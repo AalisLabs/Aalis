@@ -1,13 +1,12 @@
 // ============================================================
 // plugin-activation.ts — 插件激活路径辅助
 //
-// 从 plugin.ts 拆出的"如何把单个 entry 推进到 active 态"逻辑：
+// 从 plugin.ts 拆出的单个条目的推进与拆卸：
+//   - retireBatch：拆卸的唯一形状
 //   - requiredSatisfied：单个 entry 的 required 依赖此刻是否都有提供者
 //   - activatePlugin：建激活 → 挂载定义 → 校验 provides → 标记 active/error
 //
-// 这些都需要 PluginManager 的状态（host / logger），
-// 但被有意提成 free function：传入 deps 对象，方便单测 mock + 让 PluginManager
-// 自身只负责"事件路由 + recompute 编排"。
+// 需要的 PluginManager 状态经 deps 传入，PluginManager 自身只负责事件路由与重算编排。
 // ============================================================
 
 import type { PluginEntry, PluginState } from '../types/plugin.js';
@@ -99,17 +98,15 @@ export async function retireBatch(
 }
 
 /**
- * required 依赖此刻是否都有提供者：recompute 对 active / pending 条目的唯一判据（显式态不经这里，
- * 停机也不经这里）。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，
- * 有状态的接线经 follow 跟随提供者换人，不靠重启插件。
+ * required 依赖此刻是否都有提供者：Phase B 激活 pending 条目的判据（Phase A 的退场另按 survives 判）。optional 依赖的
+ * 上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 follow 跟随提供者换人，不靠重启插件。
  */
 export function requiredSatisfied(entry: PluginRecord, services: ServiceContainer): boolean {
   return entry.required.every(name => services.get(name) !== undefined);
 }
 
 /**
- * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验（依赖与旧激活已清由调用方在同一拍判定，
- * 见前置条件）。
+ * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验。
  *
  * 本次 required 引用缺席：记一次重试（deps.spendRetry），清理失败激活后回到 pending，并让重算继续观察可能已恢复的
  * 依赖；重试余额用尽则转 error。其余失败转为 error 态（带 message），外层 recompute 不会重试。
@@ -178,8 +175,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   } catch (err) {
     // apply 拒绝也不能夺回停机已接管的拆卸责任；资源由同一计划回滚。
     if (host.root.resources.disposed) return;
-    // 接管让位同上：管理路径已持有终态与激活的拆卸责任，此处再写 error /
-    // 二次 dispose 会踩掉 disposed / disabled / pending 终态。
+    // 接管让位同上
     if (entry.state !== 'activating') {
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
@@ -195,8 +191,6 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       return target === 'pending' ? 'retry' : undefined;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
-    // retireBatch 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
-    // 调用方）依赖状态机即时转移，异步清理不该拖延 'error' 的可见时点。
     entry.error = summarizeError(err);
     await retireBatch([entry], 'error', deps);
     return;

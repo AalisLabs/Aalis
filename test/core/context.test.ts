@@ -353,13 +353,13 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
 
   it('provide: 登记不进 disposable 链，手动 dispose 由原语自己撤回（不滞留持有 entry）', () => {
     const ctx = makeFixture();
-    const base = ctx.activation.resources.disposables.size;
+    const base = ctx.activation.resources.disposables.labels().length;
     const impl = { v: 1 };
     const dispose = ctx.caps.provide(defineService('svc'), impl);
     expect(ctx.caps.services.get('svc')).toBe(impl);
-    expect(ctx.activation.resources.disposables.size).toBe(base); // 登记只记在原语账上，链不增长
+    expect(ctx.activation.resources.disposables.labels().length).toBe(base); // 登记只记在原语账上，链不增长
     dispose();
-    expect(ctx.activation.resources.disposables.size).toBe(base);
+    expect(ctx.activation.resources.disposables.labels().length).toBe(base);
     expect(ctx.caps.services.get('svc')).toBeUndefined(); // 原语自己的 off 已撤回条目
   });
 
@@ -372,18 +372,18 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
       calls++;
     });
     first();
-    const watching = ctx.activation.resources.withdrawals.size;
+    const watching = ctx.activation.resources.withdrawals.labels().length;
     for (let i = 0; i < 200; i++) {
       ref.follow(() => {
         calls++;
       })();
     }
-    expect(ctx.activation.resources.withdrawals.size).toBe(watching);
+    expect(ctx.activation.resources.withdrawals.labels().length).toBe(watching);
     ctx.caps.provide(svc, { v: 1 });
     await tick();
     expect(calls).toBe(0);
     await ctx.activation.disposeAsync();
-    expect(ctx.activation.resources.withdrawals.size).toBe(0);
+    expect(ctx.activation.resources.withdrawals.labels().length).toBe(0);
   });
 
   it('follow: attach 执行期间同步触发自身退订时，新 cleanup 立即执行（不泄漏）', async () => {

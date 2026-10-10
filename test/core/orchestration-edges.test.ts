@@ -420,7 +420,7 @@ describe('保留的安全网：故障注入', () => {
     await app.plugin(definePlugin({ name: 'solo', apply() {} }));
     await app.plugins.idle();
     const solo = [...rootActivation(app).children].find(child => child.id === 'solo')!;
-    solo.closeInfo = () => {
+    solo.providers = () => {
       throw new Error('注入的编排故障');
     };
     expect(await app.plugins.unload('solo')).toBe(true);

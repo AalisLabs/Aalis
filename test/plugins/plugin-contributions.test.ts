@@ -130,12 +130,12 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     const ctx = makeFixture('plugin-a');
     // 首次登记挂上一条跟随提供者的清理（账本随提供者换人重挂），基线取在它之后
     ctx.caps.contributions.contribute(POINT, { id: 'k', payload: 'v0' } as never);
-    const before = ctx.activation.resources.disposables.size;
+    const before = ctx.activation.resources.disposables.labels().length;
     for (let i = 1; i < 50; i++) ctx.caps.contributions.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
     // 登记表只剩最后一次：每轮替换由原语按同键顶掉上一次的登记
     expect(ctx.caps.contributions.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v49']);
     // 贡献不进清理链，链长不变（否则 50 个旧闭包滞留、旧 build 无法 GC）
-    expect(ctx.activation.resources.disposables.size).toBe(before);
+    expect(ctx.activation.resources.disposables.labels().length).toBe(before);
     // 不进链的那份登记仍随激活关闭整体切断
     await ctx.activation.disposeAsync();
     expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
@@ -203,7 +203,7 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
   it('退订即摘登记表条目：反复 contribute+off 不无界增长', () => {
     const ctx = makeFixture('plugin-a');
     ctx.caps.contributions.contribute(POINT, { id: 'warm' } as never)();
-    const baseline = ctx.activation.resources.disposables.size;
+    const baseline = ctx.activation.resources.disposables.labels().length;
     const withdrawn: ReturnType<typeof vi.fn>[] = [];
     const register = ctx.registry.register.bind(ctx.registry);
     vi.spyOn(ctx.registry, 'register').mockImplementation((...args) => {
@@ -221,6 +221,6 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     }
     expect(previous.every(off => off.mock.calls.length === 1)).toBe(true);
     expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
-    expect(ctx.activation.resources.disposables.size, 'dispose 链不应滞留已退订的贡献闭包').toBe(baseline);
+    expect(ctx.activation.resources.disposables.labels().length, 'dispose 链不应滞留已退订的贡献闭包').toBe(baseline);
   });
 });

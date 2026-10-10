@@ -9,7 +9,6 @@
 //   2. 根用插件的服务（宿主经 App.bind）：根先收尾、插件再撤回（drain → close），根收尾时插件都还活着。
 //   3. 插件用根的服务：不加边，归属已保证插件撤回时根还在。根若同时用这个插件的服务，第 2 种边让双方收尾都拿得到
 //      对方；收成 drain → drain 会让这一对成环，所以不这样收。
-// 依赖交接放 onDrain；onDispose 阶段依赖可能已不可用。
 // 资源内核只提供「分阶段关闭」，不认识服务；依赖政策全在这里。
 //
 // 依赖成环时：先只放行仅被 optional 边挡着的收尾，不告警（互为 optional 是常态，required 消费者照样先关完）；
@@ -32,7 +31,7 @@ type Kind = 'drain' | 'close';
 interface Stage {
   ctx: Activation;
   kind: Kind;
-  /** 无约束时的自然次序：子先于父、同层后挂的先关、同一激活先收尾后关闭 */
+  /** 无约束时的自然次序：插件先于根、插件之间后挂的先关、同一激活先收尾后关闭 */
   index: number;
   /** 必须先于本阶段的阶段 → 该约束是否为硬约束（归属、required 依赖；optional 依赖为软） */
   after: Map<Stage, boolean>;
@@ -46,7 +45,7 @@ function link(earlier: Stage, later: Stage, hard: boolean): void {
 
 /**
  * 截止点：本轮涉及的激活停止新增绑定、登记「正由本计划关闭」。
- * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的节点跳过。
+ * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的激活跳过。
  * 整张计划冻完后，初始化仍在进行的激活立即 abort；其余在各自收尾段开始时 abort（Resources.drain）。
  */
 export function freezeActivations(roots: Activation[]): Map<Activation, () => void> {
@@ -55,7 +54,7 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
     const done = ctx.joinPlan();
     if (!done) return; // 已在别的计划里：由那边负责关它
     settle.set(ctx, done);
-    for (const child of ctx.closeInfo().children) freeze(child);
+    for (const child of ctx.children) freeze(child);
   };
   for (const root of roots) freeze(root);
   // abort 监听器同步执行插件代码，放在遍历之后：它看到的是已冻完的整张计划
@@ -66,7 +65,6 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 /**
  * 关闭一组激活（根激活连同它名下的插件激活），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
  * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
- * 已在别的计划里的激活（见文件头）照样排进本计划，只是不替那边收尾：轮到它关闭时等那边关完它。
  *
  * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
  */
@@ -101,15 +99,14 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
   const stages: Stage[] = [];
 
   const visit = (ctx: Activation): void => {
-    const info = ctx.closeInfo();
-    providersOf.set(ctx, info.providers);
+    providersOf.set(ctx, ctx.providers());
     // 根名下的插件激活先编号，自然次序是「插件全部在前」
     const drain: Stage = { ctx, kind: 'drain', index: -1, after: new Map(), before: new Set() };
     const close: Stage = { ctx, kind: 'close', index: -1, after: new Map(), before: new Set() };
     drainOf.set(ctx, drain);
     closeOf.set(ctx, close);
-    // 同层无依赖关系时后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
-    for (const child of [...info.children].reverse()) visit(child);
+    // 插件之间无依赖关系时后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
+    for (const child of [...ctx.children].reverse()) visit(child);
     drain.index = stages.push(drain) - 1;
     close.index = stages.push(close) - 1;
   };
