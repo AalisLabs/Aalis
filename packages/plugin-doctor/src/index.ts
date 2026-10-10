@@ -283,6 +283,8 @@ function registerBuiltinChecks(
       const active = status.filter(s => s.state === 'active');
       // 激活超过 core 慢操作阈值、已转入后台的（依赖它服务的插件在它完成前保持 pending）
       const slow = status.filter(s => s.state === 'activating' && s.slow);
+      // 旧实例超过宽限仍未停下的：停下之前同一 id 不起新实例，说法与依赖链的根（api-doctor）一致
+      const lingering = status.filter(s => s.lingering);
       // 缺与在等：与 runtime 启动告警、WebUI 同一判据（api-doctor），缺的沿链追到根；只在等提供者启动的不算未就绪
       const unmet = [...unmetDependencies(status, services.names())];
       const lacking = unmet.filter(([, u]) => u.lacking.length > 0);
@@ -334,6 +336,20 @@ function registerBuiltinChecks(
                 ].join('\n')
               : undefined,
         },
+        ...(lingering.length > 0
+          ? [
+              {
+                id: 'plugins.lingering',
+                category: 'plugins' as const,
+                level: 'warn' as const,
+                message: `${lingering.length} 个插件的旧实例超过宽限仍未停下`,
+                detail: [
+                  ...lingering.map(p => `等待 ${p.instanceId} 的旧实例停下`),
+                  '停下后按目标态继续；一直不停时看它的日志（多为清理在等网络或外部进程），重启进程可解决',
+                ].join('\n'),
+              },
+            ]
+          : []),
       ];
     },
   });

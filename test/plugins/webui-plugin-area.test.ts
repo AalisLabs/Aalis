@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   type App,
+  type AppOptions,
   appService,
   config,
   definePlugin,
   defineService,
+  lifecycle,
   optional,
   type PluginDefinition,
   pluginsService,
@@ -21,6 +23,7 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 import type { ConfigProvider } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
+import { deferred } from '../helpers/deferred.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // 插件区要的列表字段与管理动作：列表给子系统（插件声明的原样给）、版本、没起来的原因（缺与在等沿链追到根、待配置）与「界面所在」的标记；
@@ -36,10 +39,14 @@ afterEach(async () => {
 
 const SELF = 'console';
 
-function world(doc: Partial<AalisConfig> = {}, versions: Record<string, string> = {}) {
+function world(
+  doc: Partial<AalisConfig> = {},
+  versions: Record<string, string> = {},
+  timing: Pick<AppOptions, 'disposeTimeoutMs'> = {},
+) {
   const saved: AalisConfig[] = [];
   const provider: ConfigProvider = { save: snapshot => void saved.push(structuredClone(snapshot)) };
-  const { app, store } = hostedApp(doc, { logger: silent, provider });
+  const { app, store } = hostedApp(doc, { logger: silent, provider, ...timing });
   apps.push(app);
   const { expressApp, invoke } = captureRoutes();
   const panel = definePlugin({
@@ -107,6 +114,28 @@ describe('插件列表', () => {
     expect(row('zz-odd')?.subsystem).toBe('zz-own-group');
     expect(row('zz-plain')).not.toHaveProperty('subsystem');
     expect(row('zz-plain')).not.toHaveProperty('version');
+  });
+
+  it('旧实例超过宽限仍未停下的插件给 lingering', async () => {
+    const w = world({}, {}, { disposeTimeoutMs: 20 });
+    const gate = deferred();
+    let applies = 0;
+    try {
+      await w.boot(
+        definePlugin({
+          name: 'zz-slowstop',
+          uses: { lifecycle },
+          apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.onDispose(() => gate.promise)),
+        }),
+      );
+      await w.app.plugins.bounce('zz-slowstop');
+      expect((await w.rows()).find(p => p.instanceId === 'zz-slowstop')).toMatchObject({
+        state: 'pending',
+        lingering: true,
+      });
+    } finally {
+      gate.resolve();
+    }
   });
 
   it('lacking 是此刻没有任何提供者的 required 服务，沿链追到根：可选的不算，内置的总在；提供者上线后清空', async () => {
