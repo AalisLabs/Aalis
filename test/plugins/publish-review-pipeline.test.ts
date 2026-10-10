@@ -3,6 +3,7 @@ import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
 import { createReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 import { ref } from '../fixtures/service-ref.js';
 
 function chunk(type: string, body: Uint8Array): Uint8Array {
@@ -41,7 +42,7 @@ const make = (textClassifier: { provider?: string; model?: string }) => {
     config,
     llm,
     renderer: renderer as never,
-    storage: {} as never,
+    storage: boundStorage({} as never, 'publish-review'),
   });
   return { pipeline, chat, renderer };
 };
@@ -87,7 +88,7 @@ describe('publish review pipeline', () => {
       } as ReviewConfig,
       llm: ref([{ contextId: 'provider/model', instance: { capabilities: ['vision'], chat } as never }]),
       renderer: renderer as never,
-      storage: {} as never,
+      storage: boundStorage({} as never, 'publish-review'),
     });
     const result = await pipeline.run({
       ...input,

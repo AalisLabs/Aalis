@@ -9,6 +9,7 @@ import { buildGallery } from '../../packages/plugin-works-site/src/site/build.js
 import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { hashFiles, sha256 } from '../../packages/plugin-works-site/src/verify.js';
 import { type FakePages, startFakePages } from '../fixtures/fake-pages.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
 async function eventually(check: () => boolean, ms = 3000): Promise<void> {
@@ -58,7 +59,7 @@ function setup(fake: FakePages, signal: AbortSignal) {
 describe('作品站独立故障交接审计', () => {
   it('非根目录部署仅服务所选目标，撤下墓碑也留在同一目录', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const controller = new AbortController();
     const deps = setup(fake, controller.signal);
@@ -121,7 +122,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('非根 HTML 先建隔离分支，撤下后主站与分支墓碑均完成', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const controller = new AbortController();
     const deps = setup(fake, controller.signal);
@@ -187,7 +188,7 @@ describe('作品站独立故障交接审计', () => {
   }, 10000);
 
   it('注册的 doctor 检查在 token 距过期不足十四天时给 warn', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const now = 1_000_000;
     const expires = now + 14 * 24 * 60 * 60_000 - 1;
@@ -212,7 +213,7 @@ describe('作品站独立故障交接审计', () => {
   });
 
   it('注册的 doctor 检查在 token 到期当刻给 error', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const now = 1_000_000;
     let run!: () => CheckResult;
@@ -233,7 +234,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('无 id 的在飞部署没有 nonce 匹配时清掉旧计划并重做空主站', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const staleNonce = 'lostnonce';
     await store.update(state => {
@@ -280,7 +281,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('无 id 的在飞部署唯一 nonce 匹配时认领原部署，完成线上核对而不重建', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const marker = 'recoverednonce';
     const built = await buildGallery({
@@ -355,7 +356,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('发布提供者迟到时重试既有发布集合并建主站', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const controller = new AbortController();
     const deps = setup(fake, controller.signal);
@@ -408,7 +409,7 @@ describe('作品站独立故障交接审计', () => {
   }, 10000);
 
   it('停机不等待在飞网络；迟到的成功响应不能改账或发上线回报', async () => {
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const id = 'aaaaaaaa';
     await store.update(state => {
@@ -477,7 +478,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('暂停上新时仍先撤主站，防抖中的新作不夹进撤下部署', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const old = fake.seedDeployment({ branch: 'main' });
     const media = (id: string): PublishedItem => ({
@@ -544,7 +545,7 @@ describe('作品站独立故障交接审计', () => {
   it('新分支核对失败且强删失败，停机重启后清除孤儿部署', async () => {
     const fake = await startFakePages();
     const files = new Map<string, string | Uint8Array>();
-    const store = new WorksStore(memoryStorage(files));
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
     await store.load();
     const branch = 'p-12345678';
     const deployed = fake.seedDeployment({ branch });
@@ -608,7 +609,7 @@ describe('作品站独立故障交接审计', () => {
       expect(deployed.deleted).toBe(false);
       await first.stop();
       firstSignal.abort();
-      const restarted = new WorksStore(memoryStorage(files));
+      const restarted = new WorksStore(ownView(memoryStorage(files), 'works-site'));
       await restarted.load();
       expect(restarted.data?.known[deployed.id]).toBeDefined();
       const secondSignal = new AbortController();
@@ -639,7 +640,7 @@ describe('作品站独立故障交接审计', () => {
 
   it('没有新作品或新事件时，旧部署删除失败后自动重试并补发已核对主站上线回报', async () => {
     const fake = await startFakePages();
-    const store = new WorksStore(memoryStorage(new Map()));
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
     const old = fake.seedDeployment({ branch: 'main', createdAt: Date.now() - 1000 });
     const current = fake.seedDeployment({ branch: 'main' });

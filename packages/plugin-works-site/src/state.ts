@@ -1,18 +1,18 @@
 import type { PublishedItem } from '@aalis/api-publish';
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import { newAssetSalt } from './cloudflare/hash.js';
 import type { WorksSiteConfig } from './config.js';
 import type { Tombstone } from './site/build.js';
 import { sha256 } from './verify.js';
 
-export const STATE_URI = 'pluginData:/works-site/state.json';
 const DEFAULT_INSTANCE = '@aalis/plugin-works-site';
 
-export function stateUriForInstance(instanceId: string): string {
-  if (instanceId === DEFAULT_INSTANCE) return STATE_URI;
+/** 状态文件在本插件私有目录下的相对路径：默认实例的在目录根上，其他实例按实例 ID 安全编码后各放一个子目录 */
+export function statePathForInstance(instanceId: string): string {
+  if (instanceId === DEFAULT_INSTANCE) return 'state.json';
   if (!instanceId.startsWith(`${DEFAULT_INSTANCE}:`)) throw new TypeError('作品站实例 ID 不合法');
   const encoded = Array.from(new TextEncoder().encode(instanceId), byte => byte.toString(16).padStart(2, '0')).join('');
-  return `pluginData:/works-site/instances/${encoded}/state.json`;
+  return `instances/${encoded}/state.json`;
 }
 
 export interface CurrentDeployment {
@@ -186,17 +186,22 @@ export class WorksStore {
   #writing: Promise<void> = Promise.resolve();
   #closed = false;
   readonly #listeners = new Set<() => void>();
+  /** 状态文件的完整存储地址 */
   readonly uri: string;
+  readonly #path: string;
+  readonly #defaultInstance: boolean;
   constructor(
-    readonly storage: StorageService,
+    readonly storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>,
     instanceId = DEFAULT_INSTANCE,
   ) {
-    this.uri = stateUriForInstance(instanceId);
+    this.#path = statePathForInstance(instanceId);
+    this.#defaultInstance = instanceId === DEFAULT_INSTANCE;
+    this.uri = storage.uri(this.#path);
   }
 
   async load(): Promise<void> {
     try {
-      const raw = await this.storage.readFile(this.uri, 'utf8');
+      const raw = await this.storage.readFile(this.#path, 'utf8');
       const parsed: unknown = JSON.parse(String(raw));
       if (!valid(parsed)) throw new Error('结构不合法');
       this.data = parsed;
@@ -227,7 +232,7 @@ export class WorksStore {
       if (hasRemoteHistory(state)) {
         if (state.scope) {
           if (state.scope !== next) throw new Error('作品站发布范围与已部署账本不符');
-        } else if (this.uri === STATE_URI && (config.targetId !== 'works' || config.basePath !== '/')) {
+        } else if (this.#defaultInstance && (config.targetId !== 'works' || config.basePath !== '/')) {
           // Before scope was persisted, the only instance was the default root target.
           throw new Error('作品站发布范围与旧版根目录账本不符');
         }
@@ -254,7 +259,7 @@ export class WorksStore {
     if (this.failure) return Promise.reject(new Error(this.failure));
     const run = this.#writing.then(async () => {
       if (this.#closed) throw new Error('作品站状态实例已停止');
-      await this.storage.writeFile(this.uri, JSON.stringify(next));
+      await this.storage.writeFile(this.#path, JSON.stringify(next));
       this.data = next;
       this.#changed();
     });
@@ -271,7 +276,7 @@ export class WorksStore {
       if (!this.data) throw new Error('作品站状态尚未加载');
       const draft = structuredClone(this.data);
       const result = change(draft);
-      await this.storage.writeFile(this.uri, JSON.stringify(draft));
+      await this.storage.writeFile(this.#path, JSON.stringify(draft));
       this.data = draft;
       this.#changed();
       return result;

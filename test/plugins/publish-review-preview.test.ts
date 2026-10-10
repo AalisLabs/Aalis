@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ReviewPreviewServer } from '../../packages/plugin-publish-review/src/preview.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import { boundStorage } from '../fixtures/own-storage.js';
 
 const id = 'abcdefgabc';
 const html = Buffer.from('<!doctype html><script>document.body.textContent="works"</script>');
@@ -22,7 +23,7 @@ function fixture() {
       return value;
     },
   };
-  const store = new ReviewStore(storage as never);
+  const store = new ReviewStore(boundStorage(storage as never, 'publish-review'));
   store.data.queue[id] = {
     id,
     state: 'awaiting-owner',

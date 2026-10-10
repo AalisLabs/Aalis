@@ -10,10 +10,12 @@ import { registerPaperDoctor } from '../../packages/plugin-paper/src/doctor.js';
 import { PaperDriver } from '../../packages/plugin-paper/src/driver.js';
 import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { Isolation } from '../../packages/plugin-paper/src/rooms.js';
+import { TaskJournal } from '../../packages/plugin-paper/src/task-journal.js';
 import { registerPaperTools } from '../../packages/plugin-paper/src/tools.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { stubBoundTools } from './bound-tools.js';
+import { ownView } from './own-storage.js';
 import { human, LEDGER_URI, memoryStorage, type PaperFiles, sessionInfoOf } from './paper.js';
 import { ScriptedRemote } from './paper-remote.js';
 import { fixedRef, ref } from './service-ref.js';
@@ -133,7 +135,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   const raw = opts.config ?? DRIVER_CONFIG;
   const cfg = readConfig(parseConfig(configSchema, raw, logger), logger, parseConfig(paperAuditSchema, raw).papers);
   const storage = memoryStorage(files);
-  const store = new LedgerStore(storage, logger);
+  const store = new LedgerStore(ownView(storage, 'paper'), logger);
   await store.load();
   const controller = new AbortController();
   const remotes = opts.remotes ?? { [REMOTE_A]: new ScriptedRemote() };
@@ -157,6 +159,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   const now = () => Date.now();
   const isolation = new Isolation(remote, cfg.papers, logger);
   const driver = new PaperDriver({
+    journal: new TaskJournal(ownView(storage, 'paper'), logger, now),
     remote,
     sessionManager,
     storage,

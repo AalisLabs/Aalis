@@ -92,7 +92,7 @@ async function run(caps: Caps): Promise<void> {
   });
   const realRoots = await realRootsOf(declared, logger.use);
   const lists = withRealRoots(declared, root => realRoots.get(root));
-  const provenance = await openProvenance(caps.storage.use, logger.use);
+  const provenance = await openProvenance(caps.storage.use.own, logger.use);
   const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use });
   /** 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名把 `:` 换成 `-`（与白纸插件同一写法） */
   const paperOf = (sessionId: string) =>

@@ -3,10 +3,11 @@
 // 换连接、换设备、会话服务重启都一致。她最近一次开口晚于这个时刻，会话就是完成未读。
 // ════════════════════════════════════════════════════════════
 
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
-const SEEN_URI = 'pluginData:/session-server/seen.json';
+/** 私有目录下的已读记录 */
+const SEEN = 'seen.json';
 
 export interface SeenStore {
   get(sessionId: string): number | undefined;
@@ -20,11 +21,14 @@ export interface SeenStore {
  * 读出已读记录。文件不存在按没有记录起步；内容坏了告警后同样从空起步，下次记已读时覆盖。
  * 读不出来（权限、存储不可用）直接抛出：照空表落盘会覆盖原有记录。
  */
-export async function openSeenStore(storage: StorageService, logger: Logger): Promise<SeenStore> {
+export async function openSeenStore(
+  storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>,
+  logger: Logger,
+): Promise<SeenStore> {
   const seen = new Map<string, number>();
   let text: string | undefined;
   try {
-    text = String(await storage.readFile(SEEN_URI, 'utf8'));
+    text = String(await storage.readFile(SEEN, 'utf8'));
   } catch (err) {
     if (!isStorageNotFound(err)) throw err;
   }
@@ -33,7 +37,7 @@ export async function openSeenStore(storage: StorageService, logger: Logger): Pr
       const { seen: entries } = JSON.parse(text) as { seen: Record<string, unknown> };
       for (const [id, at] of Object.entries(entries)) if (typeof at === 'number') seen.set(id, at);
     } catch (err) {
-      logger.warn(`已读记录 ${SEEN_URI} 读不懂，按没有记录起步，下次记已读时覆盖:`, err);
+      logger.warn(`已读记录 ${storage.uri(SEEN)} 读不懂，按没有记录起步，下次记已读时覆盖:`, err);
     }
   }
 
@@ -41,7 +45,7 @@ export async function openSeenStore(storage: StorageService, logger: Logger): Pr
   let writing: Promise<void> = Promise.resolve();
   const persist = (): Promise<void> => {
     const body = JSON.stringify({ seen: Object.fromEntries(seen) });
-    const write = writing.then(() => storage.writeFile(SEEN_URI, body));
+    const write = writing.then(() => storage.writeFile(SEEN, body));
     writing = write.catch(() => {});
     return write;
   };

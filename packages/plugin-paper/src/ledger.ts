@@ -1,5 +1,5 @@
 // ============================================================
-// 账本：白纸、代理、任务、轮次、每日花费、预留与告警，落在 pluginData:/paper/ledger.json
+// 账本：白纸、代理、任务、轮次、每日花费、预留与告警，落在白纸的私有目录里（pluginData:/paper/ledger.json）
 //
 // 经 storage 整份原子写（写临时文件再改名）；会改变远端状态的步骤之前先落盘。
 // 文件不存在时从空账本起步；存在但读不出或解析不了时失败关闭：远端任务一律不开，原文件不覆盖，
@@ -7,11 +7,12 @@
 // ============================================================
 
 import type { RunActivity } from '@aalis/api-remote-agent';
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import { describe } from './util.js';
 
-const LEDGER_URI = 'pluginData:/paper/ledger.json';
+/** 私有目录下的账本文件 */
+const LEDGER = 'ledger.json';
 
 export interface PaperState {
   /** 当前绑定的代理 agentId */
@@ -238,14 +239,14 @@ export class LedgerStore {
   readonly #listeners = new Set<() => void>();
 
   constructor(
-    private readonly storage: StorageService,
+    private readonly storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>,
     private readonly logger: Logger,
   ) {}
 
   async load(): Promise<void> {
     let raw: string;
     try {
-      raw = (await this.storage.readFile(LEDGER_URI, 'utf-8')) as string;
+      raw = (await this.storage.readFile(LEDGER, 'utf-8')) as string;
     } catch (err) {
       if (isStorageNotFound(err)) {
         this.logger.debug('白纸账本不存在，从空账本起步');
@@ -269,7 +270,7 @@ export class LedgerStore {
   }
 
   private fail(reason: string): void {
-    this.failure = `白纸账本 ${LEDGER_URI} ${reason}`;
+    this.failure = `白纸账本 ${this.storage.uri(LEDGER)} ${reason}`;
     this.logger.error(`${this.failure}；远端任务一律不开，原文件不覆盖，请人工修复或移走后重启`);
   }
 
@@ -281,7 +282,7 @@ export class LedgerStore {
     if (this.failure) return Promise.reject(new Error(this.failure));
     const body = JSON.stringify(this.data, null, 2);
     const run = this.#writing.then(async () => {
-      await this.storage.writeFile(LEDGER_URI, body);
+      await this.storage.writeFile(LEDGER, body);
       for (const listener of this.#listeners) listener();
     });
     this.#writing = run.catch(() => {});

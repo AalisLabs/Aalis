@@ -6,6 +6,7 @@ import type { WorksSiteConfig } from '../../packages/plugin-works-site/src/confi
 import type { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
 import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { registerWorksPage } from '../../packages/plugin-works-site/src/webui.js';
+import { ownView } from '../fixtures/own-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { fixedRef } from '../fixtures/service-ref.js';
@@ -51,7 +52,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const store = new WorksStore(memoryStorage(new Map()));
+  const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
   await store.load();
   await store.update(state => {
     state.current.main = { id: 'aaaaaaaa-1', branch: 'main', nonce: 'n1', at: 2, files: {}, works: [item] };

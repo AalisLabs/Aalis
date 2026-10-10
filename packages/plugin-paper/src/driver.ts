@@ -58,7 +58,7 @@ import {
 import { normalizeActivity, progressLabel } from './progress.js';
 import { buildPrompt } from './prompt.js';
 import { actorKey, checkRemote, type Isolation, pausedReason, resolveRoomPaper } from './rooms.js';
-import { TaskJournal } from './task-journal.js';
+import type { TaskJournal } from './task-journal.js';
 import { category, describe, truncate } from './util.js';
 
 const SECOND = 1000;
@@ -122,7 +122,7 @@ interface Waits {
 type Outcome = 'next' | 'pause' | 'idle';
 
 interface DriverDeps {
-  journal?: TaskJournal;
+  journal: TaskJournal;
   remote: ServiceSelection<RemoteAgentProvider>;
   sessionManager: ServiceSelection<SessionManagerService>;
   storage: StorageService;
@@ -163,7 +163,7 @@ export class PaperDriver {
 
   constructor(deps: DriverDeps) {
     this.#d = deps;
-    this.journal = deps.journal ?? new TaskJournal(deps.storage, deps.logger, deps.now);
+    this.journal = deps.journal;
   }
 
   /** 接回进行中的任务并开始定期检查；账本读取失败时什么都不做（远端任务一律不开） */

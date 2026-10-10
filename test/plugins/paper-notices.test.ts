@@ -9,6 +9,7 @@ import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/p
 import { PaperNotices } from '../../packages/plugin-paper/src/notices.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
 import type { IncomingMessage, Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
+import { ownView } from '../fixtures/own-storage.js';
 import {
   emptyLedger,
   human,
@@ -361,7 +362,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
   it('直接发送等不到平台确认：通知说已发出、不要重发，paper_send 的提示只列其余成品（免得她把发出去的再发一遍）', async () => {
     const files = seed(failedPublication());
     const logger = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
-    const ledger = new LedgerStore(memoryStorage(files), logger);
+    const ledger = new LedgerStore(ownView(memoryStorage(files), 'paper'), logger);
     await ledger.load();
     const injected: IncomingMessage[] = [];
     const events = {
@@ -461,7 +462,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
   it('直接发送意外抛错：照常写进通知、接着注入同一轮后面的，这一轮记下的任务都不再算「正在直接发送」', async () => {
     const silent = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
     const second: TaskRecord = { ...failedPublication(), id: 't-000000f2', endedAt: now - 30_000 };
-    const ledger = new LedgerStore(memoryStorage(seed(failedPublication(), second)), silent);
+    const ledger = new LedgerStore(ownView(memoryStorage(seed(failedPublication(), second)), 'paper'), silent);
     await ledger.load();
     const injected: IncomingMessage[] = [];
     const notices = new PaperNotices({
@@ -500,7 +501,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
     const held = new Promise<void>(resolve => {
       release = resolve;
     });
-    const ledger = new LedgerStore(storage, silent);
+    const ledger = new LedgerStore(ownView(storage, 'paper'), silent);
     await ledger.load();
     storage.writeFile = async (uri, data) => {
       await held;
@@ -531,7 +532,7 @@ describe('自动发布在提交前失败：先直接发成品', () => {
   it('记通知落盘失败：通知标记与「正在直接发送」一起撤回', async () => {
     const silent = { debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
     const storage = memoryStorage(seed(failedPublication()));
-    const ledger = new LedgerStore(storage, silent);
+    const ledger = new LedgerStore(ownView(storage, 'paper'), silent);
     await ledger.load();
     storage.writeFile = async () => {
       throw new Error('zz-disk-full');
