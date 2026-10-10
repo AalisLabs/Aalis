@@ -1,7 +1,5 @@
 import type { PluginManagerService } from '../types/app.js';
 
-import { reportQuietly } from '../kernel/disposable-chain.js';
-
 import { EventBus } from '../primitives/events.js';
 import { ServiceContainer } from '../primitives/services.js';
 
@@ -13,7 +11,7 @@ import type { RestartStrategy } from './providers.js';
 import { provide } from '../composition/core-services.js';
 import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
-import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastructure/logger.js';
+import { DefaultLogger, type Logger, LogHub, type LogLevel, quietLogger } from '../infrastructure/logger.js';
 
 // ----- 应用配置选项 -----
 
@@ -57,6 +55,7 @@ export interface AppOptions {
    * 注入自定义 Logger 实现（如 pino/winston 适配对象）。
    * 注入后 core 不再写 LogHub 管线——runtime 的 console/file/webui sink
    * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。
+   * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`app.logger` 也是包过的这层。
    */
   logger?: Logger;
   /**
@@ -125,9 +124,10 @@ export class App {
     this.#events.markSticky('app:ready');
     this.#events.markSticky('app:started');
     const container = new ServiceContainer();
-    this.logger =
+    this.logger = quietLogger(
       options.logger ??
-      new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now);
+        new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now),
+    );
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
     this.#events.onHandlerError = (event, err, contextId) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
@@ -268,7 +268,7 @@ export class App {
     this.#events
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
-      .catch(err => reportQuietly(() => this.logger.error('restart 失败:', err)));
+      .catch(err => this.logger.error('restart 失败:', err));
   }
 
   /**

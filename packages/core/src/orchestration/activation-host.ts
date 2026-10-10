@@ -1,5 +1,3 @@
-import { reportQuietly } from '../kernel/disposable-chain.js';
-
 import { Activation } from './activation.js';
 import { createPort } from '../composition/binding.js';
 import { coreProviders, provide } from '../composition/core-services.js';
@@ -97,6 +95,6 @@ export class ActivationHost {
 export function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger): ServiceRuntime['notify'] {
   // EventBus.emit 逐个接住监听器错误、上报也不外抛，既不同步抛出也不拒绝；.catch 是通知出口的统一形状（架构守卫要求），不等待。
   return (event, ...args) => {
-    runtime.events.emit(event, ...args).catch(error => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error)));
+    runtime.events.emit(event, ...args).catch(error => logger.warn(`emit ${event} 失败:`, error));
   };
 }

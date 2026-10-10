@@ -654,7 +654,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // （EventBus 标记正在遍历的登记表）。
 // 2635 → 2647：同一授权下的缺陷修复——配置无法拷贝（环状引用、getter 或 Proxy 抛错）时 register / bounce 返回 false，
 // 不让 registerAll 整批拒绝；拷贝放在停机、重名检查之后，日志点名插件。
-const CORE_CODE_LINE_CEILING = 2647;
+// 2647 → 2642：core 0.20 计划 b2「缺陷与内部整理」，S5 按用户选定的根修——App 把注入或缺省的 logger 包成不抛的一层
+// （quietLogger），core 与插件的 logger 都由它派生，删去各处只为保护日志调用的 reportQuietly。
+const CORE_CODE_LINE_CEILING = 2642;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
