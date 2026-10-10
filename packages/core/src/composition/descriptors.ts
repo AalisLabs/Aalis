@@ -54,8 +54,8 @@ export interface BindingPort<P> {
   /** 实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
   readonly id: string;
   /**
-   * 这次激活的资源身份（不透明）。提供者据它把登记归到这次激活、核对调用方；
-   * 它是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。
+   * 这次激活的资源身份（不透明），即调用方身份：提供者据它认出调用方、把登记归到这次激活。
+   * 每次激活各不相同，同一 id 的前后两次激活也不同；按插件持久的状态用 id。
    */
   readonly identity: symbol;
   readonly logger: Logger;

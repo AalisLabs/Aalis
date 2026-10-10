@@ -116,7 +116,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 `ProviderOf<D>` / `BoundOf<U>` / `CheckedUses<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，两者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
-`BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），也是以这次激活名义调用提供者的凭据，见 [资源身份](service.md#资源身份)。
+`BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），即调用方身份，见 [资源身份](service.md#资源身份)。
 
 `ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`。由 `services.inspect(key)` 返回。
 
