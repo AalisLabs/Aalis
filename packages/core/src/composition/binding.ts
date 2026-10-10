@@ -1,5 +1,3 @@
-import { reportQuietly } from '../kernel/disposable-chain.js';
-
 import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer } from '../primitives/services.js';
 
@@ -125,15 +123,13 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
             follower.cleanup = ret as () => unknown;
           } else if (isThenable(ret)) {
             // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
-            reportQuietly(() =>
-              scope.logger.warn(
-                `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
-              ),
+            scope.logger.warn(
+              `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
             );
             ret.then(undefined, () => undefined);
           }
         } catch (err) {
-          reportQuietly(() => scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
+          scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err);
         } finally {
           follower.attaching = false;
         }
@@ -237,7 +233,7 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
             attachOne(target, entry, key);
           } catch (err) {
             // 单条失败不拖垮同批：当前条目留在账上，下次提供者变更时重试
-            reportQuietly(() => scope.logger.warn(`${name} 登记 "${key}" 失败（保留待重试）:`, err));
+            scope.logger.warn(`${name} 登记 "${key}" 失败（保留待重试）:`, err);
           }
         }
         return () => {

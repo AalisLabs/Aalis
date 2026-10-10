@@ -4,9 +4,11 @@ import {
   type AppOptions,
   createApp,
   definePlugin,
+  defineService,
   events,
   type Logger,
   lifecycle,
+  provide,
 } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
@@ -54,7 +56,8 @@ describe('createApp 工厂', () => {
     const app = track(createApp({ ...base('Factory'), logger: log, version: '0.0.0-test' }));
 
     expect(app).toBeInstanceOf(App);
-    expect(app.logger).toBe(log);
+    app.logger.warn('经 app.logger 写入');
+    expect(log.messages('warn')).toEqual(['经 app.logger 写入']);
     expect(log.messages('info')[0]).toBe('Aalis Core 0.0.0-test - Factory');
 
     // 工厂产物是完整可用的 App：注册即激活，停机走完整路径
@@ -65,6 +68,58 @@ describe('createApp 工厂', () => {
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     await app.stop();
     expect(log.messages('info')).toContain('已停止');
+  });
+});
+
+describe('注入的 logger 出错', () => {
+  it('同步抛错、返回被拒的 Promise：管理动作与停机照常返回，idle 落定，不外泄成未处理拒绝', async () => {
+    const escaped: unknown[] = [];
+    const onEscape = (reason: unknown) => void escaped.push(reason);
+    process.on('unhandledRejection', onEscape);
+    try {
+      const boom = (): void => {
+        throw new Error('sink failed');
+      };
+      const logger: Logger = {
+        debug: boom,
+        info: boom,
+        warn: boom,
+        error: () => Promise.reject(new Error('sink rejected')),
+        child: () => logger,
+      };
+      const app = track(new App({ name: 'T', logger }));
+      const dep = defineService<object>('zz-quiet-logger-dep');
+      let disposed = 0;
+      const plugin = definePlugin({
+        name: 'p',
+        uses: { provide, lifecycle },
+        provides: [dep],
+        apply({ provide, lifecycle }) {
+          provide(dep, {});
+          lifecycle.onDispose(() => void disposed++);
+        },
+      });
+      const broken = definePlugin({
+        name: 'broken',
+        apply() {
+          throw new Error('apply failed');
+        },
+      });
+      expect(await app.pluginAll([{ definition: plugin }, { definition: broken }])).toEqual([true, true]);
+      expect(await app.plugins.disable('p')).toBe(true);
+      expect(await app.plugins.enable('p')).toBe(true);
+      expect(await app.plugins.unload('p')).toBe(true);
+      await app.plugins.idle();
+      await app.stop();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect({ disposed, broken: app.plugins.getPlugin('broken')?.state, escaped }).toEqual({
+        disposed: 2,
+        broken: 'error',
+        escaped: [],
+      });
+    } finally {
+      process.off('unhandledRejection', onEscape);
+    }
   });
 });
 

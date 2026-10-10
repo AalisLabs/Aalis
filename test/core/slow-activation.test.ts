@@ -15,6 +15,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 激活不阻塞与可取消（C1）：
@@ -313,44 +314,41 @@ describe('慢激活转入后台', () => {
     expect(w.status('quiet')?.state).toBe('active');
   });
 
-  it('落定路径的日志器抛错不外泄成未处理拒绝，落定后照常补一次重算', async () => {
+  it('落定收尾抛错（通知出口抛出）：记 error 点名，不外泄成未处理拒绝，落定后照常补一次重算', async () => {
     const escaped: unknown[] = [];
     const onEscape = (reason: unknown) => void escaped.push(reason);
     process.on('unhandledRejection', onEscape);
     try {
-      let failError = false;
-      const changed: string[] = [];
+      const errors: string[] = [];
       const logger: Logger = {
         debug() {},
         info() {},
         warn() {},
-        error() {
-          if (failError) throw new Error('注入的日志故障');
-        },
+        error: (...args: unknown[]) => void errors.push(args.map(String).join(' ')),
         child: () => logger,
       };
-      const app = new App({ name: 'T', logger, slowThresholdMs: 20, disposeTimeoutMs: 20 });
+      const app = createInspectableApp({ name: 'T', logger, slowThresholdMs: 20, disposeTimeoutMs: 20 });
       apps.push(app);
+      const runtime = activationHost(app).runtime;
+      const notify = runtime.notify;
+      const changed: string[] = [];
       app.bind({ events }).events.on('plugins:changed', () => void changed.push('changed'));
       const gate = deferred();
       releases.push(gate.resolve);
-      await app.plugin(
-        definePlugin({
-          name: 'noisy',
-          async apply() {
-            await gate.promise;
-            throw new Error('初始化失败');
-          },
-        }),
-      );
+      await app.plugin(definePlugin({ name: 'noisy', apply: () => gate.promise }));
       await app.plugins.idle();
       const before = changed.length;
-      failError = true;
+      runtime.notify = (event, ...args) => {
+        if (event === 'plugin:loaded') throw new Error('注入的通知故障');
+        notify(event, ...args);
+      };
       gate.resolve();
       await until(() => changed.length > before, '落定后的重算');
-      await sleep(20);
-      failError = false;
-      expect(escaped).toEqual([]);
+      runtime.notify = notify;
+      expect({ errors, escaped }).toEqual({
+        errors: ['插件 "noisy" 激活收尾报错: Error: 注入的通知故障'],
+        escaped: [],
+      });
     } finally {
       process.off('unhandledRejection', onEscape);
     }

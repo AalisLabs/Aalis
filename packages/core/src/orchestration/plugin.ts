@@ -1,8 +1,6 @@
 import type { PluginManagerService, PluginStatusEntry } from '../types/index.js';
 import { type PluginEntry, type PluginState, parseInstanceId } from '../types/plugin.js';
 
-import { reportQuietly } from '../kernel/disposable-chain.js';
-
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { freezeActivations } from './close-plan.js';
@@ -149,7 +147,7 @@ export class PluginManager implements PluginManagerService {
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
   #kick(why: string): void {
-    this.recompute().catch(err => reportQuietly(() => this.#logger.error(`recompute(${why}) 报错:`, err)));
+    this.recompute().catch(err => this.#logger.error(`recompute(${why}) 报错:`, err));
   }
 
   /**
@@ -550,13 +548,13 @@ export class PluginManager implements PluginManagerService {
    * 初始化期 required 缺失的自动重试预算。两条路径记同一本账：激活时 required 绑定抛不可用，后台激活的 required
    * 依赖下线被拆。按条目跨重算累计（`#queued` 补跑、落定后补的重算都不重置），首次按当时的 {@link #maxRounds}
    * 取额；激活成功、enable、bounce 时清零。返回这次拆卸的目标态：未用尽回 pending，用尽转 error、不再自动重试，
-   * 说明里点名这次缺的服务 missing。在拆卸之前调用（写终态的是随后的 retireBatch），日志经 reportQuietly，不抛。
+   * 说明里点名这次缺的服务 missing。在拆卸之前调用（写终态的是随后的 retireBatch），不抛。
    */
   #spendRetry(entry: PluginRecord, missing: string): 'pending' | 'error' {
     entry.retriesLeft = (entry.retriesLeft ?? this.#maxRounds()) - 1;
     if (entry.retriesLeft > 0) return 'pending';
     entry.error = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
-    reportQuietly(() => this.#logger.error(`插件 "${entry.instanceId}" ${entry.error}`));
+    this.#logger.error(`插件 "${entry.instanceId}" ${entry.error}`);
     return 'error';
   }
 
@@ -659,7 +657,7 @@ export class PluginManager implements PluginManagerService {
         resolve(undefined);
         landing
           .finally(() => this.#kick(`${entry.instanceId} 激活落定`))
-          .catch(err => reportQuietly(() => this.#logger.error(`插件 "${entry.instanceId}" 激活收尾报错:`, err)));
+          .catch(err => this.#logger.error(`插件 "${entry.instanceId}" 激活收尾报错:`, err));
       };
       const unwatch = (): void => {
         clearTimeout(timer);
@@ -692,10 +690,8 @@ export class PluginManager implements PluginManagerService {
     this.#background.add(activation);
     const runtime = this.#host.runtime;
     for (const name of runtime.services.hold(activation.owner)) runtime.notify('service:unregistered', name);
-    reportQuietly(() =>
-      this.#logger.warn(
-        `插件 "${entry.instanceId}" 激活超过 ${this.#slowMs}ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放`,
-      ),
+    this.#logger.warn(
+      `插件 "${entry.instanceId}" 激活超过 ${this.#slowMs}ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放`,
     );
   }
 }

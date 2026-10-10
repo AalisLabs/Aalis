@@ -25,8 +25,6 @@
 // 经 services 动态查到的服务不产生边。
 // ============================================================
 
-import { reportQuietly } from '../kernel/disposable-chain.js';
-
 import type { Activation } from './activation.js';
 import type { Logger } from '../infrastructure/logger.js';
 
@@ -87,9 +85,7 @@ export async function closeActivations(
           stage.kind === 'drain' ? stage.ctx.resources.drain(timeoutMs) : stage.ctx.resources.disposeAsync(timeoutMs);
         if (pending) await pending;
       } catch (err) {
-        reportQuietly(() =>
-          logger.error(`关停 "${stage.ctx.id}" 的${stage.kind === 'drain' ? '收尾' : '关闭'}阶段抛错:`, err),
-        );
+        logger.error(`关停 "${stage.ctx.id}" 的${stage.kind === 'drain' ? '收尾' : '关闭'}阶段抛错:`, err);
       }
       if (stage.kind === 'close') owned.get(stage.ctx)?.();
     }
@@ -178,16 +174,14 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
       stage => stage.kind === 'drain' && ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)),
     );
     if (yielding.length > 0) {
-      reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`));
+      logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`);
       for (const stage of yielding) {
         blockers.set(stage, 0);
         release(stage);
       }
       continue;
     }
-    reportQuietly(() =>
-      logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`),
-    );
+    logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`);
     const forced = cycle[0];
     blockers.set(forced, 0);
     release(forced);
