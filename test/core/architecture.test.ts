@@ -710,7 +710,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2625 → 2623：b5 P1-12（用户选甲）——bounce 不再收 config，拷贝保护与禁用态只换配置都归 updateConfig。
 // 2623 → 2618：b5 P0-5（用户选乙）——插件 id 规则只留两条：删 `#` 禁令与 trim 后的危险键复查，危险键闸保留。
 // 2618 → 2616：b5 P1-10（用户选乙）——删 AppOptions.now，日志时钟随注入的 logger 走（DefaultLogger 的 now 参数保留）。
-const CORE_CODE_LINE_CEILING = 2616;
+// 2616 → 2619：b5 审修 S6（协调者定）——已受理过的 restart() 再调记一条 debug 后返回，不再静默。
+const CORE_CODE_LINE_CEILING = 2619;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

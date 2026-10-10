@@ -321,12 +321,14 @@ describe('启动与停机、重启互斥', () => {
     expect(seen).toEqual([]);
   });
 
-  it('重启已受理后再调 restart 静默返回，停机开始后也是：只发一次 app:restarting、只调一次策略', async () => {
+  it('重启已受理后再调 restart 记 debug 后返回，停机开始后也是：只发一次 app:restarting、只调一次策略', async () => {
     let calls = 0;
     let received: { stop: () => Promise<void> } | undefined;
+    const log = recordingLogger();
     const app = track(
       new App({
         ...base(),
+        logger: log,
         restartStrategy: {
           restart(opts) {
             calls++;
@@ -344,6 +346,10 @@ describe('启动与停机、重启互斥', () => {
     expect(() => app.restart()).not.toThrow();
     await stopping;
     expect({ calls, restarting }).toEqual({ calls: 1, restarting: 1 });
+    expect(log.messages('debug').filter(m => m.startsWith('restart'))).toEqual([
+      'restart: 已受理过一次，本次忽略',
+      'restart: 已受理过一次，本次忽略',
+    ]);
   });
 
   it('未受理过重启、停机已开始：restart 抛错', () => {
