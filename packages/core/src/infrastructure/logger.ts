@@ -307,17 +307,25 @@ function describeLayer(value: unknown, forSummary: boolean): string {
   }
 }
 
+/** 摘要里一层的首行 */
+function summaryLine(value: unknown): string {
+  return describeLayer(value, true).split('\n', 1)[0];
+}
+
 /**
- * AggregateError 的子错误：`[errors] N 项` 后每项另起一行、缩进两格（多行消息原样续行），超过 {@link AGGREGATE_ITEMS} 条
- * 写「…另 N 项」。子错误不再展开各自的 cause。绝不抛：读取或遍历 `errors` 抛错（如被改成非数组）时不列。
+ * 接在 AggregateError 层之后的子错误，列前 {@link AGGREGATE_ITEMS} 条（摘要 {@link SUMMARY_ITEMS} 条），超出写「…另 N 项」；
+ * 子错误不再展开各自的 cause。日志：`[errors] N 项` 后每项另起一行、缩进两格（多行消息原样续行）。摘要：`: ` 后接各项首行，
+ * 以 `; ` 相连，没有子错误时为空。绝不抛：读取或遍历 `errors` 抛错（如被改成非数组）时不列。
  */
-function aggregateLines(value: unknown): string {
+function aggregateTail(value: unknown, forSummary: boolean): string {
   try {
     if (!(value instanceof AggregateError)) return '';
     const items: unknown[] = value.errors;
-    const lines = items.slice(0, AGGREGATE_ITEMS).map(item => `\n  ${describeLayer(item, false)}`);
-    const rest = items.length - AGGREGATE_ITEMS;
-    return `\n[errors] ${items.length} 项${lines.join('')}${rest > 0 ? `\n  …另 ${rest} 项` : ''}`;
+    const limit = forSummary ? SUMMARY_ITEMS : AGGREGATE_ITEMS;
+    const shown = items.slice(0, limit).map(item => (forSummary ? summaryLine(item) : describeLayer(item, false)));
+    if (items.length > limit) shown.push(`…另 ${items.length - limit} 项`);
+    if (!forSummary) return `\n[errors] ${items.length} 项${shown.map(line => `\n  ${line}`).join('')}`;
+    return shown.length === 0 ? '' : `: ${shown.join('; ')}`;
   } catch {
     return '';
   }
@@ -330,44 +338,23 @@ function aggregateLines(value: unknown): string {
  */
 function causeTail(error: Error): string {
   const { causes, end } = causesOf(error);
-  let tail = aggregateLines(error);
-  for (const cause of causes) tail += `\n[cause] ${describeLayer(cause, false)}${aggregateLines(cause)}`;
+  let tail = aggregateTail(error, false);
+  for (const cause of causes) tail += `\n[cause] ${describeLayer(cause, false)}${aggregateTail(cause, false)}`;
   return end === undefined ? tail : `${tail}\n[cause] ${end}`;
 }
 
-/** 摘要里一层的首行 */
-function summaryLine(value: unknown): string {
-  return describeLayer(value, true).split('\n', 1)[0];
-}
-
 /**
- * 摘要里接在 AggregateError 层之后的子错误：`: ` 后接前 {@link SUMMARY_ITEMS} 条的首行，以 `; ` 相连，超出写「…另 N 项」；
- * 没有子错误时为空。子错误不再展开各自的 cause。绝不抛：读取或遍历 `errors` 抛错时不列。
- */
-function aggregateSummary(value: unknown): string {
-  try {
-    if (!(value instanceof AggregateError)) return '';
-    const items: unknown[] = value.errors;
-    const shown = items.slice(0, SUMMARY_ITEMS).map(summaryLine);
-    if (items.length > SUMMARY_ITEMS) shown.push(`…另 ${items.length - SUMMARY_ITEMS} 项`);
-    return shown.length === 0 ? '' : `: ${shown.join('; ')}`;
-  } catch {
-    return '';
-  }
-}
-
-/**
- * 抛出值的一行说明（`PluginEntry.error` 与注册校验失败的日志）。Error：消息后接因果链摘要，各层取首行，以 ` ← ` 相连，
- * 层数上限与收尾说明同日志；AggregateError 层之后接子错误（见 {@link aggregateSummary}）。包装错误常写成「前缀: cause 的消息」：
- * 上一层首行以本层首行结尾，且两者相同或其间以 `:` / `：`（其后可有空白）分隔时，省略本层；首行为空的层不列。其余值取渲染结果首行并限长
- * （见 {@link describeLayer}）。绝不抛。
+ * 抛出值的说明（`PluginEntry.error`，以及注册、改配置被拒时的日志）。Error：消息原样保留（多行消息照样多行），后接因果链
+ * 摘要：cause 各层取首行，以 ` ← ` 相连，层数上限与收尾说明同日志；AggregateError 层之后接子错误（见 {@link aggregateTail}）。
+ * 包装错误常写成「前缀: cause 的消息」：上一层首行以本层首行结尾，且两者相同或其间以 `:` / `：`（其后可有空白）分隔时，
+ * 省略本层；首行为空的层不列。其余值取渲染结果首行并限长（见 {@link describeLayer}）。绝不抛。
  * @internal
  */
 export function summarizeError(error: unknown): string {
   try {
     const message = describeLayer(error, true);
     if (!(error instanceof Error)) return message;
-    let summary = message + aggregateSummary(error);
+    let summary = message + aggregateTail(error, true);
     let previous = message.split('\n', 1)[0];
     const { causes, end } = causesOf(error);
     for (const cause of causes) {
@@ -379,7 +366,7 @@ export function summarizeError(error: unknown): string {
         if (!repeated) summary += ` ← ${line}`;
         previous = line;
       }
-      summary += aggregateSummary(cause);
+      summary += aggregateTail(cause, true);
     }
     return end === undefined ? summary : `${summary} ← ${end}`;
   } catch {
