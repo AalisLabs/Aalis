@@ -536,6 +536,41 @@ describe('旧实例停下之前不起新实例', () => {
     expect(applies).toBe(2);
     expect(w.status('slowstop')?.lingering).toBeUndefined();
   });
+
+  it('等别的计划关它超过宽限：不替那份计划清引用，旧实例关完之前不起新实例', async () => {
+    const w = world({ slowThresholdMs: 10, disposeTimeoutMs: 30 });
+    const draining = deferred();
+    let applies = 0;
+    let live = 0;
+    let overlapped = false;
+    await w.app.plugin(
+      definePlugin({
+        name: 'slowfail',
+        uses: { lifecycle },
+        async apply({ lifecycle }) {
+          if (live > 0) overlapped = true;
+          live++;
+          if (++applies > 1) return;
+          lifecycle.onDrain(async () => {
+            draining.resolve();
+            await sleep(25);
+          });
+          lifecycle.onDispose(async () => {
+            await sleep(25);
+            live--;
+          });
+          await sleep(20); // 已转入后台
+          throw new Error('后台激活失败');
+        },
+      }),
+    );
+    // 后台激活失败的回滚在重算之外：它的关闭要 50ms，bounce 只等 30ms 就放弃
+    await draining.promise;
+    expect(await w.app.plugins.bounce('slowfail')).toBe(true);
+    await until(() => w.status('slowfail')?.state === 'active', '旧实例关完后重新激活');
+    expect(applies).toBe(2);
+    expect(overlapped, '新实例起来时旧实例的清理还没跑完').toBe(false);
+  });
 });
 
 describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () => {
