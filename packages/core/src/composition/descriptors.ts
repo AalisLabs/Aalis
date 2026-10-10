@@ -37,22 +37,25 @@ export interface ProviderEntry<B> {
 /**
  * caps.xxx：选择层，只读。挑选只有一条规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序，偏好指向的那家不在就按下一级挑、
  * 回来后自动切回；偏好由用户经管理面（`services.prefer`）设。业务句柄是活的：每次访问成员都重新解析，存起来也安全；
- * 访问时选不到提供者就同步抛 `ServiceUnavailableError`，可选依赖先看 `present`。已经开始的一次调用在原来那一家上完成；
- * 一段操作要固定同一家，取 `list()` 里选中那一条的 `use`。
+ * 访问时选不到提供者就同步抛错。错误类不导出：可选依赖先看 `present`，接错误时认 `err.name === 'ServiceUnavailableError'`。
+ * 已经开始的一次调用在原来那一家上完成；一段操作要固定同一家，取 `list()` 里选中那一条的 `use`。
  */
 export interface ServiceSelection<B> {
   /** 每次调用重新枚举对外可见的提供者（转入后台、尚未完成激活的不在内），本插件选中的那一条在前 */
   list(): ProviderEntry<B>[];
   /** 默认业务句柄：转发给本插件当前选中的那一家 */
   readonly use: B;
-  /** 固定某一家的业务句柄：那一家不在时访问成员抛错，同一个 id 回来后照常可用 */
+  /**
+   * 固定某一家的业务句柄：那一家不在时访问成员抛错，同一个 id 回来后照常可用。内置项的业务句柄在取句柄时就取门面，
+   * 对根以外的 id 调 of 当场抛错
+   */
   of(id: string): B;
   /** 本插件此刻能否选到一家 */
   readonly present: boolean;
   /**
-   * 有状态资源：选得到即以选中那一家的 `of(id)` 句柄调 attach；换人时先跑上次返回的清理（是异步的就等它落定），
-   * 再挂新的；选不到时只清理；下线与关闭时清理。attach 必须同步，见 {@link FollowCleanup}。那一家撤回之后句柄就打不到它，
-   * 清理要用的东西在 attach 里取好（提供者方法交出的对象属于提供者，交接时它还活着）
+   * 有状态资源：选得到即以选中那一家的业务句柄调 attach；换人时先跑上次返回的清理（是异步的就等它落定），再挂新的；
+   * 选不到时只清理；下线与关闭时清理。attach 必须同步，见 {@link FollowCleanup}。交给 attach 的句柄钉在挂上的这一条
+   * 登记：那一家撤回、或同一个 id 换了新实例，它仍打到原来那一家，直到这次挂载的清理落定，之后访问抛错
    */
   follow(attach: (handle: B) => FollowCleanup): () => void;
 }
@@ -79,6 +82,8 @@ export interface BindingPort<P> {
    */
   readonly identity: symbol;
   readonly logger: Logger;
+  /** 目标那一家此刻在不在，与选择层的 `present` 同口径 */
+  readonly present: boolean;
   /** 目标那一家的活句柄，规则同选择层的业务句柄（缺席时访问成员抛错）；提供者是函数时可直接调用 */
   readonly provider: P;
   /**
