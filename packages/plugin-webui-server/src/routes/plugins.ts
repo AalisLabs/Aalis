@@ -549,12 +549,10 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return;
     }
     if (success) {
-      // 仍在初始化、不响应 abort 的插件，宽限到期转 error 而非 disabled：照样记为禁用（重启时不再激活），
-      // 回执按实际状态说明。写进了配置文件就回 2xx，口径同改配置
-      const stuck =
-        pm.getPlugin(pluginName)?.state === 'error'
-          ? `插件 ${pluginName} 未在宽限内停止，已转为 error 态，详见日志`
-          : undefined;
+      // 已禁用，但旧实例（如不响应 abort 的初始化）超过宽限仍没停下：回执说明这一点。写进了配置文件就回 2xx，口径同改配置
+      const stuck = pm.getStatus().find(entry => entry.instanceId === pluginName)?.lingering
+        ? `插件 ${pluginName} 已禁用，但超过宽限仍未停下，详见日志`
+        : undefined;
       doc.setPluginEnabled(pluginName, false);
       if (!(await saveAfterApply(doc, res, 'restart', stuck))) return;
       res.json({

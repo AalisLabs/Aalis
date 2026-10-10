@@ -61,6 +61,7 @@ function rootOk(root: Record<string, unknown>): boolean {
       return isString(root.instance) && (root.error === undefined || isString(root.error));
     case 'disabled':
     case 'starting':
+    case 'lingering':
       return isString(root.instance);
     case 'withdrawn':
       return isString(root.instance) && isString(root.service);

@@ -31,10 +31,8 @@ describe('Resources 的关闭过程', () => {
     const drainClosing = gate();
     const drainStarted = gate();
     const trace: string[] = [];
-    const life = new Resources('t', stubLogger(), {
-      beforeCleanup: () => void trace.push('withdraw'),
-      afterCleanup: () => void trace.push('finished'),
-    });
+    const life = new Resources('t', stubLogger(), { afterCleanup: () => void trace.push('finished') });
+    life.onCut(() => void trace.push('withdraw'));
     life.disposables.push(() => trace.push('first'));
     life.draining.push(async () => {
       trace.push('drain:start');

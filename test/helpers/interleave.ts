@@ -100,7 +100,7 @@ export function createWorld(seed: number, profile: Profile) {
       note(`${scope}: ${text}`);
       const held = /^插件 "p(\d+)" 激活超过/.exec(text);
       if (held) lose(Number(held[1]));
-      if (/放弃等待|未在宽限内停止/.test(text))
+      if (/放弃等待/.test(text))
         for (const o of instances) if (o.live && (scope === o.id || text.includes(`"${o.id}"`))) o.abandoned = true;
     };
     return { debug() {}, info() {}, warn, error: warn, child: capture };

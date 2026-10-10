@@ -5,7 +5,7 @@ import { deferred } from '../helpers/deferred.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
-function world(options: { beforeCleanup?: () => void; afterCleanup?: () => void } = {}) {
+function world(options: { afterCleanup?: () => void } = {}) {
   const warnings: unknown[][] = [];
   const logger: Logger = {
     debug() {},
@@ -20,10 +20,8 @@ function world(options: { beforeCleanup?: () => void; afterCleanup?: () => void 
 describe('Resources', () => {
   it('keeps phase ordering and independent cancellation without any service or activation', async () => {
     const calls: string[] = [];
-    const { resources } = world({
-      beforeCleanup: () => calls.push('before'),
-      afterCleanup: () => calls.push('after'),
-    });
+    const { resources } = world({ afterCleanup: () => calls.push('after') });
+    resources.onCut(() => calls.push('before'));
     const same = () => void calls.push('same');
     resources.onDispose(same);
     resources.onDispose(() => void calls.push('middle'));
@@ -32,7 +30,7 @@ describe('Resources', () => {
     resources.trackWithdrawal(() => calls.push('withdraw'));
     const off = resources.track(() => void calls.push('manual'), 'manual');
     off();
-    expect(resources.disposables.labels()).not.toContain('manual');
+    expect(resources.withdrawals.labels()).not.toContain('manual');
     await resources.disposeAsync();
     expect(calls).toEqual(['manual', 'drain', 'before', 'withdraw', 'middle', 'same', 'after']);
   });
@@ -96,7 +94,7 @@ describe('Resources', () => {
     const { resources } = world();
     let withdrawn = 0;
     const off = resources.trackWithdrawal(() => withdrawn++);
-    resources.disposables.remove(off);
+    resources.withdrawals.remove(off);
     await resources.disposeAsync();
     expect(withdrawn).toBe(0);
     resources.onDispose(() => {

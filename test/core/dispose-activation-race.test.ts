@@ -181,6 +181,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       host,
       logger: new DefaultLogger('test'),
       spendRetry: () => 'pending',
+      linger: () => {},
     });
 
     // activatePlugin 在 apply 之前就把 activation 挂上内部记录，此刻 apply 正卡在闸门里

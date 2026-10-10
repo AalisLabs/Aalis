@@ -17,7 +17,7 @@ import { absentDoctor, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // code-sandbox-os 的启动探测接 lifecycle.signal：启动器挂住时，停用与停机随 abort 落定，不拖满停机宽限、
-// 也不被判「未在宽限内停止」。被中止时一律抛出，不落成「没有沙箱后端」的 warn。
+// 旧实例也不会超过宽限仍没停下。被中止时一律抛出，不落成「没有沙箱后端」的 warn。
 //
 // process 服务用替身，只实现探测用到的 spawn；句柄的 wait 按用例给的行为落定。探测命令按平台分支，
 // 替身不起真实进程，停用与失败的用例在有探测分支的平台（macOS、Linux）上跑，后端选择的用例改写 process.platform 两个都测。
@@ -143,7 +143,7 @@ afterEach(async () => {
 
 describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
   it.skipIf(!probes)(
-    '安全：启动器挂住时停用，探测随 abort 落定：条目转 disabled，不记「未在宽限内停止」，停用在 1 秒内返回',
+    '安全：启动器挂住时停用，探测随 abort 落定：条目转 disabled，不留超过宽限仍没停下的旧实例，停用在 1 秒内返回',
     async () => {
       const { service, calls } = fakeProcess({ wait: hangUntilAbort });
       const { logger, lines } = recorder();
@@ -159,7 +159,7 @@ describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
       await registering;
       await app.plugins.idle();
 
-      // 没有 error（未在宽限内停止），也没有 warn（被中止不落成「没有沙箱后端」）
+      // 没有 warn（旧实例超过宽限仍未停止、被中止落成「没有沙箱后端」都会记 warn）
       expect(lines).toEqual([]);
       expect(app.plugins.getPlugin(codeSandboxOs.name)?.state).toBe('disabled');
       expect(elapsed, '停用应在 1 秒内返回').toBeLessThan(1000);

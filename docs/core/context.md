@@ -240,7 +240,7 @@ lifecycle.onDispose(async () => {
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名；该项此后才到的拒绝照样按清理失败上报。超时只是停止等待，不代表资源已释放。
 
-`apply` 尚未完成就被关闭的激活，`signal` abort 之后自其收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定；到期记 error「未在宽限内停止」、不再等待，后续清理照常执行，`apply` 本身继续跑（迟到的登记被拒收、`onDispose` 就地执行）。激活超过 `AppOptions.slowThresholdMs`（默认 60000）仍未完成时转入后台，重算不再等它；`app:*` 屏障事件的单个监听器至多等同一阈值。两个值都非 0 时 `register()` / `stop()` 不会被永不落定的 `apply` 或屏障监听器挂住；任一为 0（不设限）时仍可能等待不返回。
+`apply` 尚未完成就被关闭的激活，`signal` abort 之后自其收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定；到期不再等待，后续清理照常执行，`apply` 本身继续跑（迟到的登记被拒收、`onDispose` 就地执行）。超过宽限没落定的 `apply` 与清理都记在实例 id 名下，它们落定之前同一 id 不起新实例（`getStatus()` 的 `lingering`，见 [plugin.md](plugin.md#旧实例停下之前不起新实例)）。激活超过 `AppOptions.slowThresholdMs`（默认 60000）仍未完成时转入后台，重算不再等它；`app:*` 屏障事件的单个监听器至多等同一阈值。两个值都非 0 时 `register()` / `stop()` 不会被永不落定的 `apply` 或屏障监听器挂住；任一为 0（不设限）时仍可能等待不返回。
 
 ## 宿主入口
 
