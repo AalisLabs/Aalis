@@ -251,19 +251,26 @@ describe('等待业务交出来的 Promise', () => {
     expect(finished).toBe(true);
   });
 
-  it('在飞清理永不落定：超时点名一次、随即出账，后续各段不再重复计时', async () => {
+  const stuck = () => new Promise<void>(() => {});
+  it.each([
+    ['手动退订启动的', (port: BindingPort<unknown>) => port.track(stuck, 'zz-aa-stuck-handle')()],
+    ['关闭时撤回的', (port: BindingPort<unknown>) => void port.track(stuck, 'zz-aa-stuck-handle')],
+    [
+      '注册账本的',
+      (port: BindingPort<unknown>) =>
+        void port.registrar<string>({ key: key => key, register: () => stuck }).add('zz-aa-stuck-handle'),
+    ],
+  ])('在飞清理永不落定（%s）：超时点名一次，后续各段不再重复计时', async (_, start) => {
     const w = world();
+    const svc = defineService<unknown, BindingPort<unknown>>('zz-aa-stuck', port => port);
+    w.app.bind({ provide }).provide(svc, {});
     const activation = activationHost(w.app).create('p');
-    const port = activationHost(w.app).bind(activation, {
-      port: defineService<unknown, BindingPort<unknown>>('zz-aa-stuck', port => port),
-    }).port;
-    port.track(() => new Promise<void>(() => {}), 'zz-aa-stuck-handle')();
+    start(activationHost(w.app).bind(activation, { port: svc }).port);
     const started = Date.now();
     await activation.disposeAsync(60);
     const elapsed = Date.now() - started;
     expect(elapsed, `耗时 ${elapsed}ms`).toBeLessThan(150);
-    const named = w.warnings.filter(x => x.includes('zz-aa-stuck-handle') && x.includes('60ms'));
-    expect(named, w.warnings.join(' | ')).toHaveLength(1);
+    expect(w.warnings.filter(x => x.includes('60ms'))).toEqual([expect.stringContaining('zz-aa-stuck-handle')]);
   });
 });
 

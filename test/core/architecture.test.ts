@@ -684,7 +684,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2547 → 2542：b3+b4 审修缺陷 1——加入在飞关闭不另设时限（各计划逐项受同一上限约束，先冻的总会关完），删去「等过宽限
 // 不替那份计划清引用」的分支；同一 id 的旧实例记账只记一次。
 // 2542 → 2543：同批缺陷 3——依赖丢失的连带退场把别的计划正关着的提供者算作要走（survives 改收判定函数），抬高 1 行对应它。
-const CORE_CODE_LINE_CEILING = 2543;
+// 2543 → 2530：同批审查删减——isThenable 只留清理链里一份，track 的异步撤回与 follow / registrar 一样只进在飞账、
+// 段收口等一次（删去链上的第二次等待），注册账本的聚合不再重复记账。
+const CORE_CODE_LINE_CEILING = 2530;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

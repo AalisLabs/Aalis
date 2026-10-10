@@ -21,7 +21,11 @@ function describe(label?: string, index?: number): string {
   return index === undefined ? '' : ` [#${index}]`;
 }
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
+/**
+ * 是否 thenable：core 内部判断回调返回值要不要等、要不要接住拒绝的唯一写法，不从包根导出。
+ * @internal
+ */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
   return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function';
 }
 
