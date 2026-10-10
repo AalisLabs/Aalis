@@ -12,7 +12,6 @@ import type { AalisEvents } from '../types/events.js';
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
 import { assertOwnCopy, defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
-import { validateProvide } from './provide-validation.js';
 import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
@@ -26,7 +25,7 @@ export interface ProvideOptions {
   exclusive?: boolean;
   /** 展示名（服务页下拉等） */
   label?: string;
-  /** 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`） */
+  /** 条目的逻辑身份，缺省为本激活 id；一个激活登记多条时各给一个。格式由服务契约约定，core 不检查 */
   entryId?: string;
   /**
    * 代为登记：条目的逻辑身份取这个 id（而非本激活的），用于托管自己不运行代码的包——如 WebUI 服务端
@@ -98,7 +97,7 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
  * 发布服务：唯一的发布入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回。
  *
  * `options.onBehalfOf`：条目的逻辑身份取被代者 id（用于偏好与服务页），清理仍归本激活。
- * 以其他身份代登记不计入代理人的 `provides`，也不能替被代者满足 `provides`；校验同时核对 owner 与逻辑身份。
+ * `provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方，不替别的激活满足 `provides`。
  */
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
@@ -171,10 +170,11 @@ export function coreProviders(
     if (!accepts(c, `provide("${name}")`)) return () => {};
     assertOwnCopy(descriptor, 'provide 的描述符');
     const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
-    if (runtime.devMode && options?.onBehalfOf === undefined)
-      validateProvide(
-        { ctxId: c.id, owner: c.owner, name, entryId, explicitEntryId: options?.entryId !== undefined },
-        { services: container, logger: c.logger },
+    // dev 劝告：同一激活以同一逻辑身份重复登记同一服务，按 contextId 路由与设偏好只能命中其中一条
+    if (runtime.devMode && options?.onBehalfOf === undefined && container.hasEntry(name, entryId, c.owner))
+      c.logger.warn(
+        `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
+          `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,
       );
     const off = container.register(name, implementation, entryId, c.owner, options);
     // 暂不对外的激活（转入后台的）登记照收，上线时才通知
