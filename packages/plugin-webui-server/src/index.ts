@@ -32,6 +32,7 @@ import { isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
   type ErrorResponse,
+  type OkResponse,
   type OptionDetail,
   type PluginTheme,
   parseTheme,
@@ -50,6 +51,7 @@ import {
   lifecycle,
   logger,
   optional,
+  type PreferenceScope,
   pluginsService,
   provide,
   type ServiceView,
@@ -682,54 +684,69 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   /**
-   * 设置服务偏好。body: { contextId: string }
-   * 偏好语义：`preferred > priority > 注册顺序`。持久化到 aalis.config.yaml 的 servicePreferences。
+   * 改服务偏好，contextId 为 null 即清除：scope 不给 `for` 是全局偏好，给了是只对那个插件实例的本插件偏好。
+   * 挑选规则：本插件偏好 > 全局偏好 > priority > 注册顺序。偏好要跨重启保留就得写进文档（servicePreferences /
+   * pluginServicePreferences），宿主没提供文档时不动运行态
    */
+  const changePreference = async (
+    svcName: string,
+    contextId: string | null,
+    scope: PreferenceScope,
+    res: express.Response<OkResponse | ErrorResponse>,
+  ) => {
+    if (contextId !== null && !services.use.inspect(svcName).some(e => e.contextId === contextId)) {
+      res.status(404).json({ error: `service "${svcName}" has no provider with contextId "${contextId}"` });
+      return;
+    }
+    if (!caps.hostConfig.present) {
+      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      return;
+    }
+    const host = caps.hostConfig.use;
+    if (contextId === null) {
+      services.use.unprefer(svcName, scope);
+      host.removeServicePreference(svcName, scope);
+    } else if (services.use.prefer(svcName, contextId, scope)) {
+      host.setServicePreference(svcName, contextId, scope);
+    } else {
+      res.status(409).json({ error: `service "${svcName}" rejected provider preference "${contextId}"` });
+      return;
+    }
+    // 切换前端：webui-client 是「前端」服务，全局偏好变更需重挂静态目录 + 通知客户端刷新。
+    // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
+    if (svcName === 'webui-client' && scope.for === undefined) remountActiveClient();
+    if (!(await saveAfterApply(host, res, 'reload'))) return;
+    res.json({ ok: true });
+  };
+  const preferredIn = (body: unknown) => String((body as { contextId?: string } | undefined)?.contextId ?? '').trim();
+
   route(expressApp, 'POST /api/services/:name/prefer', gate(), async (req, res) => {
-    const svcName = String(req.params.name);
-    const contextId = String((req.body as { contextId?: string })?.contextId ?? '').trim();
+    const contextId = preferredIn(req.body);
     if (!contextId) {
       res.status(400).json({ error: 'contextId required' });
       return;
     }
-    // 校验 entry 存在
-    const entries = services.use.inspect(svcName);
-    if (!entries.some(e => e.contextId === contextId)) {
-      res.status(404).json({ error: `service "${svcName}" has no provider with contextId "${contextId}"` });
-      return;
-    }
-    // 偏好要跨重启保留就得写进文档：宿主没提供文档时不动运行态
-    if (!caps.hostConfig.present) {
-      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
-      return;
-    }
-    const host = caps.hostConfig.use;
-    if (!services.use.prefer(svcName, contextId)) {
-      res.status(409).json({ error: `service "${svcName}" rejected provider preference "${contextId}"` });
-      return;
-    }
-    host.setServicePreference(svcName, contextId);
-    // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
-    // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
-    if (svcName === 'webui-client') remountActiveClient();
-    if (!(await saveAfterApply(host, res, 'restart'))) return;
-    res.json({ ok: true });
+    await changePreference(String(req.params.name), contextId, {}, res);
   });
-
-  /** 清除服务偏好 */
-  route(expressApp, 'DELETE /api/services/:name/prefer', gate(), async (req, res) => {
-    const svcName = String(req.params.name);
-    if (!caps.hostConfig.present) {
-      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
+  route(expressApp, 'DELETE /api/services/:name/prefer', gate(), (req, res) =>
+    changePreference(String(req.params.name), null, {}, res),
+  );
+  route(expressApp, 'POST /api/plugins/:instanceId/services/:name/prefer', gate(), async (req, res) => {
+    const contextId = preferredIn(req.body);
+    if (!contextId) {
+      res.status(400).json({ error: 'contextId required' });
       return;
     }
-    const host = caps.hostConfig.use;
-    services.use.unprefer(svcName);
-    host.removeServicePreference(svcName);
-    if (svcName === 'webui-client') remountActiveClient();
-    if (!(await saveAfterApply(host, res, 'restart'))) return;
-    res.json({ ok: true });
+    const instanceId = String(req.params.instanceId);
+    if (!caps.plugins.present || !caps.plugins.use.getPlugin(instanceId)) {
+      res.status(404).json({ error: `插件 ${instanceId} 不存在` });
+      return;
+    }
+    await changePreference(String(req.params.name), contextId, { for: instanceId }, res);
   });
+  route(expressApp, 'DELETE /api/plugins/:instanceId/services/:name/prefer', gate(), (req, res) =>
+    changePreference(String(req.params.name), null, { for: String(req.params.instanceId) }, res),
+  );
 
   // 插件经贡献点提供的主题：与导入的主题同一套校验，不合格式的不列出、每份告警一次。插件停用时贡献随之撤回，
   // 界面收到 plugins.changed 后重取。贡献点服务不在时没有插件主题

@@ -1,16 +1,16 @@
-import { useEffect, useReducer, useState } from 'react';
+import { useReducer, useState } from 'react';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
-import { useConnection } from '../connection';
 import { LLM, useHost } from '../plugins/list';
 import { deleteJson, isRecord, postJson, putJson, useJson } from '../rest';
 import { paths } from '../routes';
 import { useSessionService } from '../shell/SessionGate';
 import { type Field, isModelField } from './field';
 import { SettingRow } from './SettingRow';
+import { useServices } from './services';
 import { useSettingRows } from './setting-rows';
 
 // 设置的「系统」：宿主配置的核心键（来源是配置文件或默认，要重启的键写明，改了之后出「重启以生效」与重启按钮）、
@@ -44,26 +44,6 @@ function parseHostConfig(body: unknown): HostConfigView {
     restartKeys: body.restartKeys.filter(key => typeof key === 'string'),
     home: typeof body.home === 'string' ? body.home : undefined,
   };
-}
-
-interface ServiceView {
-  name: string;
-  /** 按解析的先后：第一个就是正在用的 */
-  providers: Array<{ contextId: string; label: string }>;
-  preferred: string | null;
-}
-
-function parseServices(body: unknown): ServiceView[] {
-  if (!isRecord(body) || !isRecord(body.services)) throw new Error('服务列表的回应不是预期的形状');
-  return Object.entries(body.services).flatMap(([name, detail]) => {
-    if (!isRecord(detail) || !Array.isArray(detail.providers)) return [];
-    const providers = detail.providers.filter(isRecord).flatMap(provider => {
-      if (typeof provider.contextId !== 'string') return [];
-      const label = [provider.displayName, provider.label].find(text => typeof text === 'string' && text !== '');
-      return [{ contextId: provider.contextId, label: (label as string | undefined) ?? provider.contextId }];
-    });
-    return [{ name, providers, preferred: typeof detail.preferred === 'string' ? detail.preferred : null }];
-  });
 }
 
 export function SystemSection() {
@@ -141,17 +121,9 @@ function useDelegatedService(): string | undefined {
 
 /** 有几个提供者（或写过偏好）的服务：选用哪一个，改了立即生效并写进配置文件。插件启停、管理连接重连后重取 */
 function ServicePreferences() {
-  const { admin } = useConnection();
   const host = useHost();
   const delegated = useDelegatedService();
-  const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { value, error } = useJson('/api/services', parseServices, version);
-  useEffect(() => {
-    const offs = [admin.on('plugins.changed', refetch), admin.onReconnect(refetch)];
-    return () => {
-      for (const off of offs) off();
-    };
-  }, [admin]);
+  const { services: value, error, refetch } = useServices();
   const services = (value ?? []).filter(
     service => service.name !== delegated && (service.providers.length > 1 || service.preferred !== null),
   );

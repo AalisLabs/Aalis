@@ -7,7 +7,7 @@
  * 管理类插件在 uses 里显式声明才拿得到，没有宿主提供时声明 optional 的插件要自行降级。
  */
 
-import { defineService } from '@aalis/core';
+import { defineService, type PreferenceScope } from '@aalis/core';
 
 /**
  * 宿主配置文档。本包只声明宿主层字段；各域业务字段经 declaration merging 注入：
@@ -28,8 +28,10 @@ export interface AalisConfig {
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件实例 id；宿主登记插件时据此以禁用态登记 */
   disabledPlugins?: string[];
-  /** 服务偏好：serviceName → preferred contextId；宿主启动时应用到服务容器 */
+  /** 服务偏好：serviceName → preferred contextId；宿主启动时与配置热重载时应用到服务容器 */
   servicePreferences?: Record<string, string>;
+  /** 本插件偏好：插件实例 id → (serviceName → preferred contextId)，只对那个插件生效；应用时机同 servicePreferences */
+  pluginServicePreferences?: Record<string, Record<string, string>>;
   [key: string]: unknown;
 }
 
@@ -86,9 +88,10 @@ export interface HostConfig {
   removePluginConfig(instanceId: string): void;
   isPluginDisabled(instanceId: string): boolean;
   setPluginEnabled(instanceId: string, enabled: boolean): void;
-  getServicePreferences(): Record<string, string>;
-  setServicePreference(name: string, contextId: string): void;
-  removeServicePreference(name: string): void;
+  /** 服务偏好（服务名 → 偏好的 contextId）。给 `scope.for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好 */
+  getServicePreferences(scope?: PreferenceScope): Record<string, string>;
+  setServicePreference(name: string, contextId: string, scope?: PreferenceScope): void;
+  removeServicePreference(name: string, scope?: PreferenceScope): void;
   /**
    * 持久化当前文档（连同宿主的密钥存储，先写密钥）。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 await。
    * 配置源有尚未生效的外部修改而拒写时以 {@link ConfigSaveRefusedError} 拒绝（用 {@link isConfigSaveRefused} 判定），

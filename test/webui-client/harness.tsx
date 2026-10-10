@@ -192,7 +192,7 @@ export interface FakeRequest {
 
 /**
  * 假的 REST：路径（含查询串）→ 回应的 JSON，或按请求算回应的函数（返回 Response 时原样回，可以带状态码）；
- * 登录状态、插件列表、页面表、布局记录、「需要处理」与模型列表有缺省的回应（缺省有一个能对话的模型，首页不出「开始使用」），
+ * 登录状态、插件列表、页面表、布局记录、「需要处理」、模型列表与服务列表有缺省的回应（缺省有一个能对话的模型，首页不出「开始使用」；服务列表为空），
  * 没有的路径回 404
  */
 export type FakeRest = Record<string, unknown>;
@@ -214,6 +214,7 @@ export function stubRest(rest: FakeRest = {}): void {
     '/api/layout': { pinned: [], panelTabs: hostTabs() },
     '/api/attention': { items: [] },
     '/api/models/llm': { providers: [CHAT_MODEL] },
+    '/api/services': { services: {} },
     ...rest,
   };
   const answer = async (input: string, init?: RequestInit) => {

@@ -18,16 +18,18 @@ import { useAttention } from '../health/attention';
 import { instanceName, pageAddress, usePages } from '../pages/registry';
 import { deleteJson, isRecord, postJson, RestError } from '../rest';
 import { paths } from '../routes';
+import { SettingRow } from '../settings/SettingRow';
+import { useServices } from '../settings/services';
 import { Main, useShell } from '../shell/Shell';
 import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
-import { labelOf, type PluginRow, useFindPlugin, usePackageManager, usePlugins } from './list';
+import { labelOf, type PluginRow, useFindPlugin, useHost, usePackageManager, usePlugins } from './list';
 import { markerOf, pluginName, reasonOf, rootAction, rootText, statusOf, unmetText } from './status';
 import './PluginDetail.css';
 
 // 插件详情，由宿主拼装，自上而下：头部（包名、版本、状态与原因，启停、重载、查看日志，主实例卸载、其余实例移除）、需要处理（这个插件的
-// 提示）、配置、依赖与贡献（缺的服务写链与根）、页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；
+// 提示）、配置、依赖与贡献（缺的服务写链与根）、服务偏好（本插件偏好）、页面、实例。没有内容的块不出现。管理动作写进去了就看头部的状态，出错用 Toast 报；
 // 无论成败都重取插件列表
 
 /** 插件前端申请的宿主数据能力怎么写 */
@@ -104,6 +106,7 @@ function Detail({ row }: { row: PluginRow }) {
         <Notices row={row} />
         {schema && <ConfigSection row={row} schema={schema} />}
         <Relations row={row} />
+        <ServicePreferences row={row} />
         <Pages row={row} />
         {row.reusable && <Instances row={row} />}
       </div>
@@ -376,6 +379,58 @@ function Relations({ row }: { row: PluginRow }) {
           </div>
         )}
       </Lines>
+    </Block>
+  );
+}
+
+/**
+ * 本插件偏好：它声明的服务里有几个提供者（或设过偏好）的各一行，设了只对它生效，「跟随全局」清除。什么时候不该设写在提示里，
+ * 两类会出错的服务见用户文档的服务偏好一节
+ */
+function ServicePreferences({ row }: { row: PluginRow }) {
+  const { services, error, refetch } = useServices();
+  const { refresh } = usePlugins();
+  const host = useHost();
+  const declared = new Set([...row.requiredServices, ...row.optionalServices]);
+  const own = (name: string) =>
+    Object.hasOwn(row.servicePreferences, name) ? row.servicePreferences[name] : undefined;
+  const shown = (services ?? []).filter(
+    service => declared.has(service.name) && (service.providers.length > 1 || own(service.name) !== undefined),
+  );
+  if (!error && shown.length === 0) return null;
+  const base = (name: string) => `/api/plugins/${enc(row.instanceId)}/services/${enc(name)}/prefer`;
+  const save = (name: string) => async (contextId: unknown) => {
+    await (contextId === null ? deleteJson(base(name)) : postJson(base(name), { contextId }));
+    await refresh();
+  };
+  return (
+    <Block title="服务偏好">
+      <p className="settings-note">不需要让这个插件改用别家、也不需要它固定用某一家时，别设，跟随全局偏好就好。</p>
+      {error && (
+        <FetchError what="服务列表" error={error} retry={refetch} stale={services !== undefined} inline source={host} />
+      )}
+      <div className="settings-rows">
+        {shown.map(service => {
+          const preferred = own(service.name);
+          const missing = preferred !== undefined && !service.providers.some(p => p.contextId === preferred);
+          return (
+            <SettingRow
+              key={service.name}
+              field={{
+                type: 'select',
+                label: service.name,
+                options: service.providers.map(provider => ({ label: provider.label, value: provider.contextId })),
+              }}
+              value={preferred}
+              source={preferred === undefined ? undefined : '本插件偏好'}
+              note={missing ? '这一家现在不在，先按全局的选择' : undefined}
+              unset="跟随全局偏好"
+              reset={preferred === undefined ? undefined : '跟随全局'}
+              save={save(service.name)}
+            />
+          );
+        })}
+      </div>
     </Block>
   );
 }

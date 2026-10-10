@@ -77,7 +77,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 - **切到 Laya**：在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「Laya 模型」（即时生效）。
 - **切到规则判定（即时）**：在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「规则（计数/评分）」，下一条消息起由本插件判定。
 - **停用 Laya**：下一条消息起由本插件接手。
-- 手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
+- 手改 `aalis.config.yaml` 的 `servicePreferences` 随配置热重载生效。
 
 本插件的计数、活跃指数与闲置活动时间只统计它生效时经过的消息与 bot 回复；从不生效切回生效时，计数接着它上次生效时的状态算。
 

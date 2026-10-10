@@ -60,7 +60,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
       hostConfig: stub<HostConfig>(hostConfig),
       tools: ref(),
       commands: ref(),
-      services: { names: () => [] },
+      services: { names: () => [], preferred: () => undefined },
       self: 'zz-webui',
       home: '/home/zz/.aalis',
       versions: () => () => undefined,
