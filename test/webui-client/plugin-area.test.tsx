@@ -162,6 +162,19 @@ describe('实例树', () => {
     expect(tree().queryByRole('link', { name: /耐心/ })).toBeNull();
   });
 
+  it('自己的旧实例还没停下的：写「等待启动」，详情头部的原因写在等它的旧实例停下', async () => {
+    const lingering = plugin('zz-slowstop', {
+      displayName: '慢停',
+      subsystem: 'agent',
+      state: 'pending',
+      lingering: true,
+    });
+    app = await renderApp('/plugins', {}, pluginRest([...PLUGINS, lingering]));
+    expect((await tree().findByRole('link', { name: /慢停/ })).textContent).toBe('慢停等待启动');
+    fireEvent.click(tree().getByRole('link', { name: /慢停/ }));
+    expect(await detail().findByText('等待 慢停 的旧实例停下', { selector: '.plugin-summary-reason' })).toBeTruthy();
+  });
+
   it('市场在树的顶上，打开着时是当前项、图标栏仍在「插件」；当前打开的插件是当前项，定义名是 market 的也一样', async () => {
     app = await renderApp('/plugins/market', {}, pluginRest([...PLUGINS, plugin('market', { displayName: '集市' })]));
     expect((await tree().findByRole('link', { name: '集市' })).getAttribute('aria-current')).toBe('page');

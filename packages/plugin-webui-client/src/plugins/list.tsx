@@ -32,6 +32,8 @@ export interface PluginRow extends PluginBlockers {
   error?: string;
   /** 提供这个界面：不能从界面停用或卸载 */
   self?: boolean;
+  /** 旧实例超过宽限仍未停下：停下之前不起新实例 */
+  lingering?: boolean;
   reusable: boolean;
   provides: string[];
   requiredServices: string[];
@@ -112,6 +114,7 @@ function parseRow(row: unknown): PluginRow {
     state: row.state as PluginState,
     error: text(row.error),
     self: row.self === true,
+    lingering: row.lingering === true,
     reusable: row.reusable === true,
     provides: strings(row.provides),
     requiredServices: strings(row.requiredServices),

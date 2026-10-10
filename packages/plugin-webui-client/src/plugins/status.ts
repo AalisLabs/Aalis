@@ -60,26 +60,28 @@ export function byRoot(lacking: readonly UnmetService[]): UnmetService[] {
   return [...shortest.values()];
 }
 
+/** 写原因要读的；「需要处理」的插件项没有实例 id 与 lingering（在等旧实例停下的不进那里） */
+type Reasoned = Pick<PluginRow, 'state' | 'error' | 'lacking' | 'waiting' | 'unconfigured'> &
+  Partial<Pick<PluginRow, 'instanceId' | 'lingering'>>;
+
 /** 状态与原因写成一句：「缺服务：…」「等待启动：…」「待配置：…」「失败：…」，没有原因时只写状态 */
-export function statusLine(
-  row: Pick<PluginRow, 'state' | 'error' | 'lacking' | 'waiting' | 'unconfigured'>,
-  find: FindPlugin,
-): string {
+export function statusLine(row: Reasoned, find: FindPlugin): string {
   const { short } = statusOf(row);
   const reason = reasonOf(row, find);
   return reason ? `${short}：${reason}` : short;
 }
 
-/** 状态短句之后的原因：缺服务按根写各条链，等待启动写在等的根插件（链的最后一个），待配置写没填的键，失败写失败说明 */
-export function reasonOf(
-  row: Pick<PluginRow, 'state' | 'error' | 'lacking' | 'waiting' | 'unconfigured'>,
-  find: FindPlugin,
-): string | undefined {
+/**
+ * 状态短句之后的原因：缺服务按根写各条链，等待启动写在等的根插件（链的最后一个）或自己的旧实例，待配置写没填的键，
+ * 失败写失败说明
+ */
+export function reasonOf(row: Reasoned, find: FindPlugin): string | undefined {
   if (row.state === 'pending') {
     if (row.lacking.length > 0)
       return byRoot(row.lacking)
         .map(unmet => unmetText(unmet, find))
         .join('；');
+    if (row.lingering && row.instanceId) return rootText({ kind: 'lingering', instance: row.instanceId }, find);
     const waited = new Set(row.waiting.map(({ chain }) => pluginName(chain[chain.length - 1], find)));
     return waited.size > 0 ? [...waited].join('、') : undefined;
   }

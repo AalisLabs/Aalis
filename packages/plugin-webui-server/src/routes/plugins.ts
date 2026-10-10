@@ -246,6 +246,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         version: versionOf(p.name),
         state: p.state,
         slow: p.slow,
+        lingering: p.lingering,
         self: p.instanceId === caps.self || undefined,
         provides: p.provides ?? [],
         requiredServices: p.requiredServices ?? [],
