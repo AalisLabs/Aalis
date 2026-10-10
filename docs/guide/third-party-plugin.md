@@ -136,7 +136,7 @@ const model = resolveLLMModel(llmRef, ref, [LLMCapabilities.Vision])?.instance;
 
 ### 2.3 多提供者：per-entry 注册
 
-需要在一个服务名下暴露多个实例时，在同一次 `apply` 里多次 `provide`，用 `entryId` 区分（须以激活 id 为前缀）：
+需要在一个服务名下暴露多个实例时，在同一次 `apply` 里多次 `provide`，用 `entryId` 区分（格式按所用契约的约定，第一方契约都是激活 id 加 `/` 加子粒度）：
 
 ```ts
 for (const root of roots) {

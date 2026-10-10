@@ -76,17 +76,9 @@ describe('内置能力', () => {
     expect(host.services.preferred('__t:kv')).toBeUndefined();
   });
 
-  it('provide 的 onBehalfOf：条目取被代理者的身份、不触发前缀劝告，清理仍归登记它的激活', async () => {
+  it('provide 的 onBehalfOf 与 entryId：条目取给定的逻辑身份（core 不检查格式），清理仍归登记它的激活', async () => {
     const face = defineService<{ dir: string }>('__t:face');
-    const warnings: string[] = [];
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn: (...args: unknown[]) => void warnings.push(args.map(String).join(' ')),
-      error() {},
-      child: () => logger,
-    };
-    const app = new App({ name: 'T', logLevel: 'error', logger, devMode: true });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await app.plugin(
       definePlugin({
@@ -101,9 +93,6 @@ describe('内置能力', () => {
     await app.plugins.idle();
     const host = app.bind({ services });
     expect(host.services.all(face).map(view => view.contextId)).toEqual(['@scope/face-a', 'not-prefixed']);
-    // 劝告只冲着没加前缀的 entryId，代为登记的那条不报
-    expect(warnings.filter(line => line.includes('为前缀'))).toHaveLength(1);
-    expect(warnings.join('\n')).not.toContain('@scope/face-a');
 
     await app.plugins.unload('host-of-faces');
     expect(host.services.all(face)).toEqual([]);

@@ -3,7 +3,7 @@ import { ServiceContainer } from '../../packages/core/src/primitives/services.js
 
 // ════════════════════════════════════════════════════════════
 // 容器的「暂不对外」（hold）：编排层对转入后台的激活使用。解析类读口（get / getAll / inspect / ownerOf）
-// 一律看不见被暂扣归属的条目；登记事实类读口（hasByContext / getServiceNames / 独占冲突）照常看得见。
+// 一律看不见被暂扣归属的条目；登记事实类读口（namesOf / hasEntry / getServiceNames / 独占冲突）照常看得见。
 // 返回值口径：每次对外可见的变化恰好对应一次事件——暂扣时返回撤下的名字，恢复时返回上线的名字，
 // 暂扣期间的退订与整体摘除都不算对外少了提供者。
 // ════════════════════════════════════════════════════════════
@@ -26,7 +26,8 @@ describe('ServiceContainer.hold', () => {
     expect(c.get('only')).toBeUndefined();
     expect(c.getAll('only')).toEqual([]);
     expect(c.ownerOf('only')).toBeUndefined();
-    expect(c.hasByContext('only', 'held', HELD)).toBe(true);
+    expect(c.namesOf(HELD)).toEqual(['svc', 'only']);
+    expect(c.hasEntry('only', 'held', HELD)).toBe(true);
     expect(c.getServiceNames()).toEqual(['svc', 'only']);
 
     expect(c.release(HELD)).toEqual(['svc', 'only']);

@@ -63,9 +63,9 @@ export default definePlugin({
 
 ### `provides`：激活后校验
 
-`provides` 是描述符数组。`apply` 跑完后，core 按本次激活的 instanceId 检查每个名字是否确已提供。缺一个就把插件打成 `error`。
+`provides` 是描述符数组。`apply` 跑完后，core 按本次激活实际登记的条目检查每个名字是否确已提供。缺一个就把插件打成 `error`。
 
-`provide(..., { onBehalfOf })` 代登记的条目归属被代者身份，**不计入**代理人：若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 error。
+以任何逻辑身份登记的条目（含 `entryId` 与 `provide(..., { onBehalfOf })` 代登记）都计入登记的激活；别的激活登记的同 id 条目不算。
 
 dev 模式下，实际 `provide` 了但没有在 `provides` 里声明的服务名会 warn（下游依赖排序将无法找到该 provider）。
 
@@ -158,7 +158,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 ## 注意事项与边界情形
 
 1. **两套源不自动对账。** core 不读 `package.json`，市场不读运行时定义——必须手写一致；第一方靠 `manifest-parity` 测试兜底。
-2. **`provides` 必须等于本次激活实际登记的服务名。** 少声明会导致 dev warn、或拓扑排不到你；多声明（含误把 `onBehalfOf` 代登记算进自己）会在激活后校验失败。
+2. **`provides` 必须等于本次激活实际登记的服务名。** 少声明会导致 dev warn、或拓扑排不到你；多声明会在激活后校验失败。
 3. **市场读的是 npm packument 的 latest 版本**，不是你本地工作区——`aalis.service` 改了之后要发版才会在市场生效。
 4. **`keywords: ["aalis-plugin"]` 是加载硬门。** 漏了它，插件永远不被发现。
 5. **`aalis` 字段只有 `service` 与 `client` 两个键会被读取。** 前者供市场披露，后者控制前端发现。包类型只看 `keywords`，`aalis` 下的其它键没有代码读取，不要把行为挂在上面。

@@ -58,9 +58,9 @@ await plugins.require().bounce(lifecycle.id);
 
 ## 3. `provides` 的隐式约定
 
-`provides` 是描述符数组。声明之后，激活结束时 core 按本次激活的 instanceId 校验确已提供；缺一个进入 `error`。
+`provides` 是描述符数组。声明之后，激活结束时 core 按本次激活实际登记的条目校验确已提供；缺一个进入 `error`。
 
-`provide(..., { onBehalfOf })` 代登记归属被代者，不计入代理人：把代登记写进自己的 `provides` 会按「未提供」失败。
+以任何逻辑身份登记的条目（含 `entryId` 与 `provide(..., { onBehalfOf })` 代登记）都计入本次激活。
 
 dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 warn。除非有特殊理由，`provides` 应该和本次激活真正登记的服务名完全一致。
 
@@ -478,7 +478,7 @@ cell.innerHTML = member.nickname;
 | 加载器接受具名导出与函数 default | 只认 `export default definePlugin({…})`；其它形状 warn 并跳过 |
 | `App` 上的公开 Context | `app.plugin` / `app.bind` / `app.config` / `app.plugins` / 四注册表 |
 | 公开条目 `module` / `requiredDeps` | `definition` / `required` / `optional`（服务名数组）；不含内部激活记录 |
-| `onBehalfOf` 是否计入代理人提供表 | 归属被代者，不计入代理人 `provides` |
+| `onBehalfOf` 是否计入代理人提供表 | 计入：`provides` 按登记的激活核对 |
 
 ---
 
