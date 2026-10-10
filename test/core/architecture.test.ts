@@ -700,7 +700,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 切断项与 track、管理面 inspect 加 { for }（约 +20）；删去按容器版本的解析缓存与 #version（约 -13）。
 // 2633 → 2631：b5 P0-4 + X5（用户选甲、乙）——删 sticky 缓存清除（clearSticky 与 App 两处调用），EventBus 的 sticky 名单与
 // 三个回调改为构造参数、字段私有只读。
-const CORE_CODE_LINE_CEILING = 2631;
+// 2631 → 2645：b5 S6（用户选甲，含 restart 阶段守卫）——start 单飞、停机开始后 start 记 warn 返回、启动途中停机不再发
+// app:started；restart 只受理一次、未受理而停机已开始时抛错。抬高 14 行对应 S6 方案甲。
+const CORE_CODE_LINE_CEILING = 2645;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

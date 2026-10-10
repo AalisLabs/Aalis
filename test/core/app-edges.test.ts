@@ -258,3 +258,81 @@ describe('App.restart', () => {
     expect(log.messages('info')).toContain('已停止');
   });
 });
+
+describe('启动与停机、重启互斥', () => {
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+  it('重复调用 start 返回同一个 Promise，启动事件只发一次', async () => {
+    const app = track(new App(base()));
+    let ready = 0;
+    app.bind({ events }).events.use.on('app:ready', () => void ready++);
+    const first = app.start();
+    expect(app.start()).toBe(first);
+    await first;
+    expect(ready).toBe(1);
+  });
+
+  it('停机开始后调 start：记 warn 后直接返回，不跑启动', async () => {
+    const log = recordingLogger();
+    const app = track(new App({ ...base(), logger: log }));
+    await app.stop();
+    await app.start();
+    expect(log.messages('warn')).toEqual(['应用已开始停机，忽略 start()']);
+    expect(log.messages('info')).not.toContain('正在启动...');
+  });
+
+  it('启动途中被 stop：进行中的 start 照常落定，不再发 app:started', async () => {
+    const app = track(new App(base()));
+    const seen: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { events, lifecycle },
+        apply({ events, lifecycle }) {
+          events.use.on('app:started', () => void seen.push('started'));
+          // 收尾期间监听还在：停机没走完时发出的 app:started 会打到它
+          lifecycle.use.onDrain(() => sleep(30));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    let stopping: Promise<void> | undefined;
+    app.bind({ events }).events.use.on('app:ready', () => {
+      stopping = app.stop();
+    });
+    await app.start();
+    await stopping;
+    expect(seen).toEqual([]);
+  });
+
+  it('重启已受理后再调 restart 静默返回，停机开始后也是：只发一次 app:restarting、只调一次策略', async () => {
+    let calls = 0;
+    let received: { stop: () => Promise<void> } | undefined;
+    const app = track(
+      new App({
+        ...base(),
+        restartStrategy: {
+          restart(opts) {
+            calls++;
+            received = opts;
+          },
+        },
+      }),
+    );
+    let restarting = 0;
+    app.bind({ events }).events.use.on('app:restarting', () => void restarting++);
+    app.restart();
+    app.restart();
+    await sleep(5);
+    const stopping = received!.stop();
+    expect(() => app.restart()).not.toThrow();
+    await stopping;
+    expect({ calls, restarting }).toEqual({ calls: 1, restarting: 1 });
+  });
+
+  it('未受理过重启、停机已开始：restart 抛错', () => {
+    const app = track(new App({ ...base(), restartStrategy: { restart() {} } }));
+    void app.stop();
+    expect(() => app.restart()).toThrow('App.restart() 不可用：应用已开始停机。');
+  });
+});

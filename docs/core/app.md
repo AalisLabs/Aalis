@@ -70,6 +70,8 @@ bus.use.on('app:started', () => log.use.info('已启动'));
 1. 发出 `app:ready` 事件（sticky）
 2. 发出 `app:started` 事件（sticky）
 
+单飞：重入返回同一 Promise。停机开始后（含停机完成后）调用记一条 warn 后直接返回；启动途中停机开始，进行中的 `start()` 照常落定，不再发后续事件。App 只有一轮生命周期，要重新跑一轮就新建 App。
+
 每一步都逐个等监听器返回后才推进；单个监听器至多等 `slowThresholdMs`，超过即 warn 点名登记者（插件实例 id，宿主为 `root`），不再等它、转向下一个，它之后的拒绝照常按监听器抛错上报。`start()` 不等转入后台的插件激活：它们的 `app:ready` / `app:started` 监听器可能在自己的 `apply` 完成之前就被调用。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
 
 ### `app.stop()`
@@ -105,6 +107,8 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 委托给注入的 `restartStrategy`：发出 `app:restarting` 事件 → 调用
 `strategy.restart({ stop })`（stop / restart 时序由策略决定）。**未注入 `restartStrategy` 时抛错**，
 自身不保存任何数据、也不直接 spawn 进程。
+
+只受理一次：已受理过的再调静默返回，策略交出的 `stop` 已开始也是（只发一次 `app:restarting`、只调一次策略）；未受理过而停机已开始时抛错。
 
 ## 基础指令
 
