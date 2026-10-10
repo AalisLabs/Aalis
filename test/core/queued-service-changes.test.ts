@@ -10,6 +10,7 @@ import {
   optional,
   type Provide,
   provide,
+  type ServiceSelection,
   type Services,
   services,
 } from '../../packages/core/src/index.js';
@@ -22,7 +23,11 @@ const svcNever = defineService<unknown>('qsc-never');
 
 describe('排队的服务下线变化', () => {
   let app: App;
-  let host: { provide: Provide; services: Services; events: Events };
+  let host: {
+    provide: ServiceSelection<Provide>;
+    services: ServiceSelection<Services>;
+    events: ServiceSelection<Events>;
+  };
   let releases: Array<() => void>;
 
   beforeEach(async () => {
@@ -54,7 +59,7 @@ describe('排队的服务下线变化', () => {
             entered.resolve();
             await gate.promise;
           } else {
-            lifecycle.onDispose(async () => {
+            lifecycle.use.onDispose(async () => {
               entered.resolve();
               await gate.promise;
             });
@@ -81,8 +86,8 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, a: svcA },
         apply({ lifecycle, a }) {
           state.applies++;
-          state.values.push([a.current]);
-          lifecycle.onDispose(() => {
+          state.values.push([a.present]);
+          lifecycle.use.onDispose(() => {
             state.disposes++;
             return opts.dispose?.();
           });
@@ -102,8 +107,8 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, b: svcB },
         apply({ lifecycle, b }) {
           state.applies++;
-          state.values.push([b.current]);
-          lifecycle.onDispose(() => {
+          state.values.push([b.present]);
+          lifecycle.use.onDispose(() => {
             state.disposes++;
           });
         },
@@ -122,8 +127,8 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, a: svcA, b: svcB },
         apply({ lifecycle, a, b }) {
           state.applies++;
-          state.values.push([a.current, b.current]);
-          lifecycle.onDispose(() => {
+          state.values.push([a.present, b.present]);
+          lifecycle.use.onDispose(() => {
             state.disposes++;
             return opts.dispose?.();
           });
@@ -137,7 +142,7 @@ describe('排队的服务下线变化', () => {
 
   it.each(['activation', 'disposal'] as const)('%s 占用期间的 required 下线仍被消化（转 pending）', async phase => {
     const resource = { alive: true };
-    const remove = host.provide(svcA, resource);
+    const remove = host.provide.use(svcA, resource);
     const state = await requiredA('consumer');
     const busy = await pause(phase);
 
@@ -151,13 +156,13 @@ describe('排队的服务下线变化', () => {
 
     expect(state.applies).toBe(1);
     expect(state.disposes).toBe(1);
-    expect(state.values).toEqual([[resource]]);
+    expect(state.values).toEqual([[true]]);
     expect(app.plugins.getPlugin('consumer')?.state).toBe('pending');
   });
 
   it('合并多个下线服务与重复通知，只停用命中的 required 消费者一次', async () => {
-    const removeA = host.provide(svcA, {});
-    const removeB = host.provide(svcB, {});
+    const removeA = host.provide.use(svcA, {});
+    const removeB = host.provide.use(svcB, {});
     const both = await requiredBoth('both');
     const onlyA = await requiredA('only-a');
     const onlyB = await requiredB('only-b');
@@ -168,7 +173,7 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, never: optional(svcNever) },
         apply({ lifecycle }) {
           unrelated.applies++;
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             unrelated.disposes++;
           });
         },
@@ -181,7 +186,7 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, a: optional(svcA) },
         apply({ lifecycle }) {
           lazy.applies++;
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             lazy.disposes++;
           });
         },
@@ -194,9 +199,9 @@ describe('排队的服务下线变化', () => {
 
     removeA();
     removeB();
-    await host.events.emit('service:changed', svcA.name);
-    await host.events.emit('service:changed', svcB.name);
-    host.provide(svcNever, {});
+    await host.events.use.emit('service:changed', svcA.name);
+    await host.events.use.emit('service:changed', svcB.name);
+    host.provide.use(svcNever, {});
     await (app.plugins as PluginManager).recompute();
     busy.release();
     await busy.done;
@@ -214,18 +219,18 @@ describe('排队的服务下线变化', () => {
   });
 
   it('队列消费前服务已恢复，容器现态为真相——required 消费者不拆', async () => {
-    const remove = host.provide(svcA, { version: 1 });
+    const remove = host.provide.use(svcA, { version: 1 });
     const state = await requiredA('consumer');
     const busy = await pause('activation');
 
     remove();
     const replacement = { version: 2 };
-    host.provide(svcA, replacement);
+    host.provide.use(svcA, replacement);
     busy.release();
     await busy.done;
     await app.plugins.idle();
 
-    expect(host.services.get(svcA)).toBe(replacement);
+    expect(host.services.use.get(svcA)).toBe(replacement);
     expect(state.applies).toBe(1);
     expect(state.disposes).toBe(0);
     expect(app.plugins.getPlugin('consumer')?.state).toBe('active');
@@ -235,7 +240,7 @@ describe('排队的服务下线变化', () => {
     'activation',
     'disposal',
   ] as const)('%s 期间新登记的 required 消费者只在最新服务状态下首次激活', async phase => {
-    const remove = host.provide(svcA, {});
+    const remove = host.provide.use(svcA, {});
     await app.plugins.idle();
     const busy = await pause(phase);
     const values: unknown[] = [];
@@ -245,8 +250,8 @@ describe('排队的服务下线变化', () => {
         name: 'new-consumer',
         uses: { lifecycle, a: svcA },
         apply({ lifecycle, a }) {
-          values.push(a.current);
-          lifecycle.onDispose(() => {
+          values.push(a.present);
+          lifecycle.use.onDispose(() => {
             disposes++;
           });
         },
@@ -264,15 +269,15 @@ describe('排队的服务下线变化', () => {
   });
 
   it('批次内有的服务恢复、有的仍缺失，仍识别后者的 required 消费者', async () => {
-    const removeA = host.provide(svcA, {});
-    const removeB = host.provide(svcB, {});
+    const removeA = host.provide.use(svcA, {});
+    const removeB = host.provide.use(svcB, {});
     const state = await requiredBoth('consumer');
     const busy = await pause('activation');
 
     removeA();
     removeB();
     const replacement = {};
-    host.provide(svcA, replacement);
+    host.provide.use(svcA, replacement);
     busy.release();
     await busy.done;
     await app.plugins.idle();
@@ -280,14 +285,14 @@ describe('排队的服务下线变化', () => {
     expect(state.applies).toBe(1);
     expect(state.disposes).toBe(1);
     expect(app.plugins.getPlugin('consumer')?.state).toBe('pending');
-    expect(host.services.get(svcA)).toBe(replacement);
-    expect(host.services.get(svcB)).toBeUndefined();
+    expect(host.services.use.get(svcA)).toBe(replacement);
+    expect(host.services.use.get(svcB)).toBeUndefined();
   });
 
   it.each(['activation', 'disposal'] as const)('%s 期间 shutdown 优先于已排队的普通变化', async phase => {
     // optional 下线在新契约里本不会拆消费者；这里要钉的是：占用期间排进来的
     // 普通变化不得在停机之外再拆一次。消费者保持 active 直到 shutdown 成批关掉。
-    const remove = host.provide(svcA, {});
+    const remove = host.provide.use(svcA, {});
     const state = { applies: 0, disposes: 0 };
     await app.plugin(
       definePlugin({
@@ -295,7 +300,7 @@ describe('排队的服务下线变化', () => {
         uses: { lifecycle, a: optional(svcA) },
         apply({ lifecycle }) {
           state.applies++;
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             state.disposes++;
           });
         },
@@ -318,7 +323,7 @@ describe('排队的服务下线变化', () => {
   });
 
   it('idle 等待排队变化引起的异步清理和重新激活', async () => {
-    const remove = host.provide(svcA, {});
+    const remove = host.provide.use(svcA, {});
     const entered = deferred();
     const cleanup = deferred();
     releases.push(cleanup.resolve);
@@ -339,7 +344,7 @@ describe('排队的服务下线变化', () => {
     expect(await Promise.race([entered.promise.then(() => 'cleanup'), idle.then(() => 'idle')])).toBe('cleanup');
     expect(settled).toBe(false);
     expect(state.applies).toBe(1);
-    host.provide(svcA, { restored: true });
+    host.provide.use(svcA, { restored: true });
     cleanup.resolve();
     await idle;
     await busy.done;
@@ -349,8 +354,8 @@ describe('排队的服务下线变化', () => {
   });
 
   it('一批清理期间继续下线的服务不丢失，也不让已清理的消费者重复重建', async () => {
-    const removeA = host.provide(svcA, {});
-    const removeB = host.provide(svcB, {});
+    const removeA = host.provide.use(svcA, {});
+    const removeB = host.provide.use(svcB, {});
     const entered = deferred();
     const cleanup = deferred();
     releases.push(cleanup.resolve);

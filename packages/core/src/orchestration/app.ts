@@ -155,8 +155,8 @@ export class App {
     this.plugins = this.#plugins;
 
     // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
-    caps.provide(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
-    caps.provide(
+    caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
+    caps.provide.use(
       pluginsService,
       {
         ...narrow(this.plugins, [

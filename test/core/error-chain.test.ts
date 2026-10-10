@@ -335,10 +335,10 @@ describe('PluginEntry.error 的因果链摘要', () => {
 describe('core 错误类带名称', () => {
   it('ServiceUnavailableError 与 ForeignCoreError 的 name 与 stack 首行都是类名', async () => {
     const app = new App({ name: 'T', logHub: new LogHub() });
-    const missing = defineService('error-chain-missing');
+    const missing = defineService<{ ping(): void }>('error-chain-missing');
     let unavailable: unknown;
     try {
-      app.bind({ missing }).missing.require();
+      app.bind({ missing }).missing.use.ping();
     } catch (error) {
       unavailable = error;
     }

@@ -74,10 +74,10 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
     const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
     const host = activationHost(app);
     const child = host.create('plugin-x');
-    host.bind(child, { events }).events.on('plugin:loaded', () => {
+    host.bind(child, { events }).events.use.on('plugin:loaded', () => {
       throw new Error('x');
     });
-    await app.bind({ events }).events.emit('plugin:loaded', 'p');
+    await app.bind({ events }).events.use.emit('plugin:loaded', 'p');
     expect(warnings.filter(w => w.includes('来自 plugin-x'))).toHaveLength(1);
     await app.stop();
   });

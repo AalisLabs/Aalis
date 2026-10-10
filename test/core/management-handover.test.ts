@@ -8,8 +8,6 @@ import {
   lifecycle,
   optional,
   provide,
-  type ServiceRef,
-  serviceRef,
 } from '../../packages/core/src/index.js';
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
@@ -55,9 +53,9 @@ function memPlugin(log: string[], name: string, priority = 0) {
     provides: [M],
     uses: { provide, lifecycle },
     apply({ provide, lifecycle }) {
-      provide(M, { gen: name }, { priority });
-      lifecycle.onDrain(() => void log.push(`${name} drain`));
-      lifecycle.onDispose(() => void log.push(`${name} dispose`));
+      provide.use(M, { gen: name }, { priority });
+      lifecycle.use.onDrain(() => void log.push(`${name} drain`));
+      lifecycle.use.onDispose(() => void log.push(`${name} dispose`));
     },
   });
 }
@@ -76,8 +74,8 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         uses: { m: M, lifecycle },
         apply({ m, lifecycle }) {
           applies++;
-          seen.push(m.require().gen);
-          lifecycle.onDrain(() => void log.push(`consumer drain sees ${m.current?.gen ?? 'NONE'}`));
+          seen.push(m.use.gen);
+          lifecycle.use.onDrain(() => void log.push(`consumer drain sees ${m.present ? m.use.gen : 'NONE'}`));
         },
       }),
     );
@@ -119,7 +117,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         name: 'consumer',
         uses: { m: M },
         apply({ m }) {
-          seen.push(m.require().gen);
+          seen.push(m.use.gen);
         },
       }),
     );
@@ -129,7 +127,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         provides: [STORE],
         uses: { provide },
         apply({ provide }) {
-          provide(STORE, {});
+          provide.use(STORE, {});
         },
       }),
     );
@@ -139,7 +137,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         provides: [M],
         uses: { provide, store: STORE },
         apply({ provide }) {
-          provide(M, { gen: 'mem' }, { priority: 10 });
+          provide.use(M, { gen: 'mem' }, { priority: 10 });
         },
       }),
     );
@@ -160,7 +158,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         provides: [N],
         uses: { m: M, provide },
         apply({ provide }) {
-          provide(N, {});
+          provide.use(N, {});
         },
       }),
     );
@@ -170,7 +168,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         provides: [M],
         uses: { provide, n: N },
         apply({ provide }) {
-          provide(M, { gen: 'mem2' });
+          provide.use(M, { gen: 'mem2' });
         },
       }),
     );
@@ -207,13 +205,13 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
         uses: { provide, lifecycle, dep },
         apply({ provide, lifecycle, dep }) {
           applies[name]++;
-          provide(svc[name], { name });
-          lifecycle.onDrain(() => void drains.push(`${name} sees ${dep.current?.name ?? 'NONE'}`));
+          provide.use(svc[name], { name });
+          lifecycle.use.onDrain(() => void drains.push(`${name} sees ${dep.present ? dep.use.name : 'NONE'}`));
         },
       });
     const run = async (action: 'unload' | 'bounce') => {
       const app = world();
-      app.bind({ provide }).provide(ROOT, { name: 'root' });
+      app.bind({ provide }).provide.use(ROOT, { name: 'root' });
       for (const n of names) applies[n] = 0;
       drains.length = 0;
       for (const d of [
@@ -258,7 +256,7 @@ describe('两份管理关闭计划重叠', () => {
       entered = resolve;
     });
     await app.plugin(
-      definePlugin({ name: 'a', provides: [S], uses: { provide }, apply: ({ provide }) => void provide(S, {}) }),
+      definePlugin({ name: 'a', provides: [S], uses: { provide }, apply: ({ provide }) => void provide.use(S, {}) }),
     );
     await app.plugin(
       definePlugin({
@@ -266,8 +264,8 @@ describe('两份管理关闭计划重叠', () => {
         provides: [T],
         uses: { s: S, provide, lifecycle },
         apply({ s, provide, lifecycle }) {
-          provide(T, {});
-          lifecycle.onDrain(() => void seen.push(`b 收尾时 S ${s.current ? '在' : '不在'}`));
+          provide.use(T, {});
+          lifecycle.use.onDrain(() => void seen.push(`b 收尾时 S ${s.present ? '在' : '不在'}`));
         },
       }),
     );
@@ -276,11 +274,11 @@ describe('两份管理关闭计划重叠', () => {
         name: 'c',
         uses: { t: T, lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDrain(async () => {
+          lifecycle.use.onDrain(async () => {
             entered();
             await new Promise(resolve => setTimeout(resolve, 40));
           });
-          lifecycle.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, 40)));
+          lifecycle.use.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, 40)));
         },
       }),
     );
@@ -297,7 +295,7 @@ describe('两份管理关闭计划重叠', () => {
 describe('提供者清理之前，跟随者交接落定', () => {
   it('optional 跟随者的异步清理在提供者 onDispose 之前完成，清理期间提供者仍活着', async () => {
     const app = world();
-    const S = defineService<{ alive: boolean }>('t:handover:s');
+    const S = defineService<{ state(): { alive: boolean } }>('t:handover:s');
     const log: string[] = [];
     await app.plugin(
       definePlugin({
@@ -305,10 +303,10 @@ describe('提供者清理之前，跟随者交接落定', () => {
         provides: [S],
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          const instance = { alive: true };
-          provide(S, instance);
-          lifecycle.onDispose(() => {
-            instance.alive = false;
+          const state = { alive: true };
+          provide.use(S, { state: () => state });
+          lifecycle.use.onDispose(() => {
+            state.alive = false;
             log.push('p dispose');
           });
         },
@@ -319,11 +317,15 @@ describe('提供者清理之前，跟随者交接落定', () => {
         name: 'follower',
         uses: { s: optional(S) },
         apply({ s }) {
-          s.follow(instance => () => {
-            log.push(`cleanup start alive=${instance.alive}`);
-            return new Promise<void>(r => setTimeout(r, 10)).then(
-              () => void log.push(`cleanup end alive=${instance.alive}`),
-            );
+          // 提供者方法交出的对象属于提供者：交接时它还活着；句柄本身在那一家撤回后就打不到它
+          s.follow(handle => {
+            const state = handle.state();
+            return () => {
+              log.push(`cleanup start alive=${state.alive}`);
+              return new Promise<void>(r => setTimeout(r, 10)).then(
+                () => void log.push(`cleanup end alive=${state.alive}`),
+              );
+            };
           });
         },
       }),
@@ -336,7 +338,7 @@ describe('提供者清理之前，跟随者交接落定', () => {
 });
 
 describe('交接不经事件投递：慢跟随者不拖住别人，通知不等监听器', () => {
-  const S = defineService<{ name: string; alive: boolean }>('t:handover:shared');
+  const S = defineService<{ name: string; state(): { alive: boolean } }>('t:handover:shared');
   const never = () => new Promise<void>(() => {});
 
   function provider(log: string[], name: string, priority = 0) {
@@ -345,10 +347,10 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
       provides: [S],
       uses: { provide, lifecycle },
       apply({ provide, lifecycle }) {
-        const instance = { name, alive: true };
-        provide(S, instance, { priority });
-        lifecycle.onDispose(() => {
-          instance.alive = false;
+        const state = { alive: true };
+        provide.use(S, { name, state: () => state }, { priority });
+        lifecycle.use.onDispose(() => {
+          state.alive = false;
           log.push(`${name} dispose`);
         });
       },
@@ -360,10 +362,12 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
       name,
       uses: { s: optional(S) },
       apply({ s }) {
-        s.follow(instance => {
-          log.push(`${name} attach ${instance.name}`);
+        s.follow(handle => {
+          const provider = handle.name;
+          const state = handle.state();
+          log.push(`${name} attach ${provider}`);
           return () => {
-            log.push(`${name} cleanup ${instance.name} alive=${instance.alive}`);
+            log.push(`${name} cleanup ${provider} alive=${state.alive}`);
             return cleanup();
           };
         });
@@ -385,7 +389,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
         name: 'listener',
         uses: { events },
         apply({ events }) {
-          events.on('service:changed', name => {
+          events.use.on('service:changed', name => {
             if (name === S.name) log.push('listener got changed');
           });
         },
@@ -437,7 +441,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
         name: 'waiter',
         uses: { events },
         apply({ events }) {
-          events.on('service:changed', async () => {
+          events.use.on('service:changed', async () => {
             await app.plugins.idle();
             log.push('waiter settled');
           });
@@ -464,7 +468,7 @@ describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提�
       provides: [S],
       uses: { provide },
       apply({ provide }) {
-        provide(S, { name });
+        provide.use(S, { name });
       },
     });
   const handoverTimeouts = (warnings: string[]) =>
@@ -517,7 +521,7 @@ describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提�
         provides: [S],
         uses: { s: S, provide },
         apply({ s, provide }) {
-          provide(S, { name: `${name}(${s.require().name})` }, { priority: 10 });
+          provide.use(S, { name: `${name}(${s.use.name})` }, { priority: 10 });
         },
       });
     await app.plugin(wrapper('w1'));
@@ -538,12 +542,12 @@ describe('登记账本条目与原语同一拍撤掉，不等下游交接', () =
     interface Hub {
       add(name: string): () => void;
     }
-    interface BoundHub extends ServiceRef<Hub> {
+    interface BoundHub {
       register(name: string): () => void;
     }
     const hub = defineService<Hub, BoundHub>('t:handover:hub', port => {
       const entries = port.registrar<string>({ key: n => n, register: (p, n) => p.add(n) });
-      return serviceRef(port, { register: (n: string) => entries.add(n) });
+      return { register: n => entries.add(n) };
     });
     const Q = defineService<object>('t:handover:q');
     const app = world();
@@ -554,7 +558,7 @@ describe('登记账本条目与原语同一拍撤掉，不等下游交接', () =
         provides: [hub],
         uses: { provide },
         apply({ provide }) {
-          provide(hub, {
+          provide.use(hub, {
             add: n => {
               names.add(n);
               return () => void names.delete(n);
@@ -570,9 +574,9 @@ describe('登记账本条目与原语同一拍撤掉，不等下游交接', () =
         provides: [Q],
         uses: { h: hub, events, provide },
         apply({ h, events, provide }) {
-          provide(Q, {});
-          h.register('tool-p');
-          events.on('service:changed', () => void heard++);
+          provide.use(Q, {});
+          h.use.register('tool-p');
+          events.use.on('service:changed', () => void heard++);
         },
       }),
     );
@@ -590,7 +594,7 @@ describe('登记账本条目与原语同一拍撤掉，不等下游交接', () =
     const unloading = app.plugins.unload('p');
     await new Promise(r => setTimeout(r, 5));
     heard = 0;
-    app.bind({ provide }).provide(defineService<object>('t:handover:probe'), {});
+    app.bind({ provide }).provide.use(defineService<object>('t:handover:probe'), {});
     const during = { hubEntry: names.has('tool-p'), heard };
     releaseFollower();
     await unloading;

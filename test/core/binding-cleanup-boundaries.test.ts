@@ -20,7 +20,7 @@ describe('binding cleanup boundaries', () => {
       }),
     }));
     const { bound } = host.bind(activation, { bound: descriptor });
-    bound.off();
+    bound.use.off();
     let closed = false;
     const observed = closing.then(() => {
       closed = true;
@@ -38,7 +38,7 @@ describe('binding cleanup boundaries', () => {
     const service = defineService<{ label: string }>('cleanup-result');
     const first = host.create('first');
     const second = host.create('second');
-    host.bind(first, { provide }).provide(service, { label: 'A' });
+    const offA = host.bind(first, { provide }).provide.use(service, { label: 'A' });
     const { ref } = host.bind(activation, { ref: service });
     const active = new Set<string>();
     ref.follow(() => () => ({
@@ -53,8 +53,10 @@ describe('binding cleanup boundaries', () => {
         active.delete(provider.label);
       };
     });
-    host.bind(second, { provide }).provide(service, { label: 'B' }, { priority: 1 });
+    host.bind(second, { provide }).provide.use(service, { label: 'B' }, { priority: 1 });
     await tick();
+    // A 撤掉之后只剩跟随边能把 first 留在提供者里：声明的服务对全部在场的提供者建边
+    offA();
     const during = [...active];
     const edges = activation.providers();
     await activation.disposeAsync();
@@ -83,8 +85,8 @@ describe('binding cleanup boundaries', () => {
         }
       },
     }));
-    host.bind(host.root, { provide }).provide(resource, {});
-    host.bind(activation, { resource }).resource.acquire();
+    host.bind(host.root, { provide }).provide.use(resource, {});
+    host.bind(activation, { resource }).resource.use.acquire();
     await activation.disposeAsync();
     await host.root.disposeAsync();
     expect(executions).toBe(1);
@@ -109,11 +111,11 @@ describe('binding cleanup boundaries', () => {
       uses: { provide },
       provides: [service],
       apply({ provide }) {
-        provide(service, {});
+        provide.use(service, {});
       },
     });
     let fail = false;
-    app.bind({ events }).events.on('service:changed', () => {
+    app.bind({ events }).events.use.on('service:changed', () => {
       if (!fail) return;
       const error = new Error(`${failure} notification failure`);
       if (failure === 'sync') throw error;

@@ -21,7 +21,7 @@ describe('登记入参：原样生效、拷贝、危险键不进实例配置', (
       name: 'np',
       uses: { config },
       apply({ config }) {
-        seen.config = config;
+        seen.config = config.use;
       },
     });
 
@@ -42,7 +42,7 @@ describe('登记入参：原样生效、拷贝、危险键不进实例配置', (
         name: 'mut',
         uses: { config },
         apply({ config: pluginConfig }) {
-          const c = pluginConfig as typeof payload;
+          const c = pluginConfig.use as typeof payload;
           c.server.port = 1;
           c.hosts.push('mutated-by-plugin');
           c.jobs[0].enabled = false;
@@ -166,7 +166,7 @@ describe('bounce / updateConfig 入参拷贝', () => {
         name: 'p',
         uses: { config },
         apply({ config: pluginConfig }) {
-          seen = pluginConfig as { nested?: { k: number } };
+          seen = pluginConfig.use as { nested?: { k: number } };
         },
       }),
     );

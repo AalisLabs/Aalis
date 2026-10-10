@@ -155,7 +155,7 @@ export class PluginManager implements PluginManagerService {
 
     // 服务可能变了就路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
-    host.bind(host.root, { events }).events.on('service:changed', name => this.#kick(`service:changed:${name}`));
+    host.bind(host.root, { events }).events.use.on('service:changed', name => this.#kick(`service:changed:${name}`));
   }
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
@@ -325,14 +325,14 @@ export class PluginManager implements PluginManagerService {
 
   /**
    * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件（已激活，或仍在
-   * 初始化：在飞或后台）某个 required 服务此刻解析到的胜者归本批要关的激活所有（传递闭包）；空档里不切到后备
+   * 初始化：在飞或后台）某个 required 服务此刻为它选中的那一家归本批要关的激活所有（传递闭包）；空档里不切到后备
    * 提供者——依赖方对着旧实例收尾，提供者重启后再回到首选。仍在初始化的依赖方同样拆掉重来，否则它 apply 里
    * 拿到的是旧实例。unload / disable / bounce 三者同一路径。
    */
   #retire(entry: PluginRecord, target: PluginState): Promise<void> {
     const services = this.#host.runtime.services;
-    const batch = this.#closure([entry], [...this.#plugins.values()], (name, leaving) => {
-      const owner = services.ownerOf(name);
+    const batch = this.#closure([entry], [...this.#plugins.values()], (name, leaving, consumer) => {
+      const owner = services.ownerOf(name, consumer.instanceId);
       return owner !== undefined && leaving.has(owner);
     });
     return retireBatch(batch, item => (item === entry ? target : 'pending'), this.#deps);
@@ -345,7 +345,7 @@ export class PluginManager implements PluginManagerService {
   #closure(
     seeds: PluginRecord[],
     candidates: PluginRecord[],
-    lost: (name: string, leaving: ReadonlySet<symbol>) => boolean,
+    lost: (name: string, leaving: ReadonlySet<symbol>, consumer: PluginRecord) => boolean,
   ): PluginRecord[] {
     const batch = [...seeds];
     const leaving = new Set(seeds.flatMap(seed => (seed.activation ? [seed.activation.owner] : [])));
@@ -353,7 +353,7 @@ export class PluginManager implements PluginManagerService {
       grew = false;
       for (const other of candidates) {
         if (!running(other) || !other.activation || batch.includes(other)) continue;
-        if (!other.required.some(name => lost(name, leaving))) continue;
+        if (!other.required.some(name => lost(name, leaving, other))) continue;
         batch.push(other);
         leaving.add(other.activation.owner);
         grew = true;
@@ -621,10 +621,10 @@ export class PluginManager implements PluginManagerService {
         // 没落定：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，
         // 等管理路径收尾后、或旧实例停下后的 recompute 重新调度
         if (entry.state !== 'pending' || entry.activation || this.#lingering.has(entry.instanceId)) continue;
-        if (!requiredSatisfied(entry, this.#host.runtime.services)) continue;
-        // required 胜者已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它上面拿到的是正在
-        // 关闭的实例。等它关完、服务下线触发重算再判定
-        if (entry.required.some(name => this.#host.closing(this.#host.runtime.services.ownerOf(name)!))) continue;
+        if (!requiredSatisfied(entry, services)) continue;
+        // 它为某个 required 服务选中的那一家已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它
+        // 上面拿到的是正在关闭的实例。等它关完、服务下线触发重算再判定
+        if (entry.required.some(name => this.#host.closing(services.ownerOf(name, entry.instanceId)!))) continue;
         // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
         if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') {
           changed = true;

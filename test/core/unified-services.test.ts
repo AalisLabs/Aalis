@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { tools } from '../../packages/api-tools/src/index.js';
 import {
   App,
   config,
@@ -13,8 +12,8 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { deferred } from '../helpers/deferred.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 
 declare module '@aalis/core' {
   interface AalisEvents {
@@ -40,22 +39,20 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
   it('启动即枚举全部基础服务', () => {
     const app = makeApp();
     const host = app.bind({ services });
-    expect(host.services.names().sort()).toEqual(
+    expect(host.services.use.names().sort()).toEqual(
       ['events', 'lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins'].sort(),
     );
   });
 
   it('资源口成员定格：不带服务名，binder 写在 defineService(name, …) 的闭包里', () => {
     const shape = defineService<unknown, string[]>('__t:unified-port', port => Object.keys(port).sort());
-    expect(makeApp().bind({ shape }).shape).toEqual([
-      'all',
-      'current',
+    expect(makeApp().bind({ shape }).shape.use).toEqual([
       'follow',
       'id',
       'identity',
       'logger',
+      'provider',
       'registrar',
-      'require',
       'track',
     ]);
   });
@@ -72,17 +69,17 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
           name,
           uses: { config, lifecycle, services, me: optional(me) },
           apply({ config: ownConfig, lifecycle: ownLifecycle, services: lookup, me }) {
-            const configProvider = lookup.get(config);
+            const configProvider = lookup.use.get(config);
             if (!configProvider) throw new Error('config 提供者缺席');
-            expect(lookup.get('config')).toBe(configProvider);
-            expect(configProvider(me)).toBe(ownConfig);
+            expect(lookup.use.get('config')).toBe(configProvider);
+            expect(configProvider(me.use)).toBe(ownConfig.use);
             expect(() => configProvider(Symbol(name))).toThrow('不属于任何在册的激活');
-            const lifecycleProvider = lookup.all(lifecycle)[0]?.instance;
+            const lifecycleProvider = lookup.use.all(lifecycle)[0]?.instance;
             if (!lifecycleProvider) throw new Error('lifecycle 提供者缺席');
-            const viaLookup = lifecycleProvider(me);
-            expect(viaLookup.id).toBe(ownLifecycle.id);
+            const viaLookup = lifecycleProvider(me.use);
+            expect(viaLookup.id).toBe(ownLifecycle.use.id);
             expect(viaLookup.signal.aborted).toBe(false);
-            seen.set(name, { config: ownConfig, lifecycle: ownLifecycle, viaLookup });
+            seen.set(name, { config: ownConfig.use, lifecycle: ownLifecycle.use, viaLookup });
           },
         }),
         { name },
@@ -107,7 +104,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     const host = app.bind({ provide });
     const version = defineService<{ tag: string }>('__t:follow-version');
     const publish = (tag: string, priority: number) =>
-      host.provide(version, { tag }, { priority, entryId: `root/${tag}` });
+      host.provide.use(version, { tag }, { priority, entryId: `root/${tag}` });
     publish('old', 0);
     const cleanupStarted = deferred();
     const release = deferred();
@@ -158,66 +155,60 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
         name: 'exclusive-provider',
         uses: { provide },
         apply({ provide }) {
-          provide(unique, { value: 1 }, { exclusive: true });
+          provide.use(unique, { value: 1 }, { exclusive: true });
         },
       }),
     );
-    expect(() => host.provide(unique, { value: 2 })).toThrow(/独占/);
-    const off = host.provide(ordinary, { value: 1 });
-    expect(() => host.provide(ordinary, { value: 2 }, { exclusive: true })).toThrow(/独占/);
-    expect(() => host.provide(events, () => ({ on: () => () => {}, emit: async () => {} }))).toThrow(/独占/);
-    expect(host.services.all(unique)).toHaveLength(1);
+    expect(() => host.provide.use(unique, { value: 2 })).toThrow(/独占/);
+    const off = host.provide.use(ordinary, { value: 1 });
+    expect(() => host.provide.use(ordinary, { value: 2 }, { exclusive: true })).toThrow(/独占/);
+    expect(() => host.provide.use(events, () => ({ on: () => () => {}, emit: async () => {} }))).toThrow(/独占/);
+    expect(host.services.use.all(unique)).toHaveLength(1);
     await app.plugins.unload('exclusive-provider');
-    host.provide(unique, { value: 3 }, { exclusive: true });
-    expect(host.services.get(unique)).toEqual({ value: 3 });
+    host.provide.use(unique, { value: 3 }, { exclusive: true });
+    expect(host.services.use.get(unique)).toEqual({ value: 3 });
     off();
-    host.provide(ordinary, { value: 4 }, { exclusive: true });
-    expect(host.services.get(ordinary)).toEqual({ value: 4 });
+    host.provide.use(ordinary, { value: 4 }, { exclusive: true });
+    expect(host.services.use.get(ordinary)).toEqual({ value: 4 });
   });
 
-  it('真实 tools 的登记可执行且随消费者撤回，事件在撤回回调发射前已同栈切断', async () => {
+  it('登记型枢纽的登记随消费者撤回，事件在撤回回调发射前已同栈切断', async () => {
     const app = makeApp();
     const host = app.bind({ provide, events });
-    const registry = makeToolRegistry(silent);
-    host.provide(tools, registry);
+    const registry = new HubRegistry();
+    host.provide.use(hub, registry);
     // 绑定口交给消费者一个开关：调用时在消费者的清理链上挂一条撤回，撤回时向根发射测试事件
     const cleanupEmitter = defineService<object, () => void>(
       '__t:cleanup-emitter',
-      port => () => void port.track(() => host.events.emit('__t:unified-services')),
+      port => () => void port.track(() => host.events.use.emit('__t:unified-services')),
     );
-    host.provide(cleanupEmitter, {});
+    host.provide.use(cleanupEmitter, {});
     let ownHits = 0;
     let rootHits = 0;
-    host.events.on('__t:unified-services', () => {
+    host.events.use.on('__t:unified-services', () => {
       rootHits++;
     });
     await app.plugin(
       definePlugin({
-        name: 'tool-consumer',
-        uses: { tools, events, cleanupEmitter },
-        apply({ tools, events, cleanupEmitter }) {
-          events.on('__t:unified-services', () => {
+        name: 'hub-consumer',
+        uses: { hub, events, cleanupEmitter },
+        apply({ hub, events, cleanupEmitter }) {
+          events.use.on('__t:unified-services', () => {
             ownHits++;
           });
-          cleanupEmitter();
-          events.on('__t:unified-services', () => {
+          cleanupEmitter.use();
+          events.use.on('__t:unified-services', () => {
             ownHits++;
           });
-          tools.register({
-            definition: {
-              type: 'function',
-              function: { name: 'unified_echo', description: '', parameters: { type: 'object', properties: {} } },
-            },
-            handler: async () => 'executed',
-          });
+          hub.use.add('echo', 'executed');
         },
       }),
     );
-    expect(await registry.execute('unified_echo', {}, { sessionId: 'test' })).toEqual({ content: 'executed' });
-    await host.events.emit('__t:unified-services');
+    expect(registry.list()).toEqual(['hub-consumer/echo=executed']);
+    await host.events.use.emit('__t:unified-services');
     expect([ownHits, rootHits]).toEqual([2, 1]);
-    await app.plugins.unload('tool-consumer');
-    expect(registry.getAll()).toEqual([]);
+    await app.plugins.unload('hub-consumer');
+    expect(registry.list()).toEqual([]);
     expect([ownHits, rootHits]).toEqual([2, 2]);
   });
 });

@@ -30,7 +30,7 @@ describe('provides checks the registering activation', () => {
         name: 'donor',
         uses: { provide },
         apply({ provide }) {
-          provide(service, { source: 'donor' }, { entryId: 'claimant/model' });
+          provide.use(service, { source: 'donor' }, { entryId: 'claimant/model' });
         },
       }),
     );
@@ -44,7 +44,7 @@ describe('provides checks the registering activation', () => {
     expect(
       app
         .bind({ services })
-        .services.all(service)
+        .services.use.all(service)
         .map(({ contextId, instance }) => ({ contextId, instance })),
     ).toEqual([{ contextId: 'claimant/model', instance: { source: 'donor' } }]);
     expect(app.plugins.getPlugin('donor')?.state).toBe('active');
@@ -58,7 +58,7 @@ describe('provides checks the registering activation', () => {
         name: 'donor',
         uses: { provide },
         apply({ provide }) {
-          provide(foreign, { source: 'donor' }, { entryId: 'claimant/foreign' });
+          provide.use(foreign, { source: 'donor' }, { entryId: 'claimant/foreign' });
         },
       }),
     );
@@ -76,7 +76,7 @@ describe('provides checks the registering activation', () => {
         provides: [service],
         uses: { provide },
         apply({ provide }) {
-          provide(service, { source: 'proxy' }, { entryId: 'other' });
+          provide.use(service, { source: 'proxy' }, { entryId: 'other' });
         },
       }),
     );
@@ -96,9 +96,9 @@ describe('dev-mode duplicate provide advisory', () => {
         provides: [service],
         uses: { provide },
         apply({ provide }) {
-          provide(service, { n: 1 }, { entryId: 'dup/sub' });
-          provide(service, { n: 2 });
-          provide(service, { n: 3 });
+          provide.use(service, { n: 1 }, { entryId: 'dup/sub' });
+          provide.use(service, { n: 2 });
+          provide.use(service, { n: 3 });
         },
       }),
     );

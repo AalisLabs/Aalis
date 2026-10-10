@@ -26,18 +26,18 @@ describe('清理链点名', () => {
   it('监听、服务与账本登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
     const ctx = makeFixture('p');
     const registry = new HubRegistry();
-    bindActivationFixture(ctx.host, ctx.host.root).caps.provide(hub, registry);
+    bindActivationFixture(ctx.host, ctx.host.root).caps.provide.use(hub, registry);
     // 账本创建即跟随提供者（那条跟随按 watch:__t:hub 进撤回链），基线取在绑定之后：之后的逐条登记不再加链
     const { hub: ledger } = ctx.host.bind(ctx.activation, { hub });
     const baseline = ctx.activation.resources.withdrawals.labels();
     expect(baseline).toEqual(['watch:__t:hub']);
     let heard = 0;
-    ctx.caps.events.on(EVT, () => {
+    ctx.caps.events.use.on(EVT, () => {
       heard++;
     });
-    ledger.add('me', 'v');
-    ctx.caps.provide(defineService('svc'), {});
-    ctx.caps.provide(defineService('llm'), {} as never, { entryId: 'p/model-a' });
+    ledger.use.add('me', 'v');
+    ctx.caps.provide.use(defineService('svc'), {});
+    ctx.caps.provide.use(defineService('llm'), {} as never, { entryId: 'p/model-a' });
     ctx.host.bind(ctx.activation, { ref: defineService('later') }).ref.follow(() => {});
 
     expect(ctx.activation.resources.withdrawals.labels()).toEqual([...baseline, 'watch:later']);
@@ -59,8 +59,8 @@ describe('清理链点名', () => {
   it('onDispose 作者标签保留，未命名项以 undefined 占位', async () => {
     const ctx = makeFixture('p');
     const baseline = ctx.activation.resources.disposables.labels();
-    ctx.caps.lifecycle.onDispose(() => {}, 'mongo-client');
-    ctx.caps.lifecycle.onDispose(() => {});
+    ctx.caps.lifecycle.use.onDispose(() => {}, 'mongo-client');
+    ctx.caps.lifecycle.use.onDispose(() => {});
     expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'mongo-client', undefined]);
     await ctx.activation.disposeAsync();
   });
@@ -69,7 +69,7 @@ describe('清理链点名', () => {
     const ctx = makeFixture('p');
     const baseline = ctx.activation.resources.disposables.labels();
     let heard = 0;
-    const off = ctx.caps.events.on(EVT, () => {
+    const off = ctx.caps.events.use.on(EVT, () => {
       heard++;
     });
     expect(ctx.activation.resources.disposables.labels()).toEqual(baseline);
@@ -88,11 +88,11 @@ describe('清理链点名', () => {
     const fn = () => {
       log.push('fn');
     };
-    ctx.caps.lifecycle.onDispose(fn, 'first');
-    ctx.caps.lifecycle.onDispose(() => {
+    ctx.caps.lifecycle.use.onDispose(fn, 'first');
+    ctx.caps.lifecycle.use.onDispose(() => {
       log.push('mid');
     }, 'mid');
-    const off = ctx.caps.lifecycle.onDispose(fn, 'second');
+    const off = ctx.caps.lifecycle.use.onDispose(fn, 'second');
     off();
     off(); // 幂等
     expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'first', 'mid']);

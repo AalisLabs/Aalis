@@ -50,8 +50,8 @@ describe('停机回归', () => {
         uses: { provide, lifecycle },
         provides: [store],
         apply({ provide, lifecycle }) {
-          provide(store, { save: data => void saved.push(data) });
-          lifecycle.onDispose(async () => {
+          provide.use(store, { save: data => void saved.push(data) });
+          lifecycle.use.onDispose(async () => {
             counts.providerCleanup++;
             entered.resolve();
             await release.promise;
@@ -64,11 +64,11 @@ describe('停机回归', () => {
         name: 'consumer',
         uses: { store, lifecycle },
         apply({ store, lifecycle }) {
-          lifecycle.onDrain(() => {
+          lifecycle.use.onDrain(() => {
             counts.consumerDrain++;
-            store.require().save('last');
+            store.use.save('last');
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             counts.consumerCleanup++;
           });
         },
@@ -115,7 +115,7 @@ describe('停机回归', () => {
         uses: { lifecycle },
         apply({ lifecycle }) {
           effects.applies++;
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             effects.disposes++;
           });
         },
@@ -180,7 +180,7 @@ describe('停机回归', () => {
     const { app, effects } = await setupAdminStates();
     const entered = deferred();
     const release = deferred();
-    app.bind({ events }).events.on('app:stopping', async () => {
+    app.bind({ events }).events.use.on('app:stopping', async () => {
       entered.resolve();
       await release.promise;
     });

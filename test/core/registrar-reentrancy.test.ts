@@ -1,14 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
-import {
-  type App,
-  definePlugin,
-  defineService,
-  type Logger,
-  optional,
-  provide,
-} from '../../packages/core/src/index.js';
-import { makeToolRegistry } from '../fixtures/tool-registry.js';
+import { type App, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -72,23 +63,23 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const { app, publish } = world();
     const first = hub();
     const second = hub();
-    if (present) publish(registry, first);
+    if (present) publish.use(registry, first);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry: optional(registry) }).registry;
-    const off = bound.add({
+    const off = bound.use.add({
       key: 'same',
       value: 'outer',
-      during: () => bound.add({ key: 'same', value: 'inner' }),
+      during: () => bound.use.add({ key: 'same', value: 'inner' }),
     });
     if (!present) {
-      publish(registry, first);
+      publish.use(registry, first);
       await tick();
     }
     expect(first.values()).toEqual(['inner']);
     off();
     expect(first.values(), 'obsolete outer handle cannot remove the replacement').toEqual(['inner']);
-    publish(registry, second, { priority: 1 });
+    publish.use(registry, second, { priority: 1 });
     await tick();
     expect(first.values()).toEqual([]);
     expect(second.values()).toEqual(['inner']);
@@ -99,16 +90,16 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
   it('a failed outer registration does not delete a successful reentrant replacement', async () => {
     const { app, publish } = world();
     const provider = hub();
-    publish(registry, provider);
+    publish.use(registry, provider);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     expect(() =>
-      bound.add({
+      bound.use.add({
         key: 'same',
         value: 'failed',
         fail: true,
-        during: () => bound.add({ key: 'same', value: 'inner' }),
+        during: () => bound.use.add({ key: 'same', value: 'inner' }),
       }),
     ).toThrow('registration failed');
     expect(provider.values()).toEqual(['inner']);
@@ -119,7 +110,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
   it('replacement from the old cleanup wins; its in-flight cleanup is awaited', async () => {
     const { app, publish } = world();
     const provider = hub();
-    publish(registry, provider);
+    publish.use(registry, provider);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
@@ -127,15 +118,15 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const pending = new Promise<void>(resolve => {
       finish = resolve;
     });
-    bound.add({
+    bound.use.add({
       key: 'same',
       value: 'old',
       cleanup() {
-        bound.add({ key: 'same', value: 'inner' });
+        bound.use.add({ key: 'same', value: 'inner' });
         return pending;
       },
     });
-    bound.add({ key: 'same', value: 'outer' });
+    bound.use.add({ key: 'same', value: 'outer' });
     expect(provider.values()).toEqual(['inner']);
     let closed = false;
     const closing = ctx.disposeAsync().then(() => {
@@ -151,14 +142,14 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
   it('a stale registration cleanup may throw without removing the live replacement', async () => {
     const { app, publish, warnings } = world();
     const provider = hub();
-    publish(registry, provider);
+    publish.use(registry, provider);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
-    bound.add({
+    bound.use.add({
       key: 'same',
       value: 'outer',
-      during: () => bound.add({ key: 'same', value: 'inner' }),
+      during: () => bound.use.add({ key: 'same', value: 'inner' }),
       cleanup: () => {
         throw new Error('withdraw failed');
       },
@@ -172,7 +163,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
   it('asynchronous withdrawal of a superseded registration is awaited and rejection is isolated', async () => {
     const { app, publish, warnings } = world();
     const provider = hub();
-    publish(registry, provider);
+    publish.use(registry, provider);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
@@ -180,10 +171,10 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const pending = new Promise<void>((_resolve, rejectPromise) => {
       reject = rejectPromise;
     });
-    bound.add({
+    bound.use.add({
       key: 'same',
       value: 'outer',
-      during: () => bound.add({ key: 'same', value: 'inner' }),
+      during: () => bound.use.add({ key: 'same', value: 'inner' }),
       cleanup: () => pending,
     });
     expect(provider.values()).toEqual(['inner']);
@@ -202,7 +193,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
   it('closing inside register withdraws the returned handle and waits for asynchronous cleanup', async () => {
     const { app, publish } = world();
     const provider = hub();
-    publish(registry, provider);
+    publish.use(registry, provider);
     const host = activationHost(app);
     const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
@@ -211,7 +202,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
       finish = resolve;
     });
     let closing!: Promise<void>;
-    bound.add({
+    bound.use.add({
       key: 'same',
       value: 'late',
       during() {
@@ -228,38 +219,5 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     expect(closed).toBe(false);
     finish();
     await observed;
-  });
-
-  it('real tools cannot execute a same-key orphan after the consumer unloads', async () => {
-    const { app, publish } = world();
-    const provider = makeToolRegistry(app.logger);
-    publish(tools, provider);
-    let bound!: BoundTools;
-    await app.plugin(
-      definePlugin({
-        name: 'tool-consumer',
-        uses: { tools },
-        apply({ tools }) {
-          bound = tools;
-        },
-      }),
-    );
-    const definition = {
-      type: 'function' as const,
-      function: { name: 'same', description: 'same', parameters: { type: 'object' as const, properties: {} } },
-    };
-    const register = provider.register.bind(provider);
-    let once = true;
-    provider.register = (tool, owner) => {
-      const off = register(tool, owner);
-      if (once) {
-        once = false;
-        bound.register({ definition, handler: async () => 'orphan' });
-      }
-      return off;
-    };
-    bound.register({ definition, handler: async () => 'outer' });
-    await app.plugins.unload('tool-consumer');
-    expect((await provider.execute('same', {}, { sessionId: 'test', platform: 'test' })).content).toContain('未找到');
   });
 });

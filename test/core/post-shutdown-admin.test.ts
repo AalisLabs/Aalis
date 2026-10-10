@@ -93,13 +93,13 @@ async function storeAndWriter(
       provides: [store],
       apply({ provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('store 已关闭');
             saved.push(data);
           },
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           log.push('store-closed');
         });
@@ -111,9 +111,9 @@ async function storeAndWriter(
       name: 'writer',
       uses: { store, lifecycle },
       apply({ store, lifecycle }) {
-        lifecycle.onDrain(async () => {
+        lifecycle.use.onDrain(async () => {
           if (onWriterDrain) await onWriterDrain();
-          store.require().save('writer:last');
+          store.use.save('writer:last');
           log.push('writer-drain');
         });
       },
@@ -218,7 +218,7 @@ describe('app:stopping 窗口', () => {
     const { app } = capturingApp();
     const { saved, log } = await storeAndWriter(app, 'psa-stop-dis');
     const { events: bus } = app.bind({ events });
-    bus.on('app:stopping', async () => {
+    bus.use.on('app:stopping', async () => {
       log.push('stopping');
       await app.plugins.disable('store');
       log.push('disabled');
@@ -232,7 +232,7 @@ describe('app:stopping 窗口', () => {
     const { app } = capturingApp();
     const { saved, log } = await storeAndWriter(app, 'psa-stop-ul');
     const { events: bus } = app.bind({ events });
-    bus.on('app:stopping', () => {
+    bus.use.on('app:stopping', () => {
       log.push('stopping');
       void app.plugins.unload('store');
     });
@@ -254,13 +254,13 @@ describe('app:stopping 窗口', () => {
         apply({ provide, lifecycle }) {
           const my = ++gen;
           let closed = false;
-          provide(store, {
+          provide.use(store, {
             save(data) {
               if (closed) throw new Error(`store#${my} 已关闭`);
               saved.push(`#${my}:${data}`);
             },
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
             log.push(`closed#${my}`);
           });
@@ -272,9 +272,9 @@ describe('app:stopping 窗口', () => {
         name: 'writer',
         uses: { store, lifecycle },
         apply({ store, lifecycle }) {
-          lifecycle.onDrain(() => {
+          lifecycle.use.onDrain(() => {
             log.push('writer-drain');
-            store.require().save('writer:last');
+            store.use.save('writer:last');
           });
         },
       }),
@@ -282,7 +282,7 @@ describe('app:stopping 窗口', () => {
     await app.plugins.idle();
     const { events: bus } = app.bind({ events });
     let bounced: boolean | undefined;
-    bus.on('app:stopping', async () => {
+    bus.use.on('app:stopping', async () => {
       bounced = await app.plugins.bounce('store');
     });
     expect(await stopWithin(app)).toBe('ok');
@@ -308,7 +308,7 @@ describe('app:stopping 窗口', () => {
     const { events: bus } = app.bind({ events });
     let accepted: boolean | undefined;
     let apply = 0;
-    bus.on('app:stopping', async () => {
+    bus.use.on('app:stopping', async () => {
       accepted = await app.plugin(
         definePlugin({
           name: 'latecomer',
@@ -334,9 +334,9 @@ describe('app:stopping 窗口', () => {
     const { provide: hostProvide } = app.bind({ provide });
     const { events: bus } = app.bind({ events });
     let threw: string | false = false;
-    bus.on('app:stopping', () => {
+    bus.use.on('app:stopping', () => {
       try {
-        hostProvide(extra, { n: 1 });
+        hostProvide.use(extra, { n: 1 });
       } catch (err) {
         threw = err instanceof Error ? err.message : String(err);
       }

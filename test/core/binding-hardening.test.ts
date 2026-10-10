@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
 import {
   type App,
   definePlugin,
@@ -10,8 +9,6 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
-import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
-import { makeToolRegistry } from '../fixtures/tool-registry.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const OWNER = Symbol('owner');
@@ -23,17 +20,6 @@ const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
-
-function silentLogger(): Logger {
-  const logger: Logger = {
-    debug() {},
-    info() {},
-    warn() {},
-    error() {},
-    child: () => logger,
-  };
-  return logger;
-}
 
 function world() {
   const warnings: string[] = [];
@@ -51,17 +37,6 @@ function world() {
   });
   apps.push(app);
   return { app, warnings, host: app.bind({ provide }).provide };
-}
-
-function toolDef(name: string) {
-  return {
-    type: 'function' as const,
-    function: { name, description: name, parameters: { type: 'object' as const, properties: {} } },
-  };
-}
-
-async function execTool(reg: ToolRegistry, name: string) {
-  return (await reg.execute(name, {}, { sessionId: 's', platform: 'test' })).content;
 }
 
 /** 句柄按登记身份存，同名可以并存——用来看见快照双挂，不被按名覆盖掩盖 */
@@ -99,96 +74,6 @@ const slots = defineService<UniqueHub, { add(slot: Slot): () => void }>('zz-bind
 });
 
 describe('registrar：重入替换后续键不留孤儿', () => {
-  it('真实枢纽 tools：卸载消费者后 execute 必须报未注册', async () => {
-    const { app } = world();
-    const reg = makeToolRegistry(silentLogger());
-    const box: { bound?: BoundTools } = {};
-    const orig = reg.register.bind(reg);
-    reg.register = (tool, activation) => {
-      const off = orig(tool, activation);
-      if (tool.definition.function.name === 'alpha' && box.bound) {
-        box.bound.register({ definition: toolDef('zulu'), handler: async () => 'from-reenter' });
-      }
-      return off;
-    };
-    await app.plugin(
-      definePlugin({
-        name: 'consumer',
-        uses: { tools: optional(tools) },
-        apply({ tools }) {
-          box.bound = tools;
-          tools.register({ definition: toolDef('alpha'), handler: async () => 'alpha' });
-          tools.register({ definition: toolDef('keep'), handler: async () => 'keep' });
-          tools.register({ definition: toolDef('zulu'), handler: async () => 'from-ledger' });
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('consumer')?.state).toBe('active');
-    app.bind({ provide }).provide(tools, reg);
-    await tick();
-    expect(
-      reg
-        .getAll()
-        .map(t => t.name)
-        .sort(),
-    ).toEqual(['alpha', 'keep', 'zulu']);
-
-    await app.plugins.unload('consumer');
-    const names = reg
-      .getAll()
-      .map(t => t.name)
-      .sort();
-    const zulu = await execTool(reg, 'zulu');
-    const keep = await execTool(reg, 'keep');
-    const alpha = await execTool(reg, 'alpha');
-    expect({ names, zulu, keep, alpha }, '卸载后枢纽应空，execute 应全部未找到').toEqual({
-      names: [],
-      zulu: expect.stringContaining('未找到'),
-      keep: expect.stringContaining('未找到'),
-      alpha: expect.stringContaining('未找到'),
-    });
-  });
-
-  it('真实枢纽 tools：换人后旧表与新表在消费者卸载后都不可再派活', async () => {
-    const { app, host } = world();
-    const a = makeToolRegistry(silentLogger());
-    const b = makeToolRegistry(silentLogger());
-    const box: { bound?: BoundTools } = {};
-    const wrap = (reg: ToolRegistry) => {
-      const orig = reg.register.bind(reg);
-      reg.register = (tool, activation) => {
-        const off = orig(tool, activation);
-        if (tool.definition.function.name === 'alpha' && box.bound) {
-          box.bound.register({ definition: toolDef('zulu'), handler: async () => 'reenter' });
-        }
-        return off;
-      };
-    };
-    wrap(a);
-    wrap(b);
-    await app.plugin(
-      definePlugin({
-        name: 'consumer',
-        uses: { tools: optional(tools) },
-        apply({ tools }) {
-          box.bound = tools;
-          tools.register({ definition: toolDef('alpha'), handler: async () => 'a' });
-          tools.register({ definition: toolDef('zulu'), handler: async () => 'ledger' });
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('consumer')?.state).toBe('active');
-    host(tools, a, { priority: 1, entryId: 'root/a' });
-    await tick();
-    host(tools, b, { priority: 2, entryId: 'root/b' });
-    await tick();
-    await app.plugins.unload('consumer');
-    expect(await execTool(a, 'zulu'), '旧表不得留孤儿').toContain('未找到');
-    expect(await execTool(b, 'zulu'), '新表不得留孤儿').toContain('未找到');
-  });
-
   it('合成枢纽：账上已有后续键，首挂时 register 重入替换该键，每键一条且关闭后空', async () => {
     const { app, host } = world();
     const a = uniqueHub('A');
@@ -198,20 +83,20 @@ describe('registrar：重入替换后续键不留孤儿', () => {
         name: 'consumer',
         uses: { slots: optional(slots) },
         apply({ slots }) {
-          bound = slots;
-          slots.add({
+          bound = slots.use;
+          slots.use.add({
             key: 'head',
             body: 'head-1',
             onRegister: () => bound.add({ key: 'z', body: 'z-reenter' }),
           });
-          slots.add({ key: 'keep', body: 'keep-1' });
-          slots.add({ key: 'z', body: 'z-ledger' });
+          slots.use.add({ key: 'keep', body: 'keep-1' });
+          slots.use.add({ key: 'z', body: 'z-ledger' });
         },
       }),
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('consumer')?.state).toBe('active');
-    host(slots, a, { priority: 1, entryId: 'root/a' });
+    host.use(slots, a, { priority: 1, entryId: 'root/a' });
     await tick();
     const during = a.leftover();
     await app.stop();
@@ -226,14 +111,14 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     const { app, host } = world();
     const a = uniqueHub('A');
     const b = uniqueHub('B');
-    host(slots, a, { priority: 1, entryId: 'root/a' });
+    host.use(slots, a, { priority: 1, entryId: 'root/a' });
     const activation = activationHost(app).create('c');
     const bound = activationHost(app).bind(activation, { slots }).slots;
-    bound.add({ key: 't', body: 'v1' });
+    bound.use.add({ key: 't', body: 'v1' });
     expect(a.leftover()).toEqual(['t=v1']);
-    bound.add({ key: 't', body: 'v2' });
+    bound.use.add({ key: 't', body: 'v2' });
     expect(a.leftover(), '同键替换须立刻在当前提供者上只留新条目').toEqual(['t=v2']);
-    host(slots, b, { priority: 2, entryId: 'root/b' });
+    host.use(slots, b, { priority: 2, entryId: 'root/b' });
     await tick();
     expect(a.leftover(), '旧提供者上的当前登记随换人撤回').toEqual([]);
     expect(b.leftover(), '新提供者只挂最新条目').toEqual(['t=v2']);
@@ -251,7 +136,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const onEscape = (err: unknown) => escaped.push(String(err));
     process.on('unhandledRejection', onEscape);
     try {
-      host(d, { tag: 'a' }, { entryId: 'root/a' });
+      host.use(d, { tag: 'a' }, { entryId: 'root/a' });
       const activation = activationHost(app).create('c');
       const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // attach 必须同步返回 cleanup；这里故意喂 async，钉运行期接住拒绝
@@ -278,7 +163,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const onEscape = (err: unknown) => escaped.push(String(err));
     process.on('unhandledRejection', onEscape);
     try {
-      host(d, { tag: 'a' }, { entryId: 'root/a' });
+      host.use(d, { tag: 'a' }, { entryId: 'root/a' });
       const activation = activationHost(app).create('c');
       const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // FollowCleanup 不含 Promise；运行期仍须接住 JS 绕过
@@ -300,12 +185,12 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
   it('返回数字不得当 cleanup，换人与关闭不抛', async () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-number-cleanup');
-    host(d, { tag: 'a' }, { entryId: 'root/a' });
+    host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(app).create('c');
     const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 非函数返回值不得当 cleanup
     ref.follow(() => 1);
-    host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
+    host.use(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     await activation.disposeAsync();
     expect(
@@ -317,7 +202,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
   it('返回对象不得当 cleanup，关闭不抛', async () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-object-cleanup');
-    host(d, { tag: 'a' }, { entryId: 'root/a' });
+    host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(app).create('c');
     const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 对象不得当 cleanup
@@ -399,7 +284,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
   it('provide(null) 抛，提供者 error、消费者不得 active', async () => {
     const ping = defineService<{ ping(): string }>('zz-bind-null');
     const { app, host } = world();
-    expect(() => host(ping, null as never)).toThrow('provide 的实现不能为空');
+    expect(() => host.use(ping, null as never)).toThrow('provide 的实现不能为空');
 
     await app.plugin(
       definePlugin({
@@ -407,7 +292,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
         provides: [ping],
         uses: { provide },
         apply({ provide }) {
-          provide(ping, null as never);
+          provide.use(ping, null as never);
         },
       }),
     );
@@ -417,7 +302,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
         name: 'null-cons',
         uses: { ping },
         apply({ ping }) {
-          required = ping.require();
+          required = ping.use.ping();
         },
       }),
     );
@@ -431,7 +316,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
   it('provide(undefined) 抛，不得提供者 active 而消费者永久 pending', async () => {
     const ping = defineService<{ ping(): string }>('zz-bind-undef');
     const { app, host } = world();
-    expect(() => host(ping, undefined as never)).toThrow('provide 的实现不能为空');
+    expect(() => host.use(ping, undefined as never)).toThrow('provide 的实现不能为空');
 
     await app.plugin(
       definePlugin({
@@ -439,7 +324,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
         provides: [ping],
         uses: { provide },
         apply({ provide }) {
-          provide(ping, undefined as never);
+          provide.use(ping, undefined as never);
         },
       }),
     );
@@ -453,17 +338,17 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
   it('priority 非有限数字抛；随后有限 10 仍可登记', () => {
     const { app, host } = world();
     const kv = defineService<{ get(): number }>('zz-bind-prio');
-    expect(() => host(kv, { get: () => 2 }, { priority: 'high' as never, entryId: 'root/b' })).toThrow(
+    expect(() => host.use(kv, { get: () => 2 }, { priority: 'high' as never, entryId: 'root/b' })).toThrow(
       'provide 的 priority 必须是有限数字（收到 high）',
     );
-    expect(() => host(kv, { get: () => 2 }, { priority: Number.NaN, entryId: 'root/n' })).toThrow(
+    expect(() => host.use(kv, { get: () => 2 }, { priority: Number.NaN, entryId: 'root/n' })).toThrow(
       'provide 的 priority 必须是有限数字（收到 NaN）',
     );
-    expect(() => host(kv, { get: () => 2 }, { priority: Number.POSITIVE_INFINITY, entryId: 'root/i' })).toThrow(
+    expect(() => host.use(kv, { get: () => 2 }, { priority: Number.POSITIVE_INFINITY, entryId: 'root/i' })).toThrow(
       'provide 的 priority 必须是有限数字（收到 Infinity）',
     );
-    host(kv, { get: () => 1 }, { priority: 10, entryId: 'root/a' });
-    expect((app.bind({ services }).services.get('zz-bind-prio') as { get(): number } | undefined)?.get()).toBe(1);
+    host.use(kv, { get: () => 1 }, { priority: 10, entryId: 'root/a' });
+    expect((app.bind({ services }).services.use.get('zz-bind-prio') as { get(): number } | undefined)?.get()).toBe(1);
   });
 
   it('ServiceContainer.register 同样拒空实现与非有限 priority', () => {

@@ -9,7 +9,7 @@ import {
   type PluginManagerService,
   pluginsService,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
   services,
   type Uses,
 } from '../../packages/core/src/index.js';
@@ -101,8 +101,8 @@ export function createWorld(seed: number, profile: Profile) {
   const app = new App({ name: 'fuzz', logger: capture('app'), disposeTimeoutMs: TIMEOUT, slowThresholdMs: 60 });
   const host = app.bind({ services, events });
   // 有不在退场的提供者才算找回：撤回自己发的变更通知到达时，退场中的提供者可能还没摘掉
-  host.events.on('service:changed', name => {
-    if (host.services.all(name).some(v => running(v.contextId))) lost.delete(name);
+  host.events.use.on('service:changed', name => {
+    if (host.services.use.all(name).some(v => running(v.contextId))) lost.delete(name);
   });
 
   const n = 6 + r.int(5);
@@ -113,7 +113,8 @@ export function createWorld(seed: number, profile: Profile) {
   const ownName = (i: number) => descs.get(group[i])!.name;
   /** 撤下会同栈引发连锁收尾，所以在撤下之前记；剩下的提供者都在退场也算丢失 */
   const lose = (i: number) => {
-    if (host.services.all(ownName(i)).every(v => v.contextId === ids[i] || !running(v.contextId))) lost.add(ownName(i));
+    if (host.services.use.all(ownName(i)).every(v => v.contextId === ids[i] || !running(v.contextId)))
+      lost.add(ownName(i));
   };
 
   const manage = (pm: PluginManagerService, action: (typeof ACTIONS)[number], i: number, v: number): void => {
@@ -178,9 +179,9 @@ export function createWorld(seed: number, profile: Profile) {
       provides: [own],
       uses: { lifecycle, events, provide, plugins: pluginsService, ...deps },
       apply(caps) {
-        const refs = caps as unknown as Record<string, ServiceRef<Impl>>;
+        const refs = caps as unknown as Record<string, ServiceSelection<Impl>>;
         const inst = new Instance(id, ++gen, () => {
-          inst.off = caps.provide(own, { id }, { priority });
+          inst.off = caps.provide.use(own, { id }, { priority });
         });
         const tag = `${id}#${inst.gen}`;
         note(`apply ${tag}`);
@@ -189,26 +190,39 @@ export function createWorld(seed: number, profile: Profile) {
         instances.push(inst);
         latest.set(id, inst);
         let heard = 0;
-        caps.events.on('app:ready', () => {
+        caps.events.use.on('app:ready', () => {
           if (++heard === 2) flag('I5', `${tag} 两次收到 app:ready`);
         });
-        caps.lifecycle.onDrain(() => {
+        caps.lifecycle.use.onDrain(() => {
           note(`drain ${tag}`);
           inst.draining = true;
           for (const name of needs)
-            if (refs[name].current === undefined && !lost.has(name)) flag('I6', `${tag} 收尾时 ${name} 已无提供者`);
+            if (!refs[name].present && !lost.has(name)) flag('I6', `${tag} 收尾时 ${name} 已无提供者`);
           return run(inst, timing(false));
         });
-        caps.lifecycle.onDispose(() => {
+        caps.lifecycle.use.onDispose(() => {
           note(`dispose ${tag}`);
           inst.disposeCalled = true;
-          reenter(caps.plugins.current);
+          reenter(caps.plugins.present ? caps.plugins.use : undefined);
           return run(inst, timing(false));
         });
-        for (const name of needs) refs[name].require();
+        for (const name of needs) void refs[name].use.id;
+        // 跟随一个 optional 依赖：同一个跟随者的清理落定之前不得重挂
+        const watched = optionals[0]?.[1].name;
+        if (watched) {
+          let attached = 0;
+          refs[watched].follow(() => {
+            if (++attached > 1) flag('I9', `${tag} 跟随 ${watched}：上一家的清理还没落定就重挂`);
+            return () => {
+              const done = run(inst, timing(false));
+              if (!done) return void attached--;
+              return done.then(() => void attached--);
+            };
+          });
+        }
         inst.give();
-        reenter(caps.plugins.current);
-        return run(inst, timing(true), !overrun || pr.chance(0.5) ? caps.lifecycle.signal : undefined);
+        reenter(caps.plugins.present ? caps.plugins.use : undefined);
+        return run(inst, timing(true), !overrun || pr.chance(0.5) ? caps.lifecycle.use.signal : undefined);
       },
     });
   });
@@ -229,9 +243,11 @@ export function createWorld(seed: number, profile: Profile) {
       note('stop');
       return app.stop();
     },
+    /** 一半是按插件的偏好（随机挑一个消费者） */
     prefer(i: number) {
-      if (r.chance(0.3)) host.services.unprefer(ownName(i));
-      else host.services.prefer(ownName(i), ids[i]);
+      const scope = r.chance(0.5) ? { for: ids[r.int(n)] } : undefined;
+      if (r.chance(0.3)) host.services.use.unprefer(ownName(i), scope);
+      else host.services.use.prefer(ownName(i), ids[i], scope);
     },
     /** 非管理撤回：插件自己撤掉登记，激活不动 */
     withdraw(i: number) {

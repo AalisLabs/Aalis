@@ -13,10 +13,10 @@ describe('独立 App 隔离', () => {
     const app2 = new App({ name: 'B', logLevel: 'error' });
     const only = defineService<{ v: number }>('only-in-1');
 
-    app1.bind({ provide }).provide(only, { v: 1 });
+    app1.bind({ provide }).provide.use(only, { v: 1 });
 
-    expect(app1.bind({ services }).services.get(only)).toBeDefined();
-    expect(app2.bind({ services }).services.get(only)).toBeUndefined();
+    expect(app1.bind({ services }).services.use.get(only)).toBeDefined();
+    expect(app2.bind({ services }).services.use.get(only)).toBeUndefined();
 
     await app1.stop();
     await app2.stop();

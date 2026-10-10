@@ -67,11 +67,11 @@ describe('App.stop() 单飞与停机窗口', () => {
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDrain(async () => {
+          lifecycle.use.onDrain(async () => {
             drains++;
             await sleep(40);
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closes++;
           });
         },
@@ -79,7 +79,7 @@ describe('App.stop() 单飞与停机窗口', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    app.bind({ events }).events.on('app:stopping', () => {
+    app.bind({ events }).events.use.on('app:stopping', () => {
       stoppingEmits++;
     });
     const [a, b] = await Promise.all([stopWithin(app, 4000), stopWithin(app, 4000)]);
@@ -103,14 +103,14 @@ describe('App.stop() 单飞与停机窗口', () => {
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDrain(() => void log.push('drain'));
-          lifecycle.onDispose(() => void log.push('dispose'));
+          lifecycle.use.onDrain(() => void log.push('drain'));
+          lifecycle.use.onDispose(() => void log.push('dispose'));
         },
       }),
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    app.bind({ events }).events.on('app:stopping', () => {
+    app.bind({ events }).events.use.on('app:stopping', () => {
       stoppingDepth++;
       log.push(`stopping#${stoppingDepth}`);
       // 深度护栏：未修时无界重入会把 worker 打到 OOM；有护栏才能把「深度≠1」写成红断言
@@ -142,7 +142,7 @@ describe('App.stop() 单飞与停机窗口', () => {
         name: 'writer',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             cleanupEntered.resolve();
             await cleanupGate.promise;
             saved.push('last-message');
@@ -150,7 +150,7 @@ describe('App.stop() 单飞与停机窗口', () => {
         },
       }),
     );
-    app.bind({ events }).events.on('app:stopping', async () => {
+    app.bind({ events }).events.use.on('app:stopping', async () => {
       eventEntered.resolve();
       await eventGate.promise;
     });
@@ -199,7 +199,7 @@ describe('App.stop() 单飞与停机窗口', () => {
     app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
     let stoppingEmits = 0;
-    app.bind({ events }).events.on('app:stopping', () => {
+    app.bind({ events }).events.use.on('app:stopping', () => {
       stoppingEmits++;
     });
     const stopping = app.stop();
@@ -227,7 +227,7 @@ describe('App.stop() 单飞与停机窗口', () => {
         configSchema: { n: { type: 'number', label: 'n', default: 0 } },
         uses: { config, lifecycle },
         apply({ lifecycle: lc }) {
-          lc.onDispose(() => {});
+          lc.use.onDispose(() => {});
         },
       }),
     );
@@ -258,13 +258,13 @@ describe('App.stop() 单飞与停机窗口', () => {
         provides: [store],
         apply({ provide, lifecycle }) {
           let closed = false;
-          provide(store, {
+          provide.use(store, {
             save(data) {
               if (closed) throw new Error('store 已关闭');
               saved.push(data);
             },
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
           });
         },
@@ -275,10 +275,10 @@ describe('App.stop() 单飞与停机窗口', () => {
         name: 'writer',
         uses: { store, lifecycle },
         apply({ store, lifecycle }) {
-          lifecycle.onDrain(async () => {
+          lifecycle.use.onDrain(async () => {
             gate.resolve();
             await sleep(80);
-            store.require().save('writer:last');
+            store.use.save('writer:last');
           });
         },
       }),

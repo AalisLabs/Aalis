@@ -6,7 +6,7 @@ import {
   type Logger,
   optional,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
   services,
 } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
@@ -36,7 +36,7 @@ function makeWorld() {
   const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   const host = app.bind({ provide, services });
-  for (const id of ['a', 'b', 'c']) host.provide(svc, { id }, { entryId: `root/${id}` });
+  for (const id of ['a', 'b', 'c']) host.provide.use(svc, { id }, { entryId: `root/${id}` });
   const trace: string[] = [];
   const live = new Set<string>();
   const released: string[] = [];
@@ -54,7 +54,7 @@ function makeWorld() {
   return { app, host, trace, live, released, attach, warnings };
 }
 
-async function watch(app: App, follow: (ref: ServiceRef<Provider>) => void) {
+async function watch(app: App, follow: (ref: ServiceSelection<Provider>) => void) {
   await app.plugin(
     definePlugin({
       name: 'watcher',
@@ -75,7 +75,7 @@ describe('follow 重入时的资源归属', () => {
     await watch(app, x => {
       off = x.follow(provider => {
         const cleanup = attach(provider);
-        if (provider.id === 'a') host.services.prefer(svc, 'root/b');
+        if (provider.id === 'a') host.services.use.prefer(svc, 'root/b');
         return cleanup;
       });
     });
@@ -95,7 +95,7 @@ describe('follow 重入时的资源归属', () => {
     await watch(app, x => {
       off = x.follow(provider => {
         const cleanup = attach(provider);
-        if (transitions++ < 2) host.services.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
+        if (transitions++ < 2) host.services.use.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
         return cleanup;
       });
     });
@@ -118,13 +118,13 @@ describe('follow 重入时的资源归属', () => {
           cleanup();
           if (provider.id === 'a' && !redirected) {
             redirected = true;
-            host.services.prefer(svc, `root/${target}`);
+            host.services.use.prefer(svc, `root/${target}`);
           }
         };
       });
     });
 
-    host.services.prefer(svc, 'root/b');
+    host.services.use.prefer(svc, 'root/b');
     await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', `attach:${target}:2`]);
     expect([...live]).toEqual([`${target}:2`]);
@@ -143,14 +143,14 @@ describe('follow 重入时的资源归属', () => {
     const off = ref.follow(provider => {
       const cleanup = attach(provider);
       closing = activation.disposeAsync();
-      host.services.prefer(svc, 'root/b');
+      host.services.use.prefer(svc, 'root/b');
       return cleanup;
     });
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect([...live]).toEqual([]);
     off();
-    host.services.prefer(svc, 'root/c');
+    host.services.use.prefer(svc, 'root/c');
     expect(released).toEqual(['a:1']);
     await closing;
   });
@@ -163,13 +163,13 @@ describe('follow 重入时的资源归属', () => {
         const cleanup = attach(provider);
         if (provider.id === 'b') {
           off();
-          host.services.prefer(svc, 'root/c');
+          host.services.use.prefer(svc, 'root/c');
         }
         return cleanup;
       });
     });
 
-    host.services.prefer(svc, 'root/b');
+    host.services.use.prefer(svc, 'root/b');
     await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:b:2', 'cleanup:b:2']);
     expect([...live]).toEqual([]);
@@ -188,13 +188,13 @@ describe('follow 重入时的资源归属', () => {
           if (!stopped) {
             stopped = true;
             off();
-            host.services.prefer(svc, 'root/c');
+            host.services.use.prefer(svc, 'root/c');
           }
         };
       });
     });
 
-    host.services.prefer(svc, 'root/b');
+    host.services.use.prefer(svc, 'root/b');
     await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect(released).toEqual(['a:1']);
@@ -207,7 +207,7 @@ describe('follow 重入时的资源归属', () => {
     await watch(app, x => {
       off = x.follow(provider => {
         if (provider.id === 'a') {
-          host.services.prefer(svc, 'root/b');
+          host.services.use.prefer(svc, 'root/b');
           throw new Error('failed setup');
         }
         return attach(provider);
@@ -216,7 +216,7 @@ describe('follow 重入时的资源归属', () => {
 
     expect([...live]).toEqual(['b:1']);
     expect(warnings.filter(message => message.includes('跟随回调抛错'))).toHaveLength(1);
-    host.services.prefer(svc, 'root/c');
+    host.services.use.prefer(svc, 'root/c');
     await tick();
     expect([...live]).toEqual(['c:2']);
     off();
@@ -232,14 +232,14 @@ describe('follow 重入时的资源归属', () => {
         return () => {
           cleanup();
           if (provider.id === 'a') {
-            host.services.prefer(svc, 'root/c');
+            host.services.use.prefer(svc, 'root/c');
             throw new Error('failed cleanup');
           }
         };
       });
     });
 
-    host.services.prefer(svc, 'root/b');
+    host.services.use.prefer(svc, 'root/b');
     await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:c:2']);
     expect([...live]).toEqual(['c:2']);
@@ -255,8 +255,8 @@ describe('follow 重入时的资源归属', () => {
     await watch(app, x => {
       off = x.follow(provider => {
         const cleanup = attach(provider);
-        host.provide(unrelated, {});
-        const removeLoser = host.provide(svc, { id: 'loser' }, { priority: -1, entryId: 'root/loser' });
+        host.provide.use(unrelated, {});
+        const removeLoser = host.provide.use(svc, { id: 'loser' }, { priority: -1, entryId: 'root/loser' });
         removeLoser();
         return cleanup;
       });
@@ -279,7 +279,7 @@ describe('follow 重入时的资源归属', () => {
         depth++;
         maxDepth = Math.max(maxDepth, depth);
         const cleanup = attach(provider);
-        if (remaining-- > 0) host.services.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
+        if (remaining-- > 0) host.services.use.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
         depth--;
         return cleanup;
       });

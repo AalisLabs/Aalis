@@ -43,12 +43,12 @@ function makeWorld() {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   // 测试枢纽由根提供：插件在 apply 里登记，拆卸后登记表里不得留下幽灵条目
-  app.bind({ provide }).provide(hub, new HubRegistry());
+  app.bind({ provide }).provide.use(hub, new HubRegistry());
   const host = app.bind({ events, services, hub });
-  host.events.on('plugin:loaded', (id: string) => {
+  host.events.use.on('plugin:loaded', (id: string) => {
     trace.push(`loaded:${id}`);
   });
-  host.events.on('plugin:unloaded', (id: string) => {
+  host.events.use.on('plugin:unloaded', (id: string) => {
     trace.push(`unloaded:${id}`);
   });
   return { app, host, trace };
@@ -72,10 +72,10 @@ function makeGatedPlugin(
     provides: [gatedSvc],
     uses: { provide, hub, lifecycle, config },
     async apply({ provide, hub, lifecycle, config }) {
-      trace.push(`apply:${JSON.stringify(config)}`);
-      provide(gatedSvc, { alive: true });
-      hub.add('mw', 'live');
-      lifecycle.onDispose(() => {
+      trace.push(`apply:${JSON.stringify(config.use)}`);
+      provide.use(gatedSvc, { alive: true });
+      hub.use.add('mw', 'live');
+      lifecycle.use.onDispose(() => {
         trace.push('disposed');
       }, 'gated:res');
       enter();
@@ -94,18 +94,18 @@ describe('unload 撞上 activating 窗口', () => {
     await entered;
 
     expect(app.plugins.getPlugin('gated')?.state).toBe('activating');
-    expect(host.hub.list()).toEqual(['gated/mw=live']);
+    expect(host.hub.use.list()).toEqual(['gated/mw=live']);
     const unloading = app.plugins.unload('gated');
     release();
     await Promise.all([registering, unloading]);
     await new Promise(r => setTimeout(r, 0)); // 冲刷异步 emit
 
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
-    expect(host.services.get(gatedSvc)).toBeUndefined();
+    expect(host.services.use.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
     expect(trace).not.toContain('unloaded:gated');
     expect(trace).not.toContain('loaded:gated');
-    expect(host.hub.list()).toEqual([]);
+    expect(host.hub.use.list()).toEqual([]);
   });
 
   it('apply 在窗口内抛错也不残留：接管让位，无 error 终态写入', async () => {
@@ -119,7 +119,7 @@ describe('unload 撞上 activating 窗口', () => {
     await Promise.all([registering, unloading]);
 
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
-    expect(host.services.get(gatedSvc)).toBeUndefined();
+    expect(host.services.use.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
   });
 });
@@ -138,7 +138,7 @@ describe('disable 撞上 activating 窗口', () => {
 
     expect(ok).toBe(true);
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
-    expect(host.services.get(gatedSvc)).toBeUndefined();
+    expect(host.services.use.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
     // enable 依赖的不变量：disabled 态激活记录必已清（否则重激活被闸永跳）
     expect(recordOf(app, 'gated')?.activation).toBeUndefined();
@@ -153,7 +153,7 @@ describe('disable 终态窗口内 provider 重载不得复活消费者', () => {
       provides: [pSvc],
       uses: { provide, config },
       apply({ provide, config }) {
-        provide(pSvc, { v: typeof config.v === 'number' ? config.v : 1 });
+        provide.use(pSvc, { v: typeof config.use.v === 'number' ? config.use.v : 1 });
       },
     });
     let releaseDispose!: () => void;
@@ -169,7 +169,7 @@ describe('disable 终态窗口内 provider 重载不得复活消费者', () => {
       uses: { lifecycle, pSvc },
       apply({ lifecycle }) {
         trace.push('cons:apply');
-        lifecycle.onDispose(async () => {
+        lifecycle.use.onDispose(async () => {
           disposeEntered();
           await disposeGate;
         }, 'cons:gated');
@@ -189,7 +189,7 @@ describe('disable 终态窗口内 provider 重载不得复活消费者', () => {
 
     expect(app.plugins.getPlugin('cons')?.state).toBe('disabled');
     expect(trace.filter(t => t === 'cons:apply')).toHaveLength(1);
-    expect(host.services.get(gatedSvc)).toBeUndefined();
+    expect(host.services.use.get(gatedSvc)).toBeUndefined();
   });
 });
 
@@ -201,7 +201,7 @@ describe('provider 重载时 activating 的 required 下游一并收敛', () => 
       provides: [pSvc],
       uses: { provide, config },
       apply({ provide, config }) {
-        provide(pSvc, { v: typeof config.v === 'number' ? config.v : 1 });
+        provide.use(pSvc, { v: typeof config.use.v === 'number' ? config.use.v : 1 });
       },
     });
     let release!: () => void;
@@ -237,7 +237,7 @@ describe('provider 重载时 activating 的 required 下游一并收敛', () => 
 
     expect(trace.filter(t => t.startsWith('cons:apply'))).toEqual(['cons:apply#1', 'cons:apply#2']);
     expect(app.plugins.getPlugin('cons')?.state).toBe('active');
-    expect(host.services.get(pSvc)?.v).toBe(2);
+    expect(host.services.use.get(pSvc)?.v).toBe(2);
   });
 });
 
@@ -281,7 +281,7 @@ describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () =
 
     expect(ok).toBe(true);
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
-    expect(host.services.get(gatedSvc)).toBeUndefined();
+    expect(host.services.use.get(gatedSvc)).toBeUndefined();
   });
 });
 
@@ -302,7 +302,7 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
       provides: [pSvc],
       uses: { provide },
       apply({ provide }) {
-        provide(pSvc, { v: 1 });
+        provide.use(pSvc, { v: 1 });
       },
     });
     const consumer = definePlugin({
@@ -310,7 +310,7 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
       uses: { lifecycle, pSvc },
       apply({ lifecycle }) {
         trace.push('cons:apply');
-        lifecycle.onDispose(async () => {
+        lifecycle.use.onDispose(async () => {
           disposeEntered();
           await disposeGate;
         }, 'cons:gated');
@@ -354,8 +354,8 @@ describe('unload 拆卸未完成时同 id 重装', () => {
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
           trace.push('apply');
-          provide(gatedSvc, { alive: true });
-          lifecycle.onDispose(async () => {
+          provide.use(gatedSvc, { alive: true });
+          lifecycle.use.onDispose(async () => {
             disposeEntered();
             await disposeGate;
           }, 'gated:res');
@@ -378,7 +378,7 @@ describe('unload 拆卸未完成时同 id 重装', () => {
     await app.plugin(make());
     await app.plugins.idle();
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
-    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
+    expect(host.services.use.get(gatedSvc)).toEqual({ alive: true });
     expect(trace.filter(t => t === 'apply')).toHaveLength(2);
   });
 });
@@ -401,8 +401,8 @@ describe('并发双 unload', () => {
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
           trace.push('apply');
-          provide(gatedSvc, { alive: true });
-          lifecycle.onDispose(async () => {
+          provide.use(gatedSvc, { alive: true });
+          lifecycle.use.onDispose(async () => {
             disposeEntered();
             await disposeGate;
           }, 'gated:res');
@@ -424,7 +424,7 @@ describe('并发双 unload', () => {
     await app.plugin(make());
     await app.plugins.idle();
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
-    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
+    expect(host.services.use.get(gatedSvc)).toEqual({ alive: true });
   });
 });
 
@@ -443,7 +443,7 @@ describe('updateConfig 撞上 activating 窗口', () => {
 
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
     expect(app.plugins.getPlugin('gated')?.config).toEqual({ n: 2 });
-    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
+    expect(host.services.use.get(gatedSvc)).toEqual({ alive: true });
 
     const disposedAt = trace.indexOf('disposed');
     const reapplyAt = trace.indexOf('apply:{"n":2}');

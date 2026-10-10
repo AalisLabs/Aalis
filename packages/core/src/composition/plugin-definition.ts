@@ -1,8 +1,8 @@
 // ============================================================
 // plugin-definition.ts — 插件定义与挂载
 //
-// 插件是一份定义：名字、用到的能力（uses）、提供的服务、元数据，以及拿到绑定接口后的 apply。
-// 调度器挂载时：写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
+// 插件是一份定义：名字、用到的能力（uses）、提供的服务、元数据，以及拿到各服务选择层后的 apply。
+// 调度器挂载时：写入这次激活的配置 → 按 uses 装配选择层 → 调 apply。
 // ============================================================
 
 import { assertOwnCopy, type BoundOf, type CheckedUses, isOptional, type ServiceDescriptor } from './descriptors.js';

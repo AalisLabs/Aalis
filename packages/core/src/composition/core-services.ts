@@ -1,8 +1,9 @@
 // ============================================================
 // core-services.ts — 内置六项服务的描述符与提供者
 //
-// 与契约包的服务同一种做法：提供者由根激活经 provide 登记（独占），描述符的 bind 只用公开的资源口。
-// 六项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；认不出的身份抛错。
+// 与契约包的服务同一种做法：提供者由根激活经 provide 登记（独占），描述符的 bind 只用公开的资源口，选择层同样两层。
+// 六项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；认不出的身份抛错。业务句柄就是这份门面，
+// 装配时取一次：根是唯一的提供者、活得比插件长，本次激活拆卸之后门面照常可用（logger 不抛、config 照常可读）。
 // 动态查询拿到提供者，也只能以自己的身份取到自己的门面。
 // 原语登记按身份归属，由拆卸的同栈切断统一撤回；手动退订直接撤原语登记，不另记清理链。
 // ============================================================
@@ -44,7 +45,7 @@ interface CoreCaller {
 
 /** 内置服务的描述符：提供者是「身份 → 门面」，bind 以本资源口的身份取门面 */
 function builtin<B>(name: string): ServiceDescriptor<(identity: symbol) => B, B> {
-  return defineService<(identity: symbol) => B, B>(name, port => port.require()(port.identity));
+  return defineService<(identity: symbol) => B, B>(name, port => port.provider(port.identity));
 }
 
 // ----- events -----
@@ -108,22 +109,29 @@ export type ServiceKey = AnyDescriptor | string;
 type KeyedProvider<K extends ServiceKey> = K extends AnyDescriptor ? ProviderOf<K> : unknown;
 const keyName = (key: ServiceKey): string => (typeof key === 'string' ? key : key.name);
 
+/** 偏好的范围：给 `for`（插件实例 id）即那个插件的本插件偏好，不给即全局偏好 */
+export interface PreferenceScope {
+  for?: string;
+}
+
 /**
  * 动态查询与偏好管理（管理、展示面用）。查到的服务不是声明依赖：不参与激活闸，
- * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。
+ * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。get / all / inspect 按全局口径（不看本插件偏好）。
+ * 偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
  */
 export interface Services {
-  /** 当前胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
+  /** 全局胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
   get<K extends ServiceKey>(key: K): KeyedProvider<K> | undefined;
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
   /** 当前有提供者的全部服务名（与 get / all / inspect 同一口径：转入后台、尚未完成激活的提供者不算） */
   names(): string[];
   /** 只读登记元数据（不含实例） */
   inspect(key: ServiceKey): ServiceInfo[];
-  /** 某服务当前的偏好提供者（contextId）；无偏好为 undefined */
-  preferred(key: ServiceKey): string | undefined;
-  prefer(key: ServiceKey, contextId: string): boolean;
-  unprefer(key: ServiceKey): boolean;
+  /** 偏好的提供者（contextId）；无偏好为 undefined */
+  preferred(key: ServiceKey, scope?: PreferenceScope): string | undefined;
+  /** 设偏好：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false */
+  prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): boolean;
+  unprefer(key: ServiceKey, scope?: PreferenceScope): boolean;
 }
 export const services = builtin<Services>('services');
 
@@ -150,14 +158,14 @@ export function coreProviders(
     all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
     names: () => container.getServiceNames().filter(name => container.get(name) !== undefined),
     inspect: key => container.inspect(keyName(key)),
-    preferred: key => container.getPreferred(keyName(key)),
-    prefer: (key, contextId) => {
-      const ok = container.prefer(keyName(key), contextId);
+    preferred: (key, scope) => container.getPreferred(keyName(key), scope?.for),
+    prefer: (key, contextId, scope) => {
+      const ok = container.prefer(keyName(key), contextId, scope?.for);
       if (ok) runtime.notify('service:changed', keyName(key));
       return ok;
     },
-    unprefer: key => {
-      const ok = container.unprefer(keyName(key));
+    unprefer: (key, scope) => {
+      const ok = container.unprefer(keyName(key), scope?.for);
       if (ok) runtime.notify('service:changed', keyName(key));
       return ok;
     },

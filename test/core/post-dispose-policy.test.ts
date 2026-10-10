@@ -5,7 +5,7 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
-// - 订阅类（events/provide/ServiceRef.follow/资源口 registrar 账本）：warn + no-op
+// - 订阅类（events/provide/选择层 follow/资源口 registrar 账本）：warn + no-op
 // - 构造类（host.create）：抛错
 // - onDispose 特例：warn 后仍就地执行（握着资源，no-op 即泄漏）
 // 本文件是该政策的全量行为锚：6 个入口逐一钉死，含幽灵副作用断言与活路径回归。
@@ -28,7 +28,7 @@ function makeWorld() {
   const world = createActivationFixture({ logger });
   // 枢纽提供者挂在根上：子激活关闭后登记表仍在场可读，迟到登记若落进去看得见
   const registry = new HubRegistry();
-  world.caps.provide(hub, registry);
+  world.caps.provide.use(hub, registry);
   const make = (id: string) => {
     const activation = world.host.create(id);
     return { ...bindActivationFixture(world.host, activation), hub: world.host.bind(activation, { hub }).hub };
@@ -45,12 +45,12 @@ describe('订阅类 post-dispose：warn + no-op', () => {
 
     const onSpy = vi.spyOn(events, 'on');
     let called = 0;
-    const off = dead.caps.events.on('plugin:loaded', () => {
+    const off = dead.caps.events.use.on('plugin:loaded', () => {
       called++;
     });
     // 判别性断言：守卫必须让注册**根本不发生**（无守卫时是幽灵注册秒退，spy 会记到 1 次）
     expect(onSpy).not.toHaveBeenCalled();
-    await observer.caps.events.emit('plugin:loaded', 'x');
+    await observer.caps.events.use.emit('plugin:loaded', 'x');
     expect(called).toBe(0);
     expect(off).toBeTypeOf('function');
     expect(() => off()).not.toThrow();
@@ -65,10 +65,10 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await dead.activation.disposeAsync();
 
     const regSpy = vi.spyOn(registry, 'register');
-    const off = dead.hub.add('late', 'v');
+    const off = dead.hub.use.add('late', 'v');
     // 迟到登记不得到达登记表；warn 是关闭守卫生效的直接证据
     expect(regSpy).not.toHaveBeenCalled();
-    expect(observer.hub.list()).toEqual([]);
+    expect(observer.hub.use.list()).toEqual([]);
     expect(off).toBeTypeOf('function');
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('"dead" 已关闭，忽略 __t:hub 登记 "late"'))).toMatch(/^warn\|/);
@@ -82,13 +82,13 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await dead.activation.disposeAsync();
 
     const seen: string[] = [];
-    observer.caps.events.on('service:changed', name => void seen.push(name));
+    observer.caps.events.use.on('service:changed', name => void seen.push(name));
 
-    const off = dead.caps.provide(defineService('ghost-svc'), { v: 1 });
+    const off = dead.caps.provide.use(defineService('ghost-svc'), { v: 1 });
     // 事件总线是异步 emit——冲刷微任务后仍必须零事件
     await new Promise(r => setTimeout(r, 0));
     expect(seen).toEqual([]);
-    expect(observer.caps.services.get('ghost-svc')).toBeUndefined();
+    expect(observer.caps.services.use.get('ghost-svc')).toBeUndefined();
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略 provide("ghost-svc")'))).toMatch(/^warn\|/);
     await observer.activation.disposeAsync();
@@ -97,7 +97,7 @@ describe('订阅类 post-dispose：warn + no-op', () => {
   it('follow：服务已在场也不执行回调（此前会真跑一次再被清理）', async () => {
     const { make, lines } = makeWorld();
     const provider = make('provider');
-    provider.caps.provide(defineService('ready-svc'), { v: 1 });
+    provider.caps.provide.use(defineService('ready-svc'), { v: 1 });
     const dead = make('dead');
     const { ref } = dead.host.bind(dead.activation, { ref: defineService('ready-svc') });
     await dead.activation.disposeAsync();
@@ -117,9 +117,9 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     const ctx = make('p');
     const { ref } = ctx.host.bind(ctx.activation, { ref: defineService('y') });
     await ctx.activation.disposeAsync();
-    ctx.caps.events.on(EVT, () => {});
-    ctx.hub.add('z', 'v');
-    ctx.caps.provide(defineService('x'), {});
+    ctx.caps.events.use.on(EVT, () => {});
+    ctx.hub.use.add('z', 'v');
+    ctx.caps.provide.use(defineService('x'), {});
     ref.follow(() => {});
     expect(ctx.activation.resources.disposables.labels()).toEqual([]);
     expect(registry.list()).toEqual([]);
@@ -142,7 +142,7 @@ describe('onDispose 特例：warn 后仍就地执行（资源必须释放）', (
     const ctx = make('p');
     await ctx.activation.disposeAsync();
     let released = false;
-    ctx.caps.lifecycle.onDispose(() => {
+    ctx.caps.lifecycle.use.onDispose(() => {
       released = true;
     }, 'late-client');
     expect(released).toBe(true);
@@ -157,28 +157,28 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
     const peer = make('peer');
     const calls: string[] = [];
 
-    ctx.caps.events.on('plugin:loaded', () => {
+    ctx.caps.events.use.on('plugin:loaded', () => {
       calls.push('on');
     });
-    ctx.hub.add('a', 'v');
-    ctx.caps.provide(defineService('alive-svc'), { v: 1 });
+    ctx.hub.use.add('a', 'v');
+    ctx.caps.provide.use(defineService('alive-svc'), { v: 1 });
     ctx.host.bind(ctx.activation, { ref: defineService('alive-svc') }).ref.follow(() => {
       calls.push('when');
     });
-    ctx.caps.lifecycle.onDispose(() => {
+    ctx.caps.lifecycle.use.onDispose(() => {
       calls.push('cleanup');
     });
 
-    await peer.caps.events.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('plugin:loaded', 'x');
     expect(calls).toContain('on');
     expect(calls).toContain('when');
-    expect(peer.caps.services.get('alive-svc')).toEqual({ v: 1 });
-    expect(peer.hub.list()).toEqual(['alive/a=v']);
+    expect(peer.caps.services.use.get('alive-svc')).toEqual({ v: 1 });
+    expect(peer.hub.use.list()).toEqual(['alive/a=v']);
 
     await ctx.activation.disposeAsync();
     expect(calls).toContain('cleanup');
-    expect(peer.caps.services.get('alive-svc')).toBeUndefined();
-    expect(peer.hub.list()).toEqual([]);
+    expect(peer.caps.services.use.get('alive-svc')).toBeUndefined();
+    expect(peer.hub.use.list()).toEqual([]);
     await peer.activation.disposeAsync();
   });
 
@@ -201,7 +201,7 @@ describe('拆卸进行中（activation 在飞窗口）：迟到的 onDispose', (
     let released = false;
     const applying = (async () => {
       await gate;
-      ctx.caps.lifecycle.onDispose(() => {
+      ctx.caps.lifecycle.use.onDispose(() => {
         released = true;
       }, 'late-conn');
     })();

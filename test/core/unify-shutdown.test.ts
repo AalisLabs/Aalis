@@ -77,7 +77,7 @@ const storagePlugin = (w: World) =>
     uses: { provide, lifecycle },
     provides: [storage],
     apply({ provide, lifecycle }) {
-      provide(storage, {
+      provide.use(storage, {
         async write(data) {
           if (w.storageClosed) throw new Error('storage 已关闭');
           await w.gate;
@@ -85,7 +85,7 @@ const storagePlugin = (w: World) =>
           w.persisted.push(data);
         },
       });
-      lifecycle.onDispose(() => {
+      lifecycle.use.onDispose(() => {
         w.storageClosed = true;
         w.log.push('close:storage');
       });
@@ -99,13 +99,13 @@ const memoryPlugin = (w: World, name = 'memory', options?: { priority?: number }
     provides: [memory],
     apply({ storage, provide, lifecycle }) {
       const buffer: string[] = [];
-      provide(memory, { save: async data => void buffer.push(data) }, options);
+      provide.use(memory, { save: async data => void buffer.push(data) }, options);
       // 收尾：把缓冲落到下层并等它确认；此刻 storage 必须还活着
-      lifecycle.onDrain(async () => {
-        for (const data of buffer.splice(0)) await storage.require().write(`${name}:${data}`);
+      lifecycle.use.onDrain(async () => {
+        for (const data of buffer.splice(0)) await storage.use.write(`${name}:${data}`);
         w.log.push(`flushed:${name}`);
       }, `${name}:flush`);
-      lifecycle.onDispose(() => void w.log.push(`close:${name}`));
+      lifecycle.use.onDispose(() => void w.log.push(`close:${name}`));
     },
   });
 
@@ -114,10 +114,10 @@ const agentPlugin = (w: World) =>
     name: 'agent',
     uses: { memory: optional(memory), lifecycle },
     apply({ memory, lifecycle }) {
-      lifecycle.onDrain(async () => {
-        await memory.current?.save('last-words');
+      lifecycle.use.onDrain(async () => {
+        if (memory.present) await memory.use.save('last-words');
       });
-      lifecycle.onDispose(() => void w.log.push('close:agent'));
+      lifecycle.use.onDispose(() => void w.log.push('close:agent'));
     },
   });
 
@@ -140,7 +140,7 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     await sleep(20);
     expect(stopped, '停机等业务交出来的 Promise').toBe(false);
     expect(w.storageClosed, '阻塞期间 storage 未关').toBe(false);
-    expect(host.services.get(storage), '阻塞期间 storage 仍经容器可用').toBeDefined();
+    expect(host.services.use.get(storage), '阻塞期间 storage 仍经容器可用').toBeDefined();
     expect(w.log, 'agent 已完成收尾并关闭；memory 卡在落盘上').toEqual(['close:agent']);
     gate.resolve();
     await stopping;
@@ -197,12 +197,12 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'writer',
         uses: { memory, lifecycle },
         apply({ memory, lifecycle }) {
-          void memory.require().save('via-old');
-          lifecycle.onDrain(async () => {
-            await memory.require().save('via-new');
+          void memory.use.save('via-old');
+          lifecycle.use.onDrain(async () => {
+            await memory.use.save('via-new');
             saved.push('writer-drained');
           });
-          lifecycle.onDispose(() => void w.log.push('close:writer'));
+          lifecycle.use.onDispose(() => void w.log.push('close:writer'));
         },
       }),
     );
@@ -226,9 +226,9 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'a',
         uses: { pong: optional(pong), provide, lifecycle },
         apply({ pong, provide, lifecycle }) {
-          provide(ping, { hit: () => void w.log.push('ping<-b') });
-          lifecycle.onDrain(() => void w.log.push(`drain:a pong=${pong.current ? 'alive' : 'gone'}`));
-          lifecycle.onDispose(() => void w.log.push('close:a'));
+          provide.use(ping, { hit: () => void w.log.push('ping<-b') });
+          lifecycle.use.onDrain(() => void w.log.push(`drain:a pong=${pong.present ? 'alive' : 'gone'}`));
+          lifecycle.use.onDispose(() => void w.log.push('close:a'));
         },
       }),
     );
@@ -237,9 +237,9 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'b',
         uses: { ping: optional(ping), provide, lifecycle },
         apply({ ping, provide, lifecycle }) {
-          provide(pong, { hit() {} });
-          lifecycle.onDrain(() => ping.require().hit());
-          lifecycle.onDispose(() => void w.log.push('close:b'));
+          provide.use(pong, { hit() {} });
+          lifecycle.use.onDrain(() => ping.use.hit());
+          lifecycle.use.onDispose(() => void w.log.push('close:b'));
         },
       }),
     );
@@ -266,8 +266,8 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'seed',
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(ping, { hit() {} });
-          lifecycle.onDispose(closes('seed'));
+          provide.use(ping, { hit() {} });
+          lifecycle.use.onDispose(closes('seed'));
         },
       }),
     );
@@ -276,9 +276,9 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'a',
         uses: { ping, provide, lifecycle },
         apply({ ping, provide, lifecycle }) {
-          provide(pong, { hit() {} });
-          lifecycle.onDrain(() => void w.log.push(`drain:a ping=${ping.current ? 'alive' : 'gone'}`));
-          lifecycle.onDispose(closes('a'));
+          provide.use(pong, { hit() {} });
+          lifecycle.use.onDrain(() => void w.log.push(`drain:a ping=${ping.present ? 'alive' : 'gone'}`));
+          lifecycle.use.onDispose(closes('a'));
         },
       }),
     );
@@ -288,8 +288,8 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'b',
         uses: { pong, provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(ping, { hit() {} }, { priority: 10 });
-          lifecycle.onDispose(closes('b'));
+          provide.use(ping, { hit() {} }, { priority: 10 });
+          lifecycle.use.onDispose(closes('b'));
         },
       }),
     );
@@ -298,8 +298,8 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     const cycle = w.warnings.filter(x => x.includes('required 依赖成环'));
     expect(cycle).toHaveLength(1);
     expect(cycle[0]).toContain('[b, a]');
-    // seed 已被顶替、无人依赖，不受环牵连：环卡住时它是唯一就绪的，先走；环内先都收尾，再按自然次序 b、a 关
-    expect(w.log).toEqual(['close:seed', 'drain:a ping=alive', 'close:b', 'close:a']);
+    // 环内先都收尾，再按自然次序 b、a 关；seed 被顶替了，但 a 声明了 ping，它也是 a 的提供者，排在 a 之后关
+    expect(w.log).toEqual(['drain:a ping=alive', 'close:b', 'close:a', 'close:seed']);
   });
 });
 
@@ -313,9 +313,9 @@ describe('收尾段：需要下层回调确认的交接', () => {
         name: 'lower',
         uses: { events },
         apply({ events }) {
-          events.on('__t:save', async data => {
+          events.use.on('__t:save', async data => {
             await sleep(5);
-            await events.emit('__t:saved', data);
+            await events.use.emit('__t:saved', data);
           });
         },
       }),
@@ -326,12 +326,12 @@ describe('收尾段：需要下层回调确认的交接', () => {
         name: 'upper',
         uses: { events, lifecycle },
         apply({ events, lifecycle }) {
-          events.on('__t:saved', data => void acked.push(data));
-          lifecycle.onDrain(async () => {
-            await events.emit('__t:save', 'in-drain');
+          events.use.on('__t:saved', data => void acked.push(data));
+          lifecycle.use.onDrain(async () => {
+            await events.use.emit('__t:save', 'in-drain');
           });
-          lifecycle.onDispose(async () => {
-            await events.emit('__t:save', 'in-dispose');
+          lifecycle.use.onDispose(async () => {
+            await events.use.emit('__t:save', 'in-dispose');
           });
         },
       }),

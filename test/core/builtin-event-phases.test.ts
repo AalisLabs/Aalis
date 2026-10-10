@@ -26,7 +26,7 @@ describe('内置事件：通知节不等监听器', () => {
       release = r;
     });
     const applied: string[] = [];
-    bus.on('plugin:loaded', async name => {
+    bus.use.on('plugin:loaded', async name => {
       if (name === 'first') await gate;
     });
 
@@ -47,7 +47,7 @@ describe('内置事件：通知节不等监听器', () => {
     const app = silentApp();
     const { events: bus } = app.bind({ events });
     let settled = false;
-    bus.on('plugin:loaded', async () => {
+    bus.use.on('plugin:loaded', async () => {
       await app.plugins.idle();
       settled = true;
     });
@@ -70,8 +70,8 @@ describe('内置事件：屏障节等监听器', () => {
       await new Promise<void>(r => setTimeout(r, 15));
       order.push(tag);
     };
-    bus.on('app:ready', slow('ready'));
-    bus.on('app:started', () => void order.push('started'));
+    bus.use.on('app:ready', slow('ready'));
+    bus.use.on('app:started', () => void order.push('started'));
 
     await app.start();
     expect(order).toEqual(['ready', 'started']);
@@ -82,7 +82,7 @@ describe('内置事件：屏障节等监听器', () => {
     const app = silentApp();
     const { events: bus } = app.bind({ events });
     const order: string[] = [];
-    bus.on('app:stopping', async () => {
+    bus.use.on('app:stopping', async () => {
       await new Promise<void>(r => setTimeout(r, 15));
       order.push('stopping');
     });
@@ -91,7 +91,7 @@ describe('内置事件：屏障节等监听器', () => {
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(() => void order.push('disposed'));
+          lifecycle.use.onDispose(() => void order.push('disposed'));
         },
       }),
     );
@@ -119,7 +119,7 @@ describe('内置事件：屏障节等监听器', () => {
       },
     });
     const { events: bus } = app.bind({ events });
-    bus.on('app:restarting', async () => {
+    bus.use.on('app:restarting', async () => {
       await new Promise<void>(r => setTimeout(r, 15));
       order.push('restarting');
     });

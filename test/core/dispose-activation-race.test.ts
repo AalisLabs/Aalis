@@ -163,7 +163,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
         uses: { lifecycle },
         async apply({ lifecycle }) {
           await acquire.promise;
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             await sleep(0);
             flushed = true;
           });

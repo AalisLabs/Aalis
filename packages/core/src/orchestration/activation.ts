@@ -10,7 +10,7 @@ interface Edge {
   /** 提供方身份 */
   readonly owner: symbol;
   readonly required: boolean;
-  /** 让该跟随者向当前胜者收敛 */
+  /** 让该跟随者向它的目标收敛 */
   readonly pump: () => void;
   /** 撤回已发起、尚未落定 */
   settling?: Promise<void>;
@@ -54,10 +54,9 @@ export class Activation {
     this.#owners = owners;
   }
 
-  /** 登记一条跟随边；释放时带上撤回的落定，边留到落定为止 */
-  retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void {
-    // 只在 pump 解析到提供者之后调用：条目存在，owner 必有；容器里的条目都出自仍在册的激活（撤回先于除名）
-    const owner = this.#services.ownerOf(name)!;
+  /** 登记一条跟随边，指向挂上的那一条的提供方 owner；释放时带上撤回的落定，边留到落定为止 */
+  retainBinding(owner: symbol, name: string, pump: () => void): (settling?: Promise<void>) => void {
+    // 容器里的条目都出自仍在册的激活（撤回先于除名）
     const provider = this.#owners.get(owner)!;
     const edge: Edge = {
       from: this,
@@ -104,14 +103,18 @@ export class Activation {
     );
   }
 
-  /** 关闭时还要用到的提供者 → 是否 required：声明的依赖此刻的胜者，与撤回还没落定的跟随边 */
+  /**
+   * 关闭时还要用到的提供者 → 是否 required：声明的服务此刻对外的全部提供者（`use`、`of(id)` 与 `list()` 打到的都受保护），
+   * 与撤回还没落定的跟随边
+   */
   providers(): Map<Activation, boolean> {
     const providers = new Map<Activation, boolean>();
     const depend = (owner: symbol | undefined, required: boolean): void => {
       const provider = owner && this.#owners.get(owner);
       if (provider && provider !== this) providers.set(provider, required || providers.get(provider) === true);
     };
-    for (const [name, required] of this.declared) depend(this.#services.ownerOf(name), required);
+    for (const [name, required] of this.declared)
+      for (const owner of this.#services.ownersOf(name)) depend(owner, required);
     for (const edge of this.#outbound) depend(edge.owner, edge.required);
     return providers;
   }

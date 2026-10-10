@@ -33,7 +33,7 @@ function makeWorld() {
 describe('follow 统一错误政策', () => {
   it('首挂抛错：不逃逸出注册调用、返回可用 disposer、warn 点名、订阅保持', async () => {
     const { app, host, lines } = makeWorld();
-    const offP = host.provide(svc, { v: 1 }, { entryId: 'p1' });
+    const offP = host.provide.use(svc, { v: 1 }, { entryId: 'p1' });
 
     let calls = 0;
     let off!: () => void;
@@ -57,7 +57,7 @@ describe('follow 统一错误政策', () => {
     expect(lines.find(l => l.includes('跟随回调抛错'))).toMatch(/^warn\|/);
 
     offP();
-    host.provide(svc, { v: 2 }, { entryId: 'p2' });
+    host.provide.use(svc, { v: 2 }, { entryId: 'p2' });
     await flush();
     expect(calls).toBe(2);
 
@@ -83,7 +83,7 @@ describe('follow 统一错误政策', () => {
     expect(app.plugins.getPlugin('watcher')?.state).toBe('active');
     expect(calls).toBe(0);
 
-    host.provide(svc, { v: 1 });
+    host.provide.use(svc, { v: 1 });
     await flush();
     expect(calls).toBe(1);
     expect(lines.filter(l => l.includes('跟随回调抛错'))).toHaveLength(1);
@@ -91,7 +91,7 @@ describe('follow 统一错误政策', () => {
 
   it('成功路径回归：cleanup 在关闭时照常执行', async () => {
     const { app, host } = makeWorld();
-    host.provide(svc, { v: 1 });
+    host.provide.use(svc, { v: 1 });
     const seen: string[] = [];
     await app.plugin(
       definePlugin({

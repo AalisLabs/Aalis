@@ -39,7 +39,7 @@ describe('内置能力', () => {
         name: 'reader',
         uses: { config },
         apply({ config }) {
-          own = config;
+          own = config.use;
         },
       }),
       { greeting: 'hi' },
@@ -56,24 +56,24 @@ describe('内置能力', () => {
         definePlugin({
           name: `kv-${tag}`,
           uses: { provide },
-          apply: ({ provide }) => void provide(kv, { tag }),
+          apply: ({ provide }) => void provide.use(kv, { tag }),
         }),
       );
     }
     await app.plugins.idle();
     const host = app.bind({ services });
 
-    expect(host.services.get(kv)?.tag).toBe('a');
-    expect((host.services.get('__t:kv') as { tag: string }).tag).toBe('a');
-    expect(host.services.all('__t:kv').map(view => view.contextId)).toEqual(['kv-a', 'kv-b']);
-    expect(host.services.get('__t:nobody')).toBeUndefined();
+    expect(host.services.use.get(kv)?.tag).toBe('a');
+    expect((host.services.use.get('__t:kv') as { tag: string }).tag).toBe('a');
+    expect(host.services.use.all('__t:kv').map(view => view.contextId)).toEqual(['kv-a', 'kv-b']);
+    expect(host.services.use.get('__t:nobody')).toBeUndefined();
 
     // 按名设的偏好，按描述符读得到，反之亦然
-    expect(host.services.prefer('__t:kv', 'kv-b')).toBe(true);
-    expect(host.services.preferred(kv)).toBe('kv-b');
-    expect(host.services.get(kv)?.tag).toBe('b');
-    expect(host.services.unprefer(kv)).toBe(true);
-    expect(host.services.preferred('__t:kv')).toBeUndefined();
+    expect(host.services.use.prefer('__t:kv', 'kv-b')).toBe(true);
+    expect(host.services.use.preferred(kv)).toBe('kv-b');
+    expect(host.services.use.get(kv)?.tag).toBe('b');
+    expect(host.services.use.unprefer(kv)).toBe(true);
+    expect(host.services.use.preferred('__t:kv')).toBeUndefined();
   });
 
   it('provide 的 entryId：条目取给定的逻辑身份（如托管的前端包名，core 不检查格式），清理仍归登记它的激活', async () => {
@@ -85,26 +85,26 @@ describe('内置能力', () => {
         name: 'host-of-faces',
         uses: { provide },
         apply({ provide }) {
-          provide(face, { dir: '/a' }, { label: 'A', entryId: '@scope/face-a' });
-          provide(face, { dir: '/b' }, { entryId: 'not-prefixed' });
+          provide.use(face, { dir: '/a' }, { label: 'A', entryId: '@scope/face-a' });
+          provide.use(face, { dir: '/b' }, { entryId: 'not-prefixed' });
           // 已删的 onBehalfOf 不再认：条目身份落回本激活 id
-          provide(face, { dir: '/c' }, { onBehalfOf: '@scope/face-c' } as never);
+          provide.use(face, { dir: '/c' }, { onBehalfOf: '@scope/face-c' } as never);
         },
       }),
     );
     await app.plugins.idle();
     const host = app.bind({ services });
-    expect(host.services.all(face).map(view => view.contextId)).toEqual([
+    expect(host.services.use.all(face).map(view => view.contextId)).toEqual([
       '@scope/face-a',
       'not-prefixed',
       'host-of-faces',
     ]);
 
     await app.plugins.unload('host-of-faces');
-    expect(host.services.all(face)).toEqual([]);
+    expect(host.services.use.all(face)).toEqual([]);
   });
 
-  it('require() 缺席时点名是哪个服务、谁声明的', async () => {
+  it('缺席时访问业务句柄的成员，报错点名是哪个服务、谁声明的', async () => {
     const missing = defineService<{ ping(): void }>('__t:missing');
     const app = makeApp();
     let thrown: unknown;
@@ -114,7 +114,7 @@ describe('内置能力', () => {
         uses: { missing: optional(missing) },
         apply({ missing }) {
           try {
-            missing.require();
+            missing.use.ping();
           } catch (err) {
             thrown = err;
           }
@@ -156,7 +156,7 @@ describe('同名服务的描述符', () => {
         name,
         uses: { provide },
         apply({ provide }) {
-          provide(descriptor, { from: name });
+          provide.use(descriptor, { from: name });
         },
       });
     await app.pluginAll([
@@ -169,7 +169,7 @@ describe('同名服务的描述符', () => {
     expect(
       app
         .bind({ services })
-        .services.all(shared)
+        .services.use.all(shared)
         .map(view => view.instance.from),
     ).toEqual(['first', 'second', 'third']);
     expect(warnings.filter(line => line.includes('描述符对象'))).toEqual([

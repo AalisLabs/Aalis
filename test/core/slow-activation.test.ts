@@ -89,10 +89,10 @@ function world(options: Partial<AppOptions> = {}) {
   apps.push(app);
   const host = app.bind({ events, services, provide });
   const trace: string[] = [];
-  host.events.on('service:changed', name => void trace.push(`~${name}`));
-  host.events.on('plugin:loaded', id => void trace.push(`loaded:${id}`));
-  host.events.on('plugin:unloaded', id => void trace.push(`unloaded:${id}`));
-  host.events.on('plugins:changed', () => void trace.push('changed'));
+  host.events.use.on('service:changed', name => void trace.push(`~${name}`));
+  host.events.use.on('plugin:loaded', id => void trace.push(`loaded:${id}`));
+  host.events.use.on('plugin:unloaded', id => void trace.push(`unloaded:${id}`));
+  host.events.use.on('plugins:changed', () => void trace.push('changed'));
   const at = (level: string) => lines.filter(line => line.level === level).map(line => line.text);
   const status = (id: string): PluginStatusEntry | undefined =>
     app.plugins.getStatus().find(entry => entry.instanceId === id);
@@ -186,7 +186,7 @@ describe('慢激活转入后台', () => {
           uses: { provide },
           provides: [store],
           async apply({ provide }) {
-            provide(store, { ready: true });
+            provide.use(store, { ready: true });
             await gate.promise;
           },
         }),
@@ -195,7 +195,7 @@ describe('慢激活转入后台', () => {
         definition: definePlugin({
           name: 'dependent',
           uses: { store },
-          apply: ({ store }) => void got.push(store.require().ready),
+          apply: ({ store }) => void got.push(store.use.ready),
         }),
       },
     ]);
@@ -203,10 +203,10 @@ describe('慢激活转入后台', () => {
     expect(w.status('slow-store')).toMatchObject({ state: 'activating', slow: true });
     expect(w.status('dependent')?.state).toBe('pending');
     expect(got).toEqual([]);
-    expect(w.host.services.get(store)).toBeUndefined();
-    expect(w.host.services.all(store)).toEqual([]);
-    expect(w.host.services.inspect(store)).toEqual([]);
-    expect(w.host.services.names()).not.toContain(store.name);
+    expect(w.host.services.use.get(store)).toBeUndefined();
+    expect(w.host.services.use.all(store)).toEqual([]);
+    expect(w.host.services.use.inspect(store)).toEqual([]);
+    expect(w.host.services.use.names()).not.toContain(store.name);
     // 阈值前照常可见（apply 里 provide 当场登记），转入后台时撤下
     expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`~${store.name}`, `~${store.name}`]);
 
@@ -215,7 +215,7 @@ describe('慢激活转入后台', () => {
     await until(() => w.status('dependent')?.state === 'active', '依赖方自动激活');
     expect(w.status('slow-store')?.state).toBe('active');
     expect(got).toEqual([true]);
-    expect(w.host.services.get(store)).toEqual({ ready: true });
+    expect(w.host.services.use.get(store)).toEqual({ ready: true });
     expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`~${store.name}`, `~${store.name}`, `~${store.name}`]);
     expect(w.trace).toContain('loaded:slow-store');
     expect(w.trace).toContain('loaded:dependent');
@@ -235,7 +235,7 @@ describe('慢激活转入后台', () => {
         async apply({ provide }) {
           await sleep(60);
           from = w.trace.length;
-          for (const [n, descriptor] of late.entries()) provide(descriptor, { n });
+          for (const [n, descriptor] of late.entries()) provide.use(descriptor, { n });
           await gate.promise;
         },
       }),
@@ -245,10 +245,10 @@ describe('慢激活转入后台', () => {
     const during = w.trace.slice(from);
     expect(during.filter(t => t.startsWith('~zz-slow-late-'))).toHaveLength(late.length);
     expect(during.filter(t => t === 'changed').length, '在飞一轮加合并排队的一轮').toBeLessThanOrEqual(2);
-    expect(w.host.services.get(late[0])).toBeUndefined();
+    expect(w.host.services.use.get(late[0])).toBeUndefined();
     gate.resolve();
     await until(() => w.status('late-provider')?.state === 'active', '落定');
-    expect(w.host.services.get(late[0])).toEqual({ n: 0 });
+    expect(w.host.services.use.get(late[0])).toEqual({ n: 0 });
   });
 
   it('后台激活失败进 error；它登记的服务从未对外上线，依赖方仍 pending', async () => {
@@ -263,7 +263,7 @@ describe('慢激活转入后台', () => {
           uses: { provide },
           provides: [store],
           async apply({ provide }) {
-            provide(store, {});
+            provide.use(store, {});
             await gate.promise;
             throw new Error('初始化失败');
           },
@@ -278,7 +278,7 @@ describe('慢激活转入后台', () => {
     expect(w.status('failing')?.error).toBe('初始化失败');
     expect(w.status('failing')?.slow).toBeUndefined();
     expect(w.status('dependent')?.state).toBe('pending');
-    expect(w.host.services.get(store)).toBeUndefined();
+    expect(w.host.services.use.get(store)).toBeUndefined();
   });
 
   it('apply 很快失败、失败回滚的清理慢于阈值：不算慢激活，flight 等回滚收完', async () => {
@@ -289,7 +289,7 @@ describe('慢激活转入后台', () => {
         name: 'fails-fast',
         uses: { lifecycle },
         async apply({ lifecycle }) {
-          lifecycle.onDispose(() => sleep(80));
+          lifecycle.use.onDispose(() => sleep(80));
           await sleep(5);
           throw new Error('初始化失败');
         },
@@ -329,7 +329,7 @@ describe('慢激活转入后台', () => {
       const runtime = activationHost(app).runtime;
       const notify = runtime.notify;
       const changed: string[] = [];
-      app.bind({ events }).events.on('plugins:changed', () => void changed.push('changed'));
+      app.bind({ events }).events.use.on('plugins:changed', () => void changed.push('changed'));
       const gate = deferred();
       releases.push(gate.resolve);
       await app.plugin(definePlugin({ name: 'noisy', apply: () => gate.promise }));
@@ -375,7 +375,7 @@ describe('慢激活转入后台', () => {
         name: 'huge',
         uses: { lifecycle },
         async apply({ lifecycle }) {
-          lifecycle.onDispose(() => sleep(30));
+          lifecycle.use.onDispose(() => sleep(30));
           await sleep(30);
         },
       }),
@@ -400,9 +400,9 @@ describe('lifecycle.signal 的时机', () => {
         uses: { provide, lifecycle },
         provides: [svc],
         apply({ provide, lifecycle }) {
-          providerLife = lifecycle;
-          provide(svc, {});
-          lifecycle.onDrain(() => void seen.push(`provider: 自己=${lifecycle.signal.aborted}`));
+          providerLife = lifecycle.use;
+          provide.use(svc, {});
+          lifecycle.use.onDrain(() => void seen.push(`provider: 自己=${lifecycle.use.signal.aborted}`));
         },
       }),
     );
@@ -411,9 +411,10 @@ describe('lifecycle.signal 的时机', () => {
         name: 'consumer',
         uses: { svc, lifecycle },
         apply({ lifecycle }) {
-          consumerLife = lifecycle;
-          lifecycle.onDrain(
-            () => void seen.push(`consumer: 自己=${lifecycle.signal.aborted} 提供者=${providerLife.signal.aborted}`),
+          consumerLife = lifecycle.use;
+          lifecycle.use.onDrain(
+            () =>
+              void seen.push(`consumer: 自己=${lifecycle.use.signal.aborted} 提供者=${providerLife.signal.aborted}`),
           );
         },
       }),
@@ -446,9 +447,9 @@ describe('lifecycle.signal 的时机', () => {
         uses: { lifecycle },
         async apply({ lifecycle }) {
           if (life) return; // bounce 起的第二轮直接完成
-          life = lifecycle;
+          life = lifecycle.use;
           entered.resolve();
-          await untilAborted(lifecycle);
+          await untilAborted(lifecycle.use);
         },
       }),
     );
@@ -462,7 +463,7 @@ describe('lifecycle.signal 的时机', () => {
   it('冻结完成后才 abort：监听器里碰到的另一个在初始化的激活已在计划里', async () => {
     const w = world({ slowThresholdMs: 30 });
     const late = defineService<object>('zz-signal-late');
-    let second!: { provide: (d: typeof late, impl: object) => () => void };
+    let second!: (d: typeof late, impl: object) => () => void;
     let firstLife!: LifecycleCap;
     const secondEntered = deferred();
     await w.app.pluginAll([
@@ -471,7 +472,7 @@ describe('lifecycle.signal 的时机', () => {
           name: 'first',
           uses: { lifecycle },
           apply({ lifecycle }) {
-            firstLife = lifecycle;
+            firstLife = lifecycle.use;
             return hang();
           },
         }),
@@ -481,7 +482,7 @@ describe('lifecycle.signal 的时机', () => {
           name: 'second',
           uses: { provide },
           apply(caps) {
-            second = caps;
+            second = caps.provide.use;
             secondEntered.resolve();
             return hang();
           },
@@ -493,8 +494,8 @@ describe('lifecycle.signal 的时机', () => {
     expect(w.status('second')?.state).toBe('activating');
     let accepted: boolean | undefined;
     firstLife.signal.addEventListener('abort', () => {
-      second.provide(late, {});
-      accepted = w.host.services.get(late) !== undefined;
+      second(late, {});
+      accepted = w.host.services.use.get(late) !== undefined;
     });
     const stopping = w.app.stop();
     expect(accepted, 'first 的 abort 监听器执行时 second 已冻结，登记被拒').toBe(false);
@@ -513,7 +514,7 @@ describe('旧实例停下之前不起新实例', () => {
       name: 'slowstop',
       uses: { lifecycle },
       apply({ lifecycle }) {
-        if (++applies === 1) lifecycle.onDispose(() => slowStop.promise);
+        if (++applies === 1) lifecycle.use.onDispose(() => slowStop.promise);
       },
     });
     await w.app.plugin(def);
@@ -554,11 +555,11 @@ describe('旧实例停下之前不起新实例', () => {
         if (live > 0) overlapped = true;
         live++;
         if (++applies > 1) return;
-        lifecycle.onDrain(async () => {
+        lifecycle.use.onDrain(async () => {
           draining.resolve();
           await sleep(25);
         });
-        lifecycle.onDispose(async () => {
+        lifecycle.use.onDispose(async () => {
           await sleep(25);
           live--;
         });
@@ -586,7 +587,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
         name: 'responsive',
         uses: { lifecycle },
         async apply({ lifecycle }) {
-          if (++applies === 1) await untilAborted(lifecycle);
+          if (++applies === 1) await untilAborted(lifecycle.use);
         },
       }),
     );
@@ -652,7 +653,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const w = world({ slowThresholdMs: 5000, disposeTimeoutMs: 30 });
     const entered = deferred();
     const stopping: string[] = [];
-    w.host.events.on('app:stopping', () => void stopping.push('stopping'));
+    w.host.events.use.on('app:stopping', () => void stopping.push('stopping'));
     const registering = w.app.plugin(
       definePlugin({
         name: 'deaf',
@@ -680,7 +681,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
         name: 'self-stop',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          life = lifecycle;
+          life = lifecycle.use;
           stopping = w.app.stop();
           entered.resolve();
           return hang();
@@ -703,9 +704,9 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
         uses: { provide, config, lifecycle },
         provides: [svc],
         apply({ provide, config, lifecycle }) {
-          const v = Number(config.v ?? 1);
-          provide(svc, { v });
-          lifecycle.onDispose(() => void order.push(`prov#${v} 清理`));
+          const v = Number(config.use.v ?? 1);
+          provide.use(svc, { v });
+          lifecycle.use.onDispose(() => void order.push(`prov#${v} 清理`));
         },
       }),
       { v: 1 },
@@ -715,10 +716,10 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
         name: 'cons',
         uses: { svc, lifecycle },
         async apply({ svc, lifecycle }) {
-          seen.push(svc.require().v);
+          seen.push(svc.use.v);
           if (seen.length > 1) return;
-          lifecycle.signal.addEventListener('abort', () => void order.push('cons 被 abort'));
-          await untilAborted(lifecycle);
+          lifecycle.use.signal.addEventListener('abort', () => void order.push('cons 被 abort'));
+          await untilAborted(lifecycle.use);
         },
       }),
     );
@@ -751,11 +752,13 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
           provides: [svc],
           async apply({ provide, lifecycle }) {
             let ready = false;
-            provide(svc, { ready: () => ready });
+            provide.use(svc, { ready: () => ready });
             if (++applies === 1) {
               entered.resolve();
               // 响应 abort，但收尾要一段时间：flight 已不再等它，服务仍在容器里
-              await new Promise(resolve => lifecycle.signal.addEventListener('abort', () => setTimeout(resolve, 50)));
+              await new Promise(resolve =>
+                lifecycle.use.signal.addEventListener('abort', () => setTimeout(resolve, 50)),
+              );
             }
             ready = true;
           },
@@ -766,7 +769,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
           name: 'cons',
           uses: { svc },
           apply({ svc }) {
-            const ready = svc.require().ready();
+            const ready = svc.use.ready();
             seen.push(ready);
             if (!ready) throw new Error('提供者尚未初始化');
           },
@@ -799,8 +802,8 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
           provides: [svc],
           apply({ provide, lifecycle }) {
             let alive = true;
-            provide(svc, { alive: () => alive });
-            lifecycle.onDrain(async () => {
+            provide.use(svc, { alive: () => alive });
+            lifecycle.use.onDrain(async () => {
               alive = false;
               draining.resolve();
               await sleep(80);
@@ -823,7 +826,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
           name: 'cons',
           uses: { svc },
           apply({ svc }) {
-            const alive = svc.require().alive();
+            const alive = svc.use.alive();
             seen.push(alive);
             if (!alive) throw new Error('提供者正在关闭');
           },
@@ -849,22 +852,22 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const svc = defineService<{ v: number }>('zz-bg-required');
     const firstGate = deferred();
     releases.push(firstGate.resolve);
-    let off = w.host.provide(svc, { v: 1 });
+    let off = w.host.provide.use(svc, { v: 1 });
     const seen: number[] = [];
     await w.app.plugin(
       definePlugin({
         name: 'cons',
         uses: { svc, lifecycle },
         async apply({ svc, lifecycle }) {
-          seen.push(svc.require().v);
-          if (seen.length === 1) await Promise.race([firstGate.promise, untilAborted(lifecycle)]);
+          seen.push(svc.use.v);
+          if (seen.length === 1) await Promise.race([firstGate.promise, untilAborted(lifecycle.use)]);
         },
       }),
     );
     await until(() => w.status('cons')?.slow === true, '转入后台');
     off();
     await until(() => w.status('cons')?.state === 'pending', '回到 pending');
-    off = w.host.provide(svc, { v: 2 });
+    off = w.host.provide.use(svc, { v: 2 });
     firstGate.resolve();
     await until(() => w.status('cons')?.state === 'active', '重新激活');
     expect(seen).toEqual([1, 2]);
@@ -876,7 +879,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const svc = defineService<{ v: number }>('zz-bg-required-deaf');
     const zombie = deferred();
     releases.push(zombie.resolve);
-    let off = w.host.provide(svc, { v: 1 });
+    let off = w.host.provide.use(svc, { v: 1 });
     let applies = 0;
     await w.app.plugin(
       definePlugin({ name: 'deaf', uses: { svc }, apply: () => (++applies === 1 ? zombie.promise : undefined) }),
@@ -885,7 +888,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     off();
     await until(() => w.status('deaf')?.lingering === true, '宽限后带 lingering');
     expect(w.status('deaf')?.state).toBe('pending');
-    off = w.host.provide(svc, { v: 2 });
+    off = w.host.provide.use(svc, { v: 2 });
     await sleep(20);
     await w.app.plugins.idle();
     expect(applies, '旧 apply 仍在跑，依赖恢复也不起新实例').toBe(1);
@@ -899,7 +902,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const w = world();
     await w.app.plugin(definePlugin({ name: 'stuck', apply: () => hang() }));
     await w.app.plugins.idle();
-    const viaService = w.app.bind({ pluginsService }).pluginsService.require().getStatus();
+    const viaService = w.app.bind({ pluginsService }).pluginsService.use.getStatus();
     expect(viaService.find(entry => entry.instanceId === 'stuck')?.slow).toBe(true);
   });
 });

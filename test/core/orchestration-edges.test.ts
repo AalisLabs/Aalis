@@ -56,7 +56,7 @@ describe('插件拓扑：required 真环', () => {
         provides: [a],
         apply({ provide }) {
           applied.push('cyc-a');
-          provide(a, {});
+          provide.use(a, {});
         },
       }),
     );
@@ -67,7 +67,7 @@ describe('插件拓扑：required 真环', () => {
         provides: [b],
         apply({ provide }) {
           applied.push('cyc-b');
-          provide(b, {});
+          provide.use(b, {});
         },
       }),
     );
@@ -84,8 +84,8 @@ describe('插件拓扑：required 真环', () => {
         uses: { provide },
         apply({ provide }) {
           applied.push('seed');
-          provide(a, {});
-          provide(b, {});
+          provide.use(a, {});
+          provide.use(b, {});
         },
       }),
     );
@@ -102,7 +102,7 @@ describe('插件拓扑：required 真环', () => {
     const a = defineService<object>('zz-oe-multi-a');
     const b = defineService<object>('zz-oe-multi-b');
     const provider = (name: string) =>
-      definePlugin({ name, uses: { provide }, provides: [s], apply: ({ provide }) => void provide(s, {}) });
+      definePlugin({ name, uses: { provide }, provides: [s], apply: ({ provide }) => void provide.use(s, {}) });
     await w.app.plugin(provider('p1'));
     await w.app.plugin(provider('p2'));
     // hub 用 s（两个声明提供者：p1 是硬边，p2 是软边），它的下游 ring-a / ring-b 互为 required 成环。
@@ -112,7 +112,7 @@ describe('插件拓扑：required 真环', () => {
         name: 'hub',
         uses: { s, provide },
         provides: [d],
-        apply: ({ provide }) => void provide(d, {}),
+        apply: ({ provide }) => void provide.use(d, {}),
       }),
     );
     await w.app.plugin(
@@ -120,7 +120,7 @@ describe('插件拓扑：required 真环', () => {
         name: 'ring-a',
         uses: { d, b, provide },
         provides: [a],
-        apply: ({ provide }) => void provide(a, {}),
+        apply: ({ provide }) => void provide.use(a, {}),
       }),
     );
     await w.app.plugin(
@@ -128,7 +128,7 @@ describe('插件拓扑：required 真环', () => {
         name: 'ring-b',
         uses: { a, provide },
         provides: [b],
-        apply: ({ provide }) => void provide(b, {}),
+        apply: ({ provide }) => void provide.use(b, {}),
       }),
     );
     await w.app.plugins.idle();
@@ -164,8 +164,8 @@ describe('插件拓扑：同一提供者的多项服务', () => {
           provides: [a, b],
           apply({ provide }) {
             applied.push('twin-provider');
-            provide(a, {});
-            provide(b, {});
+            provide.use(a, {});
+            provide.use(b, {});
           },
         }),
       },
@@ -182,15 +182,27 @@ describe('关停编排：混合依赖环', () => {
     const s = defineService<object>('zz-oe-mix-s');
     const t = defineService<object>('zz-oe-mix-t');
     const x = defineService<object>('zz-oe-mix-x');
-    await w.app.plugin(definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide(s, {}) }));
+    await w.app.plugin(
+      definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide.use(s, {}) }),
+    );
     // y required s、optional 用 x 的服务；x required y 的 t：x ⇄ y 是混合环
     await w.app.plugin(
-      definePlugin({ name: 'y', uses: { s, xs: optional(x), provide }, apply: ({ provide }) => void provide(t, {}) }),
+      definePlugin({
+        name: 'y',
+        uses: { s, xs: optional(x), provide },
+        apply: ({ provide }) => void provide.use(t, {}),
+      }),
     );
-    await w.app.plugin(definePlugin({ name: 'x', uses: { t, provide }, apply: ({ provide }) => void provide(x, {}) }));
+    await w.app.plugin(
+      definePlugin({ name: 'x', uses: { t, provide }, apply: ({ provide }) => void provide.use(x, {}) }),
+    );
     // w required t，又以更高优先级顶替 s：y ⇄ w 是纯 required 环
     await w.app.plugin(
-      definePlugin({ name: 'w', uses: { t, provide }, apply: ({ provide }) => void provide(s, {}, { priority: 10 }) }),
+      definePlugin({
+        name: 'w',
+        uses: { t, provide },
+        apply: ({ provide }) => void provide.use(s, {}, { priority: 10 }),
+      }),
     );
     await w.app.plugins.idle();
     expect(w.app.plugins.getStatus().every(p => p.state === 'active')).toBe(true);
@@ -208,7 +220,7 @@ describe('重算振荡', () => {
     const w = world();
     const gate = defineService<object>('zz-oe-osc-gate');
     const blocker = defineService<object>('zz-oe-osc-blocker');
-    let offGate = w.host(gate, {});
+    let offGate = w.host.use(gate, {});
     const LIMIT = 12;
     let takeovers = 0;
     // opener 有 gate 才起并提供 blocker；closer 有 blocker 才起，起来就收走 gate、关闭时还回去。
@@ -218,7 +230,7 @@ describe('重算振荡', () => {
         name: 'opener',
         uses: { gate, provide },
         provides: [blocker],
-        apply: ({ provide }) => void provide(blocker, {}),
+        apply: ({ provide }) => void provide.use(blocker, {}),
       }),
     );
     // 先静置：closer 的登记另起一次重算，轮数从它起算，不随登记与在飞重算的交错漂移
@@ -231,8 +243,8 @@ describe('重算振荡', () => {
           if (takeovers >= LIMIT) return;
           takeovers++;
           offGate();
-          lifecycle.onDispose(() => {
-            offGate = w.host(gate, {});
+          lifecycle.use.onDispose(() => {
+            offGate = w.host.use(gate, {});
           });
         },
       }),
@@ -335,7 +347,7 @@ describe('保留的安全网：故障注入', () => {
           name,
           uses: { lifecycle },
           apply({ lifecycle }) {
-            lifecycle.onDispose(() => void disposed.push(name));
+            lifecycle.use.onDispose(() => void disposed.push(name));
           },
         }),
       );
@@ -371,7 +383,7 @@ describe('保留的安全网：故障注入', () => {
     const runtime = activationHost(app).runtime;
     const notify = runtime.notify;
     const dep = defineService<object>('t:edges:reactive-dep');
-    const withdraw = app.bind({ provide }).provide(dep, {});
+    const withdraw = app.bind({ provide }).provide.use(dep, {});
     await app.plugin(definePlugin({ name: 'consumer', uses: { dep }, apply() {} }));
     await app.plugins.idle();
     expect(stateOf(app, 'consumer')).toBe('active');

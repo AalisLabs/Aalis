@@ -6,7 +6,7 @@ import {
   type Logger,
   optional,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
 } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -51,7 +51,7 @@ function slowCleanup(ms: number, reject?: string) {
   return { state, cleanup };
 }
 
-async function watch(app: App, attach: Parameters<ServiceRef<{ id?: string }>['follow']>[0], name = 'watcher') {
+async function watch(app: App, attach: Parameters<ServiceSelection<{ id?: string }>['follow']>[0], name = 'watcher') {
   let off!: () => void;
   await app.plugin(
     definePlugin({
@@ -70,7 +70,7 @@ async function watch(app: App, attach: Parameters<ServiceRef<{ id?: string }>['f
 describe('follow 异步 cleanup', () => {
   it('拆卸路径：关闭等 cleanup 落地，拒绝记 warn 不逃逸', async () => {
     const { app, warnings, host } = makeApp();
-    host.provide(svc, {});
+    host.provide.use(svc, {});
     const { state, cleanup } = slowCleanup(20, 'cleanup failed');
     await watch(app, () => cleanup);
     await app.plugins.unload('watcher');
@@ -80,7 +80,7 @@ describe('follow 异步 cleanup', () => {
 
   it('手动退订路径：早先启动的 cleanup 由随后的关闭等到', async () => {
     const { app, warnings, host } = makeApp();
-    host.provide(svc, {});
+    host.provide.use(svc, {});
     const { state, cleanup } = slowCleanup(20, 'off failed');
     const off = await watch(app, () => cleanup);
     off();
@@ -92,7 +92,7 @@ describe('follow 异步 cleanup', () => {
 
   it('手动退订后不拆卸：清理落地即出在飞账，随后关闭不悬挂', async () => {
     const { app, host } = makeApp();
-    host.provide(svc, {});
+    host.provide.use(svc, {});
     const { state, cleanup } = slowCleanup(10);
     const off = await watch(app, () => cleanup);
     off();
@@ -104,8 +104,8 @@ describe('follow 异步 cleanup', () => {
 
   it('提供者切换路径：旧 cleanup 落定前不挂新实例；关闭等到它；拒绝被接住', async () => {
     const { app, warnings, host } = makeApp();
-    const offA = host.provide(svc, { id: 'A' }, { entryId: 'root/A' });
-    host.provide(svc, { id: 'B' }, { entryId: 'root/B' });
+    const offA = host.provide.use(svc, { id: 'A' }, { entryId: 'root/A' });
+    host.provide.use(svc, { id: 'B' }, { entryId: 'root/B' });
     const attached: string[] = [];
     const { state, cleanup } = slowCleanup(20, 'switch failed');
     await watch(app, provider => {
@@ -131,7 +131,7 @@ describe('follow 异步 cleanup', () => {
       off();
       return cleanup;
     });
-    host.provide(svc, {});
+    host.provide.use(svc, {});
     await sleep(0); // notify 的对齐在微任务里，attach 必须先跑起来
     expect(state.finished).toBe(false);
     await app.plugins.unload('watcher');
@@ -140,7 +140,7 @@ describe('follow 异步 cleanup', () => {
 
   it('超时护栏：卡住的 cleanup 按 disposeTimeoutMs 放弃并 warn，拆卸不悬挂', async () => {
     const { app, warnings, host } = makeApp(30);
-    host.provide(svc, {});
+    host.provide.use(svc, {});
     await watch(app, () => () => new Promise<void>(() => {}));
     await app.stop();
     expect(warnings.some(w => w.includes('__t:ws-async') && w.includes('超过 30ms'))).toBe(true);

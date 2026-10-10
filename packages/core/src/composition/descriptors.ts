@@ -1,15 +1,15 @@
 // ============================================================
 // descriptors.ts — 服务声明、类型推导与资源端口契约
 //
-// 一个服务有两张面：共享的提供者（容器中的实现，可有多个提供者）与按激活绑定的调用接口
-// （每次插件激活一份，登记自动归属这次激活）。描述符把两者连起来：契约包导出描述符，
-// 消费方在 uses 里声明它，装配时由描述符自带的 bind 为这次激活造接口。
+// caps.xxx 分两层。上层是选择层（ServiceSelection），由 core 定义、每个服务都一样，只管选哪一家；下层是业务层，
+// 由契约定义：默认就是提供者的形状（活的转发句柄），契约给了 bind 就是 bind 的返回值。描述符把两层连起来：
+// 契约包导出描述符，消费方在 uses 里声明它，装配时 core 造选择层，每个目标（`use` 与各个 `of(id)`）各调一次 bind。
 //
 // binder 随消费方 import 的那份契约包走：类型与绑定实现同版本，不需要宿主登记装配表，
 // 也不需要 import 时的进程全局副作用；服务身份是描述符的 name，契约包装了两份也指向同一服务。
 // ============================================================
 
-import type { ServiceView } from '../primitives/services.js';
+import type { SelectionBasis } from '../primitives/services.js';
 
 import type { Logger } from '../infrastructure/logger.js';
 
@@ -20,38 +20,58 @@ import type { Logger } from '../infrastructure/logger.js';
 // biome-ignore lint/suspicious/noConfusingVoidType: 见上——这里要的正是「可以不返回」
 export type FollowCleanup = void | (() => unknown);
 
-/**
- * 普通调用型服务的绑定接口。契约是「每次查询解析当前值」：current / require 返回的是提供者本身，
- * 调用方把它存起来就得自己承担它失效；要用提供者建立长期状态（SDK 句柄、订阅）走 follow。
- * required 与 optional 拿到的是同一接口——两者只差激活闸。
- */
-export interface ServiceRef<P> {
-  /** 当前胜者（偏好 > 优先级 > 注册顺序）；无提供者为 undefined */
-  readonly current: P | undefined;
-  /** 取当前胜者，无提供者抛错。required 依赖丢失到调度收敛之间也可能短暂为空。 */
-  require(): P;
-  /** 本服务的全部提供者（偏好 > 优先级 > 注册顺序），每次调用重新枚举 */
-  all(): ServiceView<P>[];
-  /**
-   * 跟随提供者建立有状态资源：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
-   * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。
-   * attach 本身必须同步，见 {@link FollowCleanup}。
-   */
-  follow(attach: (provider: P) => FollowCleanup): () => void;
+/** 选择层里的一家提供者：元数据与它的业务句柄 */
+export interface ProviderEntry<B> {
+  /** 条目的逻辑身份（contextId） */
+  readonly id: string;
+  readonly label?: string;
+  readonly priority: number;
+  /** 是否为本插件当前选中的那一家，即 `use` 此刻打到的那一家 */
+  readonly selected: boolean;
+  /** 选中依据，只在选中的那一条上有 */
+  readonly basis?: SelectionBasis;
+  /** 这一家的业务句柄，等同 `of(id)` */
+  readonly use: B;
 }
 
-/** 注册型能力的账本：同键替换、提供者换人整体重挂、关闭后拒收、异步撤回被关闭等待。 */
+/**
+ * caps.xxx：选择层，只读。挑选只有一条规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序，偏好指向的那家不在就按下一级挑、
+ * 回来后自动切回；偏好由用户经管理面（`services.prefer`）设。业务句柄是活的：每次访问成员都重新解析，存起来也安全；
+ * 访问时选不到提供者就同步抛 `ServiceUnavailableError`，可选依赖先看 `present`。已经开始的一次调用在原来那一家上完成；
+ * 一段操作要固定同一家，取 `list()` 里选中那一条的 `use`。
+ */
+export interface ServiceSelection<B> {
+  /** 每次调用重新枚举对外可见的提供者（转入后台、尚未完成激活的不在内），本插件选中的那一条在前 */
+  list(): ProviderEntry<B>[];
+  /** 默认业务句柄：转发给本插件当前选中的那一家 */
+  readonly use: B;
+  /** 固定某一家的业务句柄：那一家不在时访问成员抛错，同一个 id 回来后照常可用 */
+  of(id: string): B;
+  /** 本插件此刻能否选到一家 */
+  readonly present: boolean;
+  /**
+   * 有状态资源：选得到即以选中那一家的 `of(id)` 句柄调 attach；换人时先跑上次返回的清理（是异步的就等它落定），
+   * 再挂新的；选不到时只清理；下线与关闭时清理。attach 必须同步，见 {@link FollowCleanup}。那一家撤回之后句柄就打不到它，
+   * 清理要用的东西在 attach 里取好（提供者方法交出的对象属于提供者，交接时它还活着）
+   */
+  follow(attach: (handle: B) => FollowCleanup): () => void;
+}
+
+/** 注册型能力的账本：同键替换、目标换人整体重挂、关闭后拒收、异步撤回被关闭等待。 */
 export interface Registrar<Item> {
   /** 登记一条；返回退订（按条目身份，旧退订对已被替换的登记无动作） */
   add(item: Item): () => void;
 }
 
 /**
- * 一次激活的资源口：能力作者接入生命周期的全部接口。不暴露激活记录本身，
- * 不含清扫凭据——经它登记的每一条都由这次激活的撤回段逐条撤回。
+ * 绑定的资源口：契约作者接入生命周期的全部接口，不暴露激活记录，不含清扫凭据——经它登记的每一条都由这次激活的
+ * 撤回段逐条撤回。bind 对每个目标调一次：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标
+ * 固定那一家；返回值就是该目标的业务句柄。bind 可以包装业务方法（如给调用盖上调用方 id）、加登记方法，改不了选谁。
+ * 要在转发之上加或改几个成员，用 `Object.create(port.provider, …)` 或 `Object.assign(Object.create(port.provider), …)`：
+ * 没覆盖的成员沿原型链落到活句柄上。
  */
 export interface BindingPort<P> {
-  /** 实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
+  /** 消费方的实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
   readonly id: string;
   /**
    * 这次激活的资源身份（不透明），即调用方身份：提供者据它认出调用方、把登记归到这次激活。
@@ -59,32 +79,28 @@ export interface BindingPort<P> {
    */
   readonly identity: symbol;
   readonly logger: Logger;
-  /** 当前胜者 */
-  current(): P | undefined;
-  /** Resolve or throw an error attributed to this host and activation. */
-  require(): P;
-  /** 全部提供者（偏好 > 优先级 > 注册顺序） */
-  all(): ServiceView<P>[];
+  /** 目标那一家的活句柄，规则同选择层的业务句柄（缺席时访问成员抛错）；提供者是函数时可直接调用 */
+  readonly provider: P;
   /**
-   * 跟随提供者建立有状态资源，串行交接：在场即调 attach（同步）；换人时先跑上次返回的清理，
-   * 等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才用新实例调
-   * attach；等待期间再换人只跟到最新的。关闭或退订之后不再挂载，哪怕旧清理后来才落定。
-   * 旧清理永不落定则新实例永不挂上；关闭时按超时放弃并点名。与 ServiceRef.follow 同一语义。
+   * 跟随目标建立有状态资源，串行交接：目标在场即以实例调 attach（同步）；换人时先跑上次返回的清理，
+   * 等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才挂新的；等待期间再换人只跟到最新的。
+   * 关闭或退订之后不再挂载，哪怕旧清理后来才落定。旧清理永不落定则新的永不挂上；关闭时按超时放弃并点名。
    */
   follow(attach: (provider: P) => FollowCleanup): () => void;
   /**
-   * 登记一条随本次激活撤回的句柄；返回一次性的退订。与 registrar 同一清理契约：手动退订启动的
-   * 异步清理被随后的关闭等到、拒绝被接住；关闭后登记的句柄就地执行。
+   * 登记一条随本次激活撤回的句柄（binder 自己持有、不属于任何提供者的资源）；返回一次性的退订。与 registrar 同一清理契约：
+   * 手动退订启动的异步清理被随后的关闭等到、拒绝被接住；关闭后登记的句柄就地执行。
    */
   track(off: () => unknown, label?: string): () => void;
-  /** 注册型能力的通用账本，见 {@link Registrar} */
+  /** 注册型能力的通用账本，登记到目标那一家，见 {@link Registrar} */
   registrar<Item>(options: {
     key(item: Item): string;
     register(provider: P, item: Item): () => unknown;
   }): Registrar<Item>;
 }
 
-export interface ServiceDescriptor<P, B = ServiceRef<P>> {
+/** 服务描述符：P 是提供者形状，B 是业务层（不给 bind 时就是 P） */
+export interface ServiceDescriptor<P, B = P> {
   readonly name: string;
   bind(port: BindingPort<P>): B;
 }
@@ -134,13 +150,14 @@ export type Uses = Record<string, ServiceDescriptor<any, any> | OptionalUse<any,
 /** 逐项核对声明表：写错的那一项要求改成描述符，报错只落在它身上，其余绑定照常推导 */
 export type CheckedUses<U> = { [K in keyof U]: U[K] extends Uses[string] ? U[K] : Uses[string] };
 
+/** apply 的参数：每个声明一个选择层 */
 export type BoundOf<U> = {
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   [K in keyof U]: U[K] extends ServiceDescriptor<any, infer B>
-    ? B
+    ? ServiceSelection<B>
     : // biome-ignore lint/suspicious/noExplicitAny: 同上
       U[K] extends OptionalUse<any, infer B>
-      ? B
+      ? ServiceSelection<B>
       : never;
 };
 
@@ -149,19 +166,19 @@ export type BoundOf<U> = {
 export type ProviderOf<D> = D extends ServiceDescriptor<infer P, any> ? P : never;
 
 /**
- * 定义一个服务。不给 bind 即普通调用型：绑定接口是 {@link ServiceRef}；
- * 注册型能力给 bind，用资源口的 registrar / follow / track 造自动归属的门面。
+ * 定义一个服务。不给 bind，业务层就是按 P 的形状转发的活句柄，什么都不用多写；给 bind 即自定义业务层，
+ * 见 {@link BindingPort}。
  */
-export function defineService<P>(name: string): ServiceDescriptor<P, ServiceRef<P>>;
+export function defineService<P>(name: string): ServiceDescriptor<P, P>;
 export function defineService<P, B>(name: string, bind: (port: BindingPort<P>) => B): ServiceDescriptor<P, B>;
 export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) => B): ServiceDescriptor<P, B> {
   if (typeof name !== 'string' || name.trim() === '') {
     throw new Error('服务 name 不能为空');
   }
-  return mint({ name, bind: bind ?? (serviceRef as unknown as (port: BindingPort<P>) => B) });
+  return mint({ name, bind: bind ?? (port => port.provider as unknown as B) });
 }
 
-/** 可选依赖：只是不参与激活闸；绑定接口与 required 完全相同。 */
+/** 可选依赖：只是不参与激活闸；选择层与 required 完全相同。 */
 export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B> {
   return mint({ optional: descriptor, [OPTIONAL]: true });
 }
@@ -178,25 +195,6 @@ export function isOptional(use: unknown): use is OptionalUse<any, any> {
 // biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
 function unwrapDescriptor(use: Uses[string]): ServiceDescriptor<any, any> {
   return isOptional(use) ? use.optional : use;
-}
-
-/**
- * 由资源口造调用型接口。既登记又被调用的服务（如 agent：预处理器登记 + 对话调用）在自定义 bind 里
- * 把登记方法作为第二参数传入：`serviceRef(port, { registerX })`。不要用对象展开去拼——
- * `current` 是 getter，展开会把它求值成一次性的快照。
- */
-export function serviceRef<P>(port: BindingPort<P>): ServiceRef<P>;
-export function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): ServiceRef<P> & E;
-export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<P> {
-  const ref: ServiceRef<P> = {
-    get current() {
-      return port.current();
-    },
-    require: () => port.require(),
-    all: () => port.all(),
-    follow: attach => port.follow(attach),
-  };
-  return extra ? Object.assign(ref, extra) : ref;
 }
 
 /** 声明表里的依赖服务名。所有服务共用激活闸与关停边 */

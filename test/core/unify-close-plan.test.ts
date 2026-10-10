@@ -56,7 +56,7 @@ const storageDef = (w: World, name = 'storage', options?: { entryId?: string; pr
     provides: [storage],
     apply({ provide, lifecycle }) {
       let closed = false;
-      provide(
+      provide.use(
         storage,
         {
           save(data) {
@@ -66,7 +66,7 @@ const storageDef = (w: World, name = 'storage', options?: { entryId?: string; pr
         },
         options,
       );
-      lifecycle.onDispose(() => {
+      lifecycle.use.onDispose(() => {
         closed = true;
         w.log.push(`close:${name}`);
       });
@@ -79,9 +79,9 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     let inDispose: string | undefined;
     const root = w.app.bind({ storage: optional(storage), lifecycle });
     await w.app.plugin(storageDef(w));
-    root.lifecycle.onDrain(() => root.storage.require().save('root:last'));
-    root.lifecycle.onDispose(() => {
-      inDispose = root.storage.current === undefined ? 'gone' : 'alive';
+    root.lifecycle.use.onDrain(() => root.storage.use.save('root:last'));
+    root.lifecycle.use.onDispose(() => {
+      inDispose = root.storage.present ? 'alive' : 'gone';
     });
     await w.app.plugins.idle();
     await w.app.stop();
@@ -95,16 +95,16 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     await w.app.plugin(storageDef(w));
     const root = w.app.bind({ storage, provide, lifecycle });
     const buffer: string[] = [];
-    root.provide(sink, { push: data => void buffer.push(data) });
-    root.lifecycle.onDrain(() => {
-      for (const data of buffer.splice(0)) root.storage.require().save(data);
+    root.provide.use(sink, { push: data => void buffer.push(data) });
+    root.lifecycle.use.onDrain(() => {
+      for (const data of buffer.splice(0)) root.storage.use.save(data);
     });
     await w.app.plugin(
       definePlugin({
         name: 'session',
         uses: { sink, lifecycle },
         apply({ sink, lifecycle }) {
-          lifecycle.onDrain(() => sink.require().push('session-state'));
+          lifecycle.use.onDrain(() => sink.use.push('session-state'));
         },
       }),
     );
@@ -122,10 +122,10 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
         name: 'consumer',
         uses: { storage: optional(storage), provide, lifecycle },
         apply({ storage, provide, lifecycle }) {
-          provide(sink, { push() {} });
+          provide.use(sink, { push() {} });
           storage.follow(() => () => {});
-          lifecycle.onDrain(() => storage.require().save('last'));
-          lifecycle.onDispose(() => void w.log.push('close:consumer'));
+          lifecycle.use.onDrain(() => storage.use.save('last'));
+          lifecycle.use.onDispose(() => void w.log.push('close:consumer'));
         },
       }),
     );
@@ -134,9 +134,9 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
         name: 'old',
         uses: { sink, provide, lifecycle },
         apply({ sink, provide, lifecycle }) {
-          provide(storage, { save: data => void w.saved.push(`old:${data}`) }, { priority: 1 });
-          lifecycle.onDrain(() => sink.require().push('bye'));
-          lifecycle.onDispose(() => void w.log.push('close:old'));
+          provide.use(storage, { save: data => void w.saved.push(`old:${data}`) }, { priority: 1 });
+          lifecycle.use.onDrain(() => sink.use.push('bye'));
+          lifecycle.use.onDispose(() => void w.log.push('close:old'));
         },
       }),
     );
@@ -159,8 +159,8 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
         name: 'consumer',
         uses: { b: optional(b), storage, provide, lifecycle },
         apply({ storage, provide, lifecycle }) {
-          provide(a, { hit() {} });
-          lifecycle.onDrain(() => storage.require().save('consumer:last'));
+          provide.use(a, { hit() {} });
+          lifecycle.use.onDrain(() => storage.use.save('consumer:last'));
         },
       }),
     );
@@ -168,7 +168,7 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
       definePlugin({
         name: 'peer',
         uses: { a: optional(a), provide },
-        apply: ({ provide }) => void provide(b, { hit() {} }),
+        apply: ({ provide }) => void provide.use(b, { hit() {} }),
       }),
     );
     await w.app.plugins.idle();
@@ -183,15 +183,15 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     const b = defineService<{ hit(): void }>('zz-cp-rb');
     await w.app.plugin(storageDef(w));
     await w.app.plugin(
-      definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide(b, { hit() {} }) }),
+      definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide.use(b, { hit() {} }) }),
     );
     await w.app.plugin(
       definePlugin({
         name: 'consumer',
         uses: { b, storage, provide, lifecycle },
         apply({ storage, provide, lifecycle }) {
-          provide(a, { hit() {} });
-          lifecycle.onDrain(() => storage.require().save('consumer:last'));
+          provide.use(a, { hit() {} });
+          lifecycle.use.onDrain(() => storage.use.save('consumer:last'));
         },
       }),
     );
@@ -200,7 +200,7 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
       definePlugin({
         name: 'peer',
         uses: { a, provide },
-        apply: ({ provide }) => void provide(b, { hit() {} }, { priority: 10 }),
+        apply: ({ provide }) => void provide.use(b, { hit() {} }, { priority: 10 }),
       }),
     );
     await w.app.plugins.idle();
@@ -221,7 +221,7 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
         name: 'consumer',
         uses: { storage, lifecycle },
         apply({ storage, lifecycle }) {
-          lifecycle.onDrain(() => storage.require().save('last'));
+          lifecycle.use.onDrain(() => storage.use.save('last'));
         },
       }),
     );
@@ -239,13 +239,13 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
       provides: [store],
       apply({ provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('prov 已关闭');
             w.saved.push(data);
           },
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           w.log.push('prov-close');
         });
@@ -255,12 +255,12 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
       name: 'cons',
       uses: { store: optional(store), lifecycle },
       apply({ store, lifecycle }) {
-        lifecycle.onDrain(() => {
-          store.require().save('cons:last');
+        lifecycle.use.onDrain(() => {
+          store.use.save('cons:last');
           w.log.push('cons-drain');
         });
-        lifecycle.onDispose(() => {
-          store.require().save('cons-dispose');
+        lifecycle.use.onDispose(() => {
+          store.use.save('cons-dispose');
           w.log.push('cons-close');
         });
       },
@@ -286,8 +286,8 @@ describe('各关闭入口共用同一套编排', () => {
         name: 'consumer',
         uses: { storage, lifecycle },
         apply({ storage, lifecycle }) {
-          lifecycle.onDrain(() => {
-            seenInDrain = storage.current === undefined ? 'gone' : 'alive';
+          lifecycle.use.onDrain(() => {
+            seenInDrain = storage.present ? 'alive' : 'gone';
           });
         },
       }),
@@ -304,7 +304,7 @@ describe('重入清理', () => {
   it('follow 回调里取消自己：回调返回的清理器不丢，关闭后资源已释放', async () => {
     const w = world();
     const d = defineService<{ tag: string }>('zz-cp-reentrant');
-    w.host(d, { tag: 'a' }, { entryId: 'root/a' });
+    w.host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     const ref = activationHost(w.app).bind(activation, { ref: d }).ref;
     const live = new Set<string>();
@@ -313,7 +313,7 @@ describe('重入清理', () => {
       if (p.tag === 'b') off();
       return () => void live.delete(p.tag);
     });
-    w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
+    w.host.use(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     expect([...live], '在回调里取消：刚建立的 b 立即被清理').toEqual([]);
     await activation.disposeAsync();
@@ -329,13 +329,13 @@ describe('重入清理', () => {
     const gate = deferred();
     let finished = false;
     let calls = 0;
-    const offA = port.track(() => {
+    const offA = port.use.track(() => {
       calls++;
       return gate.promise.then(() => {
         finished = true;
       });
     });
-    port.track(() => offA());
+    port.use.track(() => offA());
     let closed = false;
     const closing = activation.disposeAsync().then(() => {
       closed = true;
@@ -355,7 +355,7 @@ describe('重入清理', () => {
     }).port;
     const gate = deferred();
     let finished = false;
-    const off = port.track(() =>
+    const off = port.use.track(() =>
       gate.promise.then(() => {
         finished = true;
       }),
@@ -387,12 +387,12 @@ describe('follow 的串行交接', () => {
         return () => (slow ? gate.promise.then(() => void bus.off('tick', cb)) : void bus.off('tick', cb));
       },
     });
-    w.host(d, make('a', true), { entryId: 'root/a' });
+    w.host.use(d, make('a', true), { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     activationHost(w.app)
       .bind(activation, { ref: d })
       .ref.follow(p => p.subscribe());
-    w.host(d, make('b', false), { entryId: 'root/b', priority: 2 });
+    w.host.use(d, make('b', false), { entryId: 'root/b', priority: 2 });
     await tick();
     bus.emit('tick');
     expect(seen, '交接期间只有还没退完的旧订阅在收').toEqual(['a']);
@@ -422,14 +422,14 @@ describe('follow 的串行交接', () => {
         return () => (tag === 'a' ? gate.promise.then(release) : release());
       },
     });
-    w.host(d, make('a'), { entryId: 'root/a' });
+    w.host.use(d, make('a'), { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     activationHost(w.app)
       .bind(activation, { ref: d })
       .ref.follow(p => p.acquire());
-    w.host(d, make('b'), { entryId: 'root/b', priority: 2 });
+    w.host.use(d, make('b'), { entryId: 'root/b', priority: 2 });
     await tick();
-    w.host(d, make('c'), { entryId: 'root/c', priority: 3 });
+    w.host.use(d, make('c'), { entryId: 'root/c', priority: 3 });
     await tick();
     expect(owner, 'a 还没释放完，谁也没抢').toBe('a');
     gate.resolve();
@@ -445,7 +445,7 @@ describe('follow 的串行交接', () => {
     const w = world();
     const d = defineService<{ tag: string }>('zz-cp-reject');
     const attached: string[] = [];
-    w.host(d, { tag: 'a' }, { entryId: 'root/a' });
+    w.host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     activationHost(w.app)
       .bind(activation, { ref: d })
@@ -453,7 +453,7 @@ describe('follow 的串行交接', () => {
         attached.push(p.tag);
         return () => (p.tag === 'a' ? Promise.reject(new Error('释放失败')) : undefined);
       });
-    w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
+    w.host.use(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     expect(attached).toEqual(['a', 'b']);
     expect(w.warnings.some(x => x.includes('释放失败'))).toBe(true);
@@ -465,7 +465,7 @@ describe('follow 的串行交接', () => {
     const d = defineService<{ tag: string }>('zz-cp-cutoff');
     const gate = deferred();
     const attached: string[] = [];
-    w.host(d, { tag: 'a' }, { entryId: 'root/a' });
+    w.host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     activationHost(w.app)
       .bind(activation, { ref: d })
@@ -473,7 +473,7 @@ describe('follow 的串行交接', () => {
         attached.push(p.tag);
         return () => (p.tag === 'a' ? gate.promise : undefined);
       });
-    w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
+    w.host.use(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     let closed = false;
     const closing = activation.disposeAsync().then(() => {
@@ -492,7 +492,7 @@ describe('follow 的串行交接', () => {
     const d = defineService<{ tag: string }>('zz-cp-cancel');
     const gate = deferred();
     const attached: string[] = [];
-    w.host(d, { tag: 'a' }, { entryId: 'root/a' });
+    w.host.use(d, { tag: 'a' }, { entryId: 'root/a' });
     const activation = activationHost(w.app).create('consumer');
     const off = activationHost(w.app)
       .bind(activation, { ref: d })
@@ -500,7 +500,7 @@ describe('follow 的串行交接', () => {
         attached.push(p.tag);
         return () => (p.tag === 'a' ? gate.promise : undefined);
       });
-    w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
+    w.host.use(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     off();
     gate.resolve();
