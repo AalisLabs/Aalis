@@ -60,7 +60,7 @@ register(definition, config?, instanceId?, { disabled? })
 - 重算逐个激活，每个慢激活都单独等满一个阈值：排在前面的慢插件有 N 个时，后面插件的激活与 `register` / `pluginAll` / `idle()` 的返回约晚 N×阈值。
 - 后台期间条目停在 `activating`，`getStatus()` 对它给出 `slow: true`。它经 `provide` 登记的服务不对外：`get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:unregistered`），后台期间新登记的不发事件；依赖它的插件保持 `pending`。它经 `registrar` 登记到别处的条目与事件监听照常生效，它的 `app:ready` / `app:started` 监听器可能在 `apply` 完成之前被调用。
 - 落定：成功则先转 `active` 再上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
-- 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），这次拆除计入下文的重试预算，abort 与宽限同下文：宽限内落定的回到 `pending`、依赖恢复后重新激活，这次拆除用尽预算的转 `error`；到期仍未落定的转 `error`，依赖恢复后也不自动重试。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
+- 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），这次拆除计入下文的重试预算，abort 与宽限同下文：宽限内落定的回到 `pending`、依赖恢复后重新激活，这次拆除用尽预算的转 `error`；到期仍未落定的照样回到 `pending`，带 `lingering`，旧 `apply` 落定之前不重新激活（见下文「旧实例停下之前不起新实例」）。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
 
 `apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.signal` 在关闭计划冻结后立即 abort，重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide` / `events.on` 按已关闭的激活拒收、`onDispose` 就地执行。
 
@@ -87,7 +87,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 管理动作收尾时调用 `recompute()`。停机置位后重算不再做状态转移，拆卸全归停机计划。`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃旧普通重算并冻计划）再 `idle()`（仍等待已在飞的重算和手动 dispose 段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
-停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证覆盖动作发起时处于 `active` 或仍在初始化（在飞或后台）的 required 下游；仍在初始化的下游被 abort，按上文的宽限处理，不响应 abort 的会因此进 `error`。仍在 `pending` 的下游不会在提供者关闭期间开始激活（见上文 Phase B）；并发的另一个管理动作里已在收尾的下游、管理动作进行中发生的停机，与本次管理动作彼此不排序。
+停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证覆盖动作发起时处于 `active` 或仍在初始化（在飞或后台）的 required 下游；仍在初始化的下游被 abort，按上文的宽限处理，不响应 abort 的旧实例停下之前不会重新激活。仍在 `pending` 的下游不会在提供者关闭期间开始激活（见上文 Phase B）。并发的另一个管理动作里已在收尾、依赖本插件所提供服务的下游，本次动作等它关完（按 `disposeTimeoutMs` 超时）才让本插件收尾；管理动作进行中发生的停机与本次管理动作彼此不排序。
 
 ## 管理动作口径
 
