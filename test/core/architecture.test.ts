@@ -696,7 +696,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 业务层活句柄），按插件偏好进挑选规则，关停边建给声明服务的全部提供者；删去旧的单层服务引用。
 // 2587 → 2626：同一决定的后续（owner 定稿 follow 句柄）——follow 交给 attach 的句柄钉在挂上的那条登记、清理落定之前一直
 // 可用（不按 id 打到同 id 的新实例），资源口加 present。
-const CORE_CODE_LINE_CEILING = 2626;
+// 2626 → 2633：同一决定的审修（协调者定）——list() 条目的句柄钉在那一条登记、钉住的目标退役时撤掉 bind 经资源口登记的
+// 切断项与 track、管理面 inspect 加 { for }（约 +20）；删去按容器版本的解析缓存与 #version（约 -13）。
+const CORE_CODE_LINE_CEILING = 2633;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

@@ -13,6 +13,10 @@ export interface ServiceInfo {
   priority: number;
   label?: string;
   exclusive: boolean;
+  /** 是否为所查口径（全局或 `{ for }` 那个插件）选中的那一条 */
+  selected: boolean;
+  /** 选中依据，只在选中的那一条上有 */
+  basis?: SelectionBasis;
 }
 
 /** 选中依据：本插件偏好、全局偏好，或优先级与登记顺序（排名） */
@@ -63,15 +67,6 @@ export class ServiceContainer {
   readonly #preferences = new Map<string, Map<string | undefined, string>>();
   /** 暂不对外的清理归属（见 {@link hold}） */
   readonly #held = new Set<symbol>();
-  #version = 0;
-
-  /**
-   * 解析结果的版本：任何可能改变挑选结果的写入（登记、撤回、暂扣与恢复、偏好）都加一，按它作废解析缓存
-   * @internal
-   */
-  get version(): number {
-    return this.#version;
-  }
 
   /**
    * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
@@ -114,7 +109,6 @@ export class ServiceContainer {
     list.push(entry);
     // 按优先级降序排列（稳定排序：同优先级先注册者在前）
     list.sort((a, b) => b.priority - a.priority);
-    this.#version++;
 
     return () => {
       // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
@@ -123,7 +117,6 @@ export class ServiceContainer {
       if (!current || idx < 0) return;
       current.splice(idx, 1);
       if (current.length === 0) this.#entries.delete(name);
-      this.#version++;
     };
   }
 
@@ -134,7 +127,6 @@ export class ServiceContainer {
    */
   hold(owner: symbol): string[] {
     this.#held.add(owner);
-    this.#version++;
     return this.namesOf(owner);
   }
 
@@ -143,7 +135,6 @@ export class ServiceContainer {
    * @internal
    */
   release(owner: symbol): string[] {
-    this.#version++;
     return this.#held.delete(owner) ? this.namesOf(owner) : [];
   }
 
@@ -226,7 +217,6 @@ export class ServiceContainer {
       if (list.length === 0) this.#entries.delete(name);
     }
     this.#held.delete(owner);
-    this.#version++;
     return removed;
   }
 
@@ -259,13 +249,16 @@ export class ServiceContainer {
     return this.#visible(name).some(entry => !leaving(entry.owner));
   }
 
-  /** 只读登记元数据（不含实例）：展示与诊断用 */
-  inspect(name: string): ServiceInfo[] {
-    return this.ranked(name).entries.map(entry => ({
+  /** 只读登记元数据（不含实例），按该消费者的解析顺序（不给即全局口径）：展示与诊断用 */
+  inspect(name: string, consumer?: string): ServiceInfo[] {
+    const { entries, basis } = this.ranked(name, consumer);
+    return entries.map((entry, i) => ({
       contextId: entry.contextId,
       priority: entry.priority,
       label: entry.label,
       exclusive: entry.exclusive ?? false,
+      selected: i === 0,
+      basis: i === 0 ? basis : undefined,
     }));
   }
 
@@ -285,7 +278,7 @@ export class ServiceContainer {
 
   /**
    * 设置偏好（按 contextId）：给 consumer 是该消费者实例的本插件偏好，否则是全局偏好。
-   * 指向的那家不在场照样记下，登记后生效。插件经 `services.prefer()` 调用（另发 service:changed）；
+   * 指向的那家不在场照样记下，登记后生效。管理面经 `services.prefer()` 调用（另发 service:changed）；
    * 直接调用容器不会通知绑定层。
    * @returns false 表示服务有独占条目且不是这个 contextId（拒绝）
    * @internal
@@ -295,21 +288,19 @@ export class ServiceContainer {
     if (exclusive && exclusive.contextId !== contextId) return false;
     if (!this.#preferences.has(name)) this.#preferences.set(name, new Map());
     this.#preferences.get(name)!.set(consumer, contextId);
-    this.#version++;
     return true;
   }
 
   /**
-   * 清除偏好（consumer 同 {@link prefer}）；插件经 `services.unprefer()` 调用
+   * 清除偏好（consumer 同 {@link prefer}）；管理面经 `services.unprefer()` 调用
    * @internal
    */
   unprefer(name: string, consumer?: string): boolean {
-    this.#version++;
     return this.#preferences.get(name)?.delete(consumer) === true;
   }
 
   /**
-   * 读取偏好的 contextId（consumer 同 {@link prefer}；无偏好为 undefined）；插件经 `services.preferred()` 读取
+   * 读取偏好的 contextId（consumer 同 {@link prefer}；无偏好为 undefined）；管理面经 `services.preferred()` 读取
    * @internal
    */
   getPreferred(name: string, consumer?: string): string | undefined {

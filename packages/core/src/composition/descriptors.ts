@@ -30,7 +30,10 @@ export interface ProviderEntry<B> {
   readonly selected: boolean;
   /** 选中依据，只在选中的那一条上有 */
   readonly basis?: SelectionBasis;
-  /** 这一家的业务句柄，等同 `of(id)` */
+  /**
+   * 钉在这一条登记上的业务句柄：它对外时打到它，撤回之后访问抛错，同一个 id 换了新实例也不跟过去（`of(id)` 按 id，
+   * 会跟过去）。同一条登记每次列出都是同一个句柄
+   */
   readonly use: B;
 }
 
