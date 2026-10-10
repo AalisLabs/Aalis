@@ -66,7 +66,7 @@ export default definePlugin({
 
 - **required**（未包 `optional` 的服务）：参与激活闸。缺席则顶层插件 `pending`，恢复后重新激活。
 - **optional**：不参与激活闸；绑定接口与 required 完全相同，只是激活闸这一条不同。
-- **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）：启动时由根激活经 `provide` 独占登记，与第三方服务同一条路径；提供者只向在 `uses` 里声明了它的激活交出属于该激活的接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。见 [内置服务的登记](service.md#内置服务的登记)。
+- **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）：启动时由根激活经 `provide` 独占登记，与第三方服务同一条路径；提供者按调用方身份交出属于该激活的接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。见 [内置服务的登记](service.md#内置服务的登记)。
 - 声明即计入关停编排（required 与 optional，访问与否无关）。
 
 `optional()` 使用同版本 Core 副本可识别的包装标记；描述符自有 `optional` 字段不算。
@@ -183,7 +183,7 @@ apply({ services }) {
 }
 ```
 
-查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，只接受在 `uses` 里声明了该服务的激活身份，未声明者拿不到接口。`services.inspect(key)` 只读元数据，适合服务列表。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
+查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。`services.inspect(key)` 只读元数据，适合服务列表。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
 
 ## 生命周期
 

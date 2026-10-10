@@ -76,7 +76,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
             if (!configProvider) throw new Error('config 提供者缺席');
             expect(lookup.get('config')).toBe(configProvider);
             expect(configProvider(me)).toBe(ownConfig);
-            expect(() => configProvider(Symbol(name))).toThrow('只能由在 uses 里声明了它的激活取用');
+            expect(() => configProvider(Symbol(name))).toThrow('不属于任何在册的激活');
             const lifecycleProvider = lookup.all(lifecycle)[0]?.instance;
             if (!lifecycleProvider) throw new Error('lifecycle 提供者缺席');
             const viaLookup = lifecycleProvider(me);

@@ -18,7 +18,7 @@ export class ActivationHost {
     this.root = this.#make('root', {}, logger);
     const providers = coreProviders(runtime, (identity, name) => {
       const activation = this.#owners.get(identity);
-      if (!activation?.declared.has(name)) throw new Error(`内置服务 "${name}" 只能由在 uses 里声明了它的激活取用`);
+      if (!activation) throw new Error(`内置服务 "${name}" 收到的身份不属于任何在册的激活`);
       return activation;
     });
     // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余五项与第三方服务同走 provide
