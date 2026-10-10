@@ -143,8 +143,8 @@ interface PluginRoutesCaps {
   hostConfig: Pick<ServiceSelection<HostConfig>, 'present' | 'use'>;
   tools: Pick<ServiceSelection<ToolService>, 'present' | 'use'>;
   commands: Pick<ServiceSelection<CommandService>, 'present' | 'use'>;
-  /** 当前有提供者的服务名：列表与回执据它判缺与在等；列表另据它读各插件的本插件偏好 */
-  services: Pick<Services, 'names' | 'preferred'>;
+  /** 当前有提供者的服务名：列表与回执据它判缺与在等；列表另据它读各插件的本插件偏好与此刻的选择 */
+  services: Pick<Services, 'names' | 'preferred' | 'inspect'>;
   /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
   self: string;
   /** 家目录（宿主路径的 home）：宿主配置一并给出；宿主不提供路径时没有 */
@@ -237,6 +237,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const plugins = blockedStatus({ plugins: pm, services: caps.services, doc }).map(p => {
       const entry = pm.getPlugin(p.instanceId);
       const schema = entry?.definition?.configSchema;
+      const declared = [...(p.requiredServices ?? []), ...(p.optionalServices ?? [])];
       return {
         name: p.name,
         instanceId: p.instanceId,
@@ -252,9 +253,15 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         requiredServices: p.requiredServices ?? [],
         optionalServices: p.optionalServices ?? [],
         servicePreferences: Object.fromEntries(
-          [...(p.requiredServices ?? []), ...(p.optionalServices ?? [])].flatMap(name => {
+          declared.flatMap(name => {
             const preferred = caps.services.preferred(name, { for: p.instanceId });
             return preferred === undefined ? [] : [[name, preferred]];
+          }),
+        ),
+        serviceSelections: Object.fromEntries(
+          declared.flatMap(name => {
+            const [selected] = caps.services.inspect(name, { for: p.instanceId });
+            return selected ? [[name, { contextId: selected.contextId, basis: selected.basis }]] : [];
           }),
         ),
         lacking: p.lacking,

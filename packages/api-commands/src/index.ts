@@ -231,21 +231,28 @@ interface CommandEntry {
 
 function registerEntry(svc: CommandService, entry: CommandEntry): () => void {
   const real = svc.command(entry.name, entry.description, entry.meta);
-  for (const c of entry.calls) {
-    if (c.kind === 'alias') real.alias(c.name);
-    else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
-    else if (c.kind === 'argument') real.argument(c.name, c.description);
-    else if (c.kind === 'action') real.action(c.handler);
-    else if (c.kind === 'usage') real.usage(c.text);
-    else if (c.kind === 'example') real.example(c.line);
-  }
-  entry.real = real;
-  return () => {
+  const off = () => {
     entry.real = undefined;
     // 必须带上 contextId（meta.pluginName）：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
     // 一起删掉——包括别的插件先注册的那份，且它不会重新出现。
     svc.unregister(entry.key, entry.meta.pluginName);
   };
+  // 重放到一半抛错：已推上去的那一层不留（它不归账本管，会一直压住同名指令），错误照常交给账本
+  try {
+    for (const c of entry.calls) {
+      if (c.kind === 'alias') real.alias(c.name);
+      else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
+      else if (c.kind === 'argument') real.argument(c.name, c.description);
+      else if (c.kind === 'action') real.action(c.handler);
+      else if (c.kind === 'usage') real.usage(c.text);
+      else if (c.kind === 'example') real.example(c.line);
+    }
+  } catch (err) {
+    off();
+    throw err;
+  }
+  entry.real = real;
+  return off;
 }
 
 function makeBuilder(entry: CommandEntry): CommandBuilder {

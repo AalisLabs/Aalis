@@ -45,11 +45,11 @@
   "aalis": {
     "service": {
       "required": [
-        "app",
         "config",
         "events",
         "lifecycle",
         "logger",
+        "services",
         "storage"
       ],
       "optional": [

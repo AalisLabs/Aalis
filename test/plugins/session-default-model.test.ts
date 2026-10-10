@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { agent } from '../../packages/api-agent/src/index.js';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { llm, resolveLLMModel } from '../../packages/api-llm/src/index.js';
-import type { App } from '../../packages/core/src/index.js';
+import { type App, definePlugin, provide } from '../../packages/core/src/index.js';
 import { MODEL, PERSONA, startSessionManager } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
@@ -177,6 +178,21 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
     expect(sm.resolvedDefaults()).toEqual({ llm: { provider: B, model: 'org/m3' } });
     await sm.updateLayer({ scope: 'defaults' }, { llm: { provider: A, model: 'gone' } });
     expect(sm.resolvedDefaults()).toEqual({ llm: { provider: A, model: 'm1' } });
+  });
+
+  it('服务此刻实际用的那一个按真正调模型的 agent 插件算：它设了本插件偏好就是它偏好的那个', async () => {
+    const { app, sm, host } = await setup();
+    await app.plugin(
+      definePlugin({
+        name: 'zz-agent',
+        provides: [agent],
+        uses: { provide },
+        apply: caps => void caps.provide.use(agent, {} as never),
+      }),
+    );
+    await app.plugins.idle();
+    host.services.use.prefer(llm, `${B}/org/m3`, { for: 'zz-agent' });
+    expect(sm.resolvedDefaults()).toEqual({ llm: { provider: B, model: 'org/m3' } });
   });
 
   it('没有可用的模型时，服务实际用的那一个没有', async () => {

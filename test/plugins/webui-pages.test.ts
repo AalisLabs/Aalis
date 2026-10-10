@@ -167,7 +167,7 @@ function definePages(webui: BoundWebui, received: unknown[]) {
   return { jobs, panel };
 }
 
-async function setup() {
+async function setup({ withStorage = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'aalis-webui-pages-'));
   homes.push(home);
   const port = await freePort();
@@ -199,7 +199,7 @@ async function setup() {
     },
   });
   await app.pluginAll([
-    { definition: storageLocalPlugin, config: {} },
+    ...(withStorage ? [{ definition: storageLocalPlugin, config: {} }] : []),
     {
       definition: webuiServerPlugin,
       config: { host: '127.0.0.1', port, autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN },
@@ -371,6 +371,16 @@ describe('单元格里的图片与文件', () => {
     expect(await res.text()).toBe('zz-report');
     const forged = `${handle.split('.')[0]}.${'A'.repeat(43)}`;
     expect((await get(`/api/page-file?handle=${encodeURIComponent(forged)}`)).status).toBe(403);
+  });
+
+  it('存储不在：文件单元格只给名字，不签发句柄，数据照常下发', async () => {
+    const { data } = await setup({ withStorage: false });
+    const { status, body } = await data('jobs', 'list');
+    expect(status).toBe(200);
+    expect((body.data as Array<Record<string, unknown>>).map(row => row.report)).toEqual([
+      { name: '周报.txt' },
+      { name: 'secret.json' },
+    ]);
   });
 });
 

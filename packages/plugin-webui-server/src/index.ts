@@ -562,7 +562,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     gate,
   );
   // 页面：插件经 webui-server 的绑定接口登记，页面的数据源与动作、插件前端的文件、会话面板与布局记录的路由按这张登记表分派
-  const pageFiles = createPageFiles(() => storage.listRoots());
+  const pageFiles = createPageFiles(() => (caps.storage.present ? storage.listRoots() : []));
   const pages = createPageRegistry({
     logger: logger.use,
     send: event => admin.send(event),

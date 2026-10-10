@@ -338,6 +338,38 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     await app.stop();
   });
 
+  it('换人后重放抛错：新提供者上不留半截那一层，被它压住的同名指令照常生效', async () => {
+    const app = newApp();
+    const host = app.bind({ provide });
+    const off = host.provide.use(commands, makeCommandService().svc);
+    await loadProbe(
+      app,
+      commandProbe('probe-replay', commands => {
+        commands
+          .command('ping', '探针的 ping')
+          .alias('pp')
+          .action(async () => 'probe');
+      }),
+    );
+    off();
+    await settle(app);
+    const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+    registry.command('ping', '原有的 ping', { pluginName: 'base' }).action(async () => 'base');
+    const flaky = {
+      command: (name: string, description?: string, meta?: InternalCommandMeta) =>
+        Object.assign(Object.create(registry.command(name, description, meta)) as CommandBuilder, {
+          alias: () => {
+            throw new Error('别名冲突');
+          },
+        }),
+      unregister: (name: string, contextId?: string) => registry.unregister(name, contextId),
+    } as unknown as CommandService;
+    host.provide.use(commands, flaky);
+    await settle(app);
+    expect(registry.get('ping')?.description).toBe('原有的 ping');
+    await app.stop();
+  });
+
   it('同一激活再登记同名指令：替换先前那次，只留一层', async () => {
     const app = newApp();
     const host = app.bind({ provide });

@@ -2,7 +2,7 @@ import { doctor } from '@aalis/api-doctor';
 import { publicWorkUrl, publish, type SurfaceBinding } from '@aalis/api-publish';
 import { storage } from '@aalis/api-storage';
 import { webuiServer } from '@aalis/api-webui';
-import { appService, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { appService, config, definePlugin, events, lifecycle, logger, optional, services } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { PagesClient } from './cloudflare/client.js';
 import { configSchema, resolveConfig } from './config.js';
@@ -23,7 +23,7 @@ export default definePlugin({
     events,
     lifecycle,
     logger,
-    app: appService,
+    services,
     storage,
     publish: optional(publish),
     webui: optional(webuiServer),
@@ -31,7 +31,8 @@ export default definePlugin({
   },
   async apply(caps) {
     const cfg = resolveConfig(parseConfig(configSchema, caps.config.use, caps.logger.use));
-    const release = claimWorksTarget(caps.app.use, cfg);
+    // 按宿主实例本身认领（业务句柄每次激活各一个，认不出同一个宿主）
+    const release = claimWorksTarget(caps.services.use.get(appService)!, cfg);
     caps.lifecycle.use.onDispose(release);
     try {
       const storage = caps.storage.use;

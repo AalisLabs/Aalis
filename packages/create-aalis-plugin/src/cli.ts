@@ -507,7 +507,8 @@ ${handler}
   }
   if (a.features.sessionSetting) {
     body.push(`    // 登记一个会话设置项：出现在会话设置里，各会话、各平台档可以各自设；登记随这次激活撤回，会话管理晚上线时自动补上。
-    // 读法：sessionManager.use.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键
+    // 读法：sessionManager.use.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键；会话管理是可选依赖，
+    // 读之前先看 sessionManager.present（不在时访问成员抛错）
     sessionManager.use.registerSetting({
       key: '${settingKey}',
       // 字段：类型、标签与说明，写入时按它校验；default 只供界面显示，要与哪层都没设时的行为一致
