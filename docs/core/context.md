@@ -208,11 +208,13 @@ apply({ llm, lifecycle }) {
 
 ```typescript
 apply({ services }) {
-  const llm = services.use.get(llmDesc);   // 有描述符则带类型
-  const named = services.use.get('llm');   // 运行期字符串，类型为 unknown
-  const rows = services.use.inspect('llm'); // 只读元数据
+  const online = services.use.get(llmDesc) !== undefined; // 查在不在；有描述符则带类型
+  const entries = services.use.all(name);                 // 运行期字符串（URL、配置里的服务名）的全部提供者
+  const rows = services.use.inspect('llm');               // 只读元数据，展示与对外输出用
 }
 ```
+
+插件的业务调用只经 `uses` 声明的选择层。`get` / `all` 只用来查某个服务在不在、列出运行期服务名的提供者，以及取身份键（如按宿主实例记账）；声明会成环或自依赖、只能动态查的，在调用处写明原因。要元数据就用 `inspect`：展示与对外输出（管理面列表、HTTP 回包、日志）都走它，它不含实例，可以放心序列化；`all()` 的条目带实例，直接序列化会把提供者连同内部状态（如密钥）一起带出去。
 
 `get` / `all` 给的是原始实例，按全局口径解析（不看本插件偏好），不享有业务句柄的转发语义。查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
 

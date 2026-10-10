@@ -19,6 +19,7 @@ export default definePlugin({
     storage: optional(storage),
     memory: optional(memory),
     authority: optional(authority),
+    tools: optional(tools),
     app: appService,
     events,
     hooks,

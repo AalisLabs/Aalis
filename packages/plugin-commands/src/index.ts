@@ -4,7 +4,7 @@ import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gatewa
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
-import type { ToolService } from '@aalis/api-tools';
+import { tools } from '@aalis/api-tools';
 import {
   appService,
   type BoundOf,
@@ -115,6 +115,8 @@ const uses = {
   storage: optional(storage),
   memory: optional(memory),
   authority: optional(authority),
+  /** /status 列已登记的工具数 */
+  tools: optional(tools),
   app: appService,
   events,
   hooks,
@@ -143,6 +145,7 @@ function registerCommands({
   storage,
   memory,
   authority,
+  tools,
   app,
   events,
   hooks,
@@ -360,8 +363,7 @@ function registerCommands({
     for (const [label, ok] of checks) {
       lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
     }
-    const toolService = services.use.get('tools') as ToolService | undefined;
-    lines.push(`- 已注册工具: ${toolService ? toolService.getAll().length : 0} 个`);
+    lines.push(`- 已注册工具: ${tools.present ? tools.use.getAll().length : 0} 个`);
     lines.push(`- 已注册指令: ${registry.getAll().length} 个`);
     return lines.join('\n');
   });

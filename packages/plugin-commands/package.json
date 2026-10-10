@@ -34,11 +34,11 @@
     "@aalis/api-gateway": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.7.1 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-tools": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -62,7 +62,8 @@
         "commands",
         "storage",
         "memory",
-        "authority"
+        "authority",
+        "tools"
       ],
       "provides": [
         "commands"

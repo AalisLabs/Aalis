@@ -117,7 +117,8 @@ export interface PreferenceScope {
 /**
  * 动态查询与偏好管理（管理、展示面用）。查到的服务不是声明依赖：不参与激活闸，
  * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。get / all 按全局口径（不看本插件偏好），inspect 不给 `for` 也是。
- * 偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
+ * 插件的业务调用只经 uses 声明的选择层：get / all 只用来查在不在、列运行期服务名的提供者与取身份键；展示与对外输出用
+ * inspect，它不含实例、可以放心序列化。偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
  */
 export interface Services {
   /** 全局胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
