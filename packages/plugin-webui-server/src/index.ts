@@ -566,7 +566,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const pages = createPageRegistry({
     logger: logger.use,
     send: event => admin.send(event),
-    sessions: () => (caps.sessions.present ? caps.sessions.use : undefined),
+    sessions: caps.sessions,
     signFile: pageFiles.sign,
   });
   registerPageRoutes(
@@ -599,7 +599,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 「需要处理」：推出未结的审批、插件故障与提示，界面的首页摘要、插件详情与标签页标题都读这一个列表
   const attention = createAttention({
     approvals: () => (caps.approvals.present ? caps.approvals.use.list() : []),
-    sessions: () => (caps.sessions.present ? caps.sessions.use : undefined),
+    sessions: caps.sessions,
     plugins: () => {
       const pm = caps.plugins.present ? caps.plugins.use : undefined;
       return pm

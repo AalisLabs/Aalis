@@ -4,6 +4,7 @@
 // 目录布局与退出码是侧车的约定，见 models/listener-sidecar/README.md 与 laya_listener.py 的模块说明。
 
 import type { ProcessService, SpawnHandle } from '@aalis/api-process';
+import type { ServiceSelection } from '@aalis/core';
 
 /** 等侧车打出就绪行的上限：加载模型、金样自检与预热一般约 11s */
 const STARTUP_TIMEOUT_MS = 120_000;
@@ -41,8 +42,8 @@ export type SidecarState =
   | { kind: 'stopped' };
 
 interface SidecarOptions {
-  /** 拉起时取当前的 process 服务；没有时这次拉起按退出处理，隔一段时间再试 */
-  process(): ProcessService | undefined;
+  /** process 服务：拉起时不在就按退出处理，隔一段时间再试 */
+  process: Pick<ServiceSelection<ProcessService>, 'present' | 'use'>;
   /** 侧车目录（绝对路径） */
   dir: string;
   port: number;
@@ -177,15 +178,14 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   }
 
   function spawn(): void {
-    const proc = o.process();
-    if (!proc) {
+    if (!o.process.present) {
       crashed('process 服务缺席，拉不起侧车', undefined);
       return;
     }
     let handle: SpawnHandle;
     try {
       // 只用 wait() 的退出码与信号，输出按行读：wait() 不必替常驻进程攒输出
-      handle = proc.spawn(python, args, { cwd: o.dir, maxBuffer: 1 });
+      handle = o.process.use.spawn(python, args, { cwd: o.dir, maxBuffer: 1 });
     } catch (err) {
       crashed(`拉起侧车失败（${err}）`, undefined);
       return;

@@ -55,7 +55,7 @@ async function makeStore() {
     throw new Error('memory 插件未激活');
   }
   const mem = app.bind({ memory }).memory.use;
-  return { app, mem, store: new RelationStore(() => mem) };
+  return { app, mem, store: new RelationStore(mem) };
 }
 
 const VEC = Array.from({ length: 8 }, (_, i) => (i + 1) / 10);

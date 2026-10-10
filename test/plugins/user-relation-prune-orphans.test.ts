@@ -21,7 +21,7 @@ async function makeService() {
   const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
   if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
   const ref = app.bind({ memory }).memory.use;
-  const store = new RelationStore(() => ref);
+  const store = new RelationStore(ref);
   return { app, service: new RelationService(store) };
 }
 

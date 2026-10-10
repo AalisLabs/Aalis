@@ -70,7 +70,7 @@ describe('gif 参数（纯函数）', () => {
 describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
   let base: string;
   let app: App;
-  let storageGateway: StorageService;
+  let files: StorageService;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-anim-'));
@@ -94,7 +94,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
     });
     await app.plugin(processLocal);
     await app.plugins.idle();
-    storageGateway = app.bind({ storage }).storage.use;
+    files = app.bind({ storage }).storage.use;
   });
 
   afterEach(async () => {
@@ -125,7 +125,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
       const proc = app.bind({ processService }).processService.use;
       const gif = await framesToGif(
         proc,
-        storageGateway,
+        files,
         a.frames.map(f => Buffer.from(f)),
         opts.fps,
       );

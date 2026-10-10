@@ -28,7 +28,7 @@ async function makeService(logger?: Logger) {
   await app.plugins.idle();
   if (!host.memory.present) throw new Error('memory service missing');
   const mem = host.memory.use;
-  const store = new RelationStore(() => mem);
+  const store = new RelationStore(mem);
   return { app, store, service: new RelationService(store, logger) };
 }
 

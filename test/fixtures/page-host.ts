@@ -2,6 +2,7 @@ import type { SessionInfo } from '../../packages/api-session-manager/src/index.j
 import type { DeclarativePageView, PageActionResponse, WebUIService } from '../../packages/api-webui/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { createPageRegistry, type Reply } from '../../packages/plugin-webui-server/src/pages.js';
+import { fixedRef } from './service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 页面插件的测试台：webui-server 的真实登记表（质量门槛、闸门、合并 invalidate）包成 WebUIService 交给插件，
@@ -40,7 +41,7 @@ export function pageHost(opts: PageHostOptions = {}) {
   const registry = createPageRegistry({
     logger,
     send: quiet,
-    sessions: () => ({ getSession: id => opts.sessions?.(id) }),
+    sessions: fixedRef({ getSession: (id: string) => opts.sessions?.(id) }),
     signFile: opts.signFile ?? (uri => `signed:${uri}`),
   });
   const service: WebUIService = {

@@ -411,7 +411,7 @@ const configSchema = defineConfig({
 
 function start(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
-  const store = new RelationStore(() => caps.memory.use);
+  const store = new RelationStore(caps.memory.use);
   const service = new RelationService(store, caps.logger.use, caps.embedding);
 
   caps.provide.use(userRelation, service);

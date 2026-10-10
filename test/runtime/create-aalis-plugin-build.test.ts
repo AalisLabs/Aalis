@@ -73,7 +73,7 @@ for (const desc of await loader.discover()) {
     },
     unregister: quiet,
   });
-  const pages = createPageRegistry({ logger, send: quiet, sessions: () => undefined, signFile: () => undefined });
+  const pages = createPageRegistry({ logger, send: quiet, sessions: { present: false }, signFile: () => undefined });
   host.provide.use(webuiServer, {
     getPort: () => 0,
     getHost: () => '127.0.0.1',

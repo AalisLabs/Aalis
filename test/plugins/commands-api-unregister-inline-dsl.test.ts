@@ -12,6 +12,7 @@ import { App, definePlugin, optional, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
+import { ref } from '../fixtures/service-ref.js';
 
 const mkLogger = () => {
   const l = { warn() {}, debug() {}, info() {}, error() {}, child: () => mkLogger() };
@@ -22,7 +23,7 @@ const mkLogger = () => {
 async function namesAfterProviderDown(declaration: string): Promise<string[]> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
-  const registry = new CommandRegistry(mkLogger() as never, () => undefined);
+  const registry = new CommandRegistry(mkLogger() as never, ref());
   const handle = host.provide.use(commands, registry);
 
   // commands 声明为**可选**依赖：提供者下线时探针保持激活，清理只经门面的跟随回调。

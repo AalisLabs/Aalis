@@ -24,7 +24,7 @@ async function setup() {
   await app.plugins.idle();
   if (!host.memory.present) throw new Error('no memory');
   const mem = host.memory.use;
-  const service = new RelationService(new RelationStore(() => mem));
+  const service = new RelationService(new RelationStore(mem));
   return { host, service };
 }
 

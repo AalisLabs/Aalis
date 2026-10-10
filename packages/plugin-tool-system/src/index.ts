@@ -101,7 +101,7 @@ export default definePlugin({
 });
 
 function registerSystemToolset(caps: Caps): void {
-  const { tools, logger, storage, persona } = caps;
+  const { tools, logger, persona } = caps;
   const parsed = parseConfig(configSchema, caps.config.use, logger.use);
   const cfg = {
     ...parsed,
@@ -125,15 +125,15 @@ function registerSystemToolset(caps: Caps): void {
   });
 
   // 业务句柄每次调用打到当时选中的那一家，四个工具组共用一份即可
-  const storageGateway = storage.present ? storage.use : undefined;
+  const storage = caps.storage.present ? caps.storage.use : undefined;
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    if (storageGateway && caps.process.present) {
+    if (storage && caps.process.present) {
       registerShellTools(systemTools, {
         logger: logger.use,
         cwdUri,
-        storage: storageGateway,
+        storage,
         proc: caps.process.use,
         maxOutputSize: cfg.shell.maxOutputSize,
       });
@@ -144,8 +144,8 @@ function registerSystemToolset(caps: Caps): void {
   }
 
   if (cfg.file.enabled) {
-    if (storageGateway) {
-      registerFileTools(systemTools, { ...cfg.file, storage: storageGateway, cwdState });
+    if (storage) {
+      registerFileTools(systemTools, { ...cfg.file, storage, cwdState });
       logger.use.info('文件工具已启用');
     } else {
       logger.use.warn('文件工具需要 storage 服务，已跳过注册');
@@ -154,12 +154,12 @@ function registerSystemToolset(caps: Caps): void {
 
   if (cfg.system.enabled) {
     const skipTimeTool = persona.present && !!persona.use.isTimeInjectionEnabled?.();
-    registerSystemTools(systemTools, { cwdState, storage: storageGateway, skipTimeTool });
+    registerSystemTools(systemTools, { cwdState, storage, skipTimeTool });
     logger.use.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
   }
 
   if (cfg.http.enabled) {
-    registerHttpTools(systemTools, { ...cfg.http, storage: storageGateway });
+    registerHttpTools(systemTools, { ...cfg.http, storage });
     logger.use.info('HTTP 工具已启用');
   }
 
