@@ -84,7 +84,7 @@ async function run(caps: Caps): Promise<void> {
         err => logger.use.warn('授权用户等级加载失败:', err),
       )
       .then(reportLoad)
-      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛，成败两条回调都算：
+      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或它的时钟抛错）不再外抛，成败两条回调都算：
       // storage 已在线时下面的 await 会让激活失败，晚上线时没人等这个 Promise，未处理的拒绝会被宿主当致命错误退出进程
       .catch(() => {});
   });

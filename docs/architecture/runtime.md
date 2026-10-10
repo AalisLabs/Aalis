@@ -5,7 +5,7 @@
 Aalis 把「内核」和「宿主」分开：
 
 - **`@aalis/core`** = **环境无关内核**。不碰 I/O、不读 `process.env`、不知道 node_modules，
-  环境专有件（重启策略、时钟、版本号等）经 `AppOptions` 注入；插件定义与各实例配置由宿主登记时交来（设计理念见 docs/core）。
+  环境专有件（重启策略、版本号等）经 `AppOptions` 注入，日志时钟随 logger 注入；插件定义与各实例配置由宿主登记时交来（设计理念见 docs/core）。
 - **`@aalis/runtime`** = **Node 宿主层**。用 Node API 承担 core 刻意不做的几件事
   （插件发现 / 配置文档 / 重启策略），并提供「一行启动」`startAalis`。
 
@@ -157,7 +157,7 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
 
 ## 怎么为别的环境写宿主
 
-core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` / `devMode` / `now` /
+core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` / `devMode` /
 `version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现与配置文档都不经它注入。
 `startAalis` 从配置文件顶层读 `slowThresholdMs` 注入（改了要重启），其余时长用 core 默认值。
 `@aalis/runtime` 的包入口会引入 Node 模块，非 Node 宿主不能直接复用，要用该环境的 API 自备以下几样：

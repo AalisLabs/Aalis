@@ -24,12 +24,11 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 | `name` | `string` | 应用名，只用于启动横幅；缺省 `'Aalis'` |
 | `logLevel` | `LogLevel` | 默认 Logger 的级别；缺省 `'info'`。注入了 `logger` 时不用 |
 | `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |
-| `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
-| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败时沿用上一层，`app.logger` 也是包过的这层 |
+| `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享）。注入了 `logger` 时不用 |
+| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败时沿用上一层，`app.logger` 也是包过的这层。要按 App 固定日志时间戳，注入 `new DefaultLogger('aalis', level, hub, now)` |
 | `devMode` | `boolean` | 传给根激活，决定 `provide` 与激活路径是否跑一致性校验；默认 `true` |
 | `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时 abort 后的宽限（见下文）。0=不设限 |
 | `slowThresholdMs` | `number` | 慢操作阈值（毫秒），默认 60000：插件激活超过它仍未完成即告警、转入后台；`app:*` 屏障事件的单个监听器超过它即告警、不再等待。0=不设限 |
-| `now` | `() => Date` | 日志时间戳时钟；缺省墙上时间 |
 | `version` | `string` | 启动 banner 用的内核版本；core 不自读 package.json |
 
 两个时长上限超过 2³¹−1（定时器的最大延迟，约 24.8 天）时按 2³¹−1 计，`Infinity` 同样按它计；负数与 `NaN` 按不设限处理。

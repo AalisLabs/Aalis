@@ -47,13 +47,14 @@ export interface AppOptions {
   /**
    * 注入自定义 LogHub。多 App 沙盒 / 集成测试 / 嵌入多实例场景下
    * 可以传入 `new LogHub()`使每个 App 拥有独立的日志通道，不互相串台。
-   * 缺省 = `LogHub.default`（进程级共享，runtime sink 默认订阅的也是它）。
+   * 缺省 = `LogHub.default`（进程级共享，runtime sink 默认订阅的也是它）。注入了 `logger` 时不用
    */
   logHub?: LogHub;
   /**
    * 注入自定义 Logger 实现（如 pino/winston 适配对象）。
    * 注入后 core 不再写 LogHub 管线——runtime 的 console/file/webui sink
-   * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。
+   * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。要按 App 固定日志时间戳，
+   * 注入 `new DefaultLogger('aalis', level, hub, now)`。
    * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败时沿用上一层，`app.logger` 也是包过的这层。
    */
   logger?: Logger;
@@ -64,14 +65,9 @@ export interface AppOptions {
    */
   devMode?: boolean;
   /**
-   * 时钟：日志时间戳的时间来源。缺省 `() => new Date()`（保持现行为）；宿主可注入固定时钟做
-   * 确定性测试。core 逻辑不主动取墙上时间，全由此注入——与 `devMode` 同为"宿主决定"注入项。
-   */
-  now?: () => Date;
-  /**
    * 内核版本号，仅用于启动 banner 展示（如 `Aalis Core 0.6.0 - <name>`）。
    * core 环境无关、零依赖，不能自读 package.json；由宿主（@aalis/runtime）读取
-   * `@aalis/core` 的实际版本注入——与 `now` / `devMode` 同为"宿主决定"注入项。
+   * `@aalis/core` 的实际版本注入——与 `devMode` 同为"宿主决定"注入项。
    * 缺省时 banner 省略版本段（嵌入 / 测试场景无宿主注入）。
    */
   version?: string;
@@ -117,8 +113,7 @@ export class App {
 
   constructor(options: AppOptions) {
     this.logger = quietLogger(
-      options.logger ??
-        new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now),
+      options.logger ?? new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default),
     );
     this.#restartStrategy = options.restartStrategy;
     // 定时器的最大延迟是 2³¹−1ms，更大的值（含 Infinity）会被运行时当成 1ms

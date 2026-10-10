@@ -287,8 +287,6 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
           }),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
-    // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。
-    now: () => new Date(),
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
     version: readCoreVersion(),
   });

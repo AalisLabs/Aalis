@@ -122,7 +122,7 @@ export class UserStore {
           this.logger.error('保存用户等级数据失败，改动仍只在内存生效，下次保存时重试:', err);
         },
       )
-      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛：链停在拒绝时 flushed() 与拆卸都会抛，
+      // 上报器自身失败（宿主经 AppOptions 注入的 logger 或它的时钟抛错）不再外抛：链停在拒绝时 flushed() 与拆卸都会抛，
       // 此后的写也不再发出；load 收尾那次保存无人等待，还会成为未处理的拒绝、被宿主当致命错误退出进程
       .catch(() => {});
   }
