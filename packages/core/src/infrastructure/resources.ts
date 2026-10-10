@@ -71,16 +71,15 @@ export class Resources {
 
   /**
    * 跟踪宿主的一次初始化。失败由宿主处理，关闭只等待它落定。
-   * 至多 track 一次：再次调用会覆盖前一次，前一次不再被等待——调用方保证。
+   * 至多 track 一次，调用方保证。
    * 已开始关闭时（初始化的同步段里就被接手）立即 abort：与「冻结后对在飞初始化 abort」同一规则。
    */
   trackInitialization(initializing: Promise<unknown>): void {
     // 落定的第一拍就清：宿主随后的收尾（含失败回滚里的关闭）看到的已是「初始化已落定」
     const done = (): void => {
-      if (this.#initialization === settled) this.#initialization = undefined;
+      this.#initialization = undefined;
     };
-    const settled = initializing.then(done, done);
-    this.#initialization = settled;
+    this.#initialization = initializing.then(done, done);
     if (this.#closing) this.abort();
   }
 
@@ -244,14 +243,8 @@ export class Resources {
   }
 
   onDispose(fn: () => void | Promise<void>, label?: string): () => void {
-    if (this.disposed) {
-      if (this.disposables.disposed) {
-        this.#logger.warn(`Resources "${this.#id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行`);
-      } else {
-        this.#logger.debug(
-          `Resources "${this.#id}" 拆卸进行中，onDispose${label ? `("${label}")` : ''} 纳入本次清理链`,
-        );
-      }
+    if (this.disposables.disposed) {
+      this.#logger.warn(`Resources "${this.#id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行`);
     }
     // 每次登记一个独立包装：同一个回调登记两次也能各自取消
     const entry = () => fn();

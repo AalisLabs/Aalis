@@ -656,7 +656,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 不让 registerAll 整批拒绝；拷贝放在停机、重名检查之后，日志点名插件。
 // 2647 → 2642：core 0.20 计划 b2「缺陷与内部整理」，S5 按用户选定的根修——App 把注入或缺省的 logger 包成不抛的一层
 // （quietLogger），core 与插件的 logger 都由它派生，删去各处只为保护日志调用的 reportQuietly。
-const CORE_CODE_LINE_CEILING = 2642;
+// 2642 → 2635：同批 P0-9，去掉多余的诊断——拆卸进行中登记 onDispose 的 debug 删去、只留关闭后就地执行的 warn；
+// trackInitialization 只承诺「至多一次」，删去覆盖前一次的身份核对。
+const CORE_CODE_LINE_CEILING = 2635;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
