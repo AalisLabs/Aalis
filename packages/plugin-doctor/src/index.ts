@@ -300,7 +300,7 @@ function registerBuiltinChecks(
           category: 'plugins',
           level: errored.length === 0 ? 'ok' : 'error',
           message:
-            errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件处于 error（激活失败或未在宽限内停止）`,
+            errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件处于 error（激活失败或自动重试用尽）`,
           detail: errored.length > 0 ? errored.map(p => `${p.instanceId}: ${p.error}`).join('\n') : undefined,
         },
         {

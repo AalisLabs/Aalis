@@ -42,8 +42,9 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不往排序图加边，由归属保证插件 close 先于根 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭：正在用该插件所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。这项同批保证覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游；以下情形与本次管理动作彼此不排序：并发的另一个管理动作里已在收尾的下游，在管理动作期间才开始激活的下游，管理动作进行中发生的停机。提供者清理之前，挂在它所提供服务上、尚未进关闭计划的 `follow` / `registrar` 跟随者由撤回段就地驱动交接，旧清理落定后提供者才清理；交接不经事件投递，下线通知照常不等监听器，一个跟随者的清理挂住不拖住别的跟随者。已进关闭计划的跟随者（同批下游、停机计划或别的计划里的）不由提供者驱动，旧清理在各自的撤回段执行，可能晚于提供者的 `onDispose`（根激活用插件服务时的停机、optional 环、管理动作的主体反向跟随它的 required 下游）；这类跟随者要在依赖仍可用时交接，放在 `onDrain`。动态查询与手动缓存的裸引用不产生边。
 - `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定、丢弃旧普通重算并进入停机态；`apply` 尚未完成的激活此刻 abort）→ `idle()`（等待已在飞的重算和手动 dispose 段）→ 发出 `app:stopping` → 关停计划。`app:*` 屏障逐个等监听器返回，单个至多等 `slowThresholdMs`，超过即告警点名、不再等它。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不更改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理，完整完成信号是 `App.stop()`。正常运行中已在途的 `unload` 仍 join，其他正常幂等行为不变。已冻激活上 `provide` 记 warn 后忽略、不抛。停机完成后 `idle()` 落定。
 - 非管理动作引起的提供者换人（提供者自行撤回登记、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。管理动作拆掉当前胜者时 required 下游随之重启，见上文关闭编排一条。
-- 激活超过 `slowThresholdMs`（默认 60 秒，0 = 不设限）仍未完成：告警点名一次、转入后台，重算接着激活其余插件；它以 `activating`、`slow: true` 可见，`idle()` 不等它。它落定后成功转 active 并上线服务，失败进 error，均另触发一次重算。仍在初始化（在飞或后台）的插件被停用、卸载、重启或停机接手，或后台激活因 required 依赖下线被拆时，先 abort，再自其收尾段开始至多等 `disposeTimeoutMs`；到期记 error「未在宽限内停止」、不再等待，目标态为 `disabled` / `pending` 的转 `error`（`apply` 仍在跑，不再起新实例，依赖恢复后也不自动重试），`disposed` 保持单向终态。两个值都非 0 时 `stop()` 总能结束。
-- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活（后台激活因依赖下线被拆、超过宽限转 `error` 的除外，见上条）。初始化期间本次 required 绑定的 `require()` 原样抛出不可用错误时，先回滚资源再回到 pending；optional、自造/包装异常及其他激活的错误不适用。这类自动重试与后台激活因 required 依赖下线被拆按插件计入同一份预算，跨重算累计、有界，用尽转 `error`（需 `enable` / `bounce`），不影响其他插件与管理操作。
+- 激活超过 `slowThresholdMs`（默认 60 秒，0 = 不设限）仍未完成：告警点名一次、转入后台，重算接着激活其余插件；它以 `activating`、`slow: true` 可见，`idle()` 不等它。它落定后成功转 active 并上线服务，失败进 error，均另触发一次重算。仍在初始化（在飞或后台）的插件被停用、卸载、重启或停机接手，或后台激活因 required 依赖下线被拆时，先 abort，再自其收尾段开始至多等 `disposeTimeoutMs`，到期不再等待。两个值都非 0 时 `stop()` 总能结束。
+- 同一 instanceId 任何时刻至多一个实例在跑：激活关完仍有工作没落定（`apply` 或清理超过宽限被放弃等待），条目照写目标态，`getStatus()` 给出 `lingering: true`；这些工作全部落定之前同一 id 不起新实例（含卸载后同 id 重新登记），落定后按目标态继续。管理动作与 `idle()` 不等它。core 只看得见交给它的工作：`apply`、`onDrain` / `onDispose` 返回的 Promise，`follow` / `registrar` / `track` 撤回的返回值。
+- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活（旧实例还没停下的等它停下，见上条）。初始化期间本次 required 绑定的 `require()` 原样抛出不可用错误时，先回滚资源再回到 pending；optional、自造/包装异常及其他激活的错误不适用。这类自动重试与后台激活因 required 依赖下线被拆按插件计入同一份预算，跨重算累计、有界，用尽转 `error`（需 `enable` / `bounce`），不影响其他插件与管理操作。
 
 ## 三、明确不承诺（实现自由区）
 
@@ -117,9 +118,9 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 
 core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts` 守卫；目录边界与公开包边界无关：
 
-- **资源内核** `kernel/`（`disposable-chain.ts`）：清理链、分段逆序排空与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
+- **资源内核** `kernel/`（`disposable-chain.ts`）：清理链、逆序排空与逐项超时、错误隔离与上报；链等不到的异步清理交给宿主记账。只引用本层，不认识服务、配置或激活记录。
 - **协作原语** `primitives/`（events、services）：两个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
-- **基础设施** `infrastructure/`（resources、config-values、logger）：一次激活的资源账与关闭过程（收尾段、初始化等待、完成信号、在飞撤回）、配置值的安全处理（危险键闸与拷贝）、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
+- **基础设施** `infrastructure/`（resources、config-values、logger）：一次激活的资源账与关闭过程（收尾、撤回、清理三条链，初始化等待，完成信号，在飞工作的账本）、配置值的安全处理（危险键闸与拷贝）、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
 - **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`core-services` 定义内置六项的描述符与提供者；其余包含 runtime 接线与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
 - **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：创建激活、经根激活登记内置服务、启动、调度、关停，以及宿主 SPI 和管理服务描述符。
 
@@ -143,7 +144,7 @@ src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`ty
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message，丢掉 stack 与 cause 链；日志行编码与转义由宿主负责。宿主 SPI
 （重启策略）的失败一律 `error` 级。
 
-不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的顺序是 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Resources 至多跟踪一次初始化（调用方保证）。
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的顺序是 drain → 切断对外登记 → 撤回链 → 清理链 → afterCleanup，每段收口等本段发起的异步工作；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化期间取得的资源；超时只是停止等待，不代表资源已释放，没落定的工作留在账上，关完时交给编排层按 id 记着；每个 Resources 至多跟踪一次初始化（调用方保证）。
 
 不把切断提前到收尾之前（quiesce 前置）：`onDrain` 承诺收尾时本激活的监听、登记与声明的依赖都还在（见第二节），
 提前切断与之冲突；代价是关闭等在飞初始化期间，本激活已有的监听与登记仍对外生效。不把编排改成按条目的判别联合

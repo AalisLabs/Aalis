@@ -34,8 +34,8 @@ export interface AppOptions {
    * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
    * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名。
    * 也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时的宽限：abort 它的
-   * `lifecycle.signal` 后，自其收尾段开始至多再等这么久，到期仍未落定记 error（「未在宽限内停止」）、不再等待。
-   * 该值不是整个停机的期限。
+   * `lifecycle.signal` 后，自其收尾段开始至多再等这么久，到期仍未落定即不再等待。关完仍有工作没落定的旧实例停下之前，
+   * 同一 id 不起新实例（`getStatus()` 的 `lingering`）。该值不是整个停机的期限。
    * 传 0 表示不设限；超过 2³¹−1（定时器的最大延迟）按 2³¹−1 计。
    */
   disposeTimeoutMs?: number;

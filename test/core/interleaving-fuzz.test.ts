@@ -16,7 +16,7 @@ const ONE = Number(process.env.AALIS_FUZZ_SEED);
 const SEEDS = Number(process.env.AALIS_FUZZ_SEEDS) || 32;
 const seeds = ONE ? [ONE] : Array.from({ length: SEEDS }, (_, k) => k + 1);
 const BOUND = 250 * TIMEOUT;
-const KNOWN: Record<Profile, Violation['cause'][]> = { strict: ['overlap'], 'known-gaps': ['S2', 'S3', 'overlap'] };
+const KNOWN: Record<Profile, Violation['cause'][]> = { strict: ['overlap'], 'known-gaps': ['S3', 'overlap'] };
 
 async function runWorld(seed: number, profile: Profile): Promise<Violation[]> {
   const w = createWorld(seed, profile);
@@ -82,8 +82,8 @@ describe('插件管理随机交错', () => {
   const pin = (cause: Violation['cause'], seed: number, profile: Profile) => async () => {
     expect((await runWorld(seed, profile)).filter(v => v.cause === cause)).toEqual([]);
   };
-  it.fails('S2 未修：清理超时后同一 id 新旧实例并存（known-gaps seed=2）', pin('S2', 2, 'known-gaps'));
-  it.fails('S3 未修：连锁退场时下游收尾失去上游（known-gaps seed=11）', pin('S3', 11, 'known-gaps'));
+  it('S2：清理超时后同一 id 不会新旧实例并存（known-gaps seed=2）', pin('S2', 2, 'known-gaps'));
+  it.fails('S3 未修：连锁退场时下游收尾失去上游（known-gaps seed=28）', pin('S3', 28, 'known-gaps'));
   it.fails('overlap 未修：后一份管理计划不等前一份里还没收尾的消费者（strict seed=38）', pin('overlap', 38, 'strict'));
 });
 

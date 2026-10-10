@@ -9,8 +9,8 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // apply 里 await 的启动探测（连通性检查、模型发现）接 lifecycle.signal：停用、重启、停机时 apply 随 abort 落定。
-// 不接的话要等请求自己的超时（10 秒到 60 秒）才落定，超过拆卸宽限（core 默认 5 秒）被记「未在宽限内停止」，
-// 停用与重启时条目转 error。
+// 不接的话要等请求自己的超时（10 秒到 60 秒）才落定，超过拆卸宽限（core 默认 5 秒），
+// 旧实例停下之前同一 id 不再激活。
 //
 // fetch 用替身：命中的请求挂起，只有请求带的 signal abort 才落定（替身不自带超时）。
 // 宽限取 1 秒，远小于各插件的请求超时。
@@ -118,7 +118,7 @@ describe('启动探测随 lifecycle.signal 中止', () => {
     await registering;
     await app.plugins.idle();
 
-    // 中止后 apply 不再往下走：不报探测失败、不登记服务，宿主也不记「未在宽限内停止」
+    // 中止后 apply 不再往下走：不报探测失败、不登记服务，宿主也不记旧实例超过宽限仍未停止
     expect(lines).toEqual([]);
     expect(app.plugins.getPlugin(plugin.name)?.state).toBe('disabled');
     expect(elapsed, '停用应在宽限内返回').toBeLessThan(GRACE_MS);

@@ -84,7 +84,7 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 
 监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等（监听器至多等到 `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
 
-单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。仍在初始化的插件 abort 之后，自它的收尾段开始至多再等 `disposeTimeoutMs`，到期仍未落定记 error「未在宽限内停止」、不再等待，停机继续。`slowThresholdMs` 与 `disposeTimeoutMs` 都非 0 时 `stop()` 总能结束；任一为 0（不设限）时，永不落定的 `apply` 或屏障监听器仍可能让它等待不返回。边规则见 [插件定义与能力](context.md)。
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。仍在初始化的插件 abort 之后，自它的收尾段开始至多再等 `disposeTimeoutMs`，到期仍未落定就不再等待，停机继续。`slowThresholdMs` 与 `disposeTimeoutMs` 都非 0 时 `stop()` 总能结束；任一为 0（不设限）时，永不落定的 `apply` 或屏障监听器仍可能让它等待不返回。边规则见 [插件定义与能力](context.md)。
 
 ### `app.plugin(definition, config?, instanceId?, options?)`
 

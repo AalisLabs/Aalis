@@ -27,9 +27,9 @@ describe('清理链点名', () => {
     const ctx = makeFixture('p');
     const registry = new HubRegistry();
     bindActivationFixture(ctx.host, ctx.host.root).caps.provide(hub, registry);
-    // 账本创建即跟随提供者（那条跟随按 watch:__t:hub 进链），基线取在绑定之后：之后的逐条登记不再加链
+    // 账本创建即跟随提供者（那条跟随按 watch:__t:hub 进撤回链），基线取在绑定之后：之后的逐条登记不再加链
     const { hub: ledger } = ctx.host.bind(ctx.activation, { hub });
-    const baseline = ctx.activation.resources.disposables.labels();
+    const baseline = ctx.activation.resources.withdrawals.labels();
     expect(baseline).toEqual(['watch:__t:hub']);
     let heard = 0;
     ctx.caps.events.on(EVT, () => {
@@ -40,7 +40,8 @@ describe('清理链点名', () => {
     ctx.caps.provide(defineService('llm'), {} as never, { entryId: 'p/model-a' });
     ctx.host.bind(ctx.activation, { ref: defineService('later') }).ref.follow(() => {});
 
-    expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'watch:later']);
+    expect(ctx.activation.resources.withdrawals.labels()).toEqual([...baseline, 'watch:later']);
+    expect(ctx.activation.resources.disposables.labels()).toEqual([]);
     await ctx.events.emit(EVT);
     expect(heard).toBe(1);
     expect(registry.list()).toEqual(['p/me=v']);

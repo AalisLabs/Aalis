@@ -37,6 +37,11 @@ export interface PluginStatusEntry {
   error?: string;
   /** 激活超过 `AppOptions.slowThresholdMs` 仍未完成、已转入后台（state 为 activating）时为 true，否则不给 */
   slow?: boolean;
+  /**
+   * 旧实例关完仍有工作没落定（清理或被拆的初始化超过 `AppOptions.disposeTimeoutMs`）时为 true，否则不给。state 照常是
+   * 目标态；它停下之前同一 id 不起新实例，停下后按目标态继续。与 `slow` 对称：一个是新实例没起完，一个是旧实例没停完
+   */
+  lingering?: boolean;
   // 配置详情（config / configSchema）不属状态摘要——
   // 消费者经 getPlugin(instanceId) 从 entry.config / entry.definition 读取。
 }
@@ -68,7 +73,7 @@ export interface PluginManagerService {
    * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。disabled 态只换上 `opts.config`、保持禁用，
    * 启用时按它激活；不带配置时被政策挡下（warn，返回 false）。停机进行中一律返回 false、不换配置（记 debug）。
    * 不得在插件 apply / onDrain / onDispose 内 await 针对自身或自身 required 提供者的本动作：拆卸要等这些回调返回，
-   * 两边至多互等到宽限超时，apply 被判「未在宽限内停止」。
+   * 两边至多互等到宽限超时，旧实例超过宽限仍未停下（`lingering`）。
    */
   bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean>;
   /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳，调用约束同 bounce；禁用态只换配置、保持禁用 */

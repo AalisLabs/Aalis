@@ -35,7 +35,7 @@ interface PluginEntry {
 | `active` | 已激活，正常运行 |
 | `disabled` | 手动禁用 |
 | `disposed` | 已卸载（单向终态） |
-| `error` | 激活失败，或停用 / 重启、后台激活的 required 依赖下线时 abort 后超过宽限仍未停止（`error` 为「未在宽限内停止（…）」），或初始化期间 required 依赖反复缺失、自动重试用尽（见下文）（激活失败时带 `error` 信息：错误消息后接 cause 链各层的首行，以 ` ← ` 相连，至多 5 层；`AggregateError` 层之后接至多 3 条子错误的首行，以 `; ` 相连；上一层首行与本层首行相同，或以冒号接本层首行结尾时，省略本层；非 Error 的值只取首行、至多 200 字符。不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
+| `error` | 激活失败，或初始化期间 required 依赖反复缺失、自动重试用尽（见下文）（激活失败时带 `error` 信息：错误消息后接 cause 链各层的首行，以 ` ← ` 相连，至多 5 层；`AggregateError` 层之后接至多 3 条子错误的首行，以 `; ` 相连；上一层首行与本层首行相同，或以冒号接本层首行结尾时，省略本层；非 Error 的值只取首行、至多 200 字符。不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
 
 ## 生命周期流程
 
@@ -62,7 +62,11 @@ register(definition, config?, instanceId?, { disabled? })
 - 落定：成功则先转 `active` 再上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
 - 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），这次拆除计入下文的重试预算，abort 与宽限同下文：宽限内落定的回到 `pending`、依赖恢复后重新激活，这次拆除用尽预算的转 `error`；到期仍未落定的转 `error`，依赖恢复后也不自动重试。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
 
-`apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.signal` 在关闭计划冻结后立即 abort，重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定。到期仍未落定：记 error「未在宽限内停止」、不再等待，流程继续；目标态为 `disabled` / `pending` 的（`disable` / `bounce` 的主体、任何管理动作同批的下游、依赖下线被拆的后台激活）改为 `error`：`apply` 仍在跑，不能再起新实例，`bounce` 因此不会重新激活，依赖恢复后也不自动重试；目标态本身为 `error` 的（后台激活被拆时用尽重试预算），错误说明改写为「未在宽限内停止（…）」；目标态为 `disposed` 的（`unload` 的主体、停机）是单向终态，只记日志。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态与激活身份），它迟到的 `provide` / `events.on` 按已关闭的激活拒收、`onDispose` 就地执行。
+`apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.signal` 在关闭计划冻结后立即 abort，重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide` / `events.on` 按已关闭的激活拒收、`onDispose` 就地执行。
+
+### 旧实例停下之前不起新实例
+
+一个激活关完时还有工作没落定（`apply` 或某项清理超过 `disposeTimeoutMs` 被放弃等待，或关闭后就地执行的清理还在跑），core 把它记在实例 id 名下：条目照写目标态（`bounce` 为 `pending`、`disable` 为 `disabled`、依赖下线被拆的回到 `pending`），`getStatus()` 对它给出 `lingering: true`，记一条 warn；这些工作全部落定之前，同一 id 不起新实例，`bounce`、`updateConfig`、`enable`、依赖恢复与卸载后同 id 重新登记都一样。落定后去掉标记、补一次重算，按目标态继续。管理动作与 `idle()` 不等它。永不落定的工作会让这个 id 一直等下去，只有重启进程能解决。
 
 激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活的 required 绑定在 `apply` 中通过 `require()` 原样抛出服务不可用错误，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆，按插件记入同一份重试预算，跨重算累计，额度为首次取额时的 `2×插件数 + 8`；用尽转 `error`（「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」），不再自动重试。激活成功、`enable`、`bounce` / `updateConfig` 时预算清零。optional 绑定、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。`plugin:unloaded` 只发给发过 `plugin:loaded` 的激活：失败激活、仍在初始化时被拆的激活都不发。
 
@@ -99,7 +103,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 `idle()` 等待状态机静置（无在飞 recompute、无排队、无手动 dispose 段）。变更 API 在已有 flight 在飞时排队并立即返回。不等转入后台的激活：它落定后另触发一次重算，之后调用的 `idle()` 会等这次重算。后台激活落定失败时的回滚不在重算之内，`idle()` 不等它完成（状态已先写好）。**不得在插件 `apply` / `onDispose` 内调用**——flight 正等着你返回，互等死锁。
 
-插件的 `apply` 与关闭回调（`onDrain` / `onDispose`）不能等待针对自身或自身 required 提供者的 `bounce` / `updateConfig` / `disable` / `unload`。例如在 `apply` 中 `await` 对 required 提供者的 `bounce`：这个动作要把正在用该服务的本插件并入同一批拆掉，拆卸要等 `apply` 返回，`apply` 又在等动作完成，两者至多互等到宽限（`disposeTimeoutMs`）到期（为 0 时一直等下去），本插件被判「未在宽限内停止」。
+插件的 `apply` 与关闭回调（`onDrain` / `onDispose`）不能等待针对自身或自身 required 提供者的 `bounce` / `updateConfig` / `disable` / `unload`。例如在 `apply` 中 `await` 对 required 提供者的 `bounce`：这个动作要把正在用该服务的本插件并入同一批拆掉，拆卸要等 `apply` 返回，`apply` 又在等动作完成，两者至多互等到宽限（`disposeTimeoutMs`）到期（为 0 时一直等下去），本插件的旧实例停下之前不会重新激活（见上文）。
 
 ### `register(definition, config?, instanceId?, options?)`
 
@@ -111,7 +115,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `enable(instanceId)` / `disable(instanceId)`
 
-正常运行中启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。`disable` 清掉上一次激活失败留下的 `error`；停用本身超过宽限的仍转 `error`，见上文。停机中两个动作都立即返回 false，`enable` 不会把禁用或错误条目转回 `pending`。
+正常运行中启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。`disable` 清掉上一次激活失败留下的 `error`；停用时旧实例超过宽限仍未停下的照样转 `disabled`，带 `lingering`，见上文。停机中两个动作都立即返回 false，`enable` 不会把禁用或错误条目转回 `pending`。
 
 ### `bounce(instanceId, opts?: { config? })`
 

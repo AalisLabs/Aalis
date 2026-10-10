@@ -226,7 +226,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(applied, '启用后按新配置激活').toEqual([1, 9]);
   });
 
-  it('停用时插件未在宽限内停止、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；文档记为禁用并落盘', async () => {
+  it('停用时插件超过宽限仍未停下：写进了配置文件就回 200，message 说明它还没停下；文档记为禁用并落盘', async () => {
     const w = world(
       { name: 'T', logLevel: 'error', plugins: {} },
       { timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } },
@@ -237,11 +237,11 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       expect(w.app.plugins.getPlugin('deaf')?.state).toBe('activating');
 
       const reply = await w.disable('deaf');
-      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('error');
+      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('disabled');
       expect(reply.status).toBe(200);
       expect(reply.body).toEqual({
         ok: true,
-        message: '插件 deaf 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用',
+        message: '插件 deaf 已禁用，但超过宽限仍未停下，详见日志；配置文件已记为禁用',
       });
       expect(w.store.isPluginDisabled('deaf')).toBe(true);
       expect(w.saved).toHaveLength(1);
@@ -366,10 +366,10 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       });
 
       const disabled = await w.disable('deaf');
-      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('error');
+      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('disabled');
       expect(disabled.status).toBe(500);
       expect(disabled.body).toEqual({
-        error: `插件 deaf 未在宽限内停止，已转为 error 态，详见日志；已在运行态生效，但写入配置文件失败（${SAVE_FAILED}）；${kept}`,
+        error: `插件 deaf 已禁用，但超过宽限仍未停下，详见日志；已在运行态生效，但写入配置文件失败（${SAVE_FAILED}）；${kept}`,
         applied: true,
       });
       expect(w.saved).toHaveLength(0);

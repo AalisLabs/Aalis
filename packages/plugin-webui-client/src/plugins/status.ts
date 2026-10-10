@@ -102,6 +102,8 @@ export function rootText(root: UnmetRoot, find: FindPlugin): string {
       return '已停用';
     case 'starting':
       return `等待 ${pluginName(root.instance, find)} 启动`;
+    case 'lingering':
+      return `等待 ${pluginName(root.instance, find)} 的旧实例停下`;
     case 'withdrawn':
       return `在运行但没有提供 ${root.service}`;
     case 'unprovided':

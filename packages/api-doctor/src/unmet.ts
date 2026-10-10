@@ -5,6 +5,7 @@
 // 插件或追不下去的地方，那里就是根。根失败、停用、在运行却没在提供、没有已装的插件提供、互相等待成环，是「缺」：要人
 // 处理；根在启动，是「在等」：它启动完就有。runtime 的启动告警、plugin-doctor 的诊断、webui-server 的插件列表与「需要
 // 处理」、plugin-cli 的欢迎行与 plugin-package-manager 的卸载闸都调这里，几处的判断与说法因此一致。
+// 根在等自己的旧实例停下（快照的 lingering）也是「在等」：停下后它就激活。
 //
 // 只收普通数据：插件状态快照与当前有提供者的服务名（core 的 `services.names()`）。required 与 optional 按快照里 `uses`
 // 每项的 kind 分。判缺看服务名，不看谁声明提供：宿主在根上提供的服务不在任何插件的 provides 里；声明提供它的插件
@@ -14,13 +15,17 @@
 import type { PluginStatusEntry } from '@aalis/core';
 
 /** 判据读的插件状态：core 插件状态快照里的这几项 */
-export type PluginSnapshot = Pick<PluginStatusEntry, 'instanceId' | 'state' | 'provides' | 'uses' | 'error'>;
+export type PluginSnapshot = Pick<
+  PluginStatusEntry,
+  'instanceId' | 'state' | 'provides' | 'uses' | 'error' | 'lingering'
+>;
 
 /**
  * 一条链的根：
  * - `error`：根插件激活失败，`error` 是它的失败说明；
  * - `disabled`：根插件已停用；
  * - `starting`：根插件在启动（激活中，含转入后台的慢激活；或它要的都在了、马上激活）。只是在等，不算缺；
+ * - `lingering`：根插件要的都在了，在等自己的旧实例停下（旧实例的清理超过宽限仍未落定），停下后就激活。也只是在等；
  * - `withdrawn`：根插件在运行，却没在提供 `service`（激活之后自己撤回了，例如模型全被删掉的模型插件）；
  * - `unprovided`：没有已装的插件声明提供 `service`；
  * - `cycle`：几个插件互相等待成环，`instances` 是环上的插件，按等待的先后。
@@ -29,6 +34,7 @@ export type UnmetRoot =
   | { kind: 'error'; instance: string; error?: string }
   | { kind: 'disabled'; instance: string }
   | { kind: 'starting'; instance: string }
+  | { kind: 'lingering'; instance: string }
   | { kind: 'withdrawn'; instance: string; service: string }
   | { kind: 'unprovided'; service: string }
   | { kind: 'cycle'; instances: string[] };
@@ -112,7 +118,11 @@ export function unmetDependencies(
     const below = unmetOf(provider, path);
     const waits = below.lacking.length === 0;
     const rest = waits ? below.waiting : below.lacking;
-    if (rest.length === 0) return { waits: true, traces: [{ chain: [id], root: { kind: 'starting', instance: id } }] };
+    if (rest.length === 0)
+      return {
+        waits: true,
+        traces: [{ chain: [id], root: { kind: provider.lingering ? 'lingering' : 'starting', instance: id } }],
+      };
     // 它缺的几样可能经同一条链追到同一个根（几个服务都由同一个插件提供），只算一条
     const traces = new Map(
       rest.map(({ chain, root }) => [JSON.stringify([chain, root]), { chain: [id, ...chain], root }]),
@@ -133,6 +143,8 @@ function traceText({ chain, root }: Trace): string {
       return `${path} 已停用`;
     case 'starting':
       return `等待 ${root.instance} 启动`;
+    case 'lingering':
+      return `等待 ${root.instance} 的旧实例停下`;
     case 'withdrawn':
       return `${path} 在运行但没有提供 ${root.service}`;
     case 'unprovided':

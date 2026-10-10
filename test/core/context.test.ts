@@ -372,18 +372,18 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
       calls++;
     });
     first();
-    const watching = ctx.activation.resources.disposables.size;
+    const watching = ctx.activation.resources.withdrawals.size;
     for (let i = 0; i < 200; i++) {
       ref.follow(() => {
         calls++;
       })();
     }
-    expect(ctx.activation.resources.disposables.size).toBe(watching);
+    expect(ctx.activation.resources.withdrawals.size).toBe(watching);
     ctx.caps.provide(svc, { v: 1 });
     await tick();
     expect(calls).toBe(0);
     await ctx.activation.disposeAsync();
-    expect(ctx.activation.resources.disposables.size).toBe(0);
+    expect(ctx.activation.resources.withdrawals.size).toBe(0);
   });
 
   it('follow: attach 执行期间同步触发自身退订时，新 cleanup 立即执行（不泄漏）', async () => {
@@ -440,7 +440,7 @@ describe('Activation.disposeAsync 不变量', () => {
 
     const child = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
     const offB = child.caps.provide(defineService('__t:svc2'), { v: 2 });
-    await child.activation.disposeAsync(); // beforeCleanup 的 unregisterByOwner 已摘掉条目并广播过一次
+    await child.activation.disposeAsync(); // 原语切断的 unregisterByOwner 已摘掉条目并广播过一次
     offB();
     await new Promise(r => setTimeout(r, 0));
     expect(seen.filter(n => n === '__t:svc2')).toHaveLength(1);
@@ -457,7 +457,7 @@ describe('Activation.disposeAsync 不变量', () => {
     root.host.bind(ctx.activation, { hub }).hub.add('blk', 'v');
     const { hub: observer } = root.host.bind(root.activation, { hub });
     expect(observer.list()).toEqual(['plugin-a/blk=v']);
-    // provide 不进清理链：窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
+    // provide 不进清理链：窗口内 svc 消失只能是原语切断的 unregisterByOwner 干的，钉住 provide 带 owner
     ctx.caps.provide(defineService('svc'), { alive: true });
     let entered!: () => void;
     const flushing = new Promise<void>(r => {

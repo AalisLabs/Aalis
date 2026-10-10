@@ -41,6 +41,8 @@ export interface ActivationDeps {
    * 用尽为 error（已写原因，点名 missing）
    */
   spendRetry: (entry: PluginRecord, missing: string) => 'pending' | 'error';
+  /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不起新实例 */
+  linger: (instanceId: string, rest: Promise<unknown>) => void;
 }
 
 /**
@@ -53,11 +55,9 @@ export interface ActivationDeps {
  * - 先写终态：拆卸 await 期间并发管理操作的写入必须是后写者（管理意图胜）；
  *   同时给 activatePlugin 的接管检查提供让位信号。
  * - 判据用 entry.activation 而非 state：'activating' 的在飞或后台激活同样要拆。冻结计划后它的
- *   signal 立即 abort，收尾段至多再等 disposeTimeoutMs 让 apply 落定（Resources.drain）；
- *   到期仍未落定的不再等，记 error 点名「未在宽限内停止」。目标态为 disabled / pending 的（停用 / 重启的主体、
- *   同批下游、required 依赖丢失被拆的后台激活）转 error 态：apply 仍在跑，不能再起新实例，依赖恢复也不自动
- *   重试；目标态本身为 error 的（后台激活被拆时用尽重试预算），错误说明改写为「未在宽限内停止」；卸载与停机的
- *   'disposed' 是单向终态，只记日志。
+ *   signal 立即 abort，收尾段至多再等 disposeTimeoutMs 让 apply 落定（Resources.drain）。
+ * - 关完仍有工作没落定的（被拆的初始化或清理超过宽限，Resources.lingering）交给 deps.linger 记在 id 名下：终态照写，
+ *   同一 id 等它落定才起新实例（含卸载后同 id 重新登记）。
  * - 拆激活统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
@@ -77,13 +77,12 @@ export async function retireBatch(
   deps: ActivationDeps,
   opts?: { emitUnloaded?: boolean; planRoot?: Activation; settle?: Map<Activation, () => void> },
 ): Promise<void> {
-  const closing: Array<{ entry: PluginRecord; activation: Activation; target: PluginState; loaded: boolean }> = [];
+  const closing: Array<{ entry: PluginRecord; activation: Activation; loaded: boolean }> = [];
   for (const entry of entries) {
-    const target = typeof targetState === 'function' ? targetState(entry) : targetState;
     // 'active' 与 plugin:loaded 在同一同步段里写下；仍在初始化的、另一管理动作已改走终态的都不算
     const loaded = entry.state === 'active';
-    entry.state = target;
-    if (entry.activation) closing.push({ entry, activation: entry.activation, target, loaded });
+    entry.state = typeof targetState === 'function' ? targetState(entry) : targetState;
+    if (entry.activation) closing.push({ entry, activation: entry.activation, loaded });
   }
   try {
     const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.activation);
@@ -91,16 +90,9 @@ export async function retireBatch(
   } catch (err) {
     deps.logger.error('拆卸抛错:', err);
   }
-  for (const { entry, activation, target, loaded } of closing) {
-    if (activation.resources.initializing) {
-      const reason = `未在宽限内停止（abort 后收尾段又等了 ${deps.disposeTimeoutMs}ms，初始化仍未落定，不再等待）`;
-      deps.logger.error(`插件 "${entry.instanceId}" ${reason}`);
-      // 只改本批写下、至今未被别的管理动作改写的终态（与写入之间无 await）
-      if (target !== 'disposed' && entry.state === target && entry.activation === activation) {
-        entry.state = 'error';
-        entry.error = reason;
-      }
-    }
+  for (const { entry, activation, loaded } of closing) {
+    const rest = activation.resources.lingering();
+    if (rest) deps.linger(entry.instanceId, rest);
     if (entry.activation === activation) entry.activation = undefined;
     if (loaded && opts?.emitUnloaded !== false) deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
   }
@@ -149,9 +141,9 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // 会先把 state 改离 'activating' 再 disposeAsync（等的正是上面这个 applying）。
     // 此处一旦观察到 state 被改走，说明终态与激活的拆卸责任已归管理路径所有，
     // 本次激活的收尾（置 active / 报 error / 发 plugin:loaded）全部让位。
-    // 还要比激活身份：超过宽限被放弃的 apply 迟到落定时，同一条目可能已起了新一轮激活（state 又是 activating）。
-    // 检查与下方各写入之间无 await，不存在二次窗口。
-    if (entry.state !== 'activating' || entry.activation !== activation) {
+    // 不必再比激活身份：本次激活停下之前同一 id 不起新一轮（PluginManager 的 lingering 闸），state 仍是 activating
+    // 就是本次。检查与下方各写入之间无 await，不存在二次窗口。
+    if (entry.state !== 'activating') {
       logger.debug(`插件 "${entry.instanceId}" 激活期间被管理操作接管（现态 ${entry.state}），本次激活让位`);
       return;
     }
@@ -188,7 +180,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     if (host.root.resources.disposed) return;
     // 接管让位同上：管理路径已持有终态与激活的拆卸责任，此处再写 error /
     // 二次 dispose 会踩掉 disposed / disabled / pending 终态。
-    if (entry.state !== 'activating' || entry.activation !== activation) {
+    if (entry.state !== 'activating') {
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
     }

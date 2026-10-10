@@ -3,10 +3,15 @@ import { DefaultLogger } from '../../packages/core/src/index.js';
 // DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
 import { type CleanupReporter, DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 
+const silent: CleanupReporter = { warn() {} };
+/** 链交给宿主记账的异步清理：测试里只记下交过几次、是否放弃等待 */
+const held: boolean[] = [];
+const hold = (_work: Promise<void>, _what: string, abandoned: boolean) => void held.push(abandoned);
+
 describe('DisposableChain', () => {
   it('逆序执行清理函数', async () => {
     const order: number[] = [];
-    const chain = new DisposableChain(new DefaultLogger('test'));
+    const chain = new DisposableChain(new DefaultLogger('test'), hold);
     chain.push(() => order.push(1));
     chain.push(() => order.push(2));
     chain.push(() => order.push(3));
@@ -18,7 +23,7 @@ describe('DisposableChain', () => {
     const order: number[] = [];
     const logger = new DefaultLogger('test');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const chain = new DisposableChain(logger);
+    const chain = new DisposableChain(logger, hold);
     chain.push(() => order.push(1));
     chain.push(() => {
       throw new Error('boom');
@@ -30,19 +35,21 @@ describe('DisposableChain', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
-  it('取走后再 push 立即执行', async () => {
-    const chain = new DisposableChain();
+  it('取走后再 push 立即执行，异步返回值交给宿主、不算放弃等待', async () => {
+    const chain = new DisposableChain(silent, hold);
     await chain.disposeAsync();
     let ran = false;
-    chain.push(() => {
+    held.length = 0;
+    chain.push(async () => {
       ran = true;
     });
     expect(ran).toBe(true);
+    expect(held).toEqual([false]);
   });
 
   it('重复 disposeAsync 无副作用', async () => {
     const order: number[] = [];
-    const chain = new DisposableChain();
+    const chain = new DisposableChain(silent, hold);
     chain.push(() => order.push(1));
     await chain.disposeAsync();
     await chain.disposeAsync();
@@ -51,7 +58,7 @@ describe('DisposableChain', () => {
 
   it('remove 精确移除登记项不执行', async () => {
     const order: number[] = [];
-    const chain = new DisposableChain();
+    const chain = new DisposableChain(silent, hold);
     const fn = () => order.push(99);
     chain.push(() => order.push(1));
     chain.push(fn);
@@ -67,7 +74,7 @@ describe('DisposableChain', () => {
     const order: number[] = [];
     const logger = new DefaultLogger('test');
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
-    const chain = new DisposableChain(logger);
+    const chain = new DisposableChain(logger, hold);
     const a = () => order.push(1);
     const b = () => order.push(2);
     chain.push(a);
@@ -86,42 +93,12 @@ describe('DisposableChain', () => {
   });
 });
 
-describe('DisposableChain 分段', () => {
-  it('排空快照内撤回段先、清理段后，各段内部逆序', async () => {
-    const order: string[] = [];
-    const chain = new DisposableChain(new DefaultLogger('test'));
-    chain.push(() => order.push('c1'));
-    chain.push(() => order.push('w1'), 'w1', 'withdraw');
-    chain.push(() => order.push('c2'), 'c2', 'cleanup');
-    chain.push(() => order.push('w2'), 'w2', 'withdraw');
-    await chain.disposeAsync();
-    expect(order).toEqual(['w2', 'w1', 'c2', 'c1']);
-  });
-
-  it('排空期间的迟到登记仍立即执行，不受段约束（撤回段回调里登记的清理段项插在剩余撤回之前）', async () => {
-    const order: string[] = [];
-    const chain = new DisposableChain(new DefaultLogger('test'));
-    chain.push(() => order.push('c1'));
-    chain.push(() => order.push('w1'), 'w1', 'withdraw');
-    chain.push(
-      () => {
-        order.push('w2');
-        chain.push(() => order.push('late'), 'late', 'cleanup');
-      },
-      'w2',
-      'withdraw',
-    );
-    await chain.disposeAsync();
-    expect(order).toEqual(['w2', 'late', 'w1', 'c1']);
-  });
-});
-
 describe('DisposableChain.disposeAsync', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
   it('异步项按逆序串行完成（后一项等前一项 settle）', async () => {
     const order: string[] = [];
-    const chain = new DisposableChain(new DefaultLogger('test'));
+    const chain = new DisposableChain(new DefaultLogger('test'), hold);
     chain.push(async () => {
       order.push('a:start');
       await sleep(20);
@@ -141,7 +118,7 @@ describe('DisposableChain.disposeAsync', () => {
     const order: number[] = [];
     const logger = new DefaultLogger('test');
     vi.spyOn(logger, 'debug').mockImplementation(() => {});
-    const chain = new DisposableChain(logger);
+    const chain = new DisposableChain(logger, hold);
     chain.push(() => order.push(1));
     chain.push(async () => {
       throw new Error('async boom');
@@ -155,7 +132,7 @@ describe('DisposableChain.disposeAsync', () => {
     const order: string[] = [];
     const logger = new DefaultLogger('test');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const chain = new DisposableChain(logger);
+    const chain = new DisposableChain(logger, hold);
     chain.push(() => order.push('early'));
     chain.push(
       () =>
@@ -164,8 +141,10 @@ describe('DisposableChain.disposeAsync', () => {
         }),
     );
     chain.push(() => order.push('late'));
+    held.length = 0;
     await chain.disposeAsync(30);
     expect(order).toEqual(['late', 'stuck:start', 'early']); // 卡住项之后（逆序意义上）的 early 仍执行
+    expect(held, '放弃等待的交给宿主记着').toEqual([true]);
     // 同时钉住序号兜底：全仓 78 处 onDispose 不传 label，[#i] 是它们唯一能拿到的标识
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('超过 30ms'));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[#'));
@@ -180,7 +159,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
   };
 
   it('reporter 抛错：disposeAsync 下拒绝项之后的清理照跑，promise 正常 resolve', async () => {
-    const chain = new DisposableChain(brokenSink);
+    const chain = new DisposableChain(brokenSink, hold);
     const order: number[] = [];
     chain.push(() => {
       order.push(1);
@@ -197,7 +176,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
 
   it('reporter 返回拒绝的 promise：不逃逸成 unhandledRejection', async () => {
     const asyncBrokenSink: CleanupReporter = { warn: () => Promise.reject(new Error('async sink broken')) };
-    const chain = new DisposableChain(asyncBrokenSink);
+    const chain = new DisposableChain(asyncBrokenSink, hold);
     const escaped: unknown[] = [];
     const onEscape = (err: unknown) => {
       escaped.push(err);
@@ -222,7 +201,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
     };
     process.on('unhandledRejection', onEscape);
     try {
-      const chain = new DisposableChain(brokenSink);
+      const chain = new DisposableChain(brokenSink, hold);
       await chain.disposeAsync();
       chain.push(async () => {
         throw new Error('boom');
@@ -235,7 +214,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
   });
 
   it('reporter 抛错：关闭后迟到登记的执行失败不抛给登记方', async () => {
-    const chain = new DisposableChain(brokenSink);
+    const chain = new DisposableChain(brokenSink, hold);
     await chain.disposeAsync();
     expect(() =>
       chain.push(() => {

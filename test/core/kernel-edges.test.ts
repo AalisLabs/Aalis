@@ -13,8 +13,6 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { Resources } from '../../packages/core/src/infrastructure/resources.js';
-// DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
-import { DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 import { EventBus } from '../../packages/core/src/primitives/events.js';
 import { HubRegistry, hub } from '../helpers/hub.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
@@ -57,45 +55,6 @@ function world() {
   return { app, warnings };
 }
 
-describe('DisposableChain 排空期的迟到登记', () => {
-  it('迟到登记的异步清理超时：放弃等待并点名；期间已落定的迟到项不被点名', async () => {
-    const { logger, warnings } = capture();
-    const chain = new DisposableChain(logger);
-    const order: string[] = [];
-    chain.push(() => {
-      // 链已被取走：这两项就地执行，由本段收口等待
-      chain.push(() => sleep(5).then(() => void order.push('fast')), 'late-fast');
-      chain.push(never, 'late-stuck');
-    }, 'origin');
-
-    await chain.disposeAsync(30);
-
-    expect(order, '快的迟到项在超时前已落定').toEqual(['fast']);
-    expect(warnings).toEqual(['DisposableChain: 迟到登记的异步清理 [late-stuck] 超过 30ms，放弃等待']);
-  });
-
-  it('排空途中重复调用 disposeAsync 不扰动在途排空：之后的迟到登记仍由首个排空等到', async () => {
-    const chain = new DisposableChain();
-    const order: string[] = [];
-    let release!: () => void;
-    chain.push(
-      () =>
-        new Promise<void>(resolve => {
-          release = resolve;
-        }),
-      'slow',
-    );
-
-    const first = chain.disposeAsync().then(() => void order.push('first done'));
-    const second = chain.disposeAsync();
-    chain.push(() => sleep(10).then(() => void order.push('late done')), 'late');
-    release();
-    await Promise.all([first, second]);
-
-    expect(order).toEqual(['late done', 'first done']);
-  });
-});
-
 describe('Resources 段收口等在飞撤回', () => {
   it('超时放弃时只点名仍未落定的撤回，等待期间已落定并出账的不点名', async () => {
     const { logger, warnings } = capture();
@@ -105,7 +64,22 @@ describe('Resources 段收口等在飞撤回', () => {
 
     await life.disposeAsync(30);
 
-    expect(warnings).toEqual(['Resources "t": 等待 stuck-withdraw 的撤回超过 30ms，放弃等待']);
+    expect(warnings).toEqual(['Resources "t": 等待 stuck-withdraw 超过 30ms，放弃等待']);
+  });
+
+  it('清理链取走后迟到登记的异步清理同样由段收口等：超时的点名，期间已落定的不点名', async () => {
+    const { logger, warnings } = capture();
+    const life = new Resources('t', logger);
+    const order: string[] = [];
+    life.disposables.push(() => {
+      life.disposables.push(() => sleep(5).then(() => void order.push('fast')), 'late-fast');
+      life.disposables.push(never, 'late-stuck');
+    }, 'origin');
+
+    await life.disposeAsync(30);
+
+    expect(order, '快的迟到项在超时前已落定').toEqual(['fast']);
+    expect(warnings).toEqual(['Resources "t": 等待 迟到登记的清理 [late-stuck] 超过 30ms，放弃等待']);
   });
 });
 
