@@ -14,7 +14,7 @@
 | 原语 | 描述符 / 绑定 | 语义 |
 |---|---|---|
 | 事件 | `events`：`on` / `emit` | 广播通知：无返回、错误隔离、不可拦截 |
-| 服务 | `provide(desc, impl)`；`uses` 后的 `ServiceRef`（`current` / `require()` / `all()` / `follow()`）；动态查询 `services` | IoC：同名多提供者并存，按「偏好 > 优先级 > 注册顺序」选胜者 |
+| 服务 | `provide(desc, impl)`；`uses` 后的选择层（`list()` / `use` / `of(id)` / `present` / `follow()`），业务调用经活的句柄 `use`；动态查询 `services` | IoC：同名多提供者并存，按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选胜者 |
 
 中间件钩子与贡献点建在服务之上，由插件提供：
 
@@ -70,7 +70,7 @@ export default definePlugin({
   name: 'my-plugin',
   uses: { tools, logger, events, lifecycle },
   apply({ tools, logger, events, lifecycle }) {
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: {
@@ -82,8 +82,8 @@ export default definePlugin({
       handler: async args => String((args as { text: string }).text),
     });
 
-    events.on('app:ready', () => logger.info('就绪'));
-    lifecycle.onDispose(() => {
+    events.use.on('app:ready', () => logger.use.info('就绪'));
+    lifecycle.use.onDispose(() => {
       // 关连接、停计时器：bounce / unload / 停机全部路径都会走到这里
     });
   },
@@ -98,7 +98,7 @@ export default definePlugin({
 - `@aalis/core` 的稳定性承诺自 1.0 起生效（条款见 [core 语义契约](docs/design/core-contract.md)）；1.0 之前次版本可含
   破坏性变更，迁移路径记在 [CHANGELOG](CHANGELOG.md)。插件把 core 写成
   `peerDependencies: { "@aalis/core": ">=x.y.z <1.0.0" }`（用了哪版的 API 就把下限写到哪版），不要用 caret 锁死。
-  当前公开面（`definePlugin` / 描述符 / `ServiceRef`）的下限是 `>=0.17.0 <1.0.0`。
+  当前公开面（`definePlugin` / 描述符 / 选择层 `ServiceSelection`）的下限是 `>=0.20.0 <1.0.0`。
 - `@aalis/api-*` 契约包不在承诺之内：0.x 期间服务接口与类型可能改签名、增删字段。第三方开发者请跟随 CHANGELOG、
   对所依赖的 `api-*` 用宽松区间。
 

@@ -215,7 +215,7 @@ type ReachVerdict = { allowed: true } | { allowed: false; message: string };
 function isReachCredential(value: unknown): value is ReachCredential;
 ```
 
-凭据按一次工具调用签发，只由触及插件构造；工具从调用上下文取得后转交给存储与沙箱，不自己拼。存储网关与沙箱用 `isReachCredential` 认凭据，不带品牌符号的对象一律当作没有凭据处理。品牌符号登记在全局符号表里，进程里装了两份本包时也认得；它只在本包与触及插件里出现（守卫 `test/architecture/reach-credential.test.ts`），凭据上的品牌不可枚举，展开或 `Object.assign` 复制出来的对象不带它。品牌防的是漏传、误传：第一方包由守卫禁止拼凭据，插件是可信代码，进程内蓄意伪造挡不住。
+凭据按一次工具调用签发，只由触及插件构造；工具从调用上下文取得后转交给存储与沙箱，不自己拼。存储服务与沙箱用 `isReachCredential` 认凭据，不带品牌符号的对象一律当作没有凭据处理。品牌符号登记在全局符号表里，进程里装了两份本包时也认得；它只在本包与触及插件里出现（守卫 `test/architecture/reach-credential.test.ts`），凭据上的品牌不可枚举，展开或 `Object.assign` 复制出来的对象不带它。品牌防的是漏传、误传：第一方包由守卫禁止拼凭据，插件是可信代码，进程内蓄意伪造挡不住。
 
 - `exec`、`home`、`paper`、`tainted` 按签发时的触及；`require`、`allows`、`sandboxPolicy` 与 `noteWrite` 每次按会话当时的设置与污点重算，签发之后降档或受污染立即生效。
 - `tainted` 给执行面闸填进审批的来源；全权档不带，全权不提示，确认卡上也不写来源。

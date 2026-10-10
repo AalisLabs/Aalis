@@ -19,9 +19,9 @@
 
 ## 1. 服务描述符（不是一张核心类型表）
 
-契约包导出运行时描述符（`defineService` 的结果）。消费方 `import { tools } from '@aalis/api-tools'` 写进 `uses`，`apply` 参数类型从描述符推导。同名多实现时的胜者由 preference > priority > 注册顺序决定。
+契约包导出运行时描述符（`defineService` 的结果）。消费方 `import { tools } from '@aalis/api-tools'` 写进 `uses`，`apply` 参数类型从描述符推导。同名多实现时，`use` 打到哪一家由「本插件偏好 > 全局偏好 > priority > 注册顺序」决定。
 
-> 领域能力（LLM 的 tool-calling / vision、storage 的 local-path 等）**不在描述符的 name 上**——
+> 领域能力（LLM 的 tool-calling / vision 等）**不在描述符的 name 上**——
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `checkpoint` / `code-sandbox` / `commands` /
@@ -47,10 +47,10 @@
 
 ## 2. `AalisEvents`
 
-EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
+EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
 **位置**：`packages/core/src/types/events.ts`。core 内置十一项，目录与时序说明以 [core/events.md](../core/events.md) 为准
-（没有 `dispose` 事件——清理副作用用 `lifecycle.onDispose`，见 [context](../core/context.md)）
+（没有 `dispose` 事件——清理副作用用 `lifecycle.use.onDispose`，见 [context](../core/context.md)）
 
 **扩展者**：
 
@@ -74,7 +74,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 ## 3. `HookContextMap`
 
-中间件钩子上下文表。`hooks.middleware(name, fn)` 在编译期靠它推 data 类型。
+中间件钩子上下文表。`hooks.use.middleware(name, fn)` 在编译期靠它推 data 类型。
 
 **位置**：`packages/api-hooks/src/index.ts`（空 interface；增广写 `declare module '@aalis/api-hooks'`）
 
@@ -90,7 +90,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 ## 4. `ContributionPointMap`
 
-贡献点表：贡献点名 → spec 类型。`contributions.contribute(point, spec)` / `collect(point)` 在编译期靠它推 spec 类型。
+贡献点表：贡献点名 → spec 类型。`contributions.use.contribute(point, spec)` / `collect(point)` 在编译期靠它推 spec 类型。
 
 与 `HookContextMap` 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。
 贡献者拿只读视图、无短路、无排序影响力；排布与执行策略归收集方（贡献点 owner）。
@@ -121,18 +121,18 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 ---
 
-## 6. 按激活绑定的领域门面
+## 6. 按激活绑定的领域业务层
 
-各契约包导出**描述符**（值）。消费方写进 `uses`，`apply` 拿到按本次激活绑定的接口：登记自动归属这次激活，提供者换人整体重挂。不要再给 Context 挂领域方法。
+各契约包导出**描述符**（值）。消费方写进 `uses`，`apply` 拿到选择层，业务层（`caps.x.use`）带契约定义的登记方法：登记自动归属这次激活，提供者换人整体重挂。不要再给 Context 挂领域方法。
 
 **扩展者**：
 
-| api 包 | 绑定门面（在 `ServiceRef` 上额外挂的方法） |
+| api 包 | 业务层上额外的方法（在提供者接口之外） |
 |---|---|
-| `@aalis/api-tools` | `tools.register` / `registerGroup`；`withToolGroups(bound, groups)` |
-| `@aalis/api-commands` | `commands.command(name, description?)` |
-| `@aalis/api-webui` | `webuiServer.definePage` / `notify` |
-| `@aalis/api-agent` | `agent.registerPreprocessor` |
+| `@aalis/api-tools` | `tools.use.register` / `registerGroup`；`withToolGroups(tools.use, groups)` |
+| `@aalis/api-commands` | `commands.use.command(name, description?)` |
+| `@aalis/api-webui` | `webui.use.definePage` / `notify`（描述符 `webuiServer`） |
+| `@aalis/api-agent` | `agent.use.registerPreprocessor` |
 
 示例：
 
@@ -147,7 +147,7 @@ export default definePlugin({
   name: 'my-plugin',
   uses: { tools, commands: optional(commands), webui: optional(webuiServer), agent: optional(agent) },
   apply({ tools, commands, webui, agent }) {
-    const grouped = withToolGroups(tools, ['my-group']);
+    const grouped = withToolGroups(tools.use, ['my-group']);
     grouped.register({
       definition: {
         type: 'function',
@@ -156,18 +156,18 @@ export default definePlugin({
       handler: async () => 'pong',
     });
 
-    commands.command('hello', 'hi').action(async () => 'hi');
+    commands.use.command('hello', 'hi').action(async () => 'hi');
 
-    webui.definePage({ key: 'my', title: '我的', icon: 'star', content: [{ type: 'markdown', id: 'about', data: () => '你好' }] });
+    webui.use.definePage({ key: 'my', title: '我的', icon: 'star', content: [{ type: 'markdown', id: 'about', data: () => '你好' }] });
 
-    agent.registerPreprocessor('my-preproc', async (msg, next) => {
+    agent.use.registerPreprocessor('my-preproc', async (msg, next) => {
       await next();
     });
   },
 });
 ```
 
-第三方要造同类登记门面：在自己的契约包 `defineService(name, port => …)`，用 `port.registrar` / `follow` / `track`（`BindingPort`），不要给内部激活记录加方法。
+第三方要造同类登记方法：在自己的契约包 `defineService(name, port => …)`，用 `port.registrar` / `follow` / `track`（`BindingPort`），在 `Object.create(port.provider)` 上加方法，不要给内部激活记录加方法。
 
 ---
 
@@ -180,7 +180,7 @@ export default definePlugin({
 | 包 | 注入的字段 |
 |---|---|
 | `@aalis/schema-config` | `configSchema`（插件配置表单 schema，默认值经 `defaultsFrom` 派生） |
-| `@aalis/api-webui` | `extends`（对 core 扩展的声明，仅前端展示；页面与提示在 apply 里 `definePage` / `notify`） |
+| `@aalis/api-webui` | `extends`（对 core 扩展的声明，仅前端展示；页面与提示在 apply 里经 `webui.use.definePage` / `notify`） |
 
 `subsystem` 是 `PluginDefinition` 上的展示字符串，core 不读不校验；第一方界面认的 id 见 `DEFAULT_SUBSYSTEM_METADATA`。
 
@@ -213,5 +213,5 @@ declare module '@aalis/api-llm' {
 - 加一个**新钩子** → 在自己的 `*-api` 包内 `declare module '@aalis/api-hooks' { interface HookContextMap { ... } }`
 - 加一个**新贡献点** → 在自己的 `*-api` 包内 `declare module '@aalis/api-contributions' { interface ContributionPointMap { ... } }`（spec 须含 `id: string`）
 - 加一个**新服务** → 在 `-api` 包 `export const mySvc = defineService<MyIface>('my-svc')`（登记型再给 `bind`）。领域能力放到实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）
-- 加一个**登记门面** → `defineService` 的 `bind` 里用 `BindingPort.registrar` / `serviceRef(port, extra)`
+- 加一个**登记方法** → `defineService` 的 `bind` 里用 `BindingPort.registrar`，返回 `Object.assign(Object.create(port.provider), { 登记方法 })`
 - 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/api-host-config' { interface AalisConfig { myField: ... } }`

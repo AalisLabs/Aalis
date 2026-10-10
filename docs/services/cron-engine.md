@@ -4,7 +4,7 @@
 
 `cron-engine` 是 Aalis 的**共享定时引擎原语**：把「cron 表达式 / 别名 / `@every` 间隔」解析为统一的订阅协议，所有周期型触发器（scheduler 任务、workflow 的 cron/interval 触发器）都挂接到它共享的一条整分钟 tick 上，而不是各自 `setInterval`。
 
-- 服务注册名：`'cron-engine'`（描述符 `cronEngine`，读 `cronEngine.current`；`packages/api-cron-engine/src/index.ts`）。
+- 服务注册名：`'cron-engine'`（描述符 `cronEngine`，消费方经 `cronEngine.use` 调用；`packages/api-cron-engine/src/index.ts`）。
 - 契约包：`@aalis/api-cron-engine`（订阅协议：接口 + 描述符 `cronEngine`）。
 - 表达式算法：`@aalis/util-cron`（无状态纯函数，零依赖，与 Aalis 无关，可单独用）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
@@ -75,16 +75,16 @@ export type ValidateResult =
 **提供方（唯一参考实现）**：`@aalis/plugin-cron-engine`
 - `provides: [cronEngine]`（`packages/plugin-cron-engine/src/index.ts`）
 - `package.json` 双源对应 `aalis.service.provides: ['cron-engine']`（`packages/plugin-cron-engine/package.json`）
-- 注册点 `provide(cronEngine, service)`（`packages/plugin-cron-engine/src/index.ts`）
+- 注册点 `provide.use(cronEngine, service)`（`packages/plugin-cron-engine/src/index.ts`）
 
 **消费方**：
 
-- `@aalis/plugin-scheduler`：`uses required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。取服务用 `const cronEngine = cronEngine.require()`，cron 任务 `cronEngine.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`，并用 `cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined)` 估算下次运行。它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道。
-- `@aalis/plugin-workflow`：`uses required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `cronEngine.require().subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）。
+- `@aalis/plugin-scheduler`：`uses required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。经业务句柄调用：cron 任务 `cronEngine.use.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`，并用 `cronEngine.use.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined)` 估算下次运行。它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道。
+- `@aalis/plugin-workflow`：`uses required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `cronEngine.use.subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）。
 
 ## 4. 写一个 provider
 
-绝大多数作者**不需要**再写 provider——官方 `@aalis/plugin-cron-engine` 已是唯一实现，重复 provide 同名服务只会按 `preference > priority > 注册顺序` 决出一个赢家（见 [service-model](../concepts/service-model.md)）。仅当你要替换调度后端（例如换持久化的分布式定时）时才自行实现。
+绝大多数作者**不需要**再写 provider——官方 `@aalis/plugin-cron-engine` 已是唯一实现，重复 provide 同名服务时，消费方只会按「本插件偏好 > 全局偏好 > priority > 注册顺序」选中其中一家（见 [service-model](../concepts/service-model.md)）。仅当你要替换调度后端（例如换持久化的分布式定时）时才自行实现。
 
 最小必须实现 = 接口三个方法 `subscribe / validate / nextFireTime`。可选 = `timeZone` 支持（不支持时建议忽略该参数并按本地时区评估，行为退化但不报错）。可直接复用 `@aalis/util-cron` 的纯函数完成校验与匹配，骨架如下：
 
@@ -139,15 +139,15 @@ export default definePlugin({
       },
     };
 
-    provide(cronEngine, service);
-    lifecycle.onDispose(() => {
+    provide.use(cronEngine, service);
+    lifecycle.use.onDispose(() => {
       cronSubs.clear();
     });
   },
 });
 ```
 
-注册时 `provide(cronEngine, service)` 不需要 `entryId`（单 entry、无需 per-entry 拆分），`priority` 留默认 `0` 即可，要盖过官方实现取更高值（如 `50`）。**双源同步**：`package.json` 里也要写
+注册时 `provide.use(cronEngine, service)` 不需要 `entryId`（单 entry、无需 per-entry 拆分），`priority` 留默认 `0` 即可，要盖过官方实现取更高值（如 `50`）。**双源同步**：`package.json` 里也要写
 
 ```jsonc
 "aalis": { "service": { "provides": ["cron-engine"] } }
@@ -157,7 +157,7 @@ export default definePlugin({
 
 实现要点（参照参考实现）：
 - 多订阅者**共享一条对齐到整分钟的 tick**：每轮 tick 结束时按「下一个整分钟边界」重排一次 `setTimeout`（`scheduleNextTick`，`packages/plugin-cron-engine/src/index.ts`），**不用 `setInterval`**——后者的误差会累积，攒够一分钟就整分钟丢触发。`runMinute` 对某个整分钟逐个 `matchesCron`。
-- **tick 晚到要回补，且回补有上限**：引擎记下已求值过的最后一个整分钟 `lastTickMinute`，每轮把 `(lastTickMinute, 当前整分钟]` 之间的每个整分钟各求值一遍——事件循环阻塞、机器休眠唤醒导致定时器晚到时不丢分钟。落后超过 5 分钟（`MAX_CATCHUP_MINUTES`）时只回补最近 5 分钟，其余分钟明确跳过并 `logger.warn` 一次说明跳过了多少分钟：合盖一夜醒来不该把几百分钟的任务一次性全轰出去。
+- **tick 晚到要回补，且回补有上限**：引擎记下已求值过的最后一个整分钟 `lastTickMinute`，每轮把 `(lastTickMinute, 当前整分钟]` 之间的每个整分钟各求值一遍——事件循环阻塞、机器休眠唤醒导致定时器晚到时不丢分钟。落后超过 5 分钟（`MAX_CATCHUP_MINUTES`）时只回补最近 5 分钟，其余分钟明确跳过并 `logger.use.warn` 一次说明跳过了多少分钟：合盖一夜醒来不该把几百分钟的任务一次性全轰出去。
 - handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（参考实现的 `runMinute` 与 interval 分支各有同步/异步两条 catch）。
 - `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败。
 - `onDispose` 清空所有 timer 与订阅表。
@@ -165,10 +165,10 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 1. 在 `uses required` 声明 `'cron-engine'`，让运行时保证服务就绪后才 `apply`（scheduler / workflow 的 `uses required`）。
-2. 用 `cronEngine.require()` 取服务——它内部就是 `cronEngine.current`，缺失即抛带提示的 Error（`@aalis/api-cron-engine`）。**不要缓存返回值**：provider 反弹会失效，每次用时重新取（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
+2. 经业务句柄 `cronEngine.use` 调用——缺失时访问成员同步抛 `ServiceUnavailableError`。句柄是活的：每次访问成员都解析到本插件当前选中的那一家，provider 反弹后存起来的句柄也会跟着换（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
 3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `initJob`、workflow `triggers.ts`）。
 4. 保存好 `subscribe` 返回的 dispose，在任务删除/禁用/插件卸载时调用（scheduler 存 `rt.cronDispose`、workflow 存 `cronDisposers` Map）。
-5. 可选依赖：若你的插件在没有 cron-engine 时仍能降级运行，则不要放进 `required`，改为运行时 `const eng = cronEngine.current` 判空处理。
+5. 可选依赖：若你的插件在没有 cron-engine 时仍能降级运行，则不要放进 `required`，改为运行时先看 `cronEngine.present` 再调用。
 
 `@every Ns` 与 5 字段 cron 都可直接交给 `subscribe`——无需自己预 normalize（scheduler `initJob` 注释）。`interval` 语义统一委托 `@every Ns` 表达式，不必再自行 `setInterval`（workflow `triggers.ts` 注释）。
 
@@ -194,6 +194,6 @@ export default definePlugin({
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名选择 / priority / entryId）、[lazy-service-access](../concepts/lazy-service-access.md)（每次读取 `.current`，勿缓存）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides` 双源）、[security-model](../concepts/security-model.md)（触发身份与 authority）。
-- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[core/events](../core/events.md)（workflow 经 `trigger:fired` / `events.on` 串联事件触发）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名选择 / priority / entryId）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides` 双源）、[security-model](../concepts/security-model.md)（触发身份与 authority）。
+- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[core/events](../core/events.md)（workflow 经 `trigger:fired` / `events.use.on` 串联事件触发）。
 - 服务：[services/tools](./tools.md)（被触发的执行单元）、上层的 scheduler / workflow 插件即本服务的两个标准消费方。

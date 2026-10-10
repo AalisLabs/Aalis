@@ -8,7 +8,7 @@
 
 本包定义 `remoteAgent` 描述符（服务名 `remote-agent`）、提供者接口 `RemoteAgentProvider`，以及按名取提供者与判定用的几个纯函数，不含实现。远端代理是运行在第三方平台上的长期编码代理：消费方把任务交给它，跟踪每一轮到终态，取回成品，按轮记账。第一方的消费方是白纸枢纽 [plugin-paper](../plugins/plugin-paper.md)。
 
-`remote-agent` 是多提供者服务。每个提供者插件实例对应一个远端账号与模型的组合，各自 `provide(remoteAgent, 实例)`。消费方按配置里写的提供者实例 id 精确取，不用 `current`：偏好与优先级选出的胜者不一定是配置点名的那个，取错提供者就是把任务交给了另一个账号、另一种出网方式。
+`remote-agent` 是多提供者服务。每个提供者插件实例对应一个远端账号与模型的组合，各自 `provide.use(remoteAgent, 实例)`。消费方按配置里写的提供者实例 id 精确取，不用 `use`：偏好与优先级选中的那一家不一定是配置点名的那个，取错提供者就是把任务交给了另一个账号、另一种出网方式。
 
 远端账号的凭据只在提供者所在的宿主进程里用，契约里没有任何接口把它传出。以后接自托管 worker 时，`createAgent` 会按次版本加一个可选的「白纸执行环境」参数，不影响现有提供者。
 
@@ -135,16 +135,17 @@ class RemoteAgentError extends Error {
 ## 函数
 
 ```ts
-function resolveRemoteAgent(source: ServiceRef<RemoteAgentProvider>, type: string): RemoteAgentEntry | undefined;
+function resolveRemoteAgent(
+  source: Pick<ServiceSelection<RemoteAgentProvider>, 'list'>,
+  type: string,
+): ProviderEntry<RemoteAgentProvider> | undefined;
 function egressWithin(report: EgressReport, ceiling: EgressCeiling): boolean;
 function artifactRelProblem(rel: string): string | undefined;
 function isTerminalRun(status: RunStatus): boolean;
 function isRemoteAgentError(err: unknown): err is RemoteAgentError;
-
-interface RemoteAgentEntry { instance: RemoteAgentProvider; contextId: string; label?: string }
 ```
 
-- `resolveRemoteAgent`：在 `source.all()` 里找 `contextId` 与 `type` 完全相同的那一项。找不到返回 `undefined`，不回落到 `current`、`all()[0]` 或别的提供者，也不按前缀匹配。
+- `resolveRemoteAgent`：在 `source.list()` 里找 `id` 与 `type` 完全相同的那一项（`source` 传 `caps.remoteAgent`），返回的条目经 `use` 调这一家。找不到返回 `undefined`，不回落到 `use`、`list()[0]` 或别的提供者，也不按前缀匹配。
 - `egressWithin`：报告的出网方式是否不超过上限，`unknown` 按 `open` 算；`source` 不影响判定。认不出的取值一律判为超过。
 - `artifactRelProblem`：成品相对路径（去掉交付目录前缀之后）能否交给写入口，不能时返回原因：空路径、绝对路径、反斜杠、控制字符与不可见的格式字符、`..`、空段与 `.` 段。提供者与写入口都按它判定。
 - `isTerminalRun`：`finished`、`error`、`cancelled`、`expired` 为终态；认不出的状态判为非终态。
@@ -164,7 +165,7 @@ export default definePlugin({
     async function check(type: string): Promise<string> {
       const entry = resolveRemoteAgent(remoteAgent, type);
       if (!entry) return `远端代理「${type}」不在场`;
-      await entry.instance.ready(lifecycle.signal);
+      await entry.use.ready(lifecycle.use.signal);
       return 'ok';
     }
     void check;

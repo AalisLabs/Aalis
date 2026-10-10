@@ -31,7 +31,7 @@ export default definePlugin({
   configSchema,
   uses: { config, logger },
   apply({ config, logger }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     // cfg: { apiKey: string; port: number; mode: 'fast' | 'safe' }
   },
 });

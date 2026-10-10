@@ -4,7 +4,7 @@
 
 向量数据库服务：存放 embedding 向量 + 元数据，提供近邻检索（topK）。它是语义记忆等子系统的「底层向量存储后端」，本身不做 embedding、不懂消息语义——只认 `number[]` 与 `Record<string, unknown>`。
 
-- 服务注册名：`'vectorstore'`（描述符 `vectorstore`，读 `vectorstore.current`）
+- 服务注册名：`'vectorstore'`（描述符 `vectorstore`，消费方经 `vectorstore.use` 调用）
 - 契约包：`@aalis/api-vectorstore`（`packages/api-vectorstore`）
 - 内置参考实现：`@aalis/plugin-vectorstore-flat`（零依赖，JSON 文件）、`@aalis/plugin-vectorstore-lancedb`（LanceDB 高性能）
 
@@ -32,7 +32,7 @@ export interface VectorStoreService {
 }
 ```
 
-类型随描述符提供：`defineService<VectorStoreService>('vectorstore')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`vectorstore.current` 推断为 `VectorStoreService | undefined`。
+类型随描述符提供：`defineService<VectorStoreService>('vectorstore')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`vectorstore.use` 推断为 `VectorStoreService`。
 
 方法语义（以契约注释 + 参考实现为准）：
 
@@ -48,15 +48,15 @@ export interface VectorStoreService {
 提供方（`provides: [vectorstore]`）：
 
 - `@aalis/plugin-vectorstore-flat`：`FlatVectorStore`，`packages/plugin-vectorstore-flat/src/index.ts`，按默认 priority 注册。
-- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts`，以 `{ priority: 10 }` 注册（比 flat 高 → 同时装两个时 lancedb 胜出）。
+- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts`，以 `{ priority: 10 }` 注册（比 flat 高 → 同时装两个、没有偏好时消费方选中 lancedb）。
 
 消费方：
 
 - `@aalis/plugin-memory-vector`（向量记忆，提供 `semantic-memory`）：`packages/plugin-memory-vector/src/index.ts`
   - 声明依赖：`uses` 中 `vectorstore`、`embedding` 为必需。
-  - 取服务：`vectorstore.require()`（每次调用现取）。
+  - 取服务：经业务句柄 `vectorstore.use` 调用（活句柄，每次访问成员重新解析）。
   - 典型调用：索引时 `add` + `save`；按会话删 `deleteByFilter`；清库 `clear` + `save`；检索 `search`，并对结果做 `score >= minScore` 过滤。
-- `@aalis/plugin-commands` 仅探测可用性：`services.get('vectorstore') !== undefined`（`packages/plugin-commands/src/index.ts`）。
+- `@aalis/plugin-commands` 仅探测可用性：`services.use.get('vectorstore') !== undefined`（`packages/plugin-commands/src/index.ts`）。
 
 ## 4. 写一个 provider
 
@@ -132,16 +132,16 @@ export default definePlugin({
   uses: { provide, lifecycle },
   apply({ provide, lifecycle }) {
     const store = new MyVectorStore();
-    provide(vectorstore, store);
-    lifecycle.onDispose(() => void store.save());
+    provide.use(vectorstore, store);
+    lifecycle.use.onDispose(() => void store.save());
   },
 });
 ```
 
 注册细节：
 
-- `provide(vectorstore, store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
-- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(storage).resolveLocalPath(uri, 'write')`。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
+- `provide.use(vectorstore, store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争时消费方选中哪一家：**本插件偏好 > 全局偏好 > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
+- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `caps.storage.use.resolveLocalPath(uri, 'write')`。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
 ## 5. 消费者标准写法
 
@@ -153,11 +153,11 @@ export default definePlugin({
   name: '@acme/plugin-example',
   uses: { vectorstore, logger },
   async apply({ vectorstore, logger }) {
-    const s = vectorstore.current;
-    if (!s) {
-      logger.warn('无 vectorstore，语义检索关闭');
+    if (!vectorstore.present) {
+      logger.use.warn('无 vectorstore，语义检索关闭');
       return;
     }
+    const s = vectorstore.use;
     await s.add([0], { sessionId: 's', timestamp: Date.now() });
     await s.save();
     const topK = 5;
@@ -167,7 +167,7 @@ export default definePlugin({
 });
 ```
 
-错误边界：`search` 在空库返回 `[]`（flat、lancedb 均如此）。`.current` 可能为 `undefined`（required 依赖丢失到调度收敛之间也可能短暂为空），需要非空时用 `require()`。
+错误边界：`search` 在空库返回 `[]`（flat、lancedb 均如此）。required 依赖丢失到调度收敛之间，提供者也可能短暂缺席：此时 `vectorstore.present` 为 `false`，访问 `vectorstore.use` 的成员同步抛 `ServiceUnavailableError`。
 
 ## 6. 跨后端可比性、风险与隔离
 
@@ -188,6 +188,6 @@ export default definePlugin({
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名、priority/preference 胜出）、[lazy-service-access](../concepts/lazy-service-access.md)（每次重取、不缓存句柄）、[manifest-metadata](../concepts/manifest-metadata.md)（provides 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)、[security-model](../concepts/security-model.md)（storage 非沙箱）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名、挑选规则）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（provides 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)、[security-model](../concepts/security-model.md)（storage 非沙箱）。
 - 内核：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin.md](../core/plugin.md)。
 - 相关契约/服务：`@aalis/api-storage`（落盘后端，[api/api-storage](../api/api-storage.md)）、`@aalis/api-embedding`（产生 `queryVector`，[api/api-embedding](../api/api-embedding.md)）、消费方 `@aalis/plugin-memory-vector`（semantic-memory）。

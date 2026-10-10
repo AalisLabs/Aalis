@@ -31,8 +31,8 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 - **对抗能在本机执行代码的攻击者**：能 spawn 进程、能读你磁盘的人已经是 owner 级别，在威胁模型内无从防御。
   code-sandbox 提供的是 OS 级边界，而不是强隔离（见 §4）。
 - **对抗已装插件**：插件与内核同进程、同权限。它可以用高 `priority` 覆盖 `authority` / `llm` /
-  `storage` 等既有服务（[服务模型](./service-model.md)的选择规则如此设计），下游每次读
-  `current` 都会立即改路由；也可以直接 monkey-patch 任何护栏。**这是特性不是漏洞** ——
+  `storage` 等既有服务（[服务模型](./service-model.md)的选择规则如此设计），下游的业务句柄
+  `use` 下一次调用就改了路由；也可以直接 monkey-patch 任何护栏。**这是特性不是漏洞** ——
   「万物皆插件」的前提就是任何实现可被替换，而装插件是 owner 级操作。
   框架里各种「护栏」（禁卸内核、降级守卫、串行闸）防的都是**误操作**，不是恶意插件。
   真正的防线在装之前：市场的依赖图端点会列出目标提供 / 需要哪些服务，装前可见。
@@ -86,7 +86,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 工具注册（与内置 `http_download` 工具的写法一致）：
 
 ```typescript
-tools.register({
+tools.use.register({
   definition: { type: 'function', function: { name: 'my_write_tool', /* ... */ } },
   // 写操作：受限 + 每次确认。防止被注入的 LLM 静默、越权地写进 storage。
   visibility: 'restricted',
@@ -98,7 +98,7 @@ tools.register({
 命令注册（用 `risk` 糖一次为两轴设默认）：
 
 ```typescript
-commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
+commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
 // 等价于 visibility:'restricted' + confirm:'session'
 // 也可显式覆盖：{ risk: 'dangerous', confirm: 'always' } —— 删库级操作每次都问
 ```
@@ -301,7 +301,7 @@ const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 `code_runner` 会**拒绝执行**，而不是静默地裸跑。后端可用性靠**功能性试跑**探测——
 真正跑一次最小沙箱命令，同时覆盖「命令存在」和「Linux unprivileged userns 真能用」两点。
 
-> 如果你的插件要执行不可信代码，请在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，读 `codeSandbox.current`，`available` 为假时就 fail-closed，
+> 如果你的插件要执行不可信代码，请在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，先看 `codeSandbox.present` 再读 `codeSandbox.use.available`，不在场或为假时就 fail-closed，
 > 不要自己 `child_process.spawn` 裸跑（参见 [`code-runner` 文档](../plugins/plugin-tool-code-runner.md)、
 > [`code-sandbox-os` 文档](../plugins/plugin-code-sandbox-os.md)）。
 

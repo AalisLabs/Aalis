@@ -236,7 +236,7 @@ function createService(caps: Caps): PackageManagerService {
     log: log,
     // 装到宿主的安装集：与插件加载器读的是同一份 package.json，否则装了永远不加载
     projectRoot: () => caps.paths.use.app,
-    // 经 process 网关的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
+    // 经 process 服务的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
     // lockfile、node_modules/<pkg>/package.json）在 storage 沙盒之外，而 readExternalFile
     // 正是文档给这一场景指定的「OS 直通读外部路径」通道——本插件也不在 biome 的 node:* 例外清单里。
     readText: async absPath => {
@@ -311,7 +311,7 @@ function createService(caps: Caps): PackageManagerService {
   });
 }
 
-/** install/uninstall 的显式依赖（从能力/网关解耦，便于集成测试） */
+/** install/uninstall 的显式依赖（从服务选择解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
   log: { info(msg: string): void; error(msg: string): void; warn?(msg: string): void };
@@ -611,8 +611,8 @@ export function findUnmetPeers(output: string, targetNames: readonly string[]): 
 }
 
 /**
- * 包管理核心：install/uninstall 的纯依赖实现（不碰能力/网关，可单测）。
- * 所有文件操作走 process 网关（子进程：npm/cp/test），目标是项目根 package.json 与
+ * 包管理核心：install/uninstall 的纯依赖实现（不碰服务选择，可单测）。
+ * 所有文件操作走 process 服务（子进程：npm/cp/test），目标是项目根 package.json 与
  * node_modules——不经 storage 沙盒。
  * 能力组装层见 createService。
  */
@@ -851,7 +851,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   async function preflightInSandbox(specs: string[], root: string): Promise<string[] | undefined> {
     const tmp = await proc.makeTempDir('preflight');
     try {
-      // 直接 cp 现有文件，不重新写内容——与本插件其余文件操作同一路子（走 proc 网关的
+      // 直接 cp 现有文件，不重新写内容——与本插件其余文件操作同一路子（走 process 服务的
       // POSIX 命令），也省掉一个只为此处存在的写原语。
       await execProc(proc, 'cp', [`${root}/package.json`, `${tmp.path}/package.json`], tmp.path);
       const lock = `${root}/package-lock.json`;

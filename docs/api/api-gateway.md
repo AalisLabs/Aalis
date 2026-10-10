@@ -104,13 +104,13 @@ export default definePlugin({
   name: '@acme/plugin-example-gateway',
   uses: { gateway, hooks },
   apply({ gateway, hooks }) {
-    hooks.middleware('inbound:trigger', async (data, next) => {
+    hooks.use.middleware('inbound:trigger', async (data, next) => {
       if (data.message.triggerType === 'idle') {
         data.metadata.injectedReason = 'idle-followup';
       }
       await next();
     });
-    void gateway.current?.dispatchOutbound({
+    void gateway.use.dispatchOutbound({
       content: '系统通知：xxx',
       sessionId: 'demo',
       source: 'system',
@@ -126,4 +126,4 @@ export default definePlugin({
 ## 相关
 
 - 入站消息类型见 [schema-message](./schema-message.md)
-- 业务层**不应**再直接 `events.emit('outbound:message')` —— 改用 `dispatchOutbound` 走钩子链
+- 业务层**不应**再直接 `events.use.emit('outbound:message')` —— 改用 `dispatchOutbound` 走钩子链

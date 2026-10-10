@@ -299,7 +299,7 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
     memory: fixedRef<MemoryService>(undefined),
     media: fixedRef(media as MediaService),
     llm: fixedRef<LLMModel>(undefined),
-    // 网关：缺席即一个根都没有（路由抛错）；在场时直接给本夹具的单根假 storage——两阶段结构与根路由无关，
+    // storage：缺席时访问即抛错；在场时直接给本夹具的单根假 storage——两阶段结构与根路由无关，
     // 根路由见 onebot-forward-storage-roots.test.ts
     storage: opts.brokenDownload ? fixedRef<StorageService>(undefined).use : (storage as unknown as StorageService),
     processService: fixedRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),

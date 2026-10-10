@@ -17,7 +17,7 @@ class ForeignCopyRefusedError extends Error {
   override name = 'ConfigSaveRefusedError';
 }
 
-/** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
+/** 只有一家的选择层桩 */
 function stub<T>(instance: unknown): ServiceSelection<T> {
   return fixedRef(instance as T);
 }

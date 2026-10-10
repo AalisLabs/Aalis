@@ -104,7 +104,7 @@ type BrowserConfig = ConfigOf<typeof configSchema>;
 
 // tools / webui-server 全部声明为 optional：登记面在提供者缺席时排队，上线后自动补挂，
 // 不必把激活闸架在它们身上。storage 仅截图落盘用（不接图的调用方那一路），
-// process 仅首次自动下载 Chrome 时用（execFile 走网关面，缺席则自动下载这步不可用）。
+// process 仅首次自动下载 Chrome 时用（缺席则自动下载这步不可用）。
 const uses = {
   config: configService,
   logger: loggerService,

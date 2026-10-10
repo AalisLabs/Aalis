@@ -5,7 +5,7 @@
 //   - macOS → sandbox-exec -p '<SBPL>' env -i <allowlist> <cmd> <args>
 //   - Linux → bwrap <flags> --clearenv --setenv ... -- <cmd> <args>
 // v1 语义：读放开（解释器需系统库）、写限定 fsWrite、网络粗粒度开关、env 仅白名单（防 secrets 泄漏）。
-// 后端探测（功能性 probe）在 index.ts 经 process 网关做；本文件只做纯生成。
+// 后端探测（功能性 probe）在 index.ts 经 process 服务做；本文件只做纯生成。
 // ============================================================
 
 import type { SandboxPolicy } from '@aalis/api-code-sandbox';

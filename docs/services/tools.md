@@ -91,7 +91,7 @@ getGroups(): ToolGroupInfo[];
 ### 2.4 绑定门面
 
 ```ts
-interface BoundTools extends ServiceRef<ToolService> {
+interface BoundTools extends ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
 }
@@ -99,7 +99,7 @@ interface BoundTools extends ServiceRef<ToolService> {
 function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 ```
 
-`register` / `registerGroup` 走 `registrar`。查询与执行走 `tools.current` / `tools.require()`。`withToolGroups` 只覆盖 `register`，不要对象展开 `BoundTools`（会把 `current` 求成快照）。
+`register` / `registerGroup` 走 `registrar`。查询与执行同样走业务句柄 `tools.use`（如 `tools.use.getDefinitions(...)`），转发给本插件选中的那一家。`withToolGroups(tools.use, groups)` 只覆盖 `register`，其余沿原型链落到原句柄上；不要对象展开 `BoundTools`（句柄只转发属性读取与调用，展开后看不到提供者的成员）。
 
 事件：`AalisEvents['tool:execute']`，只由 agent 工具循环发出，带 `turnId` 与 `callId`，开始与结束按 `callId` 配对；`'tool:output'` 是执行中的输出；`'background:changed'` 是后台任务登记的变化。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent` 与工具结果的结局判据 `toolFailed`、`integerIn`。
 
@@ -109,13 +109,13 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 
 ## 3. 谁提供 / 谁消费
 
-**提供者（唯一）**：`@aalis/plugin-tools` —— `provide(tools, new ToolRegistry(logger, tasks))`，同时 `provide(backgroundTasks, tasks)`。本服务是**单实例中心 Registry**。
+**提供者（唯一）**：`@aalis/plugin-tools` —— `provide.use(tools, new ToolRegistry(logger.use, tasks))`，同时 `provide.use(backgroundTasks, tasks)`。本服务是**单实例中心 Registry**。
 
-**工具提供者**：`plugin-tool-system`、`plugin-tool-math`、`plugin-tool-browser`、`plugin-tool-search`、`plugin-tool-onebot`、`plugin-tool-code-runner`、`plugin-skills`、`plugin-todo-list`、`plugin-memory-*` 等经 `tools.register` 登记。
+**工具提供者**：`plugin-tool-system`、`plugin-tool-math`、`plugin-tool-browser`、`plugin-tool-search`、`plugin-tool-onebot`、`plugin-tool-code-runner`、`plugin-skills`、`plugin-todo-list`、`plugin-memory-*` 等经 `tools.use.register` 登记。
 
 **核心消费者**：
 
-- `plugin-agent` —— `tools.current?.getDefinitions(...)` / `?.execute(...)`
+- `plugin-agent` —— 先看 `tools.present`，再 `tools.use.getDefinitions(...)` / `tools.use.execute(...)`
 - `plugin-authority` —— `tools.follow(svc => { svc.setExecutionGuard(guard); return () => svc.setExecutionGuard(undefined); })` 注入权限守卫，停用时摘掉
 - `plugin-mcp-server` —— `uses: { tools }` required
 - WebUI 经 `getAll()` 列工具+可见性
@@ -130,7 +130,7 @@ export default definePlugin({
   name: '@aalis/plugin-tool-hello',
   uses: { tools: optional(tools) },
   apply({ tools }) {
-    const grouped = withToolGroups(tools, ['hello']);
+    const grouped = withToolGroups(tools.use, ['hello']);
     grouped.registerGroup({ name: 'hello', label: '示例工具' });
     grouped.register({
       definition: {
@@ -152,20 +152,19 @@ export default definePlugin({
 });
 ```
 
-`pluginName` 由绑定门面填本次激活 id，**不要**自己传。登记不强制 required；若还要读 `getDefinitions` / `execute`，用 `uses: { tools }`（required）并 `tools.require()` 或先判 `tools.current`。
+`pluginName` 由绑定门面填本次激活 id，**不要**自己传。登记不强制 required；若还要读 `getDefinitions` / `execute`，用 `uses: { tools }`（required）并经 `tools.use` 调用；optional 时先看 `tools.present`。
 
-自建整个 `ToolService` 仅当你要替换注册表：`provide(tools, impl, { priority })`，**务必实现 `setExecutionGuard`**。
+自建整个 `ToolService` 仅当你要替换注册表：`provide.use(tools, impl, { priority })`，**务必实现 `setExecutionGuard`**。
 
 ## 5. 标准消费写法
 
-`tools.current` 每次读取重新解析。不要缓存实例或 `tools.all()[i]`。
+业务句柄 `tools.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人；一段操作要固定同一家时取 `tools.list().find(p => p.selected)?.use`。可选依赖先看 `present`：
 
 ```ts
-const defs = tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
-const result =
-  (await tools.current?.execute(call.name, call.args, { sessionId, userId, platform, enabledGroups })) ?? {
-    content: JSON.stringify({ error: 'tools 服务不可用' }),
-  };
+const defs = tools.present ? tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) : [];
+const result = tools.present
+  ? await tools.use.execute(call.name, call.args, { sessionId, userId, platform, enabledGroups })
+  : { content: JSON.stringify({ error: 'tools 服务不可用' }) };
 ```
 
 `execute` 把失败转成 `{ error }` 回灌 LLM，**不会**冒泡异常（以 `plugin-tools` 实现为准）。

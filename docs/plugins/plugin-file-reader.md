@@ -5,7 +5,7 @@
 
 ## 概述
 
-多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。通过 `agent:input:before` 钩子自动处理消息附件。插件不提供服务：上传的文件只经它自己的工具与会话面板取用。
+多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。经 agent 的输入预处理器（`agent.use.registerPreprocessor`）自动处理消息附件。插件不提供服务：上传的文件只经它自己的工具与会话面板取用。
 
 ## 插件声明
 
@@ -18,7 +18,6 @@ export default definePlugin({
     logger,
     lifecycle,
     events,
-    hooks,
     contributions,
     tools: optional(tools),
     agent: optional(agent),
@@ -56,7 +55,7 @@ export default definePlugin({
 
 ## 文档内嵌图片识别
 
-读取 DOCX 时，若启用 `recognizeDocImages`（默认开）且 `media` 服务可用，会提取内嵌图片、调用 `media.describeImage` 识别，并把描述以「`--- 文档内图片 (N) ---`」小节附在正文末尾。
+读取 DOCX 时，若启用 `recognizeDocImages`（默认开）且 `media` 服务可用，会提取内嵌图片、调用 `media.use.describeImage` 识别，并把描述以「`--- 文档内图片 (N) ---`」小节附在正文末尾。
 
 - `maxDocImages`（默认 8）限制单文档识别张数，避免大量图片拖慢解析、消耗 vision token；超出跳过。
 - 单张识别失败不影响其余；无 `media` 服务时整体静默跳过。

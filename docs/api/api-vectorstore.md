@@ -6,7 +6,7 @@
 
 ## 概述
 
-最小化的向量数据库服务契约：存向量、查最近邻、按 metadata 过滤删除。常被 `plugin-memory-vector` 消费做语义历史检索。描述符 `vectorstore` 是普通调用型 `ServiceRef<VectorStoreService>`。
+最小化的向量数据库服务契约：存向量、查最近邻、按 metadata 过滤删除。常被 `plugin-memory-vector` 消费做语义历史检索。描述符 `vectorstore` 不给 bind，业务层就是 `VectorStoreService` 形状的活句柄（`caps.vectorstore.use`）。
 
 ## 关键类型
 
@@ -37,9 +37,9 @@ export default definePlugin({
   name: '@acme/plugin-example-vectorstore',
   uses: { embedding, vectorstore },
   apply({ embedding, vectorstore }) {
-    const embedSvc = embedding.current;
-    const vs = vectorstore.current;
-    if (!embedSvc || !vs) return;
+    if (!embedding.present || !vectorstore.present) return;
+    const embedSvc = embedding.use;
+    const vs = vectorstore.use;
     void (async () => {
       const vec = await embedSvc.embed('查询内容');
       const hits = await vs.search(vec, 5);
@@ -54,7 +54,7 @@ export default definePlugin({
 
 ## 维度一致性
 
-向量维度由配套的 `embedding` 服务决定。**vectorstore 实现不强校验维度**——调用方应保证 `embedding.embed()` 与历史写入向量来自同一模型。
+向量维度由配套的 `embedding` 服务决定。**vectorstore 实现不强校验维度**——调用方应保证 `embedding.use.embed()` 与历史写入向量来自同一模型。
 
 ## 持久化
 

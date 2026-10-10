@@ -77,11 +77,11 @@ const raw = await model.chat(/* ... */); // 模型可能输出 ```json{...}``` +
 const { parsed, repairsApplied } = parseLLMJsonObject(typeof raw.content === 'string' ? raw.content : '');
 
 if (!parsed) {
-  logger.warn('LLM 输出无法解析为 JSON 对象');
+  logger.use.warn('LLM 输出无法解析为 JSON 对象');
   return;
 }
 if (repairsApplied.length > 0) {
-  logger.debug(`JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+  logger.use.debug(`JSON 自动修复成功：${repairsApplied.join(' → ')}`);
 }
 // parsed 此时一定是 Record<string, unknown>
 const reply = typeof parsed.response === 'string' ? parsed.response : '';

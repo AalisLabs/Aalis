@@ -15,7 +15,7 @@ definePlugin({
   displayName: '内存记忆',
   subsystem: 'memory',
   provides: [memory],
-  apply(caps) { caps.provide(memory, service, { priority: -100 }); },
+  apply(caps) { caps.provide.use(memory, service, { priority: -100 }); },
   uses: {
     config,
     logger,

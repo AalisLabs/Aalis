@@ -4,7 +4,7 @@
 
 `flow-control` 是会话级的**节流硬闸**：禁言、回复后冷却、限速窗口。它只回答"现在能不能说"，不参与"要不要开口"——后者由前一相位生效的触发插件判定（见 [trigger](./trigger.md)；规则版 `@aalis/plugin-trigger-policy` 看 @ / 名字 / 计数与评分，另有闲置主动开口）。
 
-- 服务注册名：`'flow-control'`（描述符 `flowControl`，读 `flowControl.current`）
+- 服务注册名：`'flow-control'`（描述符 `flowControl`，消费方经 `flowControl.use` 调用）
 - 契约包：`@aalis/api-flow-control`
 - 参考实现：`@aalis/plugin-flow-control`
 - 相邻相位：`inbound:trigger`（生效的触发插件）→ `inbound:flow`（本服务的参考实现）→ `inbound:dispatch`。
@@ -39,7 +39,7 @@ export interface FlowControlService {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。
+**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide.use(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。
 
 **消费点**（全部 `optional`，缺席即不设闸）：
 
@@ -86,9 +86,9 @@ export default definePlugin({
         else mutedUntil.delete(sid);
       },
     };
-    provide(flowControl, service);
+    provide.use(flowControl, service);
 
-    hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
+    hooks.use.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
       const { message } = data;
       if (service.isMuted(message.sessionId)) return; // 禁言期一律不说话
       // immediate 穿透冷却；带 source 的内部注入不过冷却（限速仍挡，示例从略）
@@ -96,22 +96,22 @@ export default definePlugin({
       await next();
     });
 
-    events.on('outbound:message', msg => {
+    events.use.on('outbound:message', msg => {
       if (msg.source === 'agent' && msg.sessionId) cooldownUntil.set(msg.sessionId, Date.now() + 10_000);
     });
   },
 });
 ```
 
-`flow-control` 是单实例服务，用全局 `Map<sessionId, state>` 管多会话，不需要 `entryId`；`priority` 留默认即可。同名胜出规则见 [concepts/service-model](../concepts/service-model.md)。
+`flow-control` 是单实例服务，用全局 `Map<sessionId, state>` 管多会话，不需要 `entryId`；`priority` 留默认即可。同名时选中哪一家的规则见 [concepts/service-model](../concepts/service-model.md)。
 
 ## 5. 标准消费方式
 
-按 [concepts/lazy-service-access](../concepts/lazy-service-access.md)：**每次用都 `current` 现取，不缓存引用**。缺席时按"不设闸"处理：
+按 [concepts/lazy-service-access](../concepts/lazy-service-access.md)：**业务句柄 `flowControl.use` 是活的**，每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人。缺席时访问成员抛错，先看 `present`，缺席按"不设闸"处理：
 
 ```ts
 // platform 档闲置挑候选时（packages/plugin-trigger-policy/src/idle-scheduler.ts）
-const flow = this.caps.flowControl.current;
+const flow = this.caps.flowControl.present ? this.caps.flowControl.use : undefined;
 for (const [sid, s] of this.states) {
   if (flow?.isMuted(sid) || flow?.isCoolingDown(sid) || flow?.isRateLimited(sid)) continue;
   // ...
@@ -131,7 +131,7 @@ for (const [sid, s] of this.states) {
 
 **影子归档顺序竞态（现状未收口）**。被吞掉的入站消息会做影子归档，下次触发时作为上下文：
 
-- `flow-control` 的 `shadowArchive`（`packages/plugin-flow-control/src/index.ts`）与触发插件共用的 `archiveSwallowed`（`packages/api-trigger/src/index.ts`）都直接 `await archive.archiveIncoming(message)`。
+- `flow-control` 的 `shadowArchive`（`packages/plugin-flow-control/src/index.ts`）与触发插件共用的 `archiveSwallowed`（`packages/api-trigger/src/index.ts`）都直接 `await` message-archive 的 `archiveIncoming(message)`。
 - 真正触发回合的消息走 agent 的串行归档车道 `archiveIncomingMessageInOrder`（`packages/plugin-agent/src/index.ts`）。
 - 两条路径不共享车道，`archiveIncoming` 以 `Date.now()` 作时间戳（`packages/plugin-message-archive/src/index.ts`）。吞掉与触发在毫秒级交错时，归档可能乱序或时间戳并列。
 
@@ -146,7 +146,7 @@ for (const [sid, s] of this.states) {
 
 - [plugins/plugin-flow-control](../plugins/plugin-flow-control.md)、[plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 两个相位的处理顺序与配置。
 - [services/gateway](./gateway.md) — 入站相位 `COMMAND → TRIGGER → FLOW → DISPATCH`（相位常量见 `packages/api-gateway/src/index.ts`）。
-- [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — 服务选名规则、现取不缓存。
+- [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — 服务选名规则、业务句柄是活的。
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides` / `uses` 双源同步。
 - [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — 禁言持久化用的 `data:` root 文法。
 - [services/message-archive](./message-archive.md) — `archiveIncoming` 语义与 `inbound:message:archived` 事件。

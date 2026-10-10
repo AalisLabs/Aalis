@@ -7,7 +7,7 @@
        ↑
 @aalis/api-<X>           ← 契约：服务接口、运行时描述符、事件/钩子/贡献点声明、领域 helper
        ↑
-@aalis/plugin-<X>        ← 实现：provide(描述符, 实现) 与业务逻辑
+@aalis/plugin-<X>        ← 实现：provide.use(描述符, 实现) 与业务逻辑
 ```
 
 依赖规则：
@@ -45,7 +45,7 @@
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |
 | [api-session-protocol](./api-session-protocol.md) | `sessionProtocol` 描述符（服务名 `session-protocol`）+ 会话协议的 zod schema：owner 客户端与守护进程之间的帧、会话列表、条目与回合控制（实验性） | plugin-session-server |
-| [api-storage](./api-storage.md) | `storage` 描述符 + `createStorageGateway` 等 helper（第一参吃 `ServiceRef`） | plugin-storage-local |
+| [api-storage](./api-storage.md) | `storage` 描述符 + `BoundStorage`（恒定义 `resolveLocalPath` / `readFileRange` / `watch`，插件私有目录 `own`）+ 路径文法 helper | plugin-storage-local |
 | [api-todo-list](./api-todo-list.md) | `todoList` 描述符（服务名 `todo-list`）+ `TodoListService`：读与清空会话的待办；`TodoItem` 与 `todo:updated` 事件 | plugin-todo-list |
 | [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups`；后台任务登记 `backgroundTasks` | plugin-tools |
 | [api-trigger](../services/trigger.md) | `trigger` 描述符（选出生效的触发插件，二选一）与触发插件共用的函数 | plugin-trigger-policy（规则判定） |
@@ -68,8 +68,8 @@
 
 ## 约定
 
-1. **服务身份是描述符的 `name`**。例：`@aalis/api-tools` 导出 `tools`，`name` 为 `'tools'`。消费方 `uses: { tools }`，调用型接口是 `ServiceRef`（`current` / `require()` / `all()` / `follow()`）；登记型能力另有绑定门面（如 `tools.register`、`webui.definePage`）。
-2. **按名仲裁**：同名多实现按「偏好 > 优先级 > 注册顺序」选胜者，可经 `services.prefer` 或 WebUI 设置「系统」的服务偏好调整。领域能力（storage 的 `local-path`、LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 helper 过滤（如 `resolveLLMModel(llm, ref, ['vision'])`、storage gateway 的 `resolveLocalPath`），不经 core DI、也不用按能力选服务。
-3. **事件**通过 `declare module '@aalis/core' { interface AalisEvents }` 注入；订阅者在 `uses` 里声明 `events`，用 `events.on` / `events.emit`。
+1. **服务身份是描述符的 `name`**。例：`@aalis/api-tools` 导出 `tools`，`name` 为 `'tools'`。消费方 `uses: { tools }`，拿到选择层（`list()` / `use` / `of(id)` / `present` / `follow()`）；业务层 `use` 默认是提供者形状的活句柄，登记型能力的契约在业务层上另加登记方法（如 `tools.use.register`、`webui.use.definePage`）。
+2. **按名仲裁**：同名多实现按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中一家，偏好由用户在 WebUI 设置「系统」的服务偏好或配置 `servicePreferences` 里调整。领域能力（LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 helper 过滤（如 `resolveLLMModel(caps.llm, ref, ['vision'])`），不经 core DI、也不用按能力选服务。
+3. **事件**通过 `declare module '@aalis/core' { interface AalisEvents }` 注入；订阅者在 `uses` 里声明 `events`，用 `events.use.on` / `events.use.emit`。
 4. **钩子与贡献点**的键分别经 `declare module '@aalis/api-hooks' { interface HookContextMap }` 与 `declare module '@aalis/api-contributions' { interface ContributionPointMap }` 注入。使用方在 `uses` 里声明 `hooks` / `contributions`（描述符分别从这两个契约包导入），服务由 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，core 不内置。
-5. **绑定门面 vs 动态查询**：登记（工具、指令、页面、预处理器）走描述符自带的绑定门面，归属这次激活、提供者换人自动重挂。只读当前胜者用 `x.current`（每次读取重新解析）。动态按名查询走 `services.get`，**不产生依赖边**，关停期可能拿空。把 `x.current` 或 `x.all()[i]` 存进字段后，关停边不保护这份缓存引用：提供者有失效逻辑则抛，无则静默成功。
+5. **业务层 vs 动态查询**：登记（工具、指令、页面、预处理器）走业务层上的登记方法，归属这次激活、提供者换人自动重挂。调用选中的那一家用 `x.use`（活句柄，每次访问重新解析，存起来也跟着换人；optional 先看 `x.present`）。动态按名查询走 `services.use.get`，**不产生依赖边**，关停期可能拿空。把它拿到的原始实例存进字段后，关停边不保护这份缓存引用：提供者有失效逻辑则抛，无则静默成功。

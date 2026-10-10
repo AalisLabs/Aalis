@@ -81,16 +81,26 @@ function parseInstanceId(instanceId: string): { moduleName: string; suffix?: str
 ## 描述符与绑定
 
 ```typescript
-interface ServiceDescriptor<P, B = ServiceRef<P>> {
+interface ServiceDescriptor<P, B = P> {
   readonly name: string;
   bind(port: BindingPort<P>): B;
 }
 
-interface ServiceRef<P> {
-  readonly current: P | undefined;
-  require(): P;
-  all(): ServiceView<P>[];
-  follow(attach: (provider: P) => void | (() => unknown)): () => void;
+interface ServiceSelection<B> {
+  list(): ProviderEntry<B>[];
+  readonly use: B;
+  of(id: string): B;
+  readonly present: boolean;
+  follow(attach: (handle: B) => FollowCleanup): () => void;
+}
+
+interface ProviderEntry<B> {
+  readonly id: string;
+  readonly label?: string;
+  readonly priority: number;
+  readonly selected: boolean;
+  readonly basis?: SelectionBasis; // 'plugin' | 'global' | 'rank'
+  readonly use: B;
 }
 
 interface ServiceView<T = unknown> {
@@ -100,21 +110,19 @@ interface ServiceView<T = unknown> {
   label?: string;
 }
 
-interface BindingPort<P> { /* id, identity, logger, current, require, all, follow, track, registrar */ }
+interface BindingPort<P> { /* id, identity, logger, present, provider, follow, track, registrar */ }
 interface Registrar<Item> {
   add(item: Item): () => void;
 }
 
-function defineService<P>(name: string): ServiceDescriptor<P, ServiceRef<P>>;
+function defineService<P>(name: string): ServiceDescriptor<P, P>;
 function defineService<P, B>(name: string, bind: (port: BindingPort<P>) => B): ServiceDescriptor<P, B>;
 function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B>;
-function serviceRef<P>(port: BindingPort<P>): ServiceRef<P>;
-function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): ServiceRef<P> & E;
 ```
 
-既登记又被调用的服务，把登记方法作为第二参传入：`serviceRef(port, { registerX })`。不要对象展开——`current` 是 getter，展开会求值成一次性快照。
+`P` 是提供者形状，`B` 是业务层：不给 `bind` 时 `B` 就是 `P`，业务层是按 `P` 转发的活句柄。自定义 `bind` 要在转发之上加或改成员，写 `Object.assign(Object.create(port.provider), { ... })`。不要对象展开——展开看不到提供者的成员。`ServiceView` 是 `services.all` 返回的原始实例投影；选择层的 `list()` 给 `ProviderEntry`。
 
-`ProviderOf<D>` / `BoundOf<U>` / `CheckedUses<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，两者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
+`ProviderOf<D>` / `BoundOf<U>`（每项声明一个 `ServiceSelection`）/ `CheckedUses<U>` / `Uses` 是推导载体。`OptionalUse<P, B>` 是 `optional()` 的返回类型，`FollowCleanup`（`void | (() => unknown)`）是 `follow` 回调的返回类型，`SelectionBasis` 是选中依据，三者都从包根导出。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
 `BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），即调用方身份，见 [资源身份](service.md#资源身份)。
 

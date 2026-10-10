@@ -133,6 +133,6 @@ const handles = createBoundedMap<string, FileHandle>({
 ## 6. 交叉链接
 
 - 概念 · [清单元数据](../concepts/manifest-metadata.md)——util 包靠 `aalis-util` 关键词识别、为何不进 DI 容器。
-- 概念 · [服务模型](../concepts/service-model.md)——对照：服务走 `provide(descriptor, impl)` 与 `uses` 里的描述符，util 走 `package.json` 依赖 + 直接 import。
+- 概念 · [服务模型](../concepts/service-model.md)——对照：服务走 `provide.use(descriptor, impl)` 与 `uses` 里的描述符，util 走 `package.json` 依赖 + 直接 import。
 - 概念 · [安全模型](../concepts/security-model.md) / [消息 · LLM 管线](../concepts/message-llm-pipeline.md)——缓存内容出站时的审计边界。
 - 消费范例源码：`packages/plugin-media/src/cache.ts`、`packages/plugin-office/src/session.ts`、`packages/plugin-prompt-budget/src/index.ts`。

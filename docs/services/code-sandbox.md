@@ -2,7 +2,7 @@
 
 > 面向：要为 Aalis 写一个代码沙箱后端（provider），或在自己的插件里安全执行不可信代码（consumer）的第三方作者。
 
-`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，通过 `codeSandbox.current` 取用；契约包是 `@aalis/api-code-sandbox`。
+`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，消费方经 `codeSandbox.use` 调用；契约包是 `@aalis/api-code-sandbox`。
 
 它为什么单独成服务，而不塞进通用的 `process`？「在 OS 隔离里跑不可信代码」是 `code_runner` 独有的诉求。package-manager、scheduler 等同样会跑子进程的插件都不需要它，把它塞进共享的 `process` 契约会污染公共面。
 
@@ -61,7 +61,7 @@ export interface SandboxPolicy {
 
 返回值 `ExecResult` 复用 `process` 契约，结构是 `{ code, signal, stdout, stderr, truncated? }`。非零退出会 reject，错误对象上挂 `.result`——这与 `ProcessService.execFile` 的约定一致，详见 §5 错误处理。
 
-契约包的 `package.json` 没有 `aalis.service` 块，因为它是契约包（`keywords: ["aalis","aalis-api"]`）——导出 interface、type 与描述符 `codeSandbox`（`defineService<CodeSandboxService>('code-sandbox')`），不在运行时注册服务。真正的 `provides: [codeSandbox]` 由实现包声明（见 §4）。消费方在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，读 `codeSandbox.current`，服务未就绪或实现未安装时为 `undefined`。
+契约包的 `package.json` 没有 `aalis.service` 块，因为它是契约包（`keywords: ["aalis","aalis-api"]`）——导出 interface、type 与描述符 `codeSandbox`（`defineService<CodeSandboxService>('code-sandbox')`），不在运行时注册服务。真正的 `provides: [codeSandbox]` 由实现包声明（见 §4）。消费方在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，经 `codeSandbox.use` 调用；服务未就绪或实现未安装时 `codeSandbox.present` 为 `false`，访问成员同步抛 `ServiceUnavailableError`。
 
 ---
 
@@ -70,13 +70,13 @@ export interface SandboxPolicy {
 | 角色 | 包 | 关键 API |
 |---|---|---|
 | 契约 | `@aalis/api-code-sandbox` | 导出 interface / type / `codeSandbox` 描述符 |
-| 参考实现 | `@aalis/plugin-code-sandbox-os` | `provide(codeSandbox, …)` |
-| 唯一消费方 | `@aalis/plugin-tool-code-runner` | `codeSandbox.current` → `codeSandbox.run(...)` |
+| 参考实现 | `@aalis/plugin-code-sandbox-os` | `provide.use(codeSandbox, …)` |
+| 唯一消费方 | `@aalis/plugin-tool-code-runner` | `codeSandbox.present` → `codeSandbox.use.run(...)` |
 
 参考实现有几个关键设计，写 provider 时值得参照：
 
-- 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务网关来 spawn（`uses required = ['process']`）。OS 探测同样靠经网关做功能性试跑。
-- 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会超过宽限仍没停下、拖住重新激活。
+- 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务来 spawn（`uses required = ['process']`）。OS 探测同样经 process 服务做功能性试跑。
+- 功能性探测（`probeBackend`）：经 `process` 服务真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.use.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会超过宽限仍没停下、拖住重新激活。
 - 命令改写（`wrapForSandbox()`，纯逻辑、便于单测）：把 `(cmd, args)` 改写为「经沙箱启动器运行」，全程 shell-free，不拼 shell 字符串。
 
 ---
@@ -98,7 +98,7 @@ export interface SandboxPolicy {
 
 ```ts
 import { codeSandbox } from '@aalis/api-code-sandbox';
-import { createProcessGateway, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import { definePlugin, logger, provide } from '@aalis/core';
 
 export default definePlugin({
@@ -106,10 +106,10 @@ export default definePlugin({
   provides: [codeSandbox],
   uses: { provide, logger, process: processService },
   async apply({ provide, logger, process }) {
-    const log = logger.child('my-sandbox');
-    const proc = createProcessGateway(process); // 经 process 网关，别直接碰 child_process
-    log.info(`backend probe via ${proc ? 'process' : 'missing'}`);
-    provide(codeSandbox, {
+    const log = logger.use.child('my-sandbox');
+    // 探测与 run 都经 process.use（process 服务），别直接碰 child_process
+    log.info(`backend probe via ${process.present ? 'process' : 'missing'}`);
+    provide.use(codeSandbox, {
       available: true,
       backend: 'example',
       async run() {
@@ -120,7 +120,7 @@ export default definePlugin({
 });
 ```
 
-同名多实现时，胜者 = `preference > priority > 注册顺序`——这是纯按名选择，没有能力维度的匹配（详见 [服务模型](../concepts/service-model.md)）。
+同名多实现时，消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 注册顺序」——这是纯按名选择，没有能力维度的匹配（详见 [服务模型](../concepts/service-model.md)）。
 
 ### 双源元数据要同步
 `provides` / `uses` 有两套独立来源，部署时都要写对（见 [清单元数据](../concepts/manifest-metadata.md)）：
@@ -149,12 +149,7 @@ export default definePlugin({
 ```ts
 import { codeSandbox } from '@aalis/api-code-sandbox';
 import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
-import {
-  createProcessGateway,
-  type ExecResult,
-  type ProcessService,
-  processService,
-} from '@aalis/api-process';
+import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import { definePlugin, provide } from '@aalis/core';
 
 class MyCodeSandboxService implements CodeSandboxService {
@@ -179,11 +174,11 @@ export default definePlugin({
   provides: [codeSandbox],
   uses: { provide, process: processService },
   async apply({ provide, process }) {
-    const proc = createProcessGateway(process);
+    const proc = process.use;
     const impl = new MyCodeSandboxService();
     impl.proc = proc;
     impl._ok = true;
-    provide(codeSandbox, impl);
+    provide.use(codeSandbox, impl);
   },
 });
 ```
@@ -198,8 +193,8 @@ export default definePlugin({
 uses: { storage, process, codeSandbox: optional(codeSandbox) };
 ```
 
-### 惰性读取 `.current` + fail-closed
-每次用都重新取，不要把服务句柄缓存进类字段——provider 替换或 bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)。`code_runner` 在每次工具调用前，经 `createRunnerConfig` 重新 `codeSandbox.current`，再在 `runCode` 里检查 `available`：
+### 先看 `present` + fail-closed
+业务句柄 `codeSandbox.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，provider 替换或 bounce 后存起来的句柄也会跟着换，见 [惰性服务访问](../concepts/lazy-service-access.md)。它是可选依赖，缺席时访问成员抛错。`code_runner` 在每次工具调用前经 `createRunnerConfig` 取 `codeSandbox.present ? codeSandbox.use : undefined`，再在 `runCode` 里检查 `available`：
 
 ```ts
 // 节选
@@ -272,13 +267,13 @@ provider 实现必须落实这三条强制语义；consumer 也必须传一个�
 - 不是强隔离：这是 OS 级减速带，不防内核漏洞 / 提权 / sandbox 逃逸，不等于 gVisor / 虚拟机级隔离。
 - storage 不是沙箱：`resolveLocalPath(uri)` 把 storage URI 解析成 OS 绝对路径交给子进程后，storage 那层的 root 校验对子进程毫无约束力——真正的隔离全靠这里的 OS 沙箱（见 [安全模型 §5](../concepts/security-model.md)、[存储 URI 文法](../concepts/storage-uri-grammar.md)）。
 - 平台覆盖：参考实现只覆盖 macOS（seatbelt）/ Linux（bwrap）。Windows 等其它平台 `backend='none'`，`code_runner` auto 模式会 fail-closed。
-- `env` 不在 `run()` 外层重复传：参考实现把 env 白名单注入交给 wrapper（`env -i` / `--clearenv --setenv`），外层经 `process` 网关 spawn 时不再传 `env`——外层启动器进程继承宿主 env 无妨，因为 wrapper 已为内层不可信子进程清空。写 provider 时不要把宿主 env 透传到内层。
+- `env` 不在 `run()` 外层重复传：参考实现把 env 白名单注入交给 wrapper（`env -i` / `--clearenv --setenv`），外层经 `process` 服务 spawn 时不再传 `env`——外层启动器进程继承宿主 env 无妨，因为 wrapper 已为内层不可信子进程清空。写 provider 时不要把宿主 env 透传到内层。
 - 中止与超时打的是外层启动器所在的进程组。Seatbelt 下 `sandbox-exec → env → 解释器` 逐级 exec，是同一个进程，组信号直接打到脚本；主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）不在组里，停不掉。bwrap 带 `--new-session`，内层进程不在我们的进程组里，组信号打到外层 bwrap；它同时带 `--die-with-parent` 与 `--unshare-all`（含 pid 命名空间），外层退出后内层随之结束，脱离进程组的后代也在同一个命名空间里。
 
 ---
 
 ## 7. 交叉链接
 
-- 概念：[服务模型](../concepts/service-model.md)（按名 DI / 同名多实现 / 优先级选择）· [惰性服务访问](../concepts/lazy-service-access.md)（每次用都重取）· [清单元数据](../concepts/manifest-metadata.md)（`provides`/`uses` 双源）· [安全模型](../concepts/security-model.md)（§4 OS 沙箱边界、§5 存储不是沙箱）· [存储 URI 文法](../concepts/storage-uri-grammar.md)。
+- 概念：[服务模型](../concepts/service-model.md)（按名 DI / 同名多实现 / 优先级选择）· [惰性服务访问](../concepts/lazy-service-access.md)（业务句柄是活的）· [清单元数据](../concepts/manifest-metadata.md)（`provides`/`uses` 双源）· [安全模型](../concepts/security-model.md)（§4 OS 沙箱边界、§5 存储不是沙箱）· [存储 URI 文法](../concepts/storage-uri-grammar.md)。
 - 核心：[权限两轴（authority）](../plugins/plugin-authority.md)（`restricted` 工具受闸）。
-- 相关服务/插件：`process` 契约（`ExecResult` / spawn 网关）· 消费方插件 [`plugin-tool-code-runner`](../plugins/plugin-tool-code-runner.md) · 参考实现 [`plugin-code-sandbox-os`](../plugins/plugin-code-sandbox-os.md)。
+- 相关服务/插件：`process` 契约（`ExecResult` / spawn）· 消费方插件 [`plugin-tool-code-runner`](../plugins/plugin-tool-code-runner.md) · 参考实现 [`plugin-code-sandbox-os`](../plugins/plugin-code-sandbox-os.md)。

@@ -4,7 +4,7 @@
 
 ## 定位
 
-回答"这条消息要不要让 agent 开口"。本插件是一个触发插件（见 [`trigger` 服务](../services/trigger.md)）：持有每会话的计数、活跃指数与闲置调度状态，在 `inbound:trigger` 相位处理作用域、禁言、禁言关键词、点名识别与规则判定，放行时标记 `triggerType`。它只在自己是 `trigger` 服务的胜者（生效的触发插件）时判定；与模型触发插件 `@aalis/plugin-trigger-laya` 二选一。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
+回答"这条消息要不要让 agent 开口"。本插件是一个触发插件（见 [`trigger` 服务](../services/trigger.md)）：持有每会话的计数、活跃指数与闲置调度状态，在 `inbound:trigger` 相位处理作用域、禁言、禁言关键词、点名识别与规则判定，放行时标记 `triggerType`。它只在自己是 `trigger` 服务选中的那一家（生效的触发插件）时判定；与模型触发插件 `@aalis/plugin-trigger-laya` 二选一。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
 
 ## 插件声明
 
@@ -42,7 +42,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序）：
 
-0. 本插件不是生效的触发插件（`trigger` 服务的胜者另有其人）→ `next()`，什么都不做：不计数、不识别、不归档。胜者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
+0. 本插件不是生效的触发插件（`trigger` 服务选中的是另一家）→ `next()`，什么都不做：不计数、不识别、不归档。生效者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
 1. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ `next()` 跳过策略：不计数，不改写 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。
 2. 不在作用域内 → `next()` 放行。作用域判断先于禁言关键词，避免群聊的禁言关键词作用到 WebUI、私聊等不在作用域内的会话。
 3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，记为真人活动（见第 5 步），`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。本插件还没有该会话的状态时（如平台禁言先于任何消息）照样建立。
@@ -72,7 +72,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 与模型触发插件二选一
 
-本插件与仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由 Laya 模型判定，不发布到 npm，说明见 `packages/plugin-trigger-laya/README.md`）都是完整的触发插件，由 `trigger` 服务的胜者决定哪个生效（偏好 > 优先级 > 注册顺序）。两个都启用、没有偏好时本插件生效（Laya 的优先级 -10 低于本插件的 0，两者都是插件里的常量，不可配置）；偏好指向 Laya 时 Laya 生效，本插件对每条消息直接放行，计数与闲置都停下。切换方式：
+本插件与仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由 Laya 模型判定，不发布到 npm，说明见 `packages/plugin-trigger-laya/README.md`）都是完整的触发插件，由 `trigger` 服务选中的那一家决定哪个生效（偏好 > 优先级 > 注册顺序）。两个都启用、没有偏好时本插件生效（Laya 的优先级 -10 低于本插件的 0，两者都是插件里的常量，不可配置）；偏好指向 Laya 时 Laya 生效，本插件对每条消息直接放行，计数与闲置都停下。切换方式：
 
 - **切到 Laya**：在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「Laya 模型」（即时生效）。
 - **切到规则判定（即时）**：在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「规则（计数/评分）」，下一条消息起由本插件判定。

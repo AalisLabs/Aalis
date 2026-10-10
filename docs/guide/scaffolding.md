@@ -213,9 +213,9 @@ npm run build
 |---|---|---|
 | 包名 | `aalis-plugin-sample` | 合法 npm 包名，支持 `@scope/my-plugin`；目录名取最后一段 |
 | 显示名（中文标签） | 由包名推导 | 去掉 `plugin-` 前缀、连字符转空格、首字母大写 |
-| 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.register` 示例 |
-| 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.command` 示例 |
-| 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.definePage` 示例 |
+| 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.use.register` 示例 |
+| 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.use.command` 示例 |
+| 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.use.definePage` 示例 |
 | 页面用自带前端？ | 否 | 只在上一问选了「是」时问。选了就把页面写成插件前端：另生成 `webui/` 里的静态网页，见下文「页面用自带前端」 |
 | 登记会话设置项？ | 否 | 生成 `uses: { sessionManager: optional(sessionManager) }` 与一项会话设置项，见下文「会话设置项」 |
 
@@ -270,9 +270,9 @@ export default definePlugin({
   displayName: 'My Plugin',
   uses: { logger, tools: optional(tools) },
   apply({ logger, tools }) {
-    logger.info('插件已加载');
+    logger.use.info('插件已加载');
 
-    tools.register({
+    tools.use.register({
       risk: 'safe',
       definition: {
         type: 'function',
@@ -304,7 +304,7 @@ export default definePlugin({
 
 什么都不声明时任何人可用、不确认，与 `safe` 相同，所以写、删、执行一定要声明。详见 [安全模型的「插件作者怎么标操作风险」](../concepts/security-model.md#插件作者怎么标操作风险-provider-侧)。耗时长、晚些拿到结果仍有用的工具（构建、下载、渲染）可以声明 `background: {}`，交给执行器转后台，要求见 [插件作者指南「长任务与取消」](../plugin-author-guide.md#长任务与取消)；模板的示例工具是即时的，不声明，只在注释里写了声明法。
 
-选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer` 与一段 `webui.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
+选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.use.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer` 与一段 `webui.use.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
 脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法，以及入口与 `src/index.ts` 一致的 `uses`。
 
@@ -313,18 +313,18 @@ export default definePlugin({
 「登记会话设置项？」选了「是」时，`src/index.ts` 多三样：
 
 - 用 declaration merging 把设置项的值类型加进 `@aalis/api-session-manager` 的 `SessionConfig`，键名是 `greeting` 接上包名的驼峰写法（如 `greetingMyPlugin`），各插件的设置项共用一张表，接上包名免得撞键；
-- `uses` 加 `sessionManager: optional(sessionManager)`，`apply` 里经 `sessionManager.registerSetting` 登记这一项：字段（类型、标签、说明与显示用的默认值）、适用的会话种类（`owner`、`room`、`task`）与显眼程度（`advanced`，收进会话设置的「高级」）。登记随这次激活撤回，会话管理晚上线时自动补上；
-- 同时选了工具时，示例工具按这次调用所在的会话读这一项的生效值：`sessionManager.current?.resolveConfig(ctx.sessionId, ctx.platform).<键>`，会话自己的、平台档与全局默认逐层叠出，哪层都没设时用默认的问候语。
+- `uses` 加 `sessionManager: optional(sessionManager)`，`apply` 里经 `sessionManager.use.registerSetting` 登记这一项：字段（类型、标签、说明与显示用的默认值）、适用的会话种类（`owner`、`room`、`task`）与显眼程度（`advanced`，收进会话设置的「高级」）。登记随这次激活撤回，会话管理晚上线时自动补上；
+- 同时选了工具时，示例工具按这次调用所在的会话读这一项的生效值：先看 `sessionManager.present`，在场时读 `sessionManager.use.resolveConfig(ctx.sessionId, ctx.platform).<键>`，会话自己的、平台档与全局默认逐层叠出；会话管理不在或哪层都没设时用默认的问候语。
 
 登记之后，这一项出现在 WebUI 的会话设置与设置里「会话默认」的各层里。契约见 [session-manager 服务的「设置项的登记与解析」](../services/session-manager.md#_2-5-设置项的登记与解析)。
 
 ### 页面用自带前端
 
-页面默认声明式；「页面用自带前端？」选了「是」时，`webui.definePage` 写成插件前端的形态（契约见 [api-webui 的「插件前端」](../api/api-webui.md#插件前端)）：
+页面默认声明式；「页面用自带前端？」选了「是」时，`webui.use.definePage` 写成插件前端的形态（契约见 [api-webui 的「插件前端」](../api/api-webui.md#插件前端)）：
 
 ```ts
 const items = ['示例条目一', '示例条目二', '示例条目三'];
-const page = webui.definePage({
+const page = webui.use.definePage({
   key: 'my-plugin',
   title: 'My Plugin',
   frame: { module: import.meta.url },
@@ -371,7 +371,7 @@ export default definePlugin({
   uses: { provide, storage },
   provides: [myService],
   apply({ provide }) {
-    provide(myService, new MyService(), { label: 'my-service' });
+    provide.use(myService, new MyService(), { label: 'my-service' });
   },
 });
 ```
@@ -400,7 +400,7 @@ export default definePlugin({
   configSchema,
   uses: { config, logger },
   apply({ config, logger }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     // 使用 cfg.apiKey；必填缺失会在解析时报告
   },
 });
@@ -423,6 +423,6 @@ export default definePlugin({
 - 装不上、起不来：[guide/troubleshooting.md](./troubleshooting.md)
 - 插件包的完整契约与发布流程：[guide/third-party-plugin.md](./third-party-plugin.md)
 - 两套元数据源（`definePlugin` 的 provides/uses vs `package.json` aalis.service）与对账纪律：[concepts/manifest-metadata.md](../concepts/manifest-metadata.md)
-- 服务模型（描述符 / `ServiceRef` / `services.prefer` / per-entry）：[concepts/service-model.md](../concepts/service-model.md)
-- 为什么不能缓存 `current`、何时用 `follow`：[concepts/lazy-service-access.md](../concepts/lazy-service-access.md)
+- 服务模型（描述符 / 选择层与业务层 / `services.prefer` / per-entry）：[concepts/service-model.md](../concepts/service-model.md)
+- 业务句柄为什么能存起来、何时用 `follow`：[concepts/lazy-service-access.md](../concepts/lazy-service-access.md)
 - 插件作者的安全责任边界：[concepts/security-model.md](../concepts/security-model.md)

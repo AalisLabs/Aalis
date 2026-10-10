@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/api-storage`  
 **源码**: `packages/api-storage/src/index.ts`  
-**实现**: `@aalis/plugin-storage-local`（按根多实例注册）
+**实现**: `@aalis/plugin-storage-local`（一个提供者，内部按根路由）
 
 ## 概述
 
@@ -58,38 +58,42 @@ interface StorageService {
 }
 ```
 
-目标不存在时，`readFile` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误，其它失败不用这个 code；消费方用 `isStorageNotFound(err)` 区分「不存在」与「读不出」。`writeFile` 的 `options.secret` 表示内容是凭据（访问 token 一类），只给运行 Aalis 的系统用户读写：参考实现以 0600 建文件，覆写已有文件时一并收紧，内容从不以更宽的权限落盘；做不到的提供者应拒写，不得照常写成别人读得到的文件。`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
+目标不存在时，`readFile` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误，其它失败不用这个 code；消费方用 `isStorageNotFound(err)` 区分「不存在」与「读不出」。`writeFile` 的 `options.secret` 表示内容是凭据（访问 token 一类），只给运行 Aalis 的系统用户读写：参考实现以 0600 建文件，覆写已有文件时一并收紧，内容从不以更宽的权限落盘；做不到的提供者应拒写，不得照常写成别人读得到的文件。`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时业务层的 `readFileRange` 抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `caps.storage.follow` 在新提供者上重挂。
 
-描述符 `storage` 是普通调用型：绑定接口是 `ServiceRef<StorageService>`。每个 entry 只负责一个根，以 `entryId = '${激活id}/${rootName}'` 名义 `provide`。上层跨 root 调度用 `createStorageGateway(storage)`（第一参是 `ServiceRef`，不是激活记录）。gateway **不**注册进容器。
+## 业务层
+
+描述符 `storage` 有自定义绑定，业务层是 `BoundStorage`：调用转发给本插件选中的存储提供者，由提供者按 URI 的根名分给对应的根。
 
 ```ts
-import { createStorageGateway, storage } from '@aalis/api-storage';
+type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
+
+type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
+  uri(path?: string): string;
+};
+
+interface BoundStorage extends StorageMethods {
+  readonly own: OwnStorage;
+}
+```
+
+- `resolveLocalPath` / `readFileRange` / `watch` 在业务层上恒定义：选中的那一家不支持时，调用本身抛「存储提供者不支持 X」，调用方不必先判方法是否存在。
+- `own` 是本插件私有目录 `pluginData:/<插件名>/` 上的存储视图。插件名取定义名的最后一段、去掉 `plugin-` 前缀（`@aalis/plugin-paper` → `paper`）；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址，不给参数即目录本身。
+
+```ts
+import { storage } from '@aalis/api-storage';
 import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-storage',
   uses: { storage },
   apply({ storage }) {
-    const gateway = createStorageGateway(storage);
-    void gateway.readFile('data:/example.json', 'utf8');
+    void storage.use.readFile('data:/example.json', 'utf8');
+    void storage.use.own.writeFile('state.json', '{}'); // pluginData:/example-storage/state.json
   },
 });
 ```
 
-网关每次方法调用按 URI 重新枚举 `storage.all()` 并路由。构造一次网关对象可以长期持有——它不缓存某个 root 的 `StorageService` 实例。不要把 `storage.current` 或 `storage.all()[i]` 存进字段当「当前后端」。
-
-## Capability 框架
-
-```
-list          .list() + .listRoots()
-read          .readFile() / .readFileRange() / .createReadStream()
-write         .writeFile() / .rename() / .move() / .mkdir()
-delete        .delete()
-local-path    .resolveLocalPath() —— shell/code-runner 必需
-watch         .watch()
-```
-
-这些是按 root 权限位 + 方法是否存在做过滤，不是 DI 能力声明。
+业务句柄是活的，可以长期持有：每次调用都转发给此刻选中的那一家。不要把 `services.use.get(storage)` 拿到的原始实例存进字段当「当前后端」。
 
 ## URI 规范
 
@@ -103,20 +107,16 @@ watch         .watch()
 
 ## 权限
 
-每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。
+每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；提供者在每个操作前按这些位核对，不允许时抛错（参考实现为「存储根 X 不允许该操作 (writable)」一类）。`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。
 
 ## 实现者
 
-- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里为每个根（`roots[]` 里的用户根与按家目录布局派生的内部根）独立 `provide(storage, scoped, { entryId, label })`。
+- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里先建好全部根（`roots[]` 里的用户根与按家目录布局派生的内部根），再整体登记一个提供者 `provide.use(storage, new LocalStorage(scoped), { label })`。根在它内部按 URI 根名路由，根名不认识时抛「未知存储根: x（已注册根: …）」。
 
 ## Helper
 
-第一参均为 `ServiceRef<StorageService>`：
+纯函数，不吃服务：
 
-- `getStorageEntries(source)` — 全部注册过的 storage entry
-- `aggregateStorageRoots(source)` / `getStorageRootConflicts(source)` — 跨 entry 汇总根、识别同名冲突
-- `resolveStorageEntryForRoot(source, rootName, requiredCaps?)` / `resolveStorageByPath(source, uri, requiredCaps?)` — 按 root 名或 URI 查负责该路径的 entry
-- `createStorageGateway(source)` — 调用点按 URI 路由的临时 `StorageService`；`resolveLocalPath` / `readFileRange` / `watch` 恒定义，根不支持时调用抛错
 - `isStorageUri` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
 - `isHostAbsolutePath(input)` — 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）判据：不是存储地址，`toStorageUri` 抛配置错误、`resolveAgainstCwd` 拒绝
 - `isStorageNotFound(err)` — 「目标不存在」判据：有 `code` 时只认 `ENOENT`，没有 `code` 才看错误文案

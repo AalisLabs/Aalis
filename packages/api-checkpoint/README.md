@@ -21,7 +21,7 @@ pnpm add @aalis/api-checkpoint
 import { checkpoint } from '@aalis/api-checkpoint';
 
 // uses: { checkpoint: optional(checkpoint) }
-const result = await caps.checkpoint.require().rollback(sessionId, turnId);
+const result = await caps.checkpoint.use.rollback(sessionId, turnId);
 ```
 
 详见 [docs/api/api-checkpoint.md](../../docs/api/api-checkpoint.md)。

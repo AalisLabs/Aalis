@@ -46,7 +46,7 @@ describe('storage-local watch', () => {
     await app.plugins.idle();
     // 停在 pending 会让「没有事件」看起来像被测行为出错，先把激活闸的结果钉死
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
-    // 本插件登记多个根（workspace 与各内置根），按 URI 经网关分发到 data 根
+    // 本插件管多个根（workspace 与各内置根），按 URI 的根名分发到 data 根
     storage = app.bind({ storage: storageService }).storage.use;
   });
 

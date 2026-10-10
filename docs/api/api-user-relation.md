@@ -38,15 +38,14 @@ export default definePlugin({
   name: '@acme/plugin-example-relation',
   uses: { userRelation: optional(userRelation) },
   apply({ userRelation }) {
-    // 在需要时现取；服务缺席时 current 为 undefined
-    const relation = userRelation.current;
-    if (!relation) return;
-    void relation.getCommunityPeers('<platform>:<userId>', 5);
+    // 服务缺席时 present 为 false，访问 use 的成员会抛错
+    if (!userRelation.present) return;
+    void userRelation.use.getCommunityPeers('<platform>:<userId>', 5);
   },
 });
 ```
 
-`userRelation.current` 每次读取重新解析当前胜者，不要存进字段。
+业务句柄 `userRelation.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人。
 
 ## 消费方
 

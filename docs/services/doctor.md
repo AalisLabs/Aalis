@@ -2,9 +2,9 @@
 
 > 面向：要给 Aalis 贡献一条健康检查项（最常见，consumer 角度），或要替换 / 自建诊断聚合后端（provider 角度）的第三方作者。
 
-`doctor` 是一个开放注册中心：各业务插件把「自己领域是否健康」的探测逻辑注册进来，doctor 负责聚合、跑全套、出报告。它在 DI 容器里的注册名是字符串 `'doctor'`（`doctor.current`），契约包是 `@aalis/api-doctor`。
+`doctor` 是一个开放注册中心：各业务插件把「自己领域是否健康」的探测逻辑注册进来，doctor 负责聚合、跑全套、出报告。它在 DI 容器里的注册名是字符串 `'doctor'`（消费方经 `doctor.use` 调用），契约包是 `@aalis/api-doctor`。
 
-为什么单独抽出 `-api` 包。如果 storage、commands 等下游插件必须直接 runtime depend 实现包 `plugin-doctor` 才能注册检查项，就会形成「实现包 ↔ 业务插件」的双向耦合。doctor 仿照 storage-api、commands-api 的做法，把类型和一个 `doctor.registerCheck` helper 抽到 `-api`，业务插件只依赖契约，doctor 自身不反向硬依赖任何业务插件。
+为什么单独抽出 `-api` 包。如果 storage、commands 等下游插件必须直接 runtime depend 实现包 `plugin-doctor` 才能注册检查项，就会形成「实现包 ↔ 业务插件」的双向耦合。doctor 仿照 storage-api、commands-api 的做法，把类型和一个 `doctor.use.registerCheck` helper 抽到 `-api`，业务插件只依赖契约，doctor 自身不反向硬依赖任何业务插件。
 
 参考实现是 `@aalis/plugin-doctor`，它是唯一的 provider，内置 `env.node`、`env.platform`、`plugins.status`、`services.preferences` 四条与领域无关的检查。典型 consumer 是注册检查项的插件，例如 `@aalis/plugin-storage-local` 注册 `storage.roots` 探测可写性。
 
@@ -41,7 +41,7 @@ export interface DoctorReport {
 export interface CheckSpec {
   id: string;            // 唯一 id，如 'memory.connectivity'；重复注册以最后一次为准
   category: CheckCategory;
-  pluginName?: string;   // 来源插件名；doctor.registerCheck 会自动注入 lifecycle.id
+  pluginName?: string;   // 来源插件名；doctor.use.registerCheck 会自动注入 lifecycle.use.id
   run(): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[]; // 用到的能力由注册方闭包带入
 }
 ```
@@ -71,17 +71,17 @@ export interface DoctorService {
 
 这条事件在每次 `runChecks()` 完成后发射，供订阅者得知报告换了（官方诊断页不靠它：页面属于 doctor 插件自己，运行完直接重取）。如果某个包只想拿到这条事件类型、并不调用服务，只需 `import type {} from '@aalis/api-doctor'` 触发声明合并即可。
 
-### Helper `doctor.registerCheck`
+### Helper `doctor.use.registerCheck`
 
 这是 consumer 注册检查项的推荐入口，它封装了 doctor 尚未就绪时的延迟注册：
 
 ```ts
-export interface BoundDoctor extends ServiceRef<DoctorService> {
+export interface BoundDoctor extends DoctorService {
   registerCheck(spec: CheckSpec): () => void;
 }
 ```
 
-`doctor.registerCheck` 走 `registrar`：同 id 替换、提供者换人自动重挂、随激活撤回，并自动把 `pluginName` 填成这次激活 id。
+`doctor.use.registerCheck` 走 `registrar`：同 id 替换、提供者换人自动重挂、随激活撤回，并自动把 `pluginName` 填成这次激活 id。
 
 ### 缺与在等的共享判据 `unmetDependencies`
 
@@ -111,7 +111,7 @@ interface UnmetDependencies {
   waiting: UnmetService[]; // 在等：根在启动，它启动完就满足
 }
 
-/** 每个 pending 插件没满足的 required 服务，按实例 id；available 是当前有提供者的服务名（services.names()） */
+/** 每个 pending 插件没满足的 required 服务，按实例 id；available 是当前有提供者的服务名（services.use.names()） */
 function unmetDependencies(plugins: readonly PluginSnapshot[], available: Iterable<string>): Map<string, UnmetDependencies>;
 /** 写成一句（启动告警、诊断与回执用） */
 function describeUnmet(unmet: UnmetDependencies): string;
@@ -129,15 +129,15 @@ function describeUnmet(unmet: UnmetDependencies): string;
 
 | 角色 | 包 | 关键点 |
 | --- | --- | --- |
-| Provider（唯一） | `@aalis/plugin-doctor` | `provide(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status` / `services.preferences`；挂 `/doctor` 命令与 WebUI 页面 |
-| Consumer（注册检查项） | `@aalis/plugin-storage-local` | `doctor.registerCheck({ id: 'storage.roots', ... })` |
+| Provider（唯一） | `@aalis/plugin-doctor` | `provide.use(doctor, registry)`；内置 `env.node` / `env.platform` / `plugins.status` / `services.preferences`；挂 `/doctor` 命令与 WebUI 页面 |
+| Consumer（注册检查项） | `@aalis/plugin-storage-local` | `doctor.use.registerCheck({ id: 'storage.roots', ... })` |
 | Consumer（注册检查项） | `@aalis/runtime`（宿主，经根绑定） | `config.secrets`：配置里引用的密钥不在 `secrets.yaml` 里时，每个这样的实例报一条 error（id `config.secrets.<实例 id>`，点名字段与键），都在时报一条 ok。不走 `parseConfig` 的插件拿到悬空引用不会激活失败，靠这一项发现 |
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
-`plugins.status` 在插件管理服务在场时产出四条结果，有在等的插件、有旧实例没停下的插件时各另加一条：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因，或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」，后者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（未就绪：缺服务的实例，每个一行「<实例>: <describeUnmet 的一句>」，缺的沿依赖链追到根；有则 warn；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`，取 `services.names()`）、`plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目，最后一行写怎么办；有则 warn），`plugins.waiting`（只在等别的插件启动的实例，写法同 `plugins.pending`；ok，没有在等的插件时不出这一条），以及 `plugins.lingering`（旧实例超过宽限仍未停下的实例，即 `getStatus()` 里 `lingering: true` 的条目，每个一行「等待 <实例> 的旧实例停下」，与依赖链上 `lingering` 根的说法相同，最后一行写怎么办；warn，没有时不出这一条）。判据是上文的 `unmetDependencies`，与 runtime 的启动告警、WebUI 的「需要处理」相同：后台激活的插件提供的服务在它完成前不对外，依赖它的插件只是在等，不算未就绪。
+`plugins.status` 在插件管理服务在场时产出四条结果，有在等的插件、有旧实例没停下的插件时各另加一条：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因，或初始化期间 required 依赖反复缺失时「自动重试未收敛，已停止」，后者依赖恢复后不自动重试，需 `enable` 或 `bounce`）、`plugins.pending`（未就绪：缺服务的实例，每个一行「<实例>: <describeUnmet 的一句>」，缺的沿依赖链追到根；有则 warn；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`，取 `services.use.names()`）、`plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目，最后一行写怎么办；有则 warn），`plugins.waiting`（只在等别的插件启动的实例，写法同 `plugins.pending`；ok，没有在等的插件时不出这一条），以及 `plugins.lingering`（旧实例超过宽限仍未停下的实例，即 `getStatus()` 里 `lingering: true` 的条目，每个一行「等待 <实例> 的旧实例停下」，与依赖链上 `lingering` 根的说法相同，最后一行写怎么办；warn，没有时不出这一条）。判据是上文的 `unmetDependencies`，与 runtime 的启动告警、WebUI 的「需要处理」相同：后台激活的插件提供的服务在它完成前不对外，依赖它的插件只是在等，不算未就绪。
 
-`services.preferences`（服务偏好未生效）逐个看配置文档里的服务偏好（`hostConfig.getServicePreferences()`，为此 plugin-doctor 以 optional 声明 `host-config`）：偏好指向的提供者不在这个服务此刻的提供者里（`services.inspect(name)`；例如偏好的模型删了、提供它的插件停用了），这个服务就落到了别的提供者上。每个这样的服务报一条 warn（id `services.preferences.<服务名>`），`detail` 第一行写实际在用哪个（服务按「偏好 > 优先级 > 注册顺序」解析，偏好不在时排第一的那个；没有提供者时写没有），第二行写怎么改：llm 指向 WebUI 设置「会话默认」全局默认层的「模型」（默认模型只此一处，系统页不单列它），其余服务指向配置文件的 `servicePreferences` 或 WebUI 设置「系统」的服务偏好。不只查 llm，哪个服务的偏好悬空都报；偏好都在生效时报一条 ok。宿主没有提供配置文档时没有可查的偏好，同样报 ok。
+`services.preferences`（服务偏好未生效）逐个看配置文档里的服务偏好（`hostConfig.getServicePreferences()`，为此 plugin-doctor 以 optional 声明 `host-config`）：偏好指向的提供者不在这个服务此刻的提供者里（`services.use.inspect(name)`；例如偏好的模型删了、提供它的插件停用了），这个服务就落到了别的提供者上。每个这样的服务报一条 warn（id `services.preferences.<服务名>`），`detail` 第一行写实际在用哪个（服务按「偏好 > 优先级 > 注册顺序」解析，偏好不在时排第一的那个；没有提供者时写没有），第二行写怎么改：llm 指向 WebUI 设置「会话默认」全局默认层的「模型」（默认模型只此一处，系统页不单列它），其余服务指向配置文件的 `servicePreferences` 或 WebUI 设置「系统」的服务偏好。不只查 llm，哪个服务的偏好悬空都报；偏好都在生效时报一条 ok。宿主没有提供配置文档时没有可查的偏好，同样报 ok。
 
 ---
 
@@ -155,7 +155,7 @@ export default definePlugin({
   name: '@aalis/plugin-my-feature',
   uses: { doctor: optional(doctor) },
   apply({ doctor }) {
-    doctor.registerCheck({
+    doctor.use.registerCheck({
       id: 'my-feature.connectivity',
       category: 'service',
       async run() {
@@ -183,7 +183,7 @@ export default definePlugin({
 }
 ```
 
-`doctor.registerCheck` 内部用 `follow` 持续订阅 `'doctor'`：doctor 每次上线都会重新挂载 check，doctor 下线或本插件 dispose 时自动解注册。因此即使 doctor 比你晚加载，也不会漏注册。
+`doctor.use.registerCheck` 内部用 `follow` 持续订阅 `'doctor'`：doctor 每次上线都会重新挂载 check，doctor 下线或本插件 dispose 时自动解注册。因此即使 doctor 比你晚加载，也不会漏注册。
 
 ### 命名约定
 
@@ -258,7 +258,7 @@ export default definePlugin({
   uses: { provide, events },
   apply({ provide, events }) {
     const impl = new CustomDoctor();
-    provide(doctor, impl);
+    provide.use(doctor, impl);
     void events;
   },
 });
@@ -266,8 +266,8 @@ export default definePlugin({
 
 关于注册，有几点需要注意：
 
-- `provide(doctor, instance, options?)` 的 `options.priority` 默认为 0。要抢占官方 doctor，设更高的 priority（数字越大越优先）。
-- 同名解析顺序是 preference > priority > 注册顺序，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
+- `provide.use(doctor, instance, options?)` 的 `options.priority` 默认为 0。要抢占官方 doctor，设更高的 priority（数字越大越优先）。
+- 同名时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
 - `provides` / `uses` 与 `package.json` 的 `aalis.service.provides` 双源都要写上 `'doctor'`。
 - 实现里务必对每条 check 做 try/catch（官方 doctor 就是这么做的），并在每次 `runChecks` 之后发出 `'doctor:updated'`，订阅结果的 consumer 靠它得知报告换了。
 
@@ -275,21 +275,21 @@ export default definePlugin({
 
 ## 5. 标准消费方式：跑诊断 / 读结果
 
-doctor 是可选服务，consumer 必须每次现取、并对缺失容错，不要缓存服务句柄——provider 弹跳后旧句柄会失效，原理见 [lazy-service-access](../concepts/lazy-service-access.md)。
+doctor 是可选服务，consumer 先看 `present` 再调用、并对缺失容错。业务句柄 `doctor.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，provider 弹跳后存起来的句柄也会跟着换，原理见 [lazy-service-access](../concepts/lazy-service-access.md)。
 
 ```ts
 // 触发一次诊断（如 WebUI action）
-const report = await doctor.current?.runChecks();
+const report = doctor.present ? await doctor.use.runChecks() : undefined;
 
 // 读上次报告
-const checks = doctor.current?.getLastReport()?.checks ?? [];
+const checks = (doctor.present ? doctor.use.getLastReport()?.checks : undefined) ?? [];
 ```
 
-第三方 consumer 用这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。官方诊断页的数据源与动作则直接闭包本次激活的 registry，不去查当前胜出的 doctor。订阅式 consumer 监听事件即可：
+第三方 consumer 用这个模式：先看 `present` 处理服务缺失，`?? []` 兜底空数组。官方诊断页的数据源与动作则直接闭包本次激活的 registry，不经 `doctor.use` 去找选中的提供者。订阅式 consumer 监听事件即可：
 
 ```ts
 import type {} from '@aalis/api-doctor';   // 仅引入事件类型增强
-events.on('doctor:updated', () => refresh());
+events.use.on('doctor:updated', () => refresh());
 ```
 
 报告有两个入口。聊天 / CLI 走 `/doctor` 命令（受限指令，需要等级 2，见第 6 节），输出经 `formatReport` 按 level 分组排版；WebUI 走插件详情里的诊断页（`key: 'doctor'`）：「立即运行」、上次运行的时间与通过、警告、错误数，以及结果表（级别、类别、检查项、说明、详情）。
@@ -318,12 +318,12 @@ events.on('doctor:updated', () => refresh());
 - 同 `id` 静默覆盖。两个插件用同一 `id` 注册时后者赢、前者被踢，仅打一条 debug 日志。务必用领域前缀避免撞车。
 - `run` 没有超时保护。`runChecks` 会顺序 `await` 每个 spec，一个慢检查会拖慢整份报告，也没有取消机制。你应当在 `run` 内部自带超时或 `AbortController`。
 - 报告是一次性快照，存放在 `last` 字段里，新一次 `runChecks` 会整体替换它，没有历史留存。需要趋势或历史，得自己在 `doctor:updated` 订阅里落库。
-- 不要在 `apply` 里同步调用 `doctor.current` 来注册 check。doctor 可能尚未加载——这正是基于 `follow` 的 `doctor.registerCheck` 存在的理由。直接读 `.current` 会在加载顺序不利时静默漏注册。
+- 不要在 `apply` 里经 `services.use.get(doctor)` 拿原始实例来注册 check。doctor 可能尚未加载——这正是 `doctor.use.registerCheck` 存在的理由：提供者未就绪时记在账上、就绪后挂上。直接调原始实例会在加载顺序不利时静默漏注册，也不随提供者换人重挂。
 
 ---
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 优先级）、[lazy-service-access](../concepts/lazy-service-access.md)（每用现取、`follow`）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`uses` 双源）、[security-model](../concepts/security-model.md)（safeFetch / 脱敏）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 优先级）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的、`follow`）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`uses` 双源）、[security-model](../concepts/security-model.md)（safeFetch / 脱敏）。
 - 核心：[docs/core/service.md](../core/service.md)、[docs/core/context.md](../core/context.md)（`provide` / `follow` / `on` / `emit`）、[docs/plugins/plugin-commands.md](../plugins/plugin-commands.md)（`/doctor` 入口）。
 - 同类服务文档（注册中心模式）：[services/tools.md](./tools.md)、[services/commands.md](./commands.md)、[services/storage.md](./storage.md)（`storage.roots` 检查的提供方）。

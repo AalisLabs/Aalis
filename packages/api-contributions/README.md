@@ -20,6 +20,6 @@ pnpm add @aalis/api-contributions
 import { contributions } from '@aalis/api-contributions';
 
 // uses: { contributions }
-contributions.contribute('agent:prompt', { id: 'persona', build: () => '...' });
-const all = contributions.collect('agent:prompt');
+contributions.use.contribute('agent:prompt', { id: 'persona', build: () => '...' });
+const all = contributions.use.collect('agent:prompt');
 ```

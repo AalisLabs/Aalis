@@ -47,8 +47,8 @@ export default definePlugin({
   },
   apply(caps) {
     // …
-    caps.provide(tools, new ToolRegistry(caps.logger, tasks));
-    caps.provide(backgroundTasks, tasks);
+    caps.provide.use(tools, new ToolRegistry(caps.logger.use, tasks));
+    caps.provide.use(backgroundTasks, tasks);
   },
 });
 ```
@@ -59,7 +59,7 @@ export default definePlugin({
 
 ### `uses`：激活闸 + 关停边
 
-未包 `optional()` 的服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后绑定接口仍可用（`current` 可能为 `undefined`）。内置能力与 `app` / `plugins` 由根激活提供、始终在场，激活闸恒满足，也不加关停排序边；`hooks` / `contributions` / `hostConfig` 由插件或宿主提供，与其他外部服务一样受闸约束。
+未包 `optional()` 的服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后自动接上（缺席时 `present` 为 false，访问 `use` 的成员抛错）。内置能力与 `app` / `plugins` 由根激活提供、始终在场，激活闸恒满足，也不加关停排序边；`hooks` / `contributions` / `hostConfig` 由插件或宿主提供，与其他外部服务一样受闸约束。
 
 ### `provides`：激活后校验
 
@@ -151,7 +151,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 
 前端包用 `aalis.client: true` 标记自己是一个 WebUI 前端候选。收录条件是 `aalis.client === true` **且** `dist/index.html` 存在。`@aalis/plugin-webui-client` 同时标了 `aalis.client: true` 和 `keywords: ["aalis-interface"]`。纯静态前端包不会被 runtime 当插件加载。
 
-插件也可以在 `apply` 里 `provide(webuiClient, impl)` 主动覆盖自动发现。
+插件也可以在 `apply` 里 `provide.use(webuiClient, impl)` 主动覆盖自动发现。
 
 ---
 
@@ -170,6 +170,6 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 
 - 运行时 DI **语义**：`docs/plugin-author-guide.md` 第 2–3.5 节。
 - 服务模型：`docs/concepts/service-model.md`。
-- 存储 URI 文法（per-root `entryId`）：`docs/concepts/storage-uri-grammar.md`。
+- 存储 URI 文法（单一提供者内按根路由）：`docs/concepts/storage-uri-grammar.md`。
 - 安装后能力披露：`docs/services/webui.md`。
 - 脚手架默认产物：`docs/guide/scaffolding.md`。

@@ -2,8 +2,8 @@
 // @aalis/plugin-code-sandbox-os — code-sandbox 的 OS 原生实现
 //
 // Linux bubblewrap / macOS sandbox-exec。把不可信代码包成沙箱启动器命令后，
-// **经现有 `process` 服务网关** spawn（不碰 process-api / process-local 的实现，
-// 也不直接 import node:child_process / node:fs——OS 探测靠经网关功能性试跑）。
+// **经现有 `process` 服务** spawn（不碰 process-api / process-local 的实现，
+// 也不直接 import node:child_process / node:fs——OS 探测靠经 process 服务功能性试跑）。
 // ============================================================
 
 import { type CodeSandboxService, codeSandbox, type SandboxRunRequest } from '@aalis/api-code-sandbox';
@@ -36,7 +36,7 @@ const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: st
 const NONE = '没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码';
 
 /**
- * 功能性探测：经 process 网关真正跑一次最小沙箱命令，退出码为 0 才算有后端。
+ * 功能性探测：经 process 服务真正跑一次最小沙箱命令，退出码为 0 才算有后端。
  * 比「命令是否存在」更强——一次覆盖 存在性 + Linux unprivileged userns 是否真能用。
  * 没有后端时 problem 写怎么修与原因（日志与诊断共用）。
  * 停用、停机时随 signal 中止并抛出（不落成「无后端」），启动器挂住也不拖满停机宽限。
@@ -93,7 +93,7 @@ class OsCodeSandboxService implements CodeSandboxService {
       throw new Error('code-sandbox: 无可用后端，run() 不应被调用（调用方应先检查 available）');
     }
     const wrapped = wrapForSandbox(this._backend, req.policy, req.cmd, req.args, req.cwd, req.env ?? {});
-    // 经 process 网关 spawn 包好的启动器命令；env 已由 wrapper 的 --clearenv / env -i 注入白名单，
+    // 经 process 服务 spawn 包好的启动器命令；env 已由 wrapper 的 --clearenv / env -i 注入白名单，
     // 故此处不再传 env（外层启动器进程继承宿主 env 无妨，wrapper 已为内层不可信子进程清空）。
     return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout, signal: req.signal });
   }
@@ -107,7 +107,7 @@ export default definePlugin({
   uses: { processService, doctor: optional(doctor), logger, lifecycle, provide },
   async apply(caps) {
     const log = caps.logger.use.child('code-sandbox-os');
-    // 网关每次调用重新解析当前胜者，process 提供者换人后无需重启本插件
+    // 业务句柄每次调用转发给当前选中的提供者，process 提供者换人后无需重启本插件
     const proc = caps.processService.use;
     const { backend, problem } = await probeBackend(proc, caps.lifecycle.use.signal);
     if (problem) log.warn(`${NONE}：${problem}`);

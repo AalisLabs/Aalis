@@ -269,18 +269,18 @@ export interface ChatModelRequest {
 
 `LLMModel` 提供 `chat(request): Promise<ChatResponse>`，以及可选的 `chatStream(request): AsyncIterable<ChatStreamChunk>`。
 
-服务粒度是 per-model 的：provider 插件在 `apply()` 期间，对 `listModels()` 的每个 model 单独调一次 `provide(llm, modelHandle, { entryId, label })`，entryId 取 `${lifecycle.id}/${model}`（即 `<provider>/<model>`），由 `resolveLLMModel` 负责解析。
+服务粒度是 per-model 的：provider 插件在 `apply()` 期间，对 `listModels()` 的每个 model 单独调一次 `provide.use(llm, modelHandle, { entryId, label })`，entryId 取 `${lifecycle.use.id}/${model}`（即 `<provider>/<model>`），由 `resolveLLMModel` 负责解析，按模型直接取写 `caps.llm.of('<provider>/<model>')`。
 
-`capabilities` 是领域元数据，不是 DI 选择维度。`vision` / `audio` / `tool_calling` 等只供 media 发现可处理某模态的模型，以及供前端下拉过滤。0.5.0 已移除内核的「服务能力选择层」：服务选择一律走配置加按名解析，按名解析（`llm.current` / `services.get('llm')`）只接受名字，不接受能力维度。`resolveLLMModel(llm, ref, requiredCaps)` 里的 cap 过滤是在 `instance.capabilities` 元数据上做的，不是内核 DI。
+`capabilities` 是领域元数据，不是 DI 选择维度。`vision` / `audio` / `tool_calling` 等只供 media 发现可处理某模态的模型，以及供前端下拉过滤。0.5.0 已移除内核的「服务能力选择层」：服务选择一律走配置加按名解析，按名解析（`caps.llm.use` / `services.get('llm')`）只接受名字，不接受能力维度。`resolveLLMModel(caps.llm, ref, requiredCaps)` 里的 cap 过滤是在条目 `use.capabilities` 元数据上做的，不是内核 DI。
 
 消费方的典型用法：
 
 ```ts
-const handle = resolveLLMModel(llm, ref, ['vision'])?.instance;
-await handle?.chat({ messages });   // entry 已知道是哪个 model
+const handle = resolveLLMModel(caps.llm, ref, ['vision'])?.use;
+await handle?.chat({ messages });   // 条目已固定是哪个 model
 ```
 
-默认 model 通过 `services.prefer('llm', '<provider>/<model>')` 或宿主配置的 `servicePreferences` 选定。详见 `docs/services/llm.md`、`docs/core/service.md`。
+默认 model 由用户在 WebUI 设置「会话默认」的「模型」或宿主配置的 `servicePreferences` 选定（两处写的都是 llm 服务的全局偏好，管理面代码写作 `services.use.prefer('llm', '<provider>/<model>')`）。详见 `docs/services/llm.md`、`docs/core/service.md`。
 
 ---
 
@@ -338,4 +338,4 @@ await handle?.chat({ messages });   // entry 已知道是哪个 model
 
 - `docs/services/llm.md` — `LLMModel` / `ChatModelRequest` / `resolveLLMModel` / per-model entry 注册全貌。
 - `docs/services/authority.md` — 数字等级鉴权、`actor` 授权身份、HITL 确认。
-- `docs/core/service.md` — 描述符、`ServiceRef`、`services.prefer`。
+- `docs/core/service.md` — 描述符、选择层与业务层、`services.prefer`。

@@ -25,14 +25,14 @@ export interface AgentService {
   getPluginGroups?(): PluginGroupInfo[];
 }
 
-export interface BoundAgent extends ServiceRef<AgentService> {
+export interface BoundAgent extends AgentService {
   registerPreprocessor(name: string, handler: PreprocessorFn): () => void;
 }
 ```
 
 - `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`；**不调 `next()` 即中断整条管线**。
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
-- 对话调用走 `agent.current` / `agent.require()`。`current` 每次读取重新解析当前胜者。
+- 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。
 - `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、来自会话历史的条数（`historyMessages`）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
 - **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:input:before`、`agent:turn:after`、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
@@ -49,19 +49,19 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, archiveContent?, visibleContent?, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
 | `agent:turn:after` | 回合终态（四条路径都发；消息被 `agent:input:before` 拦下时不发） | `{ message, reply, outcome, error?, sessionId, turnId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'`；`error` 只在结局为 `error` 时带，是一句原因 |
 
-钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
+钩子用 `hooks.use.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
 
-> **提示词注入不在这条链上**：摘要、语义记忆、用户档案、关系图、技能正文、平台提示等走 `agent:prompt` 贡献点（`contributions.contribute`，契约见 [api-contributions](../api/api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。往提示词加内容请用贡献点，本钩子留给改写/截停语义。
+> **提示词注入不在这条链上**：摘要、语义记忆、用户档案、关系图、技能正文、平台提示等走 `agent:prompt` 贡献点（`contributions.use.contribute`，契约见 [api-contributions](../api/api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。往提示词加内容请用贡献点，本钩子留给改写/截停语义。
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：`@aalis/plugin-agent`。`provides: [agent]`，`provide(agent, agentImpl)`，未声明 priority（= 默认 0）。
+**提供方**：`@aalis/plugin-agent`。`provides: [agent]`，`provide.use(agent, agentImpl)`，未声明 priority（= 默认 0）。
 
 **消费方**：
 
-- `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.handleMessage(message)`——**这是 agent 被驱动的主入口**。
-- `plugin-webui-server`：收到 WS `abort` 消息时调 `agent.current?.abort(sessionId)`。
-- `plugin-file-reader` / `plugin-media`：`agent.registerPreprocessor(...)`。当前提供者不实现该方法时退到 `hooks.middleware('agent:input:before', ...)`（`packages/plugin-file-reader/src/index.ts`）。
+- `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.use.handleMessage(message)`（每条消息先看 `agent.present`）——**这是 agent 被驱动的主入口**。
+- `plugin-session-server`：收到 `turn/abort` 请求时先看 `agent.present`，再调 `agent.use.abort(sessionId, turnId)`。
+- `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/plugin-file-reader/src/index.ts`）。
 
 **钩子订阅方**：`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
 
@@ -91,7 +91,7 @@ export default definePlugin({
   provides: [agent],
   uses: { provide, llm: optional(llm) },
   apply({ provide }) {
-    provide(agent, new MyAgent(), { priority: 50 });
+    provide.use(agent, new MyAgent(), { priority: 50 });
   },
 });
 ```
@@ -100,11 +100,10 @@ default agent 用整个 service 注册（不是 per-entry）。自定义 `handle
 
 ## 5. 标准消费方式
 
-`agent.current` 每次读取重新解析。不要把返回值或 `agent.all()[i]` 存进字段：提供者换人后旧引用失效；关停边不保护缓存引用。
+业务句柄 `agent.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人。选不到提供者时访问成员同步抛 `ServiceUnavailableError`，可选依赖先看 `present`。
 
 ```ts
-const svc = agent.current;
-if (svc?.abort) svc.abort(sessionId);
+if (agent.present) agent.use.abort?.(sessionId);
 ```
 
 登记预处理器：
@@ -117,18 +116,18 @@ export default definePlugin({
   name: '@acme/plugin-my-pre',
   uses: { agent: optional(agent) },
   apply({ agent }) {
-    agent.registerPreprocessor('my-pre', async (msg, next) => {
+    agent.use.registerPreprocessor('my-pre', async (msg, next) => {
       await next();
     });
   },
 });
 ```
 
-门面已把退订挂到本次激活，不必再手写 `lifecycle.onDispose`。
+门面已把退订挂到本次激活，不必再手写 `lifecycle.use.onDispose`。
 
-**服务缺失**：`agent` 全 optional 依赖。`llm` 缺失会回一条 `[系统]` 前缀诊断消息；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `events.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**）。
+**服务缺失**：`agent` 全 optional 依赖。`llm` 缺失会回一条 `[系统]` 前缀诊断消息；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `events.use.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**）。
 
-**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.onDrain` 里先 `abortInflightAndSettle()`（与 WebUI「停止生成」同语义），再等在飞回合 Promise——收尾段 memory / 钩子还在，中止后的交接写得进去；`onDispose` 再 `abortAll()` 一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独 unload / disable / bounce 某个提供者时，本插件若正在用它也会先收尾再关。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
+**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.use.onDrain` 里先 `abortInflightAndSettle()`（与 WebUI「停止生成」同语义），再等在飞回合 Promise——收尾段 memory / 钩子还在，中止后的交接写得进去；`onDispose` 再 `abortAll()` 一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独 unload / disable / bounce 某个提供者时，本插件若正在用它也会先收尾再关。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -142,13 +141,13 @@ export default definePlugin({
 
 **token 预算契约**：每次 LLM 调用后 emit `token:usage`；监听 `token:request` 在客户端重连时重算快照。
 
-**出站走 gateway**：回复经 `gateway.dispatchOutbound`。provider 务必经 gateway，不要直接 emit。
+**出站走 gateway**：回复经 `gateway.use.dispatchOutbound`。provider 务必经 gateway，不要直接 emit。
 
 ## 7. 边界情形与注意事项（审计标注）
 
 **`abort(sessionId)` 用 `startsWith` 匹配 lane**：lane key = `${sessionId}::${source}`。`abort('S')` 会一次性中止 `S` 的**所有** lane；带 `turnId` 时只中止 `turnId` 相同的那条 lane。若存在 sessionId 互为前缀的命名，`startsWith` 可能误伤——调用方需保证 sessionId 不互为前缀。
 
-**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
+**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.use.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
 
 **abort 路径不回滚已完成的工具记录**（有意为之）：删除会让 agent「忘记自己刚做过的有副作用的事」导致下一轮重复调用。真正的 orphan 由 `sanitizeToolCallHistory` 在装载历史时兜底过滤。
 

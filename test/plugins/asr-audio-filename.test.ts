@@ -53,7 +53,7 @@ async function bootAsr(
   return host.asr.use;
 }
 
-/** 真 fs 的 process 网关面：readExternalFile 真读盘，makeTempDir 指向真目录 */
+/** 真 fs 的 process 服务：readExternalFile 真读盘，makeTempDir 指向真目录 */
 function procService(tmpDir: string, onExec?: () => void): Record<string, unknown> {
   return {
     // 同 plugin-process-local：file:// 前缀在此剥掉

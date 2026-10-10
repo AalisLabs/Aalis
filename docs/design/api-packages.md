@@ -27,16 +27,16 @@ flowchart TB
 
 ### 1. 服务描述符 — 类型与绑定随契约包走
 
-api 包导出运行时描述符（值导入）。`defineService<Provider>(name)` 得到普通 `ServiceRef`；需要登记门面时给 `bind`，用 `BindingPort.registrar` / `follow` / `track`。
+api 包导出运行时描述符（值导入）。`defineService<Provider>(name)` 不给 `bind`，业务层就是按提供者形状转发的活句柄；需要登记方法或包装调用时给 `bind`，用 `BindingPort.registrar` / `follow` / `track` 与 `port.provider`。
 
 ```ts
-// api-llm/src/index.ts
-export const llm = defineService<LLMModel>('llm');
+// api-memory/src/index.ts
+export const memory = defineService<MemoryService>('memory');
 ```
 
-之后消费方 `uses: { llm }`，`apply` 里 `llm.current` 推断为 `LLMModel | undefined`。动态按名查询（`services.get('llm')`）没有类型可依凭，由调用方收窄。
+之后消费方 `uses: { memory }`，`apply` 里 `memory` 是选择层，`memory.use` 推断为 `MemoryService`（转发给本插件选中的那一家）。动态按名查询（`services.get('memory')`）没有类型可依凭，由调用方收窄。
 
-> **能力不在这里。** `current` / `all` / `services.get` 只按服务名解析，**没有** capabilities 参数；同名多实现的胜者按「偏好 > 优先级 > 注册顺序」解析（`services.prefer` / WebUI 的 Services 页）。领域能力（LLM 的 `tool_calling` / `vision`、storage 的 `local-path` 等）是服务实例 / model handle 上的**元数据**（如 `LLMModel.capabilities`），由各领域 `*-api` 的 helper 函数过滤——见下方「领域能力」。
+> **能力不在这里。** `use` / `list()` / `services.get` 只按服务名解析，**没有** capabilities 参数；同名多实现按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中一家（偏好由用户经 WebUI 的 Services 页或 `servicePreferences` 设）。领域能力（LLM 的 `tool_calling` / `vision` 等）是服务实例 / model handle 上的**元数据**（如 `LLMModel.capabilities`），由各领域 `*-api` 的 helper 函数过滤——见下方「领域能力」。
 
 ### 2. `AalisEvents` — 事件名 → 参数元组
 
@@ -61,7 +61,7 @@ declare module '@aalis/api-hooks' {
 }
 ```
 
-任何在 `hooks.middleware('agent:llm:before', ...)` 处签名的消费插件，都需要 **side-effect import**（或常规 import）该 api 包以激活类型增强。
+任何在 `hooks.use.middleware('agent:llm:before', ...)` 处签名的消费插件，都需要 **side-effect import**（或常规 import）该 api 包以激活类型增强。
 
 ### 4. `ContributionPointMap` — 贡献点名 → spec 类型（`@aalis/api-contributions`）
 
@@ -80,36 +80,33 @@ declare module '@aalis/api-contributions' {
 
 领域能力是服务实例 / model handle 上的元数据，不是 core 扩展点：
 
-- 每个 api 包仍定义自己的能力枚举（如 `api-llm` 的 `LLMCapability` = `chat | tool_calling | vision | thinking | audio | …`、`api-storage` 的 `StorageCapability`），但**不**把它声明进任何 core 接口。
-- 能力是**服务实例 / model handle 上的元数据**：provider 在 `provide(llm, modelHandle, …)` 时，`modelHandle.capabilities` 诚实反映该 model 能干啥；storage 后端按 root 的 `readable/writable/deletable` 权限位 + `resolveLocalPath`/`watch` 方法存在性体现能力。
-- 按能力筛选由各领域 `*-api` 的 **helper 函数**完成，读 `instance.capabilities`，与 core DI 无关：
+- 有领域能力的 api 包定义自己的能力枚举（如 `api-llm` 的 `LLMCapability` = `chat | tool_calling | vision | thinking | audio | …`），但**不**把它声明进任何 core 接口。
+- 能力是**服务实例 / model handle 上的元数据**：provider 在 `provide.use(llm, modelHandle, …)` 时，`modelHandle.capabilities` 诚实反映该 model 能干啥；storage 的读写删由根的 `readable/writable/deletable` 权限位携带，提供者在每个操作前核对，不按能力挑提供者。
+- 按能力筛选由各领域 `*-api` 的 **helper 函数**完成，在选择层的 `list()` 上读条目的 `use.capabilities`，与 core DI 无关：
 
 ```ts
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 // apply({ llm }) 之后：
 const entry = resolveLLMModel(llm, ref, ['vision']);
-await entry?.instance.chat({ messages });
-
-import { storage, resolveStorageByPath } from '@aalis/api-storage';
-const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
+await entry?.use.chat({ messages });
 ```
 
-`provide` 的 options 是 `{ priority?, exclusive?, label?, entryId? }`，没有 `capabilities`；`ServiceRef` 与 `services.get` 只按名字解析。能力字符串也会随模型列表上送前端（webui-server 的 `/api/models/llm` 里各模型的 `capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
+`provide` 的 options 是 `{ priority?, exclusive?, label?, entryId? }`，没有 `capabilities`；选择层与 `services.get` 只按名字解析。能力字符串也会随模型列表上送前端（webui-server 的 `/api/models/llm` 里各模型的 `capabilities`）供下拉展示与过滤——同样是元数据用途，不是 DI 通道。
 
 ## 当前 api 包索引
 
 | api 包 | 注入到 `HookContextMap` | 描述符（服务名） | 注入到 `ContributionPointMap` | 主要服务接口 |
 |---|---|---|---|---|
-| `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`；导出 `resolveLLMModel` / `listLLMModels` helper（吃 `ServiceRef`，按能力过滤）；向 schema-config 注入 `'llm-ref'` 字段类型 |
+| `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`；业务层给请求盖上调用方 `caller`；导出 `resolveLLMModel` / `listLLMModels` helper（吃选择层的 `list`，按能力过滤，返回 `ProviderEntry`）；向 schema-config 注入 `'llm-ref'` 字段类型 |
 | `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；密钥字段的引用 `SecretRef` 与 `isSecretRef` / `mapSecretFields`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
 | `api-memory` | `memory:clear` | `memory` / `compression` | — | `MemoryService`, `CompressionService`（压缩，默认提供者 plugin-memory-summary） |
-| `api-storage` | — | `storage` | — | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（吃 `ServiceRef`） |
+| `api-storage` | — | `storage` | — | `StorageService`；业务层 `BoundStorage` 恒定义 `resolveLocalPath` / `readFileRange` / `watch`，另带本插件私有目录的视图 `own`；导出 URI 文法 helper（`isStorageUri` / `toStorageUri` / `resolveAgainstCwd` 等） |
 | `api-embedding` | — | `embedding` | — | `EmbeddingService` |
 | `api-vectorstore` | — | `vectorstore` | — | `VectorStoreService` |
-| `api-tools` | — | `tools` | — | `ToolService`；工具定义的展示种类 `ToolDisplay`；绑定门面含 `register` / `registerGroup`，另导出 `withToolGroups` |
+| `api-tools` | — | `tools` | — | `ToolService`；工具定义的展示种类 `ToolDisplay`；业务层带 `register` / `registerGroup`，另导出 `withToolGroups` |
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
-| `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`、`PageDefinition`、`Notice`、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式等；绑定门面 `definePage` / `notify`；向 `PluginMeta` 注入 `extends` |
+| `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`、`PageDefinition`、`Notice`、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式等；业务层带 `definePage` / `notify`；向 `PluginMeta` 注入 `extends` |
 | `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf`）, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `OriginTurn`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
 | `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |
@@ -118,21 +115,21 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
 | `api-reach` | — | `reach` | — | `ReachService`（`forCall` 签发凭据）、`ReachCredential` 与品牌符号、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、`SandboxPolicy` / `sandboxPolicyOf`；向 `SessionConfig`（`@aalis/api-session-manager`）注入 `accessTier`、`accessOnBoundary`；默认提供者 plugin-reach |
-| `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；绑定门面 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
+| `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；业务层带 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
 | `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
 | `api-checkpoint` | — | `checkpoint` | — | `CheckpointService`, `RollbackResult`, `RollbackWithChatResult`；默认提供者 plugin-checkpoint |
 | `api-code-sandbox` | — | `code-sandbox` | — | `CodeSandboxService`, `SandboxPolicy`, `SandboxRunRequest`；默认提供者 plugin-code-sandbox-os |
 | `api-cron-engine` | — | `cron-engine` | — | `CronEngine`, `CronSubscribeOptions`；转出 `@aalis/util-cron` 的 `CronExprKind` / `ValidateResult` 类型 |
-| `api-doctor` | — | `doctor` | — | `DoctorService`, `CheckSpec`, `CheckResult`, `DoctorReport`；绑定门面 `registerCheck` |
+| `api-doctor` | — | `doctor` | — | `DoctorService`, `CheckSpec`, `CheckResult`, `DoctorReport`；业务层带 `registerCheck` |
 | `api-flow-control` | — | `flow-control` | — | `FlowControlService`, `FlowSessionStateSnapshot` |
 | `api-media` | — | `media` | — | `MediaService`, `MediaProcessor`, `MediaProcessReport` 等 |
 | `api-message-archive` | — | `message-archive` | — | `MessageArchiveService` |
 | `api-package-manager` | — | `package-manager` | — | `PackageManagerService`, `UpdateTarget`, `UpdateResult`；默认提供者 plugin-package-manager |
 | `api-persona` | — | `persona` | — | `PersonaService`, `OutputFormat`, `PersonaSessionOptions` |
-| `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃 `ServiceRef`） |
-| `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `createProcessGateway` / `makeTempDirViaStorage` helper |
+| `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃选择层的 `list`，条目是 `ProviderEntry`） |
+| `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `makeTempDirViaStorage` helper |
 | `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
-| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`（各插件经 declaration merging 加键）, `SessionSetting`, `SessionInfo`；导出 `sessionKind`；绑定门面 `registerSetting` |
+| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`（各插件经 declaration merging 加键）, `SessionSetting`, `SessionInfo`；导出 `sessionKind`；业务层带 `registerSetting` |
 | `api-session-protocol` | — | `session-protocol` | — | `SessionProtocolService`, `SessionPeer`, `SessionConnection`；会话协议的 zod schema（`sessionMethods` / `sessionNotifications`、帧与错误码），类型由 schema 推导；默认提供者 plugin-session-server |
 | `api-todo-list` | — | `todo-list` | — | `TodoListService`, `TodoItem`；注入事件 `todo:updated`；默认提供者 plugin-todo-list |
 | `api-user-relation` | — | `user-relation` | — | `UserRelationService`；默认提供者 plugin-user-relation |
@@ -172,8 +169,8 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
   添一轮往返；
 - 而**导出是非破坏性的、删除才是破坏性的**。先导出、真长期没人用再议，比反过来安全。
 
-推论：**不要拿「零消费者」当清理理由**去删契约包的导出。`api-storage` 的
-`getStorageRootConflicts`、`api-platform` 的 `aggregatePlatformConnections`、
+推论：**不要拿「零消费者」当清理理由**去删契约包的导出。`api-platform` 的
+`aggregatePlatformConnections`、
 `schema-message` 的 `parseAttachmentRefs` 都属此类——仓内零调用，但都是有意提供的能力，
 且各有 `docs/api/` 文档在教第三方使用。它们的维护成本近零（纯函数、无状态、类型守着）。
 
@@ -191,27 +188,27 @@ export default definePlugin({
   name: '@scope/plugin-example',
   uses: { llm },
   apply({ llm }) {
-    const model = llm.current; // LLMModel | undefined（胜者：偏好 > 优先级 > 注册顺序）
+    const model = llm.use; // LLMModel（本插件选中的那一家：本插件偏好 > 全局偏好 > 优先级 > 注册顺序）
   },
 });
 ```
 
 ### 按能力挑选实现（领域 helper，非 core DI）
 
-`ServiceRef` 不接受能力参数；要按能力过滤，调对应 api 包的 helper（读 handle 元数据 `instance.capabilities`）：
+选择层不接受能力参数；要按能力过滤，调对应 api 包的 helper（读 handle 元数据 `use.capabilities`）：
 
 ```ts
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 const entry = resolveLLMModel(llm, ref, ['tool_calling']);
-await entry?.instance.chat({ messages });
+await entry?.use.chat({ messages });
 ```
 
 ### 使用钩子（需要 side-effect 增强）
 
 ```ts
 import '@aalis/api-agent'; // 激活 agent:* 类型增强
-// hooks 是 uses 里声明的绑定接口（描述符从 @aalis/api-hooks 导入）
-hooks.middleware('agent:llm:before', async (data, next) => {
+// hooks 是 uses 里声明的选择层（描述符从 @aalis/api-hooks 导入）
+hooks.use.middleware('agent:llm:before', async (data, next) => {
   data.tools = data.tools.filter(tool => tool.function.name !== 'example_tool');
   await next();
 });
@@ -228,7 +225,7 @@ hooks.middleware('agent:llm:before', async (data, next) => {
 ```ts
 // my-service-api/src/index.ts
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点
-import { defineService, type ServiceRef } from '@aalis/core';
+import { defineService, type ServiceSelection } from '@aalis/core';
 
 export type MyCapability = 'feature-a' | 'feature-b';
 
@@ -244,8 +241,11 @@ declare module '@aalis/api-hooks' {
   }
 }
 
-export function resolveMyService(source: ServiceRef<MyService>, caps?: MyCapability[]): MyService | undefined {
-  return source.all().find(e => (caps ?? []).every(c => e.instance.capabilities.includes(c)))?.instance;
+export function resolveMyService(
+  source: Pick<ServiceSelection<MyService>, 'list'>,
+  caps?: MyCapability[],
+): MyService | undefined {
+  return source.list().find(e => (caps ?? []).every(c => e.use.capabilities.includes(c)))?.use;
 }
 ```
 
@@ -253,7 +253,7 @@ export function resolveMyService(source: ServiceRef<MyService>, caps?: MyCapabil
 
 ### 提供一种可登记的能力
 
-工具、命令、页面这类"登记进某个服务、由它派活"的能力，由契约包、枢纽服务、按激活绑定门面组成；范本、与原语的共同契约及允许的差异见
+工具、命令、页面这类"登记进某个服务、由它派活"的能力，由契约包、枢纽服务、按激活绑定的业务层组成；范本、与原语的共同契约及允许的差异见
 [枢纽服务](./hub-services.md)。
 
 ## CI 校验

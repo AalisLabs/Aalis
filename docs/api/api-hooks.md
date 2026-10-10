@@ -40,7 +40,7 @@ interface Hooks {
 ## 执行模型
 
 ```
-hooks.run(hookName, data, defaultAction)
+hooks.use.run(hookName, data, defaultAction)
   │
   ▼
 中间件 A（先登记） ───── await fn(data, next)
@@ -64,7 +64,7 @@ defaultAction() ← 所有中间件都调用 next() 后执行
 登记序是门面在登记时分配的序号（进程内全部 api-hooks 副本共用一个计数器，单调递增），随登记一起交给提供者，提供者按它排链：
 
 - **提供者重启**：依赖它的插件先关闭，再按拓扑序重新激活并重新登记，链序即重新激活的次序，与冷启动相同。
-- **换提供者**：以更高优先级换上另一个提供者时，消费者不重启，各插件的登记逐个重挂到新提供者，提供者按登记序还原原来的交错次序，重挂完成后链序不变。已知现状：换人瞬间正在执行的链会跳过已移走的中间件；胜者在容器里同步换人，重挂完成前新发起的链只能看到已经搬过来的中间件。两种情形下截停者都可能缺席、默认动作照样执行，只发生在运行中换提供者的那一刻，只装 `@aalis/plugin-hooks` 一个提供者的部署不会遇到。
+- **换提供者**：以更高优先级换上另一个提供者时，消费者不重启，各插件的登记逐个重挂到新提供者，提供者按登记序还原原来的交错次序，重挂完成后链序不变。已知现状：换人瞬间正在执行的链会跳过已移走的中间件；选中的那一家在容器里同步换人，重挂完成前新发起的链只能看到已经搬过来的中间件。两种情形下截停者都可能缺席、默认动作照样执行，只发生在运行中换提供者的那一刻，只装 `@aalis/plugin-hooks` 一个提供者的部署不会遇到。
 
 ## 提供者契约
 
@@ -94,7 +94,7 @@ declare module '@aalis/api-hooks' {
 }
 ```
 
-注入后 `hooks.middleware()` 与 `hooks.run()` 按键获得精确类型。同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/core'` 块。要让 TS 看到某个包注入的键，需把该包加进依赖（值导入或 side-effect import）。
+注入后 `hooks.use.middleware()` 与 `hooks.use.run()` 按键获得精确类型。同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/core'` 块。要让 TS 看到某个包注入的键，需把该包加进依赖（值导入或 side-effect import）。
 
 ## 第一方钩子键
 
@@ -120,13 +120,13 @@ export default definePlugin({
   uses: { hooks },
   apply({ hooks }) {
     // 拦截消息：不调用 next，整条链终止
-    hooks.middleware('agent:input:before', async (data, next) => {
+    hooks.use.middleware('agent:input:before', async (data, next) => {
       if (data.message.content.trim() === '') return;
       await next();
     });
 
     // 后处理回复内容
-    hooks.middleware('agent:reply:before', async (data, next) => {
+    hooks.use.middleware('agent:reply:before', async (data, next) => {
       await next();
       data.content = data.content.trim();
     });
@@ -134,13 +134,13 @@ export default definePlugin({
 });
 ```
 
-定义自己的钩子时，在关键路径上调用 `hooks.run`，默认动作放在第三个参数里：
+定义自己的钩子时，在关键路径上调用 `hooks.use.run`，默认动作放在第三个参数里：
 
 ```ts
-const reachedEnd = await hooks.run('schedule:before', { jobId, cron }, async () => {
+const reachedEnd = await hooks.use.run('schedule:before', { jobId, cron }, async () => {
   await executeJob(jobId);
 });
-if (!reachedEnd) logger.info(`任务 ${jobId} 被中间件截停`);
+if (!reachedEnd) logger.use.info(`任务 ${jobId} 被中间件截停`);
 ```
 
 ## 实现者

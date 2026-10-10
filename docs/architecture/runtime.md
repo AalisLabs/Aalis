@@ -169,7 +169,7 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 - **配置文档**：core 只持运行态（各实例的配置、禁用态、服务偏好），文档的读写与落盘由宿主负责
   （例：浏览器配置走 fetch / IndexedDB）。交给 core 的配置原样生效，schema 默认值要由宿主先深合并进去
   （`withPluginConfigSync` 即此政策）；不能顶层浅合并，否则只写了半块的嵌套组会把默认值整块顶掉。
-  文档里的服务偏好经根绑定的 `services.prefer` 应用，放在登记插件之前。schema 里 `secret: true` 的字段存在哪由宿主定：
+  文档里的服务偏好经根绑定的 `services.use.prefer` 应用（全局偏好），放在登记插件之前。schema 里 `secret: true` 的字段存在哪由宿主定：
   Node 宿主存进 `secrets.yaml`、文档里只留引用，交给 core 之前解析回原值；不做这一层的宿主把值以明文留在文档里，
   插件读取的方式不变。
 - **重启策略**：实现 `RestartStrategy`，经 `AppOptions.restartStrategy` 注入（例：浏览器里「重启」改为重建实例）；

@@ -96,7 +96,7 @@ type ApplyPluginConfigResult =
 
 ## 启停与偏好：运行态与文档分开写
 
-管理动作（`plugins.enable` / `disable`、`services.prefer`）只改运行态，不写文档；除 `applyPluginConfig` 外，`HostConfig` 的写方法只改文档，不改运行态。要让启停与服务偏好跨重启保留，调用方两边都写：先做管理动作，成功后写文档，再 `save()`。
+管理动作（`plugins.use.enable` / `disable`、`services.use.prefer`）只改运行态，不写文档；除 `applyPluginConfig` 外，`HostConfig` 的写方法只改文档，不改运行态。要让启停与服务偏好跨重启保留，调用方两边都写：先做管理动作，成功后写文档，再 `save()`。
 
 ```ts
 import { hostConfig } from '@aalis/api-host-config';
@@ -104,9 +104,8 @@ import { optional, pluginsService } from '@aalis/core';
 
 // uses: { plugins: pluginsService, doc: optional(hostConfig) }
 async function disablePersistently(id: string): Promise<boolean> {
-  const pm = plugins.current;
-  if (!pm || !(await pm.disable(id))) return false; // 运行态
-  const store = doc.current;
+  if (!plugins.present || !(await plugins.use.disable(id))) return false; // 运行态
+  const store = doc.present ? doc.use : undefined;
   if (store) {
     store.setPluginEnabled(id, false); // 文档
     await store.save();
@@ -121,7 +120,7 @@ async function disablePersistently(id: string): Promise<boolean> {
 
 | 插件 | 用途 | 宿主未提供时 |
 |---|---|---|
-| plugin-authority | 读 owners 等裁决字段；WebUI 权限页改动后落盘 | 激活失败（`apply` 内 `require()`） |
+| plugin-authority | 读 owners 等裁决字段；WebUI 权限页改动后落盘 | 激活失败（`apply` 内访问 `hostConfig.use` 的成员时抛 `ServiceUnavailableError`） |
 | plugin-webui-server | 全局配置、插件配置、启停、实例增删与服务偏好路由 | 读写文档的路由与服务偏好路由返回 503 |
 | plugin-cli | 记录最后视图 `lastView` | 不记录，下次启动回到默认视图 |
 | plugin-mcp-client | `mcp_set_server_enabled` 经 `applyPluginConfig` 改配置并落盘 | 工具返回失败，不改运行态 |

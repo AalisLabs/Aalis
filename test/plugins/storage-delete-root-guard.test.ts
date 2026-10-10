@@ -47,7 +47,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
       ],
     });
     await app.plugins.idle();
-    // 插件没激活的话网关会一路 404 根，测出来的「拒绝」就与守卫无关了
+    // 插件没激活的话 storage 没有提供者，测出来的「拒绝」就与守卫无关了
     const state = app.plugins.getPlugin(storageLocal.name)?.state;
     if (state !== 'active') throw new Error(`storage-local 未激活（state=${state}）`);
     gateway = app.bind({ storage }).storage.use;

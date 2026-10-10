@@ -34,7 +34,7 @@ import { pluginSource } from '@aalis/api-plugin-source';
 import { optional } from '@aalis/core';
 
 // uses: { source: optional(pluginSource) }
-const names = (await source.current?.rescan()) ?? [];
+const names = source.present ? await source.use.rescan() : [];
 ```
 
 | 插件 | 用途 | 宿主未提供时 |

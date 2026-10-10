@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-`trigger` 标记当前生效的**触发插件**。触发插件回答"这条入站消息要不要让 agent 开口"：它在 `inbound:trigger` 相位判定，放行的消息写好 `triggerType`，不开口的归档后吞掉。每个触发插件都是完整的判定，各自 `provide(trigger, 自己的实例)`，服务胜者即生效者，**二选一**：同一条消息只由生效者判定，其余触发插件直接放行、什么都不做。"现在能不能说"（禁言、冷却、限速）不归它管，由下一相位的 [flow-control](./flow-control.md) 把关。
+`trigger` 标记当前生效的**触发插件**。触发插件回答"这条入站消息要不要让 agent 开口"：它在 `inbound:trigger` 相位判定，放行的消息写好 `triggerType`，不开口的归档后吞掉。每个触发插件都是完整的判定，各自 `provide.use(trigger, 自己的实例)`，trigger 选中的那一家即生效者，**二选一**：同一条消息只由生效者判定，其余触发插件直接放行、什么都不做。"现在能不能说"（禁言、冷却、限速）不归它管，由下一相位的 [flow-control](./flow-control.md) 把关。
 
 - 服务注册名：`'trigger'`（描述符 `trigger`）
 - 契约包：`@aalis/api-trigger`（描述符、服务接口，以及触发插件共用的函数）
@@ -21,18 +21,18 @@ export interface TriggerService {
 export const trigger = defineService<TriggerService>('trigger');
 ```
 
-服务只用来选出生效者：触发插件拿 `trigger.current`（胜者）与自己的实例比身份，不调用方法。`label` 是触发插件的名字，进诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 设置「系统」的服务偏好显示的是 `provide` 时传的 `label`，两处取同一个值。
+服务只用来选出生效者：触发插件拿 trigger 选中那一条的 id（`trigger.list().find(p => p.selected)?.id`）与自己的实例 id 比，不调用方法。`label` 是触发插件的名字，进诊断（如 Laya 的诊断项报「生效的触发插件是某某」）；WebUI 设置「系统」的服务偏好显示的是 `provide.use` 时传的 `label`，两处取同一个值。
 
 触发插件共用的函数（同一文件）。写日志的函数由调用方传入日志前缀 `tag`（如 `'[laya]'`），告警行与调用方自己的日志同一前缀：
 
 | 函数 | 作用 |
 |---|---|
-| `isActiveTrigger(phase, trigger, self)` | 这次入站是否由 `self` 判定。胜者每次入站只取一次，以这次的相位数据为键记在进程内全部 api-trigger 副本共用的表里（见 §5） |
+| `isActiveTrigger(phase, trigger, selfId)` | 这次入站是否由 `selfId`（触发插件登记 trigger 时的条目 id，缺省即它的实例 id `caps.lifecycle.use.id`）判定。trigger 选中那一条的 id 每次入站只取一次，以这次的相位数据为键记在进程内全部 api-trigger 副本共用的表里（见 §5） |
 | `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
-| `createBotNames(persona, sessionManager, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`：每次调用按 `message` 的会话现取别名与**全部**已登记人设（`persona.all()`）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：`sessionManager.current.resolveConfig(sessionId, platform)` 的 `persona` 作为 `{ persona }` 传给每个提供者的 `getPersonaName` / `getNickNames`；session-manager 缺席时不带参数取，解析抛错时同样不带参数取并记一条 warn（同一原因只记一次）。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
+| `createBotNames(persona, sessionManager, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`（`persona` 只用 `list`，`sessionManager` 只用 `present` / `use`）：每次调用按 `message` 的会话现取别名与**全部**已登记人设（`persona.list()`）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：`sessionManager.use.resolveConfig(sessionId, platform)` 的 `persona` 作为 `{ persona }` 传给每个提供者的 `getPersonaName` / `getNickNames`；session-manager 缺席（`present` 为 `false`）时不带参数取，解析抛错时同样不带参数取并记一条 warn（同一原因只记一次）。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
 | `isAddressed(message, names, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`names` 里任一个出现在正文里即命中，`names` 通常取自 `createBotNames`） |
 | `markTriggered(message, addressed)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在非私聊会话且消息未带 `actor` 时回填无主体授权 |
-| `archiveSwallowed(message, archive, logger, tag)` | 吞掉前影子归档；message-archive 缺席时跳过，失败记 warn |
+| `archiveSwallowed(message, archive, logger, tag)` | 吞掉前影子归档；先看 `archive.present`，message-archive 缺席时跳过，失败记 warn |
 
 ## 3. 谁提供 / 谁消费
 
@@ -45,7 +45,7 @@ export const trigger = defineService<TriggerService>('trigger');
 
 两个都启用、没有偏好时 trigger-policy 生效（见 §5）。
 
-**消费方**：只有触发插件自己，经 `isActiveTrigger` 判断是否生效；trigger-policy 的闲置主动开口到点时也查 `trigger.current` 是不是自己。
+**消费方**：只有触发插件自己，经 `isActiveTrigger` 判断是否生效；trigger-policy 的闲置主动开口到点时也查 trigger 选中那一条的 id 是不是自己的实例 id（`caps.trigger.list().find(p => p.selected)?.id === lifecycle.use.id`）。
 
 ## 4. 写一个触发插件
 
@@ -67,13 +67,14 @@ import {
   type TriggerService,
   trigger,
 } from '@aalis/api-trigger';
-import { definePlugin, logger, optional, provide } from '@aalis/core';
+import { definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-trigger',
   provides: [trigger],
   uses: {
     logger,
+    lifecycle,
     hooks,
     provide,
     trigger: optional(trigger),
@@ -84,19 +85,20 @@ export default definePlugin({
   },
   apply(caps) {
     const self: TriggerService = { label: '我的触发判定' };
-    caps.provide(trigger, self, { priority: 5, label: self.label });
-    const botNames = createBotNames(caps.persona, caps.sessionManager, caps.logger, '[my-trigger]');
+    const selfId = caps.lifecycle.use.id; // 登记 trigger 时的条目 id（未传 entryId 即实例 id）
+    caps.provide.use(trigger, self, { priority: 5, label: self.label });
+    const botNames = createBotNames(caps.persona, caps.sessionManager, caps.logger.use, '[my-trigger]');
 
-    caps.hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
-      if (!isActiveTrigger(data, caps.trigger, self)) return next(); // 不是生效者：什么都不做
+    caps.hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+      if (!isActiveTrigger(data, caps.trigger, selfId)) return next(); // 不是生效者：什么都不做
       const { message } = data;
       if (message.source) return next(); // 内部注入不经判定
-      if (caps.flowControl.current?.isMuted(message.sessionId)) return next(); // 禁言期交给 flow 相位吞
+      if (caps.flowControl.present && caps.flowControl.use.isMuted(message.sessionId)) return next(); // 禁言期交给 flow 相位吞
       const opts = { triggerOnAt: true, triggerOnPoke: true };
       const addressed = isAddressed(message, botNames([], message), opts);
       const speak = await myJudge(message, addressed); // 自带超时，不抛错
       if (!speak) {
-        await archiveSwallowed(message, caps.messageArchive, caps.logger, '[my-trigger]');
+        await archiveSwallowed(message, caps.messageArchive, caps.logger.use, '[my-trigger]');
         return; // 吞掉
       }
       markTriggered(message, addressed);
@@ -117,8 +119,8 @@ export default definePlugin({
 
 ## 5. 行为不变量
 
-- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的优先级 -10 低于它的 0，两者都是插件里的常量，选哪个只用偏好；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
-- **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
+- **二选一**。选中哪一家按服务的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的优先级 -10 低于它的 0，两者都是插件里的常量，选哪个只用偏好；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
+- **生效者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 trigger 选中那一条的 id，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
 - **切换即时生效**。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
 - **owner 自己的会话不经本相位**。房间类别为 `owner-only` 的会话由 plugin-gateway 跳过 `inbound:trigger`（[结构性放行](../plugins/plugin-gateway.md#结构性放行)），触发插件收不到这些消息，不必按平台或作用域另做判断。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
@@ -136,4 +138,4 @@ export default definePlugin({
 - [services/flow-control](./flow-control.md) — 下一相位的禁言、冷却与限速。
 - [services/media](./media.md) — `processMessage` 与附件描述。
 - [services/message](./message.md) — `buildIncomingContent`：与归档逐字一致的当前消息文本。
-- [concepts/service-model](../concepts/service-model.md) — 多提供者的解析顺序（偏好 > 优先级 > 注册顺序）。
+- [concepts/service-model](../concepts/service-model.md) — 多提供者的解析顺序（本插件偏好 > 全局偏好 > 优先级 > 注册顺序）。

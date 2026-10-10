@@ -21,7 +21,7 @@ definePlugin({
 })
 ```
 
-无其它服务依赖。每个模型 `provide(llm, metered(handle, events), { entryId: \`${lifecycle.id}/${modelId}\`, label })`：拿到用量的调用发 `llm:usage`（见 [api-llm 的记账](../api/api-llm.md#记账)）。
+无其它服务依赖。每个模型 `provide.use(llm, metered(handle, events.use), { entryId: \`${lifecycle.use.id}/${modelId}\`, label })`：拿到用量的调用发 `llm:usage`（见 [api-llm 的记账](../api/api-llm.md#记账)）。
 
 ## 配置
 

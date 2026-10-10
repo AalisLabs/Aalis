@@ -61,7 +61,7 @@ interface RegisteredSessionSetting extends SessionSetting {
 ```ts
 const uses = { sessionManager: optional(sessionManager) };
 // apply 里
-sessionManager.registerSetting({
+sessionManager.use.registerSetting({
   key: 'persona',
   field: { type: 'select', label: '人设', dynamicOptions: 'persona', allowCustom: true },
   appliesTo: ['owner', 'room', 'task'],
@@ -169,8 +169,8 @@ interface SessionInheritance {
 **默认模型只有一处：** 字段类型为 `llm-ref` 的设置项（plugin-agent 的「模型」）在全局默认层不另存值，读写的就是 llm 服务的偏好（运行态与宿主配置的 `servicePreferences.llm`）。会话管理按字段类型认它，不按键名或插件名。
 
 - 按层读全局默认层（`getLayer`、`resolveLayer`、继承链）时，这一项取偏好指向的模型：条目在时按它的提供者与模型 ID；不在时按还装着的提供者拆（取能作为 `<提供者>/` 前缀的最长的一个，模型 ID 里的 `/` 留在模型里），提供者也不在时按最后一个 `/` 拆。读不成模型引用的偏好（手写的、不带 `/`，或只写了提供者、拆出的提供者只剩 npm scope，如 `@scope/llm-x`）读出来没有这一项，偏好没有生效由 doctor 报出。
-- 按层写全局默认层时写的是偏好（`services.prefer`，`null` 即取消偏好），连同文档的 `servicePreferences` 一起落盘；落盘失败时偏好与文档一并撤回。只有这一项与读出的值不同时才动偏好：改这一层的别的项不碰偏好，读不成模型引用的偏好也原样留着。`sessionConfig.defaults` 不收这一项，配置文件里写了的告警一次后忽略。
-- `resolveConfig` 在全局默认之上的各层都没设时不给它的值：取用方交给 api-llm 的 `resolveLLMModel`，落到服务此刻解析到的那一个（偏好 > 提供者自带优先级 > 登记先后），偏好指向的模型不在时也有着落。`childConfig` 同样不带它。
+- 按层写全局默认层时写的是全局偏好（`services.use.prefer`，`null` 即取消偏好），连同文档的 `servicePreferences` 一起落盘；落盘失败时偏好与文档一并撤回。只有这一项与读出的值不同时才动偏好：改这一层的别的项不碰偏好，读不成模型引用的偏好也原样留着。`sessionConfig.defaults` 不收这一项，配置文件里写了的告警一次后忽略。
+- `resolveConfig` 在全局默认之上的各层都没设时不给它的值：取用方交给 api-llm 的 `resolveLLMModel`，落到取用方此刻选中的那一个（取用方这个插件的偏好 > 全局偏好 > 提供者自带优先级 > 登记先后），偏好指向的模型不在时也有着落。`childConfig` 同样不带它。
 - llm 服务可能变了（`service:changed`：偏好从别处改了、提供者上下线）同样发 `session:config:changed`：偏好指向的模型在不在、服务实际用的那一个随之变。
 - `resolvedDefaults()` 给出这些项此刻实际落到的值：llm 服务按偏好、提供者自带的优先级与登记先后解析到的能对话的模型（偏好指向的模型不在时是服务落到的那一个），没有可用模型时没有。会话服务据此在设置行上带 `resolved`，界面写「默认（<模型名>）」、标出偏好指向的模型不在。
 
@@ -279,7 +279,7 @@ function placePaperId(key: string): string;
 1. 有出生平台：一对一而对端是 owner 身份的（owner 的 IM 私聊）为默认工作区；其余为窗口，键由 api-gateway 的 `windowKey` 拼出，不含机器人账号，同一个群里两个账号的会话是同一个窗口。聊天窗口缺失（读表时类型不对被去掉）或目标为空的坏数据同样为窗口，键里缺的段按空串拼，日志点名一次，不落进默认工作区：owner 给工作区设的值不会套到房间上。owner 谓词取 authority 的 `isOwner`（与房间类别同一判据），没有 authority 时一对一窗口按窗口算。
 2. 没有出生平台的按根会话记下的工作区：有值的为 `workspace:<id>`（绑定在这个工作区仓库的 worktree 上的会话也是它，不看绑定目录）；没有的为默认工作区——WebUI 与终端在默认工作区建的会话、没有发起会话的内部会话（`mcp-server`、编排、定时任务）、按 ID 建档且还没补记来源字段的会话，以及会话表里没有的 ID。记下的工作区没有记录（坏数据）时按默认工作区，日志点名。
 
-场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在记忆后端元数据的 `places` 命名空间，与会话表一同跟随胜者加载与写回；`config` 就是场所层的值。默认工作区的记录在激活时补上；窗口的记录在 IM 房间建档或补记来源字段时建（owner 的 IM 私聊在默认工作区，不建），显示名取群名或对方昵称，随出生平台的入站更新；删除会话不删场所，同一窗口换了会话照样取到它的设置。窗口场所不提供删除。
+场所记录 `{ key, kind, name, root?, config, createdAt, updatedAt }` 存在记忆后端元数据的 `places` 命名空间，与会话表一同跟随选中的记忆后端加载与写回；`config` 就是场所层的值。默认工作区的记录在激活时补上；窗口的记录在 IM 房间建档或补记来源字段时建（owner 的 IM 私聊在默认工作区，不建），显示名取群名或对方昵称，随出生平台的入站更新；删除会话不删场所，同一窗口换了会话照样取到它的设置。窗口场所不提供删除。
 
 工作区：
 
@@ -289,7 +289,7 @@ function placePaperId(key: string): string;
 
 ## 服务接口（节选）
 
-描述符 `sessionManager`（`name: 'session-manager'`），绑定接口 `BoundSessionManager` 是 `ServiceRef<SessionManagerService>` 加上 `registerSetting(setting)`。
+描述符 `sessionManager`（`name: 'session-manager'`），业务层 `BoundSessionManager` 是 `SessionManagerService` 形状的活句柄加上 `registerSetting(setting)`（`interface BoundSessionManager extends SessionManagerService`）。
 
 ```ts
 interface SessionManagerService {

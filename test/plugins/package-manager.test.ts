@@ -38,7 +38,7 @@ type ProcessService = PackageManagerDeps['proc'];
 type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 
 // ════════════════════════════════════════════════════════════
-// package-manager — install/uninstall 集成测试（mock process 网关）
+// package-manager — install/uninstall 集成测试（mock process 服务）
 //
 // createPackageManager(deps) 只吃一张显式依赖表：所有文件操作走 process 子进程
 // （npm/cp/test），目标是项目根 package.json 与 node_modules（不经 storage 沙盒）。

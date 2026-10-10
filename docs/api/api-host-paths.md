@@ -43,7 +43,7 @@ export default definePlugin({
   name: 'my-plugin',
   uses: { paths: hostPaths },
   apply({ paths }) {
-    const { app } = paths.require(); // 安装集
+    const { app } = paths.use; // 安装集
   },
 });
 ```

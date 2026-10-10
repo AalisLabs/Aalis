@@ -7,7 +7,7 @@
 - **参考实现**：`@aalis/plugin-commands`，核心类是 `CommandRegistry`。
 - **内核视角文档**：`docs/plugins/plugin-commands.md`。
 
-> 绝大多数插件作者只需要登记命令。登记一律走 `commands.command(...)`，详见第 4 节。第 3 节只为想替换整个指令引擎的高级作者准备。
+> 绝大多数插件作者只需要登记命令。登记一律走 `commands.use.command(...)`，详见第 4 节。第 3 节只为想替换整个指令引擎的高级作者准备。
 
 ---
 
@@ -28,12 +28,12 @@ export interface CommandService {
   setExecutionGuard(guard: ExecutionGuard | undefined): void; // 传 undefined 摘掉，退回 fail-closed
 }
 
-export interface BoundCommands extends ServiceRef<CommandService> {
+export interface BoundCommands extends CommandService {
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 ```
 
-Builder 链式追加 `alias / option / argument / action / usage / example`。`commands.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
+Builder 链式追加 `alias / option / argument / action / usage / example`。`commands.use.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
 
 重要类型：
 
@@ -47,7 +47,7 @@ Builder 链式追加 `alias / option / argument / action / usage / example`。`c
 
 ## 2. 谁提供 / 谁消费
 
-**唯一参考实现**：`@aalis/plugin-commands`。`provides: [commands]`，`uses` 含 `gateway` required，`provide(commands, registry)`。入站分发发生在 `INBOUND_PHASE.COMMAND`。运行时依赖 `@aalis/api-authority` 的 `riskDefaults`。
+**唯一参考实现**：`@aalis/plugin-commands`。`provides: [commands]`，`uses` 含 `gateway` required，`provide.use(commands, registry)`。入站分发发生在 `INBOUND_PHASE.COMMAND`。运行时依赖 `@aalis/api-authority` 的 `riskDefaults`。
 
 **典型消费点**：`plugin-authority`、`plugin-agent`、`plugin-doctor`、`plugin-tool-system`、`plugin-user-profile`、`plugin-user-relation`、`plugin-maimai` 等。`commands` 几乎总是 optional。`plugin-authority` 用 `commands.follow(svc => { svc.setExecutionGuard(guard); ... })` 注入守卫，follow 返回的清理调 `setExecutionGuard(undefined)` 摘掉。
 
@@ -72,12 +72,12 @@ export default definePlugin({
   uses: { provide, gateway },
   apply({ provide }) {
     const svc = {} as CommandService;
-    provide(commands, svc);
+    provide.use(commands, svc);
   },
 });
 ```
 
-同名 provider 胜者 = preference > priority > 注册顺序。
+同名 provider 中，消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序。
 
 ---
 
@@ -91,7 +91,7 @@ export default definePlugin({
   name: '@aalis/plugin-weather',
   uses: { commands: optional(commands) },
   apply({ commands }) {
-    commands
+    commands.use
       .command('weather <city:string> [day:number]', '查询天气。默认查今天，day 写几就查几天后')
       .argument('city', '城市名')
       .argument('day', '几天后，0 是今天')
@@ -123,7 +123,7 @@ option syntax 速查：
 | `'-t <type:string[]>'` | `string[]`。 |
 | `''`（空） | 纯 boolean flag。 |
 
-登记侧不用判断 `commands` 是否存在：builder 在提供者未就绪时缓存调用、上线后重放。若要读 `getAll()`，用 `commands.current`，每次现取，不要缓存。
+登记侧不用判断 `commands` 是否存在：builder 在提供者未就绪时缓存调用、上线后重放。若要读 `getAll()`，先看 `commands.present`，再调 `commands.use.getAll()`；业务句柄是活的，存起来也会跟着换人。
 
 写给 `/help` 看的几条：
 
@@ -148,15 +148,15 @@ option syntax 速查：
 - **沿点路径继承**
 - **`skipConfirm: true` 只免确认，授权仍评估**
 
-声明写在 `commands.command` 的第三参 `meta` 上：
+声明写在 `commands.use.command` 的第三参 `meta` 上：
 
 ```ts
 // risk 糖一次设定两轴默认：dangerous = restricted + confirm:'session'
-commands.command('weather.reset', '清空天气缓存', { risk: 'dangerous' }).action(async () => '已清空');
+commands.use.command('weather.reset', '清空天气缓存', { risk: 'dangerous' }).action(async () => '已清空');
 // 显式声明覆盖 risk 推导：每次都确认
-commands.command('weather.purge', '删除全部天气数据', { risk: 'dangerous', confirm: 'always' }).action(async () => '已删除');
+commands.use.command('weather.purge', '删除全部天气数据', { risk: 'dangerous', confirm: 'always' }).action(async () => '已删除');
 // 只收紧可见性、不要求确认；子命令（weather.admin.*）沿点路径继承
-commands.command('weather.admin', '天气管理', { visibility: 'restricted' });
+commands.use.command('weather.admin', '天气管理', { visibility: 'restricted' });
 ```
 
 handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storage 不是沙盒。

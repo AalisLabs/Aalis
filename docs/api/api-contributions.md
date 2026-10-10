@@ -16,7 +16,7 @@
 |---|---|---|---|
 | events | core 原语 | 执行 | 广播通知——无返回、错误隔离、不可拦截 |
 | hooks | `@aalis/api-hooks` | 执行 | 中间件管道——可变 data、可短路、错误上溯 |
-| services | core 原语 | 数据 | 按名解析**单胜者**（偏好 > 优先级 > 注册顺序） |
+| services | core 原语 | 数据 | 按名选出**一家**提供者（本插件偏好 > 全局偏好 > 优先级 > 注册顺序） |
 | contributions | `@aalis/api-contributions` | 数据 | 确定性枚举**全量**（按全局键码元序） |
 
 ## 与 hooks 的分工（判别法）
@@ -57,15 +57,15 @@ interface Contributions {
 
 ```ts
 // 交付一份贡献（返回退订；随这次激活撤回）
-const off = contributions.contribute('agent:prompt', {
+const off = contributions.use.contribute('agent:prompt', {
   id: 'my-block',            // 局部幂等键：非空、不含 '/'；同激活同 id 重复登记 = 替换
   anchor: 'context',         // 点自己的字段（agent:prompt 的槽位词汇）
   build: async view => (view.dryRun ? null : await loadBlock(view.sessionId)),
 });
 
 // 收集（贡献点 owner 调用；任何插件都可拥有自己的贡献点——驱动公开）
-for (const { key, spec } of contributions.collect('agent:prompt')) {
-  // key  = 全局键 `${贡献方 lifecycle.id}/${局部 id}`——归属标识
+for (const { key, spec } of contributions.use.collect('agent:prompt')) {
+  // key  = 全局键 `${贡献方 lifecycle.use.id}/${局部 id}`——归属标识
   // spec = 注册方交付的本体（引用，不拷贝、不改写）
 }
 ```
@@ -119,7 +119,7 @@ declare module '@aalis/api-contributions' {
 }
 
 // my-plugin（贡献点 owner）：收集、排布、执行全在这里
-const sections = contributions.collect('my-plugin:panel').map(({ key, spec }) => {
+const sections = contributions.use.collect('my-plugin:panel').map(({ key, spec }) => {
   try {
     return `## ${spec.title}\n${spec.render()}`;
   } catch {

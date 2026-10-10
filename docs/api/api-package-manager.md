@@ -59,11 +59,10 @@ export default definePlugin({
   name: '@acme/plugin-example-market',
   uses: { packageManager: optional(packageManager) },
   apply({ packageManager }) {
-    // 在处理指令或请求时现取，不要在 apply 里直接装包（每次激活都会装一次并触发重扫）；服务缺席时 current 为 undefined
+    // 在处理指令或请求时调用，不要在 apply 里直接装包（每次激活都会装一次并触发重扫）；服务缺席时 present 为 false
     async function install(npmPkg: string): Promise<string> {
-      const pm = packageManager.current;
-      if (!pm) return '包管理服务不可用';
-      return (await pm.install(npmPkg)).message;
+      if (!packageManager.present) return '包管理服务不可用';
+      return (await packageManager.use.install(npmPkg)).message;
     }
     // 把 install 挂到指令或路由的处理函数上
   },

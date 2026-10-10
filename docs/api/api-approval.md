@@ -162,7 +162,7 @@ interface ApprovalService {
   attachSurface(name: string, registrant: string): SurfaceBinding;   // 经绑定门面调用
 }
 
-interface BoundApprovals extends ServiceRef<ApprovalService> {
+interface BoundApprovals extends ApprovalService {
   registerSurface(name: string): ApprovalSurface;
 }
 ```
@@ -184,8 +184,8 @@ interface BoundApprovals extends ServiceRef<ApprovalService> {
 import { approvals } from '@aalis/api-approval';
 
 // uses: { approvals: optional(approvals) }
-const service = caps.approvals.current;
-if (!service) return '需要 owner 批准，但审批服务不在，操作没有执行';
+if (!caps.approvals.present) return '需要 owner 批准，但审批服务不在，操作没有执行';
+const service = caps.approvals.use;
 const outcome = await service.request(
   {
     sessionId,
@@ -207,7 +207,7 @@ if (!outcome.approved) return outcome.message;
 import { approvals, sanitizeForCard } from '@aalis/api-approval';
 
 // uses: { approvals: optional(approvals) }
-const surface = caps.approvals.registerSurface('cli');
+const surface = caps.approvals.use.registerSurface('cli');
 const attendance = surface.attend({ platform: 'cli', userId: 'console' }, {
   requested: approval => showCard(sanitizeForCard(approval.facts.command ?? approval.tool, 400)),
   settled: (approvalId, { state }) => closeCard(approvalId, state),

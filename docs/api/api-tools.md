@@ -119,7 +119,7 @@ interface ToolCallContext {
 ## 描述符与绑定门面
 
 ```ts
-interface BoundTools extends ServiceRef<ToolService> {
+interface BoundTools extends ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
 }
@@ -127,9 +127,9 @@ interface BoundTools extends ServiceRef<ToolService> {
 function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 ```
 
-`tools` 是登记型能力：`register` / `registerGroup` 走 `registrar`，同名替换、提供者换人整体重挂、关闭后拒收。查询与执行走 `ServiceRef`：`tools.current?.getDefinitions(...)`、`tools.require().execute(...)`。
+`tools` 是登记型能力：`register` / `registerGroup` 走 `registrar`，同名替换、提供者换人整体重挂、关闭后拒收。查询与执行经业务句柄转发给选中的那一家：`tools.use.getDefinitions(...)`、`tools.use.execute(...)`。
 
-`withToolGroups` 只覆盖 `register`，其余（含 `current` 这个 getter）沿原型链落到原接口，跟着提供者换人。不要对象展开一份 `BoundTools`——会把 `current` 求成一次性快照。
+`withToolGroups` 接 `tools.use`，只覆盖 `register`，其余沿原型链落到原接口，跟着提供者换人。不要对象展开一份 `BoundTools`——提供者的成员经原型链上的活句柄转发，展开只得到 `register` / `registerGroup`。
 
 同一激活内同名（工具名 / 分组名）是替换语义：新登记顶掉旧登记，旧登记的退订闭包随即失效，不会误删新登记。
 
@@ -238,7 +238,7 @@ export default definePlugin({
   name: '@acme/plugin-example-tools',
   uses: { tools: optional(tools) },
   apply({ tools }) {
-    const grouped = withToolGroups(tools, ['custom']);
+    const grouped = withToolGroups(tools.use, ['custom']);
     grouped.register({
       definition: {
         type: 'function',
@@ -258,7 +258,7 @@ export default definePlugin({
 });
 ```
 
-登记不强制把 `tools` 标成 required：绑定门面在提供者未就绪时排队，就绪后挂上。若还要读 `getDefinitions` / `getAll` / `execute`，应 `uses: { tools }`（required），用 `tools.require()` 或先判 `tools.current`。
+登记不强制把 `tools` 标成 required：绑定门面在提供者未就绪时排队，就绪后挂上。若还要读 `getDefinitions` / `getAll` / `execute`，应 `uses: { tools }`（required），经 `tools.use` 调用（缺席时同步抛 `ServiceUnavailableError`），或先看 `tools.present`。
 
 ## 实现者
 

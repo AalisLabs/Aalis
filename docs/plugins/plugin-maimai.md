@@ -5,7 +5,7 @@
 
 ## 概述
 
-基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind` / `handleUnbind`）。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。
+基于 maimai.lxns.net 开发者 API 的舞萌 DX 查分插件，提供指令与 Agent 工具双入口。工具经 `tools` 绑定门面登记到 `maimai` 工具组，指令经 `commands.use.command` 登记为 `/maimai` 及其子指令，两者调用同一组处理函数（`handleGetPlayer` / `handleGetBests` / `handleGetRecents` / `handleSearchSong` / `handleBind` / `handleUnbind`）。用户与好友码的绑定关系存放在 `memory` 服务的元数据中，命名空间为 `maimai-binding`，键为 `platform:userId`。
 
 ## 插件声明
 

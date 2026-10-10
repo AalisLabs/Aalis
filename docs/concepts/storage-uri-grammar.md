@@ -18,7 +18,7 @@ Aalis 里所有「文件」都不用宿主机绝对路径表示，而是用一�
 
 作为插件作者，你会在三处场景遇到它：
 
-1. **消费文件**：你拿到一条 URI（来自附件、配置、工具参数），要读/写它 → 用 storage service 或 `createStorageGateway`。
+1. **消费文件**：你拿到一条 URI（来自附件、配置、工具参数），要读/写它 → 用 storage 服务的业务句柄 `caps.storage.use`。
 2. **判别字符串**：你收到一个可能是 URI、可能是 http URL、可能是 base64 data-URI 的字符串，要分流 → 用 `isStorageUri`。
 3. **归一配置**：用户在你的 configSchema 里填了个路径/裸名，你要把它变成合法 URI → 用 `toStorageUri`。
 
@@ -91,9 +91,9 @@ storage / safeFetch / readExternalFile / data-URI 解码不同分支。
 import { isStorageUri } from '@aalis/api-storage';
 
 if (isStorageUri(data)) {
-  const buf = await storage.readFile(data);      // storage 路径
+  const buf = await caps.storage.use.readFile(data); // storage 路径
 } else if (data.startsWith('http://') || data.startsWith('https://')) {
-  const res = await safeFetch(data);             // SSRF 守卫出网
+  const res = await safeFetch(data);                 // SSRF 守卫出网
 } else if (data.startsWith('data:')) {
   // base64 data-URI，自行解码
 }
@@ -140,53 +140,46 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 `plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
 
 > **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），
-> gateway 找不到这个根就抛「未知根」。所以约定单段名是 `data` 根下的相对路径——这通常是用户想要的。
+> 存储提供者找不到这个根就抛「未知存储根」。所以约定单段名是 `data` 根下的相对路径——这通常是用户想要的。
 
-### `createStorageGateway(storage): StorageService` — 跨根句柄
+### 业务句柄 `caps.storage.use` — 跨根调用
 
-`index.ts`。参数是 `uses` 里声明的 `storage` 描述符绑定出的 `ServiceRef<StorageService>`；返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应后端 entry。
-**它不注册为服务**——纯本地构造，没有 facade entry。适用于 tools / shell / checkpoint
-这类需要单一 storage 句柄、又要透明跨多个根调度的场景。
+`uses` 里声明 `storage` 之后，`caps.storage.use` 是一个 `StorageService` 形状的活句柄（`BoundStorage`，`index.ts`）：调用转发给选中的存储提供者，由提供者按 URI 的根名分给对应的根。参考实现 `@aalis/plugin-storage-local` 只登记一个提供者，全部根都在它内部。tools / shell / checkpoint 这类要透明跨多个根调用的场景，直接用这个句柄。
 
 ```ts
-import { createStorageGateway } from '@aalis/api-storage';
-
-// apply({ storage }) 内，storage 为 uses 里的 ServiceRef
-const gateway = createStorageGateway(storage);
-await gateway.writeFile('data:/notes/x.md', 'hi'); // 路由到提供 data 根的后端
-await gateway.readFile('workspace:/a.txt');        // 路由到提供 workspace 根的后端
+// apply({ storage }) 内
+await storage.use.writeFile('data:/notes/x.md', 'hi'); // 落到 data 根
+await storage.use.readFile('workspace:/a.txt');        // 落到 workspace 根
 ```
 
-URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供。根不存在时抛
-「未知存储根: X（已注册根: ...）」；根已注册、但没有提供者满足调用所需能力（如只读根上的写）时抛
-「存储根 X 不支持 write」一类的错误，点明缺少的能力（`index.ts`）。
+URI 即标识 + 路由 key，调用方无需关心根落在磁盘哪里。根名不认识时抛
+「未知存储根: X（已注册根: ...）」；根的权限位不允许这次操作（如只读根上的写）时抛
+「存储根 X 不允许该操作 (writable)」一类的错误（`plugin-storage-local/src/index.ts`）。业务层恒定义 `resolveLocalPath` / `readFileRange` / `watch`，
+提供者不支持时由调用本身抛错。插件自己的私有数据经 `caps.storage.use.own` 读写：它是 `pluginData:/<插件名>/` 上的视图，
+路径参数相对这个目录，见 [storage 服务](../services/storage.md)。
 
 ---
 
 ## 提供端（实现存储后端时）
 
-### 按根拆分 entry（per-root service granularity）
+### 一个提供者，内部按根路由
 
-0.5.0 之后**没有 router facade**：每个根注册成一个独立的服务 entry，约定 entryId 为
-`${lifecycle.id}/${root.name}`（`plugin-storage-local/src/index.ts`）：
+参考实现只登记**一个** storage 提供者：全部根就绪之后整体登记，依赖方激活时就看得到每一个根；根在它内部按 URI 根名路由（`plugin-storage-local/src/index.ts` 的 `LocalStorage`）：
 
 ```ts
-provide(storage, scopedStorageService, {
-  entryId: `${lifecycle.id}/${root.name}`,  // per-root 粒度
-  label: root.label || `本地根 ${root.name}`,
-});
+caps.provide.use(storage, new LocalStorage(scoped), { label: '本地存储' });
 ```
 
-URI → 根 → entry 的路由由调用方的 `createStorageGateway(storage)` 完成。后端只要：
+URI → 根的路由在提供者内部完成。后端只要：
 
-- `listRoots()` 返回自己提供的根（含权限位）。
-- 每个数据方法收到 URI 后，自己 parse 出相对路径并校验根名归属（参考实现 `parseSelfUri`，`index.ts`）。
+- `listRoots()` 返回自己提供的全部根（含权限位）。
+- 每个数据方法收到 URI 后按根名分给对应的根，再 parse 出相对路径并校验（参考实现每个根的 `parseSelfUri`，`index.ts`）；根名不认识时抛「未知存储根」并列出已有的根。
 
 ### 权限位携带在 `StorageRootInfo` 上
 
 根的真实权限由 `StorageRootInfo` 的 `readable` / `writable` / `deletable` 位携带（`index.ts`），
-**不是**靠 DI 能力声明（0.5.0 的能力选择层已删除）。storage-api 的 `rootSatisfies`（`index.ts`）
-按这些位 + `resolveLocalPath`/`watch` 方法存在性来判定根是否满足所需能力，gateway 据此路由。
+**不是**靠 DI 能力声明（0.5.0 的能力选择层已删除）。提供者在每个操作前按这些位核对，不允许就抛错；
+消费方不按能力挑提供者。
 
 ---
 
@@ -204,7 +197,7 @@ URI → 根 → entry 的路由由调用方的 `createStorageGateway(storage)` �
 
 ```ts
 // 这个绝对路径只是「工作目录/起点」，不是沙箱边界
-const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
+const cwd = await caps.storage.use.resolveLocalPath('workspace:/proj', 'read');
 // 一旦 run_python / shell 拿到 cwd，子进程能访问当前 OS 用户可访问的任何文件
 ```
 
@@ -228,16 +221,16 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 4. **`parseUriRoot` 会抛**。对非 `<根名>:/...` 形态（`idx <= 0`）直接抛错（`index.ts`）；
    不确定输入时先 `isStorageUri` 守卫，或包 try/catch。
 
-5. **未知根抛错**。gateway dispatch 找不到根名对应 entry 时抛「未知存储根」（`index.ts`）。
+5. **未知根抛错**。存储提供者找不到根名时抛「未知存储根」（`plugin-storage-local/src/index.ts`）。
    `toStorageUri` 的单段裸名归到 `data` 根，正是为了避免把裸名当根名后必然命中这个错误。
 
-6. **同名根冲突**：多个后端各自声明同名根时，gateway 按 entry 枚举顺序优先取首个，不带能力要求的调用（如 `stat`）
-   只会路由到它；但首个缺少调用所需能力（如只读根上的写）时，按能力过滤的调用仍会落到排在后面、被遮蔽的同名根上。
-   用 `getStorageRootConflicts(storage)`（`index.ts`）做 doctor / 启动日志诊断。
+6. **同名根与多个提供者**：参考实现在一个提供者里管全部根，`roots` 里与内置根同名或重复的项被跳过并告警
+   （`plugin-storage-local/src/index.ts`），不存在同名根遮蔽。装了多个 storage 提供者时，`caps.storage.use` 只打到
+   选中的那一家，另一家的根要经 `caps.storage.of(id)` 访问。
 
-7. **不是所有根都支持 `resolveLocalPath` / `watch`**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
-   （`index.ts`、`index.ts`）。gateway 上这两个方法恒存在，目标根不支持时由调用本身抛错（`index.ts`），
-   需用 try/catch 处理，不要假定所有根都能落地到本地路径；只有直接持有单个根的提供者实例时，才需要判断方法是否存在。
+7. **不是所有后端都支持 `resolveLocalPath` / `watch`**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
+   （`index.ts`）。业务层（`caps.storage.use`）上这两个方法恒存在，提供者不支持时由调用本身抛错（`index.ts`），
+   需用 try/catch 处理，不要假定所有根都能落地到本地路径；只有经 `services.use.get(storage)` 直接持有提供者实例时，才需要判断方法是否存在。
 
 8. **路径分隔符**：URI 路径统一用 `/`；后端在归一时会把 `\\` 转成 `/`（`plugin-storage-local` 的 `toUri`，`index.ts`）。
 
@@ -246,7 +239,7 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 ## 交叉链接
 
 - 服务用法、各根的语义与配置：**`docs/services/storage.md`**（forward-ref，存储服务详解）与 [plugin-storage-local](../plugins/plugin-storage-local.md)。
-- DI 服务模型（同名多 provider 选优、per-entry 粒度、`provide` / `ServiceRef.current|all()` / `services.get` 仅取 name）：
+- DI 服务模型（同名多 provider 选优、per-entry 粒度、`provide.use` / 选择层 / `services.get` 仅取 name）：
   `docs/core/service.md`。
 - 鉴权（数字等级 + HITL 确认；deniedCapabilities 硬禁；与存储根权限位正交）：
   `docs/plugins/plugin-authority.md`、`docs/services/authority.md`。

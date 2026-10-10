@@ -23,10 +23,9 @@ export default definePlugin({
   name: '@acme/plugin-example-relation',
   uses: { userRelation: optional(userRelation) },
   apply({ userRelation }) {
-    // 在需要时现取；服务缺席时 current 为 undefined
-    const relation = userRelation.current;
-    if (!relation) return;
-    void relation.getCommunityPeers('<platform>:<userId>', 5);
+    // 服务缺席时 present 为 false
+    if (!userRelation.present) return;
+    void userRelation.use.getCommunityPeers('<platform>:<userId>', 5);
   },
 });
 ```
