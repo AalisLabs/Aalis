@@ -45,7 +45,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 | `app:ready` | — | 启动第一相位（sticky） |
 | `app:started` | — | 启动第二相位：全部 `app:ready` 监听器完成之后（sticky）；CLI / TUI 在此接管终端 |
 | `app:restarting` | — | `restart()` 先发本事件，监听器全部完成后才把控制交给宿主的 `RestartStrategy` |
-| `app:stopping` | — | `stop()` 先 `beginShutdown()`（丢弃旧普通重算）再 `idle()`（等待已在飞的重算与手动 dispose 段）之后发出；监听器全部返回后才执行停机计划。再次调用 `stop()` 返回完整停机的同一 Promise，监听器不能 await 或返回它 |
+| `app:stopping` | — | `stop()` 先 `beginShutdown()`（丢弃排队的重算）再 `idle()`（等待已在飞的重算与手动 dispose 段）之后发出；监听器全部返回后才执行停机计划。再次调用 `stop()` 返回完整停机的同一 Promise，监听器不能 await 或返回它 |
 
 **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方不等监听器。发射点要么是同步的注册 / 拆卸收尾，
 要么在 `PluginManager` 的 recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。
