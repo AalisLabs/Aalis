@@ -288,7 +288,7 @@ describe('app:stopping 窗口', () => {
     expect(await stopWithin(app)).toBe('ok');
     expect(bounced).toBe(false);
     expect(
-      warnings.some(x => x.startsWith('debug:') && x.includes('store') && x.includes('停机中不重建')),
+      warnings.some(x => x.startsWith('debug:') && x.includes('bounce: 插件 "store" 处于停机终态')),
       warnings.join(' | '),
     ).toBe(true);
     expect(gen).toBe(1);

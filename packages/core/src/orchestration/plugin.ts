@@ -248,11 +248,8 @@ export class PluginManager implements PluginManagerService {
    *   已在途时 join 它——返回时该实例已拆卸并离开注册表）
    */
   async unload(instanceId: string): Promise<boolean> {
-    const entry = this.#plugins.get(instanceId);
-    if (!entry) return this.#refuse('unload', instanceId, '不在注册表');
-
-    // 必须在 disposed-join 之前拒绝，否则清理回调中的 unload 会与停机计划互等。
-    if (this.#shuttingDown) return this.#refuse('unload', instanceId, '处于停机终态');
+    const entry = this.#target('unload', instanceId, true);
+    if (!entry) return false;
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途时不再二次
     // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
@@ -301,6 +298,20 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
+   * unload / enable / disable / bounce 的前置检查，依次为：不在注册表、停机中、'disposed' 终态，挡下时经 {@link #refuse}
+   * 记一笔并返回 false。停机先于 'disposed'：清理回调里的 unload 若去 join 在途卸载，会与停机计划互等。
+   * 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态）：unload 写入终态与从注册表摘除之间隔着 retire 的
+   * 微任务，此窗口内把它改回 pending 会激活出注册表外的孤儿实例。joinDisposed 时交回该条目，由 unload join 在途卸载。
+   */
+  #target(action: string, instanceId: string, joinDisposed = false): PluginRecord | false {
+    const entry = this.#plugins.get(instanceId);
+    if (!entry) return this.#refuse(action, instanceId, '不在注册表');
+    if (this.#shuttingDown) return this.#refuse(action, instanceId, '处于停机终态');
+    if (entry.state === 'disposed' && !joinDisposed) return this.#refuse(action, instanceId, '处于 disposed 终态');
+    return entry;
+  }
+
+  /**
    * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件（已激活，或仍在
    * 初始化：在飞或后台）某个 required 服务此刻解析到的胜者归本批要关的激活所有（传递闭包）；空档里不切到后备
    * 提供者——依赖方对着旧实例收尾，提供者重启后再回到首选。仍在初始化的依赖方同样拆掉重来，否则它 apply 里
@@ -332,11 +343,8 @@ export class PluginManager implements PluginManagerService {
    * 启用一个已禁用的插件
    */
   async enable(instanceId: string): Promise<boolean> {
-    const entry = this.#plugins.get(instanceId);
-    if (!entry) return this.#refuse('enable', instanceId, '不在注册表');
-    if (this.#shuttingDown) return this.#refuse('enable', instanceId, '处于停机终态');
-    // 'disposed' 对管理路径单向（见 bounce 内注释）
-    if (entry.state === 'disposed') return this.#refuse('enable', instanceId, '处于 disposed 终态');
+    const entry = this.#target('enable', instanceId);
+    if (!entry) return false;
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     // disabled/error 态的 entry 一般 activation 已清（disable 与激活失败都经 retireBatch 清引用；锚在
     // admin-during-activation 测试）。例外是后台激活落定失败：状态先写成 error，回滚在单飞之外进行，
@@ -353,12 +361,8 @@ export class PluginManager implements PluginManagerService {
    * 禁用一个活跃的插件
    */
   async disable(instanceId: string): Promise<boolean> {
-    const entry = this.#plugins.get(instanceId);
-    if (!entry) return this.#refuse('disable', instanceId, '不在注册表');
-    if (this.#shuttingDown) return this.#refuse('disable', instanceId, '处于停机终态');
-
-    // 'disposed' 对管理路径单向（见 bounce 内注释）
-    if (entry.state === 'disposed') return this.#refuse('disable', instanceId, '处于 disposed 终态');
+    const entry = this.#target('disable', instanceId);
+    if (!entry) return false;
     if (entry.state === 'disabled') return true; // 已经禁用
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
@@ -436,14 +440,8 @@ export class PluginManager implements PluginManagerService {
    * @returns false 表示找不到 entry、disabled 态且不带 config、'disposed' 终态、停机进行中（拒绝重建），或新 config 无法拷贝（保留旧配置）。
    */
   async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
-    const entry = this.#plugins.get(instanceId);
-    if (!entry) return this.#refuse('bounce', instanceId, '不在注册表');
-    // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
-    // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无激活可拆，
-    // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
-    // 一个注册表外的永生孤儿实例；停机后的遗留终态同理不得复活。
-    if (entry.state === 'disposed') return this.#refuse('bounce', instanceId, '处于 disposed 终态');
-    if (this.#shuttingDown) return this.#refuse('bounce', instanceId, '停机中不重建');
+    const entry = this.#target('bounce', instanceId);
+    if (!entry) return false;
     const newConfig = opts?.config;
     if (newConfig) {
       // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
