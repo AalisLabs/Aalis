@@ -291,8 +291,8 @@ export class ServiceContainer {
    * 清除偏好（consumer 同 {@link prefer}）；管理面经 `services.unprefer()` 调用
    * @internal
    */
-  unprefer(name: string, consumer?: string): boolean {
-    return this.#preferences.get(name)?.delete(consumer) === true;
+  unprefer(name: string, consumer?: string): void {
+    this.#preferences.get(name)?.delete(consumer);
   }
 
   /**

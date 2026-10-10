@@ -138,7 +138,7 @@ export interface Services {
    * 没有别家可选，指向别家的偏好在那期间不生效（展示时看 inspect 条目的 exclusive）
    */
   prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): void;
-  unprefer(key: ServiceKey, scope?: PreferenceScope): boolean;
+  unprefer(key: ServiceKey, scope?: PreferenceScope): void;
 }
 export const services = builtin<Services>('services');
 
@@ -171,9 +171,8 @@ export function coreProviders(
       runtime.notify('service:changed', keyName(key));
     },
     unprefer: (key, scope) => {
-      const ok = container.unprefer(keyName(key), scope?.for);
-      if (ok) runtime.notify('service:changed', keyName(key));
-      return ok;
+      container.unprefer(keyName(key), scope?.for);
+      runtime.notify('service:changed', keyName(key));
     },
   };
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
