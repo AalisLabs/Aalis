@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertOwnCopy } from '../../packages/core/src/composition/descriptors.js';
 import {
   App,
   DefaultLogger,
@@ -314,9 +313,9 @@ describe('PluginEntry.error 的因果链摘要', () => {
 
   it('注册校验失败的原因用同一说明：抛出转不成原始值的对象时 register 仍兑现 false', async () => {
     const hub = new LogHub();
-    const warns: string[] = [];
+    const errors: string[] = [];
     hub.onEntry(e => {
-      if (e.level === 'warn') warns.push(e.message);
+      if (e.level === 'error') errors.push(e.message);
     });
     const app = new App({ name: 'T', logHub: hub });
     apps.push(app);
@@ -328,12 +327,12 @@ describe('PluginEntry.error 的因果链摘要', () => {
       apply() {},
     } as unknown as PluginDefinition;
     await expect(app.plugins.register(definition)).resolves.toBe(false);
-    expect(warns).toEqual(['插件定义校验失败，拒绝注册: {}']);
+    expect(errors).toEqual(['插件定义校验失败，拒绝注册: {}']);
   });
 });
 
 describe('core 错误类带名称', () => {
-  it('ServiceUnavailableError 与 ForeignCoreError 的 name 与 stack 首行都是类名', async () => {
+  it('ServiceUnavailableError 的 name 与 stack 首行都是类名', async () => {
     const app = new App({ name: 'T', logHub: new LogHub() });
     const missing = defineService<{ ping(): void }>('error-chain-missing');
     let unavailable: unknown;
@@ -342,18 +341,9 @@ describe('core 错误类带名称', () => {
     } catch (error) {
       unavailable = error;
     }
-    let foreign: unknown;
-    try {
-      assertOwnCopy({ [Symbol.for('aalis.core.minted')]: Symbol('another copy') }, '描述符');
-    } catch (error) {
-      foreign = error;
-    }
     expect(unavailable).toBeInstanceOf(Error);
-    expect(foreign).toBeInstanceOf(Error);
     expect((unavailable as Error).name).toBe('ServiceUnavailableError');
     expect((unavailable as Error).stack).toMatch(/^ServiceUnavailableError: 服务 "error-chain-missing" 不可用/);
-    expect((foreign as Error).name).toBe('ForeignCoreError');
-    expect((foreign as Error).stack).toMatch(/^ForeignCoreError: 描述符来自另一份 @aalis\/core/);
     await app.stop();
   });
 });

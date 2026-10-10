@@ -55,8 +55,9 @@ export interface PluginStatusEntry {
  * 管理动作（register / unload / enable / disable / bounce / updateConfig）的返回值同一口径：
  * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、
  * 'disposed' 单向终态、disabled 态不带配置的 bounce、定义或实例 id 校验失败、配置无法拷贝）；**true = 其余，含主体已在目标态的幂等情形**。
- * 每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 core 造的对象时按安装问题记 error；主体不存在、
- * 'disposed' 在途与停机中 debug），调用方不必重复。
+ * 每个 false 分支都已记一笔日志，调用方不必重复：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，
+ * 含定义里有另一份 core 造的对象；未声明 reusable 的多实例；配置无法拷贝）；重名这类只是重复请求被忽略的与其余政策挡下的
+ * 记 warn；主体不存在、'disposed' 在途与停机中 debug。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
  * beginShutdown 后（含停机完成后）新发起的六个管理动作一律立即返回 false，不修改状态或配置。
  * 清理由已有停机计划负责，等待完整停机应在外部 await App.stop()，不要在清理回调里等待自身。
