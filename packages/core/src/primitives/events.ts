@@ -11,6 +11,29 @@ interface EventEntry {
   owner?: symbol;
 }
 
+/** 宿主（App）在构造时注入的 sticky 名单与回调；EventBus 自身不持有 Logger（保持环境无关） */
+interface EventBusOptions {
+  /**
+   * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时在下一个微任务里用缓存参数补发回调（异步，
+   * 与 emit 的投递语义一致）。派发进行中登记进同一张表的监听器由本轮派发送达，不再补发，每个监听器只收到一次。
+   * 缓存在总线存续期间一直有效：被热重载的插件重新激活后仍能拿到启动通知。App 标记 'app:ready'、'app:started'。
+   */
+  sticky?: readonly string[];
+  /**
+   * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。未设置时错误被静默丢弃——但无论是否设置，
+   * 单个 handler 抛错都**不会**中断同事件的其余 handler，也不会使 emit reject。第三参点名注册者的逻辑身份
+   * （owner symbol 的 description，events 能力注册时即激活 id；不经门面、无 owner 的登记为 undefined）。
+   */
+  onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
+  /**
+   * 单个监听器的等待上限（毫秒），按事件给出；未设置、undefined 或非正数 = 不设限。超过上限仍未返回的监听器经
+   * onHandlerSlow 上报后不再等它，转向下一个；它之后的拒绝照常经 onHandlerError 上报。App 用它给 `app:*` 屏障事件设上限。
+   */
+  handlerLimit?: (event: string) => number | undefined;
+  /** 监听器超过 handlerLimit 仍未返回时的上报回调；第三参同 onHandlerError */
+  onHandlerSlow?: (event: string, limitMs: number, contextId?: string) => void;
+}
+
 /**
  * 类型安全的事件总线
  *
@@ -25,55 +48,21 @@ export class EventBus {
   // services 同点整体切断（unregisterByOwner）；直接使用总线的无主
   // handler（owner=undefined）不受切断影响，由调用方自管。
   #handlers = new Map<string, Set<EventEntry>>();
-
-  /**
-   * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
-   *
-   * EventBus 自身不依赖 Logger（保持环境无关）；宿主（App）在构造后
-   * 注入一个指向自己 logger 的上报器。未设置时错误被静默丢弃——
-   * 但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余 handler，
-   * 也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，events 能力
-   * 注册时即激活 id；不经门面、无 owner 的登记为 undefined）。
-   */
-  onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
-
-  #reportHandlerError(event: string, error: unknown, owner?: symbol): void {
-    reportQuietly(() => this.onHandlerError?.(event, error, owner?.description));
-  }
-
-  /**
-   * 单个监听器的等待上限（毫秒），由宿主按事件给出；未设置、undefined 或非正数 = 不设限。
-   * 超过上限仍未返回的监听器经 {@link onHandlerSlow} 上报后不再等它，转向下一个；它之后的拒绝照常经
-   * {@link onHandlerError} 上报。App 用它给 `app:*` 屏障事件设上限。
-   */
-  handlerLimit?: (event: string) => number | undefined;
-  /** 监听器超过 {@link handlerLimit} 仍未返回时的上报回调；第三参同 onHandlerError */
-  onHandlerSlow?: (event: string, limitMs: number, contextId?: string) => void;
-
-  /**
-   * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时
-   * 在下一个微任务里用缓存参数补发回调（异步，与 emit 的投递语义一致）。
-   * 派发进行中登记进同一张表的监听器由本轮派发送达，不再补发，每个监听器只收到一次。
-   * 用于"应用生命周期里只发一次的里程碑事件"，
-   * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
-   * 当前标记为 sticky 的事件：'app:ready'、'app:started'。
-   *
-   * - 注册：`markSticky(event)` 由 App 在构造时调用
-   * - 清除：`clearSticky()` 由 App.restart()/stop() 在复用实例时调用，清空全部缓存参数，
-   *   避免下一轮启动时被旧的 sticky 参数误触发
-   */
+  readonly #options: EventBusOptions;
+  readonly #sticky: ReadonlySet<string>;
+  /** sticky 事件最近一次的参数 */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
-  #stickyArgs = new Map<string, any[]>();
-  #stickyEvents = new Set<string>();
+  readonly #stickyArgs = new Map<string, any[]>();
   /** 正在被 emit 遍历的登记表：派发中途登记进其中的监听器由本轮遍历送达，不再补发 */
   readonly #dispatching = new Set<Set<EventEntry>>();
 
-  markSticky(event: string): void {
-    this.#stickyEvents.add(event);
+  constructor(options: EventBusOptions = {}) {
+    this.#options = options;
+    this.#sticky = new Set(options.sticky);
   }
 
-  clearSticky(): void {
-    this.#stickyArgs.clear();
+  #reportHandlerError(event: string, error: unknown, owner?: symbol): void {
+    reportQuietly(() => this.#options.onHandlerError?.(event, error, owner?.description));
   }
 
   /**
@@ -98,7 +87,7 @@ export class EventBus {
     const entry: EventEntry = { handler, owner };
     set.add(entry);
 
-    if (this.#stickyEvents.has(event) && this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
+    if (this.#sticky.has(event) && this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
       const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
@@ -143,18 +132,16 @@ export class EventBus {
    * 触发事件，按注册顺序依次调用，支持异步 handler。
    *
    * Per-handler 隔离：单个 handler 抛错（同步或异步）只影响它自己——
-   * 错误经 {@link onHandlerError} 上报，其余 handler 照常执行，emit 始终 resolve。
+   * 错误经 onHandlerError 上报，其余 handler 照常执行，emit 始终 resolve。
    * 事件是"通知多方"语义，一个旁观者失败不该连坐其他订阅者，更不该
    * 反向把失败传染给发射方（如 plugin:loaded 的 emit 不能把刚激活成功的
-   * 插件打成 error 终态）。有等待上限（{@link handlerLimit}）时单个 handler 至多等该时长。
+   * 插件打成 error 终态）。有等待上限（handlerLimit）时单个 handler 至多等该时长。
    */
   async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
-    if (this.#stickyEvents.has(event)) {
-      this.#stickyArgs.set(event, args);
-    }
+    if (this.#sticky.has(event)) this.#stickyArgs.set(event, args);
     const set = this.#handlers.get(event);
     if (!set) return;
-    const limit = this.handlerLimit?.(event);
+    const limit = this.#options.handlerLimit?.(event);
     // 标记的是这张表而不是事件名：派发途中表被清空后重建，新表里的登记仍走补发
     this.#dispatching.add(set);
     // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
@@ -167,7 +154,7 @@ export class EventBus {
         // 先接住拒绝再限时：超时后才到的拒绝也要上报，不能被放弃等待吞掉
         const settled = Promise.resolve(handler(...args)).catch(err => this.#reportHandlerError(event, err, owner));
         await awaitWithTimeout(settled, limit, ms =>
-          reportQuietly(() => this.onHandlerSlow?.(event, ms, owner?.description)),
+          reportQuietly(() => this.#options.onHandlerSlow?.(event, ms, owner?.description)),
         );
       } catch (err) {
         this.#reportHandlerError(event, err, owner);

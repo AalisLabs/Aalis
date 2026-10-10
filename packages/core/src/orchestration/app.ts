@@ -112,33 +112,29 @@ export class App {
   #stopping?: Promise<void>;
 
   constructor(options: AppOptions) {
-    this.#events = new EventBus();
-    // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
-    // 一次，但插件配置热重载会触发 bounce → 新插件实例的
-    // events.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
-    // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
-    // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次（派发进行中登记的由本轮派发送达）。
-    this.#events.markSticky('app:ready');
-    this.#events.markSticky('app:started');
-    const container = new ServiceContainer();
     this.logger = quietLogger(
       options.logger ??
         new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now),
     );
-    // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
-    this.#events.onHandlerError = (event, err, contextId) => {
-      this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
-    };
     this.#restartStrategy = options.restartStrategy;
     // 定时器的最大延迟是 2³¹−1ms，更大的值（含 Infinity）会被运行时当成 1ms
     const cap = (ms: number): number => Math.min(ms, 2 ** 31 - 1);
     const disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
     const slowMs = cap(options.slowThresholdMs ?? 60_000);
-    // 屏障（app:*，与 types/events.ts 的分节同一判据）的单个监听器至多等 slowMs
-    this.#events.handlerLimit = event => (event.startsWith('app:') ? slowMs : undefined);
-    this.#events.onHandlerSlow = (event, limit, contextId) => {
-      this.logger.warn(`事件 "${event}" 的监听器超过 ${limit}ms 未返回（来自 ${contextId}），不再等待，继续后续步骤`);
-    };
+    this.#events = new EventBus({
+      // 'app:ready' / 'app:started' 只在 start() 发一次，但热重载 bounce 出来的新实例在 apply 里登记的监听器也要拿到，
+      // 否则 adapter、CLI 终端界面等「启动后才建立」的逻辑在 bounce 后不再执行
+      sticky: ['app:ready', 'app:started'],
+      onHandlerError: (event, err, contextId) => {
+        this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
+      },
+      // 屏障（app:*，与 types/events.ts 的分节同一判据）的单个监听器至多等 slowMs
+      handlerLimit: event => (event.startsWith('app:') ? slowMs : undefined),
+      onHandlerSlow: (event, limit, contextId) => {
+        this.logger.warn(`事件 "${event}" 的监听器超过 ${limit}ms 未返回（来自 ${contextId}），不再等待，继续后续步骤`);
+      },
+    });
+    const container = new ServiceContainer();
 
     // 1. 根激活
     const runtime = {
@@ -256,10 +252,6 @@ export class App {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
     const strategy = this.#restartStrategy;
-    // 防御性清掉全部 sticky 缓存（'app:ready' + 'app:started'）：strategy 可能走
-    // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
-    // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
-    this.#events.clearSticky();
     this.#events
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
@@ -299,9 +291,6 @@ export class App {
     await this.#events.emit('app:stopping');
     // 全部插件激活与根激活进 beginShutdown 冻好的同一张关停计划，这里执行 drain/close，返回时都已关完
     await this.#plugins.stopAll();
-    // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
-    // 复用过时的"已启动"标记
-    this.#events.clearSticky();
     this.logger.info('已停止');
   }
 }
