@@ -61,7 +61,7 @@ describe('初始化期间 required 依赖消失', () => {
     const cleanupEntered = deferred();
     const cleanupGate = deferred();
     releases.push(entered.resolve, applyGate.resolve, cleanupEntered.resolve, cleanupGate.resolve);
-    const off = host.provide(dependency, { value: 1 });
+    const off = host.provide.use(dependency, { value: 1 });
     const live = new Set<number>();
     const cleaned: number[] = [];
     let applies = 0;
@@ -73,8 +73,8 @@ describe('初始化期间 required 依赖消失', () => {
         async apply({ dependency, provide, lifecycle }) {
           const attempt = ++applies;
           live.add(attempt);
-          provide(owned, { attempt });
-          lifecycle.onDispose(async () => {
+          provide.use(owned, { attempt });
+          lifecycle.use.onDispose(async () => {
             if (attempt === 1) {
               cleanupEntered.resolve();
               await cleanupGate.promise;
@@ -84,7 +84,7 @@ describe('初始化期间 required 依赖消失', () => {
           });
           entered.resolve();
           await applyGate.promise;
-          dependency.require();
+          dependency.use.value;
         },
       }),
     );
@@ -92,7 +92,7 @@ describe('初始化期间 required 依赖消失', () => {
     off();
     applyGate.resolve();
     await cleanupEntered.promise;
-    expect(host.services.get(owned.name), '登记先撤回，不能暴露失败激活').toBeUndefined();
+    expect(host.services.use.get(owned.name), '登记先撤回，不能暴露失败激活').toBeUndefined();
     expect([...live], '资源清理正在等待真实完成').toEqual([1]);
     cleanupGate.resolve();
     await registering;
@@ -103,11 +103,11 @@ describe('初始化期间 required 依赖消失', () => {
     expect(cleaned).toEqual([1]);
     expect([...live]).toEqual([]);
 
-    host.provide(dependency, { value: 2 });
+    host.provide.use(dependency, { value: 2 });
     await app.plugins.idle();
     expect(record(app).state).toBe('active');
     expect(applies).toBe(2);
-    expect(host.services.get(owned.name)).toEqual({ attempt: 2 });
+    expect(host.services.use.get(owned.name)).toEqual({ attempt: 2 });
     await app.stop();
     expect(cleaned).toEqual([1, 2]);
     expect([...live]).toEqual([]);
@@ -117,7 +117,7 @@ describe('初始化期间 required 依赖消失', () => {
     const { app, host } = world();
     // 切断根激活的全部监听（含 PluginManager 对服务上下线的订阅）：重试不能依赖另一条通知补唤醒
     if (muted) activationHost(app).runtime.events.unregisterByOwner(rootActivation(app).owner);
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     const trace: string[] = [];
     let applies = 0;
     await app.plugin(
@@ -127,15 +127,15 @@ describe('初始化期间 required 依赖消失', () => {
         apply({ dependency, lifecycle }) {
           const attempt = ++applies;
           trace.push(`apply:${attempt}`);
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             trace.push(`cleanup:${attempt}`);
           });
-          if (attempt !== 1) return void dependency.require();
+          if (attempt !== 1) return void dependency.use.value;
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: 2 });
+            off = host.provide.use(dependencyDescriptor, { value: 2 });
             throw error;
           }
         },
@@ -152,7 +152,7 @@ describe('初始化期间 required 依赖消失', () => {
     const cleanupEntered = deferred();
     const cleanupGate = deferred();
     releases.push(cleanupEntered.resolve, cleanupGate.resolve);
-    const off = host.provide(dependency, { value: 1 });
+    const off = host.provide.use(dependency, { value: 1 });
     const trace: string[] = [];
     let applies = 0;
     const registering = app.plugin(
@@ -163,19 +163,19 @@ describe('初始化期间 required 依赖消失', () => {
           const attempt = ++applies;
           trace.push(`apply:${attempt}`);
           if (attempt === 1) {
-            lifecycle.onDispose(async () => {
+            lifecycle.use.onDispose(async () => {
               cleanupEntered.resolve();
               await cleanupGate.promise;
               trace.push('cleanup:1');
             });
             off();
           }
-          dependency.require();
+          dependency.use.value;
         },
       }),
     );
     await cleanupEntered.promise;
-    host.provide(dependency, { value: 2 });
+    host.provide.use(dependency, { value: 2 });
     await tick();
     expect(applies).toBe(1);
     expect(record(app).activation).toBeDefined();
@@ -196,11 +196,11 @@ describe('初始化期间 required 依赖消失', () => {
     const { app, host } = world();
     let foreign: unknown;
     try {
-      app.bind({ dependency }).dependency.require();
+      app.bind({ dependency }).dependency.use.value;
     } catch (error) {
       foreign = error;
     }
-    const off = host.provide(dependency, { value: 1 });
+    const off = host.provide.use(dependency, { value: 1 });
     let applies = 0;
     await app.plugin(
       definePlugin({
@@ -209,7 +209,7 @@ describe('初始化期间 required 依赖消失', () => {
         apply({ maybe }) {
           applies++;
           off();
-          if (kind === 'optional') return void maybe.require();
+          if (kind === 'optional') return void maybe.use.value;
           if (kind === 'foreign') throw foreign;
           if (kind === 'prototype-forged') {
             throw Object.create(Object.getPrototypeOf(foreign), { message: { value: '伪造相同错误原型' } });
@@ -226,7 +226,7 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     expect(record(app).state).toBe('error');
     expect(record(app).activation).toBeUndefined();
-    host.provide(dependency, { value: 2 });
+    host.provide.use(dependency, { value: 2 });
     await app.plugins.idle();
     expect(record(app).state).toBe('error');
     expect(applies).toBe(1);
@@ -234,7 +234,7 @@ describe('初始化期间 required 依赖消失', () => {
 
   it('上一轮真实缺失错误被缓存后再次抛出，不得造成陈旧错误重试循环', async () => {
     const { app, host } = world();
-    const off = host.provide(dependency, { value: 1 });
+    const off = host.provide.use(dependency, { value: 1 });
     let stale: unknown;
     let applies = 0;
     await app.plugin(
@@ -245,10 +245,10 @@ describe('初始化期间 required 依赖消失', () => {
           if (++applies > 1) throw stale;
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
             stale = error;
-            host.provide(dependencyDescriptor, { value: 2 });
+            host.provide.use(dependencyDescriptor, { value: 2 });
             throw error;
           }
         },
@@ -266,7 +266,7 @@ describe('初始化期间 required 依赖消失', () => {
     'register',
   ] as const)('持续制造真实缺失也须有界，%s 不能重置自动重试预算；用尽转 error，重算不再重试，enable 后重试', async mode => {
     const { app, host, errors, debugs } = world();
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     let firstLimit = 0;
     let helpers = 0;
@@ -277,7 +277,7 @@ describe('初始化期间 required 依赖消失', () => {
         uses: { dependency },
         async apply({ dependency }) {
           attempts++;
-          if (stable) return void dependency.require();
+          if (stable) return void dependency.use.value;
           // 错误实现也只能跑到保险丝，不能让测试挂死或占满微任务队列。
           if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
           if (mode === 'recompute') await (app.plugins as PluginManager).recompute();
@@ -287,9 +287,9 @@ describe('初始化期间 required 依赖消失', () => {
           if (attempts === 1) firstLimit = app.plugins.getStatus().length * 2 + 8;
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: attempts });
+            off = host.provide.use(dependencyDescriptor, { value: attempts });
             throw error;
           }
         },
@@ -323,7 +323,7 @@ describe('初始化期间 required 依赖消失', () => {
 
   it.each(['enable', 'bounce'] as const)('用尽后 %s 重新给满额度', async action => {
     const { app, host } = world();
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     await app.plugin(
       definePlugin({
@@ -333,9 +333,9 @@ describe('初始化期间 required 依赖消失', () => {
           if (++attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: attempts });
+            off = host.provide.use(dependencyDescriptor, { value: attempts });
             throw error;
           }
         },
@@ -353,7 +353,7 @@ describe('初始化期间 required 依赖消失', () => {
 
   it('激活成功清零预算：此后再遇缺失重新计起', async () => {
     const { app, host } = world();
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     let failures = 6;
     await app.plugin(
@@ -362,15 +362,15 @@ describe('初始化期间 required 依赖消失', () => {
         uses: { dependency },
         async apply({ dependency }) {
           attempts++;
-          if (failures === 0) return void dependency.require();
+          if (failures === 0) return void dependency.use.value;
           failures--;
           // 依赖恢复时 apply 在 provide 调用里同步开始：让出一拍，等 off 换成新句柄
           await Promise.resolve();
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: attempts });
+            off = host.provide.use(dependencyDescriptor, { value: attempts });
             throw error;
           }
         },
@@ -385,7 +385,7 @@ describe('初始化期间 required 依赖消失', () => {
     off();
     await app.plugins.idle();
     expect(record(app).state).toBe('pending');
-    off = host.provide(dependencyDescriptor, { value: 0 });
+    off = host.provide.use(dependencyDescriptor, { value: 0 });
     await app.plugins.idle();
     expect(record(app).state).toBe('active');
     expect(attempts).toBe(17);
@@ -393,7 +393,7 @@ describe('初始化期间 required 依赖消失', () => {
 
   it('后台激活反复拆掉自己的 required 依赖：与前台同一本预算，用尽转 error，enable 后重试', async () => {
     const { app, host, errors } = world({ slowThresholdMs: 10, disposeTimeoutMs: 1000 });
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     let stable = false;
     await app.plugin(
@@ -402,15 +402,15 @@ describe('初始化期间 required 依赖消失', () => {
         uses: { dependency },
         async apply({ dependency }) {
           attempts++;
-          if (stable) return void dependency.require();
+          if (stable) return void dependency.use.value;
           if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
           // 先转入后台，再让自己的 required 依赖下线：重算在 apply 抛错之前就把它拆掉
           await new Promise(resolve => setTimeout(resolve, 15));
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: attempts });
+            off = host.provide.use(dependencyDescriptor, { value: attempts });
             throw error;
           }
         },
@@ -448,7 +448,7 @@ describe('初始化期间 required 依赖消失', () => {
       operations.push(app.plugin(definePlugin({ name: 'inserted', apply: () => void inserted++ })));
       operations.push(app.plugins.enable('normal'));
     };
-    let off = host.provide(dependency, { value: 1 });
+    let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     await app.plugin(
       definePlugin({
@@ -458,9 +458,9 @@ describe('初始化期间 required 依赖消失', () => {
           if (++attempts === 41) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
           off();
           try {
-            dependency.require();
+            dependency.use.value;
           } catch (error) {
-            off = host.provide(dependencyDescriptor, { value: attempts });
+            off = host.provide.use(dependencyDescriptor, { value: attempts });
             throw error;
           }
         },
@@ -481,7 +481,7 @@ describe('初始化期间 required 依赖消失', () => {
     const entered = deferred();
     const gate = deferred();
     releases.push(entered.resolve, gate.resolve);
-    const off = host.provide(dependency, { value: 1 });
+    const off = host.provide.use(dependency, { value: 1 });
     let applies = 0;
     let cleaned = 0;
     const registering = app.plugin(
@@ -490,12 +490,12 @@ describe('初始化期间 required 依赖消失', () => {
         uses: { dependency, lifecycle },
         async apply({ dependency, lifecycle }) {
           applies++;
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             cleaned++;
           });
           entered.resolve();
           await gate.promise;
-          dependency.require();
+          dependency.use.value;
         },
       }),
     );

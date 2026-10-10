@@ -21,7 +21,7 @@ definePlugin({
   provides: [x],
   uses: { provide },
   apply({ provide }) {
-    provide(x, impl);
+    provide.use(x, impl);
   },
 });
 `;
@@ -35,7 +35,7 @@ definePlugin({
   provides: [x],
   uses: { provide },
   apply({ provide }) {
-    provide(x, { increment: (): string => 'x' }); // BAD
+    provide.use(x, { increment: (): string => 'x' }); // BAD
   },
 });
 `;
@@ -50,7 +50,7 @@ definePlugin({
   provides: [x],
   uses: { provide },
   apply({ provide }) {
-    provide('x', impl); // BAD
+    provide.use('x', impl); // BAD
   },
 });
 `;
@@ -119,7 +119,7 @@ definePlugin({
   provides: [x],
   uses: { provide },
   apply({ provide }) {
-    provide(y, { n: 1 });
+    provide.use(y, { n: 1 });
   },
 });
 `;
@@ -142,8 +142,8 @@ definePlugin({
         provides: [x],
         uses: { provide },
         apply({ provide }) {
-          provide(x, { n: 1 });
-          provide(y, { n: 2 });
+          provide.use(x, { n: 1 });
+          provide.use(y, { n: 2 });
         },
       }),
     );

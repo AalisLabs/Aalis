@@ -27,7 +27,7 @@ describe('recompute 深级联收敛（maxRounds 推导式上限）', () => {
         provides: [descs[0]],
         uses: { provide },
         apply({ provide }) {
-          provide(descs[0], { level: 0 });
+          provide.use(descs[0], { level: 0 });
         },
       }),
     );
@@ -40,7 +40,7 @@ describe('recompute 深级联收敛（maxRounds 推导式上限）', () => {
           provides: [cur],
           uses: { provide, prev },
           apply({ provide }) {
-            provide(cur, { level: i });
+            provide.use(cur, { level: i });
           },
         }),
       );

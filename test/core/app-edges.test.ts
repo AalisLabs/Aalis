@@ -97,8 +97,8 @@ describe('注入的 logger 出错', () => {
         uses: { provide, lifecycle },
         provides: [dep],
         apply({ provide, lifecycle }) {
-          provide(dep, {});
-          lifecycle.onDispose(() => void disposed++);
+          provide.use(dep, {});
+          lifecycle.use.onDispose(() => void disposed++);
         },
       });
       const broken = definePlugin({
@@ -156,10 +156,10 @@ describe('事件监听器抛错的告警', () => {
         name: 'bad-listener',
         uses: { events },
         apply({ events }) {
-          events.on('app:started', () => {
+          events.use.on('app:started', () => {
             throw boom;
           });
-          events.on('app:started', () => void reached.push('after'));
+          events.use.on('app:started', () => void reached.push('after'));
         },
       }),
     );
@@ -196,8 +196,8 @@ describe('App.restart', () => {
     const app = track(new App({ ...base(), logger: log }));
     const { events: bus } = app.bind({ events });
     const seen: string[] = [];
-    bus.on('app:restarting', () => void seen.push('restarting'));
-    bus.on('app:stopping', () => void seen.push('stopping'));
+    bus.use.on('app:restarting', () => void seen.push('restarting'));
+    bus.use.on('app:stopping', () => void seen.push('stopping'));
 
     expect(() => app.restart()).toThrow('App.restart() 不可用：未注入 restartStrategy。');
 
@@ -228,14 +228,14 @@ describe('App.restart', () => {
       }),
     );
     const { events: bus } = app.bind({ events });
-    bus.on('app:restarting', () => void order.push('restarting'));
-    bus.on('app:stopping', () => void order.push('stopping'));
+    bus.use.on('app:restarting', () => void order.push('restarting'));
+    bus.use.on('app:stopping', () => void order.push('stopping'));
     await app.plugin(
       definePlugin({
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(() => void order.push('disposed'));
+          lifecycle.use.onDispose(() => void order.push('disposed'));
         },
       }),
     );

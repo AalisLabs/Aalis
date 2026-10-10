@@ -40,11 +40,11 @@ describe('内置服务与第三方同一种登记', () => {
     const app = world();
     const host = app.bind({ provide, services });
     for (const name of [...BUILTINS, 'app', 'plugins']) {
-      expect(host.services.inspect(name), name).toEqual([
+      expect(host.services.use.inspect(name), name).toEqual([
         expect.objectContaining({ contextId: 'root', exclusive: true }),
       ]);
     }
-    expect(() => host.provide(events, () => ({}) as never)).toThrow('独占');
+    expect(() => host.provide.use(events, () => ({}) as never)).toThrow('独占');
   });
 
   it('只声明 services：动态查到的内置提供者凭自己的身份交出自己的门面，认不出的身份一律拒绝', async () => {
@@ -56,9 +56,9 @@ describe('内置服务与第三方同一种登记', () => {
         name: 'lookup',
         uses: { services, me: optional(me) },
         apply({ services, me }) {
-          ownId = services.get(lifecycle)!(me).id;
+          ownId = services.use.get(lifecycle)!(me.use).id;
           try {
-            services.get(events)!(Symbol('x'));
+            services.use.get(events)!(Symbol('x'));
           } catch (error) {
             unknown = error;
           }
@@ -79,7 +79,7 @@ describe('内置服务与第三方同一种登记', () => {
         name: 'p',
         uses: { services, events, me: optional(me) },
         apply({ services, me }) {
-          services.get(events)!(me).on('t:uniform:ping', () => {
+          services.use.get(events)!(me.use).on('t:uniform:ping', () => {
             hits++;
           });
         },
@@ -87,9 +87,9 @@ describe('内置服务与第三方同一种登记', () => {
     );
     await app.plugins.idle();
     const host = app.bind({ events });
-    await host.events.emit('t:uniform:ping');
+    await host.events.use.emit('t:uniform:ping');
     await app.plugins.unload('p');
-    await host.events.emit('t:uniform:ping');
+    await host.events.use.emit('t:uniform:ping');
     expect(hits).toBe(1);
   });
 });
@@ -100,21 +100,21 @@ describe('原语登记按身份整体切断，不逐条记清理链', () => {
     const S = defineService<{ v: number }>('t:uniform:s');
     const Mine = defineService<{ v: number }>('t:uniform:mine');
     const host = app.bind({ provide, services, events });
-    host.provide(S, { v: 1 });
+    host.provide.use(S, { v: 1 });
     const seen: string[] = [];
     await app.plugin(
       definePlugin({
         name: 'cut',
         uses: { events, provide, lifecycle, s: S },
         apply({ events, provide, lifecycle, s }) {
-          events.on('t:uniform:cut', () => void seen.push('handler fired'));
-          provide(Mine, { v: 2 });
+          events.use.on('t:uniform:cut', () => void seen.push('handler fired'));
+          provide.use(Mine, { v: 2 });
           const probe = (where: string) => {
-            void events.emit('t:uniform:cut');
-            seen.push(`${where} mine=${host.services.get(Mine) ? 'visible' : 'gone'}`);
+            void events.use.emit('t:uniform:cut');
+            seen.push(`${where} mine=${host.services.use.get(Mine) ? 'visible' : 'gone'}`);
           };
           s.follow(() => () => probe('follow-cleanup'));
-          lifecycle.onDispose(() => probe('onDispose'));
+          lifecycle.use.onDispose(() => probe('onDispose'));
         },
       }),
     );
@@ -128,7 +128,7 @@ describe('原语登记按身份整体切断，不逐条记清理链', () => {
     const S = defineService<{ v: number }>('t:uniform:manual');
     const gone: string[] = [];
     const host = app.bind({ events, services });
-    host.events.on('service:changed', name => void gone.push(name));
+    host.events.use.on('service:changed', name => void gone.push(name));
     let hits = 0;
     let off!: () => void;
     let offEvent!: () => void;
@@ -137,22 +137,22 @@ describe('原语登记按身份整体切断，不逐条记清理链', () => {
         name: 'manual',
         uses: { events, provide },
         apply({ events, provide }) {
-          off = provide(S, { v: 1 });
-          offEvent = events.on('t:uniform:manual', () => {
+          off = provide.use(S, { v: 1 });
+          offEvent = events.use.on('t:uniform:manual', () => {
             hits++;
           });
         },
       }),
     );
     await app.plugins.idle();
-    await host.events.emit('t:uniform:manual');
+    await host.events.use.emit('t:uniform:manual');
     offEvent();
-    await host.events.emit('t:uniform:manual');
+    await host.events.use.emit('t:uniform:manual');
     expect(hits).toBe(1);
-    expect(host.services.get(S)).toEqual({ v: 1 });
+    expect(host.services.use.get(S)).toEqual({ v: 1 });
     gone.length = 0;
     off();
-    expect(host.services.get(S)).toBeUndefined();
+    expect(host.services.use.get(S)).toBeUndefined();
     await Promise.resolve();
     expect(gone).toEqual([S.name]);
   });

@@ -52,14 +52,14 @@ describe('屏障监听器超时', () => {
         name: 'hanging-plugin',
         uses: { events },
         apply({ events }) {
-          events.on('app:ready', never);
-          events.on('app:ready', () => void ran.push('ready'));
+          events.use.on('app:ready', never);
+          events.use.on('app:ready', () => void ran.push('ready'));
         },
       }),
     );
     await w.app.plugins.idle();
-    w.host.events.on('app:started', never);
-    w.host.events.on('app:started', () => void ran.push('started'));
+    w.host.events.use.on('app:started', never);
+    w.host.events.use.on('app:started', () => void ran.push('started'));
     await within(w.app.start(), 2000, 'start');
     expect(ran).toEqual(['ready', 'started']);
     expect(w.warns.filter(text => text.includes('未返回'))).toEqual([
@@ -71,8 +71,8 @@ describe('屏障监听器超时', () => {
   it('app:stopping 的监听器不返回：stop 照常完成', async () => {
     const w = world();
     const ran: string[] = [];
-    w.host.events.on('app:stopping', never);
-    w.host.events.on('app:stopping', () => void ran.push('stopping'));
+    w.host.events.use.on('app:stopping', never);
+    w.host.events.use.on('app:stopping', () => void ran.push('stopping'));
     await within(w.app.stop(), 2000, 'stop');
     expect(ran).toEqual(['stopping']);
     expect(w.warns).toContain('事件 "app:stopping" 的监听器超过 30ms 未返回（来自 root），不再等待，继续后续步骤');
@@ -87,7 +87,7 @@ describe('屏障监听器超时', () => {
         },
       },
     });
-    w.host.events.on('app:restarting', never);
+    w.host.events.use.on('app:restarting', never);
     w.app.restart();
     for (let i = 0; i < 200 && !restarted; i++) await sleep(5);
     expect(restarted).toBe(true);
@@ -95,7 +95,7 @@ describe('屏障监听器超时', () => {
 
   it('超时之后才到的拒绝照常上报为监听器抛错', async () => {
     const w = world();
-    w.host.events.on('app:ready', async () => {
+    w.host.events.use.on('app:ready', async () => {
       await sleep(60);
       throw new Error('迟到的失败');
     });
@@ -107,11 +107,11 @@ describe('屏障监听器超时', () => {
   it('阈值为 0：屏障照旧逐个等到监听器返回，不告警', async () => {
     const w = world({ slowThresholdMs: 0 });
     const ran: string[] = [];
-    w.host.events.on('app:ready', async () => {
+    w.host.events.use.on('app:ready', async () => {
       await sleep(50);
       ran.push('slow');
     });
-    w.host.events.on('app:ready', () => void ran.push('next'));
+    w.host.events.use.on('app:ready', () => void ran.push('next'));
     await w.app.start();
     expect(ran).toEqual(['slow', 'next']);
     expect(w.warns).toEqual([]);

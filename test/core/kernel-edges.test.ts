@@ -103,13 +103,13 @@ describe('账本登记的旧退订句柄', () => {
   it('插件在 onDispose 里自行退订账本登记：拆卸时条目已同栈撤回，旧句柄无害返回、不产生告警', async () => {
     const { app, warnings } = world();
     const registry = new HubRegistry();
-    app.bind({ provide }).provide(hub, registry);
+    app.bind({ provide }).provide.use(hub, registry);
     await app.plugin(
       definePlugin({
         name: 'self-unsubscribe',
         uses: { hub, lifecycle },
         apply({ hub, lifecycle }) {
-          lifecycle.onDispose(hub.add('k', 'v'));
+          lifecycle.use.onDispose(hub.use.add('k', 'v'));
         },
       }),
     );
@@ -128,19 +128,19 @@ describe('ServiceContainer 偏好与独占登记', () => {
     const { app } = world();
     const Solo = defineService<{ v: number }>('__t:kernel-edges:solo');
     const host = app.bind({ provide, services, events });
-    host.provide(Solo, { v: 1 }, { exclusive: true });
+    host.provide.use(Solo, { v: 1 }, { exclusive: true });
     await tick();
     const changed: string[] = [];
-    host.events.on('service:changed', name => void changed.push(name));
+    host.events.use.on('service:changed', name => void changed.push(name));
 
-    expect(host.services.prefer(Solo, 'someone-else')).toBe(false);
-    expect(host.services.preferred(Solo)).toBeUndefined();
-    expect(host.services.get(Solo)?.v).toBe(1);
+    expect(host.services.use.prefer(Solo, 'someone-else')).toBe(false);
+    expect(host.services.use.preferred(Solo)).toBeUndefined();
+    expect(host.services.use.get(Solo)?.v).toBe(1);
     await tick();
     expect(changed, '被拒的偏好不发变更通知').toEqual([]);
 
-    expect(host.services.prefer(Solo, 'root')).toBe(true);
-    expect(host.services.preferred(Solo)).toBe('root');
+    expect(host.services.use.prefer(Solo, 'root')).toBe(true);
+    expect(host.services.use.preferred(Solo)).toBe('root');
     await tick();
     expect(changed).toEqual([Solo.name]);
   });
@@ -234,7 +234,7 @@ describe('registrar 换提供者重挂', () => {
     const { app, warnings } = world();
     const host = app.bind({ provide });
     const first = hub();
-    host.provide(Registry, first, { entryId: 'prov-1' });
+    host.provide.use(Registry, first, { entryId: 'prov-1' });
 
     let offB!: () => void;
     await app.plugin(
@@ -242,8 +242,8 @@ describe('registrar 换提供者重挂', () => {
         name: 'consumer',
         uses: { registry: Registry },
         apply({ registry }) {
-          registry.add({ key: 'a' });
-          offB = registry.add({ key: 'b' });
+          registry.use.add({ key: 'a' });
+          offB = registry.use.add({ key: 'b' });
         },
       }),
     );
@@ -253,7 +253,7 @@ describe('registrar 换提供者重挂', () => {
     const second = hub(item => {
       if (item.key === 'a') offB();
     });
-    host.provide(Registry, second, { priority: 1, entryId: 'prov-2' });
+    host.provide.use(Registry, second, { priority: 1, entryId: 'prov-2' });
     await tick();
 
     expect(first.values()).toEqual([]);

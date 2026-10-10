@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { BindingPort } from '../../packages/core/src/index.js';
+import type { BindingPort, ServiceSelection } from '../../packages/core/src/index.js';
 import { type App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
@@ -52,10 +52,10 @@ describe('评审 1：异步撤回时的提供者切换', () => {
     const gate = deferred();
     const a = makeHub(gate.promise);
     const b = makeHub();
-    host.provide(hub, a, { priority: 1, entryId: 'root/a' });
+    host.provide.use(hub, a, { priority: 1, entryId: 'root/a' });
     const activation = activationHost(app).create('consumer');
-    activationHost(app).bind(activation, { hub }).hub.register({ name: 'tool' });
-    host.provide(hub, b, { priority: 2, entryId: 'root/b' });
+    activationHost(app).bind(activation, { hub }).hub.use.register({ name: 'tool' });
+    host.provide.use(hub, b, { priority: 2, entryId: 'root/b' });
     await sleep(0);
     expect(b.list(), '新胜者上立即可用，不出现空窗').toEqual(['tool']);
     expect(a.list(), '旧撤回在飞：旧提供者上暂留，但它已不经容器解析可见').toEqual(['tool']);
@@ -77,13 +77,13 @@ describe('评审 2：同键替换失败', () => {
     const { app, host } = world();
     const a = makeHub();
     const b = makeHub();
-    host.provide(hub, a, { priority: 1, entryId: 'root/a' });
+    host.provide.use(hub, a, { priority: 1, entryId: 'root/a' });
     const activation = activationHost(app).create('consumer');
     const bound = activationHost(app).bind(activation, { hub }).hub;
-    bound.register({ name: 'tool' });
-    expect(() => bound.register({ name: 'tool', fail: true })).toThrow('registration rejected');
+    bound.use.register({ name: 'tool' });
+    expect(() => bound.use.register({ name: 'tool', fail: true })).toThrow('registration rejected');
     expect(a.list()).toEqual([]);
-    host.provide(hub, b, { priority: 2, entryId: 'root/b' });
+    host.provide.use(hub, b, { priority: 2, entryId: 'root/b' });
     await sleep(0);
     expect(b.list(), '账上不留旧条目').toEqual([]);
   });
@@ -99,7 +99,7 @@ describe('评审 3：port.track 与 registrar 同一清理契约', () => {
     const gate = deferred();
     let calls = 0;
     let finished = false;
-    const off = port.track(() => {
+    const off = port.use.track(() => {
       calls++;
       return gate.promise.then(() => {
         finished = true;
@@ -129,7 +129,7 @@ describe('评审 3：port.track 与 registrar 同一清理契约', () => {
     const onEscape = (err: unknown) => escaped.push(err);
     process.on('unhandledRejection', onEscape);
     try {
-      port.track(() => Promise.reject(new Error('boom')))();
+      port.use.track(() => Promise.reject(new Error('boom')))();
       await activation.disposeAsync();
       await sleep(10);
     } finally {
@@ -150,11 +150,11 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
     const { app, host } = world();
     const a: Sdk = { tag: 'a', closed: false };
     const b: Sdk = { tag: 'b', closed: false };
-    const offA = host.provide(sdk, a, { priority: 1, entryId: 'root/a' });
+    const offA = host.provide.use(sdk, a, { priority: 1, entryId: 'root/a' });
     const log: string[] = [];
     let applied = 0;
-    let cached!: Sdk;
-    let view!: { current: Sdk | undefined; require(): Sdk };
+    let stored!: Sdk;
+    let view!: ServiceSelection<Sdk>;
     const gate = deferred();
     await app.plugin(
       definePlugin({
@@ -163,7 +163,7 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
         apply({ sdk }) {
           applied++;
           view = sdk;
-          cached = sdk.require(); // 反面教材：缓存裸提供者，换人后就是失效引用——契约如此，由调用方负责
+          stored = sdk.use; // 业务句柄是活的，存起来也安全
           sdk.follow(provider => {
             log.push(`open:${provider.tag}`);
             return () => {
@@ -175,16 +175,15 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
       }),
     );
     await app.plugins.idle();
-    host.provide(sdk, b, { priority: 2, entryId: 'root/b' });
+    host.provide.use(sdk, b, { priority: 2, entryId: 'root/b' });
     await sleep(0);
     offA();
     a.closed = true;
     await sleep(0);
     expect(log).toEqual(['open:a', 'close:a', 'open:b']);
     expect(applied, '换人不重启插件').toBe(1);
-    expect(cached.closed, '缓存的裸引用已失效；重新 require() 才是当前值').toBe(true);
-    expect(view.current, '每次查询重新解析，不是绑定时的快照').toBe(b);
-    expect(view.require()).toBe(b);
+    expect(stored.tag, '存下来的 use 句柄每次访问重新解析，打到新的那一家').toBe('b');
+    expect(view.list().map(p => [p.id, p.selected])).toEqual([['root/b', true]]);
 
     let unloaded = false;
     const unloading = app.plugins.unload('stateful').then(() => {

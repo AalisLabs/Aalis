@@ -50,7 +50,6 @@ const RUNTIME_EXPORTS = [
   'parseInstanceId',
   'pluginsService',
   'provide',
-  'serviceRef',
   'services',
 ];
 
@@ -282,7 +281,7 @@ function activationViolations(source: string): string[] {
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const receiver = node.expression.expression.getText(file);
-      if (receiver === 'this.#services' && node.expression.name.text !== 'ownerOf') {
+      if (receiver === 'this.#services' && node.expression.name.text !== 'ownersOf') {
         violations.push(`激活记录只读取提供者身份，不执行服务操作 ${node.expression.name.text}`);
       }
     }

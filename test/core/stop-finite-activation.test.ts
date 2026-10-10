@@ -35,8 +35,8 @@ describe('有限 apply 与停机接管', () => {
         provides: [owned],
         async apply({ provide, lifecycle }) {
           live.add('resource');
-          provide(owned, { live });
-          lifecycle.onDispose(async () => {
+          provide.use(owned, { live });
+          lifecycle.use.onDispose(async () => {
             await Promise.resolve();
             cleanups++;
             live.clear();
@@ -58,7 +58,7 @@ describe('有限 apply 与停机接管', () => {
     expect(app.plugins.getPlugin('finite')?.state).toBe('activating');
     expect(app.plugins.getPlugin('next')?.state).toBe('pending');
     const lookup = app.bind({ services }).services;
-    expect(lookup.get(owned.name)).toBeDefined();
+    expect(lookup.use.get(owned.name)).toBeDefined();
     // 停机冻树时各激活交出的完成信号（joinPlan 的返回值），只在反例失败时由 finally 释放
     const planned: Array<() => void> = [];
     const joinPlan = Activation.prototype.joinPlan;
@@ -82,7 +82,7 @@ describe('有限 apply 与停机接管', () => {
       await registering;
       expect(cleanups).toBe(1);
       expect([...live]).toEqual([]);
-      expect(lookup.get(owned.name)).toBeUndefined();
+      expect(lookup.use.get(owned.name)).toBeUndefined();
       expect(pendingRan).toBe(false);
       const entry = app.plugins.getPlugin('finite') as PluginRecord;
       expect(entry.state).toBe('disposed');

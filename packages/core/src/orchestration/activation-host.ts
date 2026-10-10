@@ -1,5 +1,5 @@
 import { Activation } from './activation.js';
-import { createPort } from '../composition/binding.js';
+import { createSelection } from '../composition/binding.js';
 import { coreProviders, provide } from '../composition/core-services.js';
 import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
@@ -24,7 +24,7 @@ export class ActivationHost {
     // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余五项与第三方服务同走 provide
     runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
     const root = this.bind(this.root, { provide });
-    for (const [descriptor, provider] of providers.rest) root.provide(descriptor, provider, { exclusive: true });
+    for (const [descriptor, provider] of providers.rest) root.provide.use(descriptor, provider, { exclusive: true });
   }
 
   /** 插件激活：一律挂在根激活名下 */
@@ -69,12 +69,11 @@ export class ActivationHost {
       resources: activation.resources,
       services: this.runtime.services,
       events: this.runtime.events,
-      retainBinding: (name: string, pump: () => void) => activation.retainBinding(name, pump),
+      retainBinding: (owner: symbol, name: string, pump: () => void) => activation.retainBinding(owner, name, pump),
     };
     const caps: Record<string, unknown> = {};
     for (const [key, use] of Object.entries(uses)) {
-      const descriptor = isOptional(use) ? use.optional : use;
-      caps[key] = descriptor.bind(createPort(binding, descriptor.name, !isOptional(use)));
+      caps[key] = createSelection(binding, isOptional(use) ? use.optional : use, !isOptional(use));
     }
     return caps as BoundOf<U>;
   }

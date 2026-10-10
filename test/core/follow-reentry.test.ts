@@ -12,9 +12,9 @@ describe('follow 串行交接在旧清理同步改胜者时仍成立', () => {
     apps.push(app);
     const S = defineService<{ name: string }>('t:reentry:s');
     const host = app.bind({ provide, services });
-    host.provide(S, { name: 'A' }, { priority: 2, entryId: 'prov-a' });
-    host.provide(S, { name: 'B' }, { priority: 1, entryId: 'prov-b' });
-    host.provide(S, { name: 'C' }, { priority: 0, entryId: 'prov-c' });
+    host.provide.use(S, { name: 'A' }, { priority: 2, entryId: 'prov-a' });
+    host.provide.use(S, { name: 'B' }, { priority: 1, entryId: 'prov-b' });
+    host.provide.use(S, { name: 'C' }, { priority: 0, entryId: 'prov-c' });
     const log: string[] = [];
     let pending = 0;
     await app.plugin(
@@ -27,7 +27,7 @@ describe('follow 串行交接在旧清理同步改胜者时仍成立', () => {
             return () => {
               pending++;
               // 旧清理同步改胜者：重入的 pump 必须让步，等本次清理落定后再按新胜者挂
-              if (p.name === 'A') services.prefer(S, 'prov-c');
+              if (p.name === 'A') services.use.prefer(S, 'prov-c');
               return new Promise<void>(r => setTimeout(r, 10)).then(() => {
                 pending--;
               });
@@ -37,7 +37,7 @@ describe('follow 串行交接在旧清理同步改胜者时仍成立', () => {
       }),
     );
     await app.plugins.idle();
-    host.services.prefer(S, 'prov-b');
+    host.services.use.prefer(S, 'prov-b');
     await new Promise(r => setTimeout(r, 50));
     expect(log).toEqual(['attach A pending=0', 'attach C pending=0']);
   });

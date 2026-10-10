@@ -9,7 +9,7 @@ import {
   optional,
   type PluginDefinition,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
 } from '../../packages/core/src/index.js';
 
 // activating 窗口里的管理动作（unload / disable / bounce / updateConfig 撞上在飞 apply）
@@ -41,7 +41,7 @@ function makePlugin(
     uses: { lifecycle },
     apply({ lifecycle }) {
       state.applied.push(name);
-      lifecycle.onDispose(() => {
+      lifecycle.use.onDispose(() => {
         state.disposed.push(name);
       });
     },
@@ -72,7 +72,7 @@ describe('App plugin lifecycle', () => {
       uses: { lifecycle, mysvc },
       apply({ lifecycle }) {
         state.applied.push('consumer');
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           state.disposed.push('consumer');
         });
       },
@@ -82,7 +82,7 @@ describe('App plugin lifecycle', () => {
       provides: [mysvc],
       uses: { provide },
       apply({ provide }) {
-        provide(mysvc, { ok: true });
+        provide.use(mysvc, { ok: true });
         state.applied.push('provider');
       },
     });
@@ -136,9 +136,9 @@ describe('App plugin lifecycle', () => {
       reusable: true,
       uses: { lifecycle },
       apply({ lifecycle }) {
-        state.applied.push(lifecycle.id);
-        lifecycle.onDispose(() => {
-          state.disposed.push(lifecycle.id);
+        state.applied.push(lifecycle.use.id);
+        lifecycle.use.onDispose(() => {
+          state.disposed.push(lifecycle.use.id);
         });
       },
     });
@@ -186,7 +186,7 @@ describe('App plugin lifecycle', () => {
   it('optional 依赖不级联 bounce：下游每次查询拿到当前提供者', async () => {
     const { app } = makeApp();
     const eventsLog: string[] = [];
-    let svc!: ServiceRef<{ ok: boolean; tag?: string }>;
+    let svc!: ServiceSelection<{ ok: boolean; tag?: string }>;
 
     await app.plugin(
       definePlugin({
@@ -194,8 +194,8 @@ describe('App plugin lifecycle', () => {
         provides: [mysvc],
         uses: { provide, config },
         apply({ provide, config }) {
-          const tag = typeof config.tag === 'string' ? config.tag : 'v1';
-          provide(mysvc, { ok: true, tag });
+          const tag = typeof config.use.tag === 'string' ? config.use.tag : 'v1';
+          provide.use(mysvc, { ok: true, tag });
           eventsLog.push(`provider:apply:${tag}`);
         },
       }),
@@ -208,7 +208,7 @@ describe('App plugin lifecycle', () => {
         apply({ lifecycle, mysvc }) {
           svc = mysvc;
           eventsLog.push('consumer:apply');
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             eventsLog.push('consumer:dispose');
           });
         },
@@ -216,13 +216,13 @@ describe('App plugin lifecycle', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('svc-consumer')?.state).toBe('active');
-    expect(svc.current?.tag).toBe('v1');
+    expect(svc.use.tag).toBe('v1');
 
     await app.plugins.updateConfig('svc-provider', { tag: 'v2' });
     await app.plugins.idle();
 
     expect(eventsLog).not.toContain('consumer:dispose');
-    expect(svc.current?.tag).toBe('v2');
+    expect(svc.use.tag).toBe('v2');
   });
 
   it('updateConfig 在 active 时触发重激活', async () => {
@@ -233,8 +233,8 @@ describe('App plugin lifecycle', () => {
         name: 'rcfg',
         uses: { config, lifecycle },
         apply({ config, lifecycle }) {
-          log.push({ ...config });
-          lifecycle.onDispose(() => {
+          log.push({ ...config.use });
+          lifecycle.use.onDispose(() => {
             log.push({ disposed: true });
           });
         },
@@ -260,8 +260,8 @@ describe('App plugin lifecycle', () => {
         provides: [serviceA],
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(serviceA, { ping: () => 'pong' });
-          lifecycle.onDispose(() => {
+          provide.use(serviceA, { ping: () => 'pong' });
+          lifecycle.use.onDispose(() => {
             order.push('svc-A.dispose');
           });
         },
@@ -272,7 +272,7 @@ describe('App plugin lifecycle', () => {
         name: 'cons-B',
         uses: { lifecycle, serviceA },
         apply({ lifecycle }) {
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             order.push('cons-B.dispose');
           });
         },
@@ -295,8 +295,8 @@ describe('App plugin lifecycle', () => {
         provides: [shutdownSvc],
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(shutdownSvc, {});
-          lifecycle.onDispose(() => {
+          provide.use(shutdownSvc, {});
+          lifecycle.use.onDispose(() => {
             log.push('p-svc.dispose');
           });
         },
@@ -308,7 +308,7 @@ describe('App plugin lifecycle', () => {
         uses: { lifecycle, s: optional(shutdownSvc) },
         apply({ lifecycle }) {
           log.push('c-svc.apply');
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             log.push('c-svc.dispose');
           });
         },
@@ -332,7 +332,7 @@ describe('激活归因与级联', () => {
         name: 'observer',
         uses: { events },
         apply({ events }) {
-          events.on('plugin:loaded', name => {
+          events.use.on('plugin:loaded', name => {
             if (name === 'victim') throw new Error('旁观者爆炸');
           });
         },
@@ -354,9 +354,9 @@ describe('激活归因与级联', () => {
         provides: [mysvc],
         uses: { provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(mysvc, { ok: true });
+          provide.use(mysvc, { ok: true });
           state.applied.push('provider');
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             state.disposed.push('provider');
           });
         },
@@ -368,7 +368,7 @@ describe('激活归因与级联', () => {
         uses: { lifecycle, mysvc },
         apply({ lifecycle }) {
           state.applied.push('consumer');
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             state.disposed.push('consumer');
           });
         },
@@ -408,7 +408,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
         uses: { lifecycle },
         apply({ lifecycle }) {
           timeline.push(`apply(flushed=${flushed})`);
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             await sleep(15);
             flushed = true;
             timeline.push('flush-done');
@@ -432,7 +432,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
         name: 'persister',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             await sleep(10);
             persisted = true;
           });
@@ -449,7 +449,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     let rootCleaned = false;
-    app.bind({ lifecycle }).lifecycle.onDispose(async () => {
+    app.bind({ lifecycle }).lifecycle.use.onDispose(async () => {
       await sleep(10);
       rootCleaned = true;
     });

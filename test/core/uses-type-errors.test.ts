@@ -18,10 +18,10 @@ definePlugin({
   name: 'probe-inline',
   uses: { logger, events, lifecycle },
   apply(b) {
-    b.logger.info('x');
-    void b.events.on;
-    void b.lifecycle.onDispose;
-    const notAny: IsAny<typeof b.logger> = false;
+    b.logger.use.info('x');
+    void b.events.use.on;
+    void b.lifecycle.use.onDispose;
+    const notAny: IsAny<typeof b.logger.use> = false;
     void notAny;
   },
 });
@@ -29,8 +29,8 @@ definePlugin({
 const uses = { logger, events };
 type Caps = BoundOf<typeof uses>;
 function run(caps: Caps): void {
-  caps.logger.info('x');
-  void caps.events.on;
+  caps.logger.use.info('x');
+  void caps.events.use.on;
 }
 definePlugin({ name: 'probe-outer', uses, apply: run });
 `;
@@ -41,17 +41,17 @@ definePlugin({
   name: 'probe-inline',
   uses: { logger, oops: 42, events, lifecycle }, // BAD-INLINE
   apply(b) {
-    b.logger.info('x');
-    void b.events.on;
-    void b.lifecycle.onDispose;
+    b.logger.use.info('x');
+    void b.events.use.on;
+    void b.lifecycle.use.onDispose;
   },
 });
 
 const uses = { logger, events, bad: 'x' };
 type Caps = BoundOf<typeof uses>;
 function run(caps: Caps): void {
-  caps.logger.info('x');
-  void caps.events.on;
+  caps.logger.use.info('x');
+  void caps.events.use.on;
 }
 definePlugin({ name: 'probe-outer', uses, apply: run }); // BAD-OUTER
 `;

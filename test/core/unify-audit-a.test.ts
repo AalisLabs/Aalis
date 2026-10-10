@@ -64,13 +64,13 @@ const sinkPlugin = (w: World, descriptor: ReturnType<typeof defineService<Sink>>
     uses: { provide, lifecycle },
     apply({ provide, lifecycle }) {
       let closed = false;
-      provide(descriptor, {
+      provide.use(descriptor, {
         save(data) {
           if (closed) throw new Error(`${name} 已关闭`);
           w.saved.push(`${name}:${data}`);
         },
       });
-      lifecycle.onDispose(() => {
+      lifecycle.use.onDispose(() => {
         closed = true;
         w.log.push(`close:${name}`);
       });
@@ -84,7 +84,7 @@ describe('关停编排', () => {
     await w.app.plugin(sinkPlugin(w, store, 'store'));
     await w.app.plugins.idle();
     const host = w.app.bind({ store, lifecycle });
-    host.lifecycle.onDrain(() => host.store.require().save('host-last'));
+    host.lifecycle.use.onDrain(() => host.store.use.save('host-last'));
     await w.app.stop();
     expect(w.saved).toEqual(['store:host-last']);
   });
@@ -97,20 +97,20 @@ describe('关停编排', () => {
       const gatePlugin = definePlugin({
         name: 'gate',
         uses: { provide },
-        apply: ({ provide }) => void provide(gate, {}),
+        apply: ({ provide }) => void provide.use(gate, {}),
       });
       const memPlugin = definePlugin({
         name: 'mem',
         uses: { gate, provide, lifecycle },
         apply({ provide, lifecycle }) {
           let closed = false;
-          provide(mem, {
+          provide.use(mem, {
             save(data) {
               if (closed) throw new Error('mem 已关闭');
               w.saved.push(data);
             },
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
           });
         },
@@ -119,7 +119,7 @@ describe('关停编排', () => {
         name: 'agent',
         uses: { gate, mem: optional(mem), lifecycle },
         apply({ mem, lifecycle }) {
-          lifecycle.onDrain(() => mem.require().save('agent:last'));
+          lifecycle.use.onDrain(() => mem.use.save('agent:last'));
         },
       });
       await w.app.plugin(gatePlugin);
@@ -135,20 +135,20 @@ describe('关停编排', () => {
     const w = world();
     const gate = defineService<object>('zz-aa-cascade-gate');
     const mem = defineService<Sink>('zz-aa-cascade-mem');
-    const offGate = w.app.bind({ provide }).provide(gate, {});
+    const offGate = w.app.bind({ provide }).provide.use(gate, {});
     await w.app.plugin(
       definePlugin({
         name: 'mem',
         uses: { gate, provide, lifecycle },
         apply({ provide, lifecycle }) {
           let closed = false;
-          provide(mem, {
+          provide.use(mem, {
             save(data) {
               if (closed) throw new Error('mem 已关闭');
               w.saved.push(data);
             },
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
           });
         },
@@ -158,7 +158,7 @@ describe('关停编排', () => {
       definePlugin({
         name: 'agent',
         uses: { mem, lifecycle },
-        apply: ({ mem, lifecycle }) => void lifecycle.onDrain(() => mem.require().save('agent:last')),
+        apply: ({ mem, lifecycle }) => void lifecycle.use.onDrain(() => mem.use.save('agent:last')),
       }),
     );
     await w.app.plugins.idle();
@@ -172,7 +172,7 @@ describe('关停编排', () => {
     const w = world();
     const gate = defineService<object>('zz-aa-closing-gate');
     const mem = defineService<object>('zz-aa-closing-mem');
-    const offGate = w.app.bind({ provide }).provide(gate, {});
+    const offGate = w.app.bind({ provide }).provide.use(gate, {});
     const seen: boolean[] = [];
     const memPlugin = (name: string, priority: number, drainMs: number) =>
       definePlugin({
@@ -180,8 +180,8 @@ describe('关停编排', () => {
         provides: [mem],
         uses: { gate, provide, lifecycle },
         apply({ provide, lifecycle }) {
-          provide(mem, {}, { priority });
-          lifecycle.onDrain(() => sleep(drainMs));
+          provide.use(mem, {}, { priority });
+          lifecycle.use.onDrain(() => sleep(drainMs));
         },
       });
     await w.app.pluginAll([
@@ -191,7 +191,7 @@ describe('关停编排', () => {
         definition: definePlugin({
           name: 'agent',
           uses: { mem, lifecycle },
-          apply: ({ mem, lifecycle }) => void lifecycle.onDrain(() => void seen.push(mem.current !== undefined)),
+          apply: ({ mem, lifecycle }) => void lifecycle.use.onDrain(() => void seen.push(mem.present)),
         }),
       },
     ]);
@@ -217,9 +217,9 @@ describe('关停编排', () => {
         name: 'consumer',
         uses: { store, lifecycle },
         apply({ store, lifecycle }) {
-          lifecycle.onDrain(async () => {
+          lifecycle.use.onDrain(async () => {
             await gate.promise;
-            store.require().save('last');
+            store.use.save('last');
           });
         },
       }),
@@ -263,9 +263,9 @@ describe('等待业务交出来的 Promise', () => {
   ])('在飞清理永不落定（%s）：超时点名一次，后续各段不再重复计时', async (_, start) => {
     const w = world();
     const svc = defineService<unknown, BindingPort<unknown>>('zz-aa-stuck', port => port);
-    w.app.bind({ provide }).provide(svc, {});
+    w.app.bind({ provide }).provide.use(svc, {});
     const activation = activationHost(w.app).create('p');
-    start(activationHost(w.app).bind(activation, { port: svc }).port);
+    start(activationHost(w.app).bind(activation, { port: svc }).port.use);
     const started = Date.now();
     await activation.disposeAsync(60);
     const elapsed = Date.now() - started;
@@ -302,19 +302,19 @@ describe('注册账本', () => {
     const host = w.app.bind({ provide }).provide;
     const hubA = makeHub();
     const hubB = makeHub();
-    host(hub, hubA, { priority: 1, entryId: 'root/a' });
+    host.use(hub, hubA, { priority: 1, entryId: 'root/a' });
     let n = 0;
     await w.app.plugin(
       definePlugin({
         name: 'consumer',
         uses: { h: hub },
         apply({ h }) {
-          h.add({ name: 'x', onRegister: () => void h.add({ name: `y${++n}` }) });
+          h.use.add({ name: 'x', onRegister: () => void h.use.add({ name: `y${++n}` }) });
         },
       }),
     );
     await w.app.plugins.idle();
-    host(hub, hubB, { priority: 2, entryId: 'root/b' });
+    host.use(hub, hubB, { priority: 2, entryId: 'root/b' });
     await tick();
     const names = hubB.names();
     expect(new Set(names).size, `重复登记：${names}`).toBe(names.length);
@@ -368,7 +368,7 @@ describe('调度与类型面', () => {
     expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
     const { provide: publish } = w.app.bind({ provide });
     // 排查指引给文档站地址：npm 装的项目里没有仓库的 docs/ 目录
-    expect(() => publish(B.defineService('copy-svc'), {})).toThrow(
+    expect(() => publish.use(B.defineService('copy-svc'), {})).toThrow(
       'https://aalis.acenyan.com/guide/third-party-plugin#two-cores',
     );
   });

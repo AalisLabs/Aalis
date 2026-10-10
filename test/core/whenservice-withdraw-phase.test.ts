@@ -65,20 +65,20 @@ function makeApp() {
 describe('follow cleanup 走撤回段', () => {
   it('cleanup 先于 onDispose 执行，与登记先后无关', async () => {
     const { app, host } = makeApp();
-    host.provide(svcDesc, {});
+    host.provide.use(svcDesc, {});
     const order: string[] = [];
     await app.plugin(
       definePlugin({
         name: 'p',
         uses: { x: optional(svcDesc), lifecycle },
         apply({ x, lifecycle }) {
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             order.push('flush:early');
           });
           x.follow(() => () => {
             order.push('close');
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             order.push('flush:late');
           });
         },
@@ -93,7 +93,7 @@ describe('follow cleanup 走撤回段', () => {
   it('用户 onDispose 执行时，经 follow 交出的枢纽登记与 events.on 的监听同为已撤回', async () => {
     const { app, host } = makeApp();
     const hub = makeHub();
-    host.provide(hubDesc, hub);
+    host.provide.use(hubDesc, hub);
     let eventCalls = 0;
     const snapshots: string[][] = [];
     await app.plugin(
@@ -101,15 +101,15 @@ describe('follow cleanup 走撤回段', () => {
         name: 'p',
         uses: { hub: optional(hubDesc), events, lifecycle },
         apply({ hub: hubRef, events: ev, lifecycle }) {
-          hubRef.follow(svc => svc.register('my-item', lifecycle.id));
-          ev.on('__t:ws-withdraw-probe', () => {
+          hubRef.follow(svc => svc.register('my-item', lifecycle.use.id));
+          ev.use.on('__t:ws-withdraw-probe', () => {
             eventCalls++;
           });
-          lifecycle.onDispose(async () => {
-            await host.events.emit('__t:ws-withdraw-probe');
+          lifecycle.use.onDispose(async () => {
+            await host.events.use.emit('__t:ws-withdraw-probe');
             snapshots.push(hub.list());
           });
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             snapshots.push(hub.list());
           });
         },
@@ -125,19 +125,19 @@ describe('follow cleanup 走撤回段', () => {
 
   it('撤回段回调里登记的 onDispose 赶得上清理链，按逆序最先执行', async () => {
     const { app, host } = makeApp();
-    host.provide(svcDesc, {});
+    host.provide.use(svcDesc, {});
     const order: string[] = [];
     await app.plugin(
       definePlugin({
         name: 'p',
         uses: { x: optional(svcDesc), lifecycle },
         apply({ x, lifecycle }) {
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             order.push('cleanup:early');
           });
           x.follow(() => () => {
             order.push('withdraw');
-            lifecycle.onDispose(() => {
+            lifecycle.use.onDispose(() => {
               order.push('late');
             });
           });
@@ -152,14 +152,14 @@ describe('follow cleanup 走撤回段', () => {
 
   it('拆卸窗口内的服务事件不引爆 cleanup：子插件关闭摘掉提供者时，根的 cleanup 仍等到自己的撤回段', async () => {
     const { app, host } = makeApp();
-    host.provide(ownDesc, {});
+    host.provide.use(ownDesc, {});
     await app.plugin(
       definePlugin({
         name: 'child',
         uses: { provide },
         provides: [depDesc],
         apply({ provide: childPub }) {
-          childPub(depDesc, { id: 'child' });
+          childPub.use(depDesc, { id: 'child' });
         },
       }),
     );
@@ -169,7 +169,7 @@ describe('follow cleanup 走撤回段', () => {
     let ownVisibleAtCleanup: boolean | undefined;
     root.dep.follow(() => () => {
       // 撤回段跑在原语切断之后：根自己 provide 的服务此刻应已下线
-      ownVisibleAtCleanup = root.services.get(ownDesc) !== undefined;
+      ownVisibleAtCleanup = root.services.use.get(ownDesc) !== undefined;
     });
     // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
     await app.stop();
@@ -178,7 +178,7 @@ describe('follow cleanup 走撤回段', () => {
 
   it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {
     const { app, host } = makeApp();
-    const offDep = host.provide(depDesc, { id: 'old' });
+    const offDep = host.provide.use(depDesc, { id: 'old' });
     const attached: string[] = [];
     await app.plugin(
       definePlugin({
@@ -189,9 +189,9 @@ describe('follow cleanup 走撤回段', () => {
             attached.push(svc.id);
           });
           // 收尾段：本激活已进入关闭，跟随订阅尚未撤回
-          lifecycle.onDrain(async () => {
+          lifecycle.use.onDrain(async () => {
             offDep();
-            host.provide(depDesc, { id: 'new' });
+            host.provide.use(depDesc, { id: 'new' });
             await new Promise(r => setTimeout(r, 10));
           });
         },
@@ -205,7 +205,7 @@ describe('follow cleanup 走撤回段', () => {
 
   it('同一资源口复用一条撤回登记，手动退订的跟随者不再挂载', () => {
     const { app, host } = makeApp();
-    host.provide(svcDesc, {});
+    host.provide.use(svcDesc, {});
     const activation = activationHost(app).create('p');
     const ref = activationHost(app).bind(activation, { x: optional(svcDesc) }).x;
     const base = activation.resources.withdrawals.labels().length;
@@ -226,7 +226,7 @@ describe('follow cleanup 走撤回段', () => {
     const off2 = ref.follow(attach);
     off2();
     expect(activation.resources.withdrawals.labels().length, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
-    host.provide(svcDesc, {}, { priority: 9, entryId: 'root/new' });
+    host.provide.use(svcDesc, {}, { priority: 9, entryId: 'root/new' });
     expect({ attached, cleaned }, '已退订的跟随者不得响应后续胜者变化').toEqual({ attached: 2, cleaned: 2 });
   });
 });

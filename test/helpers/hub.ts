@@ -39,6 +39,6 @@ export const hub = defineService<HubRegistry, Hub>('__t:hub', port => {
   });
   return {
     add: (key, value) => ledger.add({ key, value }),
-    list: () => port.require().list(),
+    list: () => port.provider.list(),
   };
 });

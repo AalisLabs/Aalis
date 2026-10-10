@@ -28,11 +28,11 @@ describe('清理身份与逻辑身份分离', () => {
     const root = bindActivationFixture(host, host.root);
     const left = bindActivationFixture(root.host, root.host.create('dup'));
     const right = bindActivationFixture(root.host, root.host.create('dup'));
-    left.caps.provide(defineService('svc'), { who: 'L' });
-    right.caps.provide(defineService('svc'), { who: 'R' });
+    left.caps.provide.use(defineService('svc'), { who: 'L' });
+    right.caps.provide.use(defineService('svc'), { who: 'R' });
     await left.activation.disposeAsync();
-    expect(root.caps.services.all('svc')).toHaveLength(1);
-    expect(root.caps.services.get(defineService<{ who: string }>('svc'))?.who).toBe('R');
+    expect(root.caps.services.use.all('svc')).toHaveLength(1);
+    expect(root.caps.services.use.get(defineService<{ who: string }>('svc'))?.who).toBe('R');
   });
 
   it('同名 fork：拆左不清右（监听 / 账本登记）', async () => {
@@ -40,28 +40,28 @@ describe('清理身份与逻辑身份分离', () => {
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
     const registry = new HubRegistry();
-    root.caps.provide(hub, registry);
+    root.caps.provide.use(hub, registry);
     const left = bindActivationFixture(root.host, root.host.create('dup'));
     const right = bindActivationFixture(root.host, root.host.create('dup'));
     const leftHub = root.host.bind(left.activation, { hub }).hub;
     const rightHub = root.host.bind(right.activation, { hub }).hub;
     const seen: string[] = [];
     // 事件用真名（同 events-context-cut 的先例）：自造名会让 emit 的 rest 参数推成 never
-    left.caps.events.on('plugin:loaded', () => {
+    left.caps.events.use.on('plugin:loaded', () => {
       seen.push('L-evt');
     });
-    right.caps.events.on('plugin:loaded', () => {
+    right.caps.events.use.on('plugin:loaded', () => {
       seen.push('R-evt');
     });
-    leftHub.add('x', 'L');
-    rightHub.add('y', 'R');
+    leftHub.use.add('x', 'L');
+    rightHub.use.add('y', 'R');
     // 同键替换：同名兄弟登记同一局部键（全局键同为 dup/shared），后登记者顶替先登记者；左侧的迟到撤回不得删掉右侧的新占位
-    leftHub.add('shared', 'L');
-    rightHub.add('shared', 'R');
+    leftHub.use.add('shared', 'L');
+    rightHub.use.add('shared', 'R');
 
     await left.activation.disposeAsync();
 
-    await root.caps.events.emit('plugin:loaded', 'x');
+    await root.caps.events.use.emit('plugin:loaded', 'x');
     expect(seen).toEqual(['R-evt']);
     expect(registry.list()).toEqual(['dup/y=R', 'dup/shared=R']);
   });
@@ -71,16 +71,16 @@ describe('清理身份与逻辑身份分离', () => {
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
     const old = bindActivationFixture(root.host, root.host.create('again'));
-    old.caps.provide(defineService('svc'), { gen: 1 });
+    old.caps.provide.use(defineService('svc'), { gen: 1 });
     // 关闭一律异步：撤注册段在 disposeAsync() 返回之后才跑，新激活赶在它之前登记
     const closing = old.activation.disposeAsync();
 
     const fresh = bindActivationFixture(root.host, root.host.create('again'));
-    fresh.caps.provide(defineService('svc'), { gen: 2 });
+    fresh.caps.provide.use(defineService('svc'), { gen: 2 });
 
     await closing;
     expect(
-      root.caps.services.get(defineService<{ gen: number }>('svc'))?.gen,
+      root.caps.services.use.get(defineService<{ gen: number }>('svc'))?.gen,
       '旧 ctx 迟到的清理按 contextId 扫会把新激活的一并删掉',
     ).toBe(2);
   });
@@ -90,11 +90,11 @@ describe('清理身份与逻辑身份分离', () => {
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
     const p = bindActivationFixture(root.host, root.host.create('prov'));
-    p.caps.provide(defineService('llm'), { m: 'a' } as never, { entryId: 'prov/a' });
-    p.caps.provide(defineService('llm'), { m: 'b' } as never, { entryId: 'prov/b' });
-    expect(root.caps.services.all('llm')).toHaveLength(2);
+    p.caps.provide.use(defineService('llm'), { m: 'a' } as never, { entryId: 'prov/a' });
+    p.caps.provide.use(defineService('llm'), { m: 'b' } as never, { entryId: 'prov/b' });
+    expect(root.caps.services.use.all('llm')).toHaveLength(2);
     await p.activation.disposeAsync();
-    expect(root.caps.services.all('llm')).toHaveLength(0);
+    expect(root.caps.services.use.all('llm')).toHaveLength(0);
   });
 });
 
@@ -109,20 +109,20 @@ describe('监听登记按次计身份：同一函数对象不因共享而互相�
     }
     const left = bindActivationFixture(root.host, root.host.create('l'));
     const right = bindActivationFixture(root.host, root.host.create('r'));
-    const offLeft = left.caps.events.on('plugin:loaded', shared);
-    left.caps.events.on('plugin:loaded', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
-    right.caps.events.on('plugin:loaded', shared);
+    const offLeft = left.caps.events.use.on('plugin:loaded', shared);
+    left.caps.events.use.on('plugin:loaded', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
+    right.caps.events.use.on('plugin:loaded', shared);
 
     offLeft();
-    await root.caps.events.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('plugin:loaded', 'p');
     expect(calls, '退订只移除自己那条').toEqual(['hit', 'hit']);
 
     await left.activation.disposeAsync();
-    await root.caps.events.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('plugin:loaded', 'p');
     expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit', 'hit']);
 
     await right.activation.disposeAsync();
-    await root.caps.events.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('plugin:loaded', 'p');
     expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit', 'hit']);
   });
 });

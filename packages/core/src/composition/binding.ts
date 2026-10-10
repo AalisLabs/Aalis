@@ -1,19 +1,20 @@
 import { isThenable } from '../kernel/disposable-chain.js';
 
 import type { EventBus } from '../primitives/events.js';
-import type { ServiceContainer } from '../primitives/services.js';
+import type { ServiceContainer, ServiceEntry } from '../primitives/services.js';
 
-import type { BindingPort, FollowCleanup, Registrar } from './descriptors.js';
+import type { BindingPort, FollowCleanup, Registrar, ServiceDescriptor, ServiceSelection } from './descriptors.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
-// 只认框架为本次激活装配的 required 端口，optional / 动态查询 / 自造端口不借用重试资格。
+// 只认框架为本次激活装配的 required 依赖的 use 句柄；optional、of(id)、动态查询与自造端口不借用重试资格。
 class ServiceUnavailableError extends Error {
   override name = 'ServiceUnavailableError';
   readonly #origin: { resources: Resources; name: string } | undefined;
 
-  constructor(scope: BindingScope, name: string, required: boolean) {
-    super(`服务 "${name}" 不可用（"${scope.id}" 声明的依赖当前没有提供者）`);
+  constructor(scope: BindingScope, name: string, required: boolean, id: string | undefined) {
+    const missing = id === undefined ? '提供者' : ` "${id}" 这一家`;
+    super(`服务 "${name}" 不可用（"${scope.id}" 声明的依赖当前没有${missing}）`);
     this.#origin = required ? { resources: scope.resources, name } : undefined;
   }
 
@@ -24,7 +25,7 @@ class ServiceUnavailableError extends Error {
 }
 
 /**
- * 初始化失败归因：本次激活的 required 端口抛出的不可用错误，返回所缺的服务名；其余错误返回 undefined。
+ * 初始化失败归因：本次激活 required 依赖的 use 句柄抛出的不可用错误，返回所缺的服务名；其余错误返回 undefined。
  * 来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。
  * @internal
  */
@@ -38,30 +39,106 @@ export function missingRequiredService(
 
 /** 绑定只需要资源账与服务读取，不持有整个激活或插件管理器。 */
 interface BindingScope {
+  /** 消费方实例 id：本插件偏好认它 */
   readonly id: string;
   /** 清理归属：原语登记与关停边认它，不是逻辑 id */
   readonly owner: symbol;
   readonly logger: Logger;
   readonly resources: Resources;
-  readonly services: Pick<ServiceContainer, 'get' | 'getAll'>;
+  readonly services: Pick<ServiceContainer, 'version' | 'ranked'>;
   readonly events: EventBus;
-  /** 登记跟随边：提供者撤回时经 pump 就地驱动交接；释放时带上撤回的落定 */
-  retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void;
+  /** 登记跟随边：挂上的那一条归 owner 提供；提供者撤回时经 pump 就地驱动交接；释放时带上撤回的落定 */
+  retainBinding(owner: symbol, name: string, pump: () => void): (settling?: Promise<void>) => void;
 }
 
 /**
- * 为一次激活造某个服务的资源口
+ * 活句柄：每次访问成员都经 resolve 取当前实例，缺席时 resolve 同步抛错。then、symbol 键、toJSON 不转发：
+ * `await` 句柄不会把它当成 thenable，打印与序列化不触发解析。取到的方法在调用时才再解析，以真实实例作 this 调用，
+ * 用 # 私有字段的提供者才不会出错；属性在读取时解析。目标取 resolve 本身（一个函数），提供者是函数时句柄可直接调用。
+ */
+function forward<P>(resolve: () => P): P {
+  return new Proxy(resolve, {
+    get(_, key) {
+      if (typeof key === 'symbol' || key === 'then' || key === 'toJSON') return undefined;
+      const value = (resolve() as Record<string, unknown>)[key];
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        const self = resolve() as Record<string, (...args: unknown[]) => unknown>;
+        return Reflect.apply(self[key], self, args);
+      };
+    },
+    apply: (_, __, args) => Reflect.apply(resolve() as (...args: unknown[]) => unknown, undefined, args),
+  }) as P;
+}
+
+/**
+ * 为一次激活造某个服务的选择层（caps.xxx）
  * @internal
  */
-export function createPort<P>(scope: BindingScope, name: string, required: boolean): BindingPort<P> {
+export function createSelection<P, B>(
+  scope: BindingScope,
+  descriptor: ServiceDescriptor<P, B>,
+  required: boolean,
+): ServiceSelection<B> {
+  const targets = new Map<string | undefined, ReturnType<typeof createTarget<P, B>>>();
+  const target = (id?: string) => {
+    if (!targets.has(id)) targets.set(id, createTarget(scope, descriptor, required && id === undefined, id));
+    return targets.get(id)!;
+  };
+  const selected = target();
+  return {
+    list: () => {
+      const { entries, basis } = scope.services.ranked(descriptor.name, scope.id);
+      return entries.map((entry, i) => ({
+        id: entry.contextId,
+        label: entry.label,
+        priority: entry.priority,
+        selected: i === 0,
+        basis: i === 0 ? basis : undefined,
+        get use() {
+          return target(entry.contextId).business;
+        },
+      }));
+    },
+    use: selected.business,
+    of: id => target(id).business,
+    get present() {
+      return selected.current() !== undefined;
+    },
+    follow: attach => selected.follow(entry => attach(target(entry.contextId).business), false),
+  };
+}
+
+/**
+ * 一个目标：`use` 的是本插件选中的那一家（id 为 undefined），`of(id)` 的固定那一家。交出此刻对应的那一条（current）、
+ * 跟随它的入口（follow，overlap 见 Follower）与 bind 给它的业务句柄（business）
+ */
+function createTarget<P, B>(scope: BindingScope, descriptor: ServiceDescriptor<P, B>, required: boolean, id?: string) {
+  const { name } = descriptor;
   const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
-  // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
+  // 解析结果按容器版本缓存：登记、撤回、暂扣、偏好任何一项变了就作废，与 service:changed 同一批触发点
+  let cache: { version: number; entry: ServiceEntry | undefined } | undefined;
+  const current = (): ServiceEntry | undefined => {
+    const { version } = scope.services;
+    if (cache?.version !== version) {
+      const ranked = scope.services.ranked(name, scope.id).entries;
+      cache = { version, entry: id === undefined ? ranked[0] : ranked.find(entry => entry.contextId === id) };
+    }
+    return cache.entry;
+  };
+  const instance = (): P => {
+    const entry = current();
+    if (!entry) throw new ServiceUnavailableError(scope, name, required, id);
+    return entry.instance as P;
+  };
+
+  // 一个目标一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
-    attach(provider: P): FollowCleanup;
-    /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新实例（被动注册表）；它的清理逐条自行记账 */
+    attach(entry: ServiceEntry): FollowCleanup;
+    /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新的（被动注册表）；它的清理逐条自行记账 */
     overlap: boolean;
-    attached?: P;
+    attached?: ServiceEntry;
     cleanup?: () => unknown;
     /** 依赖边：挂上时登记，该次挂载的撤回落定后释放 */
     releaseEdge?: (settling?: Promise<void>) => void;
@@ -74,20 +151,20 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
   const followers = new Set<Follower>();
   let subscribed = false;
 
-  const desiredProvider = (follower: Follower): P | undefined =>
-    follower.cancelled || scope.resources.disposed ? undefined : scope.services.get<P>(name);
+  const desired = (follower: Follower): ServiceEntry | undefined =>
+    follower.cancelled || scope.resources.disposed ? undefined : current();
 
-  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
+  /** 让一个跟随者向「当前应挂的那一条」收敛；任何状态变化后都调它 */
   const pump = (follower: Follower): void => {
     if (follower.busy || follower.attaching) return;
-    let desired = desiredProvider(follower);
-    if (follower.attached !== undefined && follower.attached !== desired) {
+    let next = desired(follower);
+    if (follower.attached !== undefined && follower.attached !== next) {
       const cleanup = follower.cleanup;
       const releaseEdge = follower.releaseEdge;
       follower.attached = undefined;
       follower.cleanup = undefined;
       follower.releaseEdge = undefined;
-      // 旧清理同步段内的重入 pump 让步：它可能同步改胜者，新实例须等本次收敛决定
+      // 旧清理同步段内的重入 pump 让步：它可能同步改选择，新的一家须等本次收敛决定
       follower.busy = true;
       // 注册账本交回的聚合只为依赖边，不再记一次账
       const pending = cleanup && (follower.overlap ? cleanup() : withdraw(cleanup, name));
@@ -109,14 +186,14 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
         return;
       }
     }
-    // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的胜者继续挂载。
-    desired = desiredProvider(follower);
-    if (follower.attached === undefined && desired !== undefined) {
-      follower.attached = desired;
-      follower.releaseEdge = scope.retainBinding(name, () => pump(follower));
+    // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的选择继续挂载。
+    next = desired(follower);
+    if (follower.attached === undefined && next !== undefined) {
+      follower.attached = next;
+      follower.releaseEdge = scope.retainBinding(next.owner, name, () => pump(follower));
       follower.attaching = true;
       try {
-        const ret: unknown = follower.attach(desired);
+        const ret: unknown = follower.attach(next);
         if (typeof ret === 'function') {
           follower.cleanup = ret as () => unknown;
         } else if (isThenable(ret)) {
@@ -132,8 +209,7 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
         follower.attaching = false;
       }
       // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
-      if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
-        pump(follower);
+      if (follower.cancelled || scope.resources.disposed || follower.attached !== desired(follower)) pump(follower);
     }
   };
 
@@ -141,7 +217,7 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
     for (const follower of [...followers]) pump(follower);
   };
 
-  // 胜者可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
+  // 选择可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
   const subscribe = (): void => {
     subscribed = true;
     const off = scope.events.on('service:changed', service => {
@@ -176,14 +252,8 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
     id: scope.id,
     identity: scope.owner,
     logger: scope.logger,
-    current: () => scope.services.get<P>(name),
-    require() {
-      const provider = scope.services.get<P>(name);
-      if (provider === undefined) throw new ServiceUnavailableError(scope, name, required);
-      return provider;
-    },
-    all: () => scope.services.getAll<P>(name),
-    follow: attach => follow(attach, false),
+    provider: forward(instance),
+    follow: attach => follow(entry => attach(entry.instance as P), false),
     track: (off, label) => scope.resources.track(off, label ?? name),
     registrar<Item>(options: {
       key(item: Item): string;
@@ -211,15 +281,16 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
 
       // 账本创建即跟随：同口多账本的重挂次序 = 创建次序（如分组先于工具），不取决于谁先被登记。
       // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径
-      follow(target => {
+      follow(entry => {
+        const target = entry.instance as P;
         provider = target;
         // 按键再取当前 Entry：register 回调里重入 add 会换掉 map 里的对象，
         // 快照里的旧 Entry 再挂一次就是账外孤儿。新 Entry 已就地登记则 attachOne 跳过。
         for (const key of [...entries.keys()]) {
-          const entry = entries.get(key);
-          if (!entry) continue;
+          const item = entries.get(key);
+          if (!item) continue;
           try {
-            attachOne(target, entry, key);
+            attachOne(target, item, key);
           } catch (err) {
             // 单条失败不拖垮同批：当前条目留在账上，下次提供者变更时重试
             scope.logger.warn(`${name} 登记 "${key}" 失败（保留待重试）:`, err);
@@ -228,9 +299,9 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
         return () => {
           provider = undefined;
           const pending: PromiseLike<unknown>[] = [];
-          for (const [key, entry] of entries) {
-            const off = entry.off;
-            entry.off = undefined;
+          for (const [key, item] of entries) {
+            const off = item.off;
+            item.off = undefined;
             const result = off ? withdraw(off, `${name} "${key}"`) : undefined;
             if (result) pending.push(result);
           }
@@ -276,5 +347,5 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
       };
     },
   };
-  return port;
+  return { current, follow, business: descriptor.bind(port) };
 }
