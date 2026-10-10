@@ -170,13 +170,11 @@ export function coreProviders(
     if (!accepts(c, `provide("${name}")`)) return () => {};
     assertOwnCopy(descriptor, 'provide 的描述符');
     const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
-    // dev 劝告：同一激活以同一逻辑身份重复登记同一服务，按 contextId 路由与设偏好只能命中其中一条
     if (runtime.devMode && options?.onBehalfOf === undefined && container.hasEntry(name, entryId, c.owner))
       c.logger.warn(
         `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
           `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,
       );
-    // 服务身份是名字：同名的另一个描述符对象照常登记，只提醒（契约撞名或同一 api 包装了两份）
     const rival = container.rivalOf(name, descriptor);
     if (rival !== undefined)
       c.logger.warn(

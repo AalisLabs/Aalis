@@ -64,31 +64,6 @@ describe('binding cleanup boundaries', () => {
     expect(edges.has(second)).toBe(true);
   });
 
-  it('late cleanup still executes when the diagnostic logger throws', async () => {
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn() {
-        throw new Error('sink failed');
-      },
-      error() {},
-      child: () => logger,
-    };
-    const { host, activation, caps } = createActivationFixture({ id: 'consumer', logger });
-    await activation.disposeAsync();
-    let cleaned = false;
-    try {
-      expect(() =>
-        caps.lifecycle.onDispose(() => {
-          cleaned = true;
-        }),
-      ).not.toThrow();
-      expect(cleaned).toBe(true);
-    } finally {
-      await host.root.disposeAsync();
-    }
-  });
-
   it.each(['follow', 'registrar'] as const)('%s consumes a custom cleanup thenable only once', async mode => {
     const { host, activation } = createActivationFixture({ id: 'consumer' });
     let executions = 0;

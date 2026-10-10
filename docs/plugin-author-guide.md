@@ -478,7 +478,7 @@ cell.innerHTML = member.nickname;
 | 加载器接受具名导出与函数 default | 只认 `export default definePlugin({…})`；其它形状 warn 并跳过 |
 | `App` 上的公开 Context | `app.plugin` / `app.bind` / `app.config` / `app.plugins` / 四注册表 |
 | 公开条目 `module` / `requiredDeps` | `definition` / `required` / `optional`（服务名数组）；不含内部激活记录 |
-| `onBehalfOf` 是否计入代理人提供表 | 计入：`provides` 按登记的激活核对 |
+| `onBehalfOf` 是否计入代理人提供表 | 归属被代者，不计入代理人 `provides` |
 
 ---
 

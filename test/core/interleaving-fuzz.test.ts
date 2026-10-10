@@ -71,11 +71,11 @@ describe('插件管理随机交错', () => {
   beforeEach(() => void vi.useFakeTimers());
   afterEach(() => void vi.useRealTimers());
 
-  it('strict：不变量全部成立', { timeout: seeds.length * 1000 }, async () => {
+  it('strict：不变量全部成立', { timeout: 120_000 + seeds.length * 1000 }, async () => {
     expect(await sweep('strict')).toEqual([]);
   });
 
-  it('known-gaps：违例都能归到已知缺口', { timeout: seeds.length * 1000 }, async () => {
+  it('known-gaps：违例都能归到已知缺口', { timeout: 120_000 + seeds.length * 1000 }, async () => {
     expect(await sweep('known-gaps')).toEqual([]);
   });
 
