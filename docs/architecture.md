@@ -254,14 +254,9 @@ disabled ←─(手动禁用)─ active
   └─(手动启用)─→ pending → ...
 ```
 
-### 统一状态机：`recompute(kind)`
+### 统一状态机：`recompute()`
 
-PluginManager 只有一个外部可见的状态变更入口：`recompute(kind)`。种类只有 `'changed' | 'shutdown'`。所有生命周期路径（服务注册/移除、启用/禁用、配置更新、bounce、关机）都汇入同一状态机。
-
-| kind | 触发场景 |
-|---|---|
-| `changed` | `service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce、转入后台的激活落定 |
-| `shutdown` | `App.stop()` 经 `stopAll()` |
+PluginManager 只有一个外部可见的状态变更入口：`recompute()`。`service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce、转入后台的激活落定都汇入同一状态机。关机不经它：`App.stop()` 先冻好一张停机计划，`stopAll()` 执行它。
 
 optional 上下线与胜者替换不改变目标态，不级联 bounce。有状态接线走 `ServiceRef.follow`。
 
@@ -270,7 +265,7 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 每轮 recompute 先按 provider→consumer 拓扑排序（Kahn，同时就绪者按登记序），然后：
 
 1. **Phase A 成批关闭**：本轮目标不再是 active 的（含 required 依赖已不在、仍在后台初始化的），它们之间的次序由关停编排按实际绑定决定。
-2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。单个激活至多等 `AppOptions.slowThresholdMs`（默认 60000），超过即 warn 点名、转入后台，接着激活后面的插件；后台期间它登记的服务不对外，依赖方保持 pending，它落定后另触发一次重算。
+2. **Phase B 正向遍历 activate**：提供者先于消费者 active。单个激活至多等 `AppOptions.slowThresholdMs`（默认 60000），超过即 warn 点名、转入后台，接着激活后面的插件；后台期间它登记的服务不对外，依赖方保持 pending，它落定后另触发一次重算。
 
 如本轮有变动则进入下一轮，直到稳定或达到轮次上限（`maxRounds = 2×插件数 + 8`）。
 

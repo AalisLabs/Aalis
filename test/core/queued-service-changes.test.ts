@@ -306,12 +306,11 @@ describe('排队的服务下线变化', () => {
     const busy = await pause(phase);
 
     remove();
-    await (app.plugins as PluginManager).stopAll();
-    await (app.plugins as PluginManager).recompute();
+    const stopping = app.stop();
     expect(await app.plugins.bounce('consumer'), '停机后拒绝重建').toBe(false);
     busy.release();
     await busy.done;
-    await app.plugins.idle();
+    await stopping;
 
     expect(state.applies).toBe(1);
     expect(state.disposes).toBe(1);
