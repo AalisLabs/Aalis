@@ -1,3 +1,5 @@
+import { isThenable } from '../kernel/disposable-chain.js';
+
 import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer } from '../primitives/services.js';
 
@@ -47,10 +49,6 @@ interface BindingScope {
   retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void;
 }
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function';
-}
-
 /**
  * 为一次激活造某个服务的资源口
  * @internal
@@ -61,7 +59,7 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
   // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
     attach(provider: P): FollowCleanup;
-    /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新实例（被动注册表） */
+    /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新实例（被动注册表）；它的清理逐条自行记账 */
     overlap: boolean;
     attached?: P;
     cleanup?: () => unknown;
@@ -91,10 +89,11 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
       follower.releaseEdge = undefined;
       // 旧清理同步段内的重入 pump 让步：它可能同步改胜者，新实例须等本次收敛决定
       follower.busy = true;
-      const pending = cleanup ? withdraw(cleanup, name) : undefined;
+      // 注册账本交回的聚合只为依赖边，不再记一次账
+      const pending = cleanup && (follower.overlap ? cleanup() : withdraw(cleanup, name));
       follower.busy = false;
       // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边；提供者撤回段等它
-      const settled = pending
+      const settled = isThenable(pending)
         ? Promise.resolve(pending).then(
             () => undefined,
             () => undefined,

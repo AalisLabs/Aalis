@@ -1,4 +1,4 @@
-import { awaitWithTimeout, DisposableChain } from '../kernel/disposable-chain.js';
+import { awaitWithTimeout, DisposableChain, isThenable } from '../kernel/disposable-chain.js';
 
 import type { Logger } from './logger.js';
 
@@ -185,30 +185,21 @@ export class Resources {
     }
   }
 
-  /** 一次性撤回；手动开始的异步清理也纳入这次激活的关闭。 */
+  /** 一次性撤回；异步部分与 follow / registrar 一样只进在飞账，在段收口等一次（手动开始的也纳入这次激活的关闭） */
   track(off: () => unknown, label: string): () => void {
     let started = false;
-    let result: PromiseLike<unknown> | undefined;
-    const run = (): PromiseLike<unknown> | undefined => {
-      if (!started) {
-        started = true;
-        result = this.withdraw(off, label);
-      }
-      return result;
-    };
-    const dispose = this.trackWithdrawal(run, label);
-    return () => {
+    return this.trackWithdrawal(() => {
       if (started) return;
-      this.withdrawals.remove(dispose);
-      run();
-    };
+      started = true;
+      this.withdraw(off, label);
+    }, label);
   }
 
   /** 清理异常就地隔离；异步拒绝被观察，并在段收口等待。 */
   withdraw(off: () => unknown, label: string): PromiseLike<unknown> | undefined {
     try {
       const result = off();
-      if (typeof (result as PromiseLike<unknown> | undefined)?.then !== 'function') return undefined;
+      if (!isThenable(result)) return undefined;
       const pending = Promise.resolve(result);
       this.holdInflight(pending, label);
       return pending;
