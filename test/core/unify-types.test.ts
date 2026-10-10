@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
 import {
   App,
@@ -9,7 +8,7 @@ import {
   optional,
   type PluginDefinition,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
 } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -23,17 +22,25 @@ interface KvService {
 }
 const kv = defineService<KvService>('zz-kv');
 
-/** 第三方自定义门面：同时长得像 ServiceRef（current / require）又带自己的成员 */
-interface Hybrid {
-  readonly current: string | undefined;
-  require(): string;
+/** 登记型契约：业务层由绑定给出，登记口不带归属参数 */
+interface Registry {
+  register(item: string, owner: string): () => void;
+}
+interface BoundRegistry {
   register(item: string): () => void;
 }
-const hybrid = defineService<unknown, Hybrid>('zz-hybrid', () => ({
-  current: undefined,
-  require: () => '',
-  register: () => () => {},
-}));
+const registry = defineService<Registry, BoundRegistry>('zz-registry', port => {
+  const ledger = port.registrar<string>({ key: item => item, register: (hub, item) => hub.register(item, port.id) });
+  return { register: item => ledger.add(item) };
+});
+
+/** 契约的成员恰好与选择层同名：它们只在业务层 */
+interface Hybrid {
+  readonly current: string | undefined;
+  list(): string[];
+  use: number;
+}
+const hybrid = defineService<Hybrid>('zz-hybrid');
 
 describe('uses → apply 的类型推导', () => {
   const apps: App[] = [];
@@ -41,45 +48,51 @@ describe('uses → apply 的类型推导', () => {
     for (const app of apps.splice(0)) await app.stop().catch(() => {});
   });
 
-  it('声明即得；未声明不可见；required 与 optional 同一接口；提供者按描述符约束', async () => {
+  it('声明即得；未声明不可见；required 与 optional 同一选择层；业务层按描述符推导', async () => {
     const plugin = definePlugin({
       name: 'typed',
-      uses: { kv, maybe: optional(kv), tools, provide, logger, hybrid: optional(hybrid) },
+      uses: { kv, maybe: optional(kv), registry, provide, logger, hybrid: optional(hybrid) },
       apply(caps) {
-        const n: number | undefined = caps.kv.require().get('a');
-        caps.logger.info(String(n));
-        caps.tools.register({
-          definition: {
-            type: 'function',
-            function: { name: 'x', description: '', parameters: { type: 'object', properties: {} } },
-          },
-          handler: async () => '',
-        });
+        const n: number | undefined = caps.kv.use.get('a');
+        caps.logger.use.info(String(n));
+        caps.registry.use.register('x');
+        // @ts-expect-error 业务层的登记口不接受归属参数：拿不到原始枢纽
+        caps.registry.use.register('x', 'someone-else');
 
-        // optional 与 required 是同一个 ServiceRef：require() 合法（缺席时运行期抛错），follow 可用
-        const ref: ServiceRef<KvService> = caps.maybe;
+        // optional 与 required 是同一个选择层；use、of 与 list() 条目的 use 都是业务层类型
+        const selection: ServiceSelection<KvService> = caps.maybe;
+        const handles: KvService[] = [selection.use, selection.of('x'), ...selection.list().map(p => p.use)];
+        const bound: BoundRegistry[] = [caps.registry.use, caps.registry.of('x'), caps.registry.list()[0].use];
+        const present: boolean = selection.present;
+        void [handles, bound, present];
         // 不需要清理的 attach 不必显式 return
-        ref.follow(provider => {
-          provider.get('a');
+        selection.follow(handle => {
+          handle.get('a');
         });
-        ref.follow(provider => () => provider.get('a'));
+        selection.follow(handle => () => handle.get('a'));
         // @ts-expect-error attach 必须同步：async 回调的清理无处可取，类型上就拒掉
-        ref.follow(async provider => {
-          provider.get('a');
+        selection.follow(async handle => {
+          handle.get('a');
         });
-        // 注册型门面与调用型同一套读面：tools 也有 require / all / follow
-        const toolsRef: ServiceRef<ToolService> = caps.tools;
-        toolsRef.all();
-        caps.maybe.require();
-        caps.maybe.current?.get('a');
-        // @ts-expect-error current 可能是 undefined，未判空不得直接用
-        caps.maybe.current.get('a');
-        // @ts-expect-error required 的 current 同样可能为空
-        caps.kv.current.get('a');
 
-        // 第三方门面经 optional 后不丢成员
-        caps.hybrid.register('x');
-        caps.hybrid.require();
+        // 选择层成员由 core 定、契约覆盖不了：同名成员只在业务层
+        const names: string[] = caps.hybrid.use.list();
+        const count: number = caps.hybrid.use.use;
+        void [names, count, caps.hybrid.use.current];
+        // @ts-expect-error 选择层的 list 列的是提供者，不是契约的 list
+        const wrong: string[] = caps.hybrid.list();
+        void wrong;
+        // 选择层没有旧写法，也没有写偏好的操作
+        // @ts-expect-error 没有 current
+        void caps.kv.current;
+        // @ts-expect-error 没有 require
+        caps.kv.require();
+        // @ts-expect-error 没有 all
+        caps.kv.all();
+        // @ts-expect-error 偏好只经管理面设
+        caps.kv.prefer('x');
+        // @ts-expect-error 偏好只经管理面设
+        caps.kv.unprefer();
 
         // 未声明的能力不可见——包括内置的
         // @ts-expect-error events 未写进 uses
@@ -88,13 +101,9 @@ describe('uses → apply 的类型推导', () => {
         caps.lifecycle;
 
         // 提供者实现必须符合描述符的提供者类型
-        caps.provide(kv, { get: () => 1 });
+        caps.provide.use(kv, { get: () => 1 });
         // @ts-expect-error 错误的提供者形状
-        caps.provide(kv, { fetch: () => 1 });
-
-        // 绑定接口不是提供者：拿不到原始枢纽带归属参数的登记口
-        // @ts-expect-error 绑定门面的 register 不接受 contextId
-        caps.tools.register({} as never, 'someone-else');
+        caps.provide.use(kv, { fetch: () => 1 });
       },
     });
     const app = new App({ name: 'T', logLevel: 'error' });
@@ -103,8 +112,8 @@ describe('uses → apply 的类型推导', () => {
     await app.plugins.idle();
     const entry = app.plugins.getPlugin('typed');
     // 登记时已写入依赖表；全部服务（含 provide / logger）都进同一激活闸。
-    // 本用例不提供 zz-kv / tools，插件保持 pending——钉的是条目上的服务名数组，不是 apply 是否跑过。
-    expect(entry?.required, '所有服务统一参与激活闸').toEqual(['zz-kv', 'tools', 'provide', 'logger']);
+    // 本用例不提供 zz-kv / zz-registry，插件保持 pending——钉的是条目上的服务名数组，不是 apply 是否跑过。
+    expect(entry?.required, '所有服务统一参与激活闸').toEqual(['zz-kv', 'zz-registry', 'provide', 'logger']);
     expect(entry?.optional).toEqual(['zz-kv', 'zz-hybrid']);
     expect(entry?.state).toBe('pending');
 
@@ -113,7 +122,7 @@ describe('uses → apply 的类型推导', () => {
       definePlugin({
         name: 'bad',
         // @ts-expect-error 字符串不是描述符
-        uses: { tools: 'tools' },
+        uses: { kv: 'zz-kv' },
         apply() {},
       }),
     ).toThrow('不是服务描述符');

@@ -26,8 +26,8 @@ describe('绑定口的 all()', () => {
     const svc = defineService<{ id: string }>('__t:surface-all');
     const app = track(new App({ name: 'T', logLevel: 'error' }));
     const host = app.bind({ provide });
-    host.provide(svc, { id: 'low' }, { entryId: 'root/low' });
-    host.provide(svc, { id: 'high' }, { priority: 5, entryId: 'root/high' });
+    host.provide.use(svc, { id: 'low' }, { entryId: 'root/low' });
+    host.provide.use(svc, { id: 'high' }, { priority: 5, entryId: 'root/high' });
     let seen: { required: string[]; optional: string[] } | undefined;
     await app.plugin(
       definePlugin({
@@ -35,8 +35,8 @@ describe('绑定口的 all()', () => {
         uses: { must: svc, maybe: optional(svc) },
         apply({ must, maybe }) {
           seen = {
-            required: must.all().map(view => view.instance.id),
-            optional: maybe.all().map(view => view.instance.id),
+            required: must.list().map(p => p.use.id),
+            optional: maybe.list().map(p => p.use.id),
           };
         },
       }),
@@ -75,8 +75,8 @@ describe('provide 的登记日志', () => {
           uses: { provide },
           provides: [svc],
           apply({ provide }) {
-            provide(svc, { id: 'a' }, { entryId: 'multi/a' });
-            provide(svc, { id: 'b' }, { entryId: 'multi/b' });
+            provide.use(svc, { id: 'a' }, { entryId: 'multi/a' });
+            provide.use(svc, { id: 'b' }, { entryId: 'multi/b' });
           },
         }),
       },
@@ -85,7 +85,7 @@ describe('provide 的登记日志', () => {
           name: 'single',
           uses: { provide },
           provides: [svc],
-          apply: ({ provide }) => void provide(svc, { id: 'single' }),
+          apply: ({ provide }) => void provide.use(svc, { id: 'single' }),
         }),
       },
     ]);
@@ -102,6 +102,6 @@ describe('插件管理服务的快照', () => {
   it('getPlugin 查不到的实例返回 undefined，不抛', () => {
     const app = track(new App({ name: 'T', logLevel: 'error' }));
     const { plugins } = app.bind({ plugins: pluginsService });
-    expect(plugins.require().getPlugin('nope')).toBeUndefined();
+    expect(plugins.use.getPlugin('nope')).toBeUndefined();
   });
 });

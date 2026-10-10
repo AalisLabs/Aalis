@@ -99,7 +99,7 @@ export async function retireBatch(
 
 /**
  * required 依赖此刻是否都有提供者：Phase B 激活 pending 条目的判据（Phase A 的退场另按 survives 判）。optional 依赖的
- * 上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 follow 跟随提供者换人，不靠重启插件。
+ * 上下线不改变目标态：业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人，不靠重启插件。
  */
 export function requiredSatisfied(entry: PluginRecord, services: ServiceContainer): boolean {
   return entry.required.every(name => services.get(name) !== undefined);
@@ -111,7 +111,7 @@ export function requiredSatisfied(entry: PluginRecord, services: ServiceContaine
  * 本次 required 引用缺席：记一次重试（deps.spendRetry），清理失败激活后回到 pending，并让重算继续观察可能已恢复的
  * 依赖；重试余额用尽则转 error。其余失败转为 error 态（带 message），外层 recompute 不会重试。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
- * 旧激活已清，required 依赖都有提供者且胜者都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
+ * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {

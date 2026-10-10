@@ -132,7 +132,7 @@ describe('unload 的返回值', () => {
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(() => gate);
+          lifecycle.use.onDispose(() => gate);
         },
       }),
     );
@@ -179,7 +179,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
     const seen: unknown[] = [];
     await app.plugins.register(
-      definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.v) }),
+      definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.use.v) }),
       { v: 1 },
     );
     await app.plugins.idle();
@@ -203,7 +203,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const app = silentApp();
     await app.plugins.register(plugin('p'), { v: 1 }, undefined, { disabled: true });
     let bounced: boolean | undefined;
-    app.bind({ events }).events.on('app:stopping', async () => {
+    app.bind({ events }).events.use.on('app:stopping', async () => {
       bounced = await app.plugins.bounce('p', { config: { v: 2 } });
     });
     await app.stop();
@@ -241,7 +241,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.onDispose(() => gate);
+          lifecycle.use.onDispose(() => gate);
         },
       }),
     );

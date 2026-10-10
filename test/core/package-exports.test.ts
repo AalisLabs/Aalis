@@ -209,9 +209,9 @@ describe('exports 下包根类型面可命名', () => {
     );
     writeFileSync(
       join(consumer, 'src', 'index.ts'),
-      `import { type App, definePlugin, defineService, optional, type ServiceRef } from '@aalis/core';
+      `import { type App, definePlugin, defineService, optional, type ServiceSelection } from '@aalis/core';
 const dep = defineService<{ ping(): void }>('probe-dep');
-declare const ref: ServiceRef<number>;
+declare const ref: ServiceSelection<number>;
 declare const app: App;
 export default definePlugin({ name: 'probe', uses: { dep: optional(dep) }, apply() {} });
 export const follow = ref.follow;

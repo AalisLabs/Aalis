@@ -52,13 +52,13 @@ describe('关停编排：父子互用', () => {
       provides: [store],
       apply({ provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('box 已关闭');
             w.saved.push(`box:${data}`);
           },
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           w.log.push('child-close');
         });
@@ -66,8 +66,8 @@ describe('关停编排：父子互用', () => {
     });
     const parent = w.app.bind({ store: optional(store), lifecycle });
     await w.app.plugin(child);
-    parent.lifecycle.onDrain(() => {
-      parent.store.require().save('host:last');
+    parent.lifecycle.use.onDrain(() => {
+      parent.store.use.save('host:last');
       w.log.push('parent-drain');
     });
     await w.app.plugins.idle();
@@ -89,13 +89,13 @@ describe('关停编排：父子互用', () => {
       provides: [store],
       apply({ provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('box 已关闭');
             w.saved.push(`box:${data}`);
           },
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           w.log.push('child-close');
         });
@@ -103,8 +103,8 @@ describe('关停编排：父子互用', () => {
     });
     const parent = w.app.bind({ store, lifecycle });
     await w.app.plugin(child);
-    parent.lifecycle.onDrain(() => {
-      parent.store.require().save('host:last');
+    parent.lifecycle.use.onDrain(() => {
+      parent.store.use.save('host:last');
       w.log.push('parent-drain');
     });
     await w.app.plugins.idle();
@@ -127,31 +127,31 @@ describe('关停编排：父子互用', () => {
       provides: [store],
       apply({ sink, provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('kid 已关闭');
             w.saved.push(`kid:${data}`);
           },
         });
-        lifecycle.onDrain(() => {
-          sink.require().push('kid:last');
+        lifecycle.use.onDrain(() => {
+          sink.use.push('kid:last');
           w.log.push('child-drain');
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           w.log.push('child-close');
         });
       },
     });
     const parent = w.app.bind({ store: optional(store), provide, lifecycle });
-    parent.provide(sink, {
+    parent.provide.use(sink, {
       push(data) {
         w.saved.push(`sink:${data}`);
       },
     });
     await w.app.plugin(child);
-    parent.lifecycle.onDrain(() => {
-      parent.store.require().save('dad:last');
+    parent.lifecycle.use.onDrain(() => {
+      parent.store.use.save('dad:last');
       w.log.push('parent-drain');
     });
     await w.app.plugins.idle();
@@ -174,31 +174,31 @@ describe('关停编排：父子互用', () => {
       provides: [store],
       apply({ sink, provide, lifecycle }) {
         let closed = false;
-        provide(store, {
+        provide.use(store, {
           save(data) {
             if (closed) throw new Error('leaf 已关闭');
             w.saved.push(`leaf:${data}`);
           },
         });
-        lifecycle.onDrain(() => {
-          sink.require().push('leaf:last');
+        lifecycle.use.onDrain(() => {
+          sink.use.push('leaf:last');
           w.log.push('child-drain');
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
           w.log.push('child-close');
         });
       },
     });
     const parent = w.app.bind({ store: optional(store), provide, lifecycle });
-    parent.provide(sink, {
+    parent.provide.use(sink, {
       push(data) {
         w.saved.push(`sink:${data}`);
       },
     });
     await w.app.plugin(child);
-    parent.lifecycle.onDrain(() => {
-      parent.store.require().save('rootp:last');
+    parent.lifecycle.use.onDrain(() => {
+      parent.store.use.save('rootp:last');
       w.log.push('parent-drain');
     });
     await w.app.plugins.idle();
@@ -224,17 +224,17 @@ describe('关停编排：兄弟 / 根与兄弟混合（optional 环先全 drain 
         provides: [a],
         apply({ b, provide, lifecycle }) {
           let closed = false;
-          provide(a, {
+          provide.use(a, {
             save(data) {
               if (closed) throw new Error('alpha 已关闭');
               w.saved.push(`a:${data}`);
             },
           });
-          lifecycle.onDrain(() => {
-            b.require().save('alpha:last');
+          lifecycle.use.onDrain(() => {
+            b.use.save('alpha:last');
             w.log.push('alpha-drain');
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
           });
         },
@@ -247,17 +247,17 @@ describe('关停编排：兄弟 / 根与兄弟混合（optional 环先全 drain 
         provides: [b],
         apply({ a, provide, lifecycle }) {
           let closed = false;
-          provide(b, {
+          provide.use(b, {
             save(data) {
               if (closed) throw new Error('beta 已关闭');
               w.saved.push(`b:${data}`);
             },
           });
-          lifecycle.onDrain(() => {
-            a.require().save('beta:last');
+          lifecycle.use.onDrain(() => {
+            a.use.save('beta:last');
             w.log.push('beta-drain');
           });
-          lifecycle.onDispose(() => {
+          lifecycle.use.onDispose(() => {
             closed = true;
           });
         },
@@ -283,17 +283,17 @@ describe('关停编排：兄弟 / 根与兄弟混合（optional 环先全 drain 
       provides: [l],
       apply({ r, provide, lifecycle }) {
         let closed = false;
-        provide(l, {
+        provide.use(l, {
           save(data) {
             if (closed) throw new Error('left 已关闭');
             w.saved.push(`L:${data}`);
           },
         });
-        lifecycle.onDrain(() => {
-          r.require().save('left:last');
+        lifecycle.use.onDrain(() => {
+          r.use.save('left:last');
           w.log.push('left-drain');
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
         });
       },
@@ -304,31 +304,31 @@ describe('关停编排：兄弟 / 根与兄弟混合（optional 环先全 drain 
       provides: [r],
       apply({ g, provide, lifecycle }) {
         let closed = false;
-        provide(r, {
+        provide.use(r, {
           save(data) {
             if (closed) throw new Error('right 已关闭');
             w.saved.push(`R:${data}`);
           },
         });
-        lifecycle.onDrain(() => {
-          g.require().save('right:last');
+        lifecycle.use.onDrain(() => {
+          g.use.save('right:last');
           w.log.push('right-drain');
         });
-        lifecycle.onDispose(() => {
+        lifecycle.use.onDispose(() => {
           closed = true;
         });
       },
     });
     const root = w.app.bind({ l: optional(l), provide, lifecycle });
-    root.provide(g, {
+    root.provide.use(g, {
       save(data) {
         w.saved.push(`G:${data}`);
       },
     });
     await w.app.plugin(left);
     await w.app.plugin(right);
-    root.lifecycle.onDrain(() => {
-      root.l.require().save('root:last');
+    root.lifecycle.use.onDrain(() => {
+      root.l.use.save('root:last');
       w.log.push('root-drain');
     });
     await w.app.plugins.idle();

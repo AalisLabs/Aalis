@@ -23,7 +23,7 @@ describe('events 按 ctx 切断', () => {
     const peer = make('peer');
 
     let hits = 0;
-    dying.caps.events.on('plugin:loaded', () => {
+    dying.caps.events.use.on('plugin:loaded', () => {
       hits++;
     });
     let release!: () => void;
@@ -34,19 +34,19 @@ describe('events 按 ctx 切断', () => {
     const drainEnteredP = new Promise<void>(r => {
       drainEntered = r;
     });
-    dying.caps.lifecycle.onDispose(async () => {
+    dying.caps.lifecycle.use.onDispose(async () => {
       drainEntered();
       await gate;
     }, 'slow-res');
 
     const teardown = dying.activation.disposeAsync(5000);
     await drainEnteredP; // 已过注销段、正卡在链排空里
-    await peer.caps.events.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('plugin:loaded', 'x');
     expect(hits).toBe(0);
 
     release();
     await teardown;
-    await peer.caps.events.emit('plugin:loaded', 'y');
+    await peer.caps.events.use.emit('plugin:loaded', 'y');
     expect(hits).toBe(0);
     await peer.activation.disposeAsync();
   });
@@ -56,7 +56,7 @@ describe('events 按 ctx 切断', () => {
     const a = make('a');
     const b = make('b');
 
-    a.caps.events.on('plugin:loaded', () => {});
+    a.caps.events.use.on('plugin:loaded', () => {});
     let release!: () => void;
     let drainEntered!: () => void;
     const gate = new Promise<void>(r => {
@@ -66,7 +66,7 @@ describe('events 按 ctx 切断', () => {
       drainEntered = r;
     });
     // 后注册的 gated onDispose 在链上先排空——a 的 on 退订闭包在它之后迟到执行
-    a.caps.lifecycle.onDispose(async () => {
+    a.caps.lifecycle.use.onDispose(async () => {
       drainEntered();
       await gate;
     }, 'gate');
@@ -75,13 +75,13 @@ describe('events 按 ctx 切断', () => {
     await drainEnteredP;
     // 窗口内 b 重建同名事件表
     let bHits = 0;
-    b.caps.events.on('plugin:loaded', () => {
+    b.caps.events.use.on('plugin:loaded', () => {
       bHits++;
     });
     release();
     await teardown; // a 的迟到 off 在此执行——身份卫必须放过 b 的新表
 
-    await b.caps.events.emit('plugin:loaded', 'x');
+    await b.caps.events.use.emit('plugin:loaded', 'x');
     expect(bHits).toBe(1);
     await b.activation.disposeAsync();
   });
@@ -96,11 +96,11 @@ describe('events 按 ctx 切断', () => {
         raw++;
       }) as never,
     );
-    ctx.caps.events.on('plugin:loaded', () => {});
+    ctx.caps.events.use.on('plugin:loaded', () => {});
     await ctx.activation.disposeAsync();
 
     const peer = make('peer');
-    await peer.caps.events.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('plugin:loaded', 'x');
     expect(raw).toBe(1);
     await peer.activation.disposeAsync();
   });

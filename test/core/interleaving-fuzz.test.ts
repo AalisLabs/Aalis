@@ -3,10 +3,11 @@ import { App, definePlugin, defineService, lifecycle, optional, provide } from '
 import { ACTIONS, createWorld, type Profile, TIMEOUT, type Violation } from '../helpers/interleave.js';
 
 // ════════════════════════════════════════════════════════════
-// 管理动作、服务撤回、偏好切换与停机的随机交错（带种子，全程假时钟）。不变量：
+// 管理动作、服务撤回、偏好（全局与按插件）切换与停机的随机交错（带种子，全程假时钟）。不变量：
 // I1 同一 id 至多一个未落定的实例；I2 stop 之后不再开始 apply；I3 stop、idle 与管理调用在时限内落定；
 // I4 停机后没有 active / activating；I5 sticky 事件每个监听器至多一次；I6 收尾时 required 依赖仍有提供者
-// （依赖本身被撤下的除外）；I7 停机完成前跑过 apply 的实例都执行过 onDispose；I8 stop 之后管理动作返回 false。
+// （依赖本身被撤下的除外）；I7 停机完成前跑过 apply 的实例都执行过 onDispose；I8 stop 之后管理动作返回 false；
+// I9 同一个跟随者的清理落定之前不重挂。
 // 两档见 Profile：strict 的清理都在宽限内、没有非管理撤回；overrun-withdraw 两者都允许。任何违例都让用例失败，
 // 列出种子与详情。加大种子数：AALIS_FUZZ_SEEDS=2000；复现单个种子并打印全程记录：AALIS_FUZZ_SEED=38。
 // ════════════════════════════════════════════════════════════
@@ -73,24 +74,24 @@ describe('插件管理随机交错', () => {
   );
 });
 
-// X16：消费者经 optional 依赖按 contextId 从 all() 现选非胜者。关停边只连胜者；非胜者重启后排在消费者之后激活，
-// 停机按自然次序先关它，消费者收尾时已找不到它。关停边覆盖已声明服务的全部提供者后改回 it。
-it.fails('X16 未修：停机时消费者现选的非胜者不会先于消费者收尾', async () => {
+// X16：消费者经 optional 依赖从 list() 现选非胜者。非胜者重启后排在消费者之后激活，停机按自然次序会先关它；
+// 关停边覆盖已声明服务的全部提供者，消费者收尾时它仍在。
+it('X16：停机时消费者现选的非胜者不会先于消费者收尾', async () => {
   const svc = defineService<object>('zz-fz-x16');
   const provider = definePlugin({
     name: 'zz-x16-prov',
     reusable: true,
     provides: [svc],
     uses: { provide },
-    apply: ({ provide }) => void provide(svc, {}),
+    apply: ({ provide }) => void provide.use(svc, {}),
   });
   let seen: boolean | undefined;
   const consumer = definePlugin({
     name: 'zz-x16-cons',
     uses: { svc: optional(svc), lifecycle },
     apply({ svc, lifecycle }) {
-      lifecycle.onDrain(() => {
-        seen = svc.all().some(v => v.contextId === 'zz-x16-prov:b');
+      lifecycle.use.onDrain(() => {
+        seen = svc.list().some(p => p.id === 'zz-x16-prov:b');
       });
     },
   });

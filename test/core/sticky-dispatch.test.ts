@@ -27,7 +27,7 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
         uses: { events },
         apply({ events }) {
           const gen = ++generation;
-          events.on('app:ready', () => {
+          events.use.on('app:ready', () => {
             if (gen === 2) readyCalls++;
           });
         },
@@ -36,7 +36,7 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     await app.plugins.idle();
     // 宿主的 app:ready 监听器登记在插件之后也无妨：bounce 发生在它 await 期间
     let bounced: Promise<boolean> | undefined;
-    app.bind({ events }).events.on('app:ready', async () => {
+    app.bind({ events }).events.use.on('app:ready', async () => {
       bounced = app.plugins.bounce('p');
       await sleep(30);
     });
@@ -57,7 +57,7 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
         name: 'consumer',
         uses: { s: S, events },
         apply({ events }) {
-          events.on('app:ready', () => {
+          events.use.on('app:ready', () => {
             readyCalls++;
           });
         },
@@ -67,10 +67,10 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     expect(app.plugins.getPlugin('consumer')?.state).toBe('pending');
     const host = app.bind({ events, provide });
     // 模拟 webui-server 一类在 app:ready 里才 provide 的提供者；随后另一个监听器还在 await
-    host.events.on('app:ready', () => {
-      host.provide(S, { v: 1 });
+    host.events.use.on('app:ready', () => {
+      host.provide.use(S, { v: 1 });
     });
-    host.events.on('app:ready', async () => {
+    host.events.use.on('app:ready', async () => {
       await sleep(30);
     });
     await app.start();
@@ -84,8 +84,8 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     const app = mk();
     const host = app.bind({ events });
     let lateCalls = 0;
-    host.events.on('app:started', async () => {
-      host.events.on('app:started', () => {
+    host.events.use.on('app:started', async () => {
+      host.events.use.on('app:started', () => {
         lateCalls++;
       });
       await sleep(10);
@@ -99,7 +99,7 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     const app = mk();
     await app.start();
     let calls = 0;
-    app.bind({ events }).events.on('app:ready', () => {
+    app.bind({ events }).events.use.on('app:ready', () => {
       calls++;
     });
     await sleep(5);
@@ -116,7 +116,7 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
         uses: { events },
         apply({ events }) {
           const gen = ++generation;
-          events.on('app:ready', async () => {
+          events.use.on('app:ready', async () => {
             calls.push(gen);
             // 第一代在自己的监听器里 await 期间被 bounce：它是 app:ready 唯一的监听器，
             // 拆卸后该事件的登记表被整体删除，第二代登记进一张新表
@@ -139,8 +139,8 @@ describe('sticky 事件派发中途登记的监听器只收到一次', () => {
     const app = mk();
     const host = app.bind({ events });
     let calls = 0;
-    host.events.on('app:ready', async () => {
-      const off = host.events.on('app:ready', () => {
+    host.events.use.on('app:ready', async () => {
+      const off = host.events.use.on('app:ready', () => {
         calls++;
       });
       off();

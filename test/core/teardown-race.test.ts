@@ -77,8 +77,8 @@ describe('App.stop 撞上在飞 recompute', () => {
         uses: { provide, lifecycle },
         provides: [store],
         apply({ provide: pub, lifecycle }) {
-          pub(store, { write: () => order.push('write') });
-          lifecycle.onDispose(() => {
+          pub.use(store, { write: () => order.push('write') });
+          lifecycle.use.onDispose(() => {
             order.push('provider-closed');
           });
         },
@@ -89,12 +89,12 @@ describe('App.stop 撞上在飞 recompute', () => {
         name: 'cons',
         uses: { store, lifecycle },
         apply({ store: storeRef, lifecycle }) {
-          lifecycle.onDispose(async () => {
+          lifecycle.use.onDispose(async () => {
             await sleep(10);
             // 落盘：此刻提供者必须还活着（声明依赖在清理段仍可调用）
-            const impl = storeRef.current;
-            order.push(impl ? 'consumer-flushed' : 'consumer-flush-FAILED');
-            impl?.write();
+            const alive = storeRef.present;
+            order.push(alive ? 'consumer-flushed' : 'consumer-flush-FAILED');
+            if (alive) storeRef.use.write();
           });
         },
       }),

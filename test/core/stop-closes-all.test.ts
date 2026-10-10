@@ -14,8 +14,8 @@ describe('App.stop 关掉全部插件', () => {
         provides: provides ? [provides] : undefined,
         uses: { provide, lifecycle, ...uses },
         apply(caps) {
-          if (provides) caps.provide(provides, { v: 1 });
-          caps.lifecycle.onDispose(() => void closed.push(name));
+          if (provides) caps.provide.use(provides, { v: 1 });
+          caps.lifecycle.use.onDispose(() => void closed.push(name));
         },
       });
     await app.plugin(mk('solo'));
@@ -27,7 +27,7 @@ describe('App.stop 关掉全部插件', () => {
     const lookup = app.bind({ services }).services;
     await app.stop();
     expect([...closed].sort()).toEqual(['a', 'b', 'c', 'solo']);
-    expect(lookup.names().filter(n => n.startsWith('t:stop-all'))).toEqual([]);
+    expect(lookup.use.names().filter(n => n.startsWith('t:stop-all'))).toEqual([]);
     expect(app.plugins.getStatus().map(p => p.state)).toEqual(['disposed', 'disposed', 'disposed', 'disposed']);
   });
 });

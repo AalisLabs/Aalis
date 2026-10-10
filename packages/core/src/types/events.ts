@@ -29,8 +29,8 @@ export interface AalisEvents {
   // 业务事件由各契约包经 declaration merging 注入：消息事件在 @aalis/schema-message，
   // 工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。
   /**
-   * 通知：某服务的提供者或胜者可能变了，请重读（`get` / `all`）。可能变化时就发，不保证恰好一次、也不说明
-   * 变了什么：`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换都发
+   * 通知：某服务的提供者或选择可能变了，请重读（选择层的 `list()` / `present`，动态查询的 `get` / `all`）。可能变化时
+   * 就发，不保证恰好一次、也不说明变了什么：`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好（全局与本插件）切换都发
    */
   'service:changed': [name: string];
   /** 通知：插件已激活。同一轮 recompute 可能紧接着激活下一个插件，不等本事件的监听器 */

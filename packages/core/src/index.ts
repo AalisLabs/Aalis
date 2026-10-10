@@ -14,7 +14,7 @@ export type {
 } from './types/index.js';
 
 // ----- 原语的数据契约（注册表本身不外露，登记一律经描述符与资源口） -----
-export type { ServiceInfo, ServiceView } from './primitives/services.js';
+export type { SelectionBasis, ServiceInfo, ServiceView } from './primitives/services.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';
@@ -35,6 +35,7 @@ export {
   type LifecycleCap,
   lifecycle,
   logger,
+  type PreferenceScope,
   type Provide,
   type ProvideOptions,
   provide,
@@ -51,11 +52,11 @@ export {
   type FollowCleanup,
   type OptionalUse,
   optional,
+  type ProviderEntry,
   type ProviderOf,
   type Registrar,
   type ServiceDescriptor,
-  type ServiceRef,
-  serviceRef,
+  type ServiceSelection,
   type Uses,
 } from './composition/descriptors.js';
 // ----- 插件定义 -----

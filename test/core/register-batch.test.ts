@@ -23,16 +23,16 @@ describe('pluginAll', () => {
         uses: { provide },
         provides: [store],
         apply: ({ provide }) => {
-          provide(store, { id: 'fallback' }, { priority: -100 });
+          provide.use(store, { id: 'fallback' }, { priority: -100 });
         },
       }),
-      definePlugin({ name: 'consumer', uses: { store }, apply: ({ store }) => void seen.push(store.require().id) }),
+      definePlugin({ name: 'consumer', uses: { store }, apply: ({ store }) => void seen.push(store.use.id) }),
       definePlugin({
         name: 'preferred',
         uses: { provide },
         provides: [store],
         apply: ({ provide }) => {
-          provide(store, { id: 'preferred' }, { priority: 10 });
+          provide.use(store, { id: 'preferred' }, { priority: 10 });
         },
       }),
     ];
@@ -65,7 +65,7 @@ describe('pluginAll', () => {
           provides: [svc],
           apply: ({ provide }) => {
             order.push('z');
-            provide(svc, {});
+            provide.use(svc, {});
           },
         }),
         definePlugin({ name: 'b', uses: { svc }, apply: () => void order.push('b') }),
@@ -112,7 +112,7 @@ describe('pluginAll', () => {
           name: 'parent',
           uses: { plugins: pluginsService },
           async apply({ plugins }) {
-            await plugins.require().register(child);
+            await plugins.use.register(child);
           },
         }),
       },
