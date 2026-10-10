@@ -23,30 +23,30 @@ describe('App 生命周期', () => {
   it('App 仅靠最小选项可构造；配置文档由宿主接上，裸 core 上没有', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     expect(app.plugins).toBeDefined();
-    expect(app.bind({ hostConfig }).hostConfig.current).toBeUndefined();
-    expect(hostedApp().app.bind({ hostConfig }).hostConfig.current).toBeDefined();
+    expect(app.bind({ hostConfig }).hostConfig.present).toBe(false);
+    expect(hostedApp().app.bind({ hostConfig }).hostConfig.present).toBe(true);
   });
 
   it('host-config get 读取文档顶层字段', () => {
     const { app } = hostedApp({ name: 'MyApp', logLevel: 'warn' });
     const host = app.bind({ hostConfig });
-    expect(host.hostConfig.require().get('name')).toBe('MyApp');
-    expect(host.hostConfig.require().get('logLevel')).toBe('warn');
+    expect(host.hostConfig.use.get('name')).toBe('MyApp');
+    expect(host.hostConfig.use.get('logLevel')).toBe('warn');
   });
 
   it('app.stop 触发 app:stopping 事件并关闭根激活（onDispose 随之触发）', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ events, lifecycle });
     const seen: string[] = [];
-    host.events.on('app:stopping', () => {
+    host.events.use.on('app:stopping', () => {
       seen.push('stopping');
     });
-    host.lifecycle.onDispose(() => {
+    host.lifecycle.use.onDispose(() => {
       seen.push('dispose');
     });
     await app.stop();
     expect(seen).toEqual(['stopping', 'dispose']);
-    expect(host.lifecycle.signal.aborted).toBe(true);
+    expect(host.lifecycle.use.signal.aborted).toBe(true);
   });
 
   it('两个并存 App 实例互不干扰（service 与配置文档都隔离）', () => {
@@ -54,11 +54,11 @@ describe('App 生命周期', () => {
     const appB = hostedApp({ name: 'B' }).app;
     const hostA = appA.bind({ provide, shared, hostConfig });
     const hostB = appB.bind({ shared, hostConfig });
-    hostA.provide(shared, { v: 1 });
-    expect(hostA.shared.current).toBeDefined();
-    expect(hostB.shared.current).toBeUndefined();
-    expect(hostA.hostConfig.require().get('name')).toBe('A');
-    expect(hostB.hostConfig.require().get('name')).toBe('B');
+    hostA.provide.use(shared, { v: 1 });
+    expect(hostA.shared.present).toBe(true);
+    expect(hostB.shared.present).toBe(false);
+    expect(hostA.hostConfig.use.get('name')).toBe('A');
+    expect(hostB.hostConfig.use.get('name')).toBe('B');
   });
 
   it('hostConfig.setPluginConfig + save() 把更改写回 yaml', async () => {
@@ -66,8 +66,8 @@ describe('App 生命周期', () => {
     try {
       const { app } = hostedApp(cfg.config, { provider: cfg.provider });
       const host = app.bind({ hostConfig });
-      host.hostConfig.require().setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
-      await host.hostConfig.require().save();
+      host.hostConfig.use.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
+      await host.hostConfig.use.save();
       const yaml = readFileSync(cfg.path, 'utf-8');
       expect(yaml).toContain('@aalis/plugin-test');
       expect(yaml).toContain('foo');
@@ -80,8 +80,8 @@ describe('App 生命周期', () => {
   it('内置 app / plugins 服务经描述符可取', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ appService, pluginsService });
-    expect(host.appService.current).toBeDefined();
-    expect(host.pluginsService.current).toBeDefined();
-    expect(host.pluginsService.current?.getStatus()).toEqual(app.plugins.getStatus());
+    expect(host.appService.present).toBe(true);
+    expect(host.pluginsService.present).toBe(true);
+    expect(host.pluginsService.use.getStatus()).toEqual(app.plugins.getStatus());
   });
 });

@@ -34,7 +34,7 @@ async function boot(defaultPageLimit: number, maxPageLimit: number): Promise<Map
   const out = new Map<string, ToolSpec>();
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: ToolSpec) {
       out.set(tool.definition.function.name, tool);
       return () => {};

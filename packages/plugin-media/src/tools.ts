@@ -7,7 +7,7 @@
 
 import type { MemoryService } from '@aalis/api-memory';
 import type { BoundTools } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
@@ -73,14 +73,14 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
 
 /** 工具登记用到的能力：登记门面 tools，以及 update_image_description 回写历史的 memory */
 interface ToolsCaps {
-  tools: BoundTools;
-  memory: ServiceRef<MemoryService>;
+  tools: ServiceSelection<BoundTools>;
+  memory: ServiceSelection<MemoryService>;
 }
 
 export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void {
   const { tools } = caps;
 
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -204,7 +204,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
     },
   });
 
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -235,7 +235,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       const sessionId =
         typeof args.session_id === 'string' && args.session_id.trim() ? args.session_id.trim() : callCtx.sessionId;
 
-      const memory = caps.memory.current;
+      const memory = caps.memory.present ? caps.memory.use : undefined;
       if (!memory?.updateMessageContent) {
         return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
       }

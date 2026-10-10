@@ -76,7 +76,7 @@ async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; ca
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
       handlers[t.definition.function.name] = t.handler;
       return () => {};

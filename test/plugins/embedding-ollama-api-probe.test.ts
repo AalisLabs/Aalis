@@ -62,7 +62,7 @@ describe('plugin-embedding-ollama: 新旧 API 探测', () => {
     apps.push(app);
     await app.plugins.register(embeddingOllama, { baseUrl, model: 'm', timeoutMs: 2000, retries: 0 });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(embedding);
+    const svc = app.bind({ services }).services.use.get(embedding);
     if (!svc) throw new Error('embedding 服务未就绪');
     return svc;
   }

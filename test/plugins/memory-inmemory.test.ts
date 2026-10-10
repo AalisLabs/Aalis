@@ -12,7 +12,7 @@ async function boot(): Promise<{ app: App; mem: MemoryService }> {
   if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {
     throw new Error('plugin-memory-inmemory 未激活');
   }
-  const mem = app.bind({ services }).services.get(memory);
+  const mem = app.bind({ services }).services.use.get(memory);
   if (!mem) throw new Error('memory 服务未就绪');
   return { app, mem };
 }

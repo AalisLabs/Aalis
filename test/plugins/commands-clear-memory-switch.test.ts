@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -33,7 +33,7 @@ function memoryProvider(name: string, backend: ReturnType<typeof makeBackend>, p
     provides: [memory],
     uses: { provide },
     apply({ provide }) {
-      provide(memory, backend as unknown as MemoryService, { priority });
+      provide.use(memory, backend as unknown as MemoryService, { priority });
     },
   });
 }
@@ -44,7 +44,7 @@ async function world(memA: ReturnType<typeof makeBackend>) {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   await app.plugin(memoryProvider('mem-a', memA, 0));
 
   let reached!: () => void;
@@ -60,7 +60,7 @@ async function world(memA: ReturnType<typeof makeBackend>) {
       name: 'clear-gate',
       uses: { hooks },
       apply({ hooks }) {
-        hooks.middleware('memory:clear', async (_data, next) => {
+        hooks.use.middleware('memory:clear', async (_data, next) => {
           reached();
           await gate;
           await next();
@@ -73,7 +73,7 @@ async function world(memA: ReturnType<typeof makeBackend>) {
 
   /** 执行 /clear 或 /clear all；链挂住期间调 during 换记忆后端，再放行 */
   async function runSwitching(name: 'clear' | 'clear.all', during: () => Promise<unknown>): Promise<string> {
-    const cmd = (host.commands as BoundCommands).current?.getAll().find(c => c.name === name);
+    const cmd = host.commands.use.getAll().find(c => c.name === name);
     if (!cmd?.handler) throw new Error(`/${name} 未注册`);
     const out = cmd.handler({
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },

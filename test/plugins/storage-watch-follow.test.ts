@@ -79,9 +79,10 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     { definition: personaPlugin, config: { personasDir: 'store:/personas' } },
     { definition: skillsPlugin, config: { skillsUri: 'store:/skills' } },
   ];
-  const skillNames = (): string[] => (app.bind({ services }).services.get(skills)?.listSkills() ?? []).map(s => s.name);
+  const skillNames = (): string[] =>
+    (app.bind({ services }).services.use.get(skills)?.listSkills() ?? []).map(s => s.name);
   const personaNames = async (): Promise<string[]> =>
-    (await app.bind({ services }).services.get(persona)?.listModels?.()) ?? [];
+    (await app.bind({ services }).services.use.get(persona)?.listModels?.()) ?? [];
   /** 两个插件的「目录变化 → 重扫」日志条数 */
   const rescans = (): number => logs.filter(t => t.includes('目录变化')).length;
 

@@ -235,13 +235,13 @@ function createSessionHistoryService(
     },
 
     async getHistory(options, callCtx) {
-      const store = memory.current;
-      if (!store) return { error: 'memory 服务不可用' };
+      if (!memory.present) return { error: 'memory 服务不可用' };
+      const store = memory.use;
 
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
-      const sm = sessionManager.current;
+      const sm = sessionManager.present ? sessionManager.use : undefined;
       // 当前平台：房间会话按出生平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）按入口平台
       const currentPlatform = originPlatformOf(sm, callCtx.sessionId) ?? callCtx.platform;
       // 房间的召回范围每次现算：房间或平台档改了下一次读取即生效
@@ -322,7 +322,7 @@ function createSessionHistoryService(
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.warn(`session-history 读取失败 (${targetSessionId}): ${message}`);
+        logger.use.warn(`session-history 读取失败 (${targetSessionId}): ${message}`);
         return { error: `读取会话历史失败: ${message}` };
       }
     },
@@ -334,13 +334,13 @@ function registerSessionHistoryTools(
   historyService: SessionHistoryService,
   cfg: PluginConfig,
 ): void {
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'session-history',
     label: '会话历史读取',
     description: '按 Aalis sessionId 读取近期会话历史，用于核实跨会话上下文',
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['session-history'],
     definition: {
       type: 'function',
@@ -408,7 +408,7 @@ function registerSessionHistoryTools(
     },
   });
 
-  logger.info('会话历史读取工具已注册');
+  logger.use.info('会话历史读取工具已注册');
 }
 
 // ===== 插件入口 =====
@@ -421,7 +421,7 @@ export default definePlugin({
   provides: [sessionHistory],
   uses,
   apply(caps) {
-    const parsed = parseConfig(configSchema, caps.config, caps.logger);
+    const parsed = parseConfig(configSchema, caps.config.use, caps.logger.use);
     const maxLimit = Math.max(1, Math.min(1000, parsed.maxLimit || configSchema.maxLimit.default));
     const cfg: PluginConfig = {
       ...parsed,
@@ -434,9 +434,9 @@ export default definePlugin({
     };
     if (!cfg.enabled) return;
 
-    caps.sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
+    caps.sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
     const historyService = createSessionHistoryService(caps, cfg);
-    caps.provide(sessionHistory, historyService, { label: '会话历史读取' });
+    caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' });
     registerSessionHistoryTools(caps, historyService, cfg);
   },
 });

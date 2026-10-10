@@ -39,7 +39,7 @@ async function boot(): Promise<WorkflowService> {
   app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   pages = pageHost();
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   provideHostPaths(app, base);
   await app.plugin(storageLocalPlugin, {
     roots: [
@@ -57,7 +57,7 @@ async function boot(): Promise<WorkflowService> {
   });
   await app.plugin(toolsPlugin, {});
   await app.plugin(cronEnginePlugin, {});
-  app.bind({ tools: toolsService }).tools.register({
+  app.bind({ tools: toolsService }).tools.use.register({
     definition: {
       type: 'function',
       function: { name: 'zz_count', description: '计数', parameters: { type: 'object', properties: {} } },
@@ -69,7 +69,7 @@ async function boot(): Promise<WorkflowService> {
   });
   await app.plugin(workflowPlugin, {});
   await app.plugins.idle();
-  return app.bind({ services }).services.get(workflow) as WorkflowService;
+  return app.bind({ services }).services.use.get(workflow) as WorkflowService;
 }
 
 beforeEach(() => {

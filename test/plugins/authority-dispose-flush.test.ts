@@ -178,13 +178,13 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     const { app } = hostedApp();
     apps.push(app);
     const host = app.bind({ provide, authority });
-    host.provide(storage, pluginSlowStorage(done));
+    host.provide.use(storage, pluginSlowStorage(done));
     await app.plugin(authorityPlugin, {});
     await app.plugins.idle();
     expect(app.plugins.getPlugin(authorityPlugin.name)?.state).toBe('active');
 
-    const mgr = host.authority.current;
-    if (!mgr) throw new Error('authority 未发布');
+    if (!host.authority.present) throw new Error('authority 未发布');
+    const mgr = host.authority.use;
     mgr.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
     mgr.save();
     expect(done.written, 'save() 同步返回，此刻写还在飞').toBe(false);

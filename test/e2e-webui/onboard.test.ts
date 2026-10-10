@@ -47,9 +47,9 @@ const keyedModel = definePlugin({
   configSchema: MODEL_SCHEMA,
   uses: { config, provide, events },
   apply({ config: value, provide, events }) {
-    parseConfig(MODEL_SCHEMA, value);
+    parseConfig(MODEL_SCHEMA, value.use);
     const service = new MockLLMService({ responses: [{ content: REPLY }] });
-    provide(llm, metered(service, events), { entryId: `${MODEL}/${service.id}` });
+    provide.use(llm, metered(service, events.use), { entryId: `${MODEL}/${service.id}` });
   },
 });
 
@@ -61,7 +61,7 @@ function probe(name: string, displayName: string, provides: string[], requires: 
     provides: provides.map(service => defineService<object>(service)),
     uses: { provide, ...Object.fromEntries(requires.map(service => [service, defineService<object>(service)])) },
     apply({ provide }) {
-      for (const service of provides) provide(defineService<object>(service), {});
+      for (const service of provides) provide.use(defineService<object>(service), {});
     },
   });
 }
@@ -184,7 +184,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       provides: [defineService<object>('zz-onboard-slow-svc')],
       uses: { provide },
       async apply({ provide }) {
-        provide(defineService<object>('zz-onboard-slow-svc'), {});
+        provide.use(defineService<object>('zz-onboard-slow-svc'), {});
         await gate.promise;
       },
     });

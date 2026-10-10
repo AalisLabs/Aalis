@@ -47,7 +47,7 @@ async function inMemory(): Promise<{ app: App; mem: MemoryService }> {
   await registerHubs(app);
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const mem = app.bind({ services }).services.get(memory);
+  const mem = app.bind({ services }).services.use.get(memory);
   if (!mem) throw new Error('memory 服务未就绪');
   return { app, mem };
 }
@@ -88,8 +88,8 @@ describe('plugin-adapter-onebot: 参与 memory:clear', () => {
   async function world() {
     const { app, mem } = await inMemory();
     const host = app.bind({ provide, hooks });
-    host.provide(storage, {} as never);
-    host.provide(processService, {} as never);
+    host.provide.use(storage, {} as never);
+    host.provide.use(processService, {} as never);
     await app.plugin(onebot, { connections: [] });
     await app.plugin(onebot, { connections: [] }, `${onebot.name}:b`);
     await app.plugins.idle();
@@ -97,7 +97,7 @@ describe('plugin-adapter-onebot: 参与 memory:clear', () => {
     async function clear(scope: 'session' | 'all', types?: string[]) {
       await seed(mem);
       const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 'onebot:1:group:2', results: [] };
-      await host.hooks.run('memory:clear', data, async () => {});
+      await host.hooks.use.run('memory:clear', data, async () => {});
       return data.results.filter(r => r.source === 'onebot-forward');
     }
     return { mem, clear };

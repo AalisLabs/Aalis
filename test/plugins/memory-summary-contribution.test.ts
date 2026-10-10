@@ -53,9 +53,9 @@ async function setup(opts: { contextLength?: number; config?: Record<string, unk
   const assembly = app.bind({ contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const store = host.services.get(memory);
+  const store = host.services.use.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  host.provide(llm, fakeLLMModel(opts.contextLength ?? DEFAULT_CONTEXT_LENGTH));
+  host.provide.use(llm, fakeLLMModel(opts.contextLength ?? DEFAULT_CONTEXT_LENGTH));
   await app.plugin(memorySummary, opts.config ?? {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') {
@@ -70,7 +70,7 @@ function anchorProbe(name: string, id: string, anchor: string, text: string) {
     name,
     uses: { contributions },
     apply({ contributions }) {
-      contributions.contribute(POINT, { id, anchor, build: () => text } as never);
+      contributions.use.contribute(POINT, { id, anchor, build: () => text } as never);
     },
   });
 }

@@ -85,7 +85,7 @@ export function settingsPlugin(name: string, settings: SessionSetting[]) {
     name,
     uses: { sessionManager },
     apply({ sessionManager }) {
-      for (const setting of settings) sessionManager.registerSetting(setting as never);
+      for (const setting of settings) sessionManager.use.registerSetting(setting as never);
     },
   });
 }
@@ -97,7 +97,7 @@ export const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, {
+      provide.use(platform, {
         adapterName: name,
         getConnections: () => [],
         sendMessage: async () => {},
@@ -127,7 +127,7 @@ export function modelPlugin(provider: string, models: string[]) {
           capabilities: ['chat'],
           chat: async () => ({ content: '' }),
         };
-        provide(llm, instance as never, { entryId: `${provider}/${model}` });
+        provide.use(llm, instance as never, { entryId: `${provider}/${model}` });
       }
     },
   });
@@ -171,11 +171,11 @@ export async function startSessionManager({
   const host = app.bind({ provide, events, services, hostConfig, sessionManager });
   const mem = fakeMemory(stored, places);
   // memory 是会话管理的 required 依赖：不先摆上，插件会停在 pending
-  host.provide(memory, mem as never);
+  host.provide.use(memory, mem as never);
   if (owners) {
     const isOwner = (platform: string, userId?: string) =>
       owners.some(owner => owner.platform === platform && owner.userId === userId);
-    host.provide(authority, { isOwner } as never);
+    host.provide.use(authority, { isOwner } as never);
   }
   const providers = new Map<string, string[]>();
   for (const [provider, model] of models) providers.set(provider, [...(providers.get(provider) ?? []), model]);
@@ -196,6 +196,6 @@ export async function startSessionManager({
     }
   }
   const inbound = (msg: Omit<IncomingMessage, 'content'>) =>
-    host.events.emit('inbound:message', { content: '<占位>', ...msg });
-  return { app, host, sm: host.sessionManager.require(), mem, warns, inbound };
+    host.events.use.emit('inbound:message', { content: '<占位>', ...msg });
+  return { app, host, sm: host.sessionManager.use, mem, warns, inbound };
 }

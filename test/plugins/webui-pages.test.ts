@@ -188,14 +188,14 @@ async function setup() {
     'webui:real': { id: 'webui:real', kind: 'owner' },
     alias: { id: 'webui:real', kind: 'owner' },
   };
-  app.bind({ provide }).provide(sessionManager, { getSession: (id: string) => sessions[id] } as never);
+  app.bind({ provide }).provide.use(sessionManager, { getSession: (id: string) => sessions[id] } as never);
   const received: unknown[] = [];
   let handles: ReturnType<typeof definePages> | undefined;
   const owner = definePlugin({
     name: OWNER,
     uses: { webui: optional(webuiServer) },
     apply: ({ webui }) => {
-      handles = definePages(webui, received);
+      handles = definePages(webui.use, received);
     },
   });
   await app.pluginAll([
@@ -229,7 +229,7 @@ async function setup() {
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
   /** 按存储地址放一个文件 */
-  const put = (uri: string, content: string) => app.bind({ storage }).storage.require().writeFile(uri, content);
+  const put = (uri: string, content: string) => app.bind({ storage }).storage.use.writeFile(uri, content);
   const admin = async () => {
     const ws = new (WebSocket as unknown as NodeWebSocketCtor)(`ws://127.0.0.1:${port}/admin`, {
       headers: { cookie: COOKIE },

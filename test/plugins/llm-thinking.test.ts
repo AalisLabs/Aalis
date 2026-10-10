@@ -66,11 +66,11 @@ async function start(
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();
-  const entries = app.bind({ llm }).llm.all();
+  const entries = app.bind({ llm }).llm.list();
   const model = (id: string): LLMModel => {
-    const entry = entries.find(e => e.instance.id === id);
+    const entry = entries.find(e => e.use.id === id);
     if (!entry) throw new Error(`没有登记模型 ${id}`);
-    return entry.instance;
+    return entry.use;
   };
   /** 对话与流式各发一遍，交出两次的路径与请求体 */
   const send = async (id: string, request: Partial<ChatModelRequest> = {}) => {

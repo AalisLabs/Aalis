@@ -4,11 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { type Hooks, hooks as hooksCap } from '../../packages/api-hooks/src/index.js';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
 import { configSchema } from '../../packages/plugin-checkpoint/src/config.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
@@ -61,10 +57,10 @@ describe('checkpoint × storage (真 fs)', () => {
     });
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint, hooks: hooksCap });
-    storage = createStorageGateway(host.storage);
-    hooks = host.hooks;
+    storage = host.storage.use;
+    hooks = host.hooks.use;
     // runTurn 是实现类上的驱动面，不在对外服务契约里
-    svc = host.checkpoint.require() as CheckpointServiceImpl;
+    svc = host.checkpoint.use as CheckpointServiceImpl;
   });
 
   afterEach(async () => {
@@ -241,17 +237,17 @@ describe('checkpoint × storage (真 fs)', () => {
 
     // 故障 storage：move 抛错（强制走「写回源端 + 删目标」回落），删目标抛 EACCES——非 ENOENT，不该被豁免。
     // 另起一个读同一 checkpoint 目录的服务实例，经构造参数注入它
-    const faulty: StorageService = {
-      ...storage,
+    // 业务句柄是转发句柄，展开得不到成员：在它之上覆盖两个方法，其余沿原型链转发
+    const faulty: StorageService = Object.assign(Object.create(storage) as StorageService, {
       move: async () => {
         throw new Error('EEXIST: target already exists');
       },
-      delete: async uri => {
+      delete: async (uri: string) => {
         const err = new Error(`EACCES: permission denied, unlink '${uri}'`) as Error & { code?: string };
         err.code = 'EACCES';
         throw err;
       },
-    };
+    });
     const logger = { debug() {}, info() {}, warn() {}, error() {} };
     const faultySvc = new CheckpointServiceImpl(
       parseServiceConfig({ rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 }),
@@ -337,8 +333,8 @@ describe('checkpoint × storage (真 fs)', () => {
         name: 'zz-block-input',
         uses: { hooks: hooksCap, storage: storageService },
         apply({ hooks, storage }) {
-          const gateway = createStorageGateway(storage);
-          hooks.middleware('agent:input:before', async () => {
+          const gateway = storage.use;
+          hooks.use.middleware('agent:input:before', async () => {
             await gateway.writeFile('ws:/blocked.txt', 'x'); // 不调 next：拦下整条消息
           });
         },
@@ -415,11 +411,11 @@ describe('checkpoint rootDir 配置', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     try {
       await registerHubs(app);
-      app.bind({ provide }).provide(storageService, {} as never);
+      app.bind({ provide }).provide.use(storageService, {} as never);
       await app.plugins.register(checkpointPlugin, { rootDir: 'relative/path' });
       await app.plugins.idle();
       expect(app.plugins.getPlugin(checkpointPlugin.name)?.state).toBe('error');
-      expect(app.bind({ services }).services.get(checkpoint)).toBeUndefined();
+      expect(app.bind({ services }).services.use.get(checkpoint)).toBeUndefined();
     } finally {
       await app.stop();
     }

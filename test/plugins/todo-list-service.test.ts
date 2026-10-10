@@ -25,7 +25,7 @@ async function boot(enabled: boolean) {
   await app.plugin(memoryInMemory, {});
   const host = app.bind({ provide, events, todoList });
   const handlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => void handlers.delete(tool.definition.function.name);
@@ -35,8 +35,8 @@ async function boot(enabled: boolean) {
   await app.plugin(todoListPlugin, { enabled });
   await app.plugins.idle();
   const updates: Array<[string, TodoItem[]]> = [];
-  host.events.on('todo:updated', (sessionId, items) => void updates.push([sessionId, items]));
-  return { app, service: host.todoList.require(), handlers, updates };
+  host.events.use.on('todo:updated', (sessionId, items) => void updates.push([sessionId, items]));
+  return { app, service: host.todoList.use, handlers, updates };
 }
 
 describe('待办服务', () => {

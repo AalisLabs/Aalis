@@ -126,7 +126,7 @@ async function fileReaderPreprocessor() {
   const host = app.bind({ provide });
   const files = new Map<string, Buffer>();
   const writes: { gate?: Promise<void> } = {};
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [PLUGIN_DATA_ROOT],
     async list(uri: string) {
       throw new Error(`目录不存在: ${uri}`);
@@ -142,7 +142,7 @@ async function fileReaderPreprocessor() {
     },
   } as unknown as StorageService);
   let preprocessor: PreprocessorFn | undefined;
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage() {},
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;

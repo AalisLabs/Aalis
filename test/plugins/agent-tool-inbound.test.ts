@@ -63,7 +63,7 @@ async function observedAgentTurn(incoming: IncomingMessage) {
   }
 
   let seen: ToolCallContext | undefined;
-  host.tools.register({
+  host.tools.use.register({
     definition: probeDefinition,
     handler: async (_args, ctx) => {
       seen = ctx;
@@ -72,14 +72,14 @@ async function observedAgentTurn(incoming: IncomingMessage) {
   });
   const llmBeforeUserIds: Array<string | undefined> = [];
   const llmBeforeSources: Array<string | undefined> = [];
-  host.hooks.middleware('agent:llm:before', async (data, next) => {
+  host.hooks.use.middleware('agent:llm:before', async (data, next) => {
     llmBeforeUserIds.push(data.userId);
     llmBeforeSources.push(data.source);
     await next();
   });
-  await host.agent.require().handleMessage(incoming);
+  await host.agent.use.handleMessage(incoming);
   expect(seen, '探针工具应在本回合被调用').toBeDefined();
-  const history = (await host.memory.require().getHistory(incoming.sessionId, 20)) as Message[];
+  const history = (await host.memory.use.getHistory(incoming.sessionId, 20)) as Message[];
   return { ctx: seen, llmBeforeUserIds, llmBeforeSources, history };
 }
 
@@ -161,7 +161,7 @@ describe('ToolCallContext.inbound：其他调用方不填写', () => {
     await app.plugin(cronEnginePlugin, {});
     const host = app.bind({ tools, services });
     let seen: ToolCallContext | undefined;
-    host.tools.register({
+    host.tools.use.register({
       definition: probeDefinition,
       handler: async (_args, ctx) => {
         seen = ctx;
@@ -173,7 +173,7 @@ describe('ToolCallContext.inbound：其他调用方不填写', () => {
     for (const name of [toolsPlugin.name, cronEnginePlugin.name, workflowPlugin.name]) {
       expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
     }
-    const svc = host.services.get(workflow);
+    const svc = host.services.use.get(workflow);
     if (!svc) throw new Error('workflow 服务不在场');
     await svc.defineWorkflow(
       { id: 'zz-inbound', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'tool', tool: PROBE }] },

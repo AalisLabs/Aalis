@@ -41,7 +41,7 @@ async function runTool(
   // 宿主侧按根激活取绑定接口：探针工具的登记与真实插件走同一条门面
   const host = app.bind({ tools });
   let ran = false;
-  host.tools.register({
+  host.tools.use.register({
     groups: ['probe'],
     ...(risk ? { risk } : {}),
     ...(opts.confirm ? { confirm: opts.confirm } : {}),
@@ -55,8 +55,8 @@ async function runTool(
     },
   });
 
-  const svc = host.tools.current;
-  if (!svc) throw new Error('tools 服务未注册');
+  if (!host.tools.present) throw new Error('tools 服务未注册');
+  const svc = host.tools.use;
   const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
   await app.stop();
   return { ran, out: out.content };

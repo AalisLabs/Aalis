@@ -23,7 +23,7 @@ async function boot() {
   const host = app.bind({ services, contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const memory = host.services.get(memoryService);
+  const memory = host.services.use.get(memoryService);
   if (!memory) throw new Error('memory 服务未就绪');
   return { app, host, memory };
 }
@@ -256,9 +256,9 @@ async function bootGuarded() {
     const state = app.plugins.getPlugin(p.name)?.state;
     if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
   }
-  const memory = host.services.get(memoryService);
-  const toolSvc = host.tools.current;
-  const authoritySvc = host.authority.current;
+  const memory = host.services.use.get(memoryService);
+  const toolSvc = host.tools.present ? host.tools.use : undefined;
+  const authoritySvc = host.authority.present ? host.authority.use : undefined;
   if (!memory || !toolSvc || !authoritySvc) throw new Error('服务未就绪');
   await memory.saveMessage('webui:console', {
     role: 'user',

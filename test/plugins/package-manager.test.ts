@@ -1279,7 +1279,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
         provides: [descriptor],
         uses: { provide },
         apply(caps) {
-          caps.provide(descriptor, {});
+          caps.provide.use(descriptor, {});
         },
       });
     };
@@ -1300,7 +1300,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       '@aalis/plugin-package-manager': JSON.stringify({ keywords: ['aalis', 'aalis-plugin'] }),
     };
     const host = app.bind({ provide, services });
-    host.provide(defineService<object>('process'), {
+    host.provide.use(defineService<object>('process'), {
       readExternalFile: async (abs: string) => {
         const hit = Object.keys(CHANNEL_PKGS).find(n => abs.includes(n));
         if (!hit) throw new Error('ENOENT');
@@ -1313,7 +1313,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
     provideHostPaths(app, '/fake-app');
     await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
-    const svc = host.services.get(packageManager);
+    const svc = host.services.use.get(packageManager);
     if (!svc) throw new Error('package-manager 服务未就绪');
     return { app, svc };
   }
@@ -1409,7 +1409,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       provides: [tag],
       uses: { provide, lifecycle },
       apply(caps) {
-        caps.provide(tag, { id: caps.lifecycle.id });
+        caps.provide.use(tag, { id: caps.lifecycle.use.id });
       },
     });
     await app.plugin(def, { slot: 'main' });
@@ -1417,7 +1417,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     await app.plugins.register(def, { slot: 'two' }, `${TARGET}:two`);
     await app.plugins.idle();
 
-    host.provide(
+    host.provide.use(
       defineService<object>('process'),
       mockProcess({
         [`${PAGE}/package.json`]: JSON.stringify({ dependencies: { [TARGET]: '^1.0.0' } }),
@@ -1432,7 +1432,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
     expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
-    const svc = host.services.get(packageManager);
+    const svc = host.services.use.get(packageManager);
     if (!svc) throw new Error('package-manager 未就绪');
     expect(app.plugins.getStatus().filter(p => p.name === TARGET)).toHaveLength(3);
     const instances = () =>
@@ -1455,7 +1455,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     expect(store.getPluginConfig(`${TARGET}:two`)).toEqual({ slot: 'two' });
     expect(store.isPluginDisabled(`${TARGET}:one`), '后缀禁用标记应随包卸掉').toBe(false);
     expect(savedSecrets, '密钥一个不删').toEqual([]);
-    expect(host.services.get(tag), '枢纽上该包提供的服务应全部消失').toBeUndefined();
+    expect(host.services.use.get(tag), '枢纽上该包提供的服务应全部消失').toBeUndefined();
   });
 
   it('选了同时删除配置：各实例的配置段删掉，落盘后只删没人再引用的密钥', async () => {
@@ -1502,7 +1502,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         provides: [dep],
         uses: { provide },
         apply(caps) {
-          caps.provide(dep, {});
+          caps.provide.use(dep, {});
         },
       }),
       {},
@@ -1510,7 +1510,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     await app.plugin(definePlugin({ name: CONSUMER, uses: { dep }, apply() {} }), {});
     await app.plugins.idle();
 
-    host.provide(
+    host.provide.use(
       defineService<object>('process'),
       mockProcess({
         [`${PAGE}/package.json`]: JSON.stringify({ dependencies: { [PROVIDER]: '^1.0.0' } }),
@@ -1523,7 +1523,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     provideHostPaths(app, PAGE);
     await app.plugins.register(packageManagerPlugin, {});
     await app.plugins.idle();
-    const svc = host.services.get(packageManager);
+    const svc = host.services.use.get(packageManager);
     if (!svc) throw new Error('package-manager 未就绪');
 
     expect(svc.serviceDependents(PROVIDER)).toEqual([CONSUMER]);
@@ -1551,7 +1551,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
           provides: [upstream],
           uses: { provide },
           async apply(caps) {
-            caps.provide(upstream, {});
+            caps.provide.use(upstream, {});
             await gate.promise;
           },
         }),
@@ -1563,13 +1563,13 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
           provides: [dep],
           uses: { provide, upstream, hostConfig },
           apply(caps) {
-            caps.provide(dep, {});
+            caps.provide.use(dep, {});
           },
         }),
         {},
       );
       await app.plugin(definePlugin({ name: CONSUMER, uses: { dep }, apply() {} }), {});
-      host.provide(
+      host.provide.use(
         defineService<object>('process'),
         mockProcess({
           [`${PAGE}/package.json`]: JSON.stringify({ dependencies: { [PROVIDER]: '^1.0.0' } }),
@@ -1583,7 +1583,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
       expect(app.plugins.getPlugin(PROVIDER)?.state).toBe('pending');
-      const svc = host.services.get(packageManager);
+      const svc = host.services.use.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');
 
       expect(svc.serviceDependents(PROVIDER)).toEqual([CONSUMER]);
@@ -1615,8 +1615,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
-      host.provide(pluginSource, { rescan: () => discovery.rescan() });
-      host.provide(defineService<object>('process'), {
+      host.provide.use(pluginSource, { rescan: () => discovery.rescan() });
+      host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
             return readFileSync(abs);
@@ -1637,7 +1637,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
       expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
-      const svc = host.services.get(packageManager);
+      const svc = host.services.use.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');
 
       const r = await svc.install(pkg);
@@ -1673,14 +1673,14 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
       const rescanned = deferred();
-      host.provide(pluginSource, {
+      host.provide.use(pluginSource, {
         rescan: async () => {
           const loaded = await discovery.rescan();
           rescanned.resolve();
           return loaded;
         },
       });
-      host.provide(defineService<object>('process'), {
+      host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => readFileSync(abs),
         execFile: async (_cmd: string, args: readonly string[]) => ({
           stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
@@ -1692,7 +1692,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       provideHostPaths(app, proj);
       await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
-      const svc = host.services.get(packageManager);
+      const svc = host.services.use.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');
 
       // 让一次重算停在别的插件的 apply 里：rescan 的登记只排队、立即返回
@@ -1754,8 +1754,8 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
-      host.provide(pluginSource, { rescan: () => discovery.rescan() });
-      host.provide(defineService<object>('process'), {
+      host.provide.use(pluginSource, { rescan: () => discovery.rescan() });
+      host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
             return readFileSync(abs);
@@ -1774,7 +1774,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       provideHostPaths(app, proj);
       await app.plugins.register(packageManagerPlugin, {});
       await app.plugins.idle();
-      const svc = host.services.get(packageManager);
+      const svc = host.services.use.get(packageManager);
       if (!svc) throw new Error('package-manager 未就绪');
 
       const un = await svc.uninstall(pkg);

@@ -20,33 +20,27 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
   await app.plugin(toolSearch, { maxDirectTools: 1, showToolNames, maxSearchResults });
   await app.plugins.idle();
   const host = app.bind({ hooks, tools });
-  const service = host.tools.require();
+  const service = host.tools.use;
   if (firstGroupTools > 0) {
-    service.registerGroup({ name: 'bulk', label: '庞大操作集', description: '包含许多不相干的后台操作' }, 'fixture');
+    service.registerGroup({ name: 'bulk', label: '庞大操作集', description: '包含许多不相干的后台操作' });
     for (let i = 0; i < firstGroupTools; i++) {
-      service.register(
-        {
-          groups: ['bulk'],
-          definition: {
-            type: 'function',
-            function: {
-              name: `bulk_operation_${String(i).padStart(3, '0')}`,
-              description: '后台操作',
-              parameters: { type: 'object', properties: {} },
-            },
+      service.register({
+        groups: ['bulk'],
+        definition: {
+          type: 'function',
+          function: {
+            name: `bulk_operation_${String(i).padStart(3, '0')}`,
+            description: '后台操作',
+            parameters: { type: 'object', properties: {} },
           },
-          handler: async () => '{}',
         },
-        'fixture',
-      );
+        handler: async () => '{}',
+      });
     }
   }
-  service.registerGroup(
-    { name: 'paper', label: '白纸创作', description: '把需求交给代理制作网页、图像和动画' },
-    'fixture',
-  );
-  service.registerGroup({ name: 'works', label: '作品发布', description: '把成品提名审核并公开展示' }, 'fixture');
-  service.registerGroup({ name: 'secret', label: '私密管理', description: '处理受限资料' }, 'fixture');
+  service.registerGroup({ name: 'paper', label: '白纸创作', description: '把需求交给代理制作网页、图像和动画' });
+  service.registerGroup({ name: 'works', label: '作品发布', description: '把成品提名审核并公开展示' });
+  service.registerGroup({ name: 'secret', label: '私密管理', description: '处理受限资料' });
   for (const [name, description, groups] of [
     ['read_note', '读取 paper_task 指令笔记', ['paper']],
     ['paper_status', '查看任务状态', ['paper']],
@@ -55,17 +49,14 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
     ['bridge', '两组共用的工具', ['paper', 'secret']],
     ['helper', '通用帮助', []],
   ] as const) {
-    service.register(
-      {
-        groups: [...groups],
-        definition: {
-          type: 'function',
-          function: { name, description, parameters: { type: 'object', properties: {} } },
-        },
-        handler: async () => '{}',
+    service.register({
+      groups: [...groups],
+      definition: {
+        type: 'function',
+        function: { name, description, parameters: { type: 'object', properties: {} } },
       },
-      'fixture',
-    );
+      handler: async () => '{}',
+    });
   }
   async function visible(groups: string[]) {
     const data: HookContextMap['agent:llm:before'] = {
@@ -73,7 +64,7 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
       tools: service.getDefinitions({ groups }),
       sessionId: 'room-1',
     };
-    await host.hooks.run('agent:llm:before', data, async () => {});
+    await host.hooks.use.run('agent:llm:before', data, async () => {});
     return data.tools;
   }
   async function search(query: string, groups: string[], options: { limit?: number; offset?: number } = {}) {
@@ -130,18 +121,15 @@ describe('search_tools 可用能力目录', () => {
     for (let i = 0; i < 80; i++) {
       const group = `group_${i}`;
       enabled.push(group);
-      h.service.registerGroup({ name: group, label: `能力${i}`, description: '说明'.repeat(100) }, 'fixture');
-      h.service.register(
-        {
-          groups: [group],
-          definition: {
-            type: 'function',
-            function: { name: `tool_${i}`, description: '测试', parameters: { type: 'object', properties: {} } },
-          },
-          handler: async () => '{}',
+      h.service.registerGroup({ name: group, label: `能力${i}`, description: '说明'.repeat(100) });
+      h.service.register({
+        groups: [group],
+        definition: {
+          type: 'function',
+          function: { name: `tool_${i}`, description: '测试', parameters: { type: 'object', properties: {} } },
         },
-        'fixture',
-      );
+        handler: async () => '{}',
+      });
     }
     const catalog = (await h.visible(enabled))[0].function.description;
     expect(catalog.length).toBeLessThan(4000);

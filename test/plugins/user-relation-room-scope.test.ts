@@ -32,9 +32,9 @@ async function setup(room?: {
   const host = app.bind({ contributions, logger, memory, provide, sessionManager: optional(sessionManager) });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles));
-  const mem = host.memory.current;
-  if (!mem) throw new Error('no memory');
+  if (room) host.provide.use(sessionManager, roomScopeManager(room.rooms, room.profiles));
+  if (!host.memory.present) throw new Error('no memory');
+  const mem = host.memory.use;
   const service = new RelationService(new RelationStore(() => mem));
 
   await service.observePerson('onebot', 'u1', 'Alice');

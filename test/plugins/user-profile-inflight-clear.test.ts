@@ -82,13 +82,13 @@ async function setup(config: Record<string, unknown>, reply: unknown) {
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, memory });
   const llmStub = gatedChat(reply);
-  host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat: llmStub.chat } as never);
+  host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat: llmStub.chat } as never);
   const cmd = captureCommands();
-  host.provide(commands, cmd.service);
+  host.provide.use(commands, cmd.service);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('memory 服务未就绪');
+  if (!host.memory.present) throw new Error('memory 服务未就绪');
+  const mem = host.memory.use;
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
     relationIncrementWitness: 0,
@@ -97,7 +97,7 @@ async function setup(config: Record<string, unknown>, reply: unknown) {
   await app.plugins.idle();
   if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
   const inbound = (userId: string) =>
-    host.events.emit('inbound:message:archived', {
+    host.events.use.emit('inbound:message:archived', {
       sessionId: SESSION,
       incoming: { userId, platform: 'onebot' },
     } as never);
@@ -108,7 +108,7 @@ async function setup(config: Record<string, unknown>, reply: unknown) {
       sessionId: SESSION,
       results: [],
     };
-    await host.hooks.run('memory:clear', data, async () => {});
+    await host.hooks.use.run('memory:clear', data, async () => {});
     return data.results;
   };
   return { mem, cmd, llm: llmStub, inbound, clearAll };

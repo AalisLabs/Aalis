@@ -57,9 +57,9 @@ async function withScheduler(
   const host = app.bind(uses);
   const store = memoryStorage();
   if (options.persisted) store.files.set('data:/scheduler-jobs.json', JSON.stringify(options.persisted));
-  host.provide(storage, store.service as never);
+  host.provide.use(storage, store.service as never);
   const pages = pageHost();
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(cronEnginePlugin, {});
   await app.plugins.register(schedulerPlugin, {
@@ -68,7 +68,7 @@ async function withScheduler(
   });
   await app.plugins.idle();
 
-  const svc = () => host.services.get(scheduler);
+  const svc = () => host.services.use.get(scheduler);
   try {
     await fn({
       app,
@@ -76,7 +76,7 @@ async function withScheduler(
       pages,
       create: input => pages.act('scheduler', 'createJob', { input }),
       async createByTool(args) {
-        const toolSvc = host.services.get(tools);
+        const toolSvc = host.services.use.get(tools);
         if (!toolSvc) throw new Error('tools 服务未注册');
         toolSvc.setExecutionGuard(async () => null);
         const res = await toolSvc.execute('scheduler_create_job', args, {
@@ -333,7 +333,7 @@ describe('行上的动作', () => {
       const held = new Promise<void>(resolve => {
         release = resolve;
       });
-      host.events.on('scheduler:job:start', () => held);
+      host.events.use.on('scheduler:job:start', () => held);
       await create({ ...base, interval: 3600 });
       const first = pages.act('scheduler', 'triggerJob', { rowKey: 'j' });
       await vi.waitFor(() => expect(jobs().find(j => j.name === 'j')?.running).toBe(true));
@@ -407,7 +407,7 @@ describe('激活中的页面', () => {
     const held = new Promise<void>(resolve => {
       release = resolve;
     });
-    host.provide(storage, {
+    host.provide.use(storage, {
       ...store.service,
       async readFile(uri: string) {
         reading();
@@ -416,7 +416,7 @@ describe('激活中的页面', () => {
       },
     } as never);
     const pages = pageHost();
-    host.provide(webuiServer, pages.service);
+    host.provide.use(webuiServer, pages.service);
     try {
       await app.plugins.register(toolsPlugin, {});
       await app.plugins.register(cronEnginePlugin, {});

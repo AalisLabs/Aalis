@@ -240,7 +240,7 @@ describe('场所记录', () => {
     await inbound({ sessionId: GROUP, ...message });
     await inbound({ sessionId: GROUP_B, ...message });
     const updated: string[] = [];
-    host.events.on('session:updated', session => void updated.push(session.id));
+    host.events.use.on('session:updated', session => void updated.push(session.id));
 
     await inbound({ sessionId: GROUP, ...message, groupName: '<新群名>' });
     await expect.poll(() => updated.sort()).toEqual([GROUP, GROUP_B].sort());
@@ -279,13 +279,13 @@ describe('场所记录', () => {
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, fallback as never, { priority: -100 });
+    host.provide.use(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin);
     await app.plugins.idle();
-    const sm = () => host.sessionManager.require();
+    const sm = () => host.sessionManager.use;
     sm().addWorkspace(folder('switch'));
 
-    host.provide(memory, preferred as never, { priority: 10 });
+    host.provide.use(memory, preferred as never, { priority: 10, entryId: 'memory-preferred' });
     await expect.poll(() => sm().getPlace(WINDOW)?.name).toBe('<群名>');
 
     expect(sm().getPlace('workspace:default'), '新后端里没有的默认工作区记录照样补上').toBeDefined();
@@ -365,7 +365,7 @@ describe('工作区', () => {
     const other = await sm.createSession({}, { createdFrom: 'webui' });
     await sm.setCurrentDir(other.id, TMP);
     const updated: string[] = [];
-    app.bind({ events }).events.on('session:updated', s => void updated.push(s.id));
+    app.bind({ events }).events.use.on('session:updated', s => void updated.push(s.id));
 
     await sm.removeWorkspace(added.id);
 
@@ -457,14 +457,14 @@ describe('与 authority 的可选环', () => {
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, events, sessionManager });
-    host.provide(memory, fakeMemory() as never);
+    host.provide.use(memory, fakeMemory() as never);
     await app.plugin(adapterPlugin('zz-onebot', { platform: 'onebot', sessionTypes: ONEBOT_TYPES }));
     for (const plugin of order) await app.plugin(plugin);
     await app.plugins.idle();
     for (const plugin of order) expect(app.plugins.getPlugin(plugin.name)?.state, plugin.name).toBe('active');
 
-    const sm = () => host.sessionManager.require();
-    await host.events.emit('inbound:message', {
+    const sm = () => host.sessionManager.use;
+    await host.events.use.emit('inbound:message', {
       content: '<占位>',
       sessionId: OWNER_PRIVATE,
       platform: 'onebot',

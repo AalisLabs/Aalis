@@ -1,5 +1,5 @@
-import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
+import { processService } from '@aalis/api-process';
+import { isStorageUri, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -60,45 +60,45 @@ export default definePlugin({
 
 function registerOffice(caps: Caps): void {
   const { logger } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
   const outputUri = cfg.outputDir || configSchema.outputDir.default;
   if (!isStorageUri(outputUri)) {
     throw configError(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${outputUri}"`);
   }
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
   const sessions = new DocSessionManager();
 
-  caps.tools.registerGroup({
+  caps.tools.use.registerGroup({
     name: 'office',
     label: 'Office 文档工具',
     description: '创建和编辑 Word、Excel、PPT、PDF 文档',
   });
 
-  const tools = withToolGroups(caps.tools, ['office']);
+  const tools = withToolGroups(caps.tools.use, ['office']);
 
   if (cfg.docx.enabled) {
     registerDocxTools(tools, sessions, storage, outputUri);
-    logger.info('Word (docx) 工具已启用');
+    logger.use.info('Word (docx) 工具已启用');
   }
 
   if (cfg.xlsx.enabled) {
     registerExcelTools(tools, sessions, storage, outputUri);
-    logger.info('Excel (xlsx) 工具已启用');
+    logger.use.info('Excel (xlsx) 工具已启用');
   }
 
   if (cfg.pptx.enabled) {
     registerPptTools(tools, sessions, storage, outputUri);
-    logger.info('PPT (pptx) 工具已启用');
+    logger.use.info('PPT (pptx) 工具已启用');
   }
 
   if (cfg.pdf.enabled) {
     // 不给网关兜底：缺 process 时 pdf_convert 要回「请启用 process 提供方」的明确提示，
     // 而不是让网关在调用点抛出被当成转换失败
-    const proc = caps.processService.current ? createProcessGateway(caps.processService) : undefined;
+    const proc = caps.processService.present ? caps.processService.use : undefined;
     registerPdfTools(tools, sessions, storage, outputUri, proc);
-    logger.info('PDF 工具已启用');
+    logger.use.info('PDF 工具已启用');
   }
 
-  caps.lifecycle.onDispose(() => sessions.clear());
-  logger.info(`Office 文档工具插件已启动 (输出 URI: ${outputUri})`);
+  caps.lifecycle.use.onDispose(() => sessions.clear());
+  logger.use.info(`Office 文档工具插件已启动 (输出 URI: ${outputUri})`);
 }

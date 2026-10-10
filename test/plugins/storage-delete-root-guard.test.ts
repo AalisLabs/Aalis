@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, type LogEntry, LogHub } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -50,7 +50,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     // 插件没激活的话网关会一路 404 根，测出来的「拒绝」就与守卫无关了
     const state = app.plugins.getPlugin(storageLocal.name)?.state;
     if (state !== 'active') throw new Error(`storage-local 未激活（state=${state}）`);
-    gateway = createStorageGateway(app.bind({ storage }).storage);
+    gateway = app.bind({ storage }).storage.use;
   });
 
   afterEach(async () => {

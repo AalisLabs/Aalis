@@ -31,7 +31,7 @@ async function runInbound(message: Record<string, unknown>): Promise<Captured> {
 
   const host = app.bind({ events, services });
   const captured: Captured = {};
-  const commands = host.services.get(commandsDescriptor);
+  const commands = host.services.use.get(commandsDescriptor);
   if (!commands) throw new Error('commands 服务未注册');
   commands.command('probe', '探针').action(async function (this: unknown) {
     return 'ok';
@@ -43,7 +43,7 @@ async function runInbound(message: Record<string, unknown>): Promise<Captured> {
     return orig(name, input);
   };
 
-  await host.events.emit('inbound:message', message as never);
+  await host.events.use.emit('inbound:message', message as never);
   await app.stop();
   return captured;
 }

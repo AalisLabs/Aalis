@@ -100,9 +100,9 @@ async function boot(opts: BootOptions = {}) {
   running.push({ app, pages });
   const host = app.bind({ provide, services, hostConfig });
   const handlers = new Map<string, CommandHandler>();
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
   // 等级表落盘用；多数用例不验持久化，读到「无文件」即空表
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [DATA_ROOT],
     readFile:
       opts.readFile ??
@@ -112,13 +112,13 @@ async function boot(opts: BootOptions = {}) {
       }),
     writeFile: opts.writeFile ?? (async () => undefined),
   } as never);
-  host.provide(commands, fakeCommandService(opts.operations ?? [], handlers) as never);
-  host.provide(tools, fakeToolService(opts.operations ?? []) as never);
+  host.provide.use(commands, fakeCommandService(opts.operations ?? [], handlers) as never);
+  host.provide.use(tools, fakeToolService(opts.operations ?? []) as never);
 
   await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();
 
-  const manager = host.services.get(authority);
+  const manager = host.services.use.get(authority);
   if (!manager) throw new Error('authority 服务未注册 —— 插件没起来');
   /** 调一个动作，成功时回那句结果，失败时把状态码与原因抛出来 */
   const act = async (action: string, body: Record<string, unknown> = {}): Promise<string> => {
@@ -133,7 +133,7 @@ async function boot(opts: BootOptions = {}) {
     const session = { sessionId: 's1', platform: 'webui', userId: 'console', raw: `/${name}` };
     return handler({ session, options: {} }, ...positionals);
   };
-  return { app, pages, manager, act, runCommand, config: host.hostConfig.require() };
+  return { app, pages, manager, act, runCommand, config: host.hostConfig.use };
 }
 
 const canRestricted = (m: AuthorityService, platform: string, userId: string, cap: string) =>
@@ -363,7 +363,7 @@ describe('users.json 读不出来时的提示', () => {
     );
 
     // 排在前面的 storage 提供者上线：follow 换人即重读
-    app.bind({ provide }).provide(
+    app.bind({ provide }).provide.use(
       storage,
       {
         listRoots: () => [DATA_ROOT],

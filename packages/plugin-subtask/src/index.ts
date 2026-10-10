@@ -93,7 +93,7 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const parsed = parseConfig(configSchema, caps.config, caps.logger);
+    const parsed = parseConfig(configSchema, caps.config.use, caps.logger.use);
     const cfg = {
       ...parsed,
       maxWaitMs: parsed.maxWaitMs || configSchema.maxWaitMs.default,
@@ -110,14 +110,14 @@ function registerSubtask(
   cfg: PluginConfig,
 ): void {
   // 注册工具分组
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'subtask',
     label: '子任务管理',
     description: '创建、管理和协调子任务会话，支持并行执行',
   });
 
   // ---- create_subtask ----
-  tools.register({
+  tools.use.register({
     groups: ['subtask'],
     // 每个子任务是一条独立的 LLM 会话链——不受信任的调用方可连续创建以放大 API 开销。
     // sensitive(L1) 挡住 level-0，不加逐次 confirm（正常用法是 agent 连续创建多个并行子任务）。
@@ -171,8 +171,8 @@ function registerSubtask(
       },
     },
     handler: async (args, callCtx) => {
-      const sm = sessionManager.current;
-      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      const sm = sessionManager.use;
 
       const task = String(args.task || '');
       if (!task) return JSON.stringify({ error: '缺少任务描述' });
@@ -229,8 +229,8 @@ function registerSubtask(
           callCtx.actor ??
           (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
         if (createActor) incoming.actor = createActor;
-        events.emit('inbound:message', incoming).catch(err => {
-          logger.warn(`子任务消息派发失败 (${child.id}):`, err);
+        events.use.emit('inbound:message', incoming).catch(err => {
+          logger.use.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
 
         return JSON.stringify({
@@ -246,7 +246,7 @@ function registerSubtask(
   });
 
   // ---- check_subtask ----
-  tools.register({
+  tools.use.register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -272,8 +272,8 @@ function registerSubtask(
       },
     },
     handler: async args => {
-      const sm = sessionManager.current;
-      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      const sm = sessionManager.use;
 
       const ids = (args.subtask_ids as string[]) || [];
       if (ids.length === 0) {
@@ -309,7 +309,7 @@ function registerSubtask(
   });
 
   // ---- send_to_subtask ----
-  tools.register({
+  tools.use.register({
     groups: ['subtask'],
     // 向子任务追加指令 = 驱动其再跑一轮 LLM，同 create_subtask 的开销放大面。
     risk: 'sensitive',
@@ -340,8 +340,8 @@ function registerSubtask(
       },
     },
     handler: async (args, callCtx) => {
-      const sm = sessionManager.current;
-      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      const sm = sessionManager.use;
 
       const subtaskId = String(args.subtask_id || '');
       const message = String(args.message || '');
@@ -378,8 +378,8 @@ function registerSubtask(
         callCtx.actor ??
         (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
       if (followUpActor) followUp.actor = followUpActor;
-      events.emit('inbound:message', followUp).catch(err => {
-        logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
+      events.use.emit('inbound:message', followUp).catch(err => {
+        logger.use.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
       });
 
       return JSON.stringify({
@@ -391,7 +391,7 @@ function registerSubtask(
   });
 
   // ---- delete_subtask ----
-  tools.register({
+  tools.use.register({
     groups: ['subtask'],
     // 销毁子任务会话（含其未完成工作）——破坏性且影响他人发起的任务。
     risk: 'sensitive',
@@ -418,8 +418,8 @@ function registerSubtask(
       },
     },
     handler: async (args, callCtx) => {
-      const sm = sessionManager.current;
-      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      const sm = sessionManager.use;
 
       const subtaskId = String(args.subtask_id || '').trim();
       if (!subtaskId) return JSON.stringify({ error: '缺少子任务 ID' });
@@ -451,7 +451,7 @@ function registerSubtask(
   });
 
   // ---- wait_subtasks ----
-  tools.register({
+  tools.use.register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -485,8 +485,8 @@ function registerSubtask(
       },
     },
     handler: async (args, _callCtx) => {
-      const sm = sessionManager.current;
-      if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      const sm = sessionManager.use;
 
       const ids = (args.subtask_ids as string[]) || [];
       if (ids.length === 0) {
@@ -516,7 +516,7 @@ function registerSubtask(
           };
 
           // 监听 session:completed 事件
-          const disposeCompleted = events.on('session:completed', (session: SessionInfo) => {
+          const disposeCompleted = events.use.on('session:completed', (session: SessionInfo) => {
             pending.delete(session.id);
             if (pending.size === 0) {
               cleanup();
@@ -525,7 +525,7 @@ function registerSubtask(
           });
 
           // 兜底：也监听 session:updated 以防状态通过 updateSession 变更
-          const disposeUpdated = events.on('session:updated', (session: SessionInfo) => {
+          const disposeUpdated = events.use.on('session:updated', (session: SessionInfo) => {
             if ((session.status === 'completed' || session.status === 'error') && pending.has(session.id)) {
               pending.delete(session.id);
               if (pending.size === 0) {
@@ -578,12 +578,12 @@ function registerSubtask(
   /** 提醒消息的 injector 标识：每轮重注时按它摘旧、token 统计按它归桶 */
   const PARENT_STATUS_INJECTOR = 'subtask/parent-status';
 
-  hooks.middleware('agent:llm:before', async (data, next) => {
-    const sm = sessionManager.current;
-    if (!sm) {
+  hooks.use.middleware('agent:llm:before', async (data, next) => {
+    if (!sessionManager.present) {
       await next();
       return;
     }
+    const sm = sessionManager.use;
 
     const sessionId = data.sessionId;
     if (!sessionId) {
@@ -732,14 +732,14 @@ function registerSubtask(
   // ---- 子任务自动完成 ----
   // 当子任务 agent 正常回复后，自动将回复内容作为结果完成会话
   // 同时在子会话历史中合成一条 tool call 记录，展示"报告给父会话"的流程
-  hooks.middleware('agent:turn:after', async (data, next) => {
+  hooks.use.middleware('agent:turn:after', async (data, next) => {
     await next();
 
     // 仅在本轮真正产生回复时回报父会话；silent / aborted 不应触发自动完成
     if (data.outcome !== 'replied') return;
 
-    const sm = sessionManager.current;
-    if (!sm) return;
+    if (!sessionManager.present) return;
+    const sm = sessionManager.use;
 
     const session = sm.getSession(data.sessionId);
     if (!session?.parentId) return; // 非子任务
@@ -750,7 +750,7 @@ function registerSubtask(
 
     try {
       // 在子会话历史中合成 tool call 记录，展示报告流程
-      const archive = messageArchive.current;
+      const archive = messageArchive.present ? messageArchive.use : undefined;
       if (archive) {
         const syntheticToolCallId = `report-${Date.now()}`;
         // 合成 assistant 消息（含 tool_calls）
@@ -779,11 +779,11 @@ function registerSubtask(
       }
 
       await sm.completeSession(data.sessionId, result.trim());
-      logger.info(`子任务自动完成: ${session.name} (${data.sessionId})`);
+      logger.use.info(`子任务自动完成: ${session.name} (${data.sessionId})`);
     } catch (err) {
-      logger.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
+      logger.use.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }
   });
 
-  logger.info('子任务工具已注册');
+  logger.use.info('子任务工具已注册');
 }

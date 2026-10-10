@@ -12,11 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -53,7 +49,7 @@ describe('storage-local 宿主控制文件兜底', () => {
       ],
     });
     await app.plugins.idle();
-    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
+    storage = app.bind({ storage: storageService }).storage.use;
   });
 
   afterEach(async () => {
@@ -113,7 +109,7 @@ describe('storage-local 宿主控制文件兜底', () => {
       await other.plugin(storageLocal, { roots: [{ name: 'alias', path: `/System/Volumes/Data${base}`, ...rw }] });
       await other.plugins.idle();
       try {
-        const alias = createStorageGateway(other.bind({ storage: storageService }).storage);
+        const alias = other.bind({ storage: storageService }).storage.use;
         await expect(alias.delete('alias:/home')).rejects.toThrow('目录里有宿主的密钥文件或主配置');
         expect(existsSync(join(home, 'secrets.yaml'))).toBe(true);
       } finally {

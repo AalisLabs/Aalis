@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NominateInput, NominateResult, PublishService } from '../../packages/api-publish/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
+import type { Logger, ServiceSelection } from '../../packages/core/src/index.js';
 import { artifactUri } from '../../packages/plugin-paper/src/artifacts.js';
 import type { PaperConfig } from '../../packages/plugin-paper/src/config.js';
 import { rawDeliveryAllowed } from '../../packages/plugin-paper/src/deliver.js';
@@ -79,7 +79,11 @@ function setup(
   let attach: ((service: PublishService) => void) | undefined;
   let cleanup: (() => unknown) | undefined;
   const ref = {
-    get current() {
+    list: () => (current ? [{ id: 'publish', priority: 0, selected: true, use: current }] : []),
+    get present() {
+      return current !== undefined;
+    },
+    get use() {
       return current;
     },
     follow: (fn: (service: PublishService) => undefined | (() => unknown)) => {
@@ -93,7 +97,7 @@ function setup(
         attach = undefined;
       };
     },
-  } as unknown as ServiceRef<PublishService>;
+  } as unknown as ServiceSelection<PublishService>;
   const controller = new AbortController();
   const logger = { warn: vi.fn(), error: vi.fn() } as unknown as Logger;
   const changed = vi.fn();

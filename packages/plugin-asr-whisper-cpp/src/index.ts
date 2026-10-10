@@ -12,9 +12,9 @@ import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import type { ProcessService } from '@aalis/api-process';
-import { createProcessGateway, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, isStorageUri, storage as storageService } from '@aalis/api-storage';
+import { isStorageUri, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
@@ -183,12 +183,12 @@ export default definePlugin({
   provides: [asr],
   uses,
   apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
-    const proc = createProcessGateway(caps.proc);
-    const storage = createStorageGateway(caps.storage);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
+    const proc = caps.proc.use;
+    const storage = caps.storage.use;
 
-    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
-    caps.logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath})`);
+    caps.provide.use(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
+    caps.logger.use.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath})`);
   },
 });
 

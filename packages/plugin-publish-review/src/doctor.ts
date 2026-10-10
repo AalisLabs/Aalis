@@ -1,7 +1,7 @@
 import type { CodeSandboxService } from '@aalis/api-code-sandbox';
 import type { BoundDoctor, CheckResult } from '@aalis/api-doctor';
 import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import type { OfflineRenderer } from '@aalis/util-offline-render';
 import type { ReviewConfig } from './config.js';
 import type { ReviewStore } from './state.js';
@@ -10,8 +10,8 @@ export function registerReviewDoctor(deps: {
   doctor: BoundDoctor;
   store: ReviewStore;
   config: ReviewConfig;
-  llm: ServiceRef<LLMModel>;
-  sandbox: ServiceRef<CodeSandboxService>;
+  llm: ServiceSelection<LLMModel>;
+  sandbox: ServiceSelection<CodeSandboxService>;
   renderer: OfflineRenderer;
   ffprobePath: string;
   signal: AbortSignal;
@@ -35,7 +35,7 @@ export function registerReviewDoctor(deps: {
         if (!image?.provider || !image.model || !resolveLLMModel(deps.llm, image, ['vision']))
           warnings.push('图像分类器不可用或没有视觉能力');
       }
-      const sandbox = deps.sandbox.current;
+      const sandbox = deps.sandbox.present ? deps.sandbox.use : undefined;
       if (!sandbox?.available) warnings.push('代码沙箱不可用，不能处理媒体');
       else
         for (const [label, cmd] of [

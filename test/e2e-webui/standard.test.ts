@@ -173,7 +173,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await lines()).toEqual(['调用 search_tools', `写入 ${REPORT}`]);
     await page.locator(aria('批准', 'button')).click();
     await page.waitForSelector(text('周报写好了。'));
-    const files = stack.app.bind({ storage }).storage.require();
+    const files = stack.app.bind({ storage }).storage.use;
     expect(await files.readFile(REPORT, 'utf-8')).toBe('# 周报\n');
 
     // 回滚：检查点记下了这一轮写的文件（平时藏着，悬停在这一轮上才出现，触屏上常显），回滚后文件没了
@@ -207,7 +207,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.keyboard.press('Enter');
     await page.keyboard.up('Control');
     await page.waitForSelector(`${extra} ${aria('恢复继承', 'button')}`);
-    const sessions = stack.app.bind({ sessionManager }).sessionManager.require();
+    const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
     expect(sessions.getOwnConfig(sessionId).systemPromptExtra).toBe('回答简短');
 
     // 后台：命令要批准，批准后立即转到后台；在「后台」标签里停掉，进程随之结束
@@ -224,7 +224,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.locator(`${calls} ${aria(`停止「${COMMAND}」`, 'button')}`).click();
     await page.locator(`${calls} ${aria('已结束 · 1', 'button')}`).click();
     await page.waitForSelector(`${calls} ${aria('已结束的工具调用', 'list')} ${text('已停止')}`);
-    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.require();
+    const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.use;
     expect(tasks.list({ sessionId }).map(task => task.status)).toEqual(['stopped']);
     expect(problems).toEqual([]);
     expect(stack.logged).toEqual(ONLY_UNCONFIGURED);

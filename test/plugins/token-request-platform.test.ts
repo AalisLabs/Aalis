@@ -52,7 +52,7 @@ async function boot() {
   requireActive(mockLLM.name, memoryInMemory.name, messageArchive.name, sessionManagerPlugin.name, agent.name);
   const host = app.bind({ events, sessionManager });
   const seen: TokenUsageEvent[] = [];
-  host.events.on('token:usage', (u: TokenUsageEvent) => {
+  host.events.use.on('token:usage', (u: TokenUsageEvent) => {
     seen.push(u);
   });
   return { seen, host };
@@ -61,7 +61,7 @@ async function boot() {
 describe('token:request 的平台归属', () => {
   it('缺省 platform：快照按 webui 归属，不发空平台', async () => {
     const { seen, host } = await boot();
-    await host.events.emit('token:request', { sessionId: 'webui-default' });
+    await host.events.use.emit('token:request', { sessionId: 'webui-default' });
     expect(seen.length).toBe(1);
     expect(seen[0].platform).toBe('webui');
   });
@@ -69,7 +69,7 @@ describe('token:request 的平台归属', () => {
   it('显式 platform 照用，不被兜底覆盖', async () => {
     const { seen, host } = await boot();
     // 用没有出生平台的会话：房间 id 的出生平台与显式值相同，测不出显式值是否被采用
-    await host.events.emit('token:request', { sessionId: 'cli-default', platform: 'cli' });
+    await host.events.use.emit('token:request', { sessionId: 'cli-default', platform: 'cli' });
     expect(seen.length).toBe(1);
     expect(seen[0].platform).toBe('cli');
   });
@@ -78,16 +78,16 @@ describe('token:request 的平台归属', () => {
     // 不装 onebot 适配器：出生平台是建档时记下的字段，适配器没加载时同样按它
     const { seen, host } = await boot();
     const room = 'onebot:10000:group:20001';
-    await recordRoom(host.events, room);
-    const task = await host.sessionManager.require().createChildSession(room);
-    await host.events.emit('token:request', { sessionId: room });
-    await host.events.emit('token:request', { sessionId: task.id });
+    await recordRoom(host.events.use, room);
+    const task = await host.sessionManager.use.createChildSession(room);
+    await host.events.use.emit('token:request', { sessionId: room });
+    await host.events.use.emit('token:request', { sessionId: task.id });
     expect(seen.map(u => u.platform)).toEqual(['onebot', 'onebot']);
   });
 
   it('会话表里没有出生平台的会话按 webui，不从会话 id 推', async () => {
     const { seen, host } = await boot();
-    await host.events.emit('token:request', { sessionId: 'onebot:10000:group:20002' });
+    await host.events.use.emit('token:request', { sessionId: 'onebot:10000:group:20002' });
     expect(seen.map(u => u.platform)).toEqual(['webui']);
   });
 });
@@ -113,12 +113,12 @@ describe('token 日志节流状态随会话删除清理', () => {
     const host = app.bind({ events });
     const sessionId = 'webui-token-log-reset';
 
-    await host.events.emit('token:request', { sessionId }); // 首轮：打
-    await host.events.emit('token:request', { sessionId }); // 第二轮、同一桶：不打
+    await host.events.use.emit('token:request', { sessionId }); // 首轮：打
+    await host.events.use.emit('token:request', { sessionId }); // 第二轮、同一桶：不打
     expect(lines, '前置：节流生效，否则下面的断言恒真').toHaveLength(1);
 
-    await host.events.emit('session:deleted', sessionId);
-    await host.events.emit('token:request', { sessionId });
+    await host.events.use.emit('session:deleted', sessionId);
+    await host.events.use.emit('token:request', { sessionId });
     expect(lines, '删除会话后同 id 重新计数，首轮必打').toHaveLength(2);
   });
 });
@@ -126,7 +126,7 @@ describe('token 日志节流状态随会话删除清理', () => {
 describe('token:usage 的分项', () => {
   it('分项带显示名、按显示的次序排，数与 breakdown 一致；其余系统提示一项带按注入者的明细', async () => {
     const { seen, host } = await boot();
-    await host.events.emit('token:request', { sessionId: 'webui-parts' });
+    await host.events.use.emit('token:request', { sessionId: 'webui-parts' });
     const [usage] = seen;
     const { breakdown } = usage;
     expect(usage.parts.map(part => [part.label, part.tokens])).toEqual([

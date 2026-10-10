@@ -7,7 +7,7 @@ import { App, definePlugin, provide, services } from '../../packages/core/src/in
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage, MessageAttachment } from '../../packages/schema-message/src/index.js';
-import { ref } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择
@@ -18,7 +18,7 @@ import { ref } from '../fixtures/service-ref.js';
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
 function caps(over: Partial<MediaServiceCaps> = {}): MediaServiceCaps {
-  return { logger, llm: ref(), asr: ref(), sessionManager: ref(), memory: ref(), ...over };
+  return { logger: fixedRef(logger), llm: ref(), asr: ref(), sessionManager: ref(), memory: ref(), ...over };
 }
 
 const cfg = {
@@ -201,7 +201,7 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
       provides: [llm],
       uses: { provide },
       apply(c) {
-        c.provide(llm, {
+        c.provide.use(llm, {
           id: name,
           providerId: name,
           contextLength: 8192,
@@ -221,8 +221,8 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
       const s = new MediaServiceImpl(caps({ llm: host.llm }), cfg);
       // 注册顺序 A 在前；这一次调用同时建起缓存
       expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-a#vision');
-      expect(host.services.prefer(llm, 'zz-llm-b')).toBe(true);
-      expect(host.llm.all()[0]?.contextId, '前提：容器已按偏好把 B 排到最前').toBe('zz-llm-b');
+      expect(host.services.use.prefer(llm, 'zz-llm-b')).toBe(true);
+      expect(host.llm.list()[0]?.id, '前提：容器已按偏好把 B 排到最前').toBe('zz-llm-b');
       expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-b#vision');
     } finally {
       await app.stop();

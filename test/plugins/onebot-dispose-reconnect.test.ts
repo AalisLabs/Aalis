@@ -53,12 +53,12 @@ async function world(onRootDrain: (h: { dropClient: () => void; lines: string[] 
   const app = new App({ name: 'T', logger, devMode: false });
   cleanups.push(() => app.stop());
   const root = app.bind({ provide, events, lifecycle, platform });
-  root.provide(storage, {} as never);
-  root.provide(processService, {} as never);
+  root.provide.use(storage, {} as never);
+  root.provide.use(processService, {} as never);
   const dropClient = () => {
     for (const socket of sockets.splice(0)) socket.terminate();
   };
-  root.lifecycle.onDrain(() => onRootDrain({ dropClient, lines }));
+  root.lifecycle.use.onDrain(() => onRootDrain({ dropClient, lines }));
   const url = `ws://127.0.0.1:${server.address().port}`;
   await app.pluginAll([
     { definition: contributionsPlugin },

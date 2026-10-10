@@ -2,7 +2,7 @@ import type { CodeSandboxService } from '@aalis/api-code-sandbox';
 import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { PublishFile } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import type { OfflineRenderer } from '@aalis/util-offline-render';
 import { contentType, markContent } from './checks.js';
 import { type ClassificationVerdict, classifyImage, classifyText, combineVerdicts, reviewText } from './classify.js';
@@ -34,8 +34,8 @@ export interface ReviewPipeline {
 interface ReviewPipelineDeps {
   config: ReviewConfig;
   storage: StorageService;
-  llm?: ServiceRef<LLMModel>;
-  sandbox?: ServiceRef<CodeSandboxService>;
+  llm?: ServiceSelection<LLMModel>;
+  sandbox?: ServiceSelection<CodeSandboxService>;
   renderer?: OfflineRenderer;
   ffmpegPath?: string;
   ffprobePath?: string;
@@ -56,12 +56,12 @@ const mimeExt: Record<string, string> = {
 };
 
 function exactModel(
-  source: ServiceRef<LLMModel> | undefined,
+  source: ServiceSelection<LLMModel> | undefined,
   ref: { provider?: string; model?: string } | undefined,
   vision = false,
 ): LLMModel | undefined {
   if (!source || !ref?.provider || !ref.model) return undefined;
-  return resolveLLMModel(source, ref, vision ? ['vision'] : undefined)?.instance;
+  return resolveLLMModel(source, ref, vision ? ['vision'] : undefined)?.use;
 }
 
 /** Real review steps. Anything not fully observed yields unsure and waits for human review before publication. */
@@ -72,7 +72,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
       const evidence: ReviewEvidence = { flags: [], reasons, images: [] };
       const media = new SandboxedMedia({
         storage: deps.storage,
-        sandbox: deps.sandbox?.current,
+        sandbox: deps.sandbox?.present ? deps.sandbox.use : undefined,
         ffmpegPath: deps.ffmpegPath ?? deps.config.ffmpegPath,
         ffprobePath: deps.ffprobePath,
         id: input.id,

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CheckpointService, RollbackResult, RollbackWithChatResult } from '@aalis/api-checkpoint';
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { type CheckpointConfig, configSchema } from './config.js';
 
 /**
@@ -152,7 +152,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     const m = turn.manifest;
     m.endedAt = Date.now();
     // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）；即使无文件改动，只要有消息就持久化
-    const memory = this._memory?.current;
+    const memory = this._memory?.present ? this._memory.use : undefined;
     if (memory && typeof memory.getMessagesBySessionRange === 'function') {
       try {
         // 宽松边界 200ms，用于容纳 archiveIncoming/saveMessage 时钟偏差
@@ -439,13 +439,13 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   // ──────────── 聊天回滚依赖注入 ────────────
-  private _memory?: ServiceRef<MemoryService>;
+  private _memory?: ServiceSelection<MemoryService>;
   private _emitMessagesDeleted?: (sessionId: string, timestamps: number[]) => void;
   private _emitHistoryChanged?: (sessionId: string) => void;
 
   /** 注入聊天回滚所需的依赖：memory 引用（每次用时解析当前提供者）+ 事件发出器 */
   setChatRollbackDeps(deps: {
-    memory: ServiceRef<MemoryService>;
+    memory: ServiceSelection<MemoryService>;
     emitMessagesDeleted: (sessionId: string, timestamps: number[]) => void;
     emitHistoryChanged: (sessionId: string) => void;
   }): void {
@@ -482,7 +482,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       return result;
     }
 
-    const memory = this._memory?.current;
+    const memory = this._memory?.present ? this._memory.use : undefined;
     if (!memory || typeof memory.deleteMessagesByTimestamps !== 'function') {
       result.errors.push({ uri: '', reason: '当前 memory 后端不支持 deleteMessagesByTimestamps' });
       result.ok = false;

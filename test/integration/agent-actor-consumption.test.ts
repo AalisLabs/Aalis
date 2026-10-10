@@ -53,7 +53,7 @@ async function runTurn(
   await app.plugins.idle();
 
   let captured: ToolCallContext | undefined;
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: 'probe_ctx', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -65,7 +65,7 @@ async function runTurn(
     },
   });
 
-  await host.agent.require().handleMessage(incoming);
+  await host.agent.use.handleMessage(incoming);
   await app.stop();
   return captured;
 }

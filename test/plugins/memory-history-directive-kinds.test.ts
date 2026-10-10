@@ -43,7 +43,7 @@ async function setup() {
   const assembly = app.bind({ contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const memory = host.services.get(memoryService);
+  const memory = host.services.use.get(memoryService);
   if (!memory) throw new Error('memory 服务未就绪');
   const baseTs = Date.now() - 10_000;
   const seeds: Message[] = [
@@ -68,7 +68,7 @@ async function setup() {
   for (const message of seeds) await memory.saveMessage(PILOT, message);
 
   const toolHandlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};

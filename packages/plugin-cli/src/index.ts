@@ -21,7 +21,7 @@ import {
   resolvePlatformBySession,
 } from '@aalis/api-platform';
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import {
   type BoundOf,
   config,
@@ -70,7 +70,7 @@ declare module '@aalis/core' {
   }
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const cli = defineService<CLIService>('cli');
 
 // ===== 插件元数据 =====
@@ -168,7 +168,7 @@ export default definePlugin({
 
 function startCli(caps: Caps): void {
   const { config, events, logger } = caps;
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   const cliConfig: CLIConfig = {
     prompt: cfg.prompt,
     sessionId: cfg.sessionId,
@@ -178,7 +178,7 @@ function startCli(caps: Caps): void {
   };
 
   const sessionId = cliConfig.sessionId;
-  const approvalSurface = caps.approvals.registerSurface('cli');
+  const approvalSurface = caps.approvals.use.registerSurface('cli');
   let tui: CliTui | null = null;
 
   const adapter: PlatformAdapter = {
@@ -194,21 +194,21 @@ function startCli(caps: Caps): void {
     },
     async sendMessage(_sessionId: string, content: string): Promise<void> {
       if (tui) tui.pushAssistant(content);
-      else logger.info(`[cli] ${content}`);
+      else logger.use.info(`[cli] ${content}`);
     },
   };
 
-  caps.provide(platform, adapter);
+  caps.provide.use(platform, adapter);
 
   const cliService: CLIService = {
     getSessionId: () => sessionId,
     isRunning: () => tui?.isRunning() ?? false,
   };
-  caps.provide(cli, cliService);
+  caps.provide.use(cli, cliService);
 
   // 附件：终端就是这个会话的平台，显示不了图片本身，写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档。
   // 路径在支持超链接的终端里可以点开
-  const attachmentStorage = createStorageGateway(caps.storage);
+  const attachmentStorage = caps.storage.use;
   const KIND_LABELS: Record<MessageAttachment['kind'], AttachmentRefKind> = {
     image: AttachmentRefKind.Image,
     audio: AttachmentRefKind.Audio,
@@ -238,7 +238,7 @@ function startCli(caps: Caps): void {
     msg.delivery = (async () => {
       try {
         for (const att of attachments) adapter.sendMessage(msg.sessionId, await attachmentLine(att));
-        void events.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
+        void events.use.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
         return { ok: true as const };
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
@@ -246,7 +246,7 @@ function startCli(caps: Caps): void {
     })();
   }
 
-  events.on('outbound:message', msg => {
+  events.use.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
     if (msg.attachments?.length) {
       sendAttachments(msg);
@@ -266,7 +266,7 @@ function startCli(caps: Caps): void {
     );
   });
 
-  events.on('outbound:stream', chunk => {
+  events.use.on('outbound:stream', chunk => {
     if (chunk.sessionId !== sessionId) return;
     tui?.applyStreamChunk(chunk);
   });
@@ -280,18 +280,18 @@ function startCli(caps: Caps): void {
     if (liveBufferActive) liveBuffer.push(entry);
   });
 
-  events.on('app:started', async () => {
+  events.use.on('app:started', async () => {
     // 非交互终端（日志重定向 / 容器 / systemd）：不接管终端、不画界面，控制台日志照常走 stdout；
     // 服务仍在线（平台枚举、子命令分发不受影响），出站消息退化为日志（见 sendMessage）。
     if (!output.isTTY || !input.isTTY) {
       liveBufferActive = false;
       stopLiveBuffer();
-      logger.info('stdin/stdout 非 TTY，CLI 界面未启动');
+      logger.use.info('stdin/stdout 非 TTY，CLI 界面未启动');
       return;
     }
     let initial: LogEntry[] = [];
     try {
-      initial = await readLogFileTail(createStorageGateway(caps.storage), 2000);
+      initial = await readLogFileTail(caps.storage.use, 2000);
     } catch {
       // 文件未就绪可忽略——只是无早期历史
     }
@@ -388,7 +388,7 @@ class CliTui {
 
     // 宣告"我接管终端"——任何写 stdout 的订阅者（runtime/console-sink 等）
     // 自行响应该事件停止写入，CLI 不直接干预日志系统。
-    this.caps.events.emit('terminal:claimed', 'cli').catch(() => {});
+    this.caps.events.use.emit('terminal:claimed', 'cli').catch(() => {});
     // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll——支持它的终端会把
     // 滚轮翻译成方向键，落到我们的键盘滚动路径上。不开启 SGR 鼠标上报（1000h/1006h）：
     // 终端保持原生的文本选择/复制，程序不接管任何鼠标事件。
@@ -422,7 +422,7 @@ class CliTui {
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
 
-    this.caps.lifecycle.onDispose(() => this.stop());
+    this.caps.lifecycle.use.onDispose(() => this.stop());
     this.render();
   }
 
@@ -431,16 +431,16 @@ class CliTui {
    * 别的插件启动的不算），与 /doctor 的「失败」「未就绪」两项一致；有 doctor 指令时指向它，没有时指向日志页
    */
   private async pointToUnready(): Promise<void> {
-    const plugins = this.caps.plugins.current;
-    if (!plugins) return;
+    if (!this.caps.plugins.present) return;
+    const plugins = this.caps.plugins.use;
     await plugins.idle();
     const status = plugins.getStatus();
-    const lacking = [...unmetDependencies(status, this.caps.services.names()).values()].filter(
+    const lacking = [...unmetDependencies(status, this.caps.services.use.names()).values()].filter(
       u => u.lacking.length > 0,
     );
     const count = status.filter(p => p.state === 'error').length + lacking.length;
     if (count === 0) return;
-    const how = this.caps.commands.current?.has('doctor')
+    const how = (this.caps.commands.present ? this.caps.commands.use.has('doctor') : undefined)
       ? `输入 ${chalk.cyan('/doctor')} 查看原因与修法`
       : `按 ${chalk.cyan('Ctrl+L')} 看日志`;
     this.chat.append([chalk.gray(this.formatCont()) + chalk.yellow(`有 ${count} 个插件没起来，${how}`)]);
@@ -458,7 +458,7 @@ class CliTui {
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
     // 归还终端——sink 等订阅者可自行恢复
-    this.caps.events.emit('terminal:released', 'cli').catch(() => {});
+    this.caps.events.use.emit('terminal:released', 'cli').catch(() => {});
   }
 
   pushAssistant(content: string): void {
@@ -508,8 +508,10 @@ class CliTui {
 
   /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务时为 undefined */
   private personaName(): string | undefined {
-    const config = this.caps.sessionManager.current?.resolveConfig(this.sessionId, 'cli');
-    return this.caps.persona.current?.getPersonaName({ persona: config?.persona });
+    const config = this.caps.sessionManager.present
+      ? this.caps.sessionManager.use.resolveConfig(this.sessionId, 'cli')
+      : undefined;
+    return this.caps.persona.present ? this.caps.persona.use.getPersonaName({ persona: config?.persona }) : undefined;
   }
 
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
@@ -745,7 +747,7 @@ class CliTui {
     // 一行没发出去只记 warn，不挡后面的行
     this.delivering = this.delivering
       .then(() => this.deliver(text))
-      .catch(err => this.caps.logger.warn('终端消息没有发出:', err));
+      .catch(err => this.caps.logger.use.warn('终端消息没有发出:', err));
   }
 
   /**
@@ -756,13 +758,13 @@ class CliTui {
    * cli:console owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority
    */
   private async deliver(text: string): Promise<void> {
-    const sm = this.caps.sessionManager.current;
+    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const session = sm?.getSession(this.sessionId);
     const unfiled = !session || (!session.createdFrom && !session.originPlatform && !session.work);
     if (sm && unfiled && !(await this.claimedElsewhere())) {
       await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
     }
-    await this.caps.events.emit('inbound:message', {
+    await this.caps.events.use.emit('inbound:message', {
       content: text,
       sessionId: this.sessionId,
       platform: 'cli',
@@ -773,12 +775,12 @@ class CliTui {
   /** 配置的会话 id 由终端以外的平台适配器认领；第一次发现时告警 */
   private async claimedElsewhere(): Promise<boolean> {
     const { platform, logger } = this.caps;
-    const others = { all: () => platform.all().filter(({ instance }) => instance.platform !== 'cli') };
-    const owner = await resolvePlatformBySession(others, this.sessionId, logger);
+    const others = { list: () => platform.list().filter(({ use }) => use.platform !== 'cli') };
+    const owner = await resolvePlatformBySession(others, this.sessionId, logger.use);
     if (owner && !this.warnedForeign) {
       this.warnedForeign = true;
-      logger.warn(
-        `终端配置的会话 ${this.sessionId} 由平台「${owner.instance.platform}」（${owner.contextId}）认领：终端不给它建档、` +
+      logger.use.warn(
+        `终端配置的会话 ${this.sessionId} 由平台「${owner.use.platform}」（${owner.id}）认领：终端不给它建档、` +
           '不写创建来源。改配置里的 sessionId',
       );
     }
@@ -819,12 +821,12 @@ class CliTui {
   private persistLastView(view: CLIView): void {
     if (view === 'help') return;
     // 宿主没提供配置文档时不记：下次启动回到默认视图
-    const host = this.caps.hostConfig.current;
-    if (!host) return;
+    if (!this.caps.hostConfig.present) return;
+    const host = this.caps.hostConfig.use;
     const pluginConfig = host.getPluginConfig(name);
     host.setPluginConfig(name, { ...pluginConfig, lastView: view });
     // 尽力而为：最后视图丢了只是下次回到默认视图，不值得让渲染路径变 async
-    host.save().catch(err => this.caps.logger.warn('记录最后视图失败:', err));
+    host.save().catch(err => this.caps.logger.use.warn('记录最后视图失败:', err));
   }
 
   private queueRender = (): void => {
@@ -1007,7 +1009,7 @@ class CliTui {
   }
 
   private getStatusViewLines(): string[] {
-    const serviceNames = this.caps.services.names();
+    const serviceNames = this.caps.services.use.names();
     const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === 'cli');
     const connections = adapter?.getConnections?.() ?? [];
     const persona = this.personaName() ?? '-';

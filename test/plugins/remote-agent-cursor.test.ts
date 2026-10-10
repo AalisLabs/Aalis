@@ -150,7 +150,7 @@ describe('1 激活', () => {
     expect(app.plugins.getPlugin(cursorPlugin.name)?.state).toBe('active');
     expect(fake.requests).toHaveLength(0);
 
-    const provider = app.bind({ services }).services.get(remoteAgent) as RemoteAgentProvider;
+    const provider = app.bind({ services }).services.use.get(remoteAgent) as RemoteAgentProvider;
     expect(provider).toBeDefined();
     expect(provider.transcriptIsolation).toBe('shared');
     await expect(provider.egress(signal)).resolves.toEqual({ mode: 'allowlist', source: 'owner-config' });
@@ -183,7 +183,7 @@ describe('1 激活', () => {
       apps.push(app);
       await app.plugins.register(cursorPlugin, { apiKey: KEY, baseUrl: fake.baseUrl, egressMode });
       await app.plugins.idle();
-      const provider = app.bind({ services }).services.get(remoteAgent) as RemoteAgentProvider;
+      const provider = app.bind({ services }).services.use.get(remoteAgent) as RemoteAgentProvider;
       await expect(provider.egress(signal)).resolves.toEqual({ mode: 'unknown', source: 'owner-config' });
     }
     expect(fake.requests).toHaveLength(0);

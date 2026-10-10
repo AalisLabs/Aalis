@@ -79,10 +79,10 @@ export default definePlugin({
   provides: [hooks],
   uses: { provide, logger },
   apply({ provide, logger }) {
-    provide(
+    provide.use(
       hooks,
       new Registry((hook, contextId, skipped) =>
-        logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`),
+        logger.use.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`),
       ),
     );
   },

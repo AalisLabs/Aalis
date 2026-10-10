@@ -876,9 +876,9 @@ export default definePlugin({
   provides: [storage],
   uses,
   async apply(caps) {
-    const logger = caps.logger.child('storage');
-    const cfg = parseConfig(configSchema, caps.config, logger);
-    const paths = caps.paths.require();
+    const logger = caps.logger.use.child('storage');
+    const cfg = parseConfig(configSchema, caps.config.use, logger);
+    const paths = caps.paths.use;
     const home = paths.home;
     const guard = new HostFileGuard({ secrets: paths.secrets, config: paths.config });
     const internal = internalRoots(paths);
@@ -899,9 +899,9 @@ export default definePlugin({
         logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
         continue;
       }
-      const scoped = new ScopedStorageService(root, guard, logger, caps.services, caps.lifecycle.onDispose);
-      caps.provide(storage, scoped, {
-        entryId: `${caps.lifecycle.id}/${root.name}`,
+      const scoped = new ScopedStorageService(root, guard, logger, caps.services.use, caps.lifecycle.use.onDispose);
+      caps.provide.use(storage, scoped, {
+        entryId: `${caps.lifecycle.use.id}/${root.name}`,
         label: root.label || `本地根 ${root.name}`,
       });
     }
@@ -909,7 +909,7 @@ export default definePlugin({
     // 诊断检查项：探测每个 writable root 是否真的可写。
     // 由 storage 插件按全部根（含内置根）上报，而非 doctor 硬编码 fs.data：
     // 按根上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
-    caps.doctor.registerCheck({
+    caps.doctor.use.registerCheck({
       id: 'storage.roots',
       category: 'filesystem',
       async run() {

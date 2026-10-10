@@ -174,8 +174,14 @@ export function auditRawConfig(
       };
       collect(sf);
     } while (added);
+    // caps.config 是选择层，配置本身是它的 use：两层都算原始读取，只有 use 交给 parseConfig 第二参才放行
+    const isUseOf = (node: ts.Node): boolean =>
+      ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node && node.parent.name.text === 'use';
     const isRaw = (node: ts.Expression, seen = new Set<ts.Symbol>()): boolean => {
-      if (ts.isPropertyAccessExpression(node)) return isRawMember(node.expression, node.name.text, node);
+      if (ts.isPropertyAccessExpression(node)) {
+        if (node.name.text === 'use' && isRaw(node.expression, seen)) return true;
+        return isRawMember(node.expression, node.name.text, node);
+      }
       if (ts.isElementAccessExpression(node)) {
         return (
           ts.isStringLiteralLike(node.argumentExpression) &&
@@ -212,7 +218,7 @@ export function auditRawConfig(
           !(ts.isBindingElement(node.parent) && (node.parent.name === node || node.parent.propertyName === node)) &&
           !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
           !(ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node));
-      if (candidate && isRaw(node as ts.Expression)) {
+      if (candidate && !isUseOf(node) && isRaw(node as ts.Expression)) {
         result.rawSites++;
         if (!allowed(node as ts.Expression)) {
           const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;

@@ -2,11 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  createStorageGateway,
-  type StorageService,
-  storage as storageService,
-} from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -47,7 +43,7 @@ describe('storage.move (真 fs)', () => {
     await app.plugins.idle();
     // 停在 pending 会让网关的「未知存储根」看起来像路由出错，先把激活闸的结果钉死
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
-    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
+    storage = app.bind({ storage: storageService }).storage.use;
   });
 
   afterEach(async () => {

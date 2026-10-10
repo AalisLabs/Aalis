@@ -65,8 +65,8 @@ describe('works-site target ownership', () => {
     const disk = new Map<string, string>();
     const app = new App({ name: 'works-targets', logger: silent, logLevel: 'error' });
     const host = app.bind({ provide });
-    host.provide(storage, memoryStorage(disk));
-    host.provide(webuiServer, pages.service);
+    host.provide.use(storage, memoryStorage(disk));
+    host.provide.use(webuiServer, pages.service);
     try {
       expect(await app.plugin(worksSite, baseConfig)).toBe(true);
       expect(
@@ -107,7 +107,7 @@ describe('works-site target ownership', () => {
     const port = await freePort();
     const token = 'works-site-target-test-token-0000';
     const { app } = hostedApp({ name: 'works-target-pages' }, { logger: silent });
-    app.bind({ provide }).provide(storage, memoryStorage(new Map()));
+    app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
     try {
       expect(
         await app.plugin(webuiPlugin, {
@@ -202,7 +202,7 @@ describe('works-site target ownership', () => {
       state.known['12345678'] = { branch: 'main', at: 1 };
     });
     const app = new App({ name: 'works-scope-change', logger: silent, logLevel: 'error' });
-    app.bind({ provide }).provide(storage, memoryStorage(disk));
+    app.bind({ provide }).provide.use(storage, memoryStorage(disk));
     try {
       await app.plugin(worksSite, { ...baseConfig, targetId: 'works', basePath: '/draw/' });
       await app.plugins.idle();

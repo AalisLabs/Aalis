@@ -344,8 +344,8 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
 
   await registerHubs(app);
   const host = app.bind({ provide, services, events, hooks });
-  host.events.on('inbound:message', message => void injected.push(message));
-  host.provide(tools, {
+  host.events.use.on('inbound:message', message => void injected.push(message));
+  host.provide.use(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       registered.set(tool.definition.function.name, tool);
       return () => registered.delete(tool.definition.function.name);
@@ -355,7 +355,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       return () => {};
     },
   } as never);
-  host.provide(sessionManager, {
+  host.provide.use(sessionManager, {
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     registerSetting: () => () => {},
     listLayers: (): SessionConfigLayer[] => [
@@ -382,8 +382,8 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       Object.entries(opts.listed ?? {}).map(([id, config]) => ({ ...sessionInfoOf(id, children[id]), config })),
     getSession: (id: string): SessionInfo => sessionInfoOf(id, children[id]),
   } as unknown as SessionManagerService);
-  host.provide(storage, memoryStorage(files));
-  host.provide(gateway, {
+  host.provide.use(storage, memoryStorage(files));
+  host.provide.use(gateway, {
     async dispatchOutbound(message: OutgoingMessage) {
       if (opts.gatewayFails) throw new Error('网关替身：发送失败');
       outbound.push({ ...message });
@@ -392,13 +392,13 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     },
     async ingressMessage() {},
   } satisfies GatewayService);
-  host.provide(doctor, {
+  host.provide.use(doctor, {
     registerCheck(spec: CheckSpec) {
       checks.set(spec.id, spec);
       return () => checks.delete(spec.id);
     },
   } as unknown as DoctorService);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
 
   for (const [id, provider] of Object.entries(opts.remotes ?? { [REMOTE]: fakeRemote() })) {
     await app.plugin(
@@ -406,11 +406,11 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
         name: id,
         provides: [remoteAgent],
         uses: { provide },
-        apply: ({ provide }) => void provide(remoteAgent, provider),
+        apply: ({ provide }) => void provide.use(remoteAgent, provider),
       }),
     );
   }
-  if (opts.prefer) host.services.prefer(remoteAgent, opts.prefer);
+  if (opts.prefer) host.services.use.prefer(remoteAgent, opts.prefer);
 
   await app.plugin(paperPlugin, opts.config ?? PILOT_CONFIG);
   await app.plugins.idle();
@@ -429,7 +429,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     files,
     outbound,
     injected,
-    hooks: host.hooks,
+    hooks: host.hooks.use,
     logs,
     tools: registered,
     groups,

@@ -25,14 +25,14 @@ async function setup(): Promise<{
   await registerHubs(app);
   const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: Handler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => void handlers.delete(tool.definition.function.name);
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(sessionManager, {
+  host.provide.use(sessionManager, {
     // parent-1 无 parentId（非嵌套）；child-session-1 供 send_to_subtask 的归属校验
     getSession: (id: string) => (id === 'child-session-1' ? { id, parentId: 'parent-1', status: 'active' } : undefined),
     childConfig: () => ({}),
@@ -42,7 +42,7 @@ async function setup(): Promise<{
 
   // 派发走的是 inbound:message 通道：只订阅这一个事件，收到即证明通道正确
   const inbound: IncomingMessage[] = [];
-  host.events.on('inbound:message', message => {
+  host.events.use.on('inbound:message', message => {
     inbound.push(message);
   });
 

@@ -1,5 +1,5 @@
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { backgroundTasks, tools } from '@aalis/api-tools';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
@@ -53,8 +53,8 @@ export default definePlugin({
   },
   apply(caps) {
     const { logger, events, lifecycle, sessionManager } = caps;
-    const cfg = parseConfig(configSchema, caps.config, logger);
-    sessionManager.registerSetting({
+    const cfg = parseConfig(configSchema, caps.config.use, logger.use);
+    sessionManager.use.registerSetting({
       key: 'enabledToolGroups',
       field: {
         type: 'multiselect',
@@ -69,13 +69,13 @@ export default definePlugin({
       unset: '只给不属于任何分组的工具',
     });
 
-    const tasks = new BackgroundTasks({ logger, events, limits: cfg.background });
-    events.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
-    events.on('app:stopping', () => tasks.shutdown());
+    const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background });
+    events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
+    events.use.on('app:stopping', () => tasks.shutdown());
     // 停接新活时：在跑的落成 aborted 并写盘，这时依赖的存储还在
-    lifecycle.onDrain(() => tasks.close());
+    lifecycle.use.onDrain(() => tasks.close());
     // 登记表读回一次：optional 依赖不参与激活顺序，存储可能晚于本插件上线，有了插件数据根才读
-    const store = createStorageGateway(caps.storage);
+    const store = caps.storage.use;
     let restoring = false;
     caps.storage.follow(() => {
       if (restoring || !store.listRoots().some(root => root.name === 'pluginData')) return;
@@ -83,7 +83,7 @@ export default definePlugin({
       void tasks.restore(store);
     });
 
-    caps.provide(tools, new ToolRegistry(logger, tasks));
-    caps.provide(backgroundTasks, tasks);
+    caps.provide.use(tools, new ToolRegistry(logger.use, tasks));
+    caps.provide.use(backgroundTasks, tasks);
   },
 });

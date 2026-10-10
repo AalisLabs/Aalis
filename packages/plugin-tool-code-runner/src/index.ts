@@ -1,6 +1,6 @@
 import { codeSandbox } from '@aalis/api-code-sandbox';
-import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, resolveAgainstCwd, storage } from '@aalis/api-storage';
+import { processService } from '@aalis/api-process';
+import { resolveAgainstCwd, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -116,18 +116,16 @@ async function createRunnerConfig(
   caps: Pick<Caps, 'storage' | 'codeSandbox'>,
   cfg: CodeRunnerConfig,
 ): Promise<RunnerConfig> {
-  if (!caps.storage.all().some(e => typeof e.instance.resolveLocalPath === 'function')) {
-    throw new Error('代码执行器需要至少一个支持 local-path 的 storage entry');
-  }
-  const gateway = createStorageGateway(caps.storage);
+  if (!caps.storage.present) throw new Error('代码执行器需要 storage 服务');
+  const gateway = caps.storage.use;
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   return {
     maxOutputSize: cfg.maxOutputSize,
-    cwd: await gateway.resolveLocalPath!(cwdUri, 'read'),
+    cwd: await gateway.resolveLocalPath(cwdUri, 'read'),
     env: safeEnv(),
     // mode='none' → 不带 sandbox（裸跑）；mode='auto' → 带策略，runCode 经 code-sandbox 强制隔离或 fail-closed
     sandbox: cfg.sandbox.mode === 'none' ? undefined : { network: cfg.sandbox.network },
-    codeSandbox: caps.codeSandbox.current,
+    codeSandbox: caps.codeSandbox.present ? caps.codeSandbox.use : undefined,
   };
 }
 
@@ -139,23 +137,23 @@ export default definePlugin({
   uses,
   apply(caps) {
     const { tools, proc, storage, codeSandbox, logger } = caps;
-    const cfg = parseConfig(configSchema, caps.config, logger);
+    const cfg = parseConfig(configSchema, caps.config.use, logger.use);
     if (cfg.sandbox.mode === 'none') {
-      logger.warn(
+      logger.use.warn(
         '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
       );
     }
     const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
-    const processGateway = createProcessGateway(proc);
-    const storageGateway = createStorageGateway(storage);
+    const processGateway = proc.use;
+    const storageGateway = storage.use;
     // 每次调用现取：cwd 要按当时的 storage 实况解析，沙箱后端也可能中途上下线
     const runnerDeps = { storage, codeSandbox };
 
     // 创建带分组标记的工具视图
-    const groupTools = withToolGroups(tools, ['code-runner']);
+    const groupTools = withToolGroups(tools.use, ['code-runner']);
 
     // 注册工具分组
-    tools.registerGroup({
+    tools.use.registerGroup({
       name: 'code-runner',
       label: '代码执行',
       description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
@@ -203,7 +201,7 @@ export default definePlugin({
         background: {},
         handler: async (args, callCtx) => {
           const code = args.code as string;
-          logger.debug(`run_python: ${code.length} 字符`);
+          logger.use.debug(`run_python: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
             processGateway,
@@ -219,7 +217,7 @@ export default definePlugin({
         },
       });
 
-      logger.info(`Python 代码执行工具已启用 (解释器: ${cfg.python.interpreter})`);
+      logger.use.info(`Python 代码执行工具已启用 (解释器: ${cfg.python.interpreter})`);
     }
 
     // ==================== run_javascript ====================
@@ -259,7 +257,7 @@ export default definePlugin({
         background: {},
         handler: async (args, callCtx) => {
           const code = args.code as string;
-          logger.debug(`run_javascript: ${code.length} 字符`);
+          logger.use.debug(`run_javascript: ${code.length} 字符`);
           const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
           const result = await runCode(
             processGateway,
@@ -275,9 +273,9 @@ export default definePlugin({
         },
       });
 
-      logger.info(`JavaScript 代码执行工具已启用 (解释器: ${cfg.javascript.interpreter})`);
+      logger.use.info(`JavaScript 代码执行工具已启用 (解释器: ${cfg.javascript.interpreter})`);
     }
 
-    logger.info(`代码执行器插件已启动 (工作目录: ${cwdUri})`);
+    logger.use.info(`代码执行器插件已启动 (工作目录: ${cwdUri})`);
   },
 });

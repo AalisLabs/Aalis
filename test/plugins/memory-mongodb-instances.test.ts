@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { LifecycleCap, Logger } from '../../packages/core/src/index.js';
+import type { LifecycleCap, Logger, Provide } from '../../packages/core/src/index.js';
 import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 多实例的库：database 留空时按实例派生（主实例 aalis，`:b` 实例 aalis-b）；同一连接串下两个实例用同一个库时，
@@ -9,7 +10,6 @@ import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.j
 // ════════════════════════════════════════════════════════════
 
 type Client = Parameters<typeof openAndProvide>[0];
-type Caps = Parameters<typeof openAndProvide>[2];
 
 const NAME = '@aalis/plugin-memory-mongodb';
 
@@ -42,9 +42,9 @@ function activation(id: string) {
       return noop;
     },
   };
-  const provide = (() => noop) as unknown as Caps['provide'];
+  const provide = (() => noop) as unknown as Provide;
   return {
-    caps: { logger, lifecycle, provide },
+    caps: { logger: fixedRef(logger), lifecycle: fixedRef(lifecycle), provide: fixedRef(provide) },
     dispose: async () => {
       for (const fn of disposers.splice(0).reverse()) await fn();
     },

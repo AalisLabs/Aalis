@@ -19,11 +19,11 @@ async function setup(config: Record<string, unknown>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, memory: memoryService });
-  host.provide(llm, { chat: async () => ({ content: '' }) } as never);
+  host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const memory: MemoryService | undefined = host.memory.current;
-  if (!memory) throw new Error('memory 服务未就绪');
+  if (!host.memory.present) throw new Error('memory 服务未就绪');
+  const memory: MemoryService | undefined = host.memory.use;
   await app.plugins.register(userProfile, { extractEveryNMessages: 0, ...config });
   await app.plugins.idle();
   return { app, events: host.events, memory };
@@ -42,7 +42,7 @@ async function inbound(events: Events, times: number): Promise<void> {
 describe('plugin-user-profile: 旁观计数与旁观加分解耦', () => {
   it('relationIncrementWitness=0：不加分，但互动次数与最近互动时戳照记', async () => {
     const { app, events, memory } = await setup({ relationIncrementWitness: 0 });
-    await inbound(events, 3);
+    await inbound(events.use, 3);
 
     const profile = await memory.getMetadata(PROFILE_NS, 'onebot:u1');
     expect(profile, '档案应被写出（计数写点必须落）').toBeTruthy();
@@ -54,7 +54,7 @@ describe('plugin-user-profile: 旁观计数与旁观加分解耦', () => {
 
   it('relationIncrementWitness>0：照旧加分且计数递增', async () => {
     const { app, events, memory } = await setup({ relationIncrementWitness: 0.1 });
-    await inbound(events, 2);
+    await inbound(events.use, 2);
 
     const profile = await memory.getMetadata(PROFILE_NS, 'onebot:u1');
     expect(profile?.interactionCount).toBe(2);

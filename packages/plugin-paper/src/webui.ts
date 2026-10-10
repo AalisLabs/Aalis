@@ -17,7 +17,7 @@ import { type EgressReport, type RemoteAgentProvider, resolveRemoteAgent } from 
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import { type BoundWebui, type InfoItem, markdownCode, type NoticeHandle, type StatusValue } from '@aalis/api-webui';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { artifactUri, bundleUri, paperDirUri, usageOf } from './artifacts.js';
 import { dayKey, paperBudgetUsage } from './budget.js';
 import { type PaperConfig, type PaperSpec, specOf } from './config.js';
@@ -78,9 +78,9 @@ export function registerPaperPage(deps: {
   driver: PaperDriver;
   ledger: LedgerStore;
   storage: StorageService & Required<Pick<StorageService, 'resolveLocalPath'>>;
-  remote: ServiceRef<RemoteAgentProvider>;
-  publish: ServiceRef<PublishService>;
-  sessionManager: ServiceRef<SessionManagerService>;
+  remote: ServiceSelection<RemoteAgentProvider>;
+  publish: ServiceSelection<PublishService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
   cfg: PaperConfig;
   signal: AbortSignal;
   now: () => number;
@@ -162,7 +162,7 @@ export function registerPaperPage(deps: {
     if (!provider) return '提供者不在场';
     let egress: EgressReport;
     try {
-      egress = await provider.instance.egress(deps.signal);
+      egress = await provider.use.egress(deps.signal);
     } catch (err) {
       return `读取失败：${describe(err)}`;
     }
@@ -211,8 +211,8 @@ export function registerPaperPage(deps: {
   function publishTargetsText(spec: PaperSpec | undefined): string {
     if (!spec) return '（配置里已没有这块白纸）';
     if (spec.publishTargets.length === 0) return '（禁止发布）';
-    const service = deps.publish.current;
-    if (!service) return spec.publishTargets.map(name => `${name}（发布服务不在场）`).join('、');
+    if (!deps.publish.present) return spec.publishTargets.map(name => `${name}（发布服务不在场）`).join('、');
+    const service = deps.publish.use;
     try {
       const allowed = new Set(spec.publishTargets);
       const byName = new Map(
@@ -238,7 +238,7 @@ export function registerPaperPage(deps: {
     const state = ledger.data.papers[paperId];
     const spec = specOf(cfg, paperId);
     const { spentCents, unattributedCents, reservedCents } = paperBudgetUsage(ledger.data, today(), paperId);
-    const { labels, shared } = sharingRooms(deps.sessionManager.require(), ledger.data, paperId);
+    const { labels, shared } = sharingRooms(deps.sessionManager.use, ledger.data, paperId);
     return [
       { label: '共用的房间', value: shared ? `共用（${labels.length}）：${labels.join('、')}` : labels.join('') },
       { label: '远端类型', value: spec ? spec.remoteAgentType || '（未配置）' : '（配置里已没有这块白纸）' },
@@ -600,7 +600,7 @@ export function registerPaperPage(deps: {
     icon: 'file',
     placement: 'session',
     applies: ({ sessionId, kind }) =>
-      kind === 'room' && deps.sessionManager.require().resolveConfig(sessionId).paperEnabled === true,
+      kind === 'room' && deps.sessionManager.use.resolveConfig(sessionId).paperEnabled === true,
     actions: {
       cancelTask: {
         label: '取消',
@@ -617,7 +617,7 @@ export function registerPaperPage(deps: {
         effect: 'write',
         async handler({ ctx }) {
           writable();
-          const paper = resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.use, cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) throw new Error(paper.unavailable);
           if (!(await driver.resume(paper.paperId))) throw new Error('这块白纸没有停开');
           return '已恢复';
@@ -629,7 +629,7 @@ export function registerPaperPage(deps: {
         type: 'info',
         id: 'room',
         async data({ ctx }) {
-          const paper = resolveRoomPaper(deps.sessionManager.require(), cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.use, cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) return [{ label: '白纸', value: paper.unavailable }];
           const day = today();
           const usage = paperBudgetUsage(ledger.data, day, paper.paperId);

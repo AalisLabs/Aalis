@@ -22,7 +22,7 @@ import {
   type PluginManagerService,
   pluginsService,
   provide,
-  type ServiceRef,
+  type ServiceSelection,
   type Services,
   services,
 } from '@aalis/core';
@@ -59,7 +59,7 @@ class DoctorRegistry implements DoctorService {
 
   registerCheck(spec: CheckSpec): () => void {
     if (this.specs.has(spec.id)) {
-      this.caps.logger.debug(`doctor: 检查项 ${spec.id} 被覆盖注册`);
+      this.caps.logger.use.debug(`doctor: 检查项 ${spec.id} 被覆盖注册`);
     }
     this.specs.set(spec.id, spec);
     return () => {
@@ -106,7 +106,7 @@ class DoctorRegistry implements DoctorService {
     };
 
     // 通知订阅者报告换了
-    this.caps.events.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
+    this.caps.events.use.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
     this.reported(this.last);
 
     return this.last;
@@ -131,7 +131,7 @@ export default definePlugin({
   uses,
   apply({ provide, logger, events, services, plugins, commands, webui, hostConfig }) {
     // 诊断页只读本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
-    const page = webui.definePage({
+    const page = webui.use.definePage({
       key: 'doctor',
       title: '系统诊断',
       icon: 'activity',
@@ -200,21 +200,21 @@ export default definePlugin({
       }
       // 「诊断有 2 项错误、1 项警告」：只写不为零的
       const counts = [error && `${error} 项错误`, warn && `${warn} 项警告`].filter(Boolean);
-      notice = webui.notify({
+      notice = webui.use.notify({
         id: 'checks',
         level: error > 0 ? 'error' : 'action',
         title: `诊断有 ${counts.join('、')}`,
         open: { page: 'doctor' },
       });
     });
-    provide(doctor, registry);
+    provide.use(doctor, registry);
 
     // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
-    registerBuiltinChecks(registry, plugins, services, hostConfig);
+    registerBuiltinChecks(registry, plugins, services.use, hostConfig);
 
     // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
     // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到
-    commands
+    commands.use
       .command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）', { visibility: 'restricted' })
       .action(async () => {
         const report = await registry.runChecks();
@@ -232,9 +232,9 @@ export default definePlugin({
 // 若未来 PluginManager 自带 self-check，可一并迁走。`services.preferences` 同理，读的是宿主配置与服务容器。
 function registerBuiltinChecks(
   reg: DoctorRegistry,
-  plugins: ServiceRef<PluginManagerService>,
+  plugins: ServiceSelection<PluginManagerService>,
   services: Services,
-  host: ServiceRef<HostConfig>,
+  host: ServiceSelection<HostConfig>,
 ): void {
   reg.registerCheck({
     id: 'env.node',
@@ -269,8 +269,7 @@ function registerBuiltinChecks(
     category: 'plugins',
     pluginName: PLUGIN_NAME,
     run() {
-      const pm = plugins.current;
-      if (!pm) {
+      if (!plugins.present) {
         return {
           id: 'plugins.service',
           category: 'plugins',
@@ -278,6 +277,7 @@ function registerBuiltinChecks(
           message: 'PluginManagerService 不可用，跳过插件检查',
         };
       }
+      const pm = plugins.use;
       const status = pm.getStatus();
       const errored = status.filter(s => s.state === 'error');
       const active = status.filter(s => s.state === 'active');
@@ -362,7 +362,7 @@ function registerBuiltinChecks(
     pluginName: PLUGIN_NAME,
     run() {
       const results: CheckResult[] = [];
-      for (const [name, preferred] of Object.entries(host.current?.getServicePreferences() ?? {})) {
+      for (const [name, preferred] of Object.entries(host.present ? host.use.getServicePreferences() : {})) {
         const entries = services.inspect(name);
         if (entries.some(entry => entry.contextId === preferred)) continue;
         const [inUse] = entries;

@@ -2,7 +2,7 @@ import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextM
 import { checkpoint } from '@aalis/api-checkpoint';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { configSchema } from './config.js';
@@ -45,23 +45,23 @@ export default definePlugin({
 function run(caps: Caps): void {
   const { storage, memory, events, hooks, lifecycle, provide } = caps;
   /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
-  const logger = caps.logger.child('checkpoint');
-  const cfg = normalizeConfig(parseConfig(configSchema, caps.config, logger));
-  const gateway = createStorageGateway(storage);
+  const logger = caps.logger.use.child('checkpoint');
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger));
+  const gateway = storage.use;
 
   const service = new CheckpointServiceImpl(cfg, logger, gateway);
-  provide(checkpoint, service);
+  provide.use(checkpoint, service);
 
   // 注入 chat 回滚所需依赖：memory 引用（每次调用解析当前提供者）+ 事件发出器
   service.setChatRollbackDeps({
     memory,
     emitMessagesDeleted: (sessionId, timestamps) => {
-      events
+      events.use
         .emit('memory:messages-deleted', { sessionId, timestamps })
         .catch(err => logger.debug(`emit memory:messages-deleted 失败: ${(err as Error).message}`));
     },
     emitHistoryChanged: sessionId => {
-      events
+      events.use
         .emit('history:changed', { sessionId })
         .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
     },
@@ -84,7 +84,7 @@ function run(caps: Caps): void {
     return false;
   };
 
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     if (isScopeEnabled(data.message.platform, data.message.sessionType)) {
       await service.runTurn(data.turnId, data.message.sessionId, next);
     } else {
@@ -94,7 +94,7 @@ function run(caps: Caps): void {
 
   // 监听命令类工具调用，给调用所在的那一轮在清单里打 execUsed 标记：
   // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
-  hooks.middleware('agent:tool:before', async (data, next) => {
+  hooks.use.middleware('agent:tool:before', async (data, next) => {
     const name = data.name;
     if (name === 'exec' || name.startsWith('run_')) {
       service.markExecUsed();
@@ -105,7 +105,7 @@ function run(caps: Caps): void {
   // ──────────── 参与统一的 memory:clear ────────────
   // /clear 与 session-manager.deleteSession 都通过 memory:clear hook 编排，
   // 不监听的话 checkpoint 目录无人清理，长期泄漏。
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('checkpoint')) {
       await next();
       return;
@@ -141,7 +141,7 @@ function run(caps: Caps): void {
   });
 
   // 拆卸时提交所有还在跑的回合，避免崩溃/重载时丢失
-  lifecycle.onDispose(() => service.flushAll());
+  lifecycle.use.onDispose(() => service.flushAll());
 
   logger.info(
     `checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize} scopes=${cfg.scopes.join('|') || '<空>'}`,

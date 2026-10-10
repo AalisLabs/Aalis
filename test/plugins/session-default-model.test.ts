@@ -34,10 +34,10 @@ async function setup(layers?: AalisConfig['sessionConfig'], save = vi.fn(async (
   return {
     ...started,
     save,
-    preferred: () => services.preferred(llm),
-    documented: () => hostConfig.require().getServicePreferences().llm,
-    sessionConfig: () => hostConfig.require().get('sessionConfig'),
-    resolve: (ref: unknown) => resolveLLMModel(started.app.bind({ llm }).llm, ref as never)?.contextId,
+    preferred: () => services.use.preferred(llm),
+    documented: () => hostConfig.use.getServicePreferences().llm,
+    sessionConfig: () => hostConfig.use.get('sessionConfig'),
+    resolve: (ref: unknown) => resolveLLMModel(started.app.bind({ llm }).llm, ref as never)?.id,
   };
 }
 
@@ -102,22 +102,22 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
 
   it('偏好指向的模型不在、提供者还装着：按这个提供者拆，模型 id 里的斜杠留在模型里', async () => {
     const { sm, host } = await setup();
-    host.services.prefer(llm, `${A}/org/gone`);
+    host.services.use.prefer(llm, `${A}/org/gone`);
     expect(sm.getLayer({ scope: 'defaults' }).llm).toEqual({ provider: A, model: 'org/gone' });
   });
 
   it('偏好只写了提供者（没有模型段）：读不成模型引用，不拆成 npm scope 与包名', async () => {
     const { sm, host } = await setup();
-    host.services.prefer(llm, B);
+    host.services.use.prefer(llm, B);
     expect(sm.getLayer({ scope: 'defaults' }).llm).toBeUndefined();
-    host.services.prefer(llm, '@zz/llm-gone');
+    host.services.use.prefer(llm, '@zz/llm-gone');
     expect(sm.getLayer({ scope: 'defaults' }).llm, '提供者不在也一样').toBeUndefined();
   });
 
   it('偏好不是模型引用的写法（手写的、不带斜杠）：改全局默认层的别的项不动偏好', async () => {
     const { sm, host, preferred, documented, sessionConfig } = await setup();
-    host.services.prefer(llm, 'gpt-4o');
-    host.hostConfig.require().setServicePreference('llm', 'gpt-4o');
+    host.services.use.prefer(llm, 'gpt-4o');
+    host.hostConfig.use.setServicePreference('llm', 'gpt-4o');
 
     await sm.updateLayer({ scope: 'defaults' }, { persona: '<默认人设>' });
     expect(preferred()).toBe('gpt-4o');
@@ -128,9 +128,9 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
   it('偏好从别处改了：发 session:config:changed，按层读到的是新偏好', async () => {
     const { sm, host } = await setup();
     let changes = 0;
-    host.events.on('session:config:changed', () => void changes++);
+    host.events.use.on('session:config:changed', () => void changes++);
 
-    host.services.prefer(llm, `${A}/m1`);
+    host.services.use.prefer(llm, `${A}/m1`);
     await vi.waitFor(() => expect(changes).toBeGreaterThan(0));
     expect(sm.getLayer({ scope: 'defaults' }).llm).toEqual({ provider: A, model: 'm1' });
   });
@@ -138,8 +138,8 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
   it('llm 的提供者下线：发一次 session:config:changed，服务实际用的那一个随之变', async () => {
     const { app, sm, host } = await setup();
     let changes = 0;
-    host.events.on('session:config:changed', () => void changes++);
-    host.services.prefer(llm, `${A}/m1`);
+    host.events.use.on('session:config:changed', () => void changes++);
+    host.services.use.prefer(llm, `${A}/m1`);
     await vi.waitFor(() => expect(changes).toBe(1));
 
     await app.plugins.unload(A);
@@ -155,8 +155,8 @@ describe('全局默认层的「模型」就是 llm 服务的偏好', () => {
       { defaults: { persona: '<默认人设>' } },
       save,
     );
-    host.services.prefer(llm, `${A}/m1`);
-    host.hostConfig.require().setServicePreference('llm', `${A}/m1`);
+    host.services.use.prefer(llm, `${A}/m1`);
+    host.hostConfig.use.setServicePreference('llm', `${A}/m1`);
 
     await expect(
       sm.updateLayer({ scope: 'defaults' }, { llm: { provider: A, model: 'm2' }, persona: null }),

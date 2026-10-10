@@ -79,14 +79,14 @@ async function setup(stores: Array<[ReturnType<typeof fakeMemory>, number]>, adv
   const app = new App({ name: 'T', logger });
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
-  for (const [store, priority] of stores) host.provide(memory, store as never, { priority });
+  for (const [store, priority] of stores) host.provide.use(memory, store as never, { priority });
   const registered = app.plugin(sessionManagerPlugin);
   await vi.advanceTimersByTimeAsync(advanceMs);
   await registered;
   // 用例经 ensureSession 改人设，人设这一项要有人登记
   await app.plugin(settingsPlugin('test-settings', [PERSONA]));
   await app.plugins.idle();
-  return { app, host, logger, sm: () => host.sessionManager.require() };
+  return { app, host, logger, sm: () => host.sessionManager.use };
 }
 
 describe('session-manager 会话表加载失败', () => {
@@ -125,7 +125,7 @@ describe('session-manager 会话表加载失败', () => {
     const logger = recordingLogger();
     const app = new App({ name: 'T', logger });
     await registerHubs(app);
-    app.bind({ provide }).provide(memory, store as never);
+    app.bind({ provide }).provide.use(memory, store as never);
     const registered = app.plugin(sessionManagerPlugin, {});
     await vi.advanceTimersByTimeAsync(500);
     expect(store.state.calls).toBe(1);
@@ -157,7 +157,7 @@ describe('session-manager 会话表加载失败', () => {
     const logger = recordingLogger();
     const app = new App({ name: 'T', logger });
     await registerHubs(app);
-    app.bind({ provide }).provide(memory, store as never);
+    app.bind({ provide }).provide.use(memory, store as never);
     const registered = app.plugin(sessionManagerPlugin, {});
     await vi.advanceTimersByTimeAsync(0);
     expect(calls).toBe(1);
@@ -184,7 +184,7 @@ describe('session-manager 会话表加载失败', () => {
     const { app, host, sm } = await setup([[fallback, -100]], 0);
     expect(sm().getSession('old-1')?.name).toBe('上次运行的会话');
 
-    host.provide(memory, preferred as never, { priority: 10 });
+    host.provide.use(memory, preferred as never, { priority: 10 });
     await vi.advanceTimersByTimeAsync(500);
     expect(preferred.state.calls).toBe(1);
     expect(sm().getSession('old-1')?.name, '重试期间仍是旧表').toBe('上次运行的会话');
@@ -209,12 +209,12 @@ describe('session-manager 会话表加载失败', () => {
     const next = fakeMemory({ 'next-1': { ...original, id: 'next-1', children: [] } });
     const { app, host, logger, sm } = await setup([[fallback, -100]], 0);
 
-    host.provide(memory, flaky as never, { priority: 10 });
+    host.provide.use(memory, flaky as never, { priority: 10 });
     await vi.advanceTimersByTimeAsync(500);
     expect(flaky.state.calls).toBe(1);
 
     // 假时钟不再推进：新胜者的表能读进来，说明上一个胜者的重试等待被中止了
-    host.provide(memory, next as never, { priority: 20 });
+    host.provide.use(memory, next as never, { priority: 20 });
     await vi.advanceTimersByTimeAsync(0);
     expect(sm().getSession('next-1')?.name).toBe('上次运行的会话');
     expect(flaky.state.calls).toBe(1);

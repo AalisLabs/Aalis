@@ -964,7 +964,7 @@ export default definePlugin({
 });
 
 async function registerModels({ config, logger, lifecycle, provide, events }: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   const customModels = parseCustomModels(cfg.customModels);
   const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
   const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
@@ -974,7 +974,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const client = new DeepSeekClient(cfg, logger);
+  const client = new DeepSeekClient(cfg, logger.use);
   const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 探测远端 + 合并自定义模型。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels
@@ -982,16 +982,16 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   // err 交给 logger 会按因果链把原因再记一遍
   let discoveryError: string | undefined;
   const remoteIds = cfg.discoverModels
-    ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
+    ? await client.fetchRemoteModelIds(lifecycle.use.signal).catch((err: unknown) => {
         discoveryError = err instanceof Error ? err.message : String(err);
         return [];
       })
     : [];
-  lifecycle.signal.throwIfAborted();
+  lifecycle.use.signal.throwIfAborted();
   const remoteSet = new Set(remoteIds);
   for (const cm of customModels) {
     if (remoteSet.has(cm)) {
-      logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+      logger.use.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
     }
   }
   const allModelIds = [...remoteIds, ...customModels.filter(id => !remoteSet.has(id))];
@@ -1005,7 +1005,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
         : `已连接 ${shownBaseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
     );
   }
-  if (discoveryError) logger.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
+  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
 
   const baseLabel = `DeepSeek (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
 
@@ -1015,19 +1015,19 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
     const handle = new DeepSeekModelHandle(
       client,
       modelId,
-      lifecycle.id,
+      lifecycle.use.id,
       cfg.contextLength,
       cfg.maxTokens,
       capabilities,
       capabilities.includes(Thinking) ? { levels: THINKING_LEVELS, default: cfg.thinking } : undefined,
     );
-    provide(llm, metered(handle, events), {
+    provide.use(llm, metered(handle, events.use), {
       label: `${baseLabel} / ${modelId}`,
-      entryId: `${lifecycle.id}/${modelId}`,
+      entryId: `${lifecycle.use.id}/${modelId}`,
     });
   }
 
-  logger.info(
+  logger.use.info(
     !cfg.discoverModels
       ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
       : discoveryError

@@ -41,26 +41,26 @@ const plugin = definePlugin({
   },
   uses: { provide, lifecycle, services, config },
   apply({ provide, lifecycle, services, config }) {
-    writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config));
-    provide(commands, {
+    writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config.use));
+    provide.use(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
       async execute(name: string, input: { args: string[] }) {
         // probe paths：交出宿主给插件的家目录与 profile
         if (name === 'probe' && input.args[0] === 'paths') {
-          const paths = services.get('host-paths') as { home: string; profile?: string };
+          const paths = services.use.get('host-paths') as { home: string; profile?: string };
           return `paths ${JSON.stringify({ home: paths.home, profile: paths.profile ?? null })}`;
         }
         if (name === 'probe') return `probe ok ${input.args.join(' ')}`.trim();
         // 镜像 CommandRegistry：handler 抛错折成「指令执行失败」文本，不向上抛。
         try {
-          (services.get('app') as { restart(): void }).restart();
+          (services.use.get('app') as { restart(): void }).restart();
           return '正在重启应用…';
         } catch (err) {
           return `指令执行失败: ${err instanceof Error ? err.message : String(err)}`;
         }
       },
     } as never);
-    lifecycle.onDispose(async () => {
+    lifecycle.use.onDispose(async () => {
       if (slowMs > 0) await new Promise<void>(r => setTimeout(r, slowMs));
     });
   },
@@ -74,7 +74,7 @@ const slowPlugin = definePlugin({
   provides: [slowService],
   uses: { provide },
   async apply({ provide }) {
-    provide(slowService, {});
+    provide.use(slowService, {});
     await new Promise<void>(r => setTimeout(r, Number(applyMs)));
   },
 });
@@ -98,7 +98,7 @@ const middlePlugin = definePlugin({
   provides: [middleService],
   uses: { provide, broken: brokenService },
   apply({ provide }) {
-    provide(middleService, {});
+    provide.use(middleService, {});
   },
 });
 const chainedPlugin = definePlugin({ name: 'e2e-chained', uses: { middle: middleService }, apply() {} });
@@ -129,13 +129,13 @@ const app = await startAalis({
 // 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
 if (mode === 'restart' && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
-  (app.bind({ services }).services.get('app') as { restart(): void }).restart();
+  (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
 }
 // 守护路径：startAalis 已挂好 SIGTERM 处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）；
 // 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
 if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
-  const host = app.bind({ services }).services;
+  const host = app.bind({ services }).services.use;
   const rescanned = await host.get(pluginSource)?.rescan();
   writeFileSync(resolve(process.cwd(), 'rescan.json'), JSON.stringify(rescanned ?? null));
   // 实例锁：交接令牌已从环境里删掉；守护期间 run/ 里只有本进程这一代锁

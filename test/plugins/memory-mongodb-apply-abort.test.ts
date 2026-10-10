@@ -1,7 +1,8 @@
 import { getEventListeners } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import type { LifecycleCap, Logger } from '../../packages/core/src/index.js';
+import type { LifecycleCap, Logger, Provide } from '../../packages/core/src/index.js';
 import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // memory-mongodb 的 apply 等连接与建索引（serverSelection 超时默认 5 秒，建索引没有超时）。接上 lifecycle.signal 后，
@@ -14,7 +15,6 @@ import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.j
 
 type Stage = 'connect' | 'metaIndex' | 'messageIndex';
 type Client = Parameters<typeof openAndProvide>[0];
-type Caps = Parameters<typeof openAndProvide>[2];
 
 /**
  * 客户端替身：hangOn 那一步挂起。closeInterrupts 为真时 close 让挂起的操作以错误返回（真实驱动关拓扑时如此），
@@ -71,8 +71,13 @@ function harness() {
   const provide = ((_descriptor: unknown, service: unknown) => {
     provided.push(service);
     return () => {};
-  }) as Caps['provide'];
-  return { abort, lines, provided, caps: { logger, lifecycle, provide } };
+  }) as Provide;
+  return {
+    abort,
+    lines,
+    provided,
+    caps: { logger: fixedRef(logger), lifecycle: fixedRef(lifecycle), provide: fixedRef(provide) },
+  };
 }
 
 const CONFIG = { uri: 'mongodb://fake.invalid', database: 'aalis', collection: 'messages' };

@@ -57,7 +57,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   });
 
   const svcOf = (): FlowControlService => {
-    const svc = app.bind({ services }).services.get(flowControl);
+    const svc = app.bind({ services }).services.use.get(flowControl);
     if (!svc) throw new Error('flow-control 服务未注册');
     return svc;
   };
@@ -66,7 +66,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   const dataRootOf = () => {
     const root = app
       .bind({ services })
-      .services.all(storage)
+      .services.use.all(storage)
       .map(view => view.instance)
       .find(instance => instance.listRoots().some(r => r.name === 'data'));
     if (!root) throw new Error('data 根未登记');
@@ -101,7 +101,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
       provides: [storage],
       uses: { provide },
       apply(caps) {
-        caps.provide(storage, service as never);
+        caps.provide.use(storage, service as never);
       },
     });
     return { definition, files: mem.files, hold, entered };
@@ -217,13 +217,13 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     await app.plugins.idle();
     const host = app.bind({ events, gateway });
     let flowPassed: boolean | undefined;
-    host.events.on('gateway:phase:done', d => {
+    host.events.use.on('gateway:phase:done', d => {
       if (d.phase === INBOUND_PHASE.FLOW) flowPassed = d.reachedEnd;
     });
 
     await app.pluginAll([storageLocal()]);
     // 不等读回：storage 刚上线，follow 补读还在飞
-    await host.gateway.require().ingressMessage({
+    await host.gateway.use.ingressMessage({
       content: 'hi',
       sessionId: 'zz-old',
       platform: 'onebot',

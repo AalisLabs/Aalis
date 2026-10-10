@@ -167,7 +167,7 @@ export default definePlugin({
 });
 
 function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
-  const parsed = parseConfig(configSchema, config, logger);
+  const parsed = parseConfig(configSchema, config.use, logger.use);
   if (!URL.canParse(parsed.baseUrl) || new URL(parsed.baseUrl).username || new URL(parsed.baseUrl).password) {
     throw configError('baseUrl 需为不带用户名或密码的完整 URL');
   }
@@ -186,9 +186,9 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   });
 
   const modeLabel = cfg.demo ? '模拟盘' : '实盘';
-  logger.info(`OKX 交易插件已初始化 (${modeLabel})`);
+  logger.use.info(`OKX 交易插件已初始化 (${modeLabel})`);
 
-  baseTools.registerGroup({
+  baseTools.use.registerGroup({
     name: 'okx',
     label: 'OKX 交易',
     description: `OKX 虚拟币交易工具集 (${modeLabel})，提供行情查询、账户管理、下单交易等功能`,
@@ -197,7 +197,7 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   // 工具代理：自动注入 groups；权限档在这一个点按三分名单派发（见模块级名单注释）。
   const reg: Parameters<typeof registerMarketTools>[0] = tool => {
     const toolName = tool.definition.function.name;
-    return baseTools.register({
+    return baseTools.use.register({
       ...tool,
       groups: ['okx'],
       visibility: MUTATING_OKX_TOOLS.has(toolName) ? 'restricted' : tool.visibility,
@@ -214,7 +214,7 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
   const tradingArmed = cfg.demo || cfg.confirmRealMoney;
   if (!cfg.demo) {
-    logger.warn(
+    logger.use.warn(
       cfg.confirmRealMoney
         ? '⚠️ OKX 实盘模式：LLM 可用真实资金下单/撤单/划转/提币，且无逐单人工确认，请确认这是本意。'
         : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',

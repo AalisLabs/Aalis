@@ -47,14 +47,12 @@ describe('plugin-agent: 偏好的模型没有生效', () => {
     await use(app, messageArchivePlugin, { debugLogs: false });
     await use(app, agentPlugin, { systemPrompt: 'test', memoryTokenBudget: 1024 });
     const host = app.bind({ events, agent, services });
-    host.services.prefer(llm, GONE);
+    host.services.use.prefer(llm, GONE);
     const sent: string[] = [];
-    host.events.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
 
     for (let i = 0; i < 2; i++) {
-      await host.agent
-        .require()
-        .handleMessage({ content: '在吗', sessionId: 's', platform: 'webui', userId: 'console' });
+      await host.agent.use.handleMessage({ content: '在吗', sessionId: 's', platform: 'webui', userId: 'console' });
     }
 
     expect(sent).toEqual(['在的', '还在']);

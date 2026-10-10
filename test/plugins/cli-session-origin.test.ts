@@ -29,7 +29,7 @@ const onebotAdapter = definePlugin({
   provides: [platform],
   uses: { provide },
   apply: ({ provide }) => {
-    provide(platform, {
+    provide.use(platform, {
       adapterName: 'OneBot',
       platform: 'onebot',
       sessionTypes: [
@@ -58,7 +58,7 @@ async function setup(stored: Record<string, Record<string, unknown>> = {}, sessi
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(memory, fakeMemory(stored) as never);
+  host.provide.use(memory, fakeMemory(stored) as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugin(cliPlugin, { startupView: 'chat', ...(sessionId ? { sessionId } : {}) });
   await app.plugin(onebotAdapter);
@@ -69,11 +69,11 @@ async function setup(stored: Record<string, Record<string, unknown>> = {}, sessi
   }
   await app.start();
   await settle();
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   /** 每条入站发出时会话表里这个会话的样子，与入站的正文（按发出的先后） */
   const seen: Array<SessionInfo | undefined> = [];
   const sent: string[] = [];
-  host.events.on('inbound:message', msg => {
+  host.events.use.on('inbound:message', msg => {
     seen.push(structuredClone(sm.getSession(msg.sessionId)));
     sent.push(msg.content);
   });

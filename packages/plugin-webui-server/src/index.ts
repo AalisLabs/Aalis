@@ -24,10 +24,10 @@ import {
   sessionTypesOf,
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
-import { createProcessGateway, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
-import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
+import { isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
   type ErrorResponse,
@@ -315,7 +315,7 @@ export default definePlugin({
 
 async function startWebuiServer(caps: Caps): Promise<void> {
   const { events, logger, lifecycle, provide, services } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
   const uiConfig: WebUIConfig = {
     ...cfg,
     marketplaceRegistry: cfg.marketplaceRegistry.trim() || configSchema.marketplaceRegistry.default,
@@ -323,7 +323,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、日志、媒体与会话文件）都走这里
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
 
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
@@ -358,7 +358,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`, { secret: true });
       return true;
     } catch (err) {
-      logger.warn(`写入访问文件失败: ${(err as Error).message}`);
+      logger.use.warn(`写入访问文件失败: ${(err as Error).message}`);
       return false;
     }
   }
@@ -388,7 +388,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           // 读回的照样按凭据重写一遍：文件原先的权限（别处拷来、按默认权限写下的）一律收紧
           await storage
             .writeFile(tokenFileUri, existing, { secret: true })
-            .catch((err: Error) => logger.warn(`token 文件没能按凭据重写，别的系统用户可能读得到它: ${err.message}`));
+            .catch((err: Error) =>
+              logger.use.warn(`token 文件没能按凭据重写，别的系统用户可能读得到它: ${err.message}`),
+            );
           return;
         }
       } catch {
@@ -398,7 +400,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         await storage.writeFile(tokenFileUri, authToken, { secret: true });
         tokenSettled = true;
       } catch (err) {
-        logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
+        logger.use.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
       }
     })();
   });
@@ -432,7 +434,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 挂两个带 path 的 WebSocketServer 不行：先挂的那个会把别的路径的升级请求按 400 拒掉。
   const wsPaths = new Set([SESSION_PATH, ADMIN_PATH]);
   const wsPath = (req: IncomingMessage) => (req.url ?? '').split('?')[0];
-  const approvalSurface = caps.approvals.registerSurface('webui');
+  const approvalSurface = caps.approvals.use.registerSurface('webui');
   const wss = new WebSocketServer({
     server,
     verifyClient: (info, cb) => {
@@ -443,15 +445,17 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     },
   });
   // 日志按插件筛时用登记表分开后缀实例与插件分出的子作用域
-  const matchLogs = logMatcher(instance => caps.plugins.current?.getPlugin(instance) !== undefined);
-  const admin = createAdminChannel(logger, matchLogs);
+  const matchLogs = logMatcher(
+    instance => (caps.plugins.present ? caps.plugins.use.getPlugin(instance) : undefined) !== undefined,
+  );
+  const admin = createAdminChannel(logger.use, matchLogs);
   /** 打开着的 /session 连接：webui 平台的连接状态按它数 */
   const sessionSockets = new Set<WebSocket>();
   // 半开连接回收：清理只挂 'close' 时，睡眠/断网的客户端永远等不到事件，
   // 日志广播持续往死连接的发送缓冲堆数据。详见 ws-heartbeat.ts。
   const heartbeat = createWsHeartbeat<WebSocket>({
-    onStale: ws => logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
-    onError: (_ws, err) => logger.warn(`WebUI 客户端连接错误: ${err.message}`),
+    onStale: ws => logger.use.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
+    onError: (_ws, err) => logger.use.warn(`WebUI 客户端连接错误: ${err.message}`),
   });
 
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
@@ -463,10 +467,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   function mountStaticDir(dir: string): void {
     if (existsSync(dir)) {
       staticMiddleware = express.static(dir);
-      logger.info(`前端静态目录: ${dir}`);
+      logger.use.info(`前端静态目录: ${dir}`);
     } else {
       staticMiddleware = null;
-      logger.warn(`前端目录不存在: ${dir}`);
+      logger.use.warn(`前端目录不存在: ${dir}`);
     }
   }
 
@@ -482,7 +486,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const clientProviderDisposers = new Map<string, () => void>();
   /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
   function currentClientDir(): string | undefined {
-    return services.get(webuiClient)?.getClientDir?.();
+    return services.use.get(webuiClient)?.getClientDir?.();
   }
   /**
    * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包）：重挂当前活跃前端，
@@ -530,7 +534,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   };
   // 市场「已装」判定、依赖图、插件列表的版本与前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
   // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。host-paths 由宿主在根上提供，不会中途换。
-  const appDir = caps.paths.current?.app;
+  const appDir = caps.paths.present ? caps.paths.use.app : undefined;
   const scanDirs = localScanDirs(appDir);
   registerPluginRoutes(
     expressApp,
@@ -541,34 +545,34 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       hostConfig: caps.hostConfig,
       tools: caps.tools,
       commands: caps.commands,
-      services,
-      self: lifecycle.id,
-      home: caps.paths.current?.home,
+      services: services.use,
+      self: lifecycle.use.id,
+      home: caps.paths.present ? caps.paths.use.home : undefined,
       versions: () => {
         if (!appDir) return () => undefined;
         const lookup = localPackageLookup(appDir, collectLocalPackageDeps(scanDirs, fsScanEnv));
         return name => lookup(name)?.version;
       },
-      logger,
+      logger: logger.use,
     },
     gate,
   );
   // 页面：插件经 webui-server 的绑定接口登记，页面的数据源与动作、插件前端的文件、会话面板与布局记录的路由按这张登记表分派
   const pageFiles = createPageFiles(() => storage.listRoots());
   const pages = createPageRegistry({
-    logger,
+    logger: logger.use,
     send: event => admin.send(event),
-    sessions: () => caps.sessions.current,
+    sessions: () => (caps.sessions.present ? caps.sessions.use : undefined),
     signFile: pageFiles.sign,
   });
   registerPageRoutes(
     expressApp,
     {
       registry: pages,
-      layout: createLayoutStore(storage, logger),
-      storageReady: () => caps.storage.current !== undefined,
+      layout: createLayoutStore(storage, logger.use),
+      storageReady: () => caps.storage.present,
       send: event => admin.send(event),
-      logger,
+      logger: logger.use,
     },
     auth.identify,
     gate,
@@ -576,9 +580,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   registerMarketplaceRoutes(
     expressApp,
     {
-      logger,
+      logger: logger.use,
       plugins: caps.plugins,
-      services,
+      services: services.use,
       packageManager: caps.packageManager,
       appDir,
     },
@@ -590,11 +594,17 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 「需要处理」：推出未结的审批、插件故障与提示，界面的首页摘要、插件详情与标签页标题都读这一个列表
   const attention = createAttention({
-    approvals: () => caps.approvals.current?.list() ?? [],
-    sessions: () => caps.sessions.current,
+    approvals: () => (caps.approvals.present ? caps.approvals.use.list() : []),
+    sessions: () => (caps.sessions.present ? caps.sessions.use : undefined),
     plugins: () => {
-      const pm = caps.plugins.current;
-      return pm ? blockedStatus({ plugins: pm, services, doc: caps.hostConfig.current }) : [];
+      const pm = caps.plugins.present ? caps.plugins.use : undefined;
+      return pm
+        ? blockedStatus({
+            plugins: pm,
+            services: services.use,
+            doc: caps.hostConfig.present ? caps.hostConfig.use : undefined,
+          })
+        : [];
     },
     notices: pages.notices,
     send: event => admin.send(event),
@@ -631,7 +641,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 获取服务列表（含提供者信息）
   route(expressApp, 'GET /api/services', gate(), async (_req, res) => {
-    const pluginMgr = caps.plugins.current;
+    const pluginMgr = caps.plugins.present ? caps.plugins.use : undefined;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
     for (const p of pluginStatus) {
@@ -644,12 +654,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 别把内部 id 'root' 裸露给用户。
     displayNameMap.set('root', '宿主');
 
-    const serviceNames = services.names();
+    const serviceNames = services.use.names();
     const detail: ServiceListResponse['services'] = {};
 
     for (const svcName of serviceNames) {
       // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段；只取登记元数据，不取实例
-      const entries = services.inspect(svcName);
+      const entries = services.use.inspect(svcName);
       detail[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
@@ -658,7 +668,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           priority: e.priority,
           exclusive: e.exclusive,
         })),
-        preferred: services.preferred(svcName) ?? null,
+        preferred: services.use.preferred(svcName) ?? null,
       };
     }
 
@@ -677,18 +687,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
     // 校验 entry 存在
-    const entries = services.inspect(svcName);
+    const entries = services.use.inspect(svcName);
     if (!entries.some(e => e.contextId === contextId)) {
       res.status(404).json({ error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
     // 偏好要跨重启保留就得写进文档：宿主没提供文档时不动运行态
-    const host = caps.hostConfig.current;
-    if (!host) {
+    if (!caps.hostConfig.present) {
       res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
       return;
     }
-    if (!services.prefer(svcName, contextId)) {
+    const host = caps.hostConfig.use;
+    if (!services.use.prefer(svcName, contextId)) {
       res.status(409).json({ error: `service "${svcName}" rejected provider preference "${contextId}"` });
       return;
     }
@@ -703,12 +713,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   /** 清除服务偏好 */
   route(expressApp, 'DELETE /api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
-    const host = caps.hostConfig.current;
-    if (!host) {
+    if (!caps.hostConfig.present) {
       res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
       return;
     }
-    services.unprefer(svcName);
+    const host = caps.hostConfig.use;
+    services.use.unprefer(svcName);
     host.removeServicePreference(svcName);
     if (svcName === 'webui-client') remountActiveClient();
     if (!(await saveAfterApply(host, res, 'restart'))) return;
@@ -720,12 +730,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const warnedThemes = new WeakSet<object>();
   route(expressApp, 'GET /api/themes', gate(), (_req, res) => {
     const themes: PluginTheme[] = [];
-    for (const { key, spec } of services.get(contributions)?.collect('webui:theme') ?? []) {
+    for (const { key, spec } of services.use.get(contributions)?.collect('webui:theme') ?? []) {
       const parsed = parseTheme((spec as { theme?: unknown }).theme);
       if (parsed.ok) themes.push({ id: key, instance: key.slice(0, key.lastIndexOf('/')), theme: parsed.theme });
       else if (!warnedThemes.has(spec)) {
         warnedThemes.add(spec);
-        logger.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${parsed.errors.join('；')}`);
+        logger.use.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${parsed.errors.join('；')}`);
       }
     }
     res.json({ themes });
@@ -747,8 +757,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'POST /api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
     const contextId = req.params.contextId;
     try {
-      const llmEntries = caps.llm.all().filter(e => e.instance.providerId === contextId);
-      const target = llmEntries.find(e => typeof e.instance.refresh === 'function');
+      const llmEntries = caps.llm.list().filter(e => e.use.providerId === contextId);
+      const target = llmEntries.find(e => typeof e.use.refresh === 'function');
       if (!target) {
         res.status(404).json({
           error:
@@ -758,7 +768,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         });
         return;
       }
-      const result = await target.instance.refresh!();
+      const result = await target.use.refresh!();
       res.json({ ok: true, ...result });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -807,11 +817,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         res.status(400).json({ error: 'dependency 要是模型引用 { provider, model } 的 JSON' });
         return;
       }
-      const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.instance.thinking;
+      const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.use.thinking;
       const levels = thinking?.levels ?? [];
       const labels: Record<string, string> = {};
-      for (const entry of caps.llm.all()) {
-        for (const level of entry.instance.thinking?.levels ?? []) labels[level.id] ??= level.label;
+      for (const entry of caps.llm.list()) {
+        for (const level of entry.use.thinking?.levels ?? []) labels[level.id] ??= level.label;
       }
       res.json({
         models: levels.map(level => level.id),
@@ -827,7 +837,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
-      const groups = caps.tools.current?.getGroups() ?? [];
+      const groups = caps.tools.present ? caps.tools.use.getGroups() : [];
       // '*' = 全部分组（api-tools 的分组约定），与会话范围选项的「* （全部平台）」同一写法
       if (groups.length > 0) {
         res.json({
@@ -844,7 +854,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         });
       } else {
         // 回退：从已注册工具中提取分组名称
-        const allTools = caps.tools.current?.getAll() ?? [];
+        const allTools = caps.tools.present ? caps.tools.use.getAll() : [];
         const groupSet = new Set<string>();
         for (const t of allTools) {
           t.groups?.forEach((g: string) => {
@@ -860,12 +870,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // contextId 给提供者的实例 id（条目自己的是 `<实例 id>/<模型 id>`）：llm-ref 的取值 { provider, model } 认的是它
     if (serviceName === 'llm') {
       try {
-        const entries = caps.llm.all();
+        const entries = caps.llm.list();
         const providers = entries.map(e => ({
-          model: e.instance.id,
-          provider: e.label ?? e.contextId,
-          contextId: e.instance.providerId,
-          capabilities: [...e.instance.capabilities],
+          model: e.use.id,
+          provider: e.label ?? e.id,
+          contextId: e.use.providerId,
+          capabilities: [...e.use.capabilities],
         }));
         res.json({ providers });
       } catch {
@@ -875,7 +885,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
 
     // 合起各提供者的取值（人设卡等服务走 listModels()）
-    const allProviders = services.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
+    const allProviders = services.use.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
     const models: string[] = [];
     for (const provider of allProviders) {
       if (typeof provider.instance.listModels !== 'function') continue;
@@ -883,22 +893,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         models.push(...(await provider.instance.listModels()).map(String));
       } catch (err) {
         // 单个提供者获取失败不影响整体，它的取值从下拉里消失：记下是谁、为什么
-        logger.warn(`取 ${serviceName} 的可选值时 ${provider.contextId} 失败，它的取值不在下拉里:`, err);
+        logger.use.warn(`取 ${serviceName} 的可选值时 ${provider.contextId} 失败，它的取值不在下拉里:`, err);
       }
     }
     res.json({ models });
   });
 
-  registerProxyRoutes(expressApp, logger, gate);
-  registerMediaRoutes(expressApp, storage, logger, gate);
-  registerFileRoutes(expressApp, storage, { sessions: caps.sessionProtocol, pages: pageFiles }, logger, gate);
+  registerProxyRoutes(expressApp, logger.use, gate);
+  registerMediaRoutes(expressApp, storage, logger.use, gate);
+  registerFileRoutes(expressApp, storage, { sessions: caps.sessionProtocol, pages: pageFiles }, logger.use, gate);
 
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws, req) => {
     // 连接建立时解析一次调用者身份（cookie 在升级请求里；verifyClient 已保证已认证）
     const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
-    logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
+    logger.use.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
     // 每条连接都过心跳：回收半开连接，track 同时挂上 'error' 兜底监听（见 ws-heartbeat.ts）
     heartbeat.track(ws);
     ws.on('close', () => heartbeat.untrack(ws));
@@ -908,26 +918,30 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
     sessionSockets.add(ws);
     ws.on('close', () => sessionSockets.delete(ws));
-    acceptSessionSocket(ws, { identity: wsIdentity, surface: approvalSurface }, caps.sessionProtocol.current);
+    acceptSessionSocket(
+      ws,
+      { identity: wsIdentity, surface: approvalSurface },
+      caps.sessionProtocol.present ? caps.sessionProtocol.use : undefined,
+    );
   });
 
   // 管理面推送（/admin）：日志、插件状态、「需要处理」、重启。页面登记表与提示的变化、invalidate 在页面登记表（pages.ts）里推，
   // 布局记录的变化在它的路由里推，换前端在 remountActiveClient 里推
   const removeAdminLogListener = LogHub.default.onEntry(entry => admin.send({ type: 'log', entry }));
-  events.on('plugins:changed', () => {
+  events.use.on('plugins:changed', () => {
     admin.send({ type: 'plugins.changed' });
     attention.pluginsChanged();
   });
-  events.on('approval:created', () => attention.changed());
-  events.on('approval:settled', () => attention.changed());
-  events.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
+  events.use.on('approval:created', () => attention.changed());
+  events.use.on('approval:settled', () => attention.changed());
+  events.use.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
   // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
   // 回执表示这条消息已经进了会话历史，不看有没有页面在线。owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）
   // 由那个平台的适配器认领
-  events.on('outbound:message', (msg: OutgoingMessage) => {
+  events.use.on('outbound:message', (msg: OutgoingMessage) => {
     if (msg.delivery || msg.platform !== 'webui') return;
-    const sm = caps.sessions.current;
+    const sm = caps.sessions.present ? caps.sessions.use : undefined;
     const root = sm && rootSessionOf(sm.getSession(msg.sessionId), id => sm.getSession(id));
     if (root?.originPlatform !== undefined) return;
     // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
@@ -935,13 +949,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       try {
         // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
         const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
-        const archive = caps.archive.current;
-        if (!archive) return { ok: false as const, error: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史' };
+        if (!caps.archive.present)
+          return { ok: false as const, error: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史' };
+        const archive = caps.archive.use;
         for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
         if (snapshot.attachments?.length) {
           // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得全局出站归档再记一份
           const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
-          void events.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
+          void events.use.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
         }
         return { ok: true as const };
       } catch (error) {
@@ -989,8 +1004,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (res.headersSent) return next(err);
     const { status, expose, message } = err as { status?: unknown; expose?: unknown; message?: unknown };
     const code = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
-    if (code >= 500) logger.error(`${req.method} ${req.path} 处理出错:`, err);
-    else logger.debug(`${req.method} ${req.path} 请求被拒 (${code}): ${String(message)}`);
+    if (code >= 500) logger.use.error(`${req.method} ${req.path} 处理出错:`, err);
+    else logger.use.debug(`${req.method} ${req.path} 请求被拒 (${code}): ${String(message)}`);
     const reason =
       code >= 500
         ? '处理这个请求时出错，原因见日志'
@@ -1054,7 +1069,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       clientProviderDisposers.delete(stale.id);
       clientCandidates.splice(i, 1);
       removed++;
-      logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
+      logger.use.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
     }
     // 摘掉 provider 只改了「服务解析结果」，**真正服务 HTTP 的是 clientDist / staticMiddleware**，
     // 它们在 app:ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
@@ -1075,30 +1090,34 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     for (const candidate of fresh) {
       clientProviderDisposers.set(
         candidate.id,
-        provide(webuiClient, { getClientDir: () => candidate.dir }, { label: candidate.label, entryId: candidate.id }),
+        provide.use(
+          webuiClient,
+          { getClientDir: () => candidate.dir },
+          { label: candidate.label, entryId: candidate.id },
+        ),
       );
-      logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
+      logger.use.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
   }
 
   // 启动服务器
-  events.on('app:ready', async () => {
+  events.use.on('app:ready', async () => {
     // 冷启动时 storage 的激活在 app:ready 之前收敛；等晚到的读回落定，listen / autoOpen /
     // access.txt 用的就是持久化的 token
     if (tokenLoading) await tokenLoading;
     // 等插件状态机静置再登记扫描到的前端：bounce 后 sticky 的 app:ready 在本实例激活途中补发，立刻登记会落在
     // provides 核对之前（dev 多报「未在 provides 中声明」），等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。
     // 代价：重算一直不收敛时，前端要等它收敛后才登记与挂上
-    await caps.plugins.current?.idle();
+    if (caps.plugins.present) await caps.plugins.use.idle();
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
     if (activeDir) {
       clientDist = activeDir;
       mountStaticDir(activeDir);
-      logger.info(`活跃前端: ${activeDir}`);
+      logger.use.info(`活跃前端: ${activeDir}`);
     } else {
-      logger.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
+      logger.use.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
     }
 
     // 监听失败（典型 EADDRINUSE：3000 被别的 dev server 占了）是 bind 之后**异步 emit** 的，
@@ -1111,7 +1130,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // wss）并排在最前；EventEmitter 按注册顺序调用，它 emit 到无监听器的 wss 上会同步抛出、
     // 中断 emit 循环，后注册在 server 上的 handler 因此永远轮不到。
     wss.on('error', (err: Error) => {
-      logger.error(`WebUI 监听 ${uiConfig.host}:${uiConfig.port} 失败: ${err.message}；WebUI 不可用，其余功能照常运行`);
+      logger.use.error(
+        `WebUI 监听 ${uiConfig.host}:${uiConfig.port} 失败: ${err.message}；WebUI 不可用，其余功能照常运行`,
+      );
     });
     server.listen(uiConfig.port, uiConfig.host, () => {
       // 通配绑定地址（0.0.0.0 / ::）是"听在哪"，不是"从哪访问"——直接拼进 URL 会让
@@ -1121,10 +1142,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       const url = `http://${displayHost}:${uiConfig.port}/`;
       listeningUrl = url;
       const accessUrl = `${url}?token=${authToken}`;
-      logger.info(`WebUI 已启动: ${url}`);
+      logger.use.info(`WebUI 已启动: ${url}`);
       // 多前端时提示恢复页 URL：万一切到无切换 UI 的前端被卡住，可在此切回（详见 client-switch-page.ts）。
       if (clientCandidates.length > 1) {
-        logger.info(`检测到多个前端；若卡在某前端无切换入口，可访问恢复页切回: ${url}__clients`);
+        logger.use.info(`检测到多个前端；若卡在某前端无切换入口，可访问恢复页切回: ${url}__clients`);
       }
       const tokenHint =
         uiConfig.tokenMode === 'ephemeral'
@@ -1134,14 +1155,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
       // 不把 token 打进日志（会落 latest.log / 被 /api/logs/* 回放 / 贴日志求助时外泄）。
       // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（按凭据写，只给本机用户读）。
-      logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
+      logger.use.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
         // 先把文件写出来，再解析它的绝对路径：resolveLocalPath 走 realpath，文件尚未落盘会抛
         // ENOENT 被吞掉，于是「绝对路径」退化成原样重复一遍 URI——偏偏首启（新用户唯一需要
         // 这行的时刻）必然命中，二次启动因文件已在反而正常。两者原先都是 void，谁先到看调度。
         if (!(await writeAccessFile(url, authToken))) {
           // 写失败上面已 warn 过；再打一条「已写入」只会让人去找一个不存在的文件
-          logger.warn(
+          logger.use.warn(
             `访问凭据未能写入 ${accessFileUri}：修好家目录 state/webui/ 的写权限后重启；` +
               `或把 tokenMode 设为 fixed、在 fixedToken 里填一个至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的 token，用它在登录页登录`,
           );
@@ -1153,19 +1174,20 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             absHint = await storage.resolveLocalPath(accessFileUri, 'read');
           }
         } catch (err) {
-          logger.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
+          logger.use.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
         }
-        logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
+        logger.use.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
       })();
-      const host = caps.app.current;
+      // 记的是宿主实例本身（业务句柄每次激活各一个，认不出同一个宿主）
+      const host = services.use.get(appService);
       if (uiConfig.autoOpen && (tokenFresh || !host || !browserOpenedFor.has(host))) {
         if (host) browserOpenedFor.add(host);
-        openBrowser(accessUrl, createProcessGateway(caps.process));
+        openBrowser(accessUrl, caps.process.use);
       }
     });
   });
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     heartbeat.dispose();
     pages.dispose();
     removeAdminLogListener();
@@ -1187,7 +1209,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 平台名 webui 标明说话的是从 WebUI 来的 owner。登记成平台，平台档、会话范围的候选与用户关系认的平台名里才有它；
   // 连接状态数的是打开着的 /session 连接。WebUI 的会话不经适配器收发：页面走会话协议，出站消息由上面的收件箱认领
-  provide(platform, {
+  provide.use(platform, {
     adapterName: 'WebUI',
     platform: 'webui',
     getConnections(): PlatformConnection[] {
@@ -1207,5 +1229,5 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     invalidate: pages.invalidate,
     addNotice: pages.addNotice,
   };
-  provide(webuiServer, webuiService);
+  provide.use(webuiServer, webuiService);
 }

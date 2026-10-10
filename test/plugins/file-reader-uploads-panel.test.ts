@@ -43,7 +43,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
   const host = app.bind({ provide, events });
   const files = new Map<string, string | Uint8Array>(Object.entries(seed));
   const store: StorageService = memoryStorage(files);
-  host.provide(storage, {
+  host.provide.use(storage, {
     ...store,
     async delete(uri: string) {
       if (refuse?.(uri))
@@ -51,9 +51,9 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
       return store.delete(uri);
     },
   } as StorageService);
-  host.provide(webuiServer, pages.service);
+  host.provide.use(webuiServer, pages.service);
   let preprocessor: PreprocessorFn | undefined;
-  host.provide(agent, {
+  host.provide.use(agent, {
     async handleMessage() {},
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
@@ -165,7 +165,7 @@ describe('会话面板「上传的文件」', () => {
     const { host, pages, upload } = await boot({ refuse: uri => stuck !== '' && uri.includes(stuck) });
     stuck = await upload(ROOM, 'stuck.txt', '占用中');
     await upload(ROOM, 'loose.txt', '可删');
-    await host.events.emit('session:deleted', ROOM);
+    await host.events.use.emit('session:deleted', ROOM);
     const left = await pages.data<Array<{ id: string }>>('uploads', 'files', { sessionId: ROOM });
     expect(left.map(row => row.id)).toEqual([stuck]);
   });

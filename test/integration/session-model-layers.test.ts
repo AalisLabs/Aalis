@@ -27,7 +27,7 @@ function models(answered: string[]) {
       for (const id of ['a', 'b']) {
         const handle: LLMModel = {
           id,
-          providerId: caps.lifecycle.id,
+          providerId: caps.lifecycle.use.id,
           contextLength: 8192,
           maxOutputTokens: 1024,
           capabilities: ['chat', 'streaming'],
@@ -41,7 +41,7 @@ function models(answered: string[]) {
             yield { done: true };
           },
         };
-        caps.provide(llm, handle, { entryId: `${caps.lifecycle.id}/${id}` });
+        caps.provide.use(llm, handle, { entryId: `${caps.lifecycle.use.id}/${id}` });
       }
     },
   });
@@ -59,13 +59,13 @@ async function boot(answered: string[]) {
   await app.plugins.idle();
   expect(app.plugins.getPlugin(agentPlugin.name)?.state).toBe('active');
   const host = app.bind({ agent: agentService, sessionManager: sessionManagerService, services });
-  return { app, host, sm: host.sessionManager.require() };
+  return { app, host, sm: host.sessionManager.use };
 }
 
 it('全局默认层的「模型」就是服务偏好：没有任何一层设时回复用偏好指向的模型，指向的模型不在时回落到服务解析到的那一个', async () => {
   const answered: string[] = [];
   const { app, host, sm } = await boot(answered);
-  const agent = host.agent.require();
+  const agent = host.agent.use;
   const turn = async () => {
     await agent.handleMessage({
       content: 'hi',
@@ -77,7 +77,7 @@ it('全局默认层的「模型」就是服务偏好：没有任何一层设时�
     return answered.at(-1);
   };
 
-  expect(host.services.prefer(llm, `${PROVIDER}/b`)).toBe(true);
+  expect(host.services.use.prefer(llm, `${PROVIDER}/b`)).toBe(true);
   expect(await turn(), '都没设：服务偏好').toBe('b');
   expect(sm.getLayer({ scope: 'defaults' }).llm, '全局默认层读到的就是偏好').toEqual({
     provider: PROVIDER,
@@ -85,7 +85,7 @@ it('全局默认层的「模型」就是服务偏好：没有任何一层设时�
   });
 
   await sm.updateLayer({ scope: 'defaults' }, { llm: { provider: PROVIDER, model: 'a' } });
-  expect(host.services.preferred(llm)).toBe(`${PROVIDER}/a`);
+  expect(host.services.use.preferred(llm)).toBe(`${PROVIDER}/a`);
   expect(await turn(), '改全局默认即改偏好').toBe('a');
 
   await sm.updateLayer({ scope: 'defaults' }, { llm: { provider: PROVIDER, model: 'gone' } });
@@ -94,7 +94,7 @@ it('全局默认层的「模型」就是服务偏好：没有任何一层设时�
   await sm.updateLayer({ scope: 'defaults' }, { llm: { provider: PROVIDER, model: 'b' } });
   expect(await turn()).toBe('b');
   await sm.updateLayer({ scope: 'defaults' }, { llm: null });
-  expect(host.services.preferred(llm), '清掉即取消偏好').toBeUndefined();
+  expect(host.services.use.preferred(llm), '清掉即取消偏好').toBeUndefined();
   expect(await turn(), '没有偏好：登记在先的 a').toBe('a');
 
   await app.stop();
@@ -107,7 +107,7 @@ it('重载对话代理不改 llm 服务的偏好', async () => {
 
   expect(await app.plugins.bounce(agentPlugin.name)).toBe(true);
   await app.plugins.idle();
-  expect(host.services.preferred(llm)).toBe(`${PROVIDER}/b`);
+  expect(host.services.use.preferred(llm)).toBe(`${PROVIDER}/b`);
 
   await app.stop();
 });

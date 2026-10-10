@@ -149,8 +149,8 @@ describe('agent:llm:before 中间件接线', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
-    host.provide(processService, {} as never);
-    host.provide(storage, {} as never);
+    host.provide.use(processService, {} as never);
+    host.provide.use(storage, {} as never);
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery } });
     await app.plugins.idle();
@@ -170,7 +170,7 @@ describe('agent:llm:before 中间件接线', () => {
       sessionId: 's',
       dryRun,
     };
-    await host.hooks.run('agent:llm:before', data as never);
+    await host.hooks.use.run('agent:llm:before', data as never);
     await app.stop();
     return data;
   }
@@ -203,11 +203,11 @@ describe('agent:llm:before 中间件接线', () => {
       sessionId: 's',
       dryRun: false,
     };
-    await host.hooks.run('agent:llm:before', data as never);
+    await host.hooks.use.run('agent:llm:before', data as never);
     expect(data.messages[0].images).toEqual([GIF_DATA]); // 失败原样退回
     // 工具循环第二、三轮重跑同一钩子：不得再次尝试物化（负缓存生效）
-    await host.hooks.run('agent:llm:before', data as never);
-    await host.hooks.run('agent:llm:before', data as never);
+    await host.hooks.use.run('agent:llm:before', data as never);
+    await host.hooks.use.run('agent:llm:before', data as never);
     expect(mocks.materializeAttachment).toHaveBeenCalledTimes(1);
     await app.stop();
   });

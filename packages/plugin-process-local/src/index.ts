@@ -8,7 +8,7 @@ import { isAbsolute } from 'node:path';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
 import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { definePlugin, events, logger, optional, provide } from '@aalis/core';
 
 /** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
@@ -286,11 +286,11 @@ export default definePlugin({
   // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。
   uses: { provide, events, logger, storage: optional(storage) },
   apply(caps) {
-    const service = new LocalProcessService(createStorageGateway(caps.storage));
-    caps.provide(processService, service);
+    const service = new LocalProcessService(caps.storage.use);
+    caps.provide.use(processService, service);
     // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此补杀。
     // 挂 app:stopping 而非插件 dispose：本插件被 bounce 时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。
-    caps.events.on('app:stopping', () => service.killAll());
-    caps.logger.info('process-local 就绪');
+    caps.events.use.on('app:stopping', () => service.killAll());
+    caps.logger.use.info('process-local 就绪');
   },
 });

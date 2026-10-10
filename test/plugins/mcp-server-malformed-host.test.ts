@@ -46,7 +46,7 @@ describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ provide });
-    host.provide(tools, {
+    host.provide.use(tools, {
       getAll: () => [],
       getDefinitions: () => [],
       getSummaries: () => [],

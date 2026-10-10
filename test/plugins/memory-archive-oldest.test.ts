@@ -66,7 +66,7 @@ const BACKENDS: Array<[string, () => Promise<{ mem: MemoryService; stop: () => P
       const app = new App({ name: 'T', logLevel: 'error' });
       await app.plugin(memoryInMemory);
       await app.plugins.idle();
-      const mem = app.bind({ services }).services.get(memory);
+      const mem = app.bind({ services }).services.use.get(memory);
       if (!mem) throw new Error('memory 服务未就绪');
       return { mem, stop: () => app.stop() };
     },

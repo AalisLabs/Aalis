@@ -50,7 +50,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
     await app.plugins.idle();
-    const registry = app.bind({ services }).services.get(tools);
+    const registry = app.bind({ services }).services.use.get(tools);
     expect(registry).toBeDefined();
     return registry!;
   }

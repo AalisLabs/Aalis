@@ -38,8 +38,8 @@ function world() {
   apps.push(app);
   // whisper.cpp 的 process / storage 是 required：给桩，让它走到 apply 里的配置检查
   const host = app.bind({ provide });
-  host.provide(processService, {} as never);
-  host.provide(storage, {} as never);
+  host.provide.use(processService, {} as never);
+  host.provide.use(storage, {} as never);
   return { app, errors };
 }
 

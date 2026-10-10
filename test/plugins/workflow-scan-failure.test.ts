@@ -49,7 +49,7 @@ async function bootOnce(listError: string): Promise<Record<string, number>> {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   // 宿主侧提供桩 storage：只实现本用例走到的那几个方法
-  app.bind({ provide }).provide(storage, store.service as never);
+  app.bind({ provide }).provide.use(storage, store.service as never);
   await app.plugin(cronEnginePlugin, {});
   await app.plugin(workflowPlugin, { enableTools: false });
   await app.plugins.idle();

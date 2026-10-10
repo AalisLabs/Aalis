@@ -63,7 +63,7 @@ async function boot(contextLength: number, { systemPrompt = 'test bot', callsToo
   }
   const host = app.bind({ agent, events, memory, sessionManager, tools });
   if (callsTool) {
-    host.tools.register({
+    host.tools.use.register({
       definition: {
         type: 'function',
         function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
@@ -72,20 +72,22 @@ async function boot(contextLength: number, { systemPrompt = 'test bot', callsToo
     });
   }
   const statuses: string[] = [];
-  host.events.on('session:compressing', info => void statuses.push(info.status));
+  host.events.use.on('session:compressing', info => void statuses.push(info.status));
   const usages: TokenUsageEvent[] = [];
-  host.events.on('token:usage', event => void usages.push(event));
+  host.events.use.on('token:usage', event => void usages.push(event));
   const ask = (sessionId: string, content: string) =>
-    host.agent.require().handleMessage({ content, sessionId, platform: 'webui', userId: 'u1' });
+    host.agent.use.handleMessage({ content, sessionId, platform: 'webui', userId: 'u1' });
   const summaries = () => recorder.filter(r => r.purpose === '摘要').length;
   const active = async (sessionId: string) =>
-    (await host.memory.require().getHistory(sessionId, Infinity)).map(m => String(m.content));
+    (await host.memory.use.getHistory(sessionId, Infinity)).map(m => String(m.content));
   /** 预存十条两千字的历史：估算约 5800 token */
   const seedLong = async (sessionId: string) => {
     for (let i = 0; i < 10; i++) {
-      await host.memory
-        .require()
-        .saveMessage(sessionId, { role: i % 2 ? 'assistant' : 'user', content: LONG, timestamp: 1000 + i });
+      await host.memory.use.saveMessage(sessionId, {
+        role: i % 2 ? 'assistant' : 'user',
+        content: LONG,
+        timestamp: 1000 + i,
+      });
     }
   };
   return { host, recorder, statuses, usages, ask, summaries, active, seedLong };
@@ -97,7 +99,7 @@ const textsOf = (request: ChatModelRequest | undefined) => (request?.messages ??
 it('条数线：回合结束时会话条数（含落库的最终回复）到线就全量压缩，下一轮读之前已压完；用量远不到压缩线', async () => {
   const { host, recorder, statuses, usages, ask, summaries, active } = await boot(100_000);
   const SESSION = 'zz-ctx-count';
-  await host.sessionManager.require().ensureSession(SESSION, { config: { historyLimit: 4 } });
+  await host.sessionManager.use.ensureSession(SESSION, { config: { historyLimit: 4 } });
 
   // 第一轮读进 1 条、落库回复后 2 条；第二轮读进 3 条、落库回复后 4 条，到线
   await ask(SESSION, '第一问');

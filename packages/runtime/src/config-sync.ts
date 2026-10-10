@@ -164,7 +164,7 @@ export function installConfigHotReload(
   opts?: ConfigSyncOptions,
 ): void {
   store.watch(previous => void handleConfigChanged(app, store, discovery, opts, previous));
-  app.bind({ events }).events.on('app:stopping', () => store.unwatch());
+  app.bind({ events }).events.use.on('app:stopping', () => store.unwatch());
 }
 
 /**

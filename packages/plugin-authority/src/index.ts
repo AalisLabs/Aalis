@@ -4,7 +4,7 @@ import { authority as authorityService, capabilityMinLevel } from '@aalis/api-au
 import { commands as commandsService } from '@aalis/api-commands';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
@@ -15,7 +15,7 @@ import { DEFAULT_AUTHORITY } from './authority-model.js';
 // ===== 插件入口 =====
 
 // 裁决要读整份宿主配置（owners / deniedCapabilities / confirmOverrides…），缺了它权限系统无从裁决，
-// 故 apply 里 require()、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
+// 故 apply 里直接用它的业务句柄、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
 // （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
 // approvals 缺席时需要确认的工具调用一律拒绝。房间类别按 session-manager 记下的会话字段判：审批服务的提供者
@@ -45,12 +45,12 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { commands, lifecycle, logger, storage, tools, webui } = caps;
-  const config = caps.hostConfig.require();
+  const config = caps.hostConfig.use;
 
-  const manager = new AuthorityManager(config, logger, createStorageGateway(storage), id =>
-    caps.sessionManager.current?.getSession(id),
+  const manager = new AuthorityManager(config, logger.use, storage.use, id =>
+    caps.sessionManager.present ? caps.sessionManager.use.getSession(id) : undefined,
   );
-  caps.provide(authorityService, manager);
+  caps.provide.use(authorityService, manager);
   const page = defineAuthorityPage({ webui, commands, tools, config, manager });
 
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
@@ -65,7 +65,7 @@ async function run(caps: Caps): Promise<void> {
     loadNotice =
       reason === undefined
         ? undefined
-        : webui.notify({
+        : webui.use.notify({
             id: 'users-load',
             level: 'error',
             title: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
@@ -79,9 +79,9 @@ async function run(caps: Caps): Promise<void> {
     loading = manager
       .init()
       .then(
-        () => logger.debug('授权用户等级已加载'),
+        () => logger.use.debug('授权用户等级已加载'),
         // err 作参数交给 logger 渲染：模板字符串遇到转不成字符串的值会抛，被下面的兜底吞掉、一条告警都不留
-        err => logger.warn('授权用户等级加载失败:', err),
+        err => logger.use.warn('授权用户等级加载失败:', err),
       )
       .then(reportLoad)
       // 上报器自身失败（宿主经 AppOptions 注入的 logger 或时钟抛错）不再外抛，成败两条回调都算：
@@ -125,10 +125,10 @@ async function run(caps: Caps): Promise<void> {
     }
 
     // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别裁决，不能的立即拒绝、不推给任何面
-    const service = caps.approvals.current;
-    if (!service) {
+    if (!caps.approvals.present) {
       return `操作已取消：${capability} 需要 owner 批准，但审批服务不在（由 @aalis/plugin-session-server 提供）`;
     }
+    const service = caps.approvals.use;
     const outcome = await service.request(
       {
         sessionId: g.sessionId,
@@ -153,12 +153,12 @@ async function run(caps: Caps): Promise<void> {
   //（需要更高等级或确认的一律拒绝）
   commands.follow(svc => {
     svc.setExecutionGuard(guard);
-    logger.debug('权限守卫已注入: commands');
+    logger.use.debug('权限守卫已注入: commands');
     return () => svc.setExecutionGuard(undefined);
   });
   tools.follow(svc => {
     svc.setExecutionGuard(guard);
-    logger.debug('权限守卫已注入: tools');
+    logger.use.debug('权限守卫已注入: tools');
     return () => svc.setExecutionGuard(undefined);
   });
 
@@ -169,7 +169,7 @@ async function run(caps: Caps): Promise<void> {
   // 而清理链只在回调返回 thenable 时才等待——回调返回 void 时整条拆卸链一个环节都不等
   // 这次写，CLI 子命令退出与 bounce 都会静默丢掉封禁/等级。
   // flushed() 无条件 await：dirty 已为 false 时 save() 会早退，要等的是先前挂上去的那次写。
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     manager.save();
     await manager.flushed();
   });
@@ -178,7 +178,7 @@ async function run(caps: Caps): Promise<void> {
 
   // /authority [target] — 查看自己或指定用户的权限等级
   // 读类敏感操作：会披露他人的权限等级 → risk:'sensitive'（等级 1，不强制确认）。
-  commands
+  commands.use
     .command('authority [target:string]', '查看自己或指定用户的权限等级', { risk: 'sensitive' })
     .action(async (argv, target) => {
       const describe = (platform: string, userId: string | undefined, self: boolean): string => {
@@ -200,7 +200,7 @@ async function run(caps: Caps): Promise<void> {
     });
 
   // /level <target> <整数> — owner 给外部身份设等级（越大越高，0=默认，负数=封禁）。权限管理仅 owner 可达（防自授）。
-  commands
+  commands.use
     .command('level <target:string> <level:number>', '设置用户的权限等级。整数，越大越高；0 为默认，负数为封禁', {
       visibility: 'restricted',
     })
@@ -269,9 +269,9 @@ type RuleKind = keyof typeof RULE_KINDS;
 function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDeps) {
   /** 指令与工具统一成「操作」：能力键、所属插件、后端派生的默认门槛（不含 authorityOverrides） */
   const operations = () => {
-    const prefix = commands.current?.prefix ?? '/';
+    const prefix = commands.present ? commands.use.prefix : '/';
     const entries = [
-      ...(commands.current?.getAll() ?? []).map(n => ({
+      ...(commands.present ? commands.use.getAll() : []).map(n => ({
         type: 'command' as const,
         name: n.name,
         display: `${prefix}${n.name.split('.').join(' ')}`,
@@ -280,7 +280,7 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
         risk: n.risk,
         confirm: n.confirm,
       })),
-      ...(tools.current?.getAll() ?? []).map(t => ({
+      ...(tools.present ? tools.use.getAll() : []).map(t => ({
         type: 'tool' as const,
         name: t.name,
         display: t.name,
@@ -360,7 +360,7 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
     level: { type: 'number', label: '最低等级', integer: true, description: '整数；留空恢复按风险派生的默认门槛' },
   } as const;
 
-  const page = webui.definePage({
+  const page = webui.use.definePage({
     key: 'authority',
     title: '权限',
     icon: 'shield',

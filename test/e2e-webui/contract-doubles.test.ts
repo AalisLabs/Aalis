@@ -69,8 +69,8 @@ function doubles() {
     provides: [checkpoint, todoList, compression],
     uses: { provide, events },
     apply({ provide, events }) {
-      bus.current = events;
-      provide(checkpoint, {
+      bus.current = events.use;
+      provide.use(checkpoint, {
         beforeMutate: async () => {},
         execUsed: async () => true,
         rollback: async (_sessionId, turnId) => rollback(turnId),
@@ -80,17 +80,17 @@ function doubles() {
           chatDeleted: true,
         }),
       });
-      provide(todoList, {
+      provide.use(todoList, {
         get: async sessionId => plans.get(sessionId) ?? [],
         async clear(sessionId) {
           plans.delete(sessionId);
-          await events.emit('todo:updated', sessionId, []);
+          await events.use.emit('todo:updated', sessionId, []);
         },
       });
-      provide(compression, {
+      provide.use(compression, {
         async compress(sessionId) {
-          await events.emit('session:compressing', { sessionId, status: 'start' });
-          await events.emit('session:compressing', { sessionId, status: 'done' });
+          await events.use.emit('session:compressing', { sessionId, status: 'start' });
+          await events.use.emit('session:compressing', { sessionId, status: 'done' });
         },
         compressAt: () => AUTO_COMPRESS,
       });
@@ -111,7 +111,7 @@ const requester = definePlugin({
   name: 'zz-e2e-requester',
   uses: { tools, approvals },
   apply({ tools, approvals }) {
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: {
@@ -121,7 +121,7 @@ const requester = definePlugin({
         },
       },
       async handler(args, ctx) {
-        const outcome = await approvals.require().request(
+        const outcome = await approvals.use.request(
           {
             sessionId: ctx.sessionId,
             turnId: ctx.turnId,
@@ -148,8 +148,8 @@ function backgroundDouble() {
     provides: [backgroundTasks],
     uses: { provide, events },
     apply({ provide, events }) {
-      bus.current = events;
-      provide(backgroundTasks, {
+      bus.current = events.use;
+      provide.use(backgroundTasks, {
         list: filter => tasks.filter(task => filter?.sessionId === undefined || task.sessionId === filter.sessionId),
         output: id =>
           tasks.some(task => task.id === id) ? { text: `${LAST_LINE}\n`, end: 7, truncated: false } : undefined,
@@ -190,7 +190,7 @@ async function startDoubles() {
     extra: [contract.plugin, requester, background.plugin],
     cleanups,
   });
-  expect(app.bind({ services }).services.prefer(backgroundTasks, background.plugin.name)).toBe(true);
+  expect(app.bind({ services }).services.use.prefer(backgroundTasks, background.plugin.name)).toBe(true);
   await app.start();
   await waitListening(port);
   return {

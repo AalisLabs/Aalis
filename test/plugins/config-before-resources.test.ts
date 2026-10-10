@@ -35,7 +35,7 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
   apps.push(app);
   const calls: string[] = [];
   const host = app.bind({ provide });
-  host.provide(storage, {
+  host.provide.use(storage, {
     listRoots: () => [{ name: 'data', readable: true, writable: true, deletable: true }],
     readFile: async (uri: string) => {
       calls.push(`read:${uri}`);
@@ -46,7 +46,7 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
       return '/tmp/fake-db';
     },
   } as never);
-  host.provide(tools, {
+  host.provide.use(tools, {
     registerGroup: () => {
       calls.push('registerGroup');
       return () => {};
@@ -56,9 +56,9 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
       return () => {};
     },
   } as never);
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} } as never);
-  host.provide(hooks, new HookRegistry());
-  host.provide(contributions, new ContributionRegistry());
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} } as never);
+  host.provide.use(hooks, new HookRegistry());
+  host.provide.use(contributions, new ContributionRegistry());
   await app.plugin(plugin, config);
   await app.plugins.idle();
   return { entry: app.plugins.getPlugin(plugin.name), calls };

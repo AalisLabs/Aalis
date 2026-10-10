@@ -251,7 +251,7 @@ async function setup(appConfig: object = {}) {
   }
   const host = app.bind({ events, commands });
   const ran: string[] = [];
-  host.commands
+  host.commands.use
     .command('probe <keyword:text>', '探针。按关键词查找', { examples: ['/probe 苹果'] })
     .argument('keyword', '要找的词')
     .option('mode', '-m <mode:string>', {
@@ -263,17 +263,17 @@ async function setup(appConfig: object = {}) {
       ran.push('probe');
       return 'found';
     });
-  host.commands.command('admin.reset', '重置', { visibility: 'restricted' }).action(() => 'reset');
-  host.commands.command('mixed.open', '公开的').action(() => 'open');
-  host.commands.command('mixed.secret', '受限的', { visibility: 'restricted' }).action(() => 'secret');
+  host.commands.use.command('admin.reset', '重置', { visibility: 'restricted' }).action(() => 'reset');
+  host.commands.use.command('mixed.open', '公开的').action(() => 'open');
+  host.commands.use.command('mixed.secret', '受限的', { visibility: 'restricted' }).action(() => 'secret');
   const replies: string[] = [];
-  host.events.on('outbound:message', msg => {
+  host.events.use.on('outbound:message', msg => {
     replies.push(msg.content);
   });
   /** 以 who 的身份发一句，取这一句的回复 */
   const ask = async (who: Who, content: string): Promise<string> => {
     const before = replies.length;
-    await host.events.emit('inbound:message', { ...who, content } as IncomingMessage);
+    await host.events.use.emit('inbound:message', { ...who, content } as IncomingMessage);
     await vi.waitFor(() => expect(replies.length).toBe(before + 1));
     return replies[before];
   };

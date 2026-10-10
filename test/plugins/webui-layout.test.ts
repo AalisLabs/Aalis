@@ -43,10 +43,11 @@ const pageOwner = (pluginPages: number, panelPages: number) =>
     name: OWNER,
     uses: { webui: optional(webuiServer) },
     apply: ({ webui }) => {
-      for (let i = 0; i < pluginPages; i++) webui.definePage({ key: `p${i}`, title: `页${i}`, content: [markdown] });
-      webui.definePage({ key: 'prefs', title: '偏好', placement: 'settings', content: [markdown] });
+      for (let i = 0; i < pluginPages; i++)
+        webui.use.definePage({ key: `p${i}`, title: `页${i}`, content: [markdown] });
+      webui.use.definePage({ key: 'prefs', title: '偏好', placement: 'settings', content: [markdown] });
       for (let i = 0; i < panelPages; i++) {
-        webui.definePage({ key: `n${i}`, title: `面板${i}`, placement: 'session', content: [markdown] });
+        webui.use.definePage({ key: `n${i}`, title: `面板${i}`, placement: 'session', content: [markdown] });
       }
     },
   });

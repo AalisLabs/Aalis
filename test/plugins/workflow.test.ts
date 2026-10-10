@@ -6,6 +6,7 @@ import type { Events, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 const noopLogger = (): Logger =>
   ({
@@ -34,7 +35,7 @@ const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | 
 
 /** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做 */
 const toolCaps = (toolFn?: (name: string, args: unknown) => Promise<string> | string): EngineCaps => ({
-  tools: boundTools(toolFn),
+  tools: fixedRef(boundTools(toolFn)),
   events: noopEvents(),
   hooks: noopHooks(),
   logger: noopLogger(),
@@ -83,7 +84,7 @@ const agentCaps = (
       for (const h of [...handlers]) await h(data, async () => {});
     },
   } as unknown as Events;
-  return { tools: boundTools(), events, hooks, logger: noopLogger() };
+  return { tools: fixedRef(boundTools()), events, hooks, logger: noopLogger() };
 };
 
 describe('workflow validateGraph', () => {

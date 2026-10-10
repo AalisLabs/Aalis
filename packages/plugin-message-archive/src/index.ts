@@ -2,7 +2,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive } from '@aalis/api-message-archive';
-import { aggregateStorageRoots, isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
+import { isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import type { ArchivedAttachment, IncomingMessage, Message } from '@aalis/schema-message';
@@ -82,8 +82,8 @@ export default definePlugin({
   provides: [messageArchive],
   uses,
   apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
-    caps.provide(messageArchive, createArchiveService(caps, cfg.debugLogs));
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
+    caps.provide.use(messageArchive, createArchiveService(caps, cfg.debugLogs));
   },
 });
 
@@ -91,20 +91,20 @@ function createArchiveService(
   { memory, media, storage, events, logger }: Caps,
   debugLogs: boolean,
 ): MessageArchiveService {
-  // 不缓存 memory 引用，每次调用现取：一次激活内胜者也可能换人（偏好变更、更高优先级的
-  // 提供者登场），ServiceRef 的契约就是每次解析当前值。多一次查表的开销可忽。
+  // 经 memory 的业务句柄调用：一次激活内胜者也可能换人（偏好变更、更高优先级的提供者登场），
+  // 句柄每次调用都打到当时选中的那一家。
   return {
     async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
-      await memory.require().saveMessage(sessionId, message);
+      await memory.use.saveMessage(sessionId, message);
       // assistant 回复落库后通知监听者（memory-vector 据此索引 AI 自身发言）。
       // 只发「对外可见的回复」：带 toolCalls 的行是工具调用回合的内部前言
       //（「我来查一下」），从未发给任何人，不该进语义记忆；tool/摘要等其他
       // saveMessage 用途同理不发。core 的 emit 恒 resolve（per-handler try/catch），无需 catch。
       if (message.role === 'assistant' && message.content?.trim() && !message.toolCalls?.length) {
-        void events.emit('assistant:message:archived', { sessionId, message });
+        void events.use.emit('assistant:message:archived', { sessionId, message });
       }
       if (debugLogs && options?.debugLabel) {
-        logger.debug(options.debugLabel);
+        logger.use.debug(options.debugLabel);
       }
     },
 
@@ -114,11 +114,11 @@ function createArchiveService(
       // 对传入的消息对象调用（识别结果随之写回入参）：processMessage 按消息对象只处理一次，
       // 触发判定已启动的识别在这里命中（在途则等它），对拷贝调用会再识别一遍
       if (incoming.attachments && incoming.attachments.length > 0 && !incoming._attachmentDescriptions) {
-        const mediaSvc = media.current;
+        const mediaSvc = media.present ? media.use : undefined;
         if (mediaSvc) {
           const report = await mediaSvc.processMessage(incoming);
           if (debugLogs && report.total > 0) {
-            logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${incoming.content}`);
+            logger.use.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${incoming.content}`);
           }
         }
       }
@@ -145,8 +145,7 @@ function createArchiveService(
       if (working.messageId) meta[WellKnownMetadataKeys.MessageId] = working.messageId;
       // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
       if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
-      // 存储按根逐条提供，胜者只是其中一个根：根表取全部提供者的
-      const roots = new Set(aggregateStorageRoots(storage).map(root => root.name));
+      const roots = new Set(storage.present ? storage.use.listRoots().map(root => root.name) : []);
       const attachments = attachmentList(working, roots);
       if (attachments.length > 0) meta[WellKnownMetadataKeys.Attachments] = attachments;
       // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，
@@ -184,23 +183,23 @@ function createArchiveService(
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
 
-      await memory.require().saveMessage(working.sessionId, message);
+      await memory.use.saveMessage(working.sessionId, message);
 
       if (debugLogs && working.attachments?.length) {
-        logger.debug(
+        logger.use.debug(
           `附件消息已写入记忆: session=${working.sessionId}, attachments=${working.attachments.length} | ${content}`,
         );
       }
 
       // 通知监听者：入站消息已落库（用于触发用户档案事实提取等后台任务）
       // 与 agent 是否回复无关，所有走 archiveIncoming 的消息都会发出
-      events
+      events.use
         .emit('inbound:message:archived', {
           sessionId: working.sessionId,
           incoming: working,
           archivedMessage: message,
         })
-        .catch(err => logger.debug(`inbound:message:archived 事件分发失败: ${err}`));
+        .catch(err => logger.use.debug(`inbound:message:archived 事件分发失败: ${err}`));
 
       return {
         message,
@@ -229,10 +228,10 @@ function createArchiveService(
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
 
-      await memory.require().saveMessage(opts.sessionId, message);
+      await memory.use.saveMessage(opts.sessionId, message);
 
       if (debugLogs) {
-        logger.debug(
+        logger.use.debug(
           `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? `/${opts.subType}` : ''} | ${text}`,
         );
       }
@@ -245,7 +244,7 @@ function createArchiveService(
       // 缺省 100；撤回反查按需显式传大窗（见 onebot 撤回处）。不把缺省抬到 500：
       // 引用回填热路径也调本方法并按 maxDepth 递归，抬缺省会让它每层多扫 400 条。
       const limit = Math.max(1, Math.min(500, Math.floor(scanLimit ?? 100)));
-      const history = await memory.require().getHistory(sessionId, limit);
+      const history = await memory.use.getHistory(sessionId, limit);
       // 从最新往旧找：引用通常指向最近发的消息
       for (let i = history.length - 1; i >= 0; i -= 1) {
         const m = history[i];

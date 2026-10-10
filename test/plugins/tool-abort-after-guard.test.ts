@@ -14,7 +14,7 @@ async function setup() {
   await app.plugins.idle();
   let executed = 0;
   const host = app.bind({ tools: toolsService });
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -24,8 +24,8 @@ async function setup() {
       return 'done';
     },
   });
-  const tools = host.tools.current;
-  if (!tools) throw new Error('tools 服务未注册');
+  if (!host.tools.present) throw new Error('tools 服务未注册');
+  const tools = host.tools.use;
   return { app, tools, executed: () => executed };
 }
 

@@ -73,9 +73,9 @@ async function setup({
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(memory, fakeMemory(stored) as never);
+  host.provide.use(memory, fakeMemory(stored) as never);
   let changes = 0;
-  host.events.on('session:config:changed', () => void changes++);
+  host.events.use.on('session:config:changed', () => void changes++);
   await app.plugin(sessionManagerPlugin);
   for (const plugin of plugins) await app.plugin(plugin);
   await app.plugins.idle();
@@ -83,8 +83,8 @@ async function setup({
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  const layers = () => (doc ? app.bind({ hostConfig }).hostConfig.require().get('sessionConfig') : undefined);
-  return { app, sm: host.sessionManager.require(), warns, changes: () => changes, layers };
+  const layers = () => (doc ? app.bind({ hostConfig }).hostConfig.use.get('sessionConfig') : undefined);
+  return { app, sm: host.sessionManager.use, warns, changes: () => changes, layers };
 }
 
 describe('设置项登记', () => {

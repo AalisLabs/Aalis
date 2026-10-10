@@ -168,13 +168,13 @@ describe('宿主配置里的三层', () => {
     expect(sm.listLayers()).toContainEqual(thread);
     expect(sm.getLayer(thread)).toEqual({ persona: '<帖子>' });
     await sm.updateLayer({ scope: 'type', platform: 'forum', type: 'dm' }, { think: 'high' });
-    expect(host.hostConfig.require().get('sessionConfig')).toEqual({
+    expect(host.hostConfig.use.get('sessionConfig')).toEqual({
       types: { onebot: { thread: { persona: '<帖子>' } }, forum: { dm: { think: 'high' } } },
     });
 
     await sm.updateLayer(thread, { persona: null });
     expect(sm.listLayers()).not.toContainEqual(thread);
-    expect(host.hostConfig.require().get('sessionConfig')).toEqual({ types: { forum: { dm: { think: 'high' } } } });
+    expect(host.hostConfig.use.get('sessionConfig')).toEqual({ types: { forum: { dm: { think: 'high' } } } });
     expect(save).toHaveBeenCalledTimes(2);
   });
 
@@ -190,7 +190,7 @@ describe('宿主配置里的三层', () => {
     expect(sm.resolveConfig(GROUP)).toEqual({});
     expect(warns.filter(w => w.includes('sessionConfig.audiences'))).toHaveLength(1);
     await sm.updateLayer({ scope: 'defaults' }, { persona: '<默认>' });
-    expect(host.hostConfig.require().get('sessionConfig')).toEqual({ defaults: { persona: '<默认>' } });
+    expect(host.hostConfig.use.get('sessionConfig')).toEqual({ defaults: { persona: '<默认>' } });
   });
 
   it('平台名、类型名不合层标识写法的（空串、*、带冒号）告警后忽略：不列出、读得到的层都能读，按层写时从文档删掉；适配器给的同样不列', async () => {
@@ -222,7 +222,7 @@ describe('宿主配置里的三层', () => {
     expect(warns.filter(w => w.includes('sessionConfig.types'))).toHaveLength(2);
 
     await sm.updateLayer({ scope: 'platform', platform: 'onebot' }, { persona: '<平台>' });
-    expect(host.hostConfig.require().get('sessionConfig')).toEqual({
+    expect(host.hostConfig.use.get('sessionConfig')).toEqual({
       platforms: { onebot: { think: 'off', persona: '<平台>' } },
     });
   });
@@ -343,12 +343,12 @@ describe('按层读写', () => {
     const first = await setup({}, { save });
     await first.inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001' });
     let changes = 0;
-    first.host.events.on('session:config:changed', () => void changes++);
+    first.host.events.use.on('session:config:changed', () => void changes++);
 
     await first.sm.updateLayer({ scope: 'place', key: WINDOW }, { persona: '<场所>' });
     expect(changes).toBe(1);
     expect(save).not.toHaveBeenCalled();
-    expect(first.host.hostConfig.require().get('sessionConfig')).toEqual({});
+    expect(first.host.hostConfig.use.get('sessionConfig')).toEqual({});
     const unknown = first.sm.updateLayer({ scope: 'place', key: WINDOW }, { bogus: 1 } as never);
     await expect(unknown).rejects.toThrow('bogus');
     await first.app.stop();

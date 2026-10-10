@@ -60,7 +60,7 @@ async function boot(
   await registerHubs(app);
   const host = app.bind({ provide, doctor });
   // plugin-commands 把 gateway 声明为 required；这里只要指令表，给一份只满足「在场」的桩
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   await app.plugin(commandsPlugin, {});
   if (withDoctor) await app.plugin(doctorPlugin, {});
   for (const definition of extra) await app.plugin(definition, {});
@@ -84,7 +84,7 @@ describe('终端欢迎行下面的指路', () => {
     });
     await vi.waitFor(() => expect(frame()).toContain('有 3 个插件没起来，输入 /doctor 查看原因与修法'));
     expect(frame()).toContain('欢迎使用 Aalis。按 Ctrl+G 查看快捷键。');
-    const report = await host.doctor.require().runChecks();
+    const report = await host.doctor.use.runChecks();
     const listed = (id: string) => report.checks.find(check => check.id === id)?.detail?.split('\n').length ?? 0;
     expect(listed('plugins.errored') + listed('plugins.pending')).toBe(3);
   });
@@ -97,7 +97,7 @@ describe('终端欢迎行下面的指路', () => {
       provides: [slowService],
       uses: { provide },
       async apply({ provide }) {
-        provide(slowService, {});
+        provide.use(slowService, {});
         await gate.promise;
       },
     });
@@ -106,7 +106,7 @@ describe('终端欢迎行下面的指路', () => {
     // 收尾按登记的反序：先放行慢激活，再停应用
     cleanups.push(() => gate.resolve());
     await vi.waitFor(() => expect(frame()).toContain('有 1 个插件没起来，输入 /doctor 查看原因与修法'));
-    const report = await host.doctor.require().runChecks();
+    const report = await host.doctor.use.runChecks();
     const listed = (id: string) => report.checks.find(check => check.id === id)?.detail?.split('\n').length ?? 0;
     expect(listed('plugins.errored') + listed('plugins.pending')).toBe(1);
   });

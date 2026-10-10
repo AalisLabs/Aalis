@@ -42,7 +42,7 @@ async function setup(
   const assembly = app.bind({ contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
-  const memory = host.services.get(memoryService);
+  const memory = host.services.use.get(memoryService);
   if (!memory) throw new Error('memory 服务未就绪');
   const baseTs = Date.now() - 10_000;
   const entries: Array<[string, string, string]> = [
@@ -55,9 +55,9 @@ async function setup(
     await memory.saveMessage(sessionId, { role: 'user', content, timestamp: baseTs + i, metadata: { platform } });
   }
 
-  if (room) host.provide(sessionManager, roomScopeManager(room.rooms, room.profiles));
+  if (room) host.provide.use(sessionManager, roomScopeManager(room.rooms, room.profiles));
   const toolHandlers = new Map<string, ToolHandler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};

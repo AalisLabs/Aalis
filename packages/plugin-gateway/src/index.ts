@@ -38,12 +38,14 @@ export default definePlugin({
 });
 
 function runGateway({ events, hooks, logger, provide, agent, sessionManager, authority }: Caps): void {
-  logger.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
+  logger.use.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
 
   /** 会话的房间类别是不是 owner-only（子会话取根会话的）；会话管理缺席时判不出，按否 */
   function isOwnerOnly(sessionId: string): boolean {
-    const lookup = (id: string) => sessionManager.current?.getSession(id);
-    return roomClass(lookup(sessionId), lookup, (p, u) => !!authority.current?.isOwner(p, u)) === 'owner-only';
+    const lookup = (id: string) => (sessionManager.present ? sessionManager.use.getSession(id) : undefined);
+    return (
+      roomClass(lookup(sessionId), lookup, (p, u) => authority.present && authority.use.isOwner(p, u)) === 'owner-only'
+    );
   }
 
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复。 */
@@ -52,7 +54,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
       await agentService.handleMessage(message);
       return;
     }
-    logger.warn('Agent 服务不可用，消息将不会被处理');
+    logger.use.warn('Agent 服务不可用，消息将不会被处理');
     await dispatchOutbound({
       content: '[系统] Agent 服务不可用，请检查插件配置。',
       sessionId: message.sessionId,
@@ -75,7 +77,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
     // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上
-    const data: InboundPhaseData = { message, metadata: {}, agent: agent.current };
+    const data: InboundPhaseData = { message, metadata: {}, agent: agent.present ? agent.use : undefined };
 
     try {
       // 前置相位 = INBOUND_PHASE_ORDER 中除终相 DISPATCH 外的全部（单一真相：新增相位只改 gateway-api）。
@@ -90,8 +92,8 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
           if (ownerOnly) continue;
         }
         const t0 = performance.now();
-        const reachedEnd = await hooks.run(phase, data);
-        events.emit('gateway:phase:done', {
+        const reachedEnd = await hooks.use.run(phase, data);
+        events.use.emit('gateway:phase:done', {
           phase,
           reachedEnd,
           durationMs: performance.now() - t0,
@@ -99,7 +101,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
           platform: message.platform,
         });
         if (!reachedEnd) {
-          logger.debug(
+          logger.use.debug(
             `[${phase}] 消息被 swallow，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
           );
           return;
@@ -108,10 +110,10 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
 
       // 终相：dispatch —— 默认动作为调用 agent
       const t0 = performance.now();
-      const reachedEnd = await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
+      const reachedEnd = await hooks.use.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
-      events.emit('gateway:phase:done', {
+      events.use.emit('gateway:phase:done', {
         phase: INBOUND_PHASE.DISPATCH,
         reachedEnd,
         durationMs: performance.now() - t0,
@@ -119,7 +121,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
         platform: message.platform,
       });
     } catch (err) {
-      logger.warn(`入站处理异常: ${err}`);
+      logger.use.warn(`入站处理异常: ${err}`);
     }
   }
 
@@ -127,16 +129,16 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
     try {
-      await hooks.run('outbound:dispatch', data, async () => {
-        await events.emit('outbound:message', data.message);
+      await hooks.use.run('outbound:dispatch', data, async () => {
+        await events.use.emit('outbound:message', data.message);
       });
     } catch (err) {
-      logger.warn(`outbound:dispatch 处理异常: ${err}`);
+      logger.use.warn(`outbound:dispatch 处理异常: ${err}`);
     }
   }
 
   // 入站入口：core 不做默认路由，消息全部由这里消费；退订随这次激活撤回。
-  events.on('inbound:message', msg => {
+  events.use.on('inbound:message', msg => {
     void processInbound(msg);
   });
 
@@ -150,5 +152,5 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
     },
   };
 
-  provide(gateway, service);
+  provide.use(gateway, service);
 }

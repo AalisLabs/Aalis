@@ -32,23 +32,23 @@ describe('contributions 门面：交付随激活撤回', () => {
       definePlugin({
         name: 'giver',
         uses: { contributions },
-        apply: ({ contributions }) => void contributions.contribute('__t:lifecycle-point', { id: 'a', label: 'A' }),
+        apply: ({ contributions }) => void contributions.use.contribute('__t:lifecycle-point', { id: 'a', label: 'A' }),
       }),
     );
     await app.plugins.idle();
     const host = app.bind({ contributions });
-    const snapshot = host.contributions.collect('__t:lifecycle-point');
+    const snapshot = host.contributions.use.collect('__t:lifecycle-point');
     expect(snapshot.map(h => h.spec.label)).toEqual(['A']);
     await app.plugins.unload('giver');
-    expect(host.contributions.collect('__t:lifecycle-point')).toEqual([]);
+    expect(host.contributions.use.collect('__t:lifecycle-point')).toEqual([]);
     expect(snapshot).toHaveLength(1);
   });
 
   it('登记与退订对称；全局键与局部 id 往返不失真（id 含空格等字符）', async () => {
     const root = createActivationFixture();
-    root.caps.provide(contributions, new Registry());
+    root.caps.provide.use(contributions, new Registry());
     const p = root.host.create('p');
-    const bound = root.host.bind(p, { contributions }).contributions;
+    const bound = root.host.bind(p, { contributions }).contributions.use;
     const off = bound.contribute('__t:lifecycle-point', { id: 'a b', label: 'x' });
     expect(bound.collect('__t:lifecycle-point').map(entry => [entry.key, entry.spec.id])).toEqual([['p/a b', 'a b']]);
     off();

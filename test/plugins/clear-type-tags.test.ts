@@ -40,7 +40,7 @@ async function world() {
   const host = app.bind({ hooks });
   return async (scope: 'session' | 'all', types: string[]) => {
     const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 's1', results: [] };
-    await host.hooks.run('memory:clear', data, async () => {});
+    await host.hooks.use.run('memory:clear', data, async () => {});
     return data.results;
   };
 }

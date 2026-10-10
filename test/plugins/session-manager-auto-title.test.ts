@@ -14,9 +14,9 @@ async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(memory, fakeMemory() as never);
+  host.provide.use(memory, fakeMemory() as never);
   const llmCalls = { chats: 0 };
-  host.provide(llm, {
+  host.provide.use(llm, {
     id: 'mock',
     capabilities: ['chat'],
     chat: async () => {
@@ -29,7 +29,7 @@ async function setup() {
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   return { app, host, sm, llmCalls };
 }
 
@@ -49,8 +49,12 @@ describe('自动标题按创建来源', () => {
     const webui = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
     await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
 
-    await host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId: webui.id, platform: 'webui' });
-    await host.events.emit('inbound:message', {
+    await host.events.use.emit('inbound:message', {
+      content: '帮我算下装修预算',
+      sessionId: webui.id,
+      platform: 'webui',
+    });
+    await host.events.use.emit('inbound:message', {
       content: '帮我算下装修预算',
       sessionId: 'cli-default',
       platform: 'cli',
@@ -69,7 +73,7 @@ describe('自动标题按创建来源', () => {
     const child = await sm.createChildSession(owner.id, { name: '<子任务>' });
     await sm.ensureSession('<按 id 建档>', {});
     const emit = (sessionId: string, platform: string) =>
-      host.events.emit('inbound:message', { content: '帮我算下装修预算', sessionId, platform });
+      host.events.use.emit('inbound:message', { content: '帮我算下装修预算', sessionId, platform });
 
     await emit(group, 'onebot');
     await emit(group, 'webui');
@@ -88,7 +92,7 @@ describe('自动标题按创建来源', () => {
     await sm.ensureSession('cli-default', { name: 'CLI' }, { createdFrom: 'cli' });
     await sm.updateSessionTitle('cli-default', '旧标题');
 
-    await host.events.emit('inbound:message', { content: '换个话题', sessionId: 'cli-default', platform: 'cli' });
+    await host.events.use.emit('inbound:message', { content: '换个话题', sessionId: 'cli-default', platform: 'cli' });
     await new Promise(r => setTimeout(r, 30));
     const title = sm.getSession('cli-default')?.title;
     await app.stop();

@@ -42,7 +42,7 @@ async function chatWith(plugin: PluginDefinition, modelId: string, usage: Record
   const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(plugin, { apiKey: 'test-key' });
   await app.plugins.idle();
-  const model = app.bind({ services }).services.get(llm);
+  const model = app.bind({ services }).services.use.get(llm);
   if (!model) throw new Error('llm entry 未注册');
   const res = await model.chat({ messages: [{ role: 'user', content: '在吗' }] });
   await app.stop();
@@ -128,7 +128,7 @@ describe('前缀缓存命中量上报', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugins.register(openaiPlugin, { apiKey: 'test-key' });
     await app.plugins.idle();
-    const model = app.bind({ services }).services.get(llm);
+    const model = app.bind({ services }).services.use.get(llm);
     if (!model?.chatStream) throw new Error('chatStream 不可用');
 
     let cached: number | undefined;

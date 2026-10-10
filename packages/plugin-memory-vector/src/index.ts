@@ -267,7 +267,7 @@ function messageKey(sessionId: string, m: Message): string {
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}`;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 // `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
 // 供依赖声明与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
 // memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
@@ -321,11 +321,11 @@ async function run({
   // memory 是可选依赖，provider 换人不级联 bounce 本插件：引用与能力探测都必须在调用点现算，
   // 否则 provider 晚于本插件注册时 hasRangeQuery 永久为假，或扩窗落在已关闭的旧实例上。
   function hasRangeQuery(): boolean {
-    return !!memory.current?.getMessagesBySessionRange;
+    return memory.present && typeof memory.use.getMessagesBySessionRange === 'function';
   }
 
-  const parsed = parseConfig(configSchema, config, logger);
-  sessionManager.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
+  const parsed = parseConfig(configSchema, config.use, logger.use);
+  sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
 
   const cfg: VectorMemoryConfig = {
     search: {
@@ -345,8 +345,8 @@ async function run({
   };
 
   // 启动日志与下方 warn 都是启动时刻的快照（此后按调用点现算，不再据此判定）
-  logger.info(
-    `向量记忆已启动: ${await vectorstore.require().size()} 条向量, 范围查询=${hasRangeQuery() ? '可用' : '不可用'}, ` +
+  logger.use.info(
+    `向量记忆已启动: ${await vectorstore.use.size()} 条向量, 范围查询=${hasRangeQuery() ? '可用' : '不可用'}, ` +
       `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
       `单条截断=${cfg.search.perItemMaxChars > 0 ? `${cfg.search.perItemMaxChars}字` : '不截断'}, minScore=${cfg.search.minScore}, ` +
       `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
@@ -354,10 +354,10 @@ async function run({
   );
 
   if (!hasRangeQuery() && cfg.contextExpand.window > 0) {
-    logger.warn('当前 memory 后端不支持范围查询，contextExpand 将退化为仅命中本身');
+    logger.use.warn('当前 memory 后端不支持范围查询，contextExpand 将退化为仅命中本身');
   }
 
-  provide(semanticMemory, { name: 'vector-memory' });
+  provide.use(semanticMemory, { name: 'vector-memory' });
 
   // === 检索管线（被动注入与 memory_recall 共用）===
 
@@ -371,7 +371,7 @@ async function run({
 
   /** 会话管理记下的出生平台（子会话取根会话的）；会话管理不在或会话没有出生平台时为 undefined */
   function originPlatformOf(sessionId: string): string | undefined {
-    const sm = sessionManager.current;
+    const sm = sessionManager.present ? sessionManager.use : undefined;
     return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform;
   }
 
@@ -388,7 +388,11 @@ async function run({
    * 每次检索现算，房间或平台档改了下一轮即生效；session-manager 是可选依赖，同样在调用点取。
    */
   function sessionVisibility(sessionId: string | undefined, platform: string): Visibility {
-    const room = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).memoryRecallScope : undefined;
+    const room = sessionId
+      ? sessionManager.present
+        ? sessionManager.use.resolveConfig(sessionId, platform).memoryRecallScope
+        : undefined
+      : undefined;
     return effectiveVisibility(cfgVisibility, room);
   }
 
@@ -435,8 +439,8 @@ async function run({
   /** 读取或记下存量标记（在标记队列里执行）。排队期间已有别的读写确定了标记，直接用它 */
   async function loadLegacyModelId(currentModelId: string): Promise<string | undefined> {
     if (legacyModel) return legacyModel.modelId;
-    const mem = memory.current;
-    if (!mem) return undefined;
+    if (!memory.present) return undefined;
+    const mem = memory.use;
     try {
       const data = await mem.getMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
       if (data) {
@@ -449,7 +453,7 @@ async function run({
     } catch (err) {
       if (!legacyFailureWarned) {
         legacyFailureWarned = true;
-        logger.warn(
+        logger.use.warn(
           '读写存量向量的模型标记失败，存量向量暂按当前模型对待；之后每次检索都会重试，恢复前不再重复告警:',
           err,
         );
@@ -465,9 +469,9 @@ async function run({
   function dropLegacyModel(): Promise<void> {
     return queueMarker(async () => {
       try {
-        await memory.current?.deleteMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
+        if (memory.present) await memory.use.deleteMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
       } catch (err) {
-        logger.warn('删除存量向量的模型标记失败:', err);
+        logger.use.warn('删除存量向量的模型标记失败:', err);
       }
       legacyModel = undefined;
       legacyFailureWarned = false;
@@ -488,7 +492,7 @@ async function run({
     candidateCount: number,
     scope: { visibility: Visibility; curSessionId: string | undefined; curPlatform: string; boostUserId?: string },
   ): Promise<RankedHit[]> {
-    const candidates = await vectorstore.require().search(queryVec, candidateCount);
+    const candidates = await vectorstore.use.search(queryVec, candidateCount);
     const legacy = queryModelId ? await legacyModelId(queryModelId) : undefined;
     const excludedModels = new Set<string>();
     const now = Date.now();
@@ -532,7 +536,7 @@ async function run({
       });
     if (queryModelId && excludedModels.size > 0 && !mismatchWarned.has(queryModelId)) {
       mismatchWarned.add(queryModelId);
-      logger.warn(
+      logger.use.warn(
         `向量库里有其它 embedding 模型生成的向量（${[...excludedModels].join('、')}），与当前模型 ${queryModelId} ` +
           '的向量不可比较，检索时已排除。要继续召回这些记忆，改回原模型或用当前模型重新 embed 这些向量；' +
           '不再需要时可用 /clear all -t vector 清空向量库，由新消息重建。',
@@ -556,7 +560,7 @@ async function run({
     signal?: AbortSignal,
   ): Promise<Map<string, PivotWindow>> {
     const windows = new Map<string, PivotWindow>();
-    const mem = memory.current;
+    const mem = memory.present ? memory.use : undefined;
     if (!mem?.getMessagesBySessionRange) return windows;
 
     const sessionPivots = new Map<string, number[]>();
@@ -587,7 +591,7 @@ async function run({
         windows.set(sid, { sorted, idxByPivot });
       } catch (err) {
         signal?.throwIfAborted();
-        logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
+        logger.use.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return windows;
@@ -606,7 +610,7 @@ async function run({
     pendingIndexMessages.push(item);
     if (cfg.indexing.maxQueueSize > 0 && pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
-      logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
+      logger.use.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
     }
     void drainIndexQueue();
   }
@@ -652,7 +656,7 @@ async function run({
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
     try {
-      const provider = embedding.require();
+      const provider = embedding.use;
       const vec = await provider.embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
@@ -673,23 +677,23 @@ async function run({
       };
       // 向量空间标识取自算这条向量的同一实例，检索时只与同模型的查询向量比较
       if (provider.modelId) metadata.modelId = provider.modelId;
-      await vectorstore.require().add(vec, metadata);
-      await vectorstore.require().save();
+      await vectorstore.use.add(vec, metadata);
+      await vectorstore.use.save();
     } catch (err) {
-      logger.warn('向量索引失败:', err);
+      logger.use.warn('向量索引失败:', err);
     }
   }
 
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
-  events.on('inbound:message:archived', data => {
+  events.use.on('inbound:message:archived', data => {
     enqueueIndexMessage({ kind: 'user', msg: data.incoming, archived: data.archivedMessage });
   });
 
   // assistant 自身发言入库（2026-08-27，recallRoles 双模式的存储侧）：
   // 经 archive.saveMessage 落库的 assistant 回复（含 image-sender 的出站附件档案）。
   // metadata 带 role='assistant'，检索側据此过滤与标注；渲染必带「Assistant·你自己」。
-  events.on('assistant:message:archived', data => {
+  events.use.on('assistant:message:archived', data => {
     enqueueIndexMessage({ kind: 'assistant', sessionId: data.sessionId, message: data.message });
   });
 
@@ -709,7 +713,7 @@ async function run({
       const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
-      const provider = embedding.require();
+      const provider = embedding.use;
       const vec = await provider.embed(embedText);
       const metadata: Record<string, unknown> = {
         sessionId,
@@ -728,19 +732,19 @@ async function run({
         mentions: extractMentions(rawText),
       };
       if (provider.modelId) metadata.modelId = provider.modelId;
-      await vectorstore.require().add(vec, metadata);
-      await vectorstore.require().save();
+      await vectorstore.use.add(vec, metadata);
+      await vectorstore.use.save();
     } catch (err) {
-      logger.warn('assistant 向量索引失败:', err);
+      logger.use.warn('assistant 向量索引失败:', err);
     }
   }
 
   // === 按时间戳删除向量（供 plugin-checkpoint 回滚整轮对话使用） ===
-  events.on('memory:messages-deleted', async data => {
+  events.use.on('memory:messages-deleted', async data => {
     if (!data?.sessionId || !Array.isArray(data.timestamps) || data.timestamps.length === 0) return;
-    const currentStore = vectorstore.require();
+    const currentStore = vectorstore.use;
     if (!currentStore.deleteByFilter) {
-      logger.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
+      logger.use.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
       return;
     }
     let total = 0;
@@ -748,22 +752,22 @@ async function run({
       try {
         total += await currentStore.deleteByFilter({ sessionId: data.sessionId, timestamp: ts });
       } catch (err) {
-        logger.warn(`按时间戳删除向量失败 (ts=${ts}):`, err);
+        logger.use.warn(`按时间戳删除向量失败 (ts=${ts}):`, err);
       }
     }
     if (total > 0) {
       try {
         await currentStore.save();
       } catch (err) {
-        logger.warn('向量保存失败:', err);
+        logger.use.warn('向量保存失败:', err);
       }
-      logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
+      logger.use.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
     }
   });
 
   // === 统一记忆清除 ===
 
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('vector')) {
       await next();
       return;
@@ -771,13 +775,13 @@ async function run({
 
     try {
       if (data.scope === 'all') {
-        await vectorstore.require().clear();
-        await vectorstore.require().save();
+        await vectorstore.use.clear();
+        await vectorstore.use.save();
         await dropLegacyModel();
         data.results.push({ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' });
-        logger.info('向量记忆已全部清空');
+        logger.use.info('向量记忆已全部清空');
       } else if (data.sessionId) {
-        const currentStore = vectorstore.require();
+        const currentStore = vectorstore.use;
         if (currentStore.deleteByFilter) {
           const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
           await currentStore.save();
@@ -787,10 +791,10 @@ async function run({
             success: true,
             message: `向量记忆已清空 (${deleted} 条)`,
           });
-          logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
+          logger.use.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
         } else {
           // 老实报告：不支持会话级删除时不能谎称成功（此前会 push success 且「已清空 0 条」误导用户）。
-          logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
+          logger.use.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
           data.results.push({
             source: 'vector',
             type: 'vector',
@@ -802,7 +806,7 @@ async function run({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       data.results.push({ source: 'vector', type: 'vector', success: false, message: `向量清空失败: ${msg}` });
-      logger.warn('向量清空失败:', err);
+      logger.use.warn('向量清空失败:', err);
     }
 
     await next();
@@ -810,7 +814,7 @@ async function run({
 
   // === 检索并注入上下文（agent:prompt 贡献 / turn-context 槽：按当前消息检索、每轮必变，落历史后护前缀缓存）===
 
-  contributions.contribute('agent:prompt', {
+  contributions.use.contribute('agent:prompt', {
     id: 'memory-vector',
     anchor: 'turn-context',
     async build(data) {
@@ -827,11 +831,11 @@ async function run({
         const curPlatform = currentPlatformOf(curSessionId, data.platform);
         const curUserId = data.userId ?? '';
 
-        const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.require().size());
+        const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.use.size());
         data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
-        const provider = embedding.require();
+        const provider = embedding.use;
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, provider.modelId, candidateCount, {
@@ -949,7 +953,7 @@ async function run({
         );
       } catch (err) {
         if (data.signal?.aborted) return null;
-        logger.warn('向量记忆检索失败:', err);
+        logger.use.warn('向量记忆检索失败:', err);
         return null;
       }
     },
@@ -957,7 +961,7 @@ async function run({
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -1042,12 +1046,12 @@ async function run({
           : allowedScope;
 
       try {
-        const storeSize = await vectorstore.require().size();
+        const storeSize = await vectorstore.use.size();
         if (storeSize === 0) {
           return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
         }
 
-        const provider = embedding.require();
+        const provider = embedding.use;
         const queryVec = await provider.embed(query, { signal: callCtx.signal });
         // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
         const ranked = await rankCandidates(
@@ -1132,7 +1136,7 @@ async function run({
         // 回合中止（用户停止、latest-wins 腰斩）不是检索故障，与被动注入同样不告警
         if (callCtx.signal?.aborted) return JSON.stringify({ error: '回合已中止' });
         const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(`memory_recall 失败: ${msg}`);
+        logger.use.warn(`memory_recall 失败: ${msg}`);
         return JSON.stringify({ error: `检索失败: ${msg}` });
       }
     },

@@ -91,23 +91,23 @@ async function runWithWinnerSwitch(opts: {
     await gate;
     return { content: JSON.stringify(opts.reply) };
   };
-  host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
+  host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
 
   const first = new StubMemory(opts.history);
   const second = new StubMemory();
   first.metadata.set(...opts.seed('A'));
   second.metadata.set(...opts.seed('B'));
-  host.provide(memory, first as unknown as MemoryService);
+  host.provide.use(memory, first as unknown as MemoryService);
   await app.plugins.register(userProfile, { relationIncrementWitness: 0, ...opts.config });
   await app.plugins.idle();
   if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
 
-  await host.events.emit('inbound:message:archived', {
+  await host.events.use.emit('inbound:message:archived', {
     sessionId: SESSION,
     incoming: { userId: opts.speaker, platform: 'onebot' },
   } as never);
   await calledOnce;
-  host.provide(memory, second as unknown as MemoryService, { priority: 10 });
+  host.provide.use(memory, second as unknown as MemoryService, { priority: 10, entryId: 'memory-b' });
   await app.plugins.idle();
   release();
   return { first, second };

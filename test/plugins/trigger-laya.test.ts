@@ -220,7 +220,7 @@ interface SetupOptions {
   /** process 服务替身（托管侧车用） */
   process?: ProcessService;
   /** 在 Laya 登记之前对宿主做的事（如先于它挂 app:stopping 监听器） */
-  beforeLaya?: (host: { events: { on(event: 'app:stopping', fn: () => unknown): unknown } }) => void;
+  beforeLaya?: (host: { events: { use: { on(event: 'app:stopping', fn: () => unknown): unknown } } }) => void;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -238,7 +238,7 @@ async function setup(opts: SetupOptions = {}) {
     muted: new Set<string>(),
     setMuted: [] as Array<[sessionId: string, seconds: number, platform?: string]>,
   };
-  host.provide(flowControl, {
+  host.provide.use(flowControl, {
     isMuted: sid => flow.muted.has(sid),
     isCoolingDown: () => false,
     isRateLimited: () => false,
@@ -249,7 +249,7 @@ async function setup(opts: SetupOptions = {}) {
   });
   // doctor 替身：收下登记的检查项
   const checks: CheckSpec[] = [];
-  host.provide(doctor, {
+  host.provide.use(doctor, {
     registerCheck(spec: CheckSpec) {
       checks.push(spec);
       return () => {};
@@ -261,17 +261,18 @@ async function setup(opts: SetupOptions = {}) {
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.register(messageArchivePlugin, { debugLogs: false });
   } else {
-    if (opts.memory !== null) host.provide(memory, (opts.memory ?? fakeMemory()) as never);
-    host.provide(messageArchive, {
+    if (opts.memory !== null) host.provide.use(memory, (opts.memory ?? fakeMemory()) as never);
+    host.provide.use(messageArchive, {
       async archiveIncoming(m: IncomingMessage) {
         archived.push(m.content);
       },
     } as never);
   }
-  if (opts.media) host.provide(media, opts.media as never);
-  for (const p of opts.personas ?? []) host.provide(persona, p);
-  if (opts.sessionManager) host.provide(sessionManager, opts.sessionManager as SessionManagerService);
-  if (opts.process) host.provide(processService, opts.process);
+  if (opts.media) host.provide.use(media, opts.media as never);
+  // 同一激活登记多家：各给一个条目 id，list() 才分得清
+  for (const [i, p] of (opts.personas ?? []).entries()) host.provide.use(persona, p, { entryId: `persona-${i}` });
+  if (opts.sessionManager) host.provide.use(sessionManager, opts.sessionManager as SessionManagerService);
+  if (opts.process) host.provide.use(processService, opts.process);
   opts.beforeLaya?.(host);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
   await app.plugins.idle();
@@ -280,7 +281,7 @@ async function setup(opts: SetupOptions = {}) {
     const state = app.plugins.getPlugin(def.name)?.state;
     if (state !== 'active') throw new Error(`${def.name} 未激活（state=${state}）`);
   }
-  if (host.services.all(trigger)[0]?.label !== LAYA_LABEL) throw new Error('Laya 不是 trigger 服务的胜者');
+  if (host.services.use.all(trigger)[0]?.label !== LAYA_LABEL) throw new Error('Laya 不是 trigger 服务的胜者');
   const check = checks.find(c => c.id === 'trigger.laya');
   if (!check) throw new Error('Laya 没有登记诊断项');
   return {
@@ -289,7 +290,7 @@ async function setup(opts: SetupOptions = {}) {
     logs,
     archived,
     flow,
-    send: (message: IncomingMessage) => run(host.hooks, message),
+    send: (message: IncomingMessage) => run(host.hooks.use, message),
     diagnose: async () => (await check.run()) as CheckResult,
   };
 }
@@ -887,7 +888,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('memory 缺席');
 
-    host.provide(memory, fakeMemory() as never);
+    host.provide.use(memory, fakeMemory() as never);
     expect((await send(groupMsg('再聊聊'))).reached).toBe(true);
     expect(byLevel(logs, 'warn').filter(m => m.includes('判定恢复'))).toHaveLength(1);
   });
@@ -1016,17 +1017,17 @@ describe('plugin-trigger-laya：诊断项', () => {
     );
 
     // 按「切换与回滚」切到规则判定、修好侧车：本插件不再判定，锁存的故障不能写成当前不可用
-    host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
-    const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
-    host.services.prefer(trigger, rule?.contextId ?? '');
+    host.provide.use(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+    const rule = host.services.use.all(trigger).find(v => v.label === '规则（计数/评分）');
+    host.services.use.prefer(trigger, rule?.contextId ?? '');
     vi.setSystemTime(Date.now() + 3_600_000);
     const probes = sidecar.healthCalls;
     expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE });
     expect(sidecar.healthCalls, '未生效不探侧车').toBe(probes);
 
     // 切回后一次成功判定即确认恢复
-    const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
-    host.services.prefer(trigger, laya?.contextId ?? '');
+    const laya = host.services.use.all(trigger).find(v => v.label === LAYA_LABEL);
+    host.services.use.prefer(trigger, laya?.contextId ?? '');
     expect((await send(groupMsg('恢复'))).reached).toBe(true);
     expect((await diagnose()).level).toBe('ok');
   });
@@ -1065,14 +1066,14 @@ describe('plugin-trigger-laya：诊断项', () => {
       expect(blind.message).toBe(`Laya 触发判定生效中：侧车在线（版本 v-test）；近 10 条带图消息有 10 ${BLIND}`);
 
       // 切到规则判定：本插件不判定，不报
-      host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
-      const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
-      host.services.prefer(trigger, rule?.contextId ?? '');
+      host.provide.use(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+      const rule = host.services.use.all(trigger).find(v => v.label === '规则（计数/评分）');
+      host.services.use.prefer(trigger, rule?.contextId ?? '');
       const inactive = await diagnose();
       expect(inactive.level).toBe('ok');
       expect(inactive.message).not.toContain('指针');
-      const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
-      host.services.prefer(trigger, laya?.contextId ?? '');
+      const laya = host.services.use.all(trigger).find(v => v.label === LAYA_LABEL);
+      host.services.use.prefer(trigger, laya?.contextId ?? '');
 
       // 有描述的、识别失败的占位都不算只有指针：再来 10 条，窗口 20 条里只有指针的仍是 10 条
       desc = '[图片: 一只猫 | ref:data/images/a.png]';
@@ -1124,9 +1125,9 @@ describe('plugin-trigger-laya：诊断项', () => {
   it('未生效：不探侧车（侧车在不在都不影响回复），报 ok，点名当前生效的触发插件与启用方法', async () => {
     sidecar.health = 'hang';
     const { host, diagnose } = await setup({ laya: { timeoutMs: 100 } });
-    host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
-    const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
-    host.services.prefer(trigger, rule?.contextId ?? '');
+    host.provide.use(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+    const rule = host.services.use.all(trigger).find(v => v.label === '规则（计数/评分）');
+    host.services.use.prefer(trigger, rule?.contextId ?? '');
     expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE, detail: `endpoint=${sidecar.url}` });
     expect(sidecar.healthCalls).toBe(0);
   });
@@ -1202,12 +1203,15 @@ describe('plugin-trigger-laya：托管侧车', () => {
 
   /** 把 trigger 的偏好切到另一个触发插件 / 切回 Laya */
   function preferRule(host: Awaited<ReturnType<typeof setup>>['host']) {
-    if (!host.services.all(trigger).some(v => v.label === RULE))
-      host.provide(trigger, { label: RULE }, { label: RULE });
-    host.services.prefer(trigger, host.services.all(trigger).find(v => v.label === RULE)?.contextId ?? '');
+    if (!host.services.use.all(trigger).some(v => v.label === RULE))
+      host.provide.use(trigger, { label: RULE }, { label: RULE });
+    host.services.use.prefer(trigger, host.services.use.all(trigger).find(v => v.label === RULE)?.contextId ?? '');
   }
   function preferLaya(host: Awaited<ReturnType<typeof setup>>['host']) {
-    host.services.prefer(trigger, host.services.all(trigger).find(v => v.label === LAYA_LABEL)?.contextId ?? '');
+    host.services.use.prefer(
+      trigger,
+      host.services.use.all(trigger).find(v => v.label === LAYA_LABEL)?.contextId ?? '',
+    );
   }
 
   it('应用就绪前不托管（CLI 子命令进程与冷启动期间）：不拉起，诊断只探地址', async () => {
@@ -1373,12 +1377,12 @@ describe('plugin-trigger-laya：托管侧车', () => {
       process: proc.service,
       // 与 process-local 一样在 app:stopping 里强杀它拉起的子进程，监听器先于本插件登记
       beforeLaya: h =>
-        h.events.on('app:stopping', () => {
+        h.events.use.on('app:stopping', () => {
           for (const c of proc.children) c.kill('SIGKILL');
         }),
     });
     // 本插件之后还有等 I/O 的停机工作：子进程的退出在这期间报告，早于本插件的清理
-    host.events.on('app:stopping', () => new Promise(r => setTimeout(r, 20)));
+    host.events.use.on('app:stopping', () => new Promise(r => setTimeout(r, 20)));
     await app.start();
     await vi.waitFor(() => expect(proc.children).toHaveLength(1));
     proc.children[0].ready();
@@ -1422,7 +1426,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
     expect(result.message).toContain('process 服务缺席，拉不起侧车');
 
     const proc = fakeProcess();
-    host.provide(processService, proc.service);
+    host.provide.use(processService, proc.service);
     await vi.waitFor(() => expect(proc.children).toHaveLength(1), { timeout: 3_000 });
     proc.children[0].ready();
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(1));
@@ -1572,7 +1576,7 @@ describe('plugin-trigger-laya：运行期自检', () => {
     const gate = deferred();
     const recognizer = fakeMedia(msg => (msg.messageId === 'slow' ? gate.promise : Promise.resolve()));
     const { host, send, logs } = await setup({ realArchive: true, media: recognizer.svc, laya: { mediaWaitMs: 10 } });
-    const archive = host.messageArchive.require();
+    const archive = host.messageArchive.use;
     const lines = () => logs.filter(e => e.message.startsWith('[laya] 自检'));
     let n = 0;
     const next = (extra: Partial<IncomingMessage> = {}) =>

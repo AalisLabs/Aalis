@@ -14,7 +14,7 @@ import { type SessionItem, sessionProtocol } from '../../packages/api-session-pr
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
 import { type ToolCallContext, type ToolDisplay, tools } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -71,7 +71,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
+      provide.use(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
     },
   });
 
@@ -100,10 +100,10 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
   // 白纸与插件数据之外再有 data 根：媒体识别把图片落在这里，归档只把根表里有的根记成附件地址
   const files = memoryStorage(new Map());
   const dataRoot = { name: 'data', kind: 'data', browsable: true, readable: true, writable: true, deletable: true };
-  host.provide(storage, { ...files, listRoots: () => [...files.listRoots(), dataRoot] });
+  host.provide.use(storage, { ...files, listRoots: () => [...files.listRoots(), dataRoot] });
 
   const rewinds: Array<[string, string, string]> = [];
-  host.provide(checkpoint, {
+  host.provide.use(checkpoint, {
     async rollback(sessionId: string, turnId: string) {
       rewinds.push(['code', sessionId, turnId]);
       return { ok: true, restored: ['workspace:/a.txt'], deleted: [], errors: [], alsoChangedBy: [] };
@@ -112,7 +112,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     execUsed: async (_sessionId: string, turnId: string) => turnId === 'turn-exec',
     async rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult> {
       rewinds.push(['code-and-chat', sessionId, turnId]);
-      await host.events.emit('history:changed', { sessionId });
+      await host.events.use.emit('history:changed', { sessionId });
       return {
         ok: true,
         restored: [],
@@ -126,17 +126,18 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
   } as never);
 
   const plans = new Map<string, TodoItem[]>();
-  host.provide(todoList, {
+  host.provide.use(todoList, {
     get: async (sessionId: string) => plans.get(sessionId) ?? [],
     async clear(sessionId: string) {
       plans.delete(sessionId);
-      await host.events.emit('todo:updated', sessionId, []);
+      await host.events.use.emit('todo:updated', sessionId, []);
     },
   });
-  host.provide(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
 
   if (slowHistory) {
-    const mem = host.memory.require();
+    // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+    const mem = app.bind({ services }).services.use.get(memory)!;
     const read = mem.getFullHistory?.bind(mem);
     if (!read) throw new Error('内存记忆应有 getFullHistory');
     mem.getFullHistory = async (sessionId, limit) => {
@@ -151,8 +152,8 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
   await app.plugin(sessionServerPlugin, {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(sessionServerPlugin.name)?.state !== 'active') throw new Error('会话服务未激活');
-  const sm = host.sessionManager.require();
-  const archive = host.messageArchive.require();
+  const sm = host.sessionManager.use;
+  const archive = host.messageArchive.use;
 
   let turns = 0;
   /**
@@ -172,7 +173,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     const jobs: Array<{ run: () => unknown; done: ReturnType<typeof deferred<void>> }> = [];
     let wake = deferred();
     let finished: { outcome: Outcome | 'blocked' } | undefined;
-    const ended = host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    const ended = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       for (;;) {
         for (let job = jobs.shift(); job; job = jobs.shift()) {
           try {
@@ -188,7 +189,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       }
       const { outcome } = finished;
       if (outcome !== 'blocked') {
-        await host.hooks.run('agent:turn:after', { message, reply: '', outcome, sessionId, turnId, metadata: {} });
+        await host.hooks.use.run('agent:turn:after', { message, reply: '', outcome, sessionId, turnId, metadata: {} });
       }
     });
     const inside = (run: () => unknown) => {
@@ -198,7 +199,9 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       return done.promise;
     };
     const stream = (chunk: Omit<StreamChunkMessage, 'sessionId' | 'turnId' | 'platform'>) =>
-      inside(() => host.events.emit('outbound:stream', { sessionId, turnId, platform: message.platform, ...chunk }));
+      inside(() =>
+        host.events.use.emit('outbound:stream', { sessionId, turnId, platform: message.platform, ...chunk }),
+      );
     const tool = (
       phase: 'start' | 'end',
       callId: string,
@@ -207,7 +210,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       result?: string,
     ) =>
       inside(() =>
-        host.events.emit('tool:execute', {
+        host.events.use.emit('tool:execute', {
           sessionId,
           turnId,
           callId,
@@ -250,17 +253,17 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
           toolCallContext: { sessionId, turnId, callId, signal },
           metadata: {} as Record<string, unknown>,
         };
-        await inside(() => host.hooks.run('agent:tool:after', data));
+        await inside(() => host.hooks.use.run('agent:tool:after', data));
         await tool('end', callId, name, args, result);
         return data.metadata;
       },
       toolOutput: (callId: string, text: string) =>
-        inside(() => host.events.emit('tool:output', { sessionId, turnId, callId, text })),
+        inside(() => host.events.use.emit('tool:output', { sessionId, turnId, callId, text })),
       /** 一次定稿校验（persona 等在这里决定要不要重试） */
-      replyCheck: () => inside(() => host.hooks.run('agent:reply:before', { content: '', sessionId, attempt: 0 })),
+      replyCheck: () => inside(() => host.hooks.use.run('agent:reply:before', { content: '', sessionId, attempt: 0 })),
       reply: (content: string, extra: Partial<OutgoingMessage> = {}) => {
         const out: OutgoingMessage = { content, sessionId, platform: message.platform, source: 'agent', ...extra };
-        return inside(() => host.events.emit('outbound:message', out)).then(() => out);
+        return inside(() => host.events.use.emit('outbound:message', out)).then(() => out);
       },
       /** 把消息写进存档（模拟 agent 落库），带这一轮的 turnId */
       save: (msg: Message) =>
@@ -282,7 +285,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     rewinds,
     openTurn,
     releaseHistory: () => gate.resolve(),
-    server: () => host.sessionProtocol.require(),
+    server: () => host.sessionProtocol.use,
   };
 }
 
@@ -490,9 +493,10 @@ describe('订阅与快照', () => {
   });
 
   it('同一连接对同一会话连发两次订阅，先发的那次读历史失败：不撤掉后一次的订阅', async () => {
-    const { server, sm, host } = await setup();
+    const { app, server, sm, host } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    const mem = host.memory.require();
+    // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+    const mem = app.bind({ services }).services.use.get(memory)!;
     const read = mem.getFullHistory?.bind(mem);
     if (!read) throw new Error('内存记忆应有 getFullHistory');
     const gate = deferred();
@@ -512,7 +516,7 @@ describe('订阅与快照', () => {
     await first;
     expect(c.frames.find(f => f.id === 'first')).toHaveProperty('error');
     expect(c.frames.find(f => f.id === 'second')).toHaveProperty('result');
-    await host.events.emit('history:changed', { sessionId: s.id });
+    await host.events.use.emit('history:changed', { sessionId: s.id });
     expect(c.notifications('session/resync').map(p => p.sessionId)).toEqual([s.id]);
   });
 
@@ -526,7 +530,7 @@ describe('订阅与快照', () => {
     await c.subscribe(t.id);
     const resynced = () => c.notifications('session/resync').map(p => p.sessionId);
     const clear = (data: Omit<HookContextMap['memory:clear'], 'results'>) =>
-      host.hooks.run('memory:clear', { ...data, results: [] });
+      host.hooks.use.run('memory:clear', { ...data, results: [] });
 
     await clear({ scope: 'session', sessionId: s.id, types: ['vector'] });
     expect(resynced(), '没清消息历史').toEqual([]);
@@ -546,8 +550,8 @@ describe('订阅与快照', () => {
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(s.id);
-    await host.events.emit('history:changed', { sessionId: other.id });
-    await host.events.emit('history:changed', { sessionId: s.id });
+    await host.events.use.emit('history:changed', { sessionId: other.id });
+    await host.events.use.emit('history:changed', { sessionId: s.id });
     expect(c.notifications('session/resync')).toEqual([
       { sessionId: s.id, epoch: sub.snapshot.epoch, seq: expect.any(Number) },
     ]);
@@ -557,7 +561,7 @@ describe('订阅与快照', () => {
 describe('条目', () => {
   it('turn：开始带发起方，结束带结局；被下游拦下、没有结局的一轮按 silent 收尾', async () => {
     const { server, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(ROOM);
@@ -574,9 +578,9 @@ describe('条目', () => {
 
   it('房间里没发出去的标「未发出」：重试丢掉的那版、静默结束的、平台没收下的；owner 自己的会话不标', async () => {
     const { server, sm, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery)
         msg.delivery = Promise.resolve({ ok: false, error: '发送失败：群已解散' });
     });
@@ -618,9 +622,9 @@ describe('条目', () => {
 
   it('房间里工具调用之前说的话没有发进群，标「未发出」；之后的回复照常；重新订阅后历史里同样标出', async () => {
     const { server, sm, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = Promise.resolve({ ok: true });
     });
     const c = client(server());
@@ -686,9 +690,9 @@ describe('条目', () => {
 
   it('回合结束之后、送达结果到达之前订阅的连接：迟到的结果落在快照里的同一条回复上，不多出一条', async () => {
     const { server, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const settle = deferred<OutboundDeliveryResult>();
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = settle.promise;
     });
     const t = openTurn(ROOM);
@@ -716,9 +720,9 @@ describe('条目', () => {
 
   it('平台的送达结果以拒绝结算：回复标「发送出错」，经工具发出的不标，都不留未处理的拒绝', async () => {
     const { server, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const deliveries: Array<ReturnType<typeof deferred<OutboundDeliveryResult>>> = [];
-    host.events.on('outbound:message', msg => {
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId !== ROOM || msg.delivery) return;
       const pending = deferred<OutboundDeliveryResult>();
       deliveries.push(pending);
@@ -734,7 +738,7 @@ describe('条目', () => {
       const t = openTurn(ROOM);
       await t.toolStart('call-x', 'send_attachment');
       await t.inside(() =>
-        host.events.emit('outbound:message', {
+        host.events.use.emit('outbound:message', {
           content: '',
           sessionId: ROOM,
           platform: 'onebot',
@@ -764,8 +768,8 @@ describe('条目', () => {
 
   it('房间里经工具发出、平台收下的消息：工具卡标「已发到群」并写进工具结果的元数据；没收下的不标', async () => {
     const { server, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
-    host.events.on('outbound:message', msg => {
+    await recordRoom(host.events.use, ROOM, '群');
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId !== ROOM || msg.delivery) return;
       msg.delivery = Promise.resolve(msg.callId === 'call-ok' ? { ok: true } : { ok: false, error: '上传失败' });
     });
@@ -785,7 +789,7 @@ describe('条目', () => {
         attachments: [{ kind: 'image', data: 'data:/a.png' }],
       };
       await t.inside(async () => {
-        await host.events.emit('outbound:message', out);
+        await host.events.use.emit('outbound:message', out);
         await out.delivery;
       });
       // 工具结果落库前，会话服务把平台收下了的写进这次结果的元数据，刷新后历史据此还原
@@ -795,7 +799,7 @@ describe('条目', () => {
         toolCallContext: { sessionId: ROOM, turnId: t.turnId, callId },
         metadata: {} as Record<string, unknown>,
       };
-      await t.inside(() => host.hooks.run('agent:tool:after', after));
+      await t.inside(() => host.hooks.use.run('agent:tool:after', after));
       metadata.push(after.metadata);
       await t.toolEnd(callId, 'send_attachment', '{"ok":true}');
     }
@@ -814,7 +818,7 @@ describe('条目', () => {
     const { app, server, sm, archive, openTurn } = await setup();
     await app.plugin(toolsPlugin, {});
     await app.plugins.idle();
-    declareToolSystemDisplays(app.bind({ tools }).tools);
+    declareToolSystemDisplays(app.bind({ tools }).tools.use);
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
     await c.init();
@@ -906,8 +910,8 @@ describe('条目', () => {
 
   it('房间里达到工具调用上限：生成了、没执行的调用之前说的话就是回复，不标「未发出」', async () => {
     const { server, host, openTurn } = await setup();
-    await recordRoom(host.events, ROOM, '群');
-    host.events.on('outbound:message', msg => {
+    await recordRoom(host.events.use, ROOM, '群');
+    host.events.use.on('outbound:message', msg => {
       if (msg.sessionId === ROOM && !msg.delivery) msg.delivery = Promise.resolve({ ok: true });
     });
     const c = client(server());
@@ -947,7 +951,7 @@ describe('条目', () => {
     const { app, server, sm, archive, openTurn } = await setup();
     await app.plugin(toolsPlugin, {});
     await app.plugins.idle();
-    const bound = app.bind({ tools }).tools;
+    const bound = app.bind({ tools }).tools.use;
     declareToolSystemDisplays(bound);
     bound.register({
       definition: {
@@ -1011,7 +1015,7 @@ describe('条目', () => {
     const { app, server, sm, openTurn } = await setup();
     await app.plugin(toolsPlugin, {});
     await app.plugins.idle();
-    declareToolSystemDisplays(app.bind({ tools }).tools);
+    declareToolSystemDisplays(app.bind({ tools }).tools.use);
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
     await c.init();
@@ -1042,7 +1046,7 @@ describe('条目', () => {
 
   it('入站与她发出的附件按存档推送：用户消息带说话人，宿主通知是 notice（带通知的 id 与给界面的事实），发出的图片是只有附件的消息', async () => {
     const { server, host, archive } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(ROOM);
@@ -1074,7 +1078,7 @@ describe('条目', () => {
       timestamp: Date.now(),
     });
     // 她的普通回复不经这条路推（在回合里推）
-    await host.events.emit('assistant:message:archived', {
+    await host.events.use.emit('assistant:message:archived', {
       sessionId: ROOM,
       message: { role: 'assistant', content: '不该推', timestamp: Date.now() },
     });
@@ -1146,7 +1150,7 @@ describe('条目', () => {
     const sub = await c.subscribe(s.id);
     const items: TodoItem[] = [{ id: 1, title: '写用例', status: 'in-progress' }];
     plans.set(s.id, items);
-    await host.events.emit('todo:updated', s.id, items);
+    await host.events.use.emit('todo:updated', s.id, items);
     expect(c.timeline(s.id, sub).map(shape)).toEqual([{ kind: 'plan', entries: items }]);
 
     const late = client(server());
@@ -1162,7 +1166,7 @@ describe('条目', () => {
     const { server, sm, host } = await setup();
     const s = await sm.createSession({ name: 'S' });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
-    host.events.on('token:request', req => void requests.push(req));
+    host.events.use.on('token:request', req => void requests.push(req));
     const c = client(server());
     await c.init();
     await c.subscribe(s.id);
@@ -1202,7 +1206,7 @@ describe('条目', () => {
         { label: '其余系统提示', tokens: 5, injectors: { notes: 5 } },
       ],
     };
-    await host.events.emit('token:usage', usage);
+    await host.events.use.emit('token:usage', usage);
     const usageOf = async () => {
       const late = client(server());
       await late.init();
@@ -1215,11 +1219,11 @@ describe('条目', () => {
     expect(requests, '有用量就不再请求').toHaveLength(1);
 
     // 压缩线按会话与用量事件上的平台取压缩服务给的，取快照与推送的那一刻现取；不按用量压缩（undefined）时没有
-    const never = host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
+    const never = host.provide.use(compression, { compressAt: () => undefined, compress: async () => {} });
     expect(await usageOf()).not.toHaveProperty('compressAt');
     never();
     const asked: Array<[string, string | undefined]> = [];
-    host.provide(compression, {
+    host.provide.use(compression, {
       compressAt(sessionId, platform) {
         asked.push([sessionId, platform]);
         return sessionId === s.id ? 0.7 : 0.3;
@@ -1230,24 +1234,24 @@ describe('条目', () => {
     const c2 = client(server());
     await c2.init();
     const sub = await c2.subscribe(s.id);
-    await host.events.emit('token:usage', { ...usage, used: 300 });
+    await host.events.use.emit('token:usage', { ...usage, used: 300 });
     expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ used: 300, compressAt: 0.7 });
     const other = await sm.createSession({ name: 'O' });
     const otherSub = await c2.subscribe(other.id);
-    await host.events.emit('token:usage', { ...usage, sessionId: other.id, platform: 'cli' });
+    await host.events.use.emit('token:usage', { ...usage, sessionId: other.id, platform: 'cli' });
     expect(c2.timeline(other.id, otherSub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.3 });
     expect(new Set(asked.map(pair => pair.join()))).toEqual(new Set([`${s.id},webui`, `${other.id},cli`]));
     // 裁剪预算占窗口的比例低于压缩线时，到裁剪预算就压缩：条目给两者中较小的那个
-    await host.events.emit('token:usage', { ...usage, used: 300, tokenBudget: 600 });
+    await host.events.use.emit('token:usage', { ...usage, used: 300, tokenBudget: 600 });
     expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.6 });
   });
 
   it('房间的用量按出生平台算：订阅之后、手动压缩之后请求用量都不填平台', async () => {
     const { server, host } = await setup();
-    await recordRoom(host.events, ROOM, '群');
-    host.provide(compression, { compressAt: () => 0.7, compress: async () => {} });
+    await recordRoom(host.events.use, ROOM, '群');
+    host.provide.use(compression, { compressAt: () => 0.7, compress: async () => {} });
     const requests: Array<{ sessionId: string; platform?: string }> = [];
-    host.events.on('token:request', req => void requests.push(req));
+    host.events.use.on('token:request', req => void requests.push(req));
     const c = client(server());
     await c.init();
     await c.subscribe(ROOM);
@@ -1261,12 +1265,12 @@ describe('条目', () => {
     const s = await sm.createSession({ name: 'S' });
     const calls: unknown[] = [];
     let failure: string | undefined;
-    host.provide(compression, {
+    host.provide.use(compression, {
       compressAt: () => 0.7,
       async compress(sessionId, request) {
         calls.push([sessionId, request]);
-        await host.events.emit('session:compressing', { sessionId, status: 'start' });
-        await host.events.emit('session:compressing', { sessionId, status: failure ? 'error' : 'done' });
+        await host.events.use.emit('session:compressing', { sessionId, status: 'start' });
+        await host.events.use.emit('session:compressing', { sessionId, status: failure ? 'error' : 'done' });
         if (failure) throw new Error(failure);
       },
     });
@@ -1274,7 +1278,7 @@ describe('条目', () => {
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(s.id);
-    host.events.on('token:request', req => void requests.push(req));
+    host.events.use.on('token:request', req => void requests.push(req));
     await c.call('session/compress', { sessionId: s.id });
     expect(calls).toEqual([[s.id, { reason: 'manual' }]]);
     expect(requests).toEqual([{ sessionId: s.id, platform: 'webui' }]);
@@ -1344,7 +1348,7 @@ describe('历史', () => {
 
   it('重试的各版正文各成一条：房间里最后一版是回复，之前的标「未发出」；owner 自己的会话不标', async () => {
     const { server, sm, host, archive } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const mine = await sm.createSession({ name: '我的' });
     for (const sessionId of [ROOM, mine.id]) {
       await archive.saveMessage(sessionId, {
@@ -1414,7 +1418,7 @@ describe('历史', () => {
 
   it('刷新后仍在：平台没收下的回复按投递失败记录标出，已发到群与审批的结局按工具结果的元数据还原', async () => {
     const { server, host, archive } = await setup();
-    await recordRoom(host.events, ROOM, '群');
+    await recordRoom(host.events.use, ROOM, '群');
     const save = (m: Message) => archive.saveMessage(ROOM, m);
     const settlement = { state: 'expired', source: 'absent', at: 7 } as const;
     await save({
@@ -1542,7 +1546,7 @@ describe('回合控制', () => {
     const { server, sm, host } = await setup();
     const s = await sm.createSession({ name: 'S' });
     const inbound: IncomingMessage[] = [];
-    host.events.on('inbound:message', msg => void inbound.push(msg));
+    host.events.use.on('inbound:message', msg => void inbound.push(msg));
     const c = client(server());
     await c.init();
     await c.call('turn/send', { sessionId: s.id, content: '  你好  ' });
@@ -1597,12 +1601,12 @@ describe('回合控制', () => {
     await app.plugin(memoryInMemoryPlugin);
     await app.plugins.idle();
     const host = app.bind({ provide, sessionManager, sessionProtocol });
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(storage, memoryStorage(new Map()));
     await app.plugin(sessionManagerPlugin, {});
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
-    const s = await host.sessionManager.require().createSession({ name: 'S' });
-    const c = client(host.sessionProtocol.require());
+    const s = await host.sessionManager.use.createSession({ name: 'S' });
+    const c = client(host.sessionProtocol.use);
     await c.init();
     for (const [method, params] of [
       ['turn/abort', { sessionId: s.id }],
@@ -1623,27 +1627,27 @@ describe('回合控制', () => {
     await app.plugin(memoryInMemoryPlugin);
     await app.plugins.idle();
     const host = app.bind({ provide, sessionProtocol });
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(storage, memoryStorage(new Map()));
     await app.plugin(sessionManagerPlugin, {});
     await app.plugin(sessionServerPlugin, {});
     await app.plugins.idle();
-    const c = client(host.sessionProtocol.require());
+    const c = client(host.sessionProtocol.use);
     const hello = await c.init();
     expect(hello.features).toEqual({ send: false, rewind: false, compress: false });
 
     const pushed = () => c.notifications('features/changed').map(p => p.features);
-    const offCheckpoint = host.provide(checkpoint, {} as never);
+    const offCheckpoint = host.provide.use(checkpoint, {} as never);
     await vi.waitFor(() => expect(pushed()).toEqual([{ send: false, rewind: true, compress: false }]));
-    const offCompression = host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
+    const offCompression = host.provide.use(compression, { compressAt: () => undefined, compress: async () => {} });
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: true, compress: true }));
     offCheckpoint();
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: true }));
     offCompression();
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
     // 已有检查点时再来一个提供者、又撤掉：功能位没变，不推
-    const first = host.provide(checkpoint, {} as never);
+    const first = host.provide.use(checkpoint, {} as never);
     await vi.waitFor(() => expect(pushed()).toHaveLength(5));
-    const second = host.provide(checkpoint, {} as never);
+    const second = host.provide.use(checkpoint, {} as never);
     second();
     first();
     await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
@@ -1656,8 +1660,8 @@ describe('回合控制', () => {
       { send: false, rewind: false, compress: false },
     ]);
 
-    const later = client(host.sessionProtocol.require());
-    host.provide(compression, { compressAt: () => undefined, compress: async () => {} });
+    const later = client(host.sessionProtocol.use);
+    host.provide.use(compression, { compressAt: () => undefined, compress: async () => {} });
     expect((await later.init()).features, '握手给的是当前的功能位').toEqual({
       send: false,
       rewind: false,
@@ -1693,8 +1697,8 @@ async function startAgent(
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugins.idle();
   const host = app.bind({ provide, tools, sessionManager, sessionProtocol, hooks });
-  host.provide(storage, memoryStorage(new Map()));
-  host.tools.register({
+  host.provide.use(storage, memoryStorage(new Map()));
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
@@ -1709,15 +1713,15 @@ async function startAgent(
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
   const inputs: IncomingMessage[] = [];
-  host.hooks.middleware('agent:input:before', async (data, next) => {
+  host.hooks.use.middleware('agent:input:before', async (data, next) => {
     inputs.push(data.message);
     await next();
   });
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const s = await sm.createSession({ name: 'S' });
   // 有标题就不在第一条消息时调模型起标题，预设的模型回复只给 agent 用
   await sm.updateSessionTitle(s.id, 'S');
-  const c = client(host.sessionProtocol.require());
+  const c = client(host.sessionProtocol.use);
   expect((await c.init()).features.send, '有对话服务就能发送').toBe(true);
   const sub = await c.subscribe(s.id);
   const turnItems = () => c.timeline(s.id, sub).filter(i => i.kind === 'turn');
@@ -1760,7 +1764,7 @@ describe('接 agent 与网关', () => {
     );
 
     // 回合结束后新订阅：历史由存档归并，内容与实时条目一致，条目带同一个回合 id
-    const fresh = client(host.sessionProtocol.require());
+    const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     const history = (await fresh.subscribe(s.id)).snapshot.items;
     const content = (items: SessionItem[]): Array<Record<string, unknown>> =>
@@ -1803,7 +1807,7 @@ describe('接 agent 与网关', () => {
     });
     await c.call('turn/send', { sessionId: s.id, content: '查一下就好' });
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'silent' }));
-    const fresh = client(host.sessionProtocol.require());
+    const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     const calls = (await fresh.subscribe(s.id)).snapshot.items.filter(i => i.kind === 'tool-call');
     expect(calls.map(i => i.itemId)).toEqual([ctxs[0]?.callId]);
@@ -1862,7 +1866,7 @@ describe('接 agent 与网关', () => {
       result: expect.stringContaining('[工具输出已截断'),
     };
     expect(card(c.timeline(s.id, sub))).toMatchObject(expected);
-    const fresh = client(host.sessionProtocol.require());
+    const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     expect(card((await fresh.subscribe(s.id)).snapshot.items)).toMatchObject(expected);
   });
@@ -1882,7 +1886,7 @@ describe('接 agent 与网关', () => {
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'aborted' }));
     const card = (items: SessionItem[]) => items.find(i => i.kind === 'tool-call');
     expect(card(c.timeline(s.id, sub))).toMatchObject({ status: 'aborted', result: '{"ok":true}' });
-    const fresh = client(host.sessionProtocol.require());
+    const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     expect(card((await fresh.subscribe(s.id)).snapshot.items)).toMatchObject({ status: 'aborted' });
   });

@@ -24,12 +24,12 @@ async function boot(plugins: Array<[typeof asrOpenai | typeof asrWhisper, Record
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, services });
-  host.provide(processService, {} as never);
-  host.provide(storage, {} as never);
+  host.provide.use(processService, {} as never);
+  host.provide.use(storage, {} as never);
   for (const [definition, config] of plugins) await app.plugins.register(definition, config);
   await app.plugins.idle();
   for (const [{ name }] of plugins) expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
-  return host.services.inspect(asr).map(entry => entry.contextId);
+  return host.services.use.inspect(asr).map(entry => entry.contextId);
 }
 
 describe('asr 提供者的优先级', () => {

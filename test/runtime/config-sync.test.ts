@@ -63,7 +63,7 @@ describe('加载前配置同步', () => {
           },
           uses: { config },
           apply({ config: value }) {
-            seen.push(structuredClone(value));
+            seen.push(structuredClone(value.use));
           },
         }),
       );
@@ -369,7 +369,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       uses: { config },
       apply({ config: cfg }) {
         applies++;
-        seen = cfg;
+        seen = cfg.use;
       },
     });
     await registerFromDoc(app, store, mod);
@@ -417,7 +417,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       configSchema: { known: { type: 'number', label: 'K', default: 0 } },
       uses: { config },
       apply({ config: value }) {
-        seen.push(structuredClone(value));
+        seen.push(structuredClone(value.use));
       },
     });
     await registerFromDoc(app, store, mod);
@@ -473,7 +473,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       },
       uses: { config },
       apply({ config: value }) {
-        seen.push(structuredClone(value));
+        seen.push(structuredClone(value.use));
       },
     });
     const prepared = withPluginConfigSync(

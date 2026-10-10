@@ -59,10 +59,10 @@ describe('LLM 全部激活失败：发回会话的提示只点名实例', () => 
 
     const host = app.bind({ events, agent });
     const sent: string[] = [];
-    host.events.on('outbound:message', (msg: OutgoingMessage) => {
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => {
       sent.push(msg.content);
     });
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '你好',
       sessionId: 'test:group:llm-down',
       platform: 'test',

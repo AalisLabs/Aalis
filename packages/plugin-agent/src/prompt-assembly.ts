@@ -13,7 +13,7 @@
 
 import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { DIRECTIVE_KINDS, type Message } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */
@@ -24,8 +24,8 @@ const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context
  * 只收 collect 不收 contribute——组装器是收集方，不该有往贡献点塞东西的口子。
  */
 export interface PromptAssemblyCaps {
-  contributions: Pick<Contributions, 'collect'>;
-  logger: Logger;
+  contributions: ServiceSelection<Pick<Contributions, 'collect'>>;
+  logger: ServiceSelection<Logger>;
 }
 
 /**
@@ -172,7 +172,7 @@ export async function assemblePromptContributions(
   },
 ): Promise<void> {
   opts?.signal?.throwIfAborted();
-  const entries = caps.contributions.collect('agent:prompt');
+  const entries = caps.contributions.use.collect('agent:prompt');
   if (entries.length === 0) return;
 
   const { messages } = data;
@@ -198,7 +198,7 @@ export async function assemblePromptContributions(
       pending.map(async ({ key, spec }): Promise<Built | null> => {
         try {
           const out = await buildWithTimeout(
-            caps.logger,
+            caps.logger.use,
             key,
             signal => spec.build({ ...view, signal }),
             timeoutMs,
@@ -209,7 +209,7 @@ export async function assemblePromptContributions(
           return blocks.length > 0 ? { key, anchor: spec.anchor, blocks } : null;
         } catch (err) {
           opts?.signal?.throwIfAborted();
-          caps.logger.warn(`agent:prompt 贡献 "${key}" 构建失败（本轮缺席）:`, err);
+          caps.logger.use.warn(`agent:prompt 贡献 "${key}" 构建失败（本轮缺席）:`, err);
           return null;
         }
       }),
@@ -224,7 +224,7 @@ export async function assemblePromptContributions(
     if (group.length === 0) continue;
     const insertAt = anchorInsertAt(anchor, messages);
     if (insertAt < 0) {
-      caps.logger.debug(`agent:prompt 锚位 "${anchor}" 本轮无落点，弃置 ${group.length} 份贡献`);
+      caps.logger.use.debug(`agent:prompt 锚位 "${anchor}" 本轮无落点，弃置 ${group.length} 份贡献`);
       continue;
     }
     messages.splice(
@@ -240,6 +240,6 @@ export async function assemblePromptContributions(
   // 蒸发：既不物化、键也不落，下一轮还会重跑 build。点名报出，别让它静默。
   const stray = built.filter(r => !ANCHOR_ORDER.includes(r.anchor));
   for (const r of stray) {
-    caps.logger.warn(`agent:prompt 贡献 "${r.key}" 的 anchor "${r.anchor}" 不是合法锚位，本轮产物已丢弃`);
+    caps.logger.use.warn(`agent:prompt 贡献 "${r.key}" 的 anchor "${r.anchor}" 不是合法锚位，本轮产物已丢弃`);
   }
 }

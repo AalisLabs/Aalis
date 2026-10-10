@@ -34,14 +34,14 @@ async function withCmdApp(
 ): Promise<void> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const r = new CommandRegistry(makeLogger(), () => undefined);
-  app.bind({ provide }).provide(commands, r);
+  app.bind({ provide }).provide.use(commands, r);
   const load = async (id: string, register: (bound: BoundCommands) => void): Promise<void> => {
     await app.plugin(
       definePlugin({
         name: id,
         uses: { commands },
         apply({ commands: bound }) {
-          register(bound);
+          register(bound.use);
         },
       }),
     );

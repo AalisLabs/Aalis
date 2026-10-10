@@ -50,7 +50,7 @@ async function boot(llm: MockLLMOptions = {}) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
   const host = app.bind({ agent: agentService, tools, events, hooks, memory });
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
@@ -59,11 +59,15 @@ async function boot(llm: MockLLMOptions = {}) {
   });
   /** 每条用量，与它发出时模型已被调用的次数 */
   const usages: Array<{ event: TokenUsageEvent; calls: number }> = [];
-  host.events.on('token:usage', event => void usages.push({ event, calls: recorder.length }));
+  host.events.use.on('token:usage', event => void usages.push({ event, calls: recorder.length }));
   const ask = (sessionId: string) =>
-    host.agent
-      .require()
-      .handleMessage({ content: '帮我查一下', sessionId, platform: 'test', userId: 'u1', sessionType: 'private' });
+    host.agent.use.handleMessage({
+      content: '帮我查一下',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
   return { host, usages, ask, logs };
 }
 
@@ -140,7 +144,7 @@ describe('token:usage 在每次模型调用之后发', () => {
         { content: '第二版', usage: usage(1500) },
       ],
     });
-    host.hooks.middleware('agent:reply:before', async (data, next) => {
+    host.hooks.use.middleware('agent:reply:before', async (data, next) => {
       if (data.attempt === 0) {
         data.retryRequested = true;
         data.maxRetries = 1;
@@ -158,11 +162,11 @@ describe('token:usage 在每次模型调用之后发', () => {
   it('回合结束之前，这一轮每条用量的监听者都已处理完', async () => {
     const { host, ask } = await boot({ responses: [callProbe(1000), { content: '查好了', usage: usage(2000) }] });
     // 前一个监听者要等一拍：发射方不等监听者处理完时，后一个监听者要到回合结束之后才收到最后一条
-    host.events.on('token:usage', () => new Promise<void>(r => setTimeout(r, 0)));
+    host.events.use.on('token:usage', () => new Promise<void>(r => setTimeout(r, 0)));
     const seen: number[] = [];
-    host.events.on('token:usage', event => void seen.push(event.used));
+    host.events.use.on('token:usage', event => void seen.push(event.used));
     let atTurnEnd: number[] = [];
-    host.hooks.middleware('agent:turn:after', async (_data, next) => {
+    host.hooks.use.middleware('agent:turn:after', async (_data, next) => {
       atTurnEnd = [...seen];
       await next();
     });
@@ -176,7 +180,7 @@ describe('trimmed 与 untrimmedHistory：硬裁剪', () => {
   // 窗口 4096、最大输出 1024：裁剪预算 4096 − 1024 − 512 = 2560；十条两千字的历史估算约 5800
   const LONG = 'a'.repeat(2000);
   async function seedLong(host: Awaited<ReturnType<typeof boot>>['host'], sessionId: string) {
-    const store = host.memory.require();
+    const store = host.memory.use;
     for (let i = 0; i < 10; i++) {
       await store.saveMessage(sessionId, { role: i % 2 ? 'assistant' : 'user', content: LONG, timestamp: 1000 + i });
     }
@@ -211,9 +215,9 @@ describe('trimmed 与 untrimmedHistory：硬裁剪', () => {
   it('快照不带 turnId，照样带 trimmed、untrimmedHistory 与读进的条数', async () => {
     const { host, usages } = await boot({ contextLength: 4096 });
     await seedLong(host, 'zz-ctx-long');
-    await host.memory.require().saveMessage('zz-ctx-short', { role: 'user', content: '在吗' });
-    await host.events.emit('token:request', { sessionId: 'zz-ctx-long' });
-    await host.events.emit('token:request', { sessionId: 'zz-ctx-short' });
+    await host.memory.use.saveMessage('zz-ctx-short', { role: 'user', content: '在吗' });
+    await host.events.use.emit('token:request', { sessionId: 'zz-ctx-long' });
+    await host.events.use.emit('token:request', { sessionId: 'zz-ctx-short' });
 
     expect(usages.map(({ event }) => [event.turnId, event.trimmed, event.historyMessages])).toEqual([
       [undefined, true, 10],
@@ -229,7 +233,7 @@ describe('trimmed 与 untrimmedHistory：硬裁剪', () => {
     await seedLong(host, 'zz-ctx-long');
     const trimLogs = () => logs.filter(message => message.includes('条消息'));
 
-    await host.events.emit('token:request', { sessionId: 'zz-ctx-long' });
+    await host.events.use.emit('token:request', { sessionId: 'zz-ctx-long' });
     expect(usages.at(-1)?.event.trimmed).toBe(true);
     expect(trimLogs()).toEqual([]);
 

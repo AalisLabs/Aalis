@@ -90,8 +90,8 @@ describe('归档', () => {
       writable: true,
       deletable: true,
     });
-    host.provide(storage, { listRoots: () => [root('data'), root('workspace')] } as unknown as StorageService);
-    return host.messageArchive.require();
+    host.provide.use(storage, { listRoots: () => [root('data'), root('workspace')] } as unknown as StorageService);
+    return host.messageArchive.use;
   }
 
   it('archiveIncoming 写入的正文与共享函数逐字一致', async () => {

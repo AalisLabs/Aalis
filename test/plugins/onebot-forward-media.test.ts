@@ -4,7 +4,7 @@ import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import type { ForwardMediaTask } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import { expandForward } from '../../packages/plugin-adapter-onebot/src/forward.js';
@@ -301,9 +301,7 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
     llm: fixedRef<LLMModel>(undefined),
     // 网关：缺席即一个根都没有（路由抛错）；在场时直接给本夹具的单根假 storage——两阶段结构与根路由无关，
     // 根路由见 onebot-forward-storage-roots.test.ts
-    storage: opts.brokenDownload
-      ? createStorageGateway(fixedRef<StorageService>(undefined))
-      : (storage as unknown as StorageService),
+    storage: opts.brokenDownload ? fixedRef<StorageService>(undefined).use : (storage as unknown as StorageService),
     processService: fixedRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),
     forwardCfg,
     attachmentMaxBytes: 20 * 1024 * 1024,

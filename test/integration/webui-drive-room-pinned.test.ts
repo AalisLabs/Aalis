@@ -66,7 +66,7 @@ async function loadStack() {
   await app.plugin(memoryInMemoryPlugin);
   await app.plugins.idle();
   // 房间先由原生入站收录过（预置进会话表）：选档读会话记下的出生平台，不看 id
-  await seedRooms(app.bind({ memory }).memory.require(), { [GROUP]: '<群名>', [PRIVATE]: '<对端>' });
+  await seedRooms(app.bind({ memory }).memory.use, { [GROUP]: '<群名>', [PRIVATE]: '<对端>' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(commandsPlugin, {});
@@ -94,14 +94,14 @@ async function loadStack() {
   const host = app.bind({ events, tools, gateway, sessionManager, commands: commandsService });
   const exec = vi.fn(async () => 'ran');
   const search = vi.fn(async () => 'found');
-  host.tools.register({ definition: definition('exec'), handler: exec, groups: ['system'] });
-  host.tools.register({ definition: definition('web_search'), handler: search, groups: ['search'] });
+  host.tools.use.register({ definition: definition('exec'), handler: exec, groups: ['system'] });
+  host.tools.use.register({ definition: definition('web_search'), handler: search, groups: ['search'] });
   const outbound: OutgoingMessage[] = [];
-  host.events.on('outbound:message', message => void outbound.push(message));
-  const commands = host.commands.require();
+  host.events.use.on('outbound:message', message => void outbound.push(message));
+  const commands = host.commands.use;
   // /session 声明了 risk:'sensitive'，没有守卫时会被拒：放行守卫代替 plugin-authority（本文件测的不是鉴权）
   commands.setExecutionGuard(async () => null);
-  return { recorder, exec, outbound, gateway: host.gateway.require(), sm: host.sessionManager.require(), commands };
+  return { recorder, exec, outbound, gateway: host.gateway.use, sm: host.sessionManager.use, commands };
 }
 
 describe('WebUI 驱动 IM 房间按出生平台选档', () => {

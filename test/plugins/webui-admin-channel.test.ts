@@ -167,7 +167,7 @@ describe('/admin 管理面推送', () => {
       const res = await fetch(`http://127.0.0.1:${port}/api/pages`, { headers: { cookie: COOKIE } });
       return ((await res.json()) as { pages: Array<{ key: string }> }).pages.map(p => p.key);
     };
-    const service = app.bind({ services }).services.get(webuiServer)!;
+    const service = app.bind({ services }).services.use.get(webuiServer)!;
 
     const before = a.count('plugins.changed');
     const off = service.addPage(
@@ -198,7 +198,7 @@ describe('/admin 管理面推送', () => {
       provides: [webuiClient],
       uses: { provide },
       apply({ provide }) {
-        provide(webuiClient, { getClientDir: () => dir });
+        provide.use(webuiClient, { getClientDir: () => dir });
       },
     });
     const { app } = hostedApp({}, { logger: silent });
@@ -217,7 +217,7 @@ describe('/admin 管理面推送', () => {
   it('8 个标签页的 /admin 与 /session 都是 WebSocket 升级（101），不占浏览器对每个主机约 6 条的 HTTP 连接', async () => {
     const app = quietApp();
     // /session 接到一个只收不发的会话服务替身，连接一直开着
-    app.bind({ provide }).provide(sessionProtocol, {
+    app.bind({ provide }).provide.use(sessionProtocol, {
       connect: () => ({ receive: async () => {}, close() {} }),
       resolveFile: () => undefined,
     });

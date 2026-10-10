@@ -33,8 +33,8 @@ async function makeModel(): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'testvision' });
   await app.plugins.idle();
-  const entries = app.bind({ llm }).llm.all();
-  const model = entries.find(e => e.instance.id.includes('testvision'))?.instance ?? entries[0]?.instance;
+  const entries = app.bind({ llm }).llm.list();
+  const model = entries.find(e => e.use.id.includes('testvision'))?.use ?? entries[0]?.use;
   if (!model) throw new Error('未注册出 llm model entry');
   return model;
 }
@@ -136,7 +136,7 @@ describe('media 视觉识别的接线', () => {
     let seen: Record<string, unknown> | undefined;
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, llm, logger });
-    host.provide(llm, {
+    host.provide.use(llm, {
       id: 'fake/vision',
       capabilities: ['vision'],
       chat: async (req: Record<string, unknown>) => {
@@ -144,7 +144,7 @@ describe('media 视觉识别的接线', () => {
         return { content: '一只猫' };
       },
     } as never);
-    const vision = scanLLMProcessors({ llm: host.llm, logger: host.logger }).find(p =>
+    const vision = scanLLMProcessors({ llm: host.llm, logger: host.logger.use }).find(p =>
       p.capabilities.includes('vision' as never),
     );
     if (!vision?.describe) throw new Error('未扫描出带 describe 的 vision processor');
@@ -164,7 +164,7 @@ describe('识别失败的如实上报', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, services });
-    host.provide(llm, {
+    host.provide.use(llm, {
       id: 'fake/vision',
       capabilities: ['vision'],
       chat: async () => {
@@ -172,12 +172,12 @@ describe('识别失败的如实上报', () => {
       },
     } as never);
     // media 的 required 依赖：本用例只走 data URL 内联路径，两个网关都不会被调到
-    host.provide(processService, {} as never);
-    host.provide(storage, {} as never);
+    host.provide.use(processService, {} as never);
+    host.provide.use(storage, {} as never);
     await app.plugin(mediaPlugin, {});
     await app.plugins.idle();
 
-    const svc = host.services.get(media);
+    const svc = host.services.use.get(media);
     const msg = { sessionId: 's', attachments: [{ kind: 'image', data: PNG_1PX, mimeType: 'image/png' }] };
     const report = await svc!.processMessage(msg as unknown as IncomingMessage);
 
