@@ -32,6 +32,7 @@
 | [api-gateway](./api-gateway.md) | `gateway` 描述符 | plugin-gateway |
 | [api-hooks](./api-hooks.md) | `hooks` 描述符 + `Hooks`（`middleware` / `run`）+ 扩展点 `HookContextMap` | plugin-hooks |
 | [api-host-config](./api-host-config.md) | `hostConfig` 描述符（服务名 `host-config`）+ `HostConfig` + 配置文档类型 `AalisConfig` | 宿主提供（`@aalis/runtime`） |
+| [api-host-logs](./api-host-logs.md) | `hostLogs` 描述符（服务名 `host-logs`）+ `HostLogs`：最近的日志与此后的实时日志 | 宿主提供（`@aalis/runtime`） |
 | [api-host-paths](./api-host-paths.md) | `hostPaths` 描述符（服务名 `host-paths`）+ `HostPaths`：家目录、安装集与家目录布局的绝对路径 | 宿主提供（`@aalis/runtime`） |
 | [api-media](../services/media.md) | `media` 描述符 | plugin-media |
 | [api-llm](./api-llm.md) | `llm` 描述符（per-model handle）+ `listLLMModels` / `resolveLLMModel` | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |

@@ -11,6 +11,8 @@ const RUNTIME_SCOPE = 'aalis:runtime';
 const LOG_HISTORY_COUNT = 5;
 
 export interface FileLoggerHandle {
+  /** 日志文件的绝对路径 */
+  readonly path: string;
   flush(): Promise<void>;
   /**
    * 冲洗后退订 LogHub —— 与 ConsoleSinkHandle.dispose 对称。
@@ -92,6 +94,7 @@ export async function setupFileLogger(logFile: string): Promise<FileLoggerHandle
   };
 
   return {
+    path: logFile,
     flush,
     async dispose() {
       await flush();

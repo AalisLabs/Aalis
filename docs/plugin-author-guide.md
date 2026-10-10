@@ -50,6 +50,7 @@ await plugins.use.bounce(lifecycle.use.id);
 - `app`、`plugins`：core 在根激活上提供的宿主管理面。
 - `hostConfig`（配置文档，`@aalis/api-host-config`）：由宿主提供。Node 宿主 `@aalis/runtime` 会提供，别的宿主不一定；缺席时要降级的插件写 `optional(hostConfig)`。
 - `hostPaths`（家目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
+- `hostLogs`（读日志流，`@aalis/api-host-logs`）：由宿主提供，Node 宿主同样会提供。写日志用 `logger`；要读整个日志流（日志页一类）时声明它，不直接订阅 core 的日志中枢 `LogHub`（有 architecture 守卫）。
 - `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
 `uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling / vision）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。

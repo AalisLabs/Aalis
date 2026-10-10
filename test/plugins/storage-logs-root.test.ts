@@ -8,9 +8,9 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
-// storage-local 的日志根 logs 是内置根，指向 host-paths 的 logs（runtime 写 latest.log 的地方），
-// WebUI 与 CLI 的日志页经 logs:/latest.log 读它。老配置里持久化过 { name: logs, path: data }：
-// 它若照旧生效，日志页会一直读升级前那份不再更新的 data/latest.log。现在这一项被跳过并告警。
+// storage-local 的日志根 logs 是内置根，指向 host-paths 的 logs（runtime 写 latest.log 的地方）。
+// 老配置里持久化过 { name: logs, path: data }：它若照旧生效，logs:/latest.log 会一直是升级前那份不再更新的
+// data/latest.log。现在这一项被跳过并告警。
 // ════════════════════════════════════════════════════════════
 
 function recordingLogger(sink: string[]): Logger {
