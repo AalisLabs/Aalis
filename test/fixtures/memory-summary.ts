@@ -50,16 +50,16 @@ export async function setupSummary(
   const host = app.bind({ provide, services, hooks, events });
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchive, { debugLogs: false });
-  host.provide(llm, model);
+  host.provide.use(llm, model);
   await app.plugin(memorySummary, config);
   await app.plugins.idle();
   // 激活闸：required 依赖（memory / llm）缺席时插件停在 pending 且不报错，
   // 后面的断言会红在无关的细节上、掩盖真实原因，故在此显式点名。
   if (app.plugins.getPlugin('@aalis/plugin-memory-summary')?.state !== 'active')
     throw new Error('plugin-memory-summary 未激活');
-  const store = host.services.get(memory);
+  const store = host.services.use.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  const compressor = host.services.get(compression);
+  const compressor = host.services.use.get(compression);
   if (!compressor) throw new Error('compression 服务未就绪');
   return { app, host, memory: store, compression: compressor };
 }
@@ -126,13 +126,13 @@ export function startTurn(host: Host, sessionId: string, options: TurnOptions = 
   const message = { sessionId, platform };
   let finish!: (amounts?: TurnAmounts) => void;
   const ending = new Promise<TurnAmounts | undefined>(r => (finish = r));
-  const running = host.hooks.run(
+  const running = host.hooks.use.run(
     'agent:input:before' as never,
     { message, turnId, metadata: {} } as never,
     async () => {
       const amounts = await ending;
-      if (amounts) await host.events.emit('token:usage', usageEvent(sessionId, amounts, { turnId, platform }));
-      await host.hooks.run(
+      if (amounts) await host.events.use.emit('token:usage', usageEvent(sessionId, amounts, { turnId, platform }));
+      await host.hooks.use.run(
         'agent:turn:after' as never,
         { message, reply: 'ok', outcome: options.outcome ?? 'replied', sessionId, turnId, metadata: {} } as never,
       );

@@ -9,6 +9,6 @@ import { derivePaths } from '../../packages/runtime/src/home.js';
  */
 export function provideHostPaths(app: App, home: string, appDir = home): HostPaths {
   const paths = derivePaths(home, appDir);
-  app.bind({ provide }).provide(hostPaths, paths, { exclusive: true });
+  app.bind({ provide }).provide.use(hostPaths, paths, { exclusive: true });
   return paths;
 }

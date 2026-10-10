@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, storage as storageService } from '../../packages/api-storage/src/index.js';
+import { type BoundStorage, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -60,11 +60,11 @@ describe('storage-local 白纸根 paper', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  async function activate(roots: unknown[]): Promise<ReturnType<typeof createStorageGateway>> {
+  async function activate(roots: unknown[]): Promise<BoundStorage> {
     await app.plugin(storageLocal, { roots });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
-    return createStorageGateway(app.bind({ storage: storageService }).storage);
+    return app.bind({ storage: storageService }).storage.use;
   }
 
   it('与生产同形的显式 roots：paper 根存在，paper:/x/y.txt 落在 <家目录>/stage/paper/x/y.txt', async () => {

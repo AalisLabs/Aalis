@@ -1,10 +1,4 @@
-import {
-  createStorageGateway,
-  isStorageNotFound,
-  type StorageService,
-  storage,
-  toStorageUri,
-} from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
@@ -192,21 +186,21 @@ export default definePlugin({
   provides: [vectorstore],
   uses,
   async apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
 
     // toStorageUri 兼容旧格式 “data/vectorstore”
     const dirUri = toStorageUri(cfg.path);
     const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;
-    const store = new FlatVectorStore(createStorageGateway(caps.storage), dataUri, caps.logger);
+    const store = new FlatVectorStore(caps.storage.use, dataUri, caps.logger.use);
     await store.init();
 
-    caps.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储 URI=${dataUri}`);
+    caps.logger.use.info(`向量数据库已加载: ${await store.size()} 条记录, 存储 URI=${dataUri}`);
 
-    caps.provide(vectorstore, store);
+    caps.provide.use(vectorstore, store);
 
     // 必须 await：onDispose 支持异步（同组 lancedb 就是 await close），
     // void 化会让停机时最后一批向量来不及落盘就退出。
-    caps.lifecycle.onDispose(async () => {
+    caps.lifecycle.use.onDispose(async () => {
       await store.save();
     }, 'flat:store.save');
   },

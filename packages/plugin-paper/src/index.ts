@@ -21,7 +21,7 @@ import { hooks } from '@aalis/api-hooks';
 import { publish } from '@aalis/api-publish';
 import { remoteAgent } from '@aalis/api-remote-agent';
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
@@ -67,30 +67,30 @@ export default definePlugin({
 async function run(caps: BoundOf<typeof uses>): Promise<void> {
   const { logger, lifecycle } = caps;
   const cfg = readConfig(
-    parseConfig(configSchema, caps.config, logger),
-    logger,
+    parseConfig(configSchema, caps.config.use, logger.use),
+    logger.use,
     // 只为认出写错的具名白纸；不传日志器，告警已由上面的正式解析报过
-    parseConfig(paperAuditSchema, caps.config).papers,
+    parseConfig(paperAuditSchema, caps.config.use).papers,
   );
-  for (const setting of ROOM_SETTINGS) caps.sessionManager.registerSetting(setting);
-  const storage = createStorageGateway(caps.storage);
-  const ledger = new LedgerStore(storage, logger);
+  for (const setting of ROOM_SETTINGS) caps.sessionManager.use.registerSetting(setting);
+  const storage = caps.storage.use;
+  const ledger = new LedgerStore(storage, logger.use);
   await ledger.load();
 
   const now = Date.now;
-  const journal = new TaskJournal(storage, logger, now);
+  const journal = new TaskJournal(storage, logger.use, now);
   const notices = new PaperNotices({
     ledger,
-    events: caps.events,
-    logger,
+    events: caps.events.use,
+    logger: logger.use,
     now,
     cfg,
     deliver: (task, artifacts) =>
       deliverArtifacts(
-        { ledger, gateway: caps.gateway, events: caps.events, logger, signal: lifecycle.signal },
+        { ledger, gateway: caps.gateway, events: caps.events.use, logger: logger.use, signal: lifecycle.use.signal },
         task,
         artifacts,
-        lifecycle.signal,
+        lifecycle.use.signal,
       ),
   });
   const publications = new PaperPublication({
@@ -99,13 +99,13 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     cfg,
     storage,
     publish: caps.publish,
-    producer: lifecycle.id,
-    signal: lifecycle.signal,
-    logger,
+    producer: lifecycle.use.id,
+    signal: lifecycle.use.signal,
+    logger: logger.use,
     now,
     onChange: () => notices.flush(),
   });
-  const isolation = new Isolation(caps.remoteAgent, cfg.papers, logger);
+  const isolation = new Isolation(caps.remoteAgent, cfg.papers, logger.use);
   const driver = new PaperDriver({
     journal,
     remote: caps.remoteAgent,
@@ -114,15 +114,15 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     ledger,
     isolation,
     cfg,
-    logger,
-    signal: lifecycle.signal,
+    logger: logger.use,
+    signal: lifecycle.use.signal,
     now,
     ended: () => {
       publications.kick();
       notices.flush();
     },
   });
-  lifecycle.onDrain(async () => {
+  lifecycle.use.onDrain(async () => {
     await notices.close();
     await driver.drain();
     await publications.close();
@@ -130,35 +130,35 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
   }, '白纸停止通知、出队与发布并落盘账本');
   registerPaperTools({
     journal,
-    tools: caps.tools,
+    tools: caps.tools.use,
     sessionManager: caps.sessionManager,
     remote: caps.remoteAgent,
     gateway: caps.gateway,
-    events: caps.events,
+    events: caps.events.use,
     ledger,
     isolation,
     cfg,
-    logger,
-    signal: lifecycle.signal,
+    logger: logger.use,
+    signal: lifecycle.use.signal,
     now,
     kick: paperId => driver.kick(paperId),
     cancel: (taskId, via, gate) => driver.cancel(taskId, via, gate),
     directSending: task => notices.directSending(task),
   });
   registerWorksTools({
-    producer: lifecycle.id,
+    producer: lifecycle.use.id,
     onPublicationChange: () => publications.kick(),
-    signal: lifecycle.signal,
-    tools: caps.tools,
+    signal: lifecycle.use.signal,
+    tools: caps.tools.use,
     sessionManager: caps.sessionManager,
     publish: caps.publish,
     storage,
     ledger,
     cfg,
   });
-  registerPendingHint({ hooks: caps.hooks, ledger, cfg, now, directSending: task => notices.directSending(task) });
+  registerPendingHint({ hooks: caps.hooks.use, ledger, cfg, now, directSending: task => notices.directSending(task) });
   registerPaperPage({
-    webui: caps.webui,
+    webui: caps.webui.use,
     driver,
     ledger,
     storage,
@@ -166,21 +166,21 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     publish: caps.publish,
     sessionManager: caps.sessionManager,
     cfg,
-    signal: lifecycle.signal,
+    signal: lifecycle.use.signal,
     now,
   });
   registerPaperDoctor({
-    doctor: caps.doctor,
+    doctor: caps.doctor.use,
     sessionManager: caps.sessionManager,
     remote: caps.remoteAgent,
     ledger,
     isolation,
     cfg,
-    signal: lifecycle.signal,
+    signal: lifecycle.use.signal,
     listingFailures: () => driver.listingFailures(),
   });
   driver.start();
-  caps.events.on('app:started', () => {
+  caps.events.use.on('app:started', () => {
     publications.open();
     notices.open();
   });

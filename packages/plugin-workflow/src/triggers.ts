@@ -9,7 +9,7 @@
 
 import type { CronEngine } from '@aalis/api-cron-engine';
 import type { WorkflowDef } from '@aalis/api-workflow';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 
 // event 触发器禁止订阅的内部事件：这些承载会话原文/出站内容，若被 workflow 的 send-message
 // 节点转发到任意 sessionId，会构成跨会话内容窃听/外泄通道。只允许订阅编排/信号类事件。
@@ -37,13 +37,13 @@ interface OnceLedger {
 
 /** 触发器登记用到的能力：cron / interval 经 cron-engine 订阅，event 触发器订阅事件总线。 */
 export interface TriggerCaps {
-  cronEngine: ServiceRef<CronEngine>;
+  cronEngine: ServiceSelection<CronEngine>;
   events: Events;
   logger: Logger;
 }
 
 export class TriggerManager {
-  private cronEngine: ServiceRef<CronEngine>;
+  private cronEngine: ServiceSelection<CronEngine>;
   private events: Events;
   private logger: Logger;
   private fire: FireFn;
@@ -69,7 +69,7 @@ export class TriggerManager {
     switch (t.type) {
       case 'cron': {
         try {
-          const dispose = this.cronEngine.require().subscribe(t.expr, () => {
+          const dispose = this.cronEngine.use.subscribe(t.expr, () => {
             this.fire(def.id, `cron:${t.expr}`);
           });
           this.cronDisposers.set(def.id, dispose);
@@ -83,7 +83,7 @@ export class TriggerManager {
         const sec = Math.max(1, Math.floor(t.seconds));
         const expr = `@every ${sec}s`;
         try {
-          const dispose = this.cronEngine.require().subscribe(expr, () => {
+          const dispose = this.cronEngine.use.subscribe(expr, () => {
             this.fire(def.id, `interval:${sec}s`);
           });
           this.cronDisposers.set(def.id, dispose);

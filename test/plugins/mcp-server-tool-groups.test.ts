@@ -50,7 +50,7 @@ async function start(toolGroups: unknown, port?: number) {
   const { logger, errors, infos } = captureLogger();
   const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
-  app.bind({ provide }).provide(tools, {
+  app.bind({ provide }).provide.use(tools, {
     getAll: () => [],
     getDefinitions: () => [],
     getSummaries: () => [],

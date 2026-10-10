@@ -20,7 +20,7 @@
 import type { BoundCommands } from '@aalis/api-commands';
 import type { LLMModel } from '@aalis/api-llm';
 import { type PlatformAdapter, sendPlatformMessage } from '@aalis/api-platform';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
@@ -29,8 +29,8 @@ import { findOrphans } from './utils.js';
 /** /relation 指令用到的能力 */
 interface CommandsCaps {
   commands: BoundCommands;
-  platform: ServiceRef<PlatformAdapter>;
-  llm: ServiceRef<LLMModel>;
+  platform: ServiceSelection<PlatformAdapter>;
+  llm: ServiceSelection<LLMModel>;
   logger: Logger;
 }
 

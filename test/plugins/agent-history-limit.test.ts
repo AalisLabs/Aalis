@@ -49,7 +49,7 @@ async function boot(responses: ChatResponse[] = [{ content: '好' }]) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
   const host = app.bind({ agent: agentService, tools, events, memory, sessionManager });
-  host.tools.register({
+  host.tools.use.register({
     definition: {
       type: 'function',
       function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
@@ -57,12 +57,12 @@ async function boot(responses: ChatResponse[] = [{ content: '好' }]) {
     handler: async () => 'ok',
   });
   const usages: TokenUsageEvent[] = [];
-  host.events.on('token:usage', event => void usages.push(event));
+  host.events.use.on('token:usage', event => void usages.push(event));
   const ask = (sessionId: string, platform = 'webui') =>
-    host.agent.require().handleMessage({ content: '在吗', sessionId, platform, userId: 'u1' });
+    host.agent.use.handleMessage({ content: '在吗', sessionId, platform, userId: 'u1' });
   /** 存 n 条旧消息，时间早于这一轮 */
   const seed = async (sessionId: string, n: number) => {
-    const store = host.memory.require();
+    const store = host.memory.use;
     for (let i = 0; i < n; i++) {
       await store.saveMessage(sessionId, {
         role: i % 2 ? 'assistant' : 'user',
@@ -74,7 +74,7 @@ async function boot(responses: ChatResponse[] = [{ content: '好' }]) {
   /** 一次模型请求里的旧消息（用户消息带着时间标注，只取标记） */
   const oldIn = (request: ChatModelRequest | undefined) =>
     (request?.messages ?? []).flatMap(m => String(m.content ?? '').match(OLD) ?? []);
-  return { host, sm: host.sessionManager.require(), recorder, usages, ask, seed, oldIn };
+  return { host, sm: host.sessionManager.use, recorder, usages, ask, seed, oldIn };
 }
 
 describe('会话设置项 historyLimit', () => {
@@ -140,7 +140,7 @@ describe('按会话的条数线读历史', () => {
     const { host, sm, recorder, usages, ask, seed, oldIn } = await boot();
     await seed('zz-ctx-all', 600);
 
-    await host.events.emit('token:request', { sessionId: 'zz-ctx-all' });
+    await host.events.use.emit('token:request', { sessionId: 'zz-ctx-all' });
     expect(usages.at(-1)?.historyMessages).toBe(600);
 
     await ask('zz-ctx-all');
@@ -156,7 +156,7 @@ describe('按会话的条数线读历史', () => {
     const { host, sm, usages, seed } = await boot();
     await seed('zz-ctx-snapshot', 30);
     await sm.ensureSession('zz-ctx-snapshot', { config: { historyLimit: 5 } });
-    await host.events.emit('token:request', { sessionId: 'zz-ctx-snapshot' });
+    await host.events.use.emit('token:request', { sessionId: 'zz-ctx-snapshot' });
 
     expect(usages).toHaveLength(1);
     expect(usages[0]).toMatchObject({ historyMessages: 5 });

@@ -113,7 +113,7 @@ function commandProbe(name: string, register: (commands: BoundCommands) => void)
     name,
     uses: { commands: optional(commands) },
     apply(caps) {
-      register(caps.commands);
+      register(caps.commands.use);
     },
   });
 }
@@ -131,7 +131,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     const app = newApp();
     const host = app.bind({ provide });
     const { svc, cmds } = makeCommandService();
-    host.provide(commands, svc);
+    host.provide.use(commands, svc);
 
     // 在 apply 里就地取快照：热转发的判据是「apply 返回前已经落到真 builder」，
     // 等 await 之后再看的话，缓冲重放同样会满足，断言就分不出这两条路径了。
@@ -169,7 +169,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     const app = newApp();
     const host = app.bind({ provide });
     const a = makeCommandService();
-    const handle = host.provide(commands, a.svc);
+    const handle = host.provide.use(commands, a.svc);
 
     await loadProbe(
       app,
@@ -187,7 +187,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     await settle(app);
 
     const b = makeCommandService();
-    host.provide(commands, b.svc);
+    host.provide.use(commands, b.svc);
     await settle(app);
 
     const cmd = b.cmds.get('echo');
@@ -219,7 +219,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
 
     const { svc, cmds } = makeCommandService();
     expect(cmds.has('lazy'), '提供者上线之前不该有任何登记').toBe(false);
-    host.provide(commands, svc);
+    host.provide.use(commands, svc);
     await settle(app);
 
     const cmd = cmds.get('lazy');
@@ -234,7 +234,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     const app = newApp();
     const host = app.bind({ provide });
     const a = makeCommandService();
-    const handle = host.provide(commands, a.svc);
+    const handle = host.provide.use(commands, a.svc);
     await loadProbe(
       app,
       commandProbe('probe-argument', commands => {
@@ -250,7 +250,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     handle();
     await settle(app);
     const b = makeCommandService();
-    host.provide(commands, b.svc);
+    host.provide.use(commands, b.svc);
     await settle(app);
     expect(b.cmds.get('find <q:string>')?.arguments).toEqual(described);
     await app.stop();
@@ -260,7 +260,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     const app = newApp();
     const host = app.bind({ provide });
     const { svc, cmds } = makeCommandService();
-    host.provide(commands, svc);
+    host.provide.use(commands, svc);
     const owned = defineService<object>('__t:commands-owned');
     await app.plugin(
       definePlugin({
@@ -268,8 +268,8 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
         provides: [owned],
         uses: { commands: optional(commands), provide },
         apply({ commands, provide }) {
-          provide(owned, {});
-          commands.command('ping', 'p').action(async () => undefined);
+          provide.use(owned, {});
+          commands.use.command('ping', 'p').action(async () => undefined);
         },
       }),
     );
@@ -311,7 +311,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     const app = newApp();
     const host = app.bind({ provide });
     const registry = new CommandRegistry(mkLogger() as never, () => undefined);
-    host.provide(commands, registry);
+    host.provide.use(commands, registry);
 
     await loadProbe(
       app,
@@ -342,7 +342,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     const app = newApp();
     const host = app.bind({ provide });
     const registry = new CommandRegistry(mkLogger() as never, () => undefined);
-    host.provide(commands, registry);
+    host.provide.use(commands, registry);
 
     await loadProbe(
       app,

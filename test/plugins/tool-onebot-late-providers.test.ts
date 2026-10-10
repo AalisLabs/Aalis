@@ -49,7 +49,7 @@ async function setup() {
   const registered = new Set<string>();
   const registerCalls: string[] = [];
   const handlers = new Map<string, RegisteredTool['handler']>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       const name = tool.definition.function.name;
       registered.add(name);
@@ -59,13 +59,13 @@ async function setup() {
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide(memory, { getHistory: async () => [] } as never);
-  host.provide(sessionManager, roomScopeManager({}, {}, [storedRoom(GROUP), storedRoom(PRIVATE)]));
+  host.provide.use(memory, { getHistory: async () => [] } as never);
+  host.provide.use(sessionManager, roomScopeManager({}, {}, [storedRoom(GROUP), storedRoom(PRIVATE)]));
 
   /** 群会话里读取同账号某私聊的历史（直接走 session-history 服务，与通用工具同一条规则链） */
   const readPrivateFromGroup = () => {
-    const service = host.history.current;
-    if (!service) throw new Error('session-history 不在场');
+    if (!host.history.present) throw new Error('session-history 不在场');
+    const service = host.history.use;
     return service.getHistory({ sessionId: PRIVATE }, { sessionId: GROUP, platform: 'onebot' } as never);
   };
   const onebotTools = () => [...registered].filter(name => name.startsWith('onebot_'));
@@ -78,7 +78,7 @@ const DENIED = { error: expect.stringContaining('不允许从群聊读取私聊�
 describe('tool-onebot 会话历史访问规则跟随 session-history 提供者', () => {
   it('tool-session 重启后，群聊读私聊仍被拒', async () => {
     const { app, host, readPrivateFromGroup } = await setup();
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'));
     await app.pluginAll([{ definition: sessionTools }, { definition: toolOnebot }]);
     await app.start();
     await app.plugins.idle();
@@ -91,11 +91,11 @@ describe('tool-onebot 会话历史访问规则跟随 session-history 提供者',
 
   it('tool-session 晚于 app:ready 热装：规则随其上线补挂', async () => {
     const { app, host, readPrivateFromGroup } = await setup();
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'));
     await app.plugin(toolOnebot);
     await app.start();
     await app.plugins.idle();
-    expect(host.history.current).toBeUndefined();
+    expect(host.history.present).toBe(false);
 
     await app.plugin(sessionTools);
     await app.plugins.idle();
@@ -127,27 +127,28 @@ describe('tool-onebot 会话历史访问规则跟随 session-history 提供者',
 describe('tool-onebot 平台闸可重入', () => {
   it('OneBot 适配器在 app:ready 之后才上线、且不是 platform 胜者：工具随后注册', async () => {
     const { app, host, onebotTools } = await setup();
-    host.provide(platform, adapter('cli'));
+    // 同一激活登记两家：各给一个条目 id，list() 才分得清
+    host.provide.use(platform, adapter('cli'), { entryId: 'adapter-cli' });
     await app.plugin(toolOnebot);
     await app.start();
     await app.plugins.idle();
     expect(onebotTools()).toEqual([]);
 
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'), { entryId: 'adapter-onebot' });
     await flush();
     expect(onebotTools()).toEqual(expect.arrayContaining(['onebot_group_ban', 'onebot_resolve_session_id']));
   });
 
   it('OneBot 平台再次注册时不重复注册工具', async () => {
     const { app, host, registerCalls } = await setup();
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'));
     await app.plugin(toolOnebot);
     await app.start();
     await app.plugins.idle();
     const count = registerCalls.length;
     expect(count).toBeGreaterThan(0);
 
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'));
     await flush();
     expect(registerCalls).toHaveLength(count);
   });
@@ -157,7 +158,7 @@ describe('tool-onebot 在适配器缺非契约扩展时的回退文案', () => {
   it('缺 getSentMessages / getSelfMutes：不发 delete_msg，文案不归因于「版本」', async () => {
     const { app, host, handlers } = await setup();
     const actions: string[] = [];
-    host.provide(platform, {
+    host.provide.use(platform, {
       ...adapter('onebot'),
       callAction: async (_sessionId: string, action: string) => {
         actions.push(action);
@@ -188,7 +189,7 @@ describe('tool-onebot 访问规则与专属历史工具开关解耦', () => {
 
   it('sessionHistory.enabled=false：专属历史工具不注册，访问规则照常生效', async () => {
     const { app, host, readPrivateFromGroup, onebotTools } = await setup();
-    host.provide(platform, adapter('onebot'));
+    host.provide.use(platform, adapter('onebot'));
     await app.pluginAll([{ definition: sessionTools }, { definition: toolOnebot, config: HISTORY_OFF }]);
     await app.start();
     await app.plugins.idle();

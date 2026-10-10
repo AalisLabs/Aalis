@@ -143,7 +143,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     pages = pageHost();
-    app.bind({ provide }).provide(webuiServer, pages.service);
+    app.bind({ provide }).provide.use(webuiServer, pages.service);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
       roots: ['workspace'].map(name => ({
@@ -159,7 +159,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     });
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
-    app.bind({ tools: toolsService }).tools.register({
+    app.bind({ tools: toolsService }).tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'zz_count', description: '计数', parameters: { type: 'object', properties: {} } },
@@ -173,7 +173,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     await app.plugins.idle();
     const state = app.plugins.getPlugin('@aalis/plugin-workflow')?.state;
     if (state !== 'active') throw new Error(`workflow 未激活（state=${state}）`);
-    return app.bind({ services }).services.get(workflow) as WorkflowService;
+    return app.bind({ services }).services.use.get(workflow) as WorkflowService;
   };
 
   beforeEach(() => {
@@ -230,7 +230,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
   it('记账读不出时 workflow_define 定义 once：回执注明本次运行不会触发，只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
     rmSync(join(base, 'workspace', 'workflows', 'zz-once.yaml'));
     const define = async (persist: boolean): Promise<{ ok?: boolean; note?: string }> => {
-      const toolSvc = app.bind({ services }).services.get(toolsService);
+      const toolSvc = app.bind({ services }).services.use.get(toolsService);
       if (!toolSvc) throw new Error('tools 服务未注册');
       toolSvc.setExecutionGuard(async () => null); // workflow_define 是 sensitive，放行权限闸：这里只看回执
       const res = await toolSvc.execute(

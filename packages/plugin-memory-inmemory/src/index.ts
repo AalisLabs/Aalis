@@ -271,13 +271,13 @@ export default definePlugin({
   provides: [memory],
   uses: { config, logger, provide },
   apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     const service = new InMemoryFallbackService({
       rangeQueryLimit: cfg.rangeQueryLimit,
       crossSessionMaxLimit: cfg.crossSessionMaxLimit,
     });
     // 负优先级：本后端是兜底，任何持久化后端在场都该压过它
-    caps.provide(memory, service, { priority: -100 });
-    caps.logger.info('内存记忆服务已启用 (数据不会持久化)');
+    caps.provide.use(memory, service, { priority: -100 });
+    caps.logger.use.info('内存记忆服务已启用 (数据不会持久化)');
   },
 });

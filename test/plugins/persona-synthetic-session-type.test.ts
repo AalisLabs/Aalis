@@ -33,12 +33,12 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
-    host.provide(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
+    host.provide.use(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
     await app.plugin(sessionManagerPlugin);
     await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
-    const found = host.services.get(persona);
+    const found = host.services.use.get(persona);
     if (!found) throw new Error('persona 服务未就绪');
     svc = found;
   };
@@ -47,7 +47,7 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
   const volatileFor = async (message: IncomingMessage): Promise<{ prompt: string; message: IncomingMessage }> => {
     let prompt = '';
     const data = { message, turnId: 't1', metadata: {} };
-    await host.hooks.run('agent:input:before', data, async () => {
+    await host.hooks.use.run('agent:input:before', data, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
     return { prompt, message: data.message };
@@ -102,7 +102,7 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
 
   it('会话表里没有来源字段的会话：不从会话 id 推，不出会话类型', async () => {
     await boot();
-    await host.sessionManager.require().ensureSession('onebot:10000:group:20002');
+    await host.sessionManager.use.ensureSession('onebot:10000:group:20002');
     for (const [sessionId, platform] of [
       ['onebot:10000:group:20002', 'onebot'],
       ['onebot:10000:group:20003', 'onebot'],
@@ -115,7 +115,7 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
 
   it('子任务会话（无 sessionType）：出生平台取根会话的，不出会话类型、群号与身份判定', async () => {
     await boot();
-    const sm = host.sessionManager.require();
+    const sm = host.sessionManager.use;
     for (const parentId of [GROUP, PRIVATE]) {
       const child = await sm.createChildSession(parentId, { name: '<子任务>' });
       // 形状同 plugin-subtask 派发的子任务消息（平台取发起工具调用的那一轮）

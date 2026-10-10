@@ -17,6 +17,7 @@ import {
 } from '../../packages/create-aalis-plugin/src/cli.js';
 import { checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。生成的示例页面过 webui-server 登记时的质量门槛；
 // 选了自带前端时生成的插件包能被 webui-server 登记：包根名字对得上、webui/ 与入口都在。
@@ -127,7 +128,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     new Function('require', 'exports', source)((name: string) => imports[name], exports);
     const pages: unknown[] = [];
     const webui = { definePage: (page: unknown) => void pages.push(page) };
-    await (exports.default?.apply as (caps: unknown) => unknown)({ logger, webui });
+    await (exports.default?.apply as (caps: unknown) => unknown)({ logger: fixedRef(logger), webui: fixedRef(webui) });
     expect(pages).toHaveLength(1);
     expect(checkPage(pages[0])).toMatchObject({ ok: true, page: { kind: 'declarative' } });
     const [info] = (pages[0] as { content: Array<{ data: () => unknown }> }).content;
@@ -156,7 +157,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
         return handle;
       },
     };
-    await (plugin.apply as (caps: unknown) => unknown)({ logger, webui });
+    await (plugin.apply as (caps: unknown) => unknown)({ logger: fixedRef(logger), webui: fixedRef(webui) });
     expect(pages).toHaveLength(1);
     const [page] = pages;
     expect(checkPage(page)).toMatchObject({ ok: true, page: { kind: 'frame', placement: 'plugin' } });

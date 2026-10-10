@@ -7,14 +7,14 @@
  */
 
 import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 
 import type { EntityNode, EventNode, PersonNode } from './types.js';
 
 /** 解析配置的 LLM 模型；不可用时返回 undefined。 */
-export function resolveConsolidateModel(llm: ServiceRef<LLMModel>, modelRef: ModelRef): LLMModel | undefined {
+export function resolveConsolidateModel(llm: ServiceSelection<LLMModel>, modelRef: ModelRef): LLMModel | undefined {
   const entry = resolveLLMModel(llm, modelRef, [LLMCapabilities.Chat]);
-  return entry?.instance;
+  return entry?.use;
 }
 
 /** 邻居剖面：人/事件/实体三类，各含总数 + top-K (name, weight) */

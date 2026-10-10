@@ -85,7 +85,7 @@ async function startStack({ withSessionServer = true } = {}) {
   await app.plugin(gatewayPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugins.idle();
-  app.bind({ provide }).provide(storage, memoryStorage(new Map()));
+  app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
   await app.plugin(sessionManagerPlugin, {});
   const sessionServer = async () => {
     await app.plugin(sessionServerPlugin, {});
@@ -106,7 +106,7 @@ async function startWithStub() {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
   const links: Array<{ peer: SessionPeer; received: string[]; closes: number; send(frame: string): void }> = [];
-  app.bind({ provide }).provide(sessionProtocol, {
+  app.bind({ provide }).provide.use(sessionProtocol, {
     connect(peer, send) {
       const link = { peer, received: [] as string[], closes: 0, send };
       links.push(link);
@@ -226,13 +226,13 @@ describe('/session 接上真的会话服务', () => {
   it('webui 审批面：在场上报与应答经 /session 连接到达，审计里的审批面是 webui-server 登记的', async () => {
     const { app, port, paths } = await startStack();
     const host = app.bind({ provide, approvals });
-    host.provide(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+    host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
     const c = await open(port);
     expect(await c.init()).toMatchObject({ surface: 'webui' });
     const { session } = await c.call('session/create', { name: 'S' });
     await c.call('presence/update', { active: true });
 
-    const outcome = host.approvals.require().request({
+    const outcome = host.approvals.use.request({
       sessionId: session.id,
       origin: { kind: 'owner', platform: 'webui', userId: 'console' },
       tool: 'exec',

@@ -1,6 +1,6 @@
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
-import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
@@ -20,6 +20,7 @@ import {
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -27,8 +28,8 @@ import { deferred } from '../helpers/deferred.js';
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
 // 索引会让 name:suffix 误挂主实例的工具。
 
-function ref<T>(instance: unknown): ServiceRef<T> {
-  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+function stub<T>(instance: unknown): ServiceSelection<T> {
+  return fixedRef(instance as T);
 }
 
 const apps: App[] = [];
@@ -46,7 +47,7 @@ function reusableDef(name = 'probe-pkg') {
     provides: [tag],
     uses: { provide, config },
     apply({ provide, config }) {
-      provide(tag, { tag: String(config.tag ?? 'main') });
+      provide.use(tag, { tag: String(config.use.tag ?? 'main') });
     },
   });
 }
@@ -68,13 +69,13 @@ function mountPluginRoutes(
   registerPluginRoutes(
     expressApp,
     {
-      app: ref<AppService>({ restart: () => {} }),
-      source: { current: undefined },
-      plugins: ref<PluginManagerService>(app.plugins),
+      app: stub<AppService>({ restart: () => {} }),
+      source: ref(),
+      plugins: stub<PluginManagerService>(app.plugins),
       hostConfig: app.bind({ hostConfig }).hostConfig,
-      tools: { current: extras.tools as ToolService | undefined },
-      commands: { current: extras.commands as CommandService | undefined },
-      services: app.bind({ services }).services,
+      tools: fixedRef(extras.tools as ToolService | undefined),
+      commands: fixedRef(extras.commands as CommandService | undefined),
+      services: app.bind({ services }).services.use,
       self: 'zz-webui',
       versions: () => () => undefined,
     },
@@ -105,7 +106,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
         optionalEvents: optional(sameEvents),
       },
       apply({ optionalEvents, services }) {
-        sameProvider = optionalEvents.require() === services.get(events);
+        sameProvider = optionalEvents.list()[0]?.id === services.use.inspect(events)[0]?.contextId;
       },
     });
     await app.plugin(def);
@@ -157,7 +158,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
       optionalServices: ['extra', 'logger'],
     });
     expect(before.find(p => p.name === 'empty')).toMatchObject({ requiredServices: [], optionalServices: [] });
-    app.bind({ provide }).provide(needed, {});
+    app.bind({ provide }).provide.use(needed, {});
     await app.plugins.idle();
     expect((await rows()).find(p => p.name === 'waiting')).toMatchObject({
       state: 'active',
@@ -270,7 +271,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
       configSchema: SECRET_SCHEMA,
       uses: { config },
       apply({ config: value }) {
-        seen.push(value);
+        seen.push(value.use);
       },
     });
     const doc = {

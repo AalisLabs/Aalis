@@ -77,14 +77,14 @@ async function fixture(opts: { failure?: string; reviewEnabled?: boolean } = {})
   const app = new App({ name: 'T', logLevel: 'error' });
   const pages = pageHost();
   running.push({ app, pages });
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   await app.plugin(
     definePlugin({
       name: 'zz-review-page',
       uses: { webui: webuiServer },
       apply: ({ webui }) =>
         registerReviewPage({
-          webui,
+          webui: webui.use,
           service: service as never,
           store,
           preview: preview as never,

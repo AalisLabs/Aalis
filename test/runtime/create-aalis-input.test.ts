@@ -150,7 +150,7 @@ describe('renderIndexTs：生成的入口', () => {
       'uses: { logger, tools: optional(tools), commands: optional(commands), webui: optional(webuiServer) },',
     );
     // 页面在 apply 里登记（组件与数据源一次给出），不是静态导出
-    expect(full).toContain('webui.definePage({');
+    expect(full).toContain('webui.use.definePage({');
     expect(full).toContain(`data: () => [{ label: '提示', value: "这是 演示 插件的示例信息面板。" }],`);
     expect(full).not.toMatch(/export const (name|actions|inject)\b/);
   });

@@ -1,11 +1,10 @@
 import path from 'node:path';
 import { agent } from '@aalis/api-agent';
 import { contributions } from '@aalis/api-contributions';
-import { hooks } from '@aalis/api-hooks';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
-import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
+import { isStorageNotFound, storage } from '@aalis/api-storage';
 import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
@@ -181,7 +180,6 @@ const uses = {
   logger,
   lifecycle,
   events,
-  hooks,
   contributions,
   tools: optional(tools),
   agent: optional(agent),
@@ -201,8 +199,8 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { logger, lifecycle, events, hooks, contributions, tools, agent, memory, media, webui } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
+  const { logger, lifecycle, events, contributions, tools, agent, memory, media, webui } = caps;
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
 
   const maxFileSize = cfg.maxFileSizeMB * 1024 * 1024;
   const autoInlineLimit = cfg.autoInlineLimit;
@@ -214,9 +212,7 @@ async function run(caps: Caps): Promise<void> {
   const maxDocImages = Math.max(0, Math.floor(cfg.maxDocImages));
   const HISTORY_HINT_SOURCE = 'file-reader-history';
 
-  // 每个 storage root 是独立 entry；file-reader 跳跨使用 pluginData:/ 必须走 gateway
-  // 路由，否则 scoped entry 会报 'URI 根 "pluginData" 不属于本 entry'。
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
 
   // 启动时确保根目录存在（写入 .keep 触发建目录——避免目录不存在导致 list 失败）
   try {
@@ -226,7 +222,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       await storage.writeFile(`${ROOT_URI}/.keep`, '');
     } catch (err) {
-      logger.warn('初始化 file-reader 根目录失败:', err);
+      logger.use.warn('初始化 file-reader 根目录失败:', err);
     }
   }
 
@@ -234,7 +230,7 @@ async function run(caps: Caps): Promise<void> {
   const index = new Map<string, FileEntry>();
 
   // 会话面板「上传的文件」：只在本会话有上传文件时出现；文件增删后让那个会话的面板重取
-  const uploadsPage = webui.definePage({
+  const uploadsPage = webui.use.definePage({
     key: 'uploads',
     title: '上传的文件',
     icon: 'paperclip',
@@ -314,7 +310,7 @@ async function run(caps: Caps): Promise<void> {
       // 旧版本写下的 meta 里名字未经净化，读回时补上
       return { ...meta, name: sanitizeFileName(meta.name) };
     } catch (err) {
-      logger.debug(`加载 meta 失败 ${uri}:`, err);
+      logger.use.debug(`加载 meta 失败 ${uri}:`, err);
       return null;
     }
   }
@@ -342,9 +338,9 @@ async function run(caps: Caps): Promise<void> {
           restored++;
         }
       }
-      if (restored > 0) logger.info(`已从磁盘恢复 ${restored} 个上传文件`);
+      if (restored > 0) logger.use.info(`已从磁盘恢复 ${restored} 个上传文件`);
     } catch (err) {
-      logger.warn('恢复文件索引失败:', err);
+      logger.use.warn('恢复文件索引失败:', err);
     }
   }
 
@@ -390,7 +386,7 @@ async function run(caps: Caps): Promise<void> {
       const raw = await storage.readFile(entry.dataUri);
       buf = typeof raw === 'string' ? Buffer.from(raw, 'utf-8') : raw;
     } catch (err) {
-      logger.warn(`读取文件失败 ${entry.dataUri}:`, err);
+      logger.use.warn(`读取文件失败 ${entry.dataUri}:`, err);
       return '[文件读取失败]';
     }
     const text = await extractTextFromBuffer(buf, entry.mimeType);
@@ -399,7 +395,7 @@ async function run(caps: Caps): Promise<void> {
       entry.textCache = text;
       await storage
         .writeFile(entry.metaUri, JSON.stringify({ ...entry, dataUri: undefined, metaUri: undefined }, null, 2))
-        .catch((err: unknown) => logger.debug('更新 textCache 失败:', err));
+        .catch((err: unknown) => logger.use.debug('更新 textCache 失败:', err));
     }
     return text;
   }
@@ -413,7 +409,7 @@ async function run(caps: Caps): Promise<void> {
       const { text } = await extractText(pdf, { mergePages: true });
       return text.trim() || '[PDF 无文本内容]';
     } catch (err) {
-      logger.warn('PDF 解析失败:', err);
+      logger.use.warn('PDF 解析失败:', err);
       return '[PDF 解析失败]';
     }
   }
@@ -427,7 +423,7 @@ async function run(caps: Caps): Promise<void> {
       if (imageSection) text += imageSection;
       return text;
     } catch (err) {
-      logger.warn('DOCX 解析失败:', err);
+      logger.use.warn('DOCX 解析失败:', err);
       return '[DOCX 解析失败]';
     }
   }
@@ -438,7 +434,7 @@ async function run(caps: Caps): Promise<void> {
    */
   async function describeDocxImages(mammoth: typeof import('mammoth'), buffer: Buffer): Promise<string> {
     if (!recognizeDocImages || maxDocImages <= 0) return '';
-    const mediaService = media.current;
+    const mediaService = media.present ? media.use : undefined;
     if (!mediaService?.describeImage) return '';
 
     const uris: string[] = [];
@@ -452,14 +448,14 @@ async function run(caps: Caps): Promise<void> {
               const b64 = await image.readAsBase64String();
               uris.push(`data:${image.contentType || 'image/png'};base64,${b64}`);
             } catch (err) {
-              logger.debug('DOCX 内嵌图片读取失败:', err);
+              logger.use.debug('DOCX 内嵌图片读取失败:', err);
             }
             return { src: '' };
           }),
         },
       );
     } catch (err) {
-      logger.warn('DOCX 图片提取失败（仅影响图片识别，正文不受影响）:', err);
+      logger.use.warn('DOCX 图片提取失败（仅影响图片识别，正文不受影响）:', err);
       return '';
     }
     if (uris.length === 0) return '';
@@ -477,7 +473,7 @@ async function run(caps: Caps): Promise<void> {
       },
     );
     if (descriptions.length === 0) {
-      logger.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
+      logger.use.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
     }
     return formatImageSection(descriptions);
   }
@@ -503,7 +499,7 @@ async function run(caps: Caps): Promise<void> {
       existing.uploadedAt = Date.now();
       await storage
         .writeFile(existing.metaUri, JSON.stringify({ ...existing, dataUri: undefined, metaUri: undefined }, null, 2))
-        .catch((err: unknown) => logger.debug('刷新 mtime 失败:', err));
+        .catch((err: unknown) => logger.use.debug('刷新 mtime 失败:', err));
       return existing;
     }
     const meta: FileMeta = {
@@ -542,7 +538,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       return await deleteFile(fileId);
     } catch (err) {
-      logger.warn(err instanceof Error ? err.message : String(err));
+      logger.use.warn(err instanceof Error ? err.message : String(err));
       return false;
     }
   }
@@ -567,7 +563,7 @@ async function run(caps: Caps): Promise<void> {
       const cutoff = now - retentionDays * 86_400_000;
       for (const e of all) {
         if (e.uploadedAt < cutoff) {
-          logger.debug(`retention 淘汰: ${e.name} (uploaded ${new Date(e.uploadedAt).toISOString()})`);
+          logger.use.debug(`retention 淘汰: ${e.name} (uploaded ${new Date(e.uploadedAt).toISOString()})`);
           await tryDeleteFile(e.id);
         }
       }
@@ -578,7 +574,7 @@ async function run(caps: Caps): Promise<void> {
       let total = remaining.reduce((s, e) => s + e.size, 0);
       for (const e of remaining) {
         if (total <= lruMaxTotalBytes) break;
-        logger.debug(
+        logger.use.debug(
           `LRU 淘汰: ${e.name} (${(e.size / 1024).toFixed(1)} KB, total=${(total / 1024 / 1024).toFixed(1)}MB)`,
         );
         if (await tryDeleteFile(e.id)) total -= e.size;
@@ -590,8 +586,8 @@ async function run(caps: Caps): Promise<void> {
 
   async function findCachedToolResult(fileId: string, sessionId?: string): Promise<string | null> {
     if (!sessionId) return null;
-    const memoryService = memory.current;
-    if (!memoryService) return null;
+    if (!memory.present) return null;
+    const memoryService = memory.use;
     try {
       const history = await memoryService.getHistory(sessionId, 200);
       for (let i = history.length - 1; i >= 0; i--) {
@@ -604,7 +600,7 @@ async function run(caps: Caps): Promise<void> {
         }
       }
     } catch (err) {
-      logger.debug('memory 反查失败:', err);
+      logger.use.debug('memory 反查失败:', err);
     }
     return null;
   }
@@ -612,34 +608,34 @@ async function run(caps: Caps): Promise<void> {
   // ===== 初始化阶段：恢复索引 + 起一次清理 =====
 
   await restoreIndex();
-  await runCleanup().catch((err: unknown) => logger.warn('初次清理失败:', err));
+  await runCleanup().catch((err: unknown) => logger.use.warn('初次清理失败:', err));
 
   const cleanupTimer = setInterval(
     () => {
-      runCleanup().catch((err: unknown) => logger.warn('定时清理失败:', err));
+      runCleanup().catch((err: unknown) => logger.use.warn('定时清理失败:', err));
     },
     60 * 60 * 1000, // 每小时跑一次
   );
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     clearInterval(cleanupTimer);
     index.clear();
   });
 
   // session 删除时联动清理该 session 的所有文件
-  events.on('session:deleted', async sessionId => {
+  events.use.on('session:deleted', async sessionId => {
     const n = await deleteSessionFiles(sessionId).catch(() => 0);
-    if (n > 0) logger.info(`session:deleted ${sessionId} → 已清理 ${n} 个上传文件`);
+    if (n > 0) logger.use.info(`session:deleted ${sessionId} → 已清理 ${n} 个上传文件`);
   });
 
   // ===== 工具注册 =====
 
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'file-reader',
     label: '文件读取',
     description: '读取用户上传的文档文件（TXT、PDF、DOCX 等）的文本内容',
   });
-  const fileTools = withToolGroups(tools, ['file-reader']);
+  const fileTools = withToolGroups(tools.use, ['file-reader']);
 
   fileTools.register({
     definition: {
@@ -679,7 +675,7 @@ async function run(caps: Caps): Promise<void> {
         // 死链兜底：查 memory 是否有该 fileId 的旧 tool result（按本会话历史，天然隔离）
         const cached = await findCachedToolResult(fileId, callCtx.sessionId);
         if (cached) {
-          logger.debug(`fileId=${fileId} 在 index 中缺失，已用历史 tool result 兜底`);
+          logger.use.debug(`fileId=${fileId} 在 index 中缺失，已用历史 tool result 兜底`);
           if (maxLength && cached.length > maxLength) {
             return `${cached.slice(0, maxLength)}\n\n... [文本已截断，原始长度: ${cached.length} 字符]`;
           }
@@ -695,7 +691,7 @@ async function run(caps: Caps): Promise<void> {
         return `文件: ${entry.name}\n类型: ${entry.mimeType}\n大小: ${(entry.size / 1024).toFixed(1)} KB\n\n--- 内容 ---\n${text}`;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(`文件读取失败 (${entry.name}):`, msg);
+        logger.use.warn(`文件读取失败 (${entry.name}):`, msg);
         return `错误：读取文件 "${entry.name}" 失败: ${msg}`;
       }
     },
@@ -812,7 +808,7 @@ async function run(caps: Caps): Promise<void> {
 
         const mimeType = inferMimeType(fileName, resolvedMime);
         const entry = await storeFile(fileName, buffer, mimeType, msg.sessionId);
-        logger.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
+        logger.use.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
 
         own.set(i, await buildAttachmentDesc(entry));
         // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer。按写回这一刻的附件展开：存盘期间
@@ -820,7 +816,7 @@ async function run(caps: Caps): Promise<void> {
         msg.attachments[i] = { ...msg.attachments[i], data: `aalis-file://${entry.id}` };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`文件处理失败 (${fileName}):`, errMsg);
+        logger.use.warn(`文件处理失败 (${fileName}):`, errMsg);
         own.set(i, `[文件: ${fileName} - 处理失败]`);
       }
     }
@@ -856,16 +852,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   // ===== 注册到 agent =====
-  // registerPreprocessor 在 AgentService 上是可选方法：当前提供者不实现它时退到
-  // `agent:input:before` 中间件，让附件预处理照常发生在同一阶段。
-
-  if (agent.current && !agent.current.registerPreprocessor) {
-    hooks.middleware('agent:input:before', async (data, next) => {
-      await preprocessFiles(data.message, next);
-    });
-  } else {
-    agent.registerPreprocessor('file-reader', preprocessFiles);
-  }
+  agent.use.registerPreprocessor('file-reader', preprocessFiles);
 
   // ===== 历史 / 本轮新上传文件清单注入（agent:llm:before） =====
   // 两种场景，互斥注入一条 system 提示，避免「上传完下一轮就忘」 或「本轮新文件
@@ -879,7 +866,7 @@ async function run(caps: Caps): Promise<void> {
   // 新文件描述带上了。本轮新上传的 ID 用正则 `\(ID:\s*([0-9a-fA-F]+)` 从这条
   // user message 中提取（兼容 `(ID: xxx)` 和 `(ID: xxx，N KB)` 两种格式）。
   if (historyHintEnabled) {
-    contributions.contribute('agent:prompt', {
+    contributions.use.contribute('agent:prompt', {
       id: HISTORY_HINT_SOURCE,
       anchor: 'turn-context',
       build(view) {
@@ -933,7 +920,7 @@ async function run(caps: Caps): Promise<void> {
           );
           block = `📎 本会话历史上传文件 (${files.length} 个，当前轮次未新上传)：\n${lines.join('\n')}\n\n如需引用上述文件内容，请调用 ${TOOL_READ}(fileId="...") 读取；列出请用 ${TOOL_LIST}。`;
         }
-        logger.debug(
+        logger.use.debug(
           `file-reader: 已注入文件清单 (${hasNewUpload ? '本轮新上传' : '历史'}, session=${view.sessionId})`,
         );
         return block;
@@ -941,7 +928,7 @@ async function run(caps: Caps): Promise<void> {
     });
   }
 
-  logger.info(
+  logger.use.info(
     `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, autoInline=${autoInlineLimit} 字符, 保留 ${retentionDays} 天, LRU=${(lruMaxTotalBytes / 1024 / 1024).toFixed(0)}MB, 已恢复 ${index.size} 个文件)`,
   );
 }

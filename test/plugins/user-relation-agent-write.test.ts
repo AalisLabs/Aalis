@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvidenceRef, RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 
@@ -9,8 +9,8 @@ async function makeService() {
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('memory service missing');
+  if (!host.memory.present) throw new Error('memory service missing');
+  const mem = app.bind({ services }).services.use.get(memory)!;
   const store = new RelationStore(() => mem);
   return { app, store, mem, service: new RelationService(store) };
 }

@@ -52,12 +52,12 @@ it('bounce 与冷启动一样：扫描到的前端不报「未在 provides 中�
       name: 'zz-override',
       provides: [webuiClient],
       uses: { provide },
-      apply: ({ provide }) => void provide(webuiClient, { getClientDir: () => dir }),
+      apply: ({ provide }) => void provide.use(webuiClient, { getClientDir: () => dir }),
     }),
   );
   await app.plugins.idle();
   await app.start();
-  const lookup = app.bind({ services }).services;
+  const lookup = app.bind({ services }).services.use;
   const entries = () => lookup.all(webuiClient).map(view => view.contextId);
   await until(() => entries().includes('zz-client'), '冷启动登记扫描到的前端');
 

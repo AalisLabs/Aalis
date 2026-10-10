@@ -42,13 +42,13 @@ async function setup(
   await registerHubs(app);
   booted.push(app);
   const host = app.bind({ provide, history: optional(sessionHistory) });
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (_t: Omit<RegisteredTool, 'pluginName'>) => () => {},
     registerGroup: () => () => {},
   } as never);
-  host.provide(memory, { getHistory: async () => [] } as never);
+  host.provide.use(memory, { getHistory: async () => [] } as never);
   const records = rooms.map(id => storedRoom(id));
-  host.provide(sessionManager, roomScopeManager({}, {}, records));
+  host.provide.use(sessionManager, roomScopeManager({}, {}, records));
   await app.pluginAll([
     { definition: sessionTools, config: scope ? { scope } : {} },
     { definition: toolOnebot, config: deepMergeDefaults(defaultsFrom(schema), onebotFileConfig) },
@@ -56,8 +56,8 @@ async function setup(
   await app.start();
   await app.plugins.idle();
   const readPrivateFromGroup = () => {
-    const svc = host.history.current;
-    if (!svc) throw new Error('session-history 不在场');
+    if (!host.history.present) throw new Error('session-history 不在场');
+    const svc = host.history.use;
     return svc.getHistory({ sessionId: PRIVATE }, { sessionId: GROUP, platform: 'onebot' } as never);
   };
   return { state: app.plugins.getPlugin('@aalis/plugin-tool-onebot')?.state, readPrivateFromGroup, warnings };

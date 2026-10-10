@@ -7,7 +7,7 @@ import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { createStorageGateway, storage } from '../../packages/api-storage/src/index.js';
+import { type BoundStorage, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, type ToolExecuteMessage, tools } from '../../packages/api-tools/src/index.js';
 import { App, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -70,7 +70,7 @@ async function startAgent(
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
   const host = app.bind({ tools, agent: agentService, hooks, events });
-  host.tools.register({ definition: probeDefinition, handler: (_args, ctx) => handler(ctx) });
+  host.tools.use.register({ definition: probeDefinition, handler: (_args, ctx) => handler(ctx) });
 
   const seen = {
     inputs: [] as Array<{ sessionId: string; turnId: string }>,
@@ -79,18 +79,18 @@ async function startAgent(
     usages: [] as TokenUsageEvent[],
     turnEnds: [] as Array<{ sessionId: string; turnId: string; outcome: string }>,
   };
-  host.hooks.middleware('agent:input:before', async (data, next) => {
+  host.hooks.use.middleware('agent:input:before', async (data, next) => {
     seen.inputs.push({ sessionId: data.message.sessionId, turnId: data.turnId });
     await next();
   });
-  host.hooks.middleware('agent:turn:after', async (data, next) => {
+  host.hooks.use.middleware('agent:turn:after', async (data, next) => {
     seen.turnEnds.push({ sessionId: data.sessionId, turnId: data.turnId, outcome: data.outcome });
     await next();
   });
-  host.events.on('outbound:stream', chunk => void seen.streams.push(chunk));
-  host.events.on('tool:execute', info => void seen.toolEvents.push(info));
-  host.events.on('token:usage', usage => void seen.usages.push(usage));
-  return { agent: host.agent.require(), seen };
+  host.events.use.on('outbound:stream', chunk => void seen.streams.push(chunk));
+  host.events.use.on('tool:execute', info => void seen.toolEvents.push(info));
+  host.events.use.on('token:usage', usage => void seen.usages.push(usage));
+  return { agent: host.agent.use, seen };
 }
 
 const message = (sessionId: string, extra: Partial<IncomingMessage> = {}): IncomingMessage => ({
@@ -136,7 +136,7 @@ describe('回合 id 贯穿一轮的各个事件', () => {
   it('消息被入站钩子拦下：收尾的流结束标记也带这一轮的 turnId', async () => {
     const { agent, seen } = await startAgent([{ content: '不应调用' }], async () => 'ok');
     const app = apps.at(-1) as App;
-    app.bind({ hooks }).hooks.middleware('agent:input:before', async () => {
+    app.bind({ hooks }).hooks.use.middleware('agent:input:before', async () => {
       /* 不调 next：拦下整条消息 */
     });
     await agent.handleMessage(message('test:turn-id-blocked'));
@@ -180,7 +180,7 @@ describe('落库的消息带回合 id', () => {
     const { agent, seen } = await startAgent([callProbe, { content: '查好了' }], async () => 'ok');
     await agent.handleMessage(message('test:archive-turn'));
     const turnId = seen.inputs[0]?.turnId;
-    const stored = await (apps.at(-1) as App).bind({ memory }).memory.require().getHistory('test:archive-turn', 50);
+    const stored = await (apps.at(-1) as App).bind({ memory }).memory.use.getHistory('test:archive-turn', 50);
     expect(stored.map(m => [m.role, m.metadata?.turnId])).toEqual([
       ['user', undefined],
       ['assistant', turnId],
@@ -192,16 +192,16 @@ describe('落库的消息带回合 id', () => {
   it('工具结果的钩子写进 metadata 的键随这次工具结果落库，turnId 与 callId 由 agent 写；回复的出站消息带这一轮的 turnId', async () => {
     const { agent, seen } = await startAgent([callProbe, { content: '查好了' }], async () => 'ok');
     const host = (apps.at(-1) as App).bind({ hooks, memory, events });
-    host.hooks.middleware('agent:tool:after', async (data, next) => {
+    host.hooks.use.middleware('agent:tool:after', async (data, next) => {
       data.metadata.note = '记一笔';
       data.metadata.turnId = 'forged';
       await next();
     });
     const outbound: OutgoingMessage[] = [];
-    host.events.on('outbound:message', msg => void outbound.push(msg));
+    host.events.use.on('outbound:message', msg => void outbound.push(msg));
     await agent.handleMessage(message('test:tool-metadata'));
     const turnId = seen.inputs[0]?.turnId;
-    const stored = await host.memory.require().getHistory('test:tool-metadata', 50);
+    const stored = await host.memory.use.getHistory('test:tool-metadata', 50);
     expect(stored.find(m => m.role === 'tool')?.metadata).toEqual({
       note: '记一笔',
       turnId,
@@ -282,7 +282,7 @@ describe('checkpoint 用 agent 的回合 id', () => {
     dirs.push(base);
     const ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
-    let files: ReturnType<typeof createStorageGateway> | undefined;
+    let files: BoundStorage | undefined;
     const { agent, seen } = await startAgent(
       [callProbe, { content: '写好了' }],
       async () => {
@@ -310,11 +310,11 @@ describe('checkpoint 用 agent 的回合 id', () => {
     const app = apps.at(-1) as App;
     expect(app.plugins.getPlugin(checkpointPlugin.name)?.state).toBe('active');
     const host = app.bind({ storage, checkpoint });
-    files = createStorageGateway(host.storage);
+    files = host.storage.use;
 
     await agent.handleMessage(message('test:turn-checkpoint'));
     const turnId = seen.inputs[0]?.turnId;
-    const service = host.checkpoint.require() as CheckpointServiceImpl;
+    const service = host.checkpoint.use as CheckpointServiceImpl;
     const turns = await service.listTurns('test:turn-checkpoint');
     expect(turns.map(t => [t.turnId, t.filesPreview])).toEqual([[turnId, ['ws:/by-tool.txt']]]);
   });

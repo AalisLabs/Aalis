@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -27,8 +27,8 @@ async function world(withMemory = true) {
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
   const clearSession = vi.fn(async (_sessionId: string) => {});
-  if (withMemory) host.provide(memory, { clearSession } as unknown as MemoryService);
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  if (withMemory) host.provide.use(memory, { clearSession } as unknown as MemoryService);
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   // 记下每次 memory:clear 中间件被调用时的 scope：代表其它插件的清理是否已经发生
   const middlewareRuns: string[] = [];
   await app.plugin(
@@ -36,7 +36,7 @@ async function world(withMemory = true) {
       name: 'clear-probe',
       uses: { hooks },
       apply({ hooks }) {
-        hooks.middleware('memory:clear', async (data, next) => {
+        hooks.use.middleware('memory:clear', async (data, next) => {
           middlewareRuns.push(data.scope);
           await next();
         });
@@ -47,7 +47,7 @@ async function world(withMemory = true) {
   await app.plugins.idle();
 
   async function run(name: 'clear' | 'clear.all', type?: string[]): Promise<string> {
-    const cmd = (host.commands as BoundCommands).current?.getAll().find(c => c.name === name);
+    const cmd = host.commands.use.getAll().find(c => c.name === name);
     if (!cmd?.handler) throw new Error(`/${name} 未注册`);
     const out = await cmd.handler({
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },

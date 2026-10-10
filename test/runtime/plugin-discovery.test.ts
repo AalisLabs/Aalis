@@ -65,14 +65,14 @@ describe('冷启动：先全部登记、再统一激活', () => {
     const consumer = definePlugin({
       name: 'pd-consumer',
       uses: { store },
-      apply: ({ store }) => void seen.push(store.require().id),
+      apply: ({ store }) => void seen.push(store.use.id),
     });
     const fallback = definePlugin({
       name: 'pd-fallback',
       uses: { provide },
       provides: [store],
       apply: ({ provide }) => {
-        provide(store, { id: 'fallback' }, { priority: -100 });
+        provide.use(store, { id: 'fallback' }, { priority: -100 });
       },
     });
     const preferred = definePlugin({
@@ -80,7 +80,7 @@ describe('冷启动：先全部登记、再统一激活', () => {
       uses: { provide },
       provides: [store],
       apply: ({ provide }) => {
-        provide(store, { id: 'preferred' }, { priority: 10 });
+        provide.use(store, { id: 'preferred' }, { priority: 10 });
       },
     });
     const { discovery } = world();
@@ -238,12 +238,12 @@ describe('热扫描', () => {
         name,
         uses: { provide },
         provides: [store],
-        apply: ({ provide }) => void provide(store, { id }, { priority }),
+        apply: ({ provide }) => void provide.use(store, { id }, { priority }),
       });
     const consumer = definePlugin({
       name: 'pd-rescan-consumer',
       uses: { store },
-      apply: ({ store }) => void seen.push(store.require().id),
+      apply: ({ store }) => void seen.push(store.use.id),
     });
     const { app, discovery } = world();
     await discovery(
@@ -381,7 +381,7 @@ describe('按配置文档登记', () => {
         name,
         uses: { config },
         apply: ({ config }) => {
-          seen[name] = config;
+          seen[name] = config.use;
         },
       });
     const { app, store, discovery } = world({

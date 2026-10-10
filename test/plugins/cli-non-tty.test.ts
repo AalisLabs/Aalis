@@ -36,7 +36,7 @@ describe('plugin-cli 非 TTY', () => {
     // 宿主侧按根激活取绑定接口：事件订阅与平台枚举都走公开门面
     const host = app.bind({ events, platform });
     const claimed = vi.fn();
-    host.events.on('terminal:claimed', claimed);
+    host.events.use.on('terminal:claimed', claimed);
     try {
       await app.plugin(cliPlugin, {});
       await app.start();
@@ -47,10 +47,10 @@ describe('plugin-cli 非 TTY', () => {
       expect(claimed).not.toHaveBeenCalled();
       expect(entries.some(e => e.message.includes('CLI 界面未启动'))).toBe(true);
 
-      const cli = host.platform.all().find(p => p.instance.platform === 'cli');
+      const cli = host.platform.list().find(p => p.use.platform === 'cli');
       expect(cli, 'cli 平台服务应已注册').toBeDefined();
-      expect(cli?.instance.getConnections()).toEqual([]);
-      await cli?.instance.sendMessage('cli-default', 'probe-reply');
+      expect(cli?.use.getConnections()).toEqual([]);
+      await cli?.use.sendMessage('cli-default', 'probe-reply');
       expect(entries.some(e => e.message.includes('[cli] probe-reply'))).toBe(true);
     } finally {
       offLog();

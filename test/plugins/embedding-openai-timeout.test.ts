@@ -102,10 +102,10 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
       const applyElapsed = Date.now() - t0;
 
       expect(applyElapsed, `apply 应被 timeoutMs 掐断，实际 ${applyElapsed}ms`).toBeLessThan(15_000);
-      expect(host.services.get(embedding), '连通性失败不阻塞注册').toBeDefined();
+      expect(host.services.use.get(embedding), '连通性失败不阻塞注册').toBeDefined();
 
       const t1 = Date.now();
-      await expect(host.services.get(embedding)!.embed('x')).rejects.toThrow();
+      await expect(host.services.use.get(embedding)!.embed('x')).rejects.toThrow();
       const embedElapsed = Date.now() - t1;
       expect(embedElapsed, `embed 应按 timeoutMs 失败，实际 ${embedElapsed}ms`).toBeLessThan(15_000);
     },
@@ -125,7 +125,7 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
       timeoutMs: 30_000,
     });
     await app.plugins.idle();
-    const svc = host.services.get(embedding)!;
+    const svc = host.services.use.get(embedding)!;
 
     fake.mode = 'hang';
     fake.requests = 0;

@@ -19,9 +19,9 @@ import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
-import { createProcessGateway, processService } from '@aalis/api-process';
+import { processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
-import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { storage as storageService } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig, type SchemaField } from '@aalis/schema-config';
@@ -309,16 +309,16 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const parsed = parseConfig(configSchema, caps.config, caps.logger);
+  const parsed = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const cfg = resolveCfg(parsed);
-  const logger = caps.logger;
-  setMediaRuntime({ proc: createProcessGateway(caps.proc), storage: createStorageGateway(caps.storage) });
+  const logger = caps.logger.use;
+  setMediaRuntime({ proc: caps.proc.use, storage: caps.storage.use });
   const svc = new MediaServiceImpl(caps, cfg);
 
-  caps.provide(media, svc);
+  caps.provide.use(media, svc);
 
   // 没有模型看得到图时图照样落盘、正文写明看不了（见 service.recognizeMessage），整体缺了看图能力要让用户在诊断里看到
-  caps.doctor.registerCheck({
+  caps.doctor.use.registerCheck({
     id: 'media.vision',
     category: 'service',
     run() {
@@ -346,12 +346,12 @@ function run(caps: Caps): void {
   void loadDescriptionCache(logger).then(n => {
     if (n > 0) logger.info(`图片描述缓存已恢复 ${n} 条（跨重启复用，免去重复识别）`);
   });
-  caps.lifecycle.onDispose(() => flushDescriptionCache());
+  caps.lifecycle.use.onDispose(() => flushDescriptionCache());
 
   // 参与 memory:clear（/clear 与删除会话）：视频描述（describeVideo 写入）归 video 类型，其余描述归 image 类型，
   // 按所选类型清理。全局清理删掉所选类型的内存条目与别名，两类都清时删掉快照、只清一类时重写快照；
   // 会话级只删带本会话语境的描述（以含会话目录的落盘路径为键），内容哈希键跨会话共享、无从按会话归属，保留。
-  caps.hooks.middleware('memory:clear', async (data, next) => {
+  caps.hooks.use.middleware('memory:clear', async (data, next) => {
     const sessionDir = data.scope === 'all' ? undefined : data.sessionId?.replace(/[:/\\]/g, '_');
     const kinds = DESCRIPTION_KINDS.filter(k => !data.types || data.types.includes(k));
     if (kinds.length > 0 && (data.scope === 'all' || sessionDir)) {
@@ -385,7 +385,7 @@ function run(caps: Caps): void {
   // （15s 超时 × 30 轮）。每条消息只处理一次，成败皆不重来；消息对象随回合结束被回收，
   // 无生命周期管理。
   const transformed = new WeakSet<object>();
-  caps.hooks.middleware('agent:llm:before', async (data, next) => {
+  caps.hooks.use.middleware('agent:llm:before', async (data, next) => {
     // 所有交付形态都要进来——这道闸此前被模式挡住，于是 describe 模式下
     // agent 塞进 message.images 的历史相对路径 ref（`data/images/…`）一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
@@ -417,7 +417,7 @@ function run(caps: Caps): void {
     }
   };
   refreshAudioPrefer();
-  caps.events.on('service:changed', name => {
+  caps.events.use.on('service:changed', name => {
     if (name === 'asr' || name === 'llm') refreshAudioPrefer();
   });
 
@@ -425,7 +425,7 @@ function run(caps: Caps): void {
   registerMediaTools(caps, svc);
 
   // 注册 preprocessor：agent 不在场时登记留在账上，它上线后自动补挂，随本次激活撤回
-  caps.agent.registerPreprocessor('media', buildPreprocessor(caps, svc));
+  caps.agent.use.registerPreprocessor('media', buildPreprocessor(caps, svc));
   logger.info(
     `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
   );

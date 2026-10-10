@@ -6,7 +6,7 @@
 
 import type { FlowControlService } from '@aalis/api-flow-control';
 import { type GatewayService, resolveEffectiveConfig } from '@aalis/api-gateway';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import type { TriggerPolicyConfig } from './config.js';
 import { lastActivityOf, type TriggerSessionState } from './state.js';
@@ -14,8 +14,8 @@ import { lastActivityOf, type TriggerSessionState } from './state.js';
 /** 调度器用到的能力：日志、网关与流控闸门（只读当前提供者），以及本插件此刻是否生效 */
 export interface IdleCaps {
   logger: Logger;
-  gateway: Pick<ServiceRef<GatewayService>, 'current'>;
-  flowControl: Pick<ServiceRef<FlowControlService>, 'current'>;
+  gateway: Pick<ServiceSelection<GatewayService>, 'present' | 'use'>;
+  flowControl: Pick<ServiceSelection<FlowControlService>, 'present' | 'use'>;
   isActive(): boolean;
 }
 
@@ -37,11 +37,11 @@ function buildIdleMessage(sessionId: string, platform: string, prompt: string): 
  * 那时 inbound:message 同样无人消费（消费方就是 gateway 插件），这次注入只记一条 debug 放弃
  */
 async function injectIdle(caps: IdleCaps, msg: IncomingMessage): Promise<void> {
-  const gateway = caps.gateway.current;
-  if (!gateway) {
+  if (!caps.gateway.present) {
     caps.logger.debug(`[trigger] 空闲触发放弃（gateway 缺席）: session=${msg.sessionId}`);
     return;
   }
+  const gateway = caps.gateway.use;
   await gateway.ingressMessage(msg);
 }
 
@@ -72,7 +72,11 @@ export function scheduleSessionIdle(
   state.idleTimer = setTimeout(async () => {
     try {
       // 本插件不生效、或禁言期（flow 相位也会吞，这里省掉一次注入）不开口：跳过本次并按原退避重排
-      const skip = !caps.isActive() ? '触发策略未生效' : caps.flowControl.current?.isMuted(sessionId) ? '禁言中' : '';
+      const skip = !caps.isActive()
+        ? '触发策略未生效'
+        : (caps.flowControl.present ? caps.flowControl.use.isMuted(sessionId) : undefined)
+          ? '禁言中'
+          : '';
       if (skip) {
         caps.logger.debug(`[trigger] 空闲触发跳过（${skip}）: session=${sessionId}`);
         reschedule();
@@ -149,7 +153,7 @@ export class PlatformIdleScheduler {
 
   /** 选一个最适合主动开聊的会话（带该会话的有效提示词） */
   private pickTarget(): { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null {
-    const flow = this.caps.flowControl.current;
+    const flow = this.caps.flowControl.present ? this.caps.flowControl.use : undefined;
     let best: { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null = null;
     for (const [sid, s] of this.states) {
       // 禁言会话选了也会被 flow 相位吞掉；冷却对闲置注入只在这里把关（flow 相位对内部注入不查冷却），限速在 flow 相位（作用域内）还会再查一次

@@ -61,11 +61,11 @@ async function boot(options: { slowThresholdMs?: number; disposeTimeoutMs?: numb
   const recordedCommands: Array<{ name: string; description?: string }> = [];
   const pages = pageHost();
   hosts.push(pages);
-  host.provide(webuiServer, pages.service);
-  host.provide(commands, makeCommandService(recordedCommands) as never);
+  host.provide.use(webuiServer, pages.service);
+  host.provide.use(commands, makeCommandService(recordedCommands) as never);
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.idle();
-  return { app, pages, recordedCommands, doctor: host.services.get(doctor) as DoctorService };
+  return { app, pages, recordedCommands, doctor: host.services.use.get(doctor) as DoctorService };
 }
 
 // ===== tests =====
@@ -237,7 +237,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       provides: [slowService],
       uses: { provide },
       async apply({ provide }) {
-        provide(slowService, {});
+        provide.use(slowService, {});
         await gate;
       },
     });
@@ -281,7 +281,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       provides: [slowService],
       uses: { provide },
       async apply({ provide }) {
-        provide(slowService, {});
+        provide.use(slowService, {});
         await gate;
       },
     });
@@ -336,7 +336,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       definePlugin({
         name: 'zz-doctor-slowstop',
         uses: { lifecycle },
-        apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.onDispose(() => gate)),
+        apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.use.onDispose(() => gate)),
       }),
       {},
     );

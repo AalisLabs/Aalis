@@ -1,6 +1,6 @@
 import type { PublishFile, PublishService, PublishSurfaceInfo } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { artifactUri } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { failedBeforeSubmission } from './deliver.js';
@@ -19,7 +19,7 @@ interface PaperPublicationDeps {
   ledger: LedgerStore;
   cfg: PaperConfig;
   storage: StorageService;
-  publish: ServiceRef<PublishService>;
+  publish: ServiceSelection<PublishService>;
   producer: string;
   signal: AbortSignal;
   logger: Logger;
@@ -176,8 +176,12 @@ export class PaperPublication {
   #now(): number {
     return (this.#d.now ?? Date.now)();
   }
-  #valid(task: TaskRecord, pub: Publication, service: PublishService): boolean {
-    if (this.#closed || this.#d.signal.aborted || this.#d.publish.current !== service) return false;
+  /** 发布服务此刻选中的那一家：推进途中换了人，这一轮就不再往下走 */
+  #selectedId(): string | undefined {
+    return this.#d.publish.list().find(p => p.selected)?.id;
+  }
+  #valid(task: TaskRecord, pub: Publication, serviceId: string): boolean {
+    if (this.#closed || this.#d.signal.aborted || this.#selectedId() !== serviceId) return false;
     if (this.#d.ledger.data.tasks[task.id] !== task || task.publication !== pub) return false;
     if (task.state !== 'done' || task.artifactsCleared) return false;
     return !!specOf(this.#d.cfg, task.paperId)?.publishTargets.includes(pub.target);
@@ -185,11 +189,12 @@ export class PaperPublication {
 
   /** 返回 true 表示暂时推进不了（发布服务、展示面或成品读取暂不可用），由 #sweep 排进 RETRY_MS 之后的唤醒 */
   async #advance(task: TaskRecord, pub: Publication): Promise<boolean> {
-    const service = this.#d.publish.current;
-    if (!service) return true;
-    if (!this.#valid(task, pub, service)) {
+    const publisher = this.#d.publish.list().find(p => p.selected);
+    if (!publisher) return true;
+    const service = publisher.use;
+    if (!this.#valid(task, pub, publisher.id)) {
       if (
-        this.#d.publish.current === service &&
+        this.#selectedId() === publisher.id &&
         task.publication === pub &&
         task.state === 'done' &&
         !task.artifactsCleared &&
@@ -202,7 +207,7 @@ export class PaperPublication {
     if (pub.state === 'submitted') {
       if (!pub.workId) return false;
       const item = service.get(pub.workId);
-      if (!this.#valid(task, pub, service)) return false;
+      if (!this.#valid(task, pub, publisher.id)) return false;
       if (!item || item.origin.producer !== this.#d.producer || item.origin.ref !== `${task.paperId}/${task.id}`) {
         await this.#update(task.id, pub, { state: 'failed', reason: '发布回执无法核对来源' });
       } else if (item.live) {
@@ -276,7 +281,7 @@ export class PaperPublication {
     } catch {
       return true;
     }
-    if (!this.#valid(task, pub, service)) return false;
+    if (!this.#valid(task, pub, publisher.id)) return false;
     const result = await service.nominate({
       submissionKey: `paper:${task.id}`,
       origin: {
@@ -294,7 +299,7 @@ export class PaperPublication {
       files,
       ...(cover ? { cover } : {}),
     });
-    if (!this.#valid(task, pub, service)) return false;
+    if (!this.#valid(task, pub, publisher.id)) return false;
     if ('refused' in result) {
       const retry = retryDelay(result);
       if (retry !== undefined) {

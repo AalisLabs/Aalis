@@ -156,7 +156,7 @@ describe('persona / skills 的目录重扫', () => {
     logs = [];
     app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
     await registerHubs(app);
-    app.bind({ provide }).provide(storage, fake.service as never);
+    app.bind({ provide }).provide.use(storage, fake.service as never);
   }
 
   it('persona：扫描进行中的多次目录变化只排一次尾随重扫，新卡不被进行中那次的旧清单剔掉', async () => {
@@ -166,7 +166,7 @@ describe('persona / skills 的目录重扫', () => {
     await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
     await app.plugins.idle();
     await app.start();
-    const svc = app.bind({ services }).services.get(persona);
+    const svc = app.bind({ services }).services.use.get(persona);
     if (!svc?.listModels) throw new Error('persona 服务未就绪');
     expect((await svc.listModels()).sort()).toEqual(['a', 'default']);
 
@@ -192,7 +192,7 @@ describe('persona / skills 的目录重扫', () => {
     await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
     await app.plugins.idle();
     await app.start();
-    const svc = app.bind({ services }).services.get(persona);
+    const svc = app.bind({ services }).services.use.get(persona);
     if (!svc?.listModels) throw new Error('persona 服务未就绪');
     expect((await svc.listModels()).sort()).toEqual(['a', 'default']);
 
@@ -211,7 +211,7 @@ describe('persona / skills 的目录重扫', () => {
     await bootWith(fake);
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(skills);
+    const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
 
     const gate = fake.holdNextList(DIR);
@@ -238,7 +238,7 @@ describe('persona / skills 的目录重扫', () => {
     await bootWith(fake);
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(skills);
+    const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
 
     const gate = fake.holdNextList(DIR);
@@ -266,7 +266,7 @@ describe('persona / skills 的目录重扫', () => {
     await bootWith(fake);
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(skills);
+    const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
     await svc.rescan();
     expect(svc.listSkills().map(s => s.name)).toEqual(['s1']);
@@ -287,7 +287,7 @@ describe('persona / skills 的目录重扫', () => {
     await bootWith(fake);
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(skills);
+    const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
     await svc.rescan();
     const names = () =>
@@ -314,7 +314,7 @@ describe('persona / skills 的目录重扫', () => {
     await bootWith(fake);
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(skills);
+    const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
     await svc.rescan();
 
@@ -340,7 +340,7 @@ describe('persona / skills 的目录重扫', () => {
     const fake = gatedStorage({ [`${DIR}/wx/SKILL.md`]: wx('天气') });
     await bootWith(fake);
     const handlers = new Map<string, RegisteredTool['handler']>();
-    app.bind({ provide }).provide(tools, {
+    app.bind({ provide }).provide.use(tools, {
       register(tool: RegisteredTool) {
         handlers.set(tool.definition.function.name, tool.handler);
         return () => {};
@@ -350,12 +350,12 @@ describe('persona / skills 的目录重扫', () => {
     await app.plugin(skillsPlugin, { skillsUri: DIR });
     await app.plugins.idle();
     const host = app.bind({ services, hooks });
-    const svc = host.services.get(skills);
+    const svc = host.services.use.get(skills);
     const loadSkill = handlers.get('load_skill');
     if (!svc || !loadSkill) throw new Error('skills 服务或 load_skill 未就绪');
     await svc.rescan();
     const say = (sessionId: string, content: string) =>
-      host.hooks.run('agent:input:before', { message: { sessionId, content }, metadata: {} } as never);
+      host.hooks.use.run('agent:input:before', { message: { sessionId, content }, metadata: {} } as never);
 
     await say('s-1', '今天天气怎么样'); // 编译并缓存 wx 的 triggers
     expect(svc.getLoadedSkills('s-1')).toEqual(['wx']);

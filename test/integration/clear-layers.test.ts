@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
@@ -53,7 +53,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, services, commands: commandsService });
-  if (backend) host.provide(memory, backend.memory);
+  if (backend) host.provide.use(memory, backend.memory);
   const vec = { cleared: 0, deletedBy: [] as Array<Record<string, unknown>> };
   const store: VectorStoreService = {
     add: async () => {},
@@ -68,13 +68,13 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     },
     save: async () => {},
   };
-  host.provide(vectorstore, store);
-  host.provide(embedding, { modelId: 'test:A', embed: async () => [0.1, 0.2] });
-  host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(vectorstore, store);
+  host.provide.use(embedding, { modelId: 'test:A', embed: async () => [0.1, 0.2] });
+  host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   // storage / process 只为让 onebot 过激活闸：附件缓存的清理因此报失败，不在本测范围
-  host.provide(storage, {} as never);
-  host.provide(processService, {} as never);
+  host.provide.use(storage, {} as never);
+  host.provide.use(processService, {} as never);
 
   await app.pluginAll([
     ...(backend ? [] : [{ definition: memoryInMemory }]),
@@ -102,7 +102,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     .map(p => `${p.instanceId}: ${p.state}`);
   expect(inactive).toEqual([]);
 
-  const mem = host.services.get(memory) as MemoryService;
+  const mem = host.services.use.get(memory) as MemoryService;
   for (const [ns, keys] of Object.entries(SEED))
     for (const key of keys) await mem.saveMetadata(ns, key, { seeded: true });
   for (const s of ['s-cur', 's-other']) {
@@ -111,7 +111,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
   }
 
   async function run(name: 'clear' | 'clear.all' | 'profile.clear.nuke', types?: string[]): Promise<string> {
-    const cmd = (host.commands as BoundCommands).current?.getAll().find(c => c.name === name);
+    const cmd = host.commands.use.getAll().find(c => c.name === name);
     if (!cmd?.handler) throw new Error(`/${name} 未注册`);
     const out = await cmd.handler({
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },

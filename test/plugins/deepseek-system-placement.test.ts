@@ -171,7 +171,7 @@ describe('chat 出口接线', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();
-    const model = app.bind({ services }).services.get(llm);
+    const model = app.bind({ services }).services.use.get(llm);
     if (!model) throw new Error('llm entry 未注册');
     await model.chat({
       messages: [

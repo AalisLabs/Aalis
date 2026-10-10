@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { publish } from '../../packages/api-publish/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { events } from '../../packages/core/src/index.js';
+import { events, services } from '../../packages/core/src/index.js';
 import { artifactUri } from '../../packages/plugin-paper/src/artifacts.js';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import review from '../../packages/plugin-publish-review/src/index.js';
@@ -145,12 +145,13 @@ async function ready(check: () => void): Promise<void> {
 }
 
 function handlePublishedNotices(hub: PaperHub): void {
-  const host = hub.app.bind({ gateway, events });
-  const service = host.gateway.require();
+  const host = hub.app.bind({ gateway, events, services });
+  // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+  const service = host.services.use.get(gateway)!;
   const originalDispatch = service.dispatchOutbound.bind(service);
   service.dispatchOutbound = async message => {
     await originalDispatch(message);
-    await host.events.emit('outbound:message', message);
+    await host.events.use.emit('outbound:message', message);
   };
   service.ingressMessage = async message => {
     hub.injected.push(message);
@@ -178,7 +179,8 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     const remote = new ScriptedRemote();
     const hub = await startPaperHub({ remotes: { [REMOTE]: remote } });
     handlePublishedNotices(hub);
-    const backend = hub.app.bind({ storage }).storage.require();
+    // 改提供者交出的实例本身：业务句柄是转发句柄，在它上面改方法落不到提供者
+    const backend = hub.app.bind({ services }).services.use.get(storage)!;
     const roots = backend.listRoots.bind(backend);
     backend.listRoots = () => [
       ...roots(),
@@ -244,7 +246,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     expect(frame).toBeDefined();
     expect(await (await fetch(frame!, { headers: { 'Sec-Fetch-Dest': 'iframe' } })).text()).toContain('自动猫站成品');
     expect(mock.pipeline).not.toHaveBeenCalled();
-    expect(hub.app.bind({ publish }).publish.require().get(workId)?.live).toBe(true);
+    expect(hub.app.bind({ publish }).publish.use.get(workId)?.live).toBe(true);
     await vi.waitFor(() => expect(hub.ledger().tasks[taskId].publication).toMatchObject({ state: 'live', workId }), {
       timeout: 40_000,
       interval: 25,
@@ -346,7 +348,8 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     const hub = await startPaperHub({ files, config: PILOT_CONFIG });
     handlePublishedNotices(hub);
     // Review uses pluginData/public, Paper uses pluginData/paper; both share the in-memory storage provider.
-    const backend = hub.app.bind({ storage }).storage.current!;
+    // 改写提供者实例本身：业务句柄上的写不落到提供者
+    const backend = hub.app.bind({ services }).services.use.get(storage)!;
     const roots = backend.listRoots.bind(backend);
     backend.listRoots = () => [
       ...roots(),
@@ -361,7 +364,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
       failOpen: false,
     });
     await hub.app.plugins.idle();
-    expect(hub.app.bind({ publish }).publish.current).toBeUndefined();
+    expect(hub.app.bind({ publish }).publish.present).toBe(false);
     await hub.app.plugin(review, { manualReview: false });
     await hub.app.plugins.idle();
     expect(hub.app.plugins.getPlugin(review.name)?.state).toBe('active');
@@ -382,7 +385,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     });
     expect(nomination).toMatchObject({ ok: true });
     const workId = String(nomination.workId);
-    const service = hub.app.bind({ publish }).publish.require();
+    const service = hub.app.bind({ publish }).publish.use;
     await ready(() => expect(service.get(workId)?.state).toBe('published'));
     expect(hub.injected.filter(message => message.source === `publish:${workId}`)).toHaveLength(0);
     expect(await hub.pages.act('works-site', 'retryDeploy')).toMatchObject({ status: 200 });

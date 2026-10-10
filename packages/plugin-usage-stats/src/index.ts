@@ -4,9 +4,9 @@
 // 配置里填了单价才有费用一列；有服务商的模型实现了余额查询（LLMModel.balance）才有「余额」一页，服务商上下线时随之增减
 // ════════════════════════════════════════════════════════════
 
-// biome-ignore lint/style/noRestrictedImports: 启动时按行流式读回账本，存储网关没有按行读
+// biome-ignore lint/style/noRestrictedImports: 启动时按行流式读回账本，存储服务没有按行读
 import { createReadStream } from 'node:fs';
-// biome-ignore lint/style/noRestrictedImports: 账本是只追加的记录，存储网关没有追加写；位置取自 host-paths 给的家目录
+// biome-ignore lint/style/noRestrictedImports: 账本是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的家目录
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -149,11 +149,11 @@ function instanceLabel(plugins: PluginManagerService | undefined, instance: stri
 
 async function run(caps: Caps): Promise<void> {
   const { events, lifecycle, logger, webui } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
   const prices = parsePrices(cfg.prices);
   /** 填了单价才有费用一列 */
   const priced = prices.size > 0;
-  const file = join(caps.paths.require().state, 'usage', 'llm-calls.jsonl');
+  const file = join(caps.paths.use.state, 'usage', 'llm-calls.jsonl');
 
   /** 日期（本地时区）→ 模型（JSON 写的 [服务商, 模型]）→ 合计 */
   const days = new Map<string, Map<string, Totals>>();
@@ -189,12 +189,12 @@ async function run(caps: Caps): Promise<void> {
       });
     }
   }
-  if (unreadable > 0) logger.warn(`用量账本 ${file} 有 ${unreadable} 行读不懂，已跳过`);
+  if (unreadable > 0) logger.use.warn(`用量账本 ${file} 有 ${unreadable} 行读不懂，已跳过`);
   await mkdir(dirname(file), { recursive: true });
 
   // 一行一行追加，后一行等前一行落定
   let writing = Promise.resolve();
-  lifecycle.onDrain(() => writing, '用量账本落盘');
+  lifecycle.use.onDrain(() => writing, '用量账本落盘');
 
   const costOf = (model: string, totals: Totals): number | null => {
     const price = prices.get(model);
@@ -246,14 +246,19 @@ async function run(caps: Caps): Promise<void> {
       .sort(([, a], [, b]) => b.input + b.output - (a.input + a.output))
       .map(([key, totals]) => {
         const [provider, model] = JSON.parse(key) as [string, string];
-        return { key, model, provider: instanceLabel(caps.plugins.current, provider), ...row([[key, totals]]) };
+        return {
+          key,
+          model,
+          provider: instanceLabel(caps.plugins.present ? caps.plugins.use : undefined, provider),
+          ...row([[key, totals]]),
+        };
       });
   }
 
   /** 实现了余额查询的服务商各查一次：一个币种一项，查不到的写明原因 */
   async function balances(): Promise<InfoItem[]> {
     const providers = new Map<string, (signal: AbortSignal) => Promise<LLMBalance[]>>();
-    for (const { instance } of caps.llm.all()) {
+    for (const { use: instance } of caps.llm.list()) {
       const { balance } = instance;
       if (balance && !providers.has(instance.providerId)) {
         providers.set(instance.providerId, signal => balance.call(instance, signal));
@@ -261,7 +266,7 @@ async function run(caps: Caps): Promise<void> {
     }
     const items = await Promise.all(
       [...providers].map(async ([provider, balance]): Promise<InfoItem[]> => {
-        const label = instanceLabel(caps.plugins.current, provider);
+        const label = instanceLabel(caps.plugins.present ? caps.plugins.use : undefined, provider);
         try {
           const list = await balance(AbortSignal.timeout(BALANCE_TIMEOUT_MS));
           return list.map(({ currency, amount }) => ({ label: `${label}（${currency}）`, value: amount }));
@@ -285,7 +290,7 @@ async function run(caps: Caps): Promise<void> {
   ];
 
   const definePage = (withBalance: boolean) =>
-    webui.definePage({
+    webui.use.definePage({
       key: PAGE_KEY,
       title: '用量统计',
       icon: 'chart-column',
@@ -347,7 +352,7 @@ async function run(caps: Caps): Promise<void> {
     });
 
   // 有没有服务商实现了余额查询，llm 的提供者增减时重看：变了就重新登记这一页（同一个 key 是替换）
-  const anyBalance = () => caps.llm.all().some(({ instance }) => instance.balance !== undefined);
+  const anyBalance = () => caps.llm.list().some(({ use: instance }) => instance.balance !== undefined);
   let hasBalance = anyBalance();
   let page = definePage(hasBalance);
   const recheck = (name: string) => {
@@ -355,14 +360,14 @@ async function run(caps: Caps): Promise<void> {
     hasBalance = !hasBalance;
     page = definePage(hasBalance);
   };
-  events.on('service:changed', recheck);
+  events.use.on('service:changed', recheck);
 
-  events.on('llm:usage', usage => {
+  events.use.on('llm:usage', usage => {
     const line: LedgerLine = { at: Date.now(), ...usage };
     add(line);
     writing = writing
       .then(() => appendFile(file, `${JSON.stringify(line)}\n`))
-      .catch(err => logger.warn(`用量账本追加失败 (${file}):`, err));
+      .catch(err => logger.use.warn(`用量账本追加失败 (${file}):`, err));
     // 只作废三张表：「余额」不跟着每次调用重查
     for (const component of ['days', 'weeks', 'models']) page.invalidate(component);
   });

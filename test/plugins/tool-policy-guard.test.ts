@@ -33,7 +33,7 @@ async function registeredTools(plugin: PluginDefinition): Promise<RegisteredTool
   // 没激活时工具表为空，「只读工具保持 public」这类断言会空转变绿
   if (app.plugins.getPlugin(plugin.name)?.state !== 'active') throw new Error(`${plugin.name} 未激活`);
   const { tools } = app.bind({ tools: toolsService });
-  const all: RegisteredTool[] = tools.current?.getAll() ?? [];
+  const all: RegisteredTool[] = tools.use.getAll() ?? [];
   await app.stop();
   return all;
 }

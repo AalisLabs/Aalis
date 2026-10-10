@@ -14,7 +14,7 @@
 import type { EmbeddingService } from '@aalis/api-embedding';
 import type { LLMModel, ModelRef } from '@aalis/api-llm';
 import type { PlatformAdapter } from '@aalis/api-platform';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 
 import {
   inferEntityHierarchy,
@@ -108,7 +108,7 @@ export class RelationService {
     /** 审计与 consolidate 过程日志；省略则 fallback 到 console（单测） */
     private readonly logger?: Logger,
     /** 相似度召回用；省略或提供者缺席时 consolidate 自动降级为纯文本路径 */
-    private readonly embedding?: ServiceRef<EmbeddingService>,
+    private readonly embedding?: ServiceSelection<EmbeddingService>,
   ) {}
 
   /** 写 audit 日志；有 logger 走 logger.warn，否则 fallback console.warn（主要照顾单元测试）。 */
@@ -2239,7 +2239,7 @@ export class RelationService {
     opts: {
       autoLink?: boolean;
       /** 可选：传入后 consolidate 末尾会调用 LLM 做别名核验与摘要重写 */
-      llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean };
+      llm?: { models: ServiceSelection<LLMModel>; modelRef: ModelRef; disableThinking?: boolean };
       /** 调用来源标识，仅用于 getLastConsolidateInfo() 报告。默认 api。 */
       triggerSource?: 'manual' | 'eviction' | 'api';
       /**
@@ -2259,7 +2259,7 @@ export class RelationService {
        * 警告：临时禁用了某个 adapter 时（白名单收缩），这里会把对应平台的
        * **真实历史 person** 误判为 fake。白名单为空时本步骤自动跳过以保护历史数据。
        */
-      platform?: ServiceRef<PlatformAdapter>;
+      platform?: ServiceSelection<PlatformAdapter>;
     } = {},
   ): Promise<{
     aliasCandidates: Array<{
@@ -2518,7 +2518,7 @@ export class RelationService {
       // 设计与 event ensureEmbedding 完全对称：当 EntityNode.embeddingHash 与
       // embeddingHashFor(computeEntityEmbeddingHash(name, summary, entityKind), modelId)
       // 不一致或缺失时，调 embed 服务一次，写回 store + 同步本地副本。embedding 服务缺失则全部 skip。
-      const embedding = this.embedding?.current;
+      const embedding = this.embedding?.present ? this.embedding.use : undefined;
       // Entity 宽召回的 embedding cos 阈值：name+summary embed 后 cos≥该值即作为额外候选
       const entityCosThreshold = 0.86;
       const embedCache = new Map<string, number[] | null>();
@@ -3308,7 +3308,7 @@ export class RelationService {
       const r = await this._consolidateEventDuplicates({
         llmModel,
         disableThinking: llmDisableThinking,
-        embedding: this.embedding?.current,
+        embedding: this.embedding?.present ? this.embedding.use : undefined,
         dryRun: false,
       });
       eventDuplicateCandidates = r.candidates.length;
@@ -3755,7 +3755,7 @@ export class RelationService {
    * 但不写图，仅返回候选 + LLM 判定。
    */
   async findEventDuplicates(
-    opts: { llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean } } = {},
+    opts: { llm?: { models: ServiceSelection<LLMModel>; modelRef: ModelRef; disableThinking?: boolean } } = {},
   ): Promise<{
     candidates: Array<{
       aId: string;
@@ -3776,7 +3776,7 @@ export class RelationService {
     embeddingAvailable: boolean;
   }> {
     const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, opts.llm.modelRef) : undefined;
-    const embedding = this.embedding?.current;
+    const embedding = this.embedding?.present ? this.embedding.use : undefined;
     const r = await this._consolidateEventDuplicates({
       llmModel,
       disableThinking: opts.llm?.disableThinking ?? true,

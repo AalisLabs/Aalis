@@ -1,6 +1,6 @@
 import { doctor } from '@aalis/api-doctor';
 import { publicWorkUrl, publish, type SurfaceBinding } from '@aalis/api-publish';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { webuiServer } from '@aalis/api-webui';
 import { appService, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
@@ -30,32 +30,32 @@ export default definePlugin({
     doctor: optional(doctor),
   },
   async apply(caps) {
-    const cfg = resolveConfig(parseConfig(configSchema, caps.config, caps.logger));
-    const release = claimWorksTarget(caps.app.require(), cfg);
-    caps.lifecycle.onDispose(release);
+    const cfg = resolveConfig(parseConfig(configSchema, caps.config.use, caps.logger.use));
+    const release = claimWorksTarget(caps.app.use, cfg);
+    caps.lifecycle.use.onDispose(release);
     try {
-      const storage = createStorageGateway(caps.storage);
-      const store = new WorksStore(storage, caps.lifecycle.id);
+      const storage = caps.storage.use;
+      const store = new WorksStore(storage, caps.lifecycle.use.id);
       await store.load();
       await store.bindScope(cfg);
       const client = new PagesClient({
         accountId: cfg.accountId,
         apiToken: cfg.apiToken,
         projectName: cfg.projectName,
-        logger: caps.logger,
-        signal: caps.lifecycle.signal,
+        logger: caps.logger.use,
+        signal: caps.lifecycle.use.signal,
       });
       let binding: SurfaceBinding | undefined;
       const deployer = new WorksDeployer({
         config: cfg,
         store,
         client,
-        publish: () => caps.publish.current,
+        publish: () => (caps.publish.present ? caps.publish.use : undefined),
         live: ids => binding?.live(ids),
-        logger: caps.logger,
-        signal: caps.lifecycle.signal,
+        logger: caps.logger.use,
+        signal: caps.lifecycle.use.signal,
       });
-      binding = caps.publish.attachSurface({
+      binding = caps.publish.use.attachSurface({
         name: cfg.targetId,
         label: cfg.siteTitle,
         baseUrl: `${cfg.siteOrigin}${cfg.basePath}`,
@@ -65,15 +65,15 @@ export default definePlugin({
       caps.publish.follow(() => {
         deployer.providerChanged();
       });
-      caps.publish.onChange(() => deployer.change());
-      registerWorksPage({ webui: caps.webui, publish: caps.publish, store, deployer, config: cfg });
-      registerWorksDoctor({ doctor: caps.doctor, config: cfg, deployer, store });
-      caps.lifecycle.onDrain(async () => {
+      caps.publish.use.onChange(() => deployer.change());
+      registerWorksPage({ webui: caps.webui.use, publish: caps.publish, store, deployer, config: cfg });
+      registerWorksDoctor({ doctor: caps.doctor.use, config: cfg, deployer, store });
+      caps.lifecycle.use.onDrain(async () => {
         await deployer.stop();
         release();
       }, '作品站停止部署与本机定时器');
       // Do not perform Pages requests during apply/startup barrier.
-      caps.events.on('app:started', () => deployer.start());
+      caps.events.use.on('app:started', () => deployer.start());
     } catch (error) {
       release();
       throw error;

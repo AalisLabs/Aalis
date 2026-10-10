@@ -8,6 +8,7 @@ import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { registerWorksPage } from '../../packages/plugin-works-site/src/webui.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 作品站页：经 webui-server 的真实登记表登记、取数与调动作。缩略图交发布服务给的存储地址（宿主换成 /api/media），
@@ -58,7 +59,7 @@ async function fixture() {
   });
   const thumbnailUri = vi.fn((work: string) => `public:/${work}/thumb.png`);
   const withdraw = vi.fn(async () => ({ ok: true as const }));
-  const publish = { current: { thumbnailUri, withdraw } } as unknown as BoundPublish;
+  const publish = fixedRef({ thumbnailUri, withdraw } as unknown as BoundPublish);
   let health: { ok: true } | { ok: false; reason: string } = { ok: true };
   const deployer = {
     health: () => health,
@@ -70,13 +71,19 @@ async function fixture() {
   const app = new App({ name: 'T', logLevel: 'error' });
   const pages = pageHost();
   running.push({ app, pages });
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   await app.plugin(
     definePlugin({
       name: 'zz-works-page',
       uses: { webui: webuiServer },
       apply: ({ webui }) =>
-        registerWorksPage({ webui, publish, store, deployer: deployer as unknown as WorksDeployer, config }),
+        registerWorksPage({
+          webui: webui.use,
+          publish,
+          store,
+          deployer: deployer as unknown as WorksDeployer,
+          config,
+        }),
     }),
   );
   await app.plugins.idle();

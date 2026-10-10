@@ -1,5 +1,5 @@
 import { cronEngine } from '@aalis/api-cron-engine';
-import { createStorageGateway, isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
 import {
@@ -132,7 +132,7 @@ export interface SchedulerService {
   removeJob(name: string): boolean;
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const scheduler = defineService<SchedulerService>('scheduler');
 
 // ──────────── 插件元数据 ────────────
@@ -279,7 +279,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, caps.config, caps.logger);
+  const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const { cronEngine, storage, webui, events, lifecycle, logger, provide, tools } = caps;
   const config = resolveConfig(cfg);
 
@@ -292,7 +292,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
-  const storageGateway = createStorageGateway(storage);
+  const storageGateway = storage.use;
   const persistUri = config.persistPath;
   /**
    * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整表，
@@ -353,7 +353,7 @@ async function run(caps: Caps): Promise<void> {
     return `已保存任务 ${name}${persistNote()}`;
   }
 
-  const jobsPage = webui.definePage({
+  const jobsPage = webui.use.definePage({
     key: 'scheduler',
     title: '计划任务',
     icon: 'clock',
@@ -488,7 +488,7 @@ async function run(caps: Caps): Promise<void> {
       try {
         raw = (await storageGateway.readFile(persistUri, 'utf-8')) as string;
       } catch (err) {
-        // 只有「文件不存在」算全新；网关的「未知存储根」等其它失败不能当成空表
+        // 只有「文件不存在」算全新；「未知存储根」等其它失败不能当成空表
         if (isStorageNotFound(err)) return [];
         throw err;
       }
@@ -509,7 +509,7 @@ async function run(caps: Caps): Promise<void> {
           // `saveDynamicJobs` 的 JSON.stringify 会丢掉 undefined 键，匿名创建的任务落盘后
           // 与无 actor 字段的老任务同形；此处补 owner 即等于给它开一条提权通道。
           // 「创建者未知」不等于「创建者是 owner」。
-          logger.warn(
+          logger.use.warn(
             `持久化任务 "${j.name}" 缺少 actor 身份，已按匿名（最低权限）运行；如需更高权限请在 WebUI 中显式设置创建者身份`,
           );
         }
@@ -529,9 +529,9 @@ async function run(caps: Caps): Promise<void> {
       });
     } catch (err) {
       loadFailed = true;
-      logger.warn(`加载持久化任务失败，本次运行不再写入该文件: ${err}`);
+      logger.use.warn(`加载持久化任务失败，本次运行不再写入该文件: ${err}`);
       // 里面的任务全没加载、新改动也不落盘：只记日志用户看不到
-      webui.notify({
+      webui.use.notify({
         id: 'jobs-load',
         level: 'error',
         title: `计划任务文件 ${persistUri} 读不出来，里面的任务没有加载`,
@@ -554,7 +554,7 @@ async function run(caps: Caps): Promise<void> {
   let saveChain: Promise<void> = Promise.resolve();
   function saveDynamicJobs(): void {
     if (loadFailed) {
-      logger.warn(`持久化任务上次加载失败，跳过写入以免覆盖原有任务（本次改动仅在内存生效）: ${persistUri}`);
+      logger.use.warn(`持久化任务上次加载失败，跳过写入以免覆盖原有任务（本次改动仅在内存生效）: ${persistUri}`);
       return;
     }
     const jobs = [...dynamicJobs.values()];
@@ -563,10 +563,10 @@ async function run(caps: Caps): Promise<void> {
       .then(() => storageGateway.writeFile(persistUri, payload))
       .then(
         () => {
-          logger.debug(`已持久化 ${jobs.length} 个动态任务`);
+          logger.use.debug(`已持久化 ${jobs.length} 个动态任务`);
         },
         err => {
-          logger.warn(`持久化任务失败: ${err}`);
+          logger.use.warn(`持久化任务失败: ${err}`);
         },
       );
   }
@@ -581,14 +581,14 @@ async function run(caps: Caps): Promise<void> {
     const jobName = rt.config.name;
 
     try {
-      logger.info(`执行任务: ${jobName}`);
-      await events.emit('scheduler:job:start', jobName);
+      logger.use.info(`执行任务: ${jobName}`);
+      await events.use.emit('scheduler:job:start', jobName);
 
       // 通用触发事件：供 workflow 等订阅者使用
       // （任务本身仍走 inbound:message 投递，这里同时广播 trigger:fired，
       //  便于平滑迁移到 plugin-workflow）
       // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 api-workflow 增广，scheduler 不直接依赖
-      await events.emit('trigger:fired' as any, {
+      await events.use.emit('trigger:fired' as any, {
         source: `scheduler:${jobName}`,
         type: rt.config.cron ? 'cron' : 'interval',
         payload: {
@@ -617,17 +617,17 @@ async function run(caps: Caps): Promise<void> {
         message.actor = { platform: actorPlatform, userId: actorUserId };
       }
 
-      await events.emit('inbound:message', message);
+      await events.use.emit('inbound:message', message);
 
       rt.lastRun = Date.now();
       rt.runCount++;
       rt.lastResult = '成功';
-      await events.emit('scheduler:job:done', jobName);
+      await events.use.emit('scheduler:job:done', jobName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rt.lastResult = `失败: ${msg}`;
-      logger.error(`任务 "${jobName}" 执行失败: ${msg}`);
-      await events.emit('scheduler:job:error', jobName, msg);
+      logger.use.error(`任务 "${jobName}" 执行失败: ${msg}`);
+      await events.use.emit('scheduler:job:error', jobName, msg);
     } finally {
       rt.running = false;
       jobsPage.invalidate();
@@ -649,9 +649,7 @@ async function run(caps: Caps): Promise<void> {
       // 每次求值取当前提供者：cron-engine 换人后不会算在旧实例上。时区无效时它同步抛错：这只是展示用的估计，
       // 按「不知道」处理，任务排不上的原因由订阅失败的提示报出
       try {
-        return (
-          cronEngine.require().nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0
-        );
+        return cronEngine.use.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0;
       } catch {
         return 0;
       }
@@ -686,7 +684,7 @@ async function run(caps: Caps): Promise<void> {
     // 创建口与 pauseJob 都已拒绝这种组合，但存量持久化文件里可能还留着；启动时告警并按未暂停处理
     // （要停掉它请改 enabled 或直接删除）。
     if (jobCfg.runAt && !jobCfg.cron && !jobCfg.interval && jobCfg.paused) {
-      logger.warn(`任务 "${jobCfg.name}" 是一次性任务却带 paused，暂停对其无可用语义；已按未暂停处理`);
+      logger.use.warn(`任务 "${jobCfg.name}" 是一次性任务却带 paused，暂停对其无可用语义；已按未暂停处理`);
       jobCfg.paused = false;
     }
 
@@ -717,7 +715,7 @@ async function run(caps: Caps): Promise<void> {
     if (jobCfg.cron && jobCfg.enabled) {
       try {
         const tz = jobCfg.timeZone?.trim() || undefined;
-        rt.cronDispose = cronEngine.require().subscribe(
+        rt.cronDispose = cronEngine.use.subscribe(
           jobCfg.cron,
           () => {
             if (rt.paused || !rt.config.enabled) return;
@@ -728,11 +726,11 @@ async function run(caps: Caps): Promise<void> {
         );
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        logger.warn(`任务 ${jobCfg.name} cron 订阅失败: ${reason}`);
+        logger.use.warn(`任务 ${jobCfg.name} cron 订阅失败: ${reason}`);
         const fromConfig = configJobNames.has(jobCfg.name);
         unscheduled.set(
           jobCfg.name,
-          webui.notify({
+          webui.use.notify({
             id: `unscheduled:${jobCfg.name}`,
             level: 'error',
             title: `计划任务「${jobCfg.name}」没有排上，不会运行`,
@@ -775,7 +773,7 @@ async function run(caps: Caps): Promise<void> {
           arm(Math.min(delay, MAX_TIMEOUT_MS));
         }
       } else {
-        logger.warn(`任务 ${jobCfg.name} 的 runAt 无法解析: ${jobCfg.runAt}`);
+        logger.use.warn(`任务 ${jobCfg.name} 的 runAt 无法解析: ${jobCfg.runAt}`);
       }
     }
 
@@ -788,7 +786,7 @@ async function run(caps: Caps): Promise<void> {
         : jobCfg.runAt
           ? `(runAt: ${jobCfg.runAt})`
           : '(no schedule)';
-    logger.info(`任务已注册: ${jobCfg.name} ${scheduleHint}`);
+    logger.use.info(`任务已注册: ${jobCfg.name} ${scheduleHint}`);
   }
 
   /** 一次性任务执行完后的清理：动态任务直接删除；静态 yaml 任务仅标记 enabled=false */
@@ -801,14 +799,14 @@ async function run(caps: Caps): Promise<void> {
       dynamicJobs.delete(jobName);
       saveDynamicJobs();
       jobsPage.invalidate();
-      logger.info(`一次性任务已执行完毕并删除: ${jobName}`);
+      logger.use.info(`一次性任务已执行完毕并删除: ${jobName}`);
       return;
     }
     // 静态配置任务：不删，仅标记 enabled=false（yaml 才是权威源）
     rt.config.enabled = false;
     rt.paused = true;
     jobsPage.invalidate();
-    logger.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
+    logger.use.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
   }
 
   // 静态 YAML 任务的「创建者」是编辑配置文件的人——那本身就是 owner 行为，故缺省补 owner。
@@ -821,7 +819,7 @@ async function run(caps: Caps): Promise<void> {
     if ((p && !u) || (!p && u)) {
       // 半指定：只写了一半就当没写，会被整体替换成 owner —— 那与作者意图相反
       // （写 actor 通常是为了**降权**）。不静默升权，也不因此拒绝启动。
-      logger.warn(
+      logger.use.warn(
         `任务 "${job.name}" 只写了 actorPlatform/actorUserId 其中一个，两者必须成对；已按未指定处理（owner）`,
       );
     }
@@ -836,7 +834,7 @@ async function run(caps: Caps): Promise<void> {
     }
   }
   if (persisted.length > 0) {
-    logger.info(`已加载 ${persisted.length} 个持久化任务`);
+    logger.use.info(`已加载 ${persisted.length} 个持久化任务`);
   }
 
   // ── 注册 scheduler 服务 ──
@@ -844,7 +842,7 @@ async function run(caps: Caps): Promise<void> {
   /** 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改 */
   function rejectInvalidCron(job: SchedulerJobConfig): void {
     if (!job.cron) return;
-    const checked = cronEngine.require().validate(job.cron);
+    const checked = cronEngine.use.validate(job.cron);
     if (!checked.ok) throw new Error(checked.reason);
   }
 
@@ -872,7 +870,7 @@ async function run(caps: Caps): Promise<void> {
       if (!rt) return false;
       // 一次性任务被暂停会永久卡住（到点的定时器直接跳过且不重排），与创建口同一判据：直接拒绝
       if (rt.config.runAt && !rt.config.cron && !rt.config.interval) {
-        logger.warn(`一次性任务不能暂停: ${jobName}（只能删除重建）`);
+        logger.use.warn(`一次性任务不能暂停: ${jobName}（只能删除重建）`);
         return false;
       }
       rt.paused = true;
@@ -882,7 +880,7 @@ async function run(caps: Caps): Promise<void> {
         saveDynamicJobs();
       }
       jobsPage.invalidate();
-      logger.info(`任务已暂停: ${jobName}`);
+      logger.use.info(`任务已暂停: ${jobName}`);
       return true;
     },
     resumeJob(jobName) {
@@ -896,7 +894,7 @@ async function run(caps: Caps): Promise<void> {
         saveDynamicJobs();
       }
       jobsPage.invalidate();
-      logger.info(`任务已恢复: ${jobName}`);
+      logger.use.info(`任务已恢复: ${jobName}`);
       return true;
     },
     async triggerJob(jobName) {
@@ -942,22 +940,22 @@ async function run(caps: Caps): Promise<void> {
       }
       clearUnscheduled(jobName);
       jobsPage.invalidate();
-      logger.info(`任务已删除: ${jobName}`);
+      logger.use.info(`任务已删除: ${jobName}`);
       return true;
     },
   };
 
-  provide(scheduler, service);
+  provide.use(scheduler, service);
 
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
 
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'scheduler',
     label: '定时任务',
     description: '创建、查看和取消定时/周期性自主行动计划',
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1057,7 +1055,7 @@ async function run(caps: Caps): Promise<void> {
     },
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1121,7 +1119,7 @@ async function run(caps: Caps): Promise<void> {
     },
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1146,7 +1144,7 @@ async function run(caps: Caps): Promise<void> {
     },
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1172,7 +1170,7 @@ async function run(caps: Caps): Promise<void> {
     },
   });
 
-  tools.register({
+  tools.use.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1199,7 +1197,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 清理 ──
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     for (const rt of runtimes.values()) {
       if (rt.timer) clearInterval(rt.timer);
       if (rt.cronDispose) rt.cronDispose();
@@ -1207,7 +1205,7 @@ async function run(caps: Caps): Promise<void> {
     runtimes.clear();
   });
 
-  logger.info(`计划任务调度器已启动 (${config.jobs.length} 个任务)`);
+  logger.use.info(`计划任务调度器已启动 (${config.jobs.length} 个任务)`);
 }
 
 // ──────────── 辅助函数 ────────────

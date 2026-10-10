@@ -47,7 +47,7 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
       ],
     });
   const svcOf = (): WorkflowService => {
-    const svc = app.bind({ services }).services.get(workflow);
+    const svc = app.bind({ services }).services.use.get(workflow);
     if (!svc) throw new Error('workflow 服务未注册');
     return svc;
   };
@@ -56,7 +56,7 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
 
   /** 跑一次只含一个 tool 节点的手动工作流，等它跑完 */
   const runOnce = async () => {
-    app.bind({ tools: toolsService }).tools.register({
+    app.bind({ tools: toolsService }).tools.use.register({
       definition: {
         type: 'function',
         function: { name: 'zz_noop', description: '空操作', parameters: { type: 'object', properties: {} } },
@@ -169,8 +169,7 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
 
     const names = app
       .bind({ tools: toolsService })
-      .tools.require()
-      .getAll()
+      .tools.use.getAll()
       .map(t => t.name);
     expect(names).toContain('workflow_define');
     expect(names).toContain('workflow_run');

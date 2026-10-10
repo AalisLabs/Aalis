@@ -11,7 +11,7 @@
 import type { SessionProtocolService } from '@aalis/api-session-protocol';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { ErrorResponse } from '@aalis/api-webui';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import type { PageFiles } from '../page-files.js';
@@ -21,7 +21,7 @@ import { pipeToResponse } from './pipe-to-response.js';
 export function registerFileRoutes(
   expressApp: express.Express,
   storage: StorageService,
-  issuers: { sessions: Pick<ServiceRef<SessionProtocolService>, 'current'>; pages: PageFiles },
+  issuers: { sessions: Pick<ServiceSelection<SessionProtocolService>, 'present' | 'use'>; pages: PageFiles },
   logger: Logger,
   gate: RouteGate,
 ): void {
@@ -56,7 +56,9 @@ export function registerFileRoutes(
   route(expressApp, 'GET /api/session-file', gate(), (req, res) =>
     sendAttachment(
       res,
-      issuers.sessions.current?.resolveFile(String(req.query.sessionId ?? ''), String(req.query.handle ?? '')),
+      issuers.sessions.present
+        ? issuers.sessions.use.resolveFile(String(req.query.sessionId ?? ''), String(req.query.handle ?? ''))
+        : undefined,
       '会话文件',
     ),
   );

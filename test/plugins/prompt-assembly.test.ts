@@ -8,6 +8,7 @@ import {
 } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // 测试从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration
 // merging 不在此路径生效——vitest 不做类型检查，用 never 断言绕过键约束。
@@ -39,14 +40,14 @@ async function boot(): Promise<Harness> {
   await registerHubs(app);
   const host = app.bind({ contributions, logger });
   return {
-    caps: { contributions: { collect: point => host.contributions.collect(point) }, logger: host.logger },
+    caps: { contributions: fixedRef({ collect: point => host.contributions.use.collect(point) }), logger: host.logger },
     async contribute(pluginName, contribution) {
       await app.plugin(
         definePlugin({
           name: pluginName,
           uses: { contributions },
           apply(caps) {
-            caps.contributions.contribute(POINT, contribution as never);
+            caps.contributions.use.contribute(POINT, contribution as never);
           },
         }),
       );
@@ -270,7 +271,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
   it('未知 anchor：产物丢弃并 warn 点名，其余贡献照常物化', async () => {
     const h = await boot();
     const warns: string[] = [];
-    vi.spyOn(h.caps.logger, 'warn').mockImplementation((msg: unknown) => {
+    vi.spyOn(h.caps.logger.use, 'warn').mockImplementation((msg: unknown) => {
       warns.push(String(msg));
     });
     await h.contribute('p-bad', spec('b', 'bogus-anchor', 'BAD'));
@@ -285,7 +286,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
   it('build 超时：该贡献本轮缺席并 warn，其余照常；键未物化下一轮重试', async () => {
     const h = await boot();
     const warns: string[] = [];
-    vi.spyOn(h.caps.logger, 'warn').mockImplementation((msg: unknown) => {
+    vi.spyOn(h.caps.logger.use, 'warn').mockImplementation((msg: unknown) => {
       warns.push(String(msg));
     });
     let stuck = true;

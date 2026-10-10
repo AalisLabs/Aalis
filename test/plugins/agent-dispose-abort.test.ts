@@ -4,7 +4,7 @@ import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, definePlugin, events, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -42,14 +42,14 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     // 出站序列：中止路径只发 stream done，未中止则 delta → done → message（回复照常投递）。
     const host = app.bind({ events, agent: agentService });
     const seen: string[] = [];
-    host.events.on('outbound:stream', c => {
+    host.events.use.on('outbound:stream', c => {
       seen.push(c.done ? 'stream:done' : `stream:delta(${c.contentDelta})`);
     });
-    host.events.on('outbound:message', m => {
+    host.events.use.on('outbound:message', m => {
       seen.push(`message(${m.content})`);
     });
 
-    const turn = host.agent.require().handleMessage({
+    const turn = host.agent.use.handleMessage({
       content: '你好',
       sessionId: 'test:dispose-abort',
       platform: 'test',
@@ -83,7 +83,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
       name: 'zz-prompt-cancel-probe',
       uses: { contributions },
       apply({ contributions }) {
-        contributions.contribute('agent:prompt', {
+        contributions.use.contribute('agent:prompt', {
           id: 'hang-until-abort',
           anchor: 'turn-context',
           build: (view: PromptContributionView) => {
@@ -116,15 +116,15 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
 
     const host = app.bind({ events, agent: agentService });
     const outbound: string[] = [];
-    host.events.on('outbound:stream', c => {
+    host.events.use.on('outbound:stream', c => {
       outbound.push(c.done ? 'stream:done' : 'stream:delta');
     });
-    host.events.on('outbound:message', () => {
+    host.events.use.on('outbound:message', () => {
       outbound.push('message');
     });
 
     const sessionId = 'test:prompt-abort';
-    const agent = host.agent.require();
+    const agent = host.agent.use;
     const turn = agent.handleMessage({
       content: '你好',
       sessionId,
@@ -173,16 +173,16 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugins.idle();
-    // 覆盖胜者以便观测「memory 提供者」自己的 onDispose；存储仍交给 inmemory。
-    const inner = app.bind({ memory }).memory.require();
+    // 覆盖胜者以便观测「memory 提供者」自己的 onDispose；存储仍交给 inmemory 的实例本身（业务句柄会转到新胜者，即自己）
+    const inner = app.bind({ services }).services.use.get(memory)!;
     await app.plugin(
       definePlugin({
         name: 'zz-memory-dispose-tap',
         uses: { provide, lifecycle },
         provides: [memory],
         apply({ provide, lifecycle }) {
-          provide(memory, inner, { priority: 1000 });
-          lifecycle.onDispose(() => {
+          provide.use(memory, inner, { priority: 1000 });
+          lifecycle.use.onDispose(() => {
             memoryProviderOpen = false;
             order.push('memory:onDispose');
           });
@@ -195,12 +195,12 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     expect(app.plugins.getPlugin('zz-memory-dispose-tap')?.state).toBe('active');
 
     const host = app.bind({ events, hooks, agent: agentService, memory });
-    host.hooks.middleware('agent:turn:after', async (data, next) => {
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       await next();
       if (data.outcome !== 'aborted') return;
       memoryOpenAtAbort = memoryProviderOpen;
       try {
-        await host.memory.require().getHistory(data.sessionId, 50);
+        await host.memory.use.getHistory(data.sessionId, 50);
       } catch {
         memoryOpenAtAbort = false;
       }
@@ -208,8 +208,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     });
 
     const sessionId = 'test:stop-abort';
-    const turn = host.agent
-      .require()
+    const turn = host.agent.use
       .handleMessage({
         content: 'in-flight',
         sessionId,
@@ -259,14 +258,14 @@ describe('plugin-agent 提交点前被中止的回合不落库、不外发', () 
       uses: { hooks },
       apply({ hooks }) {
         // 只卡第一次进入（第一个回合）；之后的回合直接放行
-        hooks.middleware('agent:reply:before', async (_data, next) => {
+        hooks.use.middleware('agent:reply:before', async (_data, next) => {
           if (gated++ === 0) {
             enteredResolve();
             await gate;
           }
           await next();
         });
-        hooks.middleware('agent:turn:after', async (data, next) => {
+        hooks.use.middleware('agent:turn:after', async (data, next) => {
           outcomes.push(data.outcome);
           await next();
         });
@@ -287,14 +286,14 @@ describe('plugin-agent 提交点前被中止的回合不落库、不外发', () 
 
     const host = app.bind({ events, agent: agentService, memory });
     const seen: string[] = [];
-    host.events.on('outbound:stream', c => {
+    host.events.use.on('outbound:stream', c => {
       if (c.done) seen.push('stream:done');
     });
-    host.events.on('outbound:message', m => {
+    host.events.use.on('outbound:message', m => {
       seen.push(`message(${m.content})`);
     });
     const assistantHistory = async (sessionId: string) =>
-      (await host.memory.require().getHistory(sessionId, 50)).filter(m => m.role === 'assistant').map(m => m.content);
+      (await host.memory.use.getHistory(sessionId, 50)).filter(m => m.role === 'assistant').map(m => m.content);
     return { app, host, entered, release: () => releaseGate(), outcomes, seen, assistantHistory };
   }
 
@@ -303,7 +302,7 @@ describe('plugin-agent 提交点前被中止的回合不落库、不外发', () 
       { content: '被掐掉的回复' },
     ]);
     const sessionId = 'test:post-stream-abort';
-    const agent = host.agent.require();
+    const agent = host.agent.use;
     const turn = agent.handleMessage({
       content: '你好',
       sessionId,
@@ -328,7 +327,7 @@ describe('plugin-agent 提交点前被中止的回合不落库、不外发', () 
       { content: '回复B' },
     ]);
     const sessionId = 'test:latest-wins-post-stream';
-    const agent = host.agent.require();
+    const agent = host.agent.use;
     const msg = (content: string) => ({
       content,
       sessionId,

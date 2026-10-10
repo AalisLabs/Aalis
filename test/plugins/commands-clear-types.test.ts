@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
-import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -44,17 +44,17 @@ async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {
     await app.plugin(storageLocal, {});
   }
   const clearSession = vi.fn(async (_sessionId: string) => {});
-  host.provide(memory, { clearSession, clearAll: async () => {} } as unknown as MemoryService);
-  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  host.provide.use(memory, { clearSession, clearAll: async () => {} } as unknown as MemoryService);
+  host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   // /help 按权限服务列出调用者能用的指令；这里测的是类型说明，给一个放行的替身
-  host.provide(authority, { authorize: () => null } as unknown as AuthorityService);
+  host.provide.use(authority, { authorize: () => null } as unknown as AuthorityService);
   if (opts.vectorHandler) {
     await app.plugin(
       definePlugin({
         name: 'vector-probe',
         uses: { hooks },
         apply({ hooks }) {
-          hooks.middleware('memory:clear', async (data, next) => {
+          hooks.use.middleware('memory:clear', async (data, next) => {
             if (!data.types || data.types.includes('vector'))
               data.results.push({ source: 'vector-probe', type: 'vector', success: true, message: '向量已清' });
             await next();
@@ -65,7 +65,7 @@ async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {
   }
   await app.plugin(commandsPlugin, {});
   await app.plugins.idle();
-  const registry = (host.commands as BoundCommands).current as unknown as CommandRegistry;
+  const registry = host.commands.use as unknown as CommandRegistry;
   const guardCalls: string[] = [];
   registry.setExecutionGuard(async ctx => {
     guardCalls.push(ctx.name);

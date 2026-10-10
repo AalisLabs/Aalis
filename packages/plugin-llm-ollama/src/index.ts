@@ -8,7 +8,7 @@ import type {
   ThinkingLevels,
 } from '@aalis/api-llm';
 import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
-import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
+import { type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import {
   type BoundOf,
@@ -1236,7 +1236,7 @@ export default definePlugin({
 });
 
 async function start({ config, logger, lifecycle, provide, events, proc }: Caps): Promise<void> {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   const customModels = parseCustomModels(cfg.customModels);
   const modelCapabilities = parseModelCapabilities(cfg.modelCapabilities);
   const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
@@ -1246,7 +1246,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     throw missingConfigError('customModels', '关闭 discoverModels 时必填');
   }
 
-  const client = new OllamaClient(cfg, logger, createProcessGateway(proc));
+  const client = new OllamaClient(cfg, logger.use, proc.use);
   const baseLabel = `Ollama (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
   const shownBaseUrl = redactUrl(cfg.baseUrl);
 
@@ -1261,22 +1261,22 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     if (registered.has(modelId)) return false;
     const capabilities = resolveCapabilities(modelId, modelCapabilities.get(modelId), providerCapabilities, detected);
     if (capabilities.length === 0) {
-      logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
+      logger.use.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
       return false;
     }
     const handle = new OllamaModelHandle(
       client,
       modelId,
-      lifecycle.id,
+      lifecycle.use.id,
       cfg.contextLength,
       cfg.maxTokens,
       capabilities,
       capabilities.includes(Thinking) ? { levels: THINKING_LEVELS, default: cfg.thinking } : undefined,
       refresh,
     );
-    const dispose = provide(llm, metered(handle, events), {
+    const dispose = provide.use(llm, metered(handle, events.use), {
       label: `${baseLabel} / ${modelId}`,
-      entryId: `${lifecycle.id}/${modelId}`,
+      entryId: `${lifecycle.use.id}/${modelId}`,
     });
     registered.set(modelId, dispose);
     return true;
@@ -1288,7 +1288,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     try {
       d();
     } catch (err) {
-      logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
+      logger.use.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
     }
     registered.delete(modelId);
   }
@@ -1298,7 +1298,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     const remoteSet = new Set(remoteIds);
     for (const cm of customModels) {
       if (remoteSet.has(cm)) {
-        logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+        logger.use.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
       }
     }
     return [...remoteIds, ...customModels.filter(id => !remoteSet.has(id))];
@@ -1309,12 +1309,12 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   // 发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
   let discoveryError: string | undefined;
   const remoteIds = cfg.discoverModels
-    ? await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
+    ? await client.fetchRemoteModelIds(lifecycle.use.signal).catch((err: unknown) => {
         discoveryError = err instanceof Error ? err.message : String(err);
         return [];
       })
     : [];
-  lifecycle.signal.throwIfAborted();
+  lifecycle.use.signal.throwIfAborted();
   const initialIds = withCustomModels(remoteIds);
   // 一个模型都没有时抛配置错误，原因成为实例的错误信息；否则只剩 core 的「声明 provides [llm] 但未实际注册」。
   // 提示写在原因之前：原因里可能带着一段响应体
@@ -1325,10 +1325,10 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
         : `Ollama 已连接 ${shownBaseUrl}，但未发现任何可用模型；先用 ollama pull 下载模型，或在 customModels 里写明要用的模型`,
     );
   }
-  if (discoveryError) logger.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
+  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
   // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
-  const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id, lifecycle.signal)));
-  lifecycle.signal.throwIfAborted();
+  const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id, lifecycle.use.signal)));
+  lifecycle.use.signal.throwIfAborted();
   for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
   // 模型都被当作非对话模型跳过（如只装了嵌入模型）时同样抛配置错误。只有 /api/show 答复过才会跳过，所以是已连接
   if (registered.size === 0) {
@@ -1336,7 +1336,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
       `Ollama 已连接 ${shownBaseUrl}，但没有可用的对话模型：${initialIds.join(', ')} 都没有报告对话能力（如嵌入模型）；先用 ollama pull 下载对话模型`,
     );
   }
-  logger.info(
+  logger.use.info(
     !cfg.discoverModels
       ? `Ollama 未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
       : discoveryError
@@ -1350,15 +1350,15 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
    * 条目全部注销
    */
   async function refreshModels(): Promise<{ added: string[]; removed: string[]; total: number }> {
-    const next = withCustomModels(await client.fetchRemoteModelIds(lifecycle.signal));
-    lifecycle.signal.throwIfAborted();
+    const next = withCustomModels(await client.fetchRemoteModelIds(lifecycle.use.signal));
+    lifecycle.use.signal.throwIfAborted();
     const nextSet = new Set(next);
     const added: string[] = [];
     const removed: string[] = [];
     // 新模型的能力并行探测（与初次注册一致），再按发现顺序登记
     const fresh = next.filter(id => !registered.has(id));
-    const detectedCaps = await Promise.all(fresh.map(id => client.fetchModelCapabilities(id, lifecycle.signal)));
-    lifecycle.signal.throwIfAborted();
+    const detectedCaps = await Promise.all(fresh.map(id => client.fetchModelCapabilities(id, lifecycle.use.signal)));
+    lifecycle.use.signal.throwIfAborted();
     for (let i = 0; i < fresh.length; i++) {
       // 非对话模型被跳过、等能力探测期间并发的刷新已登记，都不算本次新增
       if (registerOne(fresh[i], detectedCaps[i])) added.push(fresh[i]);
@@ -1370,11 +1370,11 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
       }
     }
     if (added.length || removed.length) {
-      logger.info(
+      logger.use.info(
         `Ollama 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
       );
     } else {
-      logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
+      logger.use.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
     }
     return { added, removed, total: registered.size };
   }

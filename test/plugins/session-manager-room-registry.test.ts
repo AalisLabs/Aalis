@@ -42,7 +42,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
+      provide.use(platform, { getConnections: () => [], sendMessage: async () => {}, ...adapter } as never);
     },
   });
 
@@ -67,8 +67,10 @@ async function setup(
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
   const mem = fakeMemory(stored);
-  host.provide(memory, mem as never);
-  for (const adapter of adapters) host.provide(platform, adapter as never);
+  host.provide.use(memory, mem as never);
+  // 同一激活登记多家：各给一个条目 id，list() 才分得清
+  for (const [i, adapter] of adapters.entries())
+    host.provide.use(platform, adapter as never, { entryId: `adapter-${i}` });
   if (instances) {
     await app.plugin(
       adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => id.startsWith('onebot:10000:') }),
@@ -84,10 +86,10 @@ async function setup(
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
 
   const inbound = (msg: Omit<IncomingMessage, 'content'>) =>
-    host.events.emit('inbound:message', { content: '<占位>', ...msg });
+    host.events.use.emit('inbound:message', { content: '<占位>', ...msg });
 
   // 回合 id 每轮不同，与 agent 一致
   let turns = 0;
@@ -96,9 +98,9 @@ async function setup(
   const turn = async (sessionId: string, during?: () => Promise<void> | void, outcome: Outcome = 'replied') => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'onebot' };
     const turnId = `t${++turns}`;
-    await host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       await during?.();
-      await host.hooks.run('agent:turn:after', {
+      await host.hooks.use.run('agent:turn:after', {
         message,
         reply: outcome === 'replied' ? '<回复>' : '',
         outcome,
@@ -111,7 +113,7 @@ async function setup(
 
   /** 开一轮、回合体由用例控制（不发 agent:turn:after：收口只看输入中间件的 finally） */
   const running = (sessionId: string, body: () => Promise<void>) =>
-    host.hooks.run(
+    host.hooks.use.run(
       'agent:input:before',
       { message: { content: '<占位>', sessionId, platform: 'onebot' }, turnId: `t${++turns}`, metadata: {} },
       body,
@@ -303,7 +305,7 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     const gated = gatedAdapter();
     const { sm, host, inbound } = await setup([gated.adapter]);
     const created: string[] = [];
-    host.events.on('session:created', session => void created.push(session.id));
+    host.events.use.on('session:created', session => void created.push(session.id));
 
     const arriving = inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
     expect(gated.asked, '认领已经在问').toContain(GROUP);
@@ -363,7 +365,7 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
       '还没有适配器认领',
     ).toEqual([undefined, undefined]);
     const pushed: Array<[string, string | undefined]> = [];
-    t.host.events.on('session:updated', session => void pushed.push([session.id, session.originInstance]));
+    t.host.events.use.on('session:updated', session => void pushed.push([session.id, session.originInstance]));
 
     later.state.claiming = true;
     for (const id of [GROUP, PRIVATE]) await t.inbound({ sessionId: id, platform: 'onebot' });
@@ -396,7 +398,7 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     expect(gated.asked, '补记的解析已经发起').toContain(GROUP);
     await sm.deleteSession(GROUP);
     const updated: string[] = [];
-    host.events.on('session:updated', session => void updated.push(session.id));
+    host.events.use.on('session:updated', session => void updated.push(session.id));
     gated.release();
     await settle();
 
@@ -600,14 +602,14 @@ describe('状态在回合开始时翻 active', () => {
     await sm.ensureSession(GROUP, { status: 'waiting' });
     const seen: (string | undefined)[] = [];
 
-    const swallow = host.hooks.middleware('agent:input:before', async () => {
+    const swallow = host.hooks.use.middleware('agent:input:before', async () => {
       seen.push(sm.getSession(GROUP)?.status);
     });
     await turn(GROUP);
     swallow();
     expect(sm.getSession(GROUP)?.status, '被拦下的回合不该停在进行中').not.toBe('active');
 
-    host.hooks.middleware('agent:input:before', async () => {
+    host.hooks.use.middleware('agent:input:before', async () => {
       seen.push(sm.getSession(GROUP)?.status);
       throw new Error('<预处理失败>');
     });
@@ -640,7 +642,7 @@ describe('状态在回合开始时翻 active', () => {
     let during: string | undefined;
 
     await running(GROUP, async () => {
-      await host.events.emit('outbound:message', {
+      await host.events.use.emit('outbound:message', {
         content: '<附件>',
         sessionId: GROUP,
         platform: 'onebot',
@@ -660,7 +662,7 @@ describe('状态在回合开始时翻 active', () => {
     await inbound({ sessionId: 'cli-default', platform: 'cli', userId: 'console' });
     expect(sm.getSession('cli-default')?.status, '还没有回合，不该显示进行中').toBe('waiting');
     // 指令回复不开回合，也不改状态
-    await host.events.emit('outbound:message', {
+    await host.events.use.emit('outbound:message', {
       content: '<指令回复>',
       sessionId: 'cli-default',
       platform: 'cli',
@@ -763,7 +765,7 @@ describe('收口按这一轮的结局，replied 记下她最近开口的时间',
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
     const updates: Array<number | undefined> = [];
-    host.events.on('session:updated', session => {
+    host.events.use.on('session:updated', session => {
       if (session.id === GROUP) updates.push(session.lastReplyAt);
     });
 

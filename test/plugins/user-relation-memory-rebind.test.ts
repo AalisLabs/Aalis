@@ -44,7 +44,7 @@ function memoryProvider(name: string, priority: number, instance: StubMemory) {
     provides: [memory],
     uses: { provide },
     apply(caps) {
-      caps.provide(memory, instance as unknown as MemoryService, { priority });
+      caps.provide.use(memory, instance as unknown as MemoryService, { priority });
     },
   });
 }
@@ -70,12 +70,12 @@ describe('plugin-user-relation: memory 换胜者后读写跟随当前胜者', ()
 
     const host = app.bind({ relation: userRelation, services });
     // 契约只开放消费方用到的查询面；写入经实现类，提供的实例即插件内的 RelationService
-    const before = host.relation.require() as RelationService;
+    const before = host.relation.use as RelationService;
     await before.observePerson('onebot', 'u1');
 
-    expect(host.services.prefer(memory, 'mem-low')).toBe(true);
+    expect(host.services.use.prefer(memory, 'mem-low')).toBe(true);
     await app.plugins.idle();
-    expect(host.relation.require(), '换胜者不应重启 user-relation').toBe(before);
+    expect(host.relation.use, '换胜者不应重启 user-relation').toBe(before);
 
     await before.observePerson('onebot', 'u2');
     const persons = (m: StubMemory) => [...m.data.keys()].filter(k => k.includes('person'));

@@ -88,10 +88,10 @@ async function setup(config: Record<string, unknown>, history: Message[] = []) {
       add: [{ text: '喜欢猫', category: '兴趣爱好', temporality: 'permanent', sourceQuote: '我喜欢猫' }],
     }),
   }));
-  host.provide(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
+  host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
   const mem = new FlakyMemory(history);
   mem.metadata.set(PROFILE_KEY, structuredClone(SEED_PROFILE));
-  host.provide(memory, mem as unknown as MemoryService);
+  host.provide.use(memory, mem as unknown as MemoryService);
   await app.plugins.register(userProfile, {
     extractEveryNMessages: 0,
     ...config,
@@ -99,7 +99,7 @@ async function setup(config: Record<string, unknown>, history: Message[] = []) {
   await app.plugins.idle();
   if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
   const inbound = async () => {
-    await host.events.emit('inbound:message:archived', {
+    await host.events.use.emit('inbound:message:archived', {
       sessionId: SESSION,
       incoming: { userId: 'u1', platform: 'onebot' },
     } as never);

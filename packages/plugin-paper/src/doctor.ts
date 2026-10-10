@@ -12,7 +12,7 @@
 import type { BoundDoctor, CheckLevel, CheckResult } from '@aalis/api-doctor';
 import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
 import { type Isolation, layersWith, paperLabel, profileName, sharingRooms } from './rooms.js';
@@ -22,8 +22,8 @@ const CHECK_ID = 'paper.config';
 
 export function registerPaperDoctor(deps: {
   doctor: BoundDoctor;
-  sessionManager: ServiceRef<SessionManagerService>;
-  remote: ServiceRef<RemoteAgentProvider>;
+  sessionManager: ServiceSelection<SessionManagerService>;
+  remote: ServiceSelection<RemoteAgentProvider>;
   ledger: LedgerStore;
   isolation: Isolation;
   cfg: PaperConfig;
@@ -36,7 +36,7 @@ export function registerPaperDoctor(deps: {
     category: 'config',
     async run(): Promise<CheckResult> {
       const { ledger, cfg } = deps;
-      const sm = deps.sessionManager.require();
+      const sm = deps.sessionManager.use;
       const errors: string[] = [];
       const warnings: string[] = [];
       const notes: string[] = [];
@@ -107,7 +107,7 @@ export function registerPaperDoctor(deps: {
         const provider = type ? resolveRemoteAgent(deps.remote, type) : undefined;
         if (!provider) continue;
         try {
-          const egress = await provider.instance.egress(deps.signal);
+          const egress = await provider.use.egress(deps.signal);
           if (egress.source === 'owner-config')
             notes.push(`远端代理「${type}」的出网方式（${egress.mode}）取自 owner 配置，未核实`);
         } catch (err) {

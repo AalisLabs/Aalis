@@ -37,7 +37,7 @@ describe('embedding 提供者声明 modelId', () => {
     apps.push(app);
     await app.plugins.register(plugin, { ...config, baseUrl: fake.baseUrl });
     await app.plugins.idle();
-    const svc = app.bind({ services }).services.get(embedding);
+    const svc = app.bind({ services }).services.use.get(embedding);
     if (!svc) throw new Error('embedding 服务未就绪');
     return svc.modelId;
   }

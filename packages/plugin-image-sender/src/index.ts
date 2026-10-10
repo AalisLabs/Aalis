@@ -16,14 +16,7 @@
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import {
-  createStorageGateway,
-  isStorageNotFound,
-  isStorageUri,
-  type StorageService,
-  storage,
-  toStorageUri,
-} from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
@@ -73,7 +66,7 @@ export default definePlugin({
 
 function registerImageSender(caps: Caps): void {
   const { tools, events, logger, media, memory, archive } = caps;
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
 
   // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
   // 记忆库等非媒体文件）。放行的交出 storage URI，送达形态由平台适配器决定：onebot 读回内容内联，超过内联上限
@@ -98,7 +91,7 @@ function registerImageSender(caps: Caps): void {
   // 识别全靠 media：media 在场才挂，离场即撤（follow 在 media 上线 / 换人时各调一次，
   // 返回的退订函数即清理），media 缺席的部署里 agent 看不到这个用不了的工具。
   media.follow(service =>
-    tools.register({
+    tools.use.register({
       definition: {
         type: 'function',
         function: {
@@ -167,7 +160,7 @@ function registerImageSender(caps: Caps): void {
   );
 
   // ── send_attachment ───────────────────────────────────────────────────────
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -277,7 +270,7 @@ function registerImageSender(caps: Caps): void {
           source: 'agent',
           callId: callCtx.callId,
         };
-        await events.emit('outbound:message', outgoing);
+        await events.use.emit('outbound:message', outgoing);
         if (!outgoing.delivery) return JSON.stringify({ error: '没有目标适配器确认附件发送，请勿声称已发出' });
         const result = await awaitDelivery(outgoing.delivery, callCtx.signal);
         if (!result) return JSON.stringify({ error: '附件仍在发送，结果未确认，请勿重发' });
@@ -294,16 +287,16 @@ function registerImageSender(caps: Caps): void {
     },
   });
 
-  logger.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
+  logger.use.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
 
   // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
   // 只归档传输端确认后的附件，出站请求本身不代表发送成功。
   // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
   // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
   // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过已在档的（history_ref 重发、WebUI 收件箱已记下的）。
-  events.on('outbound:delivered', msg => {
+  events.use.on('outbound:delivered', msg => {
     if (msg.source !== 'agent' || !msg.attachments?.length) return;
-    if (!archive.current?.saveMessage) return;
+    if (!archive.present || typeof archive.use.saveMessage !== 'function') return;
     for (const att of msg.attachments) {
       if (att.skipArchive) continue;
       if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') continue;
@@ -331,7 +324,7 @@ async function safeDescribeMedia(caps: DescribeCaps, kind: 'image' | 'video', da
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
 async function safeDescribe(caps: DescribeCaps, imageData: string): Promise<string> {
-  const service = caps.media.current;
+  const service = caps.media.present ? caps.media.use : undefined;
   if (!service?.describeImage) return '';
   try {
     const desc = await Promise.race([
@@ -342,14 +335,14 @@ async function safeDescribe(caps: DescribeCaps, imageData: string): Promise<stri
     ]);
     return (desc ?? '').trim();
   } catch (err) {
-    caps.logger.debug(`[image-sender] vision 失败，跳过描述: ${err instanceof Error ? err.message : err}`);
+    caps.logger.use.debug(`[image-sender] vision 失败，跳过描述: ${err instanceof Error ? err.message : err}`);
     return '';
   }
 }
 
 /** 调 media.describeVideo，超时或失败返回空串（视频抽帧耗时长，用更宽松的超时）。 */
 async function safeDescribeVideo(caps: DescribeCaps, videoUrl: string): Promise<string> {
-  const service = caps.media.current;
+  const service = caps.media.present ? caps.media.use : undefined;
   if (!service?.describeVideo) return '';
   try {
     const desc = await Promise.race([
@@ -360,7 +353,7 @@ async function safeDescribeVideo(caps: DescribeCaps, videoUrl: string): Promise<
     ]);
     return (desc ?? '').trim();
   } catch (err) {
-    caps.logger.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
+    caps.logger.use.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
     return '';
   }
 }
@@ -373,7 +366,7 @@ async function archiveOutboundAttachment(
   description: string,
   kind: MediaKind,
 ): Promise<void> {
-  const archive = caps.archive.current;
+  const archive = caps.archive.present ? caps.archive.use : undefined;
   if (!archive?.saveMessage) return;
   const label = kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
   const message: Message = {
@@ -386,7 +379,7 @@ async function archiveOutboundAttachment(
       debugLabel: `[image-sender] 已入档发送的${label}`,
     });
   } catch (err) {
-    caps.logger.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
+    caps.logger.use.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -409,8 +402,8 @@ async function resolveHistoryRef(
   sessionId: string,
   ref: string,
 ): Promise<string | null> {
-  const service = memory.current;
-  if (!service) return null;
+  if (!memory.present) return null;
+  const service = memory.use;
   const history: Message[] = service.getFullHistory
     ? await service.getFullHistory(sessionId, 200)
     : await service.getHistory(sessionId, 200);

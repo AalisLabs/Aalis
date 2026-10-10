@@ -25,12 +25,12 @@ describe('插件原始 config 读取守卫', () => {
     const result = fixture(`
       function run(caps: Caps) {
         const { config: settings } = caps;
-        const config = read(schema, settings);
+        const config = read(schema, settings.use);
         helper(config.token);
         const document = hostConfig.getPluginConfig('instance');
         helper(document.token);
       }
-      function direct(caps: Caps) { const parsed = read(schema, caps.config); helper(parsed.token); }
+      function direct(caps: Caps) { const parsed = read(schema, caps.config.use); helper(parsed.token); }
     `);
     expect(result.violations).toEqual([]);
     expect(result.rawSites).toBe(2);
@@ -38,7 +38,8 @@ describe('插件原始 config 读取守卫', () => {
   });
 
   it.each([
-    ['属性读取', 'function run(caps: Caps) { helper(caps.config.token); }'],
+    ['属性读取', 'function run(caps: Caps) { helper(caps.config.use.token); }'],
+    ['选择层当值', 'function run(caps: Caps) { helper(JSON.stringify(caps.config)); }'],
     ['方括号读取', "function run(caps: Caps) { helper(caps['config'].token); }"],
     ['解构后读取', 'function run(caps: Caps) { const {config: settings}=caps; helper(settings.token); }'],
     [
@@ -46,7 +47,7 @@ describe('插件原始 config 读取守卫', () => {
       'function run(caps: Caps) { const {config: settings}=caps; helper(settings as Record<string, unknown>); }',
     ],
     ['传给 helper', 'function run(caps: Caps) { const {config: settings}=caps; helper(settings); }'],
-    ['别名变量', 'function run(caps: Caps) { const raw=caps.config; read(schema, raw); }'],
+    ['别名变量', 'function run(caps: Caps) { const raw=caps.config.use; read(schema, raw); }'],
     ['仿冒解析器', 'function run(caps: Caps) { const other={parseConfig:helper}; other.parseConfig(caps.config); }'],
     ['参数解构', 'function run({config: settings}: Caps) { helper(settings.token); }'],
     ['uses 属性别名', 'function run(caps: AliasCaps) { helper(caps.settings.token); }'],

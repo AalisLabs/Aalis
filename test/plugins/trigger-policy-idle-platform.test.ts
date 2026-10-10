@@ -9,6 +9,7 @@ import {
   scheduleSessionIdle,
 } from '../../packages/plugin-trigger-policy/src/idle-scheduler.js';
 import { createState, type TriggerSessionState } from '../../packages/plugin-trigger-policy/src/state.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { resolveTriggerPolicyConfig } from './trigger-policy-config.js';
 
 // 背景（A30）：platform 档 all-quiet 策略在「已达标但无候选」和「压根没有活动记录」两种情形下
@@ -42,16 +43,14 @@ function setup() {
   const seen: IncomingMessage[] = [];
   const gw = { hold: async (_msg: IncomingMessage): Promise<void> => {} };
   const caps: IdleCaps = {
-    logger: bound.logger,
-    gateway: {
-      current: {
-        async ingressMessage(msg: IncomingMessage) {
-          seen.push(msg);
-          await gw.hold(msg);
-        },
-      } as never,
-    },
-    flowControl: { current: service },
+    logger: bound.logger.use,
+    gateway: fixedRef({
+      async ingressMessage(msg: IncomingMessage) {
+        seen.push(msg);
+        await gw.hold(msg);
+      },
+    } as never),
+    flowControl: fixedRef(service),
     isActive: () => trigger.active,
   };
   return { app, caps, seen, flow, gw, trigger };

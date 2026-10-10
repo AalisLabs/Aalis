@@ -3,7 +3,7 @@ import { type CommandArgv, commands as commandsService } from '@aalis/api-comman
 import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
-import { createStorageGateway, isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import type { ToolService } from '@aalis/api-tools';
 import {
   appService,
@@ -152,10 +152,10 @@ function registerCommands({
   provide,
   services,
 }: Caps): void {
-  const cfg = parseConfig(configSchema, config, logger);
+  const cfg = parseConfig(configSchema, config.use, logger.use);
   // 创建指令注册表并注册为服务
-  const registry = new CommandRegistry(logger, () => authority.current);
-  const storageGateway = createStorageGateway(storage);
+  const registry = new CommandRegistry(logger.use, () => (authority.present ? authority.use : undefined));
+  const storageGateway = storage.use;
 
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
 
@@ -163,7 +163,7 @@ function registerCommands({
   registry.prefix = cfg.commandPrefix;
 
   // 注册服务
-  provide(commandsService, registry);
+  provide.use(commandsService, registry);
 
   // ===== 统一 memory:clear 中间件：附件缓存清理（图片/视频/语音/文件）=====
   //
@@ -173,7 +173,7 @@ function registerCommands({
   // （四类必须齐清，漏掉任一类即留下残留文件）。
   //
   // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     const safeSessionId = data.sessionId?.replace(/[:/\\]/g, '_');
     for (const k of ATTACHMENT_KINDS) {
       if (data.types && !data.types.includes(k.type)) continue;
@@ -240,9 +240,9 @@ function registerCommands({
   /** 回到消息所在的会话。required 依赖在调度收敛前可能短暂缺席，故保留事件兜底 */
   async function reply(message: IncomingMessage, content: string): Promise<void> {
     const out = { content, sessionId: message.sessionId, platform: message.platform, source: 'command' as const };
-    const gatewayService = gateway.current;
+    const gatewayService = gateway.present ? gateway.use : undefined;
     if (gatewayService) await gatewayService.dispatchOutbound(out);
-    else await events.emit('outbound:message', out);
+    else await events.use.emit('outbound:message', out);
   }
 
   // ===== 意图确认：人亲手输入、声明了 confirm 的指令，在同一会话里问发出者本人 =====
@@ -276,11 +276,11 @@ function registerCommands({
 
   // 停用（含重载）时等待中的确认按取消结算：新实例不认得它们，留到时限只会在拆卸之后才回「已取消」。
   // 在撤回登记之前结算，网关还在，取消的回复发得出去
-  lifecycle.onDrain(() => {
+  lifecycle.use.onDrain(() => {
     for (const settle of [...intents.values()]) settle(false);
   }, '取消等待中的意图确认');
 
-  hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+  hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
     const settle = message.source === undefined ? intents.get(intentKey(message)) : undefined;
     if (settle) {
@@ -319,13 +319,13 @@ function registerCommands({
           // 系统触发器（scheduler）的 sessionId 通常是 internal 虚拟 session，
           // 走 outbound 也无人接收；直接写日志便于排查。
           const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
-          logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
+          logger.use.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
           await reply(message, result);
         }
       }
     } catch (err) {
-      logger.warn(`指令执行失败: ${err}`);
+      logger.use.warn(`指令执行失败: ${err}`);
     }
     // 命令命中：不调用 next() —— 整个入站管道立即停止（不再进入 trigger/flow/dispatch）
   });
@@ -333,7 +333,7 @@ function registerCommands({
   // ===== 内置指令 =====
 
   // 只列调用者能用的指令：用不了的在帮助里当作不存在
-  commands
+  commands.use
     .command('help [name:text]', '列出你能用的指令；带指令名看用法详情')
     .argument('name', '指令名，子指令用空格或点隔开，如 clear all')
     .action(async (argv, name) => {
@@ -344,31 +344,31 @@ function registerCommands({
       return path.length > 0 ? registry.detail(path, caller) : registry.overview(caller);
     });
 
-  commands.command('status', '显示系统状态').action(async () => {
+  commands.use.command('status', '显示系统状态').action(async () => {
     const lines = ['**系统状态：**', ''];
     // 按名枚举：这张表回答的只是"在不在"，其中大半个子系统本插件并不依赖，
     // 按名动态查不产生依赖边，也就不会把它们拖进本插件的激活闸与关停顺序。
     const checks = [
-      ['WebUI Server', services.get('webui-server') !== undefined],
-      ['CLI', services.get('cli') !== undefined],
-      ['LLM 服务', services.get('llm') !== undefined],
-      ['Agent', services.get('agent') !== undefined],
-      ['记忆服务', services.get('memory') !== undefined],
-      ['人格服务', services.get('persona') !== undefined],
-      ['Embedding', services.get('embedding') !== undefined],
-      ['向量库', services.get('vectorstore') !== undefined],
+      ['WebUI Server', services.use.get('webui-server') !== undefined],
+      ['CLI', services.use.get('cli') !== undefined],
+      ['LLM 服务', services.use.get('llm') !== undefined],
+      ['Agent', services.use.get('agent') !== undefined],
+      ['记忆服务', services.use.get('memory') !== undefined],
+      ['人格服务', services.use.get('persona') !== undefined],
+      ['Embedding', services.use.get('embedding') !== undefined],
+      ['向量库', services.use.get('vectorstore') !== undefined],
     ] as const;
     for (const [label, ok] of checks) {
       lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
     }
-    const toolService = services.get('tools') as ToolService | undefined;
+    const toolService = services.use.get('tools') as ToolService | undefined;
     lines.push(`- 已注册工具: ${toolService ? toolService.getAll().length : 0} 个`);
     lines.push(`- 已注册指令: ${registry.getAll().length} 个`);
     return lines.join('\n');
   });
 
-  commands.command('shutdown', '关闭应用', { visibility: 'restricted' }).action(async () => {
-    const host = app.require();
+  commands.use.command('shutdown', '关闭应用', { visibility: 'restricted' }).action(async () => {
+    const host = app.use;
     setTimeout(async () => {
       await host.stop();
       process.exit(0);
@@ -376,8 +376,8 @@ function registerCommands({
     return '正在关闭应用…';
   });
 
-  commands.command('restart', '重启应用', { visibility: 'restricted' }).action(async () => {
-    app.require().restart();
+  commands.use.command('restart', '重启应用', { visibility: 'restricted' }).action(async () => {
+    app.use.restart();
     return '正在重启应用…';
   });
 
@@ -393,7 +393,7 @@ function registerCommands({
     // 预检：消息历史清不了就整条不执行。各插件的 memory:clear 中间件先于消息清理运行，放行就会清掉摘要、待办、
     // 附件等，留下「消息还在、其余已清」的半截状态。预检只决定执行与否，清理时另取当时的记忆后端
     const clearsMessages = !types || types.includes('context');
-    const memoryAtStart = memory.current;
+    const memoryAtStart = memory.present ? memory.use : undefined;
     if (clearsMessages && !memoryAtStart) {
       return (
         '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
@@ -410,13 +410,13 @@ function registerCommands({
       results: [],
     };
 
-    await hooks.run('memory:clear', clearData, async () => {
+    await hooks.use.run('memory:clear', clearData, async () => {
       if (!clearsMessages) return;
       try {
         // 中间件链可能要等一阵（在途落库、向量清空与保存），期间 memory 胜者可能已更换：按此刻的胜者清理，
         // 不复用预检取到的实例，免得清到已下线的旧后端
-        const memoryService = memory.current;
-        if (!memoryService) throw new Error('记忆服务在清理期间下线');
+        if (!memory.present) throw new Error('记忆服务在清理期间下线');
+        const memoryService = memory.use;
         if (isGlobal) {
           if (!memoryService.clearAll) throw new Error('清理期间换上的记忆后端不支持全局清空');
           await memoryService.clearAll();
@@ -475,7 +475,7 @@ function registerCommands({
     }
     // 共享会话设防：静态声明只能给出与会话归属无关的策略，这一档必须在运行期判。
     if (argv.session.sessionType && argv.session.sessionType !== 'private') {
-      const auth = authority.current;
+      const auth = authority.present ? authority.use : undefined;
       const isOwner = auth?.isOwner(argv.session.platform, argv.session.userId) ?? false;
       const level =
         auth?.listUsers().find(u => u.platform === argv.session.platform && u.userId === argv.session.userId)?.level ??
@@ -495,7 +495,7 @@ function registerCommands({
     ],
   };
 
-  commands
+  commands.use
     // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
     // confirm:'session' 但不抬等级——私聊里会话是用户自己的，清自己的记忆属自助行为，
     // 要 2 级等于剥夺；确认则挡住提示词注入触发的误清（需真人点一下）。
@@ -511,7 +511,7 @@ function registerCommands({
     .example('/clear all --type all')
     .action(async argv => runClearFromOptions(argv, 'session'));
 
-  commands
+  commands.use
     // 全局清空，比 /clear 更重：同样 dangerous（等级 2 + 二次确认）。
     // 原先只写 visibility:'restricted' 拿到了等级 2 但漏了 confirm。
     .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {

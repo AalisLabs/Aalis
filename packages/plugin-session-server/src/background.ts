@@ -13,7 +13,7 @@ import type {
   BackgroundTaskStatus,
   BackgroundTask as RegisteredTask,
 } from '@aalis/api-tools';
-import type { ServiceRef } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { failure, type MethodHandlers } from './connection.js';
 import type { DisplayOf } from './display.js';
 
@@ -21,8 +21,8 @@ import type { DisplayOf } from './display.js';
 const COALESCE_MS = 1000;
 
 interface BackgroundDeps {
-  tasks: ServiceRef<BackgroundTaskService>;
-  agent: ServiceRef<AgentService>;
+  tasks: ServiceSelection<BackgroundTaskService>;
+  agent: ServiceSelection<AgentService>;
   /** 后台任务的展示，同工具卡 */
   displayOf: DisplayOf;
   requireSession(id: string): SessionInfo;
@@ -44,9 +44,8 @@ export function createBackground(deps: BackgroundDeps) {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const registry = (): BackgroundTaskService => {
-    const service = deps.tasks.current;
-    if (!service) throw failure('unsupported', '没有后台任务登记');
-    return service;
+    if (!deps.tasks.present) throw failure('unsupported', '没有后台任务登记');
+    return deps.tasks.use;
   };
 
   /** 协议的形状：去掉模型给的参数与工具的结果，展示按工具声明从参数解析；退出码照登记，不随工具是否还在 */
@@ -90,7 +89,7 @@ export function createBackground(deps: BackgroundDeps) {
   /** 各会话在跑的后台任务数 */
   function runningBySession(): Map<string, number> {
     const counts = new Map<string, number>();
-    for (const task of deps.tasks.current?.list() ?? []) {
+    for (const task of deps.tasks.present ? deps.tasks.use.list() : []) {
       if (task.status === 'running') counts.set(task.sessionId, (counts.get(task.sessionId) ?? 0) + 1);
     }
     return counts;
@@ -98,9 +97,9 @@ export function createBackground(deps: BackgroundDeps) {
 
   /** 这次工具调用转到了后台时，它的任务 id */
   function taskOf(sessionId: string, turnId: string, callId: string): string | undefined {
-    return deps.tasks.current
-      ?.list({ sessionId })
-      .find(task => task.call.turnId === turnId && task.call.callId === callId)?.id;
+    if (!deps.tasks.present) return undefined;
+    return deps.tasks.use.list({ sessionId }).find(task => task.call.turnId === turnId && task.call.callId === callId)
+      ?.id;
   }
 
   /**
@@ -111,13 +110,13 @@ export function createBackground(deps: BackgroundDeps) {
     const session = deps.requireSession(sessionId);
     const below = deps.descendantsOf(session);
     const running = below.filter(info => deps.isRunning(info.id));
-    const agent = deps.agent.current;
+    const agent = deps.agent.present ? deps.agent.use : undefined;
     if (running.length > 0) {
       if (!agent?.abort) throw failure('unsupported', '没有能停止回合的 agent 服务，子会话的回合停不了');
       for (const info of running) agent.abort(info.id);
     }
-    const service = deps.tasks.current;
-    if (!service) return;
+    if (!deps.tasks.present) return;
+    const service = deps.tasks.use;
     const ids = new Set([session.id, ...below.map(info => info.id)]);
     await Promise.all(
       service

@@ -24,7 +24,7 @@ describe('plugin-cli 附件', () => {
     const app = new App({ name: 'T', logLevel: 'info' });
     const host = app.bind({ events });
     const delivered: OutgoingMessage[] = [];
-    host.events.on('outbound:delivered', msg => void delivered.push(msg));
+    host.events.use.on('outbound:delivered', msg => void delivered.push(msg));
     try {
       await app.plugin(cliPlugin, {});
       await app.start();
@@ -42,7 +42,7 @@ describe('plugin-cli 附件', () => {
           { kind: 'video', data: 'https://example.invalid/clip.mp4', name: '片段.mp4' },
         ],
       };
-      await host.events.emit('outbound:message', message);
+      await host.events.use.emit('outbound:message', message);
       expect(message.delivery, 'CLI 认领了这条消息').toBeDefined();
       expect(await message.delivery).toEqual({ ok: true });
 
@@ -67,7 +67,7 @@ describe('plugin-cli 附件', () => {
         source: 'agent',
         attachments: [{ kind: 'image', data: 'data:/images/cat.png' }],
       };
-      await host.events.emit('outbound:message', other);
+      await host.events.use.emit('outbound:message', other);
       expect(other.delivery).toBeUndefined();
     } finally {
       offLog();
@@ -97,7 +97,7 @@ describe('plugin-cli 附件', () => {
           content: `[作品通知] 《猫》已上线 (${source})`,
           source,
         };
-        await host.events.emit('outbound:message', message);
+        await host.events.use.emit('outbound:message', message);
         expect(message.delivery, `CLI 认领了 ${source} 文本`).toBeDefined();
         expect(await message.delivery).toEqual({ ok: true });
         expect(entries.map(e => e.message)).toContain(`[cli] [作品通知] 《猫》已上线 (${source})`);
@@ -121,7 +121,7 @@ describe('plugin-cli 附件', () => {
       await app.start();
       await settle();
       const stream = (chunk: Record<string, unknown>) =>
-        host.events.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
+        host.events.use.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
       await stream({ contentDelta: '画好了' });
       await stream({ done: true });
       const message: OutgoingMessage = {
@@ -130,7 +130,7 @@ describe('plugin-cli 附件', () => {
         content: '画好了',
         source: 'agent',
       };
-      await host.events.emit('outbound:message', message);
+      await host.events.use.emit('outbound:message', message);
       expect(message.delivery, '流式去重那一支同样认领回执').toBeDefined();
       expect(await message.delivery).toEqual({ ok: true });
     } finally {

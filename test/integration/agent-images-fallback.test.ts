@@ -72,10 +72,10 @@ async function loadStack(
         return PNG_BYTES;
       },
     } as unknown as StorageService;
-    host.provide(storage, fakeStorage);
+    host.provide.use(storage, fakeStorage);
   }
   if (opts.media) {
-    host.provide(media, {} as never);
+    host.provide.use(media, {} as never);
   }
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -85,7 +85,7 @@ async function loadStack(
     preferredModel: '',
   });
   await app.plugins.idle();
-  return { app, agent: host.agent.require() };
+  return { app, agent: host.agent.use };
 }
 
 function incomingWith(images: string[]): IncomingMessage {
@@ -167,8 +167,7 @@ describe('media 缺席时的 images 兜底（真实 storage-local 多根）', ()
     expect(
       app
         .bind({ storage })
-        .storage.require()
-        .listRoots()
+        .storage.use.listRoots()
         .map(r => r.name),
     ).toEqual(['workspace']);
     await stack.agent.handleMessage(incomingWith([REL_REF]));

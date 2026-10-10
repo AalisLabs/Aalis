@@ -21,7 +21,7 @@ async function setup(...args: Parameters<typeof setupSummary>) {
   const env = await setupSummary(...args);
   apps.push(env.app);
   const statuses: string[] = [];
-  env.host.events.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
+  env.host.events.use.on('session:compressing', info => void statuses.push(`${info.sessionId}:${info.status}`));
   return { ...env, statuses };
 }
 
@@ -265,9 +265,9 @@ describe('plugin-memory-summary: 后台触发', () => {
     await seed(memory, 's', 6);
     const far = { used: 990, compressible: 900 };
 
-    await host.events.emit('token:usage', usageEvent('s', far));
+    await host.events.use.emit('token:usage', usageEvent('s', far));
     await endTurn(host, 's');
-    await host.events.emit('token:usage', usageEvent('s', far, { turnId: 'earlier' }));
+    await host.events.use.emit('token:usage', usageEvent('s', far, { turnId: 'earlier' }));
     await endTurn(host, 's');
     await settle();
     expect(llm.requests).toHaveLength(0);
@@ -388,8 +388,11 @@ describe('plugin-memory-summary: 后台触发', () => {
     const { host, memory, statuses } = await setup({}, llm.model);
     await seed(memory, 's', 6);
     const turn = startTurn(host, 's');
-    await host.events.emit('token:usage', usageEvent('s', { used: 900, compressible: 500 }, { turnId: turn.turnId }));
-    await host.events.emit('token:usage', usageEvent('s', { used: 100, compressible: 50 }));
+    await host.events.use.emit(
+      'token:usage',
+      usageEvent('s', { used: 900, compressible: 500 }, { turnId: turn.turnId }),
+    );
+    await host.events.use.emit('token:usage', usageEvent('s', { used: 100, compressible: 50 }));
     await turn.end();
     await expect.poll(() => statuses).toEqual(['s:start', 's:done']);
   });
@@ -399,7 +402,7 @@ describe('plugin-memory-summary: 后台触发', () => {
     const { host, memory, statuses } = await setup({}, llm.model);
     await seed(memory, 's', 6);
     const turn = startTurn(host, 's');
-    await host.hooks.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
+    await host.hooks.use.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
     await turn.end({ used: 900, compressible: 500 });
     await settle();
     expect(llm.requests).toHaveLength(0);
@@ -427,7 +430,7 @@ describe('plugin-memory-summary: 后台触发', () => {
 
     fail = false;
     if (reset === 'manual') await compression.compress('s', { reason: 'manual' });
-    else await host.hooks.run('memory:clear', { scope: reset, sessionId: 's', results: [] });
+    else await host.hooks.use.run('memory:clear', { scope: reset, sessionId: 's', results: [] });
     await seed(memory, 's', 2);
     const before = llm.requests.length;
     await endTurn(host, 's', { used: 900, compressible: 500 });
@@ -530,7 +533,7 @@ describe('plugin-memory-summary: 分块', () => {
       (err: Error) => err.message,
     );
     await expect.poll(() => llm.requests.length).toBe(1);
-    await host.hooks.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
+    await host.hooks.use.run('memory:clear', { scope: 'session', sessionId: 's', results: [] });
     release();
 
     expect(await done).toBe('压缩期间会话被清空');
@@ -545,7 +548,7 @@ describe('plugin-memory-summary: 分块', () => {
       reply: request => '摘'.repeat(Math.floor((request.maxTokens ?? 0) / 2)),
     });
     const { host, memory, compression } = await setup({}, llm.model);
-    await host.events.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
+    await host.events.use.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
     for (let i = 0; i < 60; i++) {
       await memory.saveMessage('s', {
         role: i % 2 === 0 ? 'user' : 'assistant',
@@ -583,7 +586,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
     for (const [sessionId, contextWindow] of windows) {
       await seed(memory, sessionId, 2);
       if (contextWindow) {
-        await host.events.emit('token:usage', usageEvent(sessionId, { used: 1, compressible: 0, contextWindow }));
+        await host.events.use.emit('token:usage', usageEvent(sessionId, { used: 1, compressible: 0, contextWindow }));
       }
     }
     for (const [sessionId] of windows) await compression.compress(sessionId, { reason: 'manual' });
@@ -594,7 +597,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
     const llm = fakeSummaryLLM({ contextLength: 64_000 });
     const { host, memory, compression } = await setup({}, llm.model);
     await seed(memory, 's', 2);
-    await host.events.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
+    await host.events.use.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
     await compression.compress('s', { reason: 'manual' });
     expect(llm.requests[0].maxTokens).toBe(4096);
   });

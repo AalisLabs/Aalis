@@ -139,10 +139,10 @@ async function setup(config: Record<string, unknown> = {}) {
   await registerHubs(app);
   const host = app.bind({ provide, services, contributions, logger, hooks });
   const store = createMemoryStorage();
-  host.provide(storage, store);
+  host.provide.use(storage, store);
   await app.plugins.register(skillsPlugin, config);
   await app.plugins.idle();
-  const service = host.services.get(skills);
+  const service = host.services.use.get(skills);
   if (!service) throw new Error('skills 服务未注册');
   /** 组装器只要两样能力：枚举 agent:prompt 的交付、记日志 */
   const assembly: PromptAssemblyCaps = { contributions: host.contributions, logger: host.logger };
@@ -159,7 +159,7 @@ function anchorProbe(name: string, blocks: Array<{ id: string; anchor: PromptAnc
     uses: { contributions },
     apply({ contributions }) {
       for (const b of blocks) {
-        contributions.contribute('agent:prompt', { id: b.id, anchor: b.anchor, build: () => b.text });
+        contributions.use.contribute('agent:prompt', { id: b.id, anchor: b.anchor, build: () => b.text });
       }
     },
   });
@@ -313,7 +313,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     await skills.createSkill({ name: 'wx', description: '查询天气', triggers: ['天气'], body: 'WX-BODY' });
 
     // contributeActivation 的第二入口：triggers regex 命中 user 消息自动激活
-    await hooks.run('agent:input:before', {
+    await hooks.use.run('agent:input:before', {
       message: { sessionId: 's-wx', content: '今天天气怎么样' },
       metadata: {},
     } as never);

@@ -330,7 +330,7 @@ describe('host-config 的裁剪政策（installHostConfig 按配置同步选项�
       const app = new App({ name: 'T', logLevel: 'error' });
       apps.push(app);
       installHostConfig(app, emptyStore(), opts);
-      return app.bind({ hostConfig }).hostConfig.require().trimUnknownFields;
+      return app.bind({ hostConfig }).hostConfig.use.trimUnknownFields;
     };
     expect(policyOf()).toBe(true);
     expect(policyOf({})).toBe(true);
@@ -352,7 +352,7 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     };
     return { errors, warns, infos, logger };
   }
-  const docOf = (app: App) => app.bind({ hostConfig }).hostConfig.require();
+  const docOf = (app: App) => app.bind({ hostConfig }).hostConfig.use;
 
   it('异步 provider：等到真正落盘才返回', async () => {
     let persisted = false;
@@ -496,7 +496,8 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
 
   it('交给插件的只有文档读写、applyPluginConfig、save 与裁剪政策：宿主的 persist / watch / 密钥换算不外露', () => {
     const { app } = track(hostedApp());
-    const doc = docOf(app) as unknown as Record<string, unknown>;
+    // 看提供者交出的实例本身：业务句柄是转发句柄，列不出成员
+    const doc = app.bind({ services }).services.use.get(hostConfig) as unknown as Record<string, unknown>;
     expect(Object.keys(doc).sort()).toEqual(
       [
         'trimUnknownFields',
@@ -515,7 +516,7 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
         'save',
       ].sort(),
     );
-    expect(app.bind({ services }).services.inspect('host-config')).toMatchObject([
+    expect(app.bind({ services }).services.use.inspect('host-config')).toMatchObject([
       { contextId: 'root', exclusive: true },
     ]);
   });
@@ -531,10 +532,10 @@ describe('启动偏好与文档的边界', () => {
         definePlugin({
           name: 'high',
           uses: { provide },
-          apply: ({ provide }) => void provide(svc, { id: 'high' }, { priority: 10 }),
+          apply: ({ provide }) => void provide.use(svc, { id: 'high' }, { priority: 10 }),
         }),
-        definePlugin({ name: 'low', uses: { provide }, apply: ({ provide }) => void provide(svc, { id: 'low' }) }),
-        definePlugin({ name: 'consumer', uses: { svc }, apply: ({ svc }) => void seen.push(svc.require().id) }),
+        definePlugin({ name: 'low', uses: { provide }, apply: ({ provide }) => void provide.use(svc, { id: 'low' }) }),
+        definePlugin({ name: 'consumer', uses: { svc }, apply: ({ svc }) => void seen.push(svc.use.id) }),
       ].map(definition => ({ definition })),
     );
     await app.plugins.idle();
@@ -578,7 +579,7 @@ describe('启动偏好与文档的边界', () => {
       reusable: true,
       uses: { config },
       apply({ config: pluginConfig }) {
-        (pluginConfig as Record<string, unknown>).mutatedByApply = true;
+        (pluginConfig.use as Record<string, unknown>).mutatedByApply = true;
       },
     });
     expect(await registerFromDoc(app, store, def, 'probe-pkg:work')).toBe(true);

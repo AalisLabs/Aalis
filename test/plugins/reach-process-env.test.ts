@@ -128,8 +128,8 @@ afterEach(async () => {
 async function start() {
   const started = await startReach(dirs);
   apps.push(started.app);
-  const sm = started.host.sessionManager.require();
-  const svc = started.host.reach.require();
+  const sm = started.host.sessionManager.use;
+  const svc = started.host.reach.use;
   const webui = (await sm.createSession({ name: 'w' }, { createdFrom: 'webui' })).id;
   return { sm, svc, webui };
 }

@@ -120,11 +120,11 @@ async function world(accounts: { a: Account[]; b: Account[] }) {
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, platform, sessionManager });
-  host.provide(storage, { listRoots: () => [] } as never);
-  host.provide(processService, {} as never);
-  host.provide(memory, fakeMemory() as never);
+  host.provide.use(storage, { listRoots: () => [] } as never);
+  host.provide.use(processService, {} as never);
+  host.provide.use(memory, fakeMemory() as never);
   const handlers = new Map<string, RegisteredTool['handler']>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -161,7 +161,7 @@ async function world(accounts: { a: Account[]; b: Account[] }) {
     if (!handler) throw new Error(`工具 ${name} 未注册`);
     return (args: Record<string, unknown>, sessionId: string) => handler(args, { sessionId, platform: 'onebot' });
   };
-  return { host, server, actionsOf, tool, sm: () => host.sessionManager.require() };
+  return { host, server, actionsOf, tool, sm: () => host.sessionManager.use };
 }
 
 /** 两个实例：a 带一个在线账号，b 带一个在线账号和一个配置里写明、还没连上的账号 */
@@ -177,7 +177,7 @@ describe('OneBot 多实例：会话按账号路由到所属实例', () => {
   it('解析结果带出所属实例；配置里写明、连接还没上来的账号也认', async () => {
     const { host } = await world(TWO_INSTANCES);
 
-    const owner = async (sessionId: string) => (await resolvePlatformBySession(host.platform, sessionId))?.contextId;
+    const owner = async (sessionId: string) => (await resolvePlatformBySession(host.platform, sessionId))?.id;
     expect(await owner('onebot:111:group:1')).toBe(A);
     expect(await owner('onebot:222:group:1')).toBe(B);
     expect(await owner('onebot:333:private:1'), '配置里写明的账号，连接没上来也归 b').toBe(B);
@@ -260,8 +260,8 @@ describe('会话管理按原生入站收录房间：所属实例与来源字段'
   it('适配器声明 group、private 与 channel 三个类型', async () => {
     const { host } = await world(TWO_INSTANCES);
 
-    for (const entry of host.platform.all()) {
-      expect(sessionTypesOf(entry.instance), entry.contextId).toEqual([
+    for (const entry of host.platform.list()) {
+      expect(sessionTypesOf(entry.use), entry.id).toEqual([
         { name: 'group', multiParty: true },
         { name: 'private', multiParty: false },
         { name: 'channel', multiParty: true },

@@ -22,8 +22,8 @@ async function setup() {
   const host = app.bind({ contributions, logger, memory, sessionManager: optional(sessionManager) });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('no memory');
+  if (!host.memory.present) throw new Error('no memory');
+  const mem = host.memory.use;
   const service = new RelationService(new RelationStore(() => mem));
   return { host, service };
 }
@@ -81,7 +81,7 @@ describe('plugin-user-relation: middleware', () => {
     await service.observePerson('onebot', 'u1', 'Alice');
     vi.spyOn(service, 'loadAll').mockRejectedValue(new Error('关系图读取失败'));
     const warns: unknown[][] = [];
-    vi.spyOn(host.logger, 'warn').mockImplementation((...args: unknown[]) => {
+    vi.spyOn(host.logger.use, 'warn').mockImplementation((...args: unknown[]) => {
       warns.push(args);
     });
     const messages = await runMiddleware(host, service, { userId: 'u1', platform: 'onebot', triggerType: 'direct' });

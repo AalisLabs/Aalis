@@ -42,7 +42,7 @@ async function loadStack() {
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '<回复占位>' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
   await app.plugins.idle();
-  await seedRooms(app.bind({ memory: memoryService }).memory.require(), { [GROUP]: '<群名占位>' });
+  await seedRooms(app.bind({ memory: memoryService }).memory.use, { [GROUP]: '<群名占位>' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(triggerPolicyPlugin, { scopes: ['*:group'] });
@@ -64,7 +64,7 @@ async function loadStack() {
   }
 
   const host = app.bind({ events, gateway, memory: memoryService });
-  const memory = host.memory.require();
+  const memory = host.memory.use;
   const baseTs = Date.now() - 10_000;
   await memory.saveMessage(OTHER_GROUP, {
     role: 'user',
@@ -79,8 +79,8 @@ async function loadStack() {
     metadata: { platform: 'webui' },
   });
   const usages: TokenUsageEvent[] = [];
-  host.events.on('token:usage', usage => void usages.push(usage));
-  return { recorder, usages, gateway: host.gateway.require(), events: host.events };
+  host.events.use.on('token:usage', usage => void usages.push(usage));
+  return { recorder, usages, gateway: host.gateway.use, events: host.events };
 }
 
 describe('WebUI 驱动 IM 房间：跨会话料按出生平台', () => {
@@ -102,7 +102,7 @@ describe('WebUI 驱动 IM 房间：跨会话料按出生平台', () => {
     expect(turnTokens, '真实回合应带 memory-history 的注入').toBeGreaterThan(0);
 
     usages.length = 0;
-    await bus.emit('token:request', { sessionId: GROUP });
+    await bus.use.emit('token:request', { sessionId: GROUP });
     expect(usages).toHaveLength(1);
     expect(usages[0].breakdown.injectors?.[key]).toBe(turnTokens);
   });

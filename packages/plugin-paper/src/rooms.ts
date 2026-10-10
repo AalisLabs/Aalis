@@ -11,13 +11,7 @@
 //   不随建子会话复制。
 // ============================================================
 
-import {
-  type EgressReport,
-  egressWithin,
-  type RemoteAgentEntry,
-  type RemoteAgentProvider,
-  resolveRemoteAgent,
-} from '@aalis/api-remote-agent';
+import { type EgressReport, egressWithin, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import {
   type InheritanceSource,
   placePaperId,
@@ -30,7 +24,7 @@ import {
   type SessionSetting,
 } from '@aalis/api-session-manager';
 import type { ToolCallContext } from '@aalis/api-tools';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import type { PaperConfig, PaperSpec } from './config.js';
 import type { LedgerStore, PaperLedger } from './ledger.js';
 import { category, describe } from './util.js';
@@ -288,29 +282,29 @@ export class Isolation {
   readonly #warned = new Map<string, string>();
 
   constructor(
-    private readonly remote: ServiceRef<RemoteAgentProvider>,
+    private readonly remote: ServiceSelection<RemoteAgentProvider>,
     private readonly papers: ReadonlyMap<string, PaperSpec>,
     private readonly logger: Logger,
   ) {}
 
   async #accountKey(
-    entry: RemoteAgentEntry,
+    entry: ProviderEntry<RemoteAgentProvider>,
     signal: AbortSignal,
   ): Promise<{ key: string } | { category: string; detail: string }> {
     let failure: { category: string; detail: string };
     try {
-      const { accountKey } = await entry.instance.ready(signal);
+      const { accountKey } = await entry.use.ready(signal);
       if (accountKey) {
-        this.#warned.delete(entry.contextId);
+        this.#warned.delete(entry.id);
         return { key: accountKey };
       }
       failure = { category: '账号标识为空', detail: 'ready() 报告的 accountKey 为空' };
     } catch (err) {
       failure = { category: category(err), detail: describe(err) };
     }
-    if (this.#warned.get(entry.contextId) !== failure.category) {
-      this.#warned.set(entry.contextId, failure.category);
-      this.logger.warn(`取不到提供者「${entry.contextId}」的远端账号标识，按冲突处理：${failure.detail}`);
+    if (this.#warned.get(entry.id) !== failure.category) {
+      this.#warned.set(entry.id, failure.category);
+      this.logger.warn(`取不到提供者「${entry.id}」的远端账号标识，按冲突处理：${failure.detail}`);
     }
     return failure;
   }
@@ -324,13 +318,13 @@ export class Isolation {
     collisions: string[][];
     unknown: Array<{ type: string; papers: string[]; category: string; detail: string }>;
   }> {
-    const byType = new Map<string, { entry: RemoteAgentEntry; names: string[] }>();
+    const byType = new Map<string, { entry: ProviderEntry<RemoteAgentProvider>; names: string[] }>();
     for (const [name, spec] of this.papers) {
       const entry = resolveRemoteAgent(this.remote, spec.remoteAgentType);
-      if (entry?.instance.transcriptIsolation !== 'shared') continue;
-      const group = byType.get(entry.contextId) ?? { entry, names: [] };
+      if (entry?.use.transcriptIsolation !== 'shared') continue;
+      const group = byType.get(entry.id) ?? { entry, names: [] };
       group.names.push(name);
-      byType.set(entry.contextId, group);
+      byType.set(entry.id, group);
     }
     const byAccount = new Map<string, string[]>();
     const unknown: Array<{ type: string; papers: string[]; category: string; detail: string }> = [];
@@ -367,11 +361,11 @@ export class Isolation {
  */
 export async function checkRemote(deps: {
   paper: RoomPaper;
-  remote: ServiceRef<RemoteAgentProvider>;
+  remote: ServiceSelection<RemoteAgentProvider>;
   ledger: LedgerStore;
   isolation: Isolation;
   signal: AbortSignal;
-}): Promise<{ provider: RemoteAgentEntry } | { unavailable: string }> {
+}): Promise<{ provider: ProviderEntry<RemoteAgentProvider> } | { unavailable: string }> {
   const { paper, remote, ledger } = deps;
   const { spec } = paper;
   if (ledger.failure) return { unavailable: '白纸账本读取失败，远端任务暂停，等 owner 处理' };
@@ -383,7 +377,7 @@ export async function checkRemote(deps: {
   if (!provider) return { unavailable: `远端代理「${type}」不在场` };
   let egress: EgressReport;
   try {
-    egress = await provider.instance.egress(deps.signal);
+    egress = await provider.use.egress(deps.signal);
   } catch (err) {
     deps.signal.throwIfAborted();
     return { unavailable: `取不到远端代理「${type}」的出网方式（${category(err)}）` };
@@ -393,7 +387,7 @@ export async function checkRemote(deps: {
       unavailable: `远端代理「${type}」的出网方式（${egress.mode}）超过这块白纸的上限（${spec.remoteAgentEgress}）`,
     };
   }
-  if (provider.instance.transcriptIsolation === 'shared') {
+  if (provider.use.transcriptIsolation === 'shared') {
     if (!spec.name) {
       return {
         unavailable: `远端代理「${type}」的同账号代理能互读对话，只能给具名白纸用；本房间没有写白纸名`,

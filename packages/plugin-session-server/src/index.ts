@@ -10,7 +10,7 @@ import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { todoList } from '@aalis/api-todo-list';
 import { backgroundTasks, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, pluginsService, provide } from '@aalis/core';
@@ -92,13 +92,14 @@ export default definePlugin({
 async function run(caps: Caps): Promise<void> {
   const { events, hooks, lifecycle, logger } = caps;
   // session-manager 是 required 依赖：它换提供者时本插件随之重新激活，这里存下的引用不会过期
-  const sm = caps.sessionManager.require();
-  const store = createStorageGateway(caps.storage);
-  const seen = await openSeenStore(store, logger);
+  const sm = caps.sessionManager.use;
+  const store = caps.storage.use;
+  const seen = await openSeenStore(store, logger.use);
   const files = createFileHandles(() => store.listRoots());
   const isOwner: IsOwner = (platformName, userId) =>
-    userId !== undefined && (caps.authority.current?.isOwner(platformName, userId) ?? false);
-  const displaySpec = (tool: string) => caps.tools.current?.getAll().find(t => t.name === tool)?.display;
+    userId !== undefined && (caps.authority.present ? caps.authority.use.isOwner(platformName, userId) : false);
+  const displaySpec = (tool: string) =>
+    caps.tools.present ? caps.tools.use.getAll().find(t => t.name === tool)?.display : undefined;
   const displayOf: DisplayOf = (tool, args, result) => resolveDisplay(displaySpec(tool), args, result);
   const isRoom = (sessionId: string) => {
     const info = sm.getSession(sessionId);
@@ -109,7 +110,7 @@ async function run(caps: Caps): Promise<void> {
    * 与从这条连接发起的回合一致
    */
   const requestUsage = (sessionId: string, platformName: string) =>
-    void events.emit('token:request', isRoom(sessionId) ? { sessionId } : { sessionId, platform: platformName });
+    void events.use.emit('token:request', isRoom(sessionId) ? { sessionId } : { sessionId, platform: platformName });
 
   const sessions = createSessions({
     sm,
@@ -119,8 +120,8 @@ async function run(caps: Caps): Promise<void> {
     runningTasks: () => background.runningBySession(),
     changed: id => push([id], []),
     platform: caps.platform,
-    plugins: caps.plugins.require(),
-    logger,
+    plugins: caps.plugins.use,
+    logger: logger.use,
   });
   const timeline = createTimeline({
     memory: caps.memory,
@@ -133,16 +134,17 @@ async function run(caps: Caps): Promise<void> {
     isRoom,
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
-    compressAt: (sessionId, platform) => caps.compression.current?.compressAt(sessionId, platform),
+    compressAt: (sessionId, platform) =>
+      caps.compression.present ? caps.compression.use.compressAt(sessionId, platform) : undefined,
     approvalsOf: sessionId => approval.service.list({ sessionId }),
-    signal: lifecycle.signal,
-    logger,
+    signal: lifecycle.use.signal,
+    logger: logger.use,
   });
   const approval = createApprovals({
     isOwner,
-    events,
-    logger,
-    auditFile: join(caps.paths.require().state, 'audit', 'approvals.jsonl'),
+    events: events.use,
+    logger: logger.use,
+    auditFile: join(caps.paths.use.state, 'audit', 'approvals.jsonl'),
     displaySpec,
     changed: (card, settlement) => {
       timeline.approval(card, settlement);
@@ -150,7 +152,7 @@ async function run(caps: Caps): Promise<void> {
     },
   });
   const control = createTurnControl({
-    events,
+    events: events.use,
     agent: caps.agent,
     checkpoint: caps.checkpoint,
     compression: caps.compression,
@@ -169,14 +171,17 @@ async function run(caps: Caps): Promise<void> {
     sessionChanged: id => push([id], []),
   });
   const currentFeatures = (): Features => ({
-    send: caps.agent.current !== undefined,
-    rewind: caps.checkpoint.current !== undefined,
-    compress: caps.compression.current !== undefined,
+    send: caps.agent.present,
+    rewind: caps.checkpoint.present,
+    compress: caps.compression.present,
   });
   const server = createSessionServer(
     { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...background.handlers, ...approvalHandlers },
-    () => ({ features: currentFeatures(), appName: caps.hostConfig.current?.get('name') || 'Aalis' }),
-    logger,
+    () => ({
+      features: currentFeatures(),
+      appName: (caps.hostConfig.present ? caps.hostConfig.use.get('name') : undefined) || 'Aalis',
+    }),
+    logger.use,
   );
   // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
   let features = currentFeatures();
@@ -192,7 +197,7 @@ async function run(caps: Caps): Promise<void> {
       () => true,
     );
   };
-  events.on('service:changed', refreshFeatures);
+  events.use.on('service:changed', refreshFeatures);
 
   /**
    * 把这些会话连同各级父会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组：父会话的摘要里有按子树算的字段
@@ -219,16 +224,16 @@ async function run(caps: Caps): Promise<void> {
   }
 
   const upsert = (session: SessionInfo) => push([session.id], []);
-  events.on('session:created', upsert);
-  events.on('session:updated', upsert);
-  events.on('session:completed', upsert);
-  events.on('session:deleted', id => {
+  events.use.on('session:created', upsert);
+  events.use.on('session:updated', upsert);
+  events.use.on('session:completed', upsert);
+  events.use.on('session:deleted', id => {
     push([], [id]);
     timeline.forget(id);
-    seen.forget(id).catch(err => logger.warn(`删除会话后清理已读记录失败 (${id}):`, err));
+    seen.forget(id).catch(err => logger.use.warn(`删除会话后清理已读记录失败 (${id}):`, err));
   });
   // 设置变了（插件启停、某一层或某个会话的覆盖被改写）：每条连接各推一次，客户端重取打开着的会话的设置
-  events.on('session:config:changed', () =>
+  events.use.on('session:config:changed', () =>
     server.notify(
       'session/config/changed',
       () => ({}),
@@ -237,7 +242,7 @@ async function run(caps: Caps): Promise<void> {
   );
 
   // 回合真正开始（agent:input:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     const { sessionId } = data.message;
     const turn = timeline.begin(data.turnId, data.message);
     push([sessionId], []);
@@ -249,12 +254,12 @@ async function run(caps: Caps): Promise<void> {
       push([sessionId], []);
     }
   });
-  hooks.middleware('agent:turn:after', async (data, next) => {
+  hooks.use.middleware('agent:turn:after', async (data, next) => {
     timeline.outcome(data.turnId, data.outcome);
     await next();
   });
   // 工具返回时回合的中止信号已触发：停止时这次调用还没结束。转到后台的调用此时已在登记表里
-  hooks.middleware('agent:tool:after', async (data, next) => {
+  hooks.use.middleware('agent:tool:after', async (data, next) => {
     const { sessionId, turnId, callId, signal } = data.toolCallContext;
     if (turnId && callId) {
       const taskId = background.taskOf(sessionId, turnId, callId);
@@ -265,37 +270,37 @@ async function run(caps: Caps): Promise<void> {
     }
     await next();
   });
-  hooks.middleware('agent:reply:before', async (_data, next) => {
+  hooks.use.middleware('agent:reply:before', async (_data, next) => {
     timeline.replyCheck();
     await next();
   });
   // 消息历史清掉之后（/clear），订阅的客户端重新取快照。删除会话也经这条钩子，那时会话已不在，删除由列表增量告知
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     await next();
     if (data.types && !data.types.includes('context')) return;
     const ids = data.scope === 'all' ? server.subscribedSessions() : [data.sessionId];
     for (const id of ids) if (id !== undefined && sm.getSession(id)) timeline.resync(id);
   });
-  events.on('outbound:stream', timeline.stream);
-  events.on('tool:execute', timeline.tool);
-  events.on('tool:output', timeline.toolOutput);
-  events.on('background:changed', background.changed);
-  events.on('outbound:message', timeline.outbound);
-  events.on('inbound:message:archived', ({ sessionId, archivedMessage }) =>
+  events.use.on('outbound:stream', timeline.stream);
+  events.use.on('tool:execute', timeline.tool);
+  events.use.on('tool:output', timeline.toolOutput);
+  events.use.on('background:changed', background.changed);
+  events.use.on('outbound:message', timeline.outbound);
+  events.use.on('inbound:message:archived', ({ sessionId, archivedMessage }) =>
     timeline.archived(sessionId, archivedMessage),
   );
-  events.on('assistant:message:archived', ({ sessionId, message }) => timeline.archived(sessionId, message));
-  events.on('todo:updated', timeline.plan);
-  events.on('token:usage', timeline.usage);
-  events.on('session:compressing', ({ sessionId, status }) => timeline.compressing(sessionId, status));
-  events.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));
+  events.use.on('assistant:message:archived', ({ sessionId, message }) => timeline.archived(sessionId, message));
+  events.use.on('todo:updated', timeline.plan);
+  events.use.on('token:usage', timeline.usage);
+  events.use.on('session:compressing', ({ sessionId, status }) => timeline.compressing(sessionId, status));
+  events.use.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));
 
-  caps.provide(sessionProtocol, { connect: server.connect, resolveFile: files.resolve }, { label: '会话协议' });
-  caps.provide(approvals, approval.service, { label: '审批' });
+  caps.provide.use(sessionProtocol, { connect: server.connect, resolveFile: files.resolve }, { label: '会话协议' });
+  caps.provide.use(approvals, approval.service, { label: '审批' });
   // 撤回登记之前结算没结的审批：审批面还接着，结算推得到；之后的请求直接拒绝
-  lifecycle.onDrain(() => approval.close(), '结算未结的审批');
+  lifecycle.use.onDrain(() => approval.close(), '结算未结的审批');
   // 对外登记撤回之后断开现有连接：客户端重连时接到新的提供者。停用完成之前把审计写完
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     background.dispose();
     server.disconnectAll('会话服务已停止');
     return approval.flushed();

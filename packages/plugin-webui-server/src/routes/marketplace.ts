@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { PackageManagerService } from '@aalis/api-package-manager';
 import type { DependencyNode, MarketplacePackage, PackageCategory, SystemComponent } from '@aalis/api-webui';
-import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceSelection, Services } from '@aalis/core';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
 import { declaredProvides, type LocalScanEntry } from '../client-discovery.js';
@@ -432,11 +432,11 @@ async function fetchLatest(base: string, name: string): Promise<LatestManifest |
 /** 市场路由用到的能力 */
 interface MarketplaceRoutesCaps {
   logger: Logger;
-  plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
+  plugins: Pick<ServiceSelection<PluginManagerService>, 'present' | 'use'>;
   /** 实际提供者元数据，包含根激活提供的服务；不得为展示实例化服务工厂。 */
   services: Pick<Services, 'inspect'>;
   /** 可选依赖：缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。 */
-  packageManager: Pick<ServiceRef<PackageManagerService>, 'current'>;
+  packageManager: Pick<ServiceSelection<PackageManagerService>, 'present' | 'use'>;
   /** 宿主的安装集目录（host-paths）；宿主不提供时市场列表与系统组件页回 503 */
   appDir?: string;
 }
@@ -466,8 +466,8 @@ export function registerMarketplaceRoutes(
    * 不在场时装卸更新都不可用，退回检索源只作展示。安装源查不到时返回 error：调用方不查最新版，并如实说明。
    */
   const versionSource = async (): Promise<{ base: string } | { error: string }> => {
-    const pm = caps.packageManager.current;
-    if (!pm) return { base: searchBase };
+    if (!caps.packageManager.present) return { base: searchBase };
+    const pm = caps.packageManager.use;
     try {
       return { base: await pm.registry() };
     } catch (err) {
@@ -480,7 +480,7 @@ export function registerMarketplaceRoutes(
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   route(expressApp, 'GET /api/marketplace', gate(), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const status = caps.plugins.current?.getStatus() ?? [];
+    const status = caps.plugins.present ? caps.plugins.use.getStatus() : [];
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉不作为插件加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
     // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
@@ -611,7 +611,7 @@ export function registerMarketplaceRoutes(
     }
     // 图算法只认 name→依赖名[]，不该知道版本；在此把扫描结果投影成它要的形状。
     const depMap = new Map([...getLocalPackages()].map(([n, e]) => [n, e.deps] as const));
-    const status = caps.plugins.current?.getStatus() ?? [];
+    const status = caps.plugins.present ? caps.plugins.use.getStatus() : [];
     const svcOf = new Map(
       status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),
     );
@@ -659,7 +659,7 @@ export function registerMarketplaceRoutes(
       services: { required, provides: svcOf.get(name)?.provides ?? rootServices?.provides ?? [] },
       // 卸载会断服务的依赖者，供卸载弹窗预警；与 package-manager 卸载闸同一份判定。
       // 服务缺席时卸载本就不可用（503），不需要预警。
-      serviceDependents: caps.packageManager.current?.serviceDependents(name) ?? [],
+      serviceDependents: caps.packageManager.present ? caps.packageManager.use.serviceDependents(name) : [],
     });
   });
 
@@ -672,14 +672,14 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
-    const pkgMgr = caps.packageManager.current;
-    if (!pkgMgr) {
+    if (!caps.packageManager.present) {
       res.status(503).json({
         error:
           '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
       });
       return;
     }
+    const pkgMgr = caps.packageManager.use;
     try {
       const result = await pkgMgr.install(npmPkg);
       // 装成功就重跑前端发现：新装的 aalis-interface 包要立刻可选，不能等重启。
@@ -704,14 +704,14 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'removeConfig 字段必须是布尔值' });
       return;
     }
-    const pkgMgr = caps.packageManager.current;
-    if (!pkgMgr) {
+    if (!caps.packageManager.present) {
       res.status(503).json({
         error:
           '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
       });
       return;
     }
+    const pkgMgr = caps.packageManager.use;
     try {
       const result = await pkgMgr.uninstall(name, { removeConfig });
       // 卸成功也要重跑发现——与 install 那侧对称。卸载会真删 node_modules，不对账就会留下
@@ -738,11 +738,11 @@ export function registerMarketplaceRoutes(
       name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
       version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',
     }));
-    const pkgMgr = caps.packageManager.current;
-    if (!pkgMgr) {
+    if (!caps.packageManager.present) {
       res.status(503).json({ error: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它' });
       return;
     }
+    const pkgMgr = caps.packageManager.use;
     try {
       const result = await pkgMgr.update(targets);
       // 成功时进程即将重启：先把响应刷出去，否则客户端只会看到连接被切断。

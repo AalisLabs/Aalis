@@ -33,7 +33,7 @@ const MEDIA_TYPES: Readonly<Record<string, string>> = {
 /** 存储地址：<根名>:/<路径> */
 const STORAGE_URI = /^[A-Za-z][\w-]*:\/[^\0]*$/;
 
-/** 传入的是 createStorageGateway 的网关：区间读恒有定义，提供者不支持时调用即抛错 */
+/** 传入的是 storage 的业务句柄：区间读恒有定义，提供者不支持时调用即抛错 */
 export function registerMediaRoutes(
   expressApp: express.Express,
   storage: StorageService & Required<Pick<StorageService, 'readFileRange'>>,

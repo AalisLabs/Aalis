@@ -125,7 +125,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     apps.push(app);
     const doctor = makeDoctor();
     const host = app.bind({ provide, services });
-    host.provide(doctorService, doctor);
+    host.provide.use(doctorService, doctor);
     await app.plugins.register(embeddingOllama, {
       baseUrl: fake.baseUrl,
       model,
@@ -180,7 +180,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     const fake = await startFake('modelMissing');
     servers.push(fake.server);
     const { host } = await boot(fake);
-    expect(host.services.get(embedding)).toBeDefined();
+    expect(host.services.use.get(embedding)).toBeDefined();
   });
 
   it(
@@ -190,7 +190,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       servers.push(fake.server);
       const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 800, retries: 0 });
       fake.mode = 'stallBody';
-      const svc = host.services.get(embedding);
+      const svc = host.services.use.get(embedding);
 
       const t0 = Date.now();
       await expect(svc!.embed('你好'), '体读取若落在超时窗口之外就会一直挂着').rejects.toThrow();
@@ -233,7 +233,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
       const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 1 });
-      const svc = host.services.get(embedding)!;
+      const svc = host.services.use.get(embedding)!;
       fake.mode = 'hang';
       fake.embeddingRequests = 0;
       fake.abortedEmbeddingRequests = 0;
@@ -267,7 +267,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
       const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000, retries: 1 });
-      const svc = host.services.get(embedding)!;
+      const svc = host.services.use.get(embedding)!;
       fake.mode = 'hang';
       fake.embeddingRequests = 0;
 
@@ -283,7 +283,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     const fake = await startFake('ok', ['gemma4:12b', 'qwen3-embedding:8b', 'bge-m3:latest']);
     servers.push(fake.server);
     const { host } = await boot(fake);
-    const svc = host.services.get(embedding) as OllamaEmbedding | undefined;
+    const svc = host.services.use.get(embedding) as OllamaEmbedding | undefined;
     expect(await svc!.listModels(), '名字不含 embed 的合法嵌入模型也必须留在候选里').toEqual([
       'gemma4:12b',
       'qwen3-embedding:8b',
@@ -298,7 +298,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
       const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000 });
-      const svc = host.services.get(embedding) as OllamaEmbedding;
+      const svc = host.services.use.get(embedding) as OllamaEmbedding;
       fake.mode = 'tagsHang';
 
       const t0 = Date.now();

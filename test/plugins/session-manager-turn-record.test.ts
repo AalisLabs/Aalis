@@ -29,21 +29,21 @@ async function setup() {
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
   const mem = fakeMemory();
-  host.provide(memory, mem as never);
+  host.provide.use(memory, mem as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
 
   let turns = 0;
   /** 按 agent 的顺序跑一轮；不给结局时不发 agent:turn:after（消息被拦下的一轮） */
   const turn = (sessionId: string, outcome?: Outcome, error?: string) => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
-    return host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       if (!outcome) return;
-      await host.hooks.run('agent:turn:after', {
+      await host.hooks.use.run('agent:turn:after', {
         message,
         reply: outcome === 'replied' ? '<回复>' : '',
         outcome,
@@ -56,7 +56,7 @@ async function setup() {
   };
 
   const usage = (fields: Partial<LLMUsageEvent>) =>
-    host.events.emit('llm:usage', {
+    host.events.use.emit('llm:usage', {
       provider: '<服务商>',
       model: '<模型>',
       inputTokens: 0,
@@ -65,7 +65,7 @@ async function setup() {
     });
 
   const updates: SessionInfo[] = [];
-  host.events.on('session:updated', session => void updates.push(structuredClone(session)));
+  host.events.use.on('session:updated', session => void updates.push(structuredClone(session)));
 
   /** 推进 1 秒的落盘去抖；假后端存的是会话对象的引用，推进后换成快照，才看得出下一次有没有落盘 */
   const flush = async () => {

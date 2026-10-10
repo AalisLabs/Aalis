@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LifecycleCap, Logger } from '../../packages/core/src/index.js';
 import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 记忆库按家目录区分：库名加 profile 一段，库里记着它归哪个家目录与实例。两个家目录（开发用的 .aalis-dev 与
@@ -98,7 +99,7 @@ function caps(id: string) {
     onDrain: () => noop,
     onDispose: () => noop,
   };
-  return { logger, lifecycle, provide: (() => noop) as never, lines };
+  return { logger: fixedRef(logger), lifecycle: fixedRef(lifecycle), provide: fixedRef((() => noop) as never), lines };
 }
 
 const config = (claimFrom = '', database = '') => ({

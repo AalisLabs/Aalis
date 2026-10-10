@@ -18,7 +18,7 @@ type Spec = { id: string; payload?: string };
 function world() {
   const root = createActivationFixture();
   const registry = new Registry();
-  root.caps.provide(contributions, registry);
+  root.caps.provide.use(contributions, registry);
   const bind = (activation: Activation) => ({
     activation,
     registry,
@@ -39,23 +39,23 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     const b = root.at('plugin-b');
     const a = root.at('plugin-a');
     // 故意乱序注册
-    b.caps.contributions.contribute(POINT, { id: 'z' } as never);
-    a.caps.contributions.contribute(POINT, { id: 'y' } as never);
-    a.caps.contributions.contribute(POINT, { id: 'x' } as never);
-    const keys = root.caps.contributions.collect(POINT).map(e => e.key);
+    b.caps.contributions.use.contribute(POINT, { id: 'z' } as never);
+    a.caps.contributions.use.contribute(POINT, { id: 'y' } as never);
+    a.caps.contributions.use.contribute(POINT, { id: 'x' } as never);
+    const keys = root.caps.contributions.use.collect(POINT).map(e => e.key);
     expect(keys).toEqual(['plugin-a/x', 'plugin-a/y', 'plugin-b/z']);
   });
 
   it('同 ctx 同 id 重复注册 = 替换（幂等），旧 dispose 失效不误删新注册', () => {
     const ctx = makeFixture('plugin-a');
-    const off1 = ctx.caps.contributions.contribute(POINT, { id: 'k', payload: 'v1' } as never);
-    ctx.caps.contributions.contribute(POINT, { id: 'k', payload: 'v2' } as never);
-    let specs = ctx.caps.contributions.collect(POINT).map(e => e.spec as Spec);
+    const off1 = ctx.caps.contributions.use.contribute(POINT, { id: 'k', payload: 'v1' } as never);
+    ctx.caps.contributions.use.contribute(POINT, { id: 'k', payload: 'v2' } as never);
+    let specs = ctx.caps.contributions.use.collect(POINT).map(e => e.spec as Spec);
     expect(specs).toHaveLength(1);
     expect(specs[0].payload).toBe('v2');
     // 旧注册的 dispose 不应删掉替换后的新注册
     off1();
-    specs = ctx.caps.contributions.collect(POINT).map(e => e.spec as Spec);
+    specs = ctx.caps.contributions.use.collect(POINT).map(e => e.spec as Spec);
     expect(specs).toHaveLength(1);
     expect(specs[0].payload).toBe('v2');
   });
@@ -64,23 +64,23 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     const root = world();
     const a = root.at('plugin-a');
     const b = root.at('plugin-b');
-    a.caps.contributions.contribute(POINT, { id: 'same', payload: 'from-a' } as never);
-    b.caps.contributions.contribute(POINT, { id: 'same', payload: 'from-b' } as never);
-    const specs = root.caps.contributions.collect(POINT).map(e => e.spec as Spec);
+    a.caps.contributions.use.contribute(POINT, { id: 'same', payload: 'from-a' } as never);
+    b.caps.contributions.use.contribute(POINT, { id: 'same', payload: 'from-b' } as never);
+    const specs = root.caps.contributions.use.collect(POINT).map(e => e.spec as Spec);
     expect(specs.map(s => s.payload).sort()).toEqual(['from-a', 'from-b']);
   });
 
   it('空 id 或含 "/" 的 id 在注册期抛错（防全局键碰撞构造）', () => {
     const ctx = makeFixture('plugin-a');
-    expect(() => ctx.caps.contributions.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
-    expect(() => ctx.caps.contributions.contribute(POINT, { id: 'b/c' } as never)).toThrow(TypeError);
+    expect(() => ctx.caps.contributions.use.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
+    expect(() => ctx.caps.contributions.use.contribute(POINT, { id: 'b/c' } as never)).toThrow(TypeError);
   });
 
   it('没有提供者时门面照样在登记期校验 id；提供者自身也校验（不信任门面）', () => {
     const root = createActivationFixture();
     const caps = root.host.bind(root.activation, { contributions });
-    expect(() => caps.contributions.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
-    expect(() => caps.contributions.contribute(POINT, { id: 'a/b' } as never)).toThrow(TypeError);
+    expect(() => caps.contributions.use.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
+    expect(() => caps.contributions.use.contribute(POINT, { id: 'a/b' } as never)).toThrow(TypeError);
     expect(() => new Registry().register(POINT, { id: 'a/b' }, 'ctx')).toThrow(TypeError);
   });
 
@@ -95,50 +95,50 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
   it('同一激活在两个贡献点交付同一局部 id：两边各一条，互不顶替', () => {
     const ctx = makeFixture('plugin-a');
     const other = '__t:point-2' as never;
-    ctx.caps.contributions.contribute(POINT, { id: 'x' } as never);
-    ctx.caps.contributions.contribute(other, { id: 'x' } as never);
-    expect(ctx.caps.contributions.collect(POINT).map(e => e.key)).toEqual(['plugin-a/x']);
-    expect(ctx.caps.contributions.collect(other).map(e => e.key)).toEqual(['plugin-a/x']);
+    ctx.caps.contributions.use.contribute(POINT, { id: 'x' } as never);
+    ctx.caps.contributions.use.contribute(other, { id: 'x' } as never);
+    expect(ctx.caps.contributions.use.collect(POINT).map(e => e.key)).toEqual(['plugin-a/x']);
+    expect(ctx.caps.contributions.use.collect(other).map(e => e.key)).toEqual(['plugin-a/x']);
   });
 
   it('ctx dispose 清扫本 ctx 的全部贡献，不动兄弟 ctx 的', async () => {
     const root = world();
     const a = root.at('plugin-a');
     const b = root.at('plugin-b');
-    a.caps.contributions.contribute(POINT, { id: 'x' } as never);
-    b.caps.contributions.contribute(POINT, { id: 'y' } as never);
+    a.caps.contributions.use.contribute(POINT, { id: 'x' } as never);
+    b.caps.contributions.use.contribute(POINT, { id: 'y' } as never);
     await a.activation.disposeAsync();
-    const keys = root.caps.contributions.collect(POINT).map(e => e.key);
+    const keys = root.caps.contributions.use.collect(POINT).map(e => e.key);
     expect(keys).toEqual(['plugin-b/y']);
   });
 
   it('contribute 返回的 dispose 可手动解除，collect 返回快照不受后续注册影响', () => {
     const ctx = makeFixture('plugin-a');
-    const off = ctx.caps.contributions.contribute(POINT, { id: 'x' } as never);
-    const snapshot = ctx.caps.contributions.collect(POINT);
+    const off = ctx.caps.contributions.use.contribute(POINT, { id: 'x' } as never);
+    const snapshot = ctx.caps.contributions.use.collect(POINT);
     off();
-    expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
+    expect(ctx.caps.contributions.use.collect(POINT)).toHaveLength(0);
     // 之前拿到的快照不变（不是活视图）
     expect(snapshot).toHaveLength(1);
   });
 
   it('collect 未知贡献点返回空数组', () => {
-    expect(makeFixture().caps.contributions.collect('__t:nothing' as never)).toEqual([]);
+    expect(makeFixture().caps.contributions.use.collect('__t:nothing' as never)).toEqual([]);
   });
 
   it('同键反复重注册不在 dispose 链上累积闭包（替换时摘旧登记）', async () => {
     const ctx = makeFixture('plugin-a');
     // 首次登记挂上一条跟随提供者的清理（账本随提供者换人重挂），基线取在它之后
-    ctx.caps.contributions.contribute(POINT, { id: 'k', payload: 'v0' } as never);
+    ctx.caps.contributions.use.contribute(POINT, { id: 'k', payload: 'v0' } as never);
     const before = ctx.activation.resources.disposables.labels().length;
-    for (let i = 1; i < 50; i++) ctx.caps.contributions.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
+    for (let i = 1; i < 50; i++) ctx.caps.contributions.use.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
     // 登记表只剩最后一次：每轮替换由原语按同键顶掉上一次的登记
-    expect(ctx.caps.contributions.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v49']);
+    expect(ctx.caps.contributions.use.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v49']);
     // 贡献不进清理链，链长不变（否则 50 个旧闭包滞留、旧 build 无法 GC）
     expect(ctx.activation.resources.disposables.labels().length).toBe(before);
     // 不进链的那份登记仍随激活关闭整体切断
     await ctx.activation.disposeAsync();
-    expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
+    expect(ctx.caps.contributions.use.collect(POINT)).toHaveLength(0);
   });
 
   it('collect 按引用给出 spec：不拷贝、不改写 id，class 实例的原型方法完好', () => {
@@ -150,8 +150,8 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
       }
     }
     const original = new Spec1();
-    ctx.caps.contributions.contribute(POINT, original as never);
-    const [entry] = ctx.caps.contributions.collect(POINT);
+    ctx.caps.contributions.use.contribute(POINT, original as never);
+    const [entry] = ctx.caps.contributions.use.collect(POINT);
     expect(entry.key).toBe('plugin-a/cls');
     expect(entry.spec).toBe(original); // 同一对象，非副本
     expect((entry.spec as unknown as Spec1).build()).toBe('from-prototype');
@@ -167,42 +167,42 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
       reusable: true,
       uses: { contributions },
       apply({ contributions }) {
-        contributions.contribute(POINT, { id: 'blk' } as never);
+        contributions.use.contribute(POINT, { id: 'blk' } as never);
       },
     });
     await app.plugin(definition);
     await app.plugins.register(definition, {}, 'dyn:2');
     await app.plugins.idle();
     // 后注册的实例不顶替先注册者
-    expect(root.contributions.collect(POINT).map(e => e.key)).toEqual(['dyn/blk', 'dyn:2/blk']);
+    expect(root.contributions.use.collect(POINT).map(e => e.key)).toEqual(['dyn/blk', 'dyn:2/blk']);
 
     await app.plugins.unload('dyn');
     // 卸载其一不连带清掉另一个仍在役实例的贡献
-    expect(root.contributions.collect(POINT).map(e => e.key)).toEqual(['dyn:2/blk']);
+    expect(root.contributions.use.collect(POINT).map(e => e.key)).toEqual(['dyn:2/blk']);
     await app.stop();
   });
 
   it('dispose 后的 contribute 被拒，不得顶替同 id 活实例的贡献', async () => {
     const root = world();
     const dead = root.at('plugin-a');
-    dead.caps.contributions.contribute(POINT, { id: 'blk', payload: 'old' } as never);
+    dead.caps.contributions.use.contribute(POINT, { id: 'blk', payload: 'old' } as never);
     await dead.activation.disposeAsync();
 
     // bounce 后的新实例（同 ctx.id → 同全局键）
     const alive = root.at('plugin-a');
-    alive.caps.contributions.contribute(POINT, { id: 'blk', payload: 'new' } as never);
+    alive.caps.contributions.use.contribute(POINT, { id: 'blk', payload: 'new' } as never);
 
     // 死 ctx 的迟到注册若被接受，会顶掉活实例的条目并被立即执行的 disposer 连带删除
-    dead.caps.contributions.contribute(POINT, { id: 'blk', payload: 'zombie' } as never);
+    dead.caps.contributions.use.contribute(POINT, { id: 'blk', payload: 'zombie' } as never);
 
-    const entries = root.caps.contributions.collect(POINT);
+    const entries = root.caps.contributions.use.collect(POINT);
     expect(entries).toHaveLength(1);
     expect((entries[0].spec as Spec).payload).toBe('new');
   });
 
   it('退订即摘登记表条目：反复 contribute+off 不无界增长', () => {
     const ctx = makeFixture('plugin-a');
-    ctx.caps.contributions.contribute(POINT, { id: 'warm' } as never)();
+    ctx.caps.contributions.use.contribute(POINT, { id: 'warm' } as never)();
     const baseline = ctx.activation.resources.disposables.labels().length;
     const withdrawn: ReturnType<typeof vi.fn>[] = [];
     const register = ctx.registry.register.bind(ctx.registry);
@@ -212,15 +212,15 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
       return off;
     });
     for (let i = 0; i < 200; i++) {
-      ctx.caps.contributions.contribute(POINT, { id: `dyn-${i}` } as never)();
+      ctx.caps.contributions.use.contribute(POINT, { id: `dyn-${i}` } as never)();
     }
     const previous = [...withdrawn];
     // 如果门面私有索引仍滞留旧 off，同键下一次登记会再次调用它；用真实退订次数检查索引释放。
     for (let i = 0; i < 200; i++) {
-      ctx.caps.contributions.contribute(POINT, { id: `dyn-${i}` } as never)();
+      ctx.caps.contributions.use.contribute(POINT, { id: `dyn-${i}` } as never)();
     }
     expect(previous.every(off => off.mock.calls.length === 1)).toBe(true);
-    expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
+    expect(ctx.caps.contributions.use.collect(POINT)).toHaveLength(0);
     expect(ctx.activation.resources.disposables.labels().length, 'dispose 链不应滞留已退订的贡献闭包').toBe(baseline);
   });
 });

@@ -38,7 +38,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
     host = app.bind(hostUses);
-    const svc = host.services.get(persona);
+    const svc = host.services.use.get(persona);
     if (!svc) throw new Error('persona 服务未就绪');
     return svc;
   };
@@ -77,7 +77,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '{"message":"你好"}',
       attempt: 0,
     };
-    await host.hooks.run('agent:reply:before', data as never);
+    await host.hooks.use.run('agent:reply:before', data as never);
 
     expect(data.maxRetries).toBe(0);
     expect(data.retryRequested).not.toBe(true);
@@ -94,7 +94,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '{"message":"你好"}',
       attempt: 0,
     };
-    await host.hooks.run('agent:reply:before', data as never);
+    await host.hooks.use.run('agent:reply:before', data as never);
 
     expect(data.maxRetries).toBe(1);
     expect(data.retryRequested).toBe(true);
@@ -109,7 +109,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: `作品已完成：${url}`,
       attempt: 0,
     };
-    await host.hooks.run('agent:reply:before', data as never);
+    await host.hooks.use.run('agent:reply:before', data as never);
 
     expect(data.retryRequested).toBe(true);
     expect(data.retryFeedback).toContain('只修正格式');
@@ -122,7 +122,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: JSON.stringify({ message: `作品已完成：${url}`, mood: '开心' }),
       attempt: 1,
     };
-    await host.hooks.run('agent:reply:before', corrected as never);
+    await host.hooks.use.run('agent:reply:before', corrected as never);
 
     expect(corrected.content).toBe(`作品已完成：${url}`);
     expect(corrected.visibleContent).toBe(`作品已完成：${url}`);
@@ -137,7 +137,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '{"message":"","mood":"平静"}',
       attempt: 0,
     };
-    await host.hooks.run('agent:reply:before', silent as never);
+    await host.hooks.use.run('agent:reply:before', silent as never);
     expect(silent.content).toBe('');
     expect(silent.visibleContent).toBe('');
     expect(silent.retryRequested).not.toBe(true);
@@ -148,7 +148,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '作品已完成：https://example.com/works/new-story',
       attempt: 1,
     };
-    await host.hooks.run('agent:reply:before', invalid as never);
+    await host.hooks.use.run('agent:reply:before', invalid as never);
     expect(invalid.retryRequested).toBe(false);
     expect(invalid.content).toBe('');
     expect(invalid.archiveContent).not.toContain('https://example.com/works/new-story');

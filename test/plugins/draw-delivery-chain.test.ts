@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createProcessGateway, processService } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import { cacheOneAttachment } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
@@ -45,11 +45,11 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {});
     await app.plugin(processLocal);
-    storageGateway = createStorageGateway(app.bind({ storage }).storage);
+    storageGateway = app.bind({ storage }).storage.use;
 
     // 宿主侧最小 tools 提供者：把两个插件登记的 handler 交到测试手上
     handlers = {};
-    app.bind({ provide }).provide(tools, {
+    app.bind({ provide }).provide.use(tools, {
       register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
         const name = tool.definition.function.name;
         handlers[name] = tool.handler;
@@ -79,7 +79,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
 
     // 2. 捕获出站请求；模拟适配器确认，让本测试继续验证后续本地编码。
     const outbound: Array<{ sessionId: string; attachments?: Array<{ kind: string; data: string }> }> = [];
-    app.bind({ events }).events.on('outbound:message', msg => {
+    app.bind({ events }).events.use.on('outbound:message', msg => {
       outbound.push(msg as (typeof outbound)[number]);
       msg.delivery = Promise.resolve({ ok: true });
     });
@@ -92,7 +92,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     expect(att?.kind).toBe('image');
 
     // 3. adapter 出站两步：落盘改写 → 渲染内联标记（与 index.ts 出站监听同一套调用）
-    const proc = createProcessGateway(app.bind({ processService }).processService);
+    const proc = app.bind({ processService }).processService.use;
     const local = await cacheOneAttachment(storageGateway, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
       warn: () => {},
     });

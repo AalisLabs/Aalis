@@ -9,6 +9,7 @@ import {
   defineService,
   optional,
   type PluginDefinition,
+  type PluginManagerService,
   pluginsService,
   provide,
   services,
@@ -18,6 +19,7 @@ import { type ConfigProvider, createConfigStore } from '../../packages/runtime/s
 import { installConfigHotReload } from '../../packages/runtime/src/config-sync.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -90,19 +92,21 @@ function world(
     name: 'console',
     uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig), services },
     apply(caps) {
+      // 管理面的 unload 按需注入故障，其余成员沿原型链落到真实的业务句柄上
       const plugins = {
-        ...caps.plugins,
-        get current() {
-          const pm = caps.plugins.current;
-          if (pm && faults.unload) return { ...pm, unload: () => Promise.reject(faults.unload) };
-          if (pm && faults.unloadedElsewhere) {
-            return {
-              ...pm,
+        get present() {
+          return caps.plugins.present;
+        },
+        get use(): PluginManagerService {
+          const pm = caps.plugins.use;
+          if (faults.unload) return Object.assign(Object.create(pm), { unload: () => Promise.reject(faults.unload) });
+          if (faults.unloadedElsewhere) {
+            return Object.assign(Object.create(pm), {
               unload: async (id: string) => {
                 await pm.unload(id);
                 return pm.unload(id);
               },
-            };
+            });
           }
           return pm;
         },
@@ -112,9 +116,10 @@ function world(
         {
           ...caps,
           plugins,
-          source: { current: undefined },
-          tools: { current: undefined },
-          commands: { current: undefined },
+          services: caps.services.use,
+          source: ref(),
+          tools: ref(),
+          commands: ref(),
           self: 'console',
           versions: () => () => undefined,
         },
@@ -202,7 +207,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
         configSchema: { v: { type: 'number', label: 'V', default: 0 } },
         uses: { config },
         apply({ config }) {
-          applied.push(config.v);
+          applied.push(config.use.v);
         },
       }),
     );
@@ -256,7 +261,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     configSchema: { apiKey: { type: 'string', label: 'API Key' } },
     uses: { config },
     apply({ config }) {
-      if (!config.apiKey) throw new Error('需要配置 apiKey');
+      if (!config.use.apiKey) throw new Error('需要配置 apiKey');
     },
   });
 
@@ -301,7 +306,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     configSchema: { bad: { type: 'boolean', label: 'Bad', default: false } },
     uses: { config },
     apply({ config }) {
-      if (config.bad) throw new Error('坏配置');
+      if (config.use.bad) throw new Error('坏配置');
     },
   });
 
@@ -462,7 +467,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       provides: [heard],
       uses: { provide },
       async apply({ provide }) {
-        provide(heard, {});
+        provide.use(heard, {});
         await gate.promise;
       },
     });
@@ -718,7 +723,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
       configSchema: { who: { type: 'string', label: 'W', default: '' } },
       uses: { provide, config },
       apply(caps) {
-        caps.provide(S, { who: String(caps.config.who) });
+        caps.provide.use(S, { who: String(caps.config.use.who) });
       },
     });
     let hold: Promise<void> | undefined;

@@ -38,13 +38,13 @@ describe('send_attachment storage_uri 归一化', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     handlers = {};
     const host = app.bind({ provide, events });
-    hostEvents = host.events;
+    hostEvents = host.events.use;
     confirmDelivery = true;
     // 本文件只验证 storage_uri 解析；模拟平台适配器确认，不声称走过真实 OneBot。
     hostEvents.on('outbound:message', msg => {
       if (confirmDelivery) msg.delivery = Promise.resolve({ ok: true });
     });
-    host.provide(tools, {
+    host.provide.use(tools, {
       register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
         handlers[t.definition.function.name] = t.handler;
         return () => {};

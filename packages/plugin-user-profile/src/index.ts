@@ -320,7 +320,7 @@ function registerUserProfile({
   userRelation,
   webui,
 }: Caps): void {
-  const parsed = parseConfig(configSchema, config, logger);
+  const parsed = parseConfig(configSchema, config.use, logger.use);
   const cfg: UserProfileConfig = {
     ...parsed,
     historyForExtraction: Math.max(2, parsed.historyForExtraction),
@@ -447,7 +447,7 @@ function registerUserProfile({
     try {
       return await loadProfile(mem, userKey);
     } catch (err) {
-      logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+      logger.use.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       return undefined;
     }
   }
@@ -480,7 +480,7 @@ function registerUserProfile({
     return ref as [string, string];
   }
 
-  const page = webui.definePage({
+  const page = webui.use.definePage({
     key: 'profiles',
     title: '用户档案',
     icon: 'contact',
@@ -492,7 +492,7 @@ function registerUserProfile({
         row: true,
         async handler({ rowKey }) {
           const [userKey, factId] = parseFactRef(rowKey);
-          const mem = memory.require();
+          const mem = memory.use;
           const profile = await loadProfile(mem, userKey);
           const hit = profile?.facts.find(f => f.id === factId);
           if (!profile || !hit) throw new Error('这条事实已经不在档案里了');
@@ -511,7 +511,7 @@ function registerUserProfile({
         confirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
         row: true,
         async handler({ rowKey }) {
-          const mem = memory.require();
+          const mem = memory.use;
           if (!(await mem.getMetadata(PROFILE_NS, rowKey))) throw new Error(`${rowKey} 已经没有档案了`);
           await mem.deleteMetadata(PROFILE_NS, rowKey);
           page.invalidate();
@@ -532,7 +532,7 @@ function registerUserProfile({
           { key: 'updatedAt', label: '最近记下', kind: 'time' },
         ],
         async data() {
-          const entries = await memory.require().listMetadata(PROFILE_NS);
+          const entries = await memory.use.listMetadata(PROFILE_NS);
           return entries
             .flatMap(({ key, data }) => {
               const { facts } = profileFrom(data);
@@ -555,7 +555,7 @@ function registerUserProfile({
             ],
             rowActions: [{ action: 'forgetFact' }],
             async data({ rowKey }) {
-              const facts = (await loadProfile(memory.require(), rowKey))?.facts ?? [];
+              const facts = (await loadProfile(memory.use, rowKey))?.facts ?? [];
               return facts
                 .sort((a, b) => b.updatedAt - a.updatedAt)
                 .map(f => ({
@@ -712,7 +712,7 @@ function registerUserProfile({
     // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
     const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
     if (!entry) return empty;
-    const extractLlm = entry.instance;
+    const extractLlm = entry.use;
 
     try {
       const baseMessages: Message[] = [
@@ -731,7 +731,7 @@ function registerUserProfile({
       if (!parsed) {
         // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 模型多半
         // 写成了纯文本/markdown。给一次显式反馈再来一次，避免一次失败丢失整批事实。
-        logger.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
+        logger.use.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
         const retryResp = await extractLlm.chat({
           messages: [
             ...baseMessages,
@@ -752,10 +752,12 @@ function registerUserProfile({
         text = (retryResp.content ?? '').trim();
         ({ parsed } = parseLLMJsonObject(text));
         if (!parsed) {
-          logger.warn(`[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`);
+          logger.use.warn(
+            `[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`,
+          );
           return empty;
         }
-        logger.debug('[user-profile] LLM 重试后解析成功');
+        logger.use.debug('[user-profile] LLM 重试后解析成功');
       }
       const { add, update, remove } = parseFactOps(parsed);
 
@@ -766,7 +768,7 @@ function registerUserProfile({
       const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
         const q = item.sourceQuote?.trim() ?? '';
         if (!q) {
-          logger.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
+          logger.use.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
           return false;
         }
         const lines = q
@@ -778,7 +780,7 @@ function registerUserProfile({
           const normalized = normalizeForQuoteMatch(frag);
           if (!normalized) continue;
           if (!targetCorpus.includes(normalized)) {
-            logger.warn(
+            logger.use.warn(
               `[user-profile] 丢弃 ${kind} fact（sourceQuote 片段不在目标用户 ${userId} 发言中）: text="${item.text}" fragment="${frag}"`,
             );
             return false;
@@ -790,7 +792,7 @@ function registerUserProfile({
       const validatedUpdate = update.filter(item => validateSourceQuote(item, 'update'));
       return { add: validatedAdd, update: validatedUpdate, remove };
     } catch (err) {
-      logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.use.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
     }
   }
@@ -940,7 +942,8 @@ function registerUserProfile({
     // 若同一用户已有提取在飞，跳过（消息计数继续累加，下次 N 条后再尝试）
     if (inflightExtractions.has(userKey)) return;
     inflightExtractions.add(userKey);
-    const mem = memory.current;
+    // 读档案、等模型、重读再写回固定同一家记忆后端：途中换了人也不会读一家、写另一家
+    const mem = memory.list().find(p => p.selected)?.use;
     try {
       if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.historyForExtraction);
@@ -968,11 +971,11 @@ function registerUserProfile({
         updatedAt: Date.now(),
       });
       page.invalidate();
-      logger.debug(
+      logger.use.debug(
         `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
     } catch (err) {
-      logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+      logger.use.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       inflightExtractions.delete(userKey);
     }
@@ -983,7 +986,7 @@ function registerUserProfile({
     triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
     options?: { countInteraction?: boolean },
   ): Promise<void> {
-    const mem = memory.current;
+    const mem = memory.list().find(p => p.selected)?.use;
     const profile = (await loadProfile(mem, userKey)) ?? {
       facts: [],
       relationScore: 0,
@@ -997,7 +1000,7 @@ function registerUserProfile({
   // 注:钩子无优先级机制,同相位 handler 按插件激活序执行;本 handler 只做副作用
   // (更新关系分数)不改消息,与其它 handler 顺序无关。
   // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
-  hooks.middleware('agent:input:before', async (data, next) => {
+  hooks.use.middleware('agent:input:before', async (data, next) => {
     const { userId, platform, triggerType } = data.message;
     if (userId) {
       const userKey = userKeyOf(platform, userId);
@@ -1006,7 +1009,7 @@ function registerUserProfile({
         // 避免同一条入站消息被计两次 interactionCount。
         await updateRelationForUser(userKey, triggerType, { countInteraction: false });
       } catch (err) {
-        logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+        logger.use.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     await next();
@@ -1015,7 +1018,7 @@ function registerUserProfile({
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
   // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
   // 确保缓冲消息（onebot saveBufferedMessage 等不触发 agent 回复的路径）也能纳入计数。
-  events.on('inbound:message:archived', data => {
+  events.use.on('inbound:message:archived', data => {
     const { sessionId, incoming } = data;
     const { userId, platform, nickname } = incoming;
     if (!userId) return;
@@ -1027,7 +1030,7 @@ function registerUserProfile({
     // 排序全失效）。增量为 0 时 relationIncrementFor 自然返回 0，不加分即可。
     const userKey = userKeyOf(platform, userId);
     void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
-      logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+      logger.use.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
     );
 
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
@@ -1035,7 +1038,7 @@ function registerUserProfile({
     userMessageCount.set(countKey, count);
     if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
       void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
-        logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
+        logger.use.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
       );
     }
   });
@@ -1097,14 +1100,14 @@ function registerUserProfile({
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
   // 多块返回保序共键：主发言者档案 → 其他参与者。
-  contributions.contribute('agent:prompt', {
+  contributions.use.contribute('agent:prompt', {
     id: 'user-profile',
     anchor: 'turn-context',
     async build(data) {
       // 干跑(token 快照)跳过档案加载——该路径 userId 为空串,加载既昂贵又无意义
       if (data.dryRun) return null;
 
-      const mem = memory.current;
+      const mem = memory.present ? memory.use : undefined;
       const blocksToInsert: string[] = [];
       const trigger = data.triggerType ?? 'direct';
       const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
@@ -1120,7 +1123,7 @@ function registerUserProfile({
           // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
           let communityLine = '';
           try {
-            const relation = userRelation.current;
+            const relation = userRelation.present ? userRelation.use : undefined;
             if (relation) {
               const r = await relation.getCommunityPeers(userKey, 5);
               if (r.peers.length > 0) {
@@ -1129,7 +1132,7 @@ function registerUserProfile({
               }
             }
           } catch (err) {
-            logger.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
+            logger.use.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
           }
           const block =
             `# 关于当前对话者（${data.userId}）的已知事实\n` +
@@ -1194,7 +1197,7 @@ function registerUserProfile({
                 addOther(item.key.slice(sep + 1), platform);
               }
             } catch (err) {
-              logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
+              logger.use.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
         }
@@ -1227,7 +1230,7 @@ function registerUserProfile({
   });
 
   // ─── 参与统一的 memory:clear ───
-  hooks.middleware('memory:clear', async (data, next) => {
+  hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('user-profile')) {
       await next();
       return;
@@ -1237,17 +1240,17 @@ function registerUserProfile({
       await next();
       return;
     }
-    const mem = memory.current;
-    if (!mem) {
+    if (!memory.present) {
       await next();
       return;
     }
+    const mem = memory.use;
     try {
       // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
       // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
       // 是真原子，mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。批量的确定收益是
       // 一次往返 + 遇错即停，不是无条件的「要么全成」。读不出的条目一并删除，计入条数。
-      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
+      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger.use);
       data.results.push({
         source: 'user-profile',
         type: 'user-profile',
@@ -1272,12 +1275,12 @@ function registerUserProfile({
   // 设计要点：
   // - 全局可查（用户决定 C）：跨平台/跨群均可
   // - 两种调用方式：① user_key 直传；② platform+user_id 组合
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'user-profile',
     label: '用户档案',
     description: '查询 Aalis 已经积累的某人事实档案。',
   });
-  tools.register({
+  tools.use.register({
     definition: {
       type: 'function',
       function: {
@@ -1323,7 +1326,7 @@ function registerUserProfile({
           error: '需提供 user_key 或 (platform + user_id)。',
         });
       }
-      const profile = await loadProfileLenient(memory.current, userKey);
+      const profile = await loadProfileLenient(memory.present ? memory.use : undefined, userKey);
       if (!profile || profile.facts.length === 0) {
         return JSON.stringify({ ok: true, userKey, found: false, message: '该用户暂无档案数据。' });
       }
@@ -1348,11 +1351,11 @@ function registerUserProfile({
   // /profile              查看自己的档案
   // /profile clear        清除自己的档案（authority=2，自己删自己的）
   // /profile clear nuke   清空所有用户档案（authority=3，dangerous）
-  commands.command('profile', '查看你在 Aalis 中的事实档案').action(async argv => {
+  commands.use.command('profile', '查看你在 Aalis 中的事实档案').action(async argv => {
     const userId = argv.session.userId;
     if (!userId) return '当前会话未识别用户身份，无法查看档案。';
     const userKey = userKeyOf(argv.session.platform, userId);
-    const profile = await loadProfileLenient(memory.current, userKey);
+    const profile = await loadProfileLenient(memory.present ? memory.use : undefined, userKey);
     if (!profile || profile.facts.length === 0) {
       return `📭 暂无档案数据 (${userKey})`;
     }
@@ -1361,11 +1364,11 @@ function registerUserProfile({
     return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
   });
 
-  commands.command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' }).action(async argv => {
+  commands.use.command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' }).action(async argv => {
     const userId = argv.session.userId;
     if (!userId) return '当前会话未识别用户身份，无法清除档案。';
     const userKey = userKeyOf(argv.session.platform, userId);
-    const mem = memory.require();
+    const mem = memory.use;
     try {
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
       if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
@@ -1382,7 +1385,7 @@ function registerUserProfile({
   // mongosh 手术或 nuke 全清。dangerous → 等级 2 + confirm，与同族 nuke 对齐
   //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及任意一份档案）。
   // id 未命中时列出前若干条供定位。
-  commands
+  commands.use
     .command('profile.forget <target:string> <factId:string>', '定点删除某用户档案中的一条事实（运维除毒）', {
       risk: 'dangerous',
     })
@@ -1390,7 +1393,7 @@ function registerUserProfile({
       const target = String(targetArg ?? '');
       const factId = String(factIdArg ?? '');
       const userKey = target.includes(':') ? target : userKeyOf(argv.session.platform, target);
-      const mem = memory.current;
+      const mem = memory.list().find(p => p.selected)?.use;
       try {
         const profile = await loadProfile(mem, userKey);
         if (!profile || profile.facts.length === 0) return `📭 无档案数据 (${userKey})`;
@@ -1414,10 +1417,10 @@ function registerUserProfile({
       }
     });
 
-  commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
-    const mem = memory.require();
+  commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
+    const mem = memory.use;
     try {
-      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger);
+      const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger.use);
       page.invalidate();
       return `✅ 已清空全部用户档案（${keys.length} 条）`;
     } catch (err) {
@@ -1426,7 +1429,7 @@ function registerUserProfile({
     }
   });
 
-  logger.info(
+  logger.use.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
       `maxFacts=${cfg.maxFactsPerUser}, ` +
       `namespace=${PROFILE_NS})`,

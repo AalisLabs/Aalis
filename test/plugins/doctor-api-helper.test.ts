@@ -12,7 +12,7 @@
  * 驱动面全部走公开入口：最小 definePlugin 探针插件经 app.plugin 装载，
  * doctor 由桩提供者插件提供（可控上线时机与优先级）。
  */
-import { App, definePlugin, optional, provide } from '@aalis/core';
+import { App, definePlugin, optional, provide, type ServiceSelection } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type BoundDoctor,
@@ -71,7 +71,7 @@ function doctorProvider(name: string, svc: DoctorService, priority?: number) {
     provides: [doctor],
     uses: { provide },
     apply(caps) {
-      caps.provide(doctor, svc, priority === undefined ? undefined : { priority });
+      caps.provide.use(doctor, svc, priority === undefined ? undefined : { priority });
     },
   });
 }
@@ -80,8 +80,8 @@ function doctorProvider(name: string, svc: DoctorService, priority?: number) {
  * 最小消费者插件：把这次激活绑定到的 doctor 门面交出来，用例即以「这个插件的身份」登记检查项。
  * doctor 声明为 optional，探针在 doctor 缺席时也照常激活——「提供者后到」正是要测的场景。
  */
-async function loadProbe(app: App, name: string): Promise<BoundDoctor> {
-  let bound: BoundDoctor | undefined;
+async function loadProbe(app: App, name: string): Promise<ServiceSelection<BoundDoctor>> {
+  let bound: ServiceSelection<BoundDoctor> | undefined;
   await app.plugin(
     definePlugin({
       name,
@@ -120,7 +120,7 @@ describe('doctor 门面 — 提供者在场', () => {
   it('doctor 已就绪时立即 registerCheck，退订立即解注册', async () => {
     const { svc, specs } = makeDoctor();
     await app.plugin(doctorProvider('test-doctor', svc));
-    const d = await loadProbe(app, 'probe-eager');
+    const d = (await loadProbe(app, 'probe-eager')).use;
 
     const off = d.registerCheck(spec('eager.x'));
 
@@ -132,7 +132,7 @@ describe('doctor 门面 — 提供者在场', () => {
   it('未传 pluginName 时使用登记者（这次激活）的身份', async () => {
     const { svc, specs } = makeDoctor();
     await app.plugin(doctorProvider('test-doctor', svc));
-    const d = await loadProbe(app, 'plugin-foo');
+    const d = (await loadProbe(app, 'plugin-foo')).use;
 
     d.registerCheck(spec('attr.x'));
 
@@ -142,7 +142,7 @@ describe('doctor 门面 — 提供者在场', () => {
   it('显式传入 pluginName 时优先于登记者身份', async () => {
     const { svc, specs } = makeDoctor();
     await app.plugin(doctorProvider('test-doctor', svc));
-    const d = await loadProbe(app, 'plugin-foo');
+    const d = (await loadProbe(app, 'plugin-foo')).use;
 
     d.registerCheck(spec('attr.y', { pluginName: 'explicit-name' }));
 
@@ -153,9 +153,9 @@ describe('doctor 门面 — 提供者在场', () => {
 describe('doctor 门面 — 提供者后到与换人', () => {
   it('doctor 未就绪时挂在账上；提供者上线后真正 registerCheck', async () => {
     const d = await loadProbe(app, 'probe-deferred');
-    expect(d.current, 'doctor 尚未上线').toBeUndefined();
+    expect(d.present, 'doctor 尚未上线').toBe(false);
 
-    const off = d.registerCheck(spec('deferred.a'));
+    const off = d.use.registerCheck(spec('deferred.a'));
     const { svc, specs } = makeDoctor();
     expect(specs.has('deferred.a'), '提供者还没来，不该有登记落到任何 doctor 上').toBe(false);
 
@@ -168,7 +168,7 @@ describe('doctor 门面 — 提供者后到与换人', () => {
   });
 
   it('doctor 上线前退订：提供者后到时不再登记', async () => {
-    const d = await loadProbe(app, 'probe-deferred');
+    const d = (await loadProbe(app, 'probe-deferred')).use;
 
     const off = d.registerCheck(spec('deferred.b'));
     off();
@@ -180,7 +180,7 @@ describe('doctor 门面 — 提供者后到与换人', () => {
   });
 
   it('多条登记各自独立挂账、独立退订', async () => {
-    const d = await loadProbe(app, 'probe-multi');
+    const d = (await loadProbe(app, 'probe-multi')).use;
 
     const d1 = d.registerCheck(spec('multi.1'));
     const d2 = d.registerCheck(spec('multi.2'));
@@ -200,7 +200,7 @@ describe('doctor 门面 — 提供者后到与换人', () => {
     const first = makeDoctor();
     const second = makeDoctor();
     await app.plugin(doctorProvider('test-doctor-a', first.svc));
-    const d = await loadProbe(app, 'probe-swap');
+    const d = (await loadProbe(app, 'probe-swap')).use;
     d.registerCheck(spec('swap.x'));
     expect(first.specs.has('swap.x')).toBe(true);
 
@@ -217,7 +217,7 @@ describe('doctor 门面 — 随激活存亡', () => {
   it('登记者卸载：检查项随之摘除，无需插件自己记账', async () => {
     const { svc, specs } = makeDoctor();
     await app.plugin(doctorProvider('test-doctor', svc));
-    const d = await loadProbe(app, 'probe-teardown');
+    const d = (await loadProbe(app, 'probe-teardown')).use;
     d.registerCheck(spec('teardown.x'));
     expect(specs.has('teardown.x')).toBe(true);
 
@@ -228,8 +228,8 @@ describe('doctor 门面 — 随激活存亡', () => {
   it('跨插件隔离：卸载一个登记者不影响另一个的检查项', async () => {
     const { svc, specs } = makeDoctor();
     await app.plugin(doctorProvider('test-doctor', svc));
-    const a = await loadProbe(app, 'probe-a');
-    const b = await loadProbe(app, 'probe-b');
+    const a = (await loadProbe(app, 'probe-a')).use;
+    const b = (await loadProbe(app, 'probe-b')).use;
     a.registerCheck(spec('iso.a'));
     b.registerCheck(spec('iso.b'));
 

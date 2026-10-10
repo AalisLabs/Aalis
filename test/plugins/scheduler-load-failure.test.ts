@@ -56,7 +56,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     await app.plugins.idle();
   };
   const svcOf = (): SchedulerService => {
-    const svc = app.bind({ services }).services.get(scheduler);
+    const svc = app.bind({ services }).services.use.get(scheduler);
     if (!svc) throw new Error('scheduler 服务未注册');
     return svc;
   };
@@ -135,7 +135,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
 
   it('拒写期间 scheduler_create_job 回执注明未写入；文件正常时不带附注', async () => {
     const create = async (name: string): Promise<string> => {
-      const toolSvc = app.bind({ services }).services.get(tools);
+      const toolSvc = app.bind({ services }).services.use.get(tools);
       if (!toolSvc) throw new Error('tools 服务未注册');
       toolSvc.setExecutionGuard(async () => null); // 放行确认：这里只看回执
       const res = await toolSvc.execute(

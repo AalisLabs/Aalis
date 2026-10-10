@@ -11,7 +11,7 @@
  *
  * 门面部分只走公开入口：桩提供者插件与最小消费者插件经 app.plugin 装载。
  */
-import { App, definePlugin, optional, provide } from '@aalis/core';
+import { App, definePlugin, optional, provide, type ServiceSelection } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type BoundPublish,
@@ -310,14 +310,14 @@ function providerPlugin(name: string, svc: PublishService, priority?: number) {
     provides: [publish],
     uses: { provide },
     apply(caps) {
-      caps.provide(publish, svc, priority === undefined ? undefined : { priority });
+      caps.provide.use(publish, svc, priority === undefined ? undefined : { priority });
     },
   });
 }
 
 /** 最小消费者：交出这次激活的 publish 门面。optional，提供者后到的情形也能激活 */
-async function loadConsumer(app: App, name: string): Promise<BoundPublish> {
-  let bound: BoundPublish | undefined;
+async function loadConsumer(app: App, name: string): Promise<ServiceSelection<BoundPublish>> {
+  let bound: ServiceSelection<BoundPublish> | undefined;
   await app.plugin(
     definePlugin({
       name,
@@ -361,7 +361,7 @@ describe('publish 门面 — 随消费方激活撤回', () => {
   it('消费方卸载后：变更不再送到它，它的 health 不再被读，它的 live 不再送到提供者', async () => {
     const p = makeProvider();
     await app.plugin(providerPlugin('stub-publish', p.svc));
-    const bound = await loadConsumer(app, 'consumer-site');
+    const bound = (await loadConsumer(app, 'consumer-site')).use;
 
     let changes = 0;
     bound.onChange(() => {
@@ -391,8 +391,8 @@ describe('publish 门面 — 随消费方激活撤回', () => {
   it('卸载一个消费方不牵连另一个', async () => {
     const p = makeProvider();
     await app.plugin(providerPlugin('stub-publish', p.svc));
-    const a = await loadConsumer(app, 'consumer-a');
-    const b = await loadConsumer(app, 'consumer-b');
+    const a = (await loadConsumer(app, 'consumer-a')).use;
+    const b = (await loadConsumer(app, 'consumer-b')).use;
     let aChanges = 0;
     let bChanges = 0;
     a.onChange(() => {
@@ -417,7 +417,7 @@ describe('publish 门面 — 随消费方激活撤回', () => {
   it('手动退订与 detach：立即撤回，重复调用无副作用', async () => {
     const p = makeProvider();
     await app.plugin(providerPlugin('stub-publish', p.svc));
-    const bound = await loadConsumer(app, 'consumer-site');
+    const bound = (await loadConsumer(app, 'consumer-site')).use;
     let changes = 0;
     const off = bound.onChange(() => {
       changes++;
@@ -439,7 +439,7 @@ describe('publish 门面 — 随消费方激活撤回', () => {
   it('同一激活同名再登记：替换旧的，旧句柄的 live 不再生效', async () => {
     const p = makeProvider();
     await app.plugin(providerPlugin('stub-publish', p.svc));
-    const bound = await loadConsumer(app, 'consumer-site');
+    const bound = (await loadConsumer(app, 'consumer-site')).use;
     const first = surfaceStub('works');
     const second = surfaceStub('works');
     const oldBinding = bound.attachSurface(first.surface);
@@ -458,12 +458,12 @@ describe('publish 门面 — 随消费方激活撤回', () => {
 describe('publish 门面 — 提供者后到与换人', () => {
   it('提供者后到：先登记的挂在账上，上线后补登记；之前的 live 不排队', async () => {
     const bound = await loadConsumer(app, 'consumer-site');
-    expect(bound.current).toBeUndefined();
+    expect(bound.present).toBe(false);
     let changes = 0;
-    bound.onChange(() => {
+    bound.use.onChange(() => {
       changes++;
     });
-    const binding = bound.attachSurface(surfaceStub().surface);
+    const binding = bound.use.attachSurface(surfaceStub().surface);
     binding.live(['gggggggggg']);
 
     const p = makeProvider();
@@ -482,7 +482,7 @@ describe('publish 门面 — 提供者后到与换人', () => {
     const first = makeProvider();
     const second = makeProvider();
     await app.plugin(providerPlugin('stub-publish-a', first.svc));
-    const bound = await loadConsumer(app, 'consumer-site');
+    const bound = (await loadConsumer(app, 'consumer-site')).use;
     let changes = 0;
     bound.onChange(() => {
       changes++;

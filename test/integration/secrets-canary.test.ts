@@ -12,7 +12,7 @@ import {
   type Logger,
   type LogLevel,
   pluginsService,
-  type ServiceRef,
+  type ServiceSelection,
 } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
@@ -20,6 +20,7 @@ import { installConfigHotReload, withPluginConfigSync } from '../../packages/run
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
 import { createFsSecretsProvider, createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // ════════════════════════════════════════════════════════════
@@ -43,8 +44,8 @@ afterEach(async () => {
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
-function refStub<T>(instance: T): ServiceRef<T> {
-  return { current: instance, require: () => instance, all: () => [], follow: () => () => {} };
+function refStub<T>(instance: T): ServiceSelection<T> {
+  return fixedRef(instance);
 }
 
 async function waitFor(check: () => boolean, ms = 4000): Promise<void> {
@@ -72,7 +73,7 @@ describe('金丝雀密钥不进主配置文件', () => {
       configSchema: SCHEMA,
       uses: { config },
       apply({ config: raw }) {
-        const parsed = parseConfig(SCHEMA, raw) as { apiKey?: string };
+        const parsed = parseConfig(SCHEMA, raw.use) as { apiKey?: string };
         seen.push(parsed.apiKey ?? '');
       },
     });
@@ -107,12 +108,12 @@ describe('金丝雀密钥不进主配置文件', () => {
     registerPluginRoutes(
       expressApp,
       {
-        app: refStub(bound.app.require()),
-        source: { current: undefined },
-        plugins: refStub(bound.plugins.require()),
-        hostConfig: refStub(bound.hostConfig.require()),
-        tools: { current: undefined },
-        commands: { current: undefined },
+        app: refStub(bound.app.use),
+        source: ref(),
+        plugins: refStub(bound.plugins.use),
+        hostConfig: refStub(bound.hostConfig.use),
+        tools: ref(),
+        commands: ref(),
         services: { names: () => [] },
         self: 'zz-webui',
         versions: () => () => undefined,

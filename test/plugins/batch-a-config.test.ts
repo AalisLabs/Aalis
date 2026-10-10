@@ -38,11 +38,11 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
   const registry = makeToolRegistry(app.logger);
   const registerTool = vi.spyOn(registry, 'register');
   const registerGroup = vi.spyOn(registry, 'registerGroup');
-  app.bind({ provide }).provide(tools, registry);
+  app.bind({ provide }).provide.use(tools, registry);
   const processes: string[] = [];
   if (withProcess) {
     const host = app.bind({ provide });
-    host.provide(processService, {
+    host.provide.use(processService, {
       execFile: async (command: string) => {
         processes.push(command);
         return { stdout: '', stderr: '', code: 0 };
@@ -53,7 +53,7 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
       },
       readExternalFile: async () => new Uint8Array(),
     } as never);
-    host.provide(storage, { readFile: async () => new Uint8Array(), writeFile: async () => {} } as never);
+    host.provide.use(storage, { readFile: async () => new Uint8Array(), writeFile: async () => {} } as never);
   }
   await app.plugin(plugin, config);
   await app.plugins.idle();

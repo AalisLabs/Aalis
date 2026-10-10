@@ -7,7 +7,7 @@
 // 插件自己的临时目录（浏览器截图、代码执行的脚本目录）不在这里，清扫不碰。
 // ============================================================
 
-// biome-ignore lint/style/noRestrictedImports: 清扫本会话临时区要按 lstat 不跟随链接地看修改时间，存储网关没有这个能力
+// biome-ignore lint/style/noRestrictedImports: 清扫本会话临时区要按 lstat 不跟随链接地看修改时间，存储服务没有这个能力
 import { lstat, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SessionInfo } from '@aalis/api-session-manager';

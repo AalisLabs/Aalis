@@ -11,7 +11,7 @@ import {
   type UpdateTarget,
 } from '@aalis/api-package-manager';
 import { pluginDefinitionOf, pluginSource } from '@aalis/api-plugin-source';
-import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
+import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
   type AppService,
   appService,
@@ -223,20 +223,19 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 function createService(caps: Caps): PackageManagerService {
-  const log = caps.logger;
-  const proc = createProcessGateway(caps.proc);
+  const log = caps.logger.use;
+  const proc = caps.proc.use;
 
   function getApp(): AppService {
-    const app = caps.app.current;
-    if (!app) throw new Error('app 服务不可用，无法执行包管理操作');
-    return app;
+    if (!caps.app.present) throw new Error('app 服务不可用，无法执行包管理操作');
+    return caps.app.use;
   }
 
   return createPackageManager({
     proc,
-    log,
+    log: log,
     // 装到宿主的安装集：与插件加载器读的是同一份 package.json，否则装了永远不加载
-    projectRoot: () => caps.paths.require().app,
+    projectRoot: () => caps.paths.use.app,
     // 经 process 网关的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
     // lockfile、node_modules/<pkg>/package.json）在 storage 沙盒之外，而 readExternalFile
     // 正是文档给这一场景指定的「OS 直通读外部路径」通道——本插件也不在 biome 的 node:* 例外清单里。
@@ -248,19 +247,22 @@ function createService(caps: Caps): PackageManagerService {
       }
     },
     // 宿主不提供插件来源（打包宿主）时视同本次没有新插件；随后仍按注册表判定，声明为插件的包会报「未被加载」
-    rescanPlugins: async () => (await caps.source.current?.rescan()) ?? [],
+    rescanPlugins: async () => (await (caps.source.present ? caps.source.use.rescan() : undefined)) ?? [],
     // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
     // 也不要在真没装上时谎报成功。
-    isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
-    pluginStatus: () => caps.plugins.current?.getStatus() ?? [],
-    availableServices: () => caps.services.names(),
+    isPluginRegistered: name =>
+      caps.plugins.present ? caps.plugins.use.getStatus().some(p => p.name === name) : false,
+    pluginStatus: () => (caps.plugins.present ? caps.plugins.use.getStatus() : []),
+    availableServices: () => caps.services.use.names(),
     idle: async () => {
-      await caps.plugins.current?.idle();
+      if (caps.plugins.present) await caps.plugins.use.idle();
     },
-    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(caps.paths.require().app, pkgName),
+    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(caps.paths.use.app, pkgName),
     listPluginInstanceIds: definitionName =>
-      (caps.plugins.current?.getStatus() ?? []).filter(p => p.name === definitionName).map(p => p.instanceId),
+      (caps.plugins.present ? caps.plugins.use.getStatus() : [])
+        .filter(p => p.name === definitionName)
+        .map(p => p.instanceId),
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
     //
@@ -282,19 +284,19 @@ function createService(caps: Caps): PackageManagerService {
     recoveryChannelProviders: () => [
       ...new Set(
         ['webui-client', 'webui-server', packageManager.name].flatMap(service => {
-          const id = caps.services.inspect(service)[0]?.contextId;
+          const id = caps.services.use.inspect(service)[0]?.contextId;
           return id ? [id] : [];
         }),
       ),
     ],
 
     unloadPlugin: async name => {
-      await caps.plugins.current?.unload(name);
+      if (caps.plugins.present) await caps.plugins.use.unload(name);
     },
     // 文档没有改动时不保存：没东西要写，也就不该因配置文件的状况报失败
     cleanupConfig: async (instanceIds, removeConfig) => {
-      const doc = caps.hostConfig.current;
-      if (!doc) return;
+      if (!caps.hostConfig.present) return;
+      const doc = caps.hostConfig.use;
       const plugins = doc.getAll().plugins;
       const touched = instanceIds.filter(
         id => doc.isPluginDisabled(id) || (removeConfig && Object.hasOwn(plugins, id)),
@@ -1186,6 +1188,6 @@ export default definePlugin({
   provides: [packageManager],
   uses,
   apply(caps) {
-    caps.provide(packageManager, createService(caps), { label: 'package-manager' });
+    caps.provide.use(packageManager, createService(caps), { label: 'package-manager' });
   },
 });

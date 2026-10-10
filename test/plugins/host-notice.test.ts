@@ -85,7 +85,7 @@ function newApp(): App {
 /** 事件键经 declaration merging 声明，从源码路径导入拿不到增广，用宽签名发射 */
 function looseEmit(app: App) {
   const host = app.bind({ events });
-  return host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+  return host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
 }
 
 describe('schema-message：宿主通知的 kind 与出口前缀', () => {
@@ -111,11 +111,11 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugins.idle();
     const host = app.bind({ messageArchive, memory, events });
     const seen: Array<{ archivedMessage: Message }> = [];
-    (host.events.on as (e: string, h: (d: unknown) => void) => void)('inbound:message:archived', d => {
+    (host.events.use.on as (e: string, h: (d: unknown) => void) => void)('inbound:message:archived', d => {
       seen.push(d as { archivedMessage: Message });
     });
 
-    const { message } = await host.messageArchive.require().archiveIncoming(hostNoticeIncoming());
+    const { message } = await host.messageArchive.use.archiveIncoming(hostNoticeIncoming());
     expect(message).toMatchObject({ role: 'notice', kind: 'host-notice', content: HOST_BODY });
     expect(message.name).toBeUndefined();
     expect(message.metadata).toMatchObject({ hostNoticeKind: 'paper-task', source: 'paper' });
@@ -123,7 +123,7 @@ describe('message-archive：宿主通知归档', () => {
     expect(message.metadata?.nickname).toBeUndefined();
     expect(JSON.stringify(message)).not.toContain(SENTINEL);
 
-    const stored = await host.memory.require().getHistory(ROOM, 10);
+    const stored = await host.memory.use.getHistory(ROOM, 10);
     expect(stored).toHaveLength(1);
     expect(JSON.stringify(stored)).not.toContain(SENTINEL);
     await vi.waitFor(() => expect(seen).toHaveLength(1));
@@ -138,7 +138,7 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugins.idle();
     const host = app.bind({ messageArchive });
     const facts = { tool: 'zz_tool', status: 'failed', exitCode: 2, durationMs: 1500 };
-    const { message } = await host.messageArchive.require().archiveIncoming(
+    const { message } = await host.messageArchive.use.archiveIncoming(
       hostNoticeIncoming({
         source: 'bg:bg_1',
         hostNotice: { kind: 'background-task', id: 'bg_1', callerUserId: '30002', replyTo: 'zz-msg-1', facts },
@@ -161,7 +161,7 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     const host = app.bind({ provide, gateway, flowControl, memory });
     const reached: IncomingMessage[] = [];
-    host.provide(agent, {
+    host.provide.use(agent, {
       async handleMessage(msg: IncomingMessage) {
         reached.push(msg);
       },
@@ -173,10 +173,10 @@ describe('message-archive：宿主通知归档', () => {
       expect(app.plugins.getPlugin(p.name)?.state, `${p.name} 未激活`).toBe('active');
     }
 
-    host.flowControl.require().setMuted(ROOM, 600, 'onebot');
-    await host.gateway.require().ingressMessage(hostNoticeIncoming());
+    host.flowControl.use.setMuted(ROOM, 600, 'onebot');
+    await host.gateway.use.ingressMessage(hostNoticeIncoming());
     expect(reached).toEqual([]);
-    const stored = await host.memory.require().getHistory(ROOM, 10);
+    const stored = await host.memory.use.getHistory(ROOM, 10);
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ role: 'notice', kind: 'host-notice', content: HOST_BODY });
     expect(JSON.stringify(stored)).not.toContain(SENTINEL);
@@ -191,8 +191,8 @@ async function setupVector(hits: VectorSearchResult[] = []) {
   await app.plugin(memoryInMemory);
   const host = app.bind({ provide, memory, events });
   const added: Array<Record<string, unknown>> = [];
-  host.provide(embedding, { embed: async () => [0.1, 0.2, 0.3] });
-  host.provide(vectorstore, {
+  host.provide.use(embedding, { embed: async () => [0.1, 0.2, 0.3] });
+  host.provide.use(vectorstore, {
     async add(_v: number[], metadata: Record<string, unknown>) {
       added.push(metadata);
     },
@@ -202,7 +202,7 @@ async function setupVector(hits: VectorSearchResult[] = []) {
     save: async () => {},
   });
   const toolHandlers = new Map<string, (args: Record<string, unknown>, ctx: unknown) => Promise<string>>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: never }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -243,7 +243,7 @@ describe('memory-vector：宿主通知不进向量记忆与扩窗', () => {
   });
 
   async function seedRoom(host: Awaited<ReturnType<typeof setupVector>>['host']) {
-    const mem = host.memory.require();
+    const mem = host.memory.use;
     await mem.saveMessage(ROOM, archivedNotice(BASE_TS - 60_000));
     await mem.saveMessage(ROOM, { role: 'assistant', content: '她对通知的回复', timestamp: BASE_TS });
     await mem.saveMessage(ROOM, {
@@ -319,14 +319,14 @@ async function setupRelation(cfg: Partial<ExtractorConfig> = {}) {
   const host = app.bind({ provide, events, logger, memory, llm, platform });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.require();
+  const mem = host.memory.use;
   const calls: ChatModelRequest[] = [];
-  host.provide(
+  host.provide.use(
     platform,
     { adapterName: 'mock-onebot', platform: 'onebot', getConnections: () => [], sendMessage: async () => {} } as never,
     { entryId: 'mock/onebot' },
   );
-  host.provide(
+  host.provide.use(
     llm,
     {
       id: 'fake-extractor',
@@ -408,7 +408,7 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
   await registerHubs(app);
   const host = app.bind({ provide, events, memory, messageArchive });
   const requests: ChatModelRequest[] = [];
-  host.provide(llm, {
+  host.provide.use(llm, {
     id: 'stub-model',
     capabilities: ['chat'],
     async chat(req: ChatModelRequest) {
@@ -425,7 +425,7 @@ async function setupProfile(config: Record<string, unknown>, opts: { withArchive
   });
   await app.plugins.idle();
   expect(app.plugins.getPlugin(userProfile.name)?.state).toBe('active');
-  const mem = host.memory.require();
+  const mem = host.memory.use;
   const seedAndTrigger = async () => {
     await mem.saveMessage(ROOM, {
       role: 'user',
@@ -456,7 +456,7 @@ describe('user-profile：宿主通知不进抽取窗口', () => {
 
   it('不带 userId 的宿主通知归档后不写档案、不改关系分', async () => {
     const { host, mem, requests } = await setupProfile({ extractEveryNMessages: 1 }, { withArchive: true });
-    await host.messageArchive.require().archiveIncoming(hostNoticeIncoming());
+    await host.messageArchive.use.archiveIncoming(hostNoticeIncoming());
     await new Promise(r => setTimeout(r, 30));
     expect(await mem.listMetadata('user:profile')).toEqual([]);
     expect(requests).toEqual([]);

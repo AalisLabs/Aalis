@@ -20,7 +20,7 @@
 import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
@@ -299,7 +299,7 @@ const GENERIC_PLACEHOLDER_USERIDS = new Set(['self', 'me', 'bot', 'assistant']);
 
 /** 取当前运行时已注册的平台名集合（小写）。无 adapter 时返回空集——调用方应
  *  在传入 isPlaceholderSelfPersonId 时把「空集」视为 permissive。 */
-export function getKnownPlatformsLower(platform: ServiceRef<PlatformAdapter>): Set<string> {
+export function getKnownPlatformsLower(platform: ServiceSelection<PlatformAdapter>): Set<string> {
   try {
     return new Set(getPlatformNames(platform).map(p => p.toLowerCase()));
   } catch {
@@ -325,11 +325,11 @@ const MAX_BACKOFF_PENALTY = 8;
 
 /** RelationExtractor 用到的能力 */
 export interface ExtractorCaps {
-  events: Events;
-  logger: Logger;
-  memory: ServiceRef<MemoryService>;
-  llm: ServiceRef<LLMModel>;
-  platform: ServiceRef<PlatformAdapter>;
+  events: ServiceSelection<Events>;
+  logger: ServiceSelection<Logger>;
+  memory: ServiceSelection<MemoryService>;
+  llm: ServiceSelection<LLMModel>;
+  platform: ServiceSelection<PlatformAdapter>;
 }
 
 export class RelationExtractor {
@@ -369,12 +369,12 @@ export class RelationExtractor {
         const penalty = Math.min((this.backoff.get(data.sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
         this.backoff.set(data.sessionId, { penalty, skip: penalty - 1 });
         // warn 频率随重试几何变疏，自带节流不会刷屏
-        this.caps.logger.warn(
+        this.caps.logger.use.warn(
           `[user-relation] 提取失败 session=${data.sessionId}，退避约 ${penalty * this.cfg.triggerEveryNMessages} 条消息后重试: ${stringifyErr(err)}`,
         );
       });
     };
-    this.off = this.caps.events.on('inbound:message:archived', handler);
+    this.off = this.caps.events.use.on('inbound:message:archived', handler);
   }
 
   stop(): void {
@@ -389,11 +389,11 @@ export class RelationExtractor {
     if (this.inFlight.has(sessionId)) return;
     this.inFlight.add(sessionId);
     try {
-      const memory = this.caps.memory.current;
-      if (!memory) {
-        if (this.cfg.debug) this.caps.logger.debug('[user-relation] memory 不可用，跳过');
+      if (!this.caps.memory.present) {
+        if (this.cfg.debug) this.caps.logger.use.debug('[user-relation] memory 不可用，跳过');
         return;
       }
+      const memory = this.caps.memory.use;
       const limit = this.cfg.mode === 'all-new' ? this.cfg.allNewMaxMessages : this.cfg.readWindowSize;
       const readScope = this.cfg.readScope ?? 'same-session';
       // history: Message[] 数组（用于 LLM prompt 渲染 + validMessageIds 校验）；
@@ -413,7 +413,7 @@ export class RelationExtractor {
       } else {
         if (!memory.getRecentMessagesAcrossSessions) {
           if (this.cfg.debug)
-            this.caps.logger.debug(
+            this.caps.logger.use.debug(
               `[user-relation] readScope=${readScope} 但 memory 后端不支持 getRecentMessagesAcrossSessions，降级到 same-session`,
             );
           history = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
@@ -449,13 +449,13 @@ export class RelationExtractor {
       }
       const userMsgs = history.filter(m => m.role === 'user' && hasMessageId(m));
       if (userMsgs.length === 0) {
-        if (this.cfg.debug) this.caps.logger.debug(`[user-relation] ${sessionId} 窗口内无可提取消息`);
+        if (this.cfg.debug) this.caps.logger.use.debug(`[user-relation] ${sessionId} 窗口内无可提取消息`);
         return;
       }
 
       const modelEntry = resolveLLMModel(this.caps.llm, this.cfg.extractionModel, [LLMCapabilities.Chat]);
       if (!modelEntry) {
-        if (this.cfg.debug) this.caps.logger.debug('[user-relation] 未找到可用 LLM，跳过提取');
+        if (this.cfg.debug) this.caps.logger.use.debug('[user-relation] 未找到可用 LLM，跳过提取');
         return;
       }
 
@@ -474,7 +474,7 @@ export class RelationExtractor {
         { crossSession, currentSessionId: sessionId },
       );
 
-      const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
+      const raw = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking);
       // LLM 往返成功即视为下游恢复，清除退避——解析失败走下面的带内重试，不计入惩罚
       this.backoff.delete(sessionId);
       let result = parseExtraction(raw);
@@ -482,8 +482,8 @@ export class RelationExtractor {
         // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 多半是
         // 模型彻底跑题（写了纯文本/markdown 段落）。给模型一次明确反馈再来一次，
         // 避免一窗对话因为一次输出失败而完全丢失关系信号。
-        this.caps.logger.warn(
-          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.contextId}），尝试重试一次。原文前 200 字：${raw.slice(0, 200)}`,
+        this.caps.logger.use.warn(
+          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.id}），尝试重试一次。原文前 200 字：${raw.slice(0, 200)}`,
         );
         const retryMessages: Message[] = [
           ...promptMessages,
@@ -497,19 +497,19 @@ export class RelationExtractor {
               '就输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',
           } as Message,
         ];
-        const rawRetry = await callLLM(modelEntry.instance, retryMessages, this.cfg.disableThinking);
+        const rawRetry = await callLLM(modelEntry.use, retryMessages, this.cfg.disableThinking);
         result = parseExtraction(rawRetry);
         if (result.kind === 'parse-error') {
-          this.caps.logger.warn(
-            `[user-relation] LLM 重试后仍无法解析 JSON（model=${modelEntry.contextId}），放弃本批次。重试原文前 200 字：${rawRetry.slice(0, 200)}`,
+          this.caps.logger.use.warn(
+            `[user-relation] LLM 重试后仍无法解析 JSON（model=${modelEntry.id}），放弃本批次。重试原文前 200 字：${rawRetry.slice(0, 200)}`,
           );
           return;
         }
-        this.caps.logger.debug(`[user-relation] LLM 重试后解析成功（model=${modelEntry.contextId}）`);
+        this.caps.logger.use.debug(`[user-relation] LLM 重试后解析成功（model=${modelEntry.id}）`);
       }
       if (result.kind === 'empty') {
         if (this.cfg.debug) {
-          this.caps.logger.debug(`[user-relation] ${sessionId} LLM 明确表示本批次无可提取`);
+          this.caps.logger.use.debug(`[user-relation] ${sessionId} LLM 明确表示本批次无可提取`);
         }
         return;
       }
@@ -655,7 +655,7 @@ export class RelationExtractor {
       return false;
     };
     const debugSkip = (label: string, reason: string) => {
-      if (this.cfg.debug) this.caps.logger.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
+      if (this.cfg.debug) this.caps.logger.use.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
     };
     const now = Date.now();
     // ── 伪 person 守卫：persona-agnostic 平台白名单 + 通用占位 userId 兜底。
@@ -716,7 +716,7 @@ export class RelationExtractor {
     if (dropEntries.length > 0) {
       const total = dropEntries.reduce((s, [, v]) => s + v.count, 0);
       const summary = dropEntries.map(([k, v]) => `${k}×${v.count}`).join(' + ');
-      this.caps.logger.debug(
+      this.caps.logger.use.debug(
         `[user-relation] LLM 输出含 ${total} 个 self/占位字段，已丢弃 (${summary})。` +
           `典型示例: ${dropEntries
             .flatMap(([k, v]) => v.samples.map(s => `${k}=${s}`))
@@ -789,7 +789,7 @@ export class RelationExtractor {
       const pid = `${p.platform}:${p.userId}`;
       if (!referencedPersonIds.has(pid)) {
         if (this.cfg.debug) {
-          this.caps.logger.debug(`[user-relation] 跳过孤立人物 "${p.displayName ?? pid}"（${pid} 无任何边引用）`);
+          this.caps.logger.use.debug(`[user-relation] 跳过孤立人物 "${p.displayName ?? pid}"（${pid} 无任何边引用）`);
         }
         continue;
       }
@@ -803,7 +803,7 @@ export class RelationExtractor {
       // 反孤儿：本轮没有任何边引用该 refKey 且不是已存在节点的强化 → 跳过
       if (!e.existingEventId && !referencedEventRefKeys.has(e.refKey)) {
         if (this.cfg.debug) {
-          this.caps.logger.debug(`[user-relation] 跳过孤立事件 "${e.title}"（refKey=${e.refKey} 无任何边引用）`);
+          this.caps.logger.use.debug(`[user-relation] 跳过孤立事件 "${e.title}"（refKey=${e.refKey} 无任何边引用）`);
         }
         continue;
       }
@@ -826,7 +826,7 @@ export class RelationExtractor {
           sessionScope = 'global';
         } else {
           sessionScope = ctxInfo.sessionId;
-          this.caps.logger.debug(
+          this.caps.logger.use.debug(
             `[user-relation] 剥离 event "${e.title}" 的 scope=global 标签 ` +
               `(crossSession=${ctxInfo.crossSession === true}, evSid=${evSid ?? '?'}, current=${ctxInfo.sessionId})`,
           );
@@ -864,7 +864,7 @@ export class RelationExtractor {
       // 反孤儿：本轮没有任何边引用该 refKey 且不是已存在节点的强化 → 跳过
       if (!e.existingEntityId && !referencedEntityRefKeys.has(e.refKey)) {
         if (this.cfg.debug) {
-          this.caps.logger.debug(`[user-relation] 跳过孤立实体 "${e.name}"（refKey=${e.refKey} 无任何边引用）`);
+          this.caps.logger.use.debug(`[user-relation] 跳过孤立实体 "${e.name}"（refKey=${e.refKey} 无任何边引用）`);
         }
         continue;
       }
@@ -962,7 +962,7 @@ export class RelationExtractor {
               .map(mid => `${mid.slice(0, 8)}(sender=${senderBySid.get(mid) ?? 'unknown'})`)
               .join(',') + (ev.messageIds.length > 2 ? `,+${ev.messageIds.length - 2}` : '')
           : '无 evidence';
-        this.caps.logger.info(
+        this.caps.logger.use.info(
           `[user-relation] 严格自证丢弃 person-person ${fromName}(${fromPersonId})→${toName}(${toPersonId}) ` +
             `${pp.relationType}${pp.directed === false ? ' (undirected)' : ''}: ` +
             `evidence 中无 from 方发言（evidence=${evSummary}）`,
@@ -1050,11 +1050,11 @@ export class RelationExtractor {
       (parsed.eventEntityEdges?.length ?? 0) +
       (parsed.entityEntityEdges?.length ?? 0);
     if (total > 0) {
-      this.caps.logger.info(
+      this.caps.logger.use.info(
         `[user-relation] 关系图已更新 (session=${ctxInfo.sessionId}): persons=${parsed.persons?.length ?? 0}, events=${parsed.events?.length ?? 0}, entities=${parsed.entities?.length ?? 0}, edges=${(parsed.personEventEdges?.length ?? 0) + (parsed.personEntityEdges?.length ?? 0) + (parsed.personPersonEdges?.length ?? 0) + (parsed.eventEventEdges?.length ?? 0) + (parsed.eventEntityEdges?.length ?? 0) + (parsed.entityEntityEdges?.length ?? 0)}`,
       );
     } else if (this.cfg.debug) {
-      this.caps.logger.debug(`[user-relation] ${ctxInfo.sessionId} 提取完成，本批次无变动`);
+      this.caps.logger.use.debug(`[user-relation] ${ctxInfo.sessionId} 提取完成，本批次无变动`);
     }
 
     // 写后顺手老化（模仿 profile 风格，不开独立调度器）。
@@ -1070,12 +1070,12 @@ export class RelationExtractor {
           this.cfg.debug &&
           (orphans.deletedPersons || orphans.deletedEvents || orphans.deletedEntities || orphans.deletedDanglingEdges)
         ) {
-          this.caps.logger.debug(
+          this.caps.logger.use.debug(
             `[user-relation] 自动孤儿清理: persons=${orphans.deletedPersons} events=${orphans.deletedEvents} entities=${orphans.deletedEntities} dangling_edges=${orphans.deletedDanglingEdges}`,
           );
         }
       } catch (err) {
-        if (this.cfg.debug) this.caps.logger.debug(`[user-relation] 孤儿清理失败: ${stringifyErr(err)}`);
+        if (this.cfg.debug) this.caps.logger.use.debug(`[user-relation] 孤儿清理失败: ${stringifyErr(err)}`);
       }
     }
     if (hasQuota) {
@@ -1095,7 +1095,7 @@ export class RelationExtractor {
           hysteresisPct: this.cfg.evictHysteresisPct,
         });
       } catch (err) {
-        if (this.cfg.debug) this.caps.logger.debug(`[user-relation] isOverQuota 检查失败: ${stringifyErr(err)}`);
+        if (this.cfg.debug) this.caps.logger.use.debug(`[user-relation] isOverQuota 检查失败: ${stringifyErr(err)}`);
       }
       if (overQuota) {
         if (this.cfg.consolidateAfterEviction) {
@@ -1117,12 +1117,12 @@ export class RelationExtractor {
                 : {}),
             });
             if (this.cfg.debug) {
-              this.caps.logger.debug(
+              this.caps.logger.use.debug(
                 `[user-relation] 淘汰前 consolidate 完成: 事件边整理=${cr.eventEdgesNormalized} 层级候选=${cr.entityHierarchyCandidates} 层级边=${cr.entityHierarchyEdgesCreated}`,
               );
             }
           } catch (err) {
-            this.caps.logger.warn(`[user-relation] 淘汰前 consolidate 失败: ${(err as Error).message}`);
+            this.caps.logger.use.warn(`[user-relation] 淘汰前 consolidate 失败: ${(err as Error).message}`);
           }
         }
         try {
@@ -1146,12 +1146,12 @@ export class RelationExtractor {
             this.cfg.debug &&
             (evicted.deletedPersons || evicted.deletedEvents || evicted.deletedEntities || evicted.deletedEdges)
           ) {
-            this.caps.logger.debug(
+            this.caps.logger.use.debug(
               `[user-relation] 自动老化: 删除 persons=${evicted.deletedPersons} events=${evicted.deletedEvents} entities=${evicted.deletedEntities} edges=${evicted.deletedEdges}`,
             );
           }
         } catch (err) {
-          this.caps.logger.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
+          this.caps.logger.use.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
         }
       }
     }

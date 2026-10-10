@@ -54,7 +54,7 @@ describe('无人值守的多步任务', () => {
     homes.push(home);
     const { state } = provideHostPaths(app, home);
     const host = app.bind({ provide, events, hooks, tools, agent, approvals, sessionManager });
-    host.provide(storage, memoryStorage(new Map()));
+    host.provide.use(storage, memoryStorage(new Map()));
 
     const recorder: ChatModelRequest[] = [];
     const responses = [
@@ -76,7 +76,7 @@ describe('无人值守的多步任务', () => {
 
     const runs: string[] = [];
     const probe = (name: string, confirm?: 'session') =>
-      host.tools.register({
+      host.tools.use.register({
         confirm,
         definition: {
           type: 'function',
@@ -91,16 +91,16 @@ describe('无人值守的多步任务', () => {
     probe(NOTES);
 
     const outcomes: string[] = [];
-    host.hooks.middleware('agent:turn:after', async (data, next) => {
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       outcomes.push(data.outcome);
       await next();
     });
     const replies: string[] = [];
-    host.events.on('outbound:message', msg => void replies.push(msg.content));
+    host.events.use.on('outbound:message', msg => void replies.push(msg.content));
     // owner 自己的会话：终端在发出入站之前建档，创建来源写 cli
-    await host.sessionManager.require().ensureSession('cli-default', {}, { createdFrom: 'cli' });
+    await host.sessionManager.use.ensureSession('cli-default', {}, { createdFrom: 'cli' });
 
-    await host.agent.require().handleMessage({
+    await host.agent.use.handleMessage({
       content: '把服务部署上线，再记一下步骤',
       sessionId: 'cli-default',
       platform: 'cli',
@@ -113,7 +113,7 @@ describe('无人值守的多步任务', () => {
     expect(recorder).toHaveLength(3);
     expect(outcomes).toEqual(['replied']);
     expect(replies).toContain('部署需要你批准，已把步骤记进笔记。');
-    expect(host.approvals.require().list(), '没有留下未结的审批').toEqual([]);
+    expect(host.approvals.use.list(), '没有留下未结的审批').toEqual([]);
 
     const read = () =>
       readFileSync(join(state, 'audit', 'approvals.jsonl'), 'utf8')

@@ -17,9 +17,9 @@ async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, memory });
-  host.provide(llm, { chat: async () => ({ content: '' }) } as never);
+  host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: Omit<RegisteredTool, 'pluginName'>) => {
       registered.set(tool.definition.function.name, tool);
       return () => {};
@@ -31,7 +31,7 @@ async function setup() {
   await app.plugins.register(userProfile, { extractEveryNMessages: 0 });
   await app.plugins.idle();
   if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
-  await host.memory.require().saveMetadata('user:profile', 'onebot:u1', {
+  await host.memory.use.saveMetadata('user:profile', 'onebot:u1', {
     facts: [
       { id: 'f001', text: '喜欢养猫', category: '兴趣爱好', temporality: 'permanent', observedAt: TS, updatedAt: TS },
     ],

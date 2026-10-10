@@ -133,7 +133,7 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.withArchive) await app.plugin(messageArchivePlugin, { debugLogs: false });
 
   if (opts.rooms)
-    host.provide(
+    host.provide.use(
       sessionManager,
       roomScopeManager(
         {},
@@ -143,11 +143,11 @@ async function setup(opts: SetupOptions = {}) {
     );
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
-  host.provide(embedding, embedder.service);
-  host.provide(vectorstore, store.service);
+  host.provide.use(embedding, embedder.service);
+  host.provide.use(vectorstore, store.service);
   // 假 tools 服务：捕获 memory_recall 注册（工具有自己的参数收紧与输出组装，需独立钉住）
   const toolHandlers = new Map<string, (args: Record<string, unknown>, callCtx: unknown) => Promise<string>>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: never }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -196,7 +196,7 @@ function anchorProbe(name: string, id: string, anchor: string, out: string) {
     name,
     uses: { contributions },
     apply(caps) {
-      caps.contributions.contribute(POINT, { id, anchor, build: () => out } as never);
+      caps.contributions.use.contribute(POINT, { id, anchor, build: () => out } as never);
     },
   });
 }
@@ -452,7 +452,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
 
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     // 存入归档真形态（含 [昵称(ID)]: 前缀）；向量 metadata.content 仍是裸文本——
     // 两条路径的文本从此可区分，若 messageKey 退化为含 content 的 key，双入将被抓到
@@ -501,7 +501,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       contextExpand: { window: 2 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     await mem.saveMessage('s-old', {
       role: 'tool',
@@ -525,7 +525,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     const { host, store } = await setup({});
     // 事件键经 declaration merging 声明，测试从源码路径导入拿不到增广——
     // 以宽签名断言 emit（同文件 POINT 常量的 never 技法对双参 emit 会把实参也打成 never）
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     const emitArchived = (incoming: Record<string, unknown>) =>
       emitLoose('inbound:message:archived', {
         sessionId: incoming.sessionId,
@@ -563,7 +563,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'X事件文本' })],
     });
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     await mem.saveMessage('s-old', { role: 'notice', content: 'X事件文本', timestamp: BASE_TS });
 
@@ -592,7 +592,7 @@ describe('索引文本 = 归档文本', () => {
     // 断链形态（2026-09 核实）：lancedb 中 15995 条裸 [图片] 占位符 vs 20 条带描述——
     // 索引侧 embed 的是 incoming.content，plugin-media 识别出的描述只进了归档，从未进向量空间。
     const { host, store, embedder } = await setup({});
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     const archivedText = '[小明(u1)]: 看这个\n[图片 | ref:abc123]\n[图片描述] 一只橘猫趴在键盘上';
     await emitLoose('inbound:message:archived', {
       sessionId: 's1',
@@ -620,7 +620,7 @@ describe('索引文本长度上限', () => {
     // 对抗审计（2026-09）：改取归档文本后，file-reader 烘进的 `--- 文件内容 ---` 块可达数万字，
     // embedder 超限抛错 → 只留一条 warn，消息从此不可召回。
     const { host, store, embedder } = await setup({});
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     const body = `[u1]: 看下这个配置\n--- 文件内容 ---\n${'配置行；'.repeat(3000)}`;
     // 让上限边界恰好落在一个代理对中间：前 3999 个 UTF-16 单元后接一个 emoji
     const boundaryBody = `${'x'.repeat(3999)}😀${'y'.repeat(50)}`;
@@ -648,7 +648,7 @@ describe('索引文本长度上限', () => {
 describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   it('索引侧：assistant 落库事件入库带 role=assistant，user 入库带 role=user', async () => {
     const { host, store } = await setup({});
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     await emitLoose('inbound:message:archived', {
       sessionId: 's1',
       incoming: { content: '对方的话', sessionId: 's1', platform: 'onebot', userId: 'u1' },
@@ -677,7 +677,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
 
   it('索引侧：平台记的是这一轮的入口平台，与 user 侧同一口径，不从会话 id 取', async () => {
     const { host, store } = await setup({});
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     // WebUI 自己的会话，与 owner 从 WebUI 往群里插话那一轮的回复
     for (const sessionId of ['session-abcd1234', 'onebot:1:group:2']) {
       await emitLoose('assistant:message:archived', {
@@ -696,7 +696,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
 
   it('发射端全链：archive.saveMessage(assistant) 真的触发向量入库；tool 角色不发事件', async () => {
     const { host, store } = await setup({ withMemory: true, withArchive: true });
-    const archive = host.services.get(messageArchive);
+    const archive = host.services.use.get(messageArchive);
     if (!archive) throw new Error('no archive');
     // 顺序关键：不该发事件的先存（若发射门失守，它们会先于合法条目入库，全等断言即红）
     await archive.saveMessage('s1', { role: 'tool', content: '{"x":1}', timestamp: BASE_TS });
@@ -861,7 +861,7 @@ describe('检索管线：被动注入与 memory_recall 共用', () => {
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
 
@@ -880,7 +880,7 @@ describe('检索管线：被动注入与 memory_recall 共用', () => {
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     await mem.saveMessage('s-old', { role: 'assistant', content: 'PREV-A', timestamp: BASE_TS - 60_000 });
     await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
@@ -904,7 +904,7 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
 
   it('索引侧：assistant 落库内容是信封时，embed 与兜底 content 都取可见正文', async () => {
     const { host, store, embedder } = await setup({});
-    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
     await emitLoose('assistant:message:archived', {
       sessionId: 'onebot:1:group:2',
       message: {
@@ -925,7 +925,7 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
-    const mem = host.services.get(memory);
+    const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
     await mem.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
     await mem.saveMessage('s-old', {

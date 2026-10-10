@@ -72,8 +72,8 @@ afterEach(async () => {
 async function start(opts: Parameters<typeof startReach>[1] = {}) {
   const started = await startReach(dirs, opts);
   apps.push(started.app);
-  const sm = started.host.sessionManager.require();
-  const svc = started.host.reach.require();
+  const sm = started.host.sessionManager.use;
+  const svc = started.host.reach.use;
   const webui = (await sm.createSession({ name: 'w' }, { createdFrom: 'webui' })).id;
   return { ...started, sm, svc, webui };
 }
@@ -90,7 +90,7 @@ async function verdict(cred: ReachCredential, request: ReachRequest): Promise<st
 describe('上限：只有 owner 在自己的会话里有本地效果', () => {
   it('WebUI 会话与 owner 的 IM 私聊里 owner 发起的有；群、别人的私聊、内部会话、自主回合与没有回合的调用都没有', async () => {
     const { host, svc, sm, webui } = await start();
-    for (const id of [OWNER_DM, MEMBER_DM, GROUP]) await recordRoom(host.events, id);
+    for (const id of [OWNER_DM, MEMBER_DM, GROUP]) await recordRoom(host.events.use, id);
     await sm.ensureSession('workflow::daily');
     const exec = async (turn: OriginTurn) => (await svc.forCall(turn)).exec;
     expect(await exec(ownerTurn(webui))).toBe('sandbox');
@@ -111,7 +111,7 @@ describe('上限：只有 owner 在自己的会话里有本地效果', () => {
 
   it('宿主通知回合按接收会话的房间类别算：owner 会话里的续做有，群里的续做没有', async () => {
     const { host, svc, webui } = await start();
-    await recordRoom(host.events, GROUP);
+    await recordRoom(host.events.use, GROUP);
     const resume = (sessionId: string, platform: string, userId: string): OriginTurn => ({
       sessionId,
       platform,
@@ -125,7 +125,7 @@ describe('上限：只有 owner 在自己的会话里有本地效果', () => {
 
   it('没有本地效果的凭据：读写执行一律拒，不带主目录与白纸，没有子进程环境与沙箱策略', async () => {
     const { host, svc } = await start();
-    await recordRoom(host.events, GROUP);
+    await recordRoom(host.events.use, GROUP);
     const cred = await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
     expect(isReachCredential(cred)).toBe(true);
     expect(Object.isFrozen(cred)).toBe(true);
@@ -145,7 +145,7 @@ describe('上限：只有 owner 在自己的会话里有本地效果', () => {
 describe('场所、绑定与档位', () => {
   it('owner 的 IM 私聊与 WebUI 的会话在同一个工作区、同一档位时结果相同', async () => {
     const { host, svc, webui } = await start();
-    await recordRoom(host.events, OWNER_DM);
+    await recordRoom(host.events.use, OWNER_DM);
     const fromWeb = await svc.forCall(ownerTurn(webui));
     const fromDm = await svc.forCall({ sessionId: OWNER_DM, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
     const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
@@ -245,8 +245,8 @@ describe('场所、绑定与档位', () => {
     expect(cred.exec).toBe('sandbox');
     expect(await verdict(cred, outside)).toContain('要 owner 批准');
 
-    sm.registerSetting(TIER, 'zz-test');
-    sm.registerSetting(BOUNDARY, 'zz-test');
+    sm.registerSetting(TIER);
+    sm.registerSetting(BOUNDARY);
     await sm.updateSession(webui, { config: { accessTier: 'full' } });
     expect((await svc.forCall(ownerTurn(webui))).exec).toBe('host');
     expect(await verdict(await svc.forCall(ownerTurn(webui)), outside)).toBe('allow');
@@ -261,7 +261,7 @@ describe('场所、绑定与档位', () => {
 
   it('签发之后受污染或降档，同一张凭据的 require、allows、沙箱策略与来源账本随之', async () => {
     const { sm, svc, webui } = await start();
-    sm.registerSetting(TIER, 'zz-test');
+    sm.registerSetting(TIER);
     const cred = await svc.forCall(ownerTurn(webui));
     const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(await verdict(cred, { effect: 'network', via: 'url' })).toBe('allow');
@@ -282,7 +282,7 @@ describe('场所、绑定与档位', () => {
 describe('子任务随发起它的那一轮父会话', () => {
   /** 父会话的一轮发出任务消息（与子任务插件相同：source 为 subtask，发言者记作父会话） */
   const dispatch = (host: Awaited<ReturnType<typeof start>>['host'], child: string, parent: string) =>
-    host.events.emit('inbound:message', {
+    host.events.use.emit('inbound:message', {
       content: '<任务>',
       sessionId: child,
       platform: 'webui',
@@ -300,7 +300,7 @@ describe('子任务随发起它的那一轮父会话', () => {
 
   it('owner 发起的：子任务与父会话一样，写自己的临时区；父会话降档、受污染后随之', async () => {
     const { host, sm, svc, webui } = await start();
-    sm.registerSetting(TIER, 'zz-test');
+    sm.registerSetting(TIER);
     await svc.forCall(ownerTurn(webui));
     const child = (await sm.createChildSession(webui, {})).id;
     await dispatch(host, child, webui);
@@ -362,7 +362,7 @@ describe('清单按真实路径', () => {
     const appLink = join(dirs.base, 'app-link');
     symlinkSync(dirs.app, appLink);
     const { sm, svc } = await start({ appPath: appLink });
-    sm.registerSetting(TIER, 'zz-test');
+    sm.registerSetting(TIER);
     const full = (await sm.createSession({ name: 'f', config: { accessTier: 'full' } }, { createdFrom: 'webui' })).id;
     const cred = await svc.forCall(ownerTurn(full));
     for (const path of [
@@ -381,7 +381,7 @@ describe('清单按真实路径', () => {
 
   /** 全权档的 owner 会话 */
   async function fullSession(started: Awaited<ReturnType<typeof start>>) {
-    started.sm.registerSetting(TIER, 'zz-test');
+    started.sm.registerSetting(TIER);
     const session = await started.sm.createSession(
       { name: 'f', config: { accessTier: 'full' } },
       { createdFrom: 'webui' },
@@ -497,7 +497,7 @@ describe('本会话临时区', () => {
 
   it('有本地效果时建好（0700），没有本地效果不建；删会话时删', async () => {
     const { host, sm, svc, webui } = await start();
-    await recordRoom(host.events, GROUP);
+    await recordRoom(host.events.use, GROUP);
     await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
     expect(existsSync(tmpOf(GROUP))).toBe(false);
 
@@ -666,7 +666,7 @@ describe('污点与来源账本', () => {
 
   it('全权档的凭据不带污点（卡上不写来源）；受污染时经它写进白纸的照样记进来源账本', async () => {
     const { sm, svc, webui } = await start();
-    sm.registerSetting(TIER, 'zz-test');
+    sm.registerSetting(TIER);
     await sm.updateSession(webui, { config: { accessTier: 'full' } });
     svc.markTainted(webui, ['群「<群名>」']);
     const cred = await svc.forCall(ownerTurn(webui));
@@ -700,7 +700,7 @@ describe('沙箱策略', () => {
     );
     expect(policy.network).toBe('on');
 
-    sm.registerSetting(TIER, 'zz-test');
+    sm.registerSetting(TIER);
     await sm.updateSession(webui, { config: { accessTier: 'full' } });
     await expect(svc.forCall(ownerTurn(webui)).then(cred => cred.sandboxPolicy())).rejects.toThrow('沙箱');
   });

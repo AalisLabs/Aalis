@@ -29,9 +29,9 @@ async function setup() {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
-  host.provide(memory, fakeMemory() as never);
+  host.provide.use(memory, fakeMemory() as never);
   const handlers = new Map<string, Handler>();
-  host.provide(tools, {
+  host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: Handler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => void handlers.delete(tool.definition.function.name);
@@ -45,7 +45,7 @@ async function setup() {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const parent = await sm.createSession({ name: '<父会话>' });
   const ctx = { sessionId: parent.id, platform: 'webui', userId: 'console' };
   const call = async (tool: string, args: Record<string, unknown>) => JSON.parse(await handlers.get(tool)!(args, ctx));
@@ -55,9 +55,9 @@ async function setup() {
   const turn = (sessionId: string, outcome: Outcome, error?: string, during?: () => Promise<unknown>) => {
     const message = { content: '<任务>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
-    return host.hooks.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
       await during?.();
-      await host.hooks.run('agent:turn:after', {
+      await host.hooks.use.run('agent:turn:after', {
         message,
         reply: outcome === 'replied' ? '<结果>' : '',
         outcome,
@@ -75,7 +75,7 @@ async function setup() {
       { role: 'system', content: '<人设>' },
       { role: 'user', content: '<提问>' },
     ];
-    await host.hooks.run('agent:llm:before', { messages, tools: [], sessionId: parent.id });
+    await host.hooks.use.run('agent:llm:before', { messages, tools: [], sessionId: parent.id });
     return messages.find(m => m.metadata?.injector === 'subtask/parent-status')?.content as string | undefined;
   };
 

@@ -1,8 +1,9 @@
-import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { CORE_CONFIG_SCHEMA } from '../../packages/schema-config/src/index.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 宿主配置：GET /api/config 给出文档里写了的核心键、它们的 schema、要重启才生效的键与家目录。
@@ -17,8 +18,8 @@ class ForeignCopyRefusedError extends Error {
 }
 
 /** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
-function ref<T>(instance: unknown): ServiceRef<T> {
-  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+function stub<T>(instance: unknown): ServiceSelection<T> {
+  return fixedRef(instance as T);
 }
 
 function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) {
@@ -53,12 +54,12 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
   registerPluginRoutes(
     expressApp,
     {
-      app: ref<AppService>({ restart: opts.restart ?? (() => calls.push('restart')) }),
-      source: { current: undefined },
-      plugins: ref<PluginManagerService>({}),
-      hostConfig: ref<HostConfig>(hostConfig),
-      tools: { current: undefined },
-      commands: { current: undefined },
+      app: stub<AppService>({ restart: opts.restart ?? (() => calls.push('restart')) }),
+      source: ref(),
+      plugins: stub<PluginManagerService>({}),
+      hostConfig: stub<HostConfig>(hostConfig),
+      tools: ref(),
+      commands: ref(),
       services: { names: () => [] },
       self: 'zz-webui',
       home: '/home/zz/.aalis',

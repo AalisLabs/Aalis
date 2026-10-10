@@ -124,7 +124,7 @@ export async function webuiStack(options: {
   const { logs } = provideHostPaths(app, home);
   const fileLog = await setupFileLogger(join(logs, 'latest.log'));
   cleanups.push(() => fileLog.dispose());
-  app.bind({ provide }).provide(webuiClient, { getClientDir: () => clientDir });
+  app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => clientDir });
   const minimal = await Promise.all(
     MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
   );
@@ -134,7 +134,7 @@ export async function webuiStack(options: {
   if (rooms) {
     await app.plugin(memoryInMemoryPlugin, {});
     await app.plugins.idle();
-    await seedRooms(app.bind({ memory }).memory.require(), rooms);
+    await seedRooms(app.bind({ memory }).memory.use, rooms);
   }
   const definitions = [
     ...minimal,

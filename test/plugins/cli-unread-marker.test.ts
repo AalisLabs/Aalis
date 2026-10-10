@@ -35,7 +35,12 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
     // 宿主侧的发消息口：与插件同一套描述符，登记归属根激活
     const host = app.bind({ events });
     const send = (content: string) =>
-      host.events.emit('outbound:message', { content, sessionId: 'cli-default', platform: 'cli', source: 'system' });
+      host.events.use.emit('outbound:message', {
+        content,
+        sessionId: 'cli-default',
+        platform: 'cli',
+        source: 'system',
+      });
     try {
       await app.plugin(cliPlugin, { startupView: 'logs' });
       await app.plugins.idle();
@@ -58,13 +63,13 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
 
       // 流式回复：首块计一次，后续块与收尾不再计；随后整条 outbound:message 被流式去重吃掉，也不双计
       const stream = (chunk: Record<string, unknown>) =>
-        host.events.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
+        host.events.use.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
       await stream({ contentDelta: '流式' });
       await stream({ contentDelta: '回复' });
       await stream({ done: true });
       await settle();
       expect(lastFrame()).toContain('CHAT(3)');
-      await host.events.emit('outbound:message', {
+      await host.events.use.emit('outbound:message', {
         content: '流式回复',
         sessionId: 'cli-default',
         platform: 'cli',

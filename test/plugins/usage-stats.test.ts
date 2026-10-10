@@ -57,7 +57,7 @@ function providerPlugin(name: string, balance?: () => Promise<LLMBalance[]>) {
     provides: [llm],
     uses: { provide },
     apply({ provide }) {
-      provide(llm, model, { entryId: `${name}/${model.id}` });
+      provide.use(llm, model, { entryId: `${name}/${model.id}` });
     },
   });
 }
@@ -76,7 +76,7 @@ async function start(home: string, config: Record<string, unknown> = {}) {
   provideHostPaths(app, home);
   const pages = pageHost();
   hosts.push(pages);
-  app.bind({ provide }).provide(webuiServer, pages.service);
+  app.bind({ provide }).provide.use(webuiServer, pages.service);
   await app.plugin(usageStats, config);
   await app.plugins.idle();
   const host = app.bind({ events });
@@ -89,7 +89,7 @@ async function start(home: string, config: Record<string, unknown> = {}) {
     /** 发一次用量，等账本落盘 */
     async record(at: Date, usage: Partial<LLMUsageEvent>) {
       vi.setSystemTime(at);
-      await host.events.emit('llm:usage', {
+      await host.events.use.emit('llm:usage', {
         provider: 'fake-llm',
         model: 'a',
         inputTokens: 0,
@@ -253,12 +253,12 @@ describe('plugin-usage-stats', () => {
           capabilities: ['chat'],
           chat: async () => ({ content: '', usage: replies.shift() as ChatResponse['usage'] }),
         };
-        provide(llm, metered(model, events), { entryId: 'loose-llm/loose' });
+        provide.use(llm, metered(model, events.use), { entryId: 'loose-llm/loose' });
       },
     });
     await first.app.plugin(loose, {});
     await first.app.plugins.idle();
-    const model = first.app.bind({ llm }).llm.require();
+    const model = first.app.bind({ llm }).llm.use;
     for (let i = 0; i < 3; i++) await model.chat({ messages: [] });
     const expected = [{ day: '2026-10-04', input: 150, cached: 50, output: 15 }];
     await vi.waitFor(async () => expect(await first.pages.data(PAGE, 'days')).toEqual(expected));

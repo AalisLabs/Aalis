@@ -4,13 +4,7 @@ import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { persona } from '@aalis/api-persona';
 import { sessionManager } from '@aalis/api-session-manager';
-import {
-  createStorageGateway,
-  isStorageNotFound,
-  isStorageUri,
-  type StorageService,
-  storage,
-} from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
@@ -116,7 +110,7 @@ export interface SkillsService {
   getLoadedSkills(sessionId: string): string[];
 }
 
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const skills = defineService<SkillsService>('skills');
 
 // ──────────── 插件元数据 ────────────
@@ -297,12 +291,12 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { tools, webui, persona, sessionManager, contributions, hooks, events, provide } = caps;
-  const logger = caps.logger.child('skills');
-  const config: SkillsConfig = parseConfig(configSchema, caps.config, logger);
+  const logger = caps.logger.use.child('skills');
+  const config: SkillsConfig = parseConfig(configSchema, caps.config.use, logger);
   if (!isStorageUri(config.skillsUri)) throw configError('skillsUri 必须是 storage URI');
 
   // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
-  const storage = createStorageGateway(caps.storage);
+  const storage = caps.storage.use;
   const skillsUri = config.skillsUri;
 
   // 技能的设置页：直接读这次激活自己的服务实例，页面与服务同生共死
@@ -311,7 +305,7 @@ function run(caps: Caps): void {
     if (!skill) throw new Error(`技能 ${name} 不存在`);
     return skill;
   };
-  const page = webui.definePage({
+  const page = webui.use.definePage({
     key: 'skills',
     title: '技能',
     icon: 'sparkles',
@@ -517,8 +511,12 @@ function run(caps: Caps): void {
   // ── 会话的人设卡允许的技能：卡取会话生效设置里的人设（没有会话管理或没有会话时为主卡），白名单由人设服务给 ──
   function getAllowedSkills(sessionId: string | undefined, platform: string | undefined): SkillDefinition[] {
     const all = [...skillsCache.values()];
-    const card = sessionId ? sessionManager.current?.resolveConfig(sessionId, platform).persona : undefined;
-    const whitelist = persona.current?.getPersonaSkills?.({ persona: card });
+    const card = sessionId
+      ? sessionManager.present
+        ? sessionManager.use.resolveConfig(sessionId, platform).persona
+        : undefined
+      : undefined;
+    const whitelist = persona.present ? persona.use.getPersonaSkills?.({ persona: card }) : undefined;
     if (whitelist === undefined) return all;
     const set = new Set(whitelist);
     return all.filter(s => set.has(s.name));
@@ -532,7 +530,7 @@ function run(caps: Caps): void {
   // 不注入技能清单本身：清单随技能增删变化会打前缀缓存，且体积随技能数线性膨胀。
   // 路标是常量文本，具体技能靠 list_skills 检索（keyword 匹配 / offset 翻页）。
   if (config.discoveryEnabled) {
-    contributions.contribute('agent:prompt', {
+    contributions.use.contribute('agent:prompt', {
       id: DISCOVERY_SOURCE,
       anchor: 'knowledge',
       build(view) {
@@ -570,7 +568,7 @@ function run(caps: Caps): void {
     }
     activationIdOwner.set(localId, skillName);
     activationContributed.add(skillName);
-    contributions.contribute('agent:prompt', {
+    contributions.use.contribute('agent:prompt', {
       id: localId,
       anchor: 'knowledge',
       build(view) {
@@ -592,7 +590,7 @@ function run(caps: Caps): void {
 
   // ── 自动激活：agent:input:before 监听 user message 文本 ──
   if (config.triggersEnabled) {
-    hooks.middleware('agent:input:before', async (data, next) => {
+    hooks.use.middleware('agent:input:before', async (data, next) => {
       const sessionId = data.message?.sessionId;
       const text = data.message?.content;
       if (sessionId && typeof text === 'string' && text.length > 0) {
@@ -794,17 +792,17 @@ function run(caps: Caps): void {
     },
   };
 
-  provide(skills, service);
+  provide.use(skills, service);
 
   // ── 注册工具分组与工具 ──
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'skills',
     label: '技能管理',
     description: '查询、加载、创建、更新和删除可复用的 Agent Skills（兼容 Anthropic SKILL.md 标准）',
   });
 
   // 1. load_skill —— 核心：把指定 skill 的 SKILL.md body 注入下一轮上下文
-  tools.register({
+  tools.use.register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -859,7 +857,7 @@ function run(caps: Caps): void {
   });
 
   // 2. list_skills —— 按关键词/triggers 状态筛选
-  tools.register({
+  tools.use.register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -909,7 +907,7 @@ function run(caps: Caps): void {
   });
 
   // 3. skill_create
-  tools.register({
+  tools.use.register({
     // 变更类：写入的技能构成持久注入面（triggers 命中自动激活 + load_skill 正文注入），标 sensitive
     // 挡住不受信任访客经 LLM 驱动；无逐次 confirm（避免给 owner 加摩擦）。
     risk: 'sensitive',
@@ -979,7 +977,7 @@ function run(caps: Caps): void {
   });
 
   // 4. skill_update
-  tools.register({
+  tools.use.register({
     risk: 'sensitive',
     groups: ['skills'],
     definition: {
@@ -1034,7 +1032,7 @@ function run(caps: Caps): void {
   });
 
   // 5. skill_delete
-  tools.register({
+  tools.use.register({
     // 破坏性（递归删除整个 skill 目录）：restricted+confirm 按「写删」约定；
     // 不带 risk——capabilityMinLevel 里 risk 遮蔽 visibility，同标会把门槛从 2 降到 1。
     visibility: 'restricted',
@@ -1061,7 +1059,7 @@ function run(caps: Caps): void {
   });
 
   // 6. skill_add_file —— 单独添加/覆盖一个附属文件
-  tools.register({
+  tools.use.register({
     risk: 'sensitive',
     groups: ['skills'],
     definition: {
@@ -1096,7 +1094,7 @@ function run(caps: Caps): void {
   });
 
   // 7. skill_remove_file
-  tools.register({
+  tools.use.register({
     // 破坏性（删 skill 内文件）：同 skill_delete，restricted+confirm，不带 risk（防降档）
     visibility: 'restricted',
     confirm: 'session',
@@ -1127,7 +1125,7 @@ function run(caps: Caps): void {
   });
 
   // 8. skill_list_files
-  tools.register({
+  tools.use.register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1150,7 +1148,7 @@ function run(caps: Caps): void {
   });
 
   // 9. skill_read_file
-  tools.register({
+  tools.use.register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1179,7 +1177,7 @@ function run(caps: Caps): void {
   });
 
   // 10. skill_rescan —— 手动重新扫描目录（便于外部添加 skill 后无需重启）
-  tools.register({
+  tools.use.register({
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1206,7 +1204,7 @@ function run(caps: Caps): void {
       logger.warn(`扫描 skills 失败（${reason}）：${err}`);
     }
   }
-  events.on('app:ready', async () => {
+  events.use.on('app:ready', async () => {
     let first: Promise<void> | undefined;
     caps.storage.follow(() => {
       let off: (() => void) | undefined;

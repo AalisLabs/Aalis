@@ -27,7 +27,7 @@ import {
   type SettingLayer,
   type SettingRow,
 } from '@aalis/api-session-protocol';
-import type { Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { failure, type MethodHandlers, ProtocolError } from './connection.js';
 import type { SeenStore } from './seen.js';
 
@@ -45,7 +45,7 @@ interface SessionDeps {
   runningTasks(): ReadonlyMap<string, number>;
   /** 摘要因会话表之外的原因变了（已读），推给 watch 的连接 */
   changed(sessionId: string): void;
-  platform: ServiceRef<PlatformAdapter>;
+  platform: ServiceSelection<PlatformAdapter>;
   /** 组名：适配器实例的显示名 */
   plugins: Pick<PluginManagerService, 'getPlugin'>;
   logger: Logger;
@@ -280,7 +280,7 @@ export function createSessions(deps: SessionDeps) {
     const recorded = session.metadata?.platform;
     if (typeof recorded === 'string' && recorded) return recorded;
     const adapter = await resolvePlatformBySession(deps.platform, session.id, deps.logger);
-    return adapter?.instance.platform ?? peer.identity.platform;
+    return adapter?.use.platform ?? peer.identity.platform;
   }
 
   /**

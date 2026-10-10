@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackageManagerService } from '../../packages/api-package-manager/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { registerMarketplaceRoutes } from '../../packages/plugin-webui-server/src/routes/marketplace.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // ════════════════════════════════════════════════════════════
@@ -107,9 +108,9 @@ function mount(
     expressApp as never,
     {
       logger,
-      plugins: { current: undefined },
+      plugins: ref(),
       services: { inspect: () => [] },
-      packageManager: { current: packageManager as PackageManagerService | undefined },
+      packageManager: fixedRef(packageManager as PackageManagerService | undefined),
       appDir: project,
     },
     () => (_req: unknown, _res: unknown, next: () => void) => next(),

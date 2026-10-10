@@ -63,7 +63,7 @@ describe('trigger-laya 配置解析', () => {
       await app.plugins.register(layaPlugin, { endpoint: { host: 'bad' }, sidecarDir: '/tmp/fake-sidecar' });
       await app.plugins.idle();
       expect(app.plugins.getPlugin(layaPlugin.name)?.state).toBe('error');
-      expect(app.bind({ services }).services.get(trigger)).toBeUndefined();
+      expect(app.bind({ services }).services.use.get(trigger)).toBeUndefined();
     } finally {
       await app.stop();
     }

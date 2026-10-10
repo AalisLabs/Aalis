@@ -15,7 +15,7 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { ref } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
@@ -72,7 +72,7 @@ function makeCaps(
         },
       ]
     : [];
-  return { logger, llm: ref(models), asr: ref(), sessionManager: ref(sessionManager), memory: ref() };
+  return { logger: fixedRef(logger), llm: ref(models), asr: ref(), sessionManager: ref(sessionManager), memory: ref() };
 }
 
 describe('resolveDelivery：auto 按本会话生效主模型的 vision 能力', () => {
@@ -184,7 +184,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
     const calls = withFakeVision(svc);
     registerMediaTools(host, svc);
-    const registry = host.services.get(tools);
+    const registry = host.services.use.get(tools);
     if (!registry) throw new Error('tools 服务未注册');
     const result = await registry.execute(
       'analyze_image',

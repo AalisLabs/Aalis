@@ -49,7 +49,7 @@ describe('mcp-client 自服务开关落盘', () => {
     const registry = makeToolRegistry(silent);
     // 测的是工具自身行为而非鉴权：放行守卫代替 plugin-authority（没有守卫时需要鉴权的工具一律被拒）
     registry.setExecutionGuard(async () => null);
-    app.bind({ provide }).provide(tools, registry);
+    app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
     expect(app.plugins.getPlugin(NAME)?.state).toBe('active');
@@ -67,7 +67,7 @@ describe('mcp-client 自服务开关落盘', () => {
     // 按落盘文档重建：开关不回退
     const rebuilt = hostedApp(structuredClone(saved[0]), { logger: silent });
     apps.push(rebuilt.app);
-    rebuilt.app.bind({ provide }).provide(tools, makeToolRegistry(silent));
+    rebuilt.app.bind({ provide }).provide.use(tools, makeToolRegistry(silent));
     await registerFromDoc(rebuilt.app, rebuilt.store, mcpClient);
     await rebuilt.app.plugins.idle();
     expect((rebuilt.app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(true);
@@ -79,7 +79,7 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
-    app.bind({ provide }).provide(tools, registry);
+    app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
@@ -98,7 +98,7 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
-    app.bind({ provide }).provide(tools, registry);
+    app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
@@ -126,7 +126,7 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
-    app.bind({ provide }).provide(tools, registry);
+    app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
@@ -147,9 +147,9 @@ describe('mcp-client 自服务开关落盘', () => {
     const host = app.bind({ events, provide });
     const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => null);
-    host.provide(tools, registry);
+    host.provide.use(tools, registry);
     const unloaded: string[] = [];
-    host.events.on('plugin:unloaded', id => {
+    host.events.use.on('plugin:unloaded', id => {
       unloaded.push(id);
     });
     await app.plugin(mcpClient, { servers: [{ id: 'a', command: 'aalis-test-missing-mcp-command', enabled: false }] });

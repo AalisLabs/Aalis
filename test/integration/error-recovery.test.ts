@@ -42,19 +42,19 @@ describe('插件错误恢复', () => {
       expect(status?.state).toBe('error');
       expect(status?.error).toMatch(/boom on apply/);
       // app 仍然可用
-      expect(host.lifecycle.signal.aborted).toBe(false);
+      expect(host.lifecycle.use.signal.aborted).toBe(false);
       // 后续注册其他插件正常
       const ok = definePlugin({
         name: '@test/ok',
         uses: { provide },
         apply(caps) {
-          caps.provide(marker, { ok: true });
+          caps.provide.use(marker, { ok: true });
         },
       });
       await app.plugins.register(ok);
       await app.plugins.idle(); // register 在 flight 在飞时排队早退，静置后再断言
       expect(app.plugins.getPlugin('@test/ok')?.state).toBe('active');
-      expect(host.marker.current).toEqual({ ok: true });
+      expect(host.marker.use.ok).toBe(true);
     } finally {
       await cleanup();
     }
@@ -68,21 +68,21 @@ describe('插件错误恢复', () => {
         name: '@test/p1',
         uses: { lifecycle, provide },
         apply(caps) {
-          caps.lifecycle.onDispose(() => {
+          caps.lifecycle.use.onDispose(() => {
             order.push('p1');
             throw new Error('p1 dispose fail');
           });
-          caps.provide(p1svc, {});
+          caps.provide.use(p1svc, {});
         },
       });
       const p2 = definePlugin({
         name: '@test/p2',
         uses: { lifecycle, provide },
         apply(caps) {
-          caps.lifecycle.onDispose(() => {
+          caps.lifecycle.use.onDispose(() => {
             order.push('p2');
           });
-          caps.provide(p2svc, {});
+          caps.provide.use(p2svc, {});
         },
       });
       await app.plugins.register(p1);
@@ -107,14 +107,14 @@ describe('插件错误恢复', () => {
         name: '@test/half',
         uses: { provide },
         apply(caps) {
-          caps.provide(halfLeak, { x: 1 });
+          caps.provide.use(halfLeak, { x: 1 });
           throw new Error('mid-apply boom');
         },
       });
       await app.plugins.register(bad);
       await app.plugins.idle();
       // 插件激活应被拆掉，注入的 service 不应残留
-      expect(host.halfLeak.current).toBeUndefined();
+      expect(host.halfLeak.present).toBe(false);
       const status = app.plugins.getStatus().find(s => s.instanceId === '@test/half');
       expect(status?.state).toBe('error');
     } finally {

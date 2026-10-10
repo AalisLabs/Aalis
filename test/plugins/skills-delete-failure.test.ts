@@ -45,7 +45,7 @@ describe('skills 删除失败（真 fs，根不可删）', () => {
     });
     await app.plugins.register(skillsPlugin, { skillsUri: 'store:/skills' });
     await app.plugins.idle();
-    svc = app.bind({ services }).services.get(skills)!;
+    svc = app.bind({ services }).services.use.get(skills)!;
     await svc.rescan();
   });
 

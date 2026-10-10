@@ -63,7 +63,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   const personasDir = (): string => join(base, 'self', 'personas');
   const writeCard = (file: string, text: string): void => writeFileSync(join(personasDir(), file), text);
   const getService = (): PersonaService => {
-    const svc = app.bind({ services }).services.get(persona);
+    const svc = app.bind({ services }).services.use.get(persona);
     if (!svc) throw new Error('persona 服务未就绪');
     return svc;
   };
@@ -92,7 +92,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
     provideHostPaths(app, base);
     if (settings) {
-      app.bind({ provide }).provide(sessionManager, {
+      app.bind({ provide }).provide.use(sessionManager, {
         registerSetting(setting: SessionSetting) {
           settings.push(setting);
           return () => {};

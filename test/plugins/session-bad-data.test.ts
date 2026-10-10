@@ -48,9 +48,9 @@ async function setup(records: Record<string, unknown>, archive: Record<string, u
   await app.plugin(memoryInMemoryPlugin);
   await app.plugins.idle();
   const host = app.bind({ provide, events, memory, sessionProtocol });
-  host.provide(storage, memoryStorage(new Map()));
-  host.provide(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
-  const mem = host.memory.require();
+  host.provide.use(storage, memoryStorage(new Map()));
+  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+  const mem = host.memory.use;
   for (const [key, data] of Object.entries(records)) await mem.saveMetadata('sessions', key, data as never);
   for (const [sessionId, messages] of Object.entries(archive)) {
     for (const message of messages) await mem.saveMessage(sessionId, message as Message);
@@ -58,7 +58,7 @@ async function setup(records: Record<string, unknown>, archive: Record<string, u
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
   await app.plugins.idle();
-  const c = client(host.sessionProtocol.require());
+  const c = client(host.sessionProtocol.use);
   await c.init();
   return { c, mem, events: host.events };
 }
@@ -155,7 +155,7 @@ describe('坏数据只坏它自己', () => {
     });
     for (const sessionId of [stripped, broken]) {
       const msg: IncomingMessage = { sessionId, platform: 'onebot', userId: '7', content: '在吗', groupId: '2' };
-      await events.emit('inbound:message', msg);
+      await events.use.emit('inbound:message', msg);
     }
     // 等新建的房间落盘
     await vi.waitFor(async () => expect((await mem.getMetadata('sessions', broken))?.children).toEqual([]), {

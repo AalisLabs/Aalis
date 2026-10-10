@@ -22,12 +22,12 @@ async function setup(initial: Record<string, Record<string, unknown>> = {}) {
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
-  host.provide(memory, fakeMemory(initial) as never);
+  host.provide.use(memory, fakeMemory(initial) as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  return { sm: host.sessionManager.require(), host };
+  return { sm: host.sessionManager.use, host };
 }
 
 describe('sessionKind', () => {
@@ -48,7 +48,7 @@ describe('会话种类字段', () => {
     const child = await sm.createChildSession(root.id, { name: '子会话' });
     const cli = await sm.ensureSession('cli-default');
     const byId = await sm.ensureSession('onebot:10000:group:20009');
-    await host.events.emit('inbound:message', {
+    await host.events.use.emit('inbound:message', {
       content: '<占位>',
       sessionId: GROUP,
       platform: 'onebot',

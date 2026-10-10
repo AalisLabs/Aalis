@@ -49,7 +49,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   const host = app.bind({ events });
   const loaded: string[] = [];
   const waiters = new Map<string, () => void>();
-  host.events.on('plugin:loaded', id => {
+  host.events.use.on('plugin:loaded', id => {
     loaded.push(id);
     waiters.get(id)?.();
   });
@@ -79,13 +79,13 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
     async apply({ provide, lifecycle }) {
       const generation = ++generations;
       await Promise.resolve();
-      provide(store, { generation });
-      lifecycle.onDispose(async () => {
+      provide.use(store, { generation });
+      lifecycle.use.onDispose(async () => {
         await Promise.resolve();
         flushed.push(`provider#${generation}`);
       });
       // 超过宽限才落定：拆卸等满 disposeTimeoutMs 后放弃它、接着执行先登记的那一项；它落定之前同 id 不起新实例
-      lifecycle.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, LIMIT_MS * 3)), 'hang');
+      lifecycle.use.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, LIMIT_MS * 3)), 'hang');
     },
   });
 
@@ -96,11 +96,11 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
     name: 'consumer',
     uses: { store, events, lifecycle },
     apply({ store, events, lifecycle }) {
-      const { generation } = store.require();
+      const { generation } = store.use;
       consumerSaw.push(generation);
-      signals.push(lifecycle.signal);
-      events.on('app:ready', () => void ready.push(`consumer#${generation}`));
-      lifecycle.onDispose(() => void consumerDisposed.push(generation));
+      signals.push(lifecycle.use.signal);
+      events.use.on('app:ready', () => void ready.push(`consumer#${generation}`));
+      lifecycle.use.onDispose(() => void consumerDisposed.push(generation));
     },
   });
 
@@ -117,7 +117,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
     definePlugin({
       name: 'late',
       uses: { events },
-      apply: ({ events }) => void events.on('app:ready', () => void ready.push('late')),
+      apply: ({ events }) => void events.use.on('app:ready', () => void ready.push('late')),
     }),
   );
   await app.plugins.idle();

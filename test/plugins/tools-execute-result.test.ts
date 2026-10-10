@@ -16,20 +16,20 @@ async function withTools(fn: (svc: ToolService) => Promise<void>): Promise<void>
     type: 'function' as const,
     function: { name, description: name, parameters: { type: 'object' as const, properties: {} } },
   });
-  tools.register({ definition: def('t_str'), handler: async () => 'plain' });
-  tools.register({
+  tools.use.register({ definition: def('t_str'), handler: async () => 'plain' });
+  tools.use.register({
     definition: def('t_img'),
     handler: async () => ({ content: 'c', images: ['data:image/png;base64,AA=='] }),
   });
-  tools.register({ definition: def('t_empty_img'), handler: async () => ({ content: 'c', images: [] }) });
-  tools.register({
+  tools.use.register({ definition: def('t_empty_img'), handler: async () => ({ content: 'c', images: [] }) });
+  tools.use.register({
     definition: def('t_throw'),
     handler: async () => {
       throw new Error('boom');
     },
   });
-  const svc = tools.current;
-  if (!svc) throw new Error('tools 服务未注册');
+  if (!tools.present) throw new Error('tools 服务未注册');
+  const svc = tools.use;
   try {
     await fn(svc);
   } finally {

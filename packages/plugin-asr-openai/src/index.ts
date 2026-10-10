@@ -8,8 +8,8 @@
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
-import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
-import { createStorageGateway, isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
+import { type ProcessService, processService } from '@aalis/api-process';
+import { isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
@@ -157,16 +157,16 @@ export default definePlugin({
   provides: [asr],
   uses,
   apply(caps) {
-    const cfg = parseConfig(configSchema, caps.config, caps.logger);
+    const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
 
-    const proc = createProcessGateway(caps.proc);
-    const storage = createStorageGateway(caps.storage);
+    const proc = caps.proc.use;
+    const storage = caps.storage.use;
 
-    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
-    caps.logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model})`);
+    caps.provide.use(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
+    caps.logger.use.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model})`);
   },
 });
 

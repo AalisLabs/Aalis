@@ -46,18 +46,22 @@ it('压缩期间到达的一轮落定后仍是活跃的，下一轮的上下文�
   for (const plugin of [agentPlugin, memorySummary]) expect(app.plugins.getPlugin(plugin.name)?.state).toBe('active');
   const host = app.bind({ agent, compression, memory });
   const ask = (content: string) =>
-    host.agent
-      .require()
-      .handleMessage({ content, sessionId: SESSION, platform: 'test', userId: 'u1', sessionType: 'private' });
+    host.agent.use.handleMessage({
+      content,
+      sessionId: SESSION,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
 
   await ask('压缩之前的提问');
-  const compressing = host.compression.require().compress(SESSION, { reason: 'manual' });
+  const compressing = host.compression.use.compress(SESSION, { reason: 'manual' });
   await vi.waitFor(() => expect(recorder.some(r => r.purpose === '摘要')).toBe(true));
   await ask('压缩期间的提问');
   release();
   await compressing;
 
-  const active = (await host.memory.require().getHistory(SESSION, Infinity)).map(m => String(m.content));
+  const active = (await host.memory.use.getHistory(SESSION, Infinity)).map(m => String(m.content));
   expect(active.some(text => text.includes('压缩期间的提问'))).toBe(true);
   expect(active).toContain('回答2');
   expect(active).toContain('对话已压缩');

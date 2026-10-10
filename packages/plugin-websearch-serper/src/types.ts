@@ -3,8 +3,8 @@
 // 由 plugin-websearch-serper 等插件实现。消费方在 uses 里声明本包导出的 `webSearch`
 // 描述符，即可拿到按激活绑定的调用接口，而无需关心具体后端（Serper / DuckDuckGo / Bing 等）。
 //
-// 多个搜索后端可同时注册：`webSearch.current` 取当前胜者（偏好 > 优先级 > 注册顺序），
-// 要在多个后端间挑选（如只用带新闻能力的）就用 `webSearch.all()` 自行筛。
+// 多个搜索后端可同时注册：`webSearch.use` 打到选中的那一家（本插件偏好 > 全局偏好 > 优先级 > 注册顺序），
+// 要在多个后端间挑选（如只用带新闻能力的）就遍历 `webSearch.list()` 自行筛。
 
 /** 单条搜索结果 */
 export interface WebSearchResult {

@@ -6,6 +6,7 @@
 
 import { type BoundPublish, WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
+import type { ServiceSelection } from '@aalis/core';
 import type { WorksSiteConfig } from './config.js';
 import type { WorksDeployer } from './deploy.js';
 import type { WorksStore } from './state.js';
@@ -14,7 +15,7 @@ const PAGE_KEY = 'works-site';
 
 export function registerWorksPage(deps: {
   webui: BoundWebui;
-  publish: BoundPublish;
+  publish: ServiceSelection<BoundPublish>;
   store: WorksStore;
   deployer: WorksDeployer;
   config: WorksSiteConfig;
@@ -42,9 +43,8 @@ export function registerWorksPage(deps: {
             !state()?.current[config.productionBranch]?.works.some(work => work.id === rowKey)
           )
             throw new Error('作品不存在');
-          const service = deps.publish.current;
-          if (!service) throw new Error('发布服务不在场');
-          const result = await service.withdraw(rowKey, { kind: 'owner' }, 'owner 在作品页撤下');
+          if (!deps.publish.present) throw new Error('发布服务不在场');
+          const result = await deps.publish.use.withdraw(rowKey, { kind: 'owner' }, 'owner 在作品页撤下');
           if ('refused' in result) throw new Error(result.refused);
           deployer.change();
           return result.degraded ? `撤下已登记；站点状态：${result.degraded}` : '已撤下';
@@ -173,7 +173,8 @@ export function registerWorksPage(deps: {
                   .flatMap(item =>
                     item.works.map(work => ({
                       id: work.id,
-                      thumbnail: work.hasThumbnail ? deps.publish.current?.thumbnailUri(work.id) : undefined,
+                      thumbnail:
+                        work.hasThumbnail && deps.publish.present ? deps.publish.use.thumbnailUri(work.id) : undefined,
                       title: work.title,
                       kind: work.kind,
                       branch: state()?.groups[work.group]?.branch ?? '主站',

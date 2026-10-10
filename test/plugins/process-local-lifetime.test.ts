@@ -97,7 +97,7 @@ describe('process-local 子进程生命周期', () => {
     await app.plugin(processLocal);
     await app.plugins.idle();
     const host = app.bind({ services });
-    const service = host.services.get(processService);
+    const service = host.services.use.get(processService);
     if (!service) throw new Error('process 服务未注册');
     service.spawn('bash', ['-c', `exec -a ${marker} sleep 30`], {});
     await sleep(200);

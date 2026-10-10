@@ -102,71 +102,71 @@ export default definePlugin({
   configSchema,
   uses,
   apply({ tools, config, logger }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
 
-    tools.registerGroup({
+    tools.use.registerGroup({
       name: 'math',
       label: '数学工具',
       description: '表达式计算、统计分析、矩阵运算、数论、几何、单位换算、金融数学、微积分、方程求解、进制转换',
     });
 
-    const grouped: BoundTools = withToolGroups(tools, ['math']);
+    const grouped: BoundTools = withToolGroups(tools.use, ['math']);
 
     if (cfg.evaluate.enabled) {
       registerEvaluateTools(grouped);
-      logger.info('表达式计算工具已启用');
+      logger.use.info('表达式计算工具已启用');
     }
 
     if (cfg.statistics.enabled) {
       registerStatisticsTools(grouped);
-      logger.info('统计分析工具已启用');
+      logger.use.info('统计分析工具已启用');
     }
 
     if (cfg.matrix.enabled) {
       registerMatrixTools(grouped);
-      logger.info('矩阵运算工具已启用');
+      logger.use.info('矩阵运算工具已启用');
     }
 
     if (cfg.numberTheory.enabled) {
       registerNumberTheoryTools(grouped);
-      logger.info('数论与组合工具已启用');
+      logger.use.info('数论与组合工具已启用');
     }
 
     if (cfg.geometry.enabled) {
       registerGeometryTools(grouped);
-      logger.info('几何计算工具已启用');
+      logger.use.info('几何计算工具已启用');
     }
 
     if (cfg.conversion.enabled) {
       registerConversionTools(grouped);
-      logger.info('单位换算工具已启用');
+      logger.use.info('单位换算工具已启用');
     }
 
     if (cfg.financial.enabled) {
       registerFinancialTools(grouped);
-      logger.info('金融数学工具已启用');
+      logger.use.info('金融数学工具已启用');
     }
 
     if (cfg.calculus.enabled) {
       registerCalculusTools(grouped);
-      logger.info('微积分工具已启用');
+      logger.use.info('微积分工具已启用');
     }
 
     if (cfg.equation.enabled) {
       registerEquationTools(grouped);
-      logger.info('方程求解工具已启用');
+      logger.use.info('方程求解工具已启用');
     }
 
     if (cfg.baseConvert.enabled) {
       registerBaseConvertTools(grouped);
-      logger.info('进制转换工具已启用');
+      logger.use.info('进制转换工具已启用');
     }
 
     if (cfg.symbolic.enabled) {
       registerSymbolicTools(grouped);
-      logger.info('符号代数工具已启用 (mathjs)');
+      logger.use.info('符号代数工具已启用 (mathjs)');
     }
 
-    logger.info('数学工具插件已启动');
+    logger.use.info('数学工具插件已启动');
   },
 });

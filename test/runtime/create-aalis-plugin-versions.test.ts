@@ -88,12 +88,12 @@ describe('生成的源码', () => {
     expect(withTool).toContain('interface SessionConfig');
     expect(withTool).toContain('greetingAalisPluginDemo?: string;');
     expect(withTool).toContain('sessionManager: optional(sessionManager)');
-    expect(withTool).toContain('sessionManager.registerSetting({');
+    expect(withTool).toContain('sessionManager.use.registerSetting({');
     expect(withTool).toContain("appliesTo: ['owner', 'room', 'task'],");
     expect(withTool).toContain("prominence: 'advanced',");
     expect(withTool).toContain('resolveConfig(ctx.sessionId, ctx.platform).greetingAalisPluginDemo');
     const alone = renderIndexTs(answers({ tool: false, command: false, webui: false, sessionSetting: true }));
-    expect(alone).toContain('sessionManager.registerSetting({');
+    expect(alone).toContain('sessionManager.use.registerSetting({');
     expect(alone).not.toContain('ctx.sessionId');
     const pkg = JSON.parse(renderPackageJson(answers(ALL), VERSIONS));
     expect(pkg.aalis.service.optional).toContain('session-manager');

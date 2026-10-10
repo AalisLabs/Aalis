@@ -39,7 +39,7 @@ async function actorOfTriggeredJob(
   // 内存 storage 必需而非锦上添花：没有它，`loadDynamicJobs` 的 `readFile` 必抛并被内层 catch 吞成 `[]`，
   // 那条分支在整个测试集里一次都不会执行。实测过：把它的 actor 缺省从 undefined 退回
   // `webui/console`（即持久化往返把匿名任务变回 owner 的那条腿），全量 903 个用例零转红。
-  host.provide(storage, memoryStorage(storageSeed).service as never);
+  host.provide.use(storage, memoryStorage(storageSeed).service as never);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(cronEnginePlugin, {});
   await app.plugins.register(schedulerPlugin, schedulerConfig);
@@ -47,12 +47,12 @@ async function actorOfTriggeredJob(
 
   let actor: Actor;
   let emitted = false;
-  host.events.on('inbound:message', msg => {
+  host.events.use.on('inbound:message', msg => {
     emitted = true;
     actor = msg.actor;
   });
 
-  const svc = host.services.get(scheduler);
+  const svc = host.services.use.get(scheduler);
   expect(svc, 'scheduler 服务未注册').toBeDefined();
   setup?.(svc as SchedulerService);
   await (svc as SchedulerService).triggerJob(jobName);
@@ -93,7 +93,7 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
     for (const bad of [{ actorUserId: [10001] }, { actorPlatform: true }]) {
       const app = new App({ name: 'T', logLevel: 'error' });
       try {
-        app.bind({ provide }).provide(storage, memoryStorage().service as never);
+        app.bind({ provide }).provide.use(storage, memoryStorage().service as never);
         await app.plugins.register(toolsPlugin, {});
         await app.plugins.register(cronEnginePlugin, {});
         await app.plugins.register(schedulerPlugin, { jobs: [{ name: 'j', interval: 3600, content: 'x', ...bad }] });

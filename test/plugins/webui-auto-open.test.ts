@@ -58,8 +58,8 @@ async function opensOverStartAndBounce(
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
   const host = app.bind({ provide });
-  host.provide(processService, fakeProcess);
-  host.provide(storage, fakeStorage);
+  host.provide.use(processService, fakeProcess);
+  host.provide.use(storage, fakeStorage);
   await app.plugin(webuiServer, {
     port: 0,
     host: '127.0.0.1',

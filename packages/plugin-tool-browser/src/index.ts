@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node:net';
-import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { processService } from '@aalis/api-process';
+import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import {
@@ -127,10 +127,10 @@ export default definePlugin({
 
 function runBrowserTools(caps: Caps): void {
   const { tools, webui, lifecycle } = caps;
-  const config = parseConfig(configSchema, caps.config, caps.logger);
-  const logger = caps.logger.child('browser');
-  const proc = createProcessGateway(caps.proc);
-  const storage = createStorageGateway(caps.storage);
+  const config = parseConfig(configSchema, caps.config.use, caps.logger.use);
+  const logger = caps.logger.use.child('browser');
+  const proc = caps.proc.use;
+  const storage = caps.storage.use;
 
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   let browser: any = null;
@@ -153,7 +153,7 @@ function runBrowserTools(caps: Caps): void {
   }
 
   // 浏览器页：打开着的页面。页面表增删、导航后标题与地址变了都让它重取
-  const browserPage = webui.definePage({
+  const browserPage = webui.use.definePage({
     key: 'browser',
     title: '浏览器',
     icon: 'globe',
@@ -245,7 +245,7 @@ function runBrowserTools(caps: Caps): void {
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   async function launchBrowser(): Promise<any> {
     // 停用后才到的调用不再起闸与浏览器：onDispose 已经收过尾，这时起的东西没人关
-    if (lifecycle.signal.aborted) throw new Error('浏览器工具已停用');
+    if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
     // 重新启动时页面表一起清，否则列出的是已经不存在的死页面
     browser = null;
     pages.clear();
@@ -292,7 +292,7 @@ function runBrowserTools(caps: Caps): void {
     }
     // 启动期间插件被停用：onDispose 只关得到已交出的实例，这一代在这里关掉。
     // 不等关闭落定：onDispose 要等这次启动落定才关闸，关闭挂住会把闸一起拖住
-    if (lifecycle.signal.aborted) {
+    if (lifecycle.use.signal.aborted) {
       instance
         .close()
         .catch(err => logger.warn(`停用时关闭新启动的浏览器失败: ${err instanceof Error ? err.message : String(err)}`));
@@ -395,7 +395,7 @@ function runBrowserTools(caps: Caps): void {
 
   // ── 注册工具分组 ──
 
-  tools.registerGroup({
+  tools.use.registerGroup({
     name: 'browser',
     label: '浏览器',
     description: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
@@ -404,7 +404,7 @@ function runBrowserTools(caps: Caps): void {
   // ── 注册工具 ──
 
   // 1. 导航 (navigate)
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     // 浏览器页面池是**进程级共享**、取页时不校验会话归属：拿到 pageId 就能操作
     // 别人（含 owner）打开的页面，那页面可能带着登录态。写类浏览器操作一律 sensitive(L1)。
@@ -460,7 +460,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 2. 获取页面文本
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -499,7 +499,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 3. 点击元素
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     // 对共享页面池里的任意页面点击——见 browser_navigate 处的说明。
     risk: 'sensitive',
@@ -538,7 +538,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 4. 输入文本
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     // 向共享页面池里的任意页面输入文本（可能是他人已登录的表单）。
     risk: 'sensitive',
@@ -583,7 +583,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 5. 截图
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -671,7 +671,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 6. 获取页面链接列表
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -709,7 +709,7 @@ function runBrowserTools(caps: Caps): void {
   });
 
   // 7. 关闭页面
-  tools.register({
+  tools.use.register({
     groups: ['browser'],
     // 关闭他人正在用的页面。
     risk: 'sensitive',
@@ -733,7 +733,7 @@ function runBrowserTools(caps: Caps): void {
 
   // ── 清理 ──
 
-  lifecycle.onDispose(async () => {
+  lifecycle.use.onDispose(async () => {
     // 在途的启动先落定：它看到信号已断会自己关掉那一代浏览器；它的失败已经交给发起它的那次工具调用
     await launching?.catch(() => {});
     // 闸先关，不排在页面与浏览器的关闭后面（那两步没有时限，挂住时闸就一直开着）。

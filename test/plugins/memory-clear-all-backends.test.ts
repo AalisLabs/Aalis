@@ -49,7 +49,7 @@ describe('clearAll 只清消息与归档', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(memoryInMemory);
     await app.plugins.idle();
-    const mem = app.bind({ services }).services.get(memory);
+    const mem = app.bind({ services }).services.use.get(memory);
     if (!mem) throw new Error('memory 服务未就绪');
     await seed(mem);
     expect(await mem.getFullHistory!('s1')).toHaveLength(3);

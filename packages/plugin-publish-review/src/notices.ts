@@ -4,7 +4,7 @@ import type { GatewayService } from '@aalis/api-gateway';
 import type { HookContextMap, Hooks } from '@aalis/api-hooks';
 import type { PublishOrigin } from '@aalis/api-publish';
 import { wrapUntrustedContent } from '@aalis/api-tools';
-import type { Events, Logger, ServiceRef } from '@aalis/core';
+import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { awaitDelivery, type OutgoingMessage, selfInitiatedActor } from '@aalis/schema-message';
 
 /**
@@ -35,7 +35,7 @@ export class ReviewNotices {
   constructor(
     private readonly events: Events,
     private readonly logger: Logger,
-    private readonly gateway: ServiceRef<GatewayService>,
+    private readonly gateway: ServiceSelection<GatewayService>,
     private readonly hooks: Hooks,
     /** 插件的生命周期信号：停机时不再等平台回执，免得拖过清理时限 */
     private readonly signal?: AbortSignal,
@@ -47,7 +47,7 @@ export class ReviewNotices {
     this.#closed = true;
   }
   ready(): boolean {
-    return this.#open && !this.#closed && !!this.gateway.current;
+    return this.#open && !this.#closed && !!this.gateway.present;
   }
   async enqueue(
     origin: PublishOrigin,
@@ -58,8 +58,8 @@ export class ReviewNotices {
   ): Promise<void> {
     if (!this.#open || this.#closed) throw new Error('作品通知尚未开放');
     if (!origin.notify) return;
-    const gateway = this.gateway.current;
-    if (!gateway) throw new Error('作品通知等待消息网关');
+    if (!this.gateway.present) throw new Error('作品通知等待消息网关');
+    const gateway = this.gateway.use;
     const { sessionId, platform } = origin.notify;
     // 仅观察这次可等待调用内的出站：同房其他通知/真人回合不能代它确认。
     // 用异步调用归属而非消息对象引用，中间件复制或改写信封仍可识别；记下的是总线上实际发出的那个对象，

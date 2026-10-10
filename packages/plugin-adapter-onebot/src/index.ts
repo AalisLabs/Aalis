@@ -7,8 +7,8 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
-import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import {
@@ -616,9 +616,9 @@ type Caps = BoundOf<typeof uses>;
 
 function runAdapter(caps: Caps): void {
   const { contributions, events, lifecycle, logger, media, messageArchive, flowControl } = caps;
-  const cfg = parseConfig(configSchema, caps.config, logger);
-  const storage = createStorageGateway(caps.storage);
-  const proc = createProcessGateway(caps.processService);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
+  const storage = caps.storage.use;
+  const proc = caps.processService.use;
   const connections: OneBotConnectionConfig[] = cfg.connections;
   for (const conn of connections) {
     if (!URL.canParse(conn.url) || !['ws:', 'wss:'].includes(new URL(conn.url).protocol)) {
@@ -649,7 +649,7 @@ function runAdapter(caps: Caps): void {
       : configSchema.attachmentCache.fields.maxBytes.default;
 
   if (connections.length === 0) {
-    logger.info('OneBot 适配器未配置任何连接');
+    logger.use.info('OneBot 适配器未配置任何连接');
   }
 
   const states: ConnectionState[] = [];
@@ -712,7 +712,7 @@ function runAdapter(caps: Caps): void {
   const sentTracker = new SentMessageTracker();
 
   function setSelfMute(sessionId: string, durationSec: number): void {
-    const flow = flowControl.current;
+    const flow = flowControl.present ? flowControl.use : undefined;
     if (durationSec > 0) {
       selfMuted.set(sessionId, Date.now() + durationSec * 1000);
       flow?.setMuted(sessionId, durationSec, 'onebot');
@@ -735,7 +735,7 @@ function runAdapter(caps: Caps): void {
     operatorId?: string;
     data?: Record<string, unknown>;
   }): Promise<void> {
-    const archive = messageArchive.current;
+    const archive = messageArchive.present ? messageArchive.use : undefined;
     if (!archive?.archiveNotice) return;
     try {
       await archive.archiveNotice({
@@ -752,7 +752,7 @@ function runAdapter(caps: Caps): void {
         timestamp: Date.now(),
       });
     } catch (err) {
-      logger.warn(`notice 入档失败 (${opts.noticeType}): ${err}`);
+      logger.use.warn(`notice 入档失败 (${opts.noticeType}): ${err}`);
     }
   }
 
@@ -800,7 +800,7 @@ function runAdapter(caps: Caps): void {
       if (ts > nowSec) {
         const remainSec = ts - nowSec;
         setSelfMute(sessionId, remainSec);
-        logger.info(
+        logger.use.info(
           `[禁言恢复] session=${sessionId} 检测到 shut_up_timestamp=${ts}，剩余 ${remainSec}s，已恢复禁言状态`,
         );
         await archivePlatformNotice({
@@ -815,7 +815,7 @@ function runAdapter(caps: Caps): void {
       }
     } catch (err) {
       // 静默失败：可能是协议端不支持或群已退出
-      logger.debug(
+      logger.use.debug(
         `[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -889,7 +889,7 @@ function runAdapter(caps: Caps): void {
       selfMemberInfoCache.set(key, info);
       return info;
     } catch (err) {
-      logger.debug(
+      logger.use.debug(
         `获取 self 群身份失败 (selfId=${selfId} groupId=${groupId}): ${err instanceof Error ? err.message : String(err)}`,
       );
       return null;
@@ -956,7 +956,7 @@ function runAdapter(caps: Caps): void {
     // 0. 优先查我们自己的归档：命中即可拿到已烘焙了图片描述、forward 摘要等的"富文本"原文，
     //    避免再走 OneBot get_msg（且能跨 URL 鉴权失效）。
     if (sessionId) {
-      const archive = messageArchive.current;
+      const archive = messageArchive.present ? messageArchive.use : undefined;
       if (archive?.findByMessageId) {
         try {
           const archived = await archive.findByMessageId(sessionId, messageId);
@@ -975,7 +975,7 @@ function runAdapter(caps: Caps): void {
             return { content: body || undefined, userId, nickname };
           }
         } catch (err) {
-          logger.debug(`引用消息归档反查失败: ${err}`);
+          logger.use.debug(`引用消息归档反查失败: ${err}`);
         }
       }
     }
@@ -1007,13 +1007,13 @@ function runAdapter(caps: Caps): void {
         try {
           content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
         } catch (err) {
-          logger.debug(`引用消息中的合并转发展开失败: ${err}`);
+          logger.use.debug(`引用消息中的合并转发展开失败: ${err}`);
         }
       }
 
       // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
       if (content.includes('[图片]')) {
-        const mediaSvc = media.current;
+        const mediaSvc = media.present ? media.use : undefined;
         if (mediaSvc) {
           const imageUrls: string[] = [];
           for (const seg of segments) {
@@ -1047,7 +1047,7 @@ function runAdapter(caps: Caps): void {
 
   // ===== 合并转发自动展开（详见 ./forward-expand.ts）=====
   const forwardExpander = createForwardExpander({
-    logger,
+    logger: logger.use,
     memory: caps.memory,
     media,
     llm: caps.llm,
@@ -1063,7 +1063,7 @@ function runAdapter(caps: Caps): void {
   // 会话级清理不动它（靠持久化层的 7 天回收）。多实例共用同一命名空间、各有一份内存缓存：
   // 每个实例都清自己的缓存（持久化层重复删是空操作），回显合并成一条——已有成功项时不再追加，
   // 前一实例失败而本实例成功时改写那一条。
-  caps.hooks.middleware('memory:clear', async (data, next) => {
+  caps.hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.scope === 'all' && (!data.types || data.types.includes('context'))) {
       const prev = data.results.find(r => r.source === 'onebot-forward');
       try {
@@ -1121,7 +1121,7 @@ function runAdapter(caps: Caps): void {
       } catch (err) {
         lastErr = err;
         if (attempt < SEND_MAX_RETRIES) {
-          logger.warn(
+          logger.use.warn(
             `OneBot ${action} 发送失败(第 ${attempt + 1}/${SEND_MAX_RETRIES + 1} 次),${SEND_RETRY_DELAY_MS}ms 后重试: ${err}`,
           );
           await new Promise(r => setTimeout(r, SEND_RETRY_DELAY_MS));
@@ -1141,7 +1141,7 @@ function runAdapter(caps: Caps): void {
       const data = await sendAction(state, 'get_version_info', {});
       const info = data as Record<string, unknown>;
       const protoVer = String(info?.protocol_version ?? '');
-      logger.info(
+      logger.use.info(
         `OneBot 版本检测: get_version_info 成功 (protocol_version=${protoVer}, app=${info?.app_name ?? 'unknown'})`,
       );
       // 有些实现可能报 v12 但走的 v11 接口，以接口可用性为准
@@ -1153,7 +1153,7 @@ function runAdapter(caps: Caps): void {
     try {
       const data = await sendAction(state, 'get_version', {});
       const info = data as Record<string, unknown>;
-      logger.info(
+      logger.use.info(
         `OneBot 版本检测: get_version 成功 (impl=${info?.impl ?? 'unknown'}, onebot_version=${info?.onebot_version ?? '?'})`,
       );
       return protocolV12;
@@ -1161,7 +1161,7 @@ function runAdapter(caps: Caps): void {
       // 也不可用
     }
 
-    logger.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
+    logger.use.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
     return protocolV11;
   }
 
@@ -1405,7 +1405,7 @@ function runAdapter(caps: Caps): void {
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   };
 
-  caps.provide(platform, adapter);
+  caps.provide.use(platform, adapter);
 
   // ----- 连接管理 -----
 
@@ -1440,10 +1440,10 @@ function runAdapter(caps: Caps): void {
   }
 
   function doConnect(state: ConnectionState): void {
-    if (lifecycle.signal.aborted) return;
+    if (lifecycle.use.signal.aborted) return;
 
     state.status = 'connecting';
-    logger.info(`正在连接 OneBot: ${state.config.url} (协议: ${state.protocol?.version ?? '待检测'})`);
+    logger.use.info(`正在连接 OneBot: ${state.config.url} (协议: ${state.protocol?.version ?? '待检测'})`);
 
     const headers: Record<string, string> = {};
     if (state.config.accessToken) {
@@ -1455,33 +1455,35 @@ function runAdapter(caps: Caps): void {
 
     // 诊断：捕获 unexpected-response（服务器返回非 101 时触发，且不会触发 error）
     ws.on('unexpected-response', (_req, res) => {
-      logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
+      logger.use.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
       res.on('data', (chunk: Buffer) => {
         body += chunk.toString();
       });
       res.on('end', () => {
-        logger.warn(`OneBot unexpected-response body: ${body}`);
+        logger.use.warn(`OneBot unexpected-response body: ${body}`);
       });
     });
 
     // 连接超时：如果 WS 握手在 CONNECT_TIMEOUT 内未完成，主动关闭并触发重连
     const connectTimer = setTimeout(() => {
       if (ws.readyState === WebSocket.CONNECTING) {
-        logger.warn(`OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`);
+        logger.use.warn(
+          `OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`,
+        );
         ws.terminate();
       }
     }, CONNECT_TIMEOUT);
 
     ws.on('upgrade', res => {
-      logger.debug(`OneBot WS upgrade: status=${res.statusCode}`);
+      logger.use.debug(`OneBot WS upgrade: status=${res.statusCode}`);
     });
 
     ws.on('open', () => {
       clearTimeout(connectTimer);
       state.status = 'online';
       state.lastPong = Date.now();
-      logger.info(`OneBot 已连接: ${state.config.url}`);
+      logger.use.info(`OneBot 已连接: ${state.config.url}`);
 
       // 客户端心跳：定期 ping，检测待机后的死连接
       stopHeartbeat(state);
@@ -1491,7 +1493,7 @@ function runAdapter(caps: Caps): void {
       state.heartbeatTimer = setInterval(() => {
         if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
         if (Date.now() - state.lastPong > HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT) {
-          logger.warn(`OneBot 心跳超时，主动断开: ${state.config.url}`);
+          logger.use.warn(`OneBot 心跳超时，主动断开: ${state.config.url}`);
           state.ws.terminate();
           return;
         }
@@ -1541,12 +1543,12 @@ function runAdapter(caps: Caps): void {
           // 未识别事件类型（如 NapCat 的 post_type='message_sent' 自身消息回显、自定义 post_type 等）
           const ev = event as Record<string, unknown>;
           const ident = String(ev.post_type ?? ev.type ?? 'unknown');
-          logger.debug(
+          logger.use.debug(
             `OneBot[${state.protocol.version}] 跳过未识别事件类型: post_type=${ident}, keys=[${Object.keys(ev).slice(0, 12).join(',')}]`,
           );
         }
       } catch (err) {
-        logger.debug('OneBot 消息解析失败:', err);
+        logger.use.debug('OneBot 消息解析失败:', err);
       }
     });
 
@@ -1557,13 +1559,13 @@ function runAdapter(caps: Caps): void {
       stopHeartbeat(state);
       settlePendingActions(state.pendingActions, '连接已关闭');
 
-      logger.warn(`OneBot 连接断开: ${state.config.url}，${RECONNECT_INTERVAL / 1000}s 后重连`);
+      logger.use.warn(`OneBot 连接断开: ${state.config.url}，${RECONNECT_INTERVAL / 1000}s 后重连`);
       scheduleReconnect(state);
     });
 
     ws.on('error', err => {
       clearTimeout(connectTimer);
-      logger.warn(
+      logger.use.warn(
         `OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`,
       );
     });
@@ -1574,9 +1576,9 @@ function runAdapter(caps: Caps): void {
     if (!state.protocol) {
       try {
         state.protocol = await detectProtocol(state);
-        logger.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
+        logger.use.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
       } catch (err) {
-        logger.warn(`OneBot 协议检测异常: ${err}，默认使用 v11`);
+        logger.use.warn(`OneBot 协议检测异常: ${err}，默认使用 v11`);
         state.protocol = protocolV11;
       }
     }
@@ -1591,10 +1593,10 @@ function runAdapter(caps: Caps): void {
         if (selfInfo.nickname) state.selfNickname = selfInfo.nickname;
         if (selfInfo.userId || selfInfo.nickname) {
           const namePart = state.selfNickname ? `, nickname=${state.selfNickname}` : '';
-          logger.info(`OneBot self_id: ${state.selfId ?? '?'}${namePart} (via ${action})`);
+          logger.use.info(`OneBot self_id: ${state.selfId ?? '?'}${namePart} (via ${action})`);
         }
       } catch (err) {
-        logger.debug(`获取 self info 失败: ${err}`);
+        logger.use.debug(`获取 self info 失败: ${err}`);
       }
     }
 
@@ -1609,12 +1611,12 @@ function runAdapter(caps: Caps): void {
   }
 
   function scheduleReconnect(state: ConnectionState): void {
-    if (lifecycle.signal.aborted) return;
+    if (lifecycle.use.signal.aborted) return;
     if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-    logger.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
+    logger.use.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
     state.reconnectTimer = setTimeout(() => {
       state.reconnectTimer = undefined;
-      logger.info(`OneBot 正在重试连接: ${state.config.url}`);
+      logger.use.info(`OneBot 正在重试连接: ${state.config.url}`);
       doConnect(state);
     }, RECONNECT_INTERVAL);
   }
@@ -1647,7 +1649,7 @@ function runAdapter(caps: Caps): void {
         ? (raw.message as Array<{ type?: string }>).map(s => String(s?.type ?? '?')).filter(Boolean)
         : [];
       const rawText = typeof raw.raw_message === 'string' ? raw.raw_message : '';
-      logger.debug(
+      logger.use.debug(
         `OneBot[${state.protocol.version}] 消息事件被解析器丢弃（text 为空）: post_type=${String(raw.post_type ?? raw.type ?? '?')}, message_type=${String(raw.message_type ?? raw.detail_type ?? '?')}, segments=[${segs.join(',')}], raw_message=${rawText}`,
       );
       return;
@@ -1659,7 +1661,7 @@ function runAdapter(caps: Caps): void {
     }
 
     if (shouldSuppressInviteCardMessage(event)) {
-      logger.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
+      logger.use.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
       return;
     }
 
@@ -1672,7 +1674,7 @@ function runAdapter(caps: Caps): void {
       event.channelId,
     );
 
-    logger.debug(
+    logger.use.debug(
       `OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`,
     );
 
@@ -1713,12 +1715,12 @@ function runAdapter(caps: Caps): void {
                   if (data?.base64) source = `data:audio/mpeg;base64,${data.base64}`;
                   else if (data?.url) source = String(data.url);
                   else if (data?.file) source = `file://${data.file}`;
-                  logger.debug(
+                  logger.use.debug(
                     `OneBot get_record 完成 (file=${fileRef}, ` +
                       `kind=${data?.base64 ? 'base64' : data?.url ? 'url' : data?.file ? 'file' : 'empty'})`,
                   );
                 } catch (err) {
-                  logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+                  logger.use.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
                 }
               }
               const landed = await cacheOneAttachment(
@@ -1728,7 +1730,7 @@ function runAdapter(caps: Caps): void {
                 source,
                 sessionId,
                 attachmentMaxBytes,
-                logger,
+                logger.use,
               );
               return landed;
             }
@@ -1739,12 +1741,12 @@ function runAdapter(caps: Caps): void {
               att.url,
               sessionId,
               attachmentMaxBytes,
-              logger,
+              logger.use,
             );
-            if (landed) rememberLandedAlias(media.current, att.kind, att.url, landed);
+            if (landed) rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.url, landed);
             return landed;
           } catch (err) {
-            logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
+            logger.use.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
             return null;
           }
         }),
@@ -1759,7 +1761,7 @@ function runAdapter(caps: Caps): void {
         try {
           event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
         } catch (err) {
-          logger.debug(`合并转发自动展开失败: ${err}`);
+          logger.use.debug(`合并转发自动展开失败: ${err}`);
         }
       }
 
@@ -1799,7 +1801,7 @@ function runAdapter(caps: Caps): void {
         }
       }
 
-      events.emit('inbound:message', {
+      events.use.emit('inbound:message', {
         content: event.text,
         sessionId,
         platform: 'onebot',
@@ -1832,7 +1834,7 @@ function runAdapter(caps: Caps): void {
         // triggerType 由生效的触发插件在 inbound:trigger 相位中填充
       });
     })().catch(err => {
-      logger.warn(`OneBot 消息处理异常: ${err}`);
+      logger.use.warn(`OneBot 消息处理异常: ${err}`);
     });
   }
 
@@ -1846,7 +1848,7 @@ function runAdapter(caps: Caps): void {
     const fallbackSelfId = state.selfId ?? 'unknown';
     const req: NormalizedRequestEvent | null = state.protocol.parseRequestEvent(raw, fallbackSelfId);
     if (!req) {
-      logger.debug(
+      logger.use.debug(
         `OneBot[${state.protocol.version}] 跳过未识别 request: request_type=${String(raw.request_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
       );
       return;
@@ -1854,7 +1856,7 @@ function runAdapter(caps: Caps): void {
 
     const requestLabel = req.requestType === 'group' ? `${req.requestType}/${req.subType}` : req.requestType;
     const requestGroupId = req.requestType === 'group' ? req.groupId : '-';
-    logger.info(
+    logger.use.info(
       `OneBot[${state.protocol.version}] 请求事件: ${requestLabel}, userId=${req.userId}, groupId=${requestGroupId}`,
     );
 
@@ -1867,7 +1869,7 @@ function runAdapter(caps: Caps): void {
       const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
 
-      events
+      events.use
         .emit('inbound:message', {
           content,
           sessionId,
@@ -1877,7 +1879,7 @@ function runAdapter(caps: Caps): void {
           sessionType: 'private',
           source: REQUEST_SOURCE,
         })
-        .catch((err: unknown) => logger.warn(`请求事件处理失败: ${err}`));
+        .catch((err: unknown) => logger.use.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
       const key = `${req.userId}:${req.groupId}`;
       pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
@@ -1895,7 +1897,7 @@ function runAdapter(caps: Caps): void {
         // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
         const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
         content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_approve_join_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
-        events
+        events.use
           .emit('inbound:message', {
             content,
             sessionId: gsId,
@@ -1906,11 +1908,11 @@ function runAdapter(caps: Caps): void {
             groupId: req.groupId,
             source: REQUEST_SOURCE,
           })
-          .catch((err: unknown) => logger.warn(`群申请事件处理失败: ${err}`));
+          .catch((err: unknown) => logger.use.warn(`群申请事件处理失败: ${err}`));
         return;
       }
 
-      events
+      events.use
         .emit('inbound:message', {
           content,
           sessionId,
@@ -1920,7 +1922,7 @@ function runAdapter(caps: Caps): void {
           sessionType: 'private',
           source: REQUEST_SOURCE,
         })
-        .catch((err: unknown) => logger.warn(`邀请事件处理失败: ${err}`));
+        .catch((err: unknown) => logger.use.warn(`邀请事件处理失败: ${err}`));
     }
   }
 
@@ -1930,7 +1932,7 @@ function runAdapter(caps: Caps): void {
     const fallbackSelfId = state.selfId ?? 'unknown';
     const notice = state.protocol.parseNoticeEvent(raw, fallbackSelfId);
     if (!notice) {
-      logger.debug(
+      logger.use.debug(
         `OneBot[${state.protocol.version}] 跳过未识别 notice: notice_type=${String(raw.notice_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
       );
       return;
@@ -1939,7 +1941,7 @@ function runAdapter(caps: Caps): void {
     // 过滤高频无用通知（输入状态等）
     if (notice.noticeType === 'notify' && notice.subType === 'input_status') return;
 
-    logger.debug(
+    logger.use.debug(
       `OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`,
     );
 
@@ -1954,7 +1956,7 @@ function runAdapter(caps: Caps): void {
         const nick = await resolveNickname(state, notice.userId, notice.groupId);
         const who = nick ? `${nick}(${notice.userId})` : (notice.userId ?? '某人');
         const target = targetIsBot ? '你' : (notice.targetId ?? '某人');
-        await events.emit('inbound:message', {
+        await events.use.emit('inbound:message', {
           content: `[戳一戳: ${who} 戳了${target}]`,
           sessionId: makeSessionId(selfId, sessionType, notice.userId, notice.groupId),
           platform: 'onebot',
@@ -1966,7 +1968,7 @@ function runAdapter(caps: Caps): void {
           noticeType: WellKnownNoticeTypes.Poke,
           noticeTargetIsSelf: targetIsBot,
         });
-      })().catch(err => logger.warn(`poke 处理异常: ${err}`));
+      })().catch(err => logger.use.warn(`poke 处理异常: ${err}`));
       return;
     }
 
@@ -1988,12 +1990,12 @@ function runAdapter(caps: Caps): void {
         if (isSelf) {
           if (isLift) {
             setSelfMute(sessionId, 0);
-            logger.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
+            logger.use.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
           } else {
             // 时长未知时按 60s 兜底（旧 flowCfg.muteTimeSeconds 默认值）
             const dur = duration > 0 ? duration : 60;
             setSelfMute(sessionId, dur);
-            logger.info(
+            logger.use.info(
               `[被禁言] session=${sessionId} 时长=${dur}s 操作者=${operatorId ?? 'unknown'}，` +
                 `已通知 flow-control 暂停该群触发`,
             );
@@ -2025,7 +2027,7 @@ function runAdapter(caps: Caps): void {
             operatorId,
             data: { duration, isSelf, isLift, untilTs },
           });
-        })().catch(err => logger.warn(`group_ban 入档异常: ${err}`));
+        })().catch(err => logger.use.warn(`group_ban 入档异常: ${err}`));
       }
       return;
     }
@@ -2055,7 +2057,9 @@ function runAdapter(caps: Caps): void {
         let original: { content: string; timestamp?: number } | undefined;
         if (messageId) {
           try {
-            const found = await messageArchive.current?.findByMessageId?.(sessionId, messageId, 500);
+            const found = await (messageArchive.present
+              ? messageArchive.use.findByMessageId?.(sessionId, messageId, 500)
+              : undefined);
             if (found && typeof found.content === 'string' && found.content) {
               original = { content: found.content, timestamp: found.timestamp };
             }
@@ -2073,7 +2077,7 @@ function runAdapter(caps: Caps): void {
           operatorId,
           data: { messageId },
         });
-      })().catch(err => logger.warn(`recall 入档异常: ${err}`));
+      })().catch(err => logger.use.warn(`recall 入档异常: ${err}`));
       return;
     }
 
@@ -2113,7 +2117,7 @@ function runAdapter(caps: Caps): void {
           operatorId,
           data: { isSelf },
         });
-      })().catch(err => logger.warn(`group_member 变动 入档异常: ${err}`));
+      })().catch(err => logger.use.warn(`group_member 变动 入档异常: ${err}`));
       return;
     }
 
@@ -2138,7 +2142,7 @@ function runAdapter(caps: Caps): void {
           groupId: notice.groupId,
           data: { isSelf, isSet },
         });
-      })().catch(err => logger.warn(`group_admin 入档异常: ${err}`));
+      })().catch(err => logger.use.warn(`group_admin 入档异常: ${err}`));
       return;
     }
 
@@ -2156,7 +2160,7 @@ function runAdapter(caps: Caps): void {
           content,
           userId: notice.userId,
         });
-      })().catch(err => logger.warn(`friend_add 入档异常: ${err}`));
+      })().catch(err => logger.use.warn(`friend_add 入档异常: ${err}`));
       return;
     }
 
@@ -2167,7 +2171,7 @@ function runAdapter(caps: Caps): void {
       const fileName = notice.data?.fileName ?? '未知文件';
       const content = `[文件上传: ${notice.userId} 上传了 ${fileName}]`;
 
-      events.emit('inbound:message', {
+      events.use.emit('inbound:message', {
         content,
         sessionId,
         platform: 'onebot',
@@ -2187,22 +2191,22 @@ function runAdapter(caps: Caps): void {
     const meta = state.protocol.parseMetaEvent(raw);
 
     if (meta.subType === 'connect' || meta.subType === 'lifecycle') {
-      logger.debug(`OneBot[${state.protocol.version}] meta 事件: ${meta.subType}`);
+      logger.use.debug(`OneBot[${state.protocol.version}] meta 事件: ${meta.subType}`);
       if (meta.selfId && !state.selfId) {
         state.selfId = meta.selfId;
-        logger.info(`OneBot self_id (via meta): ${state.selfId}`);
+        logger.use.info(`OneBot self_id (via meta): ${state.selfId}`);
       }
       if (meta.version) {
-        logger.info(
+        logger.use.info(
           `OneBot 实现: ${meta.version.impl ?? 'unknown'} v${meta.version.version ?? '?'} (onebot ${meta.version.onebot_version ?? '?'})`,
         );
       }
     } else if (meta.subType === 'heartbeat') {
       // 心跳事件不输出日志
     } else if (meta.subType === 'status_update') {
-      logger.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
+      logger.use.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
     } else {
-      logger.debug(`OneBot[${state.protocol.version}] 跳过未识别 meta 事件: sub_type=${meta.subType ?? '?'}`);
+      logger.use.debug(`OneBot[${state.protocol.version}] 跳过未识别 meta 事件: sub_type=${meta.subType ?? '?'}`);
     }
   }
 
@@ -2237,7 +2241,7 @@ function runAdapter(caps: Caps): void {
   // 合成**一个**贡献返回多块：同槽多贡献按全局键排序、槽内顺序无语义，而这两块
   // 有位置语义——事件提示的"这条消息"必须紧贴它描述的那条 user 消息（组装器把
   // 多块保序物化，故事件提示恒为末块）。幂等由组装器按全局键保障。
-  contributions.contribute('agent:prompt', {
+  contributions.use.contribute('agent:prompt', {
     id: 'platform-hint',
     anchor: 'turn-hint',
     build(view) {
@@ -2304,11 +2308,11 @@ function runAdapter(caps: Caps): void {
       },
     };
     void Promise.resolve()
-      .then(() => messageArchive.current?.saveMessage(msg.sessionId, note))
-      .catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
+      .then(() => (messageArchive.present ? messageArchive.use.saveMessage(msg.sessionId, note) : undefined))
+      .catch(e => logger.use.debug(`投递失败提示入档失败: ${e}`));
   }
 
-  events.on('outbound:message', msg => {
+  events.use.on('outbound:message', msg => {
     // 多个适配器实例只认领自己的连接（与会话路由同一判断）；离线的已知连接仍需返回明确失败。
     if (msg.delivery || !ownsAccount(msg.sessionId)) return;
     // 同步交出回执，实际发送可在后台执行，不阻塞出站旁观者。
@@ -2337,19 +2341,19 @@ function runAdapter(caps: Caps): void {
                 att.data,
                 msg.sessionId,
                 attachmentMaxBytes,
-                logger,
+                logger.use,
               );
               if (local) {
-                rememberLandedAlias(media.current, att.kind, att.data, local);
+                rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.data, local);
                 att.data = local.replace(/^([^/]+)\//, '$1:/');
                 if (att.kind === 'audio') att.mimeType = 'audio/wav';
               }
             } catch (err) {
-              logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
+              logger.use.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
             }
           }),
         );
-        const materialized = await materializeAttachments(msg.attachments, storage, logger);
+        const materialized = await materializeAttachments(msg.attachments, storage, logger.use);
         if (materialized.markers) content = content ? `${content}\n${materialized.markers}` : materialized.markers;
         inlineAttachments = materialized.inlineAttachments;
         uploads.push(...materialized.uploads);
@@ -2357,7 +2361,7 @@ function runAdapter(caps: Caps): void {
       }
 
       if (content.trim()) {
-        logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
+        logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
         try {
           await adapter.sendMessage(msg.sessionId, content, {
             skipSplit: msg.source !== 'agent',
@@ -2366,7 +2370,7 @@ function runAdapter(caps: Caps): void {
           textSent = true;
           delivered.push(...inlineAttachments);
         } catch (err) {
-          logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
+          logger.use.warn(`OneBot 发送消息失败(已重试): ${err}`);
           errors.push(err);
         }
       }
@@ -2375,7 +2379,7 @@ function runAdapter(caps: Caps): void {
           await adapter.uploadFile(msg.sessionId, file, name);
           delivered.push(attachment);
         } catch (err) {
-          logger.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
+          logger.use.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
           if (err instanceof ActionTimeoutError) unconfirmed.push(name);
           else errors.push(err);
         }
@@ -2387,7 +2391,7 @@ function runAdapter(caps: Caps): void {
 
     if (textSent || delivered.length) {
       // 只交成功附件的快照；失败的图片不能写成“已发送”历史。
-      void events.emit('outbound:delivered', {
+      void events.use.emit('outbound:delivered', {
         ...msg,
         delivery: undefined,
         content: textSent ? msg.content : '',
@@ -2411,17 +2415,17 @@ function runAdapter(caps: Caps): void {
 
   // ----- 生命周期 -----
 
-  events.on('app:ready', () => {
+  events.use.on('app:ready', () => {
     for (const connConfig of connections) {
       if (!connConfig.url) {
-        logger.warn('OneBot 连接配置缺少 url，跳过');
+        logger.use.warn('OneBot 连接配置缺少 url，跳过');
         continue;
       }
       connectOne(connConfig);
     }
   });
 
-  lifecycle.onDispose(() => {
+  lifecycle.use.onDispose(() => {
     selfMuted.clear();
     muteRecoveryChecked.clear();
     nicknameCache.clear();
@@ -2444,7 +2448,7 @@ function runAdapter(caps: Caps): void {
         }
       }
       const settled = settlePendingActions(state.pendingActions, '适配器已停止');
-      if (settled > 0) logger.debug(`适配器停止：拒绝 ${settled} 个在飞 action`);
+      if (settled > 0) logger.use.debug(`适配器停止：拒绝 ${settled} 个在飞 action`);
     }
     states.length = 0;
   });

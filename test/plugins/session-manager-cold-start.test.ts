@@ -27,14 +27,14 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, fallback as never, { priority: -100 });
+    host.provide.use(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin, {});
     await app.plugins.idle();
-    host.provide(memory, preferred as never, { priority: 10 });
+    host.provide.use(memory, preferred as never, { priority: 10, entryId: 'memory-preferred' });
     await app.plugins.idle();
-    await expect.poll(() => host.sessionManager.require().getSession('old-1')?.name).toBe('上次运行的会话');
+    await expect.poll(() => host.sessionManager.use.getSession('old-1')?.name).toBe('上次运行的会话');
 
-    await host.sessionManager.require().ensureSession('new-1', { name: '新会话', status: 'waiting' });
+    await host.sessionManager.use.ensureSession('new-1', { name: '新会话', status: 'waiting' });
     await app.stop();
 
     expect([...preferred.meta.keys()].sort()).toEqual(['new-1', 'old-1']);
@@ -47,15 +47,15 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, fallback as never, { priority: -100 });
+    host.provide.use(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin, {});
     await app.plugins.idle();
-    const sm = () => host.sessionManager.require();
+    const sm = () => host.sessionManager.use;
     // 在后备上建一个会话，赶在 1 秒防抖落盘之前换后端
     await sm().ensureSession('draft', { name: '后备上的会话', status: 'waiting' });
     expect(fallback.meta.has('draft')).toBe(false);
 
-    host.provide(memory, preferred as never, { priority: 10 });
+    host.provide.use(memory, preferred as never, { priority: 10, entryId: 'memory-preferred' });
     await app.plugins.idle();
     await expect.poll(() => sm().getSession('old-1')?.name).toBe('上次运行的会话');
 
@@ -83,12 +83,12 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, fallback as never, { priority: -100 });
+    host.provide.use(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin, {});
     await app.plugins.idle();
-    const sm = () => host.sessionManager.require();
+    const sm = () => host.sessionManager.use;
 
-    host.provide(memory, preferred as never, { priority: 10 });
+    host.provide.use(memory, preferred as never, { priority: 10, entryId: 'memory-preferred' });
     await expect.poll(() => listing).toBe(true);
     await sm().ensureSession('draft', { name: '加载窗口里建的会话', status: 'waiting' });
     release();
@@ -105,11 +105,11 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
-    host.provide(memory, store as never);
+    host.provide.use(memory, store as never);
     await app.plugin(sessionManagerPlugin, {});
     await app.plugins.idle();
 
-    await host.sessionManager.require().deleteSession('drop');
+    await host.sessionManager.use.deleteSession('drop');
     await app.stop();
 
     expect([...store.meta.keys()]).toEqual(['keep']);
@@ -126,7 +126,7 @@ describe('冷启动整批登记：首选后端首轮即可见', () => {
         uses: { provide },
         provides: [memory],
         apply: ({ provide }) => {
-          provide(memory, impl as never, { priority });
+          provide.use(memory, impl as never, { priority });
         },
       });
     const app = new App({ name: 'T', logLevel: 'error' });
@@ -139,7 +139,7 @@ describe('冷启动整批登记：首选后端首轮即可见', () => {
       { definition: backend('zz-preferred', preferred, 10) },
     ]);
     await app.plugins.idle();
-    expect(host.sessionManager.require().getSession('old-1')?.name).toBe('上次运行的会话');
+    expect(host.sessionManager.use.getSession('old-1')?.name).toBe('上次运行的会话');
     await app.stop();
   });
 });

@@ -55,7 +55,7 @@ const adapterPlugin = (name: string, sessionTypes?: SessionTypeDecl[]) =>
     provides: [platform],
     uses: { provide },
     apply: ({ provide }) => {
-      provide(platform, adapter(name, sessionTypes));
+      provide.use(platform, adapter(name, sessionTypes));
     },
   });
 
@@ -82,7 +82,7 @@ async function setup(
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   const mem = fakeMemory(stored, places);
-  host.provide(memory, mem as never);
+  host.provide.use(memory, mem as never);
   await app.plugin(adapterPlugin('onebot', ONEBOT_TYPES));
   await app.plugin(adapterPlugin('forum', FORUM_TYPES));
   await app.plugin(adapterPlugin('plain'));
@@ -90,9 +90,9 @@ async function setup(
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
-  const sm = host.sessionManager.require();
+  const sm = host.sessionManager.use;
   const inbound = (msg: Omit<IncomingMessage, 'content'>) =>
-    host.events.emit('inbound:message', { content: '<占位>', ...msg });
+    host.events.use.emit('inbound:message', { content: '<占位>', ...msg });
   return { app, sm, mem, inbound, warns };
 }
 
@@ -543,7 +543,7 @@ describe('项目会话的绑定与当前目录', () => {
   it('改动发 session:updated；当前目录对全部会话开放，附加目录与 worktree 不在项目会话树里时被拒；会话不存在时被拒；子会话不能带绑定', async () => {
     const { app, sm } = await setup();
     const updated: string[] = [];
-    app.bind({ events }).events.on('session:updated', s => void updated.push(s.id));
+    app.bind({ events }).events.use.on('session:updated', s => void updated.push(s.id));
     const work = await project(sm);
     const plain = await sm.createSession({ name: '<聊天>' }, { createdFrom: 'webui' });
 

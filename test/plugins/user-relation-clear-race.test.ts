@@ -29,8 +29,8 @@ async function makeWorld() {
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
-  const mem = host.memory.current;
-  if (!mem) throw new Error('memory service missing');
+  if (!host.memory.present) throw new Error('memory service missing');
+  const mem = host.memory.use;
   let afterSave: { match: (key: string) => boolean; run: () => Promise<unknown> } | undefined;
   let commitHooks: { before?: () => Promise<unknown>; after?: () => Promise<unknown> } = {};
   let beforeSave: { match: (key: string) => boolean; run: () => Promise<unknown> } | undefined;

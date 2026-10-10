@@ -13,7 +13,7 @@ import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
 import { buildBwrapArgs } from '../../packages/plugin-code-sandbox-os/src/sandbox.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { absentDoctor, ref } from '../fixtures/service-ref.js';
+import { absentDoctor, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // code-sandbox-os 的启动探测接 lifecycle.signal：启动器挂住时，停用与停机随 abort 落定，不拖满停机宽限、
@@ -117,9 +117,9 @@ function applyWith(proc: ProcessService, signal: AbortSignal) {
     codeSandboxOs.apply({
       processService: ref([{ instance: proc, contextId: 'zz-slice1', priority: 0 }]),
       doctor: absentDoctor(),
-      logger,
-      provide: provideStub,
-      lifecycle,
+      logger: fixedRef(logger),
+      provide: fixedRef(provideStub),
+      lifecycle: fixedRef(lifecycle),
     }),
   );
   return { applying, lines, provided: () => provided };
@@ -149,7 +149,7 @@ describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
       const { logger, lines } = recorder();
       const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
       apps.push(app);
-      app.bind({ provide }).provide(processService, service);
+      app.bind({ provide }).provide.use(processService, service);
       const registering = app.plugin(codeSandboxOs);
       await until(() => calls.length === 1, '探测起进程');
 
@@ -295,11 +295,11 @@ describe('doctor 的「代码沙箱」项', () => {
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, services });
-    host.provide(processService, service);
+    host.provide.use(processService, service);
     await app.plugins.register(doctorPlugin, {});
     await app.plugins.register(codeSandboxOs, {});
     await app.plugins.idle();
-    const report = await (host.services.get(doctor) as DoctorService).runChecks();
+    const report = await (host.services.use.get(doctor) as DoctorService).runChecks();
     return report.checks.find(c => c.id === 'code-sandbox.backend');
   }
 
