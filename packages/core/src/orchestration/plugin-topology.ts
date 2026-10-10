@@ -2,7 +2,7 @@
 // plugin-topology.ts — 插件依赖图工具
 //
 // topoSortByDeps：按"提供者→消费者"方向的 Kahn 拓扑排序，决定激活次序。
-// 关闭次序不在这里：那由关停编排按实际依赖与归属树决定（orchestration/close-plan.ts）。
+// 关闭次序不在这里：那由关停编排按实际依赖与归属决定（orchestration/close-plan.ts）。
 // ============================================================
 
 import type { PluginRecord } from './plugin-activation.js';

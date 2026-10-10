@@ -159,7 +159,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
   it('middleware 不进清理链：登记与退订都不改变链长，登记随激活关闭整体切断', async () => {
     const root = createActivationFixture();
     root.caps.provide(hooks, new HookTable());
-    const child = root.host.create(root.activation, 'plugin-a');
+    const child = root.host.create('plugin-a');
     const caps = root.host.bind(child, { hooks });
     const trace = async () => {
       const data = { trail: [] as string[] };

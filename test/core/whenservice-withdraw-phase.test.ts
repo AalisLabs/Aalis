@@ -17,7 +17,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
@@ -206,7 +206,7 @@ describe('follow cleanup 走撤回段', () => {
   it('同一资源口复用一条撤回登记，手动退订的跟随者不再挂载', () => {
     const { app, host } = makeApp();
     host.provide(svcDesc, {});
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const ref = activationHost(app).bind(activation, { x: optional(svcDesc) }).x;
     const base = activation.resources.withdrawals.size;
     let attached = 0;

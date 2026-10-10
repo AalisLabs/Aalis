@@ -84,22 +84,22 @@ describe('Resources 段收口等在飞撤回', () => {
 });
 
 describe('Activation 等待在飞拆卸', () => {
-  it('激活已被父级的关闭计划接管：后来者的 disposeAsync 超过自己的上限时告警并放弃等待', async () => {
+  it('激活已被根激活的关闭计划接管：后来者的 disposeAsync 超过自己的上限时告警并放弃等待', async () => {
     const { app, warnings } = world();
-    const host = activationHost(app);
-    const parent = host.create(rootActivation(app), 'parent');
-    const child = host.create(parent, 'parent/child');
+    const child = activationHost(app).create('child');
     child.resources.onDispose(never, 'stuck');
 
-    let parentClosed = false;
-    const closingParent = parent.disposeAsync(200).then(() => {
-      parentClosed = true;
-    });
+    let rootClosed = false;
+    const closingRoot = rootActivation(app)
+      .disposeAsync(200)
+      .then(() => {
+        rootClosed = true;
+      });
     await child.disposeAsync(30);
 
-    expect(parentClosed, '后来者按自己的 30ms 返回，不等在飞的父级计划').toBe(false);
-    expect(warnings).toContain('激活 "parent/child": 等待在飞拆卸超过 30ms，放弃等待');
-    await closingParent;
+    expect(rootClosed, '后来者按自己的 30ms 返回，不等在飞的根激活计划').toBe(false);
+    expect(warnings).toContain('激活 "child": 等待在飞拆卸超过 30ms，放弃等待');
+    await closingRoot;
   });
 });
 
