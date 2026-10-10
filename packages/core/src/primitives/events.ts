@@ -1,6 +1,6 @@
 import type { AalisEvents } from '../types/events.js';
 
-import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
+import { awaitWithTimeout, isThenable, reportQuietly } from '../kernel/disposable-chain.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -107,9 +107,7 @@ export class EventBus {
         // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
         try {
           const ret = handler(...args);
-          if (ret && typeof (ret as Promise<void>).then === 'function') {
-            (ret as Promise<void>).catch(err => this.#reportHandlerError(event, err, owner));
-          }
+          if (isThenable(ret)) ret.then(undefined, err => this.#reportHandlerError(event, err, owner));
         } catch (err) {
           this.#reportHandlerError(event, err, owner);
         }
