@@ -173,7 +173,6 @@ export function createPort<P>(scope: BindingScope, name: string, required: boole
   };
 
   const port: BindingPort<P> = {
-    name,
     id: scope.id,
     identity: scope.owner,
     logger: scope.logger,
