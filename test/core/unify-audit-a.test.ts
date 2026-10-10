@@ -337,7 +337,7 @@ describe('调度与类型面', () => {
     expect(settled).toBe('settled');
   });
 
-  it('另一份 core 造的描述符与 optional 包装：注册时按 error 点名拒绝，定义与发布时直接抛错', async () => {
+  it('另一份 core 造的描述符与 optional 包装：注册时按 error 点名拒绝，定义时直接抛错；provide 只按服务名登记、照常可用', async () => {
     type CoreNs = typeof import('../../packages/core/src/index.js');
     const srcRoot = fileURLToPath(new URL('../../packages/core/src', import.meta.url));
     const dir = mkdtempSync(join(tmpdir(), 'aalis-core-copy-'));
@@ -364,12 +364,14 @@ describe('调度与类型面', () => {
     expect(errors.filter(l => l.includes('另一份 @aalis/core'))).toHaveLength(2);
     expect(warns.filter(l => l.includes('另一份 @aalis/core'))).toEqual([]);
     expect(w.app.plugins.getStatus()).toEqual([]);
-    // 本份 core 的 definePlugin 在定义时就拒绝另一份的描述符；发布另一份的描述符同样拒绝
-    expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
-    const { provide: publish } = w.app.bind({ provide });
-    // 排查指引给文档站地址：npm 装的项目里没有仓库的 docs/ 目录
-    expect(() => publish.use(B.defineService('copy-svc'), {})).toThrow(
+    // 本份 core 的 definePlugin 在定义时就拒绝另一份的描述符；排查指引给文档站地址：npm 装的项目里没有仓库的 docs/ 目录
+    expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow(
       'https://aalis.acenyan.com/guide/third-party-plugin#two-cores',
     );
+    // 只在 apply 里 provide、没写进 provides 的外来描述符：按服务名登记，本份的消费者照常用到
+    const { provide: publish } = w.app.bind({ provide });
+    publish.use(B.defineService<{ v: number }>('copy-svc'), { v: 1 });
+    const ours = defineService<{ v: number }>('copy-svc');
+    expect(w.app.bind({ ours }).ours.use.v).toBe(1);
   });
 });

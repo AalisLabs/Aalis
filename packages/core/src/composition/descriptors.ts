@@ -117,18 +117,11 @@ export interface ServiceDescriptor<P, B = P> {
 const OPTIONAL = Symbol('aalis.optional-use');
 /**
  * 本副本身份。进程里装了两份 core 时，另一份造的描述符、optional 包装带的是它的身份；跨副本只共用这一个
- * 检测键（值各自私有），据此在定义校验与发布处拒绝混装——两份 core 会让日志中枢等进程级身份静默分裂。
+ * 检测键（值各自私有），据此在定义校验处拒绝混装——两份 core 会让日志中枢等进程级身份静默分裂。
+ * provide 只按服务名登记，不查副本。
  */
 const MINTED = Symbol.for('aalis.core.minted');
 const THIS_COPY = Symbol('aalis.core.copy');
-
-/**
- * 来自另一份 @aalis/core 的对象：安装问题，注册期按 error 记
- * @internal
- */
-export class ForeignCoreError extends Error {
-  override name = 'ForeignCoreError';
-}
 
 function mint<T extends object>(value: T): T {
   return Object.defineProperty(value, MINTED, { value: THIS_COPY });
@@ -141,7 +134,7 @@ function mint<T extends object>(value: T): T {
 export function assertOwnCopy(value: unknown, what: string): void {
   const stamp = (value as { [MINTED]?: unknown } | null)?.[MINTED];
   if (stamp !== undefined && stamp !== THIS_COPY) {
-    throw new ForeignCoreError(
+    throw new Error(
       `${what}来自另一份 @aalis/core：进程里装了两份 core，只能装一份（插件以 peerDependencies 引用 core；排查见 https://aalis.acenyan.com/guide/third-party-plugin#two-cores）`,
     );
   }

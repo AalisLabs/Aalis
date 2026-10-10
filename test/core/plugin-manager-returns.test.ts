@@ -45,7 +45,7 @@ describe('register 的返回值', () => {
     await app.stop();
   });
 
-  it('手写缺 name / 空串 / 非法分隔符：false + warn 一次 + 不落账', async () => {
+  it('手写缺 name / 空串 / 非法分隔符：false + error 一次 + 不落账', async () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
@@ -61,8 +61,8 @@ describe('register 的返回值', () => {
     expect(app.plugins.getStatus()).toEqual([]);
     expect(JSON.parse(JSON.stringify(app.plugins.getStatus()))).toEqual([]);
 
-    const warns = lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册'));
-    expect(warns, '每个非法定义恰好 warn 一次').toHaveLength(4);
+    const errors = lines.filter(l => l.startsWith('error:') && l.includes('拒绝注册'));
+    expect(errors, '每个非法定义恰好 error 一次').toHaveLength(4);
     await app.stop();
   });
 
@@ -74,7 +74,7 @@ describe('register 的返回值', () => {
     await app.stop();
   });
 
-  it('非法 instanceId：false + warn；合法多实例仍 true', async () => {
+  it('非法 instanceId：false + error；合法多实例仍 true', async () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
@@ -89,14 +89,14 @@ describe('register 的返回值', () => {
     expect(app.plugins.getPlugin('')).toBeUndefined();
     expect(app.plugins.getPlugin('q#x')).toBeUndefined();
 
-    const warns = lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册'));
-    expect(warns, '空串与 # 各 warn 一次').toHaveLength(2);
-    expect(warns.some(l => l.includes('缺少合法 instanceId'))).toBe(true);
-    expect(warns.some(l => l.includes('#') && l.includes('instanceId'))).toBe(true);
+    const errors = lines.filter(l => l.startsWith('error:') && l.includes('拒绝注册'));
+    expect(errors, '空串与 # 各 error 一次').toHaveLength(2);
+    expect(errors.some(l => l.includes('缺少合法 instanceId'))).toBe(true);
+    expect(errors.some(l => l.includes('#') && l.includes('instanceId'))).toBe(true);
     await app.stop();
   });
 
-  it('手写 uses 非描述符：false + warn，不落账', async () => {
+  it('手写 uses 非描述符：false + error，不落账', async () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
@@ -112,9 +112,32 @@ describe('register 的返回值', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('bad-uses')).toBeUndefined();
     expect(
-      lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册') && l.includes('不是服务描述符')),
+      lines.filter(l => l.startsWith('error:') && l.includes('拒绝注册') && l.includes('不是服务描述符')),
     ).toHaveLength(1);
     await app.stop();
+  });
+});
+
+describe('register 被拒时的日志级别', () => {
+  it('实例因此不会运行的记 error；重名的重复注册只是被忽略，记 warn；停机中被拒记 debug', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(await app.plugins.register(plugin('p'))).toBe(true);
+
+    expect(await app.plugins.register({ name: '', apply() {} }), '定义校验失败').toBe(false);
+    expect(await app.plugins.register(plugin('p'), {}, 'p:second'), '未声明 reusable').toBe(false);
+    expect(await app.plugins.register(plugin('c'), cyclic), '配置无法拷贝').toBe(false);
+    expect(await app.plugins.register(plugin('p')), '重名').toBe(false);
+    const stopping = app.stop();
+    expect(await app.plugins.register(plugin('late')), '停机中').toBe(false);
+    await stopping;
+
+    const refusals = lines.filter(l => /拒绝注册|不允许多实例|已注册，跳过|停机终态/.test(l)).map(l => l.split(':')[0]);
+    expect(refusals).toEqual(['error', 'error', 'error', 'warn', 'debug']);
   });
 });
 

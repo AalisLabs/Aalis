@@ -97,7 +97,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 **true** = 正常运行中其余已受理的请求，含主体已在目标态的幂等情形。正常运行中，对已在途卸载再次 `unload` 会 join 首次卸载，返回时该实例已拆卸并离开注册表；进入停机后不再 join 或新增拆卸。
 
-每个 false 分支都已记一笔日志（政策挡下 warn，其中定义里有另一份 `@aalis/core` 造的对象时按安装问题记 error；主体不存在、`disposed` 终态与停机中 debug）。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
+每个 false 分支都已记一笔日志：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，含定义里有另一份 `@aalis/core` 造的对象；未声明 `reusable` 的多实例；配置无法拷贝）；重名这类只是重复请求被忽略的与其余政策挡下的记 warn；主体不存在、`disposed` 终态与停机中 debug。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
 
 管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
 
@@ -107,7 +107,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false；定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装时同样返回 false，按安装问题记 error。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时记 warn 并返回 false，不落账；`registerAll` 的其余条目照常登记。停机中立即返回 false，不落账。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不落账；`registerAll` 的其余条目照常登记。停机中立即返回 false，不落账。
 
 ### `unload(instanceId)`
 

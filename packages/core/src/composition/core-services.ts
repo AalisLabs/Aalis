@@ -12,7 +12,7 @@ import type { AalisEvents } from '../types/events.js';
 
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
-import { assertOwnCopy, defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
+import { defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
 import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
@@ -178,7 +178,6 @@ export function coreProviders(
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
     const name = descriptor.name;
     if (!accepts(c, `provide("${name}")`)) return () => {};
-    assertOwnCopy(descriptor, 'provide 的描述符');
     const entryId = options?.entryId ?? c.id;
     if (runtime.devMode && container.hasEntry(name, entryId, c.owner))
       c.logger.warn(

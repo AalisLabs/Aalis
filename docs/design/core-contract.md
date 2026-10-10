@@ -28,7 +28,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - `services.inspect` 只投影登记元数据（选中的那一条带 `selected` 与 `basis`），不返回实例。`services.get` / `services.all` 返回登记进容器的对象本身。
 - `provide.use(descriptor, impl, options?)` 是唯一发布入口。`options.entryId` 给条目指定逻辑身份（偏好、展示与 `of(id)` 认它，core 不检查格式），清理仍归本激活；同一激活登记同一服务的多条时各给一个。`provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方。
 - 资源口的 `identity` 是这次激活的不透明资源身份，即调用方身份：提供者据它认出调用方、把登记归到这次激活。每次激活各不相同，同一 id 的前后两次激活也不同。
-- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝（注册期按 error 记），宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。
+- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。`provide` 只按服务名登记，不查副本。
 
 **钩子与贡献点不是 core 原语**：它们是普通服务，契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`（非独占）。登记经描述符的 `registrar`，撤回遵守下文生命周期不变量；各自的行为约定随契约包，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 

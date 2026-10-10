@@ -13,7 +13,7 @@ import {
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
 import { events } from '../composition/core-services.js';
-import { ForeignCoreError, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
@@ -171,8 +171,8 @@ export class PluginManager implements PluginManagerService {
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @param options.disabled 以禁用态登记，不激活；之后经 enable 启用
    * @returns 口径见 {@link PluginManagerService}：false = 重名、未声明 reusable 却要多实例、定义 / 实例 id 校验失败或配置无法拷贝
-   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId；各记一笔 warn，定义里有另一份 core 造的对象时记 error）；
-   *   true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
+   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId、定义里有另一份 core 造的对象）；true = 已落账（含注册为
+   *   disabled 态），激活是否已发生另看 idle()
    */
   async register(
     definition: PluginDefinition,
@@ -198,7 +198,10 @@ export class PluginManager implements PluginManagerService {
     return admitted.map(state => state !== false);
   }
 
-  /** 校验并落账一条（同步）。返回落账时的状态；被拒返回 false，拒因已记一笔 */
+  /**
+   * 校验并落账一条（同步）。返回落账时的状态；被拒返回 false，拒因已记一笔：实例因此不会运行的记 error，重名只是重复请求
+   * 被忽略、记 warn，停机中 debug
+   */
   #admit(
     definition: PluginDefinition,
     config: Record<string, unknown>,
@@ -210,10 +213,7 @@ export class PluginManager implements PluginManagerService {
       validateDefinition(definition);
       if (instanceId !== undefined) assertValidInstanceId(instanceId);
     } catch (err) {
-      const reason = summarizeError(err);
-      // 另一份 core 造的定义是安装问题，不是作者的声明错误：按 error 记，其余仍是 warn
-      if (err instanceof ForeignCoreError) this.#logger.error(`插件定义校验失败，拒绝注册: ${reason}`);
-      else this.#logger.warn(`插件定义校验失败，拒绝注册: ${reason}`);
+      this.#logger.error(`插件定义校验失败，拒绝注册: ${summarizeError(err)}`);
       return false;
     }
 
@@ -227,7 +227,7 @@ export class PluginManager implements PluginManagerService {
       return false;
     }
     if (id !== definition.name && !definition.reusable) {
-      this.#logger.warn(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
+      this.#logger.error(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
       return false;
     }
 
@@ -236,7 +236,7 @@ export class PluginManager implements PluginManagerService {
     try {
       copy = cloneConfigObject(config);
     } catch (err) {
-      this.#logger.warn(`插件 "${id}" 的配置无法拷贝，拒绝注册: ${summarizeError(err)}`);
+      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册: ${summarizeError(err)}`);
       return false;
     }
     const state = disabled ? 'disabled' : 'pending';
