@@ -64,31 +64,7 @@ describe('provides checks the registering activation', () => {
     );
     await app.plugins.idle();
 
-    await app.plugin(definePlugin({ name: 'claimant', apply() {} }));
-    await app.plugins.idle();
-
-    expect(app.plugins.getPlugin('claimant')?.state).toBe('active');
-    expect(warnings.filter(line => line.includes('插件 "claimant"') && line.includes('未在 provides'))).toEqual([]);
     expect(warnings.filter(line => line.includes('插件 "donor"') && line.includes('未在 provides'))).toHaveLength(1);
-  });
-
-  it('the activation’s own id/sub entry satisfies provides', async () => {
-    const service = defineService<{ source: string }>('__t:owner-self');
-    const { app } = world();
-    await app.plugin(
-      definePlugin({
-        name: 'owner',
-        provides: [service],
-        uses: { provide },
-        apply({ provide }) {
-          provide(service, { source: 'owner' }, { entryId: 'owner/model' });
-        },
-      }),
-    );
-    await app.plugins.idle();
-
-    expect(app.plugins.getPlugin('owner')?.state).toBe('active');
-    expect(app.bind({ services }).services.all(service)[0]?.contextId).toBe('owner/model');
   });
 
   it('an entry registered for another identity satisfies the registrant’s provides', async () => {

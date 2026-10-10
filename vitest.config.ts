@@ -21,6 +21,7 @@ export default defineConfig({
       ['**/test/plugins/tool-browser-screenshot-timeout.test.ts', 'threads'],
       ['**/test/utils/offline-render-*.test.ts', 'threads'],
       ['**/test/plugins/works-site-isolation.test.ts', 'threads'],
+      ['**/test/plugins/works-site-layout.test.ts', 'threads'],
       ['**/test/plugins/publish-preview-isolation.test.ts', 'threads'],
       ['**/test/smoke/**', 'threads'],
       ['**/test/e2e-webui/**', 'threads'],

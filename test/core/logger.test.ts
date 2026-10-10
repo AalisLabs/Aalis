@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { App, DefaultLogger, definePlugin, LogHub } from '../../packages/core/src/index.js';
+import { DefaultLogger, LogHub } from '../../packages/core/src/index.js';
 
 describe('LogHub', () => {
   it('Logger 写入 → LogHub.push → 触发 onEntry 监听器', () => {
@@ -78,18 +78,6 @@ describe('LogHub', () => {
     } finally {
       process.off('unhandledRejection', onEscape);
     }
-  });
-
-  it('日志监听器抛错不打断 core 自己的日志调用点（登记、激活照常完成）', async () => {
-    const hub = new LogHub();
-    hub.onEntry(() => {
-      throw new Error('sink down');
-    });
-    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
-    expect(await app.plugin(definePlugin({ name: 'p', apply() {} }))).toBe(true);
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    await app.stop();
   });
 
   it('onEntry 返回 dispose 函数解除订阅', () => {

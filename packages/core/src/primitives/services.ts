@@ -138,7 +138,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 该归属名下有条目的服务名（登记事实：暂不对外的也算）。provides 按它核对：插件以任何逻辑身份登记的条目都算它自己的
+   * 该归属名下有条目的服务名（登记事实：暂不对外的也算）
    * @internal
    */
   namesOf(owner: symbol): string[] {

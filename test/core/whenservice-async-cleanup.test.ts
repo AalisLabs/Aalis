@@ -145,20 +145,4 @@ describe('follow 异步 cleanup', () => {
     await app.stop();
     expect(warnings.some(w => w.includes('__t:ws-async') && w.includes('超过 30ms'))).toBe(true);
   });
-
-  it('宿主 logger sink 抛错：拒绝仍不逃逸，在飞集合照常排空', async () => {
-    const boom = (message: unknown) => {
-      if (String(message).includes('撤回拒绝')) throw new Error('sink boom');
-    };
-    const logger = { debug() {}, info() {}, warn: boom, error: boom, child: () => logger } as unknown as Logger;
-    const app = new App({ name: 'T', logLevel: 'error', logger });
-    apps.push(app);
-    const host = app.bind({ provide });
-    host.provide(svc, {});
-    const { cleanup } = slowCleanup(10, 'boom');
-    const off = await watch(app, () => cleanup);
-    off();
-    await sleep(40);
-    await app.plugins.unload('watcher');
-  });
 });

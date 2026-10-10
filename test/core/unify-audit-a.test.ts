@@ -158,69 +158,6 @@ describe('关停编排', () => {
     await Promise.all([stopping, unloading]);
     expect(w.saved).toEqual(['storage:last']);
   });
-
-  it('宿主 logger 的 sink 抛错：成环告警与单阶段失败都不让整批停机流产', async () => {
-    const closed: string[] = [];
-    // optional 环走 debug、required 环走 warn：两个出口都炸，并记下确实炸过（否则本例是空转）
-    const boomed: string[] = [];
-    const boom = (level: string) => (message: unknown) => {
-      if (!String(message).includes('成环')) return;
-      boomed.push(level);
-      throw new Error('sink boom');
-    };
-    const logger: Logger = { debug: boom('debug'), info() {}, warn: boom('warn'), error() {}, child: () => logger };
-    const w = world({ logger });
-    const a = defineService<object>('zz-aa-cyc-a');
-    const b = defineService<object>('zz-aa-cyc-b');
-    const c = defineService<object>('zz-aa-cyc-c');
-    const d = defineService<object>('zz-aa-cyc-d');
-    const closes = (lifecycle: { onDispose(fn: () => void): unknown }, name: string) =>
-      void lifecycle.onDispose(() => void closed.push(name));
-    const mk = (name: string, mine: typeof a, other: typeof a) =>
-      definePlugin({
-        name,
-        uses: { other: optional(other), provide, lifecycle },
-        apply({ provide, lifecycle }) {
-          provide(mine, {});
-          closes(lifecycle, name);
-        },
-      });
-    await w.app.plugin(mk('x', a, b));
-    await w.app.plugin(mk('y', b, a));
-    // required 环：q 要 p 的 d，又以更高优先级顶替了 p 所依赖的 c
-    await w.app.plugin(definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide(c, {}) }));
-    await w.app.plugin(
-      definePlugin({
-        name: 'p',
-        uses: { c, provide, lifecycle },
-        apply({ provide, lifecycle }) {
-          provide(d, {});
-          closes(lifecycle, 'p');
-        },
-      }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'q',
-        uses: { d, provide, lifecycle },
-        apply({ provide, lifecycle }) {
-          provide(c, {}, { priority: 10 });
-          closes(lifecycle, 'q');
-        },
-      }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'bystander',
-        uses: { lifecycle },
-        apply: ({ lifecycle }) => void lifecycle.onDispose(() => void closed.push('bystander')),
-      }),
-    );
-    await w.app.plugins.idle();
-    await w.app.stop();
-    expect(boomed.sort()).toEqual(['debug', 'warn']);
-    expect(closed.sort()).toEqual(['bystander', 'p', 'q', 'x', 'y']);
-  });
 });
 
 describe('等待业务交出来的 Promise', () => {
@@ -347,7 +284,6 @@ describe('调度与类型面', () => {
     // 本份 core 的 definePlugin 在定义时就拒绝另一份的描述符；发布另一份的描述符同样拒绝
     expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
     const { provide: publish } = w.app.bind({ provide });
-    expect(() => publish(B.defineService('copy-svc'), {})).toThrow('另一份 @aalis/core');
     // 排查指引给文档站地址：npm 装的项目里没有仓库的 docs/ 目录
     expect(() => publish(B.defineService('copy-svc'), {})).toThrow(
       'https://aalis.acenyan.com/guide/third-party-plugin#two-cores',

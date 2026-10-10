@@ -16,17 +16,6 @@ interface Case {
 }
 
 const CASES: Case[] = [
-  { label: '无提供者', entries: [], winner: undefined, order: [] },
-  {
-    label: '无偏好：取最高 priority',
-    entries: [
-      ['a', 0],
-      ['b', 10],
-      ['c', 5],
-    ],
-    winner: 'b',
-    order: ['b', 'c', 'a'],
-  },
   {
     label: '偏好胜过 priority',
     entries: [

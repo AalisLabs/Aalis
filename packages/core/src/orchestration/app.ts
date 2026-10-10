@@ -55,7 +55,7 @@ export interface AppOptions {
    * 注入自定义 Logger 实现（如 pino/winston 适配对象）。
    * 注入后 core 不再写 LogHub 管线——runtime 的 console/file/webui sink
    * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。
-   * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`app.logger` 也是包过的这层。
+   * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败时沿用上一层，`app.logger` 也是包过的这层。
    */
   logger?: Logger;
   /**

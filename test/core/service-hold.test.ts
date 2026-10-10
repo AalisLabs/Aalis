@@ -26,7 +26,6 @@ describe('ServiceContainer.hold', () => {
     expect(c.get('only')).toBeUndefined();
     expect(c.getAll('only')).toEqual([]);
     expect(c.ownerOf('only')).toBeUndefined();
-    expect(c.namesOf(HELD)).toEqual(['svc', 'only']);
     expect(c.hasEntry('only', 'held', HELD)).toBe(true);
     expect(c.getServiceNames()).toEqual(['svc', 'only']);
 

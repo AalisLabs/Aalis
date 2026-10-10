@@ -72,7 +72,7 @@ describe('createApp 工厂', () => {
 });
 
 describe('注入的 logger 出错', () => {
-  it('同步抛错、返回被拒的 Promise：管理动作与停机照常返回，idle 落定，不外泄成未处理拒绝', async () => {
+  it('同步抛错、返回被拒的 Promise、child 派生失败：管理动作与停机照常返回，idle 落定，不外泄成未处理拒绝', async () => {
     const escaped: unknown[] = [];
     const onEscape = (reason: unknown) => void escaped.push(reason);
     process.on('unhandledRejection', onEscape);
@@ -85,7 +85,9 @@ describe('注入的 logger 出错', () => {
         info: boom,
         warn: boom,
         error: () => Promise.reject(new Error('sink rejected')),
-        child: () => logger,
+        child: () => {
+          throw new Error('child failed');
+        },
       };
       const app = track(new App({ name: 'T', logger }));
       const dep = defineService<object>('zz-quiet-logger-dep');
