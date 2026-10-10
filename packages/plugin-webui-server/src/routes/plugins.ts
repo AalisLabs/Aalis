@@ -235,7 +235,10 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const plugins = blockedStatus({ plugins: pm, services: caps.services, doc }).map(p => {
       const entry = pm.getPlugin(p.instanceId);
       const schema = entry?.definition?.configSchema;
-      const declared = [...(p.requiredServices ?? []), ...(p.optionalServices ?? [])];
+      // 线上格式照旧给 requiredServices / optionalServices：从 core 状态里唯一的依赖信息 uses 派生
+      const requiredServices = p.uses.filter(use => use.kind === 'required').map(use => use.service);
+      const optionalServices = p.uses.filter(use => use.kind === 'optional').map(use => use.service);
+      const declared = [...requiredServices, ...optionalServices];
       return {
         name: p.name,
         instanceId: p.instanceId,
@@ -248,8 +251,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         lingering: p.lingering,
         self: p.instanceId === caps.self || undefined,
         provides: p.provides ?? [],
-        requiredServices: p.requiredServices ?? [],
-        optionalServices: p.optionalServices ?? [],
+        requiredServices,
+        optionalServices,
         servicePreferences: Object.fromEntries(
           declared.flatMap(name => {
             const preferred = caps.services.preferred(name, { for: p.instanceId });

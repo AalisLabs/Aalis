@@ -53,7 +53,6 @@ function snap(name: string, state: PluginState, { provides = [] as string[], req
     instanceId: name,
     state,
     provides,
-    requiredServices: requires,
     uses: requires.map(service => ({ key: service, service, kind: 'required' as const })),
   };
 }
@@ -480,7 +479,6 @@ describe('install（只有一条路径：写根依赖）', () => {
     state,
     error,
     provides: [],
-    requiredServices: [],
     uses: [],
   });
 

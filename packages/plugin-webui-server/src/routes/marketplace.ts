@@ -613,7 +613,13 @@ export function registerMarketplaceRoutes(
     const depMap = new Map([...getLocalPackages()].map(([n, e]) => [n, e.deps] as const));
     const status = caps.plugins.present ? caps.plugins.use.getStatus() : [];
     const svcOf = new Map(
-      status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),
+      status.map(p => [
+        p.name,
+        {
+          provides: p.provides ?? [],
+          requires: p.uses.filter(use => use.kind === 'required').map(use => use.service),
+        },
+      ]),
     );
     // target 本地没有（装前浏览）→ 向安装源拉 packument 取 latest 的直接依赖 + 服务，注入工作图当根种子。
     let rootServices: { provides: string[]; requires: string[] } | undefined;

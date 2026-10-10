@@ -19,8 +19,10 @@ import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
-/** 注册表内部的记录：公开的 {@link PluginEntry} 加上这次激活与重试余额（不进公开类型） */
+/** 注册表内部的记录：公开的 {@link PluginEntry} 加上依赖表、这次激活与重试余额（不进公开类型） */
 export interface PluginRecord extends PluginEntry {
+  /** 参与激活闸的依赖服务名（uses 里未包 optional 的） */
+  required: string[];
   activation?: Activation;
   /** 初始化期 required 缺失的自动重试余额，跨重算累计；未取额时为 undefined（见 PluginManager 的 spendRetry） */
   retriesLeft?: number;

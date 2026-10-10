@@ -13,7 +13,7 @@ import {
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
 import { events } from '../composition/core-services.js';
-import { isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { isOptional, requiredNames, type Uses } from '../composition/descriptors.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
@@ -247,7 +247,6 @@ export class PluginManager implements PluginManagerService {
       config: copy,
       state,
       required: requiredNames(definition.uses ?? {}),
-      optional: optionalNames(definition.uses ?? {}),
     });
     this.#order = undefined;
     this.#logger.info(state === 'disabled' ? `插件已注册(禁用): ${id}` : `插件已注册: ${id}`);
@@ -429,8 +428,6 @@ export class PluginManager implements PluginManagerService {
           };
         },
       ),
-      requiredServices: entry.required.length > 0 ? entry.required : undefined,
-      optionalServices: entry.optional.length > 0 ? entry.optional : undefined,
       error: entry.error,
       slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
       lingering: this.#lingering.has(entry.instanceId) || undefined,

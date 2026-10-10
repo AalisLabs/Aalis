@@ -17,12 +17,10 @@ interface PluginEntry {
   config: Record<string, unknown>;
   state: PluginState;
   error?: string;              // 激活失败的说明：错误消息后接 cause 链摘要；另有 core 写入的固定说明（见下表）
-  required: string[];          // 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务）
-  optional: string[];          // 不参与激活闸的依赖服务名
 }
 ```
 
-公开条目不含内部激活记录。`required` / `optional` 是服务名数组，在注册时从 `uses` 抽出（包含 Core 基础服务）。
+公开条目不含内部激活记录与依赖表；依赖信息只在 `getStatus()` 条目的 `uses` 里（包含 Core 基础服务）。
 
 `parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` 或 `plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。模块名是 npm 包名、不含 `:`，因此以第一个 `:` 切开，带不带 scope 同一规则；后缀里可以再出现 `/` 或 `:`。
 

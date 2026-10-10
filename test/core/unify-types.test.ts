@@ -110,12 +110,14 @@ describe('uses → apply 的类型推导', () => {
     apps.push(app);
     await app.plugin(plugin);
     await app.plugins.idle();
-    const entry = app.plugins.getPlugin('typed');
+    const status = app.plugins.getStatus().find(p => p.instanceId === 'typed');
+    const kinds = (kind: 'required' | 'optional') => status?.uses.filter(u => u.kind === kind).map(u => u.service);
     // 登记时已写入依赖表；全部服务（含 provide / logger）都进同一激活闸。
-    // 本用例不提供 zz-kv / zz-registry，插件保持 pending——钉的是条目上的服务名数组，不是 apply 是否跑过。
-    expect(entry?.required, '所有服务统一参与激活闸').toEqual(['zz-kv', 'zz-registry', 'provide', 'logger']);
-    expect(entry?.optional).toEqual(['zz-kv', 'zz-hybrid']);
-    expect(entry?.state).toBe('pending');
+    // 本用例不提供 zz-kv / zz-registry，插件保持 pending——钉的是状态里的依赖声明，不是 apply 是否跑过。
+    expect(kinds('required'), '所有服务统一参与激活闸').toEqual(['zz-kv', 'zz-registry', 'provide', 'logger']);
+    expect(kinds('optional')).toEqual(['zz-kv', 'zz-hybrid']);
+    expect(status, '依赖信息只留 uses').not.toHaveProperty('requiredServices');
+    expect(status?.state).toBe('pending');
 
     // uses 的值必须是描述符：编译期拒；绕过类型的 JS 调用方在定义期得到明确报错
     expect(() =>
@@ -135,8 +137,7 @@ describe('uses → apply 的类型推导', () => {
     await app.plugin(bare);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('bare')?.state).toBe('active');
-    expect(app.plugins.getPlugin('bare')?.required).toEqual([]);
-    expect(app.plugins.getPlugin('bare')?.optional).toEqual([]);
+    expect(app.plugins.getStatus().find(p => p.instanceId === 'bare')?.uses).toEqual([]);
   });
 });
 
