@@ -62,22 +62,19 @@ describe('配置无法拷贝时管理动作返回 false', () => {
     }).toEqual({ result: 'resolved:[true,false,true]', a: 'active', cyc: undefined, b: 'active' });
   });
 
-  it('bounce / updateConfig 带环状 config：应返回 false、保留旧配置、实例不受影响', async () => {
+  it('updateConfig 带环状 config：应返回 false、保留旧配置、实例不受影响', async () => {
     const { app } = await mk();
     let applies = 0;
     await app.plugin(definePlugin({ name: 'p', apply: () => void applies++ }), { v: 1 });
     await app.plugins.idle();
-    const viaBounce = await outcome(app.plugins.bounce('p', { config: cyclic() }));
     const viaUpdate = await outcome(app.plugins.updateConfig('p', cyclic()));
     await app.plugins.idle();
     expect({
-      viaBounce,
       viaUpdate,
       state: app.plugins.getPlugin('p')?.state,
       config: app.plugins.getPlugin('p')?.config,
       applies,
     }).toEqual({
-      viaBounce: 'resolved:false',
       viaUpdate: 'resolved:false',
       state: 'active',
       config: { v: 1 },

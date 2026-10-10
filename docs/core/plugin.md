@@ -115,19 +115,19 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 正常运行中启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。`disable` 清掉上一次激活失败留下的 `error`；停用时旧实例超过宽限仍未停下的照样转 `disabled`，带 `lingering`，见上文。停机中两个动作都立即返回 false，`enable` 不会把禁用或错误条目转回 `pending`。
 
-### `bounce(instanceId, opts?: { config? })`
+### `bounce(instanceId)`
 
-增量重载：可选换上新的运行配置 → 拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。
+增量重载：按现有配置拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。换配置走 `updateConfig`。
 
 - 正在用本插件所提供服务的 required 下游随之重启（先收尾、先关，本插件重新激活后按拓扑序重新激活）；optional 依赖经 `follow` 在换人时交接。
 - 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
-- `disposed`、停机进行中拒绝 bounce；停机中也不更换配置。
-- `disabled` 态带 `config` 时只换上新配置、保持禁用，返回 true，启用时按新配置激活；不带 `config` 时拒绝（warn，返回 false）。新 `config` 无法拷贝时返回 false，保留旧配置。
+- `disposed`、停机进行中拒绝 bounce。
+- `disabled` 态拒绝（warn，返回 false）。
 - `error` 态会被重置为 pending 重试。
 
 ### `updateConfig(instanceId, config)`
 
-`bounce(instanceId, { config })` 的薄壳，正常运行中禁用态同样收下新配置、保持禁用。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；拷贝失败时返回 false，保留旧配置。停机中返回 false，不更换配置。
+换上新的运行配置，再按 `bounce` 重启。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；拷贝失败时返回 false，保留旧配置。正常运行中 `disabled` 态只换上新配置、保持禁用，返回 true，启用时按新配置激活。停机中返回 false，不更换配置。
 
 ## 反应式监听
 

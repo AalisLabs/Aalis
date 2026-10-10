@@ -707,7 +707,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2635 → 2629：b5 P1-11（用户选甲）——插件状态的依赖信息只留 uses：删 PluginStatusEntry.requiredServices / optionalServices
 // 与公开 PluginEntry.required / optional（required 留在内部 PluginRecord）。
 // 2629 → 2625：b5 X15（用户选甲）——宿主侧 getPlugin 也交调用时刻的浅快照，pluginsService 直接收窄同一个方法。
-const CORE_CODE_LINE_CEILING = 2625;
+// 2625 → 2623：b5 P1-12（用户选甲）——bounce 不再收 config，拷贝保护与禁用态只换配置都归 updateConfig。
+const CORE_CODE_LINE_CEILING = 2623;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
