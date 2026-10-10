@@ -598,12 +598,10 @@ export class PluginManager implements PluginManagerService {
       this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
       const order = this.#order;
 
-      // Phase A: 本轮目标不再是 active 的成批关闭：某个 required 服务此刻没有提供者的，连同 required 服务会随这批一起
-      // 失去全部提供者的下游（传递闭包；还有后备的不算，非管理的换人不改目标态），它们之间的次序由关停编排按实际依赖定，
-      // 下游先收尾。后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活，
-      // activating 即后台），拆它记入重试预算
+      // Phase A：缺 required 的，连同随这批（与别的计划正关着的提供者）失去全部提供者的下游，成批关闭、下游先收尾
       const services = this.#host.runtime.services;
-      const lost = (name: string, leaving: ReadonlySet<symbol>): boolean => !services.survives(name, leaving);
+      const lost = (name: string, leaving: ReadonlySet<symbol>): boolean =>
+        !services.survives(name, owner => leaving.has(owner) || this.#host.closing(owner));
       const retiring = this.#closure([], [...order].reverse(), lost);
       if (retiring.length > 0) {
         const leaving = new Set(retiring.map(entry => entry.activation!.owner));
@@ -611,6 +609,7 @@ export class PluginManager implements PluginManagerService {
           const unmet = entry.required.find(name => lost(name, leaving))!;
           this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
           lastRoundFlips.add(entry.instanceId);
+          // 本 flight 此刻没有在飞的激活：activating 即后台，它 apply 里拿到的已是旧实例，拆它记入重试预算
           return entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending';
         };
         await retireBatch(retiring, target, this.#deps);

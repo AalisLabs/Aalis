@@ -219,11 +219,11 @@ export class ServiceContainer {
   }
 
   /**
-   * 去掉这些归属的条目之后，该服务是否还有对外的提供者（重算预判连带退场用）
+   * 去掉 leaving 判为要走的归属的条目之后，该服务是否还有对外的提供者（重算预判连带退场用）
    * @internal
    */
-  survives(name: string, leaving: ReadonlySet<symbol>): boolean {
-    return this.#visible(name).some(entry => !leaving.has(entry.owner));
+  survives(name: string, leaving: (owner: symbol) => boolean): boolean {
+    return this.#visible(name).some(entry => !leaving(entry.owner));
   }
 
   /** 只读登记元数据（不含实例）：展示与诊断用 */
