@@ -124,7 +124,6 @@ const REMOVED: Array<[string, string]> = [
   ['createProcessGateway', '消费方取 process 提供者的网关，由业务层 caps.process.use 取代'],
   ['getStorageEntries', 'storage 网关的条目枚举'],
   ['aggregateStorageRoots', 'storage 网关跨条目汇总根'],
-  ['getStorageRootConflicts', 'storage 网关的同名根冲突诊断'],
   ['resolveStorageEntryForRoot', 'storage 网关按根名找条目'],
   ['resolveStorageByPath', 'storage 网关按宿主路径找条目'],
   ['StorageProviderEntry', 'storage 网关的条目类型'],

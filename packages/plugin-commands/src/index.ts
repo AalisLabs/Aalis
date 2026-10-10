@@ -154,8 +154,7 @@ function registerCommands({
 }: Caps): void {
   const cfg = parseConfig(configSchema, config.use, logger.use);
   // 创建指令注册表并注册为服务
-  const registry = new CommandRegistry(logger.use, () => (authority.present ? authority.use : undefined));
-  const storageGateway = storage.use;
+  const registry = new CommandRegistry(logger.use, authority);
 
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
 
@@ -179,7 +178,7 @@ function registerCommands({
       if (data.types && !data.types.includes(k.type)) continue;
       try {
         if (data.scope === 'all') {
-          const removed = await removeDirCounted(storageGateway, `data:/${k.dir}`);
+          const removed = await removeDirCounted(storage.use, `data:/${k.dir}`);
           data.results.push({
             source: `${k.type}-cache`,
             type: k.type,
@@ -188,7 +187,7 @@ function registerCommands({
               removed >= 0 ? `所有${k.label}缓存已清空（${removed} 个会话目录）` : `${k.label}缓存目录不存在，无需清空`,
           });
         } else if (safeSessionId) {
-          const removed = await removeDirCounted(storageGateway, `data:/${k.dir}/${safeSessionId}`);
+          const removed = await removeDirCounted(storage.use, `data:/${k.dir}/${safeSessionId}`);
           data.results.push({
             source: `${k.type}-cache`,
             type: k.type,

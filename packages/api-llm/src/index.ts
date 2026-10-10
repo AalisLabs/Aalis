@@ -355,15 +355,6 @@ export interface ModelRef {
  * 按能力过滤 llm 的提供者条目 —— 能力源为模型自带的元数据 `use.capabilities`，
  * 不是 core 的能力选择（服务选择走配置 + 按名解析）。
  */
-function listLLMEntries(
-  source: Pick<ServiceSelection<LLMModel>, 'list'>,
-  caps?: readonly LLMCapability[],
-): ProviderEntry<LLMModel>[] {
-  const all = source.list();
-  if (!caps || caps.length === 0) return all;
-  return all.filter(e => caps.every(c => (e.use.capabilities ?? []).includes(c)));
-}
-
 /**
  * 列出（可按能力过滤的）llm 提供者条目，供 `/model` 列表与前端下拉用。
  * 能力源为 `use.capabilities`（model 自带元数据），是展示/列举用途，非 DI 选择。
@@ -372,7 +363,10 @@ export function listLLMModels(
   source: Pick<ServiceSelection<LLMModel>, 'list'>,
   opts?: { caps?: readonly LLMCapability[] },
 ): ProviderEntry<LLMModel>[] {
-  return listLLMEntries(source, opts?.caps);
+  const all = source.list();
+  const caps = opts?.caps;
+  if (!caps || caps.length === 0) return all;
+  return all.filter(e => caps.every(c => (e.use.capabilities ?? []).includes(c)));
 }
 
 /**
@@ -391,7 +385,7 @@ export function resolveLLMModel(
   ref?: ModelRef | null,
   requiredCaps?: LLMCapability[],
 ): ProviderEntry<LLMModel> | undefined {
-  const all = listLLMEntries(source, requiredCaps);
+  const all = listLLMModels(source, { caps: requiredCaps });
   if (ref?.provider && ref?.model) return all.find(e => e.id === `${ref.provider}/${ref.model}`);
   if (ref?.provider) return all.find(e => e.id.startsWith(`${ref.provider}/`));
   if (ref?.model) return all.find(e => e.use.id === ref.model);

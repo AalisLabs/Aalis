@@ -39,7 +39,7 @@ import type {
   TableRow,
   WebuiAdminEvent,
 } from '@aalis/api-webui';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { parseConfig, type SchemaIssue, validateConfig } from '@aalis/schema-config';
 import {
   type CheckedFrame,
@@ -60,7 +60,7 @@ interface PageRegistryDeps {
   /** 推管理面事件 */
   send(event: WebuiAdminEvent): void;
   /** 会话管理：会话面板核会话存在、取会话种类 */
-  sessions(): Pick<SessionManagerService, 'getSession'> | undefined;
+  sessions: Pick<ServiceSelection<Pick<SessionManagerService, 'getSession'>>, 'present' | 'use'>;
   /** 文件单元格的存储地址换成下载句柄；不能签发时回 undefined */
   signFile(uri: string, name: string): string | undefined;
 }
@@ -194,9 +194,8 @@ export function createPageRegistry(deps: PageRegistryDeps) {
   }
 
   function sessionOf(sessionId: string) {
-    const manager = deps.sessions();
-    if (!manager) throw new Refusal(503, '会话管理服务不在，会话面板用不了');
-    const session = manager.getSession(sessionId);
+    if (!deps.sessions.present) throw new Refusal(503, '会话管理服务不在，会话面板用不了');
+    const session = deps.sessions.use.getSession(sessionId);
     if (!session) throw new Refusal(404, `会话 ${sessionId} 不存在`);
     return session;
   }

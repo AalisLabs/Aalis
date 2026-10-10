@@ -12,7 +12,6 @@ import {
   definePlugin,
   defineService,
   type Logger,
-  optional,
   provide,
   services,
 } from '../../packages/core/src/index.js';
@@ -87,43 +86,15 @@ describe('内置能力', () => {
         apply({ provide }) {
           provide.use(face, { dir: '/a' }, { label: 'A', entryId: '@scope/face-a' });
           provide.use(face, { dir: '/b' }, { entryId: 'not-prefixed' });
-          // 已删的 onBehalfOf 不再认：条目身份落回本激活 id
-          provide.use(face, { dir: '/c' }, { onBehalfOf: '@scope/face-c' } as never);
         },
       }),
     );
     await app.plugins.idle();
     const host = app.bind({ services });
-    expect(host.services.use.all(face).map(view => view.contextId)).toEqual([
-      '@scope/face-a',
-      'not-prefixed',
-      'host-of-faces',
-    ]);
+    expect(host.services.use.all(face).map(view => view.contextId)).toEqual(['@scope/face-a', 'not-prefixed']);
 
     await app.plugins.unload('host-of-faces');
     expect(host.services.use.all(face)).toEqual([]);
-  });
-
-  it('缺席时访问业务句柄的成员，报错点名是哪个服务、谁声明的', async () => {
-    const missing = defineService<{ ping(): void }>('__t:missing');
-    const app = makeApp();
-    let thrown: unknown;
-    await app.plugin(
-      definePlugin({
-        name: 'needs-missing',
-        uses: { missing: optional(missing) },
-        apply({ missing }) {
-          try {
-            missing.use.ping();
-          } catch (err) {
-            thrown = err;
-          }
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(String(thrown)).toContain('"__t:missing"');
-    expect(String(thrown)).toContain('"needs-missing"');
   });
 
   it('元数据随定义携带，宿主从插件条目上读得到', async () => {

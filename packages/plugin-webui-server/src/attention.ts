@@ -14,7 +14,7 @@ import { unmetDependencies } from '@aalis/api-doctor';
 import type { HostConfig } from '@aalis/api-host-config';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { AttentionItem, Notice, PluginBlockers, WebuiAdminEvent } from '@aalis/api-webui';
-import type { PluginManagerService, PluginStatusEntry, Services } from '@aalis/core';
+import type { PluginManagerService, PluginStatusEntry, ServiceSelection, Services } from '@aalis/core';
 import { validateConfig } from '@aalis/schema-config';
 
 /** 算插件没起来的原因要读的：插件状态与定义、当前有提供者的服务名、配置文档（宿主不提供时读运行态配置） */
@@ -47,7 +47,7 @@ interface AttentionDeps {
   /** 推出未结的审批；审批服务不在时没有 */
   approvals(): readonly Approval[];
   /** 会话管理：审批所在会话的标题 */
-  sessions(): Pick<SessionManagerService, 'getSession'> | undefined;
+  sessions: Pick<ServiceSelection<Pick<SessionManagerService, 'getSession'>>, 'present' | 'use'>;
   /** 插件状态与没起来的原因；插件管理服务不在时为空 */
   plugins(): ReadonlyArray<PluginStatusEntry & PluginBlockers>;
   /** 登记着的提示，带所属实例 */
@@ -74,7 +74,7 @@ export function createAttention(deps: AttentionDeps) {
     );
 
   const titleOf = (sessionId: string) => {
-    const info = deps.sessions()?.getSession(sessionId);
+    const info = deps.sessions.present ? deps.sessions.use.getSession(sessionId) : undefined;
     return info && (info.title || info.name);
   };
 

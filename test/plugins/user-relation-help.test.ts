@@ -5,6 +5,7 @@ import type { Logger } from '../../packages/core/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import { type EvictionConfig, registerRelationCommands } from '../../packages/plugin-user-relation/src/commands.js';
 import type { RelationService } from '../../packages/plugin-user-relation/src/index.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // /relation 与 /relation cleanup 两个分组登记了描述，帮助里不出现自动分组的占位文字；
@@ -19,7 +20,7 @@ const authorityAt = (level: number) =>
   ({ authorize: (_who: unknown, req) => (capabilityMinLevel(req) > level ? '权限不足' : null) }) as AuthorityService;
 
 function relationRegistry(level: number): CommandRegistry {
-  const registry = new CommandRegistry(silent, () => authorityAt(level));
+  const registry = new CommandRegistry(silent, fixedRef(authorityAt(level)));
   const commands = {
     command: (name: string, description?: string, meta?: object) =>
       registry.command(name, description, { ...meta, pluginName: 'relation' }),

@@ -35,7 +35,7 @@ const SPIN_SVG =
 describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
   let base: string;
   let app: App;
-  let storageGateway: StorageService;
+  let files: StorageService;
   let handlers: Record<string, ToolHandler>;
 
   beforeEach(async () => {
@@ -45,7 +45,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {});
     await app.plugin(processLocal);
-    storageGateway = app.bind({ storage }).storage.use;
+    files = app.bind({ storage }).storage.use;
 
     // 宿主侧最小 tools 提供者：把两个插件登记的 handler 交到测试手上
     handlers = {};
@@ -93,12 +93,12 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
 
     // 3. adapter 出站两步：落盘改写 → 渲染内联标记（与 index.ts 出站监听同一套调用）
     const proc = app.bind({ processService }).processService.use;
-    const local = await cacheOneAttachment(storageGateway, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
+    const local = await cacheOneAttachment(files, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
       warn: () => {},
     });
     expect(local).toMatch(/^data\/images\//);
     const storageUri = (local ?? '').replace(/^([^/]+)\//, '$1:/');
-    const { markers } = await materializeAttachments([{ kind: 'image', data: storageUri }], storageGateway, logger);
+    const { markers } = await materializeAttachments([{ kind: 'image', data: storageUri }], files, logger);
     const m = markers.match(/<image url="base64:\/\/([A-Za-z0-9+/=]+)"/);
     expect(m, `出站标记形态不符: ${markers.slice(0, 120)}`).toBeTruthy();
 
