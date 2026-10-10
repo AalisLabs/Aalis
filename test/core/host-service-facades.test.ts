@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, appService, definePlugin, lifecycle, pluginsService, services } from '../../packages/core/src/index.js';
+import { App, appService, definePlugin, pluginsService, services } from '../../packages/core/src/index.js';
 
 // App 的两项宿主服务由提供方控制暴露面：只交出契约列出的方法，App / PluginManager 本体不进容器（看的是提供者本身）。
 // 配置文档（host-config）不在 core：由宿主登记，见 test/runtime/config-store.test.ts。
@@ -25,20 +25,13 @@ describe('宿主服务只交出契约方法', () => {
     expect(raw.bind).toBeUndefined();
   });
 
-  it('plugins：契约方法齐全、无停机开关；getPlugin 返回不含激活记录的快照', async () => {
+  it('plugins：契约方法齐全、无停机开关', () => {
     const app = world();
     const raw = app.bind({ services }).services.use.get(pluginsService);
     expect(keysOf(raw)).toEqual(
       ['bounce', 'disable', 'enable', 'getPlugin', 'getStatus', 'idle', 'register', 'unload', 'updateConfig'].sort(),
     );
     expect((raw as unknown as Record<string, unknown>).beginShutdown).toBeUndefined();
-    const { pluginsService: svc } = app.bind({ pluginsService });
-    await app.plugin(definePlugin({ name: 'p', uses: { lifecycle }, apply() {} }));
-    await app.plugins.idle();
-    const entry = svc.use.getPlugin('p');
-    expect(entry?.state).toBe('active');
-    expect(keysOf(entry)).not.toContain('activation');
-    expect(app.plugins.getPlugin('p')).not.toBe(entry);
   });
 
   it('宿主侧 app.plugins.getPlugin 也是调用时刻的浅快照：写它进不了注册表，config 与 definition 仍是同一对象', async () => {

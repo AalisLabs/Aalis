@@ -91,7 +91,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下，例如重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态不带配置的 bounce，以及**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）。从 `beginShutdown()` 起，新发起的六个动作都立即返回 false，不改状态或配置。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下，例如重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态的 bounce，以及**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）。从 `beginShutdown()` 起，新发起的六个动作都立即返回 false，不改状态或配置。
 
 **true** = 正常运行中其余已受理的请求，含主体已在目标态的幂等情形。正常运行中，对已在途卸载再次 `unload` 会 join 首次卸载，返回时该实例已拆卸并离开注册表；进入停机后不再 join 或新增拆卸。
 

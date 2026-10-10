@@ -143,7 +143,7 @@
 ### 宿主运行时
 
 - **`@aalis/runtime`** — `node:fs` / `node:fs/promises`（文件日志、`node_modules` 插件加载、配置读写与监听）+ `node:child_process`（`spawn`）+ `node:module`（`createRequire`）+ `node:crypto`（`randomBytes`）+ `node:path` / `node:url`
-  独立部署宿主：从 `node_modules` 加载插件、读 YAML 配置、注入时钟 / 存储 / 进程等环境专有件。它本身就是宿主，直接使用 `node:*` 是本职——core 的环境无关红线正是靠它把副作用兜在外层。`randomBytes`（`providers.ts`）为配置文件原子写的临时文件名生成随机段。
+  独立部署宿主：从 `node_modules` 加载插件、读 YAML 配置、注入存储 / 进程等环境专有件。它本身就是宿主，直接使用 `node:*` 是本职——core 的环境无关红线正是靠它把副作用兜在外层。`randomBytes`（`providers.ts`）为配置文件原子写的临时文件名生成随机段。
 
 > 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-llm-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码不要再加入直接动态 import `node:fs|crypto|child_process`——如有需要，请按 § 4 流程申报新的例外。
 

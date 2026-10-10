@@ -14,7 +14,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
 - `emit` 按注册顺序依次调用，但**顺序不构成语义**：监听方不得依赖自己相对其他监听方的位置。
 - 无返回通道、不可变更 payload 语义、不可截停。
-- sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发；派发进行中登记的监听器排在本轮末尾送达，要等前面的监听器返回或超时（未设上限时一直等）。每个监听器只收到一次。补发在 App 存续期间一直有效，重启与停机都不清空；要一轮全新的启动信号就新建 App。
+- sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发；派发进行中登记的监听器排在本轮末尾送达，要等前面的监听器返回或超时（未设上限时一直等）。每个监听器只收到一次。补发在 App 存续期间一直有效，重启与停机都不清空。
 
 **services（`provide` / `ServiceSelection` / `services`）——供需**
 - 挑选规则恒为 **本插件偏好 > 全局偏好 > 优先级 > 注册顺序**：偏好指向的那家不在场就按下一级挑，回来后切回。选择层（`use` / `of()` / `list()` / `present` / `follow()`）按本插件的口径，`services.get` / `services.all` / `services.names` 与不给 `for` 的 `services.inspect` 按全局口径（不看本插件偏好），`services.inspect(key, { for })` 按那个插件的口径，排序同一套规则。激活超过 `slowThresholdMs` 转入后台的提供者，在激活完成前不参与解析：所有读口与激活闸都看不到它登记的服务。
@@ -141,7 +141,7 @@ src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`ty
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
-插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，`getPlugin()`（宿主侧与 `pluginsService` 同一个）交出调用时刻的浅快照，`config` 与 `definition` 仍是运行中的同一对象、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。私有成员一律写成 `#` 私有字段（不带 `_` 前缀），不用 TypeScript 的 `private` / `protected` / `public` 修饰符与构造函数参数属性：前者由 Biome 的 useConsistentMemberAccessibility 拦，后者由 core 编译选项 `erasableSyntaxOnly` 拦。公开面与分层分别由 purity / architecture 测试约束。
+插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，`getPlugin()` 交出调用时刻的浅快照，`config` 与 `definition` 仍是运行中的同一对象、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。私有成员一律写成 `#` 私有字段（不带 `_` 前缀），不用 TypeScript 的 `private` / `protected` / `public` 修饰符与构造函数参数属性：前者由 Biome 的 useConsistentMemberAccessibility 拦，后者由 core 编译选项 `erasableSyntaxOnly` 拦。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message，丢掉 stack 与 cause 链；日志行编码与转义由宿主负责。宿主 SPI

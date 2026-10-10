@@ -3,21 +3,16 @@ import {
   App,
   type AppOptions,
   createApp,
-  DefaultLogger,
   definePlugin,
   defineService,
   events,
   type Logger,
-  LogHub,
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
-// ════════════════════════════════════════════════════════════
-// App 外壳上几处此前没有用例守住的可观测行为：createApp 工厂、事件监听器抛错的告警文案、
-// 启动横幅的版本段、restart 在有无重启策略时的两种形状（策略拿到的 stop 与 rollback）。
-// ════════════════════════════════════════════════════════════
+// App 外壳的可观测行为：createApp 工厂、注入的 logger 出错、启动横幅、监听器抛错的告警、restart，以及启动 / 停机 / 重启互斥。
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type LogRecord = { level: Level; message: string; args: unknown[] };
@@ -144,20 +139,6 @@ describe('启动横幅', () => {
     const log = recordingLogger();
     track(new App({ logger: log }));
     expect(log.messages('info')).toEqual(['Aalis Core - Aalis']);
-  });
-});
-
-describe('日志时钟', () => {
-  it('AppOptions 不收 now：纯 JS 传了也不生效；要固定日志时钟就注入带 now 的 DefaultLogger', () => {
-    const fixed = new Date('2001-02-03T04:05:06Z');
-    const hub = new LogHub();
-    const seen: string[] = [];
-    hub.onEntry(entry => void seen.push(new Date(entry.timestamp).toISOString()));
-    track(new App({ name: 'Clock', logHub: hub, now: () => fixed } as AppOptions));
-    expect(seen, '纯 JS 传的 now 不生效').not.toContain(fixed.toISOString());
-    seen.length = 0;
-    track(new App({ name: 'Clock', logger: new DefaultLogger('aalis', 'info', hub, () => fixed) }));
-    expect(seen).toEqual([fixed.toISOString()]);
   });
 });
 

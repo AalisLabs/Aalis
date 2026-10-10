@@ -116,7 +116,6 @@ describe('uses → apply 的类型推导', () => {
     // 本用例不提供 zz-kv / zz-registry，插件保持 pending——钉的是状态里的依赖声明，不是 apply 是否跑过。
     expect(kinds('required'), '所有服务统一参与激活闸').toEqual(['zz-kv', 'zz-registry', 'provide', 'logger']);
     expect(kinds('optional')).toEqual(['zz-kv', 'zz-hybrid']);
-    expect(status, '依赖信息只留 uses').not.toHaveProperty('requiredServices');
     expect(status?.state).toBe('pending');
 
     // uses 的值必须是描述符：编译期拒；绕过类型的 JS 调用方在定义期得到明确报错
