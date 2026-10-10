@@ -6,7 +6,7 @@
 
 ## 概述
 
-最小化的 Embedding 服务契约：把一段文本转成 `number[]` 向量。被 vector memory / 语义搜索 / RAG 等场景消费。描述符 `embedding` 是普通调用型 `ServiceRef<EmbeddingService>`。
+最小化的 Embedding 服务契约：把一段文本转成 `number[]` 向量。被 vector memory / 语义搜索 / RAG 等场景消费。描述符 `embedding` 不给 bind，业务层就是 `EmbeddingService` 形状的活句柄（`caps.embedding.use`）。
 
 ## 服务接口
 
@@ -33,19 +33,18 @@ export default definePlugin({
   name: '@acme/plugin-example-embedding',
   uses: { embedding },
   apply({ embedding }) {
-    const svc = embedding.current;
-    if (!svc) return;
-    void svc.embed('the quick brown fox');
+    if (!embedding.present) return;
+    void embedding.use.embed('the quick brown fox');
   },
 });
 ```
 
-`embedding.current` 每次读取重新解析当前胜者。不要把返回值存进字段：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。
+业务句柄 `embedding.use` 是活的：每次访问成员都解析到本插件当前选中的那一家，存进字段也会跟着换人；一段操作要固定同一家时取 `embedding.list().find(p => p.selected)?.use`。
 
 ## 注意事项
 
 - 向量维度由具体 provider 决定（如 OpenAI text-embedding-3-small = 1536；ollama nomic-embed-text = 768），契约不暴露维度。**消费方应避免假设维度**，也不能靠维度区分模型（同维度换模型的向量同样不可比较）。`plugin-memory-vector` 不探测维度，靠 `modelId` 区分模型：提供者声明了它时，写入的向量 metadata 带上 `modelId`，检索只保留与查询向量同模型的候选。
-- 多个 embedding 实现互斥：同一时间只有一个胜者绑定到 `embedding` 服务名（通过 instanceId / 偏好区分多实例）。
+- 多个 embedding 实现并存时，`embedding.use` 只打到本插件选中的那一家（通过 instanceId / 偏好区分多实例）。
 
 ## 实现者
 

@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking`）。每个 provider 用 `provide(llm, handle, { entryId: '${lifecycle.id}/${modelId}', label })` 为 **每个模型** 独立注册一个 entry。能力元数据在 handle 的 `capabilities` 字段上，不放进 `provide` 选项。Agent / Memory-summary 等消费方仅依赖本契约。
+定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking`）。每个 provider 用 `provide.use(llm, handle, { entryId: '${lifecycle.use.id}/${modelId}', label })` 为 **每个模型** 独立注册一个 entry。能力元数据在 handle 的 `capabilities` 字段上，不放进 `provide` 选项。Agent / Memory-summary 等消费方仅依赖本契约。
 
 ## 关键类型
 
@@ -36,7 +36,7 @@ interface ChatResponse {
 
 ## 服务接口
 
-一个 model 就是一个 `'llm'` service entry。描述符 `llm` 的绑定接口是 `ServiceRef<LLMModel>`；经它拿到的模型在请求里填上调用方这次激活的实例 id（`caller`），同一个模型每次拿到的是同一个对象。
+一个 model 就是一个 `'llm'` service entry。描述符 `llm` 自定义了绑定：业务层是 `LLMModel` 形状的活句柄，`chat` / `chatStream` 在请求里填上调用方这次激活的实例 id（`caller`），其余成员照原样转发。按模型选就是按条目 id 选：`caps.llm.of('<provider>/<model>')`；按能力筛遍历 `caps.llm.list()`，读条目的 `use.capabilities`。
 
 ```ts
 interface LLMModel {
@@ -53,7 +53,7 @@ interface LLMModel {
 }
 ```
 
-选哪个 model 靠服务偏好（`services.prefer(llm, contextId)`）与会话级覆盖，不再由调用方传 `provider`。
+选哪个 model 靠服务偏好（由用户在 WebUI 或配置 `servicePreferences` 里设）与会话级覆盖，不再由调用方传 `provider`。
 
 ## Capability 框架
 
@@ -103,9 +103,8 @@ export default definePlugin({
   name: '@acme/plugin-example-llm-consumer',
   uses: { llm },
   apply({ llm }) {
-    const handle = llm.current;
-    if (!handle) return;
-    void handle.chat({ messages: [{ role: 'user', content: 'hi' }] });
+    if (!llm.present) return;
+    void llm.use.chat({ messages: [{ role: 'user', content: 'hi' }] });
   },
 });
 ```
@@ -129,7 +128,7 @@ interface LLMUsageEvent {
 export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel;
 ```
 
-- **谁发：** 服务商登记模型时套一层 `metered`：`provide(llm, metered(handle, events), { entryId })`。`chat` 拿到 `usage` 时发一次；`chatStream` 在流结束时（含中途停止）按最后一次报的 `usage` 发一次；服务商没报用量的调用不记。服务商回的数运行时没人核，`metered` 发之前规整一次：输入或输出不是非负有限数的调用当没报，不记；缓存命中不是非负有限数时不带，比输入多时截到输入。服务商自己的 `chat` 与 `chatStream` 不用管记账，发事件不等监听器。三个第一方服务商都套了它。不套的服务商，调用不进用量统计，会话的 token 累计（会话管理取 `llm:usage` 记账）也不算它：这是提供者的约定，宿主不另核。
+- **谁发：** 服务商登记模型时套一层 `metered`：`provide.use(llm, metered(handle, events.use), { entryId })`。`chat` 拿到 `usage` 时发一次；`chatStream` 在流结束时（含中途停止）按最后一次报的 `usage` 发一次；服务商没报用量的调用不记。服务商回的数运行时没人核，`metered` 发之前规整一次：输入或输出不是非负有限数的调用当没报，不记；缓存命中不是非负有限数时不带，比输入多时截到输入。服务商自己的 `chat` 与 `chatStream` 不用管记账，发事件不等监听器。三个第一方服务商都套了它。不套的服务商，调用不进用量统计，会话的 token 累计（会话管理取 `llm:usage` 记账）也不算它：这是提供者的约定，宿主不另核。
 - **调用方：** `caller` 由 `llm` 的绑定接口按调用方这次激活填上，调用方自己填的不算。
 - **用途与会话：** 调用方在请求里带，可以缺。`purpose` 是给人看的短语，第一方的写法：对话代理的回合是「对话」，子会话里的回合是「子任务」；压缩服务的摘要是「摘要」；媒体识别看图（含视频与动图的帧）是「识图」，转写语音（含视频的音轨）是「转写」。
 
@@ -145,20 +144,22 @@ interface LLMBalance { readonly currency: string; readonly amount: number }
 export interface ModelRef { provider?: string; model?: string }
 
 export function listLLMModels(
-  source: ServiceRef<LLMModel>,
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
   opts?: { caps?: readonly LLMCapability[] },
-): LLMModelEntry[];
+): ProviderEntry<LLMModel>[];
 
 export function resolveLLMModel(
-  source: ServiceRef<LLMModel>,
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
   ref?: ModelRef | null,
   requiredCaps?: LLMCapability[],
-): LLMModelEntry | undefined;
+): ProviderEntry<LLMModel> | undefined;
 ```
 
-`entryId` 写成 `` `${lifecycle.id}/${modelId}` `` 是本契约的约定，core 不检查：`resolveLLMModel` 给全两项时按 `${provider}/${model}` 精确比较条目的 `contextId`，只给 provider 时按 `${provider}/` 前缀匹配，不按约定写的条目这两种引用都命不中。
+`source` 传 `caps.llm` 即可。返回的是选择层的条目：`id` 是条目 id，`use` 是那个模型的业务句柄；按能力过滤读 `use.capabilities`，只给 model 时按 `use.id` 匹配。
 
-按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按偏好 > priority > 注册顺序拿首个。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
+`entryId` 写成 `` `${lifecycle.use.id}/${modelId}` `` 是本契约的约定，core 不检查：`resolveLLMModel` 给全两项时按 `${provider}/${model}` 精确比较条目的 `id`，只给 provider 时按 `${provider}/` 前缀匹配，不按约定写的条目这两种引用都命不中。
+
+按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 `list()` 的次序拿首个（本插件选中的那一家在前，其余按 priority 与注册顺序）。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
 
 ## 提供方骨架
 
@@ -174,14 +175,14 @@ export default definePlugin({
   apply({ provide, events, lifecycle }) {
     const handle: LLMModel = {
       id: 'demo',
-      providerId: lifecycle.id,
+      providerId: lifecycle.use.id,
       contextLength: 8192,
       capabilities: ['chat'],
       async chat() {
         return { content: '' };
       },
     };
-    provide(llm, metered(handle, events), { entryId: `${lifecycle.id}/demo`, label: 'demo' });
+    provide.use(llm, metered(handle, events.use), { entryId: `${lifecycle.use.id}/demo`, label: 'demo' });
   },
 });
 ```

@@ -13,7 +13,7 @@ export default definePlugin({
   name: '@your-scope/plugin-hello',
   uses: { logger },
   apply({ logger }) {
-    logger.info('hello from third-party plugin');
+    logger.use.info('hello from third-party plugin');
   },
 });
 ```
@@ -66,14 +66,14 @@ export default definePlugin({
   uses: { llm: optional(llm) },
   apply({ llm }) {
     llm.follow(model => {
-      // 胜者在场即调；换人时先清理再挂新实例。attach 必须同步。
+      // 选得到即调；换人时先清理再挂新选中的那一家。attach 必须同步。
       // model.chat(...)
     });
   },
 });
 ```
 
-调用型接口是 `ServiceRef`：每次读 `current` 重新解析；有状态资源用 `follow`。详见 [惰性服务访问](../concepts/lazy-service-access.md)。
+`llm` 是选择层：`llm.use` 是转发给本插件选中那一家的活句柄，存起来也会跟着换人；optional 依赖调用前先看 `llm.present`。有状态资源用 `follow`。详见 [惰性服务访问](../concepts/lazy-service-access.md)。
 
 ### 2.2 自己 provide 一个服务
 
@@ -88,17 +88,17 @@ export default definePlugin({
   provides: [llm],
   uses: { provide, lifecycle },
   apply({ provide, lifecycle }) {
-    provide(llm, new MyModelHandle(), {
+    provide.use(llm, new MyModelHandle(), {
       priority: 50,
       label: 'my-llm',
-      entryId: `${lifecycle.id}/my-model`,
+      entryId: `${lifecycle.use.id}/my-model`,
     });
   },
 });
 ```
 
-`provide(descriptor, instance, options?)` 的 `options`：`priority`、`exclusive`、`label`、`entryId`。
-core 不做服务能力选择。服务选择只看「偏好 > 优先级 > 注册顺序」，跨实例的「按能力挑选」交给领域 helper。
+`provide.use(descriptor, instance, options?)` 的 `options`：`priority`、`exclusive`、`label`、`entryId`。
+core 不做服务能力选择。服务选择只看「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」，跨实例的「按能力挑选」交给领域 helper。
 
 #### 能力挂在 handle 元数据上
 
@@ -112,12 +112,12 @@ class MyModelHandle {
   readonly capabilities: LLMCapability[] = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling];
   // ...
 }
-provide(llm, new MyModelHandle(), { entryId: `${lifecycle.id}/my-model`, label: 'my-model' });
+provide.use(llm, new MyModelHandle(), { entryId: `${lifecycle.use.id}/my-model`, label: 'my-model' });
 
-const model = resolveLLMModel(llmRef, ref, [LLMCapabilities.Vision])?.instance;
+const model = resolveLLMModel(caps.llm, ref, [LLMCapabilities.Vision])?.use;
 ```
 
-`resolveLLMModel` 的第一参是 `ServiceRef<LLMModel>`，不是 Context。
+`resolveLLMModel` 的第一参是 `uses` 里的那一项选择层（只用它的 `list`），不是 Context；返回 `ProviderEntry<LLMModel>`，模型句柄在 `use` 上。
 
 #### 推荐 `priority` 带
 
@@ -127,27 +127,26 @@ const model = resolveLLMModel(llmRef, ref, [LLMCapabilities.Vision])?.instance;
 | `10–50` | 希望盖过默认的次级提供者 |
 | `200` | 系统级别；仅供 core 与系统级使用 |
 
-上层跨 entry 调度请使用 `x.all()` 或 `services.all(desc)`（只接收名字，**无** capabilities 参数）
-与各 `*-api` helper（`resolveLLMModel` / `listLLMModels` / `createStorageGateway` /
-`resolvePlatformBySession` 等）。
+上层跨 entry 调度请使用 `x.list()` / `x.of(id)` 或 `services.use.all(desc)`（只接收名字，**无** capabilities 参数）
+与各 `*-api` helper（`resolveLLMModel` / `listLLMModels` / `resolvePlatformBySession` 等）。
 
-`current` 默认返回「偏好 > priority > 注册顺序」居首的那个。用户可经 `services.prefer(desc, contextId)`
-或 WebUI 设置「系统」的服务偏好里指定偏好 provider。
+`use` 默认打到「本插件偏好 > 全局偏好 > priority > 注册顺序」居首的那一家。偏好由用户在 WebUI 设置「系统」的服务偏好
+或配置项 `servicePreferences` 里指定，插件不写偏好。
 
 ### 2.3 多提供者：per-entry 注册
 
 需要在一个服务名下暴露多个实例时，在同一次 `apply` 里多次 `provide`，用 `entryId` 区分（格式按所用契约的约定，第一方契约都是激活 id 加 `/` 加子粒度）：
 
 ```ts
-for (const root of roots) {
-  provide(storage, new ScopedStorageService(root, ...), {
-    entryId: `${lifecycle.id}/${root.name}`,
-    label: root.label,
+for (const model of models) {
+  provide.use(llm, new MyModelHandle(model), {
+    entryId: `${lifecycle.use.id}/${model.id}`,
+    label: model.id,
   });
 }
 ```
 
-上层需要跨实例路由时，调用各 `*-api` 中的 helper。禁止再注册同名 facade entry。
+下游按条目 id 取其中一家（`caps.llm.of('<provider>/<model>')`），或调用各 `*-api` 中的 helper 跨实例路由。禁止再注册同名 facade entry。
 
 ## 3. 配置 schema
 
@@ -165,7 +164,7 @@ export default definePlugin({
   configSchema,
   uses: { config, logger },
   apply({ config, logger }) {
-    const cfg = parseConfig(configSchema, config, logger);
+    const cfg = parseConfig(configSchema, config.use, logger.use);
     // 使用 cfg.apiKey / cfg.baseUrl；发送请求前继续校验 URL 等业务约束
   },
 });
@@ -175,7 +174,7 @@ export default definePlugin({
 > 宿主把它的值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只留引用 `{ $secret: '<键>' }`，
 > WebUI 不回显原值；插件经 `parseConfig` 读到的仍是原值。引用的键不在密钥存储里时 `parseConfig` 拒绝激活，
 > 不回落默认值；这一行为在本批新版 schema-config 里，对它的依赖写成范围、下限抬到这个版本。值不是凭据、名字却像凭据的字段（如 `maxTokens`）可以写 `secret: false` 表明已判断过。
-> 要把配置写回配置文件，用 `host-config` 的 `applyPluginConfig`，不要把 `parseConfig` 的结果或 `config`
+> 要把配置写回配置文件，用 `host-config` 的 `applyPluginConfig`，不要把 `parseConfig` 的结果或 `config.use`
 > 原样交给 `setPluginConfig`：其中密钥字段是原值，宿主会拒收（见 [运行态与配置文档](../core/config.md#跨重启保留)）。
 > 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，
 > 值写该类型的取值类型（如 `'llm-ref': ModelRef`）。
@@ -184,32 +183,32 @@ WebUI 会自动根据 schema 渲染配置表单。
 
 ## 4. 生命周期
 
-`provide()` 与 `events.on` 返回退订；经绑定门面的登记随激活撤回，**插件本身无需再退订这些**。需要做副作用清理（关闭 socket、清空 interval）时：
+`provide.use()` 与 `events.use.on` 返回退订；经业务层登记方法的登记随激活撤回，**插件本身无需再退订这些**。需要做副作用清理（关闭 socket、清空 interval）时：
 
 ```ts
 apply({ lifecycle }) {
   const timer = setInterval(work, 1000);
-  lifecycle.onDispose(() => clearInterval(timer));
+  lifecycle.use.onDispose(() => clearInterval(timer));
 }
 ```
 
-需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.onDrain`；`onDispose` 只释放自己的资源，那时依赖可能已不可用。普通依赖下消费者 close 完提供者才 drain；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，再发 `app:stopping`（知会，不是清理通道），然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
+需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.use.onDrain`；`onDispose` 只释放自己的资源，那时依赖可能已不可用。插件用别的插件的服务时消费者 close 完提供者才 drain（边对声明服务的全部提供者建）；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，再发 `app:stopping`（知会，不是清理通道），然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
 
 ## 5. 工具 / 命令 / WebUI 扩展点
 
 | 想做的事 | 用什么 |
 |----------|--------|
-| 注册 AI 可调用的工具 | `uses: { tools }`，`tools.register(...)`（`@aalis/api-tools` 的描述符） |
-| 注册斜杠命令 | `uses: { commands }`，`commands.command(...)`（`@aalis/api-commands`） |
-| 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
-| 注册 agent 输入预处理器 | `uses: { agent }`，`agent.registerPreprocessor(...)`（`@aalis/api-agent`） |
-| 监听核心事件 | `uses: { events }`，`events.on('service:changed', …)` |
+| 注册 AI 可调用的工具 | `uses: { tools }`，`tools.use.register(...)`（`@aalis/api-tools` 的描述符） |
+| 注册斜杠命令 | `uses: { commands }`，`commands.use.command(...)`（`@aalis/api-commands`） |
+| 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.use.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
+| 注册 agent 输入预处理器 | `uses: { agent }`，`agent.use.registerPreprocessor(...)`（`@aalis/api-agent`） |
+| 监听核心事件 | `uses: { events }`，`events.use.on('service:changed', …)` |
 
-这些绑定门面内部已处理「服务晚上线或换人时重挂」。插件加载采用单遍式，无需关心依赖顺序；若还要在方法里 **读** hub（`require()` / `execute`），或希望激活闸清晰，把对应描述符写成 required（不要 `optional()`）。
+这些登记方法内部已处理「服务晚上线或换人时重挂」，登记不用先看 `present`。插件加载采用单遍式，无需关心依赖顺序；若还要在方法里 **读** hub（如 `tools.use.execute`），或希望激活闸清晰，把对应描述符写成 required（不要 `optional()`）；optional 依赖调读方法前先看 `present`。
 
 ## 5.1 类型从哪里 import；依赖怎么归类
 
-`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceRef` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；钩子与贡献点也不在 core，`hooks` / `contributions` 分别从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
+`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceSelection` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；钩子与贡献点也不在 core，`hooks` / `contributions` 分别从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
 判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间，不写 caret、精确版本或 `latest`：区间可被包管理器去重到与宿主同一份安装；caret 在 0.x 下只匹配同一个次版本，跨次版本就断，两个依赖各锁不同次版本时会装进两份同一契约包（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）；精确版本同样锁死；`latest` 发布出去等于不设上限。
 
@@ -330,8 +329,8 @@ pnpm 可以直接引用根依赖的范围：
 | 类型 | 参考包 |
 |------|--------|
 | 单一服务提供者 | `plugin-llm-openai`, `plugin-llm-deepseek`, `plugin-tools` |
-| 多 entry 注册 | `plugin-storage-local`（每 root）、`plugin-llm-ollama`（每 model） |
-| 跨 entry helper | `api-storage` (`createStorageGateway`)、`api-platform` (`resolvePlatformBySession`) |
+| 多 entry 注册 | `plugin-llm-ollama`、`plugin-llm-openai`（每 model） |
+| 跨 entry helper | `api-llm` (`resolveLLMModel`)、`api-platform` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-todo-list`, `plugin-tool-search` |
 | 命令注入 | `plugin-commands` |
 | WebUI 页面与提示 | `plugin-scheduler`（新建与编辑是带输入的动作）、`plugin-paper`（标签页、详情与会话面板）、`plugin-doctor`（运行后发出或撤回提示） |

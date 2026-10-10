@@ -7,7 +7,7 @@
 
 ## 1. 定位
 
-**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 取用名 `sessionHistory.current`，契约包 `@aalis/api-session-history`。
+**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 消费方经 `sessionHistory.use` 调用，契约包 `@aalis/api-session-history`。
 
 它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/api-session-history/src/index.ts`）。
 
@@ -42,7 +42,7 @@ export interface SessionHistoryService {
 
 判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts`，实现见 `plugin-tool-session/src/index.ts`）。
 
-契约导出描述符 `sessionHistory = defineService<SessionHistoryService>('session-history')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`sessionHistory.current` 无需手写泛型。
+契约导出描述符 `sessionHistory = defineService<SessionHistoryService>('session-history')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`sessionHistory.use` 无需手写泛型。
 
 ## 3. 谁提供 / 谁消费
 
@@ -50,7 +50,7 @@ export interface SessionHistoryService {
 
 ```ts
 const historyService = createSessionHistoryService(caps, cfg);
-provide(sessionHistory, historyService, { label: '会话历史读取' });
+caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' });
 ```
 
 它还注册了 LLM 工具 `session_get_history`（`index.ts`，handler 转调 `historyService.getHistory`）。
@@ -106,7 +106,7 @@ export default definePlugin({
         };
       },
     };
-    provide(sessionHistory, svc, { label: '我的历史读取' });
+    provide.use(sessionHistory, svc, { label: '我的历史读取' });
   },
 });
 ```
@@ -136,11 +136,11 @@ sessionHistory.follow(history =>
 
 `registerAccessChecker` 返回的注销函数作为跟随的清理：提供者离场或本插件关闭时撤回。`sessionHistory` 缺席时回调不执行，可选依赖无需额外判断。
 
-**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：每次现取，不要缓存实例（provider bounce 会失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：可选依赖先看 `present`，再经业务句柄 `sessionHistory.use` 调用（句柄是活的，provider bounce 后跟着换人，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
-const history = sessionHistory.current;
-if (!history) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session' });
+if (!sessionHistory.present) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session' });
+const history = sessionHistory.use;
 const result = await history.getHistory({ sessionId, limit }, callCtx);
 ```
 
@@ -154,7 +154,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## 7. 注意事项与边界情形
 
-- **常见错误①**：只在 `app:ready` 里对 `sessionHistory.current` 注册一次。规则存在提供者实例的局部状态里，tool-session 重启（改配置、市场更新、依赖重启连带）或晚于本插件上线时，新实例上没有这条规则，细粒度限制静默失效。应按第 5 节用 `follow` 跟随提供者注册（OneBot 曾有此问题，已修复）。
+- **常见错误①**：只在 `app:ready` 里经 `sessionHistory.use` 调一次 `registerAccessChecker`。规则存在提供者实例的局部状态里，tool-session 重启（改配置、市场更新、依赖重启连带）或晚于本插件上线时，新实例上没有这条规则，细粒度限制静默失效。应按第 5 节用 `follow` 跟随提供者注册（OneBot 曾有此问题，已修复）。
 - **时间区间模式**：给 `sinceTs`/`untilTs` 任一即进入区间检索；此模式恒含归档记录，结果 `includeArchived` 字段会回显实际生效值（`plugin-tool-session/src/index.ts`）。后端无原生区间查询（`memory.getMessagesBySessionRange` 缺失）时退回扫描 `RANGE_FALLBACK_SCAN=5000` 条客户端过滤，极早窗口可能不全；窗口内超 `limit` 时置 `truncated: true` 而非静默丢弃。
 - `getHistory` 强依赖 `memory` 服务：缺失直接返回 `{ error: 'memory 服务不可用' }`（`index.ts`）。所以参考实现把 `memory` 列为 `optional`（运行期检测）而非 `required`。
 

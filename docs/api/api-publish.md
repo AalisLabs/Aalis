@@ -6,7 +6,7 @@
 
 ## 提名与撤下
 
-插件在 `uses` 中声明 `publish` 或 `optional(publish)`，经 `publish.require()` / `publish.current` 调用提供者。
+插件在 `uses` 中声明 `publish` 或 `optional(publish)`，经业务句柄 `publish.use` 调用提供者（`optional` 声明时先看 `publish.present`）。
 
 | 方法 | 行为 |
 |---|---|
@@ -26,7 +26,7 @@
 
 ## 展示面
 
-通过绑定门面的 `publish.attachSurface({ name, label, baseUrl, urlFor, health })` 登记展示面，`publish.onChange(listener)` 订阅已发布集合变化。`label` 与 `baseUrl` 可选；`baseUrl` 是规范 HTTPS 发布目录，例如 `https://example.com/draw/`。`publicWorkUrl(baseUrl, id)` 构造目录内的作品地址。登记随当前激活撤回、随提供者切换重挂。同名再次登记后，旧句柄不再生效。
+通过绑定门面的 `publish.use.attachSurface({ name, label, baseUrl, urlFor, health })` 登记展示面，`publish.use.onChange(listener)` 订阅已发布集合变化。`label` 与 `baseUrl` 可选；`baseUrl` 是规范 HTTPS 发布目录，例如 `https://example.com/draw/`。`publicWorkUrl(baseUrl, id)` 构造目录内的作品地址。登记随当前激活撤回、随提供者切换重挂。同名再次登记后，旧句柄不再生效。
 
 给定 `baseUrl` 后，上线回执中的地址必须精确匹配该目录下的 `w/<id>/`，不能替换域名、增加子域名或换目录。授权一个域名不包含其子域名。本接口不创建 DNS 记录，也不授权提名方新增发布目标。未给 `baseUrl` 的旧展示面仍按根目录 `/w/<id>/` 校验；新网页展示面应明确给出发布目录。
 

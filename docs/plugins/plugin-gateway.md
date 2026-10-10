@@ -65,7 +65,7 @@ export default definePlugin({
 
 | 钩子键 | 数据 | 默认动作 |
 |---|---|---|
-| `outbound:dispatch` | `{ message, metadata }` | `events.emit('outbound:message', message)` |
+| `outbound:dispatch` | `{ message, metadata }` | `events.use.emit('outbound:message', message)` |
 
 ## 自定义扩展
 
@@ -78,10 +78,10 @@ export default definePlugin({
   name: '@acme/plugin-example-gateway-mw',
   uses: { hooks },
   apply({ hooks }) {
-    hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+    hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
       await next();
     });
-    hooks.middleware('outbound:dispatch', async (data, next) => {
+    hooks.use.middleware('outbound:dispatch', async (data, next) => {
       data.message.content = redact(data.message.content);
       await next();
     });
@@ -94,7 +94,7 @@ export default definePlugin({
 每个 inbound 相位执行结束后 emit `gateway:phase:done`；结构性放行跳过的相位不运行，也不发这个事件：
 
 ```ts
-events.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platform }) => {
+events.use.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platform }) => {
   void phase;
   void reachedEnd;
   void durationMs;
@@ -107,9 +107,9 @@ events.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, pla
 
 ## 与 `inbound:message` / `outbound:message` 事件的关系
 
-- 平台适配器仍以 `events.emit('inbound:message', msg)` 提交入站消息；gateway 监听该事件并把它送进相位链。
-- 适配器仍以 `events.on('outbound:message', ...)` 接收最终发送指令；gateway 在 `dispatchOutbound` 末尾 `emit` 该事件。
-- 业务侧（agent / commands / scheduler 等）应改用 `gateway.require().dispatchOutbound(msg)`（或先判 `gateway.current`）而非直接 `events.emit('outbound:message')`，以便经过 `outbound:dispatch` 链。
+- 平台适配器仍以 `events.use.emit('inbound:message', msg)` 提交入站消息；gateway 监听该事件并把它送进相位链。
+- 适配器仍以 `events.use.on('outbound:message', ...)` 接收最终发送指令；gateway 在 `dispatchOutbound` 末尾 `emit` 该事件。
+- 业务侧（agent / commands / scheduler 等）应改用 `gateway.use.dispatchOutbound(msg)`（可选依赖先看 `gateway.present`）而非直接 `events.use.emit('outbound:message')`，以便经过 `outbound:dispatch` 链。
 
 ## 应用入口要求
 

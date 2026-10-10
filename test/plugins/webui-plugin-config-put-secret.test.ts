@@ -14,7 +14,7 @@ import { captureRoutes } from '../fixtures/webui-routes.js';
 // 修法是基线改用「默认值叠已存值」，语义才是真正的部分更新。
 // ════════════════════════════════════════════════════════════
 
-/** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
+/** 只有一家的选择层桩 */
 function stub<T>(instance: unknown): ServiceSelection<T> {
   return fixedRef(instance as T);
 }

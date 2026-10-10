@@ -20,7 +20,7 @@ pnpm add @aalis/api-todo-list
 import { todoList } from '@aalis/api-todo-list';
 
 // uses: { todoList: optional(todoList) }
-const items = (await caps.todoList.current?.get(sessionId)) ?? [];
+const items = caps.todoList.present ? await caps.todoList.use.get(sessionId) : [];
 ```
 
 详见 [docs/api/api-todo-list.md](../../docs/api/api-todo-list.md)。

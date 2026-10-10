@@ -44,10 +44,10 @@ export default definePlugin({
   name: '@acme/plugin-example-plan-view',
   uses: { todoList: optional(todoList), events },
   apply({ todoList, events }) {
-    events.on('todo:updated', (sessionId, items) => {
+    events.use.on('todo:updated', (sessionId, items) => {
       // 待办整份替换
     });
-    // 需要当前计划时：(await todoList.current?.get(sessionId)) ?? []
+    // 需要当前计划时：todoList.present ? await todoList.use.get(sessionId) : []
   },
 });
 ```

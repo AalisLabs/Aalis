@@ -6,7 +6,7 @@ memory 是会话记忆与持久化层。它把对话消息（`Message`）按 `se
 
 agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖「记住对话」的功能，都建立在它之上。
 
-- 服务注册名：`memory`（描述符 `memory`，绑定接口上读 `memory.current`）
+- 服务注册名：`memory`（描述符 `memory`，消费方经 `memory.use` 调用）
 - 契约包：`@aalis/api-memory`
 - 参考实现：`@aalis/plugin-memory-sqlite`（默认推荐）、`@aalis/plugin-memory-inmemory`（fallback）、`@aalis/plugin-memory-mongodb`
 
@@ -90,13 +90,13 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 | `plugin-memory-inmemory` | `-100` | 进程内 fallback，不持久化，同样全量实现可选方法 |
 | `plugin-memory-mongodb` | `5` | MongoDB 后端 |
 
-DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concepts/service-model.md`）。sqlite（10）默认高于 inmemory（-100），两者同时装载时 sqlite 胜出。
+DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见 `docs/concepts/service-model.md`）。sqlite（10）默认高于 inmemory（-100），两者同时装载且没有偏好时选中 sqlite。
 
 ### 消费方（典型读写点）
 
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
-- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 调用 `memory.getHistory` 拉历史（0 或没设置时传 `Infinity`，读全部活跃历史），拼进 messages。
-- **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 ServiceRef，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
+- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 调用 `memory.use.getHistory` 拉历史（0 或没设置时传 `Infinity`，读全部活跃历史），拼进 messages。
+- **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveOldest` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
@@ -180,16 +180,16 @@ export default definePlugin({
   provides: [memory],
   uses: { provide },
   apply({ provide }) {
-    provide(memory, new MyMemoryService(), { priority: 10 });
+    provide.use(memory, new MyMemoryService(), { priority: 10 });
   },
 });
 ```
 
-> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端一贯是每进程单实例，直接 `provide(memory, svc, { priority })` 即可。
+> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端一贯是每进程单实例，直接 `provide.use(memory, svc, { priority })` 即可。
 
 ## 5. 标准消费方式
 
-**永远惰性查询，不要缓存实例。** memory provider 可能被 bounce 或热重载，缓存下来的裸引用会失效。详见 `docs/concepts/lazy-service-access.md`。
+**业务句柄 `memory.use` 是活的。** memory provider 可能被 bounce 或热重载，`memory.use` 每次访问成员都解析到本插件当前选中的那一家，存起来也会跟着换人；一段操作要固定同一家时取 `memory.list().find(p => p.selected)?.use`。详见 `docs/concepts/lazy-service-access.md`。
 
 ```ts
 import { memory } from '@aalis/api-memory';
@@ -199,26 +199,25 @@ export default definePlugin({
   name: '@acme/plugin-memory-consumer',
   uses: { memory: optional(memory), logger },
   async apply({ memory, logger }) {
-    const svc = memory.current;
-    if (!svc) return;
+    if (!memory.present) return;
     try {
-      await svc.getHistory('session-id', 50);
+      await memory.use.getHistory('session-id', 50);
     } catch (err) {
-      logger.warn('获取历史消息失败:', err);
+      logger.use.warn('获取历史消息失败:', err);
     }
   },
 });
 ```
 
-- **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件；运行期仍建议 `if (!m) throw`。
-- **可选依赖**：`optional(memory)` + `memory.current` 空守卫降级（agent 采用这种方式）。
+- **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件；运行期短暂缺席时访问 `memory.use` 的成员同步抛 `ServiceUnavailableError`，不必另写判空。
+- **可选依赖**：`optional(memory)` + 先看 `memory.present` 降级（agent 采用这种方式）。
 - **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.getFullHistory) await svc.getFullHistory(...)`。
-- **跨 provider 重载安全**：需要长期持有引用时，用 `memory.follow(attach)`，不要缓存 `.current`。
+- **有状态资源随换人重挂**：要跟着提供者建立有状态资源时用 `memory.follow(attach)`：以选中那一家的业务句柄调 attach，换人时先跑上次的清理再重挂。
 
 ## 6. 能力 / 风险 → 影响
 
 - **本服务不做 authority 鉴权**。memory 是内部基础设施服务，调用方拿到引用即可读写任意 `sessionId` 的全部消息；没有 visibility/risk 分级，也没有逐调用确认。跨会话隔离完全依赖调用方传入正确的 `sessionId`，以及 `getRecentMessagesAcrossSessions` 的 `excludeSessionIds` / `platform` 过滤。**provider 不得自行添加额外鉴权门**，否则会破坏 agent 流水线。authority 模型见 `docs/plugins/plugin-authority.md` 与 `docs/concepts/security-model.md`。
-- **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `createStorageGateway(storage)` + `storage.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
+- **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `caps.storage.use.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
 - **删除要广播**。实现 `deleteMessagesByTimestamps` 的 provider，删除后下游（向量库、前端）靠 `memory:messages-deleted` / `history:changed` 事件同步；但 emit 事件是**消费方**（checkpoint）的责任，不是 memory 服务自身。
 - **PII 注意**。消息原文（含用户昵称、平台 ID 等）会原样落库。示例代码一律用占位符，不要在 configSchema、默认值或日志里硬编码真实账号信息。
 
@@ -232,5 +231,5 @@ export default definePlugin({
 
 ## 8. 交叉链接
 
-- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 选 winner 规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（必须惰性查询的原因）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
+- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 挑选规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（业务句柄为什么是活的）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
 - 核心：[`docs/core/service.md`](../core/service.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/core/events.md`](../core/events.md)、[`docs/core/context.md`](../core/context.md)。

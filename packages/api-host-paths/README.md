@@ -21,7 +21,7 @@ pnpm add @aalis/api-host-paths
 import { hostPaths } from '@aalis/api-host-paths';
 
 // uses: { paths: hostPaths }
-const { app, home } = caps.paths.require();
+const { app, home } = caps.paths.use;
 ```
 
 家目录的解析规则（`--home`、`AALIS_HOME`、`--profile` 等）见 `@aalis/runtime` 的文档。

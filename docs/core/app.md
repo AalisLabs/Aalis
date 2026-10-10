@@ -56,12 +56,13 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 
 ### `app.bind(uses)`
 
-按与插件同一套描述符为根激活装配绑定接口。登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
+按与插件同一套描述符为根激活装配各项选择层，与插件拿到的同样分选择层与业务层。登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
 
 ```typescript
 import { logger, events } from '@aalis/core';
 
 const { logger: log, events: bus } = app.bind({ logger, events });
+bus.use.on('app:started', () => log.use.info('已启动'));
 ```
 
 ### `app.start()`
@@ -75,9 +76,9 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 
 单飞：重入返回同一 Promise。现序：
 
-1. `plugins.beginShutdown()`：置停机态、丢弃排队的重算，把根激活与全部插件激活冻进一张计划（之后六个管理动作一律返回 false；对这些激活的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.signal` 的 abort
+1. `plugins.beginShutdown()`：置停机态、丢弃排队的重算，把根激活与全部插件激活冻进一张计划（之后六个管理动作一律返回 false；对这些激活的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.use.signal` 的 abort
 2. `plugins.idle()`：排干在飞的 bounce / unload recompute；重算不再等已 abort 的激活
-3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。逐个等监听器返回，单个至多等 `slowThresholdMs`。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
+3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.use.onDrain` / `onDispose`）。逐个等监听器返回，单个至多等 `slowThresholdMs`。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
 4. `plugins.stopAll()`：执行已冻计划的 drain / close，根激活也在这张计划里，返回时都已关完
 5. 清空 sticky 缓存（`app:ready` / `app:started`）
 

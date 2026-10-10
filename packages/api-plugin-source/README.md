@@ -20,7 +20,7 @@ import { optional } from '@aalis/core';
 import { pluginSource } from '@aalis/api-plugin-source';
 
 // uses: { source: optional(pluginSource) }
-const names = (await source.current?.rescan()) ?? [];
+const names = source.present ? await source.use.rescan() : [];
 ```
 
 `rescan()` 返回本次新登记的主实例名，不等激活静置；判断某个插件是否就位看 plugins 服务的注册表。

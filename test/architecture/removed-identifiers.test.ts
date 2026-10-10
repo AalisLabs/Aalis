@@ -118,6 +118,23 @@ const REMOVED: Array<[string, string]> = [
     'defaultLLM',
     '对话代理的插件配置键 defaultLLM（激活时改 llm 服务的偏好）：默认模型只有 llm 服务的偏好一处，经会话设置「模型」的全局默认层改',
   ],
+  ['ServiceRef', '单层的服务引用（current / require / all），由选择层 ServiceSelection 与业务层 use 两层取代'],
+  ['serviceRef', '单层的服务引用的构造函数'],
+  ['createStorageGateway', '消费方在 storage 各条目之间路由的网关：storage-local 只登记一个提供者，根在它内部路由'],
+  ['createProcessGateway', '消费方取 process 提供者的网关，由业务层 caps.process.use 取代'],
+  ['getStorageEntries', 'storage 网关的条目枚举'],
+  ['aggregateStorageRoots', 'storage 网关跨条目汇总根'],
+  ['getStorageRootConflicts', 'storage 网关的同名根冲突诊断'],
+  ['resolveStorageEntryForRoot', 'storage 网关按根名找条目'],
+  ['resolveStorageByPath', 'storage 网关按宿主路径找条目'],
+  ['StorageProviderEntry', 'storage 网关的条目类型'],
+  ['AggregatedStorageRoot', 'storage 网关跨条目汇总的根类型'],
+  ['StorageRootConflict', 'storage 网关的同名根冲突类型'],
+  ['StorageCapability', '存储能力声明的类型（含 StorageCapabilityRegistry）：存储业务层恒定义全部方法'],
+  ['StorageCapabilities', '存储能力声明的常量表'],
+  ['PlatformAdapterEntry', '平台适配器条目类型，由选择层的 ProviderEntry 取代'],
+  ['getPlatformAdapterEntries', '平台适配器条目枚举，由选择层的 list() 取代'],
+  ['RemoteAgentEntry', '远端代理提供者条目类型，由选择层的 ProviderEntry 取代'],
 ];
 
 /**

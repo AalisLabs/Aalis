@@ -57,7 +57,7 @@ interface ExecOpts {
   env?: Record<string, string | undefined>;
 }
 
-/** 真实 process 网关：直接 spawn，不 mock。env 与本地实现同样叠加在 process.env 之上。 */
+/** 真实 process 服务：直接 spawn，不 mock。env 与本地实现同样叠加在 process.env 之上。 */
 const realProc = {
   async execFile(cmd: string, args: readonly string[], opts?: ExecOpts) {
     try {

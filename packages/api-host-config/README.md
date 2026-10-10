@@ -25,12 +25,9 @@ import { optional } from '@aalis/core';
 import { hostConfig } from '@aalis/api-host-config';
 
 // uses: { plugins: pluginsService, doc: optional(hostConfig) }
-if (await plugins.require().disable(id)) {
-  const store = doc.current;
-  if (store) {
-    store.setPluginEnabled(id, false);
-    await store.save();
-  }
+if ((await plugins.use.disable(id)) && doc.present) {
+  doc.use.setPluginEnabled(id, false);
+  await doc.use.save();
 }
 ```
 

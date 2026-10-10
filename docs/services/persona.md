@@ -4,7 +4,7 @@
 
 persona 服务负责把「角色卡」渲染成 system prompt，并在回复链路里解析结构化输出（JSON），把结果回填到回复字段与角色状态。角色卡是一份 YAML 定义的人设，包含名字、描述、性格、prompt、结构化输出格式与 skill 白名单。
 
-- 服务注册名：`'persona'`，通过 `persona.current` 获取。
+- 服务注册名：`'persona'`，消费方经 `persona.use` 调用。
 - 契约包：`@aalis/api-persona`。
 - 这个契约带有运行时服务，不是纯类型契约。`-api` 包只导出 interface、类型与服务描述符 `persona`，不含实现；参考实现是 `@aalis/plugin-persona`，也是目前唯一的实现。
 - 角色卡按名分文件存放在 `personasDir`（一个 storage 路径，见 §6）。storage 在场时全量预扫进缓存并挂监听热重载；storage 提供者重启、改配置或晚于启动上线时重挂监听并重扫。
@@ -72,23 +72,23 @@ export interface PersonaSessionOptions {
 export const persona = defineService<PersonaService>('persona');
 ```
 
-消费方把描述符写进 `uses`，`persona.current` 即推断为 `PersonaService | undefined`。
+消费方把描述符写进 `uses`，`persona.use` 即推断为 `PersonaService`（缺席时访问成员抛错，可选依赖先看 `persona.present`）。
 
 ## 3. 谁提供 / 谁消费
 
-提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide(persona, service)` 注册。这是当前唯一的参考实现。
+提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide.use(persona, service)` 注册。这是当前唯一的参考实现。
 
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
-- `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
+- `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.present ? this.caps.persona.use : undefined`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - `@aalis/plugin-skills` — 按会话取白名单：`getPersonaSkills({ persona })`（`persona` 取自 session-manager 解析的会话配置，没有会话管理或没有会话时不指定、即主卡）过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的 skill。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
-- `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
+- `@aalis/plugin-tool-system` — 通过 `persona.present && persona.use.isTimeInjectionEnabled?.()` 判断，已注入时间则跳过注册 `system_time` 工具。
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
-- `@aalis/plugin-webui-server` — 用 `getPersonaName()` 作展示名，用 `persona.current` 探测上报能力，`listModels()` 走通用的 `/models` 枚举。
-- `@aalis/plugin-cli` — 多处用 `persona.current?.getPersonaName() ?? 'Aalis'` 做命令行标题。
+- `@aalis/plugin-webui-server` — 不声明 persona 依赖；`listModels()` 走通用的 `/models` 枚举（`services.use.all('persona')`）。
+- `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName(...)`，缺席时回退 `'Aalis'`，多处用作命令行标题。
 
-关于消费模式，有一点值得说明：多数消费者对类型做了结构化窄化，只声明自己用到的那部分（例如 tool-system 只声明 `{ isTimeInjectionEnabled?(): boolean }`），以避免 import 全量类型造成包循环。`caps.services.get<T>(name)` 的 `T` 按设计就由消费侧窄化。
+关于消费模式，有一点值得说明：多数消费者对类型做了结构化窄化，只声明自己用到的那部分（例如 tool-system 只声明 `{ isTimeInjectionEnabled?(): boolean }`），以避免 import 全量类型造成包循环。`caps.services.use.get(name)` 按字符串名查时不带类型，按设计由消费侧窄化。
 
 ## 4. 写一个 provider
 
@@ -102,10 +102,10 @@ export const persona = defineService<PersonaService>('persona');
 
 ### 4.2 注册（priority / entryId / label）与双源同步
 
-`provide` 的 options 参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `provide(persona, service)`，默认优先级为 `0`。同名竞争的胜者按「偏好（preference）> priority > 注册顺序」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
+`provide.use` 的 options 参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `provide.use(persona, service)`，默认优先级为 `0`。同名竞争时消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 注册顺序」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
 
 ```ts
-provide(persona, myService, { priority: 50, label: '我的人设引擎' });
+provide.use(persona, myService, { priority: 50, label: '我的人设引擎' });
 ```
 
 manifest 的两个来源必须同步：除了运行时的 `provides: [persona]`，还要在 `package.json` 里写静态清单 `aalis.service.provides`（供加载器与市场扫描）：
@@ -145,9 +145,9 @@ export default definePlugin({
   apply({ provide, config, platform }) {
     void platform;
     const svc = new MyPersona();
-    svc.prompt = (config.prompt as string) ?? '请友好地交流。';
-    svc.nameStr = (config.name as string) ?? 'Aalis';
-    provide(persona, svc);
+    svc.prompt = (config.use.prompt as string) ?? '请友好地交流。';
+    svc.nameStr = (config.use.name as string) ?? 'Aalis';
+    provide.use(persona, svc);
   },
 });
 ```
@@ -156,16 +156,16 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-- 惰性获取，不缓存句柄。每次使用前都 `persona.current`，不要把 service 存成字段长期持有——provider bounce（卸载或重载）会让旧句柄失效（见 `docs/concepts/lazy-service-access.md`）。
-- persona 是可选依赖。在 `uses optional` 里声明它（agent、session-manager、tool-system 都如此），使用前用 `if (!persona) ...` 判断并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
+- 业务句柄是活的。`persona.use` 每次访问成员都解析到本插件当前选中的那一家，存成字段也会跟着换人，provider bounce（卸载或重载）后照常可用（见 `docs/concepts/lazy-service-access.md`）；一段操作要固定同一家时取 `persona.list().find(p => p.selected)?.use`。
+- persona 是可选依赖。在 `uses optional` 里声明它（agent、session-manager、tool-system 都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
 - 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`、`persona?.getPersonaSkills?.()`，因为第三方 provider 可能没有实现。
-- 用类型窄化避免包循环。如果只用一两个方法，按消费侧的需要声明窄类型（`persona.current`），不必 import 全量的 `PersonaService`。
+- 用类型窄化避免包循环。如果只用一两个方法，按消费侧的需要声明窄类型（如按名字动态查询 `services.use.get('persona')` 的结果），不必 import 全量的 `PersonaService`。
 - 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（persona 自身读 session-manager 就这么处理），不要让 persona 不可用拖垮主链路。
 - 区分 `getPersonaSkills` 的三态语义：`undefined` 表示全开，`[]` 表示全禁，`['a','b']` 表示白名单。消费者必须区分 `undefined` 与 `[]`——skills 插件的判断是 `if (whitelist === undefined) return all`。
 
 ## 6. 能力 / 风险 → 影响
 
-**`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时走 `createStorageGateway(storage)` 网关，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
+**`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
 **跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时取会话管理给这个会话记下的聊天窗口（类型名与群号；子任务只取根会话的出生平台，不取聊天窗口），只用于提示词，不写回消息。
 
@@ -195,6 +195,6 @@ export default definePlugin({
 
 ## 8. 交叉链接
 
-- 概念：`docs/concepts/service-model.md`（按名 DI、优先级胜者）、`docs/concepts/lazy-service-access.md`（每次读取 `.current`、不缓存）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path` 与 `personasDir`）、`docs/concepts/message-llm-pipeline.md`（`agent:input:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
+- 概念：`docs/concepts/service-model.md`（按名 DI、挑选规则）、`docs/concepts/lazy-service-access.md`（业务句柄是活的）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path` 与 `personasDir`）、`docs/concepts/message-llm-pipeline.md`（`agent:input:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
 - 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/tools.md`（`system_time` 跳过）、`docs/services/commands.md`（session 与 persona 配置）。
 - 核心：`docs/core/service.md`、`docs/core/context.md`、`docs/core/plugin.md`。

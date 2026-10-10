@@ -21,7 +21,7 @@ pnpm add @aalis/api-approval
 import { approvals, sanitizeForCard } from '@aalis/api-approval';
 
 // uses: { approvals: optional(approvals) }
-const surface = caps.approvals.registerSurface('cli');
+const surface = caps.approvals.use.registerSurface('cli');
 const attendance = surface.attend({ platform: 'cli', userId: 'console' }, {
   requested: approval => showCard(sanitizeForCard(approval.facts.command ?? approval.tool, 400)),
   settled: approvalId => closeCard(approvalId),

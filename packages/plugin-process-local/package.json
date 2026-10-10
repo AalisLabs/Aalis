@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "进程网关本地实现：受控执行子进程",
+  "description": "进程服务的本地实现：受控执行子进程",
   "type": "module",
   "keywords": [
     "aalis",

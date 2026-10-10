@@ -20,7 +20,7 @@ interface AgentService {
 }
 ```
 
-对话调用走 `ServiceRef`（`agent.current` / `agent.require()`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。
+对话调用经业务句柄 `agent.use` 转发给选中的那一家（`agent.use.handleMessage(...)`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。
 
 `abort` 不带 `turnId` 时停这个会话所有在飞的回合；带 `turnId` 时只停那一轮，它已经结束或换成了新一轮时什么也不停。返回值是有没有停下回合，调用方据此分辨「turnId 对不上」。
 
@@ -72,7 +72,7 @@ interface SessionConfig {
 ## 绑定接口
 
 ```ts
-interface BoundAgent extends ServiceRef<AgentService> {
+interface BoundAgent extends AgentService {
   registerPreprocessor(name: string, handler: PreprocessorFn): () => void;
 }
 ```
@@ -87,8 +87,6 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 
 洋葱模型：调用 `next()` 把控制权交给下一个；不调用即吞掉消息（LLM 不会被调用）。常见用法：把图片识别为文字、解析文件内容、注入会话级 metadata。
 
-当前提供者不实现该方法时，消费方可退到 `hooks.middleware('agent:input:before', ...)`（`packages/plugin-file-reader/src/index.ts`）。
-
 ## 钩子（HookContextMap）
 
 | 钩子 | 时机 | payload |
@@ -101,9 +99,9 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
 | `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, error?, sessionId, turnId, metadata }` |
 
-这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
+这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.use.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
 
-提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.contribute('agent:prompt', spec)`，契约见 [api-contributions](./api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。
+提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.use.contribute('agent:prompt', spec)`，契约见 [api-contributions](./api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。
 
 ## 典型用法
 
@@ -116,11 +114,11 @@ export default definePlugin({
   name: '@acme/plugin-example-agent',
   uses: { agent: optional(agent), hooks },
   apply({ agent, hooks }) {
-    agent.registerPreprocessor('suffix', async (message, next) => {
+    agent.use.registerPreprocessor('suffix', async (message, next) => {
       message.content += ' [logged]';
       await next();
     });
-    hooks.middleware('agent:turn:after', async (data, next) => {
+    hooks.use.middleware('agent:turn:after', async (data, next) => {
       await next();
     });
   },
@@ -136,4 +134,4 @@ export default definePlugin({
 - `IncomingMessage` / `Message` 定义在 [schema-message](./schema-message.md)
 - `agent:turn:after` 的 `outcome` 字段是 `replied | silent | aborted | error`（四条退出路径都会触发，供生命周期订阅方收口）；结局为 `replied` 时最终回复已写进会话历史，它在最后一次模型调用之后落库，不在那次用量的 `historyMessages` 里，其余结局不落库最终回复；结局为 `error` 时 `error` 是一句原因（默认实现填发到会话的 `[错误]` 那句，或解析不出模型时 `[系统]` 那句），会话管理记进 `SessionInfo.lastTurn`，其余结局不带
 - token 自检见 [plugin-prompt-budget](../plugins/plugin-prompt-budget.md)
-- 关停时默认实现在 `lifecycle.onDrain` 中止在飞回合，见 [services/agent](../services/agent.md)
+- 关停时默认实现在 `lifecycle.use.onDrain` 中止在飞回合，见 [services/agent](../services/agent.md)

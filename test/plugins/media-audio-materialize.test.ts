@@ -31,7 +31,7 @@ let base: string;
 let server: Server;
 let port: number;
 
-/** tmp:/<子目录>/<文件> ←→ 真实临时目录，proc/storage 两个网关都落在真 fs 上 */
+/** tmp:/<子目录>/<文件> ←→ 真实临时目录，proc/storage 两个服务都落在真 fs 上 */
 function realRuntime(baseDir: string): void {
   const toPath = (uri: string): string => join(baseDir, uri.replace(/^tmp:\//, ''));
   let seq = 0;

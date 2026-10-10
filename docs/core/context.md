@@ -15,9 +15,9 @@ export default definePlugin({
   displayName: '示例',
   uses: { events, logger, provide, lifecycle, memory: optional(memory) },
   apply({ events, logger, provide, lifecycle, memory }) {
-    logger.info(`激活 ${lifecycle.id}`);
-    const off = events.on('app:started', () => logger.info('已启动'));
-    lifecycle.onDispose(off);
+    logger.use.info(`激活 ${lifecycle.use.id}`);
+    const off = events.use.on('app:started', () => logger.use.info('已启动'));
+    lifecycle.use.onDispose(off);
   },
 });
 ```
@@ -35,13 +35,13 @@ export default definePlugin({
 | `uses` | 用到的全部能力。键是 `apply` 的参数名，值是描述符；可选依赖包一层 `optional()`。没有默认注入 |
 | `provides` | 本插件提供的服务描述符列表。激活后按本次激活的 instanceId 校验确已 `provide`；未提供则本次激活进入 `error` |
 | `reusable` | 允许同一份定义以 `name:suffix` 多次注册；默认 false |
-| `apply(caps)` | 拿到绑定接口后的装配。可返回 Promise |
+| `apply(caps)` | 拿到各项选择层后的装配。可返回 Promise |
 
 `PluginMeta` 是空接口：core 对额外字段零感知，只原样带在定义上。配置表单（`configSchema`）由 `@aalis/schema-config`、对 core 的扩展声明（`extends`）由 `@aalis/api-webui` 经 declaration merging 挂进来。详见 [types.md](types.md)。
 
 ## uses 与装配
 
-声明即装配：写了什么，插件就只能碰到什么。Core 基础服务与第三方服务共用容器与装配路径——都是描述符，放进 `uses`，由各自的 `bind` 生成接口。
+声明即装配：写了什么，插件就只能碰到什么。Core 基础服务与第三方服务共用容器与装配路径——都是描述符，放进 `uses`，每一项装配成一个选择层，业务层由各自的 `bind` 生成。
 
 ```typescript
 import { definePlugin, optional, events, logger, provide } from '@aalis/core';
@@ -58,14 +58,16 @@ export default definePlugin({
     memory: optional(memory),
   },
   apply({ tools, memory }) {
-    tools.register({ /* ... */ });
-    const items = memory.current; // 可能为 undefined
+    tools.use.register({ /* ... */ });
+    if (memory.present) {
+      // optional：可能选不到提供者，先看 present 再用 memory.use
+    }
   },
 });
 ```
 
 - **required**（未包 `optional` 的服务）：参与激活闸。缺席则顶层插件 `pending`，恢复后重新激活。
-- **optional**：不参与激活闸；绑定接口与 required 完全相同，只是激活闸这一条不同。
+- **optional**：不参与激活闸；选择层与业务层与 required 完全相同，只是激活闸这一条不同。
 - **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）：启动时由根激活经 `provide` 独占登记，与第三方服务同一条路径；提供者按调用方身份交出属于该激活的接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。见 [内置服务的登记](service.md#内置服务的登记)。
 - 声明即计入关停编排（required 与 optional，访问与否无关）。
 
@@ -73,7 +75,7 @@ export default definePlugin({
 
 ## Core 默认登记的服务
 
-| 描述符 | 绑定接口 | 作用 |
+| 描述符 | 业务层（`caps.x.use`） | 作用 |
 |---|---|---|
 | `events` | `Events` | `on` / `emit`，监听随这次激活撤回 |
 | `lifecycle` | `LifecycleCap` | `id`、`signal`、`onDrain`、`onDispose` |
@@ -81,6 +83,8 @@ export default definePlugin({
 | `config` | 只读对象 | 这次激活的插件配置视图。配置文档是宿主提供的另一项服务，见下方 `host-config` |
 | `provide` | `Provide` | 唯一的服务发布入口 |
 | `services` | `Services` | 动态查询与偏好。查到的不是声明依赖 |
+
+六项的业务句柄在装配时就取好这次激活的门面：根是唯一的提供者、活得比插件长，本次激活拆卸之后门面照常可用（`logger` 不抛、`config` 照常可读）。对根以外的 id 调 `of` 当场抛错。
 
 钩子（`hooks`）与贡献点（`contributions`）不是 Core 基础服务，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，描述符从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 
@@ -114,7 +118,7 @@ export default definePlugin({
   uses: { provide },
   provides: [greeter],
   apply({ provide }) {
-    provide(greeter, { hello: name => `hi ${name}` }, { priority: 10, label: 'default' });
+    provide.use(greeter, { hello: name => `hi ${name}` }, { priority: 10, label: 'default' });
   },
 });
 ```
@@ -123,52 +127,68 @@ export default definePlugin({
 
 - `priority` / `label`：解析序与展示
 - `exclusive`：独占这个服务名；与已有登记冲突、或该条目存在期间添加其他提供者，都会抛错。Core 基础服务与第三方使用同一规则
-- `entryId`：条目的逻辑身份（偏好与展示认它），缺省为本激活 id。一个激活登记多条时各给一个；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
+- `entryId`：条目的逻辑身份（偏好、展示与 `of(id)` 认它），缺省为本激活 id。一个激活登记同一服务的多条时各给一个，`list()` 与 `of(id)` 才分得清；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
 
 dev 模式下，实际注册了但未写入 `provides` 的服务会 warn：启动拓扑使用声明清单，遗漏会影响排序；关停依赖则按实际提供者身份建立。生产宿主应显式传入 `AppOptions.devMode: false`。
 
-## ServiceRef
+## 选择层与业务层
 
-普通调用型服务的绑定接口。required 与 optional 拿到的是同一接口。
+`apply` 收到的每一项都是一个选择层 `ServiceSelection<B>`：由 core 定义、每个服务都一样，只管选哪一家；`B` 是业务层，由契约定义。required 与 optional 拿到的是同一接口。
 
 ```typescript
-interface ServiceRef<P> {
-  readonly current: P | undefined;  // 当前胜者；无提供者为 undefined
-  require(): P;                     // 无提供者抛错
-  all(): ServiceView<P>[];          // 全部提供者，每次调用重新枚举
-  follow(attach: (provider: P) => void | (() => unknown)): () => void;
+interface ServiceSelection<B> {
+  list(): ProviderEntry<B>[];  // 对外可见的提供者，每次调用重新枚举；本插件选中的那一条在前
+  readonly use: B;             // 默认业务句柄：转发给本插件当前选中的那一家
+  of(id: string): B;           // 固定某一家的业务句柄
+  readonly present: boolean;   // 本插件此刻能否选到一家
+  follow(attach: (handle: B) => void | (() => unknown)): () => void;
+}
+
+interface ProviderEntry<B> {
+  readonly id: string;         // 条目的逻辑身份（contextId）
+  readonly label?: string;
+  readonly priority: number;
+  readonly selected: boolean;  // 是否为本插件当前选中的那一家
+  readonly basis?: 'plugin' | 'global' | 'rank'; // 选中依据，只在选中的那一条上有
+  readonly use: B;             // 这一家的业务句柄，等同 of(id)
 }
 ```
 
-解析顺序：**偏好 > 优先级 > 注册顺序**。`current` / `require` / `all` 每次查询重新解析。
+契约不给 `bind` 时，业务层就是按提供者形状转发的活句柄；给了 `bind` 时是 `bind` 的返回值（如 `tools` 的 `register`、`webuiServer` 的 `definePage`）。
 
-契约是「每次查询解析当前值」：`current` / `require` 返回的是**本次解析的实例**，不是自动转发所有调用的代理。调用方把它存起来就得自己承担它失效。
+挑选规则只有一条：**本插件偏好 > 全局偏好 > 优先级 > 注册顺序**。偏好指向的那家不在就按下一级挑，回来后切回。转入后台、尚未完成激活的提供者不参与。
 
-- 长期缓存 `current` 或 `all()[i]`：提供者换人后，旧引用是否仍可用取决于该实现有没有失效逻辑——有则后续调用抛错，无则可能静默成功。手动缓存的引用不建立关停边。
-- `require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。
+业务句柄是活的转发句柄：
+
+- 每次访问成员都重新解析到当前选中的那一家，存进字段或闭包也会跟着换人；已经开始的一次调用在原来那一家上完成。
+- 只转发属性读取与调用。`then`、symbol 键、`toJSON` 不转发，`await` 句柄不会把它当成 thenable；`in`、`Object.keys`、对象展开看不到提供者的成员；在句柄上写属性落不到提供者。
+- 选不到提供者时访问成员同步抛 `ServiceUnavailableError`。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`。required 依赖丢失到调度收敛之间也可能短暂选不到。
+- 一段操作要固定同一家时取选中那一条的句柄：`const v = caps.x.list().find(p => p.selected)?.use`。比较身份就比条目 id，如 `caps.trigger.list().find(p => p.selected)?.id === caps.lifecycle.use.id`。
+- `of(id)` 的那一家不在时访问成员抛错，同一个 id 回来后照常可用。
 - 要用提供者建立长期状态（SDK 句柄、订阅）走 `follow`。
 
-既登记又被调用的服务（如 agent：预处理器登记 + 对话调用）在自定义 `bind` 里把登记方法作为第二参数传入 `serviceRef(port, { registerX })`。不要用对象展开去拼——`current` 是 getter，展开会把它求值成一次性快照。
+自定义 `bind` 要在转发之上加或改几个成员时，写 `Object.assign(Object.create(port.provider), { ... })`：没覆盖的成员沿原型链落到活句柄上。不要用对象展开去拼——展开看不到提供者的成员。
 
 ## follow
 
-跟随提供者建立有状态资源，取代整插件重启式的依赖更新。胜者替换不一律重启消费者。
+跟随选中的提供者建立有状态资源，取代整插件重启式的依赖更新。选中的那一家换人不一律重启消费者。
 
 ```typescript
 apply({ llm, lifecycle }) {
-  const stop = llm.follow(provider => {
-    const client = provider.connect();
+  const stop = llm.follow(handle => {
+    const client = handle.connect();
     return () => client.close(); // 同步返回清理函数；清理本身可以是异步的
   });
-  lifecycle.onDispose(stop);
+  lifecycle.use.onDispose(stop);
 }
 ```
 
 - **attach 必须同步**返回 `void` 或清理函数。返回 thenable 会被接住并 warn，该 Promise 的拒绝不会逃逸，也**不会**被当成 cleanup。
-- 在场即调 attach；换人时先跑上次返回的清理，等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才用新实例调 attach。
+- 选得到即以选中那一家的业务句柄调 attach；换人时先跑上次返回的清理，等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才以新选中那一家的句柄调 attach。选不到时只清理。
+- 交给 attach 的句柄钉在挂上的那一条登记上：那一家撤回、或同一个 id 换了新实例，它仍打到原来那一家，直到这次挂载的清理落定，之后访问抛错。
 - 等待期间再换人只跟到最新的。关闭或退订之后不再挂载，哪怕旧清理后来才落定。
-- 旧清理永不落定则新实例永不挂上；关闭时按超时放弃并点名。
-- 提供者不变则不重挂。
+- 旧清理永不落定则新的永不挂上；关闭时按超时放弃并点名。
+- 选中的那一条不变则不重挂。
 
 `registrar`（注册型能力）与 `follow` 不同：换人时立即在新提供者重挂，旧异步撤回可后台进行，关闭会等它。不能声称所有新旧资源绝无重叠。见 [枢纽服务](../design/hub-services.md)。
 
@@ -176,25 +196,27 @@ apply({ llm, lifecycle }) {
 
 ```typescript
 apply({ services }) {
-  const llm = services.get(llmDesc);       // 有描述符则带类型
-  const named = services.get('llm');       // 运行期字符串，类型为 unknown
-  services.prefer('llm', someInstanceId);
+  const llm = services.use.get(llmDesc);   // 有描述符则带类型
+  const named = services.use.get('llm');   // 运行期字符串，类型为 unknown
+  const rows = services.use.inspect('llm'); // 只读元数据
 }
 ```
 
-查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。`services.inspect(key)` 只读元数据，适合服务列表。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
+`get` / `all` 给的是原始实例，按全局口径解析（不看本插件偏好），不享有业务句柄的转发语义。查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，不产生依赖边，关停期可能拿空。需要声明等待与跟随就写进 `uses`。动态查内置服务拿到的是提供者函数，不是门面：以调用方自己的身份调用才得到它自己的接口，认不出的身份即抛错。`services.use.inspect(key)` 只读元数据，适合服务列表。声明的依赖在单独 unload / disable / bounce 提供者时也享有与整机停机同样的交接保证。
+
+`prefer(key, contextId, { for })` / `unprefer` / `preferred` 管理偏好：给 `for`（插件实例 id）是那个插件的本插件偏好，不给是全局偏好。偏好只由用户经管理面写（WebUI、配置），普通插件不调。
 
 ## 生命周期
 
-`lifecycle.id` 是这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名，不是资源身份。归属用不透明激活身份，不从 id / `entryId` 字符串前缀猜。
+`lifecycle.use.id` 是这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名，不是资源身份。归属用不透明激活身份，不从 id / `entryId` 字符串前缀猜。
 
 ### `signal`
 
-`lifecycle.signal` 是这次激活的取消信号（`AbortSignal`），用来中止 `apply` 里发起的长任务，也可在定时器、重连等回调里查 `signal.aborted` 判断本激活是否已开始关闭：
+`lifecycle.use.signal` 是这次激活的取消信号（`AbortSignal`），用来中止 `apply` 里发起的长任务，也可在定时器、重连等回调里查 `signal.aborted` 判断本激活是否已开始关闭：
 
 ```typescript
 async apply({ lifecycle }) {
-  const res = await fetch(url, { signal: lifecycle.signal });
+  const res = await fetch(url, { signal: lifecycle.use.signal });
   // ...
 }
 ```
@@ -209,11 +231,11 @@ reason 是 name 为 `'AbortError'` 的 `DOMException`。abort 监听器同步执
 ### `onDrain` / `onDispose`
 
 ```typescript
-lifecycle.onDrain(async () => {
+lifecycle.use.onDrain(async () => {
   await persistPendingWork(); // 停接新活、把在手的数据交给下层并等它确认
 }, 'flush');
 
-lifecycle.onDispose(async () => {
+lifecycle.use.onDispose(async () => {
   await conn.close();
 }, 'db');
 ```
@@ -223,17 +245,17 @@ lifecycle.onDispose(async () => {
 - 都可以返回 Promise。编排层在 unload / bounce / 停机路径上走分阶段关闭，会等待异步清理。
 - `label` 仅进诊断日志，超时或抛错时点名。
 
-不要用 `events.on('app:stopping', …)` 做资源清理——那只在 app 全局停机时触发一次，不会在 bounce / unload 时触发。该事件定位是知会，不是清理通道。见 [events.md](events.md)。
+不要用 `events.use.on('app:stopping', …)` 做资源清理——那只在 app 全局停机时触发一次，不会在 bounce / unload 时触发。该事件定位是知会，不是清理通道。见 [events.md](events.md)。
 
-关闭一律异步：关闭位在发起关闭时同步设置，`onDrain`、撤回与 `onDispose` 不在发起关闭的调用方的栈上执行（abort 监听器除外）。关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪动态查询与调用方缓存的裸引用。
+关闭一律异步：关闭位在发起关闭时同步设置，`onDrain`、撤回与 `onDispose` 不在发起关闭的调用方的栈上执行（abort 监听器除外）。关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（required 与 optional，含尚未访问的 optional）在编排那一刻对外的全部提供者，以及存活的托管绑定与尚未落地的撤回。不追踪动态查询拿到的原始实例。
 
 承诺按依赖形状分三种，不是一条无条件规则：
 
-1. 普通依赖（required 与 optional 胜者，即别的插件）：消费者整个 close 完，提供者才 drain。
+1. 插件用别的插件的服务（声明的 required 与 optional，对外的全部提供者）：消费者整个 close 完，提供者才 drain。
 2. 根激活使用插件的服务（宿主经 `app.bind` 取用）：根 drain 先于该插件的 close；根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。到根 close 时插件已按归属关闭。
 3. 插件使用根激活登记的服务（基础服务、宿主服务，以及宿主经 `app.bind({ provide })` 发布的服务）：不额外增加依赖边。归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭；这不保证根还没执行 drain。根也依赖该插件时，按第 2 条安排根 drain，避免把互用变成两个 drain 互相等待。
 
-环：先只让仅被 optional 边挡着的成员 drain（不告警），required 消费者仍先关完；环全由 required 边构成时，环内成员先全部 drain 再关并告警：drain 期间双方都能 `require()`，`onDispose` 时提供者可能已收尾。环外与归属约束不松。单独 unload / disable / bounce 提供者时，正在用它的 required 下游（传递闭包）并入同一批关闭，上述交接同样成立；提供者因 required 依赖丢失退场时，随它一起失去全部提供者的 required 下游同样并入同批（还有后备提供者的不算，别的计划正关着的提供者不算后备）；这覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游；并发管理动作里已在收尾、依赖本次要关的插件所提供服务的下游，本次动作等它关完才让提供者收尾（不另设时限：那份计划逐项受同一上限约束，总会关完）；动作期间才开始激活的下游、动作进行中发生的停机，与本次动作彼此不排序。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
+环：先只让仅被 optional 边挡着的成员 drain（不告警），required 消费者仍先关完；环全由 required 边构成时，环内成员先全部 drain 再关并告警：drain 期间双方都能调用对方，`onDispose` 时提供者可能已收尾。环外与归属约束不松。单独 unload / disable / bounce 提供者时，正在用它的 required 下游（传递闭包）并入同一批关闭，上述交接同样成立；提供者因 required 依赖丢失退场时，随它一起失去全部提供者的 required 下游同样并入同批（还有后备提供者的不算，别的计划正关着的提供者不算后备）；这覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游；并发管理动作里已在收尾、依赖本次要关的插件所提供服务的下游，本次动作等它关完才让提供者收尾（不另设时限：那份计划逐项受同一上限约束，总会关完）；动作期间才开始激活的下游、动作进行中发生的停机，与本次动作彼此不排序。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
 关闭回调不能等待同一计划中排在自身之后的阶段。例如在 `onDrain` 中 `await app.stop()`（或返回这个 Promise）：停机要等这次收尾完成，收尾又在等停机完成，两者就会互等。收尾应等待数据交接本身完成，再由计划继续执行后续阶段。计划外的调用者仍可 `await app.stop()` 等实际关闭完成；重复请求加入已有关闭，不改变计划顺序，也不会提前兑现。
 
@@ -246,7 +268,7 @@ lifecycle.onDispose(async () => {
 宿主不拿插件那份绑定。`App` 提供：
 
 - `app.plugin(definition, config?, instanceId?, options?)` / `app.pluginAll(items)`：注册定义对象，配置与禁用标记由宿主传入
-- `app.bind(uses)`：按与插件同一套描述符为**根激活**装配绑定接口，登记归属根激活、随 App 停止撤回
+- `app.bind(uses)`：按与插件同一套描述符为**根激活**装配各项选择层（如 `app.bind({ provide }).provide.use(...)`），登记归属根激活、随 App 停止撤回
 - `app.plugins` / `app.logger`
 
 插件拿的是自己激活的绑定，不复用 `app.bind` 的那一份。
@@ -263,6 +285,6 @@ lifecycle.onDispose(async () => {
 | `orchestration/ActivationHost` | 创建激活、经根激活登记内置服务、按 `uses` 装配能力；关闭时按归属同栈切断本激活的原语登记 |
 | `composition/core-services` | 内置六项的描述符与提供者：提供者按调用方身份交出这次激活的 `events` / `provide` 等接口 |
 | `composition/descriptors`、`plugin-definition` | 服务与插件定义、类型推导，以及资源口契约 |
-| `composition/binding` | 资源口：观察服务胜者变化，负责 `follow` 交接、`registrar` 登记与逐条撤回 |
+| `composition/binding` | 选择层与活句柄、资源口：观察选中的提供者变化，负责 `follow` 交接、`registrar` 登记与逐条撤回 |
 
 插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类不属于公开 API，包的 `exports` 也不开放它们所在的深路径。

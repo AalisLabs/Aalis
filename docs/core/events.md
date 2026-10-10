@@ -6,19 +6,19 @@
 
 **源码**: `packages/core/src/primitives/events.ts`
 
-类型安全的全局发布/订阅事件总线，用于松耦合的异步通知。事件只通知、不干预流程。插件在 `uses` 里声明 `events` 后，`apply` 拿到按激活绑定的 `on` / `emit`。
+类型安全的全局发布/订阅事件总线，用于松耦合的异步通知。事件只通知、不干预流程。插件在 `uses` 里声明 `events` 后，经 `events.use` 拿到按激活绑定的 `on` / `emit`。
 
 ### API
 
 ```typescript
 // 监听事件（返回 dispose 函数；随这次激活撤回）
-const off = events.on('inbound:message', async (msg) => { ... });
+const off = events.use.on('inbound:message', async (msg) => { ... });
 
 // sticky 事件：注册晚于发出也能在下一个微任务收到补发；派发进行中登记的排在本轮末尾送达，要等前面的监听器返回或超时。每个监听器只收到一次（'app:ready' / 'app:started'）
-events.on('app:ready', () => { ... });
+events.use.on('app:ready', () => { ... });
 
 // 发出事件（按注册顺序依次 await 每个 handler，永不拒绝）
-await events.emit('outbound:message', outMsg);
+await events.use.emit('outbound:message', outMsg);
 ```
 
 ### 实现特性
@@ -52,7 +52,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
-| `service:changed` | `name` | 该服务的提供者或胜者可能变了，请重读（`get` / `all`）。`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换（`services.prefer` / `unprefer`）都发；可能变化时就发，不保证恰好一次，也不说明变了什么。`follow` 借此按胜者变化重挂 |
+| `service:changed` | `name` | 该服务的提供者或选中的那一家可能变了，请重读（`list` / `get` / `all`）。`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换（`services.use.prefer` / `unprefer`）都发；可能变化时就发，不保证恰好一次，也不说明变了什么。`follow` 借此按选中的变化重挂 |
 | `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
 | `plugin:unloaded` | `instanceId` | 插件实例已拆卸；只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）不发，关机拆卸也不发 |
 | `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |
@@ -65,7 +65,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 后台激活期间它登记的服务不对外：转入后台、激活成功上线时对它名下的服务各发一次 `service:changed`；后台期间的登记、
 退订与失败后的拆卸照常发，此时重读看不到它的条目。
 
-`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 都立即返回 false，不改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
+`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.use.onDrain` / `lifecycle.use.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 都立即返回 false，不改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
 
 ### 扩展自定义事件
 
@@ -80,12 +80,12 @@ declare module '@aalis/core' {
 }
 
 // 之后可以类型安全地使用
-events.on('scheduler:tick', async (jobId) => { ... });
-events.emit('scheduler:tick', 'job-1');
+events.use.on('scheduler:tick', async (jobId) => { ... });
+events.use.emit('scheduler:tick', 'job-1');
 ```
 
 `AalisEvents` 是**类型封闭**的（没有 `[key: string]` 兜底）：对扩展开放、对拼写错误封闭——
-未声明的事件名在 `events.on` / `events.emit` 处直接编译报错，契约始终可枚举、依赖边在包图中可见。
+未声明的事件名在 `events.use.on` / `events.use.emit` 处直接编译报错，契约始终可枚举、依赖边在包图中可见。
 
 事件名需要**运行时动态生成**（如按频道/任务 ID 派生）时，官方出路是在自己的命名空间内
 合并一条模板字面量签名（TS 4.4+）：
@@ -98,7 +98,7 @@ declare module '@aalis/core' {
   }
 }
 
-events.on(`myplugin:channel:${channelId}`, async (msg) => { ... }); // msg: ChannelMessage
+events.use.on(`myplugin:channel:${channelId}`, async (msg) => { ... }); // msg: ChannelMessage
 ```
 
 同前缀下更具体的字面量 key 仍可逐条声明（TS 优先匹配字面量）。前缀必须用自己插件的

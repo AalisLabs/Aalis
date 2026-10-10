@@ -343,7 +343,7 @@ interface Approval {
 ```ts
 interface SessionPeer {
   identity: { platform: string; userId: string };
-  surface: ApprovalSurface;            // 传输层经 approvals.registerSurface 登记得到的审批面句柄
+  surface: ApprovalSurface;            // 传输层经 approvals.use.registerSurface 登记得到的审批面句柄
   disconnect(reason: string): void;    // 服务端要断开这条连接时调用
 }
 
@@ -376,11 +376,10 @@ export default definePlugin({
   name: '@acme/plugin-example-transport',
   uses: { sessionProtocol: optional(sessionProtocol), approvals: optional(approvals) },
   apply({ sessionProtocol, approvals }) {
-    const surface = approvals.registerSurface('webui');
+    const surface = approvals.use.registerSurface('webui');
     function accept(socket: WebSocketLike, identity: { platform: string; userId: string }) {
-      const service = sessionProtocol.current;
-      if (!service) return socket.close(1013, '会话服务不在');
-      const conn = service.connect(
+      if (!sessionProtocol.present) return socket.close(1013, '会话服务不在');
+      const conn = sessionProtocol.use.connect(
         { identity, surface, disconnect: reason => socket.close(1000, reason) },
         frame => socket.send(frame),
       );

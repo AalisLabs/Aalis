@@ -569,7 +569,7 @@ npm install ${a.packageName}                 # 发布到 npm 之后
 插件配置写在 \`plugins."${a.packageName}"\` 段；没有 \`enabled\` 开关。若你为插件声明了
 \`configSchema\`，键与字段以其为准（schema 外字段启动时会被裁剪）。
 读取配置时安装 \`@aalis/schema-config\`（>=0.14.0），用 \`defineConfig\` 定义 schema，
-在 apply 开头调用 \`parseConfig(schema, config, logger)\`。\`config\` 与 \`logger\` 都要写进 uses；
+在 apply 开头调用 \`parseConfig(schema, config.use, logger.use)\`。\`config\` 与 \`logger\` 都要写进 uses；
 后续只读取解析结果。地址、启动参数等字段用 \`onInvalid: 'error'\` 拒绝错误值。
 
 ## 扩展点
