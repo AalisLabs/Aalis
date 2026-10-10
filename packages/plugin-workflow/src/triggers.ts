@@ -114,34 +114,29 @@ export class TriggerManager {
           this.logger.warn(`workflow ${def.id} once.runAt 无法解析: ${t.runAt}`);
           break;
         }
-        // 记账后再触发：这道闸同时挡住同 tick 内重复注册各排一次 setImmediate 的重复触发
+        // 先记账再触发；已有记账的不再触发
         const fireOnce = () => {
           if (this.once.onceFiredAt(def.id) !== undefined) return;
           this.once.markOnceFired(def.id);
           this.fire(def.id, `once:${t.runAt}`);
         };
-        const delay = targetMs - Date.now();
-        if (delay <= 0) {
-          // runAt 已过且从未触发过：注册时立即补触发一次
-          setImmediate(fireOnce);
-        } else {
-          // 远期 runAt 分段重排：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成
-          // 立即触发，把"一个月后跑"变成"现在就跑"。每段最多排到上限，段末若离 runAt 还有
-          // 1s 以上就续排下一段、不记账，直到真正到点才 fireOnce。
-          const arm = (wait: number) => {
-            const timer = setTimeout(() => {
-              const remain = targetMs - Date.now();
-              if (remain > 1000) {
-                arm(Math.min(remain, MAX_ONCE_TIMEOUT_MS));
-                return;
-              }
-              this.onceTimers.delete(def.id);
-              fireOnce();
-            }, wait);
-            this.onceTimers.set(def.id, timer);
-          };
-          arm(Math.min(delay, MAX_ONCE_TIMEOUT_MS));
-        }
+        // runAt 已过的排 0ms，下一轮定时器就补触发（负数延迟会引来运行时告警）；与远期的同记在 onceTimers，
+        // unregister / dispose 一并撤掉。
+        // 远期 runAt 分段重排：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，把"一个月后跑"变成
+        // "现在就跑"。每段最多排到上限，段末若离 runAt 还有 1s 以上就续排下一段、不记账，直到真正到点才 fireOnce。
+        const arm = (wait: number) => {
+          const timer = setTimeout(() => {
+            const remain = targetMs - Date.now();
+            if (remain > 1000) {
+              arm(Math.min(remain, MAX_ONCE_TIMEOUT_MS));
+              return;
+            }
+            this.onceTimers.delete(def.id);
+            fireOnce();
+          }, wait);
+          this.onceTimers.set(def.id, timer);
+        };
+        arm(Math.max(0, Math.min(targetMs - Date.now(), MAX_ONCE_TIMEOUT_MS)));
         break;
       }
       case 'event': {

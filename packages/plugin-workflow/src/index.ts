@@ -342,6 +342,8 @@ async function run(caps: Caps): Promise<void> {
   await runStore.init();
 
   const cancelTokens = new Map<string, { cancelled: boolean }>();
+  /** 在飞的 run：拆卸先置取消，再等它们收尾，被取消的 run 也要把终态写进运行历史 */
+  const running = new Set<Promise<WorkflowRun>>();
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
   const triggers = new TriggerManager(
@@ -369,8 +371,16 @@ async function run(caps: Caps): Promise<void> {
     });
   });
 
-  // ── 核心：跑一次 workflow ──
-  async function runById(
+  // ── 核心：跑一次 workflow（登记进 running，拆卸据此等它收尾）──
+  function runById(...args: Parameters<typeof execute>): Promise<WorkflowRun> {
+    const pending = execute(...args);
+    running.add(pending);
+    const settle = () => running.delete(pending);
+    pending.then(settle, settle);
+    return pending;
+  }
+
+  async function execute(
     workflowId: string,
     extraVars: Record<string, unknown>,
     triggerSource: string,
@@ -513,7 +523,9 @@ async function run(caps: Caps): Promise<void> {
     // 节点、发事件，并把结果写回旧 RunStore 的历史快照
     for (const t of cancelTokens.values()) t.cancelled = true;
     cancelTokens.clear();
-    // 等排队中的运行历史 / once 记账写完再结束拆卸：否则 app.stop() 返回后仍有落盘在飞
+    // 等在飞 run 收尾、再等排队中的运行历史 / once 记账写完才结束拆卸：否则 app.stop() 返回后仍有落盘在飞，
+    // bounce 时迟到的快照会盖掉新实例的记账。wait / agent 节点不感知取消，最长等到 disposeTimeoutMs
+    await Promise.allSettled(running);
     await runStore.flushed();
   });
 

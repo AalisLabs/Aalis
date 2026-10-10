@@ -321,7 +321,7 @@ await events.use.emit('trigger:fired', {
 - **event 触发的 payload 形态**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时需区分。
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
-- **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts`）。
+- **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts`）。插件拆卸（停机、卸载、bounce）把在飞 run 一律取消，等它们收尾、终态写进 `runsFile` 才结束，所以阻塞中的 `wait` / `agent` 节点会让拆卸等到它返回，至多等 `disposeTimeoutMs`（`index.ts`）。
 - **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。同文件还存 once 的 `firedAt`（`{ runs, onceFired }`）。
 - **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。
