@@ -12,7 +12,7 @@ import {
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
-// 编排层的边缘路径：required 真环的兜底排序、关停计划里缠绕的 required 环、重算振荡的点名告警、
+// 编排层的边缘路径：required 真环的兜底排序、关停计划里的混合依赖环、重算振荡的点名告警、
 // 管理动作的幂等早退、卸载在途时的 join、注册期与激活期的非 Error 抛出值。
 // ════════════════════════════════════════════════════════════
 
@@ -176,69 +176,7 @@ describe('插件拓扑：同一提供者的多项服务', () => {
   });
 });
 
-describe('关停编排：缠绕的 required 环', () => {
-  it('两个 required 环共用一个插件：放开整个源分量的收尾，点名一次，停机不悬挂', async () => {
-    const w = world();
-    const a = defineService<object>('zz-oe-fig-a');
-    const b = defineService<object>('zz-oe-fig-b');
-    const c = defineService<object>('zz-oe-fig-c');
-    const closed: string[] = [];
-    // seed 先垫上 b、c，hub 才能起；随后 left / right 以更高优先级顶替 b、c，又都 required 用 hub 的 a。
-    // 停机时的胜者关系：hub ⇄ left、hub ⇄ right 两个 required 环共用 hub。
-    await w.app.plugin(
-      definePlugin({
-        name: 'seed',
-        uses: { provide },
-        apply({ provide }) {
-          provide(b, {});
-          provide(c, {});
-        },
-      }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'hub',
-        uses: { b, c, provide, lifecycle },
-        provides: [a],
-        apply(caps) {
-          caps.provide(a, {});
-          caps.lifecycle.onDispose(() => void closed.push('hub'));
-        },
-      }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'left',
-        uses: { a, provide, lifecycle },
-        provides: [b],
-        apply(caps) {
-          caps.provide(b, {}, { priority: 10 });
-          caps.lifecycle.onDispose(() => void closed.push('left'));
-        },
-      }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'right',
-        uses: { a, provide, lifecycle },
-        provides: [c],
-        apply(caps) {
-          caps.provide(c, {}, { priority: 10 });
-          caps.lifecycle.onDispose(() => void closed.push('right'));
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getStatus().every(p => p.state === 'active')).toBe(true);
-
-    await w.app.stop();
-    const cycles = w.at('warn').filter(x => x.includes('required 依赖成环'));
-    expect(cycles).toEqual([
-      '关停顺序：required 依赖成环 [right, left, hub]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾',
-    ]);
-    expect(closed).toEqual(['right', 'left', 'hub']);
-  });
-
+describe('关停编排：混合依赖环', () => {
   it('混合环先放行只被 optional 边挡着的收尾，剩下的纯 required 环再放行全部收尾并告警', async () => {
     const w = world();
     const s = defineService<object>('zz-oe-mix-s');

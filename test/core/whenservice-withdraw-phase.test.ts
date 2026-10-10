@@ -23,7 +23,7 @@ import { activationHost, createInspectableApp } from '../helpers/inspectable-app
 // follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
 // 且此时原语登记与账本登记已切断。这让「半拆状态不外露」对经枢纽服务登记的条目同样成立——
 // 用户清理跑的时候，枢纽已经不会再把活派给这次激活。
-// 契约只约束排空快照内的次序；排空期间的迟到登记仍立即执行（链的既有语义，不被分段改变）。
+// 契约只约束各链取走时快照内的次序；链取走之后的迟到登记就地执行，撤回段里登记的 onDispose 还赶得上清理链。
 // ════════════════════════════════════════════════════════════
 
 /** 最小枢纽服务：登记本在服务自己手里，退订按条目引用（与 tools / webui 页面同形） */
@@ -123,7 +123,7 @@ describe('follow cleanup 走撤回段', () => {
     expect(snapshots, '两个 onDispose 看到的都是已撤回的枢纽').toEqual([[], []]);
   });
 
-  it('撤回段回调里迟到登记的 onDispose 仍立即执行（链的既有语义不被分段改变）', async () => {
+  it('撤回段回调里登记的 onDispose 赶得上清理链，按逆序最先执行', async () => {
     const { app, host } = makeApp();
     host.provide(svcDesc, {});
     const order: string[] = [];

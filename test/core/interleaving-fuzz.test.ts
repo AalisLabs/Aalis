@@ -7,16 +7,14 @@ import { ACTIONS, createWorld, type Profile, TIMEOUT, type Violation } from '../
 // I1 同一 id 至多一个未落定的实例；I2 stop 之后不再开始 apply；I3 stop、idle 与管理调用在时限内落定；
 // I4 停机后没有 active / activating；I5 sticky 事件每个监听器至多一次；I6 收尾时 required 依赖仍有提供者
 // （依赖本身被撤下的除外）；I7 停机完成前跑过 apply 的实例都执行过 onDispose；I8 stop 之后管理动作返回 false。
-// strict 的清理都在宽限内、没有非管理撤回；known-gaps 两者都允许。违例按成因归类，未归类的必须为 0；
-// 已知缺口各用一个固定种子的 it.fails 钉住，修好后改回 it 并从 KNOWN 去掉。
-// 加大种子数：AALIS_FUZZ_SEEDS=500；复现单个种子并打印全程记录：AALIS_FUZZ_SEED=38。
+// 两档见 Profile：strict 的清理都在宽限内、没有非管理撤回；overrun-withdraw 两者都允许。任何违例都让用例失败，
+// 列出种子与详情。加大种子数：AALIS_FUZZ_SEEDS=2000；复现单个种子并打印全程记录：AALIS_FUZZ_SEED=38。
 // ════════════════════════════════════════════════════════════
 
 const ONE = Number(process.env.AALIS_FUZZ_SEED);
-const SEEDS = Number(process.env.AALIS_FUZZ_SEEDS) || 32;
+const SEEDS = Number(process.env.AALIS_FUZZ_SEEDS) || 150;
 const seeds = ONE ? [ONE] : Array.from({ length: SEEDS }, (_, k) => k + 1);
 const BOUND = 250 * TIMEOUT;
-const KNOWN: Record<Profile, Violation['cause'][]> = { strict: [], 'known-gaps': [] };
 
 async function runWorld(seed: number, profile: Profile): Promise<Violation[]> {
   const w = createWorld(seed, profile);
@@ -47,14 +45,11 @@ async function runWorld(seed: number, profile: Profile): Promise<Violation[]> {
   }
   for (let t = 0; t < BOUND && (w.inflight() > 0 || waits.some(x => x.done === undefined)); t += 20)
     await vi.advanceTimersByTimeAsync(20);
-  for (const x of waits)
-    if (x.done === undefined || x.done - x.since > BOUND) w.flag('I3', 'unclassified', `${x.what} 未在时限内落定`);
-  if (w.inflight() > 0) w.flag('I3', 'unclassified', `${w.inflight()} 个管理调用未落定`);
+  for (const x of waits) if (x.done === undefined || x.done - x.since > BOUND) w.flag('I3', `${x.what} 未在时限内落定`);
+  if (w.inflight() > 0) w.flag('I3', `${w.inflight()} 个管理调用未落定`);
   for (const s of w.app.plugins.getStatus())
-    if (s.state === 'active' || s.state === 'activating')
-      w.flag('I4', 'unclassified', `${s.instanceId} 停机后仍 ${s.state}`);
-  for (const inst of w.instances)
-    if (!inst.disposeCalled) w.flag('I7', 'unclassified', `${inst.id}#${inst.gen} 没有执行 onDispose`);
+    if (s.state === 'active' || s.state === 'activating') w.flag('I4', `${s.instanceId} 停机后仍 ${s.state}`);
+  for (const inst of w.instances) if (!inst.disposeCalled) w.flag('I7', `${inst.id}#${inst.gen} 没有执行 onDispose`);
   if (ONE) console.info(w.trace.join('\n'));
   return w.violations;
 }
@@ -62,29 +57,20 @@ async function runWorld(seed: number, profile: Profile): Promise<Violation[]> {
 async function sweep(profile: Profile) {
   const found: Array<Violation & { seed: number }> = [];
   for (const seed of seeds) for (const v of await runWorld(seed, profile)) found.push({ seed, ...v });
-  const counts = KNOWN[profile].map(cause => `${cause} ${found.filter(v => v.cause === cause).length}`);
-  console.info(`${profile} ${seeds.length} 个种子：${counts.join('，')}`);
-  return found.filter(v => !KNOWN[profile].includes(v.cause));
+  return found;
 }
 
 describe('插件管理随机交错', () => {
   beforeEach(() => void vi.useFakeTimers());
   afterEach(() => void vi.useRealTimers());
 
-  it('strict：不变量全部成立', { timeout: 120_000 + seeds.length * 1000 }, async () => {
-    expect(await sweep('strict')).toEqual([]);
-  });
-
-  it('known-gaps：违例都能归到已知缺口', { timeout: 120_000 + seeds.length * 1000 }, async () => {
-    expect(await sweep('known-gaps')).toEqual([]);
-  });
-
-  const pin = (cause: Violation['cause'], seed: number, profile: Profile) => async () => {
-    expect((await runWorld(seed, profile)).filter(v => v.cause === cause)).toEqual([]);
-  };
-  it('S2：清理超时后同一 id 不会新旧实例并存（known-gaps seed=2）', pin('S2', 2, 'known-gaps'));
-  it('S3：连锁退场时下游收尾不失去上游（known-gaps seed=28）', pin('S3', 28, 'known-gaps'));
-  it('overlap：后一份管理计划等前一份里还没收尾的消费者（strict seed=38）', pin('overlap', 38, 'strict'));
+  it.each(['strict', 'overrun-withdraw'] as const)(
+    '%s：不变量全部成立',
+    async profile => {
+      expect(await sweep(profile)).toEqual([]);
+    },
+    120_000 + seeds.length * 1000,
+  );
 });
 
 // X16：消费者经 optional 依赖按 contextId 从 all() 现选非胜者。关停边只连胜者；非胜者重启后排在消费者之后激活，
