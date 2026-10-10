@@ -260,7 +260,7 @@ lifecycle.onDispose(async () => {
 |---|---|
 | `kernel/DisposableChain` | 分段清理、逆序执行与异步等待，不认识服务或插件 |
 | `infrastructure/Resources` | 一次激活的资源账与关闭过程：清理登记、收尾段、初始化等待、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
-| `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供原语操作门面 |
+| `orchestration/Activation` | 内部身份、配置视图、资源记录、根名下的插件激活和依赖边；不提供原语操作门面 |
 | `orchestration/ActivationHost` | 创建激活、经根激活登记内置服务、按 `uses` 装配能力；关闭时按归属同栈切断本激活的原语登记 |
 | `composition/core-services` | 内置六项的描述符与提供者：提供者按调用方身份交出这次激活的 `events` / `provide` 等接口 |
 | `composition/descriptors`、`plugin-definition` | 服务与插件定义、类型推导，以及资源口契约 |

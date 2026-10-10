@@ -9,7 +9,7 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const apps: App[] = [];
@@ -74,7 +74,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const second = hub();
     if (present) publish(registry, first);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry: optional(registry) }).registry;
     const off = bound.add({
       key: 'same',
@@ -101,7 +101,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const provider = hub();
     publish(registry, provider);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     expect(() =>
       bound.add({
@@ -121,7 +121,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const provider = hub();
     publish(registry, provider);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     let finish!: () => void;
     const pending = new Promise<void>(resolve => {
@@ -153,7 +153,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const provider = hub();
     publish(registry, provider);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     bound.add({
       key: 'same',
@@ -174,7 +174,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const provider = hub();
     publish(registry, provider);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     let reject!: (error: Error) => void;
     const pending = new Promise<void>((_resolve, rejectPromise) => {
@@ -204,7 +204,7 @@ describe('registrar ownership survives callbacks that reenter the same key', () 
     const provider = hub();
     publish(registry, provider);
     const host = activationHost(app);
-    const ctx = host.create(rootActivation(app), 'consumer');
+    const ctx = host.create('consumer');
     const bound = host.bind(ctx, { registry }).registry;
     let finish!: () => void;
     const pending = new Promise<void>(resolve => {

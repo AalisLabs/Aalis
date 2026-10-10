@@ -1,18 +1,14 @@
 // ============================================================
 // close-plan.ts — 关停编排
 //
-// 两种关系共同决定关闭顺序，谁也替代不了谁：
-//   - 归属树：根激活是全部插件激活的父（子的撤回必先于父的撤回）；
+// 两种关系共同决定关闭顺序：
+//   - 归属：根激活名下是全部插件激活，插件的撤回先于根的撤回；
 //   - 服务依赖：消费者关闭时还要用到提供者。
-// 每个激活的关闭拆成两个阶段：收尾（onDrain，此刻登记与依赖都在）与撤回加清理。数据交接放在收尾段。
-// 承诺按依赖的形状分三种，不是一条无条件规则：
-//   1. 普通依赖（别的插件）：消费者整个关完，提供者才开始收尾（close → providerDrain）。
-//   2. 根用插件提供的服务（宿主经 App.bind 绑定）：根的收尾先于插件的撤回（drain → childClose）；到根的
-//      撤回与清理时插件已按归属关闭。根 drain 时全部插件仍活着。
-//   3. 插件用根登记的服务：不往排序图加边。归属树已保证插件的撤回先于根的撤回，收尾在撤回之前，
-//      故插件 drain 时根仍活着。根若同时用这个插件的服务（第 2 种），第 2 种边把根 drain 插在插件 close
-//      之前，两笔收尾都能 require 到对方。两边都收成 drain→drain 会让同一对成二元环，Kahn 让步后
-//      根 drain 时插件已死，所以不这样收。
+// 每个激活的关闭拆成收尾（onDrain，此刻登记与依赖都在）与撤回加清理两个阶段，数据交接放在收尾段。依赖边按形状分三种：
+//   1. 插件用别的插件的服务：消费者整个关完，提供者才收尾（close → drain）。
+//   2. 根用插件的服务（宿主经 App.bind）：根先收尾、插件再撤回（drain → close），根收尾时插件都还活着。
+//   3. 插件用根的服务：不加边，归属已保证插件撤回时根还在。根若同时用这个插件的服务，第 2 种边让双方收尾都拿得到
+//      对方；收成 drain → drain 会让这一对成环，所以不这样收。
 // 依赖交接放 onDrain；onDispose 阶段依赖可能已不可用。
 // 资源内核只提供「分阶段关闭」，不认识服务；依赖政策全在这里。
 //
@@ -20,8 +16,8 @@
 // 环全由 required 边构成时才放行环内全部收尾并告警——drain 期间对方仍活着，双方 onDrain 都能 require，
 // 只是有的消费者清理时提供者已收尾。归属约束与环外的约束一条不松。
 //
-// 计划里除了本计划要关的激活，还有已在别的计划里、还没关完、又必须先于本计划某个成员关完的激活：成员的子激活，
-// 与依赖成员所提供服务的消费者。它们与本计划的成员按同一套边排序，只是不替那边收尾：轮到它关闭时按超时等那边关完。
+// 计划里除了本计划要关的激活，还有已在别的计划里、还没关完、又必须先于本计划某个成员关完的激活：根名下的插件激活
+// （停机），与依赖成员所提供服务的消费者。它们与本计划的成员按同一套边排序，只是不替那边收尾：轮到它关闭时按超时等那边关完。
 // 于是后一份计划拆提供者之前，会等前一份计划里还在收尾的消费者。
 //
 // 边只来自框架自己管理的关系：每个激活声明的依赖（含尚未访问的 optional）在编排
@@ -68,7 +64,7 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 }
 
 /**
- * 关闭一组激活（连同它们的子树），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
+ * 关闭一组激活（根激活连同它名下的插件激活），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
  * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
  * 已在别的计划里的激活（见文件头）照样排进本计划，只是不替那边收尾：轮到它关闭时按超时等那边关完它。
  *
@@ -101,23 +97,19 @@ export async function closeActivations(
 function planClose(roots: Activation[], owned: Map<Activation, () => void>, logger: Logger): Stage[] {
   const drainOf = new Map<Activation, Stage>();
   const closeOf = new Map<Activation, Stage>();
-  const parentOf = new Map<Activation, Activation>();
   const providersOf = new Map<Activation, Map<Activation, boolean>>();
   const stages: Stage[] = [];
 
   const visit = (ctx: Activation): void => {
     const info = ctx.closeInfo();
     providersOf.set(ctx, info.providers);
-    // 先建本激活的两个阶段再下探子树；编号在子树之后分配，自然次序是「子全部在前」
+    // 根名下的插件激活先编号，自然次序是「插件全部在前」
     const drain: Stage = { ctx, kind: 'drain', index: -1, after: new Map(), before: new Set() };
     const close: Stage = { ctx, kind: 'close', index: -1, after: new Map(), before: new Set() };
     drainOf.set(ctx, drain);
     closeOf.set(ctx, close);
     // 同层无依赖关系时后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
-    for (const child of [...info.children].reverse()) {
-      parentOf.set(child, ctx);
-      visit(child);
-    }
+    for (const child of [...info.children].reverse()) visit(child);
     drain.index = stages.push(drain) - 1;
     close.index = stages.push(close) - 1;
   };
@@ -125,27 +117,17 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
   for (const ctx of owned.keys())
     for (const consumer of ctx.closingConsumers()) if (!drainOf.has(consumer)) visit(consumer);
 
-  const isAncestor = (ancestor: Activation, ctx: Activation): boolean => {
-    for (let at = parentOf.get(ctx); at; at = parentOf.get(at)) if (at === ancestor) return true;
-    return false;
-  };
-
   for (const [ctx, drain] of drainOf) {
     const close = closeOf.get(ctx)!;
     link(drain, close, true);
-    const parent = parentOf.get(ctx);
-    // 归属：子的撤回先于父的撤回
-    if (parent) link(close, closeOf.get(parent)!, true);
+    // 归属：插件的撤回先于根的撤回
+    for (const child of ctx.children) link(closeOf.get(child)!, close, true);
     for (const [provider, required] of providersOf.get(ctx)!) {
       const providerDrain = drainOf.get(provider);
       if (!providerDrain) continue; // 提供者不在本次关闭范围内：它活得更久，无需约束
-      if (isAncestor(ctx, provider)) {
-        // 用的是自己子树里的服务：父 drain 先于子 close，父收尾时子树仍活着
-        link(drain, closeOf.get(provider)!, required);
-      } else if (!isAncestor(provider, ctx)) {
-        // 普通依赖：消费者整个关完，提供者才开始收尾。祖先边不加——归属树已保证。
-        link(close, providerDrain, required);
-      }
+      // 文件头的三种依赖边：根用插件的、插件用插件的；插件用根的不加
+      if (ctx.children.has(provider)) link(drain, closeOf.get(provider)!, required);
+      else if (!provider.children.has(ctx)) link(close, providerDrain, required);
     }
   }
 

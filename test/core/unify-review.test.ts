@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
 import { type App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 独立评审（REVIEW-eebaf214）复现出的反例，逐条钉住修正后的契约。
@@ -53,7 +53,7 @@ describe('评审 1：异步撤回时的提供者切换', () => {
     const a = makeHub(gate.promise);
     const b = makeHub();
     host.provide(hub, a, { priority: 1, entryId: 'root/a' });
-    const activation = activationHost(app).create(rootActivation(app), 'consumer');
+    const activation = activationHost(app).create('consumer');
     activationHost(app).bind(activation, { hub }).hub.register({ name: 'tool' });
     host.provide(hub, b, { priority: 2, entryId: 'root/b' });
     await sleep(0);
@@ -78,7 +78,7 @@ describe('评审 2：同键替换失败', () => {
     const a = makeHub();
     const b = makeHub();
     host.provide(hub, a, { priority: 1, entryId: 'root/a' });
-    const activation = activationHost(app).create(rootActivation(app), 'consumer');
+    const activation = activationHost(app).create('consumer');
     const bound = activationHost(app).bind(activation, { hub }).hub;
     bound.register({ name: 'tool' });
     expect(() => bound.register({ name: 'tool', fail: true })).toThrow('registration rejected');
@@ -92,7 +92,7 @@ describe('评审 2：同键替换失败', () => {
 describe('评审 3：port.track 与 registrar 同一清理契约', () => {
   it('手动退订启动的异步清理被随后的关闭等到；重复退订只执行一次', async () => {
     const { app } = world();
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const port = activationHost(app).bind(activation, {
       port: defineService<unknown, BindingPort<unknown>>('zz-any', port => port),
     }).port;
@@ -121,7 +121,7 @@ describe('评审 3：port.track 与 registrar 同一清理契约', () => {
 
   it('手动退订的异步清理拒绝：被接住，不逃逸', async () => {
     const { app } = world();
-    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const activation = activationHost(app).create('p');
     const port = activationHost(app).bind(activation, {
       port: defineService<unknown, BindingPort<unknown>>('zz-any', port => port),
     }).port;

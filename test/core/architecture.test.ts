@@ -677,7 +677,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 判据是「这批关完后该 required 服务无人提供」（容器新增 survives），振荡点名去重。抬高 10 行对应 S3 方案甲。
 // 2553 → 2560：同批修交错测试找到的缺陷 overlap（关闭链一批随修，见 0.20 计划进度）——后一份关闭计划把前一份里还没关完、
 // 依赖它成员所提供服务的消费者排进来，按超时等它关完再让提供者收尾，与停机计划沿归属排进在途激活同一条规则。
-const CORE_CODE_LINE_CEILING = 2560;
+// 2560 → 2546：同批 P1-4（用户选乙，先查负面影响与第三方需求，未发现）——归属平铺成根加插件：ActivationHost.create 不再收
+// parent、插件激活一律挂在根下，关停计划删去父子映射与祖先查找；P2-5 随之压短关停编排的说明。
+const CORE_CODE_LINE_CEILING = 2546;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

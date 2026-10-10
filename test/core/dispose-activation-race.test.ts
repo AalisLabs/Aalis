@@ -61,8 +61,8 @@ function startPlugin(ctx: Activation, track: boolean) {
 
 describe('disposeAsync 与初始化在飞的竞态', () => {
   it('登记 apply 后，disposeAsync 返回时异步清理已真正完成', async () => {
-    const { host, activation: root } = makeActivation();
-    const ctx = host.create(root, 'p');
+    const { host } = makeActivation();
+    const ctx = host.create('p');
     const { applying, state, acquire } = startPlugin(ctx, true);
 
     // 闸门未开 → apply 必定卡在获取里，此刻发起拆卸
@@ -77,8 +77,8 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('变异守卫：不登记 apply 时该承诺确实落空（证明上一条不是假绿）', async () => {
-    const { host, activation: root } = makeActivation();
-    const ctx = host.create(root, 'p');
+    const { host } = makeActivation();
+    const ctx = host.create('p');
     const { applying, state, acquire } = startPlugin(ctx, false);
 
     // 未登记 = 改动前的行为：拆卸不等 apply，闸门未开也照样排空返回 —— 承诺落空。
@@ -93,8 +93,8 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('apply 迟迟不落定时，timeoutMs 兜底放行，不拖死停机', async () => {
-    const { host, activation: root } = makeActivation();
-    const ctx = host.create(root, 'p');
+    const { host } = makeActivation();
+    const ctx = host.create('p');
     const { state, acquire } = startPlugin(ctx, true);
 
     const t0 = Date.now();
@@ -109,8 +109,8 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('apply 抛错也算落定，不把拆卸卡住', async () => {
-    const { host, activation: root } = makeActivation();
-    const ctx = host.create(root, 'p');
+    const { host } = makeActivation();
+    const ctx = host.create('p');
     const acquire = deferred();
     let released = false;
     const applying = (async () => {
@@ -130,13 +130,12 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     expect(released).toBe(true);
   });
 
-  it('级联：父 ctx 的 disposeAsync 会等到子 ctx 的初始化落定', async () => {
+  it('级联：根激活的 disposeAsync 会等到名下插件激活的初始化落定', async () => {
     const { host, activation: root } = makeActivation();
-    const parent = host.create(root, 'parent');
-    const child = host.create(parent, 'child');
+    const child = host.create('child');
     const { applying, state, acquire } = startPlugin(child, true);
 
-    const disposing = parent.disposeAsync();
+    const disposing = root.disposeAsync();
     acquire.resolve();
     await disposing;
 

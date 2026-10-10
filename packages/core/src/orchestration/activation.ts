@@ -27,6 +27,7 @@ export class Activation {
   readonly logger: Logger;
   readonly config: Readonly<Record<string, unknown>>;
   readonly resources: Resources;
+  /** 根激活名下的插件激活；插件激活的恒为空 */
   readonly children = new Set<Activation>();
   readonly declared = new Map<string, boolean>();
   readonly #services: ServiceContainer;

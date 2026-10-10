@@ -12,7 +12,7 @@ import { bindActivationFixture, createActivationFixture } from '../helpers/activ
 
 function makeWorld() {
   const world = createActivationFixture();
-  const make = (id: string) => bindActivationFixture(world.host, world.host.create(world.activation, id));
+  const make = (id: string) => bindActivationFixture(world.host, world.host.create(id));
   return { make, events: world.events };
 }
 

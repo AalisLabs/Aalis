@@ -12,7 +12,7 @@ import {
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const OWNER = Symbol('owner');
 
@@ -227,7 +227,7 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     const a = uniqueHub('A');
     const b = uniqueHub('B');
     host(slots, a, { priority: 1, entryId: 'root/a' });
-    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const activation = activationHost(app).create('c');
     const bound = activationHost(app).bind(activation, { slots }).slots;
     bound.add({ key: 't', body: 'v1' });
     expect(a.leftover()).toEqual(['t=v1']);
@@ -252,7 +252,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     process.on('unhandledRejection', onEscape);
     try {
       host(d, { tag: 'a' }, { entryId: 'root/a' });
-      const activation = activationHost(app).create(rootActivation(app), 'c');
+      const activation = activationHost(app).create('c');
       const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // attach 必须同步返回 cleanup；这里故意喂 async，钉运行期接住拒绝
       // @ts-expect-error 期望 TS 拒绝 async attach
@@ -279,7 +279,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     process.on('unhandledRejection', onEscape);
     try {
       host(d, { tag: 'a' }, { entryId: 'root/a' });
-      const activation = activationHost(app).create(rootActivation(app), 'c');
+      const activation = activationHost(app).create('c');
       const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // FollowCleanup 不含 Promise；运行期仍须接住 JS 绕过
       // @ts-expect-error 期望 TS 拒绝返回 Promise
@@ -301,7 +301,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-number-cleanup');
     host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const activation = activationHost(app).create('c');
     const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 非函数返回值不得当 cleanup
     ref.follow(() => 1);
@@ -318,7 +318,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-object-cleanup');
     host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const activation = activationHost(app).create('c');
     const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 对象不得当 cleanup
     ref.follow(() => ({ close() {} }));

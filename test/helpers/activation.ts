@@ -37,6 +37,6 @@ export function createActivationFixture(options: { id?: string; logger?: Logger 
     },
     log,
   );
-  const activation = options.id && options.id !== 'root' ? host.create(host.root, options.id) : host.root;
+  const activation = options.id && options.id !== 'root' ? host.create(options.id) : host.root;
   return bindActivationFixture(host, activation);
 }
