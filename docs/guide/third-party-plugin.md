@@ -257,7 +257,7 @@ runtime 的插件加载器在 import 插件之前，按 node_modules 逐级上�
 
 判据是包目录而不是版本号，两份版本相同同样会被拒绝。
 
-加载器只核对插件包目录解析到的那一份。其余情形（插件依赖的契约包解析到另一份 core，或插件经自定义加载器载入、在代码中直接注册）由 core 自身拦截：每份 core 给自己创建的描述符与 `optional` 包装打上本副本的标记，`definePlugin` 与插件注册遇到另一份 core 创建的对象即报错（`provide` 只按服务名登记，不查副本）：
+加载器只核对插件包目录解析到的那一份。其余情形（插件依赖的契约包解析到另一份 core，或插件经自定义加载器载入、在代码中直接注册）由 core 自身拦截：每份 core 给自己创建的描述符与 `optional` 包装打上本副本的标记，`definePlugin` 与插件注册遇到另一份 core 创建的对象即报错：
 
 ```text
 插件 "@your-scope/plugin-hello" 的 uses.logger 来自另一份 @aalis/core：进程里装了两份 core，只能装一份（……）

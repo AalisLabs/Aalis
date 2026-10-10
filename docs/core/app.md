@@ -37,7 +37,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 
 - 初始化事件总线、服务容器、logger 及根激活
 - 创建 `ActivationHost`：直接登记 `provide` 的提供者来自举，再由根激活经 `provide` 独占登记其余五项基础服务
-- 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService`：容器里放的只是契约列出的方法（窄面），App / PluginManager 本体不外露；`getPlugin`（宿主侧 `app.plugins` 与 `pluginsService` 同一个）交出调用时刻的浅快照，不含内部激活记录
+- 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService`：容器里放的只是契约列出的方法（窄面），App / PluginManager 本体不外露；`getPlugin` 交出调用时刻的浅快照，不含内部激活记录
 - 打印启动横幅（`name` 与宿主注入的 `version`）
 
 配置文档与其中的服务偏好由宿主接入，不在构造时处理：runtime 的 `installHostConfig` 在登记任何插件之前应用偏好。
