@@ -76,9 +76,7 @@ export interface Logger {
 }
 
 /**
- * 不抛的 Logger：各方法经 reportQuietly 转发（同步抛错吞掉，返回被拒的 Promise 接住），child 派生的同样包一层。
- * App 构造时把注入或缺省的 logger 包一次，core 与插件的 logger 都由它派生：日志后端出错不进 core 的编排与拆卸路径，
- * 也不进插件。
+ * 不抛的 Logger：各方法经 reportQuietly 转发，child 派生的同样包一层；派生失败时沿用这一层（少一级作用域）。
  * @internal
  */
 export function quietLogger(inner: Logger): Logger {
@@ -86,13 +84,20 @@ export function quietLogger(inner: Logger): Logger {
     (level: LogLevel): Logger[LogLevel] =>
     (...args) =>
       reportQuietly(() => inner[level](...args));
-  return {
+  const quiet: Logger = {
     debug: forward('debug'),
     info: forward('info'),
     warn: forward('warn'),
     error: forward('error'),
-    child: scope => quietLogger(inner.child(scope)),
+    child: scope => {
+      try {
+        return quietLogger(inner.child(scope));
+      } catch {
+        return quiet;
+      }
+    },
   };
+  return quiet;
 }
 
 /**

@@ -244,7 +244,7 @@ export default definePlugin({
 
 `provide(name, instance, { priority?, label?, entryId? })`：
 - `priority`：默认 `0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
-- `entryId`：默认 `lifecycle.id`，**必须以 `lifecycle.id` 为前缀**，否则卸载时无法连带注销。
+- `entryId`：条目的逻辑身份，默认 `lifecycle.id`；格式由契约约定，core 不检查。卸载时按激活清理，与 entryId 无关。
 - `label`：WebUI 选择器展示名。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。

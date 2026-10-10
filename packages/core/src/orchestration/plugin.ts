@@ -288,9 +288,8 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 管理动作的 false 分支之一：主体不在注册表、处于 'disposed' 单向终态，或已进入停机态。记 debug
-   * 而非 warn——这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测，停机中的请求常见于收尾路径；被政策挡下的
-   * 其余分支各自就地 warn。
+   * 管理动作被前置检查挡下时记 debug 而非 warn：这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测，
+   * 停机中的请求常见于收尾路径；被政策挡下的其余分支各自就地 warn。
    */
   #refuse(action: string, instanceId: string, why: string): false {
     this.#logger.debug(`${action}: 插件 "${instanceId}" ${why}`);
