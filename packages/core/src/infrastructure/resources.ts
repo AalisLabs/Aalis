@@ -122,7 +122,7 @@ export class Resources {
 
   /**
    * 关闭并等它关完（幂等：重复调用拿到同一个 Promise）。关停编排在本激活的收尾段之后才调它，此刻 abort 早已发出，
-   * 完成对象发布之前没有插件代码运行；按超时等别人的在飞关闭在激活一层（Activation.disposeAsync）。
+   * 完成对象发布之前没有插件代码运行；等别人的在飞关闭在激活一层（Activation.disposeAsync）。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
     this.#completion ??= this.#teardown(timeoutMs);

@@ -142,6 +142,8 @@ export class PluginManager implements PluginManagerService {
       disposeTimeoutMs,
       spendRetry: (...args) => this.#spendRetry(...args),
       linger: (id, rest) => {
+        // join 同一次拆卸的计划各报一次；同一 id 停下之前不会有第二个旧实例
+        if (this.#lingering.has(id)) return;
         this.#lingering.add(id);
         this.#logger.warn(`插件 "${id}" 的旧实例超过宽限仍未停止，它停下之前同一 id 不再激活`);
         void rest.then(() => {
