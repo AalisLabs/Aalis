@@ -45,7 +45,7 @@ register(definition, config?, instanceId?, { disabled? })
   ├─ 校验 definition / instanceId（失败 → false）
   ├─ 创建 PluginEntry（状态 = pending；以 { disabled: true } 登记则为 disabled），配置拷贝后原样挂上
   ├─ 从 uses 抽出 required / optional
-  └─ recompute('changed')（只登记了禁用条目时不重算）
+  └─ recompute()（只登记了禁用条目时不重算）
         required 已满足 → 激活（ActivationHost.create → mount：装配能力并调用 apply → 校验 provides）
         否则保持 pending，等待 service:registered
 ```
@@ -66,29 +66,22 @@ register(definition, config?, instanceId?, { disabled? })
 
 激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活的 required 绑定在 `apply` 中通过 `require()` 原样抛出服务不可用错误，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆，按插件记入同一份重试预算，跨重算累计，额度为首次取额时的 `2×插件数 + 8`；用尽转 `error`（「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」），不再自动重试。激活成功、`enable`、`bounce` / `updateConfig` 时预算清零。optional 绑定、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。`plugin:unloaded` 只发给发过 `plugin:loaded` 的激活：失败激活、仍在初始化时被拆的激活都不发。
 
-## 统一状态机：`recompute(kind)`
+## 统一状态机：`recompute()`
 
-PluginManager 只有一个状态变更入口。种类只有两种：
+PluginManager 只有一个状态变更入口：服务上下线、注册、启停、bounce、配置更新都汇入 `recompute()`。停机不经它，由停机计划拆卸。
 
-```typescript
-type RecomputeKind = 'changed' | 'shutdown';
-```
+在飞 recompute 或手动 dispose 段期间到来的请求合并成一次。`beginShutdown()` 丢弃尚未消费的重算，此后的重算请求直接跳过；`idle()` 仍等待已在飞的重算与手动 dispose 段完成，随后由停机计划拆卸。重算的目标态只看容器里此刻有没有服务。
 
-- `'changed'`（默认）：服务上下线、注册、启停、bounce、配置更新。合并处理。
-- `'shutdown'`：覆盖整批；`App.stop()` 经 `stopAll()` 走这一条。
-
-在飞 recompute 或手动 dispose 段期间到来的普通请求合并成一次。`beginShutdown()` 丢弃尚未消费的普通重算；`idle()` 仍等待已在飞的重算与手动 dispose 段完成，随后由停机计划拆卸。正常重算的目标态只看容器里此刻有没有服务。
-
-每轮（非 shutdown）：
+每轮：
 
 1. 按 required 依赖正序（提供者 → 消费者）拓扑排序，同时就绪者按登记序。仅 required 参与建图；optional 缺席照样激活，不制造排序约束。
 2. **Phase A**：把目标不再是 `active` 的成批关闭（含 required 依赖已不在、仍在后台初始化的）。它们之间的次序由关停编排按实际绑定决定，不是注册序。
 3. **Phase B**：正向遍历，激活目标 `active` 且依赖满足的 pending entry（提供者先起、消费者后起）。旧激活仍在拆卸中的跳过，等管理路径收尾后的重算；某个 required 服务此刻的胜者已进关闭计划的（例如在飞的提供者被管理动作接手，重算已不再等它）同样跳过，等提供者关完、服务下线触发的重算再判定。单个激活至多等到阈值，见上文慢激活一节。
-4. 本轮有变动则继续下一轮，直到稳定或达到上限（`2×插件数 + 8`）。非停机时发 `plugins:changed`。
+4. 本轮有变动则继续下一轮，直到稳定或达到上限（`2×插件数 + 8`）。最后发 `plugins:changed`。
 
 `disabled` / `disposed` / `error` 是显式态，recompute 不动它们；active / pending 条目的目标态只看 required 依赖此刻是否都有提供者（`requiredSatisfied`）：不满足 → `pending`，满足 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。停机置位后普通重算不再做状态转移，拆卸全归停机计划。`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃旧普通重算并冻计划）再 `idle()`（仍等待已在飞的重算和手动 dispose 段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
+管理动作收尾时调用 `recompute()`。停机置位后重算不再做状态转移，拆卸全归停机计划。`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃旧普通重算并冻计划）再 `idle()`（仍等待已在飞的重算和手动 dispose 段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证覆盖动作发起时处于 `active` 或仍在初始化（在飞或后台）的 required 下游；仍在初始化的下游被 abort，按上文的宽限处理，不响应 abort 的会因此进 `error`。仍在 `pending` 的下游不会在提供者关闭期间开始激活（见上文 Phase B）；并发的另一个管理动作里已在收尾的下游、管理动作进行中发生的停机，与本次管理动作彼此不排序。
 
@@ -136,7 +129,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 ## 反应式监听
 
-- `service:registered` / `service:unregistered` → `recompute('changed')`
-- flight 不再等的激活（转入后台，或被接手）落定 → `recompute('changed')`
+- `service:registered` / `service:unregistered` → `recompute()`
+- flight 不再等的激活（转入后台，或被接手）落定 → `recompute()`
 
-单飞 / 挂起 / 关机的取舍都在 `recompute` 内部：在飞期间排队，关机后非 shutdown 请求跳过。
+单飞 / 挂起 / 关机的取舍都在 `recompute` 内部：在飞期间排队，关机后跳过。

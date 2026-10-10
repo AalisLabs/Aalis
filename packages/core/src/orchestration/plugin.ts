@@ -29,9 +29,6 @@ export interface PluginRegistration {
   disabled?: boolean;
 }
 
-/** 一次重算的种类：普通状态变化（服务上下线、注册、启停、重载）合并处理；停机覆盖整批 */
-type RecomputeKind = 'changed' | 'shutdown';
-
 /**
  * 插件管理器
  *
@@ -71,10 +68,10 @@ export class PluginManager implements PluginManagerService {
     return this.#suspendDepth > 0;
   }
   /**
-   * 被推迟的重算：在飞 recompute 或手动 dispose 段期间到来的请求合并成一次，停机覆盖普通变化。
+   * 有被推迟的重算：在飞 recompute 或手动 dispose 段期间到来的请求合并成一次。
    * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另起一次。
    */
-  #queued: RecomputeKind | null = null;
+  #queued = false;
   /**
    * 全局关机标志。app.stop() 在 dispose 前置位，service:registered / unregistered 触发的
    * 反应式重算都会因此跳过——避免「正在关机还去 bounce
@@ -88,14 +85,13 @@ export class PluginManager implements PluginManagerService {
   #order?: PluginRecord[];
 
   /**
-   * 停机截止点：置 `#shuttingDown`，并把根激活整棵树冻进一张计划。
+   * 停机截止点（App.stop 单飞，只调一次）：置 `#shuttingDown`，并把根激活整棵树冻进一张计划。
    * 之后管理动作拒绝；对本树的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
    */
   beginShutdown(): void {
-    if (this.#shuttingDown) return;
     this.#shuttingDown = true;
     // 普通重算已失效；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
-    this.#queued = null;
+    this.#queued = false;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
   }
 
@@ -117,14 +113,14 @@ export class PluginManager implements PluginManagerService {
    * 等 flight 结束即互等死锁。
    */
   idle(): Promise<void> {
-    if (!this.#reloading && !this.#suspended && this.#queued === null) return Promise.resolve();
+    if (!this.#reloading && !this.#suspended && !this.#queued) return Promise.resolve();
     return new Promise(resolve => {
       this.#idleWaiters.push(resolve);
     });
   }
 
   #settleIdleWaiters(): void {
-    if (this.#reloading || this.#suspended || this.#queued !== null) return;
+    if (this.#reloading || this.#suspended || this.#queued) return;
     const waiters = this.#idleWaiters;
     this.#idleWaiters = [];
     for (const w of waiters) w();
@@ -475,13 +471,18 @@ export class PluginManager implements PluginManagerService {
   // 多实例机制是 register 带 instanceId + reusable 校验；配置键 `name:suffix` 的自动登记在宿主。
 
   /**
-   * 全局停机：全部 active 插件与宿主的根激活进同一张关停计划——消费者先于它依赖的提供者关闭，
-   * 下游的收尾还能把数据交给下层（见 orchestration/close-plan.ts）。
+   * 全局停机：执行 beginShutdown 冻好的那张关停计划，全部插件激活与宿主的根激活在里面（无依赖关系时后注册的先关）——
+   * 消费者先于它依赖的提供者关闭，下游的收尾还能把数据交给下层（见 orchestration/close-plan.ts）。
    *
-   * 停机置位后服务上下线不再触发反应式重算，本方法是关机时唯一的拆卸编排者。
+   * 调用方（App.stop）先 beginShutdown 再 idle：停机置位后服务上下线不再触发反应式重算，本方法是关机时唯一的拆卸编排者。
    */
   async stopAll(): Promise<void> {
-    await this.recompute('shutdown');
+    const live = [...this.#plugins.values()].filter(entry => entry.activation !== undefined).reverse();
+    await retireBatch(live, 'disposed', this.#deps, {
+      emitUnloaded: false,
+      planRoot: this.#host.root,
+      settle: this.#shutdownSettle,
+    });
   }
 
   // ----- 单一状态转移入口 -----
@@ -493,23 +494,18 @@ export class PluginManager implements PluginManagerService {
    * 1. 按 required 依赖正序（提供者→消费者）拓扑排序。
    * 2. Phase A：把目标不再是 active 的成批关闭，它们之间的次序由关停编排按实际依赖定。
    * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先起、消费者后起）。
-   * 4. 本轮有变动则继续下一轮，直到稳定或达到 maxRounds；非停机时发 plugins:changed。
+   * 4. 本轮有变动则继续下一轮，直到稳定或达到 maxRounds；最后发 plugins:changed。
    *
    * 判据只有一条：服务此刻在不在容器里。
    */
-  async recompute(kind: RecomputeKind = 'changed'): Promise<void> {
-    if (this.#shuttingDown && kind !== 'shutdown') {
-      // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
-      // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
-      if (this.#queued !== 'shutdown') {
-        // 早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时状态机已静置，
-        // 不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
-        this.#settleIdleWaiters();
-        return;
-      }
+  async recompute(): Promise<void> {
+    // 停机后普通重算无意义，拆卸全归停机计划。早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时
+    // 状态机已静置，不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
+    if (this.#shuttingDown) {
+      this.#settleIdleWaiters();
+      return;
     }
-    if (kind === 'shutdown') this.#shuttingDown = true;
-    if (this.#queued === null || kind === 'shutdown') this.#queued = kind;
+    this.#queued = true;
 
     // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
     // 由在飞 run 收尾时补跑或 dispose 段收尾的 recompute 消化。注意这里必须
@@ -522,9 +518,8 @@ export class PluginManager implements PluginManagerService {
     this.#reloading = true;
     try {
       while (this.#queued) {
-        const current = this.#queued;
-        this.#queued = null;
-        await this.#recomputeOnce(current);
+        this.#queued = false;
+        await this.#recomputeOnce();
       }
     } finally {
       this.#reloading = false;
@@ -555,19 +550,8 @@ export class PluginManager implements PluginManagerService {
     return 'error';
   }
 
-  /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
-  async #recomputeOnce(kind: RecomputeKind): Promise<void> {
-    // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
-    if (kind === 'shutdown') {
-      const live = [...this.#plugins.values()].filter(entry => entry.activation !== undefined).reverse();
-      await retireBatch(live, 'disposed', this.#deps, {
-        emitUnloaded: false,
-        planRoot: this.#host.root,
-        settle: this.#shutdownSettle,
-      });
-      return;
-    }
-
+  /** 单次完整重算：fixed-point 状态转移 + plugins:changed 通知 */
+  async #recomputeOnce(): Promise<void> {
     let changed = true;
     let rounds = 0;
     // 普通依赖级联的拆除波、激活波至多 {@link #maxRounds} 轮，超出即点名振荡。初始化期间 required 再次消失

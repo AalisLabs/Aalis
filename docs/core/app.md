@@ -79,10 +79,8 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 1. `plugins.beginShutdown()`：置停机态、丢弃排队的普通重算并冻计划（之后六个管理动作一律返回 false；对本树的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.signal` 的 abort
 2. `plugins.idle()`：排干在飞的 bounce / unload recompute；重算不再等已 abort 的激活
 3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。逐个等监听器返回，单个至多等 `slowThresholdMs`。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
-4. 再 `plugins.idle()`
-5. `plugins.stopAll()`：执行已冻计划的 drain / close
-6. 清空 sticky 缓存（`app:ready` / `app:started`）
-7. `disposeAsync` 根激活（等待异步清理）
+4. `plugins.stopAll()`：执行已冻计划的 drain / close，根激活也在这张计划里，返回时都已关完
+5. 清空 sticky 缓存（`app:ready` / `app:started`）
 
 监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等（监听器至多等到 `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
 
