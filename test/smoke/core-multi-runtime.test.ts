@@ -23,6 +23,7 @@ const CORE_DIST = join(ROOT, 'packages/core/dist');
 const ORIGIN = 'https://core-smoke.invalid';
 
 const HANG_GIVEN_UP = 'warn aalis:provider DisposableChain: 异步清理 [hang] 超过 30ms，放弃等待，继续后续清理';
+const LINGERING = 'warn aalis:plugins 插件 "provider" 的旧实例超过宽限仍未停止，它停下之前同一 id 不再激活';
 const EXPECTED: SmokeResult = {
   cascade: {
     consumerAlone: 'pending',
@@ -37,8 +38,10 @@ const EXPECTED: SmokeResult = {
   stopped: { consumer: 'disposed', provider: 'disposed', late: 'disposed', slow: 'disposed' },
   warnings: [
     HANG_GIVEN_UP,
+    LINGERING,
     'warn aalis:plugins 插件 "slow" 激活超过 30ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放',
     HANG_GIVEN_UP,
+    LINGERING,
   ],
 };
 
