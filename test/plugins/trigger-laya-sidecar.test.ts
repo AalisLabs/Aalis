@@ -316,7 +316,7 @@ describe('托管侧车：退出与重启', () => {
 });
 
 describe('托管侧车：停止', () => {
-  it('先 SIGTERM，5s 内退出就不再 SIGKILL；等到退出才返回并记「已停掉」；之后不重启、不回调', async () => {
+  it('先 SIGTERM，3s 内退出就不再 SIGKILL；等到退出才返回并记「已停掉」；之后不重启、不回调', async () => {
     const h = start();
     await settle();
     h.children[0].ready();
@@ -327,7 +327,7 @@ describe('托管侧车：停止', () => {
     });
     expect(h.children[0].signals).toEqual(['SIGTERM']);
     expect(h.sc.state).toEqual({ kind: 'stopped' });
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(stopped).toBe(false);
     h.children[0].exit(null, 'SIGTERM');
     await stopping;
@@ -340,11 +340,11 @@ describe('托管侧车：停止', () => {
     expect(infos(h).filter(m => m === '[laya] 已停掉侧车')).toHaveLength(1);
   });
 
-  it('SIGTERM 后 5s 还没退出：补 SIGKILL', async () => {
+  it('SIGTERM 后 3s 还没退出：补 SIGKILL', async () => {
     const h = start();
     await settle();
     const stopping = h.sc.stop();
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(h.children[0].signals).toEqual(['SIGTERM', 'SIGKILL']);
     h.children[0].exit(null, 'SIGKILL');
     await stopping;

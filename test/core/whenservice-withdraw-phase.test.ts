@@ -119,7 +119,7 @@ describe('follow cleanup 走撤回段', () => {
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     expect(hub.list(), '前置：登记已进枢纽').toEqual(['my-item']);
     await app.plugins.unload('p');
-    expect(eventCalls, '监听已在 beforeCleanup 切断').toBe(0);
+    expect(eventCalls, '监听已在原语切断时撤掉').toBe(0);
     expect(snapshots, '两个 onDispose 看到的都是已撤回的枢纽').toEqual([[], []]);
   });
 
@@ -168,7 +168,7 @@ describe('follow cleanup 走撤回段', () => {
     const root = app.bind({ dep: optional(depDesc), services });
     let ownVisibleAtCleanup: boolean | undefined;
     root.dep.follow(() => () => {
-      // 撤回段跑在 beforeCleanup 之后：根自己 provide 的服务此刻应已下线
+      // 撤回段跑在原语切断之后：根自己 provide 的服务此刻应已下线
       ownVisibleAtCleanup = root.services.get(ownDesc) !== undefined;
     });
     // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
@@ -208,7 +208,7 @@ describe('follow cleanup 走撤回段', () => {
     host.provide(svcDesc, {});
     const activation = activationHost(app).create(rootActivation(app), 'p');
     const ref = activationHost(app).bind(activation, { x: optional(svcDesc) }).x;
-    const base = activation.resources.disposables.size;
+    const base = activation.resources.withdrawals.size;
     let attached = 0;
     let cleaned = 0;
     const attach = () => {
@@ -218,14 +218,14 @@ describe('follow cleanup 走撤回段', () => {
       };
     };
     const off = ref.follow(attach);
-    const afterFollow = activation.resources.disposables.size;
+    const afterFollow = activation.resources.withdrawals.size;
     expect(afterFollow).toBeGreaterThan(base);
     off();
     // 资源口的订阅仍在，但同步退订不得另留 follower 的链上条目
-    expect(activation.resources.disposables.size).toBe(afterFollow);
+    expect(activation.resources.withdrawals.size).toBe(afterFollow);
     const off2 = ref.follow(attach);
     off2();
-    expect(activation.resources.disposables.size, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
+    expect(activation.resources.withdrawals.size, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
     host.provide(svcDesc, {}, { priority: 9, entryId: 'root/new' });
     expect({ attached, cleaned }, '已退订的跟随者不得响应后续胜者变化').toEqual({ attached: 2, cleaned: 2 });
   });

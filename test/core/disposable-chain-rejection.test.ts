@@ -23,7 +23,7 @@ function reporter() {
 describe('DisposableChain 异步拒绝兜底（内核自足）', () => {
   it('post-dispose 追加：就地执行的异步拒绝被接住并按 label 点名', async () => {
     const r = reporter();
-    const chain = new DisposableChain(r);
+    const chain = new DisposableChain(r, () => {});
     await chain.disposeAsync();
     const late = new Error('late');
     chain.push(async () => {
@@ -37,7 +37,7 @@ describe('DisposableChain 异步拒绝兜底（内核自足）', () => {
 
   it('逐项超时之后才到的拒绝：仍按 label 点名上报，不被放弃等待吞掉', async () => {
     const r = reporter();
-    const chain = new DisposableChain(r);
+    const chain = new DisposableChain(r, () => {});
     const pending = deferred();
     const late = new Error('ECONNRESET');
     chain.push(() => pending.promise, 'db');

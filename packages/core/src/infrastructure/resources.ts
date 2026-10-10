@@ -3,11 +3,10 @@ import { awaitWithTimeout, DisposableChain } from '../kernel/disposable-chain.js
 import type { Logger } from './logger.js';
 
 /**
- * beforeCleanup：收尾之后、清理链之前撤回宿主对外暴露的资源（同步）；afterWithdraw：撤回之后、清理链
- * 之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；afterCleanup：清理链之后收尾（同步）。
+ * afterWithdraw：切断之后、撤回链之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；
+ * afterCleanup：清理链之后收尾（同步）。
  */
 interface ResourceHooks {
-  beforeCleanup?: () => void;
   afterWithdraw?: () => Promise<unknown> | undefined;
   afterCleanup?: () => void;
 }
@@ -18,10 +17,16 @@ interface ResourceHooks {
  * 以接住初始化期间迟到的资源。
  */
 export class Resources {
-  readonly disposables: DisposableChain;
   /** 收尾段：默认在撤回前执行；编排者可用 drain() 提前执行。 */
   readonly draining: DisposableChain;
+  /** 撤回段：交到别人手里的登记（follow 的清理、track），整体先于清理段 */
+  readonly withdrawals: DisposableChain;
+  /** 清理段：onDispose，释放自有资源 */
+  readonly disposables: DisposableChain;
+  /** 本激活发起、尚未落定的异步工作（落定自删），值是诊断名：每段收口等它们 */
   readonly #inflight = new Map<Promise<void>, string>();
+  /** 其中超过宽限、收口不再等的；关完仍有未落定的工作，旧实例就还没停下（见 lingering） */
+  readonly #abandoned = new Set<Promise<void>>();
   #closing = false;
   #drained?: Promise<void>;
   #completion?: Promise<void>;
@@ -38,9 +43,13 @@ export class Resources {
     this.#id = id;
     this.#logger = logger;
     this.#hooks = hooks;
-    const settle = (timeoutMs?: number) => (this.#inflight.size === 0 ? undefined : this.#settle(timeoutMs));
-    this.disposables = new DisposableChain(logger, settle);
-    this.draining = new DisposableChain(logger, settle);
+    const hold = (work: Promise<void>, what: string, abandoned: boolean): void => {
+      const held = this.holdInflight(work, what);
+      if (abandoned) this.#abandoned.add(held);
+    };
+    this.draining = new DisposableChain(logger, hold);
+    this.withdrawals = new DisposableChain(logger, hold);
+    this.disposables = new DisposableChain(logger, hold);
   }
 
   /** 已开始关闭 */
@@ -80,7 +89,7 @@ export class Resources {
   }
 
   /**
-   * 登记一个切断项：与 beforeCleanup 同栈、在等下游交接之前同步执行，用于撤掉本激活登记到别处、
+   * 登记一个切断项：收尾之后、等下游交接之前按登记序同步执行，用于撤掉本激活登记到别处、
    * 对外可见的条目。异步部分由执行方自行记账，本段不等。
    */
   onCut(cut: () => void): void {
@@ -105,6 +114,7 @@ export class Resources {
       if (this.#initialization)
         await awaitWithTimeout(this.#initialization, timeoutMs, this.#timeout('等待初始化落定'));
       await this.draining.disposeAsync(timeoutMs);
+      await this.#settle(timeoutMs);
     });
     this.abort();
     return this.#drained;
@@ -122,19 +132,32 @@ export class Resources {
   async #teardown(timeoutMs?: number): Promise<void> {
     // 收尾段（等初始化、排空收尾链）已由编排者提前执行时只等它，不再等第二遍初始化
     await this.drain(timeoutMs);
-    this.#hooks.beforeCleanup?.();
     for (const cut of this.#cuts) cut();
     const handover = this.#hooks.afterWithdraw?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
-    await this.disposables.disposeAsync(timeoutMs);
+    // 撤回段整体先于清理段，段内逆序；每段收口等本段发起、还没落定的异步工作
+    for (const chain of [this.withdrawals, this.disposables]) {
+      await chain.disposeAsync(timeoutMs);
+      await this.#settle(timeoutMs);
+    }
     this.#hooks.afterCleanup?.();
+  }
+
+  /**
+   * 关闭之后仍未落定的工作（超过宽限被放弃的初始化与清理，以及关闭后就地执行的清理）全部落定时兑现，期间新起的
+   * 一并等；没有时 undefined。旧实例在它兑现之前还没停下。
+   */
+  lingering(): Promise<unknown> | undefined {
+    const rest: Promise<unknown>[] = [...this.#inflight.keys()];
+    if (this.#initialization) rest.push(this.#initialization);
+    return rest.length === 0 ? undefined : Promise.all(rest).then(() => this.lingering());
   }
 
   /**
    * 已发起的异步清理只观察一次，在下一段收口时等待。关闭不在调用方的栈上收口：同步取得资源、拿到清理句柄的
    * 那一段即使在中途发起了关闭，也在收口之前走完，句柄可以在这里补登。
    */
-  holdInflight(work: PromiseLike<unknown>, what: string): void {
+  holdInflight(work: PromiseLike<unknown>, what: string): Promise<void> {
     const settled: Promise<void> = Promise.resolve(work)
       .then(
         () => undefined,
@@ -142,17 +165,21 @@ export class Resources {
       )
       .then(() => {
         this.#inflight.delete(settled);
+        this.#abandoned.delete(settled);
       });
     this.#inflight.set(settled, what);
+    return settled;
   }
 
   async #settle(timeoutMs?: number): Promise<void> {
-    while (this.#inflight.size > 0) {
-      const batch = [...this.#inflight];
+    for (;;) {
+      const batch = [...this.#inflight].filter(([work]) => !this.#abandoned.has(work));
+      if (batch.length === 0) return;
       await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, limit => {
         for (const [work, what] of batch) {
-          if (!this.#inflight.delete(work)) continue;
-          this.#logger.warn(`Resources "${this.#id}": 等待 ${what} 的撤回超过 ${limit}ms，放弃等待`);
+          if (!this.#inflight.has(work)) continue;
+          this.#abandoned.add(work);
+          this.#logger.warn(`Resources "${this.#id}": 等待 ${what} 超过 ${limit}ms，放弃等待`);
         }
       });
     }
@@ -172,12 +199,12 @@ export class Resources {
     const dispose = this.trackWithdrawal(run, label);
     return () => {
       if (started) return;
-      this.disposables.remove(dispose);
+      this.withdrawals.remove(dispose);
       run();
     };
   }
 
-  /** 清理异常就地隔离；异步拒绝被观察，并在相位边界等待。 */
+  /** 清理异常就地隔离；异步拒绝被观察，并在段收口等待。 */
   withdraw(off: () => unknown, label: string): PromiseLike<unknown> | undefined {
     try {
       const result = off();
@@ -191,13 +218,13 @@ export class Resources {
     }
   }
 
-  /** 绑定撤回排在用户清理之前（撤回段）；返回值原样交给清理链等待。 */
+  /** 绑定撤回排在用户清理之前（撤回段）；返回值原样交给撤回链等待。 */
   trackWithdrawal(off: () => unknown, label?: string): () => unknown {
     const dispose = (): unknown => {
-      this.disposables.remove(dispose);
+      this.withdrawals.remove(dispose);
       return off();
     };
-    this.disposables.push(dispose, label, 'withdraw');
+    this.withdrawals.push(dispose, label);
     return dispose;
   }
 

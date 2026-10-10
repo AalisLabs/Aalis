@@ -12,8 +12,11 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 /** 就绪后连续运行这么久再退出，算新一轮故障：重启间隔回到起点 */
 const STABLE_MS = 60_000;
-/** 停侧车时先发 SIGTERM，这么久还没退出再发 SIGKILL */
-const STOP_GRACE_MS = 5_000;
+/**
+ * 停侧车时先发 SIGTERM，这么久还没退出再发 SIGKILL。明显短于 core 单项清理的上限（disposeTimeoutMs，默认 5s）：
+ * 侧车不理 SIGTERM 时 SIGKILL 之后还来得及在上限内退出，旧实例不至于超过宽限仍没停下、拖住重启
+ */
+const STOP_GRACE_MS = 3_000;
 /** 退出原因里附带的标准错误最后一行的长度上限 */
 const TAIL_MAX = 200;
 /** 单行输出的长度上限：没有换行的超长输出只留开头，行缓冲不无限增长 */

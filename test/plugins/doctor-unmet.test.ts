@@ -18,13 +18,14 @@ type State = PluginSnapshot['state'];
 function plugin(
   instanceId: string,
   state: State,
-  fields: { requires?: string[]; optional?: string[]; provides?: string[]; error?: string } = {},
+  fields: { requires?: string[]; optional?: string[]; provides?: string[]; error?: string; lingering?: boolean } = {},
 ): PluginSnapshot {
   return {
     instanceId,
     state,
     provides: fields.provides,
     error: fields.error,
+    lingering: fields.lingering,
     uses: [
       ...(fields.requires ?? []).map(service => ({ key: service, service, kind: 'required' as const })),
       ...(fields.optional ?? []).map(service => ({ key: service, service, kind: 'optional' as const })),
@@ -45,6 +46,18 @@ interface Case {
 }
 
 const CASES: Case[] = [
+  {
+    name: '根要的都在了、在等自己的旧实例停下：在等，根是 lingering',
+    plugins: [
+      plugin('a', 'pending', { requires: ['llm'] }),
+      plugin('model', 'pending', { provides: ['llm'], lingering: true }),
+    ],
+    of: 'a',
+    expected: {
+      lacking: [],
+      waiting: [{ service: 'llm', chain: ['model'], root: { kind: 'lingering', instance: 'model' } }],
+    },
+  },
   {
     name: '根失败：链是直接提供者，根带它的失败说明',
     plugins: [
@@ -345,6 +358,7 @@ describe('describeUnmet：启动告警、诊断与回执里的一句', () => {
         waiting: [
           { service: 'sx', chain: ['x'], root: { kind: 'starting', instance: 'x' } },
           { service: 'sy', chain: ['y', 'x'], root: { kind: 'starting', instance: 'x' } },
+          { service: 'sz', chain: ['z'], root: { kind: 'lingering', instance: 'z' } },
         ],
       }),
     ).toBe(
@@ -356,6 +370,7 @@ describe('describeUnmet：启动告警、诊断与回执里的一句', () => {
         '缺少服务 sa（b → 互相等待成环：a、b）',
         '缺少服务 llm（e → f 在运行但没有提供 sf）',
         '等待 x 启动',
+        '等待 z 的旧实例停下',
       ].join('；'),
     );
   });

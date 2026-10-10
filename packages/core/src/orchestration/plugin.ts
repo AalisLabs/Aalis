@@ -49,6 +49,11 @@ export class PluginManager implements PluginManagerService {
   readonly #slowMs: number;
   /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow；abort 时据此判断 flight 是否早已放开它） */
   readonly #background = new Set<Activation>();
+  /**
+   * 旧实例关完仍有工作没落定（清理或被拆的初始化超过宽限）的实例 id：落定之前不起同 id 的新实例，条目卸载后照样记着
+   * （getStatus 据此给出 lingering）。落定后补一次重算
+   */
+  readonly #lingering = new Set<string>();
   /** 交给编排层自由函数（activatePlugin / retireBatch）的宿主注入件，构造一次 */
   readonly #deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
@@ -131,7 +136,20 @@ export class PluginManager implements PluginManagerService {
     this.#disposeTimeoutMs = disposeTimeoutMs;
     this.#slowMs = slowMs;
     this.#logger = logger.child('plugins');
-    this.#deps = { host, logger: this.#logger, disposeTimeoutMs, spendRetry: (...args) => this.#spendRetry(...args) };
+    this.#deps = {
+      host,
+      logger: this.#logger,
+      disposeTimeoutMs,
+      spendRetry: (...args) => this.#spendRetry(...args),
+      linger: (id, rest) => {
+        this.#lingering.add(id);
+        this.#logger.warn(`插件 "${id}" 的旧实例超过宽限仍未停止，它停下之前同一 id 不再激活`);
+        void rest.then(() => {
+          this.#lingering.delete(id);
+          this.#kick(`${id} 旧实例停下`);
+        });
+      },
+    };
 
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
@@ -406,6 +424,7 @@ export class PluginManager implements PluginManagerService {
       optionalServices: entry.optional.length > 0 ? entry.optional : undefined,
       error: entry.error,
       slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
+      lingering: this.#lingering.has(entry.instanceId) || undefined,
     }));
   }
 
@@ -588,10 +607,10 @@ export class PluginManager implements PluginManagerService {
       for (const entry of order) {
         // 已进入停机：不再启动新的实例
         if (this.#shuttingDown) break converge;
-        // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清 entry.activation）：此刻重新激活
-        // 会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，等管理路径
-        // 收尾后的 recompute 重新调度
-        if (entry.state !== 'pending' || entry.activation) continue;
+        // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清 entry.activation），或关完仍有工作
+        // 没落定：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，
+        // 等管理路径收尾后、或旧实例停下后的 recompute 重新调度
+        if (entry.state !== 'pending' || entry.activation || this.#lingering.has(entry.instanceId)) continue;
         if (!requiredSatisfied(entry, this.#host.runtime.services)) continue;
         // required 胜者已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它上面拿到的是正在
         // 关闭的实例。等它关完、服务下线触发重算再判定

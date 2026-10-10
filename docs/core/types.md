@@ -74,7 +74,7 @@ interface PluginEntry {
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开类型不声明内部激活记录；经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `reusable` / `requiredServices` / `optionalServices`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`（否则不给）；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录；经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `reusable` / `requiredServices` / `optionalServices`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`、旧实例关完仍有工作没落定（停下之前同一 id 不起新实例）时的 `lingering: true`（否则都不给）；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 

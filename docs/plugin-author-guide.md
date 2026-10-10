@@ -249,7 +249,7 @@ it('required 依赖到场后激活', async () => {
 
 ### 不应该在 apply 里做
 
-- 长时间下载、等外部服务就绪或其它可能很久不返回的 `await`。激活超过 `slowThresholdMs`（默认 60 秒）仍未完成会被告警、转入后台，依赖你所提供服务的插件一直等在 pending；停用、重启、停机或 required 依赖下线时 `lifecycle.signal` abort 之后只有 `disposeTimeoutMs`（默认 5 秒）的宽限，到期记为 error「未在宽限内停止」，依赖恢复后也不自动重试。做法见下文「长任务与取消」
+- 长时间下载、等外部服务就绪或其它可能很久不返回的 `await`。激活超过 `slowThresholdMs`（默认 60 秒）仍未完成会被告警、转入后台，依赖你所提供服务的插件一直等在 pending；停用、重启、停机或 required 依赖下线时 `lifecycle.signal` abort 之后只有 `disposeTimeoutMs`（默认 5 秒）的宽限，到期仍没停下的，你的插件在它停下之前不会重新激活（状态带 `lingering`）。做法见下文「长任务与取消」
 - 直接修改全局 process 状态（`process.env`、信号 handler）
 - 跨插件 import 实现细节（应只 import `@aalis/api-xxx`）
 - 绕过绑定门面直接打容器底层 API

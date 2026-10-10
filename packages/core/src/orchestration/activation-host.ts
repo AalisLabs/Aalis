@@ -38,12 +38,6 @@ export class ActivationHost {
     const owner = Symbol(id);
     const runtime = this.runtime;
     const resources = new Resources(id, logger, {
-      beforeCleanup: () => {
-        // 原语切断保持同栈，不能逐条 await 时让一半监听仍然对外可用。
-        const removed = runtime.services.unregisterByOwner(owner);
-        runtime.events.unregisterByOwner(owner);
-        for (const name of removed) runtime.notify('service:unregistered', name);
-      },
       // 提供者自己的清理之前：挂在它上面的跟随者就地交接，落定后提供者才关
       afterWithdraw: (): Promise<unknown> | undefined => activation.handover(),
       afterCleanup: () => {
@@ -51,6 +45,12 @@ export class ActivationHost {
         this.#owners.delete(owner);
         parent?.children.delete(activation);
       },
+    });
+    // 第一个切断项：原语按归属整体切断，不能逐条 await 时让一半监听仍然对外可用
+    resources.onCut(() => {
+      const removed = runtime.services.unregisterByOwner(owner);
+      runtime.events.unregisterByOwner(owner);
+      for (const name of removed) runtime.notify('service:unregistered', name);
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
     this.#owners.set(owner, activation);
