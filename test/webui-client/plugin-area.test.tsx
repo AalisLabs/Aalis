@@ -417,6 +417,65 @@ describe('详情', () => {
     if (href) expect(relations.getByRole('link').getAttribute('href')).toBe(href);
   });
 
+  it('服务偏好：它声明的、有几个提供者的服务各一行，写本插件偏好或跟随全局；改选与「跟随全局」按实例发，所选的不在时写明', async () => {
+    const provider = (contextId: string, displayName: string) => ({
+      contextId,
+      displayName,
+      priority: 0,
+      exclusive: false,
+    });
+    const services = {
+      services: {
+        'zz-store': { providers: [provider('zz-mongo', '文档库'), provider('zz-lite', '本地库')], preferred: null },
+        'zz-vision': { providers: [provider('zz-eye', '看图'), provider('zz-eye2', '看图二')], preferred: 'zz-eye' },
+        'zz-model': { providers: [provider('zz-model', '模型服务')], preferred: null },
+        'zz-other': { providers: [provider('zz-x', '甲'), provider('zz-y', '乙')], preferred: null },
+      },
+    };
+    const agent = plugin('zz-agent', {
+      requiredServices: ['events', 'zz-store', 'zz-model'],
+      optionalServices: ['zz-vision'],
+      servicePreferences: { 'zz-vision': 'zz-eye2' },
+    });
+    const own = (service: string) => `/api/plugins/zz-agent/services/${service}/prefer`;
+    app = await renderApp(
+      '/plugins/zz-agent',
+      {},
+      pluginRest([agent], {
+        '/api/services': services,
+        [own('zz-store')]: { ok: true },
+        [own('zz-vision')]: { ok: true },
+      }),
+    );
+    const block = within(
+      (await detail().findByRole('heading', { name: '服务偏好' })).closest('section') as HTMLElement,
+    );
+    expect(block.getByText(/不需要让这个插件改用别家、也不需要它固定用某一家时，别设/)).toBeTruthy();
+    const row = (label: string) => within(block.getByRole('group', { name: label }));
+    expect(block.queryByRole('group', { name: 'zz-model' })).toBeNull();
+    expect(block.queryByRole('group', { name: 'zz-other' })).toBeNull();
+    expect(row('zz-store').getByText('跟随全局偏好')).toBeTruthy();
+    expect(row('zz-store').queryByText('本插件偏好')).toBeNull();
+    expect(row('zz-vision').getByText('看图二')).toBeTruthy();
+    expect(row('zz-vision').getByText('本插件偏好')).toBeTruthy();
+
+    fireEvent.click(row('zz-store').getByRole('button', { name: /zz-store/ }));
+    choose(row('zz-store').getByRole('combobox', { name: 'zz-store' }), '本地库');
+    await vi.waitFor(() => expect(posts(own('zz-store')).map(call => call.body)).toEqual([{ contextId: 'zz-lite' }]));
+    fireEvent.click(row('zz-vision').getByRole('button', { name: '跟随全局' }));
+    await vi.waitFor(() =>
+      expect(restCalls().filter(call => call.method === 'DELETE' && call.path === own('zz-vision'))).toHaveLength(1),
+    );
+    app.close();
+
+    const gone = plugin('zz-agent', {
+      optionalServices: ['zz-vision'],
+      servicePreferences: { 'zz-vision': 'zz-eye3' },
+    });
+    app = await renderApp('/plugins/zz-agent', {}, pluginRest([gone], { '/api/services': services }));
+    expect(await detail().findByText('这一家现在不在，先按全局的选择')).toBeTruthy();
+  });
+
   it('页面：列出全部页面与位置，插件页面与设置里的一节可以点开；插件前端另写申请的宿主数据能力；没有页面时整块不出现', async () => {
     const pages = [
       { ...BOARD, instance: 'zz-mongo' },

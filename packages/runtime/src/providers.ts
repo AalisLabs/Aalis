@@ -23,7 +23,14 @@ import { openYamlFile } from './yaml-file.js';
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
 // ============================================================
 
-const CORE_TOP_LEVEL_KEYS = new Set<string>(['name', 'logLevel', 'plugins', 'disabledPlugins', 'servicePreferences']);
+const CORE_TOP_LEVEL_KEYS = new Set<string>([
+  'name',
+  'logLevel',
+  'plugins',
+  'disabledPlugins',
+  'servicePreferences',
+  'pluginServicePreferences',
+]);
 
 /**
  * 把 AalisConfig 序列化为 YAML 文本，按固定顺序输出 core 字段，
@@ -42,6 +49,8 @@ function buildSaveYaml(config: AalisConfig): string {
   if (Object.keys(prefs).length > 0) {
     obj.servicePreferences = prefs;
   }
+  const pluginPrefs = config.pluginServicePreferences ?? {};
+  if (Object.keys(pluginPrefs).length > 0) obj.pluginServicePreferences = pluginPrefs;
 
   for (const [key, value] of Object.entries(config)) {
     if (CORE_TOP_LEVEL_KEYS.has(key)) continue;

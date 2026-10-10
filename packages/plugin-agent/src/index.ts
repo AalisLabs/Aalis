@@ -101,7 +101,7 @@ const uses = {
   storage: optional(storageService),
   gateway: optional(gatewayService),
   plugins: optional(pluginsService),
-  /** 会话没设模型时比对 llm 服务的偏好与实际用的模型 */
+  /** 会话没设模型时比对本插件该生效的 llm 偏好与实际用的模型 */
   services,
 };
 type Caps = BoundOf<typeof uses>;
@@ -210,7 +210,12 @@ class DefaultAgent implements AgentService {
   /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
-  constructor(caps: AgentCaps, cfg: ConfigOf<typeof configSchema>) {
+  constructor(
+    caps: AgentCaps,
+    cfg: ConfigOf<typeof configSchema>,
+    /** 本插件实例 id：读它的本插件偏好 */
+    private readonly instanceId: string,
+  ) {
     this.caps = caps;
     this.logger = caps.logger.use.child('agent');
     this.systemPrompt = cfg.systemPrompt;
@@ -225,8 +230,9 @@ class DefaultAgent implements AgentService {
    * 根据优先级链解析当前会话该用哪个 LLMModel entry。
    *
    * 会话设置的 llm 交给 session-manager.resolveConfig 解析（按层表叠加，全局默认层即 llm 服务的偏好）；
-   * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到服务此刻解析到的那一个（偏好 > 提供者优先级 > 登记先后）。
-   * 这时偏好指向的模型不在（模型删了、提供者在重载或激活失败），服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
+   * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到本插件此刻选中的那一个（本插件偏好 > 全局偏好 > 提供者优先级 >
+   * 登记先后）。这时该生效的偏好（设了本插件偏好就是它，否则是全局偏好）指向的模型不在（模型删了、提供者在重载或激活失败），
+   * 服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
    *
    * 返回 llm 的提供者条目（id 与这一家的业务句柄 use），条目固定那一个模型。
    */
@@ -236,13 +242,15 @@ class DefaultAgent implements AgentService {
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     const entry = resolveLLMModel(this.caps.llm, ref, ['chat']);
-    const preferred = ref ? undefined : this.caps.services.use.preferred(llmService);
-    if (entry && preferred !== undefined && entry.id !== preferred) {
+    if (ref || !entry) return entry;
+    const own = this.caps.services.use.preferred(llmService, { for: this.instanceId });
+    const preferred = own ?? this.caps.services.use.preferred(llmService);
+    if (preferred !== undefined && entry.id !== preferred) {
       const combo = `${preferred}\n${entry.id}`;
       if (!this.preferenceFallbacks.has(combo)) {
         this.preferenceFallbacks.add(combo);
         this.logger.warn(
-          `llm 服务的偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.id}`,
+          `llm 服务的${own === undefined ? '' : '本插件'}偏好 ${preferred} 没有生效（指向的模型不在、提供者在重载或激活失败），实际用的是 ${entry.id}`,
         );
       }
     }
@@ -2258,7 +2266,8 @@ const SESSION_SETTINGS: SessionSetting[] = [
     field: {
       type: 'llm-ref',
       label: '模型',
-      description: '没设置时用默认模型：全局默认层的「模型」，那里也没设时用第一个可用的对话模型',
+      description:
+        '没设置时用默认模型：给本插件设了 llm 的服务偏好时用它，否则是全局默认层的「模型」，那里也没设时用第一个可用的对话模型',
     },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'composer',
@@ -2333,7 +2342,7 @@ type InternalAgent = {
 function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   for (const setting of SESSION_SETTINGS) caps.sessionManager.use.registerSetting(setting);
-  const agentImpl = new DefaultAgent(caps, cfg);
+  const agentImpl = new DefaultAgent(caps, cfg, caps.lifecycle.use.id);
   caps.provide.use(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
   // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；

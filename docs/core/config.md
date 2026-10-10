@@ -35,7 +35,8 @@ interface AalisConfig {
   slowThresholdMs?: number;        // core 慢操作阈值（毫秒），启动时注入 AppOptions.slowThresholdMs
   plugins: Record<string, Record<string, unknown>>;   // 各实例配置，键为实例 id；指令前缀、agent 参数等都在这里
   disabledPlugins?: string[];      // 宿主登记插件时据此以禁用态登记
-  servicePreferences?: Record<string, string>;        // 服务名 → 偏好的 contextId；宿主启动时应用
+  servicePreferences?: Record<string, string>;        // 服务名 → 偏好的 contextId；宿主启动与热重载时应用
+  pluginServicePreferences?: Record<string, Record<string, string>>;  // 插件实例 id → 它的服务偏好，只对它生效（见下文「服务偏好」）
   [key: string]: unknown;          // 未做 declaration merging 的插件也能读到自己的顶层字段（类型为 unknown）
 
   // ↓ authority 域业务字段，由 api-authority 经 declaration merging 注入
@@ -69,7 +70,7 @@ doc.get('name')                        // 顶层字段
 doc.getAll()                           // 完整文档
 doc.getPluginConfig(instanceId)        // 插件配置（键是实例 id；密钥字段上是引用，不是原值）
 doc.isPluginDisabled(instanceId)       // 是否在禁用名单
-doc.getServicePreferences()            // 服务偏好
+doc.getServicePreferences()            // 全局偏好；给 { for: 实例 id } 是那个插件的本插件偏好
 
 // 改插件配置并生效（运行态、文档、密钥与落盘一步完成）
 await doc.applyPluginConfig(instanceId, {...})
@@ -79,7 +80,8 @@ doc.set('logLevel', 'debug')           // 顶层字段；plugins 不能经它整
 doc.setPluginConfig(instanceId, {...})  // 只收文档形态，密钥字段上的明文抛错
 doc.removePluginConfig(instanceId)
 doc.setPluginEnabled(instanceId, true)
-doc.setServicePreference('llm', ctxId)
+doc.setServicePreference('llm', ctxId)                       // 全局偏好
+doc.setServicePreference('llm', ctxId, { for: instanceId })  // 本插件偏好
 doc.removeServicePreference('llm')
 
 // 落盘
@@ -114,10 +116,10 @@ WebUI 的启停路由按这种方式持久化；WebUI 的改配置与新建实�
 
 - `createConfigStore(initial, provider?, secrets?)`：文档的内存态、危险键闸与落盘委托。`ConfigProvider` 负责持久化（`save`）与外部变更监听（`watch`），`createFsYamlConfigProvider` 是读写 YAML 的实现。第三个参数是密钥存储 `{ values, provider? }`，`createFsSecretsProvider` 是读写 `secrets.yaml` 的实现；不给时没有密钥存储，密钥字段照旧以明文留在文档里。给了密钥存储却没给它的 `provider.save`、配置又会落盘（给了 `provider.save`）时直接抛错：否则密钥只在内存里，重启后引用落空。
 - `createFsYamlConfigProvider` 保存前比对盘上内容：文件里有尚未生效的外部修改（手改尚未热重载、改坏未能解析、另一个进程写过）时拒绝本次保存、不覆盖（拒绝原因为 `@aalis/api-host-config` 的 `ConfigSaveRefusedError`，用同包的 `isConfigSaveRefused` 判定；错误只带文件路径），宿主记一条告警。写入先写临时文件再改名替换，临时文件创建时即沿用原文件的权限位，没有原文件时为 0600；写临时文件或改名失败时删掉临时文件再传出原错误。拒绝之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份相同也照常热重载，按文件重新对账；监听武装后立即对账一次，武装前的手改随之生效；平台不支持文件监听时记一条告警，此后手改需重启才生效。
-- `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.use.prefer` 应用文档里的服务偏好（全局偏好）。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
+- `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.use.prefer` 应用文档里的服务偏好（全局偏好与本插件偏好）。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
 - 插件发现驱动 `createPluginDiscovery(app, loader, store)` 登记插件时，按实例 id 从文档取配置（解析密钥引用后）与禁用标记，交给 `app.pluginAll`（见 [App](app.md)）。冷启动时，`plugins` 下找不到对应插件的配置段（多为直接 `npm uninstall` 后的残留）逐段告警一次，提示已卸载的可删除该段（其中可能含密钥）；文档本身不改。
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档（密钥字段的默认值不写进文档），按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留），并把密钥字段上的明文移进密钥存储。首次 apply 拿到的就是规范化后的配置。
-- `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
+- `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先按改动前后的文档对账服务偏好（改了的与新加的经 `services.use.prefer` 应用，删掉的 `unprefer`，没变的不动），再卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
 
 `startAalis` 的装配序为：家目录 → 实例锁（守护模式）→ 文档与密钥存储 → App → host-paths 与 host-logs → host-config → 加载政策 → 发现 → 热重载。实例锁只有 `startAalis` 取，自组装宿主不经过这一步。
 
@@ -145,6 +147,30 @@ installHostConfig(app, store); // 再 host-config
 ```
 
 默认值须深合并进配置（`withPluginConfigSync` 即此政策），不能顶层浅合并：只写了半块的嵌套组会把默认值整块顶掉。
+
+## 服务偏好
+
+同一个服务有几个提供者时，每个消费插件按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中一家（见 [服务模型](../concepts/service-model.md)）。两种偏好都只由用户设，插件代码只读：
+
+- **全局偏好**：对所有插件生效。WebUI 在设置「系统」的服务偏好里改（默认模型在「会话默认」的「模型」里改），配置文件写 `servicePreferences`。
+- **本插件偏好**：只对一个插件实例生效，压过全局偏好。WebUI 在这个插件的详情页「服务偏好」里改，列出它声明的、有几个提供者的服务，选「跟随全局」即清除；配置文件写 `pluginServicePreferences`，键是插件实例 id。
+
+```yaml
+servicePreferences:
+  llm: "@aalis/plugin-llm-deepseek/deepseek-chat"
+pluginServicePreferences:
+  "@aalis/plugin-memory-summary":
+    llm: "@aalis/plugin-llm-ollama/qwen3:8b"
+```
+
+偏好指向的那家不在（停用了、模型删了）时按下一级挑，回来后切回；那期间写入的数据进的是别家。WebUI 改的立即生效并写进配置文件；手改配置文件的随热重载生效，删掉的偏好同时从运行态撤回。
+
+**不需要让某个插件改用别家、也不需要它固定用某一家的，就别设本插件偏好，只用全局偏好。** 下面两类服务按插件分开选会出错：
+
+- 「谁生效」由当前选中者决定的服务，如 `trigger`：各插件看到的选中者不同，就会两边都以为自己生效，或都以为自己不生效。
+- 多个插件共用同一份数据的服务，如 `memory`（message-archive 写、memory-history 读）、`storage`、`vectorstore`、`embedding`：两边选的不是同一家，就读不到对方写的。`embedding` 的输出是向量索引的键，同一份索引的读写两方必须用同一个模型；memory-vector 只比同一模型算出的向量，分开后表现为查不到，而不是查错。
+
+插件一定要某一家提供某个服务时，core 不提供强制机制：插件在自己的文档里写明，由用户按插件设本插件偏好。
 
 ## 密钥配置
 

@@ -457,7 +457,7 @@ cell.innerHTML = member.nickname;
 | process 的网关 helper | 删除。用 `caps.process.use` |
 | `resolveLLMModel` / `listLLMModels`、api-platform 与 api-remote-agent 的 helper 返回 `{ instance, contextId }` | 返回 `ProviderEntry`，句柄在 `use`、条目 id 在 `id`；按模型取写 `caps.llm.of('<provider>/<model>')` |
 | `isActiveTrigger(phase, trigger, self)` | 第三参是自己的条目 id：`isActiveTrigger(phase, caps.trigger, caps.lifecycle.use.id)` |
-| 插件代码里调 `services.prefer` 设偏好 | 偏好只由用户经管理面写（WebUI、`servicePreferences`）；`services.use.prefer(key, id, { for })` 供管理面用 |
+| 插件代码里调 `services.prefer` 设偏好 | 偏好只由用户经管理面写（WebUI、`servicePreferences` 与本插件偏好 `pluginServicePreferences`）；`services.use.prefer(key, id, { for })` 供管理面用 |
 | 契约作者在 `bind` 里拼单层服务引用；`Bound*` 接口继承它 | `bind` 返回 `Object.assign(Object.create(port.provider), { ... })`；`Bound*` 接口 `extends` 提供者接口；资源口用 `port.provider` / `port.present` |
 
 ## 从 0.17 迁移

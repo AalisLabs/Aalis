@@ -42,7 +42,7 @@ interface ServiceView<T = unknown> {
 
 `priority` 是普通数字：越大越优先。没有预设档位，数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 `configSchema`。默认 `0`；要盖过参考实现，取一个更高的值（如 `50`）。
 
-`services.prefer` / `unprefer` 会 emit `service:changed`，业务句柄随之打到新选中的那一家，`follow` 随之重挂。偏好只由用户经管理面写：WebUI 的 Services 页面与配置项 `servicePreferences` 设全局偏好；普通插件不调 `prefer` / `unprefer`，选择层也没有写偏好的入口。
+`services.prefer` / `unprefer` 会 emit `service:changed`，业务句柄随之打到新选中的那一家，`follow` 随之重挂。偏好只由用户经管理面写：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设本插件偏好；普通插件不调 `prefer` / `unprefer`，选择层也没有写偏好的入口。不需要让某个插件改用别家、也不需要它固定用某一家的，就别设本插件偏好：「谁生效」由选中者决定的服务（trigger）与几个插件共用数据的服务（memory、storage、vectorstore、embedding）按插件分开选会出错，见 [运行态与配置文档](../core/config.md#服务偏好)。插件一定要某一家提供时，在插件文档里写明，由用户设本插件偏好。
 
 ---
 

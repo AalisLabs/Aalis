@@ -234,8 +234,8 @@ llm 服务:
 
 ### 服务偏好
 
-用户可通过配置（`servicePreferences`）或 WebUI Services 页切换首选提供者
-（管理面代码为 `services.use.prefer(key, contextId)`，给 `{ for: 实例 id }` 是只对那个插件生效的本插件偏好）。
+用户可通过配置（全局的 `servicePreferences`，只对一个插件的 `pluginServicePreferences`）或 WebUI（设置「系统」的服务偏好、插件详情的服务偏好）切换首选提供者
+（管理面代码为 `services.use.prefer(key, contextId)`，给 `{ for: 实例 id }` 是只对那个插件生效的本插件偏好）。什么时候不该设本插件偏好见 [运行态与配置文档](core/config.md#服务偏好)。
 偏好指向的那家在场时就是选中的那一家，即使其 priority 低于其他 entry；切换偏好会发出 `service:changed`，
 业务句柄随之打到新选中的那一家，`follow` 订阅者随之重挂。普通插件不写偏好。
 

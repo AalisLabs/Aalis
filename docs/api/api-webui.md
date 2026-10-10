@@ -631,6 +631,8 @@ interface MessageResponse extends OkResponse { message: string }
 | `GET /api/services` | — | `ServiceListResponse` |
 | `POST /api/services/:name/prefer` | `{ contextId }` | `OkResponse` |
 | `DELETE /api/services/:name/prefer` | — | `OkResponse` |
+| `POST /api/plugins/:instanceId/services/:name/prefer` | `{ contextId }` | `OkResponse`：这个插件实例的本插件偏好，只对它生效；插件实例不在回 404，其余同全局偏好 |
+| `DELETE /api/plugins/:instanceId/services/:name/prefer` | — | `OkResponse`：清除它的本插件偏好 |
 
 ```ts
 interface PluginListItem {
@@ -646,6 +648,7 @@ interface PluginListItem {
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
+  servicePreferences: Record<string, string>; // 本插件偏好：它声明的服务里设了的，服务名 → 偏好的提供者
   lacking: UnmetService[]; // 缺与在等、待配置三项见上文「需要处理」的 PluginBlockers
   waiting: UnmetService[];
   unconfigured: string[];
