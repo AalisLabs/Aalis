@@ -188,7 +188,7 @@ describe('workflow runDag', () => {
       runId: 'r1',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
     expect(calls).toEqual([
@@ -217,7 +217,7 @@ describe('workflow runDag', () => {
       runId: 'r2',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
     expect(res.error).toMatch(/boom/);
@@ -250,7 +250,7 @@ describe('workflow runDag', () => {
       runId: 'r3',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
     expect(peak).toBeGreaterThanOrEqual(2);
@@ -279,7 +279,7 @@ describe('workflow agent 节点', () => {
       runId: 'rA',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
     expect(res.outputs.aOut).toBe('子任务结果X');
@@ -313,7 +313,7 @@ describe('workflow agent 节点', () => {
       runId: 'rS',
       vars: { who: '群A' },
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
     expect(emitted[0].content).toBe('通知 群A');
@@ -334,7 +334,7 @@ describe('workflow agent 节点', () => {
       runId: 'rT',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
     expect(res.error).toMatch(/超时/);
@@ -353,7 +353,7 @@ describe('workflow agent 节点', () => {
       runId: 'rE',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
     expect(res.error).toMatch(/outcome=error/);
@@ -372,7 +372,7 @@ describe('workflow agent 节点', () => {
       runId: 'rSilent',
       vars: {},
       toolCallContext: {} as never,
-      cancelToken: { cancelled: false },
+      signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
     expect(res.outputs.r).toBe('');
