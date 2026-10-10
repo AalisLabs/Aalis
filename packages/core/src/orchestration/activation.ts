@@ -1,5 +1,3 @@
-import { awaitWithTimeout } from '../kernel/disposable-chain.js';
-
 import type { ServiceContainer } from '../primitives/services.js';
 
 import { closeActivations } from './close-plan.js';
@@ -128,13 +126,10 @@ export class Activation {
   }
 
   /**
-   * 关闭本激活并等它关完。已在某张关闭计划里时按超时等那张计划关完它（等在飞关闭只在这一层），否则现组一张计划。
+   * 关闭本激活并等它关完。已在某张关闭计划里时等那张计划关完它，不另设时限：每张计划逐项受同一上限约束，
+   * 先冻的总会关完；否则现组一张计划。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
-    if (this.#closing)
-      return awaitWithTimeout(this.#closing, timeoutMs, limit =>
-        this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`),
-      );
-    return closeActivations([this], timeoutMs, this.logger);
+    return this.#closing ?? closeActivations([this], timeoutMs, this.logger);
   }
 }

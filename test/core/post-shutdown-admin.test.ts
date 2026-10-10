@@ -380,7 +380,7 @@ describe('停机中 unload 快路径', () => {
     expect({ outcome, unloaded, saved }).toEqual({ outcome: 'ok', unloaded: false, saved: ['writer:last'] });
     expect(unloadMs, `unload 应立即返回，实际 ${unloadMs}ms`).toBeLessThan(400);
     expect(
-      warnings.filter(x => x.includes('超过 800ms') || x.includes('等待在飞拆卸超过')),
+      warnings.filter(x => x.includes('超过 800ms')),
       warnings.join(' | '),
     ).toEqual([]);
   });

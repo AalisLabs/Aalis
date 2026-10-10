@@ -142,7 +142,7 @@ export class DisposableChain {
  * `setTimeout`/`clearTimeout` 是各 JS 运行时共有的宿主全局，登记在 core 的宿主全局白名单里
  * （test/core/architecture.test.ts 守卫）。
  *
- * 仅供 core 内部（DisposableChain 逐项等待、激活合流等待在飞拆卸、事件总线限时等待监听器）复用，
+ * 仅供 core 内部（DisposableChain 逐项等待、Resources 等初始化与交接、事件总线限时等待监听器）复用，
  *   不从包根导出。
  * @internal
  */

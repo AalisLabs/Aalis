@@ -15,7 +15,7 @@ import {
 import { Resources } from '../../packages/core/src/infrastructure/resources.js';
 import { EventBus } from '../../packages/core/src/primitives/events.js';
 import { HubRegistry, hub } from '../helpers/hub.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 内核与原语的边角路径：超时放弃等待、重入退订、已被整体清走后的旧句柄等。
@@ -80,26 +80,6 @@ describe('Resources 段收口等在飞撤回', () => {
 
     expect(order, '快的迟到项在超时前已落定').toEqual(['fast']);
     expect(warnings).toEqual(['Resources "t": 等待 迟到登记的清理 [late-stuck] 超过 30ms，放弃等待']);
-  });
-});
-
-describe('Activation 等待在飞拆卸', () => {
-  it('激活已被根激活的关闭计划接管：后来者的 disposeAsync 超过自己的上限时告警并放弃等待', async () => {
-    const { app, warnings } = world();
-    const child = activationHost(app).create('child');
-    child.resources.onDispose(never, 'stuck');
-
-    let rootClosed = false;
-    const closingRoot = rootActivation(app)
-      .disposeAsync(200)
-      .then(() => {
-        rootClosed = true;
-      });
-    await child.disposeAsync(30);
-
-    expect(rootClosed, '后来者按自己的 30ms 返回，不等在飞的根激活计划').toBe(false);
-    expect(warnings).toContain('激活 "child": 等待在飞拆卸超过 30ms，放弃等待');
-    await closingRoot;
   });
 });
 
