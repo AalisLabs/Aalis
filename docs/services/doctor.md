@@ -183,12 +183,12 @@ export default definePlugin({
 }
 ```
 
-`doctor.use.registerCheck` 内部用 `follow` 持续订阅 `'doctor'`：doctor 每次上线都会重新挂载 check，doctor 下线或本插件 dispose 时自动解注册。因此即使 doctor 比你晚加载，也不会漏注册。
+`doctor.use.registerCheck` 经资源口的 `registrar` 登记：doctor 不在时先记下，上线时挂上；doctor 换人时整体重挂到新的那一家；本插件关闭时与原语同一拍撤回。因此即使 doctor 比你晚加载，也不会漏注册。doctor 在场时它拒收的登记原样抛给调用方。
 
 ### 命名约定
 
 - `id` 用「领域.子项」点分前缀（`storage.roots`、`env.node`、`plugins.errored`），避免与他人撞车。
-- 同 `id` 重复注册以最后一次为准，覆盖时会打一条 debug 日志。
+- 同 `id` 重复注册以最后一次为准。同一激活再登记是替换（先撤回自己原来那条）；别的激活已登记同一 `id` 时，doctor 覆盖它并打一条 debug 日志。
 - `category` 影响报告分组；没有合适分类时用 `'other'`。
 
 ---

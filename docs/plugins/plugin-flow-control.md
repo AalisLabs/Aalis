@@ -23,6 +23,7 @@ export default definePlugin({
     provide,
     storage: optional(storage),
     messageArchive: optional(messageArchive),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) { /* 见源码 */ },
 });

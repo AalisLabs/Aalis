@@ -43,7 +43,7 @@ await plugins.use.bounce(lifecycle.use.id);
 | 服务消失时必须停下（顶层插件转 pending） | 服务消失时可以保留主功能 |
 | 选择层与业务层与 optional **相同**（业务层是提供者形状的活句柄或契约自定义的绑定） | 只差激活闸，不差 API；用前先看 `present` |
 
-没有默认注入——`uses` 写了什么，插件就只能碰到什么。内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）同样要声明才会出现在 `apply` 参数里；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。
+没有默认注入：`apply` 只收到 `uses` 里声明的各项，内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）也一样；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。`uses` 说明插件依赖什么，不是授权边界：插件是同进程的可信代码（见 [安全模型](concepts/security-model.md)）。
 
 以下是普通服务，同样须显式 uses：
 
@@ -84,6 +84,8 @@ sessionHistory.follow(history => {
 - 拒绝被隔离并报告，不证明旧资源已释放。旧清理永不落定会阻塞交接。
 
 往 hub 登记（工具 / 命令 / 页面 / 预处理器）走业务层的登记方法：`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`agent.use.registerPreprocessor`。它们用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
+
+关停保护覆盖声明的服务的全部提供者：整机停机时，你经 `of(id)` 或 `list()` 条目用到的、不是此刻选中的那一家，同样等你关完才收尾。单独卸载、停用或重启某个提供者时，并入同一批先关的只有此刻选中它的 required 下游；你以 optional 声明它，或经 `of(id)`、`list()` 条目用到它，它照样先走：之后经 `of(id)` 与 `list()` 条目的访问抛 `ServiceUnavailableError`，`use` 换到下一家、选不到时同样抛错，调用处要能处理。
 
 长期缓存 `services.use.get` / `services.use.all(desc)[i].instance` 拿到的原始实例：关停边不保护这份引用。提供者有失效逻辑则抛，没有则可能静默成功。
 
@@ -165,6 +167,10 @@ lifecycle.use.onDispose(() => {
 ### 不要放入
 
 通过 `events.use.on` / `hooks.use.middleware` / `provide.use` / 业务层的 `register` 登记的东西都会随激活撤回。手动再退订可能 double-free。
+
+### 事件处理器里的异步工作
+
+撤回只摘掉监听，不等已经在执行的处理器：处理器里发起的异步工作，在你的 `onDrain` / `onDispose` 执行期间可能仍在跑。要在关闭前完成的，自己记下这些 Promise，在 `onDrain` 里等；要停下的，传 `lifecycle.use.signal`。处理器里另起、没有 `return` 或 `await` 的 Promise，`emit` 不等它，它的拒绝也不经监听器的错误隔离，要自己接住。
 
 ### 边界：在清理回调里访问其它服务
 
@@ -369,7 +375,7 @@ declare module '@aalis/core' {
 
 没把描述符写进 `uses` 时，动态 `services.use.get('llm')` 没有类型可依凭，由调用方自行收窄。
 
-实现包的 `provides` 也用同一份描述符——保持「接口契约 → `-api` 包 / 实现 → 实现包」的单向依赖。
+实现包的 `provides` 也用同一份描述符——保持「接口契约 → `-api` 包 / 实现 → 实现包」的单向依赖。自己写契约包时照 [契约约定](design/contract-conventions.md) 写。
 
 ---
 
@@ -537,4 +543,5 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
 - [docs/architecture.md](architecture.md) — 整体架构
 - [docs/core/context.md](core/context.md) — 插件定义与能力
 - [docs/core/plugin.md](core/plugin.md) — PluginManager
+- [docs/design/contract-conventions.md](design/contract-conventions.md) — 写契约包时遵守的约定
 - [docs/design/service-persistence.md](design/service-persistence.md) — 各服务 bounce 时的状态保持情况

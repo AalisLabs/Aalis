@@ -79,6 +79,8 @@ interface BoundAgent extends AgentService {
 
 `registerPreprocessor` 走 `registrar`：同名替换，提供者换人自动重挂，随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。不要对 `AgentService.registerPreprocessor` 自己传归属——门面已代填。
 
+plugin-file-reader 只经预处理器处理文件附件，没有别的入口：agent 提供者不支持预处理器时，文件附件不被处理（不入库、不生成描述，`read_uploaded_file` 也找不到），插件不记日志。
+
 ## 预处理器
 
 ```ts

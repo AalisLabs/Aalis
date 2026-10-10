@@ -51,7 +51,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 消费方每次激活装配 `uses` 时，core 为每项声明造一个选择层，并对每个目标各调一次描述符的 `bind`，返回值就是该目标的业务句柄：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标按 id 固定那一家，`list()` 条目的 `use` 与 `follow` 交给 `attach` 的句柄的目标钉在那一条登记上（首次取用时各调一次 `bind`）。钉住的目标退役时（`follow` 这次挂载的清理落定；`list()` 的条目不再对外之后的下一次 `list()`），它的 `bind` 经资源口登记的跟随、登记与 `track` 随之撤回，不留到激活关闭。bind 可以包装业务方法（如 `llm` 给请求盖上调用方 id：`chat: req => port.provider.chat({ ...req, caller: port.id })`）、加登记方法，改不了选谁。传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
 
 - `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。
-- `registrar({ key, register })`：按键登记到提供者上的条目。同键替换，提供者换人时整体重挂，关闭时与原语同一拍撤回。
+- `registrar({ key, register })`：按键登记到提供者上的条目。同键后调用者胜出（替换先前那条），提供者换人时整体重挂，关闭时与原语同一拍撤回。
 - `track(off, label?)`：binder 自己持有、不属于任何提供者的资源，例如它自建的定时器或对外部来源的订阅。`off` 在这次激活的撤回段执行；返回一次性的退订，手动退订启动的异步清理同样由关闭等到。
 - `id` / `identity` / `logger`：这次激活的逻辑名、资源身份（见下文）与日志器。
 - `provider` / `present`：目标那一家的活句柄（规则同业务句柄：每次访问成员重新解析，缺席时访问成员抛错；提供者是函数时可直接调用），与它此刻在不在。在转发之上加或改成员用 `Object.assign(Object.create(port.provider), { ... })`。
@@ -70,7 +70,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 ## 资源身份
 
-资源口的 `identity` 是这次激活的不透明资源身份（`symbol`）。`id` 是日志、展示、路由用的逻辑名；归属与核对用 `identity`，不从 `id` 字符串推断。
+资源口的 `identity` 是这次激活的不透明资源身份（`symbol`）。`id` 是日志、展示、路由用的逻辑名；core 的归属与核对用 `identity`，不从 `id` 字符串推断。枢纽服务在自己的登记本上记下的 `port.id` 只用于展示与按登记方分层，撤回由 `registrar` 交回的退订驱动。
 
 `identity` 是调用方身份：提供者据它认出调用方、把登记归到这次激活。它按激活区分，同一 `id` 的前后两次激活（如 bounce 前后）身份不同，旧激活迟到的释放不会落到新激活上；按插件持久的状态（命名空间、存档）用 `id`。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.follow` 释放（attach 里以 `port.identity` 取得接口，返回的清理调用接口的释放方法），提供者换人与这次激活关闭时都会释放。binder 不要把 `identity` 交给这次激活以外的代码，否则别处的登记会记到这次激活名下。
 

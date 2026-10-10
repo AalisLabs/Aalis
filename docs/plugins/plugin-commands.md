@@ -23,6 +23,7 @@ export default definePlugin({
     app: appService,
     events,
     hooks,
+    lifecycle,
     logger,
     config,
     provide,
