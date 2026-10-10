@@ -147,7 +147,7 @@ describe('停机回归', () => {
         enable: () => app.plugins.enable(id),
         unload: () => app.plugins.unload(id),
         disable: () => app.plugins.disable(id),
-        bounce: () => app.plugins.bounce(id, { config: { changed: true } }),
+        bounce: () => app.plugins.bounce(id),
         updateConfig: () => app.plugins.updateConfig(id, { changed: true }),
       };
       for (const [action, run] of Object.entries(actions)) {

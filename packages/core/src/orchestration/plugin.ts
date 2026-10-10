@@ -443,39 +443,37 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 更新插件配置：`bounce(instanceId, { config })` 的薄壳，独立成名只为让调用点
-   * （WebUI / 配置文件热重载）语义清晰。禁用态只换配置、保持禁用，启用时按新配置激活。
+   * 更新插件配置并热重载：换上新 config 后按 bounce 重启。禁用态只换配置、保持禁用，启用时按新配置激活。
+   * @returns false 表示找不到 entry、'disposed' 终态、停机进行中，或新 config 无法拷贝（保留旧配置）；其余同 bounce
    */
   async updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
-    return this.bounce(instanceId, { config });
+    const entry = this.#target('updateConfig', instanceId);
+    if (!entry) return false;
+    // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
+    // entry 持有自己的拷贝：插件经内置 config 就地改嵌套不得写穿调用方的对象。拷贝失败时保留旧配置并拒绝
+    try {
+      entry.config = cloneConfigObject(config);
+    } catch (err) {
+      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无法拷贝，保留旧配置: ${summarizeError(err)}`);
+      return false;
+    }
+    return entry.state === 'disabled' || this.bounce(instanceId);
   }
 
   /**
-   * 增量重载单个插件（核心入口）：换上新 config（如有）→ 拆掉当前激活 → 转 pending → 重算后重新激活。
+   * 增量重载单个插件（核心入口）：按现有配置拆掉当前激活 → 转 pending → 重算后重新激活；换配置走 updateConfig。
    * `error` 态插件会被重置为 pending 重试。
    *
    * 正在用本插件所提供服务的 required 下游随之重启：先于本插件收尾、关闭，本插件重新激活后按拓扑序
    * 重新激活；optional 依赖经 follow 在换人时交接。不换代码：跑的仍是注册时的那份定义。要换代码走
-   * `unload` + `register`。disabled 态只换上新 config、保持禁用（启用时按它激活），不重建。
+   * `unload` + `register`。
    *
-   * @returns false 表示找不到 entry、disabled 态且不带 config、'disposed' 终态、停机进行中（拒绝重建），或新 config 无法拷贝（保留旧配置）。
+   * @returns false 表示找不到 entry、disabled 态、'disposed' 终态、停机进行中（拒绝重建）。
    */
-  async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
+  async bounce(instanceId: string): Promise<boolean> {
     const entry = this.#target('bounce', instanceId);
     if (!entry) return false;
-    const newConfig = opts?.config;
-    if (newConfig) {
-      // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
-      // entry 持有自己的拷贝：插件经内置 config 就地改嵌套不得写穿调用方的对象。拷贝失败时保留旧配置并拒绝
-      try {
-        entry.config = cloneConfigObject(newConfig);
-      } catch (err) {
-        this.#logger.warn(`bounce: 插件 "${instanceId}" 的新配置无法拷贝，保留旧配置: ${summarizeError(err)}`);
-        return false;
-      }
-    }
     if (entry.state === 'disabled') {
-      if (newConfig) return true;
       this.#logger.warn(`bounce: 插件 "${instanceId}" 处于 disabled 态，跳过`);
       return false;
     }

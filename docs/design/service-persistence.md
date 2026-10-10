@@ -76,7 +76,7 @@ provider bounce 时，此刻 required 选中它的 active 下游（传递闭包�
 // dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 @aalis/runtime 的 PluginLoader.reload）
 await plugins.use.bounce('@aalis/plugin-foo');
 
-// 配置变化后的标准入口（bounce(id, { config }) 的薄壳）
+// 配置变化后的标准入口：换上新配置再按 bounce 重启
 await plugins.use.updateConfig(instanceId, newConfig);
 ```
 

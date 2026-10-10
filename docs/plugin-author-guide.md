@@ -21,7 +21,7 @@
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，激活撤回会从容器注销 |
 | 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
-| 插件配置变更触发热重载 | **调用 `updateConfig()`**（`bounce(instanceId, { config })` 的薄壳）。PluginManager 负责拆掉激活并重算。下游**不会**一律级联重启 |
+| 插件配置变更触发热重载 | **调用 `updateConfig()`**（换上新配置再按 `bounce` 重启；`bounce` 只按现有配置重启）。PluginManager 负责拆掉激活并重算。下游**不会**一律级联重启 |
 
 选中的那一家换人不一律重启消费者。下游的业务句柄 `use` 每次访问都重新解析；有状态资源用 `follow`，登记用登记型业务层。
 
