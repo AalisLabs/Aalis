@@ -73,7 +73,7 @@ describe('plugin-user-relation: memory 换胜者后读写跟随当前胜者', ()
     const before = host.relation.use as RelationService;
     await before.observePerson('onebot', 'u1');
 
-    expect(host.services.use.prefer(memory, 'mem-low')).toBe(true);
+    host.services.use.prefer(memory, 'mem-low');
     await app.plugins.idle();
     expect(host.relation.use, '换胜者不应重启 user-relation').toBe(before);
 

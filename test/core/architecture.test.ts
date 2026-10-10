@@ -702,7 +702,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 三个回调改为构造参数、字段私有只读。
 // 2631 → 2645：b5 S6（用户选甲，含 restart 阶段守卫）——start 单飞、停机开始后 start 记 warn 返回、启动途中停机不再发
 // app:started；restart 只受理一次、未受理而停机已开始时抛错。抬高 14 行对应 S6 方案甲。
-const CORE_CODE_LINE_CEILING = 2645;
+// 2645 → 2641：b5 P0-7（用户选甲）——独占期间不再拒绝偏好，prefer 一律记下、返回 void。
+const CORE_CODE_LINE_CEILING = 2641;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
