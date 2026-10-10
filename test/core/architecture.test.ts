@@ -673,7 +673,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 「未在宽限内停止」转 error 与激活身份复查。抬高 3 行对应 S2 方案丁。
 // 2550 → 2543：同批 P1-5（用户选方案丁）——关停依赖环保留 required / optional 区分，纯 required 环放行环内全部收尾并告警，
 // 删去强行放行一个阶段的分支与「激活树只有两层」的前提。
-const CORE_CODE_LINE_CEILING = 2543;
+// 2543 → 2553：同批 S3（用户选方案甲）——依赖丢失引起的连带退场也按传递闭包成批，与管理动作共用闭包循环；
+// 判据是「这批关完后该 required 服务无人提供」（容器新增 survives），振荡点名去重。抬高 10 行对应 S3 方案甲。
+const CORE_CODE_LINE_CEILING = 2553;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

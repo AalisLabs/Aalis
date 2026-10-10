@@ -264,7 +264,7 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 
 每轮 recompute 先按 provider→consumer 拓扑排序（Kahn，同时就绪者按登记序），然后：
 
-1. **Phase A 成批关闭**：本轮目标不再是 active 的（含 required 依赖已不在、仍在后台初始化的），它们之间的次序由关停编排按实际绑定决定。
+1. **Phase A 成批关闭**：本轮目标不再是 active 的（含 required 依赖已不在、仍在后台初始化的），连同 required 服务会随这批一起失去全部提供者的下游，它们之间的次序由关停编排按实际绑定决定。
 2. **Phase B 正向遍历 activate**：提供者先于消费者 active。单个激活至多等 `AppOptions.slowThresholdMs`（默认 60000），超过即 warn 点名、转入后台，接着激活后面的插件；后台期间它登记的服务不对外，依赖方保持 pending，它落定后另触发一次重算。
 
 如本轮有变动则进入下一轮，直到稳定或达到轮次上限（`maxRounds = 2×插件数 + 8`）。

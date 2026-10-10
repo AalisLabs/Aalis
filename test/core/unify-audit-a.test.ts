@@ -131,6 +131,43 @@ describe('关停编排', () => {
     }
   });
 
+  it('依赖丢失的连带退场：随这批一起失去全部提供者的下游同批收尾，收尾时上游仍在', async () => {
+    const w = world();
+    const gate = defineService<object>('zz-aa-cascade-gate');
+    const mem = defineService<Sink>('zz-aa-cascade-mem');
+    const offGate = w.app.bind({ provide }).provide(gate, {});
+    await w.app.plugin(
+      definePlugin({
+        name: 'mem',
+        uses: { gate, provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          let closed = false;
+          provide(mem, {
+            save(data) {
+              if (closed) throw new Error('mem 已关闭');
+              w.saved.push(data);
+            },
+          });
+          lifecycle.onDispose(() => {
+            closed = true;
+          });
+        },
+      }),
+    );
+    await w.app.plugin(
+      definePlugin({
+        name: 'agent',
+        uses: { mem, lifecycle },
+        apply: ({ mem, lifecycle }) => void lifecycle.onDrain(() => mem.require().save('agent:last')),
+      }),
+    );
+    await w.app.plugins.idle();
+    offGate(); // 非管理撤回：mem 丢了 gate，agent 自己没丢东西
+    await w.app.plugins.idle();
+    expect(w.saved, w.warnings.join(' | ')).toEqual(['agent:last']);
+    expect(w.app.plugins.getStatus().map(p => p.state)).toEqual(['pending', 'pending']);
+  });
+
   it('停机计划在飞时并发 unload 一个提供者：汇入计划，不抢在消费者之前拆', async () => {
     const w = world();
     const store = defineService<Sink>('zz-aa-store2');
