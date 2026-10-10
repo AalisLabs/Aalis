@@ -39,7 +39,7 @@ interface ServiceView<T = unknown> {
 
 `priority` 是普通数字：越大越优先。没有预设档位，数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 `configSchema`。默认 `0`；要盖过参考实现，取一个更高的值（如 `50`）。
 
-`services.prefer` / `unprefer` / `preferred` 会 emit `service:preference-changed`，从而触发 `follow` 重挂。不要直接调容器层的 `prefer`。所有者也可以在 WebUI 的 Services 页面设置偏好。
+`services.prefer` / `unprefer` 会 emit `service:changed`，从而触发 `follow` 重挂。不要直接调容器层的 `prefer`。所有者也可以在 WebUI 的 Services 页面设置偏好。
 
 ---
 

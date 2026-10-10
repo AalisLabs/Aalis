@@ -75,25 +75,14 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await observer.activation.disposeAsync();
   });
 
-  it('provide：不产生幽灵服务，也不向活总线发 service:registered/unregistered', async () => {
+  it('provide：不产生幽灵服务，也不向活总线发 service:changed', async () => {
     const { make, lines } = makeWorld();
     const observer = make('observer');
     const dead = make('dead');
     await dead.activation.disposeAsync();
 
     const seen: string[] = [];
-    observer.caps.events.on(
-      'service:registered' as never,
-      ((name: unknown) => {
-        seen.push(String(name));
-      }) as never,
-    );
-    observer.caps.events.on(
-      'service:unregistered' as never,
-      ((name: unknown) => {
-        seen.push(`un:${String(name)}`);
-      }) as never,
-    );
+    observer.caps.events.on('service:changed', name => void seen.push(name));
 
     const off = dead.caps.provide(defineService('ghost-svc'), { v: 1 });
     // 事件总线是异步 emit——冲刷微任务后仍必须零事件

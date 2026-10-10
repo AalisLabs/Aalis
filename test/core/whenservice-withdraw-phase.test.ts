@@ -173,7 +173,7 @@ describe('follow cleanup 走撤回段', () => {
     });
     // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
     await app.stop();
-    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:unregistered 引爆，原语登记尚未切断').toBe(false);
+    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:changed 引爆，原语登记尚未切断').toBe(false);
   });
 
   it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {

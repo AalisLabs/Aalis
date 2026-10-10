@@ -18,7 +18,7 @@ import {
   hostConfig,
   isConfigSaveRefused,
 } from '@aalis/api-host-config';
-import { type App, events, type PluginDefinition, parseInstanceId, provide, services } from '@aalis/core';
+import { type App, type PluginDefinition, parseInstanceId, provide, services } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
   type ConfigSchema,
@@ -346,13 +346,13 @@ async function reloadSecretSharers(
 }
 
 /**
- * 把文档接到 App：以 host-config 服务独占登记在根激活上，应用文档里的服务偏好，
- * 并在服务上线时记录它有无用户偏好。须在注册任何插件之前调用，偏好才先于全部提供者生效。
+ * 把文档接到 App：以 host-config 服务独占登记在根激活上，应用文档里的服务偏好。
+ * 须在注册任何插件之前调用，偏好才先于全部提供者生效。
  * `opts` 传交给配置同步（withPluginConfigSync / installConfigHotReload）的同一份：host-config 的
  * `trimUnknownFields` 据此声明宿主的裁剪政策（缺省与配置同步一样按裁剪）。
  */
 export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {
-  const host = app.bind({ events, provide, services });
+  const host = app.bind({ provide, services });
   // 失败在这里记一笔并标记已处理：不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
   const save = (): Promise<void> => {
     const done = (async () => {
@@ -494,10 +494,6 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     },
   });
   for (const [name, contextId] of Object.entries(store.getServicePreferences())) host.services.prefer(name, contextId);
-  host.events.on('service:registered', name => {
-    const pref = store.getServicePreferences()[name];
-    if (pref) app.logger.debug(`服务 "${name}" 注册时存在用户偏好: ${pref}`);
-  });
 }
 
 // ----- helpers -----

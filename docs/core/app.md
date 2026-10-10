@@ -66,9 +66,8 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 
 ### `app.start()`
 
-1. 发出 `app:starting` 事件
-2. 发出 `app:ready` 事件（sticky）
-3. 发出 `app:started` 事件（sticky）
+1. 发出 `app:ready` 事件（sticky）
+2. 发出 `app:started` 事件（sticky）
 
 每一步都逐个等监听器返回后才推进；单个监听器至多等 `slowThresholdMs`，超过即 warn 点名登记者（插件实例 id，宿主为 `root`），不再等它、转向下一个，它之后的拒绝照常按监听器抛错上报。`start()` 不等转入后台的插件激活：它们的 `app:ready` / `app:started` 监听器可能在自己的 `apply` 完成之前就被调用。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
 

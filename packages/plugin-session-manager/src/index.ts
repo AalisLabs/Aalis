@@ -1610,11 +1610,9 @@ async function run(caps: Caps): Promise<void> {
 
   // 全局默认层的「模型」就是 llm 服务的偏好：偏好从别处改了（宿主启动时应用）、llm 的提供者上下线（偏好指向的模型在不在、
   // 服务实际用的那一个随之变）同样算会话设置变了
-  for (const event of ['service:registered', 'service:unregistered', 'service:preference-changed'] as const) {
-    events.on(event, name => {
-      if (name === llm.name) void events.emit('session:config:changed');
-    });
-  }
+  events.on('service:changed', name => {
+    if (name === llm.name) void events.emit('session:config:changed');
+  });
 
   // ===== 会话状态 =====
   // 回合真正开始时（agent:input:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」

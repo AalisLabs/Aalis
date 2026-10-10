@@ -118,7 +118,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   const { host, logger } = deps;
   const services = host.runtime.services;
 
-  // 先标记为 activating，防止 service:registered 事件导致重入
+  // 先标记为 activating，防止 service:changed 事件导致重入
   entry.state = 'activating';
 
   const activation = host.create(entry.instanceId, entry.config);
@@ -170,7 +170,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     entry.error = undefined;
     entry.retriesLeft = undefined;
     // 转入过后台的激活此刻上线服务：先写 active，上线触发的重算才看得到它已激活
-    for (const name of services.release(activation.owner)) host.runtime.notify('service:registered', name);
+    for (const name of services.release(activation.owner)) host.runtime.notify('service:changed', name);
     logger.info(`插件已激活: ${entry.instanceId}`);
   } catch (err) {
     // apply 拒绝也不能夺回停机已接管的拆卸责任；资源由同一计划回滚。

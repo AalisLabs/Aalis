@@ -51,7 +51,7 @@ export class ActivationHost {
     resources.onCut(() => {
       const removed = runtime.services.unregisterByOwner(owner);
       runtime.events.unregisterByOwner(owner);
-      for (const name of removed) runtime.notify('service:unregistered', name);
+      for (const name of removed) runtime.notify('service:changed', name);
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
     this.#owners.set(owner, activation);

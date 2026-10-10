@@ -292,7 +292,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 ## 7. 边界与注意事项
 
 - **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `uses required:['process','storage']`。第三方 backend 若要自己拿依赖，请在 `uses` 里声明 `process` / `storage`，不要依赖 media 的内部 runtime。
-- **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:registered`/`service:unregistered`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
+- **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:changed`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应可能是 maxTokens 不足、上下文超限或超时，这些都被统一标为 `[音频] 识别失败（…详见日志）`。不要据此判断「这段音频没人声」。
 - **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按本会话生效主模型的 vision 能力——有则直通原图，无则由识别模型转文字；也可显式钉死 `passthrough`/`describe`。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接吃（需主模型 audio 能力）。
 - **没有能看图的模型时图照样存下**：到达识别找不到能描述图片的识图处理器时，每张图只落盘写成不带描述的引用，这条消息另加一行 `[附了 N 张图，当前无法查看]`，不留空气泡、原图不丢；识别失败或返回空串的，引用照留、描述写「获取或识别失败，内容未知」。plugin-media 同时向 doctor 报 `service/media.vision` 警告。

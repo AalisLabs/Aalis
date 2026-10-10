@@ -8,7 +8,7 @@
 
 owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发，只认宿主契约、不认具体插件（守卫见 [plugin-webui-server](./plugin-webui-server.md#概述)）：
 
-- **功能位**：握手回发送、回滚、压缩三项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）服务在不在。这三个服务上线或下线（核心的 `service:registered`、`service:unregistered` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
+- **功能位**：握手回发送、回滚、压缩三项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）服务在不在。这三个服务可能变了（核心的 `service:changed` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
 - **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted`、回合进出、审批的推出与结算、后台任务的开始、结束与删除各推一条 `sessions/changed`，带变了的会话连同各级父会话的摘要与最新的分组。

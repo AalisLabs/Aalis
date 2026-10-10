@@ -192,8 +192,7 @@ async function run(caps: Caps): Promise<void> {
       () => true,
     );
   };
-  events.on('service:registered', refreshFeatures);
-  events.on('service:unregistered', refreshFeatures);
+  events.on('service:changed', refreshFeatures);
 
   /**
    * 把这些会话连同各级父会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组：父会话的摘要里有按子树算的字段

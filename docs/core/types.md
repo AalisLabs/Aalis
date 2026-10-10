@@ -169,13 +169,10 @@ core 的扩展点只有 `AalisEvents`（core 自持基础设施事件，从来�
 
 ```typescript
 interface AalisEvents {
-  'service:registered': [name: string];
-  'service:unregistered': [name: string];
-  'service:preference-changed': [name: string];
+  'service:changed': [name: string];
   'plugin:loaded': [instanceId: string];
   'plugin:unloaded': [instanceId: string];
   'plugins:changed': [];
-  'app:starting': [];
   'app:ready': [];
   'app:started': [];
   'app:restarting': [];

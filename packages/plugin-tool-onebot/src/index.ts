@@ -620,7 +620,7 @@ export default definePlugin({
       registerToolsOnce();
       if (!toolsRegistered) logger.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
     });
-    events.on('service:registered', name => {
+    events.on('service:changed', name => {
       if (name === platformService.name) registerToolsOnce();
     });
   },

@@ -61,7 +61,7 @@ export class PluginManager implements PluginManagerService {
   /**
    * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
    * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
-   * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
+   * service:changed 反应式 recompute 会被**排队**（而非立即跑——那会看到
    * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 recompute 统一消化。
    *
    * 用计数器而非布尔：dispose hook 内可能同步级联调用 disable/unload（级联
@@ -78,7 +78,7 @@ export class PluginManager implements PluginManagerService {
    */
   #queued = false;
   /**
-   * 全局关机标志。app.stop() 在 dispose 前置位，service:registered / unregistered 触发的
+   * 全局关机标志。app.stop() 在 dispose 前置位，service:changed 触发的
    * 反应式重算都会因此跳过——避免「正在关机还去 bounce
    * 一个永远不会被重新激活的插件」这种无意义噪声，也避免下游插件 dispose 中
    * 试图 register 命令 / 监听服务等动作触发误重入。
@@ -153,12 +153,9 @@ export class PluginManager implements PluginManagerService {
       },
     };
 
-    // 监听服务注册/注销，路由到统一 recompute()。
+    // 服务可能变了就路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
-    const boundEvents = host.bind(host.root, { events }).events;
-    for (const event of ['service:registered', 'service:unregistered'] as const) {
-      boundEvents.on(event, name => this.#kick(`${event}:${name}`));
-    }
+    host.bind(host.root, { events }).events.on('service:changed', name => this.#kick(`service:changed:${name}`));
   }
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
@@ -702,7 +699,7 @@ export class PluginManager implements PluginManagerService {
   #toBackground(entry: PluginRecord, activation: Activation): void {
     this.#background.add(activation);
     const runtime = this.#host.runtime;
-    for (const name of runtime.services.hold(activation.owner)) runtime.notify('service:unregistered', name);
+    for (const name of runtime.services.hold(activation.owner)) runtime.notify('service:changed', name);
     this.#logger.warn(
       `插件 "${entry.instanceId}" 激活超过 ${this.#slowMs}ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放`,
     );

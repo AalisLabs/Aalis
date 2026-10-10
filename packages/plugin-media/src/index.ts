@@ -417,11 +417,9 @@ function run(caps: Caps): void {
     }
   };
   refreshAudioPrefer();
-  for (const ev of ['service:registered', 'service:unregistered'] as const) {
-    caps.events.on(ev, (changed: string) => {
-      if (changed === 'asr' || changed === 'llm') refreshAudioPrefer();
-    });
-  }
+  caps.events.on('service:changed', name => {
+    if (name === 'asr' || name === 'llm') refreshAudioPrefer();
+  });
 
   // 注册 analyze_image / update_image_description 工具
   registerMediaTools(caps, svc);

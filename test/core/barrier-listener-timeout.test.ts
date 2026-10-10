@@ -44,7 +44,7 @@ function world(options: Partial<AppOptions> = {}) {
 }
 
 describe('屏障监听器超时', () => {
-  it('启动三个屏障各挂一个不返回的监听器：start 照常完成，逐个点名登记者，后面的监听器照常执行', async () => {
+  it('启动两个屏障各挂一个不返回的监听器：start 照常完成，逐个点名登记者，后面的监听器照常执行', async () => {
     const w = world();
     const ran: string[] = [];
     await w.app.plugin(
@@ -58,14 +58,11 @@ describe('屏障监听器超时', () => {
       }),
     );
     await w.app.plugins.idle();
-    w.host.events.on('app:starting', never);
-    w.host.events.on('app:starting', () => void ran.push('starting'));
     w.host.events.on('app:started', never);
     w.host.events.on('app:started', () => void ran.push('started'));
     await within(w.app.start(), 2000, 'start');
-    expect(ran).toEqual(['starting', 'ready', 'started']);
+    expect(ran).toEqual(['ready', 'started']);
     expect(w.warns.filter(text => text.includes('未返回'))).toEqual([
-      '事件 "app:starting" 的监听器超过 30ms 未返回（来自 root），不再等待，继续后续步骤',
       '事件 "app:ready" 的监听器超过 30ms 未返回（来自 hanging-plugin），不再等待，继续后续步骤',
       '事件 "app:started" 的监听器超过 30ms 未返回（来自 root），不再等待，继续后续步骤',
     ]);

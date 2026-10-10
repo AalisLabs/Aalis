@@ -89,8 +89,7 @@ function world(options: Partial<AppOptions> = {}) {
   apps.push(app);
   const host = app.bind({ events, services, provide });
   const trace: string[] = [];
-  host.events.on('service:registered', name => void trace.push(`+${name}`));
-  host.events.on('service:unregistered', name => void trace.push(`-${name}`));
+  host.events.on('service:changed', name => void trace.push(`~${name}`));
   host.events.on('plugin:loaded', id => void trace.push(`loaded:${id}`));
   host.events.on('plugin:unloaded', id => void trace.push(`unloaded:${id}`));
   host.events.on('plugins:changed', () => void trace.push('changed'));
@@ -209,7 +208,7 @@ describe('慢激活转入后台', () => {
     expect(w.host.services.inspect(store)).toEqual([]);
     expect(w.host.services.names()).not.toContain(store.name);
     // 阈值前照常可见（apply 里 provide 当场登记），转入后台时撤下
-    expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`+${store.name}`, `-${store.name}`]);
+    expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`~${store.name}`, `~${store.name}`]);
 
     // 后台激活成功：先写 active 再上线服务，依赖方随之自动激活，不需要另调管理动作
     gate.resolve();
@@ -217,38 +216,39 @@ describe('慢激活转入后台', () => {
     expect(w.status('slow-store')?.state).toBe('active');
     expect(got).toEqual([true]);
     expect(w.host.services.get(store)).toEqual({ ready: true });
-    expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`+${store.name}`, `-${store.name}`, `+${store.name}`]);
+    expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`~${store.name}`, `~${store.name}`, `~${store.name}`]);
     expect(w.trace).toContain('loaded:slow-store');
     expect(w.trace).toContain('loaded:dependent');
   });
 
-  it('后台期间继续 provide 与退订：不发服务事件；上线时一并对外', async () => {
+  it('后台期间登记 N 条：每条都发 service:changed，触发的重算合并成至多两轮；上线前解析不到', async () => {
     const w = world();
-    const late = defineService<{ n: number }>('zz-slow-late');
-    const dropped = defineService<{ n: number }>('zz-slow-dropped');
+    const late = Array.from({ length: 20 }, (_, n) => defineService<{ n: number }>(`zz-slow-late-${n}`));
     const gate = deferred();
     releases.push(gate.resolve);
+    let from = -1;
     await w.app.plugin(
       definePlugin({
         name: 'late-provider',
         uses: { provide },
-        provides: [late],
+        provides: late,
         async apply({ provide }) {
           await sleep(60);
-          provide(late, { n: 1 });
-          provide(dropped, { n: 2 })();
+          from = w.trace.length;
+          for (const [n, descriptor] of late.entries()) provide(descriptor, { n });
           await gate.promise;
         },
       }),
     );
-    await until(() => w.status('late-provider')?.slow === true, '转入后台');
-    await sleep(60);
-    expect(w.trace.filter(t => t.includes('zz-slow-'))).toEqual([]);
-    expect(w.host.services.get(late)).toBeUndefined();
+    await until(() => from >= 0, '后台期间登记');
+    await sleep(30);
+    const during = w.trace.slice(from);
+    expect(during.filter(t => t.startsWith('~zz-slow-late-'))).toHaveLength(late.length);
+    expect(during.filter(t => t === 'changed').length, '在飞一轮加合并排队的一轮').toBeLessThanOrEqual(2);
+    expect(w.host.services.get(late[0])).toBeUndefined();
     gate.resolve();
     await until(() => w.status('late-provider')?.state === 'active', '落定');
-    expect(w.trace.filter(t => t.includes('zz-slow-'))).toEqual([`+${late.name}`]);
-    expect(w.host.services.get(late)).toEqual({ n: 1 });
+    expect(w.host.services.get(late[0])).toEqual({ n: 0 });
   });
 
   it('后台激活失败进 error；它登记的服务从未对外上线，依赖方仍 pending', async () => {
@@ -272,17 +272,13 @@ describe('慢激活转入后台', () => {
       { definition: definePlugin({ name: 'dependent', uses: { store }, apply() {} }) },
     ]);
     await until(() => w.status('failing')?.slow === true, '转入后台');
-    const before = w.trace.filter(t => t.endsWith(store.name));
     gate.resolve();
     await until(() => w.status('failing')?.state === 'error', '进 error');
     await w.app.plugins.idle();
     expect(w.status('failing')?.error).toBe('初始化失败');
     expect(w.status('failing')?.slow).toBeUndefined();
     expect(w.status('dependent')?.state).toBe('pending');
-    expect(
-      w.trace.filter(t => t.endsWith(store.name)),
-      '拆卸不补发下线：它早已不对外',
-    ).toEqual(before);
+    expect(w.host.services.get(store)).toBeUndefined();
   });
 
   it('apply 很快失败、失败回滚的清理慢于阈值：不算慢激活，flight 等回滚收完', async () => {

@@ -62,8 +62,7 @@ export class ServiceContainer {
    * `provide(descriptor, impl)` 处约束。
    *
    * @param owner 清理归属（注册方这次激活的身份），拆卸时按它整体摘除。
-   * @returns 退订闭包；返回这次是否摘掉了一条对外可见的条目——同一条目退订两次、已被 unregisterByOwner
-   *   清走，或归属暂不对外（见 {@link hold}）时为 false，门面据此决定要不要发 `service:unregistered`。
+   * @returns 退订闭包；条目已不在（退订过、已被 unregisterByOwner 清走）时无动作
    */
   register(
     name: string,
@@ -71,7 +70,7 @@ export class ServiceContainer {
     contextId: string,
     owner: symbol,
     options?: { priority?: number; label?: string; exclusive?: boolean; descriptor?: object },
-  ): () => boolean {
+  ): () => void {
     // 空实现会骗过 require() 的缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
     if (instance === null || instance === undefined) {
       throw new Error('provide 的实现不能为空');
@@ -104,10 +103,9 @@ export class ServiceContainer {
       // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
       const current = this.#entries.get(name);
       const idx = current?.indexOf(entry) ?? -1;
-      if (!current || idx < 0) return false;
+      if (!current || idx < 0) return;
       current.splice(idx, 1);
       if (current.length === 0) this.#entries.delete(name);
-      return !this.#held.has(owner);
     };
   }
 
@@ -127,14 +125,6 @@ export class ServiceContainer {
    */
   release(owner: symbol): string[] {
     return this.#held.delete(owner) ? this.namesOf(owner) : [];
-  }
-
-  /**
-   * 该归属是否暂不对外
-   * @internal
-   */
-  isHeld(owner: symbol): boolean {
-    return this.#held.has(owner);
   }
 
   /**
@@ -186,7 +176,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 按清理归属移除本次激活注册的所有 entry，返回对外少了提供者的服务名列表（归属暂不对外时为空）。
+   * 按清理归属移除本次激活注册的所有 entry（暂扣随之解除），返回摘掉了条目的服务名。
    *
    * 按 owner 而非 contextId：同名激活（内部构造重名、拆卸在飞时同名新激活）各有各的
    * owner，互不误清。一个激活登记的多条（各带 entryId）同 owner，一并清掉。
@@ -201,8 +191,8 @@ export class ServiceContainer {
       if (list.length < before) removed.push(name);
       if (list.length === 0) this.#entries.delete(name);
     }
-    // 暂不对外的条目从未（或已不再）对外可见：摘除不算对外少了提供者，暂扣随之解除
-    return this.#held.delete(owner) ? [] : removed;
+    this.#held.delete(owner);
+    return removed;
   }
 
   /** 列出所有已登记的服务名，含暂不对外的归属名下的（登记事实） */
@@ -257,7 +247,7 @@ export class ServiceContainer {
    * 哪怕它的 priority 数值低于其它 entry。
    *
    * @returns true 表示偏好已记录（即使目标 entry 当下尚未注册也会接受——一旦注册即生效）
-   * 插件经 `services.prefer()` 调用（额外发出 service:preference-changed 触发绑定更新）；
+   * 插件经 `services.prefer()` 调用（额外发出 service:changed 触发绑定更新）；
    * 直接调用容器不会通知绑定层。
    * @internal
    */

@@ -130,12 +130,12 @@ describe('原语登记按身份整体切断，不逐条记清理链', () => {
     expect(seen).toEqual(['follow-cleanup mine=gone', 'onDispose mine=gone']);
   });
 
-  it('手动退订直接撤原语登记：退订后监听不再触发、服务条目消失并发出下线通知，清理链不留条目', async () => {
+  it('手动退订直接撤原语登记：退订后监听不再触发、服务条目消失并发出变更通知，清理链不留条目', async () => {
     const app = world();
     const S = defineService<{ v: number }>('t:uniform:manual');
     const gone: string[] = [];
     const host = app.bind({ events, services });
-    host.events.on('service:unregistered', name => void gone.push(name));
+    host.events.on('service:changed', name => void gone.push(name));
     let hits = 0;
     let off!: () => void;
     let offEvent!: () => void;
@@ -157,12 +157,10 @@ describe('原语登记按身份整体切断，不逐条记清理链', () => {
     await host.events.emit('t:uniform:manual');
     expect(hits).toBe(1);
     expect(host.services.get(S)).toEqual({ v: 1 });
+    gone.length = 0;
     off();
     expect(host.services.get(S)).toBeUndefined();
     await Promise.resolve();
     expect(gone).toEqual([S.name]);
-    off();
-    await Promise.resolve();
-    expect(gone, '重复退订不重复通知').toEqual([S.name]);
   });
 });

@@ -235,7 +235,6 @@ export class App {
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
-    await this.#events.emit('app:starting');
 
     // 注：消息路由由网关插件承担，不在 core。
     await this.#events.emit('app:ready');

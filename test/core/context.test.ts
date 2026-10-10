@@ -296,14 +296,14 @@ describe('ServiceRef.follow 多 provider（#8.3）', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(attached).toEqual(['winner']); // 新败者上线同样不打扰
 
-    // 撤掉胜者 entry（provide 的 dispose 自带 service:unregistered 通知）
+    // 撤掉胜者 entry（provide 的退订自带 service:changed 通知）
     disposeWinner();
     await new Promise(r => setTimeout(r, 0));
     expect(cleaned).toEqual(['winner']);
     expect(attached).toEqual(['winner', 'loser']);
   });
 
-  it('preferService 切偏好触发重挂（service:preference-changed）', async () => {
+  it('preferService 切偏好触发重挂（service:changed）', async () => {
     const ctx = makeFixture();
     const attached: string[] = [];
     const cleaned: string[] = [];
@@ -329,7 +329,7 @@ describe('ServiceRef.follow 多 provider（#8.3）', () => {
     expect(attached).toEqual(['default', 'alt', 'default']);
   });
 
-  it('新败者注册（service:registered 但胜者不变）不触发重挂', async () => {
+  it('新败者注册（service:changed 但胜者不变）不触发重挂', async () => {
     const ctx = makeFixture();
     let calls = 0;
     ctx.caps.provide(defineService('__hub'), { id: 'top' }, { priority: 100 });
@@ -390,7 +390,7 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
     const ctx = makeFixture();
     let cleanupRan = 0;
     let dispose: () => void = () => {};
-    // provider 后到：让 sync 由 service:registered 事件触发，此时 dispose 已就绪
+    // provider 后到：让 sync 由 service:changed 事件触发，此时 dispose 已就绪
     dispose = ctx.host.bind(ctx.activation, { ref: defineService('svc') }).ref.follow(() => {
       dispose(); // cb 内同步触发自身 dispose（链式卸载场景）
       return () => {
@@ -398,7 +398,7 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
       };
     });
     ctx.caps.provide(defineService('svc'), { v: 1 });
-    await tick(); // 等 service:registered 异步派发到观察器
+    await tick(); // 等 service:changed 异步派发到观察器
     expect(cleanupRan).toBe(1); // 新 cleanup 被立即执行，而非挂上后永不触发
   });
 });
@@ -425,25 +425,18 @@ describe('Activation.disposeAsync 不变量', () => {
     await expect(ctx.activation.disposeAsync()).resolves.toBeUndefined();
   });
 
-  it('provide 的退订闭包调两次只广播一次 service:unregistered；拆卸已清走的条目不再广播', async () => {
+  it('provide、偏好切换、退订与拆卸都发 service:changed(name)', async () => {
     const root = makeFixture();
     const seen: string[] = [];
-    root.caps.events.on('service:unregistered', name => {
-      seen.push(name);
-    });
-    const childA = bindActivationFixture(root.host, root.host.create('plugin-a'));
-    const off = childA.caps.provide(defineService('__t:svc'), { v: 1 });
+    root.caps.events.on('service:changed', name => void seen.push(name));
+    const child = bindActivationFixture(root.host, root.host.create('plugin-a'));
+    const off = child.caps.provide(defineService('__t:svc'), { v: 1 });
+    root.caps.services.prefer('__t:svc', 'plugin-a');
+    root.caps.services.unprefer('__t:svc');
     off();
-    off();
-    await new Promise(r => setTimeout(r, 0));
-    expect(seen).toEqual(['__t:svc']);
-
-    const child = bindActivationFixture(root.host, root.host.create('plugin-b'));
-    const offB = child.caps.provide(defineService('__t:svc2'), { v: 2 });
-    await child.activation.disposeAsync(); // 原语切断的 unregisterByOwner 已摘掉条目并广播过一次
-    offB();
-    await new Promise(r => setTimeout(r, 0));
-    expect(seen.filter(n => n === '__t:svc2')).toHaveLength(1);
+    child.caps.provide(defineService('__t:svc2'), { v: 2 });
+    await child.activation.disposeAsync();
+    expect(seen).toEqual(['__t:svc', '__t:svc', '__t:svc', '__t:svc', '__t:svc2', '__t:svc2']);
   });
 
   it('异步 flush 窗口内：服务已不可取、账本登记已不可见（注销先于清理链）', async () => {
