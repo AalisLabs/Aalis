@@ -29,12 +29,11 @@ export interface PluginStatusEntry {
   state: PluginState;
   provides?: string[];
   reusable?: boolean;
-  /** 完整 uses 声明的快照；所有服务统一参与依赖解析，key 保留 apply 参数名。 */
+  /**
+   * 完整 uses 声明的快照，依赖信息只在这里：所有服务统一参与依赖解析，key 保留 apply 参数名；required 参与激活闸，
+   * optional（包了 optional() 的）不参与
+   */
   uses: Array<{ key: string; service: string; kind: 'required' | 'optional' }>;
-  /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务；能力披露用：该插件「要调用哪些子系统」） */
-  requiredServices?: string[];
-  /** 不参与激活闸的依赖服务名（uses 里包了 optional 的） */
-  optionalServices?: string[];
   error?: string;
   /** 激活超过 `AppOptions.slowThresholdMs` 仍未完成、已转入后台（state 为 activating）时为 true，否则不给 */
   slow?: boolean;

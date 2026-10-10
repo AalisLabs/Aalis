@@ -22,10 +22,6 @@ export interface PluginEntry {
    * 「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」。
    */
   error?: string;
-  /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务） */
-  required: string[];
-  /** 不参与激活闸的依赖服务名 */
-  optional: string[];
 }
 
 /**
