@@ -116,7 +116,7 @@ export interface PreferenceScope {
 
 /**
  * 动态查询与偏好管理（管理、展示面用）。查到的服务不是声明依赖：不参与激活闸，
- * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。get / all / inspect 按全局口径（不看本插件偏好）。
+ * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。get / all 按全局口径（不看本插件偏好），inspect 不给 `for` 也是。
  * 偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
  */
 export interface Services {
@@ -125,8 +125,11 @@ export interface Services {
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
   /** 当前有提供者的全部服务名（与 get / all / inspect 同一口径：转入后台、尚未完成激活的提供者不算） */
   names(): string[];
-  /** 只读登记元数据（不含实例） */
-  inspect(key: ServiceKey): ServiceInfo[];
+  /**
+   * 只读登记元数据（不含实例）。给 `for`（插件实例 id）即按那个插件的解析顺序排列，选中的那一条带 selected 与 basis，
+   * 与它的 `caps.xxx.list()` 同一条规则；不给即全局口径
+   */
+  inspect(key: ServiceKey, scope?: PreferenceScope): ServiceInfo[];
   /** 偏好的提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey, scope?: PreferenceScope): string | undefined;
   /** 设偏好：指向的那家不在场照样记下，在场后生效；它不在时按下一级挑。服务有独占条目且不是它时返回 false */
@@ -157,7 +160,7 @@ export function coreProviders(
     get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
     all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
     names: () => container.getServiceNames().filter(name => container.get(name) !== undefined),
-    inspect: key => container.inspect(keyName(key)),
+    inspect: (key, scope) => container.inspect(keyName(key), scope?.for),
     preferred: (key, scope) => container.getPreferred(keyName(key), scope?.for),
     prefer: (key, contextId, scope) => {
       const ok = container.prefer(keyName(key), contextId, scope?.for);
