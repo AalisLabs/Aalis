@@ -312,7 +312,7 @@ describe('卸载在途时再 unload', () => {
 });
 
 describe('非 Error 抛出值的文案', () => {
-  it('注册期校验以非 Error 值抛出：按 String 化的原因记 warn 并拒绝注册', async () => {
+  it('注册期校验以非 Error 值抛出：按 String 化的原因记 error 并拒绝注册', async () => {
     const w = world();
     const definition = {
       name: 'odd-def',
@@ -322,7 +322,7 @@ describe('非 Error 抛出值的文案', () => {
       apply() {},
     } as unknown as PluginDefinition;
     expect(await w.app.plugins.register(definition)).toBe(false);
-    expect(w.at('warn')).toContain('插件定义校验失败，拒绝注册: uses 读取失败');
+    expect(w.at('error')).toContain('插件定义校验失败，拒绝注册: uses 读取失败');
     expect(w.app.plugins.getPlugin('odd-def')).toBeUndefined();
   });
 
