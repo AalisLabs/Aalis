@@ -32,7 +32,7 @@ export default definePlugin({
   "files": ["dist"],
   "keywords": ["aalis-plugin"],
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.20.0 <1.0.0"
   }
 }
 ```
@@ -47,8 +47,8 @@ export default definePlugin({
 > 取到的目标，没写时取 `main`。
 >
 > `@aalis/core` 用 **peerDependency** 引用：core 在一个进程里只能装一份，写进 `dependencies` 时只要范围与宿主的
-> core 不相容，包管理器就会给插件另装一份，插件随即在加载时被拒绝（见 [第 7 节](#two-cores)）。范围用 **`>=0.17.0 <1.0.0`**：
-> 这是 `definePlugin` / 服务描述符首次成为公开面的版本。**1.0 之前 core 的公开面可能在次版本被删**，
+> core 不相容，包管理器就会给插件另装一份，插件随即在加载时被拒绝（见 [第 7 节](#two-cores)）。范围用 **`>=0.20.0 <1.0.0`**：
+> 这是现在的服务调用形状（选择层与业务层两层）首次出现的版本。**1.0 之前 core 的公开面可能在次版本被删**，
 > 用了更新的 API 就把下限再抬。别用 `^0.x` caret（只匹配单个次版本会把插件锁死）；也别用裸 `*`。
 
 ## 2. 声明 / 消费服务
@@ -296,8 +296,8 @@ npm 还须在宿主项目的 `.npmrc` 写 `install-links=true`，否则下一次
 
 ```json
 {
-  "dependencies": { "@aalis/core": ">=0.17.0 <1.0.0" },
-  "overrides": { "@aalis/core": ">=0.17.0 <1.0.0" }
+  "dependencies": { "@aalis/core": ">=0.20.0 <1.0.0" },
+  "overrides": { "@aalis/core": ">=0.20.0 <1.0.0" }
 }
 ```
 
