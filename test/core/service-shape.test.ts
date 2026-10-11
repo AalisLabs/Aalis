@@ -201,7 +201,12 @@ describe('选择层', () => {
     expect(pinned.get()).toBe('old');
     off();
     host.provide.use(kv, impl('new'), { entryId: 'a' });
-    expect(() => pinned.get()).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+    expect(() => pinned.get()).toThrow(
+      expect.objectContaining({
+        name: 'ServiceUnavailableError',
+        message: '服务 "zz-shape-kv" 不可用（"consumer" 钉住的 "a" 那条登记已失效，同一个 id 的现有登记要重新取句柄）',
+      }),
+    );
     expect(kvs.of('a').get()).toBe('new');
     expect(kvs.list()[0].use.get()).toBe('new');
   });
@@ -367,7 +372,7 @@ describe('follow 的句柄钉在挂上的那一条登记', () => {
     await app.plugins.unload('hub');
     expect(hub.guard).toBeUndefined();
     expect(warns).toEqual([]);
-    expect(() => held.guard).toThrow(expect.objectContaining({ name: 'ServiceUnavailableError' }));
+    expect(() => held.guard).toThrow(/（"guard" 钉住的 "hub" 那条登记已失效，同一个 id 的现有登记要重新取句柄）/);
   });
 
   it('钉住的句柄退役时撤掉它的 bind 登记的切断项：提供者换人多次，旧实例都可回收', async () => {

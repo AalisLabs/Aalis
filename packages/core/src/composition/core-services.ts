@@ -73,10 +73,15 @@ export interface LifecycleCap {
    * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
    * 依赖可用性取决于关停图：普通消费者先关，宿主根与循环依赖采用各自的阶段顺序；
    * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
-   * 回调不得 await 或返回同一关闭计划中后续阶段的完成 Promise（会互等）；计划外调用者仍可等待关闭完成。
+   * 回调不得 await 或返回要等本激活关完才落定的 Promise，否则两边互等到宽限（`disposeTimeoutMs`，为 0 时一直等）：
+   * 同一关闭计划中后续阶段的完成，以及对本插件所依赖的提供者（uses 里声明的服务，optional 也算）的管理动作——那份计划
+   * 要等本激活关完才让提供者收尾（调用约束见 PluginManagerService.bounce）。
    */
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
-  /** 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain */
+  /**
+   * 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain。
+   * 与 onDrain 一样，不得 await 对本插件所依赖的提供者的管理动作（会互等到宽限）
+   */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
 }
 export const lifecycle = builtin<LifecycleCap>('lifecycle');
