@@ -347,6 +347,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   /** 监听成功后的访问 URL；持久化 token 晚于监听读回时，据此重写 access.txt */
   let listeningUrl: string | undefined;
 
+  // 本激活自己发起、没有请求在等的写盘（token 与 access.txt）：收尾时等它们落定。停机、停用或重载返回之后本实例不再往
+  // 家目录里写，接手的实例写下的 access.txt 也不会被旧实例晚到的一次盖掉
+  const pendingWrites = new Set<Promise<void>>();
+  function trackWrite(work: () => Promise<void>): Promise<void> {
+    const running = work().finally(() => pendingWrites.delete(running));
+    pendingWrites.add(running);
+    return running;
+  }
+  lifecycle.use.onDrain(async () => {
+    await Promise.all(pendingWrites);
+  }, '等 token 与访问凭据落盘');
+
   /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」 */
   async function writeAccessFile(url: string, token: string): Promise<boolean> {
     const lines = [
@@ -380,7 +392,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   let tokenLoading: Promise<void> | undefined;
   caps.storage.follow(() => {
     if (tokenSettled) return;
-    tokenLoading = (async () => {
+    tokenLoading = trackWrite(async () => {
       try {
         const raw = await storage.readFile(tokenFileUri, 'utf-8');
         const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
@@ -389,7 +401,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           tokenFresh = false;
           if (existing !== authToken) {
             authToken = existing;
-            if (listeningUrl) void writeAccessFile(listeningUrl, authToken);
+            if (listeningUrl) await writeAccessFile(listeningUrl, authToken);
           }
           // 读回的照样按凭据重写一遍：文件原先的权限（别处拷来、按默认权限写下的）一律收紧
           await storage
@@ -408,7 +420,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       } catch (err) {
         logger.use.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
       }
-    })();
+    });
   });
   // storage 已在线时 follow 是同步首挂：等读回完成再继续，认证从第一个请求起就用持久化的 token
   if (tokenLoading) await tokenLoading;
@@ -1183,7 +1195,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       // 不把 token 打进日志（会落 latest.log / 被 /api/logs/* 回放 / 贴日志求助时外泄）。
       // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（按凭据写，只给本机用户读）。
       logger.use.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
-      void (async () => {
+      void trackWrite(async () => {
         // 先把文件写出来，再解析它的绝对路径：resolveLocalPath 走 realpath，文件尚未落盘会抛
         // ENOENT 被吞掉，于是「绝对路径」退化成原样重复一遍 URI——偏偏首启（新用户唯一需要
         // 这行的时刻）必然命中，二次启动因文件已在反而正常。两者原先都是 void，谁先到看调度。
@@ -1204,7 +1216,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           logger.use.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
         }
         logger.use.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
-      })();
+      });
       // 记的是宿主实例本身（业务句柄每次激活各一个，认不出同一个宿主）
       const host = services.use.get(appService);
       if (uiConfig.autoOpen && (tokenFresh || !host || !browserOpenedFor.has(host))) {
