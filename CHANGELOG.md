@@ -8,26 +8,20 @@
 
 ---
 
-## 未发布 · core 0.20（全面简化与服务调用形状统一）
+## 2026-10-11（core 0.20.0 minor；118 个包：100 minor / 18 新包）
 
-core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三个服务事件合成一个，关闭链去掉多余的内部概念并保证同一实例 id 的旧实例停下之前不起新实例，宿主与管理面每件事只留一种写法。同批迁移全部第一方契约包、插件与宿主，新增读日志的宿主服务 `@aalis/api-host-logs` 与按插件的服务偏好。core 定为 0.20.0；其余各包的档位与版本号在发布时按源码与 npm 实况核定，本节不写。
+本次发布合并两条线：core 0.20（全面简化与服务调用形状统一）与 Harness（新 WebUI、会话协议与会话服务、审批、家目录、白纸与作品发布等）。
 
-> **插件与契约包必须与 core 同批升级。** 已发布的插件与契约包的 `@aalis/core` peer 区间（`>=0.2.0`、`>=0.17.0`、`>=0.18.0`、`>=0.19.0`，上限都是 `<1.0.0`）都接受 0.20，包管理器不会拦下只升 core 的安装。配 core 0.20 时：
->
-> - runtime 还是旧版时，进程一启动就退出：`Aalis 启动失败: TypeError: host.provide is not a function`，一个插件都不加载，下面几条要等 runtime 也换成新版才看得到。runtime 换成新版而入口文件没改（不传 `appDir`）时，在解析家目录之前报「startAalis 缺少 appDir」并以 2 退出，指向升级指南。
-> - 旧版 api-agent 0.9.1、api-commands 0.7.0、api-doctor 0.7.0、api-tools 0.10.0、api-webui 0.11.1 以值导入已删的 `serviceRef`，加载时就失败，依赖它们的插件随之加载失败。旧版 api-hooks 的 `run` 调已删的 `port.require()`，得到被拒的 Promise（TypeError）；旧版 api-contributions 的 `collect` 同样调它，同步抛 TypeError。
-> - 没有自定义绑定的旧版契约包照常加载，辅助函数会坏：旧版 api-llm 的 `resolveLLMModel` / `listLLMModels`、api-storage 的网关与 `getStorageEntries`、api-platform 的辅助函数、api-trigger 的 `createBotNames` 调已删的 `.all()`，抛 TypeError；旧版 api-process 的网关与 api-trigger 的 `isActiveTrigger`、`archiveSwallowed` 读已删的 `.current`，得到 `undefined`：网关每次调用都报「未找到 process 服务」，`isActiveTrigger` 恒为 false，`archiveSwallowed` 不归档。
-> - 在 `apply` 里直接调内置项（`events.on`、`logger.info`、`lifecycle.onDispose`、`provide(...)`）或调 `.require()`、`.all()` 的插件抛 TypeError，进 `error`。`parseConfig(schema, caps.config, caps.logger)` 同样进 `error`：它把选择层当配置读，对选择层上 schema 外的键告警时调到不存在的 `warn`，抛 TypeError。
-> - 以下几种不报错，静默失效：`caps.x.current?.m()` 什么都不做；`if (caps.x.current)` 的分支不再进入；直接读 `caps.lifecycle.signal`、`caps.lifecycle.id`、`caps.config.<键>` 得到 `undefined`，带这个 `signal` 的 `fetch` 永不中止；不传 logger 的 `parseConfig(schema, caps.config)` 读到的是默认配置，schema 里有没有默认值的必填字段时抛「缺少配置项」、插件进 `error`；已改成 `events.use.on` 却仍监听 `service:registered` / `service:unregistered` / `service:preference-changed` 或 `app:starting` 的纯 JS 代码不再触发（TypeScript 下事件表是封闭的，编译报错；没改写的旧插件走不到这一步，`events.on` 先抛 TypeError）。
-> - 旧版契约包发布的类型声明引用已删的 `ServiceRef`，只改了注释的契约包也要重发。
->
-> 已有项目单独跑 `npm update`、或删掉锁文件重装，同样会装成新旧混搭：已发布的旧版插件对契约包写的是 `>=x <1.0.0`，会取到本批的新版契约包，作为嵌套副本装在旧插件下面（npm 对嵌套依赖的 peer 冲突只告警，退出码仍是 0）；启动后十几个插件加载失败（`does not provide an export named 'createStorageGateway'` 等），另有一批激活失败。create-aalis 生成的旧项目按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 升级。
->
-> 发布时受影响的第一方包同批发出：带 core peer 的包下限抬到 `>=0.20.0 <1.0.0`，含新包 api-host-logs（它用到资源口的 `port.provider`，现写的 `>=0.18.0` 不够；脚手架 create-aalis-plugin 生成的项目同样要抬，它生成的代码已经是 0.20 的写法）；依赖本批改了形状的契约包（下文「公开接口有不兼容改动」一组里的契约包，以及旧版配 core 0.20 就出错的 api-hooks、api-contributions）的包，对这些契约的 `dependencies` 下限抬到本批的新版本，只更新插件时不会留下旧版契约包。第三方插件按 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」一节改写后，把 core peer 下限抬到 `>=0.20.0`，对上述契约包的下限同样抬到本批的新版本。0.19 及以前生成的项目不能经旧版 WebUI 的插件市场升到本版：旧入口文件不传 `appDir`、`defaultHome`，更新后新进程起不来，回滚到旧版；按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 用 npm 升级。
+- 有改动的已发布包一律按次版本发布（100 个），其中 core 0.20.0、runtime 0.16.0、schema-config 0.15.0、create-aalis 0.7.0、create-aalis-plugin 0.12.0；首次发布 18 个（api-host-logs 与 Harness 一节「新包」一条的 17 个），版本即源码里的版本。
+- **插件与契约包必须与 core 同批升级。** 带 core peer 的包下限都是 `>=0.20.0 <1.0.0`，包之间的依赖下限抬到本批的新版本。第三方插件按 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」改写后，把 core peer 与所用契约包的下限抬到本批的版本。
+- api-session-confirm、plugin-session-confirm 已删除，执行 npm deprecate。
+- 不发布：没有改动的 schema-log 与 6 个 util 包停在已发布版本；plugin-trigger-laya、plugin-webui-client-example 是 `private` 包。
 
-待发布的包。下面的分组只按 core 0.20 线相对 Harness 节（`d2d96585b`）的改动分，共 116 个包；Harness 节的改动与它列的新包见那一节。两节合并发布，两节的说法不一致的（如 core peer 的下限、Harness 节写的不发版），以本节为准。分组里有 Harness 节的新包（如 api-approval、api-publish、api-remote-agent、plugin-paper），它们首次发布，分组与下文对它们写的「删」「改为」只相对 Harness 节的未发布版本，npm 上没有旧版。
+### core 0.20：全面简化与服务调用形状统一
 
-合并之后，相对已发布的版本（tag `core@0.19.1`）有改动的包共 120 个：118 个发布到 npm，其中 18 个首次发布（本节的 api-host-logs 与 Harness 节「新包」一条的 17 个）；plugin-trigger-laya 与 plugin-webui-client-example 是 `private` 包，不发布。另有 Harness 节删除的 api-session-confirm、plugin-session-confirm，执行 npm deprecate。没有改动的 schema-log 与 6 个 util 包停在已发布版本。各包的版本号与档位在发布时按源码与 npm 实况核定。
+core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三个服务事件合成一个，关闭链去掉多余的内部概念并保证同一实例 id 的旧实例停下之前不起新实例，宿主与管理面每件事只留一种写法。同批迁移全部第一方契约包、插件与宿主，新增读日志的宿主服务 `@aalis/api-host-logs` 与按插件的服务偏好。
+
+改动的包。下面的分组只按 core 0.20 线相对 Harness 一节（`d2d96585b`）的改动分，共 116 个包；两节说法不一致的，以本节为准。分组里有 Harness 一节的新包（如 api-approval、api-publish、api-remote-agent、plugin-paper），它们首次发布，下文对它们写的「删」「改为」只相对 Harness 一节的未发布版本，npm 上没有旧版。
 
 - 公开接口有不兼容改动：core；api-agent、api-approval、api-commands、api-doctor、api-llm、api-platform、api-process、api-publish、api-remote-agent、api-session-manager、api-storage、api-tools、api-trigger、api-webui；plugin-user-relation（包根导出的类改了构造参数）。
 - 行为变化或新增：runtime、create-aalis、create-aalis-plugin、api-host-config、plugin-adapter-onebot、plugin-agent、plugin-cli、plugin-commands、plugin-doctor、plugin-file-reader、plugin-media、plugin-memory-summary、plugin-memory-vector、plugin-package-manager、plugin-paper、plugin-session-manager、plugin-storage-local、plugin-tool-code-runner、plugin-tool-system、plugin-trigger-laya、plugin-user-profile、plugin-webui-client、plugin-webui-server、plugin-workflow、plugin-works-site。
@@ -36,11 +30,11 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 只改 README：schema-config。它的类型声明不引用 core 的服务类型，本节不要求重发；它在 Harness 节另有改动。
 - 新包：api-host-logs 0.1.0。
 
-### 不兼容变更与迁移
+#### 不兼容变更与迁移
 
 插件作者要改的写法逐条对照见 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」，本节不重复那张表。多数旧写法编译不过；编译得过、行为却变了的有：两参的 `parseConfig(schema, caps.config)`（第二参类型是 `unknown`）、拿句柄比对象身份或当 WeakMap 的键、缓存 `getPlugin()` 的返回值再读状态、按 `service:changed` 的次数记账，以及不经编译器的纯 JS 代码。
 
-#### 服务调用的两层形状（@aalis/core；全部契约包、插件与宿主）
+##### 服务调用的两层形状（@aalis/core；全部契约包、插件与宿主）
 
 - 删 `ServiceRef` 类型与 `serviceRef` 函数，选择层上没有 `current`、`require()`、`all()`。`uses` 里每一项装配成选择层 `ServiceSelection<B>`：`list()`、`use`、`of(id)`、`present`、`follow(attach)`，由 core 定义、每个服务一样、只读。业务层 `B` 是契约的接口（不给 `bind` 时就是提供者接口），经活句柄调用。规则见 [插件定义与能力](docs/core/context.md)。
 - 内置六项同样两层：`logger.use.info`、`events.use.on`、`lifecycle.use.onDispose` / `id` / `signal`、`provide.use(desc, impl)`、`config.use`、`services.use.get`。内置项的业务句柄在装配时取好本次激活的门面，拆卸之后照常可用；`of(非根 id)` 当场抛错。
@@ -54,7 +48,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
   - 加登记方法或包装业务方法的绑定写 `Object.assign(Object.create(port.provider), { ... })`；`Bound*` 接口 `extends` 提供者接口。写新契约照 [契约约定](docs/design/contract-conventions.md)。
 - 包根新增类型导出 `ServiceSelection`、`ProviderEntry`、`SelectionBasis`、`PreferenceScope`。
 
-#### 服务事件与偏好（@aalis/core、@aalis/api-host-config、@aalis/runtime、@aalis/plugin-webui-server）
+##### 服务事件与偏好（@aalis/core、@aalis/api-host-config、@aalis/runtime、@aalis/plugin-webui-server）
 
 - 删 `service:registered`、`service:unregistered`、`service:preference-changed`，合成 `service:changed(name)`：这个服务的提供者或选择可能变了，请重读。可能变化时就发，不保证恰好一次，也不说明变了什么；`provide`、退订、激活拆卸、激活转入后台与完成后上线、全局与本插件偏好的切换都发，转入后台的激活期间登记的服务同样发（此前不发，重读照样看不到它）。监听旧事件名的代码不报错、不再触发。
 - 删屏障事件 `app:starting`。
@@ -70,7 +64,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 依赖 `prefer` / `unprefer` 返回值的调用方删掉这层判断。偏好只由用户经管理面写（WebUI、配置文件），普通插件不调它们；插件要用某一家，在文档里写明，由用户设本插件偏好。
 - 传 `onBehalfOf` 的改传 `entryId`。
 
-#### 插件状态与管理动作（@aalis/core、@aalis/runtime、@aalis/plugin-webui-server、@aalis/plugin-package-manager）
+##### 插件状态与管理动作（@aalis/core、@aalis/runtime、@aalis/plugin-webui-server、@aalis/plugin-package-manager）
 
 - 旧实例停下之前不起新实例：激活关完仍有工作没落定（`apply` 或清理超过 `disposeTimeoutMs` 被放弃等待，或关闭后就地执行的清理还在跑）时，条目照写目标态，`PluginStatusEntry.lingering` 为 true，记一条 warn；这些工作落定之前同一 id 不起新实例（`bounce`、`updateConfig`、`enable`、依赖恢复与卸载后同 id 重新登记都一样），落定后按目标态继续，管理动作与 `idle()` 不等它。此前被放弃的初始化转 `error`（「未在宽限内停止」）、依赖恢复后不自动重试，清理超时只记 warn，新旧实例可能并存。永不落定的工作会让这个 id 一直等下去，只有重启进程能解决。
 - 删 `PluginStatusEntry.requiredServices` / `optionalServices` 与公开的 `PluginEntry.required` / `optional`。依赖信息只在 `getStatus()` 条目的 `uses` 里（每项 `{ key, service, kind }`）。webui-server 的 `/api/plugins` 照旧在服务端派生 `requiredServices` / `optionalServices`，HTTP 格式不变；市场依赖图与 package-manager 改从 `uses` 派生。
@@ -90,7 +84,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 靠「未在宽限内停止」的 `error` 发现卡住清理的，改看 `getStatus()` 的 `lingering` 与 doctor 的 `plugins.lingering`；清理里不要放永不落定的工作。
 - 停机后再 `start()` 一个 App 的嵌入宿主改为新建 App。
 
-#### 契约包
+##### 契约包
 
 - **api-storage**：删函数 `createStorageGateway`、`getStorageEntries`、`aggregateStorageRoots`、`getStorageRootConflicts`、`resolveStorageEntryForRoot`、`resolveStorageByPath`，常量 `StorageCapabilities`，类型 `StorageProviderEntry`、`AggregatedStorageRoot`、`StorageRootConflict`、`StorageCapabilityRegistry`、`StorageCapability`；直接调 `caps.storage.use`。业务层不再跨提供者聚合存储根：此前网关枚举全部 storage 条目，按 URI 的根名路由到登记那个根的条目，`listRoots` 合并各条目的根；现在调用只转发给选中的那一家，由它按根名路由。往只读根写的报错随之由网关的「存储根 X 不支持 write」变为提供者的「存储根 X 不允许该操作 (writable)」，按文案匹配的要改。业务层 `BoundStorage` 恒有 `resolveLocalPath`、`readFileRange`、`watch`，选中的那一家不支持时调用同步抛「存储提供者不支持 x」。新增 `own`（类型 `OwnStorage`）：插件私有目录 `pluginData:/<目录名>/` 的视图，目录名在 `@aalis` 与不带作用域的包是包名去掉开头的 `plugin-`，别的作用域写成 `<作用域>+<名>`（`@acme/plugin-x` 是 `acme+x`）；只收相对路径，越出目录、宿主绝对路径、存储地址都抛错，`own.uri(path)` 给完整地址。插件名取不出目录名时绑定抛错，声明了 `storage` 的插件激活失败，不论用不用 `own`。第一方插件原有的数据路径不变。第三方存储提供者：按旧约定只登记几个根、与 storage-local 并存的，升级后只有选中的那一家生效，不报错；一个提供者要提供全部根，要换掉整套存储就做完整的提供者，由用户经服务偏好选中（见 [storage 服务](docs/services/storage.md)）。
 - **api-process**：删 `createProcessGateway`，改用 `caps.process.use`（缺席时抛 `ServiceUnavailableError`）。
@@ -103,13 +97,13 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - **api-doctor**：`UnmetRoot` 新增 `{ kind: 'lingering', instance }`（「等待 X 的旧实例停下」），`PluginSnapshot` 带 `lingering`。按 `kind` 穷举的消费方补上这一支。
 - **api-webui**：`PluginListItem` 新增必有的 `servicePreferences`（本插件偏好）与 `serviceSelections`（声明的服务此刻各落到哪一家、依据是什么），以及 `lingering`；REST 契约新增 `POST` / `DELETE /api/plugins/:instanceId/services/:name/prefer`。
 
-#### 插件
+##### 插件
 
 - **plugin-storage-local**：只登记一个 `storage` 提供者（label「本地存储」，条目 id 即实例 id），全部根就绪后才登记，根在它内部路由。此前按根各登记一条（`${实例 id}/${根名}`），这些条目 id 与按根设的 storage 偏好随之失效：偏好不报错，按排名落回这唯一的一家，plugin-doctor 的 `services.preferences` 检查会报出，升级后从配置文件的 `servicePreferences` 里删掉。未知根同步抛「未知存储根: x（已注册根: …）」；跨根移动的报错改为「不能跨根移动」。
 - **plugin-file-reader**：删去 agent 不支持预处理器时退到 `agent:input:before` 中间件的回退，不再声明 `hooks`。agent 提供者不支持预处理器时，文件附件不被处理，插件也不记日志。
 - **plugin-user-relation**：包根导出的 `RelationStore` 构造参数由 `() => MemoryService` 改为 `MemoryService`，传业务句柄 `caps.memory.use`；`RelationService` 的构造参数 `embedding`、`consolidate` 选项里的 `llm.models` 与 `platform`、`findEventDuplicates` 选项里的 `llm.models` 由 `ServiceRef` 改为选择层 `ServiceSelection`。
 
-### 行为变化
+#### 行为变化
 
 - **core**：关闭一律异步，清理回调（`onDrain`、撤回、`onDispose`）不再在发起关闭的调用方的栈上执行（abort 监听器除外）；未 await 的管理动作返回时，目标可能尚未下线。
 - **core**：关停依赖边对声明的服务（required 与 optional）在编排那一刻的全部对外提供者建，此前只对选中的那一家。整机停机时，经 `of(id)` 或 `list()` 条目用到的非选中者也等消费者关完才收尾。
@@ -134,7 +128,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - **plugin-trigger-laya**（`private`）：托管的侧车停止宽限由 5 秒改为 3 秒，在 core 默认 5 秒的清理宽限内停下；`uses` 声明 `lifecycle`。
 - **plugin-works-site**：`uses` 由 `app` 改为 `services`，按宿主实例认领目标的判据随之改为 `services.get(appService)`（每个激活的句柄各不相同）；同宿主同目标的第二个实例照旧激活失败。
 
-### 新增
+#### 新增
 
 - **@aalis/api-host-logs**（新包）：`hostLogs` 描述符（服务名 `host-logs`），`recent(limit, { before?, match? })` 取本轮启动以来最后若干条，`subscribe(listener, { history? })` 先补发最近若干条再送此后的每一条，按 `seq` 递增、不重不漏，订阅归本次激活。由宿主提供，runtime 的 `createHostLogs()` 是 Node 宿主的实现（历史读家目录的 `logs/latest.log`），runtime 导出的 `FileLoggerHandle` 为此新增 `path`（日志文件的绝对路径）。插件读日志流改走它，不再直接订阅 core 的 `LogHub`（architecture 守卫拦下 core 与 runtime 之外的引用）。
 - **本插件偏好**：`services.prefer(name, id, { for })`、配置文件的 `pluginServicePreferences`、WebUI 插件详情的「服务偏好」。说明与「哪些服务不宜按插件分开选」见 [运行态与配置文档](docs/core/config.md) 的「服务偏好」一节。
@@ -142,7 +136,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - **api-storage 的 `own`**：插件私有目录的视图，见上文契约包一节。
 - **契约约定**：[docs/design/contract-conventions.md](docs/design/contract-conventions.md) 写下服务名、业务层、登记方法、在场判断、同步与异步、本插件偏好与业务调用入口的约定；现有契约与它不一致的地方另批收敛。
 
-### 修复
+#### 修复
 
 - 注入的 logger 抛错不再卡住插件状态机，`child` 派生失败也不外传。
 - 清理超时之后新旧实例不再并存（见上文「旧实例停下之前不起新实例」）。
@@ -155,27 +149,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - plugin-webui-server：启用、改配置、重载与新建实例之后，插件不缺服务、在等自己的旧实例停下时，回执写「尚未激活：等待 <实例> 的旧实例停下」，此前只写「尚未激活，结果以插件列表为准」。设服务偏好（全局与按插件）时提供者不存在，404 的说明改为中文。
 - create-aalis：full 档查插件目录时，`--registry` 指向的源回 200 却没有官方插件（镜像源多不支持检索），提示是哪个源、可以加 `--registry https://registry.npmjs.org` 重试；此前不提示，只有检索才列得出的官方插件一个都不装。
 
-## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
-
-插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列、服务归属校验、sticky 事件重复送达与配置拷贝失败的回执，并统一停机后的管理回执。停机回执的变化修的是「返回 true 却没有做任何事」的缺陷，core 按 patch 发布 0.19.1；core 0.20 留给内核全面简化。
-
-- 按次版本发布（9 个）：schema-config 0.14.0（字段类型表改为取值类型，`dynamicOptions` / `allowCustom` 移入）、api-llm 0.13.0（`llm-ref` 改为 `ModelRef`）、plugin-checkpoint 0.14.0、plugin-flow-control 0.13.0、plugin-trigger-policy 0.15.0（`scopes` 统一为数组，删除默认对象与 resolver）、plugin-mcp-client 0.13.0、plugin-mcp-server 0.13.0（args/env 与 `toolGroups` 的解析）、plugin-scheduler 0.14.0（`resolveConfig` 输入改为解析后的配置）、plugin-session-manager 0.14.0（平台 `think` 改为选项）。
-- 按 patch 发布（51 个）：core 0.19.1、runtime 0.15.1、api-agent 0.9.1、api-media 0.11.2、api-webui 0.11.1、create-aalis-plugin 0.11.1，以及其余 45 个只迁移配置读取或修复解析的插件。plugin-webui-server 0.14.1 与 plugin-webui-client 0.14.1 须同批升级。
-- plugin-trigger-laya 0.2.0 是 `private` 包，不发布到 npm。
-
-- `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
-- `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
-- sticky 事件（`app:ready` / `app:started`）派发进行中登记的监听器只收到一次。此前本轮派发与补发各送一次，在 `app:ready` 里建连接的 OneBot 适配器会因此建出两条连接。派发结束后才登记的仍在下一个微任务收到补发。
-- 配置无法拷贝（环状引用、getter 或 Proxy 抛错）时，`register` / `registerAll` / `bounce` / `updateConfig` 对该条返回 `false` 并记 warn，不再整体拒绝；`registerAll` 的其余条目照常登记，`bounce` 保留旧配置。
-- **字段类型扩展**：`SchemaFieldTypes` 的值由占位标记改为实际取值类型。自定义字段将 `custom: true` 改为 `custom: MyValue`；`api-llm` 0.13.0 已将 `llm-ref` 改为 `ModelRef`。依赖新版类型的消费者必须同步升级。`dynamicOptions` / `allowCustom` 由 schema-config 声明，`secret` 仍由 api-webui 声明；api-webui 0.11.1 的最终字段形状不变。
-- **配置解析行为**：`undefined` / `null` 表示缺省；有限数字和数字字符串按中立标量规则转换。普通无效字段按 schema 默认值回落或省略并告警；敏感地址、命令参数与启用边界使用 `onInvalid: 'error'`，显式无效时拒绝。提供拒绝规则的插件例外：tool-onebot 的开关写坏时按默认值处理并告警，插件照常激活，以免 OneBot 会话历史的访问限制随插件一起消失。MCP client 的坏 server 单独跳过，合法空字符串 argv 保留；storage-local 与 OneBot 的连接/根数组按整体严格策略处理，不会把坏项丢成默认配置后运行。
-- **旧作用域与平台模板**：flow-control 0.13.0、trigger-policy 0.15.0、trigger-laya 0.2.0、checkpoint 0.14.0 的 `scopes` 统一为数组。前三者旧 `null` 表示空范围，需转换为 `[]`；旧字符串按原分隔规则转换。session-manager 0.14.0 的平台 `think: true/false` 转为 `on/off`。运行时不拦截旧写法：旧字符串与 `''` 会告警并回落默认值，`null` 不告警、直接取默认值。升级前请用离线工具的检查模式核对配置，并且在升级后第一次经 WebUI 保存这些插件之前完成；详见 [配置迁移](docs/guide/config-migration.md)。
-- **MCP 暴露范围**：mcp-server 0.13.0 的 `toolGroups: null` 按缺省解析为 `[]`（全部组），旧版对此会拒绝启动。离线工具将其标为需人工处理，升级前明确允许的组或先禁用插件。数字组名会归一为字符串后精确匹配。mcp-client 0.13.0 的 args/env 使用数组/映射，旧文本须手工核对参数边界。
-- **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留原有 sessionId 派生规则，只写一半的 actor 照旧告警后按未指定处理（owner）；静态任务的 `actorPlatform` / `actorUserId` 写成布尔、数组、对象时拒绝激活（数字按字符串处理），不按留空处理成 owner 身份。
-- **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
-- **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。停机中或插件正在卸载时，启用、禁用、改配置被拒绝，返回 409 并说明配置未更改；插件不存在才返回 404。
-
-## 未发布 · Harness
+### Harness：新 WebUI、会话协议、审批、家目录与白纸等
 
 删除跨会话委派工具，`recent_messages` 提档，在线白纸（第一批），房间会话钉死出生平台、会话列表分区与停止键停掉子进程，宿主通知延续调用者的身份，send_attachment 的格式签名移入新包，作品提名与上站，戳一戳按目标区分点名，工具搜索的能力目录，家目录（第一部分与第二部分），会话协议与会话服务（新 WebUI 的第一部分），审批（新 WebUI 的第二部分，取代 session-confirm 的确认链），新 WebUI 的其余各部分（管理推送与登录加固、外壳与会话设置、页面契约第二版、插件前端、控件比例、插件区与深度思考档位、需要处理与用量、后台任务），删除自档案，删除第三方行为指令，单元 7 收尾第一批，改用 node:sqlite，上手与故障说明，报错普查第二批，单元 7 第六步整批收尾，全量压缩与按比例触发，会话来源字段，真实用量、裁剪标记与条数线，工作会话的结构性放行，结构化摘要，触及解析与受保护清单，设置层表与场所，以及凭据文件的权限与时间线里的图片。本节已合入 2026-10-01 发布的 core 0.19.1 与 schema-config 0.14.0。删除跨会话委派工具与 `recent_messages` 提档两节不需要抬包间依赖下限。其余各节要抬的下限列在各节里，一律抬到本批的新版本，即高于现已发布的 `@aalis/schema-message` 0.9.1、`@aalis/schema-config` 0.14.0、`@aalis/api-tools` 0.10.0、`@aalis/api-session-manager` 0.10.0、`@aalis/api-webui` 0.11.1、`@aalis/api-host-config` 0.1.0、`@aalis/api-gateway` 0.8.0、`@aalis/api-process` 0.8.0、`@aalis/api-code-sandbox` 0.6.0、`@aalis/api-memory` 0.7.1、`@aalis/api-agent` 0.9.1、`@aalis/api-platform` 0.9.0、`@aalis/api-authority` 0.10.0、`@aalis/api-storage` 0.7.0；新包对其余既有包的下限（如 plugin-paper 对 `@aalis/api-gateway` 写 `>=0.7.0`、plugin-remote-agent-cursor 对 `@aalis/util-network-guard` 写 `>=0.6.2`）用到的接口在已发布版本里都有，不必抬。`@aalis/core` peer 的下限见 core 0.20 节。
 
@@ -187,9 +161,9 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 有代码或契约改动（76 个）：schema-config、schema-message、runtime、create-aalis、create-aalis-plugin、api-agent、api-authority、api-code-sandbox、api-commands、api-doctor、api-gateway、api-host-config、api-llm、api-media、api-memory、api-package-manager、api-persona、api-platform、api-process、api-session-manager、api-storage、api-tools、api-trigger、api-webui、plugin-adapter-onebot、plugin-agent、plugin-asr-openai、plugin-asr-whisper-cpp、plugin-authority、plugin-checkpoint、plugin-cli、plugin-code-sandbox-os、plugin-commands、plugin-doctor、plugin-draw、plugin-embedding-ollama、plugin-file-reader、plugin-flow-control、plugin-gateway、plugin-image-sender、plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai、plugin-maimai、plugin-mcp-client、plugin-media、plugin-memory-history、plugin-memory-inmemory、plugin-memory-mongodb、plugin-memory-sqlite、plugin-memory-summary、plugin-memory-vector、plugin-message-archive、plugin-office、plugin-okx-trading、plugin-package-manager、plugin-persona、plugin-process-local、plugin-scheduler、plugin-session-manager、plugin-skills、plugin-storage-local、plugin-subtask、plugin-todo-list、plugin-tool-browser、plugin-tool-code-runner、plugin-tool-onebot、plugin-tool-search、plugin-tool-session、plugin-tool-system、plugin-tools、plugin-user-profile、plugin-user-relation、plugin-webui-client、plugin-webui-server、plugin-workflow。
 - 只改了注释或 README（4 个）：api-flow-control、plugin-trigger-policy（去掉跨会话委派的提法）、api-workflow（`AgentNodeSpec.sessionId` 的说明）、api-hooks（README）。Harness 的改动不需要为它们发版；它们在 core 0.20 节另有改动，随它发布。
 - 编译产物不变（2 个）：plugin-embedding-openai、plugin-websearch-serper 只删了为 `secret` 写的类型导入（编译后擦除）与 api-webui 开发依赖，编译出的 JS 与类型声明不变（只差 source map 行号与 devDependencies），运行行为不变。两者在 core 0.20 节另有改动，随它发布。
-- 各包的档位与版本号在发布时与 core 0.20 节一起，按合并后的源码与 npm 实况核定。各节末尾的「发布档位」只是那一节改动的依据；同一个包在几节里都有改动、或在 core 0.20 节另有改动的，合起来定。
+- 各节末尾的「发布档位」只是那一节改动的依据；本次一律按次版本发布，见本次发布开头。
 
-### 删除跨会话委派工具（@aalis/plugin-tool-session、@aalis/schema-message、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-agent）
+#### 删除跨会话委派工具（@aalis/plugin-tool-session、@aalis/schema-message、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-agent）
 
 plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两个工具，出于安全原因，不提供开关：
 
@@ -215,7 +189,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 要发布的包与档位（0.x 次版本可删公开 API）：plugin-tool-session、schema-message、api-persona、plugin-persona 按 minor 发布；plugin-agent 按 patch 发布。plugin-flow-control 的 `scopes` 配置说明去掉了「委派闸门」，只改说明文字，按 patch 发布。本节不需要抬任何包间依赖下限：删掉的字段与方法在第一方已没有使用方，plugin-tool-session 去掉了对 api-flow-control、api-hooks、api-persona、api-platform 的依赖。暂不升级 plugin-tool-session 的，委派工具仍在。要在旧版里关掉委派，把 plugin-tool-session 的 `crossSessionEnabled` 设为 `false`（旧版默认 `true`），或从多人平台的 `enabledToolGroups` 里去掉 `session-delegate`。
 
-### `recent_messages` 提档（@aalis/plugin-memory-history）
+#### `recent_messages` 提档（@aalis/plugin-memory-history）
 
 `recent_messages` 改为声明 `risk: 'sensitive'`，与 plugin-tool-session 的 `session_get_history` 同档：等级 0 的调用者被权限守卫拒绝（返回「权限不足」），等级 1 起照常可用，不弹确认。此前不声明 risk，按 public 处理，开了 `session-history` 组的会话里任何触发者都能调用。
 
@@ -233,7 +207,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 发布档位：plugin-memory-history 按 minor 发布。这是有意收窄一项经裁定维持 public 的能力，属于要附迁移路径的行为变化；0.9.1 那批按 patch 发布的收紧修的是非预期的默认值，性质不同。本节不需要抬任何包间依赖下限。
 
-### 在线白纸（第一批）（新包 @aalis/api-remote-agent、@aalis/plugin-remote-agent-cursor、@aalis/plugin-paper；@aalis/schema-message、@aalis/api-tools、@aalis/api-memory、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-memory-vector、@aalis/plugin-memory-history、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-user-profile、@aalis/plugin-llm-deepseek、@aalis/plugin-subtask、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/plugin-adapter-onebot）
+#### 在线白纸（第一批）（新包 @aalis/api-remote-agent、@aalis/plugin-remote-agent-cursor、@aalis/plugin-paper；@aalis/schema-message、@aalis/api-tools、@aalis/api-memory、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-memory-vector、@aalis/plugin-memory-history、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-user-profile、@aalis/plugin-llm-deepseek、@aalis/plugin-subtask、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/plugin-adapter-onebot）
 
 房间里真人提需求，模型调 `paper_task` 把任务交给远端编码代理（第一个提供者是 Cursor 云端代理）；宿主在房间里回显原文、排队、按天记账，跟踪每一轮到终态、取回成品、按轮入账，完成后以宿主通知回到房间，模型用 `paper_send` 把图片、GIF、MP4 或单个网页发回。说明见 `docs/plugins/plugin-paper.md`，安全边界与残余风险见 `docs/concepts/security-model.md`「远端代理与白纸」一节。
 
@@ -283,7 +257,7 @@ plugin-tool-session 删除跨会话委派工具组 `session-delegate` 及其两�
 
 发布档位：三个新包按 0.1.0 首发。plugin-adapter-onebot（媒体格式收窄）、plugin-storage-local（保留根名）按 minor 发布，附上面的迁移；schema-message、plugin-memory-history、plugin-tool-session 在本节之前已定为 minor。api-tools、api-memory 只做加法，plugin-agent、plugin-message-archive、plugin-memory-vector、plugin-user-relation、plugin-user-profile、plugin-llm-deepseek、plugin-subtask、plugin-checkpoint 是修复与加法，按 patch 发布。
 
-### 房间会话钉死出生平台、会话列表分区与停止键停掉子进程（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-webui-server、@aalis/plugin-workflow、@aalis/api-process、@aalis/plugin-process-local、@aalis/plugin-tool-system、@aalis/api-code-sandbox、@aalis/plugin-code-sandbox-os、@aalis/plugin-tool-code-runner）
+#### 房间会话钉死出生平台、会话列表分区与停止键停掉子进程（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-webui-server、@aalis/plugin-workflow、@aalis/api-process、@aalis/plugin-process-local、@aalis/plugin-tool-system、@aalis/api-code-sandbox、@aalis/plugin-code-sandbox-os、@aalis/plugin-tool-code-runner）
 
 IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的出生平台选平台档，跨会话召回的同平台也按出生平台算，入口平台只用来认出说话的人；会话带上种类与出生平台，会话列表按种类分区，IM 房间按首条真人入站收录；停止键能停掉 exec 与代码执行的子进程；code-sandbox-os 的启动探测不再拖满停机宽限。不需要改配置。
 
@@ -325,7 +299,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - api-agent（`token:request` 的说明）、api-workflow（`AgentNodeSpec.sessionId` 的说明）在本节只改了注释。
 - api-code-sandbox、plugin-process-local、plugin-tool-code-runner 本节有改动，但不用 core 0.18 的接口，`@aalis/core` peer 仍是 `>=0.17.0 <1.0.0`。
 
-### 宿主通知延续调用者的身份（@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-subtask）
+#### 宿主通知延续调用者的身份（@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-subtask）
 
 宿主通知可以延续某次工具调用的身份，后台任务的结束通知用它（见「后台任务」一节）；子任务的派发与追问按内部注入处理。不需要改配置。
 
@@ -341,7 +315,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 发布时要抬的包间依赖下限：plugin-agent 对 `@aalis/schema-message` 抬到含 `hostNotice.callerUserId` 的版本。
 
-### send_attachment 的格式签名移入新包（@aalis/plugin-image-sender、新包 @aalis/util-media-signature）
+#### send_attachment 的格式签名移入新包（@aalis/plugin-image-sender、新包 @aalis/util-media-signature）
 
 - 格式签名表移入新包 `@aalis/util-media-signature` 0.1.0（`detectMediaFormat`、`checkMediaHead`、`MEDIA_HEAD_BYTES`），plugin-adapter-onebot 的出站分流（见「在线白纸（第一批）」一节）用同一份；plugin-image-sender 依赖加这个包。
 - 核对通过的文件以 storage URI 交给平台适配器，不再预先换成 `file://<宿主路径>`：超过 onebot 适配器落盘上限（`attachmentCache.maxBytes`，缺省 10 MiB）的文件，此前 `file://` 原样交给实现端、适配器不核对，现在适配器按字节区间读出文件头再核对一次才交宿主路径。实现端在容器里时读不到宿主路径，超过 10 MiB 的本机文件照旧发不出去（送达方式未变）。
@@ -350,14 +324,14 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 
 - 第三方平台适配器收到的 `send_attachment` 附件，取自存储库的一律是 storage URI（如 `data:/images/…`），要经 storage 服务读取；此前解析得到本机路径时是 `file://<宿主路径>`。`@aalis/schema-message` 的 `MessageAttachment.data` 说明同步补上 storage URI（第一方生产者早已在发这种形式）。
 
-### 作品提名与上站（新包 @aalis/api-publish、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/util-offline-render；@aalis/plugin-paper、@aalis/plugin-draw、@aalis/plugin-storage-local、@aalis/plugin-checkpoint）
+#### 作品提名与上站（新包 @aalis/api-publish、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/util-offline-render；@aalis/plugin-paper、@aalis/plugin-draw、@aalis/plugin-storage-local、@aalis/plugin-checkpoint）
 
 作品提名与上站新增 `api-publish`、`plugin-publish-review`、`plugin-works-site` 和 `util-offline-render`。白纸增加提名与撤下工具；审核、隔离预览和作品站操作有 WebUI 入口。`manualReview` **默认关闭**，自动通过可继续发布；自动拒绝、不确定或模型调用失败先拦截并等待人工裁决。开启后，自动通过也须等待人工。结构检查与内容净化失败始终阻断。详见[审核配置](docs/plugins/plugin-publish-review.md)与[作品站配置](docs/plugins/plugin-works-site.md)。启用作品站后才会在后台部署。
 
 - **存储根保留名**：新增内部 `public` 根（家目录的 `stage/public/`），与 `paper` 一样不参与会话 checkpoint；自建同名用户根会被跳过并告警，升级前请改名。白纸提名的文件仍先走独立审核，不因位于该目录就自动上线。
 - **绘图引擎**：plugin-draw 改用 util-offline-render，默认尝试 Chromium 沙箱，失败后告警回落；作品审核要求沙箱。浏览器不再接管宿主 SIGINT，网络由请求拦截、解析规则和代理共同限制。
 
-### 白纸与作品发布的几项收尾（@aalis/plugin-paper、@aalis/plugin-publish-review）
+#### 白纸与作品发布的几项收尾（@aalis/plugin-paper、@aalis/plugin-publish-review）
 
 - 待提交的自动发布最长等 24 小时：创作结束后一直没能提交（发布目标或发布服务一直不可用）的，转为失败并通知来源房间。经 `works_nominate` 重新提名的，24 小时从重新提名时起算；重新提名时发布服务暂时不收（展示面暂未登记、待审额度或每日提名配额用完）的，保留待提交、按发布服务给的时间自动重试，工具回执写明已排队，不记成审核没通过；已写成待提交、随后读不到成品或提交出错的同样回已排队，稍后自动重试。暂时不可用时按 30 秒重试，不被别的任务的长时间等待推迟。
 - 多目标作品的某个展示面暂时缺席（重启、重载还没重新登记）时，沿用它上次核验过的地址，「已上线」保持不变。
@@ -373,13 +347,13 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 作品通知连续发不出去满 24 小时后放弃：审核页的「没发出的通知」可手动重发，doctor 报出条数（失败起点落盘，重启照算）。批准后复制时完整性失败的通知写「作品已通过审核，但上线前的文件完整性校验失败」。
 - 白纸页加「不带旧工程继续」：换新后旧工程包永久取不到时，owner 可以放弃交接，新代理接着用自己的工作区（或下一次新建不带旧包），成品与记录保留。
 
-### 作品集的外观（@aalis/plugin-works-site）
+#### 作品集的外观（@aalis/plugin-works-site）
 
 - 首页是作品卡片网格：缩略图、类型、标题、日期与摘要，没有缩略图时用标题首字作封面，跟随系统深浅色，手机单列。
 - 首页与作品页带分享信息（Open Graph），绝对地址取 `siteOrigin`；作品页只带标题与缩略图，铺满视口、不显示标题与摘要。
 - 下架页与 404 套站点样式并能回到作品集；日期固定为「2026 年 10 月 1 日」格式，不随宿主 locale 变。
 
-### WebUI 里的图片：没开页面照样保存，存储地址能显示，历史里能看到（@aalis/plugin-webui-server、@aalis/plugin-webui-client）
+#### WebUI 里的图片：没开页面照样保存，存储地址能显示，历史里能看到（@aalis/plugin-webui-server、@aalis/plugin-webui-client）
 
 - 发往 WebUI 会话的消息，此前没有在线页面时不归档，定时任务、白纸通知或刷新那一刻发的图会丢。现在会话历史就是收件箱：webui-server 先把别处不会存档的部分写进会话历史，写成了才回执送达。
   - 系统提示、作品通知、指令回复记成事件分隔条（不进模型上下文），图片、视频、音频记成附件，文件的记法见「管理推送、登录加固与会话文件」一节；她发出的也由 webui-server 自己记，不再取决于是否装了 image-sender；`history_ref` 重发的不再记一遍。
@@ -390,33 +364,33 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - 聊天里附件给的是存储地址（`send_attachment` 发本机文件、`paper_send` 都是）时，浏览器拿它当不了图片地址，图显示不出来。新增 `/api/media`：owner 才能取，按文件头判定类型，只提供图片、视频与浏览器能播的音频；客户端把存储地址换成这条路由。plugin-webui-server 依赖加 `@aalis/util-media-signature`。读文件出错只断开这次请求并记一条警告，页面中途断开不记。
 - 回看历史时，她发出的附件此前显示成 `[图片: … | ref:…]` 占位符原文；现在还原成图片、视频或音频，按相对路径（`data/images/…`）记的图片也能显示。
 
-### CLI 会话里的附件（@aalis/plugin-cli）
+#### CLI 会话里的附件（@aalis/plugin-cli）
 
 - `send_attachment`、`paper_send` 发往 CLI 会话的附件，终端每件写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档。音频的说明行写作「[音频]」，与归档占位符一致。
 - 发往 CLI 会话的纯文本消息（如作品通知）写到终端即算送达。plugin-cli 的 `@aalis/schema-message` 改为运行时依赖（用到的导出在已发布的 0.9.1 里都有，不必抬下限）。
 
-### paper_send 等平台确认收下（@aalis/plugin-paper、@aalis/schema-message、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-publish-review、@aalis/plugin-webui-server）
+#### paper_send 等平台确认收下（@aalis/plugin-paper、@aalis/schema-message、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-publish-review、@aalis/plugin-webui-server）
 
 - `paper_send` 与 `send_attachment` 一样等平台适配器确认：确认收下才记已交付；发送失败返回原因；没有适配器接手时直接报没有发出；等不到确认（最多 90 秒，或这一轮被中止）时返回「结果未确认，请勿重发」，当场按结果未知记下；迟到的确认补记已交付，迟到的确定失败撤掉结果未知。
 - 等回执的写法移进 `@aalis/schema-message`：新增 `awaitDelivery` 与 `DELIVERY_WAIT_MS`，plugin-image-sender 改用它，行为不变。
 - `OutboundDeliveryResult` 的失败分支带可选的 `unconfirmed: true`，表示结果未知、可能已经送达。plugin-adapter-onebot 只在失败全部由上传超时造成时带上它。plugin-paper 按成品记下结果未知：这件成品 paper_send 拒绝再发，同一任务的其他成品照常可发；这件任务不再进待交付提示，宿主也不再直接发送，完成通知写明已发出、平台没确认、不要重发；plugin-publish-review 的作品通知按已发出处理；send_attachment 不报告成功，也不劝重发。
 - 新增 `outboundMediaMessage`：出站图片、音频、视频的归档写法，plugin-image-sender 与 plugin-webui-server 共用，归档格式不变。
 
-### 戳一戳按目标区分点名（@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/api-trigger）
+#### 戳一戳按目标区分点名（@aalis/plugin-adapter-onebot、@aalis/schema-message、@aalis/api-trigger）
 
 - **plugin-adapter-onebot**：群里群友之间的戳一戳也转为入站，正文写「[戳一戳: <发起者> 戳了<被戳者账号>]」，戳机器人的仍写「戳了你」；此前群里只转戳机器人的，群友互戳直接丢掉。机器人自己发出的戳一戳（工具戳人后的回显）不转为入站；私聊里没带目标的按戳机器人算。给模型的提示改为按正文里的发起者与被戳对象理解事件，不把群友互戳当成有人戳她。
 - **schema-message**：`IncomingMessage` 新增可选的 `noticeTargetIsSelf`：通知动作是否指向机器人；戳一戳为 `false` 时是群友互戳，省略时按戳机器人处理。
 - **api-trigger**：`isAddressed` 对戳一戳只在 `triggerOnPoke` 开着、且 `noticeTargetIsSelf` 不为 `false` 时算点名。群友互戳不算点名：trigger-policy 把它按普通入站计数，不直接触发回复；trigger-laya 照常交给判定模型，模型不可用时不按点名兜底。
 - **发布档位**：plugin-adapter-onebot 次版本（群里多了一类入站）；schema-message、api-trigger 为 patch。api-trigger、plugin-adapter-onebot 对 `@aalis/schema-message` 的下限抬到本批的新版本（类型里要有 `noticeTargetIsSelf`）。三者须同批升级，见「必须同批升级的包」。
 
-### 工具搜索的能力目录（@aalis/plugin-tool-search）
+#### 工具搜索的能力目录（@aalis/plugin-tool-search）
 
 - **能力目录**：`showToolNames` 开着时（默认），`search_tools` 的说明里附的不再是全部工具名的清单，而是本轮可用的能力目录：一个分组至少有一个只属于它的可见工具时，按分组列出分组的标题、名字、说明与至多 3 个工具名（多出的写总数），其余工具逐个列出名字与说明；说明各截到 90 字，整份目录不超过 3200 字，超出时末行提示用空查询分页查看。配置项的标签改为「展示可用能力目录」。
 - **搜索排序**：结果按匹配程度排序，依次是工具名与关键词相同、工具名以关键词开头、工具名含关键词、所属分组（本轮启用的分组的名字、标题与说明）含关键词、说明含关键词；同一档里保持原有顺序。此前只按名字与说明含关键词筛选，按原有顺序返回，不看分组。
 - **结果条数**：模型传的 `limit` 只能收窄单次结果，不超过配置的 `maxSearchResults`（为 0 时不限）；此前模型传的值优先。`maxSearchResults` 声明 `min: 0` 与 `integer: true`，写成负数或小数时按默认值 5 处理并告警；此前负数等于不限。
 - **发布档位**：plugin-tool-search 次版本（`maxSearchResults` 不再接受负数，模型传的 `limit` 受配置上限约束）。用到的 `@aalis/api-tools`、`@aalis/schema-config` 接口在已发布版本里都有，不必抬下限。
 
-### 家目录（第一部分）：从任何目录启动同一个实例（新包 @aalis/api-host-paths；@aalis/runtime、@aalis/schema-config、@aalis/create-aalis、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/plugin-persona、@aalis/plugin-skills、@aalis/plugin-media、@aalis/plugin-memory-mongodb、@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-process-local、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-draw、@aalis/plugin-tool-browser、@aalis/plugin-publish-review、@aalis/plugin-mcp-client、@aalis/plugin-cli）
+#### 家目录（第一部分）：从任何目录启动同一个实例（新包 @aalis/api-host-paths；@aalis/runtime、@aalis/schema-config、@aalis/create-aalis、@aalis/plugin-storage-local、@aalis/plugin-checkpoint、@aalis/plugin-persona、@aalis/plugin-skills、@aalis/plugin-media、@aalis/plugin-memory-mongodb、@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-process-local、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-draw、@aalis/plugin-tool-browser、@aalis/plugin-publish-review、@aalis/plugin-mcp-client、@aalis/plugin-cli）
 
 - **家目录**
   - 实例的配置、数据与日志此前放在启动时的当前目录里：换个目录启动就是另一个（空的）实例，生产实例住在仓库里，一次 `git clean -fdx` 就会删掉。现在它们都在家目录里。
@@ -467,7 +441,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-storage-local、plugin-package-manager、plugin-webui-server、plugin-memory-mongodb 对 `@aalis/api-host-paths` 写 `>=0.1.0`。
   - runtime 对 schema-config 的下限这一部分不用抬，第二部分要抬，见下一节。
 
-### 家目录（第二部分）：密钥存进 secrets.yaml（@aalis/schema-config、@aalis/api-host-config、@aalis/api-webui、@aalis/runtime、@aalis/create-aalis、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb、@aalis/plugin-agent、@aalis/plugin-memory-summary、@aalis/plugin-adapter-onebot、@aalis/plugin-asr-openai、@aalis/plugin-embedding-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-remote-agent-cursor、@aalis/plugin-tool-system、@aalis/plugin-websearch-serper、@aalis/plugin-works-site）
+#### 家目录（第二部分）：密钥存进 secrets.yaml（@aalis/schema-config、@aalis/api-host-config、@aalis/api-webui、@aalis/runtime、@aalis/create-aalis、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb、@aalis/plugin-agent、@aalis/plugin-memory-summary、@aalis/plugin-adapter-onebot、@aalis/plugin-asr-openai、@aalis/plugin-embedding-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-remote-agent-cursor、@aalis/plugin-tool-system、@aalis/plugin-websearch-serper、@aalis/plugin-works-site）
 
 - **`secret` 改为语义属性**
   - `SchemaField.secret` 此前是 api-webui 经 declaration merging 注入的 WebUI 呈现属性，只让表单遮住值，值照旧以明文写在 `aalis.config.yaml` 里。现在它由 schema-config 声明，表示「这个字段的值是凭据」，各宿主都按它处理：值存进宿主的密钥存储，配置文档里只写引用 `{ $secret: '<键>' }`，展示与回传都不给原值。api-webui 删掉了同名注入。标在 map、list 上时整个值算一个密钥。
@@ -509,7 +483,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-memory-mongodb 对 `@aalis/schema-config` 的下限可以一并抬到新版本，只为改进报错：旧版的 `parseConfig` 遇到落空的引用同样拒绝激活（`uri` 声明了 `onInvalid: 'error'`），只是报 `uri` 期望 string、得到 object，不点名缺的键。
   - runtime、plugin-webui-server、plugin-mcp-client 对 `@aalis/api-host-config` 的下限，抬到含 `applyPluginConfig` 的新版本。
 
-### 会话协议与会话服务（新包 @aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-checkpoint、@aalis/api-todo-list；@aalis/api-agent、@aalis/api-tools、@aalis/api-platform、@aalis/api-session-manager、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-session-manager、@aalis/plugin-storage-local、@aalis/plugin-tool-system、@aalis/plugin-image-sender、@aalis/plugin-paper、@aalis/plugin-webui-server）
+#### 会话协议与会话服务（新包 @aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-checkpoint、@aalis/api-todo-list；@aalis/api-agent、@aalis/api-tools、@aalis/api-platform、@aalis/api-session-manager、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-session-manager、@aalis/plugin-storage-local、@aalis/plugin-tool-system、@aalis/plugin-image-sender、@aalis/plugin-paper、@aalis/plugin-webui-server）
 
 新 WebUI 的第一部分：owner 的客户端与守护进程之间改用一套公开的会话协议（旧的 `/ws` 与旧前端在「新 WebUI：外壳、会话与插件登记的会话设置」一节删除）。
 
@@ -531,7 +505,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **升级**：已有房间还没有 `originInstance`，等它下一次有消息进来时补记；在那之前列在所属平台下不归实例的一组里。不需要手动迁移。
 - **发布档位**：次版本：api-agent、api-tools、api-platform、schema-message、plugin-checkpoint、plugin-todo-list、plugin-session-manager；新包随首发；其余为 patch。plugin-agent、plugin-session-manager、plugin-checkpoint、plugin-storage-local、plugin-session-server 对 api-agent、api-tools、schema-message、api-platform、api-checkpoint 的下限抬到本批的新版本。
 
-### 审批（新包 @aalis/api-approval；@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-authority、@aalis/plugin-authority、@aalis/api-commands、@aalis/plugin-commands、@aalis/api-gateway、@aalis/plugin-gateway、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-cli、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-session-manager、@aalis/create-aalis；删除 @aalis/plugin-session-confirm、@aalis/api-session-confirm）
+#### 审批（新包 @aalis/api-approval；@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-authority、@aalis/plugin-authority、@aalis/api-commands、@aalis/plugin-commands、@aalis/api-gateway、@aalis/plugin-gateway、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-cli、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-session-manager、@aalis/create-aalis；删除 @aalis/plugin-session-confirm、@aalis/api-session-confirm）
 
 需要确认的工具调用改为请 owner 审批：审批是一个有 id、有状态、成对审计的对象，只推给在场的 owner，任务绝不因等审批而挂起。旧的文本确认链（session-confirm、确认相位、确认通道、临时授予、`/auto`）整套删除。
 
@@ -551,7 +525,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-session-confirm 与 api-session-confirm 删除；create-aalis 的预设不再含 session-confirm。
 - **发布档位**：次版本：api-authority、api-gateway、api-commands、plugin-authority、plugin-commands、plugin-gateway、plugin-cli；api-approval、api-session-protocol、plugin-session-server 随首发；其余为 patch。
 
-### 管理推送、登录加固与会话文件（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/schema-message）
+#### 管理推送、登录加固与会话文件（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/schema-message）
 
 新 WebUI 的第三部分：会话之外的变化改由推送送达，登录与 WebSocket 握手加固，会话里她发出的文件可以按句柄下载。
 
@@ -564,7 +538,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **破坏性**：`tokenMode` 为 `fixed` 时，`fixedToken` 去掉首尾空白后至少要 32 个字符，短了插件不启动并写明原因（留空仍按 persist 处理）。**升级前配了短 token 的，先换成更长的随机字符串。**
 - **发布档位**：次版本：api-webui、schema-message、plugin-webui-server；api-session-protocol、plugin-session-server 随首发。
 
-### 新 WebUI：外壳、会话与插件登记的会话设置（@aalis/plugin-webui-client、@aalis/plugin-webui-server、@aalis/api-webui、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-approval、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-paper、@aalis/plugin-subtask、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-cli、@aalis/schema-message、@aalis/schema-config、@aalis/create-aalis）
+#### 新 WebUI：外壳、会话与插件登记的会话设置（@aalis/plugin-webui-client、@aalis/plugin-webui-server、@aalis/api-webui、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-approval、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-persona、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-paper、@aalis/plugin-subtask、@aalis/plugin-checkpoint、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-cli、@aalis/schema-message、@aalis/schema-config、@aalis/create-aalis）
 
 新 WebUI 的第四部分：前端整套重写，接上会话协议与管理推送；会话设置改由插件登记。旧的 `/ws` 协议与旧前端在这一批删除。插件管理、设置、运行状况与插件页面在后续各节补上。
 
@@ -590,7 +564,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **升级须知**：session-manager 插件配置里的 `defaults` 与 `platformProfiles` 搬到宿主配置的 `sessionConfig`（`defaults` 里的 `llm` 改写进服务偏好，见「设置层表与场所」一节的升级须知）。会话库里每个会话自己的配置不用改。
 - **发布档位**：次版本：api-session-manager、plugin-session-manager、api-memory、api-tools、api-webui、plugin-memory-summary、plugin-webui-server、plugin-webui-client、create-aalis；api-session-protocol、api-approval、plugin-session-server、plugin-paper 随首发；其余为 patch。只改注释的 api-doctor、plugin-doctor、plugin-llm-openai、plugin-commands 可以不发。
 
-### 删除自档案（@aalis/plugin-user-profile、@aalis/schema-message）
+#### 删除自档案（@aalis/plugin-user-profile、@aalis/schema-message）
 
 user-profile 不再让模型反思自己的输出、生成「自档案」再注入回所有会话。
 
@@ -599,7 +573,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **升级须知**：存量的自档案不会自动清理。开过自档案的实例用 `/profile.forget __self__:<人设名> <事实id>` 逐条删；`/profile.clear.nuke` 也能清掉，但会连同全部用户档案。
 - **发布档位**：plugin-user-profile 次版本；schema-message 只改注释。
 
-### 页面契约第二版、插件页面与会话面板（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-storage、@aalis/api-publish、@aalis/api-checkpoint、@aalis/api-tools、@aalis/api-session-protocol、@aalis/schema-message、@aalis/plugin-session-server、@aalis/plugin-session-manager、@aalis/plugin-checkpoint、@aalis/plugin-agent、@aalis/plugin-tool-system、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-paper、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-authority、@aalis/plugin-skills、@aalis/plugin-doctor、@aalis/plugin-tool-browser、@aalis/plugin-user-relation、@aalis/plugin-file-reader、@aalis/create-aalis-plugin）
+#### 页面契约第二版、插件页面与会话面板（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-storage、@aalis/api-publish、@aalis/api-checkpoint、@aalis/api-tools、@aalis/api-session-protocol、@aalis/schema-message、@aalis/plugin-session-server、@aalis/plugin-session-manager、@aalis/plugin-checkpoint、@aalis/plugin-agent、@aalis/plugin-tool-system、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-paper、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-authority、@aalis/plugin-skills、@aalis/plugin-doctor、@aalis/plugin-tool-browser、@aalis/plugin-user-relation、@aalis/plugin-file-reader、@aalis/create-aalis-plugin）
 
 新 WebUI 的第五部分：插件页面换成第二版契约并全部迁移，右侧面板的宿主标签与插件标签合成一套；补齐会话工作台的几处细节，修掉命令卡与 Markdown 的显示错误。
 
@@ -623,7 +597,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **升级须知**：webui-server 的 `relationGraphDefaultSpacing` 改放到 user-relation 的 `graphSpacing`（含义相同，默认 120，范围 20 到 1000，超出按默认）。
 - **发布档位**：次版本：api-webui、api-storage、api-tools、schema-message、plugin-webui-server、plugin-webui-client、plugin-user-relation、plugin-file-reader、create-aalis-plugin；api-publish、api-checkpoint、api-session-protocol、plugin-session-server、plugin-paper、plugin-publish-review、plugin-works-site 随首发；其余为 patch。只改注释的 api-llm 可以不发。各页面插件对 api-webui 的依赖下限抬到带 `definePage` 的版本。
 
-### 隔离的插件前端、顶部横线贯穿与两侧栏宽拖拽（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis-plugin）
+#### 隔离的插件前端、顶部横线贯穿与两侧栏宽拖拽（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis-plugin）
 
 新 WebUI 的第六部分：插件页面默认仍是声明式，声明式表达不了时可以带自己的前端，在隔离的框架里显示；外壳的顶部横线贯穿各栏，两侧栏宽可以拖动。
 
@@ -638,7 +612,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **第三方前端**：api-webui 的 `PageView` 与 `PageDefinition` 是声明式与插件前端两种的联合，读 `content` 前先按 `frame` 区分。照 [api-webui](docs/api/api-webui.md) 的「插件前端」一节实现框架挂载与转发，不实现的显示占位即可。
 - **发布档位**：次版本：api-webui（实验性）、plugin-webui-server、plugin-webui-client、create-aalis-plugin。
 
-### 控件与文字的比例（@aalis/plugin-webui-client、@aalis/api-webui）
+#### 控件与文字的比例（@aalis/plugin-webui-client、@aalis/api-webui）
 
 按钮等控件按所在文字的比例定尺寸。
 
@@ -647,7 +621,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
 - **插件前端样式基线**（`/frames/_base/frame.css`）：按钮与输入框跟宿主一致（28px 高、字重常规）；触屏上按钮外面一圈透明边框补到 44px，占排版位置，列表里相邻两行的点按范围不重叠；输入框与选择框触屏 44px 高、字号 16px。插件改写按钮的边框，或用简写 `background` 换底色时，触屏上底色会铺满 44px。
 - **发布档位**：plugin-webui-client、api-webui 随本批的次版本，不另计。
 
-### 插件区与设置，深度思考按模型的档位（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-media、@aalis/plugin-memory-summary、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-adapter-onebot）
+#### 插件区与设置，深度思考按模型的档位（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-media、@aalis/plugin-memory-summary、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-adapter-onebot）
 
 新 WebUI 的第七部分：插件的管理搬进插件区，设置有了自己的目录；深度思考改为按每个模型声明的档位来选。
 
@@ -689,7 +663,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - media 的 `think` 开启时原来对 Ollama 强开思考，现在按 Ollama 实例的默认档；实例默认档是 `off` 时识别不再思考，要思考就把实例默认档设成 `on`。
 - **发布档位**：次版本：api-llm、api-agent、api-session-manager、api-webui、api-package-manager、plugin-webui-server、plugin-webui-client、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-agent、plugin-session-manager、plugin-media；api-session-protocol、plugin-session-server 随首发；其余为 patch。只改注释或说明的 api-hooks、api-trigger、plugin-trigger-laya 可以不发。
 
-### 需要处理、运行状况、用量与体验补齐，管理面 REST 契约（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-media、@aalis/plugin-media、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-mcp-client、@aalis/plugin-persona、@aalis/plugin-tools、@aalis/plugin-paper、新包 @aalis/plugin-usage-stats）
+#### 需要处理、运行状况、用量与体验补齐，管理面 REST 契约（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-llm、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-media、@aalis/plugin-media、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-mcp-client、@aalis/plugin-persona、@aalis/plugin-tools、@aalis/plugin-paper、新包 @aalis/plugin-usage-stats）
 
 新 WebUI 的第八部分：要处理的事汇总到一处，有了运行状况页与用量统计；时间线与输入框补齐体验；管理面 REST 成为公开契约。
 
@@ -715,7 +689,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - 自己实现 LLM 服务商的，登记模型时套 `metered` 才会被记账；不套照常能用，只是不记。
 - **发布档位**：次版本：api-webui、api-llm、api-agent、api-session-manager、api-media、plugin-webui-server、plugin-webui-client、plugin-llm-deepseek、plugin-llm-openai、plugin-llm-ollama、plugin-mcp-client；plugin-usage-stats 首发 0.1.0（对 api-llm 的依赖下限抬到本批的新版本），api-session-protocol、plugin-session-server、plugin-paper 随首发；其余为 patch。只改注释的 schema-message 可以不发。
 
-### 后台任务：可转后台的工具调用与「后台」标签（@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/plugin-tool-code-runner、@aalis/plugin-office、@aalis/plugin-draw、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-mcp-client、@aalis/api-checkpoint、@aalis/plugin-checkpoint、@aalis/api-authority、@aalis/schema-message、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-subtask、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-webui、@aalis/plugin-webui-client）
+#### 后台任务：可转后台的工具调用与「后台」标签（@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-tool-system、@aalis/plugin-tool-code-runner、@aalis/plugin-office、@aalis/plugin-draw、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-mcp-client、@aalis/api-checkpoint、@aalis/plugin-checkpoint、@aalis/api-authority、@aalis/schema-message、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-subtask、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-webui、@aalis/plugin-webui-client）
 
 新 WebUI 的第九部分：耗时的工具调用不再挡住对话。声明了可转后台的工具在前台等一段时间还没结束，就转到后台继续跑，她先回复，结束时再接着说；会话面板新增「后台」标签，可以看输出、停止。
 
@@ -735,7 +709,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - `wait_subtasks` 的 `timedOut` 只在等满时还有没结束的子任务才为真（此前子任务出错也算）；子任务状态多了 `stopped`。
 - **发布档位**：次版本：api-tools、plugin-tools、plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-mcp-client、api-media、schema-message、api-authority、api-agent、api-session-manager、plugin-session-manager、plugin-subtask、api-webui、plugin-webui-client；api-checkpoint、api-session-protocol、plugin-session-server 随首发；其余为 patch。plugin-tool-system、plugin-tool-code-runner、plugin-office、plugin-draw、plugin-media、plugin-mcp-client 对 `@aalis/api-tools` 的依赖下限抬到本批的新版本；plugin-tools 新增依赖 api-storage、schema-config、schema-message、util-text-normalize。
 
-### 单元 7 收尾第一批：契约清理与中立、体验与无障碍、结束通知与 /help（@aalis/schema-message、@aalis/api-llm、@aalis/api-agent、@aalis/api-tools、@aalis/api-commands、@aalis/api-session-manager、@aalis/api-session-protocol、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-commands、@aalis/plugin-authority、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-message-archive、@aalis/plugin-file-reader、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-maimai、@aalis/plugin-webui-server、@aalis/plugin-webui-client）
+#### 单元 7 收尾第一批：契约清理与中立、体验与无障碍、结束通知与 /help（@aalis/schema-message、@aalis/api-llm、@aalis/api-agent、@aalis/api-tools、@aalis/api-commands、@aalis/api-session-manager、@aalis/api-session-protocol、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-commands、@aalis/plugin-authority、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-message-archive、@aalis/plugin-file-reader、@aalis/plugin-image-sender、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-maimai、@aalis/plugin-webui-server、@aalis/plugin-webui-client）
 
 新 WebUI 的第十部分：清掉不再使用的契约，会话服务不再按平台或插件的文字格式去猜存档内容，补上出错时的重试与日志入口和无障碍，后台任务的结束通知画成一行状态，/help 只列能用的指令。
 
@@ -763,7 +737,7 @@ user-profile 不再让模型反思自己的输出、生成「自档案」再注�
   - api-commands：`OptionSpec.choices` 改为 `OptionChoice[]`（登记时仍收字符串）；`-h`、`--help` 成为保留选项，声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
 - **发布档位**：次版本：schema-message、api-llm、api-tools、api-commands、api-session-manager、plugin-session-manager、plugin-message-archive、plugin-file-reader、plugin-commands、plugin-user-profile、plugin-webui-client；api-session-protocol、plugin-session-server 随首发；其余为 patch。plugin-message-archive 新增依赖 api-storage（可选服务 storage），plugin-user-profile 新增依赖 api-webui（可选服务 webui-server）。
 
-### 改用 Node 自带的 node:sqlite，最低 Node 24.15.0（@aalis/plugin-memory-sqlite、@aalis/create-aalis、@aalis/runtime、@aalis/plugin-doctor、@aalis/plugin-package-manager）
+#### 改用 Node 自带的 node:sqlite，最低 Node 24.15.0（@aalis/plugin-memory-sqlite、@aalis/create-aalis、@aalis/runtime、@aalis/plugin-doctor、@aalis/plugin-package-manager）
 
 SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依赖，装机也不用编译工具。整个项目的最低 Node 版本随之定为 24.15.0，这一版起 `node:sqlite` 不再打实验警告。
 
@@ -775,7 +749,7 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
 - **升级须知**：在 Node 22 上运行的实例，升级到本批之前先把 Node 换到 24.15 起；在新 Node 上，旧版 plugin-memory-sqlite 的原生模块会因版本不符激活失败，随本批一起升级即可。
 - **发布档位**：次版本：plugin-memory-sqlite、create-aalis；patch：runtime（只加 engines）、plugin-doctor；plugin-package-manager 只改注释，不发版。
 
-### 上手与故障说明：脚手架、开始使用与需要处理、看不了图、报错写明怎么修（@aalis/create-aalis、@aalis/create-aalis-plugin、@aalis/runtime、@aalis/api-doctor、@aalis/plugin-doctor、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-cli、@aalis/plugin-media、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-vector、@aalis/plugin-memory-summary、@aalis/plugin-session-manager、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/plugin-embedding-ollama、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-office、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-usage-stats、@aalis/plugin-process-local、@aalis/plugin-code-sandbox-os、@aalis/schema-config、@aalis/api-host-config）
+#### 上手与故障说明：脚手架、开始使用与需要处理、看不了图、报错写明怎么修（@aalis/create-aalis、@aalis/create-aalis-plugin、@aalis/runtime、@aalis/api-doctor、@aalis/plugin-doctor、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-package-manager、@aalis/plugin-package-manager、@aalis/plugin-cli、@aalis/plugin-media、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-vector、@aalis/plugin-memory-summary、@aalis/plugin-session-manager、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-openai、@aalis/plugin-llm-ollama、@aalis/plugin-embedding-ollama、@aalis/plugin-maimai、@aalis/plugin-okx-trading、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-office、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-usage-stats、@aalis/plugin-process-local、@aalis/plugin-code-sandbox-os、@aalis/schema-config、@aalis/api-host-config）
 
 新用户从建项目到第一次对话少走弯路，出了问题界面直接说清是哪个插件、为什么、怎么修。
 
@@ -801,7 +775,7 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - create-aalis-plugin：生成的依赖不再是 `latest`，查不到版本时退出。
 - **发布档位**：次版本：api-webui、api-doctor、api-package-manager、plugin-package-manager、plugin-webui-server、plugin-webui-client、plugin-doctor、plugin-media、create-aalis、create-aalis-plugin、plugin-maimai、plugin-okx-trading；plugin-usage-stats 随首发；其余为 patch。新增依赖：api-webui、plugin-package-manager、plugin-webui-server、plugin-media 依赖 api-doctor，plugin-cli 依赖 api-doctor 与 api-commands（可选使用 plugins、commands），plugin-media 可选使用 doctor；这些对 api-doctor 的下限发布时抬到本批 api-doctor 的新版本。
 
-### 报错普查第二批：指令回复与提示写明修法，吞掉的故障交到用户眼前（@aalis/api-storage、@aalis/plugin-scheduler、@aalis/plugin-authority、@aalis/plugin-media、@aalis/plugin-code-sandbox-os、@aalis/plugin-mcp-client、@aalis/plugin-image-sender、@aalis/plugin-commands、@aalis/plugin-agent、@aalis/plugin-maimai、@aalis/plugin-user-profile、@aalis/plugin-webui-server）
+#### 报错普查第二批：指令回复与提示写明修法，吞掉的故障交到用户眼前（@aalis/api-storage、@aalis/plugin-scheduler、@aalis/plugin-authority、@aalis/plugin-media、@aalis/plugin-code-sandbox-os、@aalis/plugin-mcp-client、@aalis/plugin-image-sender、@aalis/plugin-commands、@aalis/plugin-agent、@aalis/plugin-maimai、@aalis/plugin-user-profile、@aalis/plugin-webui-server）
 
 接着「上手与故障说明」的第一批，把剩下会到用户眼前的报错改成写明出了什么事、该做什么。
 
@@ -820,7 +794,7 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - plugin-commands：`app` 改为必需依赖（声明与清单），运行时无变化。
 - **发布档位**：次版本：api-storage（新增依赖 schema-config）、plugin-scheduler、plugin-image-sender；patch：其余。plugin-code-sandbox-os 新增依赖 api-doctor 并可选使用 doctor。
 
-### 单元 7 第六步整批收尾：存档元数据只经登记的键（@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis、@aalis/schema-message、@aalis/plugin-package-manager、@aalis/plugin-scheduler、@aalis/plugin-image-sender、@aalis/plugin-cli、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-message-archive、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-paper）
+#### 单元 7 第六步整批收尾：存档元数据只经登记的键（@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/create-aalis、@aalis/schema-message、@aalis/plugin-package-manager、@aalis/plugin-scheduler、@aalis/plugin-image-sender、@aalis/plugin-cli、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-message-archive、@aalis/plugin-agent、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-paper）
 
 对单元 7 这批、改用 node:sqlite、上手与故障说明与报错普查第二批的改动做的检查与收尾。
 
@@ -841,7 +815,7 @@ SQLite 记忆后端不再需要原生编译：换 Node 大版本不用重装依�
   - plugin-scheduler：经服务新建或修改任务时，无效 cron 由收下改为抛错。
 - **发布档位**：次版本：schema-message（新键）；plugin-paper 随首发；其余为 patch。下面这些包对 schema-message 的下限抬到本批的新版本（现写 `>=0.9.0` 或 `>=0.9.1`）：plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation（plugin-trigger-laya 是 private 包，同步改下限、不发布）。
 
-### 删除第三方行为指令（@aalis/plugin-user-profile、@aalis/plugin-commands）
+#### 删除第三方行为指令（@aalis/plugin-user-profile、@aalis/plugin-commands）
 
 user-profile 只管对他人的历史记忆，不再从管理员的发言里提取行为规则、注入每一次模型调用。
 
@@ -850,7 +824,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - **升级须知**：旧配置里的这六个键启动时按 schema 裁掉并告警，删掉即可。已存的 memory 元数据命名空间 `aalis:instructions` 不再读取，`/clear` 也不再清它；需要留底的先导出，再手动删除。
 - **发布档位**：plugin-user-profile 次版本；plugin-commands patch。
 
-### 全量压缩与按比例触发（@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server、@aalis/api-session-protocol）
+#### 全量压缩与按比例触发（@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server、@aalis/api-session-protocol）
 
 压缩把切分点之前的全部活跃历史压成一份摘要，不再保留最近若干条原文；自动压缩改按用量占上下文窗口的比例，在回合结束时判。
 
@@ -873,7 +847,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
   - 现有摘要与历史数据不用迁移。
 - **发布档位**：次版本：api-memory、plugin-memory-summary、plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb；plugin-session-server 随首发；api-session-protocol 只改注释。对 `@aalis/api-memory` 的下限抬到本批的新版本（这几个现写 `>=0.7.1`）：plugin-memory-summary（运行时导入 `compressionDue`）、plugin-session-server、plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb。
 
-### 会话来源字段（@aalis/api-session-manager、@aalis/api-platform、@aalis/api-gateway、@aalis/schema-message、@aalis/api-commands、@aalis/api-approval、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-cli、@aalis/plugin-adapter-onebot、@aalis/plugin-webui-server、@aalis/plugin-authority、@aalis/plugin-flow-control、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-maimai、@aalis/plugin-agent、@aalis/plugin-subtask、@aalis/plugin-trigger-laya）
+#### 会话来源字段（@aalis/api-session-manager、@aalis/api-platform、@aalis/api-gateway、@aalis/schema-message、@aalis/api-commands、@aalis/api-approval、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-cli、@aalis/plugin-adapter-onebot、@aalis/plugin-webui-server、@aalis/plugin-authority、@aalis/plugin-flow-control、@aalis/plugin-persona、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-maimai、@aalis/plugin-agent、@aalis/plugin-subtask、@aalis/plugin-trigger-laya）
 
 会话的出生平台、聊天窗口与创建来源在建档时记成会话字段，权限判定、选档、召回范围与会话列表一律读这些字段，不再从会话 id 推；平台的类型（一对一还是多方）由适配器声明。
 
@@ -913,7 +887,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
   - `@aalis/api-gateway`（`chatScopeOf`）：plugin-session-manager（运行时导入，现写 `>=0.7.0`）。
   - `@aalis/schema-message`（`selfId`）：plugin-adapter-onebot；plugin-trigger-laya 同步改。
 
-### 真实用量、裁剪标记与条数线（@aalis/api-agent、@aalis/plugin-agent、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-history）
+#### 真实用量、裁剪标记与条数线（@aalis/api-agent、@aalis/plugin-agent、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-history）
 
 用量取模型服务返回的输入 token，每次模型调用之后都报；自动压缩按硬裁剪之前的历史算能压掉的部分，并加上按条数的一维；对话代理每轮读多少条历史改由会话设置定。
 
@@ -930,7 +904,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
   - 这一项同时是按条数压缩的线，上一节 memory-summary 的 `threshold` 也搬到这里：两个旧值都写过的，按想要的压缩时机取一个。
 - **发布档位**：次版本：api-agent、plugin-agent（api-memory、plugin-memory-summary 见「全量压缩与按比例触发」）；plugin-memory-history 本节只改说明。plugin-agent 对 `@aalis/api-agent` 的下限抬到本批的新版本。
 
-### 工作会话的结构性放行（@aalis/plugin-gateway）
+#### 工作会话的结构性放行（@aalis/plugin-gateway）
 
 受众只有 owner 的会话（房间类别 `owner-only`）没有「要不要开口」的问题，也没有刷屏要限，入站不再经过触发判定与流控。
 
@@ -940,7 +914,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - **破坏性**：挂在 `inbound:trigger`、`inbound:flow` 上的第三方中间件收不到 owner-only 会话的消息，这两个相位也不为它们发 `gateway:phase:done`；要覆盖全部入站的，挂在 `inbound:command`。
 - **发布档位**：plugin-gateway 次版本。对 `@aalis/api-session-manager` 的下限抬到本批的新版本（运行时导入 `roomClass`）；新增的 `@aalis/api-authority` 依赖写 `>=0.10.0`，要用的 `isOwner` 已发布版本里就有。
 
-### 结构化摘要（@aalis/plugin-memory-summary）
+#### 结构化摘要（@aalis/plugin-memory-summary）
 
 摘要改为按会话选的固定小节，不能再自定义提示词。
 
@@ -950,7 +924,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - **升级须知**：`summaryPrompt` 在新版启动时按 schema 裁掉并告警。现有的无结构摘要不用迁移，下一次压缩时按模板合并重写。
 - **发布档位**：plugin-memory-summary 次版本（与「全量压缩与按比例触发」同一版）。对 `@aalis/api-session-manager` 的下限抬到本批的新版本（运行时导入 `roomClass`）；新增的 `@aalis/api-authority` 依赖写 `>=0.10.0` 即可。
 
-### 触及解析与受保护清单（新包 @aalis/api-reach、@aalis/plugin-reach；@aalis/api-authority、@aalis/plugin-authority、@aalis/create-aalis）
+#### 触及解析与受保护清单（新包 @aalis/api-reach、@aalis/plugin-reach；@aalis/api-authority、@aalis/plugin-authority、@aalis/create-aalis）
 
 新增触及：一次工具调用能读写本机的哪些路径、命令在沙箱里还是宿主上执行、能不能联网，由触及服务按调用签发的凭据回答。本批只交付契约与服务，工具与存储不经它判定，装上它不改变现有工具的行为。说明见 `docs/plugins/plugin-reach.md` 与 `docs/api/api-reach.md`。
 
@@ -969,7 +943,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
 - **破坏性**：api-authority 的 `AuthorityService` 新增必填方法 `originOf(turn)`（这一轮由谁发起，取值见 api-approval 的 `OriginKind`）与类型 `OriginTurn`，自己实现权限服务的要补上；api-authority 新增对 `@aalis/api-approval` 的依赖（只用类型）。plugin-authority 实现它，执行守卫改用它，行为不变。
 - **发布档位**：api-reach、plugin-reach 首发 0.1.0；api-authority 次版本；plugin-authority、create-aalis 为 patch。两个新包对 `@aalis/api-authority`（`originOf`、`OriginTurn`）与 `@aalis/api-session-manager`（`roomClass`、`rootSessionOf`、`placePaperId` 与相关类型）的下限现写 `>=0.10.0`，发布时抬到本批的新版本；plugin-authority 对 `@aalis/api-authority` 的下限同样抬。新包对 api-host-paths（本批新包）、api-process、api-storage、schema-message 的下限，用到的接口在已发布版本里都有。
 
-### 设置层表与场所（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-gateway、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-paper、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-cli、@aalis/plugin-skills、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-trigger-laya、@aalis/plugin-doctor、@aalis/plugin-reach）
+#### 设置层表与场所（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-gateway、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-paper、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-cli、@aalis/plugin-skills、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-trigger-laya、@aalis/plugin-doctor、@aalis/plugin-reach）
 
 会话设置的层由一张层表定义：全局默认 → 平台档 → 平台类型档 → 场所 → 父会话 → 本会话。每个会话恰好属于一个场所，按房间的设置设在场所上，换会话不丢；平台档下的群与私聊条目换成按平台类型的一档。默认模型只在 llm 服务偏好一处，与会话设置项重复的插件配置删除，每个值只在一处设。说明见 `docs/plugins/plugin-session-manager.md` 的「层表」。
 
@@ -1001,7 +975,7 @@ user-profile 只管对他人的历史记忆，不再从管理员的发言里提�
   - 场所记录不用预建：默认工作区激活时就在，窗口的记录在那个窗口下一条真人消息到达时建，建了之后才能在这个场所上设值。
 - **发布档位**：次版本：api-session-manager、plugin-session-manager、api-gateway、plugin-agent、plugin-persona、plugin-asr-openai、plugin-asr-whisper-cpp、plugin-skills；plugin-paper、plugin-session-server、api-session-protocol、plugin-reach 随首发；plugin-webui-client、plugin-cli、plugin-doctor 为 patch；plugin-trigger-laya 不发布。要抬的依赖下限（抬到本批的新版本）：`@aalis/api-session-manager`（`SESSION_LAYERS`、`placePaperId`、`placeOf` 等）由 plugin-session-manager、plugin-session-server、plugin-agent、plugin-paper、plugin-reach 抬，它们运行时导入 `SESSION_LAYERS` 或 `placePaperId`；`@aalis/api-gateway`（`windowKey`、`parseWindowKey`）由 plugin-session-manager 抬。plugin-skills 新增的 `@aalis/api-session-manager` 依赖、plugin-session-manager 新增的 `@aalis/api-authority` 依赖与 plugin-doctor 新增的 `@aalis/api-host-config` 依赖，用到的接口在已发布版本里都有，分别写 `>=0.10.0`、`>=0.10.0`、`>=0.1.0` 即可。
 
-### 凭据文件的权限与时间线里的图片（@aalis/api-storage、@aalis/plugin-storage-local、@aalis/plugin-webui-server、@aalis/plugin-message-archive）
+#### 凭据文件的权限与时间线里的图片（@aalis/api-storage、@aalis/plugin-storage-local、@aalis/plugin-webui-server、@aalis/plugin-message-archive）
 
 WebUI 的登录凭据只给运行 Aalis 的系统用户读写；WebUI 上传与 OneBot 落盘的图片在时间线里显示成图片。
 
@@ -1012,7 +986,7 @@ WebUI 的登录凭据只给运行 Aalis 的系统用户读写；WebUI 上传与 
 - **升级须知**：升级后第一次启动即按凭据重写 `access.txt` 与持久化的 token 文件。自己实现存储提供者的，带 `secret` 时按凭据写或拒写。
 - **发布档位**：patch（api-storage 只加可选参数）。plugin-storage-local、plugin-webui-server 对 `@aalis/api-storage` 的下限抬到本批的新版本：webui-server 经 api-storage 的存储网关传 `secret`，旧版网关会把这个选项丢掉。
 
-### 必须同批升级的包
+#### 必须同批升级的包
 
 - plugin-memory-inmemory、plugin-memory-sqlite、plugin-memory-mongodb、plugin-memory-history、plugin-memory-vector、plugin-message-archive、plugin-agent、plugin-adapter-onebot、plugin-user-profile、plugin-user-relation 与 schema-message 同批升级：它们在运行时引用 `WellKnownMetadataKeys` 新增的 `GroupId`、`GroupName`、`SessionType`、`MessageId`，配旧版 schema-message 时常量为 undefined，按它读的元数据静默读空。
 - plugin-authority、plugin-tools、plugin-agent、plugin-commands、plugin-session-server 与 api-authority、api-approval、api-commands 同批升级：新版 authority 按 `ExecutionGuardContext.inbound` 判发起类别、经 approvals 请 owner 审批，配旧版 plugin-tools（不传 `inbound`）时一律按不能产生审批处理；旧版 session-confirm 不能与新版 authority 共存（确认通道已删）。
@@ -1057,6 +1031,26 @@ WebUI 的登录凭据只给运行 Aalis 的系统用户读写；WebUI 上传与 
 - plugin-paper、plugin-reach 与 plugin-session-manager 同批升级：两者按 `placeOf` 取场所、按 `placePaperId` 算白纸，旧版 session-manager 没有 `placeOf`，白纸工具与签发凭据抛 TypeError；plugin-reach 另要新版 plugin-authority 的 `originOf`。
 - plugin-webui-server 与 plugin-storage-local、api-storage 同批升级：token 与 `access.txt` 按凭据写（0600）要新版 storage-local 实现 `secret`、新版 api-storage 的存储网关把它传下去，配旧版时照旧按默认权限写，不报错。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager：它要用本批 api-gateway 新增的 `chatScopeOf`、`windowKey`、`parseWindowKey`，新版 api-gateway 另要本批 api-platform 的 `resolveSessionType`。要升级它，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session 不再要求新版 api-gateway。
+
+## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
+
+插件配置统一通过 `defineConfig` / `ConfigOf` / `parseConfig` 声明类型与读取值。Core 仍只交付原始配置；解析规则属于 schema-config，插件保留夹紧、哨兵和跨字段约束。Core 同批修复 `uses` 类型错误定位、停机队列、服务归属校验、sticky 事件重复送达与配置拷贝失败的回执，并统一停机后的管理回执。停机回执的变化修的是「返回 true 却没有做任何事」的缺陷，core 按 patch 发布 0.19.1；core 0.20 留给内核全面简化。
+
+- 按次版本发布（9 个）：schema-config 0.14.0（字段类型表改为取值类型，`dynamicOptions` / `allowCustom` 移入）、api-llm 0.13.0（`llm-ref` 改为 `ModelRef`）、plugin-checkpoint 0.14.0、plugin-flow-control 0.13.0、plugin-trigger-policy 0.15.0（`scopes` 统一为数组，删除默认对象与 resolver）、plugin-mcp-client 0.13.0、plugin-mcp-server 0.13.0（args/env 与 `toolGroups` 的解析）、plugin-scheduler 0.14.0（`resolveConfig` 输入改为解析后的配置）、plugin-session-manager 0.14.0（平台 `think` 改为选项）。
+- 按 patch 发布（51 个）：core 0.19.1、runtime 0.15.1、api-agent 0.9.1、api-media 0.11.2、api-webui 0.11.1、create-aalis-plugin 0.11.1，以及其余 45 个只迁移配置读取或修复解析的插件。plugin-webui-server 0.14.1 与 plugin-webui-client 0.14.1 须同批升级。
+- plugin-trigger-laya 0.2.0 是 `private` 包，不发布到 npm。
+
+- `beginShutdown()` 后新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律返回 `false`，不修改插件状态或配置。此前停机中的 `unload` / 部分 `disable` 返回 `true`，`enable` 还可能把条目改回 `pending`。调用方应以 `app.stop()` 的完成判断停机结束，不再把这些管理动作的回执当作清理成功；正常运行时的幂等与在途 `unload` 合流行为保持不变。
+- `provides` 校验同时核对实际登记的激活身份与条目的逻辑 id。由其他激活代登记同名 id 的服务，不再替当前插件满足声明；声明方应自己登记服务，纯代理登记方不要把代登记项写进自己的 `provides`。
+- sticky 事件（`app:ready` / `app:started`）派发进行中登记的监听器只收到一次。此前本轮派发与补发各送一次，在 `app:ready` 里建连接的 OneBot 适配器会因此建出两条连接。派发结束后才登记的仍在下一个微任务收到补发。
+- 配置无法拷贝（环状引用、getter 或 Proxy 抛错）时，`register` / `registerAll` / `bounce` / `updateConfig` 对该条返回 `false` 并记 warn，不再整体拒绝；`registerAll` 的其余条目照常登记，`bounce` 保留旧配置。
+- **字段类型扩展**：`SchemaFieldTypes` 的值由占位标记改为实际取值类型。自定义字段将 `custom: true` 改为 `custom: MyValue`；`api-llm` 0.13.0 已将 `llm-ref` 改为 `ModelRef`。依赖新版类型的消费者必须同步升级。`dynamicOptions` / `allowCustom` 由 schema-config 声明，`secret` 仍由 api-webui 声明；api-webui 0.11.1 的最终字段形状不变。
+- **配置解析行为**：`undefined` / `null` 表示缺省；有限数字和数字字符串按中立标量规则转换。普通无效字段按 schema 默认值回落或省略并告警；敏感地址、命令参数与启用边界使用 `onInvalid: 'error'`，显式无效时拒绝。提供拒绝规则的插件例外：tool-onebot 的开关写坏时按默认值处理并告警，插件照常激活，以免 OneBot 会话历史的访问限制随插件一起消失。MCP client 的坏 server 单独跳过，合法空字符串 argv 保留；storage-local 与 OneBot 的连接/根数组按整体严格策略处理，不会把坏项丢成默认配置后运行。
+- **旧作用域与平台模板**：flow-control 0.13.0、trigger-policy 0.15.0、trigger-laya 0.2.0、checkpoint 0.14.0 的 `scopes` 统一为数组。前三者旧 `null` 表示空范围，需转换为 `[]`；旧字符串按原分隔规则转换。session-manager 0.14.0 的平台 `think: true/false` 转为 `on/off`。运行时不拦截旧写法：旧字符串与 `''` 会告警并回落默认值，`null` 不告警、直接取默认值。升级前请用离线工具的检查模式核对配置，并且在升级后第一次经 WebUI 保存这些插件之前完成；详见 [配置迁移](docs/guide/config-migration.md)。
+- **MCP 暴露范围**：mcp-server 0.13.0 的 `toolGroups: null` 按缺省解析为 `[]`（全部组），旧版对此会拒绝启动。离线工具将其标为需人工处理，升级前明确允许的组或先禁用插件。数字组名会归一为字符串后精确匹配。mcp-client 0.13.0 的 args/env 使用数组/映射，旧文本须手工核对参数边界。
+- **配置 helper**：删除仅供取值的 flow-control / trigger-policy / trigger-laya 默认对象与 resolver、checkpoint 的 `resolveConfig`；配置类型从 schema 派生。scheduler 0.14.0 保留导出的 `resolveConfig`，输入改为 schema 解析后的配置，并导出配套的 `configSchema`；需要直接调用的代码先执行 `parseConfig(configSchema, raw)`。scheduler 补齐 `runAt` 的 schema 声明，保留原有 sessionId 派生规则，只写一半的 actor 照旧告警后按未指定处理（owner）；静态任务的 `actorPlatform` / `actorUserId` 写成布尔、数组、对象时拒绝激活（数字按字符串处理），不按留空处理成 owner 身份。
+- **安装下限**：55 个 schema-config 运行时消费者下限抬至 0.14.0；api-llm 消费者下限抬至 0.13.0。其余未删除有效配置形式或公开 API 的迁移包按 patch 准备。版本准备不代表已经发布。
+- **WebUI 配置修复**：secret 掩码只用于展示，不写回原值；实例配置按分组深合并默认值，清空顶层 number / llm-ref 字段能回到缺省。已有配置的保留键过滤规则不变，限制见迁移说明。停机中或插件正在卸载时，启用、禁用、改配置被拒绝，返回 409 并说明配置未更改；插件不存在才返回 404。
 
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
 

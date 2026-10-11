@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -33,7 +33,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.18.0 <1.0.0"
+    "@aalis/core": ">=0.20.0 <1.0.0"
   },
   "keywords": [
     "aalis",

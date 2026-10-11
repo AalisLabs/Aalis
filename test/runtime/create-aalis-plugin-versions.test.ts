@@ -50,12 +50,12 @@ describe('生成的依赖', () => {
       '@aalis/api-session-manager': '>=0.10.0 <1.0.0',
     });
     expect(pkg.devDependencies['@aalis/core']).toBe('>=0.19.1 <1.0.0');
-    // peer 的下限是 definePlugin 与服务描述符首次成为公开面的版本：模板没用更新的 core 接口
-    expect(pkg.peerDependencies['@aalis/core']).toBe('>=0.17.0 <1.0.0');
+    // peer 的下限是模板所用的服务调用形状（选择层与业务层两层）首次出现的版本
+    expect(pkg.peerDependencies['@aalis/core']).toBe('>=0.20.0 <1.0.0');
     expect(JSON.stringify(pkg)).not.toMatch(/latest|workspace:/);
   });
 
-  it('模板从 core 只取 definePlugin、logger 与 optional：peer 下限 0.17.0 由此成立', () => {
+  it('模板从 core 只取 definePlugin、logger 与 optional，调用写成两层形状：peer 下限 0.20.0 由此成立', () => {
     for (let mask = 0; mask < 8; mask++) {
       for (const webui of [false, 'declarative', 'frame'] as const) {
         const source = renderIndexTs(
@@ -66,6 +66,7 @@ describe('生成的依赖', () => {
           imported.every(name => ['definePlugin', 'logger', 'optional'].includes(name)),
           imported.join(),
         ).toBe(true);
+        expect(source).toContain('logger.use.');
       }
     }
   });

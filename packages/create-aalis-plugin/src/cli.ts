@@ -275,7 +275,7 @@ const rangeOf = (version: string) => `>=${version} <1.0.0`;
 
 export function renderPackageJson(a: Answers, versions: Versions): string {
   // 运行时依赖：服务描述符是值导入，用到的 api 包进 dependencies；@aalis/core 是宿主必有的核心，走 peerDependencies + devDep。
-  // core peerDep 的下限是 definePlugin / 服务描述符首次出现的版本；上限放到 1.0 之前，插件不必随
+  // core peerDep 的下限是模板所用的服务调用形状（选择层与业务层两层）首次出现的版本；上限放到 1.0 之前，插件不必随
   // core 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删——用了某版本才有的 API，
   // 就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
   const caps = selectedCapabilityUses(a.features);
@@ -300,7 +300,7 @@ export function renderPackageJson(a: Answers, versions: Versions): string {
     },
     ...(caps.length ? { dependencies: deps } : {}),
     peerDependencies: {
-      '@aalis/core': '>=0.17.0 <1.0.0',
+      '@aalis/core': '>=0.20.0 <1.0.0',
     },
     devDependencies: {
       '@aalis/core': rangeOf(versions['@aalis/core']),
@@ -569,7 +569,7 @@ npm install ${a.packageName}                 # 发布到 npm 之后
 插件默认启用；停用是把包名加入 \`aalis.config.yaml\` 顶层的 \`disabledPlugins\` 数组。
 插件配置写在 \`plugins."${a.packageName}"\` 段；没有 \`enabled\` 开关。若你为插件声明了
 \`configSchema\`，键与字段以其为准（schema 外字段启动时会被裁剪）。
-读取配置时安装 \`@aalis/schema-config\`（>=0.14.0），用 \`defineConfig\` 定义 schema，
+读取配置时安装 \`@aalis/schema-config\`（>=0.15.0），用 \`defineConfig\` 定义 schema，
 在 apply 开头调用 \`parseConfig(schema, config.use, logger.use)\`。\`config\` 与 \`logger\` 都要写进 uses；
 后续只读取解析结果。地址、启动参数等字段用 \`onInvalid: 'error'\` 拒绝错误值。
 

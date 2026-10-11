@@ -4,12 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
-const CORE_PEER = '>=0.18.0 <1.0.0';
-/** 带 core peer >=0.18.0 的包：39 api（含随 core 0.19 首发的 api-trigger，另有未发布的 api-remote-agent、api-publish、api-host-paths、api-host-logs、api-checkpoint、api-session-protocol、api-todo-list、api-approval 与 api-reach）+ 65 插件（含未发布的远端代理提供者插件、plugin-paper、plugin-publish-review、plugin-works-site、plugin-session-server、plugin-usage-stats 与 plugin-reach，以及探测接 lifecycle.signal 后抬了 peer 的 plugin-code-sandbox-os）+ schema-config + schema-log。 */
-const CORE_PEER_COUNT = 106;
-/** 依赖 core 0.19 新语义（禁用插件带配置的 updateConfig 只换配置、保持禁用）的包，peer 下限抬到 0.19。 */
-const CORE_PEER_019 = '>=0.19.0 <1.0.0';
-const CORE_PEER_019_DIRS = ['plugin-webui-server', 'runtime'];
+const CORE_PEER = '>=0.20.0 <1.0.0';
+/** 本批发布的包里带 core peer 的 112 个（已发布 96 个、首次发布 16 个）一律抬到 0.20 */
+const CORE_PEER_COUNT = 112;
 
 interface Manifest {
   name?: string;
@@ -45,44 +42,19 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
   return true;
 }
 
-describe('CHANGELOG 未发布节的发布声明', () => {
-  it('带 @aalis/core peer 的包：runtime 与 plugin-webui-server 为 >=0.19.0 <1.0.0，其余 106 个为 >=0.18.0 <1.0.0', () => {
+describe('发布声明（2026-10-11 一节）', () => {
+  it('带 @aalis/core peer 的包：本批发布的 112 个为 >=0.20.0 <1.0.0，只有没改动、不发版的 schema-log 留在 >=0.18.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
-      if (manifest.private) continue; // private 包不发布，不在本批发布声明之内
+      if (manifest.private) continue; // private 包不发布，不在发布声明之内
       const spec = manifest.peerDependencies?.['@aalis/core'];
       if (spec === undefined) continue;
       hits.push({ dir, spec });
     }
-    expect(
-      hits
-        .filter(h => h.spec === CORE_PEER)
-        .map(h => h.dir)
-        .sort(),
-      'core peer >=0.18.0 的包数应对齐 106（39 api + 65 插件 + schema-config + schema-log）',
-    ).toHaveLength(CORE_PEER_COUNT);
-    expect(
-      hits
-        .filter(h => h.spec === CORE_PEER_019)
-        .map(h => h.dir)
-        .sort(),
-      '只有依赖 core 0.19 新语义的 runtime 与 plugin-webui-server 抬到 >=0.19.0',
-    ).toEqual(CORE_PEER_019_DIRS);
-    const outliers = hits
-      .filter(h => h.spec !== CORE_PEER && h.spec !== CORE_PEER_019)
-      .map(h => `${h.dir} = ${h.spec}`);
-    // schema-message 的 core peer 只为类型声明，不抬。api-code-sandbox、plugin-process-local、plugin-tool-code-runner
-    // 本批有改动，但不用 core 0.18 的接口，peer 保持 >=0.17.0；plugin-maimai 0.17 批之后没有改动
-    expect(
-      outliers.sort(),
-      '仅 schema-message（type-only）、不用 core 0.18 接口的三个包与没有改动的 plugin-maimai 不在上述两个区间',
-    ).toEqual([
-      'api-code-sandbox = >=0.17.0 <1.0.0',
-      'plugin-maimai = >=0.17.0 <1.0.0',
-      'plugin-process-local = >=0.17.0 <1.0.0',
-      'plugin-tool-code-runner = >=0.17.0 <1.0.0',
-      'schema-message = >=0.2.0 <1.0.0',
+    expect(hits.filter(h => h.spec === CORE_PEER)).toHaveLength(CORE_PEER_COUNT);
+    expect(hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`)).toEqual([
+      'schema-log = >=0.18.0 <1.0.0',
     ]);
   });
 

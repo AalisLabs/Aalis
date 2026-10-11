@@ -245,14 +245,14 @@ my-plugin/
   "types": "dist/index.d.ts",
   "files": ["dist"],                      // 发布包只含编译产物；页面用自带前端时另有 "webui"
   "dependencies": { "@aalis/api-tools": ">=<最新版> <1.0.0" },  // 选了对应扩展点才写入（描述符是值导入）
-  "peerDependencies": { "@aalis/core": ">=0.17.0 <1.0.0" },
+  "peerDependencies": { "@aalis/core": ">=0.20.0 <1.0.0" },
   "devDependencies": { "@aalis/core": ">=<最新版> <1.0.0", "typescript": "^5.7.0", "@types/node": "^22.0.0" },
   "aalis": { "service": { "required": ["logger"], "optional": ["tools"] } }  // 与 uses 对齐：logger 为 required，optional(tools) 为 optional
 }
 ```
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
-- **`@aalis/core` 走 peerDependency**，区间 `>=0.17.0 <1.0.0`：`definePlugin` / 服务描述符首次成为公开面的版本，模板只用到这些。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
+- **`@aalis/core` 走 peerDependency**，区间 `>=0.20.0 <1.0.0`：模板用的是 core 0.20 起的服务调用形状（选择层与业务层两层）。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **依赖写区间**：`dependencies` 里的 `@aalis/api-*` 与 `devDependencies` 里的 `@aalis/core` 写 `>=<生成时源上的最新版> <1.0.0`。区间能被包管理器去重到与宿主同一份安装，跨次版本也不断；不写 `latest`（发布出去等于不设上限），也不写 caret（0.x 下跨次版本即断）。
 - **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、会话设置项→`@aalis/api-session-manager`。描述符是值导入，不能只放 `devDependencies`。
 - **`aalis.service` 与 `uses` 对齐**：`required` 固定含 `logger`；勾选的扩展点按 `optional(...)` 的服务名写进 `optional`（tool → `tools`，command → `commands`，webui → `webui-server`，会话设置项 → `session-manager`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」与按服务搜都会缺项——对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。

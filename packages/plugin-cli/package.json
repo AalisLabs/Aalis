@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-cli",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,20 +29,20 @@
   },
   "dependencies": {
     "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
-    "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-platform": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/api-persona": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
     "string-width": "^8.2.0",
     "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-commands": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
-    "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0"
+    "@aalis/api-commands": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-doctor": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -50,7 +50,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.18.0 <1.0.0"
+    "@aalis/core": ">=0.20.0 <1.0.0"
   },
   "aalis": {
     "service": {
