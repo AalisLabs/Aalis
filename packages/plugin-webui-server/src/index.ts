@@ -698,7 +698,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res: express.Response<OkResponse | ErrorResponse>,
   ) => {
     if (contextId !== null && !services.use.inspect(svcName).some(e => e.contextId === contextId)) {
-      res.status(404).json({ error: `service "${svcName}" has no provider with contextId "${contextId}"` });
+      res.status(404).json({ error: `服务 ${svcName} 没有 id 为 ${contextId} 的提供者` });
       return;
     }
     if (!caps.hostConfig.present) {
