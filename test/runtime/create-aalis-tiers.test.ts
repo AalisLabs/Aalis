@@ -205,6 +205,45 @@ describe('create-aalis 生成的项目', () => {
     }
   });
 
+  it('只有 full 档调检索接口：其余各档的插件是固定的，版本也只问注册表', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'aalis-tier-'));
+    let searches = 0;
+    const registry = createServer((request, response) => {
+      if (request.url?.startsWith('/-/v1/search')) searches++;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ version: '0.11.0' }));
+    });
+    try {
+      await new Promise<void>(resolve => registry.listen(0, '127.0.0.1', resolve));
+      const address = registry.address();
+      if (!address || typeof address === 'string') throw new Error('本地 registry 未监听 TCP');
+      for (const tier of ['minimal', 'standard'] as const) {
+        await run(
+          process.execPath,
+          [
+            '--import',
+            tsx,
+            cli,
+            tier,
+            '--tier',
+            tier,
+            '--no-install',
+            '--registry',
+            `http://127.0.0.1:${address.port}`,
+          ],
+          { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+        );
+        const pkg = JSON.parse(await readFile(join(dir, tier, 'package.json'), 'utf-8'));
+        expect(pkg.dependencies['@aalis/core'], tier).toBe('^0.11.0');
+      }
+      expect(searches).toBe(0);
+    } finally {
+      registry.closeAllConnections();
+      await new Promise<void>((resolve, reject) => registry.close(error => (error ? reject(error) : resolve())));
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each(['minimal', 'standard'] as const)('%s 档：带上会话协议与审批服务的提供者', tier => {
     const provided = servicesOf(pluginSet({ tier, picks: defaultPicks(tier, false) }, true));
     // 没有审批服务时，需要确认的工具调用一律被拒；WebUI 的会话也要经会话协议才连得上
