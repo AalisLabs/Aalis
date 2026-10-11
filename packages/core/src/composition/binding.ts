@@ -12,9 +12,13 @@ class ServiceUnavailableError extends Error {
   override name = 'ServiceUnavailableError';
   readonly #origin: { resources: Resources; name: string } | undefined;
 
-  constructor(scope: BindingScope, name: string, required: boolean, id: string | undefined) {
-    const missing = id === undefined ? '提供者' : ` "${id}" 这一家`;
-    super(`服务 "${name}" 不可用（"${scope.id}" 声明的依赖当前没有${missing}）`);
+  /** at 同 createTarget：钉住的目标失效时同一个 id 可能已有新登记，报的是钉住的那条失效，不说「没有这一家」 */
+  constructor(scope: BindingScope, name: string, required: boolean, at: string | ServiceEntry | undefined) {
+    const reason =
+      typeof at === 'object'
+        ? `钉住的 "${at.contextId}" 那条登记已失效，同一个 id 的现有登记要重新取句柄`
+        : `声明的依赖当前没有${at === undefined ? '提供者' : ` "${at}" 这一家`}`;
+    super(`服务 "${name}" 不可用（"${scope.id}" ${reason}）`);
     this.#origin = required ? { resources: scope.resources, name } : undefined;
   }
 
@@ -168,7 +172,7 @@ function createTarget<P, B>(
   };
   const instance = (): P => {
     const entry = current();
-    if (!entry) throw new ServiceUnavailableError(scope, name, required, id);
+    if (!entry) throw new ServiceUnavailableError(scope, name, required, at);
     return entry.instance as P;
   };
 

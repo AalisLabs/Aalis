@@ -100,7 +100,11 @@ export interface BindingPort<P> {
    * 手动退订启动的异步清理被随后的关闭等到、拒绝被接住；关闭后登记的句柄就地执行。
    */
   track(off: () => unknown, label?: string): () => void;
-  /** 注册型能力的通用账本，登记到目标那一家，见 {@link Registrar} */
+  /**
+   * 注册型能力的通用账本，登记到目标那一家，见 {@link Registrar}。register 返回的撤回须同步摘掉这一条，余下的异步收尾
+   * 照常由关闭等待：账本不等旧撤回落定就挂新的（目标换人、同键替换），在异步段里按键删除的话，快速换人 A→B→A 或同键
+   * 替换时会删掉刚挂上的新登记
+   */
   registrar<Item>(options: {
     key(item: Item): string;
     register(provider: P, item: Item): () => unknown;
