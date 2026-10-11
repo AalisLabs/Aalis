@@ -1133,6 +1133,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // provides 核对之前（dev 多报「未在 provides 中声明」），等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。
     // 代价：重算一直不收敛时，前端要等它收敛后才登记与挂上
     if (caps.plugins.present) await caps.plugins.use.idle();
+    // 等待期间本实例可能已开始关闭（bounce、disable、unload）。醒来照常登记、listen 的话，它成了占着端口的旧实例：
+    // 接手的新实例 listen 报 EADDRINUSE，禁用之后端口照样应答
+    if (lifecycle.use.signal.aborted) return;
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
