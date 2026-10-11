@@ -108,7 +108,7 @@ interface UnmetService {
 
 interface UnmetDependencies {
   lacking: UnmetService[]; // 缺：根失败、停用、在运行却没在提供、没有提供者或成环，要人处理
-  waiting: UnmetService[]; // 在等：根在启动，它启动完就满足
+  waiting: UnmetService[]; // 在等：根在启动，或在等自己的旧实例停下，落定后就满足
 }
 
 /** 每个 pending 插件没满足的 required 服务，按实例 id；available 是当前有提供者的服务名（services.use.names()） */
@@ -178,7 +178,7 @@ export default definePlugin({
 ```jsonc
 // package.json
 {
-  "dependencies": { "@aalis/api-doctor": "^0.5.0" },
+  "dependencies": { "@aalis/api-doctor": ">=<最新版> <1.0.0" },
   "aalis": { "service": { "optional": ["doctor"] } }
 }
 ```

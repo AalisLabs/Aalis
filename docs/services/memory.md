@@ -135,6 +135,7 @@ import type { Message } from '@aalis/schema-message';
 
 class MyMemoryService implements MemoryService {
   private store = new Map<string, Message[]>();
+  private archived = new Map<string, Message[]>();
   private meta = new Map<string, Map<string, { data: Record<string, unknown>; updatedAt: number }>>();
 
   async saveMessage(sessionId: string, message: Message): Promise<void> {
@@ -148,6 +149,12 @@ class MyMemoryService implements MemoryService {
   }
   async clearSession(sessionId: string): Promise<void> {
     this.store.delete(sessionId);
+    this.archived.delete(sessionId);
+  }
+  async archiveOldest(sessionId: string, count: number): Promise<number> {
+    const moved = (this.store.get(sessionId) ?? []).splice(0, count);
+    this.archived.set(sessionId, [...(this.archived.get(sessionId) ?? []), ...moved]);
+    return moved.length;
   }
   async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
     const ns = this.meta.get(namespace) ?? new Map();
@@ -211,7 +218,7 @@ export default definePlugin({
 
 - **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件，调用处不必另写判空。
 - **可选依赖**：`optional(memory)` + 先看 `memory.present` 降级（agent 采用这种方式）。
-- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.getFullHistory) await svc.getFullHistory(...)`。
+- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (memory.use.getFullHistory) await memory.use.getFullHistory(...)`。
 - **有状态资源随换人重挂**：用 `memory.follow(attach)`，见 [follow](../core/context.md#follow)。
 
 ## 6. 能力 / 风险 → 影响
