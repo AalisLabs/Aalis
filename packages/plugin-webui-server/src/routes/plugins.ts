@@ -101,7 +101,8 @@ async function settledEntry(pm: PluginManagerService, instanceId: string) {
 
 /**
  * 落定后既没激活也没失败的说明：慢激活转入后台仍在进行，或 required 依赖没满足（缺什么、在等谁，按 api-doctor 的共享判据
- * 沿链追到根，与插件列表同一说法；依赖都在、只是提供者正在关停换代时没有可说的）；其余状态由各路由自己说明
+ * 沿链追到根，与插件列表同一说法），不缺服务时在等自己的旧实例停下（同插件列表，说法同依赖链的 lingering 根）；依赖都在、
+ * 只是提供者正在关停换代时没有可说的；其余状态由各路由自己说明
  */
 function notYetActive(
   pm: PluginManagerService,
@@ -111,8 +112,10 @@ function notYetActive(
 ): string | undefined {
   if (state === 'activating') return '仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准';
   if (state !== 'pending') return undefined;
-  const unmet = unmetDependencies(pm.getStatus(), services.names()).get(instanceId);
-  const why = unmet && describeUnmet(unmet);
+  const status = pm.getStatus();
+  const unmet = unmetDependencies(status, services.names()).get(instanceId);
+  const lingering = !unmet?.lacking.length && status.find(entry => entry.instanceId === instanceId)?.lingering;
+  const why = lingering ? `等待 ${instanceId} 的旧实例停下` : unmet && describeUnmet(unmet);
   return why ? `尚未激活：${why}` : '尚未激活，结果以插件列表为准';
 }
 

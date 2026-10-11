@@ -120,9 +120,10 @@ describe('本插件偏好的 REST', () => {
     const { store, call, chosen } = await start();
     expect((await call('POST', '/api/plugins/zz-picky/services/zz-svc/prefer', {})).status).toBe(400);
     expect((await call('POST', '/api/plugins/zz-gone/services/zz-svc/prefer', { contextId: 'zz-b' })).status).toBe(404);
-    expect((await call('POST', '/api/plugins/zz-picky/services/zz-svc/prefer', { contextId: 'zz-c' })).status).toBe(
-      404,
-    );
+    expect(await call('POST', '/api/plugins/zz-picky/services/zz-svc/prefer', { contextId: 'zz-c' })).toEqual({
+      status: 404,
+      body: { error: '服务 zz-svc 没有 id 为 zz-c 的提供者' },
+    });
     expect(chosen('zz-picky')).toBe('zz-a');
     expect(store.getAll().pluginServicePreferences).toBeUndefined();
   });

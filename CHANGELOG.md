@@ -148,6 +148,8 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 一段操作固定在同一家：memory-vector（算向量与记 `modelId`、判方法与删除落盘）、user-profile、adapter-onebot 的合并转发展开、media 的描述回写、memory-summary 的压缩、paper 的发布与提名，在换提供者的空档里不会一半打到旧的、一半打到新的。
 - WebUI 页面里的文件单元格在 storage 缺席时不再回 500。
 - plugin-workflow 拆卸之后不再补触发过期的单次任务、不再写盘。
+- plugin-doctor：`plugins.pending` 在没有缺服务的插件时写「无缺服务的插件」。此前写「无未就绪插件」，而在等别的插件启动、在等自己的旧实例停下的插件仍是 pending，与这句不符；它们照旧分别在 `plugins.waiting` 与 `plugins.lingering` 里报。
+- plugin-webui-server：启用、改配置、重载与新建实例之后，插件不缺服务、在等自己的旧实例停下时，回执写「尚未激活：等待 <实例> 的旧实例停下」，此前只写「尚未激活，结果以插件列表为准」。设服务偏好（全局与按插件）时提供者不存在，404 的说明改为中文。
 
 ## 2026-10-01（core 0.19.1 patch；schema-config 0.14.0 minor；60 个包：9 minor / 51 patch）
 

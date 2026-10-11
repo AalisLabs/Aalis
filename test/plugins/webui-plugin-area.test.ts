@@ -321,6 +321,27 @@ describe('重载', () => {
     expect(w.saved, '重载不写配置文件').toHaveLength(0);
   });
 
+  it('旧实例超过宽限仍未停下：回执写明在等它停下，说法与依赖链的根一致', async () => {
+    const w = world({}, {}, { disposeTimeoutMs: 20 });
+    const gate = deferred();
+    let applies = 0;
+    try {
+      await w.boot(
+        definePlugin({
+          name: 'zz-slowstop',
+          uses: { lifecycle },
+          apply: ({ lifecycle }) => void (++applies === 1 && lifecycle.use.onDispose(() => gate.promise)),
+        }),
+      );
+      expect(await w.reload('zz-slowstop')).toMatchObject({
+        status: 200,
+        body: { ok: true, message: '插件 zz-slowstop 已重载；尚未激活：等待 zz-slowstop 的旧实例停下' },
+      });
+    } finally {
+      gate.resolve();
+    }
+  });
+
   it('已停用的插件不重载（409，说明先启用）；不存在的回 404', async () => {
     const w = world({ name: 'T', logLevel: 'error', plugins: { 'zz-off': {} }, disabledPlugins: ['zz-off'] });
     await w.boot(definePlugin({ name: 'zz-off', apply() {} }));
