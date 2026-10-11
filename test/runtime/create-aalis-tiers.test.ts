@@ -145,6 +145,31 @@ describe('create-aalis 生成的项目', () => {
     }
   });
 
+  it('full 档：源的插件检索回 200 却是 0 条（镜像源多不支持检索）时提示是哪个源、怎么重试，不静默少装', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'aalis-tier-'));
+    const registry = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(request.url?.startsWith('/-/v1/search') ? { objects: [] } : { version: '0.17.0' }));
+    });
+    try {
+      await new Promise<void>(resolve => registry.listen(0, '127.0.0.1', resolve));
+      const address = registry.address();
+      if (!address || typeof address === 'string') throw new Error('本地 registry 未监听 TCP');
+      const source = `http://127.0.0.1:${address.port}`;
+      const { stderr } = await run(
+        process.execPath,
+        ['--import', tsx, cli, 'my-bot', '--tier', 'full', '--no-install', '--registry', source],
+        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+      );
+      expect(stderr).toContain(source);
+      expect(stderr).toContain('--registry https://registry.npmjs.org');
+    } finally {
+      registry.closeAllConnections();
+      await new Promise<void>((resolve, reject) => registry.close(error => (error ? reject(error) : resolve())));
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each(['minimal', 'standard'] as const)('%s 档：带上会话协议与审批服务的提供者', tier => {
     const provided = servicesOf(pluginSet({ tier, picks: defaultPicks(tier, false) }, true));
     // 没有审批服务时，需要确认的工具调用一律被拒；WebUI 的会话也要经会话协议才连得上
