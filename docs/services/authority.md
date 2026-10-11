@@ -248,7 +248,7 @@ tools.use.register({
 });
 // 真实例：packages/plugin-tool-system/src/tools/shell.ts（exec 工具）
 // 指令：CommandDefinition 同名字段 packages/api-commands/src/index.ts
-commands.use.command('level <target> <n:number>', '设等级', { visibility: 'restricted' }); // packages/plugin-authority/src/index.ts
+commands.use.command('level <target:string> <level:number>', '设等级', { visibility: 'restricted' }); // packages/plugin-authority/src/index.ts
 ```
 
 声明展开与守卫调用：执行点 `resolveCapabilityPolicy(tool)` → `guard({ name, type, visibility, confirm, risk, ... })`，返回 string 即拦截（`packages/plugin-tools/src/tools.ts`）。

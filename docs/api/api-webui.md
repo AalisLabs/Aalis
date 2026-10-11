@@ -644,11 +644,13 @@ interface PluginListItem {
   state: PluginState; // pending | activating | active | disabled | disposed | error
   error?: string;
   slow?: boolean; // 激活超过慢激活阈值、已转入后台
+  lingering?: boolean; // 旧实例超过宽限仍未停下：停下之前同一 id 不起新实例
   self?: true; // 提供这个界面：不能从界面停用或卸载
   provides: string[];
   requiredServices: string[];
   optionalServices: string[];
   servicePreferences: Record<string, string>; // 本插件偏好：它声明的服务里设了的，服务名 → 偏好的提供者
+  serviceSelections: Record<string, { contextId: string; basis?: SelectionBasis }>; // 它声明的服务此刻各落到哪一家、依据是什么，只列选得到的
   lacking: UnmetService[]; // 缺与在等、待配置三项见上文「需要处理」的 PluginBlockers
   waiting: UnmetService[];
   unconfigured: string[];

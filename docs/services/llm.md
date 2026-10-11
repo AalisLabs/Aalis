@@ -102,7 +102,7 @@ interface ChatModelRequest {
 | --- | --- | --- |
 | `id` / `providerId` / `contextLength` / `capabilities` | 必须 | entry 元数据 |
 | `chat()` | 必须 | 非流式契约 |
-| `chatStream()` | 强烈建议 | 不实现则该 model 无 `streaming` 能力，agent 会跳过它（agent 直接调 `chatStream!`，见 §7） |
+| `chatStream()` | 强烈建议 | agent 只按 `chat` 能力挑 model，再直接调 `chatStream!`：不实现时，选中这个 model 的回合失败（见 §7） |
 | `maxOutputTokens` | 建议 | 否则消费方回退默认值，token 预算估算变粗 |
 | `refresh()` | 可选 | 仅远端动态发现型需要；没有时 webui 的「刷新」按钮照常显示，点击后提示该 provider 不支持运行时刷新 |
 | `balance()` | 可选 | 服务商有余额接口才实现；记账插件的「余额」一页按它出现 |
@@ -190,11 +190,11 @@ try {
 
 ### 可选依赖处理
 
-消费方若把 LLM 当可选增强，用 `uses optional`，`resolveLLMModel` 返回 `undefined`（或 `llm.present` 为 `false`）时降级（如上）。若是硬依赖（如 agent），用 `uses` 必选，并在 ref 解析不到时报错。
+消费方若把 LLM 当可选增强，用 `uses optional`，`resolveLLMModel` 返回 `undefined`（或 `llm.present` 为 `false`）时降级（如上）。若是硬依赖，用 `uses` 必选，并在 ref 解析不到时报错。agent 以 optional 声明 llm，没有模型时照常激活，取不到模型的回合报出原因。
 
 ### 流式消费
 
-agent 对解析到的条目取 `use`，直接调 `chatStream!(request)`（`packages/plugin-agent/src/index.ts`）——因此它通过 `resolveLLMModel(this.caps.llm, ref, ['chat'])` 拿到的 model 默认假定能 chat；若要流式，应确保选中的 model 声明了 `streaming`，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`。
+agent 按 `resolveLLMModel(this.caps.llm, ref, ['chat'])` 只要求 `chat` 能力，对解析到的条目取 `use` 后直接调 `chatStream!`（`packages/plugin-agent/src/index.ts`），不检查 `streaming`。自己写的消费方要流式时，按 `streaming` 能力筛选，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`。
 
 ### 选默认 model
 
