@@ -896,7 +896,7 @@ describe('作品站编排与假 Pages', () => {
       ratePerSecond: 1000,
       retryBaseMs: 10,
       pollIntervalMs: 10,
-      deployTimeoutMs: 2000,
+      deployTimeoutMs: 5_000,
     });
     const live = vi.fn();
     let transient404 = 0;
@@ -919,12 +919,13 @@ describe('作品站编排与假 Pages', () => {
       },
       logger: { info: () => {}, warn: () => {} },
       signal: controller.signal,
-      convergenceMs: 100,
+      // 核验期限只在失败时用到，放宽不拖慢通过的路径；收得太紧时，高负载下首轮的 404 与旧字节来不及重试就判核验失败、部署暂停
+      convergenceMs: 5_000,
       convergencePauseMs: 5,
     });
     try {
       deployer.start();
-      await eventually(() => !!store.data?.current.main || !!store.data?.lastFailure);
+      await eventually(() => !!store.data?.current.main || !!store.data?.lastFailure, 12_000);
       expect(store.data?.current.main).toBeDefined();
       expect(transient404).toBeGreaterThan(1);
       expect(staleCss).toBeGreaterThan(1);

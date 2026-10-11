@@ -149,6 +149,7 @@ describe('资产键', () => {
 });
 
 describe('部署全流程', () => {
+  // 两千多份文件的哈希与逐一核对是纯计算，单独跑约 2.5 秒，全量并行时会被拖过默认的单例时限
   it('2001 个新文件分两批上传，manifest、branch、_headers、_worker.bundle 的结构正确，轮询到 success', async () => {
     const client = makeClient();
     const files = Array.from({ length: 2001 }, (_, i) => textFile(`/f/${i}.css`, `a{--i:${i}}`));
@@ -196,7 +197,7 @@ describe('部署全流程', () => {
     const item = batches.flat().find(x => x.key === d.manifest['/f/7.css'])!;
     expect(Buffer.from(item.value, 'base64').toString()).toBe('a{--i:7}');
     expect(item.metadata.contentType).toBe('text/css');
-  });
+  }, 60_000);
 
   it('已有的键不重传：第二次部署只上传新增的文件', async () => {
     const client = makeClient();
