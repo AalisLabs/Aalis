@@ -98,6 +98,8 @@ const groups = () =>
     .queryAllByRole('heading', { level: 3 })
     .map(heading => heading.textContent);
 const detail = () => within(screen.getByRole('main'));
+/** 管理动作做完后还要等回执、重取插件列表、几轮渲染才跳转，全量并行时这一串会超过 waitFor 默认的 1 秒；只等跳转，不计时 */
+const AFTER_ACTION = { timeout: 5_000 };
 const posts = (path: string) => restCalls().filter(call => call.method === 'POST' && call.path === path);
 /** 依赖块里每个依赖一行：各段文字与按钮（链接）；已满足的只有一段文字 */
 const needs = (relations: ReturnType<typeof within>) =>
@@ -535,7 +537,7 @@ describe('详情', () => {
     expect(await block.findByText('suffix 只能包含字母、数字、下划线和连字符')).toBeTruthy();
     fireEvent.change(block.getByLabelText('新实例的名字'), { target: { value: 'vision' } });
     fireEvent.click(block.getByRole('button', { name: '新建实例' }));
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model%3Avision'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model%3Avision'), AFTER_ACTION);
     expect(created).toEqual([{ suffix: 'bad name' }, { suffix: 'vision' }]);
   });
 
@@ -599,7 +601,7 @@ describe('详情', () => {
           .map(call => call.path),
       ).toEqual(['/api/plugins/zz-model%3Abackup/instance']),
     );
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model'), AFTER_ACTION);
   });
 
   it('其余实例的详情头部有「移除实例」（手机上实例行没有「更多」）：先确认，确认后发 DELETE、回到主实例；主实例没有', async () => {
@@ -615,7 +617,7 @@ describe('详情', () => {
     fireEvent.click(summary().getByRole('button', { name: '移除实例' }));
     const dialog = within(screen.getByRole('dialog', { name: '移除实例「backup」？' }));
     fireEvent.click(dialog.getByRole('button', { name: '移除' }));
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model'), AFTER_ACTION);
     expect(
       restCalls()
         .filter(call => call.method === 'DELETE')
@@ -653,7 +655,7 @@ describe('详情', () => {
     await act(async () => {});
     expect(app.where()).toBe('/plugins/zz-model');
     act(() => answers[1]());
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model%3Avision'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/zz-model%3Avision'), AFTER_ACTION);
     expect(detail().queryByText('没有这个插件')).toBeNull();
     expect(await detail().findByText('backup', { exact: false })).toBeTruthy();
   });
@@ -703,7 +705,7 @@ describe('详情', () => {
     refuse = false;
     fireEvent.click(dialog.getByRole('checkbox', { name: '同时删除配置（含 1 个密钥）' }));
     fireEvent.click(dialog.getByRole('button', { name: '卸载' }));
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins'), AFTER_ACTION);
     expect(posts('/api/marketplace/uninstall').map(call => call.body)).toEqual([
       { name: 'zz-mongo', removeConfig: false },
       { name: 'zz-mongo', removeConfig: true },
@@ -1004,7 +1006,7 @@ describe('市场', () => {
     expect(await dialog.findByText('@aalis/api-zz-notes')).toBeTruthy();
     expect(dialog.getByText('zz-store（由 zz-mongo 提供）')).toBeTruthy();
     fireEvent.click(dialog.getByRole('button', { name: '安装' }));
-    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/%40aalis%2Fplugin-zz-notes#config'));
+    await vi.waitFor(() => expect(app?.where()).toBe('/plugins/%40aalis%2Fplugin-zz-notes#config'), AFTER_ACTION);
     expect(posts('/api/marketplace/install').map(call => call.body)).toEqual([{ name: '@aalis/plugin-zz-notes' }]);
     expect(screen.getByText('已安装并加载: @aalis/plugin-zz-notes')).toBeTruthy();
     await vi.waitFor(() => expect(scrolled).toHaveBeenCalledWith('config'));
