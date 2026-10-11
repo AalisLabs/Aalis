@@ -79,7 +79,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins`、`createApp` / `AppOptions` 的注入件（现仅 `restartStrategy`）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
+| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins`、`createApp` 与 `AppOptions` 的全部成员：宿主注入件 `restartStrategy` / `logger` / `logHub` / `version` / `devMode`，调节项 `name` / `logLevel` / `disposeTimeoutMs` / `slowThresholdMs`（接口即清单）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
 | internal | `@internal` 标注成员、私有方法、激活记录类、两个注册表类（`EventBus` / `ServiceContainer`）与 `PluginManager` 类、`DisposableChain` 等未从包根导出者 | 无承诺 |
 
 ## 七、1.0 之前的实况（避免误读上表）
