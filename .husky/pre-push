@@ -1,24 +1,42 @@
-# Pre-push 守门：本地完整复现 CI 的检查项，另加 core 覆盖率门槛。
+# Pre-push 守门：构建、Biome、Knip，加上推送前的快测试。快测试不跑重测试（起真浏览器、起构建、起真实子进程或
+# 联网的，名单见 test/heavy-tests.ts），只跑架构守卫与相对远端改动相关的测试；改到 packages/core 时另跑 core 覆盖率。
+# 全量测试不在这里跑：合进 dev 之前与发布之前手动跑 `pnpm run preflight`，见 CONTRIBUTING.md 第 2 节。
 #
-# 跑的项目 = .github/workflows/ci.yml 中 build / unit-tests / biome / knip，
-# 外加 coverage:core（只跑 test/core，四项 100%；CI 不跑这一项）。
-# 任何一项失败立即阻止 push（exit 非零）。
-#
-# 紧急绕过：git push --no-verify （仅在确认 CI 会自动 fail-safe 时使用）
+# 改动的基准取远端上这次要推的分支现在的提交。远端还没有这个分支、本地没有那个提交，或改到了依赖图判不准的公共件
+# （依赖清单、锁文件、测试与编译配置、测试的公共夹具）时，跑全部快测试。
 
-echo "[pre-push] 1/5 构建 ..."
+base=""
+while read -r _local_ref _local_oid _remote_ref remote_oid; do
+  case "$remote_oid" in
+    *[!0]*) git cat-file -e "$remote_oid^{commit}" 2>/dev/null && base="$remote_oid" ;;
+  esac
+done
+
+if [ -n "$base" ] && git diff --name-only "$base" -- package.json pnpm-lock.yaml 'vitest*.ts' 'tsconfig*.json' \
+  test/setup test/helpers test/fixtures test/heavy-tests.ts | grep -q .; then
+  base=""
+fi
+
+echo "[pre-push] 1/4 构建 ..."
 pnpm -r build || exit 1
 
-echo "[pre-push] 2/5 单元测试 ..."
-pnpm test || exit 1
-
-echo "[pre-push] 3/5 core 覆盖率 ..."
-pnpm run coverage:core || exit 1
-
-echo "[pre-push] 4/5 Biome ..."
+echo "[pre-push] 2/4 Biome ..."
 pnpm exec biome check . || exit 1
 
-echo "[pre-push] 5/5 Knip ..."
+echo "[pre-push] 3/4 Knip ..."
 pnpm exec knip --no-progress || exit 1
+
+if [ -n "$base" ]; then
+  echo "[pre-push] 4/4 快测试：架构守卫与相对 $base 改动相关的测试 ..."
+  AALIS_TEST_SCOPE=quick pnpm exec vitest run test/architecture || exit 1
+  AALIS_TEST_SCOPE=quick pnpm exec vitest run --changed "$base" --passWithNoTests || exit 1
+  if git diff --name-only "$base" -- packages/core | grep -q .; then
+    pnpm run coverage:core || exit 1
+  fi
+else
+  echo "[pre-push] 4/4 快测试：全部（没有可比的远端提交，或改到了公共件）..."
+  AALIS_TEST_SCOPE=quick pnpm exec vitest run || exit 1
+  pnpm run coverage:core || exit 1
+fi
 
 echo "[pre-push] OK"
