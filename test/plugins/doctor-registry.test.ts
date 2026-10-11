@@ -293,7 +293,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const checks = (await doctor.runChecks()).checks;
-    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({ level: 'ok', message: '无未就绪插件' });
+    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({ level: 'ok', message: '无缺服务的插件' });
     expect(checks.find(c => c.id === 'plugins.waiting')?.detail).toBe(
       'zz-doctor-patient: 等待 zz-doctor-slow-only-provider 启动',
     );
@@ -342,6 +342,13 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     );
     await app.plugins.bounce('zz-doctor-slowstop');
     const report = await doctor.runChecks();
+    // 新实例停在 pending、只在等旧实例停下：不缺服务，plugins.pending 不写「无未就绪插件」，原因只在 plugins.lingering 报一次
+    expect(app.plugins.getPlugin('zz-doctor-slowstop')?.state).toBe('pending');
+    expect(report.checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+      level: 'ok',
+      message: '无缺服务的插件',
+    });
+    expect(report.checks.some(c => c.id === 'plugins.waiting')).toBe(false);
     expect(report.checks.find(c => c.id === 'plugins.lingering')).toMatchObject({
       level: 'warn',
       message: '1 个插件的旧实例超过宽限仍未停下',
