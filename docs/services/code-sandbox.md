@@ -190,7 +190,7 @@ export default definePlugin({
 `code-sandbox` 通常是可选依赖：consumer 把它声明在 `uses optional`，运行时取不到就 fail-closed。`code_runner` 就是这么做的：
 
 ```ts
-uses: { storage, process, codeSandbox: optional(codeSandbox) };
+uses: { storage, proc: processService, codeSandbox: optional(codeSandbox) };
 ```
 
 ### 先看 `present` + fail-closed

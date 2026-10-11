@@ -61,7 +61,7 @@ export interface BoundAgent extends AgentService {
 
 - `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.use.handleMessage(message)`（每条消息先看 `agent.present`）——**这是 agent 被驱动的主入口**。
 - `plugin-session-server`：收到 `turn/abort` 请求时先看 `agent.present`，再调 `agent.use.abort(sessionId, turnId)`。
-- `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/plugin-file-reader/src/index.ts`）。
+- `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/api-agent/src/index.ts`）。
 
 **钩子订阅方**：`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
 

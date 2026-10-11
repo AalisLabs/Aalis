@@ -88,7 +88,7 @@ export default definePlugin({
   uses: { storage },
   apply({ storage }) {
     void storage.use.readFile('data:/example.json', 'utf8');
-    void storage.use.own.writeFile('state.json', '{}'); // pluginData:/example-storage/state.json
+    void storage.use.own.writeFile('state.json', '{}'); // pluginData:/acme+example-storage/state.json
   },
 });
 ```

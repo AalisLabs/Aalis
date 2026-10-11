@@ -263,11 +263,9 @@ const run = await workflow.use.runWorkflow(id, vars, 'manual:foo', { platform, u
 ### 编程式触发
 
 ```ts
-import type { WorkflowService } from '@aalis/api-workflow';
-
 if (!workflow.present) return;               // optional 依赖：先看 present 降级
 const run = await workflow.use.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
-if (run.status !== 'success') logger.use.warn(run.error);
+if (run.status !== 'success') logger.use.warn(`工作流运行未成功（${run.status}）: ${run.error ?? ''}`);
 ```
 
 ### 用事件触发（解耦，推荐跨插件做法）

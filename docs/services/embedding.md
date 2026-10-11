@@ -181,14 +181,16 @@ export default definePlugin({
 ```ts
 const provider = embedding.list().find(p => p.selected)?.use;
 if (!provider) throw new Error('没有可用的 embedding 提供者');
+// 先读 modelId 再 embed：那一家在 embed 途中撤回后，钉住的句柄就不能再访问
+const { modelId } = provider;
 const vec = await provider.embed(text);
-// provider 固定在选中的那一家，读它的 provider.modelId 与 vec 出自同一家提供者
+return { vec, modelId }; // 两者出自同一家，一起记下
 ```
 
 ### 硬依赖 vs 可选依赖
 
 - **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`，如 memory-vector）。缺席时的抛错由调用点的错误边界兜住（见下文）。
-- **可选依赖**：声明 `uses optional`（或干脆不声明），先看 `present` 降级：
+- **可选依赖**：声明 `uses optional`，先看 `present` 降级：
 
 ```ts
 if (!embedding.present) {

@@ -54,7 +54,7 @@ export interface VectorStoreService {
 
 - `@aalis/plugin-memory-vector`（向量记忆，提供 `semantic-memory`）：`packages/plugin-memory-vector/src/index.ts`
   - 声明依赖：`uses` 中 `vectorstore`、`embedding` 为必需。
-  - 取服务：经业务句柄 `vectorstore.use` 调用（活句柄，每次访问成员重新解析）。
+  - 取服务：单次调用（`search`、`size`）经业务句柄 `vectorstore.use`（活句柄，每次访问成员重新解析）；一段操作（写入再落盘、清空再落盘、判方法再删除落盘）取 `list()` 里选中那一条的 `use` 固定在同一家，选不到时退回 `vectorstore.use`。
   - 典型调用：索引时 `add` + `save`；按会话删 `deleteByFilter`；清库 `clear` + `save`；检索 `search`，并对结果做 `score >= minScore` 过滤。
 - `@aalis/plugin-commands` 仅探测可用性：`services.use.get('vectorstore') !== undefined`（`packages/plugin-commands/src/index.ts`）。
 

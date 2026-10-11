@@ -205,7 +205,7 @@ export default definePlugin({
   uses: { storage },
   apply({ storage }) {
     void storage.use.readFile('data:/persona.yaml');
-    // 私有数据：落到 pluginData:/example-storage-consumer/state.json
+    // 私有数据：落到 pluginData:/acme+example-storage-consumer/state.json
     void storage.use.own.writeFile('state.json', '{}');
   },
 });
