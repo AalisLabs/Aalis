@@ -2,7 +2,7 @@
 // 在临时目录（cwd）里以子进程方式运行。只走 runtime **源码**（start.ts），不依赖 runtime dist。
 //
 // 环境变量：
-//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'daemon'（传 argv: []，
+//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'no-app-dir'（不传 appDir）| 'daemon'（传 argv: []，
 //                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
@@ -20,7 +20,7 @@ import { commands } from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { hostPaths } from '../../packages/api-host-paths/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
-import { startAalis } from '../../packages/runtime/src/start.js';
+import { type StartAalisOptions, startAalis } from '../../packages/runtime/src/start.js';
 
 const GEN_FILE = resolve(process.cwd(), 'gen.txt');
 const gen = (existsSync(GEN_FILE) ? Number(readFileSync(GEN_FILE, 'utf-8').trim() || '0') : 0) + 1;
@@ -116,15 +116,16 @@ const pluginLoader = {
   },
 };
 
-// 'default-loader'：不传插件加载器，走默认的 node_modules 加载器；安装集取 AALIS_E2E_APP_DIR（不给则用缺省的 <家目录>/app）
-const appDir = process.env.AALIS_E2E_APP_DIR;
-const app = await startAalis({
+// 'default-loader'：不传插件加载器，走默认的 node_modules 加载器；安装集取 AALIS_E2E_APP_DIR，不给则取 cwd。
+// 'no-app-dir'：照旧版入口那样不传 appDir（经类型断言绕过必填）
+const opts = {
   ...(mode === 'default-loader' ? {} : { pluginLoader }),
-  ...(appDir ? { appDir } : {}),
+  ...(mode === 'no-app-dir' ? {} : { appDir: process.env.AALIS_E2E_APP_DIR ?? process.cwd() }),
   consoleSink: false,
   terminalRestore: false,
   ...(mode === 'daemon' ? { argv: [] } : {}),
-});
+} as StartAalisOptions;
+const app = await startAalis(opts);
 // 'restart' 模式的第一代：守护进程起来后调 app.restart()。前台由重启策略拉起第二代并交出实例锁，第二代就绪后
 // 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
 if (mode === 'restart' && gen === 1) {

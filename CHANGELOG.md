@@ -14,16 +14,16 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 
 > **插件与契约包必须与 core 同批升级。** 已发布的插件与契约包的 `@aalis/core` peer 区间（`>=0.2.0`、`>=0.17.0`、`>=0.18.0`、`>=0.19.0`，上限都是 `<1.0.0`）都接受 0.20，包管理器不会拦下只升 core 的安装。配 core 0.20 时：
 >
-> - runtime 还是旧版时，进程一启动就退出：`Aalis 启动失败: TypeError: host.provide is not a function`，一个插件都不加载，下面几条要等 runtime 也换成新版才看得到。runtime 换成新版而入口文件没改（不传 `appDir`、`defaultHome`）时，家目录按缺省落到 `~/.aalis`，提示加 `--init` 初始化那里；照做得到的是一个空的家目录，不是原来的项目。
+> - runtime 还是旧版时，进程一启动就退出：`Aalis 启动失败: TypeError: host.provide is not a function`，一个插件都不加载，下面几条要等 runtime 也换成新版才看得到。runtime 换成新版而入口文件没改（不传 `appDir`）时，在解析家目录之前报「startAalis 缺少 appDir」并以 2 退出，指向升级指南。
 > - 旧版 api-agent 0.9.1、api-commands 0.7.0、api-doctor 0.7.0、api-tools 0.10.0、api-webui 0.11.1 以值导入已删的 `serviceRef`，加载时就失败，依赖它们的插件随之加载失败。旧版 api-hooks 的 `run` 调已删的 `port.require()`，得到被拒的 Promise（TypeError）；旧版 api-contributions 的 `collect` 同样调它，同步抛 TypeError。
 > - 没有自定义绑定的旧版契约包照常加载，辅助函数会坏：旧版 api-llm 的 `resolveLLMModel` / `listLLMModels`、api-storage 的网关与 `getStorageEntries`、api-platform 的辅助函数、api-trigger 的 `createBotNames` 调已删的 `.all()`，抛 TypeError；旧版 api-process 的网关与 api-trigger 的 `isActiveTrigger`、`archiveSwallowed` 读已删的 `.current`，得到 `undefined`：网关每次调用都报「未找到 process 服务」，`isActiveTrigger` 恒为 false，`archiveSwallowed` 不归档。
 > - 在 `apply` 里直接调内置项（`events.on`、`logger.info`、`lifecycle.onDispose`、`provide(...)`）或调 `.require()`、`.all()` 的插件抛 TypeError，进 `error`。`parseConfig(schema, caps.config, caps.logger)` 同样进 `error`：它把选择层当配置读，对选择层上 schema 外的键告警时调到不存在的 `warn`，抛 TypeError。
 > - 以下几种不报错，静默失效：`caps.x.current?.m()` 什么都不做；`if (caps.x.current)` 的分支不再进入；直接读 `caps.lifecycle.signal`、`caps.lifecycle.id`、`caps.config.<键>` 得到 `undefined`，带这个 `signal` 的 `fetch` 永不中止；不传 logger 的 `parseConfig(schema, caps.config)` 读到的是默认配置，schema 里有没有默认值的必填字段时抛「缺少配置项」、插件进 `error`；已改成 `events.use.on` 却仍监听 `service:registered` / `service:unregistered` / `service:preference-changed` 或 `app:starting` 的纯 JS 代码不再触发（TypeScript 下事件表是封闭的，编译报错；没改写的旧插件走不到这一步，`events.on` 先抛 TypeError）。
 > - 旧版契约包发布的类型声明引用已删的 `ServiceRef`，只改了注释的契约包也要重发。
 >
-> 已有项目单独跑 `npm update`、或删掉锁文件重装，同样会装成新旧混搭：已发布的旧版插件对契约包写的是 `>=x <1.0.0`，会取到本批的新版契约包，作为嵌套副本装在旧插件下面（npm 对嵌套依赖的 peer 冲突只告警，退出码仍是 0）；启动后十几个插件加载失败（`does not provide an export named 'createStorageGateway'` 等），另有一批激活失败。create-aalis 生成的旧项目按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md) 升级。
+> 已有项目单独跑 `npm update`、或删掉锁文件重装，同样会装成新旧混搭：已发布的旧版插件对契约包写的是 `>=x <1.0.0`，会取到本批的新版契约包，作为嵌套副本装在旧插件下面（npm 对嵌套依赖的 peer 冲突只告警，退出码仍是 0）；启动后十几个插件加载失败（`does not provide an export named 'createStorageGateway'` 等），另有一批激活失败。create-aalis 生成的旧项目按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 升级。
 >
-> 发布时受影响的第一方包同批发出：带 core peer 的包下限抬到 `>=0.20.0 <1.0.0`，含新包 api-host-logs（它用到资源口的 `port.provider`，现写的 `>=0.18.0` 不够；脚手架 create-aalis-plugin 生成的项目同样要抬，它生成的代码已经是 0.20 的写法）；依赖本批改了形状的契约包（下文「公开接口有不兼容改动」一组里的契约包，以及旧版配 core 0.20 就出错的 api-hooks、api-contributions）的包，对这些契约的 `dependencies` 下限抬到本批的新版本，只更新插件时不会留下旧版契约包。第三方插件按 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」一节改写后，把 core peer 下限抬到 `>=0.20.0`，对上述契约包的下限同样抬到本批的新版本。0.19 及以前生成的项目不能经旧版 WebUI 的插件市场升到本版：旧入口文件不传 `appDir`、`defaultHome`，更新后新进程起不来，回滚到旧版；按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md) 用 npm 升级。
+> 发布时受影响的第一方包同批发出：带 core peer 的包下限抬到 `>=0.20.0 <1.0.0`，含新包 api-host-logs（它用到资源口的 `port.provider`，现写的 `>=0.18.0` 不够；脚手架 create-aalis-plugin 生成的项目同样要抬，它生成的代码已经是 0.20 的写法）；依赖本批改了形状的契约包（下文「公开接口有不兼容改动」一组里的契约包，以及旧版配 core 0.20 就出错的 api-hooks、api-contributions）的包，对这些契约的 `dependencies` 下限抬到本批的新版本，只更新插件时不会留下旧版契约包。第三方插件按 [插件作者指南](docs/plugin-author-guide.md) 的「从 0.19 迁移」一节改写后，把 core peer 下限抬到 `>=0.20.0`，对上述契约包的下限同样抬到本批的新版本。0.19 及以前生成的项目不能经旧版 WebUI 的插件市场升到本版：旧入口文件不传 `appDir`、`defaultHome`，更新后新进程起不来，回滚到旧版；按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 用 npm 升级。
 
 待发布的包。下面的分组只按 core 0.20 线相对 Harness 节（`d2d96585b`）的改动分，共 116 个包；Harness 节的改动与它列的新包见那一节。两节合并发布，两节的说法不一致的（如 core peer 的下限、Harness 节写的不发版），以本节为准。分组里有 Harness 节的新包（如 api-approval、api-publish、api-remote-agent、plugin-paper），它们首次发布，分组与下文对它们写的「删」「改为」只相对 Harness 节的未发布版本，npm 上没有旧版。
 
@@ -447,7 +447,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - 锁在家目录的 `run/instance.<n>.lock`，按代号 link 取得，两个进程同时启动也只有一个拿到；家目录所在的文件系统要支持硬链接。
   - 判活用开机标识、pid 与进程启动标识，与墙上时钟无关；SIGKILL 留下的锁下次启动时按残留接手。开机标识不同（宿主机重启过）的一律按残留接手，容器里也一样；同一次开机里容器被强杀后重启（pid 命名空间不同），判不了原进程是否还活着，按占用处理，要按报错提示手动删锁文件。Windows 与没有 `ps` 的环境只看 pid。锁只在同一台主机内有效：两台主机经网络盘共用一个家目录时开机标识不同，会互相按残留接手，不要这样部署。
   - `/restart` 与市场更新引起的前台重启经环境变量 `AALIS_LOCK_HANDOFF` 把锁交给新进程，新进程读到即从环境里删掉。以 `--service` 运行时，重启改为停掉后以 75 退出、由服务管理器拉起，不自己起新进程；服务形态下市场更新没有「新版起不来就回滚」。子命令不取锁。
-- **安装集**：默认的插件加载器从安装集（`appDir`）的 `package.json` 找插件。安装集里没有 `package.json` 时拒绝启动，并说明要传 `appDir`；此前这种情况会一个插件都不加载、照样起来。缺省的 `<家目录>/app` 留给以后的全局启动器，现在的入口都要自己传 `appDir`。
+- **安装集**：默认的插件加载器从安装集（`appDir`）的 `package.json` 找插件。安装集里没有 `package.json` 时拒绝启动，并说明要传 `appDir`；此前这种情况会一个插件都不加载、照样起来。`appDir` 必填：入口不传时在解析家目录之前报错并以 2 退出（0.19 及以前生成的入口就是这样），不再落到缺省的家目录。
 - **日志**：文件日志改写到家目录的 `logs/latest.log`，WebUI 与 CLI 的日志页读的就是这一份。
 - **存储根按家目录布局**：plugin-storage-local 的内置根按家目录派生，不再受 `roots` 配置影响：
   - `data` → `state/`（根名保留，历史里的附件句柄照常解析）、`pluginData` → `state/plugins/`、`tmp` → `tmp/`、`cache` → `cache/`、`logs` → `logs/`（只读）；
@@ -467,7 +467,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - plugin-webui-server 可选依赖它：市场、系统组件与前端发现都读安装集，宿主不提供时这几页回 503、也找不到前端，只剩 HTTP API。
 - **cwd 守卫**：新增 architecture 守卫，runtime 与两个脚手架以外的包不得读 cwd（`process.cwd()`、`process.env.PWD` 等）。
 - **runtime 的接口**
-  - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增 `appDir` 与 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走。
+  - `startAalis` 删掉 `configPath`、`projectDir` 与字符串形态的 `fileLog`，新增必填的 `appDir` 与可选的 `defaultHome`；`subcommands` 改名 `argv`，开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走。
   - `createFsYamlConfigProvider`、`createFsPluginLoader`、`createNodeModulesPluginLoader`、`setupFileLogger` 的路径参数改为必填，且必须是绝对路径（相对路径直接抛错）。`appendCrashLog` 的路径参数改为必填。
   - `createProcessRespawnStrategy` 必须传 `appDir` 与 `cwd`（新进程在启动时的 cwd 里起，命令行里相对的 `--home` 才解析到同一处），可选 `env`（交给新进程的环境变量，startAalis 用它交接实例锁）。新增 `createServiceRestartStrategy` 与 `SERVICE_RESTART_EXIT_CODE`（75）。`buildRespawnCommand` 的第一个参数改为 `appDir`。删掉导出常量 `DEFAULT_LOG_FILE`。
   - 新增导出 `parseHostArgs`、`resolveHome`、`profileOfRealHome`、`derivePaths`、`isHomeInitialized`、`initHome`、`HomeArgsError` 与类型 `HostArgs`、`ResolveHomeInput`。`resolveHome` 按写法认 profile，认不出时 startAalis 用 `profileOfRealHome` 按家目录的真实路径补认，自组装宿主可以照做。
@@ -477,7 +477,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
 - **其余修复**：plugin-process-local 的 `readExternalFile` 拒收相对路径：契约本来只收绝对路径或 `file://`，相对路径此前按 cwd 读。plugin-webui-server 还没有选中前端时，不再按 cwd 找 `index.html`。
 - **脚手架**：create-aalis 生成的项目带家目录 `home/`（配置与空的 `secrets.yaml` 都在里面），入口传 `appDir` 与 `defaultHome`，`.gitignore` 改为忽略整个 `home/`。用 npm 启动时，宿主参数要写在 `--` 之后：`npm start -- --home <目录>`。
 - **从源码运行**：`pnpm dev` 的家目录是仓库里的 `.aalis-dev/`（第一次先 `pnpm dev --init`）；`pnpm start` 不带 `--home`，用 `AALIS_HOME` 或 `~/.aalis`。
-- **旧项目升级**（create-aalis 生成的项目）：改入口文件、按新布局搬目录、改 `.gitignore` 与配置，步骤见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md)。
+- **旧项目升级**（create-aalis 生成的项目）：改入口文件、按新布局搬目录、改 `.gitignore` 与配置，步骤见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md)。
 - **发布时要抬的下限**
   - plugin-persona、plugin-skills 对 `@aalis/plugin-storage-local` 没有包依赖，但新的默认目录要新版 storage-local 提供的 `personas`、`skills` 根，见「必须同批升级的包」。
   - plugin-asr-whisper-cpp、plugin-draw、plugin-tool-browser、plugin-publish-review、plugin-mcp-client 对 `@aalis/schema-config` 的下限，抬到含 `format` 的新版本：旧版不认这个属性，相对路径会照旧放行。plugin-mcp-client 删掉了自己对 `command` 的去空白与空值判断，改由新版 schema-config 做，配旧版时带空白的命令会原样拿去执行。
@@ -520,7 +520,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - 自己提供 `host-config` 的宿主要实现 `applyPluginConfig`。
   - 嵌入式宿主：`createConfigStore(initial, provider?, secrets?)` 的第三个参数是密钥存储 `{ values, provider? }`，`createFsSecretsProvider(absPath)` 是读写 `secrets.yaml` 的实现，类型 `SecretProvider`、`SecretStoreInit` 一并导出；不给第三个参数时行为与此前相同；给了密钥存储却没给它的 `provider.save`、配置又会落盘（给了 `provider.save`）时直接抛错，否则密钥只在内存里，重启后引用落空。`createPluginDiscovery(app, loader, doc)` 的第三个参数改为配置存储（要有 `resolvePluginConfig`，登记时由它解析引用），不再收 `HostConfig` 形状的对象。主配置与密钥文件的读写、拒写与监听改为同一份实现。
   - 读 `/api/plugins`、`/api/config` 的第三方前端与脚本拿到的是引用，不再是原值。
-- **已有实例的升级步骤**：第一次用新版启动时密钥自动移进 `secrets.yaml`，备份从此要连同它，移走之前的明文副本要自行清理；create-aalis 生成的项目按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md) 升级，密钥的读写规则见 [运行态与配置文档](docs/core/config.md) 的「密钥配置」。
+- **已有实例的升级步骤**：第一次用新版启动时密钥自动移进 `secrets.yaml`，备份从此要连同它，移走之前的明文副本要自行清理；create-aalis 生成的项目按 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 升级，密钥的读写规则见 [运行态与配置文档](docs/core/config.md) 的「密钥配置」。
 - **发布时要抬的下限**
   - runtime、plugin-webui-server 对 `@aalis/schema-config` 的下限，抬到含 `isSecretRef`、`mapSecretFields` 的新版本：旧版没有这两个导出，加载时报错。
   - plugin-memory-mongodb 对 `@aalis/schema-config` 的下限可以一并抬到新版本，只为改进报错：旧版的 `parseConfig` 遇到落空的引用同样拒绝激活（`uri` 声明了 `onInvalid: 'error'`），只是报 `uri` 期望 string、得到 object，不点名缺的键。
@@ -567,7 +567,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - api-gateway 删掉 `inbound:confirm` 相位与 `INBOUND_PHASE.CONFIRM`，入站剩四个相位。
   - api-session-protocol 的 `SessionPeer.surface` 改为审批面登记得到的句柄。
   - plugin-session-server 现在必须有 host-paths 才能启动（审计写在家目录）。
-  - plugin-session-confirm 与 api-session-confirm 删除；create-aalis 的预设不再含 session-confirm。已有项目要卸掉 session-confirm、装上 plugin-session-server，删掉配置里残留的 session-confirm 条目与 `autoConfirmUntil`（宿主冷启动时会对没装上的插件配置段告警），见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md)。
+  - plugin-session-confirm 与 api-session-confirm 删除；create-aalis 的预设不再含 session-confirm。已有项目要卸掉 session-confirm、装上 plugin-session-server，删掉配置里残留的 session-confirm 条目与 `autoConfirmUntil`（宿主冷启动时会对没装上的插件配置段告警），见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md)。
 - **发布档位**：次版本：api-authority、api-gateway、api-commands、api-session-protocol（实验性）、plugin-authority、plugin-commands、plugin-gateway、plugin-cli、plugin-session-server；其余为 patch。
 
 ### 管理推送、登录加固与会话文件（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/schema-message）
@@ -607,7 +607,7 @@ IM 房间（群与私聊）不论从哪个入口驱动，都按房间自己的�
   - api-memory 删除 `session:compress` 事件，改用 `compression` 服务。
   - 会话设置写入改为按登记的字段校验：没有登记的键被拒绝（例如没装人设插件时 `/session.set -p` 会失败），外来字段类型的设置项必须提供 `validate`，不适用于这个会话种类的项写不进去。
   - 第三方前端：旧 `/ws` 协议已删除，改按 [api-session-protocol](docs/api/api-session-protocol.md) 与 [api-webui](docs/api/api-webui.md) 的管理推送实现。
-- **升级须知**：session-manager 插件配置里的 `defaults` 与 `platformProfiles` 搬到宿主配置的 `sessionConfig`，搬法见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md) 的「改配置文件」。会话库里每个会话自己的配置不用改。
+- **升级须知**：session-manager 插件配置里的 `defaults` 与 `platformProfiles` 搬到宿主配置的 `sessionConfig`，搬法见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md) 的「改配置文件」。会话库里每个会话自己的配置不用改。
 - **发布档位**：次版本：api-session-manager、plugin-session-manager、api-session-protocol（实验性）、api-approval、api-memory、api-tools、api-webui、plugin-session-server、plugin-memory-summary、plugin-webui-server、plugin-webui-client、create-aalis；其余为 patch。只改注释的 api-doctor、plugin-doctor、plugin-llm-openai、plugin-commands 可以不发。
 
 ### 删除自档案（@aalis/plugin-user-profile、@aalis/schema-message）
@@ -1097,7 +1097,7 @@ WebUI 的登录凭据只给运行 Aalis 的系统用户读写；WebUI 上传与 
 - plugin-persona、plugin-memory-history、plugin-memory-vector、plugin-tool-session、plugin-flow-control、plugin-maimai 与 plugin-session-manager 同批升级：它们读会话管理记下的出生平台与聊天窗口，旧版 session-manager 不记，从 WebUI 往房间插话时一律按入口平台算，合成回合取不到会话类型与群号，私聊里认不出一对一窗口。
 - plugin-paper、plugin-reach 与 plugin-session-manager 同批升级：两者按 `placeOf` 取场所、按 `placePaperId` 算白纸，旧版 session-manager 没有 `placeOf`，白纸工具与签发凭据抛 TypeError；plugin-reach 另要新版 plugin-authority 的 `originOf`。
 - plugin-webui-server 与 plugin-storage-local、api-storage 同批升级：token 与 `access.txt` 按凭据写（0600）要新版 storage-local 实现 `secret`、新版 api-storage 的存储网关把它传下去，配旧版时照旧按默认权限写，不报错。
-- 已有项目的升级见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0.19.md)；0.19 及以前生成的项目经旧版 WebUI 的插件市场更新走不通。
+- 已有项目的升级见 [从 0.19 升级已有项目](docs/guide/upgrade-from-0-19.md)；0.19 及以前生成的项目经旧版 WebUI 的插件市场更新走不通。
 - 按 0.19.0 一节用 `overrides` 把 `@aalis/api-gateway` 固定在 0.7.0 的项目，不能单独升级 plugin-session-manager：它要用本批 api-gateway 新增的 `chatScopeOf`、`windowKey`、`parseWindowKey`，新版 api-gateway 另要本批 api-platform 的 `resolveSessionType`。要升级它，先去掉这条 `overrides`，连同 plugin-flow-control 与 plugin-trigger-policy 一起升。plugin-persona、plugin-agent、plugin-memory-history、plugin-memory-vector、plugin-tool-session 不再要求新版 api-gateway。
 
 ## 2026-09-27（core 0.19.0 minor；45 个包：22 minor / 22 patch / 1 新包 api-trigger）
