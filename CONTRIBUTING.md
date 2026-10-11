@@ -43,40 +43,42 @@ pnpm dev                        # 运行 tsx src/index.ts --home .aalis-dev
 
 `pnpm dev` 会发现并默认启用仓库内的私有插件 `@aalis/plugin-trigger-laya`，但它默认不生效，群聊判定仍由 trigger-policy 负责；想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`，它生效而本机没有侧车时群里只回点名（见 `packages/plugin-trigger-laya/README.md`）。
 
-## 2. 校验三件套
+## 2. 校验
 
-提交前请确保通过：
+| 时机 | 跑什么 | 怎么跑 |
+|---|---|---|
+| 每次 `git push` | 构建、Biome、Knip、快测试 | pre-push hook 自动跑 |
+| 合进 dev 之前、发布之前 | 全量（clean、构建、全部测试、core 覆盖率、Biome、Knip） | **手动** `pnpm preflight` |
 
-```sh
-pnpm ci             # = pnpm -r build && pnpm check:biome
-pnpm check:biome    # 单跑 Biome
-pnpm -r test        # 单元测试（vitest）
-```
+仓库目前没有启用远端 CI（`.github/workflows/ci.yml` 不运行），全量测试只在本地手动跑。推送前的 hook 只跑快测试，**合进 dev 与发布之前必须自己跑通 `pnpm preflight`**，不能拿「能推上去」代替。
 
-CI（`.github/workflows/ci.yml`）执行 `pnpm ci`，任何 Biome **error** 都会阻断合并。
-warnings 不阻断但会审阅。
-
-### 2.1 pre-push 自动守门（推荐）
+### 2.1 pre-push 自动守门
 
 仓库装了 husky，`pnpm install` 时会自动启用 `.husky/pre-push` hook：
 
 ```
-git push   →   build → test → core 覆盖率 → biome → knip   全过才放行
+git push   →   build → biome → knip → 快测试   全过才放行
 ```
 
-这覆盖了 CI 的所有阻断项，另加 core 覆盖率门槛（四项 100%，CI 不跑），所以**只要本地能 push，CI 基本就过**。
-任何一步失败 push 被拒绝。手动想跑相同检查：
+快测试不跑重测试：起真浏览器、起构建、中止真实子进程并断言时限的测试，以及起真实子进程与联网的集成测试，名单在 `test/heavy-tests.ts`。快测试的范围：
+
+- 架构守卫 `test/architecture`，每次都跑；
+- 与这次改动相关的测试：基准是远端上要推的那个分支现在的提交，由 `vitest --changed` 按依赖图找出受影响的测试；
+- 改到 `packages/core` 时另跑 core 覆盖率（四项 100%）；
+- 远端还没有这个分支，或改到了依赖图判不准的公共件（`package.json`、锁文件、`vitest*.ts`、`tsconfig*.json`、`test/setup`、`test/helpers`、`test/fixtures`）时，改为跑全部快测试与 core 覆盖率。
+
+依赖图找不到所有关联：靠读文件、起子进程或文件名约定关联的测试会被漏掉，这些问题要等手动跑全量才暴露，所以全量那一步不能省。手动跑全部快测试：
 
 ```sh
-pnpm preflight     # = clean + build + test + core 覆盖率 + biome + knip
+AALIS_TEST_SCOPE=quick pnpm exec vitest run
 ```
 
-紧急情况绕过：`git push --no-verify`（请确认 CI 仍会兜底 fail）。
+期限按负载下的机器定，不按空载：测试最多用一半的 CPU 核，单例与钩子时限 30 秒，`vi.waitFor`、`expect.poll` 与 Testing Library 的等待默认 5 秒（`test/setup/timing.ts`）。写测试时不要用墙钟期限判断「做完没有」，要等就等条件成立。不要用 `git push --no-verify` 绕过 hook。
 
 ### 2.2 编写测试的纪律
 
 - **不要硬编码内部常量**（如 `expect(buf.length).toBe(2000)`）。改成引用导出的常量或断言性质（`toBeGreaterThan` 等），避免改默认值时连锁断 N 个测试。
-- 新增 export 后请在本地 `pnpm exec knip` 验证无 unused，CI 会卡这个。
+- 新增 export 后请在本地 `pnpm exec knip` 验证无 unused，pre-push 会卡这个。
 - 改 `*.tsx`/前端样式后即使本地能跑也要 `pnpm exec biome check .`，因为 biome 还做 lint 不只是 format。
 
 ## 3. 代码风格

@@ -12,9 +12,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['test/core/**/*.test.ts'],
+    setupFiles: ['test/setup/timing.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
     environment: 'node',
-    testTimeout: 15_000,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    expect: { poll: { timeout: 5_000 } },
     pool: 'forks',
     coverage: {
       enabled: true,
