@@ -115,7 +115,7 @@ npm start -- status
 ```
 my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下），engines 写 Node 24.15.0 起
-├── index.mjs           # 一行 startAalis() 启动
+├── index.mjs           # 一行 startAalis 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
 │   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / sessionConfig / disabledPlugins；密钥字段只放引用
 │   └── secrets.yaml        # 密钥的值（生成时为空，0600）

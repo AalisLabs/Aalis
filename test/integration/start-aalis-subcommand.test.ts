@@ -322,17 +322,29 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8')).known).toBe(5);
   });
 
-  it('默认加载器的安装集里没有 package.json：说明要传 appDir 后 exit 1，不带着零个插件起来', async () => {
+  it('没传 appDir（0.19 及以前生成的入口）：解析家目录之前报错并指向升级指南，exit 2，不写文件、不取实例锁', async () => {
+    const dir = makeProject();
+    dirs.push(dir);
+    const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'no-app-dir' });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('startAalis 缺少 appDir');
+    expect(r.stderr).toContain('https://aalis.acenyan.com/guide/upgrade-from-0-19');
+    expect(readLog(dir)).toBe(SENTINEL);
+    expect(existsSync(join(dir, 'run'))).toBe(false);
+    expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
+  });
+
+  it('默认加载器的安装集里没有 package.json：说明 appDir 要指向哪里后 exit 1，不带着零个插件起来', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-    const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader' });
+    const app = join(dir, 'install');
+    mkdirSync(app);
+    const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`安装集 ${join(realpathSync.native(dir), 'app')} 里没有 package.json`);
+    expect(r.stderr).toContain(`安装集 ${app} 里没有 package.json`);
     expect(r.stderr).toContain('appDir');
     expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
     // 安装集有 package.json 就照常往下走：没有插件提供指令服务，子命令按「commands 服务不可用」退出
-    const app = join(dir, 'install');
-    mkdirSync(app);
     writeFileSync(join(app, 'package.json'), '{"name":"x","private":true}');
     rmSync(join(dir, 'gen.txt'));
     const ok = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });

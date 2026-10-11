@@ -791,7 +791,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 不按「项目形态」分叉：检测到 `pnpm-workspace.yaml` 就把 npm 包解包成
    * `packages/<dir>` 源码是错的——那个文件与真正生效的加载器**没有因果关系**，加载器是入口
    * 文件传给 `startAalis` 的（默认读根依赖，本仓显式传 fs 加载器扫 packages/）。于是一个
-   * 用 pnpm 工作区但走默认 `startAalis()` 的用户，包会被装进加载器永远不看的地方，静默失败。
+   * 用 pnpm 工作区、却不给 `startAalis` 传插件加载器（走默认的 node_modules 加载器）的用户，包会被装进加载器永远不看的地方，静默失败。
    *
    * 只有一条路径。真正的 monorepo 由下面的 `hasWorkspaceProtocol` 守卫拦住并说清
    * 该用什么工具——那才是开发者场景，不该用市场往自己仓里塞源码。
