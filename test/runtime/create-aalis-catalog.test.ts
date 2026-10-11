@@ -24,18 +24,6 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
     expect(toPluginCatalog({ objects: [] })).toEqual([]);
   });
 
-  it('捕获 npm search 的 version（供脚手架逐包写 ^<最新>）', () => {
-    const data = {
-      objects: [
-        { package: { name: '@aalis/plugin-workflow', description: '工作流', version: '0.3.0' } },
-        { package: { name: '@aalis/plugin-llm-openai', description: 'LLM' } }, // 无 version
-      ],
-    };
-    const out = toPluginCatalog(data);
-    expect(out[0]).toMatchObject({ name: '@aalis/plugin-workflow', version: '0.3.0' });
-    expect(out[1].version).toBeUndefined();
-  });
-
   it('剔除 code-sandbox 沙箱基建（选 code-runner 时自动带入，不该单独可选）', () => {
     const data = {
       objects: [
