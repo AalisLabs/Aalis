@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -228,6 +228,17 @@ describe('create-aalis 生成的项目', () => {
     const offline = pluginSet({ tier: 'full', catalog: null }, true);
     expect(offline.has(SERPER)).toBe(true);
     expect(offline.has('@aalis/plugin-draw')).toBe(true);
+  });
+
+  it('断网时 full 档的离线表覆盖仓库里全部可发布的插件（LanceDB 按平台另算）', () => {
+    const publishable = readdirSync(PACKAGES).flatMap(dir => {
+      const file = join(PACKAGES, dir, 'package.json');
+      if (!existsSync(file)) return [];
+      const pkg = JSON.parse(readFileSync(file, 'utf-8')) as { name: string; private?: boolean; keywords?: string[] };
+      return !pkg.private && pkg.keywords?.includes('aalis-plugin') ? [pkg.name] : [];
+    });
+    const offline = pluginSet({ tier: 'full', catalog: null }, true);
+    expect(publishable.filter(name => !offline.has(name))).toEqual([]);
   });
 
   it('WebUI 是平台组的一项：standard 档不选它就不装 webui-server，选了带上前端与安装引擎', () => {
