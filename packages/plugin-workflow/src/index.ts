@@ -522,7 +522,8 @@ async function run(caps: Caps): Promise<void> {
     triggers.dispose();
     // 中止全部在飞 run：不再调度新节点，阻塞中的 wait / agent 节点立即结束。再等它们收尾、排队中的运行历史 /
     // once 记账写完才结束拆卸：否则 app.stop() 返回后仍有落盘在飞，bounce 时迟到的快照会盖掉新实例的记账。
-    // 不响应中止信号的工具节点至多让这里等到 disposeTimeoutMs
+    // 不响应中止信号的工具节点至多让这里等到 disposeTimeoutMs；放弃等待后旧实例记为 lingering，同 id 的新实例要等那次
+    // run 真正落定、这里返回之后才起
     for (const abort of aborts.values()) abort.abort();
     await Promise.allSettled(running);
     await runStore.flushed();
