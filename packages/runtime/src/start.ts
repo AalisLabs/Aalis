@@ -57,7 +57,6 @@ import { installTerminalStateRestorer } from './terminal.js';
 //
 // 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
 
-const UPGRADE_GUIDE_URL = 'https://aalis.acenyan.com/guide/upgrade-from-0-19';
 const APP_DIR_EXAMPLE = 'startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) })';
 
 export interface StartAalisOptions {
@@ -126,12 +125,9 @@ function readCoreVersion(): string | undefined {
  * ② 子命令短路必须在 `app.start` 之前。
  */
 export async function startAalis(opts: StartAalisOptions): Promise<App> {
-  // 0.19 及以前生成的入口是 JS，不传参数也会走到这里：在动家目录之前停下，不引人去初始化或启动别的家目录
+  // JS 入口可能一个参数都不传：在动家目录之前停下，不落到缺省的家目录
   if (typeof opts?.appDir !== 'string') {
-    console.error(
-      '[aalis] startAalis 缺少 appDir：0.19 及以前用 create-aalis 生成的项目要改入口，见《从 0.19 升级已有项目》' +
-        `${UPGRADE_GUIDE_URL}\n[aalis] 自己写的入口把入口文件所在的目录作为 appDir 传入，例如 ${APP_DIR_EXAMPLE}。`,
-    );
+    console.error(`[aalis] startAalis 缺少 appDir：把入口文件所在的目录作为 appDir 传入，例如 ${APP_DIR_EXAMPLE}。`);
     process.exit(2);
   }
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;

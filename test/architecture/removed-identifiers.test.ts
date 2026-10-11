@@ -1,9 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
-// 已删除的机制不留痕迹：下表的标识在仓库的代码、测试与文档里一处都不能再出现（CHANGELOG 与升级指南记的是历史，不查）。
+// 已删除的机制不留痕迹：下表的标识在仓库的代码、测试与文档里一处都不能再出现（CHANGELOG 记的是历史，不查）。
 // 删掉一套机制时把它的标识加进来；某个标识日后被正当地重新用上，先改这里的说明再删行。
 // ════════════════════════════════════════════════════════════
 
@@ -13,8 +13,6 @@ const SCAN_FILES = ['README.md', 'CONTRIBUTING.md', 'package.json', 'knip.json',
 const SKIP_DIRS = new Set(['node_modules', 'dist']);
 /** 文档站的构建缓存 */
 const SKIP_PATHS = new Set([join(ROOT, 'docs/.vitepress/cache')]);
-/** 升级指南：写的就是旧项目里的旧包、旧键与旧报错怎么改，同 CHANGELOG 不查 */
-const MIGRATION_DOCS = ['docs/guide/upgrade-from-0-19.md'];
 const TEXT = /\.(ts|tsx|mts|js|mjs|md|json|ya?ml|vue|css)$/;
 const SELF = relative(ROOT, __filename);
 
@@ -234,7 +232,7 @@ function* walk(dir: string): Generator<string> {
 function scannedFiles(): string[] {
   const files = SCAN_DIRS.flatMap(dir => [...walk(join(ROOT, dir))]);
   for (const name of SCAN_FILES) files.push(join(ROOT, name));
-  return files.map(file => relative(ROOT, file)).filter(file => file !== SELF && !MIGRATION_DOCS.includes(file));
+  return files.map(file => relative(ROOT, file)).filter(file => file !== SELF);
 }
 
 describe('已删除的机制不留痕迹', () => {
@@ -251,10 +249,6 @@ describe('已删除的机制不留痕迹', () => {
       )
       .map(([file]) => file);
     expect(hits).toEqual([]);
-  });
-
-  it('升级指南的豁免路径都在：改名或挪走后这份豁免不能悄悄失效', () => {
-    for (const file of MIGRATION_DOCS) expect(existsSync(join(ROOT, file)), file).toBe(true);
   });
 
   it('页面契约旧写法的豁免路径都在：改名或挪走后这份豁免不能悄悄失效', () => {

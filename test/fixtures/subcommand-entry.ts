@@ -117,7 +117,7 @@ const pluginLoader = {
 };
 
 // 'default-loader'：不传插件加载器，走默认的 node_modules 加载器；安装集取 AALIS_E2E_APP_DIR，不给则取 cwd。
-// 'no-app-dir'：照旧版入口那样不传 appDir（经类型断言绕过必填）
+// 'no-app-dir'：不传 appDir（经类型断言绕过必填）
 const opts = {
   ...(mode === 'default-loader' ? {} : { pluginLoader }),
   ...(mode === 'no-app-dir' ? {} : { appDir: process.env.AALIS_E2E_APP_DIR ?? process.cwd() }),
