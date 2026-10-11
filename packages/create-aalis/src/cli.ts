@@ -378,8 +378,6 @@ const STATIC_OTHERS = [
 interface CatalogEntry {
   name: string;
   official: boolean;
-  /** npm search 返回的最新版本（用于脚手架逐包写 `^<最新>`，省一次单独查询） */
-  version?: string;
 }
 
 /**
@@ -394,9 +392,7 @@ interface CatalogEntry {
  * code_runner 按需拉起的沙箱基建，不是用户「选功能」时该看到的条目。
  * 纯函数，便于单测。
  */
-export function toPluginCatalog(data: {
-  objects?: Array<{ package: { name: string; version?: string } }>;
-}): CatalogEntry[] {
+export function toPluginCatalog(data: { objects?: Array<{ package: { name: string } }> }): CatalogEntry[] {
   return (
     (data.objects ?? [])
       // 短名仍带 `plugin-` 前缀（如 plugin-code-sandbox-os），故用非锚定匹配，勿用 /^code-sandbox/。
@@ -404,7 +400,6 @@ export function toPluginCatalog(data: {
       .map(o => ({
         name: o.package.name,
         official: o.package.name.startsWith('@aalis/'),
-        version: o.package.version,
       }))
   );
 }
@@ -605,23 +600,15 @@ async function fetchLatestVersion(registry: string, pkg: string): Promise<string
 }
 
 /**
- * 逐包解析写入生成项目 package.json 的版本范围（替代旧的硬编码 AALIS_RANGE 常量）：
- * - 插件优先复用 live catalog 已带的最新版（零额外请求）；
- * - core/runtime 及不在 catalog 的包，实时查 {registry}/{pkg}/latest；
- * - 任何解析失败的包回退 `'latest'`（npm install 时再取最新，自我修正，避免硬编码版本过时/无法跨 0.x 非统一版本）。
- * 解析得到的版本写成 `^<版本>`（与生态约定一致：0.x caret 锁次版本，每包各取自身最新）。
+ * 逐包解析写入生成项目 package.json 的版本范围：一律实时查 {registry}/{pkg}/latest。检索结果只用来列出有哪些插件，
+ * 它带的版本来自搜索索引，发布后可能还是旧的，写进 `^<旧版>` 会把项目锁在旧次版本上。
+ * 解析失败的包回退 `'latest'`（npm install 时再取最新）。解析得到的版本写成 `^<版本>`（0.x caret 锁次版本，每包各取自身最新）。
  */
-async function resolveDepRanges(
-  registry: string,
-  names: readonly string[],
-  catalog: CatalogEntry[] | null,
-): Promise<Map<string, string>> {
-  const fromCatalog = new Map<string, string>();
-  for (const e of catalog ?? []) if (e.version) fromCatalog.set(e.name, e.version);
+async function resolveDepRanges(registry: string, names: readonly string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   await Promise.all(
     [...new Set(names)].map(async name => {
-      const v = fromCatalog.get(name) ?? (await fetchLatestVersion(registry, name));
+      const v = await fetchLatestVersion(registry, name);
       out.set(name, v ? `^${v}` : 'latest');
     }),
   );
@@ -1097,8 +1084,8 @@ async function main(): Promise<void> {
 
   const targetDir = resolve(cwd(), projectName);
   mkdirSync(targetDir, { recursive: true });
-  // 逐包解析当前最新版本（复用 catalog；core/runtime 实时查；失败回退 latest）
-  const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabled], catalog);
+  // 逐包解析当前最新版本（一律查注册表的 latest；失败回退 latest）
+  const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabled]);
   writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabled, versions), 'utf-8');
   writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
   // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限

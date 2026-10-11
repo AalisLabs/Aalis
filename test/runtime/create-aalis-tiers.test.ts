@@ -170,6 +170,41 @@ describe('create-aalis 生成的项目', () => {
     }
   });
 
+  it('版本一律问注册表的 latest：检索索引还报旧版本时，写进项目的也是注册表上的最新版', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'aalis-tier-'));
+    const registry = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      const stale = { objects: [{ package: { name: '@aalis/plugin-tool-math', version: '0.10.1' } }] };
+      response.end(JSON.stringify(request.url?.startsWith('/-/v1/search') ? stale : { version: '0.11.0' }));
+    });
+    try {
+      await new Promise<void>(resolve => registry.listen(0, '127.0.0.1', resolve));
+      const address = registry.address();
+      if (!address || typeof address === 'string') throw new Error('本地 registry 未监听 TCP');
+      await run(
+        process.execPath,
+        [
+          '--import',
+          tsx,
+          cli,
+          'my-bot',
+          '--tier',
+          'full',
+          '--no-install',
+          '--registry',
+          `http://127.0.0.1:${address.port}`,
+        ],
+        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+      );
+      const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
+      expect(pkg.dependencies['@aalis/plugin-tool-math']).toBe('^0.11.0');
+    } finally {
+      registry.closeAllConnections();
+      await new Promise<void>((resolve, reject) => registry.close(error => (error ? reject(error) : resolve())));
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each(['minimal', 'standard'] as const)('%s 档：带上会话协议与审批服务的提供者', tier => {
     const provided = servicesOf(pluginSet({ tier, picks: defaultPicks(tier, false) }, true));
     // 没有审批服务时，需要确认的工具调用一律被拒；WebUI 的会话也要经会话协议才连得上
