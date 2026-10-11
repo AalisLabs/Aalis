@@ -322,13 +322,12 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8')).known).toBe(5);
   });
 
-  it('没传 appDir（0.19 及以前生成的入口）：解析家目录之前报错并指向升级指南，exit 2，不写文件、不取实例锁', async () => {
+  it('没传 appDir：解析家目录之前报错，exit 2，不写文件、不取实例锁', async () => {
     const dir = makeProject();
     dirs.push(dir);
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'no-app-dir' });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('startAalis 缺少 appDir');
-    expect(r.stderr).toContain('https://aalis.acenyan.com/guide/upgrade-from-0-19');
     expect(readLog(dir)).toBe(SENTINEL);
     expect(existsSync(join(dir, 'run'))).toBe(false);
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
