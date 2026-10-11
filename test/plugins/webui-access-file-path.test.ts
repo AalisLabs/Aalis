@@ -1,11 +1,11 @@
 import { request } from 'node:http';
 import type { Socket } from 'node:net';
 import type { Logger } from '@aalis/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
-import { freePort } from '../helpers/net.js';
+import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 启动日志承诺给出 access.txt 的绝对路径（纯 CLI 用户唯一的找法）。
@@ -16,9 +16,18 @@ import { freePort } from '../helpers/net.js';
 // ════════════════════════════════════════════════════════════
 
 const ABS = '/tmp/aalis-test-root/webui/access.txt';
+const ACCESS_URI = 'data:/webui/access.txt';
+const TOKEN_URI = 'data:/webui/token';
 
-function makeFakeStorage(opts: { failWrite?: boolean } = {}): StorageService & { written: Set<string> } {
+/**
+ * existing：事先就有的文件与内容。held：写这些文件时等对应的 Promise 兑现才落定，别的写入过 5ms 落定。
+ * writing 是此刻还没落定的写入
+ */
+function makeFakeStorage(
+  opts: { failWrite?: boolean; existing?: Record<string, string>; held?: Record<string, Promise<void>> } = {},
+): StorageService & { written: Set<string>; writing: Set<string> } {
   const written = new Set<string>();
+  const writing = new Set<string>();
   const roots: StorageRootInfo[] = [
     {
       name: 'data',
@@ -32,15 +41,22 @@ function makeFakeStorage(opts: { failWrite?: boolean } = {}): StorageService & {
   ];
   const svc = {
     written,
+    writing,
     listRoots: () => roots,
     async writeFile(uri: string) {
       // 真实 storage 写盘要跨若干次事件循环才落地。这里必须同样推迟：写入若在调用时
       // 同步完成，就复现不出「解析绝对路径时文件还不存在」这个前提，测试会恒绿。
-      await new Promise(r => setTimeout(r, 5));
-      if (opts.failWrite) throw new Error('EACCES: permission denied');
-      written.add(uri);
+      writing.add(uri);
+      try {
+        await (opts.held?.[uri] ?? new Promise(r => setTimeout(r, 5)));
+        if (opts.failWrite) throw new Error('EACCES: permission denied');
+        written.add(uri);
+      } finally {
+        writing.delete(uri);
+      }
     },
     async readFile(uri: string) {
+      if (opts.existing?.[uri] !== undefined) return opts.existing[uri];
       if (!written.has(uri)) throw new Error(`ENOENT: ${uri}`);
       return '';
     },
@@ -65,7 +81,7 @@ function makeFakeStorage(opts: { failWrite?: boolean } = {}): StorageService & {
     async mkdir() {
       /* noop */
     },
-  } as unknown as StorageService & { written: Set<string> };
+  } as unknown as StorageService & { written: Set<string>; writing: Set<string> };
   return svc;
 }
 
@@ -85,20 +101,20 @@ function makeCapturingLogger(lines: string[]): Logger {
   return l;
 }
 
-describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
-  const apps: App[] = [];
+const apps: App[] = [];
 
-  afterEach(async () => {
-    // 逐个 try/finally：任一 stop 抛错也不能让后面的实例漏掉（数组已 splice，漏了就永久泄漏）
-    for (const a of apps.splice(0)) {
-      try {
-        await a.stop();
-      } catch {
-        /* 停不掉也要继续停下一个 */
-      }
+afterEach(async () => {
+  // 逐个 try/finally：任一 stop 抛错也不能让后面的实例漏掉（数组已 splice，漏了就永久泄漏）
+  for (const a of apps.splice(0)) {
+    try {
+      await a.stop();
+    } catch {
+      /* 停不掉也要继续停下一个 */
     }
-  });
+  }
+});
 
+describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('首启（文件此前不存在）也给出真绝对路径，而不是把 URI 重复一遍', async () => {
     const lines: string[] = [];
     const app = new App({
@@ -223,5 +239,60 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       lines.some(l => l.includes('访问凭据已写入')),
       '写失败还说「已写入」会让人去找一个不存在的文件',
     ).toBe(false);
+  });
+});
+
+// 停机、停用或重载返回之后，本实例自己发起的写盘（没有请求在等它）不能还在途：不然它落在已清理的家目录里（测试清理临时目录时
+// 报 ENOTEMPTY），或在接手的实例写下 access.txt 之后才落地、把它盖成旧实例的 token
+describe('停机等本实例自己发起的写盘落定', () => {
+  /** 在途的写入停在这里，open() 之后再过 100ms 才落定：stop 不等它的话早已返回 */
+  function gate() {
+    let open!: () => void;
+    const opened = new Promise<void>(resolve => {
+      open = () => setTimeout(resolve, 100);
+    });
+    return { opened, open };
+  }
+
+  /** 起本插件并等到监听之后（access.txt 此时已开始写）；不给 initial 时本插件在没有存储的情况下起来，存储由用例之后再提供 */
+  async function start(tokenMode: 'ephemeral' | 'persist', initial?: StorageService) {
+    const app = new App({ name: 'T', logLevel: 'error', logger: makeCapturingLogger([]) });
+    apps.push(app);
+    if (initial) app.bind({ provide }).provide.use(storage, initial);
+    const port = await freePort();
+    await app.plugins.register(webuiServer, { port, host: '127.0.0.1', autoOpen: false, tokenMode });
+    await app.plugins.idle();
+    await app.start();
+    await waitListening(port);
+    return app;
+  }
+
+  it('监听之后写 access.txt 途中停机：stop 返回时这次写入已落定', async () => {
+    const write = gate();
+    const fake = makeFakeStorage({ held: { [ACCESS_URI]: write.opened } });
+    const app = await start('ephemeral', fake);
+    expect([...fake.writing]).toEqual([ACCESS_URI]);
+    const stopped = app.stop();
+    write.open();
+    await stopped;
+    expect([...fake.writing]).toEqual([]);
+    expect(fake.written).toContain(ACCESS_URI);
+  });
+
+  it('storage 晚于本插件上线、读回 token 后重写 access.txt 途中停机：stop 返回时读回引起的写入都已落定', async () => {
+    const write = gate();
+    const fake = makeFakeStorage({
+      existing: { [TOKEN_URI]: 'zz-persisted-token-placeholder' },
+      held: { [ACCESS_URI]: write.opened },
+    });
+    const app = await start('persist');
+    // 读回的 token 与内存里的不同：按它重写 access.txt，再按凭据重写 token 文件
+    app.bind({ provide }).provide.use(storage, fake);
+    await vi.waitFor(() => expect([...fake.writing]).toEqual([ACCESS_URI]));
+    const stopped = app.stop();
+    write.open();
+    await stopped;
+    expect([...fake.writing]).toEqual([]);
+    expect([...fake.written].sort()).toEqual([ACCESS_URI, TOKEN_URI]);
   });
 });
