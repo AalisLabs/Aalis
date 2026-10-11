@@ -119,7 +119,7 @@ export default definePlugin({
 ## 不承诺的边界
 
 - `plugins.register()` 返回 `true` 只表示已受理，激活是否落定看 `plugins.idle()`。
-- 关停顺序按声明的服务（边对它们的全部对外提供者建）与实际绑定编排：`App.stop()` 覆盖整次计划；单插件 `unload` / `disable` / `bounce` 只覆盖动作发起时处于 active 的 required 下游（见 [core 语义契约](./core-contract.md) 生命周期不变量）。动态 `services.use.get` 不产生依赖边。
+- 关停顺序按声明的服务（边对它们的全部对外提供者建）与实际绑定编排：`App.stop()` 覆盖整次计划；单插件 `unload` / `disable` / `bounce` 只覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游（见 [core 语义契约](./core-contract.md) 生命周期不变量）。动态 `services.use.get` 不产生依赖边。
 - 枢纽登记随消费者激活撤回：撤回在消费者 drain 之后、close 之前完成。
 - 撤回登记不结束在飞的工作：已开始的事件处理、工具执行，不因注销而停止；关闭超时只是停止等待。
 - 经 `services.use.get` / `services.use.all` 拿到的原始实例不受关停边保护。

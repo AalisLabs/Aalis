@@ -33,7 +33,7 @@ export default definePlugin({
 | `name` | 插件名，与 `package.json` 的 `name` 一致；单实例时即实例 id |
 | `displayName` / `subsystem` | 展示元数据。core 不读、不校验 `subsystem` 取值 |
 | `uses` | 用到的全部能力。键是 `apply` 的参数名，值是描述符；可选依赖包一层 `optional()`。没有默认注入 |
-| `provides` | 本插件提供的服务描述符列表。激活后按本次激活的 instanceId 校验确已 `provide`；未提供则本次激活进入 `error` |
+| `provides` | 本插件提供的服务描述符列表。激活后按本次激活实际登记的条目校验确已 `provide`（以任何逻辑身份登记的都算，别的激活登记的同 id 条目不算）；未提供则本次激活进入 `error` |
 | `reusable` | 允许同一份定义以 `name:suffix` 多次注册；默认 false |
 | `apply(caps)` | 拿到各项选择层后的装配。可返回 Promise |
 
@@ -162,7 +162,7 @@ interface ProviderEntry<B> {
 业务句柄是活的转发句柄：
 
 - `use` 每次访问成员都重新解析到本插件此刻选中的那一家，存进字段或闭包也会跟着换人；已经开始的一次调用在原来那一家上完成。
-- 选不到提供者时访问成员同步抛 `ServiceUnavailableError`。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`，要「选不到就当没有」写 `caps.x.present ? caps.x.use : undefined`。required 依赖丢失到调度收敛之间也可能短暂选不到。
+- 选不到提供者时，访问转发到提供者的成员同步抛 `ServiceUnavailableError`，与成员本身同步还是异步无关。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`，要「选不到就当没有」写 `caps.x.present ? caps.x.use : undefined`。required 依赖丢失到调度收敛之间也可能短暂选不到。契约 `bind` 定义的成员按契约行事：经 `registrar` 的登记方法（`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`hostLogs.use.subscribe` 等）缺席时照收、上线后挂上，写成 async 函数的（如 `hooks.use.run`）得到被拒的 Promise。
 - `of(id)` 按 id 解析：那一家不在时访问成员抛错，同一个 id 回来后（含换了新实例）照常可用。
 - `list()` 条目的 `use` 钉在那一条登记上：它对外时打到它，撤回之后访问抛错，同一个 id 换了新实例也不跟过去。同一条登记每次列出都是同一个句柄。
 - 一段操作（先读后写、先查后删、算向量与记下模型标识）要落在同一家上，取选中那一条的句柄：`const v = caps.x.list().find(p => p.selected)?.use`，选不到时是 `undefined`；要选不到时照样抛不可用错误，写 `?? caps.x.use`。途中那一家撤回，后续访问抛错，不会落到另一家上。比较身份就比条目 id，如 `caps.trigger.list().find(p => p.selected)?.id === caps.lifecycle.use.id`。
@@ -172,9 +172,9 @@ interface ProviderEntry<B> {
 
 活句柄是一层代理，只转发属性读取与方法调用，以下几处与直接持有实例不同：
 
-- `typeof` 句柄是 `'function'`；提供者本身是函数时句柄可以直接调用。
+- 不给 `bind` 时 `typeof` 句柄是 `'function'`，提供者本身是函数时句柄可以直接调用。给了 `bind` 的句柄是 `bind` 的返回值：按 `Object.create(port.provider)` 加成员的写法，`typeof` 为 `'object'`。
 - `then`、symbol 键（含 `Symbol.iterator` / `Symbol.asyncIterator`）与 `toJSON` 不转发：`await` 句柄得到句柄本身，句柄不能 `for…of` 或展开迭代，打印与 `JSON.stringify` 不触发解析。
-- `in`、`Object.keys`、对象展开看不到提供者的成员，`structuredClone` 句柄抛错；在句柄上写属性落不到提供者。
+- `in`、`Object.keys`、对象展开看不到提供者的成员（不给 `bind` 时什么成员都列不出，给了的只列出 `bind` 自己加的可枚举成员），`structuredClone` 句柄抛错；在句柄上写属性落不到提供者。
 - 每次读方法得到一个新的包装函数（`h.m !== h.m`），调用时才再解析并以真实实例作 `this`，用 `#` 私有字段的提供者照常工作。包装函数不能 `new`：提供者成员里的类经句柄取出后无法构造，需要构造的由提供者给工厂方法。
 - 返回 `this` 的方法交出的是真实实例，它不再跟着换人。
 - 缺席时 `String(句柄)` 同样抛错（它要读 `toString`）。

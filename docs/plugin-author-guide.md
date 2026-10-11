@@ -20,7 +20,7 @@
 | 场景 | 你要不要做什么 |
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，激活撤回会从容器注销 |
-| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
+| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记在 dev 模式下会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
 | 插件配置变更触发热重载 | **调用 `updateConfig()`**（换上新配置再按 `bounce` 重启；`bounce` 只按现有配置重启）。PluginManager 负责拆掉激活并重算。下游**不会**一律级联重启 |
 
 选中的那一家换人不一律重启消费者。下游的业务句柄 `use` 每次访问都重新解析；有状态资源用 `follow`，登记用登记型业务层。
@@ -113,7 +113,7 @@ export default definePlugin({
 
 ### 反模式：单实例 apply 内多次 `provide` 同一服务名
 
-不带 `entryId` 二次登记，下游按条目 id 只会命中其中一个。`provide` 会 warn。
+不带 `entryId` 二次登记，下游按条目 id 只会命中其中一个。dev 模式下 `provide` 会 warn。
 
 正确做法二选一：
 
@@ -453,7 +453,7 @@ cell.innerHTML = member.nickname;
 
 | 0.19 | 0.20 |
 | --- | --- |
-| `caps.x.current` / `caps.x.require()` 取到实例再调用 | `caps.x.use.方法()`：活的转发句柄，可以存起来；选不到提供者时访问成员同步抛 `ServiceUnavailableError`（按 `err.name` 认），optional 依赖先看 `caps.x.present` |
+| `caps.x.current` / `caps.x.require()` 取到实例再调用 | `caps.x.use.方法()`：活的转发句柄，可以存起来；选不到提供者时访问转发到提供者的成员同步抛 `ServiceUnavailableError`（按 `err.name` 认），契约 `bind` 定义的成员按契约行事（如登记方法缺席时照收）；optional 依赖先看 `caps.x.present` |
 | `caps.x.all()`，条目 `{ instance, contextId, label }` | `caps.x.list()`，条目 `{ id, label, priority, selected, basis, use }`；固定某一家用 `caps.x.of(id)` |
 | `caps.x.current` 当判空用：有就用，没有就跳过 | `caps.x.present ? caps.x.use : undefined` |
 | 取一次 `current` 固定一段操作的提供者；拿它与自己的实例比身份 | `caps.x.list().find(p => p.selected)?.use`：钉在那一条登记上，途中那一家撤回后访问抛错，不跟到同一个 id 的新实例；选不到时是 `undefined`，要照样抛不可用错误写 `?? caps.x.use`。比条目 id：`…?.id === caps.lifecycle.use.id` |
@@ -464,6 +464,11 @@ cell.innerHTML = member.nickname;
 | process 的网关 helper | 删除。用 `caps.process.use` |
 | `resolveLLMModel` / `listLLMModels`、api-platform 与 api-remote-agent 的 helper 返回 `{ instance, contextId }` | 返回 `ProviderEntry`，句柄在 `use`、条目 id 在 `id`；按模型取写 `caps.llm.of('<provider>/<model>')` |
 | `isActiveTrigger(phase, trigger, self)` | 第三参是自己的条目 id：`isActiveTrigger(phase, caps.trigger, caps.lifecycle.use.id)` |
+| `events.on('service:registered' / 'service:unregistered' / 'service:preference-changed', …)` | `events.use.on('service:changed', name => …)`：这个服务的提供者或选择可能变了，回调里重读 `list()`、`present` 或 `services.use.get` / `all`；可能变化时就发，不保证恰好一次，不按次数记账 |
+| `events.on('app:starting', …)` | 事件已删，改挂 `app:ready` |
+| `provide(desc, impl, { onBehalfOf })` | `provide.use(desc, impl, { entryId })`，`entryId` 取被托管包的 id |
+| 读 `getStatus()` 条目的 `requiredServices` / `optionalServices`，或 `getPlugin()` 的 `required` / `optional` | `status.uses.filter(u => u.kind === 'required').map(u => u.service)`（optional 同理） |
+| `plugins.require().bounce(id, { config })` 换配置重启 | `plugins.use.updateConfig(id, config)`；`bounce` 只按现有配置重启 |
 | 插件代码里调 `services.prefer` 设偏好 | 偏好只由用户经管理面写（WebUI、`servicePreferences` 与本插件偏好 `pluginServicePreferences`）；`services.use.prefer(key, id, { for })` 供管理面用 |
 | 契约作者在 `bind` 里拼单层服务引用；`Bound*` 接口继承它 | `bind` 返回 `Object.assign(Object.create(port.provider), { ... })`；`Bound*` 接口 `extends` 提供者接口；资源口用 `port.provider` / `port.present` |
 
