@@ -41,10 +41,10 @@ import { installTerminalStateRestorer } from './terminal.js';
 //
 // 独立部署（scaffold 生成的 index.mjs）：
 //   import { startAalis } from '@aalis/runtime';
-//   startAalis();   // 从 node_modules 加载插件 + 默认开控制台/文件日志
+//   startAalis({ appDir: here, defaultHome: join(here, 'home') });   // 从 node_modules 加载插件 + 默认开控制台/文件日志
 //
-// monorepo 自托管（src/index.ts）传 monorepo 风味配置：
-//   startAalis({ pluginLoader: createFsPluginLoader() });
+// monorepo 自托管（src/index.ts）传仓库根与 monorepo 风味的加载器：
+//   startAalis({ appDir, pluginLoader: createFsPluginLoader(join(appDir, 'packages')) });
 //
 // 命令行开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走，用来定家目录与运行形态；余下的 argv 非空即子命令
 // 模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，命中即执行并退出，未命中报错退出
@@ -57,12 +57,15 @@ import { installTerminalStateRestorer } from './terminal.js';
 //
 // 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
 
+const UPGRADE_GUIDE_URL = 'https://aalis.acenyan.com/guide/upgrade-from-0-19';
+const APP_DIR_EXAMPLE = 'startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) })';
+
 export interface StartAalisOptions {
   /**
    * 安装集目录（package.json 与 node_modules 所在，源码形态另有 packages/），必须是绝对路径。
-   * 缺省为 `<家目录>/app`（npm 形态）；源码形态的入口传仓库根，脚手架生成的入口传项目目录。
+   * 源码形态的入口传仓库根，脚手架生成的入口传项目目录。
    */
-  appDir?: string;
+  appDir: string;
   /**
    * 宿主代码给的兜底家目录，必须是绝对路径。优先级最低：`--home`、`AALIS_HOME`、`--profile` / `AALIS_PROFILE`
    * 都没给时才用它，再没有就是 `~/.aalis`。
@@ -122,7 +125,15 @@ function readCoreVersion(): string | undefined {
  * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（之前没有事件总线）；
  * ② 子命令短路必须在 `app.start` 之前。
  */
-export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
+export async function startAalis(opts: StartAalisOptions): Promise<App> {
+  // 0.19 及以前生成的入口是 JS，不传参数也会走到这里：在动家目录之前停下，不引人去初始化或启动别的家目录
+  if (typeof opts?.appDir !== 'string') {
+    console.error(
+      '[aalis] startAalis 缺少 appDir：0.19 及以前用 create-aalis 生成的项目要改入口，见《从 0.19 升级已有项目》' +
+        `${UPGRADE_GUIDE_URL}\n[aalis] 自己写的入口把入口文件所在的目录作为 appDir 传入，例如 ${APP_DIR_EXAMPLE}。`,
+    );
+    process.exit(2);
+  }
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
 
   // ── 家目录：在任何日志与文件写入之前定下来 ──
@@ -139,7 +150,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   try {
     hostArgs = parseHostArgs(opts.argv ?? process.argv.slice(2));
     home = resolveHome({ args: hostArgs, env: process.env, defaultHome: opts.defaultHome, cwd: startCwd });
-    if (opts.appDir !== undefined && !isFullyAbsolute(opts.appDir)) {
+    if (!isFullyAbsolute(opts.appDir)) {
       throw new HomeArgsError(`appDir 必须是绝对路径：${opts.appDir}`);
     }
   } catch (err) {
@@ -147,8 +158,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     console.error(`[aalis] ${err.message}`);
     process.exit(2);
   }
-  const appDirOf = (homeDir: string) => (opts.appDir ? normalize(opts.appDir) : join(homeDir, 'app'));
-  const declared = derivePaths(home.home, appDirOf(home.home), home.profile);
+  const appDir = normalize(opts.appDir);
+  const declared = derivePaths(home.home, appDir, home.profile);
   if (hostArgs.init) {
     try {
       initHome(declared);
@@ -168,13 +179,12 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 交给插件的家目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
   // （记忆库按它记归属）。profile 按写法认不出时按真实路径再认一次，派生的库名才跟着同一个目录走
   const realHome = realpathSync.native(declared.home);
-  const paths = derivePaths(realHome, appDirOf(realHome), home.profile ?? profileOfRealHome(realHome));
-  // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」。
-  // 缺省的 <家目录>/app 留给以后的全局启动器，现在的入口都要自己传 appDir。
+  const paths = derivePaths(realHome, appDir, home.profile ?? profileOfRealHome(realHome));
+  // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
     console.error(
       `[aalis] 安装集 ${paths.app} 里没有 package.json，找不到要加载的插件。\n` +
-        '[aalis] 把入口文件所在的目录作为 appDir 传给 startAalis，例如 startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) })。',
+        `[aalis] appDir 要指向入口文件所在、带 package.json 的目录，例如 ${APP_DIR_EXAMPLE}。`,
     );
     process.exit(1);
   }

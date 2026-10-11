@@ -16,8 +16,8 @@
 
   `@aalis/api-process` 的 `createProcessGateway` 同样报这一句；激活失败的一批报 `TypeError: Object prototype may only be an Object or null: undefined`。
 - **不要只升 `@aalis/core`**。包管理器不会拦下这次安装，旧版 runtime 一启动就退出，一个插件都不加载：`Aalis 启动失败: TypeError: host.provide is not a function`。
-- **不要只升 core 与 runtime、不改入口文件**。新版 runtime 不再从启动目录读配置，旧入口文件又没告诉它项目在哪，家目录落到 `~/.aalis`，提示「家目录还没有初始化」并让你加 `--init`；照做得到的是 `~/.aalis` 里一个空的新家目录，不是这个项目。
-- **不要用旧版 WebUI 的插件市场更新到新版**。勾上内核与全部插件一起更新时，更新接口先回「已更新」，新进程因为旧入口文件没传 `appDir`、`defaultHome` 而起不来，几分钟后回滚到旧版，原因只在控制台里；用户主目录下恰好有初始化过的 `~/.aalis` 时，新进程会去起那个家目录。
+- **不要只升 core 与 runtime、不改入口文件**。新版 runtime 要求入口传 `appDir`，旧入口文件没传，进程一启动就报「startAalis 缺少 appDir」并以 2 退出，指向本页；改法见下文「改入口文件」。
+- **不要用旧版 WebUI 的插件市场更新到新版**。勾上内核与全部插件一起更新时，更新接口先回「已更新」，新进程因为旧入口文件没传 `appDir` 而立刻退出，几分钟后回滚到旧版，原因只在控制台里。
 
 已经这样做了的，停掉实例，从下面第 1 步开始做；第 2 步把依赖树整个换成同一批的新版本。
 :::

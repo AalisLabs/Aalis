@@ -41,7 +41,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
-`startAalis` 的 `opts`：`appDir`（安装集，绝对路径，缺省 `<家目录>/app`）、`defaultHome`（宿主代码给的兜底家目录，绝对路径）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
+`startAalis` 的 `opts`：`appDir`（安装集，绝对路径，必填；不传时在解析家目录之前报错并以 2 退出）、`defaultHome`（宿主代码给的兜底家目录，绝对路径）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
 
 文件日志写家目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
 `latest.1.log`（编号插在扩展名前），已有的依次后移，保留 5 份，更早的删除。每次守护进程启动都算一轮，

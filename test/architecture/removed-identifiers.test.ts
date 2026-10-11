@@ -14,7 +14,7 @@ const SKIP_DIRS = new Set(['node_modules', 'dist']);
 /** 文档站的构建缓存 */
 const SKIP_PATHS = new Set([join(ROOT, 'docs/.vitepress/cache')]);
 /** 升级指南：写的就是旧项目里的旧包、旧键与旧报错怎么改，同 CHANGELOG 不查 */
-const MIGRATION_DOCS = ['docs/guide/upgrade-from-0.19.md'];
+const MIGRATION_DOCS = ['docs/guide/upgrade-from-0-19.md'];
 const TEXT = /\.(ts|tsx|mts|js|mjs|md|json|ya?ml|vue|css)$/;
 const SELF = relative(ROOT, __filename);
 
