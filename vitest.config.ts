@@ -1,31 +1,26 @@
 import { defineConfig } from 'vitest/config';
+import { BROWSER_TESTS, HEAVY_TESTS } from './test/heavy-tests.js';
+
+/** 推送前的快测试：不跑起浏览器、起构建、起真实子进程或联网的重测试（名单见 test/heavy-tests.ts） */
+const quick = process.env.AALIS_TEST_SCOPE === 'quick';
 
 export default defineConfig({
   test: {
-    setupFiles: ['test/setup/network.ts', 'test/setup/dom.ts'],
+    setupFiles: ['test/setup/network.ts', 'test/setup/dom.ts', 'test/setup/timing.ts'],
     // .test.tsx：WebUI 组件测试（含 `// @vitest-environment jsdom` 文件级覆盖 node 默认环境）
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
-    exclude: ['**/node_modules/**', '**/dist/**', 'test/fixtures/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'test/fixtures/**', ...(quick ? HEAVY_TESTS : [])],
     environment: 'node',
-    testTimeout: 15_000,
+    // 期限按负载下的机器定，不按空载：维护者的机器各不相同，全量时又都在并行
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    expect: { poll: { timeout: 5_000 } },
     pool: 'forks',
-    // 启动真浏览器的测试分到单线程池里依次跑，其余照旧在 forks 池并行：几个 Chrome 同时开、再叠上全量测试的负载，
-    // 浏览器测试会轮流超时
-    poolMatchGlobs: [
-      ['**/test/plugins/draw-render.test.ts', 'threads'],
-      ['**/test/plugins/draw-animation.test.ts', 'threads'],
-      ['**/test/plugins/draw-delivery-chain.test.ts', 'threads'],
-      ['**/test/plugins/tool-browser-ssrf-gate.test.ts', 'threads'],
-      ['**/test/plugins/tool-browser-background-page.test.ts', 'threads'],
-      ['**/test/plugins/tool-browser-screenshot.test.ts', 'threads'],
-      ['**/test/plugins/tool-browser-screenshot-timeout.test.ts', 'threads'],
-      ['**/test/utils/offline-render-*.test.ts', 'threads'],
-      ['**/test/plugins/works-site-isolation.test.ts', 'threads'],
-      ['**/test/plugins/works-site-layout.test.ts', 'threads'],
-      ['**/test/plugins/publish-preview-isolation.test.ts', 'threads'],
-      ['**/test/smoke/**', 'threads'],
-      ['**/test/e2e-webui/**', 'threads'],
-    ],
+    // 最多用一半的核：开满时测试自己就能把负载压到核数以上，带墙钟期限的用例会轮流超时
+    maxWorkers: '50%',
+    minWorkers: 1,
+    // 启动真浏览器的测试分到单线程池里依次跑，其余照旧在 forks 池并行
+    poolMatchGlobs: BROWSER_TESTS.map(glob => [glob, 'threads'] as [string, 'threads']),
     poolOptions: { threads: { singleThread: true } },
     coverage: {
       provider: 'v8',

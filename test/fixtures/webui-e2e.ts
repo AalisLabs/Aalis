@@ -51,7 +51,7 @@ function buildClient(): string {
     cwd: CLIENT,
     encoding: 'utf-8',
     env: { ...process.env, NODE_ENV: 'production' },
-    timeout: 120_000,
+    timeout: 300_000,
   });
   expect(build.status, `前端构建失败：${build.stderr}`).toBe(0);
   return dir;
@@ -82,7 +82,7 @@ export function useWebuiE2E() {
   beforeAll(async () => {
     e2e.clientDir = buildClient();
     e2e.browser = await launchBrowser();
-  }, 180_000);
+  }, 360_000);
   afterAll(() => closeBrowser(e2e.browser, e2e.clientDir), 30_000);
   afterEach(async () => {
     for (const cleanup of e2e.cleanups.splice(0).reverse()) await cleanup();
