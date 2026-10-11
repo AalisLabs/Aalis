@@ -112,6 +112,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - **core**：关停依赖边对声明的服务（required 与 optional）在编排那一刻的全部对外提供者建，此前只对选中的那一家。整机停机时，经 `of(id)` 或 `list()` 条目用到的非选中者也等消费者关完才收尾。
 - **core**：纯 required 依赖环里的成员先全部收尾再关，并记 warn（此前强制放行其中一边）。提供者因 required 依赖丢失退场时，随它一起失去全部提供者的 required 下游按传递闭包并入同一批。后一份关闭计划要等前一份计划里还没关完、依赖本计划成员所提供服务的消费者，加入在飞关闭不另设时限。
 - **core**：偏好切换触发一次重算；外部 `prefer` 之后 `follow` 的重挂晚一个微任务。
+- **core**：管理动作（`bounce`、`updateConfig`、`disable`、`unload`）的退场批另并入这样的 required 依赖方：去掉本批与别的计划正关着的提供者之后，它的服务无人提供（与依赖丢失同一判据）。偏好刚切到别的计划正关着的提供者时再关剩下那家，依赖方随这批先于提供者收尾，此前它不进任何一份计划。钉住的句柄（`list()` 条目、`follow` 的挂载句柄）失效时，`ServiceUnavailableError` 的消息改写成「钉住的那条登记已失效」。
 - **core**：sticky 事件（`app:ready` / `app:started`）的补发在 App 存续期间一直有效，重启与停机都不清空。
 - **core**：`provides` 按归属核对：本次激活以任何逻辑身份登记的条目都计入它；重复 `provide` 的劝告（devMode）只在同一激活、同一服务、同一 contextId 时出现。
 - **core**：同一服务名以不同的描述符对象登记时照常登记，记一条 warn 点名两边（不看 devMode）。第三方契约的服务名带包名前缀，见 [契约约定](docs/design/contract-conventions.md)。
@@ -143,6 +144,7 @@ core 0.20 收拢内核：服务调用统一成选择层与业务层两层，三�
 - 注入的 logger 抛错不再卡住插件状态机，`child` 派生失败也不外传。
 - 清理超时之后新旧实例不再并存（见上文「旧实例停下之前不起新实例」）。
 - 依赖丢失引起的连带退场按传递闭包成批，下游收尾时不再失去上游；前一份管理计划里还没收尾的消费者不再被后一份计划越过。
+- plugin-webui-server：`app:ready` 里等待期间本实例被 `bounce`、`disable` 或 `unload` 关掉，醒来不再登记前端、不再监听端口（此前再 bounce 报 EADDRINUSE、停用后端口仍应答）。
 - 一段操作固定在同一家：memory-vector（算向量与记 `modelId`、判方法与删除落盘）、user-profile、adapter-onebot 的合并转发展开、media 的描述回写、memory-summary 的压缩、paper 的发布与提名，在换提供者的空档里不会一半打到旧的、一半打到新的。
 - WebUI 页面里的文件单元格在 storage 缺席时不再回 500。
 - plugin-workflow 拆卸之后不再补触发过期的单次任务、不再写盘。

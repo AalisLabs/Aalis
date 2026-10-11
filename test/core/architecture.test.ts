@@ -713,7 +713,8 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2616 → 2619：b5 审修 S6（协调者定）——已受理过的 restart() 再调记一条 debug 后返回，不再静默。
 // 2619 → 2618：b5 审修（协调者定，与 prefer 同形）——unprefer 返回 void、一律发 service:changed。
 // 2618 → 2609：b6 P1-9（用户选甲，维持判弃并顺手合并）——日志与摘要读 AggregateError 子错误合成一个函数。
-const CORE_CODE_LINE_CEILING = 2609;
+// 2609 → 2613：b6 跨批交互核查修复——管理动作的退场闭包并上依赖丢失的判据（#lost 抽成方法，+1）；钉住句柄失效的报错单列文案（+3）。
+const CORE_CODE_LINE_CEILING = 2613;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
