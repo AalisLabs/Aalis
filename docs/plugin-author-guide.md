@@ -520,8 +520,8 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
    市场按 `npm registry search keywords:aalis-plugin` 发现插件。**官方插件用 `@aalis/` scope**
    （市场标「官方」）；社区插件任意包名（标「社区」）。
 2. **依赖正确归类**（决定发布后能否被正确安装——脚手架已产出正确形态）：
-   - `@aalis/core` → **`peerDependencies: ">=0.17.0 <1.0.0"`**（用了哪版 API 就把下限写到哪版）
-     + `devDependencies: ">=x.y.z <1.0.0"`（本地编译用，x.y.z 是开发时用的版本）。**不要用 caret**（`^0.17.0` 只匹配 `0.17.x`）。
+   - `@aalis/core` → **`peerDependencies: ">=0.20.0 <1.0.0"`**（用了哪版 API 就把下限写到哪版）
+     + `devDependencies: ">=x.y.z <1.0.0"`（本地编译用，x.y.z 是开发时用的版本）。**不要用 caret**（`^0.20.0` 只匹配 `0.20.x`）。
      进程里只能装一份 core，插件解析到另一份即被拒绝加载，见 [装了两份 @aalis/core](guide/third-party-plugin.md#two-cores)。
      > **注意**：这条宽松 peer 只针对 `@aalis/core` 本身。你依赖的 `@aalis/api-*`
      > 契约包**不在稳定性承诺内**——0.x 期间仍可能改签名。消费它们的插件要关注 CHANGELOG。
