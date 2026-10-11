@@ -644,7 +644,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'GET /api/logs/range', gate(), (req, res) => {
     const before = Number(req.query.before);
     if (!Number.isFinite(before)) {
-      res.status(400).json({ error: 'before query param required' });
+      res.status(400).json({ error: '往前翻日志要给数字参数 before（取 seq 比它小的那几条）' });
       return;
     }
     return sendLogs(req.query, res, before);
@@ -724,7 +724,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'POST /api/services/:name/prefer', gate(), async (req, res) => {
     const contextId = preferredIn(req.body);
     if (!contextId) {
-      res.status(400).json({ error: 'contextId required' });
+      res.status(400).json({ error: '请求体要给 contextId：偏好的那个提供者的 id' });
       return;
     }
     await changePreference(String(req.params.name), contextId, {}, res);
@@ -735,7 +735,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'POST /api/plugins/:instanceId/services/:name/prefer', gate(), async (req, res) => {
     const contextId = preferredIn(req.body);
     if (!contextId) {
-      res.status(400).json({ error: 'contextId required' });
+      res.status(400).json({ error: '请求体要给 contextId：偏好的那个提供者的 id' });
       return;
     }
     const instanceId = String(req.params.instanceId);
