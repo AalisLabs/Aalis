@@ -11,7 +11,7 @@
 
 | 平台 | 机制 | 是否需额外安装 |
 |---|---|---|
-| macOS | `sandbox-exec`（Seatbelt/SBPL） | 否（系统自带；Apple 标记 deprecated 但仍可用，Codex CLI/Chromium 在用） |
+| macOS | `sandbox-exec`（Seatbelt/SBPL） | 否（系统自带；Apple 标记 deprecated 但仍可用，Chromium 等仍在用） |
 | Linux | `bubblewrap`（`bwrap`） | 是：`apt/dnf install bubblewrap`，且需启用 unprivileged user namespaces |
 | 其它 | — | 无后端 → `available=false` |
 
