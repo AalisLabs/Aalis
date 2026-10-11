@@ -224,7 +224,7 @@ export async function resolvePlatformBySession(
 }
 
 /**
- * 认领 sessionId 的全部 adapter 条目，按登记顺序：判定与 {@link resolvePlatformBySession} 相同，逐个问，不在第一个认领者
+ * 认领 sessionId 的全部 adapter 条目，按 `list()` 的选择顺序：判定与 {@link resolvePlatformBySession} 相同，逐个问，不在第一个认领者
  * 处停（第一个就是它解析到的那个）。用来看出一个 id 是不是同时归几个平台
  */
 export async function claimantsOf(
