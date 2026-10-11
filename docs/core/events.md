@@ -31,11 +31,11 @@ await events.use.emit('outbound:message', outMsg);
 
 ### core 内置事件
 
-core 自持的只有下面十一个基础设施事件（源码 `packages/core/src/types/events.ts`）。消息、工具、会话、
+core 自持的只有下面八个基础设施事件（源码 `packages/core/src/types/events.ts`）。消息、工具、会话、
 调度等业务事件不在 core，由各 `-api` 包经 declaration merging 注入——谁注入了哪一族见
 [扩展点索引 §2](../extensions/index.md)，键与 payload 的权威定义在该包的 `declare module` 声明里。
 
-十一个事件按「发射方等不等监听器」分两节，节由前缀判定：
+八个事件按「发射方等不等监听器」分两节，节由前缀判定：
 
 **屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，逐个等监听器返回后才推进下一步。单个监听器至多等 `AppOptions.slowThresholdMs`（默认 60000；0 = 不设限）：超过即 warn 点名登记者（插件实例 id，宿主为 `root`），不再等它、转向下一个，它之后的拒绝照常按监听器抛错上报。下表「全部返回」均按此理解。`app:stopping` 的时机见下表与后文。
 

@@ -443,7 +443,7 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）。
 
 ## 事件列表
 
-core 自持的十一个基础设施事件（`app:*` 五个屏障、`service:*` / `plugin:*` / `plugins:changed` 六个通知）及其时序见
+core 自持的八个基础设施事件（`app:*` 四个屏障、`service:changed` / `plugin:*` / `plugins:changed` 四个通知）及其时序见
 [core/events.md](core/events.md)；业务事件由各 `-api` 包注入，按包查见[扩展点索引 §2](extensions/index.md)。
 总线上没有 `dispose` 事件，清理副作用用 `lifecycle.use.onDrain` / `lifecycle.use.onDispose`；`memory:clear` 是钩子不是事件，见 [api-hooks](api/api-hooks.md)。
 

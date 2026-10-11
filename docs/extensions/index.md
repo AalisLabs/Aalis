@@ -49,7 +49,7 @@
 
 EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
-**位置**：`packages/core/src/types/events.ts`。core 内置十一项，目录与时序说明以 [core/events.md](../core/events.md) 为准
+**位置**：`packages/core/src/types/events.ts`。core 内置八项，目录与时序说明以 [core/events.md](../core/events.md) 为准
 （没有 `dispose` 事件——清理副作用用 `lifecycle.use.onDispose`，见 [context](../core/context.md)）
 
 **扩展者**：
