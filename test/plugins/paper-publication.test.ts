@@ -314,21 +314,28 @@ describe('PaperPublication', () => {
   });
 
   it('waits for a temporary quota refusal and submits once the slot becomes free', async () => {
-    const t = task([artifact('a-00000001', 'index.html', 'html')]);
-    const h = setup(t);
-    h.nominate.mockImplementationOnce(async () => ({ refused: '待审额度已满', retryAfterMs: 80 }));
-    h.connect();
-    h.coordinator.open();
-    await vi.waitFor(() => expect(t.publication?.nextAttemptAt).toBeTypeOf('number'));
-    expect(t.publication?.state).toBe('pending');
-    expect(h.nominate).toHaveBeenCalledTimes(1);
-    h.coordinator.kick();
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(h.nominate).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(t.publication?.state).toBe('submitted'));
-    expect(h.nominate).toHaveBeenCalledTimes(2);
-    expect(h.nominate.mock.calls[0][0]).toEqual(h.nominate.mock.calls[1][0]);
-    await h.coordinator.close();
+    vi.useFakeTimers();
+    try {
+      const t = task([artifact('a-00000001', 'index.html', 'html')]);
+      const h = setup(t);
+      h.nominate.mockImplementationOnce(async () => ({ refused: '待审额度已满', retryAfterMs: 80 }));
+      h.connect();
+      h.coordinator.open();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.publication?.nextAttemptAt).toBe(Date.now() + 80);
+      expect(t.publication?.state).toBe('pending');
+      expect(h.nominate).toHaveBeenCalledTimes(1);
+      h.coordinator.kick();
+      await vi.advanceTimersByTimeAsync(79);
+      expect(h.nominate).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.publication?.state).toBe('submitted');
+      expect(h.nominate).toHaveBeenCalledTimes(2);
+      expect(h.nominate.mock.calls[0][0]).toEqual(h.nominate.mock.calls[1][0]);
+      await h.coordinator.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('retries a failed artifact read after 30 seconds even when another task waits hours for its quota slot', async () => {
@@ -389,33 +396,39 @@ describe('PaperPublication', () => {
   });
 
   it('resumes a manual repair whose publish receipt could not be saved', async () => {
-    const t = task([
-      artifact('a-00000001', 'preview.png', 'png'),
-      artifact('a-00000002', 'source/workspace.tar.gz', 'other'),
-    ]);
-    t.publication = {
-      target: 'works',
-      title: '修正后的作品',
-      summary: '选定图片',
-      state: 'pending',
-      artifactIds: ['a-00000001'],
-      paths: ['work.png'],
-      nextAttemptAt: Date.now() + 80,
-    };
-    const h = setup(t);
-    h.connect();
-    h.coordinator.open();
-    h.coordinator.kick();
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(h.nominate).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(t.publication?.state).toBe('submitted'));
-    expect(h.nominate).toHaveBeenCalledTimes(1);
-    expect(h.nominate.mock.calls[0][0]).toMatchObject({
-      submissionKey: `paper:${t.id}`,
-      title: '修正后的作品',
-      files: [{ path: 'work.png' }],
-    });
-    await h.coordinator.close();
+    vi.useFakeTimers();
+    try {
+      const t = task([
+        artifact('a-00000001', 'preview.png', 'png'),
+        artifact('a-00000002', 'source/workspace.tar.gz', 'other'),
+      ]);
+      t.publication = {
+        target: 'works',
+        title: '修正后的作品',
+        summary: '选定图片',
+        state: 'pending',
+        artifactIds: ['a-00000001'],
+        paths: ['work.png'],
+        nextAttemptAt: Date.now() + 80,
+      };
+      const h = setup(t);
+      h.connect();
+      h.coordinator.open();
+      h.coordinator.kick();
+      await vi.advanceTimersByTimeAsync(79);
+      expect(h.nominate).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.publication?.state).toBe('submitted');
+      expect(h.nominate).toHaveBeenCalledTimes(1);
+      expect(h.nominate.mock.calls[0][0]).toMatchObject({
+        submissionKey: `paper:${t.id}`,
+        title: '修正后的作品',
+        files: [{ path: 'work.png' }],
+      });
+      await h.coordinator.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('records a rejected decision and stops on close', async () => {
