@@ -4,7 +4,7 @@
 
 OpenAI、DeepSeek 等遵循 OpenAI Chat Completions 协议的 LLM 在生成 `tool_calls` 时，**完全不会发送 `delta.content`**：每个 SSE chunk 的 payload 只含 `delta.tool_calls[i].function.arguments` 的字符串增量。如果上层 LLM Provider 把这些增量直接 buffer 起来、等整段生成完才一次性 yield `ChatStreamChunk`，前端在这段时间内 **完全看不到任何反馈**，用户会以为程序卡死。
 
-OpenAI 自家的 ChatGPT / Codex CLI 都通过显示「Generating tool call…」加旋转动画规避此问题。Aalis 需要在 WebUI 与未来其它前端中提供等价体验。
+常见的做法是在这段时间显示「正在生成工具调用」加旋转动画。Aalis 需要在 WebUI 与未来其它前端中提供等价体验。
 
 ## 协议契约
 
