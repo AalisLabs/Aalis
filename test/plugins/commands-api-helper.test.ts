@@ -371,6 +371,46 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     await app.stop();
   });
 
+  it('提供者拒收的调用抛给调用方，不进重放：换人后指令照常重挂', async () => {
+    const strict = () => {
+      const made = makeCommandService();
+      const command = made.svc.command.bind(made.svc);
+      made.svc.command = (name, description, meta) => {
+        const builder = command(name, description, meta);
+        const option = builder.option.bind(builder);
+        builder.option = (n, syntax, opts) => {
+          if (n === 'bad') throw new Error('选项名不合法');
+          return option(n, syntax, opts);
+        };
+        return builder;
+      };
+      return made;
+    };
+    const app = newApp();
+    const host = app.bind({ provide });
+    const off = host.provide.use(commands, strict().svc);
+    let rejected: unknown;
+    await loadProbe(
+      app,
+      commandProbe('probe-rejected', commands => {
+        const builder = commands.command('ping', '探针的 ping');
+        try {
+          builder.option('bad', '-b');
+        } catch (err) {
+          rejected = err;
+        }
+        builder.action(async () => 'probe');
+      }),
+    );
+    expect(rejected).toBeInstanceOf(Error);
+    off();
+    const next = strict();
+    host.provide.use(commands, next.svc);
+    await settle(app);
+    expect(next.cmds.get('ping')?.actions).toHaveLength(1);
+    await app.stop();
+  });
+
   it('同一激活再登记同名指令：替换先前那次，只留一层', async () => {
     const app = newApp();
     const host = app.bind({ provide });

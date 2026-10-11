@@ -239,14 +239,7 @@ function registerEntry(svc: CommandService, entry: CommandEntry): () => void {
   };
   // 重放到一半抛错：已推上去的那一层不留（它不归账本管，会一直压住同名指令），错误照常交给账本
   try {
-    for (const c of entry.calls) {
-      if (c.kind === 'alias') real.alias(c.name);
-      else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
-      else if (c.kind === 'argument') real.argument(c.name, c.description);
-      else if (c.kind === 'action') real.action(c.handler);
-      else if (c.kind === 'usage') real.usage(c.text);
-      else if (c.kind === 'example') real.example(c.line);
-    }
+    for (const c of entry.calls) forward(real, c);
   } catch (err) {
     off();
     throw err;
@@ -255,39 +248,29 @@ function registerEntry(svc: CommandService, entry: CommandEntry): () => void {
   return off;
 }
 
+function forward(real: CommandBuilder, c: DeferredCall): void {
+  if (c.kind === 'alias') real.alias(c.name);
+  else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
+  else if (c.kind === 'argument') real.argument(c.name, c.description);
+  else if (c.kind === 'action') real.action(c.handler);
+  else if (c.kind === 'usage') real.usage(c.text);
+  else real.example(c.line);
+}
+
 function makeBuilder(entry: CommandEntry): CommandBuilder {
-  const { calls } = entry;
+  // 先转发再记：提供者拒收的调用抛给调用方，不进重放列表，换人时不会再失败一次
+  const record = (c: DeferredCall): CommandBuilder => {
+    if (entry.real) forward(entry.real, c);
+    entry.calls.push(c);
+    return self;
+  };
   const self: CommandBuilder = {
-    alias(n) {
-      calls.push({ kind: 'alias', name: n });
-      entry.real?.alias(n);
-      return self;
-    },
-    option(n, syntax, opts) {
-      calls.push({ kind: 'option', name: n, syntax, opts });
-      entry.real?.option(n, syntax, opts);
-      return self;
-    },
-    argument(n, description) {
-      calls.push({ kind: 'argument', name: n, description });
-      entry.real?.argument(n, description);
-      return self;
-    },
-    action(handler) {
-      calls.push({ kind: 'action', handler });
-      entry.real?.action(handler);
-      return self;
-    },
-    usage(text) {
-      calls.push({ kind: 'usage', text });
-      entry.real?.usage(text);
-      return self;
-    },
-    example(line) {
-      calls.push({ kind: 'example', line });
-      entry.real?.example(line);
-      return self;
-    },
+    alias: name => record({ kind: 'alias', name }),
+    option: (name, syntax, opts) => record({ kind: 'option', name, syntax, opts }),
+    argument: (name, description) => record({ kind: 'argument', name, description }),
+    action: handler => record({ kind: 'action', handler }),
+    usage: text => record({ kind: 'usage', text }),
+    example: line => record({ kind: 'example', line }),
   };
   return self;
 }
