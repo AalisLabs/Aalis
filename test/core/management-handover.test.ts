@@ -8,6 +8,7 @@ import {
   lifecycle,
   optional,
   provide,
+  services,
 } from '../../packages/core/src/index.js';
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
@@ -289,6 +290,59 @@ describe('两份管理关闭计划重叠', () => {
     await Promise.all([first, app.plugins.bounce('a')]);
     await app.plugins.idle();
     expect(seen[0]).toBe('b 收尾时 S 在');
+  });
+
+  it('偏好在收尾期间切到另一份计划正关着的提供者：再关剩下那家时，依赖方随这批先收尾，收尾时服务仍在', async () => {
+    const app = world();
+    const S = defineService<{ gen: string }>('t:overlap:prefer');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const aDraining = new Promise<void>(resolve => {
+      entered = resolve;
+    });
+    const provider = (name: string, priority: number, onDrain?: () => Promise<void>) =>
+      definePlugin({
+        name,
+        provides: [S],
+        uses: { provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          provide.use(S, { gen: name }, { priority });
+          if (onDrain) lifecycle.use.onDrain(onDrain);
+        },
+      });
+    await app.plugin(
+      provider('a', 0, async () => {
+        entered();
+        await gate;
+      }),
+    );
+    await app.plugin(provider('b', 10));
+    const seen: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'c',
+        uses: { s: S, lifecycle },
+        apply({ s, lifecycle }) {
+          lifecycle.use.onDrain(() => void seen.push(s.present ? s.use.gen : 'NONE'));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    // c 选中 b，不随 a 这批走；a 收尾期间偏好切到 a，此刻再关 b，c 剩下的那家只有另一份计划正关着的 a
+    const first = app.plugins.bounce('a');
+    await aDraining;
+    app.bind({ services }).services.use.prefer(S, 'a');
+    await app.plugins.bounce('b');
+    const drainedWithB = [...seen];
+    release();
+    await first;
+    await app.plugins.idle();
+    expect(drainedWithB).toEqual(['a']);
+    expect(seen).toEqual(['a']);
+    expect(app.plugins.getPlugin('c')?.state).toBe('active');
   });
 });
 

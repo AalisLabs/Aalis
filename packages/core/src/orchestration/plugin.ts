@@ -320,10 +320,12 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件（已激活，或仍在
-   * 初始化：在飞或后台）某个 required 服务此刻为它选中的那一家归本批要关的激活所有（传递闭包）；空档里不切到后备
-   * 提供者——依赖方对着旧实例收尾，提供者重启后再回到首选。仍在初始化的依赖方同样拆掉重来，否则它 apply 里
-   * 拿到的是旧实例。unload / disable / bounce 三者同一路径。
+   * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。活插件（已激活，或仍在初始化：在飞或
+   * 后台）某个 required 服务满足下面任一条就并入本批（传递闭包）：
+   * - 此刻为它选中的那一家归本批要关的激活所有。空档里不切到后备提供者：依赖方对着旧实例收尾，提供者重启后再回到首选；
+   * - 去掉本批与别的计划正关着的提供者之后无人提供（与依赖丢失同一判据 {@link #lost}）。偏好切到别的计划正关着的那家
+   *   之后再关剩下那家，依赖方由这一条并入，否则它不在任何一份计划里，收尾时提供者已全部撤下。
+   * 仍在初始化的依赖方同样拆掉重来，否则它 apply 里拿到的是旧实例。unload / disable / bounce 三者同一路径。
    */
   #retire(entry: PluginRecord, target: PluginState): Promise<void> {
     const services = this.#host.runtime.services;
@@ -334,14 +336,19 @@ export class PluginManager implements PluginManagerService {
     return retireBatch(batch, item => (item === entry ? target : 'pending'), this.#deps);
   }
 
+  /** 去掉 leaving 与别的计划正关着的提供者之后，该服务是否已无人提供 */
+  #lost(name: string, leaving: ReadonlySet<symbol>): boolean {
+    return !this.#host.runtime.services.survives(name, owner => leaving.has(owner) || this.#host.closing(owner));
+  }
+
   /**
-   * 退场批的传递闭包：候选里在跑的插件（已激活，或仍在初始化），某个 required 服务按 lost 判定会随本批失去时并入，
-   * 直到不再增长。管理动作与依赖丢失共用，只是 lost 的判据不同
+   * 退场批的传递闭包：候选里在跑的插件（已激活，或仍在初始化），某个 required 服务随本批无人提供（{@link #lost}）时
+   * 并入，直到不再增长。依赖丢失与管理动作共用；管理动作另给 pinned：为依赖方选中的那一家要走也算
    */
   #closure(
     seeds: PluginRecord[],
     candidates: PluginRecord[],
-    lost: (name: string, leaving: ReadonlySet<symbol>, consumer: PluginRecord) => boolean,
+    pinned?: (name: string, leaving: ReadonlySet<symbol>, consumer: PluginRecord) => boolean,
   ): PluginRecord[] {
     const batch = [...seeds];
     const leaving = new Set(seeds.flatMap(seed => (seed.activation ? [seed.activation.owner] : [])));
@@ -349,7 +356,7 @@ export class PluginManager implements PluginManagerService {
       grew = false;
       for (const other of candidates) {
         if (!running(other) || !other.activation || batch.includes(other)) continue;
-        if (!other.required.some(name => lost(name, leaving, other))) continue;
+        if (!other.required.some(name => this.#lost(name, leaving) || pinned?.(name, leaving, other))) continue;
         batch.push(other);
         leaving.add(other.activation.owner);
         grew = true;
@@ -585,13 +592,11 @@ export class PluginManager implements PluginManagerService {
 
       // Phase A：缺 required 的，连同随这批（与别的计划正关着的提供者）失去全部提供者的下游，成批关闭、下游先收尾
       const services = this.#host.runtime.services;
-      const lost = (name: string, leaving: ReadonlySet<symbol>): boolean =>
-        !services.survives(name, owner => leaving.has(owner) || this.#host.closing(owner));
-      const retiring = this.#closure([], [...order].reverse(), lost);
+      const retiring = this.#closure([], [...order].reverse());
       if (retiring.length > 0) {
         const leaving = new Set(retiring.map(entry => entry.activation!.owner));
         const target = (entry: PluginRecord): PluginState => {
-          const unmet = entry.required.find(name => lost(name, leaving))!;
+          const unmet = entry.required.find(name => this.#lost(name, leaving))!;
           this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
           lastRoundFlips.add(entry.instanceId);
           // 本 flight 此刻没有在飞的激活：activating 即后台，它 apply 里拿到的已是旧实例，拆它记入重试预算
