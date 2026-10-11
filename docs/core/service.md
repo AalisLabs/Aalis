@@ -62,7 +62,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 ## 内置服务的登记
 
-六项内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方服务走同一条登记路径：加载插件前，根激活经 `provide` 以 `exclusive` 登记它们，同样经过 `provide` 的校验、发出 `service:changed`、归属根激活。唯一的例外是 `provide` 自身：根激活要先取得 `provide` 才能登记其余五项，因此 `provide` 的提供者由 `ActivationHost` 直接写入容器一次来自举。宿主管理面两项（`app` / `plugins`）同样由根激活经 `provide` 独占登记。宿主路径 `host-paths`、配置文档 `host-config` 与插件来源 `plugin-source` 不在 core，由宿主在根上提供（Node 宿主 `@aalis/runtime` 同样独占登记）。
+六项内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方服务走同一条登记路径：加载插件前，根激活经 `provide` 以 `exclusive` 登记它们，同样经过 `provide` 的校验、发出 `service:changed`、归属根激活。唯一的例外是 `provide` 自身：根激活要先取得 `provide` 才能登记其余五项，因此 `provide` 的提供者由 `ActivationHost` 直接写入容器一次来自举。宿主管理面两项（`app` / `plugins`）同样由根激活经 `provide` 独占登记。宿主路径 `host-paths`、读日志 `host-logs`、配置文档 `host-config` 与插件来源 `plugin-source` 不在 core，由宿主在根上提供（Node 宿主 `@aalis/runtime` 同样独占登记）。
 
 钩子与贡献点不是内置服务：`hooks` / `contributions` 的契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 以普通（非独占）登记提供，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 

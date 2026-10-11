@@ -331,7 +331,7 @@ await handle?.chat({ messages });   // 条目已固定是哪个 model
 
 兄弟概念（`docs/concepts/`）：
 
-- `docs/concepts/service-model.md` — `ServiceContainer` 按名注册、同名多 provider 胜出规则（preference > priority > 注册序）、per-entry 粒度。
+- `docs/concepts/service-model.md` — `ServiceContainer` 按名注册、同名多 provider 的挑选规则（本插件偏好 > 全局偏好 > priority > 注册顺序）、per-entry 粒度。
 - `docs/concepts/storage-uri-grammar.md` — `<root>:/path` 文法（`ref` 字段可承载 storage URI）。
 
 服务与核心文档：
