@@ -1064,8 +1064,8 @@ async function main(): Promise<void> {
   const chosen = answers.tier === 'minimal' || answers.tier === 'standard' ? answers : undefined;
   const keys = chosen?.keys ?? {};
 
-  // 插件目录：full 档用它枚举全部官方插件；非 bare 档也复用其版本号，省去逐包查询。
-  const catalog = answers.tier === 'bare' ? null : await fetchCatalog(registry);
+  // 插件目录：只有 full 档用它枚举全部官方插件，其余各档的插件是固定的
+  const catalog = answers.tier === 'full' ? await fetchCatalog(registry) : null;
   const official = catalog?.filter(e => e.official).map(e => e.name);
   if (answers.tier === 'full' && !official) console.warn('（无法连接 npm，full 档回退离线静态表）');
   // 镜像源多不支持检索，却照样回 200 与空结果：不提示的话 full 档会悄悄少装
