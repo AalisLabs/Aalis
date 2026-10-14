@@ -74,9 +74,3 @@ interface SessionHistoryService {
 3. **平台规则**：管目标会话 ID 的 checker 链，任一 deny 即拒绝。
 
 平台规则只能在前两步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，房间的召回范围一处管住两个工具。本插件启用（`enabled`）时登记召回范围这一项（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`，与其他跨会话取料的插件同一份定义）。
-
-## 历史
-
-本包由原 `plugin-session-tools` 拆分而来（另一部分为 `plugin-subtask`），跨会话委派工具随后也并入本包。
-
-跨会话委派工具组 `session-delegate`（`list_known_sessions` 与 `delegate_to_session`）与配置项 `crossSessionEnabled` / `crossSessionDefaultTimeoutSec` 已删除：`list_known_sessions` 不按调用者过滤，把各会话的最近一条消息交给任何触发者；`delegate_to_session` 让多人平台上的任何人都能把任务派进其他会话（包括 owner 的 WebUI 会话），并把目标会话的回复带回来源会话。会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，工具取接收会话自己的，会话之间互不信任。迁移说明见 CHANGELOG。
