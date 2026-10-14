@@ -62,8 +62,6 @@ plugins:
 - 缺省的 `args` / `env` 分别补 `[]` / `{}`；显式给出错误形态，或数组、映射中有不能转换为字符串的成员时，整条 server 跳过，绝不截短参数后启动。
 - `visibility` 不是四个取值之一、`enabled` 不是布尔值时，整条 server 跳过。
 
-旧版 WebUI 把 `args` / `env` 存成多行文本；该 server 不会启动，需按示例改写：`args` 先按行、再按空白切分，如 `args: "-y @scope/pkg"` 应改为 `["-y", "@scope/pkg"]`；`env` 每行一条 `KEY=VALUE`，忽略 `#` 开头的注释行，值去首尾空白。旧版条目常带的 `args: ''` / `env: ''` 也要删除该键或改为 `[]` / `{}`。
-
 ## 行为
 
 - 每个 server 是一个独立子进程，stdio 传输。
