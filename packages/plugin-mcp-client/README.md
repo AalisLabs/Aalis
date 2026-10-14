@@ -40,8 +40,6 @@ plugins:
 
 - `env` 声明了 `secret: true`：每个 server 的整份 `env` 算一个密钥，Node 宿主把它移进家目录的 `secrets.yaml`，配置文件里只留引用；WebUI 不回显，要改就整份重填。token 放进 `env`，不要写进 `args`（连接成功时的日志会写出全部 `args`）
 - `args` 必须是字符串数组、`env` 必须是映射；缺省时分别补 `[]` / `{}`。显式形态错误或任一成员不能转为字符串时，该 server 记录警告且不启动，其他 server 不受影响；合法的空字符串参数会原样传递
-  - 旧版 WebUI 建的条目常带 `args: ''` / `env: ''`，删除该键或改为 `[]` / `{}`
-  - 旧版按以下规则解析字符串，改写时照此拆分：`args` 先按行、再按空白切分，如 `args: "-y @scope/pkg"` 应改为 `["-y", "@scope/pkg"]`；`env` 每行一条 `KEY=VALUE`，忽略 `#` 开头的注释行，值去首尾空白
 - 缺少 `id` 或 `command` 的条目记录警告并跳过，其它 server 不受影响
 - `enabled` 不是布尔值、`visibility` 不在四档选项中时，同样跳过该 server
 - MCP `inputSchema` 顶层非 `type: 'object'` 时会被包装为 `{ input: schema }`

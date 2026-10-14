@@ -9,7 +9,6 @@
 | [安装与启动排障](./troubleshooting.md) | Node 版本、`npm install` 失败的各类原因与修法、端口被占、token 在哪、`/doctor` 与日志、卸载后留下的配置段、Intel Mac 与 LanceDB |
 | [记忆由哪些插件组成](./memory.md) | 消息存储、摘要与画像、语义记忆三层各要什么，服务是什么，缺一环时界面怎么显示 |
 | [第三方插件开发者指南](./third-party-plugin.md) | 从零到发布：`definePlugin`、消费/提供服务、扩展点、两套元数据、发布到插件市场 |
-| [配置迁移](./config-migration.md) | schema-config 0.14 的作用域转换、严格字段与离线检查 |
 
 ## 接着读
 

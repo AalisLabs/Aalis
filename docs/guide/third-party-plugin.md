@@ -344,6 +344,3 @@ pnpm 可以直接引用根依赖的范围：
 - [api 包设计](../design/api-packages.md)
 - [枢纽服务：第三方能力的登记契约](../design/hub-services.md)
 - [契约约定](../design/contract-conventions.md)
-- [从 0.19 迁移对照](../plugin-author-guide.md#从-0-19-迁移)
-- [从 0.17 迁移对照](../plugin-author-guide.md#从-0-17-迁移)
-- [从 0.16 迁移对照](../plugin-author-guide.md#从-0-16-迁移)

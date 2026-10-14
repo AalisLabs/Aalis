@@ -130,9 +130,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 | `idleTriggerPrompt` | string | `''` | 闲置触发系统提示（留空用内置提示） |
 | `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。 |
 
-`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略，旧的逗号字符串由配置迁移工具一次性转换。覆盖项中留空的 `triggerNames`、`muteKeywords` 与提示词继续继承顶层值。
-
-计数、评分与闲置触发字段原属 flow-control，字段名与默认值不变，迁移方法见根目录 `CHANGELOG.md`。
+`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略。覆盖项中留空的 `triggerNames`、`muteKeywords` 与提示词继续继承顶层值。
 
 ## 状态清理
 
