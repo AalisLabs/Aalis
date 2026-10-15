@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 
@@ -136,6 +137,16 @@ const sidebar = [
 ].filter(Boolean)
 
 /** nav 落点：优先该区 README（策展索引落地页），否则第一篇。 */
+/** 页脚里的构建来源：分支（分离检出时不写）与短提交，docs/ 有未提交的改动时注明，再加 core 版本与构建日期 */
+function buildSource(): string {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf-8' }).trim()
+  const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
+  const commit = git('rev-parse', '--short', 'HEAD')
+  const dirty = git('status', '--porcelain', '--', '.') ? '（含未提交的改动）' : ''
+  const core = JSON.parse(readFileSync(join(ROOT, '../packages/core/package.json'), 'utf-8')).version
+  return `文档对应 ${branch === 'HEAD' ? '' : `${branch}@`}${commit}${dirty}，core ${core}，构建于 ${new Date().toLocaleDateString('sv-SE')}`
+}
+
 const firstLink = (subdir: string) => {
   const names = mdNames(subdir)
   if (names.includes('README')) return `/${subdir}/README`
@@ -147,6 +158,7 @@ export default withMermaid(defineConfig({
   description: '忒修斯之船式的 LLM 助手框架 — 极简内核，万物皆插件',
   lang: 'zh-CN',
   cleanUrls: true,
+  lastUpdated: true,
   markdown: {
     // 行内代码统一 v-pre：Vue 跳过编译，`{{ }}` 与 <Tag> 原样显示。
     // 根治「行内代码里的 {{outputs.<out>}} 被当插值解析而 build 失败」——零文档改动。
@@ -177,8 +189,10 @@ export default withMermaid(defineConfig({
     sidebarMenuLabel: '菜单',
     returnToTopLabel: '回到顶部',
     langMenuLabel: '语言',
+    lastUpdated: { text: '最后更新', formatOptions: { dateStyle: 'medium', forceLocale: true } },
     footer: {
       message:
+        `${buildSource()}<br>` +
         '基于 <a href="https://github.com/AalisLabs/Aalis/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT 许可</a>发布',
       copyright:
         'Copyright © 2026 <a href="https://github.com/AalisLabs/Aalis" target="_blank" rel="noreferrer">Ace Nyan</a>',
