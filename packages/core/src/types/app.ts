@@ -25,7 +25,8 @@ export interface AppService {
 export interface PluginStatusEntry {
   name: string;
   instanceId: string;
-  displayName?: string;
+  /** 展示值（见 {@link PluginDefinition.displayName}） */
+  displayName?: unknown;
   state: PluginState;
   provides?: string[];
   reusable?: boolean;
@@ -34,7 +35,10 @@ export interface PluginStatusEntry {
    * optional（包了 optional() 的）不参与
    */
   uses: Array<{ key: string; service: string; kind: 'required' | 'optional' }>;
+  /** 同 {@link PluginEntry.error} */
   error?: string;
+  /** 同 {@link PluginEntry.failure} */
+  failure?: unknown;
   /** 激活超过 `AppOptions.slowThresholdMs` 仍未完成、已转入后台（state 为 activating）时为 true，否则不给 */
   slow?: boolean;
   /**

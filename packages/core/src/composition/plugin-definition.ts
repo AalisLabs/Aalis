@@ -22,7 +22,8 @@ export interface PluginDefinition<U = {}> extends PluginMeta {
    * 且不含 instanceId 的 `:suffix`（parseInstanceId 以第一个 ':' 切开）。
    */
   name: string;
-  displayName?: string;
+  /** 展示值（字符串或文字对象）：core 不读、不校验，原样转交给展示方 */
+  displayName?: unknown;
   /**
    * 归类标签，与 displayName 同为展示元数据：core 不读、不校验取值，管理界面据它分组。
    * 认得哪些取值由界面所在的契约定义，其它字符串原样显示。

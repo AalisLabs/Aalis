@@ -30,6 +30,11 @@ export function isTextRef(value: unknown): value is TextRef {
   return Object.keys(v).every(key => TEXT_REF_KEYS.has(key));
 }
 
+/** 展示值（core 的插件显示名、服务 label 这类 unknown 字段）收窄成文字：字符串与文字对象原样，其余 undefined */
+export function asText(value: unknown): string | TextRef | undefined {
+  return typeof value === 'string' || isTextRef(value) ? value : undefined;
+}
+
 /** 值里的文字对象换成字符串之后的类型（出口渲染的结果、前端读到的线上类型） */
 export type Localized<T> = T extends TextRef
   ? string

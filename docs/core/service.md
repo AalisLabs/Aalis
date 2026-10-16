@@ -89,7 +89,7 @@ interface ServiceView<T = unknown> {
   instance: T;
   contextId: string;  // 注册者逻辑身份（展示 / 偏好 / 路由），不是清理钥匙
   priority: number;
-  label?: string;
+  label?: unknown;    // 展示值（字符串或文字对象），core 原样转交
 }
 ```
 

@@ -25,6 +25,7 @@ import {
   pluginsService,
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { asText, toSource } from '@aalis/schema-i18n';
 
 const configSchema = defineConfig({
   prices: {
@@ -143,7 +144,7 @@ function addTotals(into: Totals, from: Totals): void {
 function instanceLabel(plugins: PluginManagerService | undefined, instance: string): string {
   const definition = plugins?.getPlugin(instance)?.definition;
   if (!definition) return instance;
-  const name = definition.displayName ?? definition.name;
+  const name = toSource(asText(definition.displayName)) ?? definition.name;
   return instance === definition.name ? name : `${name}（${instance.slice(definition.name.length + 1)}）`;
 }
 

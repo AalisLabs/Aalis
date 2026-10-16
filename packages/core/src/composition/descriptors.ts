@@ -24,7 +24,8 @@ export type FollowCleanup = void | (() => unknown);
 export interface ProviderEntry<B> {
   /** 条目的逻辑身份（contextId） */
   readonly id: string;
-  readonly label?: string;
+  /** 展示值（字符串或文字对象）：core 不读、不校验，原样转交给展示方 */
+  readonly label?: unknown;
   readonly priority: number;
   /** 是否为本插件当前选中的那一家，即 `use` 此刻打到的那一家 */
   readonly selected: boolean;

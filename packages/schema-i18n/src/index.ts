@@ -33,6 +33,7 @@ export {
 export type { Params, TextArgs } from './params.js';
 export { type ResolveOptions, resolveText } from './resolve.js';
 export {
+  asText,
   isTextRef,
   type Localized,
   type LocalizeSkip,

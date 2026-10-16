@@ -1,3 +1,5 @@
+import type { CoreFailureCode } from '../types/failure.js';
+
 import { isThenable } from '../kernel/disposable-chain.js';
 
 import type { EventBus } from '../primitives/events.js';
@@ -10,6 +12,10 @@ import type { Resources } from '../infrastructure/resources.js';
 // 只认框架为本次激活装配的 required 依赖的 use 句柄；optional、of(id)、动态查询与自造端口不借用重试资格。
 class ServiceUnavailableError extends Error {
   override name = 'ServiceUnavailableError';
+  readonly code: CoreFailureCode = 'service-unavailable';
+  readonly service: string;
+  /** 指名（of(id)）或钉住的那一家，没有指名时 undefined */
+  readonly provider: string | undefined;
   readonly #origin: { resources: Resources; name: string } | undefined;
 
   /** at 同 createTarget：钉住的目标失效时同一个 id 可能已有新登记，报的是钉住的那条失效，不说「没有这一家」 */
@@ -19,6 +25,8 @@ class ServiceUnavailableError extends Error {
         ? `钉住的 "${at.contextId}" 那条登记已失效，同一个 id 的现有登记要重新取句柄`
         : `声明的依赖当前没有${at === undefined ? '提供者' : ` "${at}" 这一家`}`;
     super(`服务 "${name}" 不可用（"${scope.id}" ${reason}）`);
+    this.service = name;
+    this.provider = typeof at === 'object' ? at.contextId : at;
     this.#origin = required ? { resources: scope.resources, name } : undefined;
   }
 

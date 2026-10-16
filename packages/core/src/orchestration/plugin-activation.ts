@@ -9,6 +9,7 @@
 // 需要的 PluginManager 状态经 deps 传入，PluginManager 自身只负责事件路由与重算编排。
 // ============================================================
 
+import { coreFailure } from '../types/failure.js';
 import type { PluginEntry, PluginState } from '../types/plugin.js';
 
 import type { ServiceContainer } from '../primitives/services.js';
@@ -17,10 +18,11 @@ import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
-import { type Logger, summarizeError } from '../infrastructure/logger.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 /** 注册表内部的记录：公开的 {@link PluginEntry} 加上依赖表、这次激活与重试余额（不进公开类型） */
-export interface PluginRecord extends PluginEntry {
+/** 注册表里的记录：失败只存一份 failure，error 在投影时现算 */
+export interface PluginRecord extends Omit<PluginEntry, 'error'> {
   /** 参与激活闸的依赖服务名（uses 里未包 optional 的） */
   required: string[];
   activation?: Activation;
@@ -152,7 +154,8 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     const registered = services.namesOf(activation.owner);
     const missing = provides.filter(name => !registered.includes(name));
     if (missing.length > 0) {
-      throw new Error(`声明 provides [${missing.join(', ')}] 但未实际注册这些服务`);
+      const message = `声明 provides [${missing.join(', ')}] 但未实际注册这些服务`;
+      throw coreFailure(message, 'provides-not-registered', { services: missing });
     }
 
     // dev mode：反向一致性检查 —— 实际注册的服务名是否都在 provides 中声明
@@ -169,7 +172,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
 
     entry.state = 'active';
-    entry.error = undefined;
+    entry.failure = undefined;
     entry.retriesLeft = undefined;
     // 转入过后台的激活此刻上线服务：先写 active，上线触发的重算才看得到它已激活
     for (const name of services.release(activation.owner)) host.runtime.notify('service:changed', name);
@@ -184,7 +187,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
     const missing = missingRequiredService(err, activation.resources, entry.required);
     if (missing !== undefined) {
-      entry.error = undefined;
+      entry.failure = undefined;
       const target = deps.spendRetry(entry, missing);
       // 用尽时 spendRetry 已记 error「已停止」，不再说等待恢复
       if (target === 'pending')
@@ -193,7 +196,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       return target === 'pending' ? 'retry' : undefined;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
-    entry.error = summarizeError(err);
+    entry.failure = err;
     await retireBatch([entry], 'error', deps);
     return;
   }

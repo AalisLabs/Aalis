@@ -28,6 +28,7 @@ import {
   type SettingRow,
 } from '@aalis/api-session-protocol';
 import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
+import { asText, toSource } from '@aalis/schema-i18n';
 import { failure, type MethodHandlers, ProtocolError } from './connection.js';
 import type { SeenStore } from './seen.js';
 
@@ -183,7 +184,7 @@ export function createSessions(deps: SessionDeps) {
   function instanceLabel(instance: string): string {
     const definition = deps.plugins.getPlugin(instance)?.definition;
     if (!definition) return instance;
-    const name = definition.displayName ?? definition.name;
+    const name = toSource(asText(definition.displayName)) ?? definition.name;
     return instance === definition.name ? name : `${name}（${instance.slice(definition.name.length + 1)}）`;
   }
 

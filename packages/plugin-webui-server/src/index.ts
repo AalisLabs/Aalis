@@ -58,6 +58,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { asText, toSource } from '@aalis/schema-i18n';
 import {
   type Message,
   type OutgoingMessage,
@@ -668,9 +669,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
     for (const p of pluginStatus) {
-      if (p.displayName) {
-        displayNameMap.set(p.name, p.displayName);
-        displayNameMap.set(p.instanceId, p.displayName);
+      const name = toSource(asText(p.displayName));
+      if (name) {
+        displayNameMap.set(p.name, name);
+        displayNameMap.set(p.instanceId, name);
       }
     }
     // 根激活归宿主：core 的内置服务与宿主登记的 host-config / plugin-source 都在这里（与市场依赖图同一标签）。
@@ -687,7 +689,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         providers: entries.map(e => ({
           contextId: e.contextId,
           displayName: displayNameMap.get(e.contextId),
-          label: e.label,
+          label: toSource(asText(e.label)),
           priority: e.priority,
           exclusive: e.exclusive,
         })),
@@ -909,7 +911,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         const entries = caps.llm.list();
         const providers = entries.map(e => ({
           model: e.use.id,
-          provider: e.label ?? e.id,
+          provider: toSource(asText(e.label)) ?? e.id,
           contextId: e.use.providerId,
           capabilities: [...e.use.capabilities],
         }));

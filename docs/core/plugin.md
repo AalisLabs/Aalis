@@ -16,11 +16,23 @@ interface PluginEntry {
   instanceId: string;          // 单实例时与 definition.name 相同，多实例时为 `name:suffix`
   config: Record<string, unknown>;
   state: PluginState;
-  error?: string;              // 激活失败的说明：错误消息后接 cause 链摘要；另有 core 写入的固定说明（见下表）
+  error?: string;              // 激活失败的说明，由 failure 现算：错误消息后接 cause 链摘要；另有 core 的固定说明（见下表）
+  failure?: unknown;           // 激活失败时抛出的原值（core 自己的失败带 code，见下文）
 }
 ```
 
-公开条目不含内部激活记录与依赖表；依赖信息只在 `getStatus()` 条目的 `uses` 里（包含 Core 基础服务）。
+公开条目不含内部激活记录与依赖表；依赖信息只在 `getStatus()` 条目的 `uses` 里（包含 Core 基础服务）。`getStatus()` 条目同样带 `error` 与 `failure`。
+
+`failure` 可能不可序列化、可能含敏感数据，激活成功、`enable`、`disable`、`bounce` 清掉之前一直留在内存里：展示方只取其中挂的文字对象与 `code`，不整体序列化或下发。core 自己的失败是挂 `code` 与数据属性的普通 Error，取值见包根类型 `CoreFailureCode`：
+
+| code | 情形 | 数据 |
+|---|---|---|
+| `required-retry-exhausted` | 初始化期间 required 依赖反复缺失、自动重试用尽 | `service`：最后一次缺的服务 |
+| `provides-not-registered` | 激活完成时 provides 声明的服务没有登记 | `services`：缺的那些 |
+| `exclusive-conflict` | 服务为独占登记期间又登记同名提供者 | `service` |
+| `service-unavailable` | 业务句柄选不到提供者（`ServiceUnavailableError`） | `service`；指名或钉住的那一家另给 `provider` |
+
+插件显示名 `displayName` 是展示值（字符串或文字对象，类型 `unknown`）：core 不读、不校验，原样转交给展示方。
 
 `parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` 或 `plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。模块名是 npm 包名、不含 `:`，因此以第一个 `:` 切开，带不带 scope 同一规则；后缀里可以再出现 `/` 或 `:`。
 

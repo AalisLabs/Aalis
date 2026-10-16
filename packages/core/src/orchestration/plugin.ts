@@ -1,3 +1,4 @@
+import { coreFailure } from '../types/failure.js';
 import type { PluginManagerService, PluginStatusEntry } from '../types/index.js';
 import { type PluginEntry, type PluginState, parseInstanceId } from '../types/plugin.js';
 
@@ -376,7 +377,7 @@ export class PluginManager implements PluginManagerService {
     // admin-during-activation 测试）。例外是后台激活落定失败：状态先写成 error，回滚在单飞之外进行，
     // 其间转 pending 会被激活侧的「旧激活未清」闸跳过——回滚完成后补跑的重算会把它接上。
     entry.state = 'pending';
-    entry.error = undefined;
+    entry.failure = undefined;
     entry.retriesLeft = undefined;
     this.#logger.info(`插件已启用: ${instanceId}`);
     await this.recompute();
@@ -394,7 +395,7 @@ export class PluginManager implements PluginManagerService {
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
     this.#suspendDepth++;
     try {
-      entry.error = undefined;
+      entry.failure = undefined;
       await this.#retire(entry, 'disabled');
       this.#logger.info(`插件已禁用: ${instanceId}`);
     } finally {
@@ -432,7 +433,8 @@ export class PluginManager implements PluginManagerService {
           };
         },
       ),
-      error: entry.error,
+      error: errorOf(entry.failure),
+      failure: entry.failure,
       slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
       lingering: this.#lingering.has(entry.instanceId) || undefined,
     }));
@@ -442,8 +444,8 @@ export class PluginManager implements PluginManagerService {
   getPlugin(instanceId: string): PluginEntry | undefined {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return undefined;
-    const { definition, config, state, error } = entry;
-    return { definition, instanceId, config, state, error };
+    const { definition, config, state, failure } = entry;
+    return { definition, instanceId, config, state, error: errorOf(failure), failure };
   }
 
   /** 换上新配置并按 bounce 重启（见 {@link PluginManagerService.updateConfig}） */
@@ -481,7 +483,7 @@ export class PluginManager implements PluginManagerService {
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
     this.#suspendDepth++;
     try {
-      entry.error = undefined;
+      entry.failure = undefined;
       entry.retriesLeft = undefined;
       await this.#retire(entry, 'pending');
     } finally {
@@ -568,8 +570,9 @@ export class PluginManager implements PluginManagerService {
   #spendRetry(entry: PluginRecord, missing: string): 'pending' | 'error' {
     entry.retriesLeft = (entry.retriesLeft ?? this.#maxRounds()) - 1;
     if (entry.retriesLeft > 0) return 'pending';
-    entry.error = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
-    this.#logger.error(`插件 "${entry.instanceId}" ${entry.error}`);
+    const message = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
+    entry.failure = coreFailure(message, 'required-retry-exhausted', { service: missing });
+    this.#logger.error(`插件 "${entry.instanceId}" ${message}`);
     return 'error';
   }
 
@@ -702,4 +705,9 @@ export class PluginManager implements PluginManagerService {
 /** 有激活在跑、目标仍是 active 的条目：已激活的，与仍在初始化（在飞或后台）的 */
 function running(entry: PluginRecord): boolean {
   return entry.state === 'active' || entry.state === 'activating';
+}
+
+/** 投影给管理面的失败说明：由 failure 现算 */
+function errorOf(failure: unknown): string | undefined {
+  return failure === undefined ? undefined : summarizeError(failure);
 }

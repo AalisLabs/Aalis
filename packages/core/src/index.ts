@@ -9,6 +9,7 @@
 export type {
   AalisEvents,
   AppService,
+  CoreFailureCode,
   PluginManagerService,
   PluginStatusEntry,
 } from './types/index.js';

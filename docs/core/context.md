@@ -147,7 +147,7 @@ interface ServiceSelection<B> {
 
 interface ProviderEntry<B> {
   readonly id: string;         // 条目的逻辑身份（contextId）
-  readonly label?: string;
+  readonly label?: unknown;    // 展示值，core 原样转交
   readonly priority: number;
   readonly selected: boolean;  // 是否为本插件当前选中的那一家
   readonly basis?: 'plugin' | 'global' | 'rank'; // 选中依据，只在选中的那一条上有
@@ -162,7 +162,7 @@ interface ProviderEntry<B> {
 业务句柄是活的转发句柄：
 
 - `use` 每次访问成员都重新解析到本插件此刻选中的那一家，存进字段或闭包也会跟着换人；已经开始的一次调用在原来那一家上完成。
-- 选不到提供者时，访问转发到提供者的成员同步抛 `ServiceUnavailableError`，与成员本身同步还是异步无关。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 认；可选依赖先看 `present`，要「选不到就当没有」写 `caps.x.present ? caps.x.use : undefined`。required 依赖丢失到调度收敛之间也可能短暂选不到。契约 `bind` 定义的成员按契约行事：经 `registrar` 的登记方法（`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`hostLogs.use.subscribe` 等）缺席时照收、上线后挂上，写成 async 函数的（如 `hooks.use.run`）得到被拒的 Promise。
+- 选不到提供者时，访问转发到提供者的成员同步抛 `ServiceUnavailableError`，与成员本身同步还是异步无关。错误类不导出，按 `err.name === 'ServiceUnavailableError'` 或 `err.code === 'service-unavailable'` 认（另带 `service`，指名或钉住的那一家给 `provider`）；可选依赖先看 `present`，要「选不到就当没有」写 `caps.x.present ? caps.x.use : undefined`。required 依赖丢失到调度收敛之间也可能短暂选不到。契约 `bind` 定义的成员按契约行事：经 `registrar` 的登记方法（`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`hostLogs.use.subscribe` 等）缺席时照收、上线后挂上，写成 async 函数的（如 `hooks.use.run`）得到被拒的 Promise。
 - `of(id)` 按 id 解析：那一家不在时访问成员抛错，同一个 id 回来后（含换了新实例）照常可用。
 - `list()` 条目的 `use` 钉在那一条登记上：它对外时打到它，撤回之后访问抛错，同一个 id 换了新实例也不跟过去。同一条登记每次列出都是同一个句柄。
 - 一段操作（先读后写、先查后删、算向量与记下模型标识）要落在同一家上，取选中那一条的句柄：`const v = caps.x.list().find(p => p.selected)?.use`，选不到时是 `undefined`；要选不到时照样抛不可用错误，写 `?? caps.x.use`。途中那一家撤回，后续访问抛错，不会落到另一家上。比较身份就比条目 id，如 `caps.trigger.list().find(p => p.selected)?.id === caps.lifecycle.use.id`。

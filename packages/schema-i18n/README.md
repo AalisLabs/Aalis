@@ -47,6 +47,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 
 | 函数 | 说明 |
 |---|---|
+| `asText(v)` | 展示值（core 的插件显示名、服务 label 这类 `unknown` 字段）收窄成文字：字符串与文字对象原样，其余 `undefined` |
 | `isTextRef(v)` | 按形状判：`i18n`、`key`、`source` 是字符串，`params` 缺省或为普通对象，没有别的键。从 JSON 读回的、另一份本包产出的都认 |
 | `toSource(v, skip?)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型、出口不在场时用；出口用时与 `localize` 传同一个 `skip` |
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
