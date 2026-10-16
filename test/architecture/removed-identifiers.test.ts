@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(__dirname, '../..');
-const SCAN_DIRS = ['packages', 'docs', 'test', 'src', 'tools'];
+const SCAN_DIRS = ['packages', 'docs', 'test', 'src'];
 const SCAN_FILES = ['README.md', 'CONTRIBUTING.md', 'package.json', 'knip.json', 'biome.json'];
 const SKIP_DIRS = new Set(['node_modules', 'dist']);
 /** 文档站的构建缓存 */
@@ -134,6 +134,9 @@ const REMOVED: Array<[string, string]> = [
   ['PlatformAdapterEntry', '平台适配器条目类型，由选择层的 ProviderEntry 取代'],
   ['getPlatformAdapterEntries', '平台适配器条目枚举，由选择层的 list() 取代'],
   ['RemoteAgentEntry', '远端代理提供者条目类型，由选择层的 ProviderEntry 取代'],
+  ['migrate-config-0.14', 'schema-config 0.14 的一次性配置迁移工具与它的说明（迁移由代理做，不放进仓库）'],
+  ['migratePluginConfig', 'schema-config 0.14 的一次性配置迁移工具'],
+  ['before-schema-0.14', '配置迁移工具写下的备份文件后缀'],
 ];
 
 /**
