@@ -1,8 +1,8 @@
-import type { SessionSummary } from '@aalis/api-session-protocol';
 import { type CSSProperties, Fragment, useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
 import { percent, tokens } from '../format';
 import { usePluginNames } from '../plugins/list';
+import type { SessionSummary } from '../protocol/session-client';
 import type { UsageItem } from './live-session';
 import './Usage.css';
 

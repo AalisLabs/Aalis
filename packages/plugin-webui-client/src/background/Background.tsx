@@ -1,5 +1,4 @@
 import { sanitizeForCard } from '@aalis/api-approval';
-import type { BackgroundTask, SessionSummary } from '@aalis/api-session-protocol';
 import { ArrowLeft, CircleStop, ScrollText } from 'lucide-react';
 import { type ReactNode, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { Block } from '../components/Block';
@@ -13,6 +12,7 @@ import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
 import { duration, tokens } from '../format';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import type { BackgroundTask, SessionSummary } from '../protocol/session-client';
 import { paths } from '../routes';
 import { useSessionList } from '../sessions/live-list';
 import { SessionsFetchError } from '../shell/SessionGate';

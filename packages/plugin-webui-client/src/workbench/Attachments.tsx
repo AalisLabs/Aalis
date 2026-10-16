@@ -1,4 +1,3 @@
-import type { SessionItem } from '@aalis/api-session-protocol';
 import { FileText } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
@@ -6,6 +5,7 @@ import { Dialog } from '../components/Dialog';
 import { Picture } from '../components/Picture';
 import { Markdown } from '../markdown/Markdown';
 import { isWebUrl, mediaUrl } from '../media';
+import type { SessionItem } from '../protocol/session-client';
 import { isRecord } from '../rest';
 import './Attachments.css';
 

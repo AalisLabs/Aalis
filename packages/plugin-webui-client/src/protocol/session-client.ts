@@ -1,6 +1,9 @@
 import type {
+  BackgroundTask as DeclaredBackgroundTask,
+  RoomGroup as DeclaredRoomGroup,
+  SessionItem as DeclaredSessionItem,
+  SessionSummary as DeclaredSessionSummary,
   ErrorCode,
-  SessionItem,
   SessionMethod,
   SessionMethodParams,
   SessionMethodResult,
@@ -20,8 +23,13 @@ import { type ConnectionState, openSocket } from './socket';
 export const PROTOCOL_VERSION = '1.0';
 const CLIENT = { name: 'webui', version };
 
-export type SessionSnapshot = SessionMethodResult<'session/subscribe'>;
-export type InitializeResult = SessionMethodResult<'initialize'>;
+// 线上的形状：帧里的文字已由服务端按这条连接的读者渲染成字符串
+export type SessionSnapshot = Localized<SessionMethodResult<'session/subscribe'>>;
+export type InitializeResult = Localized<SessionMethodResult<'initialize'>>;
+export type SessionSummary = Localized<DeclaredSessionSummary>;
+export type SessionItem = Localized<DeclaredSessionItem>;
+export type RoomGroup = Localized<DeclaredRoomGroup>;
+export type BackgroundTask = Localized<DeclaredBackgroundTask>;
 
 /** JSON-RPC 的「参数不合」：请求的参数没过服务端的校验 */
 export const INVALID_PARAMS = -32602;
@@ -71,7 +79,10 @@ export interface SessionClient {
     method: M,
     params: SessionMethodParams<M>,
   ): Promise<Localized<SessionMethodResult<M>>>;
-  on<N extends ConnectionNotification>(name: N, handler: (params: SessionNotificationParams<N>) => void): () => void;
+  on<N extends ConnectionNotification>(
+    name: N,
+    handler: (params: Localized<SessionNotificationParams<N>>) => void,
+  ): () => void;
   /** 订阅一个会话，返回退订。同一会话再来一个订阅者时重新订阅，各订阅者都收到新的快照 */
   subscribe(sessionId: string, listener: SubscriptionListener): () => void;
   close(): void;
@@ -199,7 +210,7 @@ export function createSessionClient(): SessionClient {
     switch (method) {
       case 'item/started':
       case 'item/completed': {
-        const push = params as SessionNotificationParams<'item/started'>;
+        const push = params as Localized<SessionNotificationParams<'item/started'>>;
         const phase = method === 'item/started' ? 'started' : 'completed';
         for (const listener of accept(push)?.listeners ?? []) listener.item(push.item, phase);
         return;

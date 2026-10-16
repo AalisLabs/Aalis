@@ -408,11 +408,11 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
 });
 
 describe('房间取名与补名', () => {
-  it('群的首条入站是不带群名的戳一戳：名字为 id，不取戳人者昵称；之后带群名的群消息补上群名', async () => {
+  it('群的首条入站是不带群名的戳一戳：没有名字，不取戳人者昵称；之后带群名的群消息补上群名', async () => {
     const { sm, inbound } = await setup();
 
     await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', nickname: '<戳人者>' });
-    expect(sm.getSession(GROUP)?.name).toBe(GROUP);
+    expect(sm.getSession(GROUP)?.name).toBeUndefined();
 
     await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
     expect(sm.getSession(GROUP)?.name).toBe('<群名>');
@@ -442,10 +442,10 @@ describe('房间取名与补名', () => {
   it('WebUI 往房间插话：不补名，不取 owner 的昵称；之后对方的私聊补上昵称', async () => {
     const { sm, inbound } = await setup();
     await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', userId: '30001' });
-    expect(sm.getSession(PRIVATE)?.name).toBe(PRIVATE);
+    expect(sm.getSession(PRIVATE)?.name).toBeUndefined();
 
     await inbound({ sessionId: PRIVATE, platform: 'webui', userId: 'console', nickname: '<owner 昵称>' });
-    expect(sm.getSession(PRIVATE)?.name, '入口不是出生平台时不补名').toBe(PRIVATE);
+    expect(sm.getSession(PRIVATE)?.name, '入口不是出生平台时不补名').toBeUndefined();
 
     await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', nickname: '<乙>' });
     expect(sm.getSession(PRIVATE)?.name).toBe('<乙>');
@@ -456,7 +456,6 @@ describe('房间取名与补名', () => {
       stored: {
         [GROUP]: {
           id: GROUP,
-          name: GROUP,
           children: [],
           status: 'waiting',
           config: {},
@@ -475,17 +474,17 @@ describe('房间取名与补名', () => {
       nickname: '<群员>',
     });
 
-    expect(sm.getSession(GROUP)?.name).toBe(GROUP);
+    expect(sm.getSession(GROUP)?.name).toBeUndefined();
   });
 
-  it('带 source 的注入回合在未登记的群房间下开子任务：父会话按 id 兜底建档、名字为 id；WebUI 插话不补记，之后的原生入站补记来源字段与群名', async () => {
+  it('带 source 的注入回合在未登记的群房间下开子任务：父会话按 id 兜底建档、没有名字；WebUI 插话不补记，之后的原生入站补记来源字段与群名', async () => {
     const { sm, inbound } = await setup([], { instances: true });
 
     await inbound({ sessionId: GROUP, platform: 'onebot', source: 'workflow:<工作流>:<节点>' });
     expect(sm.getSession(GROUP), '带 source 的注入不登记').toBeUndefined();
     // create_subtask 的落点：父会话未登记时兜底建档
     await sm.createChildSession(GROUP, { name: '<子任务>' });
-    expect(sm.getSession(GROUP)?.name).toBe(GROUP);
+    expect(sm.getSession(GROUP)?.name).toBeUndefined();
     expect(sm.getSession(GROUP)?.originPlatform).toBeUndefined();
 
     await inbound({ sessionId: GROUP, platform: 'webui', userId: 'console', nickname: '<owner 昵称>' });
@@ -510,7 +509,7 @@ describe('房间取名与补名', () => {
   });
 
   it('升级前只记了出生平台的记录（没有聊天窗口、创建来源与绑定）：出生平台的原生入站补记聊天窗口与群名，场所成为它自己的窗口', async () => {
-    const legacy = { id: GROUP, name: GROUP, children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 };
+    const legacy = { id: GROUP, children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 };
     const { sm, inbound } = await setup([], {
       instances: true,
       stored: { [GROUP]: { ...legacy, originPlatform: 'onebot' } },

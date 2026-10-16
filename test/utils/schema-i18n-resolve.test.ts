@@ -9,7 +9,7 @@ import {
   type TextRef,
   textClauses,
 } from '@aalis/schema-i18n';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
 // 解析与语言链：读者链里逐项找文字相同的 → 语言相同、文字不同的 → en → 原文；
@@ -177,6 +177,19 @@ describe('参数', () => {
     expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 8 as unknown as string })).toBe(processZone);
   });
 
+  it('超过 64 个字符的时区名当作没给：不拿它构造 Intl', () => {
+    const long = `Mars/${'X'.repeat(60)}`;
+    const construct = vi.spyOn(Intl, 'DateTimeFormat');
+    try {
+      expect(resolveText(t('when', { t: 1 }), ['en'], { timeZone: long })).toBe(
+        resolveText(t('when', { t: 1 }), ['en']),
+      );
+      expect(construct.mock.calls.filter(([, options]) => options?.timeZone === long)).toEqual([]);
+    } finally {
+      construct.mockRestore();
+    }
+  });
+
   it('日期按选中的语言格式化', () => {
     expect(resolveText(t('day', { t: 0 }), ['en'], { timeZone: 'UTC' })).toBe('January 1, 1970');
     expect(resolveText(t('day', { t: 0 }), ['zh-CN'], { timeZone: 'UTC' })).toBe('1970年1月1日');
@@ -284,5 +297,13 @@ describe('normalizeLanguages', () => {
 
   it('不是字符串的项丢掉', () => {
     expect(normalizeLanguages(['zh', null, 7, 'en'] as unknown as string[])).toEqual(['zh', 'en']);
+  });
+
+  it('只看前 32 项输入，至多给出 8 种', () => {
+    const junk = Array.from({ length: 32 }, () => 'bad tag!');
+    expect(normalizeLanguages([...junk, 'ja'])).toEqual([]);
+    expect(normalizeLanguages([...junk.slice(1), 'ja'])).toEqual(['ja']);
+    const many = ['zh-CN', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'it', 'pt'];
+    expect(normalizeLanguages(many)).toEqual(many.slice(0, 8));
   });
 });

@@ -1,5 +1,5 @@
-import type { SessionSummary } from '@aalis/api-session-protocol';
 import { StatusText } from '../components/StatusText';
+import type { SessionSummary } from '../protocol/session-client';
 
 /** 会话的状态，要紧的在前：需要我处理、出错、完成未读、运行中。列表与房间表都按这个先后排 */
 export const STATUS_ORDER = ['attention', 'error', 'unread', 'running'] as const;

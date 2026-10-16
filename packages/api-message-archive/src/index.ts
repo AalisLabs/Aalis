@@ -1,4 +1,5 @@
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 export interface ArchiveIncomingResult {
@@ -16,6 +17,11 @@ export interface ArchiveNoticeOptions {
   subType?: string;
   /** 人类可读的描述文本，将作为 system 消息内容写入记忆 */
   content: string;
+  /**
+   * 描述是要翻译的文字时，它的文字对象（content 写它按原文渲染的整句）：记进元数据的 WellKnownMetadataKeys.Text，
+   * 界面按读者的语言显示
+   */
+  text?: TextRef;
   /** 平台标识（如 onebot） */
   platform?: string;
   /** 触发者用户 ID */

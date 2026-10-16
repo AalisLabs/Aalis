@@ -2,11 +2,11 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
-import type { SessionSummary } from '../../packages/api-session-protocol/src/index.js';
 import type { AttentionItem, LogFilter } from '../../packages/api-webui/src/index.js';
 import type { LogEntry, LogLevel } from '../../packages/core/src/index.js';
 import { SERVICE_ABSENT } from '../../packages/plugin-webui-client/src/connection.js';
 import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
+import type { SessionSummary } from '../../packages/plugin-webui-client/src/protocol/session-client.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { deferred } from '../helpers/deferred.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';

@@ -207,7 +207,7 @@ export interface PluginBlockers {
  * - `notice`：插件的提示，`instance` 是发出它的插件实例。
  */
 export type AttentionItem =
-  | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string }
+  | { kind: 'approval'; id: string; sessionId: string; session?: string | TextRef; tool: string }
   | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string | TextRef } & PluginBlockers)
   | ({ kind: 'notice'; instance: string } & Notice);
 

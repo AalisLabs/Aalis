@@ -4,17 +4,19 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话设置的层表只在 api-session-manager 一处：会话服务经 session/config/layers 把它交给客户端，来源文字、先后说明与
-// 选层的称呼都按它写。会话服务与 WebUI 客户端不另存一份：源码里不出现层的称呼，也不出现层名的列表（两个以上层名的
-// 数组、三个以上层名作键的对象）。引用单个层名（如判断「这一层是不是场所」）不算列表。按语法树查，测试不在其列。
+// 选层的称呼都按它写。会话服务与 WebUI 客户端不另存一份：源码里不出现层的称呼（层表里文字对象的原文），也不出现层名的
+// 列表（两个以上层名的数组、三个以上层名作键的对象）。引用单个层名（如判断「这一层是不是场所」）不算列表。按语法树查，
+// 测试不在其列。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const SCANNED = ['plugin-session-server', 'plugin-webui-client'];
 const NAMES = new Set<string>(SESSION_LAYERS.map(layer => layer.name));
-const LABELS = new Set<string>(SESSION_LAYERS.map(layer => layer.label));
+const LABELS = new Set<string>(SESSION_LAYERS.map(layer => toSource(layer.label)));
 
 /** 一个源文件里另存的层表：`行 写法` */
 function layerTables(fileName: string, text: string): string[] {

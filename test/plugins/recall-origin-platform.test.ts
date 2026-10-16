@@ -35,11 +35,7 @@ const PLAIN_ROOM = 'room-plain';
 const UNRECORDED = 'onebot:10000:group:20009';
 
 /** 会话表：两个已收录的群与一个 id 不带平台前缀的房间 */
-const SESSIONS = [
-  storedRoom(GROUP),
-  storedRoom(OTHER_GROUP),
-  { ...storedRoom(GROUP), id: PLAIN_ROOM, name: PLAIN_ROOM },
-];
+const SESSIONS = [storedRoom(GROUP), storedRoom(OTHER_GROUP), { ...storedRoom(GROUP), id: PLAIN_ROOM }];
 
 /** WebUI 入口往群房间发消息时的调用上下文 */
 const WEBUI_INTO_GROUP = { sessionId: GROUP, platform: 'webui' };

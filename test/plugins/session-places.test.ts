@@ -20,8 +20,9 @@ import { adapterPlugin, ONEBOT_TYPES, PERSONA, startSessionManager, THINK } from
 // ════════════════════════════════════════════════════════════
 // 场所：每个会话恰好一个，子会话取根会话的。有聊天窗口的根会话是窗口（键 `平台:类型:目标`，不含机器人账号），
 // 一对一而对端是 owner 的（owner 的 IM 私聊）是默认工作区；其余按根会话记下的工作区，没记的是默认工作区。
-// 场所记录存在记忆后端里，带显示名与这个场所的设置，换会话照样生效；工作区由 owner 登记，以随机的固定编号标识，
-// 取消登记只删记录与它的设置，原属会话归默认工作区。每个场所一张白纸，白纸 id 由场所键算出。
+// 场所记录存在记忆后端里，带显示名与这个场所的设置，换会话照样生效；默认工作区没有名字，显示名由读者经 placeLabel 给。
+// 工作区由 owner 登记，以随机的固定编号标识，取消登记只删记录与它的设置，原属会话归默认工作区。每个场所一张白纸，
+// 白纸 id 由场所键算出。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -188,11 +189,12 @@ describe('placeOf', () => {
 });
 
 describe('场所记录', () => {
-  it('激活后默认工作区的记录在，随会话表落盘', async () => {
+  it('激活后默认工作区的记录在，随会话表落盘；不落盘生成的名字', async () => {
     const { app, sm, mem } = await setup();
-    expect(sm.getPlace('workspace:default')).toEqual({ ...DEFAULT, name: '默认工作区' });
+    expect(sm.getPlace('workspace:default')).toEqual(DEFAULT);
     await app.stop();
-    expect(mem.places.get('workspace:default')).toMatchObject({ kind: 'workspace', name: '默认工作区', config: {} });
+    expect(mem.places.get('workspace:default')).toMatchObject({ kind: 'workspace', config: {} });
+    expect(mem.places.get('workspace:default')?.name).toBeUndefined();
   });
 
   it('房间建档时建窗口的记录：显示名取群名或对方昵称，改名后跟着更新；owner 的 IM 私聊不建窗口记录', async () => {
@@ -222,7 +224,7 @@ describe('场所记录', () => {
     expect(sm.getPlace(WINDOW)).toEqual({ kind: 'window', key: WINDOW, name: '<群名>' });
     expect(sm.getPlace('onebot:private:30002')).toMatchObject({ name: '<乙>' });
     expect(sm.getPlace('onebot:private:30001')).toBeUndefined();
-    expect(sm.getPlace('workspace:default')?.name).toBe('默认工作区');
+    expect(sm.getPlace('workspace:default')).toEqual(DEFAULT);
 
     await inbound({
       sessionId: GROUP,
@@ -315,7 +317,7 @@ describe('工作区', () => {
     expect(second.workspace.name).toBe('proj');
 
     expect(sm.listWorkspaces()).toEqual([
-      { id: 'default', name: '默认工作区' },
+      { id: 'default' },
       { id: first.workspace.id, name: 'proj', root: a },
       { id: second.workspace.id, name: 'proj', root: b },
     ]);

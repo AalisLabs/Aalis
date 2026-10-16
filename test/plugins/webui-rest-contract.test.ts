@@ -122,6 +122,8 @@ const doubles = definePlugin({
     provide.use(approvals, service);
     provide.use(sessionManager, {
       getSession: (id: string) => ({ id, name: id, title: '整理周报', kind: 'owner' }) as unknown as SessionInfo,
+      // 不带语言的请求按全局默认层：i18n 读这一层
+      getLayer: () => ({}),
     } as never);
     provide.use(sessionProtocol, {
       connect: () => ({ receive: async () => {}, close() {} }),

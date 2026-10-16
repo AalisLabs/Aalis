@@ -1,7 +1,8 @@
-import type { SessionSummary, SettingLayer } from '@aalis/api-session-protocol';
+import type { SettingLayer } from '@aalis/api-session-protocol';
 import { useId, useState } from 'react';
 import { Select } from '../components/Select';
 import { useSessionClient } from '../connection';
+import type { SessionSummary } from '../protocol/session-client';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { type LayerOrder, labelOf, useLayers } from './layers';
 import { SettingRows } from './SettingRows';

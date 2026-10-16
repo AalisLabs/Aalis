@@ -13,6 +13,7 @@
 // GET /frames/_base/<路径>     宿主给框架的公用文件：助手 frame.js 与样式基线 frame.css，随本包发布
 
 import type { SessionMethodParams, SessionMethodResult, SessionNotificationParams } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import type { ThemeKind, ThemeToken } from './theme.js';
 
 /** 消息通道的协议版本 `<主>.<次>`：握手时主版本不同，宿主卸载框架 */
@@ -148,9 +149,9 @@ export interface FrameInvalidate {
   source?: string;
 }
 
-/** 会话列表的增量（申请了 sessions:read 的框架挂载起就收）：转发会话协议的 sessions/changed，不带 groups */
+/** 会话列表的增量（申请了 sessions:read 的框架挂载起就收）：转发会话协议的 sessions/changed（文字已渲染），不带 groups */
 export type FrameSessionsChanged = { type: 'sessions.changed' } & Omit<
-  SessionNotificationParams<'sessions/changed'>,
+  Localized<SessionNotificationParams<'sessions/changed'>>,
   'groups'
 >;
 
@@ -177,10 +178,10 @@ export interface FrameClient {
   open(target: FrameOpenRequest['target']): Promise<void>;
   /** 数据变了：带 source 时只重取这个数据源，不带时全部重取。回退订 */
   onInvalidate(listener: (source?: string) => void): () => void;
-  /** 列会话（要 sessions:read） */
+  /** 列会话（要 sessions:read），文字已渲染 */
   listSessions(
     params?: Omit<FrameSessionsListRequest, 'type' | 'id'>,
-  ): Promise<Omit<SessionMethodResult<'sessions/list'>, 'groups'>>;
+  ): Promise<Omit<Localized<SessionMethodResult<'sessions/list'>>, 'groups'>>;
   /** 会话列表的增量（要 sessions:read）。回退订 */
   onSessionsChanged(listener: (change: Omit<FrameSessionsChanged, 'type'>) => void): () => void;
   /** 停止一个会话的回合（要 turn:abort） */

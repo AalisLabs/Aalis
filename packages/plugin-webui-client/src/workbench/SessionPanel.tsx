@@ -1,4 +1,3 @@
-import type { BackgroundTask, SessionSummary } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { Circle, CircleAlert, CircleCheck, CircleDot, Plus, RotateCw } from 'lucide-react';
 import { useReducer, useState } from 'react';
@@ -16,6 +15,7 @@ import { PageGone } from '../pages/PluginPage';
 import { refOf, sameRef, usePages } from '../pages/registry';
 import { PageScope } from '../pages/scope';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import type { BackgroundTask, SessionSummary } from '../protocol/session-client';
 import { paths } from '../routes';
 import { SessionSettings } from '../settings/SessionSettings';
 import type { useSettingRows } from '../settings/setting-rows';

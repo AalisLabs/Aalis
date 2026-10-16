@@ -1,4 +1,4 @@
-import type { SessionSummary, SettingLayer } from '@aalis/api-session-protocol';
+import type { SettingLayer } from '@aalis/api-session-protocol';
 import { MessagesSquare } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
@@ -10,6 +10,7 @@ import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
 import { listTime } from '../format';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import type { SessionSummary } from '../protocol/session-client';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
 import { LayerRows } from '../settings/LayerRows';
 import { useLayers } from '../settings/layers';

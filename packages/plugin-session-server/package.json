@@ -35,6 +35,7 @@
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
@@ -75,6 +76,7 @@
         "checkpoint",
         "compression",
         "host-config",
+        "i18n",
         "platform",
         "todo-list",
         "tools"

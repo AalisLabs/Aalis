@@ -1,4 +1,3 @@
-import type { RoomGroup, SessionSummary } from '@aalis/api-session-protocol';
 import { MessagesSquare, Plus, Search, Table2 } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -13,6 +12,7 @@ import { AttentionSummary } from '../health/AttentionList';
 import { GetStarted } from '../health/GetStarted';
 import { shortcutLabel } from '../keys';
 import { PinnedList } from '../pages/Pinned';
+import type { RoomGroup, SessionSummary } from '../protocol/session-client';
 import {
   addressOf,
   groupFromParams,

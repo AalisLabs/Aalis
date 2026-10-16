@@ -1,4 +1,3 @@
-import type { RoomGroup, SessionSummary } from '@aalis/api-session-protocol';
 import { type KeyboardEvent, useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Dialog } from '../components/Dialog';
@@ -7,6 +6,7 @@ import { composing } from '../keys';
 import { pageAddress, pageName, usePages, withInstance } from '../pages/registry';
 import { labelOf, usePluginNames, usePlugins } from '../plugins/list';
 import { statusOf } from '../plugins/status';
+import type { RoomGroup, SessionSummary } from '../protocol/session-client';
 import { addressOf, inGroup, paths } from '../routes';
 import './QuickSwitch.css';
 

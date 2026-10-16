@@ -17,6 +17,8 @@ import {
   type SettingProminence,
 } from '@aalis/api-session-manager';
 import { isBuiltinFieldType, isUnsafeConfigKey, parseConfig, validateConfig } from '@aalis/schema-config';
+import { asText, type TextRef, textOf, withText } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 一个会话或一层里的设置值：键 → 值，原样存储 */
 export type SettingValues = Record<string, unknown>;
@@ -42,7 +44,7 @@ const PROMINENCES: ReadonlySet<SettingProminence> = new Set(['composer', 'common
 
 /**
  * 键与形状不对的登记一律拒绝：键会成为存储与配置文档里的对象键，种类与显眼程度决定界面怎么放；外来字段类型的取值
- * schema-config 不校验，没有 validate 就没人核
+ * schema-config 不校验，没有 validate 就没人核。标签与 unset 是字符串或文字对象
  */
 function assertSetting(setting: SessionSetting): void {
   const { field, appliesTo, prominence } = setting;
@@ -51,7 +53,7 @@ function assertSetting(setting: SessionSetting): void {
   if (typeof key !== 'string' || key === '' || key === 'sessionDefaults' || isUnsafeConfigKey(key)) {
     throw new TypeError(`会话设置项的键不合法：${String(key)}`);
   }
-  if (typeof field?.type !== 'string' || typeof field.label !== 'string') {
+  if (typeof field?.type !== 'string' || asText(field.label) === undefined) {
     throw new TypeError(`会话设置项 ${key} 的字段要有 type 与 label`);
   }
   if (!isBuiltinFieldType(field.type) && typeof setting.validate !== 'function') {
@@ -75,7 +77,7 @@ function assertSetting(setting: SessionSetting): void {
     throw new TypeError(`会话设置项 ${key} 声明了 dependsOn，字段要有 dynamicOptions`);
   }
   const unset: unknown = setting.unset;
-  if (unset !== undefined && (typeof unset !== 'string' || unset === '')) {
+  if (unset !== undefined && (unset === '' || asText(unset) === undefined)) {
     throw new TypeError(`会话设置项 ${key} 的 unset 要是一句非空的话`);
   }
 }
@@ -120,20 +122,29 @@ export class SettingRegistry {
 
 /**
  * 按登记的 validate 与字段读一个值：合法时给出解析后的值（undefined 等于没设，如外来类型的空串），不合法时给出原因
+ * （字符串或文字对象）。validate 是登记方的代码，抛错按不合法处理，原因是抛出的错
  */
-export function readSetting(setting: SessionSetting, value: unknown): { value: unknown } | { invalid: string } {
-  const rejected = setting.validate?.(value);
+export function readSetting(
+  setting: SessionSetting,
+  value: unknown,
+): { value: unknown } | { invalid: string | TextRef } {
+  let rejected: string | TextRef | undefined;
+  try {
+    rejected = setting.validate?.(value);
+  } catch (err) {
+    return { invalid: textOf(err) };
+  }
   if (rejected !== undefined) return { invalid: rejected };
   const schema = { [setting.key]: setting.field };
   const record = { [setting.key]: value };
   const [issue] = validateConfig(schema, record);
-  if (issue) return { invalid: issue.message };
+  if (issue) return { invalid: issue.text };
   return { value: parseConfig(schema, record)[setting.key] };
 }
 
 /**
- * 校验一份写入：没登记的键与不合字段的值抛 {@link SessionConfigError}；null 与 undefined 是删掉这一项（记为 undefined），
- * 没登记的键也能删
+ * 校验一份写入：没登记的键与不合字段的值抛 {@link SessionConfigError}（值不合的挂着给人看的原因）；null 与 undefined 是
+ * 删掉这一项（记为 undefined），没登记的键也能删
  */
 export function checkPatch(registry: SettingRegistry, patch: object): Map<string, unknown> {
   const checked = new Map<string, unknown>();
@@ -145,7 +156,10 @@ export function checkPatch(registry: SettingRegistry, patch: object): Map<string
     const setting = registry.get(key);
     if (!setting) throw new SessionConfigError(`会话设置项 ${key} 没有登记（提供它的插件没装或没启用）`);
     const read = readSetting(setting, value);
-    if ('invalid' in read) throw new SessionConfigError(`会话设置项 ${key} 的值无效：${read.invalid}`);
+    if ('invalid' in read) {
+      const text = t('invalidValue', { key, reason: read.invalid });
+      throw withText(new SessionConfigError(text.source), text);
+    }
     checked.set(key, read.value);
   }
   return checked;

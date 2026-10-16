@@ -221,6 +221,7 @@ type WebUIConfig = ConfigOf<typeof configSchema>;
  * 发往 WebUI 自己会话的出站消息里，要由本插件写进会话历史的部分。WebUI 的收件箱就是会话历史，记不记全不取决于
  * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
  * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成分隔条，不进模型上下文，与其他平台一致；
+ *   带文字对象（text）的另记在元数据的 WellKnownMetadataKeys.Text，回看时与实时推送一样按读者语言显示；
  * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
  * - 给的是存储地址的文件（插件发出的成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
  *   metadata 另记原样的地址与文件名（登记的键 SentRef、SentName）：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
@@ -233,14 +234,15 @@ type WebUIConfig = ConfigOf<typeof configSchema>;
  */
 function inboxRecords(msg: OutgoingMessage): Message[] {
   const timestamp = Date.now();
-  const marker = (content: string): Message => ({
+  const marker = (content: string, text?: TextRef): Message => ({
     role: 'system',
     kind: WellKnownKinds.EventMarker,
     content,
     timestamp,
+    ...(text ? { metadata: { [WellKnownMetadataKeys.Text]: text } } : {}),
   });
   const records: Message[] = [];
-  if (msg.source !== 'agent' && msg.content.trim()) records.push(marker(msg.content));
+  if (msg.source !== 'agent' && msg.content.trim()) records.push(marker(msg.content, msg.text));
   for (const att of msg.attachments ?? []) {
     if (att.skipArchive) continue;
     if (att.kind !== 'file') {

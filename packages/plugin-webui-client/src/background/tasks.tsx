@@ -1,13 +1,14 @@
-import type { BackgroundTask, SessionNotificationParams } from '@aalis/api-session-protocol';
+import type { SessionNotificationParams } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useReducer, useState } from 'react';
 import { useSessionClient } from '../connection';
-import { ConnectionLostError, RequestError } from '../protocol/session-client';
+import { type BackgroundTask, ConnectionLostError, RequestError } from '../protocol/session-client';
 
 // 后台任务：整页一份全部会话的任务，握手（含重连后）时取 background/list，之后按 background/changed 的增量更新，
 // 取数途中来的增量取完以后补上。没有后台任务登记（unsupported）时按没有任务。「后台」标签、时间线里转了后台的工具卡
 // 与运行状况的「正在运行」都读它
 
-type Change = SessionNotificationParams<'background/changed'>;
+type Change = Localized<SessionNotificationParams<'background/changed'>>;
 
 interface Background {
   /** 按任务 id；取到以前为 undefined，重取失败时留着上一次的 */

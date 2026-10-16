@@ -24,4 +24,9 @@ export default defineLocale<Source>()({
   packSkeleton: 'Skeleton to translate: language pack entries',
   packSkeletonDescription:
     'Contribute it to i18n:pack; only keys without a translation in the dictionary are listed, missing and stale entries are filled with the source text, and from is the fingerprint of the source',
+  settingLabel: 'Language',
+  settingDescription:
+    'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used',
+  settingUnset: 'English',
+  badLanguage: '{tag} is not a valid language tag',
 });
