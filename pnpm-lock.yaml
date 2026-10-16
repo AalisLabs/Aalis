@@ -36,6 +36,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:*
         version: link:packages/schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:*
+        version: link:packages/schema-i18n
       '@aalis/schema-log':
         specifier: workspace:*
         version: link:packages/schema-log
@@ -3382,6 +3385,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/schema-i18n:
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
