@@ -75,6 +75,16 @@ describe('插件失败', () => {
     expect(entry.error).toBeUndefined();
   });
 
+  it('抛出 undefined（或不带值的 reject）时 failure 换成说明它的 Error，error 照旧是 undefined 的说明', async () => {
+    const app = world();
+    await app.plugin(definePlugin({ name: 'silent', apply: () => Promise.reject() }));
+    await app.plugins.idle();
+    const entry = app.plugins.getPlugin('silent')!;
+    expect(entry.state).toBe('error');
+    expect(entry.failure).toBeInstanceOf(Error);
+    expect(entry.error).toBe('undefined');
+  });
+
   it('disable 清掉上一次的失败', async () => {
     const app = world();
     await app.plugin(

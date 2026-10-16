@@ -18,7 +18,7 @@ import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
-import type { Logger } from '../infrastructure/logger.js';
+import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
 /** 注册表内部的记录：公开的 {@link PluginEntry} 加上依赖表、这次激活与重试余额（不进公开类型） */
 /** 注册表里的记录：失败只存一份 failure，error 在投影时现算 */
@@ -196,7 +196,8 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       return target === 'pending' ? 'retry' : undefined;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
-    entry.failure = err;
+    // 抛出 undefined 时没有原值可存：换成说明它的 Error，免得 error 态没有原因
+    entry.failure = err === undefined ? new Error(summarizeError(err)) : err;
     await retireBatch([entry], 'error', deps);
     return;
   }
