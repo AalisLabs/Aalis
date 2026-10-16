@@ -40,10 +40,13 @@ export interface SchemaFieldTypes {
   boolean: boolean;
   /** 有静态 options、没有 dynamicOptions 且 allowCustom 不为 true 时，ConfigOf 收窄为选项值的字面量联合 */
   select: string;
-  /** 有静态 options、没有 dynamicOptions 且 allowCustom 不为 true 时，ConfigOf 收窄为选项值字面量联合的数组 */
+  /**
+   * 选中的若干项，按输入顺序保留；声明了 ordered 的先后有意义且不重复。有静态 options、没有 dynamicOptions 且
+   * allowCustom 不为 true 时，ConfigOf 收窄为选项值字面量联合的数组
+   */
   multiselect: string[];
   textarea: string;
-  /** 有序字符串列表：保序、允许重复；与 multiselect 的集合语义不同 */
+  /** 有序字符串列表：保序、允许重复，不限可选项 */
   list: string[];
   /** 字符串映射，如环境变量表 */
   map: Record<string, string>;
@@ -80,6 +83,11 @@ export interface SchemaField {
    * WebUI 只给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）
    */
   allowCustom?: boolean;
+  /**
+   * multiselect：选中项的先后有意义（如语言的先后），呈现方据此给排序控件。为 true 时 validateConfig 与 parseConfig
+   * 去掉重复项（按选项归位后的值比），重复不算问题
+   */
+  ordered?: boolean;
   /** number：数值下限（含），validateConfig 与 parseConfig 强制。无 default 的 number 表单不预填（留空=走服务端默认），带 min 仍建议声明 default 以免长期处于缺失告警 */
   min?: number;
   /** number：数值上限（含），validateConfig 与 parseConfig 强制 */
@@ -637,16 +645,19 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
       const options = field.allowCustom === true ? undefined : choiceOptions(field);
       const kept: Array<string | number> = [];
       const dropped: Array<{ at: string; reason: string }> = [];
+      const keep = (choice: string | number) => {
+        if (field.ordered !== true || !kept.includes(choice)) kept.push(choice);
+      };
       for (let i = 0; i < value.length; i++) {
         const item = value[i];
         const text = asText(item);
         if (text === undefined) {
           dropped.push({ at: `[${i}]`, reason: `期望 string 或 number 元素，得到 ${describeType(item)}` });
         } else if (!options) {
-          kept.push(text);
+          keep(text);
         } else {
           const hit = options.find(o => String(o.value) === text);
-          if (hit) kept.push(hit.value);
+          if (hit) keep(hit.value);
           else dropped.push({ at: `[${i}]`, reason: notAnOption(options) });
         }
       }

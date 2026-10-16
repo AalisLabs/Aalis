@@ -4,6 +4,7 @@ import {
   defineConfig,
   parseConfig,
   type SchemaField,
+  validateConfig,
 } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -319,6 +320,25 @@ describe('parseConfig list / map / multiselect 逐项丢弃', () => {
       '配置项 m[2] 期望 string 或 number 元素，得到 object，已忽略',
       '配置项 m[3] 不是可选值（"a"、8）之一，已忽略',
     ]);
+  });
+
+  it('multiselect 声明 ordered：保留输入顺序并去重，重复项不算问题（选项归位后再比，8 与 "8" 算重复）', () => {
+    const options = [
+      { label: 'A', value: 'a' },
+      { label: '八', value: 8 },
+    ];
+    const { config, warns } = parse({ m: field('multiselect', { ordered: true, options }) }, { m: [8, 'a', '8', 'a'] });
+    expect(config).toEqual({ m: [8, 'a'] });
+    expect(warns).toEqual([]);
+    expect(validateConfig({ m: field('multiselect', { ordered: true, options }) }, { m: [8, 'a', '8', 'a'] })).toEqual(
+      [],
+    );
+  });
+
+  it('multiselect 不声明 ordered：重复项照旧保留', () => {
+    const { config, warns } = parse({ m: field('multiselect', { allowCustom: true }) }, { m: ['x', 'y', 'x'] });
+    expect(config).toEqual({ m: ['x', 'y', 'x'] });
+    expect(warns).toEqual([]);
   });
 });
 

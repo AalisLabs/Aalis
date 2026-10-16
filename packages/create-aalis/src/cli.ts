@@ -29,10 +29,11 @@ type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
 // 会话 → 权限 → 消息归档 + 跨会话历史）。会话服务提供会话协议与审批：没有它，需要确认的工具调用一律被拒。
 // 对话模型、平台与记忆后端由提问选。钩子与贡献点由插件提供（core 不内置），
-// gateway / agent / 指令等都 required 它们，缺了整个机器人挂起，故排在最前。
+// gateway / agent / 指令等都 required 它们，缺了整个机器人挂起，故排在最前。多语言让各出口按读者的语言显示，没装时一律显示原文。
 export const MINIMAL_BASE = [
   '@aalis/plugin-hooks',
   '@aalis/plugin-contributions',
+  '@aalis/plugin-i18n',
   '@aalis/plugin-storage-local',
   '@aalis/plugin-process-local',
   '@aalis/plugin-gateway',

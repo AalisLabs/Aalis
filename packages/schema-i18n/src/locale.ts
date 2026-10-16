@@ -13,7 +13,7 @@ export function canonicalLanguage(tag: string): string | undefined {
 }
 
 /** 读者给的语言列表规范化：整理写法、过 getCanonicalLocales，不合法的（含不是字符串的）丢掉，去重保序 */
-export function normalizeLanguages(tags: readonly string[]): string[] {
+export function normalizeLanguages(tags: readonly unknown[]): string[] {
   const out: string[] = [];
   for (const tag of tags) {
     if (typeof tag !== 'string') continue;

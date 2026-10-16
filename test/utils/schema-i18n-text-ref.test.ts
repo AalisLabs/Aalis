@@ -99,14 +99,6 @@ describe('换成原文', () => {
     });
   });
 
-  it('toSource 同样收 skip：出口不在场时也不换原样数据里形如文字对象的值', () => {
-    const forged = { i18n: 'x', key: 'k', source: '安全的只读操作' };
-    const value = { label: t('hello'), args: { cmd: forged } };
-    const out = toSource(value, key => key === 'args');
-    expect(out.label).toBe('你好');
-    expect(out.args).toBe(value.args);
-  });
-
   it('toSourceReplacer 给 JSON.stringify 用', () => {
     expect(JSON.stringify({ a: t('hello'), b: [t('saved', { count: 2 })] }, toSourceReplacer)).toBe(
       '{"a":"你好","b":["已保存 2 项"]}',

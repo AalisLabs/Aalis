@@ -2,7 +2,7 @@
 
 给人看的文字对象：原文字典、ICU 消息格式（子集）与按读者语言解析。
 
-要翻译的文字一律是**文字对象**（`TextRef`），取自所属包的原文字典，键由作者起、参数有类型。产出文字的一方只依赖本包；出口（i18n 服务在场时）按读者的语言链渲染，服务不在场时一律显示原文（`toSource`）。声明里写普通字符串也可以，那就是不翻译的原文。
+要翻译的文字一律是**文字对象**（`TextRef`），取自所属包的原文字典，键由作者起、参数有类型。产出文字的一方只依赖本包；出口在 i18n 服务在场时按读者的语言链渲染，不在场时按原文语言渲染（`resolveSource`）。声明里写普通字符串也可以，那就是不翻译的原文。
 
 零运行时依赖、不用 `node:` 模块，浏览器里同样可用。
 
@@ -49,7 +49,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 |---|---|
 | `asText(v)` | 展示值（core 的插件显示名、服务 label 这类 `unknown` 字段）收窄成文字：字符串与文字对象原样，其余 `undefined` |
 | `isTextRef(v)` | 按形状判：`i18n`、`key`、`source` 是字符串，`params` 缺省或为普通对象，没有别的键。从 JSON 读回的、另一份本包产出的都认 |
-| `toSource(v, skip?)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型、出口不在场时用；出口用时与 `localize` 传同一个 `skip` |
+| `toSource(v)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型时用（取生成时的整句） |
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
 | `textLines(parts)` | 把若干段（字符串或文字对象）按行连成一个文字对象，多行报告、列表类回复用它 |
 | `TextError` | `new TextError(text, { status?, cause? })`，message 是 `text.source`，name 为 `TextError` |
@@ -69,7 +69,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{n, plural, =0 {…} one {…} other {…}}`：`=N` 精确匹配先于类别，类别取 `Intl.PluralRules`。`#` 只在直接所在的 plural 分支里替换为该数（按语言的 `NumberFormat`），嵌在 select 里的 `#` 是字面。
 - `{x, select, a {…} other {…}}`：x 是字符串。
 - `{n, number}`：`NumberFormat`。
-- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省用进程时区。
+- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省或不认识时用进程时区。
 - `{items, list}`：`ListFormat` 的 conjunction；`{items, lines}`：按行连接。元素各自渲染。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
 - `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
@@ -94,6 +94,8 @@ plural 与 select 必须有 other；未知类型、花括号不配平、重复�
 
 ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归，嵌套超过 8 层的用那一层的 source。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
 
+`resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：带读者的时区与转义，参数里的文字对象同样取各自的原文，回落规则同上。
+
 `normalizeLanguages(tags)` 整理读者给的语言列表：下划线换连字符、去掉 `.UTF-8` 这类后缀、过 `getCanonicalLocales`，不合法的丢掉，去重保序。
 
 ## 进程级目录
@@ -104,7 +106,7 @@ ns 不在目录、键不存在、原文解析失败、选中的那条渲染失�
 
 ## 语言包
 
-语言包给字典补它没有的语言：`{ id, language, entries: { [ns]: { [key]: { text, from } } } }`，`from` 是翻译时原文模板的 `fingerprint`。`indexPacks(packs)` 建索引交给 `resolveText`，形状不对的包、表与条目跳过：字典自带同语言同键时语言包不生效；`from` 与当前原文的指纹不符当作缺失；多个包给同一条时按包 id 排序取先。
+语言包给字典补它没有的语言：`{ id, language, entries: { [ns]: { [key]: { text, from } } } }`，`from` 是翻译时原文模板的 `fingerprint`。`indexPacks(packs)` 建索引交给 `resolveText`，形状不对或读取时抛错的包、表与条目跳过：字典自带同语言同键时语言包不生效；`from` 与当前原文的指纹不符当作缺失；多个包给同一条时按交来的先后取先（plugin-i18n 按贡献点的全局键交来，包名在前）。
 
 ## 自检
 

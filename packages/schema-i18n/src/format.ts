@@ -45,12 +45,17 @@ const numberFormat = (language: string, unit?: string, display?: 'short' | 'narr
       ),
   );
 
+/** 时区来自读者（cookie、协议），Intl 不认的当作没给，按进程时区：不让整句回落成原文 */
 function dateFormat(type: 'date' | 'time' | 'datetime', style: DateStyle, o: FormatOptions): Intl.DateTimeFormat {
   return cached(`${type}\0${style}\0${o.language}\0${o.timeZone}`, () => {
-    const options: Intl.DateTimeFormatOptions = { timeZone: o.timeZone };
+    const options: Intl.DateTimeFormatOptions = {};
     if (type !== 'time') options.dateStyle = style;
     if (type !== 'date') options.timeStyle = style;
-    return new Intl.DateTimeFormat(o.language, options);
+    try {
+      return new Intl.DateTimeFormat(o.language, { ...options, timeZone: o.timeZone });
+    } catch {
+      return new Intl.DateTimeFormat(o.language, options);
+    }
   });
 }
 

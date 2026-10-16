@@ -28,33 +28,45 @@ export function resolveText(text: TextRef, chain: readonly string[], options: Re
   return resolve(text, chain, options, 0);
 }
 
-function resolve(text: TextRef, chain: readonly string[], options: ResolveOptions, depth: number): string {
+/**
+ * 只按原文语言渲染文字对象：出口在 i18n 服务缺席时用（日志与交给模型的用 toSource）。参数里的文字对象同样取各自的原文，
+ * 回落规则同 {@link resolveText}
+ */
+export function resolveSource(text: TextRef, options: Pick<ResolveOptions, 'timeZone' | 'escape'> = {}): string {
+  return resolve(text, undefined, options, 0);
+}
+
+/** chain 为 undefined 时只取原文 */
+function resolve(text: TextRef, chain: readonly string[] | undefined, options: ResolveOptions, depth: number): string {
   const fallback = () => (options.escape === 'markdown' ? escapeMarkdown(text.source) : text.source);
   const entry = depth > MAX_NESTING ? undefined : catalogEntry(text.i18n);
   const template = entry && entryText(entry.source, text.key);
   const source = template === undefined ? undefined : parseMessage(template);
   if (entry === undefined || template === undefined || source === undefined) return fallback();
-  const expected = paramKinds(source);
   const languages = [entry.language];
   const messages: Message[] = [source];
-  const offer = (language: string, translation: string) => {
-    const message = parseMessage(translation);
-    if (message === undefined || incompatibleParams(expected, message).length > 0) return;
-    languages.push(language);
-    messages.push(message);
-  };
-  for (const [language, table] of Object.entries(entry.locales)) {
-    const translation = entryText(table, text.key);
-    if (translation !== undefined) offer(language, translation);
-  }
-  const packed = options.packs?.get(text.i18n)?.get(text.key);
-  if (packed) {
-    const from = fingerprint(template);
-    for (const candidate of packed) {
-      if (candidate.from === from && !languages.includes(candidate.language)) offer(candidate.language, candidate.text);
+  if (chain !== undefined) {
+    const expected = paramKinds(source);
+    const offer = (language: string, translation: string) => {
+      const message = parseMessage(translation);
+      if (message === undefined || incompatibleParams(expected, message).length > 0) return;
+      languages.push(language);
+      messages.push(message);
+    };
+    for (const [language, table] of Object.entries(entry.locales)) {
+      const translation = entryText(table, text.key);
+      if (translation !== undefined) offer(language, translation);
+    }
+    const packed = options.packs?.get(text.i18n)?.get(text.key);
+    if (packed) {
+      const from = fingerprint(template);
+      for (const candidate of packed) {
+        if (candidate.from !== from || languages.includes(candidate.language)) continue;
+        offer(candidate.language, candidate.text);
+      }
     }
   }
-  const chosen = pickLanguage(chain, languages) ?? 0;
+  const chosen = chain === undefined ? 0 : (pickLanguage(chain, languages) ?? 0);
   const rendered = formatMessage(messages[chosen], text.params ?? {}, {
     language: languages[chosen],
     timeZone: options.timeZone,

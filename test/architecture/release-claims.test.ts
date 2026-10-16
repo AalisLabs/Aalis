@@ -7,6 +7,12 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages')
 const CORE_PEER = '>=0.20.0 <1.0.0';
 /** 本批发布的包里带 core peer 的 112 个（已发布 96 个、首次发布 16 个）一律抬到 0.20 */
 const CORE_PEER_COUNT = 112;
+/** 该节之后新增的包：不计入上面的数，各自的 core peer 下限按实际用到的 core API 定 */
+const ADDED_AFTER = new Map([
+  ['api-i18n', '>=0.20.0 <1.0.0'],
+  // 显示名是文字对象：core 0.21 起展示值才放宽为 unknown
+  ['plugin-i18n', '>=0.21.0 <1.0.0'],
+]);
 
 interface Manifest {
   name?: string;
@@ -47,7 +53,7 @@ describe('发布声明（2026-10-11 一节）', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
-      if (manifest.private) continue; // private 包不发布，不在发布声明之内
+      if (manifest.private || ADDED_AFTER.has(dir)) continue; // private 包不发布；该节之后新增的另核
       const spec = manifest.peerDependencies?.['@aalis/core'];
       if (spec === undefined) continue;
       hits.push({ dir, spec });
@@ -111,5 +117,11 @@ describe('发布声明（2026-10-11 一节）', () => {
     const src = readIndex('schema-config');
     expect(src, 'packages/schema-config/src/index.ts 须存在').toBeTruthy();
     expect(/export function removeExtraFields/.test(src ?? ''), src).toBe(true);
+  });
+});
+
+describe('该节之后新增的包', () => {
+  it.each([...ADDED_AFTER])('%s 的 core peer 为 %s', (dir, spec) => {
+    expect(readManifest(dir).peerDependencies?.['@aalis/core']).toBe(spec);
   });
 });
