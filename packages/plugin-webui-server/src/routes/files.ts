@@ -16,6 +16,7 @@ import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import type { PageFiles } from '../page-files.js';
 import { route } from '../route.js';
+import { t } from '../texts.js';
 import { pipeToResponse } from './pipe-to-response.js';
 
 export function registerFileRoutes(
@@ -32,7 +33,7 @@ export function registerFileRoutes(
     what: string,
   ) {
     if (!file) {
-      res.status(403).json({ error: '文件句柄无效' });
+      res.status(403).json({ error: t('invalidHandle') });
       return;
     }
     try {
@@ -45,11 +46,11 @@ export function registerFileRoutes(
       pipeToResponse(stream, res, logger, `${what} ${file.uri}`);
     } catch (err) {
       if (isStorageNotFound(err)) {
-        res.status(404).json({ error: '文件已不在' });
+        res.status(404).json({ error: t('fileGone') });
         return;
       }
       logger.warn(`读取${what} ${file.uri} 失败:`, err);
-      res.status(500).json({ error: '读取文件失败' });
+      res.status(500).json({ error: t('readFailed') });
     }
   }
 

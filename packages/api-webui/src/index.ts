@@ -6,7 +6,9 @@
 import type { UnmetService } from '@aalis/api-doctor';
 import type { LogEntry, LogLevel } from '@aalis/core';
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { Notice, NoticeHandle, PageDefinition, PageHandle, PagePlacement } from './page.js';
+import { t } from './texts.js';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -76,7 +78,7 @@ export interface ExtendDeclaration {
  *   组名与顺序取本表。
  * - `core` 不解释 subsystem 的取值，插件定义上只有一个透传的字符串字段
  *   `subsystem?: string`（不读不解释，纯粹搬运给 WebUI）。
- * - 本表只描述 **展示元数据**（中文 label / 排序），**不写死插件归属**。
+ * - 本表只描述 **展示元数据**（组名 / 排序），**不写死插件归属**。组名取自本包的字典，界面按读者语言渲染。
  *   归属由每个插件在 `definePlugin({ subsystem: 'llm' })` 中声明。
  *
  * 解耦收益：
@@ -87,8 +89,8 @@ export interface ExtendDeclaration {
 export interface SubsystemMetadata {
   /** subsystem id（与插件定义的 subsystem 字段对应） */
   id: string;
-  /** 显示名（中文 label） */
-  label: string;
+  /** 组名 */
+  label: TextRef;
   /** 排序权重，越小越靠前 */
   order: number;
 }
@@ -96,29 +98,29 @@ export interface SubsystemMetadata {
 /**
  * 默认子系统元数据。
  *
- * 仅提供常用 id 的中文 label 与排序；插件可任意自定义 subsystem id，未命中本表的按 id 原样显示、排在表里的之后，
+ * 仅提供常用 id 的组名与排序；插件可任意自定义 subsystem id，未命中本表的按 id 原样显示、排在表里的之后，
  * 没声明的排在最后。
  */
 export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.freeze([
-  { id: 'system', label: '系统', order: 0 },
-  { id: 'core', label: '核心', order: 10 },
-  { id: 'platform', label: '平台', order: 20 },
-  { id: 'agent', label: 'Agent', order: 30 },
-  { id: 'llm', label: 'LLM', order: 40 },
-  { id: 'embedding', label: 'Embedding', order: 50 },
-  { id: 'memory', label: '记忆', order: 60 },
-  { id: 'persona', label: '人格', order: 70 },
-  { id: 'tools', label: '工具', order: 80 },
-  { id: 'storage', label: '存储', order: 85 },
-  { id: 'message', label: '消息', order: 90 },
-  { id: 'media', label: '媒体', order: 95 },
-  { id: 'session', label: '会话', order: 100 },
-  { id: 'skills', label: '技能', order: 110 },
-  { id: 'scheduler', label: '调度', order: 120 },
-  { id: 'workflow', label: '工作流', order: 125 },
-  { id: 'authority', label: '权限', order: 130 },
-  { id: 'user', label: '用户', order: 140 },
-  { id: 'external', label: '外部', order: 160 },
+  { id: 'system', label: t('subsystemSystem'), order: 0 },
+  { id: 'core', label: t('subsystemCore'), order: 10 },
+  { id: 'platform', label: t('subsystemPlatform'), order: 20 },
+  { id: 'agent', label: t('subsystemAgent'), order: 30 },
+  { id: 'llm', label: t('subsystemLlm'), order: 40 },
+  { id: 'embedding', label: t('subsystemEmbedding'), order: 50 },
+  { id: 'memory', label: t('subsystemMemory'), order: 60 },
+  { id: 'persona', label: t('subsystemPersona'), order: 70 },
+  { id: 'tools', label: t('subsystemTools'), order: 80 },
+  { id: 'storage', label: t('subsystemStorage'), order: 85 },
+  { id: 'message', label: t('subsystemMessage'), order: 90 },
+  { id: 'media', label: t('subsystemMedia'), order: 95 },
+  { id: 'session', label: t('subsystemSession'), order: 100 },
+  { id: 'skills', label: t('subsystemSkills'), order: 110 },
+  { id: 'scheduler', label: t('subsystemScheduler'), order: 120 },
+  { id: 'workflow', label: t('subsystemWorkflow'), order: 125 },
+  { id: 'authority', label: t('subsystemAuthority'), order: 130 },
+  { id: 'user', label: t('subsystemUser'), order: 140 },
+  { id: 'external', label: t('subsystemExternal'), order: 160 },
 ]);
 
 /**
@@ -200,12 +202,13 @@ export interface PluginBlockers {
 /**
  * 「需要处理」的一项，每项计 1：
  * - `approval`：推给了审批面、还没结算的审批（同一会话同一时刻最多一张）；`session` 是会话的标题，会话管理不在时没有；
- * - `plugin`：插件实例的故障：失败（`error`，带原因），或缺服务（`pending` 且 `lacking` 不空）。只在等别的插件启动的不在这里；
+ * - `plugin`：插件实例的故障：失败（`error`，带原因，即 api-doctor 的 failureText），或缺服务（`pending` 且 `lacking` 不空）。
+ *   只在等别的插件启动的不在这里；
  * - `notice`：插件的提示，`instance` 是发出它的插件实例。
  */
 export type AttentionItem =
   | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string }
-  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string } & PluginBlockers)
+  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string | TextRef } & PluginBlockers)
   | ({ kind: 'notice'; instance: string } & Notice);
 
 // ----- 管理面推送 -----

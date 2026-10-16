@@ -475,7 +475,7 @@ describe('动作', () => {
             ? Response.json(
                 {
                   error: '输入没过校验：every 不能小于 5',
-                  issues: [{ path: 'every', message: '不能小于 5', kind: 'invalid' }],
+                  issues: [{ path: 'every', message: '不能小于 5', kind: 'invalid', code: 'min' }],
                 },
                 { status: 400 },
               )

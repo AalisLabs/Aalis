@@ -2,7 +2,8 @@
 // page-check.ts — 页面登记时的质量门槛
 //
 // 插件交来的页面声明在登记时整份核一遍，不过就不登记：content（声明式）与 frame（插件前端）恰好一个；不认识的字段一律
-// 拒收（旧写法的 refresh、danger、source 等在这里就被拦下）。
+// 拒收（旧写法的 refresh、danger、source 等在这里就被拦下）。给人看的文字（标题、标签、说明、确认文案）收字符串或文字对象，
+// 标识（key、id、字段名）只收字符串。
 // 声明式页面：一屏最多 MAX_SCREEN_COMPONENTS 个组件、最多 MAX_PAGE_TABS 个标签；标签页只在最外层，详情里的组件不再带
 // 详情；组件 id 在页面内唯一；引用的动作都存在，且行动作只放在表格行上与详情里、页面动作只放在最外层与标签里。核过的
 // 声明原样经 JSON 下发给界面，函数随序列化去掉。
@@ -24,6 +25,7 @@ import {
   type PageContext,
   type PagePlacement,
 } from '@aalis/api-webui';
+import { isTextRef } from '@aalis/schema-i18n';
 
 /** 有数据源的组件 */
 export type SourceComponent = Exclude<PageComponentDefinition<string, PageContext>, { type: 'actions' }>;
@@ -87,7 +89,12 @@ const COMPONENT_KEYS: Record<string, string[]> = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+/** 标识：非空字符串 */
+const isName = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+/** 给人看的文字：非空字符串或文字对象 */
+const isText = (value: unknown) => isName(value) || isTextRef(value);
+/** 可选的文字：不写，或字符串（可以为空）、文字对象 */
+const isOptionalText = (value: unknown) => value === undefined || typeof value === 'string' || isTextRef(value);
 
 /** 核一份页面声明：过了回分派用的索引，不过回全部问题（每条带位置） */
 export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok: false; problems: string[] } {
@@ -100,7 +107,7 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
       if (!allowed.includes(key)) fail(path ? `${path}.${key}` : key, '不认识的字段');
   };
   const optionalText = (value: unknown, path: string) => {
-    if (value !== undefined && typeof value !== 'string') fail(path, '要是字符串');
+    if (!isOptionalText(value)) fail(path, '要是字符串或文字对象');
   };
 
   /** 动作与数据源的输入：非空的字段表，每个字段带 type 与 label */
@@ -108,7 +115,7 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
     if (value === undefined) return;
     if (!isRecord(value) || Object.keys(value).length === 0) return fail(path, '要是非空的字段表');
     for (const [key, field] of Object.entries(value)) {
-      if (!isRecord(field) || !isText(field.type) || !isText(field.label)) {
+      if (!isRecord(field) || !isName(field.type) || !isText(field.label)) {
         fail(`${path}.${key}`, '要是带 type 与 label 的配置字段');
       }
     }
@@ -120,8 +127,8 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
   if (isFrame === (page.content !== undefined)) {
     fail('content', '与 frame 恰好写一个（声明式页面写 content，插件前端写 frame）');
   }
-  if (!isText(page.key)) fail('key', '要是非空字符串');
-  if (!isText(page.title)) fail('title', '要是非空字符串');
+  if (!isName(page.key)) fail('key', '要是非空字符串');
+  if (!isText(page.title)) fail('title', '要是非空字符串或文字对象');
   if (page.icon !== undefined && !(typeof page.icon === 'string' && ICON_NAME.test(page.icon))) {
     fail('icon', '只收 lucide 图标名（小写字母、数字与连字符）');
   }
@@ -146,11 +153,11 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
       fail('actions', `插件前端的动作名最多 ${FRAME_NAME_MAX_LENGTH} 个字符（插件前端发不出更长的名字）`);
     }
     strict(action, ['label', 'effect', 'confirm', 'input', 'row', 'handler'], path);
-    if (!isText(action.label)) fail(`${path}.label`, '要是非空字符串');
+    if (!isText(action.label)) fail(`${path}.label`, '要是非空字符串或文字对象');
     if (!EFFECTS.has(action.effect as string)) fail(`${path}.effect`, '只有 read、write、destructive');
     if (action.confirm !== undefined) {
       if (action.effect !== 'destructive') fail(`${path}.confirm`, '确认文案只给 destructive 的动作');
-      else if (!isText(action.confirm)) fail(`${path}.confirm`, '要是非空字符串');
+      else if (!isText(action.confirm)) fail(`${path}.confirm`, '要是非空字符串或文字对象');
     }
     inputFields(action.input, `${path}.input`);
     if (action.row !== undefined) {
@@ -166,7 +173,7 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
     if (!isRecord(frame)) fail('frame', '要是对象');
     else {
       strict(frame, ['module', 'entry', 'host'], 'frame');
-      if (!isText(frame.module)) fail('frame.module', '要是非空字符串（写 import.meta.url）');
+      if (!isName(frame.module)) fail('frame.module', '要是非空字符串（写 import.meta.url）');
       if (frame.entry !== undefined && !(typeof frame.entry === 'string' && ENTRY.test(frame.entry))) {
         fail('frame.entry', '只许 webui/ 里以 .html 结尾的相对路径：不以 / 开头，各段非空、不以点开头，不含反斜杠');
       }
@@ -186,7 +193,7 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
     if (page.sources !== undefined && !isRecord(page.sources)) fail('sources', '要是对象');
     for (const [name, source] of Object.entries(isRecord(page.sources) ? page.sources : {})) {
       const path = `sources.${name}`;
-      if (!isText(name)) {
+      if (!isName(name)) {
         fail('sources', '数据源的名字要非空');
         continue;
       }
@@ -233,9 +240,9 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
         continue;
       }
       strict(kind, ['kind', 'label', 'tone'], at);
-      if (!isText(kind.kind) || seen.has(kind.kind)) fail(`${at}.kind`, '要是不重复的非空字符串');
+      if (!isName(kind.kind) || seen.has(kind.kind)) fail(`${at}.kind`, '要是不重复的非空字符串');
       seen.add(kind.kind);
-      if (!isText(kind.label)) fail(`${at}.label`, '要是非空字符串');
+      if (!isText(kind.label)) fail(`${at}.label`, '要是非空字符串或文字对象');
       if (!Number.isInteger(kind.tone) || (kind.tone as number) < 1 || (kind.tone as number) > 6) {
         fail(`${at}.tone`, '只有 1 到 6');
       }
@@ -255,12 +262,12 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
       for (const [i, name] of value.actions.entries()) referenced(name, `${path}.actions[${i}]`, inDetail);
       return;
     }
-    if (!isText(value.id)) fail(`${path}.id`, '要是非空字符串');
+    if (!isName(value.id)) fail(`${path}.id`, '要是非空字符串');
     else if (sources.has(value.id)) fail(`${path}.id`, `组件 id ${value.id} 重复`);
     else sources.set(value.id, { component: value as unknown as SourceComponent, inDetail });
     if (typeof value.data !== 'function') fail(`${path}.data`, '要是函数');
     if (value.type === 'table') {
-      if (!isText(value.rowKey)) fail(`${path}.rowKey`, '要是非空字符串');
+      if (!isName(value.rowKey)) fail(`${path}.rowKey`, '要是非空字符串');
       optionalText(value.empty, `${path}.empty`);
       if (!Array.isArray(value.columns) || value.columns.length === 0) fail(`${path}.columns`, '要是非空数组');
       else {
@@ -272,9 +279,9 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
             continue;
           }
           strict(column, ['key', 'label', 'kind', 'primary'], at);
-          if (!isText(column.key) || keys.has(column.key)) fail(`${at}.key`, '要是不重复的非空字符串');
+          if (!isName(column.key) || keys.has(column.key)) fail(`${at}.key`, '要是不重复的非空字符串');
           keys.add(column.key);
-          if (!isText(column.label)) fail(`${at}.label`, '要是非空字符串');
+          if (!isText(column.label)) fail(`${at}.label`, '要是非空字符串或文字对象');
           if (column.kind !== undefined && !CELL_KINDS.has(column.kind as CellKind))
             fail(`${at}.kind`, '不认识的显示种类');
           if (column.primary !== undefined && typeof column.primary !== 'boolean') fail(`${at}.primary`, '要是布尔值');
@@ -291,7 +298,7 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
             }
             strict(entry, ['action', 'visibleWhen'], at);
             referenced(entry.action, `${at}.action`, true);
-            if (entry.visibleWhen !== undefined && !isText(entry.visibleWhen)) {
+            if (entry.visibleWhen !== undefined && !isName(entry.visibleWhen)) {
               fail(`${at}.visibleWhen`, '要是行字段名');
             }
           }
@@ -333,9 +340,9 @@ export function checkPage(page: unknown): { ok: true; page: CheckedPage } | { ok
         continue;
       }
       strict(tab, ['key', 'title', 'content'], at);
-      if (!isText(tab.key) || keys.has(tab.key)) fail(`${at}.key`, '要是不重复的非空字符串');
+      if (!isName(tab.key) || keys.has(tab.key)) fail(`${at}.key`, '要是不重复的非空字符串');
       keys.add(tab.key);
-      if (!isText(tab.title)) fail(`${at}.title`, '要是非空字符串');
+      if (!isText(tab.title)) fail(`${at}.title`, '要是非空字符串或文字对象');
       screen(tab.content, `${at}.content`, false);
     }
   } else if (page.content !== undefined) fail('content', '要是组件数组或 { tabs }');
@@ -355,14 +362,14 @@ export function checkNotice(notice: unknown, placementOf: (pageKey: string) => P
   for (const key of Object.keys(notice)) {
     if (!['id', 'level', 'title', 'detail', 'open'].includes(key)) fail(key, '不认识的字段');
   }
-  if (!isText(notice.id)) fail('id', '要是非空字符串');
+  if (!isName(notice.id)) fail('id', '要是非空字符串');
   if (notice.level !== 'action' && notice.level !== 'error') fail('level', '只有 action、error');
-  if (!isText(notice.title)) fail('title', '要是非空字符串');
-  if (notice.detail !== undefined && typeof notice.detail !== 'string') fail('detail', '要是字符串');
+  if (!isText(notice.title)) fail('title', '要是非空字符串或文字对象');
+  if (!isOptionalText(notice.detail)) fail('detail', '要是字符串或文字对象');
   const open = notice.open;
   if (open !== undefined && open !== 'config') {
     const page = isRecord(open) && Object.keys(open).length === 1 ? open.page : undefined;
-    const placement = isText(page) ? placementOf(page) : undefined;
+    const placement = isName(page) ? placementOf(page) : undefined;
     if (placement !== 'plugin' && placement !== 'settings') {
       fail('open', '只收 config，或本插件已登记、位置为 plugin 或 settings 的页面 { page }');
     }

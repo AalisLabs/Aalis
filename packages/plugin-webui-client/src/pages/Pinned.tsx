@@ -1,4 +1,5 @@
 import type { PageView } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { CircleAlert } from 'lucide-react';
 import { useId } from 'react';
 import { Link, useLocation } from 'react-router';
@@ -13,7 +14,7 @@ import { pageName, refOf, sameRef, usePages } from './registry';
 // 固定的页面：按 owner 排的顺序，只列此刻登记着、位置为插件详情的页面；所属插件停用时不出现，记录保留。
 // 桌面上在图标栏里，手机上没有图标栏，列在第一层的会话列表上面。页面表或布局记录没取到时在同一处写明原因，可以重试
 
-function usePinned(): { pinned: PageView[]; error?: Error; retry(): void } {
+function usePinned(): { pinned: Localized<PageView>[]; error?: Error; retry(): void } {
   const { pages, pagesError, layout, layoutError, retry } = usePages();
   const pinned =
     pages && layout

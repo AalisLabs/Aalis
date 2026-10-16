@@ -1,4 +1,5 @@
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
+import { resolveSource } from '@aalis/schema-i18n';
 import { FolderSearch, Store } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useLocation, useParams } from 'react-router';
@@ -35,6 +36,12 @@ interface PluginGroup {
   items: PluginItem[];
 }
 
+/** 组名：目录里的取字典，目录外的按 id 原样 */
+const groupName = (subsystem: string) => {
+  const known = SUBSYSTEMS.get(subsystem);
+  return known ? resolveSource(known.label) : subsystem;
+};
+
 /** 排序键：目录里的按目录的顺序，目录外的按名字排在后面，没声明的在最后 */
 const rank = (subsystem: string | undefined): [number, number, string] => {
   if (subsystem === undefined) return [2, 0, ''];
@@ -58,7 +65,7 @@ function groupsOf(rows: readonly PluginRow[]): PluginGroup[] {
     })
     .map(([subsystem, items]) => ({
       key: subsystem ?? '',
-      label: subsystem === undefined ? '其他' : (SUBSYSTEMS.get(subsystem)?.label ?? subsystem),
+      label: subsystem === undefined ? '其他' : groupName(subsystem),
       items: items.sort((a, b) => labelOf(a.main).localeCompare(labelOf(b.main))),
     }));
 }

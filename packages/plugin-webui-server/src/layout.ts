@@ -16,6 +16,8 @@ import {
   type PanelTabRef,
 } from '@aalis/api-webui';
 import type { Logger } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 私有目录下的布局记录 */
 const LAYOUT = 'layout.json';
@@ -80,7 +82,7 @@ export function parseLayoutOperation(value: unknown): LayoutOperation | undefine
 }
 
 /** 操作被拒：记录满了 */
-export class LayoutFull extends Error {}
+export class LayoutFull extends TextError {}
 
 const samePage = (a: PageRef) => (b: PageRef) => a.instance === b.instance && a.pageKey === b.pageKey;
 const sameTab = (a: PanelTabRef) => (b: PanelTabRef) =>
@@ -99,7 +101,7 @@ function pinnedAfter(pinned: PageRef[], { op, page }: PinOperation): PageRef[] {
   const at = pinned.findIndex(samePage(page));
   if (op === 'pin') {
     if (at >= 0) return pinned;
-    if (pinned.length >= MAX_LAYOUT_ENTRIES) throw new LayoutFull(`最多 ${MAX_LAYOUT_ENTRIES} 条，先取消一些`);
+    if (pinned.length >= MAX_LAYOUT_ENTRIES) throw new LayoutFull(t('pinnedFull', { max: MAX_LAYOUT_ENTRIES }));
     return [...pinned, page];
   }
   if (op === 'unpin') return at < 0 ? pinned : pinned.filter((_, i) => i !== at);
@@ -114,7 +116,7 @@ function tabsAfter(tabs: TabEntry[], { op, tab }: TabOperation): TabEntry[] {
   const open = op === 'open-tab';
   if (at >= 0) return tabs[at].open === open ? tabs : tabs.map((entry, i) => (i === at ? { ...entry, open } : entry));
   if (!open) return tabs;
-  if (tabs.length >= MAX_LAYOUT_ENTRIES) throw new LayoutFull(`会话面板最多记 ${MAX_LAYOUT_ENTRIES} 个标签`);
+  if (tabs.length >= MAX_LAYOUT_ENTRIES) throw new LayoutFull(t('tabsFull', { max: MAX_LAYOUT_ENTRIES }));
   return [...tabs, { tab, open }];
 }
 

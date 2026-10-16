@@ -1,7 +1,6 @@
 {
   "format": "aalis-theme",
   "version": 1,
-  "name": "品牌柔和深色",
   "kind": "dark",
   "colors": {
     "--color-bg": "#15121f",

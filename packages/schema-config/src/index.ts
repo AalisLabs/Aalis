@@ -14,8 +14,12 @@
 // - 渲染宿主（webui-server/client 等）：读取并渲染表单
 // - 宿主政策（@aalis/runtime 的 config-sync）：按 schema 裁剪未知字段、校验告警
 //
-// 本包零运行时依赖：对 @aalis/core 仅有 type-only 锚点 import（编译后擦除）。
+// 给人看的文字（表单的 label 与说明、校验原因、配置错误）是 @aalis/schema-i18n 的文字对象，由出口按读者语言渲染。
+// 运行时只依赖同样零依赖的 @aalis/schema-i18n；对 @aalis/core 仅有 type-only 锚点 import（编译后擦除）。
 // ============================================================
+
+import { type TextRef, withText } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /**
  * Schema 字段类型注册表 —— declaration merging 扩展点。
@@ -59,11 +63,13 @@ export type SchemaFieldType = keyof SchemaFieldTypes & string;
  *
  * 声明各渲染宿主共需的字段、影响取值判定的属性（`dynamicOptions` / `allowCustom`）与各宿主都按它处理的
  * `secret`；只影响单一宿主呈现的交互属性由消费它们的宿主 api 包通过 declaration merging 注入。
+ * 给人看的 label、description 与选项的 label 可以是字符串或文字对象（@aalis/schema-i18n），渲染宿主按读者语言渲染；
+ * default 是取值，不是文字。
  */
 export interface SchemaField {
   type: SchemaFieldType;
-  label: string;
-  description?: string;
+  label: string | TextRef;
+  description?: string | TextRef;
   default?: unknown;
   required?: boolean;
   /** 显式配置的值无效时拒绝激活；缺省仍按 default / required 处理，省略时保持宽容回落 */
@@ -72,7 +78,7 @@ export interface SchemaField {
    * select / multiselect 类型的静态选项。没有 dynamicOptions、allowCustom 不为 true 时即取值范围：
    * 值按字符串与选项值比较，parseConfig 取选项声明的原值（数字选项存成字符串也能归位）
    */
-  options?: Array<{ label: string; value: string | number }>;
+  options?: Array<{ label: string | TextRef; value: string | number }>;
   /**
    * select / multiselect 的动态选项来源：服务名（WebUI 经 webui-server 调该服务的 listModels() 或等价方法获取选项）。
    * 声明后静态 options 不再是取值范围：parseConfig / validateConfig 只查取值是字符串或数字，ConfigOf 推为 string / string[]
@@ -187,16 +193,16 @@ export function mapSecretFields(
 }
 
 export interface SchemaGroup {
-  label?: string;
-  description?: string;
+  label?: string | TextRef;
+  description?: string | TextRef;
   fields: Record<string, SchemaField>;
 }
 
 /** 数组 Schema：对象数组，每个元素用 items 描述其字段结构 */
 export interface SchemaArray {
   type: 'array';
-  label: string;
-  description?: string;
+  label: string | TextRef;
+  description?: string | TextRef;
   /** 数组每个元素的字段定义 */
   items: Record<string, SchemaField>;
   default?: unknown[];
@@ -282,14 +288,14 @@ export type ConfigOf<S extends ConfigSchema> = Flatten<
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   name: {
     type: 'string',
-    label: '应用名称',
-    description: '应用显示名称，用于启动日志和界面展示',
+    label: t('nameLabel'),
+    description: t('nameDescription'),
     default: 'Aalis',
   },
   logLevel: {
     type: 'select',
-    label: '日志等级',
-    description: '日志输出等级',
+    label: t('logLevelLabel'),
+    description: t('logLevelDescription'),
     default: 'info',
     options: [
       { label: 'debug', value: 'debug' },
@@ -300,9 +306,8 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
   },
   slowThresholdMs: {
     type: 'number',
-    label: '慢操作阈值（毫秒）',
-    description:
-      '插件激活超过它仍未完成时告警并转入后台继续（它提供的服务在激活完成前不对依赖方开放），app 启动与停机阶段的单个事件监听器超过它时告警并不再等待；0 表示不设限；重启生效',
+    label: t('slowThresholdLabel'),
+    description: t('slowThresholdDescription'),
     default: 60000,
     min: 0,
   },
@@ -365,15 +370,37 @@ export function deepMergeDefaults(
 }
 
 /**
+ * 校验问题的原因种类：
+ * - `missing`：必填却没配；
+ * - `type`：类型或形状不符（如期望字符串却是对象、期望数组却是字符串）；
+ * - `not-option`：不是可选值；`pattern`：不匹配正则；`format`：路径的写法不符；
+ * - `integer`、`min`、`max`：数值约束；`reserved-key`：映射里用了保留键。
+ */
+export type SchemaIssueCode =
+  | 'missing'
+  | 'type'
+  | 'not-option'
+  | 'pattern'
+  | 'format'
+  | 'integer'
+  | 'min'
+  | 'max'
+  | 'reserved-key';
+
+/**
  * validateConfig 发现的单条问题。path 以点号/下标定位（如 `server.port`、`hosts[2]`）。
  * kind 区分两类性质不同的问题，供调用方分级处置：
  * - `missing`：必填字段未配置——"没配全"，半成品配置的正常中间态；
  * - `invalid`：值与声明的类型/形状不符——"配错了"，任何时候都不该写入。
+ *
+ * 原因：code 给程序判断，text 是本包字典的文字对象（出口按读者语言渲染），message 是它的原文（日志用）。
  */
 export interface SchemaIssue {
   path: string;
   message: string;
   kind: 'missing' | 'invalid';
+  code: SchemaIssueCode;
+  text: TextRef;
 }
 
 // 校验与解析在运行时需要一份"本包内置类型"名单：SchemaFieldTypes 是纯类型层的
@@ -457,7 +484,7 @@ export function parseConfig<S extends ConfigSchema>(
   let source: Record<string, unknown> = {};
   if (isRecord(raw)) source = raw;
   else if (raw !== undefined && raw !== null) {
-    if (hasStrictField(schema)) throw configError('配置整体期望对象，在 WebUI 或配置文件中改正后生效');
+    if (hasStrictField(schema)) throw configError(t('notObject'));
     warn(`配置整体期望对象，得到 ${describeType(raw)}，已忽略`);
   }
   try {
@@ -466,7 +493,7 @@ export function parseConfig<S extends ConfigSchema>(
     if (!(err instanceof UnrecoverableField)) throw err;
     throw err.missing
       ? missingConfigError(err.path)
-      : configError(`配置项 ${err.path} ${err.reason}，在 WebUI 或配置文件中改正后生效`);
+      : configError(t('invalid', { path: err.path, reason: err.reason }));
   }
 }
 
@@ -519,21 +546,22 @@ export function removeExtraFields(
  *
  * 实例照常转入 error 态，但这不是程序出错：core 的 DefaultLogger 对没有 stack 的错误只写「名称: 消息」，
  * 激活失败日志因此只有一行，不像程序崩溃。缺必填项用 {@link missingConfigError}。
+ * 收文字对象时挂上它（schema-i18n 的 withText，name 不变），出口按读者语言显示，message 是它的原文。
  */
-export function configError(message: string): Error {
-  const error = new Error(message);
+export function configError(message: string | TextRef): Error {
+  const error = new Error(typeof message === 'string' ? message : message.source);
   error.name = 'ConfigError';
   // 定义成自有属性而不是 delete：有的引擎把 stack 做成原型上的访问器，删实例属性去不掉
   Object.defineProperty(error, 'stack', { value: undefined, writable: true, configurable: true });
-  return error;
+  return typeof message === 'string' ? error : withText(error, message);
 }
 
 /**
  * 缺少必填配置时的 {@link configError}：消息点名缺的字段（`note` 是放在字段名后括号里的补充说明），并说明
  * 填入后生效——WebUI 保存或配置文件热重载会重建实例、重试激活。
  */
-export function missingConfigError(field: string, note?: string): Error {
-  return configError(`缺少配置项 ${field}${note ? `（${note}）` : ''}，在 WebUI 或配置文件中填入后生效`);
+export function missingConfigError(field: string, note?: string | TextRef): Error {
+  return configError(note ? t('missingFieldNote', { field, note }) : t('missingField', { field }));
 }
 
 function validateFields(
@@ -542,6 +570,8 @@ function validateFields(
   prefix: string,
   issues: SchemaIssue[],
 ): void {
+  const push = (path: string, kind: SchemaIssue['kind'], { code, text }: Reason) =>
+    issues.push({ path, message: text.source, kind, code, text });
   // `?? {}` 与 defaultsFrom 同款兜底：畸形 schema（array 缺 items / fields 为 null）
   // 不许把"最多少一条警告"升级成 TypeError——校验器自身永远不能成为故障源。
   for (const [key, entry] of Object.entries(schema ?? {})) {
@@ -552,7 +582,7 @@ function validateFields(
     if ('fields' in entry) {
       if (value === undefined || value === null) continue;
       if (!isRecord(value)) {
-        issues.push({ path, message: `期望对象（分组），得到 ${describeType(value)}`, kind: 'invalid' });
+        push(path, 'invalid', mismatch('expectedGroup', value));
         continue;
       }
       validateFields(entry.fields, value, `${path}.`, issues);
@@ -562,12 +592,12 @@ function validateFields(
     if (entry.type === 'array') {
       if (value === undefined || value === null) continue;
       if (!Array.isArray(value)) {
-        issues.push({ path, message: `期望数组，得到 ${describeType(value)}`, kind: 'invalid' });
+        push(path, 'invalid', mismatch('expectedArray', value));
         continue;
       }
       value.forEach((item, i) => {
         if (!isRecord(item)) {
-          issues.push({ path: `${path}[${i}]`, message: `期望对象元素，得到 ${describeType(item)}`, kind: 'invalid' });
+          push(`${path}[${i}]`, 'invalid', mismatch('expectedItem', item));
           return;
         }
         validateFields(entry.items, item, `${path}[${i}].`, issues);
@@ -580,7 +610,7 @@ function validateFields(
       // 显式 null（YAML 裸键），这类值照样走到这里，
       // 数组元素的默认值不参与任何合并（defaultsFrom 把 SchemaArray 当叶子），
       // 全靠这里放行——否则 required+default 的 item 字段会误报（scheduler jobs[].platform 型）。
-      if (entry.required && !('default' in entry)) issues.push({ path, message: '必填字段缺失', kind: 'missing' });
+      if (entry.required && !('default' in entry)) push(path, 'missing', { code: 'missing', text: t('missing') });
       continue;
     }
     if (entry.secret === true && isSecretRef(value)) continue;
@@ -588,63 +618,78 @@ function validateFields(
 
     const verdict = judgeField(entry, value);
     if ('invalid' in verdict) {
-      issues.push({ path, message: verdict.invalid, kind: 'invalid' });
+      push(path, 'invalid', verdict.invalid);
       continue;
     }
-    for (const d of verdict.dropped) issues.push({ path: path + d.at, message: d.reason, kind: 'invalid' });
+    for (const d of verdict.dropped) push(path + d.at, 'invalid', d.reason);
   }
 }
 
 // ---- 逐字段判定：validateConfig 与 parseConfig 共用 ----
 
+/** 值无效的原因：code 给程序判断（严格错误按它脱敏，见 safeInvalidReason），text 给人看 */
+interface Reason {
+  code: SchemaIssueCode;
+  text: TextRef;
+}
+
+/** 类型或形状不符：字典里「期望…，得到 {got}」的几句 */
+type Expected = Extract<keyof typeof t.source, `expected${string}`>;
+
+function mismatch(expected: Expected, value: unknown): Reason {
+  return { code: 'type', text: t(expected, { got: describeType(value) }) };
+}
+
 /**
  * 中立类型字段对一个已配置值（非 undefined / null）的判定。`value` 是按词汇换算后的取值（数字转成的字符串、
  * 字符串转成的数字、归位后的选项值）；`dropped` 是 list / map / multiselect 里被剔除的元素，`at` 接在字段路径后。
  */
-type FieldVerdict = { invalid: string } | { value: unknown; dropped: Array<{ at: string; reason: string }> };
+type FieldVerdict = { invalid: Reason } | { value: unknown; dropped: Array<{ at: string; reason: Reason }> };
 
 function judgeField(field: SchemaField, value: unknown): FieldVerdict {
   switch (field.type) {
     case 'string':
     case 'textarea': {
       const text = asText(value);
-      if (text === undefined) return { invalid: `期望 string，得到 ${describeType(value)}` };
+      if (text === undefined) return { invalid: mismatch('expectedString', value) };
       if (field.pattern !== undefined && !matchesPattern(field.pattern, text)) {
-        return { invalid: `不匹配模式 ${field.pattern}` };
+        return { invalid: { code: 'pattern', text: t('pattern', { pattern: field.pattern }) } };
       }
       if (field.format === undefined) return { value: text, dropped: [] };
       // 路径按去掉首尾空白后判定，交出去的也是这一份：带空白的原值交给插件会被当成相对路径或找不到
       const path = text.trim();
       if (path !== '' && !matchesFormat(field.format, path)) {
-        return { invalid: field.format === 'executable' ? '须为绝对路径或命令名（不含路径分隔符）' : '须为绝对路径' };
+        return { invalid: { code: 'format', text: t(field.format === 'executable' ? 'executable' : 'absolutePath') } };
       }
       return { value: path, dropped: [] };
     }
     case 'number': {
       const num = asNumber(value);
-      if (num === undefined) return { invalid: `期望有限数值，得到 ${describeType(value)}` };
-      if (field.integer && !Number.isInteger(num)) return { invalid: '期望整数' };
-      if (field.min !== undefined && num < field.min) return { invalid: `小于下限 ${field.min}` };
-      if (field.max !== undefined && num > field.max) return { invalid: `大于上限 ${field.max}` };
+      if (num === undefined) return { invalid: mismatch('expectedNumber', value) };
+      if (field.integer && !Number.isInteger(num)) return { invalid: { code: 'integer', text: t('integer') } };
+      if (field.min !== undefined && num < field.min) {
+        return { invalid: { code: 'min', text: t('min', { min: field.min }) } };
+      }
+      if (field.max !== undefined && num > field.max) {
+        return { invalid: { code: 'max', text: t('max', { max: field.max }) } };
+      }
       return { value: num, dropped: [] };
     }
     case 'boolean':
-      return typeof value === 'boolean'
-        ? { value, dropped: [] }
-        : { invalid: `期望 boolean，得到 ${describeType(value)}` };
+      return typeof value === 'boolean' ? { value, dropped: [] } : { invalid: mismatch('expectedBoolean', value) };
     case 'select': {
       const text = asText(value);
-      if (text === undefined) return { invalid: `期望 string 或 number，得到 ${describeType(value)}` };
+      if (text === undefined) return { invalid: mismatch('expectedChoice', value) };
       const options = field.allowCustom === true ? undefined : choiceOptions(field);
       if (!options) return { value: text, dropped: [] };
       const hit = options.find(o => String(o.value) === text);
       return hit ? { value: hit.value, dropped: [] } : { invalid: notAnOption(options) };
     }
     case 'multiselect': {
-      if (!Array.isArray(value)) return { invalid: `期望数组，得到 ${describeType(value)}` };
+      if (!Array.isArray(value)) return { invalid: mismatch('expectedArray', value) };
       const options = field.allowCustom === true ? undefined : choiceOptions(field);
       const kept: Array<string | number> = [];
-      const dropped: Array<{ at: string; reason: string }> = [];
+      const dropped: Array<{ at: string; reason: Reason }> = [];
       const keep = (choice: string | number) => {
         if (field.ordered !== true || !kept.includes(choice)) kept.push(choice);
       };
@@ -652,7 +697,7 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
         const item = value[i];
         const text = asText(item);
         if (text === undefined) {
-          dropped.push({ at: `[${i}]`, reason: `期望 string 或 number 元素，得到 ${describeType(item)}` });
+          dropped.push({ at: `[${i}]`, reason: mismatch('expectedChoiceItem', item) });
         } else if (!options) {
           keep(text);
         } else {
@@ -664,26 +709,27 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
       return { value: kept, dropped };
     }
     case 'list': {
-      if (!Array.isArray(value)) return { invalid: `期望数组，得到 ${describeType(value)}` };
+      if (!Array.isArray(value)) return { invalid: mismatch('expectedArray', value) };
       const kept: string[] = [];
-      const dropped: Array<{ at: string; reason: string }> = [];
+      const dropped: Array<{ at: string; reason: Reason }> = [];
       for (let i = 0; i < value.length; i++) {
         const item = value[i];
         const text = asText(item);
-        if (text === undefined) dropped.push({ at: `[${i}]`, reason: `期望 string 元素，得到 ${describeType(item)}` });
+        if (text === undefined) dropped.push({ at: `[${i}]`, reason: mismatch('expectedStringItem', item) });
         else kept.push(text);
       }
       return { value: kept, dropped };
     }
     case 'map': {
-      if (!isRecord(value)) return { invalid: `期望对象（映射），得到 ${describeType(value)}` };
+      if (!isRecord(value)) return { invalid: mismatch('expectedMap', value) };
       const kept: Record<string, string> = {};
-      const dropped: Array<{ at: string; reason: string }> = [];
+      const dropped: Array<{ at: string; reason: Reason }> = [];
       for (const [k, v] of Object.entries(value)) {
         const text = asText(v);
-        if (text === undefined) dropped.push({ at: `.${k}`, reason: `期望 string 值，得到 ${describeType(v)}` });
+        if (text === undefined) dropped.push({ at: `.${k}`, reason: mismatch('expectedStringValue', v) });
         // 危险键不进结果对象：写 `__proto__` 会改掉结果的原型
-        else if (isUnsafeConfigKey(k)) dropped.push({ at: `.${k}`, reason: '保留键不可用' });
+        else if (isUnsafeConfigKey(k))
+          dropped.push({ at: `.${k}`, reason: { code: 'reserved-key', text: t('reservedKey') } });
         else kept[k] = text;
       }
       return { value: kept, dropped };
@@ -725,8 +771,8 @@ function choiceOptions(field: SchemaField): Array<{ value: string | number }> | 
   return options.length > 0 ? options : undefined;
 }
 
-function notAnOption(options: Array<{ value: string | number }>): string {
-  return `不是可选值（${options.map(o => JSON.stringify(o.value)).join('、')}）之一`;
+function notAnOption(options: Array<{ value: string | number }>): Reason {
+  return { code: 'not-option', text: t('notOption', { options: options.map(o => JSON.stringify(o.value)) }) };
 }
 
 function matchesPattern(pattern: string, text: string): boolean {
@@ -771,11 +817,11 @@ type Warn = (message: string) => void;
 class UnrecoverableField extends Error {
   constructor(
     readonly path: string,
-    readonly reason: string,
+    readonly reason: TextRef,
     readonly missing: boolean,
     readonly fatal = false,
   ) {
-    super(`${path} ${reason}`);
+    super(`${path} ${reason.source}`);
   }
 }
 
@@ -816,7 +862,7 @@ function parseGroup(fields: unknown, value: unknown, path: string, warn: Warn): 
   let source: Record<string, unknown> = {};
   if (isRecord(value)) source = value;
   else if (value !== undefined && value !== null) {
-    if (hasStrictField(fields)) throw new UnrecoverableField(path, '期望对象（分组）', false);
+    if (hasStrictField(fields)) throw new UnrecoverableField(path, t('notGroup'), false);
     warn(`配置项 ${path} 期望对象（分组），得到 ${describeType(value)}，已忽略`);
   }
   return parseEntries(fields, source, `${path}.`, warn);
@@ -826,11 +872,11 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
   const neutral = NEUTRAL_FIELD_TYPES.has(field.type);
   if (value === undefined || value === null || (field.required ? isBlank(field, value) : value === '' && !neutral)) {
     if (field.default !== undefined) return cloneConfigValue(field.default);
-    if (field.required) throw new UnrecoverableField(path, '必填字段缺失', true);
+    if (field.required) throw new UnrecoverableField(path, t('missing'), true);
     return undefined;
   }
   if (field.secret === true && isSecretRef(value)) {
-    throw new UnrecoverableField(path, `引用的密钥 ${value.$secret} 不在宿主的密钥存储里`, false, true);
+    throw new UnrecoverableField(path, t('secretUnresolved', { key: value.$secret }), false, true);
   }
   if (!neutral) return cloneConfigValue(value);
   const verdict = judgeField(field, value);
@@ -841,7 +887,7 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
     const memberPath = field.type === 'map' ? path : path + first.at;
     throw new UnrecoverableField(memberPath, safeInvalidReason(first.reason), false);
   }
-  for (const d of verdict.dropped) warn(`配置项 ${path}${d.at} ${d.reason}，已忽略`);
+  for (const d of verdict.dropped) warn(`配置项 ${path}${d.at} ${d.reason.text.source}，已忽略`);
   return verdict.value;
 }
 
@@ -850,8 +896,8 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
   if (value === undefined || value === null) {
     list = entry.default;
   } else if (!Array.isArray(value)) {
-    if (hasStrictField(entry.items)) throw new UnrecoverableField(path, '期望数组', false);
-    list = fallBack(entry, path, `期望数组，得到 ${describeType(value)}`, warn);
+    if (hasStrictField(entry.items)) throw new UnrecoverableField(path, t('notArray'), false);
+    list = fallBack(entry, path, mismatch('expectedArray', value), warn);
   }
   // 默认值同样逐元素解析：元素字段的默认值要补齐；default 本身不是数组（畸形 schema）按未配置处理
   if (!Array.isArray(list)) return undefined;
@@ -860,7 +906,7 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
     const item = list[i];
     const at = `${path}[${i}]`;
     if (!isRecord(item)) {
-      if (entry.onInvalid === 'error') throw new UnrecoverableField(at, '期望对象元素', false);
+      if (entry.onInvalid === 'error') throw new UnrecoverableField(at, t('notItem'), false);
       warn(`配置项 ${at} 已忽略：期望对象元素，得到 ${describeType(item)}`);
       continue;
     }
@@ -871,7 +917,7 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
     } catch (err) {
       if (!(err instanceof UnrecoverableField)) throw err;
       if (entry.onInvalid === 'error' || err.fatal) throw err;
-      warn(`配置项 ${at} 已忽略：${err.path.slice(at.length + 1)} ${err.reason}`);
+      warn(`配置项 ${at} 已忽略：${err.path.slice(at.length + 1)} ${err.reason.source}`);
       continue;
     }
     for (const message of pending) warn(message);
@@ -883,24 +929,27 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
 function fallBack(
   entry: { default?: unknown; required?: boolean; onInvalid?: 'error' },
   path: string,
-  reason: string,
+  reason: Reason,
   warn: Warn,
 ): unknown {
   if (entry.onInvalid === 'error') throw new UnrecoverableField(path, safeInvalidReason(reason), false);
   if (entry.default !== undefined) {
-    warn(`配置项 ${path} ${reason}，改用默认值 ${describeDefault(entry.default)}`);
+    warn(`配置项 ${path} ${reason.text.source}，改用默认值 ${describeDefault(entry.default)}`);
     return cloneConfigValue(entry.default);
   }
-  if (entry.required) throw new UnrecoverableField(path, reason, false);
-  warn(`配置项 ${path} ${reason}，已忽略`);
+  if (entry.required) throw new UnrecoverableField(path, reason.text, false);
+  warn(`配置项 ${path} ${reason.text.source}，已忽略`);
   return undefined;
 }
 
-/** 错误可说明类型与约束，但不列出用户值、静态选项值或正则文本。 */
-function safeInvalidReason(reason: string): string {
-  if (reason.startsWith('不是可选值')) return '不是可选值';
-  if (reason.startsWith('不匹配模式')) return '不匹配模式';
-  return reason.replace(/得到 (?:NaN|-?Infinity)/g, '得到 number');
+/**
+ * 严格错误的原因：可说明类型与约束，但不列出静态选项值与正则文本，按 code 换成不带它们的那句。类型不符只写类型名
+ * （非有限数写成 NaN、Infinity，它们不会是密钥），本来就不带用户值
+ */
+function safeInvalidReason({ code, text }: Reason): TextRef {
+  if (code === 'not-option') return t('notOptionHidden');
+  if (code === 'pattern') return t('patternHidden');
+  return text;
 }
 
 function describeDefault(value: unknown): string {
@@ -911,7 +960,7 @@ function describeDefault(value: unknown): string {
   }
 }
 
-// 与 packages/core/src/infrastructure/config-values.ts 同一规则（本包零运行时依赖，不能 import core）。
+// 与 packages/core/src/infrastructure/config-values.ts 同一规则（本包不能 import core 的运行时）。
 // 防漂移：test/architecture/config-copy-parity.test.ts
 const UNSAFE_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -944,7 +993,7 @@ export function cloneConfigObject(obj: Record<string, unknown>): Record<string, 
 }
 
 // PluginMeta.configSchema 由本包经 declaration merging 挂上。
-// type-only import 仅作模块增强的解析锚点，编译后擦除——本包仍是零运行时依赖。
+// type-only import 仅作模块增强的解析锚点，编译后擦除——本包不依赖 core 的运行时。
 import type {} from '@aalis/core';
 
 // ============================================================

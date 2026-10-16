@@ -9,12 +9,13 @@ import {
 } from '../../packages/plugin-webui-server/src/auth.js';
 import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { createLocalizer } from '../../packages/plugin-webui-server/src/localize.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
 //
 // 认证挂到一个按登记先后分派的假 app 上（只认方法与完整路径），用最小 req/res mock 走登录/识别/注销流程、token 比较、
-// 来源判定与登录失败限速，不起 HTTP 服务器。
+// 来源判定与登录失败限速，不起 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
 // 固定 token 的长度校验在插件激活时做，那一组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
 
@@ -59,6 +60,7 @@ function makeRes(): MockRes & Record<string, unknown> {
     res.redirectTo = url;
     return res;
   };
+  res.vary = () => res;
   res.end = () => res;
   return res;
 }
@@ -97,15 +99,20 @@ function extractCookie(res: MockRes, name: string): string | undefined {
 
 const TOKEN = 'test-token-abc';
 
+/** i18n 缺席的出口：回应里的文字按原文渲染 */
+const LOCALIZER = createLocalizer({ present: false } as never);
+
 function makeAuth() {
-  return createAuthSystem(() => TOKEN);
+  return createAuthSystem(() => TOKEN, LOCALIZER);
 }
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
-/** 把认证挂上的中间件与路由按登记先后排成一列；路由只在方法与完整路径都对上时接手 */
+/** 把渲染回应的中间件与认证挂上的中间件、路由按登记先后排成一列；路由只在方法与完整路径都对上时接手 */
 function stackOf(auth: ReturnType<typeof makeAuth>) {
-  const stack: Array<{ method?: string; path?: string; handle: Handler }> = [];
+  const stack: Array<{ method?: string; path?: string; handle: Handler }> = [
+    { handle: LOCALIZER.middleware as Handler },
+  ];
   const routeOf =
     (method: string) =>
     (path: string, ...handlers: Handler[]) =>

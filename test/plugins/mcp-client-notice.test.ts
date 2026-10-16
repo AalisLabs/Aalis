@@ -3,6 +3,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { pageHost } from '../fixtures/page-host.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
@@ -69,7 +70,7 @@ describe('plugin-mcp-client 连不上时发提示', () => {
         open: 'config',
       },
     ]);
-    expect(errors).toEqual([`连接 MCP server "flaky" 失败: ${notice.detail?.slice(FIX.length)}`]);
+    expect(errors).toEqual([`连接 MCP server "flaky" 失败: ${toSource(notice.detail)?.slice(FIX.length)}`]);
     const names = () => registry.getAll().map(tool => tool.name);
     expect(names()).toContain('mcp_steady_echo');
     expect(names()).not.toContain('mcp_flaky_echo');

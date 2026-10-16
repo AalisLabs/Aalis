@@ -12,6 +12,7 @@ import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type App, provide, services } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -385,7 +386,7 @@ describe('users.json 读不出来时的提示', () => {
   ])('%s：提示末尾带出原因', async (_label, opts, reason) => {
     const { pages } = await boot(opts);
     const [notice] = pages.notices();
-    expect(notice?.detail?.split('原因：')[1]).toMatch(reason);
+    expect(toSource(notice?.detail)?.split('原因：')[1]).toMatch(reason);
   });
 
   it('users.json 正常或不存在：不发提示', async () => {

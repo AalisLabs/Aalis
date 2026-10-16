@@ -7,6 +7,7 @@ import type {
   SessionNotification,
   SessionNotificationParams,
 } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import { version } from '../../package.json';
 import { type ConnectionState, openSocket } from './socket';
 
@@ -65,8 +66,11 @@ export interface SessionClient {
   onState(listener: (state: ConnectionState) => void): () => void;
   /** 每次握手完成（包括重连后的）时调用 */
   onReady(listener: (init: InitializeResult) => void): () => void;
-  /** 发一个请求；还没握手时等握手完再发 */
-  request<M extends SessionMethod>(method: M, params: SessionMethodParams<M>): Promise<SessionMethodResult<M>>;
+  /** 发一个请求；还没握手时等握手完再发。回来的文字已按读者语言渲染成字符串 */
+  request<M extends SessionMethod>(
+    method: M,
+    params: SessionMethodParams<M>,
+  ): Promise<Localized<SessionMethodResult<M>>>;
   on<N extends ConnectionNotification>(name: N, handler: (params: SessionNotificationParams<N>) => void): () => void;
   /** 订阅一个会话，返回退订。同一会话再来一个订阅者时重新订阅，各订阅者都收到新的快照 */
   subscribe(sessionId: string, listener: SubscriptionListener): () => void;
@@ -145,9 +149,9 @@ export function createSessionClient(): SessionClient {
   function request<M extends SessionMethod>(
     method: M,
     params: SessionMethodParams<M>,
-  ): Promise<SessionMethodResult<M>> {
+  ): Promise<Localized<SessionMethodResult<M>>> {
     const sent = ready ? call(method, params) : handshake.promise.then(() => call(method, params));
-    return sent as Promise<SessionMethodResult<M>>;
+    return sent as Promise<Localized<SessionMethodResult<M>>>;
   }
 
   /** 有处理函数、这条连接还没 watch 的增量，发它的 watch */

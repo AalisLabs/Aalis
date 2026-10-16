@@ -1,4 +1,5 @@
 import type { ActionInputFields, PageRow } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { type FormEvent, useState } from 'react';
 import { isRecord, RestError } from '../rest';
 import { FieldInput, FieldRow, UNREADABLE } from '../settings/FieldInput';
@@ -25,9 +26,9 @@ interface ActionFormProps {
   id: string;
   /** destructive 动作写在表单开头的警示 */
   warning?: string;
-  fields: ActionInputFields;
+  fields: Localized<ActionInputFields>;
   /** 行动作：这一行的值，给同名的输入项预填 */
-  row?: PageRow;
+  row?: Localized<PageRow>;
   /** 送出去，成功时由它关上表单；失败时抛错（输入没过校验时是带逐项问题的 RestError） */
   submit(input: Record<string, unknown>): Promise<void>;
 }

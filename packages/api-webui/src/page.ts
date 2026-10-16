@@ -5,10 +5,13 @@
 // 按钮组五样，另有标签页这一种排法。插件前端是插件包里的一份静态网页，在宿主画的隔离框架里运行，只放在插件页面与
 // 会话面板，经消息通道调这一页声明过的数据源与动作（frame.ts）。
 // 界面经 REST 取页面的声明（函数去掉，见 PageView）、取数、调动作；路由与返回形状见 rest.ts。
+// 给人看的文字（标题、标签、说明、单元格、结果与提示）可以交 schema-i18n 的文字对象，webui-server 按读者语言渲染后再发；
+// 界面拿到的是渲染之后的形状 Localized<…>，文字一律是字符串。
 
 import type { UserIdentity } from '@aalis/api-authority';
 import type { SessionKind } from '@aalis/api-session-manager';
 import type { ConfigOf, SchemaField } from '@aalis/schema-config';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { FrameHostCapability } from './frame.js';
 
 /** 一屏（页面最外层、一个标签、一个详情）最多几个组件；webui-server 登记时校验，超了不登记 */
@@ -28,6 +31,11 @@ export type PagePlacement = 'plugin' | 'settings' | 'session';
 export interface PageContext {
   /** 调用者：认证出的身份。只有 owner 能调用页面 */
   caller: UserIdentity;
+  /**
+   * 读者的语言链，宿主按请求解析，i18n 缺席时为空。给人看的文字交文字对象即可，不必看它；按语言生成文字以外的东西
+   * （出图、调外部接口）时用
+   */
+  languages: readonly string[];
 }
 
 /** 会话面板的调用上下文：会话 id 由宿主单独给出，不从参数里取；调用前宿主核过会话存在，给的是规范化后的 id */
@@ -58,20 +66,20 @@ export type CellKind = 'text' | 'time' | 'countdown' | 'link' | 'status' | 'code
 
 /** 状态单元格的值：一句话，正常时不写 state、不上色 */
 export interface StatusValue {
-  text: string;
+  text: string | TextRef;
   /** attention 需要处理，error 出错，running 进行中，inactive 停用或弱化 */
   state?: 'attention' | 'error' | 'running' | 'inactive';
 }
 
 /** 数据源给出的单元格值 */
-export type CellValue = string | number | boolean | null | undefined | StatusValue;
+export type CellValue = string | number | boolean | null | undefined | TextRef | StatusValue;
 
 /** 数据源返回的一行：rowKey 指名的字段是这一行的非空字符串标识，visibleWhen 指名的字段是布尔值 */
 export type TableRow = Record<string, CellValue>;
 
 export interface TableColumn {
   key: string;
-  label: string;
+  label: string | TextRef;
   kind?: CellKind;
   /** 窄时（手机、会话面板）只显示标了的列；都没标时显示第一列，带详情的表格另留选中用的那一列 */
   primary?: boolean;
@@ -85,7 +93,7 @@ export interface RowAction<A extends string = string> {
 
 /** 键值组件的一项；数字用等宽数字 */
 export interface InfoItem {
-  label: string;
+  label: string | TextRef;
   value: CellValue;
   /** 显示种类，同表格的单元格，不收 image、file */
   kind?: Exclude<CellKind, 'image' | 'file'>;
@@ -97,14 +105,14 @@ export type ChartTone = 1 | 2 | 3 | 4 | 5 | 6;
 /** 关系图里的一类节点或边：取色与图例 */
 export interface GraphKind {
   kind: string;
-  label: string;
+  label: string | TextRef;
   tone: ChartTone;
 }
 
 /** 关系图的数据：节点 id 唯一，边的两端都是节点 id */
 export interface GraphData {
-  nodes: Array<{ id: string; label: string; kind?: string }>;
-  edges: Array<{ source: string; target: string; label?: string; kind?: string }>;
+  nodes: Array<{ id: string; label: string | TextRef; kind?: string }>;
+  edges: Array<{ source: string; target: string; label?: string | TextRef; kind?: string }>;
 }
 
 // ----- 组件 -----
@@ -121,8 +129,8 @@ export interface DetailDataArgs<C> extends DataArgs<C> {
 
 /** 组件共有的小标题与一句说明 */
 interface ComponentBase {
-  label?: string;
-  description?: string;
+  label?: string | TextRef;
+  description?: string | TextRef;
 }
 
 /** 表格与关系图可带详情：选中一行（一个节点）后显示的组件，宽时在右边、窄时进下一级。详情里的组件不再带详情 */
@@ -137,7 +145,7 @@ export type TableDefinition<A extends string, X, D> = ComponentBase &
     rowKey: string;
     columns: TableColumn[];
     /** 没有行时的一句话 */
-    empty?: string;
+    empty?: string | TextRef;
     rowActions?: RowAction<A>[];
     data(args: X): TableRow[] | Promise<TableRow[]>;
   };
@@ -147,7 +155,7 @@ export type GraphDefinition<X, D> = ComponentBase &
   WithDetail<D> & {
     type: 'graph';
     id: string;
-    empty?: string;
+    empty?: string | TextRef;
     nodeKinds?: GraphKind[];
     edgeKinds?: GraphKind[];
     /** 布局疏密：理想边长，单位像素；不写时宿主取默认 */
@@ -162,11 +170,14 @@ export interface InfoDefinition<X> extends ComponentBase {
   data(args: X): InfoItem[] | Promise<InfoItem[]>;
 }
 
-/** 只读文字（Markdown）：不渲染原始 HTML，图片只认 `/api/media` 地址，链接只许 http、https、mailto */
+/**
+ * 只读文字（Markdown）：不渲染原始 HTML，图片只认 `/api/media` 地址，链接只许 http、https、mailto。交文字对象时它的字符串
+ * 参数按 Markdown 转义，字典里写的 Markdown 原样
+ */
 export interface MarkdownDefinition<X> extends ComponentBase {
   type: 'markdown';
   id: string;
-  data(args: X): string | Promise<string>;
+  data(args: X): string | TextRef | Promise<string | TextRef>;
 }
 
 /**
@@ -205,7 +216,7 @@ export type PageComponentDefinition<A extends string, C> = ComponentDefinition<
 export interface PageTab<T> {
   /** 页面内唯一 */
   key: string;
-  title: string;
+  title: string | TextRef;
   content: T[];
 }
 
@@ -228,7 +239,7 @@ export type ActionInputFields = Record<string, SchemaField>;
  * 用 void 而非 undefined：没有结果的处理函数不必写 `return undefined`
  */
 // biome-ignore lint/suspicious/noConfusingVoidType: 见上——这里要的正是「可以不返回」
-export type ActionResult = string | void | Promise<string | void>;
+export type ActionResult = string | TextRef | void | Promise<string | TextRef | void>;
 
 /** definePage 推断输入时得到的是只读字面量，ConfigOf 要的是可写的字段表 */
 type Writable<T> = { -readonly [K in keyof T]: Writable<T[K]> };
@@ -251,10 +262,10 @@ type CheckedInput<I> = unknown extends I
 /** 动作共有的字段 */
 type ActionFields<I> = {
   /** 按钮上的字：两到四个字的动词 */
-  label: string;
+  label: string | TextRef;
   effect: ActionEffect;
   /** 只给 destructive：确认框（带输入的是表单）里的警示，非空；不写时宿主写「这个操作不能撤销。」 */
-  confirm?: string;
+  confirm?: string | TextRef;
   input?: I & CheckedInput<I>;
 };
 
@@ -283,7 +294,7 @@ export type FrameActionDefinition<I, C> = ActionFields<I> & {
 interface PageDefinitionBase {
   /** 本插件实例内唯一 */
   key: string;
-  title: string;
+  title: string | TextRef;
   /** lucide 图标名（kebab-case）；界面不认识的名字换成通用图标 */
   icon?: string;
   /** 同一位置里的先后，小的在前 */
@@ -373,9 +384,9 @@ export interface Notice {
   /** action 需要你处理，error 出错 */
   level: 'action' | 'error';
   /** 出了什么事；数量写进标题，例如「3 件作品待裁决」 */
-  title: string;
+  title: string | TextRef;
   /** 用户该做什么，具体到配置项、命令或页面 */
-  detail?: string;
+  detail?: string | TextRef;
   /** 跳转：去本插件的配置，或打开本插件位置为 plugin 或 settings 的页面（按页面的 key）；按钮上的字由宿主推出 */
   open?: 'config' | { page: string };
 }
@@ -386,6 +397,8 @@ export interface NoticeHandle {
 }
 
 // ----- 界面收到的形状 -----
+//
+// 这里写的是服务端交出的形状，文字可以是文字对象；发出前按读者语言渲染，界面拿到的是 Localized<…>。
 
 // biome-ignore lint/suspicious/noExplicitAny: 只用来认出函数字段
 type AnyFunction = (...args: any[]) => unknown;
@@ -404,9 +417,9 @@ export type ComponentView = Serialized<PageComponentDefinition<string, PageConte
 
 /** 界面拿到的动作：按钮上的字、效果、确认文案、输入字段，以及是不是行动作 */
 export interface ActionView {
-  label: string;
+  label: string | TextRef;
   effect: ActionEffect;
-  confirm?: string;
+  confirm?: string | TextRef;
   input?: ActionInputFields;
   row?: boolean;
 }
@@ -415,7 +428,7 @@ export interface ActionView {
 interface PageViewBase {
   instance: string;
   key: string;
-  title: string;
+  title: string | TextRef;
   icon?: string;
   placement: PagePlacement;
   order?: number;
@@ -458,7 +471,7 @@ export interface PageDataByType {
   table: PageRow[];
   graph: GraphData;
   info: InfoItem[];
-  markdown: string;
+  markdown: string | TextRef;
 }
 
 /** 一个页面的位置标识：插件实例与页面 key */

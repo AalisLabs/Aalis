@@ -1,8 +1,10 @@
 import type { Logger } from '@aalis/core';
+import { textOf, toSource } from '@aalis/schema-i18n';
 import { safeFetch } from '@aalis/util-network-guard';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
+import { t } from '../texts.js';
 
 /** 单张图最大体积（避免代理被滥用成大文件中转）。 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -53,7 +55,7 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
   route(expressApp, 'GET /api/proxy/image', gate(), async (req, res) => {
     const raw = req.query.url;
     if (typeof raw !== 'string' || !raw) {
-      res.status(400).json({ error: '缺少 url 参数' });
+      res.status(400).json({ error: t('urlRequired') });
       return;
     }
 
@@ -71,19 +73,19 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
         },
       });
       if (!upstream.ok) {
-        res.status(upstream.status).json({ error: `上游返回 ${upstream.status}` });
+        res.status(upstream.status).json({ error: t('upstreamStatus', { status: upstream.status }) });
         return;
       }
       const ctype = upstream.headers.get('content-type') ?? 'application/octet-stream';
       if (!ctype.startsWith('image/')) {
-        res.status(415).json({ error: `非图片 Content-Type: ${ctype}` });
+        res.status(415).json({ error: t('notImage', { type: ctype }) });
         return;
       }
       const lenHeader = upstream.headers.get('content-length');
       if (lenHeader) {
         const len = Number(lenHeader);
         if (Number.isFinite(len) && len > MAX_IMAGE_BYTES) {
-          res.status(413).json({ error: `图片过大 (${len} > ${MAX_IMAGE_BYTES})` });
+          res.status(413).json({ error: t('imageTooLarge', { size: len, max: MAX_IMAGE_BYTES }) });
           return;
         }
       }
@@ -97,7 +99,7 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
       res.setHeader('content-security-policy', 'sandbox');
 
       if (!upstream.body) {
-        res.status(502).json({ error: '上游无响应体' });
+        res.status(502).json({ error: t('noUpstreamBody') });
         return;
       }
 
@@ -129,9 +131,9 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
       }
       res.end();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`图片代理失败 url=${raw} err=${msg}`);
-      if (!res.headersSent) res.status(502).json({ error: `代理失败: ${msg}` });
+      const reason = textOf(err);
+      logger.warn(`图片代理失败 url=${raw} err=${toSource(reason)}`);
+      if (!res.headersSent) res.status(502).json({ error: t('proxyFailed', { error: reason }) });
       else res.end();
     } finally {
       clearTimeout(timer);

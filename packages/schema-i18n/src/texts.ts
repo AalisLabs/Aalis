@@ -3,7 +3,7 @@ import { defineTexts } from './define.js';
 import en from './locales/en.js';
 import type { TextRef } from './text-ref.js';
 
-const SOURCE = { lines: '{items, lines}' } as const;
+const SOURCE = { lines: '{items, lines}', clauses: '{head}；{tail}' } as const;
 export type Source = typeof SOURCE;
 
 const t = defineTexts({ ns: '@aalis/schema-i18n', language: 'zh-CN', source: SOURCE, locales: { en } });
@@ -11,4 +11,15 @@ const t = defineTexts({ ns: '@aalis/schema-i18n', language: 'zh-CN', source: SOU
 /** 把若干段（字符串或文字对象）按行连成一个文字对象：多行报告、列表类回复用它，每段按读者语言各自渲染 */
 export function textLines(parts: readonly (string | TextRef)[]): TextRef {
   return t('lines', { items: parts });
+}
+
+/**
+ * 把若干分句（字符串或文字对象）连成一句：原文以「；」相连，英文以「; 」。并列的几条原因、几个问题用它。两两二分着嵌套，
+ * 层数随句数按对数增长；n 句约占 2n 个参数里的文字对象，每句另带文字对象参数时更多（见 resolveText 的渲染上限）
+ */
+export function textClauses(parts: readonly (string | TextRef)[]): TextRef {
+  if (parts.length < 2) return textLines(parts);
+  const half = Math.ceil(parts.length / 2);
+  const side = (slice: readonly (string | TextRef)[]) => (slice.length === 1 ? slice[0] : textClauses(slice));
+  return t('clauses', { head: side(parts.slice(0, half)), tail: side(parts.slice(half)) });
 }

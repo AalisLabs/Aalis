@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { CORE_CONFIG_SCHEMA } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
@@ -81,7 +82,7 @@ describe('GET /api/config', () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
       config: { name: 'Aalis', logLevel: 'info' },
-      schema: CORE_CONFIG_SCHEMA,
+      schema: toSource(CORE_CONFIG_SCHEMA),
       restartKeys: ['logLevel', 'slowThresholdMs'],
       home: '/home/zz/.aalis',
     });
@@ -99,7 +100,8 @@ describe('PUT /api/config 只收核心键', () => {
     const r = await put(body);
     expect(r.status).toBe(400);
     const foreign = Object.keys(body).filter(key => !Object.hasOwn(CORE_CONFIG_SCHEMA, key));
-    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel、slowThresholdMs），不收：${foreign.join('、')}` });
+    const list = (items: string[]) => new Intl.ListFormat('zh-CN').format(items);
+    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel和slowThresholdMs），不收：${list(foreign)}` });
     expect(store).toEqual(before);
     expect(calls).toEqual([]);
   });
@@ -282,7 +284,7 @@ describe('另一份 api-host-config 抛出的拒写与本包的同样认', () =>
       },
     };
     expect(await saveAfterApply(doc, res as never, 'reload')).toBe(false);
-    expect(out).toEqual({
+    expect(toSource(out)).toEqual({
       status: 409,
       body: {
         error: '已在运行态生效，但未写入配置文件（配置文件有尚未生效的外部修改）；修好该文件后会按文件内容重载',

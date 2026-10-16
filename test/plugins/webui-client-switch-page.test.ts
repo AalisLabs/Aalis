@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLIENT_SWITCH_SCRIPT,
+  CLIENT_SWITCH_TEXTS,
   renderClientSwitchPage,
 } from '../../packages/plugin-webui-server/src/client-switch-page.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 前端切换「逃生页」：webui-server 直出的恢复页，独立于任何可被切换的前端。
 // 页面与脚本分开给出（文档级 CSP 只许同源脚本）——这里锁定它的「契约」：复用既有接口、不自造切换逻辑、切换前校验 res.ok。
+// 文字取原文（按读者语言的见 webui-i18n.test.ts）。
 // 若将来重命名 /api/services 或 .../prefer 接口，本测试会提醒同步更新本页。
 // ════════════════════════════════════════════════════════════
 
-const html = renderClientSwitchPage();
+const html = renderClientSwitchPage(toSource(CLIENT_SWITCH_TEXTS), []);
 
 describe('renderClientSwitchPage', () => {
   it('是一份完整的 HTML 文档', () => {
@@ -38,10 +41,12 @@ describe('renderClientSwitchPage', () => {
   });
 
   it('401/403 时提示需要 owner 权限', () => {
-    expect(CLIENT_SWITCH_SCRIPT).toContain('owner');
+    expect(CLIENT_SWITCH_SCRIPT).toContain('T.ownerHint');
+    expect(html).toContain('需要 owner 权限');
   });
 
   it('无可用前端时给出明确提示而非空白', () => {
-    expect(CLIENT_SWITCH_SCRIPT).toContain('未发现任何前端');
+    expect(CLIENT_SWITCH_SCRIPT).toContain('T.noClients');
+    expect(html).toContain('未发现任何前端');
   });
 });

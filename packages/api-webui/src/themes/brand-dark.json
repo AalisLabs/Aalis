@@ -1,7 +1,6 @@
 {
   "format": "aalis-theme",
   "version": 1,
-  "name": "文档站原色深色",
   "kind": "dark",
   "colors": {
     "--color-bg": "#120f1e",

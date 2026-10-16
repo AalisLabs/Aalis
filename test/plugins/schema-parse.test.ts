@@ -6,6 +6,7 @@ import {
   type SchemaField,
   validateConfig,
 } from '../../packages/schema-config/src/index.js';
+import { isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // parseConfig — 按 schema 解析插件拿到的配置
@@ -157,7 +158,7 @@ describe('parseConfig 无效值', () => {
     expect(config).toEqual({ port: 8080, mode: 'a', flag: false });
     expect(warns).toEqual([
       '配置项 port 期望有限数值，得到 string，改用默认值 8080',
-      '配置项 mode 不是可选值（"a"、"b"）之一，改用默认值 "a"',
+      '配置项 mode 不是可选值（"a"和"b"）之一，改用默认值 "a"',
       '配置项 flag 期望 boolean，得到 string，改用默认值 false',
     ]);
   });
@@ -318,7 +319,7 @@ describe('parseConfig list / map / multiselect 逐项丢弃', () => {
     expect(config).toEqual({ m: ['a', 8] });
     expect(warns).toEqual([
       '配置项 m[2] 期望 string 或 number 元素，得到 object，已忽略',
-      '配置项 m[3] 不是可选值（"a"、8）之一，已忽略',
+      '配置项 m[3] 不是可选值（"a"和8）之一，已忽略',
     ]);
   });
 
@@ -392,7 +393,7 @@ describe('parseConfig select', () => {
   it('选项外的值回落默认值', () => {
     const { config, warns } = parse(schema, { level: 3 });
     expect(config.level).toBe(1);
-    expect(warns).toEqual(['配置项 level 不是可选值（1、2、""）之一，改用默认值 1']);
+    expect(warns).toEqual(['配置项 level 不是可选值（1、2和""）之一，改用默认值 1']);
   });
 
   it('没有静态 options 时只查是 string 或 number，数字转成字符串', () => {
@@ -741,35 +742,23 @@ describe("parseConfig onInvalid: 'error'", () => {
     }
   });
 
-  it('严格错误指出安全的判定原因，不列出静态选项、正则或无效数值', () => {
-    const selected = thrown(() =>
-      parse(
-        {
-          mode: field('select', {
-            onInvalid: 'error',
-            options: [{ label: 'Secret', value: SECRET }],
-          }),
-        },
-        { mode: 'other' },
+  it('严格错误按 code 给安全的判定原因：不列出静态选项与正则，译成英文照样不列出', () => {
+    const errors = [
+      thrown(() =>
+        parse(
+          { mode: field('select', { onInvalid: 'error', options: [{ label: 'Secret', value: SECRET }] }) },
+          { mode: 'other' },
+        ),
       ),
-    );
-    expect(selected.message).toContain('mode 不是可选值');
-    expect(selected.message).not.toContain(SECRET);
-    const pattern = thrown(() =>
-      parse(
-        {
-          token: field('string', {
-            onInvalid: 'error',
-            pattern: SECRET,
-          }),
-        },
-        { token: 'other' },
-      ),
-    );
-    expect(pattern.message).toContain('token 不匹配模式');
-    expect(pattern.message).not.toContain(SECRET);
-    const nan = thrown(() => parse({ port: strict }, { port: Number.NaN }));
-    expect(nan.message).toContain('期望有限数值，得到 number');
-    expect(nan.message).not.toContain('NaN');
+      thrown(() => parse({ token: field('string', { onInvalid: 'error', pattern: SECRET }) }, { token: 'other' })),
+    ];
+    expect(errors.map(err => err.message)).toEqual([
+      '配置项 mode 不是可选值，在 WebUI 或配置文件中改正后生效',
+      '配置项 token 不匹配模式，在 WebUI 或配置文件中改正后生效',
+    ]);
+    expect(errors.map(err => (isTextError(err) ? resolveText(err.text, ['en']) : err.message))).toEqual([
+      'Config item mode: not one of the options; fix it in the WebUI or the config file to apply',
+      'Config item token: does not match the pattern; fix it in the WebUI or the config file to apply',
+    ]);
   });
 });

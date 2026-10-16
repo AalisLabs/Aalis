@@ -9,20 +9,24 @@
 //
 // 只收普通数据：插件状态快照与当前有提供者的服务名（core 的 `services.names()`）。required 与 optional 按快照里 `uses`
 // 每项的 kind 分。判缺看服务名，不看谁声明提供：宿主在根上提供的服务不在任何插件的 provides 里；声明提供它的插件
-// 只用来往下追根。
+// 只用来往下追根。说法是本包字典的文字对象，出口按读者语言渲染。
 // ============================================================
 
 import type { PluginStatusEntry } from '@aalis/core';
+import { type TextRef, textClauses } from '@aalis/schema-i18n';
+import { failureText } from './failure.js';
+import { t } from './texts.js';
 
 /** 判据读的插件状态：core 插件状态快照里的这几项 */
 export type PluginSnapshot = Pick<
   PluginStatusEntry,
-  'instanceId' | 'state' | 'provides' | 'uses' | 'error' | 'lingering'
+  'instanceId' | 'state' | 'provides' | 'uses' | 'error' | 'failure' | 'lingering'
 >;
 
 /**
  * 一条链的根：
- * - `error`：根插件激活失败，`error` 是它的失败说明；
+ * - `error`：根插件激活失败，`error` 是它的失败说明（{@link failureText}：挂了文字对象的取它，core 自己的失败按 code，其余是
+ *   core 的摘要；失败的原值不在这里）；
  * - `disabled`：根插件已停用；
  * - `starting`：根插件在启动（激活中，含转入后台的慢激活；或它要的都在了、马上激活）。只是在等，不算缺；
  * - `lingering`：根插件要的都在了，在等自己的旧实例停下（旧实例的清理超过宽限仍未落定），停下后就激活。也只是在等；
@@ -31,7 +35,7 @@ export type PluginSnapshot = Pick<
  * - `cycle`：几个插件互相等待成环，`instances` 是环上的插件，按等待的先后。
  */
 export type UnmetRoot =
-  | { kind: 'error'; instance: string; error?: string }
+  | { kind: 'error'; instance: string; error?: string | TextRef }
   | { kind: 'disabled'; instance: string }
   | { kind: 'starting'; instance: string }
   | { kind: 'lingering'; instance: string }
@@ -59,8 +63,10 @@ export interface UnmetDependencies {
 function rootOf(provider: PluginSnapshot, service: string): UnmetRoot | undefined {
   const instance = provider.instanceId;
   switch (provider.state) {
-    case 'error':
-      return { kind: 'error', instance, ...(provider.error !== undefined && { error: provider.error }) };
+    case 'error': {
+      const error = failureText(provider);
+      return { kind: 'error', instance, ...(error !== undefined && { error }) };
+    }
     case 'disabled':
       return { kind: 'disabled', instance };
     case 'activating':
@@ -134,30 +140,34 @@ export function unmetDependencies(
 }
 
 /** 一条链写成一句：缺的写链上的插件与根的情形，在等的写等待谁 */
-function traceText({ chain, root }: Trace): string {
+function traceText({ chain, root }: Trace): TextRef {
   const path = chain.join(' → ');
   switch (root.kind) {
     case 'error':
-      return `${path} 失败：${root.error ?? '原因见日志'}`;
+      return t('failed', { path, reason: root.error ?? t('reasonInLog') });
     case 'disabled':
-      return `${path} 已停用`;
+      return t('disabled', { path });
     case 'starting':
-      return `等待 ${root.instance} 启动`;
+      return t('starting', { instance: root.instance });
     case 'lingering':
-      return `等待 ${root.instance} 的旧实例停下`;
+      return t('lingering', { instance: root.instance });
     case 'withdrawn':
-      return `${path} 在运行但没有提供 ${root.service}`;
+      return t('withdrawn', { path, service: root.service });
     case 'unprovided':
-      return path ? `${path} → 没有已装的插件提供 ${root.service}` : '没有已装的插件提供';
+      return path ? t('unprovidedVia', { path, service: root.service }) : t('unprovided');
     case 'cycle':
-      return `${path ? `${path} → ` : ''}互相等待成环：${root.instances.join('、')}`;
+      return path ? t('cycleVia', { path, instances: root.instances }) : t('cycle', { instances: root.instances });
   }
 }
 
-/** 一个插件没满足的写成一句（启动告警、诊断与回执用）：缺的逐条写服务与链，在等的写等待谁，同一句只写一次 */
-export function describeUnmet({ lacking, waiting }: UnmetDependencies): string {
-  return [
-    ...lacking.map(unmet => `缺少服务 ${unmet.service}（${traceText(unmet)}）`),
-    ...new Set(waiting.map(traceText)),
-  ].join('；');
+/**
+ * 一个插件没满足的写成一句（启动告警、诊断与回执用）：缺的逐条写服务与链，在等的写等待谁，同一句只写一次，几句以分号相连。
+ * 没有缺也没有在等时是空文字
+ */
+export function describeUnmet({ lacking, waiting }: UnmetDependencies): TextRef {
+  const waits = new Map(waiting.map(traceText).map(text => [text.source, text]));
+  return textClauses([
+    ...lacking.map(unmet => t('lacking', { service: unmet.service, trace: traceText(unmet) })),
+    ...waits.values(),
+  ]);
 }

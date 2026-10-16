@@ -1,4 +1,5 @@
 import type { CellKind, CellValue, FileCell, StatusValue } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Picture } from '../components/Picture';
@@ -9,7 +10,7 @@ import { isRecord } from '../rest';
 // 单元格按显示种类显示，键值组件的值同样走这里。插件给的文字一律当纯文本，数字按千位分组，表格里同一列的小数位对齐；
 // 链接只认 http、https，新标签打开；图片只认宿主换好的 /api/media 地址，文件只认宿主签发的句柄，别的按文字或名字显示
 
-const isStatus = (value: unknown): value is StatusValue => isRecord(value) && typeof value.text === 'string';
+const isStatus = (value: unknown): value is Localized<StatusValue> => isRecord(value) && typeof value.text === 'string';
 const isFile = (value: unknown): value is FileCell => isRecord(value) && typeof value.name === 'string';
 
 /** 时间值：毫秒时间戳或 ISO 字符串；认不出时为 undefined */
@@ -19,7 +20,7 @@ function timeOf(value: unknown): number | undefined {
 }
 
 /** 单元格写成一句：搜索与详情的标题用它 */
-export function cellText(value: CellValue | FileCell): string {
+export function cellText(value: Localized<CellValue> | FileCell): string {
   if (value === undefined || value === null) return '';
   if (isStatus(value)) return value.text;
   if (isFile(value)) return value.name;
@@ -27,7 +28,7 @@ export function cellText(value: CellValue | FileCell): string {
 }
 
 /** 排序用的值：时间按时刻，数字按大小，其余按文字；图片与文件不排序 */
-export function sortValue(kind: CellKind | undefined, value: CellValue | FileCell): string | number {
+export function sortValue(kind: CellKind | undefined, value: Localized<CellValue> | FileCell): string | number {
   if (kind === 'time' || kind === 'countdown') return timeOf(value) ?? 0;
   if (typeof value === 'number') return value;
   return cellText(value);
@@ -78,7 +79,7 @@ export function Cell({
   digits,
 }: {
   kind?: CellKind;
-  value: CellValue | FileCell;
+  value: Localized<CellValue> | FileCell;
   label: string;
   digits?: number;
 }) {

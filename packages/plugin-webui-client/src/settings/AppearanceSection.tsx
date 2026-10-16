@@ -1,4 +1,5 @@
 import type { LayoutOperation, PageRef, PanelTabRef, ThemeKind } from '@aalis/api-webui';
+import { resolveSource } from '@aalis/schema-i18n';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { type ReactNode, useId, useRef, useState } from 'react';
 import { downloadTheme, type ImportResult, type ThemeEntry, useAppearance } from '../appearance';
@@ -174,7 +175,9 @@ function ThemeFiles() {
               <p>这几处对比度不够，仍可使用：</p>
               <ul>
                 {result.issues.map(issue => (
-                  <li key={issue.pair}>{`${issue.pair} ${issue.ratio}（要 ${issue.minimum}）`}</li>
+                  <li
+                    key={issue.pair.source}
+                  >{`${resolveSource(issue.pair)} ${issue.ratio}（要 ${issue.minimum}）`}</li>
                 ))}
               </ul>
             </>

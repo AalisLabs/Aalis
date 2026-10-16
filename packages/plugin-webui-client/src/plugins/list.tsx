@@ -1,6 +1,7 @@
 import type { UnmetService } from '@aalis/api-doctor';
 import type { PluginBlockers } from '@aalis/api-webui';
 import type { ConfigSchema } from '@aalis/schema-config';
+import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnection } from '../connection';
 import { getJson, isRecord } from '../rest';
@@ -20,7 +21,7 @@ const STATES: ReadonlySet<string> = new Set<PluginState>([
 ]);
 
 /** GET /api/plugins 的一项（一个插件实例）；没起来的原因（缺、在等、待配置）照契约 */
-export interface PluginRow extends PluginBlockers {
+export interface PluginRow extends Localized<PluginBlockers> {
   /** 插件包名：同一插件的几个实例按它合在一起 */
   name: string;
   instanceId: string;
@@ -49,7 +50,7 @@ export interface PluginRow extends PluginBlockers {
   configSection: boolean;
   /** 配置文档里这一段：密钥字段上是引用 */
   config: Record<string, unknown>;
-  configSchema?: ConfigSchema;
+  configSchema?: Localized<ConfigSchema>;
   defaultConfig: Record<string, unknown>;
 }
 
@@ -84,7 +85,7 @@ function rootOk(root: Record<string, unknown>): boolean {
  * 缺与在等的各条，插件列表与「需要处理」的插件项共用：形状不对时没有（插件列表整张不认，「需要处理」只丢这一项），
  * 免得画出半截的链；没给时是空的
  */
-export function unmetOf(value: unknown): UnmetService[] | undefined {
+export function unmetOf(value: unknown): Localized<UnmetService>[] | undefined {
   if (value === undefined) return [];
   const ok =
     Array.isArray(value) &&
@@ -97,7 +98,7 @@ export function unmetOf(value: unknown): UnmetService[] | undefined {
         isRecord(item.root) &&
         rootOk(item.root),
     );
-  return ok ? (value as UnmetService[]) : undefined;
+  return ok ? (value as Localized<UnmetService>[]) : undefined;
 }
 
 function parseRow(row: unknown): PluginRow {
@@ -145,7 +146,7 @@ function parseRow(row: unknown): PluginRow {
     extends: extended && { events: strings(extended.events), hooks: strings(extended.hooks) },
     configSection: row.configSection === true,
     config: isRecord(row.config) ? row.config : {},
-    configSchema: isRecord(row.configSchema) ? (row.configSchema as ConfigSchema) : undefined,
+    configSchema: isRecord(row.configSchema) ? (row.configSchema as Localized<ConfigSchema>) : undefined,
     defaultConfig: isRecord(row.defaultConfig) ? row.defaultConfig : {},
   };
 }

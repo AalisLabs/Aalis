@@ -1,10 +1,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
+import type { LanguageInfo } from '@aalis/api-i18n';
 import type { ProcessService } from '@aalis/api-process';
 import { BUILTIN_THEMES, type BuiltinThemeId, DEFAULT_THEMES, type ErrorResponse } from '@aalis/api-webui';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import type express from 'express';
+import { escapeHtml, LANGUAGE_SWITCH_SCRIPT, languageSwitch, pageLanguageOf, textsBlock } from './html.js';
+import type { Localizer } from './localize.js';
 import { route } from './route.js';
+import { t } from './texts.js';
 
 const TOKEN_COOKIE = 'aalis_webui_token';
 
@@ -52,7 +57,7 @@ function navigatedFromOtherSite(req: Pick<IncomingMessage, 'headers'>): boolean 
   return site === 'cross-site' || site === 'same-site';
 }
 
-function parseCookieValue(header: string | undefined, name: string): string | undefined {
+export function parseCookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   for (const pair of header.split(';')) {
     const eq = pair.indexOf('=');
@@ -80,14 +85,15 @@ function buildClearCookie(name: string): string {
 /** 登录页的脚本：文档级 CSP 只许同源脚本，不内联，由这个地址给出（不需登录） */
 const LOGIN_SCRIPT_PATH = '/api/auth/login.js';
 
-/** 提交 POST /api/auth/login，成功后刷新到 / */
-const LOGIN_SCRIPT = `const f=document.getElementById('f'),t=document.getElementById('t'),b=document.getElementById('b'),e=document.getElementById('e');
+/** 提交 POST /api/auth/login，成功后刷新到 /；给人看的文字取自页面的 texts 块 */
+const LOGIN_SCRIPT = `${LANGUAGE_SWITCH_SCRIPT}const T=JSON.parse(document.getElementById('texts').textContent);
+const f=document.getElementById('f'),t=document.getElementById('t'),b=document.getElementById('b'),e=document.getElementById('e');
 f.addEventListener('submit',async ev=>{
   ev.preventDefault();e.textContent='';b.disabled=true;
   try{
     const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t.value.trim()})});
-    if(r.ok){location.replace('/');}else{const j=await r.json().catch(()=>({}));e.textContent=j.error||'token 不正确';b.disabled=false;t.select();}
-  }catch(err){e.textContent='网络错误';b.disabled=false;}
+    if(r.ok){location.replace('/');}else{const j=await r.json().catch(()=>({}));e.textContent=j.error||T.tokenWrong;b.disabled=false;t.select();}
+  }catch(err){e.textContent=T.networkError;b.disabled=false;}
 });
 `;
 
@@ -114,30 +120,39 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--color-focus);ou
 button{height:2.25rem;font:inherit;font-weight:500;color:var(--color-on-accent);background:var(--color-accent);border:0;border-radius:4px;cursor:pointer}
 button:hover{background:var(--color-accent-hover)}
 button:disabled{opacity:0.6;cursor:wait}
-.err{min-height:1.375rem;color:var(--color-danger-text)}`;
+.err{min-height:1.375rem;color:var(--color-danger-text)}
+#lang{position:fixed;top:1rem;right:1rem;height:2rem;padding:0 0.5rem;font:inherit;color:var(--color-text);background:var(--color-bg);border:1px solid var(--color-border-control);border-radius:4px}`;
 
-/** 登录页：只引用同源的登录脚本，不引入别的资源 */
-function loginPageHtml(reason?: string): string {
-  const note = reason ? `<p class="note">${escapeHtml(reason)}</p>` : '';
-  return `<!DOCTYPE html><html lang="zh-CN"><head>
-<meta charset="utf-8"><title>Aalis WebUI 登录</title>
+/** 登录页的文字；pageLanguage 是渲染时实际用的语言，写进 <html lang> */
+const LOGIN_TEXTS = {
+  lang: t('pageLanguage'),
+  title: t('loginTitle'),
+  hint: t('loginHint'),
+  placeholder: t('tokenPlaceholder'),
+  button: t('loginButton'),
+  language: t('languageSwitch'),
+  script: { tokenWrong: t('tokenWrong'), networkError: t('networkError') },
+};
+
+/** 登录页：只引用同源的登录脚本，不引入别的资源。text 是按读者渲染过的文字，note 是这次要说明的一句 */
+function loginPageHtml(text: Localized<typeof LOGIN_TEXTS> & { note?: string }, languages: readonly LanguageInfo[]) {
+  const note = text.note ? `<p class="note">${escapeHtml(text.note)}</p>` : '';
+  return `<!DOCTYPE html><html lang="${escapeHtml(text.lang)}"><head>
+<meta charset="utf-8"><title>${escapeHtml(text.title)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 ${LOGIN_STYLE}
 </style></head>
-<body><form id="f">
+<body>${languageSwitch(languages, text.lang, text.language)}<form id="f">
 <h1>Aalis WebUI</h1>
-<p>访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在家目录的 secrets.yaml 里（配置文件里是引用）。</p>
+<p>${escapeHtml(text.hint)}</p>
 ${note}
-<input id="t" type="password" autocomplete="off" placeholder="访问 token" autofocus required>
-<button type="submit" id="b">登录</button>
+<input id="t" type="password" autocomplete="off" placeholder="${escapeHtml(text.placeholder)}" autofocus required>
+<button type="submit" id="b">${escapeHtml(text.button)}</button>
 <div class="err" id="e"></div>
 </form>
+${textsBlock(text.script)}
 <script src="${LOGIN_SCRIPT_PATH}"></script></body></html>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 export interface AuthSystem {
@@ -165,8 +180,12 @@ export interface AuthSystem {
  *   地址锁住。带 cookie 的请求不计数：各种模式的 token 都够长（随机生成的 24 字节，固定的至少 32 个字符），
  *   按 cookie 逐个猜猜不中；对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住
  * - 身份恒为 `webui:console`（owner 级，单人模式语义）
+ * - 登录页与回应里的文字按读者语言（localizer）
  */
-export function createAuthSystem(getToken: () => string): AuthSystem {
+export function createAuthSystem(
+  getToken: () => string,
+  localizer: Pick<Localizer, 'render' | 'languages' | 'offered'>,
+): AuthSystem {
   const cookieMaxAge = 30 * 24 * 3600; // 30d；进程重启 token 轮换后无效
 
   // 登录失败按来源地址计数。本机回环也计数：经同机反向代理来的请求全是回环地址，豁免回环等于不限速；
@@ -197,10 +216,17 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
   }
 
   /** 给被限速的登录写好 429 与 Retry-After，返回给人看的说明 */
-  function rejectLocked(res: express.Response, waitMs: number): string {
+  function rejectLocked(res: express.Response, waitMs: number): TextRef {
     res.status(429);
     res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
-    return `登录失败次数过多，请 ${Math.ceil(waitMs / 60_000)} 分钟后再试。`;
+    return t('tooManyFailures', { minutes: Math.ceil(waitMs / 60_000) });
+  }
+
+  /** 按这次请求的读者给出登录页，note 是要说明的一句 */
+  function loginPage(req: express.Request, res: express.Response, note?: TextRef): string {
+    const text = localizer.render(req, res, { ...LOGIN_TEXTS, note });
+    const lang = pageLanguageOf(text.lang, localizer.languages(req));
+    return loginPageHtml({ ...text, lang }, localizer.offered());
   }
 
   function tokenAuthed(req: Pick<IncomingMessage, 'headers'>): boolean {
@@ -218,9 +244,7 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
     // 改状态的请求先看来源：别的网页借 owner 的浏览器发来的（带着 cookie）一律拒，登录与注销也一样
     expressApp.use((req, res, next) => {
       if (SAFE_METHODS.has(req.method) || originAllowed(req)) return next();
-      res
-        .status(403)
-        .json({ error: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）' } satisfies ErrorResponse);
+      res.status(403).json({ error: t('crossOrigin') } satisfies ErrorResponse);
     });
 
     // 登录页的脚本不需登录
@@ -237,7 +261,7 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
       const waitMs = lockedFor(address);
       if (waitMs > 0) {
         const note = rejectLocked(res, waitMs);
-        res.type('html').send(loginPageHtml(note));
+        res.type('html').send(loginPage(req, res, note));
         return;
       }
       const token = getToken();
@@ -251,7 +275,10 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
         return;
       }
       recordFailure(address);
-      res.status(401).type('html').send(loginPageHtml('URL 中的 token 不正确，请手动输入。'));
+      res
+        .status(401)
+        .type('html')
+        .send(loginPage(req, res, t('urlTokenWrong')));
     });
 
     // 登录：{ token }。跨源的已在上面拒掉，不计数
@@ -270,7 +297,7 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
         res.json({ ok: true, identity: { platform: 'webui', userId: 'console' } });
       } else {
         recordFailure(address);
-        res.status(401).json({ error: 'token 不正确' });
+        res.status(401).json({ error: t('tokenWrong') });
       }
     });
 
@@ -290,11 +317,11 @@ export function createAuthSystem(getToken: () => string): AuthSystem {
     expressApp.use((req, res, next) => {
       if (tokenAuthed(req)) return next();
       if (req.path.startsWith('/api/')) {
-        res.status(401).json({ error: 'unauthenticated' } satisfies ErrorResponse);
+        res.status(401).json({ error: t('unauthenticated') } satisfies ErrorResponse);
         return;
       }
       if (req.method === 'GET') {
-        res.status(401).type('html').send(loginPageHtml());
+        res.status(401).type('html').send(loginPage(req, res));
         return;
       }
       res.status(401).end();

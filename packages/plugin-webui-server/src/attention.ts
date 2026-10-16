@@ -10,7 +10,7 @@
 // ============================================================
 
 import type { Approval } from '@aalis/api-approval';
-import { unmetDependencies } from '@aalis/api-doctor';
+import { failureText, unmetDependencies } from '@aalis/api-doctor';
 import type { HostConfig } from '@aalis/api-host-config';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { AttentionItem, Notice, PluginBlockers, WebuiAdminEvent } from '@aalis/api-webui';
@@ -57,14 +57,14 @@ interface AttentionDeps {
 
 export function createAttention(deps: AttentionDeps) {
   const faults = (): AttentionItem[] =>
-    deps.plugins().flatMap(({ instanceId, state, error, lacking, waiting, unconfigured }) =>
+    deps.plugins().flatMap(({ instanceId, state, error, failure, lacking, waiting, unconfigured }) =>
       state === 'error' || (state === 'pending' && lacking.length > 0)
         ? [
             {
               kind: 'plugin' as const,
               instance: instanceId,
               state,
-              ...(error !== undefined && { error }),
+              ...(error !== undefined && { error: failureText({ failure, error }) }),
               lacking,
               waiting,
               unconfigured,

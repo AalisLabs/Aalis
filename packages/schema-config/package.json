@@ -22,6 +22,9 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
+  },
   "devDependencies": {
     "typescript": "^5.7.0",
     "@aalis/core": "workspace:*"

@@ -14,16 +14,17 @@ import { Cell, cellText, fractionDigits, sortValue } from './cells';
 import { Graph } from './Graph';
 import { type ActionTarget, useActions, usePageData, usePageScope } from './scope';
 import './pages.css';
+import type { Localized } from '@aalis/schema-i18n';
 
 // 页面内容：竖排的组件，或者标签页（选中的标签写进地址）。表格与关系图带详情时是主从：选中的一行写进地址
 // （detail 是组件 id，row 是 rowKey），宽时详情在右边，窄时详情代替列表、像进了下一级，后退回到列表。
 // 详情里的组件按选中行的 rowKey 取数，详情里的按钮组是作用于这一行的行动作
 
-type Of<T extends ComponentView['type']> = Extract<ComponentView, { type: T }>;
+type Of<T extends ComponentView['type']> = Extract<Localized<ComponentView>, { type: T }>;
 
 const NO_CONTENT = '还没有内容';
 
-export function PageContent({ page }: { page: DeclarativePageView }) {
+export function PageContent({ page }: { page: Localized<DeclarativePageView> }) {
   const [params, setParams] = useSearchParams();
   if (Array.isArray(page.content)) return <Screen components={page.content} />;
   const { tabs } = page.content;
@@ -41,7 +42,7 @@ export function PageContent({ page }: { page: DeclarativePageView }) {
 }
 
 /** 一屏：竖排的组件；详情里的一屏带着选中的那一行 */
-function Screen({ components, target }: { components: readonly ComponentView[]; target?: ActionTarget }) {
+function Screen({ components, target }: { components: readonly Localized<ComponentView>[]; target?: ActionTarget }) {
   return (
     <div className="page-screen">
       {components.map((component, index) => (
@@ -51,7 +52,7 @@ function Screen({ components, target }: { components: readonly ComponentView[]; 
   );
 }
 
-function Block({ component, target }: { component: ComponentView; target?: ActionTarget }) {
+function Block({ component, target }: { component: Localized<ComponentView>; target?: ActionTarget }) {
   let body: ReactNode;
   if (component.type === 'table') body = <TableBlock component={component} target={target} />;
   else if (component.type === 'graph') body = <GraphBlock component={component} target={target} />;
@@ -111,7 +112,7 @@ function MasterDetail({
   close,
 }: {
   list: ReactNode;
-  detail: readonly ComponentView[];
+  detail: readonly Localized<ComponentView>[];
   /** 详情的标题：选中的那一行或那个节点 */
   title: string;
   target?: ActionTarget;
@@ -153,7 +154,7 @@ function TableBlock({ component, target }: { component: Of<'table'>; target?: Ac
   if (error) return <Failed label={component.label} error={error} retry={retry} />;
   if (!rows) return null;
 
-  const keyOf = (row: PageRow) => String(row[component.rowKey]);
+  const keyOf = (row: Localized<PageRow>) => String(row[component.rowKey]);
   const detail = component.detail;
   const linkColumn = detail
     ? (component.columns.find(column => column.primary && TEXTUAL.has(column.kind)) ??
@@ -162,7 +163,7 @@ function TableBlock({ component, target }: { component: Of<'table'>; target?: Ac
     : undefined;
   // 窄时只留 primary 的列：都没标时留第一列，选中用的链接列总留着
   const marked = component.columns.some(column => column.primary);
-  const columns: TableColumn<PageRow>[] = component.columns.map((column, index) => {
+  const columns: TableColumn<Localized<PageRow>>[] = component.columns.map((column, index) => {
     const values = rows.map(row => row[column.key]);
     const numeric =
       (column.kind ?? 'text') === 'text' &&
@@ -172,7 +173,7 @@ function TableBlock({ component, target }: { component: Of<'table'>; target?: Ac
     const digits = numeric
       ? values.reduce<number>((most, value) => Math.max(most, typeof value === 'number' ? fractionDigits(value) : 0), 0)
       : undefined;
-    const cell = (row: PageRow) => (
+    const cell = (row: Localized<PageRow>) => (
       <Cell kind={column.kind} value={row[column.key]} label={column.label} digits={digits} />
     );
     return {
@@ -340,7 +341,7 @@ function ActionsBlock({ component, target }: { component: Of<'actions'>; target?
   return (
     <div className="page-actions">
       {component.actions.map(name => {
-        const action: ActionView = actions[name];
+        const action: Localized<ActionView> = actions[name];
         const destructive = action.effect === 'destructive';
         return (
           <Button

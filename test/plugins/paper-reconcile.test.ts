@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { LEDGER_URI } from '../fixtures/paper.js';
 import {
   advance,
@@ -232,7 +233,9 @@ describe('核对时列表连续失败', () => {
     papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, idleArchiveMinutes: 24 * 60 }],
   };
   const listWarning = async (hub: DriverHub) =>
-    (await hub.doctor()).message.split('；').find(part => part.includes('连续'));
+    toSource((await hub.doctor()).message)
+      .split('；')
+      .find(part => part.includes('连续'));
 
   /** 推过一次核对并等它跑完（列账号下的代理是每次核对中最后一次列表） */
   async function pass(a: ScriptedRemote) {

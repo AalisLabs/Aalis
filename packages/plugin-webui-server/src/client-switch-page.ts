@@ -8,27 +8,37 @@
 //   · 列表：GET  /api/services                       （取 webui-client 服务的 providers + preferred）
 //   · 切换：POST /api/services/webui-client/prefer    （owner 闸，body {contextId}）
 // 全局 auth 中间件已要求登录方可到达本路由（未认证 GET 直接回登录页），故本页无需自加 gate；
-// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 只 res.type('html').send(它)。
+// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 按读者语言渲染文字后交给它。
+// 文字按读者语言：页面上的在服务端写进 HTML，脚本要的放进 texts 块，带参数的留着 {名} 占位，由脚本填（见 html.ts）。
+
+import type { LanguageInfo } from '@aalis/api-i18n';
+import type { Localized } from '@aalis/schema-i18n';
+import { escapeHtml, LANGUAGE_SWITCH_SCRIPT, languageSwitch, textsBlock } from './html.js';
+import { t } from './texts.js';
 
 /** 前端切换恢复页的脚本：文档级 CSP 只许同源脚本，由 `/__clients.js` 给出 */
-export const CLIENT_SWITCH_SCRIPT = `(function () {
+export const CLIENT_SWITCH_SCRIPT = `${LANGUAGE_SWITCH_SCRIPT}(function () {
   var SVC = 'webui-client';
   var PREFER = '/api/services/' + SVC + '/prefer';
+  var T = JSON.parse(document.getElementById('texts').textContent);
   var sel = document.getElementById('client');
   var btn = document.getElementById('go');
   var msg = document.getElementById('msg');
+  function fill(text, values) {
+    return text.replace(/\\{(\\w+)\\}/g, function (m, k) { return k in values ? String(values[k]) : m; });
+  }
   function setMsg(t, err) { msg.textContent = t; msg.className = err ? 'err' : 'ok'; }
   function load() {
     fetch('/api/services', { headers: { Accept: 'application/json' } })
       .then(function (r) {
-        if (!r.ok) throw new Error('读取服务列表失败（HTTP ' + r.status + '）');
+        if (!r.ok) throw new Error(fill(T.listFailed, { status: r.status }));
         return r.json();
       })
       .then(function (data) {
         var svc = data && data.services && data.services[SVC];
         var providers = (svc && svc.providers) || [];
         if (!providers.length) {
-          setMsg('未发现任何前端（webui-client provider）。请先安装一个 aalis.client 包。', true);
+          setMsg(T.noClients, true);
           btn.disabled = true;
           sel.innerHTML = '';
           return;
@@ -37,8 +47,9 @@ export const CLIENT_SWITCH_SCRIPT = `(function () {
         sel.innerHTML = '';
         providers.forEach(function (p) {
           var o = document.createElement('option');
+          var name = p.displayName || p.label || p.contextId;
           o.value = p.contextId;
-          o.textContent = (p.displayName || p.label || p.contextId) + (p.contextId === active ? '（当前）' : '');
+          o.textContent = p.contextId === active ? fill(T.current, { name: name }) : name;
           if (p.contextId === active) o.selected = true;
           sel.appendChild(o);
         });
@@ -49,35 +60,61 @@ export const CLIENT_SWITCH_SCRIPT = `(function () {
     var contextId = sel.value;
     if (!contextId) return;
     btn.disabled = true;
-    setMsg('切换中…', false);
+    setMsg(T.switching, false);
     fetch(PREFER, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contextId: contextId })
     })
       .then(function (r) {
-        if (r.ok) { setMsg('已切换，正在跳转…', false); location.href = '/'; return; }
+        if (r.ok) { setMsg(T.switched, false); location.href = '/'; return; }
         return r.json().catch(function () { return {}; }).then(function (j) {
           var detail = (j && j.error) || ('HTTP ' + r.status);
-          var hint = (r.status === 401 || r.status === 403) ? '（需要 owner 权限：请用一键登录链接打开 WebUI 后再试）' : '';
-          setMsg('切换失败：' + detail + hint, true);
+          var hint = (r.status === 401 || r.status === 403) ? T.ownerHint : '';
+          setMsg(fill(T.failed, { detail: detail, hint: hint }), true);
           btn.disabled = false;
         });
       })
-      .catch(function (e) { setMsg('切换请求出错：' + String((e && e.message) || e), true); btn.disabled = false; });
+      .catch(function (e) { setMsg(fill(T.error, { error: String((e && e.message) || e) }), true); btn.disabled = false; });
   });
   load();
 })();
 `;
 
-/** 渲染前端切换恢复页的完整 HTML 文档（无运行时入参，数据由页面自身 fetch）。 */
-export function renderClientSwitchPage(): string {
+/** 恢复页的文字；带参数的以 {名} 占位交给脚本填。pageLanguage 是渲染时实际用的语言，写进 <html lang> */
+export const CLIENT_SWITCH_TEXTS = {
+  lang: t('pageLanguage'),
+  title: t('switchTitle'),
+  heading: t('switchHeading'),
+  intro: t('switchIntro'),
+  label: t('switchLabel'),
+  loading: t('switchLoading'),
+  button: t('switchButton'),
+  back: t('switchBack'),
+  language: t('languageSwitch'),
+  script: {
+    listFailed: t('switchListFailed', { status: '{status}' }),
+    noClients: t('switchNoClients'),
+    current: t('switchCurrent', { name: '{name}' }),
+    switching: t('switching'),
+    switched: t('switched'),
+    ownerHint: t('switchOwnerHint'),
+    failed: t('switchFailed', { detail: '{detail}', hint: '{hint}' }),
+    error: t('switchError', { error: '{error}' }),
+  },
+};
+
+/** 渲染前端切换恢复页的完整 HTML 文档：text 是按读者渲染过的文字，数据由页面自身 fetch */
+export function renderClientSwitchPage(
+  text: Localized<typeof CLIENT_SWITCH_TEXTS>,
+  languages: readonly LanguageInfo[],
+): string {
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${escapeHtml(text.lang)}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>切换前端 · Aalis</title>
+<title>${escapeHtml(text.title)}</title>
 <style>
   :root { color-scheme: light dark; }
   body { font: 15px/1.6 system-ui, -apple-system, sans-serif; max-width: 32rem; margin: 8vh auto; padding: 0 1.2rem; }
@@ -86,6 +123,7 @@ export function renderClientSwitchPage(): string {
   label { display: block; font-weight: 600; margin-bottom: .4rem; }
   select, button { font: inherit; padding: .55rem .7rem; border-radius: .5rem; }
   select { width: 100%; box-sizing: border-box; }
+  #lang { position: fixed; top: 1rem; right: 1rem; width: auto; padding: .25rem .5rem; }
   button { margin-top: 1rem; cursor: pointer; border: 1px solid currentColor; background: transparent; }
   button:disabled { opacity: .5; cursor: default; }
   #msg { margin-top: 1rem; min-height: 1.4em; }
@@ -95,13 +133,15 @@ export function renderClientSwitchPage(): string {
 </style>
 </head>
 <body>
-  <h1>切换前端</h1>
-  <p class="hint">这是 Aalis 的前端恢复入口，由 webui-server 直接提供、独立于当前前端——即使当前前端没有切换界面，你也能在这里切回去。</p>
-  <label for="client">可用前端（webui-client）</label>
-  <select id="client"><option>加载中…</option></select>
-  <button id="go" type="button">切换并刷新</button>
+  ${languageSwitch(languages, text.lang, text.language)}
+  <h1>${escapeHtml(text.heading)}</h1>
+  <p class="hint">${escapeHtml(text.intro)}</p>
+  <label for="client">${escapeHtml(text.label)}</label>
+  <select id="client"><option>${escapeHtml(text.loading)}</option></select>
+  <button id="go" type="button">${escapeHtml(text.button)}</button>
   <div id="msg"></div>
-  <p class="hint">切回原来的前端：在上面选中它，再点「切换并刷新」。</p>
+  <p class="hint">${escapeHtml(text.back)}</p>
+${textsBlock(text.script)}
 <script src="/__clients.js"></script>
 </body>
 </html>`;

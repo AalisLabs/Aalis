@@ -81,6 +81,17 @@ describe('页面登记的质量门槛', () => {
     ).toBe(true);
   });
 
+  it('给人看的文字收文字对象，标识只收字符串', () => {
+    const text = { i18n: '@zz/page', key: 'title', source: '标题' };
+    expect(
+      problems({ title: text, content: [table('t', { label: text, columns: [{ key: 'id', label: text }] })] }),
+    ).toEqual([]);
+    expect(problems({ key: text, content: [md(text as never)] })).toEqual([
+      'key：要是非空字符串',
+      'content[0].id：要是非空字符串',
+    ]);
+  });
+
   it('标签页里再套标签页被拒', () => {
     expect(problems({ content: { tabs: [{ key: 'a', title: 'A', content: { tabs: [] } }] } })).toEqual([
       'content.tabs[0].content：要是非空的组件数组',
@@ -189,7 +200,7 @@ describe('页面登记的质量门槛', () => {
         content: [{ type: 'actions', actions: ['go'] }],
       }),
       '空的确认文案会把宿主默认的警示也去掉',
-    ).toEqual(['actions.go.confirm：要是非空字符串']);
+    ).toEqual(['actions.go.confirm：要是非空字符串或文字对象']);
     expect(
       problems({
         content: [

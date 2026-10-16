@@ -7,6 +7,7 @@ import {
   resolveText,
   TextError,
   type TextRef,
+  textClauses,
   textLines,
   textOf,
   toSource,
@@ -75,6 +76,17 @@ describe('文字对象', () => {
     expect(lines.i18n).toBe('@aalis/schema-i18n');
     expect(lines.source).toBe('第一行\n你好\n已保存 1 项');
     expect(resolveText(lines, ['en'])).toBe('第一行\nHello\nSaved 1 item');
+  });
+
+  it('textClauses 把若干分句连成一句：原文以「；」相连，英文以「; 」；几十句也不碰嵌套层数的上限', () => {
+    const clauses = textClauses(['甲', t('hello'), t('saved', { count: 1 })]);
+    expect(clauses.i18n).toBe('@aalis/schema-i18n');
+    expect(clauses.source).toBe('甲；你好；已保存 1 项');
+    expect(resolveText(clauses, ['en'])).toBe('甲; Hello; Saved 1 item');
+    expect([textClauses([]), textClauses([t('hello')])].map(text => resolveText(text, ['en']))).toEqual(['', 'Hello']);
+    expect(resolveText(textClauses(Array.from({ length: 64 }, () => t('hello'))), ['en'])).toBe(
+      Array(64).fill('Hello').join('; '),
+    );
   });
 
   it('参数在生成时复制：调用方之后改原数组或原对象，文字对象不变', () => {

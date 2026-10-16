@@ -14,6 +14,7 @@ import { paths } from '../routes';
 import { formatValue } from '../settings/field';
 import { type FrameQuestion, type FrameStop, mountFrame } from './channel';
 import './FramePage.css';
+import type { Localized } from '@aalis/schema-i18n';
 
 // 插件前端：上面一行写明出处，下面是宿主画的隔离框架，框架里画出的东西总在这一行下面。握手完成前框架不可见；
 // 停止显示时换成占位，「重新加载」与手动刷新都是重新挂载。外链与 destructive 动作的宿主对话框在这里画：
@@ -32,7 +33,7 @@ const STOPPED: Record<Exclude<FrameStop['reason'], 'version'>, string> = {
 };
 
 interface FramePageProps {
-  page: FramePageView;
+  page: Localized<FramePageView>;
   /** 会话面板的会话 */
   sessionId?: string;
   /** 手动刷新的次数：变了就重新挂载 */
@@ -199,7 +200,7 @@ function FrameDialog({ asking, answer }: { asking?: Asking; answer(confirmed: bo
 }
 
 /** 这次的输入值按纯文本列出：声明了的字段写字段名与按字段写成的值，没声明的写键名与原样的值 */
-function InputValues({ fields, input }: { fields: ActionInputFields; input: Record<string, unknown> }) {
+function InputValues({ fields, input }: { fields: Localized<ActionInputFields>; input: Record<string, unknown> }) {
   const entries = Object.entries(input);
   if (entries.length === 0) return null;
   return (

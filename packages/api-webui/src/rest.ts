@@ -8,12 +8,18 @@
 //
 // 不要登录的只有 /api/auth/ 下的四条与 /frames/ 下的文件；其余要登录（cookie），没登录的 /api/ 请求回 401，页面回登录页。
 // 改状态的请求（非 GET）另校验来源：带 Origin 的要与本服务同源。登记表里没有的 /api/ 路径回 404 与 ErrorResponse。
+//
+// 回应里给人看的文字按读者的语言：先看 cookie aalis-lang（语言标签以 `|` 分隔，靠前的优先），没有再看 Accept-Language；
+// 日期与时间按 cookie aalis-tz 的时区。这里的回应类型写的是服务端交出的形状，文字可以是文字对象（schema-i18n 的 TextRef），
+// 发出前一律渲染成字符串：线上的形状是 Localized<…>，路由的见 WebuiRestResponse。回 JSON 的都带 Vary: Cookie, Accept-Language。
 
 import type { UserIdentity } from '@aalis/api-authority';
+import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import type { InstallResult, UninstallOptions, UpdateResult, UpdateTarget } from '@aalis/api-package-manager';
 import type { PlatformConnection } from '@aalis/api-platform';
 import type { LogEntry, PluginState, SelectionBasis } from '@aalis/core';
 import type { ConfigSchema, SchemaIssue } from '@aalis/schema-config';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import type { DepOrigin } from '@aalis/util-dep-spec';
 import type { AttentionItem, ExtendDeclaration, LogFilter, PluginBlockers } from './index.js';
 import type { LayoutOperation, LayoutRecords, PageDataByType, PageRef, PageView } from './page.js';
@@ -23,9 +29,9 @@ import type { PluginTheme } from './theme.js';
 
 /** 失败的回应（4xx、5xx） */
 export interface ErrorResponse {
-  error: string;
-  /** 输入没过校验时逐项列出 */
-  issues?: SchemaIssue[];
+  error: string | TextRef;
+  /** 输入没过校验时逐项列出：path、kind、code 同 schema-config 的 SchemaIssue，message 是这一项的说明 */
+  issues?: Array<Pick<SchemaIssue, 'path' | 'kind' | 'code'> & { message: string | TextRef }>;
   /** 改动已在运行态生效，只是没写进配置文件 */
   applied?: true;
 }
@@ -36,7 +42,7 @@ export interface OkResponse {
 
 /** 管理动作的回执：message 写做成了什么，动作之后插件没落在预期状态（激活失败、仍在激活等）时也写在这里 */
 export interface MessageResponse extends OkResponse {
-  message: string;
+  message: string | TextRef;
 }
 
 // ----- 认证 -----
@@ -62,13 +68,14 @@ export interface PluginListItem extends PluginBlockers {
   /** 插件包名：同一插件的几个实例按它合在一起 */
   name: string;
   instanceId: string;
-  displayName?: string;
+  displayName?: string | TextRef;
   /** 插件声明的子系统，没声明的不给；组名与顺序见 DEFAULT_SUBSYSTEM_METADATA */
   subsystem?: string;
   /** 已装的包的版本，本地查不到的不给 */
   version?: string;
   state: PluginState;
-  error?: string;
+  /** 失败的说明（api-doctor 的 failureText） */
+  error?: string | TextRef;
   /** 激活超过慢激活阈值、已转入后台 */
   slow?: boolean;
   /** 旧实例超过宽限仍未停下：停下之前同一 id 不起新实例 */
@@ -152,8 +159,8 @@ export interface HostConfigSaved extends MessageResponse {
 export interface ServiceProviderView {
   /** 提供者的插件实例 id，宿主自己提供的是 `root` */
   contextId: string;
-  displayName?: string;
-  label?: string;
+  displayName?: string | TextRef;
+  label?: string | TextRef;
   priority: number;
   exclusive: boolean;
 }
@@ -201,10 +208,28 @@ export interface PluginThemesResponse {
 /** 一个可选项：default 标没设时生效的那一项；工具分组另带说明与登记它的插件 */
 export interface OptionDetail {
   value: string;
-  label: string;
+  label: string | TextRef;
   default?: true;
-  description?: string;
+  description?: string | TextRef;
   pluginName?: string;
+}
+
+/**
+ * `webui:options` 贡献点的 spec：一个可选项来源。id 是来源名，即配置字段的 dynamicOptions；list 收字段依赖的那一项的
+ * 生效值（GET /api/models/:service 的 dependency，原样转交），给出可选项。同一个来源名有几家交付时取全局键最前的
+ */
+export interface OptionsContribution {
+  id: string;
+  list(dependency?: string): OptionItem[] | Promise<OptionItem[]>;
+}
+
+/** 可选项来源给的一项：value 是存进配置的值 */
+export type OptionItem = Pick<OptionDetail, 'value' | 'label' | 'description'>;
+
+declare module '@aalis/api-contributions' {
+  interface ContributionPointMap {
+    'webui:options': OptionsContribution;
+  }
 }
 
 /**
@@ -221,7 +246,7 @@ export interface OptionsResponse {
 export interface LLMModelEntry {
   model: string;
   /** 显示名 */
-  provider: string;
+  provider: string | TextRef;
   contextId: string;
   capabilities: string[];
 }
@@ -277,7 +302,7 @@ export interface PageActionRequest {
 
 export interface PageActionResponse {
   /** 处理函数给的一句结果 */
-  message?: string;
+  message?: string | TextRef;
 }
 
 // ----- 市场 -----
@@ -325,7 +350,7 @@ export interface MarketplacePackage {
 export interface MarketplaceResponse {
   packages: MarketplacePackage[];
   /** 检索源或安装源查不到时的说明 */
-  warning?: string;
+  warning?: string | TextRef;
 }
 
 /** 系统组件：本地已装的内核、宿主、契约、规范与工具库 */
@@ -346,7 +371,7 @@ export interface SystemComponent {
 
 export interface SystemComponentsResponse {
   components: SystemComponent[];
-  warning?: string;
+  warning?: string | TextRef;
 }
 
 /** 依赖链路的一个节点：present 为 false 是本地没有这个包，链路在此中断 */
@@ -364,7 +389,7 @@ export interface DependencyGraphResponse {
   /** 谁依赖它 */
   downstream: DependencyNode;
   /** 它要用的服务由谁提供（宿主提供的写「宿主」，没人提供为 null），与它提供的服务 */
-  services: { required: Array<{ service: string; providedBy: string | null }>; provides: string[] };
+  services: { required: Array<{ service: string; providedBy: string | TextRef | null }>; provides: string[] };
   /** 卸载它会断掉服务的插件 */
   serviceDependents: string[];
 }
@@ -378,6 +403,32 @@ export interface UninstallRequest extends PackageRequest, UninstallOptions {}
 
 export interface UpdateRequest {
   targets: UpdateTarget[];
+}
+
+// ----- 多语言 -----
+
+/**
+ * GET /api/i18n/languages：有文字可用的语言（i18n 服务的 languages()），i18n 缺席时为空，界面据此隐藏语言切换。
+ * 每项的形状同 api-i18n 的 LanguageInfo：tag 是规范化的语言标签，name 是该语言的自称
+ */
+export interface I18nLanguagesResponse {
+  languages: Array<{ tag: string; name: string }>;
+}
+
+/** 语言包给的一条译文：from 是翻译时原文模板的指纹 */
+export interface PackedText {
+  language: string;
+  text: string;
+  from: string;
+}
+
+/**
+ * GET /api/i18n/messages：语言包给这些 ns 补的译文，供前端自带的字典用。entries 是 ns → 键 → 各语言包给的
+ * （同一语言按交付的先后，取先），只留语言链用得上的语言（与链里某种的语言相同的，以及 en）；没有的 ns 不列。
+ * 前端照它建语言包索引（schema-i18n 的 PackIndex）交给 resolveText，取舍（只补缺、指纹）在那里做。i18n 缺席时为空
+ */
+export interface I18nMessagesResponse {
+  entries: Record<string, Record<string, PackedText[]>>;
 }
 
 // ----- 路由表 -----
@@ -415,12 +466,17 @@ export interface WebuiRestRoutes {
   'GET /api/themes': { response: PluginThemesResponse };
 
   /**
-   * 按来源取可选项：llm 回模型；platform、gateway-scopes、toolGroups、llm-thinking 由宿主回答，llm-thinking 收 dependency
+   * 按来源取可选项：先找贡献点 webui:options 里同名的来源（dependency 原样交给它），回 `{ models, details }`；没有时
+   * llm 回模型；platform、gateway-scopes、toolGroups、llm-thinking 由宿主回答，llm-thinking 收 dependency
    * （模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好）；其余服务合起各提供者的 listModels()，回 `{ models }`
    */
   'GET /api/models/:service': { query: { dependency?: string }; response: LLMModelsResponse | OptionsResponse };
   /** :contextId 是提供者的插件实例，与模型的 contextId 相同 */
   'POST /api/llm-providers/:contextId/refresh': { response: ModelRefreshResponse };
+
+  'GET /api/i18n/languages': { response: I18nLanguagesResponse };
+  /** ns 以逗号分隔；lang 是语言链（写法同 cookie aalis-lang），不给时按这次请求的读者 */
+  'GET /api/i18n/messages': { query: { ns: string; lang?: string }; response: I18nMessagesResponse };
 
   'GET /api/pages': { response: PageListResponse };
   'GET /api/session-pages': { query: { sessionId: string }; response: PanelPagesResponse };
@@ -511,5 +567,5 @@ export interface WebuiFileRoutes {
   'GET /{*path}': { headers: DocumentHeaders<'text/html'> & { 'cache-control': 'public, max-age=0' } };
 }
 
-/** 一条 JSON 路由 2xx 时的回应 */
-export type WebuiRestResponse<K extends keyof WebuiRestRoutes> = WebuiRestRoutes[K]['response'];
+/** 一条 JSON 路由 2xx 时线上的回应：文字对象已按读者语言渲染成字符串 */
+export type WebuiRestResponse<K extends keyof WebuiRestRoutes> = Localized<WebuiRestRoutes[K]['response']>;

@@ -52,6 +52,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 | `toSource(v)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型时用（取生成时的整句） |
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
 | `textLines(parts)` | 把若干段（字符串或文字对象）按行连成一个文字对象，多行报告、列表类回复用它 |
+| `textClauses(parts)` | 把若干分句连成一句：原文以「；」相连，英文以「; 」。并列的几条原因、几个问题用它；两两二分着嵌套，层数随句数按对数增长，n 句约占 2n 个参数里的文字对象，每句另带文字对象参数时更多（配置校验的问题每句 3 个，约 340 句起超出渲染上限、回落成原文） |
 | `TextError` | `new TextError(text, { status?, cause? })`，message 是 `text.source`，name 为 `TextError` |
 | `withText(err, text)` | 给任意 Error 挂上文字对象，name 与类不变（按 name 判定的错误照旧认得）；message 不动 |
 | `isTextError(e)` | 按结构判：Error 且 `e.text` 是文字对象。另一份包的 `TextError`、改了 name 的子类都认 |
@@ -92,7 +93,7 @@ plural 与 select 必须有 other；未知类型、花括号不配平、重复�
 3. 再逐项找语言相同、文字不同的：zh-TW 读者遇到只有简体时用简体。
 4. 再找 en；都没有用原文。
 
-ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归，嵌套超过 8 层的用那一层的 source。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
+ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染（一次 `resolveText` 或 `resolveSource`）里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source，伪造的重复参数不放大、环不挂死。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
 
 `resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：带读者的时区与转义，参数里的文字对象同样取各自的原文，回落规则同上。
 

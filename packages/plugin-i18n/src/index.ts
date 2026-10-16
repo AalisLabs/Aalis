@@ -3,11 +3,13 @@
 //
 // 按读者的语言链渲染文字对象：languages 读者直接给链，sessionId 读者取会话设置的 language，host 读者取全局默认层，
 // 哪一层都没设时按 en。语言包取自贡献点 i18n:pack，用时与贡献点对照，变了才重建索引。
+// 另给 WebUI 两样：可选项来源 i18n-languages（贡献点 webui:options，值是语言标签、标签是自称），与「翻译」页（translation.ts）。
 // ============================================================
 
 import { contributions } from '@aalis/api-contributions';
 import { type Audience, i18n, type LanguageInfo } from '@aalis/api-i18n';
 import { sessionManager } from '@aalis/api-session-manager';
+import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, optional, provide } from '@aalis/core';
 import {
   catalogEntries,
@@ -19,6 +21,7 @@ import {
   resolveText,
 } from '@aalis/schema-i18n';
 import { t } from './texts.js';
+import { defineTranslationPage } from './translation.js';
 
 /** 语言链最多几种：再多也轮不到 */
 const MAX_CHAIN = 8;
@@ -27,10 +30,12 @@ const MAX_INPUT = 32;
 
 const uses = {
   provide,
-  /** 语言包的来源；缺席时没有语言包 */
+  /** 语言包的来源，交可选项来源；缺席时没有语言包 */
   contributions: optional(contributions),
   /** sessionId 与 host 读者的语言设置；缺席时这两种读者按 en */
   sessionManager: optional(sessionManager),
+  /** 「翻译」页 */
+  webui: optional(webuiServer),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -56,6 +61,11 @@ export default definePlugin({
       },
       languages: () => languagesOf(packs()),
     });
+    caps.contributions.use.contribute('webui:options', {
+      id: 'i18n-languages',
+      list: () => languagesOf(packs()).map(({ tag, name }) => ({ value: tag, label: name })),
+    });
+    defineTranslationPage(caps.webui.use, packs, () => languagesOf(packs()).map(({ tag }) => tag));
   },
 });
 

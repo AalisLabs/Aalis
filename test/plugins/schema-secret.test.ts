@@ -81,7 +81,7 @@ describe('validateConfig 与 parseConfig 对引用的处理', () => {
       group: { token: { $secret: 'k3' }, user: { $secret: 'k4' } },
       list: [{ url: 'x', accessToken: { $secret: 'k5' } }],
     };
-    expect(validateConfig(SCHEMA, doc)).toEqual([
+    expect(validateConfig(SCHEMA, doc)).toMatchObject([
       { path: 'group.user', message: '期望 string，得到 object', kind: 'invalid' },
     ]);
   });

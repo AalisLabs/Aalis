@@ -8,10 +8,12 @@ import {
   THEME_TOKENS,
   themeContrastIssues,
 } from '../../packages/api-webui/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 主题文件：格式的解析与校验、内置 8 个主题、对比度检查。
-// 内置主题与第三方主题同一格式，加载都经 parseTheme；对比度检查是导入时与内置主题共用的同一套组合。
+// 内置主题与第三方主题同一格式（内置的不带名字，名字按 id 取字典，校验时以 id 作名字），加载都经 parseTheme；
+// 对比度检查是导入时与内置主题共用的同一套组合，组合名是字典里的文字对象，这里按原文比。
 // ════════════════════════════════════════════════════════════
 
 const calmDark = BUILTIN_THEMES['calm-dark'];
@@ -53,7 +55,7 @@ describe('内置主题', () => {
 
   it.each(Object.keys(BUILTIN_THEMES))('%s 是合格的主题文件，令牌表里的每个名字都写了值', id => {
     const raw = BUILTIN_THEMES[id as keyof typeof BUILTIN_THEMES];
-    const result = parseTheme(raw);
+    const result = parseTheme({ ...raw, name: id });
     expect(result).toMatchObject({ ok: true });
     expect(Object.keys(raw.colors).sort()).toEqual([...THEME_TOKENS].sort());
   });
@@ -83,7 +85,7 @@ describe('内置主题', () => {
   });
 
   it.each(Object.keys(BUILTIN_THEMES))('%s 过对比度检查', id => {
-    const result = parseTheme(BUILTIN_THEMES[id as keyof typeof BUILTIN_THEMES]);
+    const result = parseTheme({ ...BUILTIN_THEMES[id as keyof typeof BUILTIN_THEMES], name: id });
     if (!result.ok) throw new Error(result.errors.join('；'));
     expect(themeContrastIssues(result.theme)).toEqual([]);
   });
@@ -164,7 +166,7 @@ describe('对比度检查', () => {
     const result = parseTheme(file({ colors: { '--color-text-3': calmDark.colors['--color-bg'] } }));
     if (!result.ok) throw new Error(result.errors.join('；'));
     const issues = themeContrastIssues(result.theme);
-    expect(issues.map(issue => issue.pair)).toEqual([
+    expect(issues.map(issue => issue.pair.source)).toEqual([
       '弱化字 / 主区',
       '弱化字 / 侧栏',
       '弱化字 / 侧栏里的选中行',
@@ -178,7 +180,7 @@ describe('对比度检查', () => {
   function mutedOnMain(color: string) {
     const result = parseTheme(file({ colors: { '--color-text-3': color } }));
     if (!result.ok) throw new Error(result.errors.join('；'));
-    return themeContrastIssues(result.theme).find(issue => issue.pair === '弱化字 / 主区');
+    return toSource(themeContrastIssues(result.theme).find(issue => issue.pair.source === '弱化字 / 主区'));
   }
 
   it('文字的门槛是 4.5：差一点的列出，刚过的不列', () => {
@@ -193,24 +195,26 @@ describe('对比度检查', () => {
     // 饱和的颜色：通道换算错位时红会变成别的颜色
     const red = parseTheme(file({ colors: { '--color-bg': '#ff0000', '--color-text-3': 'hsl(0 100% 50%)' } }));
     if (!red.ok) throw new Error(red.errors.join('；'));
-    expect(themeContrastIssues(red.theme).find(issue => issue.pair === '弱化字 / 主区')).toMatchObject({ ratio: 1 });
+    expect(themeContrastIssues(red.theme).find(issue => issue.pair.source === '弱化字 / 主区')).toMatchObject({
+      ratio: 1,
+    });
   });
 
   it('半透明的底色先叠到下层再算', () => {
     // 选中行的 fill-2 若是不透明的正文色，正文落在上面就看不见
     const result = parseTheme(file({ colors: { '--color-fill-2': calmDark.colors['--color-text'] } }));
     if (!result.ok) throw new Error(result.errors.join('；'));
-    expect(themeContrastIssues(result.theme).map(issue => issue.pair)).toContain('正文 / 侧栏里的选中行');
+    expect(themeContrastIssues(result.theme).map(issue => issue.pair.source)).toContain('正文 / 侧栏里的选中行');
   });
 
   it('图标栏的次要字与图标、金色标记对相邻底色都在检查里', () => {
     const rail = parseTheme(file({ colors: { '--color-bg-rail': calmDark.colors['--color-text-2'] } }));
     const mark = parseTheme(file({ colors: { '--color-mark': calmDark.colors['--color-bg-side'] } }));
     if (!rail.ok || !mark.ok) throw new Error('样例应合格');
-    expect(themeContrastIssues(rail.theme).map(issue => issue.pair)).toEqual(
+    expect(themeContrastIssues(rail.theme).map(issue => issue.pair.source)).toEqual(
       expect.arrayContaining(['次要字 / 图标栏', '图标 / 图标栏的当前项']),
     );
-    expect(themeContrastIssues(mark.theme).map(issue => issue.pair)).toEqual(
+    expect(themeContrastIssues(mark.theme).map(issue => issue.pair.source)).toEqual(
       expect.arrayContaining(['金色标记 / 侧栏', '金色标记 / 侧栏里的选中行', '金色标记 / 图标栏的当前项']),
     );
   });

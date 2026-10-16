@@ -6,7 +6,7 @@ import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { backgroundTasks } from '../../packages/api-tools/src/index.js';
-import type { PageListResponse } from '../../packages/api-webui/src/index.js';
+import type { WebuiRestResponse } from '../../packages/api-webui/src/index.js';
 import { LogHub, type PluginDefinition } from '../../packages/core/src/index.js';
 import {
   defaultPicks,
@@ -292,7 +292,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     // 各页面：插件页与设置页打开后都有内容，没有取数失败；会话里的页面在会话面板里
     const pages = (await (
       await fetch(`${stack.origin}/api/pages`, { headers: { Cookie: `aalis_webui_token=${TOKEN}` } })
-    ).json()) as PageListResponse;
+    ).json()) as WebuiRestResponse<'GET /api/pages'>;
     const opened: string[] = [];
     for (const { instance, key, title, placement } of pages.pages) {
       if (placement === 'session') continue;

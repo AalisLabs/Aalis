@@ -5,6 +5,7 @@ import { type App, definePlugin, defineService, type Logger, provide } from '../
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { deferred } from '../helpers/deferred.js';
@@ -85,7 +86,8 @@ describe('终端欢迎行下面的指路', () => {
     await vi.waitFor(() => expect(frame()).toContain('有 3 个插件没起来，输入 /doctor 查看原因与修法'));
     expect(frame()).toContain('欢迎使用 Aalis。按 Ctrl+G 查看快捷键。');
     const report = await host.doctor.use.runChecks();
-    const listed = (id: string) => report.checks.find(check => check.id === id)?.detail?.split('\n').length ?? 0;
+    const listed = (id: string) =>
+      toSource(report.checks.find(check => check.id === id)?.detail)?.split('\n').length ?? 0;
     expect(listed('plugins.errored') + listed('plugins.pending')).toBe(3);
   });
 
@@ -107,7 +109,8 @@ describe('终端欢迎行下面的指路', () => {
     cleanups.push(() => gate.resolve());
     await vi.waitFor(() => expect(frame()).toContain('有 1 个插件没起来，输入 /doctor 查看原因与修法'));
     const report = await host.doctor.use.runChecks();
-    const listed = (id: string) => report.checks.find(check => check.id === id)?.detail?.split('\n').length ?? 0;
+    const listed = (id: string) =>
+      toSource(report.checks.find(check => check.id === id)?.detail)?.split('\n').length ?? 0;
     expect(listed('plugins.errored') + listed('plugins.pending')).toBe(1);
   });
 

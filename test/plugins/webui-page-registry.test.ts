@@ -14,6 +14,7 @@ import {
   createPageRegistry,
   INVALIDATE_WINDOW_MS,
 } from '../../packages/plugin-webui-server/src/pages.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -205,8 +206,14 @@ describe('会话面板的 applies', () => {
 
   it('会话不存在回 404，缺会话 id 回 400', async () => {
     const { pages } = registry();
-    expect(await pages.panelPages('webui:gone')).toEqual({ status: 404, body: { error: '会话 webui:gone 不存在' } });
-    expect(await pages.panelPages(undefined)).toEqual({ status: 400, body: { error: 'sessionId 要是非空字符串' } });
+    expect(toSource(await pages.panelPages('webui:gone'))).toEqual({
+      status: 404,
+      body: { error: '会话 webui:gone 不存在' },
+    });
+    expect(toSource(await pages.panelPages(undefined))).toEqual({
+      status: 400,
+      body: { error: 'sessionId 要是非空字符串' },
+    });
   });
 });
 

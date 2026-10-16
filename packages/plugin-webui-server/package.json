@@ -32,6 +32,7 @@
     "@aalis/api-authority": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
@@ -86,7 +87,8 @@
         "message-archive",
         "plugin-source",
         "package-manager",
-        "contributions"
+        "contributions",
+        "i18n"
       ],
       "provides": [
         "webui-server",
