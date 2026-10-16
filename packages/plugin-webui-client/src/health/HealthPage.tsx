@@ -1,4 +1,3 @@
-import type { SessionSummary } from '@aalis/api-session-protocol';
 import type { PlatformStatus } from '@aalis/api-webui';
 import { RotateCw } from 'lucide-react';
 import { useReducer } from 'react';
@@ -13,6 +12,7 @@ import { Tabs } from '../components/Tabs';
 import { useConnectionState, useSessionClient, useSessionless } from '../connection';
 import { withInstance } from '../pages/registry';
 import { SESSION_PROTOCOL, useHost, useProvider } from '../plugins/list';
+import type { SessionSummary } from '../protocol/session-client';
 import { isRecord, useJson } from '../rest';
 import { paths, routes } from '../routes';
 import { useSessionList } from '../sessions/live-list';

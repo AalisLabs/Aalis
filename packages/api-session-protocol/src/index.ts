@@ -9,15 +9,22 @@
  *
  * 第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。
  * 对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
+ *
+ * 给人看的文字字段写成产出方的形状：服务端交出字符串或文字对象（@aalis/schema-i18n 的 TextRef），发出前按连接的读者
+ * （握手时给的语言链与时区）渲染成字符串，线上一律是字符串；读线上的一方（客户端）按 schema-i18n 的 Localized<…> 读。
  */
 
 import type { ApprovalSurface } from '@aalis/api-approval';
 import { defineService } from '@aalis/core';
 import type { SchemaField } from '@aalis/schema-config';
+import { asText, isTextRef, type TextRef } from '@aalis/schema-i18n';
 import { z } from 'zod';
 
 /** 协议版本 `<主>.<次>`：握手时主版本不同即断开 */
-export const SESSION_PROTOCOL_VERSION = '1.0';
+export const SESSION_PROTOCOL_VERSION = '1.1';
+
+/** 给人看的文字：服务端交出字符串或文字对象，发出前按连接的读者渲染成字符串 */
+const TextSchema = z.union([z.string(), z.custom<TextRef>(isTextRef)]);
 
 // ════════════════════════════════════════════════════════════
 // 帧（JSON-RPC 2.0）
@@ -103,9 +110,15 @@ const EmptySchema = z.object({});
 export const IdentitySchema = z.object({ platform: z.string(), userId: z.string() });
 export type Identity = z.infer<typeof IdentitySchema>;
 
+/**
+ * 握手。languages 是读者的语言链（语言标签，靠前的优先），timeZone 是读者的时区（IANA 名），1.1 起有：这条连接收到的文字按它们
+ * 渲染；不给 languages（或给的一种都不合法）时按全局默认层的设置。换语言要重连
+ */
 export const InitializeParamsSchema = z.object({
   protocolVersion: z.string().regex(/^\d+\.\d+$/),
   client: z.object({ name: z.string(), version: z.string() }),
+  languages: z.array(z.string()).optional(),
+  timeZone: z.string().optional(),
 });
 
 /**
@@ -146,7 +159,7 @@ export const TurnOutcomeSchema = z.enum(['replied', 'silent', 'aborted', 'error'
 export const SessionSummarySchema = z.object({
   id: z.string(),
   /** 标题，没有时是会话名 */
-  title: z.string(),
+  title: TextSchema,
   parentId: z.string().optional(),
   childCount: z.number().int().nonnegative(),
   /**
@@ -170,7 +183,7 @@ export const SessionSummarySchema = z.object({
    * 根会话的场所：场所键、类别（window 是 IM 的群与别人的私聊，workspace 是本机的工作区）与显示名。按层读写场所时层为
    * `{ scope: 'place', key }`
    */
-  place: z.object({ key: z.string(), kind: z.enum(['window', 'workspace']), name: z.string() }),
+  place: z.object({ key: z.string(), kind: z.enum(['window', 'workspace']), name: TextSchema }),
   createdAt: z.number(),
   /** 最后活动时间：会话档案最近一次变化 */
   updatedAt: z.number(),
@@ -195,9 +208,9 @@ export const SessionSummarySchema = z.object({
   /** 最近结束的一轮：结局与结束时间 */
   lastTurn: z.object({ outcome: TurnOutcomeSchema, endedAt: z.number() }).optional(),
   /** 出错（error 为真）时最近一轮的一句原因；没有原因的没有 */
-  reason: z.string().optional(),
+  reason: TextSchema.optional(),
   /** 子会话才有：各级父会话的 id 与标题，根会话在前 */
-  ancestors: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
+  ancestors: z.array(z.object({ id: z.string(), title: TextSchema })).optional(),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -206,7 +219,7 @@ export const RoomGroupSchema = z.object({
   platform: z.string(),
   instance: z.string().optional(),
   /** 组名：实例的显示名（插件显示名，非默认实例另带实例名）；没有实例的组是平台名 */
-  label: z.string(),
+  label: TextSchema,
   /** 组里的房间数 */
   rooms: z.number().int().nonnegative(),
   /** 组里房间涉及的机器人账号数 */
@@ -272,7 +285,7 @@ export const SessionBatchParamsSchema = z.object({
 });
 
 export const SessionBatchResultSchema = z.object({
-  failed: z.array(z.object({ sessionId: z.string(), message: z.string() })),
+  failed: z.array(z.object({ sessionId: z.string(), message: TextSchema })),
 });
 
 // ----- 会话设置 -----
@@ -283,7 +296,7 @@ const SettingFieldSchema = z.custom<SchemaField>(
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { type?: unknown }).type === 'string' &&
-    typeof (value as { label?: unknown }).label === 'string',
+    asText((value as { label?: unknown }).label) !== undefined,
   { message: '期望 schema-config 字段（带 type 与 label）' },
 );
 
@@ -303,7 +316,7 @@ export const SettingRowSchema = z.object({
   /** 可选项依赖的另一行的键：取这一行的动态可选项时带上那一行的生效值，那一行变了就重取 */
   dependsOn: z.string().optional(),
   /** 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置 */
-  unset: z.string().optional(),
+  unset: TextSchema.optional(),
   /** 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值；没写的没有 */
   value: z.unknown().optional(),
   /** 生效值；哪一层都没设时没有，界面按字段的默认值显示 */
@@ -444,8 +457,9 @@ const itemBase = {
  *   最后一行与输出看后台任务。sentToRoom、approvalId、settlement、taskId 与停止时还没结束随工具结果落库，历史里同样还原；
  * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue。
  *   宿主通知（schema-message 的 hostNotice）的 topic 是它的 kind，另带 noticeId（hostNotice.id）与 facts（hostNotice.facts，
- *   给界面的事实，键由定义这个 kind 的契约约定）；界面认得的 kind 按事实画成状态、不显示 text（写给模型的那句话），
- *   如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId 是任务 id）；
+ *   给界面的事实，键由定义这个 kind 的契约约定）；text 是给人看的那句（hostNotice.text），通知没给时是写给模型的正文。
+ *   界面认得的 kind 按事实画成状态、不显示 text，如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId
+ *   是任务 id）；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的
@@ -477,7 +491,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
         completionTokens: z.number().optional(),
       })
       .optional(),
-    undelivered: z.object({ reason: z.string() }).optional(),
+    undelivered: z.object({ reason: TextSchema }).optional(),
   }),
   z.object({ kind: z.literal('reasoning'), ...itemBase, text: z.string() }),
   z.object({
@@ -499,7 +513,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     kind: z.literal('notice'),
     ...itemBase,
     topic: z.string(),
-    text: z.string(),
+    text: TextSchema,
     attachments: z.array(ItemAttachmentSchema),
     canContinue: z.boolean().optional(),
     noticeId: z.string().optional(),
@@ -524,7 +538,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
      * 不含为回复预留（maxTokens）。injectors 是这一项按注入者的明细：键是注入者的全局键「插件实例 id/局部 id」，
      * 界面按实例前缀合并到插件
      */
-    parts: z.array(z.object({ label: z.string(), tokens: z.number(), injectors: z.record(z.number()).optional() })),
+    parts: z.array(z.object({ label: TextSchema, tokens: z.number(), injectors: z.record(z.number()).optional() })),
     /** 自动压缩的使用率（0 到 1，与 usageRatio 同一口径） */
     compressAt: z.number().optional(),
   }),
@@ -640,7 +654,7 @@ export const TurnRewindResultSchema = z.object({
   ok: z.boolean(),
   restored: z.array(z.string()),
   deleted: z.array(z.string()),
-  errors: z.array(z.object({ uri: z.string(), reason: z.string() })),
+  errors: z.array(z.object({ uri: z.string(), reason: TextSchema })),
   alsoChangedBy: z.array(z.object({ uri: z.string(), turnIds: z.array(z.string()) })),
   deletedMessages: z.number().int().nonnegative().optional(),
   chatDeleted: z.boolean().optional(),
@@ -672,7 +686,7 @@ export const BackgroundTaskSchema = z.object({
   /** 最后一次有输出的时刻 */
   lastOutputAt: z.number().optional(),
   /** 失败或中断的一句原因 */
-  reason: z.string().optional(),
+  reason: TextSchema.optional(),
   /** 命令的退出码：工具声明了 command 种类的展示、结束时取得到才有；取自登记，工具撤回登记、Aalis 重启之后照样在 */
   exitCode: z.number().int().optional(),
   display: ToolDisplaySchema.optional(),
@@ -760,7 +774,7 @@ export const sessionMethods = {
     params: EmptySchema,
     result: z.object({
       layers: z.array(SettingLayerSchema),
-      order: z.array(z.object({ name: z.string(), label: z.string() })),
+      order: z.array(z.object({ name: z.string(), label: TextSchema })),
     }),
   },
   /** 一层的各行，形状与会话的相同，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项 */

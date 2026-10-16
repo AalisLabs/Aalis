@@ -11,9 +11,9 @@ import { defineService, type ServiceSelection } from '@aalis/core';
 import { type LanguagePack, type Localized, type LocalizeSkip, localize, resolveSource } from '@aalis/schema-i18n';
 
 /**
- * 读者：按谁的语言渲染。languages 直接给语言链（如 WebUI 按 cookie 或 Accept-Language 解析出的）；sessionId 取会话
- * 设置的 language（按继承链解析，platform 是入口平台）；host 取全局默认层的设置（access.txt、插件加载后宿主的输出）。
- * timeZone 用于日期与时间，缺省用进程时区
+ * 读者：按谁的语言渲染。languages 直接给语言链（如 WebUI 按 cookie 或 Accept-Language 解析出的），规范化后为空时按
+ * 全局默认层；sessionId 取会话设置的 language（按继承链解析，platform 是入口平台）；host 取全局默认层的设置（access.txt、
+ * 插件加载后宿主的输出）。timeZone 用于日期与时间，缺省用进程时区
  */
 export type Audience =
   | { languages: readonly string[]; timeZone?: string }

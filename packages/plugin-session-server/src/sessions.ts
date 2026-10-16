@@ -8,6 +8,7 @@
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   isSessionConfigError,
+  placeLabel,
   type RegisteredSessionSetting,
   SESSION_LAYERS,
   type SessionConfig,
@@ -16,6 +17,7 @@ import {
   type SessionKind,
   type SessionManagerService,
   type SessionPlace,
+  sessionLabel,
 } from '@aalis/api-session-manager';
 import {
   type RoomGroup,
@@ -28,9 +30,10 @@ import {
   type SettingRow,
 } from '@aalis/api-session-protocol';
 import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
-import { asText, toSource } from '@aalis/schema-i18n';
+import { asText, type TextRef, textOf } from '@aalis/schema-i18n';
 import { failure, type MethodHandlers, ProtocolError } from './connection.js';
 import type { SeenStore } from './seen.js';
+import { t } from './texts.js';
 
 /** 列表一页的默认条数 */
 const PAGE_SIZE = 50;
@@ -54,7 +57,6 @@ interface SessionDeps {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-const KIND_NAMES: Record<SessionKind, string> = { owner: '我的会话', room: '房间', task: '子任务' };
 /** 场所按它的类别列与收设置项：窗口按房间，工作区按 owner 的会话 */
 const PLACE_KINDS: Record<SessionPlace['kind'], SessionKind> = { window: 'room', workspace: 'owner' };
 /** 层表：名字与称呼，按先后 */
@@ -74,7 +76,7 @@ async function checked<T>(run: () => T | Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    if (isSessionConfigError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, (err as Error).message);
+    if (isSessionConfigError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, textOf(err));
     throw err;
   }
 }
@@ -135,10 +137,11 @@ export function createSessions(deps: SessionDeps) {
     return counted.reduce((sum, t) => ({ input: sum.input + t.input, output: sum.output + t.output }));
   }
 
-  /** 会话的场所：键与类别取 placeOf，显示名取场所记录（窗口还没有记录时是场所键） */
+  /** 会话的场所：键与类别取 placeOf，显示名取场所记录（没取名的是默认名，窗口还没有记录时是场所键） */
   function placeOf(info: SessionInfo): SessionSummary['place'] {
     const place = sm.placeOf(info.id);
-    return { ...place, name: sm.getPlace(place.key)?.name ?? place.key };
+    const record = sm.getPlace(place.key);
+    return { ...place, name: record ? placeLabel(record) : place.key };
   }
 
   /** tasks 是各会话在跑的后台任务数，一批摘要共用一份 */
@@ -149,11 +152,11 @@ export function createSessions(deps: SessionDeps) {
     const seenAt = seen.get(info.id);
     const below = descendantsOf(info);
     const tokens = tokensOf([info, ...below]);
-    const ancestors = ancestorsOf(info).map(parent => ({ id: parent.id, title: parent.title || parent.name }));
+    const ancestors = ancestorsOf(info).map(parent => ({ id: parent.id, title: parent.title || sessionLabel(parent) }));
     const reason = info.status === 'error' ? info.lastTurn?.error : undefined;
     return {
       id: info.id,
-      title: info.title || info.name,
+      title: info.title || sessionLabel(info),
       parentId: info.parentId,
       childCount: info.children.length,
       kind: info.kind,
@@ -181,11 +184,13 @@ export function createSessions(deps: SessionDeps) {
   }
 
   /** 适配器实例的显示名：插件的显示名（没有时用包名），非默认实例另带实例名；插件已不在的用实例 id */
-  function instanceLabel(instance: string): string {
+  function instanceLabel(instance: string): string | TextRef {
     const definition = deps.plugins.getPlugin(instance)?.definition;
     if (!definition) return instance;
-    const name = toSource(asText(definition.displayName)) ?? definition.name;
-    return instance === definition.name ? name : `${name}（${instance.slice(definition.name.length + 1)}）`;
+    const name = asText(definition.displayName) ?? definition.name;
+    return instance === definition.name
+      ? name
+      : t('instanceLabel', { name, instance: instance.slice(definition.name.length + 1) });
   }
 
   /** 没归档的房间按接管的适配器实例分组；还没记下实例的按平台成一组，排在同平台各实例之后 */
@@ -353,7 +358,7 @@ export function createSessions(deps: SessionDeps) {
       if (value === null) continue;
       const setting = settings.find(s => s.key === key);
       if (setting && !setting.appliesTo.includes(kind)) {
-        throw new ProtocolError(RPC_ERROR_CODES.invalidParams, `会话设置项 ${key} 不适用于${KIND_NAMES[kind]}`);
+        throw new ProtocolError(RPC_ERROR_CODES.invalidParams, t('notApplicable', { key, kind }));
       }
     }
   }
@@ -434,7 +439,7 @@ export function createSessions(deps: SessionDeps) {
       return {};
     },
     'session/batch': async ({ op, ids }) => {
-      const failed: Array<{ sessionId: string; message: string }> = [];
+      const failed: SessionMethodResult<'session/batch'>['failed'] = [];
       // 只有开始前就不存在的算失败：删父会话时一并删掉的子会话不算
       const present = ids.filter(id => sm.getSession(id) !== undefined);
       for (const id of ids) if (!present.includes(id)) failed.push({ sessionId: id, message: `会话不存在：${id}` });
@@ -442,7 +447,7 @@ export function createSessions(deps: SessionDeps) {
         try {
           await (op === 'archive' ? archive(id) : sm.deleteSession(id));
         } catch (err) {
-          failed.push({ sessionId: id, message: err instanceof Error ? err.message : String(err) });
+          failed.push({ sessionId: id, message: textOf(err) });
         }
       }
       return { failed };

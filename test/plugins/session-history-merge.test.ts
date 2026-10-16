@@ -7,6 +7,7 @@ import {
   notAccepted,
   readHistory,
 } from '../../packages/plugin-session-server/src/history.js';
+import type { TextRef } from '../../packages/schema-i18n/src/index.js';
 import {
   type Message,
   outboundMediaMessage,
@@ -21,8 +22,8 @@ import {
 
 type Entry =
   | { kind: 'user'; text: string; files: string[] }
-  | { kind: 'notice'; text: string }
-  | { kind: 'agent'; text: string; attachments: Array<{ kind: string; src?: string }>; model?: unknown }
+  | { kind: 'notice'; text: string | TextRef }
+  | { kind: 'agent'; text: string | TextRef; attachments: Array<{ kind: string; src?: string }>; model?: unknown }
   | { kind: 'reasoning'; text: string }
   | { kind: 'tool'; name: string; args: Record<string, unknown>; result?: string };
 

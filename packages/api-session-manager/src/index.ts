@@ -10,6 +10,8 @@ import { Buffer } from 'node:buffer';
 import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { SchemaField } from '@aalis/schema-config';
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /**
  * 会话设置：各设置项的值。本包不认识任何具体的键，键由拥有这项功能的插件登记（{@link SessionSetting}），
@@ -67,9 +69,9 @@ export interface SessionSetting {
   /** 键：登记它的插件要先经 declaration merging 把它加进 {@link SessionConfig} */
   key: keyof SessionConfig & string;
   /**
-   * schema-config 字段：类型、标签、说明、校验与可选项来源（dynamicOptions）。写入时按它校验，不合的拒绝；
-   * 存储里不合它的值（旧数据、手写的配置文件）解析时当作没设置并告警，标了 `onInvalid: 'error'` 的则原样交出、
-   * 不回落到下面的层，由登记它的插件按拒绝处理（例如金额上限写坏了按 0，不能退成不限）。
+   * schema-config 字段：类型、标签、说明、校验与可选项来源（dynamicOptions），标签与说明可以是文字对象（@aalis/schema-i18n）。
+   * 写入时按它校验，不合的拒绝；存储里不合它的值（旧数据、手写的配置文件）解析时当作没设置并告警，标了 `onInvalid: 'error'`
+   * 的则原样交出、不回落到下面的层，由登记它的插件按拒绝处理（例如金额上限写坏了按 0，不能退成不限）。
    * 没有任何一层设置时解析结果里没有这个键：`default` 只供界面显示，须与「没有这个键」时的行为一致
    */
   field: SchemaField;
@@ -94,14 +96,15 @@ export interface SessionSetting {
   dependsOn?: keyof SessionConfig & string;
   /**
    * 哪一层都没设、字段又没有默认值时这一项的含义，界面在生效值的位置写它（如「按插件配置」「不限」）。写得出具体值的用
-   * `field.default`，不用它
+   * `field.default`，不用它。可以是文字对象
    */
-  unset?: string;
+  unset?: string | TextRef;
   /**
-   * 取值校验：合法时返回 undefined，不合法时返回原因。写入与解析都先过它，再按字段校验，结果与字段校验不合同样处理。
-   * schema-config 不校验外来字段类型（如 api-llm 的 `'llm-ref'`）的取值，所以外来类型的设置项必须给出它，否则登记抛错
+   * 取值校验：合法时返回 undefined，不合法时返回原因（字符串或文字对象），抛错按不合法处理、原因是抛出的错。写入与解析都先过
+   * 它，再按字段校验，结果与字段校验不合同样处理。schema-config 不校验外来字段类型（如 api-llm 的 `'llm-ref'`）的取值，
+   * 所以外来类型的设置项必须给出它，否则登记抛错
    */
-  validate?(value: unknown): string | undefined;
+  validate?(value: unknown): string | TextRef | undefined;
 }
 
 /** 已登记的设置项：另带登记它的插件实例 id（几个插件登记同一项时取最先登记、仍在场的那个） */
@@ -110,8 +113,8 @@ export interface RegisteredSessionSetting extends SessionSetting {
 }
 
 /**
- * 写会话设置被拒：键没有登记（提供它的插件没装或没启用）、值不合登记的字段，或层的标识不合法。
- * 用 {@link isSessionConfigError} 判定，不用 instanceof
+ * 写会话设置被拒：键没有登记（提供它的插件没装或没启用）、值不合登记的字段，或层的标识不合法。给人看的原因可能经
+ * schema-i18n 的 withText 挂在 text 上。用 {@link isSessionConfigError} 判定，不用 instanceof
  */
 export class SessionConfigError extends Error {
   override name = 'SessionConfigError';
@@ -124,15 +127,15 @@ export function isSessionConfigError(err: unknown): boolean {
 
 /**
  * 会话设置的层，先后即生效顺序（后面的压过前面的）。读取、解析、来源显示、可设的层与选层都照这张表走，
- * 加一层是这里加一行、会话管理的实现表加一条、{@link SessionConfigLayer} 加一种
+ * 加一层是这里加一行、会话管理的实现表加一条、{@link SessionConfigLayer} 加一种。称呼是文字对象，按读者语言显示
  */
 export const SESSION_LAYERS = [
-  { name: 'defaults', label: '全局默认' },
-  { name: 'platform', label: '平台档' },
-  { name: 'type', label: '平台类型档' },
-  { name: 'place', label: '场所' },
-  { name: 'parent', label: '父会话' },
-  { name: 'session', label: '本会话' },
+  { name: 'defaults', label: t('layerDefaults') },
+  { name: 'platform', label: t('layerPlatform') },
+  { name: 'type', label: t('layerType') },
+  { name: 'place', label: t('layerPlace') },
+  { name: 'parent', label: t('layerParent') },
+  { name: 'session', label: t('layerSession') },
 ] as const;
 
 /** 层名 */
@@ -167,14 +170,22 @@ export interface SessionPlace {
  * {@link WorkspaceInfo} 取
  */
 export interface PlaceInfo extends SessionPlace {
-  /** 显示名：窗口取群名或对方昵称，随消息更新；默认工作区为「默认工作区」；项目工作区默认取文件夹名，允许重名 */
-  name: string;
+  /**
+   * 显示名：窗口取群名或对方昵称，随消息更新；项目工作区默认取文件夹名，允许重名；默认工作区没有（旧记录里可能存着生成的名字）。
+   * 显示经 {@link placeLabel}
+   */
+  name?: string;
 }
 
-/** 工作区：默认工作区的 id 为 default。目录在不在由用到它的一方在用时检查，不存储 */
+/** 场所的显示名：没有名字时为「默认工作区」（文字对象，按读者语言显示；交给模型的取它的 source） */
+export function placeLabel(place: Pick<PlaceInfo, 'name'>): string | TextRef {
+  return place.name ?? t('defaultWorkspace');
+}
+
+/** 工作区：默认工作区的 id 为 default，没有名字（显示经 {@link placeLabel}）。目录在不在由用到它的一方在用时检查，不存储 */
 export interface WorkspaceInfo {
   id: string;
-  name: string;
+  name?: string;
   /** 目录的真实路径：只有项目工作区带 */
   root?: string;
 }
@@ -235,8 +246,11 @@ export interface WorkBinding {
 export interface SessionInfo {
   /** 会话唯一标识 */
   id: string;
-  /** 会话显示名称 */
-  name: string;
+  /**
+   * 会话显示名称：建会话时给的，IM 房间取群名或对方昵称（取不到时不取名，之后的入站补上）。没取名的没有（旧记录里可能存着
+   * 生成的名字），显示经 {@link sessionLabel}
+   */
+  name?: string;
   /** 自动生成的会话标题（AI 总结，或父会话指定） */
   title?: string;
   /** 父会话 ID（根会话为 undefined） */
@@ -296,11 +310,21 @@ export interface SessionInfo {
   lastReplyAt?: number;
   /**
    * 最近结束的一轮：结局（取值同 api-agent 的 agent:turn:after，被拦下、没有结局的一轮记为 silent）、结束时间，
-   * 结局为 error 时带 agent 给的一句原因。每一轮结束时由 session-manager 写入，不收调用方传值
+   * 结局为 error 时带 agent 给的一句原因（字符串或文字对象，交给模型的取 source）。每一轮结束时由 session-manager 写入，
+   * 不收调用方传值
    */
-  lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string };
+  lastTurn?: { outcome: 'replied' | 'silent' | 'aborted' | 'error'; endedAt: number; error?: string | TextRef };
   /** 这个会话自己的模型调用累计的输入与输出 token（api-llm 的 llm:usage），不含子会话。由 session-manager 累加，不收调用方传值 */
   tokens?: { input: number; output: number };
+}
+
+/**
+ * 会话的显示名称：没取名时根会话为「会话 <建档时间>」、子会话为「子任务 <建档时间>」（文字对象，按读者语言显示；
+ * 交给模型的取它的 source）。标题另算，读者按「标题，没有时用它」取
+ */
+export function sessionLabel(session: Pick<SessionInfo, 'name' | 'parentId' | 'createdAt'>): string | TextRef {
+  if (session.name !== undefined) return session.name;
+  return session.parentId ? t('subtaskName', { t: session.createdAt }) : t('sessionName', { t: session.createdAt });
 }
 
 /** 建会话时调用方能给的字段：配置按登记的设置项校验 */
@@ -437,7 +461,7 @@ export interface SessionManagerService {
 
   // ---- 树形操作 ----
 
-  /** 创建子会话；父会话还没建档时先按 id 兜底建档（名字为 id、不带来源字段，是房间的由参考实现的入站收录补记） */
+  /** 创建子会话；父会话还没建档时先按 id 兜底建档（没有名字、不带来源字段，是房间的由参考实现的入站收录补记） */
   createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo>;
   /** 获取直接子会话列表 */
   getChildren(parentId: string): SessionInfo[];

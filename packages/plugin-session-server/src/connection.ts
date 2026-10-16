@@ -2,9 +2,16 @@
 // 会话协议的连接层：JSON-RPC 帧的解析与校验、握手、按方法表分派、错误帧、推送与断开。
 // 每条连接接入它所在的审批面（对端的登记句柄），审批推送经它到达，在场上报与应答也经它。
 // 方法的业务逻辑不在这里，由 index 传入的处理函数表承担。
+//
+// 每条连接记下读者：握手时给的语言链（规范化过）与时区；握手之前与没给语言时链为空，i18n 按全局默认层。出帧（结果、错误、
+// 推送、攒着的推送）一律按连接的读者渲染帧里的文字对象（i18n 缺席时按原文）再序列化；i18n 抛错时这一帧按原文发出，每条连接
+// 告警一次，出帧与收帧都不因此抛错。一次推送发给多条连接时，语言链与时区相同的连接共用一份渲染结果。原样数据（工具调用的
+// 参数、输出与结果，事实，用户消息正文，设置项的取值与字段的默认值）不渲染：那里形如文字对象的值可能是伪造的，取值也要原样
+// 读回再写。
 // ════════════════════════════════════════════════════════════
 
 import type { ApprovalAttendance } from '@aalis/api-approval';
+import { type Audience, type I18nService, localizeFor } from '@aalis/api-i18n';
 import {
   type ErrorCode,
   RequestFrameSchema,
@@ -19,22 +26,34 @@ import {
   type SessionPeer,
   sessionMethods,
 } from '@aalis/api-session-protocol';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
+import {
+  type LocalizeSkip,
+  localize,
+  normalizeLanguages,
+  resolveSource,
+  type TextRef,
+  textOf,
+  toSource,
+} from '@aalis/schema-i18n';
 
-/** 处理函数抛出它，连接层把它写成错误帧；数值码见 RPC_ERROR_CODES，业务错误另带 reason（error.data.code） */
+/**
+ * 处理函数抛出它，连接层把它写成错误帧；数值码见 RPC_ERROR_CODES，业务错误另带 reason（error.data.code）。
+ * text 是给人看的原因，按连接的读者渲染进 error.message；message 是它的原文
+ */
 export class ProtocolError extends Error {
   constructor(
     readonly code: number,
-    message: string,
+    readonly text: string | TextRef,
     readonly reason?: ErrorCode,
   ) {
-    super(message);
+    super(toSource(text));
   }
 }
 
 /** 业务错误 */
-export function failure(reason: ErrorCode, message: string): ProtocolError {
-  return new ProtocolError(RPC_ERROR_CODES.applicationError, message, reason);
+export function failure(reason: ErrorCode, text: string | TextRef): ProtocolError {
+  return new ProtocolError(RPC_ERROR_CODES.applicationError, text, reason);
 }
 
 /** 一条已握手的连接，处理函数从它取对端、登记 watch 与订阅 */
@@ -71,9 +90,18 @@ export type MethodHandlers = {
 
 type Frame = Record<string, unknown>;
 
+/** 连接的读者：握手时给的语言链（规范化过）与时区 */
+type Reader = Extract<Audience, { languages: readonly string[] }>;
+
+/** 一次推送的渲染结果：按语言链与时区分，同键的连接共用 */
+type RenderCache = Map<string, string>;
+
 type LiveConnection = ServerConnection & {
-  /** 订阅的会话 → 攒着的推送；null 为照常推送 */
+  /** 订阅的会话 → 攒着的推送（已按这条连接渲染）；null 为照常推送 */
   readonly subscriptions: Map<string, string[] | null>;
+  /** 按这条连接的读者渲染并序列化一次推送的一帧：先查 cache，一次推送的各连接共用一份 */
+  encode(frame: Frame, cache: RenderCache): string;
+  /** 按这条连接的读者渲染一帧并发出 */
   send(frame: Frame): void;
   sendText(frame: string): void;
   drop(): void;
@@ -86,12 +114,49 @@ const majorOf = (version: string) => version.split('.')[0];
 /** 握手回应里随时会变的两项：当前的功能位与应用名 */
 type ServerState = () => Pick<SessionMethodResult<'initialize'>, 'features' | 'appName'>;
 
-export function createSessionServer(handlers: MethodHandlers, state: ServerState, logger: Logger) {
+/** 原样数据：不渲染的属性，按键与所在的对象认 */
+export const raw: LocalizeSkip = (key, parent) => {
+  switch (key) {
+    case 'args':
+    case 'output':
+    case 'result':
+      return parent.kind === 'tool-call';
+    case 'text':
+      return parent.kind === 'user-message';
+    // 审批的逐字参数，宿主通知给界面的事实
+    case 'facts':
+      return true;
+    // 设置项一行里本层的值、生效值与服务实际用的那一个
+    case 'value':
+    case 'effective':
+    case 'resolved':
+      return 'prominence' in parent;
+    // 设置项字段（schema-config）的默认值
+    case 'default':
+      return typeof parent.type === 'string';
+    default:
+      return false;
+  }
+};
+
+export function createSessionServer(
+  handlers: MethodHandlers,
+  state: ServerState,
+  logger: Logger,
+  i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
+) {
   const connections = new Set<LiveConnection>();
+  /** 渲染结果只随语言链与时区变；i18n 缺席时按原文渲染，只随时区变 */
+  const keyOf = (reader: Reader) =>
+    JSON.stringify([i18n.present ? i18n.use.chainOf(reader) : [], reader.timeZone ?? null]);
+  const serialize = (frame: object) => JSON.stringify({ jsonrpc: '2.0', ...frame });
 
   function connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection {
     let initialized = false;
     let closed = false;
+    let warned = false;
+    /** 这条连接的读者：链为空（握手之前、没给语言）时 i18n 按全局默认层 */
+    let reader: Reader = { languages: [] };
     /** 握手时主版本不合：回完错误帧再断开 */
     let farewell: string | undefined;
     const subscriptions = new Map<string, string[] | null>();
@@ -106,6 +171,16 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
         conn.send({ method: 'approval/settled', params });
       },
     });
+    /** 按读者渲染并序列化，i18n 抛错时抛出 */
+    const localized = (frame: Frame) => serialize(localizeFor(i18n, frame, reader, { skip: raw }));
+    /** i18n 抛错时的退路：告警（每条连接一次），这一帧按原文渲染，同 i18n 缺席 */
+    const asSource = (frame: Frame, err: unknown) => {
+      if (!warned) {
+        warned = true;
+        logger.warn('按读者渲染出帧出错，这一帧按原文发出（这条连接之后再出错不再告警）:', err);
+      }
+      return serialize(localize(frame, text => resolveSource(text, { timeZone: reader.timeZone }), raw));
+    };
     const conn: LiveConnection = {
       peer,
       attendance,
@@ -115,8 +190,27 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
       sendText(frame) {
         if (!closed) send(frame);
       },
+      encode(frame, cache) {
+        try {
+          const key = keyOf(reader);
+          let text = cache.get(key);
+          if (text === undefined) {
+            text = localized(frame);
+            cache.set(key, text);
+          }
+          return text;
+        } catch (err) {
+          return asSource(frame, err);
+        }
+      },
       send(frame) {
-        conn.sendText(JSON.stringify({ jsonrpc: '2.0', ...frame }));
+        let text: string;
+        try {
+          text = localized(frame);
+        } catch (err) {
+          text = asSource(frame, err);
+        }
+        conn.sendText(text);
       },
       subscribe(sessionId) {
         const held: string[] = [];
@@ -145,6 +239,7 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
 
     const initialize = (params: SessionMethodParams<'initialize'>): SessionMethodResult<'initialize'> => {
       if (initialized) throw new ProtocolError(RPC_ERROR_CODES.invalidRequest, '这条连接已经握过手');
+      reader = { languages: normalizeLanguages(params.languages ?? []), timeZone: params.timeZone };
       if (majorOf(params.protocolVersion) !== majorOf(SESSION_PROTOCOL_VERSION)) {
         farewell = `协议主版本不同：客户端 ${params.protocolVersion}，服务端 ${SESSION_PROTOCOL_VERSION}`;
         throw failure('unsupported', farewell);
@@ -181,7 +276,7 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
       );
     };
 
-    const fail = (id: string | number | null, code: number, message: string, reason?: ErrorCode) =>
+    const fail = (id: string | number | null, code: number, message: string | TextRef, reason?: ErrorCode) =>
       conn.send({ id, error: { code, message, ...(reason ? { data: { code: reason } } : {}) } });
 
     return {
@@ -206,10 +301,10 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
           for (const action of after) action();
         } catch (err) {
           if (err instanceof ProtocolError) {
-            fail(id, err.code, err.message, err.reason);
+            fail(id, err.code, err.text, err.reason);
           } else {
             logger.warn(`处理 ${method} 出错:`, err);
-            fail(id, RPC_ERROR_CODES.internalError, err instanceof Error ? err.message : String(err));
+            fail(id, RPC_ERROR_CODES.internalError, textOf(err));
           }
         }
         if (farewell !== undefined) {
@@ -230,7 +325,8 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
     const targets = [...connections].filter(to);
     if (targets.length === 0) return;
     const params = build();
-    for (const conn of targets) conn.send({ method, params });
+    const cache: RenderCache = new Map();
+    for (const conn of targets) conn.sendText(conn.encode({ method, params }, cache));
   }
 
   /** 推一条通知给订阅了这个会话的连接；订阅还在等快照回应的先攒着 */
@@ -239,11 +335,13 @@ export function createSessionServer(handlers: MethodHandlers, state: ServerState
     method: N,
     params: SessionNotificationParams<N>,
   ): void {
-    const frame = JSON.stringify({ jsonrpc: '2.0', method, params });
+    const cache: RenderCache = new Map();
     for (const conn of connections) {
       const held = conn.subscriptions.get(sessionId);
+      if (held === undefined) continue;
+      const frame = conn.encode({ method, params }, cache);
       if (held) held.push(frame);
-      else if (held === null) conn.sendText(frame);
+      else conn.sendText(frame);
     }
   }
 

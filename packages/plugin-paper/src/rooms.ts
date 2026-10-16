@@ -193,7 +193,7 @@ export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
 
 /** 平台档与平台类型档的称呼：层表里的称呼加平台（与类型名），如「平台档 onebot」「平台类型档 onebot · group」 */
 export function profileName(layer: ProfileLayer): string {
-  const label = SESSION_LAYERS.find(({ name }) => name === layer.scope)?.label;
+  const label = SESSION_LAYERS.find(({ name }) => name === layer.scope)?.label.source;
   return layer.scope === 'type' ? `${label} ${layer.platform} · ${layer.type}` : `${label} ${layer.platform}`;
 }
 

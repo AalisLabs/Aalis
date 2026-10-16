@@ -4,10 +4,10 @@
 // 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
 // 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
 // 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与她发出的附件
-// 各自单独成条；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实。存档元数据
-// 只按 schema-message 登记的键读（WellKnownMetadataKeys），会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、
-// 「已发到群」、回合停止时还没结束、命令的退出码与转到后台的任务 id 取自工具结果的元数据（会话服务在结果落库前写上），
-// 没有结果的调用（重启或中断）同样算没结束。
+// 各自单独成条；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实，通知与事件标记的
+// 文字先取存档另记的文字对象（没记的旧记录取正文）。存档元数据只按 schema-message 登记的键读（WellKnownMetadataKeys），
+// 会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、「已发到群」、回合停止时还没结束、命令的退出码与转到后台的
+// 任务 id 取自工具结果的元数据（会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
 // 房间里她只把最后的回复发进群（api-agent 的约定）：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复
 // 按适配器记的投递失败标出，与实时推送一致。
 // ════════════════════════════════════════════════════════════
@@ -16,6 +16,7 @@ import type { MemoryService } from '@aalis/api-memory';
 import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
+import { isTextRef } from '@aalis/schema-i18n';
 import {
   type ArchivedAttachment,
   type ContentSegment,
@@ -197,12 +198,13 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
     };
   }
   if (message.role === 'notice' || (message.role === 'system' && message.kind === WellKnownKinds.EventMarker)) {
+    const recorded = message.metadata?.[WellKnownMetadataKeys.Text];
     return {
       kind: 'notice',
       itemId,
       at,
       topic: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]) ?? message.kind ?? message.role,
-      text: message.content ?? '',
+      text: isTextRef(recorded) ? recorded : (message.content ?? ''),
       attachments: [],
       noticeId: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeId]),
       facts: noticeFacts(message.metadata?.[WellKnownMetadataKeys.HostNoticeFacts]),

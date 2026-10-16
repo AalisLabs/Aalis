@@ -37,8 +37,12 @@ const logger: Logger = {
   child: () => logger,
 };
 
-/** 先把会话表与存档写进内存记忆，再装会话管理与会话服务：会话管理装上时读会话表 */
-async function setup(records: Record<string, unknown>, archive: Record<string, unknown[]> = {}) {
+/** 先把会话表、场所记录与存档写进内存记忆，再装会话管理与会话服务：会话管理装上时读会话表与场所记录 */
+async function setup(
+  records: Record<string, unknown>,
+  archive: Record<string, unknown[]> = {},
+  places: Record<string, unknown> = {},
+) {
   const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-bad-data-'));
@@ -52,6 +56,7 @@ async function setup(records: Record<string, unknown>, archive: Record<string, u
   host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
   const mem = host.memory.use;
   for (const [key, data] of Object.entries(records)) await mem.saveMetadata('sessions', key, data as never);
+  for (const [key, data] of Object.entries(places)) await mem.saveMetadata('places', key, data as never);
   for (const [sessionId, messages] of Object.entries(archive)) {
     for (const message of messages) await mem.saveMessage(sessionId, message as Message);
   }
@@ -92,7 +97,6 @@ describe('坏数据只坏它自己', () => {
   it('会话表里必填字段不对的记录不载入、记告警、移到 sessions-rejected；可选字段类型不对的去掉这个字段照常载入；会话列表照常给出，好的会话都在', async () => {
     const rejected = {
       'webui:children': record('webui:children', { children: null }),
-      'webui:name': record('webui:name', { name: 7 }),
       'webui:times': record('webui:times', { updatedAt: '昨天' }),
       'webui:status': record('webui:status', { status: 'weird' }),
       'webui:config': record('webui:config', { config: 'x' }),
@@ -112,6 +116,7 @@ describe('坏数据只坏它自己', () => {
         tokens: null,
       }),
       'webui:orphan': record('webui:orphan', { parentId: 'webui:missing', children: ['webui:nobody'] }),
+      'webui:name': record('webui:name', { name: 7 }),
       'webui:title': record('webui:title', { title: { text: '标题' } }),
       'webui:turn': record('webui:turn', { status: 'error', lastTurn: 'x' }),
       'webui:tokens': record('webui:tokens', { tokens: { input: 'many', output: 1 } }),
@@ -123,6 +128,7 @@ describe('坏数据只坏它自己', () => {
     expect(sessions.map(s => s.id).sort()).toEqual([
       'webui:good',
       'webui:metadata',
+      'webui:name',
       'webui:nulls',
       'webui:title',
       'webui:tokens',
@@ -134,7 +140,12 @@ describe('坏数据只坏它自己', () => {
     expect(sessions.find(s => s.id === 'webui:turn')).not.toHaveProperty('lastTurn');
     expect(await c.list({ query: '好' })).toMatchObject({ sessions: [{ id: 'webui:good' }] });
     const warned = warnings.join('\n');
-    for (const dropped of ['webui:title（title）', 'webui:turn（lastTurn）', 'webui:tokens（tokens）']) {
+    for (const dropped of [
+      'webui:name（name）',
+      'webui:title（title）',
+      'webui:turn（lastTurn）',
+      'webui:tokens（tokens）',
+    ]) {
       expect(warned).toContain(dropped);
     }
     expect(warned).not.toContain('webui:metadata');
@@ -143,6 +154,14 @@ describe('坏数据只坏它自己', () => {
       expect(await mem.getMetadata('sessions', key)).toBeUndefined();
       expect(await mem.getMetadata('sessions-rejected', key)).toEqual(data);
     }
+  });
+
+  it('场所记录里名字或目录类型不对的去掉这个字段照常载入', async () => {
+    const key = 'onebot:group:2';
+    const place = { key, kind: 'window', name: 7, root: 5, config: { persona: 'X' }, createdAt: 1, updatedAt: 2 };
+    const { mem } = await setup({}, {}, { [key]: place });
+    expect(warnings.join('\n')).toContain(`${key}（name、root）`);
+    expect(await mem.getMetadata('places-rejected', key)).toBeUndefined();
   });
 
   it('不载入或去掉了字段的房间再来消息：建档不覆盖原记录，去掉的字段之外的配置都在', async () => {

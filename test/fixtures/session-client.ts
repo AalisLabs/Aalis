@@ -13,10 +13,13 @@ import {
   sessionMethods,
   sessionNotifications,
 } from '../../packages/api-session-protocol/src/index.js';
+import { raw as rawData } from '../../packages/plugin-session-server/src/connection.js';
+import { type Localized, localize } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话协议的测试客户端：经 sessionProtocol.connect 直接收发帧，不走网络。收到的帧逐条解析留存；
-// 结果与通知先过协议 schema 再交给用例。
+// 结果与通知先过协议 schema 再交给用例，类型是线上的形状（文字已按连接的读者渲染成字符串）。线上一律是字符串：
+// 收到的帧里除去服务端不渲染的原样数据，出现文字对象就抛错（判据与服务端同一个）。
 // ════════════════════════════════════════════════════════════
 
 /** 不接审批服务的审批面：只看会话、不涉及审批的用例用它 */
@@ -37,15 +40,23 @@ export const CLIENT = { name: 'test-client', version: '0.0.0' };
 
 export type Frame = Record<string, unknown> & { id?: unknown; method?: string };
 
-type Snapshot = SessionMethodResult<'session/subscribe'>;
+type Snapshot = Localized<SessionMethodResult<'session/subscribe'>>;
 
 /** 一条连接：call 发请求、取回同 id 的回应并过 schema，fail 取回错误帧 */
 export function client(server: SessionProtocolService, peer: Omit<SessionPeer, 'disconnect'> = OWNER) {
   const frames: Frame[] = [];
   const disconnects: string[] = [];
-  const conn = server.connect({ ...peer, disconnect: reason => disconnects.push(reason) }, frame =>
-    frames.push(JSON.parse(frame) as Frame),
-  );
+  const conn = server.connect({ ...peer, disconnect: reason => disconnects.push(reason) }, text => {
+    const frame = JSON.parse(text) as Frame;
+    localize(
+      frame,
+      ref => {
+        throw new Error(`线上出现了文字对象：${JSON.stringify(ref)}`);
+      },
+      rawData,
+    );
+    frames.push(frame);
+  });
   let nextId = 0;
 
   /** 送一帧原文，回这一帧引出的全部新帧 */
@@ -65,7 +76,7 @@ export function client(server: SessionProtocolService, peer: Omit<SessionPeer, '
   const call = async <M extends SessionMethod>(method: M, params: SessionMethodParams<M>) => {
     const reply = await request(method, params);
     if ('error' in reply) throw new Error(`${method} 出错：${JSON.stringify(reply.error)}`);
-    return sessionMethods[method].result.parse(reply.result) as SessionMethodResult<M>;
+    return sessionMethods[method].result.parse(reply.result) as Localized<SessionMethodResult<M>>;
   };
   /** 发请求，回应须是错误帧 */
   const fail = async (method: string, params?: unknown) => {
@@ -76,8 +87,10 @@ export function client(server: SessionProtocolService, peer: Omit<SessionPeer, '
   const notifications = <N extends SessionNotification>(name: N) =>
     frames
       .filter(f => f.method === name)
-      .map(f => sessionNotifications[name].parse(f.params) as SessionNotificationParams<N>);
-  const init = () => call('initialize', { protocolVersion: SESSION_PROTOCOL_VERSION, client: CLIENT });
+      .map(f => sessionNotifications[name].parse(f.params) as Localized<SessionNotificationParams<N>>);
+  /** 握手；reader 是这条连接的读者（语言链与时区），不给时服务端按全局默认层渲染 */
+  const init = (reader: Pick<SessionMethodParams<'initialize'>, 'languages' | 'timeZone'> = {}) =>
+    call('initialize', { protocolVersion: SESSION_PROTOCOL_VERSION, client: CLIENT, ...reader });
   const list = (params: SessionMethodParams<'sessions/list'> = {}) => call('sessions/list', params);
   /** 在列表里找一条摘要（列表默认一页 50 条，用例里的会话不超过一页） */
   const summary = async (id: string) => {
@@ -107,7 +120,9 @@ export function client(server: SessionProtocolService, peer: Omit<SessionPeer, '
    * started 与 completed 按 itemId 放入或覆盖，delta 接在消息、思考的正文或工具输出后面。
    */
   const timeline = (sessionId: string, base: { snapshot: Snapshot; from: number }) => {
-    const items = new Map<string, SessionItem>(base.snapshot.items.map(item => [item.itemId, structuredClone(item)]));
+    const items = new Map<string, Localized<SessionItem>>(
+      base.snapshot.items.map(item => [item.itemId, structuredClone(item)]),
+    );
     for (const frame of frames.slice(base.from)) {
       const params = frame.params as { sessionId?: string; seq?: number } | undefined;
       if (!frame.method?.startsWith('item/') || params?.sessionId !== sessionId) continue;
@@ -122,7 +137,7 @@ export function client(server: SessionProtocolService, peer: Omit<SessionPeer, '
         continue;
       }
       const { item } = sessionNotifications['item/completed'].parse(frame.params);
-      items.set(item.itemId, item);
+      items.set(item.itemId, item as Localized<SessionItem>);
     }
     return [...items.values()];
   };

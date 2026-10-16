@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackgroundTask, SessionItem, SessionSummary } from '../../packages/api-session-protocol/src/index.js';
 import { BACKGROUND_TASK_NOTICE } from '../../packages/api-tools/src/index.js';
+import type {
+  BackgroundTask,
+  SessionItem,
+  SessionSummary,
+} from '../../packages/plugin-webui-client/src/protocol/session-client.js';
 import { DEFAULT_PAGE_URL, setPageUrl, stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {

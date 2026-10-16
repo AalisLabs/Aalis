@@ -14,6 +14,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 子会话与根会话同一套收口：最后一轮出错收口为 error，被停止收口为 completed、从 lastTurn 看出。
 // 父会话的 wait_subtasks 随即返回，不等到超时；check_subtask、wait_subtasks 与父会话的子任务提醒
 // 把被停止的报成「已停止」（stopped），不算完成；出错的三处都带出 lastTurn 里的原因。
+// 没取名的子任务不落盘生成的名字，交给模型的名字取默认名（api-session-manager 的 sessionLabel）的原文。
 // ════════════════════════════════════════════════════════════
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
@@ -179,5 +180,19 @@ describe('子会话收口后父会话的等待随即返回', () => {
       timedOut: true,
       subtasks: [{ id: child.id, status: 'active', completed: false }],
     });
+  });
+});
+
+describe('没取名的子任务', () => {
+  it('不落盘生成的名字与标题；工具结果与子任务提醒里的名字是默认名的原文', async () => {
+    const { sm, call, reminder } = await setup();
+    const created = await call('create_subtask', { task: '<任务>' });
+    const child = sm.getSession(created.subtaskId);
+    expect(child?.name).toBeUndefined();
+    expect(child?.title).toBeUndefined();
+    const label = `子任务 ${new Intl.DateTimeFormat('zh-CN', { timeStyle: 'short' }).format(child?.createdAt)}`;
+    expect(created.name).toBe(label);
+    expect((await call('check_subtask', { subtask_ids: [created.subtaskId] })).subtasks[0].name).toBe(label);
+    expect(await reminder()).toContain(`[进行中] ${label}`);
   });
 });

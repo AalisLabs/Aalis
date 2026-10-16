@@ -1,5 +1,4 @@
 import { sanitizeForCard } from '@aalis/api-approval';
-import type { SessionItem } from '@aalis/api-session-protocol';
 import { FilePen, LoaderCircle, SquareTerminal, Wrench } from 'lucide-react';
 import { useState } from 'react';
 import { TaskFoot, TaskStatus } from '../background/Background';
@@ -7,7 +6,7 @@ import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { type Approval, useSessionClient } from '../connection';
 import { clockTime, duration } from '../format';
-import { RequestError } from '../protocol/session-client';
+import { RequestError, type SessionItem } from '../protocol/session-client';
 import './ToolCall.css';
 
 // 工具卡：一行写动作与对象、右侧写状态，点开看细节；模型还在生成参数时只有工具名与「正在生成」，没有细节可看。

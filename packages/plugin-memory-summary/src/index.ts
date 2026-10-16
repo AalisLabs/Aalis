@@ -11,9 +11,11 @@ import { roomClass, type SessionSetting, sessionManager } from '@aalis/api-sessi
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
+import { t } from './texts.js';
 
 /** 工具相关条目与通知进摘要输入时的每条硬截断（工具参数、结果各自适用），工具名不参与截断 */
 const ENTRY_MAX_CHARS = 200;
@@ -525,14 +527,16 @@ async function run(caps: Caps): Promise<void> {
       throw err;
     }
     logger.use.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条`);
-    // 系统事件消息，供前端持久化显示压缩分隔线
-    if (messageArchive.present)
-      await messageArchive.use.saveMessage(sessionId, {
-        role: 'system',
-        kind: WellKnownKinds.EventMarker,
-        content: '对话已压缩',
-        timestamp: at,
-      });
+    // 系统事件消息，供前端持久化显示压缩分隔线：正文是原文，文字对象另记，界面按读者语言显示
+    if (!messageArchive.present) return;
+    const compacted = t('compacted');
+    await messageArchive.use.saveMessage(sessionId, {
+      role: 'system',
+      kind: WellKnownKinds.EventMarker,
+      content: toSource(compacted),
+      timestamp: at,
+      metadata: { [WellKnownMetadataKeys.Text]: compacted },
+    });
   }
 
   /**

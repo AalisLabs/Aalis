@@ -1,10 +1,11 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
-import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
+import { type SessionInfo, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 // =====================================================================
@@ -61,9 +62,15 @@ function subtaskStatus(session: SessionInfo): SubtaskStatus {
   return session.status === 'completed' && session.lastTurn?.outcome === 'aborted' ? 'stopped' : session.status;
 }
 
-/** 出错的子任务的出错原因（session-manager 记在 lastTurn），其余状态不带：为 undefined 的键序列化后不出现在工具结果里 */
+/** 交给模型与日志的子任务名：没取名的是默认名的原文 */
+const nameOf = (session: SessionInfo): string => toSource(sessionLabel(session));
+
+/**
+ * 出错的子任务的出错原因（session-manager 记在 lastTurn，交给模型取原文），其余状态不带：为 undefined 的键序列化后不出现在
+ * 工具结果里
+ */
 function errorReason(session: SessionInfo, status: SubtaskStatus): string | undefined {
-  return status === 'error' ? session.lastTurn?.error : undefined;
+  return status === 'error' ? toSource(session.lastTurn?.error) : undefined;
 }
 
 const STATUS_LABELS: Partial<Record<SubtaskStatus, string>> = {
@@ -185,9 +192,8 @@ function registerSubtask(
         return JSON.stringify({ error: '子任务中不能再创建子任务。请直接完成当前任务，由父会话负责任务拆分和协调。' });
       }
 
-      const taskName = args.name
-        ? String(args.name)
-        : `子任务 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+      // 没给名字的不起名：显示名由读者按建档时间给（sessionLabel）
+      const taskName = args.name ? String(args.name) : undefined;
 
       try {
         // 子会话复制父会话的生效配置；登记为 liveOnly 的项（白纸与远端代理等）不随复制冻结，只经继承链实时解析
@@ -233,11 +239,12 @@ function registerSubtask(
           logger.use.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
 
+        const name = nameOf(child);
         return JSON.stringify({
           subtaskId: child.id,
-          name: taskName,
+          name,
           status: 'active',
-          message: `子任务 "${taskName}" 已创建并开始执行`,
+          message: `子任务 "${name}" 已创建并开始执行`,
         });
       } catch (err) {
         return JSON.stringify({ error: `创建子任务失败: ${err instanceof Error ? err.message : String(err)}` });
@@ -287,7 +294,7 @@ function registerSubtask(
         const status = subtaskStatus(session);
         return {
           id,
-          name: session.name,
+          name: nameOf(session),
           status,
           statusLabel: STATUS_LABELS[status] ?? status,
           reason: errorReason(session, status),
@@ -385,7 +392,7 @@ function registerSubtask(
       return JSON.stringify({
         subtaskId,
         sent: true,
-        message: `消息已发送到子任务 "${session.name}"`,
+        message: `消息已发送到子任务 "${nameOf(session)}"`,
       });
     },
   });
@@ -436,7 +443,7 @@ function registerSubtask(
       }
 
       try {
-        const name = session.name;
+        const name = nameOf(session);
         await sm.deleteSession(subtaskId);
         return JSON.stringify({
           subtaskId,
@@ -550,7 +557,7 @@ function registerSubtask(
         const status = subtaskStatus(session);
         return {
           id,
-          name: session.name,
+          name: nameOf(session),
           status,
           reason: errorReason(session, status),
           inputContext: session.inputContext || null,
@@ -612,7 +619,7 @@ function registerSubtask(
         const subtaskContext = [
           `\n\n--- 子任务上下文 ---`,
           `你正在一个子任务会话中执行独立任务。`,
-          `子任务名称: ${session.name}`,
+          `子任务名称: ${nameOf(session)}`,
           session.inputContext ? `任务指令: ${session.inputContext}` : '',
           '',
           '回答规则：',
@@ -661,16 +668,16 @@ function registerSubtask(
           if (!child) continue;
           const status = subtaskStatus(child);
           if (status === 'active') {
-            activeChildren.push(`  - [进行中] ${child.name} (ID: ${childId})`);
+            activeChildren.push(`  - [进行中] ${nameOf(child)} (ID: ${childId})`);
           } else if (status === 'completed') {
             const resultPreview = child.result ?? '(无结果)';
-            completedChildren.push(`  - [已完成] ${child.name} (ID: ${childId}): ${resultPreview}`);
+            completedChildren.push(`  - [已完成] ${nameOf(child)} (ID: ${childId}): ${resultPreview}`);
           } else if (status === 'error') {
             // 不取 result：出错时它若有值，是此前某一轮回复收口时留下的结果，不是这次出错的详情
-            const reason = child.lastTurn?.error ?? '(无错误详情)';
-            errorChildren.push(`  - [出错] ${child.name} (ID: ${childId}): ${reason}`);
+            const reason = toSource(child.lastTurn?.error) ?? '(无错误详情)';
+            errorChildren.push(`  - [出错] ${nameOf(child)} (ID: ${childId}): ${reason}`);
           } else if (status === 'stopped') {
-            stoppedChildren.push(`  - [已停止] ${child.name} (ID: ${childId})`);
+            stoppedChildren.push(`  - [已停止] ${nameOf(child)} (ID: ${childId})`);
           }
         }
 
@@ -779,7 +786,7 @@ function registerSubtask(
       }
 
       await sm.completeSession(data.sessionId, result.trim());
-      logger.use.info(`子任务自动完成: ${session.name} (${data.sessionId})`);
+      logger.use.info(`子任务自动完成: ${nameOf(session)} (${data.sessionId})`);
     } catch (err) {
       logger.use.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }

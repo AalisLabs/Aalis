@@ -1,6 +1,6 @@
-import type { SessionItem, SessionSummary } from '@aalis/api-session-protocol';
 import { useCallback, useEffect, useState } from 'react';
 import { type Approval, useSessionClient } from '../connection';
+import type { SessionItem, SessionSummary } from '../protocol/session-client';
 
 // 一个打开着的会话：订阅取快照，之后按推送更新条目（同一 itemId 覆盖，增量接在正文或输出后面），摘要随 sessions/changed
 // 更新。计划与用量每个会话一条、整份替换，不进时间线。重新订阅（重连、epoch 变了、resync）时快照整份取代，

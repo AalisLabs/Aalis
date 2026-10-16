@@ -161,12 +161,13 @@ function createArchiveService(
       //
       // 宿主通知同样落成 notice，kind='host-notice'。只归档宿主正文：注入方包好的不可信段
       // （hostNotice.untrusted）不写进消息也不写进 metadata——归档的 notice 出口转成 system，
-      // 之后这个房间每一轮都看得到它，不可信段只能在当轮出现。子类、id 与给界面的事实另记，读历史的一方据此画通知
+      // 之后这个房间每一轮都看得到它，不可信段只能在当轮出现。子类、id、给界面的事实与给人看的文字另记，读历史的一方据此画通知
       if (working.hostNotice) {
-        const { kind, id, facts } = working.hostNotice;
+        const { kind, id, facts, text } = working.hostNotice;
         meta[WellKnownMetadataKeys.HostNoticeKind] = kind;
         if (id) meta[WellKnownMetadataKeys.HostNoticeId] = id;
         if (facts) meta[WellKnownMetadataKeys.HostNoticeFacts] = facts;
+        if (text) meta[WellKnownMetadataKeys.Text] = text;
       }
       const kind = working.hostNotice
         ? WellKnownKinds.HostNotice
@@ -219,6 +220,7 @@ function createArchiveService(
       if (opts.groupId) metadata[WellKnownMetadataKeys.GroupId] = opts.groupId;
       if (opts.operatorId) metadata.operatorId = opts.operatorId;
       if (opts.data) Object.assign(metadata, opts.data);
+      if (opts.text) metadata[WellKnownMetadataKeys.Text] = opts.text;
 
       const message: Message = {
         role: 'notice',

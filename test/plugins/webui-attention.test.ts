@@ -68,15 +68,18 @@ const approvalsDouble = definePlugin({
   },
 });
 
-/** 会话管理的替身：只答 getSession，标题按 id 取 */
-const TITLES: Record<string, string> = { 's-1': '整理周报' };
+/** 会话管理的替身：只答 getSession。s-1 有标题，s-unnamed 没取名也没有标题 */
+const SESSIONS: Record<string, Partial<SessionInfo>> = {
+  's-1': { name: 's-1', title: '整理周报' },
+  's-unnamed': { createdAt: 0 },
+};
 const sessionsDouble = definePlugin({
   name: 'zz-attention-sessions',
   provides: [sessionManager],
   uses: { provide },
   apply({ provide }) {
     provide.use(sessionManager, {
-      getSession: (id: string) => (TITLES[id] ? ({ id, name: id, title: TITLES[id] } as SessionInfo) : undefined),
+      getSession: (id: string) => (SESSIONS[id] ? ({ id, ...SESSIONS[id] } as SessionInfo) : undefined),
     } as never);
   },
 });
@@ -227,6 +230,22 @@ describe('「需要处理」的读口与 attention.changed', () => {
     void emit('approval:settled', { ...first, state: 'approved' });
     expect(await next(2)).toEqual([{ kind: 'approval', id: 'ap-2', sessionId: 's-unknown', tool: 'exec' }]);
     expect(pushes()).toBe(3);
+  });
+
+  it('审批所在的会话没取名也没有标题：带会话的默认名', async () => {
+    const { next, emit } = await start([approvalsDouble, sessionsDouble]);
+    const pending = approval('ap-1', 's-unnamed');
+    shown.push(pending);
+    void emit('approval:created', pending);
+    expect(await next(0)).toEqual([
+      {
+        kind: 'approval',
+        id: 'ap-1',
+        sessionId: 's-unnamed',
+        session: expect.stringMatching(/^会话 \d/),
+        tool: 'exec',
+      },
+    ]);
   });
 
   it('插件失败与恢复、缺服务与补上都推；故障没变时（别的插件启停）只推 plugins.changed，不推 attention.changed', async () => {

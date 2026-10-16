@@ -38,11 +38,11 @@ export async function recordRoom(events: Pick<Events, 'emit'>, sessionId: string
  * 会话表里一条已收录的房间记录，来源字段与 OneBot 的声明相同（private 为一对一，其余类型为多方），供预置会话表：
  * 入站要经网关的用例发原生入站会跑完整条相位链，改用预置
  */
-export function storedRoom(sessionId: string, name = sessionId): Record<string, unknown> {
+export function storedRoom(sessionId: string, name?: string): Record<string, unknown> {
   const { platform, selfId, sessionType, targetId } = parse(sessionId);
   return {
     id: sessionId,
-    name,
+    ...(name === undefined ? {} : { name }),
     children: [],
     status: 'waiting',
     config: {},

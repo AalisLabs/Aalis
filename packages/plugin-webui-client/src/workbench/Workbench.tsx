@@ -1,4 +1,3 @@
-import type { SessionSummary } from '@aalis/api-session-protocol';
 import type { HostPanelTab, PageRef } from '@aalis/api-webui';
 import { ChevronRight, ChevronsDownUp, ChevronsUpDown, LoaderCircle, PanelRight } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,7 +17,7 @@ import { AttentionSummary } from '../health/AttentionList';
 import { GetStarted } from '../health/GetStarted';
 import { composing, shortcutLabel } from '../keys';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
-import { RequestError, unlessLost } from '../protocol/session-client';
+import { RequestError, type SessionSummary, unlessLost } from '../protocol/session-client';
 import { paths, useSessionAddress } from '../routes';
 import { useSessionActions } from '../sessions/actions';
 import { BackgroundStatus, backgroundLabel } from '../sessions/status';

@@ -5,12 +5,13 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { defineTexts, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话记下每一轮的结局与用量：一轮结束时写 lastTurn（结局、结束时间，出错时带 agent:turn:after 给的原因），
+// 会话记下每一轮的结局与用量：一轮结束时写 lastTurn（结局、结束时间，出错时带 agent:turn:after 给的原因，可以是文字对象），
 // 子会话与根会话同一套收口；模型调用的 token 按会话累加进 tokens，只记已有的会话、不改 updatedAt，
 // 随会话落盘与删除。两项都由 session-manager 写入，不收调用方传值。
 // ════════════════════════════════════════════════════════════
@@ -23,12 +24,19 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup() {
+const t = defineTexts({
+  ns: '@zz/session-turn-record',
+  language: 'zh-CN',
+  source: { quota: '额度用完了' } as const,
+});
+
+/** stored 预置会话表（重启时交上一次落盘的） */
+async function setup(stored?: Record<string, Record<string, unknown>>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
-  const mem = fakeMemory();
+  const mem = fakeMemory(stored);
   host.provide.use(memory, mem as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugins.idle();
@@ -37,8 +45,11 @@ async function setup() {
   const sm = host.sessionManager.use;
 
   let turns = 0;
-  /** 按 agent 的顺序跑一轮；不给结局时不发 agent:turn:after（消息被拦下的一轮） */
-  const turn = (sessionId: string, outcome?: Outcome, error?: string) => {
+  /**
+   * 按 agent 的顺序跑一轮；不给结局时不发 agent:turn:after（消息被拦下的一轮）。原因可以是文字对象：钩子的 error 还只收字符串，
+   * 经断言交出
+   */
+  const turn = (sessionId: string, outcome?: Outcome, error?: string | TextRef) => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
     return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
@@ -47,7 +58,7 @@ async function setup() {
         message,
         reply: outcome === 'replied' ? '<回复>' : '',
         outcome,
-        ...(error === undefined ? {} : { error }),
+        ...(error === undefined ? {} : { error: error as string }),
         sessionId,
         turnId,
         metadata: {},
@@ -73,7 +84,7 @@ async function setup() {
     for (const [key, data] of mem.meta) mem.meta.set(key, structuredClone(data));
   };
 
-  return { sm, mem, turn, usage, updates, flush };
+  return { app, sm, mem, turn, usage, updates, flush };
 }
 
 describe('lastTurn：每一轮结束时记下结局与结束时间', () => {
@@ -111,6 +122,16 @@ describe('lastTurn：每一轮结束时记下结局与结束时间', () => {
     expect(sm.getSession(session.id)?.lastTurn?.error).toBe(`${'x'.repeat(199)}…`);
     await turn(session.id, 'error', '');
     expect(sm.getSession(session.id)?.lastTurn).not.toHaveProperty('error');
+  });
+
+  it('原因是文字对象时原样记下：落盘，重启读回仍在', async () => {
+    const { app, sm, mem, turn } = await setup();
+    const session = await sm.createSession({ name: '<会话>' });
+    await turn(session.id, 'error', t('quota'));
+    await app.stop();
+    // 经 JSON 往返：与落进存储再读回一样，读回的是另一份对象
+    const restarted = await setup(JSON.parse(JSON.stringify(Object.fromEntries(mem.meta))));
+    expect(restarted.sm.getSession(session.id)?.lastTurn?.error).toEqual(t('quota'));
   });
 
   it('被拦下、没有结局的一轮按 silent 记，不沿用上一轮的出错原因', async () => {

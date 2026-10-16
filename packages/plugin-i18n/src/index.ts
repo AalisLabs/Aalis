@@ -1,14 +1,14 @@
 // ============================================================
 // @aalis/plugin-i18n — i18n 服务的默认提供者
 //
-// 按读者的语言链渲染文字对象：languages 读者直接给链，sessionId 读者取会话设置的 language，host 读者取全局默认层，
-// 哪一层都没设时按 en。语言包取自贡献点 i18n:pack，用时与贡献点对照，变了才重建索引。
+// 按读者的语言链渲染文字对象：languages 读者直接给链（规范化后为空时按全局默认层），sessionId 读者取会话设置的 language
+// （本插件登记），host 读者取全局默认层，哪一层都没设时按 en。语言包取自贡献点 i18n:pack，用时与贡献点对照，变了才重建索引。
 // 另给 WebUI 两样：可选项来源 i18n-languages（贡献点 webui:options，值是语言标签、标签是自称），与「翻译」页（translation.ts）。
 // ============================================================
 
 import { contributions } from '@aalis/api-contributions';
 import { type Audience, i18n, type LanguageInfo } from '@aalis/api-i18n';
-import { sessionManager } from '@aalis/api-session-manager';
+import { type SessionSetting, sessionManager } from '@aalis/api-session-manager';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, optional, provide } from '@aalis/core';
 import {
@@ -23,16 +23,42 @@ import {
 import { t } from './texts.js';
 import { defineTranslationPage } from './translation.js';
 
-/** 语言链最多几种：再多也轮不到 */
-const MAX_CHAIN = 8;
-/** 读者给的列表只看前几项：超长的列表不逐项规范化 */
-const MAX_INPUT = 32;
+declare module '@aalis/api-session-manager' {
+  interface SessionConfig {
+    /** 读者的语言链：语言标签，靠前的优先 */
+    language?: string[];
+  }
+}
+
+/**
+ * 会话设置 language：有序的语言列表，可选项是有文字可用的语言。规范化（同读的一侧，zh_CN 收下、读时整理成 zh-CN）
+ * 之后不合法的标签拒收，完全相同的重复项由字段的 ordered 去掉；哪一层都没设时按 en（chainOf）
+ */
+const LANGUAGE_SETTING: SessionSetting = {
+  key: 'language',
+  field: {
+    type: 'multiselect',
+    label: t('settingLabel'),
+    description: t('settingDescription'),
+    ordered: true,
+    dynamicOptions: 'i18n-languages',
+  },
+  appliesTo: ['owner', 'room', 'task'],
+  prominence: 'common',
+  unset: t('settingUnset'),
+  validate(value) {
+    // 不是数组的交给字段校验
+    if (!Array.isArray(value)) return undefined;
+    const bad = value.findIndex(tag => normalizeLanguages([tag]).length === 0);
+    return bad < 0 ? undefined : t('badLanguage', { tag: String(value[bad]) });
+  },
+};
 
 const uses = {
   provide,
   /** 语言包的来源，交可选项来源；缺席时没有语言包 */
   contributions: optional(contributions),
-  /** sessionId 与 host 读者的语言设置；缺席时这两种读者按 en */
+  /** 登记会话设置 language，sessionId 与 host 读者（含链为空的 languages 读者）取它；缺席时按 en */
   sessionManager: optional(sessionManager),
   /** 「翻译」页 */
   webui: optional(webuiServer),
@@ -48,8 +74,9 @@ export default definePlugin({
   apply(caps) {
     const packs = packIndex(caps);
     const chainOf = (audience: Audience): readonly string[] => {
-      const chain = normalizeLanguages(settingOf(caps, audience).slice(0, MAX_INPUT)).slice(0, MAX_CHAIN);
-      return chain.length > 0 ? chain : ['en'];
+      const chain = normalizeLanguages(settingOf(caps, audience));
+      if (chain.length > 0) return chain;
+      return 'languages' in audience ? chainOf({ host: true }) : ['en'];
     };
     caps.provide.use(i18n, {
       chainOf,
@@ -61,6 +88,7 @@ export default definePlugin({
       },
       languages: () => languagesOf(packs()),
     });
+    caps.sessionManager.use.registerSetting(LANGUAGE_SETTING);
     caps.contributions.use.contribute('webui:options', {
       id: 'i18n-languages',
       list: () => languagesOf(packs()).map(({ tag, name }) => ({ value: tag, label: name })),
@@ -98,7 +126,7 @@ function settingOf(caps: Caps, audience: Audience): readonly unknown[] {
       'sessionId' in audience
         ? sessions.resolveConfig(audience.sessionId, audience.platform)
         : sessions.getLayer({ scope: 'defaults' });
-    value = (config as { language?: unknown }).language;
+    value = config.language;
   }
   return Array.isArray(value) ? value : [];
 }

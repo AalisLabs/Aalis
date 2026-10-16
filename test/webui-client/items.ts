@@ -1,17 +1,17 @@
+import type { SettingRow } from '../../packages/api-session-protocol/src/index.js';
 import type {
   BackgroundTask,
   SessionItem,
-  SessionMethodResult,
+  SessionSnapshot,
   SessionSummary,
-  SettingRow,
-} from '../../packages/api-session-protocol/src/index.js';
+} from '../../packages/plugin-webui-client/src/protocol/session-client.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import { summary } from './harness.js';
 
 // 会话工作台用例的条目、快照、设置行与后台任务，以及服务端推送的写法
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
-export type Approval = SessionMethodResult<'session/subscribe'>['approvals'][number];
+export type Approval = SessionSnapshot['approvals'][number];
 
 export const EPOCH = 'epoch-1';
 export const AT = new Date(2026, 9, 3, 10, 32).getTime();
@@ -102,7 +102,7 @@ export const approval = (id: string, fields: Partial<Approval> = {}): Approval =
 export function snapshot(
   items: SessionItem[],
   fields: { session?: Partial<SessionSummary>; approvals?: Approval[]; before?: string } = {},
-): SessionMethodResult<'session/subscribe'> {
+): SessionSnapshot {
   return {
     epoch: EPOCH,
     seq: 1,

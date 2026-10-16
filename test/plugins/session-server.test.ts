@@ -18,6 +18,7 @@ import { storage } from '../../packages/api-storage/src/index.js';
 import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -982,7 +983,7 @@ describe('会话设置', () => {
         HOME,
         WINDOW,
       ],
-      order: SESSION_LAYERS.map(({ name, label }) => ({ name, label })),
+      order: SESSION_LAYERS.map(({ name, label }) => ({ name, label: toSource(label) })),
     });
     const defaults = await c.call('session/config/layer/get', { layer: { scope: 'defaults' } });
     expect(keys(defaults.items)).toEqual(expect.arrayContaining(['clientSideJsonRendering', 'paperName']));

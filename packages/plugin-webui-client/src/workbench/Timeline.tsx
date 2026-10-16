@@ -1,5 +1,4 @@
 import { sanitizeForCard } from '@aalis/api-approval';
-import type { SessionItem } from '@aalis/api-session-protocol';
 import { BACKGROUND_TASK_NOTICE, type BackgroundTaskNoticeFacts } from '@aalis/api-tools';
 import { Info, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
@@ -13,6 +12,7 @@ import { type Approval, useConnection, useFeatures, useSessionClient } from '../
 import { clockTime, tokens } from '../format';
 import { Markdown } from '../markdown/Markdown';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import type { SessionItem } from '../protocol/session-client';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { Attachments } from './Attachments';
 import type { TimelineItem } from './live-session';

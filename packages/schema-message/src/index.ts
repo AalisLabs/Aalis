@@ -20,12 +20,14 @@
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
-// 依赖：@aalis/core（类型锚点）+ @aalis/util-text-normalize（prepareLLMMessages 的 UTF-16 规整）。
+// 依赖：@aalis/core（类型锚点）+ @aalis/util-text-normalize（prepareLLMMessages 的 UTF-16 规整）+ @aalis/schema-i18n
+// （给人看的文字对象，只用类型）。
 // ============================================================
 
 // declare module 增强需要原模块可见，本包不用 core 的具体类型，
 // 仅以空导入锚点 @aalis/core 让 TS 解析模块身份。
 import type {} from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { toWellFormedText } from '@aalis/util-text-normalize';
 import { AttachmentRefKind, formatAttachmentRef } from './attachment-ref.js';
 
@@ -304,6 +306,11 @@ export interface IncomingMessage {
      * 写给模型的 content 不给人看；不进模型的上下文，存档按 {@link WellKnownMetadataKeys}.HostNoticeFacts 记下
      */
     facts?: Record<string, string | number>;
+    /**
+     * 给人看的那句话（文字对象）：content 是写给模型的，界面显示这一句，按读者的语言渲染。不进模型的上下文，
+     * 存档按 {@link WellKnownMetadataKeys}.Text 记下
+     */
+    text?: TextRef;
   };
 }
 
@@ -369,6 +376,11 @@ export function awaitDelivery<T>(
 /** 发往平台的回复：只带要发出去的正文与附件。思考与工具时间线在存档的 Message 上，客户端经会话协议拿 */
 export interface OutgoingMessage {
   content: string;
+  /**
+   * 正文是要翻译的文字时，它的文字对象：发起方同时写 content（`toSource(text)`，按原文渲染的整句）。按读者语言显示的出口
+   * （会话协议的时间线、WebUI 会话的历史）用它，其余照旧读 content
+   */
+  text?: TextRef;
   sessionId: string;
   platform?: string;
   /**
@@ -554,6 +566,9 @@ export interface ArchivedAttachment {
  *   「]」会截断、描述位的「]」「|」换成了全角。归档发出附件的一方写，会话服务优先取它们还原附件。
  * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串），平台
  *   适配器写；会话服务据此写出回复为什么没发出。
+ * - `Text`：通知与事件标记给人看的文字（@aalis/schema-i18n 的文字对象），`content` 是写给模型的话或它按原文渲染的整句。
+ *   宿主通知的 `hostNotice.text`、平台通知的文字、带 {@link OutgoingMessage}.text 的出站记进 WebUI 会话历史时由写方记下，
+ *   压缩分隔线同样；会话服务据此按读者语言显示，没有时显示 `content`。
  */
 export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',
@@ -576,6 +591,7 @@ export const WellKnownMetadataKeys = {
   SentRef: 'ref',
   SentName: 'name',
   DeliveryError: 'error',
+  Text: 'text',
 } as const;
 
 /**

@@ -1,4 +1,5 @@
 import type { SessionMethodResult } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import {
   createContext,
   type FormEvent,
@@ -24,7 +25,7 @@ interface SessionRef {
   title: string;
 }
 
-type BatchResult = SessionMethodResult<'session/batch'>;
+type BatchResult = Localized<SessionMethodResult<'session/batch'>>;
 
 interface SessionActions {
   rename(session: SessionRef): void;

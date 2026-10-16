@@ -220,6 +220,29 @@ describe('设置项登记', () => {
     expect(sm.listSettings().map(s => s.key)).toEqual(['llm']);
   });
 
+  it('validate 抛错按不合法处理：写入被拒、原因是抛出的错；层里存着的值当作没设，按层读与解析都不抛', async () => {
+    const broken: SessionSetting = {
+      key: 'broken' as never,
+      field: { type: 'string', label: '坏校验' },
+      appliesTo: ['owner', 'room', 'task'],
+      prominence: 'advanced',
+      validate: () => {
+        throw new Error('<校验器坏了>');
+      },
+    };
+    const { sm, warns } = await setup({
+      doc: { sessionConfig: { defaults: { broken: 'x', persona: '<默认人设>' } } },
+      plugins: [settingsPlugin(SETTINGS, [PERSONA, broken])],
+    });
+    expect(sm.getLayer({ scope: 'defaults' })).toEqual({ persona: '<默认人设>' });
+    const session = await sm.createSession({});
+    expect(sm.resolveConfig(session.id)).toEqual({ persona: '<默认人设>' });
+    expect(warns.some(w => w.includes('broken') && w.includes('<校验器坏了>'))).toBe(true);
+    const write = sm.updateSession(session.id, { config: { broken: 'y' } as never });
+    await expect(write).rejects.toThrow('<校验器坏了>');
+    await write.catch(err => expect(isSessionConfigError(err)).toBe(true));
+  });
+
   it('可选项依赖另一项（dependsOn）随登记列出；依赖自己、依赖空键、字段没有动态可选项的登记被拒', async () => {
     const dependent: SessionSetting = {
       key: 'think',

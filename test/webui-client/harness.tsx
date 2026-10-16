@@ -2,18 +2,16 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { expect, vi } from 'vitest';
 import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
-import type {
-  RoomGroup,
-  SessionMethodParams,
-  SessionMethodResult,
-  SessionSummary,
-} from '../../packages/api-session-protocol/src/index.js';
+import type { SessionMethodParams, SessionMethodResult } from '../../packages/api-session-protocol/src/index.js';
 import { App } from '../../packages/plugin-webui-client/src/App.js';
 import { type AdminClient, createAdminClient } from '../../packages/plugin-webui-client/src/protocol/admin-client.js';
 import {
   createSessionClient,
+  type RoomGroup,
   type SessionClient,
+  type SessionSummary,
 } from '../../packages/plugin-webui-client/src/protocol/session-client.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { type FakeHandlers, FakeWebSocket } from '../helpers/fake-websocket.js';
 import { hostTabs } from './pages.js';
 
@@ -30,9 +28,9 @@ export const INIT: SessionMethodResult<'initialize'> = {
   appName: 'Aalis',
 };
 
-/** 层表：session/config/layers 回包的 order，与会话服务给的同一份 */
+/** 层表：session/config/layers 回包的 order，与会话服务给的同一份（称呼按原文渲染） */
 export const LAYER_ORDER: SessionMethodResult<'session/config/layers'>['order'] = SESSION_LAYERS.map(
-  ({ name, label }) => ({ name, label }),
+  ({ name, label }) => ({ name, label: toSource(label) }),
 );
 
 /** 默认工作区：没有聊天窗口的会话的场所 */

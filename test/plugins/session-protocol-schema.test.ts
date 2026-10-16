@@ -23,11 +23,15 @@ import {
   sessionNotifications,
 } from '../../packages/api-session-protocol/src/index.js';
 import type { BackgroundTask as RegisteredTask } from '../../packages/api-tools/src/index.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话协议的 schema 往返：每种帧、每个方法的参数与结果、每种通知与条目，合法样例经 JSON 往返后原样通过，
 // 非法样例被拒。样例表按方法与通知名列全，协议加了方法而样例没跟上时，类型检查与「样例齐全」一条都会挂。
+// 服务端交出的文字字段是产出方形状，也收文字对象（发出前按连接的读者渲染成字符串）。
 // ════════════════════════════════════════════════════════════
+
+const t = defineTexts({ ns: 'test/session-protocol-schema', language: 'zh-CN', source: { hi: '你好' } as const });
 
 const summary: SessionSummary = {
   id: 'onebot:10000:group:20001',
@@ -136,7 +140,12 @@ type MethodSamples = {
 const methodSamples: MethodSamples = {
   initialize: {
     params: {
-      valid: { protocolVersion: SESSION_PROTOCOL_VERSION, client: { name: 'webui', version: '0.1.0' } },
+      valid: {
+        protocolVersion: SESSION_PROTOCOL_VERSION,
+        client: { name: 'webui', version: '0.1.0' },
+        languages: ['zh-CN', 'en'],
+        timeZone: 'Asia/Shanghai',
+      },
       invalid: { protocolVersion: 'v1', client: { name: 'webui', version: '0.1.0' } },
     },
     result: {
@@ -643,6 +652,66 @@ describe('会话协议 schema 往返', () => {
     expect(list.safeParse({ background: false }).success).toBe(false);
     expect(list.safeParse({ background: true, archived: true }).success).toBe(false);
     expect(list.safeParse({ background: true, archived: false }).success).toBe(false);
+  });
+
+  it('握手可带读者的语言链与时区（1.1 加的可选字段），语言链是字符串数组', () => {
+    const params = { protocolVersion: SESSION_PROTOCOL_VERSION, client: { name: 'webui', version: '0.1.0' } };
+    expect(sessionMethods.initialize.params.safeParse({ ...params, languages: 'en' }).success).toBe(false);
+  });
+
+  it('服务端交出的文字字段收文字对象：会话摘要、分组、设置项、层表、条目、批量与回滚的原因、后台任务', () => {
+    const text = t('hi');
+    const titled = {
+      ...child,
+      title: text,
+      place: { ...child.place, name: text },
+      reason: text,
+      ancestors: [{ id: 'session-1', title: text }],
+    };
+    const item = (value: SessionItem) => ({ sessionId: 'session-1', epoch: 'e1', seq: 1, item: value });
+    const samples: Array<[{ parse(value: unknown): unknown }, unknown]> = [
+      [
+        sessionNotifications['sessions/changed'],
+        {
+          upserts: [titled],
+          removes: [],
+          groups: [{ platform: 'onebot', label: text, rooms: 1, accounts: 1, attention: 0 }],
+        },
+      ],
+      [
+        sessionMethods['session/config/get'].result,
+        { items: [{ ...personaRow, field: { type: 'string', label: text }, unset: text }] },
+      ],
+      [sessionMethods['session/config/layers'].result, { layers: [], order: [{ name: 'defaults', label: text }] }],
+      [
+        sessionNotifications['item/completed'],
+        item({ kind: 'agent-message', itemId: 'a', at: 1, text: 'x', attachments: [], undelivered: { reason: text } }),
+      ],
+      [
+        sessionNotifications['item/completed'],
+        item({ kind: 'notice', itemId: 'n', at: 1, topic: 'compress', text, attachments: [] }),
+      ],
+      [
+        sessionNotifications['item/completed'],
+        item({
+          ...(items.find(each => each.kind === 'usage') as Extract<SessionItem, { kind: 'usage' }>),
+          parts: [{ label: text, tokens: 1 }],
+        }),
+      ],
+      [sessionMethods['session/batch'].result, { failed: [{ sessionId: 'session-3', message: text }] }],
+      [
+        sessionMethods['turn/rewind'].result,
+        {
+          ok: false,
+          restored: [],
+          deleted: [],
+          errors: [{ uri: 'workspace:/a.txt', reason: text }],
+          alsoChangedBy: [],
+        },
+      ],
+      [sessionMethods['background/list'].result, { tasks: [{ ...task, reason: text }] }],
+    ];
+    for (const [schema, value] of samples) expect(roundTrip(schema, value)).toEqual(value);
   });
 
   it('样例表覆盖全部方法与通知', () => {

@@ -10,7 +10,7 @@
   - `chainOf(audience)`：读者的语言链，哪一层都没设时按 `['en']`。
   - `languages()`：有文字可用的语言（目录里各字典的原文语言与译文语言、语言包的语言），带自称，语言选择用它。
 - 读者 `Audience`：
-  - `{ languages, timeZone? }`：直接给语言链，如 WebUI 按 cookie 或 Accept-Language 解析出的。
+  - `{ languages, timeZone? }`：直接给语言链，如 WebUI 按 cookie 或 Accept-Language 解析出的；规范化后为空时按全局默认层。
   - `{ sessionId, platform?, timeZone? }`：取会话设置的 `language`，按继承链解析。
   - `{ host: true }`：取全局默认层的设置，宿主自己的输出用。
 - 贡献点 `i18n:pack`：语言包，spec 是 `@aalis/schema-i18n` 的 `LanguagePack`。语言包只补字典没有的语言，取舍见该包 README「语言包」一节。

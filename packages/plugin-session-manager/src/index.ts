@@ -35,11 +35,13 @@ import {
   type SessionSetting,
   type SessionUpdates,
   sessionKind,
+  sessionLabel,
   sessionManager,
   type WorkBinding,
   type WorkspaceInfo,
 } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide, services } from '@aalis/core';
+import { asText, type TextRef, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import {
@@ -159,8 +161,9 @@ interface LayerImpl<L extends SessionConfigLayer> {
 /** 继承链的一段：一处设置的原样值、来源层、日志里的称呼 */
 type Part = [values: object | undefined, source: InheritanceSource, where: string];
 
-/** 层表里这一层的称呼，日志里点名层时用 */
-const layerLabel = (name: SessionLayerName): string => SESSION_LAYERS.find(layer => layer.name === name)!.label;
+/** 层表里这一层的称呼（原文），日志里点名层时用 */
+const layerLabel = (name: SessionLayerName): string =>
+  toSource(SESSION_LAYERS.find(layer => layer.name === name)!.label);
 
 /** 全局默认层由服务偏好承担的项：字段类型为 llm-ref（选 llm 服务的提供者）的设置项，读写 llm 服务的偏好 */
 const preferenceBacked = (setting: SessionSetting): boolean => setting.field.type === 'llm-ref';
@@ -195,7 +198,7 @@ class SessionManager implements SessionManagerService {
    * agent:turn:after 记下（消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知
    * 与真人回合），会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
    */
-  private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome; error?: string }>();
+  private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome; error?: string | TextRef }>();
   /** 正在解析所属实例的会话记录：同一条记录不并发解析，后到的调用不等它、直接返回 */
   private resolving = new WeakSet<SessionInfo>();
   private readonly lookup = (id: string) => this.sessions.get(id);
@@ -338,7 +341,7 @@ class SessionManager implements SessionManagerService {
     const pending = previous && this.dirty ? this.snapshot().ops : undefined;
     this.sessions = loaded?.sessions ?? new Map();
     this.places = loaded?.places ?? new Map();
-    if (!this.places.has(DEFAULT_PLACE.key)) this.places.set(DEFAULT_PLACE.key, newPlace(DEFAULT_PLACE, '默认工作区'));
+    if (!this.places.has(DEFAULT_PLACE.key)) this.places.set(DEFAULT_PLACE.key, newPlace(DEFAULT_PLACE));
     this.deleted = { [SESSIONS]: new Map(), [PLACES]: new Map() };
     this.dirty = false;
     this.store = loaded ? target : undefined;
@@ -469,12 +472,12 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * IM 房间收录：按原生入站记下的出生平台与聊天窗口建档，名字取出生平台给的群名或昵称（没有时为 id）。只给会话表里
+   * IM 房间收录：按原生入站记下的出生平台与聊天窗口建档，名字取出生平台给的群名或昵称（没有时不取名）。只给会话表里
    * 还没有的 id 同步调用。场所是窗口的同时确保窗口的场所记录：insert 在第一次等待之前已同步占住 id、记下来源字段
    */
   async recordRoom(id: string, nativeName: string | undefined, origin: RoomOrigin): Promise<SessionInfo> {
     const [created] = await Promise.all([
-      this.insert(id, { name: nativeName || id, status: 'waiting' }, origin),
+      this.insert(id, { name: nativeName, status: 'waiting' }, origin),
       this.noteWindow(id, nativeName),
     ]);
     return created;
@@ -482,11 +485,11 @@ class SessionManager implements SessionManagerService {
 
   /**
    * IM 房间收录的补记：按 id 兜底建档的根会话（没有来源字段、创建来源与绑定）与升级前只记了出生平台的记录（没有聊天窗口，
-   * 出生平台与消息平台相同）收到原生入站时，记下与按这条消息建档时一样的来源字段，名字还是 id 的一并补上，场所是窗口的
+   * 出生平台与消息平台相同）收到原生入站时，记下与按这条消息建档时一样的来源字段，还没有名字的一并补上，场所是窗口的
    * 确保窗口的场所记录。只给表里这条记录同步调用，由收录监听判定这个 id 归消息平台的适配器管
    */
   async backfillRoom(session: SessionInfo, nativeName: string | undefined, origin: RoomOrigin): Promise<void> {
-    Object.assign(session, origin, session.name === session.id && nativeName ? { name: nativeName } : {});
+    Object.assign(session, origin, session.name === undefined && nativeName ? { name: nativeName } : {});
     Object.assign(session, describeSession(session));
     await this.noteWindow(session.id, nativeName);
     this.markDirty();
@@ -529,9 +532,7 @@ class SessionManager implements SessionManagerService {
     const now = Date.now();
     const session: SessionInfo = {
       id,
-      name:
-        patch.name ||
-        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      name: patch.name || undefined,
       title: patch.metadata?.title as string | undefined,
       parentId: undefined,
       children: [],
@@ -547,7 +548,7 @@ class SessionManager implements SessionManagerService {
     this.sessions.set(id, session);
     this.markDirty();
     await this.caps.events.use.emit('session:created', session);
-    this.caps.logger.use.info(`会话建档(ensure): ${session.name} (${id})`);
+    this.caps.logger.use.info(`会话建档(ensure): ${toSource(sessionLabel(session))} (${id})`);
     return session;
   }
 
@@ -586,9 +587,7 @@ class SessionManager implements SessionManagerService {
     const now = Date.now();
     const session: SessionInfo = {
       id,
-      name:
-        opts?.name ||
-        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      name: opts?.name || undefined,
       title: opts?.metadata?.title as string | undefined,
       parentId: opts?.parentId,
       children: [],
@@ -615,7 +614,7 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.caps.events.use.emit('session:created', session);
     if (parent) await this.caps.events.use.emit('session:updated', parent);
-    this.caps.logger.use.info(`会话创建: ${session.name} (${id})`);
+    this.caps.logger.use.info(`会话创建: ${toSource(sessionLabel(session))} (${id})`);
     return session;
   }
 
@@ -702,7 +701,7 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     await this.caps.events.use.emit('session:deleted', id);
     if (parent) await this.caps.events.use.emit('session:updated', parent);
-    this.caps.logger.use.info(`会话删除: ${session.name} (${id})`);
+    this.caps.logger.use.info(`会话删除: ${toSource(sessionLabel(session))} (${id})`);
   }
 
   private async clearDeletedSessionData(id: string): Promise<void> {
@@ -734,8 +733,8 @@ class SessionManager implements SessionManagerService {
 
   async createChildSession(parentId: string, opts?: Omit<NewSessionFields, 'parentId'>): Promise<SessionInfo> {
     // 带 source 的注入回合（定时任务、编排）可能落在还没建档的会话上：先按 id 兜底建档再挂子会话，否则 create_subtask
-    // 在这些会话里必败。兜底建档的会话没有来源字段与创建来源，名字为 id：是房间的由之后的原生入站补记来源字段与名字
-    if (!this.sessions.has(parentId)) await this.ensureSession(parentId, { name: parentId });
+    // 在这些会话里必败。兜底建档的会话没有来源字段、创建来源与名字：是房间的由之后的原生入站补记来源字段与名字
+    if (!this.sessions.has(parentId)) await this.ensureSession(parentId);
     return this.createSession({ ...opts, parentId });
   }
 
@@ -866,7 +865,9 @@ class SessionManager implements SessionManagerService {
     // 发事件通知（wait_subtasks 通过事件驱动感知完成）
     await this.caps.events.use.emit('session:completed', session);
 
-    this.caps.logger.use.info(`会话完成: ${session.name} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`);
+    this.caps.logger.use.info(
+      `会话完成: ${toSource(sessionLabel(session))} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`,
+    );
   }
 
   // ---- 标题管理 ----
@@ -1238,10 +1239,10 @@ class SessionManager implements SessionManagerService {
       if (!('invalid' in read)) {
         if (read.value !== undefined) out[key] = read.value;
       } else if (setting.field.onInvalid === 'error') {
-        this.warnOnce(`设置项 ${key}（${where}）取值无效（${read.invalid}），原样交给登记它的插件按拒绝处理`);
+        this.warnOnce(`设置项 ${key}（${where}）取值无效（${toSource(read.invalid)}），原样交给登记它的插件按拒绝处理`);
         out[key] = value;
       } else {
-        this.warnOnce(`设置项 ${key}（${where}）取值无效（${read.invalid}），按没设置处理`);
+        this.warnOnce(`设置项 ${key}（${where}）取值无效（${toSource(read.invalid)}），按没设置处理`);
       }
     }
     return out;
@@ -1283,12 +1284,13 @@ class SessionManager implements SessionManagerService {
   }
 
   /** 记下这一轮的结局与出错原因（只有结局为 error 时留原因），回合结束时用 */
-  recordOutcome(turnId: string, outcome: TurnOutcome, error: string | undefined): void {
+  recordOutcome(turnId: string, outcome: TurnOutcome, error: string | TextRef | undefined): void {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     turn.outcome = outcome;
-    // 一句原因：agent 给的可能带上游的整段响应，会随会话落盘、进子任务提醒；空串当作没给
-    turn.error = outcome === 'error' && error ? truncateChars(error, ERROR_MAX, '…') : undefined;
+    // 一句原因：agent 给的字符串可能带上游的整段响应，会随会话落盘、进子任务提醒，截短；文字对象原样；空串当作没给
+    if (outcome !== 'error' || !error) turn.error = undefined;
+    else turn.error = typeof error === 'string' ? truncateChars(error, ERROR_MAX, '…') : error;
   }
 
   /**
@@ -1367,8 +1369,8 @@ function describeSession(session: Pick<SessionInfo, 'parentId' | 'originPlatform
   return { kind: sessionKind(session) };
 }
 
-/** 新建的场所记录：设置为空 */
-function newPlace(place: SessionPlace, name: string, root?: string): PlaceRecord {
+/** 新建的场所记录：设置为空；默认工作区没有名字 */
+function newPlace(place: SessionPlace, name?: string, root?: string): PlaceRecord {
   const now = Date.now();
   return { ...place, name, ...(root === undefined ? {} : { root }), config: {}, createdAt: now, updatedAt: now };
 }
@@ -1410,6 +1412,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * 会话记录里会进会话列表与协议、类型不对会让读者出错的可选字段，各自的类型。种类载入时重算，不在这里
  */
 const OPTIONAL_FIELDS: Record<string, (value: unknown) => boolean> = {
+  name: isText,
   title: isText,
   parentId: isText,
   createdFrom: isText,
@@ -1429,7 +1432,7 @@ const OPTIONAL_FIELDS: Record<string, (value: unknown) => boolean> = {
     isRecord(value) &&
     TURN_OUTCOMES.has(value.outcome) &&
     isTime(value.endedAt) &&
-    (value.error === undefined || isText(value.error)),
+    (value.error === undefined || asText(value.error) !== undefined),
   tokens: value => isRecord(value) && isTime(value.input) && isTime(value.output),
 };
 
@@ -1444,7 +1447,6 @@ function storedSession(
   const record = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== null));
   const required: Record<string, boolean> = {
     id: record.id === key,
-    name: isText(record.name),
     children: isTextList(record.children),
     status: SESSION_STATUSES.has(record.status),
     config: isRecord(record.config),
@@ -1462,7 +1464,7 @@ function storedSession(
 
 /**
  * 读回的场所记录：必填字段不对（含类别与键对不上：工作区的键以 `workspace:` 开头，窗口的不是）时回这个字段名，整条不载入；
- * 目录的类型不对时去掉它
+ * 可选的名字（默认工作区没有）与目录类型不对时去掉它
  */
 function storedPlace(
   key: string,
@@ -1474,15 +1476,14 @@ function storedPlace(
     kind:
       (record.kind === 'workspace' || record.kind === 'window') &&
       (record.kind === 'workspace') === key.startsWith(WORKSPACE_PREFIX),
-    name: isText(record.name),
     config: isRecord(record.config),
     createdAt: isTime(record.createdAt),
     updatedAt: isTime(record.updatedAt),
   };
   const wrong = Object.keys(required).find(field => !required[field]);
   if (wrong) return { wrong };
-  const dropped = record.root !== undefined && !isText(record.root) ? ['root'] : [];
-  if (dropped.length > 0) delete record.root;
+  const dropped = ['name', 'root'].filter(field => record[field] !== undefined && !isText(record[field]));
+  for (const field of dropped) delete record[field];
   return { record: record as unknown as PlaceRecord, dropped };
 }
 
@@ -1554,8 +1555,8 @@ async function run(caps: Caps): Promise<void> {
   // 收录与补记之前问遍认领这个 id 的适配器（claimantsOf），第一个认领者随来源字段记作所属实例。认领它的平台不止一个
   // （如终端配置的会话 id 配成了群的 id）时判不出它是谁的窗口，不收录、不补记，每个 id 告警一次：结果不能取决于
   // 适配器的登记先后。问的期间别的入站可能已收录，问完按会话表此刻的记录判，再同步建档或补记。
-  // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省用 id（群的首条入站可能是不带群名的戳一戳，
-  // 不回退到昵称）。现名还是 id 时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，
+  // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省不取名（群的首条入站可能是不带群名的戳一戳，
+  // 不回退到昵称）。没有名字时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，
   // 不补。
   // 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
   // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
@@ -1575,7 +1576,7 @@ async function run(caps: Caps): Promise<void> {
     const chat = session.originChat;
     if (chat && session.originPlatform === msg.platform) {
       const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
-      if (nativeName && session.name === session.id)
+      if (nativeName && session.name === undefined)
         manager.updateSession(session.id, { name: nativeName }).catch(() => {});
       void manager.noteWindow(session.id, nativeName);
     }

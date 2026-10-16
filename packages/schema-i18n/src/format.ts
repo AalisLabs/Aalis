@@ -45,14 +45,18 @@ const numberFormat = (language: string, unit?: string, display?: 'short' | 'narr
       ),
   );
 
-/** 时区来自读者（cookie、协议），Intl 不认的当作没给，按进程时区：不让整句回落成原文 */
+/** 再长的时区名当作没给：缓存键随读者的时区来，不收超长的名字 */
+const MAX_TIME_ZONE_LENGTH = 64;
+
+/** 时区来自读者（cookie、协议），过长的与 Intl 不认的当作没给，按进程时区：不让整句回落成原文 */
 function dateFormat(type: 'date' | 'time' | 'datetime', style: DateStyle, o: FormatOptions): Intl.DateTimeFormat {
-  return cached(`${type}\0${style}\0${o.language}\0${o.timeZone}`, () => {
+  const timeZone = o.timeZone && o.timeZone.length <= MAX_TIME_ZONE_LENGTH ? o.timeZone : undefined;
+  return cached(`${type}\0${style}\0${o.language}\0${timeZone}`, () => {
     const options: Intl.DateTimeFormatOptions = {};
     if (type !== 'time') options.dateStyle = style;
     if (type !== 'date') options.timeStyle = style;
     try {
-      return new Intl.DateTimeFormat(o.language, { ...options, timeZone: o.timeZone });
+      return new Intl.DateTimeFormat(o.language, { ...options, timeZone });
     } catch {
       return new Intl.DateTimeFormat(o.language, options);
     }

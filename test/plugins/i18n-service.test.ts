@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { isSessionConfigError, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { t as pluginTexts } from '../../packages/plugin-i18n/src/texts.js';
-import { checkTexts, defineTexts, fingerprint, type LanguagePack } from '../../packages/schema-i18n/src/index.js';
+import {
+  checkTexts,
+  defineTexts,
+  fingerprint,
+  type LanguagePack,
+  textOf,
+} from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { startSessionManager } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-i18n 的 i18n 服务：三种读者的语言链（哪一层都没设时按 en）、按语言链渲染（语言包补缺，escape 与 skip 透传）、
-// 有文字可用的语言。语言包取自贡献点 i18n:pack，用时与贡献点对照、变了就重建。会话管理是只实现两个读口的替身，
-// 贡献点用默认提供者（内存里的登记表）
+// plugin-i18n 的 i18n 服务：三种读者的语言链（languages 读者的链规范化后为空时按全局默认层，哪一层都没设时按 en）、
+// 按语言链渲染（语言包补缺，escape 与 skip 透传）、有文字可用的语言。语言包取自贡献点 i18n:pack，用时与贡献点对照、
+// 变了就重建。会话管理多是只实现两个读口的替身，会话设置 language 的登记与取用用真的会话管理；贡献点用默认提供者
+// （内存里的登记表）
 // ════════════════════════════════════════════════════════════
 
 const NS = 'test/i18n-service';
@@ -40,8 +48,9 @@ const packPlugin = (id: string, language: string, text: string) =>
     },
   });
 
-/** 会话管理的替身：会话 s1 经 onebot 进来时设了 ['ja', 'en']；全局默认层设了 zh-CN */
+/** 会话管理的替身：会话 s1 经 onebot 进来时设了 ['ja', 'en']；全局默认层设了 zh-CN。语言设置项的登记收下不管 */
 const sessions = {
+  registerSetting: () => () => {},
   resolveConfig: (sessionId: string, platform?: string) =>
     sessionId === 's1' && platform === 'onebot' ? { language: ['ja', 'en'] } : {},
   getLayer: (layer: { scope: string }) => (layer.scope === 'defaults' ? { language: ['zh-CN'] } : {}),
@@ -64,21 +73,15 @@ async function boot(options: { hubs?: boolean; sessions?: object } = {}): Promis
 }
 
 describe('chainOf：三种读者的语言链', () => {
-  it('languages 读者：规范化去重，最多 8 种；不是字符串的项丢掉，不是数组或为空时按 en', async () => {
-    const { svc } = await boot();
+  it('languages 读者：规范化去重，不是字符串的项丢掉；规范化后一种都没有（不是数组、为空、全不合法）时按全局默认层', async () => {
+    const { svc } = await boot({ sessions });
     const long = 'en-US-u-ca-gregory-co-phonebk-hc-h23-nu-latn';
-    const tags = ['zh_CN.UTF-8', 'en-us', long, 'bad tag!', 'zh-CN', 'ja', 'ko', 'fr', 'de', 'es', 'it'];
-    expect(svc.chainOf({ languages: tags })).toEqual(['zh-CN', 'en-US', long, 'ja', 'ko', 'fr', 'de', 'es']);
+    const tags = ['zh_CN.UTF-8', 'en-us', long, 'bad tag!', 'zh-CN', 'ja'];
+    expect(svc.chainOf({ languages: tags })).toEqual(['zh-CN', 'en-US', long, 'ja']);
     expect(svc.chainOf({ languages: [null, 'ja'] as unknown as string[] })).toEqual(['ja']);
-    expect(svc.chainOf({ languages: 'ja' as unknown as string[] })).toEqual(['en']);
-    expect(svc.chainOf({ languages: [] })).toEqual(['en']);
-  });
-
-  it('languages 读者给的列表只看前 32 项：超长的列表不逐项规范化', async () => {
-    const { svc } = await boot();
-    const junk = Array.from({ length: 32 }, () => 'bad tag!');
-    expect(svc.chainOf({ languages: [...junk, 'ja'] })).toEqual(['en']);
-    expect(svc.chainOf({ languages: [...junk.slice(1), 'ja'] })).toEqual(['ja']);
+    for (const languages of ['ja', [], ['bad tag!']]) {
+      expect(svc.chainOf({ languages: languages as string[] }), String(languages)).toEqual(['zh-CN']);
+    }
   });
 
   it('sessionId 读者：取会话设置的 language（带上入口平台）；没设的按 en', async () => {
@@ -92,10 +95,54 @@ describe('chainOf：三种读者的语言链', () => {
     expect(svc.chainOf({ host: true })).toEqual(['zh-CN']);
   });
 
-  it('会话管理缺席：会话与宿主读者按 en', async () => {
+  it('会话管理缺席：会话与宿主读者、链为空的 languages 读者按 en', async () => {
     const { svc } = await boot();
     expect(svc.chainOf({ sessionId: 's1', platform: 'onebot' })).toEqual(['en']);
     expect(svc.chainOf({ host: true })).toEqual(['en']);
+    expect(svc.chainOf({ languages: [] })).toEqual(['en']);
+  });
+});
+
+describe('会话设置 language', () => {
+  /** 真的会话管理（layers 是宿主配置文档里的 sessionConfig）连同 i18n */
+  async function withSessions(layers?: Parameters<typeof startSessionManager>[0]['layers']) {
+    const { app, sm } = await startSessionManager({ settings: [], layers });
+    apps.push(app);
+    await app.plugin(i18nPlugin);
+    await app.plugins.idle();
+    return { sm, svc: app.bind({ i18n }).i18n.use };
+  }
+
+  it('登记为有序多选：可选项来自 i18n-languages，显眼程度 common，适用于全部会话；规范化后不合法的标签被拒，重复项去掉', async () => {
+    const { sm, svc } = await withSessions();
+    expect(sm.listSettings().find(setting => setting.key === 'language')).toMatchObject({
+      field: { type: 'multiselect', ordered: true, dynamicOptions: 'i18n-languages' },
+      appliesTo: ['owner', 'room', 'task'],
+      prominence: 'common',
+      plugin: i18nPlugin.name,
+    });
+    const { id } = await sm.createSession({ name: '<会话>' });
+    const refused = await sm.updateSession(id, { config: { language: ['en', 'bad tag!'] } }).catch(err => err);
+    expect(isSessionConfigError(refused)).toBe(true);
+    expect(svc.render(textOf(refused), { languages: ['en'] })).toBe(
+      'Invalid value for session setting language: bad tag! is not a valid language tag',
+    );
+    await sm.updateSession(id, { config: { language: ['zh-CN', 'en', 'zh-CN'] } });
+    expect(sm.getOwnConfig(id).language).toEqual(['zh-CN', 'en']);
+    // 系统写法与读的一侧同一个规范化：收下，读时整理成 zh-CN
+    await sm.updateSession(id, { config: { language: ['zh_CN'] } });
+    expect(svc.chainOf({ sessionId: id })).toEqual(['zh-CN']);
+    const typo = await sm.updateSession(id, { config: { language: [5] } as never }).catch(err => err);
+    expect(isSessionConfigError(typo)).toBe(true);
+  });
+
+  it('sessionId 读者的语言链取自会话设置（按继承链），host 读者取全局默认层', async () => {
+    const { sm, svc } = await withSessions({ defaults: { language: ['zh-CN'] } });
+    const { id } = await sm.createSession({ name: '<会话>' });
+    expect([svc.chainOf({ host: true }), svc.chainOf({ sessionId: id })]).toEqual([['zh-CN'], ['zh-CN']]);
+    await sm.updateSession(id, { config: { language: ['en'] } });
+    expect(svc.chainOf({ sessionId: id })).toEqual(['en']);
+    expect(svc.render(t('hi'), { sessionId: id })).toBe('Hello');
   });
 });
 

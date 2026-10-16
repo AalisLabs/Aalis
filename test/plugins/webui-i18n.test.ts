@@ -273,7 +273,7 @@ interface SetupOptions {
   withDoc?: boolean;
   /** 贡献点与日语语言包 */
   withHubs?: boolean;
-  /** 会话管理的替身：全局默认层设的语言；另给存储的替身，写下的文件记在 written */
+  /** 会话管理的替身：全局默认层设的语言（i18n 登记的语言设置项收下不管）；另给存储的替身，写下的文件记在 written */
   hostLanguage?: string;
   written?: Map<string, string>;
 }
@@ -330,6 +330,7 @@ async function setup({ withI18n = true, withDoc = false, withHubs = false, hostL
         getLayer: () => ({ language: [hostLanguage] }),
         resolveConfig: () => ({}),
         getSession: () => undefined,
+        registerSetting: () => () => {},
       } as never);
       provide.use(storage, memoryStorage(written ?? new Map()));
     },
@@ -430,6 +431,15 @@ describe('REST 回应按读者语言渲染', () => {
     const { reader } = await setup();
     expect(await shown(reader({ lang: 'fr', accept: 'zh-CN' }))).toEqual({ ...CHINESE, languages: 'zh-CN' });
     expect(await shown(reader({ lang: 'zh', accept: 'en' }))).toEqual({ ...CHINESE, languages: 'zh' });
+  });
+
+  it.each([
+    ['zh-CN', CHINESE],
+    ['en', ENGLISH],
+  ])('cookie 给不出能用的语言、Accept-Language 给不出语言（没有或全不合法）时按全局默认层（设为 %s）', async (hostLanguage, expected) => {
+    const { reader } = await setup({ hostLanguage });
+    expect(await shown(reader({}))).toEqual({ ...expected, languages: hostLanguage });
+    expect(await shown(reader({ lang: 'fr', accept: 'bad tag!' }))).toEqual({ ...expected, languages: hostLanguage });
   });
 
   it('Accept-Language 去掉 q=0 的，按 q 从高到低；无效的标签先剔除，再取前 8 项；合法的长标签照收', async () => {

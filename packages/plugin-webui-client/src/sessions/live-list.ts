@@ -1,7 +1,8 @@
-import type { RoomGroup, SessionNotificationParams, SessionSummary } from '@aalis/api-session-protocol';
+import type { SessionNotificationParams } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import { useEffect, useState } from 'react';
 import { useSessionClient } from '../connection';
-import { ConnectionLostError } from '../protocol/session-client';
+import { ConnectionLostError, type RoomGroup, type SessionSummary } from '../protocol/session-client';
 import { inGroup } from '../routes';
 import { STATUS_ORDER, statusOf } from './status';
 
@@ -16,6 +17,8 @@ type SessionListQuery =
   | { archived: true }
   | { parentId: string }
   | { background: true };
+
+type Change = Localized<SessionNotificationParams<'sessions/changed'>>;
 
 const PAGE_LIMIT = 200;
 /** 翻页途中来了推送时，排在后面的行可能挪进已经取过的页而漏掉：重取，最多这么多遍 */
@@ -64,13 +67,13 @@ export function useSessionList(query: SessionListQuery) {
     let rows: Map<string, SessionSummary> | undefined;
     let groups: RoomGroup[] = [];
     /** 取数途中收到的增量，取完以后按先后补上 */
-    let pending: Array<SessionNotificationParams<'sessions/changed'>> | undefined;
+    let pending: Change[] | undefined;
     let generation = 0;
     let disposed = false;
 
     const publish = (error?: Error) => setState({ key, sessions: rows && sorted(scope, rows.values()), groups, error });
 
-    const apply = (change: SessionNotificationParams<'sessions/changed'>, into: Map<string, SessionSummary>) => {
+    const apply = (change: Change, into: Map<string, SessionSummary>) => {
       for (const s of change.upserts) {
         if (belongs(scope, s)) into.set(s.id, s);
         else into.delete(s.id);

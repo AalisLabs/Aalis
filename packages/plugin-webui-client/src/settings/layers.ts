@@ -1,4 +1,5 @@
 import type { SessionMethodResult, SettingLayer } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import { useCallback } from 'react';
 import { useConnection } from '../connection';
 import type { SessionClient } from '../protocol/session-client';
@@ -7,7 +8,7 @@ import { useSessionQuery } from './setting-rows';
 // 会话设置的层：可以设的各层与层表（全部层的名字与称呼，按先后）都取自 session/config/layers，前端不另存一份。
 // 来源文字、先后说明与选层的称呼都按层表写
 
-export type LayerOrder = SessionMethodResult<'session/config/layers'>['order'];
+export type LayerOrder = Localized<SessionMethodResult<'session/config/layers'>>['order'];
 
 const requestLayers = (client: SessionClient) => client.request('session/config/layers', {});
 

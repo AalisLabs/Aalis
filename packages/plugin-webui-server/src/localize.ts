@@ -2,8 +2,9 @@
 // localize.ts — 回应里的文字按读者语言渲染
 //
 // 读者的语言先看 cookie aalis-lang（`|` 分隔，靠前的优先）：链里要有一项按语言部分对得上有文字可用的语言（zh 命中 zh-CN），
-// 都对不上（选过的语言包卸了）当作没给；没给再看 Accept-Language。两处经同一个解析：按 q 排、剔除无效与过长的标签、规范化、
-// 限条数，不按可用语言筛（匹配交给渲染）；时区取 cookie aalis-tz。
+// 都对不上（选过的语言包卸了）当作没给；没给再看 Accept-Language，它也给不出语言（没有或全不合法）时链为空，i18n 按全局
+// 默认层。两处经同一个解析：按 q 排，再经 normalizeLanguages 剔除无效的标签、规范化、限条数，不按可用语言筛（匹配交给
+// 渲染）；时区取 cookie aalis-tz。
 // 最早挂的中间件包住 res.json：值里的文字对象按读者渲染后再发，i18n 缺席时按原文。路由里外的 JSON 回应（认证的 401 与
 // 403、闸门、未知 API、错误处理）都经过它；不经 res.json 的文字（纯文本的错误、登录页与恢复页）用 render。渲染过的回应
 // 都带 Vary: Cookie, Accept-Language。原样数据（插件配置值、schema 的默认值、插件前端的数据）要跳过、Markdown 正文要转义时，
@@ -19,21 +20,15 @@ import { parseCookieValue } from './auth.js';
 
 const LANGUAGE_COOKIE = 'aalis-lang';
 const TIME_ZONE_COOKIE = 'aalis-tz';
-/** 读者给的列表只看前几项：再长的不逐项解析 */
-const MAX_INPUT = 32;
-/** 语言链最多几种 */
-const MAX_LANGUAGES = 8;
-/** 再长的时区名不收 */
-const MAX_TIME_ZONE_LENGTH = 64;
 
 type Request = Pick<IncomingMessage, 'headers'>;
 
 /**
  * cookie 的 `zh-CN|en` 与 Accept-Language 的 `zh-CN,en;q=0.9` 同一个解析：q 不是正数的去掉（q=0 是明确不要），按 q 从高到低
- * 稳定地排（cookie 不带 q，照写的先后），不合法的标签剔除，规范化、去重后取前几项
+ * 稳定地排（cookie 不带 q，照写的先后），再经 normalizeLanguages（剔除不合法的标签，规范化、去重，限条数）
  */
 function parseLanguages(raw: string | undefined): string[] {
-  const items = (raw ?? '').split(/[|,]/, MAX_INPUT).map(part => {
+  const items = (raw ?? '').split(/[|,]/).map(part => {
     const [tag, ...params] = part.split(';').map(piece => piece.trim());
     const q = params.find(param => param.startsWith('q='));
     return { tag, weight: q === undefined ? 1 : Number(q.slice(2)) };
@@ -42,7 +37,7 @@ function parseLanguages(raw: string | undefined): string[] {
     .filter(({ weight }) => weight > 0)
     .sort((a, b) => b.weight - a.weight)
     .map(({ tag }) => tag);
-  return normalizeLanguages(tags).slice(0, MAX_LANGUAGES);
+  return normalizeLanguages(tags);
 }
 
 /** 语言标签的语言部分（zh-Hant-TW → zh）。收的都已规范化（读者的链、有文字可用的语言、语言包的语言），不会抛 */
@@ -101,13 +96,12 @@ export function createLocalizer(i18n: Pick<ServiceSelection<I18nService>, 'prese
     return chain.some(tag => bases.has(baseLanguage(tag)));
   };
 
-  /** 这次请求的读者：cookie 给不出能用的语言时看 Accept-Language */
+  /** 这次请求的读者：cookie 给不出能用的语言时看 Accept-Language，它也给不出语言时链为空（按全局默认层） */
   const readerOf = (req: Request): { languages: string[]; timeZone?: string } => {
     const { cookie } = req.headers;
     const chosen = parseLanguages(parseCookieValue(cookie, LANGUAGE_COOKIE));
     const languages = usable(chosen) ? chosen : parseLanguages(req.headers['accept-language']);
-    const timeZone = parseCookieValue(cookie, TIME_ZONE_COOKIE);
-    return timeZone && timeZone.length <= MAX_TIME_ZONE_LENGTH ? { languages, timeZone } : { languages };
+    return { languages, timeZone: parseCookieValue(cookie, TIME_ZONE_COOKIE) };
   };
 
   const render = <T>(req: Request, res: express.Response, value: T, options?: RenderOptions) => {

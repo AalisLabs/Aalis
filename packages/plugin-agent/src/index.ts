@@ -20,6 +20,7 @@ import { type PersonaSessionOptions, persona as personaService } from '@aalis/ap
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import {
   type InheritanceSource,
+  placeLabel,
   rootSessionOf,
   SESSION_LAYERS,
   type SessionConfig,
@@ -27,6 +28,7 @@ import {
   type SessionInheritance,
   type SessionManagerService,
   type SessionSetting,
+  sessionLabel,
   sessionManager as sessionManagerService,
 } from '@aalis/api-session-manager';
 import { storage as storageService } from '@aalis/api-storage';
@@ -51,6 +53,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
@@ -2375,12 +2378,13 @@ function run(caps: Caps): void {
     layer: InheritanceSource | undefined,
   ): string {
     if (layer === undefined) return '默认';
-    const label = SESSION_LAYERS.find(({ name }) => name === layer)!.label;
+    const label = toSource(SESSION_LAYERS.find(({ name }) => name === layer)!.label);
     if (layer === 'platform') return `${label} ${inheritance.platform}`;
     if (layer === 'type') return `${label} ${inheritance.platform} · ${inheritance.type}`;
     if (layer !== 'place') return label;
     const { key } = smSvc.placeOf(sessionId);
-    return `${label}『${smSvc.getPlace(key)?.name ?? key}』`;
+    const place = smSvc.getPlace(key);
+    return `${label}『${place ? toSource(placeLabel(place)) : key}』`;
   }
 
   /**
@@ -2484,7 +2488,7 @@ function run(caps: Caps): void {
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
       return [
-        `会话: ${session?.name ?? sid}`,
+        `会话: ${session ? toSource(sessionLabel(session)) : sid}`,
         ...resolutionLines(smSvc, sid, argv.session.platform, '模型', 'llm', fmtModel),
         await modelNote(smSvc, sid, argv.session.platform),
         ...resolutionLines(smSvc, sid, argv.session.platform, '人设', 'persona', fmtPersona),

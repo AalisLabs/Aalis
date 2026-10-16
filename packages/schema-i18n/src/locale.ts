@@ -12,10 +12,19 @@ export function canonicalLanguage(tag: string): string | undefined {
   }
 }
 
-/** 读者给的语言列表规范化：整理写法、过 getCanonicalLocales，不合法的（含不是字符串的）丢掉，去重保序 */
+/** 读者给的列表只看前几项：超长的列表不逐项规范化 */
+const MAX_INPUT = 32;
+/** 语言链最多几种：再多也轮不到 */
+const MAX_LANGUAGES = 8;
+
+/**
+ * 读者给的语言列表规范化：整理写法、过 getCanonicalLocales，不合法的（含不是字符串的）丢掉，去重保序。列表来自读者
+ * （请求、协议、会话设置），只看前 32 项，至多给出 8 种
+ */
 export function normalizeLanguages(tags: readonly unknown[]): string[] {
   const out: string[] = [];
-  for (const tag of tags) {
+  for (const tag of tags.slice(0, MAX_INPUT)) {
+    if (out.length === MAX_LANGUAGES) break;
     if (typeof tag !== 'string') continue;
     const canonical = canonicalLanguage(tidy(tag));
     if (canonical !== undefined && !out.includes(canonical)) out.push(canonical);

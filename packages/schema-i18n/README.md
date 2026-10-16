@@ -70,7 +70,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{n, plural, =0 {…} one {…} other {…}}`：`=N` 精确匹配先于类别，类别取 `Intl.PluralRules`。`#` 只在直接所在的 plural 分支里替换为该数（按语言的 `NumberFormat`），嵌在 select 里的 `#` 是字面。
 - `{x, select, a {…} other {…}}`：x 是字符串。
 - `{n, number}`：`NumberFormat`。
-- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省或不认识时用进程时区。
+- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省、超过 64 个字符或不认识时用进程时区。
 - `{items, list}`：`ListFormat` 的 conjunction；`{items, lines}`：按行连接。元素各自渲染。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
 - `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
@@ -97,7 +97,7 @@ ns 不在目录、键不存在、原文解析失败、选中的那条渲染失�
 
 `resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：带读者的时区与转义，参数里的文字对象同样取各自的原文，回落规则同上。
 
-`normalizeLanguages(tags)` 整理读者给的语言列表：下划线换连字符、去掉 `.UTF-8` 这类后缀、过 `getCanonicalLocales`，不合法的丢掉，去重保序。
+`normalizeLanguages(tags)` 整理读者给的语言列表：下划线换连字符、去掉 `.UTF-8` 这类后缀、过 `getCanonicalLocales`，不合法的丢掉，去重保序；只看前 32 项，至多给出 8 种。
 
 ## 进程级目录
 
