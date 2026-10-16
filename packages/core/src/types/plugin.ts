@@ -23,7 +23,7 @@ export interface PluginEntry {
    */
   error?: string;
   /**
-   * 激活失败时抛出的原值（core 自己的失败带 `code`，取值见 `CoreFailureCode`）；激活成功、enable、disable、bounce 时清掉。
+   * 激活失败时抛出的原值（抛出 undefined 时是说明它的 Error；core 自己的失败带 `code`，取值见 `CoreFailureCode`）；激活成功、enable、disable、bounce 时清掉。
    * 可能不可序列化、可能含敏感数据，清掉之前一直留在内存里：出口只取其中挂的文字对象与 `code`，不得整体序列化或下发。
    * 只有声明了 pluginsService 的插件读得到（管理面）
    */
