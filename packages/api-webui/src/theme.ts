@@ -1,8 +1,9 @@
 // ----- 主题 -----
 //
 // 一个主题是名字、种类（深或浅）与一套颜色令牌值，只改颜色，不改间距、圆角、字号与布局。主题文件是可交换的 JSON：
-// 格式名、格式版本、名字、种类与颜色令牌表，没有别的内容。内置主题就是随包带的这种文件，第三方主题照着改了再导入，
-// 插件提供的主题也只交同一种数据，三者都经 parseTheme 校验。
+// 格式名、格式版本、名字、种类与颜色令牌表，没有别的内容。内置主题是随包带的这种文件，只是不带名字：名字按主题 id
+// 取本包的字典（BUILTIN_THEME_NAMES），界面按读者语言渲染。第三方主题照着改了再导入，插件提供的主题也只交同一种数据，
+// 三者都经 parseTheme 校验（内置主题以 id 作名字）。导入的与插件提供的主题名是数据，照原文显示。
 //
 // 令牌名是公开契约：主题只能写 THEME_TOKENS 里的名字，界面的样式只引用这些名字。改名会打破已有的主题，
 // 所以按格式版本迁移，迁不了的拒收并说明。
@@ -11,6 +12,8 @@
 // 插件停用就随之撤回；设置「外观」的主题选择里与内置、导入的主题并列。
 
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 import aalisDark from './themes/aalis-dark.json' with { type: 'json' };
 import aalisLight from './themes/aalis-light.json' with { type: 'json' };
 import brandDark from './themes/brand-dark.json' with { type: 'json' };
@@ -151,7 +154,7 @@ export interface PluginTheme {
   theme: Theme;
 }
 
-/** 内置主题：随包带的主题文件，键是主题 id（配色名加种类） */
+/** 内置主题：随包带的主题文件（不带名字），键是主题 id（配色名加种类） */
 export const BUILTIN_THEMES = {
   'calm-dark': calmDark,
   'calm-light': calmLight,
@@ -163,6 +166,18 @@ export const BUILTIN_THEMES = {
   'neutral-light': neutralLight,
 };
 export type BuiltinThemeId = keyof typeof BUILTIN_THEMES;
+
+/** 内置主题的名字，按主题 id 取 */
+export const BUILTIN_THEME_NAMES: Readonly<Record<BuiltinThemeId, TextRef>> = {
+  'calm-dark': t('themeCalmDark'),
+  'calm-light': t('themeCalmLight'),
+  'aalis-dark': t('themeAalisDark'),
+  'aalis-light': t('themeAalisLight'),
+  'brand-dark': t('themeBrandDark'),
+  'brand-light': t('themeBrandLight'),
+  'neutral-dark': t('themeNeutralDark'),
+  'neutral-light': t('themeNeutralLight'),
+};
 
 /** 跟随系统时默认的深色与浅色主题，也是补齐缺失令牌的来源 */
 export const DEFAULT_THEMES: Readonly<Record<ThemeKind, BuiltinThemeId>> = { dark: 'calm-dark', light: 'calm-light' };
@@ -208,7 +223,7 @@ export function parseTheme(value: unknown): ThemeParseResult {
 
 /** 一处前景落在底色上的组合；底色从下往上叠，半透明的一层先叠到下层再算 */
 interface ContrastPair {
-  pair: string;
+  pair: TextRef;
   foreground: ThemeToken;
   background: readonly ThemeToken[];
   minimum: number;
@@ -219,7 +234,7 @@ const TEXT = 4.5;
 /** 焦点环、输入框外框、图标、标记这类非文字元素要达到的对比度 */
 const NON_TEXT = 3;
 
-const pair = (name: string, foreground: ThemeToken, background: ThemeToken[], minimum: number): ContrastPair => ({
+const pair = (name: TextRef, foreground: ThemeToken, background: ThemeToken[], minimum: number): ContrastPair => ({
   pair: name,
   foreground,
   background,
@@ -228,62 +243,63 @@ const pair = (name: string, foreground: ThemeToken, background: ThemeToken[], mi
 
 const SYNTAX_PAIRS = (
   [
-    ['关键字', '--color-syntax-keyword'],
-    ['字符串', '--color-syntax-string'],
-    ['数字', '--color-syntax-number'],
-    ['注释', '--color-syntax-comment'],
-    ['函数名', '--color-syntax-function'],
-    ['类型', '--color-syntax-type'],
+    [t('syntaxKeyword'), '--color-syntax-keyword'],
+    [t('syntaxString'), '--color-syntax-string'],
+    [t('syntaxNumber'), '--color-syntax-number'],
+    [t('syntaxComment'), '--color-syntax-comment'],
+    [t('syntaxFunction'), '--color-syntax-function'],
+    [t('syntaxType'), '--color-syntax-type'],
   ] as const
-).map(([name, token]) => pair(`代码${name} / 代码块`, token, ['--color-bg', '--color-fill-1'], TEXT));
+).map(([name, token]) => pair(name, token, ['--color-bg', '--color-fill-1'], TEXT));
 
 const CHART_PAIRS = ([1, 2, 3, 4, 5, 6] as const).map(n =>
-  pair(`图表色 ${n} / 主区`, `--color-chart-${n}`, ['--color-bg'], NON_TEXT),
+  pair(t('chartOnMain', { n }), `--color-chart-${n}`, ['--color-bg'], NON_TEXT),
 );
 
 /** 主题要过的全部组合：导入主题与内置主题的测试用同一张表 */
 const CONTRAST_PAIRS: readonly ContrastPair[] = [
-  pair('正文 / 主区', '--color-text', ['--color-bg'], TEXT),
-  pair('正文 / 侧栏里的选中行', '--color-text', ['--color-bg-side', '--color-fill-2'], TEXT),
-  pair('次要字 / 主区', '--color-text-2', ['--color-bg'], TEXT),
-  pair('次要字 / 侧栏', '--color-text-2', ['--color-bg-side'], TEXT),
-  pair('弱化字 / 主区', '--color-text-3', ['--color-bg'], TEXT),
-  pair('弱化字 / 侧栏', '--color-text-3', ['--color-bg-side'], TEXT),
-  pair('弱化字 / 侧栏里的选中行', '--color-text-3', ['--color-bg-side', '--color-fill-2'], TEXT),
-  pair('弱化字 / 主区里的选中行', '--color-text-3', ['--color-bg', '--color-fill-2'], TEXT),
-  pair('弱化字 / 浮层里的高亮项', '--color-text-3', ['--color-surface-raised', '--color-fill-1'], TEXT),
-  pair('链接 / 主区', '--color-accent-text', ['--color-bg'], TEXT),
-  pair('主按钮的字 / 主按钮', '--color-on-accent', ['--color-accent'], TEXT),
-  pair('主按钮的字 / 主按钮悬停', '--color-on-accent', ['--color-accent-hover'], TEXT),
-  pair('危险按钮的字 / 危险按钮', '--color-on-accent', ['--color-danger'], TEXT),
-  pair('危险按钮的字 / 危险按钮悬停', '--color-on-accent', ['--color-danger-hover'], TEXT),
-  pair('危险字 / 主区', '--color-danger-text', ['--color-bg'], TEXT),
-  pair('警告字 / 主区', '--color-warning-text', ['--color-bg'], TEXT),
-  pair('成功字 / 主区', '--color-success-text', ['--color-bg'], TEXT),
-  pair('危险字 / 主区上的危险浅底', '--color-danger-text', ['--color-bg', '--color-danger-subtle'], TEXT),
-  pair('危险字 / 侧栏上的危险浅底', '--color-danger-text', ['--color-bg-side', '--color-danger-subtle'], TEXT),
-  pair('警告字 / 主区上的警告浅底', '--color-warning-text', ['--color-bg', '--color-warning-subtle'], TEXT),
-  pair('警告字 / 侧栏上的警告浅底', '--color-warning-text', ['--color-bg-side', '--color-warning-subtle'], TEXT),
-  pair('成功字 / 主区上的成功浅底', '--color-success-text', ['--color-bg', '--color-success-subtle'], TEXT),
-  pair('成功字 / 侧栏上的成功浅底', '--color-success-text', ['--color-bg-side', '--color-success-subtle'], TEXT),
-  pair('次要字 / 图标栏', '--color-text-2', ['--color-bg-rail'], TEXT),
+  pair(t('textOnMain'), '--color-text', ['--color-bg'], TEXT),
+  pair(t('textOnSideSelected'), '--color-text', ['--color-bg-side', '--color-fill-2'], TEXT),
+  pair(t('secondaryOnMain'), '--color-text-2', ['--color-bg'], TEXT),
+  pair(t('secondaryOnSide'), '--color-text-2', ['--color-bg-side'], TEXT),
+  pair(t('mutedOnMain'), '--color-text-3', ['--color-bg'], TEXT),
+  pair(t('mutedOnSide'), '--color-text-3', ['--color-bg-side'], TEXT),
+  pair(t('mutedOnSideSelected'), '--color-text-3', ['--color-bg-side', '--color-fill-2'], TEXT),
+  pair(t('mutedOnMainSelected'), '--color-text-3', ['--color-bg', '--color-fill-2'], TEXT),
+  pair(t('mutedOnRaisedHighlight'), '--color-text-3', ['--color-surface-raised', '--color-fill-1'], TEXT),
+  pair(t('linkOnMain'), '--color-accent-text', ['--color-bg'], TEXT),
+  pair(t('accentText'), '--color-on-accent', ['--color-accent'], TEXT),
+  pair(t('accentHoverText'), '--color-on-accent', ['--color-accent-hover'], TEXT),
+  pair(t('dangerButtonText'), '--color-on-accent', ['--color-danger'], TEXT),
+  pair(t('dangerHoverText'), '--color-on-accent', ['--color-danger-hover'], TEXT),
+  pair(t('dangerOnMain'), '--color-danger-text', ['--color-bg'], TEXT),
+  pair(t('warningOnMain'), '--color-warning-text', ['--color-bg'], TEXT),
+  pair(t('successOnMain'), '--color-success-text', ['--color-bg'], TEXT),
+  pair(t('dangerOnMainTint'), '--color-danger-text', ['--color-bg', '--color-danger-subtle'], TEXT),
+  pair(t('dangerOnSideTint'), '--color-danger-text', ['--color-bg-side', '--color-danger-subtle'], TEXT),
+  pair(t('warningOnMainTint'), '--color-warning-text', ['--color-bg', '--color-warning-subtle'], TEXT),
+  pair(t('warningOnSideTint'), '--color-warning-text', ['--color-bg-side', '--color-warning-subtle'], TEXT),
+  pair(t('successOnMainTint'), '--color-success-text', ['--color-bg', '--color-success-subtle'], TEXT),
+  pair(t('successOnSideTint'), '--color-success-text', ['--color-bg-side', '--color-success-subtle'], TEXT),
+  pair(t('secondaryOnRail'), '--color-text-2', ['--color-bg-rail'], TEXT),
   ...SYNTAX_PAIRS,
-  pair('焦点环 / 主区', '--color-focus', ['--color-bg'], NON_TEXT),
-  pair('焦点环 / 侧栏', '--color-focus', ['--color-bg-side'], NON_TEXT),
-  pair('输入框外框 / 主区', '--color-border-control', ['--color-bg'], NON_TEXT),
-  pair('输入框外框 / 侧栏', '--color-border-control', ['--color-bg-side'], NON_TEXT),
-  pair('输入框外框 / 浮层', '--color-border-control', ['--color-surface-raised'], NON_TEXT),
+  pair(t('focusOnMain'), '--color-focus', ['--color-bg'], NON_TEXT),
+  pair(t('focusOnSide'), '--color-focus', ['--color-bg-side'], NON_TEXT),
+  pair(t('controlOnMain'), '--color-border-control', ['--color-bg'], NON_TEXT),
+  pair(t('controlOnSide'), '--color-border-control', ['--color-bg-side'], NON_TEXT),
+  pair(t('controlOnRaised'), '--color-border-control', ['--color-surface-raised'], NON_TEXT),
   ...CHART_PAIRS,
-  pair('图标 / 图标栏的当前项', '--color-text-2', ['--color-bg-rail', '--color-fill-2'], NON_TEXT),
-  pair('金色标记 / 主区', '--color-mark', ['--color-bg'], NON_TEXT),
-  pair('金色标记 / 侧栏', '--color-mark', ['--color-bg-side'], NON_TEXT),
-  pair('金色标记 / 图标栏', '--color-mark', ['--color-bg-rail'], NON_TEXT),
-  pair('金色标记 / 侧栏里的选中行', '--color-mark', ['--color-bg-side', '--color-fill-2'], NON_TEXT),
-  pair('金色标记 / 图标栏的当前项', '--color-mark', ['--color-bg-rail', '--color-fill-2'], NON_TEXT),
+  pair(t('iconOnRailCurrent'), '--color-text-2', ['--color-bg-rail', '--color-fill-2'], NON_TEXT),
+  pair(t('markOnMain'), '--color-mark', ['--color-bg'], NON_TEXT),
+  pair(t('markOnSide'), '--color-mark', ['--color-bg-side'], NON_TEXT),
+  pair(t('markOnRail'), '--color-mark', ['--color-bg-rail'], NON_TEXT),
+  pair(t('markOnSideSelected'), '--color-mark', ['--color-bg-side', '--color-fill-2'], NON_TEXT),
+  pair(t('markOnRailCurrent'), '--color-mark', ['--color-bg-rail', '--color-fill-2'], NON_TEXT),
 ];
 
 export interface ContrastIssue {
-  pair: string;
+  /** 组合名 */
+  pair: TextRef;
   /** 算出的对比度，保留两位小数 */
   ratio: number;
   minimum: number;

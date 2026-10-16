@@ -6,6 +6,7 @@ import {
   type PageView,
   type PanelTabRef,
 } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { useEffect, useReducer, useRef } from 'react';
 import { type NavigateOptions, useNavigate } from 'react-router';
 import { useBack } from '../back';
@@ -53,13 +54,13 @@ interface PanelTab {
   key: string;
   title: string;
   /** 插件标签的页面 */
-  page?: PageView;
+  page?: Localized<PageView>;
 }
 
 const sameTab = (a: PanelTabRef) => (b: PanelTabRef) =>
   'host' in a ? 'host' in b && a.host === b.host : !('host' in b) && sameRef(a)(b);
 
-const pageTab = (page: PageView): PanelTab => ({
+const pageTab = (page: Localized<PageView>): PanelTab => ({
   ref: refOf(page),
   key: paths.page(refOf(page)),
   title: pageName(page),
@@ -72,7 +73,7 @@ const pageTab = (page: PageView): PanelTab => ({
 function composeTabs(
   entries: LayoutRecords['panelTabs'],
   available: (tab: HostPanelTab) => boolean,
-  applicable: readonly PageView[],
+  applicable: readonly Localized<PageView>[],
 ): { bar: PanelTab[]; add: PanelTab[] } {
   const usable = (ref: PanelTabRef): PanelTab | undefined => {
     if (!('host' in ref)) {

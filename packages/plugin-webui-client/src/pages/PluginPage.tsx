@@ -1,4 +1,5 @@
 import type { PageRef, PageView } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { CircleAlert, Pin, RotateCw } from 'lucide-react';
 import { useReducer, useState } from 'react';
 import { useParams } from 'react-router';
@@ -57,7 +58,7 @@ export function PageGone({ instance }: { instance: string }) {
   );
 }
 
-function OpenPage({ page }: { page: PageView }) {
+function OpenPage({ page }: { page: Localized<PageView> }) {
   const [reloads, reload] = useReducer((n: number) => n + 1, 0);
   return (
     <Panel
@@ -83,7 +84,7 @@ function OpenPage({ page }: { page: PageView }) {
 }
 
 /** 固定到图标栏：再按一次取消；布局记录没取到时写明原因，点它重试 */
-function PinButton({ page }: { page: PageView }) {
+function PinButton({ page }: { page: Localized<PageView> }) {
   const { layout, layoutError, retry, changeLayout } = usePages();
   const toast = useToast();
   const host = useHost();

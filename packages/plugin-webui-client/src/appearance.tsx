@@ -1,5 +1,7 @@
 import {
+  BUILTIN_THEME_NAMES,
   BUILTIN_THEMES,
+  type BuiltinThemeId,
   type ContrastIssue,
   DEFAULT_THEMES,
   type PluginTheme,
@@ -13,6 +15,7 @@ import {
   type ThemeToken,
   themeContrastIssues,
 } from '@aalis/api-webui';
+import { resolveSource } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -54,9 +57,14 @@ export type ImportResult =
 
 const DEFAULT_CHOICE: Choice = { follow: true, ...DEFAULT_THEMES };
 
+/** 内置主题：名字按 id 取 api-webui 的字典 */
 const BUILTIN: readonly ThemeEntry[] = Object.entries(BUILTIN_THEMES).map(([id, file]) => ({
   id,
-  theme: { name: file.name, kind: file.kind as ThemeKind, colors: file.colors as Record<ThemeToken, string> },
+  theme: {
+    name: resolveSource(BUILTIN_THEME_NAMES[id as BuiltinThemeId]),
+    kind: file.kind as ThemeKind,
+    colors: file.colors as Record<ThemeToken, string>,
+  },
   origin: { kind: 'builtin' },
 }));
 

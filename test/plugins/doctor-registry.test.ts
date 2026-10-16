@@ -28,6 +28,8 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
+import { missingConfigError } from '../../packages/schema-config/src/index.js';
+import { defineTexts, resolveText, TextError, textLines, toSource } from '../../packages/schema-i18n/src/index.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ===== helpers =====
@@ -194,12 +196,47 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const report = await doctor.runChecks();
-    expect(report.checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+    expect(toSource(report.checks.find(c => c.id === 'plugins.pending'))).toMatchObject({
       level: 'warn',
       message: '1 个插件缺服务，未就绪',
       detail:
         'zz-doctor-pending-probe: 缺少服务 zz-doctor-missing-a（没有已装的插件提供）；缺少服务 zz-doctor-missing-b（没有已装的插件提供）',
     });
+    await app.stop();
+  });
+
+  it('失败的说明是文字对象时原样交给出口：检查项抛出的、插件失败的都按读者语言显示', async () => {
+    const { app, doctor } = await boot();
+    const t = defineTexts({
+      ns: 'test/doctor-registry',
+      language: 'zh-CN',
+      source: { down: '探针掉线' },
+      locales: { en: { down: 'Probe down' } },
+    });
+    doctor.registerCheck({
+      id: 'zz.thrown',
+      category: 'other',
+      run: () => {
+        throw new TextError(t('down'));
+      },
+    });
+    await app.plugins.register(
+      definePlugin({
+        name: 'zz-doctor-unconfigured',
+        apply() {
+          throw missingConfigError('apiKey');
+        },
+      }),
+      {},
+    );
+    await app.plugins.idle();
+
+    const { checks } = await doctor.runChecks();
+    const english = (id: string) => resolveText(textLines([checks.find(c => c.id === id)?.detail ?? '']), ['en']);
+    expect(english('zz.thrown')).toBe('Probe down');
+    expect(english('plugins.errored')).toBe(
+      'zz-doctor-unconfigured: Missing config item apiKey; set it in the WebUI or the config file to apply',
+    );
     await app.stop();
   });
 
@@ -219,7 +256,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const report = await doctor.runChecks();
-    expect(report.checks.find(c => c.id === 'plugins.pending')?.detail).toBe(
+    expect(toSource(report.checks.find(c => c.id === 'plugins.pending')?.detail)).toBe(
       'zz-doctor-chained: 缺少服务 zz-doctor-root-svc（zz-doctor-broken 失败：缺少配置项 apiKey）',
     );
     await app.stop();
@@ -253,12 +290,12 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const checks = (await doctor.runChecks()).checks;
-    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+    expect(toSource(checks.find(c => c.id === 'plugins.pending'))).toMatchObject({
       message: '1 个插件缺服务，未就绪',
       detail:
         'zz-doctor-waiting-probe: 缺少服务 zz-doctor-missing-c（没有已装的插件提供）；等待 zz-doctor-slow-provider 启动',
     });
-    expect(checks.find(c => c.id === 'plugins.waiting')).toEqual({
+    expect(toSource(checks.find(c => c.id === 'plugins.waiting'))).toEqual({
       id: 'plugins.waiting',
       category: 'plugins',
       level: 'ok',
@@ -294,7 +331,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
 
     const checks = (await doctor.runChecks()).checks;
     expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({ level: 'ok', message: '无缺服务的插件' });
-    expect(checks.find(c => c.id === 'plugins.waiting')?.detail).toBe(
+    expect(toSource(checks.find(c => c.id === 'plugins.waiting')?.detail)).toBe(
       'zz-doctor-patient: 等待 zz-doctor-slow-only-provider 启动',
     );
     release();

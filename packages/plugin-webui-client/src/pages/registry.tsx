@@ -1,4 +1,5 @@
 import type { LayoutOperation, LayoutRecords, PageRef, PageView } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -18,7 +19,7 @@ import { paths } from '../routes';
 
 interface Pages {
   /** 登记着的页面，按位置内的先后排好；没取到之前为 undefined，重取失败时留着上一次的 */
-  pages?: readonly PageView[];
+  pages?: readonly Localized<PageView>[];
   /** 最近一次取页面表失败的原因 */
   pagesError?: Error;
   layout?: LayoutRecords;
@@ -40,7 +41,7 @@ export function usePages(): Pages {
 
 export const sameRef = (a: PageRef) => (b: PageRef) => a.instance === b.instance && a.pageKey === b.pageKey;
 
-export const refOf = (page: PageView): PageRef => ({ instance: page.instance, pageKey: page.key });
+export const refOf = (page: Localized<PageView>): PageRef => ({ instance: page.instance, pageKey: page.key });
 
 /** 实例 id 第一个「:」之后是实例名；插件的第一个实例没有 */
 export const instanceName = (instance: string): string | undefined => {
@@ -55,19 +56,19 @@ export const withInstance = (label: string, instance: string): string => {
 };
 
 /** 页面在图标栏、菜单与标签上的名字 */
-export const pageName = (page: PageView): string => withInstance(page.title, page.instance);
+export const pageName = (page: Localized<PageView>): string => withInstance(page.title, page.instance);
 
 /** 页面自己的地址：位置为插件详情的在 /p/ 下，设置的在设置里；会话面板的页面只在会话里打开，没有 */
-export const pageAddress = (page: PageView): string | undefined =>
+export const pageAddress = (page: Localized<PageView>): string | undefined =>
   page.placement === 'plugin'
     ? paths.page(refOf(page))
     : page.placement === 'settings'
       ? paths.settingsPage(refOf(page))
       : undefined;
 
-function parsePages(body: unknown): PageView[] {
+function parsePages(body: unknown): Localized<PageView>[] {
   if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error('页面表的回应不是预期的形状');
-  return body.pages as PageView[];
+  return body.pages as Localized<PageView>[];
 }
 
 function parseLayout(body: unknown): LayoutRecords {

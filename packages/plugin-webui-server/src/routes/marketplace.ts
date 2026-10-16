@@ -5,11 +5,13 @@ import { pathToFileURL } from 'node:url';
 import type { PackageManagerService } from '@aalis/api-package-manager';
 import type { DependencyNode, MarketplacePackage, PackageCategory, SystemComponent } from '@aalis/api-webui';
 import type { Logger, PluginManagerService, ServiceSelection, Services } from '@aalis/core';
+import { TextError, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
 import { declaredProvides, type LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
+import { t } from '../texts.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
 // 安装/卸载/更新走 package-manager（npm install / uninstall）。
@@ -284,7 +286,7 @@ export function matchesQuery(
   const hay = [pkg.name, pkg.description ?? '', ...(pkg.keywords ?? []), ...(pkg.provides ?? [])]
     .join(' ')
     .toLowerCase();
-  return terms.every(t => hay.includes(t));
+  return terms.every(term => hay.includes(term));
 }
 
 /** 安装源上最新版的清单里市场要用的：版本号与声明提供的服务 */
@@ -441,7 +443,7 @@ interface MarketplaceRoutesCaps {
   appDir?: string;
 }
 
-const NO_APP_DIR = '宿主没有提供安装集目录（host-paths），无法判断已装的包';
+const NO_APP_DIR = t('noAppDir');
 
 /** 注册插件市场 REST 路由 */
 export function registerMarketplaceRoutes(
@@ -465,15 +467,15 @@ export function registerMarketplaceRoutes(
    * 查版本用的源。package-manager 在场时是它报告的安装源，最新版与「可更新」才与真正装到的一致；
    * 不在场时装卸更新都不可用，退回检索源只作展示。安装源查不到时返回 error：调用方不查最新版，并如实说明。
    */
-  const versionSource = async (): Promise<{ base: string } | { error: string }> => {
+  const versionSource = async (): Promise<{ base: string } | { error: TextRef }> => {
     if (!caps.packageManager.present) return { base: searchBase };
     const pm = caps.packageManager.use;
     try {
       return { base: await pm.registry() };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      caps.logger.warn(`market: 查询安装源失败，不显示最新版与可更新: ${msg}`);
-      return { error: `无法确定安装源（${msg}），暂不显示最新版本与可更新` };
+      const reason = textOf(err);
+      caps.logger.warn(`market: 查询安装源失败，不显示最新版与可更新: ${toSource(reason)}`);
+      return { error: t('noInstallSource', { error: reason }) };
     }
   };
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
@@ -495,15 +497,15 @@ export function registerMarketplaceRoutes(
     // 四类关键词各发一条检索（npm 的 keywords 逗号是 AND 非 OR），并行后按包名合并去重 = OR。
     const fetchKw = async (kw: string): Promise<NpmSearchResponse> => {
       const r = await fetch(buildSearchUrl(q, kw, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
-      if (!r.ok) throw new Error(`npm registry 返回 ${r.status}`);
+      if (!r.ok) throw new TextError(t('registryStatus', { status: r.status }));
       return (await r.json()) as NpmSearchResponse;
     };
     const settled = await Promise.allSettled(AALIS_KEYWORDS.map(fetchKw));
     const okResults = settled.filter((s): s is PromiseFulfilledResult<NpmSearchResponse> => s.status === 'fulfilled');
     if (okResults.length === 0) {
-      const reason = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
-      const msg = reason?.reason instanceof Error ? reason.reason.message : String(reason?.reason ?? '未知错误');
-      caps.logger.debug(`market: npm registry 检索失败: ${msg}`);
+      // 都失败了，说明取第一条的原因
+      const reason = textOf((settled[0] as PromiseRejectedResult).reason);
+      caps.logger.debug(`market: npm registry 检索失败: ${toSource(reason)}`);
       // 降级：只列本地已装。名单取自本地扫描 + 运行时已加载插件（后者覆盖扫描目录之外的部署）。
       const local = new Map<string, LocalPkgInfo>();
       for (const n of new Set([...localPkgs.keys(), ...status.map(p => p.name)])) {
@@ -512,7 +514,7 @@ export function registerMarketplaceRoutes(
       }
       res.json({
         packages: toLocalPackages(local, q),
-        warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件`,
+        warning: t('searchOffline', { error: reason }),
       });
       return;
     }
@@ -606,7 +608,7 @@ export function registerMarketplaceRoutes(
   route(expressApp, 'GET /api/marketplace/depgraph', gate(), async (req, res) => {
     const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     if (!name || !PKG_NAME_RE.test(name)) {
-      res.status(400).json({ error: 'name 必须是合法 npm 包名' });
+      res.status(400).json({ error: t('packageNameInvalid') });
       return;
     }
     // 图算法只认 name→依赖名[]，不该知道版本；在此把扫描结果投影成它要的形状。
@@ -656,7 +658,7 @@ export function registerMarketplaceRoutes(
       return {
         service: svc,
         // 根激活归宿主：core 的内置服务与宿主登记的 host-config / plugin-source 都在这里
-        providedBy: provider?.contextId === 'root' ? '宿主' : (provider?.contextId ?? null),
+        providedBy: provider?.contextId === 'root' ? t('host') : (provider?.contextId ?? null),
       };
     });
     res.json({
@@ -675,14 +677,11 @@ export function registerMarketplaceRoutes(
   route(expressApp, 'POST /api/marketplace/install', gate(), async (req, res) => {
     const npmPkg = req.body?.name;
     if (typeof npmPkg !== 'string') {
-      res.status(400).json({ error: 'name 字段必须是字符串' });
+      res.status(400).json({ error: t('nameNotString') });
       return;
     }
     if (!caps.packageManager.present) {
-      res.status(503).json({
-        error:
-          '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
-      });
+      res.status(503).json({ error: t('noPackageManagerInstall') });
       return;
     }
     const pkgMgr = caps.packageManager.use;
@@ -692,7 +691,7 @@ export function registerMarketplaceRoutes(
       if (result.ok) rediscoverClients();
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: textOf(err) });
     }
   });
 
@@ -702,19 +701,16 @@ export function registerMarketplaceRoutes(
   route(expressApp, 'POST /api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
     if (typeof name !== 'string') {
-      res.status(400).json({ error: 'name 字段必须是字符串' });
+      res.status(400).json({ error: t('nameNotString') });
       return;
     }
     const removeConfig = req.body?.removeConfig ?? false;
     if (typeof removeConfig !== 'boolean') {
-      res.status(400).json({ error: 'removeConfig 字段必须是布尔值' });
+      res.status(400).json({ error: t('removeConfigNotBoolean') });
       return;
     }
     if (!caps.packageManager.present) {
-      res.status(503).json({
-        error:
-          '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
-      });
+      res.status(503).json({ error: t('noPackageManagerUninstall') });
       return;
     }
     const pkgMgr = caps.packageManager.use;
@@ -725,7 +721,7 @@ export function registerMarketplaceRoutes(
       if (result.ok) rediscoverClients();
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: textOf(err) });
     }
   });
 
@@ -734,18 +730,19 @@ export function registerMarketplaceRoutes(
   route(expressApp, 'POST /api/marketplace/update', gate(), async (req, res) => {
     const raw = req.body?.targets;
     if (!Array.isArray(raw) || raw.length === 0) {
-      res.status(400).json({ error: 'targets 必须是非空数组' });
+      res.status(400).json({ error: t('targetsRequired') });
       return;
     }
     // 形状校验只做「是不是两个字符串」；包名/版本/总量的校验都在 package-manager 的
     // buildUpdateSpecs 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路，
     // 而总量的真实约束是 argv 字节数（见该处 SPEC_ARGV_BUDGET），不是包个数。
-    const targets = raw.map((t: unknown) => ({
-      name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
-      version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',
+    const targets = raw.map((target: unknown) => ({
+      name: typeof (target as { name?: unknown })?.name === 'string' ? (target as { name: string }).name : '',
+      version:
+        typeof (target as { version?: unknown })?.version === 'string' ? (target as { version: string }).version : '',
     }));
     if (!caps.packageManager.present) {
-      res.status(503).json({ error: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它' });
+      res.status(503).json({ error: t('noPackageManagerUpdate') });
       return;
     }
     const pkgMgr = caps.packageManager.use;
@@ -754,7 +751,7 @@ export function registerMarketplaceRoutes(
       // 成功时进程即将重启：先把响应刷出去，否则客户端只会看到连接被切断。
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: textOf(err) });
     }
   });
 }

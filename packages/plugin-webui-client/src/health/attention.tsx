@@ -1,4 +1,5 @@
 import type { AttentionItem } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useReducer } from 'react';
 import { useConnection } from '../connection';
 import { unmetOf } from '../plugins/list';
@@ -8,7 +9,7 @@ import { isRecord, useJson } from '../rest';
 
 interface Attention {
   /** 没取到之前为 undefined；重取失败时留着上一次的 */
-  items?: readonly AttentionItem[];
+  items?: readonly Localized<AttentionItem>[];
   error?: Error;
   retry(): void;
 }
@@ -26,9 +27,9 @@ const readable = (item: unknown) =>
   isRecord(item) &&
   (item.kind !== 'plugin' || (unmetOf(item.lacking) !== undefined && unmetOf(item.waiting) !== undefined));
 
-function parse(body: unknown): AttentionItem[] {
+function parse(body: unknown): Localized<AttentionItem>[] {
   if (!isRecord(body) || !Array.isArray(body.items)) throw new Error('「需要处理」的回应不是预期的形状');
-  return body.items.filter(readable) as AttentionItem[];
+  return body.items.filter(readable) as Localized<AttentionItem>[];
 }
 
 export function AttentionProvider({ children }: { children: ReactNode }) {

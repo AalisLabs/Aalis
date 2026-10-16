@@ -13,6 +13,7 @@ import { contributions } from '@aalis/api-contributions';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
+import { i18n, localizeFor } from '@aalis/api-i18n';
 import { llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
@@ -58,7 +59,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { asText, toSource } from '@aalis/schema-i18n';
+import { asText, isTextError, type TextRef, textLines, textOf } from '@aalis/schema-i18n';
 import {
   type Message,
   type OutgoingMessage,
@@ -72,21 +73,25 @@ import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
 import { blockedStatus, createAttention } from './attention.js';
 import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
-import { CLIENT_SWITCH_SCRIPT, renderClientSwitchPage } from './client-switch-page.js';
+import { CLIENT_SWITCH_SCRIPT, CLIENT_SWITCH_TEXTS, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
+import { pageLanguageOf } from './html.js';
 import { createLayoutStore } from './layout.js';
+import { createLocalizer } from './localize.js';
 import { logMatcher, parseLogFilter } from './logs.js';
 import { createPageFiles } from './page-files.js';
 import { createPageRegistry } from './pages.js';
 import { route } from './route.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerFrameRoutes } from './routes/frames.js';
+import { registerI18nRoutes } from './routes/i18n.js';
 import { localPackageLookup, registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPageRoutes } from './routes/pages.js';
 import { registerPluginRoutes, saveAfterApply } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
+import { t } from './texts.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
 
 /**
@@ -140,62 +145,67 @@ const DOCUMENT_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+/** 请求体解析（express.json）的拒绝按 type 给的整句；别的 type 给 badRequest */
+const BODY_REJECTIONS: Readonly<Record<string, TextRef>> = {
+  'entity.too.large': t('bodyTooLarge'),
+  'entity.parse.failed': t('bodyNotJson'),
+  'charset.unsupported': t('bodyEncoding'),
+  'encoding.unsupported': t('bodyEncoding'),
+};
+
 const configSchema = defineConfig({
   port: {
     type: 'number',
-    label: '端口',
+    label: t('portLabel'),
     default: 3000,
     integer: true,
     min: 0,
     max: 65535,
     onInvalid: 'error',
-    description: 'Web 管理界面的 HTTP 端口',
+    description: t('portDescription'),
   },
   host: {
     type: 'string',
-    label: '监听地址',
+    label: t('hostLabel'),
     default: '127.0.0.1',
     pattern: '\\S',
     onInvalid: 'error',
-    description: '绑定的 IP 地址，0.0.0.0 可对外访问',
+    description: t('hostDescription'),
   },
   autoOpen: {
     type: 'boolean',
-    label: '启动时自动打开浏览器',
+    label: t('autoOpenLabel'),
     default: true,
     onInvalid: 'error',
-    description:
-      '每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭',
+    description: t('autoOpenDescription'),
   },
   tokenMode: {
     type: 'select',
-    label: 'Token 策略',
+    label: t('tokenModeLabel'),
     default: 'persist',
     onInvalid: 'error',
     secret: false,
     options: [
-      { label: '每次启动随机生成（重启即轮换）', value: 'ephemeral' },
-      { label: '首次生成后持久化（重启不掉登录）', value: 'persist' },
-      { label: '使用下方固定 token', value: 'fixed' },
+      { label: t('tokenEphemeral'), value: 'ephemeral' },
+      { label: t('tokenPersist'), value: 'persist' },
+      { label: t('tokenFixed'), value: 'fixed' },
     ],
-    description:
-      'ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。',
+    description: t('tokenModeDescription'),
   },
   fixedToken: {
     type: 'string',
-    label: '固定 Token（仅 tokenMode=fixed 生效）',
+    label: t('fixedTokenLabel'),
     default: '',
     onInvalid: 'error',
     secret: true,
-    description: `至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理。存进 secrets.yaml，WebUI 不回显。`,
+    description: t('fixedTokenDescription', { min: FIXED_TOKEN_MIN_LENGTH }),
   },
   marketplaceRegistry: {
     type: 'string',
-    label: '插件市场 npm 源',
+    label: t('registryLabel'),
     default: 'https://registry.npmjs.org',
     onInvalid: 'error',
-    description:
-      '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。',
+    description: t('registryDescription'),
   },
   // 活跃前端不在此配置：前端即 `webui-client` 服务的多 provider，活跃者由「服务偏好」
   // （servicePreferences['webui-client']）决定——在 WebUI 设置「系统」的服务偏好里切换。
@@ -307,12 +317,14 @@ const uses = {
   contributions: optional(contributions),
   // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
   archive: optional(messageArchive),
+  /** 回应里的文字对象按读者语言渲染（localize.ts）；缺席时按原文 */
+  i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name,
-  displayName: 'WebUI 服务端',
+  displayName: t('displayName'),
   subsystem: 'platform',
   configSchema,
   provides: [webuiServer, platform],
@@ -327,7 +339,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     ...cfg,
     marketplaceRegistry: cfg.marketplaceRegistry.trim() || configSchema.marketplaceRegistry.default,
   };
-  if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError('marketplaceRegistry 不是有效 URL');
+  if (!URL.canParse(uiConfig.marketplaceRegistry)) throw configError(t('registryInvalid'));
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、媒体与会话文件）都走这里
   const storage = caps.storage.use;
@@ -342,7 +354,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const accessFileUri = 'data:/webui/access.txt';
   const fixedToken = uiConfig.tokenMode === 'fixed' ? uiConfig.fixedToken.trim() : '';
   if (fixedToken && fixedToken.length < FIXED_TOKEN_MIN_LENGTH) {
-    throw configError(`fixedToken 至少要 ${FIXED_TOKEN_MIN_LENGTH} 个字符（现在 ${fixedToken.length} 个）`);
+    throw configError(t('tokenTooShort', { min: FIXED_TOKEN_MIN_LENGTH, length: fixedToken.length }));
   }
   let authToken = fixedToken || Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
   /** 监听成功后的访问 URL；持久化 token 晚于监听读回时，据此重写 access.txt */
@@ -360,21 +372,21 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     await Promise.all(pendingWrites);
   }, '等 token 与访问凭据落盘');
 
-  /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」 */
+  /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」。说明行按全局默认层的语言写 */
   async function writeAccessFile(url: string, token: string): Promise<boolean> {
-    const lines = [
-      '# Aalis WebUI 访问凭据（自动生成）',
-      `# 生成时间: ${new Date().toISOString()}`,
-      `# Token 模式: ${uiConfig.tokenMode}`,
+    const lines = textLines([
+      t('accessTitle'),
+      t('accessGenerated', { time: new Date().toISOString() }),
+      t('accessMode', { mode: uiConfig.tokenMode }),
       '',
       `URL: ${url}`,
       `Token: ${token}`,
-      `一键登录: ${url}?token=${token}`,
+      t('accessLogin', { url: `${url}?token=${token}` }),
       '',
-      '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
-    ];
+      t('accessHint'),
+    ]);
     try {
-      await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`, { secret: true });
+      await storage.writeFile(accessFileUri, `${localizeFor(caps.i18n, lines, { host: true })}\n`, { secret: true });
       return true;
     } catch (err) {
       logger.use.warn(`写入访问文件失败: ${(err as Error).message}`);
@@ -425,9 +437,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
   // storage 已在线时 follow 是同步首挂：等读回完成再继续，认证从第一个请求起就用持久化的 token
   if (tokenLoading) await tokenLoading;
-  const auth = createAuthSystem(() => authToken);
+  // 回应里的文字按读者语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它；登录页与恢复页也按它（localize.ts）
+  const localizer = createLocalizer(caps.i18n);
+  const auth = createAuthSystem(() => authToken, localizer);
 
   const expressApp = express();
+  expressApp.use(localizer.middleware);
   // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
   // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱，插件前端的文件另设框架 CSP
   expressApp.use((_req, res, next) => {
@@ -592,6 +607,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       layout: createLayoutStore(storage.own, logger.use),
       storageReady: () => caps.storage.present,
       send: event => admin.send(event),
+      languages: localizer.languages,
       logger: logger.use,
     },
     auth.identify,
@@ -641,11 +657,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   ) => {
     const filter = parseLogFilter(query);
     if (!filter) {
-      res.status(400).json({ error: '日志筛选写法不对：level 只收 debug、info、warn、error，每一项最多给一次' });
+      res.status(400).json({ error: t('logFilterInvalid') });
       return;
     }
     if (!caps.logs.present) {
-      res.status(503).json({ error: '宿主未提供日志服务（host-logs），读不到日志' });
+      res.status(503).json({ error: t('noHostLogs') });
       return;
     }
     const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 5000);
@@ -657,7 +673,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'GET /api/logs/range', gate(), (req, res) => {
     const before = Number(req.query.before);
     if (!Number.isFinite(before)) {
-      res.status(400).json({ error: '往前翻日志要给数字参数 before（取 seq 比它小的那几条）' });
+      res.status(400).json({ error: t('logBeforeRequired') });
       return;
     }
     return sendLogs(req.query, res, before);
@@ -667,9 +683,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'GET /api/services', gate(), async (_req, res) => {
     const pluginMgr = caps.plugins.present ? caps.plugins.use : undefined;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
-    const displayNameMap = new Map<string, string>();
+    const displayNameMap = new Map<string, string | TextRef>();
     for (const p of pluginStatus) {
-      const name = toSource(asText(p.displayName));
+      const name = asText(p.displayName);
       if (name) {
         displayNameMap.set(p.name, name);
         displayNameMap.set(p.instanceId, name);
@@ -677,7 +693,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
     // 根激活归宿主：core 的内置服务与宿主登记的 host-config / plugin-source 都在这里（与市场依赖图同一标签）。
     // 别把内部 id 'root' 裸露给用户。
-    displayNameMap.set('root', '宿主');
+    displayNameMap.set('root', t('host'));
 
     const serviceNames = services.use.names();
     const detail: ServiceListResponse['services'] = {};
@@ -689,7 +705,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         providers: entries.map(e => ({
           contextId: e.contextId,
           displayName: displayNameMap.get(e.contextId),
-          label: toSource(asText(e.label)),
+          label: asText(e.label),
           priority: e.priority,
           exclusive: e.exclusive,
         })),
@@ -712,11 +728,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res: express.Response<OkResponse | ErrorResponse>,
   ) => {
     if (contextId !== null && !services.use.inspect(svcName).some(e => e.contextId === contextId)) {
-      res.status(404).json({ error: `服务 ${svcName} 没有 id 为 ${contextId} 的提供者` });
+      res.status(404).json({ error: t('noProvider', { service: svcName, id: contextId }) });
       return;
     }
     if (!caps.hostConfig.present) {
-      res.status(503).json({ error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      res.status(503).json({ error: t('noHostConfigPreference') });
       return;
     }
     const host = caps.hostConfig.use;
@@ -738,7 +754,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'POST /api/services/:name/prefer', gate(), async (req, res) => {
     const contextId = preferredIn(req.body);
     if (!contextId) {
-      res.status(400).json({ error: '请求体要给 contextId：偏好的那个提供者的 id' });
+      res.status(400).json({ error: t('contextIdRequired') });
       return;
     }
     await changePreference(String(req.params.name), contextId, {}, res);
@@ -749,12 +765,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   route(expressApp, 'POST /api/plugins/:instanceId/services/:name/prefer', gate(), async (req, res) => {
     const contextId = preferredIn(req.body);
     if (!contextId) {
-      res.status(400).json({ error: '请求体要给 contextId：偏好的那个提供者的 id' });
+      res.status(400).json({ error: t('contextIdRequired') });
       return;
     }
     const instanceId = String(req.params.instanceId);
     if (!caps.plugins.present || !caps.plugins.use.getPlugin(instanceId)) {
-      res.status(404).json({ error: `插件 ${instanceId} 不存在` });
+      res.status(404).json({ error: t('pluginMissing', { instance: instanceId }) });
       return;
     }
     await changePreference(String(req.params.name), contextId, { for: instanceId }, res);
@@ -801,21 +817,32 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         res.status(404).json({
           error:
             llmEntries.length > 0
-              ? `提供者 ${contextId} 不支持运行时刷新模型列表（例如关闭了模型发现）`
-              : `提供者 ${contextId} 当前没有已注册的模型，无法刷新`,
+              ? t('refreshUnsupported', { provider: contextId })
+              : t('refreshNoModels', { provider: contextId }),
         });
         return;
       }
       const result = await target.use.refresh!();
       res.json({ ok: true, ...result });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({ error: textOf(err) });
     }
   });
 
   // 获取某个服务的可用模型/选项列表
   route(expressApp, 'GET /api/models/:service', gate(), async (req, res) => {
     const serviceName = req.params.service;
+
+    // 插件经贡献点 webui:options 登记的可选项来源先查：同名的取全局键最前的那家，dependency 原样交给它
+    const source = caps.contributions.present
+      ? caps.contributions.use.collect('webui:options').find(({ spec }) => spec.id === serviceName)
+      : undefined;
+    if (source) {
+      const { dependency } = req.query;
+      const options = await source.spec.list(typeof dependency === 'string' ? dependency : undefined);
+      res.json({ models: options.map(option => option.value), details: options });
+      return;
+    }
 
     // 特殊处理 platform：通过 helper 获取已注册的平台名称
     if (serviceName === 'platform') {
@@ -829,18 +856,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       const platformTypes = new Map<string, string[]>();
       const allTypes = new Set<string>();
       for (const a of getPlatformAdapters(caps.platform)) {
-        const types = sessionTypesOf(a).map(t => t.name);
+        const types = sessionTypesOf(a).map(type => type.name);
         platformTypes.set(a.platform, types);
-        for (const t of types) allTypes.add(t);
+        for (const type of types) allTypes.add(type);
       }
       const scopes: OptionDetail[] = [];
-      scopes.push({ value: '*', label: '* （全部平台 × 全部类型）' });
-      for (const t of [...allTypes].sort()) {
-        scopes.push({ value: `*:${t}`, label: `*:${t} （所有平台的 ${t} 会话）` });
+      scopes.push({ value: '*', label: t('scopeAll') });
+      for (const type of [...allTypes].sort()) {
+        scopes.push({ value: `*:${type}`, label: t('scopeType', { type }) });
       }
       for (const [p, types] of platformTypes) {
-        scopes.push({ value: `${p}:*`, label: `${p}:* （${p} 全部类型）` });
-        for (const t of types) scopes.push({ value: `${p}:${t}`, label: `${p}:${t}` });
+        scopes.push({ value: `${p}:*`, label: t('scopePlatform', { platform: p }) });
+        for (const type of types) scopes.push({ value: `${p}:${type}`, label: `${p}:${type}` });
       }
       res.json({ models: scopes.map(s => s.value), details: scopes });
       return;
@@ -852,7 +879,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (serviceName === 'llm-thinking') {
       const ref = modelRefOf(req.query.dependency);
       if (ref === null) {
-        res.status(400).json({ error: 'dependency 要是模型引用 { provider, model } 的 JSON' });
+        res.status(400).json({ error: t('dependencyInvalid') });
         return;
       }
       const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.use.thinking;
@@ -881,7 +908,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         res.json({
           models: ['*', ...groups.map(g => g.name).sort()],
           details: [
-            { value: '*', label: '* （全部分组）' },
+            { value: '*', label: t('allGroups') },
             ...groups.map(g => ({
               value: g.name,
               label: g.label,
@@ -894,8 +921,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         // 回退：从已注册工具中提取分组名称
         const allTools = caps.tools.present ? caps.tools.use.getAll() : [];
         const groupSet = new Set<string>();
-        for (const t of allTools) {
-          t.groups?.forEach((g: string) => {
+        for (const tool of allTools) {
+          tool.groups?.forEach((g: string) => {
             groupSet.add(g);
           });
         }
@@ -911,7 +938,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         const entries = caps.llm.list();
         const providers = entries.map(e => ({
           model: e.use.id,
-          provider: toSource(asText(e.label)) ?? e.id,
+          provider: asText(e.label) ?? e.id,
           contextId: e.use.providerId,
           capabilities: [...e.use.capabilities],
         }));
@@ -937,6 +964,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.json({ models });
   });
 
+  registerI18nRoutes(expressApp, { i18n: caps.i18n, contributions: caps.contributions, localizer }, gate);
   registerProxyRoutes(expressApp, logger.use, gate);
   registerMediaRoutes(expressApp, storage, logger.use, gate);
   registerFileRoutes(expressApp, storage, { sessions: caps.sessionProtocol, pages: pageFiles }, logger.use, gate);
@@ -1007,8 +1035,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 极简第三方前端无切换 UI）卡住时都能在此切回。受全局 auth 中间件登录保护；切换走既有 owner
   // 闸的 POST /api/services/webui-client/prefer，本页零新增后端逻辑（见 client-switch-page.ts）。
   // 注册在 SPA 兜底之前，故 `/__clients` 被本路由先接走、不落到前端 index.html。
-  route(expressApp, 'GET /__clients', (_req, res) => {
-    res.type('html').send(renderClientSwitchPage());
+  route(expressApp, 'GET /__clients', (req, res) => {
+    const text = localizer.render(req, res, CLIENT_SWITCH_TEXTS);
+    const lang = pageLanguageOf(text.lang, localizer.languages(req));
+    res.type('html').send(renderClientSwitchPage({ ...text, lang }, localizer.offered()));
   });
   route(expressApp, 'GET /__clients.js', (_req, res) => {
     res.type('application/javascript').send(CLIENT_SWITCH_SCRIPT);
@@ -1017,7 +1047,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // API 未命中：回 404 JSON，不落到 SPA 兜底（否则客户端拿到 HTML 去解析 JSON）。不是路由：任何方法都回它
   expressApp.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next();
-    res.status(404).json({ error: `未知 API: ${req.method} ${req.path}` } satisfies ErrorResponse);
+    res.status(404).json({ error: t('unknownApi', { method: req.method, path: req.path }) } satisfies ErrorResponse);
   });
 
   // SPA fallback: 所有非 API 路径返回 index.html；/assets/ 下缺失的文件回 404（旧页面引用的资源换了构建就不在了，
@@ -1032,26 +1062,34 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (indexPath && existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
-      res.status(404).json({ error: '前端未就绪：请安装一个带 aalis.client 标记的前端包' });
+      res.status(404).json({ error: t('noClient') });
     }
   });
 
   // 路由与中间件抛出的错误（请求体不是 JSON 或太大、路径参数解不开、处理函数出错）：/api/ 下回 ErrorResponse，别处回纯文本，
-  // 都不带堆栈，原因只进日志。挂在全部路由之后（插件前端的挂载另有自己的，紧跟在挂载之后）
+  // 都不带堆栈，原因只进日志。挂着文字对象的错误（TextError、withText）是写给人看的：状态取它的 status，没有时 400，
+  // 按读者语言给出它的文字。请求体解析的拒绝按 type 给字典里的整句，库的原句（英文、带解析位置）只进 debug 日志。
+  // 挂在全部路由之后（插件前端的挂载另有自己的，紧跟在挂载之后）
   expressApp.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) return next(err);
-    const { status, expose, message } = err as { status?: unknown; expose?: unknown; message?: unknown };
-    const code = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
+    const { status, type, message } = err as { status?: unknown; type?: unknown; message?: unknown };
+    const told = isTextError(err);
+    const code = typeof status === 'number' && status >= 400 && status < 600 ? status : told ? 400 : 500;
     if (code >= 500) logger.use.error(`${req.method} ${req.path} 处理出错:`, err);
     else logger.use.debug(`${req.method} ${req.path} 请求被拒 (${code}): ${String(message)}`);
-    const reason =
-      code >= 500
-        ? '处理这个请求时出错，原因见日志'
-        : expose === true && typeof message === 'string'
-          ? message
-          : '请求的写法不对';
+    const reason = told
+      ? err.text
+      : code >= 500
+        ? t('serverError')
+        : typeof type === 'string' && Object.hasOwn(BODY_REJECTIONS, type)
+          ? BODY_REJECTIONS[type]
+          : t('badRequest');
     if (req.path.startsWith('/api/')) res.status(code).json({ error: reason } satisfies ErrorResponse);
-    else res.status(code).type('text').send(reason);
+    else
+      res
+        .status(code)
+        .type('text')
+        .send(localizer.render(req, res, reason));
   });
 
   /**

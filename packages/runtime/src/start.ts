@@ -349,10 +349,11 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 用户只看到 A 的报错，会以为「只是 A 不可用」，不知道 B 也一并废了
   // （实例：embedding-openai 缺 key → memory-vector 永远不激活，向量记忆整个不工作）。
   // 缺的沿依赖链追到根（失败、停用、没有提供者、成环）报 warn；只是在等提供者启动（含转入后台的慢激活）的报 info。
-  // 判据与写法同 plugin-doctor、WebUI 与终端界面（api-doctor 的 unmetDependencies）
+  // 判据与写法同 plugin-doctor、WebUI 与终端界面（api-doctor 的 unmetDependencies）；日志取说法的原文
   for (const [instance, unmet] of unmetDependencies(app.plugins.getStatus(), host.services.use.names())) {
-    if (unmet.lacking.length > 0) app.logger.warn(`插件 "${instance}" 依赖未满足，未激活：${describeUnmet(unmet)}`);
-    else if (unmet.waiting.length > 0) app.logger.info(`插件 "${instance}" 在等依赖启动：${describeUnmet(unmet)}`);
+    const why = describeUnmet(unmet).source;
+    if (unmet.lacking.length > 0) app.logger.warn(`插件 "${instance}" 依赖未满足，未激活：${why}`);
+    else if (unmet.waiting.length > 0) app.logger.info(`插件 "${instance}" 在等依赖启动：${why}`);
   }
 
   // 向重启我们的父进程回报「起来了」。父进程据此决定放手退出，还是判定本次

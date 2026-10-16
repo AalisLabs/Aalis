@@ -15,10 +15,14 @@
  *   重复声明导致 TS 合并冲突。
  *
  *   另有「缺」与「在等」的共享判据（unmet.ts）：插件没起来时沿依赖链追到根，
- *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它。
+ *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它；
+ *   以及插件失败给人看的说明（failure.ts）：core 只存失败的原值，说明按它现取。
+ *
+ *   给人看的文字可以是字符串或 @aalis/schema-i18n 的文字对象，出口按读者语言渲染。
  */
 
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 // ===== 公共类型 =====
 
@@ -30,9 +34,9 @@ export interface CheckResult {
   category: CheckCategory;
   level: CheckLevel;
   /** 一行结论：出了什么事 */
-  message: string;
-  /** 多行详情；warn 与 error 在这里写用户该做什么，具体到配置项、命令或页面 */
-  detail?: string;
+  message: string | TextRef;
+  /** 多行详情（文字对象用 textLines 分行）；warn 与 error 在这里写用户该做什么，具体到配置项、命令或页面 */
+  detail?: string | TextRef;
 }
 
 export interface DoctorReport {
@@ -94,6 +98,7 @@ export const doctor = defineService<DoctorService, BoundDoctor>('doctor', port =
   });
 });
 
+export { failureText } from './failure.js';
 export {
   describeUnmet,
   type PluginSnapshot,

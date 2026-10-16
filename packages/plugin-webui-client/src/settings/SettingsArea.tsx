@@ -18,6 +18,7 @@ import { AppearanceSection } from './AppearanceSection';
 import { SessionDefaults } from './SessionDefaults';
 import { SystemSection } from './SystemSection';
 import './SettingsArea.css';
+import type { Localized } from '@aalis/schema-i18n';
 
 // 设置：宿主的分节（会话默认、外观、系统）与插件的分节（位置为设置的页面）是同一张分节表，宿主先占好位置：会话默认在最前，
 // 插件的按页面的先后排在它后面，外观与系统在最后。左栏是这张表的目录，主区按地址打开一节。会话默认要会话服务在，
@@ -35,10 +36,10 @@ interface SectionEntry {
   path: string;
   title: string;
   host?: HostSettings;
-  page?: DeclarativePageView;
+  page?: Localized<DeclarativePageView>;
 }
 
-const isSettingsPage = (page: PageView): page is DeclarativePageView =>
+const isSettingsPage = (page: Localized<PageView>): page is Localized<DeclarativePageView> =>
   page.placement === 'settings' && page.content !== undefined;
 
 /** 分节表；插件列表或页面表还在取时为 undefined，没取到的当作没有 */

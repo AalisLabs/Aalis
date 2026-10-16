@@ -6,7 +6,8 @@
 // 适用的页面。数据源与动作只许调页面声明过的，参数按声明核过再交给插件：会话面板的会话 id 是宿主单独设的字段，调用前
 // 经会话管理核过会话存在；行动作只收 rowKey，插件按它重新查；输入按声明的字段校验类型、必填与可选项，拒收多余的键。
 // 确认框只是界面上的交互，这里的闸门是 owner 身份（路由的 gate）加改状态请求的来源校验（auth.ts）。
-// 路由（routes/pages.ts）只把请求交给这里、把结果写回。
+// 路由（routes/pages.ts）只把请求交给这里、把结果写回。插件交来的文字可以是文字对象，由回应的渲染按读者语言换掉
+// （localize.ts）：Markdown 正文的字符串参数要转义，插件前端的数据是原样 JSON、不进渲染，这两样随结果交给路由。
 //
 // 插件前端页面登记时另从声明页面的模块往上找插件包根，核 webui/ 目录与入口文件，随机一个 token 记进登记条目：
 // /frames/<token>/ 只托管这一次登记的 webui/（routes/frames.ts），页面撤回或重新登记后旧的 token 就找不到了。
@@ -16,7 +17,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { UserIdentity } from '@aalis/api-authority';
+import type { RenderOptions } from '@aalis/api-i18n';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isStorageUri } from '@aalis/api-storage';
 import type {
@@ -41,6 +42,7 @@ import type {
 } from '@aalis/api-webui';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { parseConfig, type SchemaIssue, validateConfig } from '@aalis/schema-config';
+import { isTextError, isTextRef, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import {
   type CheckedFrame,
   type CheckedPage,
@@ -49,6 +51,8 @@ import {
   checkPage,
   type SourceComponent,
 } from './page-check.js';
+import { issueViews } from './route.js';
+import { t } from './texts.js';
 
 /** invalidate 的合并窗口：同一实例、页面、组件与会话一秒内最多推一次，窗口里再来的并成窗口结束时的一次 */
 export const INVALIDATE_WINDOW_MS = 1000;
@@ -65,20 +69,26 @@ interface PageRegistryDeps {
   signFile(uri: string, name: string): string | undefined;
 }
 
-/** 回给路由的结果：状态码与回应，失败时回应是 ErrorResponse */
+/** 回给路由的结果：状态码与回应，失败时回应是 ErrorResponse；render 是这次回应要的渲染选项 */
 export interface Reply<T> {
   status: number;
   body: T | ErrorResponse;
+  render?: RenderOptions;
 }
+
+/** Markdown 正文：文字对象的字符串参数按 Markdown 转义 */
+const MARKDOWN: RenderOptions = { escape: 'markdown' };
+/** 插件前端的数据是原样 JSON：里面形如文字对象的值不换 */
+const RAW: RenderOptions = { skip: () => true };
 
 /** 闸门拒了这次调用：状态码与给人看的原因 */
 class Refusal extends Error {
   constructor(
     readonly status: number,
-    message: string,
+    readonly reason: TextRef,
     readonly issues?: SchemaIssue[],
   ) {
-    super(message);
+    super(reason.source);
   }
 }
 
@@ -92,8 +102,10 @@ interface PageEntry {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-const isText = (value: unknown): value is string => typeof value === 'string' && value !== '';
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+/** 标识（rowKey、会话 id、节点 id）：非空字符串 */
+const isName = (value: unknown): value is string => typeof value === 'string' && value !== '';
+/** 给人看的文字：字符串或文字对象 */
+const isText = (value: unknown): value is string | TextRef => typeof value === 'string' || isTextRef(value);
 
 /** 页面的先后：order 小的在前，没写 order 的排在后面，再按实例与 key */
 const rank = (order: number | undefined) => order ?? Number.MAX_SAFE_INTEGER;
@@ -171,44 +183,45 @@ export function createPageRegistry(deps: PageRegistryDeps) {
 
   function entryOf(instance: string, pageKey: string): PageEntry {
     const entry = pages.get(keyOf(instance, pageKey));
-    if (!entry) throw new Refusal(404, `页面 ${pageKey}（${instance}）不存在`);
+    if (!entry) throw new Refusal(404, t('pageMissing', { page: pageKey, instance }));
     return entry;
   }
 
   /** 只许这些键，多余的列出来拒掉 */
   function onlyKeys(value: Record<string, unknown>, allowed: string[]): void {
     const extra = Object.keys(value).filter(key => !allowed.includes(key));
-    if (extra.length > 0) throw new Refusal(400, `多余的参数：${extra.join('、')}`);
+    if (extra.length > 0) throw new Refusal(400, t('extraParams', { keys: extra }));
   }
 
-  function requiredText(value: unknown, name: string): string {
-    if (!isText(value)) throw new Refusal(400, `${name} 要是非空字符串`);
+  function requiredName(value: unknown, name: string): string {
+    if (!isName(value)) throw new Refusal(400, t('nameRequired', { name }));
     return value;
   }
 
-  /** 调用上下文：会话面板核过会话存在，给规范化后的会话 id */
-  function contextOf(entry: PageEntry, sessionId: unknown, caller: UserIdentity): PageContext | SessionPageContext {
-    if (entry.checked.placement !== 'session') return { caller };
-    const session = sessionOf(requiredText(sessionId, 'sessionId'));
-    return { caller, sessionId: session.id };
+  /** 调用上下文：会话面板核过会话存在，另给规范化后的会话 id */
+  function contextOf(entry: PageEntry, sessionId: unknown, ctx: PageContext): PageContext | SessionPageContext {
+    if (entry.checked.placement !== 'session') return ctx;
+    const session = sessionOf(requiredName(sessionId, 'sessionId'));
+    return { ...ctx, sessionId: session.id };
   }
 
   function sessionOf(sessionId: string) {
-    if (!deps.sessions.present) throw new Refusal(503, '会话管理服务不在，会话面板用不了');
+    if (!deps.sessions.present) throw new Refusal(503, t('noSessionManager'));
     const session = deps.sessions.use.getSession(sessionId);
-    if (!session) throw new Refusal(404, `会话 ${sessionId} 不存在`);
+    if (!session) throw new Refusal(404, t('sessionMissing', { session: sessionId }));
     return session;
   }
 
   /** 输入按声明的字段校验并解析：拒收多余的键，类型、必填与可选项不对的逐项列出 */
   function inputOf(fields: ActionInputFields, value: unknown): Record<string, unknown> {
     const input = value ?? {};
-    if (!isRecord(input)) throw new Refusal(400, 'input 要是对象');
+    if (!isRecord(input)) throw new Refusal(400, t('inputNotObject'));
     const extra = Object.keys(input).filter(key => !Object.hasOwn(fields, key));
-    if (extra.length > 0) throw new Refusal(400, `input 里多余的键：${extra.join('、')}`);
+    if (extra.length > 0) throw new Refusal(400, t('inputExtraKeys', { keys: extra }));
     const issues = validateConfig(fields, input);
     if (issues.length > 0) {
-      throw new Refusal(400, `输入没过校验：${issues.map(i => `${i.path} ${i.message}`).join('；')}`, issues);
+      const reasons = issues.map(issue => t('inputIssue', { path: issue.path, reason: issue.text }));
+      throw new Refusal(400, t('inputInvalid', { issues: textClauses(reasons) }), issues);
     }
     return parseConfig(fields, input);
   }
@@ -216,11 +229,11 @@ export function createPageRegistry(deps: PageRegistryDeps) {
   /** 插件前端数据源的 input 查询参数：一个 JSON 字符串；没给时按空对象核 */
   function queryInput(value: unknown): unknown {
     if (value === undefined) return undefined;
-    if (typeof value !== 'string') throw new Refusal(400, 'input 要是一个 JSON 字符串');
+    if (typeof value !== 'string') throw new Refusal(400, t('inputNotJsonString'));
     try {
       return JSON.parse(value);
     } catch {
-      throw new Refusal(400, 'input 不是合法的 JSON');
+      throw new Refusal(400, t('inputBadJson'));
     }
   }
 
@@ -230,41 +243,42 @@ export function createPageRegistry(deps: PageRegistryDeps) {
     try {
       text = JSON.stringify(raw);
     } catch (err) {
-      throw breach(entry, source, `不能转成 JSON：${errorText(err)}`);
+      throw breach(entry, source, t('notJson', { error: textOf(err) }));
     }
-    if (text === undefined) throw breach(entry, source, '不能转成 JSON');
+    if (text === undefined) throw breach(entry, source, t('notJsonValue'));
     return raw;
   }
 
   /** 插件的数据源返回的形状不对：记告警，这一块显示出错 */
-  function breach(entry: PageEntry, componentId: string, problem: string): Refusal {
-    const message = `数据源 ${componentId} 返回的数据不对：${problem}`;
-    logger.warn(`页面 ${entry.definition.key}（${entry.instance}）的${message}`);
+  function breach(entry: PageEntry, componentId: string, problem: TextRef): Refusal {
+    const message = t('breach', { source: componentId, problem });
+    logger.warn(`页面 ${entry.definition.key}（${entry.instance}）的${message.source}`);
     return new Refusal(500, message);
   }
 
   /** 表格的行：核 rowKey 与 visibleWhen 指名的字段，图片列换成 /api/media 地址，文件列换成下载句柄 */
   function rowsOf(entry: PageEntry, table: Extract<SourceComponent, { type: 'table' }>, raw: unknown) {
-    if (!Array.isArray(raw)) throw breach(entry, table.id, '要返回行的数组');
+    if (!Array.isArray(raw)) throw breach(entry, table.id, t('wantRows'));
     const flags = (table.rowActions ?? []).flatMap(rowAction => rowAction.visibleWhen ?? []);
     const media = table.columns.filter(column => column.kind === 'image' || column.kind === 'file');
     const seen = new Set<string>();
     return raw.map((row: unknown, i) => {
-      if (!isRecord(row)) throw breach(entry, table.id, `第 ${i + 1} 行不是对象`);
+      if (!isRecord(row)) throw breach(entry, table.id, t('rowNotObject', { row: i + 1 }));
       const key = row[table.rowKey];
-      if (!isText(key) || seen.has(key)) {
-        throw breach(entry, table.id, `第 ${i + 1} 行的 ${table.rowKey} 要是不重复的非空字符串`);
+      if (!isName(key) || seen.has(key)) {
+        throw breach(entry, table.id, t('rowKeyInvalid', { row: i + 1, key: table.rowKey }));
       }
       seen.add(key);
       for (const flag of flags) {
-        if (typeof row[flag] !== 'boolean') throw breach(entry, table.id, `第 ${i + 1} 行的 ${flag} 要是布尔值`);
+        if (typeof row[flag] !== 'boolean')
+          throw breach(entry, table.id, t('rowFlagInvalid', { row: i + 1, key: flag }));
       }
       const out: Record<string, unknown> = { ...(row as TableRow) };
       for (const column of media) {
         const uri = row[column.key];
         if (uri === undefined || uri === null || uri === '') continue;
         if (typeof uri !== 'string' || !isStorageUri(uri)) {
-          throw breach(entry, table.id, `第 ${i + 1} 行的 ${column.key} 要是存储地址`);
+          throw breach(entry, table.id, t('rowUriInvalid', { row: i + 1, key: column.key }));
         }
         if (column.kind === 'image') out[column.key] = `/api/media?${new URLSearchParams({ uri })}`;
         else {
@@ -283,27 +297,27 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       case 'table':
         return rowsOf(entry, component, raw);
       case 'markdown':
-        if (typeof raw !== 'string') throw breach(entry, component.id, '要返回字符串');
+        if (!isText(raw)) throw breach(entry, component.id, t('wantText'));
         return raw;
       case 'info':
-        if (!Array.isArray(raw) || !raw.every(item => isRecord(item) && typeof item.label === 'string')) {
-          throw breach(entry, component.id, '要返回 { label, value } 的数组');
+        if (!Array.isArray(raw) || !raw.every(item => isRecord(item) && isText(item.label))) {
+          throw breach(entry, component.id, t('wantInfo'));
         }
         return raw;
       case 'graph': {
         if (!isRecord(raw) || !Array.isArray(raw.nodes) || !Array.isArray(raw.edges)) {
-          throw breach(entry, component.id, '要返回 { nodes, edges }');
+          throw breach(entry, component.id, t('wantGraph'));
         }
         const ids = new Set<string>();
         for (const node of raw.nodes) {
-          if (!isRecord(node) || !isText(node.id) || ids.has(node.id) || typeof node.label !== 'string') {
-            throw breach(entry, component.id, '节点要有不重复的 id 与 label');
+          if (!isRecord(node) || !isName(node.id) || ids.has(node.id) || !isText(node.label)) {
+            throw breach(entry, component.id, t('nodeInvalid'));
           }
           ids.add(node.id);
         }
         for (const edge of raw.edges) {
           if (!isRecord(edge) || !ids.has(edge.source as string) || !ids.has(edge.target as string)) {
-            throw breach(entry, component.id, '边的两端要是节点 id');
+            throw breach(entry, component.id, t('edgeInvalid'));
           }
         }
         return raw;
@@ -311,7 +325,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
     }
   }
 
-  /** 跑一次调用：闸门拒的回它的状态码，插件抛的回 500 与原因 */
+  /** 跑一次调用：闸门拒的回它的状态码；插件抛的回 500 与原因，挂着文字对象且 status 在 400–599 的（TextError）用它的 status */
   async function guarded<T>(run: () => Promise<Reply<T>>): Promise<Reply<T>> {
     try {
       return await run();
@@ -319,10 +333,12 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       if (err instanceof Refusal) {
         return {
           status: err.status,
-          body: err.issues ? { error: err.message, issues: err.issues } : { error: err.message },
+          body: err.issues ? { error: err.reason, issues: issueViews(err.issues) } : { error: err.reason },
         };
       }
-      return { status: 500, body: { error: errorText(err) } };
+      const status = isTextError(err) ? (err as { status?: unknown }).status : undefined;
+      const code = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
+      return { status: code, body: { error: textOf(err) } };
     }
   }
 
@@ -366,7 +382,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       return verdict;
     } catch (err) {
       logger.warn(
-        `会话面板页面 ${entry.definition.key}（${entry.instance}）的 applies 出错，按不适用处理: ${errorText(err)}`,
+        `会话面板页面 ${entry.definition.key}（${entry.instance}）的 applies 出错，按不适用处理: ${toSource(textOf(err))}`,
       );
       return false;
     } finally {
@@ -460,7 +476,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
     /** 这个会话适用的会话面板页面，按页面的先后 */
     panelPages: (sessionId: unknown): Promise<Reply<PanelPagesResponse>> =>
       guarded(async () => {
-        const session = sessionOf(requiredText(sessionId, 'sessionId'));
+        const session = sessionOf(requiredName(sessionId, 'sessionId'));
         const target: PanelSession = { sessionId: session.id, kind: session.kind };
         const candidates = sorted().filter(entry => entry.checked.placement === 'session');
         const verdicts = await Promise.all(candidates.map(entry => applies(entry, target)));
@@ -479,34 +495,35 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       pageKey: string,
       componentId: string,
       query: Record<string, unknown>,
-      caller: UserIdentity,
+      base: PageContext,
     ): Promise<Reply<PageDataResponse | FrameDataResponse>> =>
       guarded(async () => {
         const entry = entryOf(instance, pageKey);
         const { checked } = entry;
         if (checked.kind === 'frame') {
           const source = checked.sources.get(componentId);
-          if (!source) throw new Refusal(404, `页面 ${pageKey} 没有数据源 ${componentId}`);
+          if (!source) throw new Refusal(404, t('noSource', { page: pageKey, source: componentId }));
           onlyKeys(query, [
             ...(checked.placement === 'session' ? ['sessionId'] : []),
             ...(source.input ? ['input'] : []),
           ]);
           const input = source.input ? inputOf(source.input, queryInput(query.input)) : undefined;
-          const ctx = contextOf(entry, query.sessionId, caller);
-          return { status: 200, body: { data: jsonData(entry, componentId, await source.data({ input, ctx })) } };
+          const ctx = contextOf(entry, query.sessionId, base);
+          const data = jsonData(entry, componentId, await source.data({ input, ctx }));
+          return { status: 200, body: { data }, render: RAW };
         }
         const source = checked.sources.get(componentId);
-        if (!source) throw new Refusal(404, `页面 ${pageKey} 没有组件 ${componentId}`);
+        if (!source) throw new Refusal(404, t('noComponent', { page: pageKey, component: componentId }));
         onlyKeys(query, [
           ...(entry.checked.placement === 'session' ? ['sessionId'] : []),
           ...(source.inDetail ? ['rowKey'] : []),
         ]);
-        const rowKey = source.inDetail ? requiredText(query.rowKey, 'rowKey') : undefined;
-        const ctx = contextOf(entry, query.sessionId, caller);
+        const rowKey = source.inDetail ? requiredName(query.rowKey, 'rowKey') : undefined;
+        const ctx = contextOf(entry, query.sessionId, base);
         // 详情里的数据源另收 rowKey
         const args = rowKey === undefined ? { ctx } : { ctx, rowKey };
-        const raw = await source.component.data(args);
-        return { status: 200, body: { data: shaped(entry, source, raw) } };
+        const body = { data: shaped(entry, source, await source.component.data(args)) };
+        return source.component.type === 'markdown' ? { status: 200, body, render: MARKDOWN } : { status: 200, body };
       }),
 
     /** 调一个动作；body 只收 sessionId（会话面板）、rowKey（行动作）与 input（声明了输入的动作） */
@@ -515,29 +532,29 @@ export function createPageRegistry(deps: PageRegistryDeps) {
       pageKey: string,
       name: string,
       body: unknown,
-      caller: UserIdentity,
+      base: PageContext,
       from: string,
     ): Promise<Reply<PageActionResponse>> =>
       guarded(async () => {
         const entry = entryOf(instance, pageKey);
         const action = entry.checked.actions.get(name);
-        if (!action) throw new Refusal(404, `页面 ${pageKey} 没有动作 ${name}`);
-        if (!isRecord(body)) throw new Refusal(400, '请求体要是对象');
+        if (!action) throw new Refusal(404, t('noAction', { page: pageKey, action: name }));
+        if (!isRecord(body)) throw new Refusal(400, t('requestNotObject'));
         onlyKeys(body, [
           ...(entry.checked.placement === 'session' ? ['sessionId'] : []),
           ...(action.row ? ['rowKey'] : []),
           ...(action.input ? ['input'] : []),
         ]);
-        const rowKey = action.row ? requiredText(body.rowKey, 'rowKey') : undefined;
+        const rowKey = action.row ? requiredName(body.rowKey, 'rowKey') : undefined;
         const input = action.input ? inputOf(action.input, body.input) : undefined;
-        const ctx = contextOf(entry, body.sessionId, caller);
+        const ctx = contextOf(entry, body.sessionId, base);
         if (action.effect !== 'read') {
           logger.info(`页面动作 ${name}（${action.effect}）：${instance} 的页面 ${pageKey}，来自 ${from}`);
         }
         const result = await action.handler(rowKey === undefined ? { input, ctx } : { rowKey, input, ctx });
-        if (result !== undefined && typeof result !== 'string') {
+        if (result !== undefined && !isText(result)) {
           logger.warn(`页面 ${pageKey}（${instance}）的动作 ${name} 返回的不是一句话，按失败处理`);
-          throw new Refusal(500, `动作 ${name} 返回的不是一句话`);
+          throw new Refusal(500, t('notASentence', { action: name }));
         }
         return { status: 200, body: result === undefined ? {} : { message: result } };
       }),

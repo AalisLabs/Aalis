@@ -3,12 +3,13 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 /**
- * 内置主题：每个主题文件经 parseTheme 校验后写成一条按 <html data-theme> 取值的规则，内联进页面头部，
- * 页面第一帧就有颜色。首帧主题脚本（public/theme.js）紧跟在规则后面，写上 data-theme，选中的主题没有规则时换成默认的
+ * 内置主题：每个主题文件经 parseTheme 校验（文件不带名字，以 id 作名字）后写成一条按 <html data-theme> 取值的规则，
+ * 内联进页面头部，页面第一帧就有颜色。首帧主题脚本（public/theme.js）紧跟在规则后面，写上 data-theme，选中的主题没有
+ * 规则时换成默认的
  */
 function builtinThemes(): Plugin {
   const rules = Object.entries(BUILTIN_THEMES).map(([id, file]) => {
-    const parsed = parseTheme(file);
+    const parsed = parseTheme({ ...file, name: id });
     if (!parsed.ok) throw new Error(`内置主题 ${id} 不合主题文件的格式：${parsed.errors.join('；')}`);
     const declarations = Object.entries(parsed.theme.colors).map(([token, value]) => `${token}:${value}`);
     return `:root[data-theme="${id}"]{color-scheme:${parsed.theme.kind};${declarations.join(';')}}`;

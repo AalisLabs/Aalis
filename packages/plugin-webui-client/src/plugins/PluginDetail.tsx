@@ -1,5 +1,6 @@
 import type { FrameHostCapability, PageView } from '@aalis/api-webui';
 import type { ConfigSchema } from '@aalis/schema-config';
+import type { Localized } from '@aalis/schema-i18n';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { Block } from '../components/Block';
@@ -279,7 +280,7 @@ function RemoveInstanceDialog({ target, current, action, onClose }: RemoveInstan
   );
 }
 
-function ConfigSection({ row, schema }: { row: PluginRow; schema: ConfigSchema }) {
+function ConfigSection({ row, schema }: { row: PluginRow; schema: Localized<ConfigSchema> }) {
   const { refresh } = usePlugins();
   const [result, setResult] = useState<string>();
   // 写进配置文件之后换上新的表单：重取的配置一样（无改动）时也换

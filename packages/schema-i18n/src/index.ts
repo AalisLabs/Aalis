@@ -43,4 +43,4 @@ export {
   toSource,
   toSourceReplacer,
 } from './text-ref.js';
-export { textLines } from './texts.js';
+export { textClauses, textLines } from './texts.js';

@@ -14,6 +14,7 @@ import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
+import { t } from '../texts.js';
 import { pipeToResponse } from './pipe-to-response.js';
 
 /** 判定出的格式 → 响应类型；不在表里的不提供 */
@@ -43,14 +44,14 @@ export function registerMediaRoutes(
   route(expressApp, 'GET /api/media', gate(), async (req, res) => {
     const uri = String(req.query.uri ?? '');
     if (!STORAGE_URI.test(uri) || /^https?:/i.test(uri)) {
-      res.status(400).json({ error: '不是存储地址' });
+      res.status(400).json({ error: t('notStorageUri') });
       return;
     }
     try {
       const head = await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES);
       const type = MEDIA_TYPES[detectMediaFormat(new Uint8Array(head))?.format ?? ''];
       if (!type) {
-        res.status(415).json({ error: '只提供图片、视频与音频' });
+        res.status(415).json({ error: t('notMedia') });
         return;
       }
       const { stream, stat } = await storage.createReadStream(uri);
@@ -63,11 +64,11 @@ export function registerMediaRoutes(
       pipeToResponse(stream, res, logger, `媒体文件 ${uri}`);
     } catch (err) {
       if (isStorageNotFound(err)) {
-        res.status(404).json({ error: '文件不存在' });
+        res.status(404).json({ error: t('fileMissing') });
         return;
       }
       logger.warn(`读取媒体文件 ${uri} 失败:`, err);
-      res.status(500).json({ error: '读取文件失败' });
+      res.status(500).json({ error: t('readFailed') });
     }
   });
 }

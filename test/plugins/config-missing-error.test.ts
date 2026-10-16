@@ -9,6 +9,7 @@ import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
 import { configError, missingConfigError } from '../../packages/schema-config/src/index.js';
+import { defineTexts, isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 缺必填配置时激活失败是对的，但那是配置没填，不是程序出错：日志只打一行「ConfigError: 消息」，
@@ -110,5 +111,23 @@ describe('configError / missingConfigError', () => {
       '缺少配置项 apiKey（使用官方 API 时必填），在 WebUI 或配置文件中填入后生效',
     );
     expect(missingConfigError('modelPath').message).toBe('缺少配置项 modelPath，在 WebUI 或配置文件中填入后生效');
+  });
+
+  it('收文字对象时挂上它（isTextError 为真），name 仍是 ConfigError；缺配置项的说明按读者语言渲染', () => {
+    const t = defineTexts({
+      ns: 'test/config-missing-error',
+      language: 'zh-CN',
+      source: { port: '端口非法' },
+      locales: { en: { port: 'Invalid port' } },
+    });
+    const errors = [configError(t('port')), missingConfigError('apiKey', t('port'))];
+    expect(errors.map(err => [err.name, isTextError(err), err.message])).toEqual([
+      ['ConfigError', true, '端口非法'],
+      ['ConfigError', true, '缺少配置项 apiKey（端口非法），在 WebUI 或配置文件中填入后生效'],
+    ]);
+    expect(errors.map(err => (isTextError(err) ? resolveText(err.text, ['en']) : err.message))).toEqual([
+      'Invalid port',
+      'Missing config item apiKey (Invalid port); set it in the WebUI or the config file to apply',
+    ]);
   });
 });

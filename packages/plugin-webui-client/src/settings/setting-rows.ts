@@ -1,7 +1,8 @@
-import type { SettingLayer, SettingRow } from '@aalis/api-session-protocol';
+import type { SettingLayer } from '@aalis/api-session-protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionClient } from '../connection';
 import { ConnectionLostError, type SessionClient } from '../protocol/session-client';
+import type { Row } from './field';
 
 // 会话设置的各行：一个会话适用的（会话的「设置」标签与输入框旁的快捷切换共用），或会话之上的一层（设置的「会话默认」）。
 // 打开时取一次，插件启停或别处改了设置（session/config/changed）、重连后重取。调用方给的 target 要是稳定的对象
@@ -61,7 +62,7 @@ export function useSettingRows(target: SettingsTarget) {
       ).items,
     [target],
   );
-  const { value: rows, error, set, retry } = useSessionQuery<SettingRow[]>(request);
+  const { value: rows, error, set, retry } = useSessionQuery<Row[]>(request);
 
   /** 改这个会话或这一层：给值即写入，null 恢复继承；写不进去时抛错 */
   const update = useCallback(

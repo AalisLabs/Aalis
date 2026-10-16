@@ -1,3 +1,4 @@
+import { localizeFor } from '../../packages/api-i18n/src/index.js';
 import type { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
@@ -7,9 +8,13 @@ interface RouteReply {
   body?: unknown;
 }
 
+/** i18n 缺席：回应里的文字对象按原文渲染，同真实出口在 i18n 不在时 */
+const ABSENT = { present: false } as Parameters<typeof localizeFor>[0];
+
 /**
  * 路由测试挂具，不起端口。路由注册器只调用 `app.<method>(path, ...handlers)`：`expressApp` 是把处理器链
  * 按「METHOD path」记下的假 app；`invoke` 取出链，带 res 桩（status / json 写进回复）经 next 逐个执行。
+ * json 写进回复之前按 i18n 缺席渲染（读者语言与跳过原样数据的出口见 test/plugins/webui-i18n.test.ts）。
  */
 export function captureRoutes(): {
   expressApp: Parameters<typeof registerPluginRoutes>[0];
@@ -36,7 +41,7 @@ export function captureRoutes(): {
         return res;
       },
       json(payload: unknown) {
-        out.body = payload;
+        out.body = localizeFor(ABSENT, payload, { languages: [] });
         return res;
       },
     };

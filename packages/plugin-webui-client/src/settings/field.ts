@@ -1,10 +1,13 @@
 import type { SettingRow } from '@aalis/api-session-protocol';
+import type { Localized } from '@aalis/schema-i18n';
 import { isRecord } from '../rest';
 
 // 设置项与页面动作输入的字段（schema-config 的词汇）：取值写成一句、选项的键，以及可选项接口回应的解析。前端不认识任何
 // 设置键，只按字段类型渲染；模型字段（llm-ref）的取值是 { provider, model }，可选项来自模型服务
 
-export type Field = SettingRow['field'];
+/** 设置的一行：给人看的文字已按读者语言渲染成字符串 */
+export type Row = Localized<SettingRow>;
+export type Field = Row['field'];
 
 /**
  * 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项；
@@ -24,13 +27,13 @@ export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
 export const optionLabel = (option: Option) => (option.isDefault ? `${option.label}（默认）` : option.label);
 
 /** 一行的生效值：哪一层都没设时按字段的默认值 */
-export const effectiveOf = (row: SettingRow) => (row.source === undefined ? row.field.default : row.effective);
+export const effectiveOf = (row: Row) => (row.source === undefined ? row.field.default : row.effective);
 
 /**
  * 一行哪一层都没设时写的一句：全局默认层由服务偏好承担的项写服务此刻实际用的那一个（「默认（<模型名>）」），其余是登记方给的
  * 「没设时」
  */
-export const unsetOf = (row: SettingRow) =>
+export const unsetOf = (row: Row) =>
   row.resolved === undefined ? row.unset : `默认（${formatValue(row.field, row.resolved)}）`;
 
 /** 可选项依赖的另一项（设置项的 dependsOn）：它的名字与生效值 */
@@ -40,7 +43,7 @@ export interface Dependency {
 }
 
 /** 一行可选项依赖的那一行；那一行不在这一组里时没有 */
-export function dependencyOf(rows: readonly SettingRow[], row: SettingRow): Dependency | undefined {
+export function dependencyOf(rows: readonly Row[], row: Row): Dependency | undefined {
   const other = row.dependsOn === undefined ? undefined : rows.find(candidate => candidate.key === row.dependsOn);
   return other && { label: other.field.label, value: effectiveOf(other) };
 }

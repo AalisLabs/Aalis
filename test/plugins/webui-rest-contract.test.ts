@@ -32,6 +32,7 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 import contributionsPlugin from '../../packages/plugin-contributions/src/index.js';
+import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { formatLogLine } from '../../packages/schema-log/src/index.js';
@@ -45,8 +46,9 @@ import { contractRoutes } from '../helpers/webui-contract.js';
 // ════════════════════════════════════════════════════════════
 // 管理面 REST 的回应与契约对得上：起真的 webui-server，契约路由表里的每条路由都走一遍成功的路径，记下实际回来的 JSON
 // （回文件的记下响应头），连同几种失败的回应（含请求体不是 JSON、路径参数解不开、处理函数抛错），一次交给 tsc 按
-// api-webui 的 rest.ts 检查：多出的字段、缺的字段、类型不对都报。启动时在 express 上记下实际登记的路由，与契约的路由表
-// 逐条对上。各服务是契约层面的替身；市场的检索源与安装源、图片代理的上游在 fetch 上截下，不发真实请求
+// api-webui 的 rest.ts 检查线上的形状（Localized，文字已渲染成字符串）：多出的字段、缺的字段、类型不对都报。启动时在
+// express 上记下实际登记的路由，与契约的路由表逐条对上。各服务是契约层面的替身；市场的检索源与安装源、图片代理的上游在
+// fetch 上截下，不发真实请求
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-rest-contract-token-placeholder-0';
@@ -237,6 +239,11 @@ function probe(home: string) {
         frame: { module: pathToFileURL(join(home, 'probe', 'dist', 'index.js')).href },
       });
       webui.use.notify({ id: 'review', level: 'action', title: '1 件待裁决', open: { page: 'board' } });
+      contributions.use.contribute('i18n:pack', {
+        id: 'ja',
+        language: 'ja',
+        entries: { 'zz-ns': { hi: { text: 'やあ', from: 'zz' } } },
+      });
       contributions.use.contribute('webui:theme', {
         id: 'dusk',
         theme: {
@@ -403,7 +410,7 @@ describe('管理面 REST 的回应与契约', () => {
     provideHostLogs(app, { file: join(home, 'logs', 'latest.log') });
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => join(home, 'client') });
     await app.pluginAll(
-      [storageLocalPlugin, contributionsPlugin, doubles, model, failing, probe(home)].map(definition => ({
+      [storageLocalPlugin, contributionsPlugin, i18nPlugin, doubles, model, failing, probe(home)].map(definition => ({
         definition,
         config: definition.name === PROBE ? { level: 1 } : {},
       })),
@@ -470,7 +477,7 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('GET /api/logs/tail', '/api/logs/tail?limit=5');
     await ok('GET /api/logs/range', '/api/logs/range?before=2&limit=5');
     await ok('GET /api/themes', '/api/themes');
-    for (const service of ['llm', 'llm-thinking', 'platform', 'toolGroups', 'zz-names']) {
+    for (const service of ['llm', 'llm-thinking', 'platform', 'toolGroups', 'zz-names', 'i18n-languages']) {
       await ok('GET /api/models/:service', `/api/models/${service}`);
     }
     gatewayScopes = (await ok('GET /api/models/:service', '/api/models/gateway-scopes')).models;
@@ -480,6 +487,8 @@ describe('管理面 REST 的回应与契约', () => {
       `/api/models/llm-thinking?dependency=${enc(JSON.stringify({ provider: 'zz-rest-llm', model: 'zz-model' }))}`,
     );
     await ok('POST /api/llm-providers/:contextId/refresh', '/api/llm-providers/zz-rest-llm/refresh');
+    await ok('GET /api/i18n/languages', '/api/i18n/languages');
+    await ok('GET /api/i18n/messages', '/api/i18n/messages?ns=zz-ns&lang=ja');
 
     // 页面、布局与文件
     const { pages } = (await ok('GET /api/pages', '/api/pages')) as unknown as PageListResponse;
@@ -598,10 +607,11 @@ describe('管理面 REST 的回应与契约', () => {
   it('JSON 的回应、文件的响应头与失败的回应都与契约的类型对得上', () => {
     const literal = (value: unknown) => JSON.stringify(value);
     const source = [
-      "import type { ErrorResponse, WebuiFileRoutes, WebuiRestRoutes } from '@aalis/api-webui';",
-      ...json.map(({ key, body }) => `(${literal(body)}) satisfies WebuiRestRoutes['${key}']['response'];`),
+      "import type { ErrorResponse, WebuiFileRoutes, WebuiRestResponse } from '@aalis/api-webui';",
+      "import type { Localized } from '@aalis/schema-i18n';",
+      ...json.map(({ key, body }) => `(${literal(body)}) satisfies WebuiRestResponse<'${key}'>;`),
       ...files.map(({ key, headers }) => `(${literal(headers)}) satisfies WebuiFileRoutes['${key}']['headers'];`),
-      ...errors.map(({ body }) => `(${literal(body)}) satisfies ErrorResponse;`),
+      ...errors.map(({ body }) => `(${literal(body)}) satisfies Localized<ErrorResponse>;`),
       '',
     ].join('\n');
     const errs = runTscProbe(source);

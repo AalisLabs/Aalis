@@ -1,4 +1,5 @@
 import type { GraphData, GraphKind } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import {
   forceCollide,
   forceLink,
@@ -34,7 +35,7 @@ interface Placed extends SimulationNodeDatum {
   y: number;
 }
 
-function place(data: GraphData, spacing: number) {
+function place(data: Localized<GraphData>, spacing: number) {
   // 不给起始位置：d3 按固定的螺旋排开，每次排出来一样
   const nodes = data.nodes.map(node => ({ ...node }) as Placed);
   const byId = new Map(nodes.map(node => [node.id, node]));
@@ -76,9 +77,9 @@ function place(data: GraphData, spacing: number) {
 }
 
 interface GraphProps {
-  data: GraphData;
-  nodeKinds: readonly GraphKind[];
-  edgeKinds: readonly GraphKind[];
+  data: Localized<GraphData>;
+  nodeKinds: readonly Localized<GraphKind>[];
+  edgeKinds: readonly Localized<GraphKind>[];
   spacing?: number;
   selected?: string;
   /** 带详情时选中一个节点 */
@@ -90,7 +91,8 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
   const svg = useRef<SVGSVGElement>(null);
   const layer = useRef<SVGGElement>(null);
   const behavior = useRef<ZoomBehavior<SVGSVGElement, unknown>>(undefined);
-  const toneOf = (kinds: readonly GraphKind[], kind?: string) => kinds.find(known => known.kind === kind)?.tone;
+  const toneOf = (kinds: readonly Localized<GraphKind>[], kind?: string) =>
+    kinds.find(known => known.kind === kind)?.tone;
 
   useEffect(() => {
     const target = select(svg.current as SVGSVGElement);
@@ -116,7 +118,7 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
     onSelect?.(id);
   };
   // 图例只列这张图里有的类别；边的类别画成线，与同色的节点类别分得开
-  const present = (kinds: readonly GraphKind[], items: ReadonlyArray<{ kind?: string }>) =>
+  const present = (kinds: readonly Localized<GraphKind>[], items: ReadonlyArray<{ kind?: string }>) =>
     kinds.filter(known => items.some(item => item.kind === known.kind));
   const legend = [
     ...present(nodeKinds, data.nodes).map(kind => ({ kind, edge: false })),

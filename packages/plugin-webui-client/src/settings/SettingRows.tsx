@@ -1,8 +1,7 @@
-import type { SettingRow as Row } from '@aalis/api-session-protocol';
 import { useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
 import { usePluginNames } from '../plugins/list';
-import { dependencyOf, effectiveOf, formatValue, unsetOf, valueKey } from './field';
+import { dependencyOf, effectiveOf, formatValue, type Row, unsetOf, valueKey } from './field';
 import { SettingRow } from './SettingRow';
 
 // 会话设置的一组行，会话的「设置」标签、设置的「会话默认」与房间的「场所设置」共用：composer 与 common 在前，advanced 收进默认

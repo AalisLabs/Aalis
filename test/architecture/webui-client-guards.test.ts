@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
@@ -738,7 +738,8 @@ describe('WebUI 服务端只认契约不认插件', () => {
       for (const pkg of PLUGINS.filter(pkg => pkg !== scope)) {
         for (const word of registered(pkg)) if (!allowed.has(word)) owners.set(word, pkg);
       }
-      for (const file of filesOf(scope)) {
+      // 译文表（src/locales/）是给人看的整句，常用词（如 browser）撞上别的插件登记的名字不算认插件
+      for (const file of filesOf(scope).filter(file => !file.includes(`${sep}locales${sep}`))) {
         const source = parse(file);
         visitAll(source, node => {
           const text = stringText(node);

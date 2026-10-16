@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type ConfigSchema, validateConfig } from '../../packages/schema-config/src/index.js';
+import { resolveText } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // validateConfig — 只读结构校验（defaultsFrom 的姊妹函数）
@@ -8,14 +9,18 @@ import { type ConfigSchema, validateConfig } from '../../packages/schema-config/
 // undefined/null 视为未配置仅 required 报缺。政策（warn/拦截）在调用方。
 // ════════════════════════════════════════════════════════════
 
+/** 既有用例只核路径、原文与种类；code 与文字对象另有用例 */
+const issuesOf = (schema: ConfigSchema | undefined, config: Record<string, unknown>) =>
+  validateConfig(schema, config).map(({ path, message, kind }) => ({ path, message, kind }));
+
 const field = (type: string, extra?: Record<string, unknown>) =>
   ({ type, label: 'F', ...extra }) as ConfigSchema[string];
 
 describe('validateConfig 标量类型', () => {
   it('string/textarea：string 通过，非 string 也非有限数字的报错', () => {
     const schema: ConfigSchema = { a: field('string'), b: field('textarea') };
-    expect(validateConfig(schema, { a: 'x', b: 'y' })).toEqual([]);
-    const issues = validateConfig(schema, { a: { v: 1 }, b: true });
+    expect(issuesOf(schema, { a: 'x', b: 'y' })).toEqual([]);
+    const issues = issuesOf(schema, { a: { v: 1 }, b: true });
     expect(issues).toHaveLength(2);
     expect(issues[0]).toEqual({ path: 'a', message: '期望 string，得到 object', kind: 'invalid' });
     expect(issues[1]).toEqual({ path: 'b', message: '期望 string，得到 boolean', kind: 'invalid' });
@@ -23,46 +28,46 @@ describe('validateConfig 标量类型', () => {
 
   it('string/textarea 标量宽容：有限数字按字符串收（YAML 里不加引号的 QQ 号、口令），NaN/Infinity 不收', () => {
     const schema: ConfigSchema = { a: field('string'), b: field('textarea', { pattern: '^\\d+$' }) };
-    expect(validateConfig(schema, { a: 123456, b: 42 })).toEqual([]);
-    expect(validateConfig(schema, { a: Number.NaN })[0].message).toBe('期望 string，得到 NaN');
+    expect(issuesOf(schema, { a: 123456, b: 42 })).toEqual([]);
+    expect(issuesOf(schema, { a: Number.NaN })[0].message).toBe('期望 string，得到 NaN');
   });
 
   it('number：有限数值通过；NaN/Infinity/非数字字符串报错', () => {
     const schema: ConfigSchema = { n: field('number') };
-    expect(validateConfig(schema, { n: 0 })).toEqual([]);
-    expect(validateConfig(schema, { n: -1.5 })).toEqual([]);
-    expect(validateConfig(schema, { n: 'abc' })[0].message).toBe('期望有限数值，得到 string');
-    expect(validateConfig(schema, { n: Number.NaN })[0].message).toBe('期望有限数值，得到 NaN');
-    expect(validateConfig(schema, { n: Number.POSITIVE_INFINITY })[0].message).toBe('期望有限数值，得到 Infinity');
+    expect(issuesOf(schema, { n: 0 })).toEqual([]);
+    expect(issuesOf(schema, { n: -1.5 })).toEqual([]);
+    expect(issuesOf(schema, { n: 'abc' })[0].message).toBe('期望有限数值，得到 string');
+    expect(issuesOf(schema, { n: Number.NaN })[0].message).toBe('期望有限数值，得到 NaN');
+    expect(issuesOf(schema, { n: Number.POSITIVE_INFINITY })[0].message).toBe('期望有限数值，得到 Infinity');
   });
 
   it('number 标量宽容：去掉首尾空白后能完整解析为有限数的字符串照收；空串、部分数字、Infinity 字符串不收', () => {
     const schema: ConfigSchema = { n: field('number', { min: 1, integer: true }) };
-    expect(validateConfig(schema, { n: '42' })).toEqual([]);
-    expect(validateConfig(schema, { n: ' 8080 ' })).toEqual([]);
+    expect(issuesOf(schema, { n: '42' })).toEqual([]);
+    expect(issuesOf(schema, { n: ' 8080 ' })).toEqual([]);
     for (const bad of ['', '  ', '12px', 'Infinity']) {
-      expect(validateConfig(schema, { n: bad }), bad).toEqual([
+      expect(issuesOf(schema, { n: bad }), bad).toEqual([
         { path: 'n', message: '期望有限数值，得到 string', kind: 'invalid' },
       ]);
     }
     // 换算后的数照样受约束键检查
-    expect(validateConfig(schema, { n: '0' })).toEqual([{ path: 'n', message: '小于下限 1', kind: 'invalid' }]);
-    expect(validateConfig(schema, { n: '1.5' })).toEqual([{ path: 'n', message: '期望整数', kind: 'invalid' }]);
+    expect(issuesOf(schema, { n: '0' })).toEqual([{ path: 'n', message: '小于下限 1', kind: 'invalid' }]);
+    expect(issuesOf(schema, { n: '1.5' })).toEqual([{ path: 'n', message: '期望整数', kind: 'invalid' }]);
   });
 
   it('boolean：非 boolean 报错，字符串与数字都不转换', () => {
     const schema: ConfigSchema = { b: field('boolean') };
-    expect(validateConfig(schema, { b: false })).toEqual([]);
-    expect(validateConfig(schema, { b: 'true' })[0].message).toBe('期望 boolean，得到 string');
-    expect(validateConfig(schema, { b: 1 })[0].message).toBe('期望 boolean，得到 number');
+    expect(issuesOf(schema, { b: false })).toEqual([]);
+    expect(issuesOf(schema, { b: 'true' })[0].message).toBe('期望 boolean，得到 string');
+    expect(issuesOf(schema, { b: 1 })[0].message).toBe('期望 boolean，得到 number');
   });
 });
 
 describe('validateConfig select / multiselect', () => {
   it('select：非 string / number 报类型错', () => {
     const schema: ConfigSchema = { s: field('select', { options: [{ label: 'A', value: 'a' }] }) };
-    expect(validateConfig(schema, { s: 'a' })).toEqual([]);
-    expect(validateConfig(schema, { s: { v: 1 } })[0].message).toBe('期望 string 或 number，得到 object');
+    expect(issuesOf(schema, { s: 'a' })).toEqual([]);
+    expect(issuesOf(schema, { s: { v: 1 } })[0].message).toBe('期望 string 或 number，得到 object');
   });
 
   it('select 有静态 options 时即取值范围：按字符串与选项值比较，选项外的值报 invalid 并列出可选值', () => {
@@ -74,13 +79,13 @@ describe('validateConfig select / multiselect', () => {
         ],
       }),
     };
-    expect(validateConfig(schema, { s: 2 })).toEqual([]);
+    expect(issuesOf(schema, { s: 2 })).toEqual([]);
     // WebUI 把数字选项存成字符串
-    expect(validateConfig(schema, { s: '2' })).toEqual([]);
-    expect(validateConfig(schema, { s: 'not-in-options' })).toEqual([
-      { path: 's', message: '不是可选值（"a"、2）之一', kind: 'invalid' },
+    expect(issuesOf(schema, { s: '2' })).toEqual([]);
+    expect(issuesOf(schema, { s: 'not-in-options' })).toEqual([
+      { path: 's', message: '不是可选值（"a"和2）之一', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { s: 3 })[0].path).toBe('s');
+    expect(issuesOf(schema, { s: 3 })[0].path).toBe('s');
   });
 
   it('select 没有 options、options 为空或声明了 dynamicOptions：只查是 string 或 number', () => {
@@ -89,7 +94,7 @@ describe('validateConfig select / multiselect', () => {
       empty: field('select', { options: [] }),
       dyn: field('select', { dynamicOptions: 'embedding', options: [{ label: 'A', value: 'a' }] }),
     };
-    expect(validateConfig(schema, { none: 'x', empty: 7, dyn: 'from-service' })).toEqual([]);
+    expect(issuesOf(schema, { none: 'x', empty: 7, dyn: 'from-service' })).toEqual([]);
   });
 
   it('multiselect：需为数组；元素需为 string/number 且在选项内，逐元素报错', () => {
@@ -101,11 +106,11 @@ describe('validateConfig select / multiselect', () => {
         ],
       }),
     };
-    expect(validateConfig(schema, { m: ['a', 8, '8'] })).toEqual([]);
-    expect(validateConfig(schema, { m: 'a' })[0].message).toBe('期望数组，得到 string');
-    expect(validateConfig(schema, { m: ['a', { bad: 1 }, 'custom-host'] })).toEqual([
+    expect(issuesOf(schema, { m: ['a', 8, '8'] })).toEqual([]);
+    expect(issuesOf(schema, { m: 'a' })[0].message).toBe('期望数组，得到 string');
+    expect(issuesOf(schema, { m: ['a', { bad: 1 }, 'custom-host'] })).toEqual([
       { path: 'm[1]', message: '期望 string 或 number 元素，得到 object', kind: 'invalid' },
-      { path: 'm[2]', message: '不是可选值（"a"、8）之一', kind: 'invalid' },
+      { path: 'm[2]', message: '不是可选值（"a"和8）之一', kind: 'invalid' },
     ]);
   });
 
@@ -114,42 +119,42 @@ describe('validateConfig select / multiselect', () => {
       custom: field('multiselect', { allowCustom: true, options: [{ label: 'A', value: 'a' }] }),
       dyn: field('multiselect', { dynamicOptions: 'toolGroups', options: [{ label: 'A', value: 'a' }] }),
     };
-    expect(validateConfig(schema, { custom: ['a', 'custom-host', 8], dyn: ['web'] })).toEqual([]);
-    expect(validateConfig(schema, { custom: [null] })).toEqual([
+    expect(issuesOf(schema, { custom: ['a', 'custom-host', 8], dyn: ['web'] })).toEqual([]);
+    expect(issuesOf(schema, { custom: [null] })).toEqual([
       { path: 'custom[0]', message: '期望 string 或 number 元素，得到 null', kind: 'invalid' },
     ]);
   });
 
   it('select 声明了 allowCustom：不查成员资格', () => {
     const schema: ConfigSchema = { s: field('select', { allowCustom: true, options: [{ label: 'A', value: 'a' }] }) };
-    expect(validateConfig(schema, { s: 'b' })).toEqual([]);
+    expect(issuesOf(schema, { s: 'b' })).toEqual([]);
   });
 });
 
 describe('validateConfig list / map', () => {
   it('list：需为数组、元素需为 string（有限数字按字符串收）；保序与重复项不查', () => {
     const schema: ConfigSchema = { args: field('list') };
-    expect(validateConfig(schema, { args: ['-e', 'A', '-e', 'A', '/p with space', ''] })).toEqual([]);
-    expect(validateConfig(schema, { args: ['--port', 8080] })).toEqual([]);
-    expect(validateConfig(schema, { args: '-y pkg' })).toEqual([
+    expect(issuesOf(schema, { args: ['-e', 'A', '-e', 'A', '/p with space', ''] })).toEqual([]);
+    expect(issuesOf(schema, { args: ['--port', 8080] })).toEqual([]);
+    expect(issuesOf(schema, { args: '-y pkg' })).toEqual([
       { path: 'args', message: '期望数组，得到 string', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { args: ['ok', true] })).toEqual([
+    expect(issuesOf(schema, { args: ['ok', true] })).toEqual([
       { path: 'args[1]', message: '期望 string 元素，得到 boolean', kind: 'invalid' },
     ]);
   });
 
   it('map：需为对象、每个值需为 string，逐值带点号路径', () => {
     const schema: ConfigSchema = { env: field('map') };
-    expect(validateConfig(schema, { env: { TOKEN: 'x', EMPTY: '' } })).toEqual([]);
-    expect(validateConfig(schema, { env: {} })).toEqual([]);
-    expect(validateConfig(schema, { env: 'KEY=VALUE' })).toEqual([
+    expect(issuesOf(schema, { env: { TOKEN: 'x', EMPTY: '' } })).toEqual([]);
+    expect(issuesOf(schema, { env: {} })).toEqual([]);
+    expect(issuesOf(schema, { env: 'KEY=VALUE' })).toEqual([
       { path: 'env', message: '期望对象（映射），得到 string', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { env: ['KEY=VALUE'] })[0].message).toBe('期望对象（映射），得到 array');
+    expect(issuesOf(schema, { env: ['KEY=VALUE'] })[0].message).toBe('期望对象（映射），得到 array');
     // 不加引号的端口号照常可用
-    expect(validateConfig(schema, { env: { PORT: 8080, OK: 'y' } })).toEqual([]);
-    expect(validateConfig(schema, { env: { DEBUG: true, OK: 'y' } })).toEqual([
+    expect(issuesOf(schema, { env: { PORT: 8080, OK: 'y' } })).toEqual([]);
+    expect(issuesOf(schema, { env: { DEBUG: true, OK: 'y' } })).toEqual([
       { path: 'env.DEBUG', message: '期望 string 值，得到 boolean', kind: 'invalid' },
     ]);
   });
@@ -158,11 +163,11 @@ describe('validateConfig list / map', () => {
 describe('validateConfig required 与缺失语义', () => {
   it('undefined 与 null（YAML 裸键）视为未配置：required 报缺，非 required 跳过', () => {
     const schema: ConfigSchema = { req: field('string', { required: true }), opt: field('number') };
-    expect(validateConfig(schema, {})).toEqual([{ path: 'req', message: '必填字段缺失', kind: 'missing' }]);
-    expect(validateConfig(schema, { req: null, opt: null })).toEqual([
+    expect(issuesOf(schema, {})).toEqual([{ path: 'req', message: '必填字段缺失', kind: 'missing' }]);
+    expect(issuesOf(schema, { req: null, opt: null })).toEqual([
       { path: 'req', message: '必填字段缺失', kind: 'missing' },
     ]);
-    expect(validateConfig(schema, { req: '' })).toEqual([{ path: 'req', message: '必填字段缺失', kind: 'missing' }]);
+    expect(issuesOf(schema, { req: '' })).toEqual([{ path: 'req', message: '必填字段缺失', kind: 'missing' }]);
   });
 
   it('必填字段的空串算未配置（与 parseConfig 一致），空数组算已配置；非必填的空串照常是值', () => {
@@ -172,7 +177,7 @@ describe('validateConfig required 与缺失语义', () => {
       o: field('string'),
       d: field('string', { required: true, default: 'x' }),
     };
-    expect(validateConfig(schema, { s: '', m: [], o: '', d: '' })).toEqual([
+    expect(issuesOf(schema, { s: '', m: [], o: '', d: '' })).toEqual([
       { path: 's', message: '必填字段缺失', kind: 'missing' },
     ]);
   });
@@ -183,7 +188,7 @@ describe('validateConfig required 与缺失语义', () => {
       model: field('textarea', { required: true, format: 'absolute-path' }),
       sep: field('string', { required: true }),
     };
-    expect(validateConfig(schema, { bin: '  ', model: '\n', sep: ' ' })).toEqual([
+    expect(issuesOf(schema, { bin: '  ', model: '\n', sep: ' ' })).toEqual([
       { path: 'bin', message: '必填字段缺失', kind: 'missing' },
       { path: 'model', message: '必填字段缺失', kind: 'missing' },
     ]);
@@ -196,9 +201,9 @@ describe("validateConfig onInvalid: 'error'", () => {
       port: field('number', { default: 80, onInvalid: 'error' }),
       args: field('list', { onInvalid: 'error' }),
     };
-    expect(validateConfig(schema, {})).toEqual([]);
-    expect(validateConfig(schema, { port: null })).toEqual([]);
-    expect(validateConfig(schema, { port: 'bad', args: ['ok', false] })).toEqual([
+    expect(issuesOf(schema, {})).toEqual([]);
+    expect(issuesOf(schema, { port: null })).toEqual([]);
+    expect(issuesOf(schema, { port: 'bad', args: ['ok', false] })).toEqual([
       { path: 'port', message: '期望有限数值，得到 string', kind: 'invalid' },
       { path: 'args[1]', message: '期望 string 元素，得到 boolean', kind: 'invalid' },
     ]);
@@ -215,7 +220,7 @@ describe("validateConfig onInvalid: 'error'", () => {
     const choices = ['a'];
     choices[2] = 'b';
     expect(
-      validateConfig(schema, {
+      issuesOf(schema, {
         env: JSON.parse('{"GOOD":"ok","__proto__":"bad"}'),
         args,
         choices,
@@ -231,13 +236,13 @@ describe("validateConfig onInvalid: 'error'", () => {
 describe('validateConfig 开放词汇表', () => {
   it('外来类型（declaration merging 注入，如 llm-ref）一律跳过放行', () => {
     const schema = { ref: { type: 'llm-ref', label: '模型' } } as unknown as ConfigSchema;
-    expect(validateConfig(schema, { ref: { provider: 'x', model: 'y' } })).toEqual([]);
-    expect(validateConfig(schema, { ref: 42 })).toEqual([]);
+    expect(issuesOf(schema, { ref: { provider: 'x', model: 'y' } })).toEqual([]);
+    expect(issuesOf(schema, { ref: 42 })).toEqual([]);
   });
 
   it('外来类型仍受 required 约束（缺失语义先于类型分派）', () => {
     const schema = { ref: { type: 'llm-ref', label: '模型', required: true } } as unknown as ConfigSchema;
-    expect(validateConfig(schema, {})).toEqual([{ path: 'ref', message: '必填字段缺失', kind: 'missing' }]);
+    expect(issuesOf(schema, {})).toEqual([{ path: 'ref', message: '必填字段缺失', kind: 'missing' }]);
   });
 });
 
@@ -247,19 +252,19 @@ describe('validateConfig SchemaGroup 递归', () => {
   };
 
   it('嵌套字段带点号路径', () => {
-    expect(validateConfig(schema, { server: { port: 'abc', host: 'ok' } })).toEqual([
+    expect(issuesOf(schema, { server: { port: 'abc', host: 'ok' } })).toEqual([
       { path: 'server.port', message: '期望有限数值，得到 string', kind: 'invalid' },
     ]);
   });
 
   it('分组值非对象报错；undefined/null 跳过', () => {
-    expect(validateConfig(schema, { server: 'oops' })[0]).toEqual({
+    expect(issuesOf(schema, { server: 'oops' })[0]).toEqual({
       path: 'server',
       message: '期望对象（分组），得到 string',
       kind: 'invalid',
     });
-    expect(validateConfig(schema, { server: [1] })[0].message).toBe('期望对象（分组），得到 array');
-    expect(validateConfig(schema, {})).toEqual([]);
+    expect(issuesOf(schema, { server: [1] })[0].message).toBe('期望对象（分组），得到 array');
+    expect(issuesOf(schema, {})).toEqual([]);
   });
 });
 
@@ -269,36 +274,36 @@ describe('validateConfig SchemaArray 递归', () => {
   };
 
   it('非数组报错；元素非对象报错；元素字段带下标路径', () => {
-    expect(validateConfig(schema, { servers: 'x' })[0].message).toBe('期望数组，得到 string');
-    expect(validateConfig(schema, { servers: [null] })).toEqual([
+    expect(issuesOf(schema, { servers: 'x' })[0].message).toBe('期望数组，得到 string');
+    expect(issuesOf(schema, { servers: [null] })).toEqual([
       { path: 'servers[0]', message: '期望对象元素，得到 null', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { servers: [{ name: 'ok' }, { name: false }] })).toEqual([
+    expect(issuesOf(schema, { servers: [{ name: 'ok' }, { name: false }] })).toEqual([
       { path: 'servers[1].name', message: '期望 string，得到 boolean', kind: 'invalid' },
     ]);
   });
 
   it('undefined/null 跳过；合法数组通过', () => {
-    expect(validateConfig(schema, {})).toEqual([]);
-    expect(validateConfig(schema, { servers: [] })).toEqual([]);
+    expect(issuesOf(schema, {})).toEqual([]);
+    expect(issuesOf(schema, { servers: [] })).toEqual([]);
   });
 });
 
 describe('validateConfig 边界', () => {
   it('schema 为 undefined 或空对象：恒返回空清单', () => {
-    expect(validateConfig(undefined, { any: 1 })).toEqual([]);
-    expect(validateConfig({}, { any: 1 })).toEqual([]);
+    expect(issuesOf(undefined, { any: 1 })).toEqual([]);
+    expect(issuesOf({}, { any: 1 })).toEqual([]);
   });
 
   it('config 里 schema 外的键不归校验器管（裁剪政策已有告警）', () => {
     const schema: ConfigSchema = { a: field('string') };
-    expect(validateConfig(schema, { a: 'x', stray: 123 })).toEqual([]);
+    expect(issuesOf(schema, { a: 'x', stray: 123 })).toEqual([]);
   });
 
   it('只读：不修改传入的 config 对象', () => {
     const schema: ConfigSchema = { a: field('number') };
     const config = { a: 'bad' };
-    validateConfig(schema, config);
+    issuesOf(schema, config);
     expect(config).toEqual({ a: 'bad' });
   });
 });
@@ -306,14 +311,14 @@ describe('validateConfig 边界', () => {
 describe('validateConfig 畸形 schema 免疫（审计修复锁定）', () => {
   it('array 缺 items / fields 为 null：不抛、不报（最大代价=少一条警告）', () => {
     const noItems = { a: { type: 'array', label: 'x' } } as unknown as ConfigSchema;
-    expect(validateConfig(noItems, { a: [{ k: 1 }] })).toEqual([]);
+    expect(issuesOf(noItems, { a: [{ k: 1 }] })).toEqual([]);
     const nullFields = { g: { label: 'x', fields: null } } as unknown as ConfigSchema;
-    expect(validateConfig(nullFields, { g: { k: 1 } })).toEqual([]);
+    expect(issuesOf(nullFields, { g: { k: 1 } })).toEqual([]);
   });
 
   it('schema 条目为 null/原始值：跳过不抛', () => {
     const weird = { a: null, b: 'oops', c: { type: 'string', label: 'C' } } as unknown as ConfigSchema;
-    expect(validateConfig(weird, { c: true })).toHaveLength(1);
+    expect(issuesOf(weird, { c: true })).toHaveLength(1);
   });
 });
 
@@ -329,38 +334,36 @@ describe('validateConfig 声明了 default 即不算缺失（审计修复锁定�
         },
       },
     };
-    expect(validateConfig(schema, { jobs: [{ name: 'x' }] })).toEqual([]);
-    expect(validateConfig(schema, { jobs: [{}] })).toEqual([
+    expect(issuesOf(schema, { jobs: [{ name: 'x' }] })).toEqual([]);
+    expect(issuesOf(schema, { jobs: [{}] })).toEqual([
       { path: 'jobs[0].name', message: '必填字段缺失', kind: 'missing' },
     ]);
   });
 
   it('顶层 required+default 未配置也不报缺（调用点合并默认值后此判恒假，语义一致）', () => {
     const schema: ConfigSchema = { p: field('string', { required: true, default: 'v' }) };
-    expect(validateConfig(schema, {})).toEqual([]);
+    expect(issuesOf(schema, {})).toEqual([]);
   });
 });
 
 describe('validateConfig 约束键（min/max/integer/pattern/format/step）', () => {
   it('min/max 含边界；违约报 invalid 并带界值', () => {
     const schema: ConfigSchema = { port: field('number', { min: 1, max: 65535 }) };
-    expect(validateConfig(schema, { port: 1 })).toEqual([]);
-    expect(validateConfig(schema, { port: 65535 })).toEqual([]);
-    expect(validateConfig(schema, { port: 0 })).toEqual([{ path: 'port', message: '小于下限 1', kind: 'invalid' }]);
-    expect(validateConfig(schema, { port: 70000 })).toEqual([
-      { path: 'port', message: '大于上限 65535', kind: 'invalid' },
-    ]);
+    expect(issuesOf(schema, { port: 1 })).toEqual([]);
+    expect(issuesOf(schema, { port: 65535 })).toEqual([]);
+    expect(issuesOf(schema, { port: 0 })).toEqual([{ path: 'port', message: '小于下限 1', kind: 'invalid' }]);
+    expect(issuesOf(schema, { port: 70000 })).toEqual([{ path: 'port', message: '大于上限 65535', kind: 'invalid' }]);
   });
 
   it('integer：小数报错，整数通过；负整数合法', () => {
     const schema: ConfigSchema = { n: field('number', { integer: true }) };
-    expect(validateConfig(schema, { n: -3 })).toEqual([]);
-    expect(validateConfig(schema, { n: 1.5 })).toEqual([{ path: 'n', message: '期望整数', kind: 'invalid' }]);
+    expect(issuesOf(schema, { n: -3 })).toEqual([]);
+    expect(issuesOf(schema, { n: 1.5 })).toEqual([{ path: 'n', message: '期望整数', kind: 'invalid' }]);
   });
 
   it('类型错时只报类型错，不叠报约束错', () => {
     const schema: ConfigSchema = { n: field('number', { min: 1, integer: true }) };
-    const issues = validateConfig(schema, { n: 'abc' });
+    const issues = issuesOf(schema, { n: 'abc' });
     expect(issues).toHaveLength(1);
     expect(issues[0].message).toBe('期望有限数值，得到 string');
   });
@@ -370,8 +373,8 @@ describe('validateConfig 约束键（min/max/integer/pattern/format/step）', ()
       host: field('string', { pattern: '^[a-z.]+$' }),
       body: field('textarea', { pattern: '^\\d+$' }),
     };
-    expect(validateConfig(schema, { host: 'a.example', body: '123' })).toEqual([]);
-    expect(validateConfig(schema, { host: 'BAD HOST', body: '123' })).toEqual([
+    expect(issuesOf(schema, { host: 'a.example', body: '123' })).toEqual([]);
+    expect(issuesOf(schema, { host: 'BAD HOST', body: '123' })).toEqual([
       { path: 'host', message: '不匹配模式 ^[a-z.]+$', kind: 'invalid' },
     ]);
   });
@@ -382,17 +385,15 @@ describe('validateConfig 约束键（min/max/integer/pattern/format/step）', ()
       bin: field('string', { format: 'executable' }),
     };
     for (const ok of ['/opt/m.bin', 'C:\\models\\m.bin', 'D:/m.bin', '\\\\nas\\share\\m.bin']) {
-      expect(validateConfig(schema, { file: ok, bin: ok }), ok).toEqual([]);
+      expect(issuesOf(schema, { file: ok, bin: ok }), ok).toEqual([]);
     }
-    expect(validateConfig(schema, { file: '', bin: 'ffmpeg' })).toEqual([]);
-    expect(validateConfig(schema, { file: 'models/m.bin', bin: './bin/ffmpeg' })).toEqual([
+    expect(issuesOf(schema, { file: '', bin: 'ffmpeg' })).toEqual([]);
+    expect(issuesOf(schema, { file: 'models/m.bin', bin: './bin/ffmpeg' })).toEqual([
       { path: 'file', message: '须为绝对路径', kind: 'invalid' },
       { path: 'bin', message: '须为绝对路径或命令名（不含路径分隔符）', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { file: 'ffmpeg', bin: 'tools\\ffmpeg.exe' })).toHaveLength(2);
-    expect(validateConfig(schema, { file: '~/m.bin' })).toEqual([
-      { path: 'file', message: '须为绝对路径', kind: 'invalid' },
-    ]);
+    expect(issuesOf(schema, { file: 'ffmpeg', bin: 'tools\\ffmpeg.exe' })).toHaveLength(2);
+    expect(issuesOf(schema, { file: '~/m.bin' })).toEqual([{ path: 'file', message: '须为绝对路径', kind: 'invalid' }]);
   });
 
   it('format：带盘符的相对写法不算命令名；判定忽略首尾空白；textarea 同规', () => {
@@ -400,25 +401,25 @@ describe('validateConfig 约束键（min/max/integer/pattern/format/step）', ()
       bin: field('string', { format: 'executable' }),
       file: field('textarea', { format: 'absolute-path' }),
     };
-    expect(validateConfig(schema, { bin: 'C:foo', file: '/x' })).toEqual([
+    expect(issuesOf(schema, { bin: 'C:foo', file: '/x' })).toEqual([
       { path: 'bin', message: '须为绝对路径或命令名（不含路径分隔符）', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { bin: 'C:', file: '/x' })).toHaveLength(1);
-    expect(validateConfig(schema, { bin: '  /usr/bin/x ', file: ' /x' })).toEqual([]);
-    expect(validateConfig(schema, { bin: 'ffmpeg', file: 'rel/x' })).toEqual([
+    expect(issuesOf(schema, { bin: 'C:', file: '/x' })).toHaveLength(1);
+    expect(issuesOf(schema, { bin: '  /usr/bin/x ', file: ' /x' })).toEqual([]);
+    expect(issuesOf(schema, { bin: 'ffmpeg', file: 'rel/x' })).toEqual([
       { path: 'file', message: '须为绝对路径', kind: 'invalid' },
     ]);
-    expect(validateConfig(schema, { bin: '   ', file: '' })).toEqual([]);
+    expect(issuesOf(schema, { bin: '   ', file: '' })).toEqual([]);
   });
 
   it('不认识的 format（schema 自身缺陷）：跳过该检查', () => {
     const schema: ConfigSchema = { s: field('string', { format: 'url' } as Record<string, unknown>) };
-    expect(validateConfig(schema, { s: 'relative/x' })).toEqual([]);
+    expect(issuesOf(schema, { s: 'relative/x' })).toEqual([]);
   });
 
   it('非法 pattern（schema 自身缺陷）：跳过该检查，不抛不误伤', () => {
     const schema: ConfigSchema = { s: field('string', { pattern: '[unclosed' }) };
-    expect(validateConfig(schema, { s: 'anything' })).toEqual([]);
+    expect(issuesOf(schema, { s: 'anything' })).toEqual([]);
   });
 
   it('step 不校验（纯 UI 提示）；约束键出现在不适用类型上被忽略', () => {
@@ -427,7 +428,7 @@ describe('validateConfig 约束键（min/max/integer/pattern/format/step）', ()
       s: field('string', { min: 3, max: 5, integer: true } as Record<string, unknown>),
       b: field('boolean', { pattern: 'x' } as Record<string, unknown>),
     };
-    expect(validateConfig(schema, { n: 7, s: 'longer-than-five', b: true })).toEqual([]);
+    expect(issuesOf(schema, { n: 7, s: 'longer-than-five', b: true })).toEqual([]);
   });
 
   it('约束键在数组元素字段上同样生效（含路径）', () => {
@@ -438,8 +439,33 @@ describe('validateConfig 约束键（min/max/integer/pattern/format/step）', ()
         items: { port: { type: 'number', label: 'P', min: 1, max: 65535, integer: true } },
       },
     };
-    expect(validateConfig(schema, { servers: [{ port: 8080 }, { port: 0 }] })).toEqual([
+    expect(issuesOf(schema, { servers: [{ port: 8080 }, { port: 0 }] })).toEqual([
       { path: 'servers[1].port', message: '小于下限 1', kind: 'invalid' },
+    ]);
+  });
+});
+
+describe('校验问题的 code 与文字对象', () => {
+  it('每条问题带 code 与本包字典的文字对象 text，message 是它的原文；英文读者看到英文', () => {
+    const schema: ConfigSchema = {
+      s: field('select', { options: [{ label: 'A', value: 'a' }] }),
+      n: field('number', { min: 1 }),
+      r: field('string', { required: true }),
+    };
+    const issues = validateConfig(schema, { s: 'x', n: 0 });
+    expect(issues.map(({ path, code }) => [path, code])).toEqual([
+      ['s', 'not-option'],
+      ['n', 'min'],
+      ['r', 'missing'],
+    ]);
+    for (const issue of issues) {
+      expect(issue.text.i18n).toBe('@aalis/schema-config');
+      expect(issue.message).toBe(issue.text.source);
+    }
+    expect(issues.map(issue => resolveText(issue.text, ['en']))).toEqual([
+      'not one of the options ("a")',
+      'less than the minimum 1',
+      'required but not set',
     ]);
   });
 });

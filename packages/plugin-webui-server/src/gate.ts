@@ -1,4 +1,5 @@
 import type { UserIdentity } from '@aalis/api-authority';
+import { t } from './texts.js';
 
 /** 从请求解析调用者身份（auth.ts 的 AuthSystem.identify） */
 type IdentifyFn = (req: { headers: { cookie?: string } }) => UserIdentity | undefined;
@@ -28,7 +29,7 @@ type GateMiddleware = (req: GateRequest, res: GateResponse, next: () => void) =>
 export function createRouteGate(identify: IdentifyFn) {
   return (): GateMiddleware => (req, res, next) => {
     if (!identify(req)) {
-      res.status(403).json({ error: '需要 owner 权限' });
+      res.status(403).json({ error: t('ownerRequired') });
       return;
     }
     next();

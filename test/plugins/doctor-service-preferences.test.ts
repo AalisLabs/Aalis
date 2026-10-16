@@ -5,6 +5,7 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
+import { type Localized, toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 诊断「服务偏好未生效」：配置文档里每个服务的偏好，指向的提供者此刻不在这个服务里时报一条警告，写明实际在用哪个
@@ -27,9 +28,11 @@ async function boot(
   const host = app.bind({ provide, services });
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.idle();
-  const run = async (): Promise<CheckResult[]> =>
-    (await (host.services.use.get(doctor) as DoctorService).runChecks()).checks.filter(c =>
-      c.id.startsWith('services.preferences'),
+  const run = async (): Promise<Localized<CheckResult>[]> =>
+    toSource(
+      (await (host.services.use.get(doctor) as DoctorService).runChecks()).checks.filter(c =>
+        c.id.startsWith('services.preferences'),
+      ),
     );
   return { host, run };
 }

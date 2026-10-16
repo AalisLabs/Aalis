@@ -9,6 +9,7 @@ import {
   type DoctorService,
   describeUnmet,
   doctor,
+  failureText,
   unmetDependencies,
 } from '@aalis/api-doctor';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
@@ -26,6 +27,8 @@ import {
   type Services,
   services,
 } from '@aalis/core';
+import { textLines, textOf, toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const PLUGIN_NAME = '@aalis/plugin-doctor';
 
@@ -86,7 +89,7 @@ class DoctorRegistry implements DoctorService {
           category: spec.category,
           level: 'error',
           message: `检查项 ${spec.id} 抛出异常`,
-          detail: err instanceof Error ? err.message : String(err),
+          detail: textOf(err),
         });
       }
     }
@@ -291,7 +294,8 @@ function registerBuiltinChecks(
       const unmet = [...unmetDependencies(status, services.names())];
       const lacking = unmet.filter(([, u]) => u.lacking.length > 0);
       const waiting = unmet.filter(([, u]) => u.lacking.length === 0 && u.waiting.length > 0);
-      const lines = (entries: typeof unmet) => entries.map(([id, u]) => `${id}: ${describeUnmet(u)}`).join('\n');
+      const lines = (entries: typeof unmet) =>
+        textLines(entries.map(([instance, u]) => t('pluginLine', { instance, reason: describeUnmet(u) })));
       return [
         {
           id: 'plugins.active',
@@ -305,7 +309,10 @@ function registerBuiltinChecks(
           level: errored.length === 0 ? 'ok' : 'error',
           message:
             errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件处于 error（激活失败或自动重试用尽）`,
-          detail: errored.length > 0 ? errored.map(p => `${p.instanceId}: ${p.error}`).join('\n') : undefined,
+          detail:
+            errored.length > 0
+              ? textLines(errored.map(p => t('pluginLine', { instance: p.instanceId, reason: failureText(p) ?? '' })))
+              : undefined,
         },
         {
           id: 'plugins.pending',
@@ -404,7 +411,7 @@ function registerBuiltinChecks(
 // ===== helpers =====
 
 export function formatReport(report: DoctorReport): string {
-  // 聊天栏排版：按 level 分组，加换行，避免一坨平铺
+  // 聊天栏排版：按 level 分组，加换行，避免一坨平铺。指令的回复只收字符串，结果里的文字对象取原文
   const byLevel = { error: [] as CheckResult[], warn: [] as CheckResult[], ok: [] as CheckResult[] };
   for (const c of report.checks) byLevel[c.level].push(c);
 
@@ -425,9 +432,9 @@ export function formatReport(report: DoctorReport): string {
     if (items.length === 0) continue;
     lines.push(`__${title}__`);
     for (const c of items) {
-      lines.push(`- \`${c.category}/${c.id}\` — ${c.message}`);
+      lines.push(`- \`${c.category}/${c.id}\` — ${toSource(c.message)}`);
       if (c.detail) {
-        for (const dl of c.detail.split('\n')) lines.push(`    ${dl}`);
+        for (const dl of toSource(c.detail).split('\n')) lines.push(`    ${dl}`);
       }
     }
     lines.push('');

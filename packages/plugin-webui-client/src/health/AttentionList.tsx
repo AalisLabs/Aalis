@@ -9,6 +9,7 @@ import { fixLink, markerOf, pluginName, statusLine, statusOf } from '../plugins/
 import { paths } from '../routes';
 import { useAttention } from './attention';
 import './AttentionList.css';
+import type { Localized } from '@aalis/schema-i18n';
 
 /** 首页摘要最多列这么多条 */
 const SUMMARY_LIMIT = 5;
@@ -47,7 +48,7 @@ const link = (to: string, label: string) => <ButtonLink to={to}>{label}</ButtonL
  * 每项一行：审批进它的会话；插件故障写状态与原因，缺服务的去第一条链的根插件（没有根插件可去时进这个插件的详情），
  * 待配置的去配置区；提示的跳转由宿主推出（去配置、打开它指向的页面）
  */
-function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
+function useRows(items: readonly Localized<AttentionItem>[], named: boolean): Row[] {
   const find = useFindPlugin();
   const { pages } = usePages();
   return items.map((item): Row => {
@@ -90,7 +91,13 @@ function useRows(items: readonly AttentionItem[], named: boolean): Row[] {
 }
 
 /** named 时说明里带上提示来自哪个插件 */
-export function AttentionList({ items, named = true }: { items: readonly AttentionItem[]; named?: boolean }) {
+export function AttentionList({
+  items,
+  named = true,
+}: {
+  items: readonly Localized<AttentionItem>[];
+  named?: boolean;
+}) {
   return <Rows rows={useRows(items, named)} />;
 }
 

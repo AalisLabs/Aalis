@@ -323,9 +323,9 @@ describe('数据源的闸门', () => {
     expect(await data('jobs', 'broken')).toEqual({ status: 500, body: { error: '账本读不出来' } });
     expect(await data('jobs', 'wrong')).toEqual({
       status: 500,
-      body: { error: '数据源 wrong 返回的数据不对：要返回字符串' },
+      body: { error: '数据源 wrong 返回的数据不对：要返回字符串或文字对象' },
     });
-    expect(logs).toContain(`warn 页面 jobs（${OWNER}）的数据源 wrong 返回的数据不对：要返回字符串`);
+    expect(logs).toContain(`warn 页面 jobs（${OWNER}）的数据源 wrong 返回的数据不对：要返回字符串或文字对象`);
   });
 
   it('表格的行：rowKey 要是不重复的非空字符串，visibleWhen 指名的字段要是布尔值；关系图的边要连着节点', async () => {
@@ -407,12 +407,14 @@ describe('动作的闸门', () => {
     const { act, received } = await setup();
     const wrongType = await act('jobs', 'create', { input: { name: 'x', times: 'many' } });
     expect(wrongType.status).toBe(400);
-    expect(wrongType.body.issues).toEqual([{ path: 'times', message: expect.any(String), kind: 'invalid' }]);
+    expect(wrongType.body.issues).toEqual([
+      { path: 'times', message: expect.any(String), kind: 'invalid', code: 'type' },
+    ]);
     expect((await act('jobs', 'create', { input: { times: 2 } })).body.issues).toEqual([
-      { path: 'name', message: '必填字段缺失', kind: 'missing' },
+      { path: 'name', message: '必填字段缺失', kind: 'missing', code: 'missing' },
     ]);
     expect((await act('jobs', 'create', { input: { name: 'x', mode: 'weekly' } })).body.issues).toEqual([
-      { path: 'mode', message: expect.any(String), kind: 'invalid' },
+      { path: 'mode', message: expect.any(String), kind: 'invalid', code: 'not-option' },
     ]);
     expect(await act('jobs', 'create', { input: { name: 'x', cron: '* * * * *' } })).toEqual({
       status: 400,

@@ -1,4 +1,27 @@
 import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
-export default defineLocale<Source>()({ displayName: 'Languages' });
+export default defineLocale<Source>()({
+  displayName: 'Languages',
+  pageTitle: 'Translation',
+  dictionariesDescription:
+    'How the source dictionaries of each package stand in every language. Translated includes what language packs fill in; stale entries are pack entries whose source wording has changed, conflicts are entries with differing translations, and broken entries are translations that fail to parse or whose parameters do not match the source. Select a row to see the keys and the skeletons to translate.',
+  dictionary: 'Dictionary',
+  language: 'Language',
+  translated: 'Translated',
+  missing: 'Missing',
+  stale: 'Stale',
+  conflicts: 'Conflicts',
+  broken: 'Broken',
+  issues: 'Issues',
+  issueLine: '{kind}: {keys, list}',
+  noIssues: 'No issues',
+  wholeDictionary: 'the whole dictionary',
+  dictionaryGone: 'Dictionary {ns} is gone',
+  localeSkeleton: 'Skeleton to translate: the plugin’s locales file',
+  localeSkeletonDescription:
+    'Put it in the plugin’s src/locales/, named after the language tag; missing entries are filled with the source text',
+  packSkeleton: 'Skeleton to translate: language pack entries',
+  packSkeletonDescription:
+    'Contribute it to i18n:pack; only keys without a translation in the dictionary are listed, missing and stale entries are filled with the source text, and from is the fingerprint of the source',
+});

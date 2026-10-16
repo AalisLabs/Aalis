@@ -15,17 +15,22 @@ export interface ResolveOptions {
   readonly escape?: 'markdown';
 }
 
-/** 参数里的文字对象最多嵌套几层：再深的用那一层的 source，伪造的深层嵌套不放大、环不挂死 */
-const MAX_NESTING = 8;
+/**
+ * 一次渲染里参数中的文字对象最多渲染几个：再多的用那一个的 source。伪造的参数每层把下一层用两次，30 层就是 2^30 个，
+ * 环更是无穷，靠总量封顶
+ */
+const MAX_NESTED = 1024;
+/** 参数里的文字对象最多嵌套几层：再深的用那一层的 source，只防栈太深 */
+const MAX_DEPTH = 32;
 
 /**
  * 按读者的语言链渲染文字对象。可用语言 = 原文语言 ∪ 字典自带译文的语言 ∪ 语言包补的语言（只补缺，原文指纹相符才算），
  * 解析失败与参数和原文不兼容的译文不算。选法见 pickLanguage：读者链里文字相同的 → 语言相同、文字不同的 → en → 原文；
  * 命中原文语言就用原文。ns 不在目录、键不存在、原文解析失败、渲染失败时用 `text.source`（转义模式下整句转义）。
- * 参数里的文字对象用同一条链递归
+ * 参数里的文字对象用同一条链递归：一次渲染至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source
  */
 export function resolveText(text: TextRef, chain: readonly string[], options: ResolveOptions = {}): string {
-  return resolve(text, chain, options, 0);
+  return resolve(text, chain, options, 0, { left: MAX_NESTED });
 }
 
 /**
@@ -33,13 +38,20 @@ export function resolveText(text: TextRef, chain: readonly string[], options: Re
  * 回落规则同 {@link resolveText}
  */
 export function resolveSource(text: TextRef, options: Pick<ResolveOptions, 'timeZone' | 'escape'> = {}): string {
-  return resolve(text, undefined, options, 0);
+  return resolve(text, undefined, options, 0, { left: MAX_NESTED });
 }
 
-/** chain 为 undefined 时只取原文 */
-function resolve(text: TextRef, chain: readonly string[] | undefined, options: ResolveOptions, depth: number): string {
+/** chain 为 undefined 时只取原文；budget 是这次顶层渲染里参数中的文字对象还能渲染几个 */
+function resolve(
+  text: TextRef,
+  chain: readonly string[] | undefined,
+  options: ResolveOptions,
+  depth: number,
+  budget: { left: number },
+): string {
   const fallback = () => (options.escape === 'markdown' ? escapeMarkdown(text.source) : text.source);
-  const entry = depth > MAX_NESTING ? undefined : catalogEntry(text.i18n);
+  const within = depth === 0 || (depth <= MAX_DEPTH && budget.left-- > 0);
+  const entry = within ? catalogEntry(text.i18n) : undefined;
   const template = entry && entryText(entry.source, text.key);
   const source = template === undefined ? undefined : parseMessage(template);
   if (entry === undefined || template === undefined || source === undefined) return fallback();
@@ -71,7 +83,7 @@ function resolve(text: TextRef, chain: readonly string[] | undefined, options: R
     language: languages[chosen],
     timeZone: options.timeZone,
     escape: options.escape,
-    nested: nested => resolve(nested, chain, options, depth + 1),
+    nested: nested => resolve(nested, chain, options, depth + 1, budget),
   });
   return rendered ?? fallback();
 }

@@ -1,4 +1,4 @@
-import type { SessionMethodParams, SettingRow } from '@aalis/api-session-protocol';
+import type { SessionMethodParams } from '@aalis/api-session-protocol';
 import { ArrowUp, CircleStop, FileText, LoaderCircle, Paperclip, X } from 'lucide-react';
 import {
   type ClipboardEvent,
@@ -25,6 +25,7 @@ import {
   hasChoices,
   type Option,
   optionLabel,
+  type Row,
   unsetOf,
   valueKey,
   withCurrent,
@@ -277,7 +278,7 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
 }
 
 interface ComposerSettingsProps {
-  rows: readonly SettingRow[];
+  rows: readonly Row[];
   update(key: string, value: unknown): Promise<void>;
   /** 不能在这里选的设置项点了去会话的「设置」标签：链接写它的地址，点按交给 openSettings（标签关着时先打开） */
   settingsPath: string;
@@ -312,7 +313,7 @@ function SettingLink({
   dependency,
   settingsPath,
   openSettings,
-}: { row: SettingRow; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
+}: { row: Row; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
   const { options, names } = useFieldOptions(row.field, 0, dependency);
   const effective = effectiveOf(row);
   const shown = effective === undefined ? unsetOf(row) : formatValue(row.field, effective, [...options, ...names]);
@@ -344,7 +345,7 @@ function SettingSelect({
   dependency,
   update,
 }: {
-  row: SettingRow;
+  row: Row;
   dependency: unknown;
   update: ComposerSettingsProps['update'];
 }) {

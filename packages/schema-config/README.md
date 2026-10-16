@@ -4,7 +4,7 @@
 
 `@aalis/core` 把插件的 `configSchema` 当作 opaque 数据透传、不解释任何字段；表单词汇（label / options / textarea …）属呈现层，统一住在本包。同一份 schema 既是表单描述，又是插件配置值类型的来源（`ConfigOf`）和运行时解析规则（`parseConfig`）；渲染宿主（WebUI）与宿主政策（runtime 的配置同步）也用它消费 schema。
 
-零运行时依赖：对 `@aalis/core` 只有 type-only 锚点（以 peer 依赖声明）。字段类型可由其他 api 包经 declaration merging 扩展（如 `api-llm` 注入 `'llm-ref'`）。
+运行时只依赖同样零依赖的 `@aalis/schema-i18n`（给人看的文字是它的文字对象）；对 `@aalis/core` 只有 type-only 锚点（以 peer 依赖声明）。字段类型可由其他 api 包经 declaration merging 扩展（如 `api-llm` 注入 `'llm-ref'`）。
 
 ## 声明与读取
 
@@ -40,6 +40,13 @@ export default definePlugin({
 - **`defineConfig(schema)`**：运行时原样返回传入的对象（不冻结、不加任何属性，WebUI 读的就是这个活对象），类型层保留字面量，返回值可直接放进 `definePlugin({ configSchema })`。不要给变量标 `ConfigSchema` 类型注解，注解会把字面量拓宽掉，`ConfigOf` 只能推出宽类型。推出的类型里各属性只读、`options` 是字面量元组；需要在运行时改写 schema（如按已注册的服务补全选项）时，经 `ConfigSchema` 或 `SchemaField` 类型的引用改写。
 - **`ConfigOf<S>`**：从 schema 推导配置值类型。字段取 `SchemaFieldTypes` 里登记的取值类型（见下表）；select / multiselect 有静态 `options`、没有 `dynamicOptions` 且 `allowCustom` 不为 `true` 时收窄为选项值的字面量联合，数字选项对应数字字面量。有 `default` 或 `required: true` 的字段必定存在，其余为可选；分组推为嵌套对象，总是存在；数组推为元素类型的数组，元素按同一规则推导。
 - **`parseConfig(schema, raw, logger?)`**：按 schema 解析插件拿到的配置，返回 `ConfigOf` 类型的新对象，不改入参。之后的夹紧、跨字段约束等核对作用于返回值。
+
+## 给人看的文字
+
+- 字段、分组与数组的 `label`、`description` 和选项的 `label` 可以写字符串，也可以写 `@aalis/schema-i18n` 的文字对象（插件自己原文字典里的 `t('…')`），渲染宿主按读者语言渲染。`default` 是取值，不是文字。
+- `validateConfig` 的每条问题带 `code`（`missing`、`type`、`not-option`、`pattern`、`format`、`integer`、`min`、`max`、`reserved-key`）与原因的文字对象 `text`；`message` 是它的原文，日志用。
+- `configError(message)` 收字符串或文字对象，收文字对象时挂上它（name 仍是 `ConfigError`），WebUI 按读者语言显示失败原因；`missingConfigError` 的说法本身是文字对象，`note` 同样可以是文字对象。
+- 本包自己的字典（ns `@aalis/schema-config`）收核心配置表单（`CORE_CONFIG_SCHEMA`）、校验原因与配置错误的说法。
 
 ## 字段类型
 

@@ -7,6 +7,7 @@ import {
   resolveSource,
   resolveText,
   type TextRef,
+  textClauses,
 } from '@aalis/schema-i18n';
 import { describe, expect, it } from 'vitest';
 
@@ -126,13 +127,26 @@ describe('回落到 source', () => {
     );
   });
 
-  it('参数里的文字对象嵌套超过 8 层时用那一层的 source：伪造的深层嵌套不放大、环不挂死', () => {
+  it('一次渲染里参数中的文字对象至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source：伪造的重复参数不放大、环不挂死', () => {
+    // 每层把下一层用两次：不设总量时要渲染 2^30 个
     let forged: TextRef = { i18n: NS, key: 'twice', params: { name: 'x' }, source: 'S' };
     for (let i = 0; i < 30; i++) forged = { i18n: NS, key: 'twice', params: { name: forged }, source: 'S' };
-    expect(resolveText(forged, ['en']).length).toBeLessThan(5000);
+    expect(resolveText(forged, ['en']).length).toBeLessThan(8 * 1024);
+    expect(resolveSource(forged).length).toBeLessThan(8 * 1024);
     const cycle = { i18n: NS, key: 'twice', params: {} as Record<string, TextRef>, source: 'S' };
     cycle.params.name = cycle;
-    expect(resolveText(cycle, ['en']).length).toBeLessThan(5000);
+    expect(resolveText(cycle, ['en']).length).toBeLessThan(8 * 1024);
+    // 一条 40 层的链：第 33 层起用那一层的 source
+    let chain: TextRef = t('hi');
+    for (let i = 0; i < 40; i++) chain = t('who', { name: chain });
+    expect(resolveText(chain, ['en'])).toBe(`你好${' 来了'.repeat(7)}${' came'.repeat(33)}`);
+  });
+
+  it('100 个分句的 textClauses 外面再套两层整句：英文读者拿到的全是英文', () => {
+    const clauses = textClauses(Array.from({ length: 100 }, () => t('hi')));
+    expect(resolveText(t('who', { name: t('who', { name: clauses }) }), ['en'])).toBe(
+      `${Array(100).fill('Hello').join('; ')} came came`,
+    );
   });
 });
 

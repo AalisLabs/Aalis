@@ -260,6 +260,10 @@ importers:
         version: 5.9.3
 
   packages/api-doctor:
+    dependencies:
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -747,6 +751,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.1 <1.0.0
         version: link:../util-dep-spec
@@ -1224,6 +1231,9 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-webui
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1448,6 +1458,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/api-webui':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-webui
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -3144,6 +3157,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:*
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:*
+        version: link:../schema-i18n
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize
@@ -3245,6 +3261,9 @@ importers:
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm
@@ -3434,6 +3453,10 @@ importers:
         version: 5.9.3
 
   packages/schema-config:
+    dependencies:
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

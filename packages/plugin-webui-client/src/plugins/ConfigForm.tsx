@@ -1,11 +1,12 @@
 import {
-  type ConfigSchema,
+  type SchemaArray as DeclaredArray,
+  type SchemaField as DeclaredField,
+  type SchemaGroup as DeclaredGroup,
+  type ConfigSchema as DeclaredSchema,
   isSecretRef,
-  type SchemaArray,
-  type SchemaField,
-  type SchemaGroup,
   type SecretRef,
 } from '@aalis/schema-config';
+import type { Localized } from '@aalis/schema-i18n';
 import { Plus } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/Button';
@@ -19,6 +20,11 @@ import './ConfigForm.css';
 // 密钥只写不回显：文档里是引用，引用原样留着即保持原值；「更换」后写的新值替换，「清除」送空值；顶层与分组里的替换写进
 // 原来的键（别处共用这个键的一并改到），数组元素里的另建新键。插件停用或失败时照样能改
 
+// 插件列表交来的 schema：给人看的文字已按读者语言渲染成字符串
+type ConfigSchema = Localized<DeclaredSchema>;
+type SchemaArray = Localized<DeclaredArray>;
+type SchemaField = Localized<DeclaredField>;
+type SchemaGroup = Localized<DeclaredGroup>;
 type Entry = ConfigSchema[string];
 const isArrayEntry = (entry: Entry): entry is SchemaArray => 'type' in entry && entry.type === 'array';
 const isGroupEntry = (entry: Entry): entry is SchemaGroup => 'fields' in entry;

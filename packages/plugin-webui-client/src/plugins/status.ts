@@ -1,4 +1,5 @@
-import type { UnmetRoot, UnmetService } from '@aalis/api-doctor';
+import type { UnmetRoot as DeclaredRoot, UnmetService as DeclaredService } from '@aalis/api-doctor';
+import type { Localized } from '@aalis/schema-i18n';
 import { withInstance } from '../pages/registry';
 import { paths } from '../routes';
 import { labelOf, type PluginRow } from './list';
@@ -12,6 +13,10 @@ interface PluginStatus {
   /** 运行中、启动中、缺服务、等待启动、待配置、失败、已停用 */
   short: string;
 }
+
+/** 插件列表交来的缺服务：根的失败说明已按读者语言渲染成字符串 */
+type UnmetRoot = Localized<DeclaredRoot>;
+type UnmetService = Localized<DeclaredService>;
 
 /** 按实例找插件列表里的一行 */
 type FindPlugin = (instance: string) => PluginRow | undefined;

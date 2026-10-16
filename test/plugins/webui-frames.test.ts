@@ -546,12 +546,14 @@ describe('插件前端的数据源与动作走同一道闸门', () => {
     expect(await data('board', 'card', { input: '["a"]' })).toEqual({ status: 400, body: { error: 'input 要是对象' } });
     const wrongType = await data('board', 'card', { input: '{"id":"a","limit":"many"}' });
     expect(wrongType.status).toBe(400);
-    expect(wrongType.body.issues).toEqual([{ path: 'limit', message: expect.any(String), kind: 'invalid' }]);
+    expect(wrongType.body.issues).toEqual([
+      { path: 'limit', message: expect.any(String), kind: 'invalid', code: 'type' },
+    ]);
     expect((await data('board', 'card', { input: '{}' })).body.issues).toEqual([
-      { path: 'id', message: '必填字段缺失', kind: 'missing' },
+      { path: 'id', message: '必填字段缺失', kind: 'missing', code: 'missing' },
     ]);
     expect((await data('board', 'card')).body.issues, '没给 input 按空对象核').toEqual([
-      { path: 'id', message: '必填字段缺失', kind: 'missing' },
+      { path: 'id', message: '必填字段缺失', kind: 'missing', code: 'missing' },
     ]);
     expect(await data('board', 'card', { input: '{"id":"a","instance":"@zz/other"}' })).toEqual({
       status: 400,

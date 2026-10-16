@@ -1,11 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CommandService } from '@aalis/api-commands';
-import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
+import { describeUnmet, failureText, unmetDependencies } from '@aalis/api-doctor';
 import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { ErrorResponse } from '@aalis/api-webui';
-import type { AppService, Logger, PluginManagerService, PluginState, ServiceSelection, Services } from '@aalis/core';
+import type {
+  AppService,
+  Logger,
+  PluginManagerService,
+  PluginState,
+  PluginStatusEntry,
+  ServiceSelection,
+  Services,
+} from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -16,39 +24,50 @@ import {
   mapSecretFields,
   parseConfig,
   removeExtraFields,
+  type SchemaIssue,
   validateConfig,
 } from '@aalis/schema-config';
-import { asText, toSource } from '@aalis/schema-i18n';
+import { asText, type TextRef, textClauses, textOf } from '@aalis/schema-i18n';
 import type express from 'express';
 import { blockedStatus } from '../attention.js';
 import type { RouteGate } from '../gate.js';
-import { route } from '../route.js';
+import { renderWith, skipSchemaDefaults } from '../localize.js';
+import { issueViews, route } from '../route.js';
+import { t } from '../texts.js';
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/** 没过校验的各项写成一句：逐项写路径与原因，以分号相连 */
+const issuesText = (issues: readonly SchemaIssue[]) =>
+  textClauses(issues.map(issue => t('issue', { path: issue.path, reason: issue.text })));
+
+/** 回执的主句后接一句插件没落在预期状态的说明（以分号相连），没有时只是主句 */
+const withAside = (text: TextRef, aside: TextRef | undefined) => (aside ? textClauses([text, aside]) : text);
+
+/** 插件失败的说明：没有时写「详见日志」 */
+const reasonOf = (entry: Pick<PluginStatusEntry, 'failure' | 'error'>) => failureText(entry) ?? t('seeLog');
+
+/** 裁掉的未声明字段的两句括注，没有的为空 */
+function fieldNotes(ignored: readonly string[], removed: readonly string[] = []) {
+  return {
+    ignored: ignored.length > 0 ? t('ignoredNote', { fields: ignored.join(', ') }) : '',
+    removed: removed.length > 0 ? t('removedNote', { fields: removed.join(', ') }) : '',
+  };
 }
-
-/**
- * 落盘被拒后运行态怎样与文件对齐：插件配置、新建的实例与服务偏好随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
- * 启停只在重启时按文件登记。被拒的可能是配置文件，也可能是密钥文件，拒写原因里点了名，这里不指具体哪个文件
- */
-const RECONCILE = {
-  reload: '修好该文件后会按文件内容重载',
-  restart: '修好该文件后，重启时以文件内容为准',
-} as const;
 
 /**
  * 管理动作改完运行态之后落盘；失败时回 `applied: true` 并返回 false：改动已在运行态生效、只是没写进文件，
  * 调用方别当成「没改成」去重试。宿主拒写（配置文件有尚未生效的外部修改）回 409，之后以文件为准对账；
  * 其它失败（权限、磁盘写满等）回 500，文件没变也不会触发重载，改动留在文档里，下一次成功保存时一并写入。
+ * `reconcile` 是落盘被拒后运行态怎样与文件对齐：插件配置、新建的实例与服务偏好随配置文件热重载（reload，文件里没有配置段的
+ * 后缀实例会被卸载）；启停只在重启时按文件登记（restart）。被拒的可能是配置文件，也可能是密钥文件，拒写原因里点了名，
+ * 这里不指具体哪个文件。
  * `outcome` 是动作之后插件没有落在预期状态的说明（如激活失败转 error、仍在激活、保持禁用）：落盘也失败时放在回执开头，
  * 两件事一并说明。
  */
 export async function saveAfterApply(
   doc: Pick<HostConfig, 'save'>,
   res: express.Response<ErrorResponse>,
-  reconcile: keyof typeof RECONCILE,
-  outcome?: string,
+  reconcile: 'reload' | 'restart',
+  outcome?: TextRef,
 ): Promise<boolean> {
   try {
     await doc.save();
@@ -63,21 +82,12 @@ export async function saveAfterApply(
 function reportSaveFailure(
   res: express.Response<ErrorResponse>,
   err: unknown,
-  reconcile: keyof typeof RECONCILE,
-  outcome?: string,
+  reconcile: 'reload' | 'restart',
+  outcome?: TextRef,
 ): void {
-  const lead = outcome ? `${outcome}；` : '';
-  if (isConfigSaveRefused(err)) {
-    res.status(409).json({
-      error: `${lead}已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
-      applied: true,
-    });
-  } else {
-    res.status(500).json({
-      error: `${lead}已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
-      applied: true,
-    });
-  }
+  const refused = isConfigSaveRefused(err);
+  const error = refused ? t('notWritten', { error: textOf(err), reconcile }) : t('writeFailed', { error: textOf(err) });
+  res.status(refused ? 409 : 500).json({ error: outcome ? textClauses([outcome, error]) : error, applied: true });
 }
 
 /** 宿主配置里要重启才生效的键：runtime 与 core 只在启动时读它们。name 只是显示用的应用名称，保存即生效 */
@@ -110,14 +120,16 @@ function notYetActive(
   services: Pick<Services, 'names'>,
   instanceId: string,
   state: PluginState | undefined,
-): string | undefined {
-  if (state === 'activating') return '仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准';
+): TextRef | undefined {
+  if (state === 'activating') return t('stillActivating');
   if (state !== 'pending') return undefined;
   const status = pm.getStatus();
   const unmet = unmetDependencies(status, services.names()).get(instanceId);
   const lingering = !unmet?.lacking.length && status.find(entry => entry.instanceId === instanceId)?.lingering;
-  const why = lingering ? `等待 ${instanceId} 的旧实例停下` : unmet && describeUnmet(unmet);
-  return why ? `尚未激活：${why}` : '尚未激活，结果以插件列表为准';
+  if (lingering) return t('notYetActiveBecause', { why: t('waitingOld', { instance: instanceId }) });
+  return unmet && unmet.lacking.length + unmet.waiting.length > 0
+    ? t('notYetActiveBecause', { why: describeUnmet(unmet) })
+    : t('notYetActive');
 }
 
 /**
@@ -128,12 +140,12 @@ function refuse(
   pm: PluginManagerService,
   res: express.Response<ErrorResponse>,
   instanceId: string,
-  action: string,
+  action: 'config' | 'enable' | 'disable' | 'reload',
 ): void {
   if (pm.getPlugin(instanceId)) {
-    res.status(409).json({ error: `插件 ${instanceId} 当前不接受${action}（停机中或正在卸载），配置未更改` });
+    res.status(409).json({ error: t('refused', { instance: instanceId, action }) });
   } else {
-    res.status(404).json({ error: `插件 ${instanceId} 不存在` });
+    res.status(404).json({ error: t('pluginMissing', { instance: instanceId }) });
   }
 }
 
@@ -164,14 +176,14 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   /** 配置文档由宿主提供；没有时读写文档的路由一律 503，与扫描、市场路由的缺席口径一致 */
   const docOr503 = (res: express.Response<ErrorResponse>): HostConfig | undefined => {
     const doc = caps.hostConfig.present ? caps.hostConfig.use : undefined;
-    if (!doc) res.status(503).json({ error: '宿主未提供配置文档（host-config），无法读写配置' });
+    if (!doc) res.status(503).json({ error: t('noHostConfig') });
     return doc;
   };
 
   /** 提供这个界面的插件经界面停掉就回不来了：拒绝停用它 */
   const refuseSelf = (res: express.Response<ErrorResponse>, name: string): boolean => {
     if (name !== caps.self) return false;
-    res.status(409).json({ error: `插件 ${name} 提供这个界面，不能从界面停用` });
+    res.status(409).json({ error: t('selfDisable', { name }) });
     return true;
   };
 
@@ -225,8 +237,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     // 反向索引：instanceId -> tools / commands。生产登记的 pluginName 就是 contextId（= instanceId）；
     // 按 definition.name 索引会让 name:suffix 误挂主实例的工具
     const toolsByPlugin = new Map<string, string[]>();
-    for (const t of caps.tools.present ? caps.tools.use.getAll() : []) {
-      toolsByPlugin.set(t.pluginName, [...(toolsByPlugin.get(t.pluginName) ?? []), t.name]);
+    for (const tool of caps.tools.present ? caps.tools.use.getAll() : []) {
+      toolsByPlugin.set(tool.pluginName, [...(toolsByPlugin.get(tool.pluginName) ?? []), tool.name]);
     }
     const commandsByPlugin = new Map<string, string[]>();
     for (const c of caps.commands.present ? caps.commands.use.getAll() : []) {
@@ -246,7 +258,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return {
         name: p.name,
         instanceId: p.instanceId,
-        displayName: toSource(asText(p.displayName)),
+        displayName: asText(p.displayName),
         // 展示元数据：子系统按插件声明原样给，归哪组、组名与顺序由界面定；版本取已装的包
         subsystem: entry?.definition?.subsystem,
         version: versionOf(p.name),
@@ -284,8 +296,15 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         config: doc ? doc.getPluginConfig(p.instanceId) : mapSecretFields(schema, entry?.config ?? {}, () => undefined),
         configSchema: schema,
         defaultConfig: defaultsFrom(schema),
-        error: p.error,
+        error: failureText(p),
       };
+    });
+    // 配置值与 schema 的默认值是原样数据：形如文字对象的值换成译文，表单读回再保存时就把它改写成了字符串
+    const items = new Set<object>(plugins);
+    const defaults = skipSchemaDefaults(plugins.map(plugin => plugin.configSchema));
+    renderWith(res, {
+      skip: (key, parent) =>
+        (items.has(parent) && (key === 'config' || key === 'defaultConfig')) || defaults(key, parent),
     });
     res.json({ plugins, secretRefCounts: doc ? countSecretRefs(doc.getAll().plugins) : {} });
   });
@@ -300,6 +319,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         .filter(key => all[key] !== undefined)
         .map(key => [key, all[key]]),
     );
+    renderWith(res, { skip: skipSchemaDefaults([CORE_CONFIG_SCHEMA]) });
     res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: [...RESTART_KEYS], home: caps.home });
   });
 
@@ -307,7 +327,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   route(expressApp, 'PUT /api/config', gate(), async (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== 'object') {
-      res.status(400).json({ error: '请求体必须是对象' });
+      res.status(400).json({ error: t('bodyNotObject') });
       return;
     }
     const doc = docOr503(res);
@@ -317,7 +337,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
     const foreign = Object.keys(updates).filter(k => !allowed.includes(k));
     if (foreign.length > 0) {
-      res.status(400).json({ error: `只能改核心键（${allowed.join('、')}），不收：${foreign.join('、')}` });
+      res.status(400).json({ error: t('foreignKeys', { allowed, foreign }) });
       return;
     }
     const current = doc.getAll() as Record<string, unknown>;
@@ -329,9 +349,9 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const changed = allowed.filter(k => k in updates && !isDeepStrictEqual(submittedOf(k), currentOf(k)));
     // 与插件配置路径同一把尺子：类型不符、越界或不在选项里的值（如 logLevel 传 nope）不落盘。
     const picked = Object.fromEntries(changed.map(k => [k, submittedOf(k)]));
-    const invalid = validateConfig(CORE_CONFIG_SCHEMA, picked).map(i => `${i.path}: ${i.message}`);
+    const invalid = validateConfig(CORE_CONFIG_SCHEMA, picked);
     if (invalid.length > 0) {
-      res.status(400).json({ error: invalid.join('; ') });
+      res.status(400).json({ error: issuesText(invalid) });
       return;
     }
     // 写进文档的是按词汇换算后的值（加了引号的数字转成数字、写成数字的名称转成字符串）：runtime 启动时
@@ -347,14 +367,12 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     } catch (err) {
       // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件
       for (const key of changed) doc.set(key, previous[key]);
-      res
-        .status(isConfigSaveRefused(err) ? 409 : 500)
-        .json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
+      res.status(isConfigSaveRefused(err) ? 409 : 500).json({ error: t('configNotSaved', { error: textOf(err) }) });
       return;
     }
     res.json({
       ok: true,
-      message: restartNeeded ? '全局配置已保存，重启后生效' : '全局配置已更新并保存',
+      message: restartNeeded ? t('savedRestart') : t('saved'),
       restartNeeded,
     });
   });
@@ -364,18 +382,18 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
   route(expressApp, 'POST /api/restart', gate(), (_req, res) => {
     const app = caps.app.present ? caps.app.use : undefined;
     if (!app) {
-      res.status(500).json({ error: 'App 不可用' });
+      res.status(500).json({ error: t('noApp') });
       return;
     }
     try {
       app.restart();
     } catch (err) {
-      const reason = `重启失败（${errorMessage(err)}），改动在下次启动时生效`;
-      caps.logger?.error(reason);
+      const reason = t('restartFailed', { error: textOf(err) });
+      caps.logger?.error(reason.source);
       res.status(500).json({ error: reason });
       return;
     }
-    res.json({ ok: true, message: '正在重启应用' });
+    res.json({ ok: true, message: t('restarting') });
   });
 
   // 更新插件配置
@@ -383,13 +401,13 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const pluginName = req.params.name;
     const newConfig = req.body?.config;
     if (!newConfig || typeof newConfig !== 'object' || Array.isArray(newConfig)) {
-      res.status(400).json({ error: 'config 字段必须是对象' });
+      res.status(400).json({ error: t('configNotObject') });
       return;
     }
 
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     const doc = docOr503(res);
@@ -419,17 +437,15 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         newConfig as Record<string, unknown>,
       ));
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     // 没登记的实例不经这里新建（宿主的 applyPluginConfig 会按同模块定义登记它），建实例走 POST instances
     if (!entry) {
-      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      res.status(404).json({ error: t('pluginMissing', { instance: pluginName }) });
       return;
     }
-    const note =
-      (ignored.length > 0 ? `（已忽略未声明的配置字段: ${ignored.join(', ')}）` : '') +
-      (removed.length > 0 ? `（已从配置文件移除未声明的字段: ${removed.join(', ')}）` : '');
+    const notes = fieldNotes(ignored, removed);
 
     // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如字符串与数组两种写法都收的
@@ -452,10 +468,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return left <= 0;
     });
     if (issues.length > 0) {
-      res.status(400).json({
-        error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
-        issues,
-      });
+      res.status(400).json({ error: t('configInvalid', { issues: issuesText(issues) }), issues: issueViews(issues) });
       return;
     }
 
@@ -466,11 +479,11 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     try {
       result = await doc.applyPluginConfig(pluginName, merged);
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     if (result.status === 'refused') {
-      refuse(pm, res, pluginName, '配置更新');
+      refuse(pm, res, pluginName, 'config');
       return;
     }
     // 运行态与文档都没变：回「无改动」。只有运行态没变（例如文档里补了配置段）照常按已更新回报，插件没有重建
@@ -479,20 +492,16 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         reportSaveFailure(res, result.saveError, 'reload');
         return;
       }
-      res.json({ ok: true, message: `插件 ${pluginName} 配置无改动，已写回配置文件${note}`, ignored, removed });
+      res.json({ ok: true, message: t('unchanged', { name: pluginName, ...notes }), ignored, removed });
       return;
     }
     // 按新配置重新激活失败、转为 error：照样写入配置（原样再存即重试激活），回执按实际状态说明。
     // 禁用态只换上新配置、保持禁用，启用时按它激活
     const after = await settledEntry(pm, pluginName);
     const failure =
-      after?.state === 'error'
-        ? `插件 ${pluginName} 按新配置重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
-        : undefined;
+      after?.state === 'error' ? t('reactivateFailed', { name: pluginName, reason: reasonOf(after) }) : undefined;
     const aside =
-      after?.state === 'disabled'
-        ? '插件已禁用，启用时按新配置激活'
-        : notYetActive(pm, caps.services, pluginName, after?.state);
+      after?.state === 'disabled' ? t('disabledNewConfig') : notYetActive(pm, caps.services, pluginName, after?.state);
     if (result.saveError !== undefined) {
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;
@@ -503,8 +512,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       ok: true,
       message:
         failure !== undefined
-          ? `${failure}；配置已写入配置文件${note}`
-          : `插件 ${pluginName} 配置已更新${note}${aside ? `；${aside}` : ''}`,
+          ? textClauses([failure, t('configWritten', notes)])
+          : withAside(t('configUpdated', { name: pluginName, ...notes }), aside),
       ignored,
       removed,
     });
@@ -515,7 +524,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const pluginName = req.params.name;
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     const doc = docOr503(res);
@@ -524,7 +533,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     try {
       success = await pm.enable(pluginName);
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     if (success) {
@@ -532,20 +541,18 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       // 激活失败、转为 error：照样记为启用（重启时再激活），回执按实际状态说明。写进了配置文件就回 2xx，口径同改配置
       const after = await settledEntry(pm, pluginName);
       const failure =
-        after?.state === 'error'
-          ? `插件 ${pluginName} 激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
-          : undefined;
+        after?.state === 'error' ? t('activateFailed', { name: pluginName, reason: reasonOf(after) }) : undefined;
       const aside = notYetActive(pm, caps.services, pluginName, after?.state);
       if (!(await saveAfterApply(doc, res, 'restart', failure ?? aside))) return;
       res.json({
         ok: true,
         message:
           failure !== undefined
-            ? `${failure}；配置文件已记为启用`
-            : `插件 ${pluginName} 已启用${aside ? `；${aside}` : ''}`,
+            ? textClauses([failure, t('markedEnabled')])
+            : withAside(t('enabled', { name: pluginName }), aside),
       });
     } else {
-      refuse(pm, res, pluginName, '启用');
+      refuse(pm, res, pluginName, 'enable');
     }
   });
 
@@ -555,7 +562,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     if (refuseSelf(res, pluginName)) return;
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     const doc = docOr503(res);
@@ -564,22 +571,22 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     try {
       success = await pm.disable(pluginName);
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     if (success) {
       // 已禁用，但旧实例（如不响应 abort 的初始化）超过宽限仍没停下：回执说明这一点。写进了配置文件就回 2xx，口径同改配置
       const stuck = pm.getStatus().find(entry => entry.instanceId === pluginName)?.lingering
-        ? `插件 ${pluginName} 已禁用，但超过宽限仍未停下，详见日志`
+        ? t('disabledStuck', { name: pluginName })
         : undefined;
       doc.setPluginEnabled(pluginName, false);
       if (!(await saveAfterApply(doc, res, 'restart', stuck))) return;
       res.json({
         ok: true,
-        message: stuck !== undefined ? `${stuck}；配置文件已记为禁用` : `插件 ${pluginName} 已禁用`,
+        message: stuck !== undefined ? textClauses([stuck, t('markedDisabled')]) : t('disabled', { name: pluginName }),
       });
     } else {
-      refuse(pm, res, pluginName, '禁用');
+      refuse(pm, res, pluginName, 'disable');
     }
   });
 
@@ -588,22 +595,22 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const pluginName = req.params.name;
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     if (pm.getPlugin(pluginName)?.state === 'disabled') {
-      res.status(409).json({ error: `插件 ${pluginName} 已停用，启用后才能重载` });
+      res.status(409).json({ error: t('reloadDisabled', { name: pluginName }) });
       return;
     }
     let success: boolean;
     try {
       success = await pm.bounce(pluginName);
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     if (!success) {
-      refuse(pm, res, pluginName, '重载');
+      refuse(pm, res, pluginName, 'reload');
       return;
     }
     const after = await settledEntry(pm, pluginName);
@@ -612,24 +619,23 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       ok: true,
       message:
         after?.state === 'error'
-          ? `插件 ${pluginName} 重新激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
-          : `插件 ${pluginName} 已重载${aside ? `；${aside}` : ''}`,
+          ? t('reloadFailed', { name: pluginName, reason: reasonOf(after) })
+          : withAside(t('reloaded', { name: pluginName }), aside),
     });
   });
 
   // 经宿主 plugin-source 重新扫描并加载新插件
   route(expressApp, 'POST /api/plugins/scan', gate(), async (_req, res) => {
     if (!caps.source.present) {
-      res.status(503).json({ error: '宿主未提供插件来源，无法扫描' });
+      res.status(503).json({ error: t('noPluginSource') });
       return;
     }
     const source = caps.source.use;
     try {
       const loaded = await source.rescan();
-      res.json({ ok: true, loaded, message: loaded.length > 0 ? `新加载 ${loaded.length} 个插件` : '无新插件' });
+      res.json({ ok: true, loaded, message: t('scanned', { count: loaded.length }) });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      res.status(500).json({ error: textOf(err) });
     }
   });
 
@@ -639,20 +645,20 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const suffix = req.body?.suffix;
     const config = req.body?.config ?? {};
     if (!suffix || typeof suffix !== 'string') {
-      res.status(400).json({ error: 'suffix 必须是非空字符串' });
+      res.status(400).json({ error: t('suffixRequired') });
       return;
     }
     if (!/^[\w-]+$/.test(suffix)) {
-      res.status(400).json({ error: 'suffix 只能包含字母、数字、下划线和连字符' });
+      res.status(400).json({ error: t('suffixInvalid') });
       return;
     }
     if (typeof config !== 'object' || Array.isArray(config)) {
-      res.status(400).json({ error: 'config 字段必须是对象' });
+      res.status(400).json({ error: t('configNotObject') });
       return;
     }
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     const doc = docOr503(res);
@@ -668,16 +674,16 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         .map(p => pm.getPlugin(p.instanceId)?.definition)
         .find(m => m?.name === moduleName);
     if (!sourceModule) {
-      res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未找到` });
+      res.status(400).json({ error: t('moduleMissing', { module: moduleName }) });
       return;
     }
     if (!sourceModule.reusable) {
-      res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未声明 reusable` });
+      res.status(400).json({ error: t('moduleNotReusable', { module: moduleName }) });
       return;
     }
     const instanceId = `${moduleName}:${suffix}`;
     if (pm.getPlugin(instanceId)) {
-      res.status(400).json({ error: `无法创建实例："${instanceId}" 已存在` });
+      res.status(400).json({ error: t('instanceExists', { instance: instanceId }) });
       return;
     }
     // 与改配置同一套合并与裁剪，基线是空对象。校验不分存量：新实例没有历史配置，类型不符的值一律拒绝，
@@ -692,37 +698,30 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     );
     const issues = validateConfig(schema, mergedConfig).filter(i => i.kind === 'invalid');
     if (issues.length > 0) {
-      res.status(400).json({
-        error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
-        issues,
-      });
+      res.status(400).json({ error: t('configInvalid', { issues: issuesText(issues) }), issues: issueViews(issues) });
       return;
     }
-    const note = ignored.length > 0 ? `（已忽略未声明的配置字段: ${ignored.join(', ')}）` : '';
+    const notes = fieldNotes(ignored);
     // 宿主先写文档再登记（文档里残留的禁用标记照旧生效，以禁用态登记），没登记上时撤回文档与密钥
     let result: ApplyPluginConfigResult;
     try {
       result = await doc.applyPluginConfig(instanceId, mergedConfig);
     } catch (err) {
-      res.status(400).json({ error: errorMessage(err) });
+      res.status(400).json({ error: textOf(err) });
       return;
     }
     if (result.status === 'refused') {
       // 前面已查过重名与 reusable，走到这里的实际只有停机进行中：配置不落盘，免得下次启动按文件登记
-      res.status(409).json({ error: `实例 ${instanceId} 未登记（停机中或被拒，见日志），配置未写入` });
+      res.status(409).json({ error: t('instanceRefused', { instance: instanceId }) });
       return;
     }
     // 激活失败、转为 error：实例与配置照样保留并落盘（改配置保存即重试激活），回执按实际状态说明。
     // 写进了配置文件就回 2xx，口径同改配置：实例已登记，表单该收起，留着再点「创建」只会得到「已存在」
     const after = await settledEntry(pm, instanceId);
     const failure =
-      after?.state === 'error'
-        ? `已创建实例 ${instanceId}，但激活失败，已转为 error 态（${after.error ?? '详见日志'}）`
-        : undefined;
+      after?.state === 'error' ? t('instanceFailed', { instance: instanceId, reason: reasonOf(after) }) : undefined;
     const aside =
-      after?.state === 'disabled'
-        ? '配置文件的 disabledPlugins 里有它，已按禁用态登记，启用后激活'
-        : notYetActive(pm, caps.services, instanceId, after?.state);
+      after?.state === 'disabled' ? t('instanceDisabled') : notYetActive(pm, caps.services, instanceId, after?.state);
     if (result.saveError !== undefined) {
       reportSaveFailure(res, result.saveError, 'reload', failure ?? aside);
       return;
@@ -732,8 +731,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       instanceId,
       message:
         failure !== undefined
-          ? `${failure}；配置已写入配置文件${note}`
-          : `已创建实例 ${instanceId}${note}${aside ? `；${aside}` : ''}`,
+          ? textClauses([failure, t('configWritten', notes)])
+          : withAside(t('instanceCreated', { instance: instanceId, ignored: notes.ignored }), aside),
       ignored,
     });
   });
@@ -743,7 +742,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const instanceId = req.params.instanceId;
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
     if (!pm) {
-      res.status(500).json({ error: '插件管理服务不可用' });
+      res.status(500).json({ error: t('noPluginManager') });
       return;
     }
     const doc = docOr503(res);
@@ -753,7 +752,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     // 触发的热重载会按仍带配置段的文件把实例重新登记，落盘随后删掉配置段，留下文件里没有的在跑实例
     const { suffix } = parseInstanceId(instanceId);
     if (!suffix || !pm.getPlugin(instanceId)) {
-      res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
+      res.status(400).json({ error: t('cannotDelete') });
       return;
     }
     const previous = Object.hasOwn(doc.getAll().plugins, instanceId) ? doc.getPluginConfig(instanceId) : undefined;
@@ -768,23 +767,21 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       doc.setPluginEnabled(instanceId, !wasDisabled);
       res
         .status(isConfigSaveRefused(err) ? 409 : 500)
-        .json({ error: `未删除实例 ${instanceId}：未写入配置文件（${errorMessage(err)}）` });
+        .json({ error: t('deleteNotSaved', { instance: instanceId, error: textOf(err) }) });
       return;
     }
     let unloaded: boolean;
     try {
       unloaded = await pm.unload(instanceId);
     } catch (err) {
-      res.status(500).json({
-        error: `已从配置文件删除实例 ${instanceId}，但卸载失败（${errorMessage(err)}）；重启后不再登记`,
-      });
+      res.status(500).json({ error: t('unloadFailed', { instance: instanceId, error: textOf(err) }) });
       return;
     }
     // 返回 false 而条目还在：停机中拒绝了卸载，配置段已删、实例仍在跑到停机为止。条目已不在的是别处先卸掉了，照常回已删除
     if (!unloaded && pm.getPlugin(instanceId)) {
-      res.json({ ok: true, message: `已从配置文件删除实例 ${instanceId}；停机中，未卸载运行中的实例` });
+      res.json({ ok: true, message: t('deletedShuttingDown', { instance: instanceId }) });
       return;
     }
-    res.json({ ok: true, message: `已删除实例 ${instanceId}` });
+    res.json({ ok: true, message: t('deleted', { instance: instanceId }) });
   });
 }

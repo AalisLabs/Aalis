@@ -14,6 +14,7 @@ import {
   THEME_TOKENS,
   type ThemeToken,
 } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import type { AdminClient } from '../protocol/admin-client';
 import { ConnectionLostError, INVALID_PARAMS, RequestError, type SessionClient } from '../protocol/session-client';
 import { getJson, isRecord, postJson, RestError } from '../rest';
@@ -37,11 +38,11 @@ export type FrameStop = { reason: 'timeout' | 'left' | 'flood' | 'refused' } | {
 
 /** 要用户在宿主对话框里拍板的事：destructive 动作（连同这次的输入），或打开一个外站地址 */
 export type FrameQuestion =
-  | { kind: 'action'; action: ActionView; input?: Record<string, unknown> }
+  | { kind: 'action'; action: Localized<ActionView>; input?: Record<string, unknown> }
   | { kind: 'open'; url: string };
 
 interface FrameHost {
-  page: FramePageView;
+  page: Localized<FramePageView>;
   /** 会话面板的会话 */
   sessionId?: string;
   session: SessionClient;

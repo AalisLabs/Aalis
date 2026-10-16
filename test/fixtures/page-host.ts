@@ -7,7 +7,7 @@ import { fixedRef } from './service-ref.js';
 // ════════════════════════════════════════════════════════════
 // 页面插件的测试台：webui-server 的真实登记表（质量门槛、闸门、合并 invalidate）包成 WebUIService 交给插件，
 // 不起端口。页面没过门槛时登记表记 error，用例读 logs 断言；invalidate 另记下每一次原样的调用，不受合并窗口影响。
-// 数据源与动作经同一套闸门调用，调用者是 owner（webui:console）。
+// 数据源与动作经同一套闸门调用，调用者是 owner（webui:console），没有 i18n（语言链为空）。交来的文字对象原样留着，不经出口渲染。
 // ════════════════════════════════════════════════════════════
 
 export interface PageHostOptions {
@@ -24,7 +24,7 @@ export interface InvalidateCall {
   sessionId?: string;
 }
 
-const CALLER = { platform: 'webui', userId: 'console' };
+const CTX = { caller: { platform: 'webui', userId: 'console' }, languages: [] };
 
 export function pageHost(opts: PageHostOptions = {}) {
   /** warn 与 error 级日志：页面没过门槛、数据源返回的形状不对、applies 出错 */
@@ -79,13 +79,13 @@ export function pageHost(opts: PageHostOptions = {}) {
     notices: () => registry.notices(),
     /** 取一个组件的数据：不是 200 就抛出，带状态码与原因 */
     async data<T = unknown>(pageKey: string, componentId: string, query: Record<string, unknown> = {}): Promise<T> {
-      const reply = await registry.data(view(pageKey).instance, pageKey, componentId, query, CALLER);
+      const reply = await registry.data(view(pageKey).instance, pageKey, componentId, query, CTX);
       if (reply.status !== 200) throw new Error(`${reply.status} ${JSON.stringify(reply.body)}`);
       return (reply.body as { data: T }).data;
     },
     /** 调一个动作，原样回状态码与回包 */
     act: (pageKey: string, action: string, body: Record<string, unknown> = {}): Promise<Reply<PageActionResponse>> =>
-      registry.act(view(pageKey).instance, pageKey, action, body, CALLER, 'test'),
+      registry.act(view(pageKey).instance, pageKey, action, body, CTX, 'test'),
     /** 这个会话适用的会话面板页面的 key */
     async panels(sessionId: string): Promise<string[]> {
       const reply = await registry.panelPages(sessionId);

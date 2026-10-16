@@ -4,6 +4,7 @@ import { placePaperId } from '../../packages/api-session-manager/src/index.js';
 import type { ComponentView, DeclarativePageView, InfoItem } from '../../packages/api-webui/src/index.js';
 import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -77,7 +78,7 @@ const alerts = (hub: PaperHub) => hub.pages.data<Row[]>('paper', 'alerts');
 /** 白纸详情的键值：名称 → 值 */
 async function info(hub: PaperHub, paperId = PAPER_ID): Promise<Map<string, unknown>> {
   const items = await hub.pages.data<InfoItem[]>('paper', 'paper', { rowKey: paperId });
-  return new Map(items.map(item => [item.label, item.value]));
+  return new Map(toSource(items).map(item => [item.label, item.value]));
 }
 const act = (hub: PaperHub, action: string, rowKey: string) => hub.pages.act('paper', action, { rowKey });
 const ok = (message: string) => ({ status: 200, body: { message } });

@@ -1,4 +1,5 @@
 import type { ActionView, DeclarativePageView, PageDataByType, PageRow } from '@aalis/api-webui';
+import type { Localized } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -28,7 +29,7 @@ import { ActionForm } from './ActionForm';
 export const DEFAULT_CONFIRM = '这个操作不能撤销。';
 
 interface Scope {
-  page: DeclarativePageView;
+  page: Localized<DeclarativePageView>;
   /** 会话面板的会话 */
   sessionId?: string;
   /** 整页重取的计数：PageScope 收的是手动刷新的次数，给组件的另加上管理连接重连的次数 */
@@ -38,7 +39,7 @@ interface Scope {
 /** 动作作用的那一行：行动作的 rowKey，以及给表单预填的这一行的值 */
 export interface ActionTarget {
   rowKey: string;
-  row?: PageRow;
+  row?: Localized<PageRow>;
 }
 
 interface Running {
@@ -57,7 +58,7 @@ export function usePageScope(): Scope {
   return scope;
 }
 
-export function useActions(): Running & { actions: Readonly<Record<string, ActionView>> } {
+export function useActions(): Running & { actions: Readonly<Record<string, Localized<ActionView>>> } {
   const running = useContext(RunningContext);
   const { page } = usePageScope();
   if (!running) throw new Error('只能在页面里调页面的动作');
@@ -65,17 +66,20 @@ export function useActions(): Running & { actions: Readonly<Record<string, Actio
 }
 
 const enc = encodeURIComponent;
-const pageBase = (page: DeclarativePageView) => `/api/pages/${enc(page.instance)}/${enc(page.key)}`;
+const pageBase = (page: Localized<DeclarativePageView>) => `/api/pages/${enc(page.instance)}/${enc(page.key)}`;
 
-const PARSERS: { [T in keyof PageDataByType]: (body: unknown) => PageDataByType[T] } = {
-  table: body => dataOf(body, Array.isArray, '行的数组') as PageDataByType['table'],
+/** 界面拿到的各种组件的数据 */
+type PageData = Localized<PageDataByType>;
+
+const PARSERS: { [T in keyof PageData]: (body: unknown) => PageData[T] } = {
+  table: body => dataOf(body, Array.isArray, '行的数组') as PageData['table'],
   graph: body =>
     dataOf(
       body,
       data => isRecord(data) && Array.isArray(data.nodes) && Array.isArray(data.edges),
       '{ nodes, edges }',
-    ) as PageDataByType['graph'],
-  info: body => dataOf(body, Array.isArray, '{ label, value } 的数组') as PageDataByType['info'],
+    ) as PageData['graph'],
+  info: body => dataOf(body, Array.isArray, '{ label, value } 的数组') as PageData['info'],
   markdown: body => dataOf(body, data => typeof data === 'string', '文字') as string,
 };
 
@@ -86,11 +90,11 @@ function dataOf(body: unknown, test: (data: unknown) => boolean, shape: string):
 }
 
 /** 一个组件的数据：详情里的组件带上选中的 rowKey */
-export function usePageData<T extends keyof PageDataByType>(
+export function usePageData<T extends keyof PageData>(
   type: T,
   componentId: string,
   rowKey?: string,
-): { value?: PageDataByType[T]; error?: Error; retry(): void } {
+): { value?: PageData[T]; error?: Error; retry(): void } {
   const { page, sessionId, version } = usePageScope();
   const { admin } = useConnection();
   const [own, invalidate] = useReducer((n: number) => n + 1, 0);
@@ -118,7 +122,7 @@ export function usePageData<T extends keyof PageDataByType>(
 /** 弹出的确认框或表单：哪个动作、作用于哪一行 */
 interface Pending {
   name: string;
-  action: ActionView;
+  action: Localized<ActionView>;
   target?: ActionTarget;
 }
 
@@ -136,7 +140,7 @@ export function PageScope({ page, sessionId, version, children }: Scope & { chil
   useEffect(() => {
     shown.current = pending;
   }, [pending]);
-  const actions: Readonly<Record<string, ActionView>> = page.actions ?? {};
+  const actions: Readonly<Record<string, Localized<ActionView>>> = page.actions ?? {};
 
   /** 调一个动作，回来之前这个动作在这一行上算进行中；成功时 Toast 写插件给的结果，失败时把错误交给调用方 */
   const call = useCallback(
@@ -164,7 +168,7 @@ export function PageScope({ page, sessionId, version, children }: Scope & { chil
   );
 
   const failed = useCallback(
-    (action: ActionView, err: unknown) =>
+    (action: Localized<ActionView>, err: unknown) =>
       toast({ kind: 'danger', text: `${action.label}失败：${(err as Error).message}`, source: page.instance }),
     [toast, page.instance],
   );

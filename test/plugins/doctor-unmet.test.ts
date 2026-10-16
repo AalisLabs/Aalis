@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeUnmet,
+  failureText,
   type PluginSnapshot,
   type UnmetDependencies,
   unmetDependencies,
 } from '../../packages/api-doctor/src/index.js';
+import { defineTexts, resolveText, toSource, withText } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 「缺」与「在等」的共享判据：pending 插件没满足的 required 服务沿声明提供它的插件追到根。根失败、停用、没有已装的
@@ -360,14 +362,14 @@ describe('describeUnmet：启动告警、诊断与回执里的一句', () => {
           { service: 'sy', chain: ['y', 'x'], root: { kind: 'starting', instance: 'x' } },
           { service: 'sz', chain: ['z'], root: { kind: 'lingering', instance: 'z' } },
         ],
-      }),
+      }).source,
     ).toBe(
       [
         '缺少服务 sb（b → c 失败：打不开数据库）',
         '缺少服务 llm（model 已停用）',
         '缺少服务 embedding（没有已装的插件提供）',
         '缺少服务 sd（d → 没有已装的插件提供 se）',
-        '缺少服务 sa（b → 互相等待成环：a、b）',
+        '缺少服务 sa（b → 互相等待成环：a和b）',
         '缺少服务 llm（e → f 在运行但没有提供 sf）',
         '等待 x 启动',
         '等待 z 的旧实例停下',
@@ -377,7 +379,81 @@ describe('describeUnmet：启动告警、诊断与回执里的一句', () => {
 
   it('根失败而没有失败说明：写「原因见日志」', () => {
     expect(
-      describeUnmet({ lacking: [{ service: 's', chain: ['p'], root: { kind: 'error', instance: 'p' } }], waiting: [] }),
+      describeUnmet({ lacking: [{ service: 's', chain: ['p'], root: { kind: 'error', instance: 'p' } }], waiting: [] })
+        .source,
     ).toBe('缺少服务 s（p 失败：原因见日志）');
+  });
+
+  it('按读者语言渲染：英文读者看到英文，根的失败说明是文字对象时照样翻译', () => {
+    const exclusive = Object.assign(new Error('core 的诊断句'), { code: 'exclusive-conflict', service: 'llm' });
+    const unmet = unmetDependencies(
+      [
+        plugin('a', 'pending', { requires: ['llm', 'sa'] }),
+        { ...plugin('model', 'error', { provides: ['llm'], error: 'core 的诊断句' }), failure: exclusive },
+        plugin('b', 'pending', { requires: ['sb'], provides: ['sa'] }),
+        plugin('x', 'activating', { provides: ['sb'] }),
+      ],
+      [],
+    ).get('a');
+    expect(unmet && resolveText(describeUnmet(unmet), ['en'])).toBe(
+      'missing service llm (model failed: Service llm is registered exclusively; no other provider can be added); ' +
+        'waiting for x to start',
+    );
+  });
+});
+
+describe('failureText：插件失败给人看的说明', () => {
+  const failed = (data: Record<string, unknown>) => ({
+    failure: Object.assign(new Error('core 的诊断句'), data),
+    error: 'core 的摘要',
+  });
+
+  it.each([
+    [
+      { code: 'required-retry-exhausted', service: 'llm' },
+      '初始化期间 required 依赖反复缺失（最后一次缺 llm），自动重试未收敛，已停止；重新启用或重载后重试',
+      'A required dependency kept going missing during initialization (last missing: llm); automatic retries did not settle and stopped. Re-enable or reload it to retry',
+    ],
+    [
+      { code: 'provides-not-registered', services: ['a', 'b'] },
+      '声明提供 a和b，但激活完成时没有登记这些服务',
+      'Declares that it provides a and b, but had not registered them when activation finished',
+    ],
+    [
+      { code: 'exclusive-conflict', service: 'llm' },
+      '服务 llm 为独占登记，不能再添加提供者',
+      'Service llm is registered exclusively; no other provider can be added',
+    ],
+    [
+      { code: 'service-unavailable', service: 'llm' },
+      '服务 llm 当前没有提供者',
+      'Service llm has no provider right now',
+    ],
+    [
+      { code: 'service-unavailable', service: 'llm', provider: 'p' },
+      '服务 llm 的提供者 p 当前不可用',
+      'Provider p of service llm is not available right now',
+    ],
+  ])('core 自己的失败按 code 给说明：%j', (data, source, english) => {
+    const text = failureText(failed(data));
+    expect(typeof text === 'object' && [text.source, resolveText(text, ['en'])]).toEqual([source, english]);
+  });
+
+  it('不认识的 code、没有 code 时用 core 给的 error，没有失败时 undefined', () => {
+    expect(failureText(failed({ code: 'ENOENT' }))).toBe('core 的摘要');
+    expect(failureText(failed({}))).toBe('core 的摘要');
+    expect(failureText({})).toBeUndefined();
+  });
+
+  it('挂了文字对象的先取它，其次按 code，再其次 core 给的 error', () => {
+    const t = defineTexts({ ns: 'test/doctor-failure', language: 'zh-CN', source: { broken: '坏了' } });
+    const texted = withText(
+      Object.assign(new Error('坏了'), { code: 'exclusive-conflict', service: 'llm' }),
+      t('broken'),
+    );
+    expect(failureText({ failure: texted, error: '坏了' })).toBe(texted.text);
+    expect(toSource(failureText(failed({ code: 'exclusive-conflict', service: 'llm' })))).toBe(
+      '服务 llm 为独占登记，不能再添加提供者',
+    );
   });
 });
