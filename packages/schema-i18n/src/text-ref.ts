@@ -85,9 +85,9 @@ export function localize<T>(value: T, render: (text: TextRef) => string, skip?: 
   return walk(value) as Localized<T>;
 }
 
-/** 值里的文字对象换成 source：写日志、交给模型、出口不在场时用（出口照样传 skip） */
-export function toSource<T>(value: T, skip?: LocalizeSkip): Localized<T> {
-  return localize(value, text => text.source, skip);
+/** 值里的文字对象换成 source（生成时的整句）：写日志、交给模型时用 */
+export function toSource<T>(value: T): Localized<T> {
+  return localize(value, text => text.source);
 }
 
 /** 给 `JSON.stringify` 的 replacer：文字对象写成 source */

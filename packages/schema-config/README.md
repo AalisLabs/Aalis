@@ -51,7 +51,7 @@ export default definePlugin({
 | `number` | `number` | 有限数值；去掉首尾空白后非空、能完整解析为有限数的字符串按数字收；`min` / `max` / `integer` |
 | `boolean` | `boolean` | 类型，不做转换 |
 | `select` | 选项值的字面量联合，否则 `string` | 字符串或有限数字；有静态 `options`、没有 `dynamicOptions` 且 `allowCustom` 不为 `true` 时须是某个选项值 |
-| `multiselect` | 选项值字面量联合的数组，否则 `string[]` | 数组；元素同 `select`；集合语义，WebUI 以勾选框编辑，不能表达重复项 |
+| `multiselect` | 选项值字面量联合的数组，否则 `string[]` | 数组；元素同 `select`；按输入顺序保留。`ordered: true` 时先后有意义（如语言的先后）：去掉重复项（按选项归位后的值比，不算问题），WebUI 给排序控件 |
 | `list` | `string[]` | 数组，元素按字符串判定；有序，允许重复（如命令行参数） |
 | `map` | `Record<string, string>` | 对象，每个值按字符串判定（如环境变量表） |
 

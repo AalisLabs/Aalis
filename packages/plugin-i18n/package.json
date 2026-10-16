@@ -1,0 +1,58 @@
+{
+  "name": "@aalis/plugin-i18n",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-i18n"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "多语言：i18n 服务的默认提供者，按读者的语言链渲染文字对象，收语言包",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.21.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "i18n"
+      ],
+      "required": [
+        "provide"
+      ],
+      "optional": [
+        "contributions",
+        "session-manager"
+      ]
+    }
+  }
+}

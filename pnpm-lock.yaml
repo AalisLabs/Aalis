@@ -368,6 +368,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-i18n:
+    dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-llm:
     dependencies:
       '@aalis/api-tools':
@@ -1407,6 +1426,31 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-i18n:
+    dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

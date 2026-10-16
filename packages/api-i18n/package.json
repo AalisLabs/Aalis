@@ -1,0 +1,42 @@
+{
+  "name": "@aalis/api-i18n",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/api-i18n"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.20.0 <1.0.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-api"
+  ],
+  "description": "多语言契约：i18n 服务描述符、读者、语言包贡献点 i18n:pack 与出口共用的 localizeFor（默认提供者 @aalis/plugin-i18n）"
+}

@@ -4,6 +4,7 @@ import {
   indexPacks,
   type LanguagePack,
   normalizeLanguages,
+  resolveSource,
   resolveText,
   type TextRef,
 } from '@aalis/schema-i18n';
@@ -153,10 +154,13 @@ describe('参数', () => {
     expect(resolveText(t('md', { name }), ['en'])).toBe(`**Name**: ${name}`);
   });
 
-  it('timeZone 用于日期与时间；不合法的时区算渲染失败', () => {
+  it('timeZone 用于日期与时间；不认识的时区按缺省', () => {
     expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 'UTC' })).toBe('1/1/70, 12:00 AM');
     expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 'Asia/Shanghai' })).toBe('1/1/70, 8:00 AM');
-    expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 'Mars/Base' })).toBe(t('when', { t: 0 }).source);
+    // 不认识的时区当作没给：按进程时区渲染，不整句回落成原文
+    const processZone = resolveText(t('when', { t: 0 }), ['en']);
+    expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 'Mars/Base' })).toBe(processZone);
+    expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 8 as unknown as string })).toBe(processZone);
   });
 
   it('日期按选中的语言格式化', () => {
@@ -182,8 +186,8 @@ describe('语言包', () => {
     pack('f', 'de', { 'test/no-such-ns': { hi: { text: 'Hallo', from: fingerprint('你好') } } }),
   ]);
 
-  it('补字典没有的语言；多个包给同一条时按包名排序取先', () => {
-    expect(resolveText(t('hi'), ['ja'], { packs })).toBe('こんにちは');
+  it('补字典没有的语言；多个包给同一条时按交来的先后取先（出口按贡献点的全局键交来，包名在前）', () => {
+    expect(resolveText(t('hi'), ['ja'], { packs })).toBe('こんにちは（b）');
   });
 
   it('只补缺：字典自带同语言同键时不生效', () => {
@@ -208,6 +212,13 @@ describe('语言包', () => {
       { id: 'm2', language: 7, entries: {} },
       { id: 'm3', language: 'ja', entries: { [NS]: null } },
       null,
+      {
+        id: 'm4',
+        language: 'ja',
+        get entries(): never {
+          throw new Error('访问器抛错');
+        },
+      },
     ] as unknown as LanguagePack[];
     const mixed = indexPacks([
       ...malformed,
@@ -224,6 +235,27 @@ describe('语言包', () => {
     expect(fingerprint('你好')).toBe(fingerprint('你好'));
     expect(fingerprint('你好')).not.toBe(fingerprint('你好！'));
     expect(fingerprint('你好')).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
+
+describe('resolveSource：只按原文语言渲染（出口在 i18n 服务缺席时用）', () => {
+  it('字典带 en 译文时仍给原文', () => {
+    expect(resolveSource(t('who', { name: 'X' }))).toBe('X 来了');
+  });
+
+  it('escape markdown：字符串参数转义；回落时整句转义', () => {
+    expect(resolveSource(t('md', { name: '_x_' }), md)).toBe('**名称**：\\_x\\_');
+    const source = '[点我](https://e.com)';
+    expect(resolveSource({ i18n: 'test/no-such-ns', key: 'hi', source }, md)).toBe('\\[点我\\]\\(https://e\\.com\\)');
+  });
+
+  it('date 参数按传入的 timeZone 渲染', () => {
+    expect(resolveSource(t('when', { t: 0 }), { timeZone: 'UTC' })).toBe('1970/1/1 00:00');
+    expect(resolveSource(t('when', { t: 0 }), { timeZone: 'Asia/Shanghai' })).toBe('1970/1/1 08:00');
+  });
+
+  it('参数里的文字对象取它自己的原文，不跟外层的语言', () => {
+    expect(resolveSource({ ...t('who', { name: third('hi') }), source: '落盘时的原文' })).toBe('Hello 来了');
   });
 });
 
