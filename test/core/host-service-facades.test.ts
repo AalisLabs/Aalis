@@ -39,7 +39,7 @@ describe('宿主服务只交出契约方法', () => {
     await app.plugin(definePlugin({ name: 'p', apply() {} }), { v: 1 });
     await app.plugins.idle();
     const snap = app.plugins.getPlugin('p')!;
-    expect(keysOf(snap)).toEqual(['config', 'definition', 'error', 'instanceId', 'state']);
+    expect(keysOf(snap)).toEqual(['config', 'definition', 'error', 'failure', 'instanceId', 'state']);
     snap.state = 'disabled';
     const now = app.plugins.getPlugin('p')!;
     expect(now.state).toBe('active');

@@ -17,11 +17,17 @@ export interface PluginEntry {
   config: Record<string, unknown>;
   state: PluginState;
   /**
-   * 激活失败的说明：错误消息后接 cause 链摘要（各层消息首行，以 ` ← ` 相连，至多 5 层；AggregateError 层之后接子错误首行，
-   * 至多 3 条）。非 Error 的值只取首行、限 200 字符。初始化期间 required 依赖反复缺失、自动重试用尽时是 core 写入的固定说明：
-   * 「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」。
+   * 激活失败的说明，由 {@link failure} 现算：错误消息后接 cause 链摘要（各层消息首行，以 ` ← ` 相连，至多 5 层；AggregateError
+   * 层之后接子错误首行，至多 3 条）。非 Error 的值只取首行、限 200 字符。初始化期间 required 依赖反复缺失、自动重试用尽时是
+   * core 的固定说明：「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」。
    */
   error?: string;
+  /**
+   * 激活失败时抛出的原值（core 自己的失败带 `code`，取值见 `CoreFailureCode`）；激活成功、enable、disable、bounce 时清掉。
+   * 可能不可序列化、可能含敏感数据，清掉之前一直留在内存里：出口只取其中挂的文字对象与 `code`，不得整体序列化或下发。
+   * 只有声明了 pluginsService 的插件读得到（管理面）
+   */
+  failure?: unknown;
 }
 
 /**

@@ -31,7 +31,8 @@
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0"
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

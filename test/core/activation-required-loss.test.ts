@@ -300,6 +300,9 @@ describe('初始化期间 required 依赖消失', () => {
     expect(consumer(app).error).toBe(
       '初始化期间 required 依赖反复缺失（最后一次缺 "activation-required-loss"），自动重试未收敛，已停止；enable 或 bounce 后重试',
     );
+    expect(consumer(app).failure).toEqual(
+      expect.objectContaining({ code: 'required-retry-exhausted', service: 'activation-required-loss' }),
+    );
     expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
     // 用尽的那一次只记 error，不再说等待依赖恢复
     expect(debugs.filter(message => message.includes('等待依赖恢复'))).toHaveLength(attempts - 1);
@@ -315,6 +318,7 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     expect(consumer(app).state).toBe('active');
     expect(consumer(app).error).toBeUndefined();
+    expect(consumer(app).failure).toBeUndefined();
     expect(attempts).toBe(previous + 1);
   });
 

@@ -1,17 +1,21 @@
 // ----- 服务系统数据契约（与容器实现同文件） -----
 
+import { coreFailure } from '../types/failure.js';
+
 /** ServiceContainer.getAll 的元素：ServiceEntry 的投影，不含清理归属 owner。 */
 export interface ServiceView<T = unknown> {
   instance: T;
   contextId: string;
   priority: number;
-  label?: string;
+  /** 展示值，同 {@link ServiceEntry.label} */
+  label?: unknown;
 }
 
 export interface ServiceInfo {
   contextId: string;
   priority: number;
-  label?: string;
+  /** 展示值，同 {@link ServiceEntry.label} */
+  label?: unknown;
   exclusive: boolean;
   /** 是否为所查口径（全局或 `{ for }` 那个插件）选中的那一条 */
   selected: boolean;
@@ -42,8 +46,8 @@ export interface ServiceEntry {
    * @internal
    */
   owner: symbol;
-  /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
-  label?: string;
+  /** 可选的展示标签（如 "OpenAI / gpt-4o"）。展示值（字符串或文字对象）：core 不读、不校验，原样转交给展示方 */
+  label?: unknown;
   /** 登记所用的描述符，只比身份（见 {@link ServiceContainer.rivalOf}） */
   descriptor?: object;
 }
@@ -80,7 +84,7 @@ export class ServiceContainer {
     instance: unknown,
     contextId: string,
     owner: symbol,
-    options?: { priority?: number; label?: string; exclusive?: boolean; descriptor?: object },
+    options?: { priority?: number; label?: unknown; exclusive?: boolean; descriptor?: object },
   ): () => void {
     // 空实现会骗过缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
     if (instance === null || instance === undefined) {
@@ -91,7 +95,7 @@ export class ServiceContainer {
     }
     let list = this.#entries.get(name);
     if (list?.length && (options?.exclusive || list.some(entry => entry.exclusive))) {
-      throw new Error(`服务 "${name}" 为独占登记，不能添加另一个提供者`);
+      throw coreFailure(`服务 "${name}" 为独占登记，不能添加另一个提供者`, 'exclusive-conflict', { service: name });
     }
     if (!list) {
       list = [];

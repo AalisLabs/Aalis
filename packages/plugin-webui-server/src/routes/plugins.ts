@@ -18,6 +18,7 @@ import {
   removeExtraFields,
   validateConfig,
 } from '@aalis/schema-config';
+import { asText, toSource } from '@aalis/schema-i18n';
 import type express from 'express';
 import { blockedStatus } from '../attention.js';
 import type { RouteGate } from '../gate.js';
@@ -245,7 +246,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return {
         name: p.name,
         instanceId: p.instanceId,
-        displayName: p.displayName,
+        displayName: toSource(asText(p.displayName)),
         // 展示元数据：子系统按插件声明原样给，归哪组、组名与顺序由界面定；版本取已装的包
         subsystem: entry?.definition?.subsystem,
         version: versionOf(p.name),

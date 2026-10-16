@@ -24,8 +24,8 @@ export interface ProvideOptions {
   priority?: number;
   /** 独占：本条登记存续期间拒绝同名的其他提供者 */
   exclusive?: boolean;
-  /** 展示名（服务页下拉等） */
-  label?: string;
+  /** 展示名（服务页下拉等）。展示值（字符串或文字对象）：core 不读、不校验，原样转交给展示方 */
+  label?: unknown;
   /**
    * 条目的逻辑身份（偏好与展示认它），缺省为本激活 id。一个激活登记多条时各给一个；托管自己不运行代码的包
    * （如 WebUI 服务端替扫描到的静态前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；

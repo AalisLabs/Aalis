@@ -1,4 +1,5 @@
 import {
+  asText,
   defineTexts,
   isTextError,
   isTextRef,
@@ -58,6 +59,15 @@ describe('文字对象', () => {
     ['多出别的键', { i18n: 'x', key: 'k', source: 's', extra: 1 }],
   ])('isTextRef 不认%s', (_label, value) => {
     expect(isTextRef(value)).toBe(false);
+  });
+
+  it('asText 把展示值收窄成文字：字符串与文字对象原样，其余 undefined', () => {
+    const hello = t('hello');
+    expect(asText('名')).toBe('名');
+    expect(asText(hello)).toBe(hello);
+    expect(asText(undefined)).toBeUndefined();
+    expect(asText(42)).toBeUndefined();
+    expect(asText({ name: 'x' })).toBeUndefined();
   });
 
   it('textLines 把字符串与文字对象按行连成一个文字对象，按读者语言逐段渲染', () => {

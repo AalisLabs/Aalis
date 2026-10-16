@@ -714,7 +714,10 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2619 → 2618：b5 审修（协调者定，与 prefer 同形）——unprefer 返回 void、一律发 service:changed。
 // 2618 → 2609：b6 P1-9（用户选甲，维持判弃并顺手合并）——日志与摘要读 AggregateError 子错误合成一个函数。
 // 2609 → 2613：b6 跨批交互核查修复——管理动作的退场闭包并上依赖丢失的判据（#lost 抽成方法，+1）；钉住句柄失效的报错单列文案（+3）。
-const CORE_CODE_LINE_CEILING = 2613;
+// 2613 → 2640：国际化（owner 10-16「core 这么改不会导致臃肿或者职责不清，则可以这么做」，core 线审定施工说明第 10 节）——
+// 插件显示名与服务 label 放宽为 unknown；插件失败只存抛出的原值 failure，error 投影时现算（errorOf）；core 自己的四种失败
+// 挂 code 与数据（types/failure.ts 的 CoreFailureCode 与 coreFailure，ServiceUnavailableError 加 code、service、provider）。
+const CORE_CODE_LINE_CEILING = 2640;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

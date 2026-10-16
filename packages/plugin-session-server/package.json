@@ -42,6 +42,7 @@
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-todo-list": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-bounded-map": "workspace:>=0.6.1 <1.0.0"
   },

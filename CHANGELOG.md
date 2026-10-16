@@ -8,6 +8,16 @@
 
 ---
 
+## 未发布 · core 0.21（国际化）
+
+给人看的文字改为文字对象（新包 `@aalis/schema-i18n`），由出口按读者语言渲染。本节随国际化各批补全；core 定为 0.21.0。
+
+### core 0.21
+
+- 展示值放宽为 `unknown`：`PluginDefinition.displayName`、`PluginStatusEntry.displayName`，以及服务提供者的展示标签 `ServiceView.label`、`ServiceInfo.label`、`ProviderEntry.label`、`ProvideOptions.label`。core 不读、不校验，原样转交；按 `string` 读这些字段的代码在类型上报错。
+- `PluginEntry` 与 `PluginStatusEntry` 加 `failure`：激活失败时抛出的原值；`error` 改为由它现算，取值不变。
+- core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
