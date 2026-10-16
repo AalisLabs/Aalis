@@ -53,3 +53,6 @@ models/
 **/settings.local.json
 sts2-dev/
 *.heapsnapshot
+
+# Vite 加载配置时在配置旁边临时写的打包文件
+*.timestamp-*.mjs
