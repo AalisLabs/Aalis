@@ -13,7 +13,7 @@ import { toSource } from '../../packages/schema-i18n/src/index.js';
 // ════════════════════════════════════════════════════════════
 // 主题文件：格式的解析与校验、内置 8 个主题、对比度检查。
 // 内置主题与第三方主题同一格式（内置的不带名字，名字按 id 取字典，校验时以 id 作名字），加载都经 parseTheme；
-// 对比度检查是导入时与内置主题共用的同一套组合，组合名是字典里的文字对象，这里按原文比。
+// 对比度检查是导入时与内置主题共用的同一套组合；组合名与校验的原因是字典里的文字对象，这里按原文比。
 // ════════════════════════════════════════════════════════════
 
 const calmDark = BUILTIN_THEMES['calm-dark'];
@@ -30,10 +30,11 @@ function file(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
+/** 被拒的原因，按原文比 */
 function errorsOf(value: unknown): string[] {
   const result = parseTheme(value);
   if (result.ok) throw new Error('期望被拒');
-  return result.errors;
+  return toSource(result.errors);
 }
 
 describe('内置主题', () => {
@@ -86,7 +87,7 @@ describe('内置主题', () => {
 
   it.each(Object.keys(BUILTIN_THEMES))('%s 过对比度检查', id => {
     const result = parseTheme({ ...BUILTIN_THEMES[id as keyof typeof BUILTIN_THEMES], name: id });
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     expect(themeContrastIssues(result.theme)).toEqual([]);
   });
 });
@@ -94,7 +95,7 @@ describe('内置主题', () => {
 describe('解析与校验', () => {
   it('缺的令牌按同种类的偏中性补齐，写了的照用', () => {
     const result = parseTheme(file());
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     expect(result.theme.name).toBe('夜读');
     expect(result.theme.kind).toBe('dark');
     expect(result.theme.colors['--color-bg']).toBe('#101012');
@@ -102,7 +103,7 @@ describe('解析与校验', () => {
     expect(result.theme.colors['--color-text']).toBe(calmDark.colors['--color-text']);
 
     const light = parseTheme(file({ kind: 'light', colors: {} }));
-    if (!light.ok) throw new Error(light.errors.join('；'));
+    if (!light.ok) throw new Error(toSource(light.errors).join('；'));
     expect(light.theme.colors).toEqual(BUILTIN_THEMES['calm-light'].colors);
   });
 
@@ -164,7 +165,7 @@ describe('解析与校验', () => {
 describe('对比度检查', () => {
   it('不达标的组合逐条列出：组合名、算出的比值与要求', () => {
     const result = parseTheme(file({ colors: { '--color-text-3': calmDark.colors['--color-bg'] } }));
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     const issues = themeContrastIssues(result.theme);
     expect(issues.map(issue => issue.pair.source)).toEqual([
       '弱化字 / 主区',
@@ -179,7 +180,7 @@ describe('对比度检查', () => {
   /** 主区底是偏中性深色（缺的令牌补齐）时，弱化字写成 color 的「弱化字 / 主区」检查结果 */
   function mutedOnMain(color: string) {
     const result = parseTheme(file({ colors: { '--color-text-3': color } }));
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     return toSource(themeContrastIssues(result.theme).find(issue => issue.pair.source === '弱化字 / 主区'));
   }
 
@@ -194,7 +195,7 @@ describe('对比度检查', () => {
     expect(mutedOnMain('hsl(240 4.918% 11.961%)')).toMatchObject({ ratio: 1 });
     // 饱和的颜色：通道换算错位时红会变成别的颜色
     const red = parseTheme(file({ colors: { '--color-bg': '#ff0000', '--color-text-3': 'hsl(0 100% 50%)' } }));
-    if (!red.ok) throw new Error(red.errors.join('；'));
+    if (!red.ok) throw new Error(toSource(red.errors).join('；'));
     expect(themeContrastIssues(red.theme).find(issue => issue.pair.source === '弱化字 / 主区')).toMatchObject({
       ratio: 1,
     });
@@ -203,7 +204,7 @@ describe('对比度检查', () => {
   it('半透明的底色先叠到下层再算', () => {
     // 选中行的 fill-2 若是不透明的正文色，正文落在上面就看不见
     const result = parseTheme(file({ colors: { '--color-fill-2': calmDark.colors['--color-text'] } }));
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     expect(themeContrastIssues(result.theme).map(issue => issue.pair.source)).toContain('正文 / 侧栏里的选中行');
   });
 

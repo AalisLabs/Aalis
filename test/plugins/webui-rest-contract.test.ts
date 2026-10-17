@@ -496,6 +496,7 @@ describe('管理面 REST 的回应与契约', () => {
     // 页面、布局与文件
     const { pages } = (await ok('GET /api/pages', '/api/pages')) as unknown as PageListResponse;
     await ok('GET /api/session-pages', '/api/session-pages?sessionId=s-1');
+    await ok('GET /api/pages/:instance/:pageKey/texts', `/api/pages/${PROBE}/board/texts`);
     const rows = await ok('GET /api/pages/:instance/:pageKey/data/:componentId', `/api/pages/${PROBE}/board/data/rows`);
     await ok(
       'GET /api/pages/:instance/:pageKey/data/:componentId',
@@ -513,6 +514,7 @@ describe('管理面 REST 的回应与契约', () => {
     await file('GET /frames/:token/{*path}', frame, false);
     await file('GET /frames/_base/frame.js', '/frames/_base/frame.js', false);
     await file('GET /frames/_base/frame.css', '/frames/_base/frame.css', false);
+    await file('GET /frames/_base/schema-i18n/{*path}', '/frames/_base/schema-i18n/index.js', false);
     await file('GET /__clients', '/__clients');
     await file('GET /__clients.js', '/__clients.js');
     await file('GET /{*path}', '/s/zz');

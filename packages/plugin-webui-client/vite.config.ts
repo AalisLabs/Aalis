@@ -1,6 +1,10 @@
-import { BUILTIN_THEMES, parseTheme } from '@aalis/api-webui';
+import '@aalis/api-approval';
+import { BUILTIN_THEMES, CLIENT_TEXTS_FILE, parseTheme } from '@aalis/api-webui';
+import '@aalis/schema-config';
+import { catalogEntries, toSource } from '@aalis/schema-i18n';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
+import './src/texts';
 
 /**
  * 内置主题：每个主题文件经 parseTheme 校验（文件不带名字，以 id 作名字）后写成一条按 <html data-theme> 取值的规则，
@@ -10,7 +14,7 @@ import { defineConfig, type Plugin } from 'vite';
 function builtinThemes(): Plugin {
   const rules = Object.entries(BUILTIN_THEMES).map(([id, file]) => {
     const parsed = parseTheme({ ...file, name: id });
-    if (!parsed.ok) throw new Error(`内置主题 ${id} 不合主题文件的格式：${parsed.errors.join('；')}`);
+    if (!parsed.ok) throw new Error(`内置主题 ${id} 不合主题文件的格式：${toSource(parsed.errors).join('；')}`);
     const declarations = Object.entries(parsed.theme.colors).map(([token, value]) => `${token}:${value}`);
     return `:root[data-theme="${id}"]{color-scheme:${parsed.theme.kind};${declarations.join(';')}}`;
   });
@@ -23,8 +27,22 @@ function builtinThemes(): Plugin {
   };
 }
 
+/**
+ * 随前端打包的字典写进 dist 下的 CLIENT_TEXTS_FILE，webui-server 挂载这个前端时登记进服务进程的目录。上面的导入登记了它们：
+ * 外壳的（src/texts）与打进包里的库的（api-webui 连同它用的 schema-i18n、api-approval、schema-config）。打进包里的库多了
+ * 带字典的，在上面补一行导入（test/plugins/webui-client-texts.test.ts 核文件与产物一致）
+ */
+function bundledTexts(): Plugin {
+  return {
+    name: 'aalis-bundled-texts',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: CLIENT_TEXTS_FILE, source: JSON.stringify(catalogEntries()) });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), builtinThemes()],
+  plugins: [react(), builtinThemes(), bundledTexts()],
   server: {
     proxy: {
       '/session': {

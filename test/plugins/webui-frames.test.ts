@@ -16,6 +16,7 @@ import { App, definePlugin, type Logger, optional, provide } from '../../package
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
+import { catalogEntries, defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { ref } from '../fixtures/service-ref.js';
 import { freePort, waitListening } from '../helpers/net.js';
@@ -30,6 +31,15 @@ const OWNER = '@zz/frame-owner';
 const TOKEN = 'zz-webui-frames-token-placeholder-00';
 const COOKIE = `aalis_webui_token=${TOKEN}`;
 const INDEX = '<!doctype html><title>看板</title><script type="module" src="app.js"></script>';
+
+/** 插件的字典：日语的译文表恰好只有 i18n、key、source 三个键，形如文字对象，被当成文字渲染就成了「看板」 */
+defineTexts({
+  ns: OWNER,
+  language: 'zh-CN',
+  source: { title: '看板', i18n: '甲', key: '乙', source: '丙' },
+  locales: { ja: { i18n: OWNER, key: 'title', source: '伪造' } },
+});
+const OWNER_TEXTS = catalogEntries().find(entry => entry.ns === OWNER);
 
 const dirs: string[] = [];
 const apps: App[] = [];
@@ -272,7 +282,8 @@ function definePages(webui: BoundWebui, module: string, received: unknown[]) {
   });
 }
 
-async function setup() {
+/** instance 是插件的实例 id，缺省就是插件名 */
+async function setup({ instance = OWNER } = {}) {
   const { module } = framePackage(tempDir());
   const port = await freePort();
   const logs: string[] = [];
@@ -294,6 +305,7 @@ async function setup() {
   const received: unknown[] = [];
   const owner = definePlugin({
     name: OWNER,
+    reusable: true,
     uses: { webui: optional(webuiServer) },
     apply: ({ webui }) => definePages(webui.use, module, received),
   });
@@ -303,7 +315,7 @@ async function setup() {
       definition: webuiServerPlugin,
       config: { host: '127.0.0.1', port, autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN },
     },
-    { definition: owner },
+    { definition: owner, instanceId: instance },
   ]);
   await app.plugins.idle();
   await app.start();
@@ -376,6 +388,23 @@ describe('GET /api/pages 里的插件前端页面', () => {
     const text = JSON.stringify(pages);
     expect(text).not.toContain('file:');
     expect(text).not.toMatch(/sources|module|entry|cards/);
+  });
+
+  it('插件前端的字典（GET /api/pages/:instance/:pageKey/texts）原样交出：译文表恰好形如文字对象时也不被渲染', async () => {
+    const { port } = await setup();
+    const res = await fetch(`http://127.0.0.1:${port}/api/pages/${encodeURIComponent(OWNER)}/board/texts`, {
+      headers: { cookie: COOKIE },
+    });
+    expect(await res.json()).toEqual({ texts: OWNER_TEXTS, packs: {} });
+  });
+
+  it('多实例插件的后缀实例（<插件>:2）的页面：字典取 ns 为插件名的那一条', async () => {
+    const instance = `${OWNER}:2`;
+    const { port } = await setup({ instance });
+    const res = await fetch(`http://127.0.0.1:${port}/api/pages/${encodeURIComponent(instance)}/board/texts`, {
+      headers: { cookie: COOKIE },
+    });
+    expect(await res.json()).toEqual({ texts: OWNER_TEXTS, packs: {} });
   });
 });
 
@@ -481,11 +510,13 @@ describe('/frames/:token/ 的托管', () => {
     }
   });
 
-  it('/frames/_base/ 给出 api-webui 随包带的助手与样式基线：不要 cookie，响应头同一套；别的文件与越界一律 404', async () => {
+  it('/frames/_base/ 给出 api-webui 随包带的助手、样式基线与助手导入的 schema-i18n：不要 cookie，响应头同一套；别的文件与越界一律 404', async () => {
     const { port } = await setup();
     for (const [path, type] of [
       ['frame.js', /javascript/],
       ['frame.css', /^text\/css/],
+      ['schema-i18n/index.js', /javascript/],
+      ['schema-i18n/locales/en.js', /javascript/],
     ] as const) {
       const res = await raw(port, `/frames/_base/${path}`);
       expect(res.status, path).toBe(200);
@@ -495,8 +526,21 @@ describe('/frames/:token/ 的托管', () => {
       expect(res.headers['x-content-type-options'], path).toBe('nosniff');
       expect(res.headers['cache-control'], path).toBe('no-cache');
     }
-    expect((await raw(port, '/frames/_base/frame.js')).body).toContain('export function connect');
-    for (const path of ['index.js', '../index.js', '../package.json', '%2e%2e/index.js', 'missing.js', '']) {
+    const helper = (await raw(port, '/frames/_base/frame.js')).body;
+    expect(helper).toContain('export function connect');
+    // 浏览器不认裸模块名：助手导入的是随它带的那一份
+    expect(helper).toContain("from './schema-i18n/index.js'");
+    expect(helper).not.toContain('@aalis/schema-i18n');
+    for (const path of [
+      'index.js',
+      '../index.js',
+      '../package.json',
+      '%2e%2e/index.js',
+      'missing.js',
+      '',
+      'schema-i18n/index.d.ts',
+      'schema-i18n/index.js.map',
+    ]) {
       const res = await raw(port, `/frames/_base/${path}`);
       expect(res.status, path).toBe(404);
       expect(res.headers.location, path).toBeUndefined();

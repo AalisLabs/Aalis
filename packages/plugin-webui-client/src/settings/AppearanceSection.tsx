@@ -11,7 +11,7 @@ import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
-import { tr } from '../language';
+import { text, tr } from '../language';
 import { pageName, refOf, sameRef, usePages } from '../pages/registry';
 import { useHost, usePluginNames } from '../plugins/list';
 import { t } from '../texts';
@@ -193,7 +193,7 @@ function ThemeFiles() {
           <p>{tr('themeImportFailed')}</p>
           <ul>
             {result.errors.map(error => (
-              <li key={error}>{error}</li>
+              <li key={error.source}>{text(error)}</li>
             ))}
           </ul>
         </div>

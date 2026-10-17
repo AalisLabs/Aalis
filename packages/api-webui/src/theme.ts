@@ -129,7 +129,8 @@ export interface Theme {
   colors: Record<ThemeToken, string>;
 }
 
-export type ThemeParseResult = { ok: true; theme: Theme } | { ok: false; errors: string[] };
+/** 校验的结果：不合格式时列出全部原因，原因是本包字典里的文字对象，界面按读者语言渲染、日志取原文 */
+export type ThemeParseResult = { ok: true; theme: Theme } | { ok: false; errors: TextRef[] };
 
 /**
  * `webui:theme` 贡献点的 spec：插件交一份主题文件，经 `contributions.contribute('webui:theme', { id, theme })` 登记，
@@ -190,25 +191,32 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** 校验一份主题文件（已按 JSON 解析）：不合格式的列出全部原因 */
 export function parseTheme(value: unknown): ThemeParseResult {
-  if (!isRecord(value)) return { ok: false, errors: ['主题文件应是一个 JSON 对象'] };
-  if (value.format !== THEME_FILE_FORMAT) return { ok: false, errors: [`格式名应为 ${THEME_FILE_FORMAT}`] };
-  if (value.version !== THEME_FILE_VERSION) {
-    return { ok: false, errors: [`格式版本 ${String(value.version)} 不认识，只认 ${THEME_FILE_VERSION}`] };
+  if (!isRecord(value)) return { ok: false, errors: [t('themeNotObject')] };
+  if (value.format !== THEME_FILE_FORMAT) {
+    return { ok: false, errors: [t('themeFormat', { format: THEME_FILE_FORMAT })] };
   }
-  const errors: string[] = [];
+  if (value.version !== THEME_FILE_VERSION) {
+    return {
+      ok: false,
+      errors: [t('themeVersion', { version: String(value.version), supported: THEME_FILE_VERSION })],
+    };
+  }
+  const errors: TextRef[] = [];
   const name = typeof value.name === 'string' ? value.name.trim() : '';
   if (name === '' || [...name].length > THEME_NAME_MAX_LENGTH) {
-    errors.push(`名字应是 1 到 ${THEME_NAME_MAX_LENGTH} 个字的文本`);
+    errors.push(t('themeName', { max: THEME_NAME_MAX_LENGTH }));
   }
-  if (value.kind !== 'dark' && value.kind !== 'light') errors.push('种类应为 dark 或 light');
-  for (const key of Object.keys(value)) if (!FILE_FIELDS.has(key)) errors.push(`多余的字段：${key}`);
+  if (value.kind !== 'dark' && value.kind !== 'light') errors.push(t('themeKind'));
+  for (const key of Object.keys(value)) if (!FILE_FIELDS.has(key)) errors.push(t('themeExtraField', { key }));
   if (!isRecord(value.colors)) {
-    errors.push('colors 应是一个对象');
+    errors.push(t('themeColorsNotObject'));
     return { ok: false, errors };
   }
   for (const [token, color] of Object.entries(value.colors)) {
-    if (!TOKEN_SET.has(token)) errors.push(`${token} 不在令牌表里`);
-    else if (typeof color !== 'string' || !parseColor(color)) errors.push(`${token} 的值不是颜色：${String(color)}`);
+    if (!TOKEN_SET.has(token)) errors.push(t('themeUnknownToken', { token }));
+    else if (typeof color !== 'string' || !parseColor(color)) {
+      errors.push(t('themeNotColor', { token, value: String(color) }));
+    }
   }
   if (errors.length > 0) return { ok: false, errors };
   const kind = value.kind as ThemeKind;

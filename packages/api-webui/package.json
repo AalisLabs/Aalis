@@ -19,7 +19,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && tsc -p frame && node -e \"require('node:fs').cpSync('frame/frame.css', 'dist/frame/frame.css')\"",
+    "build": "tsc && tsc -p frame && node frame/build.mjs",
     "dev": "tsc --watch"
   },
   "dependencies": {

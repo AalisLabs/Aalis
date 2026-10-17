@@ -4,15 +4,16 @@
 // GET /api/i18n/languages 给有文字可用的语言（供可选项与第三方客户端用；第一方前端只读后两样）、全局默认层的语言链与服务
 // 进程的时区（前端的文字、格式与时间按它们，不读浏览器的语言与时区；后两样另写进前端入口的页面，见 interfaceLanguage）；
 // GET /api/i18n/messages 给前端自带的字典
-// （外壳、契约包、插件前端）补语言包的译文：取贡献点 i18n:pack 建索引，按 ns 与全局默认层的语言链筛，取舍（只补缺、指纹）
-// 由前端的 resolveText 做。i18n 缺席时前端按原文显示，语言、语言链与补充都是空的，时区照给。
+// （外壳、契约包）补语言包的译文：取贡献点 i18n:pack 建索引，按 ns 与全局默认层的语言链筛，取舍（只补缺、指纹）
+// 由前端的 resolveText 做。i18n 缺席时前端按原文显示，语言、语言链与补充都是空的，时区照给。插件前端的字典连同补充经
+// frameTexts 交出（routes/pages.ts）。
 // ============================================================
 
 import type { Contributions } from '@aalis/api-contributions';
 import type { I18nService } from '@aalis/api-i18n';
-import type { PackedText, PageLanguage } from '@aalis/api-webui';
+import type { FrameTexts, PackedText, PageLanguage } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
-import { indexPacks } from '@aalis/schema-i18n';
+import { catalogEntries, indexPacks } from '@aalis/schema-i18n';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import type { Localizer } from '../localize.js';
@@ -44,16 +45,41 @@ export const interfaceLanguage = (localizer: Pick<Localizer, 'languages'>): Page
   timeZone: processTimeZone(),
 });
 
-export function registerI18nRoutes(
-  expressApp: express.Express,
-  deps: {
-    i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>;
-    /** 语言包的来源 */
-    contributions: Pick<ServiceSelection<Contributions>, 'present' | 'use'>;
-    localizer: Pick<Localizer, 'languages'>;
-  },
-  gate: RouteGate,
-): void {
+interface I18nDeps {
+  i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>;
+  /** 语言包的来源 */
+  contributions: Pick<ServiceSelection<Contributions>, 'present' | 'use'>;
+  localizer: Pick<Localizer, 'languages'>;
+}
+
+/**
+ * 语言包给这些 ns 补的译文：ns → 键 → 各语言包给的。只留全局默认层语言链里某种的语言相同的（zh-TW 读者遇到只有简体时用
+ * 简体），另留 en（链里都没有时按 en）。i18n 缺席时为空
+ */
+function packedTexts(deps: I18nDeps, names: Iterable<string>): Record<string, Record<string, PackedText[]>> {
+  if (!deps.i18n.present) return {};
+  const wanted = new Set([...deps.localizer.languages(), 'en'].map(baseLanguage));
+  const packs = deps.contributions.present ? deps.contributions.use.collect('i18n:pack').map(({ spec }) => spec) : [];
+  const index = indexPacks(packs);
+  const entries: Record<string, Record<string, PackedText[]>> = {};
+  for (const name of new Set(names)) {
+    const keys: Record<string, PackedText[]> = {};
+    for (const [key, candidates] of index.get(name) ?? []) {
+      const kept = candidates.filter(({ language }) => wanted.has(baseLanguage(language)));
+      if (kept.length > 0) keys[key] = kept;
+    }
+    if (Object.keys(keys).length > 0) entries[name] = keys;
+  }
+  return entries;
+}
+
+/** 插件前端的字典：服务进程目录里这个 ns（插件名）的条目，与语言包给它补的译文 */
+export const frameTexts = (deps: I18nDeps, ns: string): FrameTexts => ({
+  texts: catalogEntries().find(entry => entry.ns === ns) ?? null,
+  packs: packedTexts(deps, [ns])[ns] ?? {},
+});
+
+export function registerI18nRoutes(expressApp: express.Express, deps: I18nDeps, gate: RouteGate): void {
   route(expressApp, 'GET /api/i18n/languages', gate(), (_req, res) => {
     res.json({
       languages: deps.i18n.present ? [...deps.i18n.use.languages()] : [],
@@ -63,23 +89,6 @@ export function registerI18nRoutes(
 
   route(expressApp, 'GET /api/i18n/messages', gate(), (req, res) => {
     const { ns } = req.query;
-    if (!deps.i18n.present || typeof ns !== 'string') {
-      res.json({ entries: {} });
-      return;
-    }
-    // 链里某种的语言相同的才用得上（zh-TW 读者遇到只有简体时用简体），另留 en：链里都没有时按 en
-    const wanted = new Set([...deps.localizer.languages(), 'en'].map(baseLanguage));
-    const packs = deps.contributions.present ? deps.contributions.use.collect('i18n:pack').map(({ spec }) => spec) : [];
-    const index = indexPacks(packs);
-    const entries: Record<string, Record<string, PackedText[]>> = {};
-    for (const name of new Set(ns.split(','))) {
-      const keys: Record<string, PackedText[]> = {};
-      for (const [key, candidates] of index.get(name) ?? []) {
-        const kept = candidates.filter(({ language }) => wanted.has(baseLanguage(language)));
-        if (kept.length > 0) keys[key] = kept;
-      }
-      if (Object.keys(keys).length > 0) entries[name] = keys;
-    }
-    res.json({ entries });
+    res.json({ entries: typeof ns === 'string' ? packedTexts(deps, ns.split(',')) : {} });
   });
 }

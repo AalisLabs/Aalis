@@ -579,6 +579,23 @@ describe('外观', () => {
     expect(localStorage.getItem('aalis.themes')).toBeNull();
   });
 
+  it('英文界面导入被拒：主题文件的校验原因与界面自己的原因都按英文', async () => {
+    app = await renderApp('/settings/appearance', {}, settingsRest(language(['en'])));
+    await section().findByRole('switch', { name: 'Follow the system' });
+    const refused = async (file: File, reasons: string[]) => {
+      await act(async () => {
+        fireEvent.change(section().getByLabelText('Import a theme file'), { target: { files: [file] } });
+      });
+      const listed = () => [...section().getByRole('alert').querySelectorAll('li')].map(item => item.textContent);
+      await vi.waitFor(() => expect(listed()).toEqual(reasons));
+    };
+    await refused(fileOf(theme('坏的', 'dark', { '--color-bogus': '#000000', '--color-bg': 'red' } as never)), [
+      '--color-bogus isn’t in the token table',
+      'The value of --color-bg isn’t a color: red',
+    ]);
+    await refused(fileOf('{不是 JSON'), ['Not a JSON file']);
+  });
+
   it('内置主题导出再导入后与原主题逐令牌相同；导入的主题可以移除，正在用的回到同深浅的偏中性', async () => {
     const downloads = captureDownloads();
     app = await renderApp('/settings/appearance', {}, settingsRest());

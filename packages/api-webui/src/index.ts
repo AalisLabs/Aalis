@@ -130,11 +130,18 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
  *   webui-server 自动发现挂载（无需 `apply`，runtime 不会把它当插件加载）。
  * - **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl, { label })`，优先于自动发现；
  *   多前端切换时显示的名字优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。
+ *
+ * 前端自带字典（schema-i18n 的 defineTexts，外壳的与随它打包的库的）时，构建时把这些字典的目录条目写进静态目录下的
+ * {@link CLIENT_TEXTS_FILE}，webui-server 挂载它时登记进服务进程的目录：「翻译」页列得出它们的齐全度，语言包作者拿得到
+ * 原文指纹。没有这个文件的前端照常挂载
  */
 export interface WebuiClientProvider {
   /** 返回含 index.html 的前端静态目录绝对路径 */
   getClientDir(): string;
 }
+
+/** 前端静态目录下随前端打包的字典：schema-i18n 的目录条目（CatalogEntry）组成的 JSON 数组 */
+export const CLIENT_TEXTS_FILE = 'aalis-texts.json';
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const webuiClient = defineService<WebuiClientProvider>('webui-client');

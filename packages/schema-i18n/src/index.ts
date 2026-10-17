@@ -12,6 +12,7 @@ export {
   catalogEntries,
   catalogIssues,
   type LocaleTable,
+  registerCatalogEntry,
   type StringTable,
 } from './catalog.js';
 export { checkTexts, type TextIssue } from './check.js';

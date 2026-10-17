@@ -304,7 +304,7 @@ webui.use.definePage({
 ### 托管与隔离
 
 - `GET /frames/:token/<路径>`：插件前端的文件。`token` 是页面登记时随机生成的 128 位标识（base64url），页面撤回或重新登记后旧的回 404；地址变了界面就重新挂载，插件升级后不会读到旧缓存。不要登录：`token` 只出现在要登录的 `GET /api/pages` 里，文件是随包发布的代码，不含数据。
-- `GET /frames/_base/<路径>`：宿主给框架的公用文件，随本包发布，只有助手 `frame.js` 与样式基线 `frame.css`（见下文「助手」「样式基线」）。
+- `GET /frames/_base/<路径>`：宿主给框架的公用文件，随本包发布，只有助手 `frame.js`（见下文「助手」）、样式基线 `frame.css`（见下文「样式基线」）与助手导入的 `schema-i18n/`（随本包带的构建产物）。
 - 只收 `GET` 与 `HEAD`，别的方法回 405。扩展名只有 `html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`；文件要按 realpath 落在 `webui/` 之内，指向外面的符号链接也算越界；点开头的段、目录与其余不合的一律 404，不回目录列表、不发 3xx。
 - 响应头：框架 CSP、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`（框架取外站资源时不带上框架地址）、`Access-Control-Allow-Origin: *`（框架是不透明来源，模块脚本连取自己目录下的文件也走 CORS）、`Cache-Control: no-cache`（用 ETag 再验证）。
 - 框架 CSP，`<Host>` 是请求的 Host 去掉默认端口 `:80`、`:443`：
@@ -319,7 +319,7 @@ webui.use.definePage({
 
 ### 消息通道
 
-宿主与框架之间只用 `postMessage`。框架先在窗口上发 `hello`，宿主核过来源窗口、随机数与主版本，经 `MessageChannel` 交给框架一个专用端口，之后的消息都走这个端口。版本常量 `FRAME_PROTOCOL_VERSION`（`'1.0'`），写法与 `SESSION_PROTOCOL_VERSION` 相同；第一版标 experimental，只做加法，加字段、加消息升次版本。实例、页面与会话面板的会话一律取宿主挂载时的值，消息里没有这些字段，带了就是多余的键。
+宿主与框架之间只用 `postMessage`。框架先在窗口上发 `hello`，宿主核过来源窗口、随机数与主版本，经 `MessageChannel` 交给框架一个专用端口，之后的消息都走这个端口。版本常量 `FRAME_PROTOCOL_VERSION`（`'1.1'`），写法与 `SESSION_PROTOCOL_VERSION` 相同；第一版标 experimental，只做加法，加字段、加消息升次版本。实例、页面与会话面板的会话一律取宿主挂载时的值，消息里没有这些字段，带了就是多余的键。
 
 **框架 → 宿主**（请求带 `id`：框架自选的整数，在途的不重复；宿主回 `result`）
 
@@ -337,7 +337,7 @@ webui.use.definePage({
 
 | type | 字段 | 什么时候 |
 |---|---|---|
-| `init` | `protocol`、`experimental: true`、`sessionId?`（会话面板）、`theme` | 握手时随端口交出 |
+| `init` | `protocol`、`experimental: true`、`sessionId?`（会话面板）、`theme`；`languages` 与 `timeZone`（界面的语言链与服务进程的时区，与宿主界面同一份，链为空是 i18n 不在）、`texts` 与 `packs`（这一页所属插件的字典与语言包给它补的译文，即 `FrameTexts`） | 握手时随端口交出；全局语言变了宿主重新挂载 |
 | `result` | `id`，以及 `ok: true, value` 或 `ok: false, error: { code, message }` | 回每个请求 |
 | `theme` | `kind`（`dark`、`light`）、`tokens`（主题令牌名到值） | 主题切换，或跟随系统时深浅变了 |
 | `invalidate` | `source?` | 数据变了；带 `source` 时只重取这个数据源。会话或管理连接重连后宿主推一次不带 `source` 的，意思是全部重取（含会话列表） |
@@ -392,16 +392,20 @@ frame.onInvalidate(source => { /* 重取 source 这个数据源；没带 source 
 | 成员 | 做什么 |
 |---|---|
 | `sessionId` | 会话面板挂在哪个会话上；插件页面没有 |
+| `timeZone` | 服务进程的时区（`init` 给的）：在 `t()` 之外格式化时间也按它；次版本更早的宿主不给，给的认不出时也没有 |
+| `language` | 助手设进 `<html lang>` 的语言（规范写法），即这个插件的字典实际选中的语言；插件没有字典或次版本更早的宿主时没有 |
 | `data(source, input?)` | 取这一页一个数据源的数据 |
 | `action(name, input?)` | 调这一页的一个动作，回处理函数给的一句话或 `null`；`destructive` 的由宿主先弹确认框 |
 | `open({ url })`、`open({ session })` | 请宿主打开外站地址（经宿主的对话框，由用户点开）或应用内的会话 |
 | `onInvalidate(listener)` | 数据变了：带数据源名时只重取它，不带时全部重取。回退订 |
 | `listSessions(params?)`、`onSessionsChanged(listener)` | 列会话、收会话列表的增量（要 `sessions:read`） |
 | `abortTurn({ sessionId, turnId? })` | 停止一个会话的回合（要 `turn:abort`） |
+| `t(key, params?)` | 这个插件字典里的一句，按 `init` 给的语言链与语言包的补充渲染，时间按服务进程的时区；没有这种语言的译文时用原文，字典里没有这个键时回键名。字典写在插件自己的 `texts.ts` 里，ns 是插件包名，要由插件的服务端入口导入、在服务进程里登记，宿主才取得到；服务端没导入的字典宿主取不到，`t()` 一律回键名 |
 
 - 请求失败时抛出 `Error`，带 `code`（上文的错误码）。用户在宿主的确认框里取消是 `cancelled`，不算出错。
 - 握手：从地址片段读出随机数发 `hello`，片段不清（清片段会往会话历史里加条目）；只认来自 `window.parent`、带一个端口的第一个 `init`，之后只用这个端口；10 秒等不到 `init`，或 `init` 里的 `theme` 不是带 `tokens` 的对象时，`connect()` 报错。`connect()` 调多次是同一个连接。
 - 主题：收到 `init` 的同一拍把主题令牌写到根元素的内联样式上，设 `data-theme`（`dark` 或 `light`）与 `color-scheme`，收到 `theme` 时更新。
+- 文字：同一拍登记 `init` 里这个插件的字典，`<html lang>` 写成字典实际选中的语言（原文、字典自带的译文与原文指纹相符的语言包补充里按语言链选）；插件没有字典时不动。`packs` 里形状不对的条目丢掉，与宿主一侧同一读法。助手导入的 schema-i18n 是 `/frames/_base/schema-i18n/` 下随本包带的一份。
 - 在 `pagehide` 时经端口发 `leaving`。不画界面，不缓存数据，不改地址。
 - 宿主前端与助手不一定同版本，兼容靠握手的主版本检查与只做加法。用 TypeScript 写插件前端时，在项目里任意一个 `.d.ts` 中给这个地址补一条模块声明。以 `/` 开头的名字 TypeScript 当作相对模块名、不能直接声明，所以写成通配：
 
@@ -524,6 +528,8 @@ type LayoutOperation =
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 含 `dist/index.html`，被 webui-server 自动发现挂载（无需 `apply`）。
 - **主动覆盖**：插件 `apply` 里 `provide.use(webuiClient, impl, { label })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。替别的包登记时 `entryId` 取被托管包的 id；条目仍归登记的激活清理，计入它的 `provides`。
+
+前端自带字典（schema-i18n 的 `defineTexts`，外壳的与随它打包的库的）时，构建时把这些字典的目录条目（`CatalogEntry`）写成 JSON 数组，放在静态目录下的 `CLIENT_TEXTS_FILE`（`aalis-texts.json`）。webui-server 挂载这个前端时把它们登记进服务进程的目录：「翻译」页列得出它们的齐全度，语言包作者拿得到原文指纹。没有这个文件的前端照常挂载；读不出、不是数组时不登记，有条目不合格时合格的照登，都记告警。
 
 ## 管理面推送（/admin）
 
@@ -751,6 +757,7 @@ interface OptionDetail {
 |---|---|---|
 | `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好。声明式页面（`DeclarativePageView`）是声明去掉函数（数据源、处理函数、`applies`）；插件前端页面（`FramePageView`）见上文「插件前端」 |
 | `GET /api/session-pages` | 查询参数 `sessionId` | `{ pages: PageRef[] }`：这个会话适用的会话面板页面。会话不存在回 404 |
+| `GET /api/pages/:instance/:pageKey/texts` | — | `FrameTexts`：这一页所属插件的字典（`texts`，schema-i18n 的目录条目，插件没有字典时为 `null`）与语言包按全局默认层的语言链给它补的译文（`packs`），原样交出、不渲染；插件前端的宿主随 `init` 交给框架。页面不在回 404 |
 | `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数 `PageDataQuery` | `PageDataResponse`（声明式页面，按组件种类见 `PageDataByType`）或 `FrameDataResponse`（插件前端的数据源，`componentId` 是数据源名，`data` 是数据源返回的值） |
 | `POST /api/pages/:instance/:pageKey/actions/:action` | `PageActionRequest` | `{ message? }` |
 | `GET /api/layout` | — | `LayoutRecords` |
@@ -846,6 +853,7 @@ interface DependencyNode {
 | `GET /frames/:token/{*path}` | 插件前端的文件，`token` 取自 `FramePageView.frame.src` |
 | `GET /frames/_base/frame.js` | 宿主给框架的助手 |
 | `GET /frames/_base/frame.css` | 宿主给框架的样式基线 |
+| `GET /frames/_base/schema-i18n/{*path}` | 助手导入的 schema-i18n（随本包带的构建产物） |
 
 只收 GET 与 HEAD，别的方法回 405；不要登录。响应头与框架 CSP 见上文「托管与隔离」。
 
@@ -890,7 +898,7 @@ interface DependencyNode {
 ```ts
 function parseTheme(value: unknown): ThemeParseResult;
 
-type ThemeParseResult = { ok: true; theme: Theme } | { ok: false; errors: string[] };
+type ThemeParseResult = { ok: true; theme: Theme } | { ok: false; errors: TextRef[] };
 
 interface Theme {
   name: string;
@@ -899,7 +907,7 @@ interface Theme {
 }
 ```
 
-`value` 是已按 JSON 解析的对象。不合格式时 `errors` 列出全部原因（如「--color-bg 的值不是颜色：url(...)」「--evil 不在令牌表里」）；格式名或版本不对时只给这一条。
+`value` 是已按 JSON 解析的对象。不合格式时 `errors` 列出全部原因（如「--color-bg 的值不是颜色：url(...)」「--evil 不在令牌表里」），是本包字典里的文字对象，界面按读者的语言渲染，日志取原文（`toSource`）；格式名或版本不对时只给这一条。
 
 ### 内置主题
 

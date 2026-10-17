@@ -10,14 +10,15 @@
 //
 // 托管（webui-server，不要登录）：
 // GET /frames/:token/<路径>    插件包 webui/ 里的文件；token 是页面登记时随机生成的，页面撤回或重新登记后旧的回 404
-// GET /frames/_base/<路径>     宿主给框架的公用文件：助手 frame.js 与样式基线 frame.css，随本包发布
+// GET /frames/_base/<路径>     宿主给框架的公用文件：助手 frame.js、样式基线 frame.css 与助手导入的 schema-i18n/，随本包发布
 
 import type { SessionMethodParams, SessionMethodResult, SessionNotificationParams } from '@aalis/api-session-protocol';
-import type { Localized } from '@aalis/schema-i18n';
+import type { CatalogEntry, Localized, TextParam } from '@aalis/schema-i18n';
+import type { PackedText } from './rest.js';
 import type { ThemeKind, ThemeToken } from './theme.js';
 
 /** 消息通道的协议版本 `<主>.<次>`：握手时主版本不同，宿主卸载框架 */
-export const FRAME_PROTOCOL_VERSION = '1.0';
+export const FRAME_PROTOCOL_VERSION = '1.1';
 
 /**
  * 框架的沙箱值：宿主 iframe 的 sandbox 属性与框架文件响应头 CSP 的 sandbox 指令同一份。只给脚本，
@@ -122,13 +123,28 @@ export interface FrameTheme {
   tokens: Record<ThemeToken, string>;
 }
 
-/** 握手时随端口交出；sessionId 只给会话面板，换会话时宿主重新挂载 */
-export interface FrameInit {
+/**
+ * 插件前端的字典：这一页所属插件的原文字典（schema-i18n 的目录条目，ns 是插件名，原文与字典自带的全部译文；插件没有字典时
+ * 为 null）与语言包给它补的译文（键 → 各语言包给的，只留界面的语言链用得上的）。宿主取自
+ * GET /api/pages/:instance/:pageKey/texts，原样随 init 交给框架
+ */
+export interface FrameTexts {
+  texts: CatalogEntry | null;
+  packs: Record<string, PackedText[]>;
+}
+
+/**
+ * 握手时随端口交出；sessionId 只给会话面板，换会话时宿主重新挂载。languages 与 timeZone 与宿主界面同一份：全局默认层的
+ * 语言链（跟随系统已换成系统语言；空的是 i18n 不在，文字按原文）与服务进程的时区。全局语言变了宿主重新挂载
+ */
+export interface FrameInit extends FrameTexts {
   type: 'init';
   protocol: string;
   experimental: true;
   sessionId?: string;
   theme: FrameTheme;
+  languages: string[];
+  timeZone: string;
 }
 
 /** 回一个请求 */
@@ -163,13 +179,18 @@ export type FrameHostMessage = FrameInit | FrameResult | FrameThemeChange | Fram
 // GET /frames/_base/frame.js 是给插件前端用的浏览器模块，随本包发布，不用构建就能导入：
 //   import { connect } from '/frames/_base/frame.js';
 //   const frame = await connect();
-// 它握手，把主题令牌写到根元素上（设 data-theme 与 color-scheme，主题变了跟着更新），按 id 配对请求，在 pagehide 时
-// 发 leaving；不画界面、不缓存数据、不改地址。用 TypeScript 写插件前端时从这里取类型。
+// 它握手，把主题令牌写到根元素上（设 data-theme 与 color-scheme，主题变了跟着更新），同一拍登记这个插件的字典、按字典实际
+// 选中的语言设 <html lang>，按 id 配对请求，在 pagehide 时发 leaving；不画界面、不缓存数据、不改地址。它导入的 schema-i18n
+// 是 /frames/_base/schema-i18n/ 下随本包带的一份。用 TypeScript 写插件前端时从这里取类型。
 
 /** connect() 给出的连接。请求失败时抛出 Error，带 code（FrameErrorCode） */
 export interface FrameClient {
   /** 会话面板挂在哪个会话上；插件页面没有 */
   readonly sessionId?: string;
+  /** 服务进程的时区（init 给的）：在 t() 之外格式化时间也按它。次版本更早的宿主不给，为 undefined */
+  readonly timeZone?: string;
+  /** 助手设进 <html lang> 的语言，即这个插件的字典实际选中的语言；插件没有字典或次版本更早的宿主时为 undefined */
+  readonly language?: string;
   /** 取这一页一个数据源的数据 */
   data(source: string, input?: Record<string, unknown>): Promise<unknown>;
   /** 调这一页的一个动作，回处理函数给的一句话或 null；destructive 的由宿主先弹确认框，取消时抛 cancelled */
@@ -186,6 +207,11 @@ export interface FrameClient {
   onSessionsChanged(listener: (change: Omit<FrameSessionsChanged, 'type'>) => void): () => void;
   /** 停止一个会话的回合（要 turn:abort） */
   abortTurn(params: Omit<FrameTurnAbortRequest, 'type' | 'id'>): Promise<void>;
+  /**
+   * 这个插件字典里的一句，按界面的语言渲染：语言链与语言包的补充随 init 交来，没有这种语言的译文时用原文，时间按服务进程的
+   * 时区；字典里没有这个键时回键名
+   */
+  t(key: string, params?: Readonly<Record<string, TextParam>>): string;
 }
 
 /**

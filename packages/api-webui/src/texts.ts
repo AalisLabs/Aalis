@@ -1,4 +1,4 @@
-// 本包自己的原文字典：子系统组名、内置主题名与对比度检查的组合名，前端随包带上、按读者语言渲染
+// 本包自己的原文字典：子系统组名、内置主题名、对比度检查的组合名与主题文件的校验原因，前端随包带上、按读者语言渲染
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -72,6 +72,15 @@ const SOURCE = {
   markOnRail: '金色标记 / 图标栏',
   markOnSideSelected: '金色标记 / 侧栏里的选中行',
   markOnRailCurrent: '金色标记 / 图标栏的当前项',
+  themeNotObject: '主题文件应是一个 JSON 对象',
+  themeFormat: '格式名应为 {format}',
+  themeVersion: '格式版本 {version} 不认识，只认 {supported}',
+  themeName: '名字应是 1 到 {max, number} 个字的文本',
+  themeKind: '种类应为 dark 或 light',
+  themeExtraField: '多余的字段：{key}',
+  themeColorsNotObject: 'colors 应是一个对象',
+  themeUnknownToken: '{token} 不在令牌表里',
+  themeNotColor: '{token} 的值不是颜色：{value}',
 } as const;
 export type Source = typeof SOURCE;
 
