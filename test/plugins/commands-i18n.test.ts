@@ -243,6 +243,14 @@ describe('内置指令的说明与回复按会话的语言', () => {
     );
   });
 
+  it('en 会话里 /clear 的结果是英文：消息历史与附件缓存的结果行', async () => {
+    const s = await setup();
+    s.host.commands.use.setExecutionGuard(async () => null);
+    expect((await s.ask(await s.session(['en']), '/clear -t context,image')).content).toBe(
+      ['✅ No image cache in this session', "✅ This session's message history cleared"].join('\n'),
+    );
+  });
+
   it('en 会话里意图确认的问句是英文', async () => {
     const s = await setup();
     s.host.commands.use.setExecutionGuard(async ({ confirmIntent }) =>

@@ -37,4 +37,14 @@ export default defineLocale<Source>()({
   setHint:
     'Change settings: /session.set -m <model> -p <persona> -t <level> [-n <name>]   (/model lists the available models; a wrong persona name lists the available personas)',
   resetHint: 'Reset:   /session.reset          (-m model only / -p persona only / -t thinking only)',
+  partHistory: 'History',
+  partToolResults: 'Tool results',
+  partToolDefs: 'Tool definitions',
+  partPersona: 'Persona',
+  partMemorySummary: 'Conversation summary',
+  partMemoryVector: 'Vector memory',
+  partSkills: 'Skills',
+  partPlatform: 'Platform prompt',
+  partSubtask: 'Subtasks',
+  partSystemOther: 'Other system prompts',
 });

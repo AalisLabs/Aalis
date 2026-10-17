@@ -693,7 +693,7 @@ class DefaultAgent implements AgentService {
           message: incoming,
           reply: '',
           outcome: signal.aborted ? 'aborted' : 'error',
-          ...(signal.aborted ? {} : { error: toSource(why) }),
+          ...(signal.aborted ? {} : { error: why }),
           sessionId: incoming.sessionId,
           turnId,
           metadata: msgHookData.metadata,
@@ -1418,8 +1418,7 @@ class DefaultAgent implements AgentService {
         }
 
         const error = textOf(err);
-        const message = toSource(error);
-        this.logger.error(`处理消息失败: ${message}`);
+        this.logger.error(`处理消息失败: ${toSource(error)}`);
 
         // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
         // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
@@ -1445,7 +1444,7 @@ class DefaultAgent implements AgentService {
           message: incoming,
           reply: '',
           outcome: 'error',
-          error: message,
+          error,
           sessionId: incoming.sessionId,
           turnId,
           metadata: msgHookData.metadata,
@@ -1772,16 +1771,16 @@ class DefaultAgent implements AgentService {
         reservedForReply: maxTokens,
       },
       parts: [
-        { label: '历史消息', tokens: historyTokens },
-        { label: '工具结果', tokens: toolResultTokens },
-        { label: '工具定义', tokens: toolDefsTokens },
-        { label: '人设', tokens: personaTokens },
-        { label: '对话摘要', tokens: memorySummaryTokens },
-        { label: '向量记忆', tokens: memoryVectorTokens },
-        { label: '技能', tokens: skillsTokens },
-        { label: '平台提示', tokens: platformTokens },
-        { label: '子任务', tokens: subtaskTokens },
-        { label: '其余系统提示', tokens: systemOtherTokens, injectors: injectorTokens },
+        { label: t('partHistory'), tokens: historyTokens },
+        { label: t('partToolResults'), tokens: toolResultTokens },
+        { label: t('partToolDefs'), tokens: toolDefsTokens },
+        { label: t('partPersona'), tokens: personaTokens },
+        { label: t('partMemorySummary'), tokens: memorySummaryTokens },
+        { label: t('partMemoryVector'), tokens: memoryVectorTokens },
+        { label: t('partSkills'), tokens: skillsTokens },
+        { label: t('partPlatform'), tokens: platformTokens },
+        { label: t('partSubtask'), tokens: subtaskTokens },
+        { label: t('partSystemOther'), tokens: systemOtherTokens, injectors: injectorTokens },
       ],
     });
 

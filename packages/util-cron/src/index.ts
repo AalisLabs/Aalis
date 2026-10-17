@@ -1,10 +1,13 @@
-// ===== Cron 表达式解析与匹配（零依赖纯函数） =====
+// ===== Cron 表达式解析与匹配（纯函数） =====
 //
 // POSIX 5 字段 cron + `@hourly`/`@daily`/... 别名 + `@every Ns` 间隔语法。
-// 与 Aalis 的任何概念无关——不 import core、不碰 node:，可在任何 JS 运行时调用。
+// 不 import core、不碰 node:，可在任何 JS 运行时调用；只依赖 @aalis/schema-i18n（校验不通过的原因是文字对象）。
 //
 // 订阅协议（CronEngine 服务契约）在 @aalis/api-cron-engine，
 // 实现在 @aalis/plugin-cron-engine。
+
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // 别名表用 Map 而非对象字面量：字面量 + `aliases[s]` 真值查找会命中 Object.prototype
 // 成员（'toString' / 'constructor' / '__proto__' …），把函数/对象当表达式返回，
@@ -173,23 +176,27 @@ export function parseEverySeconds(input: string): number {
 
 export type CronExprKind = 'cron' | 'interval';
 
+/**
+ * 校验结果。不通过时 text 是给人看的原因：字符串或文字对象（@aalis/schema-i18n），本包的实现给本包字典里的文字对象；
+ * 交给模型与写日志的取 toSource，抛给人看的字符串用 Error、文字对象用 TextError
+ */
 export type ValidateResult =
   | { ok: true; kind: CronExprKind; normalized: string; intervalSeconds?: number }
-  | { ok: false; reason: string };
+  | { ok: false; text: string | TextRef };
 
 /**
  * 校验表达式：cron（5 字段或别名）或 interval（`@every Ns/Nm/Nh`）。
  */
 export function validateCronExpr(input: string): ValidateResult {
   const s = input.trim();
-  if (!s) return { ok: false, reason: '表达式为空' };
+  if (!s) return { ok: false, text: t('empty') };
   if (s.startsWith('@every')) {
     const sec = parseEverySeconds(s);
-    if (sec <= 0) return { ok: false, reason: `无法识别的 @every 表达式: ${s}` };
+    if (sec <= 0) return { ok: false, text: t('every', { expr: s }) };
     return { ok: true, kind: 'interval', normalized: s, intervalSeconds: sec };
   }
   const normalized = normalizeCronExpr(s);
-  if (!normalized) return { ok: false, reason: `非法 cron 表达式（需 5 字段或别名）: ${s}` };
+  if (!normalized) return { ok: false, text: t('syntax', { expr: s }) };
   const fields = normalized.split(/\s+/);
   // 逐字段校验：任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
   const ranges: Array<[number, number]> = [
@@ -201,7 +208,7 @@ export function validateCronExpr(input: string): ValidateResult {
   ];
   for (let i = 0; i < 5; i++) {
     if (parseCronField(fields[i], ranges[i][0], ranges[i][1]).size === 0) {
-      return { ok: false, reason: `cron 第 ${i + 1} 字段非法（解析为空）: "${fields[i]}"` };
+      return { ok: false, text: t('field', { field: i + 1, value: fields[i] }) };
     }
   }
   return { ok: true, kind: 'cron', normalized };

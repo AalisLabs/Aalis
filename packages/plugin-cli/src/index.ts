@@ -6,6 +6,7 @@ import {
   type ApprovalFacts,
   type ApprovalSurface,
   approvals,
+  clipForCard,
   type SettledState,
   sanitizeForCard,
 } from '@aalis/api-approval';
@@ -1088,7 +1089,7 @@ class CliTui {
 
   /**
    * 审批卡：标题行、事实、应答项，上下边框。卡片最多高到正文只剩 3 行：事实放不下时保留首尾几行，写明省略了多少行。
-   * 事实显示前经 sanitizeForCard 清洗，太长的保留首尾、写明省略了多少字
+   * 事实显示前经 clipForCard 清洗，太长的保留首尾、写明省略了多少字
    */
   private renderCard(width: number, height: number): string[] {
     const card = this.cards[0];
@@ -1109,7 +1110,11 @@ class CliTui {
     const title = `${chalk.bold.yellow(text.heading)} ${text.subject}`;
     const rows = cardFacts(card.facts, text.labels);
     const labelWidth = Math.max(0, ...rows.map(([label]) => visibleLen(label)));
-    const facts = rows.flatMap(([label, value]) => factLines(label, labelWidth, value, inner - 2));
+    const clipped = (value: string) => {
+      const { head, omitted, tail } = clipForCard(value, CARD_FACT_LIMIT);
+      return omitted === 0 ? head : `${head}${this.localize(t('charsOmitted', { count: omitted }))}${tail}`;
+    };
+    const facts = rows.flatMap(([label, value]) => factLines(label, labelWidth, clipped(value), inner - 2));
     const option = (decision: ApprovalDecision, label: string) =>
       this.choice === decision ? chalk.inverse(`❯ ${label}`) : `  ${label}`;
     const choices = `${option('approve', text.approve)}   ${option('deny', text.deny)}`;
@@ -1245,11 +1250,11 @@ function cardFacts(facts: ApprovalFacts, labels: Localized<typeof FACT_LABELS>):
   return rows;
 }
 
-/** 一项事实：清洗后按换行拆开、按宽度折行；标签只在第一行，补齐到 labelWidth，续行缩进到值的那一列 */
+/** 一项清洗过的事实：按换行拆开、按宽度折行；标签只在第一行，补齐到 labelWidth，续行缩进到值的那一列 */
 function factLines(label: string, labelWidth: number, text: string, width: number): string[] {
   const head = `${padAnsi(chalk.gray(label), labelWidth)}  `;
   const indent = ' '.repeat(labelWidth + 2);
-  return sanitizeForCard(text, CARD_FACT_LIMIT)
+  return text
     .replace(/\t/g, '    ')
     .split('\n')
     .flatMap(line => wrapByVisibleWidth(line, width - indent.length))

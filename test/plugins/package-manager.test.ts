@@ -29,6 +29,7 @@ import packageManagerPlugin, {
 } from '../../packages/plugin-package-manager/src/index.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { deferred } from '../helpers/deferred.js';
@@ -346,7 +347,7 @@ describe('install（只有一条路径：写根依赖）', () => {
   it('装前类型闸：前端界面包放行', async () => {
     const h = makeHarness({ viewOut: '["aalis","aalis-interface"]', json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('@scope/ui');
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(true);
   });
 
@@ -465,7 +466,7 @@ describe('install（只有一条路径：写根依赖）', () => {
       },
     });
     const r = await createPackageManager(h.deps).install('plugin-mismatch');
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     expect(r.message).toContain('plugin-mismatch');
     expect(r.plugin).toBe('other-name');
     expect(
@@ -1036,7 +1037,7 @@ describe('uninstall', () => {
   it('选了同时删除配置：交给 cleanupConfig 删配置段，回执写明只有它用的密钥一并删除', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     const r = await createPackageManager(h.deps).uninstall('@scope/foo', { removeConfig: true });
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['@scope/foo'], true);
     expect(r.message).toBe(
       '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；' +
@@ -1065,7 +1066,7 @@ describe('uninstall', () => {
     h.deps.listPluginInstanceIds = name =>
       name === '@scope/foo' ? ['@scope/foo', '@scope/foo:one', '@scope/foo:two'] : [];
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.deps.unloadPlugin).toHaveBeenCalledTimes(3);
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo');
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo:one');
@@ -1087,7 +1088,7 @@ describe('uninstall', () => {
       listPluginInstanceIds: name => (name === 'other-name' ? ['other-name'] : []),
     });
     const r = await createPackageManager(h.deps).uninstall('plugin-mismatch');
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('other-name');
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['other-name'], false);
     expect(h.deps.unloadPlugin).not.toHaveBeenCalledWith('plugin-mismatch');
@@ -1444,7 +1445,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
   it('卸载包名后，全部 instanceId 与停用标记都离开；配置段与密钥默认留着，重装后照原配置启动', async () => {
     const { TARGET, app, store, svc, tag, host, savedSecrets, instances } = await bootReuser();
     const r = await svc.uninstall(TARGET);
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     await app.plugins.idle();
 
     expect(instances(), '注册表不得留下 name:suffix 幽灵实例').toEqual([]);
@@ -1459,7 +1460,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
   it('选了同时删除配置：各实例的配置段删掉，落盘后只删没人再引用的密钥', async () => {
     const { TARGET, app, store, svc, savedSecrets, instances } = await bootReuser();
     const r = await svc.uninstall(TARGET, { removeConfig: true });
-    expect(r.ok, r.message).toBe(true);
+    expect(r.ok, toSource(r.message)).toBe(true);
     await app.plugins.idle();
 
     expect(instances()).toEqual([]);
@@ -1776,7 +1777,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       if (!svc) throw new Error('package-manager 未就绪');
 
       const un = await svc.uninstall(pkg);
-      expect(un.ok, un.message).toBe(true);
+      expect(un.ok, toSource(un.message)).toBe(true);
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name'), '按包名卸载必须摘掉以定义 name 落账的实例').toBeUndefined();
     } finally {

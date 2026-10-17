@@ -17,6 +17,7 @@ import * as process from 'node:process';
 import type { StorageService } from '@aalis/api-storage';
 import { parseStorageUri, resolveAgainstCwd } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
+import { toSource } from '@aalis/schema-i18n';
 import type { CwdState } from './cwd-state.js';
 
 interface SystemConfig {
@@ -212,7 +213,7 @@ export function registerSystemTools(tools: BoundTools, config: SystemConfig): vo
         config.storage?.listRoots().map(r => ({
           name: r.name,
           uri: `${r.name}:/`,
-          label: r.label,
+          label: toSource(r.label),
           kind: r.kind,
           readable: r.readable,
           writable: r.writable,

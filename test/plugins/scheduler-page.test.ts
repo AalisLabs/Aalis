@@ -4,9 +4,11 @@ import { webuiServer } from '@aalis/api-webui';
 import { App, type BoundOf, events, LogHub, provide, services } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import { describe, expect, it, vi } from 'vitest';
+import { type CronEngine, cronEngine } from '../../packages/api-cron-engine/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -46,6 +48,8 @@ async function withScheduler(
     /** 配置文件里的静态任务 */
     jobs?: unknown[];
     persistPath?: string;
+    /** 换掉真的 cron-engine（第三方提供者） */
+    cronEngine?: CronEngine;
   } = {},
 ) {
   const hub = new LogHub();
@@ -61,7 +65,8 @@ async function withScheduler(
   const pages = pageHost();
   host.provide.use(webuiServer, pages.service);
   await app.plugins.register(toolsPlugin, {});
-  await app.plugins.register(cronEnginePlugin, {});
+  if (options.cronEngine) host.provide.use(cronEngine, options.cronEngine);
+  else await app.plugins.register(cronEnginePlugin, {});
   await app.plugins.register(schedulerPlugin, {
     jobs: options.jobs ?? [],
     ...(options.persistPath ? { persistPath: options.persistPath } : {}),
@@ -197,11 +202,15 @@ describe('新建', () => {
     });
   });
 
-  it('cron 无效：页上新建与 scheduler_create_job 都当场拒收，任务不入表、不落盘', async () => {
+  it('cron 无效：页上新建与 scheduler_create_job 都当场拒收，任务不入表、不落盘；页上的报错按读者语言', async () => {
     await withScheduler(async ({ create, createByTool, jobs, files, pages }) => {
-      expect(await create({ ...base, cron: 'every five minutes' })).toEqual(
-        refused(500, '非法 cron 表达式（需 5 字段或别名）: every five minutes'),
+      const reply = await create({ ...base, cron: 'every five minutes' });
+      expect(reply.status).toBe(500);
+      const { error } = reply.body as { error: never };
+      expect(resolveText(error, ['en'])).toBe(
+        'Invalid cron expression (needs 5 fields or an alias): every five minutes',
       );
+      expect(resolveText(error, ['zh-CN'])).toBe('非法 cron 表达式（需 5 字段或别名）: every five minutes');
       expect(await createByTool({ name: 'k', cron: '61 * * * *', content: 'x' })).toEqual({
         error: 'cron 第 1 字段非法（解析为空）: "61"',
       });
@@ -209,6 +218,24 @@ describe('新建', () => {
       expect(files.has('data:/scheduler-jobs.json')).toBe(false);
       expect(pages.notices(), '拒收的输入不该再发「没有排上」').toEqual([]);
     });
+  });
+
+  it('cron 无效：第三方 cron 引擎交的原因是字符串时，页上新建与 scheduler_create_job 照样报出原因', async () => {
+    const thirdParty: CronEngine = {
+      subscribe: () => () => {},
+      validate: () => ({ ok: false, text: '第三方引擎不认这个表达式' }),
+      nextFireTime: () => null,
+    };
+    await withScheduler(
+      async ({ create, createByTool, jobs }) => {
+        expect(await create({ ...base, cron: 'zz' })).toEqual(refused(500, '第三方引擎不认这个表达式'));
+        expect(await createByTool({ name: 'k', cron: 'zz', content: 'x' })).toEqual({
+          error: '第三方引擎不认这个表达式',
+        });
+        expect(jobs()).toEqual([]);
+      },
+      { cronEngine: thirdParty },
+    );
   });
 
   it('cron 无效：别的插件经 scheduler 服务 addJob、setJob 同样当场拒收', async () => {
@@ -272,10 +299,12 @@ describe('编辑', () => {
     await withScheduler(async ({ pages, create, jobs }) => {
       await create({ ...base, cron: '@daily' });
       expect(
-        await pages.act('scheduler', 'editJob', {
-          rowKey: 'j',
-          input: { cron: '@every soon', sessionId: 'internal', platform: 'internal', content: 'y' },
-        }),
+        toSource(
+          await pages.act('scheduler', 'editJob', {
+            rowKey: 'j',
+            input: { cron: '@every soon', sessionId: 'internal', platform: 'internal', content: 'y' },
+          }),
+        ),
       ).toEqual(refused(500, '无法识别的 @every 表达式: @every soon'));
       expect(jobs()).toMatchObject([{ name: 'j', cron: '@daily', content: 'x' }]);
     });

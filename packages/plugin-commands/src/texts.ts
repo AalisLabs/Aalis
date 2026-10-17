@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：解析与执行的报错、派生的分组说明、意图确认的问句与 /help 的版式，内置指令的说明与回复，配置项
+// 本插件自己的原文字典：解析与执行的报错、派生的分组说明、意图确认的问句与 /help 的版式，内置指令的说明与回复（含 /clear 的结果行），配置项
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -73,6 +73,22 @@ const SOURCE = {
   globalOnlySkipped: '⚠ {type}只在 {prefix}clear all 时清理，本次未清理',
   unhandledType: '⚠ {type}：没有已启用的插件处理这一类型，未清理',
   nothingCleared: '无可清除的记忆模块。',
+  cleared: '✅ {message}',
+  notCleared: '⚠ {message}',
+  historyClearedAll: '所有消息历史和归档已清空',
+  historyClearedSession: '当前会话消息历史已清空',
+  clearFailed: '清空失败: {error}',
+  memoryGone: '记忆服务在清理期间下线',
+  noGlobalClearMidway: '清理期间换上的记忆后端不支持全局清空',
+  kindImage: '图片',
+  kindVideo: '视频',
+  kindAudio: '语音',
+  kindFile: '文件',
+  cacheClearedAll: '所有{kind}缓存已清空（{count, number} 个会话目录）',
+  cacheMissingAll: '{kind}缓存目录不存在，无需清空',
+  cacheClearedSession: '当前会话{kind}缓存已清空（{count, number} 个）',
+  cacheMissingSession: '当前会话无{kind}缓存',
+  cacheFailed: '{kind}缓存清空失败: {error}',
 } as const;
 export type Source = typeof SOURCE;
 

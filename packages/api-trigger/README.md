@@ -15,7 +15,7 @@ pnpm add @aalis/api-trigger
 
 ## 提供
 
-服务描述符：`trigger`（服务名 `trigger`），服务接口 `TriggerService`（`{ readonly label: string }`）。
+服务描述符：`trigger`（服务名 `trigger`），服务接口 `TriggerService`（`{ readonly label: string | TextRef }`，名字可以是 `@aalis/schema-i18n` 的文字对象）。
 
 ```ts
 import { trigger } from '@aalis/api-trigger';

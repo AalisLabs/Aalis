@@ -19,6 +19,7 @@ import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type {
   IncomingMessage,
   OutboundDeliveryResult,
@@ -542,7 +543,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
       summary: '',
       files: [{ path: 'index.html', bytes: new TextEncoder().encode('<!doctype html><p>作品</p>') }],
     });
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const block = h.host.hooks.use.middleware('inbound:flow', async () => {});
     try {
       await service.processNext();

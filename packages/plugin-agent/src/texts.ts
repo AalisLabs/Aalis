@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，/session 的版式和说明句
+// 本插件自己的原文字典：发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，/session 的版式和说明句，用量拆分表的分项名
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -36,6 +36,16 @@ const SOURCE = {
   noOwnRecord: '（本对话尚无独立配置记录，全部继承默认）',
   setHint: '改配置: /session.set -m <模型> -p <人设> -t <档位> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
   resetHint: '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅深度思考）',
+  partHistory: '历史消息',
+  partToolResults: '工具结果',
+  partToolDefs: '工具定义',
+  partPersona: '人设',
+  partMemorySummary: '对话摘要',
+  partMemoryVector: '向量记忆',
+  partSkills: '技能',
+  partPlatform: '平台提示',
+  partSubtask: '子任务',
+  partSystemOther: '其余系统提示',
 } as const;
 export type Source = typeof SOURCE;
 

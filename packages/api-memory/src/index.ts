@@ -3,7 +3,9 @@ import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 H
 import type { SessionSetting } from '@aalis/api-session-manager'; // 也是下方 SessionConfig 增强的锚点
 import type {} from '@aalis/core';
 import { defineService, type Logger } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 /** 跨会话最近消息查询参数 */
 export interface RecentMessagesAcrossSessionsQuery {
@@ -263,8 +265,9 @@ declare module '@aalis/api-hooks' {
        * `type` 是这一行所属的清理类型（取值同 `/clear --type`，如 `'vector'`）。处理某个清理类型的中间件
        * 须在各行标注它，成败都标：`/clear` 对显式要求的每个类型核对有没有标注它的行，没有就回报「没有
        * 已启用的插件处理这一类型」。第三方中间件处理内置类型却不标注，会被误报为无处理者。
+       * `message` 给人看，可以是文字对象（@aalis/schema-i18n），`/clear` 按会话的语言回给发指令的人；写日志的取 toSource。
        */
-      results: Array<{ source: string; type?: string; success: boolean; message: string }>;
+      results: Array<{ source: string; type?: string; success: boolean; message: string | TextRef }>;
     };
   }
 }
@@ -367,23 +370,23 @@ declare module '@aalis/api-session-manager' {
 
 /**
  * 会话设置项「记忆召回范围」。跨会话取料的插件（跨会话历史、向量记忆、会话历史工具、关系图）都遵守它，各自登记
- * 这同一份定义：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄
+ * 这同一份定义：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄。文字取自本包的字典
  */
 export const MEMORY_RECALL_SCOPE_SETTING: SessionSetting = {
   key: 'memoryRecallScope',
   field: {
     type: 'select',
-    label: '记忆召回范围',
-    description: '跨会话的记忆与历史从哪里取；只能比各记忆插件自己的配置更窄，写宽了按插件配置',
+    label: t('recallScopeLabel'),
+    description: t('recallScopeDescription'),
     options: [
-      { label: '仅本会话', value: 'session' },
-      { label: '同平台', value: 'platform' },
-      { label: '全部', value: 'all' },
+      { label: t('recallScopeSession'), value: 'session' },
+      { label: t('recallScopePlatform'), value: 'platform' },
+      { label: t('recallScopeAll'), value: 'all' },
     ],
   },
   appliesTo: ['owner', 'room', 'task'],
   prominence: 'advanced',
-  unset: '按各记忆插件的配置',
+  unset: t('recallScopeUnset'),
 };
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

@@ -2,7 +2,8 @@
  * api-publish — 发布契约
  *
  *  1. publicPathProblem：公开路径白名单（段字符与首字符、段数、总长、保留名、扩展名、index.html），
- *     拒绝原因只写类别、不回显路径（路径来自远端给的文件名，原因会经工具回执进模型上下文）
+ *     拒绝原因是本包字典里的文字对象，只写类别、不带参数，哪种语言都不回显路径（路径来自远端给的文件名，原因会经
+ *     工具回执进模型上下文）
  *  2. workHeaders：作品文件的响应头。CSP 沙箱只给 allow-scripts，外发面全关，作用域两种写法；
  *     拼进头里的来源按语法核对，带分号、换行的值拼不进去
  *  3. galleryHeaders：主站与包装页的响应头，frame-src 恰为给定列表
@@ -24,6 +25,7 @@ import {
   WORK_IFRAME_SANDBOX,
   workHeaders,
 } from '../../packages/api-publish/src/index.js';
+import { isTextRef, resolveText } from '../../packages/schema-i18n/src/index.js';
 
 // ===== 公开路径 =====
 
@@ -91,10 +93,10 @@ describe('publicPathProblem', () => {
   ];
   it.each(illegal.map(p => [JSON.stringify(p), p]))('拒绝：%s', (_label, path) => {
     const reason = publicPathProblem(path);
-    expect(reason, `${JSON.stringify(path)} 应被拒`).toBeTypeOf('string');
-    expect(reason).not.toBe('');
-    // 空串是任何字符串的子串，只对非空输入判回显
-    if (path !== '') expect(reason, '原因只写类别，不回显路径').not.toContain(path);
+    if (!isTextRef(reason)) throw new Error(`${JSON.stringify(path)} 应被拒，原因是文字对象`);
+    expect(reason.params, '原因只写类别，不带参数').toBeUndefined();
+    expect(reason.source).not.toBe('');
+    expect(resolveText(reason, ['en'])).not.toBe(reason.source);
   });
 
   it('白名单查表不沿原型链', () => {

@@ -101,7 +101,11 @@ async function setup({
   provideHostPaths(app, home);
   const host = app.bind({ provide, events, approvals, tools, sessionManager });
   host.provide.use(storage, memoryStorage(new Map()));
-  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'cli' && u === 'console' } as never);
+  // 终端身份是不是 owner：demote 之后不再是，应答被拒
+  let consoleIsOwner = true;
+  host.provide.use(authority, {
+    isOwner: (p: string, u?: string) => consoleIsOwner && p === 'cli' && u === 'console',
+  } as never);
   if (i18nMode === 'broken') host.provide.use(i18n, broken);
   await app.plugin(toolsPlugin, {});
   await app.plugins.idle();
@@ -153,7 +157,10 @@ async function setup({
   /** 改 cli 平台档的语言 */
   const setLanguage = (language: string[]) =>
     host.sessionManager.use.updateLayer({ scope: 'platform', platform: 'cli' }, { language });
-  return { frame, ctrl, touch, request, send, renderWarnings, setLanguage };
+  const demote = () => {
+    consoleIsOwner = false;
+  };
+  return { frame, ctrl, touch, request, send, renderWarnings, setLanguage, demote };
 }
 
 const ZH = {
@@ -240,6 +247,24 @@ describe('终端界面按终端会话的语言', () => {
     expect(s.frame()).toContain(EN.heading);
     expect(s.frame()).toContain(JSON.stringify({ x: forged }));
     expect(s.frame()).not.toContain('<译文>');
+  });
+
+  it('审批卡上过长的事实保留首尾，省略的字数按读者语言写在中间', async () => {
+    const s = await setup({ language: ['en'] });
+    await s.touch();
+    // 首尾各留 500 字，正好各自以换行收尾与开头：省略的那句单独成行，不被折行切开
+    await s.request({ args: { command: `${'a'.repeat(499)}\n${'x'.repeat(3000)}\n${'b'.repeat(499)}` } });
+    expect(s.frame()).toContain('…(3,000 characters omitted)…');
+  });
+
+  it('应答被拒的原因按读者语言：卡片推出之后终端身份不再是 owner', async () => {
+    const s = await setup({ language: ['en'] });
+    await s.touch();
+    await s.request();
+    expect(s.frame()).toContain(EN.heading);
+    s.demote();
+    await s.ctrl('y');
+    expect(s.frame()).toContain('Approval for exec: the answer did not take effect: The responder is not the owner');
   });
 
   it('审批卡上事实的标签补齐到同一宽度：各项的值从同一列开始', async () => {

@@ -23,6 +23,7 @@ import {
   getPlatformNames,
   type PlatformConnection,
   platform,
+  type SessionTypeDecl,
   sessionTypesOf,
 } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
@@ -93,16 +94,6 @@ import { registerProxyRoutes } from './routes/proxy.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { t } from './texts.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
-
-/**
- * 工具 / 指令 / 工具组 description 约定：首行 = 人类可读摘要，其余 = 给 agent 的长使用指南。
- * WebUI 管理页只展示首行摘要（避免倾倒整段指南）；完整 description 仍由工具/指令定义抵达 LLM。
- */
-function descSummary(d?: string): string | undefined {
-  if (!d) return d;
-  const s = d.split('\n')[0].trim();
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
-}
 
 /** 可选项接口的 dependency 查询参数当模型引用读（llm-ref 的取值，JSON）：没带为 undefined，写法不对为 null */
 function modelRefOf(raw: unknown): ModelRef | undefined | null {
@@ -853,24 +844,28 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 特殊处理 gateway-scopes：已注册平台与它们的类型名（sessionTypesOf：没声明类型的平台只有一个类型 private）
-    // 的笛卡尔积
+    // 特殊处理 gateway-scopes：已注册平台与它们的类型（sessionTypesOf：没声明类型的平台只有一个类型 private）
+    // 的笛卡尔积。类型有显示名的写显示名，没有的写类型名
     if (serviceName === 'gateway-scopes') {
-      const platformTypes = new Map<string, string[]>();
-      const allTypes = new Set<string>();
+      const platformTypes = new Map<string, readonly SessionTypeDecl[]>();
+      /** 类型名 → 显示名：几个平台有同名类型时取先给出的那个 */
+      const typeLabels = new Map<string, string | TextRef | undefined>();
       for (const a of getPlatformAdapters(caps.platform)) {
-        const types = sessionTypesOf(a).map(type => type.name);
+        const types = sessionTypesOf(a);
         platformTypes.set(a.platform, types);
-        for (const type of types) allTypes.add(type);
+        for (const { name, label } of types) typeLabels.set(name, typeLabels.get(name) ?? label);
       }
       const scopes: OptionDetail[] = [];
       scopes.push({ value: '*', label: t('scopeAll') });
-      for (const type of [...allTypes].sort()) {
-        scopes.push({ value: `*:${type}`, label: t('scopeType', { type }) });
+      for (const type of [...typeLabels.keys()].sort()) {
+        scopes.push({ value: `*:${type}`, label: t('scopeType', { type, label: typeLabels.get(type) ?? type }) });
       }
       for (const [p, types] of platformTypes) {
         scopes.push({ value: `${p}:*`, label: t('scopePlatform', { platform: p }) });
-        for (const type of types) scopes.push({ value: `${p}:${type}`, label: `${p}:${type}` });
+        for (const { name, label } of types) {
+          const scope = `${p}:${name}`;
+          scopes.push({ value: scope, label: label === undefined ? scope : t('scopePlatformType', { scope, label }) });
+        }
       }
       res.json({ models: scopes.map(s => s.value), details: scopes });
       return;
@@ -887,7 +882,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       }
       const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.use.thinking;
       const levels = thinking?.levels ?? [];
-      const labels: Record<string, string> = {};
+      const labels: Record<string, string | TextRef> = {};
       for (const entry of caps.llm.list()) {
         for (const level of entry.use.thinking?.levels ?? []) labels[level.id] ??= level.label;
       }
@@ -903,7 +898,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
+    // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具。概述取分组的 summary（description 只给模型）
     if (serviceName === 'toolGroups') {
       const groups = caps.tools.present ? caps.tools.use.getGroups() : [];
       // '*' = 全部分组（api-tools 的分组约定），与会话范围选项的「* （全部平台）」同一写法
@@ -915,7 +910,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
             ...groups.map(g => ({
               value: g.name,
               label: g.label,
-              description: descSummary(g.description),
+              description: g.summary,
               pluginName: g.pluginName,
             })),
           ],

@@ -1,6 +1,11 @@
 import { provide } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type NominateInput, type PublishService, publish } from '../../packages/api-publish/src/index.js';
+import {
+  type NominateInput,
+  type PublishService,
+  publicPathProblem,
+  publish,
+} from '../../packages/api-publish/src/index.js';
 import { artifactUri } from '../../packages/plugin-paper/src/artifacts.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import {
@@ -522,6 +527,26 @@ describe('白纸作品工具', () => {
       ok: false,
       error: '作品账本读取失败，等 owner 处理',
     });
+  });
+
+  it('发布服务交来的原因是文字对象：工具回执交给模型的是原文', async () => {
+    const reason = publicPathProblem('a b.js');
+    if (!reason) throw new Error('应被拒');
+    const { hub, nominate, withdraw, listSurfaces } = await setup();
+    nominate.mockResolvedValueOnce({ refused: reason, fileIndex: 0 } as never);
+    expect(
+      await hub.call('works_nominate', { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' }),
+    ).toMatchObject({ ok: false, error: `成品 a-00000001：${reason.source}` });
+    withdraw.mockResolvedValueOnce({ refused: reason } as never);
+    expect(await hub.call('works_takedown', { work: 'abcdefghij' })).toMatchObject({ ok: false, error: reason.source });
+    withdraw.mockResolvedValueOnce({ ok: true, degraded: reason } as never);
+    expect(String((await hub.call('works_takedown', { work: 'abcdefghij' })).message)).toContain(
+      `（${reason.source}）`,
+    );
+    listSurfaces.mockReturnValue([{ name: 'works', available: false, reason }] as never);
+    expect((await hub.call('works_targets', {})).targets).toEqual([
+      { name: 'works', available: false, reason: reason.source },
+    ]);
   });
 
   it('撤下不要求房间仍开启白纸；成品读取失败不泄漏存储路径', async () => {

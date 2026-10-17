@@ -13,6 +13,7 @@ import { defineService } from '@aalis/core';
 
 import type { OriginKind } from '@aalis/api-approval';
 import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
+import type { TextRef } from '@aalis/schema-i18n';
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
@@ -182,10 +183,11 @@ export interface ExecutionGuardContext {
 export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
 
 /**
- * 执行守卫函数。返回 null 放行；返回 string 拦截（值为原因/提示）。
+ * 执行守卫函数。返回 null 放行；返回原因拦截：可以是文字对象（@aalis/schema-i18n），指令一路作为回复交给发出者、由出口按
+ * 读者语言渲染，工具一路交给模型、取 toSource。
  * 由 plugin-authority 通过 setExecutionGuard() 注入，停用时摘掉。
  */
-export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
+export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | TextRef | null>;
 
 // ============================================================
 // 能力统一闸（裁决序：deniedCapabilities 硬禁 > owner(∞) > 用户 level >= 操作 minLevel）
@@ -246,9 +248,12 @@ export interface AuthorityService {
    * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。
    * 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
    * minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
-   * @returns null 放行；string 为拒绝原因（可直接展示）
+   * @returns null 放行；否则为拒绝原因，可以是文字对象（读法同 {@link ExecutionGuard} 的返回值）
    */
-  authorize(identity: UserIdentity | { platform: string; userId?: string }, request: AuthorizeRequest): string | null;
+  authorize(
+    identity: UserIdentity | { platform: string; userId?: string },
+    request: AuthorizeRequest,
+  ): string | TextRef | null;
 
   /**
    * 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且无备注则清记录）。

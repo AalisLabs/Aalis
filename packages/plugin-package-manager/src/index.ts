@@ -643,7 +643,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 拒绝而非排队的决定性理由：update 成功后进程立即重启，排在它后面的操作必然被腰斩。
    * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束。
    */
-  async function exclusive<T extends { ok: boolean; message: string }>(
+  async function exclusive<T extends Pick<InstallResult, 'ok' | 'message'>>(
     what: string,
     run: () => Promise<T>,
   ): Promise<T> {

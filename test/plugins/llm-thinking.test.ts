@@ -4,12 +4,14 @@ import {
   type LLMModel,
   lightestThinking,
   llm,
+  requestedThinking,
   type ThinkingLevels,
 } from '../../packages/api-llm/src/index.js';
 import { App, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
 import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
@@ -164,6 +166,28 @@ describe('DeepSeek', () => {
     const { send, sent } = await start(deepseekPlugin, { apiKey: 'test-key' }, MODELS);
     await expect(send('deepseek-v4-pro', { think: 'on' })).rejects.toThrow('没有思考档位「on」');
     expect(sent).toEqual([]);
+  });
+});
+
+describe('requestedThinking', () => {
+  it('带了模型没有的档位：抛给人看的错（api-llm 的字典），en 读者读到英文', () => {
+    const model = {
+      id: 'zz-model',
+      thinking: {
+        levels: [
+          { id: 'off', label: '关' },
+          { id: 'on', label: '开' },
+        ],
+        default: 'on',
+      },
+    };
+    let thrown: unknown;
+    try {
+      requestedThinking(model, { think: 'max' });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(isTextError(thrown) && resolveText(thrown.text, ['en'])).toBe('Model zz-model has no thinking level “max”');
   });
 });
 

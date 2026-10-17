@@ -12,6 +12,7 @@ import type { ChatResponse, ModelRef } from '@aalis/api-llm';
 import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 /**
@@ -20,8 +21,8 @@ import type { IncomingMessage, Message } from '@aalis/schema-message';
  * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构。
  */
 export interface PluginGroupInfo {
-  /** 分组显示名称 */
-  label: string;
+  /** 分组显示名称：可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染 */
+  label: string | TextRef;
   /** 该分组包含的插件 instanceId 列表 */
   plugins: string[];
 }
@@ -101,8 +102,11 @@ declare module '@aalis/api-hooks' {
       message: IncomingMessage;
       reply: string;
       outcome: 'replied' | 'silent' | 'aborted' | 'error';
-      /** 结局为 error 时的一句原因（会话记下它，界面上出错的会话据此写原因）；其余结局不带 */
-      error?: string;
+      /**
+       * 结局为 error 时的一句原因（会话记下它，界面上出错的会话据此写原因）；其余结局不带。可以是文字对象
+       * （@aalis/schema-i18n），给人看的经出口渲染，给模型或写日志的取 toSource
+       */
+      error?: string | TextRef;
       sessionId: string;
       turnId: string;
       metadata: Record<string, unknown>;
@@ -283,11 +287,11 @@ export interface TokenUsageBreakdown {
 }
 
 /**
- * 用量拆分表的一项：显示名由产出方给，界面按 {@link TokenUsageEvent.parts} 的次序画行、不认分项的键。
- * injectors 是这一项按注入者的明细（键是注入者的全局键「插件实例 id/局部 id」），界面可以按实例合并到插件展开
+ * 用量拆分表的一项：显示名由产出方给（可以是文字对象，出口按读者语言渲染），界面按 {@link TokenUsageEvent.parts} 的次序画行、
+ * 不认分项的键。injectors 是这一项按注入者的明细（键是注入者的全局键「插件实例 id/局部 id」），界面可以按实例合并到插件展开
  */
 export interface TokenUsagePart {
-  label: string;
+  label: string | TextRef;
   tokens: number;
   injectors?: Record<string, number>;
 }

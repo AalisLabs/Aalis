@@ -37,7 +37,10 @@ export interface CronEngine {
    */
   subscribe(expr: string, handler: () => void | Promise<void>, options?: CronSubscribeOptions): () => void;
 
-  /** 表达式校验。 */
+  /**
+   * 表达式校验。不通过时 text 是给人看的原因，字符串或文字对象（@aalis/schema-i18n）都可能：
+   * 抛给人看的字符串用 Error、文字对象用 TextError，交给模型与写日志的取 toSource
+   */
   validate(expr: string): ValidateResult;
 
   /**

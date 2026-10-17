@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolveText } from '../../packages/schema-i18n/src/index.js';
 import {
   dateFieldsInTimeZone,
   matchesCron,
@@ -52,6 +53,27 @@ describe('util-cron: 表达式解析', () => {
     // 逐字段校验：解析为空的字段被拒（旧实现只数字段个数会放行 99 这类非法值）
     expect(validateCronExpr('99 * * * *').ok).toBe(false);
     expect(validateCronExpr('1-30/5 9 * * *').ok).toBe(true);
+  });
+
+  it('validateCronExpr 拒绝时给本包字典里的文字对象：显示方按读者语言渲染', () => {
+    const rejected = (input: string) => {
+      const result = validateCronExpr(input);
+      if (result.ok || typeof result.text === 'string') throw new Error(`${input} 应被拒，原因是文字对象`);
+      return { en: resolveText(result.text, ['en']), source: result.text.source };
+    };
+    expect(rejected(' ')).toEqual({ en: 'The expression is empty', source: '表达式为空' });
+    expect(rejected('@every soon')).toEqual({
+      en: 'Unrecognized @every expression: @every soon',
+      source: '无法识别的 @every 表达式: @every soon',
+    });
+    expect(rejected('garbage')).toEqual({
+      en: 'Invalid cron expression (needs 5 fields or an alias): garbage',
+      source: '非法 cron 表达式（需 5 字段或别名）: garbage',
+    });
+    expect(rejected('0 99 * * *')).toEqual({
+      en: 'Cron field 2 is invalid (parses to nothing): "99"',
+      source: 'cron 第 2 字段非法（解析为空）: "99"',
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { Message, OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -476,7 +477,7 @@ describe('agent 错误路径：回合结束带出错原因', () => {
     expect(ends).toEqual([{ outcome: 'error', error: '<模型炸了>' }, { outcome: 'replied' }]);
   });
 
-  it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句', async () => {
+  it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句，交出的是文字对象', async () => {
     const app = new App({ name: 'E2E', logLevel: 'error' });
     await registerHubs(app);
     await use(app, memoryInMemoryPlugin);
@@ -489,7 +490,8 @@ describe('agent 错误路径：回合结束带出错原因', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/^\[系统\] ./);
-    expect(ends).toEqual([{ outcome: 'error', error: sent[0].slice('[系统] '.length) }]);
+    expect(ends).toEqual([{ outcome: 'error', error: expect.objectContaining({ i18n: '@aalis/plugin-agent' }) }]);
+    expect(toSource(ends[0].error)).toBe(sent[0].slice('[系统] '.length));
   });
 });
 

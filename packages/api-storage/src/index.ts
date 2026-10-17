@@ -1,14 +1,15 @@
 // ----- 存储服务接口 -----
 
 import type { Readable } from 'node:stream';
+import type { TextRef } from '@aalis/schema-i18n';
 
 export type StorageRootKind = 'workspace' | 'data' | 'tmp' | 'pluginData' | 'logs' | string;
 
 export interface StorageRootInfo {
   /** 根 ID，如 workspace、data、tmp */
   name: string;
-  /** 展示名称 */
-  label?: string;
+  /** 展示名称：可以是文字对象（@aalis/schema-i18n），给人看的经出口渲染，交给模型的取 toSource */
+  label?: string | TextRef;
   /** 语义类型，用于权限 UI 和策略判断 */
   kind: StorageRootKind;
   /** 是否允许通过通用文件浏览 UI 展示 */
@@ -146,6 +147,7 @@ export interface StorageService {
 
 import { defineService, parseInstanceId } from '@aalis/core';
 import { configError } from '@aalis/schema-config';
+import { t } from './texts.js';
 
 /** 存储 URI 的 scheme 文法：`<root>:/<path>`，root 以字母开头 + 字母/数字/下划线/连字符。 */
 const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
@@ -221,10 +223,7 @@ export function toStorageUri(input: string, fallbackRoot = 'data'): string {
   const s = input.trim();
   if (isHostAbsolutePath(s) || /^~[\\/]/.test(s)) {
     const example = `${fallbackRoot}:/${s.split(/[\\/]/).filter(Boolean).at(-1) ?? ''}`;
-    throw configError(
-      `这里要写 storage URI（<根名>:/<路径>，如 ${example}），不能写本机路径 "${s}"；` +
-        '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
-    );
+    throw configError(t('hostPath', { example, path: s }));
   }
   if (s.includes(':/')) return s;
   const cleaned = s.replace(/^\.\/+/, '');

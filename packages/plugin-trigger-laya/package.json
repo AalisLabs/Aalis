@@ -33,7 +33,8 @@
     "@aalis/api-trigger": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.1 <1.0.0",
-    "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0"
+    "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

@@ -19,8 +19,10 @@ import {
   toolFailed,
 } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
+import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
+import { t } from './texts.js';
 
 /** 让出时限的缺省（秒），工具可以声明自己的 */
 export const DEFAULT_YIELD_SECONDS = 30;
@@ -45,13 +47,11 @@ const LINE_SCAN = 1024;
 const MAX_ENDED_PER_SESSION = 20;
 /** 停止后等落定的宽限：进程服务的中止契约在宽限后整组强制结束（2 秒），再留 1 秒收尾 */
 const STOP_GRACE_MS = 3000;
-/** 失败原因最多多少字 */
+/** 原因最多多少字：失败的（结果里的 error）整句截到它，宿主写的文字对象把参数截到它 */
 const REASON_MAX = 200;
 const NOTICE_SOURCE_PREFIX = 'bg:';
 /** 私有目录下的后台任务登记 */
 const STORE = 'background-tasks.json';
-const RESTART_REASON = 'Aalis 重启时还在跑';
-const CLOSED_REASON = '工具注册表停用时还在跑';
 const STATUSES: ReadonlySet<unknown> = new Set<BackgroundTaskStatus>([
   'running',
   'completed',
@@ -105,7 +105,7 @@ export function viewOf(task: BackgroundTask): Record<string, unknown> {
     ...(task.endedAt !== undefined ? { endedAt: iso(task.endedAt) } : {}),
     ...(task.lastLine !== undefined ? { lastLine: task.lastLine } : {}),
     ...(task.lastOutputAt !== undefined ? { lastOutputAt: iso(task.lastOutputAt) } : {}),
-    ...(task.reason !== undefined ? { reason: task.reason } : {}),
+    ...(task.reason !== undefined ? { reason: toSource(task.reason) } : {}),
     ...(task.exitCode !== undefined ? { exitCode: task.exitCode } : {}),
   };
 }
@@ -238,7 +238,7 @@ function parseStored(value: unknown): BackgroundTask | undefined {
   const endedAt = optionalOf<number>(value.endedAt, 'number');
   const lastLine = optionalOf<string>(value.lastLine, 'string');
   const lastOutputAt = optionalOf<number>(value.lastOutputAt, 'number');
-  const reason = optionalOf<string>(value.reason, 'string');
+  const reason = asText(value.reason);
   const exitCode = Number.isInteger(value.exitCode) ? (value.exitCode as number) : undefined;
   return {
     id,
@@ -446,7 +446,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /** 工具撤回登记（所属插件停用）：这个登记在跑的调用一并中止，后台的落成 aborted */
   withdraw(owner: object, name: string): void {
-    this.abortWhere(call => call.owner === owner, `工具 ${name} 已撤回登记`);
+    this.abortWhere(call => call.owner === owner, t('withdrawn', { name }));
   }
 
   // ---- 插件接线 ----
@@ -489,7 +489,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /** 停用（收尾）：在跑的调用一并中止，后台的落成 aborted，等写盘落定 */
   async close(): Promise<void> {
-    this.abortWhere(() => true, this.shuttingDown ? RESTART_REASON : CLOSED_REASON);
+    this.abortWhere(() => true, t(this.shuttingDown ? 'restarted' : 'closed'));
     await this.writing;
   }
 
@@ -606,7 +606,9 @@ export class BackgroundTasks implements BackgroundTaskService {
     this.persist();
   }
 
-  private abortWhere(match: (call: Call) => boolean, reason: string): void {
+  /** 中止匹配的调用，后台的落成 aborted；原因随登记落盘，参数截短 */
+  private abortWhere(match: (call: Call) => boolean, why: TextRef): void {
+    const reason = truncateParams(why, REASON_MAX);
     for (const call of this.calls) {
       if (!match(call)) continue;
       call.controller.abort();
@@ -698,7 +700,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       if (task.status === 'running') {
         Object.assign(task, {
           status: 'aborted',
-          reason: RESTART_REASON,
+          reason: t('restarted'),
           endedAt: task.lastOutputAt ?? task.startedAt,
         });
       }

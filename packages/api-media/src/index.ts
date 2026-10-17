@@ -11,6 +11,7 @@
 
 import type { ModelRef } from '@aalis/api-llm';
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 
 /** 媒体能力枚举（与 LLM Capability 互不重叠：LLM 描述模型能力，Media 描述处理动作） */
@@ -35,8 +36,8 @@ export interface MediaProcessor {
   name: string;
   /** 可处理的能力集 */
   capabilities: MediaCapability[];
-  /** 显示名（UI 用） */
-  displayName?: string;
+  /** 显示名（UI 用）：可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染 */
+  displayName?: string | TextRef;
   /** 优先级（数值大者优先；同 cap 多 processor 时由 MediaService 仲裁；默认 0） */
   priority?: number;
   /** 描述/识别（用于 vision / document.image / video.passthrough） */

@@ -39,6 +39,7 @@ const SOURCE = {
   factParams: '参数',
   patchHidden: '疑似含密钥，不显示内容',
   linesOmitted: '…（省略 {count, number} 行）…',
+  charsOmitted: '…（省略 {count, number} 字）…',
   approve: '批准',
   deny: '拒绝',
   cardKeys: '←/→ 选择 · Enter 确定 · Ctrl+Y 批准 · Ctrl+N 拒绝',

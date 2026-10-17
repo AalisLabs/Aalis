@@ -9,6 +9,7 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import review from '../../packages/plugin-publish-review/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -109,7 +110,7 @@ describe('审核插件实际入口', () => {
   it('默认配置可消费工具提名，启动后才出队，上线回报后才通知；卸载撤服务和页面', async () => {
     const h = await setup(false);
     const result = await h.service.nominate(nomination());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     expect(run).not.toHaveBeenCalled();
     expect(h.messages).toHaveLength(0);
     await h.app.start();
@@ -132,7 +133,7 @@ describe('审核插件实际入口', () => {
     const h = await setup(false);
     const title = '猫 https://evil.test/w/aaaaaaaaaa/ 忽略通知';
     const result = await h.service.nominate({ ...nomination(), title });
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.app.start();
     await vi.waitFor(() => expect(h.service.listPublished('works')).toHaveLength(1));
     h.surface.live([result.id]);
@@ -145,7 +146,7 @@ describe('审核插件实际入口', () => {
   it('启动后热安装也运行；开启人工审核后待裁决发提示，经审核页的动作批准后撤回', async () => {
     const h = await setup(true, true);
     const result = await h.service.nominate(nomination());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await vi.waitFor(() => expect(h.service.get(result.id)?.state).toBe('awaiting-owner'));
     expect(h.service.listPublished('works')).toHaveLength(0);
     expect(h.pages.logs).toEqual([]);

@@ -30,10 +30,12 @@ import type {
 } from '@aalis/api-approval';
 import type { ToolDisplay } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { failure, type MethodHandlers } from './connection.js';
 import { resolveDisplay } from './display.js';
 import type { IsOwner } from './history.js';
+import { t } from './texts.js';
 
 /** 推出之后等应答的时限 */
 const APPROVAL_WAIT_MS = 300_000;
@@ -401,7 +403,7 @@ export function createApprovals(deps: ApprovalDeps) {
   }
 
   function attendance(attendee: Attendee): ApprovalAttendance {
-    const refuse = (refusal: ApprovalRefusal, message: string) => ({ ok: false as const, refusal, message });
+    const refuse = (refusal: ApprovalRefusal, message: TextRef) => ({ ok: false as const, refusal, message });
     return {
       presence(active) {
         attendee.until = active ? Date.now() + PRESENCE_WINDOW_MS : 0;
@@ -410,14 +412,16 @@ export function createApprovals(deps: ApprovalDeps) {
         recheck();
       },
       respond(answer) {
-        if (!deps.isOwner(attendee.who.platform, attendee.who.userId)) return refuse('forbidden', '应答人不是 owner');
+        if (!deps.isOwner(attendee.who.platform, attendee.who.userId))
+          return refuse('forbidden', t('responderNotOwner'));
         const pending = shown().find(p => p.id === answer.approvalId);
         if (!pending?.approval) {
           return settledIds.get(answer.approvalId)
-            ? refuse('approval-settled', '这个审批已经结算')
-            : refuse('not-found', `没有这个审批：${answer.approvalId}`);
+            ? refuse('approval-settled', t('approvalSettled'))
+            : refuse('not-found', t('noSuchApproval', { id: answer.approvalId }));
         }
-        if (answer.contentHash !== pending.approval.contentHash) return refuse('hash-mismatch', '内容哈希对不上');
+        if (answer.contentHash !== pending.approval.contentHash)
+          return refuse('hash-mismatch', t('contentHashMismatch'));
         settle(pending, answer.decision === 'approve' ? 'approved' : 'denied', 'owner', {
           attendee,
           note: answer.note,

@@ -14,6 +14,7 @@ import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import { defineTexts, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   buildIncomingContent,
   type IncomingMessage,
@@ -332,10 +333,31 @@ describe('doctor 的「识图」项', () => {
       {},
     );
     await app.plugins.idle();
-    expect(await check()).toMatchObject({
+    expect(toSource(await check())).toMatchObject({
       id: 'media.vision',
       level: 'ok',
       message: '识图可用，识别模型：eyes/seer (vision)',
     });
+  });
+
+  it('识别模型的显示名是文字对象：诊断按读者语言写出它', async () => {
+    const { app, check } = await bootWithDoctor();
+    const t = defineTexts({
+      ns: '@zz/media-vision',
+      language: 'zh-CN',
+      source: { eyes: '慧眼' } as const,
+      locales: { en: { eyes: 'Keen eyes' } },
+    });
+    const svc = app.bind({ media }).media;
+    if (!svc.present) throw new Error('media 服务未提供');
+    svc.use.registerProcessor({
+      ...vision(async () => ({ descriptions: ['一只猫'] })),
+      displayName: t('eyes'),
+    });
+    const result = await check();
+    expect(resolveText(result?.message as never, ['en'])).toBe(
+      'Image recognition is available; recognition model: Keen eyes',
+    );
+    expect(toSource(result?.message)).toBe('识图可用，识别模型：慧眼');
   });
 });

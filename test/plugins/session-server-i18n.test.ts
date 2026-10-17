@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
-import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
+import { type CheckpointService, checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type Audience, type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -25,6 +25,7 @@ import {
 } from '../../packages/plugin-session-server/src/connection.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import { defineTexts, TextError, type TextRef } from '../../packages/schema-i18n/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -51,6 +52,7 @@ const t = defineTexts({
     adapter: 'QQ 机器人',
     part: '历史消息',
     down: '检查点服务掉线',
+    locked: '文件被占用',
     gone: '会话 {id} 不在了',
     at: '{t, time, short}',
     title: '任务',
@@ -62,6 +64,7 @@ const t = defineTexts({
       adapter: 'QQ bot',
       part: 'History',
       down: 'Checkpoint service down',
+      locked: 'The file is in use',
       gone: 'Session {id} is gone',
       at: '{t, time, short}',
       title: 'Jobs',
@@ -141,18 +144,34 @@ const adapterPlugin = (name: string, prefix: string, reusable = false) =>
     },
   });
 
-/** 用量事件：分项名交文字对象（api-agent 的 TokenUsagePart.label 放宽之前经断言交出） */
-const usage = (label: TextRef): TokenUsageEvent =>
-  ({
-    sessionId: ROOM,
-    platform: 'onebot',
-    contextWindow: 1000,
-    maxTokens: 100,
-    tokenBudget: 900,
-    used: 10,
-    usageRatio: 0.01,
-    parts: [{ label, tokens: 10 }],
-  }) as unknown as TokenUsageEvent;
+/** 用量事件：分项名交文字对象 */
+const usage = (label: TextRef): TokenUsageEvent => ({
+  sessionId: ROOM,
+  platform: 'onebot',
+  contextWindow: 1000,
+  maxTokens: 100,
+  tokenBudget: 900,
+  used: 10,
+  usageRatio: 0.01,
+  trimmed: false,
+  untrimmedHistory: 10,
+  historyMessages: 1,
+  breakdown: {
+    system: 0,
+    persona: 0,
+    memorySummary: 0,
+    memoryVector: 0,
+    skills: 0,
+    platform: 0,
+    subtask: 0,
+    systemOther: 0,
+    history: 10,
+    toolResults: 0,
+    toolDefs: 0,
+    reservedForReply: 100,
+  },
+  parts: [{ label, tokens: 10 }],
+});
 
 /**
  * 会话服务连同会话管理与两个适配器实例（各接管一个房间），审批面由一个测试插件登记；记忆、存储、owner 判定与检查点是替身，
@@ -177,7 +196,16 @@ async function setup({ withI18n = true, defaults }: { withI18n?: boolean; defaul
     rollback: async () => {
       throw new TextError(t('down'));
     },
-  } as never);
+    rollbackWithChat: async () => ({
+      ok: false,
+      restored: [],
+      deleted: [],
+      errors: [{ uri: 'workspace:/a.txt', reason: t('locked') }],
+      alsoChangedBy: [],
+      deletedMessages: 0,
+      chatDeleted: true,
+    }),
+  } satisfies Pick<CheckpointService, 'rollback' | 'rollbackWithChat'> as never);
   await app.plugin(adapterPlugin('qq', 'onebot:10000:'));
   await app.plugin(adapterPlugin('qq-pool', 'onebot:40000:', true), {}, 'qq-pool:work');
   await app.plugin(sessionManagerPlugin, {});
@@ -351,6 +379,31 @@ describe('会话协议按连接的读者渲染', () => {
     expect(await observe(host, conns)).toEqual([CHINESE, CHINESE, CHINESE]);
   });
 
+  it.each([
+    [true, ['Checkpoint service down', '检查点服务掉线']],
+    [false, ['检查点服务掉线', '检查点服务掉线']],
+  ])('回合出错的原因（lastTurn.error，会话列表的 reason）：en 与 zh-CN 读者（i18n 在场：%s）', async (withI18n, expected) => {
+    const { host, connect } = await setup({ withI18n });
+    const { id: sessionId } = await host.sessionManager.use.createSession({ name: '<会话>' });
+    const message: IncomingMessage = { content: '<提问>', sessionId, platform: 'webui' };
+    const turnId = 'zz-turn';
+    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+      await host.hooks.use.run('agent:turn:after', {
+        message,
+        reply: '',
+        outcome: 'error',
+        error: t('down'),
+        sessionId,
+        turnId,
+        metadata: {},
+      });
+    });
+    const conns = [await connect({ languages: ['en'] }), await connect({ languages: ['zh-CN'] })];
+    await vi.waitFor(async () =>
+      expect(await Promise.all(conns.map(async c => (await c.summary(sessionId)).reason))).toEqual(expected),
+    );
+  });
+
   it('同一帧推给几种读者：各自正确，同一条语言链只渲染一次（连接级推送与会话推送都是）', async () => {
     const { host, connect, render } = await setup();
     // 不带语言的连接按全局默认层，没设时与 en 是同一条链
@@ -390,6 +443,22 @@ describe('会话协议按连接的读者渲染', () => {
       'Checkpoint service down',
       '检查点服务掉线',
       'Checkpoint service down',
+    ]);
+  });
+
+  it('回滚结果里没回滚成的原因是文字对象：按连接的读者渲染', async () => {
+    const { connect } = await setup();
+    const reasons = async (reader: { languages?: string[] }) => {
+      const result = await (await connect(reader)).call('turn/rewind', {
+        sessionId: ROOM,
+        turnId: 't1',
+        scope: 'code-and-chat',
+      });
+      return result.errors.map(e => e.reason);
+    };
+    expect([await reasons({ languages: ['en'] }), await reasons({ languages: ['zh-CN'] })]).toEqual([
+      ['The file is in use'],
+      ['文件被占用'],
     ]);
   });
 

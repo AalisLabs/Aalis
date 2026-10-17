@@ -10,6 +10,8 @@
 // ============================================================
 
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // ----- 作品编号与公开路径 -----
 
@@ -47,25 +49,25 @@ const RESERVED_NAMES = new Set(['_headers', '_redirects', '_worker.js', '_routes
 const RESERVED_TOP = 'functions';
 
 /**
- * 作品目录内的相对路径能否上站；不能时返回原因。审核按它收，展示面部署前再判一次。
+ * 作品目录内的相对路径能否上站；不能时返回原因（本包字典里的文字对象）。审核按它收，展示面部署前再判一次。
  *
- * 原因只写类别、不回显路径：路径来自远端给的文件名，拒绝理由会经工具回执进模型上下文。
+ * 原因只写类别、不带参数，哪种语言都不回显路径：路径来自远端给的文件名，拒绝理由会经工具回执进模型上下文。
  * 同一作品内的路径按小写比较不得重复，由调用方对整组路径判定（公开根可能在大小写不敏感的文件系统上）。
  */
-export function publicPathProblem(path: string): string | undefined {
-  if (path === '') return '路径为空';
-  if (path.length > MAX_PATH_LENGTH) return '路径过长';
-  if (path.startsWith('/') || path.endsWith('/')) return '路径以斜杠开头或结尾';
+export function publicPathProblem(path: string): TextRef | undefined {
+  if (path === '') return t('pathEmpty');
+  if (path.length > MAX_PATH_LENGTH) return t('pathTooLong');
+  if (path.startsWith('/') || path.endsWith('/')) return t('pathSlashEnds');
   const segments = path.split('/');
-  if (segments.length > MAX_SEGMENTS) return '路径层级过多';
-  if (segments.some(s => RESERVED_NAMES.has(s.toLowerCase()))) return '路径含保留的文件名';
-  if (segments[0].toLowerCase() === RESERVED_TOP) return '路径占用了保留的目录名';
-  if (!segments.every(s => SEGMENT.test(s))) return '路径段含不允许的字符';
+  if (segments.length > MAX_SEGMENTS) return t('pathTooDeep');
+  if (segments.some(s => RESERVED_NAMES.has(s.toLowerCase()))) return t('pathReservedName');
+  if (segments[0].toLowerCase() === RESERVED_TOP) return t('pathReservedDir');
+  if (!segments.every(s => SEGMENT.test(s))) return t('pathBadCharacters');
   const name = segments[segments.length - 1];
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
-  if (!Object.hasOwn(PUBLIC_CONTENT_TYPES, ext)) return '扩展名不在白名单';
-  if (ext === 'html' && path !== 'index.html') return '网页文件只能是作品根目录的 index.html';
+  if (!Object.hasOwn(PUBLIC_CONTENT_TYPES, ext)) return t('extensionNotAllowed');
+  if (ext === 'html' && path !== 'index.html') return t('htmlNotIndex');
   return undefined;
 }
 
@@ -109,9 +111,10 @@ export interface NominateInput {
   cover?: Uint8Array;
 }
 
-/** refused 只写类别，不含路径与文件名；fileIndex 是出问题的 files 下标（从 0 起），-1 为封面。
+/** refused 只写类别，不含路径与文件名，可以是文字对象（给人看的经出口渲染，交给模型的取 toSource）；fileIndex 是出问题的
+ * files 下标（从 0 起），-1 为封面。
  * retryAfterMs 仅用于临时拒绝（配额、服务停机、快照暂时写失败、所选展示面暂未登记），表示从本次响应起至少等待的毫秒数；缺省表示永久拒绝。 */
-export type NominateResult = { id: string } | { refused: string; fileIndex?: number; retryAfterMs?: number };
+export type NominateResult = { id: string } | { refused: string | TextRef; fileIndex?: number; retryAfterMs?: number };
 
 export type WorkKind = 'media' | 'html';
 
@@ -150,8 +153,8 @@ export interface PublishSurface {
   baseUrl?: string;
   /** 作品在这个展示面上的公开网址（上线通知里给出） */
   urlFor(id: string): string;
-  /** 现在能不能把变化送上线；暂停、鉴权失败、状态文件读失败、连续部署失败时给类别 */
-  health(): { ok: true } | { ok: false; reason: string };
+  /** 现在能不能把变化送上线；暂停、鉴权失败、状态文件读失败、连续部署失败时给类别（可以是文字对象，读法同 refused） */
+  health(): { ok: true } | { ok: false; reason: string | TextRef };
 }
 
 /** 发布目标的只读快照；不包含部署凭据或内部调用句柄。 */
@@ -160,7 +163,8 @@ export interface PublishSurfaceInfo {
   label?: string;
   baseUrl?: string;
   available: boolean;
-  reason?: string;
+  /** 不可用时展示面 health 给的类别 */
+  reason?: string | TextRef;
 }
 
 export interface SurfaceBinding {
@@ -191,12 +195,15 @@ export interface PublishService {
    * 不核对摘要，读内容要核对的用 readThumbnail
    */
   thumbnailUri(id: string): string | undefined;
-  /** 已发布的撤出公开根；待审的撤回提名。degraded：这件作品所在的展示面有 health 不正常时，给出类别 */
+  /**
+   * 已发布的撤出公开根；待审的撤回提名。degraded：这件作品所在的展示面有 health 不正常时，给出类别。degraded 与 refused
+   * 的读法同提名的 refused
+   */
   withdraw(
     id: string,
     by: { kind: 'origin' | 'owner' | 'integrity'; actorKey?: string },
     reason: string,
-  ): Promise<{ ok: true; degraded?: string } | { refused: string }>;
+  ): Promise<{ ok: true; degraded?: string | TextRef } | { refused: string | TextRef }>;
   /** 已发布集合变化（发布、撤下）时调 listener；返回退订 */
   onChange(listener: () => void): () => void;
   /** 登记展示面；返回的绑定用来回报上线与撤下 */

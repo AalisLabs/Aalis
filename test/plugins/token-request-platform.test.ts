@@ -6,6 +6,7 @@ import agent from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { localize, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { recordRoom } from '../fixtures/rooms.js';
@@ -129,7 +130,7 @@ describe('token:usage 的分项', () => {
     await host.events.use.emit('token:request', { sessionId: 'webui-parts' });
     const [usage] = seen;
     const { breakdown } = usage;
-    expect(usage.parts.map(part => [part.label, part.tokens])).toEqual([
+    expect(usage.parts.map(part => [toSource(part.label), part.tokens])).toEqual([
       ['历史消息', breakdown.history],
       ['工具结果', breakdown.toolResults],
       ['工具定义', breakdown.toolDefs],
@@ -143,5 +144,27 @@ describe('token:usage 的分项', () => {
     ]);
     expect(usage.parts.at(-1)?.injectors).toEqual(breakdown.injectors);
     expect(usage.parts.slice(0, -1).every(part => part.injectors === undefined)).toBe(true);
+  });
+
+  it('分项的显示名取自 plugin-agent 的字典：en 读者读到英文', async () => {
+    const { seen, host } = await boot();
+    await host.events.use.emit('token:request', { sessionId: 'webui-parts-en' });
+    expect(
+      localize(
+        seen[0].parts.map(part => part.label),
+        text => resolveText(text, ['en']),
+      ),
+    ).toEqual([
+      'History',
+      'Tool results',
+      'Tool definitions',
+      'Persona',
+      'Conversation summary',
+      'Vector memory',
+      'Skills',
+      'Platform prompt',
+      'Subtasks',
+      'Other system prompts',
+    ]);
   });
 });

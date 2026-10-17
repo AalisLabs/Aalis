@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isStorageUri, parseUriRoot, resolveAgainstCwd, toStorageUri } from '../../packages/api-storage/src/index.js';
+import { resolveText, type TextRef, textOf } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // storage URI 权威文法（isStorageUri / parseUriRoot）—— 收口 onebot/media/asr 6 处重抄。
@@ -73,7 +74,7 @@ describe('toStorageUri（配置路径归一）', () => {
     ['C:/aalis/lancedb', 'data:/lancedb'],
     ['~/aalis.db', 'data:/aalis.db'],
     ['~\\aalis\\lancedb', 'data:/lancedb'],
-  ])('本机路径 %s：抛配置错误（不带堆栈），写明要填 storage URI 并以 %s 为例', (input, example) => {
+  ])('本机路径 %s：抛配置错误（不带堆栈），写明要填 storage URI 并以 %s 为例；en 读者读到英文', (input, example) => {
     let thrown: unknown;
     try {
       toStorageUri(input);
@@ -87,6 +88,10 @@ describe('toStorageUri（配置路径归一）', () => {
     expect(error.message).toBe(
       `这里要写 storage URI（<根名>:/<路径>，如 ${example}），不能写本机路径 "${input}"；` +
         '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
+    );
+    expect(resolveText(textOf(error) as TextRef, ['en'])).toBe(
+      `Enter a storage URI here (<root>:/<path>, e.g. ${example}), not a local path "${input}"; ` +
+        'to use a directory outside the storage roots, first add a root pointing to it under roots in "Local storage roots" and turn on its "Allow writes"; file tools can access that root too',
     );
   });
 });

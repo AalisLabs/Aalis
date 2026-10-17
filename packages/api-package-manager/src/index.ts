@@ -6,6 +6,7 @@
 // ============================================================
 
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 /**
  * 包管理服务：在项目根 `dependencies` 里装卸插件。
@@ -24,7 +25,7 @@ export interface PackageManagerService {
    * 从根 `dependencies` 摘掉并 npm uninstall，卸掉它的全部实例并清掉它们的停用标记；闸在服务层（类型 / 撤销通道 / 来源 /
    * 服务依赖者）。配置文档没写成时包已卸掉，ok 仍为 true，message 写明原因与要手动处理的残留
    */
-  uninstall(pluginName: string, options?: UninstallOptions): Promise<{ ok: boolean; message: string }>;
+  uninstall(pluginName: string, options?: UninstallOptions): Promise<{ ok: boolean; message: string | TextRef }>;
   /**
    * 卸载 name 会打断哪些插件：name 的某个实例正在提供（已激活或激活中）或马上就提供（pending 而只是在等，按 api-doctor
    * 的共享判据）的某服务没有别的插件正在提供，而它们 required 该服务（已禁用的不算）；name 的实例都没在提供时（失败、停用、
@@ -53,10 +54,10 @@ export interface PackageManagerService {
   update(targets: UpdateTarget[]): Promise<UpdateResult>;
 }
 
-/** 安装的结果 */
+/** 安装的结果。给人看的 message 可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；装卸与更新的结果同此 */
 export interface InstallResult {
   ok: boolean;
-  message: string;
+  message: string | TextRef;
   /**
    * 装上的插件已登记时是它的主实例 id（加载器解析出的定义 name，可能与包名不同），界面据它打开这个插件；
    * 前端界面这类不进插件列表的包、以及没装成的不给
@@ -81,9 +82,9 @@ export interface UpdateTarget {
 
 export interface UpdateResult {
   ok: boolean;
-  message: string;
+  message: string | TextRef;
   /** 预检失败时的逐条冲突说明（npm dry-run 的报告摘要），供前端直接展示。 */
-  conflicts?: string[];
+  conflicts?: Array<string | TextRef>;
   /** 本次是否会重启进程。ok 且 restarting 时前端应进入「等待重连」状态。 */
   restarting?: boolean;
 }

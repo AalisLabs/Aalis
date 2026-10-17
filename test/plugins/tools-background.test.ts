@@ -12,6 +12,7 @@ import {
 import type { Logger } from '../../packages/core/src/index.js';
 import { BackgroundTasks } from '../../packages/plugin-tools/src/background.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { ownView } from '../fixtures/own-storage.js';
 
@@ -598,7 +599,10 @@ describe('停止、撤回、停用与会话删除', () => {
     expect(parse(await foreground)).toEqual({ aborted: true });
     await flush();
     expect(w.tasks.list()).toEqual([
-      expect.objectContaining({ status: 'aborted', reason: expect.stringContaining('撤回') }),
+      expect.objectContaining({
+        status: 'aborted',
+        reason: expect.objectContaining({ source: '工具 zz_slow 已撤回登记' }),
+      }),
     ]);
     expect(w.notices()).toEqual([]);
   });
@@ -611,7 +615,7 @@ describe('停止、撤回、停用与会话删除', () => {
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await w.tasks.close();
     expect(w.runs[0].ctx.signal?.aborted).toBe(true);
-    expect(w.tasks.list()[0]).toMatchObject({ status: 'aborted', reason: expect.stringContaining('停用') });
+    expect(w.tasks.list()[0]).toMatchObject({ status: 'aborted', reason: { source: '工具注册表停用时还在跑' } });
     expect(store.saved()?.tasks[0]).toMatchObject({ status: 'aborted' });
     w.runs[0].finish();
     await flush();
@@ -660,7 +664,7 @@ describe('落盘', () => {
       ],
     });
     await w.tasks.restore(ownView(store.service, 'tools'));
-    expect(w.tasks.list().map(t => [t.id, t.status, t.reason])).toEqual([
+    expect(w.tasks.list().map(t => [t.id, t.status, toSource(t.reason)])).toEqual([
       ['bg_old_1', 'aborted', 'Aalis 重启时还在跑'],
       ['bg_old_2', 'completed', undefined],
     ]);
@@ -668,6 +672,37 @@ describe('落盘', () => {
     expect(w.warnings.some(m => m.includes('1 条'))).toBe(true);
     expect(store.saved()?.tasks.map(t => t.status)).toEqual(['aborted', 'completed']);
     expect(w.tasks.output('bg_old_1')).toEqual({ text: '', end: 0, truncated: false });
+  });
+
+  it('宿主写的中断原因是文字对象：落盘，重启读回仍在；交给模型的是原文', async () => {
+    const w = world();
+    const store = memoryStore();
+    await w.tasks.restore(ownView(store.service, 'tools'));
+    const off = w.slow();
+    await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
+    off();
+    await flush();
+    const reason = w.tasks.list()[0].reason;
+    expect(reason).toMatchObject({ i18n: '@aalis/plugin-tools', params: { name: 'zz_slow' } });
+    const restarted = world();
+    await restarted.tasks.restore(ownView(memoryStore(store.saved()).service, 'tools'));
+    expect(restarted.tasks.list()[0].reason).toEqual(reason);
+    restarted.slow('zz_other');
+    expect(parse(await restarted.registry.execute('background_list', {}, turn().ctx)).tasks).toEqual([
+      expect.objectContaining({ reason: '工具 zz_slow 已撤回登记' }),
+    ]);
+  });
+
+  it('中断原因是文字对象时参数截到 200 字再落盘', async () => {
+    const w = world();
+    const store = memoryStore();
+    await w.tasks.restore(ownView(store.service, 'tools'));
+    const name = `zz_${'x'.repeat(300)}`;
+    const off = w.slow(name);
+    await w.registry.execute(name, { runInBackground: true }, turn().ctx);
+    off();
+    await flush();
+    expect(store.saved()?.tasks[0].reason).toMatchObject({ params: { name: name.slice(0, 200) } });
   });
 
   it('只记字段，不记起它的身份、输出与结果；状态变了才写', async () => {

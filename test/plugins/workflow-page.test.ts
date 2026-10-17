@@ -10,6 +10,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
@@ -126,11 +127,13 @@ describe('工作流页', () => {
     expect(calls).toBe(1);
     expect(invalidated(before), '运行中与运行完都要让运行表重取').toEqual([WHOLE_PAGE, WHOLE_PAGE]);
     const runs = await pages.data<Array<Record<string, unknown>>>('workflows', 'runs');
-    expect(runs).toMatchObject([{ workflowId: 'zz-manual', status: { text: '成功' }, triggerSource: 'manual:webui' }]);
+    expect(toSource(runs)).toMatchObject([
+      { workflowId: 'zz-manual', status: { text: '成功' }, triggerSource: 'manual:webui' },
+    ]);
 
     // 工具服务不在：tool 节点失败，这一次运行以失败收尾
     await app.plugins.unload(toolsPlugin.name);
-    expect(await pages.act('workflows', 'runWorkflow', { rowKey: 'zz-manual' })).toEqual({
+    expect(toSource(await pages.act('workflows', 'runWorkflow', { rowKey: 'zz-manual' }))).toEqual({
       status: 500,
       body: { error: '运行没有成功（失败）：节点 "a" 失败: \'tools\' 服务不可用' },
     });

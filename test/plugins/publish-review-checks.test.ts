@@ -36,7 +36,8 @@ const check = (files: Array<{ path: string; bytes: Uint8Array }>) => checkNomina
 describe('发布提名同步检查', () => {
   it('路径与大小写重复被拒，理由不回显文件名', () => {
     const path = check([{ path: '../secret.png', bytes: png }]);
-    expect(path).toMatchObject({ refused: expect.any(String), fileIndex: 0 });
+    // 公开路径的原因是 api-publish 字典里的文字对象，只写类别、不带参数
+    expect(path).toMatchObject({ refused: { i18n: '@aalis/api-publish' }, fileIndex: 0 });
     expect(JSON.stringify(path)).not.toContain('secret.png');
     expect(
       check([

@@ -8,9 +8,11 @@ import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { DEFAULT_AUTHORITY } from './authority-model.js';
+import { t } from './texts.js';
 
 // ===== 插件入口 =====
 
@@ -97,7 +99,7 @@ async function run(caps: Caps): Promise<void> {
   setNetworkPolicy(config.get('network') ?? {});
 
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
-  const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
+  const guard = async (g: ExecutionGuardContext): Promise<string | TextRef | null> => {
     const capability = `${g.type}:${g.name}`;
     // 确认覆盖：'off' 强制关确认；否则覆盖值优先，回退插件声明。
     const confOv = (config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
@@ -120,14 +122,12 @@ async function run(caps: Caps): Promise<void> {
 
     // 指令由人亲手输入：确认的是发出者本人的意图，由指令服务当面问；问不到（注入的指令）就拒
     if (g.type === 'command') {
-      if (!g.confirmIntent) return `操作已取消：${capability} 需要发出者本人确认，这条指令不是人亲手输入的，无从确认`;
-      return (await g.confirmIntent()) ? null : `操作已取消：${capability} 没有得到发出者确认`;
+      if (!g.confirmIntent) return t('intentUnreachable', { capability });
+      return (await g.confirmIntent()) ? null : t('intentDeclined', { capability });
     }
 
     // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别裁决，不能的立即拒绝、不推给任何面
-    if (!caps.approvals.present) {
-      return `操作已取消：${capability} 需要 owner 批准，但审批服务不在（由 @aalis/plugin-session-server 提供）`;
-    }
+    if (!caps.approvals.present) return t('approvalsAbsent', { capability });
     const service = caps.approvals.use;
     const outcome = await service.request(
       {

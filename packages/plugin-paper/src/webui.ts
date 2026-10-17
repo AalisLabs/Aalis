@@ -18,6 +18,7 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import { type BoundWebui, type InfoItem, markdownCode, type NoticeHandle, type StatusValue } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import { artifactUri, bundleUri, paperDirUri, usageOf } from './artifacts.js';
 import { dayKey, paperBudgetUsage } from './budget.js';
 import { type PaperConfig, type PaperSpec, specOf } from './config.js';
@@ -226,7 +227,7 @@ export function registerPaperPage(deps: {
           const surface = byName.get(name);
           if (!surface) return `${name}（未登记）`;
           const title = surface.label && surface.label !== name ? `${name}／${surface.label}` : name;
-          return `${title}${surface.baseUrl ? `：${surface.baseUrl}` : ''}（${surface.available ? '可用' : `不可用${surface.reason ? `：${surface.reason}` : ''}`}）`;
+          return `${title}${surface.baseUrl ? `：${surface.baseUrl}` : ''}（${surface.available ? '可用' : `不可用${surface.reason ? `：${toSource(surface.reason)}` : ''}`}）`;
         })
         .join('、');
     } catch {
