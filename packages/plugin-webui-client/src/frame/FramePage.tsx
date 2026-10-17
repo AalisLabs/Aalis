@@ -1,15 +1,24 @@
-import { type ActionInputFields, FRAME_PROTOCOL_VERSION, FRAME_SANDBOX, type FramePageView } from '@aalis/api-webui';
+import {
+  type ActionInputFields,
+  FRAME_PROTOCOL_VERSION,
+  FRAME_SANDBOX,
+  type FramePageView,
+  type FrameTexts,
+} from '@aalis/api-webui';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { LoaderCircle } from 'lucide-react';
-import { type ReactNode, type SyntheticEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, type SyntheticEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
+import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
 import { text, tr } from '../language';
+import { packedTexts } from '../language-provider';
 import { usePluginNames } from '../plugins/list';
+import { isRecord, useJson } from '../rest';
 import { paths } from '../routes';
 import { formatValue } from '../settings/field';
 import { t } from '../texts';
@@ -17,8 +26,9 @@ import { type FrameQuestion, type FrameStop, mountFrame } from './channel';
 import './FramePage.css';
 import type { Localized, TextRef } from '@aalis/schema-i18n';
 
-// 插件前端：上面一行写明出处，下面是宿主画的隔离框架，框架里画出的东西总在这一行下面。握手完成前框架不可见；
-// 停止显示时换成占位，「重新加载」与手动刷新都是重新挂载。外链与 destructive 动作的宿主对话框在这里画：
+// 插件前端：上面一行写明出处，下面是宿主画的隔离框架，框架里画出的东西总在这一行下面。这一页所属插件的字典取到之后才挂
+// 框架（随 init 交给它），没取到时原地写明，重试就是重新加载；握手完成前框架不可见；停止显示时换成占位。「重新加载」、手动
+// 刷新与页面换了地址都是重新挂载，每次挂载都重取字典、用这一次取到的。外链与 destructive 动作的宿主对话框在这里画：
 // 确认不默认聚焦，打开后一小段时间内不接受确认，免得用户在框架里的连点落到确认上
 
 /** 宿主对话框打开后多久内不接受确认 */
@@ -42,18 +52,51 @@ interface FramePageProps {
   reload(): void;
 }
 
+/** 插件前端的字典：字典本身由框架里的助手核（schema-i18n 的 registerCatalogEntry），这里核外层与语言包的补充 */
+function parseTexts(body: unknown): FrameTexts {
+  if (!isRecord(body) || !(body.texts === null || isRecord(body.texts)) || !isRecord(body.packs)) {
+    throw new Error(tr('frameTextsMalformed'));
+  }
+  return {
+    texts: body.texts as FrameTexts['texts'],
+    packs: Object.fromEntries(Object.entries(body.packs).map(([key, candidates]) => [key, packedTexts(candidates)])),
+  };
+}
+
 export function FramePage({ page, sessionId, reloads, reload }: FramePageProps) {
   const names = usePluginNames();
+  // IPv6 字面地址写不进框架响应头里的来源：不挂框架，也不取字典
+  const ipv6 = location.hostname.startsWith('[');
+  const path = `/api/pages/${encodeURIComponent(page.instance)}/${encodeURIComponent(page.key)}/texts`;
+  /** 这一次挂载：框架地址与刷新次数，变了就重取字典、重新挂载 */
+  const mount = `${page.frame.src}:${reloads}`;
+  // 重取时 useJson 还给着上一次的值：字典记下它是哪一次挂载取的，不是这一次的不用
+  const parse = useCallback((body: unknown) => ({ mount, texts: parseTexts(body) }), [mount]);
+  const fetched = useJson(ipv6 ? undefined : path, parse, mount);
+  let body: ReactNode;
+  if (ipv6) body = <EmptyState title={tr('frameNeedsHostName')} />;
+  else if (fetched.error) body = <FetchError what={tr('frameTexts')} error={fetched.error} retry={reload} />;
+  else if (fetched.value?.mount !== mount) body = <FrameArea loading />;
+  else body = <Frame key={mount} page={page} sessionId={sessionId} texts={fetched.value.texts} reload={reload} />;
   return (
     <div className="frame-page">
       <p className="frame-source">
         {tr('frameSource', { plugin: names.instances.get(page.instance)?.label ?? page.instance })}
       </p>
-      {/* IPv6 字面地址写不进框架响应头里的来源 */}
-      {location.hostname.startsWith('[') ? (
-        <EmptyState title={tr('frameNeedsHostName')} />
-      ) : (
-        <Frame key={`${page.frame.src}:${reloads}`} page={page} sessionId={sessionId} reload={reload} />
+      {body}
+    </div>
+  );
+}
+
+/** 框架所在的区域：加载中时上面盖着宿主的加载态 */
+function FrameArea({ loading, children }: { loading: boolean; children?: ReactNode }) {
+  return (
+    <div className="frame-area">
+      {children}
+      {loading && (
+        <span className="frame-loading" role="status" aria-label={tr('loading')}>
+          <LoaderCircle aria-hidden className="spin" />
+        </span>
       )}
     </div>
   );
@@ -69,7 +112,7 @@ interface Asking {
 }
 
 /** 一次挂载：按框架地址与刷新次数挂上（外面的 key），挂着时页面表重取回来的是同一次登记 */
-function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
+function Frame({ page, sessionId, texts, reload }: Omit<FramePageProps, 'reloads'> & { texts: FrameTexts }) {
   const { session, admin } = useConnection();
   const navigate = useNavigate();
   const toast = useToast();
@@ -84,6 +127,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
       mountFrame(iframe.current as HTMLIFrameElement, nonce, {
         page,
         sessionId,
+        texts,
         session,
         admin,
         ready: () => setState('ready'),
@@ -120,7 +164,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
   };
   return (
     <>
-      <div className="frame-area">
+      <FrameArea loading={state === 'loading'}>
         <iframe
           ref={iframe}
           className="frame"
@@ -130,12 +174,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
           referrerPolicy="no-referrer"
           data-ready={state === 'ready' || undefined}
         />
-        {state === 'loading' && (
-          <span className="frame-loading" role="status" aria-label={tr('loading')}>
-            <LoaderCircle aria-hidden className="spin" />
-          </span>
-        )}
-      </div>
+      </FrameArea>
       <FrameDialog asking={asking} answer={answer} />
     </>
   );

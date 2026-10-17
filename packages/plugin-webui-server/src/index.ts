@@ -33,6 +33,7 @@ import { sessionProtocol } from '@aalis/api-session-protocol';
 import { isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
+  CLIENT_TEXTS_FILE,
   type ErrorResponse,
   type OkResponse,
   type OptionDetail,
@@ -60,7 +61,15 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { asText, isTextError, type TextRef, textLines, textOf } from '@aalis/schema-i18n';
+import {
+  asText,
+  isTextError,
+  registerCatalogEntry,
+  type TextRef,
+  textLines,
+  textOf,
+  toSource,
+} from '@aalis/schema-i18n';
 import {
   type Message,
   type OutgoingMessage,
@@ -85,7 +94,7 @@ import { createPageRegistry } from './pages.js';
 import { route } from './route.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerFrameRoutes } from './routes/frames.js';
-import { interfaceLanguage, registerI18nRoutes } from './routes/i18n.js';
+import { frameTexts, interfaceLanguage, registerI18nRoutes } from './routes/i18n.js';
 import { localPackageLookup, registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPageRoutes } from './routes/pages.js';
@@ -338,6 +347,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const storage = caps.storage.use;
   // 给人看的文字按全局默认层的语言渲染（localize.ts）：回应、登录页与恢复页、access.txt
   const localizer = createLocalizer(caps.i18n, logger.use);
+  /** 多语言路由与插件前端的字典要的：i18n、语言包的来源与全局默认层的语言链 */
+  const i18nDeps = { i18n: caps.i18n, contributions: caps.contributions, localizer };
 
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
@@ -497,10 +508,32 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       // 入口 index.html 不由它给：SPA 兜底写好 <html lang> 再发
       staticMiddleware = express.static(dir, { index: false });
       logger.use.info(`前端静态目录: ${dir}`);
+      registerClientTexts(join(dir, CLIENT_TEXTS_FILE));
     } else {
       staticMiddleware = null;
       logger.use.warn(`前端目录不存在: ${dir}`);
     }
+  }
+
+  /**
+   * 前端随它带的字典（api-webui 的 CLIENT_TEXTS_FILE）登记进服务进程的目录：「翻译」页列得出它们，语言包作者拿得到原文指纹。
+   * 目录没有删除，换掉的前端的字典留着。没有这个文件的前端照常挂载；读不出、不是数组时不登记，有条目不合格时合格的照登，都告警
+   */
+  function registerClientTexts(file: string): void {
+    if (!existsSync(file)) return;
+    let entries: unknown;
+    try {
+      entries = JSON.parse(readFileSync(file, 'utf-8'));
+    } catch (err) {
+      logger.use.warn(`前端的字典 ${file} 读不出，没有登记:`, err);
+      return;
+    }
+    if (!Array.isArray(entries)) {
+      logger.use.warn(`前端的字典 ${file} 不是数组，没有登记`);
+      return;
+    }
+    const refused = entries.filter(entry => !registerCatalogEntry(entry)).length;
+    if (refused > 0) logger.use.warn(`前端的字典 ${file} 里有 ${refused} 条不合格，没有登记`);
   }
 
   // 已发现的前端候选（app:ready 时填充，逐个注册为 webui-client 服务 provider）。
@@ -603,6 +636,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       storageReady: () => caps.storage.present,
       send: event => admin.send(event),
       logger: logger.use,
+      texts: plugin => frameTexts(i18nDeps, plugin),
     },
     auth.identify,
     gate,
@@ -783,7 +817,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       if (parsed.ok) themes.push({ id: key, instance: key.slice(0, key.lastIndexOf('/')), theme: parsed.theme });
       else if (!warnedThemes.has(spec)) {
         warnedThemes.add(spec);
-        logger.use.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${parsed.errors.join('；')}`);
+        logger.use.warn(`插件主题 ${key} 不合主题文件的格式，没有列出：${toSource(parsed.errors).join('；')}`);
       }
     }
     res.json({ themes });
@@ -962,7 +996,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.json({ models });
   });
 
-  registerI18nRoutes(expressApp, { i18n: caps.i18n, contributions: caps.contributions, localizer }, gate);
+  registerI18nRoutes(expressApp, i18nDeps, gate);
   registerProxyRoutes(expressApp, logger.use, gate);
   registerMediaRoutes(expressApp, storage, logger.use, gate);
   registerFileRoutes(expressApp, storage, { sessions: caps.sessionProtocol, pages: pageFiles }, logger.use, gate);

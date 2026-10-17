@@ -34,29 +34,27 @@ function writtenLanguage(): PageLanguage | undefined {
   }
 }
 
-/** 语言包的补充：ns → 键 → 各包给的译文，形状不对的条目丢掉 */
+/** 语言包给一条补的译文，形状不对的丢掉（插件前端的字典里的补充同一读法） */
+export const packedTexts = (candidates: unknown): PackedText[] =>
+  (Array.isArray(candidates) ? candidates : []).filter(
+    (candidate): candidate is PackedText =>
+      isRecord(candidate) &&
+      typeof candidate.language === 'string' &&
+      typeof candidate.text === 'string' &&
+      typeof candidate.from === 'string',
+  );
+
+/** 语言包的补充：ns → 键 → 各包给的译文 */
 function parsePacks(body: unknown): PackIndex {
   const entries = isRecord(body) && isRecord(body.entries) ? body.entries : {};
   return new Map(
     Object.entries(entries).map(([ns, keys]) => [
       ns,
-      new Map(
-        Object.entries(isRecord(keys) ? keys : {}).map(([key, candidates]) => [
-          key,
-          (Array.isArray(candidates) ? candidates : []).filter(
-            (candidate): candidate is PackedText =>
-              isRecord(candidate) &&
-              typeof candidate.language === 'string' &&
-              typeof candidate.text === 'string' &&
-              typeof candidate.from === 'string',
-          ),
-        ]),
-      ),
+      new Map(Object.entries(isRecord(keys) ? keys : {}).map(([key, candidates]) => [key, packedTexts(candidates)])),
     ]),
   );
 }
 
-/** 表里自有的一条：只认字符串 */
 /** 语言包补充的内容：比较补充变没变，变了才重挂（补的译文界面上用不到时也会多重挂一次，补充很少变） */
 const packsKey = (packs: PackIndex) => JSON.stringify([...packs].map(([ns, keys]) => [ns, [...keys]]));
 

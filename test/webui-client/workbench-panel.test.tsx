@@ -127,6 +127,32 @@ const ROWS: SettingRow[] = [
 describe('右侧面板与会话头', () => {
   const subscribe = (items = [userMessage('u1', '在吗')]) => ({ 'session/subscribe': () => snapshot(items) });
 
+  /** 有序的「语言」一行，取值在 value 里；只回 session/config/get，存由用例回 */
+  async function orderedLanguages(value: { current: string[] }, ordered = true) {
+    const rows = () => [
+      row('language', {
+        field: {
+          type: 'multiselect',
+          label: '语言',
+          ordered,
+          options: [
+            { label: 'English', value: 'en' },
+            { label: '日本語', value: 'ja' },
+            { label: '中文', value: 'zh-CN' },
+          ],
+        },
+        value: value.current,
+        effective: value.current,
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: rows() }) });
+    await panel().findByRole('group', { name: '语言' });
+    fireEvent.click(settingRow('语言').getByRole('button', { name: /语言/ }));
+    return rows;
+  }
+  const button = (name: string) => panel().getByRole('button', { name }) as HTMLButtonElement;
+
   it('设置：只列服务端给的行；常用的在前，「高级」默认折叠、按插件分组；每行写生效值与来源，顶部写生效时机', async () => {
     app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: ROWS }) }, PLUGINS);
     await panel().findByRole('group', { name: '人设' });
@@ -666,6 +692,171 @@ describe('右侧面板与会话头', () => {
     fireEvent.click(panel().getByRole('button', { name: '完成' }));
     fireEvent.click(settingRow('备注').getByRole('button', { name: /备注/ }));
     expect((settingRow('备注').getByRole('textbox', { name: '备注' }) as HTMLInputElement).value).toBe('<默认备注>');
+  });
+
+  it('有序的多选：选中的按取值的先后排在前面，各带上移、下移（读屏名是整句）；移动后写回新的顺序，焦点留在被移动的项上', async () => {
+    let value = ['zh-CN', 'en'];
+    const rows = () => [
+      row('language', {
+        field: {
+          type: 'multiselect',
+          label: '语言',
+          ordered: true,
+          options: [
+            { label: 'English', value: 'en' },
+            { label: '日本語', value: 'ja' },
+            { label: '中文', value: 'zh-CN' },
+          ],
+        },
+        value,
+        effective: value,
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', {
+      ...subscribe(),
+      'session/config/get': () => ({ items: rows() }),
+      'session/config/update': ({ patch }) => {
+        value = patch.language as string[];
+        return { items: rows() };
+      },
+    });
+    await panel().findByRole('group', { name: '语言' });
+    fireEvent.click(settingRow('语言').getByRole('button', { name: /语言/ }));
+    const listed = () =>
+      panel()
+        .getAllByRole('checkbox')
+        .map(box => (box.closest('label') as HTMLElement).textContent);
+    expect(listed()).toEqual(['中文', 'English', '日本語']);
+    expect([button('上移 中文').disabled, button('下移 中文').disabled]).toEqual([true, false]);
+    expect([button('上移 English').disabled, button('下移 English').disabled]).toEqual([false, true]);
+    expect(panel().queryByRole('button', { name: '下移 日本語' })).toBeNull();
+
+    button('下移 中文').focus();
+    fireEvent.click(button('下移 中文'));
+    await vi.waitFor(() =>
+      expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { language: ['en', 'zh-CN'] } }]),
+    );
+    await vi.waitFor(() => expect(listed()).toEqual(['English', '中文', '日本語']));
+    await vi.waitFor(() => expect(document.activeElement).toBe(button('上移 中文')));
+
+    const japanese = panel().getByRole('checkbox', { name: '日本語' });
+    japanese.focus();
+    fireEvent.click(japanese);
+    await vi.waitFor(() => expect(value).toEqual(['en', 'zh-CN', 'ja']));
+    await vi.waitFor(() => expect(listed()).toEqual(['English', '中文', '日本語']));
+    expect(button('下移 中文').disabled).toBe(false);
+    await vi.waitFor(() => expect(document.activeElement, '勾选时复选框不重挂，焦点留在它上面').toBe(japanese));
+
+    const chinese = panel().getByRole('checkbox', { name: '中文' });
+    chinese.focus();
+    fireEvent.click(chinese);
+    await vi.waitFor(() => expect(listed()).toEqual(['English', '日本語', '中文']));
+    await vi.waitFor(() => expect(document.activeElement, '取消后这一项挪到后面，焦点跟着它').toBe(chinese));
+  });
+
+  it('有序的多选：勾选或取消后存的时候焦点落到 body（浏览器里整组不可用时会这样），存完放回这一项的复选框', async () => {
+    const value = { current: ['zh-CN', 'en'] };
+    const rows = await orderedLanguages(value);
+    const chinese = panel().getByRole('checkbox', { name: '中文' });
+    chinese.focus();
+    fireEvent.click(chinese);
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    // jsdom 不让不可用的控件失焦，借输入框转一下，焦点落到 body
+    const composer = main().getByRole('textbox', { name: '消息' });
+    composer.focus();
+    composer.blur();
+    value.current = ['en'];
+    act(() => server().reply('session/config/update', { items: rows() }));
+    await vi.waitFor(() => expect(chinese.matches(':disabled')).toBe(false));
+    expect(document.activeElement).toBe(chinese);
+  });
+
+  it('无序的多选同样：勾选后存的时候焦点落到 body，存完放回这一项的复选框', async () => {
+    const value = { current: ['en'] };
+    const rows = await orderedLanguages(value, false);
+    const japanese = panel().getByRole('checkbox', { name: '日本語' });
+    japanese.focus();
+    fireEvent.click(japanese);
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    const composer = main().getByRole('textbox', { name: '消息' });
+    composer.focus();
+    composer.blur();
+    value.current = ['en', 'ja'];
+    act(() => server().reply('session/config/update', { items: rows() }));
+    await vi.waitFor(() => expect(japanese.matches(':disabled')).toBe(false));
+    expect(document.activeElement).toBe(japanese);
+  });
+
+  it('有序的多选：存的时候焦点去了组外，存完不拉回来', async () => {
+    const value = { current: ['zh-CN', 'en'] };
+    const rows = await orderedLanguages(value);
+    const composer = main().getByRole('textbox', { name: '消息' });
+    button('下移 中文').focus();
+    fireEvent.click(button('下移 中文'));
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    composer.focus();
+    value.current = ['en', 'zh-CN'];
+    act(() => server().reply('session/config/update', { items: rows() }));
+    await vi.waitFor(() => expect(button('上移 中文').matches(':disabled')).toBe(false));
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('有序的多选：移动后只剩这一项（按钮自己不可用）时不再等着放回焦点，之后别处改回两项也不抢焦点', async () => {
+    const value = { current: ['zh-CN', 'en'] };
+    const rows = await orderedLanguages(value);
+    button('下移 中文').focus();
+    fireEvent.click(button('下移 中文'));
+    await vi.waitFor(() => expect(requests('session/config/update')).toHaveLength(1));
+    value.current = ['zh-CN'];
+    act(() => server().reply('session/config/update', { items: rows() }));
+    const japanese = panel().getByRole('checkbox', { name: '日本語' });
+    await vi.waitFor(() => expect(japanese.matches(':disabled')).toBe(false));
+    expect(button('下移 中文').disabled).toBe(true);
+    japanese.focus();
+    value.current = ['zh-CN', 'en'];
+    act(() => server().notify('session/config/changed', {}));
+    await vi.waitFor(() => expect(button('下移 中文').disabled).toBe(false));
+    expect(document.activeElement).toBe(japanese);
+  });
+
+  it('无序的多选：按可选项的先后排，勾选不挪位，没有上移、下移', async () => {
+    let value = ['c'];
+    const rows = () => [
+      row('tags', {
+        field: {
+          type: 'multiselect',
+          label: '标签',
+          options: [
+            { label: '甲', value: 'a' },
+            { label: '乙', value: 'b' },
+            { label: '丙', value: 'c' },
+          ],
+        },
+        value,
+        effective: value,
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', {
+      ...subscribe(),
+      'session/config/get': () => ({ items: rows() }),
+      'session/config/update': ({ patch }) => {
+        value = patch.tags as string[];
+        return { items: rows() };
+      },
+    });
+    await panel().findByRole('group', { name: '标签' });
+    fireEvent.click(settingRow('标签').getByRole('button', { name: /标签/ }));
+    const listed = () =>
+      panel()
+        .getAllByRole('checkbox')
+        .map(box => (box.closest('label') as HTMLElement).textContent);
+    expect(listed()).toEqual(['甲', '乙', '丙']);
+    fireEvent.click(panel().getByRole('checkbox', { name: '甲' }));
+    await vi.waitFor(() => expect(value).toEqual(['c', 'a']));
+    expect(listed()).toEqual(['甲', '乙', '丙']);
+    expect(panel().queryByRole('button', { name: /^(?:上移|下移) / })).toBeNull();
   });
 
   it('可选项依赖另一项（dependsOn）：带上那一项的生效值去取，它变了就重取；当前值不在可选项里写它的名字（取不到名字写原样）并写明按默认的哪一档，没有可选项写明不能调', async () => {

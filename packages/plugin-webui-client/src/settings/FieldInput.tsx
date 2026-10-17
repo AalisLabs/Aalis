@@ -1,5 +1,5 @@
-import { RotateCw } from 'lucide-react';
-import { type ReactNode, useId, useReducer, useState } from 'react';
+import { ArrowDown, ArrowUp, RotateCw } from 'lucide-react';
+import { type ReactNode, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
@@ -10,8 +10,8 @@ import { type Field, isModelField, type Option, optionLabel, valueKey, withChose
 import { useFieldOptions } from './options';
 import './FieldInput.css';
 
-// 按 schema-config 字段的类型给出编辑控件，交出的是取值：开关是布尔，选择是选中的取值，多选是取值的数组，数字是数，
-// 列表与映射一行一项、一行一个「键=值」。写法读不出时交出 UNREADABLE，原因写在控件下面，由表单拦下不送。
+// 按 schema-config 字段的类型给出编辑控件，交出的是取值：开关是布尔，选择是选中的取值，多选是取值的数组（有序的另能
+// 上移下移），数字是数，列表与映射一行一项、一行一个「键=值」。写法读不出时交出 UNREADABLE，原因写在控件下面，由表单拦下不送。
 // 选择、多选与模型的可选项由调用方给出时直接用，不然自己取；模型字段旁有「刷新模型列表」，让会自己发现模型的服务重新探测
 // 一遍。FieldRow 是表单里的一行（标签与「必填」、控件、说明与问题），页面动作的表单与插件配置共用
 
@@ -157,28 +157,93 @@ function ModelInput(props: ChoiceProps) {
   );
 }
 
+/** 移动按钮的方向：上移是 -1 */
+type Step = -1 | 1;
+
+/**
+ * 多选：一列复选框。有序的（field.ordered）选中的按取值的先后排在前面，各带上移、下移，写回的取值就是这个顺序；没选的接在
+ * 后面，勾上的排到最后。勾选、取消与移动之后焦点留在那一项上
+ */
 function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
   const [custom, setCustom] = useState('');
+  const group = useRef<HTMLFieldSetElement>(null);
+  /** 刚勾选、取消或移动（带方向）的那一项：重画之后把焦点放回它的复选框或移动按钮 */
+  const touched = useRef<{ key: string; step?: Step }>(undefined);
+  /** 复选框与移动按钮，键是「方向\n选项的键」，复选框的方向是 0 */
+  const controls = useRef(new Map<string, HTMLInputElement | HTMLButtonElement>());
   const chosen = Array.isArray(value) ? value : [];
   const keys = new Set(chosen.map(item => valueKey(field, item)));
+  const all = withChosen(field, options.options, chosen);
+  const picked = [...keys].map(key => all.find(option => option.key === key) as Option);
+  const listed = field.ordered ? [...picked, ...all.filter(option => !keys.has(option.key))] : all;
+
+  // 移动的同一方向到头了用另一个按钮。存的时候整组不可用，等可用了再放；控件自己不可用（到了两头）或不在了（那一项不选了）
+  // 就不再等。焦点去了组外（不在这一组里，也没落到 body 上）时不放，免得抢走用户正在用的控件
+  useLayoutEffect(() => {
+    const last = touched.current;
+    if (!last) return;
+    const active = document.activeElement;
+    const away = active !== document.body && !group.current?.contains(active);
+    const usable = (last.step ? [last.step, -last.step] : [0])
+      .flatMap(direction => controls.current.get(`${direction}\n${last.key}`) ?? [])
+      .filter(control => !control.disabled);
+    const target = usable.find(control => !control.matches(':disabled'));
+    if (!away && !target && usable.length > 0) return;
+    touched.current = undefined;
+    if (!away) target?.focus();
+  });
+
+  const keep = (direction: Step | 0, key: string) => (control: HTMLInputElement | HTMLButtonElement | null) => {
+    if (control) controls.current.set(`${direction}\n${key}`, control);
+    else controls.current.delete(`${direction}\n${key}`);
+  };
+  const move = (index: number, step: Step) => {
+    const next = [...picked];
+    [next[index], next[index + step]] = [next[index + step], next[index]];
+    touched.current = { key: picked[index].key, step };
+    onChange(next.map(option => option.value));
+  };
+  const moveButton = (option: Option, index: number, step: Step) => (
+    <IconButton
+      ref={keep(step, option.key)}
+      icon={step < 0 ? ArrowUp : ArrowDown}
+      label={tr(step < 0 ? 'moveItemUp' : 'moveItemDown', { item: option.label })}
+      disabled={index + step < 0 || index + step >= picked.length}
+      onClick={() => move(index, step)}
+    />
+  );
+
   return (
-    <fieldset {...common} className="field-choices" tabIndex={-1}>
-      {withChosen(field, options.options, chosen).map(option => (
-        <label key={option.key} className="field-check">
-          <input
-            type="checkbox"
-            checked={keys.has(option.key)}
-            onChange={e =>
-              onChange(
-                e.target.checked
-                  ? [...chosen, option.value]
-                  : chosen.filter(item => valueKey(field, item) !== option.key),
-              )
-            }
-          />
-          {option.label}
-        </label>
-      ))}
+    <fieldset {...common} ref={group} className="field-choices" tabIndex={-1}>
+      {listed.map((option, index) => {
+        const check = (
+          <label key={option.key} className="field-check">
+            <input
+              ref={keep(0, option.key)}
+              type="checkbox"
+              checked={keys.has(option.key)}
+              onChange={e => {
+                touched.current = { key: option.key };
+                onChange(
+                  e.target.checked
+                    ? [...chosen, option.value]
+                    : chosen.filter(item => valueKey(field, item) !== option.key),
+                );
+              }}
+            />
+            {option.label}
+          </label>
+        );
+        if (!field.ordered) return check;
+        // 勾选与取消时这一行的外层不变，复选框不重挂
+        return (
+          <div key={option.key} className="field-ordered">
+            {check}
+            {keys.has(option.key) && moveButton(option, index, -1)}
+            {keys.has(option.key) && moveButton(option, index, 1)}
+          </div>
+        );
+      })}
       {field.allowCustom && (
         <input
           aria-label={tr('addField', { label: field.label })}

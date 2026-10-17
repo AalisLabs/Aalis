@@ -5,6 +5,8 @@
 // 条目是 { v: 1, ns, language, source, locales }，只放字符串表，不放函数与解析结果。
 // 条目结构有破坏性改动时升 v；解析遇到不认识的 v 退回 text.source。
 
+import { canonicalLanguage } from './locale.js';
+
 /** 字符串表：键 → 消息模板 */
 export type StringTable = Readonly<Record<string, string>>;
 
@@ -105,6 +107,32 @@ export function registerTexts(entry: Omit<CatalogEntry, 'v'>): void {
     locales[tag] = mergeTable(locales[tag] ?? {}, table, key => ({ ns, kind: 'locale', language: tag, key }), issues);
   }
   entries.set(ns, { ...existing, source: source as StringTable, locales });
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isStringTable = (value: unknown): value is StringTable =>
+  isRecord(value) && Object.values(value).every(text => typeof text === 'string');
+
+/**
+ * 登记外来的目录条目（前端构建时写下的、插件前端随 init 收到的，都是 {@link CatalogEntry} 写成的 JSON）：按本版协议核形状——
+ * v 为 1，ns 是非空字符串，语言标签合法、规范化后不重复，原文与各语言译文表的值都是字符串——语言标签规范化；不合的整条
+ * 不登记，回 false。同一 ns 已登记时与 defineTexts 一样按键合并
+ */
+export function registerCatalogEntry(value: unknown): boolean {
+  if (!isRecord(value) || value.v !== 1 || typeof value.ns !== 'string' || value.ns === '') return false;
+  const language = typeof value.language === 'string' ? canonicalLanguage(value.language) : undefined;
+  const { source, locales } = value;
+  if (language === undefined || !isStringTable(source) || !isRecord(locales)) return false;
+  const tables: Record<string, StringTable> = {};
+  for (const [tag, table] of Object.entries(locales)) {
+    const canonical = canonicalLanguage(tag);
+    if (canonical === undefined || Object.hasOwn(tables, canonical) || !isStringTable(table)) return false;
+    tables[canonical] = table;
+  }
+  registerTexts({ ns: value.ns, language, source, locales: tables });
+  return true;
 }
 
 /** 目录里本版协议的全部字典 */

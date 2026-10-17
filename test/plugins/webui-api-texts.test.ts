@@ -8,11 +8,11 @@ import {
   THEME_FILE_VERSION,
   themeContrastIssues,
 } from '../../packages/api-webui/src/index.js';
-import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.js';
+import { resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // api-webui 的库字典：子系统组名、内置主题名（按主题 id 取，主题文件不带名字）与对比度组合名是文字对象，
-// 前端按读者语言渲染；这里核英文读者拿到英文、中文读者拿到原文
+// 主题文件的校验原因也是，前端按读者语言渲染；这里核英文读者拿到英文、中文读者拿到原文
 // ════════════════════════════════════════════════════════════
 
 const english = (text: TextRef) => resolveText(text, ['en']);
@@ -45,8 +45,42 @@ describe('api-webui 的库字典', () => {
       kind: 'dark',
       colors: { '--color-text-3': muted },
     });
-    if (!result.ok) throw new Error(result.errors.join('；'));
+    if (!result.ok) throw new Error(toSource(result.errors).join('；'));
     const [first] = themeContrastIssues(result.theme);
     expect([english(first.pair), chinese(first.pair)]).toEqual(['Muted text / main area', '弱化字 / 主区']);
+  });
+
+  it('主题文件的校验原因', () => {
+    const reasons = (value: unknown) => {
+      const result = parseTheme(value);
+      if (result.ok) throw new Error('期望被拒');
+      return result.errors;
+    };
+    const file = { format: THEME_FILE_FORMAT, version: THEME_FILE_VERSION, name: '夜读', kind: 'dark', colors: {} };
+    const errors = [
+      ...reasons([]),
+      ...reasons({ ...file, format: 'css' }),
+      ...reasons({ ...file, version: 2 }),
+      ...reasons({
+        ...file,
+        name: '',
+        kind: 'dim',
+        css: 'x',
+        colors: { '--color-bogus': '#000', '--color-bg': 'red' },
+      }),
+      ...reasons({ ...file, colors: [] }),
+    ];
+    expect(errors.map(english)).toEqual([
+      'A theme file must be a JSON object',
+      `The format name must be ${THEME_FILE_FORMAT}`,
+      `Format version 2 isn’t recognized; only ${THEME_FILE_VERSION} is supported`,
+      'The name must be 1 to 40 characters of text',
+      'The kind must be dark or light',
+      'Unexpected field: css',
+      '--color-bogus isn’t in the token table',
+      'The value of --color-bg isn’t a color: red',
+      'colors must be an object',
+    ]);
+    expect(errors.map(chinese)).toEqual(toSource(errors));
   });
 });

@@ -156,6 +156,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件，手动放进插件目录的包靠它加载（界面在插件区左栏头部的「重新扫描插件目录」）；宿主未提供插件来源时返回 503 |
 | `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除。创建的请求体为 `{ suffix, config? }`，`config` 与 PUT 插件配置同一套处理：按 schema 默认值深合并、按宿主的裁剪政策裁掉未声明的字段（在响应 `ignored` 里点名，附在 `message` 末尾）；有类型不符的值时不创建，返回 400。创建同样经 `applyPluginConfig`：`secret` 字段上的值拆进密钥存储，先写配置文档再登记。停机进行中创建会被拒绝登记，返回 409，配置文档与密钥都撤回、不写入；创建后激活失败、实例转为 `error` 态时，实例与配置照样保留并写入配置文件，仍返回 200 与 `{ ok: true, instanceId }`，`message` 说明激活失败及原因：创建回 2xx 即表示实例已登记、配置已写进配置文件，WebUI 据此收起建实例表单、刷新列表；落盘失败的回执带 `applied: true`（见下文），实例同样已在运行态登记，表单也收起；其余非 2xx 时表单留着；配置文件的 `disabledPlugins` 里已有该实例（手改配置文件留下）时以禁用态登记，回执说明这一点。移除时先从配置文件删掉该实例的配置段与禁用标记（同名重建以启用态登记；不再被任何配置引用的密钥随这次保存从 `secrets.yaml` 删除），落盘成功后再卸载实例；卸载失败时返回 500，说明配置段已从配置文件删除、卸载失败；停机进行中删除时内核不受理卸载，配置段照样删掉，返回 200，`message` 注明停机中、未卸载运行中的实例 |
 | `/api/pages` · `/api/session-pages` | GET | 登记着的页面（声明式页面的声明去掉函数，插件前端页面只有框架地址、申请的能力与 actions；都带上实例与位置）/ 这个会话（`?sessionId=`）适用的会话面板页面。见下文「声明式页面」「插件前端」 |
+| `/api/pages/:instance/:pageKey/texts` | GET | 这一页所属插件的字典（服务进程目录里 ns 为插件名的条目）与语言包按全局默认层的语言链给它补的译文，原样交出、不渲染；插件前端的宿主随 `init` 交给框架。页面不在回 404 |
 | `/api/pages/:instance/:pageKey/data/:componentId` · `/api/pages/:instance/:pageKey/actions/:action` | GET · POST | 页面组件或插件前端数据源的数据 / 页面动作，经服务端闸门调用，见下文「声明式页面」「插件前端」 |
 | `/api/page-file` | GET | 页面单元格里的文件按句柄下载（`?handle=<文件单元格的 handle>`），句柄由本插件签发；下发方式与错误同 `/api/session-file` |
 | `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
@@ -268,7 +269,7 @@ socket.onmessage = event => {
 插件前端页面（契约见 [api-webui](../api/api-webui.md#插件前端)）与声明式页面同一张登记表、同一道闸门，另有：
 
 - **登记时找包根**（`pages.ts`）：`frame.module` 要是 `file:` 地址；从它所在目录往上找最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），`name` 要等于插件名（实例 id 第一个「:」之前的部分）；包根下的 `webui/` 要是目录，入口要是按 realpath 落在 `webui/` 之内的文件。不过就不登记，错误日志写明是哪一条、在哪个目录。包根在登记时解析一次，`webui/` 的 realpath 记进登记条目，另随机一个 128 位的 `token`（base64url）。
-- **托管**（`routes/frames.ts`）：`GET /frames/:token/<路径>` 按 `token` 找到这一次登记的 `webui/`，`GET /frames/_base/<路径>` 给出 `@aalis/api-webui` 包里 `dist/frame/` 的公用文件（助手 `frame.js` 与样式基线 `frame.css`）。注册在认证之前，不看 cookie。用 `express.static` 托管（关掉目录索引与目录重定向，点开头的段不给），前面另加两道：扩展名白名单（`html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`）与 realpath 落在目录之内。不合的一律 404，不发 3xx；只收 GET 与 HEAD，别的方法回 405。页面撤回或重新登记后旧的 `token` 回 404。
+- **托管**（`routes/frames.ts`）：`GET /frames/:token/<路径>` 按 `token` 找到这一次登记的 `webui/`，`GET /frames/_base/<路径>` 给出 `@aalis/api-webui` 包里 `dist/frame/` 的公用文件（助手 `frame.js`、样式基线 `frame.css` 与助手导入的 `schema-i18n/`）。注册在认证之前，不看 cookie。用 `express.static` 托管（关掉目录索引与目录重定向，点开头的段不给），前面另加两道：扩展名白名单（`html`、`js`、`mjs`、`css`、`svg`、`png`、`jpg`、`jpeg`、`gif`、`webp`、`woff2`）与 realpath 落在目录之内。不合的一律 404，不发 3xx；只收 GET 与 HEAD，别的方法回 405。页面撤回或重新登记后旧的 `token` 回 404。
 - **响应头**：框架 CSP（盖过全局的文档级 CSP）与其余响应头见 [api-webui 的「托管与隔离」](../api/api-webui.md#托管与隔离)；脚本的来源按请求的 Host 写成带路径、不带协议的来源，Host 去掉默认端口 `:80`、`:443`。Host 在本插件按「主机名或 IPv4 地址，加可选端口」核对，IPv6 字面地址与带分号、空白、斜杠等的回 400。
 - **数据源**：`componentId` 是数据源名，没声明的回 404；查询参数只收 `sessionId`（会话面板）与 `input`（声明了输入的数据源），`input` 是 JSON 字符串，解不开、不是对象、类型不对、缺必填、带多余的键都回 400。返回不能转成 JSON 的值时回 500，记告警「页面 \<key>（<实例>）的数据源 <名> 返回的数据不对：不能转成 JSON…」。动作的请求体不收 `rowKey`。
 - **`GET /api/pages`**：插件前端页面按字段组装，只给 `frame: { src, host }` 与 `actions`；不下发插件包的本机路径（`module`）与单独的 `entry` 字段，入口已含在 `src` 里；数据源也不下发。
@@ -314,6 +315,8 @@ socket.onmessage = event => {
 扫描的目录是安装集（`host-paths` 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，另按安装集 `package.json` 的依赖解析前端包。宿主不提供 `host-paths` 时没有可扫的目录，发现不到任何前端，整个 WebUI 前端不可用，页面路径回 404「前端未就绪」，只剩 HTTP 接口；同时市场列表（`/api/marketplace`）与系统组件（`/api/system-components`）判断不了已装的包，返回 503。Node 宿主 `@aalis/runtime` 总会提供 `host-paths`。
 
 **挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸；默认前端在设置「系统」的服务偏好里改）后**实时重挂静态目录，向 `/admin` 推 `client.reload`**，无需重启进程。
+
+**前端的字典**：挂载一个前端时，读它静态目录下的 `aalis-texts.json`（api-webui 的 `CLIENT_TEXTS_FILE`，随前端打包的字典的目录条目），逐条登记进服务进程的目录（schema-i18n 的 `registerCatalogEntry`），「翻译」页因此列得出外壳的字典。没有这个文件照常挂载；读不出、不是数组时不登记，有条目不合格时合格的照登，都记告警。目录没有删除，换掉的前端的字典留着。
 
 **SPA 兜底**：活跃前端的目录里没有的路径（不在 `/api/` 下）一律回它的 `index.html`，在 `/s/:id` 这类地址上刷新也能加载；`/assets/` 下缺失的文件回 404，不回 `index.html`，免得旧页面引用的、换了构建就不在的脚本被当成 HTML 执行。页面只在源的根上提供，不支持挂在反向代理的子路径下。
 

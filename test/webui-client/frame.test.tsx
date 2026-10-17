@@ -28,11 +28,24 @@ import {
   summary,
 } from './harness.js';
 import { snapshot } from './items.js';
-import { actionPath, BOARD, data, dataPath, hostTabs, layoutStore, pagePath, pageTab, ROSTER, refOf } from './pages.js';
+import {
+  actionPath,
+  BOARD,
+  data,
+  dataPath,
+  hostTabs,
+  layoutStore,
+  pagePath,
+  pageTab,
+  ROSTER,
+  refOf,
+  textsPath,
+} from './pages.js';
 
 // ════════════════════════════════════════════════════════════
 // 插件前端的宿主一侧：iframe 的属性与握手（来源窗口、nonce、只认一次、主版本、握手前不可见、第一次 load 之后超时、
-// 第二次 load 与 leaving 卸载、IPv6 不挂载）与出处一行；转发（数据与动作带上挂载时的实例、页面与会话，没声明的动作
+// 第二次 load 与 leaving 卸载、IPv6 不挂载）与出处一行；init 带界面的语言与这个插件的字典（每次挂载重取，取到之前不挂，
+// 形状不对的补充丢掉，全局语言变了重挂）；转发（数据与动作带上挂载时的实例、页面与会话，没声明的动作
 // 不发请求，destructive 经宿主确认框，open 的两种目标，同一时刻一个宿主对话框，连续取消卸载，HTTP 回应对到错误码，
 // invalidate 的过滤与重连，主题推送，页面撤回时卸载）；宿主数据能力按申请转发；在途与频率上限，反复挂载卸载后监听、
 // 端口与计时器回到基线。框架一侧由用例扮演：hello 是派发到窗口上的消息，端口换成同步投递的假端口
@@ -127,12 +140,20 @@ const PLUGINS: FakeRest = {
   },
 };
 
+/** 服务端给插件前端的字典：插件的原文字典与语言包的补充，宿主原样转交 */
+const TEXTS = {
+  texts: { v: 1, ns: 'zz-board', language: 'zh-CN', source: { hi: '你好' }, locales: { en: { hi: 'Hello' } } },
+  packs: { hi: [{ language: 'ja', text: 'こんにちは', from: '0badf00d' }] },
+};
+
 /** 插件页面「看板」的 REST；extra 覆盖或补充 */
 function boardRest(extra: FakeRest = {}): FakeRest {
   return {
     ...PLUGINS,
     '/api/pages': { pages: [BOARD, ROSTER] },
     '/api/layout': layoutStore().route,
+    [textsPath(BOARD)]: TEXTS,
+    [textsPath(ROSTER)]: { texts: null, packs: {} },
     [dataPath(BOARD, 'cards')]: data([{ id: 'c1', title: '周报' }]),
     ...extra,
   };
@@ -277,7 +298,8 @@ function countHandlers(harness: Harness) {
   });
 }
 const posts = (path: string) => restCalls().filter(call => call.method === 'POST' && call.path === path);
-const pageCalls = () => restCalls().filter(call => call.path.startsWith('/api/pages/'));
+/** 转发框架请求发出的页面请求：数据源与动作（挂载时取字典不算） */
+const pageCalls = () => restCalls().filter(call => /^\/api\/pages\/.*\/(?:data|actions)\//.test(call.path));
 const admin = () => FakeWebSocket.at('/admin');
 const refresh = () => fireEvent.click(screen.getAllByRole('button', { name: '刷新' })[0]);
 const dialog = (name: string) => within(screen.getByRole('dialog', { name }));
@@ -339,6 +361,9 @@ describe('挂载与握手', () => {
       protocol: FRAME_PROTOCOL_VERSION,
       experimental: true,
       theme: expect.any(Object),
+      languages: ['zh-CN'],
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...TEXTS,
     });
     expect(origin).toBe('*');
     expect(channels).toHaveLength(1);
@@ -389,8 +414,7 @@ describe('挂载与握手', () => {
     expect(screen.getByText('页面没有响应')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
-    const next = frame() as HTMLIFrameElement;
-    expect(next).not.toBeNull();
+    const next = await findFrame();
     await connect(next);
     fireEvent.load(next);
     act(() => vi.advanceTimersByTime(60_000));
@@ -469,6 +493,89 @@ describe('挂载与握手', () => {
     const tab = within(await screen.findByRole('tabpanel'));
     expect(await tab.findByText('来自 子会话面板')).toBeTruthy();
     expect(await findFrame()).toBeTruthy();
+  });
+});
+
+describe('界面的语言与插件的字典', () => {
+  it('英文界面：init 的语言链与时区与外壳同一份，字典原样转交', async () => {
+    app = await renderApp(
+      pagePath(BOARD),
+      {},
+      boardRest({ '/api/i18n/languages': { languages: [], chain: ['en'], timeZone: 'Asia/Tokyo' } }),
+    );
+    const peer = await connect();
+    expect(peer.init).toMatchObject({ languages: ['en'], timeZone: 'Asia/Tokyo', ...TEXTS });
+  });
+
+  it('全局语言变了：宿主重挂框架，新的 init 按新的语言', async () => {
+    let chain = ['zh-CN'];
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    app = await renderApp(
+      pagePath(BOARD),
+      {},
+      boardRest({ '/api/i18n/languages': () => ({ languages: [], chain, timeZone }) }),
+    );
+    const before = await findFrame();
+    expect((await connect(before)).init.languages).toEqual(['zh-CN']);
+    chain = ['en'];
+    await act(async () => server().notify('session/config/changed', {}));
+    await vi.waitFor(() => expect(frame()).not.toBe(before));
+    expect((await connect()).init.languages).toEqual(['en']);
+  });
+
+  it('字典没取到：写明没取到，不挂框架；重试取到后挂上', async () => {
+    let failing = true;
+    app = await renderApp(
+      pagePath(BOARD),
+      {},
+      boardRest({
+        [textsPath(BOARD)]: () => (failing ? Response.json({ error: '服务端出错' }, { status: 500 }) : TEXTS),
+      }),
+    );
+    expect(await screen.findByText('插件前端的字典没取到')).toBeTruthy();
+    expect(frame()).toBeNull();
+    failing = false;
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect((await connect()).init).toMatchObject(TEXTS);
+  });
+
+  it('字典的回应不是预期的形状：写明没取到与原因，不挂框架；补充里形状不对的条目丢掉，init 里只有合格的', async () => {
+    app = await renderApp(pagePath(BOARD), {}, boardRest({ [textsPath(BOARD)]: { texts: 'x', packs: {} } }));
+    expect(await screen.findByText('插件前端的字典没取到')).toBeTruthy();
+    expect(screen.getByText('插件前端字典的回应不是预期的形状')).toBeTruthy();
+    expect(frame()).toBeNull();
+    app.close();
+
+    const [good] = TEXTS.packs.hi;
+    const packs = { hi: [null, good, { ...good, text: 5 }, 'x'], other: 'x' };
+    app = await renderApp(pagePath(BOARD), {}, boardRest({ [textsPath(BOARD)]: { texts: TEXTS.texts, packs } }));
+    expect((await connect()).init.packs).toEqual({ hi: [good], other: [] });
+  });
+
+  it('重新加载与页面重新登记换了地址：重取字典，框架用这一次取回的挂上', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let hi = '你好';
+    let pages: PageView[] = [BOARD];
+    app = await renderApp(
+      pagePath(BOARD),
+      {},
+      boardRest({
+        '/api/pages': () => ({ pages }),
+        [textsPath(BOARD)]: () => ({ ...TEXTS, texts: { ...TEXTS.texts, source: { hi } } }),
+      }),
+    );
+    const peer = await connect();
+    expect(peer.init.texts?.source).toEqual({ hi: '你好' });
+    hi = '您好';
+    peer.send({ type: 'leaving' });
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    expect((await connect()).init.texts?.source).toEqual({ hi: '您好' });
+
+    hi = '早上好';
+    pages = [{ ...BOARD, frame: { ...BOARD.frame, src: '/frames/tok-next/index.html' } }];
+    act(() => admin().push({ type: 'plugins.changed' }));
+    await vi.waitFor(() => expect(frame()?.getAttribute('src')).toMatch(/^\/frames\/tok-next\//));
+    expect((await connect()).init.texts?.source).toEqual({ hi: '早上好' });
   });
 });
 

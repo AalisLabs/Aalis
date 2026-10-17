@@ -2,13 +2,13 @@
 // routes/pages.ts — 声明式页面、会话面板与布局记录的 REST 路由
 //
 // 路径与返回形状见 api-webui 的 page.ts。页面的数据源与动作要把调用者交给插件，这两条路由自己解析身份（与 gate 同一判定）；
-// 其余用 gate。闸门与校验在 pages.ts，这里只把请求交过去、把结果连同它要的渲染选项写回。布局记录
-// 存在插件数据里，存储服务不在时回 503。
+// 其余用 gate。闸门与校验在 pages.ts，这里只把请求交过去、把结果连同它要的渲染选项写回。插件前端的字典是这一页所属插件
+// 的（插件名取实例 id 第一个「:」之前的部分），原样交出。布局记录存在插件数据里，存储服务不在时回 503。
 // ============================================================
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { ErrorResponse, WebuiAdminEvent } from '@aalis/api-webui';
-import type { Logger } from '@aalis/core';
+import type { ErrorResponse, FrameTexts, WebuiAdminEvent } from '@aalis/api-webui';
+import { type Logger, parseInstanceId } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import { LayoutFull, type LayoutStore, parseLayoutOperation } from '../layout.js';
@@ -26,6 +26,8 @@ export function registerPageRoutes(
     storageReady(): boolean;
     send(event: WebuiAdminEvent): void;
     logger: Logger;
+    /** 一个插件的字典，交给插件前端 */
+    texts(plugin: string): FrameTexts;
   },
   identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
   gate: RouteGate,
@@ -46,6 +48,16 @@ export function registerPageRoutes(
 
   route(expressApp, 'GET /api/session-pages', gate(), async (req, res) => {
     reply(res, await registry.panelPages(req.query.sessionId));
+  });
+
+  route(expressApp, 'GET /api/pages/:instance/:pageKey/texts', gate(), (req, res) => {
+    const { instance, pageKey } = req.params;
+    if (!registry.placementOf({ instance, pageKey })) {
+      return res.status(404).json({ error: t('pageMissing', { page: pageKey, instance }) });
+    }
+    // 字典是原样数据：译文表的键可能恰好是文字对象的那几个
+    renderWith(res, { skip: () => true });
+    res.json(deps.texts(parseInstanceId(instance).moduleName));
   });
 
   route(expressApp, 'GET /api/pages/:instance/:pageKey/data/:componentId', async (req, res) => {

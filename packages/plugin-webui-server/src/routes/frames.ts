@@ -2,8 +2,8 @@
 // routes/frames.ts — 插件前端的文件托管
 //
 // GET /frames/:token/<路径> 给出插件前端 webui/ 里的文件，token 是页面登记时随机生成的（pages.ts），页面撤回或重新
-// 登记后旧的回 404；GET /frames/_base/<路径> 给出 api-webui 随包带的公用文件（助手与样式基线）。注册在认证之前，
-// 不看 cookie：token 只出现在要登录的 GET /api/pages 里，文件是随包发布的代码，不含数据。
+// 登记后旧的回 404；GET /frames/_base/<路径> 给出 api-webui 随包带的公用文件（助手、样式基线与助手导入的
+// schema-i18n）。注册在认证之前，不看 cookie：token 只出现在要登录的 GET /api/pages 里，文件是随包发布的代码，不含数据。
 // 托管用 express.static，前面另加扩展名白名单与 realpath 两道；不合的一律 404，不回目录、不发 3xx：重定向之后 CSP 只按
 // 来源匹配、不看路径，「只放行这一页的目录」就失效了。只收 GET 与 HEAD。
 // 响应头带框架 CSP，盖过全局的文档级 CSP。CSP 的来源取请求的 Host，写成带路径、不带协议的来源，http 访问与经 TLS 代理的

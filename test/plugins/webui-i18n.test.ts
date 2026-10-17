@@ -8,13 +8,19 @@ import { type HostConfig, hostConfig } from '../../packages/api-host-config/src/
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type BoundWebui, PAGE_LANGUAGE_ID, webuiClient, webuiServer } from '../../packages/api-webui/src/index.js';
+import {
+  type BoundWebui,
+  CLIENT_TEXTS_FILE,
+  PAGE_LANGUAGE_ID,
+  webuiClient,
+  webuiServer,
+} from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { textsBlock } from '../../packages/plugin-webui-server/src/html.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
-import { defineTexts, fingerprint, TextError } from '../../packages/schema-i18n/src/index.js';
+import { catalogEntries, defineTexts, fingerprint, TextError } from '../../packages/schema-i18n/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
@@ -180,11 +186,12 @@ function framePackage(): string {
   return pathToFileURL(join(root, 'index.js')).href;
 }
 
-/** 前端目录：只有入口 index.html */
-function clientDir(index: string): string {
+/** 前端目录：入口 index.html，给了 texts 时另有随前端打包的字典文件 */
+function clientDir(index: string, texts?: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-webui-i18n-client-')));
   dirs.push(dir);
   writeFileSync(join(dir, 'index.html'), index);
+  if (texts !== undefined) writeFileSync(join(dir, CLIENT_TEXTS_FILE), texts);
   return dir;
 }
 
@@ -297,6 +304,8 @@ interface SetupOptions {
   written?: Map<string, string>;
   /** 给了就另给前端：入口 index.html 是这一段 */
   index?: string;
+  /** 前端目录里随前端打包的字典文件的内容 */
+  clientTexts?: string;
 }
 
 async function setup({
@@ -307,10 +316,18 @@ async function setup({
   language = ['zh-CN'],
   written,
   index,
+  clientTexts,
 }: SetupOptions = {}) {
   const port = await freePort();
   const quiet = () => {};
-  const logger: Logger = { debug: quiet, info: quiet, warn: quiet, error: quiet, child: () => logger };
+  const warns: string[] = [];
+  const logger: Logger = {
+    debug: quiet,
+    info: quiet,
+    warn: (...args) => void warns.push(args.map(String).join(' ')),
+    error: quiet,
+    child: () => logger,
+  };
   const app = new App({ name: 'T', logLevel: 'info', logger });
   apps.push(app);
   const frameModule = framePackage();
@@ -353,7 +370,10 @@ async function setup({
   });
   const setLanguage = provideHostLanguage(app, language);
   if (written) app.bind({ provide }).provide.use(storage, memoryStorage(written));
-  if (index !== undefined) app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => clientDir(index) });
+  if (index !== undefined) {
+    const dir = clientDir(index, clientTexts);
+    app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => dir });
+  }
   await app.pluginAll([
     ...(withHubs ? [...HUB_PLUGINS, packs].map(definition => ({ definition })) : []),
     ...(withI18n && !i18nService ? [{ definition: i18nPlugin }] : []),
@@ -405,7 +425,7 @@ async function setup({
       });
   /** 不带登录 cookie 的请求：登录页 */
   const anonymous = (browser = false) => fetch(`http://127.0.0.1:${port}/`, { headers: browser ? BROWSER : {} });
-  return { request: client(), client, fault, port, anonymous, setLanguage };
+  return { request: client(), client, fault, port, anonymous, setLanguage, warns };
 }
 
 /** 浏览器自己的语言与时区：语言 cookie、时区 cookie 与 Accept-Language 都是英语与东京，服务端不看它们 */
@@ -790,5 +810,55 @@ describe('可选项来源与 /api/i18n 的两条路由', () => {
     expect(await json(request(`/api/i18n/messages?ns=${ns}`))).toEqual({ entries: {} });
     const absent = await setup({ withI18n: false, withHubs: true });
     expect(await json(absent.request(`/api/i18n/messages?ns=${other}`))).toEqual({ entries: {} });
+  });
+});
+
+describe('插件前端的字典与随前端打包的字典', () => {
+  it('GET /api/pages/:instance/:pageKey/texts 给这一页所属插件的字典（原文与全部译文）与语言包按全局默认层语言链给它补的译文；i18n 缺席时补充为空；页面不在时 404', async () => {
+    const entry = catalogEntries().find(candidate => candidate.ns === OWNER);
+    const { request, setLanguage } = await setup({ withHubs: true, language: ['ja'] });
+    const title = { language: 'ja', text: 'ジョブ', from: fingerprint('任务') };
+    expect(await json(request(`${at('board')}/texts`))).toEqual({ texts: entry, packs: { title: [title] } });
+    setLanguage(['zh-CN']);
+    expect(await json(request(`${at('board')}/texts`))).toEqual({ texts: entry, packs: {} });
+    const missing = await request(`${at('nope')}/texts`);
+    expect(missing.status).toBe(404);
+    const absent = await setup({ withI18n: false, withHubs: true, language: ['ja'] });
+    expect(await json(absent.request(`${at('board')}/texts`))).toEqual({ texts: entry, packs: {} });
+  });
+
+  it('前端目录里带着随前端打包的字典：挂载时登记进服务进程的目录，「翻译」页列得出它的齐全度', async () => {
+    const ns = '@zz/i18n-client-shell';
+    const texts = [{ v: 1, ns, language: 'zh-CN', source: { a: '甲', b: '乙' }, locales: { en: { a: 'A' } } }];
+    const { request, warns } = await setup({ index: '<!doctype html>', clientTexts: JSON.stringify(texts) });
+    const translation = `/api/pages/${encodeURIComponent('@aalis/plugin-i18n')}/translation/data/dictionaries`;
+    const { data } = await json(request(translation));
+    expect(
+      data.filter((row: { ns: string }) => row.ns === ns).map(({ id: _id, ...row }: { id: string }) => row),
+    ).toEqual([{ ns, language: 'en', translated: '1/2', missing: 1, stale: 0, conflicts: 0, broken: 0 }]);
+    expect(warns.filter(warn => warn.includes(CLIENT_TEXTS_FILE))).toEqual([]);
+  });
+
+  it('字典文件读不出、不是数组或有条目不合格：合格的照登，告警写明前端目录，前端照常挂载', async () => {
+    const good = { v: 1, ns: '@zz/i18n-client-good', language: 'en', source: { a: 'A' }, locales: {} };
+    const bad = { v: 1, ns: '@zz/i18n-client-bad', language: 'not a tag', source: {}, locales: {} };
+    for (const [content, registered] of [
+      ['{坏的', []],
+      ['{}', []],
+      [JSON.stringify([good, bad]), [good.ns]],
+    ] as const) {
+      const { request, warns } = await setup({ index: '<!doctype html><title>前端</title>', clientTexts: content });
+      expect((await request('/')).status, content).toBe(200);
+      expect(
+        warns.filter(warn => warn.includes(CLIENT_TEXTS_FILE)),
+        content,
+      ).toHaveLength(1);
+      for (const ns of [good.ns, bad.ns]) {
+        expect(
+          catalogEntries().some(entry => entry.ns === ns),
+          `${content} ${ns}`,
+        ).toBe(registered.includes(ns as never));
+      }
+    }
   });
 });

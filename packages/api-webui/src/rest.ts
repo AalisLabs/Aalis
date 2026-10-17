@@ -21,6 +21,7 @@ import type { LogEntry, PluginState, SelectionBasis } from '@aalis/core';
 import type { ConfigSchema, SchemaIssue } from '@aalis/schema-config';
 import type { Localized, TextRef } from '@aalis/schema-i18n';
 import type { DepOrigin } from '@aalis/util-dep-spec';
+import type { FrameTexts } from './frame.js';
 import type { AttentionItem, ExtendDeclaration, LogFilter, PluginBlockers } from './index.js';
 import type { LayoutOperation, LayoutRecords, PageDataByType, PageRef, PageView } from './page.js';
 import type { PluginTheme } from './theme.js';
@@ -494,6 +495,8 @@ export interface WebuiRestRoutes {
 
   'GET /api/pages': { response: PageListResponse };
   'GET /api/session-pages': { query: { sessionId: string }; response: PanelPagesResponse };
+  /** 这一页所属插件的字典，插件前端的宿主随 init 交给框架 */
+  'GET /api/pages/:instance/:pageKey/texts': { response: FrameTexts };
   'GET /api/pages/:instance/:pageKey/data/:componentId': {
     query: PageDataQuery;
     response: PageDataResponse | FrameDataResponse;
@@ -574,6 +577,8 @@ export interface WebuiFileRoutes {
   'GET /frames/_base/frame.js': { headers: FrameFileHeaders };
   /** 宿主给框架的样式基线 */
   'GET /frames/_base/frame.css': { headers: FrameFileHeaders };
+  /** 助手导入的 schema-i18n（随 api-webui 带的一份构建产物） */
+  'GET /frames/_base/schema-i18n/{*path}': { headers: FrameFileHeaders };
   /** 换前端的恢复页：任何前端卡住时都能在这里切回 */
   'GET /__clients': { headers: DocumentHeaders<'text/html'> };
   'GET /__clients.js': { headers: DocumentHeaders<'application/javascript'> };

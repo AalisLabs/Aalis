@@ -15,6 +15,7 @@ import {
   type ThemeToken,
   themeContrastIssues,
 } from '@aalis/api-webui';
+import type { TextRef } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -31,6 +32,7 @@ import { useConnection } from './connection';
 import { text, tr } from './language';
 import { isRecord, useJson } from './rest';
 import { readStored, writeStored } from './storage';
+import { t } from './texts';
 
 // 外观：主题的选择、导入的主题与插件经贡献点提供的主题。选择与导入的主题存本浏览器（首帧主题脚本读 appearance）；
 // 插件提供的主题取自 GET /api/themes，插件启停、管理连接重连后重取。正在用的主题不在了（导入的移除、插件停用）时用
@@ -51,9 +53,10 @@ export interface ThemeEntry {
 /** 跟随系统时深浅各选一个；不跟随时选一个，记下它的深浅，它不在了时回到同深浅的偏中性 */
 type Choice = { follow: true; dark: string; light: string } | { follow: false; theme: string; kind: ThemeKind };
 
+/** 导入的结果：被拒时的原因是文字对象（主题文件的校验原因取自 api-webui 的字典），显示时按界面的语言写 */
 export type ImportResult =
   | { ok: true; entry: ThemeEntry; replaced: boolean; issues: ContrastIssue[] }
-  | { ok: false; errors: string[] };
+  | { ok: false; errors: TextRef[] };
 
 const DEFAULT_CHOICE: Choice = { follow: true, ...DEFAULT_THEMES };
 
@@ -247,13 +250,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const importTheme = useCallback(
     async (file: File): Promise<ImportResult> => {
       if (file.size > THEME_FILE_MAX_BYTES) {
-        return { ok: false, errors: [tr('themeFileTooLarge', { kb: THEME_FILE_MAX_BYTES / 1024 })] };
+        return { ok: false, errors: [t('themeFileTooLarge', { kb: THEME_FILE_MAX_BYTES / 1024 })] };
       }
       let value: unknown;
       try {
         value = JSON.parse(await file.text());
       } catch {
-        return { ok: false, errors: [tr('themeFileNotJson')] };
+        return { ok: false, errors: [t('themeFileNotJson')] };
       }
       const parsed = parseTheme(value);
       if (!parsed.ok) return parsed;

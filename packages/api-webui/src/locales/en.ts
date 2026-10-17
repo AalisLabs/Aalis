@@ -71,4 +71,13 @@ export default defineLocale<Source>()({
   markOnRail: 'Gold mark / icon rail',
   markOnSideSelected: 'Gold mark / selected row in the sidebar',
   markOnRailCurrent: 'Gold mark / current item in the icon rail',
+  themeNotObject: 'A theme file must be a JSON object',
+  themeFormat: 'The format name must be {format}',
+  themeVersion: 'Format version {version} isn’t recognized; only {supported} is supported',
+  themeName: 'The name must be 1 to {max, number} characters of text',
+  themeKind: 'The kind must be dark or light',
+  themeExtraField: 'Unexpected field: {key}',
+  themeColorsNotObject: 'colors must be an object',
+  themeUnknownToken: '{token} isn’t in the token table',
+  themeNotColor: 'The value of {token} isn’t a color: {value}',
 });

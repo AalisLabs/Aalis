@@ -1,4 +1,11 @@
-import { catalogEntries, catalogIssues, checkTexts, defineTexts, resolveText } from '@aalis/schema-i18n';
+import {
+  catalogEntries,
+  catalogIssues,
+  checkTexts,
+  defineTexts,
+  registerCatalogEntry,
+  resolveText,
+} from '@aalis/schema-i18n';
 import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
@@ -89,6 +96,55 @@ describe('进程级目录', () => {
     const before = catalogIssues().length;
     issues.push('x');
     expect(catalogIssues()).toHaveLength(before);
+  });
+});
+
+describe('registerCatalogEntry', () => {
+  it('登记外来的条目：语言标签规范化，登记后按目录解析；同 ns 再次登记与 defineTexts 一样按键合并', () => {
+    const ns = 'test/catalog-foreign';
+    const entry = {
+      v: 1,
+      ns,
+      language: 'zh-cn',
+      source: { a: '甲 {n, number}' },
+      locales: { EN: { a: 'A {n, number}' } },
+    };
+    expect(registerCatalogEntry(entry)).toBe(true);
+    expect(entryOf(ns)).toEqual({
+      v: 1,
+      ns,
+      language: 'zh-CN',
+      source: { a: '甲 {n, number}' },
+      locales: { en: { a: 'A {n, number}' } },
+    });
+    expect(resolveText({ i18n: ns, key: 'a', params: { n: 2 }, source: '?' }, ['en'])).toBe('A 2');
+    expect(registerCatalogEntry({ ...entry, source: { a: '甲（新）', b: '乙' }, locales: {} })).toBe(true);
+    expect(entryOf(ns)?.source).toEqual({ a: '甲 {n, number}', b: '乙' });
+    expect(catalogIssues().filter(issue => issue.ns === ns)).toEqual([{ ns, kind: 'source', key: 'a' }]);
+  });
+
+  it('形状不合的整条不登记：协议版本、ns、语言标签（规范化后不重复）、原文与译文表的值都要合格', () => {
+    const ns = 'test/catalog-foreign-bad';
+    const good = { v: 1, ns, language: 'en', source: { a: 'A' }, locales: { ja: { a: 'エー' } } };
+    for (const bad of [
+      null,
+      'x',
+      [],
+      { ...good, v: 2 },
+      { ...good, ns: '' },
+      { ...good, ns: 7 },
+      { ...good, language: 'not a tag' },
+      { ...good, source: [] },
+      { ...good, source: { a: 1 } },
+      { ...good, locales: null },
+      { ...good, locales: { 'not a tag': {} } },
+      { ...good, locales: { ja: { a: 'エー' }, JA: { a: 'エ' } } },
+      { ...good, locales: { ja: { a: null } } },
+      { ...good, locales: { ja: [] } },
+    ]) {
+      expect(registerCatalogEntry(bad), JSON.stringify(bad)).toBe(false);
+    }
+    expect(entryOf(ns)).toBeUndefined();
   });
 });
 

@@ -1,4 +1,4 @@
-/* 多选：一列复选框，可以手动添加的在最后一行 */
+/* 多选：一列复选框，可以手动添加的在最后一行；有序的选中项带上移、下移 */
 .field-choices {
   display: flex;
   flex-direction: column;
@@ -16,6 +16,18 @@
   min-height: var(--hit);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
+}
+
+/* 有序的多选的一行（选不选都包一层，勾选时复选框不重挂）：选中的上移、下移在行尾对齐 */
+.field-ordered {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: stretch;
+}
+
+.field-ordered > .field-check {
+  margin-right: auto;
 }
 
 .field-model {

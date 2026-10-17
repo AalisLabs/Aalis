@@ -207,6 +207,10 @@ export function dataPath(page: PageView, componentId: string, query: Record<stri
 export const actionPath = (page: PageView, action: string) =>
   `/api/pages/${encodeURIComponent(page.instance)}/${encodeURIComponent(page.key)}/actions/${encodeURIComponent(action)}`;
 
+/** 插件前端的字典的路径 */
+export const textsPath = (page: PageView) =>
+  `/api/pages/${encodeURIComponent(page.instance)}/${encodeURIComponent(page.key)}/texts`;
+
 /** 取数的回应 */
 export const data = (value: unknown) => ({ data: value });
 

@@ -8,7 +8,8 @@ import { contractRoutes } from '../helpers/webui-contract.js';
 // 管理面 REST 的路由登记守卫：路由一律经 route() 登记，键就是契约（api-webui 的 rest.ts）里的键，处理函数的回应在编译期按契约核；
 // 直接在 express 上登记带路径的只许是挂载（use 带路径）。实际登记的路由与契约的路由表逐条对上，由
 // test/plugins/webui-rest-contract.test.ts 在启动时记下真实的登记来核。
-// 宿主给框架的公用文件在 /frames/_base/ 下，由插件前端的挂载托管，契约里逐个列出，与 api-webui 随包带的文件对上。
+// 宿主给框架的公用文件在 /frames/_base/ 下，由插件前端的挂载托管，契约里逐个列出，与 api-webui 随包带的文件对上（随它带的
+// schema-i18n 是一整个目录，列一条）。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = join(import.meta.dirname, '../..');
@@ -79,10 +80,12 @@ describe('管理面 REST 的路由登记', () => {
     expect(new Set(declared).size).toBe(declared.length);
   });
 
-  it('/frames/_base/ 下列出的就是 api-webui 随包带的公用文件', () => {
+  it('/frames/_base/ 下列出的就是 api-webui 随包带的公用文件：frame/ 里的助手与样式基线，加上随它带的 schema-i18n', () => {
     const shipped = readdirSync(FRAME_BASE)
       .filter(name => /\.(ts|css)$/.test(name))
       .map(name => `${BASE_PREFIX}${name.replace(/\.ts$/, '.js')}`);
-    expect(declared.filter(key => key.startsWith(BASE_PREFIX)).sort()).toEqual(shipped.sort());
+    expect(declared.filter(key => key.startsWith(BASE_PREFIX)).sort()).toEqual(
+      [...shipped, `${BASE_PREFIX}schema-i18n/{*path}`].sort(),
+    );
   });
 });

@@ -8,6 +8,7 @@ import {
   type FrameOpenRequest,
   type FramePageView,
   type FrameRequest,
+  type FrameTexts,
   type FrameTheme,
   parseFrameHello,
   parseFrameMessage,
@@ -15,7 +16,7 @@ import {
   type ThemeToken,
 } from '@aalis/api-webui';
 import type { Localized } from '@aalis/schema-i18n';
-import { tr } from '../language';
+import { language, tr } from '../language';
 import type { AdminClient } from '../protocol/admin-client';
 import { ConnectionLostError, INVALID_PARAMS, RequestError, type SessionClient } from '../protocol/session-client';
 import { getJson, isRecord, postJson, RestError } from '../rest';
@@ -23,7 +24,8 @@ import { getJson, isRecord, postJson, RestError } from '../rest';
 // 插件前端的消息通道，宿主一侧。先在窗口上等框架的 hello，核过来源窗口、nonce 与主版本，交给框架一个专用端口，
 // 之后只走这个端口。框架发来的每条消息先过 api-webui 的校验函数；实例、页面与会话面板的会话一律取挂载时的值；
 // 宿主数据能力按页面申请的放行；外链与 destructive 动作要用户在宿主对话框里确认，同一时刻只一个，连续被取消到上限就卸载。
-// 卸载只有一个出口：关端口、撤监听、在途的结果不再转回、清计时器。
+// 卸载只有一个出口：关端口、撤监听、在途的结果不再转回、清计时器。init 里的语言链与时区取界面的语言状态（与外壳同一份），
+// 插件的字典由挂载方取好交来；全局语言变了整个界面重挂，框架随之重新握手。
 // 回给框架的失败说明：运行中会遇到的按界面的语言；只在哪一方代码写错时才出现的是诊断，与 api-webui 的校验句一样照原文
 
 /** 在途请求最多几个，超了回 busy */
@@ -47,6 +49,8 @@ interface FrameHost {
   page: Localized<FramePageView>;
   /** 会话面板的会话 */
   sessionId?: string;
+  /** 这一页所属插件的字典，随 init 原样交给框架 */
+  texts: FrameTexts;
   session: SessionClient;
   admin: AdminClient;
   /** 交出了 init，可以显示框架 */
@@ -169,7 +173,7 @@ export function mountFrame(iframe: HTMLIFrameElement, nonce: string, host: Frame
 
 /** 建专用端口随 init 交给框架，之后按消息转发。返回拆掉通道 */
 function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => void): () => void {
-  const { page, sessionId, session, admin } = host;
+  const { page, sessionId, session, admin, texts } = host;
   const base = `/api/pages/${enc(page.instance)}/${enc(page.key)}`;
   const closed = new AbortController();
   const { port1: port, port2 } = new MessageChannel();
@@ -350,12 +354,16 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
     );
   }
 
+  const { chain, timeZone } = language();
   const init: FrameInit = {
     type: 'init',
     protocol: FRAME_PROTOCOL_VERSION,
     experimental: true,
     ...(sessionId === undefined ? {} : { sessionId }),
     theme,
+    languages: [...chain],
+    timeZone,
+    ...texts,
   };
   frame.postMessage(init, '*', [port2]);
 
