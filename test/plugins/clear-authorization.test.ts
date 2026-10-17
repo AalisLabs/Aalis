@@ -5,6 +5,7 @@ import { type BoundCommands, commands as commandsService } from '../../packages/
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -53,7 +54,7 @@ async function runClear(
 ): Promise<string> {
   const clear = commands.getAll().find(c => c.name === 'clear');
   if (!clear?.handler) throw new Error('/clear 未注册');
-  const out = await clear.handler({ session: { ...session, raw: '/clear' }, options: {} });
+  const out = toSource(await clear.handler({ session: { ...session, raw: '/clear' }, options: {} }));
   if (typeof out !== 'string') throw new Error('/clear 没有返回结果');
   return out;
 }

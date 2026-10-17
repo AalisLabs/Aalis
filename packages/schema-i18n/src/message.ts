@@ -2,12 +2,16 @@
 
 export type DateStyle = 'short' | 'medium' | 'long';
 
+/** 列表的连接：`{x, list}` 是「和」，`{x, list, or}` 是「或」（ListFormat 的 type） */
+export type ListType = 'conjunction' | 'disjunction';
+
 /** 参数：plural 分支里的 # 记作 pound，取直接所在的 plural 的数 */
 export type Argument =
   | { readonly type: 'plain'; readonly name: string }
   | { readonly type: 'pound' }
   | { readonly type: 'plural' | 'select'; readonly name: string; readonly branches: ReadonlyMap<string, Message> }
-  | { readonly type: 'number' | 'list' | 'lines' | 'duration' | 'size' | 'code'; readonly name: string }
+  | { readonly type: 'number' | 'lines' | 'duration' | 'size' | 'code'; readonly name: string }
+  | { readonly type: 'list'; readonly name: string; readonly listType: ListType }
   | { readonly type: 'date' | 'time' | 'datetime'; readonly name: string; readonly style: DateStyle };
 
 /** 解析后的消息：字面文字与参数依次排列 */
@@ -140,13 +144,23 @@ function readArgument(r: Reader, depth: number): Argument {
       return { type, name, branches };
     }
     case 'number':
-    case 'list':
     case 'lines':
     case 'duration':
     case 'size':
     case 'code':
       r.expect('}');
       return { type, name };
+    case 'list': {
+      let listType: ListType = 'conjunction';
+      if (r.eat(',')) {
+        r.skipSpace();
+        if (r.match(WORD) !== 'or') fail();
+        listType = 'disjunction';
+        r.skipSpace();
+      }
+      r.expect('}');
+      return { type, name, listType };
+    }
     case 'date':
     case 'time':
     case 'datetime': {

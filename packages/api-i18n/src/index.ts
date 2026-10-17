@@ -2,7 +2,8 @@
 // @aalis/api-i18n — 多语言契约
 //
 // 出口（WebUI、会话协议、网关等把文字交给人看的地方）按读者的语言渲染文字对象：i18n 服务在场时交给它的 render
-// （读者的语言链、语言包），缺席时按原文语言渲染。出口统一写 localizeFor(caps.i18n, 值, 读者, { skip, escape })。
+// （读者的语言链、语言包），缺席时与 render 抛错时按原文语言渲染。出口统一写
+// localizeFor(caps.i18n, 值, 读者, { skip, escape, onError })。
 // 语言包经贡献点 i18n:pack 交付。默认提供者：@aalis/plugin-i18n。
 // ============================================================
 
@@ -50,17 +51,32 @@ declare module '@aalis/api-contributions' {
   }
 }
 
+/** {@link localizeFor} 的选项：渲染选项之外，出口自己接 render 抛出的错 */
+export interface LocalizeOptions extends RenderOptions {
+  /**
+   * i18n 在场但 render 抛错时调用，收到抛出的错；这次按原文语言渲染，同缺席。出口在这里告警（一个出口告警一次就够），
+   * 要发出的文字不因此丢失
+   */
+  onError(err: unknown): void;
+}
+
 /**
- * 出口的统一写法：i18n 在场时交给 render，缺席时按原文语言渲染（schema-i18n 的 resolveSource，带读者的时区与转义），
- * 两支同一个 skip。日志与交给模型的文字不走这里，用 toSource
+ * 出口的统一写法：i18n 在场时交给 render，缺席时与 render 抛错时按原文语言渲染（schema-i18n 的 resolveSource，带读者的时区
+ * 与转义），各支同一个 skip。日志与交给模型的文字不走这里，用 toSource
  */
 export function localizeFor<T>(
   i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
   value: T,
   audience: Audience,
-  opts: RenderOptions = {},
+  { onError, ...opts }: LocalizeOptions,
 ): Localized<T> {
-  if (i18n.present) return i18n.use.render(value, audience, opts);
+  if (i18n.present) {
+    try {
+      return i18n.use.render(value, audience, opts);
+    } catch (err) {
+      onError(err);
+    }
+  }
   const timeZone = 'timeZone' in audience ? audience.timeZone : undefined;
   return localize(value, text => resolveSource(text, { escape: opts.escape, timeZone }), opts.skip);
 }

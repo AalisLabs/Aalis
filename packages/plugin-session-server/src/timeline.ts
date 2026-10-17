@@ -6,7 +6,7 @@
 // 在回合结束时收尾。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发）落成 aborted，之后工具返回什么都不改。
 // 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId。不是她回复的外发消息（指令回复、宿主
 // 提示）推成通知，与 WebUI 会话历史里由事件标记还原的那一条相同（纯文本），带文字对象（text）时给出它而不是 content，由连接
-// 按读者渲染；时间线自己的固定句（压缩、工具调用上限）取本插件的字典。
+// 按读者渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的送达原因原样作参数。
 // 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
 // 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
@@ -35,6 +35,7 @@ import type {
 import type { TodoItem, TodoListService } from '@aalis/api-todo-list';
 import { type ToolExecuteMessage, type ToolOutputMessage, toolFailed } from '@aalis/api-tools';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { type TextRef, textOf } from '@aalis/schema-i18n';
 import {
   awaitDelivery,
   type IncomingMessage,
@@ -69,10 +70,10 @@ type Streamed = Item<'agent-message'> | Item<'reasoning'>;
 const NOT_EXECUTED = '没有执行';
 
 /** 房间里她没回复就收尾的一轮，说过的话按怎么收的尾写原因 */
-const UNSENT: Record<Exclude<Outcome, 'replied'>, string> = {
-  silent: '没有发出：这一轮静默结束',
-  aborted: '没有发出：回合已中止',
-  error: '没有发出：回合出错',
+const UNSENT: Record<Exclude<Outcome, 'replied'>, TextRef> = {
+  silent: t('unsentSilent'),
+  aborted: t('unsentAborted'),
+  error: t('unsentError'),
 };
 
 interface Turn {
@@ -192,7 +193,7 @@ export function createTimeline(deps: TimelineDeps) {
   }
 
   /** 收起最近一次工具调用之后说的话：流式中的那条收尾；给了 reason（房间里没发出去）时每条标出原因再推 */
-  function dropCandidates(turn: Turn, reason?: string): void {
+  function dropCandidates(turn: Turn, reason?: TextRef): void {
     const open = turn.streaming;
     if (reason) for (const said of turn.candidates) said.undelivered = { reason };
     closeStream(turn);
@@ -250,21 +251,21 @@ export function createTimeline(deps: TimelineDeps) {
   }
 
   /** 平台的送达结果：收下了为 true，没收下（或没有适配器接手、发送出错）回原因；停用前或等满时限还没结果为 undefined */
-  async function receipt(out: OutgoingMessage): Promise<true | string | undefined> {
-    if (!out.delivery) return '没有发出：没有平台适配器接手这条消息';
+  async function receipt(out: OutgoingMessage): Promise<true | TextRef | undefined> {
+    if (!out.delivery) return t('noAdapter');
     let result: OutboundDeliveryResult | undefined;
     try {
       result = await awaitDelivery(out.delivery, deps.signal);
     } catch (err) {
       // 契约要求送达结果一律以 resolve 给出；不守约的适配器以拒绝结算时按没发出处理
-      return `没有发出：发送出错（${err instanceof Error ? err.message : String(err)}）`;
+      return t('sendFailed', { error: textOf(err) });
     }
     if (!result) return undefined;
     return result.ok || notAccepted(result.error);
   }
 
   /** 等这条消息的送达结果，交给 settle。等着的时候这一轮不算收尾 */
-  function awaitReceipt(turn: Turn, out: OutgoingMessage, settle: (result: true | string | undefined) => void): void {
+  function awaitReceipt(turn: Turn, out: OutgoingMessage, settle: (result: true | TextRef | undefined) => void): void {
     turn.receipts++;
     void receipt(out).then(result => {
       turn.receipts--;
@@ -356,7 +357,7 @@ export function createTimeline(deps: TimelineDeps) {
     turn.end = seq;
     for (const { message: out, item: replyItem } of turn.replies) {
       awaitReceipt(turn, out, result => {
-        if (typeof result !== 'string') return;
+        if (result === true || result === undefined) return;
         replyItem.undelivered = { reason: result };
         complete(turn, replyItem);
       });

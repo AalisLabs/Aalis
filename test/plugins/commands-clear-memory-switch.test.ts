@@ -5,6 +5,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -83,7 +84,7 @@ async function world(memA: ReturnType<typeof makeBackend>) {
     await during();
     await app.plugins.idle();
     release();
-    return String(await out);
+    return String(toSource(await out));
   }
   return { app, runSwitching };
 }

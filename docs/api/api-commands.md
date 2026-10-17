@@ -18,19 +18,22 @@ interface CommandArgv {
   options: Record<string, unknown>;
 }
 
-type CommandHandler = (argv: CommandArgv, ...positionals: unknown[]) => Promise<string | undefined> | string | undefined;
+type CommandHandler = (
+  argv: CommandArgv,
+  ...positionals: unknown[]
+) => Promise<string | TextRef | undefined> | string | TextRef | undefined;
 
 interface CommandBuilder {
   alias(name: string): CommandBuilder;
   option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
-  argument(name: string, description: string): CommandBuilder;
+  argument(name: string, description: string | TextRef): CommandBuilder;
   action(handler: CommandHandler): CommandBuilder;
   usage(text: string): CommandBuilder;
   example(line: string): CommandBuilder;
 }
 
 interface OptionRegisterOptions {
-  description?: string;
+  description?: string | TextRef;
   default?: unknown;
   required?: boolean;
   choices?: readonly (string | OptionChoice)[];
@@ -38,7 +41,7 @@ interface OptionRegisterOptions {
 
 interface OptionChoice {
   value: string;
-  description?: string;
+  description?: string | TextRef;
 }
 
 interface CommandMeta {
@@ -52,7 +55,8 @@ interface CommandMeta {
 
 ### 描述、参数与取值
 
-- **描述的第一句是摘要**：`/help` 概览与子指令列表只显示描述的第一句（到第一个句号、分号、问号、叹号或换行为止），超过 24 字截断加省略号；详情里显示完整描述。所以第一句写成一句短话，细节写在后面，如 `'清空当前会话记忆；用 --type 选择清理类型'`。不另设摘要字段。
+- **描述的第一句是摘要**：`/help` 概览与子指令列表只显示描述的第一句（按句子切分，分号与换行另算句末），显示宽度超过 48 列（中日韩文字记 2 列）截断加省略号；详情里显示完整描述。所以第一句写成一句短话，细节写在后面，如 `'清空当前会话记忆；用 --type 选择清理类型'`。不另设摘要字段。
+- **说明与回复可以是文字对象**：描述、位置参数与选项的说明、取值的说明可以写本包字典的 `t('键')`（`@aalis/schema-i18n`），handler 也可以返回文字对象，都按这条指令所在会话的语言显示；`usage` 与 `example` 是用户照着敲的写法，保持字符串。
 - **位置参数的说明**：`argument(name, description)` 给 DSL 里声明的位置参数加说明，名字不在 DSL 里时抛错。帮助里位置参数写成 `<名字>`（必填）与 `[名字]`（可选），带说明的另列在「参数」下。
 - **带说明的取值**：`choices` 的每一项可以只写值，也可以写成 `{ value, description }`，帮助里逐项列在选项下面。`string` 选项只收其中之一，取值不在里面时回「只能是」；`string[]` 选项不按它校验，由指令自己核（如 `/clear --type` 认别名）。
 - **`-h` 与 `--help` 是保留选项**：任何指令后面写 `-h` 或 `--help`（`--` 之前），回的就是 `/help <指令>`，别的参数一概不管、不执行；声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
@@ -75,7 +79,7 @@ interface CommandMeta {
 
 ```ts
 interface BoundCommands extends CommandService {
-  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: CommandMeta): CommandBuilder;
 }
 ```
 
@@ -92,7 +96,7 @@ interface BoundCommands extends CommandService {
 ```ts
 interface CommandService {
   prefix: string;
-  command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: InternalCommandMeta): CommandBuilder;
   unregister(name: string, contextId?: string): void;
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
@@ -103,6 +107,8 @@ interface CommandService {
   setExecutionGuard(guard: ExecutionGuard | undefined): void;
 }
 ```
+
+`execute` 的回复按 `ctx` 的 `{ sessionId, platform }`（会话设置 `language`）的语言渲染成字符串交出。
 
 `setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的指令退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
 

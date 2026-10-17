@@ -2,6 +2,7 @@ import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
 import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
+import { i18n } from '@aalis/api-i18n';
 import { memory } from '@aalis/api-memory';
 import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
@@ -18,17 +19,19 @@ import {
   services,
 } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { isTextRef, TextError, type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
 import { CommandRegistry } from './commands.js';
+import { t } from './texts.js';
 
 type IncomingMessage = InboundPhaseData['message'];
 
 const configSchema = defineConfig({
   commandPrefix: {
     type: 'string',
-    label: '指令前缀',
+    label: t('prefixLabel'),
     default: '/',
     onInvalid: 'error',
-    description: '指令触发前缀，设为空字符串可使用纯关键词触发',
+    description: t('prefixDescription'),
   },
 });
 
@@ -50,18 +53,18 @@ async function removeDirCounted(storage: StorageService, dirUri: string): Promis
 }
 
 /** 可清理类型。globalOnly：跨会话数据，只在 /clear all 时清理 */
-export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: string; globalOnly?: boolean }> = [
-  { id: 'context', label: '消息历史与会话上下文（含摘要与待办）' },
-  { id: 'summary', label: '会话摘要' },
-  { id: 'vector', label: '向量记忆' },
-  { id: 'image', label: '图片缓存' },
-  { id: 'video', label: '视频缓存' },
-  { id: 'audio', label: '语音缓存' },
-  { id: 'file', label: '文件缓存' },
-  { id: 'persona', label: '会话角色状态' },
-  { id: 'checkpoint', label: '检查点（对话回滚存档）' },
-  { id: 'user-profile', label: '用户档案', globalOnly: true },
-  { id: 'user-relation', label: '用户关系图谱', globalOnly: true },
+export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: TextRef; globalOnly?: boolean }> = [
+  { id: 'context', label: t('typeContext') },
+  { id: 'summary', label: t('typeSummary') },
+  { id: 'vector', label: t('typeVector') },
+  { id: 'image', label: t('typeImage') },
+  { id: 'video', label: t('typeVideo') },
+  { id: 'audio', label: t('typeAudio') },
+  { id: 'file', label: t('typeFile') },
+  { id: 'persona', label: t('typePersona') },
+  { id: 'checkpoint', label: t('typeCheckpoint') },
+  { id: 'user-profile', label: t('typeUserProfile'), globalOnly: true },
+  { id: 'user-relation', label: t('typeUserRelation'), globalOnly: true },
 ];
 
 /**
@@ -92,12 +95,11 @@ function normalizeClearTypes(raw: unknown, prefix: string): string[] | undefined
     .filter(Boolean)
     .map(v => CLEAR_TYPE_ALIASES[v] ?? v);
   if (types.length === 0 || types.includes('all')) return undefined;
-  const known = new Set(CLEAR_TYPES.map(t => t.id));
-  const unknown = types.find(t => !known.has(t));
+  const known = new Set(CLEAR_TYPES.map(type => type.id));
+  const unknown = types.find(type => !known.has(type));
   if (unknown) {
-    throw new Error(
-      `未知清理类型: ${unknown}。可用类型: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}。说明见 ${prefix}help clear`,
-    );
+    const ids = ['all', ...CLEAR_TYPES.map(type => type.id)].join(', ');
+    throw new TextError(t('unknownClearType', { type: unknown, types: ids, prefix }));
   }
   return [...new Set(types)];
 }
@@ -117,6 +119,8 @@ const uses = {
   authority: optional(authority),
   /** /status 列已登记的工具数 */
   tools: optional(tools),
+  /** 回复与帮助按这条指令所在会话的语言渲染；缺席时按原文 */
+  i18n: optional(i18n),
   app: appService,
   events,
   hooks,
@@ -131,7 +135,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-commands',
-  displayName: '内置指令',
+  displayName: t('displayName'),
   subsystem: 'core',
   configSchema,
   provides: [commandsService],
@@ -146,6 +150,7 @@ function registerCommands({
   memory,
   authority,
   tools,
+  i18n,
   app,
   events,
   hooks,
@@ -157,7 +162,7 @@ function registerCommands({
 }: Caps): void {
   const cfg = parseConfig(configSchema, config.use, logger.use);
   // 创建指令注册表并注册为服务
-  const registry = new CommandRegistry(logger.use, authority);
+  const registry = new CommandRegistry(logger.use, authority, i18n);
 
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
 
@@ -239,9 +244,17 @@ function registerCommands({
   const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
   const isTrustedSystemSource = (source: string | undefined): boolean => !!source && TRUSTED_SOURCE_EXACT.has(source);
 
-  /** 回到消息所在的会话。required 依赖在调度收敛前可能短暂缺席，故保留事件兜底 */
-  async function reply(message: IncomingMessage, content: string): Promise<void> {
-    const out = { content, sessionId: message.sessionId, platform: message.platform, source: 'command' as const };
+  /**
+   * 回到消息所在的会话。文字对象交给网关按这个会话的语言渲染，content 写原文。required 依赖在调度收敛前可能短暂缺席，
+   * 故保留事件兜底（发出原文）
+   */
+  async function reply(message: IncomingMessage, result: string | TextRef): Promise<void> {
+    const out = {
+      ...(isTextRef(result) ? { content: toSource(result), text: result } : { content: result }),
+      sessionId: message.sessionId,
+      platform: message.platform,
+      source: 'command' as const,
+    };
     const gatewayService = gateway.present ? gateway.use : undefined;
     if (gatewayService) await gatewayService.dispatchOutbound(out);
     else await events.use.emit('outbound:message', out);
@@ -269,10 +282,7 @@ function registerCommands({
         const timer = setTimeout(() => settle(false), INTENT_TIMEOUT_MS);
         timer.unref?.();
         intents.set(key, settle);
-        void reply(
-          message,
-          `确认执行 ${raw} 吗？回复 y 确认，回复其他内容取消；${INTENT_TIMEOUT_MS / 1000} 秒内不回复也取消。`,
-        );
+        void reply(message, t('confirmIntent', { command: raw, seconds: INTENT_TIMEOUT_MS / 1000 }));
       });
   }
 
@@ -304,7 +314,7 @@ function registerCommands({
     try {
       // 优先用 actor（系统触发器注入的代理身份），fallback 到消息原始身份。
       // 与 agent 工具调用路径解析调用者身份同语义。
-      const result = await registry.execute(parsed.name, {
+      const result = await registry.run(parsed.name, {
         sessionId: message.sessionId,
         platform: message.actor?.platform ?? message.platform,
         userId: message.actor?.userId ?? message.userId,
@@ -320,7 +330,8 @@ function registerCommands({
         if (isSystemTrigger) {
           // 系统触发器（scheduler）的 sessionId 通常是 internal 虚拟 session，
           // 走 outbound 也无人接收；直接写日志便于排查。
-          const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
+          const text = toSource(result);
+          const preview = text.length > 500 ? `${text.slice(0, 500)}…` : text;
           logger.use.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
           await reply(message, result);
@@ -336,50 +347,51 @@ function registerCommands({
 
   // 只列调用者能用的指令：用不了的在帮助里当作不存在
   commands.use
-    .command('help [name:text]', '列出你能用的指令；带指令名看用法详情')
-    .argument('name', '指令名，子指令用空格或点隔开，如 clear all')
+    .command('help [name:text]', t('helpDescription'))
+    .argument('name', t('helpName'))
     .action(async (argv, name) => {
-      const caller = { platform: argv.session.platform, userId: argv.session.userId };
       const path = String(name ?? '')
         .split(/[\s.]+/)
         .filter(Boolean);
-      return path.length > 0 ? registry.detail(path, caller) : registry.overview(caller);
+      return path.length > 0 ? registry.detail(path, argv.session) : registry.overview(argv.session);
     });
 
-  commands.use.command('status', '显示系统状态').action(async () => {
-    const lines = ['**系统状态：**', ''];
+  commands.use.command('status', t('statusDescription')).action(async () => {
     // 按名枚举：这张表回答的只是"在不在"，其中大半个子系统本插件并不依赖，
     // 按名动态查不产生依赖边，也就不会把它们拖进本插件的激活闸与关停顺序。
     const checks = [
-      ['WebUI Server', services.use.get('webui-server') !== undefined],
-      ['CLI', services.use.get('cli') !== undefined],
-      ['LLM 服务', services.use.get('llm') !== undefined],
-      ['Agent', services.use.get('agent') !== undefined],
-      ['记忆服务', services.use.get('memory') !== undefined],
-      ['人格服务', services.use.get('persona') !== undefined],
-      ['Embedding', services.use.get('embedding') !== undefined],
-      ['向量库', services.use.get('vectorstore') !== undefined],
+      ['WebUI Server', 'webui-server'],
+      ['CLI', 'cli'],
+      [t('serviceLLM'), 'llm'],
+      ['Agent', 'agent'],
+      [t('serviceMemory'), 'memory'],
+      [t('servicePersona'), 'persona'],
+      ['Embedding', 'embedding'],
+      [t('serviceVectorstore'), 'vectorstore'],
     ] as const;
-    for (const [label, ok] of checks) {
-      lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
-    }
-    lines.push(`- 已注册工具: ${tools.present ? tools.use.getAll().length : 0} 个`);
-    lines.push(`- 已注册指令: ${registry.getAll().length} 个`);
-    return lines.join('\n');
+    return textLines([
+      t('statusTitle'),
+      '',
+      ...checks.map(([service, name]) =>
+        t(services.use.get(name) !== undefined ? 'statusUp' : 'statusDown', { service }),
+      ),
+      t('statusTools', { count: tools.present ? tools.use.getAll().length : 0 }),
+      t('statusCommands', { count: registry.getAll().length }),
+    ]);
   });
 
-  commands.use.command('shutdown', '关闭应用', { visibility: 'restricted' }).action(async () => {
+  commands.use.command('shutdown', t('shutdownDescription'), { visibility: 'restricted' }).action(async () => {
     const host = app.use;
     setTimeout(async () => {
       await host.stop();
       process.exit(0);
     }, 500);
-    return '正在关闭应用…';
+    return t('shuttingDown');
   });
 
-  commands.use.command('restart', '重启应用', { visibility: 'restricted' }).action(async () => {
+  commands.use.command('restart', t('restartDescription'), { visibility: 'restricted' }).action(async () => {
     app.use.restart();
-    return '正在重启应用…';
+    return t('restarting');
   });
 
   // ===== /clear —— 清空记忆 =====
@@ -389,21 +401,14 @@ function registerCommands({
     cmdCtx: { sessionId: string },
     scope: ClearScope,
     types: string[] | undefined,
-  ): Promise<string> {
+  ): Promise<TextRef> {
     const isGlobal = scope === 'all';
     // 预检：消息历史清不了就整条不执行。各插件的 memory:clear 中间件先于消息清理运行，放行就会清掉摘要、待办、
     // 附件等，留下「消息还在、其余已清」的半截状态。预检只决定执行与否，清理时另取当时的记忆后端
     const clearsMessages = !types || types.includes('context');
     const memoryAtStart = memory.present ? memory.use : undefined;
-    if (clearsMessages && !memoryAtStart) {
-      return (
-        '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
-        '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。'
-      );
-    }
-    if (clearsMessages && isGlobal && !memoryAtStart?.clearAll) {
-      return '⚠ 记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。';
-    }
+    if (clearsMessages && !memoryAtStart) return t('noMemoryBackend');
+    if (clearsMessages && isGlobal && !memoryAtStart?.clearAll) return t('noGlobalClear');
     const clearData: HookContextMap['memory:clear'] = {
       scope,
       types,
@@ -446,18 +451,17 @@ function registerCommands({
       // runClear 仅负责调度 hook 与处理 memory 主体。
     });
 
-    const lines = clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`);
+    const lines: (string | TextRef)[] = clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`);
     // 显式要求的类型逐个核对：没有任何一行标注该类型，就是没有已启用的插件处理它，照实说明
-    for (const t of CLEAR_TYPES) {
-      if (!types?.includes(t.id) || clearData.results.some(r => r.type === t.id)) continue;
+    for (const { id, label, globalOnly } of CLEAR_TYPES) {
+      if (!types?.includes(id) || clearData.results.some(r => r.type === id)) continue;
       lines.push(
-        !isGlobal && t.globalOnly
-          ? `⚠ ${t.label}只在 ${registry.prefix}clear all 时清理，本次未清理`
-          : `⚠ ${t.label}：没有已启用的插件处理这一类型，未清理`,
+        !isGlobal && globalOnly
+          ? t('globalOnlySkipped', { type: label, prefix: registry.prefix })
+          : t('unhandledType', { type: label }),
       );
     }
-    if (lines.length === 0) return '无可清除的记忆模块。';
-    return lines.join('\n');
+    return lines.length === 0 ? t('nothingCleared') : textLines(lines);
   }
 
   /**
@@ -467,12 +471,12 @@ function registerCommands({
    */
   const CLEAR_SHARED_MIN_LEVEL = 2;
 
-  async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string> {
+  async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string | TextRef> {
     let types: string[] | undefined;
     try {
       types = normalizeClearTypes(argv.options.type, registry.prefix);
     } catch (err) {
-      return err instanceof Error ? err.message : String(err);
+      return textOf(err);
     }
     // 共享会话设防：静态声明只能给出与会话归属无关的策略，这一档必须在运行期判。
     if (argv.session.sessionType && argv.session.sessionType !== 'private') {
@@ -482,17 +486,20 @@ function registerCommands({
         auth?.listUsers().find(u => u.platform === argv.session.platform && u.userId === argv.session.userId)?.level ??
         0;
       if (!isOwner && level < CLEAR_SHARED_MIN_LEVEL) {
-        return `清空共享会话需要等级 ${CLEAR_SHARED_MIN_LEVEL}（当前 ${level}）。私聊里可以随时清理自己的会话。`;
+        return t('sharedClearLevel', { required: CLEAR_SHARED_MIN_LEVEL, level });
       }
     }
     return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
 
   const clearTypeOption = {
-    description: '清理类型，可重复或用逗号分隔',
+    description: t('clearTypeDescription'),
     choices: [
-      { value: 'all', description: '全部类型' },
-      ...CLEAR_TYPES.map(t => ({ value: t.id, description: t.globalOnly ? `${t.label}（仅全局清理）` : t.label })),
+      { value: 'all', description: t('clearTypeAll') },
+      ...CLEAR_TYPES.map(({ id, label, globalOnly }) => ({
+        value: id,
+        description: globalOnly ? t('clearTypeGlobalOnly', { type: label }) : label,
+      })),
     ],
   };
 
@@ -502,7 +509,7 @@ function registerCommands({
     // 要 2 级等于剥夺；确认则挡住提示词注入触发的误清（需真人点一下）。
     // 群聊会话是共享的，一人清掉毁掉所有人的上下文——那一档在 action 里按
     // sessionType 另行设防（与 /bind 等私聊敏感指令同一模式）。
-    .command('clear', '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型', {
+    .command('clear', t('clearDescription'), {
       confirm: 'session',
     })
     .option('type', '-t <type:string[]>', clearTypeOption)
@@ -515,7 +522,7 @@ function registerCommands({
   commands.use
     // 全局清空，比 /clear 更重：同样 dangerous（等级 2 + 二次确认）。
     // 原先只写 visibility:'restricted' 拿到了等级 2 但漏了 confirm。
-    .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {
+    .command('clear.all', t('clearAllDescription'), {
       risk: 'dangerous',
     })
     .option('type', '-t <type:string[]>', clearTypeOption)

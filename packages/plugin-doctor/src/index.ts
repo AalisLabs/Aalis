@@ -27,7 +27,7 @@ import {
   type Services,
   services,
 } from '@aalis/core';
-import { textLines, textOf, toSource } from '@aalis/schema-i18n';
+import { linesOf, type TextRef, textLines, textOf } from '@aalis/schema-i18n';
 import { t } from './texts.js';
 
 const PLUGIN_NAME = '@aalis/plugin-doctor';
@@ -410,42 +410,44 @@ function registerBuiltinChecks(
 
 // ===== helpers =====
 
-export function formatReport(report: DoctorReport): string {
-  // 聊天栏排版：按 level 分组，加换行，避免一坨平铺。指令的回复只收字符串，结果里的文字对象取原文
+/**
+ * /doctor 的回复：聊天栏排版，按 level 分组，加换行，避免一坨平铺。整份报告是文字对象，出口按读者的语言渲染；各检查项的
+ * message 与 detail 原样作参数，detail 逐行缩进（见 detailLines）
+ */
+export function formatReport(report: DoctorReport): TextRef {
   const byLevel = { error: [] as CheckResult[], warn: [] as CheckResult[], ok: [] as CheckResult[] };
   for (const c of report.checks) byLevel[c.level].push(c);
 
-  const s = report.summary;
-  const lines: string[] = [];
-  lines.push(`**系统诊断 — ${formatLocalTime(report.generatedAt)}**`);
-  lines.push(`汇总: ✓ ${s.ok}　! ${s.warn}　✗ ${s.error}`);
-  lines.push('');
+  const { ok, warn, error } = report.summary;
+  const lines: (string | TextRef)[] = [
+    t('reportTitle', { at: Date.parse(report.generatedAt) }),
+    t('reportSummary', { ok, warn, error }),
+  ];
 
-  const sections: Array<[CheckLevel, string]> = [
-    ['error', '✗ 错误'],
-    ['warn', '! 警告'],
-    ['ok', '✓ 通过'],
+  const sections: Array<[CheckLevel, TextRef]> = [
+    ['error', t('reportErrors')],
+    ['warn', t('reportWarnings')],
+    ['ok', t('reportPassed')],
   ];
 
   for (const [level, title] of sections) {
     const items = byLevel[level];
     if (items.length === 0) continue;
-    lines.push(`__${title}__`);
+    lines.push('', title);
     for (const c of items) {
-      lines.push(`- \`${c.category}/${c.id}\` — ${toSource(c.message)}`);
-      if (c.detail) {
-        for (const dl of toSource(c.detail).split('\n')) lines.push(`    ${dl}`);
-      }
+      lines.push(t('reportCheck', { check: `${c.category}/${c.id}`, message: c.message }));
+      for (const detail of detailLines(c.detail)) lines.push(t('reportDetail', { detail }));
     }
-    lines.push('');
   }
 
-  return lines.join('\n').trimEnd();
+  return textLines(lines);
 }
 
-function formatLocalTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+/**
+ * 详情拆成行，好逐行缩进：textLines 生成的文字对象按段拆，字符串再按换行拆；别的文字对象渲染之前分不出行，算一行
+ */
+function detailLines(detail: CheckResult['detail']): (string | number | TextRef)[] {
+  if (!detail) return [];
+  const parts = typeof detail === 'string' ? [detail] : (linesOf(detail) ?? [detail]);
+  return parts.flatMap<string | number | TextRef>(part => (typeof part === 'string' ? part.split('\n') : part));
 }

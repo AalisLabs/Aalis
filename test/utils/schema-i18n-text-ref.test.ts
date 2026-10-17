@@ -3,6 +3,7 @@ import {
   defineTexts,
   isTextError,
   isTextRef,
+  linesOf,
   localize,
   resolveText,
   TextError,
@@ -76,6 +77,17 @@ describe('文字对象', () => {
     expect(lines.i18n).toBe('@aalis/schema-i18n');
     expect(lines.source).toBe('第一行\n你好\n已保存 1 项');
     expect(resolveText(lines, ['en'])).toBe('第一行\nHello\nSaved 1 item');
+  });
+
+  it('linesOf 是 textLines 的逆：textLines 生成的（落盘读回的也算）给出各段，别的文字对象为 undefined', () => {
+    const parts = ['第一行', t('hello')];
+    expect(linesOf(textLines(parts))).toEqual(parts);
+    expect(linesOf(JSON.parse(JSON.stringify(textLines(parts))))).toEqual(parts);
+    expect(linesOf(t('hello'))).toBeUndefined();
+    expect(linesOf(textClauses(['甲', '乙']))).toBeUndefined();
+    expect(
+      linesOf({ i18n: '@aalis/schema-i18n', key: 'lines', params: { items: '甲' }, source: '甲' }),
+    ).toBeUndefined();
   });
 
   it('textClauses 把若干分句连成一句：原文以「；」相连，英文以「; 」；几十句也不碰嵌套层数的上限', () => {

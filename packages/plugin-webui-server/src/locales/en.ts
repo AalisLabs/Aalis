@@ -187,6 +187,7 @@ export default defineLocale<Source>()({
   extraParams: 'Unexpected parameters: {keys, list}',
   nameRequired: '{name} must be a non-empty string',
   noSessionManager: 'The session manager service is absent, so session panels are unavailable',
+  archiveAbsent: 'The message archive service is absent, so this message was not saved to the WebUI session history',
   sessionMissing: 'Session {session} does not exist',
   inputNotObject: 'input must be an object',
   inputExtraKeys: 'Unexpected keys in input: {keys, list}',

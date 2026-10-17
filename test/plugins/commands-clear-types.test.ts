@@ -11,6 +11,7 @@ import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin, { CLEAR_TYPES } from '../../packages/plugin-commands/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -96,7 +97,7 @@ describe('/clear 的类型说明', () => {
     expect(registry.getAll().map(c => c.name)).not.toContain('clear.list');
     const help = await exec('/help clear');
     for (const t of CLEAR_TYPES) {
-      expect(help).toContain(`${t.id}：${t.label}`);
+      expect(help).toContain(`${t.id}：${toSource(t.label)}`);
     }
   });
 

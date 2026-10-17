@@ -12,6 +12,7 @@
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 // ===== handler 接口 =====
 
@@ -30,14 +31,14 @@ export interface CommandArgv {
 }
 
 /**
- * 命令执行函数。
+ * 命令执行函数。返回的回复可以是字符串，也可以是文字对象（按这条指令所在会话的语言显示）。
  * @param argv 会话上下文 + 解析后的选项
  * @param positionals 按 inline DSL 顺序解析出的位置参数
  */
 export type CommandHandler = (
   argv: CommandArgv,
   ...positionals: unknown[]
-) => Promise<string | undefined> | string | undefined;
+) => Promise<string | TextRef | undefined> | string | TextRef | undefined;
 
 // ===== 已解析的参数 / 选项 spec =====
 
@@ -48,7 +49,7 @@ export interface PositionalArgSpec {
   type: PositionalArgType;
   required: boolean;
   /** 说明，帮助里列在参数后面；由 builder 的 argument 添加 */
-  description?: string;
+  description?: string | TextRef;
 }
 
 export type OptionValueType = 'string' | 'number' | 'boolean' | 'string[]';
@@ -56,7 +57,7 @@ export type OptionValueType = 'string' | 'number' | 'boolean' | 'string[]';
 /** 选项的一个取值；说明在帮助里列在取值后面 */
 export interface OptionChoice {
   value: string;
-  description?: string;
+  description?: string | TextRef;
 }
 
 export interface OptionSpec {
@@ -70,7 +71,7 @@ export interface OptionSpec {
   valueName?: string;
   /** 值可选时（[val:type] 语法），flag 存在但无值给 true */
   valueOptional: boolean;
-  description?: string;
+  description?: string | TextRef;
   default?: unknown;
   required: boolean;
   /** 可选的取值，帮助里逐项列出。`string` 选项只收其中之一；`string[]` 不按它校验，由指令自己核 */
@@ -87,9 +88,9 @@ export interface CommandMeta {
   confirm?: CapabilityConfirm;
   /** 风险等级（声明糖）：展开为 (visibility, confirm) 默认；显式 visibility/confirm 覆盖 */
   risk?: CapabilityRisk;
-  /** 自定义 usage 文本 */
+  /** 自定义 usage 文本：用户照着敲的写法，不翻译 */
   usage?: string;
-  /** 示例 */
+  /** 示例：同 usage，不翻译 */
   examples?: string[];
 }
 
@@ -99,7 +100,8 @@ export interface Command {
   name: string;
   /** 注册插件名 */
   pluginName: string;
-  description: string;
+  /** 说明；自动分组节点为派生的「… 命令组」 */
+  description: string | TextRef;
   /** 主能力默认可见性（缺省 public）；可被 authority 配置的 authorityOverrides 调整 */
   visibility: CapabilityVisibility;
   /** 生效确认要求（轴 B，含从父分组继承）；缺省=不确认 */
@@ -144,7 +146,7 @@ export interface ExecutionInput {
 // ===== Builder =====
 
 export interface OptionRegisterOptions {
-  description?: string;
+  description?: string | TextRef;
   default?: unknown;
   required?: boolean;
   /** 可选的取值：只写值，或带上说明 */
@@ -156,7 +158,7 @@ export interface CommandBuilder {
   /** 声明选项。`-h` 与 `--help` 是保留选项（回这条指令的用法），声明它们时抛错 */
   option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
   /** 给 DSL 里声明的位置参数加说明；名字不在 DSL 里时抛错 */
-  argument(name: string, description: string): CommandBuilder;
+  argument(name: string, description: string | TextRef): CommandBuilder;
   action(handler: CommandHandler): CommandBuilder;
   usage(text: string): CommandBuilder;
   example(line: string): CommandBuilder;
@@ -175,10 +177,11 @@ export interface CommandService {
   /**
    * 启动 builder 注册一个命令。
    * @param name 完整点路径名，可含 inline DSL：`'memory.set <key:string> [value:text]'`
-   * @param description 说明。第一句（到第一个句号、分号、问号、叹号或换行为止）是 /help 概览与子指令列表里的摘要，
-   *   写成一句短话（24 字以内，过长会被截断），细节写在后面
+   * @param description 说明：字符串，或本包字典的文字对象（按读者的语言显示）。第一句（按句子切分，分号与换行另算句末）
+   *   是 /help 概览与子指令列表里的摘要，写成一句短话（显示宽度 48 列以内，中日韩文字记 2 列，过长会被截断），细节写在后面。
+   *   第一句里不放「缩写后接大写词」（如 e.g. Main），也不放带 ? 的网址：Intl.Segmenter 会在那里断句
    */
-  command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: InternalCommandMeta): CommandBuilder;
 
   /**
    * 注销指令。
@@ -187,6 +190,7 @@ export interface CommandService {
    */
   unregister(name: string, contextId?: string): void;
 
+  /** 执行一条指令，回复按 ctx 的 { sessionId, platform }（会话设置 language）的语言渲染成字符串 */
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
 
@@ -212,7 +216,7 @@ export interface CommandService {
 type DeferredCall =
   | { kind: 'alias'; name: string }
   | { kind: 'option'; name: string; syntax: string; opts?: OptionRegisterOptions }
-  | { kind: 'argument'; name: string; description: string }
+  | { kind: 'argument'; name: string; description: string | TextRef }
   | { kind: 'action'; handler: CommandHandler }
   | { kind: 'usage'; text: string }
   | { kind: 'example'; line: string };
@@ -222,7 +226,7 @@ interface CommandEntry {
   /** 注册表按点路径建键（inline 位置参数 DSL 在注册时被切掉），注销与同名替换都用它 */
   key: string;
   name: string;
-  description?: string;
+  description?: string | TextRef;
   meta: InternalCommandMeta;
   calls: DeferredCall[];
   /** 当前提供者上的真 builder；撤回后清空 */
@@ -283,13 +287,13 @@ function makeBuilder(entry: CommandEntry): CommandBuilder {
  */
 export interface BoundCommands extends CommandService {
   /** 同 {@link CommandService.command}：描述的第一句是 /help 里的摘要 */
-  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: CommandMeta): CommandBuilder;
 }
 
 export const commands = defineService<CommandService, BoundCommands>('commands', port => {
   const entries = port.registrar<CommandEntry>({ key: entry => entry.key, register: registerEntry });
   return Object.assign(Object.create(port.provider) as BoundCommands, {
-    command: (name: string, description?: string, meta?: CommandMeta) => {
+    command: (name: string, description?: string | TextRef, meta?: CommandMeta) => {
       const entry: CommandEntry = {
         key: name.trim().split(/\s+/)[0],
         name,

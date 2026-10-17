@@ -334,10 +334,11 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
 
 /**
  * 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。
- * 失败分支的 unconfirmed 表示请求已经发出、只是没等到平台确认（如 OneBot 文件上传超时），消息可能已经送达：
+ * 失败分支的 error 是给人看的原因，可以是文字对象（@aalis/schema-i18n 的 TextRef，按读者语言显示）；交给模型与写日志的
+ * 一方取 toSource。unconfirmed 表示请求已经发出、只是没等到平台确认（如 OneBot 文件上传超时），消息可能已经送达：
  * 发起方不得自动重发，也不得劝模型重发。没有这个标记的失败才是确定没送达。
  */
-export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string; unconfirmed?: true };
+export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string | TextRef; unconfirmed?: true };
 
 /**
  * 发起方等待传输确认的上限。适配器自身的重试窗口可能更长（如 OneBot 单个附件最坏约 150 秒），
@@ -377,8 +378,9 @@ export function awaitDelivery<T>(
 export interface OutgoingMessage {
   content: string;
   /**
-   * 正文是要翻译的文字时，它的文字对象：发起方同时写 content（`toSource(text)`，按原文渲染的整句）。按读者语言显示的出口
-   * （会话协议的时间线、WebUI 会话的历史）用它，其余照旧读 content
+   * 正文是要翻译的文字时，它的文字对象：发起方同时写 content（`toSource(text)`，按原文渲染的整句）。经网关派发时，网关按
+   * 这条消息所在会话的语言把它渲染进 content（i18n 缺席或渲染抛错时按原文）；按连接显示的出口（会话协议的时间线、WebUI
+   * 会话的历史）另按各自的读者渲染它，其余照旧读 content
    */
   text?: TextRef;
   sessionId: string;
@@ -564,8 +566,8 @@ export interface ArchivedAttachment {
  *   会话服务标在回复条目上。
  * - `SentRef`、`SentName`：发出的附件（`outboundMediaMessage` 记的那条）原样的地址与文件名（字符串）：占位符里的地址遇到
  *   「]」会截断、描述位的「]」「|」换成了全角。归档发出附件的一方写，会话服务优先取它们还原附件。
- * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串），平台
- *   适配器写；会话服务据此写出回复为什么没发出。
+ * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串或文字对象），
+ *   平台适配器写；会话服务据此按读者语言写出回复为什么没发出。
  * - `Text`：通知与事件标记给人看的文字（@aalis/schema-i18n 的文字对象），`content` 是写给模型的话或它按原文渲染的整句。
  *   宿主通知的 `hostNotice.text`、平台通知的文字、带 {@link OutgoingMessage}.text 的出站记进 WebUI 会话历史时由写方记下，
  *   压缩分隔线同样；会话服务据此按读者语言显示，没有时显示 `content`。

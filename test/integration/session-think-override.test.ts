@@ -145,7 +145,7 @@ describe('会话的深度思考档位端到端', () => {
     const view = String(await commands.execute('session', cmdInput('s1', [])));
     expect(view).toContain('深度思考: max');
     expect(view).toContain('当前模型没有这一档，按默认');
-    expect(view).toContain('off（关）、on（开），默认 on');
+    expect(view).toContain('off（关）和on（开），默认 on');
 
     await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/plain`]));
     expect('think' in (await turn('s1')).request, '不能调的模型不带').toBe(false);
@@ -166,7 +166,7 @@ describe('会话的深度思考档位端到端', () => {
     await sm.ensureSession('s3', { config: { persona: 'keep-me', llm: { provider: PROVIDER, model: 'switch' } } });
     expect(await commands.execute('session.set', cmdInput('s3', []))).toBe('至少给一项。敲 /session.set -h 看用法');
     const unknown = await commands.execute('session.set', cmdInput('s3', ['-t', 'max']));
-    expect(unknown).toContain('当前模型没有档位「max」，可选：off（关）、on（开）');
+    expect(unknown).toContain('当前模型没有档位「max」，可选：off（关）或on（开）');
     expect(sm.resolveConfig('s3', 'test').think).toBeUndefined();
 
     const plain = await commands.execute('session.set', cmdInput('s3', ['-m', `${PROVIDER}/plain`, '-t', 'on']));

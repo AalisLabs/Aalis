@@ -3,14 +3,18 @@ import { authority } from '@aalis/api-authority';
 import type { GatewayService, InboundPhase, InboundPhaseData } from '@aalis/api-gateway';
 import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { i18n, localizeFor } from '@aalis/api-i18n';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 // ----- 入口 -----
 
 // gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
-// 会话管理与 authority 用来判房间类别（结构性放行）；authority 缺席时没有人是 owner
+// 会话管理与 authority 用来判房间类别（结构性放行）；authority 缺席时没有人是 owner。
+// 出站消息带文字对象时按会话的语言渲染进 content；i18n 缺席或渲染抛错时按原文
 const uses = {
   events,
   hooks,
@@ -19,6 +23,7 @@ const uses = {
   agent: optional(agent),
   sessionManager: optional(sessionManager),
   authority: optional(authority),
+  i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -30,14 +35,14 @@ const OWNER_ONLY_SKIPPED: ReadonlySet<InboundPhase> = new Set([INBOUND_PHASE.TRI
 
 export default definePlugin({
   name: '@aalis/plugin-gateway',
-  displayName: '消息流网关',
+  displayName: t('displayName'),
   subsystem: 'core',
   provides: [gateway],
   uses,
   apply: runGateway,
 });
 
-function runGateway({ events, hooks, logger, provide, agent, sessionManager, authority }: Caps): void {
+function runGateway({ events, hooks, logger, provide, agent, sessionManager, authority, i18n }: Caps): void {
   logger.use.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
 
   /** 会话的房间类别是不是 owner-only（子会话取根会话的）；会话管理缺席时判不出，按否 */
@@ -55,8 +60,10 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
       return;
     }
     logger.use.warn('Agent 服务不可用，消息将不会被处理');
+    const text = t('agentUnavailable');
     await dispatchOutbound({
-      content: '[系统] Agent 服务不可用，请检查插件配置。',
+      content: toSource(text),
+      text,
       sessionId: message.sessionId,
       platform: message.platform,
       source: 'system',
@@ -125,10 +132,26 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
     }
   }
 
-  /** 出站派发：运行 `outbound:dispatch` 钩子链，默认动作为 emit 到 outbound:message。 */
+  /** i18n 渲染出站文字抛错时告警过了：之后再出错不再告警 */
+  let renderWarned = false;
+  const onRenderError = (err: unknown) => {
+    if (renderWarned) return;
+    renderWarned = true;
+    logger.use.warn('按会话的语言渲染出站消息出错，按原文发出（之后再出错不再告警）:', err);
+  };
+
+  /**
+   * 出站派发：带文字对象的消息先按所在会话（{ sessionId, platform }）的语言把它渲染进 content（就地改写，发起方之后等的
+   * delivery 写在同一个对象上；i18n 缺席或渲染抛错时按原文），再运行 `outbound:dispatch` 钩子链，默认动作为 emit 到
+   * outbound:message。
+   */
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
     try {
+      if (message.text) {
+        const reader = { sessionId: message.sessionId, platform: message.platform };
+        message.content = localizeFor(i18n, message.text, reader, { onError: onRenderError });
+      }
       await hooks.use.run('outbound:dispatch', data, async () => {
         await events.use.emit('outbound:message', data.message);
       });

@@ -277,13 +277,14 @@ describe('会话协议按连接的读者渲染', () => {
     expect(await observe(host, [await connect()])).toEqual([ENGLISH]);
   });
 
-  it('i18n 渲染出错时不抛：这一帧按原文发出，每条连接告警一次；同一次推送里排在后面的连接照常收到', async () => {
+  it('i18n 出错时不抛，每条连接告警一次：渲染出错的这一帧按原文发出，取语言链出错的这一帧单独渲染；同一次推送里排在后面的连接照常收到', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
     await app.plugin(i18nPlugin);
     await app.plugins.idle();
     const real = app.bind({ i18n }).i18n.use;
-    // 语言链首项为 xx 的读者 render 抛错，为 yy 的 chainOf 抛错（只有一次推送发给多条连接时才取语言链）
+    // 语言链首项为 xx 的读者 render 抛错，为 yy 的 chainOf 抛错（只有一次推送发给多条连接时才取语言链，取不到时这一帧不与别的
+    // 连接共用，照样交给 render：yy 不是有文字可用的语言，按 en）
     const head = (audience: Audience) => ('languages' in audience ? audience.languages[0] : undefined);
     const flaky: I18nService = {
       languages: () => real.languages(),
@@ -335,12 +336,12 @@ describe('会话协议按连接的读者渲染', () => {
     expect(failed).toEqual(['会话 s1 不在了', 'Session s1 is gone', 'Session s1 is gone']);
     expect(conns.map(c => c.notifications('sessions/changed').map(({ groups }) => groups[0]?.label))).toEqual([
       ['QQ 机器人'],
-      ['QQ 机器人'],
+      ['QQ bot'],
       ['QQ bot'],
     ]);
     expect(
       conns.map(c => c.notifications('item/completed').map(({ item }) => item.kind === 'notice' && item.text)),
-    ).toEqual([['历史消息'], ['历史消息'], ['History']]);
+    ).toEqual([['历史消息'], ['History'], ['History']]);
     expect(warn).toHaveBeenCalledTimes(2);
   });
 

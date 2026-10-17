@@ -8,8 +8,10 @@
  */
 import type { PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionConfig } from '@aalis/api-session-manager';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
+import { t } from './texts.js';
 /**
  * 将时间戳格式化为可读的时间标签：同年 `M/D HH:mm`，跨年 `YYYY/M/D HH:mm`。
  *
@@ -153,7 +155,7 @@ export function isSameMessage(a: Message, b: Message): boolean {
 }
 
 /**
- * LLM 解析失败时的可诊断说明（纯函数）。
+ * LLM 解析失败时的可诊断说明（纯函数）：给人看的文字对象，发进聊天时按会话的语言显示，写日志取 toSource。
  *
  * `resolveLLMModel` 拿到显式 ref 却匹配不上任何 entry 时静默返回 undefined，调用方只知道
  * 「没拿到」。而 ref 是**包名 + 模型名**——包一改名（`plugin-deepseek` → `plugin-llm-deepseek`）、
@@ -171,28 +173,28 @@ export function describeLLMFailure(
   available: readonly string[],
   wanted?: { provider?: string; model?: string },
   erroredProviders?: readonly string[],
-): string {
+): TextRef {
   if (available.length === 0) {
     // 最常见的成因是 LLM 插件装了也启用了、只是缺 apiKey 而激活失败。能点名就点名，省掉用户一轮空转；
     // 这条文案会**发进聊天**，只点名实例，原因指向 /doctor。/doctor 是受限指令，收到提示的人不一定能用，故注明要权限。
-    if (erroredProviders && erroredProviders.length > 0) {
-      return `未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：${erroredProviders.join('、')}。可用 /doctor 查看原因（需要相应权限）。`;
-    }
-    return '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。';
+    if (erroredProviders && erroredProviders.length > 0) return t('llmNoneErrored', { plugins: erroredProviders });
+    return t('llmNone');
   }
   if (wanted?.provider && wanted?.model) {
     // 只列前 LIST_MAX 个：这条文案会**发进聊天**，而 ollama 是自动发现本机全部模型逐个注册
     // entry 的——实测 40 个模型拼出 1874 字符，且每条消息都发一次。截断后给出总数，
     // 想看全的去 `/model`。
     const LIST_MAX = 5;
-    const shown = available.slice(0, LIST_MAX).join('、');
-    const more = available.length > LIST_MAX ? `…等 ${available.length} 个（用 /model 查看全部）` : '';
-    return `配置指向的模型不存在：${wanted.provider}/${wanted.model}。当前可用：${shown}${more}。`;
+    return t('llmNotFound', {
+      wanted: `${wanted.provider}/${wanted.model}`,
+      models: available.slice(0, LIST_MAX),
+      more: available.length > LIST_MAX ? t('llmMore', { count: available.length }) : '',
+    });
   }
   // ref 不全时 resolveLLM 传的是 undefined，resolveLLMModel 此时取 all[0]——只要有 entry
   // 就必命中。所以走到这里意味着取数与解析看到的不是同一份快照（例如两次调用之间服务被
   // 注销），**不是**「没有可用 entry」。文案要说这个，别谎称都不可用。
-  return `LLM 解析失败：能力过滤后有 ${available.length} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。`;
+  return t('llmUnresolved', { count: available.length });
 }
 
 /**

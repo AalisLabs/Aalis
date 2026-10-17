@@ -52,6 +52,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 | `toSource(v)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型时用（取生成时的整句） |
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
 | `textLines(parts)` | 把若干段（字符串或文字对象）按行连成一个文字对象，多行报告、列表类回复用它 |
+| `linesOf(text)` | `textLines` 的逆：是 `textLines` 生成的文字对象（落盘读回的同样认）就给出各段，否则 `undefined`。要逐行加工（缩进、加前缀）又不能先渲染时用它；段本身可能是多行的字符串或别的文字对象 |
 | `textClauses(parts)` | 把若干分句连成一句：原文以「；」相连，英文以「; 」。并列的几条原因、几个问题用它；两两二分着嵌套，层数随句数按对数增长，n 句约占 2n 个参数里的文字对象，每句另带文字对象参数时更多（配置校验的问题每句 3 个，约 340 句起超出渲染上限、回落成原文） |
 | `TextError` | `new TextError(text, { status?, cause? })`，message 是 `text.source`，name 为 `TextError` |
 | `withText(err, text)` | 给任意 Error 挂上文字对象，name 与类不变（按 name 判定的错误照旧认得）；message 不动 |
@@ -71,18 +72,18 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{x, select, a {…} other {…}}`：x 是字符串。
 - `{n, number}`：`NumberFormat`。
 - `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省、超过 64 个字符或不认识时用进程时区。
-- `{items, list}`：`ListFormat` 的 conjunction；`{items, lines}`：按行连接。元素各自渲染。
+- `{items, list}`：`ListFormat` 的 conjunction（「和」）；`{items, list, or}`：disjunction（「或」，如「可选：a、b或c」）；`{items, lines}`：按行连接。元素各自渲染。`list` 后面的样式只认 `or`。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
 - `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
 - `{x, code}`：行内代码，x 是字符串或数。围栏比参数里最长的反引号串多一个，参数原样、不转义。参数要放进代码段时用它，不要在模板里写 `` `{x}` ``：Markdown 出口转义后代码段里会显出反斜杠。
 
-plural 与 select 必须有 other；未知类型、花括号不配平、重复的分支键、`offset:`、嵌套超过 16 层都算解析失败。plural、number、date、time、datetime、duration、size 要求有限数，list、lines 要求数组，不符算渲染失败。
+plural 与 select 必须有 other；未知类型、`list` 后面不是 `or` 的样式、花括号不配平、重复的分支键、`offset:`、嵌套超过 16 层都算解析失败。plural、number、date、time、datetime、duration、size 要求有限数，list、lines 要求数组，不符算渲染失败。
 
 引号同 ICU 的 DOUBLE_OPTIONAL，只是 `#` 不分是否在 plural 分支里：`''` 是一个撇号；`'` 紧跟 `{`、`}`、`#` 时引用到下一个单独的 `'`，没闭合就到串尾；其余单个 `'` 是字面（`can't` 无需处理）。字面的花括号写成 `'{query}'`。英文里给参数加引号要用 ‘ ’ 或 “ ”：`'{name}'` 是字面的 `{name}`，不替换参数。
 
 渲染与解析失败一律不抛：`t()` 的 source 退成原文模板原样，`resolveText` 退成 `text.source`。
 
-类型层推参与运行时同一套文法（按花括号配平递归下降）：plural、number、date、time、datetime、duration、size 推为 number，list、lines 推为数组，select 推为分支键的联合并上 string，code 推为 `string | number`，其余为 `string | number | TextRef`，同名取更具体的类型。导出 `Params<模板>` 与 `TextArgs<模板>`。文法错误（未知类型、花括号不配平）类型层不报，交给 `checkTexts`。
+类型层推参与运行时同一套文法（按花括号配平递归下降）：plural、number、date、time、datetime、duration、size 推为 number，list（含 `list, or`）、lines 推为数组，select 推为分支键的联合并上 string，code 推为 `string | number`，其余为 `string | number | TextRef`，同名取更具体的类型。导出 `Params<模板>` 与 `TextArgs<模板>`。文法错误（未知类型、花括号不配平）类型层不报，交给 `checkTexts`。
 
 ## 解析与语言链
 

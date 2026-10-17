@@ -4,10 +4,10 @@
 // 方法的业务逻辑不在这里，由 index 传入的处理函数表承担。
 //
 // 每条连接记下读者：握手时给的语言链（规范化过）与时区；握手之前与没给语言时链为空，i18n 按全局默认层。出帧（结果、错误、
-// 推送、攒着的推送）一律按连接的读者渲染帧里的文字对象（i18n 缺席时按原文）再序列化；i18n 抛错时这一帧按原文发出，每条连接
-// 告警一次，出帧与收帧都不因此抛错。一次推送发给多条连接时，语言链与时区相同的连接共用一份渲染结果。原样数据（工具调用的
-// 参数、输出与结果，事实，用户消息正文，设置项的取值与字段的默认值）不渲染：那里形如文字对象的值可能是伪造的，取值也要原样
-// 读回再写。
+// 推送、攒着的推送）一律按连接的读者渲染帧里的文字对象（i18n 缺席或渲染抛错时按原文）再序列化；i18n 抛错时每条连接告警一次，
+// 出帧与收帧都不因此抛错。一次推送发给多条连接时，语言链与时区相同的连接共用一份渲染结果；取语言链抛错时这一帧不进共用，
+// 照样按这条连接渲染。原样数据（工具调用的参数、输出与结果，事实，用户消息正文，设置项的取值与字段的默认值）不渲染：那里
+// 形如文字对象的值可能是伪造的，取值也要原样读回再写。
 // ════════════════════════════════════════════════════════════
 
 import type { ApprovalAttendance } from '@aalis/api-approval';
@@ -27,15 +27,7 @@ import {
   sessionMethods,
 } from '@aalis/api-session-protocol';
 import type { Logger, ServiceSelection } from '@aalis/core';
-import {
-  type LocalizeSkip,
-  localize,
-  normalizeLanguages,
-  resolveSource,
-  type TextRef,
-  textOf,
-  toSource,
-} from '@aalis/schema-i18n';
+import { type LocalizeSkip, normalizeLanguages, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 
 /**
  * 处理函数抛出它，连接层把它写成错误帧；数值码见 RPC_ERROR_CODES，业务错误另带 reason（error.data.code）。
@@ -171,16 +163,14 @@ export function createSessionServer(
         conn.send({ method: 'approval/settled', params });
       },
     });
-    /** 按读者渲染并序列化，i18n 抛错时抛出 */
-    const localized = (frame: Frame) => serialize(localizeFor(i18n, frame, reader, { skip: raw }));
-    /** i18n 抛错时的退路：告警（每条连接一次），这一帧按原文渲染，同 i18n 缺席 */
-    const asSource = (frame: Frame, err: unknown) => {
-      if (!warned) {
-        warned = true;
-        logger.warn('按读者渲染出帧出错，这一帧按原文发出（这条连接之后再出错不再告警）:', err);
-      }
-      return serialize(localize(frame, text => resolveSource(text, { timeZone: reader.timeZone }), raw));
+    /** i18n 抛错（渲染或取语言链）时告警，每条连接一次 */
+    const warn = (err: unknown) => {
+      if (warned) return;
+      warned = true;
+      logger.warn('按读者渲染出帧时 i18n 出错，这一帧照样发出（这条连接之后再出错不再告警）:', err);
     };
+    /** 按读者渲染并序列化；i18n 渲染抛错时按原文 */
+    const localized = (frame: Frame) => serialize(localizeFor(i18n, frame, reader, { skip: raw, onError: warn }));
     const conn: LiveConnection = {
       peer,
       attendance,
@@ -191,26 +181,22 @@ export function createSessionServer(
         if (!closed) send(frame);
       },
       encode(frame, cache) {
+        let key: string;
         try {
-          const key = keyOf(reader);
-          let text = cache.get(key);
-          if (text === undefined) {
-            text = localized(frame);
-            cache.set(key, text);
-          }
-          return text;
+          key = keyOf(reader);
         } catch (err) {
-          return asSource(frame, err);
+          warn(err);
+          return localized(frame);
         }
+        let text = cache.get(key);
+        if (text === undefined) {
+          text = localized(frame);
+          cache.set(key, text);
+        }
+        return text;
       },
       send(frame) {
-        let text: string;
-        try {
-          text = localized(frame);
-        } catch (err) {
-          text = asSource(frame, err);
-        }
-        conn.sendText(text);
+        conn.sendText(localized(frame));
       },
       subscribe(sessionId) {
         const held: string[] = [];

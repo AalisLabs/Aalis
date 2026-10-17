@@ -29,7 +29,14 @@ import {
 } from '../../packages/core/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
-import { defineTexts, resolveText, TextError, textLines, toSource } from '../../packages/schema-i18n/src/index.js';
+import {
+  defineTexts,
+  resolveSource,
+  resolveText,
+  TextError,
+  textLines,
+  toSource,
+} from '../../packages/schema-i18n/src/index.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ===== helpers =====
@@ -169,7 +176,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
       run: () => ({ id: 'warn.one', category: 'other', level: 'warn', message: '小心' }),
     });
     const report = await doctor.runChecks();
-    const text = formatReport(report);
+    const text = toSource(formatReport(report));
 
     // 至少出现汇总行
     expect(text).toMatch(/汇总: ✓ \d+/);
@@ -178,6 +185,24 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(text).toMatch(/! 警告/);
     // 多行（聊天栏不是一坨）
     expect(text.split('\n').length).toBeGreaterThan(5);
+    await app.stop();
+  });
+
+  it('formatReport：两个以上插件缺服务时，详情的每一行都缩进（原文与英文）', async () => {
+    const { app, doctor } = await boot();
+    for (const name of ['zz-doctor-lacking-a', 'zz-doctor-lacking-b']) {
+      const missing = defineService<unknown>(`${name}-service`);
+      await app.plugins.register(definePlugin({ name, uses: { missing }, apply() {} }), {});
+    }
+    await app.plugins.idle();
+    const report = formatReport(await doctor.runChecks());
+    for (const shown of [resolveSource(report), resolveText(report, ['en'])]) {
+      const details = shown.split('\n').filter(line => line.includes('zz-doctor-lacking-'));
+      expect(details).toEqual([
+        expect.stringMatching(/^ {4}zz-doctor-lacking-a: /),
+        expect.stringMatching(/^ {4}zz-doctor-lacking-b: /),
+      ]);
+    }
     await app.stop();
   });
 

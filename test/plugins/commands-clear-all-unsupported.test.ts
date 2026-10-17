@@ -5,6 +5,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -53,7 +54,7 @@ async function world(withMemory = true) {
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },
       options: type ? { type } : {},
     });
-    return String(out);
+    return String(toSource(out));
   }
   return { run, clearSession, middlewareRuns };
 }

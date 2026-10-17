@@ -109,6 +109,7 @@ events.use.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId,
 
 - 平台适配器仍以 `events.use.emit('inbound:message', msg)` 提交入站消息；gateway 监听该事件并把它送进相位链。
 - 适配器仍以 `events.use.on('outbound:message', ...)` 接收最终发送指令；gateway 在 `dispatchOutbound` 末尾 `emit` 该事件。
+- 出站消息带文字对象（`text`）时，gateway 先按这条消息所在会话（`{ sessionId, platform }`）的语言把它渲染进 `content`，再走 `outbound:dispatch` 链；i18n 缺席或渲染抛错时按原文渲染，渲染抛错时告警一次（之后再出错不再告警）。
 - 业务侧（agent / commands / scheduler 等）应改用 `gateway.use.dispatchOutbound(msg)`（可选依赖先看 `gateway.present`）而非直接 `events.use.emit('outbound:message')`，以便经过 `outbound:dispatch` 链。
 
 ## 应用入口要求

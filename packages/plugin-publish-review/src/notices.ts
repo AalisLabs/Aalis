@@ -5,6 +5,7 @@ import type { HookContextMap, Hooks } from '@aalis/api-hooks';
 import type { PublishOrigin } from '@aalis/api-publish';
 import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type OutgoingMessage, selfInitiatedActor } from '@aalis/schema-message';
 
 /**
@@ -162,12 +163,12 @@ export class ReviewNotices {
       throw new NoticeUndelivered(this.signal?.aborted ? '停机时这条通知还没得到平台确认' : '平台一直没有确认这条通知');
     }
     if (!result.ok && result.unconfirmed) {
-      this.logger.warn(`作品 ${id} 的通知平台结果未知，可能已经送达，不重发：${result.error}`);
+      this.logger.warn(`作品 ${id} 的通知平台结果未知，可能已经送达，不重发：${toSource(result.error)}`);
       return;
     }
     if (!result.ok) {
-      this.logger.warn(`作品 ${id} 的通知平台没有收下：${result.error}`);
-      throw new NoticeUndelivered(`平台没有收下这条通知：${result.error}`);
+      this.logger.warn(`作品 ${id} 的通知平台没有收下：${toSource(result.error)}`);
+      throw new NoticeUndelivered(`平台没有收下这条通知：${toSource(result.error)}`);
     }
   }
 }

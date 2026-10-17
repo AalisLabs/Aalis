@@ -15,14 +15,14 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// /help：所有平台同一份纯文本（QQ 与终端原样显示，WebUI 按 Markdown 渲染成列表），不用加粗、反引号、代码围栏与空格对列；
+// /help：所有平台同一份纯文本（QQ、终端与 WebUI 时间线里的通知都原样显示），不用加粗、反引号、代码围栏与空格对列；
 // 概览与详情只列调用者能用的指令，判据与执行时的权限判据同一份。用不了的指令在帮助里当作不存在：
 // `/help <它>` 与指令不存在时回同一句，`<它> -h` 与裸敲子指令都用不了的分组回的也是这一句；直接执行它，拒绝提示照旧。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent } as unknown as Logger;
 const allowAll = { authorize: () => null } as unknown as AuthorityService;
-const caller = { platform: 'test', userId: 'u' };
+const caller = { sessionId: 's', platform: 'test', userId: 'u' };
 
 /** 没有加粗、反引号与代码围栏，不用空格对列（行首缩进除外） */
 function expectPlain(text: string): void {
@@ -31,11 +31,14 @@ function expectPlain(text: string): void {
 }
 
 describe('help: 摘要取描述的第一句', () => {
-  it('到第一个句号、分号、问号、叹号或换行为止', () => {
+  it('按句子切分取第一句（与语言无关，英文的句点同样算），分号与换行另算句末；句末标点不留', () => {
     expect(brief('舞萌 DX 查分。绑定好友码后可以不写查询目标')).toBe('舞萌 DX 查分');
     expect(brief('清空当前会话记忆；用 --type 选择类型')).toBe('清空当前会话记忆');
     expect(brief('要现在重启吗？会断开连接')).toBe('要现在重启吗');
     expect(brief('第一行\n第二行')).toBe('第一行');
+    expect(brief('Lists the commands you can use. Add a name for its usage')).toBe('Lists the commands you can use');
+    expect(brief('Clears this session; pick types with --type')).toBe('Clears this session');
+    expect(brief('Works with v1.5 and e.g. later builds. More here')).toBe('Works with v1.5 and e.g. later builds');
   });
 
   it('第一句里的逗号、顿号、冒号与括号不切', () => {
@@ -43,17 +46,29 @@ describe('help: 摘要取描述的第一句', () => {
     expect(brief('设定当前对话的模型（会话级覆盖）')).toBe('设定当前对话的模型（会话级覆盖）');
   });
 
-  it('第一句过长时截断，省略号紧跟文字', () => {
+  it('按显示宽度截断：中日韩文字记 2 列，上限 48 列；截断处尾部的标点与空白去掉，省略号紧跟文字', () => {
+    const cjk = '一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯';
+    expect(brief(cjk)).toBe(cjk);
+    expect(brief(`${cjk}辰`)).toBe(`${cjk}…`);
+    expect(brief('a'.repeat(48))).toBe('a'.repeat(48));
     expect(brief('查看当前对话生效的模型 / 人设 / 深度思考 / 名称及来源')).toBe(
-      '查看当前对话生效的模型 / 人设 / 深度思考…',
+      '查看当前对话生效的模型 / 人设 / 深度思考 / 名称…',
     );
+    expect(brief(`${'a'.repeat(46)}, more words`)).toBe(`${'a'.repeat(46)}…`);
     expect(brief('')).toBe('');
+  });
+
+  it('显示宽度：各文字共用的长音符与中点、注音、竖排与兼容形式、emoji（含按 emoji 显示的文本字符与键帽）记 2 列；半角片假名、半角谚文与拉丁区的中点、修饰符记 1 列', () => {
+    for (const wide of ['ー', '・', 'ㄅ', '︰', '😀', '❤️', '#️⃣']) {
+      expect(brief(`${wide}${'a'.repeat(47)}`), wide).toBe(`${wide}${'a'.repeat(46)}…`);
+    }
+    for (const narrow of ['ｱ', 'ﾡ', '·', 'ˇ']) expect(brief(narrow.repeat(48)), narrow).toBe(narrow.repeat(48));
   });
 });
 
 describe('help: 各平台通用的纯文本', () => {
   function registry(): CommandRegistry {
-    const r = new CommandRegistry(silent, fixedRef(allowAll));
+    const r = new CommandRegistry(silent, fixedRef(allowAll), ref());
     r.command('clear', '清空当前会话记忆；用 --type 选择类型', { examples: ['/clear', '/clear -t context,vector'] })
       .alias('cls')
       .option('type', '-t <type:string[]>', {
@@ -157,7 +172,7 @@ describe('help: 各平台通用的纯文本', () => {
 
 describe('help: 没有权限插件时按执行时的 fail-closed 列', () => {
   it('只列默认等级能用、不用确认的指令', () => {
-    const r = new CommandRegistry(silent, ref());
+    const r = new CommandRegistry(silent, ref(), ref());
     r.command('open', '公开').action(() => 'ok');
     r.command('ask', '要确认', { confirm: 'session' }).action(() => 'ok');
     r.command('high', '要等级', { risk: 'sensitive' }).action(() => 'ok');
@@ -169,7 +184,7 @@ describe('help: 没有权限插件时按执行时的 fail-closed 列', () => {
 });
 
 describe('help: 登记', () => {
-  const r = () => new CommandRegistry(silent, fixedRef(allowAll));
+  const r = () => new CommandRegistry(silent, fixedRef(allowAll), ref());
 
   it('-h 与 --help 是保留选项：声明它们的选项登记时抛错', () => {
     expect(() => r().command('a').option('help', '')).toThrow(/保留/);

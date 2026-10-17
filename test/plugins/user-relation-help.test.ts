@@ -5,7 +5,7 @@ import type { Logger } from '../../packages/core/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import { type EvictionConfig, registerRelationCommands } from '../../packages/plugin-user-relation/src/commands.js';
 import type { RelationService } from '../../packages/plugin-user-relation/src/index.js';
-import { fixedRef } from '../fixtures/service-ref.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // /relation 与 /relation cleanup 两个分组登记了描述，帮助里不出现自动分组的占位文字；
@@ -13,14 +13,14 @@ import { fixedRef } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent } as unknown as Logger;
-const caller = { platform: 'onebot', userId: '30001' };
+const caller = { sessionId: 'onebot:10000:group:1', platform: 'onebot', userId: '30001' };
 
 /** 按声明的等级裁决：level 0 的人只过默认等级的指令；owner 全过 */
 const authorityAt = (level: number) =>
   ({ authorize: (_who: unknown, req) => (capabilityMinLevel(req) > level ? '权限不足' : null) }) as AuthorityService;
 
 function relationRegistry(level: number): CommandRegistry {
-  const registry = new CommandRegistry(silent, fixedRef(authorityAt(level)));
+  const registry = new CommandRegistry(silent, fixedRef(authorityAt(level)), ref());
   const commands = {
     command: (name: string, description?: string, meta?: object) =>
       registry.command(name, description, { ...meta, pluginName: 'relation' }),

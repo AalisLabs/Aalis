@@ -16,7 +16,7 @@ import type { MemoryService } from '@aalis/api-memory';
 import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
-import { isTextRef } from '@aalis/schema-i18n';
+import { isTextRef, type TextRef } from '@aalis/schema-i18n';
 import {
   type ArchivedAttachment,
   type ContentSegment,
@@ -28,6 +28,7 @@ import {
 } from '@aalis/schema-message';
 import { failure } from './connection.js';
 import type { DisplayOf } from './display.js';
+import { t } from './texts.js';
 
 /** 说话人是不是 owner */
 export type IsOwner = (platform: string, userId?: string) => boolean;
@@ -36,11 +37,11 @@ export type IsOwner = (platform: string, userId?: string) => boolean;
 export const HISTORY_PAGE = 100;
 
 /** 房间里她在工具调用之前说的话：agent 只把最后的回复交给平台 */
-export const BEFORE_TOOL_UNSENT = '没有发出：调用工具之前说的话不发到群里';
+export const BEFORE_TOOL_UNSENT = t('beforeToolUnsent');
 /** 房间里重试丢掉的几版：最后一版才是回复 */
-export const RETRIED = '没有发出：格式校验没通过，已重试';
+export const RETRIED = t('retried');
 /** 平台没收下她发出的消息，error 是投递结果给的原因 */
-export const notAccepted = (error: string) => `没有发出：平台没收下（${error}）`;
+export const notAccepted = (error: string | TextRef) => t('notAccepted', { error });
 
 /** 给她发出的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
 export type SignFile = (uri: string, name: string) => string | undefined;
@@ -305,7 +306,7 @@ function recordedApproval(metadata: Record<string, unknown> | undefined) {
  * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示。房间里以回复收尾的一组，最后一次工具调用之后的最后一条
  * 是回复，failures 里有这一轮的就标平台没收下；其余她说的话标未发出
  */
-function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyMap<string, string>): SessionItem[] {
+function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyMap<string, TextRef>): SessionItem[] {
   const { ordered, lastAt, model, results, replied } = groupTimeline(group);
   const base = archivedItemId(group[0] as Message);
   const turnId = group.map(turnOf).find(id => id !== undefined);
@@ -372,16 +373,17 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
 }
 
 /**
- * 适配器记下的投递失败里，一轮回复没发出的：回合 id → 未发出的原因。经工具发出的（带 callId）不算，
- * 那次调用的结果已写明；没记回合或原因的旧记录不认
+ * 适配器记下的投递失败里，一轮回复没发出的：回合 id → 未发出的原因。适配器记的原因是字符串或文字对象（按形状认）；
+ * 经工具发出的（带 callId）不算，那次调用的结果已写明；没记回合或原因的旧记录不认
  */
-function replyFailures(raw: readonly Message[]): Map<string, string> {
-  const failures = new Map<string, string>();
+function replyFailures(raw: readonly Message[]): Map<string, TextRef> {
+  const failures = new Map<string, TextRef>();
   for (const message of raw) {
     if (message.kind !== WellKnownKinds.OutboundDeliveryFailed) continue;
     if (message.metadata?.[WellKnownMetadataKeys.CallId] !== undefined) continue;
     const turnId = turnOf(message);
-    const error = text(message.metadata?.[WellKnownMetadataKeys.DeliveryError]);
+    const recorded = message.metadata?.[WellKnownMetadataKeys.DeliveryError];
+    const error = isTextRef(recorded) ? recorded : text(recorded);
     if (turnId && error) failures.set(turnId, notAccepted(error));
   }
   return failures;
@@ -391,7 +393,7 @@ function replyFailures(raw: readonly Message[]): Map<string, string> {
 export function mergeArchive(
   raw: readonly Message[],
   context: MergeContext,
-  failures: ReadonlyMap<string, string>,
+  failures: ReadonlyMap<string, TextRef>,
 ): SessionItem[] {
   const items: SessionItem[] = [];
   for (let i = 0; i < raw.length; ) {

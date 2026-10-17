@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
@@ -270,6 +271,8 @@ function memoryStorage(written: Map<string, string>): StorageService {
 
 interface SetupOptions {
   withI18n?: boolean;
+  /** 给了就用这个替身代替 plugin-i18n */
+  i18nService?: I18nService;
   withDoc?: boolean;
   /** 贡献点与日语语言包 */
   withHubs?: boolean;
@@ -278,7 +281,14 @@ interface SetupOptions {
   written?: Map<string, string>;
 }
 
-async function setup({ withI18n = true, withDoc = false, withHubs = false, hostLanguage, written }: SetupOptions = {}) {
+async function setup({
+  withI18n = true,
+  i18nService,
+  withDoc = false,
+  withHubs = false,
+  hostLanguage,
+  written,
+}: SetupOptions = {}) {
   const port = await freePort();
   const quiet = () => {};
   const logger: Logger = { debug: quiet, info: quiet, warn: quiet, error: quiet, child: () => logger };
@@ -338,7 +348,20 @@ async function setup({ withI18n = true, withDoc = false, withHubs = false, hostL
   await app.pluginAll([
     ...(withHubs ? [...HUB_PLUGINS, packs].map(definition => ({ definition })) : []),
     ...(hostLanguage === undefined ? [] : [{ definition: doubles }]),
-    ...(withI18n ? [{ definition: i18nPlugin }] : []),
+    ...(withI18n && !i18nService ? [{ definition: i18nPlugin }] : []),
+    ...(i18nService
+      ? [
+          {
+            definition: definePlugin({
+              name: '@zz/i18n-double',
+              uses: { provide },
+              apply: ({ provide }) => {
+                provide.use(i18n, i18nService);
+              },
+            }),
+          },
+        ]
+      : []),
     ...(withDoc ? [{ definition: host }] : []),
     { definition: definePlugin({ name: LACKING, uses: { absent }, apply() {} }) },
     {
@@ -459,6 +482,18 @@ describe('REST 回应按读者语言渲染', () => {
 
   it('i18n 缺席时一律原文，插件收到的语言链为空', async () => {
     const { reader } = await setup({ withI18n: false });
+    expect(await shown(reader({ lang: 'en' }))).toEqual({ ...CHINESE, languages: '' });
+  });
+
+  it('i18n 渲染抛错：回应照常是 200，文字按原文；插件收到的语言链为空', async () => {
+    const fail = () => {
+      throw new Error('<i18n 坏了>');
+    };
+    const { reader } = await setup({ i18nService: { render: fail, chainOf: fail, languages: () => [] } });
+    const response = await reader({ lang: 'en' })('/api/pages');
+    expect(response.status).toBe(200);
+    const { pages } = await response.json();
+    expect(pages.find((page: { key: string }) => page.key === 'jobs').title).toBe('任务');
     expect(await shown(reader({ lang: 'en' }))).toEqual({ ...CHINESE, languages: '' });
   });
 

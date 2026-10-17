@@ -10,6 +10,10 @@ interface RouteReply {
 
 /** i18n 缺席：回应里的文字对象按原文渲染，同真实出口在 i18n 不在时 */
 const ABSENT = { present: false } as Parameters<typeof localizeFor>[0];
+/** 缺席时不会调 onError，调了就是出了错，照样抛出 */
+const rethrow = (err: unknown) => {
+  throw err;
+};
 
 /**
  * 路由测试挂具，不起端口。路由注册器只调用 `app.<method>(path, ...handlers)`：`expressApp` 是把处理器链
@@ -41,7 +45,7 @@ export function captureRoutes(): {
         return res;
       },
       json(payload: unknown) {
-        out.body = localizeFor(ABSENT, payload, { languages: [] });
+        out.body = localizeFor(ABSENT, payload, { languages: [] }, { onError: rethrow });
         return res;
       },
     };

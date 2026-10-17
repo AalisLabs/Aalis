@@ -9,6 +9,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from '../../packages/plugin-agent/src/helpers.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
@@ -145,11 +146,14 @@ describe('buildFocusGuidance', () => {
 });
 
 describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
+  /** 说明是文字对象，这里核原文 */
+  const explain = (...args: Parameters<typeof describeLLMFailure>) => toSource(describeLLMFailure(...args));
+
   // 这条曾经是一次真实事故：包改名（plugin-deepseek → plugin-llm-deepseek）后，配置里的
   // llm-ref 全部指向不存在的 entry，整机 LLM 静默全哑，而日志只说「LLM 服务不可用，请检查配置」
   // ——服务其实注册得好好的，坏的只是那条 ref。
   it('一个 entry 都没有 → 提示去装/启用提供者插件', () => {
-    const s = describeLLMFailure([]);
+    const s = explain([]);
     expect(s).toContain('未找到任何具备 chat 能力的 LLM');
     expect(s).not.toContain('配置指向');
   });
@@ -157,19 +161,19 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
   // 实测过的空转路径：照文档 `--yes` 起步 → deepseek 缺 key 激活失败（ERROR 只在终端日志里）
   // → 聊天里却说「请确认已安装并启用」，而装和启用这两条都对得上，用户会顺着错误方向排查一轮。
   it('没有可用 entry 但有 LLM 插件处于 error 态 → 点名实例并指向 /doctor，不再让人去查装没装', () => {
-    const s = describeLLMFailure([], undefined, ['@aalis/plugin-llm-deepseek', '@aalis/plugin-llm-openai:main']);
+    const s = explain([], undefined, ['@aalis/plugin-llm-deepseek', '@aalis/plugin-llm-openai:main']);
     expect(s).toMatch(
-      /激活失败：@aalis\/plugin-llm-deepseek、@aalis\/plugin-llm-openai:main。可用 \/doctor 查看原因（需要相应权限）/,
+      /激活失败：@aalis\/plugin-llm-deepseek和@aalis\/plugin-llm-openai:main。可用 \/doctor 查看原因（需要相应权限）/,
     );
     expect(s, '不能再指向「装没装/启没启用」这条错误路径').not.toContain('请确认已安装并启用');
   });
 
   it('没有可用 entry 且没有 error 态插件 → 回落到原来的通用提示', () => {
-    expect(describeLLMFailure([], undefined, [])).toContain('请确认已安装并启用');
+    expect(explain([], undefined, [])).toContain('请确认已安装并启用');
   });
 
   it('有 entry 但配置 ref 对不上 → 同时报出要找的与现有的', () => {
-    const s = describeLLMFailure(['@aalis/plugin-llm-deepseek/deepseek-v4-flash'], {
+    const s = explain(['@aalis/plugin-llm-deepseek/deepseek-v4-flash'], {
       provider: '@aalis/plugin-deepseek',
       model: 'deepseek-v4-flash',
     });
@@ -181,7 +185,7 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
   });
 
   it('未配置 ref 时不谎称「配置指向」，也不谎称「都不可用」', () => {
-    const s = describeLLMFailure(['@aalis/plugin-llm-ollama/gemma4:26b-mlx'], undefined);
+    const s = explain(['@aalis/plugin-llm-ollama/gemma4:26b-mlx'], undefined);
     expect(s).not.toContain('配置指向');
     // 这条分支在生产其实不可达（ref 不全时 resolveLLMModel 取 all[0]，有 entry 必命中），
     // 所以它不该说「均不可用」——那与「有 1 个可用 entry」自相矛盾。
@@ -190,13 +194,13 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
 
   it('可用列表过长时截断——这条文案会发进聊天，ollama 能有几十个 entry', () => {
     const many = Array.from({ length: 40 }, (_, i) => `@aalis/plugin-llm-ollama/model-${i}`);
-    const s = describeLLMFailure(many, { provider: 'p', model: 'm' });
+    const s = explain(many, { provider: 'p', model: 'm' });
     expect(s.length, `实测未截断时 40 个模型拼出 1874 字符，当前 ${s.length}`).toBeLessThan(300);
     expect(s).toContain('等 40 个');
   });
 
   it('ref 只有一半（缺 model）时按未配置处理', () => {
-    const s = describeLLMFailure(['x/y'], { provider: '@aalis/plugin-llm-deepseek' });
+    const s = explain(['x/y'], { provider: '@aalis/plugin-llm-deepseek' });
     expect(s).not.toContain('配置指向');
   });
 });

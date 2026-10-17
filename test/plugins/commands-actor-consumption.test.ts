@@ -1,6 +1,7 @@
 import { App, events, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { commands as commandsDescriptor, type ExecutionInput } from '../../packages/api-commands/src/index.js';
+import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -31,14 +32,14 @@ async function runInbound(message: Record<string, unknown>): Promise<Captured> {
 
   const host = app.bind({ events, services });
   const captured: Captured = {};
-  const commands = host.services.use.get(commandsDescriptor);
+  const commands = host.services.use.get(commandsDescriptor) as CommandRegistry | undefined;
   if (!commands) throw new Error('commands 服务未注册');
   commands.command('probe', '探针').action(async function (this: unknown) {
     return 'ok';
   });
-  // 包一层 execute 抓真实入参——断言的是「传下去的身份」，不是「谁注册了指令」。
-  const orig = commands.execute.bind(commands);
-  commands.execute = async (name: string, input: ExecutionInput) => {
+  // 包一层 run（聊天入站执行指令的入口）抓真实入参——断言的是「传下去的身份」，不是「谁注册了指令」。
+  const orig = commands.run.bind(commands);
+  commands.run = async (name: string, input: ExecutionInput) => {
     captured.input = input;
     return orig(name, input);
   };

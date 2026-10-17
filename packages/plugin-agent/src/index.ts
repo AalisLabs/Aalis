@@ -53,7 +53,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { toSource } from '@aalis/schema-i18n';
+import { type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
@@ -78,6 +78,7 @@ import {
   toPersonaOptions,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
+import { t } from './texts.js';
 
 // ===== 能力声明 =====
 //
@@ -261,7 +262,7 @@ class DefaultAgent implements AgentService {
   }
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
-  private explainLLMFailure(platform?: string, sessionId?: string): string {
+  private explainLLMFailure(platform?: string, sessionId?: string): TextRef {
     const available = listLLMModels(this.caps.llm, { caps: ['chat'] }).map(e => e.id);
     const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
@@ -677,10 +678,12 @@ class DefaultAgent implements AgentService {
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
         const why = this.explainLLMFailure(incoming.platform, incoming.sessionId);
-        this.logger.warn(`LLM 解析失败，无法处理消息：${why}`);
+        this.logger.warn(`LLM 解析失败，无法处理消息：${toSource(why)}`);
         if (!reportOnly) {
+          const text = t('systemNotice', { why });
           await this.dispatchOutbound({
-            content: `[系统] ${why}`,
+            content: toSource(text),
+            text,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             source: 'system',
@@ -690,7 +693,7 @@ class DefaultAgent implements AgentService {
           message: incoming,
           reply: '',
           outcome: signal.aborted ? 'aborted' : 'error',
-          ...(signal.aborted ? {} : { error: why }),
+          ...(signal.aborted ? {} : { error: toSource(why) }),
           sessionId: incoming.sessionId,
           turnId,
           metadata: msgHookData.metadata,
@@ -1414,7 +1417,8 @@ class DefaultAgent implements AgentService {
           return;
         }
 
-        const message = err instanceof Error ? err.message : String(err);
+        const error = textOf(err);
+        const message = toSource(error);
         this.logger.error(`处理消息失败: ${message}`);
 
         // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
@@ -1426,8 +1430,10 @@ class DefaultAgent implements AgentService {
           done: true,
         });
         if (!reportOnly) {
+          const text = t('turnError', { error });
           await this.dispatchOutbound({
-            content: `[错误] ${message}`,
+            content: toSource(text),
+            text,
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             source: 'system',
@@ -2363,28 +2369,28 @@ function run(caps: Caps): void {
   // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
 
   /** 会话设置存在会话管理里：它没在运行时三条会话指令都回这一句 */
-  const NO_SESSION_MANAGER =
-    '会话管理没有在运行，会话设置要靠它：在 WebUI 插件区启用「会话管理」，' +
-    '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因';
+  const NO_SESSION_MANAGER = t('noSessionManager');
 
   /**
    * 继承值的来源：层表里这一层的称呼，平台档、平台类型档与场所另写这个会话取的是哪一份（「平台档 onebot」
-   * 「平台类型档 onebot · group」「场所『<显示名>』」）；哪一层都没设时为「默认」
+   * 「平台类型档 onebot · group」「场所『<显示名>』」）；哪一层都没设时为「默认」。层名与场所的显示名原样作参数，按读者显示
    */
   function sourceName(
     smSvc: SessionManagerService,
     sessionId: string,
     inheritance: SessionInheritance,
     layer: InheritanceSource | undefined,
-  ): string {
-    if (layer === undefined) return '默认';
-    const label = toSource(SESSION_LAYERS.find(({ name }) => name === layer)!.label);
-    if (layer === 'platform') return `${label} ${inheritance.platform}`;
-    if (layer === 'type') return `${label} ${inheritance.platform} · ${inheritance.type}`;
+  ): TextRef {
+    if (layer === undefined) return t('fromDefault');
+    const label = SESSION_LAYERS.find(({ name }) => name === layer)!.label;
+    if (layer === 'platform') return t('fromPlatform', { layer: label, platform: inheritance.platform! });
+    if (layer === 'type') {
+      return t('fromType', { layer: label, platform: inheritance.platform!, type: inheritance.type! });
+    }
     if (layer !== 'place') return label;
     const { key } = smSvc.placeOf(sessionId);
     const place = smSvc.getPlace(key);
-    return `${label}『${place ? toSource(placeLabel(place)) : key}』`;
+    return t('fromPlace', { layer: label, place: place ? placeLabel(place) : key });
   }
 
   /**
@@ -2397,16 +2403,16 @@ function run(caps: Caps): void {
     smSvc: SessionManagerService,
     sessionId: string,
     platform: string,
-    label: string,
+    field: TextRef,
     key: 'llm' | 'persona' | 'think',
     pick: (c: CfgView) => string | undefined,
-  ): string[] {
+  ): TextRef[] {
     const inheritance = smSvc.resolveInheritance(sessionId, platform);
-    const inherited = pick(inheritance.values);
+    const inherited = pick(inheritance.values) ?? t('unsetValue');
     const from = sourceName(smSvc, sessionId, inheritance, inheritance.sources[key]);
     const own = pick(smSvc.getOwnConfig(sessionId));
-    if (own == null) return [`${label}: ${inherited ?? '(默认)'}  [来源: ${from}]`];
-    return [`${label}: ${own}  [来源: 会话覆盖]`, `  被覆盖的继承值: ${inherited ?? '(默认)'}  [来源: ${from}]`];
+    if (own == null) return [t('inheritedLine', { field, value: inherited, from })];
+    return [t('overrideLine', { field, value: own }), t('overriddenLine', { value: inherited, from })];
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
@@ -2415,26 +2421,31 @@ function run(caps: Caps): void {
    * /session 模型那一行之后：这一轮实际会用的模型与显示的生效值不同时写出来（哪一层都没设、偏好也没有时，或偏好指向的
    * 模型不在时，服务落到别的模型上）
    */
-  async function modelNote(smSvc: SessionManagerService, sessionId: string, platform: string): Promise<string> {
+  async function modelNote(
+    smSvc: SessionManagerService,
+    sessionId: string,
+    platform: string,
+  ): Promise<TextRef | undefined> {
     const actual = (await agent.resolveLLM(platform, sessionId))?.id;
     const shown =
       fmtModel(smSvc.getOwnConfig(sessionId)) ?? fmtModel(smSvc.resolveInheritance(sessionId, platform).values);
-    return actual && actual !== shown ? `  这一轮会用: ${actual}` : '';
+    return actual && actual !== shown ? t('modelInUse', { model: actual }) : undefined;
   }
 
-  /** 模型的档位写成一句：id（名字），由浅到深 */
+  /** 模型的档位逐个写成「id（名字）」，由浅到深 */
   const levelList = (thinking: ThinkingLevels) =>
-    thinking.levels.map(({ id, label }) => `${id}（${label}）`).join('、');
+    thinking.levels.map(({ id, label }) => t('thinkingLevel', { id, label }));
 
   /** /session 深度思考那一行之后：这一轮会用的模型的档位与默认档，生效的档位它没有时写明按默认 */
-  async function thinkingNote(sessionId: string, platform: string): Promise<string> {
+  async function thinkingNote(sessionId: string, platform: string): Promise<TextRef> {
     const thinking = (await agent.resolveLLM(platform, sessionId))?.use.thinking;
-    if (!thinking) return '  当前模型不能调';
+    if (!thinking) return t('thinkingFixed');
     const level = caps.sessionManager.present
       ? caps.sessionManager.use.resolveConfig(sessionId, platform).think
       : undefined;
     const missing = level !== undefined && !thinking.levels.some(({ id }) => id === level);
-    return `  当前模型的档位：${levelList(thinking)}，默认 ${thinking.default}${missing ? '；当前模型没有这一档，按默认' : ''}`;
+    const params = { levels: levelList(thinking), fallback: thinking.default };
+    return missing ? t('thinkingLevelsMissing', params) : t('thinkingLevels', params);
   }
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
@@ -2487,20 +2498,19 @@ function run(caps: Caps): void {
       const smSvc = caps.sessionManager.use;
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
-      return [
-        `会话: ${session ? toSource(sessionLabel(session)) : sid}`,
-        ...resolutionLines(smSvc, sid, argv.session.platform, '模型', 'llm', fmtModel),
+      const lines = [
+        t('sessionLine', { session: session ? sessionLabel(session) : sid }),
+        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldModel'), 'llm', fmtModel),
         await modelNote(smSvc, sid, argv.session.platform),
-        ...resolutionLines(smSvc, sid, argv.session.platform, '人设', 'persona', fmtPersona),
-        ...resolutionLines(smSvc, sid, argv.session.platform, '深度思考', 'think', fmtThink),
+        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldPersona'), 'persona', fmtPersona),
+        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldThink'), 'think', fmtThink),
         await thinkingNote(sid, argv.session.platform),
-        session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
+        session ? undefined : t('noOwnRecord'),
         '────',
-        '改配置: /session.set -m <模型> -p <人设> -t <档位> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
-        '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅深度思考）',
-      ]
-        .filter(Boolean)
-        .join('\n');
+        t('setHint'),
+        t('resetHint'),
+      ];
+      return textLines(lines.filter(line => line !== undefined));
     });
 
   caps.commands.use
@@ -2550,7 +2560,7 @@ function run(caps: Caps): void {
           .thinking;
         if (!thinking) return '当前模型不能调深度思考';
         if (!thinking.levels.some(({ id }) => id === level)) {
-          return `当前模型没有档位「${level}」，可选：${levelList(thinking)}`;
+          return t('noSuchLevel', { level, levels: levelList(thinking) });
         }
         config.think = level;
       }

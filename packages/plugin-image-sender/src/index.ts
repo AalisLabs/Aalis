@@ -19,6 +19,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { isStorageNotFound, isStorageUri, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import {
   awaitDelivery,
   type Message,
@@ -276,7 +277,7 @@ function registerImageSender(caps: Caps): void {
         if (!result) return JSON.stringify({ error: '附件仍在发送，结果未确认，请勿重发' });
         if (!result.ok) {
           return JSON.stringify({
-            error: result.unconfirmed ? '附件发送结果未知（可能已经送达），请勿重发' : result.error,
+            error: result.unconfirmed ? '附件发送结果未知（可能已经送达），请勿重发' : toSource(result.error),
           });
         }
 

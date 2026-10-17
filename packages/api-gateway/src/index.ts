@@ -97,6 +97,9 @@ export interface GatewayService {
    * 替代 `events.emit('outbound:message', msg)` —— 后者将逐步迁移：
    *   - 平台适配器仍可监听 `outbound:message` 接收最终发送指令；
    *   - 发出方应改用本接口，以经过 `outbound:dispatch` 钩子链。
+   *
+   * 消息带文字对象（`text`）时，先按这条消息所在会话（`{ sessionId, platform }`）的语言把它渲染进 content，再走钩子链；
+   * i18n 缺席或渲染抛错时按原文渲染。
    */
   dispatchOutbound(message: OutgoingMessage): Promise<void>;
 }
