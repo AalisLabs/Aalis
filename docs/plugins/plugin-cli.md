@@ -29,6 +29,7 @@ export default definePlugin({
     plugins: optional(pluginsService),
     commands: optional(commands),
     sessionManager: optional(sessionManager),
+    i18n: optional(i18n),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -56,7 +57,9 @@ export default definePlugin({
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
 - 指令的意图确认（权限模型轴 B）：声明了 `confirm` 的指令由 plugin-commands 把确认提示作为消息发进聊天区，在输入框回复 `y` 后回车即确认，其它输入取消，60 秒无回复视为取消；回复在 `inbound:command` 相位被吞掉，不会当成对话发给模型。在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答
 - sessionId 默认为 `cli-default`
+- 界面文字（欢迎行与指路、状态页、帮助页、审批卡与结算的那一行、附件说明里的类型、输入框位置的视图说明）取本插件的字典，按终端会话的语言显示：读者是 `{ sessionId: 配置的会话, platform: 'cli' }`，会话设置 `language` 按继承链解析；i18n 缺席或渲染抛错时按原文，渲染抛错时告警一次（之后再出错不再告警）。聊天里的回复与指令输出已由网关按会话的语言渲染，终端照原样显示。审批卡上的事实是逐字的参数，原样显示，不渲染。显示名与配置项的标签、说明同样在字典里，由 WebUI 按它的读者显示
 - 欢迎行、头部、回复前的署名与状态页写的人设名，按终端会话生效的「人设」取卡（会话管理的 `resolveConfig`，入口平台 `cli`），与回合同一口径；没装会话管理时是人设服务的主卡
+- 会话设置变了（`session:config:changed`，如改了语言或人设）时界面立即重绘：头部、状态页、帮助页、审批卡与视图说明换成新的设置；已经写进聊天区的行（欢迎行、回复、结算的那一行等）不随之变化
 - 审批面：激活时经 `approvals.use.registerSurface('cli')` 登记 `cli` 审批面，终端界面启动后以本地终端身份（`platform: 'cli'`，`userId: 'console'`）接入，审计里的审批面记为 `cli` 与本插件实例。详见下文「审批卡」
 - 切换视图时（help 视图除外）经 `host-config` 把 `lastView` 写回配置文档并落盘；宿主未提供配置文档时不记录，下次启动回到默认视图
 - 日志页的内容来自宿主的 `host-logs`（[api-host-logs](../api/api-host-logs.md)）：激活时订阅，补发最近 2000 条（启动期的日志也在其中），之后实时接着送，界面起来之前的先攒着；订阅随本次激活撤回。宿主不提供时日志页为空

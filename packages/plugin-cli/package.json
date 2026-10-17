@@ -42,7 +42,9 @@
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0"
+    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -63,7 +65,8 @@
         "approvals",
         "plugins",
         "commands",
-        "session-manager"
+        "session-manager",
+        "i18n"
       ],
       "provides": [
         "cli",
