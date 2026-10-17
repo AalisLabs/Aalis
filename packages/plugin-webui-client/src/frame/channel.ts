@@ -15,6 +15,7 @@ import {
   type ThemeToken,
 } from '@aalis/api-webui';
 import type { Localized } from '@aalis/schema-i18n';
+import { tr } from '../language';
 import type { AdminClient } from '../protocol/admin-client';
 import { ConnectionLostError, INVALID_PARAMS, RequestError, type SessionClient } from '../protocol/session-client';
 import { getJson, isRecord, postJson, RestError } from '../rest';
@@ -22,7 +23,8 @@ import { getJson, isRecord, postJson, RestError } from '../rest';
 // 插件前端的消息通道，宿主一侧。先在窗口上等框架的 hello，核过来源窗口、nonce 与主版本，交给框架一个专用端口，
 // 之后只走这个端口。框架发来的每条消息先过 api-webui 的校验函数；实例、页面与会话面板的会话一律取挂载时的值；
 // 宿主数据能力按页面申请的放行；外链与 destructive 动作要用户在宿主对话框里确认，同一时刻只一个，连续被取消到上限就卸载。
-// 卸载只有一个出口：关端口、撤监听、在途的结果不再转回、清计时器
+// 卸载只有一个出口：关端口、撤监听、在途的结果不再转回、清计时器。
+// 回给框架的失败说明：运行中会遇到的按界面的语言；只在哪一方代码写错时才出现的是诊断，与 api-webui 的校验句一样照原文
 
 /** 在途请求最多几个，超了回 busy */
 const FRAME_MAX_PENDING = 8;
@@ -99,7 +101,7 @@ function failureOf(err: unknown): { code: FrameErrorCode; message: string } {
   if (err instanceof RestError) {
     const { status, message } = err;
     // 数据源的输入在查询串里，太长时请求行被代理或 Node 拒收
-    if (status === 414 || status === 431) return { code: 'invalid', message: '输入太长' };
+    if (status === 414 || status === 431) return { code: 'invalid', message: tr('frameInputTooLong') };
     if (status === 400) return { code: 'invalid', message };
     if (status === 404) return { code: 'not-found', message };
     if (status === 503) return { code: 'unavailable', message };
@@ -190,17 +192,17 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
   /** REST 连不上时 fetch 抛它自己的错误，对到 unavailable */
   const rest = <T>(call: () => Promise<T>): Promise<T> =>
     call().catch((err: unknown) => {
-      throw err instanceof RestError ? err : new FrameFailure('unavailable', '连不上服务端');
+      throw err instanceof RestError ? err : new FrameFailure('unavailable', tr('frameServerUnreachable'));
     });
 
   /** 会话协议的转发：会话连接没连上（会话服务不在或断线）时不等 */
   const protocol = <T>(call: () => Promise<T>): Promise<T> => {
-    if (session.state.status !== 'open') throw new FrameFailure('unavailable', '会话服务没有连上');
+    if (session.state.status !== 'open') throw new FrameFailure('unavailable', tr('frameSessionOffline'));
     return call();
   };
 
   async function throughDialog(question: FrameQuestion): Promise<void> {
-    if (asking) throw new FrameFailure('denied', '这个页面已经开着一个宿主对话框');
+    if (asking) throw new FrameFailure('denied', tr('frameDialogOpen'));
     asking = true;
     const confirmed = await host.ask(question);
     asking = false;
@@ -210,7 +212,7 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
     }
     refusals += 1;
     if (refusals >= FRAME_DIALOG_REFUSALS_MAX) stop({ reason: 'refused' });
-    throw new FrameFailure('cancelled', '用户取消了');
+    throw new FrameFailure('cancelled', tr('frameCancelled'));
   }
 
   async function data(source: string, input?: Record<string, unknown>): Promise<unknown> {
@@ -240,7 +242,8 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
       if (confirmed && message !== null) host.report('success', message);
       return message;
     } catch (err) {
-      if (confirmed) host.report('danger', `${declared.label}失败：${failureOf(err).message}`);
+      if (confirmed)
+        host.report('danger', tr('actionFailed', { action: declared.label, error: failureOf(err).message }));
       throw err;
     }
   }
@@ -297,7 +300,7 @@ function openChannel(frame: Window, host: FrameHost, stop: (stop: FrameStop) => 
       return;
     }
     if (pending >= FRAME_MAX_PENDING) {
-      const error = { code: 'busy' as const, message: `在途的请求已有 ${FRAME_MAX_PENDING} 个` };
+      const error = { code: 'busy' as const, message: tr('frameBusy', { count: FRAME_MAX_PENDING }) };
       post({ type: 'result', id, ok: false, error });
       return;
     }

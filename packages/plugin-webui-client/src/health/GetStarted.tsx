@@ -4,6 +4,7 @@ import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { usePluginAction } from '../plugins/action';
 import { InstallDialog } from '../plugins/InstallDialog';
 import { CHAT, LLM, type PluginRow, useFindPlugin, useHost, usePlugins } from '../plugins/list';
@@ -36,12 +37,12 @@ export function GetStarted() {
   const { value: models, error } = useJson('/api/models/llm', parseModels, version);
   if (models?.some(model => model.capabilities?.includes(CHAT)) || (!models && !error)) return null;
   return (
-    <section className="attention-summary" aria-label="开始使用">
-      <h2 className="section-heading">开始使用</h2>
+    <section className="attention-summary" aria-label={tr('getStarted')}>
+      <h2 className="section-heading">{tr('getStarted')}</h2>
       {models && <ChooseModel />}
       {error && (
         <FetchError
-          what="对话模型列表"
+          what={tr('chatModelList')}
           error={error}
           retry={reload}
           stale={models !== undefined}
@@ -70,7 +71,7 @@ function ChooseModel() {
         key: row.instanceId,
         tone: markerOf(statusOf(row)),
         title: pluginName(row.instanceId, find),
-        detail: row.state === 'active' ? '在运行，但没有能对话的模型' : statusLine(row, find),
+        detail: row.state === 'active' ? tr('getStartedNoChatModel') : statusLine(row, find),
         action: providerAction(row),
       }),
     );
@@ -83,7 +84,7 @@ function ChooseModel() {
         detail: pkg.description || undefined,
         action: (
           <Button disabled={action.busy !== undefined} onClick={() => setInstalling(pkg)}>
-            安装
+            {tr('install')}
           </Button>
         ),
       }),
@@ -93,16 +94,22 @@ function ChooseModel() {
   function providerAction(row: PluginRow) {
     const id = row.instanceId;
     if (row.state === 'disabled') {
-      const label = `启用 ${pluginName(id, find)}`;
+      const enable = `enable:${id}`;
       return (
         <Button
-          busy={action.busy === label}
+          busy={action.busy === enable}
           disabled={action.busy !== undefined}
           onClick={() =>
-            action.run(label, () => postJson(`/api/plugins/${encodeURIComponent(id)}/enable`, {}), undefined, id)
+            action.run(
+              enable,
+              tr('enablePlugin', { name: pluginName(id, find) }),
+              () => postJson(`/api/plugins/${encodeURIComponent(id)}/enable`, {}),
+              undefined,
+              id,
+            )
           }
         >
-          启用
+          {tr('enable')}
         </Button>
       );
     }
@@ -113,12 +120,12 @@ function ChooseModel() {
 
   return (
     <>
-      <p className="attention-detail">还没有能对话的模型。选一个对话模型：配好已装的，或从市场装一个。</p>
+      <p className="attention-detail">{tr('getStartedIntro')}</p>
       {installed.length + available.length > 0 && <Rows rows={[...installed, ...available]} />}
       {market.value?.warning && <p className="attention-detail">{market.value.warning}</p>}
       {market.error && (
         <FetchError
-          what="市场"
+          what={tr('market')}
           error={market.error}
           retry={reloadMarket}
           stale={market.value !== undefined}

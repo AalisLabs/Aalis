@@ -4,6 +4,7 @@ import type { ConfigSchema } from '@aalis/schema-config';
 import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { getJson, isRecord } from '../rest';
 
 // 插件列表：整页取一份，插件登记表变了（plugins.changed）或管理连接重连后重取。插件区、各处的插件显示名、
@@ -103,12 +104,14 @@ export function unmetOf(value: unknown): Localized<UnmetService>[] | undefined {
 
 function parseRow(row: unknown): PluginRow {
   if (!isRecord(row) || typeof row.name !== 'string' || typeof row.instanceId !== 'string') {
-    throw new Error('插件列表里有一项不是预期的形状');
+    throw new Error(tr('pluginRowMalformed'));
   }
-  if (typeof row.state !== 'string' || !STATES.has(row.state)) throw new Error(`插件 ${row.instanceId} 的状态认不出`);
+  if (typeof row.state !== 'string' || !STATES.has(row.state)) {
+    throw new Error(tr('pluginStateUnknown', { instance: row.instanceId }));
+  }
   const lacking = unmetOf(row.lacking);
   const waiting = unmetOf(row.waiting);
-  if (!lacking || !waiting) throw new Error(`插件 ${row.instanceId} 缺的服务认不出`);
+  if (!lacking || !waiting) throw new Error(tr('pluginUnmetUnknown', { instance: row.instanceId }));
   const extended = isRecord(row.extends) ? row.extends : undefined;
   return {
     name: row.name,
@@ -152,7 +155,7 @@ function parseRow(row: unknown): PluginRow {
 }
 
 function parse(body: unknown): { plugins: PluginRow[]; secretRefCounts: Record<string, number> } {
-  if (!isRecord(body) || !Array.isArray(body.plugins)) throw new Error('插件列表的回应不是预期的形状');
+  if (!isRecord(body) || !Array.isArray(body.plugins)) throw new Error(tr('pluginsMalformed'));
   const counts = isRecord(body.secretRefCounts) ? body.secretRefCounts : {};
   return {
     plugins: body.plugins.map(parseRow),
@@ -176,7 +179,7 @@ const Context = createContext<Plugins | undefined>(undefined);
 
 export function usePlugins(): Plugins {
   const plugins = useContext(Context);
-  if (!plugins) throw new Error('只能在 PluginsProvider 里取插件列表');
+  if (!plugins) throw new Error(tr('pluginsOutsideProvider'));
   return plugins;
 }
 

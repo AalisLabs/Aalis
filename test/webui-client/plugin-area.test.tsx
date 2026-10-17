@@ -10,6 +10,7 @@ import {
   type FakeRest,
   type Harness,
   installDialog,
+  language,
   lists,
   pluginRow as plugin,
   renderApp,
@@ -297,6 +298,40 @@ describe('详情', () => {
     expect(posts('/api/plugins/zz-mongo/enable')).toHaveLength(1);
   });
 
+  it('英文界面下点 Enable：转圈的是 Enable 那个按钮（正在做的按动作认，不按显示的字）', async () => {
+    let release = () => {};
+    const pending = () => new Promise(resolve => (release = () => resolve({ ok: true })));
+    app = await renderApp(
+      '/plugins/zz-model',
+      {},
+      { ...language(['en']), ...pluginRest(undefined, { '/api/plugins/zz-model/enable': pending }) },
+    );
+    const enable = await detail().findByRole('button', { name: 'Enable' });
+    fireEvent.click(enable);
+    await vi.waitFor(() => expect(enable.getAttribute('aria-busy')).toBe('true'));
+    expect(detail().queryAllByRole('button', { busy: true })).toEqual([enable]);
+    await act(async () => release());
+  });
+
+  it('英文界面：配置表单的标题、密钥一行与未保存的说法按英文', async () => {
+    const conf = plugin('zz-conf', {
+      displayName: '配置插件',
+      configSchema: {
+        apiKey: { type: 'string', label: '密钥', secret: true },
+        folder: { type: 'string', label: '目录' },
+      },
+      config: { apiKey: { $secret: 'conf.apiKey' } },
+    });
+    app = await renderApp('/plugins/zz-conf', {}, { ...language(['en']), ...pluginRest([conf]) });
+    const heading = await detail().findByRole('heading', { name: 'Configuration' });
+    const form = within(heading.closest('.config-form') as HTMLElement);
+    expect(form.getByText('Set (key conf.apiKey)')).toBeTruthy();
+    expect(form.getByRole('button', { name: 'Replace 密钥' })).toBeTruthy();
+    fireEvent.change(form.getByLabelText('目录'), { target: { value: 'notes' } });
+    expect(form.getByText('1 unsaved change')).toBeTruthy();
+    expect(form.getByRole('button', { name: 'Save and reload' })).toBeTruthy();
+  });
+
   it('界面所在的插件：停用、卸载不可点，写明原因；重载照常', async () => {
     app = await renderApp('/plugins/zz-ui', {}, pluginRest());
     expect(await detail().findByText('这个界面由它提供，不能从界面停用或卸载。')).toBeTruthy();
@@ -317,7 +352,7 @@ describe('详情', () => {
     );
     expect(relations.getByText('zz-store（文档库）')).toBeTruthy();
     expect(relations.queryByText(/events/)).toBeNull();
-    expect(relations.getByText('zz_read、zz_write')).toBeTruthy();
+    expect(relations.getByText('zz_read和zz_write')).toBeTruthy();
     expect(relations.getByText('/zz-reset')).toBeTruthy();
     // 两个实例都提供它，各自追到自己的根：停用的一键启用，失败的去它的详情处理（启用只是重试，配置错了还会失败）
     expect(needs(relations)).toEqual([
@@ -392,7 +427,7 @@ describe('详情', () => {
       lacking: [
         { service: 'zz-x', chain: ['zz-keyless'], root: { kind: 'cycle', instances: ['zz-probe', 'zz-keyless'] } },
       ],
-      need: ['zz-x：缺', '没钥匙（互相等待成环：探针、没钥匙）'],
+      need: ['zz-x：缺', '没钥匙（互相等待成环：探针和没钥匙）'],
     },
     {
       name: '在等：写等待谁启动',
@@ -501,7 +536,7 @@ describe('详情', () => {
     expect(text('看板')).toBe('看板插件页面，打开后可以固定到图标栏；插件前端，不申请宿主数据');
     expect(text('笔记')).toBe('笔记会话面板，在会话右侧面板的「+」里打开');
     expect(text('子会话')).toBe(
-      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态、停止会话的回合',
+      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态和停止会话的回合',
     );
     app.close();
 
@@ -904,6 +939,14 @@ describe('市场', () => {
     fireEvent.change(search, { target: { value: 'embedding' } });
     expect(screen.getByText('没有符合筛选的包')).toBeTruthy();
     expect(screen.getByText('按服务搜只找得到在 package.json 里声明了提供服务的包')).toBeTruthy();
+  });
+
+  it('安装源给的更新时间认不出时照常列出，只是不写「更新于」', async () => {
+    const packages = [{ ...PACKAGES[0], updated: 'garbage' }];
+    app = await renderApp('/market', {}, marketRest({ '/api/marketplace?q=': { packages } }));
+    await screen.findByRole('list', { name: '包' });
+    expect(entries()).toEqual(['@aalis/plugin-zz-notes']);
+    expect(screen.queryByText(/更新于/)).toBeNull();
   });
 
   it('卸载默认留着配置；有配置的插件可以勾上同时删除，框里写明随之删掉几个只有它用的密钥', async () => {

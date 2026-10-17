@@ -14,6 +14,7 @@ import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom';
 import { Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useRef } from 'react';
 import { IconButton } from '../components/IconButton';
+import { tr } from '../language';
 
 // 关系图：力导向排一次就定住，不做动画；节点与边按类别取 --color-chart-1 到 -6，没有类别的用中性色。滚轮、双指与拖动缩放平移，
 // 角上另有放大、缩小与复位。带详情时节点是按钮，选中的节点写进地址
@@ -128,7 +129,7 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
   return (
     <div className="page-graph">
       {legend.length > 0 && (
-        <ul className="page-graph-legend" aria-label="图例">
+        <ul className="page-graph-legend" aria-label={tr('graphLegend')}>
           {legend.map(({ kind, edge }) => (
             <li key={`${edge ? 'edge' : 'node'}:${kind.kind}`}>
               <span className="page-graph-swatch" data-tone={kind.tone} data-edge={edge || undefined} aria-hidden />
@@ -138,7 +139,7 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
         </ul>
       )}
       <div className="page-graph-view">
-        <svg ref={svg} viewBox={`${box.x} ${box.y} ${box.width} ${box.height}`} aria-label="关系图">
+        <svg ref={svg} viewBox={`${box.x} ${box.y} ${box.width} ${box.height}`} aria-label={tr('relationGraph')}>
           <g ref={layer}>
             {edges.map(edge => (
               <line
@@ -179,9 +180,9 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
           </g>
         </svg>
         <div className="page-graph-zoom">
-          <IconButton icon={ZoomIn} label="放大" onClick={() => zoomBy(1.5)} />
-          <IconButton icon={ZoomOut} label="缩小" onClick={() => zoomBy(1 / 1.5)} />
-          <IconButton icon={Maximize} label="复位" onClick={reset} />
+          <IconButton icon={ZoomIn} label={tr('zoomIn')} onClick={() => zoomBy(1.5)} />
+          <IconButton icon={ZoomOut} label={tr('zoomOut')} onClick={() => zoomBy(1 / 1.5)} />
+          <IconButton icon={Maximize} label={tr('zoomReset')} onClick={reset} />
         </div>
       </div>
     </div>

@@ -8,7 +8,7 @@ import { type HostConfig, hostConfig } from '../../packages/api-host-config/src/
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type BoundWebui, webuiServer } from '../../packages/api-webui/src/index.js';
+import { type BoundWebui, PAGE_LANGUAGE_ID, webuiClient, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { textsBlock } from '../../packages/plugin-webui-server/src/html.js';
@@ -180,6 +180,14 @@ function framePackage(): string {
   return pathToFileURL(join(root, 'index.js')).href;
 }
 
+/** 前端目录：只有入口 index.html */
+function clientDir(index: string): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-webui-i18n-client-')));
+  dirs.push(dir);
+  writeFileSync(join(dir, 'index.html'), index);
+  return dir;
+}
+
 function definePages(webui: BoundWebui, frameModule: string) {
   webui.definePage({
     key: 'jobs',
@@ -287,6 +295,8 @@ interface SetupOptions {
   language?: string[];
   /** 给了就另给存储的替身，写下的文件记在这里 */
   written?: Map<string, string>;
+  /** 给了就另给前端：入口 index.html 是这一段 */
+  index?: string;
 }
 
 async function setup({
@@ -296,6 +306,7 @@ async function setup({
   withHubs = false,
   language = ['zh-CN'],
   written,
+  index,
 }: SetupOptions = {}) {
   const port = await freePort();
   const quiet = () => {};
@@ -342,6 +353,7 @@ async function setup({
   });
   const setLanguage = provideHostLanguage(app, language);
   if (written) app.bind({ provide }).provide.use(storage, memoryStorage(written));
+  if (index !== undefined) app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => clientDir(index) });
   await app.pluginAll([
     ...(withHubs ? [...HUB_PLUGINS, packs].map(definition => ({ definition })) : []),
     ...(withI18n && !i18nService ? [{ definition: i18nPlugin }] : []),
@@ -646,6 +658,20 @@ describe('webui-server 自己的文字按全局默认层的语言', () => {
     expect(textsOf(chinese)).toEqual({ tokenWrong: 'token 不正确', networkError: '网络错误' });
   });
 
+  it('前端入口：<html lang> 与界面的语言块（全局默认层的语言链与服务进程的时区，首帧按它画）按全局默认层的语言写好，入口文件里写的 lang 换掉；首页与别的地址上的刷新一样', async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const page = (lang: string, head = '') =>
+      `<!doctype html><html lang="${lang}" data-x><head>${head}</head><body></body></html>`;
+    const block = (chain: string[]) =>
+      `<script type="application/json" id="${PAGE_LANGUAGE_ID}">${JSON.stringify({ chain, timeZone })}</script>`;
+    const { request, setLanguage } = await setup({ language: ['en'], index: page('zh-CN') });
+    for (const path of ['/', '/s/session-1']) {
+      expect(await (await request(path)).text(), path).toBe(page('en', block(['en'])));
+    }
+    setLanguage(['zh-CN']);
+    expect(await (await request('/')).text()).toBe(page('zh-CN', block(['zh-CN'])));
+  });
+
   it('pageLanguage 的译文不是合法的语言标签时，<html lang> 用全局默认层语言链的第一项', async () => {
     const { anonymous } = await setup({ withHubs: true, language: ['ja'] });
     expect(await (await anonymous()).text()).toContain('<html lang="ja">');
@@ -701,17 +727,54 @@ describe('可选项来源与 /api/i18n 的两条路由', () => {
     });
   });
 
-  it('GET /api/i18n/languages 给有文字可用的语言，i18n 缺席时为空', async () => {
-    const present = await setup({ withHubs: true });
+  it('GET /api/i18n/languages 给有文字可用的语言、全局默认层的语言链（跟随系统换成系统语言）与服务进程的时区；i18n 缺席时语言与链为空，时区照给', async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const present = await withSystemLocale('ja-JP', () => setup({ withHubs: true, language: ['auto', 'en'] }));
     expect(await json(present.request('/api/i18n/languages'))).toEqual({
       languages: [
         { tag: 'en', name: 'English' },
         { tag: 'ja', name: '日本語' },
         { tag: 'zh-CN', name: '中文（中国）' },
       ],
+      chain: ['ja-JP', 'en'],
+      timeZone,
     });
     const absent = await setup({ withI18n: false, withHubs: true });
-    expect(await json(absent.request('/api/i18n/languages'))).toEqual({ languages: [] });
+    expect(await json(absent.request('/api/i18n/languages'))).toEqual({ languages: [], chain: [], timeZone });
+  });
+
+  it('TZ 写成 POSIX 串或文件路径、Node 取不到时区名时，时区按进程当前的偏移给：前端按它写出的时刻与进程本地的一致', async () => {
+    const { request } = await setup({ withI18n: false });
+    const resolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+    // TZ=:/etc/localtime、CST-8 一类：名字是 undefined（也见过 Etc/Unknown），进程本地时间照样带偏移
+    const zoneOf = async (name: string | undefined, offset: number) => {
+      const names = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockImplementation(function (
+        this: Intl.DateTimeFormat,
+      ) {
+        return { ...resolved.call(this), timeZone: name as string };
+      });
+      const offsets = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(offset);
+      try {
+        return (await json(request('/api/i18n/languages'))).timeZone as string;
+      } finally {
+        names.mockRestore();
+        offsets.mockRestore();
+      }
+    };
+    /** 1970-01-01T00:00Z 在这个时区里的时刻 */
+    const clock = (timeZone: string) =>
+      new Intl.DateTimeFormat('en', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(0);
+    const cases: Array<[string | undefined, number, string, string]> = [
+      [undefined, -480, 'Etc/GMT-8', '08:00'],
+      ['Etc/Unknown', -540, 'Etc/GMT-9', '09:00'],
+      [undefined, 300, 'Etc/GMT+5', '19:00'],
+      [undefined, -330, '+05:30', '05:30'],
+      [undefined, 0, 'UTC', '00:00'],
+    ];
+    for (const [name, offset, zone, time] of cases) {
+      const given = await zoneOf(name, offset);
+      expect([given, clock(given)], `${name} ${offset}`).toEqual([zone, time]);
+    }
   });
 
   it('GET /api/i18n/messages 给这些 ns 在全局默认层语言链下语言包的补充：按 ns 与语言筛（en 总留着），i18n 缺席时为空', async () => {

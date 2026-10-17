@@ -408,12 +408,26 @@ export interface UpdateRequest {
 // ----- 多语言 -----
 
 /**
- * GET /api/i18n/languages：有文字可用的语言（i18n 服务的 languages()），i18n 缺席时为空，界面据此隐藏语言切换。
- * 每项的形状同 api-i18n 的 LanguageInfo：tag 是规范化的语言标签，name 是该语言的自称
+ * GET /api/i18n/languages：界面的语言与时区。languages 是有文字可用的语言（i18n 服务的 languages()），供可选项与第三方客户端
+ * 用，每项的形状同 api-i18n 的 LanguageInfo（tag 是规范化的语言标签，name 是该语言的自称），第一方前端只读 chain 与 timeZone；
+ * chain 是全局默认层的语言链（i18n 的 chainOf({ host: true })，跟随系统已换成系统语言），界面的文字按它渲染，数字、日期与排序
+ * 按渲染时选中的语言；timeZone 是服务进程的时区，界面的时间按它。i18n 缺席时 languages 与 chain 为空，timeZone 照给
  */
 export interface I18nLanguagesResponse {
   languages: Array<{ tag: string; name: string }>;
+  chain: string[];
+  timeZone: string;
 }
+
+/** 界面的语言：GET /api/i18n/languages 的 chain 与 timeZone */
+export type PageLanguage = Pick<I18nLanguagesResponse, 'chain' | 'timeZone'>;
+
+/**
+ * 前端入口里写好的界面语言：SPA 兜底发 index.html 时在 `</head>` 前放一个 id 为它的 application/json 块，内容是
+ * {@link PageLanguage}，前端首帧按它画，不等一次往返。直接打开 /index.html、开发模式等没有这一块时，前端取
+ * GET /api/i18n/languages，取到之前按原文
+ */
+export const PAGE_LANGUAGE_ID = 'aalis-language';
 
 /** 语言包给的一条译文：from 是翻译时原文模板的指纹 */
 export interface PackedText {

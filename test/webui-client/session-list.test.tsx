@@ -8,6 +8,7 @@ import {
   group,
   type Harness,
   installDialog,
+  language,
   listRequests,
   lists,
   pluginRow,
@@ -326,6 +327,32 @@ describe('会话列表', () => {
     const list = await within(left()).findByRole('list', { name: 'QQ 主号' });
     expect(titles(list)).toEqual(['后台在跑的群']);
     expect(within(list).getByRole('link', { name: /后台在跑的群/ }).textContent).toContain('后台 1');
+  });
+});
+
+describe('英文界面', () => {
+  it('分组的标题、房间组的房间数与需要处理的读屏说法、归档的 Toast', async () => {
+    const groups = [group('im-a', { label: 'QQ 主号', rooms: 3, attention: 1 })];
+    const rooms = [room('r1', 'im-a', { title: '示例群 A', attention: true, updatedAt: NOW - DAY })];
+    app = await renderApp(
+      '/',
+      {
+        'sessions/list': lists(
+          p => (p.section === 'owner' ? [summary('a', { title: '整理周报' })] : p.instance === 'im-a' ? rooms : []),
+          groups,
+        ),
+        'session/batch': () => ({ failed: [] }),
+      },
+      language(['en']),
+    );
+    const nav = within(screen.getByRole('navigation', { name: 'Sessions' }));
+    const rooms_ = await nav.findByRole('region', { name: 'Rooms' });
+    expect(within(rooms_).getByRole('button', { name: /^QQ 主号/ }).textContent).toContain('3 rooms');
+    expect(within(rooms_).getByText('1 needs attention')).toBeTruthy();
+    const row = await within(nav.getByRole('region', { name: 'Mine' })).findByRole('listitem');
+    fireEvent.click(within(row).getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
+    expect(await screen.findByText('Archived “整理周报”')).toBeTruthy();
   });
 });
 

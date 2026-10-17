@@ -1,5 +1,6 @@
 import type { Features, SessionNotificationParams } from '@aalis/api-session-protocol';
 import { createContext, type ReactNode, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import { tr } from './language';
 import type { AdminClient } from './protocol/admin-client';
 import { trackPresence } from './protocol/presence';
 import type { SessionClient } from './protocol/session-client';
@@ -32,7 +33,7 @@ const Context = createContext<Connection | undefined>(undefined);
 
 export function useConnection(): Connection {
   const connection = useContext(Context);
-  if (!connection) throw new Error('只能在 ConnectionProvider 里取连接');
+  if (!connection) throw new Error(tr('connectionOutsideProvider'));
   return connection;
 }
 

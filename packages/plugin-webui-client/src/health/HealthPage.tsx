@@ -1,4 +1,5 @@
 import type { PlatformStatus } from '@aalis/api-webui';
+import type { TextRef } from '@aalis/schema-i18n';
 import { RotateCw } from 'lucide-react';
 import { useReducer } from 'react';
 import { useMatch, useNavigate } from 'react-router';
@@ -10,6 +11,7 @@ import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
 import { Tabs } from '../components/Tabs';
 import { useConnectionState, useSessionClient, useSessionless } from '../connection';
+import { text, tr } from '../language';
 import { withInstance } from '../pages/registry';
 import { SESSION_PROTOCOL, useHost, useProvider } from '../plugins/list';
 import type { SessionSummary } from '../protocol/session-client';
@@ -18,6 +20,7 @@ import { paths, routes } from '../routes';
 import { useSessionList } from '../sessions/live-list';
 import { BackgroundStatus } from '../sessions/status';
 import { Main } from '../shell/Shell';
+import { t } from '../texts';
 import { AttentionList } from './AttentionList';
 import { useAttention } from './attention';
 import { Logs } from './Logs';
@@ -27,27 +30,27 @@ import './Health.css';
 // 正在运行的按会话列出（归档的也列），每个会话下按会话树列出在跑的子会话与后台任务，都能停；会话服务不在时不出现。
 // 平台连接没有变化事件，打开时取一次，配手动刷新；WebUI 那一行数的是会话连接，本页的会话连接接上与断开时再取
 
-const TABS = [
-  { key: 'overview', title: '概况' },
-  { key: 'logs', title: '日志' },
-];
-
 export function HealthPage() {
   const tab = useMatch(routes.healthLogs) ? 'logs' : 'overview';
   const navigate = useNavigate();
   const [platformsVersion, refreshPlatforms] = useReducer((n: number) => n + 1, 0);
   return (
     <Main>
-      <Panel title="运行状况" back={paths.home}>
+      <Panel title={tr('health')} back={paths.home}>
         <Tabs
-          label="运行状况"
-          items={TABS}
+          label={tr('health')}
+          items={[
+            { key: 'overview', title: tr('healthOverview') },
+            { key: 'logs', title: tr('logs') },
+          ]}
           value={tab}
           onChange={key => {
             if (key !== tab) navigate(key === 'logs' ? paths.healthLogs() : paths.health, { replace: true });
           }}
           trailing={
-            tab === 'overview' && <IconButton icon={RotateCw} label="刷新平台连接" onClick={refreshPlatforms} />
+            tab === 'overview' && (
+              <IconButton icon={RotateCw} label={tr('refreshPlatforms')} onClick={refreshPlatforms} />
+            )
           }
         >
           {tab === 'logs' ? (
@@ -69,10 +72,21 @@ function Attention() {
   const { items, error, retry } = useAttention();
   const host = useHost();
   return (
-    <Block title="需要处理">
-      {items && (items.length > 0 ? <AttentionList items={items} /> : <p className="page-empty">没有需要处理的事</p>)}
+    <Block title={tr('needsAttention')}>
+      {items &&
+        (items.length > 0 ? (
+          <AttentionList items={items} />
+        ) : (
+          <p className="page-empty">{tr('nothingNeedsAttention')}</p>
+        ))}
       {error && (
-        <FetchError what="「需要处理」" error={error} retry={retry} stale={items !== undefined} source={host} />
+        <FetchError
+          what={tr('needsAttentionQuoted')}
+          error={error}
+          retry={retry}
+          stale={items !== undefined}
+          source={host}
+        />
       )}
     </Block>
   );
@@ -85,10 +99,10 @@ function Running() {
   const sessions = useProvider(SESSION_PROTOCOL);
   if (sessionless || (!list.error && !list.sessions?.length)) return null;
   return (
-    <Block title="正在运行">
+    <Block title={tr('healthRunning')}>
       {list.error && (
         <FetchError
-          what="正在运行的会话"
+          what={tr('runningSessions')}
           error={list.error}
           retry={list.retry}
           stale={list.sessions !== undefined}
@@ -96,7 +110,7 @@ function Running() {
         />
       )}
       {list.sessions && list.sessions.length > 0 && (
-        <List label="正在运行">
+        <List label={tr('healthRunning')}>
           {list.sessions.map(session => (
             <RunningSession key={session.id} session={session} />
           ))}
@@ -114,10 +128,10 @@ function RunningSession({ session }: { session: SessionSummary }) {
       to={paths.session(session.id, 'background')}
       title={session.title}
       detail={<BackgroundStatus count={session.background} />}
-      meta={session.archived && '已归档'}
+      meta={session.archived && tr('archived')}
       action={
         <StopButton
-          label={`全部停止「${session.title}」`}
+          label={tr('stopAllIn', { name: session.title })}
           stop={() => client.request('background/stopAll', { sessionId: session.id })}
         />
       }
@@ -129,10 +143,10 @@ function RunningSession({ session }: { session: SessionSummary }) {
 
 type Connection = PlatformStatus['connections'][number];
 
-const STATUS_TEXT: Record<Connection['status'], string> = {
-  online: '在线',
-  offline: '离线',
-  connecting: '连接中',
+const STATUS_TEXT: Record<Connection['status'], TextRef> = {
+  online: t('connectionOnline'),
+  offline: t('connectionOffline'),
+  connecting: t('connectionConnecting'),
 };
 
 function parsePlatforms(body: unknown): PlatformStatus[] {
@@ -147,7 +161,7 @@ function parsePlatforms(body: unknown): PlatformStatus[] {
         c => isRecord(c) && typeof c.id === 'string' && Object.hasOwn(STATUS_TEXT, String(c.status)),
       ),
   );
-  if (!rows || !valid) throw new Error('平台连接的回应不是预期的形状');
+  if (!rows || !valid) throw new Error(tr('platformsMalformed'));
   return rows as PlatformStatus[];
 }
 
@@ -158,9 +172,9 @@ function Platforms({ version, refresh }: { version: number; refresh(): void }) {
   const host = useHost();
   if ((!platforms || platforms.length === 0) && !error) return null;
   return (
-    <Block title="平台连接">
+    <Block title={tr('platformConnections')}>
       {platforms && platforms.length > 0 && (
-        <List label="平台连接">
+        <List label={tr('platformConnections')}>
           {platforms.flatMap(({ adapterName, contextId, connections }) => {
             const row = (key: string, connection?: Connection) => (
               <ListItem
@@ -168,7 +182,7 @@ function Platforms({ version, refresh }: { version: number; refresh(): void }) {
                 to={paths.plugin(contextId)}
                 title={withInstance(adapterName, contextId)}
                 detail={connection && accountOf(connection)}
-                meta={connection ? STATUS_TEXT[connection.status] : '没有连接'}
+                meta={connection ? text(STATUS_TEXT[connection.status]) : tr('noConnection')}
                 marker={connection?.status === 'offline' ? 'error' : undefined}
               />
             );
@@ -179,7 +193,13 @@ function Platforms({ version, refresh }: { version: number; refresh(): void }) {
         </List>
       )}
       {error && (
-        <FetchError what="平台连接" error={error} retry={refresh} stale={platforms !== undefined} source={host} />
+        <FetchError
+          what={tr('platformConnections')}
+          error={error}
+          retry={refresh}
+          stale={platforms !== undefined}
+          source={host}
+        />
       )}
     </Block>
   );
@@ -187,6 +207,6 @@ function Platforms({ version, refresh }: { version: number; refresh(): void }) {
 
 /** 连接上的账号：昵称后面括着 id，只有一样时写那一样 */
 function accountOf({ selfId, selfNickname }: Connection): string | undefined {
-  if (selfNickname && selfId) return `${selfNickname}（${selfId}）`;
+  if (selfNickname && selfId) return tr('accountWithId', { name: selfNickname, id: selfId });
   return selfNickname || selfId;
 }

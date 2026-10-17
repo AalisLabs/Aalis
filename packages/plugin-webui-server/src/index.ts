@@ -76,7 +76,7 @@ import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { CLIENT_SWITCH_SCRIPT, CLIENT_SWITCH_TEXTS, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
-import { pageLanguageOf } from './html.js';
+import { pageLanguageOf, withPageLanguage } from './html.js';
 import { createLayoutStore } from './layout.js';
 import { createLocalizer } from './localize.js';
 import { logMatcher, parseLogFilter } from './logs.js';
@@ -85,7 +85,7 @@ import { createPageRegistry } from './pages.js';
 import { route } from './route.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerFrameRoutes } from './routes/frames.js';
-import { registerI18nRoutes } from './routes/i18n.js';
+import { interfaceLanguage, registerI18nRoutes } from './routes/i18n.js';
 import { localPackageLookup, registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerPageRoutes } from './routes/pages.js';
@@ -494,7 +494,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   function mountStaticDir(dir: string): void {
     if (existsSync(dir)) {
-      staticMiddleware = express.static(dir);
+      // 入口 index.html 不由它给：SPA 兜底写好 <html lang> 再发
+      staticMiddleware = express.static(dir, { index: false });
       logger.use.info(`前端静态目录: ${dir}`);
     } else {
       staticMiddleware = null;
@@ -1045,8 +1046,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.status(404).json({ error: t('unknownApi', { method: req.method, path: req.path }) } satisfies ErrorResponse);
   });
 
-  // SPA fallback: 所有非 API 路径返回 index.html；/assets/ 下缺失的文件回 404（旧页面引用的资源换了构建就不在了，
-  // 回 index.html 只会让浏览器把 HTML 当脚本执行）
+  // SPA fallback: 所有非 API 路径返回 index.html，<html lang> 与界面的语言块按全局默认层的语言写好；/assets/ 下缺失的文件回
+  // 404（旧页面引用的资源换了构建就不在了，回 index.html 只会让浏览器把 HTML 当脚本执行）
   route(expressApp, 'GET /{*path}', (req, res) => {
     if (req.path.startsWith('/assets/')) {
       res.status(404).end();
@@ -1055,7 +1056,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 还没有选中的前端时 clientDist 为空：不能拼出相对 cwd 的 index.html
     const indexPath = clientDist ? join(clientDist, 'index.html') : undefined;
     if (indexPath && existsSync(indexPath)) {
-      res.sendFile(indexPath);
+      // 每次再验证：页面随全局默认层的语言变
+      const lang = pageLanguageOf(localizer.render(t('pageLanguage')), localizer.languages());
+      res.set('Cache-Control', 'public, max-age=0');
+      res.type('html').send(withPageLanguage(readFileSync(indexPath, 'utf-8'), lang, interfaceLanguage(localizer)));
     } else {
       res.status(404).json({ error: t('noClient') });
     }

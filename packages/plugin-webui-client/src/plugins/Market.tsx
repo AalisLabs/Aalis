@@ -1,4 +1,5 @@
 import type { MarketplacePackage, SystemComponent } from '@aalis/api-webui';
+import { type TextRef, textClauses } from '@aalis/schema-i18n';
 import { Package, RotateCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useId, useReducer, useState } from 'react';
 import { Badge } from '../components/Badge';
@@ -10,10 +11,12 @@ import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
-import { listTime } from '../format';
+import { listTime, lower } from '../format';
+import { text, tr } from '../language';
 import { getJson, isRecord, postJson } from '../rest';
 import { paths } from '../routes';
 import { Main } from '../shell/Shell';
+import { t } from '../texts';
 import { messageOf, usePluginAction } from './action';
 import { UninstallWarning } from './disclosure';
 import { InstallDialog } from './InstallDialog';
@@ -34,34 +37,39 @@ type Origin = NonNullable<MarketItem['origin']>;
 /** 只有插件与前端界面是自己装的；其余随脚手架就位，或随依赖它的插件自动装卸 */
 const INSTALLABLE: ReadonlySet<Category> = new Set(['plugin', 'interface']);
 
-const KINDS = { plugin: '插件', interface: '前端界面', system: '系统组件', all: '全部' } as const;
+const KINDS = {
+  plugin: t('plugins'),
+  interface: t('marketKindInterface'),
+  system: t('marketKindSystem'),
+  all: t('all'),
+};
 type Kind = keyof typeof KINDS;
 const kindOf = (category: Category): Exclude<Kind, 'all'> =>
   category === 'plugin' || category === 'interface' ? category : 'system';
 
-const STATES = { all: '全部状态', installed: '已安装', available: '没装' } as const;
+const STATES = { all: t('marketStateAll'), installed: t('installed'), available: t('marketStateAvailable') };
 type State = keyof typeof STATES;
 
-const choicesOf = (labels: Readonly<Record<string, string>>) =>
-  Object.entries(labels).map(([value, label]) => ({ value, label }));
+const choicesOf = (labels: Readonly<Record<string, TextRef>>) =>
+  Object.entries(labels).map(([value, label]) => ({ value, label: text(label) }));
 
 /** 非 registry 来源：市场更新不了，写明原因 */
-const ORIGINS: Record<Exclude<Origin, 'registry'>, string> = {
-  workspace: '工作区里的源码',
-  link: '指向本地目录',
-  git: '从 git 或网址装的',
-  alias: 'npm 别名',
-  transitive: '随别的包带入',
+const ORIGINS: Record<Exclude<Origin, 'registry'>, TextRef> = {
+  workspace: t('originWorkspace'),
+  link: t('originLink'),
+  git: t('originGit'),
+  alias: t('originAlias'),
+  transitive: t('originTransitive'),
 };
 
-const CATEGORY_NAMES: Record<Category, string> = {
-  plugin: '插件',
-  interface: '前端界面',
-  api: '契约',
-  schema: '数据规范',
-  util: '工具库',
-  core: '内核',
-  runtime: '宿主',
+const CATEGORY_NAMES: Record<Category, TextRef> = {
+  plugin: t('categoryPlugin'),
+  interface: t('categoryInterface'),
+  api: t('categoryApi'),
+  schema: t('categorySchema'),
+  util: t('categoryUtil'),
+  core: t('categoryCore'),
+  runtime: t('categoryRuntime'),
 };
 
 /** GET /api/marketplace 的回应；「开始使用」也用它。旧版服务端的包没有 provides，按没有声明提供服务处理 */
@@ -71,7 +79,7 @@ export function parseMarket(body: unknown): { packages: MarketplacePackage[]; wa
     !Array.isArray(body.packages) ||
     !body.packages.every(pkg => isRecord(pkg) && typeof pkg.name === 'string')
   ) {
-    throw new Error('市场的回应不是预期的形状');
+    throw new Error(tr('marketMalformed'));
   }
   return {
     packages: body.packages.map(pkg => ({ ...pkg, provides: strings(pkg.provides) })) as MarketplacePackage[],
@@ -103,7 +111,7 @@ async function systemComponents(signal: AbortSignal): Promise<{ packages: Market
     };
   } catch (error) {
     if (signal.aborted) throw error;
-    return { packages: [], warning: `系统组件没取到：${(error as Error).message}` };
+    return { packages: [], warning: tr('systemComponentsFailed', { error: (error as Error).message }) };
   }
 }
 
@@ -148,7 +156,7 @@ export function Market() {
   const [status, setStatus] = useState<State>('all');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [updating, setUpdating] = useState(false);
-  const busy = action.busy ?? (updating ? '更新' : undefined);
+  const busy = action.busy ?? (updating ? 'update' : undefined);
   const [installing, setInstalling] = useState<MarketItem>();
   /** 卸载确认框开着时是要卸的包与框里的选择 */
   const [uninstalling, setUninstalling] = useState<{ pkg: MarketItem; removeConfig: boolean }>();
@@ -176,23 +184,24 @@ export function Market() {
   const packages = state.packages ?? [];
   const updatable = packages.filter(pkg => pkg.updatable);
   const chosen = updatable.filter(pkg => selected.has(pkg.name));
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = lower(query.trim()).split(/\s+/).filter(Boolean);
   const shown = packages.filter(pkg => {
     if (kind !== 'all' && kindOf(pkg.category) !== kind) return false;
     if (status === 'installed' && !pkg.installed) return false;
     if (status === 'available' && pkg.installed) return false;
-    const text = [pkg.name, pkg.description, pkg.author ?? '', ...pkg.provides].join(' ').toLowerCase();
-    return terms.every(term => text.includes(term));
+    const haystack = lower([pkg.name, pkg.description, pkg.author ?? '', ...pkg.provides].join(' '));
+    return terms.every(term => haystack.includes(term));
   });
 
   // 装卸做完连同市场一起重取
   const uninstall = async ({ pkg, removeConfig }: NonNullable<typeof uninstalling>) => {
     await action.run(
-      `卸载 ${pkg.name}`,
+      `uninstall:${pkg.name}`,
+      tr('uninstallPackage', { name: pkg.name }),
       () => postJson('/api/marketplace/uninstall', { name: pkg.name, removeConfig }),
       reply => {
         setUninstalling(undefined);
-        toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${pkg.name}` });
+        toast({ kind: 'success', text: messageOf(reply) ?? tr('uninstalled', { name: pkg.name }) });
       },
       packageManager,
     );
@@ -211,7 +220,7 @@ export function Market() {
       const ok = body.ok === true;
       setUpdate({
         ok,
-        message: typeof body.message === 'string' ? body.message : ok ? '已提交更新' : '更新失败',
+        message: typeof body.message === 'string' ? body.message : tr(ok ? 'updateSubmitted' : 'updateFailed'),
         conflicts: Array.isArray(body.conflicts) ? body.conflicts.filter(item => typeof item === 'string') : [],
       });
     } catch (err) {
@@ -224,31 +233,31 @@ export function Market() {
   return (
     <Main>
       <Panel
-        title="市场"
+        title={tr('market')}
         back={paths.plugins}
-        actions={<IconButton icon={RotateCw} label="刷新" disabled={loading} onClick={reload} />}
-        banner={state.warnings.length > 0 ? state.warnings.join('；') : undefined}
+        actions={<IconButton icon={RotateCw} label={tr('refresh')} disabled={loading} onClick={reload} />}
+        banner={state.warnings.length > 0 ? text(textClauses(state.warnings)) : undefined}
       >
         <div className="page-screen market">
           <div className="market-filters">
             <label htmlFor={searchId} className="visually-hidden">
-              搜索
+              {tr('search')}
             </label>
             <input
               id={searchId}
               type="search"
               value={query}
-              placeholder="搜名称、说明、作者或提供的服务"
+              placeholder={tr('marketSearchPlaceholder')}
               onChange={event => setQuery(event.target.value)}
             />
             <Select
-              aria-label="类型"
+              aria-label={tr('type')}
               value={kind}
               options={choicesOf(KINDS)}
               onChange={value => setKind(value as Kind)}
             />
             <Select
-              aria-label="状态"
+              aria-label={tr('status')}
               value={status}
               options={choicesOf(STATES)}
               onChange={value => setStatus(value as State)}
@@ -256,26 +265,30 @@ export function Market() {
           </div>
           {updatable.length > 0 && (
             <div className="market-updates">
-              <p className="market-updates-text">{`可更新 ${updatable.length} 项，选了 ${chosen.length} 项`}</p>
+              <p className="market-updates-text">
+                {tr('marketUpdatable', { updatable: updatable.length, chosen: chosen.length })}
+              </p>
               <Button
                 variant="text"
                 disabled={busy !== undefined}
                 onClick={() => setSelected(new Set(updatable.map(pkg => pkg.name)))}
               >
-                全选
+                {tr('selectAll')}
               </Button>
               <Button
                 variant="primary"
-                busy={busy === '更新'}
+                busy={busy === 'update'}
                 disabled={chosen.length === 0 || busy !== undefined}
                 onClick={() => void applyUpdates()}
               >
-                {`更新所选（${chosen.length}）`}
+                {tr('updateSelected', { count: chosen.length })}
               </Button>
               <p className="market-updates-note">
-                {chosen.some(pkg => pkg.category === 'core' || pkg.category === 'runtime')
-                  ? '所选含内核或宿主：更新后整个应用重启，新版本起不来会自动回滚。'
-                  : '所选的一起预检、一起安装、重启一次；有一项的依赖对不上就整批不动，把它要的包一并勾上再试。'}
+                {tr(
+                  chosen.some(pkg => pkg.category === 'core' || pkg.category === 'runtime')
+                    ? 'marketUpdateCoreNote'
+                    : 'marketUpdateNote',
+                )}
               </p>
               {update && (
                 <div
@@ -297,13 +310,13 @@ export function Market() {
             </div>
           )}
           {state.error ? (
-            <FetchError what="市场" error={state.error} retry={reload} source={host} />
+            <FetchError what={tr('market')} error={state.error} retry={reload} source={host} />
           ) : (
             state.packages &&
             (shown.length === 0 ? (
               <EmptyState
-                title={packages.length === 0 ? '市场里没有包' : '没有符合筛选的包'}
-                description={terms.length > 0 ? '按服务搜只找得到在 package.json 里声明了提供服务的包' : undefined}
+                title={tr(packages.length === 0 ? 'marketEmpty' : 'marketNoMatch')}
+                description={terms.length > 0 ? tr('marketSearchHint') : undefined}
                 action={
                   packages.length > 0 && (
                     <Button
@@ -314,13 +327,13 @@ export function Market() {
                         setStatus('all');
                       }}
                     >
-                      清除筛选
+                      {tr('clearFilters')}
                     </Button>
                   )
                 }
               />
             ) : (
-              <ul className="market-list" aria-label="包">
+              <ul className="market-list" aria-label={tr('packages')}>
                 {shown.map(pkg => (
                   <MarketEntry
                     key={pkg.name}
@@ -346,17 +359,17 @@ export function Market() {
       <InstallDialog pkg={installing} action={action} onClose={() => setInstalling(undefined)} onSettled={reload} />
       <Dialog
         open={uninstalling !== undefined}
-        title={uninstalling ? `卸载「${uninstalling.pkg.name}」？` : ''}
+        title={uninstalling ? tr('uninstallConfirm', { name: uninstalling.pkg.name }) : ''}
         size="form"
         onClose={() => setUninstalling(undefined)}
         footer={
           uninstalling && (
             <>
               <Button data-autofocus onClick={() => setUninstalling(undefined)}>
-                取消
+                {tr('cancel')}
               </Button>
               <Button variant="primary" danger busy={busy !== undefined} onClick={() => void uninstall(uninstalling)}>
-                卸载
+                {tr('uninstall')}
               </Button>
             </>
           )
@@ -385,10 +398,12 @@ interface MarketEntryProps {
 function MarketEntry({ pkg, busy, selected, onSelect, onAsk }: MarketEntryProps) {
   const link = safeLink(pkg);
   const shownVersion = pkg.installed ? pkg.resolved : pkg.version;
+  // 更新时间是安装源原样给的串，认不出时不写
+  const updated = Date.parse(pkg.updated ?? '');
   const meta = [
     pkg.author,
-    pkg.downloads !== undefined && `${downloads(pkg.downloads)}/月`,
-    pkg.updated && `更新于 ${listTime(Date.parse(pkg.updated))}`,
+    pkg.downloads !== undefined && tr('downloadsPerMonth', { count: downloads(pkg.downloads) }),
+    Number.isFinite(updated) && tr('updatedAt', { time: listTime(updated) }),
     pkg.license,
   ].filter(Boolean);
   return (
@@ -403,20 +418,22 @@ function MarketEntry({ pkg, busy, selected, onSelect, onAsk }: MarketEntryProps)
           ) : (
             <span>{pkg.name}</span>
           )}
-          <span className="market-entry-version">{shownVersion ? `v${shownVersion}` : '版本未知'}</span>
-          <Badge>{pkg.official ? '官方' : '社区'}</Badge>
-          {pkg.category !== 'plugin' && <Badge>{CATEGORY_NAMES[pkg.category]}</Badge>}
-          {pkg.installed && <Badge>已安装</Badge>}
-          {pkg.installed && pkg.origin && pkg.origin !== 'registry' && <Badge>{ORIGINS[pkg.origin]}</Badge>}
+          <span className="market-entry-version">{shownVersion ? `v${shownVersion}` : tr('versionUnknown')}</span>
+          <Badge>{tr(pkg.official ? 'official' : 'community')}</Badge>
+          {pkg.category !== 'plugin' && <Badge>{text(CATEGORY_NAMES[pkg.category])}</Badge>}
+          {pkg.installed && <Badge>{tr('installed')}</Badge>}
+          {pkg.installed && pkg.origin && pkg.origin !== 'registry' && <Badge>{text(ORIGINS[pkg.origin])}</Badge>}
         </p>
         {pkg.insecure && (
           <p className="market-entry-warning">
             <TriangleAlert aria-hidden />
-            npm 标记它不安全，谨慎安装
+            {tr('marketInsecure')}
           </p>
         )}
         {pkg.description && <p className="market-entry-description">{pkg.description}</p>}
-        {pkg.provides.length > 0 && <p className="market-entry-meta">{`提供：${pkg.provides.join('、')}`}</p>}
+        {pkg.provides.length > 0 && (
+          <p className="market-entry-meta">{tr('providesList', { services: pkg.provides })}</p>
+        )}
         {meta.length > 0 && <p className="market-entry-meta">{meta.join(' · ')}</p>}
         <div className="market-entry-actions">
           {pkg.updatable && (
@@ -427,18 +444,18 @@ function MarketEntry({ pkg, busy, selected, onSelect, onAsk }: MarketEntryProps)
                 disabled={busy !== undefined}
                 onChange={event => onSelect(event.target.checked)}
               />
-              {`更新到 v${pkg.version}`}
+              {tr('updateTo', { version: pkg.version })}
             </label>
           )}
           {!INSTALLABLE.has(pkg.category) ? (
-            <span className="market-entry-meta">随依赖管理</span>
+            <span className="market-entry-meta">{tr('managedByDependencies')}</span>
           ) : pkg.installed ? (
             <Button variant="text" danger disabled={busy !== undefined} onClick={() => onAsk(false)}>
-              卸载
+              {tr('uninstall')}
             </Button>
           ) : (
             <Button disabled={busy !== undefined} onClick={() => onAsk(true)}>
-              安装
+              {tr('install')}
             </Button>
           )}
         </div>

@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { choose, type FakeRest, type Harness, installDialog, optionsOf, renderApp, restCalls } from './harness.js';
+import {
+  choose,
+  type FakeRest,
+  type Harness,
+  installDialog,
+  language,
+  optionsOf,
+  renderApp,
+  restCalls,
+} from './harness.js';
 import { actionPath, data, dataPath, GRAPH, JOB_ROWS, JOBS, layoutStore, pagePath, SETTINGS_PAGE } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
@@ -209,8 +219,7 @@ describe('表格', () => {
       ['状态', 'true'],
       ['操作', null],
     ]);
-    expect(rowOf('周报').getByText((3600).toLocaleString()).closest('td')?.dataset.numeric).toBe('true');
-    expect((3600).toLocaleString()).not.toBe('3600');
+    expect(rowOf('周报').getByText('3,600').closest('td')?.dataset.numeric).toBe('true');
     expect(rowOf('备份').getByText('执行中').closest('[data-state]')?.getAttribute('data-state')).toBe('running');
   });
 
@@ -248,11 +257,45 @@ describe('表格', () => {
         .getAllByRole('cell')
         .slice(1)
         .map(cell => cell.textContent);
-    const fixed = (value: number, digits: number) =>
-      value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-    expect(shown('一')).toEqual([(1200).toLocaleString(), fixed(1.5, 2), fixed(0.12345, 3)]);
-    expect(shown('二')).toEqual(['80', fixed(1.83, 2), fixed(2, 3)]);
-    expect(shown('三')).toEqual(['5', fixed(2, 2), '']);
+    expect(shown('一')).toEqual(['1,200', '1.50', '0.123']);
+    expect(shown('二')).toEqual(['80', '1.83', '2.000']);
+    expect(shown('三')).toEqual(['5', '2.00', '']);
+  });
+
+  it('真假按界面的语言写：中文界面是、否，英文界面 Yes、No', async () => {
+    const FLAGS: typeof JOBS = {
+      ...JOBS,
+      actions: {},
+      content: [
+        {
+          type: 'table',
+          id: 'list',
+          rowKey: 'name',
+          columns: [
+            { key: 'name', label: '名称' },
+            { key: 'on', label: '开着' },
+          ],
+        },
+      ],
+    };
+    const rest = (extra: FakeRest = {}) =>
+      jobsRest({
+        '/api/pages': { pages: [FLAGS] },
+        [dataPath(FLAGS, 'list')]: data([
+          { name: '一', on: true },
+          { name: '二', on: false },
+        ]),
+        ...extra,
+      });
+    const shown = async () => {
+      await table().findByText('一');
+      return ['一', '二'].map(name => rowOf(name).getAllByRole('cell')[1].textContent);
+    };
+    app = await renderApp(pagePath(FLAGS), {}, rest());
+    expect(await shown()).toEqual(['是', '否']);
+    app.close();
+    app = await renderApp(pagePath(FLAGS), {}, rest(language(['en'])));
+    expect(await shown()).toEqual(['Yes', 'No']);
   });
 
   it('都没标 primary 时窄时留第一列；选中用的链接列总留着', async () => {
@@ -462,6 +505,25 @@ describe('动作', () => {
 
     fireEvent.click(page().getByRole('button', { name: '清空' }));
     expect(within(screen.getByRole('dialog', { name: '清空？' })).getByText('这个操作不能撤销。')).toBeTruthy();
+  });
+
+  it('英文界面：标题栏的按钮、宿主的确认框与动作失败的说法按英文', async () => {
+    app = await renderApp(
+      pagePath(JOBS),
+      {},
+      jobsRest({
+        ...language(['en']),
+        [actionPath(JOBS, 'purge')]: () => Response.json({ error: '没清掉' }, { status: 500 }),
+      }),
+    );
+    await table().findByText('周报');
+    expect(header().getByRole('button', { name: 'Pin to icon bar' })).toBeTruthy();
+    expect(rowOf('周报').getAllByRole('button', { name: 'More' })).not.toHaveLength(0);
+    fireEvent.click(page().getByRole('button', { name: '清空' }));
+    const dialog = within(screen.getByRole('dialog', { name: '清空?' }));
+    expect(dialog.getByText('This action cannot be undone.')).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: '清空' }));
+    expect(await screen.findByText('清空 failed: 没清掉')).toBeTruthy();
   });
 
   it('带输入的弹表单：控件按字段类型，必填写明；提交时按类型转换，空着的可选项不送；服务端逐项的问题写在字段下，表单不关', async () => {
@@ -676,6 +738,48 @@ describe('单元格', () => {
     expect(b.getByText('javascript:alert(1)')).toBeTruthy();
     expect(b.queryByRole('img')).toBeNull();
     expect(b.getByText('b.log')).toBeTruthy();
+  });
+
+  it('时间按服务进程的时区写；字符串只认带时区偏移（Z 或 ±HH:MM）的 ISO 串，不带偏移的按文字显示', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(Date.parse('2026-10-17T12:00:00+09:00'));
+    expectProcessTimeZoneDistinct(Date.parse('2026-10-17T10:00:00+09:00'));
+    const TIMES: typeof JOBS = {
+      ...CELLS,
+      content: [
+        {
+          type: 'table',
+          id: 'list',
+          rowKey: 'id',
+          columns: [
+            { key: 'id', label: '编号', primary: true },
+            { key: 'at', label: '时刻', kind: 'time' },
+          ],
+        },
+      ],
+    };
+    const rows = [
+      { id: 'a', at: '2026-10-17T09:00:00+08:00' },
+      { id: 'b', at: '2026-10-17T01:00:00Z' },
+      { id: 'c', at: '2026-10-17T09:00:00' },
+    ];
+    const tokyo = { languages: [], chain: ['zh-CN'], timeZone: 'Asia/Tokyo' };
+    app = await renderApp(
+      pagePath(TIMES),
+      {},
+      jobsRest({
+        '/api/pages': { pages: [TIMES] },
+        [dataPath(TIMES, 'list')]: data(rows),
+        '/api/i18n/languages': tokyo,
+      }),
+    );
+    await table().findByText('c');
+    const cell = (id: string) => rowOf(id).getAllByRole('cell')[1];
+    expect(['a', 'b', 'c'].map(id => [cell(id).textContent, cell(id).querySelector('time') !== null])).toEqual([
+      ['10:00', true],
+      ['10:00', true],
+      ['2026-10-17T09:00:00', false],
+    ]);
   });
 });
 

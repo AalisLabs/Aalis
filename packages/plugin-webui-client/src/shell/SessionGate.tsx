@@ -1,8 +1,10 @@
+import { textClauses } from '@aalis/schema-i18n';
 import type { ReactNode } from 'react';
 import { ButtonLink } from '../components/ButtonLink';
 import { EmptyState } from '../components/EmptyState';
 import { FetchError } from '../components/FetchError';
 import { SERVICE_ABSENT, useConnectionState, useSessionClient } from '../connection';
+import { text, tr } from '../language';
 import { SESSION_PROTOCOL, useFindPlugin, usePlugins, useProvider } from '../plugins/list';
 import { byRoot, fixLink, pluginName, statusLine, unmetText } from '../plugins/status';
 import { paths } from '../routes';
@@ -21,7 +23,7 @@ export function SessionGate({ children, quiet = false }: { children: ReactNode; 
   const state = useConnectionState(useSessionClient());
   const reason =
     state.status === 'stopped' ? (
-      <EmptyState tone="danger" title="会话连接已停止" description={state.reason} />
+      <EmptyState tone="danger" title={tr('sessionConnectionStopped')} description={state.reason} />
     ) : state.status === 'retrying' && state.code === SERVICE_ABSENT ? (
       <ServiceAbsent />
     ) : undefined;
@@ -39,22 +41,26 @@ export function ServiceAbsent() {
   const provider = plugins?.find(plugin => plugin.provides.includes(SESSION_PROTOCOL));
   const description =
     provider && provider.lacking.length > 0
-      ? byRoot(provider.lacking)
-          .map(unmet => `${pluginName(provider.instanceId, find)} → ${unmetText(unmet, find)}`)
-          .join('；')
+      ? text(
+          textClauses(
+            byRoot(provider.lacking).map(
+              unmet => `${pluginName(provider.instanceId, find)} → ${unmetText(unmet, find)}`,
+            ),
+          ),
+        )
       : provider && (provider.state === 'error' || provider.waiting.length > 0)
         ? statusLine(provider, find)
-        : '提供会话协议的插件启用后，这里会自动连上。';
+        : tr('sessionServiceHint');
   const fix = provider && fixLink(provider.instanceId, provider, find);
   return (
     <EmptyState
-      title="会话服务未启用"
+      title={tr('sessionServiceDisabled')}
       description={description}
       action={
         fix ? (
           <ButtonLink to={fix.to}>{fix.label}</ButtonLink>
         ) : (
-          plugins && <ButtonLink to={paths.market}>去市场</ButtonLink>
+          plugins && <ButtonLink to={paths.market}>{tr('goToMarket')}</ButtonLink>
         )
       }
     />

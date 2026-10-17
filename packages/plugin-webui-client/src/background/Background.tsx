@@ -11,12 +11,14 @@ import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
 import { duration, tokens } from '../format';
+import { text, tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import type { BackgroundTask, SessionSummary } from '../protocol/session-client';
 import { paths } from '../routes';
 import { useSessionList } from '../sessions/live-list';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { usePhone } from '../shell/Shell';
+import { t } from '../texts';
 import { openableLocalUrl } from './loopback';
 import { useBackground } from './tasks';
 import './Background.css';
@@ -81,7 +83,7 @@ function Elapsed({ since }: { since: number }) {
   return duration(Math.max(0, useNow() - since));
 }
 
-const ENDINGS = { completed: '完成', stopped: '已停止', aborted: '已中断' } as const;
+const ENDINGS = { completed: t('done'), stopped: t('stopped'), aborted: t('interrupted') };
 const ENDING_TONES = { completed: undefined, failed: 'error', stopped: 'inactive', aborted: 'inactive' } as const;
 
 /** 结束了的任务的结局 */
@@ -93,7 +95,7 @@ interface TaskEnd {
 /** 结局写成一个词（失败的命令有退出码时写退出码），后面接用时；失败用危险色 */
 export function Ending({ end: { status, exitCode }, took }: { end: TaskEnd; took?: number }) {
   const ending =
-    status !== 'failed' ? ENDINGS[status] : exitCode === undefined || exitCode === 0 ? '失败' : `退出码 ${exitCode}`;
+    status !== 'failed' ? text(ENDINGS[status]) : exitCode ? tr('exitCode', { code: exitCode }) : tr('failed');
   return (
     <StatusText state={ENDING_TONES[status]}>{ending + (took === undefined ? '' : ` · ${duration(took)}`)}</StatusText>
   );
@@ -125,7 +127,13 @@ export function StopButton({ label, stop }: { label: string; stop(): Promise<unk
       onClick={() => {
         setBusy(true);
         stop()
-          .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions }))
+          .catch((err: Error) =>
+            toast({
+              kind: 'danger',
+              text: tr('actionFailed', { action: t('stop'), error: err.message }),
+              source: sessions,
+            }),
+          )
           .finally(() => setBusy(false));
       }}
     />
@@ -136,7 +144,7 @@ function StopTask({ task }: { task: BackgroundTask }) {
   const client = useSessionClient();
   return (
     <StopButton
-      label={`停止「${taskName(task)}」`}
+      label={tr('stopNamed', { name: taskName(task) })}
       stop={() => client.request('background/stop', { taskId: task.id })}
     />
   );
@@ -150,7 +158,7 @@ function LastLine({ line }: { line: string }) {
       <span>{line}</span>
       {url && (
         <a href={url} target="_blank" rel="noopener noreferrer">
-          打开
+          {tr('open')}
         </a>
       )}
     </p>
@@ -162,7 +170,7 @@ export function TaskFoot({ task, onOutput }: { task: BackgroundTask; onOutput():
   return (
     <div className="task-foot">
       {task.lastLine !== undefined && <LastLine line={task.lastLine} />}
-      <IconButton icon={ScrollText} label={`输出「${taskName(task)}」`} onClick={onOutput} />
+      <IconButton icon={ScrollText} label={tr('outputOf', { name: taskName(task) })} onClick={onOutput} />
       {task.status === 'running' && <StopTask task={task} />}
     </div>
   );
@@ -222,7 +230,9 @@ function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }
           </span>
         )}
         <span className="task-actions">
-          {onOutput && <IconButton icon={ScrollText} label={`输出「${taskName(task)}」`} onClick={onOutput} />}
+          {onOutput && (
+            <IconButton icon={ScrollText} label={tr('outputOf', { name: taskName(task) })} onClick={onOutput} />
+          )}
           {task.status === 'running' && <StopTask task={task} />}
         </span>
       </div>
@@ -238,10 +248,10 @@ function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }
 
 /** 子会话的状态：在跑、出错（写原因）、被停止、完成；还没跑完一轮的没有 */
 function childState(session: SessionSummary): { text: string; tone?: 'running' | 'error' | 'inactive' } | undefined {
-  if (active(session)) return { text: '运行中', tone: 'running' };
-  if (session.error) return { text: session.reason ?? '出错', tone: 'error' };
-  if (session.lastTurn?.outcome === 'aborted') return { text: '已停止', tone: 'inactive' };
-  return session.lastTurn && { text: '完成' };
+  if (active(session)) return { text: tr('running'), tone: 'running' };
+  if (session.error) return { text: session.reason ?? tr('error'), tone: 'error' };
+  if (session.lastTurn?.outcome === 'aborted') return { text: tr('stopped'), tone: 'inactive' };
+  return session.lastTurn && { text: tr('done') };
 }
 
 /** 子会话的一行：状态、标题、耗时（建会话到最近一轮结束，在跑的走到此刻）与 token；点行打开它，在跑的可以停 */
@@ -271,7 +281,7 @@ function ChildRow({ session, children }: { session: SessionSummary; children?: R
       action={
         active(session) && (
           <StopButton
-            label={`停止「${session.title}」`}
+            label={tr('stopNamed', { name: session.title })}
             stop={() =>
               Promise.all([
                 client.request('turn/abort', { sessionId: session.id }),
@@ -294,7 +304,7 @@ function Ended({ count, children }: { count: number; children: ReactNode }) {
   return (
     <div>
       <Disclosure expanded={open} onToggle={() => setOpen(!open)}>
-        已结束 · {count}
+        {tr('endedCount', { count })}
       </Disclosure>
       {open && children}
     </div>
@@ -308,11 +318,11 @@ function ChildNode({ session }: { session: SessionSummary }) {
 
 function Children({ parentId }: { parentId: string }) {
   const list = useSessionList({ parentId });
-  if (list.error) return <SessionsFetchError what="子会话" error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what={tr('childSessions')} error={list.error} retry={list.retry} />;
   if (!list.sessions?.length) return null;
   const rows = [...list.sessions.filter(active), ...list.sessions.filter(child => !active(child))];
   return (
-    <List label="子会话">
+    <List label={tr('childSessions')}>
       {rows.map(child => (
         <ChildNode key={child.id} session={child} />
       ))}
@@ -326,19 +336,24 @@ function ChildGroup({ session }: { session: SessionSummary }) {
   const open = [...children.filter(active), ...children.filter(child => !active(child) && !ended(child))];
   const done = children.filter(ended);
   return (
-    <Block title={`子会话 · ${session.childCount}`}>
+    <Block title={tr('childSessionsCount', { count: session.childCount })}>
       {list.error && (
-        <SessionsFetchError what="子会话" error={list.error} retry={list.retry} stale={list.sessions !== undefined} />
+        <SessionsFetchError
+          what={tr('childSessions')}
+          error={list.error}
+          retry={list.retry}
+          stale={list.sessions !== undefined}
+        />
       )}
       {open.length > 0 && (
-        <List label="子会话">
+        <List label={tr('childSessions')}>
           {open.map(child => (
             <ChildNode key={child.id} session={child} />
           ))}
         </List>
       )}
       <Ended count={done.length}>
-        <List label="已结束的子会话">
+        <List label={tr('childSessionsEnded')}>
           {done.map(child => (
             <ChildNode key={child.id} session={child} />
           ))}
@@ -352,10 +367,10 @@ function TaskGroup({ tasks, onLog }: { tasks: readonly BackgroundTask[]; onLog(t
   const [running, ended] = splitTasks(tasks);
   const row = (task: BackgroundTask) => <TaskRow key={task.id} task={task} onOutput={() => onLog(task.id)} />;
   return (
-    <Block title={`工具调用 · ${tasks.length}`}>
-      {running.length > 0 && <List label="在跑的工具调用">{running.map(row)}</List>}
+    <Block title={tr('toolCallsCount', { count: tasks.length })}>
+      {running.length > 0 && <List label={tr('toolCallsRunning')}>{running.map(row)}</List>}
       <Ended count={ended.length}>
-        <List label="已结束的工具调用">{ended.map(row)}</List>
+        <List label={tr('toolCallsEnded')}>{ended.map(row)}</List>
       </Ended>
     </Block>
   );
@@ -386,7 +401,7 @@ export function BackgroundTab({ session, tasks, log, onLog }: BackgroundTabProps
         task={shown}
         lead={
           <>
-            <IconButton icon={ArrowLeft} label="回到列表" onClick={() => onLog(undefined)} />
+            <IconButton icon={ArrowLeft} label={tr('backToList')} onClick={() => onLog(undefined)} />
             <span className="task-log-title">{taskName(shown)}</span>
           </>
         }
@@ -403,16 +418,22 @@ export function BackgroundTab({ session, tasks, log, onLog }: BackgroundTabProps
             setStopping(true);
             client
               .request('background/stopAll', { sessionId: session.id })
-              .catch((err: Error) => toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions }))
+              .catch((err: Error) =>
+                toast({
+                  kind: 'danger',
+                  text: tr('actionFailed', { action: t('stop'), error: err.message }),
+                  source: sessions,
+                }),
+              )
               .finally(() => setStopping(false));
           }}
         >
-          全部停止
+          {tr('stopAll')}
         </Button>
       )}
       {background.error && (
         <SessionsFetchError
-          what="后台任务"
+          what={tr('backgroundTasks')}
           error={background.error}
           retry={background.retry}
           stale={background.tasks !== undefined}
@@ -474,11 +495,13 @@ export function TaskLog({ task, lead }: { task: BackgroundTask; lead?: ReactNode
         {lead}
         <TaskStatus task={task} />
         {task.status === 'running' && <StopTask task={task} />}
-        <CopyButton text={log.text} label="复制输出" />
+        <CopyButton text={log.text} label={tr('copyOutput')} />
       </div>
-      {log.truncated && <p className="task-log-note">前面的输出已丢弃，只留着最后一段</p>}
-      {log.error && <SessionsFetchError what="输出" error={log.error} retry={retry} stale={log.end !== undefined} />}
-      {log.end !== undefined && log.text === '' && <p className="task-log-note">还没有输出</p>}
+      {log.truncated && <p className="task-log-note">{tr('outputTruncated')}</p>}
+      {log.error && (
+        <SessionsFetchError what={tr('output')} error={log.error} retry={retry} stale={log.end !== undefined} />
+      )}
+      {log.end !== undefined && log.text === '' && <p className="task-log-note">{tr('noOutput')}</p>}
       <div className="task-log-scroll" data-anchor="end">
         <pre className="task-log-text">{log.text}</pre>
       </div>
@@ -493,7 +516,7 @@ export function RunningBelow({ session }: { session: SessionSummary }) {
   return (
     <>
       {own.length > 0 && (
-        <List label="在跑的后台任务">
+        <List label={tr('backgroundTasksRunning')}>
           {own.map(task => (
             <TaskRow key={task.id} task={task} />
           ))}
@@ -506,11 +529,11 @@ export function RunningBelow({ session }: { session: SessionSummary }) {
 
 function RunningChildren({ parentId }: { parentId: string }) {
   const list = useSessionList({ parentId });
-  if (list.error) return <SessionsFetchError what="子会话" error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what={tr('childSessions')} error={list.error} retry={list.retry} />;
   const running = list.sessions?.filter(active) ?? [];
   if (running.length === 0) return null;
   return (
-    <List label="在跑的子会话">
+    <List label={tr('childSessionsRunning')}>
       {running.map(child => (
         <ChildRow key={child.id} session={child}>
           <RunningBelow session={child} />

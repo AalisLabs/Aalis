@@ -615,7 +615,7 @@ describe('右侧面板与会话头', () => {
       { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
       { '/api/models/toolGroups': TOOL_GROUPS },
     );
-    expect(await settingRow('工具分组').findByText('全部分组、联网')).toBeTruthy();
+    expect(await settingRow('工具分组').findByText('全部分组和联网')).toBeTruthy();
     expect(settingRow('模式').getByText('乙')).toBeTruthy();
     expect(settingRow('上限').getByRole('button', { name: /上限/ }).textContent).toBe('上限<不另加限制>');
     expect(settingRow('渲染 JSON').getByText('<按角色卡>')).toBeTruthy();

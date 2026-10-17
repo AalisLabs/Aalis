@@ -1,6 +1,7 @@
 import type { ErrorResponse } from '@aalis/api-webui';
 import type { Localized } from '@aalis/schema-i18n';
 import { useEffect, useState } from 'react';
+import { tr } from './language';
 
 // 管理面 REST：同源、带登录 cookie，回应按 JSON 解析。非 2xx 抛 RestError，带状态码，错误文字取服务端给的 error，
 // 输入没过校验时带上逐项的问题；连不上时抛 fetch 自己的错误。回应的形状由调用方校验
@@ -33,7 +34,7 @@ async function request(path: string, init: RequestInit): Promise<unknown> {
         )
       : [];
     throw new RestError(
-      typeof error.error === 'string' ? error.error : `${path} 回了 ${response.status}`,
+      typeof error.error === 'string' ? error.error : tr('restStatus', { path, status: response.status }),
       response.status,
       issues,
     );

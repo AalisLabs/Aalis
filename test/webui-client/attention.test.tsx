@@ -9,6 +9,7 @@ import {
   type Harness,
   INIT,
   installDialog,
+  language,
   lists,
   pluginRow as plugin,
   renderApp,
@@ -140,6 +141,33 @@ describe('首页摘要', () => {
         text: '规则文件读不出权限 · 第 3 行格式不对',
         tone: '出错',
         action: ['打开权限', '/settings/p/zz-auth/auth'],
+      },
+    ]);
+  });
+
+  it('英文界面：标题、跳转按钮与插件故障的说法按英文', async () => {
+    app = await renderApp('/', noSessions, { ...language(['en']), ...rest() });
+    const region = await screen.findByRole('region', { name: 'Needs attention' });
+    expect(within(region).getByRole('heading').textContent).toBe('Needs attention · 7');
+    expect(within(region).getByRole('link', { name: 'All' })).toBeTruthy();
+    await vi.waitFor(() => expect(rows(region)[3].action).not.toBeNull());
+    expect(rows(region)).toEqual([
+      { text: '整理周报Awaiting your approval: exec', tone: 'Needs attention', action: ['Resolve', '/s/s1'] },
+      { text: '模型服务Failed: 缺少 API 密钥', tone: 'Error', action: ['Resolve', '/plugins/zz-model'] },
+      {
+        text: '对话代理Missing services: 模型服务 (Failed: 缺少 API 密钥)',
+        tone: 'Needs attention',
+        action: ['Resolve 模型服务', '/plugins/zz-model'],
+      },
+      {
+        text: '3 个任务没跑计划任务 · night',
+        tone: 'Needs attention',
+        action: ['Open 计划', '/p/zz-jobs%3Anight/jobs'],
+      },
+      {
+        text: '规则文件读不出权限 · 第 3 行格式不对',
+        tone: 'Error',
+        action: ['Open 权限', '/settings/p/zz-auth/auth'],
       },
     ]);
   });
@@ -332,7 +360,7 @@ describe('插件故障的写法', () => {
       item: pending('zz-a', [
         { service: 'zz-sb', chain: ['zz-b'], root: { kind: 'cycle', instances: ['zz-a', 'zz-b'] } },
       ]),
-      row: { text: '甲缺服务：乙（互相等待成环：甲、乙）', tone: '需要处理', action: ['去处理', '/plugins/zz-a'] },
+      row: { text: '甲缺服务：乙（互相等待成环：甲和乙）', tone: '需要处理', action: ['去处理', '/plugins/zz-a'] },
     },
     {
       name: '待配置的插件自己：提醒色，写没填的键，按钮去配置区',
@@ -353,6 +381,28 @@ describe('插件故障的写法', () => {
     });
     const region = await screen.findByRole('region', { name: '需要处理' });
     await vi.waitFor(() => expect(rows(region)).toEqual([row]));
+  });
+
+  it('英文界面：状态、根的情形与成环的列表按英文', async () => {
+    app = await renderApp('/health', noSessions, {
+      ...language(['en']),
+      '/api/plugins': { plugins: CHAIN_PLUGINS, secretRefCounts: {} },
+      '/api/attention': {
+        items: [
+          pending('zz-a', [
+            { service: 'zz-sb', chain: ['zz-b'], root: { kind: 'cycle', instances: ['zz-a', 'zz-b'] } },
+          ]),
+          { kind: 'plugin', instance: 'zz-embed', state: 'error', ...clear, unconfigured: ['apiKey', 'baseUrl'] },
+        ],
+      },
+    });
+    const region = await screen.findByRole('region', { name: 'Needs attention' });
+    await vi.waitFor(() =>
+      expect(rows(region).map(row => [row.text, row.action?.[0]])).toEqual([
+        ['甲Missing services: 乙 (Waiting on each other in a cycle: 甲 and 乙)', 'Resolve'],
+        ['OpenAI EmbeddingNeeds configuration: apiKey and baseUrl', 'Configure'],
+      ]),
+    );
   });
 
   it('根的报错有多行：根插件自己那一行写全文，依赖它的插件那一行只写第一行', async () => {

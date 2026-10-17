@@ -4,6 +4,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Toggle } from '../components/Toggle';
 import { composing } from '../keys';
+import { tr } from '../language';
 import { FieldInput, type FieldOptions, UNREADABLE } from './FieldInput';
 import { type Dependency, type Field, formatValue, isModelField, optionLabel, valueKey } from './field';
 import { useFieldOptions } from './options';
@@ -85,9 +86,11 @@ export function SettingRow({
     dependency === undefined || !loaded
       ? extra
       : fixed
-        ? `当前${dependency.label}不能调`
+        ? tr('dependencyFixed', { dependency: dependency.label })
         : value !== undefined && !options.some(option => option.key === valueKey(field, value))
-          ? `当前${dependency.label}没有这一档，按默认${fallback ? `（${fallback.label}）` : ''}`
+          ? fallback
+            ? tr('dependencyNoLevelFallback', { dependency: dependency.label, fallback: fallback.label })
+            : tr('dependencyNoLevel', { dependency: dependency.label })
           : extra;
   const head = (
     <>
@@ -235,7 +238,7 @@ function Editor({ field, value, options, labelId, busy, onCommit, onClose }: Edi
       />
       {field.type === 'multiselect' && (
         <Button variant="text" onClick={onClose}>
-          完成
+          {tr('done')}
         </Button>
       )}
     </fieldset>

@@ -10,6 +10,7 @@ import { Tabs } from '../components/Tabs';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
 import { FramePage } from '../frame/FramePage';
+import { text, tr } from '../language';
 import { PageContent } from '../pages/PageContent';
 import { PageGone } from '../pages/PluginPage';
 import { refOf, sameRef, usePages } from '../pages/registry';
@@ -20,6 +21,7 @@ import { paths } from '../routes';
 import { SessionSettings } from '../settings/SessionSettings';
 import type { useSettingRows } from '../settings/setting-rows';
 import { Aside, usePhone } from '../shell/Shell';
+import { t } from '../texts';
 import type { PlanItem, UsageItem } from './live-session';
 import type { SessionTabs } from './panel-tabs';
 import { UsageTable } from './Usage';
@@ -69,13 +71,13 @@ export function SessionPanel({
   const gone = panel && pages && !pages.some(page => sameRef(panel)(refOf(page))) ? panel : undefined;
   const current = gone ? undefined : (tabs.bar.find(item => item.key === addressed) ?? tabs.bar[0]);
   const host = current && 'host' in current.ref ? current.ref.host : undefined;
-  const items = gone ? [...tabs.bar, { ref: gone, key: paths.page(gone), title: '已停用' }] : tabs.bar;
+  const items = gone ? [...tabs.bar, { ref: gone, key: paths.page(gone), title: tr('stateDisabled') }] : tabs.bar;
   const selected = gone ? paths.page(gone) : current?.key;
   const shownRef = gone ?? current?.ref;
 
   const body = (
     <Tabs
-      label="会话面板"
+      label={tr('sessionPanel')}
       items={items}
       value={selected ?? ''}
       onChange={key => {
@@ -84,18 +86,18 @@ export function SessionPanel({
       onClose={shownRef && (() => tabs.close(shownRef))}
       trailing={
         <>
-          {current?.page && <IconButton icon={RotateCw} label="刷新" onClick={reload} />}
+          {current?.page && <IconButton icon={RotateCw} label={tr('refresh')} onClick={reload} />}
           {tabs.error && (
             <IconButton
               icon={CircleAlert}
-              label={`面板的标签没取全：${tabs.error.message}（点按重试）`}
+              label={tr('panelTabsIncomplete', { error: tabs.error.message })}
               onClick={tabs.retry}
             />
           )}
           {tabs.add.length > 0 && (
             <Menu
               icon={Plus}
-              label="打开标签"
+              label={tr('panelTabOpen')}
               items={tabs.add.map(item => ({
                 id: item.key,
                 label: item.title,
@@ -122,9 +124,9 @@ export function SessionPanel({
     </Tabs>
   );
   return (
-    <Aside label="会话面板">
+    <Aside label={tr('sessionPanel')}>
       {phone ? (
-        <Panel title="会话面板" back={paths.session(sessionId)}>
+        <Panel title={tr('sessionPanel')} back={paths.session(sessionId)}>
           {body}
         </Panel>
       ) : (
@@ -135,10 +137,10 @@ export function SessionPanel({
 }
 
 const PLAN_STATUS = {
-  'not-started': { icon: Circle, text: '未开始' },
-  'in-progress': { icon: CircleDot, text: '进行中' },
-  completed: { icon: CircleCheck, text: '已完成' },
-} as const;
+  'not-started': { icon: Circle, label: t('planNotStarted') },
+  'in-progress': { icon: CircleDot, label: t('planInProgress') },
+  completed: { icon: CircleCheck, label: t('planCompleted') },
+};
 
 function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
   const client = useSessionClient();
@@ -147,14 +149,14 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="session-panel-section">
-      <ul className="plan" aria-label="计划">
+      <ul className="plan" aria-label={tr('plan')}>
         {plan.entries.map(entry => {
-          const { icon: Icon, text } = PLAN_STATUS[entry.status];
+          const { icon: Icon, label } = PLAN_STATUS[entry.status];
           return (
             <li key={entry.id} data-status={entry.status}>
               <Icon aria-hidden />
               <span className="plan-title">{entry.title}</span>
-              <span className="visually-hidden">{text}</span>
+              <span className="visually-hidden">{text(label)}</span>
             </li>
           );
         })}
@@ -166,11 +168,17 @@ function PlanTab({ sessionId, plan }: { sessionId: string; plan: PlanItem }) {
           setBusy(true);
           client
             .request('plan/clear', { sessionId })
-            .catch((err: Error) => toast({ kind: 'danger', text: `清空失败：${err.message}`, source: sessions }))
+            .catch((err: Error) =>
+              toast({
+                kind: 'danger',
+                text: tr('actionFailed', { action: t('clear'), error: err.message }),
+                source: sessions,
+              }),
+            )
             .finally(() => setBusy(false));
         }}
       >
-        清空
+        {tr('clear')}
       </Button>
     </div>
   );

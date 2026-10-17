@@ -19,6 +19,7 @@ import {
   group,
   type Harness,
   installDialog,
+  language,
   lists,
   renderApp,
   requests,
@@ -428,6 +429,21 @@ describe('挂载与握手', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('这个页面离开了宿主给它的地址，已停止显示')).toBeTruthy();
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('英文界面：出处、宿主对话框、停止显示的原因与运行中的失败说明按英文；告警是日志，照原文', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    app = await renderApp(pagePath(BOARD), {}, boardRest(language(['en'])));
+    expect(await screen.findByText('From 看板插件')).toBeTruthy();
+    const peer = await connect();
+    const opening = peer.request({ type: 'open', target: { url: 'https://example.com/' } });
+    fireEvent.click(dialog('Open the external link?').getByRole('button', { name: 'Cancel' }));
+    expect(await act(() => opening)).toMatchObject({ error: { code: 'cancelled', message: 'Cancelled by the user' } });
+
+    peer.send({ type: 'leaving' });
+    expect(screen.getByText('This page left the address the host gave it and is no longer shown')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy();
+    expect(String(warn.mock.calls[0][0])).toContain('这个页面离开了宿主给它的地址');
   });
 
   it('以 IPv6 字面地址访问时不挂载框架，写明要用主机名或 IPv4 地址访问', async () => {

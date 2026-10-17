@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
+import { tr } from '../language';
 import './IconButton.css';
 
 interface IconButtonProps extends Omit<ComponentProps<'button'>, 'children' | 'className' | 'style'> {
@@ -17,7 +18,7 @@ export function IconButton({ icon: Icon, label, shortcut, type = 'button', ...re
       type={type}
       className="icon-button"
       aria-label={label}
-      title={shortcut ? `${label}（${shortcut}）` : label}
+      title={shortcut ? tr('withShortcut', { label, shortcut }) : label}
     >
       <Icon aria-hidden />
     </button>

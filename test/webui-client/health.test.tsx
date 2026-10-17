@@ -7,6 +7,8 @@ import type { LogEntry, LogLevel } from '../../packages/core/src/index.js';
 import { SERVICE_ABSENT } from '../../packages/plugin-webui-client/src/connection.js';
 import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import type { SessionSummary } from '../../packages/plugin-webui-client/src/protocol/session-client.js';
+import { fingerprint } from '../../packages/schema-i18n/src/index.js';
+import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { deferred } from '../helpers/deferred.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
@@ -15,6 +17,7 @@ import {
   type FakeRest,
   type Harness,
   installDialog,
+  language,
   listRequests,
   lists,
   optionsOf,
@@ -111,7 +114,7 @@ function rest(fields: FakeRest = {}): FakeRest {
 
 const entry = (seq: number, level: LogLevel, scope: string, message: string): LogEntry => ({
   seq,
-  timestamp: `2026-10-04T09:00:0${seq}.000+08:00`,
+  timestamp: `2026-10-04T09:00:${String(seq % 60).padStart(2, '0')}.000+08:00`,
   level,
   scope,
   message,
@@ -138,6 +141,44 @@ describe('入口与角标', () => {
     expect(within(plain).queryByText(/\d/)).toBeNull();
   });
 
+  it('英文界面：图标栏与各入口的读屏名字、角标上的数的说法按英文', async () => {
+    app = await renderApp('/', noSessions, rest(language(['en'])));
+    const icons = within(screen.getByRole('navigation', { name: 'Icon bar' }));
+    await icons.findByRole('link', { name: 'Health, 2 need attention' });
+    expect(icons.getAllByRole('link').map(link => link.getAttribute('aria-label'))).toEqual([
+      'Sessions',
+      'Health, 2 need attention',
+      'Plugins',
+      'Settings',
+    ]);
+  });
+
+  it('带数的入口，读屏名字与悬停提示是整句（语言包可以换语序）：图标栏与手机第一层同一句，手机上的角标不读', async () => {
+    const packs = {
+      '@aalis/plugin-webui-client': {
+        health: [{ language: 'ja', text: '稼働状況', from: fingerprint('运行状况') }],
+        entryWithCount: [
+          {
+            language: 'ja',
+            text: '要対応 {count, number} 件：{name}',
+            from: fingerprint('{name}，{count, number} 项需要处理'),
+          },
+        ],
+      },
+    };
+    app = await renderApp('/', noSessions, rest(language(['ja'], { packs })));
+    const health = await within(screen.getByRole('navigation', { name: 'Icon bar' })).findByRole('link', {
+      name: '要対応 2 件：稼働状況',
+    });
+    expect(health.getAttribute('title')).toBe('要対応 2 件：稼働状況');
+    app.close();
+
+    stubViewport(390);
+    app = await renderApp('/', noSessions, rest(language(['ja'], { packs })));
+    const entries = within(await screen.findByRole('list', { name: 'Entries' }));
+    expect(await entries.findByRole('link', { name: '要対応 2 件：稼働状況' })).toBeTruthy();
+  });
+
   it('运行状况没有左栏：所在时是当前项，再点它不收起别的区的左栏', async () => {
     app = await renderApp('/s/a', noSessions, rest());
     fireEvent.click(await rail().findByRole('link', { name: /^运行状况/ }));
@@ -158,8 +199,8 @@ describe('入口与角标', () => {
     stubViewport(390);
     app = await renderApp('/', noSessions, rest());
     const entries = within(await screen.findByRole('list', { name: '入口' }));
-    // 读屏名字与桌面图标栏同一写法（两段之间的空白由排版带出）
-    const health = await entries.findByRole('link', { name: /^运行状况\s*，2 项需要处理$/ });
+    // 读屏名字与桌面图标栏同一句
+    const health = await entries.findByRole('link', { name: '运行状况，2 项需要处理' });
     expect(within(health).getByText('2')).toBeTruthy();
     fireEvent.click(health);
     expect(app.where()).toBe('/health');
@@ -206,6 +247,23 @@ describe('概况', () => {
     expect(calls).toBe(2);
     fireEvent.click(main.getByRole('button', { name: '刷新平台连接' }));
     await vi.waitFor(() => expect(calls).toBe(3));
+  });
+
+  it('英文界面：标签、各块的标题与平台连接的状态按英文', async () => {
+    app = await renderApp('/health', noSessions, rest(language(['en'])));
+    const main = within(screen.getByRole('main'));
+    expect(main.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Logs']);
+    await main.findByRole('region', { name: 'Needs attention' });
+    const platforms = await main.findByRole('list', { name: 'Platform connections' });
+    expect([...platforms.querySelectorAll('.list-item-meta')].map(meta => meta.textContent)).toEqual([
+      'Online',
+      'Online',
+      'Offline',
+      'Connecting',
+      'No connections',
+    ]);
+    expect(platforms.querySelector('.list-item-detail')?.textContent).toBe('小助手 (10001)');
+    expect(main.getByRole('button', { name: 'Refresh platform connections' })).toBeTruthy();
   });
 
   it('平台连接：WebUI 那一行按本页的会话连接算：打开页面时会话连接还没接上，接上后再取一次写在线；断线时与重连后同样再取', async () => {
@@ -427,6 +485,23 @@ describe('日志', () => {
     fireEvent.click(again.getByRole('tab', { name: '概况' }));
     expect(app.where()).toBe('/health');
     expect(adminMessages().at(-1)).toEqual({ type: 'log.unsubscribe' });
+  });
+
+  it('时间按服务进程的时区写到秒：core 写的带偏移的本地时间与崩溃日志的 UTC 时间写成同一时刻，悬停是完整的日期与时刻', async () => {
+    const utc = '2026-10-17T01:05:03.000Z';
+    expectProcessTimeZoneDistinct(Date.parse(utc));
+    const lines = [
+      { ...entry(1, 'error', 'aalis:runtime', '崩溃'), timestamp: utc },
+      { ...entry(2, 'info', 'aalis:zz-im', '本地'), timestamp: '2026-10-17T09:05:03.000+08:00' },
+    ];
+    const tokyo = { languages: [], chain: ['zh-CN'], timeZone: 'Asia/Tokyo' };
+    app = await renderApp('/health/logs', noSessions, rest({ [tail('')]: lines, '/api/i18n/languages': tokyo }));
+    const list = await within(screen.getByRole('main')).findByRole('list', { name: '日志' });
+    await within(list).findByText('本地');
+    expect([...list.querySelectorAll('time')].map(time => [time.textContent, time.title])).toEqual([
+      ['10:05:03', '2026/10/17 10:05:03'],
+      ['10:05:03', '2026/10/17 10:05:03'],
+    ]);
   });
 
   it('推来的接在历史后面、按序号去重，级别写成字；没有日志、没有符合筛选的分别写明，后者能清除筛选；「更早的日志」往前翻同样带筛选', async () => {

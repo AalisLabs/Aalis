@@ -1,5 +1,6 @@
 import { useEffect, useReducer } from 'react';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { isRecord, useJson } from '../rest';
 
 // 服务列表（GET /api/services）：设置的「系统」与插件详情的服务偏好都读它。插件启停、管理连接重连后重取
@@ -13,7 +14,7 @@ interface ServiceView {
 }
 
 function parseServices(body: unknown): ServiceView[] {
-  if (!isRecord(body) || !isRecord(body.services)) throw new Error('服务列表的回应不是预期的形状');
+  if (!isRecord(body) || !isRecord(body.services)) throw new Error(tr('servicesMalformed'));
   return Object.entries(body.services).flatMap(([name, detail]) => {
     if (!isRecord(detail) || !Array.isArray(detail.providers)) return [];
     const providers = detail.providers.filter(isRecord).flatMap(provider => {

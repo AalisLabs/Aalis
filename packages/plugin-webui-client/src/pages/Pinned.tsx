@@ -6,6 +6,7 @@ import { Link, useLocation } from 'react-router';
 import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
+import { tr } from '../language';
 import { useHost } from '../plugins/list';
 import { pageAt, paths } from '../routes';
 import { PageIcon } from './PageIcon';
@@ -49,9 +50,7 @@ export function PinnedRail() {
           </Link>
         );
       })}
-      {error && (
-        <IconButton icon={CircleAlert} label={`固定的页面没取到：${error.message}（点按重试）`} onClick={retry} />
-      )}
+      {error && <IconButton icon={CircleAlert} label={tr('pinnedFailed', { error: error.message })} onClick={retry} />}
     </div>
   );
 }
@@ -64,11 +63,11 @@ export function PinnedList() {
   return (
     <section aria-labelledby={headingId}>
       <h2 id={headingId} className="section-heading session-list-heading">
-        固定的页面
+        {tr('pinnedPages')}
       </h2>
-      {error && <FetchError what="固定的页面" error={error} retry={retry} inline source={host} />}
+      {error && <FetchError what={tr('pinnedPages')} error={error} retry={retry} inline source={host} />}
       {pinned.length > 0 && (
-        <List label="固定的页面">
+        <List label={tr('pinnedPages')}>
           {pinned.map(page => (
             <ListItem
               key={paths.page(refOf(page))}

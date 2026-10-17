@@ -12,6 +12,7 @@ import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
   type Harness,
   installDialog,
+  language,
   lists,
   main,
   renderApp,
@@ -117,6 +118,31 @@ describe('「后台」标签', () => {
     await loaded();
     expect(tabs().includes('后台')).toBe(available);
     expect(panel().queryByRole('button', { name: '打开标签' })).toBeNull();
+  });
+
+  it('英文界面：组头的数目、结局与用时、停止按钮的读屏名字与「全部停止」', async () => {
+    const tasks = [
+      backgroundTask('t-fail', {
+        exitCode: 2,
+        display: { kind: 'command', command: 'make test' },
+        status: 'failed',
+        endedAt: AT + 3000,
+      }),
+      DEV,
+    ];
+    const children = { s1: [summary('c-run', { title: 'child', kind: 'task', parentId: 's1', running: true })] };
+    app = await renderApp(
+      '/s/s1/background',
+      handlers({ session: { childCount: 1, background: 1 }, tasks, children }),
+      language(['en']),
+    );
+    const side = within(screen.getByRole('complementary', { name: 'Session panel' }));
+    const calls = await side.findByRole('region', { name: 'Tool calls · 2' });
+    expect(side.getByRole('region', { name: 'Child sessions · 1' })).toBeTruthy();
+    expect(side.getByRole('button', { name: 'Stop all' })).toBeTruthy();
+    expect(within(calls).getByRole('button', { name: 'Stop “npm run dev”' })).toBeTruthy();
+    fireEvent.click(within(calls).getByRole('button', { name: 'Ended · 1' }));
+    expect(within(calls).getByText('Exit code 2 · 3.0 s')).toBeTruthy();
   });
 
   it('子会话按会话树列出，工具调用列这个会话的任务；组头带数目，在跑的在前，结束的收进默认折叠的「已结束」（刚建还没开始的不算），非零退出码标红', async () => {

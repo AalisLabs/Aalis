@@ -2,6 +2,7 @@ import type { AttentionItem } from '@aalis/api-webui';
 import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useReducer } from 'react';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { unmetOf } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
 
@@ -18,7 +19,7 @@ const Context = createContext<Attention | undefined>(undefined);
 
 export function useAttention(): Attention {
   const attention = useContext(Context);
-  if (!attention) throw new Error('只能在 AttentionProvider 里取「需要处理」');
+  if (!attention) throw new Error(tr('attentionOutsideProvider'));
   return attention;
 }
 
@@ -28,7 +29,7 @@ const readable = (item: unknown) =>
   (item.kind !== 'plugin' || (unmetOf(item.lacking) !== undefined && unmetOf(item.waiting) !== undefined));
 
 function parse(body: unknown): Localized<AttentionItem>[] {
-  if (!isRecord(body) || !Array.isArray(body.items)) throw new Error('「需要处理」的回应不是预期的形状');
+  if (!isRecord(body) || !Array.isArray(body.items)) throw new Error(tr('attentionMalformed'));
   return body.items.filter(readable) as Localized<AttentionItem>[];
 }
 

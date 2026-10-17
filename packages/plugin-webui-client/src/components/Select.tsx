@@ -1,6 +1,8 @@
 import { ChevronDown } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { lower } from '../format';
+import { tr } from '../language';
 import { usePopover } from './popover';
 import './Select.css';
 
@@ -40,8 +42,8 @@ export function Select({ value, options, onChange, placeholder, variant, ...rest
   const [filter, setFilter] = useState('');
   const [active, setActive] = useState<string>();
   const filtering = options.length >= FILTER_FROM;
-  const needle = filter.trim().toLowerCase();
-  const shown = needle ? options.filter(option => option.label.toLowerCase().includes(needle)) : options;
+  const needle = lower(filter.trim());
+  const shown = needle ? options.filter(option => lower(option.label).includes(needle)) : options;
   const enabled = shown.filter(option => !option.disabled);
   const current = options.find(option => option.value === value);
   const optionId = (option: SelectOption) => `${listId}-${options.indexOf(option)}`;
@@ -124,8 +126,8 @@ export function Select({ value, options, onChange, placeholder, variant, ...rest
             {filtering && (
               <input
                 type="search"
-                aria-label="过滤"
-                placeholder="过滤"
+                aria-label={tr('selectFilter')}
+                placeholder={tr('selectFilter')}
                 aria-controls={listId}
                 aria-activedescendant={activeId}
                 value={filter}
@@ -160,7 +162,7 @@ export function Select({ value, options, onChange, placeholder, variant, ...rest
                 </div>
               ))}
             </div>
-            {shown.length === 0 && <p className="select-empty">没有符合的项</p>}
+            {shown.length === 0 && <p className="select-empty">{tr('selectNoMatch')}</p>}
           </div>,
           host(),
         )}

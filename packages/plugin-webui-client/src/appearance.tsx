@@ -15,7 +15,6 @@ import {
   type ThemeToken,
   themeContrastIssues,
 } from '@aalis/api-webui';
-import { resolveSource } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -29,6 +28,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { useConnection } from './connection';
+import { text, tr } from './language';
 import { isRecord, useJson } from './rest';
 import { readStored, writeStored } from './storage';
 
@@ -57,18 +57,17 @@ export type ImportResult =
 
 const DEFAULT_CHOICE: Choice = { follow: true, ...DEFAULT_THEMES };
 
-/** 内置主题：名字按 id 取 api-webui 的字典 */
-const BUILTIN: readonly ThemeEntry[] = Object.entries(BUILTIN_THEMES).map(([id, file]) => ({
-  id,
-  theme: {
-    name: resolveSource(BUILTIN_THEME_NAMES[id as BuiltinThemeId]),
-    kind: file.kind as ThemeKind,
-    colors: file.colors as Record<ThemeToken, string>,
-  },
-  origin: { kind: 'builtin' },
-}));
-
-const builtinOf = (kind: ThemeKind) => BUILTIN.find(entry => entry.id === DEFAULT_THEMES[kind]) as ThemeEntry;
+/** 内置主题：名字按 id 取 api-webui 的字典，按界面的语言写（换语言时界面重挂，重新取） */
+const builtins = (): ThemeEntry[] =>
+  Object.entries(BUILTIN_THEMES).map(([id, file]) => ({
+    id,
+    theme: {
+      name: text(BUILTIN_THEME_NAMES[id as BuiltinThemeId]),
+      kind: file.kind as ThemeKind,
+      colors: file.colors as Record<ThemeToken, string>,
+    },
+    origin: { kind: 'builtin' },
+  }));
 
 const importedId = (theme: Theme) => `imported:${theme.kind}:${theme.name}`;
 
@@ -92,7 +91,7 @@ function storedChoice(): Choice {
   const stored = readStored('appearance');
   if (!isRecord(stored)) return DEFAULT_CHOICE;
   if (stored.follow === false && typeof stored.theme === 'string') {
-    const builtin = BUILTIN.find(entry => entry.id === stored.theme);
+    const builtin = builtins().find(entry => entry.id === stored.theme);
     const kind = stored.kind === 'dark' || stored.kind === 'light' ? stored.kind : (builtin?.theme.kind ?? 'dark');
     return { follow: false, theme: stored.theme, kind };
   }
@@ -123,7 +122,7 @@ function storedImports(): ThemeEntry[] {
 }
 
 function parsePluginThemes(body: unknown): ThemeEntry[] {
-  if (!isRecord(body) || !Array.isArray(body.themes)) throw new Error('插件主题的回应不是预期的形状');
+  if (!isRecord(body) || !Array.isArray(body.themes)) throw new Error(tr('pluginThemesMalformed'));
   return (body.themes as PluginTheme[]).map(({ id, instance, theme }) => ({
     id: `plugin:${id}`,
     theme,
@@ -188,7 +187,7 @@ const Context = createContext<Appearance | undefined>(undefined);
 
 export function useAppearance(): Appearance {
   const appearance = useContext(Context);
-  if (!appearance) throw new Error('只能在 AppearanceProvider 里取外观');
+  if (!appearance) throw new Error(tr('appearanceOutsideProvider'));
   return appearance;
 }
 
@@ -209,12 +208,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }, [admin]);
 
   const themes = useMemo(
-    () => [...BUILTIN, ...imported, ...(plugin.value ?? cached)],
+    () => [...builtins(), ...imported, ...(plugin.value ?? cached)],
     [imported, plugin.value, cached],
   );
   const find = useCallback(
     (id: string, kind: ThemeKind) =>
-      themes.find(entry => entry.id === id && entry.theme.kind === kind) ?? builtinOf(kind),
+      themes.find(entry => entry.id === id && entry.theme.kind === kind) ??
+      (themes.find(entry => entry.id === DEFAULT_THEMES[kind]) as ThemeEntry),
     [themes],
   );
   const shown = useMemo(() => {
@@ -247,13 +247,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const importTheme = useCallback(
     async (file: File): Promise<ImportResult> => {
       if (file.size > THEME_FILE_MAX_BYTES) {
-        return { ok: false, errors: [`文件超过 ${THEME_FILE_MAX_BYTES / 1024} KB`] };
+        return { ok: false, errors: [tr('themeFileTooLarge', { kb: THEME_FILE_MAX_BYTES / 1024 })] };
       }
       let value: unknown;
       try {
         value = JSON.parse(await file.text());
       } catch {
-        return { ok: false, errors: ['不是 JSON 文件'] };
+        return { ok: false, errors: [tr('themeFileNotJson')] };
       }
       const parsed = parseTheme(value);
       if (!parsed.ok) return parsed;

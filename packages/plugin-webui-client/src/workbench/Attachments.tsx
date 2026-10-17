@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Picture } from '../components/Picture';
+import { tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { isWebUrl, mediaUrl } from '../media';
 import type { SessionItem } from '../protocol/session-client';
@@ -68,7 +69,7 @@ function AttachmentView({ attachment, sessionId }: { attachment: Attachment; ses
   const media = src === undefined ? undefined : mediaUrl(src);
   if (kind === 'image' && src !== undefined && (media || isWebUrl(src))) {
     const url = media ?? `/api/proxy/image?${new URLSearchParams({ url: src })}`;
-    return <Picture className="attachment-image" src={url} alt={name ?? '图片'} />;
+    return <Picture className="attachment-image" src={url} alt={name ?? tr('image')} />;
   }
   // biome-ignore lint/a11y/useMediaCaption: 会话里收发的音视频没有字幕文件可配
   if (kind === 'audio' && media) return <audio className="attachment-media" controls src={media} />;
@@ -77,7 +78,7 @@ function AttachmentView({ attachment, sessionId }: { attachment: Attachment; ses
   if (kind === 'file' && src !== undefined) {
     return (
       <FileAttachment
-        name={name ?? '文件'}
+        name={name ?? tr('file')}
         href={`/api/session-file?${new URLSearchParams({ sessionId, handle: src })}`}
       />
     );
@@ -91,7 +92,7 @@ function AttachmentView({ attachment, sessionId }: { attachment: Attachment; ses
   }
   return (
     <span className="attachment-file">
-      <FileLine name={name ?? src ?? '附件'} />
+      <FileLine name={name ?? src ?? tr('attachment')} />
     </span>
   );
 }
@@ -103,7 +104,7 @@ function FileLine({ name }: { name: string }) {
     <>
       <FileText aria-hidden />
       <span className="attachment-name">{name}</span>
-      <span className="attachment-type">{extension ? extension.toUpperCase() : '文件'}</span>
+      <span className="attachment-type">{extension ? extension.toUpperCase() : tr('file')}</span>
     </>
   );
 }
@@ -132,14 +133,16 @@ async function readText(href: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(href, { signal });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined);
-    throw new Error(isRecord(body) && typeof body.error === 'string' ? body.error : `取不到（${response.status}）`);
+    throw new Error(
+      isRecord(body) && typeof body.error === 'string' ? body.error : tr('fileStatus', { status: response.status }),
+    );
   }
   if (!(Number(response.headers.get('Content-Length')) <= PREVIEW_LIMIT_KB * 1024)) {
     await response.body?.cancel();
-    throw new Error(`文件超过 ${PREVIEW_LIMIT_KB} KB，下载后查看`);
+    throw new Error(tr('previewTooLarge', { kb: PREVIEW_LIMIT_KB }));
   }
   const text = await response.text();
-  if (text.includes('\u0000')) throw new Error('不是文本文件，下载后查看');
+  if (text.includes('\u0000')) throw new Error(tr('previewNotText'));
   return text;
 }
 
@@ -155,7 +158,7 @@ function FilePreview({ name, href, onClose }: { name: string; href: string; onCl
     );
     return () => controller.abort();
   }, [href]);
-  let body: ReactNode = <p>正在读取…</p>;
+  let body: ReactNode = <p>{tr('reading')}</p>;
   if (shown && 'error' in shown) body = <p role="alert">{shown.error}</p>;
   else if (shown && MARKDOWN_TYPES.has(extensionOf(name))) body = <Markdown text={shown.text} />;
   else if (shown) body = <pre className="attachment-preview">{shown.text}</pre>;
@@ -168,10 +171,10 @@ function FilePreview({ name, href, onClose }: { name: string; href: string; onCl
       footer={
         <>
           <a className="button" href={href} download={name}>
-            下载
+            {tr('download')}
           </a>
           <Button data-autofocus onClick={onClose}>
-            关闭
+            {tr('close')}
           </Button>
         </>
       }

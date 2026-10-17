@@ -9,6 +9,7 @@ import { FetchError } from '../components/FetchError';
 import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
 import { listTime } from '../format';
+import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import type { SessionSummary } from '../protocol/session-client';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
@@ -26,23 +27,23 @@ import './RoomsPage.css';
 // 每行的「场所设置」在页内打开这一行所在窗口的设置（与「会话默认」同一套行）；统一设置一个平台或一种类型在设置的
 // 「会话默认」，表格下面一句话指过去
 
-const STATUS_FIELD = {
+const statusField = () => ({
   key: 'status',
-  label: '状态',
+  label: tr('status'),
   options: [
-    { value: 'attention', label: '需要处理' },
-    { value: 'error', label: '出错' },
-    { value: 'running', label: '运行中' },
+    { value: 'attention', label: tr('needsAttention') },
+    { value: 'error', label: tr('error') },
+    { value: 'running', label: tr('running') },
   ],
   matches: (s: SessionSummary, value: string) => s[value as 'attention' | 'error' | 'running'],
-};
+});
 
 /** 类型的筛选：本组出现过的类型名，原样写 */
 function typeField(sessions: readonly SessionSummary[]) {
   const types = [...new Set(sessions.flatMap(s => (s.chat ? [s.chat.type] : [])))].sort();
   return {
     key: 'type',
-    label: '类型',
+    label: tr('type'),
     options: types.map(type => ({ value: type, label: type })),
     matches: (s: SessionSummary, value: string) => s.chat?.type === value,
   };
@@ -67,24 +68,24 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   const [place, setPlace] = useState<SessionSummary['place']>();
   const layer = useMemo((): SettingLayer | undefined => place && { scope: 'place', key: place.key }, [place]);
   const layers = useLayers();
-  const filterFields = [typeField(list.sessions ?? []), STATUS_FIELD];
+  const filterFields = [typeField(list.sessions ?? []), statusField()];
   const group = list.groups.find(g => inGroup(g, query));
   const title = group?.label ?? ('instance' in query ? query.instance : query.platform);
 
   const columns: TableColumn<SessionSummary>[] = [
     {
       key: 'name',
-      label: '名称',
+      label: tr('name'),
       primary: true,
       render: s => <Link to={paths.session(s.id)}>{s.title}</Link>,
       sortValue: s => s.title,
     },
-    { key: 'type', label: '类型', render: s => s.chat?.type },
+    { key: 'type', label: tr('type'), render: s => s.chat?.type },
     ...(group && group.accounts > 1
       ? [
           {
             key: 'account',
-            label: '账号',
+            label: tr('account'),
             render: (s: SessionSummary) => s.account,
             sortValue: (s: SessionSummary) => s.account ?? '',
           },
@@ -92,7 +93,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       : []),
     {
       key: 'status',
-      label: '状态',
+      label: tr('status'),
       primary: true,
       render: s => {
         const status = statusOf(s);
@@ -103,10 +104,10 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
         return status && status !== 'unread' ? STATUS_ORDER.indexOf(status) : STATUS_ORDER.length;
       },
     },
-    { key: 'active', label: '最后活动', render: s => time(s.updatedAt), sortValue: s => s.updatedAt },
+    { key: 'active', label: tr('lastActive'), render: s => time(s.updatedAt), sortValue: s => s.updatedAt },
     {
       key: 'replied',
-      label: '她最近开口',
+      label: tr('lastReply'),
       render: s => (s.lastReplyAt === undefined ? '—' : time(s.lastReplyAt)),
       sortValue: s => s.lastReplyAt ?? 0,
     },
@@ -140,21 +141,21 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
         <SessionGate>
           <div className="rooms-page">
             {list.error ? (
-              <FetchError what="房间" error={list.error} retry={list.retry} source={sessions} />
+              <FetchError what={tr('rooms')} error={list.error} retry={list.retry} source={sessions} />
             ) : (
               list.sessions && (
                 <Table
-                  label={`${title}的房间`}
+                  label={tr('roomsOf', { name: title })}
                   rows={list.sessions}
                   rowKey={s => s.id}
                   columns={columns}
-                  empty="这一组没有房间"
+                  empty={tr('roomsEmpty')}
                   search={s => `${s.title} ${s.id}`}
                   filter={{ fields: filterFields, values: filterValues, onChange: setFilter }}
                   rowActions={s =>
                     s.place.kind === 'window' && (
                       <Button variant="text" onClick={() => setPlace(s.place)}>
-                        场所设置
+                        {tr('placeSettings')}
                       </Button>
                     )
                   }
@@ -170,10 +171,10 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                             setSelected(new Set());
                           }}
                         >
-                          归档
+                          {tr('archive')}
                         </Button>
                         <Button variant="text" danger onClick={() => actions.remove(rowsOf(keys))}>
-                          删除
+                          {tr('delete')}
                         </Button>
                       </>
                     ),
@@ -182,9 +183,9 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
               )
             )}
             <div className="rooms-hint">
-              <p>统一设置一个平台或一种类型去「会话默认」，单个窗口在这里设。</p>
+              <p>{tr('roomsHint')}</p>
               <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
-                去会话默认
+                {tr('goToSessionDefaults')}
               </ButtonLink>
             </div>
           </div>
@@ -192,13 +193,13 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       </Panel>
       <Dialog
         open={place !== undefined}
-        title={`场所设置：${place?.name ?? ''}`}
+        title={tr('placeSettingsOf', { name: place?.name ?? '' })}
         size="form"
         onClose={() => setPlace(undefined)}
-        footer={<Button onClick={() => setPlace(undefined)}>关闭</Button>}
+        footer={<Button onClick={() => setPlace(undefined)}>{tr('close')}</Button>}
       >
-        {layers.error && <SessionsFetchError what="会话设置的层" error={layers.error} retry={layers.retry} />}
-        {layer && layers.value && <LayerRows layer={layer} order={layers.value.order} what="场所设置" />}
+        {layers.error && <SessionsFetchError what={tr('settingLayers')} error={layers.error} retry={layers.retry} />}
+        {layer && layers.value && <LayerRows layer={layer} order={layers.value.order} what={tr('placeSettings')} />}
       </Dialog>
     </Main>
   );

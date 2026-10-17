@@ -30,15 +30,24 @@
   white-space: nowrap;
 }
 
+/* 结算句可能比一行还长（英文的可达 60 多个字符）：可以收窄，放不下时句末省略，不撑出这一行。省略号要落在块里的文字上，
+   所以字放在里层的 span 里 */
 .tool-line-status {
   display: inline-flex;
-  flex-shrink: 0;
+  min-width: 0;
   align-items: center;
   gap: var(--space-1);
   font-size: var(--text-xs);
   line-height: var(--leading-xs);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--color-text-3);
+}
+
+.tool-line-status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool-line-status[data-tone="attention"] {

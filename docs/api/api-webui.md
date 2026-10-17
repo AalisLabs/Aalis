@@ -172,7 +172,7 @@ interface DeclarativePageDefinition<P, S, A> {
 | 种类 | 值 | 界面上 |
 |---|---|---|
 | `text` | 字符串、数字或布尔值 | 原样，数字用等宽数字 |
-| `time` | 毫秒时间戳或 ISO 字符串 | 本地时间 |
+| `time` | 毫秒时间戳，或带时区偏移（`Z` 或 `±HH:MM`）的 ISO 字符串；不带偏移的按文字显示 | 服务进程的时区 |
 | `countdown` | 毫秒时间戳 | 剩余时间，到零不重取 |
 | `link` | 网址 | 只认 http、https，新标签打开，其余按文本 |
 | `status` | `{ text, state? }` | 一句话；`state` 为 `attention`（需要处理）、`error`（出错）、`running`（进行中）、`inactive`（停用或弱化），正常时不写、不上色 |

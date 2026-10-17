@@ -12,6 +12,7 @@ import type {
 } from '@aalis/api-session-protocol';
 import type { Localized } from '@aalis/schema-i18n';
 import { version } from '../../package.json';
+import { tr } from '../language';
 import { type ConnectionState, openSocket } from './socket';
 
 // 会话协议的客户端：一条 /session 连接上握手、配对请求与回应、订阅多个会话。
@@ -49,7 +50,7 @@ export class RequestError extends Error {
 /** 请求发出后连接断开：服务端可能执行了，也可能没有 */
 export class ConnectionLostError extends Error {
   constructor() {
-    super('与服务端的连接断开，这次请求没有收到回应');
+    super(tr('connectionLost'));
     this.name = 'ConnectionLostError';
   }
 }
@@ -85,6 +86,8 @@ export interface SessionClient {
   ): () => void;
   /** 订阅一个会话，返回退订。同一会话再来一个订阅者时重新订阅，各订阅者都收到新的快照 */
   subscribe(sessionId: string, listener: SubscriptionListener): () => void;
+  /** 关掉当前连接立即重连（换语言后重取服务端渲染的文字）：在途的请求失败，重新握手、watch 并重订打开着的会话 */
+  reconnect(): void;
   close(): void;
 }
 
@@ -249,7 +252,7 @@ export function createSessionClient(): SessionClient {
         return;
       }
       // id 为空的错误帧：服务端认不出这一帧是哪个请求（不是 JSON、不合帧格式），只会是客户端的缺陷
-      if (frame.id === null) throw new Error(`服务端拒收了这个客户端发出的一帧：${frame.error.message}`);
+      if (frame.id === null) throw new Error(tr('frameRejected', { message: frame.error.message }));
       const waiting = pending.get(frame.id) as { resolve(result: unknown): void; reject(error: Error): void };
       pending.delete(frame.id);
       if ('error' in frame) {
@@ -300,6 +303,7 @@ export function createSessionClient(): SessionClient {
         if (ready) request('session/unsubscribe', { sessionId }).catch(unlessLost);
       };
     },
+    reconnect: () => socket.reconnect(),
     close() {
       socket.close();
       handshake.reject(new ConnectionLostError());

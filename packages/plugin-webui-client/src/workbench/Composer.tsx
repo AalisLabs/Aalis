@@ -17,6 +17,7 @@ import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnectionState, useFeatures, useSessionClient } from '../connection';
 import { composing } from '../keys';
+import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import {
   dependencyOf,
@@ -71,7 +72,7 @@ function read(file: File): Promise<OutgoingAttachment> {
         byteSize: file.size,
         ...(file.type ? { mimeType: file.type } : {}),
       });
-    reader.onerror = () => reject(reader.error ?? new Error(`读不出 ${file.name}`));
+    reader.onerror = () => reject(reader.error ?? new Error(tr('fileUnreadable', { name: file.name })));
     reader.readAsDataURL(file);
   });
 }
@@ -119,7 +120,7 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
     const added = [...list];
     const total = [...files, ...added].reduce((sum, file) => sum + file.size, 0);
     if (total > ATTACHMENTS_LIMIT_MB * 1024 * 1024) {
-      setError(`一条消息的附件合计不能超过 ${ATTACHMENTS_LIMIT_MB} MB，这次选的没有加上`);
+      setError(tr('attachmentsTooLarge', { mb: ATTACHMENTS_LIMIT_MB }));
       return;
     }
     setError(undefined);
@@ -211,7 +212,7 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
     <form
       ref={form}
       className="composer"
-      aria-label="发消息"
+      aria-label={tr('sendMessage')}
       data-dropping={(dropping && !disabled) || undefined}
       onSubmit={event => {
         event.preventDefault();
@@ -219,14 +220,14 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
       }}
     >
       {files.length > 0 && (
-        <ul className="composer-files" aria-label="附件">
+        <ul className="composer-files" aria-label={tr('attachments')}>
           {files.map(file => (
             <li key={file.id}>
               {file.attachment ? <FileText aria-hidden /> : <LoaderCircle aria-hidden className="spin" />}
               <span className="composer-file-name">{file.name}</span>
               <IconButton
                 icon={X}
-                label={`移除 ${file.name}`}
+                label={tr('removeFile', { name: file.name })}
                 onClick={() => setFiles(current => current.filter(item => item.id !== file.id))}
               />
             </li>
@@ -234,8 +235,8 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
         </ul>
       )}
       <textarea
-        aria-label="消息"
-        placeholder={disabled ? undefined : '发消息'}
+        aria-label={tr('message')}
+        placeholder={disabled ? undefined : tr('sendMessage')}
         rows={2}
         value={text}
         disabled={disabled}
@@ -244,7 +245,12 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
         onPaste={onPaste}
       />
       <div className="composer-bar">
-        <IconButton icon={Paperclip} label="添加附件" disabled={disabled} onClick={() => picker.current?.click()} />
+        <IconButton
+          icon={Paperclip}
+          label={tr('addAttachment')}
+          disabled={disabled}
+          onClick={() => picker.current?.click()}
+        />
         <input
           ref={picker}
           type="file"
@@ -259,15 +265,15 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
         <span className="composer-spacer" />
         {onStop && empty ? (
           <Button icon={CircleStop} onClick={onStop}>
-            停止
+            {tr('stop')}
           </Button>
         ) : (
           <Button variant="primary" type="submit" icon={ArrowUp} busy={busy} disabled={disabled || empty || !ready}>
-            发送
+            {tr('send')}
           </Button>
         )}
       </div>
-      {open && !features.send && <p className="composer-note">没有对话服务，暂时不能发消息</p>}
+      {open && !features.send && <p className="composer-note">{tr('noChatService')}</p>}
       {error && (
         <p className="composer-note" role="alert">
           {error}
@@ -317,7 +323,7 @@ function SettingLink({
   const { options, names } = useFieldOptions(row.field, 0, dependency);
   const effective = effectiveOf(row);
   const shown = effective === undefined ? unsetOf(row) : formatValue(row.field, effective, [...options, ...names]);
-  const name = shown === undefined ? row.field.label : `${row.field.label}：${shown}`;
+  const name = shown === undefined ? row.field.label : tr('settingValue', { label: row.field.label, value: shown });
   return (
     <Link
       className="select"
@@ -356,7 +362,7 @@ function SettingSelect({
   const current = effectiveOf(row);
   const choices = withCurrent(field, options, current, names);
   const fallback = options.find(option => option.isDefault);
-  const failed = error && `可选项没取到：${error.message}`;
+  const failed = error && tr('optionsFailed', { error: error.message });
   return (
     <Select
       variant="bare"
@@ -371,7 +377,11 @@ function SettingSelect({
       onChange={key => {
         const chosen = choices.find(option => option.key === key) as Option;
         update(row.key, chosen.value).catch((err: Error) =>
-          toast({ kind: 'danger', text: `${field.label}没改成：${err.message}`, source: sessions }),
+          toast({
+            kind: 'danger',
+            text: tr('settingNotChanged', { label: field.label, error: err.message }),
+            source: sessions,
+          }),
         );
       }}
     />

@@ -1,5 +1,6 @@
 import type { SettingLayer } from '@aalis/api-session-protocol';
 import { useMemo } from 'react';
+import { tr } from '../language';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { type LayerOrder, labelOf } from './layers';
 import { SettingRows } from './SettingRows';
@@ -17,7 +18,7 @@ export function LayerRows({ layer, order, what }: { layer: SettingLayer; order: 
   return (
     <div className="settings-rows">
       {rows.length === 0 ? (
-        <p className="settings-note">这一层没有可以设置的项</p>
+        <p className="settings-note">{tr('layerEmpty')}</p>
       ) : (
         <SettingRows rows={rows} layer={layer.scope} sourceOf={name => labelOf(order, name)} update={update} />
       )}

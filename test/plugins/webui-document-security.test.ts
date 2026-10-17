@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { webuiClient } from '../../packages/api-webui/src/index.js';
+import { PAGE_LANGUAGE_ID, webuiClient } from '../../packages/api-webui/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
@@ -56,10 +56,17 @@ describe('WebUI 的文档级安全', () => {
   const authed = { cookie: `aalis_webui_token=${TOKEN}` };
 
   it('前端的 HTML（首页与任意地址上的刷新）带文档级 CSP', async () => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     for (const path of ['/', '/s/session-1', '/rooms?instance=x']) {
       const res = await fetch(url(path), { headers: authed });
       expect(res.status, path).toBe(200);
-      expect(await res.text(), path).toBe(INDEX);
+      // i18n 不在：<html lang> 是原文的语言，语言块里的链为空；块是数据（application/json），不是内联脚本
+      expect(await res.text(), path).toBe(
+        INDEX.replace('<html>', '<html lang="zh-CN">').replace(
+          '</head>',
+          `<script type="application/json" id="${PAGE_LANGUAGE_ID}">${JSON.stringify({ chain: [], timeZone })}</script></head>`,
+        ),
+      );
       expect(res.headers.get('content-security-policy'), path).toBe(CSP);
     }
   });

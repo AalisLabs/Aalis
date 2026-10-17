@@ -1,4 +1,5 @@
 import { createContext, memo, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import { tr } from '../language';
 
 // Mermaid 图：用到时才加载。图的源码来自模型与工具输出，不可信，用严格安全级别（内置的净化、不绑定点击回调）；
 // 颜色每次渲染时从当前主题的令牌取，换主题后重画。所在的消息还在输出时源码没写完，只显示源码，输出完再画
@@ -102,7 +103,7 @@ export const Mermaid = memo(function Mermaid({ chart }: { chart: string }) {
   }
   return (
     <div className="markdown-mermaid">
-      {result && <p className="markdown-mermaid-error">图没能画出来：{result.error}</p>}
+      {result && <p className="markdown-mermaid-error">{tr('mermaidFailed', { error: result.error })}</p>}
       <pre>
         <code>{chart}</code>
       </pre>

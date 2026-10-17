@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import { text } from '../language';
+import { t } from '../texts';
 import './List.css';
 
 /** 行首标记的读屏说法 */
-export const MARKERS = { attention: '需要处理', error: '出错', unread: '未读' } as const;
+export const MARKERS = { attention: t('needsAttention'), error: t('error'), unread: t('markerUnread') };
 
 export function List({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -43,7 +45,7 @@ export function ListItem({ to, title, detail, meta, marker, current, menu, actio
       >
         <Link className="list-item-link" to={to} aria-current={current ? 'page' : undefined}>
           <span className="list-item-marker" aria-hidden />
-          {marker && <span className="visually-hidden">{MARKERS[marker]}</span>}
+          {marker && <span className="visually-hidden">{text(MARKERS[marker])}</span>}
           <span className="list-item-text">
             <span className="list-item-title">{title}</span>
             {detail && <span className="list-item-detail">{detail}</span>}

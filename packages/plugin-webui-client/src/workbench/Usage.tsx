@@ -1,6 +1,7 @@
 import { type CSSProperties, Fragment, useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
 import { percent, tokens } from '../format';
+import { tr } from '../language';
 import { usePluginNames } from '../plugins/list';
 import type { SessionSummary } from '../protocol/session-client';
 import type { UsageItem } from './live-session';
@@ -23,11 +24,11 @@ export function UsageMeter({ usage, onOpen }: { usage: UsageItem; onOpen(): void
     <button
       type="button"
       className="header-meter"
-      aria-label={`上下文已用 ${ratio}`}
+      aria-label={tr('contextUsed', { ratio })}
       title={
         usage.compressAt === undefined
-          ? `上下文已用 ${ratio}`
-          : `上下文已用 ${ratio}，到 ${percent(usage.compressAt)} 自动压缩`
+          ? tr('contextUsed', { ratio })
+          : tr('contextUsedCompress', { ratio, at: percent(usage.compressAt) })
       }
       data-tone={reachesCompressAt(usage) ? 'warning' : undefined}
       onClick={onOpen}
@@ -55,7 +56,7 @@ function byPlugin(part: UsagePart, names: ReturnType<typeof usePluginNames>): Ar
     others -= count;
   }
   const rows = [...merged.values()].sort((a, b) => b.tokens - a.tokens);
-  return others > 0 ? [...rows, { label: '其他', tokens: others }] : rows;
+  return others > 0 ? [...rows, { label: tr('other'), tokens: others }] : rows;
 }
 
 const Swatch = ({ swatch }: { swatch: string }) => <span className="usage-swatch" data-swatch={swatch} aria-hidden />;
@@ -90,14 +91,14 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
     <div className="usage">
       {names.error && (
         <p className="usage-note" role="alert">
-          插件的显示名没取到（{names.error.message}），按插件实例 id 显示
+          {tr('usageNamesFailed', { error: names.error.message })}
         </p>
       )}
       {contextWindow > 0 && (
         <div className="usage-bar" aria-hidden>
           {[
             ...bySize.map(part => ({ label: part.label, tokens: part.tokens, swatch: swatchOf(part) })),
-            { label: '为回复预留', tokens: reserved, swatch: 'reserved' },
+            { label: tr('usageReserved'), tokens: reserved, swatch: 'reserved' },
           ].map(part => (
             <span
               key={part.label}
@@ -110,16 +111,16 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
           )}
         </div>
       )}
-      <table className="usage-table" aria-label="上下文用量">
+      <table className="usage-table" aria-label={tr('contextUsage')}>
         <tbody>
           {contextWindow > 0 && (
             <tr>
-              <th scope="row">上下文窗口</th>
+              <th scope="row">{tr('contextWindow')}</th>
               <td>{tokens(contextWindow)}</td>
               <td />
             </tr>
           )}
-          {row('已用', usage.used)}
+          {row(tr('usageUsed'), usage.used)}
           {parts.map(part =>
             part.injectors ? (
               <Fragment key={part.label}>
@@ -143,15 +144,19 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
               row(part.label, part.tokens, swatchOf(part))
             ),
           )}
-          {row('为回复预留', reserved, 'reserved')}
-          {row('剩余', remaining, 'free')}
+          {row(tr('usageReserved'), reserved, 'reserved')}
+          {row(tr('usageRemaining'), remaining, 'free')}
         </tbody>
       </table>
-      {usage.compressAt !== undefined && <p className="usage-note">到 {percent(usage.compressAt)} 自动压缩</p>}
+      {usage.compressAt !== undefined && (
+        <p className="usage-note">{tr('usageCompressAt', { at: percent(usage.compressAt) })}</p>
+      )}
       {session?.tokens && (
         <p className="usage-total">
-          累计输入 {tokens(session.tokens.input)}，输出 {tokens(session.tokens.output)}
-          {session.childCount > 0 && '（含子会话）'}
+          {tr(session.childCount > 0 ? 'usageTotalWithChildren' : 'usageTotal', {
+            input: tokens(session.tokens.input),
+            output: tokens(session.tokens.output),
+          })}
         </p>
       )}
     </div>

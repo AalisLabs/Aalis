@@ -1,5 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
+import { compareText, lower } from '../format';
+import { tr } from '../language';
 import { Button } from './Button';
 import { Select } from './Select';
 import './Table.css';
@@ -63,7 +65,7 @@ interface TableProps<Row> {
 }
 
 function compare(a: string | number, b: string | number): number {
-  return typeof a === 'string' && typeof b === 'string' ? a.localeCompare(b) : Number(a) - Number(b);
+  return typeof a === 'string' && typeof b === 'string' ? compareText(a, b) : Number(a) - Number(b);
 }
 
 /** 表格：排序、搜索、筛选与分页都在客户端做；窄时只留标了 primary 的列 */
@@ -85,14 +87,14 @@ export function Table<Row>({
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
 
-  const needle = query.trim().toLowerCase();
+  const needle = lower(query.trim());
   const filtered = rows.filter(
     row =>
       (filter?.fields ?? []).every(field => {
         const value = filter?.values[field.key];
         return !value || field.matches(row, value);
       }) &&
-      (!needle || (search as (row: Row) => string)(row).toLowerCase().includes(needle)),
+      (!needle || lower((search as (row: Row) => string)(row)).includes(needle)),
   );
   const sortValue = columns.find(column => column.key === sort?.key)?.sortValue;
   const sorted =
@@ -141,7 +143,7 @@ export function Table<Row>({
               <Select
                 id={`${id}-${field.key}`}
                 value={filter.values[field.key] ?? ''}
-                options={[{ value: '', label: '全部' }, ...field.options]}
+                options={[{ value: '', label: tr('all') }, ...field.options]}
                 onChange={value => {
                   setPage(0);
                   const { [field.key]: _, ...others } = filter.values;
@@ -153,8 +155,8 @@ export function Table<Row>({
           {searchable && (
             <input
               type="search"
-              aria-label={`搜索${label}`}
-              placeholder="搜索"
+              aria-label={tr('tableSearch', { label })}
+              placeholder={tr('search')}
               value={query}
               onChange={event => {
                 setPage(0);
@@ -166,10 +168,10 @@ export function Table<Row>({
       )}
       {selection && chosen.length > 0 && (
         <div className="table-batch">
-          <span>{`已选 ${chosen.length} 项`}</span>
+          <span>{tr('tableSelected', { count: chosen.length })}</span>
           {selection.actions(chosen)}
           <Button variant="text" onClick={() => selection.onChange(new Set())}>
-            取消选择
+            {tr('tableClearSelection')}
           </Button>
         </div>
       )}
@@ -183,7 +185,7 @@ export function Table<Row>({
                   <label>
                     <input
                       type="checkbox"
-                      aria-label="全选筛选结果"
+                      aria-label={tr('tableSelectAll')}
                       checked={allChosen}
                       disabled={filteredKeys.length === 0}
                       ref={element => {
@@ -227,7 +229,7 @@ export function Table<Row>({
               ))}
               {rowActions && (
                 <th scope="col" className="table-actions">
-                  <span className="visually-hidden">操作</span>
+                  <span className="visually-hidden">{tr('tableActions')}</span>
                 </th>
               )}
             </tr>
@@ -256,7 +258,7 @@ export function Table<Row>({
                       <label>
                         <input
                           type="checkbox"
-                          aria-label={`选择 ${selection.rowLabel(row)}`}
+                          aria-label={tr('tableSelectRow', { row: selection.rowLabel(row) })}
                           checked={checked}
                           onChange={() => toggleRow(selection, key)}
                         />
@@ -284,9 +286,9 @@ export function Table<Row>({
                     empty
                   ) : (
                     <>
-                      没有符合筛选的项
+                      {tr('tableNoMatch')}
                       <Button variant="text" onClick={clearFilters}>
-                        清除筛选
+                        {tr('clearFilters')}
                       </Button>
                     </>
                   )}
@@ -297,13 +299,13 @@ export function Table<Row>({
         </table>
       </div>
       {pageCount > 1 && (
-        <nav className="table-pager" aria-label="分页">
+        <nav className="table-pager" aria-label={tr('tablePages')}>
           <Button variant="text" disabled={shownPage === 0} onClick={() => setPage(shownPage - 1)}>
-            上一页
+            {tr('tablePrevious')}
           </Button>
-          <span>{`第 ${shownPage + 1} / ${pageCount} 页`}</span>
+          <span>{tr('tablePage', { page: shownPage + 1, count: pageCount })}</span>
           <Button variant="text" disabled={shownPage === pageCount - 1} onClick={() => setPage(shownPage + 1)}>
-            下一页
+            {tr('tableNext')}
           </Button>
         </nav>
       )}

@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from 'react';
 import { closeTabKey } from '../keys';
+import { tr } from '../language';
 import { IconButton } from './IconButton';
 import './Tabs.css';
 
@@ -94,7 +95,7 @@ export function Tabs({ label, items, value, onChange, onClose, trailing, childre
         {onClose && selectedIndex >= 0 && (
           <IconButton
             icon={X}
-            label={`关闭「${items[selectedIndex].title}」`}
+            label={tr('closeTab', { title: items[selectedIndex].title })}
             shortcut={closeKey.label}
             onClick={onClose}
           />

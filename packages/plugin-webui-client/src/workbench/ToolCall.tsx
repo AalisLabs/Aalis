@@ -1,4 +1,5 @@
 import { clipForCard, sanitizeForCard } from '@aalis/api-approval';
+import type { TextRef } from '@aalis/schema-i18n';
 import { FilePen, LoaderCircle, SquareTerminal, Wrench } from 'lucide-react';
 import { useState } from 'react';
 import { TaskFoot, TaskStatus } from '../background/Background';
@@ -6,7 +7,9 @@ import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { type Approval, useSessionClient } from '../connection';
 import { clockTime, duration } from '../format';
+import { tr } from '../language';
 import { RequestError, type SessionItem } from '../protocol/session-client';
+import { t } from '../texts';
 import './ToolCall.css';
 
 // 工具卡：一行写动作与对象、右侧写状态，点开看细节；模型还在生成参数时只有工具名与「正在生成」，没有细节可看。
@@ -24,25 +27,23 @@ type Display = NonNullable<ToolCallItem['display']>;
 /** 一行里命令最多显示这么多个字，完整的在细节里 */
 const SUMMARY_LIMIT = 60;
 
-/** 回合与工具调用被停止时写的字 */
-export const STOPPED = '已停止';
-
-const SETTLED_BY: Record<Exclude<Settlement['source'], 'owner'>, string> = {
-  absent: '没人在场',
-  timeout: '等待超时',
-  ineligible: '这一轮不能产生审批',
-  subtask: '子任务里的审批不转交',
-  'rate-limit': '审批太频繁',
-  'turn-ended': '回合已结束',
-  shutdown: '审批服务已停止',
+const SETTLED_BY: Record<Exclude<Settlement['source'], 'owner'>, TextRef> = {
+  absent: t('settledByAbsent'),
+  timeout: t('settledByTimeout'),
+  ineligible: t('settledByIneligible'),
+  subtask: t('settledBySubtask'),
+  'rate-limit': t('settledByRateLimit'),
+  'turn-ended': t('settledByTurnEnded'),
+  shutdown: t('settledByShutdown'),
 };
 
 /** 结算写成一句：结果、原因与时间 */
 function settlementText({ state, source, at }: Settlement): string {
   const time = clockTime(at);
-  if (state === 'approved') return `已批准 · ${time}`;
-  if (source === 'owner') return `已拒绝 · ${time}`;
-  return `${state === 'cancelled' ? '已撤销' : '已按拒绝'} · ${SETTLED_BY[source]} · ${time}`;
+  if (state === 'approved') return tr('settledApproved', { time });
+  if (source === 'owner') return tr('settledDenied', { time });
+  const reason = SETTLED_BY[source];
+  return state === 'cancelled' ? tr('settledCancelled', { reason, time }) : tr('settledAsDenied', { reason, time });
 }
 
 /** 认得的展示：种类按加法扩展，服务端比客户端新时会发来认不出的种类，当没声明 */
@@ -57,18 +58,20 @@ function summaryOf(item: ToolCallItem): string {
   const display = displayOf(item);
   if (display?.kind === 'command') {
     const { head, omitted, tail } = clipForCard(display.command.split('\n')[0], SUMMARY_LIMIT);
-    return `执行 ${head}${omitted === 0 ? '' : `…（省略 ${omitted} 字）…`}${tail}`;
+    return omitted === 0 ? tr('toolRun', { command: head }) : tr('toolRunClipped', { head, count: omitted, tail });
   }
   if (display?.kind === 'file-change') {
-    return `${display.removed === undefined ? '写入' : '修改'} ${sanitizeForCard(display.path)}`;
+    const path = sanitizeForCard(display.path);
+    return display.removed === undefined ? tr('toolWrite', { path }) : tr('toolEdit', { path });
   }
-  return `调用 ${sanitizeForCard(item.name)}`;
+  return tr('toolCall', { tool: sanitizeForCard(item.name) });
 }
 
 /** 失败写成一句：命令的退出码不为 0 时写退出码，其余写「失败」 */
 function failureOf(item: ToolCallItem): string {
   const display = displayOf(item);
-  return display?.kind === 'command' && (display.exitCode ?? 0) !== 0 ? `退出码 ${display.exitCode}` : '失败';
+  const code = display?.kind === 'command' ? display.exitCode : undefined;
+  return code ? tr('exitCode', { code }) : tr('failed');
 }
 
 /** 按展示种类选的图标，没声明的是通用调用 */
@@ -93,11 +96,14 @@ export function ToolCall({ item, open, onToggle, approval, openLog }: ToolCallPr
   const parts = [
     item.settlement && settlementText(item.settlement),
     item.status === 'failed' && failureOf(item),
-    item.status === 'aborted' && STOPPED,
-    item.sentToRoom && '已发到群',
+    item.status === 'aborted' && tr('stopped'),
+    item.sentToRoom && tr('sentToRoom'),
     !task && item.status === 'completed' && item.durationMs !== undefined && duration(item.durationMs),
   ].filter(part => typeof part === 'string');
   const tone = waiting ? 'attention' : item.status === 'failed' ? 'danger' : undefined;
+  const busy = !waiting && (generating || item.status === 'running');
+  // 状态写成的一句，后台任务的状态另接在后面；放不下时句末省略，这一句的全文在悬停提示里
+  const status = waiting ? tr('waitingApproval') : busy ? tr(generating ? 'generating' : 'running') : parts.join(' · ');
   return (
     <div className="tool-call">
       <button
@@ -109,22 +115,17 @@ export function ToolCall({ item, open, onToggle, approval, openLog }: ToolCallPr
       >
         <Icon aria-hidden />
         <span className="tool-line-text">{summaryOf(item)}</span>
-        <span className="tool-line-status" data-tone={tone}>
-          {waiting ? (
-            '等你批准'
-          ) : generating || item.status === 'running' ? (
-            <>
-              <LoaderCircle aria-hidden className="spin" />
-              {generating ? '正在生成' : '运行中'}
-            </>
-          ) : task ? (
-            <>
-              {parts.length > 0 && `${parts.join(' · ')} · `}
-              <TaskStatus task={task} />
-            </>
-          ) : (
-            parts.join(' · ')
-          )}
+        <span className="tool-line-status" data-tone={tone} title={status || undefined}>
+          {busy && <LoaderCircle aria-hidden className="spin" />}
+          <span>
+            {status}
+            {!waiting && !busy && task && (
+              <>
+                {status && ' · '}
+                <TaskStatus task={task} />
+              </>
+            )}
+          </span>
         </span>
       </button>
       {task && <TaskFoot task={task} onOutput={() => openLog(task.id)} />}
@@ -144,18 +145,18 @@ const side = (text: string | undefined, sign: '-' | '+') =>
 
 function ToolDetails({ item }: { item: ToolCallItem }) {
   const display = displayOf(item);
-  const output = item.output ?? item.result ?? (item.notExecuted ? '没有执行' : undefined);
+  const output = item.output ?? item.result ?? (item.notExecuted ? tr('notExecuted') : undefined);
   return (
     <div className="tool-details">
       {display?.kind === 'command' && (
         <dl className="tool-facts">
-          <dt>命令</dt>
+          <dt>{tr('command')}</dt>
           <dd>
             <code>{sanitizeForCard(display.command)}</code>
           </dd>
           {display.cwd !== undefined && (
             <>
-              <dt>目录</dt>
+              <dt>{tr('directory')}</dt>
               <dd>{sanitizeForCard(display.cwd)}</dd>
             </>
           )}
@@ -198,7 +199,11 @@ function ApprovalCard({ approval }: { approval: Approval }) {
   const { facts } = approval;
   const tool = sanitizeForCard(approval.tool);
   const title =
-    facts.command !== undefined ? `要执行一条命令 · ${tool}` : facts.diff ? `要改动文件 · ${tool}` : `要调用 ${tool}`;
+    facts.command !== undefined
+      ? tr('approvalCommand', { tool })
+      : facts.diff
+        ? tr('approvalFileChange', { tool })
+        : tr('approvalCall', { tool });
   const command = facts.command === undefined ? undefined : sanitizeForCard(facts.command);
   const patch = facts.diff?.patch === undefined ? undefined : sanitizeForCard(facts.diff.patch);
   const params =
@@ -227,19 +232,19 @@ function ApprovalCard({ approval }: { approval: Approval }) {
   };
 
   return (
-    <section className="approval" aria-label="审批">
+    <section className="approval" aria-label={tr('approval')}>
       <p className="approval-title">{title}</p>
       {command !== undefined && <pre className="approval-command">{command}</pre>}
       {facts.cwd !== undefined && (
         <p className="approval-meta">
-          目录 <span>{sanitizeForCard(facts.cwd)}</span>
+          {tr('directory')} <span>{sanitizeForCard(facts.cwd)}</span>
         </p>
       )}
       {facts.diff && (
         <>
           <p className="approval-path">{sanitizeForCard(facts.diff.path)}</p>
           {patch === undefined ? (
-            <p className="approval-meta">路径或内容疑似含密钥，只显示文件名</p>
+            <p className="approval-meta">{tr('approvalPatchHidden')}</p>
           ) : (
             <Diff lines={patch.split('\n')} />
           )}
@@ -247,14 +252,14 @@ function ApprovalCard({ approval }: { approval: Approval }) {
       )}
       {params !== undefined && (
         <>
-          {(command !== undefined || facts.diff) && <p className="approval-meta">其他参数</p>}
+          {(command !== undefined || facts.diff) && <p className="approval-meta">{tr('otherParams')}</p>}
           <pre className="approval-params">{params}</pre>
         </>
       )}
       {noting ? (
         <div className="approval-note">
           <textarea
-            aria-label="拒绝的理由"
+            aria-label={tr('denyReason')}
             rows={2}
             value={note}
             disabled={busy}
@@ -268,23 +273,23 @@ function ApprovalCard({ approval }: { approval: Approval }) {
           />
           <div className="approval-actions">
             <Button busy={busy} onClick={() => respond('deny')}>
-              拒绝
+              {tr('deny')}
             </Button>
             <Button variant="text" disabled={busy} onClick={closeNote}>
-              取消
+              {tr('cancel')}
             </Button>
           </div>
         </div>
       ) : (
         <div className="approval-actions">
           <Button variant="primary" busy={busy} onClick={() => respond('approve')}>
-            批准
+            {tr('approve')}
           </Button>
           <Button variant="text" disabled={busy} onClick={() => respond('deny')}>
-            拒绝
+            {tr('deny')}
           </Button>
           <Button variant="text" disabled={busy} onClick={() => setNoting(true)}>
-            拒绝并附理由
+            {tr('denyWithReason')}
           </Button>
         </div>
       )}

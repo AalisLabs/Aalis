@@ -1,5 +1,5 @@
 import type { SessionMethodResult } from '@aalis/api-session-protocol';
-import type { Localized } from '@aalis/schema-i18n';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import {
   createContext,
   type FormEvent,
@@ -14,7 +14,9 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import { t } from '../texts';
 import './actions.css';
 
 // 会话的改名、归档、恢复与删除：列表行、房间表与会话头共用一处对话框与回报。
@@ -38,12 +40,9 @@ const Context = createContext<SessionActions | undefined>(undefined);
 
 export function useSessionActions(): SessionActions {
   const actions = useContext(Context);
-  if (!actions) throw new Error('只能在 SessionActionsProvider 里取会话操作');
+  if (!actions) throw new Error(tr('sessionActionsOutsideProvider'));
   return actions;
 }
-
-const named = (sessions: readonly SessionRef[]) =>
-  sessions.length === 1 ? `「${sessions[0].title}」` : ` ${sessions.length} 个会话`;
 
 export function SessionActionsProvider({ children }: { children: ReactNode }) {
   const client = useSessionClient();
@@ -53,14 +52,20 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
   const [removing, setRemoving] = useState<readonly SessionRef[]>();
 
   const failed = useCallback(
-    (verb: string, err: unknown) => toast({ kind: 'danger', text: `${verb}失败：${(err as Error).message}`, source }),
+    (action: TextRef, err: unknown) =>
+      toast({ kind: 'danger', text: tr('actionFailed', { action, error: (err as Error).message }), source }),
     [toast, source],
   );
   /** 批量操作里有没做成的：写数目与第一个的原因 */
   const partial = useCallback(
-    (verb: string, { failed: missed }: BatchResult) => {
+    (op: 'archive' | 'delete', { failed: missed }: BatchResult) => {
       if (missed.length === 0) return;
-      toast({ kind: 'danger', text: `有 ${missed.length} 个会话没能${verb}：${missed[0].message}`, source });
+      const counted = { count: missed.length, error: missed[0].message };
+      toast({
+        kind: 'danger',
+        text: op === 'archive' ? tr('batchArchiveFailed', counted) : tr('batchDeleteFailed', counted),
+        source,
+      });
     },
     [toast, source],
   );
@@ -71,7 +76,7 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
         sessions.map(s => client.request('session/unarchive', { sessionId: s.id })),
       );
       const rejected = results.find(result => result.status === 'rejected');
-      if (rejected) failed('恢复', rejected.reason);
+      if (rejected) failed(t('restore'), rejected.reason);
     },
     [client, failed],
   );
@@ -81,16 +86,19 @@ export function SessionActionsProvider({ children }: { children: ReactNode }) {
       try {
         const result = await client.request('session/batch', { op: 'archive', ids: sessions.map(s => s.id) });
         const done = sessions.filter(s => !result.failed.some(f => f.sessionId === s.id));
-        partial('归档', result);
+        partial('archive', result);
         if (done.length > 0) {
           toast({
             kind: 'success',
-            text: `已归档${named(done)}`,
-            action: { label: '撤销', run: () => void unarchive(done) },
+            text:
+              done.length === 1
+                ? tr('archivedOne', { title: done[0].title })
+                : tr('archivedMany', { count: done.length }),
+            action: { label: tr('undo'), run: () => void unarchive(done) },
           });
         }
       } catch (err) {
-        failed('归档', err);
+        failed(t('archive'), err);
       }
     },
     [client, toast, failed, partial, unarchive],
@@ -146,21 +154,21 @@ function RenameDialog({ target, onClose }: { target?: SessionRef; onClose(): voi
   return (
     <Dialog
       open={target !== undefined}
-      title="改名"
+      title={tr('rename')}
       size="form"
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>取消</Button>
+          <Button onClick={onClose}>{tr('cancel')}</Button>
           <Button variant="primary" type="submit" form={formId} busy={busy} disabled={!title.trim()}>
-            保存
+            {tr('save')}
           </Button>
         </>
       }
     >
       <form id={formId} className="session-form" onSubmit={submit}>
         <input
-          aria-label="会话名"
+          aria-label={tr('sessionName')}
           value={title}
           aria-invalid={error ? true : undefined}
           data-autofocus
@@ -178,8 +186,8 @@ function RenameDialog({ target, onClose }: { target?: SessionRef; onClose(): voi
 
 interface DeleteDialogProps {
   targets?: readonly SessionRef[];
-  failed(verb: string, err: unknown): void;
-  partial(verb: string, result: BatchResult): void;
+  failed(action: TextRef, err: unknown): void;
+  partial(op: 'archive' | 'delete', result: BatchResult): void;
   onClose(): void;
 }
 
@@ -190,9 +198,9 @@ function DeleteDialog({ targets, failed, partial, onClose }: DeleteDialogProps) 
   const deleteSessions = async (sessions: readonly SessionRef[]) => {
     setBusy(true);
     try {
-      partial('删除', await client.request('session/batch', { op: 'delete', ids: sessions.map(s => s.id) }));
+      partial('delete', await client.request('session/batch', { op: 'delete', ids: sessions.map(s => s.id) }));
     } catch (err) {
-      failed('删除', err);
+      failed(t('delete'), err);
     } finally {
       setBusy(false);
       onClose();
@@ -202,22 +210,28 @@ function DeleteDialog({ targets, failed, partial, onClose }: DeleteDialogProps) 
   return (
     <Dialog
       open={targets !== undefined}
-      title={targets ? `删除${targets.length === 1 ? '会话' : ''}${named(targets)}？` : ''}
+      title={
+        targets === undefined
+          ? ''
+          : targets.length === 1
+            ? tr('deleteSessionConfirm', { title: targets[0].title })
+            : tr('deleteSessionsConfirm', { count: targets.length })
+      }
       onClose={onClose}
       footer={
         targets && (
           <>
             <Button data-autofocus onClick={onClose}>
-              取消
+              {tr('cancel')}
             </Button>
             <Button variant="primary" danger busy={busy} onClick={() => void deleteSessions(targets)}>
-              删除
+              {tr('delete')}
             </Button>
           </>
         )
       }
     >
-      会话的消息记录与长期记忆都会清空，删除后不能恢复。
+      {tr('deleteSessionNote')}
     </Dialog>
   );
 }

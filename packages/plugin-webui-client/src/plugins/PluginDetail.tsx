@@ -1,6 +1,6 @@
 import type { FrameHostCapability, PageView } from '@aalis/api-webui';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { Localized } from '@aalis/schema-i18n';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { Block } from '../components/Block';
@@ -14,14 +14,17 @@ import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
+import { compareText, listText } from '../format';
 import { AttentionList } from '../health/AttentionList';
 import { useAttention } from '../health/attention';
+import { text, tr } from '../language';
 import { instanceName, pageAddress, usePages } from '../pages/registry';
 import { deleteJson, isRecord, postJson, RestError } from '../rest';
 import { paths } from '../routes';
 import { SettingRow } from '../settings/SettingRow';
 import { useServices } from '../settings/services';
 import { Main, useShell } from '../shell/Shell';
+import { t } from '../texts';
 import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
@@ -34,15 +37,15 @@ import './PluginDetail.css';
 // 无论成败都重取插件列表
 
 /** 插件前端申请的宿主数据能力怎么写 */
-const CAPABILITIES: Record<FrameHostCapability, string> = {
-  'sessions:read': '读会话树与状态',
-  'turn:abort': '停止会话的回合',
+const CAPABILITIES: Record<FrameHostCapability, TextRef> = {
+  'sessions:read': t('capabilitySessionsRead'),
+  'turn:abort': t('capabilityTurnAbort'),
 };
 
-const PLACEMENTS: Record<PageView['placement'], string> = {
-  plugin: '插件页面，打开后可以固定到图标栏',
-  settings: '设置里的一节',
-  session: '会话面板，在会话右侧面板的「+」里打开',
+const PLACEMENTS: Record<PageView['placement'], TextRef> = {
+  plugin: t('placementPlugin'),
+  settings: t('placementSettings'),
+  session: t('placementSession'),
 };
 
 const enc = encodeURIComponent;
@@ -52,11 +55,11 @@ export function PluginsHome() {
   const { reveal } = useShell();
   return (
     <Main>
-      <Panel title="插件">
+      <Panel title={tr('plugins')}>
         <EmptyState
-          title="选一个插件"
-          description="左栏按子系统列出已安装的插件；要装新的插件，去市场。"
-          action={<Button onClick={() => reveal('left')}>打开插件列表</Button>}
+          title={tr('pluginsHomeTitle')}
+          description={tr('pluginsHomeDescription')}
+          action={<Button onClick={() => reveal('left')}>{tr('pluginsHomeOpen')}</Button>}
         />
       </Panel>
     </Main>
@@ -76,15 +79,15 @@ export function PluginDetail() {
   }
   return (
     <Main>
-      <Panel title="插件" back={paths.plugins}>
+      <Panel title={tr('plugins')} back={paths.plugins}>
         {error ? (
-          <FetchError what="插件列表" error={error} retry={() => void refresh()} />
+          <FetchError what={tr('pluginList')} error={error} retry={() => void refresh()} />
         ) : (
           plugins && (
             <EmptyState
-              title="没有这个插件"
-              description={`${instance} 不在已安装的插件里，可能已经卸载或移除。`}
-              action={<ButtonLink to={paths.market}>去市场</ButtonLink>}
+              title={tr('pluginMissingTitle')}
+              description={tr('pluginMissingDescription', { instance })}
+              action={<ButtonLink to={paths.market}>{tr('goToMarket')}</ButtonLink>}
             />
           )
         )}
@@ -130,79 +133,82 @@ function Summary({ row }: { row: PluginRow }) {
   const locked = row.self || busy !== undefined;
   const uninstall = (removeConfig: boolean) =>
     run(
-      '卸载',
+      'uninstall',
+      tr('uninstall'),
       () => postJson('/api/marketplace/uninstall', { name: row.name, removeConfig }),
       reply => {
         setUninstalling(undefined);
-        toast({ kind: 'success', text: messageOf(reply) ?? `已卸载 ${labelOf(row)}` });
+        toast({ kind: 'success', text: messageOf(reply) ?? tr('uninstalled', { name: labelOf(row) }) });
         navigate(paths.plugins);
       },
       packageManager,
     );
   return (
     <div className="plugin-summary">
-      <p className="plugin-summary-meta">{row.version ? `${row.name} · 版本 ${row.version}` : row.name}</p>
+      <p className="plugin-summary-meta">
+        {row.version ? tr('pluginVersion', { name: row.name, version: row.version }) : row.name}
+      </p>
       <p className="plugin-summary-status">
         <StatusText state={status.state}>{status.short}</StatusText>
         {reason && <span className="plugin-summary-reason">{reason}</span>}
       </p>
-      {row.self && <p className="plugin-summary-note">这个界面由它提供，不能从界面停用或卸载。</p>}
+      {row.self && <p className="plugin-summary-note">{tr('pluginSelfNote')}</p>}
       <div className="page-actions">
         {row.state === 'disabled' ? (
           <Button
             variant="primary"
-            busy={busy === '启用'}
+            busy={busy === 'enable'}
             disabled={busy !== undefined}
-            onClick={() => run('启用', () => postJson(`${base}/enable`, {}))}
+            onClick={() => run('enable', tr('enable'), () => postJson(`${base}/enable`, {}))}
           >
-            启用
+            {tr('enable')}
           </Button>
         ) : (
           <>
             <Button
-              busy={busy === '停用'}
+              busy={busy === 'disable'}
               disabled={locked}
-              onClick={() => run('停用', () => postJson(`${base}/disable`, {}))}
+              onClick={() => run('disable', tr('disable'), () => postJson(`${base}/disable`, {}))}
             >
-              停用
+              {tr('disable')}
             </Button>
             <Button
-              busy={busy === '重载'}
+              busy={busy === 'reload'}
               disabled={busy !== undefined}
-              onClick={() => run('重载', () => postJson(`${base}/reload`, {}))}
+              onClick={() => run('reload', tr('reload'), () => postJson(`${base}/reload`, {}))}
             >
-              重载
+              {tr('reload')}
             </Button>
           </>
         )}
         <LogsLink source={row.instanceId} />
         {row.instanceId === row.name ? (
           <Button variant="text" danger disabled={locked} onClick={() => setUninstalling({ removeConfig: false })}>
-            卸载
+            {tr('uninstall')}
           </Button>
         ) : (
           <Button variant="text" danger disabled={busy !== undefined} onClick={() => setRemoving(row)}>
-            移除实例
+            {tr('removeInstance')}
           </Button>
         )}
       </div>
       <Dialog
         open={uninstalling !== undefined}
-        title={`卸载「${labelOf(row)}」？`}
+        title={tr('uninstallConfirm', { name: labelOf(row) })}
         onClose={() => setUninstalling(undefined)}
         footer={
           uninstalling && (
             <>
               <Button data-autofocus onClick={() => setUninstalling(undefined)}>
-                取消
+                {tr('cancel')}
               </Button>
               <Button
                 variant="primary"
                 danger
-                busy={busy === '卸载'}
+                busy={busy === 'uninstall'}
                 onClick={() => void uninstall(uninstalling.removeConfig)}
               >
-                卸载
+                {tr('uninstall')}
               </Button>
             </>
           )
@@ -226,7 +232,7 @@ function Notices({ row }: { row: PluginRow }) {
   const own = (useAttention().items ?? []).filter(item => item.kind === 'notice' && item.instance === row.instanceId);
   if (own.length === 0) return null;
   return (
-    <Block title="需要处理">
+    <Block title={tr('needsAttention')}>
       <AttentionList items={own} named={false} />
     </Block>
   );
@@ -246,7 +252,8 @@ function RemoveInstanceDialog({ target, current, action, onClose }: RemoveInstan
   const navigate = useNavigate();
   const remove = (plugin: PluginRow) =>
     action.run(
-      '移除实例',
+      'remove-instance',
+      tr('removeInstance'),
       () => deleteJson(`/api/plugins/${enc(plugin.instanceId)}/instance`),
       () => {
         onClose();
@@ -257,25 +264,25 @@ function RemoveInstanceDialog({ target, current, action, onClose }: RemoveInstan
   return (
     <Dialog
       open={target !== undefined}
-      title={`移除实例「${target ? instanceName(target.instanceId) : ''}」？`}
+      title={target ? tr('removeInstanceConfirm', { name: instanceName(target.instanceId) ?? '' }) : ''}
       onClose={onClose}
       footer={
         <>
           <Button data-autofocus onClick={onClose}>
-            取消
+            {tr('cancel')}
           </Button>
           <Button
             variant="primary"
             danger
-            busy={action.busy === '移除实例'}
+            busy={action.busy === 'remove-instance'}
             onClick={() => target && void remove(target)}
           >
-            移除
+            {tr('remove')}
           </Button>
         </>
       }
     >
-      <p>这个实例的配置会一并从配置文件删除。</p>
+      <p>{tr('removeInstanceNote')}</p>
     </Dialog>
   );
 }
@@ -311,55 +318,65 @@ function Relations({ row }: { row: PluginRow }) {
   const find = useFindPlugin();
   const { busy, run } = usePluginAction();
   const providersOf = (service: string) => (plugins ?? []).filter(plugin => plugin.provides.includes(service));
-  const names = (rows: PluginRow[]) => rows.map(labelOf).join('、');
+  const names = (rows: PluginRow[]) => listText(rows.map(labelOf));
   const unmet = new Set([...row.lacking, ...row.waiting].map(({ service }) => service));
   // 宿主自己提供的服务（不在任何插件的 provides 里、此刻也不缺）不列
   const satisfied = row.requiredServices.flatMap(service => {
     const by = providersOf(service);
-    return unmet.has(service) || by.length === 0 ? [] : [`${service}（${names(by)}）`];
+    return unmet.has(service) || by.length === 0 ? [] : [tr('serviceProviders', { service, providers: names(by) })];
   });
   const optional = row.optionalServices.flatMap(service => {
     const by = providersOf(service);
-    return by.length > 0 ? [`${service}（${names(by)}${by.some(p => p.state === 'active') ? '' : '，没在运行'}）`] : [];
+    if (by.length === 0) return [];
+    const providers = names(by);
+    return [
+      by.some(p => p.state === 'active')
+        ? tr('serviceProviders', { service, providers })
+        : tr('serviceProvidersIdle', { service, providers }),
+    ];
   });
   const lines: Array<[string, string[]]> = [
-    ['可选依赖', optional],
-    ['提供的服务', row.provides],
-    ['工具', row.tools],
-    ['指令', row.commands.map(name => `/${name}`)],
-    ['扩展的事件', row.extends?.events ?? []],
-    ['扩展的钩子', row.extends?.hooks ?? []],
+    [tr('relationsOptional'), optional],
+    [tr('providedServices'), row.provides],
+    [tr('relationsTools'), row.tools],
+    [tr('relationsCommands'), row.commands.map(name => `/${name}`)],
+    [tr('relationsEvents'), row.extends?.events ?? []],
+    [tr('relationsHooks'), row.extends?.hooks ?? []],
   ];
   if (unmet.size + satisfied.length === 0 && lines.every(([, items]) => items.length === 0)) return null;
   return (
-    <Block title="依赖与贡献">
+    <Block title={tr('relationsTitle')}>
       <Lines lines={lines}>
         {unmet.size + satisfied.length > 0 && (
           <div className="page-info-item">
-            <dt>依赖</dt>
+            <dt>{tr('relationsRequired')}</dt>
             <dd>
               <ul className="plugin-needs">
                 {row.lacking.map(({ service, chain, root }) => {
                   const go = rootAction(root, find);
-                  const enable = root.kind === 'disabled' && `启用 ${pluginName(root.instance, find)}`;
+                  const enable = root.kind === 'disabled' && {
+                    id: `enable:${root.instance}`,
+                    label: tr('enablePlugin', { name: pluginName(root.instance, find) }),
+                  };
                   return (
                     <li key={JSON.stringify([service, chain, root])}>
-                      <StatusText state="attention">{`${service}：缺`}</StatusText>
+                      <StatusText state="attention">{tr('serviceLacking', { service })}</StatusText>
                       <span>{unmetText({ service, chain, root }, find)}</span>
                       {enable ? (
                         <Button
-                          busy={busy === enable}
+                          busy={busy === enable.id}
                           disabled={busy !== undefined}
                           onClick={() =>
                             run(
-                              enable,
+                              enable.id,
+                              enable.label,
                               () => postJson(`/api/plugins/${enc(root.instance)}/enable`, {}),
                               undefined,
                               root.instance,
                             )
                           }
                         >
-                          {enable}
+                          {enable.label}
                         </Button>
                       ) : (
                         go && <ButtonLink to={go.to}>{go.label}</ButtonLink>
@@ -369,7 +386,9 @@ function Relations({ row }: { row: PluginRow }) {
                 })}
                 {row.waiting.map(({ service, chain, root }) => (
                   <li key={JSON.stringify([service, chain, root])}>
-                    <StatusText state="running">{`${service}：${rootText(root, find)}`}</StatusText>
+                    <StatusText state="running">
+                      {tr('serviceWaiting', { service, reason: rootText(root, find) })}
+                    </StatusText>
                   </li>
                 ))}
                 {satisfied.map(line => (
@@ -385,7 +404,11 @@ function Relations({ row }: { row: PluginRow }) {
 }
 
 /** 此刻选中那一家的依据 */
-const BASIS: Record<string, string> = { plugin: '本插件偏好', global: '全局偏好', rank: '没有偏好，按优先级' };
+const BASIS: Record<string, TextRef> = {
+  plugin: t('basisPlugin'),
+  global: t('basisGlobal'),
+  rank: t('basisRank'),
+};
 
 /**
  * 本插件偏好：它声明的服务里有几个提供者（或设过偏好）的各一行，设了只对它生效，「跟随全局」清除；每行写它此刻用的那一家
@@ -408,20 +431,34 @@ function ServicePreferences({ row }: { row: PluginRow }) {
     await refresh();
   };
   return (
-    <Block title="服务偏好">
-      <p className="settings-note">不需要让这个插件改用别家、也不需要它固定用某一家时，别设，跟随全局偏好就好。</p>
+    <Block title={tr('servicePreferences')}>
+      <p className="settings-note">{tr('servicePreferencesNote')}</p>
       {error && (
-        <FetchError what="服务列表" error={error} retry={refetch} stale={services !== undefined} inline source={host} />
+        <FetchError
+          what={tr('serviceList')}
+          error={error}
+          retry={refetch}
+          stale={services !== undefined}
+          inline
+          source={host}
+        />
       )}
       <div className="settings-rows">
         {shown.map(service => {
           const preferred = own(service.name);
           const missing = preferred !== undefined && !service.providers.some(p => p.contextId === preferred);
           const effective = row.serviceSelections[service.name];
-          const label =
-            service.providers.find(p => p.contextId === effective?.contextId)?.label ?? effective?.contextId;
-          const basis = effective?.basis && BASIS[effective.basis];
-          const using = effective && `现在用：${label}${basis ? `（${basis}）` : ''}`;
+          const provider =
+            effective &&
+            (service.providers.find(p => p.contextId === effective.contextId)?.label ?? effective.contextId);
+          const basis = effective?.basis && Object.hasOwn(BASIS, effective.basis) ? BASIS[effective.basis] : undefined;
+          const using =
+            provider === undefined
+              ? undefined
+              : basis
+                ? tr('usingProviderBy', { provider, basis })
+                : tr('usingProvider', { provider });
+          const missingText = missing ? tr('providerAbsent') : undefined;
           return (
             <SettingRow
               key={service.name}
@@ -431,10 +468,12 @@ function ServicePreferences({ row }: { row: PluginRow }) {
                 options: service.providers.map(provider => ({ label: provider.label, value: provider.contextId })),
               }}
               value={preferred}
-              source={preferred === undefined ? undefined : '本插件偏好'}
-              note={[missing && '这一家现在不在', using].filter(Boolean).join('，') || undefined}
-              unset="跟随全局偏好"
-              reset={preferred === undefined ? undefined : '跟随全局'}
+              source={preferred === undefined ? undefined : tr('basisPlugin')}
+              note={
+                missingText && using ? tr('notePair', { first: missingText, second: using }) : (missingText ?? using)
+              }
+              unset={tr('followGlobalPreference')}
+              reset={preferred === undefined ? undefined : tr('followGlobal')}
               save={save(service.name)}
             />
           );
@@ -450,7 +489,7 @@ function Pages({ row }: { row: PluginRow }) {
   const own = (pages ?? []).filter(page => page.instance === row.instanceId);
   if (own.length === 0) return null;
   return (
-    <Block title="页面">
+    <Block title={tr('pages')}>
       <ul className="plugin-pages">
         {own.map(page => {
           const to = pageAddress(page);
@@ -459,11 +498,14 @@ function Pages({ row }: { row: PluginRow }) {
             <li key={page.key}>
               {to ? <Link to={to}>{page.title}</Link> : <span>{page.title}</span>}
               <span className="plugin-page-detail">
-                {PLACEMENTS[page.placement]}
-                {page.frame &&
-                  (host.length > 0
-                    ? `；插件前端，申请宿主数据：${host.map(capability => CAPABILITIES[capability]).join('、')}`
-                    : '；插件前端，不申请宿主数据')}
+                {!page.frame
+                  ? text(PLACEMENTS[page.placement])
+                  : host.length > 0
+                    ? tr('pageFrame', {
+                        placement: PLACEMENTS[page.placement],
+                        capabilities: host.map(capability => CAPABILITIES[capability]),
+                      })
+                    : tr('pageFrameNoHost', { placement: PLACEMENTS[page.placement] })}
               </span>
             </li>
           );
@@ -487,13 +529,14 @@ function Instances({ row }: { row: PluginRow }) {
   const instances = (plugins ?? [])
     .filter(plugin => plugin.name === row.name)
     .sort((a, b) =>
-      a.instanceId === a.name ? -1 : b.instanceId === b.name ? 1 : a.instanceId.localeCompare(b.instanceId),
+      a.instanceId === a.name ? -1 : b.instanceId === b.name ? 1 : compareText(a.instanceId, b.instanceId),
     );
 
   const create = () => {
     setProblem(undefined);
     void run(
-      '新建实例',
+      'create-instance',
+      tr('createInstance'),
       async () => {
         try {
           return await postJson(`/api/plugins/${enc(row.name)}/instances`, { suffix: suffix.trim() });
@@ -510,7 +553,7 @@ function Instances({ row }: { row: PluginRow }) {
         if (!isRecord(reply) || typeof reply.instanceId !== 'string') return;
         toast({
           kind: 'success',
-          text: typeof reply.message === 'string' ? reply.message : `已新建 ${reply.instanceId}`,
+          text: typeof reply.message === 'string' ? reply.message : tr('created', { name: reply.instanceId }),
         });
         setSuffix('');
         navigate(paths.plugin(reply.instanceId));
@@ -519,8 +562,8 @@ function Instances({ row }: { row: PluginRow }) {
   };
 
   return (
-    <Block title="实例">
-      <List label="实例">
+    <Block title={tr('instances')}>
+      <List label={tr('instances')}>
         {instances.map(plugin => {
           const name = instanceName(plugin.instanceId);
           const status = statusOf(plugin);
@@ -528,13 +571,16 @@ function Instances({ row }: { row: PluginRow }) {
             <ListItem
               key={plugin.instanceId}
               to={paths.plugin(plugin.instanceId)}
-              title={name ?? '主实例'}
+              title={name ?? tr('mainInstance')}
               meta={status.state && status.short}
               marker={markerOf(status)}
               current={plugin.instanceId === row.instanceId}
               menu={
                 name !== undefined && (
-                  <Menu label="更多" items={[{ label: '移除', danger: true, onSelect: () => setRemoving(plugin) }]} />
+                  <Menu
+                    label={tr('more')}
+                    items={[{ label: tr('remove'), danger: true, onSelect: () => setRemoving(plugin) }]}
+                  />
                 )
               }
             />
@@ -548,17 +594,17 @@ function Instances({ row }: { row: PluginRow }) {
           create();
         }}
       >
-        <label htmlFor={inputId}>新实例的名字</label>
+        <label htmlFor={inputId}>{tr('newInstanceName')}</label>
         <div className="plugin-instance-input">
           <input
             id={inputId}
             value={suffix}
-            placeholder="字母、数字、下划线或连字符"
+            placeholder={tr('newInstancePlaceholder')}
             aria-invalid={problem ? true : undefined}
             onChange={event => setSuffix(event.target.value)}
           />
-          <Button type="submit" busy={busy === '新建实例'} disabled={!suffix.trim() || busy !== undefined}>
-            新建实例
+          <Button type="submit" busy={busy === 'create-instance'} disabled={!suffix.trim() || busy !== undefined}>
+            {tr('createInstance')}
           </Button>
         </div>
         {problem && <p className="field-problem">{problem}</p>}

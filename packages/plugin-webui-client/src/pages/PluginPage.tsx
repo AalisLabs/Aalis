@@ -10,6 +10,7 @@ import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
 import { FramePage } from '../frame/FramePage';
+import { tr } from '../language';
 import { useHost } from '../plugins/list';
 import { paths } from '../routes';
 import { Main } from '../shell/Shell';
@@ -31,7 +32,7 @@ export function PluginPage() {
       {page ? (
         <OpenPage key={paths.page(refOf(page))} page={page} />
       ) : (
-        <Panel title="页面" back={paths.home}>
+        <Panel title={tr('pageHeading')} back={paths.home}>
           <PageMissing instance={instance} />
         </Panel>
       )}
@@ -43,7 +44,7 @@ export function PluginPage() {
 export function PageMissing({ instance }: { instance: string }) {
   const { pages, pagesError, retry } = usePages();
   const host = useHost();
-  if (pagesError) return <FetchError what="页面" error={pagesError} retry={retry} source={host} />;
+  if (pagesError) return <FetchError what={tr('pages')} error={pagesError} retry={retry} source={host} />;
   return pages ? <PageGone instance={instance} /> : null;
 }
 
@@ -51,9 +52,9 @@ export function PageMissing({ instance }: { instance: string }) {
 export function PageGone({ instance }: { instance: string }) {
   return (
     <EmptyState
-      title="这个页面所属的插件已停用"
-      description="插件重新启用后会自动回到这里。"
-      action={<ButtonLink to={paths.plugin(instance)}>去插件详情</ButtonLink>}
+      title={tr('pageGoneTitle')}
+      description={tr('pageGoneDescription')}
+      action={<ButtonLink to={paths.plugin(instance)}>{tr('goToPluginDetail')}</ButtonLink>}
     />
   );
 }
@@ -67,7 +68,7 @@ function OpenPage({ page }: { page: Localized<PageView> }) {
       back={paths.home}
       actions={
         <>
-          <IconButton icon={RotateCw} label="刷新" onClick={reload} />
+          <IconButton icon={RotateCw} label={tr('refresh')} onClick={reload} />
           <PinButton page={page} />
         </>
       }
@@ -91,7 +92,7 @@ function PinButton({ page }: { page: Localized<PageView> }) {
   const [busy, setBusy] = useState(false);
   if (!layout) {
     return layoutError ? (
-      <IconButton icon={CircleAlert} label={`布局记录没取到：${layoutError.message}（点按重试）`} onClick={retry} />
+      <IconButton icon={CircleAlert} label={tr('layoutFailedRetry', { error: layoutError.message })} onClick={retry} />
     ) : null;
   }
   const ref = refOf(page);
@@ -99,14 +100,18 @@ function PinButton({ page }: { page: Localized<PageView> }) {
   return (
     <IconButton
       icon={Pin}
-      label="固定到图标栏"
+      label={tr('pinToIconBar')}
       aria-pressed={pinned}
       disabled={busy}
       onClick={() => {
         setBusy(true);
         changeLayout({ op: pinned ? 'unpin' : 'pin', page: ref })
           .catch((err: Error) =>
-            toast({ kind: 'danger', text: `${pinned ? '取消固定' : '固定'}失败：${err.message}`, source: host }),
+            toast({
+              kind: 'danger',
+              text: tr('actionFailed', { action: pinned ? tr('unpin') : tr('pin'), error: err.message }),
+              source: host,
+            }),
           )
           .finally(() => setBusy(false));
       }}

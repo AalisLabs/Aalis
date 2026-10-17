@@ -8,6 +8,7 @@ import { Badge } from '../../packages/plugin-webui-client/src/components/Badge.j
 import { Button } from '../../packages/plugin-webui-client/src/components/Button.js';
 import { Dialog } from '../../packages/plugin-webui-client/src/components/Dialog.js';
 import { EmptyState } from '../../packages/plugin-webui-client/src/components/EmptyState.js';
+import { FetchError } from '../../packages/plugin-webui-client/src/components/FetchError.js';
 import { IconButton } from '../../packages/plugin-webui-client/src/components/IconButton.js';
 import { List, ListItem } from '../../packages/plugin-webui-client/src/components/List.js';
 import { Menu } from '../../packages/plugin-webui-client/src/components/Menu.js';
@@ -17,6 +18,8 @@ import { TABLE_PAGE_SIZE, Table, type TableColumn } from '../../packages/plugin-
 import { Tabs } from '../../packages/plugin-webui-client/src/components/Tabs.js';
 import { ToastProvider, useToast } from '../../packages/plugin-webui-client/src/components/Toast.js';
 import { Toggle } from '../../packages/plugin-webui-client/src/components/Toggle.js';
+import { setLanguage } from '../../packages/plugin-webui-client/src/language.js';
+import { getJson } from '../../packages/plugin-webui-client/src/rest.js';
 import { stubPlatform } from '../helpers/browser.js';
 import { choose, installDialog } from './harness.js';
 
@@ -59,6 +62,28 @@ describe('Button 与 IconButton', () => {
     render(<IconButton icon={Ellipsis} label="搜索" shortcut="⌘K" />);
     const button = screen.getByRole('button', { name: '搜索' });
     expect(button.getAttribute('title')).toBe('搜索（⌘K）');
+  });
+});
+
+describe('英文界面', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setLanguage({ chain: [], timeZone: 'UTC', packs: new Map() });
+  });
+
+  it('悬停提示里的快捷键、取数失败的一行与 REST 没给原因时的状态码说明按英文写', async () => {
+    setLanguage({ chain: ['en'], timeZone: 'UTC', packs: new Map() });
+    render(<IconButton icon={Ellipsis} label="Search" shortcut="⌘K" />);
+    expect(screen.getByRole('button', { name: 'Search' }).getAttribute('title')).toBe('Search (⌘K)');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 502 })),
+    );
+    const error = await getJson('/api/zz', new AbortController().signal).catch((err: Error) => err);
+    render(<FetchError what="Plugin list" error={error as Error} retry={() => {}} stale />);
+    expect(screen.getByText('Plugin list couldn’t be refreshed: /api/zz returned 502')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 });
 

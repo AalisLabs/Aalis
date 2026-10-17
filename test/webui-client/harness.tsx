@@ -3,7 +3,9 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { expect, vi } from 'vitest';
 import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
 import type { SessionMethodParams, SessionMethodResult } from '../../packages/api-session-protocol/src/index.js';
+import { PAGE_LANGUAGE_ID, type PageLanguage } from '../../packages/api-webui/src/index.js';
 import { App } from '../../packages/plugin-webui-client/src/App.js';
+import { setLanguage } from '../../packages/plugin-webui-client/src/language.js';
 import { type AdminClient, createAdminClient } from '../../packages/plugin-webui-client/src/protocol/admin-client.js';
 import {
   createSessionClient,
@@ -190,10 +192,23 @@ export interface FakeRequest {
 
 /**
  * 假的 REST：路径（含查询串）→ 回应的 JSON，或按请求算回应的函数（返回 Response 时原样回，可以带状态码）；
- * 登录状态、插件列表、页面表、布局记录、「需要处理」、模型列表与服务列表有缺省的回应（缺省有一个能对话的模型，首页不出「开始使用」；服务列表为空），
- * 没有的路径回 404
+ * 登录状态、插件列表、页面表、布局记录、「需要处理」、模型列表、服务列表与界面的语言有缺省的回应（缺省有一个能对话的模型，
+ * 首页不出「开始使用」；服务列表为空；语言见 {@link language}），没有的路径回 404。语言包的补充按路径认，不看查询串（ns 的清单
+ * 随前端打包的字典而定）。服务端写进页面的语言块与那一刻 GET /api/i18n/languages 的回应相同，见 {@link renderApp}
  */
 export type FakeRest = Record<string, unknown>;
+
+const MESSAGES = '/api/i18n/messages';
+
+/**
+ * 界面的语言：GET /api/i18n/languages 回全局默认层的这条语言链与服务进程的时区（取测试进程的时区，用例里本地时间构造的时刻
+ * 照常对得上；前端不读 languages，给空的），语言包的补充是 packs；链为空是 i18n 不在。缺省的回应是 zh-CN；英文界面的用例在
+ * rest 里展开 language(['en'])，要别的时区的用例直接写这条路由
+ */
+export function language(chain: string[], { packs = {} }: { packs?: object } = {}): FakeRest {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return { '/api/i18n/languages': { languages: [], chain, timeZone }, [MESSAGES]: { entries: packs } };
+}
 
 /** 请求被作废时按浏览器的行为立即以作废的原因失败，不等回应 */
 const aborted = (signal: AbortSignal | null | undefined) =>
@@ -203,8 +218,8 @@ const aborted = (signal: AbortSignal | null | undefined) =>
     signal.addEventListener('abort', () => reject(signal.reason), { once: true });
   });
 
-/** 换掉全局的 fetch，按路径回 rest 里的 JSON */
-export function stubRest(rest: FakeRest = {}): void {
+/** 换掉全局的 fetch，按路径回 rest 里的 JSON；返回连同缺省回应的全部路由 */
+export function stubRest(rest: FakeRest = {}): FakeRest {
   const routes: FakeRest = {
     '/api/auth/status': { authed: true },
     '/api/plugins': { plugins: [] },
@@ -213,11 +228,12 @@ export function stubRest(rest: FakeRest = {}): void {
     '/api/attention': { items: [] },
     '/api/models/llm': { providers: [CHAT_MODEL] },
     '/api/services': { services: {} },
+    ...language(['zh-CN']),
     ...rest,
   };
   const answer = async (input: string, init?: RequestInit) => {
     const url = new URL(input, location.origin);
-    const route = routes[url.pathname + url.search];
+    const route = routes[url.pathname === MESSAGES ? MESSAGES : url.pathname + url.search];
     if (route === undefined) return Response.json({ error: '未知 API' }, { status: 404 });
     if (typeof route !== 'function') return Response.json(route);
     const request: FakeRequest = {
@@ -231,6 +247,14 @@ export function stubRest(rest: FakeRest = {}): void {
     'fetch',
     vi.fn((input: string, init?: RequestInit) => Promise.race([answer(input, init), aborted(init?.signal)])),
   );
+  return routes;
+}
+
+/** 服务端写进页面的语言块：与这一刻 GET /api/i18n/languages 的回应相同（按请求算的回应同样算一次），回应不是 JSON 时没有 */
+function pageLanguageOf(route: unknown): PageLanguage | undefined {
+  const reply = typeof route === 'function' ? (route as (request: FakeRequest) => unknown)({ method: 'GET' }) : route;
+  const { chain, timeZone } = (reply ?? {}) as Partial<PageLanguage>;
+  return Array.isArray(chain) && typeof timeZone === 'string' ? { chain, timeZone } : undefined;
 }
 
 /** 发出的 REST 请求，按先后：路径（含查询串）、方法与请求体 */
@@ -246,10 +270,23 @@ export function restCalls(): Array<FakeRequest & { path: string }> {
 }
 
 /**
- * 在 url 上渲染整个前端，等会话连接握手完成；rest 是假的 REST 回应。url 给成几条时，前面的是打开页面之前就有的历史
+ * 在 url 上渲染整个前端，等界面画出来、会话连接握手完成；rest 是假的 REST 回应。url 给成几条时，前面的是打开页面之前就有的
+ * 历史。page 是服务端写进页面的语言块：缺省照 GET /api/i18n/languages 的回应，false 是没有这一块（直接打开 /index.html、
+ * 开发模式）
  */
-export async function renderApp(url: string | string[], handlers: FakeHandlers, rest?: FakeRest): Promise<Harness> {
-  stubRest(rest);
+export async function renderApp(
+  url: string | string[],
+  handlers: FakeHandlers,
+  rest?: FakeRest,
+  { page }: { page?: PageLanguage | false } = {},
+): Promise<Harness> {
+  const routes = stubRest(rest);
+  const written = page === undefined ? pageLanguageOf(routes['/api/i18n/languages']) : page;
+  if (written) {
+    const block = Object.assign(document.createElement('script'), { type: 'application/json', id: PAGE_LANGUAGE_ID });
+    block.textContent = JSON.stringify(written);
+    document.head.append(block);
+  }
   const all: FakeHandlers = {
     initialize: () => INIT,
     'sessions/watch': () => ({}),
@@ -268,10 +305,15 @@ export async function renderApp(url: string | string[], handlers: FakeHandlers, 
   FakeWebSocket.at('/admin').open();
   render(
     <MemoryRouter initialEntries={[url].flat()}>
-      <App session={session} admin={admin} />
+      <div data-testid="app">
+        <App session={session} admin={admin} />
+      </div>
       <Where />
     </MemoryRouter>,
   );
+  // 等界面画出来、各处的副作用跑完再接上会话连接，用例都从「界面先于握手画好」写起
+  await vi.waitFor(() => expect(screen.getByTestId('app').childElementCount).toBeGreaterThan(0));
+  await act(async () => {});
   const server = await connect();
   return {
     session,
@@ -285,6 +327,10 @@ export async function renderApp(url: string | string[], handlers: FakeHandlers, 
       cleanup();
       session.close();
       admin.close();
+      // 界面的语言是模块里的状态：复原成原文，免得漏给同一文件里后面单独渲染组件的用例
+      setLanguage({ chain: [], timeZone: 'UTC', packs: new Map() });
+      document.documentElement.lang = '';
+      document.getElementById(PAGE_LANGUAGE_ID)?.remove();
     },
   };
 }
