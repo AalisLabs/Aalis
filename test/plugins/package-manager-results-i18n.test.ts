@@ -5,11 +5,12 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostLanguage } from '../fixtures/host-language.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// 包管理的装卸与更新结果：message 与 conflicts 可以是文字对象，WebUI 的市场接口按读者语言渲染（en 拿英文，zh-CN 拿原文），
-// 原样的字符串照旧。包管理服务是替身，webui-server 与 plugin-i18n 是真的。
+// 包管理的装卸与更新结果：message 与 conflicts 可以是文字对象，WebUI 的市场接口按全局默认层的语言渲染（en 拿英文，zh-CN
+// 拿原文），原样的字符串照旧。包管理服务与会话管理是替身，webui-server 与 plugin-i18n 是真的。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-package-results-token-placeholder';
@@ -44,35 +45,38 @@ async function setup() {
   const { app } = hostedApp({}, { logger: silent });
   apps.push(app);
   app.bind({ provide }).provide.use(packageManager, fake);
+  const setLanguage = provideHostLanguage(app, ['en']);
   await app.plugin(i18nPlugin);
   await app.plugin(webuiServer, { port, host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN });
   await app.plugins.idle();
   await app.start();
   await waitListening(port);
-  return async (path: string, body: unknown, lang: string) => {
+  const post = async (path: string, body: unknown) => {
     const res = await fetch(`http://127.0.0.1:${port}/api/marketplace/${path}`, {
       method: 'POST',
-      headers: { cookie: `aalis_webui_token=${TOKEN}; aalis-lang=${lang}`, 'content-type': 'application/json' },
+      headers: { cookie: `aalis_webui_token=${TOKEN}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
     return res.json();
   };
+  return { post, setLanguage };
 }
 
-describe('包管理结果按读者语言', () => {
+describe('包管理结果按全局默认层的语言', () => {
   it('更新的 message 与 conflicts、卸载的 message：en 拿英文，zh-CN 拿原文，原样的字符串照旧', async () => {
-    const post = await setup();
+    const { post, setLanguage } = await setup();
     const update = { targets: [{ name: '@zz/a', version: '1.0.0' }] };
-    expect(await post('update', update, 'en')).toEqual({
+    expect(await post('update', update)).toEqual({
       ok: false,
       message: 'The dry run failed',
       conflicts: ['The core version that @zz/a needs cannot be installed', 'npm ERR! peer core@0.30'],
     });
-    expect(await post('update', update, 'zh-CN')).toEqual({
+    expect(await post('uninstall', { name: '@zz/a' })).toEqual({ ok: false, message: 'The dry run failed' });
+    setLanguage(['zh-CN']);
+    expect(await post('update', update)).toEqual({
       ok: false,
       message: '预检没有通过',
       conflicts: ['@zz/a 要求的 core 版本装不上', 'npm ERR! peer core@0.30'],
     });
-    expect(await post('uninstall', { name: '@zz/a' }, 'en')).toEqual({ ok: false, message: 'The dry run failed' });
   });
 });

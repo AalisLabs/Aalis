@@ -10,8 +10,9 @@
  * 第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。
  * 对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
  *
- * 给人看的文字字段写成产出方的形状：服务端交出字符串或文字对象（@aalis/schema-i18n 的 TextRef），发出前按连接的读者
- * （握手时给的语言链与时区）渲染成字符串，线上一律是字符串；读线上的一方（客户端）按 schema-i18n 的 Localized<…> 读。
+ * 给人看的文字字段写成产出方的形状：服务端交出字符串或文字对象（@aalis/schema-i18n 的 TextRef），发出前按全局默认层的
+ * 语言（读者是 owner 自己）渲染成字符串，日期与时间按服务进程的时区，线上一律是字符串；读线上的一方（客户端）按
+ * schema-i18n 的 Localized<…> 读。
  */
 
 import type { ApprovalSurface } from '@aalis/api-approval';
@@ -23,7 +24,7 @@ import { z } from 'zod';
 /** 协议版本 `<主>.<次>`：握手时主版本不同即断开 */
 export const SESSION_PROTOCOL_VERSION = '1.1';
 
-/** 给人看的文字：服务端交出字符串或文字对象，发出前按连接的读者渲染成字符串 */
+/** 给人看的文字：服务端交出字符串或文字对象，发出前按全局默认层的语言渲染成字符串 */
 const TextSchema = z.union([z.string(), z.custom<TextRef>(isTextRef)]);
 
 // ════════════════════════════════════════════════════════════
@@ -110,15 +111,9 @@ const EmptySchema = z.object({});
 export const IdentitySchema = z.object({ platform: z.string(), userId: z.string() });
 export type Identity = z.infer<typeof IdentitySchema>;
 
-/**
- * 握手。languages 是读者的语言链（语言标签，靠前的优先），timeZone 是读者的时区（IANA 名），1.1 起有：这条连接收到的文字按它们
- * 渲染；不给 languages（或给的一种都不合法）时按全局默认层的设置。换语言要重连
- */
 export const InitializeParamsSchema = z.object({
   protocolVersion: z.string().regex(/^\d+\.\d+$/),
   client: z.object({ name: z.string(), version: z.string() }),
-  languages: z.array(z.string()).optional(),
-  timeZone: z.string().optional(),
 });
 
 /**
@@ -460,8 +455,9 @@ const itemBase = {
  *   宿主通知（schema-message 的 hostNotice）的 topic 是它的 kind，另带 noticeId（hostNotice.id）与 facts（hostNotice.facts，
  *   给界面的事实，键由定义这个 kind 的契约约定）；text 是给人看的那句（hostNotice.text），通知没给时是写给模型的正文。
  *   界面认得的 kind 按事实画成状态、不显示 text，如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId
- *   是任务 id）。平台事件合成的入站（schema-message 的 IncomingMessage.text，如好友申请）不是谁的发言，同样是 notice：
- *   topic 是它的来源（IncomingMessage.source），text 是给人看的那句；
+ *   是任务 id）。平台事件合成或转成的入站（带 schema-message 的 IncomingMessage.text，如好友申请、戳一戳）不是谁的发言，
+ *   同样是 notice：topic 是它的通知子类型（IncomingMessage.noticeType，如 poke），没有时是它的来源（IncomingMessage.source，
+ *   如好友申请的），text 是给人看的那句；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的

@@ -2,6 +2,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
+import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
@@ -290,6 +291,8 @@ const uses = {
   tools: optional(tools),
   commands: optional(commands),
   userRelation: optional(userRelation),
+  /** 事实的语言：取全局默认层的语言列表（读者是 owner），缺席时按中文 */
+  i18n: optional(i18n),
   /** 档案页；不在时照常记档案 */
   webui: optional(webuiServer),
 };
@@ -315,6 +318,7 @@ function registerUserProfile({
   tools,
   commands,
   userRelation,
+  i18n,
   webui,
 }: Caps): void {
   const parsed = parseConfig(configSchema, config.use, logger.use);
@@ -691,7 +695,7 @@ function registerUserProfile({
       '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写' +
       '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条' +
       '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除' +
-      `\n5. 每条 text 用一句简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字，不带「用户」「他」等代词，直接陈述事实` +
+      `\n5. 每条 text 用一句简洁的 ${outputLanguageFor(i18n, { host: true }, 'zh-CN')}，不超过 ${cfg.maxFactCharsPerItem} 个字符，不带「用户」「他」等代词，直接陈述事实` +
       '\n6. 如果没有任何更新，或所有候选都拿不准，三个数组都返回空——**保守优先**' +
       `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}` +
       '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary' +

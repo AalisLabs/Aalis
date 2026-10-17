@@ -29,6 +29,16 @@ const SOURCE = {
   settingUnset: '按英文',
   followSystem: '跟随系统（当前：{current}）',
   badLanguage: '{tag} 不是合法的语言标签',
+  languagesProvided: '语言列表里的语言都有插件提供',
+  followedUnprovided: '跟随系统当前是 {language}，没有插件提供，实际用 {used}',
+  languageUnprovided: '语言列表里的 {language} 没有插件提供，实际用 {used}',
+  layerFollowedUnprovided: '{layer}里的跟随系统当前是 {language}，没有插件提供，实际用 {used}',
+  layerLanguageUnprovided: '{layer}里的 {language} 没有插件提供，实际用 {used}',
+  layerPlatform: '{layer} {platform}',
+  layerType: '{layer} {platform} · {type}',
+  layerPlace: '{layer}『{place}』',
+  installPack:
+    '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在会话设置的{layer}里调整「语言」列表',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -8,12 +8,14 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostLanguage } from '../fixtures/host-language.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 的可选项接口按读者语言渲染产出方交来的文字对象：工具分组的名字与概述（/api/models/toolGroups），深度思考档位的
+// WebUI 的可选项接口按全局默认层的语言渲染产出方交来的文字对象：工具分组的名字与概述（/api/models/toolGroups），深度思考档位的
 // 名字（/api/models/llm-thinking 的可选项与 labels），平台类型的显示名（/api/models/gateway-scopes，没有显示名的照旧写类型名）。
-// 分组的 description 只给模型，不进可选项：没有概述的分组不显示概述。i18n 是真的 plugin-i18n，缺席时一律原文。
+// 分组的 description 只给模型，不进可选项：没有概述的分组不显示概述。i18n 是真的 plugin-i18n，缺席时一律原文；会话管理是
+// 只给全局默认层的替身。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-options-i18n-token-placeholder-0';
@@ -84,6 +86,7 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   const port = await freePort();
   const { app } = hostedApp({}, { logger: silent });
   apps.push(app);
+  const setLanguage = provideHostLanguage(app, ['en']);
   await app.plugin(toolsPlugin, {});
   if (withI18n) await app.plugin(i18nPlugin);
   await app.plugin(owner);
@@ -91,18 +94,16 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   await app.plugins.idle();
   await app.start();
   await waitListening(port);
-  const get = async (path: string, lang: string) => {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-      headers: { cookie: `aalis_webui_token=${TOKEN}; aalis-lang=${lang}` },
-    });
+  const get = async (path: string) => {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie: `aalis_webui_token=${TOKEN}` } });
     return res.json();
   };
   /** 读者看到的：分组可选项（不含「全部分组」）、档位可选项与 labels、作用域可选项里与平台类型有关的几项 */
-  return async (lang: string) => {
-    const groups = await get('/api/models/toolGroups', lang);
+  const shown = async () => {
+    const groups = await get('/api/models/toolGroups');
     const dependency = encodeURIComponent(JSON.stringify({ provider: OWNER, model: 'm1' }));
-    const thinking = await get(`/api/models/llm-thinking?dependency=${dependency}`, lang);
-    const scopes = await get('/api/models/gateway-scopes', lang);
+    const thinking = await get(`/api/models/llm-thinking?dependency=${dependency}`);
+    const scopes = await get('/api/models/gateway-scopes');
     return {
       groups: groups.details.filter((detail: { value: string }) => detail.value !== '*'),
       levels: thinking.details,
@@ -110,6 +111,7 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
       scopes: scopes.details.filter((detail: { value: string }) => /^(\*:|zz:)(room|dm)$/.test(detail.value)),
     };
   };
+  return { shown, setLanguage };
 }
 
 const CHINESE = {
@@ -153,15 +155,16 @@ const ENGLISH = {
   ],
 };
 
-describe('可选项接口按读者语言渲染', () => {
+describe('可选项接口按全局默认层的语言渲染', () => {
   it('分组的名字与概述、档位名、平台类型的显示名：en 拿英文，zh-CN 拿原文；没有概述的分组不显示概述，没有显示名的类型写类型名', async () => {
-    const shown = await setup();
-    expect(await shown('en')).toEqual(ENGLISH);
-    expect(await shown('zh-CN')).toEqual(CHINESE);
+    const { shown, setLanguage } = await setup();
+    expect(await shown()).toEqual(ENGLISH);
+    setLanguage(['zh-CN']);
+    expect(await shown()).toEqual(CHINESE);
   });
 
   it('i18n 缺席时一律原文', async () => {
-    const shown = await setup({ withI18n: false });
-    expect(await shown('en')).toEqual(CHINESE);
+    const { shown } = await setup({ withI18n: false });
+    expect(await shown()).toEqual(CHINESE);
   });
 });

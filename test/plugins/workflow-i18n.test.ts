@@ -14,15 +14,16 @@ import { runDag } from '../../packages/plugin-workflow/src/engine.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { defineTexts, resolveText } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 工作流运行的错误原因可以是文字对象：节点失败的那一句在 plugin-workflow 的字典里，接住的报错作参数、落盘前截到 200 字。
-// 运行历史重启读回时文字对象仍在。WebUI 的工作流页（REST）按读者语言渲染运行表与「立即运行」的报错：en 拿英文，
+// 运行历史重启读回时文字对象仍在。WebUI 的工作流页（REST）按全局默认层的语言渲染运行表与「立即运行」的报错：en 拿英文，
 // zh-CN 拿原文；交给模型的运行历史取原文。
-// 真的 storage-local、tools、cron-engine、plugin-workflow、webui-server 与 plugin-i18n。
+// 真的 storage-local、tools、cron-engine、plugin-workflow、webui-server 与 plugin-i18n，会话管理是只给全局默认层的替身。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-workflow-i18n-token-placeholder-0';
@@ -93,17 +94,18 @@ async function boot() {
   });
   await app.plugin(toolsPlugin, {});
   await app.plugin(cronEnginePlugin, {});
+  const setLanguage = provideHostLanguage(app, ['en']);
   await app.plugin(i18nPlugin);
   await app.plugin(workflowPlugin, {});
   await app.plugin(webuiServer, { port, host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN });
   await app.plugins.idle();
   await app.start();
   await waitListening(port);
-  const request = async (path: string, lang: string, method = 'GET', body?: unknown) => {
+  const request = async (path: string, method = 'GET', body?: unknown) => {
     const res = await fetch(`http://127.0.0.1:${port}/api/pages/${INSTANCE}/workflows/${path}`, {
       method,
       headers: {
-        cookie: `aalis_webui_token=${TOKEN}; aalis-lang=${lang}`,
+        cookie: `aalis_webui_token=${TOKEN}`,
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
@@ -111,13 +113,13 @@ async function boot() {
     return res.json();
   };
   /** 运行表里预置的那条的状态与原因 */
-  const runs = async (lang: string) => {
-    const { data } = (await request('data/runs', lang)) as {
+  const runs = async () => {
+    const { data } = (await request('data/runs')) as {
       data: Array<{ runId: string; status: { text: string }; error: string }>;
     };
     return data.filter(r => r.runId.startsWith('zz-')).map(({ runId, status, error }) => ({ runId, status, error }));
   };
-  return { app, request, runs };
+  return { app, request, runs, setLanguage };
 }
 
 describe('工作流运行的错误原因', () => {
@@ -144,14 +146,13 @@ describe('工作流运行的错误原因', () => {
     expect(resolveText(result.error as never, ['en'])).toBe(`Node "a" failed: ${'x'.repeat(200)}`);
   });
 
-  it('落盘的原因重启读回：文字对象仍在、按读者语言渲染；交给模型的取原文', async () => {
-    const { app, runs } = await boot();
-    expect(await runs('en')).toEqual([
+  it('落盘的原因重启读回：文字对象仍在、按全局默认层的语言渲染；交给模型的取原文', async () => {
+    const { app, runs, setLanguage } = await boot();
+    expect(await runs()).toEqual([
       { runId: 'zz-text', status: { text: 'Failed', state: 'error' }, error: 'Out of quota' },
     ]);
-    expect(await runs('zh-CN')).toEqual([
-      { runId: 'zz-text', status: { text: '失败', state: 'error' }, error: '额度用完了' },
-    ]);
+    setLanguage(['zh-CN']);
+    expect(await runs()).toEqual([{ runId: 'zz-text', status: { text: '失败', state: 'error' }, error: '额度用完了' }]);
     const forModel = await app
       .bind({ tools })
       .tools.use.execute('workflow_get_runs', {}, { sessionId: 'zz', platform: 'webui', userId: 'console' });
@@ -159,14 +160,15 @@ describe('工作流运行的错误原因', () => {
     expect(listed.filter(r => r.runId.startsWith('zz-'))).toMatchObject([{ runId: 'zz-text', error: '额度用完了' }]);
   });
 
-  it('「立即运行」没有成功：报错按读者语言', async () => {
-    const { app, request } = await boot();
+  it('「立即运行」没有成功：报错按全局默认层的语言', async () => {
+    const { app, request, setLanguage } = await boot();
     // 工具服务不在：tool 节点失败，这一次运行以失败收尾
     await app.plugins.unload(toolsPlugin.name);
-    expect(await request('actions/runWorkflow', 'en', 'POST', { rowKey: 'zz-manual' })).toEqual({
+    expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({
       error: 'Run did not succeed (Failed): Node "a" failed: \'tools\' 服务不可用',
     });
-    expect(await request('actions/runWorkflow', 'zh-CN', 'POST', { rowKey: 'zz-manual' })).toEqual({
+    setLanguage(['zh-CN']);
+    expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({
       error: '运行没有成功（失败）：节点 "a" 失败: \'tools\' 服务不可用',
     });
   });

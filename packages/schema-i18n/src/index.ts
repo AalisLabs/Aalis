@@ -23,7 +23,7 @@ export {
   truncateParams,
 } from './define.js';
 export { isTextError, TextError, textOf, withText } from './errors.js';
-export { normalizeLanguages } from './locale.js';
+export { matchLanguage, normalizeLanguages, pickLanguage, selfName } from './locale.js';
 export {
   fingerprint,
   indexPacks,

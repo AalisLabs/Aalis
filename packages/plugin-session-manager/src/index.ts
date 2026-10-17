@@ -5,6 +5,7 @@ import { authority } from '@aalis/api-authority';
 import { chatScopeOf, parseWindowKey, windowKey } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
+import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 import { type LLMUsageEvent, lightestThinking, llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import {
@@ -95,7 +96,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 // ===== SessionManager 实现 =====
 
 /**
- * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM、中止读表重试的 lifecycle，
+ * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM 与输出语言、中止读表重试的 lifecycle，
  * 解析接管房间的适配器实例的 platform，存放会话设置三层的宿主配置文档，判 owner 的 IM 私聊的 authority，
  * 以及承担全局默认模型的服务偏好
  */
@@ -106,6 +107,7 @@ type ManagerCaps = Pick<
   | 'hooks'
   | 'logger'
   | 'llm'
+  | 'i18n'
   | 'agent'
   | 'lifecycle'
   | 'platform'
@@ -908,8 +910,7 @@ class SessionManager implements SessionManagerService {
         messages: [
           {
             role: 'system',
-            content:
-              '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的标题，用对话片段所用的语言。\n\n规则：\n- 中文不超过15字，其他语言不超过8个词\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括',
+            content: `你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的标题，用 ${outputLanguageFor(this.caps.i18n, { host: true }, 'zh-CN')}。\n\n规则：\n- 中文不超过15字，其他语言不超过8个词\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括`,
           },
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
@@ -1501,6 +1502,11 @@ const uses = {
   agent: optional(agent),
   /** 自动标题的模型来源（没有 LLM 时退回用户消息首段）；全局默认层的「模型」按偏好指向的条目写出提供者与模型 */
   llm: optional(llm),
+  /**
+   * 自动标题的输出语言：取全局默认层的语言列表（读者是 owner），缺席时按中文。plugin-i18n 也以 optional 用会话管理，
+   * 两边成可选环
+   */
+  i18n: optional(i18n),
   /** 房间建档时取平台的类型声明记下聊天窗口；解析接管房间的适配器实例（originInstance）；可设的平台与类型 */
   platform: optional(platform),
   /**

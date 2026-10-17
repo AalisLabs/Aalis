@@ -8,16 +8,15 @@
 //   · 列表：GET  /api/services                       （取 webui-client 服务的 providers + preferred）
 //   · 切换：POST /api/services/webui-client/prefer    （owner 闸，body {contextId}）
 // 全局 auth 中间件已要求登录方可到达本路由（未认证 GET 直接回登录页），故本页无需自加 gate；
-// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 按读者语言渲染文字后交给它。
-// 文字按读者语言：页面上的在服务端写进 HTML，脚本要的放进 texts 块，带参数的留着 {名} 占位，由脚本填（见 html.ts）。
+// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 按全局默认层的语言渲染文字后交给它。
+// 文字按全局默认层的语言：页面上的在服务端写进 HTML，脚本要的放进 texts 块，带参数的留着 {名} 占位，由脚本填（见 html.ts）。
 
-import type { LanguageInfo } from '@aalis/api-i18n';
 import type { Localized } from '@aalis/schema-i18n';
-import { escapeHtml, LANGUAGE_SWITCH_SCRIPT, languageSwitch, textsBlock } from './html.js';
+import { escapeHtml, textsBlock } from './html.js';
 import { t } from './texts.js';
 
 /** 前端切换恢复页的脚本：文档级 CSP 只许同源脚本，由 `/__clients.js` 给出 */
-export const CLIENT_SWITCH_SCRIPT = `${LANGUAGE_SWITCH_SCRIPT}(function () {
+export const CLIENT_SWITCH_SCRIPT = `(function () {
   var SVC = 'webui-client';
   var PREFER = '/api/services/' + SVC + '/prefer';
   var T = JSON.parse(document.getElementById('texts').textContent);
@@ -91,7 +90,6 @@ export const CLIENT_SWITCH_TEXTS = {
   loading: t('switchLoading'),
   button: t('switchButton'),
   back: t('switchBack'),
-  language: t('languageSwitch'),
   script: {
     listFailed: t('switchListFailed', { status: '{status}' }),
     noClients: t('switchNoClients'),
@@ -104,11 +102,8 @@ export const CLIENT_SWITCH_TEXTS = {
   },
 };
 
-/** 渲染前端切换恢复页的完整 HTML 文档：text 是按读者渲染过的文字，数据由页面自身 fetch */
-export function renderClientSwitchPage(
-  text: Localized<typeof CLIENT_SWITCH_TEXTS>,
-  languages: readonly LanguageInfo[],
-): string {
+/** 渲染前端切换恢复页的完整 HTML 文档：text 是渲染过的文字，数据由页面自身 fetch */
+export function renderClientSwitchPage(text: Localized<typeof CLIENT_SWITCH_TEXTS>): string {
   return `<!doctype html>
 <html lang="${escapeHtml(text.lang)}">
 <head>
@@ -123,7 +118,6 @@ export function renderClientSwitchPage(
   label { display: block; font-weight: 600; margin-bottom: .4rem; }
   select, button { font: inherit; padding: .55rem .7rem; border-radius: .5rem; }
   select { width: 100%; box-sizing: border-box; }
-  #lang { position: fixed; top: 1rem; right: 1rem; width: auto; padding: .25rem .5rem; }
   button { margin-top: 1rem; cursor: pointer; border: 1px solid currentColor; background: transparent; }
   button:disabled { opacity: .5; cursor: default; }
   #msg { margin-top: 1rem; min-height: 1.4em; }
@@ -133,7 +127,6 @@ export function renderClientSwitchPage(
 </style>
 </head>
 <body>
-  ${languageSwitch(languages, text.lang, text.language)}
   <h1>${escapeHtml(text.heading)}</h1>
   <p class="hint">${escapeHtml(text.intro)}</p>
   <label for="client">${escapeHtml(text.label)}</label>

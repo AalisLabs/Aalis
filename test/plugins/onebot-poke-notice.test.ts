@@ -6,7 +6,7 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
-import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.js';
+import { resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -37,7 +37,8 @@ async function until(cond: () => boolean, ms = 5000): Promise<void> {
 }
 
 type Protocol = 'v11' | 'v12';
-async function boot(protocol: Protocol) {
+/** nicknames 是假实现端查得到的昵称（账号 → 昵称），群名片与陌生人昵称都按它答；缺省一个都查不到 */
+async function boot(protocol: Protocol, nicknames: Record<string, string> = {}) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(resolve => server.once('listening', resolve));
   cleanups.push(
@@ -53,9 +54,12 @@ async function boot(protocol: Protocol) {
   server.on('connection', ws => {
     socket = ws;
     ws.on('message', raw => {
-      const req = JSON.parse(raw.toString()) as { echo?: string; action?: string };
+      const req = JSON.parse(raw.toString()) as { echo?: string; action?: string; params?: { user_id?: unknown } };
       if (req.action) actions.push(req.action);
-      if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }));
+      const nickname = nicknames[String(req.params?.user_id)];
+      if (req.echo) {
+        ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF, nickname }, echo: req.echo }));
+      }
     });
   });
 
@@ -162,6 +166,53 @@ describe.each(['v11', 'v12'] as const)('OneBot %s poke 入站', protocol => {
     expect(t.inbound).toHaveLength(1);
     expect(t.inbound[0]).toMatchObject({ userId: '30001', noticeTargetIsSelf: true });
     expect(t.directNotices).toEqual([]);
+  });
+});
+
+// 戳一戳与群文件上传是平台事件转成的入站：写给模型的 content 一字不改，给人看的那句另作文字对象放进 IncomingMessage.text
+// （会话历史据此画成通知）；不带 source，照旧经触发策略判定
+describe('OneBot 戳一戳与群文件上传：给模型的正文与给人看的那句', () => {
+  it('戳我、戳别人与上传文件：content 照旧，text 按读者语言，称呼在句首', async () => {
+    const t = await boot('v11');
+    t.poke(30005, Number(SELF), 20001);
+    t.poke(30001, 30002, 20001);
+    await until(() => t.inbound.length === 2);
+    t.post({
+      post_type: 'notice',
+      notice_type: 'group_upload',
+      group_id: 20001,
+      user_id: 30003,
+      file: { name: 'a.txt' },
+    });
+    await until(() => t.inbound.length === 3);
+    expect(t.inbound.map(m => [m.content, m.source])).toEqual([
+      ['[戳一戳: 30005 戳了你]', undefined],
+      ['[戳一戳: 30001 戳了30002]', undefined],
+      ['[文件上传: 30003 上传了 a.txt]', undefined],
+    ]);
+    expect(t.inbound.map(m => m.text && [toSource(m.text), resolveText(m.text, ['en'])])).toEqual([
+      ['30005 戳了我', '30005 poked the assistant'],
+      ['30001 戳了 30002', '30001 poked 30002'],
+      ['30003 上传了 a.txt', '30003 uploaded a.txt'],
+    ]);
+  });
+
+  it('查得到昵称：给人看的那句里的人一律写「昵称(id)」，content 与改动前逐字相同', async () => {
+    const t = await boot('v11', { 30001: '甲', 30002: '乙', 30003: '丙' });
+    t.poke(30001, 30002, 20001);
+    await until(() => t.inbound.length === 1);
+    t.post({
+      post_type: 'notice',
+      notice_type: 'group_upload',
+      group_id: 20001,
+      user_id: 30003,
+      file: { name: 'a.txt' },
+    });
+    await until(() => t.inbound.length === 2);
+    expect(t.inbound.map(m => [m.content, m.text && toSource(m.text)])).toEqual([
+      ['[戳一戳: 甲(30001) 戳了30002]', '甲(30001) 戳了 乙(30002)'],
+      ['[文件上传: 30003 上传了 a.txt]', '丙(30003) 上传了 a.txt'],
+    ]);
   });
 });
 

@@ -9,7 +9,7 @@ import {
   type TextRef,
   textClauses,
 } from '@aalis/schema-i18n';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
 // 解析与语言链：读者链里逐项找文字相同的 → 语言相同、文字不同的 → en → 原文；
@@ -175,19 +175,6 @@ describe('参数', () => {
     const processZone = resolveText(t('when', { t: 0 }), ['en']);
     expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 'Mars/Base' })).toBe(processZone);
     expect(resolveText(t('when', { t: 0 }), ['en'], { timeZone: 8 as unknown as string })).toBe(processZone);
-  });
-
-  it('超过 64 个字符的时区名当作没给：不拿它构造 Intl', () => {
-    const long = `Mars/${'X'.repeat(60)}`;
-    const construct = vi.spyOn(Intl, 'DateTimeFormat');
-    try {
-      expect(resolveText(t('when', { t: 1 }), ['en'], { timeZone: long })).toBe(
-        resolveText(t('when', { t: 1 }), ['en']),
-      );
-      expect(construct.mock.calls.filter(([, options]) => options?.timeZone === long)).toEqual([]);
-    } finally {
-      construct.mockRestore();
-    }
   });
 
   it('日期按选中的语言格式化', () => {

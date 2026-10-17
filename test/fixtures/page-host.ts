@@ -24,7 +24,7 @@ export interface InvalidateCall {
   sessionId?: string;
 }
 
-const CTX = { caller: { platform: 'webui', userId: 'console' }, languages: [] };
+const CTX = { caller: { platform: 'webui', userId: 'console' } };
 
 export function pageHost(opts: PageHostOptions = {}) {
   /** warn 与 error 级日志：页面没过门槛、数据源返回的形状不对、applies 出错 */

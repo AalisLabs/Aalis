@@ -1,12 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
-import type { LanguageInfo } from '@aalis/api-i18n';
 import type { ProcessService } from '@aalis/api-process';
 import { BUILTIN_THEMES, type BuiltinThemeId, DEFAULT_THEMES, type ErrorResponse } from '@aalis/api-webui';
 import type { Localized, TextRef } from '@aalis/schema-i18n';
 import type express from 'express';
-import { escapeHtml, LANGUAGE_SWITCH_SCRIPT, languageSwitch, pageLanguageOf, textsBlock } from './html.js';
+import { escapeHtml, pageLanguageOf, textsBlock } from './html.js';
 import type { Localizer } from './localize.js';
 import { route } from './route.js';
 import { t } from './texts.js';
@@ -57,7 +56,7 @@ function navigatedFromOtherSite(req: Pick<IncomingMessage, 'headers'>): boolean 
   return site === 'cross-site' || site === 'same-site';
 }
 
-export function parseCookieValue(header: string | undefined, name: string): string | undefined {
+function parseCookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   for (const pair of header.split(';')) {
     const eq = pair.indexOf('=');
@@ -86,7 +85,7 @@ function buildClearCookie(name: string): string {
 const LOGIN_SCRIPT_PATH = '/api/auth/login.js';
 
 /** 提交 POST /api/auth/login，成功后刷新到 /；给人看的文字取自页面的 texts 块 */
-const LOGIN_SCRIPT = `${LANGUAGE_SWITCH_SCRIPT}const T=JSON.parse(document.getElementById('texts').textContent);
+const LOGIN_SCRIPT = `const T=JSON.parse(document.getElementById('texts').textContent);
 const f=document.getElementById('f'),t=document.getElementById('t'),b=document.getElementById('b'),e=document.getElementById('e');
 f.addEventListener('submit',async ev=>{
   ev.preventDefault();e.textContent='';b.disabled=true;
@@ -120,8 +119,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--color-focus);ou
 button{height:2.25rem;font:inherit;font-weight:500;color:var(--color-on-accent);background:var(--color-accent);border:0;border-radius:4px;cursor:pointer}
 button:hover{background:var(--color-accent-hover)}
 button:disabled{opacity:0.6;cursor:wait}
-.err{min-height:1.375rem;color:var(--color-danger-text)}
-#lang{position:fixed;top:1rem;right:1rem;height:2rem;padding:0 0.5rem;font:inherit;color:var(--color-text);background:var(--color-bg);border:1px solid var(--color-border-control);border-radius:4px}`;
+.err{min-height:1.375rem;color:var(--color-danger-text)}`;
 
 /** 登录页的文字；pageLanguage 是渲染时实际用的语言，写进 <html lang> */
 const LOGIN_TEXTS = {
@@ -130,12 +128,11 @@ const LOGIN_TEXTS = {
   hint: t('loginHint'),
   placeholder: t('tokenPlaceholder'),
   button: t('loginButton'),
-  language: t('languageSwitch'),
   script: { tokenWrong: t('tokenWrong'), networkError: t('networkError') },
 };
 
-/** 登录页：只引用同源的登录脚本，不引入别的资源。text 是按读者渲染过的文字，note 是这次要说明的一句 */
-function loginPageHtml(text: Localized<typeof LOGIN_TEXTS> & { note?: string }, languages: readonly LanguageInfo[]) {
+/** 登录页：只引用同源的登录脚本，不引入别的资源。text 是渲染过的文字，note 是这次要说明的一句 */
+function loginPageHtml(text: Localized<typeof LOGIN_TEXTS> & { note?: string }) {
   const note = text.note ? `<p class="note">${escapeHtml(text.note)}</p>` : '';
   return `<!DOCTYPE html><html lang="${escapeHtml(text.lang)}"><head>
 <meta charset="utf-8"><title>${escapeHtml(text.title)}</title>
@@ -143,7 +140,7 @@ function loginPageHtml(text: Localized<typeof LOGIN_TEXTS> & { note?: string }, 
 <style>
 ${LOGIN_STYLE}
 </style></head>
-<body>${languageSwitch(languages, text.lang, text.language)}<form id="f">
+<body><form id="f">
 <h1>Aalis WebUI</h1>
 <p>${escapeHtml(text.hint)}</p>
 ${note}
@@ -180,11 +177,11 @@ export interface AuthSystem {
  *   地址锁住。带 cookie 的请求不计数：各种模式的 token 都够长（随机生成的 24 字节，固定的至少 32 个字符），
  *   按 cookie 逐个猜猜不中；对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住
  * - 身份恒为 `webui:console`（owner 级，单人模式语义）
- * - 登录页与回应里的文字按读者语言（localizer）
+ * - 登录页与回应里的文字按全局默认层的语言（localizer）
  */
 export function createAuthSystem(
   getToken: () => string,
-  localizer: Pick<Localizer, 'render' | 'languages' | 'offered'>,
+  localizer: Pick<Localizer, 'render' | 'languages'>,
 ): AuthSystem {
   const cookieMaxAge = 30 * 24 * 3600; // 30d；进程重启 token 轮换后无效
 
@@ -222,11 +219,10 @@ export function createAuthSystem(
     return t('tooManyFailures', { minutes: Math.ceil(waitMs / 60_000) });
   }
 
-  /** 按这次请求的读者给出登录页，note 是要说明的一句 */
-  function loginPage(req: express.Request, res: express.Response, note?: TextRef): string {
-    const text = localizer.render(req, res, { ...LOGIN_TEXTS, note });
-    const lang = pageLanguageOf(text.lang, localizer.languages(req));
-    return loginPageHtml({ ...text, lang }, localizer.offered());
+  /** 登录页，note 是要说明的一句 */
+  function loginPage(note?: TextRef): string {
+    const text = localizer.render({ ...LOGIN_TEXTS, note });
+    return loginPageHtml({ ...text, lang: pageLanguageOf(text.lang, localizer.languages()) });
   }
 
   function tokenAuthed(req: Pick<IncomingMessage, 'headers'>): boolean {
@@ -261,7 +257,7 @@ export function createAuthSystem(
       const waitMs = lockedFor(address);
       if (waitMs > 0) {
         const note = rejectLocked(res, waitMs);
-        res.type('html').send(loginPage(req, res, note));
+        res.type('html').send(loginPage(note));
         return;
       }
       const token = getToken();
@@ -278,7 +274,7 @@ export function createAuthSystem(
       res
         .status(401)
         .type('html')
-        .send(loginPage(req, res, t('urlTokenWrong')));
+        .send(loginPage(t('urlTokenWrong')));
     });
 
     // 登录：{ token }。跨源的已在上面拒掉，不计数
@@ -321,7 +317,7 @@ export function createAuthSystem(
         return;
       }
       if (req.method === 'GET') {
-        res.status(401).type('html').send(loginPage(req, res));
+        res.status(401).type('html').send(loginPage());
         return;
       }
       res.status(401).end();

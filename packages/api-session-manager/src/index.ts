@@ -52,6 +52,11 @@ export function sessionKind(session: Pick<SessionInfo, 'parentId' | 'originPlatf
   return session.originPlatform === undefined ? 'owner' : 'room';
 }
 
+/** 场所层按哪种会话列与收设置项：窗口按房间，工作区按 owner 的会话 */
+export function placeKind(place: Pick<SessionPlace, 'kind'>): SessionKind {
+  return place.kind === 'window' ? 'room' : 'owner';
+}
+
 /**
  * 设置项的显眼程度：composer 也出现在输入框旁的快捷切换（同一会话最多两项，多出的按 order 退到 common），
  * common 在设置里排在前面，advanced 收进默认折叠的「高级」，按登记它的插件分组

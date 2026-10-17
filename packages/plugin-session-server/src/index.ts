@@ -35,7 +35,7 @@ import { createTurnControl } from './turns.js';
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
 // 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。后台任务登记投影成列表与增量，
 // 取输出、停止与按会话树全部停止转给它与 agent。握手给出功能位（发送、回滚、压缩各看对话、检查点、压缩服务在不在），
-// 服务上下线时推 features/changed；另给出宿主配置里的应用名。帧里的文字对象按每条连接的读者渲染（见 connection.ts）。
+// 服务上下线时推 features/changed；另给出宿主配置里的应用名。帧里的文字对象按全局默认层的语言渲染（见 connection.ts）。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
@@ -78,7 +78,7 @@ const uses = {
   backgroundTasks: optional(backgroundTasks),
   /** 握手回应里的应用名：宿主配置的 name，每次握手现读；缺席时是 Aalis */
   hostConfig: optional(hostConfig),
-  /** 出帧里的文字对象按连接的读者渲染；缺席时按原文 */
+  /** 出帧里的文字对象按全局默认层的语言渲染；缺席时按原文 */
   i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;

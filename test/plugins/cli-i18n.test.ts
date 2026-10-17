@@ -27,9 +27,9 @@ import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// 终端界面按终端会话的读者（{ sessionId: 配置的会话, platform: 'cli' }，会话设置 language 按继承链解析）显示：欢迎行、
-// 帮助页、审批卡的标题与按键提示、附件类别取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
-// 会话设置变了立即重绘；帮助页按终端宽度折行，审批卡上事实的标签补齐到同一宽度（译文长短不一）。
+// 终端界面是 owner 自己看的，按全局默认层的语言（{ host: true }）显示，不看终端会话自己的语言设置：欢迎行、帮助页、审批卡的
+// 标题与按键提示、附件类别取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
+// 全局默认层变了立即重绘；帮助页按终端宽度折行，审批卡上事实的标签补齐到同一宽度（译文长短不一）。
 // i18n 缺席或渲染抛错时按原文，抛错只告警一次。送达失败（含只带附件的出站）的原因是挂着文字对象的报错时交出文字对象。
 // 真的 plugin-i18n、会话管理、会话服务（审批服务）与 TUI（假 TTY，收集 stdout 帧），记忆是内存实现，存储与 owner 判定是替身。
 // ════════════════════════════════════════════════════════════
@@ -67,16 +67,18 @@ afterEach(async () => {
 });
 
 /**
- * 全局默认层的语言是 zh-CN，cli 平台档的是 language：终端会话按平台档取到后者。i18n 为 absent 时没有 i18n 服务，
- * broken 时由抛错的替身代替 plugin-i18n。终端缺省 40 行 120 列
+ * 全局默认层的语言是 language；cliLanguage 给了就另设 cli 平台档的语言（终端会话按平台档取到它，界面不看它）。i18n 为
+ * absent 时没有 i18n 服务，broken 时由抛错的替身代替 plugin-i18n。终端缺省 40 行 120 列
  */
 async function setup({
   language,
+  cliLanguage,
   i18nMode = 'plugin',
   rows = 40,
   columns = 120,
 }: {
   language: string[];
+  cliLanguage?: string[];
   i18nMode?: 'plugin' | 'absent' | 'broken';
   rows?: number;
   columns?: number;
@@ -92,7 +94,12 @@ async function setup({
   const home = mkdtempSync(join(tmpdir(), 'aalis-cli-i18n-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const { app } = hostedApp(
-    { sessionConfig: { defaults: { language: ['zh-CN'] }, platforms: { cli: { language } } } },
+    {
+      sessionConfig: {
+        defaults: { language },
+        ...(cliLanguage ? { platforms: { cli: { language: cliLanguage } } } : {}),
+      },
+    },
     { logger },
   );
   cleanups.push(() => app.stop());
@@ -154,9 +161,8 @@ async function setup({
     host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', ...message });
   /** 告警里带着 i18n 抛出的那个错的 */
   const renderWarnings = () => warn.mock.calls.filter(call => call.includes(BROKEN));
-  /** 改 cli 平台档的语言 */
-  const setLanguage = (language: string[]) =>
-    host.sessionManager.use.updateLayer({ scope: 'platform', platform: 'cli' }, { language });
+  /** 改全局默认层的语言 */
+  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
   const demote = () => {
     consoleIsOwner = false;
   };
@@ -180,10 +186,11 @@ const EN = {
   help: 'Switching views',
 };
 
-describe('终端界面按终端会话的语言', () => {
+describe('终端界面按全局默认层的语言', () => {
   it.each([
-    ['会话语言为 en：英文', { language: ['en'] }, EN, ZH],
-    ['会话语言为 zh-CN：原文', { language: ['zh-CN'] }, ZH, EN],
+    ['全局默认层为 en：英文', { language: ['en'] }, EN, ZH],
+    ['全局默认层为 zh-CN：原文', { language: ['zh-CN'] }, ZH, EN],
+    ['终端会话自己设了 en、全局默认层为 zh-CN：原文', { language: ['zh-CN'], cliLanguage: ['en'] }, ZH, EN],
     ['i18n 缺席：原文', { language: ['en'], i18nMode: 'absent' as const }, ZH, EN],
   ])('%s', async (_case, options, shown, other) => {
     const s = await setup(options);
@@ -210,7 +217,7 @@ describe('终端界面按终端会话的语言', () => {
     expect(s.frame()).not.toContain(other.help);
   });
 
-  it('会话设置变了立即重绘：停在帮助页时把语言改成 zh-CN，不按键就换成中文', async () => {
+  it('全局默认层变了立即重绘：停在帮助页时把语言改成 zh-CN，不按键就换成中文', async () => {
     const s = await setup({ language: ['en'] });
     await s.ctrl('g');
     expect(s.frame()).toContain(EN.help);

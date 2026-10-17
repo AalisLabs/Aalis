@@ -30,7 +30,6 @@ export default defineLocale<Source>()({
   accessLogin: 'One-click sign-in: {url}',
   accessHint: '# Tip: paste the one-click sign-in link into a browser and the cookie is set for you',
   pageLanguage: 'en',
-  languageSwitch: 'Language',
   loginTitle: 'Aalis WebUI sign-in',
   loginHint:
     'The access token is in state/webui/access.txt under the home directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the home directory after startup (the config file holds a reference).',

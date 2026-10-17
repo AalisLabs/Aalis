@@ -23,7 +23,7 @@ import { type ConnectionState, openSocket } from './socket';
 export const PROTOCOL_VERSION = '1.0';
 const CLIENT = { name: 'webui', version };
 
-// 线上的形状：帧里的文字已由服务端按这条连接的读者渲染成字符串
+// 线上的形状：帧里的文字已由服务端按全局默认层的语言渲染成字符串
 export type SessionSnapshot = Localized<SessionMethodResult<'session/subscribe'>>;
 export type InitializeResult = Localized<SessionMethodResult<'initialize'>>;
 export type SessionSummary = Localized<DeclaredSessionSummary>;

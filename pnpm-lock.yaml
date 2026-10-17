@@ -878,6 +878,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm
@@ -1548,6 +1551,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-doctor':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-doctor
       '@aalis/api-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-i18n
@@ -2484,6 +2490,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm
@@ -3110,6 +3119,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm

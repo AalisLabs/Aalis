@@ -310,7 +310,7 @@ const uses = {
   contributions: optional(contributions),
   // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
   archive: optional(messageArchive),
-  /** 回应里的文字对象按读者语言渲染（localize.ts）；缺席时按原文 */
+  /** 回应里的文字对象按全局默认层的语言渲染（localize.ts）；缺席时按原文 */
   i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
@@ -336,7 +336,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、媒体与会话文件）都走这里
   const storage = caps.storage.use;
-  // 给人看的文字按读者语言渲染（localize.ts）：回应、登录页与恢复页按请求的读者，access.txt 按全局默认层
+  // 给人看的文字按全局默认层的语言渲染（localize.ts）：回应、登录页与恢复页、access.txt
   const localizer = createLocalizer(caps.i18n, logger.use);
 
   // ---- Token 解析 ----
@@ -381,7 +381,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       t('accessHint'),
     ]);
     try {
-      await storage.writeFile(accessFileUri, `${localizer.host(lines)}\n`, { secret: true });
+      await storage.writeFile(accessFileUri, `${localizer.render(lines)}\n`, { secret: true });
       return true;
     } catch (err) {
       logger.use.warn(`写入访问文件失败: ${(err as Error).message}`);
@@ -435,7 +435,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const auth = createAuthSystem(() => authToken, localizer);
 
   const expressApp = express();
-  // 回应里的文字按读者语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它
+  // 回应里的文字按全局默认层的语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它
   expressApp.use(localizer.middleware);
   // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
   // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱，插件前端的文件另设框架 CSP
@@ -601,7 +601,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       layout: createLayoutStore(storage.own, logger.use),
       storageReady: () => caps.storage.present,
       send: event => admin.send(event),
-      languages: localizer.languages,
       logger: logger.use,
     },
     auth.identify,
@@ -1032,10 +1031,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 极简第三方前端无切换 UI）卡住时都能在此切回。受全局 auth 中间件登录保护；切换走既有 owner
   // 闸的 POST /api/services/webui-client/prefer，本页零新增后端逻辑（见 client-switch-page.ts）。
   // 注册在 SPA 兜底之前，故 `/__clients` 被本路由先接走、不落到前端 index.html。
-  route(expressApp, 'GET /__clients', (req, res) => {
-    const text = localizer.render(req, res, CLIENT_SWITCH_TEXTS);
-    const lang = pageLanguageOf(text.lang, localizer.languages(req));
-    res.type('html').send(renderClientSwitchPage({ ...text, lang }, localizer.offered()));
+  route(expressApp, 'GET /__clients', (_req, res) => {
+    const text = localizer.render(CLIENT_SWITCH_TEXTS);
+    res.type('html').send(renderClientSwitchPage({ ...text, lang: pageLanguageOf(text.lang, localizer.languages()) }));
   });
   route(expressApp, 'GET /__clients.js', (_req, res) => {
     res.type('application/javascript').send(CLIENT_SWITCH_SCRIPT);
@@ -1082,11 +1080,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           ? BODY_REJECTIONS[type]
           : t('badRequest');
     if (req.path.startsWith('/api/')) res.status(code).json({ error: reason } satisfies ErrorResponse);
-    else
-      res
-        .status(code)
-        .type('text')
-        .send(localizer.render(req, res, reason));
+    else res.status(code).type('text').send(localizer.render(reason));
   });
 
   /**
