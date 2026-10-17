@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aalis/api-flow-control": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-media": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
@@ -71,6 +72,7 @@
       "optional": [
         "flow-control",
         "hooks",
+        "i18n",
         "llm",
         "media",
         "memory",

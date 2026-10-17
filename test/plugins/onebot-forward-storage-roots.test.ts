@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { I18nService } from '../../packages/api-i18n/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
@@ -94,6 +95,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       memory: fixedRef<MemoryService>(undefined),
       media: fixedRef(media as MediaService),
       llm: fixedRef<LLMModel>(undefined),
+      i18n: fixedRef<I18nService>(undefined),
       storage: storageRef.use,
       // data URI 源的落盘不经 process，只需在场
       processService: fixedRef({} as ProcessService),

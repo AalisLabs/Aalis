@@ -2,6 +2,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { flowControl } from '@aalis/api-flow-control';
 import { hooks } from '@aalis/api-hooks';
+import { i18n } from '@aalis/api-i18n';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
@@ -28,7 +29,7 @@ import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
 import { materializeAttachments } from './attachments.js';
-import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
+import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
 import { t } from './texts.js';
@@ -222,7 +223,7 @@ const configSchema = defineConfig({
         type: 'textarea',
         label: '摘要 system prompt（高级，留空使用内置）',
         default: '',
-        description: `留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下，可作为撰写参考：\n\n${DEFAULT_FORWARD_SUMMARY_PROMPT}`,
+        description: `留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下（<输出语言> 取全局默认的语言列表的第一项），可作为撰写参考：\n\n${defaultForwardSummaryPrompt('<输出语言>')}`,
       },
     },
   },
@@ -618,6 +619,8 @@ const uses = {
   messageArchive: optional(messageArchive),
   flowControl: optional(flowControl),
   hooks: optional(hooks),
+  /** 默认合并转发摘要的输出语言（全局默认层的语言列表），缺席时按中文 */
+  i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -1062,6 +1065,7 @@ function runAdapter(caps: Caps): void {
     memory: caps.memory,
     media,
     llm: caps.llm,
+    i18n: caps.i18n,
     storage,
     processService: caps.processService,
     forwardCfg,
@@ -1963,7 +1967,8 @@ function runAdapter(caps: Caps): void {
       `OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`,
     );
 
-    // 所有用户戳一戳共用入站链路；触发插件按目标区分点名与旁观互动。
+    // 所有用户戳一戳共用入站链路；触发插件按目标区分点名与旁观互动。给人看的那句放 text（会话历史画成通知）；
+    // 不带 source：带了就按内部注入，不经触发策略。
     if (notice.noticeType === WellKnownNoticeTypes.Poke) {
       const selfId = notice.selfId;
       // 自己发出的动作是工具回显，不作为新用户输入再次触发。
@@ -1971,11 +1976,18 @@ function runAdapter(caps: Caps): void {
       const sessionType = notice.groupId ? 'group' : 'private';
       const targetIsBot = notice.targetId === selfId || (!notice.groupId && notice.targetId == null);
       (async () => {
-        const nick = await resolveNickname(state, notice.userId, notice.groupId);
-        const who = nick ? `${nick}(${notice.userId})` : (notice.userId ?? '某人');
+        // 两个昵称一起查：入站只等一个来回，与只查戳的人时一样
+        const [nick, targetNick] = await Promise.all([
+          resolveNickname(state, notice.userId, notice.groupId),
+          targetIsBot ? undefined : resolveNickname(state, notice.targetId, notice.groupId),
+        ]);
+        const user = who(nick, notice.userId, t('someoneSubject'));
         const target = targetIsBot ? '你' : (notice.targetId ?? '某人');
         await events.use.emit('inbound:message', {
-          content: `[戳一戳: ${who} 戳了${target}]`,
+          content: `[戳一戳: ${toSource(user)} 戳了${target}]`,
+          text: targetIsBot
+            ? t('poked', { user })
+            : t('pokedOther', { user, target: who(targetNick, notice.targetId, t('someone')) }),
           sessionId: makeSessionId(selfId, sessionType, notice.userId, notice.groupId),
           platform: 'onebot',
           selfId,
@@ -2197,23 +2209,30 @@ function runAdapter(caps: Caps): void {
       return;
     }
 
-    // 群文件上传 → 转化为 inbound:message
+    // 群文件上传 → 转化为 inbound:message；给人看的那句与不带 source 同戳一戳
     if (notice.noticeType === 'group_upload' && notice.groupId) {
       const selfId = notice.selfId;
       const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
-      const fileName = notice.data?.fileName ?? '未知文件';
-      const content = `[文件上传: ${notice.userId} 上传了 ${fileName}]`;
+      const fileName = notice.data?.fileName;
+      const content = `[文件上传: ${notice.userId} 上传了 ${fileName ?? '未知文件'}]`;
 
-      events.use.emit('inbound:message', {
-        content,
-        sessionId,
-        platform: 'onebot',
-        selfId,
-        userId: notice.userId,
-        sessionType: 'group',
-        groupId: notice.groupId,
-        noticeType: 'group_upload',
-      });
+      (async () => {
+        const nick = await resolveNickname(state, notice.userId, notice.groupId);
+        await events.use.emit('inbound:message', {
+          content,
+          text: t('uploaded', {
+            user: who(nick, notice.userId, t('someoneSubject')),
+            file: fileName == null ? t('unknownFile') : String(fileName),
+          }),
+          sessionId,
+          platform: 'onebot',
+          selfId,
+          userId: notice.userId,
+          sessionType: 'group',
+          groupId: notice.groupId,
+          noticeType: 'group_upload',
+        });
+      })().catch(err => logger.use.warn(`group_upload 处理异常: ${err}`));
       return;
     }
   }

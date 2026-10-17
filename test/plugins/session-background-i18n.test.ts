@@ -6,19 +6,20 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════
-// 后台任务的中断原因是宿主写的文字对象（plugin-tools 的字典），经会话协议的后台任务推送按连接的读者渲染：en 拿英文，
+// 后台任务的中断原因是宿主写的文字对象（plugin-tools 的字典），经会话协议的后台任务推送按全局默认层的语言渲染：en 拿英文，
 // zh-CN 拿原文，i18n 缺席时一律原文。工具注册表、会话管理与会话服务都是真的，i18n 是真的 plugin-i18n。
 // ════════════════════════════════════════════════════════════
 
@@ -32,8 +33,9 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+/** 全局默认层的语言是 language；返回后台任务推送里中断原因的取法 */
+async function setup({ withI18n = true, language }: { withI18n?: boolean; language: string[] }) {
+  const { app } = hostedApp({ sessionConfig: { defaults: { language } } }, { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-i18n-'));
   homes.push(home);
@@ -67,13 +69,9 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
       }),
   });
   const { id: sessionId } = await host.sessionManager.use.createSession({ name: '<会话>' });
-  const connect = async (languages: string[]) => {
-    const c = client(host.sessionProtocol.use);
-    await c.init({ languages });
-    await c.call('background/watch', {});
-    return c;
-  };
-  const conns = [await connect(['en']), await connect(['zh-CN'])];
+  const c = client(host.sessionProtocol.use);
+  await c.init();
+  await c.call('background/watch', {});
   await host.tools.use.execute(
     BG,
     { runInBackground: true },
@@ -81,26 +79,24 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   );
   // 工具撤回登记：后台的任务落成 aborted，原因是宿主写的「已撤回登记」
   withdraw();
-  /** 每条连接最近推出的这个任务的原因 */
+  /** 最近推出的这个任务的原因 */
   return async () => {
-    await vi.waitFor(() =>
-      expect(conns.map(c => c.notifications('background/changed').at(-1)?.upserts[0]?.status)).toEqual([
-        'aborted',
-        'aborted',
-      ]),
-    );
-    return conns.map(c => c.notifications('background/changed').at(-1)?.upserts[0]?.reason);
+    await vi.waitFor(() => expect(c.notifications('background/changed').at(-1)?.upserts[0]?.status).toBe('aborted'));
+    return c.notifications('background/changed').at(-1)?.upserts[0]?.reason;
   };
 }
 
-describe('后台任务推送里的中断原因按连接的读者渲染', () => {
-  it('en 拿英文，zh-CN 拿原文', async () => {
-    const reasons = await setup();
-    expect(await reasons()).toEqual([`Tool ${BG} was unregistered`, `工具 ${BG} 已撤回登记`]);
+describe('后台任务推送里的中断原因按全局默认层的语言渲染', () => {
+  it.each([
+    ['en', `Tool ${BG} was unregistered`],
+    ['zh-CN', `工具 ${BG} 已撤回登记`],
+  ])('全局默认层为 %s', async (language, expected) => {
+    const reason = await setup({ language: [language] });
+    expect(await reason()).toBe(expected);
   });
 
   it('i18n 缺席时一律原文', async () => {
-    const reasons = await setup({ withI18n: false });
-    expect(await reasons()).toEqual([`工具 ${BG} 已撤回登记`, `工具 ${BG} 已撤回登记`]);
+    const reason = await setup({ withI18n: false, language: ['en'] });
+    expect(await reason()).toBe(`工具 ${BG} 已撤回登记`);
   });
 });

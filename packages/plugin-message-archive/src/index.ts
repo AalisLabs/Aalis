@@ -178,17 +178,18 @@ function createArchiveService(
         if (facts) meta[WellKnownMetadataKeys.HostNoticeFacts] = facts;
         recordText(meta, text);
       }
-      const kind = working.hostNotice
+      const directive = working.hostNotice
         ? WellKnownKinds.HostNotice
         : working.triggerType === 'proactive'
           ? WellKnownKinds.CrossSessionDelegation
           : undefined;
 
+      // 平台事件转成的入站（如戳一戳）仍是 user 消息，子类（noticeType）记成 kind，读历史的一方据此给出通知的种类
       const message: Message = {
-        role: kind ? 'notice' : 'user',
-        kind,
+        role: directive ? 'notice' : 'user',
+        kind: directive ?? working.noticeType,
         content,
-        name: kind ? undefined : getMessageName(working.userId),
+        name: directive ? undefined : getMessageName(working.userId),
         timestamp: Date.now(),
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };

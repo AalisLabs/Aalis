@@ -17,6 +17,7 @@ export default definePlugin({
     memory,
     agent: optional(agent),
     llm: optional(llm),
+    i18n: optional(i18n),
     platform: optional(platform),
     hostConfig: optional(hostConfig),
     authority: optional(authority),

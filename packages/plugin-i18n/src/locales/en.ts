@@ -30,4 +30,15 @@ export default defineLocale<Source>()({
   settingUnset: 'English',
   followSystem: 'Follow system (currently: {current})',
   badLanguage: '{tag} is not a valid language tag',
+  languagesProvided: 'Every language in the language list is provided by a plugin',
+  followedUnprovided: 'Follow system is currently {language}, which no plugin provides; {used} is used instead',
+  languageUnprovided: '{language} in the language list is not provided by any plugin; {used} is used instead',
+  layerFollowedUnprovided:
+    'Follow system in {layer} is currently {language}, which no plugin provides; {used} is used instead',
+  layerLanguageUnprovided: '{language} in {layer} is not provided by any plugin; {used} is used instead',
+  layerPlatform: '{layer} {platform}',
+  layerType: '{layer} {platform} · {type}',
+  layerPlace: '{layer} “{place}”',
+  installPack:
+    'Install a language pack that provides it (search the plugin market or npm for the keyword {keywords, list, or}), or adjust the “Language” list in the session settings for {layer}',
 });

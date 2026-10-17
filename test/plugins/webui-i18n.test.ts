@@ -7,7 +7,6 @@ import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type BoundWebui, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
@@ -16,17 +15,19 @@ import { textsBlock } from '../../packages/plugin-webui-server/src/html.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
 import { defineTexts, fingerprint, TextError } from '../../packages/schema-i18n/src/index.js';
+import { provideHostLanguage } from '../fixtures/host-language.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { withSystemLocale } from '../fixtures/system-locale.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 的 REST 出口按读者语言渲染文字对象：读者语言先看 cookie aalis-lang，没有再看 Accept-Language；i18n 是真的
-// plugin-i18n，缺席时一律原文。夹具插件在页面声明、页面数据、动作结果与提示里交出文字对象，平台适配器抛出 TextError；
+// WebUI 的 REST 出口按全局默认层的语言渲染文字对象（读者是 owner 自己，不看浏览器的语言与时区）；i18n 是真的
+// plugin-i18n，会话管理是只给全局默认层的替身，i18n 缺席时一律原文。夹具插件在页面声明、页面数据、动作结果与提示里交出文字对象，平台适配器抛出 TextError；
 // 插件配置值、schema 与动作输入字段的默认值、插件前端的数据是原样数据，里面伪造的文字对象不被换掉。另有缺服务与缺配置的
 // 两个夹具插件，核插件状态与回执里的
 // 原因；宿主配置文档只在要用 /api/config 的用例里给。webui-server 自己的文字（接口报错、登录页与恢复页、access.txt）、
-// 可选项来源与 /api/i18n 的两条路由另成一组：贡献点与语言包、存储与会话管理的替身只在要用的用例里给。
+// 可选项来源与 /api/i18n 的两条路由另成一组：贡献点与语言包、存储的替身只在要用的用例里给。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-webui-i18n-token-placeholder-000';
@@ -62,6 +63,7 @@ const t = defineTexts({
     detail: '去设置里看',
     down: '平台掉线',
     times: '次数',
+    when: '{t, time, short}',
   } as const,
   locales: {
     en: {
@@ -86,9 +88,13 @@ const t = defineTexts({
       detail: 'See settings',
       down: 'Platform down',
       times: 'Times',
+      when: '{t, time, short}',
     },
   },
 });
+
+/** 时间戳 0 按服务进程的时区写成的时刻 */
+const processTime = (language: string) => new Intl.DateTimeFormat(language, { timeStyle: 'short' }).format(0);
 
 /** 形如文字对象的原样数据：真被渲染了，英文读者会看到 Jobs */
 const FORGED = { i18n: OWNER, key: 'title', source: '伪造' };
@@ -238,7 +244,7 @@ function definePages(webui: BoundWebui, frameModule: string) {
             },
             { type: 'info', id: 'info', data: () => [{ label: t('count'), value: t('paused') }] },
             { type: 'markdown', id: 'md', data: () => t('file', { name: 'a_b' }) },
-            { type: 'markdown', id: 'languages', data: ({ ctx }) => ctx.languages.join(' ') },
+            { type: 'markdown', id: 'when', data: () => t('when', { t: 0 }) },
             { type: 'actions', actions: ['create', 'remove'] },
           ],
         },
@@ -277,8 +283,9 @@ interface SetupOptions {
   withDoc?: boolean;
   /** 贡献点与日语语言包 */
   withHubs?: boolean;
-  /** 会话管理的替身：全局默认层设的语言（i18n 登记的语言设置项收下不管）；另给存储的替身，写下的文件记在 written */
-  hostLanguage?: string;
+  /** 全局默认层的语言，缺省 zh-CN，setLanguage 改它（会话管理是只给这一层的替身） */
+  language?: string[];
+  /** 给了就另给存储的替身，写下的文件记在这里 */
   written?: Map<string, string>;
 }
 
@@ -287,7 +294,7 @@ async function setup({
   i18nService,
   withDoc = false,
   withHubs = false,
-  hostLanguage,
+  language = ['zh-CN'],
   written,
 }: SetupOptions = {}) {
   const port = await freePort();
@@ -333,22 +340,10 @@ async function setup({
       provide.use(hostConfig, hostDoc());
     },
   });
-  const doubles = definePlugin({
-    name: '@zz/i18n-doubles',
-    uses: { provide },
-    apply: ({ provide }) => {
-      provide.use(sessionManager, {
-        getLayer: () => ({ language: [hostLanguage] }),
-        resolveConfig: () => ({}),
-        getSession: () => undefined,
-        registerSetting: () => () => {},
-      } as never);
-      provide.use(storage, memoryStorage(written ?? new Map()));
-    },
-  });
+  const setLanguage = provideHostLanguage(app, language);
+  if (written) app.bind({ provide }).provide.use(storage, memoryStorage(written));
   await app.pluginAll([
     ...(withHubs ? [...HUB_PLUGINS, packs].map(definition => ({ definition })) : []),
-    ...(hostLanguage === undefined ? [] : [{ definition: doubles }]),
     ...(withI18n && !i18nService ? [{ definition: i18nPlugin }] : []),
     ...(i18nService
       ? [
@@ -383,29 +378,32 @@ async function setup({
   await app.start();
   await waitListening(port);
 
-  /** 带登录 cookie 与读者的语言（cookie 的值与 Accept-Language）请求 */
-  const reader =
-    ({ lang, accept }: { lang?: string; accept?: string }) =>
+  /** 已登录的请求；browser 为真时另带浏览器自己的语言（BROWSER） */
+  const client =
+    (browser = false) =>
     (path: string, init: RequestInit = {}) =>
       fetch(`http://127.0.0.1:${port}${path}`, {
         ...init,
         headers: {
-          cookie: [`aalis_webui_token=${TOKEN}`, ...(lang === undefined ? [] : [`aalis-lang=${lang}`])].join('; '),
-          ...(accept === undefined ? {} : { 'accept-language': accept }),
+          ...(browser ? BROWSER : {}),
+          cookie: [`aalis_webui_token=${TOKEN}`, ...(browser ? [BROWSER.cookie] : [])].join('; '),
           ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(init.headers as Record<string, string> | undefined),
         },
       });
-  /** 不带登录 cookie、只带读者语言的请求：登录页 */
-  const anonymous = (lang: string) => fetch(`http://127.0.0.1:${port}/`, { headers: { cookie: `aalis-lang=${lang}` } });
-  return { reader, fault, port, anonymous };
+  /** 不带登录 cookie 的请求：登录页 */
+  const anonymous = (browser = false) => fetch(`http://127.0.0.1:${port}/`, { headers: browser ? BROWSER : {} });
+  return { request: client(), client, fault, port, anonymous, setLanguage };
 }
 
-type Request = ReturnType<Awaited<ReturnType<typeof setup>>['reader']>;
+/** 浏览器自己的语言与时区：语言 cookie、时区 cookie 与 Accept-Language 都是英语与东京，服务端不看它们 */
+const BROWSER = { cookie: 'aalis-lang=en; aalis-tz=Asia%2FTokyo', 'accept-language': 'en' };
+
+type Request = Awaited<ReturnType<typeof setup>>['request'];
 const json = async (response: Promise<Response>) => (await response).json();
 const at = (pageKey: string) => `/api/pages/${encodeURIComponent(OWNER)}/${pageKey}`;
 
-/** 读者看到的：页面声明、各组件的数据、动作结果、提示，以及插件收到的语言链 */
+/** 读者看到的：页面声明、各组件的数据、动作结果与提示 */
 async function shown(request: Request) {
   const { pages } = await json(request('/api/pages'));
   const jobs = pages.find((page: { key: string }) => page.key === 'jobs');
@@ -433,84 +431,58 @@ async function shown(request: Request) {
     notice: items
       .filter((item: { kind: string }) => item.kind === 'notice')
       .map((item: { title: string; detail: string }) => [item.title, item.detail]),
-    languages: await data('languages'),
   };
 }
 
-describe('REST 回应按读者语言渲染', () => {
-  it('cookie 为 en 时拿到英文，为 zh-CN 时拿到原文（cookie 先于 Accept-Language）；插件收到语言链，回应带 Vary', async () => {
-    const { reader } = await setup();
-    expect(await shown(reader({ lang: 'en' }))).toEqual({ ...ENGLISH, languages: 'en' });
-    expect(await shown(reader({ lang: 'zh-CN|en', accept: 'en' }))).toEqual({ ...CHINESE, languages: 'zh-CN en' });
-    expect((await reader({ lang: 'en' })('/api/pages')).headers.get('vary')).toBe('Cookie, Accept-Language');
+describe('REST 回应按全局默认层的语言渲染', () => {
+  it('不看浏览器的语言与时区：全局默认层是 zh-CN 时回应、登录页与语言包的补充按 zh-CN，时间按服务进程的时区；改成 en 之后按 en；回应不带 Vary', async () => {
+    expectProcessTimeZoneDistinct();
+    const { client, anonymous, setLanguage } = await setup({ withHubs: true });
+    const browser = client(true);
+    expect(await shown(browser)).toEqual(CHINESE);
+    expect((await json(browser(`${at('jobs')}/data/when`))).data).toBe(processTime('zh-CN'));
+    expect((await browser('/api/pages')).headers.get('vary')).toBeNull();
+    expect(await (await anonymous(true)).text()).toContain('<html lang="zh-CN">');
+    const ns = encodeURIComponent(OWNER);
+    expect(await json(browser(`/api/i18n/messages?ns=${ns}&lang=ja`))).toEqual({ entries: {} });
+    setLanguage(['en']);
+    expect(await shown(browser)).toEqual(ENGLISH);
+    expect(await (await anonymous(true)).text()).toContain('<html lang="en">');
   });
 
-  it('没有 cookie 时看 Accept-Language；不按可用语言筛，zh 读者命中 zh-CN', async () => {
-    const { reader } = await setup();
-    expect(await shown(reader({ accept: 'en-US,en;q=0.9' }))).toEqual({ ...ENGLISH, languages: 'en-US en' });
-    expect(await shown(reader({ accept: 'zh, en;q=0.5' }))).toEqual({ ...CHINESE, languages: 'zh en' });
+  it('i18n 缺席时一律原文', async () => {
+    const { request } = await setup({ withI18n: false, language: ['en'] });
+    expect(await shown(request)).toEqual(CHINESE);
   });
 
-  it('cookie 里的语言按语言部分都对不上可用语言（语言包卸了）时当作没给，看 Accept-Language；zh 照样命中 zh-CN', async () => {
-    const { reader } = await setup();
-    expect(await shown(reader({ lang: 'fr', accept: 'zh-CN' }))).toEqual({ ...CHINESE, languages: 'zh-CN' });
-    expect(await shown(reader({ lang: 'zh', accept: 'en' }))).toEqual({ ...CHINESE, languages: 'zh' });
-  });
-
-  it.each([
-    ['zh-CN', CHINESE],
-    ['en', ENGLISH],
-  ])('cookie 给不出能用的语言、Accept-Language 给不出语言（没有或全不合法）时按全局默认层（设为 %s）', async (hostLanguage, expected) => {
-    const { reader } = await setup({ hostLanguage });
-    expect(await shown(reader({}))).toEqual({ ...expected, languages: hostLanguage });
-    expect(await shown(reader({ lang: 'fr', accept: 'bad tag!' }))).toEqual({ ...expected, languages: hostLanguage });
-  });
-
-  it('Accept-Language 去掉 q=0 的，按 q 从高到低；无效的标签先剔除，再取前 8 项；合法的长标签照收', async () => {
-    const { reader } = await setup();
-    expect(await shown(reader({ accept: 'en;q=0, zh-CN;q=0.5, ja;q=0.8' }))).toEqual({
-      ...CHINESE,
-      languages: 'ja zh-CN',
-    });
-    const junk = Array.from({ length: 8 }, (_, i) => `a${i}`);
-    expect(await shown(reader({ accept: [...junk, 'zh-CN'].join(',') }))).toEqual({ ...CHINESE, languages: 'zh-CN' });
-    const long = 'en-US-u-ca-gregory-nu-latn-hc-h23-x-foo';
-    expect(await shown(reader({ accept: `${long},zh-CN` }))).toEqual({
-      ...ENGLISH,
-      languages: 'en-US-u-ca-gregory-hc-h23-nu-latn-x-foo zh-CN',
-    });
-  });
-
-  it('i18n 缺席时一律原文，插件收到的语言链为空', async () => {
-    const { reader } = await setup({ withI18n: false });
-    expect(await shown(reader({ lang: 'en' }))).toEqual({ ...CHINESE, languages: '' });
-  });
-
-  it('i18n 渲染抛错：回应照常是 200，文字按原文；插件收到的语言链为空', async () => {
+  it('i18n 渲染抛错：回应照常是 200，文字按原文', async () => {
     const fail = () => {
       throw new Error('<i18n 坏了>');
     };
-    const { reader } = await setup({ i18nService: { render: fail, chainOf: fail, languages: () => [] } });
-    const response = await reader({ lang: 'en' })('/api/pages');
+    const { request } = await setup({
+      i18nService: { render: fail, chainOf: fail, languages: () => [] },
+      language: ['en'],
+    });
+    const response = await request('/api/pages');
     expect(response.status).toBe(200);
     const { pages } = await response.json();
     expect(pages.find((page: { key: string }) => page.key === 'jobs').title).toBe('任务');
-    expect(await shown(reader({ lang: 'en' }))).toEqual({ ...CHINESE, languages: '' });
+    expect(await shown(request)).toEqual(CHINESE);
   });
 
-  it('抛出的 TextError 按读者语言写进 error，状态码取它的 status，没有时 400', async () => {
-    const { reader, fault } = await setup();
+  it('抛出的 TextError 按全局默认层的语言写进 error，状态码取它的 status，没有时 400', async () => {
+    const { request, fault, setLanguage } = await setup({ language: ['en'] });
     fault.error = new TextError(t('down'), { status: 503 });
-    const outage = await reader({ lang: 'en' })('/api/platforms');
+    const outage = await request('/api/platforms');
     expect([outage.status, await outage.json()]).toEqual([503, { error: 'Platform down' }]);
     fault.error = new TextError(t('down'));
-    const refused = await reader({ lang: 'zh-CN' })('/api/platforms');
+    setLanguage(['zh-CN']);
+    const refused = await request('/api/platforms');
     expect([refused.status, await refused.json()]).toEqual([400, { error: '平台掉线' }]);
   });
 
   it('插件的配置值、schema 与动作输入字段的默认值、插件前端的数据原样返回，里面伪造的文字对象不被换掉', async () => {
-    const { reader } = await setup();
-    const request = reader({ lang: 'en' });
+    const { request } = await setup({ language: ['en'] });
     const { plugins } = await json(request('/api/plugins'));
     const item = plugins.find((plugin: { instanceId: string }) => plugin.instanceId === OWNER);
     const rows = [{ cell: FORGED }];
@@ -532,29 +504,28 @@ describe('REST 回应按读者语言渲染', () => {
   });
 });
 
-describe('配置表单、校验问题与插件状态的原因按读者语言', () => {
-  it('核心配置表单经 /api/config 按读者语言给出；没过校验时的说明也是', async () => {
-    const { reader } = await setup({ withDoc: true });
-    const english = reader({ lang: 'en' });
-    const labels = async (request: Request) => {
+describe('配置表单、校验问题与插件状态的原因按全局默认层的语言', () => {
+  it('核心配置表单经 /api/config 按全局默认层的语言给出；没过校验时的说明也是', async () => {
+    const { request, setLanguage } = await setup({ withDoc: true, language: ['en'] });
+    const labels = async () => {
       const { schema } = await json(request('/api/config'));
       return [schema.name.label, schema.logLevel.label, schema.slowThresholdMs.label];
     };
-    expect(await labels(english)).toEqual(['App name', 'Log level', 'Slow operation threshold (ms)']);
-    expect(await labels(reader({ lang: 'zh-CN' }))).toEqual(['应用名称', '日志等级', '慢操作阈值（毫秒）']);
-    const refused = await english('/api/config', { method: 'PUT', body: JSON.stringify({ logLevel: 'loud' }) });
+    expect(await labels()).toEqual(['App name', 'Log level', 'Slow operation threshold (ms)']);
+    const refused = await request('/api/config', { method: 'PUT', body: JSON.stringify({ logLevel: 'loud' }) });
     expect([refused.status, await refused.json()]).toEqual([
       400,
       { error: 'logLevel: not one of the options ("debug", "info", "warn", and "error")' },
     ]);
+    setLanguage(['zh-CN']);
+    expect(await labels()).toEqual(['应用名称', '日志等级', '慢操作阈值（毫秒）']);
   });
 
-  it('动作的输入字段与没过校验时的说明按读者语言', async () => {
-    const { reader } = await setup();
-    const english = reader({ lang: 'en' });
-    const { pages } = await json(english('/api/pages'));
+  it('动作的输入字段与没过校验时的说明按全局默认层的语言', async () => {
+    const { request } = await setup({ language: ['en'] });
+    const { pages } = await json(request('/api/pages'));
     expect(pages.find((page: { key: string }) => page.key === 'jobs').actions.repeat.input.times.label).toBe('Times');
-    const refused = await english(`${at('jobs')}/actions/repeat`, {
+    const refused = await request(`${at('jobs')}/actions/repeat`, {
       method: 'POST',
       body: JSON.stringify({ input: { times: 'many' } }),
     });
@@ -564,17 +535,16 @@ describe('配置表单、校验问题与插件状态的原因按读者语言', (
     ]);
   });
 
-  it('没过校验的逐项问题：message 按读者语言，线上不另带 text（动作的输入与插件配置）', async () => {
-    const { reader } = await setup({ withDoc: true });
-    const english = reader({ lang: 'en' });
-    const input = await english(`${at('jobs')}/actions/repeat`, {
+  it('没过校验的逐项问题：message 按全局默认层的语言，线上不另带 text（动作的输入与插件配置）', async () => {
+    const { request } = await setup({ withDoc: true, language: ['en'] });
+    const input = await request(`${at('jobs')}/actions/repeat`, {
       method: 'POST',
       body: JSON.stringify({ input: { times: 'many' } }),
     });
     expect((await input.json()).issues).toEqual([
       { path: 'times', kind: 'invalid', code: 'type', message: 'expected a finite number, got string' },
     ]);
-    const config = await english(`/api/plugins/${encodeURIComponent(OWNER)}/config`, {
+    const config = await request(`/api/plugins/${encodeURIComponent(OWNER)}/config`, {
       method: 'PUT',
       body: JSON.stringify({ config: { level: 0 } }),
     });
@@ -584,15 +554,14 @@ describe('配置表单、校验问题与插件状态的原因按读者语言', (
     ]);
   });
 
-  it('插件失败的说明（插件列表与需要处理）与回执里缺服务的链按读者语言', async () => {
-    const { reader } = await setup();
-    const english = reader({ lang: 'en' });
-    const { plugins } = await json(english('/api/plugins'));
+  it('插件失败的说明（插件列表与需要处理）与回执里缺服务的链按全局默认层的语言', async () => {
+    const { request } = await setup({ language: ['en'] });
+    const { plugins } = await json(request('/api/plugins'));
     const failed = 'Missing config item apiKey; set it in the WebUI or the config file to apply';
     expect(plugins.find((plugin: { instanceId: string }) => plugin.instanceId === FAILING).error).toBe(failed);
-    const { items } = await json(english('/api/attention'));
+    const { items } = await json(request('/api/attention'));
     expect(items.find((item: { instance?: string }) => item.instance === FAILING).error).toBe(failed);
-    const reloaded = await english(`/api/plugins/${encodeURIComponent(LACKING)}/reload`, {
+    const reloaded = await request(`/api/plugins/${encodeURIComponent(LACKING)}/reload`, {
       method: 'POST',
       body: '{}',
     });
@@ -610,110 +579,93 @@ function textsOf(html: string): Record<string, string> {
   return JSON.parse(block);
 }
 
-/** 页面上语言切换的选项：标签、自称、是否选中 */
-const switchOf = (html: string) =>
-  [...html.matchAll(/<option value="([^"]+)"( selected)?>([^<]+)<\/option>/g)].map(([, tag, selected, name]) => [
-    tag,
-    name,
-    selected !== undefined,
-  ]);
-
-describe('webui-server 自己的文字按读者语言', () => {
+describe('webui-server 自己的文字按全局默认层的语言', () => {
   it('接口报错：未知 API、插件不存在、页面动作抛出的 TextError（经 guarded 接住，带 400–599 的 status 时用它）', async () => {
-    const { reader } = await setup();
-    const english = reader({ lang: 'en' });
-    const unknown = await english('/api/zz-unknown');
+    const { request } = await setup({ language: ['en'] });
+    const unknown = await request('/api/zz-unknown');
     expect([unknown.status, await unknown.json()]).toEqual([404, { error: 'Unknown API: GET /api/zz-unknown' }]);
-    const missing = await english('/api/plugins/zz-none/reload', { method: 'POST', body: '{}' });
+    const missing = await request('/api/plugins/zz-none/reload', { method: 'POST', body: '{}' });
     expect([missing.status, await missing.json()]).toEqual([404, { error: 'Plugin zz-none does not exist' }]);
-    const failed = await english(`${at('jobs')}/actions/fail`, { method: 'POST', body: '{}' });
+    const failed = await request(`${at('jobs')}/actions/fail`, { method: 'POST', body: '{}' });
     expect([failed.status, await failed.json()]).toEqual([500, { error: 'Platform down' }]);
-    const gone = await english(`${at('jobs')}/actions/gone`, { method: 'POST', body: '{}' });
+    const gone = await request(`${at('jobs')}/actions/gone`, { method: 'POST', body: '{}' });
     expect([gone.status, await gone.json()]).toEqual([404, { error: 'Platform down' }]);
   });
 
   it('请求体解析不了时给字典里的整句，不透传库的原句', async () => {
-    const { reader } = await setup();
-    const put = (lang: string, body: string, headers?: Record<string, string>) =>
-      reader({ lang })('/api/config', { method: 'PUT', body, headers });
+    const { request, setLanguage } = await setup({ language: ['en'] });
+    const put = (body: string, headers?: Record<string, string>) =>
+      request('/api/config', { method: 'PUT', body, headers });
     const answer = async (response: Promise<Response>) => {
       const got = await response;
       return [got.status, await got.json()];
     };
     const notJson = { error: 'The request body must be a valid JSON object or array' };
-    expect(await answer(put('en', '{bad json'))).toEqual([400, notJson]);
-    expect(await answer(put('en', 'null'))).toEqual([400, notJson]);
-    expect(await answer(put('zh-CN', '{bad json'))).toEqual([400, { error: '请求体要是合法的 JSON 对象或数组' }]);
-    expect(await answer(put('en', '{}', { 'content-type': 'application/json; charset=klingon' }))).toEqual([
+    expect(await answer(put('{bad json'))).toEqual([400, notJson]);
+    expect(await answer(put('null'))).toEqual([400, notJson]);
+    expect(await answer(put('{}', { 'content-type': 'application/json; charset=klingon' }))).toEqual([
       415,
       { error: 'The charset or content encoding of the request body is not supported' },
     ]);
+    setLanguage(['zh-CN']);
+    expect(await answer(put('{bad json'))).toEqual([400, { error: '请求体要是合法的 JSON 对象或数组' }]);
   });
 
-  it('未登录的 API 请求回 401，说明按读者语言', async () => {
-    const { port } = await setup();
-    const unauthenticated = (lang: string) =>
-      fetch(`http://127.0.0.1:${port}/api/plugins`, { headers: { cookie: `aalis-lang=${lang}` } });
-    const english = await unauthenticated('en');
+  it('未登录的 API 请求回 401，说明按全局默认层的语言', async () => {
+    const { port, setLanguage } = await setup({ language: ['en'] });
+    const unauthenticated = () => fetch(`http://127.0.0.1:${port}/api/plugins`);
+    const english = await unauthenticated();
     expect([english.status, await english.json()]).toEqual([401, { error: 'Not signed in' }]);
-    expect(await (await unauthenticated('zh-CN')).json()).toEqual({ error: '未登录' });
+    setLanguage(['zh-CN']);
+    expect(await (await unauthenticated()).json()).toEqual({ error: '未登录' });
   });
 
-  it('插件的显示名经插件列表与服务列表交出，按读者语言', async () => {
-    const { reader } = await setup();
-    const english = reader({ lang: 'en' });
-    const { plugins } = await json(english('/api/plugins'));
+  it('插件的显示名经插件列表与服务列表交出，按全局默认层的语言', async () => {
+    const { request } = await setup({ language: ['en'] });
+    const { plugins } = await json(request('/api/plugins'));
     expect(plugins.find((plugin: { instanceId: string }) => plugin.instanceId === OWNER).displayName).toBe('Jobs');
-    const { services } = await json(english('/api/services'));
+    const { services } = await json(request('/api/services'));
     expect(services.platform.providers.find((p: { contextId: string }) => p.contextId === OWNER).displayName).toBe(
       'Jobs',
     );
   });
 
-  it('登录页：<html lang> 跟随读者，外链脚本要的文字在 texts 块里，语言切换列出可用语言，CSP 照旧', async () => {
-    const { anonymous } = await setup();
-    const english = await anonymous('en');
+  it('登录页：<html lang> 跟随全局默认层，外链脚本要的文字在 texts 块里，没有语言切换，CSP 照旧', async () => {
+    const { anonymous, setLanguage } = await setup({ language: ['en'] });
+    const english = await anonymous();
     const html = await english.text();
     expect(english.status).toBe(401);
     expect(english.headers.get('content-security-policy')).toBe(DOCUMENT_CSP);
     expect(html).toContain('<html lang="en">');
     expect(html).toContain('<button type="submit" id="b">Sign in</button>');
     expect(textsOf(html)).toEqual({ tokenWrong: 'Incorrect token', networkError: 'Network error' });
-    expect(switchOf(html)).toEqual([
-      ['en', 'English', true],
-      ['zh-CN', '中文（中国）', false],
-    ]);
-    const chinese = await (await anonymous('zh-CN')).text();
+    expect(html).not.toContain('<select');
+    setLanguage(['zh-CN']);
+    const chinese = await (await anonymous()).text();
     expect(chinese).toContain('<html lang="zh-CN">');
     expect(textsOf(chinese)).toEqual({ tokenWrong: 'token 不正确', networkError: '网络错误' });
   });
 
-  it('pageLanguage 的译文不是合法的语言标签时，<html lang> 与选中项用读者语言链的第一项', async () => {
-    const { anonymous } = await setup({ withHubs: true });
-    const html = await (await anonymous('ja')).text();
-    expect(html).toContain('<html lang="ja">');
-    expect(switchOf(html)).toEqual([
-      ['en', 'English', false],
-      ['ja', '日本語', true],
-      ['zh-CN', '中文（中国）', false],
-    ]);
+  it('pageLanguage 的译文不是合法的语言标签时，<html lang> 用全局默认层语言链的第一项', async () => {
+    const { anonymous } = await setup({ withHubs: true, language: ['ja'] });
+    expect(await (await anonymous()).text()).toContain('<html lang="ja">');
   });
 
-  it('i18n 缺席：登录页是原文，没有语言切换', async () => {
-    const { anonymous } = await setup({ withI18n: false });
-    const html = await (await anonymous('en')).text();
+  it('i18n 缺席：登录页是原文', async () => {
+    const { anonymous } = await setup({ withI18n: false, language: ['en'] });
+    const html = await (await anonymous()).text();
     expect(html).toContain('<html lang="zh-CN">');
     expect(textsOf(html)).toEqual({ tokenWrong: 'token 不正确', networkError: '网络错误' });
-    expect(html).not.toContain('<select');
   });
 
-  it('恢复页 /__clients 按读者语言输出，带参数的文字留着占位给脚本填', async () => {
-    const { reader } = await setup();
-    const response = await reader({ lang: 'en' })('/__clients');
+  it('恢复页 /__clients 按全局默认层的语言输出，带参数的文字留着占位给脚本填，没有语言切换', async () => {
+    const { request } = await setup({ language: ['en'] });
+    const response = await request('/__clients');
     const html = await response.text();
     expect(response.headers.get('content-security-policy')).toBe(DOCUMENT_CSP);
     expect(html).toContain('<html lang="en">');
     expect(textsOf(html)).toMatchObject({ switching: 'Switching…', failed: 'Switch failed: {detail}{hint}' });
+    expect(html).not.toContain('id="lang"');
   });
 
   it('texts 块里的 < 写成 \\u003c，内容结束不了这个块', () => {
@@ -725,9 +677,9 @@ describe('webui-server 自己的文字按读者语言', () => {
   it.each([
     ['en', '# Aalis WebUI access credentials (generated)', 'One-click sign-in: '],
     ['zh-CN', '# Aalis WebUI 访问凭据（自动生成）', '一键登录: '],
-  ])('access.txt 的说明行按全局默认层的语言写（%s）', async (hostLanguage, title, login) => {
+  ])('access.txt 的说明行按全局默认层的语言写（%s）', async (language, title, login) => {
     const written = new Map<string, string>();
-    const { port } = await setup({ hostLanguage, written });
+    const { port } = await setup({ language: [language], written });
     await vi.waitFor(() => expect(written.has('data:/webui/access.txt')).toBe(true));
     const lines = written.get('data:/webui/access.txt')?.split('\n') ?? [];
     expect(lines[0]).toBe(title);
@@ -737,8 +689,8 @@ describe('webui-server 自己的文字按读者语言', () => {
 
 describe('可选项来源与 /api/i18n 的两条路由', () => {
   it('/api/models/i18n-languages 经贡献点 webui:options 给出可选项：先是跟随系统，再是各语言（值是语言标签，标签是自称）', async () => {
-    const { reader } = await withSystemLocale('ja-JP', () => setup({ withHubs: true }));
-    expect(await json(reader({ lang: 'en' })('/api/models/i18n-languages'))).toEqual({
+    const { request } = await withSystemLocale('ja-JP', () => setup({ withHubs: true, language: ['en'] }));
+    expect(await json(request('/api/models/i18n-languages'))).toEqual({
       models: ['auto', 'en', 'ja', 'zh-CN'],
       details: [
         { value: 'auto', label: 'Follow system (currently: 日本語 (日本))' },
@@ -751,7 +703,7 @@ describe('可选项来源与 /api/i18n 的两条路由', () => {
 
   it('GET /api/i18n/languages 给有文字可用的语言，i18n 缺席时为空', async () => {
     const present = await setup({ withHubs: true });
-    expect(await json(present.reader({})('/api/i18n/languages'))).toEqual({
+    expect(await json(present.request('/api/i18n/languages'))).toEqual({
       languages: [
         { tag: 'en', name: 'English' },
         { tag: 'ja', name: '日本語' },
@@ -759,30 +711,21 @@ describe('可选项来源与 /api/i18n 的两条路由', () => {
       ],
     });
     const absent = await setup({ withI18n: false, withHubs: true });
-    expect(await json(absent.reader({})('/api/i18n/languages'))).toEqual({ languages: [] });
+    expect(await json(absent.request('/api/i18n/languages'))).toEqual({ languages: [] });
   });
 
-  it('GET /api/i18n/messages 给这些 ns 在语言链下语言包的补充：按 ns 与语言筛（en 总留着），i18n 缺席时为空', async () => {
-    const { reader } = await setup({ withHubs: true });
-    const request = reader({});
+  it('GET /api/i18n/messages 给这些 ns 在全局默认层语言链下语言包的补充：按 ns 与语言筛（en 总留着），i18n 缺席时为空', async () => {
+    const { request, setLanguage } = await setup({ withHubs: true, language: ['ja-JP'] });
     const ns = encodeURIComponent(OWNER);
     const other = encodeURIComponent('@zz/other');
     const title = { language: 'ja', text: 'ジョブ', from: fingerprint('任务') };
-    expect(await json(request(`/api/i18n/messages?ns=${ns}&lang=ja-JP`))).toEqual({
-      entries: { [OWNER]: { title: [title] } },
-    });
-    expect(await json(request(`/api/i18n/messages?ns=${ns}&lang=${encodeURIComponent('fr|en')}`))).toEqual({
-      entries: {},
-    });
-    // 没给 lang（含空的 lang=）时按这次请求的读者
     const hi = (language: string, text: string) => ({ language, text, from: fingerprint('你好') });
-    expect(await json(reader({ lang: 'ja' })(`/api/i18n/messages?ns=${ns},${other}`))).toEqual({
+    expect(await json(request(`/api/i18n/messages?ns=${ns},${other}`))).toEqual({
       entries: { [OWNER]: { title: [title] }, '@zz/other': { hi: [hi('en', 'Hi'), hi('ja', 'やあ')] } },
     });
-    expect(await json(reader({ lang: 'ja' })(`/api/i18n/messages?ns=${ns}&lang=`))).toEqual({
-      entries: { [OWNER]: { title: [title] } },
-    });
+    setLanguage(['fr', 'en']);
+    expect(await json(request(`/api/i18n/messages?ns=${ns}`))).toEqual({ entries: {} });
     const absent = await setup({ withI18n: false, withHubs: true });
-    expect(await json(absent.reader({})(`/api/i18n/messages?ns=${other}&lang=en`))).toEqual({ entries: {} });
+    expect(await json(absent.request(`/api/i18n/messages?ns=${other}`))).toEqual({ entries: {} });
   });
 });

@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import type { I18nService } from '../../packages/api-i18n/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
@@ -299,6 +300,7 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
     memory: fixedRef<MemoryService>(undefined),
     media: fixedRef(media as MediaService),
     llm: fixedRef<LLMModel>(undefined),
+    i18n: fixedRef<I18nService>(undefined),
     // storage：缺席时访问即抛错；在场时直接给本夹具的单根假 storage——两阶段结构与根路由无关，
     // 根路由见 onebot-forward-storage-roots.test.ts
     storage: opts.brokenDownload ? fixedRef<StorageService>(undefined).use : (storage as unknown as StorageService),

@@ -31,7 +31,6 @@ const SOURCE = {
   accessLogin: '一键登录: {url}',
   accessHint: '# 提示：将该一键登录链接粘贴到浏览器即可自动设置 cookie',
   pageLanguage: 'zh-CN',
-  languageSwitch: '语言',
   loginTitle: 'Aalis WebUI 登录',
   loginHint:
     '访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在家目录的 secrets.yaml 里（配置文件里是引用）。',

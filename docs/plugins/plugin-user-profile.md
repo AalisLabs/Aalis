@@ -27,6 +27,7 @@ export default definePlugin({
     tools: optional(tools),
     commands: optional(commands),
     userRelation: optional(userRelation),
+    i18n: optional(i18n),
     webui: optional(webuiServer),
   },
   apply(caps) { /* 见源码 */ },

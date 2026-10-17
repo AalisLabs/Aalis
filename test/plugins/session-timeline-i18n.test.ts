@@ -7,9 +7,10 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -24,6 +25,7 @@ import {
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
@@ -32,7 +34,7 @@ import { client } from '../fixtures/session-client.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// 时间线与历史按连接的读者渲染：实时推送与重连之后的历史显示同一句话。夹具交出文字对象的三处写入方都是真的：
+// 时间线与历史按全局默认层的语言渲染：实时推送与重连之后的历史显示同一句话。夹具交出文字对象的三处写入方都是真的：
 // webui-server 把带文字对象的出站记进 WebUI 会话的历史，memory-summary 写压缩分隔线，message-archive 记宿主通知与
 // 平台通知；会话服务的时间线固定句（压缩）进它自己的字典。存档的正文是原文（给模型与日志），没记文字对象的旧记录照旧
 // 显示正文。i18n 是真的 plugin-i18n。
@@ -73,16 +75,25 @@ afterEach(async () => {
 
 /**
  * 会话服务连同会话管理、内存记忆、消息归档、记忆摘要（桩摘要模型）、webui-server（不监听，只用它的出站收件箱）与 i18n；
- * 存储与 owner 判定是替身
+ * 存储与 owner 判定是替身。全局默认层的语言是 en，setLanguage 改它
  */
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const { app } = hostedApp({ sessionConfig: { defaults: { language: ['en'] } } }, { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-timeline-i18n-'));
   homes.push(home);
   provideHostPaths(app, home);
   await registerHubs(app);
-  const host = app.bind({ provide, events, hooks, memory, messageArchive, compression, sessionProtocol });
+  const host = app.bind({
+    provide,
+    events,
+    hooks,
+    memory,
+    messageArchive,
+    compression,
+    sessionManager,
+    sessionProtocol,
+  });
   host.provide.use(storage, memoryStorage(new Map()));
   host.provide.use(authority, {
     isOwner: (p: string, u?: string) => p === OWNER.platform && u === OWNER.userId,
@@ -106,12 +117,13 @@ async function setup() {
     const state = app.plugins.getPlugin(plugin.name)?.state;
     if (state !== 'active') throw new Error(`${plugin.name} 未激活（state=${state}）`);
   }
-  const connect = async (languages: string[]) => {
+  const connect = async () => {
     const c = client(host.sessionProtocol.use);
-    await c.init({ languages });
+    await c.init();
     return c;
   };
-  return { host, connect };
+  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
+  return { host, connect, setLanguage };
 }
 
 /** 条目里显示的文字：她的消息与通知 */
@@ -126,10 +138,10 @@ const said = (items: Localized<SessionItem>[]) =>
       : [],
   );
 
-describe('时间线与历史按连接的读者渲染', () => {
-  it('带文字对象的非回复出站（回合外与回合中）：实时推成 notice，与重连之后历史里的那一条 kind、topic、text 相同；en 连接看到英文、zh-CN 是原文，参数里的 Markdown 原样；消息与存档的正文是原文', async () => {
-    const { host, connect } = await setup();
-    const live = await connect(['en']);
+describe('时间线与历史按全局默认层的语言渲染', () => {
+  it('带文字对象的非回复出站（回合外与回合中）：实时推成 notice，与重连之后历史里的那一条 kind、topic、text 相同；en 看到英文、zh-CN 是原文，参数里的 Markdown 原样；消息与存档的正文是原文', async () => {
+    const { host, connect, setLanguage } = await setup();
+    const live = await connect();
     const { session } = await live.call('session/create', {});
     const id = session.id;
     const base = await live.subscribe(id);
@@ -157,20 +169,18 @@ describe('时间线与历史按连接的读者渲染', () => {
     const notice = (text: string) => ({ kind: 'notice', topic: WellKnownKinds.EventMarker, text });
     const english = [notice(`Switched to ${link}`), notice(`Stopped ${image}`)];
     expect(said(live.timeline(id, base))).toEqual(english);
-    const history = async (languages: string[]) =>
-      said((await (await connect(languages)).subscribe(id)).snapshot.items);
-    expect([await history(['en']), await history(['zh-CN'])]).toEqual([
-      english,
-      [notice(`已切换到 ${link}`), notice(`已停止 ${image}`)],
-    ]);
+    const history = async () => said((await (await connect()).subscribe(id)).snapshot.items);
+    expect(await history()).toEqual(english);
+    await setLanguage(['zh-CN']);
+    expect(await history()).toEqual([notice(`已切换到 ${link}`), notice(`已停止 ${image}`)]);
     const sources = [`已切换到 ${link}`, `已停止 ${image}`];
     expect(sent.map(out => out.content)).toEqual(sources);
     expect((await host.memory.use.getHistory(id, Infinity)).map(m => m.content)).toEqual(sources);
   });
 
-  it('压缩分隔线与宿主通知在实时与历史里按连接的语言显示；没记文字对象的旧记录照旧显示正文', async () => {
+  it('压缩分隔线与宿主通知在实时与历史里按全局默认层的语言显示；没记文字对象的旧记录照旧显示正文', async () => {
     const { host, connect } = await setup();
-    const live = await connect(['en']);
+    const live = await connect();
     const { session } = await live.call('session/create', {});
     const id = session.id;
     const base = await live.subscribe(id);
@@ -202,7 +212,7 @@ describe('时间线与历史按连接的读者渲染', () => {
       .flatMap(({ item }) => (item.kind === 'notice' ? [item.text] : []));
     expect(started).toEqual(['Compacting the conversation']);
     expect(shown(live.timeline(id, base))).toEqual(['Conversation compacted', 'Paper n-1 is done']);
-    const reopened = await connect(['en']);
+    const reopened = await connect();
     const { snapshot } = await reopened.subscribe(id);
     expect(shown(snapshot.items)).toEqual([
       '在',
@@ -214,9 +224,9 @@ describe('时间线与历史按连接的读者渲染', () => {
     ]);
   });
 
-  it('平台事件合成的入站带给人看的那句：实时与历史都画成按连接语言显示的通知，存档正文照旧是写给模型的原文', async () => {
+  it('平台事件合成的入站带给人看的那句：实时与历史都画成按全局默认层的语言显示的通知，存档正文照旧是写给模型的原文', async () => {
     const { host, connect } = await setup();
-    const live = await connect(['en']);
+    const live = await connect();
     const { session } = await live.call('session/create', {});
     const id = session.id;
     const base = await live.subscribe(id);
@@ -231,8 +241,29 @@ describe('时间线与历史按连接的读者渲染', () => {
     });
     const notice = { kind: 'notice', topic: 'zz-request', text: 'User 30001 sent a friend request' };
     expect(said(live.timeline(id, base))).toEqual([notice]);
-    expect(said((await (await connect(['en'])).subscribe(id)).snapshot.items)).toEqual([notice]);
+    expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual([notice]);
     const [stored] = await host.memory.use.getHistory(id, Infinity);
     expect(stored).toMatchObject({ role: 'user', content: `[30001]: ${content}` });
+  });
+
+  it('平台事件转成的入站不带来源（如戳一戳）：通知的 topic 是它的 noticeType，存档仍是 user 消息、子类记成 kind', async () => {
+    const { host, connect } = await setup();
+    const live = await connect();
+    const { session } = await live.call('session/create', {});
+    const id = session.id;
+    const base = await live.subscribe(id);
+    await host.messageArchive.use.archiveIncoming({
+      content: '[戳一戳: 30001 戳了你]',
+      sessionId: id,
+      platform: 'onebot',
+      userId: '30001',
+      noticeType: 'poke',
+      text: t('poked', { who: '30001' }),
+    });
+    const notice = { kind: 'notice', topic: 'poke', text: '30001 poked you' };
+    expect(said(live.timeline(id, base))).toEqual([notice]);
+    expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual([notice]);
+    const [stored] = await host.memory.use.getHistory(id, Infinity);
+    expect(stored).toMatchObject({ role: 'user', kind: 'poke', content: '[30001]: [戳一戳: 30001 戳了你]' });
   });
 });

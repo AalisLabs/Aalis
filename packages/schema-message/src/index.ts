@@ -102,7 +102,8 @@ export interface Message {
    * - `'cross-session-delegation'`  ：notice 子类——系统代发的任务指令（triggerType 为 proactive，如 workflow 的 agent 节点）。
    * - `'host-notice'`               ：notice 子类——宿主撰写的事件通知（入站消息带 hostNotice）。
    * - `'outbound-image'`            ：assistant 子类——agent 已发出的图片。
-   * - notice 的平台事件类型         ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。
+   * - 平台事件类型                 ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。平台通知
+   *   落成 notice；转成入站的（如戳一戳、群文件上传）仍是 user，kind 取 {@link IncomingMessage}.noticeType。
    *
    * 第三方插件可定义自己的 kind 字符串，但请避开 `WellKnownKinds` 中已有的语义。
    */
@@ -226,13 +227,14 @@ export interface IncomingMessage {
     userId?: string;
     nickname?: string;
   };
-  /** 通知子类型（如 poke、group_upload 等非消息事件） */
+  /** 通知子类型（如 poke、group_upload 等非消息事件）；存档记成消息的 kind */
   noticeType?: string;
   /** 通知动作是否指向机器人；poke 为 false 时按未点名互动判断，省略沿用戳机器人的语义。 */
   noticeTargetIsSelf?: boolean;
   /**
-   * 平台事件合成的入站（如好友申请、入群邀请）给人看的那句（文字对象）：content 是写给模型的（带处理办法与工具用法），
-   * 界面显示这一句，按读者的语言渲染。适配器写，真人发言不设；不进模型的上下文，存档按 {@link WellKnownMetadataKeys}.Text 记下
+   * 平台事件合成或转成的入站（如好友申请、入群邀请、戳一戳、群文件上传）给人看的那句（文字对象）：content 是写给模型的
+   * （有的带处理办法与工具用法），界面显示这一句，按读者的语言渲染。适配器写，真人发言不设；不进模型的上下文，也不参与触发与
+   * 回复的判定，存档按 {@link WellKnownMetadataKeys}.Text 记下
    */
   text?: TextRef;
   /**

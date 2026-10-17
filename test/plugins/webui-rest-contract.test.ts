@@ -122,8 +122,9 @@ const doubles = definePlugin({
     provide.use(approvals, service);
     provide.use(sessionManager, {
       getSession: (id: string) => ({ id, name: id, title: '整理周报', kind: 'owner' }) as unknown as SessionInfo,
-      // 不带语言的请求按全局默认层：i18n 读这一层
+      // WebUI 的读者按全局默认层：i18n 读这一层，诊断枚举的层只有它
       getLayer: () => ({}),
+      listLayers: () => [{ scope: 'defaults' }],
     } as never);
     provide.use(sessionProtocol, {
       connect: () => ({ receive: async () => {}, close() {} }),
@@ -490,7 +491,7 @@ describe('管理面 REST 的回应与契约', () => {
     );
     await ok('POST /api/llm-providers/:contextId/refresh', '/api/llm-providers/zz-rest-llm/refresh');
     await ok('GET /api/i18n/languages', '/api/i18n/languages');
-    await ok('GET /api/i18n/messages', '/api/i18n/messages?ns=zz-ns&lang=ja');
+    await ok('GET /api/i18n/messages', '/api/i18n/messages?ns=zz-ns');
 
     // 页面、布局与文件
     const { pages } = (await ok('GET /api/pages', '/api/pages')) as unknown as PageListResponse;

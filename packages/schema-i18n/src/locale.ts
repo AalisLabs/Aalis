@@ -18,8 +18,8 @@ const MAX_INPUT = 32;
 const MAX_LANGUAGES = 8;
 
 /**
- * 读者给的语言列表规范化：整理写法、过 getCanonicalLocales，不合法的（含不是字符串的）丢掉，去重保序。列表来自读者
- * （请求、协议、会话设置），只看前 32 项，至多给出 8 种
+ * 读者给的语言列表规范化：整理写法、过 getCanonicalLocales，不合法的（含不是字符串的）丢掉，去重保序。列表来自会话设置与调用方
+ * （可能是手写的配置），只看前 32 项，至多给出 8 种
  */
 export function normalizeLanguages(tags: readonly unknown[]): string[] {
   const out: string[] = [];
@@ -38,7 +38,7 @@ interface Subtags {
   readonly region?: string;
 }
 
-// 读者的标签来自请求，条目数封顶
+// 标签来自设置与调用方，条目数封顶
 const subtagCache = new Map<string, Subtags | null>();
 
 /** maximize 之后的语言、文字与地区：zh、zh-CN、zh-SG 都是 zh-Hans，zh-TW、zh-HK 是 zh-Hant */
@@ -58,11 +58,11 @@ function subtags(tag: string): Subtags | undefined {
 }
 
 /**
- * 按读者语言链在可用语言里选一种，返回下标：①链里逐项找语言与文字都相同的，同文字内地区相同者优先，
- * 其余按 available 的先后；②链里逐项找语言相同、文字不同的（zh-TW 读者遇到只有简体时用简体）；③en。
- * 都没有时 undefined，由调用方用原文
+ * 读者语言链在可用语言里对得上的一种，返回下标：①链里逐项找语言与文字都相同的，同文字内地区相同者优先，
+ * 其余按 available 的先后；②链里逐项找语言相同、文字不同的（zh-TW 读者遇到只有简体时用简体）。都没有时 undefined。
+ * 不含 en 兜底（见 {@link pickLanguage}）：判「某种语言有没有字典提供」用它
  */
-export function pickLanguage(chain: readonly string[], available: readonly string[]): number | undefined {
+export function matchLanguage(chain: readonly string[], available: readonly string[]): number | undefined {
   const offered = available.map(subtags);
   const sameScript = (reader: Subtags) => {
     let first: number | undefined;
@@ -82,6 +82,22 @@ export function pickLanguage(chain: readonly string[], available: readonly strin
     const found = offered.findIndex(candidate => candidate?.language === reader.language);
     if (found >= 0) return found;
   }
-  const english = subtags('en');
-  return english && sameScript(english);
+  return undefined;
+}
+
+/**
+ * 渲染时按读者语言链在可用语言里选一种，返回下标：链里对得上的（{@link matchLanguage}），没有时找 en。
+ * 都没有时 undefined，由调用方用原文
+ */
+export function pickLanguage(chain: readonly string[], available: readonly string[]): number | undefined {
+  return matchLanguage(chain, available) ?? matchLanguage(['en'], available);
+}
+
+/** 该语言的自称（English、日本語 (日本)）；带扩展的标签这类 DisplayNames 不收的，用标签本身 */
+export function selfName(tag: string): string {
+  try {
+    return new Intl.DisplayNames([tag], { type: 'language' }).of(tag) ?? tag;
+  } catch {
+    return tag;
+  }
 }

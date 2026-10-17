@@ -8,6 +8,7 @@
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   isSessionConfigError,
+  placeKind,
   placeLabel,
   type RegisteredSessionSetting,
   SESSION_LAYERS,
@@ -16,7 +17,6 @@ import {
   type SessionInfo,
   type SessionKind,
   type SessionManagerService,
-  type SessionPlace,
   sessionLabel,
 } from '@aalis/api-session-manager';
 import {
@@ -57,8 +57,6 @@ interface SessionDeps {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** 场所按它的类别列与收设置项：窗口按房间，工作区按 owner 的会话 */
-const PLACE_KINDS: Record<SessionPlace['kind'], SessionKind> = { window: 'room', workspace: 'owner' };
 /** 层表：名字与称呼，按先后 */
 const LAYER_ORDER = SESSION_LAYERS.map(({ name, label }) => ({ name, label }));
 
@@ -370,7 +368,7 @@ export function createSessions(deps: SessionDeps) {
   function layerKind(layer: SettingLayer): SessionKind | undefined {
     if (layer.scope !== 'place') return undefined;
     const place = sm.getPlace(layer.key);
-    return place && PLACE_KINDS[place.kind];
+    return place && placeKind(place);
   }
 
   /** 一层的各行：只列这一层适用的项，各带解析到这一层为止的生效值与来源 */

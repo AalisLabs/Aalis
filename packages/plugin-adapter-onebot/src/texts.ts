@@ -1,4 +1,5 @@
-// 本插件自己的原文字典：平台通知与请求事件合成的入站给人看的那句（写给模型的正文另带 [notice/…]、处理办法与工具用法）
+// 本插件自己的原文字典：平台通知、请求事件合成的入站与戳一戳、群文件上传转成的入站给人看的那句（写给模型的正文另带
+// [notice/…]、处理办法与工具用法）
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -31,6 +32,10 @@ const SOURCE = {
   adminUnset: '{user} 被取消管理员',
   adminChanged: '{user} 管理员状态变化',
   friendAdded: '{user} 成为了我的好友',
+  poked: '{user} 戳了我',
+  pokedOther: '{user} 戳了 {target}',
+  uploaded: '{user} 上传了 {file}',
+  unknownFile: '未知文件',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -31,11 +31,6 @@ export type PagePlacement = 'plugin' | 'settings' | 'session';
 export interface PageContext {
   /** 调用者：认证出的身份。只有 owner 能调用页面 */
   caller: UserIdentity;
-  /**
-   * 读者的语言链，宿主按请求解析，i18n 缺席时为空。给人看的文字交文字对象即可，不必看它；按语言生成文字以外的东西
-   * （出图、调外部接口）时用
-   */
-  languages: readonly string[];
 }
 
 /** 会话面板的调用上下文：会话 id 由宿主单独给出，不从参数里取；调用前宿主核过会话存在，给的是规范化后的 id */

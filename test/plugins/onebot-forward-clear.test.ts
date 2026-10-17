@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
+import type { I18nService } from '../../packages/api-i18n/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -66,6 +67,7 @@ describe('forward-expand: clearAll', () => {
       memory: fixedRef(mem),
       media: fixedRef<MediaService>(undefined),
       llm: fixedRef<LLMModel>(undefined),
+      i18n: fixedRef<I18nService>(undefined),
       storage: {} as StorageService,
       processService: fixedRef<ProcessService>(undefined),
       forwardCfg: CFG,

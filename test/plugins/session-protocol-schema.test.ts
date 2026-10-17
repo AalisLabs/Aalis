@@ -140,12 +140,7 @@ type MethodSamples = {
 const methodSamples: MethodSamples = {
   initialize: {
     params: {
-      valid: {
-        protocolVersion: SESSION_PROTOCOL_VERSION,
-        client: { name: 'webui', version: '0.1.0' },
-        languages: ['zh-CN', 'en'],
-        timeZone: 'Asia/Shanghai',
-      },
+      valid: { protocolVersion: SESSION_PROTOCOL_VERSION, client: { name: 'webui', version: '0.1.0' } },
       invalid: { protocolVersion: 'v1', client: { name: 'webui', version: '0.1.0' } },
     },
     result: {
@@ -652,11 +647,6 @@ describe('会话协议 schema 往返', () => {
     expect(list.safeParse({ background: false }).success).toBe(false);
     expect(list.safeParse({ background: true, archived: true }).success).toBe(false);
     expect(list.safeParse({ background: true, archived: false }).success).toBe(false);
-  });
-
-  it('握手可带读者的语言链与时区（1.1 加的可选字段），语言链是字符串数组', () => {
-    const params = { protocolVersion: SESSION_PROTOCOL_VERSION, client: { name: 'webui', version: '0.1.0' } };
-    expect(sessionMethods.initialize.params.safeParse({ ...params, languages: 'en' }).success).toBe(false);
   });
 
   it('服务端交出的文字字段收文字对象：会话摘要、分组、设置项、层表、条目、批量与回滚的原因、后台任务', () => {

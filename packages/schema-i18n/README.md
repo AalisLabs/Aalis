@@ -72,7 +72,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{n, plural, =0 {…} one {…} other {…}}`：`=N` 精确匹配先于类别，类别取 `Intl.PluralRules`。`#` 只在直接所在的 plural 分支里替换为该数（按语言的 `NumberFormat`），嵌在 select 里的 `#` 是字面。
 - `{x, select, a {…} other {…}}`：x 是字符串。
 - `{n, number}`：`NumberFormat`。
-- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省、超过 64 个字符或不认识时用进程时区。
+- `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省或不认识时用进程时区。
 - `{items, list}`：`ListFormat` 的 conjunction（「和」）；`{items, list, or}`：disjunction（「或」，如「可选：a、b或c」）；`{items, lines}`：按行连接。元素各自渲染。`list` 后面的样式只认 `or`。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
 - `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
@@ -97,9 +97,11 @@ plural 与 select 必须有 other；未知类型、`list` 后面不是 `or` 的�
 
 ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染（一次 `resolveText` 或 `resolveSource`）里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source，伪造的重复参数不放大、环不挂死。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
 
-`resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：带读者的时区与转义，参数里的文字对象同样取各自的原文，回落规则同上。
+`resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：时区与转义同 `resolveText`，参数里的文字对象同样取各自的原文，回落规则同上。
 
 `normalizeLanguages(tags)` 整理读者给的语言列表：下划线换连字符、去掉 `.UTF-8` 这类后缀、过 `getCanonicalLocales`，不合法的丢掉，去重保序；只看前 32 项，至多给出 8 种。
+
+`pickLanguage(chain, available)` 是上面第 2 到 4 步的选法，返回 available 的下标，都没有时 `undefined`（由调用方用原文）；`matchLanguage(chain, available)` 只做第 2、3 步、不找 en，判「某种语言有没有字典提供」用它。`selfName(tag)` 给出该语言的自称（`English`、`日本語 (日本)`），`Intl.DisplayNames` 不收的标签用标签本身。
 
 ## 进程级目录
 

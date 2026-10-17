@@ -88,9 +88,8 @@ export function client(server: SessionProtocolService, peer: Omit<SessionPeer, '
     frames
       .filter(f => f.method === name)
       .map(f => sessionNotifications[name].parse(f.params) as Localized<SessionNotificationParams<N>>);
-  /** 握手；reader 是这条连接的读者（语言链与时区），不给时服务端按全局默认层渲染 */
-  const init = (reader: Pick<SessionMethodParams<'initialize'>, 'languages' | 'timeZone'> = {}) =>
-    call('initialize', { protocolVersion: SESSION_PROTOCOL_VERSION, client: CLIENT, ...reader });
+  /** 握手 */
+  const init = () => call('initialize', { protocolVersion: SESSION_PROTOCOL_VERSION, client: CLIENT });
   const list = (params: SessionMethodParams<'sessions/list'> = {}) => call('sessions/list', params);
   /** 在列表里找一条摘要（列表默认一页 50 条，用例里的会话不超过一页） */
   const summary = async (id: string) => {

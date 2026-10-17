@@ -45,7 +45,7 @@ export function captureRoutes(): {
         return res;
       },
       json(payload: unknown) {
-        out.body = localizeFor(ABSENT, payload, { languages: [] }, { onError: rethrow });
+        out.body = localizeFor(ABSENT, payload, { host: true }, { onError: rethrow });
         return res;
       },
     };

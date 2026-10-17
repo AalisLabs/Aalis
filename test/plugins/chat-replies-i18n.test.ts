@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionLabel, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
@@ -22,12 +23,13 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 第一方发到聊天里的固定文字按会话的语言：/doctor 的报告版式、/session 的版式与说明句（层名、默认会话名、默认工作区随读者），
-// agent 发出的「[系统]」「[错误]」两句。它们交出文字对象，网关按消息所在会话（会话设置 language）的语言渲染；i18n 缺席时
-// 是原文。真的 plugin-i18n、plugin-commands、plugin-gateway、plugin-agent、plugin-doctor 与会话管理，记忆是内存实现，
-// 存储与 owner 判定是替身。
+// agent 发出的「[系统]」「[错误]」两句。它们交出文字对象，网关按消息所在房间（会话设置 language）的语言渲染；i18n 缺席时
+// 是原文。房间是 owner 在聊天平台上的私聊（场所是默认工作区）。真的 plugin-i18n、plugin-commands、plugin-gateway、
+// plugin-agent、plugin-doctor 与会话管理，记忆是内存实现，存储与 owner 判定是替身。
 // ════════════════════════════════════════════════════════════
 
 const t = defineTexts({
@@ -39,6 +41,12 @@ const t = defineTexts({
 
 /** 聊天平台：适配器收 outbound:message 里这个平台的消息 */
 const CHAT = 'zz-chat';
+const OWNER = 'zz-owner';
+/**
+ * 预置在会话表里的房间：owner 经几个机器人账号的私聊，没取名。经网关的原生入站会跑完整条相位链（兜底回复也是出站），
+ * 不经它收录
+ */
+const ROOMS = [1, 2, 3].map(n => `${CHAT}:bot${n}:private:${OWNER}`);
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
@@ -59,10 +67,20 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
   await registerHubs(app);
   const host = app.bind({ provide, events, commands, gateway, sessionManager });
   host.provide.use(storage, memoryStorage(new Map()));
-  host.provide.use(authority, { isOwner: () => false, authorize: () => null } as never);
+  host.provide.use(authority, {
+    isOwner: (platform: string, userId?: string) => platform === CHAT && userId === OWNER,
+    authorize: () => null,
+  } as never);
+  // 房间要在会话管理读表之前预置进记忆后端
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  await app
+    .bind({ memory })
+    .memory.use.commitMetadata(
+      ROOMS.map(id => ({ op: 'put' as const, namespace: 'sessions', key: id, data: storedRoom(id) })),
+    );
   const plugins: Array<{ definition: PluginDefinition; config?: Record<string, unknown> }> = [
     ...(llm ? [{ definition: llm }] : []),
-    { definition: memoryInMemory },
     { definition: messageArchivePlugin, config: { debugLogs: false } },
     { definition: sessionManagerPlugin },
     { definition: gatewayPlugin },
@@ -74,7 +92,7 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
   // 与 runtime 一样一批登记
   await app.pluginAll(plugins.map(({ definition, config }) => ({ definition, config: config ?? {} })));
   await app.plugins.idle();
-  for (const { definition } of plugins) {
+  for (const { definition } of [{ definition: memoryInMemory }, ...plugins]) {
     const state = app.plugins.getPlugin(definition.name)?.state;
     if (state !== 'active') throw new Error(`${definition.name} 未激活（state=${state}）`);
   }
@@ -88,13 +106,18 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
   /** 在聊天平台的会话里说一句，取这一句引出的那条出站的正文，按行拆开 */
   const ask = async (sessionId: string, content: string): Promise<string[]> => {
     const before = sent.length;
-    await host.gateway.use.ingressMessage({ content, sessionId, platform: CHAT, userId: 'zz-user' });
+    await host.gateway.use.ingressMessage({ content, sessionId, platform: CHAT, userId: OWNER });
     await vi.waitFor(() => expect(sent.length).toBe(before + 1));
     return sent[before].content.split('\n');
   };
-  /** 一个没取名的会话；language 是它自己的会话设置 */
-  const session = async (language?: string[]) =>
-    host.sessionManager.use.createSession(language ? { config: { language } } : {});
+  let rooms = 0;
+  /** 下一个预置的房间；language 是它自己的会话设置 */
+  const session = async (language?: string[]) => {
+    const id = ROOMS[rooms++];
+    return language
+      ? host.sessionManager.use.updateSession(id, { config: { language } })
+      : (host.sessionManager.use.getSession(id) as SessionInfo);
+  };
   return { host, ask, session };
 }
 

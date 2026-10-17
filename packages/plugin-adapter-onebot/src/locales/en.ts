@@ -29,4 +29,8 @@ export default defineLocale<Source>()({
   adminUnset: '{user} is no longer an admin',
   adminChanged: "{user}'s admin status changed",
   friendAdded: '{user} became a friend of the assistant',
+  poked: '{user} poked the assistant',
+  pokedOther: '{user} poked {target}',
+  uploaded: '{user} uploaded {file}',
+  unknownFile: 'an unknown file',
 });

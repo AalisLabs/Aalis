@@ -1,12 +1,11 @@
 // ============================================================
 // routes/pages.ts — 声明式页面、会话面板与布局记录的 REST 路由
 //
-// 路径与返回形状见 api-webui 的 page.ts。页面的数据源与动作要把调用者与读者的语言链交给插件，这两条路由自己解析身份
-// （与 gate 同一判定）；其余用 gate。闸门与校验在 pages.ts，这里只把请求交过去、把结果连同它要的渲染选项写回。布局记录
+// 路径与返回形状见 api-webui 的 page.ts。页面的数据源与动作要把调用者交给插件，这两条路由自己解析身份（与 gate 同一判定）；
+// 其余用 gate。闸门与校验在 pages.ts，这里只把请求交过去、把结果连同它要的渲染选项写回。布局记录
 // 存在插件数据里，存储服务不在时回 503。
 // ============================================================
 
-import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ErrorResponse, WebuiAdminEvent } from '@aalis/api-webui';
 import type { Logger } from '@aalis/core';
@@ -26,8 +25,6 @@ export function registerPageRoutes(
     /** 存储服务在不在：布局记录读写要它 */
     storageReady(): boolean;
     send(event: WebuiAdminEvent): void;
-    /** 读者的语言链（localize.ts） */
-    languages(req: IncomingMessage): readonly string[];
     logger: Logger;
   },
   identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
@@ -55,16 +52,14 @@ export function registerPageRoutes(
     const caller = identify(req);
     if (!caller) return forbidden(res);
     const { instance, pageKey, componentId } = req.params;
-    const ctx = { caller, languages: deps.languages(req) };
-    reply(res, await registry.data(instance, pageKey, componentId, req.query, ctx));
+    reply(res, await registry.data(instance, pageKey, componentId, req.query, { caller }));
   });
 
   route(expressApp, 'POST /api/pages/:instance/:pageKey/actions/:action', async (req, res) => {
     const caller = identify(req);
     if (!caller) return forbidden(res);
     const { instance, pageKey, action } = req.params;
-    const ctx = { caller, languages: deps.languages(req) };
-    reply(res, await registry.act(instance, pageKey, action, req.body, ctx, req.socket.remoteAddress ?? '未知'));
+    reply(res, await registry.act(instance, pageKey, action, req.body, { caller }, req.socket.remoteAddress ?? '未知'));
   });
 
   const storageMissing = (res: express.Response<ErrorResponse>) =>

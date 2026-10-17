@@ -43,6 +43,7 @@ function setup() {
     memory: absentRef(),
     media: absentRef(),
     llm: absentRef(),
+    i18n: absentRef(),
     storage: absentRef<StorageService>().use,
     processService: absentRef(),
     forwardCfg: CFG,

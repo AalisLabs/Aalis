@@ -9,9 +9,9 @@
 // 不要登录的只有 /api/auth/ 下的四条与 /frames/ 下的文件；其余要登录（cookie），没登录的 /api/ 请求回 401，页面回登录页。
 // 改状态的请求（非 GET）另校验来源：带 Origin 的要与本服务同源。登记表里没有的 /api/ 路径回 404 与 ErrorResponse。
 //
-// 回应里给人看的文字按读者的语言：先看 cookie aalis-lang（语言标签以 `|` 分隔，靠前的优先），没有再看 Accept-Language；
-// 日期与时间按 cookie aalis-tz 的时区。这里的回应类型写的是服务端交出的形状，文字可以是文字对象（schema-i18n 的 TextRef），
-// 发出前一律渲染成字符串：线上的形状是 Localized<…>，路由的见 WebuiRestResponse。回 JSON 的都带 Vary: Cookie, Accept-Language。
+// 回应里给人看的文字按全局默认层的语言（读者是 owner 自己，不看浏览器的语言），日期与时间按服务进程的时区。这里的回应类型
+// 写的是服务端交出的形状，文字可以是文字对象（schema-i18n 的 TextRef），发出前一律渲染成字符串：线上的形状是 Localized<…>，
+// 路由的见 WebuiRestResponse。
 
 import type { UserIdentity } from '@aalis/api-authority';
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
@@ -424,7 +424,7 @@ export interface PackedText {
 
 /**
  * GET /api/i18n/messages：语言包给这些 ns 补的译文，供前端自带的字典用。entries 是 ns → 键 → 各语言包给的
- * （同一语言按交付的先后，取先），只留语言链用得上的语言（与链里某种的语言相同的，以及 en）；没有的 ns 不列。
+ * （同一语言按交付的先后，取先），只留全局默认层的语言链用得上的语言（与链里某种的语言相同的，以及 en）；没有的 ns 不列。
  * 前端照它建语言包索引（schema-i18n 的 PackIndex）交给 resolveText，取舍（只补缺、指纹）在那里做。i18n 缺席时为空
  */
 export interface I18nMessagesResponse {
@@ -475,8 +475,8 @@ export interface WebuiRestRoutes {
   'POST /api/llm-providers/:contextId/refresh': { response: ModelRefreshResponse };
 
   'GET /api/i18n/languages': { response: I18nLanguagesResponse };
-  /** ns 以逗号分隔；lang 是语言链（写法同 cookie aalis-lang），不给时按这次请求的读者 */
-  'GET /api/i18n/messages': { query: { ns: string; lang?: string }; response: I18nMessagesResponse };
+  /** ns 以逗号分隔 */
+  'GET /api/i18n/messages': { query: { ns: string }; response: I18nMessagesResponse };
 
   'GET /api/pages': { response: PageListResponse };
   'GET /api/session-pages': { query: { sessionId: string }; response: PanelPagesResponse };

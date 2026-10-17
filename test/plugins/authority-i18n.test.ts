@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -20,15 +21,18 @@ import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 执行守卫的拒绝语是 plugin-authority 字典里的文字对象：指令一路由 plugin-commands 作为回复交出，网关按会话的语言渲染
-// （en 会话拿英文、zh-CN 会话拿原文）；工具一路交给模型，取原文。真的 plugin-authority、plugin-commands、plugin-gateway、
+// 执行守卫的拒绝语是 plugin-authority 字典里的文字对象：指令一路由 plugin-commands 作为回复交出，网关按房间的语言渲染
+// （en 房间拿英文、zh-CN 房间拿原文）；工具一路交给模型，取原文。真的 plugin-authority、plugin-commands、plugin-gateway、
 // plugin-tools、会话管理与 plugin-i18n，记忆是内存实现，存储是替身。
 // ════════════════════════════════════════════════════════════
 
 const CHAT = 'zz-chat';
 const USER = 'zz-user';
+/** 预置在会话表里的房间：经网关的原生入站会跑完整条相位链，不经它收录 */
+const ROOMS = [1, 2].map(n => `${CHAT}:bot:group:${n}`);
 const DENIED = '权限不足: "command:zz-admin" 需等级 2（当前 0）';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
@@ -48,18 +52,14 @@ async function setup() {
   await registerHubs(app);
   const host = app.bind({ provide, events, commands, gateway, sessionManager, tools });
   host.provide.use(storage, memoryStorage(new Map()));
-  const plugins = [
-    memoryInMemory,
-    sessionManagerPlugin,
-    gatewayPlugin,
-    commandsPlugin,
-    toolsPlugin,
-    authorityPlugin,
-    i18nPlugin,
-  ];
+  // 房间要在会话管理读表之前预置进记忆后端
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  await seedRooms(app.bind({ memory }).memory.use, Object.fromEntries(ROOMS.map(id => [id, id])));
+  const plugins = [sessionManagerPlugin, gatewayPlugin, commandsPlugin, toolsPlugin, authorityPlugin, i18nPlugin];
   await app.pluginAll(plugins.map(definition => ({ definition, config: {} })));
   await app.plugins.idle();
-  for (const { name } of plugins) {
+  for (const { name } of [memoryInMemory, ...plugins]) {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
@@ -79,9 +79,11 @@ async function setup() {
   host.events.use.on('outbound:message', message => {
     if (message.platform === CHAT) sent.push(message);
   });
-  /** 在语言为 language 的聊天会话里敲一条指令，取它引出的回复 */
+  let rooms = 0;
+  /** 在下一个预置的房间里把语言设成 language、敲一条指令，取它引出的回复 */
   const ask = async (language: string[], content: string): Promise<string> => {
-    const { id: sessionId } = await host.sessionManager.use.createSession({ config: { language } });
+    const sessionId = ROOMS[rooms++];
+    await host.sessionManager.use.updateSession(sessionId, { config: { language } });
     const before = sent.length;
     void host.gateway.use.ingressMessage({ content, sessionId, platform: CHAT, userId: USER });
     await vi.waitFor(() => expect(sent.length).toBe(before + 1));
@@ -91,7 +93,7 @@ async function setup() {
 }
 
 describe('执行守卫的拒绝语', () => {
-  it('指令一路：en 会话的回复是英文，zh-CN 会话是原文', async () => {
+  it('指令一路：en 房间的回复是英文，zh-CN 房间是原文', async () => {
     const s = await setup();
     expect(await s.ask(['en'], '/zz-admin')).toBe(
       'Insufficient permission: "command:zz-admin" needs level 2 (current 0)',

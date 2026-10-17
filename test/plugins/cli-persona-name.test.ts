@@ -20,18 +20,18 @@ afterEach(async () => {
 });
 
 describe('终端显示的人设名', () => {
-  /** 起终端界面，全局默认层的「人设」设为 <别的卡>；返回发一条回复之后的最后一帧（去掉控制序列） */
-  async function terminal(getPersonaName: (options?: PersonaSessionOptions) => string) {
+  /** 起终端界面，会话设置的各层是 layers（缺省全局默认层的「人设」设为 <别的卡>）；返回发一条回复之后的最后一帧（去掉控制序列） */
+  async function terminal(
+    getPersonaName: (options?: PersonaSessionOptions) => string,
+    layers: Parameters<typeof startSessionManager>[0]['layers'] = { defaults: { persona: '<别的卡>' } },
+  ) {
     const writes: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
       writes.push(String(chunk));
       return true;
     });
     cleanups.push(fakeTty(30, 120).restore);
-    const { app, host } = await startSessionManager({
-      layers: { defaults: { persona: '<别的卡>' } },
-      settings: [PERSONA],
-    });
+    const { app, host } = await startSessionManager({ layers, settings: [PERSONA] });
     cleanups.push(() => app.stop());
     host.provide.use(persona, { getPersonaName } as never);
     await app.plugin(cliPlugin, { startupView: 'chat' });
@@ -57,10 +57,15 @@ describe('终端显示的人设名', () => {
     expect(frame).not.toContain('<主卡的名字>');
   });
 
-  it('人设没取名（名字是空串）：欢迎行与署名写 Aalis，头部写 default', async () => {
+  it('会话用的卡没取名（名字是空串）：欢迎行与署名写 Aalis，头部写卡的 id', async () => {
     const frame = await terminal(() => '');
     expect(frame).toContain('✦ Aalis');
     expect(frame).toContain('欢迎使用 Aalis。');
+    expect(frame).toContain('Aalis · <别的卡>');
+  });
+
+  it('哪一层都没设人设、主卡没取名：头部写 default', async () => {
+    const frame = await terminal(() => '', {});
     expect(frame).toContain('Aalis · default');
   });
 });

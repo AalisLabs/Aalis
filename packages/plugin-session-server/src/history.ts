@@ -188,7 +188,7 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
   const itemId = archivedItemId(message);
   const at = message.timestamp ?? 0;
   const recorded = message.metadata?.[WellKnownMetadataKeys.Text];
-  // 记了给人看的那句的入站是平台事件合成的（如好友申请），不是谁的发言：画成通知
+  // 记了给人看的那句的入站是平台事件合成或转成的（如好友申请、戳一戳），不是谁的发言：画成通知，种类取存档记的子类或来源
   if (message.role === 'user' && !isTextRef(recorded)) {
     const spoken = message.metadata?.[WellKnownMetadataKeys.SpokenContent];
     return {

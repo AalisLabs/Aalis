@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@aalis/api-commands": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
@@ -64,6 +65,7 @@
       ],
       "optional": [
         "user-relation",
+        "i18n",
         "tools",
         "commands",
         "webui-server"

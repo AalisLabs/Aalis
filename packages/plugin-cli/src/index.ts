@@ -138,7 +138,7 @@ const uses = {
   commands: optional(commands),
   /** 发出入站之前给配置的会话建档，创建来源写 cli 审批面的登记名 */
   sessionManager: optional(sessionManager),
-  /** 界面文字按终端会话的语言显示；缺席时按原文 */
+  /** 界面文字按全局默认层的语言显示；缺席时按原文 */
   i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
@@ -158,7 +158,7 @@ type TuiCaps = Pick<
   | 'sessionManager'
 >;
 
-/** 按终端会话的读者渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
+/** 按全局默认层的语言渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
 type Localize = <T>(value: T) => Localized<T>;
 
 export default definePlugin({
@@ -191,11 +191,11 @@ function startCli(caps: Caps): void {
   const onRenderError = (err: unknown) => {
     if (renderWarned) return;
     renderWarned = true;
-    logger.use.warn('按终端会话的语言渲染界面文字出错，按原文显示（之后再出错不再告警）:', err);
+    logger.use.warn('按全局默认层的语言渲染界面文字出错，按原文显示（之后再出错不再告警）:', err);
   };
-  // 读者是终端会话：会话设置 language 按继承链解析，入口平台 cli。终端不做 Markdown 转义
-  const reader = { sessionId, platform: 'cli' };
-  const localize: Localize = value => localizeFor(caps.i18n, value, reader, { onError: onRenderError });
+  // 终端是 owner 自己看的：界面文字按全局默认层的语言，不看终端会话自己的语言设置（聊天输出已由网关按会话渲染）。终端不做
+  // Markdown 转义
+  const localize: Localize = value => localizeFor(caps.i18n, value, { host: true }, { onError: onRenderError });
 
   const adapter: PlatformAdapter = {
     adapterName: 'CLI',
@@ -348,7 +348,7 @@ class CliTui {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
     // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
-    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按终端会话的读者渲染，事实原样
+    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按全局默认层的语言渲染，事实原样
     this.attendance = this.approvalSurface.attend(
       { platform: 'cli', userId: 'console' },
       {
@@ -388,7 +388,7 @@ class CliTui {
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
-    // 会话设置变了（语言、人设）：界面立即按新的设置重绘，已写进聊天区的行不变
+    // 会话设置变了（全局默认层的语言、终端会话的人设）：界面立即按新的设置重绘，已写进聊天区的行不变
     this.caps.events.use.on('session:config:changed', this.queueRender);
 
     this.caps.lifecycle.use.onDispose(() => this.stop());
@@ -483,13 +483,17 @@ class CliTui {
     if (this.view === 'chat') this.queueRender();
   }
 
+  /** 终端会话设置的「人设」（卡的 id）；没有会话管理或没设时为 undefined */
+  private personaCard(): string | undefined {
+    return this.caps.sessionManager.present
+      ? this.caps.sessionManager.use.resolveConfig(this.sessionId, 'cli').persona
+      : undefined;
+  }
+
   /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务或卡没取名时为 undefined */
   private personaName(): string | undefined {
-    const config = this.caps.sessionManager.present
-      ? this.caps.sessionManager.use.resolveConfig(this.sessionId, 'cli')
-      : undefined;
     return this.caps.persona.present
-      ? this.caps.persona.use.getPersonaName({ persona: config?.persona }) || undefined
+      ? this.caps.persona.use.getPersonaName({ persona: this.personaCard() }) || undefined
       : undefined;
   }
 
@@ -857,7 +861,8 @@ class CliTui {
   }
 
   private renderHeader(width: number): string {
-    const persona = this.personaName() ?? 'default';
+    // 卡没取名时写会话用的卡的 id，没设人设（用主卡）时写 default
+    const persona = this.personaName() || this.personaCard() || 'default';
     const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
     const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
       .map(v => {

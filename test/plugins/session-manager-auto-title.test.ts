@@ -1,9 +1,11 @@
-import { App, events, provide } from '@aalis/core';
+import { events, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
@@ -12,8 +14,9 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 
 type Chat = (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string }>;
 
-async function setup(chat: Chat = async () => ({ content: '装修预算' })) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+/** language 给出时装上 i18n，全局默认层的语言设成它 */
+async function setup(chat: Chat = async () => ({ content: '装修预算' }), language?: string[]) {
+  const { app } = hostedApp(language ? { sessionConfig: { defaults: { language } } } : {});
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide.use(memory, fakeMemory() as never);
@@ -27,6 +30,7 @@ async function setup(chat: Chat = async () => ({ content: '装修预算' })) {
     },
   } as never);
   await app.plugin(sessionManagerPlugin, {});
+  if (language) await app.plugin(i18nPlugin);
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
@@ -115,16 +119,29 @@ describe('标题的语言与截断', () => {
     return title;
   }
 
-  it('提示词不写死中文：标题用对话片段所用的语言', async () => {
+  it('标题的语言取自全局默认层的语言列表（会话自己设的不算）：提示词里写 English（en），不写死中文、不让模型跟对话的语言', async () => {
     const systems: string[] = [];
-    const title = await titleOf(async req => {
-      systems.push(req.messages.find(m => m.role === 'system')?.content ?? '');
-      return { content: 'Kitchen budget' };
-    }, 'help me plan a kitchen budget');
+    const { app, host, sm } = await setup(
+      async req => {
+        systems.push(req.messages.find(m => m.role === 'system')?.content ?? '');
+        return { content: 'Kitchen budget' };
+      },
+      ['en', 'zh-CN'],
+    );
+    const session = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
+    await sm.updateSession(session.id, { config: { language: ['ja'] } });
+    await host.events.use.emit('inbound:message', {
+      content: '帮我算下厨房装修预算',
+      sessionId: session.id,
+      platform: 'webui',
+    });
+    const title = await waitTitle(sm, session.id);
+    await app.stop();
 
     expect(title).toBe('Kitchen budget');
+    expect(systems[0]).toContain('生成一个简短的标题，用 English（en）。');
     expect(systems[0]).not.toContain('中文标题');
-    expect(systems[0]).toContain('对话片段所用的语言');
+    expect(systems[0]).not.toContain('对话片段所用的语言');
   });
 
   it('模型给的标题与兜底标题截断时不切坏 emoji', async () => {
