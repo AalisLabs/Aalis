@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -160,14 +161,15 @@ describe('paper_send：发出', () => {
     ]);
   });
 
-  it('平台报发送失败时返回原因，不标为已交付', async () => {
+  it('平台报发送失败时返回原因（文字对象取原文），不标为已交付', async () => {
+    const t = defineTexts({ ns: '@zz/paper-send', language: 'zh-CN', source: { timeout: '上传超时' } });
     const h = await startPaperHub({
       files: seed(),
-      delivery: async () => ({ ok: false, error: '上传超时' }),
+      delivery: async () => ({ ok: false, error: t('timeout') }),
     });
     const res = await h.call('paper_send', { artifact_id: 'a-00000001' });
     expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain('上传超时');
+    expect(res.error).toBe('发送失败：上传超时');
     expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
     expect(h.ledger().tasks['t-00000001'].unknownArtifacts).toBeUndefined();
   });

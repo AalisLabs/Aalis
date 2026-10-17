@@ -100,7 +100,7 @@ function extractCookie(res: MockRes, name: string): string | undefined {
 const TOKEN = 'test-token-abc';
 
 /** i18n 缺席的出口：回应里的文字按原文渲染 */
-const LOCALIZER = createLocalizer({ present: false } as never);
+const LOCALIZER = createLocalizer({ present: false } as never, {} as Logger);
 
 function makeAuth() {
   return createAuthSystem(() => TOKEN, LOCALIZER);

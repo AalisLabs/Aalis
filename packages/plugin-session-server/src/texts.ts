@@ -9,6 +9,14 @@ const SOURCE = {
   compacting: '正在压缩对话',
   compacted: '对话已压缩',
   compactionFailed: '压缩失败',
+  unsentSilent: '没有发出：这一轮静默结束',
+  unsentAborted: '没有发出：回合已中止',
+  unsentError: '没有发出：回合出错',
+  beforeToolUnsent: '没有发出：调用工具之前说的话不发到群里',
+  retried: '没有发出：格式校验没通过，已重试',
+  notAccepted: '没有发出：平台没收下（{error}）',
+  noAdapter: '没有发出：没有平台适配器接手这条消息',
+  sendFailed: '没有发出：发送出错（{error}）',
 } as const;
 export type Source = typeof SOURCE;
 

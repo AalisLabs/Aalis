@@ -220,6 +220,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-authority
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1171,6 +1174,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-memory':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-memory
@@ -1183,6 +1189,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1426,9 +1435,15 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-session-manager':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1504,6 +1519,9 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-tools
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
@@ -2110,6 +2128,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
@@ -2246,6 +2267,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message

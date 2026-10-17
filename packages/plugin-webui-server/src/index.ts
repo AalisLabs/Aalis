@@ -13,7 +13,7 @@ import { contributions } from '@aalis/api-contributions';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
-import { i18n, localizeFor } from '@aalis/api-i18n';
+import { i18n } from '@aalis/api-i18n';
 import { llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
@@ -345,6 +345,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、媒体与会话文件）都走这里
   const storage = caps.storage.use;
+  // 给人看的文字按读者语言渲染（localize.ts）：回应、登录页与恢复页按请求的读者，access.txt 按全局默认层
+  const localizer = createLocalizer(caps.i18n, logger.use);
 
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
@@ -388,7 +390,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       t('accessHint'),
     ]);
     try {
-      await storage.writeFile(accessFileUri, `${localizeFor(caps.i18n, lines, { host: true })}\n`, { secret: true });
+      await storage.writeFile(accessFileUri, `${localizer.host(lines)}\n`, { secret: true });
       return true;
     } catch (err) {
       logger.use.warn(`写入访问文件失败: ${(err as Error).message}`);
@@ -439,11 +441,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
   // storage 已在线时 follow 是同步首挂：等读回完成再继续，认证从第一个请求起就用持久化的 token
   if (tokenLoading) await tokenLoading;
-  // 回应里的文字按读者语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它；登录页与恢复页也按它（localize.ts）
-  const localizer = createLocalizer(caps.i18n);
   const auth = createAuthSystem(() => authToken, localizer);
 
   const expressApp = express();
+  // 回应里的文字按读者语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它
   expressApp.use(localizer.middleware);
   // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
   // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱，插件前端的文件另设框架 CSP
@@ -1017,8 +1018,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       try {
         // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
         const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
-        if (!caps.archive.present)
-          return { ok: false as const, error: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史' };
+        if (!caps.archive.present) return { ok: false as const, error: t('archiveAbsent') };
         const archive = caps.archive.use;
         for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
         if (snapshot.attachments?.length) {
@@ -1028,7 +1028,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         }
         return { ok: true as const };
       } catch (error) {
-        return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+        return { ok: false as const, error: textOf(error) };
       }
     })();
   });

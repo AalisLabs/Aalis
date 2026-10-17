@@ -27,10 +27,19 @@ pnpm add @aalis/api-i18n
 import { i18n, localizeFor } from '@aalis/api-i18n';
 
 // uses: { i18n: optional(i18n) }
-const reply = localizeFor(caps.i18n, payload, { sessionId, platform }, { skip: key => key === 'args', escape: 'markdown' });
+let warned = false;
+const reply = localizeFor(caps.i18n, payload, { sessionId, platform }, {
+  skip: key => key === 'args',
+  escape: 'markdown',
+  onError: err => {
+    if (warned) return;
+    warned = true;
+    logger.warn('按读者语言渲染出错，按原文发出:', err);
+  },
+});
 ```
 
-i18n 在场时调 `render`，缺席时按原文语言渲染（`resolveSource`，带读者的时区与转义），两支同一个 `skip`：工具参数与结果、审批的逐字参数、用户消息正文这类原样数据里形如文字对象的值可能是伪造的，要跳过。写日志、交给模型的文字不经出口，用 `toSource`。
+i18n 在场时调 `render`，缺席时按原文语言渲染（`resolveSource`，带读者的时区与转义）；`render` 抛错时把错交给 `onError`（必填），这次同样按原文渲染，要发出的文字不丢。出口在 `onError` 里告警，一个出口告警一次就够。各支同一个 `skip`：工具参数与结果、审批的逐字参数、用户消息正文这类原样数据里形如文字对象的值可能是伪造的，要跳过。写日志、交给模型的文字不经出口，用 `toSource`。
 
 出口的包同时直接依赖 `@aalis/schema-i18n`（产出文字本来就要用它）：只经本包间接拿到时，泛型包装函数推断出的返回类型 `Localized<T>` 在生成声明文件时无法命名（TS2742）；也可以给包装函数显式标注返回类型。
 

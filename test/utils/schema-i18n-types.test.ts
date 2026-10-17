@@ -34,6 +34,7 @@ describe('Params：按花括号配平的递归下降推参', () => {
       >
     >();
     assertType<Equal<Params<'{items, list} / {rows, lines}'>, { items: List; rows: List }>>();
+    assertType<Equal<Params<'可选：{levels, list, or}'>, { levels: List }>>();
   });
 
   it('plural 分支里的单词与 =0 分支不算参数，分支里的真参数算', () => {

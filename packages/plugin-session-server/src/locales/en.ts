@@ -9,4 +9,12 @@ export default defineLocale<Source>()({
   compacting: 'Compacting the conversation',
   compacted: 'Conversation compacted',
   compactionFailed: 'Compaction failed',
+  unsentSilent: 'Not sent: this turn ended silently',
+  unsentAborted: 'Not sent: the turn was aborted',
+  unsentError: 'Not sent: the turn failed',
+  beforeToolUnsent: 'Not sent: what is said before calling a tool is not sent to the group',
+  retried: 'Not sent: the format check failed, so the reply was retried',
+  notAccepted: 'Not sent: the platform did not accept it ({error})',
+  noAdapter: 'Not sent: no platform adapter took this message',
+  sendFailed: 'Not sent: sending failed ({error})',
 });

@@ -11,6 +11,7 @@
 
 import type { GatewayService } from '@aalis/api-gateway';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type OutgoingMessage } from '@aalis/schema-message';
 import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
 import type { PaperConfig } from './config.js';
@@ -199,7 +200,7 @@ export async function deliverArtifacts(
     return { ok: false, error: '成品仍在发送，结果未确认，请勿重发', unconfirmed: true };
   }
   if (!result.ok) {
-    if (!result.unconfirmed) return { ok: false, error: `发送失败：${result.error}` };
+    if (!result.unconfirmed) return { ok: false, error: `发送失败：${toSource(result.error)}` };
     await record('unknown');
     return { ok: false, error: '成品发送结果未知（可能已经送达），请勿重发', unconfirmed: true };
   }

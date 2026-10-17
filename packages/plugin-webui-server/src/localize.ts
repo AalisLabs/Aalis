@@ -5,15 +5,15 @@
 // 都对不上（选过的语言包卸了）当作没给；没给再看 Accept-Language，它也给不出语言（没有或全不合法）时链为空，i18n 按全局
 // 默认层。两处经同一个解析：按 q 排，再经 normalizeLanguages 剔除无效的标签、规范化、限条数，不按可用语言筛（匹配交给
 // 渲染）；时区取 cookie aalis-tz。
-// 最早挂的中间件包住 res.json：值里的文字对象按读者渲染后再发，i18n 缺席时按原文。路由里外的 JSON 回应（认证的 401 与
-// 403、闸门、未知 API、错误处理）都经过它；不经 res.json 的文字（纯文本的错误、登录页与恢复页）用 render。渲染过的回应
-// 都带 Vary: Cookie, Accept-Language。原样数据（插件配置值、schema 的默认值、插件前端的数据）要跳过、Markdown 正文要转义时，
-// 路由在 res.json 之前经 renderWith 交代。
+// 最早挂的中间件包住 res.json：值里的文字对象按读者渲染后再发，i18n 缺席或渲染抛错时按原文（抛错只告警一次）。路由里外的
+// JSON 回应（认证的 401 与 403、闸门、未知 API、错误处理）都经过它；不经 res.json 的文字（纯文本的错误、登录页与恢复页）用
+// render，宿主自己写出的（access.txt）用 host，按全局默认层。渲染过的回应都带 Vary: Cookie, Accept-Language。原样数据（插件
+// 配置值、schema 的默认值、插件前端的数据）要跳过、Markdown 正文要转义时，路由在 res.json 之前经 renderWith 交代。
 // ============================================================
 
 import type { IncomingMessage } from 'node:http';
 import { type I18nService, type LanguageInfo, localizeFor, type RenderOptions } from '@aalis/api-i18n';
-import type { ServiceSelection } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { type Localized, type LocalizeSkip, normalizeLanguages } from '@aalis/schema-i18n';
 import type express from 'express';
 import { parseCookieValue } from './auth.js';
@@ -77,17 +77,28 @@ export interface Localizer {
   middleware: express.RequestHandler;
   /** 把值里的文字对象按这次请求的读者渲染，回应带上 Vary */
   render<T>(req: Request, res: express.Response, value: T, options?: RenderOptions): Localized<T>;
+  /** 按全局默认层渲染：宿主自己写出的文字（access.txt） */
+  host<T>(value: T): Localized<T>;
   /**
    * 读者的语言链（i18n 的 chainOf），交给插件的 PageContext；chain 是另给的链（写法同 cookie），不给时按这次请求的读者。
-   * i18n 缺席时为空
+   * i18n 缺席时为空，取链出错时告警（与渲染共用一次）并为空
    */
   languages(req: Request, chain?: string): readonly string[];
   /** 有文字可用的语言，页面上的语言切换列它们；i18n 缺席时为空 */
   offered(): readonly LanguageInfo[];
 }
 
-export function createLocalizer(i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>): Localizer {
+export function createLocalizer(
+  i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
+  logger: Logger,
+): Localizer {
   const offered = () => (i18n.present ? i18n.use.languages() : []);
+  let warned = false;
+  const onError = (err: unknown) => {
+    if (warned) return;
+    warned = true;
+    logger.warn('按读者语言渲染出错，按原文发出（之后再出错不再告警）:', err);
+  };
 
   /** cookie 的链里有一项按语言部分对得上有文字可用的语言才算给了；i18n 缺席时读者的链用不上，看哪一处都一样 */
   const usable = (chain: readonly string[]) => {
@@ -106,7 +117,7 @@ export function createLocalizer(i18n: Pick<ServiceSelection<I18nService>, 'prese
 
   const render = <T>(req: Request, res: express.Response, value: T, options?: RenderOptions) => {
     res.vary('Cookie').vary('Accept-Language');
-    return localizeFor(i18n, value, readerOf(req), options);
+    return localizeFor(i18n, value, readerOf(req), { ...options, onError });
   };
   return {
     middleware: (req, res, next) => {
@@ -115,8 +126,16 @@ export function createLocalizer(i18n: Pick<ServiceSelection<I18nService>, 'prese
       next();
     },
     render,
-    languages: (req, chain) =>
-      i18n.present ? i18n.use.chainOf(chain === undefined ? readerOf(req) : { languages: parseLanguages(chain) }) : [],
+    host: value => localizeFor(i18n, value, { host: true }, { onError }),
+    languages: (req, chain) => {
+      if (!i18n.present) return [];
+      try {
+        return i18n.use.chainOf(chain === undefined ? readerOf(req) : { languages: parseLanguages(chain) });
+      } catch (err) {
+        onError(err);
+        return [];
+      }
+    },
     offered,
   };
 }

@@ -178,6 +178,7 @@ const SOURCE = {
   extraParams: '多余的参数：{keys, list}',
   nameRequired: '{name} 要是非空字符串',
   noSessionManager: '会话管理服务不在，会话面板用不了',
+  archiveAbsent: '消息存档服务不在场，这条消息没有存进 WebUI 会话的历史',
   sessionMissing: '会话 {session} 不存在',
   inputNotObject: 'input 要是对象',
   inputExtraKeys: 'input 里多余的键：{keys, list}',

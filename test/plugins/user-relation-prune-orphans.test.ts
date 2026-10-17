@@ -6,6 +6,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvictionConfig, registerRelationCommands } from '../../packages/plugin-user-relation/src/commands.js';
 import type { EvidenceRef } from '../../packages/plugin-user-relation/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // pruneOrphans 一趟收敛：删完悬空边后，"被引用"的统计必须只看存活边。
@@ -111,7 +112,7 @@ function captureCommands(): { commands: BoundCommands; run(name: string): Promis
     async run(name) {
       const handler = handlers.get(name);
       if (!handler) throw new Error(`指令未注册：${name}`);
-      return handler({ session: { sessionId: 's', platform: 'test', raw: '' }, options: {} });
+      return toSource(await handler({ session: { sessionId: 's', platform: 'test', raw: '' }, options: {} }));
     },
   };
 }

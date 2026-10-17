@@ -8,6 +8,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import type { Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
 import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -327,8 +328,13 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(outbound[0].attachments?.[0].data).toBe('https://example.invalid/cat.png');
   });
 
-  it('平台明确拒绝时，合法 PNG 也不能报告成功', async () => {
-    deliveryResult = { ok: false, error: '模拟平台拒绝' };
+  it('平台明确拒绝时，合法 PNG 也不能报告成功；原因是文字对象时交给模型的是原文', async () => {
+    const t = defineTexts({
+      ns: '@zz/image-sender-media-check',
+      language: 'zh-CN',
+      source: { refused: '模拟平台拒绝' },
+    });
+    deliveryResult = { ok: false, error: t('refused') };
     const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
     expect(out.ok).toBeUndefined();
     expect(out.error).toBe('模拟平台拒绝');

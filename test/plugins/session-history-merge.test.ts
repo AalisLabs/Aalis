@@ -7,7 +7,7 @@ import {
   notAccepted,
   readHistory,
 } from '../../packages/plugin-session-server/src/history.js';
-import type { TextRef } from '../../packages/schema-i18n/src/index.js';
+import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   type Message,
   outboundMediaMessage,
@@ -518,7 +518,7 @@ describe('服务端归并的条目', () => {
     ];
     const said = (room: boolean) =>
       mergeArchive(raw, context(room), new Map()).flatMap(i =>
-        i.kind === 'agent-message' ? [[i.text, i.undelivered?.reason]] : [],
+        i.kind === 'agent-message' ? [[i.text, toSource(i.undelivered?.reason)]] : [],
       );
     expect(said(true)).toEqual([
       ['我先查', expect.stringContaining('调用工具之前')],

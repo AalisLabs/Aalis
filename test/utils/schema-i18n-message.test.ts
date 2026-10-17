@@ -25,6 +25,8 @@ const SOURCE = {
   unclosed: "a '{b",
   quotedBraces: "'{'{x}'}'",
   list: '{items, list}',
+  listOr: '{items, list, or}',
+  listStyle: '{items, list, and}',
   lines: '{rows, lines}',
   duration: '{ms, duration}',
   size: '{bytes, size}',
@@ -45,7 +47,12 @@ const md = { escape: 'markdown' } as const;
 const zh = defineTexts({
   ns: 'test/schema-i18n-message-zh',
   language: 'zh-CN',
-  source: { list: '{items, list}', duration: '{ms, duration}', size: '{bytes, size}' } as const,
+  source: {
+    list: '{items, list}',
+    listOr: '{items, list, or}',
+    duration: '{ms, duration}',
+    size: '{bytes, size}',
+  } as const,
 });
 
 describe('参数与类型', () => {
@@ -120,6 +127,12 @@ describe('list 与 lines', () => {
   it('list 用 ListFormat 的 conjunction，按语言', () => {
     expect(t('list', { items: ['a', 'b', 'c'] }).source).toBe('a, b, and c');
     expect(zh('list', { items: ['a', 'b', 'c'] }).source).toBe('a、b和c');
+  });
+
+  it('list, or 用 ListFormat 的 disjunction，按语言；样式只认 or，别的算解析失败', () => {
+    expect(t('listOr', { items: ['a', 'b', 'c'] }).source).toBe('a, b, or c');
+    expect(zh('listOr', { items: ['a', 'b', 'c'] }).source).toBe('a、b或c');
+    expect(t('listStyle', { items: ['a', 'b'] }).source).toBe('{items, list, and}');
   });
 
   it('lines 按行连接，元素各自渲染', () => {

@@ -135,6 +135,16 @@ describe('checkTexts', () => {
     ]);
   });
 
+  it('list 与 list, or 收的都是数组，互相兼容', () => {
+    const issues = checkTexts({
+      ns: 'test/check-list-or',
+      language: 'zh-CN',
+      source: { and: '{items, list}', or: '{items, list, or}', both: '{items, list} 或 {items, list, or}' },
+      locales: { en: { and: '{items, list, or}', or: '{items, list}', both: '{items, list, or}' } },
+    });
+    expect(issues).toEqual([]);
+  });
+
   it('原文里同一参数的用法互不相容（既是数又是列表）', () => {
     const issues = checkTexts({
       ns: 'test/check-conflict',

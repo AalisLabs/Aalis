@@ -159,9 +159,10 @@ function formatArgument(arg: Argument, params: Params, o: FormatOptions, count: 
     case 'datetime':
       return dateFormat(arg.type, arg.style, o).format(finite(value));
     case 'list':
-      return cached(`list\0${o.language}`, () => new Intl.ListFormat(o.language, { type: 'conjunction' })).format(
-        list(value).map(element => item(element, o)),
-      );
+      return cached(
+        `list\0${arg.listType}\0${o.language}`,
+        () => new Intl.ListFormat(o.language, { type: arg.listType }),
+      ).format(list(value).map(element => item(element, o)));
     case 'lines':
       return list(value)
         .map(element => item(element, o))

@@ -20,8 +20,11 @@ import type {
   PositionalArgSpec,
   PositionalArgType,
 } from '@aalis/api-commands';
+import { type I18nService, localizeFor } from '@aalis/api-i18n';
 import type { Logger, ServiceSelection } from '@aalis/core';
-import { type Entry, renderDetail, renderOverview } from './help.js';
+import { isTextRef, type Localized, TextError, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import { type Entry, type Localize, renderDetail, renderOverview } from './help.js';
+import { t } from './texts.js';
 
 // ============================================================================
 // 命令注册表（v2 — 链式 builder）
@@ -37,8 +40,9 @@ import { type Entry, renderDetail, renderOverview } from './help.js';
 
 const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
 
-/** 帮助按谁的等级过滤：执行时守卫裁决的同一个身份 */
+/** 帮助按谁的等级过滤、按谁的语言渲染：执行时守卫裁决的同一个身份，与这条指令所在的会话 */
 interface Caller {
+  sessionId: string;
   platform: string;
   userId?: string;
 }
@@ -56,7 +60,7 @@ interface Caller {
  * 而安全轴取全栈最严（见 `strictestPolicy`）——后来者只能收紧、不能放宽。
  */
 interface Decl {
-  description?: string;
+  description?: string | TextRef;
   /** 节点自身声明的可见性（未声明则继承祖先；缺省 public） */
   baseVisibility?: CapabilityVisibility;
   /** 节点自身声明的确认要求（轴 B；未声明则继承祖先） */
@@ -140,13 +144,22 @@ export class CommandRegistry implements CommandService {
   private readonly logger: Logger;
   /** 权限服务：帮助按它的 authorize 判调用者能用哪些指令，与执行守卫的等级裁决同一份 */
   private readonly authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
+  /** 回复与帮助按读者的语言渲染；缺席时按原文 */
+  private readonly i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>;
+  /** i18n 渲染抛错时告警过了：之后再出错不再告警 */
+  private renderWarned = false;
   private _guard?: ExecutionGuard;
 
   prefix = '/';
 
-  constructor(logger: Logger, authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>) {
+  constructor(
+    logger: Logger,
+    authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>,
+    i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
+  ) {
     this.logger = logger.child('commands');
     this.authority = authority;
+    this.i18n = i18n;
   }
 
   // ---- Guard ----
@@ -157,7 +170,7 @@ export class CommandRegistry implements CommandService {
 
   // ---- Builder 入口 ----
 
-  command(rawName: string, description?: string, meta?: InternalCommandMeta): CommandBuilder {
+  command(rawName: string, description?: string | TextRef, meta?: InternalCommandMeta): CommandBuilder {
     const parsed = parseCommandName(rawName);
     const { name, positionalArgs } = parsed;
     validateName(name);
@@ -235,7 +248,7 @@ export class CommandRegistry implements CommandService {
         decl.options.push(parseOptionSyntax(optName, syntax, opts));
         return self;
       },
-      argument: (argName: string, description: string) => {
+      argument: (argName: string, description: string | TextRef) => {
         const arg = decl.positionalArgs.find(a => a.name === argName);
         if (!arg) throw new Error(`指令 ${name} 没有位置参数 ${argName}`);
         arg.description = description;
@@ -410,17 +423,24 @@ export class CommandRegistry implements CommandService {
   }
 
   async execute(name: string, input: ExecutionInput): Promise<string | undefined> {
-    const resolved = this.resolve(name, input.args);
-    if (!resolved) return `未知指令: ${this.prefix}${name}。输入 ${this.prefix}help 查看帮助。`;
+    return this.localize(await this.run(name, input), input);
+  }
 
-    const caller = { platform: input.platform, userId: input.userId };
+  /**
+   * 同 {@link execute}，回复不渲染：文字对象原样交出。聊天回复用它，把文字对象交给网关按会话的语言渲染；
+   * 帮助（裸敲分组、-h）照旧是按调用者所在会话的语言渲染好的字符串
+   */
+  async run(name: string, input: ExecutionInput): Promise<string | TextRef | undefined> {
+    const resolved = this.resolve(name, input.args);
+    if (!resolved) return t('unknownCommand', { command: `${this.prefix}${name}`, prefix: this.prefix });
+
     const cmd = this.materialize(resolved.name);
     // 裸敲分组与 -h、--help 回的都是 `/help <指令>` 那一段：调用者用不了的指令在帮助里当作不存在。
     // 直接执行用不了的指令由守卫拒绝，拒绝文案照旧点名指令
-    if (!cmd.handler || asksHelp(resolved.remaining)) return this.detail(resolved.name.split('.'), caller);
+    if (!cmd.handler || asksHelp(resolved.remaining)) return this.detail(resolved.name.split('.'), input);
 
-    const parsed = this.parseArgs(cmd, resolved.remaining, caller);
-    if (typeof parsed === 'string') return parsed;
+    const parsed = this.parseArgs(cmd, resolved.remaining, input);
+    if (typeof parsed === 'string' || isTextRef(parsed)) return parsed;
 
     if (this._guard) {
       const rejection = await this._guard({
@@ -437,7 +457,7 @@ export class CommandRegistry implements CommandService {
       });
       if (rejection) return rejection;
     } else if (needsAuthority(cmd)) {
-      return `指令 ${this.prefix}${cmd.name} 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
+      return t('needsAuthority', { command: `${this.prefix}${cmd.name}` });
     }
 
     try {
@@ -454,9 +474,9 @@ export class CommandRegistry implements CommandService {
       const result = await cmd.handler(argv, ...parsed.positionals);
       return result ?? undefined;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`指令 ${this.prefix}${cmd.name} 执行失败: ${message}`);
-      return `指令执行失败: ${message}`;
+      const error = textOf(err);
+      this.logger.error(`指令 ${this.prefix}${cmd.name} 执行失败: ${toSource(error)}`);
+      return t('failed', { error });
     }
   }
 
@@ -497,7 +517,7 @@ export class CommandRegistry implements CommandService {
       name,
       pluginName: top?.pluginName ?? 'unknown',
       // 空栈 = 自动创建的分组节点，描述在此派生而非落字段（少存一份、不会陈旧）。
-      description: top?.description ?? `${name} 命令组`,
+      description: top?.description ?? t('group', { name }),
       visibility,
       confirm,
       risk,
@@ -522,7 +542,7 @@ export class CommandRegistry implements CommandService {
   /** `/help` 的概览：调用者看得见的顶层指令（help 自己不列） */
   overview(caller: Caller): string {
     const tops = [...this.nodes.keys()].filter(n => !n.includes('.') && n !== 'help').sort();
-    return renderOverview(this.entries(tops, caller), this.prefix);
+    return renderOverview(this.entries(tops, caller), this.prefix, value => this.localize(value, caller));
   }
 
   /**
@@ -531,18 +551,41 @@ export class CommandRegistry implements CommandService {
    */
   detail(path: string[], caller: Caller): string {
     const cmd = this.getNode(path);
-    if (!cmd || !this.visible(cmd.name, caller))
-      return `没有指令 ${path.join(' ')}。敲 ${this.prefix}help 看可用指令。`;
+    if (!cmd || !this.visible(cmd.name, caller)) {
+      return this.localize(t('noCommand', { path: path.join(' '), prefix: this.prefix }), caller);
+    }
     return this.usageOf(cmd, caller);
   }
 
-  private usageOf(cmd: Command, caller: Caller): string {
-    return cmd.usage ?? renderDetail(cmd, this.entries(this.directChildren(cmd.name), caller), this.prefix);
+  /** 用法（同帮助，按调用者所在会话的语言渲染好）；给了 error 时报错在前，同一次渲染 */
+  private usageOf(cmd: Command, caller: Caller, error?: TextRef): string {
+    const localize: Localize = value => this.localize(value, caller);
+    if (cmd.usage !== undefined) return error ? `${localize(error)}\n\n${cmd.usage}` : cmd.usage;
+    return renderDetail(cmd, this.entries(this.directChildren(cmd.name), caller), this.prefix, localize, error);
   }
 
   /** 报错后附上用法；调用者看不见这条指令时只回报错 */
-  private withUsage(error: string, cmd: Command, caller: Caller): string {
-    return this.visible(cmd.name, caller) ? `${error}\n\n${this.usageOf(cmd, caller)}` : error;
+  private withUsage(error: TextRef, cmd: Command, caller: Caller): string | TextRef {
+    return this.visible(cmd.name, caller) ? this.usageOf(cmd, caller, error) : error;
+  }
+
+  /**
+   * 按调用者所在会话的语言渲染（i18n 缺席时按原文）。帮助一次要渲染几十段，整份交给这里一次，语言链只算一次；
+   * i18n 渲染抛错时按原文，告警一次
+   */
+  private localize<T>(value: T, caller: Caller): Localized<T> {
+    return localizeFor(
+      this.i18n,
+      value,
+      { sessionId: caller.sessionId, platform: caller.platform },
+      {
+        onError: err => {
+          if (this.renderWarned) return;
+          this.renderWarned = true;
+          this.logger.warn('按会话的语言渲染指令的回复与帮助出错，按原文交出（之后再出错不再告警）:', err);
+        },
+      },
+    );
   }
 
   private entries(names: string[], caller: Caller): Entry[] {
@@ -588,7 +631,7 @@ export class CommandRegistry implements CommandService {
     cmd: Command,
     rawArgs: string[],
     caller: Caller,
-  ): { positionals: unknown[]; options: Record<string, unknown> } | string {
+  ): { positionals: unknown[]; options: Record<string, unknown> } | string | TextRef {
     const options = this.defaultOptions(cmd.options);
     const positionalTokens: string[] = [];
 
@@ -607,7 +650,7 @@ export class CommandRegistry implements CommandService {
           const negated = !exact && rawName.startsWith('no-');
           const optName = negated ? rawName.slice(3) : rawName;
           const def = exact ?? (negated ? findOption(cmd.options, optName) : undefined);
-          if (!def) return this.withUsage(`未知选项: --${rawName}`, cmd, caller);
+          if (!def) return this.withUsage(t('unknownOption', { option: `--${rawName}` }), cmd, caller);
           let rawValue = eq >= 0 ? token.slice(eq + 1) : undefined;
           if (def.type === 'boolean') {
             options[def.name] = negated ? false : rawValue === undefined ? true : parseBoolean(rawValue);
@@ -620,7 +663,7 @@ export class CommandRegistry implements CommandService {
               i += 1;
               rawValue = rawArgs[i];
             }
-            if (rawValue === undefined) return `选项 --${optName} 缺少取值`;
+            if (rawValue === undefined) return t('missingValue', { option: `--${optName}` });
             options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
           }
           continue;
@@ -633,7 +676,7 @@ export class CommandRegistry implements CommandService {
             positionalTokens.push(token);
             continue;
           }
-          if (!def) return this.withUsage(`未知选项: -${alias}`, cmd, caller);
+          if (!def) return this.withUsage(t('unknownOption', { option: `-${alias}` }), cmd, caller);
           if (def.type === 'boolean') {
             options[def.name] = true;
           } else {
@@ -644,7 +687,7 @@ export class CommandRegistry implements CommandService {
                 options[def.name] = true;
                 continue;
               }
-              return `选项 -${alias} 缺少取值`;
+              return t('missingValue', { option: `-${alias}` });
             }
             options[def.name] = parseOptionValue(def, rawValue, options[def.name]);
           }
@@ -654,14 +697,18 @@ export class CommandRegistry implements CommandService {
       }
 
       for (const o of cmd.options) {
-        if (o.required && options[o.name] === undefined) return `缺少必填选项: --${o.name}`;
+        if (o.required && options[o.name] === undefined) return t('missingOption', { option: `--${o.name}` });
       }
 
       // 有子指令、自身不收位置参数的指令，多出来的词是写错或不存在的子指令名，或是写多了的选项值
       // （`/clear -t context vector`）：报错并指向 /help，不忽略后执行本指令（否则 `/clear alll`
       // 会在确认后清掉当前会话）
       if (cmd.positionalArgs.length === 0 && positionalTokens.length > 0 && this.directChildren(cmd.name).length > 0) {
-        return `未知子指令或多余参数: ${positionalTokens[0]}。输入 ${this.prefix}help ${cmd.name.replace(/\./g, ' ')} 查看用法。`;
+        return t('extraArgument', {
+          token: positionalTokens[0],
+          prefix: this.prefix,
+          command: cmd.name.replace(/\./g, ' '),
+        });
       }
 
       const positionals: unknown[] = [];
@@ -670,7 +717,7 @@ export class CommandRegistry implements CommandService {
         const values =
           def.type === 'text' ? positionalTokens.slice(cursor) : positionalTokens.slice(cursor, cursor + 1);
         if (values.length === 0) {
-          if (def.required) return `缺少必填参数: ${def.name}`;
+          if (def.required) return t('missingArgument', { name: def.name });
           positionals.push(undefined);
           continue;
         }
@@ -680,8 +727,8 @@ export class CommandRegistry implements CommandService {
 
       return { positionals, options };
     } catch (err) {
-      // 取值解析错误（数字非法 / choices 越界）→ 返回可读错误串，而非抛出冒泡到命令管道。
-      return err instanceof Error ? err.message : String(err);
+      // 取值解析错误（数字非法 / choices 越界）→ 返回给人看的报错，而非抛出冒泡到命令管道。
+      return textOf(err);
     }
   }
 
@@ -864,7 +911,7 @@ function parseBoolean(value: string): boolean {
 function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown): unknown {
   if (def.type === 'number') {
     const n = Number(rawValue);
-    if (Number.isNaN(n)) throw new Error(`选项 --${def.name} 需要数字，收到「${rawValue}」`);
+    if (Number.isNaN(n)) throw new TextError(t('optionNumber', { option: `--${def.name}`, value: rawValue }));
     return n;
   }
   if (def.type === 'boolean') return parseBoolean(rawValue);
@@ -880,7 +927,9 @@ function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown):
   }
   // string
   if (def.choices && !def.choices.some(c => c.value === rawValue)) {
-    throw new Error(`选项 --${def.name} 只能是: ${def.choices.map(c => c.value).join(', ')}`);
+    throw new TextError(
+      t('optionChoices', { option: `--${def.name}`, choices: def.choices.map(c => c.value).join(', ') }),
+    );
   }
   return rawValue;
 }
@@ -889,7 +938,7 @@ function parsePositionalValue(def: PositionalArgSpec, values: string[]): unknown
   const raw = def.type === 'text' ? values.join(' ') : values[0];
   if (def.type === 'number') {
     const n = Number(raw);
-    if (Number.isNaN(n)) throw new Error(`参数 ${def.name} 需要数字，收到「${raw}」`);
+    if (Number.isNaN(n)) throw new TextError(t('argumentNumber', { name: def.name, value: raw }));
     return n;
   }
   if (def.type === 'boolean') return parseBoolean(raw);

@@ -39,6 +39,7 @@
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "@aalis/util-media-signature": "workspace:>=0.1.0 <1.0.0",

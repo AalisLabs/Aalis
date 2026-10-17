@@ -4,6 +4,7 @@ import { type SessionInfo, sessionManager } from '../../packages/api-session-man
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSender from '../../packages/plugin-image-sender/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { defineTexts, localize, resolveText, TextError } from '../../packages/schema-i18n/src/index.js';
 import type { Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { freePort } from '../helpers/net.js';
@@ -13,6 +14,12 @@ import { freePort } from '../helpers/net.js';
 // 不看有没有页面在线（打开着的页面由会话服务推送）。owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）
 // 由那个平台的适配器认领，按会话字段判，不看会话 id 的写法。
 // ════════════════════════════════════════════════════════════
+
+const t = defineTexts({
+  ns: '@zz/webui-outbound-delivery',
+  language: 'zh-CN',
+  source: { diskFull: '磁盘满了' } as const,
+});
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -50,7 +57,7 @@ async function startWebui(
 }
 
 describe('WebUI outbound delivery confirmation', () => {
-  it('fails when there is no archive to save into', async () => {
+  it('fails when there is no archive to save into: the reason is a text object readers render in their language', async () => {
     const { app } = await startWebui();
     const delivered: OutgoingMessage[] = [];
     app.bind({ events }).events.use.on('outbound:delivered', message => {
@@ -65,7 +72,10 @@ describe('WebUI outbound delivery confirmation', () => {
     };
     await app.bind({ events }).events.use.emit('outbound:message', message);
     expect(message.delivery).toBeDefined();
-    expect(await message.delivery).toEqual({ ok: false, error: expect.stringContaining('没有存进') });
+    expect(localize(await message.delivery, text => resolveText(text, ['en']))).toEqual({
+      ok: false,
+      error: 'The message archive service is absent, so this message was not saved to the WebUI session history',
+    });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(delivered).toEqual([]);
   });
@@ -187,10 +197,11 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
-  it('fails when saving into the history fails', async () => {
+  it('fails when saving into the history fails: the error is the reason, its text object kept', async () => {
+    const diskFull = t('diskFull');
     const { app } = await startWebui({
       async saveMessage() {
-        throw new Error('zz-disk-full');
+        throw new TextError(diskFull);
       },
     });
     const message: OutgoingMessage = {
@@ -200,7 +211,7 @@ describe('WebUI outbound delivery confirmation', () => {
       source: 'system',
     };
     await app.bind({ events }).events.use.emit('outbound:message', message);
-    expect(await message.delivery).toEqual({ ok: false, error: 'zz-disk-full' });
+    expect(await message.delivery).toEqual({ ok: false, error: diskFull });
   });
 
   it('archives media that does not come from her in the image-sender format (image-sender only archives agent media)', async () => {
