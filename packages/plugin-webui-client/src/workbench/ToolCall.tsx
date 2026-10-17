@@ -1,4 +1,4 @@
-import { sanitizeForCard } from '@aalis/api-approval';
+import { clipForCard, sanitizeForCard } from '@aalis/api-approval';
 import { FilePen, LoaderCircle, SquareTerminal, Wrench } from 'lucide-react';
 import { useState } from 'react';
 import { TaskFoot, TaskStatus } from '../background/Background';
@@ -56,8 +56,8 @@ export const awaitingApproval = (item: ToolCallItem) => item.approvalId !== unde
 function summaryOf(item: ToolCallItem): string {
   const display = displayOf(item);
   if (display?.kind === 'command') {
-    const line = display.command.split('\n')[0];
-    return `执行 ${sanitizeForCard(line, SUMMARY_LIMIT)}`;
+    const { head, omitted, tail } = clipForCard(display.command.split('\n')[0], SUMMARY_LIMIT);
+    return `执行 ${head}${omitted === 0 ? '' : `…（省略 ${omitted} 字）…`}${tail}`;
   }
   if (display?.kind === 'file-change') {
     return `${display.removed === undefined ? '写入' : '修改'} ${sanitizeForCard(display.path)}`;

@@ -12,6 +12,7 @@ import {
   WORK_ID_PATTERN,
 } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
+import type { TextRef } from '@aalis/schema-i18n';
 import { checkNomination, contentType } from './checks.js';
 import type { ReviewConfig } from './config.js';
 import { isNoticeUndelivered } from './notices.js';
@@ -674,7 +675,7 @@ export class PublishReviewService implements PublishService {
     id: string,
     by: { kind: 'origin' | 'owner' | 'integrity'; actorKey?: string },
     reason: string,
-  ): Promise<{ ok: true; degraded?: string } | { refused: string }> {
+  ): Promise<{ ok: true; degraded?: string | TextRef } | { refused: string | TextRef }> {
     if (!WORK_ID_PATTERN.test(id)) return { refused: '作品编号不合法' };
     const { store, storage } = this.#d;
     return store.exclusive(async () => {
@@ -706,7 +707,7 @@ export class PublishReviewService implements PublishService {
       );
       await storage.delete(queued ? store.item(id) : `${PUBLIC_ROOT}/${id}`).catch(() => {});
       if (published) this.#changed();
-      let degraded: string | undefined;
+      let degraded: string | TextRef | undefined;
       for (const name of published?.surfaces ?? []) {
         try {
           const health = this.#surfaces.get(name)?.surface.health();

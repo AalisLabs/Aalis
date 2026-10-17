@@ -14,6 +14,7 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
 
@@ -842,7 +843,7 @@ async function run(caps: Caps): Promise<void> {
   function rejectInvalidCron(job: SchedulerJobConfig): void {
     if (!job.cron) return;
     const checked = cronEngine.use.validate(job.cron);
-    if (!checked.ok) throw new Error(checked.reason);
+    if (!checked.ok) throw typeof checked.text === 'string' ? new Error(checked.text) : new TextError(checked.text);
   }
 
   const service: SchedulerService = {

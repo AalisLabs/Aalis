@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeForCard } from '../../packages/api-approval/src/index.js';
+import { clipForCard, sanitizeForCard } from '../../packages/api-approval/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 审批卡的清洗：显示的内容里，原文的每个字符都看得见、顺序不变。控制符（含 ANSI 转义的 ESC）转义显示，
-// 双向控制符与零宽字符换成占位符；截断保留首尾并写明省略多少。
+// 双向控制符与零宽字符换成占位符；截断保留首尾，交出清洗过的两段与省略的字数，「省略 N 字」由显示方按读者语言写。
 // ════════════════════════════════════════════════════════════
 
 describe('审批卡清洗', () => {
@@ -21,14 +21,14 @@ describe('审批卡清洗', () => {
     expect(sanitizeForCard(text)).toBe(shown);
   });
 
-  it('截断：保留首尾共 limit 个字符，中间写明省略了多少；不超过 limit 时原样', () => {
-    expect(sanitizeForCard('0123456789', 10)).toBe('0123456789');
-    expect(sanitizeForCard('0123456789abcdef', 6)).toBe('012…（省略 10 字）…def');
-    expect(sanitizeForCard('0123456789abcdef', 5)).toBe('012…（省略 11 字）…ef');
+  it('截断：保留首尾共 limit 个字符，交出两段与省略的字数；不超过 limit 时整段在 head，省略 0 字', () => {
+    expect(clipForCard('0123456789', 10)).toEqual({ head: '0123456789', omitted: 0, tail: '' });
+    expect(clipForCard('0123456789abcdef', 6)).toEqual({ head: '012', omitted: 10, tail: 'def' });
+    expect(clipForCard('0123456789abcdef', 5)).toEqual({ head: '012', omitted: 11, tail: 'ef' });
   });
 
   it('截断按字符算：不切开表情的代理对，也不切开转义与占位符', () => {
-    expect(sanitizeForCard('👍👍👍👍', 2)).toBe('👍…（省略 2 字）…👍');
-    expect(sanitizeForCard('\u001b[2Kxxxxxxx\u202E', 2)).toBe('\\x1B…（省略 10 字）…⟨U+202E⟩');
+    expect(clipForCard('👍👍👍👍', 2)).toEqual({ head: '👍', omitted: 2, tail: '👍' });
+    expect(clipForCard('\u001b[2Kxxxxxxx\u202E', 2)).toEqual({ head: '\\x1B', omitted: 10, tail: '⟨U+202E⟩' });
   });
 });

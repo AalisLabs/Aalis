@@ -15,11 +15,13 @@ import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aa
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, type TextRef, toSource } from '@aalis/schema-i18n';
 import { parse, stringify } from 'yaml';
 
-import { runDag, validateGraph } from './engine.js';
+import { errorReason, runDag, validateGraph } from './engine.js';
 import { normalizeDef, WorkflowLoader } from './loader.js';
 import { RunStore } from './persistence.js';
+import { t } from './texts.js';
 import { TriggerManager } from './triggers.js';
 
 // ─── 配置 ───
@@ -96,12 +98,12 @@ function onceSkippedNote(
   return `once 记录读取失败（见日志），本次运行不会触发；可用${manualRun}手动执行${persist ? '，修复运行历史文件后重启恢复' : ''}`;
 }
 
-const STATUS: Record<WorkflowRun['status'], { text: string; state?: 'error' | 'running' | 'inactive' }> = {
-  pending: { text: '等待', state: 'inactive' },
-  running: { text: '运行中', state: 'running' },
-  success: { text: '成功' },
-  failed: { text: '失败', state: 'error' },
-  cancelled: { text: '已取消', state: 'inactive' },
+const STATUS: Record<WorkflowRun['status'], { text: TextRef; state?: 'error' | 'running' | 'inactive' }> = {
+  pending: { text: t('statusPending'), state: 'inactive' },
+  running: { text: t('statusRunning'), state: 'running' },
+  success: { text: t('statusSuccess') },
+  failed: { text: t('statusFailed'), state: 'error' },
+  cancelled: { text: t('statusCancelled'), state: 'inactive' },
 };
 
 /**
@@ -134,7 +136,10 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
         async handler({ rowKey }) {
           const run = await service.runWorkflow(rowKey, {}, 'manual:webui');
           if (run.status !== 'success') {
-            throw new Error(`运行没有成功（${STATUS[run.status].text}）${run.error ? `：${run.error}` : ''}`);
+            const status = STATUS[run.status].text;
+            throw new TextError(
+              run.error ? t('runNotSucceededBecause', { status, error: run.error }) : t('runNotSucceeded', { status }),
+            );
           }
           return `已运行 ${rowKey}，用时 ${fmtDuration((run.finishedAt ?? Date.now()) - run.startedAt)}`;
         },
@@ -446,15 +451,15 @@ async function run(caps: Caps): Promise<void> {
         logger.info(`run=${runId} 完成 (${run.finishedAt - run.startedAt}ms)`);
       } else {
         await events.use.emit('workflow:run:error', run);
-        logger.warn(`run=${runId} ${result.status}: ${result.error ?? ''}`);
+        logger.warn(`run=${runId} ${result.status}: ${toSource(result.error) ?? ''}`);
       }
     } catch (err) {
       run.status = 'failed';
-      run.error = err instanceof Error ? err.message : String(err);
+      run.error = errorReason(err);
       run.finishedAt = Date.now();
       runStore.update(run);
       await events.use.emit('workflow:run:error', run);
-      logger.error(`run=${runId} 异常: ${run.error}`);
+      logger.error(`run=${runId} 异常: ${toSource(run.error)}`);
     } finally {
       aborts.delete(runId);
       page.invalidate();
@@ -646,8 +651,8 @@ function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerRe
           runId: run.runId,
           status: run.status,
           durationMs: (run.finishedAt ?? Date.now()) - run.startedAt,
-          nodes: run.nodes.map(n => ({ id: n.id, status: n.status, error: n.error })),
-          error: run.error,
+          nodes: run.nodes.map(n => ({ id: n.id, status: n.status, error: toSource(n.error) })),
+          error: toSource(run.error),
         });
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
@@ -685,7 +690,7 @@ function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerRe
           triggerSource: r.triggerSource,
           startedAt: new Date(r.startedAt).toISOString(),
           durationMs: (r.finishedAt ?? Date.now()) - r.startedAt,
-          error: r.error,
+          error: toSource(r.error),
         })),
       });
     },

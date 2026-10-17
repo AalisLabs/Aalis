@@ -5,6 +5,7 @@ import type { ReviewPipeline } from '../../packages/plugin-publish-review/src/pi
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -61,7 +62,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const stop = new AbortController();
     const first = await open(files, false, 'allow', clock, vi.fn(), reviewEnabled, stop.signal);
     const proposed = await first.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     first.store.onChange(() => {
       if (first.store.data.queue[proposed.id]?.outHashes) stop.abort();
     });
@@ -82,7 +83,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const clock = { now: 1000 };
     const first = await open(files, false, 'reject', clock);
     const proposed = await first.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     await first.service.processNext();
     expect(first.store.data.queue[proposed.id]?.awaitingReason).toBe('fallback');
     await first.service.close();
@@ -101,7 +102,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const clock = { now: 1000 };
     const first = await open(files, true, 'allow', clock);
     const proposed = await first.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     await first.service.processNext();
     expect(first.store.data.queue[proposed.id]?.awaitingReason).toBe('required');
     await first.service.close();
@@ -115,7 +116,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const clock = { now: 1000 };
     const h = await open(files, false, 'reject', clock);
     const proposed = await h.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     await h.service.processNext();
     expect(h.store.data.queue[proposed.id]?.awaitingReason).toBe('fallback');
     clock.now += 3_600_001;
@@ -128,7 +129,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const clock = { now: 1000 };
     const h = await open(files, false, 'unsure', clock);
     const proposed = await h.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     await h.service.processNext();
     let release!: () => void;
     let entered!: () => void;
@@ -156,7 +157,7 @@ describe('默认人工回退的时间与配置交接', () => {
     const clock = { now: 1000 };
     const h = await open(files, false, 'reject', clock);
     const proposed = await h.service.nominate(nomination());
-    if (!('id' in proposed)) throw new Error(proposed.refused);
+    if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
     await h.service.processNext();
     let release!: () => void;
     let entered!: () => void;

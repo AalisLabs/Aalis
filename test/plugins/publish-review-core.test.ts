@@ -6,6 +6,7 @@ import type { ReviewConfig } from '../../packages/plugin-publish-review/src/conf
 import type { ReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -85,7 +86,7 @@ describe('作品审核核心', () => {
     );
     const keyed = { ...input(), submissionKey: 'paper:legacy' };
     const result = await h.service.nominate(keyed);
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     expect(h.store.data.queue[result.id]).not.toHaveProperty('credit');
     const legacy = h.store.copy();
     const legacyCredit = '旧版作者';
@@ -156,7 +157,7 @@ describe('作品审核核心', () => {
     );
     const keyed = { ...input(), submissionKey: 'paper:task-1' };
     const nominated = await h.service.nominate(keyed);
-    if (!('id' in nominated)) throw new Error(nominated.refused);
+    if (!('id' in nominated)) throw new Error(toSource(nominated.refused));
     expect(h.service.get(nominated.id)?.live).not.toBe(true);
     await h.service.processNext();
     expect(await h.service.reject(nominated.id)).toBe(true);
@@ -171,7 +172,7 @@ describe('作品审核核心', () => {
     expect(resumed.store.data.nominations).toHaveLength(1);
 
     const next = await resumed.service.nominate({ ...keyed, submissionKey: 'paper:task-2' });
-    if (!('id' in next)) throw new Error(next.refused);
+    if (!('id' in next)) throw new Error(toSource(next.refused));
     await resumed.service.processNext();
     expect(resumed.service.get(next.id)?.state).toBe('awaiting-owner');
     expect(resumed.service.get(next.id)?.live).not.toBe(true);
@@ -202,7 +203,7 @@ describe('作品审核核心', () => {
     );
     const first = { ...input(), submissionKey: 'paper:expire' };
     const expired = await h.service.nominate(first);
-    if (!('id' in expired)) throw new Error(expired.refused);
+    if (!('id' in expired)) throw new Error(toSource(expired.refused));
     await h.service.processNext();
     clock.now += 12 * 3_600_000 + 1;
     await h.service.reconcile();
@@ -211,7 +212,7 @@ describe('作品审核核心', () => {
 
     const second = { ...input(), submissionKey: 'paper:withdraw' };
     const withdrawn = await h.service.nominate(second);
-    if (!('id' in withdrawn)) throw new Error(withdrawn.refused);
+    if (!('id' in withdrawn)) throw new Error(toSource(withdrawn.refused));
     expect(await h.service.withdraw(withdrawn.id, { kind: 'origin' }, '取消')).toMatchObject({ ok: true });
     expect(h.service.get(withdrawn.id)?.state).toBe('withdrawn');
     expect(await h.service.nominate(second)).toEqual({ id: withdrawn.id });
@@ -228,7 +229,7 @@ describe('作品审核核心', () => {
     );
     const third = { ...input(), submissionKey: 'paper:fail' };
     const failed = await failedReview.service.nominate(third);
-    if (!('id' in failed)) throw new Error(failed.refused);
+    if (!('id' in failed)) throw new Error(toSource(failed.refused));
     await failedReview.service.processNext();
     const restarted = await setup({ run: vi.fn() }, false, failSeed);
     expect(restarted.service.get(failed.id)?.state).toBe('failed');
@@ -246,7 +247,7 @@ describe('作品审核核心', () => {
     delete draft.origin.notify;
     draft.submissionKey = 'paper:no-notify';
     const result = await h.service.nominate(draft);
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     expect(h.service.get(result.id)).toMatchObject({ state: 'published' });
     expect(h.service.get(result.id)?.live).not.toBe(true);
@@ -276,7 +277,7 @@ describe('作品审核核心', () => {
       health: () => ({ ok: true }),
     });
     const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
-    if (!('id' in nominated)) throw new Error(nominated.refused);
+    if (!('id' in nominated)) throw new Error(toSource(nominated.refused));
     await h.service.processNext();
     first.live([nominated.id]);
     await h.store.exclusive(async () => {});
@@ -371,7 +372,7 @@ describe('作品审核核心', () => {
       health: () => ({ ok: true }),
     });
     const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
-    if (!('id' in nominated)) throw new Error(nominated.refused);
+    if (!('id' in nominated)) throw new Error(toSource(nominated.refused));
     await h.service.processNext();
     oldA.live([nominated.id]);
     await h.store.exclusive(async () => {});
@@ -417,7 +418,7 @@ describe('作品审核核心', () => {
       health: () => ({ ok: true }),
     });
     const nominated = await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] });
-    if (!('id' in nominated)) throw new Error(nominated.refused);
+    if (!('id' in nominated)) throw new Error(toSource(nominated.refused));
     await h.service.processNext();
     works.live([nominated.id]);
     draw.live([nominated.id]);
@@ -671,7 +672,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'unsure', reasons: ['拿不准'] }, files: input().files }),
     });
     const a = await unsure.service.nominate(input());
-    if (!('id' in a)) throw new Error(a.refused);
+    if (!('id' in a)) throw new Error(toSource(a.refused));
     await unsure.service.processNext();
     expect(unsure.service.get(a.id)?.state).toBe('awaiting-owner');
     expect(unsure.store.data.queue[a.id].awaitingReason).toBe('fallback');
@@ -684,7 +685,7 @@ describe('作品审核核心', () => {
       true,
     );
     const b = await manual.service.nominate(input());
-    if (!('id' in b)) throw new Error(b.refused);
+    if (!('id' in b)) throw new Error(toSource(b.refused));
     await manual.service.processNext();
     expect(manual.service.get(b.id)?.state).toBe('awaiting-owner');
     expect(manual.store.data.queue[b.id].awaitingReason).toBe('required');
@@ -705,7 +706,7 @@ describe('作品审核核心', () => {
     }));
     const first = await setup({ run }, false, seed);
     const nomination = await first.service.nominate(input());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     const { id } = nomination;
     await first.service.processNext();
     expect(first.store.data.queue[id]).toMatchObject({
@@ -738,7 +739,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'reject', reasons: ['其他'] }, files: input().files }),
     });
     const nomination = await h.service.nominate(input());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     await h.service.processNext();
     expect(h.store.data.queue[nomination.id]?.state).toBe('awaiting-owner');
     expect(await h.service.reject(nomination.id)).toBe(true);
@@ -758,7 +759,7 @@ describe('作品审核核心', () => {
       }),
     });
     const nomination = await h.service.nominate(input());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     await h.service.processNext();
     expect(h.store.data.queue[nomination.id].review?.reasons).toContain('个人信息');
     expect(h.service.listPublished('works')).toEqual([]);
@@ -773,7 +774,7 @@ describe('作品审核核心', () => {
       clock,
     );
     const nomination = await h.service.nominate(input());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     await h.service.processNext();
     expect(h.service.get(nomination.id)?.state).toBe('awaiting-owner');
     clock.now += 12 * 3_600_000 + 1;
@@ -790,7 +791,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'failed', reasons: ['文件处理失败'] }, files: input().files }),
     });
     const first = await failed.service.nominate(input());
-    if (!('id' in first)) throw new Error(first.refused);
+    if (!('id' in first)) throw new Error(toSource(first.refused));
     await failed.service.processNext();
     expect(failed.service.get(first.id)).toBeUndefined();
     expect(await failed.service.approve(first.id)).toBe(false);
@@ -799,7 +800,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'reject', reasons: ['其他'] }, files: [] }),
     });
     const second = await invalid.service.nominate(input());
-    if (!('id' in second)) throw new Error(second.refused);
+    if (!('id' in second)) throw new Error(toSource(second.refused));
     await invalid.service.processNext();
     expect(invalid.service.get(second.id)).toBeUndefined();
     expect(await invalid.service.approve(second.id)).toBe(false);
@@ -816,7 +817,7 @@ describe('作品审核核心', () => {
     };
     const h = await setup(pipeline);
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const processing = h.service.processNext();
     await vi.waitFor(() => expect(h.service.get(result.id)?.state).toBe('checking'));
     expect(await h.service.withdraw(result.id, { kind: 'origin' }, '撤回')).toEqual({ ok: true });
@@ -828,7 +829,7 @@ describe('作品审核核心', () => {
   it('公开根文件篡改后 readFile 撤下并抛完整性错误', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     expect(h.service.listPublished('works')).toHaveLength(1);
     h.seed.set(`public:/${result.id}/files/work.png`, new Uint8Array([1, 2, 3]));
@@ -842,7 +843,7 @@ describe('作品审核核心', () => {
       true,
     );
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     h.seed.set(`pluginData:/publish-review/items/${result.id}/out/work.png`, new Uint8Array([1, 2, 3]));
     expect(await h.service.approve(result.id)).toBe(false);
@@ -852,7 +853,7 @@ describe('作品审核核心', () => {
   it('网址通知须等展示面报 live，重复 live 不重发', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     expect(h.notices).toEqual([]);
     const binding = h.service.attachSurface({
@@ -897,7 +898,7 @@ describe('作品审核核心', () => {
       const draft = input();
       draft.origin.ref = `task-${index}`;
       const accepted = await daily.service.nominate(draft);
-      if (!('id' in accepted)) throw new Error(accepted.refused);
+      if (!('id' in accepted)) throw new Error(toSource(accepted.refused));
       await daily.service.withdraw(accepted.id, { kind: 'origin' }, 'test');
     }
     expect(await daily.service.nominate(input())).toEqual({
@@ -950,7 +951,7 @@ describe('作品审核核心', () => {
     const noRoom = (ref: string) => ({ ...input(), origin: { producer: 'paper', ref, label: '来源' } });
     for (let i = 0; i < 10; i++) {
       const result = await h.service.nominate(noRoom(`task-${i}`));
-      if (!('id' in result)) throw new Error(result.refused);
+      if (!('id' in result)) throw new Error(toSource(result.refused));
       if (i % 2 === 0) await h.service.withdraw(result.id, { kind: 'origin' }, '撤回');
       else {
         await h.service.processNext();
@@ -963,7 +964,7 @@ describe('作品审核核心', () => {
   it('get 返回来源快照，不能经引用改写记录与通知归宿', async () => {
     const h = await setup({ run: vi.fn() });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const view = h.service.get(result.id);
     if (!view) throw new Error('entry missing');
     view.origin.notify!.sessionId = 'forged-room';
@@ -979,7 +980,7 @@ describe('作品审核核心', () => {
       clock,
     );
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     clock.now += 12 * 3_600_000 + 1;
     await h.service.reconcile();
@@ -994,7 +995,7 @@ describe('作品审核核心', () => {
       autoClock,
     );
     const b = await auto.service.nominate(input());
-    if (!('id' in b)) throw new Error(b.refused);
+    if (!('id' in b)) throw new Error(toSource(b.refused));
     await auto.service.processNext();
     autoClock.now += 30 * 60_000 + 1;
     await auto.service.reconcile();
@@ -1038,7 +1039,7 @@ describe('作品审核核心', () => {
       seed,
     );
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     seed.set('public:/abcdefghij/files/work.png', image);
     const restarted = await setup({ run: vi.fn() }, false, seed);
@@ -1055,7 +1056,7 @@ describe('作品审核核心', () => {
       seed,
     );
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     const ledger = h.store.data.ledger[result.id];
     const duplicate = {
@@ -1077,7 +1078,7 @@ describe('作品审核核心', () => {
   it('旧展示面 live 写盘挂起时被替换，不能发旧网址且新句柄仍可报在线', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     const old = h.service.attachSurface({
       name: 'works',
@@ -1118,7 +1119,7 @@ describe('作品审核核心', () => {
   it('清掉未登记的目录与发布写入串行，不能删在途发布文件', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const original = h.storage.list.bind(h.storage);
     let entered!: () => void;
     let release!: () => void;
@@ -1147,7 +1148,7 @@ describe('作品审核核心', () => {
   it('展示面返回带控制符的网址或抛错时不发送宿主通知，也不消耗待通知状态', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     h.service
       .attachSurface({
@@ -1174,7 +1175,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files, thumbnail: image }),
     });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const original = h.storage.writeFile.bind(h.storage);
     h.storage.writeFile = (uri, data) =>
       original(uri, uri === `public:/${result.id}/thumb.png` ? Buffer.from([1, 2, 3]) : data);
@@ -1222,7 +1223,7 @@ describe('作品审核核心', () => {
     nomination.files[1].bytes.set(new TextEncoder().encode('alert(1);//X'));
     release();
     const result = await nominating;
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     expect(
       Buffer.from(h.seed.get(`pluginData:/publish-review/items/${result.id}/src/a.js`) as Uint8Array).toString(),
     ).toBe('safe_data___');
@@ -1238,7 +1239,7 @@ describe('作品审核核心', () => {
       run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: [two.files[0], two.files[0]] }),
     });
     const first = await duplicate.service.nominate(two);
-    if (!('id' in first)) throw new Error(first.refused);
+    if (!('id' in first)) throw new Error(toSource(first.refused));
     await duplicate.service.processNext();
     expect(duplicate.service.listPublished('works')).toEqual([]);
 
@@ -1249,7 +1250,7 @@ describe('作品审核核心', () => {
       }),
     });
     const second = await oversized.service.nominate(input());
-    if (!('id' in second)) throw new Error(second.refused);
+    if (!('id' in second)) throw new Error(toSource(second.refused));
     await oversized.service.processNext();
     expect(oversized.service.listPublished('works')).toEqual([]);
   });
@@ -1257,7 +1258,7 @@ describe('作品审核核心', () => {
   it('展示面 health 抛错时撤下仍返回已成功且标 degraded', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await h.service.processNext();
     h.service.attachSurface({
       name: 'works',
@@ -1276,7 +1277,7 @@ describe('作品审核核心', () => {
   it('发布态记录瞬时写失败保留审核结果，不能误报文件完整性失败', async () => {
     const h = await setup({ run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) });
     const result = await h.service.nominate(input());
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     const original = h.storage.writeFile.bind(h.storage);
     let once = true;
     h.storage.writeFile = async (uri, data) => {

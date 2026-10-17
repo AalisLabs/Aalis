@@ -21,6 +21,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import { createSelfCheck } from '../../packages/plugin-trigger-laya/src/self-check.js';
+import { defineTexts, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { buildIncomingContent, type IncomingMessage, type Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
@@ -1022,7 +1023,7 @@ describe('plugin-trigger-laya：诊断项', () => {
     host.services.use.prefer(trigger, rule?.contextId ?? '');
     vi.setSystemTime(Date.now() + 3_600_000);
     const probes = sidecar.healthCalls;
-    expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE });
+    expect(toSource(await diagnose())).toMatchObject({ level: 'ok', message: INACTIVE });
     expect(sidecar.healthCalls, '未生效不探侧车').toBe(probes);
 
     // 切回后一次成功判定即确认恢复
@@ -1128,8 +1129,33 @@ describe('plugin-trigger-laya：诊断项', () => {
     host.provide.use(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
     const rule = host.services.use.all(trigger).find(v => v.label === '规则（计数/评分）');
     host.services.use.prefer(trigger, rule?.contextId ?? '');
-    expect(await diagnose()).toMatchObject({ level: 'ok', message: INACTIVE, detail: `endpoint=${sidecar.url}` });
+    expect(toSource(await diagnose())).toMatchObject({
+      level: 'ok',
+      message: INACTIVE,
+      detail: `endpoint=${sidecar.url}`,
+    });
     expect(sidecar.healthCalls).toBe(0);
+  });
+
+  it('未生效时点名的触发插件，名字是文字对象：诊断按读者语言写出它', async () => {
+    const { host, diagnose } = await setup();
+    const t = defineTexts({
+      ns: '@zz/trigger-label',
+      language: 'zh-CN',
+      source: { rules: '规则判定' } as const,
+      locales: { en: { rules: 'Rule-based' } },
+    });
+    const label = t('rules');
+    host.provide.use(trigger, { label }, { label });
+    const rule = host.services.use.all(trigger).find(v => v.label === label);
+    host.services.use.prefer(trigger, rule?.contextId ?? '');
+    const { message } = await diagnose();
+    expect(resolveText(message as never, ['en'])).toBe(
+      'Laya trigger judging is not in effect (the active trigger plugin is “Rule-based”), so the sidecar is not ' +
+        'checked; to enable it, point trigger to @aalis/plugin-trigger-laya under servicePreferences in the ' +
+        'configuration file',
+    );
+    expect(toSource(message)).toBe(INACTIVE.replace('规则（计数/评分）', '规则判定'));
   });
 });
 

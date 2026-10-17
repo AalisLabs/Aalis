@@ -2,7 +2,7 @@
  * @aalis/api-approval — 审批契约
  *
  * 模型发起、需要 owner 批准的操作以审批对象的形式出现：发起方发起并等结算，审批对象推给在场的审批面，
- * owner 应答，结果回给发起方。本包只有类型、服务描述符 `approvals` 与卡片清洗函数 `sanitizeForCard`；
+ * owner 应答，结果回给发起方。本包只有类型、服务描述符 `approvals` 与卡片清洗函数 `sanitizeForCard`、`clipForCard`；
  * 实现见 @aalis/plugin-session-server。
  *
  * 三类使用方：
@@ -13,6 +13,8 @@
  */
 
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // 发起
@@ -71,7 +73,7 @@ export type SettledState = Exclude<ApprovalState, 'pending'>;
  *   路径或内容疑似含密钥时没有 `patch`，只给路径；
  * - `params`：其余参数，逐字。没声明展示种类的工具，全部参数都在这里。
  *
- * 显示之前一律经 {@link sanitizeForCard} 清洗。
+ * 显示之前一律经 {@link sanitizeForCard} 清洗，要截断的经 {@link clipForCard}。
  */
 export interface ApprovalFacts {
   command?: string;
@@ -156,7 +158,8 @@ export interface ApprovalAnswer {
  */
 export type ApprovalRefusal = 'forbidden' | 'not-found' | 'approval-settled' | 'hash-mismatch' | 'unavailable';
 
-export type ApprovalResponse = { ok: true } | { ok: false; refusal: ApprovalRefusal; message: string };
+/** 应答的结果。被拒时 message 是给应答人看的原因，可以是文字对象（出口按读者语言渲染） */
+export type ApprovalResponse = { ok: true } | { ok: false; refusal: ApprovalRefusal; message: string | TextRef };
 
 /** 审批面的一个客户端（WebUI 的一条连接、终端）：在场上报与应答都记在它接入的审批面的登记身份名下 */
 export interface ApprovalAttendance {
@@ -243,7 +246,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
     bound();
     return {
       presence: active => bound()?.presence(active),
-      respond: answer => bound()?.respond(answer) ?? { ok: false, refusal: 'unavailable', message: '审批服务不在' },
+      respond: answer => bound()?.respond(answer) ?? { ok: false, refusal: 'unavailable', message: t('serviceAbsent') },
       leave() {
         left = true;
         current?.attendance.leave();
@@ -282,22 +285,35 @@ const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/gu;
 
 const hex = (char: string, width: number) => (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(width, '0');
 
-function clean(text: string): string {
+/**
+ * 审批卡显示事实之前的清洗：控制符（含 ANSI 转义序列的 ESC）转义成 `\x1B` 的样子显示；双向控制符、零宽字符等
+ * 看不见的字符换成 `⟨U+202E⟩` 的样子。换行与制表符保留。原文里的每个字符都显示出来，不隐藏、不改变顺序。
+ */
+export function sanitizeForCard(text: string): string {
   return text
     .replace(CONTROL, char => (char === '\n' || char === '\t' ? char : `\\x${hex(char, 2)}`))
     .replace(INVISIBLE, char => `⟨U+${hex(char, 4)}⟩`);
 }
 
+/** {@link clipForCard} 的结果：清洗过的开头与结尾，中间省略的字数（没有截断时为 0，整段在 head、tail 为空） */
+export interface CardClip {
+  head: string;
+  omitted: number;
+  tail: string;
+}
+
 /**
- * 审批卡显示事实之前的清洗：控制符（含 ANSI 转义序列的 ESC）转义成 `\x1B` 的样子显示；双向控制符、零宽字符等
- * 看不见的字符换成 `⟨U+202E⟩` 的样子。换行与制表符保留。原文里的每个字符都显示出来，不隐藏、不改变顺序。
- * 给了 limit 且原文超过 limit 个字符时，保留开头与结尾共 limit 个字符，中间写明省略了多少；截断按原文的字符算，
- * 不会切开转义或占位符。
+ * 清洗（同 {@link sanitizeForCard}）并截断：原文超过 limit 个字符时保留开头与结尾共 limit 个字符，交出两段与中间省略的
+ * 字数，显示方在两段之间按读者语言写明省略了多少。截断按原文的字符算，不会切开转义或占位符。
  */
-export function sanitizeForCard(text: string, limit?: number): string {
+export function clipForCard(text: string, limit: number): CardClip {
   const chars = [...text];
-  if (limit === undefined || chars.length <= limit) return clean(text);
+  if (chars.length <= limit) return { head: sanitizeForCard(text), omitted: 0, tail: '' };
   const head = Math.ceil(limit / 2);
   const tail = limit - head;
-  return `${clean(chars.slice(0, head).join(''))}…（省略 ${chars.length - limit} 字）…${clean(chars.slice(chars.length - tail).join(''))}`;
+  return {
+    head: sanitizeForCard(chars.slice(0, head).join('')),
+    omitted: chars.length - limit,
+    tail: sanitizeForCard(chars.slice(chars.length - tail).join('')),
+  };
 }

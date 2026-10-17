@@ -12,6 +12,7 @@ import {
   takenBackgroundParams,
 } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, inTurn, type Plan } from './background.js';
 import { backgroundTaskTools } from './background-tools.js';
 
@@ -325,8 +326,10 @@ export class ToolRegistry implements ToolService {
         signal: callCtx.signal,
       });
       if (denied) {
-        this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${denied}`);
-        return denied;
+        // 拒绝语交给模型：取原文
+        const reason = toSource(denied);
+        this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${reason}`);
+        return reason;
       }
     } else if (confirm || capabilityMinLevel({ risk: tool.risk, visibility }) > DEFAULT_AUTHORITY) {
       // 没有守卫（未装权限插件）时 fail-closed：等同人人都是默认等级、没人能确认。

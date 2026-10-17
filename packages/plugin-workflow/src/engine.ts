@@ -16,9 +16,13 @@ import type {
   WorkflowDef,
 } from '@aalis/api-workflow';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import { type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 const MAX_OUTPUT_PREVIEW = 1000;
+/** 原因最多多少字：文字对象的参数截到它（上游的整段报错可能在参数里），随运行历史落盘 */
+const ERROR_MAX = 200;
 /** 运行被取消时，阻塞中的节点以此失败 */
 const CANCELLED = '运行已取消';
 
@@ -285,6 +289,12 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
   }
 }
 
+/** 接住的报错作原因：文字对象的参数截短，字符串照旧 */
+export function errorReason(err: unknown): string | TextRef {
+  const error = textOf(err);
+  return typeof error === 'string' ? error : truncateParams(error, ERROR_MAX);
+}
+
 // ─── DAG 主调度 ────────────────────────────────────────
 
 interface RunOptions extends EngineCaps {
@@ -309,7 +319,7 @@ export async function runDag(opts: RunOptions): Promise<{
   status: 'success' | 'failed' | 'cancelled';
   nodes: NodeRunInfo[];
   outputs: Record<string, unknown>;
-  error?: string;
+  error?: string | TextRef;
 }> {
   const { def, vars, tools, events, hooks, logger, runId, signal, onNodeDone } = opts;
   const outputs: Record<string, unknown> = {};
@@ -342,7 +352,7 @@ export async function runDag(opts: RunOptions): Promise<{
   const nodeRuns = new Map<string, NodeRunInfo>();
   for (const n of def.nodes) nodeRuns.set(n.id, { id: n.id, type: n.type, status: 'pending' });
 
-  let firstError: string | null = null;
+  let firstError: string | TextRef | null = null;
 
   async function runOne(id: string): Promise<void> {
     const node = nodeMap.get(id)!;
@@ -364,9 +374,9 @@ export async function runDag(opts: RunOptions): Promise<{
     } catch (err) {
       info.status = 'failed';
       info.finishedAt = Date.now();
-      info.error = err instanceof Error ? err.message : String(err);
-      firstError ??= `节点 "${id}" 失败: ${info.error}`;
-      logger.warn(`run=${runId} node=${id} failed: ${info.error}`);
+      info.error = errorReason(err);
+      firstError ??= truncateParams(t('nodeFailed', { id, error: info.error }), ERROR_MAX);
+      logger.warn(`run=${runId} node=${id} failed: ${toSource(info.error)}`);
     } finally {
       onNodeDone?.(info);
     }

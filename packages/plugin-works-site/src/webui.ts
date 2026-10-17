@@ -7,9 +7,11 @@
 import { type BoundPublish, WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
 import type { WorksSiteConfig } from './config.js';
 import type { WorksDeployer } from './deploy.js';
 import type { WorksStore } from './state.js';
+import { t } from './texts.js';
 
 const PAGE_KEY = 'works-site';
 
@@ -45,9 +47,12 @@ export function registerWorksPage(deps: {
             throw new Error('作品不存在');
           if (!deps.publish.present) throw new Error('发布服务不在场');
           const result = await deps.publish.use.withdraw(rowKey, { kind: 'owner' }, 'owner 在作品页撤下');
-          if ('refused' in result) throw new Error(result.refused);
+          if ('refused' in result) {
+            const { refused } = result;
+            throw typeof refused === 'string' ? new Error(refused) : new TextError(refused);
+          }
           deployer.change();
-          return result.degraded ? `撤下已登记；站点状态：${result.degraded}` : '已撤下';
+          return result.degraded ? t('withdrawnDegraded', { state: result.degraded }) : t('withdrawn');
         },
       },
       acknowledgeAlert: {

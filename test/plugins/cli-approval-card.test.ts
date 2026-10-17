@@ -284,7 +284,7 @@ describe('卡片显示', () => {
     const [head, tail] = unit === '字' ? ['HEAD', 'TAIL'] : ['line-1 ', 'line-100'];
     expect(frame).toContain(head);
     expect(frame).toContain(tail);
-    expect(frame).toMatch(new RegExp(`省略 \\d+ ${unit}`));
+    expect(frame).toMatch(new RegExp(`省略 [\\d,]+ ${unit}`));
     // 卡片挤不掉标题栏与页脚
     expect(frame).toContain('[CHAT]');
     expect(frame).toContain('^C exit');

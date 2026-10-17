@@ -5,6 +5,7 @@ import type { ToolCallContext, ToolDefinition, ToolGroupInfo, ToolSummary } from
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 
 const configSchema = defineConfig({
   enabled: {
@@ -127,7 +128,7 @@ function searchTools(summaries: ToolSummary[], query: string, groups: readonly T
       const groupText = (tool.groups ?? [])
         .map(key => groupByName.get(key))
         .filter((group): group is ToolGroupInfo => !!group)
-        .map(group => `${group.name} ${group.label} ${group.description ?? ''}`.toLowerCase())
+        .map(group => `${group.name} ${toSource(group.label)} ${group.description ?? ''}`.toLowerCase())
         .join(' ');
       const score = Math.max(
         ...keywords.map(keyword => {
@@ -179,7 +180,9 @@ function capabilityCatalog(
       .map(item => item.name)
       .join('、');
     const more = members.length > GROUP_TOOL_EXAMPLES ? `等 ${members.length} 个` : '';
-    lines.push(`- ${group.label}（${group.name}）：${short(group.description ?? '')}；工具 ${examples}${more}`);
+    lines.push(
+      `- ${toSource(group.label)}（${group.name}）：${short(group.description ?? '')}；工具 ${examples}${more}`,
+    );
   }
   for (const summary of visible) {
     if (assigned.has(summary.name)) continue;

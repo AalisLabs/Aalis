@@ -18,13 +18,15 @@ pnpm add @aalis/api-package-manager
 ```ts
 import { packageManager } from '@aalis/api-package-manager';
 import { definePlugin, optional } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 export default definePlugin({
   name: '@acme/plugin-example-market',
   uses: { packageManager: optional(packageManager) },
   apply({ packageManager }) {
-    // 在处理指令或请求时调用，不要在 apply 里直接装包（每次激活都会装一次并触发重扫）；服务缺席时 present 为 false
-    async function install(npmPkg: string): Promise<string> {
+    // 在处理指令或请求时调用，不要在 apply 里直接装包（每次激活都会装一次并触发重扫）；服务缺席时 present 为 false。
+    // 结果的 message 可以是文字对象：作为回复交给出口按读者语言渲染，写日志的取 toSource
+    async function install(npmPkg: string): Promise<string | TextRef> {
       if (!packageManager.present) return '包管理服务不可用';
       return (await packageManager.use.install(npmPkg)).message;
     }

@@ -6,7 +6,9 @@
 import type { ToolDefinition } from '@aalis/api-tools';
 import type { Events, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { defineService } from '@aalis/core';
+import { TextError, type TextRef } from '@aalis/schema-i18n';
 import type { Message, ToolCall } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 export interface ChatResponse {
   content: string | null;
@@ -257,10 +259,13 @@ export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel
 
 // ----- 深度思考的档位 -----
 
-/** 一个思考档位：id 是提供者自己的写法（请求的 think 填它），label 给人看 */
+/**
+ * 一个思考档位：id 是提供者自己的写法（请求的 think 填它），label 给人看，可以是文字对象（@aalis/schema-i18n），出口按读者语言
+ * 渲染；给模型或写日志的取 toSource
+ */
 export interface ThinkingLevel {
   readonly id: string;
-  readonly label: string;
+  readonly label: string | TextRef;
 }
 
 /**
@@ -273,8 +278,8 @@ export interface ThinkingLevels {
 }
 
 /**
- * 请求带的思考档位：没带时为 undefined；带了却不在模型声明的档位里（含模型不能调时带了档位）时抛错。提供者把档位翻成
- * 线上字段之前先过它，调用方要先按模型声明的档位选
+ * 请求带的思考档位：没带时为 undefined；带了却不在模型声明的档位里（含模型不能调时带了档位）时抛给人看的错（TextError）。
+ * 提供者把档位翻成线上字段之前先过它，调用方要先按模型声明的档位选
  */
 export function requestedThinking(
   model: Pick<LLMModel, 'id' | 'thinking'>,
@@ -282,7 +287,7 @@ export function requestedThinking(
 ): string | undefined {
   const { think } = request;
   if (think !== undefined && !model.thinking?.levels.some(level => level.id === think)) {
-    throw new Error(`模型 ${model.id} 没有思考档位「${think}」`);
+    throw new TextError(t('noSuchLevel', { model: model.id, level: think }));
   }
   return think;
 }

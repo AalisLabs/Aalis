@@ -41,7 +41,7 @@ import {
   type WorkspaceInfo,
 } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide, services } from '@aalis/core';
-import { asText, type TextRef, toSource } from '@aalis/schema-i18n';
+import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import {
@@ -724,7 +724,7 @@ class SessionManager implements SessionManagerService {
     const failed = clearData.results.filter(r => !r.success);
     if (failed.length > 0) {
       this.caps.logger.use.warn(
-        `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`,
+        `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${toSource(r.message)}`).join('; ')}`,
       );
     }
   }
@@ -1288,9 +1288,10 @@ class SessionManager implements SessionManagerService {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     turn.outcome = outcome;
-    // 一句原因：agent 给的字符串可能带上游的整段响应，会随会话落盘、进子任务提醒，截短；文字对象原样；空串当作没给
+    // 一句原因：agent 给的可能带上游的整段响应（字符串本身，或文字对象的参数），会随会话落盘、进子任务提醒，截短；空串当作没给
     if (outcome !== 'error' || !error) turn.error = undefined;
-    else turn.error = typeof error === 'string' ? truncateChars(error, ERROR_MAX, '…') : error;
+    else
+      turn.error = typeof error === 'string' ? truncateChars(error, ERROR_MAX, '…') : truncateParams(error, ERROR_MAX);
   }
 
   /**

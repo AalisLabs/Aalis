@@ -32,6 +32,8 @@ export interface PlatformSelfIdentity {
 export interface SessionTypeDecl {
   /** 类型名：非空，不含 `:`，不是 `*`；与作用域 `平台:类型:目标` 的第二段同一套写法 */
   name: string;
+  /** 给人看的显示名（如作用域的可选项），可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；不给时界面写类型名 */
+  label?: string | TextRef;
   /** 多方（受众里不止机器人与对端两方）为 true，一对一为 false */
   multiParty: boolean;
 }
@@ -98,6 +100,7 @@ export interface PlatformAdapter {
 
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 /** 只枚举提供者的那一面：只在部分 adapter 里找时，给一个只列它们的 `list` */
 type Adapters = Pick<ServiceSelection<PlatformAdapter>, 'list'>;

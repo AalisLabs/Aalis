@@ -18,6 +18,7 @@
 
 import { type CronEngine, type CronSubscribeOptions, cronEngine, type ValidateResult } from '@aalis/api-cron-engine';
 import { type BoundOf, definePlugin, lifecycle, logger, provide } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
 import { matchesCron, validateCronExpr } from '@aalis/util-cron';
 
 interface CronSubscription {
@@ -122,7 +123,7 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
   const service: CronEngine = {
     subscribe(expr, handler, options?: CronSubscribeOptions) {
       const v = validateCronExpr(expr);
-      if (!v.ok) throw new Error(v.reason);
+      if (!v.ok) throw typeof v.text === 'string' ? new Error(v.text) : new TextError(v.text);
       // 卸载后仍被握着的陈旧服务引用：cron 与 interval 两条通道一律不再建定时器
       // （interval 分支建出的 setInterval 没有任何东西会再清它，会越过卸载一直活着）
       if (lifecycle.use.signal.aborted) {

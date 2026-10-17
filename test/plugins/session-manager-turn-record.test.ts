@@ -27,7 +27,7 @@ afterEach(async () => {
 const t = defineTexts({
   ns: '@zz/session-turn-record',
   language: 'zh-CN',
-  source: { quota: '额度用完了' } as const,
+  source: { quota: '额度用完了', failed: '调用失败：{error}' } as const,
 });
 
 /** stored 预置会话表（重启时交上一次落盘的） */
@@ -45,10 +45,7 @@ async function setup(stored?: Record<string, Record<string, unknown>>) {
   const sm = host.sessionManager.use;
 
   let turns = 0;
-  /**
-   * 按 agent 的顺序跑一轮；不给结局时不发 agent:turn:after（消息被拦下的一轮）。原因可以是文字对象：钩子的 error 还只收字符串，
-   * 经断言交出
-   */
+  /** 按 agent 的顺序跑一轮；不给结局时不发 agent:turn:after（消息被拦下的一轮）。原因可以是文字对象 */
   const turn = (sessionId: string, outcome?: Outcome, error?: string | TextRef) => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
@@ -58,7 +55,7 @@ async function setup(stored?: Record<string, Record<string, unknown>>) {
         message,
         reply: outcome === 'replied' ? '<回复>' : '',
         outcome,
-        ...(error === undefined ? {} : { error: error as string }),
+        ...(error === undefined ? {} : { error }),
         sessionId,
         turnId,
         metadata: {},
@@ -132,6 +129,13 @@ describe('lastTurn：每一轮结束时记下结局与结束时间', () => {
     // 经 JSON 往返：与落进存储再读回一样，读回的是另一份对象
     const restarted = await setup(JSON.parse(JSON.stringify(Object.fromEntries(mem.meta))));
     expect(restarted.sm.getSession(session.id)?.lastTurn?.error).toEqual(t('quota'));
+  });
+
+  it('原因是文字对象时参数截到 200 字（上游的整段报错常作参数）', async () => {
+    const { sm, turn } = await setup();
+    const session = await sm.createSession({ name: '<会话>' });
+    await turn(session.id, 'error', t('failed', { error: 'x'.repeat(300) }));
+    expect(sm.getSession(session.id)?.lastTurn?.error).toEqual(t('failed', { error: 'x'.repeat(200) }));
   });
 
   it('被拦下、没有结局的一轮按 silent 记，不沿用上一轮的出错原因', async () => {

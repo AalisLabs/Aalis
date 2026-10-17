@@ -15,6 +15,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -111,7 +112,7 @@ describe('重启之后的后台任务', () => {
 
     const registry = () => host.backgroundTasks.use.list();
     await vi.waitFor(() => expect(registry()).toHaveLength(2));
-    expect(registry().map(task => [task.call.tool, task.status, task.reason])).toEqual([
+    expect(registry().map(task => [task.call.tool, task.status, toSource(task.reason)])).toEqual([
       [BG, 'completed', undefined],
       [BG, 'aborted', 'Aalis 重启时还在跑'],
     ]);

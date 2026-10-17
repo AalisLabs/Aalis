@@ -42,6 +42,7 @@ export default defineLocale<Source>()({
   factParams: 'Parameters',
   patchHidden: 'Looks like it contains secrets; content not shown',
   linesOmitted: '…({count, plural, one {# line} other {# lines}} omitted)…',
+  charsOmitted: '…({count, plural, one {# character} other {# characters}} omitted)…',
   approve: 'Approve',
   deny: 'Deny',
   cardKeys: '←/→ choose · Enter confirm · Ctrl+Y approve · Ctrl+N deny',

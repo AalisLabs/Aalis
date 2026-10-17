@@ -20,6 +20,7 @@ export {
   defineTexts,
   type TextDomain,
   type TextFactory,
+  truncateParams,
 } from './define.js';
 export { isTextError, TextError, textOf, withText } from './errors.js';
 export { normalizeLanguages } from './locale.js';

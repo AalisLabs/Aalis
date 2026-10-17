@@ -33,7 +33,8 @@
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/util-cron": "workspace:>=0.1.3 <1.0.0"
+    "@aalis/util-cron": "workspace:>=0.1.3 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

@@ -6,6 +6,7 @@ import type { WorksSiteConfig } from '../../packages/plugin-works-site/src/confi
 import type { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
 import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { registerWorksPage } from '../../packages/plugin-works-site/src/webui.js';
+import { defineTexts, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -42,6 +43,14 @@ const config: WorksSiteConfig = {
   siteTitle: '作品集',
   siteIntro: '',
 };
+
+/** 发布服务交来的状态与拒绝原因：文字对象 */
+const t = defineTexts({
+  ns: '@zz/works-site-page',
+  language: 'zh-CN',
+  source: { paused: '已暂停', ledgerDown: '记录读不出来' } as const,
+  locales: { en: { paused: 'Paused', ledgerDown: 'The ledger cannot be read' } },
+});
 
 const running: Array<{ app: App; pages: PageHost }> = [];
 afterEach(async () => {
@@ -135,7 +144,7 @@ describe('作品站页', () => {
 
   it('撤下：交给发布服务并安排重新部署；不在线上的作品与读不出的告警回错误', async () => {
     const h = await fixture();
-    expect(await h.pages.act('works-site', 'withdrawWork', { rowKey: id })).toEqual({
+    expect(toSource(await h.pages.act('works-site', 'withdrawWork', { rowKey: id }))).toEqual({
       status: 200,
       body: { message: '已撤下' },
     });
@@ -148,6 +157,20 @@ describe('作品站页', () => {
     expect(await h.pages.act('works-site', 'acknowledgeAlert', { rowKey: 'none' })).toEqual({
       status: 500,
       body: { error: '告警不存在' },
+    });
+  });
+
+  it('撤下时发布服务交来的站点状态与拒绝原因是文字对象：回执与报错按读者语言渲染', async () => {
+    const h = await fixture();
+    h.withdraw.mockResolvedValueOnce({ ok: true, degraded: t('paused') } as never);
+    const { body } = await h.pages.act('works-site', 'withdrawWork', { rowKey: id });
+    const message = (body as { message: unknown }).message as never;
+    expect(resolveText(message, ['en'])).toBe('Withdrawal registered; site status: Paused');
+    expect(resolveText(message, ['zh-CN'])).toBe('撤下已登记；站点状态：已暂停');
+    h.withdraw.mockResolvedValueOnce({ refused: t('ledgerDown') } as never);
+    expect(await h.pages.act('works-site', 'withdrawWork', { rowKey: id })).toEqual({
+      status: 500,
+      body: { error: t('ledgerDown') },
     });
   });
 

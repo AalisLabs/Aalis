@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { mkConfig, noFileStorage, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
@@ -29,7 +30,9 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
   it('默认等级(0)：public 放行、restricted 拒', () => {
     const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage, noSessions);
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).toBeNull();
-    expect(m.authorize(onebot('1'), { capability: 'tool:shutdown', visibility: 'restricted' })).toContain('权限不足');
+    expect(toSource(m.authorize(onebot('1'), { capability: 'tool:shutdown', visibility: 'restricted' }))).toContain(
+      '权限不足',
+    );
   });
 
   it('设等级达标放行；owner 直接放行；任意整数等级', () => {
@@ -76,6 +79,20 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).toBeNull();
   });
 
+  it('authorityOverrides 写成 Infinity：拒绝语照样点名能力与门槛，不露出原文模板的花括号', () => {
+    const m = new AuthorityManager(
+      mkConfig({ authorityOverrides: { 'tool:weather': Number.POSITIVE_INFINITY } }),
+      silentLogger(),
+      noFileStorage,
+      noSessions,
+    );
+    const denied = m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' }) as TextRef;
+    expect(denied.source).toBe('权限不足: "tool:weather" 需等级 Infinity（当前 0）');
+    expect(resolveText(denied, ['en'])).toBe(
+      'Insufficient permission: "tool:weather" needs level Infinity (current 0)',
+    );
+  });
+
   it('全局 deniedCapabilities 连 owner 都压过', () => {
     const m = new AuthorityManager(
       mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }], deniedCapabilities: ['tool:forbidden'] }),
@@ -83,7 +100,9 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
       noFileStorage,
       noSessions,
     );
-    expect(m.authorize(onebot('boss'), { capability: 'tool:forbidden', visibility: 'public' })).toContain('系统禁用');
+    expect(toSource(m.authorize(onebot('boss'), { capability: 'tool:forbidden', visibility: 'public' }))).toContain(
+      '系统禁用',
+    );
   });
 });
 

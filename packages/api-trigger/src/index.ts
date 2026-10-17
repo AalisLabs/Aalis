@@ -17,15 +17,17 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 
 /**
  * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿选中那一条的 id 与自己的实例 id 比，
  * 不调用方法，所以接口只有名字，进诊断（如 Laya 诊断项报「生效的触发插件是某某」）。WebUI 设置「系统」的
- * 服务偏好显示的是 provide 时传的 label，两处取同一个值。
+ * 服务偏好显示的是 provide 时传的 label，两处取同一个值。名字可以是文字对象（@aalis/schema-i18n）：要写进句子的
+ * 作为文字对象的参数，出口按读者语言渲染
  */
 export interface TriggerService {
-  readonly label: string;
+  readonly label: string | TextRef;
 }
 
 export const trigger = defineService<TriggerService>('trigger');

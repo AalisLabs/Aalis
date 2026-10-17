@@ -36,6 +36,7 @@ import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMP
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
+import { t } from './texts.js';
 import { registerMediaTools } from './tools.js';
 
 const name = '@aalis/plugin-media';
@@ -328,7 +329,7 @@ function run(caps: Caps): void {
             id: 'media.vision',
             category: 'service',
             level: 'ok',
-            message: `识图可用，识别模型：${vision.displayName ?? vision.name}`,
+            message: t('visionReady', { model: vision.displayName ?? vision.name }),
           }
         : {
             id: 'media.vision',

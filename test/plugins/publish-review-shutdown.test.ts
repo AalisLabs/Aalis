@@ -3,6 +3,7 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -42,7 +43,7 @@ async function setup(manualReview = false, now: () => number = Date.now) {
     health: () => ({ ok: true }),
   });
   const proposed = await service.nominate(input());
-  if (!('id' in proposed)) throw new Error(proposed.refused);
+  if (!('id' in proposed)) throw new Error(toSource(proposed.refused));
   return { files, storage, store, abort, notice, pipelineRun, service, binding, id: proposed.id };
 }
 
@@ -134,7 +135,7 @@ describe('作品审核停机交错', () => {
     const h = await setup();
     await h.service.processNext();
     const second = await h.service.nominate(input());
-    if (!('id' in second)) throw new Error(second.refused);
+    if (!('id' in second)) throw new Error(toSource(second.refused));
     await h.service.processNext();
     let entered!: () => void;
     let release!: () => void;

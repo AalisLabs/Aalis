@@ -5,6 +5,7 @@ import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
@@ -220,7 +221,7 @@ describe('workflow runDag', () => {
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
-    expect(res.error).toMatch(/boom/);
+    expect(toSource(res.error)).toMatch(/boom/);
     expect(res.nodes.find(n => n.id === 'a')?.status).toBe('failed');
     expect(res.nodes.find(n => n.id === 'b')?.status).toBe('skipped');
   });
@@ -337,7 +338,7 @@ describe('workflow agent 节点', () => {
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
-    expect(res.error).toMatch(/超时/);
+    expect(toSource(res.error)).toMatch(/超时/);
   });
 
   it('outcome=error → 节点失败', async () => {
@@ -356,7 +357,7 @@ describe('workflow agent 节点', () => {
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
-    expect(res.error).toMatch(/outcome=error/);
+    expect(toSource(res.error)).toMatch(/outcome=error/);
   });
 
   it('outcome=silent → 成功且输出空串（agent 选择不回复是合法结果）', async () => {

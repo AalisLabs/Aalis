@@ -14,6 +14,7 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { ServiceSelection } from '@aalis/core';
+import { type TextRef, toSource } from '@aalis/schema-i18n';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
@@ -77,7 +78,7 @@ export function automaticPublicationArtifacts(
  * 一组公开路径里第一个不合规的：逐条过 publicPathProblem，按小写比较也不得重复（公开根可能在大小写不敏感的
  * 文件系统上）。原因只写类别，不回显路径
  */
-export function pathsProblem(paths: readonly string[]): { index: number; reason: string } | undefined {
+export function pathsProblem(paths: readonly string[]): { index: number; reason: string | TextRef } | undefined {
   const lowered = new Set<string>();
   for (const [index, path] of paths.entries()) {
     const reason = publicPathProblem(path) ?? (lowered.has(path.toLowerCase()) ? '文件路径重复' : undefined);
@@ -107,8 +108,9 @@ export function retryDelay(result: { retryAfterMs?: number }): number | undefine
   return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? Math.ceil(ms) : undefined;
 }
 
-/** 发布服务的拒绝类别可展示；发现相对路径时不把远端文件名带进工具回执。 */
-function refusal(reason: string, artifacts: readonly Artifact[]): string {
+/** 发布服务的拒绝类别可展示（交给模型，取原文）；发现相对路径时不把远端文件名带进工具回执。 */
+function refusal(refused: string | TextRef, artifacts: readonly Artifact[]): string {
+  const reason = toSource(refused);
   const privateNames = artifacts.flatMap(a => [a.rel, a.rel.split('/').pop() ?? '']);
   return reason.includes('/') || reason.includes('\\') || privateNames.some(name => name && reason.includes(name))
     ? '作品文件未通过检查'
@@ -145,7 +147,7 @@ export function registerWorksTools(deps: WorksDeps): void {
           label,
           baseUrl,
           available,
-          ...(reason ? { reason } : {}),
+          ...(reason ? { reason: toSource(reason) } : {}),
         })),
       });
     } catch {
@@ -232,7 +234,7 @@ export function registerWorksTools(deps: WorksDeps): void {
     const pathProblem = pathsProblem(paths);
     if (pathProblem) {
       return fail(
-        `成品 ${selected[pathProblem.index].id} 的公开路径不符合发布要求（${pathProblem.reason}），请换选成品`,
+        `成品 ${selected[pathProblem.index].id} 的公开路径不符合发布要求（${toSource(pathProblem.reason)}），请换选成品`,
       );
     }
     let repair = task.publication;
@@ -392,11 +394,11 @@ export function registerWorksTools(deps: WorksDeps): void {
         { kind: 'origin', actorKey: actorKey(effectiveActor(ctx)) },
         '来源房间撤下',
       );
-      if ('refused' in result) return fail(result.refused);
+      if ('refused' in result) return fail(toSource(result.refused));
       return done({
         workId: id,
         message: result.degraded
-          ? `已从作品集撤下作品 ${id}，但作品站目前没法部署（${result.degraded}），站点上可能还打得开，要等 owner 处理`
+          ? `已从作品集撤下作品 ${id}，但作品站目前没法部署（${toSource(result.degraded)}），站点上可能还打得开，要等 owner 处理`
           : `已撤下作品 ${id}，站点一般几分钟内不再返回它`,
       });
     } catch {

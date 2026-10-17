@@ -1,4 +1,5 @@
 import { type NominateInput, PUBLIC_CONTENT_TYPES, publicPathProblem, type WorkKind } from '@aalis/api-publish';
+import type { TextRef } from '@aalis/schema-i18n';
 import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
 import type { ReviewConfig } from './config.js';
 
@@ -69,7 +70,7 @@ export function checkNomination(
   surfaces: ReadonlySet<string>,
 ):
   | { ok: true; kind: WorkKind; title: string; summary: string }
-  | { refused: string; fileIndex?: number; retryAfterMs?: number } {
+  | { refused: string | TextRef; fileIndex?: number; retryAfterMs?: number } {
   const clean = (value: string) => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim();
   const title = clean(input.title);
   const summary = clean(input.summary);

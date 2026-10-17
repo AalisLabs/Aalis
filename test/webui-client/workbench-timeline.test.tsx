@@ -113,6 +113,14 @@ describe('时间线', () => {
     expect(log.getByText(/a\.txt\s+b\.txt/)).toBeTruthy();
   });
 
+  it('命令太长的工具卡行：保留首尾，中间写明省略了多少字', async () => {
+    app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([]) });
+    const log = within(await timeline());
+    const command = `${'a'.repeat(30)}${'x'.repeat(40)}${'b'.repeat(30)}`;
+    act(() => push('started', toolCall('c1', 'exec', { status: 'running', display: { kind: 'command', command } })));
+    expect(log.getByRole('button', { name: /执行 a{30}…（省略 40 字）…b{30}/ })).toBeTruthy();
+  });
+
   it('正在输出的回复里的 Mermaid 图输出完才画', async () => {
     app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([]) });
     const log = within(await timeline());

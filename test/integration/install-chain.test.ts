@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createPackageManager, type PackageManagerDeps } from '../../packages/plugin-package-manager/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 const pexec = promisify(execFile);
 
@@ -252,7 +253,7 @@ describe('安装链（真实 npm）', () => {
         // （用升级而非降级：降级另有守卫会更早拒掉，就测不到预检这一层了）
         const r = await makePm(p, restarts).update([{ name: 'react', version: '19.0.0' }]);
         expect(r.ok).toBe(false);
-        expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
+        expect(r.conflicts?.some(c => toSource(c).includes('react-dom'))).toBe(true);
         expect(restarts).toHaveLength(0);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
         expect(JSON.parse(readFileSync(join(p, 'node_modules/react/package.json'), 'utf-8')).version).toBe('18.2.0');
@@ -284,7 +285,7 @@ describe('安装链（真实 npm）', () => {
         const before = readFileSync(join(p, 'package.json'), 'utf-8');
         const r = await makePm(p, []).update([{ name: 'react', version: '19.0.0' }]);
         expect(r.ok).toBe(false);
-        expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
+        expect(r.conflicts?.some(c => toSource(c).includes('react-dom'))).toBe(true);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
       } finally {
         rmSync(p, { recursive: true, force: true });

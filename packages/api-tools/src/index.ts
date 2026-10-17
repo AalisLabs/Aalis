@@ -25,6 +25,7 @@ import type {
 } from '@aalis/api-authority';
 import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -201,13 +202,18 @@ export interface ToolSummary {
   groups?: string[];
 }
 
-/** 工具分组信息 */
+/**
+ * 工具分组信息。给人看的 label、summary 可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；label 也进能力目录给模型，
+ * 那一侧取 toSource
+ */
 export interface ToolGroupInfo {
   /** 分组标识（如 'system'、'onebot'、'search'） */
   name: string;
   /** 显示名称（如 '系统工具'、'OneBot 工具'） */
-  label: string;
-  /** 分组描述 */
+  label: string | TextRef;
+  /** 给人看的一句概述（WebUI 的分组选项）；没有时界面不显示概述 */
+  summary?: string | TextRef;
+  /** 分组描述：只给模型（能力目录与工具搜索），不进界面 */
   description?: string;
   /** 注册该分组的插件 */
   pluginName: string;
@@ -334,8 +340,11 @@ export interface BackgroundTask {
   lastLine?: string;
   /** 最后一次有输出的时刻 */
   lastOutputAt?: number;
-  /** 失败或中断的一句原因：失败的取自结果里的 error */
-  reason?: string;
+  /**
+   * 失败或中断的一句原因：失败的取自结果里的 error（原文字符串），中断的是宿主写的文字对象（出口按读者语言渲染）。
+   * 交给模型的取 toSource
+   */
+  reason?: string | TextRef;
   /** 命令的退出码：工具声明了 command 种类的展示、结束时从结果里取得到才有；随登记落盘 */
   exitCode?: number;
   /** 结束的任务：工具的结果。不落盘，Aalis 重启前结束的没有 */

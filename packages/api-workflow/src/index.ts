@@ -14,6 +14,7 @@ import { defineService } from '@aalis/core';
 // ============================================================
 
 import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisEvents 增强）
+import type { TextRef } from '@aalis/schema-i18n';
 
 // ============ 触发器 ============
 
@@ -121,8 +122,8 @@ export interface NodeRunInfo {
   finishedAt?: number;
   /** 节点输出（截断后的字符串展示） */
   output?: string;
-  /** 失败原因 */
-  error?: string;
+  /** 失败原因：可以是文字对象（读法同 {@link WorkflowRun.error}） */
+  error?: string | TextRef;
 }
 
 export interface WorkflowRun {
@@ -137,8 +138,11 @@ export interface WorkflowRun {
   vars: Record<string, unknown>;
   /** 节点运行明细 */
   nodes: NodeRunInfo[];
-  /** 整体错误（首个失败的简要） */
-  error?: string;
+  /**
+   * 整体错误（首个失败的简要）：可以是文字对象（@aalis/schema-i18n），给人看的经出口按读者语言渲染，交给模型与写日志的
+   * 取 toSource；随运行历史落盘
+   */
+  error?: string | TextRef;
 }
 
 // ============ 服务接口 ============

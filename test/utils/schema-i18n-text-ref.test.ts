@@ -13,6 +13,7 @@ import {
   textOf,
   toSource,
   toSourceReplacer,
+  truncateParams,
   withText,
 } from '@aalis/schema-i18n';
 import { describe, expect, it } from 'vitest';
@@ -127,6 +128,51 @@ describe('换成原文', () => {
     expect(JSON.stringify({ a: t('hello'), b: [t('saved', { count: 2 })] }, toSourceReplacer)).toBe(
       '{"a":"你好","b":["已保存 2 项"]}',
     );
+  });
+});
+
+describe('截参数', () => {
+  const cut = defineTexts({
+    ns: 'test/schema-i18n-truncate',
+    language: 'zh-CN',
+    source: { failed: '失败：{error}（第 {n, number} 次）', detail: '原因 {why}', all: '{items, list}' } as const,
+    locales: { en: { failed: 'Failed: {error} (attempt {n, number})', detail: 'Reason {why}' } },
+  });
+  const long = (n: number) => '长'.repeat(n);
+
+  it('字符串参数截到给定的码点数，数原样；source 按截后的参数重新按原文渲染', () => {
+    const text = truncateParams(cut('failed', { error: long(300), n: 2 }), 200);
+    expect(text).toEqual(cut('failed', { error: long(200), n: 2 }));
+    expect(resolveText(text as TextRef, ['en'])).toBe(`Failed: ${long(200)} (attempt 2)`);
+  });
+
+  it('参数里的文字对象与列表元素逐个截', () => {
+    const text = truncateParams(cut('failed', { error: cut('detail', { why: long(300) }), n: 1 }), 200);
+    expect(text).toEqual(cut('failed', { error: cut('detail', { why: long(200) }), n: 1 }));
+    const list = truncateParams(cut('all', { items: [long(300), cut('detail', { why: long(300) }), 3] }), 200);
+    expect(list).toEqual(cut('all', { items: [long(200), cut('detail', { why: long(200) }), 3] }));
+  });
+
+  it('按码点截，不从代理对中间切开', () => {
+    const text = truncateParams(cut('detail', { why: `${'x'.repeat(199)}😀${'y'.repeat(50)}` }), 200);
+    expect(text).toMatchObject({ params: { why: `${'x'.repeat(199)}😀` } });
+  });
+
+  it('没有参数、参数没超长时原样；所属字典不在目录里时 source 也截到给定的码点数，有没有参数都截', () => {
+    const hello = t('hello');
+    expect(truncateParams(hello, 200)).toBe(hello);
+    expect(truncateParams(cut('detail', { why: '短' }), 200)).toEqual(cut('detail', { why: '短' }));
+    const foreign = { i18n: 'test/schema-i18n-absent', key: 'k', params: { why: long(300) }, source: long(300) };
+    expect(truncateParams(foreign, 200)).toEqual({ ...foreign, params: { why: long(200) }, source: long(200) });
+    const bare = { i18n: 'test/schema-i18n-absent', key: 'k', source: long(300) };
+    expect(truncateParams(bare, 200)).toEqual({ ...bare, source: long(200) });
+  });
+
+  it('截完参数的总字数仍超过给定字数的 16 倍（几百条分句）时，退为截到给定字数的原文字符串；十几条照旧是文字对象', () => {
+    const many = textClauses(Array.from({ length: 300 }, () => cut('detail', { why: long(500) })));
+    expect(truncateParams(many, 200)).toBe(`原因 ${long(197)}`);
+    const some = truncateParams(textClauses(Array.from({ length: 12 }, () => cut('detail', { why: long(500) }))), 200);
+    expect(isTextRef(some)).toBe(true);
   });
 });
 

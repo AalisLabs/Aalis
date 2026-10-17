@@ -53,6 +53,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
 | `textLines(parts)` | 把若干段（字符串或文字对象）按行连成一个文字对象，多行报告、列表类回复用它 |
 | `linesOf(text)` | `textLines` 的逆：是 `textLines` 生成的文字对象（落盘读回的同样认）就给出各段，否则 `undefined`。要逐行加工（缩进、加前缀）又不能先渲染时用它；段本身可能是多行的字符串或别的文字对象 |
+| `truncateParams(text, max)` | 把字符串参数（含参数里的文字对象与列表元素）逐个截到 max 个码点，不从代理对中间切开，source 按截后的参数重新按原文渲染（所属字典不在目录里时 source 也截到 max，没有参数的也截；在目录里且没有参数的原样返回）。截完参数里字符串的总字数仍超过 max 的 16 倍时（几十条以上带长参数的分句、上百行的 `textLines`）退为截到 max 的原文字符串，所以返回 `string \| TextRef`。落盘方用它给参数里可能带着上游整段报错的文字对象封顶，照常存返回值；第一方截到 200 |
 | `textClauses(parts)` | 把若干分句连成一句：原文以「；」相连，英文以「; 」。并列的几条原因、几个问题用它；两两二分着嵌套，层数随句数按对数增长，n 句约占 2n 个参数里的文字对象，每句另带文字对象参数时更多（配置校验的问题每句 3 个，约 340 句起超出渲染上限、回落成原文） |
 | `TextError` | `new TextError(text, { status?, cause? })`，message 是 `text.source`，name 为 `TextError` |
 | `withText(err, text)` | 给任意 Error 挂上文字对象，name 与类不变（按 name 判定的错误照旧认得）；message 不动 |

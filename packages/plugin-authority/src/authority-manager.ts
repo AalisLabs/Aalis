@@ -10,6 +10,7 @@ import type { HostConfig } from '@aalis/api-host-config';
 import type { SessionInfo } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import {
   DEFAULT_AUTHORITY,
   matchAnyCap,
@@ -18,6 +19,7 @@ import {
   resolveAccess,
   resolveMinLevel,
 } from './authority-model.js';
+import { t } from './texts.js';
 import { UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
@@ -75,7 +77,7 @@ export class AuthorityManager implements AuthorityService {
   }
 
   // ── 统一权限闸（等级静态判定；确认在执行守卫）──────────
-  authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): string | null {
+  authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): TextRef | null {
     const level = this.level(identity.platform, identity.userId);
     const isOwner = this.isOwner(identity.platform, identity.userId);
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
@@ -88,13 +90,13 @@ export class AuthorityManager implements AuthorityService {
       visibility: request.visibility,
     });
     if (!resolveAccess({ level, minLevel, isOwner, denied, capability: request.capability })) {
-      if (matchAnyCap(denied, request.capability)) return `已被系统禁用: ${request.capability}`;
+      if (matchAnyCap(denied, request.capability)) return t('capabilityDenied', { capability: request.capability });
       // 文案点名能力，因此会向无权用户暴露该能力的**存在性**。这是评估后刻意保留的：
       // 改成「未知指令」式的模糊回应会牵动所有能力的拒绝语义（本函数同时服务 tools 与
       // commands 两个注入点），而开源项目里能力存在性本就公开——防泄漏不是这里的目标，
       // 说清「差多少等级」对用户更有用。指令的帮助（/help、-h、裸敲分组）另按本函数过滤，
       // 用不了的在那里当作不存在；直接执行时仍是这条点名的拒绝。
-      return `权限不足: "${request.capability}" 需等级 ${minLevel}（当前 ${level}）`;
+      return t('levelTooLow', { capability: request.capability, required: minLevel, level });
     }
     return null;
   }

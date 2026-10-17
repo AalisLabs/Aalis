@@ -68,16 +68,16 @@ export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: TextRef; globalOnly
 ];
 
 /**
- * 附件缓存种类 → `data:/` 目录 + 中文标签。
+ * 附件缓存种类 → `data:/` 目录 + 显示名。
  * 目录名与 @aalis/plugin-adapter-onebot 的 attachment-cache `KIND_DIR` 对齐
  * （image→images / video→videos / audio→audios / file→files），落盘路径为
  * `data:/{dir}/{safeSessionId}/{hash}.{ext}`。改这里即同步 /clear 覆盖面。
  */
 export const ATTACHMENT_KINDS = [
-  { type: 'image', dir: 'images', label: '图片' },
-  { type: 'video', dir: 'videos', label: '视频' },
-  { type: 'audio', dir: 'audios', label: '语音' },
-  { type: 'file', dir: 'files', label: '文件' },
+  { type: 'image', dir: 'images', label: t('kindImage') },
+  { type: 'video', dir: 'videos', label: t('kindVideo') },
+  { type: 'audio', dir: 'audios', label: t('kindAudio') },
+  { type: 'file', dir: 'files', label: t('kindFile') },
 ] as const;
 
 const CLEAR_TYPE_ALIASES: Record<string, string> = {
@@ -192,7 +192,9 @@ function registerCommands({
             type: k.type,
             success: true,
             message:
-              removed >= 0 ? `所有${k.label}缓存已清空（${removed} 个会话目录）` : `${k.label}缓存目录不存在，无需清空`,
+              removed >= 0
+                ? t('cacheClearedAll', { kind: k.label, count: removed })
+                : t('cacheMissingAll', { kind: k.label }),
           });
         } else if (safeSessionId) {
           const removed = await removeDirCounted(storage.use, `data:/${k.dir}/${safeSessionId}`);
@@ -200,16 +202,18 @@ function registerCommands({
             source: `${k.type}-cache`,
             type: k.type,
             success: true,
-            message: removed >= 0 ? `当前会话${k.label}缓存已清空（${removed} 个）` : `当前会话无${k.label}缓存`,
+            message:
+              removed >= 0
+                ? t('cacheClearedSession', { kind: k.label, count: removed })
+                : t('cacheMissingSession', { kind: k.label }),
           });
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
         data.results.push({
           source: `${k.type}-cache`,
           type: k.type,
           success: false,
-          message: `${k.label}缓存清空失败: ${msg}`,
+          message: t('cacheFailed', { kind: k.label, error: textOf(err) }),
         });
       }
     }
@@ -421,16 +425,16 @@ function registerCommands({
       try {
         // 中间件链可能要等一阵（在途落库、向量清空与保存），期间 memory 胜者可能已更换：按此刻的胜者清理，
         // 不复用预检取到的实例，免得清到已下线的旧后端
-        if (!memory.present) throw new Error('记忆服务在清理期间下线');
+        if (!memory.present) throw new TextError(t('memoryGone'));
         const memoryService = memory.use;
         if (isGlobal) {
-          if (!memoryService.clearAll) throw new Error('清理期间换上的记忆后端不支持全局清空');
+          if (!memoryService.clearAll) throw new TextError(t('noGlobalClearMidway'));
           await memoryService.clearAll();
           clearData.results.push({
             source: 'memory',
             type: 'context',
             success: true,
-            message: '所有消息历史和归档已清空',
+            message: t('historyClearedAll'),
           });
         } else {
           await memoryService.clearSession(cmdCtx.sessionId);
@@ -438,12 +442,16 @@ function registerCommands({
             source: 'memory',
             type: 'context',
             success: true,
-            message: '当前会话消息历史已清空',
+            message: t('historyClearedSession'),
           });
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        clearData.results.push({ source: 'memory', type: 'context', success: false, message: `清空失败: ${msg}` });
+        clearData.results.push({
+          source: 'memory',
+          type: 'context',
+          success: false,
+          message: t('clearFailed', { error: textOf(err) }),
+        });
       }
 
       // 图片缓存与 vectorstore/persona/user-profile 等子系统的清理
@@ -451,7 +459,9 @@ function registerCommands({
       // runClear 仅负责调度 hook 与处理 memory 主体。
     });
 
-    const lines: (string | TextRef)[] = clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`);
+    const lines: (string | TextRef)[] = clearData.results.map(r =>
+      t(r.success ? 'cleared' : 'notCleared', { message: r.message }),
+    );
     // 显式要求的类型逐个核对：没有任何一行标注该类型，就是没有已启用的插件处理它，照实说明
     for (const { id, label, globalOnly } of CLEAR_TYPES) {
       if (!types?.includes(id) || clearData.results.some(r => r.type === id)) continue;

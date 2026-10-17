@@ -3,6 +3,7 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -57,7 +58,7 @@ describe('审核入口使用的管理操作', () => {
     const changed = vi.fn();
     h.service.onQueueChange(changed);
     const nomination = await h.service.nominate(item());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     const { id } = nomination;
     expect(changed).toHaveBeenCalled();
     await h.service.processNext();
@@ -78,7 +79,7 @@ describe('审核入口使用的管理操作', () => {
   it('关闭人工审核后重新执行自动审核，不把旧待裁决条目悬空或直接放行', async () => {
     const h = await world();
     const nomination = await h.service.nominate(item());
-    if (!('id' in nomination)) throw new Error(nomination.refused);
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
     await h.service.processNext();
     const run = vi.fn(async (input: { files: readonly { path: string; bytes: Uint8Array }[] }) => ({
       verdict: { verdict: 'unsure' as const, reasons: ['拿不准'] },
@@ -115,7 +116,7 @@ describe('审核入口使用的管理操作', () => {
 it('重启核对会清理不再属于待审队列的私有快照，保留仍待裁决的文件', async () => {
   const h = await world();
   const nomination = await h.service.nominate(item());
-  if (!('id' in nomination)) throw new Error(nomination.refused);
+  if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
   h.files.set('pluginData:/publish-review/items/abcdefghij/out/index.html', new TextEncoder().encode('orphan'));
   await h.service.reconcile();
   expect(h.files.has('pluginData:/publish-review/items/abcdefghij/out/index.html')).toBe(false);

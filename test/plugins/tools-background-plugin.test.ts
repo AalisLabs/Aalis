@@ -160,7 +160,7 @@ describe('plugin-tools 的转后台接线', () => {
     await w.app.plugins.unload(toolsPlugin.name);
     const saved = JSON.parse(files.get(FILE) ?? '{}') as { tasks: Array<Record<string, unknown>> };
     expect(saved.tasks.map(t => [t.status, t.reason])).toEqual([
-      ['aborted', expect.stringContaining('停用')],
+      ['aborted', expect.objectContaining({ source: '工具注册表停用时还在跑' })],
       ['completed', undefined],
     ]);
   });

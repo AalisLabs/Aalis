@@ -10,6 +10,7 @@
  */
 
 import { defineService } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 
 export interface CheckpointService {
   /**
@@ -42,7 +43,8 @@ export interface RollbackResult {
   ok: boolean;
   restored: string[];
   deleted: string[];
-  errors: Array<{ uri: string; reason: string }>;
+  /** 没回滚成的文件与原因：原因可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染 */
+  errors: Array<{ uri: string; reason: string | TextRef }>;
   /**
    * 这一轮改过、同一会话里另有回合也改过的文件（按这一轮清单里的顺序），以及那些回合的 id（按开始时间）。
    * 在这一轮开始前就已结束的回合不算：它们的改动早于这一轮的备份，回滚不会撤掉。

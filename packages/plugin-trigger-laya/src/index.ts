@@ -46,6 +46,7 @@ import { waitForAttachmentDescriptions } from './attachments.js';
 import { configSchema, normalizeConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
 import { type Sidecar, sidecarTarget, superviseSidecar } from './sidecar.js';
+import { t } from './texts.js';
 
 // ----- 元数据 -----
 
@@ -538,9 +539,7 @@ function run(caps: Caps): void {
           id: 'trigger.laya',
           category: 'service',
           level: 'ok',
-          message:
-            `Laya 触发判定未生效（${current ? `生效的触发插件是「${current.use.label}」` : '没有生效的触发插件'}），` +
-            '不检查侧车；要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya',
+          message: current ? t('inactive', { label: current.use.label }) : t('inactiveNone'),
           detail,
         };
       }

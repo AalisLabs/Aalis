@@ -4,6 +4,7 @@ import { configSchema } from '../../packages/plugin-publish-review/src/config.js
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -29,7 +30,7 @@ async function world() {
       summary: '',
       files: [{ path: 'index.html', bytes: new TextEncoder().encode('<!doctype html><html>作品</html>') }],
     });
-    if (!('id' in result)) throw new Error(result.refused);
+    if (!('id' in result)) throw new Error(toSource(result.refused));
     await service.processNext();
     return result.id;
   };

@@ -239,7 +239,7 @@ declare module '@aalis/api-contributions' {
 export interface OptionsResponse {
   models: string[];
   details?: OptionDetail[];
-  labels?: Record<string, string>;
+  labels?: Record<string, string | TextRef>;
 }
 
 /** 一个模型：contextId 是提供它的插件实例，llm-ref 的取值 `{ provider, model }` 认的是它 */
@@ -493,7 +493,7 @@ export interface WebuiRestRoutes {
   'GET /api/marketplace/depgraph': { query: { name: string }; response: DependencyGraphResponse };
   /** 包管理拒绝时也回 200，ok 为 false、message 写原因 */
   'POST /api/marketplace/install': { body: PackageRequest; response: InstallResult };
-  'POST /api/marketplace/uninstall': { body: UninstallRequest; response: { ok: boolean; message: string } };
+  'POST /api/marketplace/uninstall': { body: UninstallRequest; response: { ok: boolean; message: string | TextRef } };
   /** 整批更新，成功后进程重启 */
   'POST /api/marketplace/update': { body: UpdateRequest; response: UpdateResult };
 }

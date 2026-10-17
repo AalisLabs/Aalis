@@ -5,7 +5,15 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import toolSearch from '../../packages/plugin-tool-search/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+
+const t = defineTexts({
+  ns: '@zz/tool-search-catalog',
+  language: 'zh-CN',
+  source: { label: '翻译工具' } as const,
+  locales: { en: { label: 'Translation tools' } },
+});
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -96,6 +104,22 @@ describe('search_tools 可用能力目录', () => {
     expect((await h.search('白纸创作', ['paper'])).tools.map(tool => tool.name)).toContain('paper_task');
     expect((await h.search('作品发布', ['paper'])).tools).toEqual([]);
     expect((await h.search('私密管理', ['paper'])).tools).toEqual([]);
+  });
+
+  it('分组名是文字对象：目录与搜索按它的原文', async () => {
+    const h = await world();
+    h.service.registerGroup({ name: 'translate', label: t('label'), description: '把文字译成别的语言' });
+    h.service.register({
+      groups: ['translate'],
+      definition: {
+        type: 'function',
+        function: { name: 'translate_text', description: '翻译', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => '{}',
+    });
+    const catalog = (await h.visible(['translate']))[0].function.description;
+    expect(catalog).toContain('- 翻译工具（translate）：');
+    expect((await h.search('翻译工具', ['translate'])).tools.map(tool => tool.name)).toEqual(['translate_text']);
   });
 
   it('名称精确和前缀优先，同分结果保持注册顺序', async () => {
