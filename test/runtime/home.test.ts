@@ -97,12 +97,12 @@ describe('resolveHome', () => {
   });
 
   it.each([
-    [{ home: '/h', profile: 'p' }, {}, '--home 与 --profile'],
-    [{ profile: 'p' }, { AALIS_HOME: '/h' }, 'AALIS_HOME 与 --profile'],
-    [{ home: '/h' }, { AALIS_PROFILE: 'p' }, '--home 与 AALIS_PROFILE'],
-    [{}, { AALIS_HOME: '/h', AALIS_PROFILE: 'p' }, 'AALIS_HOME 与 AALIS_PROFILE'],
+    [{ home: '/h', profile: 'p' }, {}, '--home and --profile'],
+    [{ profile: 'p' }, { AALIS_HOME: '/h' }, 'AALIS_HOME and --profile'],
+    [{ home: '/h' }, { AALIS_PROFILE: 'p' }, '--home and AALIS_PROFILE'],
+    [{}, { AALIS_HOME: '/h', AALIS_PROFILE: 'p' }, 'AALIS_HOME and AALIS_PROFILE'],
   ])('profile 与更高优先级的来源同时给出时报错：%j %j', (args, env, named) => {
-    expect(() => resolveHome({ ...base, args, env })).toThrow(`同时指定了 ${named}`);
+    expect(() => resolveHome({ ...base, args, env })).toThrow(`Both ${named} are set`);
   });
 
   it.each(['../x', 'a/b', 'Test', '-x', '', 'a'.repeat(33), 'a.b', 'a_b'])('拒绝不合法的 profile 名：%j', profile => {
@@ -116,7 +116,7 @@ describe('resolveHome', () => {
   it('宿主代码给的 defaultHome 必须是绝对路径：不按 cwd 猜，别的来源胜出时也照样报', () => {
     expect(() => resolveHome({ ...base, args: {}, defaultHome: 'rel' })).toThrow(HomeArgsError);
     expect(() => resolveHome({ ...base, env: { AALIS_HOME: '/h' }, args: {}, defaultHome: 'rel' })).toThrow(
-      'defaultHome 必须是绝对路径',
+      'defaultHome must be an absolute path',
     );
   });
 
@@ -151,14 +151,14 @@ describe('resolveHome', () => {
   it('开头的 ~ 展开成用户主目录；「~用户名」写法报错', () => {
     expect(resolveHome({ ...base, args: { home: '~/x' } })).toEqual({ home: '/u/x' });
     expect(resolveHome({ ...base, env: { AALIS_HOME: '~' }, args: {} })).toEqual({ home: '/u' });
-    expect(() => resolveHome({ ...base, args: { home: '~bob/x' } })).toThrow('不支持「~用户名」写法');
+    expect(() => resolveHome({ ...base, args: { home: '~bob/x' } })).toThrow('"~user" paths are not supported');
   });
 
   it('启动目录已不存在（cwd 取不到）时，绝对路径照常可用，相对路径报错', () => {
     const noCwd = { env: {}, userHome: '/u' };
     expect(resolveHome({ ...noCwd, args: { home: '/abs/h' } })).toEqual({ home: '/abs/h' });
     expect(resolveHome({ ...noCwd, args: {} })).toEqual({ home: '/u/.aalis' });
-    expect(() => resolveHome({ ...noCwd, args: { home: 'rel' } })).toThrow('当前目录已不存在');
+    expect(() => resolveHome({ ...noCwd, args: { home: 'rel' } })).toThrow('The current directory no longer exists');
   });
 });
 
@@ -208,15 +208,17 @@ describe('isFullyAbsolute', () => {
   });
 
   it('assertAbsolute 拒收相对路径', () => {
-    expect(() => assertAbsolute('配置文件路径', 'aalis.config.yaml')).toThrow('配置文件路径必须是绝对路径');
-    expect(() => assertAbsolute('配置文件路径', '/h/aalis.config.yaml')).not.toThrow();
+    expect(() => assertAbsolute('Config file path', 'aalis.config.yaml')).toThrow(
+      'Config file path must be an absolute path',
+    );
+    expect(() => assertAbsolute('Config file path', '/h/aalis.config.yaml')).not.toThrow();
   });
 
   it('宿主件的路径参数拒收相对路径，不按调用那一刻的 cwd 解析', async () => {
-    expect(() => createFsYamlConfigProvider('aalis.config.yaml')).toThrow('配置文件路径必须是绝对路径');
-    expect(() => createFsPluginLoader('packages')).toThrow('packages 目录必须是绝对路径');
-    expect(() => createNodeModulesPluginLoader('.')).toThrow('安装集目录必须是绝对路径');
-    await expect(setupFileLogger('logs/latest.log')).rejects.toThrow('日志文件路径必须是绝对路径');
+    expect(() => createFsYamlConfigProvider('aalis.config.yaml')).toThrow('Config file path must be an absolute path');
+    expect(() => createFsPluginLoader('packages')).toThrow('Packages directory must be an absolute path');
+    expect(() => createNodeModulesPluginLoader('.')).toThrow('Install directory must be an absolute path');
+    await expect(setupFileLogger('logs/latest.log')).rejects.toThrow('Log file path must be an absolute path');
   });
 });
 
@@ -285,7 +287,7 @@ describe('initHome', () => {
     const paths = derivePaths(tmp(), '/app');
     writeFileSync(paths.config, 'name: mine\n');
     writeFileSync(paths.secrets, 'k: v\n');
-    expect(() => initHome(paths)).toThrow('已经初始化过');
+    expect(() => initHome(paths)).toThrow('already initialized');
     expect(readFileSync(paths.config, 'utf-8')).toBe('name: mine\n');
     expect(readFileSync(paths.secrets, 'utf-8')).toBe('k: v\n');
   });
@@ -327,7 +329,7 @@ describe('initHome', () => {
     chmodSync(home, 0o755);
     writeFileSync(join(home, 'notes.txt'), 'x');
     mkdirSync(join(home, 'src'));
-    expect(() => initHome(derivePaths(home, '/app'))).toThrow('目录不是空的（有 notes.txt、src）');
+    expect(() => initHome(derivePaths(home, '/app'))).toThrow('not empty (it contains notes.txt, src)');
     expect(statSync(home).mode & 0o777).toBe(0o755);
     expect(existsSync(join(home, 'state'))).toBe(false);
     expect(existsSync(join(home, 'secrets.yaml'))).toBe(false);

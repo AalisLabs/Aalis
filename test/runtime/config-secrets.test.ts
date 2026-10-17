@@ -19,6 +19,7 @@ import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { installConfigHotReload, withPluginConfigSync } from '../../packages/runtime/src/config-sync.js';
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
 import { type ConfigSchema, parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -304,7 +305,7 @@ describe('插件拿到的 setPluginConfig 只收文档形态', () => {
     await registerFromDoc(w.app, w.store, probe('p').definition);
     const host = w.host();
     expect(() => host.setPluginConfig('p', { apiKey: 'sk-PLACEHOLDER', conns: [{ token: 't' }] })).toThrow(
-      'p 的 apiKey、conns.token 是密钥字段',
+      'p 的 apiKey和conns.token 是密钥字段',
     );
     expect(w.store.getPluginConfig('p')).toEqual({});
     host.setPluginConfig('p', { apiKey: { $secret: 'k' }, model: 'm3', conns: [{ token: '' }] });
@@ -506,7 +507,7 @@ describe('登记、同步与热重载', () => {
     } as unknown as DoctorService);
     await new Promise(resolve => setTimeout(resolve, 0));
     const check = checks.find(c => c.id === 'config.secrets');
-    expect(await check?.run()).toEqual([
+    expect(toSource(await check?.run())).toEqual([
       {
         id: 'config.secrets.p',
         category: 'config',
@@ -780,7 +781,7 @@ describe('登记、同步与热重载', () => {
   });
 
   it('配置会落盘、密钥存储却不能保存时拒绝组装', () => {
-    expect(() => createConfigStore({}, { save: () => {} }, { values: {} })).toThrow('密钥存储却不能保存');
+    expect(() => createConfigStore({}, { save: () => {} }, { values: {} })).toThrow('the secret store cannot save');
     expect(() => createConfigStore({}, undefined, { values: {} })).not.toThrow();
   });
 

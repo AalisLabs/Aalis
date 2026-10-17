@@ -21,11 +21,15 @@ export async function tryDispatchSubcommand(
   const [cmdName = '', ...rest] = argv;
   const commands = services.get('commands') as CommandService | undefined;
   if (!commands) {
-    err(`无法执行子命令「${cmdName}」：commands 服务不可用（未安装 @aalis/plugin-commands？）`);
+    err(
+      `Cannot run subcommand "${cmdName}": the commands service is unavailable (is @aalis/plugin-commands installed?)`,
+    );
     return 2;
   }
   if (!cmdName || !commands.has(cmdName)) {
-    err(`未知子命令「${cmdName}」。子命令等价于聊天里的 /${cmdName}；不带参数启动才进守护进程。`);
+    err(
+      `Unknown subcommand "${cmdName}". A subcommand runs like /${cmdName} in chat; start without arguments to run the daemon.`,
+    );
     return 2;
   }
   const result = await commands.execute(cmdName, {

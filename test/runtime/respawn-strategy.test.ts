@@ -115,7 +115,7 @@ describe('createProcessRespawnStrategy', () => {
     // 只看 exit(1) 分不出来：重装被当成成功时拉起旧版那条路也是 exit(1)，区别在多出的第三次 spawn
     expect(spawned.calls).toBe(2);
     expect(readFileSync(file, 'utf-8')).toBe('OLD');
-    expect(errors.join('\n')).toContain('依赖重装失败');
+    expect(errors.join('\n')).toContain('reinstalling dependencies failed');
   });
 
   it('回滚成功后拉起的旧版进程同样拿到交接令牌与原有环境，在启动时的 cwd 里起', async () => {
@@ -153,6 +153,6 @@ describe('createServiceRestartStrategy', () => {
     expect(SERVICE_RESTART_EXIT_CODE).toBe(75);
     expect(stopped).toBe(true);
     expect(spawned.calls).toBe(0);
-    expect(errors.join('\n')).toContain('不会自动回滚（marketplace-update:@aalis/x）');
+    expect(errors.join('\n')).toContain('not rolled back automatically (marketplace-update:@aalis/x)');
   });
 });

@@ -27,7 +27,7 @@ describe('tryDispatchSubcommand', () => {
       expect(result).toBe(2);
       expect(errors).toHaveLength(1);
       expect(errors[0]).toContain('doctor');
-      expect(errors[0]).toContain('commands 服务不可用');
+      expect(errors[0]).toContain('the commands service is unavailable');
     } finally {
       await app.stop();
     }
@@ -56,7 +56,7 @@ describe('tryDispatchSubcommand', () => {
       expect(result).toBe(2);
       expect(executed).toBe(false);
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toContain('未知子命令「nonexistent」');
+      expect(errors[0]).toContain('Unknown subcommand "nonexistent"');
     } finally {
       await app.stop();
     }

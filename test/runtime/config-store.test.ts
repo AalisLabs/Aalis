@@ -320,7 +320,7 @@ describe('watch', () => {
   it('单订阅者：已有订阅时再 watch 抛错，不静默顶替', () => {
     const store = emptyStore();
     store.watch(() => {});
-    expect(() => store.watch(() => {})).toThrow('配置变更只支持一个订阅者');
+    expect(() => store.watch(() => {})).toThrow('Only one config change subscriber is supported');
   });
 });
 

@@ -35,6 +35,7 @@ import {
   defaultsFrom,
   isUnsafeConfigKey,
 } from '@aalis/schema-config';
+import { TextError } from '@aalis/schema-i18n';
 import { type ConfigSyncOptions, configToReload } from './config-sync.js';
 import { moduleDefinitionOf } from './plugin-discovery.js';
 import {
@@ -44,8 +45,10 @@ import {
   referencedKeys,
   resolveSecrets,
   type SplitSecrets,
+  secretPlaces,
   splitSecrets,
 } from './secrets.js';
+import { t } from './texts.js';
 
 /**
  * 配置提供者：负责持久化层。文档由宿主在构造前自己加载好传入，provider 不必提供 load()。
@@ -114,7 +117,7 @@ export interface ConfigStore extends Omit<HostConfig, 'save' | 'trimUnknownField
  * 按 id 取放的入口共用这一抛错，文案给 WebUI 映射 400。
  */
 function assertSafePluginId(id: string): void {
-  if (isUnsafeConfigKey(id)) throw new Error(`插件 id 不合法: ${id}`);
+  if (isUnsafeConfigKey(id)) throw new TextError(t('unsafePluginId', { id }));
 }
 
 export interface SecretStoreInit {
@@ -133,7 +136,7 @@ export function createConfigStore(
   // 配置会落盘、密钥却不能：引用写进文件，值只在内存里，重启后全部落空
   if (secrets && !secrets.provider?.save && provider?.save) {
     throw new Error(
-      '配置文档会落盘、密钥存储却不能保存：引用会在重启后落空。给密钥存储一个能保存的 provider，或者不给密钥存储',
+      'The config document is persisted but the secret store cannot save, so references would be lost after a restart: give the secret store a provider that can save, or give no secret store',
     );
   }
   let config = normalize(initial);
@@ -297,7 +300,8 @@ export function createConfigStore(
       return true;
     },
     watch(onChange) {
-      if (onChangeCallback) throw new Error('配置变更只支持一个订阅者，先 unwatch 再订阅');
+      if (onChangeCallback)
+        throw new Error('Only one config change subscriber is supported; unwatch before subscribing again');
       onChangeCallback = onChange;
       const configWatch = provider?.watch?.(next => {
         const previous = config;
@@ -396,8 +400,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     assertSafePluginId(instanceId);
     const entry = app.plugins.getPlugin(instanceId);
     const definition = entry?.definition ?? definitionOf(app, instanceId);
-    if (!definition)
-      throw new Error(`插件 ${instanceId} 不存在，也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）`);
+    if (!definition) throw new TextError(t('noDefinition', { instance: instanceId }));
     const schema = definition.configSchema;
     const { doc, writes, placed } = store.splitPluginSecrets(instanceId, schema, submitted);
     const { config: resolved, dangling } = store.resolvePluginConfig(instanceId, schema, doc, writes);
@@ -407,12 +410,9 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
       const known = new Set(store.resolvePluginConfig(instanceId, schema).dangling.map(d => d.key));
       const introduced = dangling.filter(d => !known.has(d.key));
       if (introduced.length > 0) {
-        throw new Error(
-          `${instanceId} 引用的密钥不在 secrets.yaml 里：${introduced.map(d => `${d.path}（键 ${d.key}）`).join('、')}；` +
-            '重新填写值，或先在 secrets.yaml 里补上这些键',
-        );
+        throw new TextError(t('danglingRejected', { instance: instanceId, items: secretPlaces(introduced) }));
       }
-      app.logger.error(describeDangling(instanceId, dangling));
+      app.logger.error(describeDangling(instanceId, dangling).source);
     }
     let reloaded = true;
     if (entry) {
@@ -468,11 +468,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
         assertSafePluginId(instanceId);
         const schema = store.hasSecretStore ? definitionOf(app, instanceId)?.configSchema : undefined;
         const plain = plainSecretPaths(schema, next);
-        if (plain.length > 0) {
-          throw new Error(
-            `setPluginConfig 只收文档形态：${instanceId} 的 ${plain.join('、')} 是密钥字段，不能写原值；改配置请用 applyPluginConfig`,
-          );
-        }
+        if (plain.length > 0) throw new TextError(t('plainSecret', { instance: instanceId, paths: plain }));
         store.setPluginConfig(instanceId, next);
       },
       applyPluginConfig,
@@ -508,7 +504,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
       }
       return results.length > 0
         ? results
-        : { id: 'config.secrets', category: 'config', level: 'ok', message: '配置引用的密钥都在 secrets.yaml 里' };
+        : { id: 'config.secrets', category: 'config', level: 'ok', message: t('secretsResolved') };
     },
   });
   applyServicePreferences(host.services.use, store.getAll());

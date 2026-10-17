@@ -183,7 +183,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     const r = await run(dir, ['nope']);
     expect(r.signal).toBeNull();
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain('未知子命令「nope」');
+    expect(r.stderr).toContain('Unknown subcommand "nope"');
     expect(readLog(dir)).toBe(SENTINEL);
     expect(hasRotated(dir)).toBe(false);
   });
@@ -268,7 +268,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     const dir = tempDir();
     const r = await run(dir, ['probe']);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`家目录还没有初始化：${dir}`);
+    expect(r.stderr).toContain(`The home directory is not initialized: ${dir}`);
     expect(r.stderr).toContain('--init');
     expect(existsSync(join(dir, 'aalis.config.yaml'))).toBe(false);
     expect(existsSync(join(dir, 'logs'))).toBe(false);
@@ -280,7 +280,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     const home = join(dir, 'home');
     const r = await run(dir, ['--init'], { AALIS_HOME: home });
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain(`已初始化家目录：${home}`);
+    expect(r.stdout).toContain(`Initialized the home directory: ${home}`);
     expect(statSync(home).mode & 0o777).toBe(0o700);
     expect(statSync(join(home, 'secrets.yaml')).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(home, 'secrets.yaml'), 'utf-8')).toBe('');
@@ -305,7 +305,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: mine\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--init']);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain('已经初始化过');
+    expect(r.stderr).toContain('already initialized');
     expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf-8')).toBe('name: mine\nlogLevel: info\nplugins: {}\n');
   });
 
@@ -327,7 +327,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     dirs.push(dir);
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'no-app-dir' });
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain('startAalis 缺少 appDir');
+    expect(r.stderr).toContain('startAalis is missing appDir');
     expect(readLog(dir)).toBe(SENTINEL);
     expect(existsSync(join(dir, 'run'))).toBe(false);
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
@@ -340,15 +340,15 @@ describe('startAalis 家目录（真实子进程）', () => {
     mkdirSync(app);
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`安装集 ${app} 里没有 package.json`);
+    expect(r.stderr).toContain(`The install directory ${app} has no package.json`);
     expect(r.stderr).toContain('appDir');
     expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
-    // 安装集有 package.json 就照常往下走：没有插件提供指令服务，子命令按「commands 服务不可用」退出
+    // 安装集有 package.json 就照常往下走：没有插件提供指令服务，子命令按指令服务不可用退出
     writeFileSync(join(app, 'package.json'), '{"name":"x","private":true}');
     rmSync(join(dir, 'gen.txt'));
     const ok = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });
     expect(ok.code).toBe(2);
-    expect(ok.stderr).toContain('commands 服务不可用');
+    expect(ok.stderr).toContain('the commands service is unavailable');
   }, 30_000);
 
   /** 以本测试进程为持有者写一份活着的锁：pid 在、开机与进程启动标识都是真的 */
@@ -375,10 +375,11 @@ describe('startAalis 家目录（真实子进程）', () => {
     liveLock(dir);
     const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`已有实例在运行：pid ${process.pid}`);
+    expect(r.stderr).toContain('An instance is already running');
+    expect(r.stderr).toContain(`: pid ${process.pid} (lock file`);
     expect(r.stderr).toContain(join(dir, 'run', 'instance.4.lock'));
     // 判不了的几种情形都要提到：容器被强杀后在同一次开机内重启，新进程在另一个 pid 命名空间里
-    expect(r.stderr).toContain('或容器被强杀后在同一次开机内重启');
+    expect(r.stderr).toContain('or a container was killed and restarted within the same boot');
     expect(readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8')).toBe(SENTINEL);
     expect(existsSync(join(dir, 'logs', 'latest.1.log'))).toBe(false);
     expect(readdirSync(join(dir, 'run'))).toEqual(['instance.4.lock']);
@@ -391,8 +392,8 @@ describe('startAalis 家目录（真实子进程）', () => {
     const r = await run(dir, ['--service']);
     expect(r.code).toBe(0);
     expect(r.signal).toBeNull();
-    expect(r.stderr).toContain('已有实例在运行');
-    expect(r.stderr).toContain('以服务形态启动，按正常退出处理');
+    expect(r.stderr).toContain('An instance is already running');
+    expect(r.stderr).toContain('Started as a service, so this counts as a normal exit');
   });
 
   // 靠权限位制造写不进：root 不受权限位限制，Windows 的 chmod 只切换只读属性
@@ -405,7 +406,7 @@ describe('startAalis 家目录（真实子进程）', () => {
       try {
         const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
         expect(r.code).toBe(1);
-        expect(r.stderr).toContain(`无法在 ${join(realpathSync.native(dir), 'run')} 取实例锁`);
+        expect(r.stderr).toContain(`Cannot acquire the instance lock in ${join(realpathSync.native(dir), 'run')}`);
         expect(existsSync(join(dir, 'logs', 'latest.log'))).toBe(false);
       } finally {
         chmodSync(join(dir, 'run'), 0o700);
@@ -484,15 +485,17 @@ describe('startAalis 家目录（真实子进程）', () => {
 
   it('启动时配置文件或密钥文件写坏：一行报错（错误码与行列，不带原文）后 exit 1，不带调用栈', async () => {
     for (const [file, label] of [
-      ['aalis.config.yaml', '配置文件'],
-      ['secrets.yaml', '密钥文件'],
+      ['aalis.config.yaml', 'config file'],
+      ['secrets.yaml', 'secrets file'],
     ] as const) {
       const dir = tempDir();
       writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
       writeFileSync(join(dir, file), 'name: e2e\ntoken: "PLACEHOLDER-NOT-SHOWN\n');
       const r = await run(dir, ['probe']);
       expect(r.code, file).toBe(1);
-      expect(r.stderr).toMatch(new RegExp(`^\\[aalis\\] ${label}解析失败：\\S+（第 \\d+ 行第 \\d+ 列）`, 'm'));
+      expect(r.stderr).toMatch(
+        new RegExp(`^\\[aalis\\] Could not parse the ${label} .+: \\S+ \\(line \\d+, column \\d+\\)$`, 'm'),
+      );
       expect(r.stderr).not.toMatch(/^\s+at /m);
       expect(r.stderr).not.toContain('PLACEHOLDER-NOT-SHOWN');
       expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
@@ -520,7 +523,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--profile', 'test', 'probe']);
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain('同时指定了 AALIS_HOME 与 --profile');
+    expect(r.stderr).toContain('Both AALIS_HOME and --profile are set');
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
 });

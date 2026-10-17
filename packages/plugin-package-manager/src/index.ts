@@ -1006,7 +1006,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // postRestore 钉**精确旧版**，不用裸 `npm install`。
     // 裸 install 只能按还原后的 package.json 重解析，而声明通常是 caret 范围（`^1.0.0`），
     // 刚崩掉的新版（1.1.0）本身就满足它——于是 npm 又把它装回来，node_modules 分毫未变，
-    // 而重启策略照样打印「已回滚并重新启动旧版本」。实测：有锁时正常，无锁时静默失效。
+    // 而重启策略照样报告已回滚并拉起旧版本。实测：有锁时正常，无锁时静默失效。
     // `--no-save` 保证 package.json 维持 restore 写回的原样，不被 npm 改写成 `^旧版`。
     // 降级守卫已保证每个 target 都有已装版本（读不到的在那里就被拒了），此处的 undefined
     // 过滤只是让类型收窄，不承担逻辑。

@@ -77,7 +77,7 @@ export function createPluginDiscovery(
 
   const registration = (definition: PluginDefinition, instanceId = definition.name): PluginRegistration => {
     const { config, dangling } = doc.resolvePluginConfig(instanceId, definition.configSchema);
-    if (dangling.length > 0) log.error(describeDangling(instanceId, dangling));
+    if (dangling.length > 0) log.error(describeDangling(instanceId, dangling).source);
     return { definition, instanceId, config, disabled: doc.isPluginDisabled(instanceId) };
   };
 

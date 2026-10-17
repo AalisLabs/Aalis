@@ -184,7 +184,7 @@ export function configToReload(
   if (!entry) return undefined;
   // 拿解析后的配置与运行态比：文档里是引用、运行态是原值，直接比永远不等
   const { config, dangling } = store.resolvePluginConfig(instanceId, entry.definition.configSchema);
-  if (dangling.length > 0) app.logger.error(describeDangling(instanceId, dangling));
+  if (dangling.length > 0) app.logger.error(describeDangling(instanceId, dangling).source);
   if (isDeepStrictEqual(config, entry.config)) return undefined;
   app.logger.info(
     entry.state === 'disabled'

@@ -6,6 +6,8 @@
 // ============================================================
 
 import { type ConfigSchema, isSecretRef, mapSecretFields } from '@aalis/schema-config';
+import type { TextRef } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 密钥字段上算「有值」的明文：非空。`''`、null、空 map、空 list 是没填，不进密钥存储 */
 export function isSecretValue(value: unknown): boolean {
@@ -97,10 +99,14 @@ export function resolveSecrets(
   return { config, dangling };
 }
 
-/** 悬空引用的日志：点名实例、字段与键，不涉及值 */
-export function describeDangling(instanceId: string, dangling: ResolvedSecrets['dangling']): string {
-  const items = dangling.map(d => `${d.path}（键 ${d.key}）`).join('、');
-  return `${instanceId} 引用的密钥不在 secrets.yaml 里：${items}；用 parseConfig 读配置的插件会激活失败，在 WebUI 重新填写或在 secrets.yaml 里补上这些键`;
+/** 悬空引用的说明：点名实例、字段与键，不涉及值。诊断项 config.secrets 显示它，日志取原文 */
+export function describeDangling(instanceId: string, dangling: ResolvedSecrets['dangling']): TextRef {
+  return t('dangling', { instance: instanceId, items: secretPlaces(dangling) });
+}
+
+/** 引用所在的字段与键，一处一项：悬空引用的说明与拒收提交的报错共用 */
+export function secretPlaces(places: ResolvedSecrets['dangling']): TextRef[] {
+  return places.map(({ path, key }) => t('secretAt', { path, key }));
 }
 
 /** 按点号路径取顶层或分组里那个位置上的引用键 */

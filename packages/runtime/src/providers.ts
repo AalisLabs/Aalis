@@ -17,6 +17,7 @@ import {
 } from './node-modules-loader.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
+import { t } from './texts.js';
 import { openYamlFile } from './yaml-file.js';
 
 // ============================================================
@@ -84,11 +85,11 @@ interface FsYamlConfigProviderResult {
  * 读写与监听的细节见 {@link openYamlFile}，与密钥文件共用。
  */
 export function createFsYamlConfigProvider(absPath: string): FsYamlConfigProviderResult {
-  assertAbsolute('配置文件路径', absPath);
+  assertAbsolute('Config file path', absPath);
   // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr 进不了 logs/latest.log
   const logger = new DefaultLogger('aalis:config');
   const file = openYamlFile<AalisConfig>(absPath, {
-    label: '配置文件',
+    label: t('configFile'),
     logger,
     serialize: buildSaveYaml,
     missing: () => {
@@ -113,9 +114,9 @@ interface FsSecretsProviderResult {
  * 原子写的临时文件一律以 0600 创建，不沿用原文件的权限位。
  */
 export function createFsSecretsProvider(absPath: string): FsSecretsProviderResult {
-  assertAbsolute('密钥文件路径', absPath);
+  assertAbsolute('Secrets file path', absPath);
   const file = openYamlFile<Record<string, unknown>>(absPath, {
-    label: '密钥文件',
+    label: t('secretsFile'),
     logger: new DefaultLogger('aalis:secrets'),
     serialize: values => stringifyYaml(values, { lineWidth: 0 }),
     missing: () => ({}),
@@ -137,7 +138,7 @@ export function createFsSecretsProvider(absPath: string): FsSecretsProviderResul
  * - `reload()`：用入口文件 mtime 作为 import URL 的 query 强制 ESM 缓存失效
  */
 export function createFsPluginLoader(rootDir: string): PluginLoader {
-  assertAbsolute('packages 目录', rootDir);
+  assertAbsolute('Packages directory', rootDir);
   // 死门信号与 node_modules 加载器同一套（本仓自托管入口走的正是本加载器，
   // 只在一边出声等于对自己的部署失聪）。
   const loaderLogger = new DefaultLogger('aalis:loader');
@@ -269,17 +270,19 @@ export function createServiceRestartStrategy(): RestartStrategy {
   return {
     async restart({ stop, rollback }) {
       if (restarting) {
-        console.error('[aalis] 已有重启在进行中，忽略本次请求。');
+        console.error('[aalis] A restart is already in progress; ignoring this request.');
         return;
       }
       restarting = true;
       if (isRestartRollback(rollback)) {
-        console.error(`[aalis] 以服务形态运行，重启交给服务管理器；新版本起不来时不会自动回滚（${rollback.reason}）。`);
+        console.error(
+          `[aalis] Running as a service, so the service manager handles the restart; if the new version fails to start, it is not rolled back automatically (${rollback.reason}).`,
+        );
       }
       try {
         await stop();
       } catch (err) {
-        console.error('[aalis] 停止应用时出错，仍继续重启:', err);
+        console.error('[aalis] Error while stopping the app; restarting anyway:', err);
       }
       process.exit(SERVICE_RESTART_EXIT_CODE);
     },
@@ -325,7 +328,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
   return {
     async restart({ stop, rollback }) {
       if (restarting) {
-        console.error('[aalis] 已有重启在进行中，忽略本次请求。');
+        console.error('[aalis] A restart is already in progress; ignoring this request.');
         return;
       }
       restarting = true;
@@ -335,7 +338,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
         await stop();
       } catch (err) {
         // 停不干净也要往下走：僵尸态比一次不完全的重启更糟。
-        console.error('[aalis] 停止应用时出错，仍继续重启:', err);
+        console.error('[aalis] Error while stopping the app; restarting anyway:', err);
       }
 
       const child = spawnChild(true);
@@ -367,10 +370,12 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
 
       // ── 新进程在就绪前夭折 ──
       if (!isRestartRollback(rollback)) {
-        console.error('[aalis] 重启失败：新进程未能启动，且本次重启未带回滚凭据。请检查上方日志。');
+        console.error(
+          '[aalis] Restart failed: the new process did not start, and this restart carries no rollback information. See the log above.',
+        );
         process.exit(1);
       }
-      console.error(`[aalis] 新进程未能启动，正在回滚（${rollback.reason}）…`);
+      console.error(`[aalis] The new process did not start; rolling back (${rollback.reason})…`);
       // 任一还原失败就不再往下走：部分还原后跑 postRestore 会在「package.json 已回退、
       // lockfile 未回退」的混合树上安装，比不回滚更糟。此时把原始内容打进日志——
       // 它是盘外仅存的一份，用户据此可手工恢复。
@@ -382,12 +387,18 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
           else writeFileSync(f.path, f.content);
         } catch (err) {
           failed.push(f.path);
-          console.error(`[aalis] 回滚${f.deleteIfEmpty ? '删除' : '写入'}失败 ${f.path}:`, err);
-          if (!f.deleteIfEmpty) console.error(`[aalis] 该文件的更新前内容如下，请手工恢复：\n${f.content}`);
+          console.error(`[aalis] Rollback could not ${f.deleteIfEmpty ? 'delete' : 'write'} ${f.path}:`, err);
+          if (!f.deleteIfEmpty) {
+            console.error(
+              `[aalis] The content of this file before the update follows; restore it by hand:\n${f.content}`,
+            );
+          }
         }
       }
       if (failed.length > 0) {
-        console.error(`[aalis] 回滚未完成（${failed.length} 个文件写入失败），已跳过重装以免留下混合状态。`);
+        console.error(
+          `[aalis] Rollback incomplete (files not restored: ${failed.length}); skipped reinstalling so the project is not left in a mixed state.`,
+        );
         process.exit(1);
       }
       if (rollback.postRestore) {
@@ -402,23 +413,23 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
           const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
           p.on('exit', c => r(c));
           p.on('error', err => {
-            console.error('[aalis] 回滚命令执行失败:', err);
+            console.error('[aalis] The rollback command could not run:', err);
             r(-1);
           });
         });
         if (code !== 0) {
           console.error(
-            `[aalis] 回滚未完成：依赖重装失败（${cmd} 退出码 ${code}）。\n` +
-              `[aalis] 配置文件已还原，但 node_modules 仍是更新后的版本 —— 工程处于「声明旧版、实装新版」的错位状态。\n` +
-              `[aalis] 请联网后手工执行：${[cmd, ...args].join(' ')}（cwd: ${cwd}）\n` +
-              '[aalis] 未重新拉起旧版进程：它会加载到新版代码，很可能反复崩溃。',
+            `[aalis] Rollback incomplete: reinstalling dependencies failed (${cmd} exited with code ${code}).\n` +
+              '[aalis] The files were restored, but node_modules still holds the updated versions: the project declares the old versions while the new ones are installed.\n' +
+              `[aalis] Once online, run by hand: ${[cmd, ...args].join(' ')} (cwd: ${cwd})\n` +
+              '[aalis] The old version was not started again: it would load the new code and likely keep crashing.',
           );
           process.exit(1);
         }
       }
       const revived = spawnChild(false);
       revived.unref();
-      console.error('[aalis] 已回滚并重新启动旧版本。');
+      console.error('[aalis] Rolled back and started the old version again.');
       process.exit(1);
     },
   };

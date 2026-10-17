@@ -15,7 +15,7 @@ import { stringify as stringifyYaml } from 'yaml';
 
 /** 宿主件的路径参数必须是绝对路径：相对路径会按调用那一刻的 cwd 解析，而 cwd 不带语义 */
 export function assertAbsolute(what: string, p: string): void {
-  if (!isFullyAbsolute(p)) throw new Error(`${what}必须是绝对路径：${p}`);
+  if (!isFullyAbsolute(p)) throw new Error(`${what} must be an absolute path: ${p}`);
 }
 
 /** profile 名既拼进 `~/.aalis-<profile>`，也拼进数据库名：只许小写字母、数字与连字符，挡住 `../x` 这类跳出。 */
@@ -80,7 +80,7 @@ export function parseHostArgs(argv: readonly string[]): HostArgs {
     if (!m) break;
     const key = m[1] as 'home' | 'profile';
     const value = m[2] ?? argv[++i];
-    if (!value) throw new HomeArgsError(`--${key} 缺少取值`);
+    if (!value) throw new HomeArgsError(`--${key} is missing a value`);
     out[key] = value;
   }
   out.rest = argv.slice(i);
@@ -111,18 +111,18 @@ export function resolveHome(input: ResolveHomeInput): { home: string; profile?: 
   const profile = args.profile ?? nonEmpty(env.AALIS_PROFILE);
   // defaultHome 是宿主代码写死的值：写错了不论这次谁胜出都报，免得换一台没设环境变量的机器才暴露
   if (input.defaultHome !== undefined && !isFullyAbsolute(input.defaultHome)) {
-    throw new HomeArgsError(`defaultHome 必须是绝对路径：${input.defaultHome}`);
+    throw new HomeArgsError(`defaultHome must be an absolute path: ${input.defaultHome}`);
   }
   if (explicit !== undefined && profile !== undefined) {
     const homeSource = args.home !== undefined ? '--home' : 'AALIS_HOME';
     const profileSource = args.profile !== undefined ? '--profile' : 'AALIS_PROFILE';
-    throw new HomeArgsError(`同时指定了 ${homeSource} 与 ${profileSource}，只能选一个`);
+    throw new HomeArgsError(`Both ${homeSource} and ${profileSource} are set; use only one of them`);
   }
   if (explicit !== undefined) return withProfile(toAbsolute(explicit, userHome, input.cwd), userHome);
   if (profile !== undefined) {
     if (!PROFILE_PATTERN.test(profile)) {
       throw new HomeArgsError(
-        `profile 名「${profile}」不合法：只能用小写字母、数字与连字符，以字母或数字开头，最长 32 个字符`,
+        `Invalid profile name "${profile}": use only lowercase letters, digits and hyphens, start with a letter or digit, and keep it within 32 characters`,
       );
     }
     return { home: join(userHome, `.aalis-${profile}`), profile };
@@ -168,9 +168,15 @@ function nonEmpty(value: string | undefined): string | undefined {
 function toAbsolute(value: string, userHome: string, cwd: string | undefined): string {
   if (value === '~') return userHome;
   if (/^~[\\/]/.test(value)) return join(userHome, value.slice(2));
-  if (value.startsWith('~')) throw new HomeArgsError(`不支持「~用户名」写法，请写绝对路径：${value}`);
+  if (value.startsWith('~')) {
+    throw new HomeArgsError(`"~user" paths are not supported; write an absolute path: ${value}`);
+  }
   if (isFullyAbsolute(value)) return normalize(value);
-  if (cwd === undefined) throw new HomeArgsError(`当前目录已不存在，家目录请写绝对路径：${value}`);
+  if (cwd === undefined) {
+    throw new HomeArgsError(
+      `The current directory no longer exists; write the home directory as an absolute path: ${value}`,
+    );
+  }
   return resolve(cwd, value);
 }
 
@@ -218,12 +224,14 @@ const OWNER_PLATFORM_PROFILES = { cli: { enabledToolGroups: ['*'] }, webui: { en
  * 沿用并收紧为 0700：`--home ~ --init` 这类笔误不能把用户主目录改成 0700、再往里铺一层布局。
  */
 export function initHome(paths: HostPaths): void {
-  if (isHomeInitialized(paths)) throw new HomeArgsError(`家目录已经初始化过：${paths.home}`);
+  if (isHomeInitialized(paths)) throw new HomeArgsError(`The home directory is already initialized: ${paths.home}`);
   if (existsSync(paths.home)) {
     const foreign = readdirSync(paths.home).filter(name => !LAYOUT_ENTRIES.has(name));
     if (foreign.length > 0) {
-      const shown = foreign.slice(0, 3).join('、') + (foreign.length > 3 ? ' 等' : '');
-      throw new HomeArgsError(`目录不是空的（有 ${shown}），不能在这里初始化家目录：${paths.home}`);
+      const shown = foreign.slice(0, 3).join(', ') + (foreign.length > 3 ? ' and more' : '');
+      throw new HomeArgsError(
+        `The directory is not empty (it contains ${shown}); cannot initialize a home directory here: ${paths.home}`,
+      );
     }
   }
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
