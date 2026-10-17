@@ -1097,6 +1097,9 @@ importers:
       '@aalis/api-host-logs':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-logs
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-persona':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-persona
@@ -1112,6 +1115,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-log':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../schema-log

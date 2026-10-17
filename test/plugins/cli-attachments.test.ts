@@ -49,7 +49,7 @@ describe('plugin-cli 附件', () => {
       const lines = entries.map(e => e.message).filter(m => m.startsWith('[cli]'));
       expect(lines).toContain('[cli] [图片] 猫.png · data:/images/cat.png');
       expect(lines).toContain('[cli] [文件] 主页.html https://example.invalid/page.html');
-      expect(lines, '类型名与归档占位符一致').toContain('[cli] [音频] 问好.mp3 https://example.invalid/hello.mp3');
+      expect(lines).toContain('[cli] [音频] 问好.mp3 https://example.invalid/hello.mp3');
       expect(lines).toContain('[cli] [视频] 片段.mp4 https://example.invalid/clip.mp4');
       expect(lines, '附件消息的空正文不写成空行').not.toContain('[cli] ');
       await vi.waitFor(() => expect(delivered).toHaveLength(1));

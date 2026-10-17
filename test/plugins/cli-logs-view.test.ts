@@ -17,46 +17,62 @@ const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
 
-const dirs: string[] = [];
-afterEach(() => {
+const cleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** 20 行的终端停在日志页；early 在激活前写日志（之后作为历史补发） */
+async function setup(early: (probe: DefaultLogger) => void) {
+  cleanups.push(fakeTty(20, 100).restore);
+  const writes: string[] = [];
+  vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
+    writes.push(String(chunk));
+    return true;
+  });
+  const dir = mkdtempSync(join(tmpdir(), 'aalis-cli-logs-'));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'latest.log');
+  const hub = new LogHub();
+  hub.onEntry(entry => appendFileSync(file, formatLogLine(entry)));
+  const probe = new DefaultLogger('aalis:zz-probe', 'info', hub);
+  early(probe);
+  const app = new App({ name: 'T', logLevel: 'error', logHub: hub });
+  cleanups.push(() => app.stop());
+  provideHostLogs(app, { hub, file });
+  await app.plugin(cliPlugin, { startupView: 'logs' });
+  await app.plugins.idle();
+  expect(app.plugins.getPlugin(cliPlugin.name)?.state).toBe('active');
+  await app.start();
+  const lastFrame = () => {
+    const all = writes.join('');
+    return all.slice(all.lastIndexOf(FRAME_SPLIT)).replace(ANSI_RE, '');
+  };
+  return { probe, lastFrame };
+}
 
 describe('plugin-cli 日志页', () => {
   it('显示补发的历史与之后的实时日志', async () => {
-    const tty = fakeTty(20, 100);
-    const writes: string[] = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
-      writes.push(String(chunk));
-      return true;
-    });
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-cli-logs-'));
-    dirs.push(dir);
-    const file = join(dir, 'latest.log');
-    const hub = new LogHub();
-    hub.onEntry(entry => appendFileSync(file, formatLogLine(entry)));
-    const probe = new DefaultLogger('aalis:zz-probe', 'info', hub);
-    probe.info('启动期的一条');
-    const app = new App({ name: 'T', logLevel: 'error', logHub: hub });
-    provideHostLogs(app, { hub, file });
-    const lastFrame = () => {
-      const all = writes.join('');
-      return all.slice(all.lastIndexOf(FRAME_SPLIT)).replace(ANSI_RE, '');
-    };
-    try {
-      await app.plugin(cliPlugin, { startupView: 'logs' });
-      await app.plugins.idle();
-      expect(app.plugins.getPlugin(cliPlugin.name)?.state).toBe('active');
-      await app.start();
-      await vi.waitFor(() => expect(lastFrame()).toContain('启动期的一条'));
+    const { probe, lastFrame } = await setup(probe => probe.info('启动期的一条'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('启动期的一条'));
 
-      probe.info('实时的一条');
-      await settle();
-      expect(lastFrame()).toContain('实时的一条');
-    } finally {
-      await app.stop().catch(() => {});
-      tty.restore();
-    }
+    probe.info('实时的一条');
+    await settle();
+    expect(lastFrame()).toContain('实时的一条');
+  });
+
+  it('按 Home 到顶：视图说明里的 scroll 是钳制后的偏移，不带千分位', async () => {
+    const { lastFrame } = await setup(probe => {
+      for (let i = 0; i < 1100; i++) probe.info(`zz-${i}`);
+    });
+    await vi.waitFor(() => expect(lastFrame()).toContain('zz-1099'));
+    process.stdin.emit('keypress', '', { name: 'home' });
+    await settle();
+    const m = lastFrame().match(/logs · (\S+) 行 · scroll (\S+)/);
+    expect(m, '帧里没有日志页的视图说明').not.toBeNull();
+    const [, total, scroll] = m as RegExpMatchArray;
+    // 一条一行；正文 14 行：20 行的终端减去头部、分隔线、底栏与视图说明的框（3 行）
+    expect(scroll).toBe(String(Number(total.replace(/,/g, '')) - 14));
   });
 });

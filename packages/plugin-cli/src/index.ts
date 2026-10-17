@@ -13,6 +13,7 @@ import { commands } from '@aalis/api-commands';
 import { unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
+import { i18n, localizeFor } from '@aalis/api-i18n';
 import { persona } from '@aalis/api-persona';
 import {
   getPlatformAdapters,
@@ -37,17 +38,14 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type Localized, type TextRef, textOf } from '@aalis/schema-i18n';
 import type { LogEntry } from '@aalis/schema-log';
-import {
-  AttachmentRefKind,
-  type MessageAttachment,
-  type OutgoingMessage,
-  type StreamChunkMessage,
-} from '@aalis/schema-message';
+import type { MessageAttachment, OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
 import { ChatBuffer } from './chat-buffer.js';
+import { t } from './texts.js';
 import type { CLIService } from './types.js';
 
 /** 附件说明里的大小 */
@@ -79,35 +77,35 @@ const name = '@aalis/plugin-cli';
 const configSchema = defineConfig({
   sessionId: {
     type: 'string',
-    label: '默认会话 ID',
+    label: t('sessionIdLabel'),
     default: 'cli-default',
     onInvalid: 'error',
-    description: 'CLI 聊天所在的会话标识。',
+    description: t('sessionIdDescription'),
   },
   lastView: {
     type: 'string',
-    label: '上次视图',
+    label: t('lastViewLabel'),
     default: 'chat',
-    description: '运行时自动写回；startupView=last 时启动恢复到这里记录的视图。',
+    description: t('lastViewDescription'),
   },
-  prompt: { type: 'string', label: '提示符', default: 'You', description: '命令行输入提示符前缀' },
+  prompt: { type: 'string', label: t('promptLabel'), default: 'You', description: t('promptDescription') },
   maxLogEntries: {
     type: 'number',
-    label: '日志内存缓冲上限（条）',
+    label: t('maxLogEntriesLabel'),
     default: 50000,
-    description: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在家目录的 logs/latest.log',
+    description: t('maxLogEntriesDescription'),
   },
   startupView: {
     type: 'select',
-    label: '启动视图',
+    label: t('startupViewLabel'),
     default: 'last',
-    description: 'CLI 接管终端后的默认视图。last 表示恢复上次视图',
+    description: t('startupViewDescription'),
     options: [
-      { label: '恢复上次', value: 'last' },
-      { label: '聊天', value: 'chat' },
-      { label: '日志', value: 'logs' },
-      { label: '状态', value: 'status' },
-      { label: '帮助', value: 'help' },
+      { label: t('viewLast'), value: 'last' },
+      { label: t('viewChat'), value: 'chat' },
+      { label: t('viewLogs'), value: 'logs' },
+      { label: t('viewStatus'), value: 'status' },
+      { label: t('viewHelp'), value: 'help' },
     ],
   },
 });
@@ -139,6 +137,8 @@ const uses = {
   commands: optional(commands),
   /** 发出入站之前给配置的会话建档，创建来源写 cli 审批面的登记名 */
   sessionManager: optional(sessionManager),
+  /** 界面文字按终端会话的语言显示；缺席时按原文 */
+  i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -157,9 +157,12 @@ type TuiCaps = Pick<
   | 'sessionManager'
 >;
 
+/** 按终端会话的读者渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
+type Localize = <T>(value: T) => Localized<T>;
+
 export default definePlugin({
   name,
-  displayName: 'CLI 终端',
+  displayName: t('displayName'),
   subsystem: 'platform',
   configSchema,
   provides: [cli, platform],
@@ -181,6 +184,17 @@ function startCli(caps: Caps): void {
   const sessionId = cliConfig.sessionId;
   const approvalSurface = caps.approvals.use.registerSurface('cli');
   let tui: CliTui | null = null;
+
+  /** i18n 渲染界面文字抛错时告警过了：之后再出错不再告警 */
+  let renderWarned = false;
+  const onRenderError = (err: unknown) => {
+    if (renderWarned) return;
+    renderWarned = true;
+    logger.use.warn('按终端会话的语言渲染界面文字出错，按原文显示（之后再出错不再告警）:', err);
+  };
+  // 读者是终端会话：会话设置 language 按继承链解析，入口平台 cli。终端不做 Markdown 转义
+  const reader = { sessionId, platform: 'cli' };
+  const localize: Localize = value => localizeFor(caps.i18n, value, reader, { onError: onRenderError });
 
   const adapter: PlatformAdapter = {
     adapterName: 'CLI',
@@ -208,20 +222,14 @@ function startCli(caps: Caps): void {
   caps.provide.use(cli, cliService);
 
   // 附件：终端就是这个会话的平台，显示不了图片本身，写一行说明（类型、名称、大小、本机路径），写出即算送达并照常归档。
-  // 路径在支持超链接的终端里可以点开
+  // 路径在支持超链接的终端里可以点开。类型的显示名取本插件字典（归档协议的类别占位符不当显示名）
   const attachmentStorage = caps.storage.use;
-  const KIND_LABELS: Record<MessageAttachment['kind'], AttachmentRefKind> = {
-    image: AttachmentRefKind.Image,
-    audio: AttachmentRefKind.Audio,
-    video: AttachmentRefKind.Video,
-    file: AttachmentRefKind.File,
-  };
   async function attachmentLine(att: MessageAttachment): Promise<string> {
-    const label = `[${KIND_LABELS[att.kind] ?? '附件'}]`;
+    const label = `[${localize(t('attachmentKind', { kind: att.kind }))}]`;
     if (/^https?:\/\//i.test(att.data)) return `${label} ${att.name ?? ''} ${att.data}`.replace(/\s+/g, ' ').trim();
     if (att.data.startsWith('data:') && att.data.includes(';base64,')) {
       const bytes = Math.floor(((att.data.length - att.data.indexOf(',') - 1) * 3) / 4);
-      return `${label} ${att.name ?? '内联数据'} · ${formatBytes(bytes)}`;
+      return `${label} ${att.name ?? localize(t('inlineData'))} · ${formatBytes(bytes)}`;
     }
     let path = att.data;
     let size = '';
@@ -235,14 +243,16 @@ function startCli(caps: Caps): void {
   }
   function sendAttachments(msg: OutgoingMessage): void {
     const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
-    // 同步认领：发起方 await emit 之后就要能等到它
+    // 同步认领：发起方 await emit 之后就要能等到它。消息里的文字先写（非空时），再依次写各附件；写不出时回执交出原因。
+    // 文字不是流式正文的整条重复，不消耗流式标记
     msg.delivery = (async () => {
       try {
-        for (const att of attachments) adapter.sendMessage(msg.sessionId, await attachmentLine(att));
+        if (msg.content.trim()) await adapter.sendMessage(msg.sessionId, msg.content);
+        for (const att of attachments) await adapter.sendMessage(msg.sessionId, await attachmentLine(att));
         void events.use.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
         return { ok: true as const };
       } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false as const, error: textOf(err) };
       }
     })();
   }
@@ -251,19 +261,17 @@ function startCli(caps: Caps): void {
     if (msg.sessionId !== sessionId) return;
     if (msg.attachments?.length) {
       sendAttachments(msg);
-      // 附件消息里的文字照常显示；它不是流式正文的整条重复，不消耗流式标记
-      if (msg.content.trim()) adapter.sendMessage(msg.sessionId, msg.content);
       return;
     }
     // 纯文本同样写出即算送达，同步认领回执（作品通知等要等它）。同一轮已流式输出时，agent 的整条回复是重复、
-    // 正文早已写出；系统/指令消息不是流式正文，照常显示
+    // 正文早已写出；系统/指令消息不是流式正文，照常显示。content 已由网关按会话的语言渲染（网关缺席时是原文）
     const written =
       msg.source === 'agent' && tui?.consumeStreamedSend()
         ? Promise.resolve()
         : adapter.sendMessage(msg.sessionId, msg.content);
     msg.delivery = written.then(
       () => ({ ok: true as const }),
-      err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }),
+      err => ({ ok: false as const, error: textOf(err) }),
     );
   });
 
@@ -285,7 +293,7 @@ function startCli(caps: Caps): void {
       logger.use.info('stdin/stdout 非 TTY，CLI 界面未启动');
       return;
     }
-    const started = new CliTui(caps, cliConfig, sessionId, approvalSurface, earlyLogs);
+    const started = new CliTui(caps, cliConfig, sessionId, approvalSurface, localize, earlyLogs);
     onLog = entry => started.appendLog(entry);
     tui = started;
     tui.start();
@@ -333,12 +341,13 @@ class CliTui {
     private config: CLIConfig,
     private sessionId: string,
     private readonly approvalSurface: ApprovalSurface,
+    private readonly localize: Localize,
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
     // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
-    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场
+    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按终端会话的读者渲染，事实原样
     this.attendance = this.approvalSurface.attend(
       { platform: 'cli', userId: 'console' },
       {
@@ -346,7 +355,7 @@ class CliTui {
           this.cards.push(approval);
           this.queueRender();
         },
-        settled: (approvalId, { state }) => this.closeCard(approvalId, SETTLED_LINES[state]),
+        settled: (approvalId, { state }) => this.closeCard(approvalId, tool => t(SETTLED_LINES[state], { tool })),
       },
     );
   }
@@ -372,14 +381,14 @@ class CliTui {
     input.resume();
     process.once('exit', this.restoreOnExit);
 
-    const assistantName = this.personaName() ?? 'Aalis';
-    this.chat.append([
-      chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
-    ]);
+    const welcome = t('welcome', { name: this.personaName() ?? 'Aalis', key: chalk.cyan('Ctrl+G') });
+    this.chat.append([chalk.gray(this.formatCont()) + chalk.gray(this.localize(welcome))]);
     void this.pointToUnready();
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
+    // 会话设置变了（语言、人设）：界面立即按新的设置重绘，已写进聊天区的行不变
+    this.caps.events.use.on('session:config:changed', this.queueRender);
 
     this.caps.lifecycle.use.onDispose(() => this.stop());
     this.render();
@@ -399,10 +408,10 @@ class CliTui {
     );
     const count = status.filter(p => p.state === 'error').length + lacking.length;
     if (count === 0) return;
-    const how = (this.caps.commands.present ? this.caps.commands.use.has('doctor') : undefined)
-      ? `输入 ${chalk.cyan('/doctor')} 查看原因与修法`
-      : `按 ${chalk.cyan('Ctrl+L')} 看日志`;
-    this.chat.append([chalk.gray(this.formatCont()) + chalk.yellow(`有 ${count} 个插件没起来，${how}`)]);
+    const hint = (this.caps.commands.present ? this.caps.commands.use.has('doctor') : undefined)
+      ? t('unreadyDoctor', { count, command: chalk.cyan('/doctor') })
+      : t('unreadyLogs', { count, key: chalk.cyan('Ctrl+L') });
+    this.chat.append([chalk.gray(this.formatCont()) + chalk.yellow(this.localize(hint))]);
     this.queueRender();
   }
 
@@ -651,16 +660,18 @@ class CliTui {
   private answer(decision: ApprovalDecision): void {
     const card = this.cards[0];
     const reply = this.attendance.respond({ approvalId: card.id, decision, contentHash: card.contentHash });
-    if (!reply.ok) this.closeCard(card.id, `应答没有生效：${reply.message}`);
+    if (!reply.ok) this.closeCard(card.id, tool => t('answerRefused', { tool, reason: reply.message }));
   }
 
-  /** 审批结算了：卡片关掉，聊天区留一行 */
-  private closeCard(approvalId: string, line: string): void {
+  /** 审批结算了：卡片关掉，聊天区留一行（line 按工具名给出这一行） */
+  private closeCard(approvalId: string, line: (tool: string) => TextRef): void {
     const index = this.cards.findIndex(card => card.id === approvalId);
     if (index < 0) return;
     const [card] = this.cards.splice(index, 1);
     if (index === 0) this.choice = undefined;
-    this.chat.append([`${this.formatHead(chalk.yellow('◆ System'))}审批 ${sanitizeForCard(card.tool)}：${line}`]);
+    this.chat.append([
+      `${this.formatHead(chalk.yellow('◆ System'))}${this.localize(line(sanitizeForCard(card.tool)))}`,
+    ]);
     if (this.view !== 'chat') this.unreadChat++;
     this.queueRender();
   }
@@ -809,19 +820,23 @@ class CliTui {
     if (!this.running) return;
     const width = Math.max(40, output.columns || 100);
     const height = Math.max(14, output.rows || 30);
-    // 输入框可变高度（多行输入）：内容行数 + 上下边框，最多 8 行内容。有审批卡时卡片占这个位置
+    // 正文下面的框：有审批卡时是卡片；chat 视图是输入框，可变高度（多行输入）：内容行数 + 上下边框，最多 8 行内容；
+    // 别的视图是一行视图说明（框高 3 行），在正文之后算，滚动值取正文钳制过的
     const box =
       this.cards.length > 0
         ? this.renderCard(width, height)
-        : this.renderInputBox(width, this.computeInputDisplayLines(width));
+        : this.view === 'chat'
+          ? this.renderInputBox(width, this.computeInputDisplayLines(width))
+          : undefined;
     // 布局：header(1) + sep(1) + body + box + footer(1)
-    const bodyHeight = Math.max(3, height - 3 - box.length);
+    const bodyHeight = Math.max(3, height - 3 - (box?.length ?? 3));
+    const body = this.renderBody(width, bodyHeight);
 
     const out: string[] = [];
     out.push(this.renderHeader(width));
     out.push(chalk.gray(LINE_H.repeat(width)));
-    out.push(...this.renderBody(width, bodyHeight));
-    out.push(...box);
+    out.push(...body);
+    out.push(...(box ?? this.renderInputBox(width, [this.viewLine(width)])));
     out.push(this.renderFooter(width));
 
     output.write('\x1b[?25l\x1b[H');
@@ -884,7 +899,7 @@ class CliTui {
   private getBodyLines(width: number): string[] {
     if (this.view === 'logs') return this.getLogViewLines(width);
     if (this.view === 'status') return this.getStatusViewLines();
-    if (this.view === 'help') return this.getHelpViewLines();
+    if (this.view === 'help') return this.getHelpViewLines(width);
     return this.getChatViewLines(width);
   }
 
@@ -980,19 +995,26 @@ class CliTui {
     const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === 'cli');
     const connections = adapter?.getConnections?.() ?? [];
     const persona = this.personaName() ?? '-';
-    const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
+    const text = this.localize({
+      runtime: t('statusRuntime'),
+      logs: t('logCount', { count: this.logLines.length }),
+      services: t('statusServices', { count: serviceNames.length }),
+      connections: t('statusConnections', { count: connections.length }),
+      none: t('noConnections'),
+    });
+    const sec = (title: string) => chalk.bold.cyan(`▎ ${title}`);
     const kv = (k: string, v: string) => `    ${chalk.gray(k.padEnd(14))} ${v}`;
     const out: string[] = [];
-    out.push(sec('运行时'));
+    out.push(sec(text.runtime));
     out.push(kv('persona', persona));
     out.push(kv('cli session', this.sessionId));
-    out.push(kv('log buffer', `${this.logLines.length} 条`));
+    out.push(kv('log buffer', text.logs));
     out.push('');
-    out.push(sec(`服务 (${serviceNames.length})`));
+    out.push(sec(text.services));
     for (const s of serviceNames) out.push(`    ${chalk.green('●')} ${s}`);
     out.push('');
-    out.push(sec(`平台连接 (${connections.length})`));
-    if (connections.length === 0) out.push(`    ${chalk.gray('— 无')}`);
+    out.push(sec(text.connections));
+    if (connections.length === 0) out.push(`    ${chalk.gray(text.none)}`);
     else
       for (const c of connections) {
         const dot =
@@ -1002,62 +1024,36 @@ class CliTui {
     return out.map(l => (l.length === 0 ? '' : ` ${l}`));
   }
 
-  private getHelpViewLines(): string[] {
-    const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
-    const row = (k: string, v: string) => `    ${chalk.cyan(k.padEnd(10))} ${chalk.gray(v)}`;
+  private getHelpViewLines(width: number): string[] {
+    const help = this.localize(HELP);
+    /** text 按宽度折行：第一行接在 head 后面，续行缩进到同一列 */
+    const wrap = (head: string, text: string, style: (s: string) => string) => {
+      const indent = ' '.repeat(visibleLen(head));
+      return wrapWords(text, width - indent.length).map((seg, i) => (i === 0 ? head : indent) + style(seg));
+    };
+    const sec = (title: string) => wrap(` ${chalk.bold.cyan('▎')} `, title, chalk.bold.cyan);
+    const row = (k: string, v: string) => wrap(`     ${chalk.cyan(k.padEnd(10))} `, v, chalk.gray);
     const out: string[] = [];
-    out.push(sec('视图切换'));
-    out.push(row('Ctrl+T', 'Chat   ·  聊天 / 命令输入'));
-    out.push(row('Ctrl+L', 'Logs   ·  实时日志'));
-    out.push(row('Ctrl+S', 'Status ·  服务与平台状态'));
-    out.push(row('Ctrl+G', 'Help   ·  当前页'));
-    out.push(row('Esc', '返回上一个视图'));
-    out.push(row('Ctrl+C', '退出'));
-    out.push('');
-    out.push(sec('滚动 (Logs / Status / Help)'));
-    out.push(row('↑ / ↓', '逐行滚动'));
-    out.push(row('PgUp/Dn', '翻页'));
-    out.push(row('Home', '回到顶部'));
-    out.push(row('End', '到底部'));
-    out.push(row('Ctrl+W', '日志页：切换换行模式（多行完整展示）'));
-    out.push('');
-    out.push(sec('编辑'));
-    out.push(row('Enter', '提交输入'));
-    out.push(row('Ctrl+J', '插入换行（macOS Ctrl+Enter）'));
-    out.push(row('Shift+Ent', '插入换行（如终端支持）'));
-    out.push(row('↑ / ↓', '历史记录回溯（chat 视图）'));
-    out.push('');
-    out.push(sec('审批卡（卡在时打字与回车不算应答，也不进输入框）'));
-    out.push(row('← / →', '选批准 / 拒绝，Enter 确定'));
-    out.push(row('Ctrl+Y', '批准'));
-    out.push(row('Ctrl+N', '拒绝'));
-    out.push('');
-    out.push(sec('提示'));
-    out.push(
-      `    ${chalk.gray('• 完整日志写入家目录的 logs/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。')}`,
-    );
-    out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
-    out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
-    out.push(
-      `    ${chalk.gray('• ↑/↓、PgUp/PgDn、Home/End 滚动 Logs / Status / Help；选择 / 复制文本直接用终端原生操作。')}`,
-    );
-    return out.map(l => (l.length === 0 ? '' : ` ${l}`));
+    for (const { title, rows } of help.sections) out.push(...sec(title), ...rows.flatMap(([k, v]) => row(k, v)), '');
+    out.push(...sec(help.tipsTitle), ...help.tips.flatMap(tip => wrap('     ', tip, chalk.gray)));
+    return out;
+  }
+
+  /** chat 以外的视图在输入框位置的说明：视图名、总行数与滚动值（正文渲染之后取，是钳制过的） */
+  private viewLine(width: number): string {
+    const total =
+      this.view === 'logs'
+        ? this.logLines.length
+        : this.view === 'status'
+          ? this.getStatusViewLines().length
+          : this.getHelpViewLines(width).length;
+    const scroll = this.view === 'logs' ? this.logScroll : this.view === 'status' ? this.statusScroll : this.helpScroll;
+    return chalk.gray(this.localize(t('viewLine', { view: this.view, total, scroll })));
   }
 
   /** 计算输入框的多行内容（不含边框、不含 padding） */
   private computeInputDisplayLines(width: number): string[] {
     const inner = width - 2;
-    if (this.view !== 'chat') {
-      const total =
-        this.view === 'logs'
-          ? this.logLines.length
-          : this.view === 'status'
-            ? this.getStatusViewLines().length
-            : this.getHelpViewLines().length;
-      const scroll =
-        this.view === 'logs' ? this.logScroll : this.view === 'status' ? this.statusScroll : this.helpScroll;
-      return [chalk.gray(`${this.view} · ${total} 行 · scroll ${scroll}  ·  按 Ctrl+T 回到聊天`)];
-    }
     const inputLines = this.inputLine.split('\n');
     const display: string[] = [];
     const promptLen = visibleLen(this.makePrompt());
@@ -1097,26 +1093,45 @@ class CliTui {
   private renderCard(width: number, height: number): string[] {
     const card = this.cards[0];
     const inner = width - 2;
-    const waiting = this.cards.length > 1 ? ` · 还有 ${this.cards.length - 1} 张` : '';
-    const title = `${chalk.bold.yellow('需要批准')} ${sanitizeForCard(card.tool)} · 会话 ${sanitizeForCard(card.sessionId)}${waiting}`;
-    const facts = cardFacts(card.facts).flatMap(([label, text]) => factLines(label, text, inner - 2));
+    const tool = sanitizeForCard(card.tool);
+    const session = sanitizeForCard(card.sessionId);
+    const text = this.localize({
+      heading: t('cardHeading'),
+      subject:
+        this.cards.length > 1
+          ? t('cardSubjectWaiting', { tool, session, count: this.cards.length - 1 })
+          : t('cardSubject', { tool, session }),
+      labels: FACT_LABELS,
+      approve: t('approve'),
+      deny: t('deny'),
+      keys: t('cardKeys'),
+    });
+    const title = `${chalk.bold.yellow(text.heading)} ${text.subject}`;
+    const rows = cardFacts(card.facts, text.labels);
+    const labelWidth = Math.max(0, ...rows.map(([label]) => visibleLen(label)));
+    const facts = rows.flatMap(([label, value]) => factLines(label, labelWidth, value, inner - 2));
+    const option = (decision: ApprovalDecision, label: string) =>
+      this.choice === decision ? chalk.inverse(`❯ ${label}`) : `  ${label}`;
+    const choices = `${option('approve', text.approve)}   ${option('deny', text.deny)}`;
+    // 应答行放不下按键提示时，提示另起一行（再放不下就折行）
+    const answer =
+      visibleLen(`${choices}   ${text.keys}`) < inner
+        ? [`${choices}   ${chalk.gray(text.keys)}`]
+        : [choices, ...wrapWords(text.keys, inner - 1).map(line => chalk.gray(line))];
     // 高度：header、sep、footer 各一行，正文至少 3 行，卡片的上下边框、标题行与应答行
-    const room = height - 10;
+    const room = height - 9 - answer.length;
     const shown =
       facts.length <= room
         ? facts
         : [
             ...facts.slice(0, Math.ceil((room - 1) / 2)),
-            chalk.gray(`…（省略 ${facts.length - room + 1} 行）…`),
+            chalk.gray(this.localize(t('linesOmitted', { count: facts.length - room + 1 }))),
             ...facts.slice(facts.length - Math.floor((room - 1) / 2)),
           ];
-    const option = (decision: ApprovalDecision, label: string) =>
-      this.choice === decision ? chalk.inverse(`❯ ${label}`) : `  ${label}`;
-    const options = `${option('approve', '批准')}   ${option('deny', '拒绝')}   ${chalk.gray('←/→ 选择 · Enter 确定 · Ctrl+Y 批准 · Ctrl+N 拒绝')}`;
     const edge = chalk.yellow(BOX_V);
     return [
       chalk.yellow(`${BOX_TL}${LINE_H.repeat(inner)}${BOX_TR}`),
-      ...[title, ...shown, options].map(line => `${edge}${padAnsi(` ${line}`, inner)}${edge}`),
+      ...[title, ...shown, ...answer].map(line => `${edge}${padAnsi(` ${line}`, inner)}${edge}`),
       chalk.yellow(`${BOX_BL}${LINE_H.repeat(inner)}${BOX_BR}`),
     ];
   }
@@ -1147,35 +1162,93 @@ class CliTui {
   }
 }
 
+// ===== 帮助页 =====
+
+/** 帮助页：各节的标题与「按键、作用」行，末尾一节是提示 */
+const HELP = {
+  sections: [
+    {
+      title: t('helpViews'),
+      rows: [
+        ['Ctrl+T', t('helpChat')],
+        ['Ctrl+L', t('helpLogs')],
+        ['Ctrl+S', t('helpStatus')],
+        ['Ctrl+G', t('helpHelp')],
+        ['Esc', t('helpBack')],
+        ['Ctrl+C', t('helpExit')],
+      ],
+    },
+    {
+      title: t('helpScrolling'),
+      rows: [
+        ['↑ / ↓', t('helpLine')],
+        ['PgUp/Dn', t('helpPage')],
+        ['Home', t('helpTop')],
+        ['End', t('helpBottom')],
+        ['Ctrl+W', t('helpWrap')],
+      ],
+    },
+    {
+      title: t('helpEditing'),
+      rows: [
+        ['Enter', t('helpSubmit')],
+        ['Ctrl+J', t('helpNewline')],
+        ['Shift+Ent', t('helpShiftNewline')],
+        ['↑ / ↓', t('helpHistory')],
+      ],
+    },
+    {
+      title: t('helpCard'),
+      rows: [
+        ['← / →', t('helpChoose')],
+        ['Ctrl+Y', t('approve')],
+        ['Ctrl+N', t('deny')],
+      ],
+    },
+  ],
+  tipsTitle: t('helpTips'),
+  tips: [t('tipLogFile'), t('tipRestore'), t('tipCommands'), t('tipKeys')],
+} as const;
+
 // ===== 审批卡 =====
 
 type ApprovalDecision = 'approve' | 'deny';
 
 /** 卡片结算后在聊天区留的话 */
-const SETTLED_LINES: Record<SettledState, string> = {
-  approved: '已批准',
-  denied: '已拒绝',
-  expired: '没有人应答，按拒绝处理',
-  cancelled: '已撤销',
-};
+const SETTLED_LINES = {
+  approved: 'settledApproved',
+  denied: 'settledDenied',
+  expired: 'settledExpired',
+  cancelled: 'settledCancelled',
+} as const satisfies Record<SettledState, string>;
 
 /** 每项事实显示的字数上限，超出的保留首尾 */
 const CARD_FACT_LIMIT = 1000;
 
-/** 卡上的事实：标签与原文 */
-function cardFacts(facts: ApprovalFacts): Array<[label: string, text: string]> {
+/** 卡上事实的标签，与疑似含密钥时代替改动的说明 */
+const FACT_LABELS = {
+  command: t('factCommand'),
+  cwd: t('factCwd'),
+  file: t('factFile'),
+  patch: t('factPatch'),
+  params: t('factParams'),
+  patchHidden: t('patchHidden'),
+};
+
+/** 卡上的事实：标签（已按读者渲染）与原文 */
+function cardFacts(facts: ApprovalFacts, labels: Localized<typeof FACT_LABELS>): Array<[label: string, text: string]> {
   const rows: Array<[string, string]> = [];
-  if (facts.command !== undefined) rows.push(['命令', facts.command]);
-  if (facts.cwd !== undefined) rows.push(['目录', facts.cwd]);
-  if (facts.diff) rows.push(['文件', facts.diff.path], ['改动', facts.diff.patch ?? '疑似含密钥，不显示内容']);
-  if (Object.keys(facts.params).length > 0) rows.push(['参数', JSON.stringify(facts.params)]);
+  if (facts.command !== undefined) rows.push([labels.command, facts.command]);
+  if (facts.cwd !== undefined) rows.push([labels.cwd, facts.cwd]);
+  if (facts.diff) rows.push([labels.file, facts.diff.path], [labels.patch, facts.diff.patch ?? labels.patchHidden]);
+  if (Object.keys(facts.params).length > 0) rows.push([labels.params, JSON.stringify(facts.params)]);
   return rows;
 }
 
-/** 一项事实：清洗后按换行拆开、按宽度折行，标签只在第一行 */
-function factLines(label: string, text: string, width: number): string[] {
-  const head = `${chalk.gray(label)}  `;
-  const indent = ' '.repeat(visibleLen(head));
+/** 一项事实：清洗后按换行拆开、按宽度折行；标签只在第一行，补齐到 labelWidth，续行缩进到值的那一列 */
+function factLines(label: string, labelWidth: number, text: string, width: number): string[] {
+  const head = `${padAnsi(chalk.gray(label), labelWidth)}  `;
+  const indent = ' '.repeat(labelWidth + 2);
   return sanitizeForCard(text, CARD_FACT_LIMIT)
     .replace(/\t/g, '    ')
     .split('\n')
@@ -1239,6 +1312,30 @@ function clipExact(s: string, width: number): string {
  * 把单行字符串按可见宽度软折行（CJK 算 2 列，emoji/ANSI 不破坏）。
  * 返回若干段，每段宽度 ≤ width。空字符串返回 [''] 以保留视觉空行。
  */
+/** 按宽度折行，优先在空格处断开（断处的空白去掉）：一行放不下的词（含不带空格的中日韩长句）再按宽度切 */
+function wrapWords(s: string, width: number): string[] {
+  if (width <= 0 || stringWidth(s) <= width) return [s];
+  const lines: string[] = [];
+  let line = '';
+  for (const token of s.split(/(\s+)/)) {
+    if (stringWidth(line + token) <= width) {
+      line += token;
+      continue;
+    }
+    if (/^\s+$/.test(token)) {
+      lines.push(line);
+      line = '';
+      continue;
+    }
+    if (line.trim()) lines.push(line.trimEnd());
+    const pieces = wrapByVisibleWidth(token, width);
+    line = pieces.pop() ?? '';
+    lines.push(...pieces);
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 function wrapByVisibleWidth(s: string, width: number): string[] {
   if (width <= 0) return [s];
   if (stringWidth(s) <= width) return [s];

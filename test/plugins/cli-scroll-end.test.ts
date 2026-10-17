@@ -17,10 +17,14 @@ afterEach(() => {
 });
 
 /**
- * 起 CLI（直接进 help 页），先按完 prelude 里的按键（其效果算进 before 帧），
+ * 起 CLI（直接进 startupView，缺省 help 页），先按完 prelude 里的按键（其效果算进 before 帧），
  * 再按 keyName，返回按键前后的最后一帧。
  */
-async function framesAroundKey(keyName: string, prelude: string[] = []): Promise<{ before: string; after: string }> {
+async function framesAroundKey(
+  keyName: string,
+  prelude: string[] = [],
+  startupView = 'help',
+): Promise<{ before: string; after: string }> {
   const tty = fakeTty(20, 100);
   const writes: string[] = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
@@ -29,7 +33,7 @@ async function framesAroundKey(keyName: string, prelude: string[] = []): Promise
   });
   const app = new App({ name: 'T', logLevel: 'error' });
   try {
-    await app.plugin(cliPlugin, { startupView: 'help' });
+    await app.plugin(cliPlugin, { startupView });
     await app.plugins.idle();
     // 激活闸会让缺依赖的插件停在 pending 而不报错：不核一下，下面的帧断言会在
     // 「TUI 压根没起来」上变成对空帧的比对。
@@ -61,6 +65,17 @@ const scrollOf = (frame: string): number => {
   expect(m, `帧里没有 help 页 footer：${JSON.stringify(frame.slice(-200))}`).not.toBeNull();
   return Number((m as RegExpMatchArray)[2]);
 };
+
+describe('plugin-cli Status / Help 页的视图说明', () => {
+  it.each(['status', 'help'])('%s 页按 End：scroll 是钳制后的真实最大值', async view => {
+    const { after } = await framesAroundKey('end', [], view);
+    const m = after.match(new RegExp(`${view} · (\\d+) 行 · scroll (\\S+)`));
+    expect(m, `帧里没有 ${view} 页的视图说明`).not.toBeNull();
+    const [, total, scroll] = m as RegExpMatchArray;
+    // 正文 14 行：20 行的终端减去头部、分隔线、底栏与视图说明的框（3 行）
+    expect(scroll).toBe(String(Math.max(0, Number(total) - 14)));
+  });
+});
 
 describe('plugin-cli Help 页滚动', () => {
   it('按 End 滚到底部（footer scroll 变正、底部提示可见、顶部标题移出视野）', async () => {
