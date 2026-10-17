@@ -2,6 +2,7 @@ import type { SessionMethodResult, SettingLayer } from '@aalis/api-session-proto
 import type { Localized } from '@aalis/schema-i18n';
 import { useCallback } from 'react';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import type { SessionClient } from '../protocol/session-client';
 import { useSessionQuery } from './setting-rows';
 
@@ -25,5 +26,5 @@ export const labelOf = (order: LayerOrder, name: string) => order.find(entry => 
 /** 一层的称呼：层表里的称呼，后面写这一层取的是哪一份（平台、类型名），如「平台档：onebot」「平台类型档：onebot · group」 */
 export function layerLabel(order: LayerOrder, { scope, ...which }: SettingLayer): string {
   const detail = Object.values(which).join(' · ');
-  return detail ? `${labelOf(order, scope)}：${detail}` : labelOf(order, scope);
+  return detail ? tr('layerDetail', { layer: labelOf(order, scope), detail }) : labelOf(order, scope);
 }

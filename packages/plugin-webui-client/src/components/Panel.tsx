@@ -1,6 +1,7 @@
 import { ArrowLeft, type LucideIcon } from 'lucide-react';
 import { type ReactNode, useId } from 'react';
 import { useBack } from '../back';
+import { tr } from '../language';
 import './Panel.css';
 
 interface PanelProps {
@@ -24,8 +25,9 @@ interface PanelProps {
 
 function Back({ to }: { to: string }) {
   const goBack = useBack();
+  const label = tr('back');
   return (
-    <button type="button" className="panel-back" aria-label="返回" title="返回" onClick={() => goBack(to)}>
+    <button type="button" className="panel-back" aria-label={label} title={label} onClick={() => goBack(to)}>
       <ArrowLeft aria-hidden />
     </button>
   );

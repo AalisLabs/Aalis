@@ -2,6 +2,7 @@ import type { SessionNotificationParams } from '@aalis/api-session-protocol';
 import type { Localized } from '@aalis/schema-i18n';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useReducer, useState } from 'react';
 import { useSessionClient } from '../connection';
+import { tr } from '../language';
 import { type BackgroundTask, ConnectionLostError, RequestError } from '../protocol/session-client';
 
 // 后台任务：整页一份全部会话的任务，握手（含重连后）时取 background/list，之后按 background/changed 的增量更新，
@@ -21,7 +22,7 @@ const Context = createContext<Background | undefined>(undefined);
 
 export function useBackground(): Background {
   const background = useContext(Context);
-  if (!background) throw new Error('只能在 BackgroundProvider 里取后台任务');
+  if (!background) throw new Error(tr('backgroundOutsideProvider'));
   return background;
 }
 

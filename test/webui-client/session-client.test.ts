@@ -336,6 +336,34 @@ describe('断线重连', () => {
     expect(ready).toHaveBeenLastCalledWith(init);
   });
 
+  it('reconnect：关掉当前连接立即重连（不等退避，不算断线），在途的请求失败，重新握手并重订打开着的会话；关闭之后不再连', async () => {
+    client = createSessionClient();
+    const socket = await connect();
+    const a = recorder();
+    client.subscribe('a', a.listener);
+    await vi.waitFor(() => socket.request('session/subscribe'));
+    socket.reply('session/subscribe', snapshot('a', 'e1', 2));
+    await vi.waitFor(() => expect(a.events).toHaveLength(1));
+    const inFlight = client.request('session/rename', { sessionId: 'a', title: '甲' }).catch(e => e);
+    const states: string[] = [];
+    client.onState(state => states.push(state.status));
+
+    client.reconnect();
+    expect(await inFlight).toBeInstanceOf(ConnectionLostError);
+    expect(socket.closedByClient).toBe(true);
+    const again = FakeWebSocket.last;
+    expect(again).not.toBe(socket);
+    await connect(again);
+    await vi.waitFor(() => expect(again.frames.map(f => f.method)).toEqual(['initialize', 'session/subscribe']));
+    again.reply('session/subscribe', snapshot('a', 'e1', 3));
+    await vi.waitFor(() => expect(a.events).toEqual(['snapshot e1#2', 'snapshot e1#3']));
+    expect(states).toEqual(['connecting', 'open']);
+
+    client.close();
+    client.reconnect();
+    expect(FakeWebSocket.last).toBe(again);
+  });
+
   it('连续失败时退避拉长，网络恢复或页面回到前台时立即重试', async () => {
     vi.useFakeTimers();
     client = createSessionClient();

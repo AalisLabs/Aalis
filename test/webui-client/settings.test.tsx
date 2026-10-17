@@ -22,6 +22,7 @@ import {
   type Harness,
   installDialog,
   LAYER_ORDER,
+  language,
   optionsOf,
   pluginRow as plugin,
   renderApp,
@@ -262,7 +263,7 @@ describe('会话默认', () => {
     expect(optionsOf(picker())).toEqual(['全局默认', '平台档：qq', '平台档：webui', '平台类型档：qq · group']);
     expect(requests('session/config/layer/get')).toEqual([{ layer: DEFAULTS }]);
     expect(
-      section().getByText(/^会话设置按本会话、父会话、场所、平台类型档、平台档、全局默认的先后，取第一个设了值的一层/),
+      section().getByText(/^会话设置按本会话、父会话、场所、平台类型档、平台档和全局默认的先后，取第一个设了值的一层/),
     ).toBeTruthy();
     expect(settingRow('人设').getByText('<默认人设>')).toBeTruthy();
     expect(settingRow('人设').getByText('全局默认')).toBeTruthy();
@@ -277,13 +278,26 @@ describe('会话默认', () => {
     expect(section().getByText(/平台档按平台名生效，不区分实例/)).toBeTruthy();
   });
 
+  it('英文界面：继承先后的说明、选层与层的称呼按英文，层的列表按英文连接', async () => {
+    app = await renderApp('/settings/session-defaults', handlers(), settingsRest(language(['en'])));
+    await section().findByRole('group', { name: '人设' });
+    const layer = section().getByRole('combobox', { name: 'Layer' });
+    expect(optionsOf(layer)).toEqual(['全局默认', '平台档: qq', '平台档: webui', '平台类型档: qq · group']);
+    expect(
+      section().getByText(
+        'Session settings take the first layer that has a value, in the order 本会话, 父会话, 场所, 平台类型档, 平台档, and 全局默认; when no layer sets an item, its own default applies. Changes take effect from the next turn.',
+      ),
+    ).toBeTruthy();
+    expect(section().getByRole('button', { name: 'Advanced' })).toBeTruthy();
+  });
+
   it('层的称呼与继承的先后都取自层表，前端不另存一份', async () => {
     const order = LAYER_ORDER.map(entry => ({ ...entry, label: `<${entry.label}>` }));
     app = await renderApp('/settings/session-defaults', handlers(undefined, order), settingsRest());
     await section().findByRole('group', { name: '人设' });
     expect(optionsOf(picker())).toEqual(['<全局默认>', '<平台档>：qq', '<平台档>：webui', '<平台类型档>：qq · group']);
     expect(
-      section().getByText(/^会话设置按<本会话>、<父会话>、<场所>、<平台类型档>、<平台档>、<全局默认>的先后/),
+      section().getByText(/^会话设置按<本会话>、<父会话>、<场所>、<平台类型档>、<平台档>和<全局默认>的先后/),
     ).toBeTruthy();
     expect(settingRow('人设').getByText('<全局默认>')).toBeTruthy();
   });
@@ -839,6 +853,20 @@ describe('系统', () => {
     expect(settingRow('日志等级').getByText('默认')).toBeTruthy();
     expect(settingRow('日志等级').getByText('重启后生效')).toBeTruthy();
     expect(section().getByText('/home/zz/.aalis')).toBeTruthy();
+  });
+
+  it('英文界面：目录、宿主配置的来源与生效时机、家目录按英文', async () => {
+    app = await renderApp('/settings/system', {}, systemRest(language(['en'])));
+    await section().findByRole('group', { name: '应用名称' });
+    expect(
+      within(screen.getByRole('navigation', { name: 'Settings' }))
+        .getAllByRole('link')
+        .map(link => link.textContent),
+    ).toEqual(['Session defaults', '权限', '技能', 'Appearance', 'System']);
+    expect(settingRow('应用名称').getByText('Config file')).toBeTruthy();
+    expect(settingRow('日志等级').getByText('Default')).toBeTruthy();
+    expect(settingRow('日志等级').getByText('Applies after restart')).toBeTruthy();
+    expect(section().getByRole('region', { name: 'Home directory' })).toBeTruthy();
   });
 
   it('改要重启的键：只送这一个键，保存后出「重启以生效」与重启按钮；改别的键不出；恢复默认与选空的一项送 null', async () => {

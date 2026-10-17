@@ -27,11 +27,13 @@ interface Socket {
   onState(listener: (state: ConnectionState) => void): () => void;
   /** 底层连接打开时发出一帧；没打开时不发，返回 false */
   send(text: string): boolean;
+  /** 关掉当前连接立即重连，不等退避、不算断线；关闭之后不再连 */
+  reconnect(): void;
   close(): void;
 }
 
-/** 第 n 次连续失败后等多久再连；连上一次就从头算 */
-const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+/** 第 n 次连续失败后等多久再试，之后一直按最后一项；成功一次就从头算。会话连接与界面的语言共用 */
+export const RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const AUTH_CHECK_TIMEOUT_MS = 10_000;
 /** 页面的请求正常、却连着这么多回一次也没连上，算被拒 */
 const REFUSED_AFTER = 2;
@@ -61,6 +63,7 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
   /** 第几次连接：登录状态查回来时已经在连下一次了，就不再据它改状态 */
   let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
 
   const setState = (next: ConnectionState) => {
     state = next;
@@ -140,7 +143,17 @@ export function openSocket(path: string, handlers: SocketHandlers): Socket {
       live?.send(text);
       return live !== undefined;
     },
+    reconnect() {
+      if (closed) return;
+      clearTimeout(timer);
+      const socket = current;
+      release();
+      socket?.close();
+      setState({ status: 'connecting' });
+      connect();
+    },
     close() {
+      closed = true;
       clearTimeout(timer);
       timer = undefined;
       window.removeEventListener('online', retryNow);

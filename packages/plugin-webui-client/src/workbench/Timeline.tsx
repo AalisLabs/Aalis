@@ -10,14 +10,16 @@ import { Menu } from '../components/Menu';
 import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
 import { clockTime, tokens } from '../format';
+import { text, tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import type { SessionItem } from '../protocol/session-client';
 import { SessionsFetchError } from '../shell/SessionGate';
+import { t } from '../texts';
 import { Attachments } from './Attachments';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
-import { awaitingApproval, displayOf, STOPPED, TOOL_ICONS, ToolCall } from './ToolCall';
+import { awaitingApproval, displayOf, TOOL_ICONS, ToolCall } from './ToolCall';
 import './Timeline.css';
 
 // 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错、没有回复）写在段尾，回滚在段的右上角。
@@ -30,7 +32,7 @@ import './Timeline.css';
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 
 const TIME_GAP_MS = 10 * 60_000;
-const OUTCOMES = { aborted: STOPPED, error: '这一轮出错了' } as const;
+const OUTCOMES = { aborted: t('stopped'), error: t('turnError') };
 /** 连续这么多个工具调用收成一行 */
 const COLLAPSE_FROM = 3;
 
@@ -120,20 +122,24 @@ function rowsOf(items: Block['items'], live: boolean, taskRunning: (taskId: stri
   return rows;
 }
 
-const KIND_NAMES = { command: '执行命令', 'file-change': '改动文件', generic: '其他' } as const;
+const KIND_COUNTS = {
+  command: 'callKindCommand',
+  'file-change': 'callKindFileChange',
+  generic: 'callKindOther',
+} as const;
 const kindOf = (call: ToolCallItem) => displayOf(call)?.kind ?? 'generic';
 
 function groupSummary(calls: readonly ToolCallItem[]): string {
-  const counts = new Map<keyof typeof KIND_NAMES, number>();
+  const counts = new Map<keyof typeof KIND_COUNTS, number>();
   for (const call of calls) counts.set(kindOf(call), (counts.get(kindOf(call)) ?? 0) + 1);
-  const total = calls.length;
+  const count = calls.length;
   if (counts.size > 1) {
-    return `调用了 ${total} 个工具：${[...counts].map(([kind, count]) => `${KIND_NAMES[kind]} ${count}`).join('、')}`;
+    return tr('callsMixed', { count, kinds: [...counts].map(([kind, n]) => t(KIND_COUNTS[kind], { count: n })) });
   }
   const [kind] = counts.keys();
-  if (kind === 'command') return `执行了 ${total} 条命令`;
-  if (kind === 'file-change') return `改动了 ${total} 次文件`;
-  return `调用了 ${total} 个工具`;
+  if (kind === 'command') return tr('callsCommands', { count });
+  if (kind === 'file-change') return tr('callsFileChanges', { count });
+  return tr('callsTools', { count });
 }
 
 /** 工具卡与思考的折叠：默认收起，「全部展开」「全部折叠」改默认并清掉逐张的设置 */
@@ -186,7 +192,7 @@ export function Timeline(props: TimelineProps) {
   const silent = useMemo(() => silentCounts(blocks), [blocks]);
   const [rewinding, setRewinding] = useState<RewindTarget>();
   return (
-    <section className="timeline" aria-label="对话">
+    <section className="timeline" aria-label={tr('conversation')}>
       {before !== undefined && <Earlier load={loadEarlier} />}
       {blocks.map((block, index) => {
         if (silent[index] === 0) return null;
@@ -242,9 +248,9 @@ function Earlier({ load }: { load(): Promise<void> }) {
   return (
     <div className="timeline-earlier">
       <Button variant="text" busy={busy} onClick={run}>
-        更早的消息
+        {tr('earlierMessages')}
       </Button>
-      {error && <SessionsFetchError what="更早的消息" error={error} retry={run} />}
+      {error && <SessionsFetchError what={tr('earlierMessages')} error={error} retry={run} />}
     </div>
   );
 }
@@ -265,12 +271,12 @@ function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) 
   const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running && !quiet(block);
   const outcomeText =
     outcome === 'aborted' || outcome === 'error'
-      ? OUTCOMES[outcome]
+      ? text(OUTCOMES[outcome])
       : silent === undefined
         ? undefined
         : silent > 1
-          ? `${silent} 轮没有回复`
-          : '没有回复';
+          ? tr('silentTurns', { count: silent })
+          : tr('noReply');
   return (
     <div className="turn">
       {rowsOf(block.items, !settled, taskId => tasks?.get(taskId)?.status === 'running').map(row =>
@@ -288,11 +294,11 @@ function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) 
       {rewindable && (
         <div className="turn-rewind">
           <Menu
-            label="回滚这一轮"
+            label={tr('rewindTurn')}
             icon={RotateCcw}
             items={[
-              { label: '回滚文件改动', onSelect: () => onRewind('code') },
-              { label: '回滚文件改动与这一轮对话', danger: true, onSelect: () => onRewind('code-and-chat') },
+              { label: tr('rewindCode'), onSelect: () => onRewind('code') },
+              { label: tr('rewindCodeAndChat'), danger: true, onSelect: () => onRewind('code-and-chat') },
             ]}
           />
         </div>
@@ -373,7 +379,7 @@ function Entry({ item, last, ...props }: EntryProps) {
 
 /** 说话人：owner 写「你」，房间成员写昵称，没有昵称写账号 */
 function speakerName(speaker: Item<'user-message'>['speaker']): string {
-  if (speaker.owner) return '你';
+  if (speaker.owner) return tr('speakerYou');
   return speaker.nickname || speaker.userId || speaker.platform;
 }
 
@@ -386,7 +392,7 @@ function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; ro
           <time>{clockTime(item.at)}</time>
         </p>
       )}
-      {item.speaker.source && <p className="message-meta">来自 {item.speaker.source}</p>}
+      {item.speaker.source && <p className="message-meta">{tr('messageFrom', { source: item.speaker.source })}</p>}
       {item.text && <p className="message-text">{item.text}</p>}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
     </div>
@@ -405,8 +411,8 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
   const { model, promptTokens, completionTokens } = item.model ?? {};
   const meta = [
     model,
-    promptTokens === undefined ? undefined : `输入 ${tokens(promptTokens)}`,
-    completionTokens === undefined ? undefined : `输出 ${tokens(completionTokens)}`,
+    promptTokens === undefined ? undefined : tr('tokensIn', { count: tokens(promptTokens) }),
+    completionTokens === undefined ? undefined : tr('tokensOut', { count: tokens(completionTokens) }),
     item.undelivered?.reason,
   ].filter((text): text is string => Boolean(text));
   return (
@@ -424,7 +430,7 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
       )}
       {item.text && <Markdown text={item.text} streaming={streaming} />}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
-      {streaming && <LoaderCircle className="spin message-streaming" aria-label="正在输出" />}
+      {streaming && <LoaderCircle className="spin message-streaming" aria-label={tr('writing')} />}
       {meta.length > 0 && (
         <p className="message-meta">
           {meta.map(text => (
@@ -447,7 +453,7 @@ function Reasoning({ item, streaming, open, onToggle }: ReasoningProps) {
   return (
     <div className="reasoning">
       <Disclosure expanded={open} onToggle={onToggle}>
-        {streaming ? '正在思考' : '思考'}
+        {streaming ? tr('reasoningStreaming') : tr('reasoning')}
       </Disclosure>
       {open && (
         <div className="reasoning-text">
@@ -483,7 +489,7 @@ function TaskNotice({
   return (
     <button type="button" className="tool-line" disabled={!task} onClick={task && (() => openLog(task.id))}>
       <TOOL_ICONS.generic aria-hidden />
-      <span className="tool-line-text">后台任务 {sanitizeForCard(facts.tool)}</span>
+      <span className="tool-line-text">{tr('backgroundTaskNamed', { tool: sanitizeForCard(facts.tool) })}</span>
       <span className="tool-line-status">
         <Ending end={facts} took={facts.durationMs} />
       </span>
@@ -520,11 +526,17 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
             setBusy(true);
             client
               .request('turn/continue', { sessionId })
-              .catch((err: Error) => toast({ kind: 'danger', text: `继续失败：${err.message}`, source: sessions }))
+              .catch((err: Error) =>
+                toast({
+                  kind: 'danger',
+                  text: tr('actionFailed', { action: t('continueTurn'), error: err.message }),
+                  source: sessions,
+                }),
+              )
               .finally(() => setBusy(false));
           }}
         >
-          继续
+          {tr('continueTurn')}
         </Button>
       )}
     </div>

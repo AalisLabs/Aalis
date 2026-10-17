@@ -9,6 +9,7 @@ import { IconButton } from '../components/IconButton';
 import { Menu } from '../components/Menu';
 import { Table, type TableColumn } from '../components/Table';
 import { Tabs } from '../components/Tabs';
+import { tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { Cell, cellText, fractionDigits, sortValue } from './cells';
 import { Graph } from './Graph';
@@ -21,8 +22,6 @@ import type { Localized } from '@aalis/schema-i18n';
 // 详情里的组件按选中行的 rowKey 取数，详情里的按钮组是作用于这一行的行动作
 
 type Of<T extends ComponentView['type']> = Extract<Localized<ComponentView>, { type: T }>;
-
-const NO_CONTENT = '还没有内容';
 
 export function PageContent({ page }: { page: Localized<DeclarativePageView> }) {
   const [params, setParams] = useSearchParams();
@@ -71,7 +70,7 @@ function Block({ component, target }: { component: Localized<ComponentView>; tar
 /** 取数失败：这一块写明原因，可以重试、看页面所属实例的日志，别的块照常 */
 function Failed({ label, error, retry }: { label?: string; error: Error; retry(): void }) {
   const { page } = usePageScope();
-  return <FetchError what={label ?? '这一块'} error={error} retry={retry} source={page.instance} />;
+  return <FetchError what={label ?? tr('thisBlock')} error={error} retry={retry} source={page.instance} />;
 }
 
 // ----- 主从 -----
@@ -126,13 +125,13 @@ function MasterDetail({
         <section className="page-detail" aria-labelledby={headingId}>
           <div className="page-detail-header">
             <span data-narrow>
-              <IconButton icon={ArrowLeft} label="返回列表" onClick={close} />
+              <IconButton icon={ArrowLeft} label={tr('returnToList')} onClick={close} />
             </span>
             <h3 id={headingId} className="page-detail-title">
               {title}
             </h3>
             <span data-wide>
-              <IconButton icon={X} label="关闭详情" onClick={close} />
+              <IconButton icon={X} label={tr('closeDetail')} onClick={close} />
             </span>
           </div>
           <Screen key={target.rowKey} components={detail} target={target} />
@@ -204,7 +203,7 @@ function TableBlock({ component, target }: { component: Of<'table'>; target?: Ac
       rows={rows}
       rowKey={keyOf}
       columns={columns}
-      empty={component.empty ?? NO_CONTENT}
+      empty={component.empty ?? tr('noContent')}
       search={row => component.columns.map(column => cellText(row[column.key])).join(' ')}
       rowActions={
         component.rowActions && component.rowActions.length > 0
@@ -242,7 +241,7 @@ function RowActions({ entries, target }: { entries: readonly RowAction[]; target
     .map(entry => ({ name: entry.action, action: actions[entry.action] }));
   if (visible.some(({ name }) => busy(name, target))) {
     return (
-      <span className="page-row-busy" role="status" aria-label="进行中">
+      <span className="page-row-busy" role="status" aria-label={tr('actionInProgress')}>
         <LoaderCircle aria-hidden className="spin" />
       </span>
     );
@@ -251,7 +250,7 @@ function RowActions({ entries, target }: { entries: readonly RowAction[]; target
   const rest = visible.filter(entry => entry !== inline);
   const menu = (list: typeof visible) => (
     <Menu
-      label="更多"
+      label={tr('more')}
       items={list.map(({ name, action }) => ({
         label: action.label,
         danger: action.effect === 'destructive',
@@ -280,7 +279,7 @@ function GraphBlock({ component, target }: { component: Of<'graph'>; target?: Ac
   const selection = useSelection(component.id);
   if (error) return <Failed label={component.label} error={error} retry={retry} />;
   if (!data) return null;
-  if (data.nodes.length === 0) return <p className="page-empty">{component.empty ?? NO_CONTENT}</p>;
+  if (data.nodes.length === 0) return <p className="page-empty">{component.empty ?? tr('noContent')}</p>;
   const selected = data.nodes.find(node => node.id === selection.selected);
   const graph = (
     <Graph

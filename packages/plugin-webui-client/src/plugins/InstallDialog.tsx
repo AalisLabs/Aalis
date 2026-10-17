@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
+import { tr } from '../language';
 import { isRecord, postJson } from '../rest';
 import { paths } from '../routes';
 import { messageOf, type PluginAction } from './action';
@@ -25,11 +26,12 @@ export function InstallDialog({ pkg, action, onClose, onSettled }: InstallDialog
   const source = usePackageManager();
   const install = async (name: string) => {
     await action.run(
-      `安装 ${name}`,
+      `install:${name}`,
+      tr('installPackage', { name }),
       () => postJson('/api/marketplace/install', { name }),
       reply => {
         onClose();
-        toast({ kind: 'success', text: messageOf(reply) ?? `已安装 ${name}` });
+        toast({ kind: 'success', text: messageOf(reply) ?? tr('installedPackage', { name }) });
         if (isRecord(reply) && typeof reply.plugin === 'string') navigate(paths.plugin(reply.plugin, 'config'));
       },
       source,
@@ -39,17 +41,17 @@ export function InstallDialog({ pkg, action, onClose, onSettled }: InstallDialog
   return (
     <Dialog
       open={pkg !== undefined}
-      title={pkg ? `安装「${pkg.name}」？` : ''}
+      title={pkg ? tr('installConfirm', { name: pkg.name }) : ''}
       size="form"
       onClose={onClose}
       footer={
         pkg && (
           <>
             <Button data-autofocus onClick={onClose}>
-              取消
+              {tr('cancel')}
             </Button>
             <Button variant="primary" busy={action.busy !== undefined} onClick={() => void install(pkg.name)}>
-              安装
+              {tr('install')}
             </Button>
           </>
         )
@@ -58,7 +60,7 @@ export function InstallDialog({ pkg, action, onClose, onSettled }: InstallDialog
       {pkg && (
         <>
           <InstallDisclosure name={pkg.name} />
-          <p>{`从 npm 安装${pkg.official ? '' : '第三方社区的包'}。装上后它以你授予的能力运行，请确认来源可信。`}</p>
+          <p>{tr(pkg.official ? 'installFromNpm' : 'installCommunityFromNpm')}</p>
         </>
       )}
     </Dialog>

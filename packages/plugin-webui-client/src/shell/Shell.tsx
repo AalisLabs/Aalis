@@ -19,12 +19,14 @@ import { Badge } from '../components/Badge';
 import { useConnection } from '../connection';
 import { useAttention } from '../health/attention';
 import { shortcutLabel, shortcutOf } from '../keys';
+import { text, tr } from '../language';
 import { PinnedRail } from '../pages/Pinned';
 import { pageAt, paths, routes } from '../routes';
 import { useMine } from '../sessions/mine';
 import { readStored, writeStored } from '../storage';
+import { t } from '../texts';
 import { ConnectionBar } from './ConnectionBar';
-import { countNote, HOST_ENTRIES, type HostArea, useEntryCounts } from './entries';
+import { entryName, HOST_ENTRIES, type HostArea, useEntryCounts } from './entries';
 import { QuickSwitch } from './QuickSwitch';
 import './Shell.css';
 
@@ -89,7 +91,7 @@ const Context = createContext<ShellControls | undefined>(undefined);
 
 export function useShell(): ShellControls {
   const controls = useContext(Context);
-  if (!controls) throw new Error('只能在外壳里取外壳的控制');
+  if (!controls) throw new Error(tr('shellOutsideProvider'));
   return controls;
 }
 
@@ -220,12 +222,14 @@ export function Shell() {
       >
         <ConnectionBar />
         <div className="shell-columns">
-          <nav className="shell-rail" aria-label="图标栏">
-            <div className="header-bar shell-rail-head">{railItem('sessions', '会话', MessagesSquare, paths.home)}</div>
+          <nav className="shell-rail" aria-label={tr('iconBar')}>
+            <div className="header-bar shell-rail-head">
+              {railItem('sessions', tr('sessions'), MessagesSquare, paths.home)}
+            </div>
             <PinnedRail />
             <div className="shell-rail-tail">
               {HOST_ENTRIES.map(entry =>
-                railItem(entry.area, entry.label, entry.icon, entry.path, countOf(entry.area)),
+                railItem(entry.area, text(entry.label), entry.icon, entry.path, countOf(entry.area)),
               )}
             </div>
           </nav>
@@ -237,7 +241,7 @@ export function Shell() {
             className="shell-scrim"
             data-side={drawer}
             tabIndex={-1}
-            aria-label="关上"
+            aria-label={tr('closeDrawer')}
             onClick={controls.closeDrawer}
           />
         )}
@@ -280,14 +284,14 @@ interface RailItemProps {
 
 /** 图标栏上宿主的一区 */
 function RailItem({ label, icon: Icon, count, current, to, toggleLeft }: RailItemProps) {
-  const name = count === undefined ? label : label + countNote(count);
+  const name = entryName(label, count);
   return (
     <Link
       to={to}
       className="shell-rail-item"
       aria-current={current ? 'page' : undefined}
       aria-label={name}
-      title={current && toggleLeft ? `${name}（${shortcutLabel('toggleLeft')} 收起或展开左栏）` : name}
+      title={current && toggleLeft ? tr('railToggleLeft', { name, shortcut: shortcutLabel('toggleLeft') }) : name}
       onClick={event => {
         if (!current || !toggleLeft) return;
         event.preventDefault();
@@ -324,7 +328,7 @@ function useDrawer(side: Side) {
   return { ref, onKeyDown };
 }
 
-const SEPARATOR_LABEL: Record<Side, string> = { left: '调整左栏宽度', right: '调整右侧面板宽度' };
+const SEPARATOR_LABEL = { left: t('resizeLeft'), right: t('resizeRight') };
 
 interface SeparatorProps {
   side: Side;
@@ -385,12 +389,12 @@ function Separator({ side, onDrag }: SeparatorProps) {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label={SEPARATOR_LABEL[side]}
+      aria-label={text(SEPARATOR_LABEL[side])}
       aria-valuenow={widths[side]}
       aria-valuemin={min}
       aria-valuemax={max}
       tabIndex={0}
-      title="拖动调整宽度，双击恢复默认"
+      title={tr('resizeHint')}
       className="shell-resize"
       data-side={side}
       onPointerDown={onPointerDown}

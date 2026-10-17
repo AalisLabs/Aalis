@@ -1,5 +1,6 @@
 import { Check, CircleAlert, Info, X } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { tr } from '../language';
 import { Button } from './Button';
 import { LogsLink } from './FetchError';
 import { IconButton } from './IconButton';
@@ -23,7 +24,7 @@ const ACTION_DURATION_MS = 8_000;
 const ICONS = { success: Check, danger: CircleAlert, info: Info };
 
 const ShowToast = createContext<(toast: ToastInput) => void>(() => {
-  throw new Error('Toast 只能在 ToastProvider 里弹出');
+  throw new Error(tr('toastOutsideProvider'));
 });
 
 /** 弹一条 Toast：成功与信息 4 秒后消失，带动作的 8 秒，出错的不自动消失 */
@@ -45,7 +46,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <section
         className="toasts"
-        aria-label="通知"
+        aria-label={tr('notifications')}
         aria-live="polite"
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
@@ -98,7 +99,7 @@ function ToastItem({ toast, paused, onDismiss }: ToastItemProps) {
         </Button>
       )}
       {toast.kind === 'danger' && toast.source && <LogsLink source={toast.source} />}
-      <IconButton icon={X} label="关闭" onClick={() => onDismiss(toast.id)} />
+      <IconButton icon={X} label={tr('close')} onClick={() => onDismiss(toast.id)} />
     </div>
   );
 }

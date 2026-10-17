@@ -2,7 +2,9 @@ import { type KeyboardEvent, useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Dialog } from '../components/Dialog';
 import { useSessionClient, useSessionless } from '../connection';
+import { lower } from '../format';
 import { composing } from '../keys';
+import { tr } from '../language';
 import { pageAddress, pageName, usePages, withInstance } from '../pages/registry';
 import { labelOf, usePluginNames, usePlugins } from '../plugins/list';
 import { statusOf } from '../plugins/status';
@@ -30,14 +32,14 @@ interface Option {
 }
 
 function where(session: SessionSummary, groups: RoomGroup[]): string {
-  if (session.kind === 'owner') return '我的';
+  if (session.kind === 'owner') return tr('mine');
   const group = groups.find(g => inGroup(session, addressOf(g)));
   return group?.label ?? session.platform ?? '';
 }
 
 export function QuickSwitch({ open, onClose }: { open: boolean; onClose(): void }) {
   return (
-    <Dialog open={open} title="搜索" onClose={onClose}>
+    <Dialog open={open} title={tr('search')} onClose={onClose}>
       {open && <Search onClose={onClose} />}
     </Dialog>
   );
@@ -74,11 +76,11 @@ function Search({ onClose }: { onClose(): void }) {
     };
   }, [client, query]);
 
-  const needle = query.trim().toLocaleLowerCase();
-  const matches = (...texts: string[]) => texts.some(text => text.toLocaleLowerCase().includes(needle));
+  const needle = lower(query.trim());
+  const matches = (...texts: string[]) => texts.some(text => lower(text).includes(needle));
   const sections = [
     {
-      label: '会话',
+      label: tr('sessions'),
       options: (found?.sessions ?? []).map(
         (session): Option => ({
           key: session.id,
@@ -89,7 +91,7 @@ function Search({ onClose }: { onClose(): void }) {
       ),
     },
     {
-      label: '页面',
+      label: tr('pages'),
       options: needle
         ? (pages ?? [])
             .flatMap((page): Option[] => {
@@ -101,7 +103,7 @@ function Search({ onClose }: { onClose(): void }) {
         : [],
     },
     {
-      label: '插件',
+      label: tr('plugins'),
       options: needle
         ? (plugins ?? [])
             .filter(row => matches(labelOf(row), row.name, row.instanceId))
@@ -123,9 +125,9 @@ function Search({ onClose }: { onClose(): void }) {
   const optionId = (index: number) => `${listId}-${index}`;
 
   const notes = [
-    error && `会话没取到：${error.message}`,
-    needle && !pages && pagesError && `页面表没取到：${pagesError.message}`,
-    needle && !plugins && pluginsError && `插件列表没取到：${pluginsError.message}`,
+    error && tr('quickSwitchSessionsFailed', { error: error.message }),
+    needle && !pages && pagesError && tr('quickSwitchPagesFailed', { error: pagesError.message }),
+    needle && !plugins && pluginsError && tr('quickSwitchPluginsFailed', { error: pluginsError.message }),
   ].filter((note): note is string => Boolean(note));
   // 会话服务不在时会话的搜索等它回来，页面与插件照样有结果
   const settled = sessionless || found !== undefined || error !== undefined;
@@ -151,11 +153,11 @@ function Search({ onClose }: { onClose(): void }) {
       <input
         type="search"
         role="combobox"
-        aria-label="搜索会话、页面与插件"
+        aria-label={tr('quickSwitchLabel')}
         aria-expanded={options.length > 0}
         aria-controls={listId}
         aria-activedescendant={options.length > 0 ? optionId(current) : undefined}
-        placeholder="会话、页面或插件"
+        placeholder={tr('quickSwitchPlaceholder')}
         value={query}
         data-autofocus
         onChange={event => {
@@ -169,8 +171,10 @@ function Search({ onClose }: { onClose(): void }) {
           {note}
         </p>
       ))}
-      {settled && options.length === 0 && notes.length === 0 && <p className="quick-switch-note">没有找到</p>}
-      <div id={listId} role="listbox" aria-label="搜索结果" className="quick-switch-results">
+      {settled && options.length === 0 && notes.length === 0 && (
+        <p className="quick-switch-note">{tr('quickSwitchNothing')}</p>
+      )}
+      <div id={listId} role="listbox" aria-label={tr('quickSwitchResults')} className="quick-switch-results">
         {sections.map(section => (
           // biome-ignore lint/a11y/useSemanticElements: 列表框里的一组选项只能用 role="group"，fieldset 是表单控件的分组
           <div key={section.label} role="group" aria-label={section.label} className="quick-switch-group">

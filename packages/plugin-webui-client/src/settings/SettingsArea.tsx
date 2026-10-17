@@ -1,4 +1,5 @@
 import type { DeclarativePageView, PageView } from '@aalis/api-webui';
+import type { TextRef } from '@aalis/schema-i18n';
 import { RotateCw } from 'lucide-react';
 import { type ComponentType, type ReactNode, useReducer } from 'react';
 import { Navigate, useParams } from 'react-router';
@@ -6,6 +7,7 @@ import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
+import { text, tr } from '../language';
 import { PageContent } from '../pages/PageContent';
 import { PageMissing } from '../pages/PluginPage';
 import { instanceName, pageName, refOf, usePages } from '../pages/registry';
@@ -14,6 +16,7 @@ import { useHost, usePlugins } from '../plugins/list';
 import { paths } from '../routes';
 import { ServiceAbsent, useSessionService } from '../shell/SessionGate';
 import { Left, Main, usePhone } from '../shell/Shell';
+import { t } from '../texts';
 import { AppearanceSection } from './AppearanceSection';
 import { SessionDefaults } from './SessionDefaults';
 import { SystemSection } from './SystemSection';
@@ -26,10 +29,10 @@ import type { Localized } from '@aalis/schema-i18n';
 // 插件列表或页面表没取到时只少依赖它的那几节，目录写明原因、可以重试
 
 const HOST = {
-  'session-defaults': { title: '会话默认', Content: SessionDefaults },
-  appearance: { title: '外观', Content: AppearanceSection },
-  system: { title: '系统', Content: SystemSection },
-} satisfies Record<string, { title: string; Content: ComponentType }>;
+  'session-defaults': { title: t('sessionDefaults'), Content: SessionDefaults },
+  appearance: { title: t('settingsAppearance'), Content: AppearanceSection },
+  system: { title: t('settingsSystem'), Content: SystemSection },
+} satisfies Record<string, { title: TextRef; Content: ComponentType }>;
 type HostSettings = keyof typeof HOST;
 
 interface SectionEntry {
@@ -50,7 +53,7 @@ function useSections(): SectionEntry[] | undefined {
   if ((sessions === undefined && !pluginsError) || (pages === undefined && !pagesError)) return undefined;
   const host = (section: HostSettings): SectionEntry => ({
     path: paths.settingsSection(section),
-    title: HOST[section].title,
+    title: text(HOST[section].title),
     host: section,
   });
   return [
@@ -72,12 +75,12 @@ export function SettingsDirectory() {
   const current = (entry: SectionEntry) =>
     entry.host ? entry.host === section : entry.page?.instance === instance && entry.page?.key === pageKey;
   return (
-    <Left label="设置">
-      <Panel title="设置" back={paths.home}>
+    <Left label={tr('settings')}>
+      <Panel title={tr('settings')} back={paths.home}>
         <div className="settings-directory">
           {pluginsError && (
             <FetchError
-              what="插件列表"
+              what={tr('pluginList')}
               error={pluginsError}
               retry={() => void refresh()}
               stale={plugins !== undefined}
@@ -87,7 +90,7 @@ export function SettingsDirectory() {
           )}
           {pagesError && (
             <FetchError
-              what="插件的设置页"
+              what={tr('pluginSettingsPages')}
               error={pagesError}
               retry={retry}
               stale={pages !== undefined}
@@ -96,7 +99,7 @@ export function SettingsDirectory() {
             />
           )}
           {sections && (
-            <List label="分节">
+            <List label={tr('settingsSections')}>
               {sections.map(entry => (
                 <ListItem key={entry.path} to={entry.path} title={entry.title} current={current(entry)} />
               ))}
@@ -148,14 +151,15 @@ export function SettingsSection() {
     return <PluginSection key={`${instance}\n${pageKey}`} instance={instance} pageKey={pageKey} />;
   }
   if (!isHost(section)) return <Navigate to={paths.settings} replace />;
-  const { title, Content } = HOST[section];
+  const title = text(HOST[section].title);
+  const { Content } = HOST[section];
   if (section === 'session-defaults' && sessions !== true) {
     return (
       <Section title={title}>
         {sessions === false ? (
           <ServiceAbsent />
         ) : (
-          pluginsError && <FetchError what="插件列表" error={pluginsError} retry={() => void refresh()} />
+          pluginsError && <FetchError what={tr('pluginList')} error={pluginsError} retry={() => void refresh()} />
         )}
       </Section>
     );
@@ -174,7 +178,7 @@ function PluginSection({ instance, pageKey }: { instance: string; pageKey: strin
   const page = pages?.filter(isSettingsPage).find(view => view.instance === instance && view.key === pageKey);
   if (!page) {
     return (
-      <Section title="设置">
+      <Section title={tr('settings')}>
         <PageMissing instance={instance} />
       </Section>
     );
@@ -183,7 +187,7 @@ function PluginSection({ instance, pageKey }: { instance: string; pageKey: strin
     <Section
       title={page.title}
       meta={instanceName(page.instance)}
-      actions={<IconButton icon={RotateCw} label="刷新" onClick={reload} />}
+      actions={<IconButton icon={RotateCw} label={tr('refresh')} onClick={reload} />}
     >
       <PageScope page={page} version={reloads}>
         <PageContent page={page} />

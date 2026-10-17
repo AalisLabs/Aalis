@@ -1,5 +1,7 @@
 import type { UnmetRoot as DeclaredRoot, UnmetService as DeclaredService } from '@aalis/api-doctor';
-import type { Localized } from '@aalis/schema-i18n';
+import { type Localized, textClauses } from '@aalis/schema-i18n';
+import { listText } from '../format';
+import { text, tr } from '../language';
 import { withInstance } from '../pages/registry';
 import { paths } from '../routes';
 import { labelOf, type PluginRow } from './list';
@@ -30,17 +32,21 @@ export const pluginName = (instance: string, find: FindPlugin): string => {
 export function statusOf(row: Pick<PluginRow, 'state' | 'lacking' | 'unconfigured'>): PluginStatus {
   switch (row.state) {
     case 'active':
-      return { short: '运行中' };
+      return { short: tr('running') };
     case 'activating':
-      return { state: 'running', short: '启动中' };
+      return { state: 'running', short: tr('stateStarting') };
     case 'pending':
-      return row.lacking.length > 0 ? { state: 'attention', short: '缺服务' } : { state: 'running', short: '等待启动' };
+      return row.lacking.length > 0
+        ? { state: 'attention', short: tr('stateLacking') }
+        : { state: 'running', short: tr('stateWaiting') };
     case 'error':
-      return row.unconfigured.length > 0 ? { state: 'attention', short: '待配置' } : { state: 'error', short: '失败' };
+      return row.unconfigured.length > 0
+        ? { state: 'attention', short: tr('stateUnconfigured') }
+        : { state: 'error', short: tr('failed') };
     case 'disabled':
-      return { state: 'inactive', short: '已停用' };
+      return { state: 'inactive', short: tr('stateDisabled') };
     case 'disposed':
-      return { state: 'inactive', short: '已卸载' };
+      return { state: 'inactive', short: tr('stateDisposed') };
   }
 }
 
@@ -73,7 +79,7 @@ type Reasoned = Pick<PluginRow, 'state' | 'error' | 'lacking' | 'waiting' | 'unc
 export function statusLine(row: Reasoned, find: FindPlugin): string {
   const { short } = statusOf(row);
   const reason = reasonOf(row, find);
-  return reason ? `${short}：${reason}` : short;
+  return reason ? tr('statusReason', { status: short, reason }) : short;
 }
 
 /**
@@ -82,16 +88,13 @@ export function statusLine(row: Reasoned, find: FindPlugin): string {
  */
 export function reasonOf(row: Reasoned, find: FindPlugin): string | undefined {
   if (row.state === 'pending') {
-    if (row.lacking.length > 0)
-      return byRoot(row.lacking)
-        .map(unmet => unmetText(unmet, find))
-        .join('；');
+    if (row.lacking.length > 0) return text(textClauses(byRoot(row.lacking).map(unmet => unmetText(unmet, find))));
     if (row.lingering && row.instanceId) return rootText({ kind: 'lingering', instance: row.instanceId }, find);
     const waited = new Set(row.waiting.map(({ chain }) => pluginName(chain[chain.length - 1], find)));
-    return waited.size > 0 ? [...waited].join('、') : undefined;
+    return waited.size > 0 ? listText([...waited]) : undefined;
   }
   if (row.state === 'error')
-    return row.unconfigured.length > 0 ? row.unconfigured.join('、') : (row.error ?? '原因见日志');
+    return row.unconfigured.length > 0 ? listText(row.unconfigured) : (row.error ?? tr('reasonInLogs'));
   return undefined;
 }
 
@@ -103,31 +106,33 @@ export function rootText(root: UnmetRoot, find: FindPlugin): string {
   switch (root.kind) {
     case 'error': {
       const keys = find(root.instance)?.unconfigured ?? [];
-      return keys.length > 0 ? `待配置：${keys.join('、')}` : `失败：${root.error?.split('\n')[0] ?? '原因见日志'}`;
+      return keys.length > 0
+        ? tr('rootUnconfigured', { keys })
+        : tr('rootFailed', { error: root.error?.split('\n')[0] ?? tr('reasonInLogs') });
     }
     case 'disabled':
-      return '已停用';
+      return tr('stateDisabled');
     case 'starting':
-      return `等待 ${pluginName(root.instance, find)} 启动`;
+      return tr('rootStarting', { name: pluginName(root.instance, find) });
     case 'lingering':
-      return `等待 ${pluginName(root.instance, find)} 的旧实例停下`;
+      return tr('rootLingering', { name: pluginName(root.instance, find) });
     case 'withdrawn':
-      return `在运行但没有提供 ${root.service}`;
+      return tr('rootWithdrawn', { service: root.service });
     case 'unprovided':
-      return `没有已装的插件提供 ${root.service}，可以在插件市场按服务搜 ${root.service}`;
+      return tr('rootUnprovided', { service: root.service });
     case 'cycle':
-      return `互相等待成环：${root.instances.map(instance => pluginName(instance, find)).join('、')}`;
+      return tr('rootCycle', { instances: root.instances.map(instance => pluginName(instance, find)) });
     default:
       // 契约加了一种根而这里没跟上时编译不过
       root satisfies never;
-      return '原因见日志';
+      return tr('reasonInLogs');
   }
 }
 
 /** 一条缺的服务：链上的插件，括号里写根的情形；没有链（没有提供者）时只写根 */
 export function unmetText({ chain, root }: UnmetService, find: FindPlugin): string {
   const path = chain.map(instance => pluginName(instance, find)).join(' → ');
-  return path ? `${path}（${rootText(root, find)}）` : rootText(root, find);
+  return path ? tr('unmetChain', { chain: path, root: rootText(root, find) }) : rootText(root, find);
 }
 
 interface Link {
@@ -140,8 +145,8 @@ export function rootAction(root: UnmetRoot, find: FindPlugin): Link | undefined 
   if (root.kind !== 'error' && root.kind !== 'disabled' && root.kind !== 'withdrawn') return undefined;
   const name = pluginName(root.instance, find);
   return root.kind === 'error' && (find(root.instance)?.unconfigured.length ?? 0) > 0
-    ? { to: paths.plugin(root.instance, 'config'), label: `去配置 ${name}` }
-    : { to: paths.plugin(root.instance), label: `去处理 ${name}` };
+    ? { to: paths.plugin(root.instance, 'config'), label: tr('goConfigureNamed', { name }) }
+    : { to: paths.plugin(root.instance), label: tr('goResolveNamed', { name }) };
 }
 
 /** 插件没起来去哪处理：缺服务的去第一条链的根插件；没有根插件可去时，待配置的去它的配置区，其余去它的详情 */
@@ -153,6 +158,6 @@ export function fixLink(
   const root = lacking[0] && rootAction(lacking[0].root, find);
   if (root) return root;
   return unconfigured.length > 0
-    ? { to: paths.plugin(instance, 'config'), label: '去配置' }
-    : { to: paths.plugin(instance), label: '去处理' };
+    ? { to: paths.plugin(instance, 'config'), label: tr('goConfigure') }
+    : { to: paths.plugin(instance), label: tr('goResolve') };
 }

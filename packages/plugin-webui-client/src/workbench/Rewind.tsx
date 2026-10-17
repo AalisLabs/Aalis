@@ -3,7 +3,9 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
+import { text, tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
+import { t } from '../texts';
 
 // 回滚一轮：只回滚文件，或连这一轮的对话一起删。回滚撤不回来，先确认，焦点落在「取消」上。确认之前先查这一轮的检查点：
 // 执行过命令的写明命令的效果不会撤回（命令的副作用不经存储），没查到的写明原因，查完才能确认。这一轮有转到后台的调用的
@@ -21,15 +23,9 @@ export interface RewindTarget {
 }
 
 const TEXT = {
-  code: {
-    title: '回滚这一轮的文件改动？',
-    body: '这一轮改过的文件恢复成改动之前的样子。之后的回合也改过的文件，那些改动会一并撤掉。',
-  },
-  'code-and-chat': {
-    title: '回滚这一轮的文件改动与对话？',
-    body: '这一轮改过的文件恢复成改动之前的样子，这一轮的消息也从会话里删掉。之后的回合也改过的文件，那些改动会一并撤掉。',
-  },
-} as const;
+  code: { title: t('rewindCodeTitle'), body: t('rewindCodeBody') },
+  'code-and-chat': { title: t('rewindChatTitle'), body: t('rewindChatBody') },
+};
 
 export function RewindDialog({
   sessionId,
@@ -70,26 +66,31 @@ export function RewindDialog({
     try {
       const result = await client.request('turn/rewind', { sessionId, turnId, scope });
       if (prompt !== undefined && (result.deletedMessages ?? 0) > 0) restore(prompt);
-      const done = [
-        result.restored.length > 0 && `恢复 ${result.restored.length} 个文件`,
-        result.deleted.length > 0 && `删除 ${result.deleted.length} 个文件`,
-        result.deletedMessages !== undefined && result.deletedMessages > 0 && `删掉 ${result.deletedMessages} 条消息`,
-      ].filter(part => typeof part === 'string');
-      toast({ kind: 'success', text: done.length > 0 ? `已回滚：${done.join('、')}` : '这一轮没有可以回滚的改动' });
+      const changes = [
+        result.restored.length > 0 && t('rewindRestored', { count: result.restored.length }),
+        result.deleted.length > 0 && t('rewindDeletedFiles', { count: result.deleted.length }),
+        result.deletedMessages !== undefined &&
+          result.deletedMessages > 0 &&
+          t('rewindDeletedMessages', { count: result.deletedMessages }),
+      ].filter(part => part !== false);
+      toast({ kind: 'success', text: changes.length > 0 ? tr('rewound', { changes }) : tr('rewindNothing') });
       if (result.alsoChangedBy.length > 0) {
-        const uris = result.alsoChangedBy.map(entry => entry.uri).join('、');
-        toast({ kind: 'info', text: `之后的回合也改过这些文件，那些改动一并撤掉了：${uris}` });
+        toast({ kind: 'info', text: tr('rewindAlsoChanged', { uris: result.alsoChangedBy.map(entry => entry.uri) }) });
       }
       const [first] = result.errors;
       if (first) {
         toast({
           kind: 'danger',
-          text: `有 ${result.errors.length} 处没能回滚：${first.uri}（${first.reason}）`,
+          text: tr('rewindErrors', { count: result.errors.length, uri: first.uri, reason: first.reason }),
           source: sessions,
         });
       }
     } catch (err) {
-      toast({ kind: 'danger', text: `回滚失败：${(err as Error).message}`, source: sessions });
+      toast({
+        kind: 'danger',
+        text: tr('actionFailed', { action: t('rewind'), error: (err as Error).message }),
+        source: sessions,
+      });
     } finally {
       setBusy(false);
       onClose();
@@ -99,27 +100,25 @@ export function RewindDialog({
   return (
     <Dialog
       open={target !== undefined}
-      title={target ? TEXT[target.scope].title : ''}
+      title={target ? text(TEXT[target.scope].title) : ''}
       onClose={onClose}
       footer={
         target && (
           <>
             <Button data-autofocus onClick={onClose}>
-              取消
+              {tr('cancel')}
             </Button>
             <Button variant="primary" danger busy={busy || check === undefined} onClick={() => void rewind(target)}>
-              回滚
+              {tr('rewind')}
             </Button>
           </>
         )
       }
     >
-      {target && <p>{TEXT[target.scope].body}</p>}
-      {check && 'error' in check && (
-        <p role="alert">没能确认这一轮有没有执行过命令（{check.error}）；命令的效果不会随回滚撤回。</p>
-      )}
-      {check && 'execUsed' in check && check.execUsed && <p>这一轮执行过命令，命令的效果不会撤回。</p>}
-      {target?.backgrounded && <p>这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。</p>}
+      {target && <p>{text(TEXT[target.scope].body)}</p>}
+      {check && 'error' in check && <p role="alert">{tr('rewindCheckFailed', { error: check.error })}</p>}
+      {check && 'execUsed' in check && check.execUsed && <p>{tr('rewindExecUsed')}</p>}
+      {target?.backgrounded && <p>{tr('rewindBackgrounded')}</p>}
     </Dialog>
   );
 }

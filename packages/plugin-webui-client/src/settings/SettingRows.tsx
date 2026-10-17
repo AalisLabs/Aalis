@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
+import { tr } from '../language';
 import { usePluginNames } from '../plugins/list';
 import { dependencyOf, effectiveOf, formatValue, type Row, unsetOf, valueKey } from './field';
 import { SettingRow } from './SettingRow';
@@ -23,7 +24,7 @@ interface SettingRowsProps {
 function dangling(row: Row): string | undefined {
   if (row.resolved === undefined || row.effective === undefined) return undefined;
   if (valueKey(row.field, row.effective) === valueKey(row.field, row.resolved)) return undefined;
-  return `所选模型不在，正在用${formatValue(row.field, row.resolved)}`;
+  return tr('modelMissingUsing', { model: formatValue(row.field, row.resolved) });
 }
 
 export function SettingRows({ rows, layer, sourceOf, originOf, update }: SettingRowsProps) {
@@ -37,7 +38,7 @@ export function SettingRows({ rows, layer, sourceOf, originOf, update }: Setting
       source={row.source && sourceOf?.(row.source)}
       origin={row.source && originOf?.(row.source)}
       note={dangling(row)}
-      reset={row.source === layer ? '恢复继承' : undefined}
+      reset={row.source === layer ? tr('resetInherit') : undefined}
       dependency={dependencyOf(rows, row)}
       unset={unsetOf(row)}
       save={value => update(row.key, value)}
@@ -55,11 +56,11 @@ export function SettingRows({ rows, layer, sourceOf, originOf, update }: Setting
       {advanced.length > 0 && (
         <div className="settings-advanced">
           <Disclosure expanded={advancedOpen} onToggle={() => setAdvancedOpen(!advancedOpen)}>
-            高级
+            {tr('advanced')}
           </Disclosure>
           {advancedOpen && names.error && (
             <p className="settings-advanced-note" role="alert">
-              插件的显示名没取到（{names.error.message}），按插件实例 id 分组
+              {tr('pluginNamesFailedGroup', { error: names.error.message })}
             </p>
           )}
           {advancedOpen &&

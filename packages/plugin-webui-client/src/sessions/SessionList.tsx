@@ -11,6 +11,7 @@ import { listTime } from '../format';
 import { AttentionSummary } from '../health/AttentionList';
 import { GetStarted } from '../health/GetStarted';
 import { shortcutLabel } from '../keys';
+import { text, tr } from '../language';
 import { PinnedList } from '../pages/Pinned';
 import type { RoomGroup, SessionSummary } from '../protocol/session-client';
 import {
@@ -22,7 +23,7 @@ import {
   routes,
   useSessionAddress,
 } from '../routes';
-import { countNote, HOST_ENTRIES, useEntryCounts } from '../shell/entries';
+import { entryName, HOST_ENTRIES, useEntryCounts } from '../shell/entries';
 import { SessionGate, SessionsFetchError } from '../shell/SessionGate';
 import { Left, usePhone, useShell } from '../shell/Shell';
 import { useSessionActions } from './actions';
@@ -44,19 +45,23 @@ export function SessionList() {
   const phone = usePhone();
   const newSession = () => navigate(paths.newSession);
   return (
-    <Left label="会话">
+    <Left label={tr('sessions')}>
       {phone ? (
         <div className="header-bar session-list-header">
-          <h1 className="session-list-title">会话</h1>
-          <IconButton icon={Search} label="搜索" onClick={openSearch} />
-          <IconButton icon={Plus} label="新会话" onClick={newSession} />
+          <h1 className="session-list-title">{tr('sessions')}</h1>
+          <IconButton icon={Search} label={tr('search')} onClick={openSearch} />
+          <IconButton icon={Plus} label={tr('newSession')} onClick={newSession} />
         </div>
       ) : (
         <div className="header-bar session-list-header">
-          <Button icon={Plus} title={`新会话（${shortcutLabel('newSession')}）`} onClick={newSession}>
-            新会话
+          <Button
+            icon={Plus}
+            title={tr('withShortcut', { label: tr('newSession'), shortcut: shortcutLabel('newSession') })}
+            onClick={newSession}
+          >
+            {tr('newSession')}
           </Button>
-          <IconButton icon={Search} label="搜索" shortcut={shortcutLabel('search')} onClick={openSearch} />
+          <IconButton icon={Search} label={tr('search')} shortcut={shortcutLabel('search')} onClick={openSearch} />
         </div>
       )}
       <div className="session-list-body">
@@ -76,17 +81,19 @@ export function SessionList() {
 function Entries() {
   const countOf = useEntryCounts();
   return (
-    <List label="入口">
+    <List label={tr('entries')}>
       {HOST_ENTRIES.map(({ area, label, icon: Icon, path }) => {
         const count = countOf(area);
+        const name = text(label);
         return (
           <ListItem
             key={area}
             to={path}
             title={
-              <span className="pinned-title">
+              // 带数时读屏读后面的整句
+              <span className="pinned-title" aria-hidden={count !== undefined || undefined}>
                 <Icon aria-hidden />
-                {label}
+                {name}
               </span>
             }
             meta={
@@ -95,7 +102,7 @@ function Entries() {
                   <span aria-hidden>
                     <Badge tone="attention">{count}</Badge>
                   </span>
-                  <span className="visually-hidden">{countNote(count)}</span>
+                  <span className="visually-hidden">{entryName(name, count)}</span>
                 </>
               )
             }
@@ -108,15 +115,15 @@ function Entries() {
 
 function Sections() {
   const mine = useMine();
-  if (mine.error) return <SessionsFetchError what="会话列表" error={mine.error} retry={mine.retry} />;
+  if (mine.error) return <SessionsFetchError what={tr('sessionList')} error={mine.error} retry={mine.retry} />;
   if (!mine.sessions) return null;
   return (
     <>
-      <Section title="我的">
+      <Section title={tr('mine')}>
         {mine.sessions.length === 0 ? (
-          <p className="session-list-note">还没有会话</p>
+          <p className="session-list-note">{tr('noSessions')}</p>
         ) : (
-          <List label="我的会话">
+          <List label={tr('mySessions')}>
             {mine.sessions.map(session => (
               <SessionRow key={session.id} session={session} />
             ))}
@@ -124,7 +131,7 @@ function Sections() {
         )}
       </Section>
       {mine.groups.length > 0 && (
-        <Section title="房间">
+        <Section title={tr('rooms')}>
           {mine.groups.map(group => (
             <RoomGroupItem key={JSON.stringify(addressOf(group))} group={group} />
           ))}
@@ -162,17 +169,19 @@ function RoomGroupItem({ group }: { group: RoomGroup }) {
         <Disclosure expanded={expanded} onToggle={() => setOpen(!expanded)}>
           <MessagesSquare aria-hidden />
           <span className="room-group-label">{group.label}</span>
-          <span className="room-group-count">{`${group.rooms} 个房间`}</span>
+          <span className="room-group-count">{tr('roomCount', { count: group.rooms })}</span>
         </Disclosure>
         {group.attention > 0 && (
           <span className="room-group-attention">
-            <Badge tone="attention">{group.attention}</Badge>
-            <span className="visually-hidden">个需要处理</span>
+            <span aria-hidden>
+              <Badge tone="attention">{group.attention}</Badge>
+            </span>
+            <span className="visually-hidden">{tr('roomAttention', { count: group.attention })}</span>
           </span>
         )}
         <IconButton
           icon={Table2}
-          label={`用表格查看「${group.label}」的全部房间`}
+          label={tr('roomTable', { group: group.label })}
           aria-current={tableOpen ? 'page' : undefined}
           onClick={() => navigate(paths.rooms(address))}
         />
@@ -186,7 +195,7 @@ function GroupRooms({ query, label, accounts }: { query: RoomGroupAddress; label
   const list = useSessionList(query);
   const current = useSessionAddress()?.sessionId;
   const [all, setAll] = useState(false);
-  if (list.error) return <SessionsFetchError what="会话列表" error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what={tr('sessionList')} error={list.error} retry={list.retry} />;
   if (!list.sessions) return null;
   const now = Date.now();
   const surfaced = list.sessions.filter(
@@ -207,7 +216,7 @@ function GroupRooms({ query, label, accounts }: { query: RoomGroupAddress; label
       {rest > 0 && (
         <li>
           <button type="button" className="room-group-more" onClick={() => setAll(!all)}>
-            {all ? '收起' : `其余 ${rest} 个`}
+            {all ? tr('showLess') : tr('restCount', { count: rest })}
           </button>
         </li>
       )}
@@ -218,10 +227,10 @@ function GroupRooms({ query, label, accounts }: { query: RoomGroupAddress; label
 function Archive() {
   const [open, setOpen] = useState(false);
   return (
-    <section aria-label="已归档">
+    <section aria-label={tr('archived')}>
       <div className="section-heading">
         <Disclosure expanded={open} onToggle={() => setOpen(!open)}>
-          已归档
+          {tr('archived')}
         </Disclosure>
       </div>
       {open && <ArchivedSessions />}
@@ -231,11 +240,11 @@ function Archive() {
 
 function ArchivedSessions() {
   const list = useSessionList({ archived: true });
-  if (list.error) return <SessionsFetchError what="会话列表" error={list.error} retry={list.retry} />;
+  if (list.error) return <SessionsFetchError what={tr('sessionList')} error={list.error} retry={list.retry} />;
   if (!list.sessions) return null;
-  if (list.sessions.length === 0) return <p className="session-list-note">没有归档的会话</p>;
+  if (list.sessions.length === 0) return <p className="session-list-note">{tr('noArchived')}</p>;
   return (
-    <List label="已归档">
+    <List label={tr('archived')}>
       {list.sessions.map(session => (
         <SessionRow key={session.id} session={session} />
       ))}
@@ -261,13 +270,13 @@ function SessionRow({ session, account }: { session: SessionSummary; account?: b
   const room = session.kind === 'room';
   const items = session.archived
     ? [
-        { label: '恢复', onSelect: () => actions.unarchive([session]) },
-        { label: '删除', danger: true, onSelect: () => actions.remove([session]) },
+        { label: tr('restore'), onSelect: () => actions.unarchive([session]) },
+        { label: tr('delete'), danger: true, onSelect: () => actions.remove([session]) },
       ]
     : [
-        { label: '改名', onSelect: () => actions.rename(session) },
-        { label: '归档', onSelect: () => actions.archive([session]) },
-        { label: '删除', danger: true, onSelect: () => actions.remove([session]) },
+        { label: tr('rename'), onSelect: () => actions.rename(session) },
+        { label: tr('archive'), onSelect: () => actions.archive([session]) },
+        { label: tr('delete'), danger: true, onSelect: () => actions.remove([session]) },
       ];
   return (
     <ListItem
@@ -282,7 +291,7 @@ function SessionRow({ session, account }: { session: SessionSummary; account?: b
       meta={room ? said || time : time}
       marker={status === 'running' ? undefined : status}
       current={current}
-      menu={<Menu label="更多" items={items} />}
+      menu={<Menu label={tr('more')} items={items} />}
     />
   );
 }

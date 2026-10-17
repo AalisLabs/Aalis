@@ -16,6 +16,7 @@ import { useConnection, useFeatures, useSessionClient } from '../connection';
 import { AttentionSummary } from '../health/AttentionList';
 import { GetStarted } from '../health/GetStarted';
 import { composing, shortcutLabel } from '../keys';
+import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { RequestError, type SessionSummary, unlessLost } from '../protocol/session-client';
 import { paths, useSessionAddress } from '../routes';
@@ -24,6 +25,7 @@ import { BackgroundStatus, backgroundLabel } from '../sessions/status';
 import { useSettingRows } from '../settings/setting-rows';
 import { SessionGate } from '../shell/SessionGate';
 import { Main, usePhone, useShell } from '../shell/Shell';
+import { t } from '../texts';
 import { Composer, type ComposerHandle, ComposerSettings, type OutgoingAttachment } from './Composer';
 import { clearSent, NEW_SESSION } from './drafts';
 import { useLiveSession } from './live-session';
@@ -52,7 +54,7 @@ export function NewSession() {
   };
   return (
     <Main>
-      <Panel title="新会话" back={paths.home} footer={<Composer sessionId={NEW_SESSION} send={send} />}>
+      <Panel title={tr('newSession')} back={paths.home} footer={<Composer sessionId={NEW_SESSION} send={send} />}>
         {!phone && <GetStarted />}
         {!phone && <AttentionSummary />}
         <SessionGate>{null}</SessionGate>
@@ -129,7 +131,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
     client.request('turn/abort', { sessionId, ...(turnId === undefined ? {} : { turnId }) }).catch((err: Error) => {
       // 这一轮已经结束了
       if (err instanceof RequestError && err.reason === 'expected-turn-mismatch') return;
-      toast({ kind: 'danger', text: `停止失败：${err.message}`, source: sessions });
+      toast({ kind: 'danger', text: tr('actionFailed', { action: t('stop'), error: err.message }), source: sessions });
     });
   }, [client, sessionId, turnId, toast, sessions]);
 
@@ -183,11 +185,15 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const logged = phone ? own.find(task => task.id === log) : undefined;
   const parent = summary?.ancestors?.at(-1);
   const compress = () =>
-    client
-      .request('session/compress', { sessionId })
-      .catch((err: Error) => toast({ kind: 'danger', text: `压缩失败：${err.message}`, source: sessions }));
+    client.request('session/compress', { sessionId }).catch((err: Error) =>
+      toast({
+        kind: 'danger',
+        text: tr('actionFailed', { action: t('compaction'), error: err.message }),
+        source: sessions,
+      }),
+    );
 
-  const foldLabel = fold.all ? '全部折叠' : '全部展开';
+  const foldLabel = fold.all ? tr('collapseAll') : tr('expandAll');
   const toggleFold = () => fold.setAll(!fold.all);
   // 手机的顶栏右边只放用量与「更多」，全部展开与会话面板收进「更多」
   const menu = summary && [
@@ -196,15 +202,15 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
           ...(background > 0 ? [{ label: backgroundLabel(background), onSelect: openBackground }] : []),
           { label: foldLabel, onSelect: toggleFold },
           // 标签都关了时停在面板上，从「+」打开
-          { label: '会话面板', onSelect: () => navigate(tabs.pathOf((tabs.bar[0] ?? tabs.add[0]).ref)) },
+          { label: tr('sessionPanel'), onSelect: () => navigate(tabs.pathOf((tabs.bar[0] ?? tabs.add[0]).ref)) },
         ]
       : []),
-    { label: '改名', onSelect: () => actions.rename(summary) },
+    { label: tr('rename'), onSelect: () => actions.rename(summary) },
     summary.archived
-      ? { label: '恢复', onSelect: () => actions.unarchive([summary]) }
-      : { label: '归档', onSelect: () => actions.archive([summary]) },
-    ...(features.compress ? [{ label: '压缩对话', onSelect: () => void compress() }] : []),
-    { label: '删除', danger: true, onSelect: () => actions.remove([summary]) },
+      ? { label: tr('restore'), onSelect: () => actions.unarchive([summary]) }
+      : { label: tr('archive'), onSelect: () => actions.archive([summary]) },
+    ...(features.compress ? [{ label: tr('compactConversation'), onSelect: () => void compress() }] : []),
+    { label: tr('delete'), danger: true, onSelect: () => actions.remove([summary]) },
   ];
 
   return (
@@ -215,12 +221,12 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
           meta={summary && whereOf(summary)}
           back={parent ? paths.session(parent.id) : paths.home}
           anchor="end"
-          banner={summary?.kind === 'room' && `你正在以 owner 身份在「${summary.title}」发言，按群的人设和能力运行`}
+          banner={summary?.kind === 'room' && tr('ownerInRoom', { room: summary.title })}
           actions={
             <>
-              {running && <LoaderCircle className="spin" role="img" aria-label="正在运行" />}
+              {running && <LoaderCircle className="spin" role="img" aria-label={tr('turnRunning')} />}
               {background > 0 && !phone && (
-                <button type="button" className="header-meter" title="打开「后台」标签" onClick={openBackground}>
+                <button type="button" className="header-meter" title={tr('openBackgroundTab')} onClick={openBackground}>
                   <BackgroundStatus count={background} />
                 </button>
               )}
@@ -234,13 +240,13 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
                   />
                   <IconButton
                     icon={PanelRight}
-                    label="会话面板"
+                    label={tr('sessionPanel')}
                     shortcut={shortcutLabel('toggleRight')}
                     onClick={() => shell.toggle('right')}
                   />
                 </>
               )}
-              {menu && <Menu label="更多" items={menu} dot={phone && background > 0} />}
+              {menu && <Menu label={tr('more')} items={menu} dot={phone && background > 0} />}
             </>
           }
           footer={
@@ -267,7 +273,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
         >
           <SessionGate>
             {live.error ? (
-              <FetchError what="会话" error={live.error} retry={live.retry} source={sessions} />
+              <FetchError what={tr('session')} error={live.error} retry={live.retry} source={sessions} />
             ) : (
               summary && (
                 <Timeline
@@ -302,7 +308,12 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
         onLog={setLog}
       />
       {phone && tab === 'usage' && usage && (
-        <Dialog open title="上下文用量" onClose={closeUsage} footer={<Button onClick={closeUsage}>关闭</Button>}>
+        <Dialog
+          open
+          title={tr('contextUsage')}
+          onClose={closeUsage}
+          footer={<Button onClick={closeUsage}>{tr('close')}</Button>}
+        >
           <UsageTable usage={usage} session={summary} />
         </Dialog>
       )}
@@ -312,7 +323,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
           size="full"
           title={taskName(logged)}
           onClose={() => setLog(undefined)}
-          footer={<Button onClick={() => setLog(undefined)}>关闭</Button>}
+          footer={<Button onClick={() => setLog(undefined)}>{tr('close')}</Button>}
         >
           <TaskLog task={logged} />
         </Dialog>

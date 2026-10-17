@@ -51,7 +51,8 @@ export interface PanelSession {
 
 /**
  * 单元格的显示种类，封闭集合，不写为 `text`：
- * - `time`：毫秒时间戳或 ISO 字符串，显示为本地时间；`countdown`：毫秒时间戳，显示剩余时间，到零不重取；
+ * - `time`：毫秒时间戳或带时区偏移（`Z` 或 `±HH:MM`）的 ISO 字符串，按服务进程的时区显示，不带偏移的串按文本；
+ *   `countdown`：毫秒时间戳，显示剩余时间，到零不重取；
  * - `link`：只认 http、https，新标签打开，其余按文本；`status`：{@link StatusValue}；`code`：等宽；
  *   `long-text`：单行省略，可以展开；
  * - `image`：值是存储地址，宿主换成 `/api/media` 地址，按需懒加载；

@@ -1,5 +1,7 @@
 import type { SettingRow } from '@aalis/api-session-protocol';
 import type { Localized } from '@aalis/schema-i18n';
+import { listText } from '../format';
+import { tr } from '../language';
 import { isRecord } from '../rest';
 
 // 设置项与页面动作输入的字段（schema-config 的词汇）：取值写成一句、选项的键，以及可选项接口回应的解析。前端不认识任何
@@ -24,7 +26,8 @@ export interface Option {
 export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
 
 /** 选项在列表里的写法：可选项接口标了默认的那一项注明是默认 */
-export const optionLabel = (option: Option) => (option.isDefault ? `${option.label}（默认）` : option.label);
+export const optionLabel = (option: Option) =>
+  option.isDefault ? tr('optionDefault', { label: option.label }) : option.label;
 
 /** 一行的生效值：哪一层都没设时按字段的默认值 */
 export const effectiveOf = (row: Row) => (row.source === undefined ? row.field.default : row.effective);
@@ -34,7 +37,7 @@ export const effectiveOf = (row: Row) => (row.source === undefined ? row.field.d
  * 「没设时」
  */
 export const unsetOf = (row: Row) =>
-  row.resolved === undefined ? row.unset : `默认（${formatValue(row.field, row.resolved)}）`;
+  row.resolved === undefined ? row.unset : tr('unsetResolved', { value: formatValue(row.field, row.resolved) });
 
 /** 可选项依赖的另一项（设置项的 dependsOn）：它的名字与生效值 */
 export interface Dependency {
@@ -65,8 +68,8 @@ export function valueKey(field: Field, value: unknown): string {
 export function staticOptions(field: Field): Option[] {
   if (field.type === 'boolean') {
     return [
-      { key: 'true', label: '开', value: true },
-      { key: 'false', label: '关', value: false },
+      { key: 'true', label: tr('switchOn'), value: true },
+      { key: 'false', label: tr('switchOff'), value: false },
     ];
   }
   return (field.options ?? []).map(option => ({ key: String(option.value), label: option.label, value: option.value }));
@@ -85,7 +88,7 @@ export function parseNames(body: unknown): Option[] {
  * （标了 default 的是没设时生效的那一项），其余给 models 的名字列表
  */
 export function parseOptions(models: boolean, body: unknown): Option[] {
-  if (!isRecord(body)) throw new Error('可选项的回应不是预期的形状');
+  if (!isRecord(body)) throw new Error(tr('optionsMalformed'));
   const list = (key: string) => (Array.isArray(body[key]) ? (body[key] as unknown[]).filter(isRecord) : undefined);
   if (models) {
     const entries = (list('providers') ?? []).flatMap(entry => {
@@ -100,7 +103,7 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
     const repeated = (name: string) => entries.filter(m => m.model === name).length > 1;
     return entries.map(({ provider, model, label, capabilities }) => ({
       key: `${provider}\n${model}`,
-      label: repeated(model) ? `${model}（${label}）` : model,
+      label: repeated(model) ? tr('modelWithProvider', { model, provider: label }) : model,
       value: { provider, model },
       capabilities,
     }));
@@ -124,15 +127,13 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
   return names.map(name => ({ key: name, label: name, value: name }));
 }
 
-/** 取值写成一句：开关写开或关，选项写选项名，模型写模型名，列表用顿号连起来 */
+/** 取值写成一句：开关写开或关，选项写选项名，模型写模型名，列表与映射的各项按界面的语言连起来 */
 export function formatValue(field: Field, value: unknown, options: readonly Option[] = staticOptions(field)): string {
   const labelOf = (item: unknown) => options.find(option => option.key === valueKey(field, item))?.label;
   if (isModelField(field)) return modelOf(value)?.model ?? JSON.stringify(value);
-  if (Array.isArray(value)) return value.map(item => labelOf(item) ?? String(item)).join('、');
+  if (Array.isArray(value)) return listText(value.map(item => labelOf(item) ?? String(item)));
   if (field.type === 'map' && isRecord(value)) {
-    return Object.entries(value)
-      .map(([key, item]) => `${key}=${String(item)}`)
-      .join('、');
+    return listText(Object.entries(value).map(([key, item]) => `${key}=${String(item)}`));
   }
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return labelOf(value) ?? String(value);

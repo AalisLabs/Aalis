@@ -4,6 +4,7 @@ import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
+import { tr } from '../language';
 import { LLM, useHost } from '../plugins/list';
 import { deleteJson, isRecord, postJson, putJson, useJson } from '../rest';
 import { paths } from '../routes';
@@ -17,10 +18,6 @@ import { useSettingRows } from './setting-rows';
 // 服务偏好（有几个提供者的服务选用哪一个，界面前端也在其中）与家目录。会话设置的全局默认层里有模型字段的设置项时，
 // 模型服务的偏好就是它（默认模型），不在这里单列，写一行指向「会话默认」
 
-const PREFERENCES_NOTE =
-  '同一个服务有几个提供者时选用哪一个，改了立即生效。界面前端（webui-client）也在其中，换了以后页面会重新加载；' +
-  '新的前端用不了时，打开 /__clients 切回来。';
-
 interface HostConfigView {
   /** 配置文件里写了的核心键 */
   config: Record<string, unknown>;
@@ -31,7 +28,7 @@ interface HostConfigView {
 
 function parseHostConfig(body: unknown): HostConfigView {
   if (!isRecord(body) || !isRecord(body.config) || !isRecord(body.schema) || !Array.isArray(body.restartKeys)) {
-    throw new Error('宿主配置的回应不是预期的形状');
+    throw new Error(tr('hostConfigMalformed'));
   }
   return {
     config: body.config,
@@ -52,13 +49,21 @@ export function SystemSection() {
   const host = useHost();
   return (
     <div className="page-screen settings-screen">
-      {error && <FetchError what="宿主配置" error={error} retry={refetch} stale={value !== undefined} source={host} />}
+      {error && (
+        <FetchError
+          what={tr('hostConfiguration')}
+          error={error}
+          retry={refetch}
+          stale={value !== undefined}
+          source={host}
+        />
+      )}
       {value && <HostConfig view={value} saved={refetch} />}
       <ServicePreferences />
       {value?.home && (
-        <Block title="家目录">
+        <Block title={tr('homeDirectory')}>
           <p className="settings-path">{value.home}</p>
-          <p className="settings-note">配置文件、密钥、插件的数据与日志都在这里。</p>
+          <p className="settings-note">{tr('homeDirectoryNote')}</p>
         </Block>
       )}
     </div>
@@ -84,12 +89,12 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
     });
   };
   return (
-    <Block title="宿主配置">
+    <Block title={tr('hostConfiguration')}>
       {restartNeeded && (
         <div className="settings-restart" role="status">
-          <span>改动重启以生效</span>
+          <span>{tr('restartToApply')}</span>
           <Button variant="primary" busy={restarting} onClick={restart}>
-            重启
+            {tr('restartApp')}
           </Button>
         </div>
       )}
@@ -99,9 +104,9 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
             key={key}
             field={field}
             value={written(key) ? view.config[key] : field.default}
-            source={written(key) ? '配置文件' : '默认'}
-            timing={view.restartKeys.includes(key) ? '重启后生效' : undefined}
-            reset={written(key) ? '恢复默认' : undefined}
+            source={written(key) ? tr('configFile') : tr('sourceDefault')}
+            timing={view.restartKeys.includes(key) ? tr('appliesAfterRestart') : undefined}
+            reset={written(key) ? tr('resetDefault') : undefined}
             save={save(key)}
           />
         ))}
@@ -134,18 +139,25 @@ function ServicePreferences() {
     refetch();
   };
   return (
-    <Block title="服务偏好">
-      <p className="settings-note">{PREFERENCES_NOTE}</p>
+    <Block title={tr('servicePreferences')}>
+      <p className="settings-note">{tr('servicePreferencesHostNote')}</p>
       {delegated && (
         <p className="settings-note">
-          默认模型在「会话默认」里设
+          {tr('defaultModelNote')}
           <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
-            去会话默认
+            {tr('goToSessionDefaults')}
           </ButtonLink>
         </p>
       )}
       {error && (
-        <FetchError what="服务列表" error={error} retry={refetch} stale={value !== undefined} inline source={host} />
+        <FetchError
+          what={tr('serviceList')}
+          error={error}
+          retry={refetch}
+          stale={value !== undefined}
+          inline
+          source={host}
+        />
       )}
       <div className="settings-rows">
         {services.map(service => {
@@ -159,8 +171,8 @@ function ServicePreferences() {
                 options: service.providers.map(provider => ({ label: provider.label, value: provider.contextId })),
               }}
               value={service.providers[0]?.contextId}
-              source={preferred ? '服务偏好' : '默认'}
-              reset={service.preferred === null ? undefined : '恢复默认'}
+              source={preferred ? tr('servicePreferences') : tr('sourceDefault')}
+              reset={service.preferred === null ? undefined : tr('resetDefault')}
               save={save(service.name)}
             />
           );

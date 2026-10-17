@@ -6,17 +6,19 @@ import {
   type PageView,
   type PanelTabRef,
 } from '@aalis/api-webui';
-import type { Localized } from '@aalis/schema-i18n';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import { useEffect, useReducer, useRef } from 'react';
 import { type NavigateOptions, useNavigate } from 'react-router';
 import { useBack } from '../back';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
+import { text, tr } from '../language';
 import { pageName, refOf, sameRef, usePages } from '../pages/registry';
 import { useHost } from '../plugins/list';
 import { isRecord, useJson } from '../rest';
 import { paths } from '../routes';
 import { usePhone } from '../shell/Shell';
+import { t } from '../texts';
 import type { PlanItem, UsageItem } from './live-session';
 
 // 会话右侧面板的标签：宿主的标签与插件的会话面板走同一张表（布局记录的 panelTabs，按 owner 排的顺序、各带开关），
@@ -32,17 +34,17 @@ interface HostData {
 }
 
 /** 宿主的标签：名字，与此刻可不可用 */
-const HOST_TABS: Record<HostPanelTab, { title: string; available(data: HostData): boolean }> = {
-  plan: { title: '计划', available: ({ plan }) => plan !== undefined && plan.entries.length > 0 },
-  settings: { title: '设置', available: () => true },
+const HOST_TABS: Record<HostPanelTab, { title: TextRef; available(data: HostData): boolean }> = {
+  plan: { title: t('plan'), available: ({ plan }) => plan !== undefined && plan.entries.length > 0 },
+  settings: { title: t('settings'), available: () => true },
   // 手机上用量从会话头的百分比打开底部抽屉
-  usage: { title: '用量', available: ({ usage, phone }) => usage !== undefined && !phone },
-  background: { title: '后台', available: ({ background }) => background },
+  usage: { title: t('usage'), available: ({ usage, phone }) => usage !== undefined && !phone },
+  background: { title: t('background'), available: ({ background }) => background },
 };
 
 /** 宿主标签的名字；前端还不认识的宿主标签（webui-server 比前端新）没有 */
 export const hostTabTitle = (host: string): string | undefined =>
-  Object.hasOwn(HOST_TABS, host) ? HOST_TABS[host as HostPanelTab].title : undefined;
+  Object.hasOwn(HOST_TABS, host) ? text(HOST_TABS[host as HostPanelTab].title) : undefined;
 
 /** 布局记录没取到时：宿主的标签都开着 */
 const NEW_RECORD: LayoutRecords['panelTabs'] = HOST_PANEL_TABS.map(host => ({ tab: { host }, open: true }));
@@ -98,7 +100,7 @@ function composeTabs(
 }
 
 function parseRefs(body: unknown): PageRef[] {
-  if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error('会话面板的回应不是预期的形状');
+  if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error(tr('sessionPanelMalformed'));
   return body.pages as PageRef[];
 }
 
@@ -165,7 +167,14 @@ export function useSessionTabs(sessionId: string, data: Omit<HostData, 'phone'>)
         if (mounted.current) then();
       },
       (err: Error) =>
-        toast({ kind: 'danger', text: `${op === 'open-tab' ? '打开' : '关闭'}标签失败：${err.message}`, source: host }),
+        toast({
+          kind: 'danger',
+          text: tr('actionFailed', {
+            action: t(op === 'open-tab' ? 'panelTabOpen' : 'panelTabClose'),
+            error: err.message,
+          }),
+          source: host,
+        }),
     );
   const pathOf = (ref: PanelTabRef) =>
     'host' in ref ? paths.session(sessionId, ref.host) : paths.sessionPanel(sessionId, ref);

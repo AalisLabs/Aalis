@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { SERVICE_ABSENT, useConnection, useConnectionState } from '../connection';
+import { tr } from '../language';
 import './ConnectionBar.css';
 
 // 窗口顶部的连接状态（横跨图标栏与各栏）：会话连接或管理连接断开、重连中时出现，重连上写「已恢复」两秒后收起，
@@ -28,20 +29,15 @@ export function ConnectionBar() {
   }, [notice]);
 
   const [tone, text] = restarting
-    ? ['warning', '正在重启，连上后自动刷新页面']
+    ? ['warning', tr('connectionRestarting')]
     : notice === 'lost'
-      ? [
-          'warning',
-          refused
-            ? '连接一直被服务端拒绝，页面的其他请求却正常：经反向代理访问时，检查代理是否转发了原始的 Host 请求头'
-            : '连接断开，正在重连…',
-        ]
+      ? ['warning', refused ? tr('connectionRefused') : tr('connectionReconnecting')]
       : notice === 'recovered'
-        ? ['success', '已恢复']
+        ? ['success', tr('connectionRecovered')]
         : [undefined, ''];
 
   return (
-    <div className="connection-bar" role="status" aria-label="连接状态" data-tone={tone}>
+    <div className="connection-bar" role="status" aria-label={tr('connectionStatus')} data-tone={tone}>
       {text}
     </div>
   );

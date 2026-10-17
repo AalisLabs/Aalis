@@ -10,6 +10,7 @@ import type { Localized } from '@aalis/schema-i18n';
 import { Plus } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/Button';
+import { tr } from '../language';
 import { isRecord, putJson, RestError } from '../rest';
 import { type FieldCommon, FieldInput, FieldRow, UNREADABLE } from '../settings/FieldInput';
 import { type PluginRow, usePlugins } from './list';
@@ -123,10 +124,11 @@ function countChanges(schema: ConfigSchema, base: Record<string, unknown>, draft
 const SECRET_NAME = /(apiKey|password|secret|token)(?![a-zA-Z])/i;
 
 /** 路径类字段的提示（与 schema-config 的 format 对应） */
-const FORMAT_PLACEHOLDER: Record<string, string> = {
-  'absolute-path': '绝对路径，例如 /opt/models/model.bin',
-  executable: '命令名（按 PATH 查找）或绝对路径',
-};
+function formatPlaceholder(format: SchemaField['format']): string | undefined {
+  if (format === 'absolute-path') return tr('formatAbsolutePath');
+  if (format === 'executable') return tr('formatExecutable');
+  return undefined;
+}
 
 interface ConfigFormProps {
   row: PluginRow;
@@ -173,7 +175,7 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
         .map(key => [key, draft[key] === undefined ? null : draft[key]]),
     );
     if (unreadable(patch)) {
-      setError('有写法不对的项，改好再保存');
+      setError(tr('configInvalid'));
       return;
     }
     setSaving(true);
@@ -181,7 +183,7 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
     setIssues([]);
     try {
       const reply = await putJson(`/api/plugins/${encodeURIComponent(row.instanceId)}/config`, { config: patch });
-      await onSaved(isRecord(reply) && typeof reply.message === 'string' ? reply.message : '已保存');
+      await onSaved(isRecord(reply) && typeof reply.message === 'string' ? reply.message : tr('saved'));
     } catch (err) {
       setError((err as Error).message);
       if (err instanceof RestError) setIssues(err.issues);
@@ -197,13 +199,13 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
   return (
     <div className="config-form">
       <div className="config-head">
-        <h3 className="page-block-label">配置</h3>
+        <h3 className="page-block-label">{tr('configuration')}</h3>
         {Object.keys(row.defaultConfig).length > 0 && (
           <Button
             variant="text"
             onClick={() => replaceAll(buildDraft(schema, keepStoredSecrets(schema, row.defaultConfig, row.config)))}
           >
-            恢复默认
+            {tr('resetDefault')}
           </Button>
         )}
       </div>
@@ -272,15 +274,15 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
               {error}
             </p>
           ) : (
-            <p className="config-bar-text">{changes > 0 ? `${changes} 项未保存` : result}</p>
+            <p className="config-bar-text">{changes > 0 ? tr('configUnsaved', { count: changes }) : result}</p>
           )}
           {changes > 0 && (
             <>
               <Button variant="text" disabled={saving} onClick={() => replaceAll(base)}>
-                放弃
+                {tr('discard')}
               </Button>
               <Button variant="primary" busy={saving} onClick={() => void save()}>
-                {row.state === 'disabled' ? '保存' : '保存并重载'}
+                {row.state === 'disabled' ? tr('save') : tr('saveAndReload')}
               </Button>
             </>
           )}
@@ -355,28 +357,28 @@ function ArrayBlock({ name, entry, items, changed, issues, onChange, onRevert }:
         <h4 className="config-group-title">{entry.label}</h4>
         {changed && (
           <Button variant="text" onClick={onRevert}>
-            撤销
+            {tr('undo')}
           </Button>
         )}
         <Button variant="text" icon={Plus} onClick={add}>
-          添加
+          {tr('addEntry')}
         </Button>
       </div>
       {entry.description && <p className="field-note">{entry.description}</p>}
-      {items.length === 0 && <p className="field-note">还没有条目</p>}
+      {items.length === 0 && <p className="field-note">{tr('configNoEntries')}</p>}
       {items.map((item, index) => {
         const record = isRecord(item) ? item : {};
         return (
           <div key={itemKey(item, index)} className="config-item">
             <div className="config-head">
-              <span className="config-item-title">{`第 ${index + 1} 项`}</span>
+              <span className="config-item-title">{tr('configEntry', { index: index + 1 })}</span>
               <Button
                 variant="text"
                 danger
-                aria-label={`删除第 ${index + 1} 项`}
+                aria-label={tr('configEntryDelete', { index: index + 1 })}
                 onClick={() => onChange(items.filter((_, i) => i !== index))}
               >
-                删除
+                {tr('delete')}
               </Button>
             </div>
             {Object.entries(entry.items).map(([field, spec]) => {
@@ -432,8 +434,8 @@ function ConfigRow({ name, field, value, problem, refCount, inArray, changed, on
       trailing={
         changed &&
         onRevert && (
-          <Button variant="text" aria-label={`撤销${field.label}`} onClick={onRevert}>
-            撤销
+          <Button variant="text" aria-label={tr('undoField', { label: field.label })} onClick={onRevert}>
+            {tr('undo')}
           </Button>
         )
       }
@@ -455,7 +457,7 @@ function ConfigRow({ name, field, value, problem, refCount, inArray, changed, on
             onChange={onChange}
             common={common}
             masked={field.secret === undefined && SECRET_NAME.test(name)}
-            placeholder={field.format && FORMAT_PLACEHOLDER[field.format]}
+            placeholder={formatPlaceholder(field.format)}
           />
         )
       }
@@ -508,24 +510,30 @@ function SecretInput({ field, value, onChange, common, refCount, inArray }: Secr
 
   if (!ref) {
     const fallback =
-      typeof field.default === 'string' && field.default !== '' ? `留空使用默认值 ${field.default}` : '未设置';
-    return editor(value, (field.format && FORMAT_PLACEHOLDER[field.format]) ?? fallback);
+      typeof field.default === 'string' && field.default !== ''
+        ? tr('secretDefaultHint', { value: field.default })
+        : tr('secretUnset');
+    return editor(value, formatPlaceholder(field.format) ?? fallback);
   }
-  if (blankSecret(value)) return <p className="config-secret">{`保存后清除（键 ${ref.$secret}）`}</p>;
+  if (blankSecret(value)) return <p className="config-secret">{tr('secretClearOnSave', { key: ref.$secret })}</p>;
   if (isSecretRef(value) && !replacing) {
     return (
       <div className="config-secret">
-        <span>{`已设置（键 ${ref.$secret}）`}</span>
-        <Button variant="text" aria-label={`更换${field.label}`} onClick={() => setReplacing(true)}>
-          更换
+        <span>{tr('secretSet', { key: ref.$secret })}</span>
+        <Button
+          variant="text"
+          aria-label={tr('replaceField', { label: field.label })}
+          onClick={() => setReplacing(true)}
+        >
+          {tr('secretReplace')}
         </Button>
         <Button
           variant="text"
           danger
-          aria-label={`清除${field.label}`}
+          aria-label={tr('clearField', { label: field.label })}
           onClick={() => onChange(field.type === 'list' ? [] : field.type === 'map' ? {} : '')}
         >
-          清除
+          {tr('secretClear')}
         </Button>
       </div>
     );
@@ -533,12 +541,16 @@ function SecretInput({ field, value, onChange, common, refCount, inArray }: Secr
   const kept = isSecretRef(value);
   return (
     <>
-      {editor(kept ? undefined : value, lines ? '整份重填；留空保持原值' : '输入新值替换；留空保持原值')}
+      {editor(kept ? undefined : value, lines ? tr('secretRefill') : tr('secretReplaceHint'))}
       <p className="field-note">
-        {`键 ${ref.$secret} · ${kept ? '留空保持原值' : inArray ? '保存后存为新键' : '保存后替换这个键的值'}`}
+        {kept
+          ? tr('secretKeyKept', { key: ref.$secret })
+          : inArray
+            ? tr('secretKeyNew', { key: ref.$secret })
+            : tr('secretKeyReplaced', { key: ref.$secret })}
       </p>
       {!inArray && refCount > 1 && (
-        <p className="config-warning">{`此密钥被 ${refCount} 处引用，替换会同时改到另外 ${refCount - 1} 处`}</p>
+        <p className="config-warning">{tr('secretShared', { count: refCount, others: refCount - 1 })}</p>
       )}
     </>
   );

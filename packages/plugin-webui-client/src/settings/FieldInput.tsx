@@ -4,6 +4,7 @@ import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { composing } from '../keys';
+import { tr } from '../language';
 import { isRecord, postJson } from '../rest';
 import { type Field, isModelField, type Option, optionLabel, valueKey, withChosen, withCurrent } from './field';
 import { useFieldOptions } from './options';
@@ -97,7 +98,14 @@ function OwnOptions(props: FieldInputProps) {
 }
 
 /** 选择：不是必填的可以选空的一项（交出 undefined）；empty 是空的那一项的名字 */
-function Choices({ field, value, onChange, common, options, empty = '不选' }: ChoiceProps & { empty?: string }) {
+function Choices({
+  field,
+  value,
+  onChange,
+  common,
+  options,
+  empty = tr('selectNone'),
+}: ChoiceProps & { empty?: string }) {
   const choices = withCurrent(field, options.options, value, options.names);
   return (
     <>
@@ -108,10 +116,10 @@ function Choices({ field, value, onChange, common, options, empty = '不选' }: 
           ...(field.required ? [] : [{ value: '', label: empty }]),
           ...choices.map(option => ({ value: option.key, label: optionLabel(option) })),
         ]}
-        placeholder="请选择"
+        placeholder={tr('selectPlaceholder')}
         onChange={key => onChange(choices.find(option => option.key === key)?.value)}
       />
-      {options.error && <p className="field-note">可选项没取到：{options.error.message}</p>}
+      {options.error && <p className="field-note">{tr('optionsFailed', { error: options.error.message })}</p>}
     </>
   );
 }
@@ -129,17 +137,22 @@ function ModelInput(props: ChoiceProps) {
           const counts = isRecord(reply) ? reply : {};
           const added = Array.isArray(counts.added) ? counts.added.length : 0;
           const removed = Array.isArray(counts.removed) ? counts.removed.length : 0;
-          toast({ kind: 'success', text: `模型列表已刷新：新增 ${added} 个、移除 ${removed} 个` });
+          toast({ kind: 'success', text: tr('modelsRefreshed', { added, removed }) });
           props.options.refetch();
         },
-        (err: Error) => toast({ kind: 'danger', text: `刷新模型列表失败：${err.message}`, source: provider }),
+        (err: Error) =>
+          toast({
+            kind: 'danger',
+            text: tr('actionFailed', { action: tr('refreshModels'), error: err.message }),
+            source: provider,
+          }),
       )
       .finally(() => setBusy(false));
   };
   return (
     <div className="field-model">
-      <Choices {...props} empty="跟随默认" />
-      <IconButton icon={RotateCw} label="刷新模型列表" disabled={!provider || busy} onClick={refresh} />
+      <Choices {...props} empty={tr('followDefault')} />
+      <IconButton icon={RotateCw} label={tr('refreshModels')} disabled={!provider || busy} onClick={refresh} />
     </div>
   );
 }
@@ -168,8 +181,8 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
       ))}
       {field.allowCustom && (
         <input
-          aria-label={`添加${field.label}`}
-          placeholder="添加一项，回车确认"
+          aria-label={tr('addField', { label: field.label })}
+          placeholder={tr('addOnePlaceholder')}
           value={custom}
           onChange={e => setCustom(e.target.value)}
           onKeyDown={e => {
@@ -181,7 +194,7 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
           }}
         />
       )}
-      {options.error && <p className="field-note">可选项没取到：{options.error.message}</p>}
+      {options.error && <p className="field-note">{tr('optionsFailed', { error: options.error.message })}</p>}
     </fieldset>
   );
 }
@@ -205,7 +218,7 @@ function NumberInput({ value, onChange, common, placeholder }: FieldInputProps) 
           onChange(next.trim() === '' ? undefined : Number.isFinite(number) ? number : UNREADABLE);
         }}
       />
-      {unreadable && <p className="field-problem">要填一个数</p>}
+      {unreadable && <p className="field-problem">{tr('needNumber')}</p>}
     </>
   );
 }
@@ -227,7 +240,7 @@ function fromText(field: Field, text: string): string[] | Record<string, string>
   return Object.fromEntries(
     lines.map(line => {
       const at = line.indexOf('=');
-      if (at <= 0) throw new Error(`「${line}」要写成「键=值」`);
+      if (at <= 0) throw new Error(tr('mapLineInvalid', { line }));
       return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
     }),
   );
@@ -262,7 +275,7 @@ function LinesInput({ field, value, onChange, common, placeholder }: FieldInputP
     return (
       <>
         <textarea {...common} rows={3} readOnly value={JSON.stringify(value, null, 2)} />
-        <p className="field-note">含换行、空白项或不是文字的值，请在配置文件里改</p>
+        <p className="field-note">{tr('linesUnexpressible')}</p>
       </>
     );
   }
@@ -273,7 +286,7 @@ function LinesInput({ field, value, onChange, common, placeholder }: FieldInputP
         aria-invalid={problem !== undefined || common['aria-invalid']}
         rows={3}
         value={text}
-        placeholder={placeholder ?? (field.type === 'map' ? '每行一条 键=值' : '每行一项')}
+        placeholder={placeholder ?? (field.type === 'map' ? tr('mapPlaceholder') : tr('listPlaceholder'))}
         onChange={e => {
           setText(e.target.value);
           try {
@@ -319,7 +332,7 @@ export function FieldRow({ field, problem, autofocus, changed, trailing, childre
     <div className="field-row" data-changed={changed || undefined}>
       <div className="field-row-label">
         {group ? <span id={`${id}-label`}>{field.label}</span> : <label htmlFor={id}>{field.label}</label>}
-        {field.required && <span className="field-row-required">必填</span>}
+        {field.required && <span className="field-row-required">{tr('fieldRequired')}</span>}
       </div>
       <div className="field-row-control">
         {children(common)}

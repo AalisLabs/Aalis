@@ -1,5 +1,4 @@
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
-import { resolveSource } from '@aalis/schema-i18n';
 import { FolderSearch, Store } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useLocation, useParams } from 'react-router';
@@ -9,6 +8,8 @@ import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
 import { useToast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
+import { compareText } from '../format';
+import { text, tr } from '../language';
 import { instanceName } from '../pages/registry';
 import { postJson } from '../rest';
 import { paths } from '../routes';
@@ -39,7 +40,7 @@ interface PluginGroup {
 /** 组名：目录里的取字典，目录外的按 id 原样 */
 const groupName = (subsystem: string) => {
   const known = SUBSYSTEMS.get(subsystem);
-  return known ? resolveSource(known.label) : subsystem;
+  return known ? text(known.label) : subsystem;
 };
 
 /** 排序键：目录里的按目录的顺序，目录外的按名字排在后面，没声明的在最后 */
@@ -55,18 +56,18 @@ function groupsOf(rows: readonly PluginRow[]): PluginGroup[] {
   const groups = new Map<string | undefined, PluginItem[]>();
   for (const instances of byName.values()) {
     const main = instances.find(row => row.instanceId === row.name) ?? instances[0];
-    const others = instances.filter(row => row !== main).sort((a, b) => a.instanceId.localeCompare(b.instanceId));
+    const others = instances.filter(row => row !== main).sort((a, b) => compareText(a.instanceId, b.instanceId));
     groups.set(main.subsystem, [...(groups.get(main.subsystem) ?? []), { main, others }]);
   }
   return [...groups]
     .sort(([a], [b]) => {
       const [x, y] = [rank(a), rank(b)];
-      return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2]);
+      return x[0] - y[0] || x[1] - y[1] || compareText(x[2], y[2]);
     })
     .map(([subsystem, items]) => ({
       key: subsystem ?? '',
-      label: subsystem === undefined ? '其他' : groupName(subsystem),
-      items: items.sort((a, b) => labelOf(a.main).localeCompare(labelOf(b.main))),
+      label: subsystem === undefined ? tr('other') : groupName(subsystem),
+      items: items.sort((a, b) => compareText(labelOf(a.main), labelOf(b.main))),
     }));
 }
 
@@ -92,45 +93,46 @@ export function PluginTree() {
   const groups = problemsOnly ? problemsOf(all) : all;
   const rescan = () =>
     action.run(
-      '重新扫描插件目录',
+      'rescan',
+      tr('pluginTreeRescan'),
       () => postJson('/api/plugins/scan', {}),
-      reply => toast({ kind: 'success', text: messageOf(reply) ?? '已重新扫描插件目录' }),
+      reply => toast({ kind: 'success', text: messageOf(reply) ?? tr('pluginTreeRescanned') }),
     );
 
   return (
-    <Left label="插件">
+    <Left label={tr('plugins')}>
       <Panel
-        title="插件"
+        title={tr('plugins')}
         back={paths.home}
         actions={
           <IconButton
             icon={FolderSearch}
-            label="重新扫描插件目录"
+            label={tr('pluginTreeRescan')}
             disabled={action.busy !== undefined}
             onClick={() => void rescan()}
           />
         }
       >
         <div className="plugin-tree">
-          <List label="市场">
+          <List label={tr('market')}>
             <ListItem
               to={paths.market}
               current={onMarket}
               title={
                 <span className="pinned-title">
                   <Store aria-hidden />
-                  市场
+                  {tr('market')}
                 </span>
               }
             />
           </List>
           <div className="plugin-tree-filter">
-            <span aria-hidden>只看有问题的</span>
-            <Toggle label="只看有问题的" checked={problemsOnly} onChange={setProblemsOnly} />
+            <span aria-hidden>{tr('pluginTreeProblemsOnly')}</span>
+            <Toggle label={tr('pluginTreeProblemsOnly')} checked={problemsOnly} onChange={setProblemsOnly} />
           </div>
           {error && (
             <FetchError
-              what="插件列表"
+              what={tr('pluginList')}
               error={error}
               retry={() => void refresh()}
               stale={plugins !== undefined}
@@ -139,7 +141,7 @@ export function PluginTree() {
             />
           )}
           {plugins && groups.length === 0 && (
-            <p className="plugin-tree-note">{problemsOnly ? '没有出问题的插件' : '还没有安装插件'}</p>
+            <p className="plugin-tree-note">{tr(problemsOnly ? 'pluginTreeNoProblems' : 'pluginTreeEmpty')}</p>
           )}
           {groups.map(group => (
             <Group key={group.key} group={group} />
@@ -161,7 +163,7 @@ function Group({ group }: { group: PluginGroup }) {
         {group.items.map(item => (
           <InstanceRow key={item.main.instanceId} row={item.main} title={labelOf(item.main)}>
             {item.others.length > 0 && (
-              <List label={`${labelOf(item.main)}的其余实例`}>
+              <List label={tr('pluginTreeOtherInstances', { name: labelOf(item.main) })}>
                 {item.others.map(row => (
                   <InstanceRow key={row.instanceId} row={row} title={instanceName(row.instanceId) ?? row.instanceId} />
                 ))}

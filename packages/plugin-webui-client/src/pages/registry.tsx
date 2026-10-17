@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { isRecord, postJson, useJson } from '../rest';
 import { paths } from '../routes';
 
@@ -35,7 +36,7 @@ const Context = createContext<Pages | undefined>(undefined);
 
 export function usePages(): Pages {
   const pages = useContext(Context);
-  if (!pages) throw new Error('只能在 PagesProvider 里取页面');
+  if (!pages) throw new Error(tr('pagesOutsideProvider'));
   return pages;
 }
 
@@ -67,13 +68,13 @@ export const pageAddress = (page: Localized<PageView>): string | undefined =>
       : undefined;
 
 function parsePages(body: unknown): Localized<PageView>[] {
-  if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error('页面表的回应不是预期的形状');
+  if (!isRecord(body) || !Array.isArray(body.pages)) throw new Error(tr('pagesMalformed'));
   return body.pages as Localized<PageView>[];
 }
 
 function parseLayout(body: unknown): LayoutRecords {
   if (!isRecord(body) || !Array.isArray(body.pinned) || !Array.isArray(body.panelTabs)) {
-    throw new Error('布局记录的回应不是预期的形状');
+    throw new Error(tr('layoutMalformed'));
   }
   return { pinned: body.pinned, panelTabs: body.panelTabs };
 }

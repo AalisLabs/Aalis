@@ -1,5 +1,5 @@
 import type { ActionView, DeclarativePageView, PageDataByType, PageRow } from '@aalis/api-webui';
-import type { Localized } from '@aalis/schema-i18n';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 import {
   createContext,
   type ReactNode,
@@ -16,7 +16,9 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
+import { tr } from '../language';
 import { isRecord, postJson, useJson } from '../rest';
+import { t } from '../texts';
 import { ActionForm } from './ActionForm';
 
 // 一个打开着的声明式页面：取数与动作都按它的实例、key 与会话（会话面板）走。整页在手动刷新与管理连接重连后重取；
@@ -24,9 +26,6 @@ import { ActionForm } from './ActionForm';
 // 动作按 effect 推出交互：带输入的弹表单，destructive 先确认，其余直接调；发出后到回来这个动作在这一行上算进行中。
 // 成功时插件给的一句结果用 Toast 显示，失败按用户操作的失败显示（开着的表单写在表单上）。结果变了由插件 invalidate，
 // 这里不自己重取
-
-/** destructive 动作没写确认文案时，宿主的确认框写这一句（声明式页面与插件前端同一句） */
-export const DEFAULT_CONFIRM = '这个操作不能撤销。';
 
 interface Scope {
   page: Localized<DeclarativePageView>;
@@ -54,14 +53,14 @@ const RunningContext = createContext<Running | undefined>(undefined);
 /** 打开着的页面与它的会话 */
 export function usePageScope(): Scope {
   const scope = useContext(ScopeContext);
-  if (!scope) throw new Error('只能在页面里取页面的数据');
+  if (!scope) throw new Error(tr('pageScopeOutside'));
   return scope;
 }
 
 export function useActions(): Running & { actions: Readonly<Record<string, Localized<ActionView>>> } {
   const running = useContext(RunningContext);
   const { page } = usePageScope();
-  if (!running) throw new Error('只能在页面里调页面的动作');
+  if (!running) throw new Error(tr('pageActionsOutside'));
   return { ...running, actions: page.actions ?? {} };
 }
 
@@ -72,20 +71,20 @@ const pageBase = (page: Localized<DeclarativePageView>) => `/api/pages/${enc(pag
 type PageData = Localized<PageDataByType>;
 
 const PARSERS: { [T in keyof PageData]: (body: unknown) => PageData[T] } = {
-  table: body => dataOf(body, Array.isArray, '行的数组') as PageData['table'],
+  table: body => dataOf(body, Array.isArray, t('shapeRows')) as PageData['table'],
   graph: body =>
     dataOf(
       body,
       data => isRecord(data) && Array.isArray(data.nodes) && Array.isArray(data.edges),
       '{ nodes, edges }',
     ) as PageData['graph'],
-  info: body => dataOf(body, Array.isArray, '{ label, value } 的数组') as PageData['info'],
-  markdown: body => dataOf(body, data => typeof data === 'string', '文字') as string,
+  info: body => dataOf(body, Array.isArray, t('shapeInfo')) as PageData['info'],
+  markdown: body => dataOf(body, data => typeof data === 'string', t('shapeText')) as string,
 };
 
-function dataOf(body: unknown, test: (data: unknown) => boolean, shape: string): unknown {
+function dataOf(body: unknown, test: (data: unknown) => boolean, shape: string | TextRef): unknown {
   const data = isRecord(body) ? body.data : undefined;
-  if (!test(data)) throw new Error(`取回的数据不是${shape}`);
+  if (!test(data)) throw new Error(tr('pageDataShape', { shape }));
   return data;
 }
 
@@ -169,7 +168,11 @@ export function PageScope({ page, sessionId, version, children }: Scope & { chil
 
   const failed = useCallback(
     (action: Localized<ActionView>, err: unknown) =>
-      toast({ kind: 'danger', text: `${action.label}失败：${(err as Error).message}`, source: page.instance }),
+      toast({
+        kind: 'danger',
+        text: tr('actionFailed', { action: action.label, error: (err as Error).message }),
+        source: page.instance,
+      }),
     [toast, page.instance],
   );
 
@@ -239,18 +242,19 @@ function ActionDialog({
 }) {
   const formId = useId();
   const action = pending?.action;
-  const warning = action?.effect === 'destructive' ? (action.confirm ?? DEFAULT_CONFIRM) : undefined;
+  // destructive 动作没写确认文案时写宿主的默认警示，与插件前端的确认框同一句
+  const warning = action?.effect === 'destructive' ? (action.confirm ?? tr('defaultConfirm')) : undefined;
   return (
     <Dialog
       open={action !== undefined}
-      title={action ? (action.input ? action.label : `${action.label}？`) : ''}
+      title={action ? (action.input ? action.label : tr('confirmAction', { action: action.label })) : ''}
       size={action?.input ? 'form' : 'confirm'}
       onClose={onClose}
       footer={
         action && (
           <>
             <Button data-autofocus={action.input ? undefined : true} onClick={onClose}>
-              取消
+              {tr('cancel')}
             </Button>
             <Button
               variant="primary"

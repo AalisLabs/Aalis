@@ -1,5 +1,6 @@
 import { approvals } from '@aalis/api-approval';
 import type { LogFilter, WebuiAdminEvent } from '@aalis/api-webui';
+import type { TextRef } from '@aalis/schema-i18n';
 import { type FormEvent, useEffect, useReducer, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
@@ -9,10 +10,13 @@ import { FetchError } from '../components/FetchError';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnection, useConnectionState } from '../connection';
+import { compareText, fullTime, logTime } from '../format';
+import { text, tr } from '../language';
 import { withInstance } from '../pages/registry';
 import { labelOf, usePlugins, useProvider } from '../plugins/list';
 import { getJson, isRecord } from '../rest';
 import { logFilterFrom, logQuery, paths } from '../routes';
+import { t } from '../texts';
 
 // 日志标签：筛选写在地址里，服务端按它筛历史与实时推送。先订阅、再取最后一页历史，取回之前推来的按序号接在后面；
 // 管理连接重连或筛选变了就重新订阅、重取，离开时退订。最新的在底部，停在底部时新来的出现在视野里
@@ -25,12 +29,17 @@ const PAGE = 200;
 /** 页面上最多留这么多条，实时推来的多了丢最早的 */
 const KEEP = 2000;
 
-const LEVELS: Record<LogLevel, string> = { debug: '调试', info: '信息', warn: '警告', error: '错误' };
-const LEVEL_FILTERS: ReadonlyArray<{ value: LogLevel | ''; label: string }> = [
-  { value: '', label: '全部级别' },
-  { value: 'info', label: '信息及以上' },
-  { value: 'warn', label: '警告及以上' },
-  { value: 'error', label: '只看错误' },
+const LEVELS: Record<LogLevel, TextRef> = {
+  debug: t('logLevelDebug'),
+  info: t('logLevelInfo'),
+  warn: t('logLevelWarn'),
+  error: t('logLevelError'),
+};
+const LEVEL_FILTERS: ReadonlyArray<{ value: LogLevel | ''; label: TextRef }> = [
+  { value: '', label: t('logLevelAll') },
+  { value: 'info', label: t('logLevelInfoUp') },
+  { value: 'warn', label: t('logLevelWarnUp') },
+  { value: 'error', label: t('logErrorsOnly') },
 ];
 
 function parseEntries(body: unknown): LogEntry[] {
@@ -45,7 +54,7 @@ function parseEntries(body: unknown): LogEntry[] {
         typeof entry.scope === 'string' &&
         typeof entry.message === 'string',
     );
-  if (!valid) throw new Error('日志的回应不是预期的形状');
+  if (!valid) throw new Error(tr('logsMalformed'));
   return body as LogEntry[];
 }
 
@@ -128,7 +137,8 @@ function useLogs(query: string) {
               : last,
           ),
         (error: Error) => {
-          if (!controller.signal.aborted) toast({ kind: 'danger', text: `更早的日志没取到：${error.message}` });
+          if (!controller.signal.aborted)
+            toast({ kind: 'danger', text: tr('logsOlderFailed', { error: error.message }) });
         },
       )
       .finally(() => setBusy(false));
@@ -147,7 +157,7 @@ export function Logs() {
   const approver = useProvider(approvals.name);
   const options = (plugins ?? [])
     .map(plugin => ({ value: plugin.instanceId, label: withInstance(labelOf(plugin), plugin.instanceId) }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .sort((a, b) => compareText(a.label, b.label));
   if (filter.plugin && !options.some(option => option.value === filter.plugin)) {
     options.push({ value: filter.plugin, label: filter.plugin });
   }
@@ -159,61 +169,61 @@ export function Logs() {
 
   return (
     <div className="health-logs">
-      <form aria-label="筛选日志" className="health-logs-filters" onSubmit={submitText}>
-        <ButtonLink to={paths.healthLogs({ level: 'error' })}>只看错误</ButtonLink>
-        {approver && <ButtonLink to={paths.healthLogs({ plugin: approver })}>审批</ButtonLink>}
+      <form aria-label={tr('logsFilter')} className="health-logs-filters" onSubmit={submitText}>
+        <ButtonLink to={paths.healthLogs({ level: 'error' })}>{tr('logErrorsOnly')}</ButtonLink>
+        {approver && <ButtonLink to={paths.healthLogs({ plugin: approver })}>{tr('approvals')}</ButtonLink>}
         <Select
-          aria-label="级别"
+          aria-label={tr('logsLevel')}
           value={filter.level ?? ''}
-          options={LEVEL_FILTERS}
+          options={LEVEL_FILTERS.map(({ value, label }) => ({ value, label: text(label) }))}
           onChange={value => apply({ level: (value || undefined) as LogLevel | undefined })}
         />
         <Select
-          aria-label="插件"
+          aria-label={tr('plugins')}
           value={filter.plugin ?? ''}
-          options={[{ value: '', label: '全部插件' }, ...options]}
+          options={[{ value: '', label: tr('logsAllPlugins') }, ...options]}
           onChange={value => apply({ plugin: value })}
         />
         <input
           key={filter.text ?? ''}
           type="search"
           name="text"
-          aria-label="文字"
-          placeholder="日志里的文字，回车筛选"
+          aria-label={tr('logsText')}
+          placeholder={tr('logsTextPlaceholder')}
           defaultValue={filter.text ?? ''}
         />
         {query && (
           <ButtonLink to={paths.healthLogs()} variant="text">
-            清除筛选
+            {tr('clearFilters')}
           </ButtonLink>
         )}
       </form>
       {error ? (
         // 日志本身没取到，「查看日志」帮不上
-        <FetchError what="日志" error={error} retry={retry} />
+        <FetchError what={tr('logs')} error={error} retry={retry} />
       ) : (
         loaded &&
         (loaded.entries.length === 0 ? (
           <EmptyState
-            title={query ? '没有符合筛选的日志' : '还没有日志'}
-            description={query ? '换个筛选，或清除筛选看全部。' : '新的日志会实时出现在这里。'}
+            title={tr(query ? 'logsNoMatch' : 'logsEmpty')}
+            description={tr(query ? 'logsNoMatchHint' : 'logsEmptyHint')}
           />
         ) : (
           <div className="health-logs-scroll">
             <div className="health-logs-content">
               {loaded.more && (
                 <Button variant="text" busy={busy} onClick={loadOlder}>
-                  更早的日志
+                  {tr('logsOlder')}
                 </Button>
               )}
-              <ol className="log-list" aria-label="日志">
+              <ol className="log-list" aria-label={tr('logs')}>
                 {loaded.entries.map(entry => (
                   <li key={entry.seq} className="log-line" data-level={entry.level}>
                     <span className="log-meta">
-                      <time dateTime={entry.timestamp} title={entry.timestamp}>
-                        {entry.timestamp.slice(11, 19)}
+                      <time dateTime={entry.timestamp} title={fullTime(Date.parse(entry.timestamp))}>
+                        {logTime(Date.parse(entry.timestamp))}
                       </time>
-                      <span className="log-level">{LEVELS[entry.level]}</span>
+                      <span className="log-level">{text(LEVELS[entry.level])}</span>
                       <span className="log-scope" title={entry.scope}>
                         {entry.scope}
                       </span>

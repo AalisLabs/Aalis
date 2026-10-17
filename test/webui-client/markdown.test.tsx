@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { setLanguage } from '../../packages/plugin-webui-client/src/language.js';
 import { Markdown } from '../../packages/plugin-webui-client/src/markdown/Markdown.js';
 
 // ════════════════════════════════════════════════════════════
@@ -137,6 +138,14 @@ describe('Markdown', () => {
     show('```mermaid\ngraph ???\n```');
     expect(await screen.findByText(/语法不对/)).toBeTruthy();
     expect(screen.getByText('graph ???')).toBeTruthy();
+  });
+
+  it('英文界面：Mermaid 渲染失败的说明按英文写，原因照原样', async () => {
+    setLanguage({ chain: ['en'], timeZone: 'UTC', packs: new Map() });
+    onTestFinished(() => setLanguage({ chain: [], timeZone: 'UTC', packs: new Map() }));
+    mermaid.parse.mockRejectedValueOnce(new Error('bad syntax'));
+    show('```mermaid\ngraph ???\n```');
+    expect(await screen.findByText('The diagram couldn’t be drawn: bad syntax')).toBeTruthy();
   });
 
   it('正在输出时 Mermaid 只显示源码、不解析：半截的图不闪错误；输出完才画', async () => {

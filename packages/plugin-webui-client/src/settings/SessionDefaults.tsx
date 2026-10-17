@@ -1,6 +1,7 @@
 import type { SettingLayer } from '@aalis/api-session-protocol';
 import { useId, useMemo, useState } from 'react';
 import { Select } from '../components/Select';
+import { tr } from '../language';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { LayerRows } from './LayerRows';
 import { type LayerOrder, layerLabel, useLayers } from './layers';
@@ -16,10 +17,7 @@ const keyOf = (layer: SettingLayer): string => JSON.stringify(layer, Object.keys
 
 /** 继承先后的说明：层表按先后排，说明从压过别人的那一层说起 */
 const orderNote = (order: LayerOrder) =>
-  `会话设置按${order
-    .map(entry => entry.label)
-    .toReversed()
-    .join('、')}的先后，取第一个设了值的一层；哪一层都没设时按各项自己的默认。改动从下一轮起生效。`;
+  tr('settingsOrderNote', { layers: order.map(entry => entry.label).toReversed() });
 
 export function SessionDefaults() {
   const pickerId = useId();
@@ -31,13 +29,13 @@ export function SessionDefaults() {
 
   return (
     <div className="page-screen settings-screen">
-      {error && <SessionsFetchError what="会话默认的层" error={error} retry={retry} />}
+      {error && <SessionsFetchError what={tr('sessionDefaultLayers')} error={error} retry={retry} />}
       {value && (
         <>
           <div className="settings-head">
             <p className="settings-note">{orderNote(value.order)}</p>
             <div className="settings-field">
-              <label htmlFor={pickerId}>层</label>
+              <label htmlFor={pickerId}>{tr('layerPicker')}</label>
               <Select
                 id={pickerId}
                 value={chosen}
@@ -45,9 +43,9 @@ export function SessionDefaults() {
                 onChange={setChosen}
               />
             </div>
-            {layer.scope !== 'defaults' && <p className="settings-note">平台档按平台名生效，不区分实例。</p>}
+            {layer.scope !== 'defaults' && <p className="settings-note">{tr('platformLayerNote')}</p>}
           </div>
-          <LayerRows layer={layer} order={value.order} what="会话默认" />
+          <LayerRows layer={layer} order={value.order} what={tr('sessionDefaults')} />
         </>
       )}
     </div>

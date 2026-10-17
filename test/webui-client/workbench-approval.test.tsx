@@ -3,8 +3,8 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
-import { type Harness, installDialog, main, renderApp, requests, server } from './harness.js';
-import { approval, push, snapshot, toolCall, turn, userMessage } from './items.js';
+import { type Harness, installDialog, language, main, renderApp, requests, server } from './harness.js';
+import { agentMessage, approval, push, snapshot, toolCall, turn, userMessage } from './items.js';
 
 // ════════════════════════════════════════════════════════════
 // 审批卡：挂在工具卡下面，事实取会话服务按展示种类给出的命令、目录与 diff，没声明的逐字列出全部参数，显示前一律清洗、
@@ -291,5 +291,63 @@ describe('审批卡', () => {
     expect(log.getByRole('button', { name: /执行 rm -rf build/ }).textContent).toContain('已拒绝 · 09:05');
     expect(log.getByRole('button', { name: /执行 sleep 9/ }).textContent).toContain('已撤销 · 回合已结束 · 09:05');
     expect(screen.queryByRole('region', { name: '审批' })).toBeNull();
+  });
+
+  it('英文界面：卡的标题与按钮、工具行的「等你批准」与结算句', async () => {
+    const at = new Date(2026, 9, 3, 9, 5).getTime();
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () =>
+          snapshot(
+            [
+              turn('t1'),
+              exec,
+              agentMessage('m1', 'next'),
+              toolCall('c2', 'exec', {
+                status: 'denied',
+                display: { kind: 'command', command: 'sleep 9' },
+                approvalId: 'ap2',
+                settlement: { state: 'cancelled', source: 'turn-ended', at },
+              }),
+            ],
+            { approvals: [execApproval] },
+          ),
+      },
+      language(['en']),
+    );
+    const log = within(await main().findByRole('region', { name: 'Conversation' }));
+    const approvalCard = within(screen.getByRole('region', { name: 'Approval' }));
+    expect(log.getByRole('button', { name: /Run npm run lint/ }).textContent).toContain('Awaiting your approval');
+    expect(approvalCard.getByText('Wants to run a command · exec')).toBeTruthy();
+    expect(approvalCard.getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Approve',
+      'Deny',
+      'Deny with a reason',
+    ]);
+    expect(log.getByRole('button', { name: /Run sleep 9/ }).textContent).toContain('Cancelled · Turn ended · 09:05');
+  });
+
+  it('工具行的结算句放不下时句末省略（jsdom 不排版，只核悬停提示）：完整的一句在 title 里', async () => {
+    const at = new Date(2026, 9, 3, 9, 5).getTime();
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () =>
+          snapshot([
+            turn('t1'),
+            toolCall('c1', 'exec', {
+              status: 'denied',
+              display: { kind: 'command', command: 'make' },
+              approvalId: 'ap1',
+              settlement: { state: 'expired', source: 'subtask', at },
+            }),
+          ]),
+      },
+      language(['en']),
+    );
+    const log = within(await main().findByRole('region', { name: 'Conversation' }));
+    const status = log.getByRole('button', { name: /Run make/ }).querySelector('.tool-line-status');
+    expect(status?.getAttribute('title')).toBe('Treated as denied · Approvals in subtasks aren’t forwarded · 09:05');
   });
 });

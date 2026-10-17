@@ -8,13 +8,14 @@ import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
 import { useToast } from '../components/Toast';
 import { useConnection } from '../connection';
-import { DEFAULT_CONFIRM } from '../pages/scope';
+import { text, tr } from '../language';
 import { usePluginNames } from '../plugins/list';
 import { paths } from '../routes';
 import { formatValue } from '../settings/field';
+import { t } from '../texts';
 import { type FrameQuestion, type FrameStop, mountFrame } from './channel';
 import './FramePage.css';
-import type { Localized } from '@aalis/schema-i18n';
+import type { Localized, TextRef } from '@aalis/schema-i18n';
 
 // 插件前端：上面一行写明出处，下面是宿主画的隔离框架，框架里画出的东西总在这一行下面。握手完成前框架不可见；
 // 停止显示时换成占位，「重新加载」与手动刷新都是重新挂载。外链与 destructive 动作的宿主对话框在这里画：
@@ -25,11 +26,11 @@ const FRAME_DIALOG_ARM_MS = 500;
 /** 确认框里一个输入值最多显示几个字 */
 const VALUE_MAX_CHARS = 200;
 
-const STOPPED: Record<Exclude<FrameStop['reason'], 'version'>, string> = {
-  timeout: '页面没有响应',
-  left: '这个页面离开了宿主给它的地址，已停止显示',
-  flood: '这个页面发了太多消息，已停止显示',
-  refused: '这个页面反复弹出确认，已停止',
+const STOPPED: Record<Exclude<FrameStop['reason'], 'version'>, TextRef> = {
+  timeout: t('frameTimeout'),
+  left: t('frameLeft'),
+  flood: t('frameFlood'),
+  refused: t('frameRefused'),
 };
 
 interface FramePageProps {
@@ -45,10 +46,12 @@ export function FramePage({ page, sessionId, reloads, reload }: FramePageProps) 
   const names = usePluginNames();
   return (
     <div className="frame-page">
-      <p className="frame-source">{`来自 ${names.instances.get(page.instance)?.label ?? page.instance}`}</p>
+      <p className="frame-source">
+        {tr('frameSource', { plugin: names.instances.get(page.instance)?.label ?? page.instance })}
+      </p>
       {/* IPv6 字面地址写不进框架响应头里的来源 */}
       {location.hostname.startsWith('[') ? (
-        <EmptyState title="用主机名或 IPv4 地址访问才能显示插件前端" />
+        <EmptyState title={tr('frameNeedsHostName')} />
       ) : (
         <Frame key={`${page.frame.src}:${reloads}`} page={page} sessionId={sessionId} reload={reload} />
       )}
@@ -86,7 +89,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
         ready: () => setState('ready'),
         stop(why) {
           if (why.reason === 'left' || why.reason === 'flood' || why.reason === 'refused') {
-            console.warn(`插件前端「${page.title}」（${page.instance}）：${STOPPED[why.reason]}`);
+            console.warn(`插件前端「${page.title}」（${page.instance}）：${STOPPED[why.reason].source}`);
           }
           setState(why);
         },
@@ -101,10 +104,14 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
     return state.reason === 'version' ? (
       <EmptyState
         tone="danger"
-        title={`这个页面用的前端协议是 ${state.protocol}，界面支持的是 ${FRAME_PROTOCOL_VERSION}`}
+        title={tr('frameProtocolMismatch', { page: state.protocol, host: FRAME_PROTOCOL_VERSION })}
       />
     ) : (
-      <EmptyState tone="danger" title={STOPPED[state.reason]} action={<Button onClick={reload}>重新加载</Button>} />
+      <EmptyState
+        tone="danger"
+        title={text(STOPPED[state.reason])}
+        action={<Button onClick={reload}>{tr('reloadPage')}</Button>}
+      />
     );
   }
   const answer = (confirmed: boolean) => {
@@ -124,7 +131,7 @@ function Frame({ page, sessionId, reload }: Omit<FramePageProps, 'reloads'>) {
           data-ready={state === 'ready' || undefined}
         />
         {state === 'loading' && (
-          <span className="frame-loading" role="status" aria-label="正在加载">
+          <span className="frame-loading" role="status" aria-label={tr('loading')}>
             <LoaderCircle aria-hidden className="spin" />
           </span>
         )}
@@ -146,7 +153,7 @@ function FrameDialog({ asking, answer }: { asking?: Asking; answer(confirmed: bo
   let body: ReactNode = null;
   let confirm: ReactNode = null;
   if (question?.kind === 'open') {
-    title = '打开外部链接？';
+    title = tr('openExternalLink');
     body = <p>{question.url}</p>;
     confirm = (
       <a
@@ -160,15 +167,15 @@ function FrameDialog({ asking, answer }: { asking?: Asking; answer(confirmed: bo
           else event.preventDefault();
         }}
       >
-        <span className="button-label">打开</span>
+        <span className="button-label">{tr('open')}</span>
       </a>
     );
   } else if (question) {
     const { action, input } = question;
-    title = `${action.label}？`;
+    title = tr('confirmAction', { action: action.label });
     body = (
       <>
-        <p>{action.confirm ?? DEFAULT_CONFIRM}</p>
+        <p>{action.confirm ?? tr('defaultConfirm')}</p>
         {input && <InputValues fields={action.input ?? {}} input={input} />}
       </>
     );
@@ -187,7 +194,7 @@ function FrameDialog({ asking, answer }: { asking?: Asking; answer(confirmed: bo
         question && (
           <>
             <Button data-autofocus onClick={() => answer(false)}>
-              取消
+              {tr('cancel')}
             </Button>
             {confirm}
           </>

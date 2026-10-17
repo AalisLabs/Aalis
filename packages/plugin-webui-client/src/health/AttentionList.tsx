@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { MARKERS } from '../components/List';
+import { text, tr } from '../language';
 import { pageAddress, usePages } from '../pages/registry';
 import { useFindPlugin, useHost } from '../plugins/list';
 import { fixLink, markerOf, pluginName, statusLine, statusOf } from '../plugins/status';
@@ -30,7 +31,7 @@ export function Rows({ rows }: { rows: readonly Row[] }) {
       {rows.map(row => (
         <li key={row.key} className="attention-row" data-marker={row.tone}>
           <span className="list-item-marker" aria-hidden />
-          {row.tone && <span className="visually-hidden">{MARKERS[row.tone]}</span>}
+          {row.tone && <span className="visually-hidden">{text(MARKERS[row.tone])}</span>}
           <span className="attention-text">
             <span className="attention-title">{row.title}</span>
             {row.detail && <span className="attention-detail">{row.detail}</span>}
@@ -57,8 +58,8 @@ function useRows(items: readonly Localized<AttentionItem>[], named: boolean): Ro
         key: `approval:${item.id}`,
         tone: 'attention',
         title: item.session ?? item.sessionId,
-        detail: `等你批准：${item.tool}`,
-        action: link(paths.session(item.sessionId), '去处理'),
+        detail: tr('awaitingApprovalOf', { tool: item.tool }),
+        action: link(paths.session(item.sessionId), tr('goResolve')),
       };
     }
     if (item.kind === 'plugin') {
@@ -82,9 +83,9 @@ function useRows(items: readonly Localized<AttentionItem>[], named: boolean): Ro
       detail: [named && pluginName(instance, find), item.detail].filter(Boolean).join(' · ') || undefined,
       action:
         open === 'config'
-          ? link(paths.plugin(instance, 'config'), '去配置')
+          ? link(paths.plugin(instance, 'config'), tr('goConfigure'))
           : page && to
-            ? link(to, `打开${page.title}`)
+            ? link(to, tr('openPage', { title: page.title }))
             : undefined,
     };
   });
@@ -108,18 +109,25 @@ export function AttentionSummary() {
   const count = items?.length ?? 0;
   if (count === 0 && !error) return null;
   return (
-    <section className="attention-summary" aria-label="需要处理">
+    <section className="attention-summary" aria-label={tr('needsAttention')}>
       <div className="attention-summary-head">
-        <h2 className="section-heading">{count > 0 ? `需要处理 · ${count}` : '需要处理'}</h2>
+        <h2 className="section-heading">{count > 0 ? tr('needsAttentionCount', { count }) : tr('needsAttention')}</h2>
         {count > 0 && (
           <ButtonLink to={paths.health} variant="text">
-            全部
+            {tr('all')}
           </ButtonLink>
         )}
       </div>
       {items && count > 0 && <AttentionList items={items.slice(0, SUMMARY_LIMIT)} />}
       {error && (
-        <FetchError what="「需要处理」" error={error} retry={retry} stale={items !== undefined} inline source={host} />
+        <FetchError
+          what={tr('needsAttentionQuoted')}
+          error={error}
+          retry={retry}
+          stale={items !== undefined}
+          inline
+          source={host}
+        />
       )}
     </section>
   );

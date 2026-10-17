@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { CopyButton, canCopy } from '../components/CopyButton';
 import { Picture } from '../components/Picture';
+import { tr } from '../language';
 import { isWebUrl, mediaUrl } from '../media';
 import { preprocessLaTeX } from './latex';
 import { Mermaid, Streaming } from './Mermaid';
@@ -90,7 +91,7 @@ function CodeBlock({ text, language, children }: { text: string; language?: stri
       {(language || canCopy()) && (
         <div className="markdown-code-head">
           {language}
-          <CopyButton text={text} label="复制代码" />
+          <CopyButton text={text} label={tr('copyCode')} />
         </div>
       )}
       <pre>{children}</pre>

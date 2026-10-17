@@ -11,13 +11,16 @@ import { compilerOptions, fixtureProgram, ROOT, sourceFiles } from '../helpers/p
 // 不自己找语言来源。取语言或时区来源的写法只许出现在名单里的位置，每条带理由：navigator 的 language 与 languages，
 // Accept-Language 请求头（字面量写的头名，读写都算：替外部接口挑语言同样是自己找来源）与 express 的 acceptsLanguages，
 // Intl 的 resolvedOptions().locale（默认 locale 就是进程或浏览器的系统语言），process.env 的 LANG、LANGUAGE 与 LC_*；
-// WebUI 客户端另禁浏览器时区：resolvedOptions().timeZone 与 Date 的 getTimezoneOffset（客户端用服务端给的时区）。服务端取
-// resolvedOptions().timeZone 就是服务进程的时区，不禁。
+// WebUI 客户端另禁浏览器时区：resolvedOptions().timeZone 与 Date 的 getTimezoneOffset，以及按它取值或格式化的 Date 方法
+// （getHours、getMinutes、getSeconds、getDate、getMonth、getFullYear、getDay，同名的 set 方法，toString、toDateString、
+// toTimeString 与不带 timeZone 选项的 toLocale*String；客户端用服务端给的时区，经 format.ts）。服务端取 resolvedOptions().timeZone 就是服务进程的时区，
+// 不禁。
 //
 // 按语法与类型认，不扫文本：属性访问（点、字面量键的方括号、对象解构）按类型检查器解析到的属性声明认，别名与可选链同样
 // 认得出；process.env 按类型（NodeJS.ProcessEnv）认；请求头名按字符串字面量认，不分大小写。写死语言标签的 toLocale*String
-// 与 Intl 格式器不在这里，归单元 D。看不到的：键是变量的访问、process.env 先交给只标成普通记录的变量再访问、扫描面以外的
-// 文件；客户端按浏览器时区的隐式格式化（Date 的 getHours 一类、不带 timeZone 的 toLocale*String，归单元 C）；随前端打包的
+// 与 Intl 格式器不在这里，归单元 D。toLocale*String 的选项按类型认：类型上 timeZone 是必有的才算写明了（标成
+// Intl.DateTimeFormatOptions 的变量里 timeZone 是可选的，不算）。看不到的：键是变量的访问、process.env 先交给只标成普通记录的变量再访问、扫描面
+// 以外的文件；客户端不带 timeZone 的 new Intl.DateTimeFormat() 与 Date 隐式转成字符串（String(date)、模板串）；随前端打包的
 // 同构库（schema-i18n、api-webui、api-approval）按服务端规则查，它们在浏览器里取时区看不到；服务端不带 locale 的
 // toLocaleString() 与 new Intl.*() 隐式取进程的系统语言（归单元 D 迁移时清）。
 //
@@ -56,6 +59,9 @@ function scannedFiles(): string[] {
 const LOCALE_ENV = /^(LANG|LANGUAGE|LC_[A-Z]+)$/;
 /** Intl 各格式器 resolvedOptions() 的返回类型 */
 const RESOLVED_OPTIONS = /^Resolved\w*Options$/;
+/** Date 上按所在环境的时区取值或格式化的方法 */
+const LOCAL_DATE =
+  /^(get(Hours|Minutes|Seconds|Date|Month|FullYear|Day)|set(Hours|Minutes|Seconds|Date|Month|FullYear)|to(Date|Time|Locale(Date|Time)?)?String)$/;
 
 /** 程序里取语言或时区来源的位置，只看 `files` 里的源文件 */
 function languageSources(program: ts.Program, files: readonly string[]): Hit[] {
@@ -87,12 +93,21 @@ function languageSources(program: ts.Program, files: readonly string[]): Hit[] {
       return 'resolvedOptions().timeZone';
     }
     if (name === 'getTimezoneOffset' && declaredOn(type, name, i => i === 'Date')) return 'getTimezoneOffset()';
+    if (LOCAL_DATE.test(name) && declaredOn(type, name, i => i === 'Date')) return `Date.${name}()`;
     return undefined;
+  };
+  /** 调用 toLocale*String 时选项（第二个参数）的类型上 timeZone 是必有的：时区写明了（可选的算没写明） */
+  const zoned = (access: ts.PropertyAccessExpression) => {
+    const call = access.parent;
+    const options = ts.isCallExpression(call) && call.expression === access ? call.arguments[1] : undefined;
+    const timeZone = options && checker.getTypeAtLocation(options).getProperty('timeZone');
+    return timeZone !== undefined && (timeZone.flags & ts.SymbolFlags.Optional) === 0;
   };
   /** 节点取到的来源：属性访问（点、字面量键的方括号、对象解构）与请求头名的字面量 */
   const sourceOf = (node: ts.Node, client: boolean): string | undefined => {
     if (ts.isPropertyAccessExpression(node)) {
-      return read(checker.getTypeAtLocation(node.expression), node.name.text, client);
+      const source = read(checker.getTypeAtLocation(node.expression), node.name.text, client);
+      return source?.startsWith('Date.toLocale') && zoned(node) ? undefined : source;
     }
     if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
       return read(checker.getTypeAtLocation(node.expression), node.argumentExpression.text, client);
@@ -172,6 +187,17 @@ export const { timeZone } = new Intl.DateTimeFormat().resolvedOptions();
 export const language = navigator.language;
 export const platform = navigator.platform;
 export const formatted = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+export const hours = new Date().getHours();
+const day = new Date(0);
+export const { getDay } = day;
+export const local = day.toLocaleDateString();
+export const optioned = day.toLocaleTimeString('en', { hour: 'numeric' });
+export const zoned = day.toLocaleTimeString('en', { ...{ hour: 'numeric' }, timeZone: 'UTC' });
+export const utc = [day.getUTCHours(), day.toISOString(), (1234).toLocaleString()];
+const options: Intl.DateTimeFormatOptions = { hour: 'numeric' };
+export const typed = day.toLocaleTimeString('en', options);
+export const plain = day.toString();
+day.setHours(0);
 `;
 
 /** 一个夹具里的命中：`行 写法` */
@@ -198,12 +224,19 @@ describe('语言只有一个来源', () => {
     ]);
   });
 
-  it('客户端：另报浏览器时区；写死语言标签与时区的格式化不归这里', () => {
+  it('客户端：另报浏览器时区与按它取值、格式化的 Date 方法（toLocale*String 带上 timeZone 选项的不报）；写死语言标签的格式化不归这里', () => {
     expect(fixtureHits(CLIENT_FIXTURE, CLIENT_SOURCE)).toEqual([
       '1 resolvedOptions().timeZone',
       '2 getTimezoneOffset()',
       '3 resolvedOptions().timeZone',
       '4 navigator.language',
+      '7 Date.getHours()',
+      '9 Date.getDay()',
+      '10 Date.toLocaleDateString()',
+      '11 Date.toLocaleTimeString()',
+      '15 Date.toLocaleTimeString()',
+      '16 Date.toString()',
+      '17 Date.setHours()',
     ]);
   });
 
