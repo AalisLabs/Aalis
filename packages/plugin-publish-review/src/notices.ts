@@ -5,8 +5,9 @@ import type { HookContextMap, Hooks } from '@aalis/api-hooks';
 import type { PublishOrigin } from '@aalis/api-publish';
 import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
-import { toSource } from '@aalis/schema-i18n';
+import { isTextRef, type TextRef, toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type OutgoingMessage, selfInitiatedActor } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 /**
  * 等平台回执的上限：适配器每个发送分支都会结算（OneBot 单个附件最坏约 150 秒），这里只防它一直不结算时卡住
@@ -26,9 +27,16 @@ export function isNoticeUndelivered(err: unknown): boolean {
   return (err as { name?: unknown } | null | undefined)?.name === 'NoticeUndelivered';
 }
 
+/** 一条作品通知：交给她转述的正文（写给模型的原文）与给人看的那句（旧的待发通知没有，显示正文） */
+export interface NoticeBody {
+  content: string;
+  text?: string | TextRef;
+}
+
 /**
  * 待发正文由 ReviewStore 持久化。第一次由她按人设转述（宿主通知回合），转述静默或出错时派发宿主正文兜底；
- * 平台确认收下才算发出。重发（direct）直接派发宿主正文，同样等平台确认。
+ * 平台确认收下才算发出。重发（direct）直接派发宿主正文，同样等平台确认。给人看的那句随转述回合进 hostNotice.text，
+ * 宿主正文兜底按它出站（网关按会话语言渲染）
  */
 export class ReviewNotices {
   #open = false;
@@ -52,7 +60,7 @@ export class ReviewNotices {
   }
   async enqueue(
     origin: PublishOrigin,
-    content: string,
+    { content, text }: NoticeBody,
     id: string,
     title?: string,
     opts: { direct?: boolean } = {},
@@ -99,9 +107,11 @@ export class ReviewNotices {
       await next();
     });
     // 宿主正文：重发时直接发；转述静默或出错时兜底。正文由宿主根据记录生成，绝不发送格式校验失败的模型原文
+    const hostText = t('noticeFallback', { notice: text ?? content });
     const dispatchHostText = () =>
       gateway.dispatchOutbound({
-        content: `[作品通知] ${content}`,
+        content: toSource(hostText),
+        text: hostText,
         sessionId,
         platform,
         source: 'system',
@@ -125,6 +135,7 @@ export class ReviewNotices {
             id,
             reportOnly: true,
             ...(title ? { untrusted: wrapUntrustedContent(title, '作品标题') } : {}),
+            ...(isTextRef(text) ? { text } : {}),
           },
         });
         // 只兜底已走完整入站流程的静默回合，不绕过禁言、取消或停机。

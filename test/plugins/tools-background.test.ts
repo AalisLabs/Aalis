@@ -12,7 +12,7 @@ import {
 import type { Logger } from '../../packages/core/src/index.js';
 import { BackgroundTasks } from '../../packages/plugin-tools/src/background.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { ownView } from '../fixtures/own-storage.js';
 
@@ -856,6 +856,7 @@ describe('结束通知', () => {
         id: taskId,
         ...(c.callerUserId !== undefined ? { callerUserId: c.callerUserId } : {}),
         facts: { tool: 'zz_slow', status: 'completed', durationMs: 65_000 },
+        text: expect.objectContaining({ key: 'noticeCompleted' }),
       });
       expect(notice.userId).toBeUndefined();
       expect(notice.content).toContain(String(taskId));
@@ -881,6 +882,7 @@ describe('结束通知', () => {
         callerUserId: '30002',
         replyTo: 'zz-msg-1',
         facts: { tool: 'zz_slow', status: 'completed', durationMs: 0 },
+        text: expect.objectContaining({ key: 'noticeCompleted' }),
       },
     ]);
   });
@@ -900,6 +902,38 @@ describe('结束通知', () => {
     expect(byError.content).toContain('失败');
     expect(byError.hostNotice?.facts).toEqual({ tool: 'zz_cmd', status: 'failed', durationMs: 1_500 });
     expect(JSON.stringify(byError)).not.toContain('zz-tool-error');
+  });
+
+  it('给人看的那句另进 hostNotice.text（按读者语言），写给模型的正文一字不改', async () => {
+    const w = world();
+    w.slow('zz_cmd', { display: { kind: 'command', fields: { command: 'text' }, result: { exitCode: 'exitCode' } } });
+    const ids: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push(parse(await w.registry.execute('zz_cmd', { text: 'x', runInBackground: true }, turn().ctx)).taskId);
+    }
+    await vi.advanceTimersByTimeAsync(65_000);
+    w.runs[0].finish();
+    w.runs[1].finish(JSON.stringify({ exitCode: 3 }));
+    w.runs[2].finish(JSON.stringify({ error: 'zz-tool-error' }));
+    await flush();
+    const notices = w.notices();
+    const tail = '，用时 1 分 5 秒。结果与输出用 background_output 查看。';
+    expect(notices.map(n => n.content)).toEqual([
+      `后台任务 ${ids[0]}（zz_cmd）已完成${tail}`,
+      `后台任务 ${ids[1]}（zz_cmd）失败：退出码 3${tail}`,
+      `后台任务 ${ids[2]}（zz_cmd）失败${tail}`,
+    ]);
+    const text = notices.map(n => n.hostNotice?.text);
+    expect(text.map(x => x && resolveText(x, ['en']))).toEqual([
+      `Background task ${ids[0]} (zz_cmd) completed in 1 min, 5 sec`,
+      `Background task ${ids[1]} (zz_cmd) failed with exit code 3 after 1 min, 5 sec`,
+      `Background task ${ids[2]} (zz_cmd) failed after 1 min, 5 sec`,
+    ]);
+    expect(toSource(text)).toEqual([
+      `后台任务 ${ids[0]}（zz_cmd）已完成，用时 1分钟5秒`,
+      `后台任务 ${ids[1]}（zz_cmd）失败：退出码 3，用时 1分钟5秒`,
+      `后台任务 ${ids[2]}（zz_cmd）失败，用时 1分钟5秒`,
+    ]);
   });
 
   it('由结束通知开的回合里转后台的不再通知，工具结果写明', async () => {

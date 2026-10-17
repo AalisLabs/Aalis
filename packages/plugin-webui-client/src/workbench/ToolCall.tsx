@@ -144,7 +144,7 @@ const side = (text: string | undefined, sign: '-' | '+') =>
 
 function ToolDetails({ item }: { item: ToolCallItem }) {
   const display = displayOf(item);
-  const output = item.output ?? item.result;
+  const output = item.output ?? item.result ?? (item.notExecuted ? '没有执行' : undefined);
   return (
     <div className="tool-details">
       {display?.kind === 'command' && (

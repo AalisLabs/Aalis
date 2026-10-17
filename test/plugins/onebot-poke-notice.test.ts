@@ -6,6 +6,7 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -107,7 +108,10 @@ async function boot(protocol: Protocol) {
           };
     socket?.send(JSON.stringify(event));
   }
-  return { poke, inbound, directNotices };
+  /** 发一个 v11 事件 */
+  const post = (event: Record<string, unknown>) =>
+    socket?.send(JSON.stringify({ self_id: Number(SELF), time: 0, ...event }));
+  return { poke, post, inbound, directNotices };
 }
 
 describe.each(['v11', 'v12'] as const)('OneBot %s poke 入站', protocol => {
@@ -158,5 +162,71 @@ describe.each(['v11', 'v12'] as const)('OneBot %s poke 入站', protocol => {
     expect(t.inbound).toHaveLength(1);
     expect(t.inbound[0]).toMatchObject({ userId: '30001', noticeTargetIsSelf: true });
     expect(t.directNotices).toEqual([]);
+  });
+});
+
+// 平台通知两用拆分：写给模型的 content 一字不改（带 [notice/…] 与排查细节），给人看的那句另作文字对象经
+// archiveNotice 的 text 入档。英文里称呼在句首时首字母大写。假实现端查不到昵称，人写成 id，没有 id 时写称呼。
+describe('OneBot 平台通知：给模型的正文与给人看的那句', () => {
+  const english = (text: TextRef | undefined) => (text ? resolveText(text, ['en']) : undefined);
+
+  it('入档：content 照旧，text 是去掉 [notice/…] 与排查细节的那句', async () => {
+    const h = await boot('v11');
+    const events = [
+      { notice_type: 'group_increase', sub_type: 'approve', group_id: 20001, user_id: 30004, operator_id: 30005 },
+      { notice_type: 'group_decrease', sub_type: 'kick', group_id: 20001, user_id: 30006, operator_id: 30005 },
+      { notice_type: 'group_increase', sub_type: 'approve', group_id: 20001, user_id: Number(SELF) },
+      { notice_type: 'group_increase', sub_type: 'approve', group_id: 20001 },
+      { notice_type: 'group_admin', sub_type: 'set', group_id: 20001, user_id: 30007 },
+      { notice_type: 'friend_add', user_id: 30008 },
+      { notice_type: 'group_ban', sub_type: 'lift_ban', group_id: 20001, user_id: 30009, operator_id: 30005 },
+      { notice_type: 'group_recall', group_id: 20001, user_id: 30010, operator_id: 30005, message_id: 456 },
+      { notice_type: 'friend_recall', user_id: 30011, message_id: 789 },
+    ];
+    for (const [i, event] of events.entries()) {
+      h.post({ post_type: 'notice', ...event });
+      await until(() => h.directNotices.length === i + 1);
+    }
+    expect(h.directNotices.map(n => n.content)).toEqual([
+      '[notice/group_increase/approve] 30004 加入了群',
+      '[notice/group_decrease/kick] 30006 被 30005 移出群聊',
+      '[notice/group_increase/approve] 我 加入了群',
+      '[notice/group_increase/approve] 某人 加入了群',
+      '[notice/group_admin/set] 30007 被设置为管理员',
+      '[notice/friend_add] 30008 成为了我的好友',
+      '[notice/group_ban/lift] 30005 把 30009 解除了禁言',
+      '[notice/group_recall] 30005 撤回了 30010 的消息（msg=456）',
+      '[notice/friend_recall] 30011 撤回了一条私聊消息（msg=789）',
+    ]);
+    expect(h.directNotices.map(n => english(n.text))).toEqual([
+      '30004 joined the group',
+      '30006 was removed from the group by 30005',
+      'The assistant joined the group',
+      'Someone joined the group',
+      '30007 was made an admin',
+      '30008 became a friend of the assistant',
+      '30005 unmuted 30009',
+      "30010's message was recalled by 30005",
+      '30011 recalled a private message',
+    ]);
+  });
+
+  it('禁言：content 照旧写秒数与 ISO 时刻，text 的时长与解禁时刻按读者语言；没有操作者时写管理员', async () => {
+    const h = await boot('v11');
+    const before = Date.now();
+    const ban = { post_type: 'notice', notice_type: 'group_ban', sub_type: 'ban', group_id: 20001, user_id: 30009 };
+    h.post({ ...ban, operator_id: 30005, duration: 60 });
+    await until(() => h.directNotices.length === 1);
+    h.post({ ...ban, duration: 60 });
+    await until(() => h.directNotices.length === 2);
+    const [notice, byAdmin] = h.directNotices;
+    expect(notice?.content).toMatch(
+      /^\[notice\/group_ban\] 30005 把 30009 禁言了 60 秒（解禁于 \d{4}-\d\d-\d\dT[\d:.]+Z）$/,
+    );
+    expect(english(notice?.text)).toMatch(/^30005 muted 30009 for 1 min \(until .+\)$/);
+    const until_ = (notice?.text?.params?.until as number) - before;
+    expect(until_).toBeGreaterThanOrEqual(60_000);
+    expect(byAdmin?.content).toMatch(/^\[notice\/group_ban\] 管理员 把 30009 禁言了 60 秒（/);
+    expect(english(byAdmin?.text)).toMatch(/^An admin muted 30009 for 1 min \(until .+\)$/);
   });
 });

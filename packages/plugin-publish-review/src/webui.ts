@@ -8,9 +8,11 @@
 
 import { WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
+import { reasonText } from './policy.js';
 import type { ReviewPreviewServer } from './preview.js';
 import type { PublishReviewService } from './service.js';
 import type { QueueItem, ReviewStore } from './state.js';
+import { t } from './texts.js';
 
 const PAGE_KEY = 'publish-review';
 
@@ -167,7 +169,7 @@ export function registerReviewPage(deps: {
                     return [
                       { label: '分类结论', value: review?.classification ?? '' },
                       { label: '标记', value: review?.flags.join('、') ?? '' },
-                      { label: '理由', value: review?.reasons.join('、') ?? '' },
+                      { label: '理由', value: review ? t('reasons', { items: review.reasons.map(reasonText) }) : '' },
                     ];
                   },
                 },

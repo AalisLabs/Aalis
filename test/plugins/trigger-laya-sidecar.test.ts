@@ -2,6 +2,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions } from '../../packages/api-process/src/index.js';
 import { type Sidecar, sidecarTarget, superviseSidecar } from '../../packages/plugin-trigger-laya/src/sidecar.js';
+import { defineTexts, resolveText, TextError, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -70,7 +71,10 @@ interface Harness {
   sc: Sidecar;
   children: FakeChild[];
   logs: Array<[level: string, msg: string]>;
+  /** 退出原因的原文与是否新一轮故障 */
   exits: Array<[reason: string, newRound: boolean]>;
+  /** 退出原因（文字对象） */
+  reasons: TextRef[];
   probe: { taken: boolean; calls: number };
   /** 拉起时给出的 process 服务；置为 undefined 模拟缺席 */
   current: { process: ProcessService | undefined };
@@ -82,6 +86,7 @@ function start(opts: { taken?: boolean; process?: ProcessService | null } = {}):
     children: fake.children,
     logs: [] as Array<[string, string]>,
     exits: [] as Array<[string, boolean]>,
+    reasons: [] as TextRef[],
     probe: { taken: opts.taken ?? false, calls: 0 },
     current: { process: opts.process === null ? undefined : (opts.process ?? fake.service) },
   } as Harness;
@@ -106,7 +111,10 @@ function start(opts: { taken?: boolean; process?: ProcessService | null } = {}):
       warn: m => h.logs.push(['warn', m]),
       debug: m => h.logs.push(['debug', m]),
     },
-    onExit: (reason, newRound) => h.exits.push([reason, newRound]),
+    onExit: (reason, newRound) => {
+      h.exits.push([toSource(reason), newRound]);
+      h.reasons.push(reason);
+    },
   });
   return h;
 }
@@ -265,10 +273,13 @@ describe('托管侧车：退出与重启', () => {
     h.children[0].exit(null, 'SIGSEGV');
     await settle();
     expect(h.exits.at(-1)?.[0]).toBe('侧车退出（被信号 SIGSEGV 终止），1s 后重启');
+    expect(resolveText(h.reasons.at(-1) as TextRef, ['en']), '诊断里按读者语言').toBe(
+      'the sidecar exited (terminated by signal SIGSEGV), restarting in 1s',
+    );
     await vi.advanceTimersByTimeAsync(1_000);
     h.children[1].fail(new Error('spawn ENOENT'));
     await settle();
-    expect(h.exits.at(-1)?.[0]).toBe('拉起侧车失败（Error: spawn ENOENT），2s 后重启');
+    expect(h.exits.at(-1)?.[0]).toBe('拉起侧车失败（spawn ENOENT），2s 后重启');
 
     const throwing = start({
       process: {
@@ -279,8 +290,38 @@ describe('托管侧车：退出与重启', () => {
       },
     });
     await settle();
-    expect(throwing.exits).toEqual([['拉起侧车失败（TypeError: bad cwd），1s 后重启', true]]);
+    expect(throwing.exits).toEqual([['拉起侧车失败（bad cwd），1s 后重启', true]]);
     await throwing.sc.stop();
+  });
+
+  it('拉起失败的错误带文字对象（TextError，spawn 抛出与 wait 拒绝）：诊断里按读者语言', async () => {
+    const denied = defineTexts({
+      ns: '@zz/laya-spawn',
+      language: 'zh-CN',
+      source: { denied: '不允许拉起' } as const,
+      locales: { en: { denied: 'not allowed' } },
+    })('denied');
+    const fake = fakeProcess();
+    let throwing = true;
+    const h = start({
+      process: {
+        ...fake.service,
+        spawn: (cmd, args, opts) => {
+          if (throwing) throw new TextError(denied);
+          return fake.service.spawn(cmd, args, opts);
+        },
+      },
+    });
+    await settle();
+    throwing = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    fake.children[0].fail(new TextError(denied));
+    await settle();
+    expect(h.reasons.map(reason => resolveText(reason, ['en']))).toEqual([
+      'launching the sidecar failed (not allowed), restarting in 1s',
+      'launching the sidecar failed (not allowed), restarting in 2s',
+    ]);
+    await h.sc.stop();
   });
 
   it('拉起时没有 process 服务：按没能拉起处理、退避重试，服务回来后的下一次重试照常拉起', async () => {
@@ -380,7 +421,7 @@ describe('托管的目标', () => {
   it('侧车目录须为绝对路径；地址须为 http://127.0.0.1:<端口>（不带路径），端口取自地址', () => {
     expect(sidecarTarget(DIR, 'http://127.0.0.1:17878')).toEqual({ dir: DIR, port: 17878 });
     expect(sidecarTarget(DIR, 'http://127.0.0.1:17878/')).toEqual({ dir: DIR, port: 17878 });
-    expect(sidecarTarget('models/listener-sidecar', 'http://127.0.0.1:17878')).toEqual({
+    expect(toSource(sidecarTarget('models/listener-sidecar', 'http://127.0.0.1:17878'))).toEqual({
       problem: 'sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
     });
     for (const endpoint of [
@@ -391,7 +432,7 @@ describe('托管的目标', () => {
       'https://127.0.0.1:17878',
       'not a url',
     ]) {
-      expect(sidecarTarget(DIR, endpoint), endpoint).toEqual({
+      expect(toSource(sidecarTarget(DIR, endpoint)), endpoint).toEqual({
         problem: `托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前: ${endpoint}）`,
       });
     }

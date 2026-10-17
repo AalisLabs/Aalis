@@ -1,0 +1,32 @@
+import { defineLocale } from '@aalis/schema-i18n';
+import type { Source } from '../texts.js';
+
+export default defineLocale<Source>()({
+  self: 'the assistant',
+  someone: 'someone',
+  admin: 'an admin',
+  selfSubject: 'The assistant',
+  someoneSubject: 'Someone',
+  adminSubject: 'An admin',
+  friendRequest: 'User {user} sent the assistant a friend request',
+  friendRequestWithComment: 'User {user} sent the assistant a friend request, verification message: “{comment}”',
+  groupInvite: 'User {user} invited the assistant to join group {group}',
+  groupInviteWithComment: 'User {user} invited the assistant to join group {group}, note: “{comment}”',
+  joinRequest: 'User {user} asked to join group {group}',
+  joinRequestWithComment: 'User {user} asked to join group {group}, note: “{comment}”',
+  muteRecovered: 'The assistant is still muted in this group, about {ms, duration} left',
+  banned: '{op} muted {target} for {ms, duration} (until {until, datetime, short})',
+  bannedUnknown: '{op} muted {target} for an unspecified time',
+  banLifted: '{op} unmuted {target}',
+  recalled: '{user} recalled a message',
+  recalledOther: "{user}'s message was recalled by {op}",
+  recalledPrivate: '{user} recalled a private message',
+  joined: '{user} joined the group',
+  joinedInvited: '{user} joined the group, invited by {op}',
+  removed: '{user} was removed from the group by {op}',
+  left: '{user} left the group',
+  adminSet: '{user} was made an admin',
+  adminUnset: '{user} is no longer an admin',
+  adminChanged: "{user}'s admin status changed",
+  friendAdded: '{user} became a friend of the assistant',
+});

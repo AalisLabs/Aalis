@@ -19,6 +19,7 @@ import {
   verifyContentUntilMatch,
   waitForSwitch,
 } from '../../packages/plugin-works-site/src/verify.js';
+import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { startFakePages } from '../fixtures/fake-pages.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -412,7 +413,7 @@ describe('作品站持久状态与内容核对', () => {
       deployer.start();
       await eventually(() => store.data?.current[branch]?.id === newId);
       expect(store.data?.current[branch]?.works).toEqual([]);
-      expect(store.data?.paused?.reason).toContain('别名');
+      expect(toSource(store.data?.paused?.reason)).toContain('别名');
       expect(store.data?.known[oldId]).toBeUndefined();
       expect(deleteDeployment).toHaveBeenCalledWith(oldId, expect.objectContaining({ force: false }));
     } finally {
@@ -700,6 +701,84 @@ describe('作品站持久状态与内容核对', () => {
     expect(getEventListeners(signal, 'abort')).toHaveLength(0);
   });
 
+  /** 未登记的部署 aaaaaaaa-1111 在线，跑一次定时核对 */
+  async function checkWithRogue(store: WorksStore, signal: AbortSignal): Promise<void> {
+    const rogue = fixture();
+    rogue.listDeployments.mockResolvedValue([
+      {
+        id: 'aaaaaaaa-1111',
+        branch: 'main',
+        environment: 'production',
+        stage: { name: 'deploy', status: 'success' },
+        aliases: [],
+      },
+    ]);
+    const deployer = new WorksDeployer({
+      config: {
+        targetId: 'works',
+        basePath: '/',
+        accountId: '0'.repeat(32),
+        apiToken: 'sentinel',
+        projectName: 'aalis',
+        productionBranch: 'main',
+        siteOrigin: 'https://aalis.pages.dev',
+        mainOrigins: ['https://aalis.pages.dev'],
+        failOpen: false,
+        siteTitle: '作品集',
+        siteIntro: '',
+      },
+      store,
+      client: { ...rogue, verifyToken: async () => ({}) } as unknown as PagesClient,
+      publish: ref(),
+      live: () => {},
+      logger: { info: () => {}, warn: () => {} },
+      signal,
+    });
+    await deployer.checkPeriodic();
+  }
+
+  it('告警按种类与文字的键、参数认同一条：措辞变了的旧告警不再重记；暂停原因是文字对象，按读者语言显示，重启读回仍在', async () => {
+    const files = new Map();
+    const store = new WorksStore(ownView(memoryStorage(files), 'works-site'));
+    await store.load();
+    const earlier = {
+      i18n: '@aalis/plugin-works-site',
+      key: 'unknownDeployment',
+      params: { id: 'aaaaaaaa' },
+      source: '<旧的措辞> aaaaaaaa',
+    };
+    await store.update(state => {
+      state.alerts.push({ id: 'one', kind: 'unknown-deployment', detail: earlier, at: 1 });
+    });
+    const controller = new AbortController();
+    await checkWithRogue(store, controller.signal);
+    expect(store.data?.alerts).toEqual([{ id: 'one', kind: 'unknown-deployment', detail: earlier, at: 1 }]);
+    const reason = store.data?.paused?.reason;
+    expect(isTextRef(reason) && [resolveText(reason, ['en']), resolveText(reason, ['zh-CN'])]).toEqual([
+      'Found an untracked deployment aaaaaaaa',
+      '发现未登记的部署 aaaaaaaa',
+    ]);
+    controller.abort();
+    const reloaded = new WorksStore(ownView(memoryStorage(files), 'works-site'));
+    await reloaded.load();
+    expect(reloaded.failure).toBeUndefined();
+    expect(reloaded.data?.paused?.reason).toEqual(reason);
+    expect(reloaded.data?.alerts[0]?.detail).toEqual(earlier);
+  });
+
+  it('旧版存成字符串的未读告警：按原文认同一条，同一问题再出现不重记', async () => {
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
+    await store.load();
+    const earlier = { id: 'one', kind: 'unknown-deployment' as const, detail: '发现未登记的部署 aaaaaaaa', at: 1 };
+    await store.update(state => {
+      state.alerts.push(earlier);
+    });
+    const controller = new AbortController();
+    await checkWithRogue(store, controller.signal);
+    controller.abort();
+    expect(store.data?.alerts).toEqual([earlier]);
+  });
+
   it('并发页面告警已读与部署更新不互相覆盖', async () => {
     const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
     await store.load();
@@ -788,7 +867,7 @@ describe('作品站编排与假 Pages', () => {
     try {
       deployer.start();
       await eventually(() => !!store.data?.paused);
-      expect(store.data?.alerts).toContainEqual(
+      expect(toSource(store.data?.alerts)).toContainEqual(
         expect.objectContaining({
           kind: 'unknown-deployment',
           detail: '同一 nonce 对应多个部署',

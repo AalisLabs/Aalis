@@ -11,6 +11,7 @@ import { platform } from '../../packages/api-platform/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, events, logger, provide } from '../../packages/core/src/index.js';
+import { t as onebotText } from '../../packages/plugin-adapter-onebot/src/texts.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -25,6 +26,7 @@ import {
 } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
+import { type TextRef, textLines } from '../../packages/schema-i18n/src/index.js';
 import {
   DIRECTIVE_KINDS,
   type IncomingMessage,
@@ -152,6 +154,39 @@ describe('message-archive：宿主通知归档', () => {
       [K.HostNoticeId]: 'bg_1',
       [K.HostNoticeFacts]: facts,
     });
+  });
+
+  it('给人看的那句落盘前参数截到 200 字；截完退成字符串的不记，读历史的一方照旧显示正文', async () => {
+    const app = newApp();
+    await registerHubs(app);
+    await app.plugin(memoryInMemory);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugins.idle();
+    const host = app.bind({ messageArchive });
+    const { message: request } = await host.messageArchive.use.archiveIncoming({
+      content: '[系统通知] 用户 30001 向我发出了好友申请',
+      sessionId: 'onebot:10000:private:30001',
+      platform: 'onebot',
+      userId: '30001',
+      source: 'onebot-request',
+      text: onebotText('friendRequestWithComment', { user: '30001', comment: '长'.repeat(300) }),
+    });
+    const text = request.metadata?.[WellKnownMetadataKeys.Text] as TextRef | undefined;
+    expect(text?.params?.comment).toBe('长'.repeat(200));
+    const platformNotice = await host.messageArchive.use.archiveNotice?.({
+      sessionId: 'onebot:10000:group:20001',
+      noticeType: 'group_increase',
+      content: '[notice/group_increase] 新成员入群',
+      text: onebotText('joined', { user: '长'.repeat(300) }),
+    });
+    const noticeText = platformNotice?.metadata?.[WellKnownMetadataKeys.Text] as TextRef | undefined;
+    expect(noticeText?.params?.user).toBe('长'.repeat(200));
+    const long = textLines(Array.from({ length: 20 }, () => 'x'.repeat(200)));
+    const { message: notice } = await host.messageArchive.use.archiveIncoming(
+      hostNoticeIncoming({ hostNotice: { kind: 'paper-task', id: 'n-2', text: long } }),
+    );
+    expect(notice.metadata?.[WellKnownMetadataKeys.HostNoticeKind]).toBe('paper-task');
+    expect(notice.metadata?.[WellKnownMetadataKeys.Text]).toBeUndefined();
   });
 
   it('flow-control 禁言期吞掉宿主通知：影子归档写成 notice，不含不可信段', async () => {

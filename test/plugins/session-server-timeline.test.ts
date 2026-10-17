@@ -854,7 +854,7 @@ describe('条目', () => {
     expect(history.items.find(i => i.itemId === 'h1')).toMatchObject({ display: { kind: 'command', command: 'pwd' } });
   });
 
-  it('模型生成参数期间工具卡已出现：只有工具名，状态 generating；开始执行时同一张卡转为 running；生成了却没执行的在回合结束时以失败收尾', async () => {
+  it('模型生成参数期间工具卡已出现：只有工具名，状态 generating；开始执行时同一张卡转为 running；生成了却没执行的在回合结束时以失败收尾，标 notExecuted、没有结果', async () => {
     const { server, sm, openTurn } = await setup();
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
@@ -879,7 +879,8 @@ describe('条目', () => {
     ]);
     const other = client(server());
     await other.init();
-    const cards = (await other.subscribe(s.id)).snapshot.items.filter(i => i.kind === 'tool-call');
+    const otherSub = await other.subscribe(s.id);
+    const cards = otherSub.snapshot.items.filter(i => i.kind === 'tool-call');
     expect(
       cards.map(i => [i.itemId, i.status]),
       '快照里同样有生成中的卡',
@@ -898,10 +899,13 @@ describe('条目', () => {
     await t.toolEnd('c1', 'file_write', '{"ok":true}', { path: 'workspace:/a.md', content: '全文' });
     await t.finish('silent');
     const items = c.timeline(s.id, sub);
-    expect(items.filter(i => i.kind === 'tool-call').map(i => [i.itemId, i.status, i.result])).toEqual([
-      ['c1', 'completed', '{"ok":true}'],
-      ['c2', 'failed', '没有执行'],
+    const toolCards = (timeline: SessionItem[]) =>
+      timeline.flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.result, i.notExecuted]] : []));
+    expect(toolCards(items)).toEqual([
+      ['c1', 'completed', '{"ok":true}', undefined],
+      ['c2', 'failed', undefined, true],
     ]);
+    expect(toolCards(other.timeline(s.id, otherSub)), '生成中途订阅的连接看到同样的收尾').toEqual(toolCards(items));
     expect(
       items.map(i => i.kind),
       '卡片排在生成它之前说的话后面',
@@ -1035,12 +1039,14 @@ describe('条目', () => {
     await t.finish('aborted');
     expect([settled, killed, finished]).toEqual([{ exitCode: 0 }, { aborted: true, exitCode: -1 }, { aborted: true }]);
     expect(
-      c.timeline(s.id, sub).flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.result]] : [])),
+      c
+        .timeline(s.id, sub)
+        .flatMap(i => (i.kind === 'tool-call' ? [[i.itemId, i.status, i.result, i.notExecuted]] : [])),
     ).toEqual([
-      ['c1', 'completed', '{"exitCode":0}'],
-      ['c2', 'aborted', '{"aborted":true,"message":"命令已中止","exitCode":-1}'],
-      ['c3', 'aborted', '{"ok":true}'],
-      ['c4', 'aborted', '没有执行'],
+      ['c1', 'completed', '{"exitCode":0}', undefined],
+      ['c2', 'aborted', '{"aborted":true,"message":"命令已中止","exitCode":-1}', undefined],
+      ['c3', 'aborted', '{"ok":true}', undefined],
+      ['c4', 'aborted', undefined, true],
     ]);
   });
 

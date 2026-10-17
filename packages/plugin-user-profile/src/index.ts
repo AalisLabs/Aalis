@@ -9,9 +9,11 @@ import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案
@@ -132,28 +134,23 @@ const configSchema = defineConfig({
   },
 });
 
-/** 事实分类，用于 LLM 在同类下做覆写决策 */
-type FactCategory =
-  | '兴趣爱好'
-  | '职业身份'
-  | '人际关系'
-  | '近期处境'
-  | '价值观'
-  | '性格特征'
-  | '偏好'
-  | '忌讳'
-  | '其他';
-const KNOWN_CATEGORIES: FactCategory[] = [
-  '兴趣爱好',
-  '职业身份',
-  '人际关系',
-  '近期处境',
-  '价值观',
-  '性格特征',
-  '偏好',
-  '忌讳',
-  '其他',
-];
+/**
+ * 事实分类，用于 LLM 在同类下做覆写决策。分类值是给模型的、落盘的标识，界面显示这里的名字；
+ * 次序即提示词里列出与档案分组的次序
+ */
+const CATEGORY_NAMES = {
+  兴趣爱好: t('categoryInterests'),
+  职业身份: t('categoryOccupation'),
+  人际关系: t('categoryRelationships'),
+  近期处境: t('categorySituation'),
+  价值观: t('categoryValues'),
+  性格特征: t('categoryPersonality'),
+  偏好: t('categoryPreferences'),
+  忌讳: t('categoryTaboos'),
+  其他: t('categoryOther'),
+} as const;
+type FactCategory = keyof typeof CATEGORY_NAMES;
+const KNOWN_CATEGORIES = Object.keys(CATEGORY_NAMES) as FactCategory[];
 type FactTemporality = 'permanent' | 'temporary';
 
 interface Fact {
@@ -564,7 +561,7 @@ function registerUserProfile({
                 .map(f => ({
                   ref: JSON.stringify([rowKey, f.id]),
                   text: f.text,
-                  category: f.category ?? '',
+                  category: f.category ? CATEGORY_NAMES[f.category] : '',
                   temporality: f.temporality === 'temporary' ? '近期' : '长期',
                   updatedAt: f.updatedAt,
                 }));
@@ -609,13 +606,13 @@ function registerUserProfile({
       ? (obj.add as unknown[]).flatMap(x => {
           if (!x || typeof x !== 'object') return [];
           const o = x as Record<string, unknown>;
-          const t = typeof o.text === 'string' ? o.text.trim() : '';
-          if (!t) return [];
+          const text = typeof o.text === 'string' ? o.text.trim() : '';
+          if (!text) return [];
           const category = normalizeCategory(o.category);
           const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
           return [
             {
-              text: t,
+              text,
               category,
               temporality: normalizeTemporality(o.temporality, category),
               timeHint: normalizeTextField(o.timeHint),
@@ -629,14 +626,14 @@ function registerUserProfile({
           if (!x || typeof x !== 'object') return [];
           const o = x as Record<string, unknown>;
           const id = typeof o.id === 'string' ? o.id.trim() : '';
-          const t = typeof o.text === 'string' ? o.text.trim() : '';
-          if (!id || !t) return [];
+          const text = typeof o.text === 'string' ? o.text.trim() : '';
+          if (!id || !text) return [];
           const category = normalizeCategory(o.category);
           const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
           return [
             {
               id,
-              text: t,
+              text,
               category,
               temporality: normalizeTemporality(o.temporality, category),
               timeHint: normalizeTextField(o.timeHint),
@@ -1061,34 +1058,53 @@ function registerUserProfile({
     return `- ${fact.text}（${meta.join('；')}）`;
   }
 
-  /** 将一个用户的 Fact[] 渲染为分组文本块 */
+  /** 生效的事实按分类分组，次序同 KNOWN_CATEGORIES；没有分类的归「其他」。给模型的档案块与 /profile 共用 */
+  function groupFacts(facts: Fact[]): Array<[FactCategory, Fact[]]> {
+    const active = facts.filter(isFactActive);
+    return KNOWN_CATEGORIES.flatMap(cat => {
+      const items = active.filter(f => (f.category ?? '其他') === cat);
+      return items.length > 0 ? [[cat, items] as [FactCategory, Fact[]]] : [];
+    });
+  }
+
+  /** 将一个用户的 Fact[] 渲染为分组文本块（给模型的） */
   function renderProfileBlock(facts: Fact[], label: string, compact: boolean): string {
-    const groups = new Map<string, string[]>();
-    const activeFacts = facts.filter(isFactActive);
-    // compact 模式（群聊背景参与者）：只取最近更新的 N 条，不分组
-    const subset = compact
-      ? [...activeFacts].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, cfg.maxFactsForOthers)
-      : activeFacts;
-    for (const f of subset) {
-      const key = f.category ?? '其他';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(renderFactLine(f, !compact));
-    }
     if (compact) {
-      // compact 模式：平铺，不加分组标题
+      // compact 模式（群聊背景参与者）：只取最近更新的 N 条，平铺，不加分组标题
+      const subset = facts
+        .filter(isFactActive)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, cfg.maxFactsForOthers);
       return `### ${label}\n${subset.map(f => renderFactLine(f, false)).join('\n')}`;
     }
-    const sections: string[] = [];
-    for (const cat of KNOWN_CATEGORIES) {
-      const items = groups.get(cat);
-      if (items && items.length > 0) sections.push(`## ${cat}\n${items.join('\n')}`);
-    }
-    for (const [cat, items] of groups) {
-      if (!(KNOWN_CATEGORIES as string[]).includes(cat) && items.length > 0) {
-        sections.push(`## ${cat}\n${items.join('\n')}`);
-      }
-    }
-    return sections.join('\n\n');
+    return groupFacts(facts)
+      .map(([cat, items]) => `## ${cat}\n${items.map(f => renderFactLine(f, true)).join('\n')}`)
+      .join('\n\n');
+  }
+
+  /** /profile 的回复：与给模型的档案块同一分组与版式，分类名与说明按读者语言 */
+  function profileText(profile: UserProfile, userKey: string): TextRef {
+    const factText = (fact: Fact) =>
+      t('factLine', {
+        text: fact.text,
+        meta: textClauses([
+          ...(fact.timeHint ? [t('factTimeHint', { hint: fact.timeHint })] : []),
+          t('factObserved', { at: fact.observedAt }),
+          ...(fact.temporality === 'temporary' ? [t('factTemporary')] : []),
+        ]),
+      });
+    return textLines([
+      t('profileHead', { key: userKey }),
+      t('profileMeta', {
+        score: (profile.relationScore ?? 0).toFixed(relationScorePrecision),
+        count: profile.interactionCount ?? 0,
+      }),
+      ...groupFacts(profile.facts).flatMap(([cat, items]) => [
+        '',
+        t('section', { name: CATEGORY_NAMES[cat] }),
+        ...items.map(factText),
+      ]),
+    ]);
   }
 
   function renderRelationLine(profile: UserProfile): string {
@@ -1362,9 +1378,7 @@ function registerUserProfile({
     if (!profile || profile.facts.length === 0) {
       return `📭 暂无档案数据 (${userKey})`;
     }
-    const block = renderProfileBlock(profile.facts, userKey, false);
-    const meta = `关系强度：${(profile.relationScore ?? 0).toFixed(relationScorePrecision)}/100，互动次数：${profile.interactionCount ?? 0}`;
-    return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
+    return profileText(profile, userKey);
   });
 
   commands.use.command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' }).action(async argv => {

@@ -8,6 +8,7 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
+import { isTextRef, resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -79,7 +80,7 @@ async function setup(extract?: unknown) {
 
 describe('用户档案页', () => {
   it('位置为插件详情：带详情的表格列出有事实的人（键、事实条数、最近一条事实的时间），新的在前；详情是各条事实与清空', async () => {
-    const { pages } = await setup();
+    const { pages, mem } = await setup();
     const view: DeclarativePageView = pages.view(PAGE);
     expect(view.placement).toBe('plugin');
     expect(pages.logs).toEqual([]);
@@ -87,10 +88,19 @@ describe('用户档案页', () => {
       { key: 'onebot:bob', facts: 1, updatedAt: 500 },
       { key: 'onebot:alice', facts: 2, updatedAt: 300 },
     ]);
-    expect(await pages.data(PAGE, 'facts', { rowKey: 'onebot:alice' })).toEqual([
+    const facts = await pages.data<Array<{ category: string | TextRef }>>(PAGE, 'facts', { rowKey: 'onebot:alice' });
+    expect(toSource(facts)).toEqual([
       { ref: '["onebot:alice","f2"]', text: '在读研', category: '', temporality: '近期', updatedAt: 300 },
       { ref: '["onebot:alice","f1"]', text: '喜欢猫', category: '偏好', temporality: '长期', updatedAt: 100 },
     ]);
+    // 分类的显示名按读者语言；落盘的分类值照旧
+    expect(facts.map(f => (isTextRef(f.category) ? resolveText(f.category, ['en']) : f.category))).toEqual([
+      '',
+      'Preferences',
+    ]);
+    expect((await mem.getMetadata(NS, 'onebot:alice'))?.facts).toContainEqual(
+      expect.objectContaining({ id: 'f1', category: '偏好' }),
+    );
     expect(await pages.data(PAGE, 'facts', { rowKey: 'onebot:nobody' })).toEqual([]);
     expect(view.actions).toMatchObject({
       forgetFact: { effect: 'destructive', row: true },
@@ -148,6 +158,56 @@ describe('用户档案页', () => {
     await command('profile.clear.nuke');
     expect(await pages.data(PAGE, 'profiles')).toEqual([]);
     expect(pages.invalidations).toHaveLength(3);
+  });
+
+  it('/profile 交出文字对象：分类名与说明按读者语言，原文与给模型的档案块同一版式', async () => {
+    const { mem, command } = await setup();
+    await mem.saveMetadata(NS, 'onebot:alice', {
+      facts: [
+        fact('f1', '喜欢猫', 100, { category: '偏好' }),
+        fact('f3', '考试周', Date.now(), {
+          category: '近期处境',
+          temporality: 'temporary',
+          timeHint: '十月',
+          observedAt: 100,
+        }),
+        fact('f4', 'zz', 100),
+      ],
+      relationScore: 12,
+      interactionCount: 3,
+      updatedAt: 900,
+    });
+    const reply = (await command('profile')) as TextRef;
+    expect(toSource(reply)).toBe(
+      [
+        '📇 你的档案 (onebot:alice)',
+        '关系强度：12.0/100，互动次数：3',
+        '',
+        '## 近期处境',
+        '- 考试周（时间线索：十月；记录于：1970/1/1；临时状态）',
+        '',
+        '## 偏好',
+        '- 喜欢猫（记录于：1970/1/1）',
+        '',
+        '## 其他',
+        '- zz（记录于：1970/1/1）',
+      ].join('\n'),
+    );
+    expect(isTextRef(reply) && resolveText(reply, ['en'])).toBe(
+      [
+        '📇 Your profile (onebot:alice)',
+        'Relationship strength: 12.0/100, interactions: 3',
+        '',
+        '## Current situation',
+        '- 考试周 (time hint: 十月; recorded 1/1/70; temporary)',
+        '',
+        '## Preferences',
+        '- 喜欢猫 (recorded 1/1/70)',
+        '',
+        '## Other',
+        '- zz (recorded 1/1/70)',
+      ].join('\n'),
+    );
   });
 
   it('提取写进新的事实后 invalidate', async () => {

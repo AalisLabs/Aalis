@@ -450,7 +450,8 @@ const itemBase = {
  *   界面逐字列出参数；sentToRoom 标出房间里经平台工具发出、平台收下的消息。模型还在生成参数时先推一次，状态是 generating，
  *   只有工具名、args 为空；开始执行时同一个 itemId 转为 running。结果带 error、或展示里的退出码不为 0 的是 failed。
  *   回合被停止时还没结束的调用（包括生成了还没执行的）是 aborted，停止之后工具照样返回了结果也不改；生成了却没有执行、
- *   回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾。历史里没有结果的调用（重启或中断）是 aborted。
+ *   回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾。生成了却没有执行的调用带 notExecuted、没有
+ *   result（界面据此写出没有执行）；它们不落库，历史里没有。历史里没有结果的调用（重启或中断）是 aborted。
  *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
  *   没人应答、撤销）状态是 denied。转到后台的调用带 taskId（后台任务的 id），结果是转后台时回给模型的那段，任务的状态、
@@ -459,7 +460,8 @@ const itemBase = {
  *   宿主通知（schema-message 的 hostNotice）的 topic 是它的 kind，另带 noticeId（hostNotice.id）与 facts（hostNotice.facts，
  *   给界面的事实，键由定义这个 kind 的契约约定）；text 是给人看的那句（hostNotice.text），通知没给时是写给模型的正文。
  *   界面认得的 kind 按事实画成状态、不显示 text，如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId
- *   是任务 id）；
+ *   是任务 id）。平台事件合成的入站（schema-message 的 IncomingMessage.text，如好友申请）不是谁的发言，同样是 notice：
+ *   topic 是它的来源（IncomingMessage.source），text 是给人看的那句；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的
@@ -502,6 +504,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     status: z.enum(['generating', 'running', 'completed', 'failed', 'denied', 'aborted']),
     output: z.string().optional(),
     result: z.string().optional(),
+    notExecuted: z.literal(true).optional(),
     durationMs: z.number().optional(),
     display: ToolDisplaySchema.optional(),
     sentToRoom: z.boolean().optional(),

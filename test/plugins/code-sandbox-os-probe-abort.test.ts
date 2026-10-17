@@ -12,6 +12,7 @@ import { App, type LifecycleCap, type Logger, type Provide, provide, services } 
 import codeSandboxOs from '../../packages/plugin-code-sandbox-os/src/index.js';
 import { buildBwrapArgs } from '../../packages/plugin-code-sandbox-os/src/sandbox.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
+import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { absentDoctor, fixedRef, ref } from '../fixtures/service-ref.js';
 
@@ -303,18 +304,24 @@ describe('doctor 的「代码沙箱」项', () => {
     return report.checks.find(c => c.id === 'code-sandbox.backend');
   }
 
-  it.skipIf(!probes)('探测失败：warn，说明写修法与探测失败的原因', async () => {
-    expect(await check({ wait: async () => ({ ...EXITED, code: 1 }) })).toEqual({
+  it.skipIf(!probes)('探测失败：warn，说明写修法与探测失败的原因（文字对象，按读者语言；日志里是原文）', async () => {
+    const result = await check({ wait: async () => ({ ...EXITED, code: 1 }) });
+    expect(toSource(result)).toEqual({
       id: 'code-sandbox.backend',
       category: 'env',
       level: 'warn',
       message: NONE,
       detail: expect.stringMatching(new RegExp(`^${FIX[process.platform]}。探测 \\S+ 失败：退出码 1$`)),
     });
+    const english = (text: unknown) => resolveText(text as never, ['en']);
+    expect(english(result?.message)).toBe(
+      'No OS sandbox is available; code_runner in auto mode will refuse to run code',
+    );
+    expect(english(result?.detail)).toMatch(/ reload this plugin.*\. Probing \S+ failed: exit code 1$/i);
   });
 
   it.skipIf(!probes)('探测成功：ok，写出后端', async () => {
-    expect(await check({ wait: async () => EXITED })).toEqual({
+    expect(toSource(await check({ wait: async () => EXITED }))).toEqual({
       id: 'code-sandbox.backend',
       category: 'env',
       level: 'ok',

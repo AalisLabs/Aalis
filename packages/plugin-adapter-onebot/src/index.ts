@@ -11,6 +11,7 @@ import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type TextRef, toSource } from '@aalis/schema-i18n';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
@@ -30,6 +31,7 @@ import { materializeAttachments } from './attachments.js';
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
+import { t } from './texts.js';
 import type {
   NormalizedRequestEvent,
   OneBotActionResponse,
@@ -302,6 +304,11 @@ function formatRecallClock(ts: number, now: number): string {
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
   return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+/** 通知里的人：查到昵称写「昵称(id)」，没有写 id，都没有写 fallback（给模型的正文取它的原文） */
+function who(nick: string | undefined, id: string | undefined, fallback: TextRef): string | TextRef {
+  return nick ? `${nick}(${id})` : (id ?? fallback);
 }
 
 /**
@@ -724,11 +731,13 @@ function runAdapter(caps: Caps): void {
 
   // ── 平台 notice 入档 ──
 
+  /** content 写给模型（text 的原文加上 [notice/…]，有的另带排查细节），text 是给人看的那句 */
   async function archivePlatformNotice(opts: {
     sessionId: string;
     noticeType: string;
     subType?: string;
     content: string;
+    text: TextRef;
     userId?: string;
     targetId?: string;
     groupId?: string;
@@ -743,6 +752,7 @@ function runAdapter(caps: Caps): void {
         noticeType: opts.noticeType,
         subType: opts.subType,
         content: opts.content,
+        text: opts.text,
         platform: 'onebot',
         userId: opts.userId,
         targetId: opts.targetId,
@@ -808,6 +818,7 @@ function runAdapter(caps: Caps): void {
           noticeType: 'group_ban',
           subType: 'recovered',
           content: `[notice/group_ban/recovered] 检测到我在该群仍处于禁言状态，剩余约 ${remainSec} 秒（重启/重连后从 shut_up_timestamp 恢复）`,
+          text: t('muteRecovered', { ms: remainSec * 1000 }),
           targetId: selfId,
           groupId,
           data: { duration: remainSec, until: ts * 1000 },
@@ -1868,10 +1879,14 @@ function runAdapter(caps: Caps): void {
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
       const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
+      const text = req.comment
+        ? t('friendRequestWithComment', { user: req.userId, comment: req.comment })
+        : t('friendRequest', { user: req.userId });
 
       events.use
         .emit('inbound:message', {
           content,
+          text,
           sessionId,
           platform: 'onebot',
           selfId: req.selfId,
@@ -1889,6 +1904,7 @@ function runAdapter(caps: Caps): void {
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
       const groupPart = `群 ${req.groupId}`;
       const commentPart = req.comment ? `，备注："${req.comment}"` : '';
+      const said = { user: req.userId, group: req.groupId };
 
       let content: string;
       if (req.subType === 'invite') {
@@ -1900,6 +1916,7 @@ function runAdapter(caps: Caps): void {
         events.use
           .emit('inbound:message', {
             content,
+            text: req.comment ? t('joinRequestWithComment', { ...said, comment: req.comment }) : t('joinRequest', said),
             sessionId: gsId,
             platform: 'onebot',
             selfId: req.selfId,
@@ -1915,6 +1932,7 @@ function runAdapter(caps: Caps): void {
       events.use
         .emit('inbound:message', {
           content,
+          text: req.comment ? t('groupInviteWithComment', { ...said, comment: req.comment }) : t('groupInvite', said),
           sessionId,
           platform: 'onebot',
           selfId: req.selfId,
@@ -2005,22 +2023,23 @@ function runAdapter(caps: Caps): void {
         // notice 入档（自己 / 他人都记录，便于 agent 感知群内动态）
         (async () => {
           const opNick = await resolveNickname(state, operatorId, notice.groupId);
-          const targetNick = isSelf ? '我' : await resolveNickname(state, notice.userId, notice.groupId);
-          const opLabel = opNick ? `${opNick}(${operatorId})` : (operatorId ?? '管理员');
-          const targetLabel = isSelf
-            ? '我'
-            : targetNick
-              ? `${targetNick}(${notice.userId})`
-              : (notice.userId ?? '某人');
+          const targetNick = isSelf ? undefined : await resolveNickname(state, notice.userId, notice.groupId);
+          const op = who(opNick, operatorId, t('adminSubject'));
+          const target = isSelf ? t('self') : who(targetNick, notice.userId, t('someone'));
           const verb = isLift ? '解除了禁言' : `禁言了 ${duration > 0 ? `${duration} 秒` : '若干时间'}`;
           const untilTs = isLift ? 0 : duration > 0 ? Date.now() + duration * 1000 : 0;
           const untilLabel = untilTs > 0 ? `（解禁于 ${new Date(untilTs).toISOString()}）` : '';
-          const content = `[notice/group_ban${isLift ? '/lift' : ''}] ${opLabel} 把 ${targetLabel} ${verb}${untilLabel}`;
+          const content = `[notice/group_ban${isLift ? '/lift' : ''}] ${toSource(op)} 把 ${toSource(target)} ${verb}${untilLabel}`;
           await archivePlatformNotice({
             sessionId,
             noticeType: notice.noticeType,
             subType: notice.subType,
             content,
+            text: isLift
+              ? t('banLifted', { op, target })
+              : untilTs > 0
+                ? t('banned', { op, target, ms: duration * 1000, until: untilTs })
+                : t('bannedUnknown', { op, target }),
             userId: notice.userId,
             targetId: notice.userId,
             groupId: notice.groupId,
@@ -2049,7 +2068,8 @@ function runAdapter(caps: Caps): void {
       (async () => {
         const userNick = await resolveNickname(state, notice.userId, notice.groupId);
         const opNick = isGroup ? await resolveNickname(state, operatorId, notice.groupId) : undefined;
-        const userLabel = userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
+        const user = who(userNick, notice.userId, t('someoneSubject'));
+        const userLabel = toSource(user);
         const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
         // 反查被撤回的归档原文：入站消息归档时带 metadata.messageId（archive:meta.messageId）。
         // 显式传 500 条扫描窗（活跃群百条几分钟即滚过，撤回常发生在更久之后）。
@@ -2072,6 +2092,11 @@ function runAdapter(caps: Caps): void {
           sessionId,
           noticeType: notice.noticeType,
           content,
+          text: !isGroup
+            ? t('recalledPrivate', { user })
+            : opLabel && opLabel !== userLabel
+              ? t('recalledOther', { op: opLabel, user })
+              : t('recalled', { user }),
           userId: notice.userId,
           groupId: notice.groupId,
           operatorId,
@@ -2096,22 +2121,24 @@ function runAdapter(caps: Caps): void {
       (async () => {
         const userNick = await resolveNickname(state, notice.userId, notice.groupId);
         const opNick = await resolveNickname(state, operatorId, notice.groupId);
-        const userLabel = isSelf ? '我' : userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
+        const user = isSelf ? t('selfSubject') : who(userNick, notice.userId, t('someoneSubject'));
         const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
-        let action: string;
+        let text: TextRef;
         if (isJoin) {
-          action = notice.subType === 'invite' && opLabel ? `被 ${opLabel} 邀请加入了群` : '加入了群';
+          text =
+            notice.subType === 'invite' && opLabel ? t('joinedInvited', { user, op: opLabel }) : t('joined', { user });
         } else {
-          if (notice.subType === 'kick' && opLabel) action = `被 ${opLabel} 移出群聊`;
-          else if (notice.subType === 'kick_me') action = `被 ${opLabel ?? '管理员'} 移出群聊`;
-          else action = '退出了群聊';
+          if (notice.subType === 'kick' && opLabel) text = t('removed', { user, op: opLabel });
+          else if (notice.subType === 'kick_me') text = t('removed', { user, op: opLabel ?? t('admin') });
+          else text = t('left', { user });
         }
-        const content = `[notice/${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}] ${userLabel} ${action}`;
+        const content = `[notice/${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}] ${toSource(text)}`;
         await archivePlatformNotice({
           sessionId,
           noticeType: notice.noticeType,
           subType: notice.subType,
           content,
+          text,
           userId: notice.userId,
           groupId: notice.groupId,
           operatorId,
@@ -2129,15 +2156,20 @@ function runAdapter(caps: Caps): void {
       const isSet = notice.subType === 'set' || notice.subType === 'unban' /* spurious */;
       (async () => {
         const userNick = await resolveNickname(state, notice.userId, notice.groupId);
-        const userLabel = isSelf ? '我' : userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
-        const action =
-          notice.subType === 'set' ? '被设置为管理员' : notice.subType === 'unset' ? '被取消管理员' : '管理员状态变化';
-        const content = `[notice/group_admin/${notice.subType ?? 'change'}] ${userLabel} ${action}`;
+        const user = isSelf ? t('selfSubject') : who(userNick, notice.userId, t('someoneSubject'));
+        const text =
+          notice.subType === 'set'
+            ? t('adminSet', { user })
+            : notice.subType === 'unset'
+              ? t('adminUnset', { user })
+              : t('adminChanged', { user });
+        const content = `[notice/group_admin/${notice.subType ?? 'change'}] ${toSource(text)}`;
         await archivePlatformNotice({
           sessionId,
           noticeType: notice.noticeType,
           subType: notice.subType,
           content,
+          text,
           userId: notice.userId,
           groupId: notice.groupId,
           data: { isSelf, isSet },
@@ -2152,12 +2184,13 @@ function runAdapter(caps: Caps): void {
       const sessionId = makeSessionId(notice.selfId, 'private', notice.userId);
       (async () => {
         const userNick = await resolveNickname(state, notice.userId);
-        const userLabel = userNick ? `${userNick}(${notice.userId})` : notice.userId;
-        const content = `[notice/${notice.noticeType}] ${userLabel} 成为了我的好友`;
+        const text = t('friendAdded', { user: who(userNick, notice.userId, t('someoneSubject')) });
+        const content = `[notice/${notice.noticeType}] ${toSource(text)}`;
         await archivePlatformNotice({
           sessionId,
           noticeType: notice.noticeType,
           content,
+          text,
           userId: notice.userId,
         });
       })().catch(err => logger.use.warn(`friend_add 入档异常: ${err}`));

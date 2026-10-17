@@ -231,6 +231,11 @@ export interface IncomingMessage {
   /** 通知动作是否指向机器人；poke 为 false 时按未点名互动判断，省略沿用戳机器人的语义。 */
   noticeTargetIsSelf?: boolean;
   /**
+   * 平台事件合成的入站（如好友申请、入群邀请）给人看的那句（文字对象）：content 是写给模型的（带处理办法与工具用法），
+   * 界面显示这一句，按读者的语言渲染。适配器写，真人发言不设；不进模型的上下文，存档按 {@link WellKnownMetadataKeys}.Text 记下
+   */
+  text?: TextRef;
+  /**
    * 触发类型（下游插件可据此区分主发言者语义）。真人消息由 inbound:trigger 相位生效的触发插件写入
    * （immediate / interval），平台适配器不设置；内部注入由注入方自带（idle、proactive）。flow 相位对
    * immediate 不查回复后冷却与限速，所以不经触发插件改写时（作用域外、没装触发插件），入站消息上预设的
@@ -569,8 +574,9 @@ export interface ArchivedAttachment {
  * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串或文字对象），
  *   平台适配器写；会话服务据此按读者语言写出回复为什么没发出。
  * - `Text`：通知与事件标记给人看的文字（@aalis/schema-i18n 的文字对象），`content` 是写给模型的话或它按原文渲染的整句。
- *   宿主通知的 `hostNotice.text`、平台通知的文字、带 {@link OutgoingMessage}.text 的出站记进 WebUI 会话历史时由写方记下，
- *   压缩分隔线同样；会话服务据此按读者语言显示，没有时显示 `content`。
+ *   宿主通知的 `hostNotice.text`、平台通知的文字、平台事件合成的入站的 {@link IncomingMessage}.text、带
+ *   {@link OutgoingMessage}.text 的出站记进 WebUI 会话历史时由写方记下，压缩分隔线同样；会话服务据此按读者语言显示（合成的
+ *   入站画成通知），没有时显示 `content`。
  */
 export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',

@@ -21,7 +21,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import { createSelfCheck } from '../../packages/plugin-trigger-laya/src/self-check.js';
-import { defineTexts, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
+import { defineTexts, localize, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { buildIncomingContent, type IncomingMessage, type Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
@@ -292,7 +292,11 @@ async function setup(opts: SetupOptions = {}) {
     archived,
     flow,
     send: (message: IncomingMessage) => run(host.hooks.use, message),
-    diagnose: async () => (await check.run()) as CheckResult,
+    /** 诊断项的结果：文字按 languages 渲染，不给时取原文 */
+    diagnose: async (languages?: readonly string[]) => {
+      const result = (await check.run()) as CheckResult;
+      return languages ? localize(result, text => resolveText(text, languages)) : toSource(result);
+    },
   };
 }
 
@@ -988,6 +992,23 @@ describe('plugin-trigger-laya：诊断项', () => {
     expect(result.message).toContain('只回点名');
   });
 
+  it('说明按读者语言：熔断的原因进诊断是文字对象，日志里是原文', async () => {
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    const { send, diagnose, logs } = await setup();
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    expect((await diagnose(['en'])).message).toBe(
+      'Laya trigger judging is in effect: judging unavailable (the sidecar failed 3 times in a row, last time: ' +
+        'HTTP 500 internal; circuit open, retrying in 30s); judging falls back to replying only when mentioned',
+    );
+    expect((await diagnose()).message).toBe(
+      'Laya 触发判定生效中：判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；熔断 30s 后重试），判定按兜底只回点名',
+    );
+    expect(byLevel(logs, 'error')).toEqual([
+      '[laya] 判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；熔断 30s 后重试），' +
+        '已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档',
+    ]);
+  });
+
   it('熔断后：报判定不可用；memory 缺席同样报出', async () => {
     sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
     const fused = await setup();
@@ -1149,13 +1170,12 @@ describe('plugin-trigger-laya：诊断项', () => {
     host.provide.use(trigger, { label }, { label });
     const rule = host.services.use.all(trigger).find(v => v.label === label);
     host.services.use.prefer(trigger, rule?.contextId ?? '');
-    const { message } = await diagnose();
-    expect(resolveText(message as never, ['en'])).toBe(
+    expect((await diagnose(['en'])).message).toBe(
       'Laya trigger judging is not in effect (the active trigger plugin is “Rule-based”), so the sidecar is not ' +
         'checked; to enable it, point trigger to @aalis/plugin-trigger-laya under servicePreferences in the ' +
         'configuration file',
     );
-    expect(toSource(message)).toBe(INACTIVE.replace('规则（计数/评分）', '规则判定'));
+    expect((await diagnose()).message).toBe(INACTIVE.replace('规则（计数/评分）', '规则判定'));
   });
 });
 

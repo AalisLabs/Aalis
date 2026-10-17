@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnManifest } from '../../packages/plugin-checkpoint/src/service.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import {
   makeCheckpointService as makeService,
   CHECKPOINT_ROOT as ROOT,
@@ -274,6 +275,26 @@ describe('checkpoint 不记 data / tmp 等共享根', () => {
 // 删掉，且 rollback 仍返回 ok:true。可达场景：只写权限(0200)、fd 打满(EMFILE)、
 // 超过单次 readFile 上限。
 // ════════════════════════════════════════════════════════════
+
+describe('checkpoint：清单里没有备份的原因', () => {
+  it('清单里存的原因是文字对象：回滚时原样报出', async () => {
+    const reason = defineTexts({
+      ns: '@zz/checkpoint-readback',
+      language: 'zh-CN',
+      source: { tooLarge: '文件过大' } as const,
+    })('tooLarge');
+    const manifest: TurnManifest = {
+      turnId: 'turn-a',
+      sessionId: 'sessA',
+      startedAt: 1,
+      endedAt: 2,
+      files: [{ uri: 'ws:/big.bin', action: 'write', skipped: reason }],
+    };
+    const { svc, disk } = makeService();
+    disk.set(`${ROOT}/sessA/turn-a/manifest.json`, JSON.stringify(manifest));
+    expect((await svc.rollback('sessA', 'turn-a')).errors).toEqual([{ uri: 'ws:/big.bin', reason }]);
+  });
+});
 
 describe('checkpoint：原文件读取失败不得当成「本回合新建」', () => {
   it('覆盖一个读不出来的既有文件 → 记 skipped，回滚不删它', async () => {

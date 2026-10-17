@@ -29,7 +29,7 @@ import packageManagerPlugin, {
 } from '../../packages/plugin-package-manager/src/index.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { deferred } from '../helpers/deferred.js';
@@ -199,17 +199,17 @@ describe('纯函数判据', () => {
     expect(r.error).toContain('参数总长');
   });
 
-  it('nonMarketKind：只有插件与前端界面归市场装卸，其余给出拒绝时的类别名', () => {
+  it('nonMarketKind：只有插件与前端界面归市场装卸，其余给出种类码', () => {
     expect(nonMarketKind(['aalis', 'aalis-plugin'])).toBeUndefined();
     expect(nonMarketKind(['aalis', 'aalis-interface'])).toBeUndefined();
-    expect(nonMarketKind(['aalis-core'])).toBe('内核');
-    expect(nonMarketKind(['aalis-runtime'])).toBe('宿主');
-    expect(nonMarketKind(['aalis-api'])).toBe('服务契约');
-    expect(nonMarketKind(['aalis-schema'])).toBe('数据规范');
-    expect(nonMarketKind(['aalis-util'])).toBe('工具库');
-    expect(nonMarketKind(['odd', 'even'])).toBe('非插件包');
-    expect(nonMarketKind(undefined)).toBe('非插件包');
-    expect(nonMarketKind('aalis-plugin'), '非数组的 keywords 不算声明').toBe('非插件包');
+    expect(nonMarketKind(['aalis-core'])).toBe('core');
+    expect(nonMarketKind(['aalis-runtime'])).toBe('runtime');
+    expect(nonMarketKind(['aalis-api'])).toBe('api');
+    expect(nonMarketKind(['aalis-schema'])).toBe('schema');
+    expect(nonMarketKind(['aalis-util'])).toBe('util');
+    expect(nonMarketKind(['odd', 'even'])).toBe('other');
+    expect(nonMarketKind(undefined)).toBe('other');
+    expect(nonMarketKind('aalis-plugin'), '非数组的 keywords 不算声明').toBe('other');
   });
 
   describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
@@ -330,16 +330,18 @@ describe('install（只有一条路径：写根依赖）', () => {
 
   // ── 装前类型闸：与卸载同一判据，只装插件与前端界面 ──
   it.each([
-    ['["aalis","aalis-core"]', '内核'],
-    ['["aalis","aalis-api"]', '服务契约'],
-    ['["aalis","aalis-util"]', '工具库'],
-    ['["odd","even"]', '非插件包'],
-    ['', '非插件包'], // 包没有 keywords 字段时 npm view 什么都不输出
-  ])('装前类型闸拒装 keywords=%s（%s），不跑 npm install', async (viewOut, label) => {
+    ['["aalis","aalis-core"]', '内核', '(core)', 'put in place by the scaffold'],
+    ['["aalis","aalis-api"]', '服务契约', '(service contract)', 'put in place by the scaffold'],
+    ['["aalis","aalis-util"]', '工具库', '(utility library)', 'put in place by the scaffold'],
+    ['["odd","even"]', '非插件包', '(non-plugin package)', 'only installs packages with'],
+    ['', '非插件包', '(non-plugin package)', 'only installs packages with'], // 包没有 keywords 字段时 npm view 什么都不输出
+  ])('装前类型闸拒装 keywords=%s（%s），不跑 npm install；种类名与说明按读者语言', async (viewOut, label, en, hint) => {
     const h = makeHarness({ viewOut, json: { [rootPkg]: { dependencies: {} } } });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain(label);
+    expect(toSource(r.message)).toContain(label);
+    expect(isTextRef(r.message) && resolveText(r.message, ['en'])).toContain(`@scope/foo ${en} is not a plugin`);
+    expect(isTextRef(r.message) && resolveText(r.message, ['en'])).toContain(hint);
     expect(h.execCalls.find(c => c.cmd === 'npm')?.args).toEqual(['view', '@scope/foo', 'keywords', '--json']);
     expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(false);
   });
@@ -356,7 +358,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     const h = makeHarness({ viewOut: '[["aalis-plugin"],["aalis-api"]]', json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('foo@1');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('服务契约');
+    expect(toSource(r.message)).toContain('服务契约');
     expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(false);
   });
 
@@ -1186,18 +1188,20 @@ describe('uninstall', () => {
 
   // ── 闸一：类型 ──
   it.each([
-    ['aalis-core', '内核'],
-    ['aalis-runtime', '宿主'],
-    ['aalis-api', '服务契约'],
-    ['aalis-schema', '数据规范'],
-    ['aalis-util', '工具库'],
-  ])('拒卸 %s（%s 不是插件，不在市场职权内）', async (kw, label) => {
+    ['aalis-core', '内核', '(core)', 'cannot start'],
+    ['aalis-runtime', '宿主', '(host)', 'cannot start'],
+    ['aalis-api', '服务契约', '(service contract)', 'prunes it'],
+    ['aalis-schema', '数据规范', '(data schema)', 'prunes it'],
+    ['aalis-util', '工具库', '(utility library)', 'prunes it'],
+  ])('拒卸 %s（%s 不是插件，不在市场职权内）；种类名与说明按读者语言', async (kw, label, en, hint) => {
     const h = harness(['aalis', kw]);
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain(label);
+    expect(toSource(r.message)).toContain(label);
     // 措辞必须指出带外途径：owner 权限很高，拦的不是权限而是「这个操作会销毁你用来撤销它的通道」
-    expect(r.message).toContain('npm uninstall');
+    expect(toSource(r.message)).toContain('npm uninstall');
+    expect(isTextRef(r.message) && resolveText(r.message, ['en'])).toContain(`@scope/foo ${en} is not a plugin`);
+    expect(isTextRef(r.message) && resolveText(r.message, ['en'])).toContain(hint);
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
     expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
   });

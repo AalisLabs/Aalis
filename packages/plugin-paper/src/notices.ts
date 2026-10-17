@@ -3,7 +3,8 @@
 //
 // - 完成通知：任务到终态（完成、失败、超时取消、被 owner 取消）后，向发起房间注入一条宿主通知
 //   （IncomingMessage.hostNotice）。一件一条，source 为 paper:<白纸 id>:<任务 id>，各占 agent 的一条 lane，
-//   互不中止；不做串行与积压合并。宿主撰写的行全在 content 里；远端说明截断后经 wrapUntrustedContent 放进
+//   互不中止；不做串行与积压合并。宿主撰写的行全在 content 里，给人看的那句（任务的结果、用时与花费）另作文字对象
+//   放进 hostNotice.text；远端说明截断后经 wrapUntrustedContent 放进
 //   hostNotice.untrusted，只在通知那一轮出现、不归档，所以远端说明伪造不出宿主行，也进不了之后的历史。
 //   经 paper_cancel 取消的任务不通知（工具结果已告知）。注入之前先把通知标识与时刻写进记录并落盘，每件至多
 //   注入一次；app:started 之后才开始注入（网关与 agent 此时已就位），重启前已到终态而还没注入的在这时补注。
@@ -25,6 +26,7 @@
 import type { Hooks } from '@aalis/api-hooks';
 import { wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
+import { type TextRef, toSource } from '@aalis/schema-i18n';
 import { type IncomingMessage, selfInitiatedActor } from '@aalis/schema-message';
 import type { PaperConfig } from './config.js';
 import {
@@ -35,6 +37,7 @@ import {
   sendRefusal,
 } from './deliver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { t } from './texts.js';
 import { describe, formatDuration, formatSize, truncate } from './util.js';
 
 /** 通知里远端说明的长度 */
@@ -57,17 +60,34 @@ function artifactList(artifacts: readonly Artifact[]): string {
   return artifacts.map(a => `${a.id}（${a.type}，${formatSize(a.sizeBytes)}）`).join('、');
 }
 
-function outcomeOf(task: TaskRecord): string {
-  if (task.state === 'done' && task.publication?.state === 'failed')
-    return `未能上线：${task.publication.reason ?? '发布处理失败'}`;
-  if (task.state === 'done') return '已完成';
-  if (task.state === 'failed') {
-    // 压成一行：原因里的换行不能在通知里另起一行冒充宿主行
-    return `失败：${truncate((task.error ?? '原因不明').replace(/\s+/g, ' ').trim(), ERROR_MAX)}`;
+/** 任务的结果：给模型的正文（forModel）取它的原文，给人看的那句按读者语言 */
+function outcomeOf(task: TaskRecord, forModel: boolean): TextRef {
+  if (task.state === 'done' && task.publication?.state === 'failed') {
+    const { reason } = task.publication;
+    return reason === undefined ? t('outcomeUnpublishedUnknown') : t('outcomeUnpublished', { reason });
   }
-  if (task.cancelledVia === 'timeout') return '超过单轮时长上限，已取消';
-  if (task.cancelledVia === 'webui') return '已被 owner 取消';
-  return '已在远端被取消';
+  if (task.state === 'done') return t('outcomeDone');
+  if (task.state === 'failed') {
+    const { error } = task;
+    if (error === undefined) return t('outcomeFailedUnknown');
+    // 正文里的原因（文字对象取原文）与给人看的字符串原因压成一行：换行不能在通知里另起一行冒充宿主行。
+    // 给人看的文字对象照原样交出（参数由写入方落盘前截短）
+    const oneLine = forModel || typeof error === 'string';
+    return t('outcomeFailed', {
+      error: oneLine ? truncate(toSource(error).replace(/\s+/g, ' ').trim(), ERROR_MAX) : error,
+    });
+  }
+  if (task.cancelledVia === 'timeout') return t('outcomeTimeout');
+  if (task.cancelledVia === 'webui') return t('outcomeOwnerCancelled');
+  return t('outcomeRemoteCancelled');
+}
+
+/** 完成通知给人看的那句：任务的结果、用时与花费（成品清单与 paper_send 的用法是写给她的） */
+function noticeText(task: TaskRecord): TextRef {
+  const took =
+    task.startedAt !== undefined && task.endedAt !== undefined ? t('took', { ms: task.endedAt - task.startedAt }) : '';
+  const cost = task.costCents !== undefined ? t('cost', { cents: task.costCents }) : task.runId ? t('costPending') : '';
+  return t('notice', { id: task.id, name: task.name, outcome: outcomeOf(task, false), took, cost });
 }
 
 /** 完成通知的宿主正文：只有宿主撰写的行 */
@@ -78,7 +98,8 @@ function noticeContent(task: TaskRecord, direct?: DirectSend): string {
   }
   if (task.costCents !== undefined) facts.push(`花费 ${task.costCents} 美分`);
   else if (task.runId) facts.push('费用还没入账');
-  const lines = [`[白纸] 任务 ${task.id}「${task.name}」${outcomeOf(task)}。${facts.map(f => `${f}。`).join('')}`];
+  const outcome = toSource(outcomeOf(task, true));
+  const lines = [`[白纸] 任务 ${task.id}「${task.name}」${outcome}。${facts.map(f => `${f}。`).join('')}`];
   if (task.publication) {
     // 自动发布在提交之前失败：说清直接发送的结果，并列出成品编号，交给她处理
     if (rawDeliveryAllowed(task) && task.artifacts.length > 0) {
@@ -164,8 +185,8 @@ export class PaperNotices {
     const due = await ledger.exclusive(async () => {
       if (ledger.failure) return [];
       const tasks = Object.values(ledger.data.tasks)
-        .filter(t => !UNFINISHED_STATES.has(t.state) && !t.notice && t.cancelledVia !== 'tool')
-        .filter(t => !t.publication || t.state !== 'done' || failedBeforeSubmission(t))
+        .filter(task => !UNFINISHED_STATES.has(task.state) && !task.notice && task.cancelledVia !== 'tool')
+        .filter(task => !task.publication || task.state !== 'done' || failedBeforeSubmission(task))
         .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
       if (tasks.length === 0) return [];
       const at = this.#d.now();
@@ -225,7 +246,7 @@ export class PaperNotices {
       platform: task.platform,
       source: `paper:${task.paperId}:${task.id}`,
       actor: selfInitiatedActor(task.platform),
-      hostNotice: { kind: 'paper-task', id, ...(untrusted ? { untrusted } : {}) },
+      hostNotice: { kind: 'paper-task', id, ...(untrusted ? { untrusted } : {}), text: noticeText(task) },
     };
     try {
       await this.#d.events.emit('inbound:message', message);
@@ -249,23 +270,23 @@ function pendingHint(
 ): string | undefined {
   const tasks = Object.values(ledger.data.tasks)
     .filter(
-      t =>
-        t.room === room &&
-        (!source || source === `paper:${t.paperId}:${t.id}`) &&
-        t.state === 'done' &&
-        rawDeliveryAllowed(t) &&
-        !t.delivered &&
-        !t.unknownArtifacts?.length &&
-        !directSending(t) &&
-        !t.artifactsCleared &&
-        t.artifacts.length > 0 &&
-        (t.endedAt ?? 0) >= since,
+      task =>
+        task.room === room &&
+        (!source || source === `paper:${task.paperId}:${task.id}`) &&
+        task.state === 'done' &&
+        rawDeliveryAllowed(task) &&
+        !task.delivered &&
+        !task.unknownArtifacts?.length &&
+        !directSending(task) &&
+        !task.artifactsCleared &&
+        task.artifacts.length > 0 &&
+        (task.endedAt ?? 0) >= since,
     )
     .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
   if (tasks.length === 0) return undefined;
   return [
     '[白纸] 以下任务的成品还没发回本群，需要时用 paper_send 按成品编号发：',
-    ...tasks.map(t => `- 任务 ${t.id}「${t.name}」：${artifactList(t.artifacts)}`),
+    ...tasks.map(task => `- 任务 ${task.id}「${task.name}」：${artifactList(task.artifacts)}`),
   ].join('\n');
 }
 

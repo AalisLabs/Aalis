@@ -8,6 +8,7 @@ import {
 } from '../../packages/api-publish/src/index.js';
 import { artifactUri } from '../../packages/plugin-paper/src/artifacts.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -90,6 +91,29 @@ async function setup(
 }
 
 describe('白纸作品工具', () => {
+  it('落盘的发布原因是文字对象：重启读回仍在，提名被拒时交给模型的是原文', async () => {
+    const quota = defineTexts({
+      ns: '@zz/paper-works-readback',
+      language: 'zh-CN',
+      source: { quota: '额度用完了' } as const,
+    })('quota');
+    const { hub } = await setup([
+      task({
+        publication: {
+          target: 'works',
+          title: '猫',
+          summary: '',
+          state: 'failed',
+          workId: 'abcdefghij',
+          reason: quota,
+        },
+      }),
+    ]);
+    expect(
+      await hub.call('works_nominate', { task_id: taskId, artifact_ids: ['a-00000001'], title: '猫', summary: '' }),
+    ).toEqual({ ok: false, error: '这件任务的发布没有成功（额度用完了），不能再次提名' });
+  });
+
   it('同一白纸只能选择白名单中已登记的单个目标；查询只显示获准目标与目录地址', async () => {
     const { hub, nominate, listSurfaces } = await setup(undefined, {
       paperConfig: { papers: [{ name: PAPER, publishTargets: 'one, two' }] },

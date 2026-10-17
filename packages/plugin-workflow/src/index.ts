@@ -15,7 +15,7 @@ import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aa
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { TextError, type TextRef, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, toSource } from '@aalis/schema-i18n';
 import { parse, stringify } from 'yaml';
 
 import { errorReason, runDag, validateGraph } from './engine.js';
@@ -85,18 +85,21 @@ function fmtDuration(ms: number): string {
 }
 
 /**
- * once 记录读不出时本次运行不安排 once：定义或启用一个 once 的回执据此如实说明（AI 工具与工作流页同一口径）。
+ * once 记录读不出时本次运行不安排 once：定义或启用一个 once 的回执据此如实说明（AI 工具与工作流页同一口径，工具取原文）。
  * manualRun 是各自那一面手动执行的说法；不持久化的定义重启后就没了，「重启恢复」只对写了文件的定义成立。
  */
 function onceSkippedNote(
   def: WorkflowDef,
   persist: boolean,
   onceLedgerReadable: boolean,
-  manualRun: string,
-): string | undefined {
+  manualRun: string | TextRef,
+): TextRef | undefined {
   if (def.trigger.type !== 'once' || def.enabled === false || onceLedgerReadable) return undefined;
-  return `once 记录读取失败（见日志），本次运行不会触发；可用${manualRun}手动执行${persist ? '，修复运行历史文件后重启恢复' : ''}`;
+  return t(persist ? 'onceSkippedPersisted' : 'onceSkipped', { manualRun });
 }
+
+/** 工作流页的回执：once 记录读不出时接上附注 */
+const withNote = (receipt: TextRef, note: TextRef | undefined) => (note ? textClauses([receipt, note]) : receipt);
 
 const STATUS: Record<WorkflowRun['status'], { text: TextRef; state?: 'error' | 'running' | 'inactive' }> = {
   pending: { text: t('statusPending'), state: 'inactive' },
@@ -117,11 +120,11 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
     return def;
   };
   /** 启用或停用：改的是写在磁盘上的定义 */
-  const setEnabled = async (id: string, enabled: boolean): Promise<string> => {
+  const setEnabled = async (id: string, enabled: boolean): Promise<TextRef> => {
     const next = { ...definitionOf(id), enabled };
     await service.defineWorkflow(next, { persist: true });
-    const note = onceSkippedNote(next, true, onceLedgerReadable(), '「立即运行」');
-    return `已${enabled ? '启用' : '停用'} ${id}${note ? `；${note}` : ''}`;
+    const note = onceSkippedNote(next, true, onceLedgerReadable(), t('runNow'));
+    return withNote(t(enabled ? 'enabled' : 'disabled', { id }), note);
   };
 
   return webui.definePage({
@@ -191,8 +194,8 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
           const def = normalizeDef(raw, `wf-${Date.now()}`);
           if (!def) throw new Error('定义不合法：缺少 trigger 或 nodes');
           await service.defineWorkflow(def, { persist: input.persist });
-          const note = onceSkippedNote(def, input.persist, onceLedgerReadable(), '「立即运行」');
-          return `已保存工作流 ${def.id}${note ? `；${note}` : ''}`;
+          const note = onceSkippedNote(def, input.persist, onceLedgerReadable(), t('runNow'));
+          return withNote(t('saved', { id: def.id }), note);
         },
       },
     },
@@ -590,7 +593,7 @@ function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerRe
         id: def.id,
         nodes: def.nodes.length,
         trigger: def.trigger.type,
-        ...(note ? { note } : {}),
+        ...(note ? { note: toSource(note) } : {}),
       });
     },
   });

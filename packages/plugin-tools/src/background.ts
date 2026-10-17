@@ -637,19 +637,22 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * 结束通知只放宿主取得的事实：任务 id、工具名、结局与退出码、用时，正文写给模型，同样的事实另给界面。参数由模型写出
-   * （可能受过注入），输出与结果受外部内容左右，都不进通知（通知以 system 呈现且会归档）；它们由模型用 background_output 取，
-   * 以 tool 角色进上下文。只有正常结束（completed、failed）的通知
+   * 结束通知只放宿主取得的事实：任务 id、工具名、结局与退出码、用时，正文写给模型，同样的事实另给界面，给人看的那句另写
+   * （不带给模型的用法提示）。参数由模型写出（可能受过注入），输出与结果受外部内容左右，都不进通知（通知以 system 呈现且
+   * 会归档）；它们由模型用 background_output 取，以 tool 角色进上下文。只有正常结束（completed、failed）的通知
    */
   private notify({ task }: TaskRecord, status: BackgroundTaskNoticeFacts['status'], target: NoticeTarget): void {
     const durationMs = (task.endedAt ?? task.startedAt) - task.startedAt;
     const { exitCode } = task;
-    const ending =
+    const failedExit = status === 'failed' && exitCode !== undefined && exitCode !== 0;
+    const ending = status === 'completed' ? '已完成' : failedExit ? `失败：退出码 ${exitCode}` : '失败';
+    const said = { id: task.id, tool: task.label, ms: durationMs };
+    const text =
       status === 'completed'
-        ? '已完成'
-        : exitCode !== undefined && exitCode !== 0
-          ? `失败：退出码 ${exitCode}`
-          : '失败';
+        ? t('noticeCompleted', said)
+        : failedExit
+          ? t('noticeFailedExit', { ...said, code: exitCode })
+          : t('noticeFailed', said);
     const facts: BackgroundTaskNoticeFacts = {
       tool: task.label,
       status,
@@ -668,6 +671,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(target.callerUserId !== undefined ? { callerUserId: target.callerUserId } : {}),
         ...(target.replyTo !== undefined ? { replyTo: target.replyTo } : {}),
         facts,
+        text,
       },
     };
     this.logger.info(`后台任务 ${task.id} 已结束，结束通知注入会话 ${task.sessionId}`);

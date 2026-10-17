@@ -10,49 +10,46 @@ import { type CodeSandboxService, codeSandbox, type SandboxRunRequest } from '@a
 import { doctor } from '@aalis/api-doctor';
 import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import { definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
+import { t } from './texts.js';
 
 /**
  * 各平台的最小沙箱命令：跑通即有该后端，跑不通时按 fix 修。Linux 与正式运行（sandbox.ts 的 buildBwrapArgs）一样挂 /dev 与 /proc：
  * 只放开 seccomp、挂不了 /proc 的容器里，不挂的探测会报 bwrap 可用，之后每次运行都失败
  */
-const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: string; args: string[]; fix: string }>> =
+const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: string; args: string[]; fix: TextRef }>> =
   {
     darwin: {
       backend: 'seatbelt',
       cmd: 'sandbox-exec',
       args: ['-p', '(version 1) (allow default)', 'true'],
-      fix: 'sandbox-exec 是 macOS 自带的，确认 /usr/bin/sandbox-exec 能执行后重载本插件',
+      fix: t('fixSeatbelt'),
     },
     linux: {
       backend: 'bwrap',
       cmd: 'bwrap',
       args: ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-all', 'true'],
-      fix: '装上 bubblewrap（bwrap），并开启非特权用户命名空间（unprivileged user namespaces）；在容器里运行时还要能挂 /proc。改好后重载本插件',
+      fix: t('fixBwrap'),
     },
   };
 
 /** 没有后端时的结论：code_runner 的 auto 模式在没有沙箱时拒绝执行（fail-closed） */
-const NONE = '没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码';
+const NONE = t('none');
 
 /**
  * 功能性探测：经 process 服务真正跑一次最小沙箱命令，退出码为 0 才算有后端。
  * 比「命令是否存在」更强——一次覆盖 存在性 + Linux unprivileged userns 是否真能用。
- * 没有后端时 problem 写怎么修与原因（日志与诊断共用）。
+ * 没有后端时 problem 写怎么修与原因（日志取原文，诊断交文字对象）。
  * 停用、停机时随 signal 中止并抛出（不落成「无后端」），启动器挂住也不拖满停机宽限。
  */
 async function probeBackend(
   proc: ProcessService,
   signal: AbortSignal,
-): Promise<{ backend: SandboxBackend; problem?: string }> {
+): Promise<{ backend: SandboxBackend; problem?: TextRef }> {
   const platform = process.platform;
   const probe = PROBES[platform];
-  if (!probe) {
-    return {
-      backend: 'none',
-      problem: `这个平台（${platform}）没有 OS 沙箱后端：要用沙箱就在 macOS、Linux 或 WSL 上运行 Aalis`,
-    };
-  }
+  if (!probe) return { backend: 'none', problem: t('noPlatform', { platform }) };
   let result: ExecResult | undefined;
   let error: unknown;
   try {
@@ -66,12 +63,10 @@ async function probeBackend(
   // 启动器不存在 / 不可用（如 Linux 未安装 bwrap、或 unprivileged user namespaces 被禁）/ 超时 → 无后端
   const reason = result
     ? result.code === null
-      ? `被信号 ${result.signal} 终止（含 5 秒超时）`
-      : `退出码 ${result.code}`
-    : error instanceof Error
-      ? error.message
-      : String(error);
-  return { backend: 'none', problem: `${probe.fix}。探测 ${probe.cmd} 失败：${reason}` };
+      ? t('killed', { signal: String(result.signal) })
+      : t('exitCode', { code: result.code })
+    : textOf(error);
+  return { backend: 'none', problem: t('probeFailed', { fix: probe.fix, cmd: probe.cmd, reason }) };
 }
 
 class OsCodeSandboxService implements CodeSandboxService {
@@ -110,7 +105,7 @@ export default definePlugin({
     // 业务句柄每次调用转发给当前选中的提供者，process 提供者换人后无需重启本插件
     const proc = caps.processService.use;
     const { backend, problem } = await probeBackend(proc, caps.lifecycle.use.signal);
-    if (problem) log.warn(`${NONE}：${problem}`);
+    if (problem) log.warn(`${toSource(NONE)}：${toSource(problem)}`);
     caps.provide.use(codeSandbox, new OsCodeSandboxService(proc, backend));
     // 这台机器上没有沙箱时整个插件用不了：在诊断里给出修法，没装 WebUI 的用户靠 /doctor 看到
     caps.doctor.use.registerCheck({
@@ -119,7 +114,7 @@ export default definePlugin({
       run: () =>
         problem
           ? { id: 'code-sandbox.backend', category: 'env', level: 'warn', message: NONE, detail: problem }
-          : { id: 'code-sandbox.backend', category: 'env', level: 'ok', message: `OS 沙箱可用（${backend}）` },
+          : { id: 'code-sandbox.backend', category: 'env', level: 'ok', message: t('available', { backend }) },
     });
     log.info(`code-sandbox-os 就绪（后端: ${backend}）`);
   },

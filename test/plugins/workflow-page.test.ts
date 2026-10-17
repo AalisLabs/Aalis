@@ -144,7 +144,7 @@ describe('工作流页', () => {
     const before = pages.invalidations.length;
     expect(await pages.act('workflows', 'disableWorkflow', { rowKey: 'zz-manual' })).toEqual({
       status: 200,
-      body: { message: '已停用 zz-manual' },
+      body: { message: expect.objectContaining({ source: '已停用 zz-manual' }) },
     });
     expect(svc.getWorkflow('zz-manual')?.enabled).toBe(false);
     expect(await pages.data('workflows', 'workflows')).toMatchObject([
@@ -152,7 +152,7 @@ describe('工作流页', () => {
     ]);
     expect(await pages.act('workflows', 'enableWorkflow', { rowKey: 'zz-manual' })).toEqual({
       status: 200,
-      body: { message: '已启用 zz-manual' },
+      body: { message: expect.objectContaining({ source: '已启用 zz-manual' }) },
     });
     expect(invalidated(before)).toContainEqual(WHOLE_PAGE);
   });
@@ -163,7 +163,7 @@ describe('工作流页', () => {
     const yaml = MANUAL_YAML.replace('zz-manual', 'zz-second');
     expect(await pages.act('workflows', 'defineWorkflow', { input: { yaml } })).toEqual({
       status: 200,
-      body: { message: '已保存工作流 zz-second' },
+      body: { message: expect.objectContaining({ source: '已保存工作流 zz-second' }) },
     });
     expect(svc.getWorkflow('zz-second')).toBeDefined();
     expect(existsSync(join(base, 'workspace', 'workflows', 'zz-second.yaml'))).toBe(true);

@@ -72,7 +72,7 @@ describe('审核入口使用的管理操作', () => {
     expect(h.files.get(`pluginData:/publish-review/items/${id}/review/image-1.png`)).toEqual(new Uint8Array([1, 2]));
     expect(await h.service.reject(id)).toBe(true);
     expect(h.store.data.queue[id]).toBeUndefined();
-    await vi.waitFor(() => expect(h.notice.mock.calls.at(-1)?.[1]).toContain('未获批准'));
+    await vi.waitFor(() => expect(h.notice.mock.calls.at(-1)?.[1].content).toContain('未获批准'));
     expect(h.store.data.history.at(-1)).toMatchObject({ id, event: 'rejected' });
     expect(await h.service.reject(id)).toBe(false);
   });

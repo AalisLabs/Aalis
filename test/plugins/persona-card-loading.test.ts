@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
 import { type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { createBotNames } from '../../packages/api-trigger/src/index.js';
 import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
@@ -142,7 +143,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect(promptB).not.toContain('"msgA"');
   });
 
-  it('名字与昵称按 options 取卡：不传取主卡；指定的卡没写名字时报那张卡的文件名；找不到该卡时回落主卡', async () => {
+  it('名字与昵称按 options 取卡：不传取主卡；指定的卡没写名字时为空串；找不到该卡时回落主卡', async () => {
     writeCard('default.yaml', 'name: Main\nnick_name: [小M]\ndescription: m\nprompt: m\n');
     writeCard('b.yaml', 'name: Bob\nnick_name: [阿B]\ndescription: b\nprompt: b\n');
     writeCard('nameless.yaml', 'description: n\nprompt: n\n');
@@ -151,10 +152,19 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect([svc.getPersonaName(), svc.getNickNames?.()]).toEqual(['Main', ['小M']]);
     expect([svc.getPersonaName({ persona: 'b' }), svc.getNickNames?.({ persona: 'b' })]).toEqual(['Bob', ['阿B']]);
     expect([svc.getPersonaName({ persona: 'nameless' }), svc.getNickNames?.({ persona: 'nameless' })]).toEqual([
-      'nameless，未设置名字',
+      '',
       [],
     ]);
     expect(svc.getPersonaName({ persona: 'missing' })).toBe('Main');
+  });
+
+  it('主卡没写名字：点名的名字表只有别名与昵称，不混进兜底文字', async () => {
+    writeCard('default.yaml', 'nick_name: [小N]\ndescription: m\nprompt: m\n');
+    await boot(true);
+    await app.start();
+    const { persona: personas, sessionManager: sessions } = app.bind({ persona, sessionManager });
+    const names = createBotNames(personas, sessions, app.logger, '[t]');
+    expect(names(['别名'], { sessionId: 's', platform: 'onebot' })).toEqual(['别名', '小N']);
   });
 
   it('nick_name 写成单个字符串按一个昵称取、不拆成单字；列表各项去空白、滤掉非字符串与空串；留空不告警；其它类型忽略并记 warn', async () => {

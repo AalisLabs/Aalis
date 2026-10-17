@@ -4,6 +4,8 @@ import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { isTextRef, TextError, type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   developerToken: {
@@ -150,15 +152,10 @@ function bindingStore(
   memory: MemoryRef,
   platform: string | undefined,
   userId: string | undefined,
-): { service: MemoryService; key: string } | string {
+): { service: MemoryService; key: string } | TextRef {
   const key = bindKey(platform, userId);
-  if (!key) return '认不出发消息的人（没有平台用户 id），绑定只能在认得出发送者的平台上做，如 QQ';
-  if (!memory.present) {
-    return (
-      '没有在运行的记忆后端（绑定记在它里面）：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
-      '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因'
-    );
-  }
+  if (!key) return t('unknownSender');
+  if (!memory.present) return t('noMemory');
   const service = memory.use;
   return { service, key };
 }
@@ -197,7 +194,7 @@ class MaimaiClient {
     } catch (err) {
       // 超时或连不上：底层原因常在 cause 里（fetch 只说 fetch failed）
       const reason = err instanceof Error ? (err.cause instanceof Error ? err.cause : err).message : String(err);
-      throw new Error(`查分器暂时连不上，稍后再试（${reason}）`, { cause: err });
+      throw new TextError(t('unreachable', { reason }), { cause: err });
     }
     let body: { success?: boolean; code?: number; message?: string; data?: T } | undefined;
     try {
@@ -206,11 +203,11 @@ class MaimaiClient {
       /* 非 JSON */
     }
     if (!resp.ok || (body && body.success === false)) {
-      const msg = body?.message || `HTTP ${resp.status}`;
+      const msg = String(body?.message || `HTTP ${resp.status}`);
       if (resp.status === 401 || resp.status === 403) {
-        throw new Error(`查分器不认开发者凭据：检查配置项 developerToken（HTTP ${resp.status}：${msg}）`);
+        throw new TextError(t('badToken', { status: resp.status, message: msg }));
       }
-      throw new Error(`查分器回复：${msg}`);
+      throw new TextError(t('replied', { message: msg }));
     }
     if (body && 'data' in body) return body.data as T;
     return text as unknown as T;
@@ -246,12 +243,14 @@ class MaimaiClient {
 }
 
 // ===== 工具/指令共享逻辑 =====
+//
+// 回复是文字对象：指令交给出口按读者语言渲染，工具取它的原文交给模型。
 
 interface ResolveResult {
   friend_code?: number;
   qq?: number;
   source: 'arg-friend' | 'arg-qq' | 'bound' | 'private-self' | 'none';
-  hint?: string;
+  hint?: TextRef;
 }
 
 /** 会话所在的聊天窗口是一对一的（会话管理记下的，子会话取根会话的）；没有会话管理或会话没有聊天窗口时为 false */
@@ -291,18 +290,10 @@ async function resolveTarget(
     inOneToOneChat(refs.sessionManager, callCtx.sessionId)
   ) {
     const userQq = parseIntStrict(callCtx.userId);
-    if (userQq)
-      return {
-        qq: userQq,
-        source: 'private-self',
-        hint: '使用你的 QQ 号查询查分器（如失败请先 /maimai bind <好友码>）',
-      };
+    if (userQq) return { qq: userQq, source: 'private-self', hint: t('byQq') };
   }
 
-  return {
-    source: 'none',
-    hint: '未找到查询目标。请提供 friend_code/qq 参数，或先用 /maimai bind <好友码> 绑定自己。',
-  };
+  return { source: 'none', hint: t('noTargetHint') };
 }
 
 function parseIntStrict(v: unknown): number | undefined {
@@ -317,17 +308,30 @@ function parseIntStrict(v: unknown): number | undefined {
 async function fetchPlayer(client: MaimaiClient, target: ResolveResult): Promise<MaiPlayer> {
   if (target.friend_code) return client.getPlayer(target.friend_code);
   if (target.qq) return client.getPlayerByQQ(target.qq);
-  throw new Error('解析目标失败');
+  throw new TextError(t('noTarget'));
+}
+
+/** 查询目标是怎么定的（按调用者的 QQ 号查时）：放在回复的第一行 */
+function hintLines(target: ResolveResult): TextRef[] {
+  return target.hint ? [t('hint', { hint: target.hint })] : [];
 }
 
 // ===== 输出格式化 =====
 
-function formatPlayer(p: MaiPlayer): string {
-  const lines = [`👤 ${p.name}  (DX Rating: ${p.rating})`, `🆔 好友码: ${p.friend_code}`];
-  if (p.trophy?.name) lines.push(`🏆 称号: ${p.trophy.name}${p.trophy.color ? ` [${p.trophy.color}]` : ''}`);
-  if (typeof p.star === 'number') lines.push(`⭐ 搭档觉醒: ${p.star}`);
-  if (p.upload_time) lines.push(`🕒 同步时间: ${p.upload_time}`);
-  return lines.join('\n');
+function formatPlayer(p: MaiPlayer): TextRef {
+  const lines = [
+    t('playerName', { name: String(p.name), rating: String(p.rating) }),
+    t('playerCode', { code: String(p.friend_code) }),
+  ];
+  if (p.trophy?.name) {
+    const name = String(p.trophy.name);
+    lines.push(
+      p.trophy.color ? t('playerTrophyColor', { name, color: String(p.trophy.color) }) : t('playerTrophy', { name }),
+    );
+  }
+  if (typeof p.star === 'number') lines.push(t('playerStar', { star: p.star }));
+  if (p.upload_time) lines.push(t('playerSynced', { time: String(p.upload_time) }));
+  return textLines(lines);
 }
 
 function formatScoreLine(s: MaiScore, idx: number): string {
@@ -340,32 +344,27 @@ function formatScoreLine(s: MaiScore, idx: number): string {
   return `${String(idx).padStart(2, ' ')}. ${s.song_name ?? `#${s.id}`} [${lvIdx} ${s.level ?? ''} ${s.type}]  ${ach}% ${rate}${fc}${fs}${dxr}`;
 }
 
-function formatBests(b: MaiBests, opts: { topN?: number } = {}): string {
+function formatBests(b: MaiBests, opts: { topN?: number } = {}): TextRef {
   const topN = opts.topN ?? 50;
   const total = b.standard_total + b.dx_total;
-  const lines: string[] = [];
-  lines.push(`📊 B50 总分: ${total}  (B35 旧版 ${b.standard_total} + B15 现版 ${b.dx_total})`);
-  lines.push('');
-  lines.push('— 旧版 B35 —');
-  b.standard.slice(0, topN).forEach((s, i) => {
-    lines.push(formatScoreLine(s, i + 1));
-  });
-  lines.push('');
-  lines.push('— 现版 B15 —');
-  b.dx.slice(0, topN).forEach((s, i) => {
-    lines.push(formatScoreLine(s, i + 1));
-  });
-  return lines.join('\n');
+  return textLines([
+    t('bestsTotal', { total, standard: String(b.standard_total), dx: String(b.dx_total) }),
+    '',
+    t('bestsStandard'),
+    ...b.standard.slice(0, topN).map((s, i) => formatScoreLine(s, i + 1)),
+    '',
+    t('bestsDx'),
+    ...b.dx.slice(0, topN).map((s, i) => formatScoreLine(s, i + 1)),
+  ]);
 }
 
-function formatRecents(scores: MaiScore[], limit: number): string {
-  if (scores.length === 0) return '（无最近游玩记录）';
+function formatRecents(scores: MaiScore[], limit: number): TextRef {
+  if (scores.length === 0) return t('noRecents');
   const sorted = [...scores].sort((a, b) => (b.play_time ?? '').localeCompare(a.play_time ?? '')).slice(0, limit);
-  const lines: string[] = [`🕘 最近 ${sorted.length} 条游玩记录:`];
-  sorted.forEach((s, i) => {
-    lines.push(formatScoreLine(s, i + 1) + (s.play_time ? `  @${s.play_time}` : ''));
-  });
-  return lines.join('\n');
+  return textLines([
+    t('recentsHead', { count: sorted.length }),
+    ...sorted.map((s, i) => formatScoreLine(s, i + 1) + (s.play_time ? `  @${s.play_time}` : '')),
+  ]);
 }
 
 // ===== 曲库（带懒加载缓存） =====
@@ -404,15 +403,21 @@ function searchSongs(idx: SongIndex, keyword: string, limit: number): MaiSong[] 
   return out;
 }
 
-function formatSongMatch(song: MaiSong, idx: SongIndex): string {
+function formatSongMatch(song: MaiSong, idx: SongIndex): TextRef {
   const aliases = idx.aliases.get(song.id) ?? [];
   const lines = [
-    `#${song.id} 《${song.title}》  by ${song.artist}`,
-    `  分类: ${song.genre} | BPM: ${song.bpm} | 版本: ${song.version}`,
+    t('songTitle', { id: String(song.id), title: String(song.title), artist: String(song.artist) }),
+    t('songInfo', { genre: String(song.genre), bpm: String(song.bpm), version: String(song.version) }),
   ];
-  if (aliases.length)
-    lines.push(`  别名: ${aliases.slice(0, 6).join(' / ')}${aliases.length > 6 ? ` ...(+${aliases.length - 6})` : ''}`);
-  return lines.join('\n');
+  if (aliases.length) {
+    const shown = aliases.slice(0, 6).join(' / ');
+    lines.push(
+      aliases.length > 6
+        ? t('songAliasesMore', { aliases: shown, more: aliases.length - 6 })
+        : t('songAliases', { aliases: shown }),
+    );
+  }
+  return textLines(lines);
 }
 
 // ===== 插件入口 =====
@@ -460,7 +465,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetPlayer(refs, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => toSource(await handleGetPlayer(refs, cfg, client, args, callCtx)),
       });
 
       // B50
@@ -484,7 +489,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetBests(refs, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => toSource(await handleGetBests(refs, cfg, client, args, callCtx)),
       });
 
       // Recent
@@ -507,7 +512,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleGetRecents(refs, cfg, client, args, callCtx),
+        handler: async (args, callCtx) => toSource(await handleGetRecents(refs, cfg, client, args, callCtx)),
       });
 
       // 搜索曲目
@@ -529,7 +534,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async args => handleSearchSong(client, songCache, args),
+        handler: async args => toSource(await handleSearchSong(client, songCache, args)),
       });
 
       // 绑定好友码
@@ -549,7 +554,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async (args, callCtx) => handleBind(memory, args, callCtx),
+        handler: async (args, callCtx) => toSource(await handleBind(memory, args, callCtx)),
       });
 
       tools.use.register({
@@ -562,7 +567,7 @@ export default definePlugin({
             parameters: { type: 'object', properties: {}, required: [] },
           },
         },
-        handler: async (_args, callCtx) => handleUnbind(memory, callCtx),
+        handler: async (_args, callCtx) => toSource(await handleUnbind(memory, callCtx)),
       });
 
       logger.use.info('[maimai] Agent 工具已注册');
@@ -570,7 +575,7 @@ export default definePlugin({
 
     // ===== 用户指令（同样的功能，文本入口） =====
     //
-    // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数。
+    // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数，指令把回复的文字对象原样交出。
     if (cfg.enableCommands) {
       const callCtxOf = (argv: CommandArgv) => ({
         sessionId: argv.session.sessionId,
@@ -634,24 +639,20 @@ export default definePlugin({
 
 // ===== 处理函数（工具与指令共用） =====
 
-/** 按 QQ 号查到的玩家没带好友码：B50 与最近游玩只能按好友码查 */
-const NO_FRIEND_CODE = '按 QQ 号查到的玩家没有好友码：直接写好友码查，或先 /maimai bind <好友码> 绑定';
-
 async function handleGetPlayer(
   refs: TargetRefs,
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
-): Promise<string> {
+): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   try {
     const player = await fetchPlayer(client, target);
-    const head = target.hint ? `(${target.hint})\n` : '';
-    return head + formatPlayer(player);
+    return textLines([...hintLines(target), formatPlayer(player)]);
   } catch (err) {
-    return `查询失败: ${err instanceof Error ? err.message : String(err)}`;
+    return t('queryFailed', { error: textOf(err) });
   }
 }
 
@@ -661,7 +662,7 @@ async function handleGetBests(
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
-): Promise<string> {
+): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   // bests 接口仅支持 friend_code；若来源是 qq，先 lookup
@@ -671,14 +672,13 @@ async function handleGetBests(
       const p = await client.getPlayerByQQ(target.qq);
       friendCode = p.friend_code;
     }
-    if (!friendCode) return NO_FRIEND_CODE;
+    if (!friendCode) return t('noFriendCode');
     const apOnly = args.ap_only === true;
     const topN = parseIntStrict(args.top_n) ?? 50;
     const bests = apOnly ? await client.getApBests(friendCode) : await client.getBests(friendCode);
-    const head = target.hint ? `(${target.hint})\n` : '';
-    return head + (apOnly ? '【AP B50】\n' : '') + formatBests(bests, { topN });
+    return textLines([...hintLines(target), ...(apOnly ? [t('apBests')] : []), formatBests(bests, { topN })]);
   } catch (err) {
-    return `查询失败: ${err instanceof Error ? err.message : String(err)}`;
+    return t('queryFailed', { error: textOf(err) });
   }
 }
 
@@ -688,7 +688,7 @@ async function handleGetRecents(
   client: MaimaiClient,
   args: Record<string, unknown>,
   callCtx: { sessionId: string; userId?: string; platform?: string },
-): Promise<string> {
+): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   let friendCode = target.friend_code;
@@ -697,12 +697,12 @@ async function handleGetRecents(
       const p = await client.getPlayerByQQ(target.qq);
       friendCode = p.friend_code;
     }
-    if (!friendCode) return NO_FRIEND_CODE;
+    if (!friendCode) return t('noFriendCode');
     const limit = Math.min(50, Math.max(1, parseIntStrict(args.limit) ?? 10));
     const scores = await client.getRecents(friendCode);
     return formatRecents(scores, limit);
   } catch (err) {
-    return `查询失败: ${err instanceof Error ? err.message : String(err)}`;
+    return t('queryFailed', { error: textOf(err) });
   }
 }
 
@@ -710,18 +710,21 @@ async function handleSearchSong(
   client: MaimaiClient,
   cache: { ref: SongIndex | null },
   args: Record<string, unknown>,
-): Promise<string> {
+): Promise<TextRef> {
   const keyword = String(args.keyword ?? '').trim();
-  if (!keyword) return '请提供搜索关键词';
+  if (!keyword) return t('noKeyword');
   const limit = Math.min(20, Math.max(1, parseIntStrict(args.limit) ?? 5));
   try {
     const idx = await loadSongIndex(client, cache);
     const matches = searchSongs(idx, keyword, limit);
-    if (matches.length === 0) return `未找到匹配「${keyword}」的曲目`;
-    const head = `🔍 共 ${matches.length} 条匹配 (关键词: ${keyword})`;
-    return [head, ...matches.map(m => formatSongMatch(m, idx))].join('\n\n');
+    if (matches.length === 0) return t('noSong', { keyword });
+    // 各条之间空一行
+    return textLines([
+      t('songsHead', { count: matches.length, keyword }),
+      ...matches.flatMap(m => ['', formatSongMatch(m, idx)]),
+    ]);
   } catch (err) {
-    return `查询失败: ${err instanceof Error ? err.message : String(err)}`;
+    return t('queryFailed', { error: textOf(err) });
   }
 }
 
@@ -729,20 +732,20 @@ async function handleBind(
   memory: MemoryRef,
   args: Record<string, unknown>,
   callCtx: { userId?: string; platform?: string },
-): Promise<string> {
+): Promise<TextRef> {
   const fc = parseIntStrict(args.friend_code);
-  if (!fc) return '请提供有效的好友码（数字）';
+  if (!fc) return t('badFriendCode');
   const store = bindingStore(memory, callCtx.platform, callCtx.userId);
-  if (typeof store === 'string') return `绑定失败：${store}`;
+  if (isTextRef(store)) return t('bindFailed', { reason: store });
   await store.service.saveMetadata(BIND_NAMESPACE, store.key, { friend_code: fc, updated_at: Date.now() });
-  return `已将 ${store.key} 绑定到好友码 ${fc}`;
+  return t('bound', { key: store.key, code: fc });
 }
 
-async function handleUnbind(memory: MemoryRef, callCtx: { userId?: string; platform?: string }): Promise<string> {
+async function handleUnbind(memory: MemoryRef, callCtx: { userId?: string; platform?: string }): Promise<TextRef> {
   const store = bindingStore(memory, callCtx.platform, callCtx.userId);
-  if (typeof store === 'string') return `解绑失败：${store}`;
+  if (isTextRef(store)) return t('unbindFailed', { reason: store });
   await store.service.deleteMetadata(BIND_NAMESPACE, store.key);
-  return '已解绑你的舞萌 DX 好友码';
+  return t('unbound');
 }
 
 // ===== 指令参数解析 =====

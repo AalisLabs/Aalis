@@ -5,12 +5,14 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import { resolveText } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // OneBot 请求事件（好友申请、入群邀请、加群申请）合成的「[系统通知] …」是系统侧注入，要带 source：
 // 不带时它在群会话里被当成真人消息，触发判定计数后吞掉（加群申请几乎到不了 agent），冷却期内也会被吞。
+// 写给模型的 content 一字不改（带处理办法与工具用法），给人看的那句另作文字对象放进 IncomingMessage.text。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务），适配器按配置正向连接，经真实的事件解析与请求处理发出。
 // ════════════════════════════════════════════════════════════
 
@@ -43,7 +45,7 @@ async function until(cond: () => boolean, ms = 5000): Promise<void> {
 }
 
 describe('plugin-adapter-onebot：请求事件的系统通知', () => {
-  it('好友申请、入群邀请、加群申请都带 source=onebot-request 发出', async () => {
+  it('好友申请、入群邀请、加群申请都带 source=onebot-request 发出；content 照旧，text 是不带工具用法的那句', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await new Promise<void>(r => server.once('listening', r));
     cleanups.push(
@@ -93,6 +95,15 @@ describe('plugin-adapter-onebot：请求事件的系统通知', () => {
       [`onebot:${SELF}:private:30002`, 'private', 'onebot-request'],
       [`onebot:${SELF}:group:20001`, 'group', 'onebot-request'],
     ]);
-    expect(inbound.every(m => m.content.startsWith('[系统通知]'))).toBe(true);
+    expect(inbound.map(m => m.content)).toEqual([
+      '[系统通知] 用户 30001 向我发出了好友申请，验证信息："你好"。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="30001"）。',
+      '[系统通知] 用户 30002 邀请我加入群 20002。请决定是否接受邀请，调用 onebot_handle_group_invite 工具处理（user_id="30002", group_id="20002"）。',
+      '[系统通知] 用户 30003 申请加入群 20001。请决定是否同意，调用 onebot_approve_join_request 工具处理（user_id="30003", group_id="20001"）。',
+    ]);
+    expect(inbound.map(m => m.text && resolveText(m.text, ['en']))).toEqual([
+      'User 30001 sent the assistant a friend request, verification message: “你好”',
+      'User 30002 invited the assistant to join group 20002',
+      'User 30003 asked to join group 20001',
+    ]);
   });
 });

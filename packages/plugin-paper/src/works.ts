@@ -195,7 +195,7 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (task.publication?.workId) {
       // 提交键固定为任务 ID，已提交过的任务不能另投一次；失败时只报原因，不带回失效的编号。
       if (task.publication.state === 'failed') {
-        return fail(`这件任务的发布没有成功（${task.publication.reason ?? '原因未记录'}），不能再次提名`);
+        return fail(`这件任务的发布没有成功（${toSource(task.publication.reason) ?? '原因未记录'}），不能再次提名`);
       }
       return done({ workId: task.publication.workId, message: '这件任务已提交发布处理' });
     }

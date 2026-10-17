@@ -18,7 +18,7 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import { type BoundWebui, type InfoItem, markdownCode, type NoticeHandle, type StatusValue } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
-import { toSource } from '@aalis/schema-i18n';
+import { type TextRef, toSource } from '@aalis/schema-i18n';
 import { artifactUri, bundleUri, paperDirUri, usageOf } from './artifacts.js';
 import { dayKey, paperBudgetUsage } from './budget.js';
 import { type PaperConfig, type PaperSpec, specOf } from './config.js';
@@ -26,6 +26,7 @@ import type { PaperDriver } from './driver.js';
 import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { currentProgress } from './progress.js';
 import { actorKey, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
+import { t } from './texts.js';
 import { describe, formatDuration, formatSize } from './util.js';
 
 const PAGE_KEY = 'paper';
@@ -48,10 +49,27 @@ const STATE_TEXT: Record<TaskRecord['state'], string> = {
 
 function taskStatus(task: TaskRecord): StatusValue {
   const base = STATE_TEXT[task.state];
-  const text = task.error ? `${base}：${task.error}` : task.cancelledVia ? `${base}（${task.cancelledVia}）` : base;
+  const text = task.error
+    ? t('stateWithError', { state: base, error: task.error })
+    : task.cancelledVia
+      ? `${base}（${task.cancelledVia}）`
+      : base;
   if (task.state === 'failed') return { text, state: 'error' };
   if (task.state === 'cancelled') return { text, state: 'inactive' };
   return UNFINISHED_STATES.has(task.state) ? { text, state: 'running' } : { text };
+}
+
+const PUBLICATION_TEXT: Record<NonNullable<TaskRecord['publication']>['state'], string> = {
+  pending: '等待自动提交',
+  submitted: '发布处理中',
+  live: '已上线',
+  failed: '未能上线',
+};
+
+/** 任务的发布状态：目标与进度，没能上线的带原因 */
+function publicationStatus({ target, state, reason }: NonNullable<TaskRecord['publication']>): string | TextRef {
+  const label = PUBLICATION_TEXT[state];
+  return reason ? t('publicationWithReason', { target, state: label, reason }) : `${target}：${label}`;
 }
 
 /** 白纸的状态：停开写明原因 */
@@ -128,9 +146,7 @@ export function registerPaperPage(deps: {
       duration: task.startedAt !== undefined ? formatDuration((task.endedAt ?? deps.now()) - task.startedAt) : '',
       cost: task.costCents ?? (ledger.data.reserves[task.id] ? `预留 ${ledger.data.reserves[task.id].cents}` : ''),
       text: task.text,
-      publication: publication
-        ? `${publication.target}：${{ pending: '等待自动提交', submitted: '发布处理中', live: '已上线', failed: '未能上线' }[publication.state]}${publication.reason ? `（${publication.reason}）` : ''}`
-        : '不发布',
+      publication: publication ? publicationStatus(publication) : '不发布',
       cancellable: task.state === 'queued' || task.state === 'running',
       abandonable: driver.abandonRefusal(task) === undefined,
       writeOffable: !UNFINISHED_STATES.has(task.state) && Object.hasOwn(ledger.data.reserves, task.id),
@@ -267,13 +283,17 @@ export function registerPaperPage(deps: {
     const day = today();
     const spend = ledger.data.spend[day] ?? { global: 0, rooms: {}, users: {} };
     const reserves = Object.values(ledger.data.reserves);
-    const todays = Object.values(ledger.data.tasks).filter(t => dayKey(t.createdAt, cfg.budgetTimeZone) === day);
+    const todays = Object.values(ledger.data.tasks).filter(task => dayKey(task.createdAt, cfg.budgetTimeZone) === day);
     const sum = (list: Array<{ cents: number }>) => list.reduce((total, r) => total + r.cents, 0);
-    const rooms = new Set([...Object.keys(spend.rooms), ...reserves.map(r => r.room), ...todays.map(t => t.room)]);
+    const rooms = new Set([
+      ...Object.keys(spend.rooms),
+      ...reserves.map(r => r.room),
+      ...todays.map(task => task.room),
+    ]);
     const users = new Set([
       ...Object.keys(spend.users),
       ...reserves.map(r => r.user),
-      ...todays.map(t => actorKey(t.initiator)),
+      ...todays.map(task => actorKey(task.initiator)),
     ]);
     return [
       {
@@ -287,14 +307,14 @@ export function registerPaperPage(deps: {
         key: `room:${room}`,
         scope: `房间 ${room}`,
         cents: spend.rooms[room] ?? 0,
-        tasks: todays.filter(t => t.room === room).length,
+        tasks: todays.filter(task => task.room === room).length,
         reserved: sum(reserves.filter(r => r.room === room)),
       })),
       ...[...users].map(user => ({
         key: `user:${user}`,
         scope: `发起者 ${user}`,
         cents: spend.users[user]?.cents ?? 0,
-        tasks: todays.filter(t => actorKey(t.initiator) === user).length,
+        tasks: todays.filter(task => actorKey(task.initiator) === user).length,
         reserved: sum(reserves.filter(r => r.user === user)),
       })),
     ];

@@ -483,12 +483,14 @@ class CliTui {
     if (this.view === 'chat') this.queueRender();
   }
 
-  /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务时为 undefined */
+  /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务或卡没取名时为 undefined */
   private personaName(): string | undefined {
     const config = this.caps.sessionManager.present
       ? this.caps.sessionManager.use.resolveConfig(this.sessionId, 'cli')
       : undefined;
-    return this.caps.persona.present ? this.caps.persona.use.getPersonaName({ persona: config?.persona }) : undefined;
+    return this.caps.persona.present
+      ? this.caps.persona.use.getPersonaName({ persona: config?.persona }) || undefined
+      : undefined;
   }
 
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */

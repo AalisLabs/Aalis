@@ -206,6 +206,15 @@ describe('时间线', () => {
     expect(status(/执行 cat/)).toEqual(['失败', 'danger']);
   });
 
+  it('生成了却没有执行的调用（notExecuted）：细节里写「没有执行」', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () => snapshot([toolCall('c1', 'web_search', { status: 'failed', notExecuted: true })]),
+    });
+    const log = within(await timeline());
+    fireEvent.click(log.getByRole('button', { name: /调用 web_search/ }));
+    expect(log.getByText('没有执行')).toBeTruthy();
+  });
+
   it('模型还在生成参数的工具卡写工具名与「正在生成」，不能展开；开始执行后同一张卡照常', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () => snapshot([turn('t1'), toolCall('c1', 'file_write', { status: 'generating' })]),

@@ -397,8 +397,7 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   getPersonaName(options?: PersonaSessionOptions): string {
-    const card = this.getEffectiveCard(options);
-    return card.name || `${card === this.card ? DEFAULT_PERSONA : options?.persona}，未设置名字`;
+    return this.getEffectiveCard(options).name;
   }
 
   /** 该角色卡是否配置为客户端渲染 JSON */

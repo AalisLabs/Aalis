@@ -3,6 +3,7 @@ import type { CheckpointService, RollbackResult, RollbackWithChatResult } from '
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { type CheckpointConfig, configSchema } from './config.js';
 
 /**
@@ -33,8 +34,11 @@ interface CheckpointFileRecord {
   originalSize?: number;
   /** 备份文件名（相对于回合目录） */
   blob?: string;
-  /** 没有备份的原因（过大、读取失败、目录等），这一条不可回滚 */
-  skipped?: string;
+  /**
+   * 没有备份的原因（过大、读取失败、目录等），这一条不可回滚。可以是文字对象（旧清单是字符串），回滚时原样放进
+   * RollbackResult.errors
+   */
+  skipped?: string | TextRef;
 }
 
 /** 一轮的清单，提交时落盘为回合目录下的 manifest.json */
