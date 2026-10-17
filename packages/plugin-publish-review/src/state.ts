@@ -7,6 +7,7 @@ import {
   type WorkKind,
 } from '@aalis/api-publish';
 import { type BoundStorage, isStorageNotFound } from '@aalis/api-storage';
+import { asText, type TextRef } from '@aalis/schema-i18n';
 
 // 账本、审核记录与各作品条目在本插件的私有目录里；审核通过的文件在公开根里
 const STATE = 'state.json';
@@ -46,7 +47,14 @@ export interface QueueItem {
   /** 与审核输出一同持久化；旧记录缺少此标记时必须重新处理。 */
   outputPolicy?: 'off' | 'auto' | 'manual';
   thumbnailHash?: string;
-  review?: { flags: string[]; reasons: string[]; images: string[]; hasRender: boolean; classification?: string };
+  /** reasons 是类别值与宿主写的原因：新记录的原因可以是文字对象，旧记录是字符串 */
+  review?: {
+    flags: string[];
+    reasons: Array<string | TextRef>;
+    images: string[];
+    hasRender: boolean;
+    classification?: string;
+  };
 }
 export interface LedgerItem extends PublishedItem {
   state: 'published' | 'withdrawn';
@@ -74,13 +82,17 @@ interface ReviewState {
     string,
     { state: Extract<ItemState, 'rejected' | 'expired' | 'failed' | 'withdrawn'>; origin: PublishOrigin; title: string }
   >;
-  history: Array<{ at: number; id: string; event: string; detail: string }>;
+  /** detail 是裁决者与理由：新记录可以是文字对象，旧记录是字符串 */
+  history: Array<{ at: number; id: string; event: string; detail: string | TextRef }>;
   notices: Record<
     string,
     {
       id: string;
       origin: PublishOrigin;
+      /** 交给她转述的正文（写给模型的原文） */
       content: string;
+      /** 给人看的那句（文字对象，参数截过长度时可能退成截短的原文）；旧记录没有，显示正文 */
+      text?: string | TextRef;
       title?: string;
       live: boolean;
       /** 第一次发送失败的时刻；发出去之前一直保留，用来算连续失败了多久 */
@@ -111,6 +123,7 @@ function record(value: unknown): value is Record<string, unknown> {
 const time = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const string = (value: unknown) => typeof value === 'string';
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(string);
+const text = (value: unknown) => asText(value) !== undefined;
 const digest = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 function liveUrl(value: unknown, id: string): boolean {
   if (!string(value) || Array.from(value).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
@@ -215,8 +228,7 @@ function valid(value: unknown): value is ReviewState {
     value.history !== undefined &&
     (!Array.isArray(value.history) ||
       value.history.some(
-        entry =>
-          !record(entry) || !time(entry.at) || !string(entry.id) || !string(entry.event) || !string(entry.detail),
+        entry => !record(entry) || !time(entry.at) || !string(entry.id) || !string(entry.event) || !text(entry.detail),
       ))
   )
     return false;
@@ -229,6 +241,7 @@ function valid(value: unknown): value is ReviewState {
           !string(entry.id) ||
           !origin(entry.origin) ||
           !string(entry.content) ||
+          (entry.text !== undefined && !text(entry.text)) ||
           (entry.title !== undefined && !string(entry.title)) ||
           typeof entry.live !== 'boolean' ||
           (entry.failingSince !== undefined && !time(entry.failingSince)) ||
@@ -255,7 +268,8 @@ function valid(value: unknown): value is ReviewState {
       entry.review !== undefined &&
       (!record(entry.review) ||
         !strings(entry.review.flags) ||
-        !strings(entry.review.reasons) ||
+        !Array.isArray(entry.review.reasons) ||
+        !entry.review.reasons.every(text) ||
         !strings(entry.review.images) ||
         entry.review.images.some(name => !/^[a-z0-9-]+\.png$/.test(name)) ||
         typeof entry.review.hasRender !== 'boolean' ||

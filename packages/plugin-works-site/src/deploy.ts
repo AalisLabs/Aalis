@@ -1,11 +1,14 @@
+import { isDeepStrictEqual } from 'node:util';
 import { isIntegrityError, type PublishedItem } from '@aalis/api-publish';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { isTextRef, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import { PagesApiError } from './cloudflare/client.js';
 import type { WorksSiteConfig } from './config.js';
 import { buildBranch, buildGallery, type SiteBuild } from './site/build.js';
 import { mediaPath, sitePath } from './site/paths.js';
 import type { CurrentDeployment, InFlightDeployment, SiteAlert, WorksState, WorksStore } from './state.js';
+import { type Source, t } from './texts.js';
 import {
   ContentMismatchError,
   checkPreflight,
@@ -26,6 +29,16 @@ const CLEANUP_INTERVAL = 24 * 60 * 60_000;
 /** 单个线上核对请求的上限，与 Pages API 请求一致。 */
 const REQUEST_TIMEOUT = 60_000;
 const nonce = () => crypto.randomUUID().replaceAll('-', '');
+/** 两条告警的说明是不是同一条：文字对象按字典、键与参数认（原文的措辞变了也还是同一条），字符串（旧版写的）按原文认 */
+const sameDetail = (a: string | TextRef, b: string | TextRef) =>
+  typeof a === 'string' || typeof b === 'string'
+    ? toSource(a) === toSource(b)
+    : a.i18n === b.i18n && a.key === b.key && isDeepStrictEqual(a.params, b.params);
+/** 暂停是不是这一种说明的告警引起的（按字典的键认；旧版写的字符串原因不认） */
+const pausedBy = (state: WorksState | undefined, key: keyof Source) => {
+  const reason = state?.paused?.reason;
+  return isTextRef(reason) && reason.i18n === t.ns && reason.key === key;
+};
 const branchName = () =>
   `p-${Array.from(crypto.getRandomValues(new Uint8Array(4)), x => x.toString(16).padStart(2, '0')).join('')}`;
 
@@ -207,7 +220,7 @@ export class WorksDeployer {
     }
     await this.#store.update(next => {
       next.alerts = next.alerts.filter(alert => alert.kind !== 'unknown-deployment');
-      if (next.paused?.reason.startsWith('发现账外部署')) next.paused = undefined;
+      if (pausedBy(next, 'unknownDeployment')) next.paused = undefined;
     });
   }
 
@@ -383,11 +396,11 @@ export class WorksDeployer {
 
   /** 撤下过的作品又回到发布列表时去掉它的墓碑；留着会与作品路径重复，每次构建都失败。 */
   async #reviveTombstones(published: readonly PublishedItem[]): Promise<void> {
-    const key = (t: { branch: string; path: string }) => `${t.branch}\n${t.path}`;
+    const key = (tombstone: { branch: string; path: string }) => `${tombstone.branch}\n${tombstone.path}`;
     const revived = new Set(published.flatMap(item => this.#tombstonesFor(item).map(key)));
-    if (!this.#store.data?.tombstones.some(t => revived.has(key(t)))) return;
+    if (!this.#store.data?.tombstones.some(tombstone => revived.has(key(tombstone)))) return;
     await this.#store.update(state => {
-      state.tombstones = state.tombstones.filter(t => !revived.has(key(t)));
+      state.tombstones = state.tombstones.filter(tombstone => !revived.has(key(tombstone)));
     });
   }
 
@@ -395,7 +408,7 @@ export class WorksDeployer {
     await this.#store.update(state => {
       for (const item of removed) {
         for (const { branch, path } of this.#tombstonesFor(item)) {
-          if (!state.tombstones.some(t => t.branch === branch && t.path === path))
+          if (!state.tombstones.some(tombstone => tombstone.branch === branch && tombstone.path === path))
             state.tombstones.push({ branch, path, until: this.#now() + TOMBSTONE_LIFE });
         }
       }
@@ -417,7 +430,7 @@ export class WorksDeployer {
       if (branch === this.#config.productionBranch || !previous.works.some(item => removedIds.has(item.id))) continue;
       const group = Object.keys(state.groups).find(key => state.groups[key].branch === branch);
       if (!group) {
-        await this.#alert('integrity', '撤下作品的组映射缺失', true);
+        await this.#alert('integrity', t('groupMissing'), true);
         continue;
       }
       await this.#deployJob(
@@ -519,7 +532,7 @@ export class WorksDeployer {
       }
       if (this.#signal.aborted) return;
       if (matching.length > 1) {
-        await this.#alert('unknown-deployment', '同一 nonce 对应多个部署', true);
+        await this.#alert('unknown-deployment', t('nonceAmbiguous'), true);
         return;
       }
       if (matching.length === 0) {
@@ -565,14 +578,14 @@ export class WorksDeployer {
     const main = inflight.branch === this.#config.productionBranch;
     const alias = main ? undefined : this.#client.aliasOf(deployed);
     if (alias && !alias.ok) {
-      await this.#alert('alias', '部署别名不合格', true);
+      await this.#alert('alias', t('aliasInvalid'), true);
       let cleaned = false;
       try {
         if (inflight.kind === 'withdraw') await this.#deleteOlder(inflight.branch, inflight.id);
         else await this.#client.deleteDeployment(inflight.id, { force: true, signal: this.#signal });
         cleaned = true;
       } catch {
-        await this.#alert('deploy-failed', '旧部署清理失败', true);
+        await this.#alert('deploy-failed', t('cleanupFailed'), true);
         this.#needCleanupRetry();
       }
       await this.#store.update(state => {
@@ -608,14 +621,14 @@ export class WorksDeployer {
     } catch (err) {
       if (this.#signal.aborted) return;
       if (err instanceof ContentMismatchError) this.#logger.warn(`作品站内容核验：${contentMismatchDetail(err)}`);
-      await this.#alert(err instanceof ContentMismatchError ? 'content' : 'probe', '部署后线上核对失败', true);
+      await this.#alert(err instanceof ContentMismatchError ? 'content' : 'probe', t('verifyFailed'), true);
       let cleaned = false;
       try {
         if (inflight.kind === 'withdraw') await this.#deleteOlder(inflight.branch, inflight.id);
         else if (!main) await this.#client.deleteDeployment(inflight.id, { force: true, signal: this.#signal });
         cleaned = true;
       } catch {
-        await this.#alert('deploy-failed', '旧部署清理失败', true);
+        await this.#alert('deploy-failed', t('cleanupFailed'), true);
         this.#needCleanupRetry();
       }
       await this.#store.update(state => {
@@ -639,7 +652,7 @@ export class WorksDeployer {
         const group = Object.keys(state.groups).find(key => state.groups[key].branch === inflight.branch);
         if (group) {
           if (alias.label !== inflight.branch || (state.groups[group].alias && state.groups[group].alias !== origin)) {
-            state.alerts.unshift({ id: nonce(), kind: 'alias', detail: '部署别名与分支名不一致', at: this.#now() });
+            state.alerts.unshift({ id: nonce(), kind: 'alias', detail: t('aliasMismatch'), at: this.#now() });
           }
           state.groups[group].alias = origin;
         }
@@ -655,7 +668,7 @@ export class WorksDeployer {
     try {
       await this.#deleteOlder(inflight.branch, inflight.id);
     } catch {
-      await this.#alert('deploy-failed', '旧部署清理失败', true);
+      await this.#alert('deploy-failed', t('cleanupFailed'), true);
       this.#needCleanupRetry();
       return;
     }
@@ -719,7 +732,7 @@ export class WorksDeployer {
         if (this.#signal.aborted) return false;
         if (err instanceof PagesApiError && err.kind === 'auth') await this.#recordFailure(err);
         else {
-          await this.#alert('deploy-failed', '旧部署清理失败', true);
+          await this.#alert('deploy-failed', t('cleanupFailed'), true);
           this.#needCleanupRetry();
         }
         return false;
@@ -739,15 +752,15 @@ export class WorksDeployer {
         if (this.#signal.aborted) return false;
         if (err instanceof PagesApiError && err.kind === 'auth') await this.#recordFailure(err);
         else {
-          await this.#alert('deploy-failed', '旧部署清理失败', true);
+          await this.#alert('deploy-failed', t('cleanupFailed'), true);
           this.#needCleanupRetry();
         }
         return false;
       }
     }
-    if (this.#store.data?.paused?.reason === '旧部署清理失败') {
+    if (pausedBy(this.#store.data, 'cleanupFailed')) {
       await this.#store.update(state => {
-        if (state.paused?.reason === '旧部署清理失败') state.paused = undefined;
+        if (pausedBy(state, 'cleanupFailed')) state.paused = undefined;
       });
     }
     this.#retryDue = 0;
@@ -884,16 +897,15 @@ export class WorksDeployer {
       for (const issue of result.issues) await this.#alert(issue.kind, issue.detail, issue.pause);
       const token = await this.#client.verifyToken(this.#signal);
       this.tokenExpiresOn = token.expiresOn;
-      if (token.expiresOn && token.expiresOn <= this.#now())
-        await this.#alert('auth', 'Cloudflare token 已过期', false);
+      if (token.expiresOn && token.expiresOn <= this.#now()) await this.#alert('auth', t('tokenExpired'), false);
     } catch (err) {
       if (this.#signal.aborted) return;
       if (err instanceof PagesApiError && err.kind === 'auth') {
         await this.#store.update(state => {
           state.lastFailure = 'auth';
         });
-        await this.#alert('auth', 'Cloudflare 鉴权失败', false);
-      } else await this.#alert('settings', '定时核对失败', false);
+        await this.#alert('auth', t('authFailed'), false);
+      } else await this.#alert('settings', t('periodicCheckFailed'), false);
     }
   }
 
@@ -907,16 +919,17 @@ export class WorksDeployer {
     if (changed) this.retry();
   }
 
-  async #alert(kind: SiteAlert['kind'], detail: string, pause: boolean): Promise<void> {
+  async #alert(kind: SiteAlert['kind'], detail: TextRef, pause: boolean): Promise<void> {
     if (this.#signal.aborted) return;
+    const text = truncateParams(detail, 200);
     await this.#store.update(state => {
-      if (!state.alerts.some(a => !a.acknowledged && a.kind === kind && a.detail === detail)) {
-        state.alerts.unshift({ id: nonce(), kind, detail, at: this.#now() });
+      if (!state.alerts.some(a => !a.acknowledged && a.kind === kind && sameDetail(a.detail, text))) {
+        state.alerts.unshift({ id: nonce(), kind, detail: text, at: this.#now() });
         state.alerts = state.alerts.slice(0, 100);
       }
-      if (pause) state.paused = { reason: detail, at: this.#now() };
+      if (pause) state.paused = { reason: text, at: this.#now() };
     });
-    this.#logger.warn(`作品站：${detail}`);
+    this.#logger.warn(`作品站：${toSource(text)}`);
   }
 
   async #recordFailure(err: unknown): Promise<void> {
@@ -926,7 +939,7 @@ export class WorksDeployer {
       await this.#store.update(state => {
         state.lastFailure = 'auth';
       });
-      await this.#alert('auth', 'Cloudflare 鉴权失败', false);
+      await this.#alert('auth', t('authFailed'), false);
       return;
     }
     if (this.#store.data?.paused) return;
@@ -938,7 +951,7 @@ export class WorksDeployer {
       await this.#store.update(state => {
         state.lastFailure = 'deploy-failed';
       });
-      await this.#alert('deploy-failed', '部署连续失败', false);
+      await this.#alert('deploy-failed', t('deployFailedRepeatedly'), false);
     }
   }
 

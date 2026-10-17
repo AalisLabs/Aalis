@@ -12,13 +12,14 @@ import {
   WORK_ID_PATTERN,
 } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
-import type { TextRef } from '@aalis/schema-i18n';
+import { type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import { checkNomination, contentType } from './checks.js';
 import type { ReviewConfig } from './config.js';
-import { isNoticeUndelivered } from './notices.js';
+import { isNoticeUndelivered, type NoticeBody } from './notices.js';
 import type { ReviewPipeline } from './pipeline.js';
 import { decideReview } from './policy.js';
 import { type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
+import { t } from './texts.js';
 
 const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
 const DAY = 86_400_000;
@@ -28,6 +29,10 @@ const QUOTA_RETRY_MS = 30_000;
 const NOTICE_RETRY_MS = 30_000;
 /** 一条通知连续发不出去这么久就放弃，等 owner 手动重发 */
 const NOTICE_GIVE_UP_MS = 24 * 3_600_000;
+/** 待发通知里给人看的那句：参数截到这么多字再落盘 */
+const NOTICE_TEXT_MAX = 200;
+/** 宿主撰写的通知：交给她转述的正文是给人看的那句的原文 */
+const hostSaid = (text: TextRef) => ({ content: toSource(text), text });
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
 const publicFile = (id: string, path: string) => `${PUBLIC_ROOT}/${id}/files/${path}`;
 const publicThumb = (id: string) => `${PUBLIC_ROOT}/${id}/thumb.png`;
@@ -96,7 +101,13 @@ interface ReviewServiceDeps {
    * 只接受宿主生成的固定文案，不传模型文本、标题与文件路径。平台确认收下（或报结果未知、可能已经送达）才 resolve；
    * direct 为真时直接发宿主原文，不再让她转述（这条通知已经转述过、平台却没确认）。抛 NoticeUndelivered 表示已转述但平台没确认
    */
-  notice?: (origin: PublishOrigin, content: string, id: string, title?: string, opts?: { direct?: boolean }) => unknown;
+  notice?: (
+    origin: PublishOrigin,
+    notice: NoticeBody,
+    id: string,
+    title?: string,
+    opts?: { direct?: boolean },
+  ) => unknown;
   /** 通知通道当前能否发送（已开放且网关在场）；缺省视为能发。 */
   noticeReady?: () => boolean;
 }
@@ -404,7 +415,7 @@ export class PublishReviewService implements PublishService {
         this.#queueNotice(
           next,
           item.origin,
-          `作品要等 owner 审核，最长 ${this.#d.config.ownerTimeoutHours} 小时，有结果会再通知`,
+          hostSaid(t('noticeAwaitingOwner', { hours: this.#d.config.ownerTimeoutHours })),
           item.id,
           item.title,
         );
@@ -429,7 +440,7 @@ export class PublishReviewService implements PublishService {
       const next = store.copy();
       delete next.queue[id];
       this.#rememberTerminal(next, item, 'rejected');
-      this.#queueNotice(next, item.origin, '作品未获批准，这次不发布', id, item.title);
+      this.#queueNotice(next, item.origin, hostSaid(t('noticeRejected')), id, item.title);
       await store.save(next, this.#event(id, 'rejected', '人工拒绝'));
       await storage.delete(store.item(id)).catch(() => {});
       return true;
@@ -494,18 +505,12 @@ export class PublishReviewService implements PublishService {
         this.#queueNotice(
           next,
           item.origin,
-          `作品等 owner 审核超过 ${this.#d.config.ownerTimeoutHours} 小时，这次不发布，需要的话可以重新提名`,
+          hostSaid(t('noticeExpired', { hours: this.#d.config.ownerTimeoutHours })),
           item.id,
           item.title,
         );
       for (const item of delayed)
-        this.#queueNotice(
-          next,
-          item.origin,
-          '作品已获准发布，但作品站暂时没能上线，owner 会处理；上线后会再通知',
-          item.id,
-          item.title,
-        );
+        this.#queueNotice(next, item.origin, hostSaid(t('noticeDelayed')), item.id, item.title);
       if (
         requeued ||
         expired.length ||
@@ -576,13 +581,7 @@ export class PublishReviewService implements PublishService {
         const next = store.copy();
         delete next.queue[id];
         this.#rememberTerminal(next, item, 'failed');
-        this.#queueNotice(
-          next,
-          item.origin,
-          '作品已通过审核，但上线前的文件完整性校验失败，这次不发布',
-          id,
-          item.title,
-        );
+        this.#queueNotice(next, item.origin, hostSaid(t('noticeIntegrityFailed')), id, item.title);
         await store.save(next, this.#event(id, 'integrity-failed'));
         await storage.delete(`${PUBLIC_ROOT}/${id}`).catch(() => {});
         await storage.delete(store.item(id)).catch(() => {});
@@ -629,8 +628,7 @@ export class PublishReviewService implements PublishService {
       const next = store.copy();
       delete next.queue[id];
       this.#rememberTerminal(next, item, 'failed');
-      const message = '作品暂时没法审核（审核步骤不可用），这次不发布';
-      this.#queueNotice(next, item.origin, message, id, item.title);
+      this.#queueNotice(next, item.origin, hostSaid(t('noticeUnreviewable')), id, item.title);
       await store.save(next, this.#event(id, 'failed', reason));
       await storage.delete(store.item(id)).catch(() => {});
     });
@@ -823,7 +821,9 @@ export class PublishReviewService implements PublishService {
           if (next.ledger[id].notice !== 'sent') {
             const addresses = item.surfaces.map(name => next.ledger[id].liveSurfaces![name]);
             if (item.origin.notify) next.ledger[id].notice = 'pending';
-            this.#queueNotice(next, item.origin, `作品已上线：${addresses.join('、')}`, id, item.title, true);
+            // 交给她的正文照旧以顿号连接地址，给人看的那句按读者语言连接
+            const live = { content: `作品已上线：${addresses.join('、')}`, text: t('noticeLive', { addresses }) };
+            this.#queueNotice(next, item.origin, live, id, item.title, true);
           }
         } else if (invalidated) {
           delete next.notices[`${id}:live`];
@@ -869,7 +869,7 @@ export class PublishReviewService implements PublishService {
   #queueNotice(
     next: ReviewStore['data'],
     origin: PublishOrigin,
-    content: string,
+    notice: { content: string; text: TextRef },
     id: string,
     title?: string,
     live = false,
@@ -877,7 +877,14 @@ export class PublishReviewService implements PublishService {
     if (!origin.notify) return;
     this.#clearNotices(next, id);
     const key = live ? `${id}:live` : crypto.randomUUID();
-    next.notices[key] = { id, origin: structuredClone(origin), content, ...(title ? { title } : {}), live };
+    next.notices[key] = {
+      id,
+      origin: structuredClone(origin),
+      content: notice.content,
+      text: truncateParams(notice.text, NOTICE_TEXT_MAX),
+      ...(title ? { title } : {}),
+      live,
+    };
     // 入队与业务状态在同一次 save 内提交。此处只排调度，发送始终在锁外。
     void this.flushNotices().catch(() => {});
   }
@@ -923,7 +930,13 @@ export class PublishReviewService implements PublishService {
       if (!entry || this.#stopped) return;
       const [key, item] = entry;
       try {
-        await notice(item.origin, item.content, item.id, item.title, item.narrated ? { direct: true } : undefined);
+        await notice(
+          item.origin,
+          { content: item.content, text: item.text },
+          item.id,
+          item.title,
+          item.narrated ? { direct: true } : undefined,
+        );
       } catch (err) {
         // 单个房间发不出去（如被禁言拦截）只推迟这一条，不挡其他房间。
         const failures = (this.#noticeRetry.get(key)?.failures ?? 0) + 1;
@@ -973,7 +986,14 @@ export class PublishReviewService implements PublishService {
   }
 
   /** 已放弃的通知：owner 在审核页查看与重发 */
-  abandonedNotices(): Array<{ key: string; id: string; title?: string; room: string; content: string; at: number }> {
+  abandonedNotices(): Array<{
+    key: string;
+    id: string;
+    title?: string;
+    room: string;
+    content: string | TextRef;
+    at: number;
+  }> {
     return Object.entries(this.#d.store.data.notices)
       .filter(([, notice]) => notice.abandoned !== undefined)
       .map(([key, notice]) => ({
@@ -981,7 +1001,7 @@ export class PublishReviewService implements PublishService {
         id: notice.id,
         ...(notice.title ? { title: notice.title } : {}),
         room: notice.origin.label,
-        content: notice.content,
+        content: notice.text ?? notice.content,
         at: notice.abandoned as number,
       }));
   }

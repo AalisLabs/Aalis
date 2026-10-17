@@ -14,9 +14,10 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { TextError } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-scheduler — 让 AI 从"被动"变"主动"
@@ -299,9 +300,11 @@ async function run(caps: Caps): Promise<void> {
    * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
    */
   let loadFailed = false;
-  /** 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与计划任务页同一附注），文件正常时为空串 */
-  const persistNote = () =>
-    loadFailed ? `；仅本次运行生效，未写入 ${persistUri}：它读不出来，处理办法见「需要处理」里的提示` : '';
+  /**
+   * 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与计划任务页同一附注，工具取原文），
+   * 文件正常时没有
+   */
+  const persistNote = (): TextRef | undefined => (loadFailed ? t('notPersisted', { uri: persistUri }) : undefined);
 
   // 先读完持久化任务再登记页面：登记之后到服务就绪之间不再有等待，页面一出现取数与动作就可用
   const persisted = await loadDynamicJobs();
@@ -312,7 +315,7 @@ async function run(caps: Caps): Promise<void> {
    * 新建与编辑共用：调度方式恰好一个（四者是互不相容的定时语义，多填时取哪个都是猜），与 scheduler_create_job
    * 工具路径同一条判据与同一份 delaySeconds 换算。actor 取闸门放行后的调用者，不从输入读，免得伪造他人身份
    */
-  function saveJob(name: string, input: JobInput, caller: PageContext['caller'], creating: boolean): string {
+  function saveJob(name: string, input: JobInput, caller: PageContext['caller'], creating: boolean): TextRef {
     const cron = input.cron?.trim() || undefined;
     const interval = input.interval !== undefined && input.interval > 0 ? input.interval : undefined;
     const delaySeconds =
@@ -350,7 +353,8 @@ async function run(caps: Caps): Promise<void> {
       enabled: input.enabled,
       paused: input.paused,
     });
-    return `已保存任务 ${name}${persistNote()}`;
+    const note = persistNote();
+    return note ? textClauses([t('jobSaved', { name }), note]) : t('jobSaved', { name });
   }
 
   const jobsPage = webui.use.definePage({
@@ -1048,9 +1052,10 @@ async function run(caps: Caps): Promise<void> {
           : job.runAt
             ? `一次性 @ ${job.runAt}`
             : '?';
+      const note = persistNote();
       return JSON.stringify({
         ok: true,
-        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})${persistNote()}`,
+        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})${note ? `；${toSource(note)}` : ''}`,
       });
     },
   });

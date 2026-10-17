@@ -51,7 +51,7 @@ describe('scheduler 一次性任务的远期 runAt', () => {
       const res = await pages.act('scheduler', 'createJob', {
         input: { name: 'far', sessionId: 'internal', platform: 'internal', content: 'x', enabled: true, runAt },
       });
-      expect(res).toEqual({ status: 200, body: { message: '已保存任务 far' } });
+      expect(res).toEqual({ status: 200, body: { message: expect.objectContaining({ source: '已保存任务 far' }) } });
 
       // 25 天已越过 setTimeout 上限：溢出写法在这里早就执行并删掉任务了
       await vi.advanceTimersByTimeAsync(25 * DAY);

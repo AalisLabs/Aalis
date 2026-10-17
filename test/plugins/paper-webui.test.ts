@@ -4,7 +4,7 @@ import { placePaperId } from '../../packages/api-session-manager/src/index.js';
 import type { ComponentView, DeclarativePageView, InfoItem } from '../../packages/api-webui/src/index.js';
 import { provide } from '../../packages/core/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { defineTexts, isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -388,6 +388,27 @@ describe('跑完一件任务后的几张表', () => {
         expect.objectContaining({ key: 'user:onebot:30001', cents: 10, tasks: 1 }),
       ]),
     );
+  });
+
+  it('落盘的失败原因与发布原因是文字对象：重启读回仍在，任务表按读者语言显示', async () => {
+    const quota = defineTexts({
+      ns: '@zz/paper-webui-readback',
+      language: 'zh-CN',
+      source: { quota: '额度用完了' } as const,
+      locales: { en: { quota: 'Out of quota' } },
+    })('quota');
+    const failed = doneTask('t-0000000e', [], {
+      state: 'failed',
+      error: quota,
+      publication: { target: 'works', title: '猫', summary: '', state: 'failed', reason: quota },
+    });
+    const hub = await hubWith(new ScriptedRemote(), { files: seeded([{ task: failed, bytes: {} }]) });
+    const [row] = await tasks(hub);
+    const shown = [(row.state as { text: unknown }).text, row.publication];
+    expect(shown.map(text => isTextRef(text) && [toSource(text), resolveText(text, ['en'])])).toEqual([
+      ['失败：额度用完了', '失败: Out of quota'],
+      ['works：未能上线（额度用完了）', 'works: 未能上线 (Out of quota)'],
+    ]);
   });
 
   it('今天的花费：预留中的金额按房间与发起者列出', async () => {

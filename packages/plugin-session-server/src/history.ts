@@ -181,13 +181,15 @@ function speakerOf(message: Message, isOwner: IsOwner) {
 }
 
 /**
- * 单独成条的存档消息：提问、通知（含压缩分隔线）、她发出的附件。她的回复与工具调用要成组归并，
+ * 单独成条的存档消息：提问、通知（含压缩分隔线与平台事件合成的入站）、她发出的附件。她的回复与工具调用要成组归并，
  * 其余系统消息与组外的工具结果不显示，都回 undefined
  */
 export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
   const itemId = archivedItemId(message);
   const at = message.timestamp ?? 0;
-  if (message.role === 'user') {
+  const recorded = message.metadata?.[WellKnownMetadataKeys.Text];
+  // 记了给人看的那句的入站是平台事件合成的（如好友申请），不是谁的发言：画成通知
+  if (message.role === 'user' && !isTextRef(recorded)) {
     const spoken = message.metadata?.[WellKnownMetadataKeys.SpokenContent];
     return {
       kind: 'user-message',
@@ -198,17 +200,25 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       speaker: speakerOf(message, isOwner),
     };
   }
-  if (message.role === 'notice' || (message.role === 'system' && message.kind === WellKnownKinds.EventMarker)) {
-    const recorded = message.metadata?.[WellKnownMetadataKeys.Text];
+  if (
+    message.role === 'user' ||
+    message.role === 'notice' ||
+    (message.role === 'system' && message.kind === WellKnownKinds.EventMarker)
+  ) {
+    const meta = message.metadata;
     return {
       kind: 'notice',
       itemId,
       at,
-      topic: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]) ?? message.kind ?? message.role,
+      topic:
+        text(meta?.[WellKnownMetadataKeys.HostNoticeKind]) ??
+        message.kind ??
+        text(meta?.[WellKnownMetadataKeys.Source]) ??
+        message.role,
       text: isTextRef(recorded) ? recorded : (message.content ?? ''),
       attachments: [],
-      noticeId: text(message.metadata?.[WellKnownMetadataKeys.HostNoticeId]),
-      facts: noticeFacts(message.metadata?.[WellKnownMetadataKeys.HostNoticeFacts]),
+      noticeId: text(meta?.[WellKnownMetadataKeys.HostNoticeId]),
+      facts: noticeFacts(meta?.[WellKnownMetadataKeys.HostNoticeFacts]),
     };
   }
   const sent = sentAttachments(message, signFile);

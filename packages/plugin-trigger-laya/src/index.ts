@@ -33,6 +33,7 @@ import {
 } from '@aalis/api-trigger';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
+import { type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import {
   buildIncomingContent,
   getMessageName,
@@ -196,16 +197,16 @@ function run(caps: Caps): void {
 
   let failures = 0;
   let openUntil = 0;
-  /** 判定不可用的原因（侧车熔断、memory 缺席、托管的侧车退出或没能拉起）；undefined = 可用 */
-  let down: string | undefined;
+  /** 判定不可用的原因（侧车熔断、memory 缺席、托管的侧车退出或没能拉起），诊断项写出它；undefined = 可用 */
+  let down: TextRef | undefined;
   let downSince = 0;
 
   /** 转为不可用：由正常转入时记一条 error，之后只更新原因 */
-  function goDown(reason: string): void {
+  function goDown(reason: TextRef): void {
     if (down === undefined) {
       downSince = Date.now();
       logger.use.error(
-        `[laya] 判定不可用（${reason}），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档`,
+        `[laya] 判定不可用（${toSource(reason)}），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档`,
       );
     }
     down = reason;
@@ -215,17 +216,19 @@ function run(caps: Caps): void {
    * 计一次失败：连续第 3 次起熔断（到期后再失败即重新熔断）。转入熔断即判定不可用，一次故障只记一条 error，
    * 之后的并发失败与重新熔断记 debug，恢复由 healthy() 记
    */
-  function fail(why: string): void {
+  function fail(why: string | TextRef): void {
     failures++;
-    logger.use.debug(`[laya] 侧车请求失败: ${why}`);
+    logger.use.debug(`[laya] 侧车请求失败: ${toSource(why)}`);
     if (failures < CIRCUIT_FAILURES) return;
     openUntil = Date.now() + CIRCUIT_OPEN_MS;
     // 失败计数在侧车正常作答时清零（成功的判定与 422 / 413），恰好等于门限的那次是转入熔断。判定不可用期间
     // 回过 422 / 413 又攒满门限的，仍是同一次故障：goDown 只在由可用转入时记 error
     if (failures === CIRCUIT_FAILURES) {
-      goDown(`侧车连续 ${failures} 次失败，最近一次: ${why}；熔断 ${CIRCUIT_OPEN_MS / 1000}s 后重试`);
+      goDown(t('circuitOpen', { count: failures, why, seconds: CIRCUIT_OPEN_MS / 1000 }));
     } else {
-      logger.use.debug(`[laya] 侧车连续 ${failures} 次失败（最近一次: ${why}），再熔断 ${CIRCUIT_OPEN_MS / 1000}s`);
+      logger.use.debug(
+        `[laya] 侧车连续 ${failures} 次失败（最近一次: ${toSource(why)}），再熔断 ${CIRCUIT_OPEN_MS / 1000}s`,
+      );
     }
   }
 
@@ -233,7 +236,9 @@ function run(caps: Caps): void {
   function healthy(): void {
     failures = 0;
     if (down === undefined) return;
-    logger.use.warn(`[laya] 判定恢复（不可用 ${Math.round((Date.now() - downSince) / 1000)}s，最后原因: ${down}）`);
+    logger.use.warn(
+      `[laya] 判定恢复（不可用 ${Math.round((Date.now() - downSince) / 1000)}s，最后原因: ${toSource(down)}）`,
+    );
     down = undefined;
   }
 
@@ -247,7 +252,7 @@ function run(caps: Caps): void {
   /** 托管的目标；undefined = 没配 sidecarDir，侧车由外部运行 */
   const target = cfg.sidecarDir ? sidecarTarget(cfg.sidecarDir, cfg.endpoint) : undefined;
   const managed = target && !('problem' in target) ? target : undefined;
-  if (target && 'problem' in target) logger.use.error(`[laya] 不托管侧车：${target.problem}`);
+  if (target && 'problem' in target) logger.use.error(`[laya] 不托管侧车：${toSource(target.problem)}`);
   /** 正在托管的侧车；没配托管、应用还没就绪（如 CLI 子命令进程）、本插件不生效或停用后为 undefined */
   let sidecar: Sidecar | undefined;
 
@@ -278,7 +283,7 @@ function run(caps: Caps): void {
                 // 失败计数属于退出了的那个进程，作废；新一轮故障（就绪后稳定运行过才退出）另记一条 error
                 failures = 0;
                 if (newRound) down = undefined;
-                else if (down !== undefined) logger.use.debug(`[laya] ${reason}`);
+                else if (down !== undefined) logger.use.debug(`[laya] ${toSource(reason)}`);
                 goDown(reason);
               },
             });
@@ -350,7 +355,7 @@ function run(caps: Caps): void {
       return fallback('没有机器人账号');
     }
     if (!caps.memory.present) {
-      goDown('memory 缺席，没有历史窗口');
+      goDown(t('noMemory'));
       return fallback('memory 缺席');
     }
     const mem = caps.memory.use;
@@ -417,7 +422,7 @@ function run(caps: Caps): void {
       status = res.status;
       text = await res.text();
     } catch (err) {
-      fail(controller.signal.aborted ? `超时（${cfg.timeoutMs}ms）` : `${err}`);
+      fail(controller.signal.aborted ? t('timeout', { ms: cfg.timeoutMs }) : textOf(err));
       return fallback('侧车请求失败');
     } finally {
       clearTimeout(timer);
@@ -437,21 +442,21 @@ function run(caps: Caps): void {
     try {
       parsed = JSON.parse(text);
     } catch {
-      fail('响应不是 JSON');
+      fail(t('notJson'));
       return fallback('侧车请求失败');
     }
     const logit = parsed.logit;
-    const t = threshold ?? parsed.threshold;
+    const cutoff = threshold ?? parsed.threshold;
     if (typeof logit !== 'number' || !Number.isFinite(logit)) {
-      fail('响应的 logit 不是有限数');
+      fail(t('badLogit'));
       return fallback('侧车请求失败');
     }
-    if (typeof t !== 'number' || !Number.isFinite(t)) {
-      fail('阈值不是有限数');
+    if (typeof cutoff !== 'number' || !Number.isFinite(cutoff)) {
+      fail(t('badThreshold'));
       return fallback('侧车请求失败');
     }
     healthy();
-    return { speak: logit >= t, logit, threshold: t, version: str(parsed.version) ?? '?' };
+    return { speak: logit >= cutoff, logit, threshold: cutoff, version: str(parsed.version) ?? '?' };
   }
 
   // ===== inbound:trigger 相位：要不要开口 =====
@@ -544,57 +549,48 @@ function run(caps: Caps): void {
         };
       }
       // 当前判定不了的原因（报 error）与要留意的情况（报 warn）
-      const problems: string[] = [];
-      const notes: string[] = [];
-      if (target && 'problem' in target) notes.push(`不托管侧车：${target.problem}`);
+      const problems: TextRef[] = [];
+      const notes: TextRef[] = [];
+      if (target && 'problem' in target) notes.push(t('notManaged', { problem: target.problem }));
       const state = sidecar?.state;
-      let online: string | undefined;
+      let online: TextRef | undefined;
       if (state?.kind === 'starting' || state?.kind === 'waiting') {
         const now = Date.now();
         if (state.kind === 'waiting') {
           const wait = Math.max(0, Math.ceil((state.until - now) / 1000));
-          problems.push(`${state.reason}，${wait}s 后重启（连续 ${state.restarts} 次）`);
+          problems.push(t('restarting', { reason: state.reason, wait, count: state.restarts }));
         } else if (state.restarts > 0) {
-          problems.push(
-            `侧车重启中（已 ${Math.round((now - state.since) / 1000)}s，此前连续 ${state.restarts} 次没起来）`,
-          );
+          problems.push(t('restartingFor', { seconds: Math.round((now - state.since) / 1000), count: state.restarts }));
         } else {
-          notes.push(`侧车启动中（已 ${Math.round((now - state.since) / 1000)}s），就绪前判定按兜底只回点名`);
+          notes.push(t('starting', { seconds: Math.round((now - state.since) / 1000) }));
         }
       } else {
         const health = await probe();
-        if ('error' in health) problems.push(`侧车不可达（${health.error}）`);
-        else online = `侧车在线（版本 ${health.version}${state?.kind === 'ready' ? '，由本插件托管' : ''}）`;
-        if (state?.kind === 'external') {
-          notes.push(
-            '侧车不由本插件托管：首次拉起前端口上已有别的侧车在运行；要改由本插件托管，先停掉它（系统服务要卸载），' +
-              '再重启 Aalis 或把 trigger 偏好切走再切回',
-          );
-        }
+        if ('error' in health) problems.push(t('unreachable', { error: health.error }));
+        else online = t(state?.kind === 'ready' ? 'onlineManaged' : 'online', { version: health.version });
+        if (state?.kind === 'external') notes.push(t('external'));
       }
-      if (!caps.memory.present) problems.push('memory 缺席');
-      if (circuitOpen()) problems.push(`判定不可用（${down}）`);
-      const parts = problems.length > 0 ? [`${problems.join('；')}，判定按兜底只回点名`] : online ? [online] : [];
+      // down 在别处会被改写：取成常量，下面借 stale 收窄类型才成立
+      const reason = down;
+      if (!caps.memory.present) problems.push(t('memoryAbsent'));
+      if (reason !== undefined && circuitOpen()) problems.push(t('unavailable', { reason }));
+      const parts =
+        problems.length > 0 ? [t('fallbackNote', { problems: textClauses(problems) })] : online ? [online] : [];
       parts.push(...notes);
       // down 只由成功的判定清除（422 / 413 不算）：眼下没有故障，但还没有请求确认恢复。探活正常不代表
       // /v1/score 正常，照实报成上次的故障
-      const stale = problems.length === 0 && down !== undefined;
-      if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
+      const stale = problems.length === 0 && reason !== undefined;
+      if (stale) parts.push(t('stale', { reason }));
       // 近期带图消息大多只有图片指针：模型判定带图消息时不知道图里是什么
       const pointerOnlyCount = recentImages.filter(Boolean).length;
       const blind = pointerOnlyCount >= POINTER_ONLY_WARN;
-      if (blind) {
-        parts.push(
-          `近 ${recentImages.length} 条带图消息有 ${pointerOnlyCount} 条判定时只有图片指针、没有内容描述：` +
-            'media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型',
-        );
-      }
+      if (blind) parts.push(t('blind', { total: recentImages.length, count: pointerOnlyCount }));
       return {
         id: 'trigger.laya',
         category: 'service',
         // 判定不了会让群里只回点名，报 error；其余要留意的报 warn
         level: problems.length > 0 ? 'error' : notes.length > 0 || stale || blind ? 'warn' : 'ok',
-        message: `Laya 触发判定生效中：${parts.join('；')}`,
+        message: t('active', { parts: textClauses(parts) }),
         detail,
       };
     },

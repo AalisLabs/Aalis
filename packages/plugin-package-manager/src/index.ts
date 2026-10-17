@@ -24,7 +24,9 @@ import {
   provide,
   services,
 } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
+import { t } from './texts.js';
 
 // ===== 实现 =====
 
@@ -110,20 +112,30 @@ export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): bo
 
 /**
  * 包类型是否归市场装卸：插件（判据同 {@link declaresPlugin}）与前端界面（`aalis-interface`）
- * 归市场管，返回 `undefined`；其余返回拒绝时展示的类别名。装与卸共用这一份判据——同一件事
- * 维护两份同义判据，正是本仓已出事四次的形态（依赖来源判据、定级数学、包名正则、关键词分类）。
+ * 归市场管，返回 `undefined`；其余按类型关键词返回种类码（没有类型关键词的是 other），拒绝时显示 KIND_NAMES 里的名字。
+ * 装与卸共用这一份判据——同一件事维护两份同义判据，正是本仓已出事四次的形态（依赖来源判据、定级数学、包名正则、关键词分类）。
  * 纯函数，便于单测。
  */
-export function nonMarketKind(keywords: unknown): string | undefined {
+export function nonMarketKind(keywords: unknown): 'core' | 'runtime' | 'api' | 'schema' | 'util' | 'other' | undefined {
   const kw: unknown[] = Array.isArray(keywords) ? keywords : [];
   if (declaresPlugin({ keywords: kw }) || kw.includes('aalis-interface')) return undefined;
-  if (kw.includes('aalis-core')) return '内核';
-  if (kw.includes('aalis-runtime')) return '宿主';
-  if (kw.includes('aalis-api')) return '服务契约';
-  if (kw.includes('aalis-schema')) return '数据规范';
-  if (kw.includes('aalis-util')) return '工具库';
-  return '非插件包';
+  if (kw.includes('aalis-core')) return 'core';
+  if (kw.includes('aalis-runtime')) return 'runtime';
+  if (kw.includes('aalis-api')) return 'api';
+  if (kw.includes('aalis-schema')) return 'schema';
+  if (kw.includes('aalis-util')) return 'util';
+  return 'other';
 }
+
+/** 不归市场装卸的包种类给人看的名字 */
+const KIND_NAMES: Readonly<Record<NonNullable<ReturnType<typeof nonMarketKind>>, TextRef>> = {
+  core: t('kindCore'),
+  runtime: t('kindRuntime'),
+  api: t('kindApi'),
+  schema: t('kindSchema'),
+  util: t('kindUtil'),
+  other: t('kindOther'),
+};
 
 /** 服务依赖者闸读的插件状态：判谁在提供、谁 required 什么，以及 pending 的目标是缺还是在等（api-doctor 的共享判据） */
 type ServiceStatus = Pick<PluginStatusEntry, 'name' | 'instanceId' | 'state' | 'error' | 'provides' | 'uses'>;
@@ -452,9 +464,9 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
   const specs: string[] = [];
   const seen = new Set<string>();
   let bytes = 0;
-  for (const t of targets) {
-    const name = typeof t?.name === 'string' ? t.name : '';
-    const version = typeof t?.version === 'string' ? t.version : '';
+  for (const target of targets) {
+    const name = typeof target?.name === 'string' ? target.name : '';
+    const version = typeof target?.version === 'string' ? target.version : '';
     if (!PKG_NAME_ONLY_RE.test(name)) return { error: `非法包名: ${JSON.stringify(name)}` };
     if (!VERSION_RE.test(version)) return { error: `非法版本号: ${name}@${JSON.stringify(version)}` };
     // 同名多版本会让 npm 取最后一个，静默丢弃前面的选择——宁可让用户重选。
@@ -738,19 +750,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 沿用项目与本机的 npm 源配置），判据与卸载同一份（{@link nonMarketKind}）。闸放服务层而非
    * HTTP 路由——本服务对外公开，任何插件都能绕过路由直接调。返回拒绝理由，`undefined` = 放行。
    */
-  async function installKindRefusal(npmPkg: string, root: string): Promise<string | undefined> {
+  async function installKindRefusal(npmPkg: string, root: string): Promise<TextRef | undefined> {
     const out = (await npm(['view', npmPkg, 'keywords', '--json'], root)).trim();
     // 包没有 keywords 字段时 npm 什么都不输出；spec 是版本范围时按版本逐个给出、返回二维数组
     const parsed: unknown = out ? JSON.parse(out) : [];
     const perVersion = Array.isArray(parsed) && parsed.length > 0 && parsed.every(Array.isArray) ? parsed : [parsed];
     const kind = perVersion.map(kw => nonMarketKind(kw)).find(k => k !== undefined);
     if (!kind) return undefined;
-    return (
-      `${npmPkg} 是${kind}，不是可装卸的插件，市场不负责它的安装。` +
-      (kind === '非插件包'
-        ? '市场只安装带 aalis-plugin / aalis-interface 关键词的包。'
-        : '它随脚手架或依赖它的插件自动就位；要升级已装的版本，请在市场勾选它后用「更新所选」提交。')
-    );
+    return t(kind === 'other' ? 'installUnmarked' : 'installBundled', { name: npmPkg, kind: KIND_NAMES[kind] });
   }
 
   /**
@@ -903,13 +910,13 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 只允许更新「根依赖里以 semver 范围声明」的包。闸放在服务层而非 HTTP 路由——
     // 本服务对外公开，任何插件都能绕过路由直接调用（理由见 isRegistryDep）。
     const rootDependencies = (rootPkg?.dependencies ?? {}) as Record<string, string>;
-    const notUpdatable = targets.filter(t => !isRegistryDep(rootDependencies[t.name]));
+    const notUpdatable = targets.filter(target => !isRegistryDep(rootDependencies[target.name]));
     if (notUpdatable.length > 0) {
       return {
         ok: false,
         message:
           '以下包不在根依赖中（由其它插件带入）或不是 registry 来源，单独更新只会装出第二份副本；' +
-          `请改为更新带入它们的插件：${notUpdatable.map(t => t.name).join('、')}`,
+          `请改为更新带入它们的插件：${notUpdatable.map(target => target.name).join('、')}`,
       };
     }
 
@@ -917,12 +924,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 两处都要用：(a) 降级守卫；(b) 回滚凭据钉精确旧版。两者都不能靠根 package.json 的
     // 声明——那是**范围**，回滚时按范围重解析只会又解到刚崩掉的新版。
     const installedVersions = new Map<string, string>();
-    for (const t of targets) {
-      const text = await deps.readText(`${root}/node_modules/${t.name}/package.json`);
+    for (const target of targets) {
+      const text = await deps.readText(`${root}/node_modules/${target.name}/package.json`);
       if (text === undefined) continue;
       try {
         const v = (JSON.parse(text) as { version?: unknown }).version;
-        if (typeof v === 'string') installedVersions.set(t.name, v);
+        if (typeof v === 'string') installedVersions.set(target.name, v);
       } catch {
         /* 坏 JSON：当作读不到，由下面的守卫拒掉 */
       }
@@ -933,14 +940,17 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 拒绝而非放行的理由：registry 的 dist-tags.latest 可以**低于**本地已装版本（发布事故后
     // `npm dist-tag add pkg@旧版 latest` 回滚，或用户曾装过预发布版），此时「更新」会静默降级；
     // 读不到已装版本同样拒——无从判断方向就不动，用户可显式卸载重装。
-    const notUpgrade = targets.filter(t => !isUpgrade(installedVersions.get(t.name), t.version));
+    const notUpgrade = targets.filter(target => !isUpgrade(installedVersions.get(target.name), target.version));
     if (notUpgrade.length > 0) {
       return {
         ok: false,
         message:
           '以下目标版本不高于本地已装版本（或本地版本号读不到），更新会变成降级，已拒绝：' +
           notUpgrade
-            .map(t => `${t.name}（本地 ${installedVersions.get(t.name) ?? '未知'} → 目标 ${t.version}）`)
+            .map(
+              target =>
+                `${target.name}（本地 ${installedVersions.get(target.name) ?? '未知'} → 目标 ${target.version}）`,
+            )
             .join('、'),
       };
     }
@@ -1011,14 +1021,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 降级守卫已保证每个 target 都有已装版本（读不到的在那里就被拒了），此处的 undefined
     // 过滤只是让类型收窄，不承担逻辑。
     const pinned = targets
-      .map(t => {
-        const v = installedVersions.get(t.name);
-        return v === undefined ? undefined : `${t.name}@${v}`;
+      .map(target => {
+        const v = installedVersions.get(target.name);
+        return v === undefined ? undefined : `${target.name}@${v}`;
       })
       .filter((s): s is string => s !== undefined);
     // 再把「被这次安装顺带改了版本」的包一并钉回旧版（理由见上面 treeBefore 处的注释）。
     // 只回退**本来就在**的包：新增的包钉不回去（它更新前不存在），留给 npm 的 extraneous。
-    const named = new Set(targets.map(t => t.name));
+    const named = new Set(targets.map(target => target.name));
     const treeAfter = await readInstalledTree(deps, root);
     for (const [name, before] of treeBefore) {
       if (named.has(name)) continue;
@@ -1034,7 +1044,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 
   return {
-    update: t => exclusive(`更新 ${t.map(x => x.name).join('、')}`, () => updateAll(t)),
+    update: targets => exclusive(`更新 ${targets.map(x => x.name).join('、')}`, () => updateAll(targets)),
 
     install: npmPkg =>
       exclusive(`安装 ${npmPkg}`, async () => {
@@ -1067,7 +1077,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   async function uninstallOne(
     pluginName: string,
     { removeConfig = false }: UninstallOptions = {},
-  ): Promise<{ ok: boolean; message: string }> {
+  ): Promise<{ ok: boolean; message: string | TextRef }> {
     const bad = validatePackageSpec(pluginName);
     if (bad) return { ok: false, message: bad };
 
@@ -1091,11 +1101,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (kind) {
       return {
         ok: false,
-        message:
-          `${pluginName} 是${kind}，不是可装卸的插件，市场不负责它的卸载。` +
-          (kind === '内核' || kind === '宿主'
-            ? '删掉它实例将无法启动、市场也随之消失，只能在终端里恢复；确需如此请手动执行 npm uninstall。'
-            : '它随依赖它的插件被 npm 自动剪枝；确需单独删除请手动执行 npm uninstall。'),
+        message: t(kind === 'core' || kind === 'runtime' ? 'uninstallVital' : 'uninstallPruned', {
+          name: pluginName,
+          kind: KIND_NAMES[kind],
+        }),
       };
     }
 

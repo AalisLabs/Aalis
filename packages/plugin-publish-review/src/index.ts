@@ -74,7 +74,7 @@ export default definePlugin({
       config: cfg,
       pipeline,
       signal: caps.lifecycle.use.signal,
-      notice: (origin, content, id, title, opts) => notices.enqueue(origin, content, id, title, opts),
+      notice: (origin, notice, id, title, opts) => notices.enqueue(origin, notice, id, title, opts),
       noticeReady: () => notices.ready(),
     });
     const driver = new ReviewDriver(service, store, caps.lifecycle.use.signal, caps.logger.use);

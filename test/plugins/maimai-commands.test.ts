@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { isTextRef, resolveText } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
@@ -194,5 +197,67 @@ describe('/maimai 没绑定时按调用者的 QQ 号查', () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ success: true, data: player }), { status: 200 }));
     const run = await setup(sessionId, sessions);
     expect(await run('/maimai info')).toContain(expected);
+  });
+});
+
+describe('/maimai 与工具共用处理函数：指令交出文字对象，工具取它的原文', () => {
+  const session = { sessionId: 'onebot:10000:group:20001', platform: 'onebot', userId: '30001' };
+
+  /** 工具与指令都装上：tool 返回工具结果，command 返回指令回复按 languages 渲染的结果 */
+  async function setupBoth() {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    const host = app.bind({ provide, commands: commandsService, tools });
+    host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+    await app.plugin(toolsPlugin, {});
+    await app.plugin(commandsPlugin, {});
+    await app.plugin(maimaiPlugin, { developerToken: 'tok' });
+    await app.plugins.idle();
+    const registry = host.commands.use as unknown as CommandRegistry;
+    return {
+      tool: async (name: string, args: Record<string, unknown>) =>
+        (await host.tools.use.execute(name, args, session)).content,
+      command: async (name: string, args: string[], languages: string[]) => {
+        const reply = await registry.run(name, { ...session, args, raw: `/${name} ${args.join(' ')}` });
+        return isTextRef(reply) && resolveText(reply, languages);
+      },
+    };
+  }
+
+  it('同一次查询：工具结果一字不改，指令回复按读者语言', async () => {
+    const player = { name: 'p', rating: 12345, friend_code: 456, trophy: { name: 'zz', color: 'Gold' }, star: 3 };
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ success: true, data: player }), { status: 200 }));
+    const { tool, command } = await setupBoth();
+    expect(await tool('maimai_get_player_info', { friend_code: '456' })).toBe(
+      ['👤 p  (DX Rating: 12345)', '🆔 好友码: 456', '🏆 称号: zz [Gold]', '⭐ 搭档觉醒: 3'].join('\n'),
+    );
+    expect(await command('maimai.info', ['456'], ['en'])).toBe(
+      ['👤 p  (DX Rating: 12345)', '🆔 Friend code: 456', '🏆 Title: zz [Gold]', '⭐ Awakening: 3'].join('\n'),
+    );
+  });
+
+  it('查分器缺字段或给 null：照原样写出 undefined、null，不退回模板', async () => {
+    const song = { id: 14, title: '星4', genre: 'X', bpm: null, version: 21000 };
+    vi.stubGlobal('fetch', async (url: string) => {
+      const data = url.includes('/player/qq/')
+        ? { name: 'p', rating: 1 }
+        : url.includes('/alias/')
+          ? { aliases: [] }
+          : { songs: [song] };
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 });
+    });
+    const { tool, command } = await setupBoth();
+    const player = ['👤 p  (DX Rating: 1)', '🆔 好友码: undefined'].join('\n');
+    expect(await tool('maimai_get_player_info', { qq: '123' })).toBe(player);
+    expect(await command('maimai.info', ['qq:123'], ['zh-CN'])).toBe(player);
+    const songs = [
+      '🔍 共 1 条匹配 (关键词: 星4)',
+      '',
+      '#14 《星4》  by undefined',
+      '  分类: X | BPM: null | 版本: 21000',
+    ];
+    expect(await tool('maimai_search_song', { keyword: '星4' })).toBe(songs.join('\n'));
+    expect(await command('maimai.song', ['星4'], ['zh-CN'])).toBe(songs.join('\n'));
   });
 });

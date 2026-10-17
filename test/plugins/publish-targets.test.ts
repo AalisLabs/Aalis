@@ -53,7 +53,7 @@ describe('发布目标目录与回执', () => {
     expect(h.notice).not.toHaveBeenCalled();
     binding.live([id]);
     await vi.waitFor(() => expect(h.notice).toHaveBeenCalledOnce());
-    expect(h.notice.mock.calls[0][1]).toContain(`https://works.invalid/draw/w/${id}/`);
+    expect(h.notice.mock.calls[0][1].content).toContain(`https://works.invalid/draw/w/${id}/`);
     binding.live([id]);
     await h.store.exclusive(async () => {});
     expect(h.notice).toHaveBeenCalledOnce();

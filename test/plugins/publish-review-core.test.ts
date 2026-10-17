@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { NominateInput } from '../../packages/api-publish/src/index.js';
 import { isIntegrityError } from '../../packages/api-publish/src/index.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
+import type { NoticeBody } from '../../packages/plugin-publish-review/src/notices.js';
 import type { ReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import { PublishReviewService } from '../../packages/plugin-publish-review/src/service.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { t } from '../../packages/plugin-publish-review/src/texts.js';
+import { defineTexts, isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -21,10 +23,10 @@ const input = (): NominateInput => ({
   files: [{ path: 'work.png', bytes: image }],
 });
 
-const config = (manualReview = false): ReviewConfig => ({
+const config = (manualReview = false, ownerTimeoutHours = 12): ReviewConfig => ({
   reviewEnabled: true,
   manualReview,
-  ownerTimeoutHours: 12,
+  ownerTimeoutHours,
   ffmpegPath: 'ffmpeg',
   chrome: { headless: true, executablePath: '' },
   limits: {
@@ -42,28 +44,74 @@ async function setup(
   manualReview = false,
   seed = new Map<string, string | Uint8Array>(),
   clock = { now: 1000 },
+  ownerTimeoutHours?: number,
 ) {
   const storage = memoryStorage(seed);
   const store = new ReviewStore(boundStorage(storage, 'publish-review'));
   await store.load();
+  /** 交给模型的正文与给人看的那句 */
   const notices: string[] = [];
+  const texts: unknown[] = [];
   const service = new PublishReviewService({
     storage,
     store,
-    config: config(manualReview),
+    config: config(manualReview, ownerTimeoutHours),
     pipeline,
     now: () => clock.now,
-    notice: (_origin, text) => notices.push(text),
+    notice: (_origin, { content, text }) => {
+      notices.push(content);
+      texts.push(text);
+    },
   });
   service.attachSurface({
     name: 'works',
     urlFor: id => `https://works.invalid/w/${id}/`,
     health: () => ({ ok: true }),
   });
-  return { service, store, storage, seed, notices };
+  return { service, store, storage, seed, notices, texts };
 }
 
 describe('作品审核核心', () => {
+  it('待发通知另记给人看的那句（文字对象），交给模型的正文是它的原文', async () => {
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      true,
+    );
+    const result = await h.service.nominate(input());
+    if (!('id' in result)) throw new Error(toSource(result.refused));
+    await h.service.processNext();
+    await vi.waitFor(() => expect(h.notices).toHaveLength(1));
+    expect(h.notices).toEqual(['作品要等 owner 审核，最长 12 小时，有结果会再通知']);
+    expect(h.texts.map(text => isTextRef(text) && resolveText(text, ['en']))).toEqual([
+      'The work is waiting for owner review, for up to 12 hours; you will be notified again when there is a result',
+    ]);
+  });
+
+  it('交给模型的小时数照配置原样写出（与改动前逐字相同），不按语言格式化', async () => {
+    const clock = { now: 1000 };
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'unsure', reasons: ['模型不可用'] }, files: input().files }) },
+      false,
+      new Map(),
+      clock,
+      1.23456,
+    );
+    const nomination = await h.service.nominate(input());
+    if (!('id' in nomination)) throw new Error(toSource(nomination.refused));
+    await h.service.processNext();
+    clock.now += 1.23456 * 3_600_000 + 1;
+    await h.service.reconcile();
+    await vi.waitFor(() => expect(h.notices).toHaveLength(2));
+    expect(h.notices).toEqual([
+      '作品要等 owner 审核，最长 1.23456 小时，有结果会再通知',
+      '作品等 owner 审核超过 1.23456 小时，这次不发布，需要的话可以重新提名',
+    ]);
+    expect(h.texts.map(text => isTextRef(text) && resolveText(text, ['en']))).toEqual([
+      'The work is waiting for owner review, for up to 1.23456 hours; you will be notified again when there is a result',
+      'The work waited for owner review for more than 1.23456 hours and will not be published this time; nominate it again if needed',
+    ]);
+  });
+
   it('旧待发通知没有独立标题字段仍可读取', async () => {
     const seed = new Map<string, string | Uint8Array>();
     const h = await setup({ run: vi.fn() }, false, seed);
@@ -75,6 +123,31 @@ describe('作品审核核心', () => {
     expect(reloaded.failure).toBeUndefined();
     expect(reloaded.data.notices.legacy).toMatchObject({ content: '作品已上线：旧链接' });
     expect(reloaded.data.notices.legacy).not.toHaveProperty('title');
+  });
+
+  it('审核理由与历史里的说明是文字对象：落盘，重启读回仍在', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'unsure', reasons: ['暴力血腥'] }, files: input().files }) },
+      true,
+      seed,
+    );
+    const result = await h.service.nominate(input());
+    if (!('id' in result)) throw new Error(toSource(result.refused));
+    await h.service.processNext();
+    const reason = defineTexts({
+      ns: '@zz/publish-review-readback',
+      language: 'zh-CN',
+      source: { blurry: '图像太糊，看不清' } as const,
+    })('blurry');
+    const next = h.store.copy();
+    next.queue[result.id].review?.reasons.push(reason);
+    await h.store.save(next, { at: 2000, id: result.id, event: 'failed', detail: reason });
+    const reloaded = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
+    await reloaded.load();
+    expect(reloaded.failure).toBeUndefined();
+    expect(reloaded.data.queue[result.id].review?.reasons).toEqual(['暴力血腥', reason]);
+    expect(reloaded.data.history.at(-1)?.detail).toEqual(reason);
   });
 
   it('旧账本多余署名可读，相同提交键按旧指纹重试且新公开契约不返回署名', async () => {
@@ -312,8 +385,23 @@ describe('作品审核核心', () => {
     await service.flushNotices();
     expect(service.get(nominated.id)?.live).toBe(true);
     expect(restarted.data.ledger[nominated.id].notice).toBe('pending');
-    expect(restarted.data.notices[`${nominated.id}:live`]?.content).toContain(
-      `https://works.invalid/w/${nominated.id}/、https://draw.invalid/w/${nominated.id}/`,
+    const works = `https://works.invalid/w/${nominated.id}/`;
+    const drawn = `https://draw.invalid/w/${nominated.id}/`;
+    const queued = restarted.data.notices[`${nominated.id}:live`];
+    expect(queued?.content, '交给模型的正文照旧').toBe(`作品已上线：${works}、${drawn}`);
+    expect(isTextRef(queued?.text) && resolveText(queued.text, ['en'])).toBe(`The work is live: ${works} and ${drawn}`);
+    expect(emit).toHaveBeenCalledWith(
+      expect.any(Object),
+      { content: queued?.content, text: queued?.text },
+      nominated.id,
+      '测试作品',
+      undefined,
+    );
+    const reread = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
+    await reread.load();
+    expect(reread.failure).toBeUndefined();
+    expect(reread.data.notices[`${nominated.id}:live`]?.text, '给人看的那句随通知落盘，重启读回仍在').toEqual(
+      queued?.text,
     );
     draw.live([nominated.id]);
     await restarted.exclusive(async () => {});
@@ -509,16 +597,18 @@ describe('作品审核核心', () => {
     await service.close();
   });
 
-  it('通知连续发不出去满 24 小时就放弃：落盘、不再自动重发、列给 owner；owner 重发后照常发出', async () => {
+  it('通知连续发不出去满 24 小时就放弃：落盘、不再自动重发、列给 owner（显示给人看的那句）；owner 重发后照常发出', async () => {
     const clock = { now: 1000 };
     const seed = new Map<string, string | Uint8Array>();
     const store = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
     await store.load();
     const seeded = store.copy();
+    const text = t('noticeLive', { addresses: ['https://works.invalid/w/aaaaaaaaaa/'] });
     seeded.notices.blocked = {
       id: 'aaaaaaaaaa',
       origin: { ...input().origin, notify: { sessionId: 'room-1', platform: 'onebot' } },
       content: '作品已上线：https://works.invalid/w/aaaaaaaaaa/',
+      text,
       title: '蓝色主页',
       live: false,
     };
@@ -554,7 +644,13 @@ describe('作品审核核心', () => {
     await service.flushNotices();
     expect(emit, '放弃后不再自动重发').toHaveBeenCalledTimes(calls);
     expect(service.abandonedNotices()).toEqual([
-      expect.objectContaining({ key: 'blocked', id: 'aaaaaaaaaa', title: '蓝色主页', room: input().origin.label }),
+      expect.objectContaining({
+        key: 'blocked',
+        id: 'aaaaaaaaaa',
+        title: '蓝色主页',
+        room: input().origin.label,
+        content: text,
+      }),
     ]);
 
     expect(await service.retryNotice('nope')).toBe('没有这条已放弃的通知');
@@ -581,7 +677,7 @@ describe('作品审核核心', () => {
     await store.save(seeded);
     const calls: Array<{ direct?: boolean } | undefined> = [];
     const emit = vi.fn(
-      async (_o: NominateInput['origin'], _c: string, _i: string, _t?: string, opts?: { direct?: boolean }) => {
+      async (_o: NominateInput['origin'], _n: NoticeBody, _i: string, _t?: string, opts?: { direct?: boolean }) => {
         calls.push(opts);
         if (calls.length === 1) throw Object.assign(new Error('平台没有收下这条通知'), { name: 'NoticeUndelivered' });
       },

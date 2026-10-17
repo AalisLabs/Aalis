@@ -5,6 +5,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { isTextRef, type TextRef, truncateParams } from '@aalis/schema-i18n';
 import type { ArchivedAttachment, IncomingMessage, Message } from '@aalis/schema-message';
 import {
   AttachmentRefKind,
@@ -69,6 +70,12 @@ function attachmentList(incoming: IncomingMessage, roots: ReadonlySet<string>): 
     const ref = addressOf(data, roots) ?? addressOf(described?.ref, roots);
     return { kind, ...(name ? { name } : {}), ...(ref ? { ref } : {}) };
   });
+}
+
+/** 给人看的那句记进 metadata：参数截到 200 字（同其余落盘方）；截完退成字符串的不记，读历史的一方照旧显示正文 */
+function recordText(meta: Record<string, unknown>, text: TextRef | undefined): void {
+  const cut = text && truncateParams(text, 200);
+  if (isTextRef(cut)) meta[WellKnownMetadataKeys.Text] = cut;
 }
 
 const uses = { memory, media: optional(media), storage: optional(storage), events, logger, config, provide };
@@ -152,6 +159,8 @@ function createArchiveService(
       // 也方便事后审计"agent 在 X 群做过什么"
       if (working.triggerType) meta.triggerType = working.triggerType;
       if (working.source) meta[WellKnownMetadataKeys.Source] = working.source;
+      // 平台事件合成的入站给人看的那句：读历史的一方据此把它画成通知
+      recordText(meta, working.text);
       const mentions = extractMentions(content);
       if (mentions.length > 0) meta.mentions = mentions;
 
@@ -167,7 +176,7 @@ function createArchiveService(
         meta[WellKnownMetadataKeys.HostNoticeKind] = kind;
         if (id) meta[WellKnownMetadataKeys.HostNoticeId] = id;
         if (facts) meta[WellKnownMetadataKeys.HostNoticeFacts] = facts;
-        if (text) meta[WellKnownMetadataKeys.Text] = text;
+        recordText(meta, text);
       }
       const kind = working.hostNotice
         ? WellKnownKinds.HostNotice
@@ -220,7 +229,7 @@ function createArchiveService(
       if (opts.groupId) metadata[WellKnownMetadataKeys.GroupId] = opts.groupId;
       if (opts.operatorId) metadata.operatorId = opts.operatorId;
       if (opts.data) Object.assign(metadata, opts.data);
-      if (opts.text) metadata[WellKnownMetadataKeys.Text] = opts.text;
+      recordText(metadata, opts.text);
 
       const message: Message = {
         role: 'notice',

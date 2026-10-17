@@ -1,9 +1,11 @@
+import type { TextRef } from '@aalis/schema-i18n';
 import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import type { SiteAlert } from './state.js';
+import { t } from './texts.js';
 
 type PreflightClient = Pick<PagesClient, 'getProject' | 'listDomains' | 'listDeployments'>;
 type PreflightConfig = { productionBranch: string; failOpen: boolean; mainOrigins: readonly string[] };
-type PreflightIssue = Pick<SiteAlert, 'kind' | 'detail'> & { pause: boolean };
+type PreflightIssue = Pick<SiteAlert, 'kind'> & { detail: TextRef; pause: boolean };
 
 const KNOWN_BINDINGS = new Set([
   'env_vars',
@@ -58,14 +60,14 @@ export async function checkPreflight(
     client.listDeployments(signal),
   ]);
   const issues: PreflightIssue[] = [];
-  const add = (kind: PreflightIssue['kind'], detail: string, pause: boolean) => issues.push({ kind, detail, pause });
-  if (project.productionBranch !== config.productionBranch) add('settings', '生产分支与配置不符', true);
+  const add = (kind: PreflightIssue['kind'], detail: TextRef, pause: boolean) => issues.push({ kind, detail, pause });
+  if (project.productionBranch !== config.productionBranch) add('settings', t('productionBranch'), true);
   for (const [name, settings] of Object.entries(project.deploymentConfigs)) {
-    if (settings.fail_open !== config.failOpen) add('settings', `${name} 的 fail_open 与配置不符`, true);
+    if (settings.fail_open !== config.failOpen) add('settings', t('failOpenMismatch', { name }), true);
     for (const [key, value] of Object.entries(settings)) {
       if (!nonempty(value) || key === 'fail_open') continue;
-      if (KNOWN_BINDINGS.has(key)) add('settings', `${name} 存在 ${key} 绑定`, true);
-      else if (!SETTINGS.has(key)) add('settings', `${name} 出现未知设置 ${key}`, false);
+      if (KNOWN_BINDINGS.has(key)) add('settings', t('binding', { name, key }), true);
+      else if (!SETTINGS.has(key)) add('settings', t('unknownSetting', { name, key }), false);
     }
   }
   // The domains endpoint lists custom domains; the project object separately carries pages.dev.
@@ -73,10 +75,10 @@ export async function checkPreflight(
     .map(origin => new URL(origin).hostname)
     .filter(host => host !== project.subdomain)
     .sort();
-  if (JSON.stringify([...domains].sort()) !== JSON.stringify(expected)) add('domains', '域名列表与配置不符', true);
+  if (JSON.stringify([...domains].sort()) !== JSON.stringify(expected)) add('domains', t('domains'), true);
   for (const deployment of deployments) {
     if (!known.has(deployment.id) && deployment.id !== inFlightId) {
-      add('unknown-deployment', `发现账外部署 ${deployment.id.slice(0, 8)}`, true);
+      add('unknown-deployment', t('unknownDeployment', { id: deployment.id.slice(0, 8) }), true);
     }
   }
   return {

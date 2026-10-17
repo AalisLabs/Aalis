@@ -14,6 +14,7 @@ import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
 import type { PaperConfig } from './config.js';
 import { deliverArtifacts, failedBeforeSubmission, rawDeliveryAllowed, sendRefusal } from './deliver.js';
@@ -279,7 +280,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
                 target: t.publication.target,
                 state: t.publication.state,
                 ...(t.publication.workId ? { workId: t.publication.workId } : {}),
-                ...(t.publication.reason ? { reason: t.publication.reason } : {}),
+                ...(t.publication.reason ? { reason: toSource(t.publication.reason) } : {}),
               },
             }
           : {}),
@@ -290,7 +291,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         ...(t.artifacts.length > 0 && (!t.publication || failedBeforeSubmission(t))
           ? { artifacts: t.artifacts.map(a => ({ id: a.id, type: a.type, sizeBytes: a.sizeBytes })) }
           : {}),
-        ...(t.error ? { error: t.error } : {}),
+        ...(t.error ? { error: toSource(t.error) } : {}),
         ...(t.cancelledVia ? { cancelledVia: t.cancelledVia } : {}),
       };
     });

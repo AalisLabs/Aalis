@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   fakeRemote,
@@ -281,6 +282,27 @@ describe('paper_status', () => {
       at: new Date(at).toISOString(),
     });
     expect(rows.find(row => row.taskId === finished.id)?.progress).toBeUndefined();
+  });
+
+  it('落盘的失败原因与发布原因是文字对象：重启读回仍在，交给模型的是原文', async () => {
+    const quota = defineTexts({
+      ns: '@zz/paper-tools-readback',
+      language: 'zh-CN',
+      source: { quota: '额度用完了' } as const,
+    })('quota');
+    const failed = task('t-0000000e', {
+      state: 'failed',
+      endedAt: now,
+      error: quota,
+      publication: { target: 'works', title: '猫', summary: '', state: 'failed', reason: quota },
+    });
+    const hub = await startPaperHub({ files: seed([failed]) });
+    expect((await hub.call('paper_status', {})).tasks).toEqual([
+      expect.objectContaining({
+        error: '额度用完了',
+        publication: { target: 'works', state: 'failed', reason: '额度用完了' },
+      }),
+    ]);
   });
 });
 

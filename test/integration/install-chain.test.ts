@@ -184,7 +184,7 @@ describe('安装链（真实 npm）', () => {
       // 类型闸先验：is-odd 原样（无 aalis 关键词）不该被市场卸载——它不是插件。
       const refused = await makePm(root).uninstall('is-odd');
       expect(refused.ok).toBe(false);
-      expect(refused.message).toContain('不是可装卸的插件');
+      expect(toSource(refused.message)).toContain('不是可装卸的插件');
       expect(deps(root)['is-odd'], '被拒时根依赖不能动').toBeDefined();
 
       // 打上关键词让它成为「插件」，再验真正的卸载路径。
@@ -203,7 +203,7 @@ describe('安装链（真实 npm）', () => {
       const before = readFileSync(join(root, 'package.json'), 'utf-8');
       const refused = await makePm(root).install('is-odd@3.0.0');
       expect(refused.ok).toBe(false);
-      expect(refused.message).toContain('非插件包');
+      expect(toSource(refused.message)).toContain('非插件包');
       expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe(before);
 
       const r = await makePm(root, [], passKindGate(['aalis', 'aalis-interface'])).install('is-odd@3.0.0');

@@ -87,7 +87,14 @@ async function boot(
   });
   const notices = new ReviewNotices(host.events.use, app.logger, host.gateway, host.hooks.use);
   notices.open();
-  return { app, host, recorder, outgoing, notices, send: () => notices.enqueue(origin, CONTENT, 'test-work') };
+  return {
+    app,
+    host,
+    recorder,
+    outgoing,
+    notices,
+    send: () => notices.enqueue(origin, { content: CONTENT }, 'test-work'),
+  };
 }
 
 describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
@@ -100,7 +107,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
       incoming.push(data.message);
       await next();
     });
-    await h.notices.enqueue(origin, trusted, 'test-work', title);
+    await h.notices.enqueue(origin, { content: trusted }, 'test-work', title);
     expect(incoming[0].content).toBe(trusted);
     expect(incoming[0].hostNotice?.untrusted).toContain(title);
     expect(h.outgoing).toHaveLength(1);
@@ -194,7 +201,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     expect(String((err as Error).message)).toContain('上传超时');
     const calls = h.recorder.length;
     accept = true;
-    await h.notices.enqueue(origin, CONTENT, 'test-work', undefined, { direct: true });
+    await h.notices.enqueue(origin, { content: CONTENT }, 'test-work', undefined, { direct: true });
     expect(h.recorder, '重发不再跑一轮模型').toHaveLength(calls);
     expect(h.outgoing.at(-1)).toMatchObject({
       content: `[作品通知] ${CONTENT}`,
@@ -226,7 +233,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     );
     const notices = new ReviewNotices(h.host.events.use, h.app.logger, h.host.gateway, h.host.hooks.use, stop.signal);
     notices.open();
-    const pending = notices.enqueue(origin, CONTENT, 'test-work').then(
+    const pending = notices.enqueue(origin, { content: CONTENT }, 'test-work').then(
       () => undefined,
       (e: unknown) => e,
     );
@@ -458,7 +465,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     await h.send();
     const requestsAfterFirstNotice = h.recorder.length;
     await expect(
-      h.notices.enqueue(origin, '作品 second 已上线：https://works.invalid/w/second/', 'second'),
+      h.notices.enqueue(origin, { content: '作品 second 已上线：https://works.invalid/w/second/' }, 'second'),
     ).rejects.toThrow();
     expect(h.outgoing).toHaveLength(1);
     expect(requestsAfterFirstNotice).toBe(2);
@@ -527,7 +534,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
       config: parseConfig(configSchema, { reviewEnabled: false }),
       pipeline: { run: async input => ({ verdict: { verdict: 'allow', reasons: [] }, files: [...input.files] }) },
       now: () => clock.now,
-      notice: (origin, content, id) => h.notices.enqueue(origin, content, id),
+      notice: (origin, notice, id) => h.notices.enqueue(origin, notice, id),
     });
     const surface = service.attachSurface({
       name: 'works',

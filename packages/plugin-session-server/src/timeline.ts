@@ -66,9 +66,6 @@ type Outcome = HookContextMap['agent:turn:after']['outcome'];
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 type Streamed = Item<'agent-message'> | Item<'reasoning'>;
 
-/** 生成了却没有执行的工具调用，回合结束时写在卡上的结果 */
-const NOT_EXECUTED = '没有执行';
-
 /** 房间里她没回复就收尾的一轮，说过的话按怎么收的尾写原因 */
 const UNSENT: Record<Exclude<Outcome, 'replied'>, TextRef> = {
   silent: t('unsentSilent'),
@@ -348,7 +345,7 @@ export function createTimeline(deps: TimelineDeps) {
     for (const item of turn.items.values()) {
       if (item.kind !== 'tool-call' || item.status !== 'generating') continue;
       item.status = outcome === 'aborted' ? 'aborted' : 'failed';
-      item.result = NOT_EXECUTED;
+      item.notExecuted = true;
       complete(turn, item);
     }
     if (turn.items.size === 0) turn.items.set(turn.turnId, turn.item);

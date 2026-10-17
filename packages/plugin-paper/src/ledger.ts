@@ -9,6 +9,7 @@
 import type { RunActivity } from '@aalis/api-remote-agent';
 import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import { describe } from './util.js';
 
 /** 私有目录下的账本文件 */
@@ -106,7 +107,8 @@ export interface TaskRecord {
     summary: string;
     state: 'pending' | 'submitted' | 'failed' | 'live';
     workId?: string;
-    reason?: string;
+    /** 没能上线的原因：新记录可以是文字对象，旧记录是字符串；交给模型取原文 */
+    reason?: string | TextRef;
     /** 首次提交前固定选中的成品，供同键重试重建相同字节。 */
     artifactIds?: string[];
     /** 与 artifactIds 同序的公开相对路径；提交前固定。 */
@@ -123,7 +125,8 @@ export interface TaskRecord {
      */
     reviewRefused?: true;
   };
-  error?: string;
+  /** 失败原因：新记录可以是文字对象，旧记录是字符串；交给模型取原文 */
+  error?: string | TextRef;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
   /**
    * 已注入的完成通知：通知标识与注入时刻。缺省即还没注入；经 paper_cancel 取消的任务不通知，一直缺省。经 works_nominate

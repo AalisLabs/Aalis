@@ -123,6 +123,11 @@ describe('作品站页', () => {
         { label: '上次部署', value: 'live' },
       ]),
     );
+    // 暂停原因是文字对象，原样交给出口按读者语言渲染
+    await h.store.update(state => {
+      state.paused = { reason: t('paused'), at: 4 };
+    });
+    expect(await h.pages.data('works-site', 'health')).toContainEqual({ label: '暂停', value: t('paused') });
   });
 
   it('作品的缩略图只取发布服务给的存储地址，宿主换成 /api/media', async () => {

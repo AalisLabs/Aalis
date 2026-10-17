@@ -172,7 +172,7 @@ describe('作品审核停机交错', () => {
     // 第五个参数是重发选项：首次补发仍由她转述，不带 direct
     expect(replayed).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.stringContaining('已上线'),
+      expect.objectContaining({ content: expect.stringContaining('已上线') }),
       second.id,
       'work',
       undefined,

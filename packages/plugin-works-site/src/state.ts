@@ -1,5 +1,6 @@
 import type { PublishedItem } from '@aalis/api-publish';
 import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
+import { asText, type TextRef } from '@aalis/schema-i18n';
 import { newAssetSalt } from './cloudflare/hash.js';
 import type { WorksSiteConfig } from './config.js';
 import type { Tombstone } from './site/build.js';
@@ -46,7 +47,8 @@ export interface SiteAlert {
     | 'auth'
     | 'integrity'
     | 'deploy-failed';
-  detail: string;
+  /** 给人看的说明；同一条告警按种类与文字对象的键、参数认（旧版写的是字符串，原样显示） */
+  detail: string | TextRef;
   at: number;
   acknowledged?: boolean;
 }
@@ -60,7 +62,8 @@ export interface WorksState {
   known: Record<string, { branch: string; at: number }>;
   inFlight?: InFlightDeployment;
   tombstones: Tombstone[];
-  paused?: { reason: string; at: number };
+  /** 暂停自动部署：原因是暂停它的那条告警的说明 */
+  paused?: { reason: string | TextRef; at: number };
   lastFailure?: 'auth' | 'deploy-failed';
   alerts: SiteAlert[];
   history: Array<{ at: number; branch: string; deployment: string; result: string }>;
@@ -163,7 +166,8 @@ function valid(v: unknown): v is WorksState {
   )
     return false;
   if (v.tombstones.some(t => !record(t) || !string(t.branch) || !string(t.path) || !time(t.until))) return false;
-  if (v.paused !== undefined && (!record(v.paused) || !string(v.paused.reason) || !time(v.paused.at))) return false;
+  if (v.paused !== undefined && (!record(v.paused) || asText(v.paused.reason) === undefined || !time(v.paused.at)))
+    return false;
   if (v.lastFailure !== undefined && !['auth', 'deploy-failed'].includes(String(v.lastFailure))) return false;
   if (
     v.alerts.some(
@@ -171,7 +175,7 @@ function valid(v: unknown): v is WorksState {
         !record(a) ||
         !string(a.id) ||
         !string(a.kind) ||
-        !string(a.detail) ||
+        asText(a.detail) === undefined ||
         !time(a.at) ||
         (a.acknowledged !== undefined && typeof a.acknowledged !== 'boolean'),
     )

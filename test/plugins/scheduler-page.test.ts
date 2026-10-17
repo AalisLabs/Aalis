@@ -103,7 +103,10 @@ async function withScheduler(
 }
 
 const base = { name: 'j', sessionId: 'internal', platform: 'internal', content: 'x', enabled: true };
-const saved = (name = 'j') => ({ status: 200, body: { message: `已保存任务 ${name}` } });
+const saved = (name = 'j') => ({
+  status: 200,
+  body: { message: expect.objectContaining({ source: `已保存任务 ${name}` }) },
+});
 const refused = (status: number, error: string | RegExp) => ({
   status,
   body: { error: typeof error === 'string' ? error : expect.stringMatching(error) },
@@ -260,15 +263,21 @@ describe('新建', () => {
     });
   });
 
-  it('持久化文件读不懂而拒写：保存回执注明仅本次运行生效，与 scheduler_create_job 同一附注', async () => {
+  it('持久化文件读不懂而拒写：保存回执注明仅本次运行生效（文字对象，按读者语言），与 scheduler_create_job 同一附注', async () => {
     await withScheduler(
-      async ({ create, jobs }) => {
-        expect(await create({ ...base, interval: 60 })).toEqual({
-          status: 200,
-          body: {
-            message:
-              '已保存任务 j；仅本次运行生效，未写入 data:/scheduler-jobs.json：它读不出来，处理办法见「需要处理」里的提示',
-          },
+      async ({ create, createByTool, jobs }) => {
+        const note = '仅本次运行生效，未写入 data:/scheduler-jobs.json：它读不出来，处理办法见「需要处理」里的提示';
+        const reply = await create({ ...base, interval: 60 });
+        expect(reply.status).toBe(200);
+        const { message } = reply.body as { message: never };
+        expect(toSource(message)).toBe(`已保存任务 j；${note}`);
+        expect(resolveText(message, ['en'])).toBe(
+          'Saved job j; only effective for this run, not written to data:/scheduler-jobs.json: ' +
+            'it could not be read; see Needs attention for how to fix it',
+        );
+        expect(await createByTool({ name: 'k', interval: 60, content: 'x' })).toEqual({
+          ok: true,
+          message: `任务 "k" 已创建 (每 60s 重复)，目标会话: internal (internal)；${note}`,
         });
         expect(
           jobs().find(j => j.name === 'j'),

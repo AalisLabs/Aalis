@@ -13,6 +13,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { WorkflowLoader } from '../../packages/plugin-workflow/src/loader.js';
 import { RunStore } from '../../packages/plugin-workflow/src/persistence.js';
+import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
@@ -244,8 +245,9 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     await boot(true);
     const memoryOnly = await define(false);
     expect(memoryOnly.ok).toBe(true);
-    expect(memoryOnly.note).toContain('本次运行不会触发');
-    expect(memoryOnly.note, '不持久化的定义重启后就没了').not.toContain('重启');
+    expect(memoryOnly.note, '不持久化的定义重启后就没了').toBe(
+      'once 记账读取失败（见日志），本次运行不会触发；可用 workflow_run 手动执行',
+    );
     const persisted = await define(true);
     expect(persisted.ok).toBe(true);
     expect(persisted.note).toContain('修复运行历史文件后重启恢复');
@@ -258,11 +260,14 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     expect(readable.note).toBeUndefined();
   });
 
-  it('记账读不出时工作流页保存或启用 once：回执带同一说明，只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
+  it('记账读不出时工作流页保存或启用 once：回执带同一说明（文字对象，按读者语言），只对写了文件的定义说重启恢复；记账可读时不带附注', async () => {
+    const replies: unknown[] = [];
     const message = async (action: string, body: Record<string, unknown>) => {
       const reply = await pages.act('workflows', action, body);
       expect(reply.status, JSON.stringify(reply.body)).toBe(200);
-      return (reply.body as { message: string }).message;
+      const { message } = reply.body as { message: never };
+      replies.push(message);
+      return toSource(message);
     };
     const skipped = 'once 记账读取失败（见日志），本次运行不会触发；可用「立即运行」手动执行';
     writeFileSync(runsPath(), 'null');
@@ -277,6 +282,10 @@ describe('workflow：once 记账读不出时不安排 once', () => {
     expect(await message('disableWorkflow', { rowKey: 'zz-once' })).toBe('已停用 zz-once');
     expect(await message('enableWorkflow', { rowKey: 'zz-once' })).toBe(
       `已启用 zz-once；${skipped}，修复运行历史文件后重启恢复`,
+    );
+    expect(resolveText(replies.at(-1) as never, ['en'])).toBe(
+      'Enabled zz-once; reading the once ledger failed (see the log), so it will not trigger in this run; ' +
+        'use “Run now” to run it manually, and restart after fixing the run history file to restore it',
     );
     expect(calls).toBe(0);
 

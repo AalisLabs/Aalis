@@ -62,7 +62,8 @@ export interface PersonaService {
   getVolatilePrompt?(options?: PersonaSessionOptions): string;
   /**
    * 角色卡的名字。options.persona 指定了会话用的卡时返回那张卡的（找不到该卡时与其它方法一样回落主卡），
-   * 不传时返回主卡的。触发插件按会话取它做点名识别，终端按自己会话的配置取它作署名。
+   * 不传时返回主卡的。触发插件按会话取它做点名识别，终端按自己会话的配置取它作署名。卡没取名时返回空串，
+   * 不给兜底的名字：要显示名字的一方自己兜底，点名识别跳过空串。
    */
   getPersonaName(options?: PersonaSessionOptions): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */

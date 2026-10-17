@@ -20,7 +20,8 @@ afterEach(async () => {
 });
 
 describe('终端显示的人设名', () => {
-  it('owner 在全局默认层设了别的人设：欢迎行、头部与回复的署名写它的名字', async () => {
+  /** 起终端界面，全局默认层的「人设」设为 <别的卡>；返回发一条回复之后的最后一帧（去掉控制序列） */
+  async function terminal(getPersonaName: (options?: PersonaSessionOptions) => string) {
     const writes: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
       writes.push(String(chunk));
@@ -32,10 +33,7 @@ describe('终端显示的人设名', () => {
       settings: [PERSONA],
     });
     cleanups.push(() => app.stop());
-    const names: Record<string, string> = { '<别的卡>': '<别的卡的名字>' };
-    host.provide.use(persona, {
-      getPersonaName: (options?: PersonaSessionOptions) => names[options?.persona ?? ''] ?? '<主卡的名字>',
-    } as never);
+    host.provide.use(persona, { getPersonaName } as never);
     await app.plugin(cliPlugin, { startupView: 'chat' });
     await app.plugins.idle();
     if (app.plugins.getPlugin(cliPlugin.name)?.state !== 'active') throw new Error('plugin-cli 未激活');
@@ -45,11 +43,24 @@ describe('终端显示的人设名', () => {
       const all = writes.join('');
       return all.slice(all.lastIndexOf(FRAME_SPLIT)).replace(ANSI_RE, '');
     };
-
     await host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', content: '<回复>' });
-    await vi.waitFor(() => expect(frame()).toContain('✦ <别的卡的名字>'));
-    expect(frame()).toContain('欢迎使用 <别的卡的名字>。');
-    expect(frame()).toContain('Aalis · <别的卡的名字>');
-    expect(frame()).not.toContain('<主卡的名字>');
+    await vi.waitFor(() => expect(frame()).toContain('<回复>'));
+    return frame();
+  }
+
+  it('owner 在全局默认层设了别的人设：欢迎行、头部与回复的署名写它的名字', async () => {
+    const names: Record<string, string> = { '<别的卡>': '<别的卡的名字>' };
+    const frame = await terminal(options => names[options?.persona ?? ''] ?? '<主卡的名字>');
+    expect(frame).toContain('✦ <别的卡的名字>');
+    expect(frame).toContain('欢迎使用 <别的卡的名字>。');
+    expect(frame).toContain('Aalis · <别的卡的名字>');
+    expect(frame).not.toContain('<主卡的名字>');
+  });
+
+  it('人设没取名（名字是空串）：欢迎行与署名写 Aalis，头部写 default', async () => {
+    const frame = await terminal(() => '');
+    expect(frame).toContain('✦ Aalis');
+    expect(frame).toContain('欢迎使用 Aalis。');
+    expect(frame).toContain('Aalis · default');
   });
 });

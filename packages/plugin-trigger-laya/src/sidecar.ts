@@ -5,6 +5,8 @@
 
 import type { ProcessService, SpawnHandle } from '@aalis/api-process';
 import type { ServiceSelection } from '@aalis/core';
+import { type TextRef, textOf } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 等侧车打出就绪行的上限：加载模型、金样自检与预热一般约 11s */
 const STARTUP_TIMEOUT_MS = 120_000;
@@ -24,19 +26,14 @@ const TAIL_MAX = 200;
 const LINE_MAX = 64 * 1024;
 
 /** 侧车退出码的含义（laya_listener.py 模块说明「退出码」）；2 也是 Python 自己报参数错误、找不到脚本时的退出码 */
-const EXIT_CODES: Record<number, string> = {
-  2: '启动失败：加载模型或金样自检没过，或参数、脚本有误',
-  3: '绑定端口失败',
-  4: '自愈退出：推理连续失败',
-  5: '父进程不是 --parent-pid 给的进程',
-};
+const EXIT_CODES: Record<number, TextRef> = { 2: t('exit2'), 3: t('exit3'), 4: t('exit4'), 5: t('exit5') };
 
 export type SidecarState =
   /** 拉起中，等就绪行；restarts = 此前连续退出的次数，0 为首次启动 */
   | { kind: 'starting'; since: number; restarts: number }
   | { kind: 'ready' }
   /** 退出（或没能拉起）后等着重启；reason 如「侧车退出（退出码 4，…）」 */
-  | { kind: 'waiting'; until: number; reason: string; restarts: number }
+  | { kind: 'waiting'; until: number; reason: TextRef; restarts: number }
   /** 首次拉起前地址上已有别的侧车在答：不拉起，直接用它 */
   | { kind: 'external' }
   | { kind: 'stopped' };
@@ -59,7 +56,7 @@ interface SidecarOptions {
    * 意外退出（含没能拉起、启动超时被杀）；reason 含退出码的含义、标准错误的最后一行与重启时间。
    * newRound：首次退出，或就绪后稳定运行满 STABLE_MS 才退出，算新一轮故障
    */
-  onExit(reason: string, newRound: boolean): void;
+  onExit(reason: TextRef, newRound: boolean): void;
 }
 
 export interface Sidecar {
@@ -72,8 +69,8 @@ export interface Sidecar {
  * 托管的目标：侧车目录与端口。侧车只监听 127.0.0.1，端口取侧车地址的，所以地址必须是 http://127.0.0.1:<端口>
  * （不带路径）；不合要求时返回原因，本插件不托管
  */
-export function sidecarTarget(dir: string, endpoint: string): { dir: string; port: number } | { problem: string } {
-  if (!dir.startsWith('/')) return { problem: `sidecarDir 须为绝对路径（当前: ${dir}）` };
+export function sidecarTarget(dir: string, endpoint: string): { dir: string; port: number } | { problem: TextRef } {
+  if (!dir.startsWith('/')) return { problem: t('dirNotAbsolute', { dir }) };
   let url: URL | undefined;
   try {
     url = new URL(endpoint);
@@ -82,9 +79,7 @@ export function sidecarTarget(dir: string, endpoint: string): { dir: string; por
   }
   const port = Number(url?.port);
   if (url?.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !(port > 0) || url.pathname !== '/') {
-    return {
-      problem: `托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前: ${endpoint}）`,
-    };
+    return { problem: t('badEndpoint', { endpoint }) };
   }
   return { dir, port };
 }
@@ -157,7 +152,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   }
 
   /** 意外退出（含没能拉起）：记下原因，隔一段时间重启；readyAt = 这次就绪的时刻，没就绪过为 undefined */
-  function crashed(reason: string, readyAt: number | undefined): void {
+  function crashed(reason: TextRef, readyAt: number | undefined): void {
     child = undefined;
     if (stopping) return;
     if (readyAt !== undefined && Date.now() - readyAt >= STABLE_MS) {
@@ -168,7 +163,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
     const delay = backoff;
     backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
     state = { kind: 'waiting', until: Date.now() + delay, reason, restarts };
-    o.onExit(`${reason}，${delay / 1000}s 后重启`, restarts === 1);
+    o.onExit(t('restartIn', { reason, seconds: delay / 1000 }), restarts === 1);
     // 重启不再探地址：旧进程刚退出，端口若被别的进程占着，侧车以绑定端口失败退出，照常退避重试
     restartTimer = setTimeout(() => {
       state = { kind: 'starting', since: Date.now(), restarts };
@@ -179,7 +174,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
 
   function spawn(): void {
     if (!o.process.present) {
-      crashed('process 服务缺席，拉不起侧车', undefined);
+      crashed(t('noProcess'), undefined);
       return;
     }
     let handle: SpawnHandle;
@@ -187,7 +182,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
       // 只用 wait() 的退出码与信号，输出按行读：wait() 不必替常驻进程攒输出
       handle = o.process.use.spawn(python, args, { cwd: o.dir, maxBuffer: 1 });
     } catch (err) {
-      crashed(`拉起侧车失败（${err}）`, undefined);
+      crashed(t('spawnFailed', { error: textOf(err) }), undefined);
       return;
     }
     child = handle;
@@ -222,15 +217,18 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
       .wait()
       .then(
         r => {
+          const meaning = r.code === null ? undefined : EXIT_CODES[r.code];
           const why = timedOut
-            ? `启动超时：${STARTUP_TIMEOUT_MS / 1000}s 内没有就绪`
+            ? t('startupTimeout', { seconds: STARTUP_TIMEOUT_MS / 1000 })
             : r.signal
-              ? `被信号 ${r.signal} 终止`
-              : `退出码 ${r.code}${r.code !== null && EXIT_CODES[r.code] ? `，${EXIT_CODES[r.code]}` : ''}`;
-          return `侧车退出（${why}${lastLine ? `；标准错误最后一行: ${lastLine.slice(0, TAIL_MAX)}` : ''}）`;
+              ? t('killedBy', { signal: r.signal })
+              : meaning
+                ? t('exitCodeMeaning', { code: String(r.code), meaning })
+                : t('exitCode', { code: String(r.code) });
+          return lastLine ? t('exitedTail', { why, tail: lastLine.slice(0, TAIL_MAX) }) : t('exited', { why });
         },
         // 拉起本身失败（如 python 不存在）：子进程的 error 事件让 wait() 拒绝
-        (err: unknown) => `拉起侧车失败（${err}）`,
+        (err: unknown) => t('spawnFailed', { error: textOf(err) }),
       )
       .then(reason => {
         clearTimeout(startTimer);

@@ -47,6 +47,7 @@ const t = defineTexts({
     stopped: '已停止 {name}',
     done: '白纸 {id} 完成了',
     poked: '{who} 戳了戳你',
+    requested: '用户 {user} 发来了好友申请',
   } as const,
   locales: {
     en: {
@@ -54,6 +55,7 @@ const t = defineTexts({
       stopped: 'Stopped {name}',
       done: 'Paper {id} is done',
       poked: '{who} poked you',
+      requested: 'User {user} sent a friend request',
     },
   },
 });
@@ -210,5 +212,27 @@ describe('时间线与历史按连接的读者渲染', () => {
       '旧的分隔线',
       '坏的文字对象',
     ]);
+  });
+
+  it('平台事件合成的入站带给人看的那句：实时与历史都画成按连接语言显示的通知，存档正文照旧是写给模型的原文', async () => {
+    const { host, connect } = await setup();
+    const live = await connect(['en']);
+    const { session } = await live.call('session/create', {});
+    const id = session.id;
+    const base = await live.subscribe(id);
+    const content = '[系统通知] 用户 30001 向我发出了好友申请。请决定是否同意，调用 zz_handle 工具处理。';
+    await host.messageArchive.use.archiveIncoming({
+      content,
+      sessionId: id,
+      platform: 'onebot',
+      userId: '30001',
+      source: 'zz-request',
+      text: t('requested', { user: '30001' }),
+    });
+    const notice = { kind: 'notice', topic: 'zz-request', text: 'User 30001 sent a friend request' };
+    expect(said(live.timeline(id, base))).toEqual([notice]);
+    expect(said((await (await connect(['en'])).subscribe(id)).snapshot.items)).toEqual([notice]);
+    const [stored] = await host.memory.use.getHistory(id, Infinity);
+    expect(stored).toMatchObject({ role: 'user', content: `[30001]: ${content}` });
   });
 });
