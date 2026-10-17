@@ -2,8 +2,10 @@
 // @aalis/plugin-i18n — i18n 服务的默认提供者
 //
 // 按读者的语言链渲染文字对象：languages 读者直接给链（规范化后为空时按全局默认层），sessionId 读者取会话设置的 language
-// （本插件登记），host 读者取全局默认层，哪一层都没设时按 en。语言包取自贡献点 i18n:pack，用时与贡献点对照，变了才重建索引。
-// 另给 WebUI 两样：可选项来源 i18n-languages（贡献点 webui:options，值是语言标签、标签是自称），与「翻译」页（translation.ts）。
+// （本插件登记），host 读者取全局默认层，哪一层都没设时按 en；列表里的 auto（跟随系统）换成服务进程的系统语言。
+// 语言包取自贡献点 i18n:pack，用时与贡献点对照，变了才重建索引。
+// 另给 WebUI 两样：可选项来源 i18n-languages（贡献点 webui:options，值是语言标签、标签是自称，第一项是跟随系统），
+// 与「翻译」页（translation.ts）。
 // ============================================================
 
 import { contributions } from '@aalis/api-contributions';
@@ -25,14 +27,20 @@ import { defineTranslationPage } from './translation.js';
 
 declare module '@aalis/api-session-manager' {
   interface SessionConfig {
-    /** 读者的语言链：语言标签，靠前的优先 */
+    /** 读者的语言链：语言标签或 auto（跟随系统），靠前的优先 */
     language?: string[];
   }
 }
 
 /**
- * 会话设置 language：有序的语言列表，可选项是有文字可用的语言。规范化（同读的一侧，zh_CN 收下、读时整理成 zh-CN）
- * 之后不合法的标签拒收，完全相同的重复项由字段的 ordered 去掉；哪一层都没设时按 en（chainOf）
+ * 跟随系统：服务进程的系统语言（Node 的 Intl 默认 locale，跟 LANG），插件激活时取一次。环境里没有语言信息时
+ * （Docker 里没设 LANG、C、POSIX）Node 报 en-US，就是英语。跟的是服务所在的机器，不是读者
+ */
+const AUTO = 'auto';
+
+/**
+ * 会话设置 language：有序的语言列表，可选项是跟随系统与有文字可用的语言。规范化（同读的一侧，zh_CN 收下、
+ * 读时整理成 zh-CN）之后不合法的标签拒收，完全相同的重复项由字段的 ordered 去掉；哪一层都没设时按 en（chainOf）
  */
 const LANGUAGE_SETTING: SessionSetting = {
   key: 'language',
@@ -49,7 +57,7 @@ const LANGUAGE_SETTING: SessionSetting = {
   validate(value) {
     // 不是数组的交给字段校验
     if (!Array.isArray(value)) return undefined;
-    const bad = value.findIndex(tag => normalizeLanguages([tag]).length === 0);
+    const bad = value.findIndex(tag => tag !== AUTO && normalizeLanguages([tag]).length === 0);
     return bad < 0 ? undefined : t('badLanguage', { tag: String(value[bad]) });
   },
 };
@@ -73,8 +81,9 @@ export default definePlugin({
   uses,
   apply(caps) {
     const packs = packIndex(caps);
+    const system = Intl.DateTimeFormat().resolvedOptions().locale;
     const chainOf = (audience: Audience): readonly string[] => {
-      const chain = normalizeLanguages(settingOf(caps, audience));
+      const chain = normalizeLanguages(settingOf(caps, audience).map(tag => (tag === AUTO ? system : tag)));
       if (chain.length > 0) return chain;
       return 'languages' in audience ? chainOf({ host: true }) : ['en'];
     };
@@ -91,7 +100,10 @@ export default definePlugin({
     caps.sessionManager.use.registerSetting(LANGUAGE_SETTING);
     caps.contributions.use.contribute('webui:options', {
       id: 'i18n-languages',
-      list: () => languagesOf(packs()).map(({ tag, name }) => ({ value: tag, label: name })),
+      list: () => [
+        { value: AUTO, label: t('followSystem', { current: selfName(system) }) },
+        ...languagesOf(packs()).map(({ tag, name }) => ({ value: tag, label: name })),
+      ],
     });
     defineTranslationPage(caps.webui.use, packs, () => languagesOf(packs()).map(({ tag }) => tag));
   },

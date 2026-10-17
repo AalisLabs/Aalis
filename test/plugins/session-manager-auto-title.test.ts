@@ -10,7 +10,9 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 自动标题只给带创建来源的根会话（WebUI 新建的、终端建的）生成，按会话字段判，不按入口平台：
 // IM 房间、按 id 建档的会话与子会话不生成，owner 从 WebUI 往房间插话也不拿来给房间起名。
 
-async function setup() {
+type Chat = (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string }>;
+
+async function setup(chat: Chat = async () => ({ content: '装修预算' })) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
@@ -19,9 +21,9 @@ async function setup() {
   host.provide.use(llm, {
     id: 'mock',
     capabilities: ['chat'],
-    chat: async () => {
+    chat: (req: Parameters<Chat>[0]) => {
       llmCalls.chats++;
-      return { content: '装修预算' };
+      return chat(req);
     },
   } as never);
   await app.plugin(sessionManagerPlugin, {});
@@ -100,5 +102,36 @@ describe('自动标题按创建来源', () => {
     expect(title).toBe('旧标题');
     // 标题没变还可能是「生成了但写不回」；真正的契约是**压根没调 LLM**（有成本），破闸即红
     expect(llmCalls.chats, '已有标题不该再发一次 LLM chat').toBe(0);
+  });
+});
+
+describe('标题的语言与截断', () => {
+  async function titleOf(chat: Chat, content: string) {
+    const { app, host, sm } = await setup(chat);
+    const session = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
+    await host.events.use.emit('inbound:message', { content, sessionId: session.id, platform: 'webui' });
+    const title = await waitTitle(sm, session.id);
+    await app.stop();
+    return title;
+  }
+
+  it('提示词不写死中文：标题用对话片段所用的语言', async () => {
+    const systems: string[] = [];
+    const title = await titleOf(async req => {
+      systems.push(req.messages.find(m => m.role === 'system')?.content ?? '');
+      return { content: 'Kitchen budget' };
+    }, 'help me plan a kitchen budget');
+
+    expect(title).toBe('Kitchen budget');
+    expect(systems[0]).not.toContain('中文标题');
+    expect(systems[0]).toContain('对话片段所用的语言');
+  });
+
+  it('模型给的标题与兜底标题截断时不切坏 emoji', async () => {
+    const fromModel = await titleOf(async () => ({ content: `${'y'.repeat(49)}😀` }), '随便聊聊');
+    const fallback = await titleOf(async () => ({ content: '' }), `${'x'.repeat(19)}😀尾巴`);
+
+    expect(fromModel).toBe('y'.repeat(49));
+    expect(fallback).toBe('x'.repeat(19));
   });
 });

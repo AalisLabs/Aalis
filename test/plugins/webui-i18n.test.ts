@@ -17,6 +17,7 @@ import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
 import { defineTexts, fingerprint, TextError } from '../../packages/schema-i18n/src/index.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { withSystemLocale } from '../fixtures/system-locale.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -735,11 +736,12 @@ describe('webui-server 自己的文字按读者语言', () => {
 });
 
 describe('可选项来源与 /api/i18n 的两条路由', () => {
-  it('/api/models/i18n-languages 经贡献点 webui:options 给出可选项：值是语言标签，标签是自称', async () => {
-    const { reader } = await setup({ withHubs: true });
+  it('/api/models/i18n-languages 经贡献点 webui:options 给出可选项：先是跟随系统，再是各语言（值是语言标签，标签是自称）', async () => {
+    const { reader } = await withSystemLocale('ja-JP', () => setup({ withHubs: true }));
     expect(await json(reader({ lang: 'en' })('/api/models/i18n-languages'))).toEqual({
-      models: ['en', 'ja', 'zh-CN'],
+      models: ['auto', 'en', 'ja', 'zh-CN'],
       details: [
+        { value: 'auto', label: 'Follow system (currently: 日本語 (日本))' },
         { value: 'en', label: 'English' },
         { value: 'ja', label: '日本語' },
         { value: 'zh-CN', label: '中文（中国）' },

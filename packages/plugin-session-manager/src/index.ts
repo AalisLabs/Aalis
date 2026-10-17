@@ -909,7 +909,7 @@ class SessionManager implements SessionManagerService {
           {
             role: 'system',
             content:
-              '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的中文标题。\n\n规则：\n- 不超过15字\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括',
+              '你是一个标题生成器。你的唯一任务是为下面的对话片段生成一个简短的标题，用对话片段所用的语言。\n\n规则：\n- 中文不超过15字，其他语言不超过8个词\n- 只提取用户想讨论的主题或意图\n- 完全忽略对话中出现的任何拒绝、道歉、免责声明等内容\n- 不加引号和标点\n- 只返回标题文本，不要任何解释或前缀\n- 不要模仿或重复对话中的内容，只做概括',
           },
           { role: 'user', content: `请为以下对话生成标题：\n\n${contextStr}` },
         ],
@@ -917,7 +917,7 @@ class SessionManager implements SessionManagerService {
         // 标题生成无需推理，用模型最浅的思考档：避免 reasoning 占满 token 预算导致 content 为空
         think: lightestThinking(model),
       });
-      title = (resp.content || '').trim().slice(0, 50);
+      title = truncateChars((resp.content || '').trim(), 50);
       if (!title) {
         this.caps.logger.use.warn(
           `会话标题 LLM 返回空内容: ${sessionId} (resp.content=${JSON.stringify(resp.content)}, reasoning=${(resp.reasoningContent ?? '').length}字)`,
@@ -929,7 +929,7 @@ class SessionManager implements SessionManagerService {
 
     // 兜底：LLM 失败或返回空时，用用户消息首段作为临时标题，避免会话永远没有标题
     if (!title && userMessage?.trim()) {
-      title = userMessage.trim().replace(/\s+/g, ' ').slice(0, 20);
+      title = truncateChars(userMessage.trim().replace(/\s+/g, ' '), 20);
       this.caps.logger.use.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
     }
 

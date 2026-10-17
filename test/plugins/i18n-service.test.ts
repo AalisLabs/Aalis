@@ -14,6 +14,7 @@ import {
 } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { startSessionManager } from '../fixtures/session-settings.js';
+import { withSystemLocale } from '../fixtures/system-locale.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-i18n 的 i18n 服务：三种读者的语言链（languages 读者的链规范化后为空时按全局默认层，哪一层都没设时按 en）、
@@ -110,8 +111,37 @@ describe('会话设置 language', () => {
     apps.push(app);
     await app.plugin(i18nPlugin);
     await app.plugins.idle();
-    return { sm, svc: app.bind({ i18n }).i18n.use };
+    return { app, sm, svc: app.bind({ i18n }).i18n.use };
   }
+
+  const withSystem = (locale: string, layers?: Parameters<typeof startSessionManager>[0]['layers']) =>
+    withSystemLocale(locale, () => withSessions(layers));
+
+  it('列表里的 auto 是服务进程的系统语言（激活时取一次），排在哪里就在哪里生效，与重复项合并', async () => {
+    const ja = await withSystem('ja-JP', { defaults: { language: ['zh-CN', 'auto', 'en'] } });
+    expect(ja.svc.chainOf({ host: true })).toEqual(['zh-CN', 'ja-JP', 'en']);
+    // Docker 里没设 LANG 时 Node 报 en-US：auto 就是英语
+    const docker = await withSystem('en-US', { defaults: { language: ['auto', 'zh-CN', 'en'] } });
+    expect(docker.svc.chainOf({ host: true })).toEqual(['en-US', 'zh-CN', 'en']);
+    const zh = await withSystem('zh-CN', { defaults: { language: ['auto', 'zh-CN', 'en'] } });
+    const { id } = await zh.sm.createSession({ name: '<会话>' });
+    expect(zh.svc.chainOf({ sessionId: id })).toEqual(['zh-CN', 'en']);
+  });
+
+  it('会话设置收 auto；可选项第一项是「跟随系统（当前：系统语言的自称）」', async () => {
+    const { app, sm, svc } = await withSystem('ja-JP');
+    const { id } = await sm.createSession({ name: '<会话>' });
+    await sm.updateSession(id, { config: { language: ['auto', 'en'] } });
+    expect(sm.getOwnConfig(id).language).toEqual(['auto', 'en']);
+    const source = app
+      .bind({ contributions })
+      .contributions.use.collect('webui:options')
+      .find(handle => handle.spec.id === 'i18n-languages')?.spec;
+    const [first] = (await source?.list()) ?? [];
+    expect(first?.value).toBe('auto');
+    expect(svc.render(first?.label, { languages: ['en'] })).toBe('Follow system (currently: 日本語 (日本))');
+    expect(svc.render(first?.label, { languages: ['zh-CN'] })).toBe('跟随系统（当前：日本語 (日本)）');
+  });
 
   it('登记为有序多选：可选项来自 i18n-languages，显眼程度 common，适用于全部会话；规范化后不合法的标签被拒，重复项去掉', async () => {
     const { sm, svc } = await withSessions();
