@@ -105,7 +105,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     } catch (e) {
       thrown = e as Error;
     }
-    expect(thrown?.message).toContain('解析失败');
+    expect(thrown?.message).toContain('Could not parse');
     expect(thrown?.message).not.toContain('sk-LEAK');
   });
 
@@ -117,7 +117,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     } catch (e) {
       thrown = e as Error;
     }
-    expect(thrown?.message).toMatch(/解析失败：UNEXPECTED_TOKEN（第 1 行第 \d+ 列）/);
+    expect(thrown?.message).toMatch(/: UNEXPECTED_TOKEN \(line 1, column \d+\)$/);
     expect(thrown?.message).not.toContain('sk-LEAK');
 
     writeFileSync(file, 'name: Aalis\nplugins: {}\n', 'utf-8');
@@ -131,7 +131,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
 
   it('启动时裸标量：响亮拒启，不进 core 摊字符', () => {
     writeFileSync(file, 'foo\n', 'utf-8');
-    expect(() => createFsYamlConfigProvider(file)).toThrowError(/不是一个映射（得到 string）/);
+    expect(() => createFsYamlConfigProvider(file)).toThrowError(/is not a mapping \(got string\)/);
   });
 
   it('启动时缺文件：warn 点名绝对路径并回落内存默认（不再无声）', () => {

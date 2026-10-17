@@ -145,7 +145,7 @@ describe('acquireInstanceLock', () => {
     () => {
       writeLock(2, holder());
       chmodSync(join(run, 'instance.2.lock'), 0o000);
-      expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(/读不了锁文件/);
+      expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(/Cannot read lock file/);
       chmodSync(join(run, 'instance.2.lock'), 0o600);
       expect(files()).toEqual(['instance.2.lock']);
     },
@@ -153,7 +153,7 @@ describe('acquireInstanceLock', () => {
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('run 目录写不进去时报错，说明原因', () => {
     chmodSync(run, 0o500);
-    expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(`写不进 ${run}`);
+    expect(() => acquireInstanceLock(run, { probe: probe() })).toThrow(`Cannot write to ${run}`);
   });
 
   it('现行锁是残留、更低代号里却有活着的持有者（代号曾从 1 重新编号）：让出刚建的这一代，报那个持有者', () => {
@@ -289,7 +289,7 @@ describe('锁文件名拼不回原名、是悬空的符号链接、或代号过�
     expect(r.signal, r.stderr).toBeNull();
     expect(r.status).not.toBe(0);
     expect(r.stdout).toBe('READY\n');
-    expect(r.stderr).toContain(`锁文件 ${huge} 的代号太大`);
+    expect(r.stderr).toContain(`The generation number of lock file ${huge} is too large`);
     expect(readdirSync(run)).toEqual(['instance.9007199254740992.lock']);
   }, 30_000);
 });

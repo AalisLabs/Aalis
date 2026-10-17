@@ -13,7 +13,9 @@ import {
 import { basename, dirname } from 'node:path';
 import { ConfigSaveRefusedError } from '@aalis/api-host-config';
 import type { Logger } from '@aalis/core';
+import { resolveText, type TextRef, toSource, withText } from '@aalis/schema-i18n';
 import { parseDocument } from 'yaml';
+import { t } from './texts.js';
 
 // ============================================================
 // yaml-file —— 家目录里的 YAML 文档文件：同步装载、写前比对、原子写、按目录监听
@@ -22,8 +24,8 @@ import { parseDocument } from 'yaml';
 // ============================================================
 
 interface YamlFileOptions<T> {
-  /** 报错与日志里对文件的称呼，如「配置文件」「密钥文件」 */
-  label: string;
+  /** 对文件的称呼（本包字典的「配置文件」「密钥文件」）：拒写说明按读者语言显示，日志取原文，启动时的报错取英文 */
+  label: TextRef;
   logger: Logger;
   serialize(value: T): string;
   /** 文件不存在时的初始值 */
@@ -59,11 +61,16 @@ interface YamlFile<T> {
  * `Unexpected ${token.source} in …`、block scalar 头部的多余字符），配置与密钥文件的原文可能就是密钥，
  * 随日志进 latest.log 与 WebUI 日志页就是泄漏。
  */
-function describeYamlError(err: unknown): string {
+function describeYamlError(err: unknown): string | TextRef {
   const e = err as { code?: unknown; linePos?: ReadonlyArray<{ line: number; col: number }> } | null;
-  const code = typeof e?.code === 'string' ? e.code : '语法错误';
+  const code = typeof e?.code === 'string' ? e.code : t('yamlSyntax');
   const at = e?.linePos?.[0];
-  return at ? `${code}（第 ${at.line} 行第 ${at.col} 列）` : code;
+  return at ? t('yamlPosition', { code, line: at.line, col: at.col }) : code;
+}
+
+/** 启动时的报错由宿主打到终端，这时插件还没加载、没有读者语言：文字对象一律取英文 */
+function english(text: string | TextRef): string {
+  return typeof text === 'string' ? text : resolveText(text, ['en']);
 }
 
 /**
@@ -74,7 +81,7 @@ function describeYamlError(err: unknown): string {
 function parseYamlText(text: string, label: string, logger: Logger): unknown {
   const doc = parseDocument(text, { logLevel: 'error' });
   if (doc.errors.length > 0) throw doc.errors[0];
-  for (const warning of doc.warnings) logger.warn(`${label}有可疑写法：${describeYamlError(warning)}`);
+  for (const warning of doc.warnings) logger.warn(`${label}有可疑写法：${toSource(describeYamlError(warning))}`);
   return doc.toJS();
 }
 
@@ -105,14 +112,14 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
     raw = readFileSync(absPath, 'utf-8');
     let parsed: unknown;
     try {
-      parsed = parseYamlText(raw, label, logger) ?? {};
+      parsed = parseYamlText(raw, label.source, logger) ?? {};
     } catch (err) {
       // 启动时语法错误照样响亮拒启，消息里只有错误码与行列（崩溃日志同为暴露面）
-      throw new Error(`${label}解析失败：${describeYamlError(err)}（${absPath}）`);
+      throw new Error(`Could not parse the ${english(label)} ${absPath}: ${english(describeYamlError(err))}`);
     }
     // 「解析成功但不是映射」同样上抛，不能放进下游摊开再写回磁盘。空文件视同空映射（?? {} 已兜）
     const kind = describeNonMapping(parsed);
-    if (kind) throw new Error(`${label}不是一个映射（得到 ${kind}）：${absPath}`);
+    if (kind) throw new Error(`The ${english(label)} ${absPath} is not a mapping (got ${kind})`);
     return parsed as T;
   }
 
@@ -133,7 +140,8 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
       }
       if (onDisk !== null && onDisk !== raw) {
         reconcilePending = true;
-        throw new ConfigSaveRefusedError(`${label}有尚未生效的外部修改，为免覆盖已拒绝本次保存（${absPath}）`);
+        const reason = t('saveRefused', { file: label, path: absPath });
+        throw withText(new ConfigSaveRefusedError(reason.source), reason);
       }
       const text = opts.serialize(value);
       // 原子写：先写临时文件再 rename（同目录同分区，rename 原子覆盖）。直接 writeFileSync 是 O_CREAT|O_TRUNC，
@@ -195,17 +203,19 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
             if (current === raw && !reconcilePending) return;
             let parsed: unknown;
             try {
-              parsed = parseYamlText(current, label, logger);
+              parsed = parseYamlText(current, label.source, logger);
             } catch (err) {
               // raw 只在解析成功后推进：同一份坏内容每次保存都重新告警，直到改对为止
-              logger.warn(`${label}解析失败，本次变更已忽略，仍在使用上一份内容：${describeYamlError(err)}`);
+              logger.warn(
+                `${label.source}解析失败，本次变更已忽略，仍在使用上一份内容：${toSource(describeYamlError(err))}`,
+              );
               return;
             }
             // 空文件、裸标量、数组：一道闸拒收，放行会让下游按空内容重载或写回垃圾
             if (parsed === null && opts.emptyAsMissing) parsed = opts.missing();
             const kind = describeNonMapping(parsed);
             if (kind) {
-              logger.warn(`${label}不是一个映射（得到 ${kind}），本次变更已忽略`);
+              logger.warn(`${label.source}不是一个映射（得到 ${kind}），本次变更已忽略`);
               return;
             }
             raw = current;
@@ -213,7 +223,7 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
             try {
               onChange(parsed as T);
             } catch (err) {
-              logger.warn(`${label}变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
+              logger.warn(`${label.source}变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
             }
           }, 300);
         };
@@ -227,7 +237,7 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
         // 不接 error 会成为未捕获异常、带倒进程（Windows 上被监听的目录被删或不可访问时会报 EPERM）
         watcher.on('error', err => {
           logger.warn(
-            `${label}监听出错，已停止监听（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
+            `${label.source}监听出错，已停止监听（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
           );
           watcher?.close();
           watcher = null;
@@ -236,7 +246,7 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
         schedule();
       } catch (err) {
         logger.warn(
-          `无法监听${label}变更（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
+          `无法监听${label.source}变更（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
         );
       }
       return () => {

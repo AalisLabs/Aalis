@@ -107,7 +107,7 @@ describe('createFsSecretsProvider', () => {
     } catch (err) {
       thrown = err as Error;
     }
-    expect(thrown?.message).toMatch(/^密钥文件解析失败：UNEXPECTED_TOKEN（第 1 行第 \d+ 列）/);
+    expect(thrown?.message).toMatch(/^Could not parse the secrets file .+: UNEXPECTED_TOKEN \(line 1, column \d+\)$/);
     expect(thrown?.message).not.toContain('sk-LEAK');
   });
 

@@ -127,7 +127,9 @@ function readCoreVersion(): string | undefined {
 export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // JS 入口可能一个参数都不传：在动家目录之前停下，不落到缺省的家目录
   if (typeof opts?.appDir !== 'string') {
-    console.error(`[aalis] startAalis 缺少 appDir：把入口文件所在的目录作为 appDir 传入，例如 ${APP_DIR_EXAMPLE}。`);
+    console.error(
+      `[aalis] startAalis is missing appDir: pass the directory of the entry file as appDir, for example ${APP_DIR_EXAMPLE}.`,
+    );
     process.exit(2);
   }
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
@@ -147,7 +149,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     hostArgs = parseHostArgs(opts.argv ?? process.argv.slice(2));
     home = resolveHome({ args: hostArgs, env: process.env, defaultHome: opts.defaultHome, cwd: startCwd });
     if (!isFullyAbsolute(opts.appDir)) {
-      throw new HomeArgsError(`appDir 必须是绝对路径：${opts.appDir}`);
+      throw new HomeArgsError(`appDir must be an absolute path: ${opts.appDir}`);
     }
   } catch (err) {
     if (!(err instanceof HomeArgsError)) throw err;
@@ -163,12 +165,13 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
       console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
-    console.log(`[aalis] 已初始化家目录：${declared.home}`);
+    console.log(`[aalis] Initialized the home directory: ${declared.home}`);
     process.exit(0);
   }
   if (!isHomeInitialized(declared)) {
     console.error(
-      `[aalis] 家目录还没有初始化：${declared.home}\n[aalis] 在启动命令里、子命令之前加上 --init 运行一次即可初始化。`,
+      `[aalis] The home directory is not initialized: ${declared.home}\n` +
+        '[aalis] Run the start command once with --init (before any subcommand) to initialize it.',
     );
     process.exit(1);
   }
@@ -179,8 +182,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
     console.error(
-      `[aalis] 安装集 ${paths.app} 里没有 package.json，找不到要加载的插件。\n` +
-        `[aalis] appDir 要指向入口文件所在、带 package.json 的目录，例如 ${APP_DIR_EXAMPLE}。`,
+      `[aalis] The install directory ${paths.app} has no package.json, so there are no plugins to load.\n` +
+        `[aalis] appDir must point to the directory of the entry file, which holds package.json, for example ${APP_DIR_EXAMPLE}.`,
     );
     process.exit(1);
   }
@@ -196,18 +199,20 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     try {
       acquired = acquireInstanceLock(paths.run, { handoffToken });
     } catch (err) {
-      console.error(`[aalis] 无法在 ${paths.run} 取实例锁：${err instanceof Error ? err.message : String(err)}`);
+      console.error(
+        `[aalis] Cannot acquire the instance lock in ${paths.run}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       process.exit(1);
     }
     if (!acquired.ok) {
       const { holder, file } = acquired;
       const occupied =
-        `[aalis] 家目录 ${paths.home} 已有实例在运行：pid ${holder.pid}（锁文件 ${file}）。\n` +
-        '[aalis] 确认没有实例在运行时（例如进程被强制结束、而本机查不了进程启动时间，或容器被强杀后在同一次开机内重启），' +
-        '删掉这个锁文件再启动。';
+        `[aalis] An instance is already running in the home directory ${paths.home}: pid ${holder.pid} (lock file ${file}).\n` +
+        '[aalis] If you are sure no instance is running (for example, the process was killed and this machine cannot look up ' +
+        'process start times, or a container was killed and restarted within the same boot), delete this lock file and start again.';
       if (hostArgs.service) {
         // 服务形态按正常退出：配合 KeepAlive={SuccessfulExit=false}，不会被服务管理器反复拉起再抢锁
-        console.error(`${occupied}\n[aalis] 以服务形态启动，按正常退出处理。`);
+        console.error(`${occupied}\n[aalis] Started as a service, so this counts as a normal exit.`);
         process.exit(0);
       }
       console.error(occupied);
@@ -224,7 +229,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
   // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
-  // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游「commands 服务不可用」。
+  // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游的指令服务不可用报错。
   const consoleHandle: ConsoleSinkHandle = consoleSink
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
     : installConsoleSink({ target: 'stderr', minLevel: 'warn' });
@@ -248,8 +253,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     }
     process.exit(1);
   };
-  process.on('uncaughtException', err => void exitWithFatalLog('未捕获异常', err));
-  process.on('unhandledRejection', reason => void exitWithFatalLog('未处理 Promise 拒绝', reason));
+  process.on('uncaughtException', err => void exitWithFatalLog('Uncaught exception', err));
+  process.on('unhandledRejection', reason => void exitWithFatalLog('Unhandled promise rejection', reason));
 
   // ── file logger（async）+ 释放 bootstrap buffer ──
   if (fileLogTarget) fileLogger = await setupFileLogger(fileLogTarget);

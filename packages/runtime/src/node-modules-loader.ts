@@ -193,7 +193,7 @@ export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, met
  * - `reload()`：用入口文件 mtime 作 import URL query 强制 ESM 缓存失效。
  */
 export function createNodeModulesPluginLoader(projectDir: string, opts: { hostCoreDir?: string } = {}): PluginLoader {
-  assertAbsolute('安装集目录', projectDir);
+  assertAbsolute('Install directory', projectDir);
   const root = projectDir;
   const hostCoreDir = opts.hostCoreDir === undefined ? HOST_CORE_DIR : realpathSync(opts.hostCoreDir);
   const logger = new DefaultLogger('aalis:loader');

@@ -154,7 +154,7 @@ function readHolder(file: string): LockHolder | 'gone' | 'corrupt' {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return lstatSync(file, { throwIfNoEntry: false }) ? 'corrupt' : 'gone';
     }
-    throw new Error(`读不了锁文件 ${file}：${(err as Error).message}`);
+    throw new Error(`Cannot read lock file ${file}: ${(err as Error).message}`);
   }
   try {
     const v = JSON.parse(text) as Partial<LockHolder>;
@@ -220,7 +220,7 @@ export function acquireInstanceLock(
     try {
       writeFileSync(temp, JSON.stringify(mine), { mode: 0o600 });
     } catch (err) {
-      throw new Error(`写不进 ${runDir}：${(err as Error).message}`);
+      throw new Error(`Cannot write to ${runDir}: ${(err as Error).message}`);
     }
     for (;;) {
       const top = generations(runDir).at(-1);
@@ -232,14 +232,20 @@ export function acquireInstanceLock(
         if (holder === 'gone') continue;
         if (blocks(holder)) return { ok: false, holder, file };
         // 代号到了 2^53 及以上，加一不再变大：link 会一直撞上已有的文件
-        if (next <= top.n) throw new Error(`锁文件 ${file} 的代号太大，排不出下一代；确认没有实例在运行后删掉它再启动`);
+        if (next <= top.n) {
+          throw new Error(
+            `The generation number of lock file ${file} is too large to allocate the next one; once you are sure no instance is running, delete it and start again`,
+          );
+        }
       }
       const file = join(runDir, `instance.${next}.lock`);
       try {
         linkSync(temp, file);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-        throw new Error(`建不出锁文件 ${file}（家目录所在的文件系统要支持硬链接）：${(err as Error).message}`);
+        throw new Error(
+          `Cannot create lock file ${file} (the file system of the home directory must support hard links): ${(err as Error).message}`,
+        );
       }
       // 更低的代号里还有活着的持有者：让出刚建的这一代（读锁出错时同样先让出再抛）
       const blocker = lowerBlocker(runDir, next, blocks, file);

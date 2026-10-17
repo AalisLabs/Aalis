@@ -7,6 +7,6 @@ import { createFsPluginLoader, startAalis } from '@aalis/runtime';
 // 子命令分发、控制台/文件日志、终端复原走 startAalis 默认。宿主实现全在 @aalis/runtime。
 const appDir = dirname(dirname(fileURLToPath(import.meta.url)));
 startAalis({ appDir, pluginLoader: createFsPluginLoader(join(appDir, 'packages')) }).catch(err => {
-  console.error('启动失败:', err);
+  console.error('Aalis failed to start:', err);
   process.exit(1);
 });

@@ -66,7 +66,7 @@ async function rotateLogs(logFile: string): Promise<void> {
  * seq 从 0 起随文件位置单调递增，webui 的历史分页与 CLI 的启动恢复都以此为前提。
  */
 export async function setupFileLogger(logFile: string): Promise<FileLoggerHandle> {
-  assertAbsolute('日志文件路径', logFile);
+  assertAbsolute('Log file path', logFile);
   let queue: Promise<void> = Promise.resolve();
 
   await mkdir(dirname(logFile), { recursive: true });

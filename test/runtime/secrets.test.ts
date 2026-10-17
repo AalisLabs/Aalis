@@ -132,7 +132,7 @@ describe('resolveSecrets', () => {
       name: { $secret: 'k1' },
     });
     expect(dangling).toEqual([{ path: 'conns.token', key: 'gone' }]);
-    expect(describeDangling('p', dangling)).toBe(
+    expect(describeDangling('p', dangling).source).toBe(
       'p 引用的密钥不在 secrets.yaml 里：conns.token（键 gone）；用 parseConfig 读配置的插件会激活失败，在 WebUI 重新填写或在 secrets.yaml 里补上这些键',
     );
   });

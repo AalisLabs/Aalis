@@ -3483,6 +3483,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-log':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../schema-log
