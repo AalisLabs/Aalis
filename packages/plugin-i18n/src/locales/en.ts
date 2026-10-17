@@ -26,7 +26,8 @@ export default defineLocale<Source>()({
     'Contribute it to i18n:pack; only keys without a translation in the dictionary are listed, missing and stale entries are filled with the source text, and from is the fingerprint of the source',
   settingLabel: 'Language',
   settingDescription:
-    'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used',
+    'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used. "Follow system" uses the system language of the machine running the service, not the reader’s',
   settingUnset: 'English',
+  followSystem: 'Follow system (currently: {current})',
   badLanguage: '{tag} is not a valid language tag',
 });

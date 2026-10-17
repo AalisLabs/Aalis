@@ -24,8 +24,10 @@ const SOURCE = {
   packSkeleton: '待译骨架：语言包的 entries',
   packSkeletonDescription: '交给贡献点 i18n:pack；只列字典没有自带译文的键，缺的与过时的先填了原文，from 是原文的指纹',
   settingLabel: '语言',
-  settingDescription: '给人看的文字用的语言，靠前的优先；缺译文时依次用后面的',
+  settingDescription:
+    '给人看的文字用的语言，靠前的优先；缺译文时依次用后面的。「跟随系统」用的是服务所在机器的系统语言，不是看的人的',
   settingUnset: '按英文',
+  followSystem: '跟随系统（当前：{current}）',
   badLanguage: '{tag} 不是合法的语言标签',
 } as const;
 export type Source = typeof SOURCE;
