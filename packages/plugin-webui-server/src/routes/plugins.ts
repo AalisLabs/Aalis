@@ -1,7 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CommandService } from '@aalis/api-commands';
 import { describeUnmet, failureText, unmetDependencies } from '@aalis/api-doctor';
-import { type ApplyPluginConfigResult, type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
+import {
+  type ApplyPluginConfigResult,
+  type HostConfig,
+  isConfigSaveRefused,
+  saveFailureText,
+} from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { ErrorResponse } from '@aalis/api-webui';
@@ -17,6 +22,7 @@ import type {
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
+  CORE_RESTART_KEYS,
   type ConfigSchema,
   deepMergeDefaults,
   defaultsFrom,
@@ -85,13 +91,11 @@ function reportSaveFailure(
   reconcile: 'reload' | 'restart',
   outcome?: TextRef,
 ): void {
-  const refused = isConfigSaveRefused(err);
-  const error = refused ? t('notWritten', { error: textOf(err), reconcile }) : t('writeFailed', { error: textOf(err) });
-  res.status(refused ? 409 : 500).json({ error: outcome ? textClauses([outcome, error]) : error, applied: true });
+  const error = saveFailureText(err, reconcile);
+  res
+    .status(isConfigSaveRefused(err) ? 409 : 500)
+    .json({ error: outcome ? textClauses([outcome, error]) : error, applied: true });
 }
-
-/** 宿主配置里要重启才生效的键：runtime 与 core 只在启动时读它们。name 只是显示用的应用名称，保存即生效 */
-const RESTART_KEYS: readonly string[] = ['logLevel', 'slowThresholdMs'];
 
 /** 文档里每个密钥键被引用的处数：表单据此提示「替换会同时改到另外 N 处」 */
 function countSecretRefs(value: unknown, into: Record<string, number> = {}): Record<string, number> {
@@ -320,7 +324,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         .map(key => [key, all[key]]),
     );
     renderWith(res, { skip: skipSchemaDefaults([CORE_CONFIG_SCHEMA]) });
-    res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: [...RESTART_KEYS], home: caps.home });
+    res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: [...CORE_RESTART_KEYS], home: caps.home });
   });
 
   // 改宿主配置的核心键：只保存，要重启才生效的键改了时回执写明，由界面出「重启以生效」，重启走 POST /api/restart
@@ -360,7 +364,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     // 提交 null 的键置为 undefined，写文件时省略
     for (const key of changed) doc.set(key, updates[key] === null ? undefined : values[key]);
-    const restartNeeded = changed.some(k => RESTART_KEYS.includes(k));
+    const restartNeeded = changed.some(k => CORE_RESTART_KEYS.includes(k));
 
     try {
       await doc.save();
@@ -472,7 +476,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       return;
     }
 
-    // 运行态、文档、密钥与落盘由宿主一步完成：解析出的配置与运行态相同、实例在 active 时不重建插件
+    // 运行态、文档、密钥与落盘由宿主一步完成：解析出的配置与运行态相同、实例不在 error 态时不重建插件
     // （updateConfig 即 bounce，会连带重启依赖它所提供服务的下游），照常写回文档并落盘：上一次保存可能写文件失败（500），
     // 原样重试要能补写；自写回不会触发 watch 重载。error 态插件靠原样保存来重试激活
     let result: ApplyPluginConfigResult;

@@ -274,8 +274,9 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   const { config, provider } = loadOrExit(() => createFsYamlConfigProvider(paths.config));
   const secrets = loadOrExit(() => createFsSecretsProvider(paths.secrets));
   const store = createConfigStore(config, provider, secrets);
-  // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认
-  // （启动时读取，改了要重启）
+  // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认。
+  // 它与 logLevel 只在这里读一次，改了要重启：哪些核心键只在启动时读以 schema-config 的 CORE_RESTART_KEYS 为准，
+  // 改成热生效或新加启动时才读的键，同步改那一份
   const slowThresholdMs = store.get('slowThresholdMs') ?? undefined;
   const slowThresholdValid =
     slowThresholdMs === undefined ||

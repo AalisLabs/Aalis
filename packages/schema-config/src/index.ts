@@ -377,6 +377,12 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
 };
 
 /**
+ * 宿主配置里只在启动时读、改了要重启才生效的核心键：runtime 启动时读它们交给 core，WebUI 设置页据此标「重启后生效」。
+ * runtime 改了哪些键只在启动时读，同步改这一份。name 只是显示用的应用名称，保存即生效
+ */
+export const CORE_RESTART_KEYS: readonly string[] = ['logLevel', 'slowThresholdMs'];
+
+/**
  * 从 ConfigSchema 派生默认配置（密钥字段除外）。
  *
  * ConfigSchema 是插件配置的**唯一声明来源**：每个字段的 `default` 就是运行时默认值，

@@ -20,6 +20,7 @@ const TRIGGERABLE = new Map<string, string>([
   ['plugin:loaded', '插件实例 id'],
   ['plugin:unloaded', '插件实例 id'],
   ['plugins:changed', '没有负载'],
+  ['host-config:changed', '改了哪个实例的配置段（实例 id），或整份文档变了'],
   ['app:ready', '没有负载'],
   ['app:started', '没有负载'],
   ['app:restarting', '没有负载'],

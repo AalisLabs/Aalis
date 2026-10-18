@@ -2,7 +2,7 @@ import type { AppService, Logger, PluginManagerService, ServiceSelection } from 
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
-import { CORE_CONFIG_SCHEMA } from '../../packages/schema-config/src/index.js';
+import { CORE_CONFIG_SCHEMA, CORE_RESTART_KEYS } from '../../packages/schema-config/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
@@ -167,6 +167,19 @@ describe('PUT /api/config 要不要重启', () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ ok: true, message: '全局配置已保存，重启后生效', restartNeeded: true });
     expect(store).toMatchObject({ name: 'Bot', logLevel: 'debug' });
+  });
+
+  it('要重启才生效的键取自 schema-config 的 CORE_RESTART_KEYS：换掉那一份的内容，GET 与 PUT 的回执跟着变', async () => {
+    const keys = CORE_RESTART_KEYS as string[];
+    const saved = keys.splice(0, keys.length, 'name');
+    try {
+      const { get, put } = setup();
+      expect(((await get()).body as { restartKeys: string[] }).restartKeys).toEqual(['name']);
+      expect((await put({ name: 'Bot' })).body).toMatchObject({ restartNeeded: true });
+      expect((await put({ logLevel: 'debug' })).body).toMatchObject({ restartNeeded: false });
+    } finally {
+      keys.splice(0, keys.length, ...saved);
+    }
   });
 });
 
