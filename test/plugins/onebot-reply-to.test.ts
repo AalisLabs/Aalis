@@ -12,7 +12,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 出站的回复引用（OutgoingMessage.replyTo）：onebot 只给第一条分条加引用段，v11 与 v12 各按自己的消息段写法；
-// 没有 replyTo 的不加；正文里模型已经写了引用标记的，不再加第二个。本地起一个假的 OneBot 实现端记录发出的 action。
+// 没有 replyTo 的不加；她的回复（markup）正文里模型已经写了引用标记的，不再加第二个。本地起一个假的 OneBot 实现端记录
+// 发出的 action。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -36,8 +37,13 @@ describe('消息段：buildSendMessage 带 replyTo', () => {
   const v11 = new OneBotV11();
   const v12 = new OneBotV12();
   const build = (protocol: OneBotV11 | OneBotV12, content: string, replyTo?: string) =>
-    protocol.buildSendMessage({ detailType: 'group', targetId: '20001', content, ...(replyTo ? { replyTo } : {}) })
-      .params.message;
+    protocol.buildSendMessage({
+      detailType: 'group',
+      targetId: '20001',
+      content,
+      markup: true,
+      ...(replyTo ? { replyTo } : {}),
+    }).params.message;
 
   it('v11：引用段在最前，id 按数字给', () => {
     expect(build(v11, '好了', '12345')).toEqual([
@@ -129,7 +135,7 @@ describe.each([
 ])('出站分条：%s', (protocol, reply) => {
   it('有 replyTo 时只给第一条分条加引用段', async () => {
     const t = await boot(protocol);
-    await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'agent', replyTo: '12345' });
+    await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'agent', markup: true, replyTo: '12345' });
     const sent = t.sent();
     expect(sent).toHaveLength(2);
     expect(sent[0][0]).toEqual(reply);
@@ -138,7 +144,7 @@ describe.each([
 
   it('没有 replyTo 时都不加', async () => {
     const t = await boot(protocol);
-    await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'agent' });
+    await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'agent', markup: true });
     expect(t.sent()).toHaveLength(2);
     expect(
       t

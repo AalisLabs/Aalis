@@ -82,6 +82,10 @@ describe('作品通知：给模型的正文与给人看的那句', () => {
     await h.notices.enqueue(origin, { content: '旧的正文' }, 'zz-b', undefined, { direct: true });
     expect(h.incoming).toEqual([]);
     expect(h.outgoing.map(m => m.content)).toEqual(['[作品通知] 作品未获批准，这次不发布', '[作品通知] 旧的正文']);
+    expect(
+      h.outgoing.map(m => m.markup),
+      '宿主正文按纯文字发，不设 markup',
+    ).toEqual([undefined, undefined]);
     expect(h.outgoing.map(m => m.text && resolveText(m.text, ['en']))).toEqual([
       '[Work notice] The work was not approved',
       '[Work notice] 旧的正文',

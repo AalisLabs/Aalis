@@ -1356,7 +1356,8 @@ class DefaultAgent implements AgentService {
             segments: visibleSegments,
           });
 
-          // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上
+          // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上；
+          // 正文是她写的，其中的 @、媒体与引用标记交适配器解析
           await this.dispatchOutbound({
             content: replyContent,
             sessionId: incoming.sessionId,
@@ -1365,6 +1366,7 @@ class DefaultAgent implements AgentService {
               ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
               : {}),
             ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
+            markup: true,
             source: 'agent',
             turnId,
             modelInfo: turnModelInfo,

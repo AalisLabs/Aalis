@@ -28,7 +28,7 @@ import {
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
-import { materializeAttachments } from './attachments.js';
+import { inlineRemoteMarkers, materializeAttachments } from './attachments.js';
 import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -1146,6 +1146,69 @@ function runAdapter(caps: Caps): void {
     throw lastErr;
   }
 
+  /**
+   * 发一段文字。markup：正文含平台标记，按配置分条、图片单独成条，标记解析成 @、媒体与引用；不设时整段作一个文字段
+   * 原样发出。replyTo：引用回复的平台消息 id，只加在第一条分条前
+   */
+  async function sendText(
+    sessionId: string,
+    content: string,
+    options: { markup?: boolean; replyTo?: string } = {},
+  ): Promise<void> {
+    const parsed = parseSessionId(sessionId);
+    if (!parsed) {
+      throw new Error(`无法解析 sessionId: ${sessionId}`);
+    }
+
+    const state = findStateBySelfId(parsed.selfId);
+    if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
+      // 经路由与出站认领到这里的账号都是本实例的；认不出的账号由路由处报错并列出各实例的已知账号
+      const reason = !state
+        ? '未找到对应连接'
+        : state.status !== 'online'
+          ? `状态=${state.status}`
+          : !state.ws
+            ? 'ws 为空'
+            : '协议未初始化';
+      throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
+    }
+
+    // 她的回复分条发送，再拆出 <image .../>：图片始终独立成条，不与文本粘连
+    const pieces = options.markup
+      ? (splitEnabled ? splitMessageByPunctuation(content, splitPatterns) : [content]).flatMap(p => splitImageOut(p))
+      : [content];
+
+    let replyTo = options.replyTo;
+    for (let i = 0; i < pieces.length; i++) {
+      const piece = pieces[i].trim();
+      if (!piece) continue;
+
+      const { action, params } = state.protocol.buildSendMessage({
+        detailType: parsed.detailType,
+        targetId: parsed.targetId,
+        content: piece,
+        replyTo,
+        markup: options.markup,
+      });
+      replyTo = undefined;
+
+      const sendResult = await sendActionWithRetry(state, action, params);
+      // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
+      const sentId = extractSentMessageId(sendResult);
+      if (sentId) sentTracker.record(sessionId, sentId, piece, Date.now());
+
+      // 按下一条消息的字数计算延迟
+      if (i < pieces.length - 1) {
+        const nextPiece = pieces[i + 1];
+        const charCount = nextPiece ? nextPiece.replace(/<[^>]+>/g, '').length : 0;
+        const delay = Math.min(charCount * splitDelayPerChar, splitMaxDelay);
+        if (delay > 0) {
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+  }
+
   // ----- 版本自动检测 -----
 
   async function detectProtocol(state: ConnectionState): Promise<OneBotProtocol> {
@@ -1225,64 +1288,9 @@ function runAdapter(caps: Caps): void {
       };
     },
 
-    /** replyTo：引用回复的平台消息 id，只加在第一条分条前 */
-    async sendMessage(
-      sessionId: string,
-      content: string,
-      options?: { skipSplit?: boolean; replyTo?: string },
-    ): Promise<void> {
-      const parsed = parseSessionId(sessionId);
-      if (!parsed) {
-        throw new Error(`无法解析 sessionId: ${sessionId}`);
-      }
-
-      const state = findStateBySelfId(parsed.selfId);
-      if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
-        // 经路由与出站认领到这里的账号都是本实例的；认不出的账号由路由处报错并列出各实例的已知账号
-        const reason = !state
-          ? '未找到对应连接'
-          : state.status !== 'online'
-            ? `状态=${state.status}`
-            : !state.ws
-              ? 'ws 为空'
-              : '协议未初始化';
-        throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
-      }
-
-      // 消息分条发送（指令回复等短消息可跳过）
-      const punctPieces =
-        splitEnabled && !options?.skipSplit ? splitMessageByPunctuation(content, splitPatterns) : [content];
-      // 进一步拆出 <image .../>：图片始终独立成条，不与文本粘连。
-      const pieces = punctPieces.flatMap(p => splitImageOut(p));
-
-      let replyTo = options?.replyTo;
-      for (let i = 0; i < pieces.length; i++) {
-        const piece = pieces[i].trim();
-        if (!piece) continue;
-
-        const { action, params } = state.protocol.buildSendMessage({
-          detailType: parsed.detailType,
-          targetId: parsed.targetId,
-          content: piece,
-          replyTo,
-        });
-        replyTo = undefined;
-
-        const sendResult = await sendActionWithRetry(state, action, params);
-        // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
-        const sentId = extractSentMessageId(sendResult);
-        if (sentId) sentTracker.record(sessionId, sentId, piece, Date.now());
-
-        // 按下一条消息的字数计算延迟
-        if (i < pieces.length - 1) {
-          const nextPiece = pieces[i + 1];
-          const charCount = nextPiece ? nextPiece.replace(/<[^>]+>/g, '').length : 0;
-          const delay = Math.min(charCount * splitDelayPerChar, splitMaxDelay);
-          if (delay > 0) {
-            await new Promise(r => setTimeout(r, delay));
-          }
-        }
-      }
+    /** 契约的直发：纯文字，不解析标记、不分条。她的回复经 outbound:message 带 markup 发出 */
+    async sendMessage(sessionId: string, content: string): Promise<void> {
+      await sendText(sessionId, content);
     },
 
     async callAction(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown> {
@@ -1411,7 +1419,6 @@ function runAdapter(caps: Caps): void {
         : `已拒绝 ${userId} 的${typeLabel}（群 ${groupId}）${reason ? `，理由: ${reason}` : ''}`;
     },
   } as PlatformAdapter & {
-    sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean; replyTo?: string }): Promise<void>;
     getSelfMutes(): Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
     getSentMessages(sessionId: string, limit?: number): Array<{ messageId: string; ts: number; preview: string }>;
     forgetSentMessage(sessionId: string, messageId: string): void;
@@ -2379,6 +2386,7 @@ function runAdapter(caps: Caps): void {
     let textSent = false;
     try {
       let content = msg.content ?? '';
+      let markers = '';
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
       if (msg.attachments?.length) {
@@ -2406,23 +2414,34 @@ function runAdapter(caps: Caps): void {
           }),
         );
         const materialized = await materializeAttachments(msg.attachments, storage, logger.use);
-        if (materialized.markers) content = content ? `${content}\n${materialized.markers}` : materialized.markers;
+        markers = materialized.markers;
         inlineAttachments = materialized.inlineAttachments;
         uploads.push(...materialized.uploads);
         errors.push(...materialized.errors);
       }
+      if (msg.markup) {
+        const inlined = await inlineRemoteMarkers(content, storage, logger.use);
+        content = inlined.content;
+        errors.push(...inlined.errors);
+      }
 
+      // 正文按 markup 发；附件的消息段标记另起一条，按标记发
       if (content.trim()) {
-        logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
+        logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
         try {
-          await adapter.sendMessage(msg.sessionId, content, {
-            skipSplit: msg.source !== 'agent',
-            replyTo: msg.replyTo,
-          });
+          await sendText(msg.sessionId, content, { markup: msg.markup, replyTo: msg.replyTo });
           textSent = true;
-          delivered.push(...inlineAttachments);
         } catch (err) {
           logger.use.warn(`OneBot 发送消息失败(已重试): ${err}`);
+          errors.push(err);
+        }
+      }
+      if (markers) {
+        try {
+          await sendText(msg.sessionId, markers, { markup: true, replyTo: content.trim() ? undefined : msg.replyTo });
+          delivered.push(...inlineAttachments);
+        } catch (err) {
+          logger.use.warn(`OneBot 发送附件消息段失败(已重试): ${err}`);
           errors.push(err);
         }
       }
