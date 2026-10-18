@@ -32,8 +32,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
-// 带 markup 的正文（她的回复）里的媒体标记经网关派发时由 image-sender 按受众转成附件或去掉，网址的留在正文里由适配器
-// 下载内联（会话表与 owner 判定是替身：私聊的对端是 owner）。
+// 带 markup 的正文（她的回复）里的媒体标记经网关派发时由 image-sender 转成附件或去掉：存储地址的在受众只有 owner 的私聊里
+// 不过判据，别的会话按受众判，都核文件头；网址的留在正文里由适配器下载内联（会话表与 owner 判定是替身：私聊的对端是 owner）。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -135,7 +135,7 @@ async function until(cond: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
-/** 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在） */
+/** 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在）；别的根同 storage-local 抛「未知存储根」 */
 function memStorage(files: Map<string, Buffer>) {
   const root = (name: string, writable: boolean) => ({
     name,
@@ -147,6 +147,8 @@ function memStorage(files: Map<string, Buffer>) {
     deletable: false,
   });
   const get = (uri: string) => {
+    const name = uri.slice(0, uri.indexOf(':/'));
+    if (name !== 'data' && name !== 'aalis') throw new Error(`未知存储根: ${name}`);
     const f = files.get(uri);
     if (!f) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
     return f;
@@ -326,6 +328,7 @@ async function boot(
   };
   return {
     actions,
+    files,
     sent,
     send,
     dispatch,
@@ -484,6 +487,21 @@ describe('onebot 出站：文件附件', () => {
     expect(decode(byType('record')).equals(WAV)).toBe(true);
     expect(String(byType('video')).startsWith('base64://')).toBe(true);
     expect(decode(byType('video')).equals(MP4)).toBe(true);
+  });
+
+  it('附件的消息段各自单独成一条发出：语音与视频不同条', async () => {
+    const t = await boot({ files: { 'data:/m/a.wav': WAV, 'data:/m/a.mp4': MP4 } });
+    const attachments: MessageAttachment[] = [
+      { kind: 'audio', data: 'data:/m/a.wav' },
+      { kind: 'video', data: 'data:/m/a.mp4' },
+    ];
+    await t.send({ sessionId: GROUP, content: '', attachments });
+    await t.flush();
+    const messages = t
+      .sent()
+      .filter(a => a.action === 'send_group_msg')
+      .map(m => (m.params.message as Array<{ type: string }>).map(s => s.type));
+    expect(messages).toEqual([['record'], ['video'], ['text']]);
   });
 
   it('v12 连接：文件附件不支持，warn 并按投递失败处理', async () => {
@@ -692,23 +710,49 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     actions
       .filter(a => a.action === action)
       .flatMap(a => a.params.message as Array<{ type: string; data: { file?: string; text?: string } }>);
-  const textOf = (actions: Action[]) =>
-    segmentsOf(actions, 'send_group_msg')
+  const sendAction = (sessionId: string) => (sessionId === GROUP ? 'send_group_msg' : 'send_private_msg');
+  const textOf = (actions: Action[], sessionId = GROUP) =>
+    segmentsOf(actions, sendAction(sessionId))
       .filter(s => s.type === 'text')
       .map(s => s.data.text);
 
   it.each([
-    ['file://', 'file:///zz/placeholder.png'],
-    ['本机绝对路径', '/zz/placeholder.png'],
-    ['base64://', `base64://${PNG.toString('base64')}`],
-    ['data: 内联数据', `data:image/png;base64,${PNG.toString('base64')}`],
-    ['别的会话的存储地址', OTHER],
-  ])('群里：%s 的标记去掉，不发', async (_label, url) => {
+    ['群里', 'file://', GROUP, 'file:///zz/placeholder.png'],
+    ['群里', '本机绝对路径', GROUP, '/zz/placeholder.png'],
+    ['群里', 'base64://', GROUP, `base64://${PNG.toString('base64')}`],
+    ['群里', 'data: 内联数据', GROUP, `data:image/png;base64,${PNG.toString('base64')}`],
+    ['受众只有 owner 的私聊', 'file://', PRIVATE, 'file:///zz/placeholder.png'],
+    ['受众只有 owner 的私聊', 'base64://', PRIVATE, `base64://${PNG.toString('base64')}`],
+  ])('%s：%s 的标记去掉，不转附件、不发', async (_where, _label, sessionId, url) => {
+    const t = await boot({ imageSender: true, gateway: true });
+    const message: OutgoingMessage = { sessionId, source: 'agent', markup: true, content: `一<image url="${url}"/>二` };
+    await t.dispatch(message);
+    expect(message.attachments ?? []).toEqual([]);
+    await t.flush(sessionId);
+    expect(segmentsOf(t.sent(), sendAction(sessionId)).filter(s => s.type !== 'text')).toEqual([]);
+    expect(JSON.stringify(t.actions)).not.toContain(url);
+    expect(textOf(t.sent(), sessionId)).toContain('一二');
+  });
+
+  it.each([
+    ['受众只有 owner 的私聊', PRIVATE, 'aalis:/aalis.config.yaml'],
+    ['群里本会话的目录', GROUP, `data:/images/${GROUP_DIR}/note.png`],
+  ])('%s：不是媒体的存储文件的标记去掉，不转附件，也不复制进会话的媒体目录', async (_where, sessionId, uri) => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [uri]: CONFIG } });
+    const message: OutgoingMessage = { sessionId, source: 'agent', markup: true, content: `一<image url="${uri}"/>二` };
+    await t.dispatch(message);
+    expect(message.attachments ?? []).toEqual([]);
+    await t.flush(sessionId);
+    expect(JSON.stringify(t.actions)).not.toContain(CONFIG.toString('base64'));
+    expect([...t.files.keys()]).toEqual([uri]);
+  });
+
+  it('群里：别的会话的存储地址的标记去掉，不发', async () => {
     const t = await boot({ imageSender: true, gateway: true, files: { [OTHER]: JPEG } });
-    await t.dispatch({ sessionId: GROUP, source: 'agent', markup: true, content: `一<image url="${url}"/>二` });
+    await t.dispatch({ sessionId: GROUP, source: 'agent', markup: true, content: `一<image url="${OTHER}"/>二` });
     await t.flush();
     expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
-    expect(JSON.stringify(t.actions)).not.toContain(url);
+    expect(JSON.stringify(t.actions)).not.toContain(OTHER);
     expect(textOf(t.sent())).toContain('一二');
   });
 
@@ -852,13 +896,44 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(JSON.stringify(t.actions)).not.toContain('placeholder.png');
   });
 
-  it('受众只有 owner 的私聊：标记不动，照旧交给适配器解析', async () => {
-    const t = await boot({ imageSender: true, gateway: true });
-    const url = 'file:///zz/placeholder.png';
-    await t.dispatch({ sessionId: PRIVATE, source: 'agent', markup: true, content: `<image url="${url}"/>` });
+  it('受众只有 owner 的私聊：存储地址的标记不过判据，转成同类附件发出，不另入档', async () => {
+    const elsewhere = 'data:/downloads/zz-placeholder.jpg';
+    const t = await boot({
+      imageSender: true,
+      gateway: true,
+      files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG, [elsewhere]: JPEG },
+    });
+    const message: OutgoingMessage = {
+      sessionId: PRIVATE,
+      source: 'agent',
+      markup: true,
+      content: `一<image url="data:/images/${GROUP_DIR}/a.png"/>二<image url="${elsewhere}"/>`,
+    };
+    await t.dispatch(message);
+    expect(await message.delivery).toEqual({ ok: true });
     await t.flush(PRIVATE);
     const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
-    expect(images.map(s => s.data.file)).toEqual([url]);
+    expect(images.map(s => decode(s.data.file))).toEqual([PNG, JPEG]);
+    expect(textOf(t.sent(), PRIVATE)).toContain('一二');
+    expect(t.imageNotes(), '她这条回复已带着标记落库，转出的附件不另入档').toEqual([]);
+  });
+
+  it('会话管理不在：私聊判不出受众，按不是 owner 的会话，别的会话的存储地址去掉', async () => {
+    const t = await boot({
+      imageSender: true,
+      gateway: true,
+      sessions: false,
+      files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG },
+    });
+    await t.dispatch({
+      sessionId: PRIVATE,
+      source: 'agent',
+      markup: true,
+      content: `一<image url="data:/images/${GROUP_DIR}/a.png"/>二`,
+    });
+    await t.flush(PRIVATE);
+    expect(segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type !== 'text')).toEqual([]);
+    expect(textOf(t.sent(), PRIVATE)).toContain('一二');
   });
 });
 
@@ -1005,6 +1080,18 @@ describe('onebot 出站：安全', () => {
     expect(wire).not.toContain('file://');
     expect(wire).not.toContain(httpBase);
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
+  });
+
+  it('超过内联上限、退回原网址的图片附件：网址里带引号也只成一个媒体段，实现端收不到网址以外的地址', async () => {
+    const t = await boot();
+    const url = `${httpBase}/big.html#"/><image url="file:///zz/placeholder.png`;
+    await t.send({ sessionId: GROUP, content: '', attachments: [{ kind: 'image', data: url }] });
+    await t.flush();
+    const media = t
+      .sent()
+      .flatMap(a => a.params.message as Array<{ type: string; data: { file?: string } }>)
+      .filter(s => s.type !== 'text');
+    expect(media.map(s => s.data.file)).toEqual([url]);
   });
 
   it('不是对应格式的文件（占位的配置文本）以 image、audio、video 发出：不内联、不发出，并有 warn', async () => {

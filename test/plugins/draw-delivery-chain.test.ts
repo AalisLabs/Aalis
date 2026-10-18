@@ -18,8 +18,8 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // 画→出站请求→编码 链路测试（真 App/storage/process/Chromium/ffmpeg）：
 //   draw_animation 出 GIF storage_uri
 //   → send_attachment(storage_uri) 解析并 emit outbound:message（平台确认由 fixture 模拟）
-//   → adapter 出站两步（cacheOneAttachment 落盘改写 + 渲染 base64:// 内联标记）
-//   → 标记里的 base64 解出来是合法 GIF89a。
+//   → adapter 出站两步（cacheOneAttachment 落盘改写 + 物化成 base64:// 内联的消息段）
+//   → 消息段里的 base64 解出来是合法 GIF89a。
 // 这是进入 OneBot WebSocket 之前的本地编码链路，不验证实际平台送达。
 // ════════════════════════════════════════════════════════════
 
@@ -91,19 +91,20 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     const att = outbound[0].attachments?.[0];
     expect(att?.kind).toBe('image');
 
-    // 3. adapter 出站两步：落盘改写 → 渲染内联标记（与 index.ts 出站监听同一套调用）
+    // 3. adapter 出站两步：落盘改写 → 物化成内联的消息段（与 index.ts 出站监听同一套调用）
     const proc = app.bind({ processService }).processService.use;
     const local = await cacheOneAttachment(files, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
       warn: () => {},
     });
     expect(local).toMatch(/^data\/images\//);
     const storageUri = (local ?? '').replace(/^([^/]+)\//, '$1:/');
-    const { markers } = await materializeAttachments([{ kind: 'image', data: storageUri }], files, logger);
-    const m = markers.match(/<image url="base64:\/\/([A-Za-z0-9+/=]+)"/);
-    expect(m, `出站标记形态不符: ${markers.slice(0, 120)}`).toBeTruthy();
+    const { segments } = await materializeAttachments([{ kind: 'image', data: storageUri }], files, logger);
+    expect(segments.map(s => s.type)).toEqual(['image']);
+    const file = String(segments[0]?.data.url);
+    expect(file.startsWith('base64://'), `出站消息段形态不符: ${file.slice(0, 120)}`).toBe(true);
 
     // 4. 内联字节 = 合法 GIF
-    const bytes = Buffer.from(m?.[1] ?? '', 'base64');
+    const bytes = Buffer.from(file.slice('base64://'.length), 'base64');
     expect(bytes.subarray(0, 6).toString('ascii')).toBe('GIF89a');
     expect(bytes.byteLength).toBeGreaterThan(2000);
   }, 60_000);

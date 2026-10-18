@@ -24,7 +24,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 // 出站正文默认按纯文字发：只有带 markup 的（她的回复）才把 <at>、<image|record|video url>、<reply>、<face> 解析成
 // 平台的 @、媒体与引用并分条；指令回显、宿主提示与第三方插件的文字原样整条发出。她回复里媒体标记的网址由适配器
-// 经 safeFetch 取下来内联，不交给实现端去拉。本地起一个假的 OneBot 实现端记录发出的 action。
+// 经 safeFetch 取下来内联，不交给实现端去拉；地址不是网址的标记去掉（这里没装 plugin-image-sender，存储地址的也一样）。
+// 本地起一个假的 OneBot 实现端记录发出的 action。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -244,10 +245,12 @@ describe('onebot：没设 markup 的正文按纯文字发', () => {
 });
 
 describe('onebot：markup 的正文照旧解析', () => {
+  beforeAll(() => setNetworkPolicy({ blockPrivate: false })); // 只为连本机测试服务
+  afterAll(() => setNetworkPolicy({ blockPrivate: true }));
+
   it('@ 成段、图片单独成条、引用加在所在分条、表情去掉，按句号分条', async () => {
     const t = await boot();
-    const image = `base64://${PNG.toString('base64')}`;
-    const content = `第一句<at id="1">某人</at>足够长。第二句也足够长的一段话。<image url="${image}"/><reply id="2"/><face id="3"/>第三句也足够长的一段话。`;
+    const content = `第一句<at id="1">某人</at>足够长。第二句也足够长的一段话。<image url="http://${httpBase}/ok.png"/><reply id="2"/><face id="3"/>第三句也足够长的一段话。`;
     expect(await t.send({ sessionId: GROUP, content, source: 'agent', markup: true })).toEqual({ ok: true });
     expect(t.sent()).toEqual([
       [
@@ -256,12 +259,30 @@ describe('onebot：markup 的正文照旧解析', () => {
         { type: 'text', data: { text: '足够长' } },
       ],
       [{ type: 'text', data: { text: '第二句也足够长的一段话。' } }],
-      [{ type: 'image', data: { file: image } }],
+      [{ type: 'image', data: { file: `base64://${PNG.toString('base64')}` } }],
       [
         { type: 'reply', data: { id: 2 } },
         { type: 'text', data: { text: '第三句也足够长的一段话' } },
       ],
     ]);
+  });
+});
+
+describe('onebot：markup 正文里地址不是网址的媒体标记去掉', () => {
+  it.each([
+    ['file://', '<image url="file:///zz/placeholder.png"/>'],
+    ['本机绝对路径', '<image url="/zz/placeholder.png"/>'],
+    ['存储地址', '<image url="data:/images/onebot_10000_group_20001/a.png"/>'],
+    ['data URI', `<image url="data:image/png;base64,${PNG.toString('base64')}"/>`],
+    ['外来的 base64://', `<image url="base64://${PNG.toString('base64')}"/>`],
+    ['语音的 file://', '<record url="file:///zz/placeholder.wav"/>'],
+    ['视频的本机路径', '<video url="/zz/placeholder.mp4"/>'],
+  ])('%s：不交给实现端，文字照发，投递报失败', async (_label, marker) => {
+    const t = await boot();
+    const delivery = await t.send({ sessionId: GROUP, content: `一${marker}二`, source: 'agent', markup: true });
+    expect(t.mediaFiles()).toEqual([]);
+    expect(t.sent().map(text).join('')).toBe('一二');
+    expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
   });
 });
 
