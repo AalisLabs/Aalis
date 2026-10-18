@@ -112,7 +112,7 @@ describe('plugin-memory-summary: 模板的共同规则', () => {
   it.each([
     ['聊天', GROUP, CHAT],
     ['工作', 'mcp-server', WORK],
-  ])('%s模板：小节按顺序列出，没有内容写「无」，输出上限写进提示词', async (_label, sessionId, titles) => {
+  ])('%s模板：小节按顺序列出，没有内容写「无」，摘要预算写进提示词', async (_label, sessionId, titles) => {
     const { summarize } = await setup();
     const request = await summarize(sessionId);
     const system = systemOf(request);
@@ -120,7 +120,11 @@ describe('plugin-memory-summary: 模板的共同规则', () => {
     expect(positions).not.toContain(-1);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(system).toContain('写「无」');
-    expect(system).toContain(`上限为 ${request.maxTokens} tokens`);
+    const budget = Number(/合计约 (\d+) tokens/.exec(system)?.[1]);
+    expect(system).toContain(
+      `合计约 ${budget} tokens（约 ${budget * 4} 个英文字符，或约 ${Math.floor(budget / 1.5)} 个中文字符）`,
+    );
+    expect(system).not.toContain('上限为');
   });
 
   it('聊天模板要求发言人写成「昵称(ID)」', async () => {

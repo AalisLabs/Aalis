@@ -1,6 +1,13 @@
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
-import { type ChatModelRequest, LLMCapabilities, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
+import {
+  type ChatModelRequest,
+  type ChatResponse,
+  type ChatStreamChunk,
+  LLMCapabilities,
+  type LLMModel,
+  llm,
+} from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { App, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -10,26 +17,39 @@ import { registerHubs } from './hubs.js';
 
 /**
  * 假摘要模型：记下每次请求，按 reply 回（缺省回 `SUMMARY-TEXT`，reply 抛错即这次调用失败）。
- * 不声明 maxOutputTokens 时摘要的输出上限按 4096 封顶
+ * 不声明 maxOutputTokens 时物理上限按 4096 算。给了 completionTokens 时回复带用量，报它算出的输出 token；
+ * stream 时经 chatStream 回，正文一段、用量另一段
  */
 export function fakeSummaryLLM(
   options: {
     contextLength?: number;
     maxOutputTokens?: number;
     reply?: (request: ChatModelRequest, index: number) => string | Promise<string>;
+    completionTokens?: (request: ChatModelRequest, content: string) => number;
+    stream?: boolean;
   } = {},
 ) {
   const requests: ChatModelRequest[] = [];
+  const respond = async (request: ChatModelRequest): Promise<ChatResponse> => {
+    requests.push(request);
+    const content = await (options.reply?.(request, requests.length - 1) ?? 'SUMMARY-TEXT');
+    const completionTokens = options.completionTokens?.(request, content);
+    if (completionTokens === undefined) return { content };
+    return { content, usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens } };
+  };
+  async function* chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
+    const { content, usage } = await respond(request);
+    yield { contentDelta: content ?? '' };
+    yield { done: true, usage };
+  }
   const model: LLMModel = {
     id: 'fake',
     providerId: 'fake',
     contextLength: options.contextLength ?? 8192,
     maxOutputTokens: options.maxOutputTokens,
     capabilities: [LLMCapabilities.Chat],
-    async chat(request) {
-      requests.push(request);
-      return { content: await (options.reply?.(request, requests.length - 1) ?? 'SUMMARY-TEXT') };
-    },
+    chat: respond,
+    ...(options.stream ? { chatStream } : {}),
   };
   /** 第 index 次请求（负数从末尾数）的全部正文；没有这次请求时为空串 */
   const text = (index = -1) => (requests.at(index)?.messages ?? []).map(m => String(m.content ?? '')).join('\n');

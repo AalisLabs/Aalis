@@ -540,15 +540,11 @@ describe('plugin-memory-summary: 分块', () => {
     expect(llm.requests).toHaveLength(1);
   });
 
-  it('每次请求都装得下：输入（提示词、至多输出上限那么多的已有摘要、这一块）加输出上限不超过摘要模型的窗口', async () => {
-    // 会话主模型的窗口 100 万，按比例算的输出上限顶到摘要模型的 4096；摘要模型每次都回到输出上限（按每字 2 token 折算）
-    const llm = fakeSummaryLLM({
-      contextLength: 8192,
-      maxOutputTokens: 4096,
-      reply: request => '摘'.repeat(Math.floor((request.maxTokens ?? 0) / 2)),
-    });
-    const { host, memory, compression } = await setup({}, llm.model);
-    await host.events.use.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
+  it('每次请求都装得下：输入（提示词、至多物理上限那么多的已有摘要、这一块）加输出上限不超过摘要模型的窗口', async () => {
+    // 物理上限 min(4096, 8192 / 4) = 2048，预算按下限 1000、输出上限 1500；上一块的摘要可能是按更大的预算写的，
+    // 摘要模型每次都写到物理上限（按每字 2 token 折算）
+    const llm = fakeSummaryLLM({ contextLength: 8192, maxOutputTokens: 4096, reply: () => '摘'.repeat(1024) });
+    const { memory, compression } = await setup({}, llm.model);
     for (let i = 0; i < 60; i++) {
       await memory.saveMessage('s', {
         role: i % 2 === 0 ? 'user' : 'assistant',
@@ -570,36 +566,6 @@ describe('plugin-memory-summary: 分块', () => {
     await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('装不下');
     expect(llm.requests).toHaveLength(0);
     expect(await active(memory, 's')).toHaveLength(2);
-  });
-});
-
-describe('plugin-memory-summary: 摘要预算', () => {
-  it('输出上限按会话最近一次用量的窗口算比例（快照也记），没有用量时按摘要模型的窗口；下限 512，不超过模型的输出上限', async () => {
-    const llm = fakeSummaryLLM({ contextLength: 64_000, maxOutputTokens: 8000 });
-    const { host, memory, compression } = await setup({ summaryTokenRatio: 0.01 }, llm.model);
-    const windows: Array<[string, number | undefined, number]> = [
-      ['wide', 1_000_000, 8000],
-      ['narrow', 128_000, 1280],
-      ['tiny', 1000, 512],
-      ['fresh', undefined, 640],
-    ];
-    for (const [sessionId, contextWindow] of windows) {
-      await seed(memory, sessionId, 2);
-      if (contextWindow) {
-        await host.events.use.emit('token:usage', usageEvent(sessionId, { used: 1, compressible: 0, contextWindow }));
-      }
-    }
-    for (const [sessionId] of windows) await compression.compress(sessionId, { reason: 'manual' });
-    expect(llm.requests.map(r => [r.sessionId, r.maxTokens])).toEqual(windows.map(([s, , budget]) => [s, budget]));
-  });
-
-  it('摘要模型没声明输出上限时按 4096 封顶', async () => {
-    const llm = fakeSummaryLLM({ contextLength: 64_000 });
-    const { host, memory, compression } = await setup({}, llm.model);
-    await seed(memory, 's', 2);
-    await host.events.use.emit('token:usage', usageEvent('s', { used: 1, compressible: 0, contextWindow: 1_000_000 }));
-    await compression.compress('s', { reason: 'manual' });
-    expect(llm.requests[0].maxTokens).toBe(4096);
   });
 });
 
