@@ -11,17 +11,17 @@
 // 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
 //
 // image、audio、video 按文件头分流（格式签名见 @aalis/util-media-signature）：NapCat 能内联的格式走消息段；
-// 认得出、但不能内联的媒体（如 BMP、HEIC 图片，MKV、AVI 视频）改经文件上传；不是媒体的拒发——发送工具接受
-// 任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过内联上限的 storage 文件退回
-// file://<宿主路径> 之前同样核对（daemon 与 Aalis 共享文件系统时它读得到）。原样透传的 file:// 与裸路径
-// 不经 storage、也不核对。
+// 认得出、但不能内联的媒体（如 BMP、HEIC 图片，MKV、AVI 视频）改经文件上传；不是媒体的拒发——发送工具在 owner
+// 自己的会话里能取任意可读的 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过内联上限的
+// storage 文件退回 file://<宿主路径> 之前同样核对（daemon 与 Aalis 共享文件系统时它读得到）。原样透传的 file://
+// 与裸路径不经 storage、也不核对。
 // file 附件与改走上传的媒体不走消息段，经群文件、私聊文件上传，只收 base64://（见 materializeAttachments）。
 //
 // file:// 与本地绝对路径不再由本插件直接读取（避免依赖 node:fs），原样透传
 // 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
 // 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
 //
-// 她回复正文里媒体标记的网址同样经 safeFetch 下载后内联（inlineRemoteMarkers），不交给 daemon 去拉。
+// 她回复正文里媒体标记的网址同样经 safeFetch 下载后内联（inlineRemoteMedia），不交给 daemon 去拉。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
@@ -31,7 +31,7 @@ import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
-import { MARKER_KINDS, MEDIA_MARKER } from './types.js';
+import type { OutgoingPiece, ParsedSegment } from './types.js';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -212,52 +212,50 @@ export async function materializeAttachments(
   return { markers: markers.join(''), inlineAttachments, uploads, errors };
 }
 
-/** 地址按网址解析得出 http、https 时返回规范化的网址：协议的大小写、前导空白与省略的 `//` 都按网址算 */
-function remoteUrl(raw: string): string | undefined {
-  if (!URL.canParse(raw)) return undefined;
-  const url = new URL(raw);
-  return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
+/** 按网址处理的地址：以 http:、https: 开头（不计首尾空白、不分大小写），或按网址解析得出 http、https */
+function isRemote(address: string): boolean {
+  return /^\s*https?:/i.test(address) || (URL.canParse(address) && /^https?:$/.test(new URL(address).protocol));
 }
 
 /**
- * 她回复正文（OutgoingMessage.markup）里媒体标记的网址：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
- * 下载、按文件头核对后改成 base64:// 内联，各标记同时下载；下载不了、超过内联上限、不是能内联的媒体的标记去掉，原因收进
- * errors（已记 warn）。地址不是网址的标记原样留下
+ * 她回复正文（OutgoingMessage.markup）里媒体段的网址：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
+ * 下载、按文件头核对后改成 base64:// 内联，各段同时下载；解析不了、下载不了、超过内联上限、不是能内联的媒体的段去掉，原因收进
+ * errors（已记 warn），去掉后没有段的那一条不发。地址不是网址的段原样留下。在解析出的段上改、不回头改正文：从正文里删掉
+ * 标记再解析，两边的文字会拼出新的标记
  */
-export async function inlineRemoteMarkers(
-  content: string,
+export async function inlineRemoteMedia(
+  pieces: OutgoingPiece[],
   storage: StorageService,
   logger?: Logger,
-): Promise<{ content: string; errors: unknown[] }> {
+): Promise<{ pieces: OutgoingPiece[]; errors: unknown[] }> {
   const errors: unknown[] = [];
-  /** 一个网址标记换成的文字：内联后的标记，发不出的为空串 */
-  const inline = async (tag: string, url: string): Promise<string> => {
-    const kind = MARKER_KINDS[tag];
+  /** 一个段换成的段：网址的媒体段换成内联后的，发不出的为 undefined */
+  const inline = async (segment: ParsedSegment): Promise<ParsedSegment | undefined> => {
+    const { type } = segment;
+    if (type !== 'image' && type !== 'audio' && type !== 'video') return segment;
+    const address = String(segment.data.url);
+    if (!isRemote(address)) return segment;
     try {
-      const { file, uploadExt } = await attachmentToOneBotFile({ kind, data: url }, storage, logger);
+      if (!URL.canParse(address)) throw new Error('网址解析不了，已拒发');
+      const { file, uploadExt } = await attachmentToOneBotFile(
+        { kind: type, data: new URL(address).href },
+        storage,
+        logger,
+      );
       if (uploadExt !== undefined) throw new Error(`${uploadExt} 格式不能内联，已拒发`);
       if (!file.startsWith('base64://')) throw new Error('超过内联上限，不交给实现端去拉，已拒发');
-      return `<${tag} url="${file}"/>`;
+      return { type, data: { url: file } };
     } catch (err) {
-      logger?.warn?.(`OneBot 正文里的${LABELS[kind]}标记未发出: ${err instanceof Error ? err.message : err}`);
+      logger?.warn?.(`OneBot 正文里的${LABELS[type]}标记未发出: ${err instanceof Error ? err.message : err}`);
       errors.push(err);
-      return '';
+      return undefined;
     }
   };
-  // 去掉一个标记后，前后的文字可能拼成新的网址标记，所以重扫到某一遍没有去掉标记为止：去掉标记让正文里的 `<` 变少、
-  // 内联不增加，循环必停
-  let out = content;
-  let dropped: boolean;
-  do {
-    const replaced = await Promise.all(
-      [...out.matchAll(MEDIA_MARKER)].map(([, tag, raw]) => {
-        const url = remoteUrl(raw);
-        return url === undefined ? undefined : inline(tag, url);
-      }),
-    );
-    dropped = replaced.includes('');
-    let i = 0;
-    out = out.replace(MEDIA_MARKER, whole => replaced[i++] ?? whole);
-  } while (dropped);
-  return { content: out, errors };
+  const inlined = await Promise.all(
+    pieces.map(async ({ text, segments }) => ({
+      text,
+      segments: (await Promise.all(segments.map(inline))).filter(segment => segment !== undefined),
+    })),
+  );
+  return { pieces: inlined.filter(piece => piece.segments.length > 0), errors };
 }

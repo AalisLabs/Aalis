@@ -273,14 +273,22 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
     '<image url="HTTP://{host}/ok.png"/>',
     '<image url="http:{host}/ok.png"/>',
     '<image url=" https://{host}/ok.png"/>',
-    // 去掉里面那个之后，前后的文字拼成外面那个
-    '<image url="http://10.0.0.1/x<image url="http://{host}/ok.png"/>"/>',
   ])('私网地址 %s：不交给实现端，标记去掉，文字照发，投递报失败', async raw => {
     const t = await boot();
     const marker = raw.replace('{host}', httpBase);
     const delivery = await t.send({ sessionId: GROUP, content: `看这个${marker}`, source: 'agent', markup: true });
     expect(t.mediaFiles()).toEqual([]);
     expect(t.sent().map(text)).toEqual(['看这个']);
+    expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('拒绝访问') });
+    expect(fetched).toEqual([]);
+  });
+
+  it('去掉的标记两边的文字照旧是文字，不拼成新的标记', async () => {
+    const t = await boot();
+    const content = `看这个<image url="http://10.0.0.1/x<image url="http://${httpBase}/ok.png"/>"/>`;
+    const delivery = await t.send({ sessionId: GROUP, content, source: 'agent', markup: true });
+    expect(t.mediaFiles()).toEqual([]);
+    expect(t.sent().map(text)).toEqual(['看这个<image url="http://10.0.0.1/x', '"/>']);
     expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('拒绝访问') });
     expect(fetched).toEqual([]);
   });

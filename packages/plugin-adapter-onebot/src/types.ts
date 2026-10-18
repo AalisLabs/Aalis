@@ -124,11 +124,8 @@ export interface OneBotSelfInfo {
 export interface SendMessageParams {
   detailType: string;
   targetId: string;
-  content: string;
-  /** 引用回复：被引用消息的平台消息 id */
-  replyTo?: string;
-  /** 正文含平台标记、要解析（OutgoingMessage.markup）；不设时整段是一个文字段 */
-  markup?: boolean;
+  /** 要发的消息段，引用段在内 */
+  segments: ParsedSegment[];
 }
 
 /** 协议处理器接口 */
@@ -345,14 +342,8 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
   return out;
 }
 
-/**
- * 媒体标记 `<image|record|video url="…"/>`，第 1 组是标签、第 2 组是地址。parseContentToSegments 与出站前的网址内联
- * （attachments.ts 的 inlineRemoteMarkers）共用这一份写法：内联认不出的媒体标记，解析也认不出
- */
-export const MEDIA_MARKER = /<(image|record|video)\s+url=["']([^"']*)["']\s*\/>/g;
-
 /** 媒体标记的标签对应的消息段类型 */
-export const MARKER_KINDS: Record<string, 'image' | 'audio' | 'video'> = {
+const MARKER_KINDS: Record<string, 'image' | 'audio' | 'video'> = {
   image: 'image',
   record: 'audio',
   video: 'video',
@@ -370,13 +361,11 @@ export const MARKER_KINDS: Record<string, 'image' | 'audio' | 'video'> = {
  * - `<video url="..."/>` → 视频
  * - `<reply id="..."/>` → 引用回复
  */
-function parseContentToSegments(content: string): ParsedSegment[] {
+export function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   // 匹配新旧两种 at 格式 + face/reply + 媒体标记
-  const regex = new RegExp(
-    `${/<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/.source}|${MEDIA_MARKER.source}`,
-    'g',
-  );
+  const regex =
+    /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>|<(image|record|video)\s+url=["']([^"']*)["']\s*\/>/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null = regex.exec(content);
@@ -408,16 +397,16 @@ function parseContentToSegments(content: string): ParsedSegment[] {
   return segments.length > 0 ? segments : [{ type: 'text', data: { text: content } }];
 }
 
-/**
- * 要发的消息段：markup 时解析正文里的标记，否则整段一个文字段；有 replyTo 时在最前加引用段，正文里已有引用标记
- * （模型自己写的）的，以它为准，不加第二个
- */
-export function messageSegments(params: SendMessageParams): ParsedSegment[] {
-  const segments: ParsedSegment[] = params.markup
-    ? parseContentToSegments(params.content)
-    : [{ type: 'text', data: { text: params.content } }];
-  if (params.replyTo === undefined || segments.some(seg => seg.type === 'reply')) return segments;
-  return [{ type: 'reply', data: { id: params.replyTo } }, ...segments];
+/** 出站正文切出的一条：原文（记发出记录、算分条延迟用）与解析出的消息段 */
+export interface OutgoingPiece {
+  text: string;
+  segments: ParsedSegment[];
+}
+
+/** 有 replyTo 时在最前加引用段；段里已有引用（模型自己写的引用标记）的，以它为准，不加第二个 */
+export function withReply(segments: ParsedSegment[], replyTo: string | undefined): ParsedSegment[] {
+  if (replyTo === undefined || segments.some(seg => seg.type === 'reply')) return segments;
+  return [{ type: 'reply', data: { id: replyTo } }, ...segments];
 }
 
 /** 将抽象消息段转为 OneBot v11 格式 */

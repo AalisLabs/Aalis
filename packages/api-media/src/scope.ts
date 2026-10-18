@@ -42,7 +42,7 @@ const SESSION_MEDIA_DIRS: ReadonlyArray<readonly [root: string, dir: string]> = 
 ];
 
 /**
- * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载时认的一样）原样；存储地址与历史相对路径
+ * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载附件时认的一样）原样；存储地址与历史相对路径
  * （`data/images/…`）规整成存储地址（消 `.`、`..`）；其余不是网址也不是存储地址的（本机路径含盘符路径、`file://`、
  * data URI，以及带反斜杠的：有的系统按目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，过不了判据
  */

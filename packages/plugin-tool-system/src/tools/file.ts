@@ -805,7 +805,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
         },
       },
     },
-    // 建目录约束在存储根内、不覆盖不注入内容，风险低于写/移动；restricted 挡住 level-0 即可，不弹确认。
+    // 建目录约束在存储根内、不覆盖不注入内容，风险低于写/移动，不弹确认；只声明 restricted，与写类工具同为等级 2 起可用。
     visibility: 'restricted',
     handler: async (args, callCtx) => {
       try {

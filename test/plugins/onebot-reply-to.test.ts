@@ -5,6 +5,7 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import { parseContentToSegments, withReply } from '../../packages/plugin-adapter-onebot/src/types.js';
 import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import { OneBotV12 } from '../../packages/plugin-adapter-onebot/src/v12.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
@@ -40,9 +41,7 @@ describe('消息段：buildSendMessage 带 replyTo', () => {
     protocol.buildSendMessage({
       detailType: 'group',
       targetId: '20001',
-      content,
-      markup: true,
-      ...(replyTo ? { replyTo } : {}),
+      segments: withReply(parseContentToSegments(content), replyTo),
     }).params.message;
 
   it('v11：引用段在最前，id 按数字给', () => {
