@@ -3,7 +3,7 @@ import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
-import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { estimateTextTokens, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -22,6 +22,9 @@ const ENTRY_MAX_CHARS = 200;
 
 /** 摘要模型没声明输出上限时按这个数封顶，与对话代理对模型输出上限的缺省假设相同 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+
+/** 摘要预算的下限：压掉的内容很少时也留够写全各小节的篇幅 */
+const MIN_BUDGET = 1000;
 
 /** 自动压缩线的默认值：会话设置的各层都没设时用它，也是设置项字段的默认值 */
 const DEFAULT_COMPRESS_AT = 0.8;
@@ -141,13 +144,13 @@ function chunkLines(lines: string[], limit: number): string[] {
 // ===== 插件元数据 =====
 
 const configSchema = defineConfig({
-  summaryTokenRatio: {
+  summaryBudgetRatio: {
     type: 'number',
-    label: '摘要 Token 上限（占窗口比例）',
-    default: 0.05,
-    secret: false,
-    description:
-      '摘要的输出上限占会话所用模型上下文窗口的比例 (0~1)，例如 0.05 表示 5%。窗口取这个会话最近一次模型调用的（还没有用量时取摘要模型的），上限不少于 512、不超过摘要模型的输出上限与它窗口的四分之一',
+    label: t('budgetRatioLabel'),
+    default: 0.1,
+    min: 0,
+    max: 0.5,
+    description: t('budgetRatioDescription', { min: MIN_BUDGET }),
   },
   summaryModelMode: {
     type: 'select',
@@ -226,13 +229,13 @@ const WORK_TEMPLATE: SummaryTemplate = {
   ],
 };
 
-/** 摘要模型的系统提示：模板的场合与小节，加上输出上限 */
-function instructions({ scene, sections }: SummaryTemplate, maxTokens: number): string {
+/** 摘要模型的系统提示：模板的场合与小节，加上摘要预算 */
+function instructions({ scene, sections }: SummaryTemplate, budget: number): string {
   return [
     `你是对话摘要助手，把对话压缩成一份摘要。${scene}`,
     '按下面的小节依次输出，每节以小节标题（连同【】）单独一行开头，标题照写、顺序不变；某一小节没有内容时写「无」。',
     ...sections.map(([title, content]) => `【${title}】${content}`),
-    `摘要的输出上限为 ${maxTokens} tokens（约 ${maxTokens * 4} 个英文字符，或约 ${Math.floor(maxTokens / 1.5)} 个中文字符），合理分配篇幅，每个小节都要完整输出。`,
+    `摘要合计约 ${budget} tokens（约 ${budget * 4} 个英文字符，或约 ${Math.floor(budget / 1.5)} 个中文字符），合理分配篇幅，每个小节都要完整输出。`,
   ].join('\n');
 }
 
@@ -371,8 +374,8 @@ async function run(caps: Caps): Promise<void> {
 
   /** 每个会话最近一条真实回合的用量（带 turnId）：回合结束时只认这一轮的那条做判定 */
   const turnUsages = new Map<string, TokenUsageEvent>();
-  /** 每个会话最近一次用量的窗口（真实回合与 token:request 的快照都记），供摘要预算用 */
-  const windows = new Map<string, number>();
+  /** 每个会话最近一次用量（真实回合与 token:request 的快照都记），供摘要预算算压缩线 */
+  const lastUsages = new Map<string, TokenUsageEvent>();
   /**
    * 后台压缩连续没压成的次数，与最后一次之后判过的轮数：第 count 次之后隔 2^count 轮（至多 MAX_RETRY_INTERVAL_TURNS 轮）
    * 才重试。按轮数退避而不按用量又涨了多少：用量是硬裁剪之后量的，涨到裁剪预算就不再涨
@@ -395,16 +398,26 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 摘要的输出上限：会话最近一次用量的窗口 × summaryTokenRatio（还没有用量时按摘要模型的窗口），下限 512，
-   * 不超过摘要模型的输出上限与它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）。
-   * 摘要是每轮重发的常驻块，要收紧调 summaryTokenRatio
+   * 这个会话的压缩线，按最近一次用量算：与 compressionDue 用量一维的线相同（自动压缩线 × 窗口与裁剪预算取小），自动压缩线为 0
+   * 时取裁剪预算；还没有用量时为 Infinity（不封顶）
    */
-  function summaryBudget(sessionId: string, model: LLMModel): number {
-    const window = windows.get(sessionId) ?? model.contextLength;
+  function usageLine(sessionId: string): number {
+    const usage = lastUsages.get(sessionId);
+    if (!usage) return Infinity;
+    const { compressAt } = linesOf(sessionId, usage.platform);
+    return compressAt ? Math.min(compressAt * usage.contextWindow, usage.tokenBudget) : usage.tokenBudget;
+  }
+
+  /**
+   * 摘要预算：这次重写的输入 × summaryBudgetRatio，越旧的内容每经一次压缩就再缩一次；不少于 MIN_BUDGET。不超过物理上限的
+   * 三分之二，与这个会话压缩线的四分之一（有用量时，压过下限：摘要是每轮重发的常驻块，小窗口的会话里摘要一大，之后每轮都
+   * 到线或被硬裁剪）
+   */
+  function summaryBudget(sessionId: string, physical: number, input: number): number {
     return Math.min(
-      Math.max(512, Math.floor(window * cfg.summaryTokenRatio)),
-      model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-      Math.floor(model.contextLength / 4),
+      Math.floor(physical / 1.5),
+      Math.floor(usageLine(sessionId) / 4),
+      Math.max(MIN_BUDGET, Math.floor(cfg.summaryBudgetRatio * input)),
     );
   }
 
@@ -421,7 +434,7 @@ async function run(caps: Caps): Promise<void> {
     return roomClass(info, id => sessions.getSession(id), isOwner) === 'room' ? CHAT_TEMPLATE : WORK_TEMPLATE;
   }
 
-  /** 调一次摘要模型：模型失败、流式中途断开或返回空都以原因抛出。有已有摘要时要求在它的同名小节上合并 */
+  /** 调一次摘要模型：模型失败、流式中途断开、写满了输出上限或返回空都以原因抛出。有已有摘要时要求在它的同名小节上合并 */
   async function askSummaryModel(
     model: LLMModel,
     sessionId: string,
@@ -446,13 +459,26 @@ async function run(caps: Caps): Promise<void> {
       purpose: '摘要',
     };
     let text = '';
+    let completionTokens: number | undefined;
     try {
       const stream = model.chatStream?.(request);
-      if (stream) for await (const chunk of stream) text += chunk.contentDelta ?? '';
-      else text = (await model.chat(request)).content ?? '';
+      if (stream) {
+        for await (const chunk of stream) {
+          text += chunk.contentDelta ?? '';
+          if (chunk.usage) completionTokens = chunk.usage.completionTokens;
+        }
+      } else {
+        const response = await model.chat(request);
+        text = response.content ?? '';
+        completionTokens = response.usage?.completionTokens;
+      }
     } catch (err) {
       // 半截流式输出一并丢弃：provider 超时常在吐出部分内容后中断流，截断的文本入库会成为之后所有增量摘要的基底
       throw new Error(`摘要模型调用失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    }
+    // 写满了输出上限的可能是被截断的，同样丢弃；服务商不报用量时查不出来
+    if (completionTokens !== undefined && completionTokens >= maxTokens) {
+      throw new Error('摘要模型写满了输出上限，输出可能不完整');
     }
     const summary = text.trim();
     if (!summary) throw new Error('摘要模型返回了空内容');
@@ -460,10 +486,11 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多
-   * 输出上限那么多 token 算（它是按这个上限生成的摘要），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，
-   * 余下的折成每块的字数。格式化后的输入超过一块时分块增量，上一块的结果作为下一块的已有摘要。
-   * 任何一块失败或返回空整次失败；每块返回后会话被清空过的，整次作废
+   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。预算按这次重写的输入（已有摘要加格式化后的各行）算，请求的输出上限是
+   * 预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的推理 token 也算在输出上限里。
+   * 每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份可能是按更大的预算写的），
+   * 系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每块的字数。格式化后的输入超过一块时分块增量，
+   * 上一块的结果作为下一块的已有摘要。任何一块失败或返回空整次失败；每块返回后会话被清空过的，整次作废
    */
   async function summarize(
     model: LLMModel,
@@ -472,18 +499,7 @@ async function run(caps: Caps): Promise<void> {
     previous: string | undefined,
     cleared: () => boolean,
   ): Promise<string> {
-    const maxTokens = summaryBudget(sessionId, model);
     const template = templateOf(sessionId);
-    const system = instructions(template, maxTokens);
-    // 请求里的固定文字按带已有摘要的那一种（较长）算
-    const prompt = system.length + summaryRequest('', '').length;
-    const limit = Math.floor((model.contextLength - 2 * maxTokens - 2 * prompt) / 2);
-    // 每块至少两个码元，切分才能前进（代理对不拆开）
-    if (limit < 2) {
-      throw new Error(
-        `摘要模型的上下文窗口（${model.contextLength}）装不下提示词、已有摘要与摘要的输出上限（${maxTokens}）`,
-      );
-    }
     const names = buildToolNameMap(part);
     const lines = part.map(m => formatMsgForSummary(m, names));
     // 工作模板的「未完成的事」以待办为准：待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
@@ -494,8 +510,24 @@ async function run(caps: Caps): Promise<void> {
         .at(-1)?.function.arguments;
       if (todo) lines.push(`当前任务列表状态：\n${todo}`);
     }
+    // 物理上限：摘要模型一次写得出的长度，至多它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）
+    const physical = Math.min(model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.contextLength / 4));
+    const input = [previous ?? '', ...lines].reduce((sum, text) => sum + estimateTextTokens(text), 0);
+    const budget = summaryBudget(sessionId, physical, input);
+    // 预算不超过物理上限的三分之二，输出上限因此也不超过物理上限
+    const maxTokens = Math.ceil(1.5 * budget);
+    const system = instructions(template, budget);
+    // 请求里的固定文字按带已有摘要的那一种（较长）算
+    const prompt = system.length + summaryRequest('', '').length;
+    const capacity = Math.floor((model.contextLength - physical - maxTokens) / 2) - prompt;
+    // 每块至少两个码元，切分才能前进（代理对不拆开）
+    if (capacity < 2) {
+      throw new Error(
+        `摘要模型的上下文窗口（${model.contextLength}）装不下提示词、已有摘要与摘要的输出上限（${maxTokens}）`,
+      );
+    }
     let summary = '';
-    for (const [i, chunk] of chunkLines(lines, limit).entries()) {
+    for (const [i, chunk] of chunkLines(lines, capacity).entries()) {
       summary = await askSummaryModel(model, sessionId, system, maxTokens, i === 0 ? previous : summary, chunk);
       if (cleared()) throw new Error('压缩期间会话被清空');
     }
@@ -625,7 +657,7 @@ async function run(caps: Caps): Promise<void> {
   );
 
   events.use.on('token:usage', usage => {
-    windows.set(usage.sessionId, usage.contextWindow);
+    lastUsages.set(usage.sessionId, usage);
     if (usage.turnId) turnUsages.set(usage.sessionId, usage);
   });
 
@@ -685,13 +717,13 @@ async function run(caps: Caps): Promise<void> {
     if (data.scope === 'all') {
       clearAllEpoch++;
       turnUsages.clear();
-      windows.clear();
+      lastUsages.clear();
       failures.clear();
       compressions.clear();
     } else if (data.sessionId) {
       clearEpoch.set(data.sessionId, (clearEpoch.get(data.sessionId) ?? 0) + 1);
       turnUsages.delete(data.sessionId);
-      windows.delete(data.sessionId);
+      lastUsages.delete(data.sessionId);
       failures.delete(data.sessionId);
       compressions.delete(data.sessionId);
     }

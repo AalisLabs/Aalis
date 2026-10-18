@@ -20,20 +20,17 @@ const SUMMARY_NAMESPACE = 'summary';
 const FIXED_TS = '2026-01-01T00:00:00.000Z';
 
 /** 只声明 chat 能力的假 LLM model entry：贡献不调模型 */
-function fakeLLMModel(contextLength: number): LLMModel {
+function fakeLLMModel(): LLMModel {
   return {
     id: 'fake-model',
     providerId: 'fake-provider',
-    contextLength,
+    contextLength: 128_000,
     capabilities: [LLMCapabilities.Chat],
     async chat() {
       throw new Error('测试不应调用 LLM');
     },
   };
 }
-
-/** 不指定窗口时用的窗口 */
-const DEFAULT_CONTEXT_LENGTH = 128_000;
 
 const started: App[] = [];
 afterEach(async () => {
@@ -44,7 +41,7 @@ afterEach(async () => {
  * 摘要插件把 memory 与 llm 都声明为 required：两者缺一它就停在 pending，
  * 贡献根本不会登记。所以这里总是先备齐服务，再装插件并核激活。
  */
-async function setup(opts: { contextLength?: number; config?: Record<string, unknown> } = {}) {
+async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   started.push(app);
@@ -55,8 +52,8 @@ async function setup(opts: { contextLength?: number; config?: Record<string, unk
   await app.plugins.idle();
   const store = host.services.use.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  host.provide.use(llm, fakeLLMModel(opts.contextLength ?? DEFAULT_CONTEXT_LENGTH));
-  await app.plugin(memorySummary, opts.config ?? {});
+  host.provide.use(llm, fakeLLMModel());
+  await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') {
     throw new Error('plugin-memory-summary 未激活');
@@ -178,7 +175,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
   });
 
   it('长摘要全文注入，不按预算截断：生成时的输出上限已经限住它', async () => {
-    const { assembly, memory } = await setup({ contextLength: 30000, config: { summaryTokenRatio: 0.02 } });
+    const { assembly, memory } = await setup();
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
     await seedSummary(memory, 's-a', longSummary);
 
