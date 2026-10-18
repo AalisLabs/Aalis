@@ -490,7 +490,7 @@ describe('右侧面板与会话头', () => {
     const table = within(panel().getByRole('table', { name: '上下文用量' }));
     const labels = () => table.getAllByRole('rowheader').map(cell => cell.textContent);
     expect(labels()).toEqual(['上下文窗口', '已用', '历史消息', '笔记', '注入的提示', '为回复预留', '剩余']);
-    expect(table.getByRole('rowheader', { name: '剩余' }).closest('tr')?.textContent).toContain('24.0k');
+    expect(table.getByRole('rowheader', { name: '剩余' }).closest('tr')?.textContent).toContain('24k');
     fireEvent.click(table.getByRole('button', { name: '注入的提示' }));
     await vi.waitFor(() =>
       expect(labels()).toEqual([
@@ -506,9 +506,9 @@ describe('右侧面板与会话头', () => {
       ]),
     );
     const plugin = table.getByRole('rowheader', { name: '跨会话历史' }).closest('tr') as HTMLElement;
-    expect(plugin.textContent).toContain('8.0k');
+    expect(plugin.textContent).toContain('8k');
     const others = table.getByRole('rowheader', { name: '其他' }).closest('tr') as HTMLElement;
-    expect(others.textContent).toContain('4.0k');
+    expect(others.textContent).toContain('4k');
     expect(panel().getByText('到 70% 自动压缩')).toBeTruthy();
 
     act(() =>
@@ -549,7 +549,7 @@ describe('右侧面板与会话头', () => {
         groups: [],
       }),
     );
-    expect(panel().getByText(/^累计/).textContent).toBe('累计输入 20.0k，输出 1.0k（含子会话）');
+    expect(panel().getByText(/^累计/).textContent).toBe('累计输入 20k，输出 1k（含子会话）');
     act(() =>
       server().notify('sessions/changed', {
         upserts: [summary('s1', { title: '整理周报' })],
@@ -641,7 +641,7 @@ describe('右侧面板与会话头', () => {
       { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
       { '/api/models/toolGroups': TOOL_GROUPS },
     );
-    expect(await settingRow('工具分组').findByText('全部分组和联网')).toBeTruthy();
+    expect(await settingRow('工具分组').findByText('全部分组、联网')).toBeTruthy();
     expect(settingRow('模式').getByText('乙')).toBeTruthy();
     expect(settingRow('上限').getByRole('button', { name: /上限/ }).textContent).toBe('上限<不另加限制>');
     expect(settingRow('渲染 JSON').getByText('<按角色卡>')).toBeTruthy();

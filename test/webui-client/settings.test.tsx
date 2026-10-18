@@ -263,7 +263,7 @@ describe('会话默认', () => {
     expect(optionsOf(picker())).toEqual(['全局默认', '平台档：qq', '平台档：webui', '平台类型档：qq · group']);
     expect(requests('session/config/layer/get')).toEqual([{ layer: DEFAULTS }]);
     expect(
-      section().getByText(/^会话设置按本会话、父会话、场所、平台类型档、平台档和全局默认的先后，取第一个设了值的一层/),
+      section().getByText(/^会话设置按本会话、父会话、场所、平台类型档、平台档、全局默认的先后，取第一个设了值的一层/),
     ).toBeTruthy();
     expect(settingRow('人设').getByText('<默认人设>')).toBeTruthy();
     expect(settingRow('人设').getByText('全局默认')).toBeTruthy();
@@ -285,7 +285,7 @@ describe('会话默认', () => {
     expect(optionsOf(layer)).toEqual(['全局默认', '平台档: qq', '平台档: webui', '平台类型档: qq · group']);
     expect(
       section().getByText(
-        'Session settings take the first layer that has a value, in the order 本会话, 父会话, 场所, 平台类型档, 平台档, and 全局默认; when no layer sets an item, its own default applies. Changes take effect from the next turn.',
+        'Session settings take the first layer that has a value, in the order 本会话, 父会话, 场所, 平台类型档, 平台档, 全局默认; when no layer sets an item, its own default applies. Changes take effect from the next turn.',
       ),
     ).toBeTruthy();
     expect(section().getByRole('button', { name: 'Advanced' })).toBeTruthy();
@@ -297,7 +297,7 @@ describe('会话默认', () => {
     await section().findByRole('group', { name: '人设' });
     expect(optionsOf(picker())).toEqual(['<全局默认>', '<平台档>：qq', '<平台档>：webui', '<平台类型档>：qq · group']);
     expect(
-      section().getByText(/^会话设置按<本会话>、<父会话>、<场所>、<平台类型档>、<平台档>和<全局默认>的先后/),
+      section().getByText(/^会话设置按<本会话>、<父会话>、<场所>、<平台类型档>、<平台档>、<全局默认>的先后/),
     ).toBeTruthy();
     expect(settingRow('人设').getByText('<全局默认>')).toBeTruthy();
   });

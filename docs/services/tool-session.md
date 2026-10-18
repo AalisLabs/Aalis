@@ -32,7 +32,7 @@ export interface SessionHistoryService {
 }
 ```
 
-返回类型 `SessionHistoryReadResult`（`index.ts`）是判别联合：成功为 `{ ok: true; sessionId; count; limit; includeArchived; range?; truncated?; messages }`，失败为 `{ error: string }`——**没有 `ok: false` 形态，错误分支只有 `error` 字段**，消费方用 `'error' in result` 判别。
+返回类型 `SessionHistoryReadResult`（`index.ts`）是判别联合：成功为 `{ ok: true; sessionId; count; limit; includeArchived; range?; truncated?; omittedNonConversation?; messages }`（`omittedNonConversation`：条数模式返回不满 `limit` 条时，读到的记录里略去的事件标记条数），失败为 `{ error: string }`——**没有 `ok: false` 形态，错误分支只有 `error` 字段**，消费方用 `'error' in result` 判别。
 
 访问规则三件套：
 - `AccessChecker`（`index.ts`）：`{ platform: string; check(args): AccessDecision | undefined }`。`check` 是**同步**的；只对 `targetSessionId.startsWith(platform + ':')` 的目标生效。

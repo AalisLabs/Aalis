@@ -1,3 +1,4 @@
+import { listSeparator } from '@aalis/schema-i18n';
 import { type Language, language, pageLanguage, tr } from './language';
 
 // 数字、时间、时长、列表、排序与不分大小写的比较一律按外壳实际用的语言（language.ts 的 pageLanguage，与句子里的同类参数一致），
@@ -79,9 +80,9 @@ export function duration(ms: number): string {
   return tr('durationMinutes', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 });
 }
 
-/** 并列的几项：甲、乙和丙 */
+/** 罗列的几项：甲、乙、丙，不加「和」，与字典里的 `{x, list}` 同一个分隔符 */
 export const listText = (items: readonly string[]): string =>
-  cached('list', () => new Intl.ListFormat(pageLanguage(), { type: 'conjunction' })).format(items);
+  items.join(cached('list', () => listSeparator(pageLanguage(), language().packs)));
 
 /** 排序比较文字 */
 export const compareText = (a: string, b: string): number =>
@@ -90,10 +91,11 @@ export const compareText = (a: string, b: string): number =>
 /** 转小写：搜索不分大小写时两边都过它 */
 export const lower = (text: string): string => text.toLocaleLowerCase(pageLanguage());
 
-/** token 数：千以上写成 k，百万以上写成 M（如 128.0k、1.20M），不分语言，因为模型的上下文大小在中文资料里也按千写 */
-export function tokens(n: number): string {
+/** 数量缩写（token 数、下载量）：千以上写 k、百万以上写 M，一位小数、去掉末尾的 .0（1.2k、128k、1.2M），不分语言 */
+export function compactNumber(n: number): string {
   if (n < 1000) return String(n);
-  return n < 1_000_000 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1_000_000).toFixed(2)}M`;
+  const thousands = Math.round(n / 100) / 10;
+  return thousands < 1000 ? `${thousands}k` : `${Math.round(n / 100_000) / 10}M`;
 }
 
 /** 比例写成百分数，取整 */

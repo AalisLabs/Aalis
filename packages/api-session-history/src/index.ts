@@ -63,6 +63,10 @@ export type SessionHistoryReadResult =
       range?: { fromTs: number; toTs: number };
       /** 区间模式：窗口内消息多于返回条数（被 limit/后端上限截断）时为 true。 */
       truncated?: boolean;
+      /**
+       * 条数模式：返回不满 limit 条时，读到的记录里略去的非对话记录（事件标记，如指令的回复、压缩分隔线）条数；没略去时缺省。
+       */
+      omittedNonConversation?: number;
       messages: Array<Record<string, unknown>>;
     }
   | { error: string };

@@ -153,8 +153,8 @@ describe('回落到 source', () => {
 describe('参数', () => {
   it('参数里的文字对象用同一条链递归', () => {
     expect(resolveText(t('who', { name: t('hi') }), ['en'])).toBe('Hello came');
-    expect(resolveText(t('all', { items: [t('hi'), 'x'] }), ['en'])).toBe('There are Hello and x');
-    expect(resolveText(t('all', { items: [t('hi'), 'x'] }), ['zh-CN'])).toBe('共有 你好和x');
+    expect(resolveText(t('all', { items: [t('hi'), 'x'] }), ['en'])).toBe('There are Hello, x');
+    expect(resolveText(t('all', { items: [t('hi'), 'x'] }), ['zh-CN'])).toBe('共有 你好、x');
   });
 
   it('escape markdown：字符串参数转义，字典里的 Markdown 原样；嵌套文字对象的参数同样转义', () => {

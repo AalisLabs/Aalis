@@ -449,47 +449,54 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
 describe('agent 错误路径：回合结束带出错原因', () => {
   type TurnEnd = Pick<HookContextMap['agent:turn:after'], 'outcome' | 'error'>;
 
-  /** 记下每一轮的结局与原因，以及发到会话里的消息 */
+  /** 记下每一轮的结局与原因，以及发到会话里的消息；另记各轮与各条消息的 turnId */
   function observe(app: App) {
     const host = app.bind({ agent, events, hooks });
     const ends: TurnEnd[] = [];
     const sent: string[] = [];
+    const turns = { ended: [] as string[], sent: [] as (string | undefined)[] };
     host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       ends.push(data.error === undefined ? { outcome: data.outcome } : { outcome: data.outcome, error: data.error });
+      turns.ended.push(data.turnId);
       await next();
     });
-    host.events.use.on('outbound:message', (msg: OutgoingMessage) => void sent.push(msg.content));
+    host.events.use.on('outbound:message', (msg: OutgoingMessage) => {
+      sent.push(msg.content);
+      turns.sent.push(msg.turnId);
+    });
     const send = (sessionId: string) =>
       host.agent.use.handleMessage({ content: '你好', sessionId, platform: 'test', userId: 'u1' });
-    return { ends, sent, send };
+    return { ends, sent, turns, send };
   }
 
-  it('模型调用抛错：结局 error，原因是发到会话的 [错误] 那句；正常回复的一轮不带原因', async () => {
+  it('模型调用抛错：结局 error，原因是发到会话的 [错误] 那句，它带这一轮的 turnId；正常回复的一轮不带原因', async () => {
     const app = new App({ name: 'E2E', logLevel: 'error' });
     await bootAgentStack(app, createMockLLMPlugin({ throwOnce: new Error('<模型炸了>') }), false);
-    const { ends, sent, send } = observe(app);
+    const { ends, sent, turns, send } = observe(app);
 
     await send('test:turn-error');
     await send('test:turn-error');
     await app.stop();
 
     expect(sent[0]).toBe('[错误] <模型炸了>');
+    expect(turns.sent[0]).toBe(turns.ended[0]);
     expect(ends).toEqual([{ outcome: 'error', error: '<模型炸了>' }, { outcome: 'replied' }]);
   });
 
-  it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句，交出的是文字对象', async () => {
+  it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句，交出的是文字对象，它带这一轮的 turnId', async () => {
     const app = new App({ name: 'E2E', logLevel: 'error' });
     await registerHubs(app);
     await use(app, memoryInMemoryPlugin);
     await use(app, messageArchivePlugin, { debugLogs: false });
     await use(app, agentPlugin, AGENT_CONFIG);
-    const { ends, sent, send } = observe(app);
+    const { ends, sent, turns, send } = observe(app);
 
     await send('test:no-model');
     await app.stop();
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatch(/^\[系统\] ./);
+    expect(turns.sent).toEqual(turns.ended);
     expect(ends).toEqual([{ outcome: 'error', error: expect.objectContaining({ i18n: '@aalis/plugin-agent' }) }]);
     expect(toSource(ends[0].error)).toBe(sent[0].slice('[系统] '.length));
   });

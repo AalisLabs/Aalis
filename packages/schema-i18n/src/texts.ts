@@ -1,9 +1,9 @@
-// 本包自己的原文字典
+// 本包自己的原文字典（原文表在 source.ts）
 import { defineTexts } from './define.js';
 import en from './locales/en.js';
+import { SOURCE } from './source.js';
 import type { TextRef } from './text-ref.js';
 
-const SOURCE = { lines: '{items, lines}', clauses: '{head}；{tail}' } as const;
 export type Source = typeof SOURCE;
 
 const t = defineTexts({ ns: '@aalis/schema-i18n', language: 'zh-CN', source: SOURCE, locales: { en } });

@@ -73,6 +73,7 @@ import {
 import {
   type Message,
   type OutgoingMessage,
+  outboundMarkerMessage,
   outboundMediaMessage,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -220,36 +221,23 @@ type WebUIConfig = ConfigOf<typeof configSchema>;
 /**
  * 发往 WebUI 自己会话的出站消息里，要由本插件写进会话历史的部分。WebUI 的收件箱就是会话历史，记不记全不取决于
  * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
- * - 不是她说的文字（系统提示、指令回复、宿主通知）记成事件标记：回看时显示成通知，不进模型上下文，与其他平台一致；
- *   出站的 source 另记在元数据的 WellKnownMetadataKeys.Source，会话服务据此认出指令的回复；带文字对象（text）的另记在
- *   WellKnownMetadataKeys.Text，回看时与实时推送一样按读者语言显示；
+ * - 不是她说的文字（系统提示、指令回复、宿主通知）按 outboundMarkerMessage 记成事件标记：回看时显示成通知，不进模型上下文，
+ *   与别的平台由 message-archive 在送达之后记的一样；
  * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
  * - 给的是存储地址的文件（插件发出的成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
  *   metadata 另记原样的地址与文件名（登记的键 SentRef、SentName）：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
  *   「[文件: 名称 | ref:…]」进模型上下文与记忆，不看全局出站归档记不记文件。不是存储地址的文件
  *   （网址、data URL）签不出句柄，记成事件标记「[文件] 名称」，内容不进历史；
  * - 快照里的 data 未经平台改写，就是页面上显示的那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在
- *   历史里，不再记。她发出的媒体在别的平台由全局出站归档在 outbound:delivered 上记；发往 WebUI 的由这里记，
- *   outbound:delivered 的快照给附件标上 skipArchive，免得全局出站归档再记一份。代价是这些网址图片与视频不再由
- *   全局出站归档在后台补视觉描述
+ *   历史里，不再记。别的平台上这些由出站归档在 outbound:delivered 上记（文字是 message-archive，她发出的媒体是
+ *   全局出站归档）；发往 WebUI 的由这里记，outbound:delivered 的快照不带文字、附件标上 skipArchive，免得再记一份。
+ *   代价是这些网址图片与视频不再由全局出站归档在后台补视觉描述
  */
 function inboxRecords(msg: OutgoingMessage): Message[] {
   const timestamp = Date.now();
-  const marker = (content: string, metadata?: Message['metadata']): Message => ({
-    role: 'system',
-    kind: WellKnownKinds.EventMarker,
-    content,
-    timestamp,
-    ...(metadata ? { metadata } : {}),
-  });
   const records: Message[] = [];
-  if (msg.source !== 'agent' && msg.content.trim()) {
-    const metadata = {
-      ...(msg.source ? { [WellKnownMetadataKeys.Source]: msg.source } : {}),
-      ...(msg.text ? { [WellKnownMetadataKeys.Text]: msg.text } : {}),
-    };
-    records.push(marker(msg.content, Object.keys(metadata).length > 0 ? metadata : undefined));
-  }
+  const marker = outboundMarkerMessage(msg);
+  if (marker) records.push({ ...marker, timestamp });
   for (const att of msg.attachments ?? []) {
     if (att.skipArchive) continue;
     if (att.kind !== 'file') {
@@ -269,7 +257,12 @@ function inboxRecords(msg: OutgoingMessage): Message[] {
         },
       });
     } else {
-      records.push(marker(`[文件] ${att.name ?? att.data.split('/').pop()}`));
+      records.push({
+        role: 'system',
+        kind: WellKnownKinds.EventMarker,
+        content: `[文件] ${att.name ?? att.data.split('/').pop()}`,
+        timestamp,
+      });
     }
   }
   return records;
@@ -1058,9 +1051,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         const archive = caps.archive.use;
         for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
         if (snapshot.attachments?.length) {
-          // 附件已由上面记进会话历史（见 inboxRecords），标上 skipArchive，免得全局出站归档再记一份
+          // 文字与附件已由上面记进会话历史（见 inboxRecords）：快照不带文字、附件标上 skipArchive，免得出站归档再记一份
           const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
-          void events.use.emit('outbound:delivered', { ...snapshot, attachments, delivery: undefined });
+          void events.use.emit('outbound:delivered', { ...snapshot, content: '', attachments, delivery: undefined });
         }
         return { ok: true as const };
       } catch (error) {

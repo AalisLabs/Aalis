@@ -4,7 +4,11 @@ import { escapeMarkdown, formatMessage } from './format.js';
 import { pickLanguage } from './locale.js';
 import { incompatibleParams, type Message, paramKinds, parseMessage } from './message.js';
 import { fingerprint, type PackIndex } from './packs.js';
+import { SOURCE } from './source.js';
 import type { TextRef } from './text-ref.js';
+
+/** 本包字典里罗列的分隔符那一键，同 texts.ts 的 t('listSeparator')（原文没有参数，source 就是原文） */
+const LIST_SEPARATOR: TextRef = { i18n: '@aalis/schema-i18n', key: 'listSeparator', source: SOURCE.listSeparator };
 
 export interface ResolveOptions {
   /** 语言包索引（indexPacks 建），补字典没有的语言 */
@@ -31,6 +35,14 @@ const MAX_DEPTH = 32;
  */
 export function resolveText(text: TextRef, chain: readonly string[], options: ResolveOptions = {}): string {
   return resolve(text, chain, options, 0, { left: MAX_NESTED });
+}
+
+/**
+ * 罗列（`{x, list}`）的分隔符：本包字典的 listSeparator 按 language 取，可用语言与选法同 {@link resolveText}（链里只有这一种
+ * 语言），字典与语言包都没有这种语言时回落到 en 的「, 」。`{x, list}` 按句子选中的语言取它；自己罗列的出口（如前端）同样用它
+ */
+export function listSeparator(language: string, packs?: PackIndex): string {
+  return resolveText(LIST_SEPARATOR, [language], { packs });
 }
 
 /**
@@ -84,6 +96,7 @@ function resolve(
     timeZone: options.timeZone,
     escape: options.escape,
     nested: nested => resolve(nested, chain, options, depth + 1, budget),
+    listSeparator: () => listSeparator(languages[chosen], options.packs),
   });
   return rendered ?? fallback();
 }

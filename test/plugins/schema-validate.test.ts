@@ -83,7 +83,7 @@ describe('validateConfig select / multiselect', () => {
     // WebUI 把数字选项存成字符串
     expect(issuesOf(schema, { s: '2' })).toEqual([]);
     expect(issuesOf(schema, { s: 'not-in-options' })).toEqual([
-      { path: 's', message: '不是可选值（"a"和2）之一', kind: 'invalid' },
+      { path: 's', message: '不是可选值（"a"、2）之一', kind: 'invalid' },
     ]);
     expect(issuesOf(schema, { s: 3 })[0].path).toBe('s');
   });
@@ -110,7 +110,7 @@ describe('validateConfig select / multiselect', () => {
     expect(issuesOf(schema, { m: 'a' })[0].message).toBe('期望数组，得到 string');
     expect(issuesOf(schema, { m: ['a', { bad: 1 }, 'custom-host'] })).toEqual([
       { path: 'm[1]', message: '期望 string 或 number 元素，得到 object', kind: 'invalid' },
-      { path: 'm[2]', message: '不是可选值（"a"和8）之一', kind: 'invalid' },
+      { path: 'm[2]', message: '不是可选值（"a"、8）之一', kind: 'invalid' },
     ]);
   });
 

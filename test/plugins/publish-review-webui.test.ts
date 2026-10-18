@@ -151,11 +151,11 @@ describe('作品审核页', () => {
     expect(toSource(verdict)).toEqual([
       { label: '分类结论', value: '拿不准' },
       { label: '标记', value: '外链' },
-      { label: '理由', value: '暴力血腥、其他和需人工' },
+      { label: '理由', value: '暴力血腥、其他、需人工' },
     ]);
     // 类别的显示名按读者语言，落盘的类别值照旧；别的理由原样
     const reasons = verdict[2].value;
-    expect(isTextRef(reasons) && resolveText(reasons, ['en'])).toBe('Violence or gore, Other, and 需人工');
+    expect(isTextRef(reasons) && resolveText(reasons, ['en'])).toBe('Violence or gore, Other, 需人工');
     expect(h.store.data.queue[id].review?.reasons).toEqual(['暴力血腥', '其他', '需人工']);
     expect(await h.pages.data('publish-review', 'images', { rowKey: id })).toEqual([
       { name: 'frame-1.png', image: media(`${ITEM}/review/frame-1.png`) },

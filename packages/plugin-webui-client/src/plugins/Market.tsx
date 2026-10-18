@@ -11,7 +11,7 @@ import { IconButton } from '../components/IconButton';
 import { Panel } from '../components/Panel';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
-import { listTime, lower } from '../format';
+import { compactNumber, listTime, lower } from '../format';
 import { text, tr } from '../language';
 import { getJson, isRecord, postJson } from '../rest';
 import { paths } from '../routes';
@@ -126,14 +126,6 @@ async function loadMarket(signal: AbortSignal) {
     warnings: [market.warning, system.warning].filter((text): text is string => text !== undefined),
   };
 }
-
-/** 1234 → 1.2k */
-const downloads = (count: number) =>
-  count >= 1_000_000
-    ? `${(count / 1_000_000).toFixed(1)}M`
-    : count >= 1_000
-      ? `${(count / 1_000).toFixed(1)}k`
-      : `${count}`;
 
 /** 只认 http、https 的链接：检索结果原样透传，恶意包可以塞 javascript: 地址 */
 const safeLink = (pkg: MarketItem) => {
@@ -402,7 +394,7 @@ function MarketEntry({ pkg, busy, selected, onSelect, onAsk }: MarketEntryProps)
   const updated = Date.parse(pkg.updated ?? '');
   const meta = [
     pkg.author,
-    pkg.downloads !== undefined && tr('downloadsPerMonth', { count: downloads(pkg.downloads) }),
+    pkg.downloads !== undefined && tr('downloadsPerMonth', { count: compactNumber(pkg.downloads) }),
     Number.isFinite(updated) && tr('updatedAt', { time: listTime(updated) }),
     pkg.license,
   ].filter(Boolean);

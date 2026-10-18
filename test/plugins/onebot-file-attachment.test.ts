@@ -171,13 +171,16 @@ interface Action {
 
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
 
-/** imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment */
+/**
+ * imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment。replyToSend 是实现端怎么回发送与上传：
+ * failText 只让发消息失败、上传照常成功
+ */
 async function boot(
   opts: {
     protocol?: 'v11' | 'v12';
     files?: Record<string, Buffer>;
     imageSender?: boolean;
-    replyToSend?: 'ok' | 'fail' | 'hold';
+    replyToSend?: 'ok' | 'fail' | 'failText' | 'hold';
   } = {},
 ) {
   const protocol = opts.protocol ?? 'v11';
@@ -207,8 +210,11 @@ async function boot(
               echo: req.echo,
             }),
           );
+        const fails =
+          (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'fail') ||
+          (/^send_/.test(req.action) && opts.replyToSend === 'failText');
         if (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'hold') heldReplies.push(() => reply('ok'));
-        else reply(/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'fail' ? 'failed' : 'ok');
+        else reply(fails ? 'failed' : 'ok');
       }
     });
   });
@@ -241,6 +247,8 @@ async function boot(
       return f;
     },
   } as never);
+  const delivered: OutgoingMessage[] = [];
+  host.events.use.on('outbound:delivered', msg => void delivered.push(msg));
   const notes: Array<{ sessionId: string; message: Message }> = [];
   host.provide.use(messageArchive, {
     async saveMessage(sessionId: string, message: Message) {
@@ -292,7 +300,7 @@ async function boot(
       unknown
     >;
   };
-  return { actions, sent, send, flush, warns, notes, failureNotes, imageNotes, heldReplies, sendAttachment };
+  return { actions, sent, send, flush, warns, notes, delivered, failureNotes, imageNotes, heldReplies, sendAttachment };
 }
 
 const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
@@ -326,6 +334,23 @@ describe('onebot 出站：文件附件', () => {
     expect(segmentTypes).toContain('image');
     expect(segmentTypes, '文件不以消息段发出').not.toContain('file');
     expect(JSON.stringify(messages)).not.toContain(HTML.toString('base64'));
+    // 送达快照：文字发出了，带 content
+    await until(() => t.delivered.length > 0);
+    expect(t.delivered.map(msg => msg.content)).toEqual(['成品在这']);
+  });
+
+  it('文字没发出、文件上传成功：送达快照的 content 是空串，只带上传了的文件', async () => {
+    const t = await boot({ replyToSend: 'failText', files: { 'data:/paper-out/a.html': HTML } });
+    await t.send({
+      sessionId: GROUP,
+      content: '成品在这',
+      source: 'command',
+      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' }],
+    });
+    await until(() => t.delivered.length > 0);
+    expect(t.delivered.map(msg => [msg.content, msg.attachments?.map(att => att.name)])).toEqual([
+      ['', ['占位成品.html']],
+    ]);
   });
 
   it('私聊：经 upload_private_file 上传，文件名去掉路径分隔符', async () => {

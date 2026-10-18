@@ -2,7 +2,7 @@
 
 export type DateStyle = 'short' | 'medium' | 'long';
 
-/** 列表的连接：`{x, list}` 是「和」，`{x, list, or}` 是「或」（ListFormat 的 type） */
+/** 列表的连接：`{x, list}` 是罗列（按语言的分隔符拼接），`{x, list, or}` 是「或」（ListFormat 的 disjunction） */
 export type ListType = 'conjunction' | 'disjunction';
 
 /** 参数：plural 分支里的 # 记作 pound，取直接所在的 plural 的数 */

@@ -5,7 +5,7 @@
 
 ## 概述
 
-注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。「同平台」比较当前会话的平台与目标会话的平台，两边都取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不从会话 ID 推：当前会话是 IM 房间（群与私聊，含其子任务）时取房间的出生平台，不论这一轮从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）取入口平台。目标会话没有出生平台的（WebUI、CLI 的会话，以及会话表里没有记录、按 ID 建档的会话）不属于任何平台，同平台范围里读不到；会话管理不在场时所有会话都没有出生平台，同平台范围里读不到别的会话。房间的召回范围（会话配置 `memoryRecallScope`）为 `platform` 时的裁决同一取法。
+注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。读出的消息不含事件标记（schema-message 的 `CONTROL_KINDS`，如压缩分隔线、指令的回复）：它们不是对话内容，不交给模型；按条数读时多读一倍再去掉它们，取最后 `limit` 条；还是凑不满 `limit` 条时，结果带 `omittedNonConversation`，写明略去了几条非对话记录（没略去的不带）。「同平台」比较当前会话的平台与目标会话的平台，两边都取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不从会话 ID 推：当前会话是 IM 房间（群与私聊，含其子任务）时取房间的出生平台，不论这一轮从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）取入口平台。目标会话没有出生平台的（WebUI、CLI 的会话，以及会话表里没有记录、按 ID 建档的会话）不属于任何平台，同平台范围里读不到；会话管理不在场时所有会话都没有出生平台，同平台范围里读不到别的会话。房间的召回范围（会话配置 `memoryRecallScope`）为 `platform` 时的裁决同一取法。
 
 ## 插件声明
 

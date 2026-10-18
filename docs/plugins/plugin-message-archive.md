@@ -11,6 +11,8 @@
 
 归档文本是给模型看的。元数据按 schema-message 登记的键（`WellKnownMetadataKeys`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）另记说话人（`Platform`、`UserId`、`Nickname`）、来源（`Source`）、宿主通知的子类、id 与给界面的事实（`HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`），以及给人看的两样：发言人写的话（`SpokenContent`，入站消息的 `content`，只在与归档文本不同时记）与附件清单（`Attachments`，每项是种类、名字与地址）。附件的地址先取它的 `data`：网址原样记；相对的存储路径（`<根>/路径`）先归一成存储地址，存储地址只在根是存储服务登记过的根时记（各提供者的根合起来，存储按根逐条提供；存储服务不在时一个也不记）。`data` 不是地址时（内联数据、本机路径、预处理器换上的私有引用，如文件读取插件的 `aalis-file://<id>`），按同样的规则取预处理器给它写的描述里同种附件的引用（`formatAttachmentRef` 的写法，如媒体识别落盘后写的）；都没有时只记种类与名字。会话服务回看历史与实时推送的提问取这两样。
 
+不是她回复的出站文字（指令的回复、宿主提示等，`OutgoingMessage.source` 不是 `agent`）在平台送达之后由本插件记进会话历史：监听 `outbound:delivered`，按 schema-message 的 `outboundMarkerMessage` 记一条事件标记，元数据带出站的 `Source`、`Text` 与 `TurnId`，不进模型的上下文，会话服务据此在历史里还原成通知（指令的回复是 `command-reply`）。她的回复由 agent 存档，这里不记；送达快照里文字为空的也不记（发出方已自己记进历史的部分，快照里文字留空）。
+
 ## 插件声明
 
 ```typescript

@@ -10,7 +10,7 @@ import { rootSessionOf, type SessionManagerService, sessionManager } from '@aali
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import { CONTROL_KINDS, type Message } from '@aalis/schema-message';
 
 // ===== 插件元数据与能力声明 =====
 
@@ -149,6 +149,9 @@ export function resolveTimeRange(
 function originPlatformOf(sm: SessionManagerService | undefined, sessionId: string): string | undefined {
   return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform;
 }
+
+/** 交给模型的历史不含事件标记（CONTROL_KINDS，如压缩分隔线、指令的回复）：它们不是对话内容 */
+const isSaid = (message: Message) => !CONTROL_KINDS.includes(message.kind ?? '');
 
 function formatHistoryMessage(message: Message, index: number, perMessageMaxChars: number): Record<string, unknown> {
   const text =
@@ -292,8 +295,9 @@ function createSessionHistoryService(
           // 区间查询按时间升序返回。窗口内超过 limit 时取**最早**的 limit 条（按阅读顺序、与「区间」语义一致），
           // 并以 truncated 明示「窗口内还有更多、请缩小窗口」——不再静默丢弃。
           // 注意：原生区间后端通常有约 500 条的硬上限，极大窗口可能在后端那步就已截断，故 truncated 为保守信号。
-          const sliced = ranged.slice(0, limit);
-          const truncated = ranged.length > sliced.length;
+          const said = ranged.filter(isSaid);
+          const sliced = said.slice(0, limit);
+          const truncated = said.length > sliced.length;
           const result: SessionHistoryResult = {
             ok: true,
             sessionId: targetSessionId,
@@ -307,16 +311,21 @@ function createSessionHistoryService(
           return result;
         }
 
-        const history =
+        // 多读一倍再去掉事件标记，取最后 limit 条；还是凑不满时写明略去了几条非对话记录
+        const read =
           includeArchived && store.getFullHistory
-            ? await store.getFullHistory(targetSessionId, limit)
-            : await store.getHistory(targetSessionId, limit);
+            ? await store.getFullHistory(targetSessionId, limit * 2)
+            : await store.getHistory(targetSessionId, limit * 2);
+        const said = read.filter(isSaid);
+        const history = said.slice(-limit);
+        const omitted = history.length < limit ? read.length - said.length : 0;
         const result: SessionHistoryResult = {
           ok: true,
           sessionId: targetSessionId,
           count: history.length,
           limit,
           includeArchived: includeArchived && !!store.getFullHistory,
+          ...(omitted > 0 ? { omittedNonConversation: omitted } : {}),
           messages: history.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
         };
         return result;
@@ -349,7 +358,8 @@ function registerSessionHistoryTools(
         description: [
           '按 Aalis sessionId 读取指定会话的消息。',
           '两种模式：',
-          '①【条数】默认——读最近若干条（limit 控制）。',
+          '①【条数】默认——读最近若干条（limit 控制），不含指令回复等非对话记录；',
+          '  凑不满又略去了这类记录时，结果带 omittedNonConversation（略去的条数）。',
           '②【时间区间】给定 within_minutes（最近 N 分钟）或 since/until（绝对区间）时启用——',
           '  取该会话落在区间内的消息（含归档完整记录），按时间正序返回最早的 limit 条；',
           '  窗口内更多时结果带 truncated:true（请缩小时间窗再查）。',

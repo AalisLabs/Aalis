@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   clockTime,
+  compactNumber,
   duration,
   fullTime,
   listText,
@@ -10,6 +11,8 @@ import {
   numberText,
 } from '../../packages/plugin-webui-client/src/format.js';
 import { setLanguage, tr } from '../../packages/plugin-webui-client/src/language.js';
+import { t as shell } from '../../packages/plugin-webui-client/src/texts.js';
+import { fingerprint, indexPacks } from '../../packages/schema-i18n/src/index.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 
 // 数字、列表、时长与时间按外壳实际用的语言（全局默认层的语言链选中的字典的语言，与句子里的同类参数一致；i18n 不在时按原文的
@@ -71,14 +74,14 @@ describe('格式与文字同一种语言', () => {
     vi.setSystemTime(tokyo(9, 3, 15, 0));
     const formatted = () => [listText(['a', 'b', 'c']), numberText(1234.5, 1), listTime(tokyo(11, 31, 23, 0, 2025))];
     use(['de-DE', 'en']);
-    expect(formatted()).toEqual(['a, b, and c', '1,234.5', '12/31/2025']);
+    expect(formatted()).toEqual(['a, b, c', '1,234.5', '12/31/2025']);
     expect([tr('rootCycle', { instances: ['a', 'b', 'c'] }), tr('tableSelected', { count: 1234.5 })]).toEqual([
-      'Waiting on each other in a cycle: a, b, and c',
+      'Waiting on each other in a cycle: a, b, c',
       '1,234.5 selected',
     ]);
     use(['ja', 'zh-CN', 'en']);
-    expect(formatted()).toEqual(['a、b和c', '1,234.5', '2025/12/31']);
-    expect(tr('rootCycle', { instances: ['a', 'b', 'c'] })).toBe('互相等待成环：a、b和c');
+    expect(formatted()).toEqual(['a、b、c', '1,234.5', '2025/12/31']);
+    expect(tr('rootCycle', { instances: ['a', 'b', 'c'] })).toBe('互相等待成环：a、b、c');
   });
 });
 
@@ -87,11 +90,41 @@ describe('数字、列表与时长', () => {
     use(['en']);
     expect([numberText(1234.5, 2), listText(['a', 'b', 'c']), duration(3_240), duration(65_400)]).toEqual([
       '1,234.50',
-      'a, b, and c',
+      'a, b, c',
       '3.2 s',
       '1 min 5 s',
     ]);
     use([]);
-    expect([listText(['a', 'b', 'c']), duration(3_240), duration(65_400)]).toEqual(['a、b和c', '3.2 秒', '1 分 5 秒']);
+    expect([listText(['a', 'b', 'c']), duration(3_240), duration(65_400)]).toEqual(['a、b、c', '3.2 秒', '1 分 5 秒']);
+  });
+
+  it('罗列与字典里的 {x, list} 同一个分隔符：语言包给了外壳与分隔符的日文时，两处都按包里的写', () => {
+    const packs = indexPacks([
+      {
+        id: 'zz-ja',
+        language: 'ja',
+        entries: {
+          [shell.ns]: {
+            pageLanguage: { text: 'ja', from: fingerprint(shell.source.pageLanguage) },
+            rootCycle: { text: '循環待ち：{instances, list}', from: fingerprint(shell.source.rootCycle) },
+          },
+          '@aalis/schema-i18n': { listSeparator: { text: '・', from: fingerprint('、') } },
+        },
+      },
+    ]);
+    setLanguage({ chain: ['ja'], timeZone: TOKYO, packs });
+    expect(listText(['a', 'b', 'c'])).toBe('a・b・c');
+    expect(tr('rootCycle', { instances: ['a', 'b', 'c'] })).toBe('循環待ち：a・b・c');
+  });
+});
+
+describe('数量缩写', () => {
+  it('千以下原样，千以上写 k、百万以上写 M，一位小数、末尾的 .0 去掉，舍入到 1000k 的进成 1M；不分语言', () => {
+    const counts = [999, 1000, 1234, 128_000, 999_949, 999_950, 999_999, 1_000_000, 1_200_000];
+    const written = ['999', '1k', '1.2k', '128k', '999.9k', '1M', '1M', '1M', '1.2M'];
+    for (const chain of [['zh-CN'], ['en']]) {
+      use(chain);
+      expect(counts.map(compactNumber)).toEqual(written);
+    }
   });
 });

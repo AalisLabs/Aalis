@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
@@ -34,14 +34,15 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
 import { memoryStorage } from '../fixtures/paper.js';
+import { seedRooms } from '../fixtures/rooms.js';
 import { client } from '../fixtures/session-client.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 时间线与历史按全局默认层的语言渲染：实时推送与重连之后的历史显示同一句话。夹具交出文字对象的三处写入方都是真的：
-// webui-server 把带文字对象的出站记进 WebUI 会话的历史，memory-summary 写压缩分隔线，message-archive 记宿主通知与
-// 平台通知；会话服务的时间线固定句（压缩）进它自己的字典。存档的正文是原文（给模型与日志），没记文字对象的旧记录照旧
-// 显示正文。i18n 是真的 plugin-i18n。
+// webui-server 把带文字对象的出站记进 WebUI 会话的历史，memory-summary 写压缩分隔线，message-archive 记宿主通知、
+// 平台通知与房间里送达了的非回复出站；会话服务的时间线固定句（压缩）进它自己的字典。存档的正文是原文（给模型与日志），
+// 没记文字对象的旧记录照旧显示正文。i18n 是真的 plugin-i18n。
 // ════════════════════════════════════════════════════════════
 
 const NS = '@zz/session-timeline-i18n';
@@ -68,6 +69,9 @@ const t = defineTexts({
 
 const OWNER = { platform: 'webui', userId: 'console' };
 
+/** 预置在会话表里的房间 */
+const ROOM = 'onebot:10000:group:20001';
+
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
 const apps: App[] = [];
@@ -79,7 +83,7 @@ afterEach(async () => {
 
 /**
  * 会话服务连同会话管理、内存记忆、消息归档、记忆摘要（桩摘要模型）、webui-server（不监听，只用它的出站收件箱）与 i18n；
- * 存储与 owner 判定是替身。全局默认层的语言是 en，setLanguage 改它
+ * 存储与 owner 判定是替身，会话表里预置了 ROOM。全局默认层的语言是 en，setLanguage 改它
  */
 async function setup() {
   const { app } = hostedApp({ sessionConfig: { defaults: { language: ['en'] } } }, { logger: silent });
@@ -104,6 +108,8 @@ async function setup() {
   } as never);
   host.provide.use(llm, fakeSummaryLLM().model);
   await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  await seedRooms(host.memory.use, { [ROOM]: '群' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
@@ -204,6 +210,86 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     ];
     expect(said(live.timeline(id, base))).toEqual(expected);
     expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual(expected);
+  });
+
+  it('房间里不是她回复的出站文字：平台送达之后记进历史，实时与重连之后的历史是同样的通知；她的回复不在这里记', async () => {
+    const { host, connect } = await setup();
+    // 房间的平台适配器替身：认领出站，回执成功，送达之后发 outbound:delivered（同 OneBot、CLI）
+    host.events.use.on('outbound:message', message => {
+      if (message.sessionId !== ROOM || message.delivery) return;
+      message.delivery = Promise.resolve({ ok: true });
+      void host.events.use.emit('outbound:delivered', { ...message, delivery: undefined });
+    });
+    const live = await connect();
+    const base = await live.subscribe(ROOM);
+    const switched = t('switched', { name: 'zz' });
+    const sent: OutgoingMessage[] = [
+      { sessionId: ROOM, platform: 'onebot', source: 'command', content: toSource(switched), text: switched },
+      { sessionId: ROOM, platform: 'onebot', source: 'system', content: '[错误] 出错了' },
+      // 她的回复由 agent 存档
+      { sessionId: ROOM, platform: 'onebot', source: 'agent', content: '在' },
+    ];
+    for (const message of sent) {
+      await host.events.use.emit('outbound:message', message);
+      expect(await message.delivery).toEqual({ ok: true });
+    }
+
+    const expected = [
+      { kind: 'notice', topic: COMMAND_REPLY_TOPIC, text: 'Switched to zz' },
+      { kind: 'notice', topic: WellKnownKinds.EventMarker, text: '[错误] 出错了' },
+    ];
+    expect(said(live.timeline(ROOM, base)).filter(item => item.kind === 'notice')).toEqual(expected);
+    await vi.waitFor(async () =>
+      expect(said((await (await connect()).subscribe(ROOM)).snapshot.items)).toEqual(expected),
+    );
+  });
+
+  it('回合里发进房间的 [错误]（带这一轮的 turnId）：送达记进存档之后、回合还没收尾时取快照，只有一条', async () => {
+    const { host, connect } = await setup();
+    host.events.use.on('outbound:message', message => {
+      if (message.sessionId !== ROOM || message.delivery) return;
+      message.delivery = Promise.resolve({ ok: true });
+      void host.events.use.emit('outbound:delivered', { ...message, delivery: undefined });
+    });
+    const asked = { content: '<提问>', sessionId: ROOM, platform: 'onebot', userId: '30001' };
+    let inTurn: ReturnType<typeof said> = [];
+    await host.hooks.use.run('agent:input:before', { message: asked, turnId: 'turn-1', metadata: {} }, async () => {
+      const error: OutgoingMessage = {
+        sessionId: ROOM,
+        platform: 'onebot',
+        source: 'system',
+        turnId: 'turn-1',
+        content: '[错误] 出错了',
+      };
+      await host.events.use.emit('outbound:message', error);
+      expect(await error.delivery).toEqual({ ok: true });
+      await vi.waitFor(async () =>
+        expect((await host.memory.use.getHistory(ROOM, Infinity)).map(m => m.content)).toContain('[错误] 出错了'),
+      );
+      inTurn = said((await (await connect()).subscribe(ROOM)).snapshot.items);
+    });
+
+    expect(inTurn).toEqual([{ kind: 'notice', topic: WellKnownKinds.EventMarker, text: '[错误] 出错了' }]);
+  });
+
+  it('WebUI 自己的会话里带附件的指令回复：文字由收件箱记一次，送达之后不再记一份', async () => {
+    const { host, connect } = await setup();
+    const { session } = await (await connect()).call('session/create', {});
+    const message: OutgoingMessage = {
+      sessionId: session.id,
+      platform: 'webui',
+      source: 'command',
+      content: '图表如下',
+      attachments: [{ kind: 'image', data: 'data:/images/chart.png' }],
+    };
+    await host.events.use.emit('outbound:message', message);
+    expect(await message.delivery).toEqual({ ok: true });
+    // outbound:delivered 的旁观者在后台记：等一拍再数
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const markers = (await host.memory.use.getHistory(session.id, Infinity)).filter(
+      stored => stored.kind === WellKnownKinds.EventMarker,
+    );
+    expect(markers.map(stored => stored.content)).toEqual(['图表如下']);
   });
 
   it('压缩分隔线与宿主通知在实时与历史里按全局默认层的语言显示；没记文字对象的旧记录照旧显示正文', async () => {

@@ -10,7 +10,7 @@ import { List, ListItem } from '../components/List';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { useSessionClient } from '../connection';
-import { duration, tokens } from '../format';
+import { compactNumber, duration } from '../format';
 import { text, tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import type { BackgroundTask, SessionSummary } from '../protocol/session-client';
@@ -284,7 +284,7 @@ function ChildRow({ session, children }: { session: SessionSummary; children?: R
           <span className="child-detail">
             {state && <StatusText state={state.tone}>{state.text}</StatusText>}
             {took && <span>{took}</span>}
-            {session.tokens && <span>{tokens(session.tokens.input + session.tokens.output)} token</span>}
+            {session.tokens && <span>{compactNumber(session.tokens.input + session.tokens.output)} token</span>}
           </span>
         )
       }

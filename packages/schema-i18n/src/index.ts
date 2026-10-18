@@ -33,7 +33,7 @@ export {
   type PackText,
 } from './packs.js';
 export type { Params, TextArgs } from './params.js';
-export { type ResolveOptions, resolveSource, resolveText } from './resolve.js';
+export { listSeparator, type ResolveOptions, resolveSource, resolveText } from './resolve.js';
 export {
   asText,
   isTextRef,

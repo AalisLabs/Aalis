@@ -11,6 +11,7 @@ import {
   AttachmentRefKind,
   buildIncomingContent,
   getMessageName,
+  outboundMarkerMessage,
   parseAttachmentRefs,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -91,6 +92,11 @@ export default definePlugin({
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     caps.provide.use(messageArchive, createArchiveService(caps, cfg.debugLogs));
+    // 不是她回复的出站文字（指令的回复、宿主提示）在平台送达之后记进会话历史，记法见 outboundMarkerMessage；快照里文字为空的不记
+    caps.events.use.on('outbound:delivered', async msg => {
+      const marker = outboundMarkerMessage(msg);
+      if (marker) await caps.memory.use.saveMessage(msg.sessionId, { ...marker, timestamp: Date.now() });
+    });
   },
 });
 

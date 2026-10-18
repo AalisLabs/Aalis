@@ -73,3 +73,5 @@ contributions.use.contribute('i18n:pack', {
 ```
 
 `from` 是翻译时原文模板的指纹，原文改了措辞的条目当作缺失。语言包随贡献它的插件激活生效、停用撤回。
+
+罗列（`{x, list}`）的分隔符是 `@aalis/schema-i18n` 字典的 `listSeparator` 键，自带 zh-CN 与 en；别的语言由语言包补，没补时用 en 的「, 」。日文要用「、」就在 `entries` 里加 `'@aalis/schema-i18n': { listSeparator: { text: '、', from: fingerprint('、') } }`。

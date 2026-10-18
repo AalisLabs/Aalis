@@ -1,4 +1,4 @@
-import { defineTexts, resolveText, type TextRef } from '@aalis/schema-i18n';
+import { defineTexts, fingerprint, indexPacks, resolveText, type TextRef } from '@aalis/schema-i18n';
 import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
@@ -53,6 +53,14 @@ const zh = defineTexts({
     duration: '{ms, duration}',
     size: '{bytes, size}',
   } as const,
+});
+
+/** 罗列的句子各语言都有：分隔符按句子选中的语言取 */
+const listed = defineTexts({
+  ns: 'test/schema-i18n-message-listed',
+  language: 'zh-CN',
+  source: { list: '{items, list}' } as const,
+  locales: Object.fromEntries(['zh-TW', 'ko', 'de', 'ja'].map(language => [language, { list: '{items, list}' }])),
 });
 
 describe('参数与类型', () => {
@@ -124,9 +132,28 @@ describe('引号', () => {
 });
 
 describe('list 与 lines', () => {
-  it('list 用 ListFormat 的 conjunction，按语言', () => {
-    expect(t('list', { items: ['a', 'b', 'c'] }).source).toBe('a, b, and c');
-    expect(zh('list', { items: ['a', 'b', 'c'] }).source).toBe('a、b和c');
+  it('list 是罗列：按句子的语言取本包字典的分隔符直接拼接，不加「和」「and」', () => {
+    expect(t('list', { items: ['a', 'b', 'c'] }).source).toBe('a, b, c');
+    expect(zh('list', { items: ['a', 'b', 'c'] }).source).toBe('a、b、c');
+    expect(zh('list', { items: ['a', 'b'] }).source).toBe('a、b');
+  });
+
+  it('罗列不靠 Intl 的窄写法（zh-TW、ko、de 的带连接词）：本包字典没有这种语言的分隔符时按选法回落，同语言的用它，再是 en', () => {
+    const text = listed('list', { items: ['a', 'b', 'c'] });
+    expect(resolveText(text, ['zh-TW'])).toBe('a、b、c');
+    expect(resolveText(text, ['ko'])).toBe('a, b, c');
+    expect(resolveText(text, ['de'])).toBe('a, b, c');
+  });
+
+  it('分隔符由语言包补：包给了日文的分隔符，日文的句子按它拼', () => {
+    const packs = indexPacks([
+      {
+        id: 'zz-ja',
+        language: 'ja',
+        entries: { '@aalis/schema-i18n': { listSeparator: { text: '・', from: fingerprint('、') } } },
+      },
+    ]);
+    expect(resolveText(listed('list', { items: ['a', 'b', 'c'] }), ['ja'], { packs })).toBe('a・b・c');
   });
 
   it('list, or 用 ListFormat 的 disjunction，按语言；样式只认 or，别的算解析失败', () => {

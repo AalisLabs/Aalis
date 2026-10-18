@@ -73,7 +73,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{x, select, a {…} other {…}}`：x 是字符串。
 - `{n, number}`：`NumberFormat`。
 - `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省或不认识时用进程时区。
-- `{items, list}`：`ListFormat` 的 conjunction（「和」）；`{items, list, or}`：disjunction（「或」，如「可选：a、b或c」）；`{items, lines}`：按行连接。元素各自渲染。`list` 后面的样式只认 `or`。
+- `{items, list}`：罗列，按句子选中的语言取分隔符直接拼接（中文「a、b、c」，英文「a, b, c」），不加「和」「and」。分隔符来自 `@aalis/schema-i18n` 字典的 `listSeparator` 键，自带 zh-CN（「、」）与 en（「, 」）；别的语言由语言包补，没补时按下文的选法回落，同语言的用它（zh-TW 用「、」），其余用 en 的「, 」：日文要用「、」，得在语言包里给 `@aalis/schema-i18n` 的 `listSeparator`（见「语言包」）。不用 `ListFormat` 的窄写法：它在各语言（zh-TW、ko、de 等仍带连接词）与各浏览器里不一致。`{items, list, or}`：`ListFormat` 的 disjunction（「或」，如「可选：a、b或c」）；`{items, lines}`：按行连接。元素各自渲染。`list` 后面的样式只认 `or`。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
 - `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
 - `{x, code}`：行内代码，x 是字符串或数。围栏比参数里最长的反引号串多一个，参数原样、不转义。参数要放进代码段时用它，不要在模板里写 `` `{x}` ``：Markdown 出口转义后代码段里会显出反斜杠。
@@ -101,6 +101,8 @@ ns 不在目录、键不存在、原文解析失败、选中的那条渲染失�
 
 `normalizeLanguages(tags)` 整理读者给的语言列表：下划线换连字符、去掉 `.UTF-8` 这类后缀、过 `getCanonicalLocales`，不合法的丢掉，去重保序；只看前 32 项，至多给出 8 种。
 
+`listSeparator(language, packs?)` 是 `{items, list}` 用的分隔符：本包字典的 `listSeparator` 按这种语言取，选法同上（链里只有这一种语言），字典与语言包都没有时回落到 en 的「, 」。自己罗列的出口（如前端的列表文字）用它，与字典里的 `{items, list}` 一致。
+
 `pickLanguage(chain, available)` 是上面第 2 到 4 步的选法，返回 available 的下标，都没有时 `undefined`（由调用方用原文）；`matchLanguage(chain, available)` 只做第 2、3 步、不找 en，判「某种语言有没有字典提供」用它。`selfName(tag)` 给出该语言的自称（`English`、`日本語 (日本)`），`Intl.DisplayNames` 不收的标签用标签本身。
 
 ## 进程级目录
@@ -114,6 +116,8 @@ ns 不在目录、键不存在、原文解析失败、选中的那条渲染失�
 ## 语言包
 
 语言包给字典补它没有的语言：`{ id, language, entries: { [ns]: { [key]: { text, from } } } }`，`from` 是翻译时原文模板的 `fingerprint`。`indexPacks(packs)` 建索引交给 `resolveText`，形状不对或读取时抛错的包、表与条目跳过：字典自带同语言同键时语言包不生效；`from` 与当前原文的指纹不符当作缺失；多个包给同一条时按交来的先后取先（plugin-i18n 按贡献点的全局键交来，包名在前）。
+
+`{x, list}` 的分隔符也要语言包补：本包字典只带 zh-CN 与 en，别的语言没补时罗列用 en 的「, 」。日文要用「、」就在包里给本包的 `listSeparator`：`entries: { '@aalis/schema-i18n': { listSeparator: { text: '、', from: fingerprint('、') } } }`。
 
 ## 自检
 

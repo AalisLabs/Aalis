@@ -44,8 +44,8 @@ export const RETRIED = t('retried');
 export const notAccepted = (error: string | TextRef) => t('notAccepted', { error });
 
 /**
- * 事件标记还原成的通知的 topic：来源（出站消息的 source，WebUI 收件箱记在 Source 键上）是 command 的是指令的回复，其余
- * （宿主提示、压缩分隔线等）是事件标记。实时推送按出站消息的 source 取同一个
+ * 事件标记还原成的通知的 topic：来源（出站消息的 source，outboundMarkerMessage 记在 Source 键上）是 command 的是指令的回复，
+ * 其余（宿主提示、压缩分隔线等）是事件标记。实时推送按出站消息的 source 取同一个
  */
 export const markerTopic = (source: unknown) =>
   source === 'command' ? COMMAND_REPLY_TOPIC : WellKnownKinds.EventMarker;
@@ -216,6 +216,8 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
     return {
       kind: 'notice',
       itemId,
+      // 回合里发出的提示（如 [错误]）记成事件标记时带着这一轮的 id，与实时推送一样并进回合
+      turnId: text(meta?.[WellKnownMetadataKeys.TurnId]),
       at,
       topic:
         text(meta?.[WellKnownMetadataKeys.HostNoticeKind]) ??

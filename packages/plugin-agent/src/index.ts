@@ -687,6 +687,7 @@ class DefaultAgent implements AgentService {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             source: 'system',
+            turnId,
           });
         }
         await this.caps.hooks.use.run('agent:turn:after', {
@@ -1436,6 +1437,7 @@ class DefaultAgent implements AgentService {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             source: 'system',
+            turnId,
           });
         }
 

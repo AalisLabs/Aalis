@@ -83,7 +83,7 @@ definePlugin({
 | `turn` | `agent:input:before` 开始一轮，`agent:turn:after` 给出结局，`next` 返回时收尾；被下游拦下、没有结局的一轮按 silent 收尾。回合条目在这一轮第一次有动静时才推出，提问（在回合开头落库）总排在它前面 |
 | `reasoning`、`agent-message` | `outbound:stream` 的思考与正文增量，连续的同类增量接在同一条上；工具调用开始、定稿校验（`agent:reply:before`）与流结束时一条收尾。她这一轮的回复（`outbound:message`，`source` 为 agent）认作最后一版正文，带上模型与这一轮的 token（取消息的 `modelInfo`，与历史里取存档元数据的同一份写法）；回合外她发出的消息（`source` 为 agent）各成一条 |
 | `tool-call` | `agent:tool:after` 时按回合与调用的 id 在后台任务登记里找这次调用：转到了后台的，卡上带 `taskId`、元数据记下 `backgroundTask`。模型生成参数时，`outbound:stream` 的工具调用进度带着这次调用的 callId，有了工具名就推一张 generating 的卡（只有工具名），之后的进度不再推；`tool:execute` 的开始与结束（`itemId` 是 callId）把同一张卡转为 running 再收尾，开始时按工具声明的展示种类解析出 `display`；`agent:tool:after` 时从截断之前的结果里取退出码、带进 `display`，结束时不为 0 的收成 failed；`agent:tool:after` 时回合的中止信号已触发的（停止时还没结束），卡落成 aborted，结束事件不再改它；生成了却没有执行的，回合结束时收尾（回合被停止的为 aborted，其余为 failed，结果都是「没有执行」）；`tool:output` 推成输出增量，工具结束之后才到的输出不再接上；审批推出与结算时再推一次（`approvalId`、`settlement`） |
-| `notice` | `session:compressing`（`compress`）；流结束标记带 `toolLimitReached` 时给 `tool-limit`；落库的宿主通知按存档推；不是她回复的 `outbound:message`（`source` 不是 agent，如 `[错误]`、指令的回复），回合里与回合外都各成一条，指令的回复（`source` 为 command）为 `command-reply`，其余为 `event-marker`；只有 WebUI 自己的会话把它们记进存档（见 plugin-webui-server），房间与终端会话里的只在实时推送里 |
+| `notice` | `session:compressing`（`compress`）；流结束标记带 `toolLimitReached` 时给 `tool-limit`；落库的宿主通知按存档推；不是她回复的 `outbound:message`（`source` 不是 agent，如 `[错误]`、指令的回复），回合里与回合外都各成一条，指令的回复（`source` 为 command）为 `command-reply`，其余为 `event-marker`；送达之后记进存档（WebUI 自己的会话由收件箱记，见 plugin-webui-server；房间与终端会话由 plugin-message-archive 记），历史里还原成同样的通知 |
 | `user-message`，她发出的附件 | `inbound:message:archived`、`assistant:message:archived` 带出的存档消息，与历史归并用同一套规则，`itemId` 相同 |
 | `plan` | `todo:updated`；快照从待办服务读当前计划 |
 | `usage` | `token:usage`，按会话记下最近一次，分项取事件的 `parts` 原样放进条目；快照带它，还没有时订阅之后发 `token:request`。房间的请求不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，与从这条连接发起的回合一致。压缩线 `compressAt` 在推送与取快照时现取压缩服务的 `compressAt(会话, 用量事件上的平台)`，与条目的 `tokenBudget / contextWindow` 取较小者（压缩线写得比裁剪预算还高时，到裁剪预算就压缩；不按用量压缩或没有服务时不给） |
@@ -104,7 +104,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 - **工具结果的元数据**：工具结果落库之前（`agent:tool:after`），本插件把这次调用的审批结算（`approval: { id, state, source, at }`）、房间里经它发出、平台已收下的消息（`sentToRoom: true`）、回合停止时这次调用还没结束（`aborted: true`，工具上下文的中止信号此时已触发）、命令的退出码（`exitCode`）与转到后台的任务 id（`backgroundTask`）写进 `metadata`，agent 随结果落库。退出码在这里取：agent 跑完这个钩子才把过长的结果截断，截断后的结果不再是 JSON，从中取不到。发消息的工具都等过平台确认，这里只取已经到了的送达结果，不再等。
 - **投递失败**：平台没收下她的回复时，适配器（onebot）在存档里记一条投递失败（`OutboundDeliveryFailed`，`metadata` 带这一轮的 `turnId` 与同一句原因）。这条记录在回复之后，可能落在更新的一页，归并时从这一页的开头往后全看。经工具发出的（带 `callId`）不算到回复上，那次调用的结果已写明。
 - **推出来的**：工具调用之前说的话、重试丢掉的几版由存档的时间线推出。
-- **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，历史里没有这几条。
+- **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。不是她回复的外发消息（指令的回复、宿主提示等）在发出时推出，送达之后才记进存档：送达之前订阅的快照里没有，送达之后的历史里才有；平台没收下时只在实时推送里。房间与终端会话里的这类消息由 message-archive 记，没装它时不落库，只在实时推送里。
 - **刷新后不还原的**：时间线末尾「没有回复」「已停止」「这一轮出错了」这几行来自实时的回合条目，历史里没有回合条目，刷新后不再出现。要还原就得另开存放处与上限，且不能写进记忆存档（读存档的地方都会读到）；这几行只是提示，会话列表与摘要的 `lastTurn` 仍给出最近一轮的结局与原因。已知局限，不改。
 
 ## 快照与推送
@@ -120,7 +120,7 @@ owner 自己的会话不标：会话服务本身就是 owner 看她说话的地�
 存档里的消息按顺序归并。元数据只按 schema-message 登记的键读（`WellKnownMetadataKeys`，各键谁写见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)），本插件自己写进工具结果元数据的几个（见下文）除外；按类型取，形状不对的项当没有：
 
 - **提问**：正文取存档另记的发言人写的话（`SpokenContent`），没记时就是存档正文；附件取附件清单（`Attachments`）：图片、音频、视频的 `src` 是地址，文件有地址时给句柄（见下文「文件句柄」），没有地址的只给名字。存档正文里给模型看的发送者前缀、引用与附件描述不进提问。没记这两个键的旧提问按存档正文原样显示，不解析其中的文件块。说话人取自存档的元数据（`Platform`、`UserId`、`Nickname`、`Source`）。
-- **通知**：`notice` 角色的消息与事件标记（压缩分隔线，WebUI 收件箱记下的不是她回复的外发消息）各成一条通知。宿主通知的种类取 `HostNoticeKind`，`noticeId` 与 `facts` 取 `HostNoticeId`、`HostNoticeFacts`（事实里只认字符串与有限数的项）；事件标记的种类是 `event-marker`，记着来源（`Source`）是 `command` 的是指令的回复，种类为 `command-reply`，与实时推送里按出站消息的 `source` 给的一致；`notice` 角色的消息在实时推送里也由同一份存档消息算出，与历史一致。其余系统消息不显示。
+- **通知**：`notice` 角色的消息与事件标记（压缩分隔线，送达之后记下的不是她回复的外发消息）各成一条通知。宿主通知的种类取 `HostNoticeKind`，`noticeId` 与 `facts` 取 `HostNoticeId`、`HostNoticeFacts`（事实里只认字符串与有限数的项）；事件标记的种类是 `event-marker`，记着来源（`Source`）是 `command` 的是指令的回复，种类为 `command-reply`，与实时推送里按出站消息的 `source` 给的一致；记着回合 id（`TurnId`，回合里发出的 `[错误]` 等）的带上这一轮的 `turnId`，与实时推送一样并进回合；`notice` 角色的消息在实时推送里也由同一份存档消息算出，与历史一致。其余系统消息不显示。
 - **她发出的附件**：`outbound-image`、`outbound-video`、`outbound-audio`、`outbound-file` 的消息按附件引用占位符还原成只有附件的消息。图片、音频、视频的 `src` 就是引用；文件的 `src` 是句柄（见下文「文件句柄」）。文件的地址与名字先取存档时元数据里原样记下的 `SentRef`、`SentName`（占位符里的地址遇到 `]` 会截断，描述位的 `]`、`|` 换成了全角），没有时取占位符的引用与描述位，名字再没有就取地址的最后一段。
 - **回复与工具调用**：同一轮里相邻的 assistant 与带 `toolCallId` 的 tool 消息成一组；回合 id（`TurnId`）不同的两条分属两组（旧存档没记回合的不分），前一轮按旧格式落库的工具调用组不会被后一轮的时间线盖掉。组里有带时间线（`segments`）的回复时，以最后这样一条为准，覆盖这一轮之前按旧格式落库的工具调用组；否则按旧格式拼：思考前置，正文与工具调用按序，工具结果按 `toolCallId` 对回它的调用。每段正文（一次模型调用说的话，重试的各版各是一段）各成一条，相邻的思考合成一条，空的不显示；组以回复收尾时，记下的模型与这一轮的 token（`ModelInfo`）挂在回复上，`TurnId` 给出条目的回合 id。
   - 工具卡的 `itemId` 是这次调用的 `callId`（时间线的 `tool_call` 段与工具结果元数据的 `CallId` 带它），与实时推送相同；旧存档没有 `callId`，回落到这一组第一条消息的 id 加序号。参数不是对象的（旧存档里模型给出的 `null`、数组等）按空参数显示。`display` 按工具现在的声明从参数与结果解析，退出码以元数据里记下的 `exitCode` 为准（没记下的，如结果落库时会话服务没在跑，从结果里取）；工具结果的元数据里记下的审批结算、`sentToRoom` 与 `backgroundTask`（还原成 `taskId`）还原到工具卡上。状态依次看：元数据记着停止时还没结束、或没有结果（重启或中断）的为 aborted，没批准的为 denied，结果带 `error` 或退出码不为 0 的为 failed，其余为 completed。

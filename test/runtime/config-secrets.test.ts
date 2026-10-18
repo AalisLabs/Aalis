@@ -305,7 +305,7 @@ describe('插件拿到的 setPluginConfig 只收文档形态', () => {
     await registerFromDoc(w.app, w.store, probe('p').definition);
     const host = w.host();
     expect(() => host.setPluginConfig('p', { apiKey: 'sk-PLACEHOLDER', conns: [{ token: 't' }] })).toThrow(
-      'p 的 apiKey和conns.token 是密钥字段',
+      'p 的 apiKey、conns.token 是密钥字段',
     );
     expect(w.store.getPluginConfig('p')).toEqual({});
     host.setPluginConfig('p', { apiKey: { $secret: 'k' }, model: 'm3', conns: [{ token: '' }] });
