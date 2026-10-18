@@ -28,7 +28,7 @@ import {
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
-import { inlineRemoteMedia, materializeAttachments } from './attachments.js';
+import { inlineMarkupMedia, materializeAttachments } from './attachments.js';
 import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -2383,7 +2383,7 @@ function runAdapter(caps: Caps): void {
     let textSent = false;
     try {
       let pieces = toPieces(msg.content ?? '', msg.markup);
-      let markers = '';
+      let attachmentPieces: OutgoingPiece[] = [];
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
       if (msg.attachments?.length) {
@@ -2411,18 +2411,18 @@ function runAdapter(caps: Caps): void {
           }),
         );
         const materialized = await materializeAttachments(msg.attachments, storage, logger.use);
-        markers = materialized.markers;
+        attachmentPieces = materialized.segments.map(segment => ({ text: '', segments: [segment] }));
         inlineAttachments = materialized.inlineAttachments;
         uploads.push(...materialized.uploads);
         errors.push(...materialized.errors);
       }
       if (msg.markup) {
-        const inlined = await inlineRemoteMedia(pieces, storage, logger.use);
+        const inlined = await inlineMarkupMedia(pieces, storage, logger.use);
         pieces = inlined.pieces;
         errors.push(...inlined.errors);
       }
 
-      // 正文按 markup 发；附件的消息段标记另起一条，按标记发
+      // 正文按 markup 发；附件物化出的消息段在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤
       if (pieces.length) {
         logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
         try {
@@ -2433,9 +2433,9 @@ function runAdapter(caps: Caps): void {
           errors.push(err);
         }
       }
-      if (markers) {
+      if (attachmentPieces.length) {
         try {
-          await sendPieces(msg.sessionId, toPieces(markers, true), pieces.length ? undefined : msg.replyTo);
+          await sendPieces(msg.sessionId, attachmentPieces, pieces.length ? undefined : msg.replyTo);
           delivered.push(...inlineAttachments);
         } catch (err) {
           logger.use.warn(`OneBot 发送附件消息段失败(已重试): ${err}`);

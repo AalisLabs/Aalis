@@ -1,5 +1,5 @@
 // ============================================================
-// attachments.ts — 把 OutgoingMessage.attachments 转为 OneBot 可发的字符串
+// attachments.ts — 把 OutgoingMessage.attachments 转为 OneBot 的消息段与上传文件
 //
 // OneBot v11 image.file 字段支持三种 scheme：
 //   - http(s)://...        OneBot 守护进程自行拉取
@@ -21,7 +21,7 @@
 // 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
 // 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
 //
-// 她回复正文里媒体标记的网址同样经 safeFetch 下载后内联（inlineRemoteMedia），不交给 daemon 去拉。
+// 她回复正文里的媒体标记只发网址的，同样经 safeFetch 下载后内联（inlineMarkupMedia），不交给 daemon 去拉；其余地址的去掉。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
@@ -154,17 +154,17 @@ async function attachmentToOneBotFile(
   return { file: `file://${data}` };
 }
 
-/** 媒介附件对应的消息段标记 */
-const SEGMENT_TAGS: Record<MediaKind, string> = { image: 'image', audio: 'record', video: 'video' };
-
 /** 日志里对各类附件的称呼 */
 const LABELS: Record<MessageAttachment['kind'], string> = { image: '图片', audio: '语音', video: '视频', file: '文件' };
 
 /** 出站附件的物化结果 */
 interface OneBotOutgoingAttachments {
-  /** 拼到文字后面的消息段标记（`<image url="base64://…"/>` 等） */
-  markers: string;
-  /** markers 中对应的成功物化附件；只有平台发送成功后才可归档。 */
+  /**
+   * 能走消息段的媒介附件物化出的段（地址是 `base64://…`，超过内联上限的是原网址或宿主路径），不拼成标记再解析：
+   * 附件自带的地址原样留在一个段里，拆不出别的段
+   */
+  segments: ParsedSegment[];
+  /** segments 对应的成功物化附件；只有平台发送成功后才可归档。 */
   inlineAttachments: MessageAttachment[];
   /** 文字与消息段发出之后逐个上传的文件：file 附件与改走上传的媒体 */
   uploads: Array<{ file: string; name: string; attachment: MessageAttachment }>;
@@ -173,10 +173,9 @@ interface OneBotOutgoingAttachments {
 }
 
 /**
- * 把出站附件分成消息段标记与上传文件：
- * - image / audio / video：按文件头分流。能内联的物化为 base64://（走 WS 隧道，Docker 部署最稳）→ `<image>` /
- *   `<record>` / `<video>`，超过内联上限的退回 URL 或 file:// 宿主路径，daemon 读不到时发不出；认得出但不能内联的
- *   改经文件上传；不是媒体的拒发
+ * 把出站附件分成消息段与上传文件：
+ * - image / audio / video：按文件头分流。能内联的物化为 base64://（走 WS 隧道，Docker 部署最稳）的消息段，超过内联
+ *   上限的退回 URL 或 file:// 宿主路径，daemon 读不到时发不出；认得出但不能内联的改经文件上传；不是媒体的拒发
  * - file 与改走上传的媒体经群文件、私聊文件上传，内容只收 `base64://`：超过内联上限的文件、原样返回的超限
  *   http 链接与透传的 `file://` 路径，容器里的 NapCat 都读不到，一律拒发。`name` 是群文件里显示的文件名，
  *   去掉路径分隔符；缺省时 file 附件叫 `file`，改走上传的媒体按类型与格式命名（如 `image.bmp`）
@@ -187,7 +186,7 @@ export async function materializeAttachments(
   storage: StorageService,
   logger?: Logger,
 ): Promise<OneBotOutgoingAttachments> {
-  const markers: string[] = [];
+  const segments: ParsedSegment[] = [];
   const inlineAttachments: MessageAttachment[] = [];
   const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
   const errors: unknown[] = [];
@@ -195,7 +194,7 @@ export async function materializeAttachments(
     try {
       const { file, uploadExt } = await attachmentToOneBotFile(att, storage, logger);
       if (att.kind !== 'file' && uploadExt === undefined) {
-        markers.push(`<${SEGMENT_TAGS[att.kind]} url="${file}"/>`);
+        segments.push({ type: att.kind, data: { url: file } });
         inlineAttachments.push(att);
         continue;
       }
@@ -209,21 +208,17 @@ export async function materializeAttachments(
       errors.push(err);
     }
   }
-  return { markers: markers.join(''), inlineAttachments, uploads, errors };
-}
-
-/** 按网址处理的地址：以 http:、https: 开头（不计首尾空白、不分大小写），或按网址解析得出 http、https */
-function isRemote(address: string): boolean {
-  return /^\s*https?:/i.test(address) || (URL.canParse(address) && /^https?:$/.test(new URL(address).protocol));
+  return { segments, inlineAttachments, uploads, errors };
 }
 
 /**
- * 她回复正文（OutgoingMessage.markup）里媒体段的网址：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
- * 下载、按文件头核对后改成 base64:// 内联，各段同时下载；解析不了、下载不了、超过内联上限、不是能内联的媒体的段去掉，原因收进
- * errors（已记 warn），去掉后没有段的那一条不发。地址不是网址的段原样留下。在解析出的段上改、不回头改正文：从正文里删掉
+ * 她回复正文（OutgoingMessage.markup）里的媒体段只发网址的：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
+ * 下载、按文件头核对后改成 base64:// 内联，各段同时下载。地址不是网址的（file://、本机路径、存储地址、data URI、正文里写的
+ * base64:// 等）不交给实现端，与解析不了、下载不了、超过内联上限、不是能内联的媒体的段一样去掉，原因收进 errors（已记 warn），
+ * 去掉后没有段的那一条不发；存储里的媒体由 plugin-image-sender 在派发前转成附件。在解析出的段上改、不回头改正文：从正文里删掉
  * 标记再解析，两边的文字会拼出新的标记
  */
-export async function inlineRemoteMedia(
+export async function inlineMarkupMedia(
   pieces: OutgoingPiece[],
   storage: StorageService,
   logger?: Logger,
@@ -234,14 +229,11 @@ export async function inlineRemoteMedia(
     const { type } = segment;
     if (type !== 'image' && type !== 'audio' && type !== 'video') return segment;
     const address = String(segment.data.url);
-    if (!isRemote(address)) return segment;
     try {
-      if (!URL.canParse(address)) throw new Error('网址解析不了，已拒发');
-      const { file, uploadExt } = await attachmentToOneBotFile(
-        { kind: type, data: new URL(address).href },
-        storage,
-        logger,
-      );
+      // 按网址解析得出 http、https 的才下载：不计首尾空白、不分大小写
+      const url = URL.canParse(address) ? new URL(address) : undefined;
+      if (!url || !/^https?:$/.test(url.protocol)) throw new Error('地址不是网址，不交给实现端，已拒发');
+      const { file, uploadExt } = await attachmentToOneBotFile({ kind: type, data: url.href }, storage, logger);
       if (uploadExt !== undefined) throw new Error(`${uploadExt} 格式不能内联，已拒发`);
       if (!file.startsWith('base64://')) throw new Error('超过内联上限，不交给实现端去拉，已拒发');
       return { type, data: { url: file } };
