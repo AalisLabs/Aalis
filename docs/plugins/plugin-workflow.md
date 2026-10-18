@@ -10,7 +10,7 @@
 拓扑分层执行，同层并行；任一节点失败整个 run 标记 `failed`。节点可声明 `out` 把字符串结果
 存入 `outputs` 命名空间，供下游节点用 `{{outputs.<out>}}` 插值。
 
-定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt`，形状 `{ runs, onceFired }`）。
+定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt` 与定义者账本，形状 `{ runs, onceFired, definers }`）。
 
 ## 插件声明
 
@@ -25,6 +25,7 @@ export default definePlugin({
     storage: optional(storage),
     tools: optional(tools),
     webui: optional(webuiServer),
+    authority: optional(authority),
     events,
     hooks,
     lifecycle,
@@ -102,6 +103,28 @@ nodes:
     instruction: "综合下面两份调研给出结论：\n性能：{{outputs.a}}\n成本：{{outputs.b}}"
     out: report
 ```
+
+## 定义者与运行身份
+
+每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（匿名的不记），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
+
+- 手写进 `defsDir`、没经工作流页或 `workflow_define` 存过的定义；
+- 定义文件在磁盘上被改过的；
+- `runsFile` 读不出时载入的全部定义。
+
+要让这类编排按 owner 执行，在工作流页用「新建或覆盖」存一次。只在内存里注册的定义（不写入磁盘），定义者也只在内存，重启后随定义一起没有。
+
+工作流内部的 `tool` 节点与 `send-message`、`agent` 节点投递的消息按运行身份过权限闸。运行身份取定义者与调用者里不是 owner 的一方：调用者是 owner 时取定义者（没有即匿名），否则取调用者。两者都是 owner 才按 owner 执行，确认的豁免（见 [plugin-authority](./plugin-authority.md) 的「确认（轴 B）」）也只在这时生效；owner 调起别人定义或覆盖过的编排时，按那个人的等级执行。调用者按入口定：
+
+| 入口 | 调用者 |
+|---|---|
+| `workflow_run` | 调用者的授权身份 |
+| 工作流页「立即运行」 | 登录的 owner |
+| `cron`、`interval`、`once`、`event` 触发与 `trigger:fired` | 定义者 |
+
+`event` 触发的事件参数（运行变量 `args`）与 `trigger:fired` 的 `payload` 作为运行变量进入这次按定义者身份的运行：插值进 `agent` 节点的指令或 `send-message` 节点的正文时，触发方写的内容就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信。
+
+判 owner 用权限服务（`authority`，optional）。它不在时（停用或重载的窗口）判不出谁是 owner：调用者与定义者是同一身份时按这个身份执行，否则按匿名。
 
 ## 注册工具
 

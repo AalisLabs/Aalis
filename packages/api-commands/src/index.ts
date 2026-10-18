@@ -134,6 +134,7 @@ export interface ExecutionInput {
    *
    * 供没人可问的受信任来源使用：scheduler 触发的指令（owner 建任务时已经授权，身份是创建时固化的 actor）、
    * runtime 一次性子命令（owner 在本机终端亲手输入）。**不**绕过 authorize（防提权）。
+   * 只对授权身份是 owner 的执行生效：创建者不是 owner 的定时任务里，需要确认的指令照旧无从确认、直接拒。
    */
   skipConfirm?: boolean;
   /**

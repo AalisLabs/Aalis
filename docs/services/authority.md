@@ -91,7 +91,7 @@ interface ExecutionGuardContext {
   risk?: CapabilityRisk;             // 透传，供派生 minLevel；缺省回退 visibility
   confirm?: CapabilityConfirm;       // 轴 B，owner 也生效
   sessionId; platform; userId?; actor?; args?;
-  skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权时跳过非 always 的确认
+  skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
   turnId?; callId?;                  // 工具调用所在回合与这次调用的 id（agent 工具循环填写）
   inbound?: InboundTurn;             // { source?, callerUserId? }：调用所在的入站回合，判发起类别用
   confirmIntent?: () => Promise<boolean>; // 指令用：向发出者本人核对意图
@@ -112,8 +112,8 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | `owners?: UserIdentity[]` | owner 列表，owner = `*`，拥有一切 |
 | `deniedCapabilities?: string[]` | 全局能力硬禁（glob），命中即拒，**连 owner 都压过** |
 | `authorityOverrides?: Record<string, number>` | owner 逐条覆盖某操作最低等级（键 `type:name`），优先于 risk/visibility 派生 |
-| `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 强制关闭确认 |
-| `restrictedPolicy?: { allow?: string[]; duration?: number }` | 免确认白名单（给自动化）；`['*']` 全放。只免 `session` 档，不放宽授权 |
+| `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 关闭确认，只对授权身份是 owner 的回合生效，别人的回落到插件的声明 |
+| `restrictedPolicy?: { allow?: string[]; duration?: number }` | 免确认白名单（给自动化）；`['*']` 全放。只免 `session` 档，只对授权身份是 owner 的回合生效，不放宽授权 |
 | `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级网络策略，`safeFetch` 与 tool-browser 的浏览器网络闸都按它判定（见第 6 节） |
 
 ## 3. 谁提供 / 谁消费
@@ -289,7 +289,8 @@ auth.save();
 confirm 与等级**正交**，**只对已授权操作做意图确认**（不是提权入口）。守卫顺序：先 `authorize`（轴 A），过了再看 `confirm`（轴 B），见 `packages/plugin-authority/src/index.ts`。
 
 确认怎么做（`packages/plugin-authority/src/index.ts` 的守卫）：
-- `confirm:'always'` → **什么都免不掉**（cron 等无人可问即拒）。
+- 免确认只对**授权身份是 owner** 的回合（守卫上下文的 `actor`，缺省即会话身份）：`confirmOverrides` 的 `'off'` 对别人的回合回落到插件的声明，`skipConfirm` 与白名单对别人的回合不生效。
+- `confirm:'always'` → 只有 `'off'` 能免（cron 等无人可问即拒）。
 - `confirm:'session'` → `skipConfirm`（scheduler 触发的指令、runtime 一次性子命令）或 `restrictedPolicy` 白名单命中时免确认；两者都**不绕 `authorize`**（仍评估等级，防提权）。
 - 指令：调 `confirmIntent` 向发出者本人核对意图（plugin-commands 只给人亲手输入的指令带上）；没有就拒。
 - 工具：按发起回合的类别（`authority-model.ts` 的 `originKind`）调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，定时任务、编排、房间、子任务与他人的回合由审批服务立即拒绝、不推给任何面。审批服务不在时立即拒。

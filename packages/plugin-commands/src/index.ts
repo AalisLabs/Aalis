@@ -232,6 +232,7 @@ function registerCommands({
   // - 权限身份取创建时固化的 message.actor，守卫按它的真实等级评估，与普通用户走同一闸门。**actor 缺省即匿名**：
   //   创建者匿名时不得回填 owner（在触发路径把空 actor 补成 `webui:console` 之类，等于开了一条 owner 快速通道）；
   // - 没人可问，免 session 档的确认（skipConfirm；authorize 仍生效，always 档照常要确认、无从确认即拒）；
+  //   免确认只对创建者是 owner 的注入生效（执行守卫按授权身份判），别人建的任务里需要确认的指令照旧直接拒；
   // - 通常指向没有适配器接收的 internal 虚拟会话，结果写日志而不回发，避免发到虚空。
 
   /**

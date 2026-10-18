@@ -31,6 +31,17 @@ export function normalizeDef(raw: unknown, fallbackId: string): WorkflowDef | nu
   return def;
 }
 
+/** 定义文件的文本：定义者不写进文件，记在运行历史文件的账本里（见 RunStore） */
+export function definitionText(def: WorkflowDef): string {
+  const { definedBy: _definedBy, ...rest } = def;
+  return stringify(rest);
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function joinUri(base: string, rel: string): string {
   const b = base.endsWith('/') ? base : `${base}/`;
   return `${b}${rel.replace(/^\/+/, '')}`;
@@ -58,8 +69,11 @@ export class WorkflowLoader {
     return this.loaded.get(id);
   }
 
-  /** 扫描存储 → 内存。失败的文件记 warn 跳过。返回扫描是否成功：目录不存在算成功（零定义），列目录失败算失败 */
-  async loadAll(): Promise<boolean> {
+  /**
+   * 扫描存储 → 内存。失败的文件记 warn 跳过。返回扫描是否成功：目录不存在算成功（零定义），列目录失败算失败。
+   * definerOf 按 id 与文件文本的哈希给出定义者，给不出的（手写的、被改过的）没有定义者
+   */
+  async loadAll(definerOf: (id: string, sha256: string) => WorkflowDef['definedBy']): Promise<boolean> {
     let entries: Array<{ name: string; uri: string; isDirectory: boolean }> = [];
     try {
       const listed = await this.storage.list(this.dirUri);
@@ -84,6 +98,8 @@ export class WorkflowLoader {
           this.logger.warn(`workflow "${def.id}" 校验失败: ${err}`);
           continue;
         }
+        const definer = definerOf(def.id, await sha256(text));
+        if (definer) def.definedBy = definer;
         this.loaded.set(def.id, def);
         this.onDisk.add(def.id);
         this.logger.info(`已加载 workflow: ${def.id} (${def.nodes.length} 节点, trigger=${def.trigger.type})`);
@@ -94,12 +110,14 @@ export class WorkflowLoader {
     return true;
   }
 
-  /** 保存定义到存储（覆盖） */
-  async saveDef(def: WorkflowDef): Promise<void> {
+  /** 保存定义到存储（覆盖），返回写进文件的文本的哈希 */
+  async saveDef(def: WorkflowDef): Promise<string> {
     const uri = joinUri(this.dirUri, `${def.id}.yaml`);
-    await this.storage.writeFile(uri, stringify(def));
+    const text = definitionText(def);
+    await this.storage.writeFile(uri, text);
     this.onDisk.add(def.id);
     this.loaded.set(def.id, def);
+    return await sha256(text);
   }
 
   /**

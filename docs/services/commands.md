@@ -40,7 +40,7 @@ Builder 链式追加 `alias / option / argument / action / usage / example`。`c
 - **命令名 = 完整点路径**（`'memory.clear.all'`）。名字段必须匹配 `^[a-z][a-z0-9-]*$`。
 - **inline DSL**：`<name:type>` 或 `[name:type]`，`type ∈ string|number|boolean|text`。`text` 会吞掉剩余 token。有子指令的父指令不声明位置参数时，多余的 token 不被忽略，回「未知子指令或多余参数」、不执行（见 [api-commands](../api/api-commands.md) 的「子指令」一节）。
 - **CommandHandler**：`(argv: CommandArgv, ...positionals: unknown[]) => ...`。返回字符串即回复，`undefined` 则静默。
-- **ExecutionInput.skipConfirm**：供 scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，不绕过授权。
+- **ExecutionInput.skipConfirm**：供 scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，只对授权身份是 owner 的执行生效，不绕过授权。
 - **ExecutionInput.confirmIntent**：人亲手输入的指令由入站相位带上，执行守卫需要确认时调它向发出者本人核对意图；没有就按无从确认拒绝。
 
 ---

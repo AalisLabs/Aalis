@@ -1,14 +1,20 @@
 // ============================================================
-// persistence.ts — 运行实例持久化（追加 + 滚动）+ once 触发记账
+// persistence.ts — 运行实例持久化（追加 + 滚动）+ once 触发记账 + 定义者账本
 //
 // 通过 @aalis/api-storage 写入 storage URI（默认 data:/workflow-runs.json）。
 // 仍维持 write-on-end 整体重写策略；写入串行化避免覆盖。
-// 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> } }。
+// 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> },
+//           definers: { <workflowId>: { platform, userId, sha256 } } }。
 // ============================================================
 
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
-import type { WorkflowRun } from '@aalis/api-workflow';
+import type { WorkflowDef, WorkflowRun } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
+
+type Definer = NonNullable<WorkflowDef['definedBy']>;
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const filled = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 export class RunStore {
   private storage: StorageService;
@@ -18,6 +24,11 @@ export class RunStore {
   private runs: WorkflowRun[] = [];
   /** once 触发记账：workflowId → 首次触发时刻（ms）。与运行历史同文件，重启后读回即不再触发 */
   private onceFired: Record<string, number> = {};
+  /**
+   * 定义者账本：workflowId → 定义者与写进定义文件的那份文本的哈希。不放进定义文件：工作区能被别的工具写，写在文件里的
+   * 定义者伪造得出来。与运行历史同文件，读不出时没有定义者
+   */
+  private definers: Record<string, Definer & { sha256: string }> = {};
   private writeChain: Promise<void> = Promise.resolve();
   /**
    * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整份快照，
@@ -45,16 +56,20 @@ export class RunStore {
     }
     // 解析与结构校验单独一段：解析报错的文案（会带上短文件原文）不能进「不存在」判据
     try {
-      const data = JSON.parse(String(raw)) as { runs?: unknown; onceFired?: unknown } | null;
-      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('顶层不是 JSON 对象');
+      const data: unknown = JSON.parse(String(raw));
+      if (!isObject(data)) throw new Error('顶层不是 JSON 对象');
       if (data.runs !== undefined && !Array.isArray(data.runs)) throw new Error('runs 不是数组');
-      const fired = data.onceFired;
-      if (fired !== undefined && (!fired || typeof fired !== 'object' || Array.isArray(fired))) {
-        throw new Error('onceFired 不是对象');
-      }
+      const { onceFired = {}, definers = {} } = data;
+      if (!isObject(onceFired)) throw new Error('onceFired 不是对象');
+      if (!isObject(definers)) throw new Error('definers 不是对象');
       if (data.runs) this.runs = data.runs as WorkflowRun[];
-      for (const [id, at] of Object.entries((fired ?? {}) as Record<string, unknown>)) {
+      for (const [id, at] of Object.entries(onceFired)) {
         if (typeof at === 'number') this.onceFired[id] = at;
+      }
+      for (const [id, entry] of Object.entries(definers)) {
+        if (isObject(entry) && filled(entry.platform) && filled(entry.userId) && filled(entry.sha256)) {
+          this.definers[id] = { platform: entry.platform, userId: entry.userId, sha256: entry.sha256 };
+        }
       }
     } catch (err) {
       this.loadFailed = true;
@@ -74,7 +89,7 @@ export class RunStore {
 
   private flush(): void {
     if (this.loadFailed) return; // init 时已 warn 过
-    const payload = JSON.stringify({ runs: this.runs, onceFired: this.onceFired }, null, 2);
+    const payload = JSON.stringify({ runs: this.runs, onceFired: this.onceFired, definers: this.definers }, null, 2);
     this.writeChain = this.writeChain
       .then(() => this.storage.writeFile(this.fileUri, payload))
       .then(
@@ -114,25 +129,42 @@ export class RunStore {
     this.flush();
   }
 
-  /** 删除 workflow 时一并清账：同 id 重建视为新工作流，可再触发一次 */
-  clearOnceFired(workflowId: string): void {
-    if (this.onceFired[workflowId] === undefined) return;
+  /** 定义文件这份文本的定义者：账本里的哈希对得上才有，手写的、被改过的与没有记账的都没有 */
+  definerOf(workflowId: string, sha256: string): Definer | undefined {
+    const entry = this.definers[workflowId];
+    return entry?.sha256 === sha256 ? { platform: entry.platform, userId: entry.userId } : undefined;
+  }
+
+  /** 记下写进定义文件的这份文本的定义者；匿名定义的清掉这一条，不留覆盖之前的定义者 */
+  recordDefiner(workflowId: string, definer: Definer | undefined, sha256: string): void {
+    if (!definer && !this.definers[workflowId]) return;
+    if (definer) this.definers[workflowId] = { platform: definer.platform, userId: definer.userId, sha256 };
+    else delete this.definers[workflowId];
+    this.flush();
+  }
+
+  /** 删除 workflow 时一并清账：同 id 重建视为新工作流，可再触发一次 once，也没有原来的定义者 */
+  forget(workflowId: string): void {
+    if (this.onceFired[workflowId] === undefined && this.definers[workflowId] === undefined) return;
     delete this.onceFired[workflowId];
+    delete this.definers[workflowId];
     this.flush();
   }
 
   /**
-   * 按现存定义集清账：不在 ids 里的 workflowId 记账一并删除。
+   * 按现存定义集清账：不在 ids 里的 workflowId 的 once 记账与定义者一并删除。
    * removeWorkflow 之外还有一条路能让定义消失——直接删 defsDir 里的 yaml 文件，
-   * 那条路不经服务、清不了账，同 id 重建就会被旧记账永久压住。
+   * 那条路不经服务、清不了账，同 id 重建就会被旧记账永久压住，写回同样的文本还会认回原来的定义者。
    * 启动扫描完定义后调一次，语义收敛为「定义不存在时记账随之清除」。
    */
-  pruneOnceFired(ids: Set<string>): void {
+  prune(ids: Set<string>): void {
     let changed = false;
-    for (const id of Object.keys(this.onceFired)) {
-      if (ids.has(id)) continue;
-      delete this.onceFired[id];
-      changed = true;
+    for (const ledger of [this.onceFired, this.definers]) {
+      for (const id of Object.keys(ledger)) {
+        if (ids.has(id)) continue;
+        delete ledger[id];
+        changed = true;
+      }
     }
     if (changed) this.flush();
   }

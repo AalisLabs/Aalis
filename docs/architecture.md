@@ -401,17 +401,18 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）。
 授权已过、命中 confirm 的操作
   │
   ▼
-可免确认? （always 什么都免不掉）
+可免确认? （只对授权身份是 owner 的回合；always 只有确认覆盖设为 off 能免）
+  ├─ confirmOverrides 设为 off → 免
   ├─ skipConfirm（受信来源：scheduler 触发的指令、runtime 一次性子命令）→ 免
   ├─ restrictedPolicy 白名单命中 → 免
-  └─ 否则
+  └─ 否则（含授权身份不是 owner 的回合）
        ├─ 指令：在同一会话里问发出者本人，只认他的下一条消息（y 确认，其余取消，超时取消）
        └─ 工具：owner 审批（approvals）
             ├─ 发起回合是 owner 本人或 owner 链的延续 → 推给在场的审批面，owner 批准才执行
             └─ 其余（定时任务、编排、房间、子任务、他人）→ 立即拒绝，不推给任何面
 ```
 
-`confirm:'always'` 是最高危档：**每次都必须有人确认**（cron 等无人可问的场景直接拒）。
+`confirm:'always'` 是最高危档：**每次都必须有人确认**（cron 等无人可问的场景直接拒），只有确认覆盖设为 off 时对 owner 的回合免。
 审批的在场、排队、时限与审计见 [api-approval](api/api-approval.md)。
 
 ## 上下文窗口管理算法

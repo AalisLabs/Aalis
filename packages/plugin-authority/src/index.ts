@@ -101,24 +101,24 @@ async function run(caps: Caps): Promise<void> {
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | TextRef | null> => {
     const capability = `${g.type}:${g.name}`;
-    // 确认覆盖：'off' 强制关确认；否则覆盖值优先，回退插件声明。
+    // 授权身份（actor 缺省即会话身份）：等级裁决与免确认都按它，不看物理发言者
+    const identity = g.actor ?? { platform: g.platform, userId: g.userId };
+    const ownerActs = manager.isOwner(identity.platform, identity.userId);
+    // 确认覆盖：覆盖值优先，回退插件声明；'off' 只对授权身份是 owner 的回合关掉确认，别人的回落到插件声明
     const confOv = (config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
     const cOv = confOv[capability];
-    const confirm = cOv === 'off' ? undefined : (cOv ?? g.confirm);
+    const confirm = cOv === 'off' ? (ownerActs ? undefined : g.confirm) : (cOv ?? g.confirm);
 
-    // ── 轴 A · 授权：数字等级裁决按授权身份（actor 缺省即会话身份）——系统源也评估，防绕过提权。
+    // ── 轴 A · 授权：数字等级裁决——系统源也评估，防绕过提权。
     // 等级不够即拒，没有别的放行口：发起者本人不能靠确认给自己提权。
-    const denied = manager.authorize(g.actor ?? { platform: g.platform, userId: g.userId }, {
-      capability,
-      visibility: g.visibility,
-      risk: g.risk,
-    });
+    const denied = manager.authorize(identity, { capability, visibility: g.visibility, risk: g.risk });
     if (denied) return denied;
 
     // ── 轴 B · 确认：授权已过，但操作声明了 confirm 仍要有人确认（owner 也吃，防注入借权）。
-    // 非 always 的确认可免：没人可问的受信来源（skipConfirm）、owner 配的 restrictedPolicy 白名单。always 什么都免不掉
+    // 非 always 的确认可免，只对授权身份是 owner 的回合：没人可问的受信来源（skipConfirm）、owner 配的 restrictedPolicy
+    // 白名单。always 只有确认覆盖设为 off 能免（见上）
     if (!confirm) return null;
-    if (confirm !== 'always' && (g.skipConfirm || manager.waivesConfirm(capability))) return null;
+    if (confirm !== 'always' && ownerActs && (g.skipConfirm || manager.waivesConfirm(capability))) return null;
 
     // 指令由人亲手输入：确认的是发出者本人的意图，由指令服务当面问；问不到（注入的指令）就拒
     if (g.type === 'command') {
@@ -141,7 +141,9 @@ async function run(caps: Caps): Promise<void> {
         },
         tool: g.name,
         args: g.args ?? {},
-        rule: cOv ? `confirmOverrides 把 ${capability} 设为 ${cOv}` : `${capability} 声明 confirm=${confirm}`,
+        // 覆盖生效时记覆盖；'off' 没生效（授权身份不是 owner）时记插件的声明
+        rule:
+          cOv === confirm ? `confirmOverrides 把 ${capability} 设为 ${cOv}` : `${capability} 声明 confirm=${confirm}`,
       },
       g.signal,
     );
@@ -256,7 +258,7 @@ function identityOf(key: string): UserIdentity {
   return { platform: key.slice(0, sep), userId: key.slice(sep + 1) };
 }
 
-const CONFIRM_TEXT: Record<CapabilityConfirm, string> = { session: '每会话一次', always: '每次' };
+const CONFIRM_TEXT: Record<CapabilityConfirm, TextRef> = { session: t('confirmSession'), always: t('confirmAlways') };
 
 /** 「禁用与免确认」表的两种规则：禁用写进 deniedCapabilities，免确认写进 restrictedPolicy.allow */
 const RULE_KINDS = { deny: '禁用（连 owner 也拒）', waive: '免确认' } as const;
@@ -478,7 +480,7 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
       waiveConfirm: {
         label: '免确认',
         effect: 'write',
-        input: RULE_INPUT,
+        input: { pattern: { ...RULE_INPUT.pattern, description: t('waivePattern') } },
         handler: ({ input }) => addRule('waive', input.pattern),
       },
       removeRule: {
@@ -613,8 +615,7 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
               type: 'table',
               id: 'rules',
               rowKey: 'key',
-              description:
-                '禁用压过一切，连 owner 也拒；免确认只免每会话一次的确认，不放宽等级，给自动化用。都可以写通配，如 tool:*。',
+              description: t('rulesDescription'),
               empty: '没有禁用或免确认的规则',
               columns: [
                 { key: 'rule', label: '能力', kind: 'code', primary: true },
