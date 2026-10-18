@@ -547,7 +547,7 @@ describe('配置表单、校验问题与插件状态的原因按全局默认层�
     const refused = await request('/api/config', { method: 'PUT', body: JSON.stringify({ logLevel: 'loud' }) });
     expect([refused.status, await refused.json()]).toEqual([
       400,
-      { error: 'logLevel: not one of the options ("debug", "info", "warn", and "error")' },
+      { error: 'logLevel: not one of the options ("debug", "info", "warn", "error")' },
     ]);
     setLanguage(['zh-CN']);
     expect(await labels()).toEqual(['应用名称', '日志等级', '慢操作阈值（毫秒）']);

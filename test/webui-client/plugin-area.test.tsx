@@ -352,7 +352,7 @@ describe('详情', () => {
     );
     expect(relations.getByText('zz-store（文档库）')).toBeTruthy();
     expect(relations.queryByText(/events/)).toBeNull();
-    expect(relations.getByText('zz_read和zz_write')).toBeTruthy();
+    expect(relations.getByText('zz_read、zz_write')).toBeTruthy();
     expect(relations.getByText('/zz-reset')).toBeTruthy();
     // 两个实例都提供它，各自追到自己的根：停用的一键启用，失败的去它的详情处理（启用只是重试，配置错了还会失败）
     expect(needs(relations)).toEqual([
@@ -427,7 +427,7 @@ describe('详情', () => {
       lacking: [
         { service: 'zz-x', chain: ['zz-keyless'], root: { kind: 'cycle', instances: ['zz-probe', 'zz-keyless'] } },
       ],
-      need: ['zz-x：缺', '没钥匙（互相等待成环：探针和没钥匙）'],
+      need: ['zz-x：缺', '没钥匙（互相等待成环：探针、没钥匙）'],
     },
     {
       name: '在等：写等待谁启动',
@@ -536,7 +536,7 @@ describe('详情', () => {
     expect(text('看板')).toBe('看板插件页面，打开后可以固定到图标栏；插件前端，不申请宿主数据');
     expect(text('笔记')).toBe('笔记会话面板，在会话右侧面板的「+」里打开');
     expect(text('子会话')).toBe(
-      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态和停止会话的回合',
+      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态、停止会话的回合',
     );
     app.close();
 
@@ -927,10 +927,11 @@ describe('市场', () => {
     expect(entries()).toEqual(['@aalis/plugin-zz-notes', 'zz-theme-ui', '@aalis/core']);
   });
 
-  it('卡片写提供的服务，搜索也匹配它；搜不到时写明按服务搜的前提', async () => {
+  it('卡片写提供的服务与每月下载量（缩写），搜索也匹配服务；搜不到时写明按服务搜的前提', async () => {
     app = await renderApp('/market', {}, marketRest());
     await screen.findByRole('list', { name: '包' });
     expect(screen.getByText('提供：zz-memo')).toBeTruthy();
+    expect(screen.getByText('1.2k/月 · MIT')).toBeTruthy();
     const search = screen.getByLabelText('搜索');
     expect(search.getAttribute('placeholder')).toBe('搜名称、说明、作者或提供的服务');
     choose(screen.getByRole('combobox', { name: '类型' }), '全部');

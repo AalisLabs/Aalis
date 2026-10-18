@@ -10,7 +10,7 @@ import { Menu } from '../components/Menu';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
-import { clockTime, tokens } from '../format';
+import { clockTime, compactNumber } from '../format';
 import { text, tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
@@ -422,8 +422,8 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
   const { model, promptTokens, completionTokens } = item.model ?? {};
   const meta = [
     model,
-    promptTokens === undefined ? undefined : tr('tokensIn', { count: tokens(promptTokens) }),
-    completionTokens === undefined ? undefined : tr('tokensOut', { count: tokens(completionTokens) }),
+    promptTokens === undefined ? undefined : tr('tokensIn', { count: compactNumber(promptTokens) }),
+    completionTokens === undefined ? undefined : tr('tokensOut', { count: compactNumber(completionTokens) }),
     item.undelivered?.reason,
   ].filter((text): text is string => Boolean(text));
   return (

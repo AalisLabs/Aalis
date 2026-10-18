@@ -41,7 +41,7 @@ export type MessageRole = WellKnownRole | (string & {});
 
 | 常量 | 字面量 | 含义 | 典型 role |
 | --- | --- | --- | --- |
-| `EventMarker` | `'event-marker'` | 纯 UI / 控制标记（如对话压缩分隔条），不应进入 LLM 上下文 | system |
+| `EventMarker` | `'event-marker'` | 纯 UI / 控制标记（如对话压缩分隔条、不是她回复的出站文字），不应进入 LLM 上下文 | system |
 | `CrossSessionDelegation` | `'cross-session-delegation'` | 系统代发的任务指令（`triggerType: 'proactive'`，如 workflow 的 agent 节点） | notice |
 | `OutboundImage` | `'outbound-image'` | assistant 已发出的图片占位 | assistant |
 | `OutboundAudio` | `'outbound-audio'` | assistant 已发出的音频占位 | assistant |

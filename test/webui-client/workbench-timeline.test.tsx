@@ -762,7 +762,7 @@ describe('收起、没有回复与运行指示', () => {
         ]),
     });
     const log = within(await timeline());
-    const mixed = log.getByRole('button', { name: '调用了 4 个工具：执行命令 2、改动文件 1和其他 1' });
+    const mixed = log.getByRole('button', { name: '调用了 4 个工具：执行命令 2、改动文件 1、其他 1' });
     expect(mixed.getAttribute('aria-expanded')).toBe('false');
     for (const name of [/执行 ls/, /修改 a\.ts/, /调用 web_search/, /执行 pwd/, /思考/]) {
       expect(log.queryByRole('button', { name }), String(name)).toBeNull();
@@ -808,7 +808,7 @@ describe('收起、没有回复与运行指示', () => {
     const single = log.getByRole('button', { name: /调用 zz_fetch/ });
     fireEvent.click(single);
     expect(log.getByText(/"url": "https:\/\/example\.invalid"/)).toBeTruthy();
-    expect(log.getByRole('button', { name: '调用了 3 个工具：其他 2和执行命令 1' })).toBeTruthy();
+    expect(log.getByRole('button', { name: '调用了 3 个工具：其他 2、执行命令 1' })).toBeTruthy();
   });
 
   it('英文界面：收起的一行按单复数与列表写，过长的命令写明省略了几个字符', async () => {
@@ -829,7 +829,7 @@ describe('收起、没有回复与运行指示', () => {
       language(['en']),
     );
     const log = within(await main().findByRole('region', { name: 'Conversation' }));
-    expect(log.getByRole('button', { name: 'Called 4 tools: 2 commands, 1 file change, and 1 other' })).toBeTruthy();
+    expect(log.getByRole('button', { name: 'Called 4 tools: 2 commands, 1 file change, 1 other' })).toBeTruthy();
     expect(log.getByRole('button', { name: /^Run echo x{25}…\(25 characters omitted\)…x{30}$/ })).toBeTruthy();
   });
 

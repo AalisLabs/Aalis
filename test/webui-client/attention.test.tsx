@@ -360,7 +360,7 @@ describe('插件故障的写法', () => {
       item: pending('zz-a', [
         { service: 'zz-sb', chain: ['zz-b'], root: { kind: 'cycle', instances: ['zz-a', 'zz-b'] } },
       ]),
-      row: { text: '甲缺服务：乙（互相等待成环：甲和乙）', tone: '需要处理', action: ['去处理', '/plugins/zz-a'] },
+      row: { text: '甲缺服务：乙（互相等待成环：甲、乙）', tone: '需要处理', action: ['去处理', '/plugins/zz-a'] },
     },
     {
       name: '待配置的插件自己：提醒色，写没填的键，按钮去配置区',
@@ -399,8 +399,8 @@ describe('插件故障的写法', () => {
     const region = await screen.findByRole('region', { name: 'Needs attention' });
     await vi.waitFor(() =>
       expect(rows(region).map(row => [row.text, row.action?.[0]])).toEqual([
-        ['甲Missing services: 乙 (Waiting on each other in a cycle: 甲 and 乙)', 'Resolve'],
-        ['OpenAI EmbeddingNeeds configuration: apiKey and baseUrl', 'Configure'],
+        ['甲Missing services: 乙 (Waiting on each other in a cycle: 甲, 乙)', 'Resolve'],
+        ['OpenAI EmbeddingNeeds configuration: apiKey, baseUrl', 'Configure'],
       ]),
     );
   });

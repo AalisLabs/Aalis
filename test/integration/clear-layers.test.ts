@@ -17,6 +17,7 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import todoList from '../../packages/plugin-todo-list/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import userRelation from '../../packages/plugin-user-relation/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -117,7 +118,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },
       options: types ? { type: types } : {},
     });
-    return String(out);
+    return String(toSource(out));
   }
 
   /** 各命名空间剩下的 key，与各会话剩下的消息条数（含归档） */

@@ -100,8 +100,8 @@ describe('PUT /api/config 只收核心键', () => {
     const r = await put(body);
     expect(r.status).toBe(400);
     const foreign = Object.keys(body).filter(key => !Object.hasOwn(CORE_CONFIG_SCHEMA, key));
-    const list = (items: string[]) => new Intl.ListFormat('zh-CN').format(items);
-    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel和slowThresholdMs），不收：${list(foreign)}` });
+    const list = (items: string[]) => new Intl.ListFormat('zh-CN', { style: 'narrow' }).format(items);
+    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel、slowThresholdMs），不收：${list(foreign)}` });
     expect(store).toEqual(before);
     expect(calls).toEqual([]);
   });

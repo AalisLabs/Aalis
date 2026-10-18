@@ -389,7 +389,7 @@ describe('作品审核核心', () => {
     const drawn = `https://draw.invalid/w/${nominated.id}/`;
     const queued = restarted.data.notices[`${nominated.id}:live`];
     expect(queued?.content, '交给模型的正文照旧').toBe(`作品已上线：${works}、${drawn}`);
-    expect(isTextRef(queued?.text) && resolveText(queued.text, ['en'])).toBe(`The work is live: ${works} and ${drawn}`);
+    expect(isTextRef(queued?.text) && resolveText(queued.text, ['en'])).toBe(`The work is live: ${works}, ${drawn}`);
     expect(emit).toHaveBeenCalledWith(
       expect.any(Object),
       { content: queued?.content, text: queued?.text },

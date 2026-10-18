@@ -158,7 +158,7 @@ describe('parseConfig 无效值', () => {
     expect(config).toEqual({ port: 8080, mode: 'a', flag: false });
     expect(warns).toEqual([
       '配置项 port 期望有限数值，得到 string，改用默认值 8080',
-      '配置项 mode 不是可选值（"a"和"b"）之一，改用默认值 "a"',
+      '配置项 mode 不是可选值（"a"、"b"）之一，改用默认值 "a"',
       '配置项 flag 期望 boolean，得到 string，改用默认值 false',
     ]);
   });
@@ -319,7 +319,7 @@ describe('parseConfig list / map / multiselect 逐项丢弃', () => {
     expect(config).toEqual({ m: ['a', 8] });
     expect(warns).toEqual([
       '配置项 m[2] 期望 string 或 number 元素，得到 object，已忽略',
-      '配置项 m[3] 不是可选值（"a"和8）之一，已忽略',
+      '配置项 m[3] 不是可选值（"a"、8）之一，已忽略',
     ]);
   });
 
@@ -393,7 +393,7 @@ describe('parseConfig select', () => {
   it('选项外的值回落默认值', () => {
     const { config, warns } = parse(schema, { level: 3 });
     expect(config.level).toBe(1);
-    expect(warns).toEqual(['配置项 level 不是可选值（1、2和""）之一，改用默认值 1']);
+    expect(warns).toEqual(['配置项 level 不是可选值（1、2、""）之一，改用默认值 1']);
   });
 
   it('没有静态 options 时只查是 string 或 number，数字转成字符串', () => {

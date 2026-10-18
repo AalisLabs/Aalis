@@ -298,13 +298,13 @@ socket.onmessage = event => {
 发往 WebUI 自己会话的出站消息（`outbound:message` 的 `platform` 为 `webui`，会话不是 IM 房间）由本插件认领投递回执：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。回执成功表示这条消息已进会话历史，不看有没有页面在线。owner 从 WebUI 驱动的 IM 房间（根会话有 session-manager 记下的出生平台，按会话字段判、不看会话 id 的写法）由那个平台的适配器认领；不带 `platform` 的出站消息本插件不认领；已有回执的消息不覆盖。
 
 - agent 的文字回复由 agent 存档，这里不再记；
-- 不是她说的文字（系统提示、指令回复、宿主通知）经 message-archive 记成事件标记，回看时显示成通知，不进模型上下文；出站的 `source` 记在元数据的 `Source` 键上，会话服务据此把指令的回复还原成 `command-reply` 的通知；
+- 不是她说的文字（系统提示、指令回复、宿主通知）按 `outboundMarkerMessage` 经 message-archive 记成事件标记，回看时显示成通知，不进模型上下文；出站的 `source` 记在元数据的 `Source` 键上，会话服务据此把指令的回复还原成 `command-reply` 的通知。别的平台上这些文字由 message-archive 在送达之后记，记法相同；
 - 图片、视频、音频按 `outboundMediaMessage` 的格式记，会话服务据此还原成附件；
 - 给的是存储地址的文件同样按这个格式记（描述位记文件名，`metadata` 另记原样的 `ref` 与 `name`），会话服务给它签发下载句柄。这样的文件以 `[文件: 名称 | ref:…]` 进入模型上下文与记忆，与 QQ 等平台不同：image-sender 只归档图片、音频、视频，那些平台上发出的文件不进历史；
 - 不是存储地址的文件（网址、data URL）签不出句柄，记成事件标记 `[文件] 名称`，内容不进历史；
 - 带 `skipArchive` 的附件（`history_ref` 重发，原图已在历史里）不记。
 
-记完之后发出的 `outbound:delivered` 快照给附件标上 `skipArchive`，image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由它补视觉描述。存档服务不在场或写入失败时回执失败。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败时回执失败，已写成的几条不撤回，发起方重发后这几条会重复。
+记完之后发出的 `outbound:delivered` 快照不带文字、附件标上 `skipArchive`，message-archive 与 image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由 image-sender 补视觉描述。存档服务不在场或写入失败时回执失败。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败时回执失败，已写成的几条不撤回，发起方重发后这几条会重复。
 
 本插件仍以 `webui` 平台名登记一个平台适配器，平台档、会话范围的候选与用户关系认的平台名里才有它；连接状态数的是打开着的 `/session` 连接。WebUI 的会话不经这个适配器收发，它的 `sendMessage` 一律拒绝并写明原因。
 

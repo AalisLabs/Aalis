@@ -369,7 +369,7 @@ describe('describeUnmet：启动告警、诊断与回执里的一句', () => {
         '缺少服务 llm（model 已停用）',
         '缺少服务 embedding（没有已装的插件提供）',
         '缺少服务 sd（d → 没有已装的插件提供 se）',
-        '缺少服务 sa（b → 互相等待成环：a和b）',
+        '缺少服务 sa（b → 互相等待成环：a、b）',
         '缺少服务 llm（e → f 在运行但没有提供 sf）',
         '等待 x 启动',
         '等待 z 的旧实例停下',
@@ -416,8 +416,8 @@ describe('failureText：插件失败给人看的说明', () => {
     ],
     [
       { code: 'provides-not-registered', services: ['a', 'b'] },
-      '声明提供 a和b，但激活完成时没有登记这些服务',
-      'Declares that it provides a and b, but had not registered them when activation finished',
+      '声明提供 a、b，但激活完成时没有登记这些服务',
+      'Declares that it provides a, b, but had not registered them when activation finished',
     ],
     [
       { code: 'exclusive-conflict', service: 'llm' },

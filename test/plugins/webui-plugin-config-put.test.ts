@@ -402,7 +402,7 @@ describe('PUT /api/plugins/:name/config 保存前校验：拦新不追旧', () =
     const reply = await api.putPlugin('target', { mode: 'zzz' });
     expect(reply.status).toBe(400);
     expect((reply.body as { issues: unknown }).issues).toEqual([
-      { path: 'mode', message: '不是可选值（"a"和"b"）之一', kind: 'invalid', code: 'not-option' },
+      { path: 'mode', message: '不是可选值（"a"、"b"）之一', kind: 'invalid', code: 'not-option' },
     ]);
     expect(store.getPluginConfig('target').mode).toBe('a');
   });
@@ -441,7 +441,7 @@ describe('PUT /api/plugins/:name/config 保存前校验：拦新不追旧', () =
     const reply = await api.putPlugin('target', { tags: ['legacy', 'other'] });
     expect(reply.status).toBe(400);
     expect((reply.body as { issues: unknown }).issues).toEqual([
-      { path: 'tags[1]', message: '不是可选值（"x"和"y"）之一', kind: 'invalid', code: 'not-option' },
+      { path: 'tags[1]', message: '不是可选值（"x"、"y"）之一', kind: 'invalid', code: 'not-option' },
     ]);
     expect(store.getPluginConfig('target').tags).toEqual(['legacy']);
   });

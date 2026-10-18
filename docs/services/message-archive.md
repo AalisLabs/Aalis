@@ -60,6 +60,8 @@ export interface MessageArchiveService {
 
 依赖：归档必须落到某个持久层。参考实现用 `memory`（`required`）+ `media`（`optional`，仅做附件识别）。
 
+送达快照：参考实现另监听 `outbound:delivered`，把不是她回复的出站文字（指令的回复、宿主提示）按 schema-message 的 `outboundMarkerMessage` 记进会话历史（快照里文字为空的不记）。这项职责不在 `MessageArchiveService` 契约里，替换实现要同样做（见下面的骨架），否则房间与终端会话里的这类消息不落库，只在实时推送里。
+
 manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `export const`）：
 
 ```jsonc
@@ -82,7 +84,7 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import { definePlugin, events, logger, provide } from '@aalis/core';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
+import { type IncomingMessage, type Message, outboundMarkerMessage } from '@aalis/schema-message';
 
 export default definePlugin({
   name: '@aalis/plugin-my-archive',
@@ -109,6 +111,11 @@ export default definePlugin({
     };
 
     provide.use(messageArchive, service);
+    // 送达之后记不是她回复的出站文字
+    events.use.on('outbound:delivered', async msg => {
+      const marker = outboundMarkerMessage(msg);
+      if (marker) await memory.use.saveMessage(msg.sessionId, { ...marker, timestamp: Date.now() });
+    });
   },
 });
 ```

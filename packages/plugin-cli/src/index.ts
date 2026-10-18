@@ -242,36 +242,37 @@ function startCli(caps: Caps): void {
     }
     return [`${label} ${att.name ?? path.split('/').pop() ?? ''}`, size, path].filter(Boolean).join(' · ');
   }
-  function sendAttachments(msg: OutgoingMessage): void {
-    const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
-    // 同步认领：发起方 await emit 之后就要能等到它。消息里的文字先写（非空时），再依次写各附件；写不出时回执交出原因。
-    // 文字不是流式正文的整条重复，不消耗流式标记
-    msg.delivery = (async () => {
-      try {
-        if (msg.content.trim()) await adapter.sendMessage(msg.sessionId, msg.content);
-        for (const att of attachments) await adapter.sendMessage(msg.sessionId, await attachmentLine(att));
-        void events.use.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
-        return { ok: true as const };
-      } catch (err) {
-        return { ok: false as const, error: textOf(err) };
-      }
-    })();
+  /** 附件消息：文字先写（非空时），再依次写各附件。文字不是流式正文的整条重复，不消耗流式标记 */
+  async function writeAttachments(msg: OutgoingMessage, attachments: MessageAttachment[]): Promise<void> {
+    if (msg.content.trim()) await adapter.sendMessage(msg.sessionId, msg.content);
+    for (const att of attachments) await adapter.sendMessage(msg.sessionId, await attachmentLine(att));
   }
 
   events.use.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
-    if (msg.attachments?.length) {
-      sendAttachments(msg);
-      return;
-    }
-    // 纯文本同样写出即算送达，同步认领回执（作品通知等要等它）。同一轮已流式输出时，agent 的整条回复是重复、
-    // 正文早已写出；系统/指令消息不是流式正文，照常显示。content 已由网关按会话的语言渲染（网关缺席时是原文）
-    const written =
-      msg.source === 'agent' && tui?.consumeStreamedSend()
+    const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
+    // 纯文本：同一轮已流式输出时，agent 的整条回复是重复、正文早已写出；系统/指令消息不是流式正文，照常显示。content 已由
+    // 网关按会话的语言渲染（网关缺席时是原文）
+    const written = attachments.length
+      ? writeAttachments(msg, attachments)
+      : msg.source === 'agent' && tui?.consumeStreamedSend()
         ? Promise.resolve()
         : adapter.sendMessage(msg.sessionId, msg.content);
+    // 出站的平台另有在场的适配器（如 owner 从 WebUI 驱动这个会话）由那个平台认领并记进历史；回执已被别的入口认领的不覆盖。
+    // 这两种照样写到终端，不认领、不发 outbound:delivered，免得再记一份。平台没有适配器的（如工作流注入的）由终端认领
+    const handedOff =
+      msg.platform !== adapter.platform && getPlatformAdapters(caps.platform).some(a => a.platform === msg.platform);
+    if (handedOff || msg.delivery) {
+      written.catch(err => logger.use.warn('[cli] 写到终端失败:', err));
+      return;
+    }
+    // 写出即算送达，同步认领回执（作品通知等要等它）；写不出时回执交出原因。送达之后发 outbound:delivered，不是她回复的
+    // 文字与她发出的附件据此记进历史
     msg.delivery = written.then(
-      () => ({ ok: true as const }),
+      () => {
+        void events.use.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });
+        return { ok: true as const };
+      },
       err => ({ ok: false as const, error: textOf(err) }),
     );
   });

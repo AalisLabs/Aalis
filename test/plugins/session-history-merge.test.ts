@@ -10,6 +10,7 @@ import {
 import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   type Message,
+  outboundMarkerMessage,
   outboundMediaMessage,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -568,5 +569,27 @@ describe('服务端归并的条目', () => {
     expect(items[5]).toMatchObject({ attachments: [{ kind: 'audio', src: 'data:/a.wav' }] });
     expect(new Set(items.map(i => i.itemId)).size).toBe(items.length);
     expect(mergeArchive(raw, context(), new Map()).map(i => i.itemId)).toEqual(items.map(i => i.itemId));
+  });
+
+  it('回合里发出的 [错误] 记成的事件标记：还原出的通知带这一轮的 id，与实时推送一样并进回合；没记回合的不带', () => {
+    const marker = (content: string, turnId?: string) => {
+      const message = outboundMarkerMessage({ sessionId: 'zz', platform: 'onebot', source: 'system', content, turnId });
+      if (!message) throw new Error('outboundMarkerMessage 没给出事件标记');
+      return message;
+    };
+    const items = mergeArchive(
+      [
+        { role: 'assistant', content: '答', timestamp: 1, metadata: { [WellKnownMetadataKeys.TurnId]: 'turn-9' } },
+        { ...marker('[错误] 出错了', 'turn-9'), timestamp: 2 },
+        { ...marker('[系统] 回合外的提示'), timestamp: 3 },
+      ],
+      context(),
+      new Map(),
+    );
+    expect(items.map(i => [i.kind, i.turnId])).toEqual([
+      ['agent-message', 'turn-9'],
+      ['notice', 'turn-9'],
+      ['notice', undefined],
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 import { type CSSProperties, Fragment, useState } from 'react';
 import { Disclosure } from '../components/Disclosure';
-import { percent, tokens } from '../format';
+import { compactNumber, percent } from '../format';
 import { tr } from '../language';
 import { usePluginNames } from '../plugins/list';
 import type { SessionSummary } from '../protocol/session-client';
@@ -82,7 +82,7 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
           {swatch && <Swatch swatch={swatch} />}
           {label}
         </th>
-        <td>{tokens(count)}</td>
+        <td>{compactNumber(count)}</td>
         <td>{share(count)}</td>
       </tr>
     );
@@ -116,7 +116,7 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
           {contextWindow > 0 && (
             <tr>
               <th scope="row">{tr('contextWindow')}</th>
-              <td>{tokens(contextWindow)}</td>
+              <td>{compactNumber(contextWindow)}</td>
               <td />
             </tr>
           )}
@@ -134,7 +134,7 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
                       {part.label}
                     </Disclosure>
                   </th>
-                  <td>{tokens(part.tokens)}</td>
+                  <td>{compactNumber(part.tokens)}</td>
                   <td>{share(part.tokens)}</td>
                 </tr>
                 {expanded === part.label &&
@@ -154,8 +154,8 @@ export function UsageTable({ usage, session }: { usage: UsageItem; session?: Ses
       {session?.tokens && (
         <p className="usage-total">
           {tr(session.childCount > 0 ? 'usageTotalWithChildren' : 'usageTotal', {
-            input: tokens(session.tokens.input),
-            output: tokens(session.tokens.output),
+            input: compactNumber(session.tokens.input),
+            output: compactNumber(session.tokens.output),
           })}
         </p>
       )}

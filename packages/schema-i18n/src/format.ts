@@ -12,6 +12,8 @@ interface FormatOptions {
   readonly escape?: 'markdown';
   /** 参数里的文字对象怎么渲染 */
   readonly nested: (text: TextRef) => string;
+  /** 罗列（`{x, list}`）的分隔符，按 language 取（见 resolve.ts 的 listSeparator） */
+  readonly listSeparator: () => string;
 }
 
 type Params = Readonly<Record<string, TextParam>>;
@@ -154,11 +156,14 @@ function formatArgument(arg: Argument, params: Params, o: FormatOptions, count: 
     case 'time':
     case 'datetime':
       return dateFormat(arg.type, arg.style, o).format(finite(value));
-    case 'list':
-      return cached(
-        `list\0${arg.listType}\0${o.language}`,
-        () => new Intl.ListFormat(o.language, { type: arg.listType }),
-      ).format(list(value).map(element => item(element, o)));
+    case 'list': {
+      const items = list(value).map(element => item(element, o));
+      // 罗列只用分隔符拼接，不加「和」「and」：Intl 的窄写法各语言、各浏览器带不带连接词不一。「或」照常用 Intl
+      if (arg.listType === 'conjunction') return items.join(o.listSeparator());
+      return cached(`list-or\0${o.language}`, () => new Intl.ListFormat(o.language, { type: 'disjunction' })).format(
+        items,
+      );
+    }
     case 'lines':
       return list(value)
         .map(element => item(element, o))

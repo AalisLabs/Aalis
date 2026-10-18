@@ -104,7 +104,7 @@ describe('翻译页', () => {
     const detail = (id: string, language: string) => host.data('translation', id, { rowKey: rowKey(language) });
 
     expect(resolveText((await detail('issues', 'en')) as never, ['en'])).toBe('Missing: d\nConflicts: b\nBroken: c');
-    expect(resolveText((await detail('issues', 'ja')) as never, ['zh-CN'])).toBe('缺：b、c和d\n过时：b\n冲突：a');
+    expect(resolveText((await detail('issues', 'ja')) as never, ['zh-CN'])).toBe('缺：b、c、d\n过时：b\n冲突：a');
     expect(codeOf(await detail('locale', 'en'))).toBe(
       [
         "import { defineLocale } from '@aalis/schema-i18n';",

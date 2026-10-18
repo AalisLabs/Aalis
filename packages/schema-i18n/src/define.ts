@@ -4,6 +4,7 @@ import { formatMessage } from './format.js';
 import { canonicalLanguage } from './locale.js';
 import { parseMessage } from './message.js';
 import type { Params, TextArgs } from './params.js';
+import { listSeparator } from './resolve.js';
 import { isTextRef, type TextParam, type TextRef } from './text-ref.js';
 
 /** 一个字典：所属包名、原文语言、原文表与各语言的译文表。t() 本身就是一个，checkTexts 也收目录条目 */
@@ -91,7 +92,8 @@ function renderSource(
   language: string,
 ): string {
   const message = parseMessage(template);
-  return (message && formatMessage(message, params ?? {}, { language, nested: text => text.source })) ?? template;
+  const options = { language, nested: (text: TextRef) => text.source, listSeparator: () => listSeparator(language) };
+  return (message && formatMessage(message, params ?? {}, options)) ?? template;
 }
 
 /** value 的前 max 个码点，不从代理对中间切开 */

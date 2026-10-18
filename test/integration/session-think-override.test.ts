@@ -145,7 +145,7 @@ describe('会话的深度思考档位端到端', () => {
     const view = String(await commands.execute('session', cmdInput('s1', [])));
     expect(view).toContain('深度思考: max');
     expect(view).toContain('当前模型没有这一档，按默认');
-    expect(view).toContain('off（关）和on（开），默认 on');
+    expect(view).toContain('off（关）、on（开），默认 on');
 
     await commands.execute('session.set', cmdInput('s1', ['-m', `${PROVIDER}/plain`]));
     expect('think' in (await turn('s1')).request, '不能调的模型不带').toBe(false);
