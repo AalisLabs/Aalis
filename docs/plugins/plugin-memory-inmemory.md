@@ -37,7 +37,7 @@ definePlugin({
 
 ## 工作方式
 
-- 消息按会话 ID 存放在进程内存中，活跃历史与 `archiveOldest` 归档的消息分开保存
+- 消息按会话 ID 存放在进程内存中，每个会话一个按写入序的列表，`archiveSpan` 只给归档的消息打标记，留下的原文与归档的照原顺序交错。`getHistory`、`getFullHistory` 与 `archiveSpan` 数位置都按写入序，不按时间戳重排：假定时间戳随写入递增，这时与 sqlite、mongodb 按时间排的结果相同
 - 结构化元数据按命名空间与 key 存放，写入和读出时均做深拷贝
 - `clearAll()` 清空全部会话的消息与归档，不清元数据；各命名空间由归属插件经 `memory:clear` 自行清理
 - 应用重启后数据丢失

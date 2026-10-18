@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type CompressionUsage, compressionDue } from '../../packages/api-memory/src/index.js';
+import { type CompressionUsage, compressionDue, compressionLine } from '../../packages/api-memory/src/index.js';
 
 // ════════════════════════════════════════════════════════════
+// compressionLine 是用量一维的线：压缩线为正时 E = min(压缩线 × 窗口, 裁剪预算)，压缩线为 0 或没设时取裁剪预算。
 // compressionDue 有两维，任一维到线即该压缩。
-// 用量一维：有效阈值 E = min(压缩线 × 窗口, 裁剪预算)。用量到 E 或这次被硬裁剪过、且可压缩部分至少是 E 的一半时
-// 该压缩；压缩线为 0 或没设时不按用量判。
+// 用量一维：压缩线为正时，用量到 E 或这次被硬裁剪过、且可压缩部分至少是 E 的一半时该压缩；压缩线为 0 或没设时不按
+// 用量判（这时 compressionLine 取的裁剪预算只是上限，不是触发线）。
 // 条数一维：会话历史的条数到条数线即该压缩；条数线为 0 或没设时不按条数判。
 // ════════════════════════════════════════════════════════════
 
@@ -19,8 +20,20 @@ const usage = (used: number, compressible: number, more: Partial<CompressionUsag
   ...more,
 });
 
+describe('compressionLine', () => {
+  it('压缩线为正时取压缩线乘窗口与裁剪预算中较小的那个', () => {
+    expect(compressionLine(usage(0, 0), 0.5)).toBe(50_000);
+    expect(compressionLine(usage(0, 0), 0.95), '压缩线写得比裁剪预算还高时以裁剪预算为准').toBe(90_000);
+  });
+
+  it('压缩线为 0 或没设时取裁剪预算', () => {
+    expect(compressionLine(usage(0, 0), 0)).toBe(90_000);
+    expect(compressionLine(usage(0, 0), undefined)).toBe(90_000);
+  });
+});
+
 describe('compressionDue：用量一维', () => {
-  it('压缩线为 0 或没设时不判用量，被硬裁剪过也不判', () => {
+  it('压缩线为 0 或没设时不判用量：用量超过裁剪预算、被硬裁剪过也不判', () => {
     for (const trimmed of [false, true]) {
       expect(compressionDue(usage(99_000, 99_000, { trimmed }), {})).toBe(false);
       expect(compressionDue(usage(99_000, 99_000, { trimmed }), { compressAt: 0 })).toBe(false);

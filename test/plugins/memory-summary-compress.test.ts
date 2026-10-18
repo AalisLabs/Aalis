@@ -180,6 +180,29 @@ describe('plugin-memory-summary: 落笔前核对', () => {
     expect((await active(memory, 's')).map(m => m.content)).toEqual(['第 0 条', '第 1 条', '第 3 条']);
     expect(statuses).toEqual(['s:start', 's:error']);
   });
+
+  it('写摘要与归档之间又追加了一条：它在段外，照常压成，追加的那条留在活跃历史里', async () => {
+    const { memory, compression, statuses } = await setup();
+    await seed(memory, 's', 4);
+    const save = memory.saveMetadata.bind(memory);
+    memory.saveMetadata = async (namespace, key, data) => {
+      await save(namespace, key, data);
+      if (namespace === 'summary') await memory.saveMessage(key, { role: 'user', content: '追加' });
+    };
+    const archive = memory.archiveSpan.bind(memory);
+    const spans: unknown[] = [];
+    memory.archiveSpan = (sessionId, span) => {
+      spans.push(span);
+      return archive(sessionId, span);
+    };
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(spans).toEqual([{ count: 4, keep: [] }]);
+    expect(await summaryOf(memory, 's')).toBe('SUMMARY-TEXT');
+    expect((await active(memory, 's')).filter(m => m.kind !== MARKER.kind).map(m => m.content)).toEqual(['追加']);
+    expect(statuses).toEqual(['s:start', 's:done']);
+  });
 });
 
 describe('plugin-memory-summary: 没压成', () => {

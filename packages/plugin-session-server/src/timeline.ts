@@ -23,7 +23,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TokenUsageEvent } from '@aalis/api-agent';
 import type { Approval, ApprovalSettlement } from '@aalis/api-approval';
 import type { HookContextMap } from '@aalis/api-hooks';
-import type { MemoryService } from '@aalis/api-memory';
+import { compressionLine, type MemoryService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
 import type {
   SessionItem,
@@ -294,12 +294,18 @@ export function createTimeline(deps: TimelineDeps) {
   const unsettledOf = (sessionId: string) =>
     [...turns.values()].filter(turn => turn.sessionId === sessionId && (turn.end === undefined || turn.receipts > 0));
 
-  /** 压缩线：会话的自动压缩线与裁剪预算占窗口的比例中较小的那个，压缩实际在这里发生（见 api-memory 的 compressionDue） */
+  /**
+   * 压缩线：会话的自动压缩线与裁剪预算占窗口的比例中较小的那个，压缩实际在这里发生（见 api-memory 的 compressionLine）；
+   * 不知道窗口（为 0）时这个比例算不出，给压缩线本身
+   */
   const withCompressAt = (sessionId: string, { item, platform }: { item: Item<'usage'>; platform: string }) => {
     const compressAt = deps.compressAt(sessionId, platform);
     return compressAt === undefined
       ? item
-      : { ...item, compressAt: Math.min(compressAt, item.tokenBudget / item.contextWindow) };
+      : {
+          ...item,
+          compressAt: item.contextWindow > 0 ? compressionLine(item, compressAt) / item.contextWindow : compressAt,
+        };
   };
 
   const planItem = (entries: TodoItem[]): Item<'plan'> => ({

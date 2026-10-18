@@ -21,7 +21,7 @@ import {
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
-import { type Collection, type Db, MongoClient } from 'mongodb';
+import { type Collection, type Db, type FindCursor, MongoClient } from 'mongodb';
 
 const configSchema = defineConfig({
   uri: {
@@ -112,6 +112,15 @@ interface MetadataDocument {
   updatedAt?: Date;
 }
 
+/**
+ * 游标按 limit 取前若干条：limit 为 0 时为空（MongoDB 的 limit(0) 表示不限条数，不能透传）；为 Infinity 时不设
+ * （limit 要是整数）
+ */
+async function limited<T>(cursor: FindCursor<T>, limit: number): Promise<T[]> {
+  if (limit === 0) return [];
+  return (limit === Infinity ? cursor : cursor.limit(limit)).toArray();
+}
+
 /** @internal 只为测试导出：以替身集合直接构造（经 apply 会连真实的 mongod），不是公开 API */
 export class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
@@ -169,10 +178,10 @@ export class MongoMemoryService implements MemoryService {
     // sort 必须带 _id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
     // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
     // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。_id 单调递增即插入序。
-    const cursor = this.collection.find({ sessionId, archived: { $ne: true } }).sort({ timestamp: -1, _id: -1 });
-    // limit 要是整数，读全部就不设
-    if (limit !== Infinity) cursor.limit(limit);
-    const docs = await cursor.toArray();
+    const docs = await limited(
+      this.collection.find({ sessionId, archived: { $ne: true } }).sort({ timestamp: -1, _id: -1 }),
+      limit,
+    );
     docs.reverse();
     return docs.map(doc => this.docToMessage(doc));
   }
@@ -183,7 +192,7 @@ export class MongoMemoryService implements MemoryService {
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     // 同 getHistory：_id 次键保证同毫秒消息按插入序稳定返回
-    const docs = await this.collection.find({ sessionId }).sort({ timestamp: -1, _id: -1 }).limit(limit).toArray();
+    const docs = await limited(this.collection.find({ sessionId }).sort({ timestamp: -1, _id: -1 }), limit);
     docs.reverse();
     return docs.map(doc => this.docToMessage(doc));
   }
@@ -207,7 +216,7 @@ export class MongoMemoryService implements MemoryService {
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
+    const limit = Math.max(0, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     const filter: Record<string, unknown> = {
       archived: { $ne: true },
@@ -228,7 +237,7 @@ export class MongoMemoryService implements MemoryService {
       filter.sessionId = { $nin: query.excludeSessionIds };
     }
 
-    const docs = await this.collection.find(filter).sort({ timestamp: -1 }).limit(limit).toArray();
+    const docs = await limited(this.collection.find(filter).sort({ timestamp: -1 }), limit);
     docs.reverse();
 
     return docs.map(d => ({
@@ -237,18 +246,18 @@ export class MongoMemoryService implements MemoryService {
     }));
   }
 
-  async archiveOldest(sessionId: string, count: number): Promise<number> {
-    // MongoDB 的 limit(0) 表示不限条数，0 条要在这里挡下，否则归档全部
-    if (count === 0) return 0;
-    // 与 getHistory 同序：_id 次键让同毫秒的消息按插入序归档
-    const docs = await this.collection
-      .find({ sessionId, archived: { $ne: true } })
-      .sort({ timestamp: 1, _id: 1 })
-      .limit(count)
-      .project({ _id: 1 })
-      .toArray();
+  async archiveSpan(sessionId: string, { count, keep }: { count: number; keep: readonly number[] }): Promise<number> {
+    // 与 getHistory 同序：_id 次键让同毫秒的消息按插入序数位置
+    const docs = await limited(
+      this.collection
+        .find({ sessionId, archived: { $ne: true } })
+        .sort({ timestamp: 1, _id: 1 })
+        .project({ _id: 1 }),
+      count,
+    );
+    const kept = new Set(keep);
     const result = await this.collection.updateMany(
-      { _id: { $in: docs.map(d => d._id) } },
+      { _id: { $in: docs.filter((_, i) => !kept.has(i)).map(d => d._id) } },
       { $set: { archived: true } },
     );
     return result.modifiedCount;
@@ -318,11 +327,12 @@ export class MongoMemoryService implements MemoryService {
 
   async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
     // 找到最近含 oldText 的消息
-    const docs = await this.collection
-      .find({ sessionId, content: { $regex: oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') } })
-      .sort({ timestamp: -1 })
-      .limit(recentLimit)
-      .toArray();
+    const docs = await limited(
+      this.collection
+        .find({ sessionId, content: { $regex: oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') } })
+        .sort({ timestamp: -1 }),
+      recentLimit,
+    );
     if (docs.length === 0) return 0;
 
     let count = 0;

@@ -5,7 +5,7 @@ import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
 import { estimateTextTokens, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import type { CompressionLines, MemoryService } from '@aalis/api-memory';
-import { clearMetadataNamespaces, compression, compressionDue, memory } from '@aalis/api-memory';
+import { clearMetadataNamespaces, compression, compressionDue, compressionLine, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { roomClass, type SessionSetting, sessionManager } from '@aalis/api-session-manager';
 import type { BoundOf, Logger } from '@aalis/core';
@@ -397,15 +397,10 @@ async function run(caps: Caps): Promise<void> {
     return { compressAt: resolved?.compressAt ?? DEFAULT_COMPRESS_AT, historyLimit: resolved?.historyLimit };
   }
 
-  /**
-   * 这个会话的压缩线，按最近一次用量算：与 compressionDue 用量一维的线相同（自动压缩线 × 窗口与裁剪预算取小），自动压缩线为 0
-   * 时取裁剪预算；还没有用量时为 Infinity（不封顶）
-   */
+  /** 这个会话的压缩线（compressionLine），按最近一次用量算；还没有用量时为 Infinity（不封顶） */
   function usageLine(sessionId: string): number {
     const usage = lastUsages.get(sessionId);
-    if (!usage) return Infinity;
-    const { compressAt } = linesOf(sessionId, usage.platform);
-    return compressAt ? Math.min(compressAt * usage.contextWindow, usage.tokenBudget) : usage.tokenBudget;
+    return usage ? compressionLine(usage, linesOf(sessionId, usage.platform).compressAt) : Infinity;
   }
 
   /**
@@ -547,7 +542,7 @@ async function run(caps: Caps): Promise<void> {
     await store.upsertSummary(sessionId, summary);
     let archived: number;
     try {
-      archived = await provider.archiveOldest(sessionId, cut);
+      archived = await provider.archiveSpan(sessionId, { count: cut, keep: [] });
     } catch (err) {
       // 摘要已写、历史没归档：下一次压缩会把同一段历史再并进这份新摘要，故回滚到写入前
       try {

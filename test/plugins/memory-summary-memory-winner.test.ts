@@ -45,7 +45,8 @@ function gatedLLM() {
 
 class StubMemory {
   readonly metadata = new Map<string, Record<string, unknown>>();
-  archiveCalls = 0;
+  /** 每次归档收到的那一段 */
+  readonly spans: Array<{ count: number; keep: readonly number[] }> = [];
   constructor(
     readonly history: Message[] = [],
     private readonly archiveError?: Error,
@@ -58,10 +59,10 @@ class StubMemory {
     return [...this.history];
   }
   async clearSession(): Promise<void> {}
-  async archiveOldest(_sessionId: string, count: number): Promise<number> {
-    this.archiveCalls++;
+  async archiveSpan(_sessionId: string, span: { count: number; keep: readonly number[] }): Promise<number> {
+    this.spans.push(span);
     if (this.archiveError) throw this.archiveError;
-    return this.history.splice(0, count).length;
+    return this.history.splice(0, span.count).length;
   }
   async saveMetadata(ns: string, key: string, data: Record<string, unknown>): Promise<void> {
     this.metadata.set(`${ns}/${key}`, data);
@@ -120,7 +121,7 @@ async function switchWinnerMidway({ app, host }: Booted, gated: ReturnType<typeo
 /** 等这次操作走完：归档之后只剩回滚这几步微任务，一拍宏任务足够落定 */
 async function settle(first: StubMemory, pending: Promise<unknown>): Promise<void> {
   await pending;
-  await vi.waitFor(() => expect(first.archiveCalls).toBe(1));
+  await vi.waitFor(() => expect(first.spans).toHaveLength(1));
   await new Promise<void>(r => setTimeout(r, 20));
 }
 
@@ -141,10 +142,11 @@ describe.each(paths)('plugin-memory-summary %s：一次操作只认开头取到�
     await switchWinnerMidway(booted, gated, second);
     await settle(first, pending);
 
+    expect(first.spans, '归档切分点之前的 40 条，一条不留').toEqual([{ count: 40, keep: [] }]);
     expect(first.history, 'A 上的历史应全部归档').toHaveLength(0);
     expect(first.summary(), '摘要应写在 A').toBe('SUMMARY-FROM-A');
     expect(second.summary(), 'B 不得出现摘要').toBeUndefined();
-    expect(second.archiveCalls).toBe(0);
+    expect(second.spans).toEqual([]);
   });
 
   it('归档失败：摘要回滚在 A 上，B 原有摘要不被覆盖', async () => {
