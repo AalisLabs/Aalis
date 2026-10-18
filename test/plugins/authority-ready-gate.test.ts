@@ -8,6 +8,7 @@ import { type StorageRootInfo, type StorageService, storage } from '../../packag
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -34,11 +35,11 @@ const ROOT: StorageRootInfo = {
 let dir = '';
 const hosts: PageHost[] = [];
 
-/** 经闸门调权限页的等级动作（调用者是 owner），回那句回执 */
+/** 经闸门调权限页的等级动作（调用者是 owner），回那句回执的原文 */
 async function act(pages: PageHost, action: string, body: Record<string, unknown>): Promise<string> {
   const reply = await pages.act('authority', action, body);
   if (reply.status !== 200) throw new Error(`${reply.status} ${JSON.stringify(reply.body)}`);
-  return (reply.body as { message: string }).message;
+  return toSource((reply.body as { message: string | TextRef }).message);
 }
 const setLevel = (pages: PageHost, userId: string, level: number) =>
   act(pages, 'setUserLevel', { rowKey: `onebot:${userId}`, input: { level } });

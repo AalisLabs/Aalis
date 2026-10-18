@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
+import { services } from '../../packages/core/src/index.js';
+import type { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
@@ -35,11 +38,17 @@ async function makeApp(appConfig: Record<string, unknown> = {}) {
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
   caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
-  opts: { appConfig?: Record<string, unknown>; confirm?: 'always' } = {},
+  opts: { appConfig?: Record<string, unknown>; confirm?: 'always'; memberOf?: string[] } = {},
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp(opts.appConfig);
   // 宿主侧按根激活取绑定接口：探针工具的登记与真实插件走同一条门面
-  const host = app.bind({ tools });
+  const host = app.bind({ tools, services });
+  // 成员关系只在实现上（契约不加方法），测试取这次激活的实例
+  if (opts.memberOf && caller.userId) {
+    const manager = host.services.use.get(authority) as AuthorityManager | undefined;
+    if (!manager) throw new Error('authority 服务未注册');
+    manager.setUserGroups({ platform: caller.platform, userId: caller.userId }, opts.memberOf);
+  }
   let ran = false;
   host.tools.use.register({
     groups: ['probe'],
@@ -137,5 +146,17 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     );
     expect(always.ran).toBe(false);
     expect(always.out).toContain('审批服务不在');
+  });
+
+  it('权限组：组里写 tool-group:probe 的 0 级成员能调 probe 组里门槛 1 的工具，别人照旧不能', async () => {
+    const appConfig = { authorityGroups: { probers: ['tool-group:probe'] } };
+    const member = await runTool(
+      'sensitive',
+      { platform: 'onebot', userId: 'm1' },
+      { appConfig, memberOf: ['probers'] },
+    );
+    expect(member.ran, '守卫没把工具的分组交给权限服务，或权限服务没按所属组放行').toBe(true);
+    const other = await runTool('sensitive', { platform: 'onebot', userId: 'm2' }, { appConfig });
+    expect(other.ran).toBe(false);
   });
 });

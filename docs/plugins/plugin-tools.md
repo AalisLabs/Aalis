@@ -58,7 +58,8 @@ export default definePlugin({
   owner 可经 authority 配置 `authorityOverrides`（能力键 `tool:<name>` → 整数等级）改写该等级，
   `confirmOverrides` 同键改写确认要求，无需改插件。
 - **执行守卫**：`setExecutionGuard(guard)` 注入统一钩子（典型为 plugin-authority
-  的能力统一闸与 owner 审批）；所有 `execute()` 调用前过钩子，调用上下文的回合与调用 id、`inbound` 一并交给守卫。
+  的能力统一闸与 owner 审批）；所有 `execute()` 调用前过钩子，调用上下文的回合与调用 id、`inbound` 与工具的分组（`toolGroups`，
+  权限组的 `tool-group:` 条目按它覆盖）一并交给守卫。
   传 `undefined` 摘掉守卫，plugin-authority 停用时就这样摘掉。未注入守卫（没装或停用了 plugin-authority）时 fail-closed：等同所有人都是默认等级、没人能确认，需要更高等级
   （restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的工具一律拒绝并提示缺少权限插件，
   默认等级可用且无需确认的工具照常执行。

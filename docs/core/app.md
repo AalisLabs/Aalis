@@ -111,7 +111,7 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 
 ## 基础指令
 
-App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/authority`、`/level`。
+App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-commands` 提供 `/help`、`/status`、`/clear`、`/shutdown`、`/restart`，`@aalis/plugin-authority` 提供 `/authority`、`/level`、`/perm`。
 
 | 指令 | 可见性 | 说明 |
 |---|---|---|
@@ -121,8 +121,9 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 | `/clear all [--type/-t <type>]` | restricted | 全局清空指定类型记忆 |
 | `/shutdown` | restricted | 关闭应用 |
 | `/restart` | restricted | 重启应用 |
-| `/authority [target]` | restricted（risk: sensitive，等级 1） | 查看自己或指定用户的权限等级（owner 显示 ∞） |
+| `/authority [target]` | restricted（risk: sensitive，等级 1） | 查看自己或指定用户的权限等级与所属权限组（owner 显示 ∞） |
 | `/level <target> <level>` | restricted | owner 给某外部身份设置权限等级（整数；0 默认，负数封禁；仅 owner 可用，防自授） |
+| `/perm <target> [groups]` | restricted | owner 覆盖式设某外部身份所属的权限组（组名用空格隔开，不给即清空；仅 owner 可用，防自授） |
 
 ## 插件发现与配置文档（宿主，不在 core）
 

@@ -2,11 +2,11 @@ import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
-// UserStore —— users.json v5 数据层（数字等级单轴存储）
+// UserStore —— users.json v5 数据层（等级与权限组成员的存储）
 //
-// 单 owner 终态：每个外部身份恰好一个**整数等级**（默认 0，封禁=负数；owner 不入表）。
-// 无能力 glob、无密码、无绑定、无委托树。非 v5 文件按加载失败处理（记 error、拒写），不做迁移。
-// 裁决在 authority-manager.ts；等级数字引擎在 authority-model.ts。
+// 单 owner 终态：每个外部身份恰好一个**整数等级**（默认 0，封禁=负数；owner 不入表），可属于任意几个权限组
+// （记组名，组定义在宿主配置）。无能力 glob、无密码、无绑定、无委托树。非 v5 文件按加载失败处理（记 error、拒写），
+// 不做迁移；v5 没有 groups 字段的记录即没有组。裁决在 authority-manager.ts；裁决引擎在 authority-model.ts。
 // ════════════════════════════════════════════════════════════
 
 /** users.json v5 单用户记录 */
@@ -15,6 +15,13 @@ export interface UserRecord {
   level?: number;
   /** 可选备注（这人是谁） */
   note?: string;
+  /** 所属权限组的组名（去重；空数组即没有组，写盘时省掉） */
+  groups?: string[];
+}
+
+/** 记录里还有没有等级、备注或组：什么都不剩的不留在表里 */
+function hasContent(record: UserRecord): boolean {
+  return record.level !== undefined || !!record.note || !!record.groups?.length;
 }
 
 const USERS_VERSION = 5;
@@ -103,7 +110,7 @@ export class UserStore {
       return;
     }
     const users: Record<string, UserRecord> = {};
-    for (const [key, record] of this.users) users[key] = record;
+    for (const [key, { groups, ...rest }] of this.users) users[key] = groups?.length ? { ...rest, groups } : rest;
     const payload = JSON.stringify({ version: USERS_VERSION, users }, null, 2);
     const upTo = this.rev;
     this.dirty = false;
@@ -203,12 +210,16 @@ export class UserStore {
           const clean: UserRecord = {};
           if (typeof r.level === 'number' && Number.isFinite(r.level)) clean.level = r.level;
           if (r.note) clean.note = r.note;
-          if (clean.level !== undefined || clean.note) next.set(key, clean);
+          const groups = Array.isArray(r.groups) ? r.groups.filter(g => typeof g === 'string' && g !== '') : [];
+          if (groups.length > 0) clean.groups = [...new Set(groups)];
+          if (hasContent(clean)) next.set(key, clean);
         }
         for (const key of new Set([...dirtyAtStart, ...this.dirtyKeys.keys()])) {
           const record = this.users.get(key);
-          // 内存里的字段盖过文件的：首次读取前改等级时内存里没有文件里的备注，按整条覆盖会丢掉它
-          if (record) next.set(key, { ...next.get(key), ...record });
+          // 内存里的字段盖过文件的：首次读取前改等级时内存里没有文件里的备注，按整条覆盖会丢掉它。
+          // 合并后什么都不剩的（首次读取前清空了组，文件里也没有等级与备注）删掉，随下次写盘生效
+          const merged = record && { ...next.get(key), ...record };
+          if (merged && hasContent(merged)) next.set(key, merged);
           else next.delete(key);
         }
         this.users = next;

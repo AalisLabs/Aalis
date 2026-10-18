@@ -43,6 +43,7 @@ interface AalisConfig {
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
   deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
   authorityOverrides?: Record<string, number>;      // 单操作最低等级覆盖（能力键 type:name → 整数等级）
+  authorityGroups?: Record<string, string[]>;       // 权限组：组名 → 放行条目（tool:… / command:… 可带通配，tool-group:<分组名>）
   restrictedPolicy?: {                              // 免确认白名单（只免 owner 的 session 档，不放宽授权）
     allow?: string[];                               // 免确认的能力 glob（['*'] 全放）
     duration?: number;                              // 生效时长（秒，0=永久）

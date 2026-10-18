@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**数字等级单轴授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制收敛到一个 `authorize()` 闸与执行守卫里：工具的确认交给 owner 审批（`approvals`），指令的确认向发出者本人核对意图。
+访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**等级与权限组授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制收敛到一个 `authorize()` 闸与执行守卫里：工具的确认交给 owner 审批（`approvals`），指令的确认向发出者本人核对意图。
 
 - 服务注册名：`'authority'`（消费方经 `authority.use` 调用）。
 - 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + 对 `@aalis/api-host-config` 的 `AalisConfig` 的 declaration merging）。
@@ -54,11 +54,11 @@ export interface AuthorityService {
   originOf(turn: OriginTurn): OriginKind;
 
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
-  // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > level >= minLevel
+  // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > level >= minLevel > 所属权限组覆盖
   authorize(identity: UserIdentity | { platform: string; userId?: string },
             request: AuthorizeRequest): string | null;
 
-  // 设 target 外部身份等级（覆盖式整数；level=0 且无备注则清记录）。调用方自保仅 owner 可达。
+  // 设 target 外部身份等级（覆盖式整数；level=0 且记录里没有备注等别的内容则清记录）。调用方自保仅 owner 可达。
   setUserLevel(target: UserIdentity, level: number): void;
   removeUser(platform: string, userId: string): void;
 
@@ -71,7 +71,7 @@ export interface AuthorityService {
 
 ```ts
 // packages/api-authority/src/index.ts
-interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; }
+interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; toolGroups?: readonly string[]; }
 interface UserIdentity { platform: string; userId: string; }
 interface AuthorityUserEntry { platform; userId; isOwner: boolean; level: number; note?: string; }
 type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
@@ -91,6 +91,7 @@ interface ExecutionGuardContext {
   risk?: CapabilityRisk;             // 透传，供派生 minLevel；缺省回退 visibility
   confirm?: CapabilityConfirm;       // 轴 B，owner 也生效
   sessionId; platform; userId?; actor?; args?;
+  toolGroups?: readonly string[];    // 工具所属的工具分组（工具一路由执行器填）：原样转给 authorize，权限组的 tool-group: 条目按它覆盖
   skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
   turnId?; callId?;                  // 工具调用所在回合与这次调用的 id（agent 工具循环填写）
   inbound?: InboundTurn;             // { source?, callerUserId? }：调用所在的入站回合，判发起类别用
@@ -114,6 +115,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | `authorityOverrides?: Record<string, number>` | owner 逐条覆盖某操作最低等级（键 `type:name`），优先于 risk/visibility 派生 |
 | `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 关闭确认，只对授权身份是 owner 的回合生效，别人的回落到插件的声明 |
 | `restrictedPolicy?: { allow?: string[]; duration?: number }` | 免确认白名单（给自动化）；`['*']` 全放。只免 `session` 档，只对授权身份是 owner 的回合生效，不放宽授权 |
+| `authorityGroups?: Record<string, string[]>` | 权限组：组名 → 放行条目（`tool:…`、`command:…` 可带通配，`tool-group:<分组名>`）；只加放行，硬禁与封禁照旧先拒。成员记在参考实现的 users.json 里 |
 | `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级网络策略，`safeFetch` 与 tool-browser 的浏览器网络闸都按它判定（见第 6 节） |
 
 ## 3. 谁提供 / 谁消费
@@ -129,10 +131,10 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | 消费点 | 文件 | 用法 |
 |---|---|---|
 | commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入），返回的清理调 `setExecutionGuard(undefined)` 摘掉 |
-| plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
+| plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`（带上工具的分组 `toolGroups`），非 null 即拦截 |
 | plugin-commands 执行点 | `packages/plugin-commands/src/index.ts` | 人亲手输入的指令带 `confirmIntent`，守卫需要确认时经它问发出者本人 |
 | plugin-gateway 入站 | `packages/plugin-gateway/src/index.ts` | 以 `isOwner` 作 `roomClass` 的 owner 谓词判会话的房间类别，`owner-only` 的跳过触发与流控（结构性放行）；缺席时没有人是 owner |
-| 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用 |
+| 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、权限组、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用；组成员的读写（`setUserGroups`、带组的用户列表）只在 manager 上，不在契约里 |
 
 ## 4. 写一个 provider（替换默认 authority 实现）
 
@@ -143,8 +145,8 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 `AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`originOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
 - **必须**：`isOwner`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
-- **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。
-- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；等级不够即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
+- **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
+- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
 
 ### 4.2 注册（provide）
 
@@ -280,7 +282,9 @@ auth.save();
 
 1. `deniedCapabilities` glob 命中 → **拒**（压过 owner，保 `deny > owner` 不变量；这是配置总闸，非 per-user）。
 2. `isOwner` → **放行**（owner = ∞）。
-3. `level >= minLevel` → 放行；否则拒（封禁 = 负数，自然连 `minLevel=0` 都不过）。
+3. 封禁（`level < 0`）→ **拒**（门槛设成负数、所属组覆盖都不放行）。
+4. `level >= minLevel` → 放行。
+5. 所属权限组的放行条目覆盖这个操作 → 放行；否则拒。`tool-group:` 条目按请求的 `toolGroups` 比，其余按能力串匹配（通配同 `deniedCapabilities`），写法不对的条目不命中；成员指向没定义的组不放行。
 
 `minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > risk 派生 > visibility 兜底`。`capabilityMinLevel`（在 `@aalis/api-authority`）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`。
 
@@ -310,7 +314,7 @@ authority 在 `apply` 时把 `config.network` 注入进程级网络策略：`set
 
 ## 8. 交叉链接
 
-- docs/plugins/plugin-authority.md — 权限系统总览（数字等级单轴的设计与配置面）。
+- docs/plugins/plugin-authority.md — 权限系统总览（等级与权限组的设计与配置面）。
 - docs/concepts/security-model.md — 威胁模型、SSRF / `safeFetch`、插件作者责任边界。
 - docs/api/api-approval.md — owner 审批：在场、排队、时限、应答核验与审计。
 - docs/concepts/service-model.md — DI 按名解析、priority、覆盖同名服务。

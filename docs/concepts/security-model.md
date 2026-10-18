@@ -46,11 +46,11 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 
 权限裁决拆成两条**互相正交**的轴：
 
-- **轴 A · 授权（谁有资格）**：把触发者的**等级**和操作的**最低等级**比大小。
+- **轴 A · 授权（谁有资格）**：把触发者的**等级**和操作的**最低等级**比大小，等级不够时再看触发者所属的**权限组**。
   `resolveAccess` 的优先级如下，首个命中者胜出：
 
   ```
-  deniedCapabilities（全局硬禁 glob，压过 owner）  >  owner(∞)  >  level >= minLevel
+  deniedCapabilities（全局硬禁 glob，压过 owner）  >  owner(∞)  >  封禁（level < 0）  >  level >= minLevel  >  所属权限组覆盖
   ```
 
   - 身份映射到整数等级：默认 `DEFAULT_AUTHORITY = 0`，封禁为负数，
@@ -61,6 +61,12 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
     `visibility` 的 `public→0 / restricted→RESTRICTED_LEVEL(2)`。
   - `deniedCapabilities` 是**配置总闸、glob 硬禁，连 owner 都压过**。
     它不是 per-user 黑名单，而是「这台机器上谁都不许做」的系统级断路器，应谨慎使用。
+  - 封禁先判：等级小于 0 的人一律拒，门槛设成负数、所属组覆盖都不放行。
+  - 权限组（`authorityGroups`）是具名的放行集合，**只加放行**：成员等级不够的操作，所属组里有条目覆盖它即放行
+    （`tool:`、`command:` 可带通配，`tool-group:` 按工具的分组）。按授权身份判，与等级同一个身份；
+    组不放宽确认，需要确认的工具对不是 owner 的成员照旧要 owner 审批；组不开工具分组闸，分组闸在守卫之前。
+    写法不对的条目与没定义的组不放行任何东西（失败关闭）。触及接线之前，组与等级一样：成员在开了 `system`、
+    `code-runner`、`skills` 等分组的会话里，能用不需确认的本机读与执行，给组放行条目时要按给等级同样看待。
 
 - **轴 B · 确认（是不是你本人此刻要做）**：HITL（human-in-the-loop）意图确认，与等级无关。
   关键点是 **owner 也受确认约束**——这道关卡专门为「owner 会话被提示注入借权、静默调用高危操作」的场景设计。
@@ -81,7 +87,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 `visibility:'restricted'`（抬高轴 A 门槛）加上 `confirm:'session'`（轴 B 需确认），
 这套默认值由 `RISK_DEFAULTS` 定义。
 
-> 两轴的完整机制（发起回合的类别、免确认白名单、WebUI 权限页、users.json 持久化）见
+> 两轴的完整机制（权限组、发起回合的类别、免确认白名单、WebUI 权限页、users.json 持久化）见
 > [权限系统文档](../plugins/plugin-authority.md) 与 forward-ref [`docs/services/authority.md`](../services/authority.md)；
 > 审批的在场、排队、时限与审计见 [api-approval](../api/api-approval.md)。这里只给出安全视角的要点。
 
