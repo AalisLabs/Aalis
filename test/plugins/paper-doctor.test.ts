@@ -18,7 +18,7 @@ import {
 // ════════════════════════════════════════════════════════════
 // 诊断项 paper.config（U10d）：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题。
 // error：账本读取失败、同账号多块具名白纸、有停开的白纸、有未读的账本外代理告警；
-// warn：平台档或平台类型档写了 remoteAgentTypes（窗口的场所写的是正常写法，不报）、
+// warn：全局默认、平台档或平台类型档写了 remoteAgentTypes（窗口的场所写的是正常写法，不报）、
 // 具名白纸引用的提供者不在场、取不到账号标识（按冲突处理）、一块具名白纸被多个房间共用、globalDailyCents 为 0；
 // 出网取自 owner 配置时在说明里标「未核实」。
 // ════════════════════════════════════════════════════════════
@@ -147,11 +147,11 @@ describe('诊断项 paper.config', () => {
   it('平台类型档写了 remoteAgentTypes 时 warn（不必先有这个类型的房间登记），写明平台与类型名', async () => {
     const group = await check({ typeProfiles: { 'onebot/group': { remoteAgentTypes: [REMOTE] } } });
     expect(group.level).toBe('warn');
-    expect(group.message).toContain('平台类型档 onebot · group 写了 remoteAgentTypes');
+    expect(group.message).toContain('写在平台类型档 onebot · group');
 
     const priv = await check({ typeProfiles: { 'onebot/private': { remoteAgentTypes: [REMOTE] } } });
     expect(priv.level).toBe('warn');
-    expect(priv.message).toContain('平台类型档 onebot · private 写了 remoteAgentTypes');
+    expect(priv.message).toContain('写在平台类型档 onebot · private');
   });
 
   it('对照：平台类型档的 remoteAgentTypes 为空数组时不报；平台档写了只报平台档；窗口的场所写了不报（按窗口设是正常写法）', async () => {
@@ -162,11 +162,20 @@ describe('诊断项 paper.config', () => {
     expect(empty.level).toBe('ok');
 
     const base = await check({ listed: { [ROOM]: {} }, profiles: { onebot: { remoteAgentTypes: [REMOTE] } } });
-    expect(base.message).toContain('平台档 onebot 写了 remoteAgentTypes');
+    expect(base.message).toContain('写在平台档 onebot');
     expect(base.message).not.toContain('平台类型档');
 
     const window = await check({ listed: { [ROOM]: {} }, placeProfiles: { [WINDOW]: { remoteAgentTypes: [REMOTE] } } });
     expect(window.level).toBe('ok');
+  });
+
+  it('全局默认写了 remoteAgentTypes 或 paperName 时同样 warn：全部房间都继承', async () => {
+    const types = await check({ listed: { [ROOM]: {} }, defaults: { remoteAgentTypes: [REMOTE] } });
+    expect(types.message).toContain('写在全局默认');
+    const name = await check({ listed: { [ROOM]: {} }, defaults: { paperName: PAPER } });
+    expect(name.level).toBe('warn');
+    expect(name.message).toContain(ROOM);
+    expect(name.message).toContain('全局默认的全部房间');
   });
 
   it('平台类型档写了 paperName 时按共用 warn：列出继承它的房间与这一档的全部房间', async () => {
