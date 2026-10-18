@@ -319,6 +319,7 @@ export class ToolRegistry implements ToolService {
         platform: callCtx.platform ?? 'unknown',
         userId: callCtx.userId,
         actor: callCtx.actor,
+        toolGroups: tool.groups,
         args,
         turnId: callCtx.turnId,
         callId: callCtx.callId,

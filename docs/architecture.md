@@ -369,12 +369,13 @@ hooks.use.middleware('my-plugin:before', async (data, next) => {
 权限是**两条正交的轴**：轴 A「等级」决定**谁可以执行**，轴 B「确认」做 HITL 意图核对
 （owner 同样受确认轴约束，以抵御提示词注入借权）。两轴由 plugin-authority 统一裁决。
 
-### 轴 A · 数字等级裁决（开放整数等级）
+### 轴 A · 等级与权限组裁决（开放整数等级）
 
 ```
-每个外部身份 → 一个整数等级（缺省 0，封禁 = 负数）
+每个外部身份 → 一个整数等级（缺省 0，封禁 = 负数），另可属于任意几个权限组
 owner        → ∞（靠 owners 列表归属，不在等级轴上，永不能被设成有限值）
 每个操作     → 一个最低等级 minLevel
+权限组       → 一组放行条目（authorityGroups：tool:… / command:… 可带通配，tool-group:<分组名>）
 
 minLevel 解析（首个命中赢）:
   1. authorityOverrides[capability]  ← owner 逐条覆盖成任意整数
@@ -384,12 +385,14 @@ minLevel 解析（首个命中赢）:
 裁决 resolveAccess（首个命中赢）:
   1. deniedCapabilities glob 全局硬禁 → 拒（压过一切，含 owner；配置总闸，非 per-user）
   2. isOwner                          → 放行
-  3. level >= minLevel                → 放行；否则拒（封禁=负数连 minLevel=0 都不过）
+  3. 封禁（level < 0）                → 拒（负数门槛、权限组都不放行）
+  4. level >= minLevel                → 放行
+  5. 所属权限组的条目覆盖这个操作     → 放行；否则拒
 ```
 
 没有命名档位（受信/管理员等表面名仅是等级整数的别称）、没有能力委托图、
-没有 per-user 的逐条能力授予/禁用列表。owner **只管理权限**（不能自授）：
-WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）。
+没有按人禁用的清单；按人放行用权限组，它只加放行。owner **只管理权限**（不能自授）：
+WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `/perm`（设某用户所属的权限组）。
 模型详见 [docs/plugins/plugin-authority.md](plugins/plugin-authority.md)。
 
 ### 轴 B · 确认（HITL 意图核对）

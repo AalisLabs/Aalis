@@ -307,13 +307,14 @@ describe('help: 按调用者的等级过滤', () => {
       ),
     );
     const owner = await ask(OWNER, '/help');
-    expect(owner.split('\n')[0]).toBe('可用指令（9 条）：');
+    expect(owner.split('\n')[0]).toBe('可用指令（10 条）：');
     for (const line of [
       '- /admin — 1 个子指令',
       '- /authority — 查看自己或指定用户的权限等级',
       '- /clear — 清空当前会话记忆 · 1 个子指令',
       '- /level — 设置用户的权限等级',
       '- /mixed — 2 个子指令',
+      '- /perm — 设置用户所属的权限组',
       '- /restart — 重启应用',
       '- /shutdown — 关闭应用',
     ]) {

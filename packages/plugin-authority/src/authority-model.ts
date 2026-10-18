@@ -1,15 +1,18 @@
 // ════════════════════════════════════════════════════════════
-// authority-model —— 数字等级裁决引擎（纯函数，无副作用，便于单测）
+// authority-model —— 等级与权限组的裁决引擎（纯函数，无副作用，便于单测）
 //
 // 单 owner 个人 bot 的「好管」权限：每个外部身份一个**整数等级**（越大越高，默认 0，
-// 封禁=负数），每个操作一个**最低等级**（由 risk 派生、owner 可逐条覆盖成任意整数）。
+// 封禁=负数），每个操作一个**最低等级**（由 risk 派生、owner 可逐条覆盖成任意整数）；
+// 另可属于任意几个**权限组**（具名的放行集合，只加放行，组之间合起来算）。
 // owner = ∞（不在等级轴上，靠 owners 列表归属），永不被任何门槛锁出。
 // 裁决优先级（首个命中即定，硬禁先于 owner 与等级放行）：
 //   1. 全局硬禁 deniedCapabilities  → 拒（压过 owner，保 deny>owner 不变量；配置总闸，非 per-user）
 //   2. owner                        → 放行
-//   3. 等级 level >= 操作 minLevel   → 放行；否则拒（封禁=负数自然连 minLevel=0 都不过）
+//   3. 封禁（等级小于 0）            → 拒（负数的门槛与权限组都不放行）
+//   4. 等级 level >= 操作 minLevel   → 放行
+//   5. 所属组里有条目覆盖这个操作    → 放行；否则拒
 // 确认轴（confirm/HITL）正交，不在此函数（owner 也吃，防注入借权）。
-// 内含 glob 工具 matchAnyCap（资源能力/硬禁匹配），以及工具调用发起回合的类别 originKind。
+// 内含 glob 工具 matchAnyCap（硬禁、白名单与组条目的匹配）、组名与条目的写法，以及工具调用发起回合的类别 originKind。
 // ════════════════════════════════════════════════════════════
 
 /** owner 等级（∞）：不入等级轴，靠 owners 列表归属；任何有限门槛都压不过它（防自锁）。 */
@@ -21,6 +24,7 @@ export const OWNER_RANK = Number.POSITIVE_INFINITY;
 import type { OriginKind } from '@aalis/api-approval';
 import { capabilityMinLevel, DEFAULT_AUTHORITY, type OriginTurn } from '@aalis/api-authority';
 import { roomClass, type SessionInfo } from '@aalis/api-session-manager';
+import { isUnsafeConfigKey } from '@aalis/schema-config';
 
 export { DEFAULT_AUTHORITY };
 
@@ -56,7 +60,36 @@ export function resolveMinLevel(
   return capabilityMinLevel(opts);
 }
 
-/** 一次访问裁决的输入（纯数字单轴）。 */
+// ── 权限组的写法 ──────────────
+/** 组的放行条目：tool:、command: 后接名字或通配，tool-group: 后接工具分组名（不是通配）；裸 `*` 与别的前缀不收 */
+const GRANT_ENTRY = /^(?:(?:tool|command):\S+|tool-group:[^\s*]+)$/;
+const TOOL_GROUP = 'tool-group:';
+
+/** 放行条目的写法对不对：页面写入时据此当场报错，裁决时写法不对的条目不命中任何操作 */
+export function isGrantEntry(entry: unknown): entry is string {
+  return typeof entry === 'string' && GRANT_ENTRY.test(entry);
+}
+
+/**
+ * 组名：字母、数字、连字符、下划线与中文，不以连字符开头（指令解析会把它当成选项）；不收空白与 `<>`，
+ * 也不收落到原型链上的保留名（组名是配置里的键）
+ */
+export function isGroupName(name: string): boolean {
+  return /^[A-Za-z0-9_\p{Script=Han}][A-Za-z0-9_\p{Script=Han}-]*$/u.test(name) && !isUnsafeConfigKey(name);
+}
+
+/** 所属组的放行条目里有没有一条覆盖这个操作：tool-group: 按工具的分组比，其余按能力串匹配（通配同 matchAnyCap） */
+function grantsCover(granted: readonly string[], capability: string, toolGroups: readonly string[] = []): boolean {
+  return granted.some(
+    entry =>
+      isGrantEntry(entry) &&
+      (entry.startsWith(TOOL_GROUP)
+        ? toolGroups.includes(entry.slice(TOOL_GROUP.length))
+        : capMatches(entry, capability)),
+  );
+}
+
+/** 一次访问裁决的输入。 */
 interface AccessInput {
   /** 触发者有效等级（owner→OWNER_RANK；= 登记等级，缺省 DEFAULT_AUTHORITY） */
   level: number;
@@ -65,15 +98,21 @@ interface AccessInput {
   isOwner: boolean;
   /** 全局硬禁 glob（config.deniedCapabilities，配置总闸，非 per-user） */
   denied?: readonly string[];
-  /** 被裁决的能力串（command:x / tool:x / storage:...） */
+  /** 被裁决的能力串（command:x / tool:x） */
   capability: string;
+  /** 触发者所属各组的放行条目合集（没有组即空）；写法不对的条目不命中任何操作 */
+  granted: readonly string[];
+  /** 被裁决的工具所属的工具分组（指令没有） */
+  toolGroups?: readonly string[];
 }
 
-/** 数字等级裁决（见文件头优先级）。true=放行。 */
+/** 等级与权限组裁决（见文件头优先级）。true=放行。 */
 export function resolveAccess(input: AccessInput): boolean {
   if (matchAnyCap(input.denied ?? [], input.capability)) return false; // 1. 全局硬禁，压过 owner
   if (input.isOwner) return true; // 2. owner（∞）
-  return input.level >= input.minLevel; // 3. 等级门槛（封禁=负数自然不过）
+  if (input.level < 0) return false; // 3. 封禁，负数的门槛也不放行
+  if (input.level >= input.minLevel) return true; // 4. 等级门槛
+  return grantsCover(input.granted, input.capability, input.toolGroups); // 5. 所属组覆盖
 }
 
 type IsOwner = (platform: string, userId?: string) => boolean;

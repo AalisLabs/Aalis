@@ -2,16 +2,18 @@ import { approvals } from '@aalis/api-approval';
 import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
 import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
+import { contributions as contributionsService } from '@aalis/api-contributions';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { sessionManager } from '@aalis/api-session-manager';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { TextRef } from '@aalis/schema-i18n';
+import { isUnsafeConfigKey } from '@aalis/schema-config';
+import { isTextError, TextError, type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
-import { DEFAULT_AUTHORITY } from './authority-model.js';
+import { DEFAULT_AUTHORITY, isGrantEntry, isGroupName } from './authority-model.js';
 import { t } from './texts.js';
 
 // ===== 插件入口 =====
@@ -21,7 +23,7 @@ import { t } from './texts.js';
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
 // （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
 // approvals 缺席时需要确认的工具调用一律拒绝。房间类别按 session-manager 记下的会话字段判：审批服务的提供者
-// plugin-session-server 本身依赖它，它缺席时也没有审批服务。
+// plugin-session-server 本身依赖它，它缺席时也没有审批服务。权限页的两个可选项来源经贡献点交付，缺席时页上的多选没有选项。
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
@@ -33,6 +35,7 @@ const uses = {
   storage: optional(storageService),
   approvals: optional(approvals),
   sessionManager: optional(sessionManager),
+  contributions: optional(contributionsService),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -46,14 +49,14 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { commands, lifecycle, logger, storage, tools, webui } = caps;
+  const { commands, contributions, lifecycle, logger, storage, tools, webui } = caps;
   const config = caps.hostConfig.use;
 
   const manager = new AuthorityManager(config, logger.use, storage.use, id =>
     caps.sessionManager.present ? caps.sessionManager.use.getSession(id) : undefined,
   );
   caps.provide.use(authorityService, manager);
-  const page = defineAuthorityPage({ webui, commands, tools, config, manager });
+  const page = defineAuthorityPage({ webui, commands, tools, contributions, config, manager });
 
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
@@ -109,9 +112,14 @@ async function run(caps: Caps): Promise<void> {
     const cOv = confOv[capability];
     const confirm = cOv === 'off' ? (ownerActs ? undefined : g.confirm) : (cOv ?? g.confirm);
 
-    // ── 轴 A · 授权：数字等级裁决——系统源也评估，防绕过提权。
-    // 等级不够即拒，没有别的放行口：发起者本人不能靠确认给自己提权。
-    const denied = manager.authorize(identity, { capability, visibility: g.visibility, risk: g.risk });
+    // ── 轴 A · 授权：等级与权限组裁决——系统源也评估，防绕过提权。
+    // 等级不够、所属组也不覆盖即拒；发起者本人不能靠确认给自己提权，白名单也不放宽授权。
+    const denied = manager.authorize(identity, {
+      capability,
+      visibility: g.visibility,
+      risk: g.risk,
+      toolGroups: g.toolGroups,
+    });
     if (denied) return denied;
 
     // ── 轴 B · 确认：授权已过，但操作声明了 confirm 仍要有人确认（owner 也吃，防注入借权）。
@@ -183,20 +191,21 @@ async function run(caps: Caps): Promise<void> {
   commands.use
     .command('authority [target:string]', '查看自己或指定用户的权限等级', { risk: 'sensitive' })
     .action(async (argv, target) => {
-      const describe = (platform: string, userId: string | undefined, self: boolean): string => {
+      const describe = (platform: string, userId: string | undefined, self: boolean): string | TextRef => {
         const isOwner = manager.isOwner(platform, userId);
         const who = self ? '您' : `${platform}:${userId}`;
         if (isOwner) return `${who}（owner，等级 ∞，拥有全部权限）`;
         const entry = userId
           ? manager.listUsers().find(u => u.platform === platform && u.userId === userId)
           : undefined;
-        return `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
+        const level = `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
+        if (!entry?.groups.length) return level;
+        return textLines([level, t('memberOf', { groups: memberGroups(manager, entry.groups) })]);
       };
-      const t = target as string | undefined;
-      if (t) {
-        const sep = t.indexOf(':');
-        if (sep < 1) return '目标格式: <platform:userId>';
-        return describe(t.slice(0, sep), t.slice(sep + 1), false);
+      if (target) {
+        const identity = targetOf(String(target));
+        if (!identity) return t('targetFormat');
+        return describe(identity.platform, identity.userId, false);
       }
       return describe(argv.session.platform, argv.session.userId, true);
     });
@@ -208,24 +217,60 @@ async function run(caps: Caps): Promise<void> {
     })
     .example('/level onebot:12345 5')
     .action(async (argv, target, level) => {
-      if (!manager.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
-      const t = String(target);
-      const sep = t.indexOf(':');
-      if (sep < 1) return '目标格式: <platform:userId>';
+      if (!manager.isOwner(argv.session.platform, argv.session.userId)) return t('ownerOnly');
+      const spec = String(target);
+      const identity = targetOf(spec);
+      if (!identity) return t('targetFormat');
       const lv = Number(level);
       if (!Number.isInteger(lv)) return '等级必须是整数';
       const message = await applyUserChange(
         manager,
-        () => manager.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv),
-        `已设 ${t} 等级: ${lv}`,
+        () => manager.setUserLevel(identity, lv),
+        `已设 ${spec} 等级: ${lv}`,
       );
       page.invalidate();
       return message;
     });
+
+  // /perm <target> [组名…] — owner 覆盖式设外部身份所属的权限组，不给组名即清空。组的定义只在权限页与配置里改
+  commands.use
+    .command('perm <target:string> [groups:text]', t('permDescription'), { visibility: 'restricted' })
+    .example('/perm onebot:12345 helpers')
+    .action(async (argv, target, groups) => {
+      if (!manager.isOwner(argv.session.platform, argv.session.userId)) return t('ownerOnly');
+      const spec = String(target);
+      const identity = targetOf(spec);
+      if (!identity) return t('targetFormat');
+      const names = [...new Set(String(groups ?? '').match(/\S+/g))];
+      try {
+        const message = await applyUserChange(
+          manager,
+          () => manager.setUserGroups(identity, names),
+          groupsReceipt(spec, names),
+        );
+        page.invalidate();
+        return message;
+      } catch (err) {
+        // 没定义的组：setUserGroups 拒收并列出已有的组，原样回给 owner
+        if (isTextError(err)) return err.text;
+        throw err;
+      }
+    });
+}
+
+/** 成员记录里的组名，没定义的标出来（删组不级联，成员记录里的组名保留） */
+function memberGroups(manager: AuthorityManager, names: readonly string[]): Array<string | TextRef> {
+  const defined = manager.definedGroups();
+  return names.map(name => (defined.has(name) ? name : t('undefinedGroup', { name })));
+}
+
+/** 设权限组的回执：给了组名就列出来，没给即清空 */
+function groupsReceipt(target: string, names: readonly string[]): TextRef {
+  return names.length > 0 ? t('groupsSet', { target, groups: names }) : t('groupsCleared', { target });
 }
 
 /**
- * 等级管理入口（/level、权限页的设等级、加用户与删除记录）的共同流程。
+ * 等级与组成员的管理入口（/level、/perm、权限页的设等级、设权限组、加用户与删除记录）的共同流程。
  * 先等在飞的等级表读取落定再改：首次读取完成前内存里查不到文件里的记录。storage 未上线时首次读取尚未发起，
  * 这里无从等待：改等级（含降为 0 级）保留文件里的备注、删除不随文件回来，由 setUserLevel 在首次读取落定前不删记录、
  * UserStore 的字段合并与删除墓碑保证，不靠这次等待。
@@ -233,29 +278,45 @@ async function run(caps: Caps): Promise<void> {
  * 加载失败而拒写时只在本次运行生效、重启即失；首次读取尚未落定（storage 未上线）时改动留在内存，读完后写盘；
  * 写盘失败时改动留在内存，下次保存时重写。
  */
-async function applyUserChange(manager: AuthorityManager, change: () => void, message: string): Promise<string> {
+async function applyUserChange(
+  manager: AuthorityManager,
+  change: () => void,
+  message: string | TextRef,
+): Promise<string | TextRef> {
   await manager.whenLoaded();
   change();
   manager.save();
   await manager.flushed();
   if (manager.persistBlocked) {
-    return `${message}；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启`;
+    return textClauses([
+      message,
+      '仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
+    ]);
   }
-  if (manager.awaitingFirstLoad) return `${message}；未写入 users.json（等级表尚未载入），载入后写入`;
-  if (manager.lastSaveFailed) return `${message}；未写入 users.json（写入失败，见日志），下次保存时重试`;
+  if (manager.awaitingFirstLoad) return textClauses([message, '未写入 users.json（等级表尚未载入），载入后写入']);
+  if (manager.lastSaveFailed) return textClauses([message, '未写入 users.json（写入失败，见日志），下次保存时重试']);
   return message;
 }
 
-// ===== 权限的设置页（数字等级单轴：用户等级、owner、操作门槛、禁用与免确认）=====
+// ===== 权限的设置页（用户等级、权限组、owner、操作门槛、禁用与免确认）=====
 
 /** 页面用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
-type PageDeps = Pick<Caps, 'webui' | 'commands' | 'tools'> & { config: HostConfig; manager: AuthorityManager };
+type PageDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'contributions'> & {
+  config: HostConfig;
+  manager: AuthorityManager;
+};
+
+/** 「平台:用户 ID」按第一个冒号拆开；没有冒号或平台为空时取不到 */
+function targetOf(spec: string): UserIdentity | undefined {
+  const sep = spec.indexOf(':');
+  return sep < 1 ? undefined : { platform: spec.slice(0, sep), userId: spec.slice(sep + 1) };
+}
 
 /** 表格里的身份写成「平台:用户 ID」，按第一个冒号拆回 */
 function identityOf(key: string): UserIdentity {
-  const sep = key.indexOf(':');
-  if (sep < 1) throw new Error(`身份要写成「平台:用户 ID」，收到的是 ${key}`);
-  return { platform: key.slice(0, sep), userId: key.slice(sep + 1) };
+  const identity = targetOf(key);
+  if (!identity) throw new Error(`身份要写成「平台:用户 ID」，收到的是 ${key}`);
+  return identity;
 }
 
 const CONFIRM_TEXT: Record<CapabilityConfirm, TextRef> = { session: t('confirmSession'), always: t('confirmAlways') };
@@ -268,7 +329,7 @@ type RuleKind = keyof typeof RULE_KINDS;
  * 权限页放在设置里。改宿主配置的动作先改运行态（即刻生效）再等落盘：save 拒绝时从处理函数抛出，写明改动已在本次运行
  * 生效、没写进配置文件及原因。等级改动走 applyUserChange，回执注明没落盘的情形。每次改动后页面重取，落盘失败也一样
  */
-function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDeps) {
+function defineAuthorityPage({ webui, commands, tools, contributions, config, manager }: PageDeps) {
   /** 指令与工具统一成「操作」：能力键、所属插件、后端派生的默认门槛（不含 authorityOverrides） */
   const operations = () => {
     const prefix = commands.present ? commands.use.prefix : '/';
@@ -304,8 +365,22 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
   const owners = (): UserIdentity[] => config.get('owners') ?? [];
   const sameIdentity = (a: UserIdentity, b: UserIdentity) => a.platform === b.platform && a.userId === b.userId;
 
+  // 两个可选项来源（贡献点 webui:options）：放行条目可选全部指令与工具的能力键与已登记的工具分组，设权限组可选已定义的组
+  contributions.use.contribute('webui:options', {
+    id: 'authority-operations',
+    list: () =>
+      [
+        ...operations().map(op => op.capability),
+        ...(tools.present ? tools.use.getGroups() : []).map(group => `tool-group:${group.name}`),
+      ].map(value => ({ value, label: value })),
+  });
+  contributions.use.contribute('webui:options', {
+    id: 'authority-groups',
+    list: () => [...manager.definedGroups().keys()].map(name => ({ value: name, label: name })),
+  });
+
   /** 写宿主配置并落盘，页面重取 */
-  async function saveConfig(write: () => void, message: string): Promise<string> {
+  async function saveConfig(write: () => void, message: string | TextRef): Promise<string | TextRef> {
     write();
     try {
       await config.save();
@@ -318,12 +393,12 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
     }
     return message;
   }
-  async function saveUser(change: () => void, message: string): Promise<string> {
+  async function saveUser(change: () => void, message: string | TextRef): Promise<string | TextRef> {
     const receipt = await applyUserChange(manager, change, message);
     page.invalidate();
     return receipt;
   }
-  async function setRules(kind: RuleKind, next: string[], message: string): Promise<string> {
+  async function setRules(kind: RuleKind, next: string[], message: string): Promise<string | TextRef> {
     return saveConfig(() => {
       if (kind === 'deny') config.set('deniedCapabilities', next);
       else {
@@ -333,7 +408,7 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
       }
     }, message);
   }
-  async function addRule(kind: RuleKind, pattern: string): Promise<string> {
+  async function addRule(kind: RuleKind, pattern: string): Promise<string | TextRef> {
     const rule = pattern.trim();
     if (!rule) throw new Error('能力不能为空');
     const current = rules(kind);
@@ -348,6 +423,13 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
     }
     return saveConfig(() => config.set('authorityOverrides', next), message);
   }
+  /** 写一个组的放行条目：写法不对的当场报错；别的组原样写回 */
+  async function setGroup(name: string, entries: readonly string[], message: TextRef): Promise<string | TextRef> {
+    const next = [...new Set(entries.map(entry => entry.trim()))];
+    const bad = next.filter(entry => !isGrantEntry(entry));
+    if (bad.length > 0) throw new TextError(t('badEntries', { entries: bad }));
+    return saveConfig(() => config.set('authorityGroups', { ...config.get('authorityGroups'), [name]: next }), message);
+  }
 
   const RULE_INPUT = {
     pattern: {
@@ -360,6 +442,16 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
   const LEVEL_DESCRIPTION = '整数，越大权限越高；0 是默认，负数是封禁';
   const THRESHOLD = {
     level: { type: 'number', label: '最低等级', integer: true, description: '整数；留空恢复按风险派生的默认门槛' },
+  } as const;
+  const GRANTS = {
+    entries: {
+      type: 'multiselect',
+      label: t('groupGrants'),
+      required: true,
+      dynamicOptions: 'authority-operations',
+      allowCustom: true,
+      description: t('grantsHint'),
+    },
   } as const;
 
   const page = webui.use.definePage({
@@ -395,14 +487,72 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
             `${input.platform}:${input.userId} 的等级已设为 ${input.level}`,
           ),
       },
+      setUserGroups: {
+        label: t('setUserGroups'),
+        effect: 'write',
+        row: true,
+        input: {
+          groups: {
+            type: 'multiselect',
+            label: t('userGroups'),
+            dynamicOptions: 'authority-groups',
+            description: t('userGroupsHint'),
+          },
+        },
+        handler({ rowKey, input }) {
+          const target = identityOf(rowKey);
+          const groups = input.groups ?? [];
+          return saveUser(() => manager.setUserGroups(target, groups), groupsReceipt(rowKey, groups));
+        },
+      },
       deleteUser: {
         label: '删除记录',
         effect: 'destructive',
-        confirm: '删除这条记录？封禁的用户删掉记录就等于解封。',
+        confirm: t('deleteUserConfirm'),
         row: true,
         handler({ rowKey }) {
           const { platform, userId } = identityOf(rowKey);
           return saveUser(() => manager.removeUser(platform, userId), `${rowKey} 的记录已删除`);
+        },
+      },
+      createGroup: {
+        label: t('createGroup'),
+        effect: 'write',
+        input: {
+          name: { type: 'string', label: t('groupName'), required: true, description: t('groupNameHint') },
+          ...GRANTS,
+        },
+        handler({ input }) {
+          const name = input.name.trim();
+          if (!isGroupName(name)) {
+            throw new TextError(t(isUnsafeConfigKey(name) ? 'reservedGroupName' : 'badGroupName', { name }));
+          }
+          if (manager.definedGroups().has(name)) throw new TextError(t('groupExists', { name }));
+          return setGroup(name, input.entries, t('groupCreated', { name }));
+        },
+      },
+      editGroup: {
+        label: t('editGroup'),
+        effect: 'write',
+        row: true,
+        input: GRANTS,
+        handler({ rowKey, input }) {
+          if (!manager.definedGroups().has(rowKey)) throw new TextError(t('noSuchGroup', { name: rowKey }));
+          return setGroup(rowKey, input.entries, t('groupEdited', { name: rowKey }));
+        },
+      },
+      deleteGroup: {
+        label: t('deleteGroup'),
+        effect: 'destructive',
+        confirm: t('deleteGroupConfirm'),
+        row: true,
+        handler({ rowKey }) {
+          if (!manager.definedGroups().has(rowKey)) throw new TextError(t('noSuchGroup', { name: rowKey }));
+          // 不级联：成员记录里的组名保留，没定义的组不放行；之后建同名组即恢复
+          const next = Object.fromEntries(
+            Object.entries(config.get('authorityGroups') ?? {}).filter(([name]) => name !== rowKey),
+          );
+          return saveConfig(() => config.set('authorityGroups', next), t('groupDeleted', { name: rowKey }));
         },
       },
       addOwner: {
@@ -516,16 +666,50 @@ function defineAuthorityPage({ webui, commands, tools, config, manager }: PageDe
               columns: [
                 { key: 'identity', label: '身份', primary: true },
                 { key: 'level', label: '等级', primary: true },
+                { key: 'memberOf', label: t('userGroups') },
                 { key: 'note', label: '备注' },
               ],
-              rowActions: [{ action: 'setUserLevel' }, { action: 'deleteUser' }],
+              rowActions: [{ action: 'setUserLevel' }, { action: 'setUserGroups' }, { action: 'deleteUser' }],
               data: () =>
                 manager
                   .listUsers()
                   .filter(u => !u.isOwner)
-                  .map(u => ({ identity: `${u.platform}:${u.userId}`, level: u.level, note: u.note ?? '' })),
+                  .map(u => ({
+                    identity: `${u.platform}:${u.userId}`,
+                    level: u.level,
+                    memberOf: u.groups.length > 0 ? t('groupList', { groups: memberGroups(manager, u.groups) }) : '',
+                    note: u.note ?? '',
+                  })),
             },
             { type: 'actions', actions: ['addUser'] },
+          ],
+        },
+        {
+          key: 'permissionGroups',
+          title: t('groupsTab'),
+          content: [
+            {
+              type: 'table',
+              id: 'permissionGroups',
+              rowKey: 'name',
+              description: t('groupsTable'),
+              empty: t('groupsEmpty'),
+              columns: [
+                { key: 'name', label: t('groupName'), primary: true },
+                { key: 'grants', label: t('groupGrants'), kind: 'code', primary: true },
+                { key: 'members', label: t('groupMembers') },
+              ],
+              rowActions: [{ action: 'editGroup' }, { action: 'deleteGroup' }],
+              data() {
+                const users = manager.listUsers();
+                return [...manager.definedGroups()].map(([name, entries]) => ({
+                  name,
+                  grants: entries.join(' '),
+                  members: users.filter(u => u.groups.includes(name)).length,
+                }));
+              },
+            },
+            { type: 'actions', actions: ['createGroup'] },
           ],
         },
         {

@@ -1,12 +1,12 @@
 import { defineService } from '@aalis/core';
 // ----- 权限服务接口 + 执行守卫契约（数字等级模型）-----
 //
-// 模型：操作能力（capability）+ 用户数字等级（level，整数，越大越高）+ 操作最低等级（minLevel）。
+// 模型：操作能力（capability）+ 用户数字等级（level，整数，越大越高）+ 操作最低等级（minLevel）+ 权限组（具名的放行集合）。
 //   - owner = ∞，可执行任意能力、可管理所有人的权限（不入等级表）。
-//   - 裁决：deniedCapabilities（全局硬禁）> owner(∞) > 用户 level >= 操作 minLevel；
-//     minLevel 由操作的 risk / visibility / config.authorityOverrides 派生。
-//   - restricted：门槛较高的能力；等级不够即拒，没有别的放行口。
-//   - 单 owner 终态：等级只由 owner 管理（无委托树 / 子委托）。
+//   - 裁决：deniedCapabilities（全局硬禁）> owner(∞) > 封禁（level < 0）> 用户 level >= 操作 minLevel > 所属权限组覆盖；
+//     minLevel 由操作的 risk / visibility / config.authorityOverrides 派生，组定义在 config.authorityGroups。
+//   - restricted：门槛较高的能力；等级不够、所属组也不覆盖即拒，没有别的放行口。
+//   - 单 owner 终态：等级与组成员只由 owner 管理（无委托树 / 子委托）。
 //
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
@@ -158,6 +158,8 @@ export interface ExecutionGuardContext {
   userId?: string;
   /** 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）按它评估 */
   actor?: { platform: string; userId: string };
+  /** 工具所属的工具分组（工具一路由执行器填，指令没有）：原样转给 authorize，权限组的 `tool-group:` 条目按它覆盖 */
+  toolGroups?: readonly string[];
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**
@@ -191,7 +193,7 @@ export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 
 export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | TextRef | null>;
 
 // ============================================================
-// 能力统一闸（裁决序：deniedCapabilities 硬禁 > owner(∞) > 用户 level >= 操作 minLevel）
+// 能力统一闸（裁决序：deniedCapabilities 硬禁 > owner(∞) > 封禁 > 用户 level >= 操作 minLevel > 所属权限组覆盖）
 // ============================================================
 
 /**
@@ -206,6 +208,8 @@ export interface AuthorizeRequest {
   visibility: CapabilityVisibility;
   /** 操作原始风险（透传，供 minLevel 派生；缺省回退 visibility） */
   risk?: CapabilityRisk;
+  /** 被裁决的工具所属的工具分组（工具一路由执行器填，指令没有）：权限组的 `tool-group:` 条目按它覆盖，权限服务不反查工具表 */
+  toolGroups?: readonly string[];
 }
 
 // ============================================================
@@ -247,8 +251,8 @@ export interface AuthorityService {
 
   /**
    * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。
-   * 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
-   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
+   * 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁（level < 0）> 用户 level >= 操作 minLevel > 所属权限组覆盖；
+   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生，组的放行条目取自 config.authorityGroups。
    * @returns null 放行；否则为拒绝原因，可以是文字对象（读法同 {@link ExecutionGuard} 的返回值）
    */
   authorize(
@@ -257,7 +261,7 @@ export interface AuthorityService {
   ): string | TextRef | null;
 
   /**
-   * 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且无备注则清记录）。
+   * 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且记录里没有备注等别的内容则清记录）。
    * 单 owner 终态：权限只由 owner 管理。调用方（WebUI action / CLI 指令）自行确保仅 owner 可达（防自授）。
    */
   setUserLevel(target: UserIdentity, level: number): void;
@@ -294,13 +298,19 @@ declare module '@aalis/api-host-config' {
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
     /**
      * 免确认白名单：allow 列出不必确认的能力 glob（['*'] 全放）；duration 生效时长（秒，0=永久）。
-     * 只免 confirm 为 session 的确认，always 照常确认；只对授权身份是 owner 的回合生效；不放宽授权，等级不够的照样拒。
+     * 只免 confirm 为 session 的确认，always 照常确认；只对授权身份是 owner 的回合生效；不放宽授权，等级不够、所属组也不覆盖的照样拒。
      * 运行时启用时点（enabledAt）不持久化，是 plugin-authority 运行时状态。
      */
     restrictedPolicy?: {
       allow?: string[];
       duration?: number;
     };
+    /**
+     * 权限组：组名 → 放行条目。条目写成 `tool:<名或通配>`、`command:<名或通配>`（通配同 deniedCapabilities）或
+     * `tool-group:<工具分组名>`（工具的分组里有它即覆盖）；裸 `*` 与别的前缀不命中任何操作。组只加放行：等级不够的操作，
+     * 所属组里有一条覆盖它即放行；硬禁与封禁照旧先拒，确认照旧。成员记在实现的用户数据里，指向没定义的组不放行。
+     */
+    authorityGroups?: Record<string, string[]>;
     /**
      * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的出口能连到哪，即 safeFetch，
      * 以及 tool-browser 开启 blockPrivate 时的浏览器网络闸（三项都遵循）。

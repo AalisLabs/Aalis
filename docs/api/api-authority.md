@@ -11,14 +11,14 @@
 定义三件事：
 
 1. **`AuthorityService.authorize`** —— capability 统一闸。tools / commands 的执行守卫在操作边界过这道裁决：
-   数字等级裁决 `deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel`。
+   裁决 `deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > 用户 level >= 操作 minLevel > 所属权限组覆盖`。
    模型详见 [docs/plugins/plugin-authority.md](../plugins/plugin-authority.md)。
 2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize，已授权但声明了确认的操作在守卫里确认（见下文「守卫流程」）。
 3. **身份** —— `UserIdentity`（全 surface 统一身份类型）。
 
 ## 两条正交轴
 
-- **轴 A · 授权（谁能用）**：每个外部身份对应一个整数 **level**（缺省 0，封禁=负数）；owner = ∞（经 `owners` 列表命中，**不是**有限数字，无法被设成有限等级）。每个操作有一个 `minLevel`，调用者 `level >= minLevel` 才放行。
+- **轴 A · 授权（谁能用）**：每个外部身份对应一个整数 **level**（缺省 0，封禁=负数）；owner = ∞（经 `owners` 列表命中，**不是**有限数字，无法被设成有限等级）。每个操作有一个 `minLevel`，调用者 `level >= minLevel` 才放行；等级不够时，所属权限组（`authorityGroups`）里有条目覆盖这个操作也放行。封禁（等级小于 0）一律拒。
 - **轴 B · 确认（HITL 意图核验）**：与等级正交，**owner 也是被确认对象**（抵御会话内提示注入借权静默调高危）。工具由模型调用，确认是 owner 审批（[api-approval](./api-approval.md)）；指令由人亲手输入，确认是向发出者本人核对意图。
 
 `risk` 声明同时设定两轴默认（`dangerous` = restricted + `confirm:'session'`）。
@@ -41,6 +41,7 @@ interface ExecutionGuardContext {
   platform: string;
   userId?: string;
   actor?: { platform: string; userId: string }; // 被裁决身份（缺省=会话身份 platform/userId）
+  toolGroups?: readonly string[];    // 工具所属的工具分组（工具一路由执行器填，指令没有）：原样转给 authorize
   args?: Record<string, unknown>;
   skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
   turnId?: string;                   // 调用所在回合（工具调用由 agent 工具循环填写）；审批随回合结束撤销
@@ -85,14 +86,14 @@ interface AuthorityService {
   originOf(turn: OriginTurn): OriginKind;
 
   // capability 统一闸：null 放行 | string 拒绝原因
-  // 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
-  // minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
+  // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > 用户 level >= 操作 minLevel > 所属权限组覆盖；
+  // minLevel 由 request.risk/visibility/config.authorityOverrides 派生，组的放行条目取自 config.authorityGroups。
   authorize(
     identity: UserIdentity | { platform: string; userId?: string },
-    request: AuthorizeRequest, // { capability, visibility, risk? }
+    request: AuthorizeRequest, // { capability, visibility, risk?, toolGroups? }
   ): string | null;
 
-  // 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且无备注则清记录）。
+  // 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且记录里没有备注等别的内容则清记录）。
   // 单 owner 终态：权限只由 owner 管理。调用方自行确保仅 owner 可达（防自授）。
   setUserLevel(target: UserIdentity, level: number): void;
 
@@ -114,7 +115,7 @@ type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId
 
 ## 守卫流程：授权与确认
 
-执行前 `ExecutionGuard` 先委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。等级不够或命中硬禁即拒，没有别的放行口：发起者本人不能靠确认给自己提权，`restrictedPolicy` 白名单也不放宽授权。
+执行前 `ExecutionGuard` 先委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。命中硬禁、封禁，或等级不够、所属组也不覆盖即拒：发起者本人不能靠确认给自己提权，`restrictedPolicy` 白名单也不放宽授权。
 
 已授权且声明了 `confirm`（经 `confirmOverrides` 覆盖后）的操作再走轴 B：
 
@@ -129,6 +130,7 @@ interface AuthorizeRequest {
   capability: CapabilityId;        // 操作主能力（tool:<name> / command:<name>）
   visibility: CapabilityVisibility; // 主能力默认可见性（无 risk 时作 minLevel 兜底）
   risk?: CapabilityRisk;            // 原始风险（透传，供 minLevel 派生；缺省回退 visibility）
+  toolGroups?: readonly string[];   // 被裁决的工具所属的工具分组（工具一路由执行器填）：权限组的 tool-group: 条目按它覆盖，权限服务不反查工具表
 }
 ```
 
@@ -147,6 +149,7 @@ interface AuthorizeRequest {
 - `deniedCapabilities?: string[]` —— 全局硬禁用（glob；命中即拒，连 owner 都压过）
 - `authorityOverrides?: Record<string, number>` —— 单条操作的最低等级覆盖（能力键 `type:name` → 任意整数），优先于 risk/visibility 派生
 - `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 关闭确认（便于自动化），只对授权身份是 owner 的回合生效，别人的回落到插件的声明；与等级正交
+- `authorityGroups?: Record<string, string[]>` —— 权限组：组名 → 放行条目。条目写成 `tool:<名或通配>`、`command:<名或通配>`（通配同 `deniedCapabilities`）或 `tool-group:<工具分组名>`；裸 `*` 与别的前缀不命中任何操作。只加放行，硬禁与封禁照旧先拒，确认照旧。成员关系不在契约里，参考实现记在 users.json
 - `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；只对授权身份是 owner 的回合生效；不放宽授权
 - `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的出口能连到哪，即 `safeFetch`，以及 tool-browser 开启 `blockPrivate` 时的浏览器网络闸（三项都遵循）
 
@@ -154,8 +157,9 @@ interface AuthorizeRequest {
 
 owner 仅管理权限（无自授）：
 
-- **WebUI authority 页**（owner-only）—— 设等级、管覆盖
+- **WebUI authority 页**（owner-only）—— 设等级、管权限组与成员、管覆盖
 - **`/level`** 指令 —— 设某用户的等级
+- **`/perm`** 指令 —— 设某用户所属的权限组
 
 ## 实现者
 
@@ -163,7 +167,7 @@ owner 仅管理权限（无自授）：
 
 ## 相关
 
-- 权限数据（level / note）存于 `data:/users.json`（家目录的 `state/users.json`）
+- 权限数据（level / note / groups）存于 `data:/users.json`（家目录的 `state/users.json`）
 - 工具的确认经 [api-approval](./api-approval.md) 的 `approvals` 服务（由 `plugin-session-server` 提供）；指令的意图确认由 `plugin-commands` 在同一会话里问发出者
 - 用户身份模型 `UserIdentity` 在本 api 包中定义，是全 surface 统一的调用者身份类型
   （WebUI action 的 caller 第三参、scheduler actor 快照等均为该类型）

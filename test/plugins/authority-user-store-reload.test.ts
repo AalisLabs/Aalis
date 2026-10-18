@@ -7,12 +7,15 @@ import { mkConfig, noSessions, silentLogger } from '../fixtures/authority.js';
 // users.json 重读与写盘失败：重读以文件重建内存表，再叠加自上次成功落盘以来改过的键（内存优先）。
 // 读取在飞或 storage 离线期间的改动还没进文件，按文件值覆盖就是静默撤回封禁；
 // 运行中从文件里删掉的记录则要随重读生效。写盘失败要留下标记，管理入口据此在回执里注明。
+// 记录里的权限组（groups）同样：读取只留非空字符串组名并去重，空数组不写盘，清空也以内存为准。
 
 /**
  * 内存 users.json：offline 时读写都抛（storage 不在线）。readGate 给出时读卡在闸上：
  * 内容在发起读取时就已取到，闸只推迟交回（字节读完、close 等后续步骤还没走完）
  */
-function memStorage(initial: Record<string, { level?: number; note?: string }>) {
+type DiskUsers = Record<string, Record<string, unknown>>;
+
+function memStorage(initial: DiskUsers) {
   const disk = { text: JSON.stringify({ version: 5, users: initial }) };
   const state: { offline: boolean; readGate?: Promise<void>; writeGate?: Promise<void>; writes: number } = {
     offline: false,
@@ -32,8 +35,8 @@ function memStorage(initial: Record<string, { level?: number; note?: string }>) 
       disk.text = data;
     },
   } as unknown as StorageService;
-  const users = (): Record<string, { level?: number; note?: string }> => JSON.parse(disk.text).users;
-  const edit = (next: Record<string, { level?: number; note?: string }>): void => {
+  const users = (): DiskUsers => JSON.parse(disk.text).users;
+  const edit = (next: DiskUsers): void => {
     disk.text = JSON.stringify({ version: 5, users: next });
   };
   return { storage, state, users, edit };
@@ -174,5 +177,63 @@ describe('UserStore 重读：以文件重建，未落盘的改动以内存为准
     disk.edit({ 'onebot:x': { level: 4 } });
     await m.init();
     expect(levelOf(m, 'x')).toBe(4);
+  });
+});
+
+describe('UserStore 的权限组', () => {
+  const config = () => mkConfig({ authorityGroups: { a: ['tool:x'], b: ['tool:y'], ops: ['tool:z'] } });
+  const groupsOf = (m: AuthorityManager, userId: string) =>
+    m.listUsers().find(u => u.platform === 'onebot' && u.userId === userId)?.groups;
+
+  it('groups 读写往返；空数组不写盘', async () => {
+    const disk = memStorage({ 'onebot:y': { level: 1, groups: ['a'] } });
+    const m = new AuthorityManager(config(), silentLogger(), disk.storage, noSessions);
+    await m.init();
+    m.setUserGroups({ platform: 'onebot', userId: 'x' }, ['a', 'b']);
+    m.setUserGroups({ platform: 'onebot', userId: 'y' }, []);
+    m.save();
+    await m.flushed();
+    expect(disk.users()).toEqual({ 'onebot:x': { groups: ['a', 'b'] }, 'onebot:y': { level: 1 } });
+
+    const reloaded = new AuthorityManager(config(), silentLogger(), disk.storage, noSessions);
+    await reloaded.init();
+    expect(groupsOf(reloaded, 'x')).toEqual(['a', 'b']);
+    expect(groupsOf(reloaded, 'y')).toEqual([]);
+  });
+
+  it('坏值丢弃：不是数组的 groups、不是字符串与空的组名；重复的去掉；什么都不剩的记录不载入', async () => {
+    const disk = memStorage({
+      'onebot:a': { level: 1, groups: 'ops' },
+      'onebot:b': { groups: ['ops', 3, '', 'ops', null] },
+      'onebot:c': { groups: [7] },
+    });
+    const m = new AuthorityManager(config(), silentLogger(), disk.storage, noSessions);
+    await m.init();
+    expect(groupsOf(m, 'a')).toEqual([]);
+    expect(groupsOf(m, 'b')).toEqual(['ops']);
+    expect(groupsOf(m, 'c')).toBeUndefined();
+  });
+
+  it('首次读取前清空组：读完之后仍为空，文件里的等级保留', async () => {
+    const disk = memStorage({ 'onebot:x': { level: 2, groups: ['ops'] } });
+    const m = new AuthorityManager(config(), silentLogger(), disk.storage, noSessions);
+    m.setUserGroups({ platform: 'onebot', userId: 'x' }, []);
+    await m.init();
+    expect(groupsOf(m, 'x'), '读取用文件里的组盖掉了读取前的清空').toEqual([]);
+    expect(levelOf(m, 'x')).toBe(2);
+    await m.flushed();
+    expect(disk.users()['onebot:x']).toEqual({ level: 2 });
+  });
+
+  it('首次读取前清空组、记录里别的都没有：读完之后没有这条记录，也不写盘', async () => {
+    const disk = memStorage({ 'onebot:y': { level: 1 }, 'onebot:z': { groups: ['ops'] } });
+    const m = new AuthorityManager(config(), silentLogger(), disk.storage, noSessions);
+    m.setUserGroups({ platform: 'onebot', userId: 'x' }, []);
+    m.setUserGroups({ platform: 'onebot', userId: 'z' }, []);
+    await m.init();
+    expect(groupsOf(m, 'x'), '文件里没有这条记录').toBeUndefined();
+    expect(groupsOf(m, 'z'), '文件里只有组').toBeUndefined();
+    await m.flushed();
+    expect(disk.users()).toEqual({ 'onebot:y': { level: 1 } });
   });
 });

@@ -117,7 +117,7 @@ EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做�
 
 | api 包 | 注入的字段 |
 |---|---|
-| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `authorityOverrides` / `confirmOverrides` / `restrictedPolicy` / `network` |
+| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `authorityOverrides` / `authorityGroups` / `confirmOverrides` / `restrictedPolicy` / `network` |
 
 ---
 

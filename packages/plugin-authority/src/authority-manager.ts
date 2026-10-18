@@ -10,7 +10,7 @@ import type { HostConfig } from '@aalis/api-host-config';
 import type { SessionInfo } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import type { TextRef } from '@aalis/schema-i18n';
+import { TextError, type TextRef } from '@aalis/schema-i18n';
 import {
   DEFAULT_AUTHORITY,
   matchAnyCap,
@@ -20,15 +20,16 @@ import {
   resolveMinLevel,
 } from './authority-model.js';
 import { t } from './texts.js';
-import { UserStore } from './user-store.js';
+import { type UserRecord, UserStore } from './user-store.js';
 
 // ════════════════════════════════════════════════════════════
-// AuthorityManager —— 数字等级单轴的 AuthorityService 实现（策略层）
+// AuthorityManager —— 等级加权限组的 AuthorityService 实现（策略层）
 //
-// owner=∞；每个外部身份一个登记等级（缺省 0，封禁=负数）；操作一个 minLevel（risk/visibility/authorityOverrides 派生）；
-// 裁决 deniedCapabilities(全局硬禁) > owner > level>=minLevel（纯函数在 authority-model）。
+// owner=∞；每个外部身份一个登记等级（缺省 0，封禁=负数），可属于任意几个权限组；操作一个 minLevel
+// （risk/visibility/authorityOverrides 派生）；裁决 deniedCapabilities(全局硬禁) > owner > 封禁 > level>=minLevel >
+// 所属组覆盖（纯函数在 authority-model）。组定义在宿主配置 authorityGroups，成员关系记在用户记录里，读写只在本类上。
 // confirm 轴另在执行守卫里（plugin-authority 的 index.ts），这里只答 restrictedPolicy 白名单免不免确认。
-// 数据层（users.json v5 等级存储）委托给 UserStore。
+// 数据层（users.json v5 的等级与组成员存储）委托给 UserStore。
 // ════════════════════════════════════════════════════════════
 
 export class AuthorityManager implements AuthorityService {
@@ -69,14 +70,31 @@ export class AuthorityManager implements AuthorityService {
     return originKind(turn, (platform, userId) => this.isOwner(platform, userId), this.sessions);
   }
 
-  /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。v1 无访问器（onebot 群角色待 sender.role 透传后接线）。 */
+  /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。平台身份（如 onebot 群角色）不参与。 */
   private level(platform: string, userId?: string): number {
     if (this.isOwner(platform, userId)) return OWNER_RANK;
     const key = userId ? `${platform}:${userId}` : undefined;
     return (key ? this.store.get(key)?.level : undefined) ?? DEFAULT_AUTHORITY;
   }
 
-  // ── 统一权限闸（等级静态判定；确认在执行守卫）──────────
+  /** 已定义的权限组（宿主配置 authorityGroups）：组名 → 放行条目；手改坏了的组（条目不是数组）不算定义 */
+  definedGroups(): Map<string, readonly string[]> {
+    const defs = Object.entries(this.config.get('authorityGroups') ?? {});
+    return new Map(defs.filter(([, entries]) => Array.isArray(entries)));
+  }
+
+  /**
+   * 这个身份所属各组的放行条目合集：成员关系的唯一入口（以后按场所取成员关系只改这里）。
+   * 用户记录里的组名按配置里定义了的取，没定义的组不放行任何东西
+   */
+  private grantsOf(identity: { platform: string; userId?: string }): string[] {
+    const groups = identity.userId ? this.store.get(`${identity.platform}:${identity.userId}`)?.groups : undefined;
+    if (!groups?.length) return [];
+    const defs = this.definedGroups();
+    return groups.flatMap(name => defs.get(name) ?? []);
+  }
+
+  // ── 统一权限闸（等级与权限组静态判定；确认在执行守卫）──────────
   authorize(identity: { platform: string; userId?: string }, request: AuthorizeRequest): TextRef | null {
     const level = this.level(identity.platform, identity.userId);
     const isOwner = this.isOwner(identity.platform, identity.userId);
@@ -89,7 +107,17 @@ export class AuthorityManager implements AuthorityService {
       risk: request.risk,
       visibility: request.visibility,
     });
-    if (!resolveAccess({ level, minLevel, isOwner, denied, capability: request.capability })) {
+    if (
+      !resolveAccess({
+        level,
+        minLevel,
+        isOwner,
+        denied,
+        capability: request.capability,
+        granted: this.grantsOf(identity),
+        toolGroups: request.toolGroups,
+      })
+    ) {
       if (matchAnyCap(denied, request.capability)) return t('capabilityDenied', { capability: request.capability });
       // 文案点名能力，因此会向无权用户暴露该能力的**存在性**。这是评估后刻意保留的：
       // 改成「未知指令」式的模糊回应会牵动所有能力的拒绝语义（本函数同时服务 tools 与
@@ -101,18 +129,41 @@ export class AuthorityManager implements AuthorityService {
     return null;
   }
 
-  // ── 等级设置（owner 管理；单轴，无 per-user 特批）──────────
+  // ── 等级与组成员设置（owner 管理）──────────
   setUserLevel(target: UserIdentity, level: number): void {
     const key = `${target.platform}:${target.userId}`;
-    const existing = this.store.get(key);
-    // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）。首次读取落定之前、读取失败拒写期间内存里看不到
-    // 文件里的备注，删除会记成墓碑、之后读取成功时连同备注删掉整条记录；这时改为保留记录，读取按字段合并带上文件里的备注
-    if (level === DEFAULT_AUTHORITY && !existing?.note && !this.store.awaitingFirstLoad && !this.store.persistBlocked) {
-      this.store.delete(key);
-    } else {
-      this.store.set(key, { ...existing, level });
-    }
+    this.put(key, { ...this.store.get(key), level });
     this.logger.debug(`设置等级: ${key} → ${level}`);
+  }
+
+  /**
+   * 覆盖式设 target 所属的权限组（去重，空即清空）。组名须都已定义，否则抛错并列出已有的组，记录不动。
+   * 清空而记录留着时（还有等级或备注，或首次读取尚未落定）记成 `groups: []`：读取按字段合并时由它盖掉文件里的组
+   */
+  setUserGroups(target: UserIdentity, groups: readonly string[]): void {
+    const names = [...new Set(groups)];
+    const defs = this.definedGroups();
+    const unknown = names.filter(name => !defs.has(name));
+    if (unknown.length > 0) {
+      const known = [...defs.keys()];
+      throw new TextError(
+        known.length > 0 ? t('unknownGroups', { groups: unknown, known }) : t('noGroupsDefined', { groups: unknown }),
+      );
+    }
+    const key = `${target.platform}:${target.userId}`;
+    this.put(key, { ...this.store.get(key), groups: names });
+    this.logger.debug(`设置权限组: ${key} → [${names.join(', ')}]`);
+  }
+
+  /**
+   * 写回一条记录：默认等级(0)、无备注、没有组时直接清记录（保持 users.json 精简）。首次读取落定之前、读取失败拒写期间
+   * 内存里看不到文件里的字段，删除会记成墓碑、之后读取成功时连同文件里的备注与组删掉整条记录；这时改为保留记录，
+   * 读取按字段合并带上文件里的
+   */
+  private put(key: string, record: UserRecord): void {
+    const empty = (record.level ?? DEFAULT_AUTHORITY) === DEFAULT_AUTHORITY && !record.note && !record.groups?.length;
+    if (empty && !this.store.awaitingFirstLoad && !this.store.persistBlocked) this.store.delete(key);
+    else this.store.set(key, record);
   }
 
   removeUser(platform: string, userId: string): void {
@@ -140,21 +191,21 @@ export class AuthorityManager implements AuthorityService {
   }
 
   // ── 列表 ──────────────────────────────────────────────────
-  listUsers(): AuthorityUserEntry[] {
-    const result: AuthorityUserEntry[] = [];
-    for (const [key, record] of this.store.entries()) {
+  /** 带所属组的用户记录：权限页与 /authority 用，契约的 AuthorityUserEntry 不带组 */
+  listUsers(): Array<AuthorityUserEntry & { groups: string[] }> {
+    return [...this.store.entries()].map(([key, record]) => {
       const idx = key.indexOf(':');
       const platform = key.slice(0, idx);
       const userId = key.slice(idx + 1);
-      result.push({
+      return {
         platform,
         userId,
         isOwner: this.isOwner(platform, userId),
         level: record.level ?? DEFAULT_AUTHORITY,
         note: record.note,
-      });
-    }
-    return result;
+        groups: record.groups ?? [],
+      };
+    });
   }
 
   /** 等在飞的等级表读取落定（管理入口改等级前等它：首次读取完成前内存表是空的） */

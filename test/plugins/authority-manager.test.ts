@@ -5,7 +5,7 @@ import { resolveText, type TextRef, toSource } from '../../packages/schema-i18n/
 import { mkConfig, noFileStorage, noSessions, silentLogger } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
-// AuthorityManager —— 数字等级单轴（authorize: deny>owner>level>=minLevel；owner 管理 setUserLevel）
+// AuthorityManager —— 数字等级加权限组（authorize: deny>owner>封禁>level>=minLevel>所属组覆盖；owner 管理 setUserLevel 与 setUserGroups）
 // ════════════════════════════════════════════════════════════
 
 const onebot = (id: string) => ({ platform: 'onebot', userId: id });
@@ -103,6 +103,59 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
     expect(toSource(m.authorize(onebot('boss'), { capability: 'tool:forbidden', visibility: 'public' }))).toContain(
       '系统禁用',
     );
+  });
+});
+
+describe('权限组（成员存 users.json，组定义存宿主配置 authorityGroups）', () => {
+  const GROUPS = { authorityGroups: { search: ['tool:web_search'], ops: ['command:restart', 'tool-group:system'] } };
+  const shell = { capability: 'tool:shell_exec', visibility: 'restricted' as const, toolGroups: ['system'] };
+
+  it('成员指向未定义的组不放行；删组不动成员记录', () => {
+    const config = mkConfig(GROUPS);
+    const m = new AuthorityManager(config, silentLogger(), noFileStorage, noSessions);
+    const search = { capability: 'tool:web_search', visibility: 'restricted' as const };
+    m.setUserGroups(onebot('1'), ['search']);
+    expect(m.authorize(onebot('1'), search)).toBeNull();
+    config.set('authorityGroups', { ops: GROUPS.authorityGroups.ops });
+    expect(m.authorize(onebot('1'), search)).not.toBeNull();
+    expect(m.listUsers().find(u => u.userId === '1')?.groups).toEqual(['search']);
+    // 重建同名组即恢复
+    config.set('authorityGroups', GROUPS.authorityGroups);
+    expect(m.authorize(onebot('1'), search)).toBeNull();
+  });
+
+  it('两个组合起来，各放行一样', () => {
+    const m = new AuthorityManager(mkConfig(GROUPS), silentLogger(), noFileStorage, noSessions);
+    m.setUserGroups(onebot('1'), ['search', 'ops']);
+    expect(m.authorize(onebot('1'), { capability: 'tool:web_search', visibility: 'restricted' })).toBeNull();
+    expect(m.authorize(onebot('1'), { capability: 'command:restart', visibility: 'restricted' })).toBeNull();
+    expect(m.authorize(onebot('1'), shell)).toBeNull();
+    expect(m.authorize(onebot('1'), { ...shell, toolGroups: undefined })).not.toBeNull();
+    expect(m.authorize(onebot('2'), shell), '不在组里的人照旧按等级').not.toBeNull();
+  });
+
+  it('setUserGroups 拒收未定义的组并列出已有的组；去重', () => {
+    const m = new AuthorityManager(mkConfig(GROUPS), silentLogger(), noFileStorage, noSessions);
+    expect(() => m.setUserGroups(onebot('1'), ['search', 'nope'])).toThrow(
+      '没有这些权限组：nope；已有的组：search、ops',
+    );
+    expect(
+      m.listUsers().find(u => u.userId === '1'),
+      '拒收时不改记录',
+    ).toBeUndefined();
+    m.setUserGroups(onebot('1'), ['ops', 'search', 'ops']);
+    expect(m.listUsers().find(u => u.userId === '1')?.groups).toEqual(['ops', 'search']);
+  });
+
+  it('0 级有组的记录降级不删；组也清空之后才删', async () => {
+    const m = new AuthorityManager(mkConfig(GROUPS), silentLogger(), noFileStorage, noSessions);
+    await m.init(); // 首次读取落定之后才按「什么都没有」清记录
+    m.setUserLevel(onebot('1'), 3);
+    m.setUserGroups(onebot('1'), ['search']);
+    m.setUserLevel(onebot('1'), 0);
+    expect(m.listUsers().find(u => u.userId === '1')).toMatchObject({ level: 0, groups: ['search'] });
+    m.setUserGroups(onebot('1'), []);
+    expect(m.listUsers().find(u => u.userId === '1')).toBeUndefined();
   });
 });
 

@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "权限系统：数字等级授权、高危操作确认、网络出口闸（单 owner）",
+  "description": "权限系统：数字等级与权限组授权、高危操作确认、网络出口闸（单 owner）",
   "type": "module",
   "keywords": [
     "aalis",
@@ -31,12 +31,14 @@
     "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
@@ -56,7 +58,8 @@
         "tools",
         "storage",
         "approvals",
-        "session-manager"
+        "session-manager",
+        "contributions"
       ],
       "provides": [
         "authority"
