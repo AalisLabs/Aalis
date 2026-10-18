@@ -20,6 +20,8 @@
 // file:// 与本地绝对路径不再由本插件直接读取（避免依赖 node:fs），原样透传
 // 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
 // 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
+//
+// 她回复正文里媒体标记的网址同样经 safeFetch 下载后内联（inlineRemoteMarkers），不交给 daemon 去拉。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
@@ -29,6 +31,7 @@ import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
+import { MARKER_KINDS, MEDIA_MARKER } from './types.js';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
@@ -207,4 +210,54 @@ export async function materializeAttachments(
     }
   }
   return { markers: markers.join(''), inlineAttachments, uploads, errors };
+}
+
+/** 地址按网址解析得出 http、https 时返回规范化的网址：协议的大小写、前导空白与省略的 `//` 都按网址算 */
+function remoteUrl(raw: string): string | undefined {
+  if (!URL.canParse(raw)) return undefined;
+  const url = new URL(raw);
+  return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
+}
+
+/**
+ * 她回复正文（OutgoingMessage.markup）里媒体标记的网址：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
+ * 下载、按文件头核对后改成 base64:// 内联，各标记同时下载；下载不了、超过内联上限、不是能内联的媒体的标记去掉，原因收进
+ * errors（已记 warn）。地址不是网址的标记原样留下
+ */
+export async function inlineRemoteMarkers(
+  content: string,
+  storage: StorageService,
+  logger?: Logger,
+): Promise<{ content: string; errors: unknown[] }> {
+  const errors: unknown[] = [];
+  /** 一个网址标记换成的文字：内联后的标记，发不出的为空串 */
+  const inline = async (tag: string, url: string): Promise<string> => {
+    const kind = MARKER_KINDS[tag];
+    try {
+      const { file, uploadExt } = await attachmentToOneBotFile({ kind, data: url }, storage, logger);
+      if (uploadExt !== undefined) throw new Error(`${uploadExt} 格式不能内联，已拒发`);
+      if (!file.startsWith('base64://')) throw new Error('超过内联上限，不交给实现端去拉，已拒发');
+      return `<${tag} url="${file}"/>`;
+    } catch (err) {
+      logger?.warn?.(`OneBot 正文里的${LABELS[kind]}标记未发出: ${err instanceof Error ? err.message : err}`);
+      errors.push(err);
+      return '';
+    }
+  };
+  // 去掉一个标记后，前后的文字可能拼成新的网址标记，所以重扫到某一遍没有去掉标记为止：去掉标记让正文里的 `<` 变少、
+  // 内联不增加，循环必停
+  let out = content;
+  let dropped: boolean;
+  do {
+    const replaced = await Promise.all(
+      [...out.matchAll(MEDIA_MARKER)].map(([, tag, raw]) => {
+        const url = remoteUrl(raw);
+        return url === undefined ? undefined : inline(tag, url);
+      }),
+    );
+    dropped = replaced.includes('');
+    let i = 0;
+    out = out.replace(MEDIA_MARKER, whole => replaced[i++] ?? whole);
+  } while (dropped);
+  return { content: out, errors };
 }

@@ -85,6 +85,7 @@ interface OutgoingMessage {
   platform?: string;
   hostNotice?: { kind: string; id?: string }; // 最终通知关联，工具中途发消息不带
   replyTo?: string;                   // 引用回复：被引用消息的平台消息 id
+  markup?: boolean;                   // 正文含平台标记、要解析；不设的按纯文字发
   source?: 'agent' | 'system' | 'command';
   callId?: string;                    // 由工具调用发出时，那次调用的 id
   turnId?: string;                    // agent 这一轮发出的消息：这一轮的 id
@@ -95,7 +96,9 @@ interface OutgoingMessage {
 
 出站消息只带要发出去的正文与附件，不带思考与工具时间线：平台适配器只发正文；要展示思考与工具调用的客户端经会话协议拿（流式片段与 `reasoning` 条目），存档的 `Message` 照旧带 `reasoningContent` 与 `segments`。
 
-`source='agent'` 表示由 AI 生成，可被分条延迟发送以模拟自然节奏；其它来源默认整条立即发送。
+`source='agent'` 表示由 AI 发出（她的回复与她经工具发的附件），`system` 是宿主提示，`command` 是指令回复。
+
+`markup` 表示正文含平台标记、要解析：有标记语法的适配器（OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成 @、媒体与引用，并可分条延迟发送以模拟自然节奏。不设的正文一律按纯文字原样整条发出，不解析、不分条，其中回显的参数、错误信息与作品标题不会变成 @、图片或引用。要发平台标记的出站自己设它，第一方只有 agent 的回复设。`attachments` 不受它影响，照常发出。
 
 `modelInfo` 是 agent 一轮的回复由哪个模型生成与这一轮的 token（`promptTokens` 取回复定稿时的上下文，`completionTokens` 是这一轮各次调用的输出之和），agent 存档时把同一份写进这条 assistant 消息的元数据（登记的键 `ModelInfo`，见下文「存档元数据的键」），会话服务据此在实时推送与回看历史里标出回复的模型与 token。需要总数时取两项之和；用时由会话协议时间线条目各自的时刻（`at`）算出。
 

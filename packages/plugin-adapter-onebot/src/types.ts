@@ -127,6 +127,8 @@ export interface SendMessageParams {
   content: string;
   /** 引用回复：被引用消息的平台消息 id */
   replyTo?: string;
+  /** 正文含平台标记、要解析（OutgoingMessage.markup）；不设时整段是一个文字段 */
+  markup?: boolean;
 }
 
 /** 协议处理器接口 */
@@ -344,6 +346,19 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
 }
 
 /**
+ * 媒体标记 `<image|record|video url="…"/>`，第 1 组是标签、第 2 组是地址。parseContentToSegments 与出站前的网址内联
+ * （attachments.ts 的 inlineRemoteMarkers）共用这一份写法：内联认不出的媒体标记，解析也认不出
+ */
+export const MEDIA_MARKER = /<(image|record|video)\s+url=["']([^"']*)["']\s*\/>/g;
+
+/** 媒体标记的标签对应的消息段类型 */
+export const MARKER_KINDS: Record<string, 'image' | 'audio' | 'video'> = {
+  image: 'image',
+  record: 'audio',
+  video: 'video',
+};
+
+/**
  * 解析内容字符串中的 XML 标记，拆分为抽象消息段列表。
  *
  * 支持的标记：
@@ -357,9 +372,11 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
  */
 function parseContentToSegments(content: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
-  // 匹配新旧两种 at 格式 + face/image/record/video/reply
-  const regex =
-    /<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<image\s+url=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>|<video\s+url=["']([^"']*)["']\s*\/>|<record\s+url=["']([^"']*)["']\s*\/>/g;
+  // 匹配新旧两种 at 格式 + face/reply + 媒体标记
+  const regex = new RegExp(
+    `${/<at(?:\s+self)?(?:\s+id=["']([^"']*)["'])?\s*>([^<]*)<\/at>|<face\s+id=["']([^"']*)["']\s*\/>|<reply\s+id=["']([^"']*)["']\s*\/>/.source}|${MEDIA_MARKER.source}`,
+    'g',
+  );
 
   let lastIndex = 0;
   let match: RegExpExecArray | null = regex.exec(content);
@@ -375,13 +392,9 @@ function parseContentToSegments(content: string): ParsedSegment[] {
     } else if (match[3] !== undefined) {
       // face 标签：忽略，不转为消息段（防止 LLM 误发 QQ 表情，也兼容v12版本）
     } else if (match[4] !== undefined) {
-      segments.push({ type: 'image', data: { url: match[4] } });
+      segments.push({ type: 'reply', data: { id: match[4] } });
     } else if (match[5] !== undefined) {
-      segments.push({ type: 'reply', data: { id: match[5] } });
-    } else if (match[6] !== undefined) {
-      segments.push({ type: 'video', data: { url: match[6] } });
-    } else if (match[7] !== undefined) {
-      segments.push({ type: 'audio', data: { url: match[7] } });
+      segments.push({ type: MARKER_KINDS[match[5]], data: { url: match[6] } });
     }
     lastIndex = match.index + match[0].length;
     match = regex.exec(content);
@@ -395,9 +408,14 @@ function parseContentToSegments(content: string): ParsedSegment[] {
   return segments.length > 0 ? segments : [{ type: 'text', data: { text: content } }];
 }
 
-/** 要发的消息段：有 replyTo 时在最前加引用段；正文里已有引用标记（模型自己写的）的，以它为准，不加第二个 */
+/**
+ * 要发的消息段：markup 时解析正文里的标记，否则整段一个文字段；有 replyTo 时在最前加引用段，正文里已有引用标记
+ * （模型自己写的）的，以它为准，不加第二个
+ */
 export function messageSegments(params: SendMessageParams): ParsedSegment[] {
-  const segments = parseContentToSegments(params.content);
+  const segments: ParsedSegment[] = params.markup
+    ? parseContentToSegments(params.content)
+    : [{ type: 'text', data: { text: params.content } }];
   if (params.replyTo === undefined || segments.some(seg => seg.type === 'reply')) return segments;
   return [{ type: 'reply', data: { id: params.replyTo } }, ...segments];
 }

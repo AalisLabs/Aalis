@@ -70,7 +70,7 @@ export default definePlugin({
 | `v11.ts` | OneBot v11 协议处理器 |
 | `v12.ts` | OneBot v12 协议处理器 |
 | `attachment-cache.ts` | 入站/出站附件统一落盘缓存（`data/{kind}s/{session}/`，含单文件大小上限） |
-| `attachments.ts` | 出站附件按文件头分流：能内联的媒体渲染为消息段标记，文件附件与不能内联的媒体物化为上传文件 |
+| `attachments.ts` | 出站附件按文件头分流：能内联的媒体渲染为消息段标记，文件附件与不能内联的媒体物化为上传文件；她回复正文里媒体标记的网址下载后内联 |
 | `forward.ts` | 合并转发展开与摘要信封构造 |
 | `forward-expand.ts` | 合并转发自动展开器（缓存、媒体识别、LLM 摘要、默认摘要 prompt） |
 | `sent-messages.ts` | 已发送消息记录（供撤回等工具查询） |
@@ -124,13 +124,21 @@ onebot:{selfId}:{detailType}:{targetId}
 
 适配器不对普通入站图片调用视觉模型。合并转发内的图片在 `forward.imageRecognition` 开启时送 media 服务识别，语音与视频在 media 服务具备相应能力时一并识别。引用消息中的图片只复用 media 服务已有的描述缓存，写成 `[图片: 描述]`，查不到时保留 `[图片]`。
 
+## 出站正文
+
+出站消息的正文默认按纯文字发：整条一个文字段，不解析标记、不分条。带 `markup` 的（她的回复，见 [schema-message](../api/schema-message.md#outgoingmessage)）才解析：`<at id>` 变成 @，`<image|record|video url>` 变成图片、语音、视频段，`<reply id>` 变成引用，`<face>` 去掉；开了 `splitMessage` 时按切割模式分条，图片单独成条。指令回复、宿主提示与其它插件的文字因此原样显示，群友让指令回显的标记不会变成 @、图片或引用。平台契约的 `sendMessage`（经 `sendPlatformMessage` 直发）同样只发纯文字。
+
+带 `markup` 的正文里，媒体标记的地址是 http、https 网址的，适配器先经 `safeFetch` 下载、按文件头核对，改成 `base64://` 内联再发。下载不了（含私网地址被拒）、超过 10 MiB 或内容不是能内联的媒体的标记去掉，文字照发，投递结果报失败。地址不是网址的（`base64://`、`file://`、本机路径）原样交给实现端。
+
+附件的消息段标记在正文之后另起一条、按标记发，不受 `markup` 影响。
+
 ## 出站附件
 
 出站附件的内容读出后以 `base64://` 交给实现端，走 WebSocket 隧道：实现端在容器里（如 Docker 里的 NapCat）时读不到宿主路径，这是最稳的形态。storage URI 先量大小再读，超过 10 MiB 的不整份读进内存。
 
 - **图片、语音、视频**：先按文件头认格式（格式签名在 [`@aalis/util-media-signature`](../utils/README.md)，与 `send_attachment` 的白名单是同一份），再分三路。实现端能内联的格式（图片 PNG、JPEG、GIF、WebP；语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频 MP4、MOV、WebM）内联为消息段；认得出、但不能内联的媒体（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经文件上传，规则同下面的文件附件，没有名字时群文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn。发送工具接受任意 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。能内联、但超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明：实现端在容器里（如 Docker 里的 NapCat）读不到宿主路径，超过 10 MiB 的本机文件因此发不出去，这是送达方式的限制，要发更大的文件得让实现端与 Aalis 共享文件系统。storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头 4 KiB，不整份读进内存），超过 10 MiB 又不能内联的不发。`send_attachment` 交来的是 storage URI，大文件照样经这道核对；附件本来就是 `file://` 或本机绝对路径（只有插件代码直接发出的附件是这种形态）、又没能落盘的，原样交给实现端，不经核对。
 - **文件**（`kind: 'file'`）与改走上传的媒体：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接、原样透传的 `file://` 这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，文件附件没有名字时用 `file`。上传不重试：上传超时多半是文件还在传，重试会在群文件里留两份。v12 连接不支持文件上传，按失败处理。
-- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed`（`WellKnownKinds.OutboundDeliveryFailed`）系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。记录的 `metadata` 带 `error`（与投递结果同一句原因）与这条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里给那一轮的回复标「未发出」。文件上传超时单独说明：实现端可能已经收下，记录写明结果未知、不要重发，投递结果同样返回失败但附带这句提示。失败全部是上传超时、没有别的失败时，投递结果另带 `unconfirmed: true`（见 [schema-message](../api/schema-message.md)），发起方据此不重发、也不劝模型重发；夹着确定没发出的部分时不带。
+- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、正文媒体标记的下载、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed`（`WellKnownKinds.OutboundDeliveryFailed`）系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。记录的 `metadata` 带 `error`（与投递结果同一句原因）与这条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里给那一轮的回复标「未发出」。文件上传超时单独说明：实现端可能已经收下，记录写明结果未知、不要重发，投递结果同样返回失败但附带这句提示。失败全部是上传超时、没有别的失败时，投递结果另带 `unconfirmed: true`（见 [schema-message](../api/schema-message.md)），发起方据此不重发、也不劝模型重发；夹着确定没发出的部分时不带。
 
 文件上传经适配器的非标准扩展方法 `uploadFile(sessionId, file, name)` 完成，它不在 `@aalis/api-platform` 契约里。
 

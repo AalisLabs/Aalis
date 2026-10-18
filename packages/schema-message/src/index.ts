@@ -408,10 +408,15 @@ export interface OutgoingMessage {
   /**
    * 助手要附带发送的多模态附件（图片/音频/视频/文件）。
    * 适配器（OneBot / WebUI 等）应优先发结构化 attachments，把远程 URL 主动下载为本地文件后用 file:// 形式发送。
-   * 若 attachments 为空但 content 内含 `<image url="...">` 标记，则由适配器解析嵌入式发图（旧路径，仍兼容）。
    */
   attachments?: MessageAttachment[];
-  /** 消息来源：agent = AI 回复（可分条延迟发送），其他来源默认立即整条发送 */
+  /**
+   * 正文含平台标记、要解析：有标记语法的适配器（如 OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成
+   * @、媒体与引用，并可分条延迟发送；不设的正文按纯文字原样整条发出，不解析、不分条。要发平台标记的出站自己设它；
+   * attachments 不受它影响
+   */
+  markup?: boolean;
+  /** 消息来源：agent = AI 发出的（回复与经工具发的附件），system = 宿主提示，command = 指令回复 */
   source?: 'agent' | 'system' | 'command';
   /** 由工具调用发出的消息：那次调用的 id（ToolCallContext.callId），会话的客户端据此把消息挂到对应的工具卡上 */
   callId?: string;

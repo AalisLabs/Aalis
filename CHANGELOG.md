@@ -36,6 +36,14 @@
 
 **迁移**：要让 0 级继续用，在 `authorityOverrides` 里把 `command:clear` 设为 `0`，群里的 0 级也随之能清；要群里仍是等级 2，设为 `2`，私聊也随之要等级 2。
 
+### 出站文字默认按纯文字发（@aalis/schema-message、@aalis/plugin-adapter-onebot）
+
+- `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
+- onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除。
+- 带 `markup` 的正文里媒体标记的网址由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
+
+**迁移**：要发 @、图片或引用的出站设 `markup: true`，图片、语音、视频也可以改走 `attachments`；引用回复用 `OutgoingMessage.replyTo`。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
