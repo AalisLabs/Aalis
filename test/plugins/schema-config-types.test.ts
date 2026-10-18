@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
-// defineConfig 的 const 推导与 ConfigOf 推出的配置值类型。
+// defineConfig 的 const 推导、ConfigOf 推出的配置值类型、带 session 字段的 SessionFieldsOf 与线上类型。
 //
 // 负向用例不能放进 test/（test-types 绊线要求零错），故写到临时目录、spawn tsc、断言错误落点。
 // 负向探针由正向夹具追加错误行而成：正向夹具零错即「去掉错误就能编过」，防恒真。
@@ -15,7 +15,12 @@ import {
   type ConfigOf,
   type ConfigSchema,
   type SchemaField,
+  type SessionFieldSpec,
+  type SessionFieldsOf,
+  type WireConfigSchema,
+  type WireSchemaField,
   defineConfig,
+  isSessionField,
   parseConfig,
 } from '@aalis/schema-config';
 
@@ -55,7 +60,8 @@ const configSchema = defineConfig({
     label: '音频',
     fields: {
       prefer: { type: 'select', label: '后端', options: [{ label: '自动', value: '' }], default: '' },
-      think: { type: 'boolean', label: '思考' },
+      // 分组里写了 session 的照常在 ConfigOf 里
+      think: { type: 'boolean', label: '思考', session: {} },
     },
   },
   servers: {
@@ -68,6 +74,35 @@ const configSchema = defineConfig({
     },
   },
   jobs: { type: 'array', label: '任务', items: { name: { type: 'string', label: '名称' } } },
+  // 带 session 的顶层字段不在 ConfigOf 里（写成 undefined 的不算带）
+  memo: { type: 'string', label: '附注', session: undefined },
+  effort: {
+    type: 'select',
+    label: '思考深度',
+    session: {},
+    options: [
+      { label: '低', value: 'low' },
+      { label: '高', value: 'high' },
+    ],
+  },
+  toolGroups: { type: 'multiselect', label: '工具分组', session: {}, default: [], dynamicOptions: 'toolGroups' },
+  scope: {
+    type: 'select',
+    label: '范围',
+    session: {},
+    default: 'session',
+    onInvalid: 'error',
+    options: [{ label: '本会话', value: 'session' }],
+  },
+  depth: { type: 'number', label: '深度', session: {}, onInvalid: 'error' },
+  chat: {
+    type: 'llm-ref',
+    label: '对话模型',
+    session: {},
+    validate: (value: unknown) => (typeof value === 'object' ? undefined : '不是模型引用'),
+    fromText: (text: string) => ({ provider: text, model: text }),
+    toText: (value: unknown) => String(value),
+  },
 });
 
 type Config = ConfigOf<typeof configSchema>;
@@ -95,9 +130,38 @@ assertType<
       env?: Record<string, string> | undefined;
       llm?: ModelRef | undefined;
       jobs?: { name?: string | undefined }[] | undefined;
+      memo?: string | undefined;
     }
   >
 >();
+
+// 带 session 的顶层字段经读取器读到的值：有 default 的必有，严格的为 unknown
+type Fields = SessionFieldsOf<typeof configSchema>;
+assertType<
+  Equal<
+    Fields,
+    {
+      toolGroups: string[];
+      scope: unknown;
+      effort?: 'low' | 'high' | undefined;
+      depth?: unknown;
+      chat?: ModelRef | undefined;
+    }
+  >
+>();
+declare const fields: Fields;
+
+// 经 JSON 下发的 schema：插件声明的 schema 可以直接给出去，session 留在线上类型里
+const wire: WireConfigSchema = configSchema;
+void wire;
+const wireField: WireSchemaField = { type: 'select', label: '档位', session: {} };
+
+// isSessionField 是类型守卫：判过之后直接读 session
+declare const entry: unknown;
+if (isSessionField(entry)) {
+  const spec: SessionFieldSpec = entry.session;
+  void spec;
+}
 
 // 返回值可赋给 ConfigSchema 与 PluginMeta.configSchema；parseConfig 的返回类型即 ConfigOf，可改写
 const asSchema: ConfigSchema = configSchema;
@@ -133,6 +197,10 @@ const BAD_LINES = [
   'declare const parsed: Config; const badOptional: number = parsed.note.length; // BAD-OPTIONAL',
   "configSchema.audio.fields.prefer.options = [{ label: 'y', value: 'other' }]; // BAD-READONLY",
   "defineConfig({ x: { type: 'nope', label: 'X' } }); // BAD-TYPE",
+  'parseConfig(configSchema, {}).effort; // BAD-CONFIG-SESSION',
+  'const effort: string = fields.effort; // BAD-FIELD-OPTIONAL',
+  'const scope: string = fields.scope; // BAD-STRICT',
+  'wireField.validate; // BAD-WIRE',
 ];
 const BAD = `${GOOD}\n${BAD_LINES.join('\n')}\n`;
 
@@ -140,16 +208,26 @@ function lineOf(source: string, marker: string): number {
   return source.split('\n').findIndex(l => l.includes(marker)) + 1;
 }
 
-describe('defineConfig / ConfigOf 类型', () => {
-  it('正向：字面量保留、ConfigOf 推导、可赋给 ConfigSchema 与 PluginMeta.configSchema、经宽类型引用改写 options', () => {
+describe('defineConfig / ConfigOf / SessionFieldsOf 类型', () => {
+  it('正向：字面量保留、ConfigOf 推导（不含带 session 的顶层字段）、SessionFieldsOf 只含它们、可赋给 ConfigSchema、PluginMeta.configSchema 与 WireConfigSchema、经宽类型引用改写 options、isSessionField 收窄', () => {
     const errs = runTscProbe(GOOD);
     expect(errs, `合法声明必须放行，实际：${errs.join('\n') || '（零错误）'}`).toEqual([]);
   });
 
-  it('负向：选项外的字面量、未判空的可选字段、直接改写推出的只读属性、未登记的字段类型各报一条', () => {
+  it('负向：选项外的字面量、未判空的可选字段、直接改写推出的只读属性、未登记的字段类型、插件配置里读带 session 的键、没有 default 的会话字段当必有、严格会话字段当具体类型、线上字段读函数成员各报一条', () => {
     const errs = runTscProbe(BAD);
-    expect(errs, `应恰好四条错误，实际：\n${errs.join('\n')}`).toHaveLength(BAD_LINES.length);
-    for (const marker of ['BAD-NARROW', 'BAD-OPTIONAL', 'BAD-READONLY', 'BAD-TYPE']) {
+    expect(errs, `应恰好 ${BAD_LINES.length} 条错误，实际：\n${errs.join('\n')}`).toHaveLength(BAD_LINES.length);
+    const markers = [
+      'BAD-NARROW',
+      'BAD-OPTIONAL',
+      'BAD-READONLY',
+      'BAD-TYPE',
+      'BAD-CONFIG-SESSION',
+      'BAD-FIELD-OPTIONAL',
+      'BAD-STRICT',
+      'BAD-WIRE',
+    ];
+    for (const marker of markers) {
       const line = lineOf(BAD, marker);
       expect(
         errs.some(e => e.includes(`fixture.ts(${line},`)),

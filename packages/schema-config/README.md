@@ -1,6 +1,6 @@
 # @aalis/schema-config
 
-配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；对这套词汇的中立解释函数 `defaultsFrom` / `deepMergeDefaults` / `validateConfig` / `removeExtraFields`，密钥引用的类型与工具 `SecretRef` / `isSecretRef` / `mapSecretFields` / `SecretPosition`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
+配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；可按会话覆盖的字段 `SessionFieldSpec` / `SessionFieldsOf` / `isSessionField`，经 JSON 下发的 `WireSchemaField` / `WireConfigSchema`；对这套词汇的中立解释函数 `defaultsFrom` / `deepMergeDefaults` / `validateConfig` / `readFieldValue` / `removeExtraFields`，密钥引用的类型与工具 `SecretRef` / `isSecretRef` / `mapSecretFields` / `SecretPosition`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
 
 `@aalis/core` 把插件的 `configSchema` 当作 opaque 数据透传、不解释任何字段；表单词汇（label / options / textarea …）属呈现层，统一住在本包。同一份 schema 既是表单描述，又是插件配置值类型的来源（`ConfigOf`）和运行时解析规则（`parseConfig`）；渲染宿主（WebUI）与宿主政策（runtime 的配置同步）也用它消费 schema。
 
@@ -38,13 +38,13 @@ export default definePlugin({
 ```
 
 - **`defineConfig(schema)`**：运行时原样返回传入的对象（不冻结、不加任何属性，WebUI 读的就是这个活对象），类型层保留字面量，返回值可直接放进 `definePlugin({ configSchema })`。不要给变量标 `ConfigSchema` 类型注解，注解会把字面量拓宽掉，`ConfigOf` 只能推出宽类型。推出的类型里各属性只读、`options` 是字面量元组；需要在运行时改写 schema（如按已注册的服务补全选项）时，经 `ConfigSchema` 或 `SchemaField` 类型的引用改写。
-- **`ConfigOf<S>`**：从 schema 推导配置值类型。字段取 `SchemaFieldTypes` 里登记的取值类型（见下表）；select / multiselect 有静态 `options`、没有 `dynamicOptions` 且 `allowCustom` 不为 `true` 时收窄为选项值的字面量联合，数字选项对应数字字面量。有 `default` 或 `required: true` 的字段必定存在，其余为可选；分组推为嵌套对象，总是存在；数组推为元素类型的数组，元素按同一规则推导。
+- **`ConfigOf<S>`**：从 schema 推导配置值类型。字段取 `SchemaFieldTypes` 里登记的取值类型（见下表）；select / multiselect 有静态 `options`、没有 `dynamicOptions` 且 `allowCustom` 不为 `true` 时收窄为选项值的字面量联合，数字选项对应数字字面量。有 `default` 或 `required: true` 的字段必定存在，其余为可选；分组推为嵌套对象，总是存在；数组推为元素类型的数组，元素按同一规则推导。带 `session` 的顶层字段不在其中（见下文「可按会话覆盖的字段」）。
 - **`parseConfig(schema, raw, logger?)`**：按 schema 解析插件拿到的配置，返回 `ConfigOf` 类型的新对象，不改入参。之后的夹紧、跨字段约束等核对作用于返回值。
 
 ## 给人看的文字
 
 - 字段、分组与数组的 `label`、`description` 和选项的 `label` 可以写字符串，也可以写 `@aalis/schema-i18n` 的文字对象（插件自己原文字典里的 `t('…')`），渲染宿主按读者语言渲染。`default` 是取值，不是文字。
-- `validateConfig` 的每条问题带 `code`（`missing`、`type`、`not-option`、`pattern`、`format`、`integer`、`min`、`max`、`reserved-key`）与原因的文字对象 `text`；`message` 是它的原文，日志用。
+- `validateConfig` 的每条问题带 `code`（`missing`、`type`、`not-option`、`pattern`、`format`、`integer`、`min`、`max`、`reserved-key`、`validate`）与原因的文字对象 `text`；`message` 是它的原文，日志用。
 - `configError(message)` 收字符串或文字对象，收文字对象时挂上它（name 仍是 `ConfigError`），WebUI 按读者语言显示失败原因；`missingConfigError` 的说法本身是文字对象，`note` 同样可以是文字对象。
 - 本包自己的字典（ns `@aalis/schema-config`）收核心配置表单（`CORE_CONFIG_SCHEMA`）、校验原因与配置错误的说法。
 
@@ -66,7 +66,22 @@ export default definePlugin({
 - **`format`**：写宿主文件路径的 `string` / `textarea` 字段声明。`'absolute-path'` 只收绝对路径（`/…`、`C:\…` 或 `\\…`）；`'executable'` 另收不含路径分隔符的命令名（按 PATH 查找），`C:foo` 这类带盘符的相对写法不算。判定忽略首尾空白，交给插件的值也去掉首尾空白；空串与只有空白都表示未填、不查（`required` 字段算缺失）；只按写法判定、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准（宿主进程的 cwd 不带语义），所以不收。
 - **选项即取值范围**：选项按字符串比较，`parseConfig` 取选项声明的原值（WebUI 把数字选项存成字符串，读出时归位成数字）。
 - **`dynamicOptions` / `allowCustom`**：两者影响取值判定，由本包声明。`dynamicOptions` 是动态选项来源的服务名（WebUI 经 webui-server 调该服务的 `listModels()` 或等价方法获取选项），声明后静态 `options` 不再是取值范围，只查取值是字符串或数字；`allowCustom` 表示接受选项之外的值，不查是否在选项内：WebUI 给 multiselect 提供手动输入；select 用它表示静态选项不全（例如由插件在运行时补全选项的字段）。
-- **扩展字段类型**：api 包经 declaration merging 往 `SchemaFieldTypes` 登记类型名与取值类型（如 `'llm-ref': ModelRef`），`ConfigOf` 据此推导。本包不校验外来类型的取值：`validateConfig` 跳过，`parseConfig` 除把 `''` 当作未配置外原样透传。
+- **扩展字段类型**：api 包经 declaration merging 往 `SchemaFieldTypes` 登记类型名与取值类型（如 `'llm-ref': ModelRef`），`ConfigOf` 据此推导。本包不按类型校验外来类型的取值，只调字段自己的 `validate`（见下文）：`validateConfig` 放行，`parseConfig` 除把 `''` 当作未配置外原样透传。
+
+## 字段自己的校验与文字读写（`validate` / `fromText` / `toText`）
+
+- **`validate(value)`**：合法返回 `undefined`，不合法返回原因（非空字符串或文字对象）；抛错或返回别的值都按不合法，原因写「校验时出错」，不转述抛出的错。在类型与约束都过了之后调，拿换算后的取值（外来类型是原值）。`validateConfig` 报 `invalid`（`code` 为 `validate`），`parseConfig` 按无效处置（见下文），`readFieldValue` 给出原因。list、map、multiselect 有坏元素时，`validateConfig` 与 `readFieldValue` 只报元素、不调它，`parseConfig` 先丢坏元素、再拿剩下的值调它。外来类型的字段要核取值就写它。原因会原样进 `parseConfig` 的告警与拒绝激活的消息，不要在里面写取值（字段可能是密钥）。
+- **`fromText(text)` / `toText(value)`**：文字与取值互换；内置类型不用写。
+- 三者是进程内函数，schema 经 JSON 下发时没有；线上类型是 `WireSchemaField` / `WireConfigSchema`。
+
+## 可按会话覆盖的字段（`session`）
+
+顶层字段写了 `session`（声明 `SessionFieldSpec`，成员由 `@aalis/api-session-settings` 并入）即可按会话覆盖：插件经会话设置的读取器按会话读它，改了不重载插件。`isSessionField(entry)` 判一个顶层条目是不是这种字段（分组、数组上写了不算，分组与数组元素里的字段不按它判）。
+
+- **`parseConfig`** 不交出这类字段、不补 `default`，配置里有这个键也不告警；`ConfigOf` 同样不含。
+- **`SessionFieldsOf<S>`**：这类字段经读取器读到的值。取值类型同 `ConfigOf`，`onInvalid: 'error'` 的为 `unknown`（坏值原样交出，由插件核）；有 `default` 的必定存在，没有的为可选。
+- **`validateConfig`、`defaultsFrom`、`removeExtraFields`** 照常把它当 schema 字段：它的全局层就是配置文档里的值，作者默认照常写进文档。
+- **`readFieldValue(field, value)`**：单个值的判定，与 `validateConfig` 同一套：合法给 `{ value }`（换算后的取值；没配置的给 `undefined`），不合法给 `{ invalid }`（集合里有坏元素也算）。不回落 `default`、不抛错、不拷贝。判的是取值，不是文档写法：密钥字段上的引用 `validateConfig` 放行，这里判为不合法。
 
 ## 密钥字段（`secret`）
 
@@ -81,8 +96,8 @@ export default definePlugin({
 ## parseConfig 的处置
 
 - **缺失**：`undefined` 与 `null`（YAML 裸键）；`required` 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填；声明了 `format` 的只有空白也算），外来类型的 `''` 一律当作缺失（WebUI 给未选的 `llm-ref` 存 `''`）。有 `default` 用 `default` 的拷贝；无 `default` 且 `required` 不可恢复；否则省略该键。
-- **无效**（不符合上表的判定）：未声明 `onInvalid` 时保持宽容处置：有 `default` 回落并告警；无 `default` 且 `required` 不可恢复；否则省略并告警。字段声明 `onInvalid: 'error'` 时，显式无效值即使有 `default` 也抛 `ConfigError`；它不改变 `required` 的缺省含义，`undefined` / `null` 仍走上述缺省规则。
-- **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警，其余保留；稀疏数组的空位和 map 的保留键也属于坏成员。严格字段只要含一个坏成员就拒绝整个值，不返回部分结果。
+- **无效**（不符合上表的判定，或字段的 `validate` 判为不合法）：未声明 `onInvalid` 时保持宽容处置：有 `default` 回落并告警；无 `default` 且 `required` 不可恢复；否则省略并告警。字段声明 `onInvalid: 'error'` 时，显式无效值即使有 `default` 也抛 `ConfigError`；它不改变 `required` 的缺省含义，`undefined` / `null` 仍走上述缺省规则。
+- **list / map / multiselect**：默认坏元素、坏值逐个丢弃并告警，其余保留，剩下的值再过字段的 `validate`；稀疏数组的空位和 map 的保留键也属于坏成员。严格字段只要含一个坏成员就拒绝整个值，不返回部分结果。
 - **分组**：值不是对象时默认告警，整组按空对象解析，子字段各取默认值。显式给非对象且分组含严格字段时拒绝；`undefined` / `null` 仍视为缺省。
 - **数组**：值不是数组按无效处理，含严格元素字段时显式无效的数组值会被拒绝；元素不是对象、或元素内有不可恢复的字段时只丢这一条元素并告警，邻居元素照常解析；元素字段的默认值逐元素补齐（runtime 的配置同步不补数组元素的默认值）。
 - **整体配置**：显式非对象且 schema 含严格字段时拒绝；`undefined` / `null` 仍视为缺省。严格错误说明字段路径与安全的类型或约束原因；集合的下标可定位，map 的键可能含密钥，因此错误只定位到 map 字段，不写用户值或键。
