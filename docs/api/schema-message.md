@@ -153,7 +153,7 @@ outboundMediaMessage(kind: 'image' | 'audio' | 'video' | 'file', ref: string, de
 | `Platform`、`UserId`、`Nickname` | `platform`、`userId`、`nickname` | 存档写入站消息的说话人；agent 给她自己的回复写这一轮的平台与她在那里的账号、昵称 | 字符串 | 会话服务标说话人与是不是 owner；记忆后端按平台筛最近消息；向量记忆、用户档案与关系等 |
 | `GroupId`、`GroupName`、`SessionType` | `groupId`、`groupName`、`sessionType` | 存档写入站消息的群号、群名与会话类型；agent 给她自己的回复写这一轮的 | 字符串，即入站消息的同名字段 | 向量记忆与最近消息写出说话的位置；关系插件判断是不是群聊 |
 | `MessageId` | `messageId` | 存档：平台侧的消息 id（入站消息的 `messageId`） | 字符串 | 存档按它反查被引用的原文（`findByMessageId`）；关系插件把引用与回复对回消息 |
-| `Source` | `source` | 存档写入站消息的 `source`（内部注入的来源，真人发言没有）；插件自己写的记录（发出的附件、投递失败）写插件的名字 | 字符串 | 会话服务标出提问是不是内部注入的 |
+| `Source` | `source` | 存档写入站消息的 `source`（内部注入的来源，真人发言没有）；出站消息的文字记成事件标记时写出站的 `source`（如指令回复的 `command`）；插件自己写的其余记录（发出的附件、投递失败）写插件的名字 | 字符串 | 会话服务标出提问是不是内部注入的、认出指令的回复 |
 | `HostNoticeKind` | `hostNoticeKind` | 存档：宿主通知的子类（`hostNotice.kind`） | 字符串 | 会话服务给出通知条目的种类 |
 | `HostNoticeId`、`HostNoticeFacts` | `hostNoticeId`、`hostNoticeFacts` | 存档：宿主通知的 `id` 与给界面的事实（`hostNotice.id`、`hostNotice.facts`），有才写 | 字符串；扁平的键值（值是字符串或数） | 会话服务给出通知条目的 `noticeId` 与 `facts` |
 | `TurnId` | `turnId` | agent 写在这一轮落库的回复与工具结果上；平台适配器写在一轮回复的投递失败记录上 | 字符串 | 会话服务把存档归回回合、标出哪一轮的回复没发出 |

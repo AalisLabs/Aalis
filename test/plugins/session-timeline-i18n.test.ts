@@ -8,7 +8,11 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
+import {
+  COMMAND_REPLY_TOPIC,
+  type SessionItem,
+  sessionProtocol,
+} from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
@@ -176,6 +180,30 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     const sources = [`已切换到 ${link}`, `已停止 ${image}`];
     expect(sent.map(out => out.content)).toEqual(sources);
     expect((await host.memory.use.getHistory(id, Infinity)).map(m => m.content)).toEqual(sources);
+  });
+
+  it('指令的回复（出站的 source 为 command）：实时与重连之后的历史都是 topic 为 command-reply 的通知，文字相同', async () => {
+    const { host, connect } = await setup();
+    const live = await connect();
+    const { session } = await live.call('session/create', {});
+    const id = session.id;
+    const base = await live.subscribe(id);
+    const send = async (out: Pick<OutgoingMessage, 'source' | 'content' | 'text'>) => {
+      const message: OutgoingMessage = { sessionId: id, platform: 'webui', ...out };
+      await host.events.use.emit('outbound:message', message);
+      expect(await message.delivery).toEqual({ ok: true });
+    };
+    const list = '指令\n- /zz-a — 第一条\n  - all：全部';
+    const switched = t('switched', { name: 'zz' });
+    await send({ source: 'command', content: list });
+    await send({ source: 'command', content: toSource(switched), text: switched });
+
+    const expected = [
+      { kind: 'notice', topic: COMMAND_REPLY_TOPIC, text: list },
+      { kind: 'notice', topic: COMMAND_REPLY_TOPIC, text: 'Switched to zz' },
+    ];
+    expect(said(live.timeline(id, base))).toEqual(expected);
+    expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual(expected);
   });
 
   it('压缩分隔线与宿主通知在实时与历史里按全局默认层的语言显示；没记文字对象的旧记录照旧显示正文', async () => {

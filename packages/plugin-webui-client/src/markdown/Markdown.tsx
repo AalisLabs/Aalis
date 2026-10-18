@@ -16,11 +16,40 @@ import './Markdown.css';
 
 // 模型、插件与房间成员写的文字都不可信：原始 HTML 当文字显示；图片只认媒体地址，外站图片显示成链接、不发请求；
 // 链接只许 http、https 与 mailto；公式不信任输入（\href 等不生效）。裸换行照写的换行显示。
-// 单个 ~ 不是删除线（常用来写「约」）；单美元不是公式的定界符，行内公式由预处理写成行内的 $$（见 latex.ts）
+// 单个 ~ 不是删除线（常用来写「约」）；单美元不是公式的定界符，行内公式由预处理写成行内的 $$（见 latex.ts）。
+// plain 只认段落与列表，其余写法在解析时关掉（micromark 的 disable），按原文显示；分隔线的检查也随之关掉，单独一行的
+// `- - -` 会成为空的嵌套列表（指令回复不这样写）
 
 const REMARK_PLUGINS: Options['remarkPlugins'] = [
   [remarkGfm, { singleTilde: false }],
   [remarkMath, { singleDollarTextMath: false }],
+  remarkBreaks,
+];
+const PLAIN_DISABLED = [
+  'attention',
+  'autolink',
+  'blockQuote',
+  'characterEscape',
+  'characterReference',
+  'codeFenced',
+  'codeIndented',
+  'codeText',
+  'definition',
+  'hardBreakEscape',
+  'headingAtx',
+  'htmlFlow',
+  'htmlText',
+  'labelStartImage',
+  'labelStartLink',
+  'setextUnderline',
+  'thematicBreak',
+];
+const PLAIN_REMARK_PLUGINS: Options['remarkPlugins'] = [
+  function paragraphsAndLists(this: unknown) {
+    // remark-parse 从处理器数据的 micromarkExtensions 取解析扩展
+    const data = (this as { data(): { micromarkExtensions?: object[] } }).data();
+    data.micromarkExtensions = [...(data.micromarkExtensions ?? []), { disable: { null: PLAIN_DISABLED } }];
+  },
   remarkBreaks,
 ];
 const REHYPE_PLUGINS: Options['rehypePlugins'] = [
@@ -99,18 +128,26 @@ function CodeBlock({ text, language, children }: { text: string; language?: stri
   );
 }
 
-/** 一段 Markdown：字号与行高跟着外面；streaming 是这段还在输出 */
-export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+interface MarkdownProps {
+  text: string;
+  /** 这段还在输出 */
+  streaming?: boolean;
+  /** 只认段落与列表：转述了别人原话的文字（如指令的回复）用它，写法照原文显示 */
+  plain?: boolean;
+}
+
+/** 一段 Markdown：字号与行高跟着外面 */
+export const Markdown = memo(function Markdown({ text, streaming = false, plain = false }: MarkdownProps) {
   return (
     <div className="markdown">
       <Streaming.Provider value={streaming}>
         <ReactMarkdown
-          remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
+          remarkPlugins={plain ? PLAIN_REMARK_PLUGINS : REMARK_PLUGINS}
+          rehypePlugins={plain ? [] : REHYPE_PLUGINS}
           components={COMPONENTS}
           urlTransform={urlTransform}
         >
-          {preprocessLaTeX(text)}
+          {plain ? text : preprocessLaTeX(text)}
         </ReactMarkdown>
       </Streaming.Provider>
     </div>

@@ -305,7 +305,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       opened.push(title);
     }
     expect(opened.sort()).toEqual(
-      ['人物关系图', '关系图原始数据', '权限', '技能', '用户档案', '系统诊断', '计划任务'].sort(),
+      ['人物关系图', '关系图原始数据', '权限', '技能', '用户档案', '系统诊断', '翻译', '计划任务'].sort(),
     );
     expect(problems).toEqual([]);
     expect(stack.logged).toEqual(ONLY_UNCONFIGURED);

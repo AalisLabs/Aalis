@@ -5,8 +5,8 @@
 // 工具卡在模型生成参数时就出现（流式的生成进度带着这次调用的 callId），开始执行时转为 running；生成了却没有执行的
 // 在回合结束时收尾。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发）落成 aborted，之后工具返回什么都不改。
 // 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId。不是她回复的外发消息（指令回复、宿主
-// 提示）推成通知，与 WebUI 会话历史里由事件标记还原的那一条相同（纯文本），带文字对象（text）时给出它而不是 content，由连接
-// 按读者渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的送达原因原样作参数。
+// 提示）推成通知，与 WebUI 会话历史里由事件标记还原的那一条相同，带文字对象（text）时给出它而不是 content，由连接按读者
+// 渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的送达原因原样作参数。
 // 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
 // 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
@@ -43,7 +43,6 @@ import {
   type OutboundDeliveryResult,
   type OutgoingMessage,
   type StreamChunkMessage,
-  WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import type { MethodHandlers, ServerConnection } from './connection.js';
@@ -54,6 +53,7 @@ import {
   HISTORY_PAGE,
   type IsOwner,
   type MergeContext,
+  markerTopic,
   notAccepted,
   RETRIED,
   readHistory,
@@ -520,7 +520,7 @@ export function createTimeline(deps: TimelineDeps) {
     itemId,
     turnId,
     at: Date.now(),
-    topic: WellKnownKinds.EventMarker,
+    topic: markerTopic(out.source),
     text: out.text ?? out.content,
     attachments: [],
   });

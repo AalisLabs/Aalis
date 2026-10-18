@@ -2,13 +2,14 @@ import { clipForCard, sanitizeForCard } from '@aalis/api-approval';
 import type { TextRef } from '@aalis/schema-i18n';
 import { FilePen, LoaderCircle, SquareTerminal, Wrench } from 'lucide-react';
 import { useState } from 'react';
-import { TaskFoot, TaskStatus } from '../background/Background';
+import { TaskFoot, taskTone, useTaskStatusText } from '../background/Background';
 import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
+import { StatusText } from '../components/StatusText';
 import { type Approval, useSessionClient } from '../connection';
 import { clockTime, duration } from '../format';
 import { tr } from '../language';
-import { RequestError, type SessionItem } from '../protocol/session-client';
+import { type BackgroundTask, RequestError, type SessionItem } from '../protocol/session-client';
 import { t } from '../texts';
 import './ToolCall.css';
 
@@ -102,7 +103,6 @@ export function ToolCall({ item, open, onToggle, approval, openLog }: ToolCallPr
   ].filter(part => typeof part === 'string');
   const tone = waiting ? 'attention' : item.status === 'failed' ? 'danger' : undefined;
   const busy = !waiting && (generating || item.status === 'running');
-  // 状态写成的一句，后台任务的状态另接在后面；放不下时句末省略，这一句的全文在悬停提示里
   const status = waiting ? tr('waitingApproval') : busy ? tr(generating ? 'generating' : 'running') : parts.join(' · ');
   return (
     <div className="tool-call">
@@ -115,23 +115,40 @@ export function ToolCall({ item, open, onToggle, approval, openLog }: ToolCallPr
       >
         <Icon aria-hidden />
         <span className="tool-line-text">{summaryOf(item)}</span>
-        <span className="tool-line-status" data-tone={tone} title={status || undefined}>
-          {busy && <LoaderCircle aria-hidden className="spin" />}
-          <span>
-            {status}
-            {!waiting && !busy && task && (
-              <>
-                {status && ' · '}
-                <TaskStatus task={task} />
-              </>
-            )}
-          </span>
-        </span>
+        <LineStatus tone={tone} busy={busy} status={status} task={waiting || busy ? undefined : task} />
       </button>
       {task && <TaskFoot task={task} onOutput={() => openLog(task.id)} />}
       {open && !generating && <ToolDetails item={item} />}
       {waiting && approval && <ApprovalCard approval={approval} />}
     </div>
+  );
+}
+
+interface LineStatusProps {
+  tone?: 'attention' | 'danger';
+  busy: boolean;
+  status: string;
+  /** 转到后台的任务：它的状态接在 status 后面 */
+  task?: BackgroundTask;
+}
+
+/** 行右侧的状态：放不下时句末省略，悬停提示是此刻的全文（在跑的任务耗时一直在走） */
+function LineStatus({ tone, busy, status, task }: LineStatusProps) {
+  const taskStatus = useTaskStatusText(task);
+  const full = [status, taskStatus].filter(Boolean).join(' · ');
+  return (
+    <span className="tool-line-status" data-tone={tone} title={full || undefined}>
+      {busy && <LoaderCircle aria-hidden className="spin" />}
+      <span>
+        {status}
+        {task && (
+          <>
+            {status && ' · '}
+            <StatusText state={taskTone(task)}>{taskStatus}</StatusText>
+          </>
+        )}
+      </span>
+    </span>
   );
 }
 

@@ -76,7 +76,10 @@ function subscribeClock(listener: () => void): () => void {
   };
 }
 
-const useNow = () => useSyncExternalStore(subscribeClock, () => clock.now);
+const stayStill = () => () => {};
+
+/** 此刻；ticking 为假时不跟着时钟重画 */
+const useNow = (ticking = true) => useSyncExternalStore(ticking ? subscribeClock : stayStill, () => clock.now);
 
 /** 从 since 走到此刻的耗时 */
 function Elapsed({ since }: { since: number }) {
@@ -84,7 +87,13 @@ function Elapsed({ since }: { since: number }) {
 }
 
 const ENDINGS = { completed: t('done'), stopped: t('stopped'), aborted: t('interrupted') };
-const ENDING_TONES = { completed: undefined, failed: 'error', stopped: 'inactive', aborted: 'inactive' } as const;
+/** 结局的语气：失败用危险色 */
+export const ENDING_TONES = {
+  completed: undefined,
+  failed: 'error',
+  stopped: 'inactive',
+  aborted: 'inactive',
+} as const;
 
 /** 结束了的任务的结局 */
 interface TaskEnd {
@@ -92,26 +101,28 @@ interface TaskEnd {
   exitCode?: number;
 }
 
-/** 结局写成一个词（失败的命令有退出码时写退出码），后面接用时；失败用危险色 */
-export function Ending({ end: { status, exitCode }, took }: { end: TaskEnd; took?: number }) {
+/** 结局写成一个词（失败的命令有退出码时写退出码），后面接用时 */
+export function endingText({ status, exitCode }: TaskEnd, took?: number): string {
   const ending =
     status !== 'failed' ? text(ENDINGS[status]) : exitCode ? tr('exitCode', { code: exitCode }) : tr('failed');
-  return (
-    <StatusText state={ENDING_TONES[status]}>{ending + (took === undefined ? '' : ` · ${duration(took)}`)}</StatusText>
-  );
+  return took === undefined ? ending : `${ending} · ${duration(took)}`;
 }
 
-/** 任务的状态写成一句：在跑的转动、写走着的耗时；结束的写结局与用时 */
-export function TaskStatus({ task }: { task: BackgroundTask }) {
-  if (task.status === 'running') {
-    return (
-      <StatusText state="running">
-        <Elapsed since={task.startedAt} />
-      </StatusText>
-    );
-  }
+/** 任务状态的语气：在跑的转动，结束的按结局 */
+export const taskTone = (task: BackgroundTask) => (task.status === 'running' ? 'running' : ENDING_TONES[task.status]);
+
+/** 任务的状态写成的字：在跑的是走着的耗时（只有在跑时跟着时钟重画），结束的是结局与用时；没有任务时没有 */
+export function useTaskStatusText(task: BackgroundTask | undefined): string | undefined {
+  const now = useNow(task?.status === 'running');
+  if (!task) return undefined;
+  if (task.status === 'running') return duration(Math.max(0, now - task.startedAt));
   const took = task.endedAt === undefined ? undefined : task.endedAt - task.startedAt;
-  return <Ending end={{ status: task.status, exitCode: task.exitCode }} took={took} />;
+  return endingText({ status: task.status, exitCode: task.exitCode }, took);
+}
+
+/** 任务的状态写成一句：在跑的转动、写走着的耗时；结束的写结局与用时，失败用危险色 */
+function TaskStatus({ task }: { task: BackgroundTask }) {
+  return <StatusText state={taskTone(task)}>{useTaskStatusText(task)}</StatusText>;
 }
 
 /** 停止按钮：不弹确认，请求在途时不能再按，失败写进 Toast；停下来的状态等推送 */

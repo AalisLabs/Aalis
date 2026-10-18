@@ -162,3 +162,15 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* 指令的回复：不用卡片样式的例外，与她的回复区分 */
+.command-reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}

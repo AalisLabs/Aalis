@@ -64,6 +64,8 @@ const tabs = () =>
 const rowOf = (element: HTMLElement) => element.closest('li') as HTMLElement;
 /** 时间线里一张工具卡 */
 const cardOf = (element: HTMLElement) => element.closest('.tool-call') as HTMLElement;
+/** 一行的状态区的悬停提示 */
+const statusTitle = (line: HTMLElement) => line.querySelector('.tool-line-status')?.getAttribute('title');
 
 const DEV = backgroundTask('t-dev', {
   display: { kind: 'command', command: 'npm run dev', cwd: '/home/me/code/app' },
@@ -588,6 +590,23 @@ describe('时间线里转了后台的工具卡', () => {
     expect(elapsed(row)).toBe(elapsed(card));
   });
 
+  it('状态区放不下时句末省略，悬停提示是此刻的全文：结算句接后台任务的状态（在跑的耗时跟着走），没有结算句的只有任务的状态', async () => {
+    const settlement = { state: 'approved' as const, source: 'owner' as const, at: AT };
+    const items = [
+      toolCall('call-t-dev', 'exec', { taskId: 't-dev', display: command, approvalId: 'ap1', settlement }),
+      toolCall('call-t-make', 'exec', { taskId: 't-make', display: { kind: 'command', command: 'make' } }),
+    ];
+    const make = backgroundTask('t-make', { status: 'failed', exitCode: 2, endedAt: AT + 3_000 });
+    app = await renderApp('/s/s1', handlers({ tasks: [DEV, make], items }));
+    const live = await main().findByRole('button', { name: /执行 npm run dev/ });
+    await loaded();
+    await clockAt(63_000);
+    expect(statusTitle(live)).toBe('已批准 · 10:32 · 1 分 3 秒');
+    await clockAt(70_000);
+    expect(statusTitle(live)).toBe('已批准 · 10:32 · 1 分 10 秒');
+    expect(statusTitle(main().getByRole('button', { name: /执行 make/ }))).toBe('退出码 2 · 3.0 秒');
+  });
+
   it('收起规则：后台还在跑的卡不收，结束后照收', async () => {
     const items = [
       turn('t1', { outcome: 'replied' }),
@@ -651,6 +670,7 @@ describe('时间线里的结束通知', () => {
     );
     const line = (await main().findByRole('button', { name: /^后台任务 exec/ })) as HTMLButtonElement;
     expect(line.textContent).toContain('完成 · 1 分 5 秒');
+    expect(statusTitle(line)).toBe('完成 · 1 分 5 秒');
     expect(main().queryByText(/background_output/)).toBeNull();
     await loaded();
     expect(line.disabled).toBe(false);

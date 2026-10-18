@@ -6,7 +6,7 @@ import { Markdown } from '../../packages/plugin-webui-client/src/markdown/Markdo
 
 // ════════════════════════════════════════════════════════════
 // Markdown：不渲染原始 HTML；图片只认媒体地址（/api/media 与存储地址），外站图片显示成链接、不发请求；链接只许 http、https、
-// mailto；公式渲染不信任输入；代码块按语法色令牌高亮，剪贴板不可用时没有复制按钮；Mermaid 用严格安全级别
+// mailto；公式渲染不信任输入；代码块按语法色令牌高亮，剪贴板不可用时没有复制按钮；Mermaid 用严格安全级别；plain 只认段落与列表
 // ════════════════════════════════════════════════════════════
 
 const mermaid = vi.hoisted(() => ({
@@ -22,7 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const show = (text: string) => render(<Markdown text={text} />).container;
+const show = (text: string, plain?: boolean) => render(<Markdown text={text} plain={plain} />).container;
 
 describe('Markdown', () => {
   it('外站图片不发请求、显示成链接；媒体地址与存储地址的图片照常显示', () => {
@@ -146,6 +146,38 @@ describe('Markdown', () => {
     mermaid.parse.mockRejectedValueOnce(new Error('bad syntax'));
     show('```mermaid\ngraph ???\n```');
     expect(await screen.findByText('The diagram couldn’t be drawn: bad syntax')).toBeTruthy();
+  });
+
+  it('plain 只认段落与列表（含嵌套列表、空行分段与裸换行），其余写法按原文显示', () => {
+    let view = show('第一段\n第二行\n\n第二段\n\n- 一\n  - 甲\n\n1. 一', true);
+    expect([...view.querySelectorAll('.markdown > *')].map(node => node.tagName)).toEqual(['P', 'P', 'UL', 'OL']);
+    expect(view.querySelector('p')?.innerHTML).toBe('第一段<br>\n第二行');
+    expect(view.querySelector('ul > li > ul > li')?.textContent).toBe('甲');
+    cleanup();
+    for (const text of [
+      '[链接](https://a.example) ![图](https://a.example/p.png)',
+      '[a]: https://a.example',
+      '<https://a.example> https://a.example',
+      '**强调** _斜体_ ~~删除~~ `代码`',
+      '\\*转义\\* &amp; $$x$$',
+      '$x$ \\(y\\)',
+      '行尾\\\n下一行',
+      '<b>粗</b>',
+      '<div>块</div>',
+      '# 标题',
+      '标题\n===',
+      '| a | b |\n| - | - |',
+      '> 引用',
+      '```\n代码块\n```',
+      '---',
+    ]) {
+      view = show(text, true);
+      expect(view.querySelector('.markdown :not(p):not(br)'), text).toBeNull();
+      expect(view.textContent, text).toBe(text);
+      cleanup();
+    }
+    view = show('    缩进的一行', true);
+    expect(view.querySelector('pre, code')).toBeNull();
   });
 
   it('正在输出时 Mermaid 只显示源码、不解析：半截的图不闪错误；输出完才画', async () => {

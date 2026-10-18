@@ -561,8 +561,9 @@ export interface ArchivedAttachment {
  *   判断是不是群聊。
  * - `MessageId`：平台侧的消息 id（字符串，即入站消息的 `messageId`），存档写；存档按它反查被引用的原文，关系插件据此把
  *   引用与回复对回消息。
- * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；插件自己写的记录（发出的
- *   附件、投递失败）写插件的名字。会话服务据此标出提问是不是内部注入的。
+ * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；出站消息的文字记成事件标记时
+ *   是出站的 `source`（如指令回复的 command）；插件自己写的其余记录（发出的附件、投递失败）写插件的名字。会话服务据此标出
+ *   提问是不是内部注入的、认出指令的回复。
  * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
  *   事实（`hostNotice.facts`），存档写；会话服务据此给出通知条目的种类、id 与事实。
  * - `TurnId`：所在回合的 id（字符串）。agent 写在这一轮落库的回复与工具结果上，平台适配器写在一轮回复的投递失败记录上；

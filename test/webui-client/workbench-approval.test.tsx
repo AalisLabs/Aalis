@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, fireEvent, screen, within } from '@testing-library/react';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import { type Harness, installDialog, language, main, renderApp, requests, server } from './harness.js';
@@ -11,6 +13,8 @@ import { agentMessage, approval, push, snapshot, toolCall, turn, userMessage } f
 // 完整列出不限高；只有批准与拒绝（拒绝可附理由），不显示倒计时，出现时不抢输入框的焦点；结算后收成工具行上的一句
 // （结果、原因与时间），刷新后从条目恢复
 // ════════════════════════════════════════════════════════════
+
+const CLIENT_SRC = join(import.meta.dirname, '../../packages/plugin-webui-client/src');
 
 let app: Harness | undefined;
 let restoreDialog: () => void;
@@ -328,7 +332,11 @@ describe('审批卡', () => {
     expect(log.getByRole('button', { name: /Run sleep 9/ }).textContent).toContain('Cancelled · Turn ended · 09:05');
   });
 
-  it('工具行的结算句放不下时句末省略（jsdom 不排版，只核悬停提示）：完整的一句在 title 里', async () => {
+  it('工具行的结算句放不下时句末省略，状态区最多占一行的一半、工具名始终看得见（jsdom 不排版，核作用在状态区上的样式规则与悬停提示）：完整的一句在 title 里', async () => {
+    const style = document.createElement('style');
+    style.textContent = readFileSync(join(CLIENT_SRC, 'workbench/ToolCall.css'), 'utf-8');
+    document.head.append(style);
+    onTestFinished(() => style.remove());
     const at = new Date(2026, 9, 3, 9, 5).getTime();
     app = await renderApp(
       '/s/s1',
@@ -347,7 +355,8 @@ describe('审批卡', () => {
       language(['en']),
     );
     const log = within(await main().findByRole('region', { name: 'Conversation' }));
-    const status = log.getByRole('button', { name: /Run make/ }).querySelector('.tool-line-status');
-    expect(status?.getAttribute('title')).toBe('Treated as denied · Approvals in subtasks aren’t forwarded · 09:05');
+    const status = log.getByRole('button', { name: /Run make/ }).querySelector('.tool-line-status') as HTMLElement;
+    expect(status.getAttribute('title')).toBe('Treated as denied · Approvals in subtasks aren’t forwarded · 09:05');
+    expect(getComputedStyle(status).maxWidth).toBe('50%');
   });
 });

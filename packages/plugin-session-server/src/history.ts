@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════
 
 import type { MemoryService } from '@aalis/api-memory';
-import { ApprovalSettlementSchema, type SessionItem } from '@aalis/api-session-protocol';
+import { ApprovalSettlementSchema, COMMAND_REPLY_TOPIC, type SessionItem } from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import { isTextRef, type TextRef } from '@aalis/schema-i18n';
@@ -42,6 +42,13 @@ export const BEFORE_TOOL_UNSENT = t('beforeToolUnsent');
 export const RETRIED = t('retried');
 /** 平台没收下她发出的消息，error 是投递结果给的原因 */
 export const notAccepted = (error: string | TextRef) => t('notAccepted', { error });
+
+/**
+ * 事件标记还原成的通知的 topic：来源（出站消息的 source，WebUI 收件箱记在 Source 键上）是 command 的是指令的回复，其余
+ * （宿主提示、压缩分隔线等）是事件标记。实时推送按出站消息的 source 取同一个
+ */
+export const markerTopic = (source: unknown) =>
+  source === 'command' ? COMMAND_REPLY_TOPIC : WellKnownKinds.EventMarker;
 
 /** 给她发出的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
 export type SignFile = (uri: string, name: string) => string | undefined;
@@ -181,7 +188,7 @@ function speakerOf(message: Message, isOwner: IsOwner) {
 }
 
 /**
- * 单独成条的存档消息：提问、通知（含压缩分隔线与平台事件合成的入站）、她发出的附件。她的回复与工具调用要成组归并，
+ * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、她发出的附件。她的回复与工具调用要成组归并，
  * 其余系统消息与组外的工具结果不显示，都回 undefined
  */
 export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
@@ -212,7 +219,9 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       at,
       topic:
         text(meta?.[WellKnownMetadataKeys.HostNoticeKind]) ??
-        message.kind ??
+        (message.kind === WellKnownKinds.EventMarker
+          ? markerTopic(meta?.[WellKnownMetadataKeys.Source])
+          : message.kind) ??
         text(meta?.[WellKnownMetadataKeys.Source]) ??
         message.role,
       text: isTextRef(recorded) ? recorded : (message.content ?? ''),

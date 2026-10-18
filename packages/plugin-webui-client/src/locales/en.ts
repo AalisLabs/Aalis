@@ -425,6 +425,7 @@ export default defineLocale<Source>()({
   reasoning: 'Thinking',
   backgroundTaskNamed: 'Background task {tool}',
   continueTurn: 'Continue',
+  commandReply: 'Command reply',
   settledByAbsent: 'Nobody present',
   settledByTimeout: 'Timed out',
   settledByIneligible: 'This turn can’t raise approvals',

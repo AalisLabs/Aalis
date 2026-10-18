@@ -425,6 +425,9 @@ export const ToolDisplaySchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+/** 指令回复的 notice 的 topic（见 {@link SessionItemSchema}） */
+export const COMMAND_REPLY_TOPIC = 'command-reply';
+
 const itemBase = {
   /** 会话里唯一；tool-call 的 itemId 就是工具调用的 callId（存档里没记 callId 的旧数据与没有执行的调用除外） */
   itemId: z.string(),
@@ -457,7 +460,10 @@ const itemBase = {
  *   界面认得的 kind 按事实画成状态、不显示 text，如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId
  *   是任务 id）。平台事件合成或转成的入站（带 schema-message 的 IncomingMessage.text，如好友申请、戳一戳）不是谁的发言，
  *   同样是 notice：topic 是它的通知子类型（IncomingMessage.noticeType，如 poke），没有时是它的来源（IncomingMessage.source，
- *   如好友申请的），text 是给人看的那句；
+ *   如好友申请的），text 是给人看的那句。压缩分隔线的 topic 是 schema-message 的 WellKnownKinds.EventMarker。不是她回复的
+ *   外发消息（schema-message 的 OutgoingMessage.source 不是 agent）也是 notice：指令的回复（source 为 command）的 topic 是
+ *   {@link COMMAND_REPLY_TOPIC}，text 是整段回复，其余（宿主提示等）的 topic 是 WellKnownKinds.EventMarker；只有 WebUI 自己的
+ *   会话（收件箱即历史）把它们落库、历史里同样还原，房间与终端会话里的只在实时推送里；
  * - plan：待办，整份替换；每个会话一条，itemId 固定为 plan；
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的

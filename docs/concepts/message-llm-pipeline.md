@@ -318,7 +318,7 @@ await handle?.chat({ messages });   // 条目已固定是哪个 model
 
 1. **漏调 `prepareLLMMessages` 会导致 provider 崩溃。** 某天上游塞进 `notice` 或跨会话委派消息，未归一的非标准 role 会让你的 API 直接返回 400。务必在 `chat` / `chatStream` 第一步调用（§3.1）。
 2. **`prepareLLMMessages` 不剔除 event-marker。** 它只做 role 转译加前缀。`CONTROL_KINDS` 过滤是消费方的职责。你自己拼历史喂模型时要先 `filter(m => !CONTROL_KINDS.includes(m.kind ?? ''))`。
-3. **自定义 kind 不要撞已占用语义。** 可以定义新 kind，但要避开 `WellKnownKinds`。前端有一份字面量副本，改动 `event-marker` 等值时要同步前后端。
+3. **自定义 kind 不要撞已占用语义。** 可以定义新 kind，但要避开 `WellKnownKinds`。
 4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**（§4.3）——`desc` 的分隔符净化在 format 里，手写字符串既绕过净化又会让四处解析悄悄断链。
 5. **`<at>` 是约定不是 API**，没有编译期兜底。新平台适配器产出的入站文本必须严格遵循 `<at id="X">名</at>` / `<at self …>` / `<at>all</at>`，否则归档、向量、触发判定会全部静默失效（§5.2）。`<at self>` 是触发插件判定「机器人被 @」的唯一信号。
 6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要塞进 metadata。
