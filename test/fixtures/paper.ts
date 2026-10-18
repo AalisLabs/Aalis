@@ -220,13 +220,13 @@ function placeOf(id: string, lookup: (id: string) => SessionInfo): SessionPlace 
 
 /**
  * session-manager 替身的继承链解析：与参考实现同一口径，子会话按根会话取；有出生平台的会话按出生平台取平台档、按聊天窗口的
- * 类型名叠加平台类型档，其余按入口平台取平台档；再叠加场所（{@link placeOf}）的设置。全局默认与父会话的 sessionDefaults
- * 两层不模拟
+ * 类型名叠加平台类型档，其余按入口平台取平台档；全局默认在最前，最后叠加场所（{@link placeOf}）的设置。父会话的
+ * sessionDefaults 不模拟
  */
 function inheritanceOf(
   id: string,
   platform: string | undefined,
-  opts: Pick<PaperHubOptions, 'profiles' | 'typeProfiles' | 'placeProfiles'>,
+  opts: Pick<PaperHubOptions, 'defaults' | 'profiles' | 'typeProfiles' | 'placeProfiles'>,
   lookup: (id: string) => SessionInfo,
 ): SessionInheritance {
   const root = rootSessionOf(lookup(id), lookup);
@@ -240,6 +240,7 @@ function inheritanceOf(
       sources[key] = source;
     }
   };
+  layer(opts.defaults, 'defaults');
   if (pinned) layer(opts.profiles?.[pinned], 'platform');
   if (pinned && chat) layer(opts.typeProfiles?.[`${pinned}/${chat.type}`], 'type');
   layer(opts.placeProfiles?.[placeOf(id, lookup).key], 'place');
@@ -269,6 +270,8 @@ export interface PaperHubOptions {
   rooms?: Record<string, SessionConfig>;
   /** 子会话 id → 父会话 id */
   children?: Record<string, string>;
+  /** 全局默认层；缺省没有 */
+  defaults?: SessionConfig;
   /** 平台档，键为平台名；缺省没有 */
   profiles?: Record<string, SessionConfig>;
   /** 平台类型档，键为 `<平台>/<类型名>`；缺省没有 */
@@ -359,6 +362,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
     resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     registerSetting: () => () => {},
     listLayers: (): SessionConfigLayer[] => [
+      ...(opts.defaults ? [{ scope: 'defaults' as const }] : []),
       ...Object.keys(opts.profiles ?? {}).map(platform => ({ scope: 'platform' as const, platform })),
       ...Object.keys(opts.typeProfiles ?? {}).map(key => {
         const [platform, type] = key.split('/') as [string, string];
@@ -373,7 +377,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
           ? (opts.typeProfiles?.[`${layer.platform}/${layer.type}`] ?? {})
           : layer.scope === 'place'
             ? (opts.placeProfiles?.[layer.key] ?? {})
-            : {},
+            : (opts.defaults ?? {}),
     getOwnConfig: (id: string) => ({ ...(opts.listed?.[id] ?? {}) }),
     resolveInheritance: (id: string, platform?: string) =>
       inheritanceOf(id, platform, opts, x => sessionInfoOf(x, children[x])),

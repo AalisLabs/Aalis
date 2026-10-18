@@ -171,38 +171,45 @@ function imRoomInheritance(
     .map(session => ({ session, inheritance: sm.resolveInheritance(session.id) }));
 }
 
-/** 覆盖一类房间的层：平台档覆盖这个平台的全部房间，平台类型档覆盖这个平台这种类型的全部房间（包括还没登记的） */
-type ProfileLayer = Extract<SessionConfigLayer, { scope: 'platform' | 'type' }>;
+/**
+ * 覆盖一类房间的层：全局默认覆盖全部房间，平台档覆盖这个平台的全部房间，平台类型档覆盖这个平台这种类型的全部房间（都包括
+ * 还没登记的）
+ */
+type ProfileLayer = Exclude<SessionConfigLayer, { scope: 'place' }>;
 
-/** 房间的白纸设置继承自这几层时算进共用：覆盖一类房间的两档与房间所在的窗口 */
-const SHARING_SOURCES: ReadonlySet<InheritanceSource> = new Set(['platform', 'type', 'place']);
+/** 房间的白纸设置继承自这几层时算进共用：覆盖一类房间的三层与房间所在的窗口 */
+const SHARING_SOURCES: ReadonlySet<InheritanceSource> = new Set(['defaults', 'platform', 'type', 'place']);
 
-/** 写了某个设置项的平台档与平台类型档，各带这一层的值 */
+/** 写了某个设置项的全局默认、平台档与平台类型档，各带这一层的值 */
 export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
   sm: SessionManagerService,
   key: K,
 ): Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> {
   const found: Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> = [];
   for (const layer of sm.listLayers()) {
-    if (layer.scope !== 'platform' && layer.scope !== 'type') continue;
+    if (layer.scope === 'place') continue;
     const value = sm.getLayer(layer)[key];
     if (value !== undefined) found.push({ layer, value });
   }
   return found;
 }
 
-/** 平台档与平台类型档的称呼：层表里的称呼加平台（与类型名），如「平台档 onebot」「平台类型档 onebot · group」 */
+/** 覆盖一类房间的层的称呼：层表里的称呼，两档另加平台（与类型名），如「全局默认」「平台档 onebot」「平台类型档 onebot · group」 */
 export function profileName(layer: ProfileLayer): string {
   const label = SESSION_LAYERS.find(({ name }) => name === layer.scope)?.label.source;
-  return layer.scope === 'type' ? `${label} ${layer.platform} · ${layer.type}` : `${label} ${layer.platform}`;
+  if (layer.scope === 'type') return `${label} ${layer.platform} · ${layer.type}`;
+  return layer.scope === 'platform' ? `${label} ${layer.platform}` : `${label}`;
 }
 
+/** 一层覆盖的全部房间的称呼，如「全局默认的全部房间」「平台档 onebot 的全部房间」（以平台名收尾的称呼与汉字隔一个空格） */
+const allRoomsOf = (layer: ProfileLayer) => `${profileName(layer)}${layer.scope === 'defaults' ? '' : ' '}的全部房间`;
+
 /**
- * 共用一块白纸的房间：已登记的 IM 房间里，从平台档、平台类型档或所在窗口的场所继承了这个白纸名的；写了它的平台档与平台
- * 类型档（覆盖一类房间，包括还没登记的）；以及记录里还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的
+ * 共用一块白纸的房间：已登记的 IM 房间里，从全局默认、平台档、平台类型档或所在窗口的场所继承了这个白纸名的；写了它的全局
+ * 默认、平台档与平台类型档（覆盖一类房间，包括还没登记的）；以及记录里还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的
  * 对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。不写名字的白纸只有记录里的房间。
- * labels 是显示用的称呼（房间会话 id，两档写成「平台档 X 的全部房间」「平台类型档 X · T 的全部房间」）；
- * shared：多于一个房间，或有平台档、平台类型档写了它。
+ * labels 是显示用的称呼（房间会话 id；覆盖一类房间的层写成「全局默认的全部房间」「平台档 X 的全部房间」「平台类型档 X · T
+ * 的全部房间」）；shared：多于一个房间，或有覆盖一类房间的层写了它。
  */
 export function sharingRooms(
   sm: SessionManagerService,
@@ -215,7 +222,7 @@ export function sharingRooms(
     const name = paperId.slice(2);
     const names = (value: string | undefined) => value?.trim() === name;
     for (const { layer, value } of layersWith(sm, 'paperName')) {
-      if (names(value)) profiles.add(`${profileName(layer)} 的全部房间`);
+      if (names(value)) profiles.add(allRoomsOf(layer));
     }
     for (const { session, inheritance } of imRoomInheritance(sm)) {
       const source = inheritance.sources.paperName;

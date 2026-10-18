@@ -436,6 +436,11 @@ describe('白纸详情的「共用的房间」', () => {
     expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台类型档 onebot · group 的全部房间`);
   });
 
+  it('全局默认写了 paperName：列出继承它的已登记房间与全局默认的全部房间，标为共用', async () => {
+    const hub = await startPaperHub({ listed: { [ROOM]: {} }, defaults: { paperName: PAPER } });
+    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、全局默认的全部房间`);
+  });
+
   it('对照：只有一个窗口的场所写了 paperName、没有平台档与平台类型档时不算共用', async () => {
     const hub = await startPaperHub({
       listed: { [ROOM]: {} },

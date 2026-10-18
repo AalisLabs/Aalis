@@ -2,8 +2,8 @@
 // 诊断项 paper.config：让远端任务开不了、或让长期代理的可见范围超出预期的配置与记录问题
 //
 // - error：记录读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的未登记代理告警。
-// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；平台档或平台类型档写了 remoteAgentTypes（这个平台或这种
-//   类型的全部房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；核对时列代理或轮次连续失败到 3 次（写类别与次数，
+// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；全局默认、平台档或平台类型档写了 remoteAgentTypes（全部
+//   房间、这个平台或这种类型的全部房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；核对时列代理或轮次连续失败到 3 次（写类别与次数，
 //   不写提供者报错的原文）；有任务认领失败后仍在开轮中（与放弃跟踪同一判据：记录里有它的 claim-failed 告警，不论
 //   是否已读；报出时 owner 就能在任务表放弃跟踪）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
@@ -67,7 +67,7 @@ export function registerPaperDoctor(deps: {
       for (const { layer, value } of layersWith(sm, 'remoteAgentTypes')) {
         if (value.length === 0) continue;
         warnings.push(
-          `${profileName(layer)} 写了 remoteAgentTypes（${value.join('、')}），这一档覆盖的开了白纸的房间都会继承；` +
+          `remoteAgentTypes（${value.join('、')}）写在${profileName(layer)}，这一层覆盖的开了白纸的房间都会继承；` +
             '按窗口写在房间的场所设置里即可',
         );
       }
