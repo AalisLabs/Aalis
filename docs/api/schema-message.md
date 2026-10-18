@@ -98,7 +98,7 @@ interface OutgoingMessage {
 
 `source='agent'` 表示由 AI 发出（她的回复与她经工具发的附件），`system` 是宿主提示，`command` 是指令回复。
 
-`markup` 表示正文含平台标记、要解析：有标记语法的适配器（OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成 @、媒体与引用，并可分条延迟发送以模拟自然节奏。不设的正文一律按纯文字原样整条发出，不解析、不分条，其中回显的参数、错误信息与作品标题不会变成 @、图片或引用。要发平台标记的出站自己设它，第一方只有 agent 的回复设。`attachments` 不受它影响，照常发出。
+`markup` 表示正文含平台标记、要解析：有标记语法的适配器（OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成 @、媒体与引用，并可分条延迟发送以模拟自然节奏。不设的正文一律按纯文字原样整条发出，不解析、不分条，其中回显的参数、错误信息与作品标题不会变成 @、图片或引用。要发平台标记的出站自己设它，第一方只有 agent 的回复设。`attachments` 不受它影响，照常发出。受众不只 owner 的会话里，装了 plugin-image-sender 时，带 `markup` 的正文里存储地址的媒体标记由它按[媒体按受众的判据](../services/media.md#媒体按受众的判据)转成附件，其余不是网址的去掉；没装时这些标记原样交给适配器。
 
 `modelInfo` 是 agent 一轮的回复由哪个模型生成与这一轮的 token（`promptTokens` 取回复定稿时的上下文，`completionTokens` 是这一轮各次调用的输出之和），agent 存档时把同一份写进这条 assistant 消息的元数据（登记的键 `ModelInfo`，见下文「存档元数据的键」），会话服务据此在实时推送与回看历史里标出回复的模型与 token。需要总数时取两项之和；用时由会话协议时间线条目各自的时刻（`at`）算出。
 

@@ -7,8 +7,8 @@
 //                          由出站归档监听器在后台描述并入档，让"AI 之前
 //                          发过的图/视频"能被 memory_recall 召回
 //
-// 出站中间件：受众不只 owner 的会话里，她回复正文里的媒体标记（<image|video|record url>）转成附件，
-// 与 send_attachment 走同一个判据、同一条受保护下载与文件头核对。
+// 出站中间件：受众不只 owner 的会话里，带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）按
+// send_attachment 的判据转成附件，其余不是网址的去掉；网址的留给适配器经受保护下载与文件头核对后内联。
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先按受众判能不能取（@aalis/api-media 的 mediaInScope），再读文件头核对格式
@@ -327,13 +327,13 @@ function registerImageSender(caps: Caps): void {
 
   logger.use.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
 
-  // ── 她回复里的媒体标记：受众不只 owner 的会话里转成附件 ─────────────────────
-  // 适配器会把正文里的标记交给平台去取（onebot 把 url 原样交给实现端），不经判据、文件头核对与受保护下载。
-  // 网址转成同类附件，由适配器下载核对；存储地址过判据（出站不带授权身份，按非 owner），过了转成附件；其余
-  // （file://、本机路径、base64:// 等）与不过的去掉。转出的附件不另入档：她这条回复已带着标记落库。
+  // ── 带 markup 的正文里的媒体标记：受众不只 owner 的会话里，存储地址的转成附件 ─────────────
+  // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址原样交给实现端，
+  // 不经判据与文件头核对。存储地址过判据（出站不带授权身份，按非 owner），过了转成附件；其余（file://、本机路径、base64://
+  // 等）与不过的去掉；网址的留在正文里交给适配器。转出的附件不另入档：这条回复已带着标记落库。
   // 受众只有 owner 的会话不动；会话管理不在时判不出，按不是。网关缺席时出站不经这条链，生产须装网关
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
-    if (message.source === 'agent') await markupToAttachments(message);
+    if (message.markup) await markupToAttachments(message);
     await next();
   });
 
@@ -344,17 +344,23 @@ function registerImageSender(caps: Caps): void {
     const { getSession, isOwner } = deps;
     if (getSession && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only') return;
     const converted: MessageAttachment[] = [];
-    // 摘到正文里没有标记为止：摘掉一个标记后，两边剩下的文字可能拼成新的标记
+    // 摘到某一遍没有摘掉标记为止：摘掉一个标记后，两边剩下的文字可能拼成新的标记；网址的留下，摘掉让 `<` 变少，循环必停
+    let dropped: boolean;
     do {
+      const kept: boolean[] = [];
       for (const [, tag, url] of tags) {
         const ref = mediaRef(url);
-        if (ref && (!isStorageUri(ref) || (await storedInScope(ref, message.sessionId, deps)))) {
+        const remote = ref !== undefined && !isStorageUri(ref);
+        kept.push(remote);
+        if (ref && !remote && (await storedInScope(ref, message.sessionId, deps))) {
           converted.push({ kind: MARKUP_KIND[tag], data: ref, skipArchive: true });
         }
       }
-      message.content = message.content.replace(MEDIA_MARKUP, '');
+      dropped = kept.includes(false);
+      let i = 0;
+      message.content = message.content.replace(MEDIA_MARKUP, whole => (kept[i++] ? whole : ''));
       tags = [...message.content.matchAll(MEDIA_MARKUP)];
-    } while (tags.length > 0);
+    } while (dropped);
     message.attachments = [...(message.attachments ?? []), ...converted];
   }
 

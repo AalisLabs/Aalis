@@ -32,7 +32,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
-// 她回复里的媒体标记经网关派发时由 image-sender 按受众转成附件（会话表与 owner 判定是替身：私聊的对端是 owner）。
+// 带 markup 的正文（她的回复）里的媒体标记经网关派发时由 image-sender 按受众转成附件或去掉，网址的留在正文里由适配器
+// 下载内联（会话表与 owner 判定是替身：私聊的对端是 owner）。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -702,13 +703,73 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     ['base64://', `base64://${PNG.toString('base64')}`],
     ['data: 内联数据', `data:image/png;base64,${PNG.toString('base64')}`],
     ['别的会话的存储地址', OTHER],
-    ['协议名大写的网址', 'HTTP://127.0.0.1:9/zz-placeholder.png'],
   ])('群里：%s 的标记去掉，不发', async (_label, url) => {
     const t = await boot({ imageSender: true, gateway: true, files: { [OTHER]: JPEG } });
-    await t.dispatch({ sessionId: GROUP, source: 'agent', content: `一<image url="${url}"/>二` });
+    await t.dispatch({ sessionId: GROUP, source: 'agent', markup: true, content: `一<image url="${url}"/>二` });
     await t.flush();
     expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
     expect(JSON.stringify(t.actions)).not.toContain(url);
+    expect(textOf(t.sent())).toContain('一二');
+  });
+
+  it('群里：协议名大写的网址去掉，适配器取得到也不发', async () => {
+    const t = await boot({ imageSender: true, gateway: true });
+    const url = `${httpBase.replace('http://', 'HTTP://')}/ok.png`;
+    await t.dispatch({ sessionId: GROUP, source: 'agent', markup: true, content: `一<image url="${url}"/>二` });
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
+    expect(JSON.stringify(t.actions)).not.toContain(url);
+    expect(textOf(t.sent())).toContain('一二');
+  });
+
+  it.each([
+    ['file://', 'file:///zz/placeholder.png'],
+    ['别的会话的存储地址', OTHER],
+  ])('群里：适配器去掉取不下来的网址标记后，两边的文字照旧是文字，拼不出 %s 的标记', async (_label, url) => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [OTHER]: JPEG } });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'agent',
+      markup: true,
+      content: `一<ima<image url="${httpBase}/missing.png"/>ge url="${url}"/>二`,
+    });
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
+    expect(textOf(t.sent())).toEqual(['一<ima', `ge url="${url}"/>二`, '哨兵']);
+  });
+
+  it.each([
+    ['群里', GROUP],
+    ['owner 私聊', PRIVATE],
+  ])('%s：http:// 开头、解析不了的网址标记不交给实现端，投递报失败', async (_label, sessionId) => {
+    const t = await boot({ imageSender: true, gateway: true });
+    const url = 'http://127.0.0.1:99999/zz-placeholder.png';
+    const message: OutgoingMessage = { sessionId, source: 'agent', markup: true, content: `一<image url="${url}"/>二` };
+    await t.dispatch(message);
+    expect(await message.delivery).toMatchObject({ ok: false });
+    await t.flush(sessionId);
+    expect(JSON.stringify(t.actions)).not.toContain(url);
+  });
+
+  it('群里：不设 markup 的 agent 文字按纯文字显示，里面的标记不转附件、不去掉', async () => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG } });
+    const content = `一<image url="data:/images/${GROUP_DIR}/a.png"/>二<image url="file:///zz/placeholder.png"/>三`;
+    await t.dispatch({ sessionId: GROUP, source: 'agent', content });
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
+    expect(textOf(t.sent())).toEqual([content, '哨兵']);
+  });
+
+  it('群里：设了 markup 的宿主正文同样按受众处理，file:// 的标记去掉', async () => {
+    const t = await boot({ imageSender: true, gateway: true });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'system',
+      markup: true,
+      content: '一<image url="file:///zz/placeholder.png"/>二',
+    });
+    await t.flush();
+    expect(JSON.stringify(t.actions)).not.toContain('file://');
     expect(textOf(t.sent())).toContain('一二');
   });
 
@@ -725,6 +786,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.dispatch({
       sessionId: GROUP,
       source: 'agent',
+      markup: true,
       content:
         `一<image url="data:/images/${GROUP_DIR}/a.png"/>二<record url="data:/audios/${GROUP_DIR}/a.wav"/>` +
         `三<video url="data:/videos/${GROUP_DIR}/a.mp4"/>`,
@@ -739,12 +801,18 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(t.imageNotes(), '她这条回复已带着标记落库，转出的附件不另入档').toEqual([]);
   });
 
-  it('群里：网址的标记转成附件，经适配器的受保护下载发出', async () => {
+  it('群里：网址的标记留在正文原处，由适配器经 safeFetch 下载内联，超过内联上限的去掉，网址不交给实现端', async () => {
     const t = await boot({ imageSender: true, gateway: true });
-    await t.dispatch({ sessionId: GROUP, source: 'agent', content: `<image url="${httpBase}/ok.png"/>` });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'agent',
+      markup: true,
+      content: `一<image url="${httpBase}/ok.png"/>二<image url="${httpBase}/big.html"/>三`,
+    });
     await t.flush();
     const images = segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image');
     expect(images.map(s => decode(s.data.file))).toEqual([PNG]);
+    expect(textOf(t.sent())).toEqual(['一', '二', '三', '哨兵']);
     expect(JSON.stringify(t.actions)).not.toContain(httpBase);
   });
 
@@ -753,6 +821,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.dispatch({
       sessionId: GROUP,
       source: 'agent',
+      markup: true,
       content:
         '一<ima<image url="file:///zz/inner.png"/>ge url="file:///zz/outer.png"/>二' +
         `<ima<image url="file:///zz/inner.png"/>ge url="data:/images/${GROUP_DIR}/a.png"/>三`,
@@ -774,6 +843,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.dispatch({
       sessionId: GROUP,
       source: 'agent',
+      markup: true,
       content: `一<image url="file:///zz/placeholder.png"/>二<image url="data:/images/${GROUP_DIR}/a.png"/>`,
     });
     await t.flush();
@@ -784,8 +854,8 @@ describe('onebot 出站：她回复里的媒体标记', () => {
 
   it('受众只有 owner 的私聊：标记不动，照旧交给适配器解析', async () => {
     const t = await boot({ imageSender: true, gateway: true });
-    const url = `${httpBase}/ok.png`;
-    await t.dispatch({ sessionId: PRIVATE, source: 'agent', content: `<image url="${url}"/>` });
+    const url = 'file:///zz/placeholder.png';
+    await t.dispatch({ sessionId: PRIVATE, source: 'agent', markup: true, content: `<image url="${url}"/>` });
     await t.flush(PRIVATE);
     const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
     expect(images.map(s => s.data.file)).toEqual([url]);

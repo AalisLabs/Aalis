@@ -28,7 +28,7 @@ import {
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
-import { inlineRemoteMarkers, materializeAttachments } from './attachments.js';
+import { inlineRemoteMedia, materializeAttachments } from './attachments.js';
 import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -39,8 +39,9 @@ import type {
   OneBotConnectionConfig,
   OneBotProtocol,
   OneBotRawEvent,
+  OutgoingPiece,
 } from './types.js';
-import { normalizeOneBotMessage, segmentsToText } from './types.js';
+import { normalizeOneBotMessage, parseContentToSegments, segmentsToText, withReply } from './types.js';
 import { OneBotV11 } from './v11.js';
 
 /**
@@ -1147,14 +1148,22 @@ function runAdapter(caps: Caps): void {
   }
 
   /**
-   * 发一段文字。markup：正文含平台标记，按配置分条、图片单独成条，标记解析成 @、媒体与引用；不设时整段作一个文字段
-   * 原样发出。replyTo：引用回复的平台消息 id，只加在第一条分条前
+   * 把一段文字切成要发的各条。markup：正文含平台标记，按配置分条、图片单独成条，各条的标记解析成 @、媒体与引用；不设时整段
+   * 作一个文字段原样发出
    */
-  async function sendText(
-    sessionId: string,
-    content: string,
-    options: { markup?: boolean; replyTo?: string } = {},
-  ): Promise<void> {
+  function toPieces(content: string, markup?: boolean): OutgoingPiece[] {
+    // 她的回复分条发送，再拆出 <image .../>：图片始终独立成条，不与文本粘连
+    const texts = markup
+      ? (splitEnabled ? splitMessageByPunctuation(content, splitPatterns) : [content]).flatMap(p => splitImageOut(p))
+      : [content];
+    return texts
+      .map(text => text.trim())
+      .filter(Boolean)
+      .map(text => ({ text, segments: markup ? parseContentToSegments(text) : [{ type: 'text', data: { text } }] }));
+  }
+
+  /** 逐条发出。replyTo：引用回复的平台消息 id，只加在第一条前 */
+  async function sendPieces(sessionId: string, pieces: OutgoingPiece[], replyTo?: string): Promise<void> {
     const parsed = parseSessionId(sessionId);
     if (!parsed) {
       throw new Error(`无法解析 sessionId: ${sessionId}`);
@@ -1173,34 +1182,22 @@ function runAdapter(caps: Caps): void {
       throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
     }
 
-    // 她的回复分条发送，再拆出 <image .../>：图片始终独立成条，不与文本粘连
-    const pieces = options.markup
-      ? (splitEnabled ? splitMessageByPunctuation(content, splitPatterns) : [content]).flatMap(p => splitImageOut(p))
-      : [content];
-
-    let replyTo = options.replyTo;
     for (let i = 0; i < pieces.length; i++) {
-      const piece = pieces[i].trim();
-      if (!piece) continue;
-
+      const { text, segments } = pieces[i];
       const { action, params } = state.protocol.buildSendMessage({
         detailType: parsed.detailType,
         targetId: parsed.targetId,
-        content: piece,
-        replyTo,
-        markup: options.markup,
+        segments: withReply(segments, i === 0 ? replyTo : undefined),
       });
-      replyTo = undefined;
 
       const sendResult = await sendActionWithRetry(state, action, params);
       // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
       const sentId = extractSentMessageId(sendResult);
-      if (sentId) sentTracker.record(sessionId, sentId, piece, Date.now());
+      if (sentId) sentTracker.record(sessionId, sentId, text, Date.now());
 
       // 按下一条消息的字数计算延迟
       if (i < pieces.length - 1) {
-        const nextPiece = pieces[i + 1];
-        const charCount = nextPiece ? nextPiece.replace(/<[^>]+>/g, '').length : 0;
+        const charCount = pieces[i + 1].text.replace(/<[^>]+>/g, '').length;
         const delay = Math.min(charCount * splitDelayPerChar, splitMaxDelay);
         if (delay > 0) {
           await new Promise(r => setTimeout(r, delay));
@@ -1290,7 +1287,7 @@ function runAdapter(caps: Caps): void {
 
     /** 契约的直发：纯文字，不解析标记、不分条。她的回复经 outbound:message 带 markup 发出 */
     async sendMessage(sessionId: string, content: string): Promise<void> {
-      await sendText(sessionId, content);
+      await sendPieces(sessionId, toPieces(content));
     },
 
     async callAction(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown> {
@@ -2385,7 +2382,7 @@ function runAdapter(caps: Caps): void {
     const delivered: MessageAttachment[] = [];
     let textSent = false;
     try {
-      let content = msg.content ?? '';
+      let pieces = toPieces(msg.content ?? '', msg.markup);
       let markers = '';
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
@@ -2420,16 +2417,16 @@ function runAdapter(caps: Caps): void {
         errors.push(...materialized.errors);
       }
       if (msg.markup) {
-        const inlined = await inlineRemoteMarkers(content, storage, logger.use);
-        content = inlined.content;
+        const inlined = await inlineRemoteMedia(pieces, storage, logger.use);
+        pieces = inlined.pieces;
         errors.push(...inlined.errors);
       }
 
       // 正文按 markup 发；附件的消息段标记另起一条，按标记发
-      if (content.trim()) {
+      if (pieces.length) {
         logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
         try {
-          await sendText(msg.sessionId, content, { markup: msg.markup, replyTo: msg.replyTo });
+          await sendPieces(msg.sessionId, pieces, msg.replyTo);
           textSent = true;
         } catch (err) {
           logger.use.warn(`OneBot 发送消息失败(已重试): ${err}`);
@@ -2438,7 +2435,7 @@ function runAdapter(caps: Caps): void {
       }
       if (markers) {
         try {
-          await sendText(msg.sessionId, markers, { markup: true, replyTo: content.trim() ? undefined : msg.replyTo });
+          await sendPieces(msg.sessionId, toPieces(markers, true), pieces.length ? undefined : msg.replyTo);
           delivered.push(...inlineAttachments);
         } catch (err) {
           logger.use.warn(`OneBot 发送附件消息段失败(已重试): ${err}`);

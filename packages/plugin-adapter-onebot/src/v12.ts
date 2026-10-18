@@ -7,7 +7,7 @@ import type {
   OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { messageSegments, segmentsToText, toV12Segments } from './types.js';
+import { segmentsToText, toV12Segments } from './types.js';
 
 /**
  * OneBot v12 协议处理器
@@ -26,7 +26,7 @@ export class OneBotV12 implements OneBotProtocol {
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> } {
     const actionParams: Record<string, unknown> = {
       detail_type: params.detailType,
-      message: toV12Segments(messageSegments(params)),
+      message: toV12Segments(params.segments),
     };
 
     if (params.detailType === 'private') {

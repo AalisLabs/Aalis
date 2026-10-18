@@ -40,7 +40,7 @@
 
 - `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
 - onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除。
-- 带 `markup` 的正文里媒体标记的网址由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
+- 带 `markup` 的正文里媒体标记的网址（以 `http:`、`https:` 开头，不分大小写）由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、解析不了、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
 
 **迁移**：要发 @、图片或引用的出站设 `markup: true`，图片、语音、视频也可以改走 `attachments`；引用回复用 `OutgoingMessage.replyTo`。
 
@@ -51,7 +51,7 @@
 - `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
 - `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
-- 受众不只 owner 的会话里，她回复正文里的 `<image|video|record url="…"/>` 标记改按附件发：网址下载后按附件发，本会话的媒体照发，本机路径、`file://`、别的会话的媒体去掉不发。
+- 受众不只 owner 的会话里，带 `markup` 的正文（她的回复）里的 `<image|video|record url="…"/>` 标记：本会话的媒体改按附件发，本机路径、`file://`、`base64://` 与别的会话的媒体去掉不发；网址（协议名小写的 `http://`、`https://`）的留在正文里，由适配器下载、核对文件头后内联（见上一节），其余写法的网址去掉。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
