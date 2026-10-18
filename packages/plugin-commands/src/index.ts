@@ -242,7 +242,7 @@ function registerCommands({
   //   'system' —— 只出现在出站消息，无入站生产者，纯死值，删。
   //   'workflow:*' —— 曾想按前缀纳入，但 workflow_define/workflow_run 只是 sensitive(L1)、
   //     零确认，一旦受信，L1 就能定义 send-message 节点向任意会话静默投递 /clear 这类
-  //     0 级 + confirm:'session' 命令、且无回显——confirm 闸（防注入误清）被绕过。
+  //     1 级 + confirm:'session' 命令、且无回显——confirm 闸（防注入误清）被绕过。
   //     故 workflow 派发**不受信**：带 source 的注入问不到发出者，需要确认的指令直接拒（fail-closed）。
   //     要让 workflow 自动化免确认，须先把 define/run 抬到与 scheduler 相称的档位，那是单独的决定。
   const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
@@ -267,7 +267,7 @@ function registerCommands({
   // ===== 意图确认：人亲手输入、声明了 confirm 的指令，在同一会话里问发出者本人 =====
   //
   // 只认这个人在这个会话里的下一条消息（带 source 的注入不认）：y 为确认，其余取消，这条回复吞掉、不往下走；
-  // 时限内不回也取消。问的是「确定要这么做吗」，不是 owner 审批：群成员在私聊里清自己的记忆照样能确认。
+  // 时限内不回也取消。问的是「确定要这么做吗」，不是 owner 审批：非 owner 的发出者本人确认即可。
   const INTENT_TIMEOUT_MS = 60_000;
   const YES = /^\s*(?:y|yes)\s*$/i;
   /** 等回复的意图确认：键是会话与发出者，值是结算函数 */
@@ -474,30 +474,12 @@ function registerCommands({
     return lines.length === 0 ? t('nothingCleared') : textLines(lines);
   }
 
-  /**
-   * 清空共享会话（群/频道）所需的最低等级。私聊会话归用户本人，不受此限——
-   * 清自己的记忆是自助行为；群会话一人清掉会毁掉所有人的上下文，故要求同
-   * `visibility:'restricted'` 的等级 2。
-   */
-  const CLEAR_SHARED_MIN_LEVEL = 2;
-
   async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string | TextRef> {
     let types: string[] | undefined;
     try {
       types = normalizeClearTypes(argv.options.type, registry.prefix);
     } catch (err) {
       return textOf(err);
-    }
-    // 共享会话设防：静态声明只能给出与会话归属无关的策略，这一档必须在运行期判。
-    if (argv.session.sessionType && argv.session.sessionType !== 'private') {
-      const auth = authority.present ? authority.use : undefined;
-      const isOwner = auth?.isOwner(argv.session.platform, argv.session.userId) ?? false;
-      const level =
-        auth?.listUsers().find(u => u.platform === argv.session.platform && u.userId === argv.session.userId)?.level ??
-        0;
-      if (!isOwner && level < CLEAR_SHARED_MIN_LEVEL) {
-        return t('sharedClearLevel', { required: CLEAR_SHARED_MIN_LEVEL, level });
-      }
     }
     return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
@@ -514,12 +496,9 @@ function registerCommands({
   };
 
   commands.use
-    // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
-    // confirm:'session' 但不抬等级——私聊里会话是用户自己的，清自己的记忆属自助行为，
-    // 要 2 级等于剥夺；确认则挡住提示词注入触发的误清（需真人点一下）。
-    // 群聊会话是共享的，一人清掉毁掉所有人的上下文——那一档在 action 里按
-    // sessionType 另行设防（与 /bind 等私聊敏感指令同一模式）。
+    // 清空**当前会话**的记忆；确认挡住提示词注入触发的误清（需真人回一句）。
     .command('clear', t('clearDescription'), {
+      risk: 'sensitive',
       confirm: 'session',
     })
     .option('type', '-t <type:string[]>', clearTypeOption)

@@ -45,7 +45,7 @@ export default definePlugin({
 |---|---|---|---|
 | `/help` | `[name]` | 无参时列出你能用的顶层指令（子指令只显示个数）；带指令名时显示用法详情，空格和点两种写法都可以，如 `/help clear all` | public |
 | `/status` | — | 系统状态 | public |
-| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | public（需确认 confirm: session；群聊等共享会话要求等级 ≥ 2 或 owner，私聊不限） |
+| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | restricted（risk: sensitive，等级 1，需确认 confirm: session） |
 | `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话中指定类型的内容；不指定类型时清空全部类型 | restricted（risk: dangerous，等级 2，需确认 confirm: session） |
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
@@ -56,7 +56,7 @@ export default definePlugin({
 
 ## 帮助
 
-`/help` 概览、`/help <指令>`、`<指令> -h`（或 `--help`）、裸敲分组（如 `/relation`）与选项写错时附的用法，都只列调用者能用的指令。判据与执行同一份：有 plugin-authority 时按它的 `authorize`（等级、`authorityOverrides` 与 `deniedCapabilities` 一并生效，确认不算），没有或停用时按下文的 fail-closed。用不了的指令在帮助里当作不存在：`/help <它>` 与指令不存在时回同一句「没有指令 …」；`<它> -h` 与裸敲子指令都用不了的分组回的也是这一句（不存在的指令后面写 `-h` 不算指令，消息交给后续处理，指令系统不回话），子指令都用不了的分组不列；概览里不提还有多少条看不到。直接执行用不了的指令时，拒绝提示照旧点名指令（「权限不足: "command:shutdown" 需等级 2（当前 0）」）。指令自己在运行时另设的限制不算在内，如群聊里的 `/clear` 要求等级 2：0 级群成员的帮助里列着 `/clear`，执行时才被拒。
+`/help` 概览、`/help <指令>`、`<指令> -h`（或 `--help`）、裸敲分组（如 `/relation`）与选项写错时附的用法，都只列调用者能用的指令。判据与执行同一份：有 plugin-authority 时按它的 `authorize`（等级、`authorityOverrides` 与 `deniedCapabilities` 一并生效，确认不算），没有或停用时按下文的 fail-closed。用不了的指令在帮助里当作不存在：`/help <它>` 与指令不存在时回同一句「没有指令 …」；`<它> -h` 与裸敲子指令都用不了的分组回的也是这一句（不存在的指令后面写 `-h` 不算指令，消息交给后续处理，指令系统不回话），子指令都用不了的分组不列；概览里不提还有多少条看不到。直接执行用不了的指令时，拒绝提示照旧点名指令（「权限不足: "command:shutdown" 需等级 2（当前 0）」）。指令自己在运行时另设的限制不算在内，如 `/level` 另要求调用者是 owner：2 级成员的帮助里列着 `/level`，执行时才被拒。
 
 回复是各平台通用的纯文本，按这条指令所在会话的语言渲染（说明先渲染、再取第一句作摘要）；QQ 与终端原样显示，WebUI 的时间线里画成一张卡，只认段落与列表，其余写法照原文显示（回复里会回显调用者敲的原话），所以写法两边都读得清：一行一条的 `- ` 列表，选项的取值缩进两格列在下面，段落之间空一行；不用加粗、反引号、代码围栏与空格对列。概览每行是「指令 — 描述的第一句 · 子指令数」，末尾提示「详情：/help 指令名，或在指令后加 -h」；详情依次是标题（完整描述）、用法、示例、参数、选项、子指令、别名。指令登记了 `usage` 时详情整段用它。
 
@@ -64,7 +64,7 @@ export default definePlugin({
 
 声明了 `confirm` 的指令（如 `/clear`）由人亲手输入时，执行前在同一会话里问发出者本人「确认执行 /clear 吗？」。只认这个人在这个会话里的下一条消息：回 `y`（或 `yes`，不分大小写）即执行，回别的取消；这条回复在 `inbound:command` 相位被吞掉，不进入后续相位、不打断在途的回合。别人的消息、发出者在别的会话里的消息、带 `source` 的注入都不算回复，照常往下走。60 秒不回即取消；插件停用或重载时，等待中的确认当即取消。
 
-这是意图确认，不是 owner 审批：群成员在私聊里用 `/clear` 清自己的记忆照样能确认。带 `source` 的注入投递的指令（编排的发消息节点等）问不到发出者，需要确认时直接拒；scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，`always` 档照样无从确认而拒。确认要不要做由 plugin-authority 的执行守卫判定（含 `confirmOverrides` 与白名单），见 [plugin-authority](./plugin-authority.md)。
+这是意图确认，不是 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。带 `source` 的注入投递的指令（编排的发消息节点等）问不到发出者，需要确认时直接拒；scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，`always` 档照样无从确认而拒。确认要不要做由 plugin-authority 的执行守卫判定（含 `confirmOverrides` 与白名单），见 [plugin-authority](./plugin-authority.md)。
 
 权限守卫由 plugin-authority 激活时注入、停用时摘掉。未安装或停用了 plugin-authority 时指令系统按 fail-closed 处理：等同所有人都是默认等级、没人能确认，需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的指令一律拒绝并提示缺少权限插件，其余指令照常执行。上表中除 `/help`、`/status` 外的指令因此都不可用，`/help` 也只列出能用的这些。
 

@@ -30,6 +30,12 @@
   - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史条数（含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史条数。类型不变。
   - plugin-memory-summary：插件配置 `summaryTokenRatio` 删除，换成 `summaryBudgetRatio`（见上文「摘要预算」）。配置里留着 `summaryTokenRatio` 时，runtime 在启动与热重载时按 schema 裁掉并写回配置文件，记一条 warn。
 
+### /clear 的门槛改为等级 1（@aalis/plugin-commands）
+
+- `/clear` 声明 `risk: 'sensitive'`，需要等级 1，群聊私聊一样；确认照旧（`confirm: 'session'`）。此前不声明 risk，私聊里 0 级也能清自己的会话，群聊等共享会话在指令里另判、要求等级 2 或 owner。这道另判与它的拒绝语「清空共享会话需要等级 …」删除：等级不够时回通用的等级拒绝，不再先问确认；1 级在群里能清群的共享会话。权限页 `command:clear` 显示的门槛就是生效的门槛。
+
+**迁移**：要让 0 级继续用，在 `authorityOverrides` 里把 `command:clear` 设为 `0`，群里的 0 级也随之能清；要群里仍是等级 2，设为 `2`，私聊也随之要等级 2。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

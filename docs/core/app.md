@@ -117,7 +117,7 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 |---|---|---|
 | `/help` | public | 列出调用者能用的指令；`/help <指令>` 看用法 |
 | `/status` | public | 显示系统状态（服务可用性、工具数、指令数） |
-| `/clear [--type/-t <type>]` | public | 清空当前会话指定类型记忆 |
+| `/clear [--type/-t <type>]` | restricted（risk: sensitive，等级 1） | 清空当前会话指定类型记忆 |
 | `/clear all [--type/-t <type>]` | restricted | 全局清空指定类型记忆 |
 | `/shutdown` | restricted | 关闭应用 |
 | `/restart` | restricted | 重启应用 |

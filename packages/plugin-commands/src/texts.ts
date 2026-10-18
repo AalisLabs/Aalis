@@ -66,7 +66,6 @@ const SOURCE = {
   typeUserProfile: '用户档案',
   typeUserRelation: '用户关系图谱',
   unknownClearType: '未知清理类型: {type}。可用类型: {types}。说明见 {prefix}help clear',
-  sharedClearLevel: '清空共享会话需要等级 {required, number}（当前 {level, number}）。私聊里可以随时清理自己的会话。',
   noMemoryBackend:
     '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。',
   noGlobalClear: '⚠ 记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。',
