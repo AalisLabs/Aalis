@@ -63,7 +63,7 @@ export default definePlugin({
 
 授权已过（owner 或等级够）但操作声明了 `confirm`（经 `confirmOverrides` 覆盖后）时，仍要有人确认。守卫的判定顺序：
 
-1. **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认。`confirm: 'always'` 什么都免不掉（cron 等无人可问的上下文即拒）。
+1. **可免的确认**：只对授权身份是 owner 的回合（授权身份取守卫上下文的 `actor`，缺省即会话身份，不看物理发言者）。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认；`confirmOverrides` 设为 `'off'` 的能力连 `always` 也免。照旧免的是 owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排（运行身份见 [plugin-workflow](./plugin-workflow.md#定义者与运行身份)）。别人发起的回合照旧确认：群成员、别人的私聊里对方发起的、创建者不是 owner 的定时任务、MCP 客户端（`mcp:mcp-client` 不是 owner）、没有授权主体的回合（群里的频率触发、空闲触发、主动发言、白纸任务完成通知等，授权身份是匿名），以及定义者不是 owner 或没有定义者的编排。owner 在群里亲手发起、从 WebUI 往房间插话的回合，授权身份也是 owner，照旧免。其余情形 `always` 每次确认，cron 等无人可问的上下文即拒。
 2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（适配器没给发出者的消息）无从确认，直接拒。不走 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。
 3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。
 
@@ -87,8 +87,8 @@ export default definePlugin({
 - `config.owners`（`UserIdentity[]`）：owner 身份列表（owner = ∞，不在等级表内）。
 - `config.deniedCapabilities`（glob 列表）：全局硬禁用，命中即拒，连 owner 都压过（配置总闸，非 per-user）。
 - `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。
-- `config.confirmOverrides`（能力键 `type:name` → `'session' | 'always' | 'off'`）：owner 逐条覆盖确认要求；`'off'` 强制关确认。
-- `config.restrictedPolicy`（`{ allow?, duration? }`）：免确认白名单（能力 glob，`['*']` 全放），给自动化用。只免 `session` 档的确认，`always` 照常确认；不放宽授权，等级不够的照样拒。注意 `duration > 0` 的窗口只在权限页往白名单里加规则（动作 `waiveConfirm`，调 `markPolicyEnabled`）时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。权限页不改 `duration`，原值保留。
+- `config.confirmOverrides`（能力键 `type:name` → `'session' | 'always' | 'off'`）：owner 逐条覆盖确认要求；`'off'` 关掉确认，只对授权身份是 owner 的回合生效，别人发起的回落到插件的声明。
+- `config.restrictedPolicy`（`{ allow?, duration? }`）：免确认白名单（能力 glob，`['*']` 全放），给自动化用。只免 `session` 档的确认，`always` 照常确认；只对授权身份是 owner 的回合生效，别人发起的照旧要 owner 批准；不放宽授权，等级不够的照样拒。注意 `duration > 0` 的窗口只在权限页往白名单里加规则（动作 `waiveConfirm`，调 `markPolicyEnabled`）时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。权限页不改 `duration`，原值保留。
 
 `DEFAULT_AUTHORITY`（未登记身份默认等级 = 0）是常量，不可配置。某操作是否 restricted 由其工具 / 指令声明的 `visibility` 决定，可经 `authorityOverrides`（等级）/ `confirmOverrides`（确认）逐操作覆盖。
 
@@ -113,8 +113,8 @@ WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 tok
 |---|---|---|
 | 用户 | 登记了等级的外部身份（owner 不列）：身份、等级、备注 | 行上「设等级」（输入等级，按这一行预填）、「删除记录」（destructive：删掉封禁记录就等于解封）；「加用户」（输入平台、用户 ID、等级） |
 | Owner | 配置里的 `owners`（本机控制台恒为 owner，不列） | 行上「移除」（destructive）；「加 owner」（输入平台与用户 ID，已经是 owner 的拒收） |
-| 操作门槛 | 指令与工具按所属插件分组：操作数、已改门槛的数量。选中一组，详情列出这一组的每个操作：默认门槛（权限服务按风险派生，不含覆盖）、生效门槛、确认要求 | 组那一行上「整组设门槛」，操作那一行上「设门槛」；输入最低等级，留空恢复默认。写进 `authorityOverrides` |
-| 禁用与免确认 | `deniedCapabilities` 与 `restrictedPolicy.allow` 里的规则 | 行上「移除」；「禁用」「免确认」（输入能力键或通配，重复的拒收） |
+| 操作门槛 | 指令与工具按所属插件分组：操作数、已改门槛的数量。选中一组，详情列出这一组的每个操作：默认门槛（权限服务按风险派生，不含覆盖）、生效门槛、确认要求（`session` 显示「每次（白名单可免）」，`always` 显示「每次（只有确认覆盖设为 off 能免）」） | 组那一行上「整组设门槛」，操作那一行上「设门槛」；输入最低等级，留空恢复默认。写进 `authorityOverrides` |
+| 禁用与免确认 | `deniedCapabilities` 与 `restrictedPolicy.allow` 里的规则；说明写明免确认只对以 owner 身份做的事生效 | 行上「移除」；「禁用」「免确认」（输入能力键或通配，重复的拒收） |
 
 - 等级改动（设等级、加用户、删除记录）与 `/level` 走同一个流程：先等等级表的首次读取落定，改完等落盘，没落盘时回执注明原因（见下文「用户数据」）。改宿主配置的动作先改运行态（即刻生效）再等 `save()`，保存失败时动作回错误，写明改动已在本次运行中生效、没写进配置文件及原因。每次改动后页面重取，保存失败时也一样。
 - 只有 owner 能调页面动作，由 webui-server 的闸门保证（单 token 下身份恒为 `webui:console`），处理函数不另核调用者。

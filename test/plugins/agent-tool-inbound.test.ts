@@ -175,14 +175,21 @@ describe('ToolCallContext.inbound：其他调用方不填写', () => {
     }
     const svc = host.services.use.get(workflow);
     if (!svc) throw new Error('workflow 服务不在场');
+    // 没有权限服务时判不出 owner，定义者与调用者是同一身份才按它跑
+    const who = { platform: 'test', userId: 'u1' };
     await svc.defineWorkflow(
-      { id: 'zz-inbound', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'tool', tool: PROBE }] },
+      {
+        id: 'zz-inbound',
+        trigger: { type: 'manual' },
+        nodes: [{ id: 'a', type: 'tool', tool: PROBE }],
+        definedBy: who,
+      },
       { persist: false },
     );
-    const run = await svc.runWorkflow('zz-inbound', {}, 'manual', { platform: 'test', userId: 'u1' });
+    const run = await svc.runWorkflow('zz-inbound', {}, 'manual', who);
     expect(run.status).toBe('success');
     expect(seen, '探针工具应被 tool 节点调用').toBeDefined();
-    expect(seen?.actor, '调用者身份照常透传').toEqual({ platform: 'test', userId: 'u1' });
+    expect(seen?.actor, '运行身份照常透传').toEqual(who);
     expect(seen?.inbound).toBeUndefined();
   });
 

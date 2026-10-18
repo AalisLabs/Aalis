@@ -106,6 +106,12 @@ export interface WorkflowDef {
   nodes: NodeSpec[];
   /** 是否启用 */
   enabled?: boolean;
+  /**
+   * 定义者：调用 defineWorkflow 的一方填自己经认证的授权身份，没有即匿名。服务原样记下，转交外部来的定义之前先删掉这个键；
+   * 改了内容的覆盖填覆盖者，不能把 getWorkflow 取回的原样带回去，只改启停的沿用原来的。实现不写进定义文件、也不从定义文件读，
+   * 文件被改过的载入后没有定义者。运行身份见 {@link WorkflowService.runWorkflow}
+   */
+  definedBy?: { platform: string; userId: string };
 }
 
 // ============ 运行实例 ============
@@ -161,7 +167,10 @@ export interface WorkflowService {
     id: string,
     vars?: Record<string, unknown>,
     triggerSource?: string,
-    /** 调用者身份：经 workflow_run 工具触发时透传，使内部工具按调用者权限裁决（缺省=匿名） */
+    /**
+     * 调用者身份（缺省=匿名）。内部工具与投递的消息按定义者与调用者里不是 owner 的一方裁决：调用者是 owner 时取定义者
+     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者
+     */
     caller?: { platform?: string; userId?: string },
   ): Promise<WorkflowRun>;
   /** 取消一个运行中的实例（若执行引擎支持） */

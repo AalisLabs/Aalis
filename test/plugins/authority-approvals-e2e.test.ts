@@ -277,19 +277,65 @@ describe('确认的豁免与缺席', () => {
     expect(out).toContain('审批服务不在');
   });
 
-  it('confirmOverrides 关掉确认：不出卡，群成员照常执行', async () => {
-    const s = await setup({ appConfig: { confirmOverrides: { [`tool:${PROBE}`]: 'off' } } });
-    expect((await s.call({ sessionId: ROOM, ...MEMBER_QQ, inbound: {} }).result).content).toBe('ran');
+  const OFF = { confirmOverrides: { [`tool:${PROBE}`]: 'off' } };
+  const WAIVE = { restrictedPolicy: { allow: [`tool:${PROBE}`] } };
+
+  it('confirmOverrides 关掉确认只对 owner：群成员在群里照旧要审批，回房间那一句、不执行，审计记插件的声明', async () => {
+    const s = await setup({ appConfig: OFF });
+    const out = (await s.call({ sessionId: ROOM, ...MEMBER_QQ, inbound: {} }).result).content;
+    expect(s.runs()).toBe(0);
+    expect(s.pushed()).toEqual([]);
+    expect(out).toContain(ROOM_DENIAL);
+    await vi.waitFor(() => expect(readFileSync(s.auditFile, 'utf8').trim().split('\n')).toHaveLength(2));
+    const [request] = readFileSync(s.auditFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(request.rule).toBe(`tool:${PROBE} 声明 confirm=session`);
+  });
+
+  it('confirmOverrides 关掉确认：owner 派的子任务照常执行，不出卡', async () => {
+    const s = await setup({ appConfig: OFF });
+    const subtask = {
+      sessionId: `${MINE}::abcd1234`,
+      platform: 'webui',
+      userId: `parent:${MINE}`,
+      actor: OWNER,
+      inbound: { source: 'subtask' },
+    };
+    expect((await s.call(subtask).result).content).toBe('ran');
     expect(s.pushed()).toEqual([]);
   });
 
-  it('restrictedPolicy 白名单免 session 档确认；always 档照常出卡', async () => {
-    const appConfig = { restrictedPolicy: { allow: [`tool:${PROBE}`] } };
-    const session = await setup({ appConfig });
+  const notOwner: Array<[string, Ctx, string]> = [
+    ['对端不是 owner 的私聊里对方发起的', { sessionId: MEMBER_DM, ...MEMBER_QQ, inbound: {} }, ROOM_DENIAL],
+    ['匿名编排的工具节点', { sessionId: 'workflow::daily', platform: 'workflow' }, INELIGIBLE],
+  ];
+  it.each(notOwner)('restrictedPolicy 白名单只对 owner：别人的回合照旧拒（%s）', async (_label, ctx, text) => {
+    const s = await setup({ appConfig: WAIVE });
+    const out = (await s.call(ctx).result).content;
+    expect(s.runs()).toBe(0);
+    expect(s.pushed()).toEqual([]);
+    expect(out).toContain(text);
+  });
+
+  it.each([
+    ['confirmOverrides 设为 off', OFF],
+    ['restrictedPolicy 白名单', WAIVE],
+  ])('物理发言者是 owner、授权身份是自发的一轮（%s）：照旧不免，不执行', async (_label, appConfig) => {
+    const s = await setup({ appConfig });
+    const ctx = { sessionId: MINE, ...OWNER, actor: selfInitiatedActor('webui'), inbound: {} };
+    expect((await s.call(ctx).result).content).toContain(INELIGIBLE);
+    expect(s.runs()).toBe(0);
+    expect(s.pushed()).toEqual([]);
+  });
+
+  it('restrictedPolicy 白名单免 owner 的 session 档确认；always 档照常出卡', async () => {
+    const session = await setup({ appConfig: WAIVE });
     expect((await session.call({ sessionId: MINE, ...OWNER, inbound: {} }).result).content).toBe('ran');
     expect(session.pushed()).toEqual([]);
 
-    const always = await setup({ appConfig, confirm: 'always' });
+    const always = await setup({ appConfig: WAIVE, confirm: 'always' });
     const { result } = always.call({ sessionId: MINE, ...OWNER, inbound: {} });
     await always.answer(await always.card(), 'approve');
     expect((await result).content).toBe('ran');

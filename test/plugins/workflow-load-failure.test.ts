@@ -19,7 +19,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
-// workflow 的运行历史（含 once 记录）是整份快照：读不懂时必须拒写，once 也不能据空记录安排。
+// workflow 的运行历史（含 once 记录与定义者记录）是整份快照：读不懂时必须拒写，once 也不能据空记录安排。
 // 曾经的三处缺口：
 // - 「不存在」只看文案：带 EACCES 等 code 但文案含 not found 的错误被当成全新，整份覆盖；
 //   读与解析在同一个 try 里，短坏文件的原文（如 `Not Found`）进了解析报错文案，同样被当成全新。
@@ -80,6 +80,8 @@ describe('RunStore 加载三态', () => {
     '{"runs":null}',
     '{"onceFired":[1]}',
     '{"onceFired":"x"}',
+    '{"definers":[1]}',
+    '{"definers":"x"}',
   ])('合法 JSON 但结构不对（%s）：拒写', async content => {
     const r = await initAndWrite(async () => content);
     expect(r).toEqual({ writes: 0, readable: false });
@@ -87,7 +89,13 @@ describe('RunStore 加载三态', () => {
 
   it('空对象与完整形状照常读入、照常写', async () => {
     expect(await initAndWrite(async () => '{}')).toEqual({ writes: 1, readable: true });
-    const full = await initAndWrite(async () => JSON.stringify({ runs: [], onceFired: { 'zz-b': 1 } }));
+    const full = await initAndWrite(async () =>
+      JSON.stringify({
+        runs: [],
+        onceFired: { 'zz-b': 1 },
+        definers: { 'zz-b': { platform: 'onebot', userId: '10001', sha256: 'ab' } },
+      }),
+    );
     expect(full).toEqual({ writes: 1, readable: true });
   });
 });
@@ -105,11 +113,11 @@ describe('WorkflowLoader 扫描判据', () => {
     );
 
   it('列目录报错带非 ENOENT 的 code、文案含 not found：扫描失败（不据空集清 once 记录）', async () => {
-    expect(await loaderWith(coded('EACCES', 'bucket not found')).loadAll()).toBe(false);
+    expect(await loaderWith(coded('EACCES', 'bucket not found')).loadAll(() => undefined)).toBe(false);
   });
 
   it('目录不存在（code ENOENT）：扫描成功、零定义', async () => {
-    expect(await loaderWith(coded('ENOENT', '目录缺失')).loadAll()).toBe(true);
+    expect(await loaderWith(coded('ENOENT', '目录缺失')).loadAll(() => undefined)).toBe(true);
   });
 });
 

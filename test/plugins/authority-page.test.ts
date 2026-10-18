@@ -212,7 +212,7 @@ describe('Owner', () => {
 
 describe('操作门槛', () => {
   const OPS: OpNode[] = [
-    { name: 'pub', pluginName: 'zz-a' },
+    { name: 'pub', pluginName: 'zz-a', confirm: 'session' },
     { name: 'res', pluginName: 'zz-a', visibility: 'restricted', confirm: 'always' },
     { name: 'sen', pluginName: 'zz-b', risk: 'sensitive' },
     // 关键格：risk 是非联合成员的真值串。三个 === 都不中 → 落 visibility 兜底 = 2，不能当成「所有人可用」
@@ -240,7 +240,12 @@ describe('操作门槛', () => {
       effectiveLevel: 4,
       level: 4,
     });
-    expect(zzA.find(row => row.capability === 'command:res')).toMatchObject({ display: '/res', confirm: '每次' });
+    // 两种「免」都只对 owner，说明在「禁用与免确认」
+    expect(toSource(zzA.find(row => row.capability === 'tool:pub'))).toMatchObject({ confirm: '每次（白名单可免）' });
+    expect(toSource(zzA.find(row => row.capability === 'command:res'))).toMatchObject({
+      display: '/res',
+      confirm: '每次（只有确认覆盖设为 off 能免）',
+    });
   });
 
   it('设门槛写进 authorityOverrides，留空恢复默认；不认识的操作回错误', async () => {
@@ -274,6 +279,16 @@ describe('禁用与免确认', () => {
     const { pages, act, config } = await boot({
       config: { deniedCapabilities: ['tool:shell.exec'], restrictedPolicy: { allow: ['tool:a'], duration: 60 } },
     });
+    const view = pages.view('authority');
+    const rulesTab = 'tabs' in view.content ? view.content.tabs.find(tab => tab.key === 'rules') : undefined;
+    expect(toSource(rulesTab?.content[0])).toMatchObject({
+      description:
+        '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效：owner 本人、owner 派的子任务、owner 建的定时任务、' +
+        '定义者与调用者都是 owner 的编排；别人发起的照旧要 owner 批准，不能产生审批的直接拒绝；不放宽等级。都可以写通配，如 tool:*。',
+    });
+    expect(toSource(view.actions?.waiveConfirm.input?.pattern.description)).toBe(
+      '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的照旧要 owner 批准',
+    );
     expect(await pages.data('authority', 'rules')).toEqual([
       { key: 'deny:tool:shell.exec', rule: 'tool:shell.exec', kind: '禁用（连 owner 也拒）' },
       { key: 'waive:tool:a', rule: 'tool:a', kind: '免确认' },

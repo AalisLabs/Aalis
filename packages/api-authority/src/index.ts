@@ -29,7 +29,8 @@ export type CapabilityVisibility = 'public' | 'restricted';
  * 能力确认要求（轴 B · 确认：是否需「人确认」这一步，与 visibility 正交、owner 也生效）：
  * - 缺省/undefined：无需确认（不提醒）。
  * - 'session'：执行前需人确认；系统源（ExecutionGuardContext.skipConfirm）与 restrictedPolicy 白名单可免。
- * - 'always'：每次都需确认，什么都免不掉（最危险操作）。
+ * - 'always'：每次都需确认（最危险操作），只有确认覆盖设为 'off' 能免。
+ * 免确认只对授权身份是 owner 的回合生效，别人发起的照旧要确认。
  *
  * 怎么确认看操作是谁发起的：工具由模型调用，确认是 owner 审批（@aalis/api-approval）；指令由人亲手输入，
  * 确认是向发出者本人核对意图（ExecutionGuardContext.confirmIntent）。
@@ -161,7 +162,7 @@ export interface ExecutionGuardContext {
   args?: Record<string, unknown>;
   /**
    * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
-   * 已授权时跳过非 always 的确认，always 照常确认。
+   * 已授权时跳过非 always 的确认，always 照常确认；只对授权身份是 owner 的回合生效。
    */
   skipConfirm?: boolean;
   /** 调用所在回合的 id（工具调用由 agent 工具循环填写）；审批随回合结束撤销 */
@@ -287,12 +288,13 @@ declare module '@aalis/api-host-config' {
     authorityOverrides?: Record<string, number>;
     /**
      * 管理员对单条操作的确认要求覆盖（能力键 `type:name` → session/always/off）。
-     * 'off' 强制关闭确认（即便插件声明了 confirm，便于自动化）；与等级正交，owner 也吃。
+     * 'off' 关闭确认（即便插件声明了 confirm，便于自动化），只对授权身份是 owner 的回合生效，别人的回落到插件声明；
+     * 与等级正交。
      */
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
     /**
      * 免确认白名单：allow 列出不必确认的能力 glob（['*'] 全放）；duration 生效时长（秒，0=永久）。
-     * 只免 confirm 为 session 的确认，always 照常确认；不放宽授权，等级不够的照样拒。
+     * 只免 confirm 为 session 的确认，always 照常确认；只对授权身份是 owner 的回合生效；不放宽授权，等级不够的照样拒。
      * 运行时启用时点（enabledAt）不持久化，是 plugin-authority 运行时状态。
      */
     restrictedPolicy?: {

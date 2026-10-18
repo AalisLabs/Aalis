@@ -122,7 +122,8 @@ export class AuthorityManager implements AuthorityService {
 
   /**
    * restrictedPolicy 白名单是否免掉这个能力的确认（只对 confirm 为 session 的确认有意义，always 由守卫照常确认）。
-   * 硬禁的能力不在这里放行：授权轴已先拒。`duration > 0` 时从 owner 在权限页保存策略起算，过了即失效。
+   * 只看能力与时长，授权身份是不是 owner 由守卫判。硬禁的能力不在这里放行：授权轴已先拒。
+   * `duration > 0` 时从 owner 在权限页保存策略起算，过了即失效。
    */
   waivesConfirm(capability: string): boolean {
     const policy = this.config.get('restrictedPolicy');

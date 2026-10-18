@@ -42,7 +42,7 @@ interface ExecutionGuardContext {
   userId?: string;
   actor?: { platform: string; userId: string }; // 被裁决身份（缺省=会话身份 platform/userId）
   args?: Record<string, unknown>;
-  skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权时跳过非 always 的确认
+  skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
   turnId?: string;                   // 调用所在回合（工具调用由 agent 工具循环填写）；审批随回合结束撤销
   callId?: string;                   // 这次工具调用的 id；审批卡据它挂到工具卡上
   inbound?: InboundTurn;             // 调用所在的入站回合；缺省 = 不在由入站消息驱动的回合里（编排节点、mcp-server 等）
@@ -118,7 +118,7 @@ type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId
 
 已授权且声明了 `confirm`（经 `confirmOverrides` 覆盖后）的操作再走轴 B：
 
-- **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认。`always` 什么都免不掉。
+- **可免的确认**：只对授权身份是 owner 的回合。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（带 `ownerApproved` 的注入即定时任务触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认；`always` 只有 `confirmOverrides` 设为 `'off'` 能免。授权身份不是 owner 的回合照旧确认，`'off'` 回落到插件的声明。
 - **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。
 - **工具**：确认是 owner 审批。守卫按发起回合的类别（`inbound`、`actor`、续做的调用者与会话受众，不按授权身份）调 `approvals.request`，只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
 
@@ -146,8 +146,8 @@ interface AuthorizeRequest {
 - `owners?: UserIdentity[]` —— owner 列表（owner = ∞，拥有一切）
 - `deniedCapabilities?: string[]` —— 全局硬禁用（glob；命中即拒，连 owner 都压过）
 - `authorityOverrides?: Record<string, number>` —— 单条操作的最低等级覆盖（能力键 `type:name` → 任意整数），优先于 risk/visibility 派生
-- `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 强制关闭确认（便于自动化），与等级正交，owner 也吃
-- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；不放宽授权
+- `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 关闭确认（便于自动化），只对授权身份是 owner 的回合生效，别人的回落到插件的声明；与等级正交
+- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；只对授权身份是 owner 的回合生效；不放宽授权
 - `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的出口能连到哪，即 `safeFetch`，以及 tool-browser 开启 `blockPrivate` 时的浏览器网络闸（三项都遵循）
 
 ## 管理入口

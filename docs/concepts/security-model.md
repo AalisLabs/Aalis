@@ -64,9 +64,14 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 
 - **轴 B · 确认（是不是你本人此刻要做）**：HITL（human-in-the-loop）意图确认，与等级无关。
   关键点是 **owner 也受确认约束**——这道关卡专门为「owner 会话被提示注入借权、静默调用高危操作」的场景设计。
-  - `confirm: 'always'` **永不可跳过**（最高危，每次都需要人工确认；cron 这类无人确认的来源直接拒绝）。
+  - `confirm: 'always'` 每次都需要人工确认（最高危；cron 这类无人确认的来源直接拒绝），只有确认覆盖 `confirmOverrides` 设为
+    `off` 时免，且只对授权身份是 owner 的回合。
   - `confirm: 'session'` 可在两种情况下免掉：来自受信来源时（`skipConfirm`：scheduler 触发的指令、runtime 一次性子命令），
-    或能力命中 owner 配的 `restrictedPolicy` 白名单时。
+    或能力命中 owner 配的 `restrictedPolicy` 白名单时；同样只对授权身份是 owner 的回合。
+  - 免确认看的是授权身份（`actor`，缺省即会话身份），不看物理发言者：owner 本人、owner 派的子任务、owner 建的定时任务、
+    定义者与调用者都是 owner 的编排照旧免；群成员、别人的私聊、创建者不是 owner 的定时任务、MCP 客户端、没有授权主体的回合
+    （群里的频率触发、空闲触发、主动发言、白纸任务完成通知等）与定义者不是 owner 或没有定义者的编排照旧要确认。
+    编排按定义者与调用者里不是 owner 的一方执行，见 [plugin-workflow](../plugins/plugin-workflow.md#定义者与运行身份)。
   - 工具的确认是 owner 审批：只有 owner 本人在自己会话里发起的回合（含其后台续做）能产生审批，
     定时任务、编排、房间、子任务与他人的回合需要确认时直接拒绝、不推给任何面；没人在场也按拒绝回给模型，回合不挂起。
   - 指令的确认是向发出者本人核对意图：只认他在同一会话里的下一条消息，带 `source` 的注入不认。

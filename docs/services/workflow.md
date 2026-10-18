@@ -29,7 +29,10 @@ export interface WorkflowService {
     id: string,
     vars?: Record<string, unknown>,
     triggerSource?: string,
-    /** 调用者身份：经 workflow_run 工具触发时透传，使内部工具按调用者权限裁决（缺省=匿名） */
+    /**
+     * 调用者身份（缺省=匿名）。内部工具与投递的消息按定义者与调用者里不是 owner 的一方裁决：调用者是 owner 时取定义者
+     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者
+     */
     caller?: { platform?: string; userId?: string },
   ): Promise<WorkflowRun>;
   /** 取消一个运行中的实例（若执行引擎支持） */
@@ -55,6 +58,7 @@ export interface WorkflowDef {
   trigger: TriggerSpec;            // manual 表示仅手动调用
   nodes: NodeSpec[];               // DAG 节点
   enabled?: boolean;
+  definedBy?: { platform: string; userId: string };  // 定义者：调用方填自己的授权身份，不写进定义文件（见 §6）
 }
 ```
 
@@ -113,7 +117,7 @@ export interface WorkflowRun {
 唯一一等实现 **`@aalis/plugin-workflow`**：
 - 注册：`provide.use(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
-- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['storage', 'tools', 'webui-server']`。
+- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['authority', 'storage', 'tools', 'webui-server']`（`authority` 用来判 owner，定运行身份，见 §6）。
 
 ### 触发源（trigger:fired 的 emit 者）
 
@@ -143,8 +147,8 @@ await events.use.emit('trigger:fired' as any, {
 
 `WorkflowService` 的 8 个方法都应实现（接口无可选成员）。最小语义：
 - `listWorkflows` / `getWorkflow`：返回内存中的定义。
-- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘。
-- `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必透传 `caller` 身份到内部工具调用**（见 §6）。
+- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘；记下 `def.definedBy`，覆盖即换成覆盖者，落盘时不写进定义文件、载入时不从定义文件读（见 §6）。
+- `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必按运行身份执行内部工具调用与投递的消息**，定时与事件触发以定义者作调用者（见 §6）。
 - `cancelRun` / `getRun` / `listRuns`：运行实例管理（`cancelRun` 可降级为始终返回 false，但参考实现经 AbortSignal 真实支持）。
 
 ### aalis.service 与 definePlugin provides/uses 双源必须同步
@@ -158,14 +162,14 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
   "aalis": {
     "service": {
       "required": ["config", "cron-engine", "events", "hooks", "lifecycle", "logger", "provide"],
-      "optional": ["storage", "tools", "webui-server"],
+      "optional": ["authority", "storage", "tools", "webui-server"],
       "provides": ["workflow"]
     }
   }
 }
 ```
 
-`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'workflow', provides: [workflow], uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webuiServer), events, hooks, lifecycle, logger, config, provide }, apply })`（`packages/plugin-workflow/src/index.ts`）。不要再写具名 `export const subsystem`。
+`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'workflow', provides: [workflow], uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webuiServer), authority: optional(authority), events, hooks, lifecycle, logger, config, provide }, apply })`（`packages/plugin-workflow/src/index.ts`）。不要再写具名 `export const subsystem`。
 
 ### 最小可编译骨架
 
@@ -290,13 +294,16 @@ await events.use.emit('trigger:fired', {
 
 ## 6. 能力 / 风险 → 影响
 
-### authority：调用者身份透传（核心安全约束）
+### authority：运行身份（核心安全约束）
 
-工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）：
+工作流按**定义者与调用者里不是 owner 的一方**裁决，杜绝借他人 workflow 提权，也借不到 owner 的免确认。参考实现各入口的定义者与调用者、哪几种编排没有定义者，见 [plugin-workflow](../plugins/plugin-workflow.md#定义者与运行身份)。provider 作者重实现时**必须守住下面几条**：
 
-- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`，引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.use.execute`）。
-- cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts`）。
-- provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
+- **定义者**：不写进定义文件，也不从定义文件读（工作区能被别的工具写，文件里的定义者伪造得出来）；记下定义者时连同写进文件的文本的哈希，载入时哈希对得上才认。`definedBy` 由调用方按认证出的身份填写，服务原样记下：转交外部来的定义之前先删掉这个键。
+- **运行身份**：调用者是 owner 时取定义者（没有即匿名），否则取调用者。
+- **触发**：定时与事件触发以定义者作调用者。事件参数与 `trigger:fired` 的 `payload` 作为 `vars` 进入这次运行，插值进 `agent` 节点的指令或 `send-message` 的正文时就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信。
+- **传递**：运行身份放进 `toolCallContext.actor`（`platform` 保持 `'workflow'`），`tool` 节点按它过 authority 闸，`send-message` 与 `agent` 节点投递的消息带同一个 `actor`；匿名只能跑 `public`（risk safe、minLevel 0）工具。
+
+漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 调起成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
 
 ### agent 节点：join 串扰与隔离
 
@@ -308,7 +315,7 @@ await events.use.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记录重放已触发过的一次性工作流；**定义不存在时记录随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清掉记录；只在内存里的定义照常删除），手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.use.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记录重放已触发过的一次性工作流；**定义不存在时记录随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清掉记录；只在内存里的定义照常删除），手删 yaml 则由启动时的 `prune`（扫完定义、注册触发器之前）按现存定义集补清，定义者记录同样清；`event` 用 `events.use.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
@@ -320,7 +327,7 @@ await events.use.emit('trigger:fired', {
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
 - **取消打断阻塞中的节点**：`cancelRun` 与插件拆卸（停机、卸载、bounce）都中止这次运行的信号：不再调度新节点；阻塞中的 `wait` / `agent` 节点立即失败（「运行已取消」），已派发的 agent 回合不随之中止，照常跑完；`tool` 节点经 `ToolCallContext.signal` 收到中止，是否提前返回由工具决定（`engine.ts`）。拆卸等在飞 run 收尾、终态写进 `runsFile` 才结束，不响应中止的工具至多让它等到 `disposeTimeoutMs`（`index.ts`）。
-- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。同文件还存 once 的 `firedAt`（`{ runs, onceFired }`）。
+- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。同文件还存 once 的 `firedAt` 与定义者记录（`{ runs, onceFired, definers }`）。
 - **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。
 

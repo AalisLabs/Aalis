@@ -15,7 +15,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 指令的确认是意图确认：人亲手输入的指令声明了 confirm，就在同一会话里向发出者本人问一句，
 // 只认这个人在这个会话里的下一条消息（带 source 的注入不认），超时取消；不走 owner 审批。
-// 定时任务触发的指令与 runtime 一次性子命令不问（skipConfirm），always 档照常要确认、无从确认即拒。
+// 创建者是 owner 的定时任务触发的指令与 runtime 一次性子命令不问（skipConfirm），always 档照常要确认、无从确认即拒；
+// skipConfirm 与确认覆盖的 off 只对授权身份是 owner 的生效，别人的照常确认。
 // 真实的网关、指令与权限插件；结果与提示经出站消息看，放行到后续相位的消息在 dispatch 相位记下。
 // ════════════════════════════════════════════════════════════
 
@@ -157,14 +158,26 @@ describe('人亲手输入的指令：向发出者本人确认意图', () => {
     expect(s.runs()).toBe(0);
   });
 
-  it('confirmOverrides 关掉确认：不问，直接执行', async () => {
-    const s = await setup({ appConfig: { confirmOverrides: { 'command:probe': 'off' } } });
+  const OFF = { confirmOverrides: { 'command:probe': 'off' } };
+
+  it('confirmOverrides 关掉确认：owner 亲手输入的不问，直接执行', async () => {
+    const s = await setup({ appConfig: { ...OFF, owners: [MEMBER] } });
     await s.say({ content: '/probe' });
     await vi.waitFor(() => expect(s.to(DM)).toEqual(['ran']));
   });
+
+  it('confirmOverrides 关掉确认只对 owner：别人亲手输入的照旧当面问他本人，回 y 才执行', async () => {
+    const s = await setup({ appConfig: OFF });
+    await s.say({ content: '/probe' });
+    await vi.waitFor(() => expect(s.to(DM)).toHaveLength(1));
+    expect(s.to(DM)[0]).toContain('/probe');
+    expect(s.runs(), '确认之前不得执行').toBe(0);
+    await s.say({ content: 'y' });
+    await vi.waitFor(() => expect(s.to(DM)).toEqual([expect.any(String), 'ran']));
+  });
 });
 
-describe('没人可问的受信来源：skipConfirm 照旧', () => {
+describe('没人可问的受信来源：skipConfirm 只免创建者是 owner 的', () => {
   const scheduled = {
     content: '/probe',
     sessionId: 'internal',
@@ -176,20 +189,23 @@ describe('没人可问的受信来源：skipConfirm 照旧', () => {
     actor: { platform: 'webui', userId: 'console' },
   };
 
-  it('定时任务触发的指令：session 档不问直接执行', async () => {
+  it('owner 建的定时任务触发的指令：session 档不问直接执行', async () => {
     const s = await setup();
     await s.say(scheduled);
     await vi.waitFor(() => expect(s.runs()).toBe(1));
     expect(s.sent, '不发确认提示').toEqual([]);
   });
 
-  it('定时任务触发的指令：always 档无从确认，拒绝', async () => {
-    const s = await setup({ confirm: 'always' });
+  it.each([
+    ['always 档', { confirm: 'always' as const }, scheduled],
+    ['创建者不是 owner', {}, { ...scheduled, actor: MEMBER }],
+  ])('定时任务触发的指令（%s）：无从确认，拒绝', async (_label, options, message) => {
+    const s = await setup(options);
     const done = vi.fn();
     s.host.events.use.on('gateway:phase:done', ({ phase }) => {
       if (phase === 'inbound:command') done();
     });
-    await s.say(scheduled);
+    await s.say(message);
     await vi.waitFor(() => expect(done).toHaveBeenCalled());
     expect(s.runs()).toBe(0);
     expect(s.sent).toEqual([]);
