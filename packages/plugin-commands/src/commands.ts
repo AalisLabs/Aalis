@@ -65,7 +65,7 @@ interface Decl {
   baseVisibility?: CapabilityVisibility;
   /** 节点自身声明的确认要求（轴 B；未声明则继承祖先） */
   baseConfirm?: CapabilityConfirm;
-  /** 节点自身声明的原始风险（透传，未声明则继承祖先）；供 authority 区分 sensitive(朋友)/dangerous(信任) */
+  /** 节点自身声明的原始风险（透传，未声明则继承祖先）；供 authority 区分 sensitive（等级 1）与 dangerous（等级 2） */
   baseRisk?: CapabilityRisk;
   aliases: string[];
   positionalArgs: PositionalArgSpec[];

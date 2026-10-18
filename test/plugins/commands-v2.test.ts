@@ -165,7 +165,7 @@ describe('commands v2 — 链式 builder', () => {
     expect(r.get('x')!.visibility).toBe('public');
   });
 
-  it('risk 透传 + 沿点路径继承 + 进 guard ctx（authority 据此派生 minTier：sensitive→朋友/dangerous→信任）', async () => {
+  it('risk 透传 + 沿点路径继承 + 进 guard ctx（authority 据此派生最低等级：sensitive 1、dangerous 2）', async () => {
     const r = new CommandRegistry(makeLogger(), ref(), ref());
     r.command('sys.exec', '', { risk: 'dangerous' }).action(async () => 'x');
     r.command('sys.exec.bg', '').action(async () => 'y'); // 未声明 → 继承父 risk

@@ -90,7 +90,7 @@ const configSchema = defineConfig({
 // ===== 工具权限三分名单（模块级导出，测试做补集断言防漏网）=====
 
 /**
- * 动真金白银 / 改仓位：visibility restricted（最低等级 2，仅信任档/owner 可驱动）。
+ * 动真金白银 / 改仓位：visibility restricted（最低等级 2，等级 2 起或 owner 可驱动）。
  * 堵"任意 visitor 驱动 LLM 用 owner 真钱下单/划转"。不加逐单 confirm —— okx 刻意保留
  * 实时/算法交易能力（见实盘安全闸注释），改用「等级门禁 + 一次性显式 confirmRealMoney」。
  * 注意：与 ACCOUNT_READ_OKX_TOOLS 必须互斥——capabilityMinLevel 里 risk 会遮蔽

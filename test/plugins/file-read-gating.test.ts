@@ -7,8 +7,8 @@ import { stubBoundTools } from '../fixtures/bound-tools.js';
 // file 读类能力闸回归：
 //   读文件/内容 = 信息暴露向量（可读跨会话日志 data:/latest.log、记忆库等）。
 //   默认 public 会让 level-0 群成员经聊天读到私密数据 → 收敛为 sensitive(级 1)：
-//   挡住 level-0，但保留「朋友档只读、不写/不 exec」的粒度，且读不弹确认。
-//   写删类保持 restricted + confirm（信任档 + 意图确认），不被本批下调。
+//   挡住 level-0，但保留「等级 1 只读、不写/不 exec」的粒度，且读不弹确认。
+//   写删类保持 restricted + confirm（等级 2 + 意图确认），不被本批下调。
 // ════════════════════════════════════════════════════════════
 
 function captureFileTools(): Record<string, Omit<RegisteredTool, 'pluginName'>> {

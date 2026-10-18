@@ -172,7 +172,7 @@ export class ToolRegistry implements ToolService {
         pluginName: t.pluginName,
         visibility,
         confirm,
-        risk: t.risk, // 原始风险透传：让 authority 区分 sensitive(朋友) / dangerous(信任)，否则二者都折成 restricted=信任
+        risk: t.risk, // 原始风险透传：让 authority 区分 sensitive（等级 1）与 dangerous（等级 2），否则二者都折成 restricted（等级 2）
         groups: t.groups,
         display: t.display,
       };
