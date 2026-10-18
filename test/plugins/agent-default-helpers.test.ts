@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { estimateMsgTokens } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import {
   buildFocusGuidance,
   describeLLMFailure,
   estimateTokens,
   formatTimeLabel,
+  historyStart,
   INPUT_CONVENTIONS,
   isSameMessage,
+  readHistory,
 } from '../../packages/plugin-agent/src/helpers.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
@@ -38,6 +41,88 @@ describe('estimateTokens', () => {
       { role: 'assistant', content: 'hello' },
     ];
     expect(estimateTokens(msgs)).toBe(estimateMsgTokens(msgs[0]) + estimateMsgTokens(msgs[1]));
+  });
+});
+
+describe('historyStart', () => {
+  it('条数线为 0、或活跃条数不超过它时为 0', () => {
+    expect([historyStart(0, 20), historyStart(20, 20), historyStart(600, 0)]).toEqual([0, 0, 0]);
+  });
+
+  it('超过条数线时按半条线成段前移，两次前移之间不变；一次跨好几段时落在半条线的整数倍上', () => {
+    // 条数线 20、半条线 10：(20, 30] 起点 10，(30, 40] 起点 20
+    expect([21, 25, 30, 31, 40, 57].map(n => historyStart(n, 20))).toEqual([10, 10, 10, 20, 20, 40]);
+    // 奇数条数线的半条线向上取整
+    expect([6, 8, 9].map(n => historyStart(n, 5))).toEqual([3, 3, 6]);
+  });
+});
+
+describe('readHistory', () => {
+  const user = (i: number): Message => ({ role: 'user', content: `m${i}`, timestamp: 1000 + i });
+  const users = (n: number) => Array.from({ length: n }, (_, i) => user(i));
+  /** n 条用户消息，第 9、10 条换成一组工具调用：带调用的助手与它的结果 */
+  const withToolGroup = (n: number) => {
+    const list = users(n);
+    const call = { id: 'call-9', type: 'function' as const, function: { name: 'zz_probe', arguments: '{}' } };
+    list[9] = { role: 'assistant', content: null, toolCalls: [call], timestamp: 1009 };
+    list[10] = { role: 'tool', content: 'ok', toolCallId: call.id, timestamp: 1010 };
+    return list;
+  };
+  /** 记下 getHistory 收到的条数；counts 为假时后端不带 countHistory */
+  function store(messages: Message[], counts: boolean) {
+    const limits: number[] = [];
+    const memory: Pick<MemoryService, 'getHistory' | 'countHistory'> = {
+      getHistory: async (_sessionId, limit = 50) => {
+        limits.push(limit);
+        return messages.slice(-limit);
+      },
+      ...(counts ? { countHistory: async () => messages.length } : {}),
+    };
+    return { memory, limits };
+  }
+  const contents = (messages: Message[]) => messages.map(m => m.content);
+
+  it('后端有 countHistory 时先数再只读起点之后，没有时读全部再切，两条路得到同一段', async () => {
+    const counted = store(users(25), true);
+    const plain = store(users(25), false);
+    const expected = { count: 25, messages: users(25).slice(10) };
+
+    expect(await readHistory(counted.memory, 's', 20)).toEqual(expected);
+    expect(await readHistory(plain.memory, 's', 20)).toEqual(expected);
+    expect([counted.limits, plain.limits]).toEqual([[15], [Infinity]]);
+  });
+
+  it('起点落在工具调用组中间时去掉开头连续的工具结果（组首在起点之前，已一起丢掉）', async () => {
+    for (const counts of [true, false]) {
+      const { memory } = store(withToolGroup(25), counts);
+      const { messages, count } = await readHistory(memory, 's', 20);
+      expect(count).toBe(25);
+      expect(contents(messages)).toEqual(Array.from({ length: 14 }, (_, i) => `m${i + 11}`));
+    }
+  });
+
+  it('没有成段丢弃时开头原样交给清洗；条数线为 0 时读全部，不数条数', async () => {
+    const orphan: Message[] = [{ role: 'tool', content: 'ok', toolCallId: 'call-0', timestamp: 999 }, user(0), user(1)];
+    const { memory, limits } = store(orphan, true);
+
+    expect(await readHistory(memory, 's', 20)).toEqual({ count: 3, messages: orphan });
+    expect(await readHistory(memory, 's', 0)).toEqual({ count: 3, messages: orphan });
+    expect(await readHistory(memory, 's', undefined)).toEqual({ count: 3, messages: orphan });
+    expect(limits).toEqual([20, Infinity, Infinity]);
+  });
+
+  it('没超线时照读最近条数线那么多条：数完到读之间进来的新消息不会把最早那条挤出去', async () => {
+    const messages = users(3);
+    const memory: Pick<MemoryService, 'getHistory' | 'countHistory'> = {
+      getHistory: async (_sessionId, limit = 50) => messages.slice(-limit),
+      countHistory: async () => {
+        const count = messages.length;
+        messages.push(user(3));
+        return count;
+      },
+    };
+
+    expect(await readHistory(memory, 's', 20)).toEqual({ count: 3, messages: users(4) });
   });
 });
 

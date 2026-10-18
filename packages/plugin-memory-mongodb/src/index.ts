@@ -177,6 +177,10 @@ export class MongoMemoryService implements MemoryService {
     return docs.map(doc => this.docToMessage(doc));
   }
 
+  async countHistory(sessionId: string): Promise<number> {
+    return this.collection.countDocuments({ sessionId, archived: { $ne: true } });
+  }
+
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
     // 同 getHistory：_id 次键保证同毫秒消息按插入序稳定返回
     const docs = await this.collection.find({ sessionId }).sort({ timestamp: -1, _id: -1 }).limit(limit).toArray();

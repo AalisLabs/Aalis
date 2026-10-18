@@ -36,6 +36,7 @@ archiveOldest(sessionId: string, count: number): Promise<number>;    // 归档�
 ```ts
 clearAll?(): Promise<void>;                                          // 清空所有会话 + 归档（不含元数据）
 getFullHistory?(sessionId, limit?): Promise<Message[]>;             // 含已归档，供 UI 展示
+countHistory?(sessionId): Promise<number>;                          // 活跃消息的条数，与 getHistory(sessionId, Infinity) 的长度相同
 
 // 范围查询（向量召回时扩展上下文窗口用）
 getMessagesBySessionRange?(
@@ -95,7 +96,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 ### 消费方（典型读写点）
 
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
-- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 调用 `memory.use.getHistory` 拉历史（0 或没设置时传 `Infinity`，读全部活跃历史），拼进 messages。
+- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃条数，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveOldest` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
@@ -110,9 +111,10 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
 - 不实现 `clearAll` → 含 `context` 的 `/clear all`（含不带类型的）整条拒绝执行、不清任何类型；不含 `context` 的类型照常清理。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
+- 不实现 `countHistory` → 设了历史条数上限的会话，plugin-agent 每轮读全部活跃历史再切出发给模型的那一段，读量随会话增长。
 - 不实现 `listMetadataKeys` → 各插件经 `/clear` 整体清空命名空间时按 `listMetadata` 枚举键，读不出的条目留在库里。
 
-参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.getFullHistory) … else 回落 getHistory`），缺失只触发功能降级、不会崩溃。`listMetadata` 遇到读不出的条目（数据损坏、不是对象）要跳过并记一条点名 namespace 与 key 的 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 返回 0。`listMetadataKeys` 只列键、不读 `data`，读不出的条目也要列出：插件整体清空命名空间时经 `clearMetadataNamespaces` 按它列键，连这些条目一并删除（见 [api-memory](../api/api-memory.md)）。
+参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余八个方法可选，消费方一律带存在性守卫（如 `if (memory.getFullHistory) … else 回落 getHistory`），缺失只触发功能降级、不会崩溃。`listMetadata` 遇到读不出的条目（数据损坏、不是对象）要跳过并记一条点名 namespace 与 key 的 warn，不让整个命名空间读失败；读不到写入时间时 `updatedAt` 返回 0。`listMetadataKeys` 只列键、不读 `data`，读不出的条目也要列出：插件整体清空命名空间时经 `clearMetadataNamespaces` 按它列键，连这些条目一并删除（见 [api-memory](../api/api-memory.md)）。
 
 ### 双源元数据必须同步
 

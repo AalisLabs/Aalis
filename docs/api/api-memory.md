@@ -18,6 +18,7 @@ interface MemoryService {
   archiveOldest(sessionId: string, count: number): Promise<number>;
   clearAll?(): Promise<void>;
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
+  countHistory?(sessionId: string): Promise<number>;
   getMessagesBySessionRange?(
     sessionId: string,
     fromTs: number,
@@ -40,6 +41,7 @@ interface MemoryService {
 ```
 
 - **`getHistory`**：最近 `limit` 条活跃（未归档）消息；`limit` 为 `Infinity` 时返回全部活跃消息。
+- **`countHistory`**：活跃消息的条数，与 `getHistory(sessionId, Infinity)` 的长度相同。可选：缺了它，plugin-agent 读全部活跃历史再数。
 - **`archiveOldest`**：把最早的 `count` 条活跃消息标为归档（顺序与 `getHistory` 相同），返回归档条数；`count` 为 0 时什么都不归档。归档的消息不再进 `getHistory`，`getFullHistory` 照样有。必填：压缩靠它落定，缺了没有降级可走。
 
 ## 消费方式

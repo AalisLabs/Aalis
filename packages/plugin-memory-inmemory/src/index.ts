@@ -51,6 +51,10 @@ class InMemoryFallbackService implements MemoryService {
     return history.slice(-limit);
   }
 
+  async countHistory(sessionId: string): Promise<number> {
+    return this.sessions.get(sessionId)?.length ?? 0;
+  }
+
   async clearSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
     this.archivedSessions.delete(sessionId);

@@ -42,7 +42,7 @@ interface AgentService {
 - `used` 与 `usageRatio`：`used` 取模型服务返回的这次调用的输入 token（`ChatResponse.usage.promptTokens`），没有返回或不是正的有限数时（以及快照）按发出的消息与工具定义估算；`usageRatio` 是 `used / contextWindow`。
 - `trimmed`：本回合到这次调用为止经过了硬裁剪，即这次或之前某次调用组装后的估算超过了 `tokenBudget`（不一定真裁掉了内容）。之后的调用在首次调用裁剪过的列表上追加，所以有过一次，本回合之后各次都算。
 - `untrimmedHistory`：按没经过硬裁剪的消息列表估算的历史与工具结果 token；`breakdown` 的 `history`、`toolResults` 两项按发出的列表算。裁掉的部分仍在会话历史里，全量压缩能把它们一并压掉，摘要插件以它为可压缩部分。
-- `historyMessages`：这次的消息列表里来自会话历史的条数，即这一轮开头从记忆读进的条数（含这一轮的入站消息），加本回合到这次调用为止追加的工具调用与结果。按读进与追加的算，与硬裁剪无关；快照只有读进的条数。
+- `historyMessages`：会话历史的条数，即这一轮开头会话的活跃历史条数（含这一轮的入站消息，也含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果。与硬裁剪无关；快照只有活跃历史条数。
 
 `breakdown` 与 `parts` 是同一份输入按来源估算的拆分，各项之和不必等于 `used`。`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
 
@@ -65,7 +65,7 @@ interface SessionConfig {
   llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
   think?: string;               // 深度思考的档位 id；没设置、当前模型没有这一档或不能调时按模型的默认档
   maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时为 30
-  historyLimit?: number;        // 历史条数上限（非负整数）：一轮最多读进的会话历史条数，也是按条数压缩的线；0 或没设置时读全部活跃历史
+  historyLimit?: number;        // 历史条数上限（非负整数）：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的一半，也是按条数压缩的线；0 或没设置时发全部活跃历史
 }
 ```
 

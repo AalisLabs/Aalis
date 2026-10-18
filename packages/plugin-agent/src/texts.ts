@@ -1,4 +1,5 @@
-// 本插件自己的原文字典：发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，/session 的版式和说明句，用量拆分表的分项名
+// 本插件自己的原文字典：发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，/session 的版式和说明句，用量拆分表的分项名，
+// 会话设置项「历史条数上限」的说明
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -46,6 +47,8 @@ const SOURCE = {
   partPlatform: '平台提示',
   partSubtask: '子任务',
   partSystemOther: '其余系统提示',
+  historyLimitDescription:
+    '发给模型的会话历史不超过这么多条：超过时一次丢掉最早的一半，之后照常累积到这个条数再丢一段；丢掉的只是这一轮发给模型的，会话历史本身保留，压缩时照样进摘要。装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：发全部活跃历史，只按自动压缩线压缩',
 } as const;
 export type Source = typeof SOURCE;
 

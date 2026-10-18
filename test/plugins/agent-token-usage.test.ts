@@ -16,7 +16,7 @@ import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.j
 // token:usage 在每次模型调用之后发一次（首次调用、工具循环里的每次、格式重试），调用抛错的那次不发。
 // used 与 usageRatio 取接口返回的输入 token，没有返回（或不是正的有限数）时取按发出的消息与工具定义的估算；
 // trimmed 标出本回合到这次调用为止经过了硬裁剪，untrimmedHistory 是按没经过硬裁剪的列表估算的历史与工具结果。
-// token:request 的快照不带 turnId，照样带 trimmed、untrimmedHistory 与读进的条数。
+// token:request 的快照不带 turnId，照样带 trimmed、untrimmedHistory 与会话历史的条数。
 // ════════════════════════════════════════════════════════════
 
 const PROBE = 'zz_usage_probe';
@@ -212,7 +212,7 @@ describe('trimmed 与 untrimmedHistory：硬裁剪', () => {
     expect(second.untrimmedHistory - first.untrimmedHistory).toBe(sentHistory(second) - sentHistory(first));
   });
 
-  it('快照不带 turnId，照样带 trimmed、untrimmedHistory 与读进的条数', async () => {
+  it('快照不带 turnId，照样带 trimmed、untrimmedHistory 与会话历史的条数', async () => {
     const { host, usages } = await boot({ contextLength: 4096 });
     await seedLong(host, 'zz-ctx-long');
     await host.memory.use.saveMessage('zz-ctx-short', { role: 'user', content: '在吗' });
