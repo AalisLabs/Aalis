@@ -142,6 +142,24 @@ describe('WebUI outbound delivery confirmation', () => {
     ]);
   });
 
+  it('records the source of text that is not her reply on its event marker; with neither a source nor a text object the marker has no metadata', async () => {
+    const saved: Message[] = [];
+    const { app } = await startWebui({
+      async saveMessage(_sessionId, message) {
+        saved.push(message);
+      },
+    });
+    const messages: OutgoingMessage[] = [
+      { sessionId: 'webui-offline', platform: 'webui', content: '/help 的回复', source: 'command' },
+      { sessionId: 'webui-offline', platform: 'webui', content: '没有来源的提示' },
+    ];
+    for (const message of messages) {
+      await app.bind({ events }).events.use.emit('outbound:message', message);
+      expect(await message.delivery).toEqual({ ok: true });
+    }
+    expect(saved.map(message => message.metadata)).toEqual([{ source: 'command' }, undefined]);
+  });
+
   it('saves the image she sends without image-sender installed: the history has it and the receipt is ok', async () => {
     const saved: Message[] = [];
     const { app } = await startWebui({

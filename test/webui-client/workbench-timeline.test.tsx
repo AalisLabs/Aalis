@@ -610,6 +610,29 @@ describe('时间线', () => {
     expect(log.queryByRole('button', { name: '继续' })).toBeNull();
   });
 
+  it('指令的回复（topic 为 command-reply）是单独的一张卡，读屏名「指令的回复」，不折叠，不是她的消息，也不是一行通知：只认段落与列表，回显的链接与强调写法按原文显示，附件照常显示；别的通知照旧是一行', async () => {
+    const echoed = '没有指令 [点此领取](https://example.invalid/x) **x**';
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          notice('n1', `${echoed}\n\n选项\n- --type, -t <type>：清理类型\n  - all：全部类型`, {
+            topic: 'command-reply',
+            attachments: [{ kind: 'file', name: '清理记录.txt' }],
+          }),
+          notice('n2', '对话已压缩', { topic: 'compress' }),
+        ]),
+    });
+    const log = within(await timeline());
+    const card = log.getByRole('note', { name: '指令的回复' });
+    expect(within(card).getByText(echoed)).toBeTruthy();
+    expect(card.closest('.message, .notice')).toBeNull();
+    expect(card.querySelector('a, strong, button')).toBeNull();
+    const option = within(card).getByText('--type, -t <type>：清理类型');
+    expect(option.closest('li')?.querySelector('li')?.textContent).toBe('all：全部类型');
+    expect(within(card).getByText('清理记录.txt')).toBeTruthy();
+    expect(log.getByText('对话已压缩').closest('.notice')).toBeTruthy();
+  });
+
   it('「继续」只给最后一段里的通知，回合在跑时不出现', async () => {
     const items = [
       turn('t1', { outcome: 'replied' }),

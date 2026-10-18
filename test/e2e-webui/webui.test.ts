@@ -17,6 +17,7 @@ import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { settingsPlugin } from '../fixtures/session-settings.js';
 import {
@@ -641,20 +642,16 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('指令的回复是一条通知：/help clear 逐行显示，标题、用法各占一行，取值缩在选项下面', async () => {
+  it('指令的回复是一张卡：/help clear 的标题、用法各是一段，取值是选项下面的子列表', async () => {
     const stack = await startStack();
     const { page, problems } = await openPage(stack, viewport);
     await newSession(page);
     await send(page, '/help clear');
-    const reply = await page.waitForSelector(`.notice-body ${text('仅全局清理')}`);
-    const lines = (await reply?.evaluate(element => (element as HTMLElement).innerText))?.split('\n');
-    expect(lines?.slice(0, 3)).toEqual([
+    await page.waitForSelector(`.command-reply li > ul > li ${text('all：全部类型')}`);
+    expect(await page.$$eval('.command-reply .markdown > p', ps => ps.slice(0, 2).map(p => p.textContent))).toEqual([
       '/clear — 清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型',
-      '',
       '用法：/clear [选项]',
     ]);
-    expect(lines).toContain('- --type, -t <type>：清理类型，可重复或用逗号分隔');
-    expect(lines).toContain('  - all：全部类型');
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -1089,7 +1086,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const registered = stack.app
       .bind({ sessionManager })
       .sessionManager.use.listSettings()
-      .map(setting => setting.field.label);
+      .map(setting => toSource(setting.field.label));
     expect([...rows].sort()).toEqual([...registered].sort());
     await page.waitForSelector(`main .setting-row[aria-label="深度思考"] ${text('当前模型不能调')}`);
 
@@ -2059,7 +2056,7 @@ describe('插件区', () => {
       '控件插件页面，打开后可以固定到图标栏；插件前端，不申请宿主数据',
       '探针插件页面，打开后可以固定到图标栏；插件前端，不申请宿主数据',
       '不用助手插件页面，打开后可以固定到图标栏；插件前端，不申请宿主数据',
-      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态、停止会话的回合',
+      '子会话会话面板，在会话右侧面板的「+」里打开；插件前端，申请宿主数据：读会话树与状态和停止会话的回合',
     ]);
     await page.locator(`.plugin-pages ${aria('探针', 'link')}`).click();
     await page.waitForFunction(path => location.pathname === path, {}, pagePath(FRAMES, 'probe'));

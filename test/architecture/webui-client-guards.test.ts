@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { packageManager } from '../../packages/api-package-manager/src/index.js';
 import {
+  COMMAND_REPLY_TOPIC,
   sessionMethods,
   sessionNotifications,
   sessionProtocol,
@@ -19,7 +20,7 @@ import {
 // - 客户端只认契约不认插件：不出现插件包名，引的 @aalis 包都是 MIT 许可（第三方前端照着同样的包就能实现），不依赖对话代理的
 //   契约（用量分项名由条目给出），字符串字面量（正则字面量按词拆开）不等于任何插件登记的页面键、动作名、数据源名、设置键或工具名。
 //   与会话协议、管理面事件、插件前端消息里的字段同名的不查，这份排除表从 schema 与类型定义算出；客户端手写的契约服务名
-//   （会话协议、对话模型、包管理）与能力名要与契约同名，它们是契约的词，同样不查；
+//   （会话协议、对话模型、包管理）、能力名与指令回复的通知种类要与契约同名，它们是契约的词，同样不查；
 // - 服务端只认契约不认插件：会话协议、webui-server（含框架托管与转发）、session-server 的源码不出现别的插件的名字，
 //   字符串字面量与正则字面量里的词（协议另加字段名）不是别的插件登记的工具名、设置键、字段名、页面键、动作名或数据源名。
 //   契约包里出现的词与字段声明的可选项来源不查，这份排除表从契约包的源码算出；
@@ -529,6 +530,12 @@ describe('WebUI 客户端只认契约不认插件', () => {
   it('客户端手写的包管理服务名与契约同名：市场装卸更新出错时按它找日志的来源', () => {
     expect(/export const PACKAGE_MANAGER = '([^']+)'/.exec(read(join(SRC, 'plugins/list.tsx')))?.[1]).toBe(
       packageManager.name,
+    );
+  });
+
+  it('客户端手写的指令回复的通知种类与契约同名：时间线按它把指令的回复画成卡片', () => {
+    expect(/const COMMAND_REPLY = '([^']+)'/.exec(read(join(SRC, 'workbench/Timeline.tsx')))?.[1]).toBe(
+      COMMAND_REPLY_TOPIC,
     );
   });
 

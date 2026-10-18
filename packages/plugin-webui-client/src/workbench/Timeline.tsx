@@ -2,11 +2,12 @@ import { sanitizeForCard } from '@aalis/api-approval';
 import { BACKGROUND_TASK_NOTICE, type BackgroundTaskNoticeFacts } from '@aalis/api-tools';
 import { Info, LoaderCircle, RotateCcw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
-import { Ending } from '../background/Background';
+import { ENDING_TONES, endingText } from '../background/Background';
 import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { Menu } from '../components/Menu';
+import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
 import { clockTime, tokens } from '../format';
@@ -27,10 +28,12 @@ import './Timeline.css';
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
 // 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
 // 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并。
-// 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示
+// 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示；指令的回复是一张卡，只认段落与列表，其余通知是一行
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 
+/** 指令回复的通知种类：api-session-protocol 的 COMMAND_REPLY_TOPIC */
+const COMMAND_REPLY = 'command-reply';
 const TIME_GAP_MS = 10 * 60_000;
 const OUTCOMES = { aborted: t('stopped'), error: t('turnError') };
 /** 连续这么多个工具调用收成一行 */
@@ -363,6 +366,14 @@ function Entry({ item, last, ...props }: EntryProps) {
         />
       );
     case 'notice': {
+      if (item.topic === COMMAND_REPLY) {
+        return (
+          <div className="command-reply" role="note" aria-label={tr('commandReply')}>
+            <Markdown text={item.text} plain />
+            <Attachments attachments={item.attachments} sessionId={sessionId} />
+          </div>
+        );
+      }
       const facts = taskNoticeFacts(item);
       if (facts) return <TaskNotice facts={facts} taskId={item.noticeId} openLog={props.openLog} />;
       return (
@@ -486,12 +497,13 @@ function TaskNotice({
 }) {
   const { tasks } = useBackground();
   const task = taskId === undefined ? undefined : tasks?.get(taskId);
+  const ending = endingText(facts, facts.durationMs);
   return (
     <button type="button" className="tool-line" disabled={!task} onClick={task && (() => openLog(task.id))}>
       <TOOL_ICONS.generic aria-hidden />
       <span className="tool-line-text">{tr('backgroundTaskNamed', { tool: sanitizeForCard(facts.tool) })}</span>
-      <span className="tool-line-status">
-        <Ending end={facts} took={facts.durationMs} />
+      <span className="tool-line-status" title={ending}>
+        <StatusText state={ENDING_TONES[facts.status]}>{ending}</StatusText>
       </span>
     </button>
   );

@@ -415,6 +415,7 @@ const SOURCE = {
   reasoning: '思考',
   backgroundTaskNamed: '后台任务 {tool}',
   continueTurn: '继续',
+  commandReply: '指令的回复',
   settledByAbsent: '没人在场',
   settledByTimeout: '等待超时',
   settledByIneligible: '这一轮不能产生审批',

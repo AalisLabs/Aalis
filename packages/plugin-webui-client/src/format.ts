@@ -90,7 +90,7 @@ export const compareText = (a: string, b: string): number =>
 /** 转小写：搜索不分大小写时两边都过它 */
 export const lower = (text: string): string => text.toLocaleLowerCase(pageLanguage());
 
-/** token 数：千以上写成 k，百万以上写成 M */
+/** token 数：千以上写成 k，百万以上写成 M（如 128.0k、1.20M），不分语言，因为模型的上下文大小在中文资料里也按千写 */
 export function tokens(n: number): string {
   if (n < 1000) return String(n);
   return n < 1_000_000 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1_000_000).toFixed(2)}M`;

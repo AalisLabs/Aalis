@@ -103,7 +103,8 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 /**
  * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
  * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份），
- * rooms 是会话表里预置的已收录房间（会话 id → 名字）。
+ * rooms 是会话表里预置的已收录房间（会话 id → 名字）。界面语言写在全局默认层，是中文（doc 写了的照它）：哪一层都没设时
+ * 按英文，用例按中文的文字与读屏名找元素。
  * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。收尾登记进 cleanups
  */
 export async function webuiStack(options: {
@@ -118,7 +119,8 @@ export async function webuiStack(options: {
 }): Promise<{ app: App; port: number }> {
   const { clientDir, model, extra, cleanups, webui, slowThresholdMs, doc, rooms } = options;
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const { app } = hostedApp({ ...doc, logLevel: 'info' }, { slowThresholdMs });
+  const sessionConfig = { ...doc?.sessionConfig, defaults: { language: ['zh-CN'], ...doc?.sessionConfig?.defaults } };
+  const { app } = hostedApp({ ...doc, sessionConfig, logLevel: 'info' }, { slowThresholdMs });
   cleanups.push(async () => {
     await app.stop();
     rmSync(home, { recursive: true, force: true });
