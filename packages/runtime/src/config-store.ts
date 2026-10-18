@@ -16,11 +16,13 @@ import {
   type AalisConfig,
   type ApplyPluginConfigResult,
   type HostConfig,
+  type HostConfigChange,
   hostConfig,
   isConfigSaveRefused,
 } from '@aalis/api-host-config';
 import {
   type App,
+  events,
   type PluginDefinition,
   type PreferenceScope,
   parseInstanceId,
@@ -33,6 +35,7 @@ import {
   type ConfigSchema,
   cloneConfigObject,
   defaultsFrom,
+  isSessionField,
   isUnsafeConfigKey,
 } from '@aalis/schema-config';
 import { TextError } from '@aalis/schema-i18n';
@@ -71,8 +74,8 @@ export interface SecretProvider {
 }
 
 /**
- * 宿主持有的配置文档。读写方法与插件经 host-config 看到的相同（写方法这里不检查形态，宿主自己的同步先拆后写）；
- * 落盘、外部变更监听与密钥的换算只给宿主：
+ * 宿主持有的配置文档。读写方法与插件经 host-config 看到的同名，但读法交出文档里的活对象（插件拿到的是复制品），写方法
+ * 不检查形态（宿主自己的同步先拆后写）、不拦 plugins 整块替换、不发 host-config:changed；落盘、外部变更监听与密钥的换算只给宿主：
  * `persist()` 是裸落盘，不记日志，先写密钥再写文档，兑现值表示文档是否交给了 provider 落盘（provider 不提供 save
  * 时为 false），失败原样以拒绝传出。插件拿到的 `save()` 由 {@link installHostConfig} 包上日志与「拒绝已处理」，
  * 两者名字不同，本对象因此不能被误当成 HostConfig 直接交出去。
@@ -90,7 +93,8 @@ export interface ConfigStore extends Omit<HostConfig, 'save' | 'trimUnknownField
   readonly hasSecretStore: boolean;
   /**
    * 文档形态解析成运行态：`doc` 缺省取该实例在文档里的配置；`staged` 是还没提交的写入，优先于存储。
-   * 悬空的引用原样留着并列在 dangling 里
+   * 悬空的引用原样留着并列在 dangling 里。顶层带标记的字段（schema 里写了 `session`，判定见 isSessionField）不进运行态：
+   * 插件经会话设置的读取器读它们，登记、热重载与 applyPluginConfig 比较的都是去掉它们之后的配置，只改它们不重载插件
    */
   resolvePluginConfig(
     instanceId: string,
@@ -128,6 +132,14 @@ export interface SecretStoreInit {
 /**
  * @param secrets 宿主的密钥存储；不给时没有密钥存储（嵌入式宿主、只在内存里的配置），密钥照旧以明文留在文档里
  */
+/**
+ * 写进文档的值（set 与 setPluginConfig 共用）：整份深复制，调用方之后改入参写不穿文档，函数这类复制不了的值在这里就抛给
+ * 写入方；再按配置拷贝规则滤掉落到原型链的键，外来对象（WebUI 请求体、工具参数）里 JSON 解出的 __proto__ 等不进文档
+ */
+function intoDocument<T>(value: T): T {
+  return cloneConfigObject({ value: structuredClone(value) }).value as T;
+}
+
 export function createConfigStore(
   initial: Partial<AalisConfig>,
   provider?: ConfigProvider,
@@ -162,7 +174,7 @@ export function createConfigStore(
     get: key => config[key],
     getAll: () => config,
     set: (key, value) => {
-      config[key] = value;
+      config[key] = intoDocument(value);
     },
     getPluginConfig<T extends Record<string, unknown>>(instanceId: string): T {
       assertSafePluginId(instanceId);
@@ -171,8 +183,7 @@ export function createConfigStore(
     setPluginConfig(instanceId, next) {
       assertSafePluginId(instanceId);
       markReplaced(instanceId);
-      // 值也过闸：外来对象（WebUI 请求体、工具参数）里 JSON 解出的 __proto__ 等键不进文档，调用方之后改它也写不穿
-      config.plugins[instanceId] = cloneConfigObject(next);
+      config.plugins[instanceId] = intoDocument(next);
     },
     removePluginConfig(instanceId) {
       assertSafePluginId(instanceId);
@@ -211,10 +222,11 @@ export function createConfigStore(
     },
     resolvePluginConfig(instanceId, schema, doc, staged) {
       const source = doc ?? store.getPluginConfig(instanceId);
-      return resolveSecrets(schema, source, key => {
+      const resolved = resolveSecrets(schema, source, key => {
         if (staged?.has(key)) return { value: staged.get(key) };
         return values.has(key) ? { value: values.get(key) } : undefined;
       });
+      return { ...resolved, config: withoutSessionFields(schema, resolved.config) };
     },
     splitPluginSecrets(instanceId, schema, submitted, base) {
       if (!secrets) return { doc: submitted, writes: new Map(), placed: [] };
@@ -374,7 +386,16 @@ async function reloadSecretSharers(
  * `trimUnknownFields` 据此声明宿主的裁剪政策（缺省与配置同步一样按裁剪）。
  */
 export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {
-  const host = app.bind({ provide, services });
+  const host = app.bind({ events, provide, services });
+  // 文档在内存里确实变了才通知：read 取写入所及的那一段，写前写后各取一次比较（写入相同的值不发）
+  const notify = (change: HostConfigChange) => void host.events.use.emit('host-config:changed', change);
+  const notifyIfChanged = (change: HostConfigChange, read: () => unknown, write: () => void): void => {
+    const before = read();
+    write();
+    if (!isDeepStrictEqual(before, read())) notify(change);
+  };
+  const sectionOf = (instanceId: string): Record<string, unknown> | undefined =>
+    Object.hasOwn(store.getAll().plugins, instanceId) ? store.getPluginConfig(instanceId) : undefined;
   // 失败在这里记一笔并标记已处理：不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
   const save = (): Promise<void> => {
     const done = (async () => {
@@ -416,17 +437,21 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     }
     let reloaded = true;
     if (entry) {
-      // 解析出的配置与运行态相同、实例在 active：不重建（updateConfig 即 bounce，会连带重启依赖它所提供服务的下游），
-      // 只写文档与落盘。error 态的实例靠原样保存重试激活，照旧走 updateConfig
-      if (entry.state === 'active' && isDeepStrictEqual(resolved, entry.config)) reloaded = false;
+      // 解析出的配置与运行态相同（只改了带标记的字段时也是）：不重建（updateConfig 即 bounce，会连带重启依赖它所提供服务的
+      // 下游），只写文档与落盘，pending、activating 的实例同样不打断。error 态的实例靠原样保存重试激活，照旧走 updateConfig；
+      // 正在卸载的（disposed）也交给 updateConfig，由它拒收
+      if (entry.state !== 'error' && entry.state !== 'disposed' && isDeepStrictEqual(resolved, entry.config))
+        reloaded = false;
       else if (!(await app.plugins.updateConfig(instanceId, resolved))) return { status: 'refused' };
       store.commitSecrets(writes);
-      store.setPluginConfig(instanceId, doc);
+      notifyIfChanged(
+        { instanceId },
+        () => sectionOf(instanceId),
+        () => store.setPluginConfig(instanceId, doc),
+      );
     } else {
       // 后缀实例由配置段定义：先写文档再登记，免得登记途中的热重载按还没有这一段的文件把它卸掉
-      const previous = Object.hasOwn(store.getAll().plugins, instanceId)
-        ? store.getPluginConfig(instanceId)
-        : undefined;
+      const previous = sectionOf(instanceId);
       const undo = store.commitSecrets(writes);
       store.setPluginConfig(instanceId, doc);
       const registered = await app.plugins.register(definition, resolved, instanceId, {
@@ -438,6 +463,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
         else store.removePluginConfig(instanceId);
         return { status: 'refused' };
       }
+      if (!isDeepStrictEqual(previous, sectionOf(instanceId))) notify({ instanceId });
     }
     // 写进的若是被别处共用的已有键，共用它的实例跟着换上新值（新建的键没有别人引用）
     await reloadSecretSharers(app, store, new Set(writes.keys()), instanceId);
@@ -451,33 +477,59 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     return { status: 'applied', reloaded };
   };
 
+  // 读法交出复制品（与写方法存入参的复制品对称）：插件就地改读到的值改不到文档，改了再写回照常算改动、照常通知
   host.provide.use(
     hostConfig,
     {
-      get: store.get,
-      getAll: store.getAll,
+      get: key => structuredClone(store.get(key)),
+      getAll: () => structuredClone(store.getAll()),
       // plugins 整块替换会绕过下面 setPluginConfig 的形态检查与孤儿键记账
       set: (key, value) => {
         if (key === 'plugins')
           throw new Error('plugins 不能整块替换：改插件配置用 applyPluginConfig 或 setPluginConfig');
-        store.set(key, value);
+        notifyIfChanged(
+          { document: true },
+          () => store.get(key),
+          () => store.set(key, value),
+        );
       },
-      getPluginConfig: store.getPluginConfig,
+      getPluginConfig: <T extends Record<string, unknown>>(instanceId: string) =>
+        structuredClone(store.getPluginConfig<T>(instanceId)),
       // 只收文档形态：查得到 schema 时，密钥字段上的明文（例如把 caps.config 原样写回）拒绝，不让原值进文档
       setPluginConfig: (instanceId, next) => {
         assertSafePluginId(instanceId);
         const schema = store.hasSecretStore ? definitionOf(app, instanceId)?.configSchema : undefined;
         const plain = plainSecretPaths(schema, next);
         if (plain.length > 0) throw new TextError(t('plainSecret', { instance: instanceId, paths: plain }));
-        store.setPluginConfig(instanceId, next);
+        notifyIfChanged(
+          { instanceId },
+          () => sectionOf(instanceId),
+          () => store.setPluginConfig(instanceId, next),
+        );
       },
       applyPluginConfig,
-      removePluginConfig: store.removePluginConfig,
+      removePluginConfig: instanceId =>
+        notifyIfChanged(
+          { instanceId },
+          () => sectionOf(instanceId),
+          () => store.removePluginConfig(instanceId),
+        ),
       isPluginDisabled: store.isPluginDisabled,
+      // 启停不通知：另有 plugins:changed
       setPluginEnabled: store.setPluginEnabled,
-      getServicePreferences: store.getServicePreferences,
-      setServicePreference: store.setServicePreference,
-      removeServicePreference: store.removeServicePreference,
+      getServicePreferences: scope => structuredClone(store.getServicePreferences(scope)),
+      setServicePreference: (name, contextId, scope) =>
+        notifyIfChanged(
+          { document: true },
+          () => store.getServicePreferences(scope)[name],
+          () => store.setServicePreference(name, contextId, scope),
+        ),
+      removeServicePreference: (name, scope) =>
+        notifyIfChanged(
+          { document: true },
+          () => store.getServicePreferences(scope)[name],
+          () => store.removeServicePreference(name, scope),
+        ),
       trimUnknownFields: opts?.trimUnknownFields ?? true,
       save,
     },
@@ -537,6 +589,16 @@ export function applyServicePreferences(
 }
 
 // ----- helpers -----
+
+/** 去掉顶层带标记的字段（运行态不含它们） */
+function withoutSessionFields(
+  schema: ConfigSchema | undefined,
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...config };
+  for (const [key, entry] of Object.entries(schema ?? {})) if (isSessionField(entry)) delete out[key];
+  return out;
+}
 
 /** 文档的拷贝：之后对文档的就地修改（禁用名单、服务偏好、插件配置里的子对象）不会改到它 */
 function snapshot(doc: AalisConfig): AalisConfig {

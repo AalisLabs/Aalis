@@ -100,9 +100,6 @@ const SOURCE = {
   issue: '{path}: {reason}',
   inputInvalid: '输入没过校验：{issues}',
   inputIssue: '{path} {reason}',
-  notWritten:
-    '已在运行态生效，但未写入配置文件（{error}）；{reconcile, select, reload {修好该文件后会按文件内容重载} other {修好该文件后，重启时以文件内容为准}}',
-  writeFailed: '已在运行态生效，但写入配置文件失败（{error}）；改动保留在文档里，下次保存成功时一并写入',
   stillActivating: '仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准',
   waitingOld: '等待 {instance} 的旧实例停下',
   notYetActive: '尚未激活，结果以插件列表为准',

@@ -69,8 +69,10 @@ export function syncPluginDefaults(
  * 宿主加载政策：导入定义后、交给 Core 注册前规范化主实例与已配置的复用实例。
  * 首次加载批次只落盘一次；随后市场 rescan 的 load/reload 也走同一政策。
  * 发现驱动随后按文档取每个实例的配置交给 core，首次 apply 拿到的就是规范化后的这一份。
+ * 配置段被改了的实例各发一次 host-config:changed（带 instanceId）。
  */
 export function withPluginConfigSync(loader: PluginLoader, app: App, store: ConfigStore, opts?: ConfigSyncOptions) {
+  const host = app.bind({ events });
   let initialLoad = true;
   let initialChanged = false;
   // 首次加载批次里移进密钥存储的字段：合并的那次保存写成之后再记
@@ -91,6 +93,7 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
       if (!syncPluginConfig(app, store, definition, id, moved, opts)) continue;
       app.logger.debug(`同步插件配置: ${id}`);
       changed = true;
+      void host.events.use.emit('host-config:changed', { instanceId: id });
     }
     if (initialLoad) initialChanged ||= changed;
     else if (changed) saveSyncedConfig(app, store, moved);
@@ -115,6 +118,8 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
  * 重新计算各插件配置并热重载差异（updateConfig → bounce），最后经发现驱动登记文件里新出现的后缀实例
  * （判据同冷启动与热扫描）。`previous` 是变更前的文档：对账偏好的基线（不给时只应用新文档里的），也交给同步作拆密钥的基线
  * （见 {@link syncPluginDefaults}）。
+ * 结束时（成功与失败都一样）文档与 `previous` 不同就发 host-config:changed（带 document）：热重载换下整份文档，不经 host-config
+ * 的写方法。只换了密钥文件、文档没换时不发；不给 `previous` 时按变了处理。配置文件解析失败的变更到不了这里
  */
 export async function handleConfigChanged(
   app: App,
@@ -124,8 +129,9 @@ export async function handleConfigChanged(
   previous?: Readonly<AalisConfig>,
 ): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
+  const host = app.bind({ events, services });
   try {
-    applyServicePreferences(app.bind({ services }).services.use, store.getAll(), previous);
+    applyServicePreferences(host.services.use, store.getAll(), previous);
     // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载，新出现的在最后登记。
     // 留着不管的话，下面的同步会把它当成缺配置的实例：运行态配置被换成默认值（无默认值时是 {}），
     // 默认值还会作为一个新配置段写回文件。
@@ -152,6 +158,9 @@ export async function handleConfigChanged(
     app.logger.info('配置热重载完成');
   } catch (e) {
     app.logger.error('配置热重载失败:', e);
+  } finally {
+    if (!isDeepStrictEqual(previous, store.getAll()))
+      await host.events.use.emit('host-config:changed', { document: true });
   }
 }
 

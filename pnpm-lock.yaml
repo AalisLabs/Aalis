@@ -354,6 +354,10 @@ importers:
         version: 5.9.3
 
   packages/api-host-config:
+    dependencies:
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

@@ -522,6 +522,53 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
   });
 });
 
+describe('host-config 的读法交出复制品（installHostConfig 交给插件的那一份）', () => {
+  function world() {
+    const w = track(
+      hostedApp({
+        plugins: { p: { known: 1, nested: { k: 1 }, list: [{ a: 1 }] } },
+        disabledPlugins: ['q'],
+        servicePreferences: { 'zz-svc': 'a' },
+        pluginServicePreferences: { p: { 'zz-svc': 'b' } },
+        'zz-key': { v: 1, list: [1] },
+      }),
+    );
+    return { ...w, doc: w.app.bind({ hostConfig }).hostConfig.use, before: structuredClone(w.store.getAll()) };
+  }
+
+  it('getAll：改它（含嵌套）不影响文档', () => {
+    const { store, doc, before } = world();
+    const all = doc.getAll() as AalisConfig;
+    all.name = 'X';
+    all.plugins.p.known = 2;
+    (all.plugins.p.nested as { k: number }).k = 2;
+    all.disabledPlugins!.push('p');
+    all.servicePreferences!['zz-svc'] = 'z';
+    all.pluginServicePreferences!.p['zz-svc'] = 'z';
+    (all['zz-key'] as { list: number[] }).list.push(2);
+    expect(store.getAll()).toEqual(before);
+  });
+
+  it('getPluginConfig：改它（含嵌套）不影响文档', () => {
+    const { store, doc, before } = world();
+    const section = doc.getPluginConfig('p');
+    section.known = 2;
+    (section.nested as { k: number }).k = 2;
+    (section.list as Array<{ a: number }>)[0].a = 2;
+    expect(store.getAll()).toEqual(before);
+  });
+
+  it('get 与 getServicePreferences：改它们不影响文档', () => {
+    const { store, doc, before } = world();
+    (doc.get('zz-key') as { list: number[] }).list.push(2);
+    doc.get('plugins').p.known = 2;
+    doc.get('disabledPlugins')!.push('p');
+    doc.getServicePreferences()['zz-svc'] = 'z';
+    doc.getServicePreferences({ for: 'p' })['zz-svc'] = 'z';
+    expect(store.getAll()).toEqual(before);
+  });
+});
+
 describe('启动偏好与文档的边界', () => {
   it('文档里的服务偏好在任何提供者上线前生效：后登记的低优先级提供者按偏好胜出', async () => {
     const svc = defineService<{ id: string }>('cs-pref');

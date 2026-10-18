@@ -102,10 +102,6 @@ export default defineLocale<Source>()({
   issue: '{path}: {reason}',
   inputInvalid: 'Input failed validation: {issues}',
   inputIssue: '{path}: {reason}',
-  notWritten:
-    'Applied at runtime, but not written to the config file ({error}); {reconcile, select, reload {once the file is fixed, it is reloaded from its contents} other {once the file is fixed, its contents take effect at the next restart}}',
-  writeFailed:
-    'Applied at runtime, but writing the config file failed ({error}); the change stays in the document and is written with the next successful save',
   stillActivating:
     'still activating (past the slow-activation threshold, moved to the background); see the plugin list for the result',
   waitingOld: 'waiting for the old instance of {instance} to stop',

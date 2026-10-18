@@ -9,11 +9,14 @@ import { describe, expect, it } from 'vitest';
 //
 // 1. 每个服务名全仓只有一处 defineService。同名描述符在容器里就是同一个服务，
 //    第二处定义等于把契约抄了一份：类型各写各的，改一边另一边不报错。消费方要的是
-//    契约包导出的那一个描述符。
+//    契约包导出的描述符。例外只有登记在 NARROW_FACADES 里的只读窄面（同名、业务层更窄，见第 3 条），
+//    它与完整描述符写在同一个文件里，提供者类型写同一个。
 // 2. 包的发布依赖（dependencies / optionalDependencies / peerDependencies）里
 //    不出现插件实现包。消费方依赖契约包；依赖实现包会把实现连同它的依赖树一起装进来，
 //    也让「换一个提供者」在包管理层面做不到。确有需要的（如打包一整套插件的发行包）
 //    进 ALLOWED_PLUGIN_DEPS 并写明理由。devDependencies 不发布，不在此列。
+// 3. 只读窄面只供消费：与完整描述符同名、业务层更窄的描述符（api-host-config 的 ownHostConfig）只写在插件的 uses 里，
+//    第一方没有插件 provide 它。拿它去 provide 会在同一个服务名下造出第二家提供者，也会触发同名服务来自两个描述符的告警。
 //
 // 扫描面是 packages/*/src 与根 src；测试里为替身随手定义的描述符不算。
 // ════════════════════════════════════════════════════════════
@@ -82,22 +85,84 @@ function sourceFiles(dir: string): string[] {
     .map(name => join(dir, name));
 }
 
+/** 扫描面上的源文件：相对仓库根的路径与内容 */
+function scanSources(): { rel: string; source: string }[] {
+  const roots = [join(ROOT, 'src'), ...readdirSync(PACKAGES).map(dir => join(PACKAGES, dir, 'src'))];
+  return roots.flatMap(sourceFiles).map(file => ({
+    rel: relative(ROOT, file).replace(/\\/g, '/'),
+    source: readFileSync(file, 'utf8'),
+  }));
+}
+
 function scanDefinitions(): { byName: Map<string, string[]>; dynamic: string[] } {
-  const roots = [
-    join(ROOT, 'src'),
-    ...readdirSync(PACKAGES)
-      .map(dir => join(PACKAGES, dir, 'src'))
-      .filter(existsSync),
-  ];
   const byName = new Map<string, string[]>();
   const dynamic: string[] = [];
-  for (const file of roots.flatMap(sourceFiles)) {
-    const rel = relative(ROOT, file).replace(/\\/g, '/');
-    const found = collectDefinitions(rel, readFileSync(file, 'utf8'), NAME_WRAPPERS.get(rel));
+  for (const { rel, source } of scanSources()) {
+    const found = collectDefinitions(rel, source, NAME_WRAPPERS.get(rel));
     for (const def of found.definitions) byName.set(def.name, [...(byName.get(def.name) ?? []), def.site]);
     dynamic.push(...found.dynamic);
   }
   return { byName, dynamic };
+}
+
+/** 只读窄面：服务名、契约包与导出名 */
+interface NarrowFacade {
+  service: string;
+  module: string;
+  name: string;
+}
+const NARROW_FACADES: NarrowFacade[] = [
+  { service: 'host-config', module: '@aalis/api-host-config', name: 'ownHostConfig' },
+];
+
+/**
+ * 一个源文件里 provide 只读窄面的位置：`<…>.provide.use(<窄面>, …)`、解构出的 `provide.use(<窄面>, …)` 与定义上的
+ * `provides: [<窄面>]`。窄面按从契约包导入的绑定认（含 `as` 改名），属性访问按名字认（与 collectDefinitions 一致）
+ */
+function narrowProvideSites(file: string, source: string, narrow: NarrowFacade): string[] {
+  // 改名导入与属性访问的源码里都有导出名本身：没有它的文件不用解析
+  if (!source.includes(narrow.name)) return [];
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const locals = new Set<string>();
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (stmt.moduleSpecifier.text !== narrow.module || !bindings || !ts.isNamedImports(bindings)) continue;
+    for (const spec of bindings.elements) {
+      if ((spec.propertyName ?? spec.name).text === narrow.name) locals.add(spec.name.text);
+    }
+  }
+  const isNarrow = (node: ts.Node | undefined): boolean =>
+    node !== undefined &&
+    ((ts.isIdentifier(node) && locals.has(node.text)) ||
+      (ts.isPropertyAccessExpression(node) && node.name.text === narrow.name));
+  const sites: string[] = [];
+  const site = (node: ts.Node) => `${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1}`;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'use'
+    ) {
+      const target = node.expression.expression;
+      const provide =
+        (ts.isIdentifier(target) && target.text === 'provide') ||
+        (ts.isPropertyAccessExpression(target) && target.name.text === 'provide');
+      if (provide && isNarrow(node.arguments[0])) sites.push(site(node));
+    }
+    if (
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'provides' &&
+      ts.isArrayLiteralExpression(node.initializer) &&
+      node.initializer.elements.some(isNarrow)
+    ) {
+      sites.push(site(node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return sites;
 }
 
 interface Manifest {
@@ -143,15 +208,23 @@ describe('每个服务名只有一处 defineService', () => {
     expect(byName.get('user-relation')).toEqual([expect.stringMatching(/^packages\/api-user-relation\/src\//)]);
     expect(byName.get('package-manager')).toEqual([expect.stringMatching(/^packages\/api-package-manager\/src\//)]);
     expect(byName.get('session-history')).toEqual([expect.stringMatching(/^packages\/api-session-history\/src\//)]);
+    // 完整描述符与登记过的只读窄面同名，写在同一个文件里
+    const hostConfigFile = expect.stringMatching(/^packages\/api-host-config\/src\/index\.ts:/);
+    expect(byName.get('host-config')).toEqual([hostConfigFile, hostConfigFile]);
   });
 
-  it('没有重复定义的服务名', () => {
+  it('没有重复定义的服务名（登记过的只读窄面除外）', () => {
+    const fileOf = (site: string) => site.slice(0, site.lastIndexOf(':'));
     const duplicated = [...byName]
-      .filter(([, sites]) => sites.length > 1)
+      .filter(([name, sites]) => {
+        const allowed = 1 + NARROW_FACADES.filter(narrow => narrow.service === name).length;
+        return sites.length > allowed || new Set(sites.map(fileOf)).size > 1;
+      })
       .map(([name, s]) => `${name}: ${s.join('、')}`);
     expect(
       duplicated,
-      '同一服务名只能有一处 defineService。消费方从契约包导入描述符，没有契约包的先建契约包：\n' +
+      '同一服务名只能有一处 defineService（只读窄面登记进 NARROW_FACADES，与完整描述符写在同一个文件里）。' +
+        '消费方从契约包导入描述符，没有契约包的先建契约包：\n' +
         duplicated.join('\n'),
     ).toEqual([]);
   });
@@ -173,6 +246,31 @@ describe('每个服务名只有一处 defineService', () => {
     expect(plain.definitions.map(d => d.name)).toEqual(['dup', 'dup']);
     expect(plain.dynamic).toEqual(['x.ts:6']);
     expect(collectDefinitions('x.ts', src, 'builtin').definitions.map(d => d.name)).toEqual(['dup', 'dup', 'wrapped']);
+  });
+});
+
+describe('只读窄面只供消费', () => {
+  it('第一方没有插件 provide 只读窄面', () => {
+    const sites = scanSources().flatMap(({ rel, source }) =>
+      NARROW_FACADES.flatMap(narrow => narrowProvideSites(rel, source, narrow)),
+    );
+    expect(sites, '只读窄面只写在 uses 里；要提供服务，provide 完整的描述符').toEqual([]);
+  });
+
+  it('认得改名导入、命名空间访问、解构出的 provide 与 provides，uses 里的不算', () => {
+    const src = [
+      "import { hostConfig, ownHostConfig as own } from '@aalis/api-host-config';",
+      "import * as hc from '@aalis/api-host-config';",
+      'caps.provide.use(own, impl);',
+      'provide.use(hc.ownHostConfig, impl);',
+      "export default definePlugin({ name: 'x', provides: [own], uses: { doc: own, all: hc.ownHostConfig }, apply() {} });",
+      'caps.provide.use(hostConfig, impl);',
+      'caps.services.use(own);',
+    ].join('\n');
+    expect(narrowProvideSites('x.ts', src, NARROW_FACADES[0])).toEqual(['x.ts:3', 'x.ts:4', 'x.ts:5']);
+    // 别的包导出的同名绑定不算
+    const other = ["import { ownHostConfig } from '@zz/other';", 'caps.provide.use(ownHostConfig, impl);'].join('\n');
+    expect(narrowProvideSites('y.ts', other, NARROW_FACADES[0])).toEqual([]);
   });
 });
 
