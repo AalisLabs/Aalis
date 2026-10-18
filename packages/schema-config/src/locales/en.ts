@@ -35,6 +35,8 @@ export default defineLocale<Source>()({
   executable: 'must be an absolute path or a command name (without path separators)',
   reservedKey: 'reserved key, not allowed',
   secretUnresolved: 'the referenced secret {key} is not in the host secret store',
+  validateFailed: '{reason}',
+  validateError: 'an error occurred during validation',
   notObject: 'The configuration must be an object; fix it in the WebUI or the config file to apply',
   invalid: 'Config item {path}: {reason}; fix it in the WebUI or the config file to apply',
   missingField: 'Missing config item {field}; set it in the WebUI or the config file to apply',

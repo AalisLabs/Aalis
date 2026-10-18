@@ -5,7 +5,7 @@
 // ConfigOf 从同一份 schema 推导配置值类型；
 // 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）与深合并（deepMergeDefaults）、
 // 只读结构校验（validateConfig）、按 schema 键集裁未知字段（removeExtraFields）、
-// 按 schema 解析插件拿到的配置（parseConfig）。
+// 按 schema 解析插件拿到的配置（parseConfig）与单个取值的判定（readFieldValue）。
 // 它们都不属于 @aalis/core——core 只把 `PluginMeta.configSchema` 当作
 // opaque 数据透传，不解释任何字段。另有插件因配置问题无法激活时抛的错误（configError / missingConfigError）。
 //
@@ -18,7 +18,7 @@
 // 运行时只依赖同样零依赖的 @aalis/schema-i18n；对 @aalis/core 仅有 type-only 锚点 import（编译后擦除）。
 // ============================================================
 
-import { type TextRef, withText } from '@aalis/schema-i18n';
+import { isTextRef, type TextRef, withText } from '@aalis/schema-i18n';
 import { t } from './texts.js';
 
 /**
@@ -36,7 +36,8 @@ import { t } from './texts.js';
  * }
  * ```
  *
- * 外来类型的取值不经本包校验：parseConfig 除把 `''` 当作未配置外原样透传，value 只是类型层的声明。
+ * 外来类型的取值不经本包按类型校验，只过字段自己的 validate：parseConfig 除把 `''` 当作未配置外原样透传，
+ * value 只是类型层的声明。
  */
 export interface SchemaFieldTypes {
   string: string;
@@ -57,6 +58,9 @@ export interface SchemaFieldTypes {
 }
 
 export type SchemaFieldType = keyof SchemaFieldTypes & string;
+
+/** 可按会话覆盖的声明（{@link SchemaField.session}）：扩展点，成员由 @aalis/api-session-settings 经 declaration merging 并入 */
+export interface SessionFieldSpec {}
 
 /**
  * 单个配置字段。
@@ -121,6 +125,21 @@ export interface SchemaField {
    * 名字像凭据却不是凭据的字段（如 `maxTokens`）写 `false` 表明已判断过
    */
   secret?: boolean;
+  /**
+   * 可按会话覆盖：宿主不交给插件的运行态配置，插件经会话设置的读取器读；改了不重载插件。只写在顶层字段上，
+   * 判定见 {@link isSessionField}
+   */
+  session?: SessionFieldSpec;
+  /**
+   * 取值校验（进程内函数，经 JSON 下发时没有）。合法返回 undefined，不合法返回原因（非空字符串或文字对象）；抛错或返回
+   * 别的值都按不合法，原因写「校验时出错」。在类型与约束键之后调，拿到的是换算后的取值（外来类型是原值）；validateConfig、
+   * parseConfig 与 readFieldValue 都调它。原因会原样进告警与拒绝激活的消息，不要在里面写取值（字段可能是密钥）
+   */
+  validate?(value: unknown): string | TextRef | undefined;
+  /** 文字读成取值；内置类型不用写 */
+  fromText?(text: string): unknown;
+  /** 取值写成文字；内置类型不用写 */
+  toText?(value: unknown): string;
 }
 
 /**
@@ -213,6 +232,25 @@ export interface SchemaArray {
 /** 配置 Schema：顶层 key 可以是字段、分组或数组 */
 export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
+/** 经 JSON 下发的字段：去掉函数成员，session 原样保留 */
+export type WireSchemaField = Omit<SchemaField, 'validate' | 'fromText' | 'toText'>;
+
+/** 经 JSON 下发的 schema：同 {@link ConfigSchema}，分组与数组元素里的字段也换成 {@link WireSchemaField} */
+export type WireConfigSchema = Record<
+  string,
+  | WireSchemaField
+  | (Omit<SchemaGroup, 'fields'> & { fields: Record<string, WireSchemaField> })
+  | (Omit<SchemaArray, 'items'> & { items: Record<string, WireSchemaField> })
+>;
+
+/**
+ * 顶层条目是不是可按会话覆盖的字段：是字段（不是分组、数组）且 session 不为 undefined。只对 configSchema 的顶层条目问，
+ * 分组与数组元素里的字段不按它判
+ */
+export function isSessionField(entry: unknown): entry is SchemaField & { session: SessionFieldSpec } {
+  return isRecord(entry) && !('fields' in entry) && entry.type !== 'array' && entry.session !== undefined;
+}
+
 /**
  * 声明插件的配置 schema：运行时原样返回传入的对象（不冻结、不加任何属性），类型层保留字面量，
  * 供 {@link ConfigOf} 推出配置值类型。返回值可直接放进 `definePlugin({ configSchema })`。
@@ -228,18 +266,20 @@ export function defineConfig<const S extends ConfigSchema>(schema: S): S {
 /** 展开交叉类型，悬停提示显示成一个对象 */
 type Flatten<T> = { [K in keyof T]: T[K] } & {};
 
-/** parseConfig 成功后必定存在的条目：分组、required 字段、声明了 default 的字段与数组 */
-type IsPresent<E> = E extends { fields: unknown }
-  ? true
-  : E extends { required: true }
-    ? true
-    : E extends { default: infer D }
-      ? [D] extends [undefined]
-        ? false
-        : true
-      : false;
+/** 条目声明了 K（不是 undefined） */
+type Declares<E, K extends string> = E extends { [P in K]: infer D } ? ([D] extends [undefined] ? false : true) : false;
 
-type HasDynamicOptions<E> = E extends { dynamicOptions: infer D } ? ([D] extends [undefined] ? false : true) : false;
+/** parseConfig 成功后必定存在的条目：分组、required 字段、声明了 default 的字段与数组 */
+type IsPresent<E> = E extends { fields: unknown } ? true : E extends { required: true } ? true : Declares<E, 'default'>;
+
+/** 带 session 的顶层字段的键（{@link isSessionField} 的类型层）：分组、数组上写了不算，写成 undefined 不算 */
+type SessionKeys<S> = {
+  [K in keyof S]: S[K] extends { fields: unknown } | { type: 'array' }
+    ? never
+    : Declares<S[K], 'session'> extends true
+      ? K
+      : never;
+}[keyof S];
 
 /** allowCustom 不是字面量 false 时按可能允许算：宽类型总是安全的 */
 type AllowsCustom<E> = E extends { allowCustom: infer A } ? (true extends A ? true : false) : false;
@@ -248,7 +288,11 @@ type StaticOptionValue<E> = E extends { options: ReadonlyArray<{ value: infer V 
 
 /** 有非空静态 options 且没有动态来源时收窄为选项值的字面量联合，否则取宽类型 */
 type ChoiceValue<E> =
-  HasDynamicOptions<E> extends true ? string : [StaticOptionValue<E>] extends [never] ? string : StaticOptionValue<E>;
+  Declares<E, 'dynamicOptions'> extends true
+    ? string
+    : [StaticOptionValue<E>] extends [never]
+      ? string
+      : StaticOptionValue<E>;
 
 type FieldValue<E> = E extends { type: 'select' }
   ? AllowsCustom<E> extends true
@@ -261,10 +305,17 @@ type FieldValue<E> = E extends { type: 'select' }
       : unknown;
 
 type EntryValue<E> = E extends { fields: infer F extends ConfigSchema }
-  ? ConfigOf<F>
+  ? EntriesOf<F>
   : E extends { type: 'array'; items: infer I extends ConfigSchema }
-    ? ConfigOf<I>[]
+    ? EntriesOf<I>[]
     : FieldValue<E>;
+
+/** 各条目解析出的值：分组与数组元素也用它，带 session 的字段只在顶层由 ConfigOf 排除 */
+type EntriesOf<S> = Flatten<
+  { -readonly [K in keyof S as IsPresent<S[K]> extends true ? K : never]: EntryValue<S[K]> } & {
+    -readonly [K in keyof S as IsPresent<S[K]> extends true ? never : K]?: EntryValue<S[K]>;
+  }
+>;
 
 /**
  * 从 schema 推导 {@link parseConfig} 返回的配置值类型（schema 须经 {@link defineConfig} 声明才保留字面量）。
@@ -272,10 +323,22 @@ type EntryValue<E> = E extends { fields: infer F extends ConfigSchema }
  * - 字段取 {@link SchemaFieldTypes} 里登记的取值类型；select / multiselect 见该注册表的说明
  * - 有 default 或 `required: true` 的字段必定存在，其余为可选（parseConfig 省略未配置的键）
  * - 分组推为嵌套对象，总是存在；数组推为元素类型的数组，元素按同一规则推导
+ * - 带 session 的顶层字段不在其中（parseConfig 不交出），见 {@link SessionFieldsOf}
  */
-export type ConfigOf<S extends ConfigSchema> = Flatten<
-  { -readonly [K in keyof S as IsPresent<S[K]> extends true ? K : never]: EntryValue<S[K]> } & {
-    -readonly [K in keyof S as IsPresent<S[K]> extends true ? never : K]?: EntryValue<S[K]>;
+export type ConfigOf<S extends ConfigSchema> = EntriesOf<Omit<S, SessionKeys<S>>>;
+
+/** 带 session 的字段经会话设置读到的值：严格字段的坏值原样交出、不往下回落，所以是 unknown */
+type SessionValue<E> = E extends { onInvalid: 'error' } ? unknown : FieldValue<E>;
+
+/**
+ * 从 schema 推导带 session 的顶层字段经会话设置的读取器读到的值（ConfigOf 不含的那部分）。
+ *
+ * - 取值类型同 ConfigOf；`onInvalid: 'error'` 的为 unknown，由插件自己核
+ * - 有 default 的必定存在，没有的为可选（哪层都没设时没有值）
+ */
+export type SessionFieldsOf<S extends ConfigSchema> = Flatten<
+  { [K in SessionKeys<S> as Declares<S[K], 'default'> extends true ? K : never]: SessionValue<S[K]> } & {
+    [K in SessionKeys<S> as Declares<S[K], 'default'> extends true ? never : K]?: SessionValue<S[K]>;
   }
 >;
 
@@ -374,7 +437,8 @@ export function deepMergeDefaults(
  * - `missing`：必填却没配；
  * - `type`：类型或形状不符（如期望字符串却是对象、期望数组却是字符串）；
  * - `not-option`：不是可选值；`pattern`：不匹配正则；`format`：路径的写法不符；
- * - `integer`、`min`、`max`：数值约束；`reserved-key`：映射里用了保留键。
+ * - `integer`、`min`、`max`：数值约束；`reserved-key`：映射里用了保留键；
+ * - `validate`：字段自己的 validate 判为不合法（含它抛错）。
  */
 export type SchemaIssueCode =
   | 'missing'
@@ -385,7 +449,8 @@ export type SchemaIssueCode =
   | 'integer'
   | 'min'
   | 'max'
-  | 'reserved-key';
+  | 'reserved-key'
+  | 'validate';
 
 /**
  * validateConfig 发现的单条问题。path 以点号/下标定位（如 `server.port`、`hosts[2]`）。
@@ -404,8 +469,8 @@ export interface SchemaIssue {
 }
 
 // 校验与解析在运行时需要一份"本包内置类型"名单：SchemaFieldTypes 是纯类型层的
-// merging 注册表，运行时不存在。外来类型（如 'llm-ref'）落在名单之外，
-// validateConfig 一律跳过放行、parseConfig 原样透传——开放词汇表要求两者同样开放。
+// merging 注册表，运行时不存在。外来类型（如 'llm-ref'）落在名单之外，不经类型判定、只过字段自己的 validate：
+// validateConfig 放行、parseConfig 原样透传——开放词汇表要求两者同样开放。
 const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
   'string',
   'number',
@@ -417,7 +482,10 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
   'map',
 ]);
 
-/** 字段类型是不是本包内置的：内置类型的取值经 validateConfig 与 parseConfig 校验，外来类型（如 'llm-ref'）的不经 */
+/**
+ * 字段类型是不是本包内置的：内置类型的取值经 validateConfig 与 parseConfig 按类型校验，外来类型（如 'llm-ref'）的
+ * 只过字段的 validate
+ */
 export function isBuiltinFieldType(type: string): boolean {
   return NEUTRAL_FIELD_TYPES.has(type);
 }
@@ -427,10 +495,11 @@ export function isBuiltinFieldType(type: string): boolean {
  *
  * 定位与边界：
  * - **只读**：不转换、不回填、不裁剪——回填是 defaultsFrom，裁剪是 removeExtraFields，取值是 parseConfig。
- *   逐字段判定与 parseConfig 共用同一份：这里报 invalid 的值，parseConfig 会回落、忽略或拒绝。
+ *   逐字段判定与 parseConfig 共用同一份：这里报 invalid 的值，parseConfig 会回落、忽略或拒绝（带 session 的顶层字段除外，
+ *   parseConfig 不交出它）。
  *   校验器出错的最大代价必须始终是"少一条警告"，因此它对畸形 schema 不抛错。
- * - **只解释本包的词汇**：type/required、约束键、影响取值的 dynamicOptions/allowCustom 与 secret；
- *   宿主经 declaration merging 注入的呈现属性一概不解读。
+ * - **只解释本包的词汇**：type/required、约束键、影响取值的 dynamicOptions/allowCustom、secret 与字段自己的 validate；
+ *   宿主经 declaration merging 注入的呈现属性一概不解读。带 session 的字段照常校验（它的全局层就在配置文档里）。
  * - **校验的是文档**：`secret` 字段上的 {@link SecretRef} 算合法（值在宿主的密钥存储里），不查引用的键在不在。
  * - **标量宽容**：期望字符串的位置（string/textarea、list 元素、map 值、选项比较）接受有限数字；
  *   期望数字的位置接受去掉首尾空白后能完整解析为有限数的字符串。boolean 不做转换。
@@ -439,6 +508,8 @@ export function isBuiltinFieldType(type: string): boolean {
  * - **约束键**：number 强制 min/max（含边界）与 integer，string/textarea 强制
  *   pattern（模式非法则跳过该检查）与 format（空串与只有空白不查）；step 是纯 UI 提示不校验。约束只在类型
  *   检查通过后评估——类型都不对时报类型错，不叠报约束错。
+ * - **validate**：类型与约束键都过了才调，拿换算后的取值；返回原因报 invalid（code 为 `validate`），抛错同样报，不外传。
+ *   list、map、multiselect 有坏元素时只报元素、不调它：它拿到的会是剔掉坏元素的值，报的原因对不上文档里写的。
  * - **list / map**：list 须为数组、map 须为对象，逐元素 / 逐值报错，路径形如 `args[1]`、`env.KEY`。
  * - **宽容缺失**：undefined 与 null（YAML 裸键）视为"未配置"，required 字段的 `''` 也算未配置（WebUI 与脚手架
  *   用 `''` 表示未填，与 parseConfig 一致；声明了 format 的只有空白也算；空数组仍算已配置），仅在 required 且未声明 default 时报缺——顶层/分组的默认值在调用点已合并，数组元素的默认值
@@ -459,10 +530,12 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
  *
  * - **缺失**：undefined 与 null；required 字段另把 `''` 当作缺失（WebUI 与脚手架用 `''` 表示未填；声明了 format 的
  *   只有空白也算），外来类型的 `''` 一律当作缺失。有 default 用 default（拷贝），无 default 且 required 不可恢复，否则省略该键。
- * - **无效**：逐字段判定与 validateConfig 共用（标量宽容、选项即取值范围、约束键）。
+ * - **无效**：逐字段判定与 validateConfig 共用（标量宽容、选项即取值范围、约束键、字段的 validate）。
+ *   list、map、multiselect 先丢坏元素，validate 判的是剩下的值。
  *   默认有 default 回落并告警；无 default 且 required 不可恢复；否则省略并告警。
  *   `onInvalid: 'error'` 的字段遇到显式无效值或坏集合成员时，即使有 default 也不可恢复。
- * - **外来类型**：除 `''` 外原样透传，不校验。
+ * - **外来类型**：除 `''` 外原样透传，只过字段的 validate。
+ * - **带 session 的顶层字段**：不交出、不补 default，配置里有这个键也不告警（插件经会话设置的读取器读）。
  * - **密钥字段**：宿主交给插件之前已把引用解析成原值；`secret` 字段上仍是 {@link SecretRef}，说明引用的键不在
  *   宿主的密钥存储里，一律不可恢复（不回落 default，数组元素里的也不只丢这一条），消息点名键名。owner 写了引用，
  *   引用落空就是配置错误，回落默认值会悄悄连上别的东西（例如默认的本机数据库）。
@@ -473,7 +546,7 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
  * - **schema 外的键**：丢弃并告警。
  * - **不可恢复**（顶层或分组内）：缺失抛 {@link missingConfigError}，无效抛 {@link configError}，插件随之进 error 态。
  *
- * 告警只写路径、类型名与约束，不写原值（可能是密钥）；默认值可以写。
+ * 告警只写路径、类型名与约束，不写原值（可能是密钥）；默认值可以写。字段 validate 返回的原因原样写进去。
  */
 export function parseConfig<S extends ConfigSchema>(
   schema: S,
@@ -484,7 +557,7 @@ export function parseConfig<S extends ConfigSchema>(
   let source: Record<string, unknown> = {};
   if (isRecord(raw)) source = raw;
   else if (raw !== undefined && raw !== null) {
-    if (hasStrictField(schema)) throw configError(t('notObject'));
+    if (hasStrictField(schema, true)) throw configError(t('notObject'));
     warn(`配置整体期望对象，得到 ${describeType(raw)}，已忽略`);
   }
   try {
@@ -495,6 +568,22 @@ export function parseConfig<S extends ConfigSchema>(
       ? missingConfigError(err.path)
       : configError(t('invalid', { path: err.path, reason: err.reason }));
   }
+}
+
+/**
+ * 单个字段对一个值的判定，与 validateConfig 同一套（类型、约束键、字段的 validate）：合法给出换算后的取值，没配置的
+ * （undefined、null，外来类型与 required 字段的空串）给 `{ value: undefined }`；不合法给出原因，list、map、multiselect
+ * 里有元素不合法也算（取第一个）。不回落 default、不抛错，不拷贝（外来类型的值原样交出）。判的是取值本身：密钥字段上的
+ * 引用不像 validateConfig 那样按文档的写法放行
+ */
+export function readFieldValue(field: SchemaField, value: unknown): { value: unknown } | { invalid: TextRef } {
+  if (isUnset(field, value)) return { value: undefined };
+  const verdict = judgeField(field, value);
+  if ('invalid' in verdict) return { invalid: verdict.invalid.text };
+  const [dropped] = verdict.dropped;
+  if (dropped) return { invalid: dropped.reason.text };
+  const invalid = runValidate(field, verdict.value);
+  return invalid ? { invalid: invalid.text } : { value: verdict.value };
 }
 
 /**
@@ -605,7 +694,7 @@ function validateFields(
       continue;
     }
 
-    if (value === undefined || value === null || (entry.required && isBlank(entry, value))) {
+    if (isUnset(entry, value)) {
       // 声明了 default 的字段永远不算缺失：顶层/分组的默认值多已在调用点合并，但合并不覆盖
       // 显式 null（YAML 裸键），这类值照样走到这里，
       // 数组元素的默认值不参与任何合并（defaultsFrom 把 SchemaArray 当叶子），
@@ -614,7 +703,6 @@ function validateFields(
       continue;
     }
     if (entry.secret === true && isSecretRef(value)) continue;
-    if (!NEUTRAL_FIELD_TYPES.has(entry.type)) continue;
 
     const verdict = judgeField(entry, value);
     if ('invalid' in verdict) {
@@ -622,6 +710,8 @@ function validateFields(
       continue;
     }
     for (const d of verdict.dropped) push(path + d.at, 'invalid', d.reason);
+    const invalid = verdict.dropped.length > 0 ? undefined : runValidate(entry, verdict.value);
+    if (invalid) push(path, 'invalid', invalid);
   }
 }
 
@@ -641,11 +731,12 @@ function mismatch(expected: Expected, value: unknown): Reason {
 }
 
 /**
- * 中立类型字段对一个已配置值（非 undefined / null）的判定。`value` 是按词汇换算后的取值（数字转成的字符串、
- * 字符串转成的数字、归位后的选项值）；`dropped` 是 list / map / multiselect 里被剔除的元素，`at` 接在字段路径后。
+ * 字段对一个已配置值（见 isUnset）的判定。`value` 是按词汇换算后的取值（数字转成的字符串、字符串转成的数字、
+ * 归位后的选项值，外来类型是原值）；`dropped` 是 list / map / multiselect 里被剔除的元素，`at` 接在字段路径后。
  */
 type FieldVerdict = { invalid: Reason } | { value: unknown; dropped: Array<{ at: string; reason: Reason }> };
 
+/** 按类型与约束键判，外来类型不判；字段自己的 validate 由调用方处置完 dropped 之后调（runValidate） */
 function judgeField(field: SchemaField, value: unknown): FieldVerdict {
   switch (field.type) {
     case 'string':
@@ -740,6 +831,26 @@ function judgeField(field: SchemaField, value: unknown): FieldVerdict {
 }
 
 /**
+ * 拿换算后的取值调字段自己的 validate：合法给 undefined。validate 抛错、或返回的不是非空字符串与文字对象时，原因写
+ * 「校验时出错」（抛出的错里可能带着取值，不转述）
+ */
+function runValidate(field: SchemaField, value: unknown): Reason | undefined {
+  if (field.validate === undefined) return undefined;
+  let reason: unknown;
+  try {
+    reason = field.validate(value);
+  } catch {
+    return { code: 'validate', text: t('validateError') };
+  }
+  if (reason === undefined) return undefined;
+  if (isTextRef(reason)) return { code: 'validate', text: reason };
+  return {
+    code: 'validate',
+    text: typeof reason === 'string' && reason !== '' ? t('validateFailed', { reason }) : t('validateError'),
+  };
+}
+
+/**
  * 填的是空串（WebUI 与脚手架用 `''` 表示未填）。声明了 format 的 string / textarea 交给插件的是去掉首尾空白的那份
  * （见 judgeField），只有空白同样算空串
  */
@@ -747,6 +858,12 @@ function isBlank(field: SchemaField, value: unknown): boolean {
   if (typeof value !== 'string') return false;
   const trims = field.format !== undefined && (field.type === 'string' || field.type === 'textarea');
   return (trims ? value.trim() : value) === '';
+}
+
+/** 没配置：undefined 与 null（YAML 裸键）；required 字段另把空串算进来（见 isBlank），外来类型的 `''` 一律算 */
+function isUnset(field: SchemaField, value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return field.required ? isBlank(field, value) : value === '' && !NEUTRAL_FIELD_TYPES.has(field.type);
 }
 
 /** 期望字符串的位置：字符串原样，有限数字转成字符串（YAML 里不加引号的 QQ 号、端口照常可用） */
@@ -825,11 +942,14 @@ class UnrecoverableField extends Error {
   }
 }
 
-/** 只在祖先值显式无效时检查；缺省的容器仍按字段原有的缺省规则解析。 */
-function hasStrictField(schema: unknown): boolean {
+/**
+ * 只在祖先值显式无效时检查；缺省的容器仍按字段原有的缺省规则解析。`top` 表示查的是整份配置：顶层带 session 的字段
+ * parseConfig 不解析，不算
+ */
+function hasStrictField(schema: unknown, top = false): boolean {
   if (!isRecord(schema)) return false;
   return Object.values(schema).some(entry => {
-    if (!isRecord(entry)) return false;
+    if (!isRecord(entry) || (top && isSessionField(entry))) return false;
     if (entry.onInvalid === 'error') return true;
     if ('fields' in entry) return hasStrictField(entry.fields);
     if (entry.type === 'array') return hasStrictField(entry.items);
@@ -843,6 +963,8 @@ function parseEntries(schema: unknown, source: Record<string, unknown>, prefix: 
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(entries)) {
     if (!isRecord(entry) || isUnsafeConfigKey(key)) continue;
+    // 顶层（prefix 为空）带 session 的字段不交出：插件经会话设置的读取器读它。键仍在 schema 里，配置里有它也不告警
+    if (prefix === '' && isSessionField(entry)) continue;
     const path = prefix + key;
     // 只认自有属性：`toString` 这类键不能从原型上读到值
     const value = Object.hasOwn(source, key) ? source[key] : undefined;
@@ -869,8 +991,7 @@ function parseGroup(fields: unknown, value: unknown, path: string, warn: Warn): 
 }
 
 function parseField(field: SchemaField, value: unknown, path: string, warn: Warn): unknown {
-  const neutral = NEUTRAL_FIELD_TYPES.has(field.type);
-  if (value === undefined || value === null || (field.required ? isBlank(field, value) : value === '' && !neutral)) {
+  if (isUnset(field, value)) {
     if (field.default !== undefined) return cloneConfigValue(field.default);
     if (field.required) throw new UnrecoverableField(path, t('missing'), true);
     return undefined;
@@ -878,7 +999,6 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
   if (field.secret === true && isSecretRef(value)) {
     throw new UnrecoverableField(path, t('secretUnresolved', { key: value.$secret }), false, true);
   }
-  if (!neutral) return cloneConfigValue(value);
   const verdict = judgeField(field, value);
   if ('invalid' in verdict) return fallBack(field, path, verdict.invalid, warn);
   if (field.onInvalid === 'error' && verdict.dropped.length > 0) {
@@ -888,7 +1008,9 @@ function parseField(field: SchemaField, value: unknown, path: string, warn: Warn
     throw new UnrecoverableField(memberPath, safeInvalidReason(first.reason), false);
   }
   for (const d of verdict.dropped) warn(`配置项 ${path}${d.at} ${d.reason.text.source}，已忽略`);
-  return verdict.value;
+  const invalid = runValidate(field, verdict.value);
+  if (invalid) return fallBack(field, path, invalid, warn);
+  return cloneConfigValue(verdict.value);
 }
 
 function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn): unknown[] | undefined {

@@ -36,6 +36,8 @@ const SOURCE = {
   executable: '须为绝对路径或命令名（不含路径分隔符）',
   reservedKey: '保留键不可用',
   secretUnresolved: '引用的密钥 {key} 不在宿主的密钥存储里',
+  validateFailed: '{reason}',
+  validateError: '校验时出错',
   notObject: '配置整体期望对象，在 WebUI 或配置文件中改正后生效',
   invalid: '配置项 {path} {reason}，在 WebUI 或配置文件中改正后生效',
   missingField: '缺少配置项 {field}，在 WebUI 或配置文件中填入后生效',
