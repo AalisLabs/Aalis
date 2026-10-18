@@ -6,6 +6,7 @@
  * - 让 index.ts 主类聚焦在编排/状态管理，而不是 token 估算细节
  * - 让纯函数可被 vitest 单独覆盖（无需搭出一次激活）
  */
+import { estimateMsgTokens } from '@aalis/api-llm';
 import type { PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionConfig } from '@aalis/api-session-manager';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -90,47 +91,6 @@ export function buildFocusGuidance(incoming: IncomingMessage): Message | null {
 }
 
 // ----- Token 估算 -----
-//
-// 大多数 BPE tokenizer (GPT / DeepSeek / Qwen) 经验值：
-//   - ASCII 字符 ~ 3.5 字符 / token
-//   - CJK 字符 ~ 1.5 token / 字符
-// 保守取高，避免超限。
-
-const CJK_REGEX = /[\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/;
-
-/** 估算文本的 token 数（区分中文与 ASCII） */
-export function estimateTextTokens(text: string): number {
-  let tokens = 0;
-  let i = 0;
-  while (i < text.length) {
-    if (CJK_REGEX.test(text[i])) {
-      tokens += 1.5;
-      i++;
-    } else {
-      let asciiLen = 0;
-      while (i < text.length && !CJK_REGEX.test(text[i])) {
-        asciiLen++;
-        i++;
-      }
-      tokens += Math.ceil(asciiLen / 3.5);
-    }
-  }
-  return Math.ceil(tokens);
-}
-
-/** 估算单条消息的 token 数（含 toolCalls + reasoningContent） */
-/** 单张图片的保守 token 估算（实测 800×600 静图经 ViT 编码为 500–800 visual token）。 */
-const IMAGE_TOKENS_ESTIMATE = 800;
-
-export function estimateMsgTokens(msg: Message): number {
-  let t = 4;
-  if (msg.content) t += estimateTextTokens(msg.content);
-  if (msg.toolCalls) t += estimateTextTokens(JSON.stringify(msg.toolCalls));
-  if (msg.reasoningContent) t += estimateTextTokens(msg.reasoningContent);
-  // 图片不是按 base64 长度计费的：估一个保守常量，让预算/统计/裁剪看得见它们
-  if (msg.images) t += msg.images.length * IMAGE_TOKENS_ESTIMATE;
-  return t;
-}
 
 /** 估算一组消息的总 token 数 */
 export function estimateTokens(messages: Message[]): number {

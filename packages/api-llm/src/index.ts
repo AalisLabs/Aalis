@@ -397,6 +397,49 @@ export function resolveLLMModel(
   return all[0];
 }
 
+// ----- Token 估算 -----
+//
+// 大多数 BPE tokenizer (GPT / DeepSeek / Qwen) 经验值：
+//   - ASCII 字符 ~ 3.5 字符 / token
+//   - CJK 字符 ~ 1.5 token / 字符
+// 保守取高，避免超限。
+
+const CJK_REGEX = /[\u2E80-\u9FFF\uA000-\uA4FF\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/;
+
+/** 估算文本的 token 数（区分中文与 ASCII） */
+export function estimateTextTokens(text: string): number {
+  let tokens = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (CJK_REGEX.test(text[i])) {
+      tokens += 1.5;
+      i++;
+    } else {
+      let asciiLen = 0;
+      while (i < text.length && !CJK_REGEX.test(text[i])) {
+        asciiLen++;
+        i++;
+      }
+      tokens += Math.ceil(asciiLen / 3.5);
+    }
+  }
+  return Math.ceil(tokens);
+}
+
+/** 单张图片的保守 token 估算（实测 800×600 静图经 ViT 编码为 500–800 visual token）。 */
+const IMAGE_TOKENS_ESTIMATE = 800;
+
+/** 估算单条消息的 token 数（含 toolCalls + reasoningContent） */
+export function estimateMsgTokens(msg: Message): number {
+  let t = 4;
+  if (msg.content) t += estimateTextTokens(msg.content);
+  if (msg.toolCalls) t += estimateTextTokens(JSON.stringify(msg.toolCalls));
+  if (msg.reasoningContent) t += estimateTextTokens(msg.reasoningContent);
+  // 图片不是按 base64 长度计费的：估一个保守常量，让预算/统计/裁剪看得见它们
+  if (msg.images) t += msg.images.length * IMAGE_TOKENS_ESTIMATE;
+  return t;
+}
+
 // ----- 服务描述符（按激活绑定）-----
 
 /**
