@@ -7,16 +7,24 @@
 //                          由出站归档监听器在后台描述并入档，让"AI 之前
 //                          发过的图/视频"能被 memory_recall 召回
 //
+// 出站中间件：受众不只 owner 的会话里，她回复正文里的媒体标记（<image|video|record url>）转成附件，
+// 与 send_attachment 走同一个判据、同一条受保护下载与文件头核对。
+//
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
-// 取自存储库的文件发送前读文件头核对格式（见 @aalis/util-media-signature）。
+// 存储库里的文件先按受众判能不能取（@aalis/api-media 的 mediaInScope），再读文件头核对格式
+// （见 @aalis/util-media-signature）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
 
-import { media } from '@aalis/api-media';
+import { authority } from '@aalis/api-authority';
+import type {} from '@aalis/api-gateway'; // declaration merging 锚点（outbound:dispatch 钩子）
+import { hooks } from '@aalis/api-hooks';
+import { historyMediaRefs, type MediaScopeDeps, media, mediaInScope, mediaRef } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import { isStorageNotFound, isStorageUri, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
+import { roomClass, sessionManager } from '@aalis/api-session-manager';
+import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
@@ -39,17 +47,28 @@ const ARCHIVE_DESCRIBE_TIMEOUT_MS = 25_000;
 const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
+/** 按受众判出来不能取时回给模型的话：先判后读，不存在与不是媒体也回这一句，拿它探测不出存储根里有什么 */
+const OUT_OF_SCOPE = '这个会话里只能发本会话收到或产生的媒体';
+/** 判媒体归属与找 history_ref 回看的历史条数 */
+const HISTORY_LIMIT = 200;
+/** 回复正文里的媒体标记：与 onebot 适配器解析的写法相同 */
+const MEDIA_MARKUP = /<(image|video|record)\s+url=["']([^"']*)["']\s*\/>/g;
+const MARKUP_KIND: Record<string, MediaKind> = { image: 'image', video: 'video', record: 'audio' };
 
-// tools 不入激活闸：出站附件归档（outbound:delivered 监听）只靠 archive / media，
-// 没有工具服务时也该照常挂上；工具登记走归属表，提供者上线后自动补挂。
+// tools 与 hooks 不入激活闸：出站附件归档（outbound:delivered 监听）只靠 archive / media，
+// 没有工具服务时也该照常挂上；工具与中间件登记走归属表，提供者上线后自动补挂。
+// 会话管理、权限与记忆给媒体按受众的判据用，缺席时判据按它的约定取值（只认本会话、没人是 owner、历史为空）。
 const uses = {
   tools: optional(tools),
+  hooks: optional(hooks),
   events,
   logger,
   storage: optional(storage),
   media: optional(media),
   memory: optional(memory),
   archive: optional(messageArchive),
+  sessionManager: optional(sessionManager),
+  authority: optional(authority),
 };
 type Caps = BoundOf<typeof uses>;
 /** 描述媒体只需要 media 与日志。 */
@@ -66,8 +85,26 @@ export default definePlugin({
 });
 
 function registerImageSender(caps: Caps): void {
-  const { tools, events, logger, media, memory, archive } = caps;
+  const { tools, hooks, events, logger, media, memory, archive, sessionManager, authority } = caps;
   const storage = caps.storage.use;
+
+  /** 调用所在会话最近的历史：记忆不在时为空 */
+  async function recentHistory(sessionId: string): Promise<Message[]> {
+    if (!memory.present) return [];
+    const service = memory.use;
+    return service.getFullHistory
+      ? service.getFullHistory(sessionId, HISTORY_LIMIT)
+      : service.getHistory(sessionId, HISTORY_LIMIT);
+  }
+
+  /** 判据的依赖：每次现取，服务随时可能上下线 */
+  function scopeDeps(): MediaScopeDeps {
+    return {
+      getSession: sessionManager.present ? id => sessionManager.use.getSession(id) : undefined,
+      isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
+      history: recentHistory,
+    };
+  }
 
   // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
   // 记忆库等非媒体文件）。放行的交出 storage URI，送达形态由平台适配器决定：onebot 读回内容内联，超过内联上限
@@ -172,11 +209,12 @@ function registerImageSender(caps: Caps): void {
           'kind 必填，指定附件类型；来源三选一：\n' +
           '  - url：网络资源 URL（http/https）。\n' +
           '  - storage_uri：存储库内的资源 URI（如 data:/images/xxx）。\n' +
-          '  - history_ref：历史消息中已识别的引用（[图片/音频/视频: ... | ref:xxx] 中 xxx 部分），\n' +
+          '  - history_ref：本会话历史消息中的引用（[图片/音频/视频: ... | ref:xxx] 中完整的 xxx），\n' +
           '    用于"把之前那条媒体重发/转发回去"。\n' +
+          '有别人在场的会话里，storage_uri 与 history_ref 只能指向本会话收到或产生的媒体。\n' +
           '建议流程（图片）：search_images 拿候选 URL →（有 preview_image 时可先看清内容）→ send_attachment 选其一发出。\n' +
           '只有返回 ok:true 才能说已发送；返回 error 时没有成功确认，下载失败可改选另一张图片，不要反复重发同一失效地址。\n' +
-          '若想重发自己之前发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
+          '若想重发自己之前在本会话发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
           '注意：本工具不发送任何文字。如需配文，请把文字写在你本轮最终输出的 message 字段里——' +
           '不要在 message 中重复媒体描述。',
         parameters: {
@@ -191,7 +229,7 @@ function registerImageSender(caps: Caps): void {
             storage_uri: { type: 'string', description: '存储库内资源 URI（如 data:/images/xxx）。' },
             history_ref: {
               type: 'string',
-              description: '历史消息中的引用路径（[... | ref:xxx] 中 xxx 部分）。',
+              description: '本会话历史消息中的引用路径（[... | ref:xxx] 中完整的 xxx）。',
             },
           },
           required: ['kind'],
@@ -221,33 +259,32 @@ function registerImageSender(caps: Caps): void {
         } else if (storageUri) {
           // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
           // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
-          const uri = storeUriOf(storageUri);
-          if (!uri) {
+          // 先判后读：判据与读取用同一个规整后的地址
+          const uri = mediaRef(storageUri);
+          if (!uri || !isStorageUri(uri)) {
             return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
           }
+          if (!(await mediaInScope(uri, callCtx, scopeDeps()))) return JSON.stringify({ error: OUT_OF_SCOPE });
           const loaded = await loadStorageMedia(uri, kind);
           if (!loaded.ok) return JSON.stringify({ error: loaded.error });
           data = loaded.data;
-          // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致，供 history_ref 回查匹配。
+          // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致；history_ref 回查时两边都规整再比。
           refTag = storageUri;
           via = 'storage_uri';
         } else if (historyRef) {
-          const found = await resolveHistoryRef(memory, storage, callCtx.sessionId, historyRef);
-          if (!found) return JSON.stringify({ error: `未在历史中找到引用: ${historyRef}` });
-          if (found.startsWith('http://') || found.startsWith('https://')) {
-            data = found;
+          refTag = historyRef.replace(/^ref:/, '').trim();
+          // 网址照旧当 url 用；其余只在调用所在会话历史里系统记下的引用中按全等找。找到的就是判据第 2 条的历史引用，
+          // 不再另判
+          const ref = mediaRef(refTag);
+          if (ref && !isStorageUri(ref)) {
+            data = ref;
+          } else if (!ref || !historyMediaRefs(await recentHistory(callCtx.sessionId)).includes(ref)) {
+            return JSON.stringify({ error: `未在本会话历史中找到引用: ${historyRef}` });
           } else {
-            // 本地来源只认存储库内的文件：storage URI 或历史相对路径（data/images/…）。本机路径、
-            // file://、data URI 等来源不在存储库内，读不了文件头，无从核对格式
-            const uri = storeUriOf(found);
-            if (!uri || !isStorageUri(uri)) {
-              return JSON.stringify({ error: `引用 ${historyRef} 的来源不在存储库内，无法核对格式，不能发送` });
-            }
-            const loaded = await loadStorageMedia(uri, kind);
+            const loaded = await loadStorageMedia(ref, kind);
             if (!loaded.ok) return JSON.stringify({ error: loaded.error });
             data = loaded.data;
           }
-          refTag = historyRef.replace(/^ref:/, '').trim();
           via = 'history_ref';
         } else {
           return JSON.stringify({ error: '必须提供 url / storage_uri / history_ref 之一' });
@@ -289,6 +326,49 @@ function registerImageSender(caps: Caps): void {
   });
 
   logger.use.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
+
+  // ── 她回复里的媒体标记：受众不只 owner 的会话里转成附件 ─────────────────────
+  // 适配器会把正文里的标记交给平台去取（onebot 把 url 原样交给实现端），不经判据、文件头核对与受保护下载。
+  // 网址转成同类附件，由适配器下载核对；存储地址过判据（出站不带授权身份，按非 owner），过了转成附件；其余
+  // （file://、本机路径、base64:// 等）与不过的去掉。转出的附件不另入档：她这条回复已带着标记落库。
+  // 受众只有 owner 的会话不动；会话管理不在时判不出，按不是。网关缺席时出站不经这条链，生产须装网关
+  hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
+    if (message.source === 'agent') await markupToAttachments(message);
+    await next();
+  });
+
+  async function markupToAttachments(message: OutgoingMessage): Promise<void> {
+    let tags = [...message.content.matchAll(MEDIA_MARKUP)];
+    if (tags.length === 0) return;
+    const deps = scopeDeps();
+    const { getSession, isOwner } = deps;
+    if (getSession && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only') return;
+    const converted: MessageAttachment[] = [];
+    // 摘到正文里没有标记为止：摘掉一个标记后，两边剩下的文字可能拼成新的标记
+    do {
+      for (const [, tag, url] of tags) {
+        const ref = mediaRef(url);
+        if (ref && (!isStorageUri(ref) || (await storedInScope(ref, message.sessionId, deps)))) {
+          converted.push({ kind: MARKUP_KIND[tag], data: ref, skipArchive: true });
+        }
+      }
+      message.content = message.content.replace(MEDIA_MARKUP, '');
+      tags = [...message.content.matchAll(MEDIA_MARKUP)];
+    } while (tags.length > 0);
+    message.attachments = [...(message.attachments ?? []), ...converted];
+  }
+
+  /** 出站里的存储地址按非 owner 判；判不出（如读历史出错）按不在范围内，去掉不发 */
+  async function storedInScope(uri: string, sessionId: string, deps: MediaScopeDeps): Promise<boolean> {
+    try {
+      return await mediaInScope(uri, { sessionId }, deps);
+    } catch (err) {
+      logger.use.warn(
+        `[image-sender] 回复里的媒体标记判不出归属，去掉不发: ${err instanceof Error ? err.message : err}`,
+      );
+      return false;
+    }
+  }
 
   // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
   // 只归档传输端确认后的附件，出站请求本身不代表发送成功。
@@ -382,63 +462,4 @@ async function archiveOutboundAttachment(
   } catch (err) {
     caps.logger.use.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
   }
-}
-
-/** 输入对应的存储地址；本机路径（宿主机绝对路径与家目录简写）不是存储地址，没有。toStorageUri 只在遇到本机路径时抛错 */
-function storeUriOf(input: string): string | undefined {
-  try {
-    return toStorageUri(input);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * 在最近 200 条消息里寻找匹配 historyRef 的媒体来源：http(s) URL、存储库内文件的 storage URI，
- * 或历史附件里的原样数据串（能否发送由调用方判定）。
- */
-async function resolveHistoryRef(
-  memory: Caps['memory'],
-  storage: StorageService,
-  sessionId: string,
-  ref: string,
-): Promise<string | null> {
-  if (!memory.present) return null;
-  const service = memory.use;
-  const history: Message[] = service.getFullHistory
-    ? await service.getFullHistory(sessionId, 200)
-    : await service.getHistory(sessionId, 200);
-  const normalized = ref.replace(/^ref:/, '').trim();
-  // http(s) ref：直接当 URL 用
-  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
-    return normalized;
-  }
-  // storage URI / 历史相对路径：归一化后 stat；命中即用，未命中 fallthrough 到子串匹配。
-  // 完整相对路径 `data/images/x.jpg` → `data:/images/x.jpg` 能直接命中；
-  // 单段 hash（如 `abc123.jpg`）归一化成 `data:/abc123.jpg` stat 失败，正确回落子串匹配。
-  // 本机路径不是存储地址，直接走子串匹配
-  const asUri = storeUriOf(normalized);
-  if (asUri) {
-    try {
-      await storage.stat(asUri);
-      return asUri;
-    } catch {
-      // fallthrough 到历史子串匹配
-    }
-  }
-  // 回退：搜历史里 images / attachments 数组里包含 normalized 子串的项
-  for (const msg of history) {
-    const m = msg as Message & { images?: string[]; attachments?: MessageAttachment[] };
-    if (m.images?.length) {
-      for (const img of m.images) {
-        if (img.includes(normalized)) return img;
-      }
-    }
-    if (m.attachments?.length) {
-      for (const att of m.attachments) {
-        if (att.data.includes(normalized)) return att.data;
-      }
-    }
-  }
-  return null;
 }

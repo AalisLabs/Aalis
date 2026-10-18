@@ -334,6 +334,32 @@ symlink realpath 校验。但这层校验的目的是**防止上层代码出 bug
 > storage URI 文法、保留 scheme（`http` / `https` / `file` 不是 storage URI）见 forward-ref
 > [`docs/concepts/storage-uri-grammar.md`](./storage-uri-grammar.md) 与 [`docs/services/storage.md`](../services/storage.md)。
 
+### 媒体工具按受众
+
+存储根里除了会话的媒体，还有工作区、白纸成品、下载与别的会话的媒体。按路径取媒体的通道按受众收紧，判据是
+api-media 的 `mediaInScope`（判法见 [media 服务](../services/media.md#媒体按受众的判据)）：
+
+- **不限的**：受众里没有别人的会话（房间类别 owner-only 或 internal），且授权身份是 owner 的回合。owner-only 里是 owner 本人
+  在 WebUI、终端（`webui:console`、`cli:console`）与 IM 私聊（owner 的 IM 身份在 owners 里时）的回合、owner 派的子任务、owner
+  建的定时任务；internal 里是 owner 的编排节点与定时任务。
+- **只认本会话的**：其余回合，只能取本会话树的媒体目录里的文件与调用所在会话历史里系统记下的引用。包括房间里的全部回合
+  （owner 在群里发言也一样）；owner 会话里授权身份不是 owner 的回合：空闲触发与主动发言（没有 userId）、白纸通知
+  （`selfInitiatedActor`）、别人借编排投进 owner 会话的回合；MCP 客户端（`mcp:mcp-client`，`mcp-server` 会话没有媒体目录与历史，
+  实际只剩网址）与匿名编排。会话管理不在时一律只认本会话。
+- **覆盖的通道**：`send_attachment` 的 `storage_uri` 与 `history_ref`（`history_ref` 只在调用所在会话历史里按全等找）、
+  `analyze_image` 的存储地址（另按文件头核对是不是图片）、她回复正文里的媒体标记。工具先判后读：不在范围内的地址，
+  存在与否、是不是媒体都回同一句，拿它探测不出存储根里有什么。网址不在判据里，照旧经受保护的下载（§3）。
+- **她回复里的媒体标记**：平台适配器会把回复正文里的 `<image|video|record url="…"/>` 交给平台去取（onebot 把 url 原样交给实现端），
+  不经判据、文件头核对与受保护下载。受众不只 owner 的会话里，plugin-image-sender 在 `outbound:dispatch` 上把这些标记摘出来：
+  网址转成同类附件，由适配器下载核对；存储地址按非 owner 过判据，过了转成附件；`file://`、本机路径、`base64://` 与不过判据的去掉。
+  受众只有 owner 的会话不转，标记照旧交给适配器。网关缺席时出站不经这条链。
+
+判据按目录约定判归属，**不是隔离**：同一个根里的符号链接（storage-local 只核真实路径还在根内），或能往本会话目录写文件的工具，
+都能把别处的媒体伪装成本会话的。默认配置下房间里的写类工具要审批、不可达，判据不为此加复杂度，随本机通道的强化处理。
+会话目录名由会话 id 把 `:`、`/`、`\` 换成 `_` 得来，换法有损：适配器的会话 id 不能只在这几个字符上有区别；大小写不敏感的卷（macOS 与 Windows 的默认）上，只差大小写的两个会话 id 也落进同一个目录。
+房间类别按会话表判：不在会话表里的会话按 internal（编排与定时任务的会话本来就不进会话表），所以群会话要已收录，
+判据才认得出它是房间；会话管理收录入站之前或重载期间到达的那一轮，owner 发起时按不限处理。
+
 ---
 
 ## 6. readExternalFile：confused-deputy 读任意路径
@@ -452,8 +478,9 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 - **白纸文件没有来源标记**：`plugin-tool-system` 的 `file.allowedRoots` 写成 `'*'`（包括 `paper` 根）时，
   拿得到文件工具的会话（主要是 owner 自己的）能读到白纸目录，读到时不计污点。
-- **`send_attachment` 能按路径发白纸根里的媒体**：它接受任意 storage URI、不带分组，别的房间被注入时，
-  可以按路径把白纸里的图片与视频发走。
+- **owner 自己的会话照旧能按路径发白纸根里的媒体**：`send_attachment` 不带分组；房间里已按本会话收紧
+  （见 §5「媒体工具按受众」），受众只有 owner、且授权身份是 owner 的回合照旧能按路径取白纸根里的图片与视频，
+  取白纸文件时同样不计污点；发出的只到这个会话，别的房间借不走。
 
 ---
 

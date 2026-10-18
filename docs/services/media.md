@@ -81,6 +81,31 @@ export interface MediaProcessor {
 
 `'media:processed': [{ sessionId, report }]`。一条入站消息的所有附件处理完毕后发出，无论成功还是失败都会发，供 webui、archive、调试等消费。
 
+### 媒体按受众的判据
+
+契约包另导出一组纯函数，判一次调用能取哪些存储里的媒体。`send_attachment`、`analyze_image` 与 plugin-image-sender 的出站转换共用它；它不是 `media` 服务的方法，media 缺席时也能判。
+
+```ts
+function mediaInScope(target: string, call: MediaScopeCall, deps: MediaScopeDeps): Promise<boolean>;
+function mediaRef(input: string): string | undefined;          // 网址原样；存储地址与历史相对路径规整成存储地址
+function historyMediaRefs(messages: readonly Message[]): string[]; // 历史里系统记下的媒体引用
+
+interface MediaScopeCall { sessionId: string; platform?: string; userId?: string; actor?: { platform: string; userId: string } }
+interface MediaScopeDeps {
+  getSession?: (id: string) => SessionInfo | undefined;  // 会话管理在场才给
+  isOwner: (platform: string, userId: string) => boolean; // 权限服务不在时恒为否
+  history: (sessionId: string) => Promise<readonly Message[]>; // 记忆不在时为空；第一方取最近 200 条
+}
+```
+
+- **判法**：授权身份取 `actor`，缺省为 `platform`、`userId`，没有 `userId` 即匿名。会话管理在场、调用所在会话的房间类别（api-session-manager 的 `roomClass`）不是 room、且授权身份是 owner 时不限；其余只认两样：本会话树（根会话加它的全部子会话）任一会话的媒体目录里的文件，即 `data:/{images,audios,videos,files}/<会话目录>/` 与 `tmp:/browser/<会话目录>/`；调用所在会话历史里系统记下的引用。先比目录，不中再读历史。
+- **会话管理不在**：一律只认本会话，owner 也一样。这时会话记录都取不到，房间类别一律是 internal，按第一条群里的 owner 回合就不受限了。
+- **历史引用**：`historyMediaRefs` 只读结构化字段，即入站附件清单（metadata 的 `Attachments` 各项的 `ref`）与发出的附件（`SentRef`），不读正文里的 `[图片 | ref:…]`：群友能打出伪造的占位符。目录按整棵会话树比，历史只取调用所在会话。
+- **规整**：`mediaRef` 消 `.`、`..`，带反斜杠的不收（有的系统按目录分隔解析它），盘符路径（`C:/…`）按本机路径不收；网址只认协议名小写的 `http://`、`https://`，与适配器下载时认的一样。判据先规整 target，调用方读的也应是规整后的那个。
+- **会话目录名**：判据按写入方的换法正向比对：会话 id 里的 `:`、`/`、`\` 换成 `_`（onebot 附件缓存、媒体识别、浏览器截图），绘图另把 `..` 与前导点换成 `_`。换法有损：适配器的会话 id 不能只在这几个字符上有区别（`x:a_b` 与 `x:a:b` 落进同一个目录）。新的写入方要把会话媒体写进这几个目录，房间里才取得到。
+
+判据按目录约定判归属，不是隔离，见 [安全模型的「媒体工具按受众」](../concepts/security-model.md#媒体工具按受众)。
+
 ---
 
 ## 2. 谁提供 / 谁消费
@@ -280,7 +305,7 @@ export default definePlugin({
 
 `media` 服务本身不挂 authority 的 risk/visibility 门——它是 preprocessor 链路上的内部增强，调用语境（agent / 工具）由各自的 authority 把关。
 
-不过落盘路径按 `session` 做了 key 隔离（`images/{safeSession}`），`buildContext` 也只读当前会话历史。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
+不过落盘路径按 `session` 做了 key 隔离（`images/{safeSession}`），`buildContext` 也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体按受众的判据](#媒体按受众的判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
 
 ### storage 不是沙箱
 

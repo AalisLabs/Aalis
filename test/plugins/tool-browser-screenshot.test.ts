@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mediaInScope } from '../../packages/api-media/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
@@ -143,6 +144,9 @@ describe('browser_screenshot 的交付形态', () => {
     expect(out).toMatchObject({ ok: true });
     // 接得住图也照样落盘给 URI：看不到图的下游（送去看图工具 / 发出去）有路可走
     expect(out.storage_uri).toMatch(/^tmp:\/browser\/onebot_t_group_1\/shot-[0-9a-f]{16}\.png$/);
+    // 媒体按受众的判据认这个目录：群里照样能把本会话的截图交给看图工具或发出去
+    const scope = { isOwner: () => false, history: async () => [] };
+    expect(await mediaInScope(out.storage_uri, { sessionId: 'onebot:t:group:1' }, scope)).toBe(true);
     expect(out.note).toBe('图已随结果附上；若你看不到图，可把 storage_uri 交给看图工具（如有）或 send_attachment');
     expect(result.content.length).toBeLessThan(400);
   }, 60_000);

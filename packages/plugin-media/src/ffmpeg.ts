@@ -23,34 +23,6 @@ export function isAnimatedFormat(pathOrUrl: string): boolean {
   return ANIMATED_EXTS.has(ext);
 }
 
-const MIME_BY_EXT: Record<string, string> = {
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  webm: 'video/webm',
-  mov: 'video/quicktime',
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-};
-
-function mimeForExt(ext: string): string {
-  return MIME_BY_EXT[ext.toLowerCase()] ?? 'application/octet-stream';
-}
-
-/**
- * Storage URI → data URI（按扩展名猜 mime）。失败抛错。
- */
-export async function fileToDataUri(uri: string): Promise<string> {
-  const { storage } = getMediaRuntime();
-  const ext = extname(uri).slice(1).toLowerCase();
-  const buf = (await storage.readFile(uri)) as Uint8Array;
-  return `data:${mimeForExt(ext)};base64,${Buffer.from(buf).toString('base64')}`;
-}
-
 export function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
   if (totalFrames <= 0) return [];
   if (totalFrames === 1) return [0];

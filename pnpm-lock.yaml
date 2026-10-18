@@ -438,6 +438,12 @@ importers:
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-storage':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-storage
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -1579,6 +1585,15 @@ importers:
 
   packages/plugin-image-sender:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-media':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-media
@@ -1588,6 +1603,9 @@ importers:
       '@aalis/api-message-archive':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-message-archive
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
@@ -1793,6 +1811,9 @@ importers:
       '@aalis/api-asr':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-asr
+      '@aalis/api-authority':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-doctor':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-doctor
@@ -1832,6 +1853,9 @@ importers:
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
         version: link:../util-bounded-map
+      '@aalis/util-media-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-media-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard

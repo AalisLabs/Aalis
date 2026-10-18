@@ -1,18 +1,39 @@
 // ============================================================
 // tools.ts — analyze_image / update_image_description 工具
 //
-// 由 plugin-image-recognition 移植而来。让 agent 主动分析任意图片
-// （本地路径 / URL / data URI），以及把识别结果写回历史消息。
+// 由 plugin-image-recognition 移植而来。让 agent 主动分析图片（存储地址 / URL / data URI），
+// 以及把识别结果写回调用所在会话的历史消息。存储里的图先按受众判能不能看（@aalis/api-media 的
+// mediaInScope），再读一次、按文件头认格式。
 // ============================================================
 
+import { Buffer } from 'node:buffer';
+import type { AuthorityService } from '@aalis/api-authority';
+import { type MediaScopeDeps, mediaInScope, mediaRef } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
+import type { SessionManagerService } from '@aalis/api-session-manager';
+import { isStorageUri } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import type { ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
-import { fileToDataUri } from './ffmpeg.js';
+import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
 import { getMediaRuntime } from './runtime.js';
 import { safeDownloadToTemp } from './safe-fetch.js';
 import type { MediaServiceImpl } from './service.js';
+
+/** 按受众判出来不能看时回给模型的话：先判后读，存储里有没有、是不是图片都回这一句 */
+const OUT_OF_SCOPE = '这个会话里只能看本会话收到或产生的图片';
+/** 判媒体归属与回写图片描述回看的历史条数 */
+const HISTORY_LIMIT = 200;
+/** 文件头认出的图片格式（@aalis/util-media-signature 的格式名）→ mime */
+const IMAGE_MIME: Record<string, string> = {
+  PNG: 'image/png',
+  JPEG: 'image/jpeg',
+  GIF: 'image/gif',
+  WebP: 'image/webp',
+  BMP: 'image/bmp',
+  AVIF: 'image/avif',
+  HEIC: 'image/heic',
+};
 
 /** 不参与裸路径首段路由的根类型：插件私有的内置根，agent 给的裸路径不会指向它们 */
 const PRIVATE_ROOT_KINDS: ReadonlySet<string> = new Set(['self', 'cache', 'logs', 'pluginData', 'paper', 'public']);
@@ -71,14 +92,35 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
   return [...tokens];
 }
 
-/** 工具登记用到的能力：登记门面 tools，以及 update_image_description 回写历史的 memory */
+/** 某会话最近的历史：有完整历史就取它 */
+function recentHistory(service: MemoryService, sessionId: string): Promise<Message[]> {
+  return service.getFullHistory
+    ? service.getFullHistory(sessionId, HISTORY_LIMIT)
+    : service.getHistory(sessionId, HISTORY_LIMIT);
+}
+
+/**
+ * 工具登记用到的能力：登记门面 tools；update_image_description 回写历史的 memory；判媒体归属的会话管理、权限和记忆
+ * （缺席时判据按它的约定取值）。存储取自媒体运行时
+ */
 interface ToolsCaps {
   tools: ServiceSelection<BoundTools>;
   memory: ServiceSelection<MemoryService>;
+  sessionManager: ServiceSelection<SessionManagerService>;
+  authority: ServiceSelection<AuthorityService>;
 }
 
 export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void {
-  const { tools } = caps;
+  const { tools, sessionManager, authority } = caps;
+
+  /** 判据的依赖：每次现取，服务随时可能上下线 */
+  function scopeDeps(): MediaScopeDeps {
+    return {
+      getSession: sessionManager.present ? id => sessionManager.use.getSession(id) : undefined,
+      isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
+      history: async sessionId => (caps.memory.present ? recentHistory(caps.memory.use, sessionId) : []),
+    };
+  }
 
   tools.use.register({
     definition: {
@@ -86,7 +128,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       function: {
         name: 'analyze_image',
         description:
-          '查看一张图片或动图的内容：历史消息里的 `[图片 | ref:…]` 指针、本地文件（storage URI）或网络 URL 都可以。\n' +
+          '查看一张图片或动图的内容：历史消息里的 `[图片 | ref:…]` 指针、本地文件（storage URI）或网络 URL 都可以。' +
+          '有别人在场的会话里，本地文件只能看本会话收到或产生的图片。\n' +
           '按当前配置交付：或把图片直接随结果交给你查看（此时 prompt/detail_level 不生效；若你看不到图片，请如实说明），' +
           '或返回图像识别模型的文字描述。\n' +
           '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。\n' +
@@ -106,8 +149,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
             image: {
               type: 'string',
               description:
-                '图片来源：本地路径（如 tmp/screenshots/xxx.png、data/images/onebot_xxx/xxx.jpg）、' +
-                'storage URI（如 data:/images/...、tmp:/x.png）或网络 URL。' +
+                '图片来源：本地路径（如 data/images/onebot_xxx/xxx.jpg）、' +
+                'storage URI（如 data:/images/...、tmp:/browser/...）或网络 URL。' +
                 '裸相对路径会按首段匹配 storage 根（如 data/、workspace/、tmp/），未命中时归到 workspace:/ 下。',
             },
             prompt: { type: 'string', description: '分析提示词（可选）。数学/代码/表格类务必写明具体要求。' },
@@ -149,12 +192,25 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           .filter(Boolean)
           .join('\n');
 
+        // 内嵌数据只认 data URI（`data:/…` 是存储地址）；存储里的图先判后读，整读一次、按文件头认格式与 mime
         let imageUrl: string;
-        if (imageInput.startsWith('http://') || imageInput.startsWith('https://') || imageInput.startsWith('data:')) {
+        if (
+          imageInput.startsWith('http://') ||
+          imageInput.startsWith('https://') ||
+          (imageInput.startsWith('data:') && !isStorageUri(imageInput))
+        ) {
           imageUrl = imageInput;
         } else {
-          const uri = resolveImageStorageUri(imageInput);
-          imageUrl = await fileToDataUri(uri);
+          const uri = mediaRef(resolveImageStorageUri(imageInput));
+          if (!uri || !isStorageUri(uri)) {
+            return JSON.stringify({ error: '图片来源要写历史引用、存储地址或网址，不能写本机路径' });
+          }
+          if (!(await mediaInScope(uri, callCtx, scopeDeps()))) return JSON.stringify({ error: OUT_OF_SCOPE });
+          const buf = (await getMediaRuntime().storage.readFile(uri)) as Uint8Array;
+          const format = detectMediaFormat(buf.subarray(0, MEDIA_HEAD_BYTES));
+          const mime = format && IMAGE_MIME[format.format];
+          if (!mime) return JSON.stringify({ error: '目标不是图片（文件内容不是受支持的图片格式）' });
+          imageUrl = `data:${mime};base64,${Buffer.from(buf).toString('base64')}`;
         }
 
         // 主模型自己能看且调用方接得住图（agent 工具循环）：图片随工具结果交出（规范化 +
@@ -210,7 +266,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       function: {
         name: 'update_image_description',
         description:
-          '更新历史消息中图片的描述。当你通过 analyze_image 识别了一张历史图片后，' +
+          '更新当前会话历史消息中图片的描述。当你通过 analyze_image 识别了一张历史图片后，' +
           '调用此工具将描述写回数据库，以便未来检索。',
         parameters: {
           type: 'object',
@@ -220,20 +276,16 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
               description: '图片引用路径（ref: 后面的部分），如 data/images/onebot_xxx/abc123.jpg',
             },
             description: { type: 'string', description: '图片描述文字' },
-            session_id: {
-              type: 'string',
-              description: '图片所在的会话 ID。可选；不填时使用当前会话。',
-            },
           },
           required: ['image_ref', 'description'],
+          additionalProperties: false,
         },
       },
     },
     handler: async (args, callCtx) => {
       const imageRef = normalizeImageRef(String(args.image_ref));
       const desc = String(args.description);
-      const sessionId =
-        typeof args.session_id === 'string' && args.session_id.trim() ? args.session_id.trim() : callCtx.sessionId;
+      const { sessionId } = callCtx;
 
       // 先读历史再改写：固定同一家
       const memory = caps.memory.list().find(p => p.selected)?.use;
@@ -242,16 +294,14 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       }
 
       const newText = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc, ref: imageRef });
-      const history = memory.getFullHistory
-        ? await memory.getFullHistory(sessionId, 200)
-        : await memory.getHistory(sessionId, 200);
+      const history = await recentHistory(memory, sessionId);
       const oldTexts = findImageDescriptionTokens(history, imageRef);
       if (oldTexts.length === 0) oldTexts.push(formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: imageRef }));
 
       let updated = 0;
       for (const oldText of oldTexts) {
         if (oldText === newText) continue;
-        updated += await memory.updateMessageContent(sessionId, oldText, newText, 200);
+        updated += await memory.updateMessageContent(sessionId, oldText, newText, HISTORY_LIMIT);
       }
       return updated > 0
         ? `已更新 ${updated} 条消息中的图片描述`

@@ -2,12 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
+import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 的 storage_uri 归一化——「图明明在却报找不到」回归。
@@ -17,7 +20,11 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // 漏了 toStorageUri 归一化、直接拿相对路径 stat（storage 需要 data:/images/... 带
 // 冒号的 URI），必然 stat 失败 → "存储资源不存在" → agent 6 次全挂、群里回"找不到了"，
 // 而文件其实好好在盘上。契约的 toStorageUri 本就该被复用（"勿各自重抄"）。
+//
+// 会话是群（会话表里预置收录过的房间）：只能发本会话收到或产生的媒体，先判后读。
 // ════════════════════════════════════════════════════════════
+
+const OWNER_QQ = '90001';
 
 describe('send_attachment storage_uri 归一化', () => {
   let base: string;
@@ -35,6 +42,11 @@ describe('send_attachment storage_uri 归一化', () => {
       join(base, 'state', 'images', 'onebot_x_group_1', 'abcd1234.jpg'),
       Buffer.from([0xff, 0xd8, 0xff, 0]),
     );
+    // 别的群的图与不是媒体的文件
+    mkdirSync(join(base, 'state', 'images', 'onebot_x_group_2'), { recursive: true });
+    writeFileSync(join(base, 'state', 'images', 'onebot_x_group_2', 'other.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
+    mkdirSync(join(base, 'state', 'secret'), { recursive: true });
+    writeFileSync(join(base, 'state', 'secret', 'config.yaml'), 'token: PLACEHOLDER\n');
     app = new App({ name: 'T', logLevel: 'error' });
     handlers = {};
     const host = app.bind({ provide, events });
@@ -51,6 +63,11 @@ describe('send_attachment storage_uri 归一化', () => {
       },
       registerGroup: () => () => {},
     } as never);
+    const rooms = new Map(
+      ['onebot:x:group:1', 'onebot:x:group:2'].map(id => [id, storedRoom(id) as unknown as SessionInfo]),
+    );
+    host.provide.use(sessionManager, { getSession: (id: string) => rooms.get(id) } as never);
+    host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'onebot' && u === OWNER_QQ } as never);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {});
     await app.plugins.register(imageSenderPlugin, {});
@@ -110,6 +127,36 @@ describe('send_attachment storage_uri 归一化', () => {
       ),
     );
     expect(out.error).toMatch(/存储资源不存在/);
+  });
+
+  it.each([
+    ['群友', '90002'],
+    ['owner 在群里', OWNER_QQ],
+  ])('%s：发别的群的 data:/images/… → 拒，不出站', async (_label, userId) => {
+    const outbound: unknown[] = [];
+    hostEvents.on('outbound:message', m => {
+      outbound.push(m);
+    });
+    const out = JSON.parse(
+      await handlers.send_attachment({ kind: 'image', storage_uri: 'data:/images/onebot_x_group_2/other.jpg' }, {
+        sessionId: 'onebot:x:group:1',
+        platform: 'onebot',
+        userId,
+      } as { sessionId: string }),
+    );
+    expect(out.error).toBe('这个会话里只能发本会话收到或产生的媒体');
+    expect(outbound).toHaveLength(0);
+  });
+
+  it('先判后读：本会话以外的地址，不存在的与不是媒体的回同一句', async () => {
+    const send = async (uri: string) =>
+      JSON.parse(
+        await handlers.send_attachment({ kind: 'image', storage_uri: uri }, { sessionId: 'onebot:x:group:1' }),
+      );
+    const missing = await send('data:/secret/nonexistent.png');
+    const notMedia = await send('data:/secret/config.yaml');
+    expect(missing.error).toBe('这个会话里只能发本会话收到或产生的媒体');
+    expect(notMedia).toEqual(missing);
   });
 
   it('没有适配器确认时，即使路径正确也不报告已发送', async () => {
