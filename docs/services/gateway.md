@@ -218,7 +218,7 @@ export default definePlugin({
 - **出站统一收口**：业务层**不应**再直接 `events.use.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
 - **COMMAND 相位与在途生成的 abort**：`inbound:command` 排在最前。指令意图确认的回复（发出者本人在同一会话的下一条消息）在这里命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort（`packages/plugin-commands/src/index.ts`）。若你新增相位插在 COMMAND 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / workflow）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
-- **`source` 标识系统侧注入**：闲置触发、定时任务、workflow 等触发器投递的消息必须设置 `IncomingMessage.source`；平台适配器投递真人消息**不得**设置。带 `source` 的消息被视为内部注入：不经触发策略（不计数、不改写 `triggerType`），不过回复后冷却，禁言与限速照常生效。`source` 同时用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。
+- **`source` 标识系统侧注入**：闲置触发、定时任务、workflow 等触发器投递的消息必须设置 `IncomingMessage.source`；平台适配器投递真人消息**不得**设置。带 `source` 的消息被视为内部注入：不经触发策略（不计数、不改写 `triggerType`），不过回复后冷却，不过指令解析（声明了 `ownerApproved` 的除外，见 [注入的文字不执行指令](../concepts/security-model.md#注入的文字不执行指令)），禁言与限速照常生效。`source` 同时用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。
 - gateway 自身不碰 storage / 网络出口；附件落盘、SSRF 守卫（`safeFetch`）等是适配器与 media 层的事，见 `concepts/storage-uri-grammar.md` / `concepts/security-model.md`。
 
 ## 8. 边界与注意事项
@@ -226,7 +226,6 @@ export default definePlugin({
 - **没有 core 兜底路由**：core 的 `start()` 不注册 `inbound:message` 监听，路由完全由 gateway 插件承担。不加载 gateway 时 `inbound:message` 无人消费，消息被静默丢弃，应把 gateway 视为必需件。
 - **`outbound:message` 直发仍被容忍但属旧路径**：契约注释说 emit 出站「将逐步迁移」（`packages/api-gateway/src/index.ts`）。现状是两条路并存，新代码一律走 `dispatchOutbound()`。
 - **相位顺序是单一真相，只在 gateway-api 改**：默认实现用 `INBOUND_PHASE_ORDER.filter(p => p !== DISPATCH)` 推导前置相位（`packages/plugin-gateway/src/index.ts`）。新增相位**只**改 `gateway-api` 的常量数组，调度方零改动；不要在自己插件里硬编码相位顺序。
-- **plugin-subtask 的任务消息不带 `source`**：`create_subtask` 与 `send_to_subtask` 派发给子会话（`<父会话 id>::<uuid>`）的消息不设 `source`，入站相位按真人消息处理。触发插件的作用域里会话类型段为通配（`*`、`onebot:*` 等）时，它会被计数判定吞掉，子任务不启动；flow-control 的作用域为通配时，子会话冷却期内的追问也会被吞。默认作用域 `*:group` 不受影响。
 - **`ingressMessage` 走内部路径而非再 emit**：默认实现里 `ingressMessage` 直接调 `processInbound`，刻意避免「emit → 自己监听 → 再处理」的事件总线递归歧义（`packages/plugin-gateway/src/index.ts`）。你若重写 gateway 应保持这一点。
 
 ## 9. 交叉链接

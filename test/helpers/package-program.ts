@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import ts from 'typescript';
 
 // 三道守卫（文字对象的拼接、写死的中文，语言来源）共用：packages 源码的扫描面与编译选项、内存夹具的小程序；按结构认文字对象的
-// 判法（holdsTextRef）只有两道文字守卫在用
+// 判法（holdsTextRef）只有两道文字守卫在用；扫描面另有经 owner 审批的注入方登记在用
 
 export const ROOT = join(import.meta.dirname, '../..');
 const PACKAGES = join(ROOT, 'packages');

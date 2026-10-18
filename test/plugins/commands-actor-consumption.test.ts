@@ -7,7 +7,7 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// commands 的 inbound 相位：actor 消费端 + 受信系统源判定
+// commands 的 inbound 相位：actor 消费端 + 经 owner 审批的注入
 //
 // 补的是一条**链条断在消费端**的缺口。scheduler 侧已经有测试钉住「触发时发出的
 // message.actor 是谁」（见 scheduler-actor-identity.test.ts），但没有任何测试验证
@@ -15,8 +15,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 直接用 `message.platform`，全量 1181 个用例零转红——上游把身份设对了，下游改成不看，
 // 整条权限链断掉而无人知晓。
 //
-// 同一段里的 `skipConfirm: isSystemTrigger` 也零覆盖：改成恒 true（即任何来源都免确认）
-// 同样全绿。它决定「cron 上下文免二次确认」这条豁免给不给，改错等于把豁免发给所有人。
+// 同一段里的 `skipConfirm` 也要钉：改成恒 true（即任何来源都免确认）曾经全绿。它只给声明了
+// ownerApproved 的注入（定时任务），改错等于把豁免发给所有人。
 // ════════════════════════════════════════════════════════════
 
 interface Captured {
@@ -50,13 +50,13 @@ async function runInbound(message: Record<string, unknown>): Promise<Captured> {
 }
 
 const base = { content: '/probe', sessionId: 'internal', platform: 'internal', sessionType: 'private' as const };
+const approved = { ...base, source: 'scheduler', ownerApproved: true };
 
-describe('commands 消费 message.actor 与受信系统源', () => {
+describe('commands 消费 message.actor 与 ownerApproved', () => {
   it('带 actor 时按 actor 的身份裁决（不是消息原始身份）', async () => {
     const { input } = await runInbound({
-      ...base,
+      ...approved,
       userId: 'anonymous-inbound',
-      source: 'scheduler',
       actor: { platform: 'onebot', userId: '10001' },
     });
     expect(input, '中间件没跑到 execute，本用例没测到东西').toBeDefined();
@@ -71,36 +71,13 @@ describe('commands 消费 message.actor 与受信系统源', () => {
     expect({ platform: input?.platform, userId: input?.userId }).toEqual({ platform: 'onebot', userId: 'alice' });
   });
 
-  it('受信系统源（scheduler）才给 skipConfirm', async () => {
-    const { input } = await runInbound({ ...base, userId: 'u', source: 'scheduler' });
-    expect(input?.skipConfirm, 'cron 上下文无人可点确认框，受信源必须免确认').toBe(true);
+  it('声明了 ownerApproved 的注入才给 skipConfirm', async () => {
+    const { input } = await runInbound({ ...approved, userId: 'u' });
+    expect(input?.skipConfirm, 'cron 上下文无人可点确认框，经 owner 审批的注入必须免确认').toBe(true);
   });
 
   it('普通消息不得拿到 skipConfirm（否则豁免发给了所有人）', async () => {
     const { input } = await runInbound({ ...base, platform: 'onebot', userId: 'alice' });
     expect(input?.skipConfirm, 'skipConfirm 泄漏给普通用户——受限操作的二次确认形同虚设').toBeFalsy();
-  });
-
-  it('伪造的 source 不在白名单内则不给 skipConfirm', async () => {
-    const { input } = await runInbound({ ...base, userId: 'u', source: 'not-a-trusted-source' });
-    expect(input?.skipConfirm).toBeFalsy();
-  });
-
-  it('workflow 派发不受信（2026-08-28 审计：workflow_define/run 仅 L1，受信会绕过 confirm 闸）', async () => {
-    // workflow send-message 节点可向任意会话投递 /clear 这类 1 级+confirm 命令；
-    // define/run 只 sensitive(L1)、零确认，故 workflow 派发**不给** skipConfirm，
-    // 带 source 的注入问不到发出者，需要确认的指令直接拒（fail-closed）。
-    const { input } = await runInbound({ ...base, userId: 'u', source: 'workflow:wf1:node2' });
-    expect(input?.skipConfirm, 'workflow 不该受信——否则 L1 绕过 confirm 向任意会话投命令').toBeFalsy();
-  });
-
-  it("'system' 死项已删——不受信（全仓无入站生产者，仅出站消息用该值）", async () => {
-    const { input } = await runInbound({ ...base, userId: 'u', source: 'system' });
-    expect(input?.skipConfirm).toBeFalsy();
-  });
-
-  it('唯一受信源是 scheduler（它建任务的入口 dangerous+always-confirm，特权与成本相称）', async () => {
-    const { input } = await runInbound({ ...base, userId: 'u', source: 'scheduler' });
-    expect(input?.skipConfirm).toBe(true);
   });
 });

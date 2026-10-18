@@ -62,9 +62,9 @@ export default definePlugin({
 | 类型 | 关键字段 | 说明 |
 |---|---|---|
 | `tool` | `tool`, `args` | 调用一个已注册工具；`args` 支持插值 |
-| `send-message` | `sessionId`, `content`, `platform?` | 向会话投递 `inbound:message`（fire-and-forget，不等回复）；`platform` 默认 `internal` |
+| `send-message` | `sessionId`, `content`, `platform?` | 向会话投递 `inbound:message`（fire-and-forget，不等回复）；`platform` 默认 `internal`。正文写成指令的也不执行，当普通消息交给她 |
 | `wait` | `seconds` | 等待固定秒数 |
-| `agent` | `instruction`, `sessionId?`, `platform?`, `timeoutSeconds?` | 把指令派发给 agent **并等待本轮回复**；回复文本作节点结果；`platform` 默认 `workflow` |
+| `agent` | `instruction`, `sessionId?`, `platform?`, `timeoutSeconds?` | 把指令派发给 agent **并等待本轮回复**；回复文本作节点结果；`platform` 默认 `workflow`。`instruction` 写成指令系统的指令也不执行，交给 agent |
 
 `args`（递归处理其中的字符串）、`content`、`instruction`、`sessionId`、`platform` 支持 `{{vars.X}}`（运行变量）与 `{{outputs.Y}}`（上游节点输出）插值；`tool`（工具名）、`id`、`out`、`deps` 不插值。
 

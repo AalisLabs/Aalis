@@ -226,27 +226,13 @@ function registerCommands({
   // 所有平台共享同一套命令解析路径。
   // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 trigger / flow 之前。
   //
-  // 受信任系统源：scheduler 等内部触发器写入 message.source。
-  // 这些来源的权限身份来自创建时固化的 message.actor（scheduler 在 setJob / addJob /
-  // 静态配置载入这三条建任务路径上各自 snapshot 创建者身份），守卫按 actor 的真实等级
-  // 评估——与普通用户走同一闸门，不存在 bypassGuard 式的全绕过。
-  // **actor 缺省即匿名**：创建者匿名时不得回填 owner，否则受信来源就成了提权通道
-  // （在触发路径把空 actor 补成 `webui:console` 之类，等于开了一条 owner 快速通道）。
-  // skipConfirm 仍然需要：cron 上下文里没人可问（authorize 仍生效，always 档照常要确认、无从确认即拒）。
-  // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
-  // 因此结果不走 outbound 而是写日志，避免发到虚空。
-  // 受信系统源 = 免确认（skipConfirm）+ 结果写日志而非回发。仅 scheduler：
-  // 它建任务的入口是 dangerous + confirm:'always'（L2 且每次 owner 批准），拿到受信特权
-  // 的成本与特权本身相称。
-  // 刻意排除的两项：
-  //   'system' —— 只出现在出站消息，无入站生产者，纯死值，删。
-  //   'workflow:*' —— 曾想按前缀纳入，但 workflow_define/workflow_run 只是 sensitive(L1)、
-  //     零确认，一旦受信，L1 就能定义 send-message 节点向任意会话静默投递 /clear 这类
-  //     1 级 + confirm:'session' 命令、且无回显——confirm 闸（防注入误清）被绕过。
-  //     故 workflow 派发**不受信**：带 source 的注入问不到发出者，需要确认的指令直接拒（fail-closed）。
-  //     要让 workflow 自动化免确认，须先把 define/run 抬到与 scheduler 相称的档位，那是单独的决定。
-  const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
-  const isTrustedSystemSource = (source: string | undefined): boolean => !!source && TRUSTED_SOURCE_EXACT.has(source);
+  // 只有人亲手写的文字才执行指令。真人入站（平台适配器、WebUI、终端）不带 source，照常解析；带 source 的注入不论
+  // source 叫什么，都不过指令解析、当普通消息往下走，只有声明了 ownerApproved 的照常解析：文字在建立时经 owner 过目过原文。
+  // 带声明的注入：
+  // - 权限身份取创建时固化的 message.actor，守卫按它的真实等级评估，与普通用户走同一闸门。**actor 缺省即匿名**：
+  //   创建者匿名时不得回填 owner（在触发路径把空 actor 补成 `webui:console` 之类，等于开了一条 owner 快速通道）；
+  // - 没人可问，免 session 档的确认（skipConfirm；authorize 仍生效，always 档照常要确认、无从确认即拒）；
+  // - 通常指向没有适配器接收的 internal 虚拟会话，结果写日志而不回发，避免发到虚空。
 
   /**
    * 回到消息所在的会话。文字对象交给网关按这个会话的语言渲染，content 写原文。required 依赖在调度收敛前可能短暂缺席，
@@ -298,13 +284,14 @@ function registerCommands({
 
   hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
-    const settle = message.source === undefined ? intents.get(intentKey(message)) : undefined;
+    const injected = message.source !== undefined;
+    const settle = injected ? undefined : intents.get(intentKey(message));
     if (settle) {
       settle(YES.test(message.content ?? ''));
       return;
     }
-    // 内部触发（idle-trigger 等无 userId）不参与命令解析
-    if (!message.content) return next();
+    // 带 source 又没声明 ownerApproved 的注入不是人亲手写的，与没有文字的消息一样不参与命令解析
+    if (!message.content || (injected && !message.ownerApproved)) return next();
 
     const parsed = registry.parseCommand(message.content);
     if (!parsed) return next();
@@ -312,8 +299,6 @@ function registerCommands({
     // 解析到 "<prefix>foo" 但没有任何插件注册过该指令 → 当作普通消息处理
     // （归档、trigger、agent 等下游相位继续工作），避免对错字/打字噪音回显"未知指令"。
     if (!registry.hasMatch(parsed.name, parsed.args)) return next();
-
-    const isSystemTrigger = isTrustedSystemSource(message.source);
 
     try {
       // 优先用 actor（系统触发器注入的代理身份），fallback 到消息原始身份。
@@ -325,15 +310,13 @@ function registerCommands({
         sessionType: message.sessionType,
         args: parsed.args,
         raw: parsed.raw,
-        skipConfirm: isSystemTrigger,
+        // 走到这里的注入都声明了 ownerApproved
+        skipConfirm: injected,
         // 人亲手输入的消息才问得到发出者
-        confirmIntent:
-          message.source === undefined && message.userId !== undefined ? askIntent(message, parsed.raw) : undefined,
+        confirmIntent: !injected && message.userId !== undefined ? askIntent(message, parsed.raw) : undefined,
       });
       if (result) {
-        if (isSystemTrigger) {
-          // 系统触发器（scheduler）的 sessionId 通常是 internal 虚拟 session，
-          // 走 outbound 也无人接收；直接写日志便于排查。
+        if (injected) {
           const text = toSource(result);
           const preview = text.length > 500 ? `${text.slice(0, 500)}…` : text;
           logger.use.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);

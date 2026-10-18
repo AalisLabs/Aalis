@@ -199,9 +199,15 @@ export interface IncomingMessage {
   /**
    * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'）。
    * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
-   * 不过回复后冷却（禁言与限速照常生效）。同时用于并发隔离：同一 session 不同来源互不打断。
+   * 不过回复后冷却（禁言与限速照常生效），也不过指令解析（声明了 {@link IncomingMessage.ownerApproved} 的除外）。
+   * 同时用于并发隔离：同一 session 不同来源互不打断。
    */
   source?: string;
+  /**
+   * 注入方的声明：这段文字在建立时经 owner 过目过原文（owner 自己写下，或每次由 owner 审批），算作 owner 亲手写的。
+   * 注入方必须同时设 source；只给经 owner 过目原文的文字设，第一方的设置方在仓内守卫里登记
+   */
+  ownerApproved?: boolean;
   /** 群名称（仅群聊时可用） */
   groupName?: string;
   /** 多方聊天窗口的 id，由适配器填（如 OneBot 的群号，频道为 `<guild>:<channel>`） */

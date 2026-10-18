@@ -72,9 +72,9 @@ export type TriggerSpec =
 节点（`packages/api-workflow/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
 
 - `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值。
-- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息。
+- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息。消息带 `source`，正文写成指令的也不执行，当普通消息交给她（见 [security-model](../concepts/security-model.md#注入的文字不执行指令)）。
 - `wait`：`{ seconds: number }`——等待 N 秒。
-- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（详见 §6）。
+- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（详见 §6）。`instruction` 同样不当指令系统的指令执行。
 
 ### 运行实例
 

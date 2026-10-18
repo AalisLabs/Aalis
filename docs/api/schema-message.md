@@ -22,7 +22,8 @@ interface IncomingMessage {
   attachmentOrder?: Array<'image' | 'file'>;
   sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一；不带时平台声明了多方类型的按多方，否则按 private、一对一
   selfId?: string;                     // 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id）
-  source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却），并用于并发隔离
+  source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却、不过指令解析），并用于并发隔离
+  ownerApproved?: boolean;             // 注入方声明：文字建立时经 owner 过目过原文，带 source 的注入只有它过指令解析，见下文
   groupName?: string;
   groupId?: string;
   replyTo?: { messageId; content?; userId?; nickname? };
@@ -55,6 +56,10 @@ interface IncomingMessage {
 | `proactive` | 系统代发给 agent 的任务指令，如 workflow 的 agent 节点；content 是任务描述而非用户消息 |
 
 真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的作用域外（或没装触发插件时）会原样生效。
+
+### 经 owner 过目的注入（ownerApproved）
+
+`ownerApproved` 是注入方的声明：这段文字在建立时经 owner 过目过原文（owner 自己写下，或每次由 owner 审批）。注入方必须同时设 `source`，只给经 owner 过目原文的文字设。带 `source` 的注入里只有带这个声明的才当指令解析，判据与插件作者的写法见 [security-model](../concepts/security-model.md#注入的文字不执行指令)。
 
 ### 宿主通知（hostNotice）
 

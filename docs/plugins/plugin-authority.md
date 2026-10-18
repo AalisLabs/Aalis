@@ -64,7 +64,7 @@ export default definePlugin({
 授权已过（owner 或等级够）但操作声明了 `confirm`（经 `confirmOverrides` 覆盖后）时，仍要有人确认。守卫的判定顺序：
 
 1. **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认。`confirm: 'always'` 什么都免不掉（cron 等无人可问的上下文即拒）。
-2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（编排投递等带 `source` 的注入）无从确认，直接拒。不走 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。
+2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（适配器没给发出者的消息）无从确认，直接拒。不走 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。
 3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。
 
 等级不够或命中硬禁即拒，没有别的放行口：发起者本人不能靠确认给自己提权，白名单也不放宽授权。

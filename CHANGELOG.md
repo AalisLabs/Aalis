@@ -30,6 +30,13 @@
   - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史条数（含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史条数。类型不变。
   - plugin-memory-summary：插件配置 `summaryTokenRatio` 删除，换成 `summaryBudgetRatio`（见上文「摘要预算」）。配置里留着 `summaryTokenRatio` 时，runtime 在启动与热重载时按 schema 裁掉并写回配置文件，记一条 warn。
 
+### 注入的文字不再执行指令（@aalis/schema-message、@aalis/plugin-commands、@aalis/plugin-scheduler）
+
+- 只有人亲手写的文字才执行指令：带 `source` 的入站注入里的指令不再执行，正文当普通消息交给她。编排里用发消息节点（或 agent 节点）发的指令不再生效；子任务的任务正文与 `send_to_subtask` 的追问、宿主通知、空闲触发里的指令同样不执行。此前注入的文字照常解析指令，不需要确认的指令（如 `/shutdown`、`/status`）按注入带的 `actor` 执行。
+- `IncomingMessage` 加 `ownerApproved`（注入方声明文字建立时经 owner 过目过原文），plugin-commands 只解析不带 `source` 的真人入站与带这个声明的注入；`source` 写成 `scheduler` 而不声明的注入不再执行指令。plugin-scheduler 触发的消息带声明，定时任务里的指令照旧执行。
+
+**迁移**：编排要到点执行指令，改用定时任务（配置里的 `jobs`、计划任务页，或经 `scheduler_create_job`）。第三方插件注入的文字里的指令不再执行，没有替代写法：注入的文字不算人写的，不要给没经 owner 过目原文的文字设 `ownerApproved`。
+
 ### /clear 的门槛改为等级 1（@aalis/plugin-commands）
 
 - `/clear` 声明 `risk: 'sensitive'`，需要等级 1，群聊私聊一样；确认照旧（`confirm: 'session'`）。此前不声明 risk，私聊里 0 级也能清自己的会话，群聊等共享会话在指令里另判、要求等级 2 或 owner。这道另判与它的拒绝语「清空共享会话需要等级 …」删除：等级不够时回通用的等级拒绝，不再先问确认；1 级在群里能清群的共享会话。权限页 `command:clear` 显示的门槛就是生效的门槛。

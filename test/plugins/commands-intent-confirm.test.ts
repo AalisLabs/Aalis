@@ -149,22 +149,6 @@ describe('人亲手输入的指令：向发出者本人确认意图', () => {
     expect(s.runs()).toBe(0);
   });
 
-  it('带 source 注入的指令需要确认：无从确认，直接拒，不发提示', async () => {
-    const s = await setup();
-    await s.say({ content: '/probe', source: 'workflow:wf:n1', userId: undefined });
-    await vi.waitFor(() => expect(s.to(DM)).toHaveLength(1));
-    expect(s.to(DM)[0]).toContain('需要发出者本人确认');
-    expect(s.runs()).toBe(0);
-  });
-
-  it('带 source 也带 userId 的注入（子任务的派发与追问）里的指令需要确认：不问，直接拒', async () => {
-    const s = await setup();
-    await s.say({ content: '/probe', source: 'subtask', userId: `parent:${DM}` });
-    await vi.waitFor(() => expect(s.to(DM)).toHaveLength(1));
-    expect(s.to(DM)[0]).toContain('需要发出者本人确认');
-    expect(s.runs()).toBe(0);
-  });
-
   it('不知道发出者是谁（适配器没给 userId）：问不到本人，直接拒，不发提示', async () => {
     const s = await setup();
     await s.say({ content: '/probe', userId: undefined });
@@ -186,6 +170,7 @@ describe('没人可问的受信来源：skipConfirm 照旧', () => {
     sessionId: 'internal',
     platform: 'internal',
     source: 'scheduler',
+    ownerApproved: true,
     userId: undefined,
     sessionType: undefined,
     actor: { platform: 'webui', userId: 'console' },
@@ -206,6 +191,18 @@ describe('没人可问的受信来源：skipConfirm 照旧', () => {
     });
     await s.say(scheduled);
     await vi.waitFor(() => expect(done).toHaveBeenCalled());
+    expect(s.runs()).toBe(0);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('带声明又带 userId 的注入：always 档也不问会话里的人，拒绝', async () => {
+    const s = await setup({ confirm: 'always' });
+    const done = vi.fn();
+    s.host.events.use.on('gateway:phase:done', ({ phase }) => {
+      if (phase === 'inbound:command') done();
+    });
+    await s.say({ ...scheduled, userId: MEMBER.userId });
+    await vi.waitFor(() => expect(done, '在问会话里的人：注入的文字不能由他当面确认通过').toHaveBeenCalled());
     expect(s.runs()).toBe(0);
     expect(s.sent).toEqual([]);
   });
