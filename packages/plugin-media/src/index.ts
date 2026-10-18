@@ -14,6 +14,7 @@
 
 import { agent } from '@aalis/api-agent';
 import { asr } from '@aalis/api-asr';
+import { authority } from '@aalis/api-authority';
 import { doctor } from '@aalis/api-doctor';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
@@ -295,6 +296,7 @@ const uses = {
   tools: optional(tools),
   memory: optional(memory),
   sessionManager: optional(sessionManager),
+  authority: optional(authority),
   doctor: optional(doctor),
 };
 type Caps = BoundOf<typeof uses>;

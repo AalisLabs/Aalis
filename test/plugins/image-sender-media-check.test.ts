@@ -2,23 +2,31 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
-import type { Message, OutboundDeliveryResult } from '../../packages/schema-message/src/index.js';
+import {
+  type Message,
+  type OutboundDeliveryResult,
+  WellKnownMetadataKeys,
+} from '../../packages/schema-message/src/index.js';
 import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 发送存储库内的文件前按文件头核对格式。
 //
 // 此前 storage_uri / history_ref 只 stat 就转成本地路径发出，onebot 把文件按 base64
 // 内联当图片发送、不看内容：群里任何人都能让模型把存储根里的配置、令牌、记忆库、
-// 日志当图片外发。现在读文件头，按 kind 的白名单认格式，不符拒发。
+// 日志当图片外发。现在读文件头，按 kind 的白名单认格式，不符拒发。文件头的用例以 owner 在自己的会话里调用
+// （地址不限，只看文件头）；history_ref 按真实落库的形状、只在调用所在会话的历史里按全等找。
 // 全部用本地假文件（内容为占位符），不碰真实配置、不连 NapCat、不发网络请求。
 // ════════════════════════════════════════════════════════════
 
@@ -127,10 +135,19 @@ describe('checkMediaHead：按 kind 的白名单认格式', () => {
   });
 });
 
-type ToolHandler = (args: Record<string, unknown>, ctx: { sessionId: string }) => Promise<string>;
+type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
 
-/** 起一个 App：宿主侧 tools 替身收集 handler，memory 替身交出给定历史。 */
-function startApp(history: Message[]) {
+/** owner 在 WebUI 的会话（受众只有 owner）与一个群（预置收录过的房间） */
+const OWNER_SESSION = 'webui-owner-1';
+const ROOM = 'onebot:x:group:1';
+const OWNER_CALL: ToolCallContext = { sessionId: OWNER_SESSION, platform: 'webui', userId: 'console' };
+const ROOM_CALL: ToolCallContext = { sessionId: ROOM, platform: 'onebot', userId: '90002' };
+
+/**
+ * 起一个 App：宿主侧 tools 替身收集 handler，memory 替身按会话交出给定历史，会话表里有 OWNER_SESSION 与 ROOM，
+ * owner 是 webui:console
+ */
+function startApp(histories: Record<string, Message[]>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const handlers: Record<string, ToolHandler> = {};
   const host = app.bind({ provide, events });
@@ -141,20 +158,36 @@ function startApp(history: Message[]) {
     },
     registerGroup: () => () => {},
   } as never);
-  host.provide.use(memory, { getHistory: async () => history } as never);
+  host.provide.use(memory, { getHistory: async (sessionId: string) => histories[sessionId] ?? [] } as never);
+  const ownerSession: SessionInfo = {
+    id: OWNER_SESSION,
+    children: [],
+    status: 'waiting',
+    config: {},
+    createdAt: 0,
+    updatedAt: 0,
+    kind: 'room',
+    createdFrom: 'webui',
+  };
+  const sessions = new Map([
+    [OWNER_SESSION, ownerSession],
+    [ROOM, storedRoom(ROOM) as unknown as SessionInfo],
+  ]);
+  host.provide.use(sessionManager, { getSession: (id: string) => sessions.get(id) } as never);
+  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
   return { app, host, handlers };
 }
 
 describe('send_attachment 发送存储库内的文件前核对文件头', () => {
-  const session = 'onebot:x:group:1';
   let base: string;
   let app: App;
   let handlers: Record<string, ToolHandler>;
   let outbound: Array<{ attachments?: Array<{ kind: string; data: string }> }>;
   let deliveryResult: OutboundDeliveryResult | null;
 
-  const send = async (args: Record<string, unknown>) =>
-    JSON.parse(await handlers.send_attachment(args, { sessionId: session }));
+  /** 默认以 owner 在自己的会话里调用：不限地址，只看文件头 */
+  const send = async (args: Record<string, unknown>, call = OWNER_CALL) =>
+    JSON.parse(await handlers.send_attachment(args, call));
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-sig-'));
@@ -163,44 +196,36 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     mkdirSync(join(dataDir, 'images', 's'), { recursive: true });
     mkdirSync(join(dataDir, 'secret'), { recursive: true });
     writeFileSync(join(dataDir, 'images', 's', 'cat.png'), HEADS[0][2]);
+    writeFileSync(join(dataDir, 'images', 's', 'other.png'), HEADS[0][2]);
     writeFileSync(join(dataDir, 'images', 's', 'song.mp3'), bytes('ID3', [4, 0, 0, 0, 0, 0, 0]));
     writeFileSync(join(dataDir, 'secret', 'config.yaml'), FAKE_YAML);
     writeFileSync(join(dataDir, 'secret', 'token.txt'), FAKE_TOKEN);
     writeFileSync(join(dataDir, 'secret', 'memory.db'), FAKE_SQLITE);
 
+    // 真实落库的形状：入站附件的地址在 metadata 的附件清单里，她发出的附件在 SentRef 里；正文只是给模型看的占位符
     const history: Message[] = [
       {
         role: 'user',
         content: '[图片 | ref:data/images/s/cat.png]',
         timestamp: 1,
-        attachments: [{ kind: 'image', data: 'data/images/s/cat.png' }],
-      } as Message,
+        metadata: { [WellKnownMetadataKeys.Attachments]: [{ kind: 'image', ref: 'data:/images/s/cat.png' }] },
+      },
       {
         role: 'user',
-        content: '[文件]',
+        content: '[文件: config.yaml | ref:data:/secret/config.yaml]',
         timestamp: 2,
-        attachments: [{ kind: 'file', data: `file://${join(dataDir, 'secret', 'config.yaml')}` }],
-      } as Message,
+        metadata: {
+          [WellKnownMetadataKeys.Attachments]: [{ kind: 'file', name: 'config.yaml', ref: 'data:/secret/config.yaml' }],
+        },
+      },
       {
         role: 'assistant',
-        content: '[图片 | ref:https://example.invalid/pics/dog.png]',
+        content: '[音频 | ref:data/images/s/song.mp3]',
         timestamp: 3,
-        attachments: [{ kind: 'image', data: 'https://example.invalid/pics/dog.png' }],
-      } as Message,
-      // 入站落盘失败时 onebot 退回平台给的本机路径；首段 data 与存储根同名，Windows 路径带盘符，另有家目录简写
-      {
-        role: 'user',
-        content: '[语音]',
-        timestamp: 4,
-        attachments: [
-          { kind: 'audio', data: '/data/images/s/song.mp3' },
-          { kind: 'audio', data: '/root/.config/QQ/Ptt/abc.amr' },
-          { kind: 'audio', data: 'C:\\Users\\napcat\\Ptt\\def.amr' },
-          { kind: 'audio', data: '~/Ptt/ghi.amr' },
-        ],
-      } as Message,
+        metadata: { [WellKnownMetadataKeys.SentRef]: 'data/images/s/song.mp3' },
+      },
     ];
-    const started = startApp(history);
+    const started = startApp({ [OWNER_SESSION]: history, [ROOM]: history });
     app = started.app;
     handlers = started.handlers;
     outbound = [];
@@ -250,6 +275,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   it.each([
     '/data/images/s/cat.png',
     'C:\\pics\\cat.png',
+    'C:/pics/cat.png',
     '~/pics/cat.png',
   ])('storage_uri 写成本机路径 %s → 拒发，说明要写存储地址', async uri => {
     const out = await send({ kind: 'image', storage_uri: uri });
@@ -266,60 +292,53 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     );
   });
 
-  it('history_ref 直接写存储库内的非媒体文件 → 拒发', async () => {
-    const out = await send({ kind: 'image', history_ref: 'ref:data/secret/config.yaml' });
+  it.each([
+    ['owner 在自己的会话里', OWNER_CALL],
+    ['群友在群里', ROOM_CALL],
+  ])('history_ref 按真实落库的形状找到并发出（%s）：入站附件清单与发出的附件都算', async (_label, call) => {
+    const image = await send({ kind: 'image', history_ref: 'ref:data/images/s/cat.png' }, call);
+    expect(image).toEqual({ ok: true, sent: { kind: 'image', via: 'history_ref', ref: 'data/images/s/cat.png' } });
+    const audio = await send({ kind: 'audio', history_ref: 'data:/images/s/song.mp3' }, call);
+    expect(audio.ok).toBe(true);
+    expect(outbound.map(m => m.attachments?.[0].data)).toEqual(['data:/images/s/cat.png', 'data:/images/s/song.mp3']);
+  });
+
+  it.each([
+    ['owner 在自己的会话里', OWNER_CALL],
+    ['群友在群里', ROOM_CALL],
+  ])('history_ref 指向存在、但不在本会话历史里的文件 → 拒（%s）', async (_label, call) => {
+    const out = await send({ kind: 'image', history_ref: 'data/images/s/other.png' }, call);
+    expect(out.error).toBe('未在本会话历史中找到引用: data/images/s/other.png');
+    const elsewhere = await send({ kind: 'image', history_ref: 'data/images/s/cat.png' }, { ...call, sessionId: 'zz' });
+    expect(elsewhere.error).toBe('未在本会话历史中找到引用: data/images/s/cat.png');
+    expect(outbound).toHaveLength(0);
+  });
+
+  it('history_ref 找到的是存储库内的非媒体文件 → 按文件头拒发', async () => {
+    const out = await send({ kind: 'image', history_ref: 'ref:data:/secret/config.yaml' });
     expect(out.error).toMatch(/^文件不是受支持的图片格式/);
     expect(outbound).toHaveLength(0);
   });
 
-  it('history_ref 子串命中历史里的合法图片 → 照常发出', async () => {
-    const out = await send({ kind: 'image', history_ref: 'cat.png' });
-    expect(out.ok).toBe(true);
-    expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
-      'data:/images/s/cat.png',
-    );
-  });
-
-  it('history_ref 命中历史里存储库外的 file:// 来源 → 拒发（读不了文件头）', async () => {
-    const out = await send({ kind: 'image', history_ref: 'secret/config.yaml' });
-    expect(out.error).toBe('引用 secret/config.yaml 的来源不在存储库内，无法核对格式，不能发送');
-    expect(outbound).toHaveLength(0);
-  });
-
-  // 宿主机绝对路径不能按首段当根名转成 storage URI：否则 /data/… 会被换成存储根 data 下同一相对路径的文件发出，
-  // /root/… 报「未知存储根」
-  it.each([
-    ['首段与存储根同名', 'song.mp3'],
-    ['首段不是存储根', 'abc.amr'],
-    ['Windows 盘符路径', 'def.amr'],
-    ['家目录简写', 'ghi.amr'],
-  ])('history_ref 命中历史里的本机路径（%s）→ 按库外来源拒发', async (_label, ref) => {
-    const out = await send({ kind: 'audio', history_ref: ref });
-    expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
-    expect(outbound).toHaveLength(0);
-  });
-
-  // 本机路径不是存储地址：不当 storage URI 去查，照样在历史里找，找到后按库外来源拒发
+  // 历史引用只记网址与存储地址：本机路径、file:// 与只写文件名的都找不到
   it.each([
     '/root/.config/QQ/Ptt/abc.amr',
     'C:\\Users\\napcat\\Ptt\\def.amr',
     '~/Ptt/ghi.amr',
-  ])('history_ref 直接写本机路径 %s → 按库外来源拒发', async ref => {
+    'file:///data/secret/config.yaml',
+    'cat.png',
+  ])('history_ref 写 %s → 按找不到拒', async ref => {
     const out = await send({ kind: 'audio', history_ref: ref });
-    expect(out.error).toBe(`引用 ${ref} 的来源不在存储库内，无法核对格式，不能发送`);
+    expect(out.error).toBe(`未在本会话历史中找到引用: ${ref}`);
     expect(outbound).toHaveLength(0);
   });
 
-  it.each([
-    ['子串命中历史里的 http 附件', 'dog.png', 'https://example.invalid/pics/dog.png'],
-    ['直接写 URL', 'ref:https://example.invalid/pics/cat.png', 'https://example.invalid/pics/cat.png'],
-  ])('history_ref 解析到 http(s)（%s）→ 照 url 发出', async (_label, ref, url) => {
-    const out = await send({ kind: 'image', history_ref: ref });
+  it('history_ref 直接写网址 → 照 url 发出', async () => {
+    const out = await send({ kind: 'image', history_ref: 'ref:https://example.invalid/pics/cat.png' });
     expect(out.ok).toBe(true);
     expect(out.sent.via).toBe('history_ref');
     expect(outbound).toHaveLength(1);
-    expect(outbound[0].attachments?.[0].data).toBe(url);
+    expect(outbound[0].attachments?.[0].data).toBe('https://example.invalid/pics/cat.png');
   });
 
   it('url 来源不读文件、照旧直发', async () => {
@@ -359,7 +378,7 @@ describe('send_attachment 只读文件头，不整份载入', () => {
   });
 
   it('按字节区间读前 4 KiB，不调 readFile', async () => {
-    const started = startApp([]);
+    const started = startApp({});
     app = started.app;
     const reads: Array<[string, number, number]> = [];
     const big = new Uint8Array(8 * 1024 * 1024);
@@ -385,7 +404,7 @@ describe('send_attachment 只读文件头，不整份载入', () => {
     await app.plugins.idle();
 
     const out = JSON.parse(
-      await started.handlers.send_attachment({ kind: 'image', storage_uri: 'data:/big.png' }, { sessionId: 's' }),
+      await started.handlers.send_attachment({ kind: 'image', storage_uri: 'data:/big.png' }, OWNER_CALL),
     );
     expect(out.ok).toBe(true);
     expect(reads).toEqual([['data:/big.png', 0, 4096]]);

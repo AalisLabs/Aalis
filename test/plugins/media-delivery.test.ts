@@ -4,17 +4,20 @@ import { join } from 'node:path';
 import type { Logger, ServiceView } from '@aalis/core';
 import { App, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
+import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
-import { memory } from '../../packages/api-memory/src/index.js';
-import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import type { SessionInfo, SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import { storedRoom } from '../fixtures/rooms.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
@@ -183,7 +186,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     await app.plugins.idle();
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
     const calls = withFakeVision(svc);
-    registerMediaTools(host, svc);
+    registerMediaTools({ ...host, sessionManager: ref(), authority: ref() }, svc);
     const registry = host.services.use.get(tools);
     if (!registry) throw new Error('tools 服务未注册');
     const result = await registry.execute(
@@ -277,5 +280,134 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls[0].sessionId).toBe('s');
     expect(result.images).toBeUndefined();
     expect(JSON.parse(result.content).description).toBe('一只猫');
+  });
+});
+
+/** 一张最小的 PNG 与几样不是图片的内容（占位符） */
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+const YAML = new TextEncoder().encode('token: PLACEHOLDER\n');
+const MP3 = Uint8Array.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+const GROUP = 'onebot:10000:group:20001';
+const GROUP_DIR = 'onebot_10000_group_20001';
+
+describe('analyze_image：存储里的图按受众判、读一次、核文件头', () => {
+  async function analyze(
+    files: Record<string, Uint8Array>,
+    image: string,
+    opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallContext; sessions?: SessionInfo[] },
+  ) {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    const host = app.bind({ services, tools, memory });
+    await app.plugin(toolsPlugin);
+    await app.plugins.idle();
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ delivery: opts.delivery }));
+    const calls = withFakeVision(svc);
+    const reads: string[] = [];
+    const storageStub = {
+      listRoots: () => [{ name: 'data', kind: 'data' }],
+      readFile: async (uri: string) => {
+        reads.push(uri);
+        const data = files[uri];
+        if (!data) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
+        return data;
+      },
+      readFileRange: async () => {
+        throw new Error('只整读一次，不另读文件头');
+      },
+    } as unknown as StorageService;
+    // 读存储与裸相对路径按存储根路由，都取自媒体运行时
+    setMediaRuntime({ proc: {} as never, storage: storageStub });
+    const sessions = new Map((opts.sessions ?? []).map(info => [info.id, info]));
+    registerMediaTools(
+      {
+        ...host,
+        sessionManager: fixedRef({ getSession: (id: string) => sessions.get(id) } as unknown as SessionManagerService),
+        authority: fixedRef({ isOwner: () => false } as unknown as AuthorityService),
+      },
+      svc,
+    );
+    const registry = host.services.use.get(tools);
+    if (!registry) throw new Error('tools 服务未注册');
+    const result = await registry.execute(
+      'analyze_image',
+      { image },
+      opts.call ?? { sessionId: 's', platform: 'test', acceptsImages: true },
+    );
+    await app.stop();
+    return { result, calls, reads };
+  }
+
+  it('直通 + data:/images/… 存储地址：按存储读取交出图片，只读一次', async () => {
+    const { result, calls, reads } = await analyze({ 'data:/images/s/cat.png': PNG }, 'data:/images/s/cat.png', {
+      delivery: 'passthrough',
+    });
+    expect(JSON.parse(result.content).error).toBeUndefined();
+    expect(result.images).toEqual([`data:image/png;base64,${Buffer.from(PNG).toString('base64')}`]);
+    expect(calls).toHaveLength(0);
+    expect(reads).toEqual(['data:/images/s/cat.png']);
+  });
+
+  it.each([
+    ['文本', YAML],
+    ['音频', MP3],
+  ])('扩展名是 .png、内容是%s：用本工具的话拒，不交给识别模型', async (_label, content) => {
+    const { result, calls } = await analyze({ 'data:/images/s/fake.png': content }, 'data/images/s/fake.png', {
+      delivery: 'describe',
+    });
+    expect(JSON.parse(result.content).error).toBe('目标不是图片（文件内容不是受支持的图片格式）');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('房间里看别的会话的图：拒，不读文件', async () => {
+    const { result, calls, reads } = await analyze(
+      { 'data:/images/onebot_10000_group_20002/x.png': PNG, [`data:/images/${GROUP_DIR}/y.png`]: PNG },
+      'data:/images/onebot_10000_group_20002/x.png',
+      {
+        delivery: 'describe',
+        call: { sessionId: GROUP, platform: 'onebot', userId: '90002' },
+        sessions: [storedRoom(GROUP) as unknown as SessionInfo],
+      },
+    );
+    expect(JSON.parse(result.content).error).toBe('这个会话里只能看本会话收到或产生的图片');
+    expect(calls).toHaveLength(0);
+    expect(reads).toEqual([]);
+  });
+});
+
+describe('update_image_description：只改调用所在会话', () => {
+  it('传 session_id 被参数校验拒；不传时改调用所在会话', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    const updates: Array<[string, string, string]> = [];
+    const history: Message[] = [{ role: 'user', content: '[图片 | ref:data/images/s/a.png]', timestamp: 1 }];
+    const memoryStub = {
+      getHistory: async () => history,
+      updateMessageContent: async (sessionId: string, oldText: string, newText: string) => {
+        updates.push([sessionId, oldText, newText]);
+        return 1;
+      },
+    } as unknown as MemoryService;
+    const host = app.bind({ services, tools });
+    await app.plugin(toolsPlugin);
+    await app.plugins.idle();
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith({}));
+    registerMediaTools({ ...host, memory: fixedRef(memoryStub), sessionManager: ref(), authority: ref() }, svc);
+    const registry = host.services.use.get(tools);
+    if (!registry) throw new Error('tools 服务未注册');
+    const call = { sessionId: 's', platform: 'test' };
+    const refused = await registry.execute(
+      'update_image_description',
+      { image_ref: 'data/images/s/a.png', description: '一只猫', session_id: 'other' },
+      call,
+    );
+    expect(JSON.parse(refused.content).error).toContain('包含未知参数 "session_id"');
+    expect(updates).toEqual([]);
+    await registry.execute(
+      'update_image_description',
+      { image_ref: 'data/images/s/a.png', description: '一只猫' },
+      call,
+    );
+    await app.stop();
+    expect(updates).toEqual([['s', '[图片 | ref:data/images/s/a.png]', '[图片: 一只猫 | ref:data/images/s/a.png]']]);
   });
 });

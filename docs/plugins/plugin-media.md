@@ -28,6 +28,7 @@ export default definePlugin({
     tools: optional(tools),
     memory: optional(memory),
     sessionManager: optional(sessionManager),
+    authority: optional(authority),
     doctor: optional(doctor),
   },
   apply(caps) { /* 见源码 */ },
@@ -40,6 +41,11 @@ export default definePlugin({
 - 识别失败或返回空串：引用照留，描述写「获取或识别失败，内容未知」，主模型可以据引用再经 `analyze_image` 看一次。
 - 没有任何能看图的模型（没有识图处理器，或选中的处理器不会描述图片；主模型若能看图，它自己就是处理器）：不识别，每张图只落盘写成不带描述的引用（与关掉 `vision.recognizeOnArrival` 时同一形态），这条消息另加一行 `[附了 N 张图，当前无法查看]`。这一行接在最后一张图的描述后面另起一行，不进任何引用的描述，消息存档的附件清单照样带上这些图的地址。OneBot 的图在适配器里已落盘、正文已带引用，这时只加这一行。
 - 图片落盘失败（磁盘满、没有写权限）：记一条 warn，并写进 `media:processed` 报告里这张图的条目（`error`，以「图片落盘失败」开头）。还能识别时照常识别，描述不带引用（`[图片描述] <描述>`，缓存命中时同样）；不识别时描述写「获取或识别失败，内容未知」。识别随后也失败时，条目的 `error` 记的是识别的错误，落盘失败见那条 warn。
+
+## 工具
+
+- `analyze_image`：看一张图。来源可以是历史里的引用、存储地址（含 `data:/…`）、网址或 data URI。存储里的图先过[媒体按受众的判据](../services/media.md#媒体按受众的判据)：有别人在场的会话里，以及授权身份不是 owner 的回合里，只能看本会话收到或产生的图（本会话树的媒体目录里的，与本会话历史里记下的引用），别处的回「这个会话里只能看本会话收到或产生的图片」，不读文件。过了判据的整读一次，按文件头认格式（[util-media-signature](../utils/README.md)），内容不是图片的拒绝（扩展名是图片也一样，owner 自己的会话也一样），mime 按认出的格式定。直通交付下 `data:/…` 存储地址同样按存储读取后交给主模型。网址照旧经 `safeFetch` 下载。
+- `update_image_description`：把识别结果写回调用所在会话历史里这张图的占位符；只改调用所在会话，不收会话 id 参数（多传的参数被执行器的参数校验拒绝）。它不在任何工具分组里，群里同样能写回。
 
 ## 诊断
 

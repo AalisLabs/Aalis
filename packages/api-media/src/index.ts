@@ -5,8 +5,10 @@
 // plugin-media 既是该契约的调度器，也是 LLM 服务的内置 adapter
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
 // 真正"非 LLM"的 backend（如 whisper.cpp / 云 ASR）则注册为独立 processor。
+// 另导出媒体按受众的判据（scope.ts），发媒体、看图的工具与出站转换共用。
 //
-// 依赖：@aalis/core、@aalis/schema-message、@aalis/api-llm（仅 ModelRef 类型）。
+// 依赖：@aalis/core、@aalis/schema-message、@aalis/api-llm（仅 ModelRef 类型）、
+// @aalis/api-session-manager 与 @aalis/api-storage（判据用的纯函数）。
 // ============================================================
 
 import type { ModelRef } from '@aalis/api-llm';
@@ -256,3 +258,5 @@ declare module '@aalis/core' {
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const media = defineService<MediaService>('media');
+
+export * from './scope.js';

@@ -44,6 +44,15 @@
 
 **迁移**：要发 @、图片或引用的出站设 `markup: true`，图片、语音、视频也可以改走 `attachments`；引用回复用 `OutgoingMessage.replyTo`。
 
+### 媒体按受众（plugin-image-sender、plugin-media）
+
+- 有别人在场的会话里，以及授权身份不是 owner 的回合里，`send_attachment` 的 `storage_uri`、`history_ref` 与 `analyze_image` 的存储地址只认本会话树的媒体目录（`data:/{images,audios,videos,files}/<会话目录>/`、`tmp:/browser/<会话目录>/`）与调用所在会话历史里系统记下的引用，别处的拒绝。
+- `storage_uri` 只收存储地址与历史相对路径（`data/images/…`）：只写文件名或带 `./` 前缀的不再补成存储地址，按「要写存储地址」拒绝。
+- `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
+- `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
+- `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
+- 受众不只 owner 的会话里，她回复正文里的 `<image|video|record url="…"/>` 标记改按附件发：网址下载后按附件发，本会话的媒体照发，本机路径、`file://`、别的会话的媒体去掉不发。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

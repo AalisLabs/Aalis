@@ -3,12 +3,16 @@ import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
+import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import {
   type Message,
@@ -18,6 +22,7 @@ import {
 } from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // onebot 出站的文件附件与内联前的文件头核对。
@@ -27,6 +32,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
+// 她回复里的媒体标记经网关派发时由 image-sender 按受众转成附件（会话表与 owner 判定是替身：私聊的对端是 owner）。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -172,14 +178,17 @@ interface Action {
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
 
 /**
- * imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment。replyToSend 是实现端怎么回发送与上传：
- * failText 只让发消息失败、上传照常成功
+ * imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment；gateway 为真时另装网关，经 dispatch
+ * 派发出站，会话表里有 GROUP 与 PRIVATE、PRIVATE 的对端是 owner（sessions 为假时不装会话管理）。replyToSend 是实现端怎么回
+ * 发送与上传：failText 只让发消息失败、上传照常成功
  */
 async function boot(
   opts: {
     protocol?: 'v11' | 'v12';
     files?: Record<string, Buffer>;
     imageSender?: boolean;
+    gateway?: boolean;
+    sessions?: boolean;
     replyToSend?: 'ok' | 'fail' | 'failText' | 'hold';
   } = {},
 ) {
@@ -260,6 +269,15 @@ async function boot(
   });
   await app.plugins.idle();
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
+  if (opts.gateway) {
+    if (opts.sessions !== false) {
+      const rooms = new Map([GROUP, PRIVATE].map(id => [id, storedRoom(id) as unknown as SessionInfo]));
+      host.provide.use(sessionManager, { getSession: (id: string) => rooms.get(id) } as never);
+    }
+    host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'onebot' && u === '30001' } as never);
+    await app.plugins.register(gatewayPlugin);
+    await app.plugins.idle();
+  }
   const toolHandlers = new Map<string, ToolHandler>();
   if (opts.imageSender) {
     host.provide.use(tools, {
@@ -284,6 +302,11 @@ async function boot(
     await host.events.use.emit('outbound:message', msg);
     if (msg.delivery) deliveries.push(msg.delivery);
   };
+  /** 经网关派发（outbound:dispatch 中间件链先跑），投递结果同 send 一样记下 */
+  const dispatch = async (msg: OutgoingMessage) => {
+    await app.bind({ gateway }).gateway.use.dispatchOutbound(msg);
+    if (msg.delivery) deliveries.push(msg.delivery);
+  };
   /** 等此前经 send 交出的消息都有了投递结果，再发一条哨兵文字并等它到达 */
   const flush = async (sessionId = GROUP) => {
     await Promise.allSettled(deliveries.splice(0));
@@ -300,7 +323,20 @@ async function boot(
       unknown
     >;
   };
-  return { actions, sent, send, flush, warns, notes, delivered, failureNotes, imageNotes, heldReplies, sendAttachment };
+  return {
+    actions,
+    sent,
+    send,
+    dispatch,
+    flush,
+    warns,
+    notes,
+    delivered,
+    failureNotes,
+    imageNotes,
+    heldReplies,
+    sendAttachment,
+  };
 }
 
 const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
@@ -617,26 +653,142 @@ describe('onebot 出站：媒体按文件头分流', () => {
 describe('onebot 出站：send_attachment 交来的存储库文件', () => {
   it('超过 10 MiB 的 PNG：send_attachment 交出 storage URI，适配器按区间读出文件头核对后交宿主路径', async () => {
     const bigPng = Buffer.concat([PNG, Buffer.alloc(10 * MIB)]);
-    const t = await boot({ imageSender: true, files: { 'data:/images/big.png': bigPng } });
-    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.png' })).toMatchObject({ ok: true });
+    const t = await boot({ imageSender: true, files: { 'data:/images/onebot_10000_group_20001/big.png': bigPng } });
+    expect(
+      await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/onebot_10000_group_20001/big.png' }),
+    ).toMatchObject({
+      ok: true,
+    });
     await t.flush();
     const segments = t
       .sent()
       .filter(a => a.action === 'send_group_msg')
       .flatMap(m => m.params.message as Array<{ type: string; data: { file?: string } }>);
-    expect(segments.find(s => s.type === 'image')?.data.file).toBe('file:///host/data/images/big.png');
+    expect(segments.find(s => s.type === 'image')?.data.file).toBe(
+      'file:///host/data/images/onebot_10000_group_20001/big.png',
+    );
     expect(t.failureNotes()).toEqual([]);
   });
 
   it('超过 10 MiB 的 BMP（send_attachment 放行、实现端不能内联）：不以宿主路径发出，留投递失败记录', async () => {
     const bigBmp = Buffer.concat([BMP, Buffer.alloc(10 * MIB)]);
-    const t = await boot({ imageSender: true, files: { 'data:/images/big.bmp': bigBmp } });
-    expect(await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/big.bmp' })).toHaveProperty('error');
+    const t = await boot({ imageSender: true, files: { 'data:/images/onebot_10000_group_20001/big.bmp': bigBmp } });
+    expect(
+      await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/onebot_10000_group_20001/big.bmp' }),
+    ).toHaveProperty('error');
     await until(() => t.failureNotes().length > 0);
     await t.flush();
     expect(JSON.stringify(t.actions)).not.toContain('file://');
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
     expect(t.imageNotes()).toEqual([]);
+  });
+});
+
+describe('onebot 出站：她回复里的媒体标记', () => {
+  const GROUP_DIR = 'onebot_10000_group_20001';
+  const OTHER = 'data:/images/onebot_10000_group_20002/b.png';
+  const segmentsOf = (actions: Action[], action: string) =>
+    actions
+      .filter(a => a.action === action)
+      .flatMap(a => a.params.message as Array<{ type: string; data: { file?: string; text?: string } }>);
+  const textOf = (actions: Action[]) =>
+    segmentsOf(actions, 'send_group_msg')
+      .filter(s => s.type === 'text')
+      .map(s => s.data.text);
+
+  it.each([
+    ['file://', 'file:///zz/placeholder.png'],
+    ['本机绝对路径', '/zz/placeholder.png'],
+    ['base64://', `base64://${PNG.toString('base64')}`],
+    ['data: 内联数据', `data:image/png;base64,${PNG.toString('base64')}`],
+    ['别的会话的存储地址', OTHER],
+    ['协议名大写的网址', 'HTTP://127.0.0.1:9/zz-placeholder.png'],
+  ])('群里：%s 的标记去掉，不发', async (_label, url) => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [OTHER]: JPEG } });
+    await t.dispatch({ sessionId: GROUP, source: 'agent', content: `一<image url="${url}"/>二` });
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text')).toEqual([]);
+    expect(JSON.stringify(t.actions)).not.toContain(url);
+    expect(textOf(t.sent())).toContain('一二');
+  });
+
+  it('群里：本会话的存储地址按同类附件发出（image、record 为语音、video），不另入档', async () => {
+    const t = await boot({
+      imageSender: true,
+      gateway: true,
+      files: {
+        [`data:/images/${GROUP_DIR}/a.png`]: PNG,
+        [`data:/audios/${GROUP_DIR}/a.wav`]: WAV,
+        [`data:/videos/${GROUP_DIR}/a.mp4`]: MP4,
+      },
+    });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'agent',
+      content:
+        `一<image url="data:/images/${GROUP_DIR}/a.png"/>二<record url="data:/audios/${GROUP_DIR}/a.wav"/>` +
+        `三<video url="data:/videos/${GROUP_DIR}/a.mp4"/>`,
+    });
+    await t.flush();
+    const segments = segmentsOf(t.sent(), 'send_group_msg');
+    const byType = (type: string) => segments.filter(s => s.type === type).map(s => decode(s.data.file));
+    expect(byType('image')).toEqual([PNG]);
+    expect(byType('record')).toEqual([WAV]);
+    expect(byType('video')).toEqual([MP4]);
+    expect(textOf(t.sent())).toContain('一二三');
+    expect(t.imageNotes(), '她这条回复已带着标记落库，转出的附件不另入档').toEqual([]);
+  });
+
+  it('群里：网址的标记转成附件，经适配器的受保护下载发出', async () => {
+    const t = await boot({ imageSender: true, gateway: true });
+    await t.dispatch({ sessionId: GROUP, source: 'agent', content: `<image url="${httpBase}/ok.png"/>` });
+    await t.flush();
+    const images = segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image');
+    expect(images.map(s => decode(s.data.file))).toEqual([PNG]);
+    expect(JSON.stringify(t.actions)).not.toContain(httpBase);
+  });
+
+  it('群里：摘掉标记后剩下的文字拼成新的标记，照样摘掉，按同一规则转换或去掉', async () => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG } });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'agent',
+      content:
+        '一<ima<image url="file:///zz/inner.png"/>ge url="file:///zz/outer.png"/>二' +
+        `<ima<image url="file:///zz/inner.png"/>ge url="data:/images/${GROUP_DIR}/a.png"/>三`,
+    });
+    await t.flush();
+    const segments = segmentsOf(t.sent(), 'send_group_msg');
+    expect(segments.filter(s => s.type !== 'text').map(s => decode(s.data.file))).toEqual([PNG]);
+    expect(JSON.stringify(t.actions)).not.toContain('/zz/');
+    expect(textOf(t.sent())).toContain('一二三');
+  });
+
+  it('会话管理不在：群里的标记照样转换或去掉', async () => {
+    const t = await boot({
+      imageSender: true,
+      gateway: true,
+      sessions: false,
+      files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG },
+    });
+    await t.dispatch({
+      sessionId: GROUP,
+      source: 'agent',
+      content: `一<image url="file:///zz/placeholder.png"/>二<image url="data:/images/${GROUP_DIR}/a.png"/>`,
+    });
+    await t.flush();
+    const segments = segmentsOf(t.sent(), 'send_group_msg');
+    expect(segments.filter(s => s.type === 'image').map(s => decode(s.data.file))).toEqual([PNG]);
+    expect(JSON.stringify(t.actions)).not.toContain('placeholder.png');
+  });
+
+  it('受众只有 owner 的私聊：标记不动，照旧交给适配器解析', async () => {
+    const t = await boot({ imageSender: true, gateway: true });
+    const url = `${httpBase}/ok.png`;
+    await t.dispatch({ sessionId: PRIVATE, source: 'agent', content: `<image url="${url}"/>` });
+    await t.flush(PRIVATE);
+    const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
+    expect(images.map(s => s.data.file)).toEqual([url]);
   });
 });
 
@@ -719,16 +871,23 @@ describe('onebot 出站：send_attachment 投递结果', () => {
   });
 
   it('OneBot action 返回失败：工具不报告成功，也不成功归档', async () => {
-    const t = await boot({ imageSender: true, replyToSend: 'fail', files: { 'data:/images/a.png': PNG } });
-    const result = await t.sendAttachment({ kind: 'image', storage_uri: 'data:/images/a.png' });
+    const t = await boot({
+      imageSender: true,
+      replyToSend: 'fail',
+      files: { 'data:/images/onebot_10000_group_20001/a.png': PNG },
+    });
+    const result = await t.sendAttachment({
+      kind: 'image',
+      storage_uri: 'data:/images/onebot_10000_group_20001/a.png',
+    });
     expect(result).toHaveProperty('error');
     expect(t.imageNotes()).toEqual([]);
   });
 
   it('连接不可用：工具不报告成功，也不成功归档', async () => {
-    const t = await boot({ imageSender: true, files: { 'data:/images/a.png': PNG } });
+    const t = await boot({ imageSender: true, files: { 'data:/images/onebot_99999_group_20001/a.png': PNG } });
     const result = await t.sendAttachment(
-      { kind: 'image', storage_uri: 'data:/images/a.png' },
+      { kind: 'image', storage_uri: 'data:/images/onebot_99999_group_20001/a.png' },
       'onebot:99999:group:20001',
     );
     expect(result).toHaveProperty('error');
