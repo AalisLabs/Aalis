@@ -107,6 +107,7 @@ interface JobRuntime {
 
 // ──────────── 调度器服务接口 ────────────
 
+/** 任务触发时的消息声明 ownerApproved，内容里的指令照常执行：经 addJob、setJob 交来的内容要是 owner 过目过原文的 */
 export interface SchedulerService {
   getJobs(): Array<{
     name: string;
@@ -603,11 +604,13 @@ async function run(caps: Caps): Promise<void> {
         },
       });
 
+      // 内容由 owner 写下或审批（见 SchedulerService），声明 ownerApproved
       const message: IncomingMessage = {
         content: rt.config.content,
         sessionId: rt.config.sessionId,
         platform: rt.config.platform,
         source: 'scheduler',
+        ownerApproved: true,
       };
       // 注入代理身份：authority 守卫优先读 actor 而非 platform/userId，
       // 从而让 scheduler 触发的 AI 走**创建者**的权限等级。

@@ -60,11 +60,15 @@ export default definePlugin({
 
 回复是各平台通用的纯文本，按这条指令所在会话的语言渲染（说明先渲染、再取第一句作摘要）；QQ 与终端原样显示，WebUI 的时间线里画成一张卡，只认段落与列表，其余写法照原文显示（回复里会回显调用者敲的原话），所以写法两边都读得清：一行一条的 `- ` 列表，选项的取值缩进两格列在下面，段落之间空一行；不用加粗、反引号、代码围栏与空格对列。概览每行是「指令 — 描述的第一句 · 子指令数」，末尾提示「详情：/help 指令名，或在指令后加 -h」；详情依次是标题（完整描述）、用法、示例、参数、选项、子指令、别名。指令登记了 `usage` 时详情整段用它。
 
+## 只认人亲手写的文字
+
+指令只从两种消息里解析：不带 `source` 的真人入站（平台适配器、WebUI 与终端），与声明了 `ownerApproved` 的注入。其余带 `source` 的注入不论 `source` 写成什么，正文都不当指令，按普通消息往下走、交给她。带声明的注入问不到发出者：指令免 `session` 档的确认，等级按消息的 `actor` 判，结果写日志、不回发。判据与为什么这样挡见 [security-model](../concepts/security-model.md#注入的文字不执行指令)。
+
 ## 意图确认
 
 声明了 `confirm` 的指令（如 `/clear`）由人亲手输入时，执行前在同一会话里问发出者本人「确认执行 /clear 吗？」。只认这个人在这个会话里的下一条消息：回 `y`（或 `yes`，不分大小写）即执行，回别的取消；这条回复在 `inbound:command` 相位被吞掉，不进入后续相位、不打断在途的回合。别人的消息、发出者在别的会话里的消息、带 `source` 的注入都不算回复，照常往下走。60 秒不回即取消；插件停用或重载时，等待中的确认当即取消。
 
-这是意图确认，不是 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。带 `source` 的注入投递的指令（编排的发消息节点等）问不到发出者，需要确认时直接拒；scheduler 触发的指令与 runtime 一次性子命令免 `session` 档的确认，`always` 档照样无从确认而拒。确认要不要做由 plugin-authority 的执行守卫判定（含 `confirmOverrides` 与白名单），见 [plugin-authority](./plugin-authority.md)。
+这是意图确认，不是 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。定时任务触发的指令与 runtime 一次性子命令免 `session` 档的确认，`always` 档照样无从确认而拒；适配器没给发出者（`userId`）的真人消息问不到人，需要确认时直接拒。确认要不要做由 plugin-authority 的执行守卫判定（含 `confirmOverrides` 与白名单），见 [plugin-authority](./plugin-authority.md)。
 
 权限守卫由 plugin-authority 激活时注入、停用时摘掉。未安装或停用了 plugin-authority 时指令系统按 fail-closed 处理：等同所有人都是默认等级、没人能确认，需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的指令一律拒绝并提示缺少权限插件，其余指令照常执行。上表中除 `/help`、`/status` 外的指令因此都不可用，`/help` 也只列出能用的这些。
 

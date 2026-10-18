@@ -7,7 +7,7 @@
 
 AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具与计划任务页的新建、编辑还接受 `delaySeconds`，会换算为 `runAt`。
 
-触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话；会话落在 flow-control 作用域内时限速照常生效，限速窗口已满时这次触发被吞掉（做影子归档），不重试。消息不带会话类型，flow-control 判作用域时先用流控状态里记下的类型，没有再取会话管理记下的聊天窗口：默认 `*:group` 下，发往已收录的群的任务在作用域内（平台为默认 `internal` 的也一样，按群记下的出生平台算）；发往会话表里没有记录的会话时没有聊天窗口，算作用域外。
+触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话。消息同时声明 `ownerApproved`（schema-message）：任务内容来自 owner 写的配置与计划任务页，或每次要 owner 审批的 `scheduler_create_job`，算作 owner 亲手写的，plugin-commands 照常解析其中的指令（免交互确认，结果写入日志）。别的插件经 `scheduler` 服务的 `addJob`、`setJob` 建的任务同样声明，交来的内容要是 owner 过目过原文的。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话；会话落在 flow-control 作用域内时限速照常生效，限速窗口已满时这次触发被吞掉（做影子归档），不重试。消息不带会话类型，flow-control 判作用域时先用流控状态里记下的类型，没有再取会话管理记下的聊天窗口：默认 `*:group` 下，发往已收录的群的任务在作用域内（平台为默认 `internal` 的也一样，按群记下的出生平台算）；发往会话表里没有记录的会话时没有聊天窗口，算作用域外。
 
 ## 插件声明
 

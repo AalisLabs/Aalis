@@ -119,7 +119,7 @@ type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId
 已授权且声明了 `confirm`（经 `confirmOverrides` 覆盖后）的操作再走轴 B：
 
 - **可免的确认**：`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认。`always` 什么都免不掉。
-- **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（带 `source` 的注入，例如编排投递的指令）就无从确认，直接拒。
+- **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。
 - **工具**：确认是 owner 审批。守卫按发起回合的类别（`inbound`、`actor`、续做的调用者与会话受众，不按授权身份）调 `approvals.request`，只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
 
 ## 关键类型（请求）

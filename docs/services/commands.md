@@ -47,7 +47,7 @@ Builder 链式追加 `alias / option / argument / action / usage / example`。`c
 
 ## 2. 谁提供 / 谁消费
 
-**唯一参考实现**：`@aalis/plugin-commands`。`provides: [commands]`，`uses` 含 `gateway` required，`provide.use(commands, registry)`。入站分发发生在 `INBOUND_PHASE.COMMAND`。运行时依赖 `@aalis/api-authority` 的 `riskDefaults`。
+**唯一参考实现**：`@aalis/plugin-commands`。`provides: [commands]`，`uses` 含 `gateway` required，`provide.use(commands, registry)`。入站分发发生在 `INBOUND_PHASE.COMMAND`，只解析不带 `source` 的真人入站与声明了 `ownerApproved` 的注入（判据见 [security-model](../concepts/security-model.md#注入的文字不执行指令)），替换指令引擎的实现要照此判。运行时依赖 `@aalis/api-authority` 的 `riskDefaults`。
 
 **典型消费点**：`plugin-authority`、`plugin-agent`、`plugin-doctor`、`plugin-tool-system`、`plugin-user-profile`、`plugin-user-relation`、`plugin-maimai` 等。`commands` 几乎总是 optional。`plugin-authority` 用 `commands.follow(svc => { svc.setExecutionGuard(guard); ... })` 注入守卫，follow 返回的清理调 `setExecutionGuard(undefined)` 摘掉。
 
@@ -171,7 +171,7 @@ handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storag
 4. **位置参数都是 `unknown`**。
 5. **`text` 类型贪婪**，必须放在最后。
 6. **纯关键词模式（prefix=''）需命中首段**。
-7. **命令命中即终止入站管道**；带前缀却无人注册会放行到下游。
+7. **命令命中即终止入站管道**；带前缀却无人注册会放行到下游，带 `source` 又没声明 `ownerApproved` 的注入不解析、同样放行。
 
 ---
 
