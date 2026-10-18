@@ -10,7 +10,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 // 三家后端同一组用例：
 // - archiveOldest(n) 把最早的 n 条活跃消息标为归档，顺序与 getHistory 相同（时间，同毫秒按写入序），返回归档条数；
 //   只数活跃的，n 为 0 时什么都不归档，n 大于活跃条数时归档全部；归档的消息完整历史里照样有，别的会话不动。
-// - getHistory(…, Infinity) 返回全部活跃消息。
+// - getHistory(…, Infinity) 返回全部活跃消息；countHistory 是它的条数。
 //
 // mongodb 的集合用内存替身，不经 apply（apply 会直连真实的 mongod）。替身照服务端的规矩：limit(0) 表示不限条数、
 // limit 不是整数时报错；排序键全部平票时按写入的逆序排——这是对抗方向：archiveOldest 的排序去掉 _id 次键，
@@ -21,15 +21,20 @@ const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 type Doc = Record<string, unknown> & { _id: number };
 
+type Filter = { sessionId: string; archived?: unknown };
+
 function fakeCollection() {
   const docs: Doc[] = [];
+  const matching = (filter: Filter) =>
+    docs.filter(d => d.sessionId === filter.sessionId && !(filter.archived && d.archived === true));
   return {
     insertOne: async (doc: Record<string, unknown>) => {
       docs.push({ ...doc, _id: docs.length + 1 });
       return { acknowledged: true };
     },
-    find: (filter: { sessionId: string; archived?: unknown }) => {
-      let rows = docs.filter(d => d.sessionId === filter.sessionId && !(filter.archived && d.archived === true));
+    countDocuments: async (filter: Filter) => matching(filter).length,
+    find: (filter: Filter) => {
+      let rows = matching(filter);
       const cursor = {
         sort: (spec: Record<string, 1 | -1>) => {
           rows = [...rows].sort((a, b) => {
@@ -125,6 +130,16 @@ describe.each(BACKENDS)('%s：archiveOldest 与读全部活跃消息', (_name, o
     expect(await mem.getHistory('s')).toEqual([]);
     expect(contents(await mem.getFullHistory!('s'))).toEqual(['m0', 'm1', 'm2']);
     expect(contents(await mem.getHistory('other'))).toEqual(['别的会话']);
+  });
+
+  it('countHistory 与 getHistory(…, Infinity) 的长度相同：只数活跃的，归档后随之变，别的会话不算', async () => {
+    const mem = await seeded([msg('m0', 1000), msg('m1', 2000), msg('m2', 3000)]);
+
+    expect(await mem.countHistory?.('s')).toBe(3);
+    await mem.archiveOldest('s', 2);
+    expect(await mem.countHistory?.('s')).toBe(1);
+    expect((await mem.getHistory('s', Infinity)).length).toBe(1);
+    expect([await mem.countHistory?.('other'), await mem.countHistory?.('none')]).toEqual([1, 0]);
   });
 
   it('getHistory 的 limit 为 Infinity 时返回全部活跃消息', async () => {

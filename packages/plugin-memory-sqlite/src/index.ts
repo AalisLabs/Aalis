@@ -218,6 +218,11 @@ export class SQLiteMemoryService implements MemoryService {
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
+  async countHistory(sessionId: string): Promise<number> {
+    const stmt = this.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE sessionId = ? AND archived = 0');
+    return (stmt.get(sessionId) as { n: number }).n;
+  }
+
   async clearSession(sessionId: string): Promise<void> {
     const stmt = this.db.prepare('DELETE FROM messages WHERE sessionId = ?');
     stmt.run(sessionId);

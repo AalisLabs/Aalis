@@ -79,6 +79,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
   parseToolArguments,
+  readHistory,
   toPersonaOptions,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
@@ -737,7 +738,7 @@ class DefaultAgent implements AgentService {
 
         const built = await this.buildMessages(incoming, resolved?.historyLimit, personaOpts, archivedIncoming);
         const messages = built.messages;
-        /** 这次调用的消息列表里来自会话历史的条数：读进的，加本回合追加的工具调用与结果 */
+        /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
         let historyMessages = built.historyMessages;
         // 通过 resolved config 获取工具分组
         let enabledGroups: string[] | undefined;
@@ -1470,8 +1471,8 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 构建发送给 LLM 的消息列表。历史按会话的条数线读：historyLimit 为 0 或没设置时读全部活跃历史。
-   * historyMessages 是从记忆读进的条数（含已归档的这一轮入站消息），与之后的清洗、裁剪无关
+   * 构建发送给 LLM 的消息列表。历史按会话的条数线成段丢弃（见 readHistory）：historyLimit 为 0 或没设置时发全部活跃历史。
+   * historyMessages 是会话的活跃条数（含已归档的这一轮入站消息与没发给模型的部分），与之后的清洗、裁剪无关
    */
   private async buildMessages(
     incoming: IncomingMessage,
@@ -1490,9 +1491,9 @@ class DefaultAgent implements AgentService {
     const memory = this.caps.memory.present ? this.caps.memory.use : undefined;
     if (memory) {
       try {
-        const stored = await memory.getHistory(incoming.sessionId, historyLimit || Infinity);
-        historyMessages = stored.length;
-        const history = this.sanitizeToolCallHistory(stored, incoming.sessionId);
+        const stored = await readHistory(memory, incoming.sessionId, historyLimit);
+        historyMessages = stored.count;
+        const history = this.sanitizeToolCallHistory(stored.messages, incoming.sessionId);
         const now = Date.now();
         for (const m of history) {
           if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
@@ -2332,8 +2333,7 @@ const SESSION_SETTINGS: SessionSetting[] = [
       integer: true,
       min: 0,
       default: 0,
-      description:
-        '一轮最多读进这么多条会话历史；装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：读全部活跃历史，只按自动压缩线压缩',
+      description: t('historyLimitDescription'),
     },
     appliesTo: ['owner', 'room', 'task'],
     prominence: 'advanced',
@@ -2657,9 +2657,11 @@ function run(caps: Caps): void {
       const systemPrompt = agent.buildSystemPrompt(toPersonaOptions(sessionResolved));
       messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
-      // 历史消息：与真实回合同样按会话的条数线读
-      const history = memory ? await memory.getHistory(data.sessionId, sessionResolved?.historyLimit || Infinity) : [];
-      messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
+      // 历史消息：与真实回合同一个读法
+      const history = memory
+        ? await readHistory(memory, data.sessionId, sessionResolved?.historyLimit)
+        : { messages: [], count: 0 };
+      messages.push(...history.messages.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
@@ -2691,7 +2693,7 @@ function run(caps: Caps): void {
         tools: llmBeforeData.tools,
         trimmed: sent.trimmed,
         untrimmedHistory: estimateHistoryTokens(llmBeforeData.messages),
-        historyMessages: history.length,
+        historyMessages: history.count,
       });
     } catch (err) {
       caps.logger.use.debug('token:request 处理失败:', err);

@@ -235,7 +235,7 @@ interface SessionSetting {
 
 | 消费方 | 用法 | file:line |
 | --- | --- | --- |
-| `plugin-agent` | 登记 `llm`、`think`、`maxToolIterations`、`historyLimit`；每条消息 `resolveConfig()` 决定 LLM、persona 与结构化输出的会话选项、工具分组、思考档、最大工具迭代与一轮读的历史条数；`/session.set`·`/session.reset` 走 `ensureSession()`、`updateSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
+| `plugin-agent` | 登记 `llm`、`think`、`maxToolIterations`、`historyLimit`；每条消息 `resolveConfig()` 决定 LLM、persona 与结构化输出的会话选项、工具分组、思考档、最大工具迭代与发给模型的历史条数上限（超过时成段丢弃）；`/session.set`·`/session.reset` 走 `ensureSession()`、`updateSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-persona` | 登记人设、额外提示与结构化输出两项；`resolveConfig()` 取它们 | `plugin-persona/src/index.ts` |
 | `plugin-tools` | 登记 `enabledToolGroups`（agent 读它决定工具分组） | `plugin-tools/src/index.ts` |
 | `plugin-skills` | 按会话 `resolveConfig().persona` 取人设卡，过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的技能（可选依赖，缺席时取主卡的白名单） | `plugin-skills/src/index.ts` |

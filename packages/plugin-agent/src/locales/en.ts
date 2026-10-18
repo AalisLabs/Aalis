@@ -47,4 +47,6 @@ export default defineLocale<Source>()({
   partPlatform: 'Platform prompt',
   partSubtask: 'Subtasks',
   partSystemOther: 'Other system prompts',
+  historyLimitDescription:
+    'At most this many messages of the conversation history are sent to the model: when exceeded, the oldest half is dropped at once, and history then builds up to this count again before the next chunk is dropped. The drop only affects what is sent to the model; the conversation history itself is kept and still goes into the summary when compacting. With the summary plugin installed, the conversation is compacted when its messages reach this count. 0 means no count limit: all active history is sent, and compaction follows only the automatic compaction threshold',
 });

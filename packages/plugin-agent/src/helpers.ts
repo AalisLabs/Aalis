@@ -1,12 +1,13 @@
 /**
- * DefaultAgent 内部纯工具函数。
+ * DefaultAgent 内部工具函数。
  *
- * 这些函数**不碰能力、也不碰 this**，可独立测试与替换。
+ * 这些函数**不碰能力、也不碰 this**（readHistory 读的记忆服务由调用方传入），可独立测试与替换。
  * 拆分目的：
  * - 让 index.ts 主类聚焦在编排/状态管理，而不是 token 估算细节
- * - 让纯函数可被 vitest 单独覆盖（无需搭出一次激活）
+ * - 让这些函数可被 vitest 单独覆盖（无需搭出一次激活）
  */
 import { estimateMsgTokens } from '@aalis/api-llm';
+import type { MemoryService } from '@aalis/api-memory';
 import type { PersonaSessionOptions } from '@aalis/api-persona';
 import type { SessionConfig } from '@aalis/api-session-manager';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -102,6 +103,47 @@ export function estimateTokens(messages: Message[]): number {
 /** 估算一组消息里历史与工具结果（system 以外的消息）的 token 数，与用量拆分的 history、toolResults 两项同一口径 */
 export function estimateHistoryTokens(messages: Message[]): number {
   return estimateTokens(messages.filter(m => m.role !== 'system'));
+}
+
+// ----- 发给模型的会话历史 -----
+
+/**
+ * 发给模型的会话历史从活跃历史的第几条开始：条数线为 0、或活跃条数不超过它时为 0；超过时按半条线成段前移。
+ * 只由活跃条数与条数线决定，两次前移之间不变：发出的开头逐字不变，服务商的前缀缓存才命中
+ */
+export function historyStart(count: number, limit: number): number {
+  if (!limit || count <= limit) return 0;
+  const step = Math.ceil(limit / 2);
+  return Math.ceil((count - limit) / step) * step;
+}
+
+/**
+ * 读发给模型的会话历史：活跃历史从 historyStart 起到末尾，count 是活跃历史的条数（真实回合与 token:request 的快照共用）。
+ * 后端有 countHistory 时先数再只读起点之后的那一段（没超线时读最近条数线那么多条：数完到读之间进来的消息不会挤掉最早那条），
+ * 没有时读全部再切
+ */
+export async function readHistory(
+  memory: Pick<MemoryService, 'getHistory' | 'countHistory'>,
+  sessionId: string,
+  limit = 0,
+): Promise<{ messages: Message[]; count: number }> {
+  let messages: Message[];
+  let count: number;
+  let start: number;
+  if (limit && memory.countHistory) {
+    count = await memory.countHistory(sessionId);
+    start = historyStart(count, limit);
+    messages = await memory.getHistory(sessionId, start ? count - start : limit);
+  } else {
+    const all = await memory.getHistory(sessionId, Infinity);
+    count = all.length;
+    start = historyStart(count, limit);
+    messages = all.slice(start);
+  }
+  // 起点落在工具调用组中间：组首在起点之前已经丢掉，开头连续的工具结果随它一起丢
+  let first = 0;
+  while (start > 0 && messages[first]?.role === 'tool') first++;
+  return { messages: messages.slice(first), count };
 }
 
 /** 比较两条消息是否在 role/timestamp/name/content 维度上等价（不比较 toolCalls / id） */

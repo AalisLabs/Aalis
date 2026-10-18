@@ -73,14 +73,14 @@ export interface MemoryService {
   // ── 为什么这些是可选、而 metadata 五方法是必填 ──
   //
   // 判据不是「三家后端有没有全实现」（它们对两组都全实现了），而是**消费方缺了它能不能
-  // 降级**：下面这六个与 metadata 段的 `listMetadataKeys` 共七个，守卫都是有真实降级动作的
+  // 降级**：下面这七个与 metadata 段的 `listMetadataKeys` 共八个，守卫都是有真实降级动作的
   // 活分支——`deleteMessagesByTimestamps` 缺失把 checkpoint 回滚记成一条 error 返回、
-  // `getFullHistory` 缺失回落 `getHistory`、`getRecentMessagesAcrossSessions` 缺失就不注入
-  // 跨会话历史、`listMetadataKeys` 缺失时整体清理退回按 `listMetadata` 枚举键。而 metadata
-  // 五方法没有可用降级：无处存 = 功能坏，守卫只能抛，于是那些守卫全是死分支，留着只会教人
-  // 照抄一套永远进不去的判断。
+  // `getFullHistory` 缺失回落 `getHistory`、`countHistory` 缺失时 agent 读全部活跃历史再数、
+  // `getRecentMessagesAcrossSessions` 缺失就不注入跨会话历史、`listMetadataKeys` 缺失时整体清理
+  // 退回按 `listMetadata` 枚举键。而 metadata 五方法没有可用降级：无处存 = 功能坏，守卫只能抛，
+  // 于是那些守卫全是死分支，留着只会教人照抄一套永远进不去的判断。
   //
-  // 所以「另七个也补齐必填」不是欠债而是**倒退**：那会删掉这些真实降级路径，
+  // 所以「另八个也补齐必填」不是欠债而是**倒退**：那会删掉这些真实降级路径，
   // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明每处降级各自该怎么办。
 
   /**
@@ -90,6 +90,8 @@ export interface MemoryService {
   clearAll?(): Promise<void>;
   /** 获取完整历史（含已归档消息），用于 UI 展示 */
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
+  /** 活跃（未归档）消息的条数，与 getHistory(sessionId, Infinity) 的长度相同 */
+  countHistory?(sessionId: string): Promise<number>;
 
   // ----- 范围查询（供向量检索的上下文窗口扩展使用） -----
 
@@ -338,7 +340,7 @@ export interface CompressionLines {
  * 被硬裁剪过（到了丢内容的地步），且能压掉的部分至少是线的一半时该压缩：压完只剩切分点之后的几条，到不了线的一半，不会
  * 接着再触发；压不掉的部分（人设、工具定义等）再大也不会让它空转。
  *
- * 条数一维：来自会话历史的条数到条数线时该压缩；全量压缩之后只剩分隔标记与切分点之后的几条，远不到线
+ * 条数一维：会话历史的条数到条数线时该压缩；全量压缩之后只剩分隔标记与切分点之后的几条，远不到线
  */
 export function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean {
   if (lines.historyLimit && usage.historyMessages >= lines.historyLimit) return true;
