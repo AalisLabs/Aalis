@@ -68,8 +68,6 @@ export default defineLocale<Source>()({
   typeUserProfile: 'User profiles',
   typeUserRelation: 'User relation graph',
   unknownClearType: 'Unknown clear type: {type}. Available types: {types}. See {prefix}help clear',
-  sharedClearLevel:
-    'Clearing a shared session needs level {required, number} (currently {level, number}). You can clear your own session in a private chat at any time.',
   noMemoryBackend:
     '⚠ No memory backend is running, so nothing was cleared: enable one in the WebUI plugin area (such as SQLite memory), or remove it from disabledPlugins in the config file; if it still does not start, use /doctor to see why.',
   noGlobalClear:

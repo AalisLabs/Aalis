@@ -53,6 +53,8 @@ interface CommandMeta {
 }
 ```
 
+`session.sessionType` 是平台给的类型名，从入站消息原样透传（`ExecutionInput.sessionType` 同此）。类型名由平台自定，不能据它判会话是不是多人：要判，按会话 id 找到认领它的适配器（`resolvePlatformBySession`），用 api-platform 的 `sessionTypesOf` 与 `resolveSessionType` 按它声明的 `multiParty` 判，不看类型名是不是 `'private'`，见 [platform 服务](../services/platform.md)。
+
 ### 描述、参数与取值
 
 - **描述的第一句是摘要**：`/help` 概览与子指令列表只显示描述的第一句（按句子切分，分号与换行另算句末），显示宽度超过 48 列（中日韩文字记 2 列）截断加省略号；详情里显示完整描述。所以第一句写成一句短话，细节写在后面，如 `'清空当前会话记忆；用 --type 选择清理类型'`。不另设摘要字段。

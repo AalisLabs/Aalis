@@ -302,15 +302,9 @@ describe('help: 按调用者的等级过滤', () => {
   it('0 级群成员的概览只列能用的，用不了的一条都不出现、也不提数目；owner 的概览列全部', async () => {
     const { ask } = await setup();
     expect(await ask(MEMBER, '/help')).toBe(
-      [
-        '可用指令（4 条）：',
-        '- /clear — 清空当前会话记忆',
-        '- /mixed — 1 个子指令',
-        '- /probe — 探针',
-        '- /status — 显示系统状态',
-        '',
-        HINT,
-      ].join('\n'),
+      ['可用指令（3 条）：', '- /mixed — 1 个子指令', '- /probe — 探针', '- /status — 显示系统状态', '', HINT].join(
+        '\n',
+      ),
     );
     const owner = await ask(OWNER, '/help');
     expect(owner.split('\n')[0]).toBe('可用指令（9 条）：');

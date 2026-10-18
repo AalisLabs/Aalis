@@ -149,15 +149,6 @@ describe('人亲手输入的指令：向发出者本人确认意图', () => {
     expect(s.runs()).toBe(0);
   });
 
-  it('群成员在私聊里 /clear 清自己的记忆：本人确认后照常清理', async () => {
-    const s = await setup();
-    await s.say({ content: '/clear' });
-    await vi.waitFor(() => expect(s.to(DM)).toHaveLength(1));
-    await s.say({ content: 'y' });
-    await vi.waitFor(() => expect(s.to(DM)).toHaveLength(2));
-    expect(s.to(DM)[1]).toContain('当前会话消息历史已清空');
-  });
-
   it('带 source 注入的指令需要确认：无从确认，直接拒，不发提示', async () => {
     const s = await setup();
     await s.say({ content: '/probe', source: 'workflow:wf:n1', userId: undefined });
