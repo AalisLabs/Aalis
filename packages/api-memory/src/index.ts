@@ -60,16 +60,30 @@ export type MetadataOp =
   | { op: 'put'; namespace: string; key: string; data: Record<string, unknown> }
   | { op: 'del'; namespace: string; key: string };
 
+/**
+ * 带条数的读法（getHistory、getFullHistory 的 limit，getRecentMessagesAcrossSessions 的 query.limit，updateMessageContent
+ * 的 recentLimit）一个规则：条数是非负整数或 Infinity（调用方保证），为 0 时返回空（updateMessageContent 一条都不改），
+ * 为 Infinity 时返回全部（跨会话查询照样收窄到后端配置的上限）
+ */
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
-  /** 最近 limit 条活跃（未归档）消息；limit 为 `Infinity` 时返回全部活跃消息 */
+  /** 最近 limit 条活跃（未归档）消息 */
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
   /**
-   * 把最早的 count 条活跃消息标为归档（顺序与 getHistory 相同），返回归档条数；count 为 0 时什么都不归档。
-   * 归档的消息不再进 getHistory，getFullHistory 照样有。必填：压缩靠它落定，缺了没有降级可走，只能拒绝压缩
+   * 归档一段：把最早的 count 条活跃消息（顺序与 getHistory 相同：时间，同毫秒按写入序；inmemory 只按写入序，假定时间戳
+   * 随写入递增）标为归档，其中 keep 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里；返回归档条数。
+   *
+   * - count 与 keep 的元素都是非负整数（调用方保证），count 为 0 时什么都不归档；大于活跃条数时这一段就是全部活跃消息。
+   *   keep 里落在这一段之外的下标不起作用，重复的下标与一个相同。
+   * - 位置按调用这一刻的活跃历史算。调用方读快照之后若有写入插进这一段（时间戳早于段尾的晚到消息、按时间戳删除），
+   *   归档的会错位：调用方要在调用之前核对快照。之后追加的新消息在这一段之外，不受影响。
+   * - 一次调用的原子性按后端分档（与 commitMetadata 同一口径）：sqlite 与 inmemory 全成或全不成；mongodb 是一次
+   *   updateMany，不是事务，中途出错时可能只归档了一部分。
+   * - 归档的消息不再进 getHistory；getFullHistory 照样有，按原来的顺序（留下的与归档的照时间交错）。
+   * 必填：压缩靠它落定，缺了没有降级可走，只能拒绝压缩
    */
-  archiveOldest(sessionId: string, count: number): Promise<number>;
+  archiveSpan(sessionId: string, span: { count: number; keep: readonly number[] }): Promise<number>;
   // ── 为什么这些是可选、而 metadata 五方法是必填 ──
   //
   // 判据不是「三家后端有没有全实现」（它们对两组都全实现了），而是**消费方缺了它能不能
@@ -304,7 +318,7 @@ export interface CompressionService {
   compress(sessionId: string, request: { reason: 'manual' }): Promise<void>;
   /**
    * 这个会话的自动压缩线（占窗口比例，与 api-agent 的 token:usage 里 usageRatio 同一口径）；设为 0 时为 undefined。
-   * 实际在它与裁剪预算占窗口的比例中较小的那个上压缩（见 compressionDue）。platform 是入口平台：没有出生平台的会话按它选平台档
+   * 实际在它与裁剪预算占窗口的比例中较小的那个上压缩（见 compressionLine）。platform 是入口平台：没有出生平台的会话按它选平台档
    */
   compressAt(sessionId: string, platform?: string): number | undefined;
 }
@@ -334,18 +348,29 @@ export interface CompressionLines {
 }
 
 /**
+ * 用量一维的压缩线（token）。compressAt 为正时是 min(compressAt × 窗口, 裁剪预算)：压缩线写得比裁剪预算还高时以裁剪预算
+ * 为准，压缩先于硬裁剪。compressAt 缺省或为 0 时取裁剪预算，这时它只是上限、不是触发线：compressionDue 不按用量判
+ */
+export function compressionLine(
+  usage: Pick<CompressionUsage, 'contextWindow' | 'tokenBudget'>,
+  compressAt: number | undefined,
+): number {
+  return compressAt ? Math.min(compressAt * usage.contextWindow, usage.tokenBudget) : usage.tokenBudget;
+}
+
+/**
  * 是否该压缩：任一维到线即该压缩。
  *
- * 用量一维的线是 min(压缩线 × 窗口, 裁剪预算)：压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。用量到线或这次
- * 被硬裁剪过（到了丢内容的地步），且能压掉的部分至少是线的一半时该压缩：压完只剩切分点之后的几条，到不了线的一半，不会
- * 接着再触发；压不掉的部分（人设、工具定义等）再大也不会让它空转。
+ * 用量一维：compressAt 为正时，用量到 compressionLine 或这次被硬裁剪过（到了丢内容的地步），且能压掉的部分至少是线的一半时
+ * 该压缩：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；压不掉的部分（人设、工具定义等）再大也不会让它空转。
+ * compressAt 缺省或为 0 时这一维不判，被硬裁剪过也一样。
  *
  * 条数一维：会话历史的条数到条数线时该压缩；全量压缩之后只剩分隔标记与切分点之后的几条，远不到线
  */
 export function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean {
   if (lines.historyLimit && usage.historyMessages >= lines.historyLimit) return true;
   if (!lines.compressAt) return false;
-  const line = Math.min(lines.compressAt * usage.contextWindow, usage.tokenBudget);
+  const line = compressionLine(usage, lines.compressAt);
   return (usage.used >= line || usage.trimmed) && usage.compressible >= line / 2;
 }
 

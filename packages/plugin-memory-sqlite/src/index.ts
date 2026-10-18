@@ -54,6 +54,9 @@ function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
+/** LIMIT 绑不了 Infinity，取负数即不限条数 */
+const sqlLimit = (limit: number) => (limit === Infinity ? -1 : limit);
+
 const configSchema = defineConfig({
   path: {
     type: 'string',
@@ -211,10 +214,7 @@ export class SQLiteMemoryService implements MemoryService {
         LIMIT ?
       ) sub ORDER BY timestamp ASC, id ASC
     `);
-    // LIMIT 绑不了 Infinity，取负数即不限条数
-    const rows = stmt.all(sessionId, limit === Infinity ? -1 : limit) as Array<
-      Parameters<typeof SQLiteMemoryService.rowToMessage>[0]
-    >;
+    const rows = stmt.all(sessionId, sqlLimit(limit)) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
@@ -256,7 +256,7 @@ export class SQLiteMemoryService implements MemoryService {
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
+    const limit = Math.max(0, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     // platform / excludeSessionIds 走内存过滤；为保证 limit 命中，先用 overscan 倍率拉取候选。
     const needsPostFilter =
@@ -308,15 +308,19 @@ export class SQLiteMemoryService implements MemoryService {
     return out.reverse();
   }
 
-  async archiveOldest(sessionId: string, count: number): Promise<number> {
-    // 与 getHistory 同序：id 次键让同毫秒的消息按插入序归档
+  async archiveSpan(sessionId: string, { count, keep }: { count: number; keep: readonly number[] }): Promise<number> {
+    // 一条语句，全成或全不成。与 getHistory 同序：id 次键让同毫秒的消息按插入序数位置；keep 以 JSON 数组绑定，
+    // 不受绑定参数个数的上限影响
     const stmt = this.db.prepare(`
       UPDATE messages SET archived = 1
       WHERE id IN (
-        SELECT id FROM messages WHERE sessionId = ? AND archived = 0 ORDER BY timestamp ASC, id ASC LIMIT ?
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp ASC, id ASC) - 1 AS pos
+          FROM messages WHERE sessionId = ? AND archived = 0
+        ) WHERE pos < ? AND pos NOT IN (SELECT value FROM json_each(?))
       )
     `);
-    return Number(stmt.run(sessionId, count).changes);
+    return Number(stmt.run(sessionId, count, JSON.stringify(keep)).changes);
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
@@ -331,7 +335,7 @@ export class SQLiteMemoryService implements MemoryService {
         LIMIT ?
       ) sub ORDER BY timestamp ASC, id ASC
     `);
-    const rows = stmt.all(sessionId, limit) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
+    const rows = stmt.all(sessionId, sqlLimit(limit)) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
@@ -414,7 +418,10 @@ export class SQLiteMemoryService implements MemoryService {
         LIMIT ?
       )
     `);
-    const rows = findStmt.all(sessionId, `%${oldText}%`, recentLimit) as Array<{ id: number; content: string }>;
+    const rows = findStmt.all(sessionId, `%${oldText}%`, sqlLimit(recentLimit)) as Array<{
+      id: number;
+      content: string;
+    }>;
     if (rows.length === 0) return 0;
 
     const updateStmt = this.db.prepare('UPDATE messages SET content = ? WHERE id = ?');

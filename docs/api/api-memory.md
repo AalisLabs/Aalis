@@ -15,7 +15,7 @@ interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
-  archiveOldest(sessionId: string, count: number): Promise<number>;
+  archiveSpan(sessionId: string, span: { count: number; keep: readonly number[] }): Promise<number>;
   clearAll?(): Promise<void>;
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
   countHistory?(sessionId: string): Promise<number>;
@@ -40,9 +40,14 @@ interface MemoryService {
 }
 ```
 
-- **`getHistory`**：最近 `limit` 条活跃（未归档）消息；`limit` 为 `Infinity` 时返回全部活跃消息。
+- **带条数的读法**（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）一个规则：条数是非负整数或 `Infinity`（调用方保证），为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。
+- **`getHistory`**：最近 `limit` 条活跃（未归档）消息。
 - **`countHistory`**：活跃消息的条数，与 `getHistory(sessionId, Infinity)` 的长度相同。可选：缺了它，plugin-agent 读全部活跃历史再数。
-- **`archiveOldest`**：把最早的 `count` 条活跃消息标为归档（顺序与 `getHistory` 相同），返回归档条数；`count` 为 0 时什么都不归档。归档的消息不再进 `getHistory`，`getFullHistory` 照样有。必填：压缩靠它落定，缺了没有降级可走。
+- **`archiveSpan`**：把最早的 `count` 条活跃消息（顺序与 `getHistory` 相同：时间，同毫秒按写入序；inmemory 只按写入序，假定时间戳随写入递增）标为归档，其中 `keep` 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里；返回归档条数。必填：压缩靠它落定，缺了没有降级可走。
+  - `count` 与 `keep` 的元素都是非负整数（调用方保证），`count` 为 0 时什么都不归档；大于活跃条数时这一段就是全部活跃消息。`keep` 里落在这一段之外的下标不起作用，重复的下标与一个相同。
+  - 位置按调用这一刻的活跃历史算。调用方读快照之后若有写入插进这一段（时间戳早于段尾的晚到消息、按时间戳删除），归档的会错位：调用方要在调用之前核对快照。之后追加的新消息在这一段之外，不受影响。
+  - 原子性按后端分档（与 `commitMetadata` 同一口径）：sqlite 与 inmemory 全成或全不成；mongodb 是一次 `updateMany`，不是事务，中途出错时可能只归档了一部分。
+  - 归档的消息不再进 `getHistory`；`getFullHistory` 照样有，按原来的顺序（留下的与归档的照时间交错）。
 
 ## 消费方式
 
@@ -89,7 +94,7 @@ interface CompressionService {
 服务名 `compression`。压缩把切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样接在摘要后面，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
 
 - **`compress`**：`manual` 是 owner 手动，短对话也完整压一次。压成才落定；没压成时以原因拒绝（这个会话正在压缩、记忆或摘要模型不在、模型失败、期间被清空或历史被改动）。没有可压的对话（历史为空、只剩分隔标记）时什么都不做，照常落定。用量或会话条数到线的自动压缩由提供方在后台自己发起，不经这个方法。
-- **`compressAt`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，按会话取。实际在它与裁剪预算占窗口的比例（`tokenBudget / contextWindow`）中较小的那个上压缩（见下文「触发判定」），界面的压缩线取这个较小值。`platform` 是入口平台：没有出生平台的会话按它选平台档。
+- **`compressAt`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，按会话取。实际在它与裁剪预算占窗口的比例（`tokenBudget / contextWindow`）中较小的那个上压缩（见下文「触发判定」的 `compressionLine`），界面的压缩线取这个较小值。`platform` 是入口平台：没有出生平台的会话按它选平台档。
 - **进度**：事件 `session:compressing { sessionId, status: 'start' | 'done' | 'error' }`，会话服务转成时间线上的压缩通知。只在真的开始压时报：`start` 之后压成报 `done`、没压成报 `error`；什么都不做的与开始之前就失败的（记忆不在、读不出历史）不报。
 - **使用方**：[plugin-session-server](../plugins/plugin-session-server.md) 的 `session/compress` 调它，功能位的「压缩」与用量条目的 `compressAt` 看它在不在。
 
@@ -109,12 +114,18 @@ interface CompressionLines {
   historyLimit?: number;   // 条数线；缺省或 0 不按条数判
 }
 
+function compressionLine(
+  usage: Pick<CompressionUsage, 'contextWindow' | 'tokenBudget'>,
+  compressAt: number | undefined,
+): number;
 function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean;
 ```
 
-判定是否该压缩的纯函数，两维任一到线即该压缩。
+`compressionLine` 是用量一维的压缩线（token）：`compressAt` 为正时是 `min(compressAt × contextWindow, tokenBudget)`，压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪；`compressAt` 缺省或为 0 时取 `tokenBudget`，这时它只是上限、不是触发线（`compressionDue` 不按用量判）。
 
-- **用量一维**：线是 `min(compressAt × contextWindow, tokenBudget)`，压缩线写得比裁剪预算还高时以裁剪预算为准，压缩先于硬裁剪。用量到线或经过了硬裁剪（`trimmed`：到了丢内容的地步），且 `compressible` 至少是线的一半时该压缩。后一个条件就是回差：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；人设、工具定义这些压不掉的部分再大也不会让它空转。
+`compressionDue` 是判定是否该压缩的纯函数，两维任一到线即该压缩。
+
+- **用量一维**：`compressAt` 为正时，用量到 `compressionLine` 或经过了硬裁剪（`trimmed`：到了丢内容的地步），且 `compressible` 至少是线的一半时该压缩。后一个条件就是回差：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；人设、工具定义这些压不掉的部分再大也不会让它空转。`compressAt` 缺省或为 0 时这一维不判，经过了硬裁剪也一样。
 - **条数一维**：`historyMessages` 到 `historyLimit` 时该压缩。全量压缩之后只剩分隔标记与切分点之后的几条，远不到线。
 
 没压成之后多久再试由调用方决定，不在这个函数里。

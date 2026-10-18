@@ -1250,6 +1250,9 @@ describe('条目', () => {
     // 裁剪预算占窗口的比例低于压缩线时，到裁剪预算就压缩：条目给两者中较小的那个
     await host.events.use.emit('token:usage', { ...usage, used: 300, tokenBudget: 600 });
     expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.6 });
+    // 不知道窗口（contextWindow 为 0）时裁剪预算占窗口的比例算不出：给压缩线本身
+    await host.events.use.emit('token:usage', { ...usage, contextWindow: 0, usageRatio: 0 });
+    expect(c2.timeline(s.id, sub).find(i => i.kind === 'usage')).toMatchObject({ compressAt: 0.7 });
   });
 
   it('房间的用量按出生平台算：订阅之后、手动压缩之后请求用量都不填平台', async () => {

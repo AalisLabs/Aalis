@@ -24,12 +24,14 @@ agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖�
 saveMessage(sessionId: string, message: Message): Promise<void>;
 getHistory(sessionId: string, limit?: number): Promise<Message[]>;   // 仅未归档，按 timestamp 升序
 clearSession(sessionId: string): Promise<void>;
-archiveOldest(sessionId: string, count: number): Promise<number>;    // 归档最早的 count 条活跃消息，返回归档条数
+archiveSpan(sessionId: string, span: { count: number; keep: readonly number[] }): Promise<number>; // 归档最早的 count 条活跃消息，keep 列出的位置不归档，返回归档条数
 ```
 
-`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息；内部先 `ORDER BY timestamp DESC, id DESC LIMIT ?` 取最近 N 条，再升序输出；默认 `limit=50`，`limit` 为 `Infinity` 时返回全部活跃消息。
+`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息；内部先 `ORDER BY timestamp DESC, id DESC LIMIT ?` 取最近 N 条，再升序输出；默认 `limit=50`。
 
-`archiveOldest` 按与 `getHistory` 相同的顺序（时间，同毫秒按写入序）把最早的 `count` 条活跃消息标为 `archived`，不做物理删除；`count` 为 0 时什么都不归档，大于活跃条数时归档全部。压缩靠它落定，缺了没有降级可走，所以是必填。
+带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）一个规则：条数是非负整数或 `Infinity`（调用方保证），为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到 `crossSessionMaxLimit`）。MongoDB 的 `limit(0)` 表示不限条数、SQLite 的 `LIMIT` 绑不了 `Infinity`，自写后端透传条数之前要先处理这两个值。
+
+`archiveSpan` 按与 `getHistory` 相同的顺序（时间，同毫秒按写入序）把最早的 `count` 条活跃消息标为 `archived`，其中 `keep` 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里，不做物理删除；`count` 与 `keep` 的元素都是非负整数（调用方保证），`count` 为 0 时什么都不归档，大于活跃条数时这一段就是全部活跃消息，`keep` 里落在段外的下标不起作用、重复的与一个相同。位置按调用这一刻的活跃历史算，之后追加的新消息在段外；调用方在调用之前核对快照。原子性按后端分档：sqlite 与 inmemory 全成或全不成，mongodb 是一次 `updateMany`、不是事务。压缩靠它落定，缺了没有降级可走，所以是必填。
 
 ### 2.2 可选方法（`?` 修饰，按需实现）
 
@@ -98,7 +100,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
 - **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃条数，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
-- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveOldest` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
+- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
 
@@ -106,7 +108,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 
 ### 最小必须 vs 可选
 
-必须实现 `saveMessage` / `getHistory` / `clearSession` / `archiveOldest`。其余方法带 `?` 可选，但缺失会导致对应功能降级：
+必须实现 `saveMessage` / `getHistory` / `clearSession` / `archiveSpan`。其余方法带 `?` 可选，但缺失会导致对应功能降级：
 
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
 - 不实现 `clearAll` → 含 `context` 的 `/clear all`（含不带类型的）整条拒绝执行、不清任何类型；不含 `context` 的类型照常清理。
@@ -136,27 +138,31 @@ import { definePlugin, provide } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 
 class MyMemoryService implements MemoryService {
-  private store = new Map<string, Message[]>();
-  private archived = new Map<string, Message[]>();
+  // 每个会话一个按写入序的数组，归档只打标记：留下的原文早于之后归档的消息，活跃、归档分两个列表就排不对
+  private store = new Map<string, Array<{ message: Message; archived: boolean }>>();
   private meta = new Map<string, Map<string, { data: Record<string, unknown>; updatedAt: number }>>();
 
+  private active(sessionId: string) {
+    return (this.store.get(sessionId) ?? []).filter(e => !e.archived);
+  }
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     const arr = this.store.get(sessionId) ?? [];
-    arr.push(message);
+    arr.push({ message, archived: false });
     this.store.set(sessionId, arr);
   }
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
-    const arr = this.store.get(sessionId) ?? [];
-    return arr.slice(-limit);
+    const active = this.active(sessionId);
+    // slice(-0) 是全部：条数为 0 时要返回空
+    return active.slice(Math.max(0, active.length - limit)).map(e => e.message);
   }
   async clearSession(sessionId: string): Promise<void> {
     this.store.delete(sessionId);
-    this.archived.delete(sessionId);
   }
-  async archiveOldest(sessionId: string, count: number): Promise<number> {
-    const moved = (this.store.get(sessionId) ?? []).splice(0, count);
-    this.archived.set(sessionId, [...(this.archived.get(sessionId) ?? []), ...moved]);
-    return moved.length;
+  async archiveSpan(sessionId: string, { count, keep }: { count: number; keep: readonly number[] }): Promise<number> {
+    const kept = new Set(keep);
+    const span = this.active(sessionId).slice(0, count).filter((_, i) => !kept.has(i));
+    for (const entry of span) entry.archived = true;
+    return span.length;
   }
   async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
     const ns = this.meta.get(namespace) ?? new Map();
@@ -232,7 +238,7 @@ export default definePlugin({
 
 ## 7. 边界与注意事项
 
-- **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。`archiveOldest` 之后旧消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把历史压成摘要再归档。新 provider 要维护 `archived` 字段，`archiveOldest` 与 `getHistory` 用同一个顺序，否则归档的不是摘要覆盖的那一段。
+- **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。`archiveSpan` 之后段里没留下的消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把历史压成摘要再归档。新 provider 要维护 `archived` 字段，`archiveSpan` 与 `getHistory` 用同一个顺序，否则归档的不是摘要覆盖的那一段；`getFullHistory` 按原来的顺序返回，留下的与归档的照时间交错。
 - **`excludeKinds` 的 NULL 语义**：sqlite 与 mongodb 采用「`kind IS NULL` 不被排除」的保守语义，新后端应对齐，否则跨实现切换时控制类消息的过滤行为会漂移。
 - **跨会话查询的 limit 收窄与 overscan**：`getRecentMessagesAcrossSessions` 会把 `query.limit` 收窄到 `crossSessionMaxLimit`（默认 1000），且 `platform` / `excludeSessionIds` 在内存中后过滤——sqlite 用 8x overscan 拉候选再过滤。如果候选 overscan 不足，在极端过滤下可能返回不满 limit 条。
 - **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者只在最近 `recentLimit`（默认 100）条内做文本替换；后者在 sqlite 中因单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766）而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。

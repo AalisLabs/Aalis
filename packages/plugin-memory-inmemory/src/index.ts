@@ -12,9 +12,23 @@ import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 // ===== InMemoryFallbackService 实现 =====
 
+/** 最近 limit 条：limit 为 0 时为空（slice(-0) 是全部），为 Infinity 时为全部 */
+function recent<T>(items: T[], limit: number): T[] {
+  return items.slice(Math.max(0, items.length - limit));
+}
+
+/** 一条消息与它归档了没有 */
+interface Entry {
+  message: Message;
+  archived: boolean;
+}
+
 class InMemoryFallbackService implements MemoryService {
-  private sessions = new Map<string, Message[]>();
-  private archivedSessions = new Map<string, Message[]>();
+  /**
+   * 每个会话一个按写入序的数组：留下的原文早于之后归档的消息，活跃与归档分两个数组就只能表达「归档的都在前面」，
+   * 完整历史的次序会错。getHistory、getFullHistory 与 archiveSpan 数位置都按写入序，假定时间戳随写入递增
+   */
+  private sessions = new Map<string, Entry[]>();
   /** namespace → key → { data, updatedAt }。带上写入时间，与另两家后端的返回结构对齐。 */
   private metadata = new Map<string, Map<string, { data: Record<string, unknown>; updatedAt: number }>>();
   private readonly rangeQueryLimit: number;
@@ -32,53 +46,56 @@ class InMemoryFallbackService implements MemoryService {
       this.sessions.set(sessionId, history);
     }
     history.push({
-      role: message.role,
-      content: message.content,
-      toolCalls: message.toolCalls,
-      toolCallId: message.toolCallId,
-      name: message.name,
-      kind: message.kind,
-      reasoningContent: message.reasoningContent,
-      timestamp: message.timestamp ?? Date.now(),
-      metadata: message.metadata,
-      segments: message.segments,
+      archived: false,
+      message: {
+        role: message.role,
+        content: message.content,
+        toolCalls: message.toolCalls,
+        toolCallId: message.toolCallId,
+        name: message.name,
+        kind: message.kind,
+        reasoningContent: message.reasoningContent,
+        timestamp: message.timestamp ?? Date.now(),
+        metadata: message.metadata,
+        segments: message.segments,
+      },
     });
   }
 
+  /** 这个会话的活跃（未归档）条目，按写入序 */
+  private active(sessionId: string): Entry[] {
+    return (this.sessions.get(sessionId) ?? []).filter(e => !e.archived);
+  }
+
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
-    const history = this.sessions.get(sessionId);
-    if (!history) return [];
-    return history.slice(-limit);
+    return recent(this.active(sessionId), limit).map(e => e.message);
   }
 
   async countHistory(sessionId: string): Promise<number> {
-    return this.sessions.get(sessionId)?.length ?? 0;
+    return this.active(sessionId).length;
   }
 
   async clearSession(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
-    this.archivedSessions.delete(sessionId);
   }
 
   /** 只清消息（含归档）；元数据由归属插件经 memory:clear 自行清理（见 api-memory 的 clearAll 契约） */
   async clearAll(): Promise<void> {
     this.sessions.clear();
-    this.archivedSessions.clear();
   }
 
-  async archiveOldest(sessionId: string, count: number): Promise<number> {
-    const history = this.sessions.get(sessionId);
-    if (!history) return 0;
-    const archived = history.splice(0, count);
-    this.archivedSessions.set(sessionId, [...(this.archivedSessions.get(sessionId) ?? []), ...archived]);
-    return archived.length;
+  async archiveSpan(sessionId: string, { count, keep }: { count: number; keep: readonly number[] }): Promise<number> {
+    const kept = new Set(keep);
+    const span = this.active(sessionId)
+      .slice(0, count)
+      .filter((_, i) => !kept.has(i));
+    // 中间没有 await：与 commitMetadata 同理，整段一次标完
+    for (const entry of span) entry.archived = true;
+    return span.length;
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
-    const archived = this.archivedSessions.get(sessionId) ?? [];
-    const active = this.sessions.get(sessionId) ?? [];
-    const all = [...archived, ...active];
-    return all.slice(-limit);
+    return recent(this.sessions.get(sessionId) ?? [], limit).map(e => e.message);
   }
 
   async getMessagesBySessionRange(
@@ -88,11 +105,9 @@ class InMemoryFallbackService implements MemoryService {
     roles?: Array<Message['role']>,
     excludeKinds?: string[],
   ): Promise<Message[]> {
-    const archived = this.archivedSessions.get(sessionId) ?? [];
-    const active = this.sessions.get(sessionId) ?? [];
-    const all = [...archived, ...active];
     const excludeKindSet = excludeKinds && excludeKinds.length > 0 ? new Set(excludeKinds) : null;
-    return all
+    return (this.sessions.get(sessionId) ?? [])
+      .map(e => e.message)
       .filter(m => {
         const ts = m.timestamp ?? 0;
         if (ts < fromTs || ts > toTs) return false;
@@ -105,7 +120,7 @@ class InMemoryFallbackService implements MemoryService {
   }
 
   async getRecentMessagesAcrossSessions(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]> {
-    const limit = Math.max(1, Math.min(query.limit, this.crossSessionMaxLimit));
+    const limit = Math.max(0, Math.min(query.limit, this.crossSessionMaxLimit));
     const roles = query.roles && query.roles.length > 0 ? query.roles : (['user', 'assistant'] as Message['role'][]);
     const roleSet = new Set(roles);
     const excludeSet =
@@ -114,9 +129,9 @@ class InMemoryFallbackService implements MemoryService {
     const excludeKindSet = query.excludeKinds && query.excludeKinds.length > 0 ? new Set(query.excludeKinds) : null;
 
     const all: RecentMessageRecord[] = [];
-    for (const [sessionId, msgs] of this.sessions) {
+    for (const sessionId of this.sessions.keys()) {
       if (excludeSet?.has(sessionId)) continue;
-      for (const m of msgs) {
+      for (const { message: m } of this.active(sessionId)) {
         if (!roleSet.has(m.role)) continue;
         if (kindSet && (!m.kind || !kindSet.has(m.kind))) continue;
         if (excludeKindSet && m.kind && excludeKindSet.has(m.kind)) continue;
@@ -205,13 +220,11 @@ class InMemoryFallbackService implements MemoryService {
   }
 
   async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
-    const history = this.sessions.get(sessionId);
-    if (!history) return 0;
     let count = 0;
-    const start = Math.max(0, history.length - recentLimit);
-    for (let i = start; i < history.length; i++) {
-      if (history[i].content && history[i].content!.includes(oldText)) {
-        history[i] = { ...history[i], content: history[i].content!.replaceAll(oldText, newText) };
+    for (const entry of recent(this.active(sessionId), recentLimit)) {
+      const { content } = entry.message;
+      if (content?.includes(oldText)) {
+        entry.message = { ...entry.message, content: content.replaceAll(oldText, newText) };
         count++;
       }
     }
@@ -219,34 +232,13 @@ class InMemoryFallbackService implements MemoryService {
   }
 
   async deleteMessagesByTimestamps(sessionId: string, timestamps: number[]): Promise<number> {
-    if (timestamps.length === 0) return 0;
+    const history = this.sessions.get(sessionId);
+    if (!history || timestamps.length === 0) return 0;
     const tsSet = new Set(timestamps);
-    let removed = 0;
-    const active = this.sessions.get(sessionId);
-    if (active) {
-      const kept = active.filter(m => {
-        if (m.timestamp !== undefined && tsSet.has(m.timestamp)) {
-          removed++;
-          return false;
-        }
-        return true;
-      });
-      if (kept.length > 0) this.sessions.set(sessionId, kept);
-      else this.sessions.delete(sessionId);
-    }
-    const archived = this.archivedSessions.get(sessionId);
-    if (archived) {
-      const kept = archived.filter(m => {
-        if (m.timestamp !== undefined && tsSet.has(m.timestamp)) {
-          removed++;
-          return false;
-        }
-        return true;
-      });
-      if (kept.length > 0) this.archivedSessions.set(sessionId, kept);
-      else this.archivedSessions.delete(sessionId);
-    }
-    return removed;
+    const kept = history.filter(e => e.message.timestamp === undefined || !tsSet.has(e.message.timestamp));
+    if (kept.length > 0) this.sessions.set(sessionId, kept);
+    else this.sessions.delete(sessionId);
+    return history.length - kept.length;
   }
 }
 
