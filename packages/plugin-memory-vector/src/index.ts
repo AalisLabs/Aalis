@@ -1036,7 +1036,7 @@ async function run({
         },
       },
     },
-    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    // 读=信息暴露向量（可含跨会话日志/记忆），等级 1 起可用，挡住 0 级；不弹确认
     risk: 'sensitive',
     handler: async (args, callCtx): Promise<string> => {
       const query = String(args.query ?? '').trim();

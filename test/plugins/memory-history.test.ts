@@ -237,7 +237,7 @@ describe('plugin-memory-history', () => {
 // ════════════════════════════════════════════════════════════
 // recent_messages 权限档：它查的是别的会话（默认排除当前会话；same-platform 含同平台别的群与
 // 别人的私聊，cross-platform 含 WebUI），与 session_get_history 同属跨会话读取，同挂
-// risk: 'sensitive'——挡等级 0，朋友档（等级 1）起照常可用、不弹确认。
+// risk: 'sensitive'——挡等级 0，等级 1 起照常可用、不弹确认。
 // 走真链路：plugin-tools 执行 → plugin-authority 守卫 → 本插件 handler。
 // ════════════════════════════════════════════════════════════
 
