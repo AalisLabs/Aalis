@@ -678,6 +678,8 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
                     identity: `${u.platform}:${u.userId}`,
                     level: u.level,
                     memberOf: u.groups.length > 0 ? t('groupList', { groups: memberGroups(manager, u.groups) }) : '',
+                    // 不显示，与「设权限组」的输入项同名，表单按它预填
+                    groups: u.groups,
                     note: u.note ?? '',
                   })),
             },
@@ -696,7 +698,7 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
               empty: t('groupsEmpty'),
               columns: [
                 { key: 'name', label: t('groupName'), primary: true },
-                { key: 'grants', label: t('groupGrants'), kind: 'code', primary: true },
+                { key: 'entries', label: t('groupGrants'), kind: 'code', primary: true },
                 { key: 'members', label: t('groupMembers') },
               ],
               rowActions: [{ action: 'editGroup' }, { action: 'deleteGroup' }],
@@ -704,7 +706,8 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
                 const users = manager.listUsers();
                 return [...manager.definedGroups()].map(([name, entries]) => ({
                   name,
-                  grants: entries.join(' '),
+                  // 与「改条目」的输入项同名，表单按它预填
+                  entries,
                   members: users.filter(u => u.groups.includes(name)).length,
                 }));
               },

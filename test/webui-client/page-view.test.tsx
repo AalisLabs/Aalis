@@ -655,6 +655,97 @@ describe('动作', () => {
     await vi.waitFor(() => expect(posts(actionPath(JOBS, 'edit'))).toHaveLength(1));
     expect(posts(actionPath(JOBS, 'edit'))[0].body).toEqual({ rowKey: '周报', input: { every: 3600, note: '每周一' } });
   });
+
+  it('行动作的表单：多选与列表字段用这一行的字符串数组预填，其余字段用标量；类型对不上的与逐行写不出的列表不预填', async () => {
+    const RETAG: typeof JOBS = {
+      ...JOBS,
+      actions: {
+        retag: {
+          label: '改标签',
+          effect: 'write',
+          row: true,
+          input: {
+            tags: {
+              type: 'multiselect',
+              label: '标签',
+              options: [
+                { label: '甲', value: 'a' },
+                { label: '乙', value: 'b' },
+              ],
+            },
+            steps: { type: 'list', label: '步骤' },
+            note: { type: 'string', label: '备注' },
+          },
+        },
+      },
+      content: [
+        {
+          type: 'table',
+          id: 'list',
+          rowKey: 'name',
+          columns: [{ key: 'name', label: '名称', primary: true }],
+          rowActions: [{ action: 'retag' }],
+        },
+      ],
+    };
+    const rows = [
+      { name: '周报', tags: ['b', 'zz-gone'], steps: ['汇总', '发出'], note: ['不是一句'] },
+      { name: '备份', tags: 'a', steps: '一步', note: '每天' },
+      { name: '月报', steps: ['汇总', ''], note: '每月' },
+    ];
+    app = await renderApp(
+      pagePath(RETAG),
+      {},
+      jobsRest({
+        '/api/pages': { pages: [RETAG] },
+        [dataPath(RETAG, 'list')]: data(rows),
+        [actionPath(RETAG, 'retag')]: {},
+      }),
+    );
+    await table().findByText('周报');
+    const open = (name: string) => {
+      fireEvent.click(rowOf(name).getByRole('button', { name: '改标签' }));
+      return within(screen.getByRole('dialog', { name: '改标签' }));
+    };
+    const checked = (dialog: ReturnType<typeof open>) =>
+      dialog
+        .getAllByRole('checkbox')
+        .filter(box => (box as HTMLInputElement).checked)
+        .map(box => box.closest('label')?.textContent);
+
+    let dialog = open('周报');
+    expect(checked(dialog), '不在可选项里的取值也列出来、勾着').toEqual(['乙', 'zz-gone']);
+    expect((dialog.getByLabelText('步骤') as HTMLTextAreaElement).value).toBe('汇总\n发出');
+    expect((dialog.getByLabelText('备注') as HTMLInputElement).value).toBe('');
+    fireEvent.click(dialog.getByRole('button', { name: '改标签' }));
+    await vi.waitFor(() => expect(posts(actionPath(RETAG, 'retag'))).toHaveLength(1));
+    expect(posts(actionPath(RETAG, 'retag'))[0].body).toEqual({
+      rowKey: '周报',
+      input: { tags: ['b', 'zz-gone'], steps: ['汇总', '发出'] },
+    });
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    dialog = open('备份');
+    expect(checked(dialog)).toEqual([]);
+    expect((dialog.getByLabelText('步骤') as HTMLTextAreaElement).value).toBe('');
+    expect((dialog.getByLabelText('备注') as HTMLInputElement).value).toBe('每天');
+    fireEvent.click(dialog.getByRole('button', { name: '改标签' }));
+    await vi.waitFor(() => expect(posts(actionPath(RETAG, 'retag'))).toHaveLength(2));
+    expect(posts(actionPath(RETAG, 'retag'))[1].body).toEqual({ rowKey: '备份', input: { note: '每天' } });
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // 空白项逐行写不出：照旧可以编辑，不预填
+    dialog = open('月报');
+    const steps = dialog.getByLabelText('步骤') as HTMLTextAreaElement;
+    expect([steps.readOnly, steps.value]).toEqual([false, '']);
+    fireEvent.change(steps, { target: { value: '汇总\n发出' } });
+    fireEvent.click(dialog.getByRole('button', { name: '改标签' }));
+    await vi.waitFor(() => expect(posts(actionPath(RETAG, 'retag'))).toHaveLength(3));
+    expect(posts(actionPath(RETAG, 'retag'))[2].body).toEqual({
+      rowKey: '月报',
+      input: { steps: ['汇总', '发出'], note: '每月' },
+    });
+  });
 });
 
 describe('单元格', () => {
@@ -738,6 +829,67 @@ describe('单元格', () => {
     expect(b.getByText('javascript:alert(1)')).toBeTruthy();
     expect(b.queryByRole('img')).toBeNull();
     expect(b.getByText('b.log')).toBeTruthy();
+  });
+
+  it('字符串数组按界面的语言连成一句列出：代码列整句等宽，长文本可展开，别的种类按文字（链接列不成链接），空数组按空值；键值与搜索同样用这一句', async () => {
+    const LISTS: typeof JOBS = {
+      ...CELLS,
+      content: [
+        { type: 'info', id: 'summary', label: '概况' },
+        {
+          type: 'table',
+          id: 'list',
+          rowKey: 'id',
+          columns: [
+            { key: 'id', label: '编号', primary: true },
+            { key: 'tags', label: '标签' },
+            { key: 'code', label: '代码', kind: 'code' },
+            { key: 'url', label: '网址', kind: 'link' },
+            { key: 'text', label: '原文', kind: 'long-text' },
+          ],
+        },
+      ],
+    };
+    const rows = [
+      {
+        id: 'a',
+        tags: ['甲', '乙'],
+        code: ['tool:web_*', 'command:restart'],
+        url: ['https://example.invalid/1', 'https://example.invalid/2'],
+        text: ['很长的一段', '另一段'],
+      },
+      { id: 'b', tags: ['丙'], code: [] },
+      // 超过一页才有搜索框
+      ...Array.from({ length: 49 }, (_, i) => ({ id: `c${i}`, tags: ['甲', `丁${i}`] })),
+    ];
+    app = await renderApp(
+      pagePath(LISTS),
+      {},
+      jobsRest({
+        '/api/pages': { pages: [LISTS] },
+        [dataPath(LISTS, 'summary')]: data([{ label: '常用标签', value: ['戊', '己'] }]),
+        [dataPath(LISTS, 'list')]: data(rows),
+      }),
+    );
+    await table().findByText('a');
+    expect((await page().findByText('戊、己')).closest('dd')).toBeTruthy();
+    const a = rowOf('a');
+    expect(a.getByText('甲、乙')).toBeTruthy();
+    expect(a.getByText('tool:web_*、command:restart').tagName).toBe('CODE');
+    expect(a.queryByRole('link')).toBeNull();
+    expect(a.getByText('https://example.invalid/1、https://example.invalid/2')).toBeTruthy();
+    expect(table().getByText('b').closest('tr')?.querySelector('code')).toBeNull();
+    const expand = a.getByRole('button', { name: '很长的一段、另一段' });
+    fireEvent.click(expand);
+    expect(expand.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.change(page().getByRole('searchbox'), { target: { value: '甲、乙' } });
+    expect(
+      table()
+        .getAllByRole('row')
+        .slice(1)
+        .map(row => row.querySelector('td')?.textContent),
+    ).toEqual(['a']);
   });
 
   it('时间按服务进程的时区写；字符串只认带时区偏移（Z 或 ±HH:MM）的 ISO 串，不带偏移的按文字显示', async () => {
