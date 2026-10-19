@@ -59,7 +59,7 @@ listMetadataKeys?(namespace): Promise<string[]>;      // 只列键、不读 data
 deleteMetadata(namespace, key): Promise<void>;
 commitMetadata(ops): Promise<void>;                  // 批量提交，原子性按后端分档
 
-updateMessageContent?(sessionId, oldText, newText, recentLimit?): Promise<number>; // 最近 N 条内文本替换
+updateMessageContent?(sessionId, oldText, newText, recentLimit?): Promise<number>; // 含 oldText 的消息（含归档）里最近 N 条做文本替换
 deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时间戳批删（回滚整轮）
 ```
 
@@ -241,7 +241,7 @@ export default definePlugin({
 - **`getHistory` 只看未归档**，`getFullHistory` 才包含归档。`archiveSpan` 之后段里没留下的消息变为 `archived=1`，agent 上下文看不到它们；summary 正是利用这一点，把历史压成摘要再归档。新 provider 要维护 `archived` 字段，`archiveSpan` 与 `getHistory` 用同一个顺序，否则归档的不是摘要覆盖的那一段；`getFullHistory` 按原来的顺序返回，留下的与归档的照时间交错。
 - **`excludeKinds` 的 NULL 语义**：sqlite 与 mongodb 采用「`kind IS NULL` 不被排除」的保守语义，新后端应对齐，否则跨实现切换时控制类消息的过滤行为会漂移。
 - **跨会话查询的 limit 收窄与 overscan**：`getRecentMessagesAcrossSessions` 会把 `query.limit` 收窄到 `crossSessionMaxLimit`（默认 1000），且 `platform` / `excludeSessionIds` 在内存中后过滤——sqlite 用 8x overscan 拉候选再过滤。如果候选 overscan 不足，在极端过滤下可能返回不满 limit 条。
-- **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者只在最近 `recentLimit`（默认 100）条内做文本替换；后者在 sqlite 中因单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766）而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。
+- **`updateMessageContent` / `deleteMessagesByTimestamps` 的作用域**：前者在含 `oldText` 的消息（含归档）里取最近 `recentLimit`（默认 100）条做文本替换；后者在 sqlite 中因单条语句的绑定参数有上限（Node 自带的 SQLite 为 32766）而分 500 条一批、以事务删除。新 provider 应注意同等的批量约束。
 - **没有 schema 校验**：`saveMessage` 直接信任传入的 `Message`，不校验 `role` / `kind` 是否合法。脏数据由调用方（message-archive）负责清洗。
 
 ## 8. 交叉链接

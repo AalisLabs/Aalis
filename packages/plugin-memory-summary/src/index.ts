@@ -605,8 +605,9 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 把归档段连同已有摘要交给摘要模型，得到新摘要与挑中、原样保留的单位。预算按这次重写的输入（已有摘要加各单位的文字，不计
-   * 编号标注）算，摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 输入⌋)：下限只托住摘要，小输入时留得很少，压完不会
-   * 仍在线上。请求的输出上限是预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的
+   * 编号标注）算，摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 这次新压的对话⌋)，不算已有摘要：下限只托住摘要，
+   * 已有摘要再长也撑不大它，新压的少时留得很少，压完不会仍在线上。
+   * 请求的输出上限是预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的
    * 推理 token 也算在输出上限里。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份
    * 可能是按更大的预算写的），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每次放对话的字数（容量，
    * 编号标注与重发的保留单位都算在内）。放不下时分几次请求：每次是上一次挑中的单位（原样、带原编号）加按顺序放得下的新单位，
@@ -632,9 +633,9 @@ async function run(caps: Caps): Promise<void> {
     }
     // 物理上限：摘要模型一次写得出的长度，至多它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）
     const physical = Math.min(model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.contextLength / 4));
-    const input = units.reduce((sum, unit) => sum + estimateTextTokens(unit.text), estimateTextTokens(previous ?? ''));
-    const budget = summaryBudget(sessionId, physical, input);
-    const keepCap = Math.min(budget, Math.floor(cfg.summaryBudgetRatio * input));
+    const added = units.reduce((sum, unit) => sum + estimateTextTokens(unit.text), 0);
+    const budget = summaryBudget(sessionId, physical, added + estimateTextTokens(previous ?? ''));
+    const keepCap = Math.min(budget, Math.floor(cfg.summaryBudgetRatio * added));
     // 预算不超过物理上限的三分之二，输出上限因此也不超过物理上限
     const maxTokens = Math.ceil(1.5 * budget);
     const system = instructions(template, budget, keepCap);

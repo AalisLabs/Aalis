@@ -196,7 +196,7 @@ it('丢弃的边界落在工具调用组中间：组首连同结果一起丢，�
 });
 
 it('压成之后到下一次压缩之间：摘要块与保留的原文紧接在系统提示之后，每轮在同一位置逐字相同；下一次压成那一轮只共享系统提示', async () => {
-  // 保留上限是这次输入的一半，短消息编得上号
+  // 保留上限是这次新压的对话的一半，短消息编得上号
   const { ask, conversation, summaryTurns, statuses, summarizer } = await boot({ summaryBudgetRatio: 0.5 });
   // 第 10 轮结束时到线、没压成，第 11 轮丢一段；第 12 轮退避期满再试：丢掉一段之后条数一维仍判得出该压缩
   for (let k = 1; k <= 11; k++) await ask(k, { compresses: k === 10 });

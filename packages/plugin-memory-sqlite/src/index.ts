@@ -409,16 +409,16 @@ export class SQLiteMemoryService implements MemoryService {
   }
 
   async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
-    // 找到最近 N 条消息中含 oldText 的记录 ID
+    // 含 oldText 的消息（含归档）里最近 N 条；instr 按字面、区分大小写，不像 LIKE 把 _ 与 % 当通配、不分大小写
     const findStmt = this.db.prepare(`
       SELECT id, content FROM (
         SELECT id, content FROM messages
-        WHERE sessionId = ? AND content LIKE ?
+        WHERE sessionId = ? AND instr(content, ?) > 0
         ORDER BY timestamp DESC
         LIMIT ?
       )
     `);
-    const rows = findStmt.all(sessionId, `%${oldText}%`, sqlLimit(recentLimit)) as Array<{
+    const rows = findStmt.all(sessionId, oldText, sqlLimit(recentLimit)) as Array<{
       id: number;
       content: string;
     }>;

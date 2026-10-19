@@ -21,7 +21,7 @@
 ### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
 
 - **摘要预算**（plugin-memory-summary）：摘要长度跟着压掉的量走。预算是这次重写的输入（上一份摘要加这次新压的对话）乘 `summaryBudgetRatio`（默认 0.1），不少于 1000 token，越旧的内容越浓缩；不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，也不超过这个会话压缩线（按最近一次用量算）的四分之一，两个封顶都压过这个下限。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占压掉内容的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。
-- **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过输入乘 `summaryBudgetRatio`（不套 1000 的下限）。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
+- **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过这次新压的对话乘 `summaryBudgetRatio`（不算上一份摘要，也不套 1000 的下限）。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
 - **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory` 时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
 - **写满输出上限算没压成**（plugin-memory-summary）：摘要模型报的输出 token 不小于请求的 `maxTokens` 时，这次压缩没压成，日志写明「摘要模型写满了输出上限，输出可能不完整」，可能被截断的摘要不存下；后台压缩照常计入退避。服务商不报用量时查不出。
 - **破坏性**：

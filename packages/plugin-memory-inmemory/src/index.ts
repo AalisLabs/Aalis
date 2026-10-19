@@ -220,11 +220,13 @@ class InMemoryFallbackService implements MemoryService {
   }
 
   async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
+    // 从最新的往前数含 oldText 的，归档的也算
+    const entries = this.sessions.get(sessionId) ?? [];
     let count = 0;
-    for (const entry of recent(this.active(sessionId), recentLimit)) {
-      const { content } = entry.message;
+    for (let i = entries.length - 1; i >= 0 && count < recentLimit; i--) {
+      const { content } = entries[i].message;
       if (content?.includes(oldText)) {
-        entry.message = { ...entry.message, content: content.replaceAll(oldText, newText) };
+        entries[i].message = { ...entries[i].message, content: content.replaceAll(oldText, newText) };
         count++;
       }
     }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ChatModelRequest, estimateMsgTokens, estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
-import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { compression, compressionDue, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -21,7 +21,7 @@ import {
 // 「#编号〔约 N token〕」，N 是原样留下要占的 token。摘要模型在【保留原文】后列出要留的编号，落定时这些单位不归档、
 // 原样留在活跃历史最前面。保留的合计超过 min(保留上限, 预算 − 摘要) 时从最早的起去掉；摘要仍覆盖全部对话，去掉的只损失
 // 原样的细节。分块时上一次请求挑中的原样带进下一次重挑。认不出格式时只用摘要，照常压成。
-// 用例把 summaryBudgetRatio 设 0.5：保留上限是这次输入的一半，短消息编得上号。
+// 用例把 summaryBudgetRatio 设 0.5：保留上限是这次新压的对话的一半，短消息编得上号。
 // ════════════════════════════════════════════════════════════
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -182,7 +182,7 @@ describe('plugin-memory-summary: 单位与编号', () => {
       contextLength: 4096,
       maxOutputTokens: 512,
     });
-    // 物理上限 512 把预算压到 341；输入不小于 682 token 时保留上限也是 341：两次压缩的系统提示一样长，容量相同
+    // 物理上限 512 把预算压到 341；这次新压的对话不小于 682 token 时保留上限也是 341：两次压缩的系统提示一样长，容量相同
     const filler = assistant('。'.repeat(500));
     await memory.saveMetadata('summary', 's', { summary: SUMMARY });
     await seed(memory, [filler]);
@@ -400,6 +400,34 @@ describe('plugin-memory-summary: 保留的合计', () => {
     for (const m of five.slice(0, 4)) expect(conversationOf(request)).toContain(m.content);
     expect(systemOf(request)).toContain('摘要仍要覆盖全部对话');
   });
+
+  it('保留上限只按这次新压的对话算、不含上一份摘要：上一份摘要很长、新压的是十条短消息时，压完的活跃条数到不了条数线', async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => user(`第${i}问`));
+    const { memory, compression, llm } = await setup(
+      () => `【保留原文】${ten.map((_, i) => `#${i + 1}`).join(' ')}\n【目标】S`,
+      {},
+      { summaryBudgetRatio: 0.1 },
+    );
+    // 约 1000 token：算上它时保留上限约 108，十条全编得上号、全留得下
+    await memory.saveMetadata('summary', 's', { summary: `【目标】${'旧'.repeat(663)}` });
+    await seed(memory, ten);
+    const lines = { compressAt: 0.8, historyLimit: 10 };
+    const usage = async () => ({
+      used: 10,
+      contextWindow: 1000,
+      tokenBudget: 1000,
+      compressible: 10,
+      trimmed: false,
+      historyMessages: (await memory.getHistory('s', Infinity)).length,
+    });
+    expect(compressionDue(await usage(), lines)).toBe(true);
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(compressionDue(await usage(), lines)).toBe(false);
+    const added = ten.reduce((sum, m) => sum + estimateTextTokens(`用户: ${m.content}`), 0);
+    expect(systemOf(llm.requests[0])).toContain(`其中保留的原文合计不超过 ${Math.floor(0.1 * added)} tokens`);
+  });
 });
 
 describe('plugin-memory-summary: 下一次压缩', () => {
@@ -480,7 +508,7 @@ describe('plugin-memory-summary: 分块时带入', () => {
 });
 
 describe('plugin-memory-summary: 挑原文的提示词', () => {
-  it('点名四类典型，写明合计预算与保留上限（保留上限 = min(预算, 比例 × 输入)）、不必因为是最近几条就保留、摘要仍要覆盖全部对话、编号行在第一行', async () => {
+  it('点名四类典型，写明合计预算与保留上限（保留上限 = min(预算, 比例 × 这次新压的对话)）、不必因为是最近几条就保留、摘要仍要覆盖全部对话、编号行在第一行', async () => {
     const { memory, compression, llm } = await setup(
       () => '【保留原文】无\n【目标】S',
       {},
