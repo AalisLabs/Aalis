@@ -176,7 +176,7 @@ export default definePlugin({
 
 `cron-engine` 本身**不触及 authority、storage、网络**——它只回调 handler。安全责任完全落在 handler 内部和上层：
 
-- **触发无人类调用者 → 匿名最低权限**。cron/interval/event 触发器没有触发人，workflow 据此把这类运行视作匿名 level-0，**只能跑 public 工具**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）。你的 handler 若要执行带风险的动作，必须自己经 [authority](../concepts/security-model.md) 闸，且不能假冒 owner 身份。
+- **触发没有人类调用者**。cron/interval/event 触发器没有触发人，workflow 以定义者作调用者，没有定义者的按匿名，**只能跑 public 工具**，杜绝借他人 workflow 提权（见 [plugin-workflow](../plugins/plugin-workflow.md#定义者与运行身份)）。你的 handler 若要执行带风险的动作，必须自己经 [authority](../concepts/security-model.md) 闸，且不能假冒 owner 身份。
 - **handler 隔离**：provider 保证单个 handler 抛错不波及其他订阅者，但 handler 自身**不得阻塞**——它跑在共享 tick 上，长任务应 `void`/fire-and-forget（scheduler 与 workflow 都是异步 fire，不阻塞 tick）。
 - **风险标注的副作用**属于上层工具调用，不在本服务范畴；定时只是触发器。
 

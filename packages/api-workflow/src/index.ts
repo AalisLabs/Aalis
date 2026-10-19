@@ -106,12 +106,6 @@ export interface WorkflowDef {
   nodes: NodeSpec[];
   /** 是否启用 */
   enabled?: boolean;
-  /**
-   * 定义者：调用 defineWorkflow 的一方填自己经认证的授权身份，没有即匿名。服务原样记下，转交外部来的定义之前先删掉这个键；
-   * 改了内容的覆盖填覆盖者，不能把 getWorkflow 取回的原样带回去，只改启停的沿用原来的。实现不写进定义文件、也不从定义文件读，
-   * 文件被改过的载入后没有定义者。运行身份见 {@link WorkflowService.runWorkflow}
-   */
-  definedBy?: { platform: string; userId: string };
 }
 
 // ============ 运行实例 ============
@@ -158,7 +152,11 @@ export interface WorkflowService {
   listWorkflows(): WorkflowDef[];
   /** 按 id 获取定义 */
   getWorkflow(id: string): WorkflowDef | undefined;
-  /** 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml */
+  /**
+   * 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml。
+   * 经这里定义或覆盖的没有定义者（运行身份见 {@link WorkflowService.runWorkflow}）：服务认不出调用方是谁，定义者只由实现
+   * 自己认证过调用者的入口记下
+   */
   defineWorkflow(def: WorkflowDef, opts?: { persist?: boolean }): Promise<void>;
   /** 删除工作流（若 persist 文件存在则删除；有文件的定义删不掉文件时抛错） */
   removeWorkflow(id: string): Promise<boolean>;

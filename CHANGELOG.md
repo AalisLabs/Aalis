@@ -84,10 +84,16 @@
 
 - `confirmOverrides` 的 `'off'`、`restrictedPolicy` 白名单与执行守卫的 `skipConfirm` 只对授权身份（守卫上下文的 `actor`，缺省即会话身份）是 owner 的回合生效。别人发起的照旧确认：`'off'` 回落到插件的声明，工具要 owner 批准、不能产生审批的直接拒绝，指令当面问发出者本人。不再免确认的有：群成员（含开了相应工具组的群里的 2 级成员）、别人的私聊里对方发起的、群友亲手输入的指令、创建者不是 owner 的定时任务里的指令（需要确认的直接拒绝）、MCP 客户端、没有授权主体的回合（群里的频率触发、空闲触发、owner 会话里的主动发言、白纸任务完成通知），以及定义者不是 owner 或没有定义者的编排。owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排照旧免。
 - 编排按定义者与调用者里不是 owner 的一方执行：调用者是 owner 时按定义者（没有即匿名），否则按调用者。`workflow_run` 的调用者是调用它的人，工作流页「立即运行」是登录的 owner，cron、interval、once、event 触发与 `trigger:fired` 以定义者作调用者，不再匿名。owner 经 `workflow_run` 调起别人定义或覆盖过的编排，按那个人的等级执行。权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
-- 定义者由定义入口记下（`workflow_define` 取调用者的授权身份，工作流页「新建或覆盖」取登录的 owner），覆盖即换成覆盖者；它连同定义文件文本的哈希记在运行历史文件（`runsFile`）的 `definers` 里，不写进定义文件。手写进 `defsDir` 的定义（含已有的全部定义）、文件在磁盘上被改过的、运行历史文件读不出时，没有定义者，按匿名执行，owner 经 `workflow_run` 调起也一样。
-- `WorkflowDef` 加 `definedBy`。替换编排服务的第三方实现要照此记下定义者（不写进定义文件、不从定义文件读），并按上面的规则定运行身份。
+- 定义者由 plugin-workflow 自己的入口记下（`workflow_define` 取调用者的授权身份，工作流页「新建或覆盖」取登录的 owner），覆盖即换成覆盖者；它连同定义文件文本的哈希记在运行历史文件（`runsFile`）的 `definers` 里，不写进定义文件。经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）、手写进 `defsDir` 的定义（含已有的全部定义）、文件在磁盘上被改过的、运行历史文件读不出时，没有定义者，按匿名执行，owner 经 `workflow_run` 调起也一样。
+- 替换编排服务的第三方实现，`defineWorkflow` 定义或覆盖的同样没有定义者；定义者只由实现自己认证过调用者的入口记下（不写进定义文件、不从定义文件读），并按上面的规则定运行身份。
 
 **迁移**：要让已有的编排按 owner 执行，在工作流页用「新建或覆盖」把它存一次。
+
+### 编排的事件触发不订阅带会话内容的事件（@aalis/plugin-workflow）
+
+- `event` 触发器不接受负载带会话内容的事件，订阅它们的触发器不注册、只记警告。在原有的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文。
+
+**迁移**：订阅这些事件的编排改用别的触发方式；要在一次运行结束后接着跑，把后续步骤写进同一个编排的 DAG。
 
 ### 封禁先于等级判定（@aalis/plugin-authority）
 

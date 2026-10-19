@@ -11,9 +11,39 @@ import type { CronEngine } from '@aalis/api-cron-engine';
 import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 
-// event 触发器禁止订阅的内部事件：这些承载会话原文/出站内容，若被 workflow 的 send-message
-// 节点转发到任意 sessionId，会构成跨会话内容窃听/外泄通道。只允许订阅编排/信号类事件。
-const BLOCKED_EVENT_TRIGGERS = new Set<string>(['inbound:message', 'outbound:message', 'inbound:command']);
+// event 触发器不订阅的事件：负载带会话内容。编排按定义者的身份运行，事件参数作为运行变量插值进 tool 节点的参数、agent 节点
+// 的指令与 send-message 的正文，内容里不可信的部分就以定义者的身份下达；转发到任意 sessionId，又是跨会话窃听与外泄的通道。
+// 第一方声明的每个事件在这里或 test/architecture/event-trigger-sources.test.ts 的可作触发源表里表态。
+export const BLOCKED_EVENT_TRIGGERS: ReadonlySet<string> = new Set([
+  // 消息与回复
+  'inbound:message',
+  'inbound:message:archived',
+  'assistant:message:archived',
+  'outbound:message',
+  'outbound:delivered',
+  'outbound:stream',
+  // 工具调用的参数、结果与输出
+  'tool:execute',
+  'tool:output',
+  'background:changed',
+  // 审批的命令、改动与参数
+  'approval:created',
+  'approval:settled',
+  // 附件的识别结果
+  'media:processed',
+  // 待办的内容
+  'todo:updated',
+  // 会话档案：名称（群名、昵称）、标题、子任务的指令与结果
+  'session:created',
+  'session:updated',
+  'session:completed',
+  // 编排：trigger:fired 的负载（定时任务的内容等），运行的变量与节点输出
+  'trigger:fired',
+  'workflow:run:start',
+  'workflow:run:done',
+  'workflow:run:error',
+  'workflow:node:done',
+]);
 
 /** setTimeout 的 delay 上限（32 位有符号毫秒，约 24.8 天）；超过即溢出成立即触发 */
 const MAX_ONCE_TIMEOUT_MS = 2 ** 31 - 1;
@@ -143,7 +173,7 @@ export class TriggerManager {
         const evtName = t.event;
         if (BLOCKED_EVENT_TRIGGERS.has(evtName)) {
           this.logger.warn(
-            `workflow "${def.id}" 的 event 触发器订阅了受限内部事件 "${evtName}"（承载会话内容，防跨会话外泄），已拒绝注册`,
+            `workflow "${def.id}" 的 event 触发器订阅的 "${evtName}" 负载带会话内容，不能当触发源，已拒绝注册`,
           );
           break;
         }

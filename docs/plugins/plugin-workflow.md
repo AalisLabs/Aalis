@@ -56,7 +56,7 @@ export default definePlugin({
 | `event` | `event`, `filter?` | 订阅指定事件；`filter` 的每个键须与事件第一个参数的同名顶层字段严格相等；事件参数数组以运行变量 `args` 注入 |
 | `manual` | — | 不注册触发器，仅手动运行 |
 
-`event` 触发器不接受 `inbound:message`、`outbound:message`、`inbound:command`：这些事件承载会话内容，若被 `send-message` 节点转发到其它会话会造成跨会话泄露。订阅这些事件的触发器不会注册，仅记录警告。
+`event` 触发器不接受负载带会话内容的事件：消息与回复（`inbound:message`、`inbound:message:archived`、`assistant:message:archived`、`outbound:message`、`outbound:delivered`、`outbound:stream`），工具调用的参数、结果与输出（`tool:execute`、`tool:output`、`background:changed`），审批（`approval:created`、`approval:settled`），附件的识别结果（`media:processed`），待办（`todo:updated`），会话档案（`session:created`、`session:updated`、`session:completed`），以及 `trigger:fired` 与编排自己的运行事件（`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`）。编排按定义者的身份运行（见下文「定义者与运行身份」），事件参数插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 节点的正文时，内容里不可信的部分就以定义者的身份下达，转发到别的会话还会造成跨会话泄露。订阅这些事件的触发器不会注册，仅记录警告。这里只列第一方声明的事件，第三方插件声明的事件照常可以订阅，声明事件的插件作者与定义编排的人要自己确认负载里没有会话内容。
 
 ## 节点类型
 
@@ -108,6 +108,7 @@ nodes:
 
 每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（匿名的不记），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
 
+- 经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）：服务认不出调用方是谁；
 - 手写进 `defsDir`、没经工作流页或 `workflow_define` 存过的定义；
 - 定义文件在磁盘上被改过的；
 - `runsFile` 读不出时载入的全部定义。
@@ -122,7 +123,7 @@ nodes:
 | 工作流页「立即运行」 | 登录的 owner |
 | `cron`、`interval`、`once`、`event` 触发与 `trigger:fired` | 定义者 |
 
-`event` 触发的事件参数（运行变量 `args`）与 `trigger:fired` 的 `payload` 作为运行变量进入这次按定义者身份的运行：插值进 `agent` 节点的指令或 `send-message` 节点的正文时，触发方写的内容就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信。
+`event` 触发的事件参数（运行变量 `args`）与 `trigger:fired` 的 `payload` 作为运行变量进入这次按定义者身份的运行：插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 节点的正文时，触发方写的内容就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信。
 
 判 owner 用权限服务（`authority`，optional）。它不在时（停用或重载的窗口）判不出谁是 owner：调用者与定义者是同一身份时按这个身份执行，否则按匿名。
 
@@ -141,7 +142,7 @@ nodes:
 WebUI 插件详情里的「工作流」页（`key: 'workflows'`）：
 
 - 概况：定义数、启用数、24 小时内的运行与失败次数；
-- 定义表：ID、名称、触发、节点数、状态（启用或停用）、描述。选中一个，详情里显示它的 YAML。行动作「立即运行」（运行没有成功时回错误与原因）、「启用」「停用」（按当前状态显示其一，改写磁盘上的定义）、「删除」（确认框，连同磁盘上的定义文件；不存在时回错误）；
+- 定义表：ID、名称、触发、节点数、状态（启用或停用）、定义者（没有定义者的写「匿名」）、描述。选中一个，详情里显示它的 YAML。行动作「立即运行」（运行没有成功时回错误与原因）、「启用」「停用」（按当前状态显示其一，改写磁盘上的定义）、「删除」（确认框，连同磁盘上的定义文件；不存在时回错误）；
 - 最近运行表：工作流、状态、触发来源、开始时间、用时、错误与运行 ID；
 - 「新建或覆盖」：带输入的动作，粘贴完整 YAML，可选不写入磁盘。
 
