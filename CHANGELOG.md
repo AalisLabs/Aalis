@@ -1,8 +1,8 @@
 # Changelog
 
-本文件只记录**破坏性变更与迁移路径**。逐包的完整改动见 git 历史。
+本文件只记录**破坏性变更与看得到的行为变化**，写改了什么，不写旧项目的升级步骤。逐包的完整改动见 git 历史。
 
-版本号语义：core 在 1.0 之前，次版本（`0.x.0`）可含破坏性变更并在此列出迁移路径；
+版本号语义：core 在 1.0 之前，次版本（`0.x.0`）可含破坏性变更并在此列出；
 补丁版本（`0.x.y`）只做修复与加法。1.0 之后按标准 semver，稳定性条款见
 [`docs/design/core-contract.md`](docs/design/core-contract.md)。
 
@@ -33,24 +33,18 @@
 ### 注入的文字不再执行指令（@aalis/schema-message、@aalis/plugin-commands、@aalis/plugin-scheduler）
 
 - 只有人亲手写的文字才执行指令：带 `source` 的入站注入里的指令不再执行，正文当普通消息交给她。编排里用发消息节点（或 agent 节点）发的指令不再生效；子任务的任务正文与 `send_to_subtask` 的追问、宿主通知、空闲触发里的指令同样不执行。此前注入的文字照常解析指令，不需要确认的指令（如 `/shutdown`、`/status`）按注入带的 `actor` 执行。
-- `IncomingMessage` 加 `ownerApproved`（注入方声明文字建立时经 owner 过目过原文），plugin-commands 只解析不带 `source` 的真人入站与带这个声明的注入；`source` 写成 `scheduler` 而不声明的注入不再执行指令。plugin-scheduler 触发的消息带声明，定时任务里的指令照旧执行。
-
-**迁移**：编排要到点执行指令，改用定时任务（配置里的 `jobs`、计划任务页，或经 `scheduler_create_job`）。第三方插件注入的文字里的指令不再执行，没有替代写法：注入的文字不算人写的，不要给没经 owner 过目原文的文字设 `ownerApproved`。
+- `IncomingMessage` 加 `ownerApproved`（注入方声明文字建立时经 owner 过目过原文），plugin-commands 只解析不带 `source` 的真人入站与带这个声明的注入；`source` 写成 `scheduler` 而不声明的注入不再执行指令。plugin-scheduler 触发的消息带声明，定时任务里的指令照旧执行。第三方插件注入的文字不算人写的，其中的指令不执行；不要给没经 owner 过目原文的文字设 `ownerApproved`。
 
 ### /clear 的门槛改为等级 1（@aalis/plugin-commands）
 
 - `/clear` 声明 `risk: 'sensitive'`，需要等级 1，群聊私聊一样；确认照旧（`confirm: 'session'`）。此前不声明 risk，私聊里 0 级也能清自己的会话，群聊等共享会话在指令里另判、要求等级 2 或 owner。这道另判与它的拒绝语「清空共享会话需要等级 …」删除：等级不够时回通用的等级拒绝，不再先问确认；1 级在群里能清群的共享会话。权限页 `command:clear` 显示的门槛就是生效的门槛。
 
-**迁移**：要让 0 级继续用，在 `authorityOverrides` 里把 `command:clear` 设为 `0`，群里的 0 级也随之能清；要群里仍是等级 2，设为 `2`，私聊也随之要等级 2。
-
 ### 出站文字默认按纯文字发（@aalis/schema-message、@aalis/plugin-adapter-onebot）
 
-- `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
-- onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除。
+- `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示，要解析标记的出站设 `markup: true`（图片、语音、视频也可以改走 `attachments`）。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
+- onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除，引用回复改用 `OutgoingMessage.replyTo`。
 - 带 `markup` 的正文里媒体标记的网址（以 `http:`、`https:` 开头，不分大小写）由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、解析不了、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
-- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出。有标记语法的第三方适配器同样要去掉这些标记、报投递失败，不得自己读取：留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
-
-**迁移**：要发 @、图片或引用的出站设 `markup: true`，图片、语音、视频也可以改走 `attachments`；引用回复用 `OutgoingMessage.replyTo`。她回复里要发本机文件，先放进存储，再在回复里写存储地址的标记（要装 plugin-image-sender），或经 `send_attachment` 的 `storage_uri` 发。
+- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出（create-aalis 的 minimal 与 standard 档不装它）。有标记语法的第三方适配器同样要去掉这些标记、报投递失败，不得自己读取：留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
 
 ### 媒体按受众（plugin-image-sender、plugin-media）
 
@@ -61,25 +55,19 @@
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
 - 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转上面所说范围内的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（别处的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
 
-**迁移**：要让她在回复里发存储里的媒体，装 plugin-image-sender（create-aalis 的 minimal 与 standard 档不装它）。
-
 ### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-tool-session、@aalis/plugin-scheduler）
 
-- 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。
+- 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`，按 id 前缀找子会话或父会话的改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。
 - 会话服务的时间线上，房间的子会话里她说的话不再标「没有发出」（工具调用之前说的、没有适配器接手的回复）。
 - 会话管理的房间收录按会话记录跳过子会话，不再看 id 里有没有 `::`：适配器的窗口 id 里带 `::` 的照常收录。
 - 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；不带 `self_id` 时用先上线的账号。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
-- plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
-- 访问检查器收到的 `AccessCheckArgs.currentSessionId` 改为调用所在的窗口：当前会话本身，子会话取根会话的。子任务里读历史与在它的根会话里读受同样的平台规则约束；此前按子会话的 id 判，群里建的子任务读本群在不许跨群（`allowCrossGroup: false`）时被拒。
-
-**迁移**：按 id 前缀找子会话或父会话的，改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。子任务里调 OneBot 的群工具要显式给 `group_id`，建定时任务要给 `sessionId`。
+- plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，报错里给出根会话的 id 作候选，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
+- 访问检查器收到的 `AccessCheckArgs.currentSessionId` 改为调用所在的窗口：当前会话本身，子会话取根会话的。子任务里读历史与在它的根会话里读受同样的平台规则约束；此前按子会话的 id 判，群里建的子任务读本群在不许跨群（`allowCrossGroup: false`）时被拒。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。
 
 ### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
 
 - `check_subtask`、`wait_subtasks` 只认调用所在会话的直接子任务，与 `send_to_subtask`、`delete_subtask` 同一判据：给的是别的会话的子任务或根会话时，这一项与不存在的一样回「子任务不存在」，不交出它的状态、任务与结果，`wait_subtasks` 也不等它。此前任何会话都能按 id 查、等任意会话的状态与结果。
 - `send_to_subtask`、`delete_subtask` 对别的会话的子任务与根会话同样回「子任务不存在」，不再回带着调用所在会话与对方父会话 id 的拒绝原因；`delete_subtask` 的结果去掉 `notFound` 与 `denied`。
-
-**迁移**：查、等子任务要在建它的会话里调。
 
 ### 免确认只对授权身份是 owner 的回合（plugin-authority、plugin-workflow、api-workflow）
 
@@ -88,14 +76,10 @@
 - 定义者由 plugin-workflow 自己的入口记下（`workflow_define` 取调用者的授权身份，工作流页「新建或覆盖」取登录的 owner），覆盖即换成覆盖者；它连同定义文件文本的哈希记在运行历史文件（`runsFile`）的 `definers` 里，不写进定义文件。经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）、手写进 `defsDir` 的定义（含已有的全部定义）、文件在磁盘上被改过的、运行历史文件读不出时，没有定义者，按匿名执行，owner 经 `workflow_run` 调起也一样。
 - 替换编排服务的第三方实现，`defineWorkflow` 定义或覆盖的同样没有定义者；定义者只由实现自己认证过调用者的入口记下（不写进定义文件、不从定义文件读），并按上面的规则定运行身份。
 
-**迁移**：要让已有的编排按 owner 执行，在工作流页用「新建或覆盖」把它存一次。
-
 ### 编排的事件触发不订阅带会话内容的事件（@aalis/plugin-workflow）
 
 - `event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件。在原有的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`token:usage`、`token:request`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`history:changed`、`session:compressing`、`session:deleted`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文；单是会话 id 也让订阅者看出别人的私聊在活动。
-- 订阅这些事件的编排在定义时报错、不保存：`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错。原有的两个此前照常保存、只在注册触发器时记警告。已在定义目录里的照常载入，触发器不注册、记警告，文件不改；工作流页对它的「启用」「停用」同样报错。
-
-**迁移**：订阅这些事件的编排改用别的触发方式，已在定义目录里的改掉触发器重新保存或删掉；要在一次运行结束后接着跑，把后续步骤写进同一个编排的 DAG。
+- 订阅这些事件的编排在定义时报错、不保存：`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错。原有的两个此前照常保存、只在注册触发器时记警告。已在定义目录里的照常载入，触发器不注册，文件不改，启用着的记警告（写明改掉触发器重新保存或删掉）；工作流页对它的「启用」「停用」同样报错。
 
 ### 封禁先于等级判定（@aalis/plugin-authority）
 

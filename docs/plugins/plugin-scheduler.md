@@ -7,7 +7,7 @@
 
 AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具与计划任务页的新建、编辑还接受 `delaySeconds`，会换算为 `runAt`。
 
-触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话。消息同时声明 `ownerApproved`（schema-message）：任务内容来自 owner 写的配置与计划任务页，或每次要 owner 审批的 `scheduler_create_job`，算作 owner 亲手写的，plugin-commands 照常解析其中的指令，结果写入日志；创建者是 owner 的任务免 `session` 档的交互确认，别人建的任务里需要确认的指令直接拒绝（见 [plugin-authority](./plugin-authority.md) 的「确认（轴 B）」）。别的插件经 `scheduler` 服务的 `addJob`、`setJob` 建的任务同样声明，交来的内容要是 owner 过目过原文的。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话；会话落在 flow-control 作用域内时限速照常生效，限速窗口已满时这次触发被吞掉（做影子归档），不重试。消息不带会话类型，flow-control 判作用域时先用流控状态里记下的类型，没有再取会话管理记下的聊天窗口：默认 `*:group` 下，发往已收录的群的任务在作用域内（平台为默认 `internal` 的也一样，按群记下的出生平台算）；发往会话表里没有记录的会话时没有聊天窗口，算作用域外。
+触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话。消息同时声明 `ownerApproved`（schema-message）：任务内容来自 owner 写的配置与计划任务页，或每次要 owner 审批的 `scheduler_create_job`，算作 owner 亲手写的，plugin-commands 照常解析其中的指令，结果写入日志；创建者是 owner 的任务免 `session` 档的交互确认，别人建的任务里需要确认的指令直接拒绝（见 [plugin-authority](./plugin-authority.md) 的「确认（轴 B）」）。例外：授权身份是 owner 的回合里 `scheduler_create_job` 免了确认时（配置的 `confirmOverrides` 把 `tool:scheduler_create_job` 设为 `off`；或设为 `session`，再被 `restrictedPolicy` 白名单免掉），建任务不再逐次审批，任务内容（模型写出的）没经 owner 过目原文，触发时照样声明 `ownerApproved`，其中的指令照样以 owner 的身份执行，与审批过的任务不作区分（见 [安全模型](../concepts/security-model.md#注入的文字不执行指令)）。别的插件经 `scheduler` 服务的 `addJob`、`setJob` 建的任务同样声明，交来的内容要是 owner 过目过原文的。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话；会话落在 flow-control 作用域内时限速照常生效，限速窗口已满时这次触发被吞掉（做影子归档），不重试。消息不带会话类型，flow-control 判作用域时先用流控状态里记下的类型，没有再取会话管理记下的聊天窗口：默认 `*:group` 下，发往已收录的群的任务在作用域内（平台为默认 `internal` 的也一样，按群记下的出生平台算）；发往会话表里没有记录的会话时没有聊天窗口，算作用域外。
 
 ## 插件声明
 
@@ -44,13 +44,15 @@ export default definePlugin({
 
 | 工具 | 说明 |
 |---|---|
-| `scheduler_create_job` | 创建定时/周期/一次性任务（`cron`、`interval`、`delaySeconds`、`runAt` 四选一；不传 `sessionId`/`platform` 时用当前会话；在子会话里不传 `sessionId` 报错，要写明目标：子会话没有窗口，删掉后发往它的任务会静默丢失） |
+| `scheduler_create_job` | 创建定时/周期/一次性任务（`cron`、`interval`、`delaySeconds`、`runAt` 四选一；不传 `sessionId`/`platform` 时用当前会话，子会话里例外，见下文） |
 | `scheduler_list_jobs` | 列出任务及状态，可按名称关键词、状态过滤并分页 |
 | `scheduler_remove_job` | 删除任务 |
 | `scheduler_pause_job` | 暂停任务 |
 | `scheduler_resume_job` | 恢复已暂停的任务 |
 
 以上工具均属 `scheduler` 工具组。创建、删除、暂停、恢复为 `dangerous` 级且每次需确认，列表为 `sensitive` 级。
+
+在子会话里调 `scheduler_create_job` 不传 `sessionId` 时报错，要写明目标：子会话没有窗口，删掉后发往它的任务会静默丢失。报错里给出根会话的 id 作候选，照传即发回根会话。子会话按会话记录的 `parentId` 认：编排的 `agent` 节点省略 `sessionId` 时用的一次性会话（`workflow::<运行 id>::<节点 id>`）没有 `parentId`，不在这条规则里，在那里不传 `sessionId` 照旧发往这个一次性会话。
 
 ## 事件
 
