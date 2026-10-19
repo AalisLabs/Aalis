@@ -23,7 +23,7 @@ import { errorReason, runDag, validateGraph } from './engine.js';
 import { normalizeDef, WorkflowLoader } from './loader.js';
 import { RunStore } from './persistence.js';
 import { t } from './texts.js';
-import { TriggerManager } from './triggers.js';
+import { BLOCKED_EVENT_TRIGGERS, TriggerManager } from './triggers.js';
 
 // ─── 配置 ───
 
@@ -511,10 +511,17 @@ async function run(caps: Caps): Promise<void> {
     return run;
   }
 
-  /** 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存 */
+  /**
+   * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。event 触发器订阅不可作触发源的
+   * 事件的，报错、不保存
+   */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
     const err = validateGraph(def);
     if (err) throw new Error(err);
+    const { trigger } = def;
+    if (trigger.type === 'event' && BLOCKED_EVENT_TRIGGERS.has(trigger.event)) {
+      throw new TextError(t('blockedEventTrigger', { event: trigger.event }));
+    }
     if (persist) runStore.recordDefiner(def.id, definer, await loader.saveDef(def));
     loader.putMemory(def, definer);
     // 重新触发器

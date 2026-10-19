@@ -18,6 +18,8 @@ export default defineLocale<Source>()({
   onceSkippedPersisted:
     'reading the once ledger failed (see the log), so it will not trigger in this run; use {manualRun} to run it manually, and restart after fixing the run history file to restore it',
   runNow: '“Run now”',
+  blockedEventTrigger:
+    'The event trigger subscribes to {event}, whose payload carries session content (session IDs, platforms, message text and the like), so it cannot be a trigger source',
   definedBy: 'Defined by',
   anonymous: 'Anonymous',
 });

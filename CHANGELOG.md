@@ -91,9 +91,10 @@
 
 ### 编排的事件触发不订阅带会话内容的事件（@aalis/plugin-workflow）
 
-- `event` 触发器不接受负载带会话内容的事件，订阅它们的触发器不注册、只记警告。在原有的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文。
+- `event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件。在原有的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`token:usage`、`token:request`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`history:changed`、`session:compressing`、`session:deleted`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文；单是会话 id 也让订阅者看出别人的私聊在活动。
+- 订阅这些事件的编排在定义时报错、不保存：`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错。原有的两个此前照常保存、只在注册触发器时记警告。已在定义目录里的照常载入，触发器不注册、记警告，文件不改；工作流页对它的「启用」「停用」同样报错。
 
-**迁移**：订阅这些事件的编排改用别的触发方式；要在一次运行结束后接着跑，把后续步骤写进同一个编排的 DAG。
+**迁移**：订阅这些事件的编排改用别的触发方式，已在定义目录里的改掉触发器重新保存或删掉；要在一次运行结束后接着跑，把后续步骤写进同一个编排的 DAG。
 
 ### 封禁先于等级判定（@aalis/plugin-authority）
 

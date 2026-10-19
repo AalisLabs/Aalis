@@ -56,7 +56,16 @@ export default definePlugin({
 | `event` | `event`, `filter?` | 订阅指定事件；`filter` 的每个键须与事件第一个参数的同名顶层字段严格相等；事件参数数组以运行变量 `args` 注入 |
 | `manual` | — | 不注册触发器，仅手动运行 |
 
-`event` 触发器不接受负载带会话内容的事件：消息与回复（`inbound:message`、`inbound:message:archived`、`assistant:message:archived`、`outbound:message`、`outbound:delivered`、`outbound:stream`），工具调用的参数、结果与输出（`tool:execute`、`tool:output`、`background:changed`），审批（`approval:created`、`approval:settled`），附件的识别结果（`media:processed`），待办（`todo:updated`），会话档案（`session:created`、`session:updated`、`session:completed`），以及 `trigger:fired` 与编排自己的运行事件（`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`）。编排按定义者的身份运行（见下文「定义者与运行身份」），事件参数插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 节点的正文时，内容里不可信的部分就以定义者的身份下达，转发到别的会话还会造成跨会话泄露。订阅这些事件的触发器不会注册，仅记录警告。这里只列第一方声明的事件，第三方插件声明的事件照常可以订阅，声明事件的插件作者与定义编排的人要自己确认负载里没有会话内容。
+`event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件：消息与回复（`inbound:message`、`inbound:message:archived`、`assistant:message:archived`、`outbound:message`、`outbound:delivered`、`outbound:stream`），工具调用的参数、结果与输出（`tool:execute`、`tool:output`、`background:changed`），审批（`approval:created`、`approval:settled`），附件的识别结果（`media:processed`），待办（`todo:updated`），会话档案（`session:created`、`session:updated`、`session:completed`），会话的活动（`token:usage`、`token:request`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`history:changed`、`session:compressing`、`session:deleted`），以及 `trigger:fired` 与编排自己的运行事件（`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`）。编排按定义者的身份运行（见下文「定义者与运行身份」），事件参数插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 节点的正文时，内容里不可信的部分就以定义者的身份下达，转发到别的会话还会造成跨会话泄露；单是会话 id 也让订阅者看出别人的私聊在活动。
+
+定义订阅这些事件的编排时直接报错、不保存，错误写明是哪个事件：`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错。已在 `defsDir` 里的这类定义照常载入，触发器不注册，记一条警告，文件不改；工作流页的「启用」「停用」会重写定义文件，对它同样报错，要改掉触发器重新保存或删掉。这里只列第一方声明的事件，第三方插件声明的事件照常可以订阅，声明事件的插件作者与定义编排的人要自己确认负载里没有会话内容。
+
+由 plugin-scheduler 的定时任务触发编排，两条路的现状：
+
+- `trigger:fired`：plugin-scheduler 每次执行任务时广播，但不带 `workflowId`，本插件只运行带 `workflowId` 的（见下文「事件」）；`event` 触发器订阅 `trigger:fired` 又在上面的拒绝之列。
+- `scheduler:job:start`、`scheduler:job:done`、`scheduler:job:error`：`event` 触发器可以订阅，事件参数是任务名（`scheduler:job:error` 另带失败原因），`{{vars.args[0]}}` 取任务名。第一个参数是字符串，`filter` 按对象的顶层字段比对，写了非空的 `filter` 就永远不触发；不写则每个定时任务执行都触发一次，选不出某一个任务。
+
+所以没法让某一个定时任务触发编排。要按时间运行编排，用编排自己的 `cron`、`interval` 或 `once` 触发器；要在某个会话里做事，用 `send-message` 或 `agent` 节点指向那个会话。
 
 ## 节点类型
 

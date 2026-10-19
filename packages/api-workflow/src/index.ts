@@ -155,7 +155,7 @@ export interface WorkflowService {
   /**
    * 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml。
    * 经这里定义或覆盖的没有定义者（运行身份见 {@link WorkflowService.runWorkflow}）：服务认不出调用方是谁，定义者只由实现
-   * 自己认证过调用者的入口记下
+   * 自己认证过调用者的入口记下。event 触发器订阅不可作触发源的事件（负载带会话内容，列表由实现定）时抛错、不保存
    */
   defineWorkflow(def: WorkflowDef, opts?: { persist?: boolean }): Promise<void>;
   /** 删除工作流（若 persist 文件存在则删除；有文件的定义删不掉文件时抛错） */
