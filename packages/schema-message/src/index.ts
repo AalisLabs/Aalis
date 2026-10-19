@@ -419,7 +419,9 @@ export interface OutgoingMessage {
   /**
    * 正文含平台标记、要解析：有标记语法的适配器（如 OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成
    * @、媒体与引用，并可分条延迟发送；不设的正文按纯文字原样整条发出，不解析、不分条。要发平台标记的出站自己设它；
-   * attachments 不受它影响。正文里的媒体标记怎么发，见 docs/services/media.md
+   * attachments 不受它影响。媒体标记的地址不是网址的（本机路径、存储地址、data URI 等），适配器不得自己读取，也不交给实现端，
+   * 一律去掉并报投递失败：存储里的媒体由 plugin-image-sender 在派发前按受众转成附件，留在正文里的存储地址是没转成的（不在受众
+   * 范围、读不出、不是对应媒体，或没装它）。正文里的媒体标记怎么发，见 docs/services/media.md
    */
   markup?: boolean;
   /** 消息来源：agent = AI 发出的（回复与经工具发的附件），system = 宿主提示，command = 指令回复 */

@@ -315,6 +315,19 @@ describe('权限组', () => {
     );
   });
 
+  it('设权限组：原有的组被删掉之后按预填原样保存照收，新加没定义的组报错', async () => {
+    const { manager, act } = await boot({ config: GROUPS });
+    manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['search', 'ops']);
+    await act('deleteGroup', { rowKey: 'search' });
+    expect(await act('setUserGroups', { rowKey: 'onebot:1', input: { groups: ['search', 'ops'] } })).toBe(
+      '已设 onebot:1 的权限组：search、ops',
+    );
+    expect(manager.listUsers().find(u => u.userId === '1')?.groups).toEqual(['search', 'ops']);
+    await expect(act('setUserGroups', { rowKey: 'onebot:2', input: { groups: ['search'] } })).rejects.toThrow(
+      '500 没有这些权限组：search；已有的组：ops',
+    );
+  });
+
   it('改条目与设权限组打开即带已有值：行里带与输入项同名的数组，表单按它预填', async () => {
     const { pages, manager } = await boot({ config: GROUPS });
     manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['ops', 'search']);
@@ -347,6 +360,17 @@ describe('权限组', () => {
     expect(await options('authority-groups')).toEqual([
       { value: 'search', label: 'search' },
       { value: 'ops', label: 'ops' },
+    ]);
+  });
+
+  it('可选项来源 authority-groups：成员记录里指向的、已删掉的组也列出来，标「（未定义）」', async () => {
+    const { manager, act, options } = await boot({ config: GROUPS });
+    manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['search', 'ops']);
+    manager.setUserGroups({ platform: 'onebot', userId: '2' }, ['search']);
+    await act('deleteGroup', { rowKey: 'search' });
+    expect(await options('authority-groups')).toEqual([
+      { value: 'ops', label: 'ops' },
+      { value: 'search', label: 'search（未定义）' },
     ]);
   });
 });

@@ -147,6 +147,21 @@ describe('权限组（成员存 users.json，组定义存宿主配置 authorityG
     expect(m.listUsers().find(u => u.userId === '1')?.groups).toEqual(['ops', 'search']);
   });
 
+  it('setUserGroups 只拒这次新加的未定义的组：原有的组被删掉之后原样保存照收', () => {
+    const config = mkConfig(GROUPS);
+    const m = new AuthorityManager(config, silentLogger(), noFileStorage, noSessions);
+    m.setUserGroups(onebot('1'), ['search', 'ops']);
+    config.set('authorityGroups', { ops: GROUPS.authorityGroups.ops });
+    m.setUserGroups(onebot('1'), ['search', 'ops']);
+    expect(m.listUsers().find(u => u.userId === '1')?.groups).toEqual(['search', 'ops']);
+    expect(() => m.setUserGroups(onebot('2'), ['ops', 'search'])).toThrow('没有这些权限组：search；已有的组：ops');
+    m.setUserGroups(onebot('1'), ['ops']);
+    expect(() => m.setUserGroups(onebot('1'), ['ops', 'search']), '去掉之后再加回来算新加').toThrow(
+      '没有这些权限组：search；已有的组：ops',
+    );
+    expect(m.listUsers().find(u => u.userId === '1')?.groups).toEqual(['ops']);
+  });
+
   it('0 级有组的记录降级不删；组也清空之后才删', async () => {
     const m = new AuthorityManager(mkConfig(GROUPS), silentLogger(), noFileStorage, noSessions);
     await m.init(); // 首次读取落定之后才按「什么都没有」清记录
