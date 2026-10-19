@@ -226,6 +226,7 @@ function parseSummary(text: string): { summary: string; keep?: string } {
 /** 一次请求里这些单位占的字数：各自的文字加一个换行 */
 const charsOf = (units: Unit[]) => units.reduce((sum, unit) => sum + unit.text.length + 1, 0);
 const costOf = (units: Unit[]) => units.reduce((sum, unit) => sum + unit.cost, 0);
+const countOf = (units: Unit[]) => units.reduce((sum, unit) => sum + unit.at.length, 0);
 
 // ===== 插件元数据 =====
 
@@ -317,7 +318,8 @@ const WORK_TEMPLATE: SummaryTemplate = {
 
 /**
  * 摘要模型的系统提示：模板的场合与小节，挑原文的规则，加上预算（摘要与保留的原文合计）与保留上限。保留编号的那一行放第一行：
- * 输出被截断时伤的只是摘要末尾。摘要仍要覆盖全部对话：挑中的原文可能因超出上限、分块腾地方或后一块没按格式而被去掉、随之归档
+ * 输出被截断时伤的只是摘要末尾。摘要仍要覆盖全部对话：挑中的原文可能因超出上限或条数线的一半、分块腾地方或后一块没按格式而被
+ * 去掉、随之归档
  */
 function instructions({ scene, sections }: SummaryTemplate, budget: number, keepCap: number): string {
   return [
@@ -606,7 +608,7 @@ async function run(caps: Caps): Promise<void> {
   /**
    * 把归档段连同已有摘要交给摘要模型，得到新摘要与挑中、原样保留的单位。预算按这次重写的输入（已有摘要加各单位的文字，不计
    * 编号标注）算，摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 这次新压的对话⌋)，不算已有摘要：下限只托住摘要，
-   * 已有摘要再长也撑不大它，新压的少时留得很少，压完不会仍在线上。
+   * 已有摘要再长也撑不大它，新压的少时留得很少。它按 token 算，条数另由落定时的条数规则限住（见 withinHalfLine）。
    * 请求的输出上限是预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的
    * 推理 token 也算在输出上限里。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份
    * 可能是按更大的预算写的），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每次放对话的字数（容量，
@@ -671,24 +673,43 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 落定：写摘要 → 重读活跃历史、核对开头与归档段逐条相同 → 归档这一段（keep 列出的位置不归档）→ 写分隔标记。核对在写摘要
-   * 之后，与归档之间只隔这一次重读：回滚删了段里的消息、晚到的消息时间戳插进了这一段，位置就会错开，归档会归掉没进摘要的消息、
-   * 拆开保留的工具组。核对不过时以「压缩期间历史被改动」失败；它与归档抛错都把摘要回滚到写入前，原样抛出
+   * 条数规则：设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的 after 条与要写的分隔标记，与 agent 数的
+   * 活跃条数同一口径）不超过条数线的一半（向下取整）为止：超出的从最早的保留单位起整个去掉，直到不超或一个不剩（去掉的在这次
+   * 的输入里，摘要覆盖了它们）。保留上限按 token 算，一条很长的正文能把它撑大、留下很多短消息，没有这一条时压完的条数可能仍到线、
+   * 每轮都压。条数线按最近一次用量的入口平台解析
+   */
+  function withinHalfLine(kept: Unit[], after: number, sessionId: string): Unit[] {
+    const { historyLimit } = linesOf(sessionId, lastUsages.get(sessionId)?.platform);
+    if (!historyLimit) return kept;
+    const room = Math.floor(historyLimit / 2) - after - (messageArchive.present ? 1 : 0);
+    let rest = kept;
+    while (rest.length > 0 && countOf(rest) > room) rest = rest.slice(1);
+    return rest;
+  }
+
+  /**
+   * 落定：写摘要 → 重读活跃历史、核对开头与归档段逐条相同 → 按重读时切分点之后的条数套条数规则（withinHalfLine）→ 归档这一段
+   * （留下的保留单位不归档）→ 写分隔标记。核对在写摘要之后，与归档之间只隔这一次重读：回滚删了段里的消息、晚到的消息时间戳
+   * 插进了这一段，位置就会错开，归档会归掉没进摘要的消息、拆开保留的工具组。核对不过时以「压缩期间历史被改动」失败；它与归档
+   * 抛错都把摘要回滚到写入前，原样抛出
    */
   async function commitCompression(
     provider: MemoryService,
     store: SummaryStore,
     sessionId: string,
     span: Message[],
-    keep: number[],
+    kept: Unit[],
     previous: string | undefined,
     summary: string,
   ): Promise<void> {
     const at = Date.now();
     await store.upsertSummary(sessionId, summary);
+    let keep: number[];
     let archived: number;
     try {
-      if (!samePrefix(span, await provider.getHistory(sessionId, Infinity))) throw new Error('压缩期间历史被改动');
+      const current = await provider.getHistory(sessionId, Infinity);
+      if (!samePrefix(span, current)) throw new Error('压缩期间历史被改动');
+      keep = withinHalfLine(kept, current.length - span.length, sessionId).flatMap(unit => unit.at);
       archived = await provider.archiveSpan(sessionId, { count: span.length, keep });
     } catch (err) {
       // 摘要已写、历史没归档：下一次压缩会把同一段历史再并进这份新摘要，故回滚到写入前
@@ -715,10 +736,10 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部（归档段）连同已有摘要压成一份新摘要，写摘要、核对快照
-   * 前缀没被改过、归档这一段、写分隔标记；摘要模型挑出的单位与切分点之后的消息（快照之后到达的、没写全的工具调用组）原样留在
-   * 活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面据此插「对话已压缩」）。
-   * 没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要回滚）；待摘要部分没有对话时
-   * 什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
+   * 前缀没被改过、归档这一段、写分隔标记；摘要模型挑出的单位（过了条数规则的，见 withinHalfLine）与切分点之后的消息（快照之后
+   * 到达的、没写全的工具调用组）原样留在活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面
+   * 据此插「对话已压缩」）。没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要
+   * 回滚）；待摘要部分没有对话时什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
    */
   async function compressHistory(sessionId: string): Promise<void> {
     if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩，稍后再试');
@@ -751,8 +772,7 @@ async function run(caps: Caps): Promise<void> {
       const previous = (await store.getSummary(sessionId))?.summary || undefined;
       const { summary, kept } = await summarize(model, sessionId, span, previous, cleared);
       if (cleared()) throw new Error('压缩期间会话被清空');
-      const keep = kept.flatMap(unit => unit.at);
-      const commit = commitCompression(provider, store, sessionId, span, keep, previous, summary);
+      const commit = commitCompression(provider, store, sessionId, span, kept, previous, summary);
       committing.set(sessionId, commit);
       try {
         await commit;
