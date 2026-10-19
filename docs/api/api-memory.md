@@ -91,7 +91,7 @@ interface CompressionService {
 }
 ```
 
-服务名 `compression`。压缩把切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样接在摘要后面，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
+服务名 `compression`。压缩把切分点之前的全部活跃历史压成一份摘要，摘要模型挑出的原文原样留在活跃历史里、接在摘要之后，切分点之后到达的消息再接在它们后面，提供方是 [plugin-memory-summary](../plugins/plugin-memory-summary.md)。
 
 - **`compress`**：`manual` 是 owner 手动，短对话也完整压一次。压成才落定；没压成时以原因拒绝（这个会话正在压缩、记忆或摘要模型不在、模型失败、期间被清空或历史被改动）。没有可压的对话（历史为空、只剩分隔标记）时什么都不做，照常落定。用量或会话条数到线的自动压缩由提供方在后台自己发起，不经这个方法。
 - **`compressAt`**：与 api-agent 的 `token:usage` 里 `usageRatio` 同一口径，按会话取。实际在它与裁剪预算占窗口的比例（`tokenBudget / contextWindow`）中较小的那个上压缩（见下文「触发判定」的 `compressionLine`），界面的压缩线取这个较小值。`platform` 是入口平台：没有出生平台的会话按它选平台档。
@@ -125,8 +125,8 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
 
 `compressionDue` 是判定是否该压缩的纯函数，两维任一到线即该压缩。
 
-- **用量一维**：`compressAt` 为正时，用量到 `compressionLine` 或经过了硬裁剪（`trimmed`：到了丢内容的地步），且 `compressible` 至少是线的一半时该压缩。后一个条件就是回差：压完只剩切分点之后的几条，到不了线的一半，不会接着再触发；人设、工具定义这些压不掉的部分再大也不会让它空转。`compressAt` 缺省或为 0 时这一维不判，经过了硬裁剪也一样。
-- **条数一维**：`historyMessages` 到 `historyLimit` 时该压缩。全量压缩之后只剩分隔标记与切分点之后的几条，远不到线。
+- **用量一维**：`compressAt` 为正时，用量到 `compressionLine` 或经过了硬裁剪（`trimmed`：到了丢内容的地步），且 `compressible` 至少是线的一半时该压缩。后一个条件就是回差：压完只剩留下的少量原文与切分点之后的几条，一般到不了线的一半，不会接着再触发（留下得多、很快又到线时，下一次压缩的输入大半就是它们，留下的随之变少）；人设、工具定义这些压不掉的部分再大也不会让它空转。`compressAt` 缺省或为 0 时这一维不判，经过了硬裁剪也一样。
+- **条数一维**：`historyMessages` 到 `historyLimit` 时该压缩。全量压缩之后只剩留下的少量原文、分隔标记与切分点之后的几条，一般远不到线。
 
 没压成之后多久再试由调用方决定，不在这个函数里。
 

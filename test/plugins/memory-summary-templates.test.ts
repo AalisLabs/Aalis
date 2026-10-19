@@ -10,7 +10,7 @@ import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
+import { fakeSummaryLLM, setupSummary, systemOf } from '../fixtures/memory-summary.js';
 import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
@@ -65,8 +65,6 @@ async function setup({ withAuthority = true } = {}) {
   };
   return { sm: host.sessionManager.use, store, summarize };
 }
-
-const systemOf = (request: ChatModelRequest) => String(request.messages[0]?.content ?? '');
 
 /** 系统提示含这套模板的全部小节标题，不含另一套的 */
 function expectTemplate(request: ChatModelRequest, template: Template): void {

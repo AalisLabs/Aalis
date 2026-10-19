@@ -100,7 +100,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
 - **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃条数，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
-- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
+- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息（摘要模型挑出、原样保留的不归档），摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
 

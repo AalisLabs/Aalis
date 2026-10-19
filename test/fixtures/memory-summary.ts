@@ -56,6 +56,22 @@ export function fakeSummaryLLM(
   return { model, requests, text };
 }
 
+/** 摘要请求的系统提示 */
+export const systemOf = (request: ChatModelRequest) => String(request.messages[0]?.content ?? '');
+
+/** 提示词里写的摘要预算 */
+export const budgetOf = (request: ChatModelRequest) => Number(/合计约 (\d+) tokens/.exec(systemOf(request))?.[1]);
+
+/** 请求里交给摘要模型的这一块对话（不含提示语与已有摘要） */
+export const conversationOf = (request: ChatModelRequest) => {
+  const content = String(request.messages.at(-1)?.content ?? '');
+  return content.slice(content.lastIndexOf('摘要：\n') + 4);
+};
+
+/** 一次请求按每字 2 token 折算的输入，加上它的输出上限 */
+export const requestTokens = (request: ChatModelRequest) =>
+  2 * request.messages.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + (request.maxTokens ?? 0);
+
 /**
  * 装好 memory-inmemory、message-archive 与 memory-summary、挂上桩 LLM，返回这次 App 的 memory、memory-summary 提供的
  * 压缩服务与宿主门面。给了 logger 时日志交给它

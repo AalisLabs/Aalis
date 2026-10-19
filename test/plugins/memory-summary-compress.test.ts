@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { App, Logger } from '../../packages/core/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
-import { endTurn, fakeSummaryLLM, setupSummary, startTurn, usageEvent } from '../fixtures/memory-summary.js';
+import {
+  conversationOf,
+  endTurn,
+  fakeSummaryLLM,
+  requestTokens,
+  setupSummary,
+  startTurn,
+  usageEvent,
+} from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 全量压缩：切分点之前的全部活跃历史压成一份摘要，切分点之后到达的消息原样留在活跃历史里。
@@ -51,16 +59,6 @@ function gatedLLM() {
   });
   return { ...llm, release };
 }
-
-/** 请求里交给摘要模型的这一块对话（不含提示语与已有摘要） */
-const chunkOf = (request: ChatModelRequest) => {
-  const content = String(request.messages.at(-1)?.content ?? '');
-  return content.slice(content.lastIndexOf('摘要：\n') + 4);
-};
-
-/** 一次请求按每字 2 token 折算的输入，加上它的输出上限 */
-const requestTokens = (request: ChatModelRequest) =>
-  2 * request.messages.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + (request.maxTokens ?? 0);
 
 describe('plugin-memory-summary: 手动压缩', () => {
   it('历史只有 3 条：照常报进度，三条全部进摘要，活跃历史只剩分隔标记', async () => {
@@ -475,7 +473,7 @@ describe('plugin-memory-summary: 分块', () => {
 
     await compression.compress('s', { reason: 'manual' });
 
-    const chunks = llm.requests.map(chunkOf);
+    const chunks = llm.requests.map(conversationOf);
     expect(chunks.length).toBeGreaterThanOrEqual(4);
     for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(3000);
     for (let i = 0; i < 30; i++) {
@@ -492,7 +490,8 @@ describe('plugin-memory-summary: 分块', () => {
   });
 
   it('待办参数作为最后一行一起分块：每次请求仍装得下，附的是待摘要部分里最后一次待办的参数', async () => {
-    const llm = fakeSummaryLLM({ contextLength: 3000, maxOutputTokens: 512 });
+    // 窗口取到待办那一行不超过每次容量的一半：超过一半的会切成几段
+    const llm = fakeSummaryLLM({ contextLength: 5000, maxOutputTokens: 512 });
     const { memory, compression } = await setup({}, llm.model);
     const todo = (label: string) => JSON.stringify({ todoList: [{ title: `${label}${'办'.repeat(380)}` }] });
     const todoCall = async (id: string, label: string) => {
@@ -507,8 +506,9 @@ describe('plugin-memory-summary: 分块', () => {
 
     await compression.compress('s', { reason: 'manual' });
 
-    const chunks = llm.requests.map(chunkOf);
-    for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(3000);
+    const chunks = llm.requests.map(conversationOf);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(5000);
     expect(chunks.at(-1)).toContain(`当前任务列表状态：\n${todo('新')}`);
     expect(chunks.join('\n')).not.toContain(todo('旧'));
   });

@@ -3,7 +3,7 @@ import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import type { LLMModel } from '@aalis/api-llm';
-import { estimateTextTokens, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { estimateMsgTokens, estimateTextTokens, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, compressionLine, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -111,9 +111,9 @@ function cutPoint(snapshot: Message[]): number {
 
 const toolCallIds = (m: Message) => m.toolCalls?.map(call => call.id).join() ?? '';
 
-/** 落笔前核对：现在的活跃历史前 count 条与快照逐条相同（时间戳、角色、正文与工具调用 id） */
-function samePrefix(snapshot: Message[], current: Message[], count: number): boolean {
-  return snapshot.slice(0, count).every((m, i) => {
+/** 落定前核对：现在的活跃历史开头与归档段逐条相同（时间戳、角色、正文与工具调用 id） */
+function samePrefix(span: Message[], current: Message[]): boolean {
+  return span.every((m, i) => {
     const now = current[i];
     return (
       now !== undefined &&
@@ -126,20 +126,106 @@ function samePrefix(snapshot: Message[], current: Message[], count: number): boo
   });
 }
 
-/** 把格式化好的各行拼成每块不超过 limit 字的若干块；单行超过 limit 的切成几段（代理对不拆开） */
-function chunkLines(lines: string[], limit: number): string[] {
-  const chunks: string[] = [];
-  for (const line of lines) {
-    for (let rest = line; rest; ) {
-      const piece = truncateChars(rest, limit);
-      rest = rest.slice(piece.length);
-      const last = chunks.length - 1;
-      if (last >= 0 && chunks[last].length + 1 + piece.length <= limit) chunks[last] += `\n${piece}`;
-      else chunks.push(piece);
+/** 摘要输入里能整体留下或整体不留的一块：一条不带工具调用的消息，或带工具调用的 assistant 连同紧随其后的全部工具结果 */
+interface Unit {
+  /** 在归档段里的下标（工具组是连续的几条；待办那一行没有） */
+  at: number[];
+  /** 进摘要输入的文字：各行同 formatMsgForSummary，以换行相接；有编号时开头加标注 */
+  text: string;
+  /** 原样留在上下文里要占的 token：各条消息的 estimateMsgTokens 之和，按落库的消息算，不按截断后的行 */
+  cost: number;
+  /** 形状完整：不带工具调用的消息，或工具组里的结果恰好对上调用的 id、每个一条（清洗会整组收下、一条不跳的形状） */
+  whole: boolean;
+  /** 能保留时的编号，这次压缩里从 1 起按时间先后连续编 */
+  id?: number;
+}
+
+/** 形状完整（见 Unit.whole）：结果与组首调用的 id 一一对上，对上一个划掉一个，重复的、多余的都对不上；单独的工具结果不算 */
+function isWhole([head, ...results]: Message[]): boolean {
+  if (head.role === 'tool') return false;
+  const ids = new Set(head.toolCalls?.map(call => call.id));
+  return results.length === ids.size && results.every(m => m.toolCallId !== undefined && ids.delete(m.toolCallId));
+}
+
+/** 把归档段分成单位：不进摘要的（system）跳过，照常归档 */
+function buildUnits(span: Message[]): Unit[] {
+  const names = buildToolNameMap(span);
+  const units: Unit[] = [];
+  for (let i = 0; i < span.length; i++) {
+    if (!entersSummary(span[i])) continue;
+    let end = i + 1;
+    if (span[i].role === 'assistant' && span[i].toolCalls?.length) {
+      while (span[end]?.role === 'tool') end++;
+    }
+    const messages = span.slice(i, end);
+    units.push({
+      at: messages.map((_, k) => i + k),
+      text: messages.map(m => formatMsgForSummary(m, names)).join('\n'),
+      cost: messages.reduce((sum, m) => sum + estimateMsgTokens(m), 0),
+      whole: isWhole(messages),
+    });
+    i = end - 1;
+  }
+  return units;
+}
+
+/**
+ * 切段与编号（预算与容量定下之后）：文字超过 half 的单位切成每段不超过 half 的几段（代理对不拆开），都不编号；其余形状完整、
+ * 原样留下要占的不超过保留上限、加上标注之后不超过 half 的，按时间从 1 起编号，开头加「#编号〔约 N token〕」，N 是 cost
+ */
+function numberUnits(units: Unit[], keepCap: number, half: number): Unit[] {
+  const queue: Unit[] = [];
+  let numbered = 0;
+  for (const unit of units) {
+    if (unit.text.length > half) {
+      for (let rest = unit.text; rest; ) {
+        const piece = truncateChars(rest, half);
+        rest = rest.slice(piece.length);
+        queue.push({ ...unit, text: piece });
+      }
+      continue;
+    }
+    const text = `#${numbered + 1}〔约 ${unit.cost} token〕${unit.text}`;
+    if (unit.whole && unit.cost <= keepCap && text.length <= half) queue.push({ ...unit, id: ++numbered, text });
+    else queue.push(unit);
+  }
+  return queue;
+}
+
+const KEEP_TITLE = '【保留原文】';
+
+/** 认标题用：去掉行首的空白与 Markdown 标记（标题、加粗、列表、引用），不改正文 */
+const bare = (line: string) => line.replace(/^[\s#*>-]+/, '');
+
+/** 只列编号：去掉编号与「无」之后只剩空白、标点与符号 */
+const listsIds = (text: string) => !text.replace(/[#＃]\d+|无/g, '').replace(/[\s\p{P}\p{S}]/gu, '');
+
+/**
+ * 拆开摘要模型的回复：以【保留原文】开头的标题行（取这一行余下的部分）连同紧随其后、只列编号的各行是一个保留段，遇到别的行
+ * 就结束；其余各行是摘要。保留段在前在后都认得，摘要正文里的 #数字不在保留段里。有几个保留段时都不进摘要，编号认最后一个；
+ * 没有这个标题时 keep 为 undefined
+ */
+function parseSummary(text: string): { summary: string; keep?: string } {
+  const summary: string[] = [];
+  let keep: string[] | undefined;
+  let segment: string[] | undefined;
+  for (const line of text.split('\n')) {
+    if (bare(line).startsWith(KEEP_TITLE)) {
+      segment = [bare(line).slice(KEEP_TITLE.length)];
+      keep = segment;
+    } else if (segment && listsIds(line)) {
+      segment.push(line);
+    } else {
+      segment = undefined;
+      summary.push(line);
     }
   }
-  return chunks;
+  return { summary: summary.join('\n').trim(), keep: keep?.join('\n') };
 }
+
+/** 一次请求里这些单位占的字数：各自的文字加一个换行 */
+const charsOf = (units: Unit[]) => units.reduce((sum, unit) => sum + unit.text.length + 1, 0);
+const costOf = (units: Unit[]) => units.reduce((sum, unit) => sum + unit.cost, 0);
 
 // ===== 插件元数据 =====
 
@@ -229,13 +315,20 @@ const WORK_TEMPLATE: SummaryTemplate = {
   ],
 };
 
-/** 摘要模型的系统提示：模板的场合与小节，加上摘要预算 */
-function instructions({ scene, sections }: SummaryTemplate, budget: number): string {
+/**
+ * 摘要模型的系统提示：模板的场合与小节，挑原文的规则，加上预算（摘要与保留的原文合计）与保留上限。保留编号的那一行放第一行：
+ * 输出被截断时伤的只是摘要末尾。摘要仍要覆盖全部对话：挑中的原文可能因超出上限、分块腾地方或后一块没按格式而被去掉、随之归档
+ */
+function instructions({ scene, sections }: SummaryTemplate, budget: number, keepCap: number): string {
   return [
-    `你是对话摘要助手，把对话压缩成一份摘要。${scene}`,
-    '按下面的小节依次输出，每节以小节标题（连同【】）单独一行开头，标题照写、顺序不变；某一小节没有内容时写「无」。',
+    `你是对话摘要助手，把对话压缩成一份摘要，并挑出值得原样保留的原文。${scene}`,
+    '对话里能原样保留的部分以「#编号〔约 N token〕」开头，工具调用连同它的全部结果是一个整体、共用一个编号；没有编号的不能保留。',
+    '值得原样保留的典型：正在进行的话题、未完成的事项、用户的明确指令、代码或数据原文。不必因为是最近几条就保留，按内容取舍。',
+    '保留的原文会按原来的顺序原样接在摘要之后，但摘要仍要覆盖全部对话：挑出保留的部分照常概括，不必逐字复述。',
+    `第一行写${KEEP_TITLE}，后面列出要保留的编号，如 #3 #12；一条都不留时写「无」。`,
+    '之后按下面的小节依次输出，每节以小节标题（连同【】）单独一行开头，标题照写、顺序不变；某一小节没有内容时写「无」。',
     ...sections.map(([title, content]) => `【${title}】${content}`),
-    `摘要合计约 ${budget} tokens（约 ${budget * 4} 个英文字符，或约 ${Math.floor(budget / 1.5)} 个中文字符），合理分配篇幅，每个小节都要完整输出。`,
+    `摘要与保留的原文合计约 ${budget} tokens（约 ${budget * 4} 个英文字符，或约 ${Math.floor(budget / 1.5)} 个中文字符），其中保留的原文合计不超过 ${keepCap} tokens，按编号后标的 token 数计；摘要写多少、原文留多少由你权衡，每个小节都要完整输出。`,
   ].join('\n');
 }
 
@@ -259,7 +352,7 @@ interface SummaryRecord {
 }
 
 /**
- * 绑定一个提供者实例，按次构造：一次压缩（读历史 → 调 LLM → 核对 → 写摘要 → 归档或回滚）全程只认开头取到的那一个。
+ * 绑定一个提供者实例，按次构造：一次压缩（读历史 → 调 LLM → 写摘要 → 核对 → 归档或回滚）全程只认开头取到的那一个。
  * memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会从 A 读历史、在 A 上归档，摘要却写进 B。
  */
 class SummaryStore {
@@ -367,7 +460,7 @@ async function run(caps: Caps): Promise<void> {
     return () => clearAllEpoch !== all || (clearEpoch.get(sessionId) ?? 0) !== own;
   }
   /**
-   * 已过比对、正在落库（写摘要 → 归档 → 写标记）的会话。比对与落库之间隔着数据库往返，清理在其间开始时
+   * 已过比对、正在落库（写摘要 → 重读核对 → 归档 → 写标记）的会话。比对与落库之间隔着数据库往返，清理在其间开始时
    * 比对拦不住：清理先等这一段落定再删，删掉的就包括它刚写进去的
    */
   const committing = new Map<string, Promise<unknown>>();
@@ -404,9 +497,9 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 摘要预算：这次重写的输入 × summaryBudgetRatio，越旧的内容每经一次压缩就再缩一次；不少于 MIN_BUDGET。不超过物理上限的
-   * 三分之二，与这个会话压缩线的四分之一（有用量时，压过下限：摘要是每轮重发的常驻块，小窗口的会话里摘要一大，之后每轮都
-   * 到线或被硬裁剪）
+   * 摘要预算（摘要与保留的原文合计）：这次重写的输入 × summaryBudgetRatio，越旧的内容每经一次压缩就再缩一次；不少于
+   * MIN_BUDGET。不超过物理上限的三分之二，与这个会话压缩线的四分之一（有用量时，压过下限：摘要是每轮重发的常驻块，小窗口的
+   * 会话里摘要一大，之后每轮都到线或被硬裁剪）
    */
   function summaryBudget(sessionId: string, physical: number, input: number): number {
     return Math.min(
@@ -429,7 +522,10 @@ async function run(caps: Caps): Promise<void> {
     return roomClass(info, id => sessions.getSession(id), isOwner) === 'room' ? CHAT_TEMPLATE : WORK_TEMPLATE;
   }
 
-  /** 调一次摘要模型：模型失败、流式中途断开、写满了输出上限或返回空都以原因抛出。有已有摘要时要求在它的同名小节上合并 */
+  /**
+   * 调一次摘要模型，拆出摘要与保留段（parseSummary）：模型失败、流式中途断开、写满了输出上限或摘要为空都以原因抛出。
+   * 有已有摘要时要求在它的同名小节上合并
+   */
   async function askSummaryModel(
     model: LLMModel,
     sessionId: string,
@@ -437,7 +533,7 @@ async function run(caps: Caps): Promise<void> {
     maxTokens: number,
     previous: string | undefined,
     conversation: string,
-  ): Promise<string> {
+  ): Promise<{ summary: string; keep?: string }> {
     const messages: Message[] = [
       { role: 'system', content: system },
       { role: 'user', content: summaryRequest(previous, conversation) },
@@ -475,66 +571,115 @@ async function run(caps: Caps): Promise<void> {
     if (completionTokens !== undefined && completionTokens >= maxTokens) {
       throw new Error('摘要模型写满了输出上限，输出可能不完整');
     }
-    const summary = text.trim();
-    if (!summary) throw new Error('摘要模型返回了空内容');
-    return summary;
+    const reply = parseSummary(text);
+    if (!reply.summary) throw new Error('摘要模型返回了空内容');
+    return reply;
   }
 
   /**
-   * 把待摘要部分连同已有摘要交给摘要模型，得到新摘要。预算按这次重写的输入（已有摘要加格式化后的各行）算，请求的输出上限是
-   * 预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的推理 token 也算在输出上限里。
-   * 每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份可能是按更大的预算写的），
-   * 系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每块的字数。格式化后的输入超过一块时分块增量，
-   * 上一块的结果作为下一块的已有摘要。任何一块失败或返回空整次失败；每块返回后会话被清空过的，整次作废
+   * 这一次请求挑中的单位（按时间排）。编号要在这次请求里出现过：不存在的丢掉、重复的算一次；合计超过 cap 时从最早的起去掉，
+   * 直到不超或一个不剩（去掉的在这次的输入里，摘要按提示覆盖了它们）。没有保留段、或段里写了字却认不出编号时一个不留，记告警；
+   * 段为空或写「无」时不告警；这次请求里没有编号可选时，没有保留段也不告警
+   */
+  function keptOf(keep: string | undefined, offered: Unit[], cap: number, sessionId: string): Unit[] {
+    if (keep === undefined) {
+      if (offered.some(unit => unit.id !== undefined)) {
+        logger.use.warn(`摘要模型没有按格式列出保留原文的编号，这次只用摘要: session=${sessionId}`);
+      }
+      return [];
+    }
+    const ids = new Set([...keep.matchAll(/[#＃](\d+)/g)].map(match => Number(match[1])));
+    if (ids.size === 0) {
+      if (!listsIds(keep)) logger.use.warn(`没认出保留原文的编号，这次不保留原文: session=${sessionId}`);
+      return [];
+    }
+    let kept = offered.filter(unit => unit.id !== undefined && ids.has(unit.id));
+    if (kept.length < ids.size) {
+      logger.use.debug(
+        `摘要模型列出的保留编号有 ${ids.size - kept.length} 个不在这次的输入里，已丢掉: session=${sessionId}`,
+      );
+    }
+    while (kept.length > 0 && costOf(kept) > cap) kept = kept.slice(1);
+    return kept;
+  }
+
+  /**
+   * 把归档段连同已有摘要交给摘要模型，得到新摘要与挑中、原样保留的单位。预算按这次重写的输入（已有摘要加各单位的文字，不计
+   * 编号标注）算，摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 输入⌋)：下限只托住摘要，小输入时留得很少，压完不会
+   * 仍在线上。请求的输出上限是预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的
+   * 推理 token 也算在输出上限里。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份
+   * 可能是按更大的预算写的），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每次放对话的字数（容量，
+   * 编号标注与重发的保留单位都算在内）。放不下时分几次请求：每次是上一次挑中的单位（原样、带原编号）加按顺序放得下的新单位，
+   * 上一次的摘要作为已有摘要，与跨压缩时把已保留的原文和新内容一起重挑是同一种做法；腾地方时去掉的保留单位在之前那次的输入里，
+   * 摘要覆盖了它。任何一次失败整次失败；每次返回后会话被清空过的，整次作废
    */
   async function summarize(
     model: LLMModel,
     sessionId: string,
-    part: Message[],
+    span: Message[],
     previous: string | undefined,
     cleared: () => boolean,
-  ): Promise<string> {
+  ): Promise<{ summary: string; kept: Unit[] }> {
     const template = templateOf(sessionId);
-    const names = buildToolNameMap(part);
-    const lines = part.map(m => formatMsgForSummary(m, names));
-    // 工作模板的「未完成的事」以待办为准：待摘要部分里最后一次待办的参数作为最后一行，与其余各行一起分块
+    const units = buildUnits(span);
+    // 工作模板的「未完成的事」以待办为准：归档段里最后一次待办的参数作为最后一行，不能保留
     if (template === WORK_TEMPLATE) {
-      const todo = part
+      const todo = span
         .flatMap(m => m.toolCalls ?? [])
         .filter(call => call.function.name === 'manage_todo_list')
         .at(-1)?.function.arguments;
-      if (todo) lines.push(`当前任务列表状态：\n${todo}`);
+      if (todo) units.push({ at: [], text: `当前任务列表状态：\n${todo}`, cost: 0, whole: false });
     }
     // 物理上限：摘要模型一次写得出的长度，至多它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）
     const physical = Math.min(model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.contextLength / 4));
-    const input = [previous ?? '', ...lines].reduce((sum, text) => sum + estimateTextTokens(text), 0);
+    const input = units.reduce((sum, unit) => sum + estimateTextTokens(unit.text), estimateTextTokens(previous ?? ''));
     const budget = summaryBudget(sessionId, physical, input);
+    const keepCap = Math.min(budget, Math.floor(cfg.summaryBudgetRatio * input));
     // 预算不超过物理上限的三分之二，输出上限因此也不超过物理上限
     const maxTokens = Math.ceil(1.5 * budget);
-    const system = instructions(template, budget);
+    const system = instructions(template, budget, keepCap);
     // 请求里的固定文字按带已有摘要的那一种（较长）算
     const prompt = system.length + summaryRequest('', '').length;
     const capacity = Math.floor((model.contextLength - physical - maxTokens) / 2) - prompt;
-    // 每块至少两个码元，切分才能前进（代理对不拆开）
-    if (capacity < 2) {
+    // 大单位切成至多容量一半的段：一半至少两个码元，每段才至少有一个字符（代理对不拆开），切分才能前进
+    if (capacity < 4) {
       throw new Error(
         `摘要模型的上下文窗口（${model.contextLength}）装不下提示词、已有摘要与摘要的输出上限（${maxTokens}）`,
       );
     }
-    let summary = '';
-    for (const [i, chunk] of chunkLines(lines, capacity).entries()) {
-      summary = await askSummaryModel(model, sessionId, system, maxTokens, i === 0 ? previous : summary, chunk);
+    const queue = numberUnits(units, keepCap, Math.floor(capacity / 2));
+    let summary = previous;
+    let kept: Unit[] = [];
+    let next = 0;
+    do {
+      // 队首放不下时从最早的保留单位起去掉：队首至多占容量的一半，保留的去到不超过另一半时必能放下
+      while (charsOf(kept) + queue[next].text.length + 1 > capacity) kept = kept.slice(1);
+      const offered = [...kept];
+      let room = capacity - charsOf(kept);
+      while (next < queue.length && queue[next].text.length + 1 <= room) {
+        room -= queue[next].text.length + 1;
+        offered.push(queue[next++]);
+      }
+      const conversation = offered.map(unit => unit.text).join('\n');
+      const reply = await askSummaryModel(model, sessionId, system, maxTokens, summary, conversation);
       if (cleared()) throw new Error('压缩期间会话被清空');
-    }
-    return summary;
+      summary = reply.summary;
+      kept = keptOf(reply.keep, offered, Math.min(keepCap, budget - estimateTextTokens(summary)), sessionId);
+    } while (next < queue.length);
+    return { summary, kept };
   }
 
-  /** 落定：写摘要 → 归档切分点之前的 cut 条 → 写分隔标记。归档抛错时把摘要回滚到写入前，原样抛出 */
+  /**
+   * 落定：写摘要 → 重读活跃历史、核对开头与归档段逐条相同 → 归档这一段（keep 列出的位置不归档）→ 写分隔标记。核对在写摘要
+   * 之后，与归档之间只隔这一次重读：回滚删了段里的消息、晚到的消息时间戳插进了这一段，位置就会错开，归档会归掉没进摘要的消息、
+   * 拆开保留的工具组。核对不过时以「压缩期间历史被改动」失败；它与归档抛错都把摘要回滚到写入前，原样抛出
+   */
   async function commitCompression(
     provider: MemoryService,
     store: SummaryStore,
     sessionId: string,
-    cut: number,
+    span: Message[],
+    keep: number[],
     previous: string | undefined,
     summary: string,
   ): Promise<void> {
@@ -542,18 +687,19 @@ async function run(caps: Caps): Promise<void> {
     await store.upsertSummary(sessionId, summary);
     let archived: number;
     try {
-      archived = await provider.archiveSpan(sessionId, { count: cut, keep: [] });
+      if (!samePrefix(span, await provider.getHistory(sessionId, Infinity))) throw new Error('压缩期间历史被改动');
+      archived = await provider.archiveSpan(sessionId, { count: span.length, keep });
     } catch (err) {
       // 摘要已写、历史没归档：下一次压缩会把同一段历史再并进这份新摘要，故回滚到写入前
       try {
         if (previous) await store.upsertSummary(sessionId, previous);
         else await store.clearSession(sessionId);
       } catch (rollbackErr) {
-        logger.use.warn('归档失败后回滚摘要也失败（下一次压缩会把这一段再并进新摘要）:', rollbackErr);
+        logger.use.warn('没落定，回滚摘要也失败（下一次压缩会把这一段再并进新摘要）:', rollbackErr);
       }
       throw err;
     }
-    logger.use.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条`);
+    logger.use.info(`会话已压缩: session=${sessionId}, 归档 ${archived} 条，保留 ${keep.length} 条原文`);
     // 系统事件消息，供前端持久化显示压缩分隔线：正文是原文，文字对象另记，界面按读者语言显示
     if (!messageArchive.present) return;
     const compacted = t('compacted');
@@ -567,11 +713,11 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部连同已有摘要压成一份新摘要，落笔前核对快照前缀
-   * 没被改过，再写摘要、归档切分点之前的消息、写分隔标记；切分点之后的消息（快照之后到达的、没写全的工具调用组）
-   * 原样留在活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面据此插「对话已压缩」）。
-   * 没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，什么都不写；待摘要部分没有对话时什么都不做、
-   * 不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
+   * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部（归档段）连同已有摘要压成一份新摘要，写摘要、核对快照
+   * 前缀没被改过、归档这一段、写分隔标记；摘要模型挑出的单位与切分点之后的消息（快照之后到达的、没写全的工具调用组）原样留在
+   * 活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面据此插「对话已压缩」）。
+   * 没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要回滚）；待摘要部分没有对话时
+   * 什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
    */
   async function compressHistory(sessionId: string): Promise<void> {
     if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩，稍后再试');
@@ -586,9 +732,8 @@ async function run(caps: Caps): Promise<void> {
       const provider = memory.list().find(p => p.selected)?.use;
       if (!provider) throw new Error('memory 服务不可用');
       const snapshot = await provider.getHistory(sessionId, Infinity);
-      const cut = cutPoint(snapshot);
-      const part = snapshot.slice(0, cut).filter(entersSummary);
-      if (part.length === 0) return;
+      const span = snapshot.slice(0, cutPoint(snapshot));
+      if (!span.some(entersSummary)) return;
       report('start');
       started = true;
       // global 按默认优先级选首个能对话的模型；custom 按 summaryLLM 精确匹配，常见的落空是它指向的 provider 被卸载或重载中
@@ -603,12 +748,10 @@ async function run(caps: Caps): Promise<void> {
       }
       const store = new SummaryStore(provider);
       const previous = (await store.getSummary(sessionId))?.summary || undefined;
-      const summary = await summarize(model, sessionId, part, previous, cleared);
-      const current = await provider.getHistory(sessionId, Infinity);
+      const { summary, kept } = await summarize(model, sessionId, span, previous, cleared);
       if (cleared()) throw new Error('压缩期间会话被清空');
-      // 回滚删了前缀里的消息、晚到的消息时间戳插进了前缀：归档最早的 cut 条就会归掉没进摘要的消息
-      if (!samePrefix(snapshot, current, cut)) throw new Error('压缩期间历史被改动');
-      const commit = commitCompression(provider, store, sessionId, cut, previous, summary);
+      const keep = kept.flatMap(unit => unit.at);
+      const commit = commitCompression(provider, store, sessionId, span, keep, previous, summary);
       committing.set(sessionId, commit);
       try {
         await commit;
@@ -635,7 +778,9 @@ async function run(caps: Caps): Promise<void> {
     async build(view) {
       if (!view.sessionId) return null;
       const existing = await new SummaryStore(memory.use).getSummary(view.sessionId);
-      return existing?.summary ? `以下是之前对话的摘要，包含了较早的对话上下文：\n${existing.summary}` : null;
+      return existing?.summary
+        ? `以下是之前对话的摘要，包含了较早的对话上下文。压缩时原样保留的原文（如果有）按原来的时间顺序排在之后的历史开头，内容已在摘要里概括过：\n${existing.summary}`
+        : null;
     },
   });
 
