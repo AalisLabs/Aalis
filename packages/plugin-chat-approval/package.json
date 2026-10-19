@@ -56,7 +56,9 @@
       "required": [
         "approvals",
         "gateway",
-        "hooks"
+        "hooks",
+        "lifecycle",
+        "logger"
       ]
     }
   }

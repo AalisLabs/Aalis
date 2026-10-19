@@ -17,7 +17,7 @@ import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { getPlatformAdapters, platform } from '@aalis/api-platform';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, optional } from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type TextRef, textLines, toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { createBoundedMap } from '@aalis/util-bounded-map';
@@ -28,6 +28,8 @@ const uses = {
   approvals,
   gateway,
   hooks,
+  lifecycle,
+  logger,
   authority: optional(authority),
   sessionManager: optional(sessionManager),
   platform: optional(platform),
@@ -38,27 +40,42 @@ type Caps = BoundOf<typeof uses>;
 const FACT_LIMIT = 500;
 /** 记住最近这么多条审批消息（引用回复据它认出回的是哪一张）与应答过的入站消息 */
 const MEMORY = 1000;
+/** owner 在私聊里亲手发言之后算在场的时长，与审批服务默认实现的在场窗口一致 */
+const PRESENCE_MS = 10 * 60_000;
 
-/** 应答首尾不论的空白（含全角空格）与标点 */
-const EDGES = /^[\s。！!.~，,？?：:]+|[\s。！!.~，,？?：:]+$/g;
+/** 超过这么多字的不是应答 */
+const ANSWER_LIMIT = 200;
+/** 应答首尾不论的一个字：空白（含全角空格）与标点 */
+const EDGE = /[\s。！!.~，,？?：:]/;
+/** 尾部去掉的标点里有问号：是在问，不是应答 */
+const ASKING = /[？?]/;
 /**
- * 应答词，英文不分大小写：整条恰为「同意」「approve」为批准（「同意吗」「同意不了」与以问号收尾的「同意？」不算）；「拒绝」「deny」开头为拒绝，
- * 后面可带原因。不收 y、n：指令插件的意图确认在等时会把下一条消息当作对它的回答，词表避开它的词，免得回意图确认的那条
- * 被当成应答
+ * 应答词，英文不分大小写：整条恰为「同意」「approve」为批准（「同意吗」「同意不了」不算）；「拒绝」「deny」开头为拒绝，后面可带
+ * 原因（「denylist」不算）。不收 y、n：指令插件的意图确认在等时会把下一条消息当作对它的回答，词表避开它的词，免得回意图确认
+ * 的那条被当成应答
  */
 const APPROVE = /^(?:同意|approve)$/i;
-/** 以问号收尾的是在问，不算批准 */
-const QUESTION = /[？?]\s*$/;
-const DENY = /^(?:拒绝|deny)/i;
+const DENY = /^(?:拒绝|deny\b)/i;
 
 type Answer = { decision: 'approve' } | { decision: 'deny'; note?: string };
 
+/** 去掉首尾的空白与标点，逐字扫描：交出中间的正文与尾部去掉的那段 */
+function trimEdges(text: string): { body: string; tail: string } {
+  let start = 0;
+  let end = text.length;
+  while (start < end && EDGE.test(text[start])) start++;
+  while (end > start && EDGE.test(text[end - 1])) end--;
+  return { body: text.slice(start, end), tail: text.slice(end) };
+}
+
 function answerOf(content: string): Answer | undefined {
-  const text = content.replace(EDGES, '');
-  if (APPROVE.test(text) && !QUESTION.test(content)) return { decision: 'approve' };
-  const match = DENY.exec(text);
+  if (content.length > ANSWER_LIMIT) return undefined;
+  const { body, tail } = trimEdges(content);
+  if (ASKING.test(tail)) return undefined;
+  if (APPROVE.test(body)) return { decision: 'approve' };
+  const match = DENY.exec(body);
   if (!match) return undefined;
-  const note = text.slice(match[0].length).replace(EDGES, '');
+  const note = trimEdges(body.slice(match[0].length)).body;
   return note ? { decision: 'deny', note } : { decision: 'deny' };
 }
 
@@ -70,7 +87,7 @@ function fact(value: string): string | TextRef {
 
 /**
  * 推到私聊的审批消息：工具，命令、目录、文件、改动、参数各一行，末行是怎么回复与还剩几分钟（按审批的到期时刻算，
- * 不足一分钟按一分钟）
+ * 不足一分钟按一分钟，墙钟已过到期时刻、等待的计时器还没到时也写一分钟）
  */
 function requestText({ tool, facts, expiresAt }: Approval, now: number): TextRef {
   const { command, cwd, diff, params } = facts;
@@ -85,7 +102,7 @@ function requestText({ tool, facts, expiresAt }: Approval, now: number): TextRef
         ]
       : []),
     ...(Object.keys(params).length > 0 ? [t('factParams', { value: fact(JSON.stringify(params)) })] : []),
-    t('howToAnswer', { minutes: Math.ceil((expiresAt - now) / 60_000) }),
+    t('howToAnswer', { minutes: Math.max(1, Math.ceil((expiresAt - now) / 60_000)) }),
   ]);
 }
 
@@ -102,8 +119,6 @@ interface Shown {
   approval: Approval;
   /** 送达时平台给了消息 id：认得出引用它的回复 */
   quotable: boolean;
-  /** 推出时延续了在场、owner 之后还没在这里亲手说过话：结算时对这个接入上报离开 */
-  unheard: boolean;
 }
 
 /** 一个 owner 私聊的接入 */
@@ -113,13 +128,27 @@ interface Chat {
   attendance: ApprovalAttendance;
   /** 推到这里、还没结的审批 */
   pending: Map<string, Shown>;
+  /** owner 最近一次在这里亲手发言的时刻 */
+  spokeAt: number;
+  /** 推来的审批都结了、owner 自己的在场还没过：到它过的那一刻上报离开 */
+  leaving?: ReturnType<typeof setTimeout>;
 }
 
-function runChatApproval({ approvals, gateway, hooks, authority, sessionManager, platform }: Caps): void {
+function runChatApproval({
+  approvals,
+  gateway,
+  hooks,
+  lifecycle,
+  logger,
+  authority,
+  sessionManager,
+  platform,
+}: Caps): void {
+  const { signal } = lifecycle.use;
   const surface = approvals.use.registerSurface('chat');
   const chats = new Map<string, Chat>();
-  /** 审批消息的平台消息 id（按会话）→ 那张审批 */
-  const quoted = createBoundedMap<string, Approval>({ max: MEMORY });
+  /** 审批消息的平台消息 id（按会话）→ 那张审批的 id */
+  const quoted = createBoundedMap<string, string>({ max: MEMORY });
   /** 应答过的入站消息 id（按会话） */
   const answered = createBoundedMap<string, true>({ max: MEMORY });
   const keyOf = (sessionId: string, messageId: string) => `${sessionId}\n${messageId}`;
@@ -145,8 +174,12 @@ function runChatApproval({ approvals, gateway, hooks, authority, sessionManager,
       : undefined;
   }
 
-  /** 发一句到这个私聊：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回平台的投递结果 */
+  /**
+   * 发一句到这个私聊：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回平台的投递结果。停用之后不发、不等回执；
+   * 发不出或等不到回执时交回 undefined，不抛
+   */
   async function send(chat: Chat, text: TextRef) {
+    if (signal.aborted || !gateway.present) return undefined;
     const message: OutgoingMessage = {
       content: toSource(text),
       text,
@@ -154,37 +187,53 @@ function runChatApproval({ approvals, gateway, hooks, authority, sessionManager,
       platform: chat.platform,
       source: 'system',
     };
-    await gateway.use.dispatchOutbound(message);
-    return message.delivery && (await awaitDelivery(message.delivery));
+    try {
+      await gateway.use.dispatchOutbound(message);
+      return message.delivery && (await awaitDelivery(message.delivery, signal));
+    } catch (err) {
+      logger.use.warn('聊天审批往私聊发消息出错:', err);
+      return undefined;
+    }
   }
 
   /**
-   * 推一张审批。没送达时 owner 在这里看不到它：对这个接入上报离开，不让它白等。送达且平台给了消息 id 才认得出引用它的
-   * 回复，这时算 owner 会在这里看到，在场重新计时，只延续到这张结算；平台不给 id 时补一句这里无法应答。送达之前已经结了的
+   * 推一张审批。还在等的这张没送达时 owner 在这里看不到它：对这个接入上报离开，不让它白等。送达且平台给了消息 id 才认得出
+   * 引用它的回复，这时算 owner 会在这里看到，在场延续到这张结算；平台不给 id 时补一句这里无法应答。送达之前已经结了的
    * 只记下消息 id（引用它的回复回「已经处理过」）
    */
   async function push(chat: Chat, approval: Approval): Promise<void> {
     const result = await send(chat, requestText(approval, Date.now()));
+    const shown = chat.pending.get(approval.id);
     if (!result?.ok) {
-      chat.attendance.presence(false);
+      if (shown) chat.attendance.presence(false);
       return;
     }
     const ids = result.messageIds ?? [];
-    for (const id of ids) quoted.set(keyOf(chat.sessionId, id), approval);
-    const shown = chat.pending.get(approval.id);
+    for (const id of ids) quoted.set(keyOf(chat.sessionId, id), approval.id);
     if (!shown) return;
     if (ids.length === 0) {
       await send(chat, t('answerElsewhere'));
       return;
     }
     shown.quotable = true;
-    shown.unheard = true;
     chat.attendance.presence(true);
   }
 
-  /** owner 在这个私聊里亲手说了话：推出时延续的在场不再在结算时收回 */
-  function heard(chat: Chat): void {
-    for (const shown of chat.pending.values()) shown.unheard = false;
+  /** owner 在这个私聊里亲手说了话：在场从此刻起算 */
+  function spoke(chat: Chat): void {
+    chat.spokeAt = Date.now();
+    clearTimeout(chat.leaving);
+    chat.attendance.presence(true);
+  }
+
+  /**
+   * 推来的审批都结了：收回推出带来的延续，在场回到 owner 自己发言起的那一段，已经过了的即刻上报离开，没过的到点再报
+   * （期间 owner 在这里说话或又推来审批就不报）
+   */
+  function release(chat: Chat): void {
+    const left = chat.spokeAt + PRESENCE_MS - Date.now();
+    if (left <= 0) chat.attendance.presence(false);
+    else chat.leaving = setTimeout(() => chat.attendance.presence(false), left);
   }
 
   /** 这个私聊的接入，首次即建 */
@@ -196,19 +245,20 @@ function runChatApproval({ approvals, gateway, hooks, authority, sessionManager,
       sessionId,
       platform: owner.platform,
       pending,
+      spokeAt: 0,
       attendance: surface.attend(
         owner,
         {
           requested: approval => {
-            pending.set(approval.id, { approval, quotable: false, unheard: false });
-            void push(chat, approval);
+            clearTimeout(chat.leaving);
+            pending.set(approval.id, { approval, quotable: false });
+            push(chat, approval).catch(err => logger.use.warn('聊天审批推送审批出错:', err));
           },
           settled: (approvalId, { state }) => {
             const shown = pending.get(approvalId);
             pending.delete(approvalId);
             if (!shown) return;
-            // 推出时延续的在场到这里为止：owner 自推出以来没在这里说过话，就不再算他在这里
-            if (shown.unheard) chat.attendance.presence(false);
+            if (pending.size === 0) release(chat);
             // 只在过期时说一句：在这里回的、在别处处理的与撤销的，回合自己的回复会说明结果
             if (state === 'expired') void send(chat, t('expired', { tool: sanitizeForCard(shown.approval.tool) }));
           },
@@ -220,14 +270,14 @@ function runChatApproval({ approvals, gateway, hooks, authority, sessionManager,
     return chat;
   }
 
+  lifecycle.use.onDispose(() => {
+    for (const chat of chats.values()) clearTimeout(chat.leaving);
+  });
+
   // 在场：在派发相位记（与网关判受众的时机一致：IM 私聊的第一条消息与入站同拍建档，判早了可能还没建档）
   hooks.use.middleware(INBOUND_PHASE.DISPATCH, async (data, next) => {
     const owner = ownerOf(data.message);
-    if (owner) {
-      const chat = chatOf(data.message.sessionId, owner);
-      heard(chat);
-      chat.attendance.presence(true);
-    }
+    if (owner) spoke(chatOf(data.message.sessionId, owner));
     await next();
   });
 
@@ -237,21 +287,26 @@ function runChatApproval({ approvals, gateway, hooks, authority, sessionManager,
     const chat = chats.get(message.sessionId);
     const answer = chat && answerOf(message.content);
     if (!chat || !answer) return next();
-    const approval = message.replyTo && quoted.get(keyOf(chat.sessionId, message.replyTo.messageId));
-    if ((!approval && chat.pending.size === 0) || !ownerOf(message)) return next();
+    const approvalId = message.replyTo && quoted.get(keyOf(chat.sessionId, message.replyTo.messageId));
+    if ((!approvalId && chat.pending.size === 0) || !ownerOf(message)) return next();
     if (message.messageId !== undefined) {
       const key = keyOf(chat.sessionId, message.messageId);
       if (answered.get(key)) return;
       answered.set(key, true);
     }
-    heard(chat);
-    if (!approval) {
+    spoke(chat);
+    if (!approvalId) {
       // 推着的审批都没有消息 id 时，引用了也认不出
       const quotable = [...chat.pending.values()].some(shown => shown.quotable);
       await send(chat, t(quotable ? 'quoteToAnswer' : 'answerElsewhere'));
       return;
     }
-    const response = chat.attendance.respond({ approvalId: approval.id, contentHash: approval.contentHash, ...answer });
+    const shown = chat.pending.get(approvalId);
+    if (!shown) {
+      await send(chat, t('alreadySettled'));
+      return;
+    }
+    const response = chat.attendance.respond({ approvalId, contentHash: shown.approval.contentHash, ...answer });
     if (response.ok) return;
     // 审批服务不认得的 id（服务重启过）同样是已经不在等的
     const settled = response.refusal === 'approval-settled' || response.refusal === 'not-found';

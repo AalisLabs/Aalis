@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type Approval,
+  type ApprovalAttendance,
   type ApprovalOutcome,
   type ApprovalRequest,
   type ApprovalSurface,
@@ -477,6 +478,68 @@ describe('限定会话的接入', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(uncovered.outcome).toMatchObject({ approved: false, source: 'absent' });
     expect(covered.outcome).toBeUndefined();
+  });
+
+  it('宽限按会话算：别的会话在宽限里，不让本会话没有覆盖的下一张推出，它当场按不在场结算', async () => {
+    const { mine, surfaces, service, connect, request, flush } = await setup();
+    const c = await connect();
+    const waiting = request(mine);
+    await flush();
+    await c.call('presence/update', { active: false });
+    // 私聊的接入在结算回调里上报离开（聊天审批收回推出带来的延续即如此）
+    const dm: { attendance?: ApprovalAttendance } = {};
+    dm.attendance = surfaces.webui.attend(
+      OWNER_QQ,
+      { requested() {}, settled: () => dm.attendance?.presence(false) },
+      OWNER_DM,
+    );
+    dm.attendance.presence(true);
+    const origin = { kind: 'owner' as const, ...OWNER_QQ };
+    const first = request(OWNER_DM, { origin, callId: 'call-1' });
+    const second = request(OWNER_DM, { origin, callId: 'call-2' });
+    await flush();
+    const [approval] = service().list({ sessionId: OWNER_DM });
+    dm.attendance.respond({ approvalId: approval.id, decision: 'approve', contentHash: approval.contentHash });
+    await flush();
+    expect(first.outcome).toMatchObject({ approved: true });
+    expect(second.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(service().list({ sessionId: OWNER_DM })).toEqual([]);
+    expect(waiting.outcome, 'mine 的宽限照旧').toBeUndefined();
+  });
+
+  it('宽限按会话起算：两个会话先后没了覆盖，各自从没了覆盖那一刻等满 30 秒', async () => {
+    const { mine, surfaces, request, flush } = await setup();
+    const sink = { requested() {}, settled() {} };
+    const web = surfaces.webui.attend(OWNER, sink, mine);
+    web.presence(true);
+    const dm = surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM);
+    dm.presence(true);
+    const early = request(mine);
+    const late = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    await flush();
+    web.presence(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    dm.presence(false);
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 10_000);
+    expect(early.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(late.outcome, 'DM 晚 10 秒没了覆盖，还在它自己的宽限里').toBeUndefined();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(late.outcome).toMatchObject({ approved: false, source: 'absent' });
+  });
+
+  it('应答别的会话已经结了的审批：同样回 not-found，不回 approval-settled', async () => {
+    const { mine, surfaces, connect, request, flush } = await setup();
+    const c = await connect();
+    const dm = surfaces.webui.attend(OWNER_QQ, { requested() {}, settled() {} }, OWNER_DM);
+    dm.presence(true);
+    const r = request(mine);
+    await flush();
+    const [approval] = pushed(c);
+    await approve(c, approval);
+    await flush();
+    expect(r.outcome).toMatchObject({ approved: true });
+    const answer = { approvalId: approval.id, decision: 'approve' as const, contentHash: approval.contentHash };
+    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'not-found' });
   });
 
   it('应答也只认那个会话的：别处的审批回 not-found，审批照旧等', async () => {

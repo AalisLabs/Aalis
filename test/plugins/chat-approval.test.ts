@@ -33,6 +33,8 @@ import { seedRooms } from '../fixtures/rooms.js';
 // 适配器（每条出站回一个平台消息 id，可选声明会话类型、改写投递结果），agent 是记录收到什么的假件，另有一个覆盖全部会话的
 // 审批面代表 WebUI 与终端。私聊预置进会话表（来源字段与 OneBot 的声明相同）。工具调用按 agent 工具循环的填法构造：owner 在
 // 私聊里亲手发起，探针工具人人可用、声明需要确认。
+// 假 agent 不按 latest-wins 中止在跑的回合：「交给 agent，审批照旧等」只说明本插件不截下、不结算它；今天的 agent 收到
+// 这样的消息会中止在等审批的那一轮，审批随之撤销（见插件文档「应答」一节）。
 // ════════════════════════════════════════════════════════════
 
 const SELF = '10000';
@@ -232,7 +234,21 @@ async function setup({
     });
     return Object.assign(attendance, { got });
   };
-  return { say, reply, call, requested, requests, lines, elsewhere, outbound, received, runs: () => runs };
+  return { app, say, reply, call, requested, requests, lines, elsewhere, outbound, received, runs: () => runs };
+}
+
+/** 收集 run 期间逃逸成进程级未处理拒绝的错误 */
+async function escapedDuring(run: () => Promise<void>): Promise<string[]> {
+  const escaped: string[] = [];
+  const onEscape = (err: unknown) => void escaped.push(String(err));
+  process.on('unhandledRejection', onEscape);
+  try {
+    await run();
+    await settle();
+  } finally {
+    process.off('unhandledRejection', onEscape);
+  }
+  return escaped;
 }
 
 describe('推送', () => {
@@ -325,21 +341,52 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
-  it('有审批在等时的普通消息：照常交给 agent，审批照旧等', async () => {
+  it('没引用审批消息的「拒绝 太危险」：整条是一个应答，同样回一句怎么回复，不交给 agent', async () => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
     await s.requested();
-    const chat = await s.say('等一下，我先看看');
+    const answer = await s.say('拒绝 太危险');
+    expect(s.lines(QUOTE_TO_ANSWER)).toHaveLength(1);
+    expect(r.content).toBeUndefined();
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+  });
+
+  it.each([
+    '等一下，我先看看',
+    'denylist 里加一条 foo',
+  ])('有审批在等时不是应答的消息「%s」：照常交给 agent，不回提示，审批照旧等', async text => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    const chat = await s.say(text);
     expect(s.received.map(m => m.messageId)).toContain(chat.messageId);
     expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
     expect(r.content).toBeUndefined();
+  });
+
+  it('很长的一串空白后跟一个字：不算应答，不卡住入站', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    s.call();
+    await s.requested();
+    const started = performance.now();
+    const long = await s.say(`a${' '.repeat(40_000)}x`);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(s.received.map(m => m.messageId)).toContain(long.messageId);
   });
 
   it.each([
     '同意吗？',
     '同意？',
     'approve?',
+    '同意？！',
+    '同意?。',
+    'deny?',
+    '拒绝吗？',
+    'denylist',
+    `拒绝 ${'很'.repeat(200)}`,
     '同意不了',
     '同意之前先说明一下',
     '先别批',
@@ -405,10 +452,11 @@ describe('时限与在场', () => {
     expect(await r.result).toBe('ran');
   });
 
-  it('推出时延续的在场只到这张结算：owner 之后没再说话、等它过期，模型再发起时按不在场拒，私聊不再收到审批消息', async () => {
+  it('推出时延续的在场只到这张结算：owner 第 0 分钟说话、第 8 分钟推出，第 13 分钟过期时 owner 自己的 10 分钟已过，模型再发起按不在场拒，私聊不再收到审批消息', async () => {
     const s = await setup();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(8 * MINUTE);
     const first = s.call();
     await s.requested();
     await vi.advanceTimersByTimeAsync(WAIT_MS);
@@ -419,16 +467,99 @@ describe('时限与在场', () => {
     expect(s.requests()).toHaveLength(1);
   });
 
-  it('owner 在推出之后说过话：过期之后照旧在场，模型再发起照常推到私聊', async () => {
+  it('结算只收回推出带来的延续：owner 第 0 分钟说话、第 4 分钟推出，第 9 分钟过期之后仍在 owner 自己的 10 分钟里，模型再发起照常推到私聊', async () => {
     const s = await setup();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await first.result).toContain('300 秒');
+    s.call();
+    await s.requested(2);
+  });
+
+  it('结算之后 owner 自己的 10 分钟到点那一刻不在场：第 10 分钟之后发起的按不在场拒', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await first.result).toContain('300 秒');
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    const again = s.call();
+    await settle();
+    expect(again.content).toEqual(expect.stringContaining(ABSENT));
+    expect(s.requests()).toHaveLength(1);
+  });
+
+  it('结算之后、到点之前 owner 又亲手说了话：在场从这句起算，到点不再收回', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await first.result).toContain('300 秒');
+    await vi.advanceTimersByTimeAsync(MINUTE / 2);
+    await s.say('我在');
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    s.call();
+    await s.requested(2);
+  });
+
+  it('owner 在推出之后说过话：过期之后仍在这句话起的 10 分钟里，模型再发起照常推到私聊', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(8 * MINUTE);
     const first = s.call();
     await s.requested();
     await vi.advanceTimersByTimeAsync(MINUTE);
     await s.say('我看看');
     await vi.advanceTimersByTimeAsync(WAIT_MS - MINUTE);
     expect(await first.result).toContain('300 秒');
+    s.call();
+    await s.requested(2);
+  });
+
+  it('推出之后、回执之前 owner 说的话：回执到达不把它抹掉，过期之后仍在这句话起的 10 分钟里', async () => {
+    const release: Array<() => void> = [];
+    const s = await setup({
+      deliver: id => new Promise(resolve => release.push(() => resolve({ ok: true, messageIds: [id] }))),
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(8 * MINUTE);
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(MINUTE / 2);
+    await s.say('我看看');
+    for (const deliver of release.splice(0)) deliver();
+    await settle();
+    await vi.advanceTimersByTimeAsync(WAIT_MS - MINUTE / 2);
+    expect(await first.result).toContain('300 秒');
+    const again = s.call();
+    await vi.waitFor(() => expect(s.requests()).toHaveLength(2));
+    for (const deliver of release.splice(0)) deliver();
+    expect(again.content).toBeUndefined();
+  });
+
+  it('在这里引用回审批也算亲手发言：第 9 分钟批了 A，第 16 分钟的 B 照常推到私聊', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    const first = s.call();
+    const { id } = await s.requested();
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
+    await s.reply('同意', id);
+    expect(await first.result).toBe('ran');
+    await vi.advanceTimersByTimeAsync(7 * MINUTE);
     s.call();
     await s.requested(2);
   });
@@ -470,6 +601,19 @@ describe('时限与在场', () => {
     expect(message.content).toContain('3 分钟内不回按过期');
   });
 
+  it('墙钟已过到期时刻、等待的计时器还没到：补推的末行写 1 分钟，不写负数', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const other = s.elsewhere();
+    other.presence(true);
+    s.call();
+    await vi.waitFor(() => expect(other.got).toHaveLength(1));
+    vi.setSystemTime(Date.now() + 6 * MINUTE);
+    await s.say('我在');
+    const { message } = await s.requested();
+    expect(message.content).toContain('；1 分钟内不回按过期');
+  });
+
   it('WebUI 往这个私聊插话不算 owner 在场：之后发起的审批按不在场拒；owner 在 QQ 里发言之后才推', async () => {
     const s = await setup();
     await s.say('从网页插一句', { platform: 'webui', userId: 'console', sessionType: undefined, selfId: undefined });
@@ -505,6 +649,87 @@ describe('时限与在场', () => {
     await s.say('帮我清一下');
     const r = s.call();
     await s.requested();
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    await vi.waitFor(() => expect(r.content).toEqual(expect.stringContaining(ABSENT)));
+  });
+
+  it('迟到的投递失败只为还在等的那张上报离开：已经在别处结了的 A 回执失败，不清掉随后送达的 B 的在场', async () => {
+    let failFirst = () => {};
+    const s = await setup({
+      deliver: id =>
+        id === 'm1'
+          ? new Promise(resolve => {
+              failFirst = () => resolve({ ok: false, error: '发送失败' });
+            })
+          : { ok: true, messageIds: [id] },
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const other = s.elsewhere();
+    other.presence(true);
+    const first = s.call();
+    await s.requested();
+    const [approval] = other.got;
+    other.respond({ approvalId: approval.id, decision: 'approve', contentHash: approval.contentHash });
+    expect(await first.result).toBe('ran');
+    const second = s.call();
+    await s.requested(2);
+    await settle();
+    other.leave();
+    failFirst();
+    await settle();
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(second.content).toBeUndefined();
+  });
+});
+
+describe('发不出去与停用', () => {
+  /** 审批消息的回执先扣着：放行时回送达、不带消息 id（插件随后会补一句这里无法应答） */
+  async function held() {
+    const release: Array<() => void> = [];
+    const s = await setup({ deliver: () => new Promise(resolve => release.push(() => resolve({ ok: true }))) });
+    await s.say('帮我清一下');
+    s.call();
+    await s.requested();
+    return {
+      s,
+      release: () => {
+        for (const deliver of release.splice(0)) deliver();
+      },
+    };
+  }
+
+  it('推送等回执时停用网关：没有未处理的拒绝，之后不再往私聊发消息', async () => {
+    const { s, release } = await held();
+    const before = s.outbound.length;
+    const escaped = await escapedDuring(async () => {
+      await s.app.plugins.disable('@aalis/plugin-gateway');
+      release();
+    });
+    expect(escaped).toEqual([]);
+    expect(s.outbound).toHaveLength(before);
+  });
+
+  it('推送等回执时停用聊天审批：没有未处理的拒绝，之后不再往私聊发消息', async () => {
+    const { s, release } = await held();
+    const before = s.outbound.length;
+    const escaped = await escapedDuring(async () => {
+      await s.app.plugins.disable('@aalis/plugin-chat-approval');
+      release();
+    });
+    expect(escaped).toEqual([]);
+    expect(s.outbound).toHaveLength(before);
+  });
+
+  it('适配器的回执 reject：没有未处理的拒绝，按没送达处理，宽限之后按不在场结', async () => {
+    const s = await setup({ deliver: () => Promise.reject(new Error('适配器出错')) });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const r = s.call();
+    const escaped = await escapedDuring(async () => {
+      await s.requested();
+    });
+    expect(escaped).toEqual([]);
     await vi.advanceTimersByTimeAsync(GRACE_MS);
     await vi.waitFor(() => expect(r.content).toEqual(expect.stringContaining(ABSENT)));
   });
