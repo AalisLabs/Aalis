@@ -14,11 +14,12 @@ import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 压缩没压成期间，发给模型的开头在两次成段丢弃之间逐字不变：条数线超出时一次丢掉最早的半条线，之后各轮请求的系统提示与
-// 历史都是下一轮请求的前缀，服务商的前缀缓存因此命中。在发往服务商的那一层比对：真的 OpenAI 插件，桩 fetch 记下每次
-// /chat/completions 的请求体，逐条比 messages 的 JSON（线上发出去的字节），请求体其余部分（模型、工具、输出上限、流式
-// 开关）逐字相同。不装人设与注入本轮材料的插件，请求里的本轮块只有当前消息。摘要请求按系统提示的开头认，一律回 500；
-// 该压缩的轮次按退避预先算好，等那一轮的后台压缩落定再发下一条，退避的轮次因此确定。
+// 发给模型的开头在两次变动之间逐字不变：压缩没压成期间，条数线超出时一次丢掉最早的半条线；压成之后到下一次压缩之间，摘要块
+// 与摘要模型挑出、原样保留的原文排在历史开头。其间各轮请求的系统提示与历史都是下一轮请求的前缀，服务商的前缀缓存因此命中。
+// 在发往服务商的那一层比对：真的 OpenAI 插件，桩 fetch 记下每次 /chat/completions 的请求体，逐条比 messages 的 JSON
+// （线上发出去的字节），请求体其余部分（模型、工具、输出上限、流式开关）逐字相同。不装人设与注入本轮材料的插件，请求里的
+// 本轮块只有当前消息。摘要请求按系统提示的开头认，缺省回 500，可切换成回一份摘要；该压缩的轮次按退避预先算好，等那一轮的
+// 后台压缩落定再发下一条，退避的轮次因此确定。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-cache-prefix';
@@ -52,7 +53,13 @@ function sse(delta: Record<string, unknown>): Response {
   return new Response(frames.join('\n\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-async function boot() {
+/** 摘要请求怎么回：reply 没给时回 500；hold 给了时先等它放行 */
+interface Summarizer {
+  reply?: () => string;
+  hold?: Promise<void>;
+}
+
+async function boot(summaryConfig: Record<string, unknown> = {}) {
   const logs: string[] = [];
   const logHub = new LogHub();
   logHub.onEntry(entry => void logs.push(entry.message));
@@ -64,10 +71,13 @@ async function boot() {
   const summaryTurns: number[] = [];
   let turn = 0;
   let toolPending = false;
+  const summarizer: Summarizer = {};
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as ChatBody;
     if (String(body.messages[0]?.content).startsWith('你是对话摘要助手')) {
       summaryTurns.push(turn);
+      await summarizer.hold;
+      if (summarizer.reply) return sse({ content: summarizer.reply() });
       return new Response(JSON.stringify({ error: { message: 'zz-summary-down' } }), { status: 500 });
     }
     conversation.push({ turn, body });
@@ -87,7 +97,7 @@ async function boot() {
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'zz cache bot' });
-  await app.plugin(memorySummary);
+  await app.plugin(memorySummary, summaryConfig);
   await app.plugins.idle();
   for (const plugin of [openaiPlugin, toolsPlugin, sessionManagerPlugin, agentPlugin, memorySummary]) {
     expect(app.plugins.getPlugin(plugin.name)?.state, `${plugin.name} 未激活`).toBe('active');
@@ -106,7 +116,7 @@ async function boot() {
 
   /**
    * 第 k 轮：callsTool 时先调一次探针工具再回复（落四条），否则直接回复（落两条）。compresses 时这一轮结束该触发一次后台
-   * 压缩，等它报出 start 与 error 再往下，不靠压缩在几个任务之内报出
+   * 压缩，等它报出 start 与 error（或 done）再往下，不靠压缩在几个任务之内报出
    */
   const ask = async (k: number, { callsTool = false, compresses = false } = {}) => {
     turn = k;
@@ -115,7 +125,7 @@ async function boot() {
     await host.agent.use.handleMessage({ content: `问题 ${k}`, sessionId: SESSION, platform: 'webui', userId: 'u1' });
     if (compresses) await expect.poll(() => statuses.length).toBe(reported + 2);
   };
-  return { ask, conversation, summaryTurns, statuses, logs };
+  return { ask, conversation, summaryTurns, statuses, logs, summarizer };
 }
 
 /** 请求体里逐条消息的 JSON */
@@ -183,4 +193,49 @@ it('丢弃的边界落在工具调用组中间：组首连同结果一起丢，�
   // 对齐：起点落在组中间时开头的工具结果随组首一起丢，清洗不会再跳过落单的结果
   expect(logs.filter(message => message.includes('不完整工具调用组'))).toEqual([]);
   expect(summaryTurns).toEqual(compressing);
+});
+
+it('压成之后到下一次压缩之间：摘要块与保留的原文紧接在系统提示之后，每轮在同一位置逐字相同；下一次压成那一轮只共享系统提示', async () => {
+  // 保留上限是这次输入的一半，短消息编得上号
+  const { ask, conversation, summaryTurns, statuses, summarizer } = await boot({ summaryBudgetRatio: 0.5 });
+  // 第 10 轮结束时到线、没压成，第 11 轮丢一段；第 12 轮退避期满再试：丢掉一段之后条数一维仍判得出该压缩
+  for (let k = 1; k <= 11; k++) await ask(k, { compresses: k === 10 });
+  let summaries = 0;
+  summarizer.reply = () => `【保留原文】#2 #5\n【目标】zz-summary-${++summaries}`;
+  let release!: () => void;
+  summarizer.hold = new Promise<void>(r => (release = r));
+  await ask(12);
+  await expect.poll(() => summaryTurns).toEqual([10, 12]);
+  // 压缩进行中的一轮在切分点之后，落定后仍是活跃历史
+  await ask(13);
+  release();
+  await expect.poll(() => statuses).toEqual(['start', 'error', 'start', 'done']);
+  summarizer.hold = undefined;
+  // 压成后第 k 轮开头活跃条数为 2k − 22（两条保留的原文、第 13 轮的两条、分隔标记与这一轮的入站消息起算）：第 21 轮结束时到线
+  for (let k = 14; k <= 24; k++) await ask(k, { compresses: k === 21 });
+
+  expect(summaryTurns).toEqual([10, 12, 21]);
+  expect(statuses).toEqual(['start', 'error', 'start', 'done', 'start', 'done']);
+  // 第 14 到 21 轮相邻的请求，前一次的系统提示与历史是后一次的前缀：摘要块与保留的原文每轮在同一位置、逐字相同
+  expect(droppedTurns(conversation)).toEqual([11, 14, 22]);
+  // 起点回到 0：系统提示 → 摘要块 → 保留的原文（第 2 个单位是第 1 轮的回复，第 5 个是第 3 轮的提问）→ 切分点之后的第 13 轮
+  // → 当前消息
+  const first = conversation.find(r => r.turn === 14)!.body;
+  expect(first.messages.map(m => m.role)).toEqual([
+    'system',
+    'system',
+    'assistant',
+    'user',
+    'user',
+    'assistant',
+    'user',
+  ]);
+  expect(first.messages[1].content).toBe(
+    '以下是之前对话的摘要，包含了较早的对话上下文。压缩时原样保留的原文（如果有）按原来的时间顺序排在之后的历史开头，内容已在摘要里概括过：\n【目标】zz-summary-1',
+  );
+  expect(first.messages[2].content).toBe('回答 1');
+  expect(String(first.messages[3].content)).toMatch(/问题 3$/);
+  expect(String(first.messages[4].content)).toMatch(/问题 13$/);
+  expect(first.messages[5].content).toBe('回答 13');
+  expect(String(first.messages[6].content)).toMatch(/问题 14$/);
 });

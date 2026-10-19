@@ -157,8 +157,10 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     expect(idx).toBe(4);
     expect(messages[idx].role).toBe('system');
     expect(messages[idx + 1]).toMatchObject({ role: 'user', content: '旧问' });
-    expect(contents[idx]).toContain('SUM-BODY 用户偏好夜间工作');
-    expect(contents[idx]).toContain('以下是之前对话的摘要');
+    // 头一句说明保留的原文排在之后的历史开头：模型不会以为它们是摘要之后才发生的
+    expect(contents[idx]).toBe(
+      '以下是之前对话的摘要，包含了较早的对话上下文。压缩时原样保留的原文（如果有）按原来的时间顺序排在之后的历史开头，内容已在摘要里概括过：\nSUM-BODY 用户偏好夜间工作',
+    );
   });
 
   it('会话隔离：只注入当前 sessionId 的摘要', async () => {

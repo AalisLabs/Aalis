@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type ChatModelRequest, estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
+import { estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
 import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
@@ -10,7 +10,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { endTurn, fakeSummaryLLM, setupSummary, usageEvent } from '../fixtures/memory-summary.js';
+import { budgetOf, endTurn, fakeSummaryLLM, setupSummary, systemOf, usageEvent } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 摘要预算：这次重写的输入（上一份摘要加这次新压的对话，按格式化后的各行估算）× summaryBudgetRatio（默认 0.1），不少于
@@ -44,9 +44,6 @@ async function seed(memory: MemoryService, sessionId: string, count: number, pad
 }
 
 const tokensOf = (texts: string[]) => texts.reduce((sum, text) => sum + estimateTextTokens(text), 0);
-const systemOf = (request: ChatModelRequest) => String(request.messages[0]?.content ?? '');
-/** 提示词里写的摘要预算 */
-const budgetOf = (request: ChatModelRequest) => Number(/合计约 (\d+) tokens/.exec(systemOf(request))?.[1]);
 /** 没有触发的后台压缩不会有任何动静：等几拍再看 */
 const settle = () => new Promise<void>(r => setTimeout(r, 20));
 
