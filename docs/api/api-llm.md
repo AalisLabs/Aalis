@@ -138,6 +138,19 @@ export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel
 interface LLMBalance { readonly currency: string; readonly amount: number }
 ```
 
+## 生成请求的超时
+
+```ts
+export function idleTimeout(ms: number, signal?: AbortSignal): { readonly signal: AbortSignal; touch(): void };
+```
+
+服务商给生成请求计超时用，按停顿计：从调用起计时，每次 `touch` 重新计时，连续 `ms` 毫秒没有 `touch` 时 `signal` 以 `TimeoutError`（`DOMException`）中止；调用方的 `signal` 中止时随之中止，原因照抄。`ms` 为 0 或负数时不限，超过定时器上限（2^31−1 毫秒，约 24.8 天）时按上限计。
+
+- 把 `signal` 交给请求。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的名字与参数）调一次 `touch`；保活注释、空行与没有生成内容的帧（如只有角色的首帧）不调，停住时只发这些的连接照样超时。
+- `touch` 只在收到内容时调：交出一段之后、调用方来取下一段之前的时间也算在停顿里，调用方处理一段太久同样会超时。
+- 不流式的请求不调 `touch`：整份回复是唯一的一段，`ms` 内没读完就中止。
+- 计时器不拖住进程退出，请求结束后不用收尾。
+
 ## 模型引用解析
 
 ```ts

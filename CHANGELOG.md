@@ -85,6 +85,12 @@
 
 - 判定顺序改为：硬禁、owner、封禁（等级小于 0）、等级够、所属权限组覆盖。等级小于 0 的人一律拒绝：此前把某个操作的门槛（`authorityOverrides`）设成负数，等级不低于这个数的封禁用户仍能用它，现在不能。
 
+### 模型请求的超时按停顿计（@aalis/api-llm、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama）
+
+- 三家的 `timeout`（秒，默认 120，0 为不限）改为多久收不到新的生成内容算超时：从发出请求起计时，流式请求每收到一段正文、思考或工具调用的名字与参数就重新计时，一直在输出的请求总时长超过 `timeout` 也照常读完；保活注释、空行与没有生成内容的帧不算，停住时只发这些的连接照样超时。不流式的请求（含 llm-ollama 带音频的请求）照旧要在 `timeout` 秒内收到整份回复。此前 `timeout` 是整个请求的总时限，流式时连读流一起算。
+- 超时的错误信息改为「<提供者> 请求超时：<timeout> 秒内没有收到新的生成内容，可在配置里调大 timeout」；配置项的标签改为「停顿超时 (秒)」。
+- api-llm 加 `idleTimeout(ms, signal?)`：给服务商用的按停顿计时，返回交给请求的 `signal` 与收到新的生成内容时调用的 `touch`，见 [api-llm](docs/api/api-llm.md) 的「生成请求的超时」。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

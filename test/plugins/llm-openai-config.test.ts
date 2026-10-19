@@ -5,7 +5,7 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-llm-openai 读配置：parseConfig 管类型与默认值，插件自己的规则作用于它的结果。
-// - timeout 以秒计，0 或负数表示不限时（换成定时器能接受的最大毫秒数）；加了引号的数字照常可用（'0' 同样不限时），
+// - timeout 以秒计，0 或负数表示不限时（不设定时器）；加了引号的数字照常可用（'0' 同样不限时），
 //   不是数字的值回落默认的 120 秒并告警。
 // - temperature、maxTokens、contextLength 加了引号时按数字使用，不以字符串写进请求体。
 // - apiKey 只在 baseUrl 是 OpenAI 官方端点时必填（空串也算没填）；别家端点不填时不发 Authorization。
@@ -14,7 +14,6 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const GATEWAY = { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' };
-const UNLIMITED_MS = 2_147_483_647;
 const messages = [{ role: 'user' as const, content: '在吗' }];
 
 const apps: App[] = [];
@@ -102,17 +101,20 @@ describe('baseUrl：缺省走官方默认；显式非法值拒绝激活', () => 
 describe('timeout：0 或负数不限时，加引号的数字照常可用，不是数字的回落默认', () => {
   it.each([
     { name: '未配置', timeout: undefined, ms: 120_000, warned: false },
-    { name: '0', timeout: 0, ms: UNLIMITED_MS, warned: false },
-    { name: '负数', timeout: -1, ms: UNLIMITED_MS, warned: false },
-    { name: "'0'", timeout: '0', ms: UNLIMITED_MS, warned: false },
+    { name: '0', timeout: 0, ms: undefined, warned: false },
+    { name: '负数', timeout: -1, ms: undefined, warned: false },
+    { name: "'0'", timeout: '0', ms: undefined, warned: false },
     { name: "'45'", timeout: '45', ms: 45_000, warned: false },
     { name: "'abc'", timeout: 'abc', ms: 120_000, warned: true },
   ])('$name', async ({ timeout, ms, warned }) => {
     const { model, warns } = await start(timeout === undefined ? GATEWAY : { ...GATEWAY, timeout });
-    const armed = vi.spyOn(AbortSignal, 'timeout');
+    const armed = vi.spyOn(globalThis, 'setTimeout');
     await model().chat({ messages });
 
-    expect(armed.mock.calls, '对话请求的超时定时器').toEqual([[ms]]);
+    expect(
+      armed.mock.calls.map(([, delay]) => delay),
+      '对话请求的超时定时器',
+    ).toEqual(ms === undefined ? [] : [ms]);
     expect(warns).toEqual(warned ? ['配置项 timeout 期望有限数值，得到 string，改用默认值 120'] : []);
   });
 });

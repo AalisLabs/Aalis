@@ -8,7 +8,7 @@ import type {
   ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import { idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -181,9 +181,10 @@ const configSchema = defineConfig({
   },
   timeout: {
     type: 'number',
-    label: '请求超时 (秒)',
+    label: '停顿超时 (秒)',
     default: 120,
-    description: 'LLM 请求超时时间（秒）。思考模式下建议 180-300 秒。0 = 不限制。',
+    description:
+      '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。',
   },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
@@ -322,8 +323,8 @@ class DeepSeekClient {
   constructor(config: DeepSeekConfig, logger: Logger) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-    // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
-    this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限（见 idleTimeout）
+    this.timeout = config.timeout * 1000;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.strictToolCalls = config.strictToolCalls;
@@ -345,7 +346,7 @@ class DeepSeekClient {
     if (request.signal?.aborted) return err;
     this.logger.warn(`DeepSeek 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
-      return new Error(`DeepSeek 请求超时：${this.timeout / 1000} 秒内没有完成，可在配置里调大 timeout`);
+      return new Error(`DeepSeek 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
       return new Error('DeepSeek 连不上服务：检查 baseUrl 与网络，详情见日志');
@@ -445,9 +446,6 @@ class DeepSeekClient {
       `请求 DeepSeek (思考 ${level ?? 'off'}): ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
     );
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
     const startedAt = Date.now();
     let response: Response;
     let text: string;
@@ -459,7 +457,7 @@ class DeepSeekClient {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: idleTimeout(this.timeout, request.signal).signal,
       });
       text = await response.text();
     } catch (err) {
@@ -545,9 +543,7 @@ class DeepSeekClient {
 
     this.logger.debug(`流式请求 DeepSeek (思考 ${level ?? 'off'}): ${body.model}, ${messages.length} 条消息`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
+    const timer = idleTimeout(this.timeout, request.signal);
     const reqStart = Date.now();
     // 守护：超过 15 秒还没拿到响应头，提示可能是网络/上游慢
     const slowConnectTimer = setTimeout(() => {
@@ -563,7 +559,7 @@ class DeepSeekClient {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: timer.signal,
       });
     } catch (err) {
       clearTimeout(slowConnectTimer);
@@ -682,6 +678,8 @@ class DeepSeekClient {
               continue;
             }
 
+            // 带生成内容的增量重新计时：留在尾缓冲里、DSML 泄漏后不交出的正文也算
+            if (delta.content || delta.reasoning_content) timer.touch();
             if (delta.content) {
               // 无论是否检测到 DSML，都要累积原始 content：
               // - 未检测时：用于 DSML 起始位置定位
@@ -732,6 +730,7 @@ class DeepSeekClient {
             const progress: ToolCallProgress[] = [];
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
+                if (tc.function?.name || tc.function?.arguments) timer.touch();
                 const idx = tc.index ?? 0;
                 if (tc.id) {
                   toolCallBuffers.set(idx, { id: tc.id, name: tc.function?.name ?? '', args: '' });

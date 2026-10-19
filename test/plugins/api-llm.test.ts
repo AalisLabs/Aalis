@@ -1,5 +1,6 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
-import { estimateMsgTokens, estimateTextTokens } from '../../packages/api-llm/src/index.js';
+import { estimateMsgTokens, estimateTextTokens, idleTimeout } from '../../packages/api-llm/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 describe('estimateTextTokens', () => {
@@ -30,5 +31,13 @@ describe('estimateMsgTokens', () => {
   it('单条消息基线开销 4 tokens', () => {
     const msg: Message = { role: 'user', content: '' };
     expect(estimateMsgTokens(msg)).toBe(4);
+  });
+});
+
+describe('idleTimeout', () => {
+  it.each([2 ** 31, Number.POSITIVE_INFINITY])('ms 超过定时器上限（%s）时按上限计，不会立刻中止', async ms => {
+    const { signal } = idleTimeout(ms);
+    await sleep(50);
+    expect(signal.aborted).toBe(false);
   });
 });

@@ -7,7 +7,7 @@ import type {
   ThinkingLevel,
   ThinkingLevels,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import { idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import { type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import {
@@ -185,9 +185,11 @@ const configSchema = defineConfig({
   },
   timeout: {
     type: 'number',
-    label: '请求超时 (秒)',
+    label: '停顿超时 (秒)',
     default: 120,
-    description: 'LLM 请求超时时间（秒）。大模型或长上下文建议适当调大。0 = 不限制。',
+    description:
+      '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；' +
+      '不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。',
   },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: {
@@ -336,8 +338,8 @@ class OllamaClient {
 
   constructor(config: OllamaConfig, logger: Logger, proc: ProcessService | null) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
-    this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限（见 idleTimeout）
+    this.timeout = config.timeout * 1000;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
@@ -360,7 +362,7 @@ class OllamaClient {
     if (request.signal?.aborted) return err;
     this.logger.warn(`Ollama 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
-      return new Error(`Ollama 请求超时：${this.timeout / 1000} 秒内没有完成，可在配置里调大 timeout`);
+      return new Error(`Ollama 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
       return new Error('Ollama 连不上服务：检查 baseUrl 与网络，详情见日志');
@@ -485,9 +487,6 @@ class OllamaClient {
       `请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
     );
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
     const startedAt = Date.now();
     let response: Response;
     let text: string;
@@ -496,7 +495,7 @@ class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: idleTimeout(this.timeout, request.signal).signal,
       });
       text = await response.text();
     } catch (err) {
@@ -554,9 +553,7 @@ class OllamaClient {
 
     this.logger.debug(`流式请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
+    const timer = idleTimeout(this.timeout, request.signal);
     const reqStart = Date.now();
     const slowConnectTimer = setTimeout(() => {
       this.logger.warn(`Ollama 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/api/chat)`);
@@ -568,7 +565,7 @@ class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: timer.signal,
       });
     } catch (err) {
       clearTimeout(slowConnectTimer);
@@ -624,6 +621,8 @@ class OllamaClient {
 
           try {
             const data = JSON.parse(trimmed) as OllamaChatResponse;
+            // 带生成内容的帧重新计时：正文（含 <think> 标签里的）、原生思考、工具调用
+            if (data.message?.content || data.message?.thinking || data.message?.tool_calls?.length) timer.touch();
 
             // 累积工具调用
             if (data.message?.tool_calls) {
@@ -937,9 +936,6 @@ class OllamaClient {
       this.logger.info(`[ollama-audio] 发送 ${audioCount} 段音频，合计 ${(totalAudioBytes / 1024).toFixed(1)}KB`);
     }
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
     const httpT0 = Date.now();
     let resp: Response;
     let respText: string;
@@ -948,7 +944,7 @@ class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: idleTimeout(this.timeout, request.signal).signal,
       });
       respText = await resp.text();
     } catch (err) {

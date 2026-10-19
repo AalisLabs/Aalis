@@ -541,8 +541,7 @@ async function run(caps: Caps): Promise<void> {
       { role: 'user', content: summaryRequest(previous, conversation) },
     ];
     // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-    // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次撞 provider 的 120s 超时。
-    // 「不思考的摘要」对「超时导致根本没有摘要」不是权衡。将来真出现需要思考版摘要的模型再补配置键。
+    // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次耗时两分钟以上。将来真出现需要思考版摘要的模型再补配置键。
     const request = {
       messages,
       temperature: 0.3,
@@ -566,7 +565,7 @@ async function run(caps: Caps): Promise<void> {
         completionTokens = response.usage?.completionTokens;
       }
     } catch (err) {
-      // 半截流式输出一并丢弃：provider 超时常在吐出部分内容后中断流，截断的文本入库会成为之后所有增量摘要的基底
+      // 半截流式输出一并丢弃：provider 超时或断流可能发生在吐出部分内容之后，截断的文本入库会成为之后所有增量摘要的基底
       throw new Error(`摘要模型调用失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
     // 写满了输出上限的可能是被截断的，同样丢弃；服务商不报用量时查不出来

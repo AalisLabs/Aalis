@@ -7,7 +7,7 @@ import type {
   ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import { idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -207,9 +207,11 @@ const configSchema = defineConfig({
   },
   timeout: {
     type: 'number',
-    label: '请求超时 (秒)',
+    label: '停顿超时 (秒)',
     default: 120,
-    description: 'LLM 请求超时时间（秒）。思考模式或长文本建议适当调大。0 = 不限制。',
+    description:
+      '多久收不到新的生成内容算超时（秒）。一直在输出不算超时；不流式的请求要在这段时间内收到整份回复。' +
+      '模型思考时不发出思考内容（如 OpenAI 官方的推理模型）或输入很长时，建议适当调大。0 = 不限制。',
   },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
@@ -309,8 +311,8 @@ class OpenAIClient {
   constructor(cfg: OpenAIConfig, logger: Logger) {
     this.apiKey = cfg.apiKey;
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, '');
-    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数视为不限制 → 用一个非常大的值
-    this.timeout = cfg.timeout > 0 ? cfg.timeout * 1000 : 2_147_483_647;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限（见 idleTimeout）
+    this.timeout = cfg.timeout * 1000;
     this.temperature = cfg.temperature;
     this.maxTokens = cfg.maxTokens;
     this.thinkingFields = THINKING_STYLES[cfg.thinkingParam].fields;
@@ -338,7 +340,7 @@ class OpenAIClient {
     if (request.signal?.aborted) return err;
     this.logger.warn(`LLM 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
-      return new Error(`LLM 请求超时：${this.timeout / 1000} 秒内没有完成，可在配置里调大 timeout`);
+      return new Error(`LLM 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
       return new Error('LLM 连不上服务：检查 baseUrl 与网络，详情见日志');
@@ -415,9 +417,6 @@ class OpenAIClient {
 
     this.logger.debug(`请求 LLM: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
     const startedAt = Date.now();
     let response: Response;
     let text: string;
@@ -426,7 +425,7 @@ class OpenAIClient {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: idleTimeout(this.timeout, request.signal).signal,
       });
       text = await response.text();
     } catch (err) {
@@ -496,9 +495,7 @@ class OpenAIClient {
 
     this.logger.debug(`流式请求 LLM: ${body.model}, ${messages.length} 条消息`);
 
-    const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
-    if (request.signal) signals.push(request.signal);
-
+    const timer = idleTimeout(this.timeout, request.signal);
     const reqStart = Date.now();
     const slowConnectTimer = setTimeout(() => {
       this.logger.warn(`LLM 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/chat/completions)`);
@@ -510,7 +507,7 @@ class OpenAIClient {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.any(signals),
+        signal: timer.signal,
       });
     } catch (err) {
       clearTimeout(slowConnectTimer);
@@ -591,12 +588,15 @@ class OpenAIClient {
               continue;
             }
 
+            // 带生成内容的增量重新计时：思考本插件不交出，照样算（兼容端点写在 reasoning_content 或 reasoning）
+            if (delta.content || delta.reasoning_content || delta.reasoning) timer.touch();
             if (delta.content) chunk.contentDelta = delta.content;
 
             // 累积工具调用；同一帧里有几个调用，进度就各报一次
             const progress: ToolCallProgress[] = [];
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
+                if (tc.function?.name || tc.function?.arguments) timer.touch();
                 const idx = tc.index ?? 0;
                 if (tc.id) {
                   toolCallBuffers.set(idx, { id: tc.id, name: tc.function?.name ?? '', args: '' });
