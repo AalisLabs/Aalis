@@ -323,7 +323,7 @@ const asText = (value: object): unknown =>
       );
 
 /** 逐行写得出来：写成文字再读回来与原值相同（项里有换行、空白项、嵌套的对象等写不出） */
-function linesExpressible(field: Field, value: unknown): boolean {
+export function linesExpressible(field: Field, value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return true;
   try {
     return JSON.stringify(fromText(field, toText(field, value))) === JSON.stringify(asText(value));

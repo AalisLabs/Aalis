@@ -4,13 +4,13 @@ import { Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Picture } from '../components/Picture';
 import { StatusText } from '../components/StatusText';
-import { clockTime, fullTime, numberText } from '../format';
+import { clockTime, fullTime, listText, numberText } from '../format';
 import { tr } from '../language';
 import { isRecord } from '../rest';
 
 // 单元格按显示种类显示，键值组件的值同样走这里。插件给的文字一律当纯文本，数字按千位分组，表格里同一列的小数位对齐，数字、
-// 真假与时间按界面的语言写；链接只认 http、https，新标签打开；图片只认宿主换好的 /api/media 地址，文件只认宿主签发的句柄，
-// 别的按文字或名字显示
+// 真假与时间按界面的语言写，字符串数组按界面的语言连成一句；链接只认 http、https，新标签打开；图片只认宿主换好的 /api/media
+// 地址，文件只认宿主签发的句柄，别的按文字或名字显示
 
 const isStatus = (value: unknown): value is Localized<StatusValue> => isRecord(value) && typeof value.text === 'string';
 const isFile = (value: unknown): value is FileCell => isRecord(value) && typeof value.name === 'string';
@@ -24,9 +24,10 @@ function timeOf(value: unknown): number | undefined {
   return typeof at === 'number' && Number.isFinite(at) ? at : undefined;
 }
 
-/** 单元格写成一句：搜索与详情的标题用它。真假按界面的语言写 */
+/** 单元格写成一句：搜索与详情的标题用它。真假与数组按界面的语言写 */
 export function cellText(value: Localized<CellValue> | FileCell): string {
   if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) return listText(value);
   if (isStatus(value)) return value.text;
   if (isFile(value)) return value.name;
   if (typeof value === 'boolean') return tr(value ? 'yes' : 'no');
@@ -92,6 +93,11 @@ export function Cell({
   digits?: number;
 }) {
   if (value === undefined || value === null || value === '') return null;
+  // 数组连成一句再显示：代码等宽，长文本可展开，别的种类按文字（几个网址连起来不是一个链接）；空数组连成空串，按空值
+  if (Array.isArray(value)) {
+    const shown = kind === 'code' || kind === 'long-text' ? kind : 'text';
+    return <Cell kind={shown} value={cellText(value)} label={label} />;
+  }
   if (kind === 'status' && isStatus(value)) return <StatusText state={value.state}>{value.text}</StatusText>;
   if (kind === 'file' && isFile(value)) {
     return value.handle ? (

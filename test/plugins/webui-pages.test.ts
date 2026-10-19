@@ -328,7 +328,7 @@ describe('数据源的闸门', () => {
     expect(logs).toContain(`warn 页面 jobs（${OWNER}）的数据源 wrong 返回的数据不对：要返回字符串或文字对象`);
   });
 
-  it('表格的行：rowKey 要是不重复的非空字符串，visibleWhen 指名的字段要是布尔值；关系图的边要连着节点', async () => {
+  it('表格的行：rowKey 要是不重复的非空字符串，visibleWhen 指名的字段要是布尔值，字符串数组原样下发；关系图的边要连着节点', async () => {
     const { data } = await setup();
     rows.push(
       [{ name: 'a', running: true }, { running: false }],
@@ -337,13 +337,16 @@ describe('数据源的闸门', () => {
         { name: 'a', running: false },
       ],
       [{ name: 'a', running: 'yes' }],
-      [{ name: 'a', running: true }],
+      [{ name: 'a', running: true, tags: ['x', 'y'] }],
     );
     const error = async () => ((await data('jobs', 'rows')).body as { error?: string }).error;
     expect(await error()).toBe('数据源 rows 返回的数据不对：第 2 行的 name 要是不重复的非空字符串');
     expect(await error()).toBe('数据源 rows 返回的数据不对：第 2 行的 name 要是不重复的非空字符串');
     expect(await error()).toBe('数据源 rows 返回的数据不对：第 1 行的 running 要是布尔值');
-    expect(await data('jobs', 'rows')).toEqual({ status: 200, body: { data: [{ name: 'a', running: true }] } });
+    expect(await data('jobs', 'rows')).toEqual({
+      status: 200,
+      body: { data: [{ name: 'a', running: true, tags: ['x', 'y'] }] },
+    });
     expect(await data('jobs', 'graph')).toEqual({
       status: 500,
       body: { error: '数据源 graph 返回的数据不对：边的两端要是节点 id' },

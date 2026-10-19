@@ -2,15 +2,24 @@ import type { ActionInputFields, PageRow } from '@aalis/api-webui';
 import type { Localized } from '@aalis/schema-i18n';
 import { type FormEvent, useState } from 'react';
 import { isRecord, RestError } from '../rest';
-import { FieldInput, FieldRow, UNREADABLE } from '../settings/FieldInput';
+import { FieldInput, FieldRow, linesExpressible, UNREADABLE } from '../settings/FieldInput';
 import type { Field } from '../settings/field';
 
 // 带输入的动作的表单（放在对话框里，提交按钮在对话框底部）：字段按类型给控件，单列排；行动作里与行字段同名的输入项用这一行的值预填，其余取字段的默认值。
 // 写法读不出的拦下不送，空着的可选项不送，由服务端补默认值并校验；服务端逐项的问题写回对应的字段
 
-/** 打开表单时的取值：行里同名的标量，没有时取默认值 */
+/**
+ * 打开表单时的取值：行里同名的值，多选取数组，列表取逐行写得出的数组（写不出的在列表控件里只读，表单里没处改），其余取标量；
+ * 没有或对不上时取默认值
+ */
 function initialValue(field: Field, rowValue: unknown): unknown {
-  const value = rowValue !== undefined && rowValue !== null && typeof rowValue !== 'object' ? rowValue : field.default;
+  const fits =
+    field.type === 'multiselect'
+      ? Array.isArray(rowValue)
+      : field.type === 'list'
+        ? Array.isArray(rowValue) && linesExpressible(field, rowValue)
+        : rowValue !== undefined && rowValue !== null && typeof rowValue !== 'object';
+  const value = fits ? rowValue : field.default;
   return field.type === 'boolean' ? value === true : value;
 }
 

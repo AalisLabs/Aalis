@@ -181,7 +181,7 @@ describe('用户', () => {
     manager.setUserLevel({ platform: 'onebot', userId: '123' }, 1);
     manager.setUserLevel({ platform: 'onebot', userId: 'boss' }, 3);
     expect(toSource(await pages.data('authority', 'users'))).toEqual([
-      { identity: 'onebot:123', level: 1, memberOf: '', note: '' },
+      { identity: 'onebot:123', level: 1, memberOf: '', groups: [], note: '' },
     ]);
     const before = pages.invalidations.length;
     expect(await act('setUserLevel', { rowKey: 'onebot:123', input: { level: 2 } })).toBe('onebot:123 的等级已设为 2');
@@ -222,8 +222,8 @@ describe('权限组', () => {
     manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['search', 'ops']);
     manager.setUserGroups({ platform: 'onebot', userId: '2' }, ['ops']);
     expect(await pages.data('authority', 'permissionGroups')).toEqual([
-      { name: 'search', grants: 'tool:web_*', members: 1 },
-      { name: 'ops', grants: 'command:restart tool-group:system', members: 2 },
+      { name: 'search', entries: ['tool:web_*'], members: 1 },
+      { name: 'ops', entries: ['command:restart', 'tool-group:system'], members: 2 },
     ]);
     const description = toSource(tab(pages)?.content[0].description) ?? '';
     for (const part of ['组只加放行', '不开工具分组闸', '需要确认的工具', 'file_read', 'tool-group:']) {
@@ -291,7 +291,7 @@ describe('权限组', () => {
     expect(manager.listUsers().find(u => u.userId === '1')?.groups).toEqual(['search', 'ops']);
     expect(canSearch()).not.toBeNull();
     expect(toSource(await pages.data('authority', 'users'))).toEqual([
-      { identity: 'onebot:1', level: 0, memberOf: 'search（未定义）、ops', note: '' },
+      { identity: 'onebot:1', level: 0, memberOf: 'search（未定义）、ops', groups: ['search', 'ops'], note: '' },
     ]);
     await act('createGroup', { input: { name: 'search', entries: ['tool:web_*'] } });
     expect(canSearch()).toBeNull();
@@ -313,6 +313,23 @@ describe('权限组', () => {
     expect(toSource(pages.view('authority').actions?.deleteUser.confirm)).toBe(
       '删除这条记录？封禁的用户删掉记录就等于解封，所属权限组一并清掉。',
     );
+  });
+
+  it('改条目与设权限组打开即带已有值：行里带与输入项同名的数组，表单按它预填', async () => {
+    const { pages, manager } = await boot({ config: GROUPS });
+    manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['ops', 'search']);
+    const { actions } = pages.view('authority');
+    /** 行动作的表单拿到的预填：这一行里与输入项同名的字段 */
+    const prefill = async (action: string, table: string) => {
+      const keys = Object.keys(actions?.[action].input ?? {});
+      const rows = await pages.data<Array<Record<string, unknown>>>('authority', table);
+      return rows.map(row => Object.fromEntries(keys.map(key => [key, row[key]])));
+    };
+    expect(await prefill('editGroup', 'permissionGroups')).toEqual([
+      { entries: ['tool:web_*'] },
+      { entries: ['command:restart', 'tool-group:system'] },
+    ]);
+    expect(await prefill('setUserGroups', 'users')).toEqual([{ groups: ['ops', 'search'] }]);
   });
 
   it('可选项来源：authority-operations 列全部指令与工具的能力键与已登记的工具分组，authority-groups 列组名', async () => {

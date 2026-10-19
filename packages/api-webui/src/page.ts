@@ -57,6 +57,8 @@ export interface PanelSession {
  *   `long-text`：单行省略，可以展开；
  * - `image`：值是存储地址，宿主换成 `/api/media` 地址，按需懒加载；
  * - `file`：值是存储地址，宿主换成下载句柄（{@link FileCell}）。插件私有数据的根（data、pluginData）里的文件不签发，只显示名字。
+ *
+ * 值也可以是字符串数组：按界面的语言连成一句列出，`code` 等宽，`long-text` 可展开，别的种类按文字；空数组按空值；`image`、`file` 不收。
  */
 export type CellKind = 'text' | 'time' | 'countdown' | 'link' | 'status' | 'code' | 'long-text' | 'image' | 'file';
 
@@ -68,7 +70,7 @@ export interface StatusValue {
 }
 
 /** 数据源给出的单元格值 */
-export type CellValue = string | number | boolean | null | undefined | TextRef | StatusValue;
+export type CellValue = string | number | boolean | null | undefined | TextRef | StatusValue | readonly string[];
 
 /** 数据源返回的一行：rowKey 指名的字段是这一行的非空字符串标识，visibleWhen 指名的字段是布尔值 */
 export type TableRow = Record<string, CellValue>;
@@ -227,7 +229,10 @@ export type PageContent<T> = T[] | { tabs: PageTab<T>[] };
  */
 export type ActionEffect = 'read' | 'write' | 'destructive';
 
-/** 动作的输入：一组 schema-config 字段。点了按钮弹一个小表单；行动作的表单里，与行字段同名的输入项用这一行的值预填 */
+/**
+ * 动作的输入：一组 schema-config 字段。点了按钮弹一个小表单；行动作的表单里，与行字段同名的输入项用这一行的值预填：
+ * 多选与列表字段取字符串数组（逐行写不出的列表不预填：有空白项、项里有换行或首尾空白），其余取标量
+ */
 export type ActionInputFields = Record<string, SchemaField>;
 
 /**
