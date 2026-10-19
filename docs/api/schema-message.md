@@ -95,7 +95,7 @@ interface OutgoingMessage {
   callId?: string;                    // 由工具调用发出时，那次调用的 id
   turnId?: string;                    // agent 这一轮发出的消息：这一轮的 id
   modelInfo?: { provider?: string; model?: string; promptTokens?: number; completionTokens?: number };
-  delivery?: Promise<{ ok: true } | { ok: false; error: string | TextRef; unconfirmed?: true }>;
+  delivery?: Promise<{ ok: true; messageIds?: string[] } | { ok: false; error: string | TextRef; unconfirmed?: true }>;
 }
 ```
 
@@ -114,6 +114,8 @@ interface OutgoingMessage {
 `turnId` 是 agent 这一轮发出的消息（回复与 `[错误]` 等提示）所在回合的 id。平台适配器记回复的投递失败（`WellKnownKinds.OutboundDeliveryFailed`）时把 `turnId` 或 `callId` 连同原因写进记录的元数据（登记的键 `TurnId`、`CallId`、`DeliveryError`），会话服务回看历史时据此标出哪条没发出；不是回复的按 `outboundMarkerMessage` 记成事件标记时同样记下 `TurnId`，会话服务据此认出在途回合里的那一条，取快照时不与实时条目重复。
 
 `delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经写进会话历史（打开着的页面经会话服务推送，没打开的打开时从历史看到），存档服务不在场或写入失败都算失败；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
+
+成功回执的 `messageIds` 是正文送达时平台给出的消息 id：分条发出的各一个，按发送顺序，与入站 `replyTo.messageId` 同一写法，引用回复据它认出被引用的是哪一条（如 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 认审批消息）。平台不给 id、或只发出了附件时没有。
 
 失败回执的 `error` 是给人看的原因，可以是文字对象（`TextRef`，按读者语言显示）；交给模型、写日志的一方取 `toSource`。失败回执带 `unconfirmed: true` 时表示请求已经发出、只是没等到平台确认，消息可能已经送达（如 OneBot 文件上传超时）；发起方不得自动重发，也不得劝模型重发。适配器只在失败全部属于这种情况时才带它，夹着确定没发出的部分时按普通失败报。没有这个标记的失败才是确定没送达。
 

@@ -12,6 +12,7 @@ const ADDED_AFTER = new Map([
   ['api-i18n', '>=0.20.0 <1.0.0'],
   // 显示名是文字对象：core 0.21 起展示值才放宽为 unknown
   ['plugin-i18n', '>=0.21.0 <1.0.0'],
+  ['plugin-chat-approval', '>=0.21.0 <1.0.0'],
 ]);
 
 interface Manifest {

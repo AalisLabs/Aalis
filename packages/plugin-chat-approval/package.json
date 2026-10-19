@@ -1,0 +1,63 @@
+{
+  "name": "@aalis/plugin-chat-approval",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-chat-approval"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "聊天审批：受众只有 owner 的 IM 私聊作审批面，审批推回发起它的私聊，owner 引用审批消息回复同意或拒绝",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-authority": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-gateway": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/util-bounded-map": "workspace:>=0.6.1 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.21.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "optional": [
+        "authority",
+        "platform",
+        "session-manager"
+      ],
+      "required": [
+        "approvals",
+        "gateway",
+        "hooks"
+      ]
+    }
+  }
+}

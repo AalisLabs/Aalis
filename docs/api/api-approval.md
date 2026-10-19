@@ -6,12 +6,12 @@
 
 ## 概述
 
-模型发起、需要 owner 批准的操作以审批对象的形式出现：发起方发起并等结算，审批推给在场的审批面，owner 应答，结局回给发起方。本包定义服务描述符 `approvals`（服务名 `approvals`）、审批对象与请求的类型、审批面的登记接口，以及各审批面共用的卡片清洗函数 `sanitizeForCard`，不含实现。
+模型发起、需要 owner 批准的操作以审批对象的形式出现：发起方发起并等结算，审批推给在场的审批面，owner 应答，结局回给发起方。本包定义服务描述符 `approvals`（服务名 `approvals`）、审批对象与请求的类型、审批面的登记接口，以及各审批面共用的卡片清洗与截断函数 `sanitizeForCard`、`clipForCard`，不含实现。
 
 三类使用方：
 
 - **发起方**（执行守卫）：`request(req, signal)` 发起一个审批并等它结算。拒绝时结局里带着回给模型的话。
-- **审批面**（WebUI、终端）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。
+- **审批面**（WebUI、终端、owner 与她的 IM 私聊）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端、一个 IM 私聊）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。IM 私聊这一面由 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 登记。
 - **展示方**：`list()` 列出推出、还没结的审批；`approval:created`、`approval:settled` 事件。
 
 目前审批的目标只有工具调用。
@@ -34,11 +34,11 @@
 ## 流程
 
 1. **发起**：`request(req, signal)`。`signal` 是发起回合的中止信号。
-2. **在场**：审批面的客户端上报活动，最近一次活动在时限内的算在场；只算身份是 owner 的客户端，别人答不了，推给它只会让审批白等。发起时没人在场直接按拒绝结算，发起方立即拿到原因。
-3. **排队**：同一会话的审批串行，一次只推出一张卡，不同会话之间并行；等待从卡推出那一刻算起。同一会话一段时间内推出的卡有上限，超出的直接拒绝并说明原因。
-4. **推送**：推出时推给在场的客户端；不在场的客户端变为在场时补推还没结的。身份不是 owner 的客户端收不到推送。
+2. **在场**：审批面的客户端上报活动，最近一次活动在时限内的算在场；只算身份是 owner 的客户端，别人答不了，推给它只会让审批白等。接入时限定了会话的客户端只算那个会话的在场。发起时这个会话没人在场直接按拒绝结算，发起方立即拿到原因。
+3. **排队**：同一会话的审批串行，一次只推出一张卡，不同会话之间并行；等待从卡推出那一刻算起，到期时刻是这张审批自己的事实，记在审批对象的 `expiresAt` 上。同一会话一段时间内推出的卡有上限，超出的直接拒绝并说明原因。
+4. **推送**：推出时推给覆盖这个会话的在场客户端；不在场的客户端变为在场时补推它覆盖的、还没结的。身份不是 owner 的客户端收不到推送，限定了会话的客户端收不到别的会话的审批。
 5. **应答**：先答先得，核两项：应答人是 owner；`approvalId` 是本服务签发的、还没结算，并且 `contentHash` 一致。后到的应答回 `approval-settled`。
-6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中在场的客户端都断开或变为不在场时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
+6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中覆盖它的在场客户端都断开或变为不在场时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
 7. **回给模型**：批准时工具照常执行。拒绝时结局里的 `message` 写明被什么拦下、能不能再申请；发起类别是 `room` 的（房间里的回合）只回一句通用的拒绝，不透露 owner 的文件布局与说明。owner 自己的 QQ 私聊不算房间，照样拿到写明原因的格式。
 8. **审计**：请求与决定成对记下，不进模型上下文。
 
@@ -76,6 +76,7 @@ interface Approval {
   facts: ApprovalFacts;
   options: Array<'approve' | 'deny'>;
   contentHash: string;        // 会话、回合、调用、工具与参数的哈希，应答时原样带回
+  expiresAt: number;          // 到期的时刻（毫秒时间戳），审批服务推出时按它的等待时限填
   state: ApprovalState;
 }
 
@@ -116,8 +117,8 @@ interface ApprovalFacts {
 
 ```ts
 interface ApprovalSurface {
-  readonly name: string;      // 登记名（webui、cli）
-  attend(who: { platform: string; userId: string }, sink: ApprovalSink): ApprovalAttendance;
+  readonly name: string;      // 登记名（webui、cli、chat）
+  attend(who: { platform: string; userId: string }, sink: ApprovalSink, sessionId?: string): ApprovalAttendance;
 }
 
 interface ApprovalSink {
@@ -133,25 +134,28 @@ interface ApprovalAttendance {
 ```
 
 - `registerSurface(name)` 经绑定门面登记：同一激活同名再登记替换旧的，提供者换人自动重挂，随激活撤回。审计记的审批面是登记名加登记它的插件实例。
-- `attend(who, sink)`：接入一个客户端，`who` 是它经认证得出的身份，应答人就是它。审批推送与结算推送经 `sink` 到达。`who` 不是 owner 的客户端不算在场、收不到推送，应答回 `forbidden`。
+- `attend(who, sink, sessionId?)`：接入一个客户端，`who` 是它经认证得出的身份，应答人就是它。审批推送与结算推送经 `sink` 到达。`who` 不是 owner 的客户端不算在场、收不到推送，应答回 `forbidden`。
+- 给了 `sessionId` 的接入限定在这个会话：只算这个会话的在场、只收这个会话的审批（IM 私聊每个私聊接入一份）。不给的覆盖全部会话（WebUI 的连接、终端）。
 - `presence(true)` 表示刚有键盘或指针活动（WebUI 另要页面可见），`presence(false)` 表示离开、即刻不在场。从没上报过的客户端不算在场。
-- `respond(answer)` 回 `{ ok: true }` 或 `{ ok: false, refusal, message }`，`refusal` 取 `forbidden`（应答人不是 owner）、`not-found`、`approval-settled`、`hash-mismatch`、`unavailable`（审批服务不在）。
+- `respond(answer)` 回 `{ ok: true }` 或 `{ ok: false, refusal, message }`，`refusal` 取 `forbidden`（应答人不是 owner）、`not-found`（不是本服务签发的 id，或审批不在接入限定的会话里）、`approval-settled`、`hash-mismatch`、`unavailable`（审批服务不在）。
 - 审批服务不在场时，接入的客户端照样拿到句柄：在场上报不生效，应答回 `unavailable`。服务上线或换了提供者之后，下一次上报或应答时在新的登记上重新接入。
 - 登记撤回（登记它的插件停用）时，它的客户端都不再算在场。
 
 ### 卡片清洗
 
 ```ts
-function sanitizeForCard(text: string, limit?: number): string;
+function sanitizeForCard(text: string): string;
+function clipForCard(text: string, limit: number): { head: string; omitted: number; tail: string };
 ```
 
-事实是逐字的参数，可能带控制符、双向控制符与零宽字符，显示之前一律经它清洗，各审批面共用：
+事实是逐字的参数，可能带控制符、双向控制符与零宽字符，显示之前一律经 `sanitizeForCard` 清洗，各审批面共用：
 
 - C0 与 C1 控制符、DEL 转义成 `\x1B` 的样子显示，ANSI 转义序列因此整段看得见；换行与制表符保留。
 - 双向控制符、零宽字符等看不见的字符（Unicode 格式符、行与段分隔符、落单的代理项）换成 `⟨U+202E⟩` 的样子。
-- 给了 `limit` 且原文超过 `limit` 个字符时，保留开头与结尾共 `limit` 个字符，中间写明省略了多少。截断按码点算，不切开代理对、转义或占位符；由多个码点组成的表情（国旗、键帽、肤色修饰等）可能被切开。
 
 原文的每个字符都显示出来，不隐藏、不改变顺序。
+
+`clipForCard` 同样清洗，原文超过 `limit` 个字符时只保留开头与结尾共 `limit` 个字符：交出清洗过的两段与中间省略的字数（没有截断时 `omitted` 为 0、整段在 `head`），由显示方在两段之间按读者语言写明省略了多少。截断按原文的码点算，不切开代理对、转义或占位符；由多个码点组成的表情（国旗、键帽、肤色修饰等）可能被切开。
 
 ## 服务接口
 
@@ -204,12 +208,15 @@ if (!outcome.approved) return outcome.message;
 进程内的审批面：
 
 ```ts
-import { approvals, sanitizeForCard } from '@aalis/api-approval';
+import { approvals, clipForCard } from '@aalis/api-approval';
 
 // uses: { approvals: optional(approvals) }
 const surface = caps.approvals.use.registerSurface('cli');
 const attendance = surface.attend({ platform: 'cli', userId: 'console' }, {
-  requested: approval => showCard(sanitizeForCard(approval.facts.command ?? approval.tool, 400)),
+  requested: approval => {
+    const { head, omitted, tail } = clipForCard(approval.facts.command ?? approval.tool, 400);
+    showCard(omitted === 0 ? head : `${head}…（省略 ${omitted} 字）…${tail}`);
+  },
   settled: (approvalId, { state }) => closeCard(approvalId, state),
 });
 attendance.presence(true);   // 有输入时

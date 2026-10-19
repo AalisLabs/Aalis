@@ -1162,8 +1162,8 @@ function runAdapter(caps: Caps): void {
       .map(text => ({ text, segments: markup ? parseContentToSegments(text) : [{ type: 'text', data: { text } }] }));
   }
 
-  /** 逐条发出。replyTo：引用回复的平台消息 id，只加在第一条前 */
-  async function sendPieces(sessionId: string, pieces: OutgoingPiece[], replyTo?: string): Promise<void> {
+  /** 逐条发出，交回实现端给出的各条消息 id（按发送顺序，没给的不算）。replyTo：引用回复的平台消息 id，只加在第一条前 */
+  async function sendPieces(sessionId: string, pieces: OutgoingPiece[], replyTo?: string): Promise<string[]> {
     const parsed = parseSessionId(sessionId);
     if (!parsed) {
       throw new Error(`无法解析 sessionId: ${sessionId}`);
@@ -1182,6 +1182,7 @@ function runAdapter(caps: Caps): void {
       throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
     }
 
+    const sentIds: string[] = [];
     for (let i = 0; i < pieces.length; i++) {
       const { text, segments } = pieces[i];
       const { action, params } = state.protocol.buildSendMessage({
@@ -1193,7 +1194,10 @@ function runAdapter(caps: Caps): void {
       const sendResult = await sendActionWithRetry(state, action, params);
       // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
       const sentId = extractSentMessageId(sendResult);
-      if (sentId) sentTracker.record(sessionId, sentId, text, Date.now());
+      if (sentId) {
+        sentTracker.record(sessionId, sentId, text, Date.now());
+        sentIds.push(sentId);
+      }
 
       // 按下一条消息的字数计算延迟
       if (i < pieces.length - 1) {
@@ -1204,6 +1208,7 @@ function runAdapter(caps: Caps): void {
         }
       }
     }
+    return sentIds;
   }
 
   // ----- 版本自动检测 -----
@@ -2381,6 +2386,8 @@ function runAdapter(caps: Caps): void {
     const unconfirmed: string[] = [];
     const delivered: MessageAttachment[] = [];
     let textSent = false;
+    /** 正文各条的平台消息 id */
+    let messageIds: string[] = [];
     try {
       let pieces = toPieces(msg.content ?? '', msg.markup);
       let attachmentPieces: OutgoingPiece[] = [];
@@ -2426,7 +2433,7 @@ function runAdapter(caps: Caps): void {
       if (pieces.length) {
         logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
         try {
-          await sendPieces(msg.sessionId, pieces, msg.replyTo);
+          messageIds = await sendPieces(msg.sessionId, pieces, msg.replyTo);
           textSent = true;
         } catch (err) {
           logger.use.warn(`OneBot 发送消息失败(已重试): ${err}`);
@@ -2478,7 +2485,7 @@ function runAdapter(caps: Caps): void {
       return errors.length ? { ok: false, error } : { ok: false, error, unconfirmed: true };
     }
     if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
-    return { ok: true };
+    return messageIds.length ? { ok: true, messageIds } : { ok: true };
   }
 
   // ----- 生命周期 -----

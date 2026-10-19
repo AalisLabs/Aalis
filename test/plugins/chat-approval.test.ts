@@ -1,0 +1,511 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { agent } from '../../packages/api-agent/src/index.js';
+import { type Approval, type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { platform } from '../../packages/api-platform/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import chatApprovalPlugin from '../../packages/plugin-chat-approval/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import type {
+  IncomingMessage,
+  OutboundDeliveryResult,
+  OutgoingMessage,
+} from '../../packages/schema-message/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
+import { provideHostPaths } from '../fixtures/host-paths.js';
+import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/paper.js';
+import { seedRooms } from '../fixtures/rooms.js';
+
+// ════════════════════════════════════════════════════════════
+// 聊天审批：owner 与她的 IM 私聊作审批面。owner 在私聊里亲手发言即在场，私聊里发起的审批推回这个私聊，owner 引用那条
+// 审批消息回复「同意」或「拒绝 原因」即结；回复不交给 agent。真实的网关、会话管理、权限与会话服务，一个记录出站的假平台
+// 适配器（每条出站回一个平台消息 id，可选声明会话类型、改写投递结果），agent 是记录收到什么的假件，另有一个覆盖全部会话的
+// 审批面代表 WebUI 与终端。私聊预置进会话表（来源字段与 OneBot 的声明相同）。工具调用按 agent 工具循环的填法构造：owner 在
+// 私聊里亲手发起，探针工具人人可用、声明需要确认。
+// ════════════════════════════════════════════════════════════
+
+const SELF = '10000';
+const OWNER_QQ = { platform: 'onebot', userId: '99999' };
+const OWNER_DM = `onebot:${SELF}:private:${OWNER_QQ.userId}`;
+const PROBE = 'zz_confirm_probe';
+const WAIT_MS = 300_000;
+/** 覆盖审批的在场都失效之后的重连宽限 */
+const GRACE_MS = 30_000;
+const MINUTE = 60_000;
+
+/** 审批服务回给模型的话（见 plugin-session-server 的 approvals.ts） */
+const ABSENT = '没人在场';
+/** 本插件的话（字典原文） */
+const REQUEST = '需要你批准';
+const QUOTE_TO_ANSWER = '要批准或拒绝，请引用那条审批消息回复';
+const ALREADY_SETTLED = '这张已经处理过';
+const ANSWER_ELSEWHERE = '这条审批无法在这里应答';
+
+const apps: App[] = [];
+const homes: string[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  for (const app of apps.splice(0)) await app.stop();
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
+/** 让经入站事件进来、不等待的相位链跑完（setImmediate 不在假时钟内） */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i++) await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+/**
+ * declared 为假时适配器不声明会话类型：私聊的一对一是推断出来的。deliver 给出平台对一条出站（带它的平台消息 id）的
+ * 投递结果
+ */
+async function setup({
+  declared = true,
+  deliver = id => ({ ok: true, messageIds: [id] }),
+}: {
+  declared?: boolean;
+  deliver?: (id: string) => OutboundDeliveryResult | Promise<OutboundDeliveryResult>;
+} = {}) {
+  const { app } = hostedApp({ owners: [OWNER_QQ] });
+  apps.push(app);
+  const home = mkdtempSync(join(tmpdir(), 'aalis-chat-approval-'));
+  homes.push(home);
+  provideHostPaths(app, home);
+  await registerHubs(app);
+  const host = app.bind({ provide, events, tools, memory });
+  host.provide.use(storage, memoryStorage(new Map()));
+  // 私聊要在会话管理读表之前预置进记忆后端
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugins.idle();
+  await seedRooms(host.memory.use, { [OWNER_DM]: 'owner' });
+
+  /** 平台收下的出站，各带平台给的消息 id */
+  const outbound: Array<{ message: OutgoingMessage; id: string }> = [];
+  const adapterPlugin = definePlugin({
+    name: '@test/chat-adapter',
+    provides: [platform],
+    uses: { provide, events },
+    apply: ({ provide, events }) => {
+      provide.use(platform, {
+        adapterName: 'chat',
+        platform: 'onebot',
+        ...(declared
+          ? {
+              sessionTypes: [
+                { name: 'group', multiParty: true },
+                { name: 'private', multiParty: false },
+              ],
+            }
+          : {}),
+        getConnections: () => [],
+        sendMessage: async () => {},
+        canHandle: id => id.startsWith(`onebot:${SELF}:`),
+      });
+      events.use.on('outbound:message', message => {
+        if (message.delivery || !message.sessionId.startsWith(`onebot:${SELF}:`)) return;
+        const id = `m${outbound.length + 1}`;
+        outbound.push({ message, id });
+        message.delivery = Promise.resolve(deliver(id));
+      });
+    },
+  });
+  /** agent 收到的入站 */
+  const received: IncomingMessage[] = [];
+  const agentPlugin = definePlugin({
+    name: '@test/agent',
+    provides: [agent],
+    uses: { provide },
+    apply: ({ provide }) => {
+      provide.use(agent, {
+        handleMessage: async (message: IncomingMessage) => {
+          received.push(message);
+        },
+      } as never);
+    },
+  });
+  const surfaces: Record<string, ApprovalSurface> = {};
+  const otherSurfacePlugin = definePlugin({
+    name: '@test/other-surface',
+    uses: { approvals },
+    apply: ({ approvals }) => {
+      surfaces.other = approvals.use.registerSurface('other');
+    },
+  });
+  const plugins = [
+    toolsPlugin,
+    authorityPlugin,
+    sessionManagerPlugin,
+    sessionServerPlugin,
+    gatewayPlugin,
+    adapterPlugin,
+    agentPlugin,
+    otherSurfacePlugin,
+    chatApprovalPlugin,
+  ];
+  await app.pluginAll(plugins.map(definition => ({ definition, config: {} })));
+  await app.plugins.idle();
+  for (const { name } of plugins) {
+    const state = app.plugins.getPlugin(name)?.state;
+    if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
+  }
+
+  let runs = 0;
+  host.tools.use.register({
+    confirm: 'session',
+    display: { kind: 'command', fields: { command: 'command' } },
+    definition: {
+      type: 'function',
+      function: {
+        name: PROBE,
+        description: '探针',
+        parameters: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+    },
+    handler: async () => {
+      runs++;
+      return 'ran';
+    },
+  });
+
+  let seq = 0;
+  /** owner 在 QQ 私聊里发一条（经网关的整条入站链）；over 改写消息上的字段 */
+  const say = async (content: string, over: Partial<IncomingMessage> = {}) => {
+    const message: IncomingMessage = {
+      content,
+      sessionId: OWNER_DM,
+      platform: OWNER_QQ.platform,
+      sessionType: 'private',
+      selfId: SELF,
+      userId: OWNER_QQ.userId,
+      messageId: `in-${++seq}`,
+      ...over,
+    };
+    await host.events.use.emit('inbound:message', message);
+    await settle();
+    return message;
+  };
+  /** 引用平台消息 quoted 回复 */
+  const reply = (content: string, quoted: string, over: Partial<IncomingMessage> = {}) =>
+    say(content, { replyTo: { messageId: quoted }, ...over });
+  /** 这一轮调探针：owner 在私聊里亲手发起；box 在调用结束时拿到结果 */
+  const call = (args: Record<string, unknown> = { command: 'rm -rf build' }, who = OWNER_QQ) => {
+    seq++;
+    const ctx: ToolCallContext = {
+      sessionId: OWNER_DM,
+      ...who,
+      inbound: {},
+      turnId: `turn-${seq}`,
+      callId: `call-${seq}`,
+    };
+    const box: { content?: string } = {};
+    const result = host.tools.use.execute(PROBE, args, ctx).then(r => {
+      box.content = r.content;
+      return r.content;
+    });
+    return Object.assign(box, { result });
+  };
+  /** 推到私聊的审批消息 */
+  const requests = () => outbound.filter(({ message }) => message.content.includes(REQUEST));
+  /** 等第 n 条审批消息推到私聊 */
+  const requested = async (n = 1) => {
+    await vi.waitFor(() => expect(requests()).toHaveLength(n));
+    return requests()[n - 1];
+  };
+  /** 推到私聊的、含 text 的消息正文 */
+  const lines = (text: string) => outbound.map(({ message }) => message.content).filter(c => c.includes(text));
+  /** owner 在另一个审批面上接入的客户端，覆盖全部会话；got 是推给它的审批 */
+  const elsewhere = () => {
+    const got: Approval[] = [];
+    const attendance = surfaces.other.attend(OWNER_QQ, {
+      requested: approval => void got.push(approval),
+      settled() {},
+    });
+    return Object.assign(attendance, { got });
+  };
+  return { say, reply, call, requested, requests, lines, elsewhere, outbound, received, runs: () => runs };
+}
+
+describe('推送', () => {
+  it('owner 私聊里发起需要确认的工具：私聊收到一条审批消息，含工具名与事实，参数里的标记逐字按纯文字发', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const command = 'echo <at id="1">x</at> <image url="http://127.0.0.1:9/x.png"/>';
+    s.call({ command });
+    const { message } = await s.requested();
+    expect(message).toMatchObject({ sessionId: OWNER_DM, source: 'system' });
+    expect(message.markup, '不设 markup：适配器不解析正文里的标记').toBeUndefined();
+    expect(message.content).toContain(PROBE);
+    expect(message.content).toContain(command);
+  });
+});
+
+describe('应答：引用那条审批消息回复', () => {
+  it('回「同意」：工具执行，这条回复不交给 agent', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    expect(s.runs(), '批准之前不得执行').toBe(0);
+    const answer = await s.reply('同意', id);
+    expect(await r.result).toBe('ran');
+    expect(s.runs()).toBe(1);
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+  });
+
+  it('回「拒绝 太危险」：不执行，模型收到 owner 拒绝与说明', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply('拒绝 太危险', id);
+    const out = await r.result;
+    expect(s.runs()).toBe(0);
+    expect(out).toContain('owner 拒绝了');
+    expect(out).toContain('太危险');
+  });
+
+  it.each(['同意。', '  同意！', 'Approve.'])('首尾的空白与标点不论、英文不分大小写：「%s」也算批准', async text => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply(text, id);
+    expect(await r.result).toBe('ran');
+  });
+
+  it('A 结算后紧接推出 B：引用 A 的回复不批 B，回「这张已经处理过」；引用 B 的才批 B', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const a = s.call();
+    const first = await s.requested();
+    await s.reply('同意', first.id);
+    expect(await a.result).toBe('ran');
+    const b = s.call();
+    const second = await s.requested(2);
+    await s.reply('同意', first.id);
+    expect(s.lines(ALREADY_SETTLED)).toHaveLength(1);
+    expect(b.content).toBeUndefined();
+    expect(s.runs()).toBe(1);
+    await s.reply('同意', second.id);
+    expect(await b.result).toBe('ran');
+  });
+
+  it('同一个入站消息 id 重复到达：只应答一次，重复的静默吞掉', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply('同意', id, { messageId: 'in-dup' });
+    expect(await r.result).toBe('ran');
+    const before = s.outbound.length;
+    await s.reply('同意', id, { messageId: 'in-dup' });
+    expect(s.outbound, '重复的不回任何话').toHaveLength(before);
+    expect(s.received.map(m => m.messageId)).not.toContain('in-dup');
+  });
+
+  it('没引用审批消息的「同意」：不批，回一句怎么回复，不交给 agent', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    const answer = await s.say('同意');
+    expect(s.lines(QUOTE_TO_ANSWER)).toHaveLength(1);
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+  });
+
+  it('有审批在等时的普通消息：照常交给 agent，审批照旧等', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    const chat = await s.say('等一下，我先看看');
+    expect(s.received.map(m => m.messageId)).toContain(chat.messageId);
+    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(r.content).toBeUndefined();
+  });
+
+  it.each([
+    '同意吗？',
+    '同意？',
+    'approve?',
+    '同意不了',
+    '同意之前先说明一下',
+    '先别批',
+  ])('引用审批消息、既不是批准也不是拒绝的「%s」：不批，照常交给 agent，审批照旧等', async text => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const said = await s.reply(text, id);
+    expect(s.received.map(m => m.messageId)).toContain(said.messageId);
+    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
+  });
+
+  it('送达了但平台没给消息 id：私聊里补一句这里无法应答；之后回「同意」也回这一句，不给「请引用」的提示，审批照旧等', async () => {
+    const s = await setup({ deliver: () => ({ ok: true }) });
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await vi.waitFor(() => expect(s.lines(ANSWER_ELSEWHERE)).toHaveLength(1));
+    const answer = await s.reply('同意', id);
+    expect(s.lines(ANSWER_ELSEWHERE)).toHaveLength(2);
+    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(r.content).toBeUndefined();
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+  });
+
+  it('带 source 或 actor 的注入引用审批消息回「同意」：不是 owner 亲手发的，不批', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply('同意', id, { source: 'system' });
+    await s.reply('同意', id, { actor: OWNER_QQ });
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
+  });
+});
+
+describe('时限与在场', () => {
+  it('等满时限：私聊收到一行过期', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await r.result).toContain('300 秒');
+    await vi.waitFor(() => expect(s.lines('已过期')).toHaveLength(1));
+    expect(s.lines('已过期')[0]).toContain(PROBE);
+  });
+
+  it('owner 最后发言 8 分钟后推出的审批：推出时重新计时，第 11 分钟回复仍能应答', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(8 * MINUTE);
+    const r = s.call();
+    const { id } = await s.requested();
+    await vi.advanceTimersByTimeAsync(3 * MINUTE);
+    await s.reply('同意', id);
+    expect(await r.result).toBe('ran');
+  });
+
+  it('推出时延续的在场只到这张结算：owner 之后没再说话、等它过期，模型再发起时按不在场拒，私聊不再收到审批消息', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await first.result).toContain('300 秒');
+    const again = s.call();
+    await settle();
+    expect(again.content).toEqual(expect.stringContaining(ABSENT));
+    expect(s.requests()).toHaveLength(1);
+  });
+
+  it('owner 在推出之后说过话：过期之后照旧在场，模型再发起照常推到私聊', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await s.say('我看看');
+    await vi.advanceTimersByTimeAsync(WAIT_MS - MINUTE);
+    expect(await first.result).toContain('300 秒');
+    s.call();
+    await s.requested(2);
+  });
+
+  it('审批消息送达之前已经在别处结了：送达之后不延续在场，owner 自己的在场过了就按不在场拒', async () => {
+    const release: Array<() => void> = [];
+    const s = await setup({
+      deliver: id => new Promise(resolve => release.push(() => resolve({ ok: true, messageIds: [id] }))),
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(9 * MINUTE);
+    const other = s.elsewhere();
+    other.presence(true);
+    const first = s.call();
+    await s.requested();
+    const [approval] = other.got;
+    other.respond({ approvalId: approval.id, decision: 'approve', contentHash: approval.contentHash });
+    expect(await first.result).toBe('ran');
+    for (const deliver of release) deliver();
+    await settle();
+    other.leave();
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    const again = s.call();
+    await settle();
+    expect(again.content).toEqual(expect.stringContaining(ABSENT));
+  });
+
+  it('末行的剩余分钟数按审批的到期时刻算：推出两分半之后才补推到私聊的写 3 分钟', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const other = s.elsewhere();
+    other.presence(true);
+    s.call();
+    await vi.waitFor(() => expect(other.got).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(2.5 * MINUTE);
+    await s.say('我在');
+    const { message } = await s.requested();
+    expect(message.content).toContain('3 分钟内不回按过期');
+  });
+
+  it('WebUI 往这个私聊插话不算 owner 在场：之后发起的审批按不在场拒；owner 在 QQ 里发言之后才推', async () => {
+    const s = await setup();
+    await s.say('从网页插一句', { platform: 'webui', userId: 'console', sessionType: undefined, selfId: undefined });
+    const fromWebui = s.call(undefined, { platform: 'webui', userId: 'console' });
+    expect(await fromWebui.result).toContain(ABSENT);
+    expect(s.requests()).toEqual([]);
+
+    await s.say('我在');
+    s.call();
+    await s.requested();
+  });
+
+  it('只有带 source 或 actor 的入站、owner 没亲手发过言：不算在场，发起的审批按不在场拒', async () => {
+    const s = await setup();
+    await s.say('定时任务的提醒', { source: 'system' });
+    await s.say('接着做', { actor: OWNER_QQ });
+    const r = s.call();
+    expect(await r.result).toContain(ABSENT);
+    expect(s.requests()).toEqual([]);
+  });
+
+  it('适配器没声明会话类型、一对一是推断出来的：不推，按不在场拒', async () => {
+    const s = await setup({ declared: false });
+    await s.say('帮我清一下');
+    const r = s.call();
+    expect(await r.result).toContain(ABSENT);
+    expect(s.requests()).toEqual([]);
+  });
+
+  it('审批消息没送达：owner 在这里看不到它，不白等，宽限之后按不在场结', async () => {
+    const s = await setup({ deliver: () => ({ ok: false, error: '发送失败' }) });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    await vi.waitFor(() => expect(r.content).toEqual(expect.stringContaining(ABSENT)));
+  });
+});

@@ -94,6 +94,7 @@ export const approval = (id: string, fields: Partial<Approval> = {}): Approval =
   facts: { params: {} },
   options: ['approve', 'deny'],
   contentHash: `hash-${id}`,
+  expiresAt: AT + 300_000,
   state: 'pending',
   ...fields,
 });

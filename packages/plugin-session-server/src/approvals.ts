@@ -1,10 +1,11 @@
 // ════════════════════════════════════════════════════════════
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
-// 只有 owner 本人与 owner 链的延续发起的回合能产生审批，其余直接拒绝，不推给任何审批面。能产生的先看有没有人在场：
-// 审批面上身份是 owner 的客户端上报活动，最近一次活动在 10 分钟内的算在场，发起时没人在场直接拒绝。同一会话的审批排队，
-// 一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、在场的客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
-// 应答先答先得，核两项：应答人是 owner；id 由本服务签发且未结算，内容哈希一致。
+// 只有 owner 本人与 owner 链的延续发起的回合能产生审批，其余直接拒绝，不推给任何审批面。能产生的先看这个会话有没有人在场：
+// 审批面上身份是 owner、覆盖这个会话的客户端（接入时没限定会话，或限定的就是它）上报活动，最近一次活动在 10 分钟内的算在场，
+// 发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，只推给覆盖它的客户端，等待从推出那一刻算起；等满 300 秒、
+// 覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 应答先答先得，核两项：应答人是 owner；id 由本服务签发、未结算、在接入覆盖的会话里，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
 
@@ -66,6 +67,8 @@ interface Attendee {
   surface: SurfaceRecord;
   who: ApprovalIdentity;
   sink: ApprovalSink;
+  /** 接入时限定的会话：只覆盖这个会话；没有即覆盖全部会话 */
+  sessionId?: string;
   /** 在场到这个时刻为止；离开或从没上报过活动为 0 */
   until: number;
 }
@@ -174,7 +177,7 @@ export function createApprovals(deps: ApprovalDeps) {
   const cards = new Map<string, number[]>();
   const settledIds = createBoundedMap<string, SettledState>({ max: SETTLED_MEMORY });
   let lapse: ReturnType<typeof setTimeout> | undefined;
-  /** 在场的客户端全部离开之后的宽限：有推出的审批、又没人在场时才有 */
+  /** 推出的审批没有覆盖它的在场客户端之后的宽限：有这样的审批时才有 */
   let grace: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
 
@@ -199,41 +202,54 @@ export function createApprovals(deps: ApprovalDeps) {
     }
   }
 
-  /** 只有身份是 owner 的客户端算出席：别人答不了，推给它、算它在场都只会让审批白等 */
-  const ownerAttends = (attendee: Attendee) => deps.isOwner(attendee.who.platform, attendee.who.userId);
-  const present = (now = Date.now()) =>
+  /**
+   * 只有身份是 owner 的客户端算出席：别人答不了，推给它、算它在场都只会让审批白等。并且只算覆盖这个会话的（接入时没限定
+   * 会话，或限定的就是它）
+   */
+  const attends = (attendee: Attendee, sessionId: string) =>
+    deps.isOwner(attendee.who.platform, attendee.who.userId) &&
+    (attendee.sessionId === undefined || attendee.sessionId === sessionId);
+  /** 此刻覆盖这个会话的在场客户端 */
+  const present = (now: number, sessionId: string) =>
     [...surfaces].flatMap(surface =>
-      [...surface.attendees].filter(attendee => now < attendee.until && ownerAttends(attendee)),
+      [...surface.attendees].filter(attendee => now < attendee.until && attends(attendee, sessionId)),
     );
   /** 已推出、还没结的 */
   const shown = () => [...queues.values()].flatMap(queue => (queue[0]?.approval ? [queue[0]] : []));
+  /** 已推出、此刻没有覆盖它的在场客户端的 */
+  const uncovered = () => {
+    const now = Date.now();
+    return shown().filter(pending => present(now, pending.req.sessionId).length === 0);
+  };
 
   function deliver(pending: Pending, attendee: Attendee): void {
     const { approval } = pending;
-    if (!approval || pending.delivered.has(attendee) || !ownerAttends(attendee)) return;
+    if (!approval || pending.delivered.has(attendee) || !attends(attendee, approval.sessionId)) return;
     pending.delivered.add(attendee);
     tell('推出', () => attendee.sink.requested(approval));
   }
 
-  /** 推出之后在场的客户端都会在某个时刻失效：在那一刻再判一次 */
+  /** 覆盖推出的审批的在场客户端都会在某个时刻失效：在最早的那一刻再判一次（它可能是某张审批唯一覆盖它的） */
   function rearm(): void {
     clearTimeout(lapse);
     lapse = undefined;
     const now = Date.now();
-    const live = present(now);
-    if (live.length === 0 || shown().length === 0) return;
-    lapse = setTimeout(recheck, Math.max(...live.map(attendee => attendee.until)) - now);
+    const live = shown().flatMap(pending => present(now, pending.req.sessionId));
+    if (live.length > 0) lapse = setTimeout(recheck, Math.min(...live.map(attendee => attendee.until)) - now);
   }
 
-  /** 在场或推出的审批有变：没人在场又有推出的审批时起宽限，有人回来或审批都结了就撤掉 */
+  /**
+   * 在场或推出的审批有变：有推出的审批没有覆盖它的在场客户端、又没有在跑的宽限时起宽限，到时只结算届时仍没有覆盖的；
+   * 没有这样的审批时撤掉。宽限期间才变成没有覆盖的审批到时一起结算
+   */
   function recheck(): void {
-    if (present().length > 0 || shown().length === 0) {
+    if (uncovered().length === 0) {
       clearTimeout(grace);
       grace = undefined;
     } else if (grace === undefined) {
       grace = setTimeout(() => {
         grace = undefined;
-        for (const pending of shown()) settle(pending, 'expired', 'absent');
+        for (const pending of uncovered()) settle(pending, 'expired', 'absent');
       }, ABSENCE_GRACE_MS);
     }
     rearm();
@@ -302,14 +318,14 @@ export function createApprovals(deps: ApprovalDeps) {
     recheck();
   }
 
-  /** 队首推给在场的客户端；排队期间回合中止了的、已经没人在场又不在宽限内的，直接结算 */
+  /** 队首推给覆盖它的在场客户端；排队期间回合中止了的、已经没有这样的客户端又不在宽限内的，直接结算 */
   function show(pending: Pending): void {
     if (pending.signal?.aborted) {
       settle(pending, 'cancelled', 'turn-ended');
       return;
     }
     const now = Date.now();
-    const audience = present(now);
+    const audience = present(now, pending.req.sessionId);
     if (audience.length === 0 && grace === undefined) {
       settle(pending, 'expired', 'absent');
       return;
@@ -326,6 +342,7 @@ export function createApprovals(deps: ApprovalDeps) {
       facts: pending.facts,
       options: ['approve', 'deny'],
       contentHash: pending.contentHash,
+      expiresAt: now + APPROVAL_WAIT_MS,
       state: 'pending',
     };
     pending.approval = approval;
@@ -351,7 +368,7 @@ export function createApprovals(deps: ApprovalDeps) {
     if (origin.kind === 'subtask') return ['denied', 'subtask'];
     const eligible = origin.kind === 'owner' || origin.kind === 'owner-chain';
     if (!eligible || !deps.isOwner(origin.platform, origin.userId)) return ['denied', 'ineligible'];
-    if (present(at).length === 0) return ['expired', 'absent'];
+    if (present(at, req.sessionId).length === 0) return ['expired', 'absent'];
     if (recentCards(req.sessionId, at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
     return undefined;
   }
@@ -407,14 +424,15 @@ export function createApprovals(deps: ApprovalDeps) {
     return {
       presence(active) {
         attendee.until = active ? Date.now() + PRESENCE_WINDOW_MS : 0;
-        // 变为在场：补推还没结的审批
+        // 变为在场：补推它覆盖的、还没结的审批
         if (active) for (const pending of shown()) deliver(pending, attendee);
         recheck();
       },
       respond(answer) {
         if (!deps.isOwner(attendee.who.platform, attendee.who.userId))
           return refuse('forbidden', t('responderNotOwner'));
-        const pending = shown().find(p => p.id === answer.approvalId);
+        // 限定了会话的接入只认那个会话的审批，别处的对它就是没有
+        const pending = shown().find(p => p.id === answer.approvalId && attends(attendee, p.req.sessionId));
         if (!pending?.approval) {
           return settledIds.get(answer.approvalId)
             ? refuse('approval-settled', t('approvalSettled'))
@@ -439,8 +457,8 @@ export function createApprovals(deps: ApprovalDeps) {
     const surface: SurfaceRecord = { name, registrant, attendees: new Set() };
     surfaces.add(surface);
     return {
-      attend(who, sink) {
-        const attendee: Attendee = { surface, who, sink, until: 0 };
+      attend(who, sink, sessionId) {
+        const attendee: Attendee = { surface, who, sink, sessionId, until: 0 };
         surface.attendees.add(attendee);
         return attendance(attendee);
       },

@@ -437,6 +437,63 @@ describe('重连宽限：在场的面全部消失之后再等 30 秒', () => {
   });
 });
 
+describe('限定会话的接入', () => {
+  it('只算那个会话的在场、只收那个会话的审批：别处的审批发起时按不在场拒，有别的面在场时也不推给它', async () => {
+    const { mine, surfaces, connect, request, flush } = await setup();
+    const got: Approval[] = [];
+    const dm = surfaces.webui.attend(OWNER_QQ, { requested: a => void got.push(a), settled() {} }, OWNER_DM);
+    dm.presence(true);
+    const alone = request(mine);
+    await flush();
+    expect(alone.outcome).toMatchObject({ approved: false, source: 'absent' });
+
+    const c = await connect();
+    request(mine);
+    request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    await flush();
+    // 再报一次在场：补推也只补它的会话
+    dm.presence(true);
+    expect(pushed(c).map(a => a.sessionId)).toEqual([mine, OWNER_DM]);
+    expect(got.map(a => a.sessionId)).toEqual([OWNER_DM]);
+  });
+
+  it('两个会话各有推出的审批，一个会话的接入先失效：从它失效起等完宽限，只结算没有接入覆盖的那张', async () => {
+    const { mine, surfaces, request, flush } = await setup();
+    const sink = { requested() {}, settled() {} };
+    surfaces.webui.attend(OWNER, sink, mine).presence(true);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM).presence(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const uncovered = request(mine);
+    const covered = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    await flush();
+    // mine 的接入在第 10 分钟失效，DM 的到第 15 分钟
+    await vi.advanceTimersByTimeAsync(4 * 60_000 + GRACE_MS - 1);
+    expect(uncovered.outcome).toBeUndefined();
+    // 宽限期间 mine 新发起的：DM 的接入还在场也不算，立即按不在场拒
+    const fresh = request(mine, { callId: 'call-fresh' });
+    await flush();
+    expect(fresh.outcome).toMatchObject({ approved: false, source: 'absent' });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(uncovered.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(covered.outcome).toBeUndefined();
+  });
+
+  it('应答也只认那个会话的：别处的审批回 not-found，审批照旧等', async () => {
+    const { mine, surfaces, connect, request, flush } = await setup();
+    const c = await connect();
+    const dm = surfaces.webui.attend(OWNER_QQ, { requested() {}, settled() {} }, OWNER_DM);
+    dm.presence(true);
+    const r = request(mine);
+    await flush();
+    const [approval] = pushed(c);
+    const answer = { approvalId: approval.id, decision: 'approve' as const, contentHash: approval.contentHash };
+    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'not-found' });
+    await flush();
+    expect(r.outcome).toBeUndefined();
+  });
+});
+
 describe('应答', () => {
   it('先答先得：第一个有效应答结算，后到的回 approval-settled；结算推给拿到过它的连接', async () => {
     const { mine, connect, request, flush } = await setup();
@@ -512,20 +569,21 @@ describe('应答', () => {
 });
 
 describe('排队与频率上限', () => {
-  it('同一会话的并行两次调用同一时刻只出一张卡；后一张在前一张结算后推出，等待从推出时算起', async () => {
+  it('同一会话的并行两次调用同一时刻只出一张卡；后一张在前一张结算后推出，等待与审批对象的到期时刻都从推出时算起', async () => {
     const { mine, connect, request, flush, service } = await setup();
     const c = await connect();
     const first = request(mine, { callId: 'call-1' });
     const second = request(mine, { callId: 'call-2' });
     await flush();
     expect(pushed(c).map(a => a.callId)).toEqual(['call-1']);
+    expect(pushed(c)[0].expiresAt).toBe(Date.now() + WAIT_MS);
     expect(service().list()).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(WAIT_MS - 1_000);
     await approve(c, pushed(c)[0]);
     await flush();
     expect(first.outcome).toMatchObject({ approved: true });
-    expect(pushed(c)[1].callId).toBe('call-2');
+    expect(pushed(c)[1]).toMatchObject({ callId: 'call-2', expiresAt: Date.now() + WAIT_MS });
     // 从第一次请求算已过了 300 秒，第二张仍在等；从它推出算满 300 秒才结算
     await vi.advanceTimersByTimeAsync(WAIT_MS - 1);
     expect(second.outcome).toBeUndefined();

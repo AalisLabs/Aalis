@@ -94,6 +94,7 @@ const APPROVAL: Approval = {
   facts: { command: 'ls', params: {} },
   options: ['approve', 'deny'],
   contentHash: 'hash-zz',
+  expiresAt: 300_000,
   state: 'pending',
 };
 
