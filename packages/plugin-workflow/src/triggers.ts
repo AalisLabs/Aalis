@@ -11,9 +11,10 @@ import type { CronEngine } from '@aalis/api-cron-engine';
 import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 
-// event 触发器不订阅的事件：负载带会话内容。编排按定义者的身份运行，事件参数作为运行变量插值进 tool 节点的参数、agent 节点
-// 的指令与 send-message 的正文，内容里不可信的部分就以定义者的身份下达；转发到任意 sessionId，又是跨会话窃听与外泄的通道。
-// 第一方声明的每个事件在这里或 test/architecture/event-trigger-sources.test.ts 的可作触发源表里表态。
+// event 触发器不订阅的事件：负载带会话内容（会话 id、平台、正文等）。编排按定义者的身份运行，事件参数作为运行变量插值进 tool
+// 节点的参数、agent 节点的指令与 send-message 的正文，内容里不可信的部分就以定义者的身份下达；转发到任意 sessionId，又是跨会话
+// 窃听与外泄的通道，单是会话 id 也让订阅者看出别人的私聊在活动。定义时就拒（index.ts 的 define），已在定义目录里的载入后
+// 不注册。第一方声明的每个事件在这里或 test/architecture/event-trigger-sources.test.ts 的可作触发源表里表态。
 export const BLOCKED_EVENT_TRIGGERS: ReadonlySet<string> = new Set([
   // 消息与回复
   'inbound:message',
@@ -37,6 +38,15 @@ export const BLOCKED_EVENT_TRIGGERS: ReadonlySet<string> = new Set([
   'session:created',
   'session:updated',
   'session:completed',
+  // 会话的活动：模型用量与用量快照的请求、入站相位、消息删除与历史变更、压缩、会话删除，带会话 id，有的另带平台
+  'token:usage',
+  'token:request',
+  'llm:usage',
+  'gateway:phase:done',
+  'memory:messages-deleted',
+  'history:changed',
+  'session:compressing',
+  'session:deleted',
   // 编排：trigger:fired 的负载（定时任务的内容等），运行的变量与节点输出
   'trigger:fired',
   'workflow:run:start',

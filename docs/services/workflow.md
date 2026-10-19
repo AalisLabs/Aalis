@@ -150,7 +150,7 @@ await events.use.emit('trigger:fired' as any, {
 
 `WorkflowService` 的 8 个方法都应实现（接口无可选成员）。最小语义：
 - `listWorkflows` / `getWorkflow`：返回内存中的定义。
-- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘；经它定义或覆盖的没有定义者，覆盖即清掉原来的定义者（见 §6）。
+- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全），`event` 触发器订阅负载带会话内容的事件的报错、不保存（参考实现的列表见 [plugin-workflow](../plugins/plugin-workflow.md#触发器)）；通过的注册触发器，`persist !== false` 时落盘；经它定义或覆盖的没有定义者，覆盖即清掉原来的定义者（见 §6）。
 - `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必按运行身份执行内部工具调用与投递的消息**，定时与事件触发以定义者作调用者（见 §6）。
 - `cancelRun` / `getRun` / `listRuns`：运行实例管理（`cancelRun` 可降级为始终返回 false，但参考实现经 AbortSignal 真实支持）。
 
@@ -208,7 +208,7 @@ export default definePlugin({
     listWorkflows: () => [...defs.values()],
     getWorkflow: id => defs.get(id),
     async defineWorkflow(def) {
-      // TODO: 校验无环 + deps 合法 + 注册触发器（参考 engine.validateGraph / TriggerManager）
+      // TODO: 校验无环 + deps 合法 + 拒绝订阅不可作触发源的事件 + 注册触发器（参考 engine.validateGraph / BLOCKED_EVENT_TRIGGERS / TriggerManager）
       defs.set(def.id, def);
     },
     async removeWorkflow(id) {
