@@ -1,7 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
-import { type SessionInfo, sessionLabel, sessionManager } from '@aalis/api-session-manager';
+import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -79,6 +79,17 @@ const STATUS_LABELS: Partial<Record<SubtaskStatus, string>> = {
   error: '出错',
   stopped: '已停止',
 };
+
+const NOT_FOUND = '子任务不存在';
+
+/**
+ * 按 id 取调用所在会话的直接子任务，四个按 id 操作的工具都经这里：别的会话的子任务、根会话与不存在的一样取不到，
+ * 一律按 {@link NOT_FOUND} 回，不确认存在与否，也不交出、不等、不改它们
+ */
+function directChild(sm: SessionManagerService, id: string, sessionId: string): SessionInfo | undefined {
+  const session = sm.getSession(id);
+  return session?.parentId === sessionId ? session : undefined;
+}
 
 // ===== 插件入口 =====
 
@@ -278,7 +289,7 @@ function registerSubtask(
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
       const sm = sessionManager.use;
 
@@ -289,8 +300,8 @@ function registerSubtask(
         });
       }
       const results = ids.map(id => {
-        const session = sm.getSession(id);
-        if (!session) return { id, error: '会话不存在' };
+        const session = directChild(sm, id, callCtx.sessionId);
+        if (!session) return { id, error: NOT_FOUND };
         const status = subtaskStatus(session);
         return {
           id,
@@ -354,16 +365,9 @@ function registerSubtask(
       const message = String(args.message || '');
       if (!subtaskId || !message) return JSON.stringify({ error: '缺少子任务 ID 或消息内容' });
 
-      const session = sm.getSession(subtaskId);
-      if (!session) return JSON.stringify({ error: `子任务不存在: ${subtaskId}` });
-
-      // 归属校验：只能向本会话的直接子任务发消息，防越权向任意会话注入消息 / 重激活已完成会话
-      //（与 delete_subtask 一致）。
-      if (session.parentId !== callCtx.sessionId) {
-        return JSON.stringify({
-          error: `无权操作该子任务：${subtaskId} 不是当前会话 (${callCtx.sessionId}) 的子任务 (parentId=${session.parentId})。`,
-        });
-      }
+      // 只向直接子任务发：防越权向任意会话注入消息、重激活已完成的会话
+      const session = directChild(sm, subtaskId, callCtx.sessionId);
+      if (!session) return JSON.stringify({ error: `${NOT_FOUND}: ${subtaskId}` });
 
       // 如果子任务已完成，重新激活
       if (session.status === 'completed') {
@@ -408,7 +412,7 @@ function registerSubtask(
         name: 'delete_subtask',
         description: [
           '删除指定的子任务会话及其所有子会话（递归删除）。',
-          '只能删除当前会话的直接或间接子任务，不能删除根会话或其他会话的子任务。',
+          '只能删除当前会话的直接子任务，不能删除根会话或其他会话的子任务。',
           '删除后会话的消息历史也会被一并清除。',
         ].join('\n'),
         parameters: {
@@ -431,16 +435,8 @@ function registerSubtask(
       const subtaskId = String(args.subtask_id || '').trim();
       if (!subtaskId) return JSON.stringify({ error: '缺少子任务 ID' });
 
-      const session = sm.getSession(subtaskId);
-      if (!session) return JSON.stringify({ error: `会话不存在: ${subtaskId}`, notFound: true });
-
-      // 安全检查：只能删除当前会话的子任务
-      if (session.parentId !== callCtx.sessionId) {
-        return JSON.stringify({
-          error: `无权删除该会话。当前会话 (${callCtx.sessionId}) 不是该会话的父会话 (parentId=${session.parentId})。`,
-          denied: true,
-        });
-      }
+      const session = directChild(sm, subtaskId, callCtx.sessionId);
+      if (!session) return JSON.stringify({ error: `${NOT_FOUND}: ${subtaskId}` });
 
       try {
         const name = nameOf(session);
@@ -491,7 +487,7 @@ function registerSubtask(
         },
       },
     },
-    handler: async (args, _callCtx) => {
+    handler: async (args, callCtx) => {
       if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
       const sm = sessionManager.use;
 
@@ -505,9 +501,9 @@ function registerSubtask(
       const timeoutSec = Number(args.timeout_seconds) || cfg.maxWaitMs / 1000;
       const timeoutMs = Math.min(timeoutSec * 1000, cfg.maxWaitMs);
 
-      // 先检查是否已经全部完成（避免不必要的等待）
+      // 先检查是否已经全部完成（避免不必要的等待）；不是本会话直接子任务的不等
       const isTerminal = (id: string) => {
-        const s = sm.getSession(id);
+        const s = directChild(sm, id, callCtx.sessionId);
         return !s || s.status === 'completed' || s.status === 'error';
       };
 
@@ -520,6 +516,7 @@ function registerSubtask(
             clearTimeout(timer);
             disposeCompleted();
             disposeUpdated();
+            disposeDeleted();
           };
 
           // 监听 session:completed 事件
@@ -542,6 +539,15 @@ function registerSubtask(
             }
           });
 
+          // 被删的子任务也算结束：结果里按不存在回
+          const disposeDeleted = events.use.on('session:deleted', (sessionId: string) => {
+            pending.delete(sessionId);
+            if (pending.size === 0) {
+              cleanup();
+              resolve();
+            }
+          });
+
           // 超时保护
           const timer = setTimeout(() => {
             cleanup();
@@ -552,8 +558,8 @@ function registerSubtask(
 
       // 收集结果
       const results = ids.map(id => {
-        const session = sm.getSession(id);
-        if (!session) return { id, error: '会话不存在' };
+        const session = directChild(sm, id, callCtx.sessionId);
+        if (!session) return { id, error: NOT_FOUND };
         const status = subtaskStatus(session);
         return {
           id,

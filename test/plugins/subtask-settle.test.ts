@@ -171,6 +171,20 @@ describe('子会话收口后父会话的等待随即返回', () => {
     expect(checked.subtasks[0]).not.toHaveProperty('reason');
   });
 
+  it('等待中子任务被删：随即返回，按不存在回，不算超时', async () => {
+    const { sm, parent, call } = await setup();
+    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
+
+    const waiting = call('wait_subtasks', { subtask_ids: [child.id], timeout_seconds: 1 });
+    await sm.deleteSession(child.id);
+
+    expect(await within(waiting)).toEqual({
+      allCompleted: false,
+      timedOut: false,
+      subtasks: [{ id: child.id, error: '子任务不存在' }],
+    });
+  });
+
   it('等满时还在跑的报超时', async () => {
     const { sm, parent, call } = await setup();
     const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
