@@ -63,15 +63,16 @@
 
 **迁移**：要让她在回复里发存储里的媒体，装 plugin-image-sender（create-aalis 的 minimal 与 standard 档不装它）。
 
-### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-tool-session）
+### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-tool-session、@aalis/plugin-scheduler）
 
 - 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。
 - 会话服务的时间线上，房间的子会话里她说的话不再标「没有发出」（工具调用之前说的、没有适配器接手的回复）。
 - 会话管理的房间收录按会话记录跳过子会话，不再看 id 里有没有 `::`：适配器的窗口 id 里带 `::` 的照常收录。
 - 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；不带 `self_id` 时用先上线的账号。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
+- plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
 - 访问检查器收到的 `AccessCheckArgs.currentSessionId` 改为调用所在的窗口：当前会话本身，子会话取根会话的。子任务里读历史与在它的根会话里读受同样的平台规则约束；此前按子会话的 id 判，群里建的子任务读本群在不许跨群（`allowCrossGroup: false`）时被拒。
 
-**迁移**：按 id 前缀找子会话或父会话的，改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。子任务里调 OneBot 的群工具要显式给 `group_id`。
+**迁移**：按 id 前缀找子会话或父会话的，改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。子任务里调 OneBot 的群工具要显式给 `group_id`，建定时任务要给 `sessionId`。
 
 ### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
 

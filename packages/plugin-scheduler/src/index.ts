@@ -1,4 +1,5 @@
 import { cronEngine } from '@aalis/api-cron-engine';
+import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
@@ -260,6 +261,8 @@ const uses = {
   storage: optional(storage),
   /** 计划任务页的登记口；无 WebUI 时调度照常运行 */
   webui: optional(webuiServer),
+  /** 认调用所在的会话是不是子会话（在子会话里建任务要写明目标）；没有会话管理就没有子会话 */
+  sessionManager: optional(sessionManager),
   events,
   lifecycle,
   logger,
@@ -283,7 +286,7 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
-  const { cronEngine, storage, webui, events, lifecycle, logger, provide, tools } = caps;
+  const { cronEngine, storage, webui, sessionManager, events, lifecycle, logger, provide, tools } = caps;
   const config = resolveConfig(cfg);
 
   const runtimes = new Map<string, JobRuntime>();
@@ -996,7 +999,10 @@ async function run(caps: Caps): Promise<void> {
               type: 'string',
               description: 'ISO 8601 绝对时间，到点执行一次后自动停止。例："2026-05-19T15:46:44+08:00"。',
             },
-            sessionId: { type: 'string', description: '任务消息发往的会话 ID。不传则默认使用当前会话。' },
+            sessionId: {
+              type: 'string',
+              description: '任务消息发往的会话 ID。不传则默认使用当前会话（子任务里必须传）。',
+            },
             platform: { type: 'string', description: '目标平台标识。不传则默认使用当前平台。' },
             content: { type: 'string', description: '届时发送给自己的指令/提示内容' },
           },
@@ -1026,12 +1032,19 @@ async function run(caps: Caps): Promise<void> {
       if (hasDelay) {
         runAt = new Date(Date.now() + Math.floor(args.delaySeconds as number) * 1000).toISOString();
       }
+      const target = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
+      // 子会话没有窗口，删掉后发往它的任务就静默丢了：在子会话里不按默认发回当前会话，要写明目标
+      if (!target && sessionManager.present && sessionManager.use.getSession(callCtx.sessionId)?.parentId) {
+        return JSON.stringify({
+          error: '在子任务里建定时任务必须写明目标会话 sessionId：子任务的会话删掉后，发往它的任务会静默丢失',
+        });
+      }
       const job: SchedulerJobConfig = {
         name: args.name as string,
         cron: hasCron ? (args.cron as string).trim() : undefined,
         interval: hasInterval ? (args.interval as number) : undefined,
         runAt,
-        sessionId: (args.sessionId as string) || callCtx.sessionId,
+        sessionId: target || callCtx.sessionId,
         platform: (args.platform as string) || callCtx.platform || 'internal',
         // 安全关键：actor 强制从 callCtx snapshot，不从 args 读取。
         // 这样即使 LLM 在 prompt 中尝试伪造身份，也会被忽略——它只能以当前调用者的身份创建任务。

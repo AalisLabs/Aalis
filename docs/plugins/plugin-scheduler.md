@@ -20,6 +20,7 @@ export default definePlugin({
     cronEngine,
     storage: optional(storage),
     webui: optional(webuiServer),
+    sessionManager: optional(sessionManager),
     events,
     lifecycle,
     logger,
@@ -43,7 +44,7 @@ export default definePlugin({
 
 | 工具 | 说明 |
 |---|---|
-| `scheduler_create_job` | 创建定时/周期/一次性任务（`cron`、`interval`、`delaySeconds`、`runAt` 四选一；不传 `sessionId`/`platform` 时用当前会话） |
+| `scheduler_create_job` | 创建定时/周期/一次性任务（`cron`、`interval`、`delaySeconds`、`runAt` 四选一；不传 `sessionId`/`platform` 时用当前会话；在子会话里不传 `sessionId` 报错，要写明目标：子会话没有窗口，删掉后发往它的任务会静默丢失） |
 | `scheduler_list_jobs` | 列出任务及状态，可按名称关键词、状态过滤并分页 |
 | `scheduler_remove_job` | 删除任务 |
 | `scheduler_pause_job` | 暂停任务 |
