@@ -242,20 +242,21 @@ function startCli(caps: Caps): void {
     }
     return [`${label} ${att.name ?? path.split('/').pop() ?? ''}`, size, path].filter(Boolean).join(' · ');
   }
-  /** 附件消息：文字先写（非空时），再依次写各附件。文字不是流式正文的整条重复，不消耗流式标记 */
+  /** 同一轮已流式输出时，agent 的整条回复是重复、正文早已写出（消耗流式标记）；系统/指令消息不是流式正文 */
+  const streamedAlready = (msg: OutgoingMessage) => msg.source === 'agent' && tui?.consumeStreamedSend() === true;
+  /** 附件消息：文字先写（非空、且没有流式写出过时），再依次写各附件。只带附件的消息（发图工具交来的）不消耗流式标记 */
   async function writeAttachments(msg: OutgoingMessage, attachments: MessageAttachment[]): Promise<void> {
-    if (msg.content.trim()) await adapter.sendMessage(msg.sessionId, msg.content);
+    if (msg.content.trim() && !streamedAlready(msg)) await adapter.sendMessage(msg.sessionId, msg.content);
     for (const att of attachments) await adapter.sendMessage(msg.sessionId, await attachmentLine(att));
   }
 
   events.use.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
     const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
-    // 纯文本：同一轮已流式输出时，agent 的整条回复是重复、正文早已写出；系统/指令消息不是流式正文，照常显示。content 已由
-    // 网关按会话的语言渲染（网关缺席时是原文）
+    // 已流式写出的正文不再写，其余照常显示。content 已由网关按会话的语言渲染（网关缺席时是原文）
     const written = attachments.length
       ? writeAttachments(msg, attachments)
-      : msg.source === 'agent' && tui?.consumeStreamedSend()
+      : streamedAlready(msg)
         ? Promise.resolve()
         : adapter.sendMessage(msg.sessionId, msg.content);
     // 出站的平台另有在场的适配器（如 owner 从 WebUI 驱动这个会话）由那个平台认领并记进历史；回执已被别的入口认领的不覆盖。

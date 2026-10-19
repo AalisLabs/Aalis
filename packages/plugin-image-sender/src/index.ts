@@ -8,8 +8,7 @@
 //                          发过的图/视频"能被 memory_recall 召回
 //
 // 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，受众只有 owner 的会话
-// 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；其余不是网址的去掉，网址的留给适配器经受保护下载与文件头
-// 核对后内联。
+// 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；别的写法不碰，交给适配器。
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先按受众判能不能取（@aalis/api-media 的 mediaInScope），再读文件头核对格式
@@ -329,41 +328,35 @@ function registerImageSender(caps: Caps): void {
   logger.use.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
 
   // ── 带 markup 的正文里的媒体标记：存储地址的转成附件 ─────────────────────────────────
-  // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址的去掉，存储里的
-  // 媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据（出站不带授权
-  // 身份，按非 owner），不过的去掉；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头，不是
-  // 对应媒体的去掉，适配器就不会先把它复制进会话的媒体目录。不是网址也不是存储地址的（file://、本机路径、data URI 等）去掉；
-  // 网址的留在正文里交给适配器。转出的附件不另入档：这条回复已带着标记落库。网关缺席时出站不经这条链，存储地址的标记由适配器
-  // 去掉、发不出
+  // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址的去掉并报投递失败，
+  // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据（出站
+  // 不带授权身份，按非 owner），不过的去掉；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头，
+  // 不是对应媒体的去掉，适配器就不会先把它复制进会话的媒体目录。别的写法（网址、file://、本机路径、data URI 等）不碰，交给
+  // 适配器；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件不另入档：这条回复已带着标记落库。
+  // 网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
     if (message.markup) await markupToAttachments(message);
     await next();
   });
 
   async function markupToAttachments(message: OutgoingMessage): Promise<void> {
-    let tags = [...message.content.matchAll(MEDIA_MARKUP)];
-    if (tags.length === 0) return;
+    // 各标记的存储地址：不是存储地址的为 undefined，留在正文里
+    const tags = [...message.content.matchAll(MEDIA_MARKUP)].map(([, tag, url]) => {
+      const ref = mediaRef(url);
+      return { kind: MARKUP_KIND[tag], ref: ref && isStorageUri(ref) ? ref : undefined };
+    });
+    if (!tags.some(({ ref }) => ref)) return;
     const deps = scopeDeps();
     const { getSession, isOwner } = deps;
     const ownerOnly = !!getSession && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';
     const converted: MessageAttachment[] = [];
-    // 摘到某一遍没有摘掉标记为止：摘掉一个标记后，两边剩下的文字可能拼成新的标记；网址的留下，摘掉让 `<` 变少，循环必停
-    let dropped: boolean;
-    do {
-      const kept: boolean[] = [];
-      for (const [, tag, url] of tags) {
-        const ref = mediaRef(url);
-        const remote = ref !== undefined && !isStorageUri(ref);
-        kept.push(remote);
-        if (ref && !remote && (await markupMediaAllowed(ref, MARKUP_KIND[tag], message.sessionId, ownerOnly, deps))) {
-          converted.push({ kind: MARKUP_KIND[tag], data: ref, skipArchive: true });
-        }
+    for (const { kind, ref } of tags) {
+      if (ref && (await markupMediaAllowed(ref, kind, message.sessionId, ownerOnly, deps))) {
+        converted.push({ kind, data: ref, skipArchive: true });
       }
-      dropped = kept.includes(false);
-      let i = 0;
-      message.content = message.content.replace(MEDIA_MARKUP, whole => (kept[i++] ? whole : ''));
-      tags = [...message.content.matchAll(MEDIA_MARKUP)];
-    } while (dropped);
+    }
+    let i = 0;
+    message.content = message.content.replace(MEDIA_MARKUP, whole => (tags[i++].ref ? '' : whole));
     message.attachments = [...(message.attachments ?? []), ...converted];
   }
 
