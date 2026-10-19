@@ -161,6 +161,18 @@ export function resolveLLMModel(
 
 按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 `list()` 的次序拿首个（本插件选中的那一家在前，其余按 priority 与注册顺序）。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
 
+## Token 估算
+
+```ts
+export function estimateTextTokens(text: string): number;
+export function estimateMsgTokens(msg: Message): number;
+```
+
+不调分词器的估算，按大多数 BPE 分词器（GPT、DeepSeek、Qwen）的经验值取高：
+
+- `estimateTextTokens`：中日韩文字与全角符号每个按 1.5 token，其余字符每连续的一段按 ⌈长度 ÷ 3.5⌉ 计，合计向上取整。
+- `estimateMsgTokens`：每条消息固定 4 token，加正文、工具调用（序列化成 JSON 之后）与思考内容各自的 `estimateTextTokens`；图片不按 base64 长度算，每张按 800 计。
+
 ## 提供方骨架
 
 ```ts

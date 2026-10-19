@@ -87,7 +87,7 @@ sessionManager.use.registerSetting({
 |---|---|---|---|---|
 | `llm` | [plugin-agent](../plugins/plugin-agent.md) | 全部 | composer | 全局默认层即 llm 服务的偏好（下文「默认模型只有一处」）；界面写服务实际用的那一个 |
 | `think`、`maxToolIterations` | plugin-agent | 全部 | common、advanced | 模型的默认档（可选项接口标出）；30（默认值） |
-| `historyLimit` | plugin-agent | 全部 | advanced，liveOnly | 0（默认值）：读全部活跃历史，不按条数压缩 |
+| `historyLimit` | plugin-agent | 全部 | advanced，liveOnly | 0（默认值）：发全部活跃历史，不按条数压缩 |
 | `compressAt` | [plugin-memory-summary](../plugins/plugin-memory-summary.md) | 全部 | advanced，liveOnly | 0.8（默认值） |
 | `persona`、`systemPromptExtra` | [plugin-persona](../plugins/plugin-persona.md) | 全部 | common | 主卡 `default`（默认值）；不追加 |
 | `disableOutputFormat`、`clientSideJsonRendering` | plugin-persona | 全部 | advanced | 关；按角色卡 |

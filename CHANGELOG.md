@@ -18,6 +18,18 @@
 - `PluginEntry` 与 `PluginStatusEntry` 加 `failure`：激活失败时抛出的原值；`error` 改为由它现算，取值不变。
 - core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
 
+### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
+
+- **摘要预算**（plugin-memory-summary）：摘要长度跟着压掉的量走。预算是这次重写的输入（上一份摘要加这次新压的对话）乘 `summaryBudgetRatio`（默认 0.1），不少于 1000 token，越旧的内容越浓缩；不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，也不超过这个会话压缩线（按最近一次用量算）的四分之一，两个封顶都压过这个下限。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占压掉内容的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。
+- **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过输入乘 `summaryBudgetRatio`（不套 1000 的下限）。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
+- **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory` 时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
+- **写满输出上限算没压成**（plugin-memory-summary）：摘要模型报的输出 token 不小于请求的 `maxTokens` 时，这次压缩没压成，日志写明「摘要模型写满了输出上限，输出可能不完整」，可能被截断的摘要不存下；后台压缩照常计入退避。服务商不报用量时查不出。
+- **破坏性**：
+  - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档），第三方记忆后端须实现它，`getFullHistory` 也要按时间交错返回留下的与归档的消息。
+  - api-memory：带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）条数为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。plugin-user-relation 的 `readWindowSize`、`allNewMaxMessages` 配成 0 时，关系提取读不到消息。
+  - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史条数（含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史条数。类型不变。
+  - plugin-memory-summary：插件配置 `summaryTokenRatio` 删除，换成 `summaryBudgetRatio`（见上文「摘要预算」）。配置里留着 `summaryTokenRatio` 时，runtime 在启动与热重载时按 schema 裁掉并写回配置文件，记一条 warn。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
