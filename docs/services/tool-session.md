@@ -36,7 +36,7 @@ export interface SessionHistoryService {
 
 访问规则三件套：
 - `AccessChecker`（`index.ts`）：`{ platform: string; check(args): AccessDecision | undefined }`。`check` 是**同步**的；只对 `targetSessionId.startsWith(platform + ':')` 的目标生效。
-- `AccessCheckArgs`（`index.ts`）：`{ currentSessionId; targetSessionId; callCtx }`。
+- `AccessCheckArgs`（`index.ts`）：`{ currentSessionId; targetSessionId; callCtx }`。`currentSessionId` 是调用所在的窗口：当前会话本身，子会话取根会话的（子会话没有窗口）。
 - `AccessDecision`（`index.ts`）：`{ decision: 'allow' | 'deny'; reason? }`；返回 `undefined` 表示「不表态，交给后续 checker / 默认放行」。
 - `AccessCheckerDisposer`（`index.ts`）：`() => void`，插件 dispose 时调用解绑。
 
@@ -68,13 +68,14 @@ caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' }
 ```ts
 import { sessionHistory } from '@aalis/api-session-history';
 import type { SessionHistoryService } from '@aalis/api-session-history';
-import { definePlugin, provide } from '@aalis/core';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { definePlugin, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@you/plugin-my-history',
   provides: [sessionHistory],
-  uses: { provide },
-  apply({ provide }) {
+  uses: { provide, sessionManager: optional(sessionManager) },
+  apply({ provide, sessionManager }) {
     const checkers: import('@aalis/api-session-history').AccessChecker[] = [];
     const svc: SessionHistoryService = {
       registerAccessChecker(checker) {
@@ -88,9 +89,12 @@ export default definePlugin({
         const target = String(options.sessionId ?? '').trim();
         if (!target) return { error: 'sessionId 不能为空' };
         const platform = target.split(':')[0] ?? '';
+        // 平台规则按调用所在的窗口判：子会话没有窗口，取根会话的
+        const sm = sessionManager.present ? sessionManager.use : undefined;
+        const root = sm && rootSessionOf(sm.getSession(callCtx.sessionId), id => sm.getSession(id));
         for (const c of checkers.filter(ch => ch.platform === platform)) {
           const v = c.check({
-            currentSessionId: callCtx.sessionId,
+            currentSessionId: root?.id ?? callCtx.sessionId,
             targetSessionId: target,
             callCtx,
           });

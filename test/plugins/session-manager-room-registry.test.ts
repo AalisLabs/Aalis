@@ -157,12 +157,14 @@ describe('IM 房间按首条真人入站登记', () => {
     expect(sm.getSession(GROUP), '首条真人入站就该登记').toBeDefined();
   });
 
-  it('子任务 id 的入站不建房间档，也不顺手登记它的父房间', async () => {
-    const { sm, inbound } = await setup();
+  it('子会话的入站不把它补记成房间：按会话记录判，认领它的适配器也不算数', async () => {
+    const { sm, inbound } = await setup([{ platform: 'onebot', canHandle: () => true }]);
+    const child = await sm.createChildSession(GROUP, { name: '<子任务>' });
 
-    await inbound({ sessionId: `${GROUP}::abcd1234`, platform: 'onebot', groupName: '<群名>' });
-    expect(sm.getSession(`${GROUP}::abcd1234`), '子任务 id 不该被当成房间登记').toBeUndefined();
-    expect(sm.getSession(GROUP), '也不顺手登记它的父房间').toBeUndefined();
+    await inbound({ sessionId: child.id, platform: 'onebot', groupName: '<群名>' });
+    await settle();
+    expect(sm.getSession(child.id)?.originPlatform, '子会话不该被补记成房间').toBeUndefined();
+    expect(sm.getSession(child.id)?.originChat).toBeUndefined();
   });
 
   it('带 source 的内部注入不登记：工作流发往群、好友申请的合成通知、空闲开话题', async () => {

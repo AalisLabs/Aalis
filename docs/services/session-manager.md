@@ -23,6 +23,7 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 // CRUD（kind、来源字段、创建来源、所属工作区、绑定、当前目录、originInstance、lastReplyAt、lastTurn、tokens 由服务推出或写入，
 // 不收调用方经会话字段传值；config 按登记的设置项校验）
 // creation 是建档专用的参数（创建来源、所属工作区、绑定），只有会话服务与终端传（§2.6）
+// 自生成的 id 不落在平台的 id 写法里（子会话一样，不带父会话的 id）：适配器按会话 id 认领窗口与出站，子会话没有窗口
 createSession(opts?: NewSessionFields, creation?: SessionCreation): Promise<SessionInfo>;
 getSession(id: string): SessionInfo | undefined;
 listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
@@ -325,7 +326,9 @@ class MySessionManager implements SessionManagerService {
     if ((creation?.workspace ?? 'default') !== 'default' || creation?.work) throw new Error('这个实现只有默认工作区');
     const config = this.patch({}, opts.config ?? {});
     const now = Date.now();
-    const id = opts.parentId ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}` : `session-${crypto.randomUUID().slice(0, 8)}`;
+    let id: string; // 子会话也一样，不带父会话的 id；撞上已有的会话就重抽
+    do id = `session-${crypto.randomUUID().slice(0, 8)}`;
+    while (this.sessions.has(id));
     const parent = opts.parentId ? this.sessions.get(opts.parentId) : undefined;
     const s: SessionInfo = {
       id,
@@ -571,10 +574,10 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 6.6 IM 房间收录
 
-参考实现在 `inbound:message` 上收录 IM 房间：会话表里还没有记录、不是子任务（id 不含 `::`）的会话，首条真人入站（不带 `source`）到达即按这条消息建档，与是否执行过 `/session.set`、开过子任务无关。WebUI 与终端的会话在入站之前都已建档（§2.6），不经这里。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
+参考实现在 `inbound:message` 上收录 IM 房间：会话表里还没有记录的会话，首条真人入站（不带 `source`）到达即按这条消息建档，与是否执行过 `/session.set`、开过子任务无关。WebUI 与终端的会话在入站之前都已建档（§2.6），不经这里。带 `source` 的是内部注入（workflow 的 send-message 与 agent 节点、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不触发登记，每次 workflow 运行不会多出一个持久的房间。
 
 - 登记：状态为 `waiting`，记下来源字段（§2.6）：出生平台取消息的平台；聊天窗口按这个平台适配器的类型声明经 api-gateway 的 `chatScopeOf` 解析，记下类型名、多方标记、机器人账号（消息上的 `selfId`，没有就不记）与目标（多方为群号，一对一为对端账号）。没有适配器的平台同没声明类型，整个平台算一个一对一类型 `private`；消息带的类型名不在平台的声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名而平台声明了多方类型时按其中第一个、多方记下，每个平台告警一次。来源字段之后不变，同一窗口后来的消息带了别的类型名也不改。收录只登记与补名，不改状态；状态翻转见 §7.1。
-- 补记来源字段：按 id 兜底建档的根会话（`createChildSession` 给父会话兜底建的、收录之前 `/session.set` 建的）没有来源字段、创建来源与绑定，第一条原生入站到达时按这条消息补记，与按它建档时记下的相同，现名还是 id 的一并补名。只认这个 id 归消息平台的适配器管（认领它的平台只有 `msg.platform`）的入站，WebUI 与终端往房间插话不算。升级前的记录只记了出生平台、没有聊天窗口（也没有创建来源与绑定）的同样补记，只认出生平台的入站：不补记时它们按窗口 `<平台>::` 共用一个场所。带创建来源的（WebUI 与终端预先建档的）、已有聊天窗口的不补记。
+- 补记来源字段：按 id 兜底建档的根会话（`createChildSession` 给父会话兜底建的、收录之前 `/session.set` 建的）没有来源字段、创建来源与绑定，第一条原生入站到达时按这条消息补记，与按它建档时记下的相同，现名还是 id 的一并补名。只认这个 id 归消息平台的适配器管（认领它的平台只有 `msg.platform`）的入站，WebUI 与终端往房间插话不算。升级前的记录只记了出生平台、没有聊天窗口（也没有创建来源与绑定）的同样补记，只认出生平台的入站：不补记时它们按窗口 `<平台>::` 共用一个场所。带创建来源的（WebUI 与终端预先建档的）、已有聊天窗口的与子会话（没有窗口）不补记。
 - 认领：建档与补记之前用 `@aalis/api-platform` 的 `claimantsOf` 问遍认领这个 id 的适配器（判定与 `resolvePlatformBySession` 相同，逐个问）。认领它的平台不止一个（如终端配置的会话 id 配成了 OneBot 群的 id）时判不出它是哪个平台的窗口，不建档、不补记，每个 id 告警一次，写明哪几个平台认领了它：结果不取决于适配器的登记先后。同一平台的几个实例都认领的仍算一个平台。问的期间别的入站已收录、别处已按 id 建档或会话被删的，问完按会话表此刻的记录判，再同步建档或补记，不会重复建档。
 - 所属实例：第一个认领者的插件实例 id 随来源字段记进 `originInstance`（与 `resolvePlatformBySession` 解析到的相同）。会话列表据此把同一插件的多个实例（如两个 OneBot 实例）分组显示；路由不读它。没有适配器认领的（适配器没装好、连接还没上来、账号暂时不属于任何实例）先不记，与读表读进来、还没有 `originInstance` 的房间一样，在下一条真人入站时用 `resolvePlatformBySession` 重新解析，认领到就补记并发 `session:updated`；解析期间会话被删的不写回，同一条记录的解析不并发。已记下的不改；owner 面会话与子任务不记。
 - 窗口的场所记录：场所是窗口的房间建档或补记时建它的场所记录（§2.7），显示名取群名或对方昵称（缺省为场所键），之后随出生平台的原生入站更新；owner 的 IM 私聊在默认工作区，不建。

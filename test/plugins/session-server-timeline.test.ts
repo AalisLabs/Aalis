@@ -688,6 +688,56 @@ describe('条目', () => {
     expect(said(c.timeline(mine.id, own))).toEqual([['我先查一下', undefined]]);
   });
 
+  it('房间的子会话没有窗口：她在里面说的话不交给平台，都不标「未发出」，重新订阅后历史里一样；房间本身照旧标', async () => {
+    const { server, sm, host, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    const task = await sm.createChildSession(ROOM, { name: '<子任务>' });
+    const c = client(server());
+    await c.init();
+    const room = await c.subscribe(ROOM);
+    const sub = await c.subscribe(task.id);
+    const said = (items: SessionItem[]) =>
+      items.flatMap(i => (i.kind === 'agent-message' ? [[i.text, i.undelivered?.reason]] : []));
+
+    const inTask = openTurn(task.id, { platform: 'onebot', userId: `parent:${ROOM}`, source: 'subtask' });
+    await inTask.ask();
+    await inTask.text('我先查一下');
+    await inTask.toolStart('call-a', 'probe');
+    await inTask.toolEnd('call-a', 'probe', 'ok');
+    await inTask.text('查好了');
+    await inTask.replyCheck();
+    await inTask.save({
+      role: 'assistant',
+      content: '查好了',
+      segments: [
+        { type: 'text', content: '我先查一下' },
+        { type: 'tool_call', name: 'probe', args: {}, result: 'ok', callId: 'call-a' },
+        { type: 'text', content: '查好了' },
+      ],
+    });
+    await inTask.reply('查好了');
+    await inTask.finish('replied');
+
+    // 对照：房间本身的回复没有适配器接手，标出原因；它标出来时，子会话那一轮的送达结果也早已结算
+    const inRoom = openTurn(ROOM);
+    await inRoom.text('群里的回复');
+    await inRoom.replyCheck();
+    await inRoom.reply('群里的回复');
+    await inRoom.finish('replied');
+    await vi.waitFor(() =>
+      expect(said(c.timeline(ROOM, room))).toEqual([['群里的回复', expect.stringContaining('没有平台适配器接手')]]),
+    );
+
+    const expected = [
+      ['我先查一下', undefined],
+      ['查好了', undefined],
+    ];
+    expect(said(c.timeline(task.id, sub))).toEqual(expected);
+    const fresh = client(server());
+    await fresh.init();
+    expect(said((await fresh.subscribe(task.id)).snapshot.items)).toEqual(expected);
+  });
+
   it('回合结束之后、送达结果到达之前订阅的连接：迟到的结果落在快照里的同一条回复上，不多出一条', async () => {
     const { server, host, openTurn } = await setup();
     await recordRoom(host.events.use, ROOM, '群');

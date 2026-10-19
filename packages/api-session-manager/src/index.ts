@@ -436,7 +436,8 @@ export interface SessionManagerService {
   /**
    * 创建新会话，返回完整的 SessionInfo。creation 是建档专用的参数（创建来源、所属工作区、绑定），只给根会话：带 parentId
    * 时抛错；工作区没有记录、项目工作区缺绑定、默认工作区带绑定时抛错。建档不写当前目录（没有值即场所的主目录）；
-   * 子会话的当前目录取父会话此刻的值
+   * 子会话的当前目录取父会话此刻的值。自生成的 id 不落在平台的 id 写法里（子会话一样，不带父会话的 id）：适配器按
+   * 会话 id 认领窗口与出站，子会话没有窗口
    */
   createSession(opts?: NewSessionFields, creation?: SessionCreation): Promise<SessionInfo>;
   /** 获取指定会话（不存在返回 undefined） */

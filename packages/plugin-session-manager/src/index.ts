@@ -581,9 +581,10 @@ class SessionManager implements SessionManagerService {
       throw new Error('建档专用参数只给根会话：子会话按根会话取创建来源、所属工作区与绑定');
     const created = creation ? this.creationFields(creation) : {};
     const config = this.checkedConfig(opts?.config);
-    const id = opts?.parentId
-      ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
-      : `session-${crypto.randomUUID().slice(0, 8)}`;
+    // 子会话的 id 同样不带父会话的 id：平台按会话 id 认领窗口，子会话没有窗口。撞上已有的会话就重抽
+    let id: string;
+    do id = `session-${crypto.randomUUID().slice(0, 8)}`;
+    while (this.sessions.has(id));
     const parent = opts?.parentId ? this.sessions.get(opts.parentId) : undefined;
 
     const now = Date.now();
@@ -1553,7 +1554,7 @@ async function run(caps: Caps): Promise<void> {
   provide.use(sessionManager, manager, { label: '会话管理' });
 
   // ===== IM 房间收录 =====
-  // 会话表里还没有记录的真人入站（不带 source、不是子任务）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
+  // 会话表里还没有记录的真人入站（不带 source）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
   // 类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，不经这里。带 source 的是
   // 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。消息带的类型名不在平台的
   // 声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名、按平台声明的第一个多方类型记下时，每个平台告警一次。
@@ -1573,10 +1574,10 @@ async function run(caps: Caps): Promise<void> {
     warned.add(key);
     logger.use.warn(message);
   };
-  /** 不经这条入站收录或补记的会话：有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
+  /** 不经这条入站收录或补记的会话：子会话（没有窗口），有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
   const recorded = (session: SessionInfo | undefined, msg: IncomingMessage): session is SessionInfo =>
     session !== undefined &&
-    (Boolean(session.originChat || session.createdFrom || session.work) ||
+    (Boolean(session.parentId || session.originChat || session.createdFrom || session.work) ||
       (session.originPlatform ?? msg.platform) !== msg.platform);
   /** 已收录的会话：出生平台的入站补名、更新窗口的显示名，还没记下所属实例的再解析一次 */
   const noteRecorded = (session: SessionInfo, msg: IncomingMessage) => {
@@ -1591,7 +1592,7 @@ async function run(caps: Caps): Promise<void> {
   };
   events.use.on('inbound:message', async (msg: IncomingMessage) => {
     const { sessionId } = msg;
-    if (!sessionId || msg.source || sessionId.includes('::')) return;
+    if (!sessionId || msg.source) return;
     const known = manager.getSession(sessionId);
     if (recorded(known, msg)) {
       noteRecorded(known, msg);

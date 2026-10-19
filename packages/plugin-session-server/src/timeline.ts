@@ -108,6 +108,7 @@ interface TimelineDeps {
   displayOf: DisplayOf;
   requireSession(id: string): SessionInfo;
   summarize(info: SessionInfo): SessionSummary;
+  /** 她的话发进房间的会话：房间本身。房间的子会话没有窗口，她在里面说的话不交给平台 */
   isRoom(sessionId: string): boolean;
   /** 推一条通知给订阅了这个会话的连接 */
   notify<N extends SessionNotification>(sessionId: string, method: N, params: SessionNotificationParams<N>): void;

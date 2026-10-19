@@ -740,17 +740,18 @@ async function run(caps: Caps): Promise<void> {
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
-  // 会话事实（平台、自身账号、会话类型与群号）按会话记下的来源字段取：出生平台取根会话的（房间里的子任务也在房间的
-  // 平台上），聊天窗口只取会话自己的（子任务不是群里的对话）；从 WebUI 往群里插话时回复发进群里。没有来源字段的会话
-  // 按消息。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
+  // 会话事实（平台、自身账号、会话类型与群号）按会话记下的来源字段取：出生平台与自身账号取根会话的（房间里的子任务也在
+  // 房间的平台与账号上），聊天窗口只取会话自己的（子任务不是群里的对话）；从 WebUI 往群里插话时回复发进群里。没有来源
+  // 字段的会话按消息。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
   hooks.use.middleware('agent:input:before', async (data, next) => {
     const { message } = data;
     const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const session = sm?.getSession(message.sessionId);
-    const origin = sm && rootSessionOf(session, id => sm.getSession(id))?.originPlatform;
+    const root = sm && rootSessionOf(session, id => sm.getSession(id));
+    const origin = root?.originPlatform;
     const chat = session?.originChat;
     const sessionPlatform = origin ?? message.platform;
-    const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, message.sessionId);
+    const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, root?.id ?? message.sessionId);
     const identity: PersonaIdentity = {
       sessionId: message.sessionId,
       platform: sessionPlatform,

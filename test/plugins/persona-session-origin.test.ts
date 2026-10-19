@@ -3,6 +3,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -14,13 +15,15 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 会话环境按会话记下的来源字段：WebUI 往 IM 房间插话时，这一轮的回复发进房间，会话事实（平台、自身账号、会话类型与群号）
 // 按房间记下的出生平台与聊天窗口取；说话人事实（发送者 ID、昵称、群身份）照旧取自消息；入口与出生平台不同时注明消息经哪个
-// 入口发来。会话表里预置两个已收录的房间。
+// 入口发来。自身账号随窗口：子会话没有窗口，取根会话的。会话表里预置三个已收录的房间，其中一个在另一个账号上；
+// 适配器桩与 onebot 一样按会话 id 里的账号给身份，认不出的取先上线的账号。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
 const PRIVATE = 'onebot:10000:private:30001';
+const OTHER_ACCOUNT_GROUP = 'onebot:20000:group:20002';
 
-const hostUses = { hooks, services, provide };
+const hostUses = { hooks, services, provide, sessionManager };
 
 describe('persona 会话环境按出生平台', () => {
   let app: App;
@@ -31,13 +34,17 @@ describe('persona 会话环境按出生平台', () => {
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
-    host.provide.use(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);
+    const rooms = [GROUP, PRIVATE, OTHER_ACCOUNT_GROUP];
+    host.provide.use(memory, fakeMemory(Object.fromEntries(rooms.map(id => [id, storedRoom(id)]))) as never);
     host.provide.use(platform, {
       adapterName: 'OneBot',
       platform: 'onebot',
       getConnections: () => [],
       sendMessage: async () => {},
-      getSelfIdentity: () => ({ platform: 'onebot', selfId: '10000', nickname: 'Aalis' }),
+      getSelfIdentity: (sessionId?: string) =>
+        sessionId?.startsWith('onebot:20000:')
+          ? { platform: 'onebot', selfId: '20000', nickname: '<账号乙>' }
+          : { platform: 'onebot', selfId: '10000', nickname: 'Aalis' },
     } as never);
     await app.plugin(sessionManagerPlugin);
     await app.plugin(personaPlugin, { timeInjection: false });
@@ -97,6 +104,19 @@ describe('persona 会话环境按出生平台', () => {
     expect(prompt).toContain('群号：20001');
     expect(prompt).toContain('当前消息发送者昵称：群友');
     expect(prompt).not.toContain('当前消息经');
+  });
+
+  it('多账号时房间里建的子任务：自身账号取房间所在的账号', async () => {
+    await boot();
+    const child = await host.sessionManager.use.createChildSession(OTHER_ACCOUNT_GROUP, { name: '<子任务>' });
+    const prompt = await volatileFor({
+      content: '<占位>',
+      sessionId: child.id,
+      platform: 'onebot',
+      userId: `parent:${OTHER_ACCOUNT_GROUP}`,
+      source: 'subtask',
+    });
+    expect(prompt).toContain('你在当前平台的账号：<账号乙>（20000）');
   });
 
   it('owner 面会话（没有出生平台）照旧按入口平台，不注明入口', async () => {
