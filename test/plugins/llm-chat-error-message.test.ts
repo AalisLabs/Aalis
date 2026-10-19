@@ -245,7 +245,7 @@ describe('超时与连不上：各一句，原因只进 warn', () => {
     const { handle, warns } = await start(plugin, config);
 
     expect(await messageOf(() => call.run(handle))).toBe(
-      `${provider} 请求超时：30 秒内没有完成，可在配置里调大 timeout`,
+      `${provider} 请求超时：30 秒内没有收到新的生成内容，可在配置里调大 timeout`,
     );
     expect(warns.filter(w => w.includes('aborted due to timeout'))).toHaveLength(1);
   });
@@ -256,7 +256,7 @@ describe('超时与连不上：各一句，原因只进 warn', () => {
     const { handle } = await start(plugin, config);
 
     expect(await messageOf(() => call.run(handle))).toBe(
-      `${provider} 请求超时：30 秒内没有完成，可在配置里调大 timeout`,
+      `${provider} 请求超时：30 秒内没有收到新的生成内容，可在配置里调大 timeout`,
     );
   });
 
@@ -266,7 +266,7 @@ describe('超时与连不上：各一句，原因只进 warn', () => {
     const { handle } = await start(plugin, config);
 
     expect(await messageOf(() => call.run(handle))).toBe(
-      `${provider} 请求超时：30 秒内没有完成，可在配置里调大 timeout`,
+      `${provider} 请求超时：30 秒内没有收到新的生成内容，可在配置里调大 timeout`,
     );
   });
 

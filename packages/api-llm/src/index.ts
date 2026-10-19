@@ -257,6 +257,24 @@ export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel
   });
 }
 
+// ----- 生成请求的超时 -----
+
+/**
+ * 生成请求的超时按停顿计，给服务商用：signal 交给请求，从调用起计时，每次 touch 重新计时，连续 ms 毫秒没有 touch 时 signal 以
+ * TimeoutError 中止；调用方的 signal 中止时 signal 随之中止，原因照抄。ms 为 0 或负数时不限，超过定时器上限（2^31−1，约 24.8
+ * 天）时按上限计。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的名字与参数）调一次 touch，保活注释、空行与没有
+ * 生成内容的帧不调；不流式的请求不调，即 ms 内没读完整份回复就中止。计时器不拖住进程退出，请求结束后不用收尾
+ */
+export function idleTimeout(ms: number, signal?: AbortSignal): { readonly signal: AbortSignal; touch(): void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort(new DOMException(`No new content within ${ms}ms`, 'TimeoutError'));
+  const timer = ms > 0 ? setTimeout(abort, Math.min(ms, 2 ** 31 - 1)).unref() : undefined;
+  return {
+    signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
+    touch: () => void timer?.refresh(),
+  };
+}
+
 // ----- 深度思考的档位 -----
 
 /**
