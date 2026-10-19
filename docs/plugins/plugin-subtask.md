@@ -35,8 +35,10 @@ export default definePlugin({
 | `create_subtask` | 创建子会话并异步派发任务（不阻塞当前会话） |
 | `check_subtask` | 查询一个或多个子任务的当前状态和结果；状态为 `active`、`completed`、`error` 或 `stopped`（已停止），汇总里另数已停止的个数。出错的另带 `reason`（出错原因） |
 | `send_to_subtask` | 向子任务追加消息（追问/补充指令；可重新激活已完成的子任务） |
-| `delete_subtask` | 递归删除子任务会话；仅允许删除当前会话的直接子任务 |
+| `delete_subtask` | 递归删除子任务会话 |
 | `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；出错的另带 `reason`（出错原因）；`timedOut` 只在等满时还有没结束的才为真 |
+
+除 `create_subtask` 外的四个工具只认调用所在会话的直接子任务（会话记录的 `parentId` 是调用所在会话）。别的会话的子任务、根会话与不存在的 id 一律按「子任务不存在」回，不确认存在与否：`check_subtask` 与 `wait_subtasks` 对这一项不交出状态、任务与结果，也不等它；`send_to_subtask` 与 `delete_subtask` 不执行。
 
 ## 工作方式
 

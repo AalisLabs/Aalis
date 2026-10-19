@@ -73,6 +73,13 @@
 
 **迁移**：按 id 前缀找子会话或父会话的，改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。子任务里调 OneBot 的群工具要显式给 `group_id`。
 
+### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
+
+- `check_subtask`、`wait_subtasks` 只认调用所在会话的直接子任务，与 `send_to_subtask`、`delete_subtask` 同一判据：给的是别的会话的子任务或根会话时，这一项与不存在的一样回「子任务不存在」，不交出它的状态、任务与结果，`wait_subtasks` 也不等它。此前任何会话都能按 id 查、等任意会话的状态与结果。
+- `send_to_subtask`、`delete_subtask` 对别的会话的子任务与根会话同样回「子任务不存在」，不再回带着调用所在会话与对方父会话 id 的拒绝原因；`delete_subtask` 的结果去掉 `notFound` 与 `denied`。
+
+**迁移**：查、等子任务要在建它的会话里调。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
