@@ -1,5 +1,5 @@
 import { cronEngine } from '@aalis/api-cron-engine';
-import { sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
@@ -607,7 +607,7 @@ async function run(caps: Caps): Promise<void> {
         },
       });
 
-      // 内容由 owner 写下或审批（见 SchedulerService），声明 ownerApproved
+      // 内容由 owner 写下或审批（见 SchedulerService；owner 免了 scheduler_create_job 的确认时例外，见 security-model），声明 ownerApproved
       const message: IncomingMessage = {
         content: rt.config.content,
         sessionId: rt.config.sessionId,
@@ -1033,10 +1033,13 @@ async function run(caps: Caps): Promise<void> {
         runAt = new Date(Date.now() + Math.floor(args.delaySeconds as number) * 1000).toISOString();
       }
       const target = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
-      // 子会话没有窗口，删掉后发往它的任务就静默丢了：在子会话里不按默认发回当前会话，要写明目标
-      if (!target && sessionManager.present && sessionManager.use.getSession(callCtx.sessionId)?.parentId) {
+      const here = sessionManager.present ? sessionManager.use.getSession(callCtx.sessionId) : undefined;
+      // 子会话没有窗口，删掉后发往它的任务就静默丢了：在子会话里不按默认发回当前会话，要写明目标；根会话的 id 作候选
+      if (!target && here?.parentId) {
+        const root = rootSessionOf(here, id => sessionManager.use.getSession(id));
+        const candidate = root ? `；要发回根会话，sessionId 写 "${root.id}"` : '';
         return JSON.stringify({
-          error: '在子任务里建定时任务必须写明目标会话 sessionId：子任务的会话删掉后，发往它的任务会静默丢失',
+          error: `在子任务里建定时任务必须写明目标会话 sessionId：子任务的会话删掉后，发往它的任务会静默丢失${candidate}`,
         });
       }
       const job: SchedulerJobConfig = {

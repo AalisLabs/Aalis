@@ -183,7 +183,7 @@ export class TriggerManager {
         const evtName = t.event;
         if (BLOCKED_EVENT_TRIGGERS.has(evtName)) {
           this.logger.warn(
-            `workflow "${def.id}" 的 event 触发器订阅的 "${evtName}" 负载带会话内容，不能当触发源，已拒绝注册`,
+            `workflow "${def.id}" 的 event 触发器订阅的 "${evtName}" 负载带会话内容，不能当触发源，已拒绝注册；改掉触发器重新保存，或删掉这个定义`,
           );
           break;
         }

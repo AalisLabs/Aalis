@@ -253,6 +253,11 @@ owner 链的延续、能产生审批；等级按 `actor` 实时查，其间被�
 派的子任务里的 `/shutdown`），不产生审批，owner 看不到也拦不下。二是按 `source` 的名字认受信：任何注入方写上这个名字，
 都能拿到同样的免确认待遇。所以判据只看声明、不看名字：注入方把 `source` 写成 `scheduler` 却不声明，照样不执行。
 
+例外：授权身份是 owner 的回合里 `scheduler_create_job` 免了确认时（配置的 `confirmOverrides` 把 `tool:scheduler_create_job`
+设为 `off`；或设为 `session`，再被 `restrictedPolicy` 白名单免掉），建定时任务不再逐次审批，任务内容（模型写出的）没经 owner
+过目原文，触发时照样带 `ownerApproved`，其中的指令照样以 owner 的身份执行。这类任务与审批过的不作区分，免掉这道确认就是接受这一点；
+两种免法都只对授权身份是 owner 的回合生效，别人发起的照旧确认（见上文的轴 B）。
+
 插件作者：插件注入的文字不算人写的，正文里的指令不执行；要让一段文字到点执行指令，经定时任务的入口建任务，由 owner 写下或
 审批原文，没有别的路径。入站注入一律设 `source`（见 [gateway](../services/gateway.md) 的约定）：不设 `source` 冒充真人入站，
 与给没经 owner 过目原文的文字设 `ownerApproved` 同样违约。插件是同进程的可信代码，这两条技术上拦不住，第一方设 `ownerApproved`

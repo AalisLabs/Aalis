@@ -16,6 +16,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 在子会话里建定时任务要写明目标：子会话没有窗口，不传 sessionId 时默认的目标就是调用所在的子会话，子会话删掉后任务
 // 静默丢失。按会话记录的 parentId 认子会话，与 onebot 群工具在子会话里要求显式给群号同一规则；根会话照旧默认当前会话。
+// 报错给出根会话的 id 作候选，模型照传即可。
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:20001';
@@ -69,6 +70,16 @@ describe('子会话里建定时任务要写明目标', () => {
 
     expect(await t.create(ROOM, { name: 'in-room' })).toMatchObject({ ok: true });
     expect(t.jobs()).toEqual([expect.objectContaining({ name: 'in-room', sessionId: ROOM, platform: 'onebot' })]);
+  });
+
+  it('报错给出根会话的 id 作候选：孙会话里也取根会话，不取父会话', async () => {
+    const t = await boot();
+    const child = await t.sm.createChildSession(ROOM);
+    const grandchild = await t.sm.createChildSession(child.id);
+
+    const { error } = await t.create(grandchild.id, { name: 'in-grandchild' });
+    expect(error).toContain(`"${ROOM}"`);
+    expect(error).not.toContain(child.id);
   });
 
   it('子会话里写明目标照常建，发往写明的会话', async () => {
