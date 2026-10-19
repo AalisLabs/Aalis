@@ -137,21 +137,23 @@ export class AuthorityManager implements AuthorityService {
   }
 
   /**
-   * 覆盖式设 target 所属的权限组（去重，空即清空）。组名须都已定义，否则抛错并列出已有的组，记录不动。
+   * 覆盖式设 target 所属的权限组（去重，空即清空）。这次新加的组须都已定义，否则抛错并列出已有的组，记录不动；原有的组
+   * 即使已被删掉也照收（删组不级联，原样保存不受它影响）。
    * 清空而记录留着时（还有等级或备注，或首次读取尚未落定）记成 `groups: []`：读取按字段合并时由它盖掉文件里的组
    */
   setUserGroups(target: UserIdentity, groups: readonly string[]): void {
+    const key = `${target.platform}:${target.userId}`;
+    const record = this.store.get(key);
     const names = [...new Set(groups)];
     const defs = this.definedGroups();
-    const unknown = names.filter(name => !defs.has(name));
+    const unknown = names.filter(name => !defs.has(name) && !record?.groups?.includes(name));
     if (unknown.length > 0) {
       const known = [...defs.keys()];
       throw new TextError(
         known.length > 0 ? t('unknownGroups', { groups: unknown, known }) : t('noGroupsDefined', { groups: unknown }),
       );
     }
-    const key = `${target.platform}:${target.userId}`;
-    this.put(key, { ...this.store.get(key), groups: names });
+    this.put(key, { ...record, groups: names });
     this.logger.debug(`设置权限组: ${key} → [${names.join(', ')}]`);
   }
 

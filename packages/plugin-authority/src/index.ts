@@ -251,7 +251,7 @@ async function run(caps: Caps): Promise<void> {
         page.invalidate();
         return message;
       } catch (err) {
-        // 没定义的组：setUserGroups 拒收并列出已有的组，原样回给 owner
+        // 这次新加的组没定义：setUserGroups 拒收并列出已有的组，原样回给 owner
         if (isTextError(err)) return err.text;
         throw err;
       }
@@ -365,7 +365,8 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
   const owners = (): UserIdentity[] => config.get('owners') ?? [];
   const sameIdentity = (a: UserIdentity, b: UserIdentity) => a.platform === b.platform && a.userId === b.userId;
 
-  // 两个可选项来源（贡献点 webui:options）：放行条目可选全部指令与工具的能力键与已登记的工具分组，设权限组可选已定义的组
+  // 两个可选项来源（贡献点 webui:options）：放行条目可选全部指令与工具的能力键与已登记的工具分组，设权限组可选已定义的组，
+  // 另列成员记录里指向的、已删掉的组并标出来：设权限组按这一行预填，原有的组照样能保存
   contributions.use.contribute('webui:options', {
     id: 'authority-operations',
     list: () =>
@@ -376,7 +377,11 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
   });
   contributions.use.contribute('webui:options', {
     id: 'authority-groups',
-    list: () => [...manager.definedGroups().keys()].map(name => ({ value: name, label: name })),
+    list: () => {
+      const names = [...new Set([...manager.definedGroups().keys(), ...manager.listUsers().flatMap(u => u.groups)])];
+      const labels = memberGroups(manager, names);
+      return names.map((value, i) => ({ value, label: labels[i] }));
+    },
   });
 
   /** 写宿主配置并落盘，页面重取 */

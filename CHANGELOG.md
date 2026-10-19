@@ -48,7 +48,7 @@
 - `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
 - onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除。
 - 带 `markup` 的正文里媒体标记的网址（以 `http:`、`https:` 开头，不分大小写）由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、解析不了、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
-- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出。
+- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出。有标记语法的第三方适配器同样要去掉这些标记、报投递失败，不得自己读取：留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
 
 **迁移**：要发 @、图片或引用的出站设 `markup: true`，图片、语音、视频也可以改走 `attachments`；引用回复用 `OutgoingMessage.replyTo`。她回复里要发本机文件，先放进存储，再在回复里写存储地址的标记（要装 plugin-image-sender），或经 `send_attachment` 的 `storage_uri` 发。
 
@@ -59,7 +59,7 @@
 - `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
 - `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
-- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转上面所说范围内的媒体，别处的去掉；转之前按文件头核对，不是对应媒体的去掉。别的写法（网址、`file://`、本机路径、data URI 等）不碰，由适配器按上一节的规则下载内联或去掉。
+- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转上面所说范围内的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（别处的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
 
 **迁移**：要让她在回复里发存储里的媒体，装 plugin-image-sender（create-aalis 的 minimal 与 standard 档不装它）。
 

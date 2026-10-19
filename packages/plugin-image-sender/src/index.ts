@@ -8,7 +8,7 @@
 //                          发过的图/视频"能被 memory_recall 召回
 //
 // 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，受众只有 owner 的会话
-// 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；别的写法不碰，交给适配器。
+// 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给适配器。
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先按受众判能不能取（@aalis/api-media 的 mediaInScope），再读文件头核对格式
@@ -330,9 +330,9 @@ function registerImageSender(caps: Caps): void {
   // ── 带 markup 的正文里的媒体标记：存储地址的转成附件 ─────────────────────────────────
   // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址的去掉并报投递失败，
   // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据（出站
-  // 不带授权身份，按非 owner），不过的去掉；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头，
-  // 不是对应媒体的去掉，适配器就不会先把它复制进会话的媒体目录。别的写法（网址、file://、本机路径、data URI 等）不碰，交给
-  // 适配器；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件不另入档：这条回复已带着标记落库。
+  // 不带授权身份，按非 owner）；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头。这里只摘掉
+  // 转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、本机路径、data URI 等）都留在正文里，去不去掉
+  // 由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件不另入档：这条回复已带着标记落库。
   // 网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
     if (message.markup) await markupToAttachments(message);
@@ -340,7 +340,7 @@ function registerImageSender(caps: Caps): void {
   });
 
   async function markupToAttachments(message: OutgoingMessage): Promise<void> {
-    // 各标记的存储地址：不是存储地址的为 undefined，留在正文里
+    // 各标记的存储地址：不是存储地址的为 undefined
     const tags = [...message.content.matchAll(MEDIA_MARKUP)].map(([, tag, url]) => {
       const ref = mediaRef(url);
       return { kind: MARKUP_KIND[tag], ref: ref && isStorageUri(ref) ? ref : undefined };
@@ -349,20 +349,23 @@ function registerImageSender(caps: Caps): void {
     const deps = scopeDeps();
     const { getSession, isOwner } = deps;
     const ownerOnly = !!getSession && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';
-    const converted: MessageAttachment[] = [];
+    // 各标记转成的附件：没转成的为 undefined，标记留在正文里
+    const converted: Array<MessageAttachment | undefined> = [];
     for (const { kind, ref } of tags) {
-      if (ref && (await markupMediaAllowed(ref, kind, message.sessionId, ownerOnly, deps))) {
-        converted.push({ kind, data: ref, skipArchive: true });
-      }
+      converted.push(
+        ref && (await markupMediaAllowed(ref, kind, message.sessionId, ownerOnly, deps))
+          ? { kind, data: ref, skipArchive: true }
+          : undefined,
+      );
     }
     let i = 0;
-    message.content = message.content.replace(MEDIA_MARKUP, whole => (tags[i++].ref ? '' : whole));
-    message.attachments = [...(message.attachments ?? []), ...converted];
+    message.content = message.content.replace(MEDIA_MARKUP, whole => (converted[i++] ? '' : whole));
+    message.attachments = [...(message.attachments ?? []), ...converted.filter(att => att !== undefined)];
   }
 
   /**
    * 回复里存储地址的标记能不能转成附件：受众只有 owner 的会话不过判据，其余按非 owner 判；再按 kind 核文件头。判不出、读不出
-   * （如读历史出错、根不存在）的按不能，去掉不发
+   * （如读历史出错、根不存在）的按不能，标记留在正文里
    */
   async function markupMediaAllowed(
     uri: string,
@@ -376,7 +379,7 @@ function registerImageSender(caps: Caps): void {
       return (await loadStorageMedia(uri, kind)).ok;
     } catch (err) {
       logger.use.warn(
-        `[image-sender] 回复里的媒体标记判不出归属或读不出，去掉不发: ${err instanceof Error ? err.message : err}`,
+        `[image-sender] 回复里的媒体标记判不出归属或读不出，不转成附件: ${err instanceof Error ? err.message : err}`,
       );
       return false;
     }
