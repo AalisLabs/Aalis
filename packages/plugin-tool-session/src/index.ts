@@ -6,7 +6,12 @@ import {
   type SessionHistoryService,
   sessionHistory,
 } from '@aalis/api-session-history';
-import { rootSessionOf, type SessionManagerService, sessionManager } from '@aalis/api-session-manager';
+import {
+  rootSessionOf,
+  type SessionInfo,
+  type SessionManagerService,
+  sessionManager,
+} from '@aalis/api-session-manager';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -145,9 +150,9 @@ export function resolveTimeRange(
   return null;
 }
 
-/** 会话管理记下的出生平台（子会话取根会话的）；会话管理不在或会话没有出生平台时为 undefined */
-function originPlatformOf(sm: SessionManagerService | undefined, sessionId: string): string | undefined {
-  return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform;
+/** 会话的根会话：子会话的窗口与出生平台都取它的；会话管理不在或会话不在表里时为 undefined */
+function rootOf(sm: SessionManagerService | undefined, sessionId: string): SessionInfo | undefined {
+  return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id));
 }
 
 /** 交给模型的历史不含事件标记（CONTROL_KINDS，如压缩分隔线、指令的回复）：它们不是对话内容 */
@@ -178,10 +183,12 @@ const SCOPE_RANK: Record<HistoryScope, number> = { current: 0, platform: 1, all:
 
 /**
  * 当前会话能否读目标会话的历史。平台都按会话管理记下的出生平台：当前会话没有出生平台的取入口平台，目标会话没有出生平台的
- * 不属于任何平台（同平台范围里读不到）
+ * 不属于任何平台（同平台范围里读不到）。范围粗筛按当前会话本身，平台规则按调用所在的窗口 currentWindowId（子会话没有窗口，
+ * 取根会话的）
  */
 function canReadSessionHistory(
   currentSessionId: string,
+  currentWindowId: string,
   targetSessionId: string,
   currentPlatform: string | undefined,
   targetPlatform: string | undefined,
@@ -214,7 +221,7 @@ function canReadSessionHistory(
   //    无匹配 checker 默认通过
   const matched = checkers.filter(c => targetSessionId.startsWith(`${c.platform}:`));
   for (const checker of matched) {
-    const verdict = checker.check({ currentSessionId, targetSessionId, callCtx });
+    const verdict = checker.check({ currentSessionId: currentWindowId, targetSessionId, callCtx });
     if (verdict?.decision === 'deny') {
       return { ok: false, reason: verdict.reason || `平台 ${checker.platform} 拒绝此次跨会话访问` };
     }
@@ -245,15 +252,17 @@ function createSessionHistoryService(
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
       const sm = sessionManager.present ? sessionManager.use : undefined;
+      const root = rootOf(sm, callCtx.sessionId);
       // 当前平台：房间会话按出生平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）按入口平台
-      const currentPlatform = originPlatformOf(sm, callCtx.sessionId) ?? callCtx.platform;
+      const currentPlatform = root?.originPlatform ?? callCtx.platform;
       // 房间的召回范围每次现算：房间或平台档改了下一次读取即生效
       const roomScope = sm?.resolveConfig(callCtx.sessionId, currentPlatform).memoryRecallScope;
       const verdict = canReadSessionHistory(
         callCtx.sessionId,
+        root?.id ?? callCtx.sessionId,
         targetSessionId,
         currentPlatform,
-        originPlatformOf(sm, targetSessionId),
+        rootOf(sm, targetSessionId)?.originPlatform,
         cfg.scope,
         roomScope,
         checkers,

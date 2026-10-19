@@ -23,7 +23,7 @@ import { defineService } from '@aalis/core';
 export type AccessDecision = { decision: 'allow' | 'deny'; reason?: string };
 
 export interface AccessCheckArgs {
-  /** 触发调用的当前会话 sessionId（callCtx 提供） */
+  /** 调用所在的窗口：当前会话（callCtx 提供）本身，子会话取根会话的（子会话没有窗口） */
   currentSessionId: string;
   /** LLM 想读取的目标 sessionId */
   targetSessionId: string;

@@ -2097,9 +2097,14 @@ class DefaultAgent implements AgentService {
     }
   }
 
-  /** 这一轮落库的 assistant 消息的元数据；带 turnId，会话的客户端据此把存档归回它所在的回合 */
+  /**
+   * 这一轮落库的 assistant 消息的元数据；带 turnId，会话的客户端据此把存档归回它所在的回合。自身账号随窗口：子会话没有
+   * 窗口，取根会话的
+   */
   private buildAssistantMetadata(incoming: IncomingMessage, turnId: string): Record<string, unknown> | undefined {
-    const identity = getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId);
+    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
+    const root = sm && rootSessionOf(sm.getSession(incoming.sessionId), id => sm.getSession(id));
+    const identity = getPlatformSelfIdentity(this.caps.platform, incoming.platform, root?.id ?? incoming.sessionId);
     const metadata: Record<string, unknown> = {
       [WellKnownMetadataKeys.Platform]: incoming.platform,
       senderType: 'assistant',

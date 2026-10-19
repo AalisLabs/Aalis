@@ -104,16 +104,15 @@ async function run(caps: Caps): Promise<void> {
   const displaySpec = (tool: string) =>
     caps.tools.present ? caps.tools.use.getAll().find(t => t.name === tool)?.display : undefined;
   const displayOf: DisplayOf = (tool, args, result) => resolveDisplay(displaySpec(tool), args, result);
-  const isRoom = (sessionId: string) => {
-    const info = sm.getSession(sessionId);
-    return info !== undefined && sessions.sectionOf(info) === 'rooms';
-  };
   /**
-   * 请 agent 重发某会话的用量。房间不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的入口平台，
-   * 与从这条连接发起的回合一致
+   * 请 agent 重发某会话的用量。房间与它的子会话不填平台，agent 按出生平台算，与群里真实的回合一致；其余会话填连接的
+   * 入口平台，与从这条连接发起的回合一致
    */
-  const requestUsage = (sessionId: string, platformName: string) =>
-    void events.use.emit('token:request', isRoom(sessionId) ? { sessionId } : { sessionId, platform: platformName });
+  const requestUsage = (sessionId: string, platformName: string) => {
+    const info = sm.getSession(sessionId);
+    const pinned = info !== undefined && sessions.sectionOf(info) === 'rooms';
+    void events.use.emit('token:request', pinned ? { sessionId } : { sessionId, platform: platformName });
+  };
 
   const sessions = createSessions({
     sm,
@@ -134,7 +133,7 @@ async function run(caps: Caps): Promise<void> {
     displayOf,
     requireSession: sessions.requireSession,
     summarize: sessions.summarize,
-    isRoom,
+    isRoom: sessionId => sm.getSession(sessionId)?.kind === 'room',
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
     compressAt: (sessionId, platform) =>

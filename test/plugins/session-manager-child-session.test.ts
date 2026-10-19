@@ -1,5 +1,5 @@
 import { App, events, provide } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -78,6 +78,23 @@ describe('子会话增删：父会话的子会话列表变了，发 session:upda
       ['deleted', child.id, 0],
       ['updated', parent.id, 0],
     ]);
+    await app.stop();
+  });
+});
+
+describe('createSession：自生成的 id 不撞已有会话', () => {
+  it('抽到已有会话的 id 时重抽：已有记录不变，新会话拿到另一个 id', async () => {
+    const { app, sm } = await setup();
+    const existing = await sm.createSession({ name: '已有' });
+    const taken = existing.id.slice('session-'.length);
+    const spy = vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce(`${taken}-0000-4000-8000-000000000000`);
+
+    const fresh = await sm.createSession({ name: '新建' });
+    spy.mockRestore();
+
+    expect(fresh.id).not.toBe(existing.id);
+    expect(sm.getSession(existing.id)?.name).toBe('已有');
+    expect(sm.getSession(fresh.id)?.name).toBe('新建');
     await app.stop();
   });
 });

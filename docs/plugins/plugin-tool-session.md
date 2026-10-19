@@ -71,6 +71,6 @@ interface SessionHistoryService {
 
 1. **房间的召回范围**：当前会话的会话配置 `memoryRecallScope`（见 [api-session-manager](../api/api-session-manager.md)）为 `session` 时，目标不是当前会话一律拒绝（「本房间的召回范围限于本会话」）；为 `platform` 时，目标平台与当前平台不同就拒绝。未设置或 session-manager 不在场时跳过这一步。房间范围每次读取时现算。
 2. **插件的 `scope`**：`current` / `platform` / `all` 粗筛。
-3. **平台规则**：管目标会话 ID 的 checker 链，任一 deny 即拒绝。
+3. **平台规则**：管目标会话 ID 的 checker 链，任一 deny 即拒绝。checker 收到的当前会话是调用所在的窗口：子会话没有窗口，取根会话的（与出生平台同一取法）；前两步按子会话本身判。
 
 平台规则只能在前两步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，房间的召回范围一处管住两个工具。本插件启用（`enabled`）时登记召回范围这一项（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`，与其他跨会话取料的插件同一份定义）。
