@@ -386,11 +386,11 @@ api-media 的 `mediaInScope`（判法见 [media 服务](../services/media.md#媒
   照旧经受保护的下载（§3）。
 - **带 markup 的正文里的媒体标记**：适配器只解析带 `markup` 的正文（第一方只有她的回复）。onebot 只发其中网址的
   `<image|video|record url="…"/>`，经 `safeFetch` 下载、核对文件头后内联（§7「出站文字的标记」）；地址不是网址的（`file://`、
-  本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，所有会话一样。存储里的媒体要由 plugin-image-sender 在
-  `outbound:dispatch` 上先摘出来、与 `send_attachment` 一样按文件头核对后转成同类附件，再由适配器按附件发出：受众只有 owner
-  的会话（房间类别 owner-only）里不过判据，发给 owner 看不越权；其余会话按非 owner 过判据；会话管理不在时判不出受众，按不是
-  只有 owner。不过判据的、读不出的与不是对应媒体的去掉，适配器不会先把它们复制进会话的媒体目录。
-  它同样去掉 `file://` 与本机路径；网址（协议名小写的 `http://`、`https://`）的留在正文里交给适配器，其余写法的网址去掉。
+  本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉、投递报失败，所有会话一样，这道过滤只在适配器里做。存储里的
+  媒体要由 plugin-image-sender 在 `outbound:dispatch` 上先摘出来、与 `send_attachment` 一样按文件头核对后转成同类附件，再由
+  适配器按附件发出：受众只有 owner 的会话（房间类别 owner-only）里不过判据，发给 owner 看不越权；其余会话按非 owner 过判据；
+  会话管理不在时判不出受众，按不是只有 owner。不过判据的、读不出的与不是对应媒体的去掉，适配器不会先把它们复制进会话的媒体
+  目录。别的写法的标记它不碰，留给适配器；它摘掉标记后两边的文字拼出的新标记也留给适配器，在解析出的消息段上判。
   这道转换要装了 plugin-image-sender、出站经网关派发才有：create-aalis 的 minimal 与 standard 档不装它，没装时或网关缺席时，
   存储地址的标记由适配器去掉、发不出，不会外泄。要让她在回复里发存储里的媒体，装 plugin-image-sender。
 
