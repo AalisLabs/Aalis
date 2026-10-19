@@ -82,7 +82,7 @@ export default definePlugin({
 
 1. **可免的确认**：只对授权身份是 owner 的回合（授权身份取守卫上下文的 `actor`，缺省即会话身份，不看物理发言者）。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认；`confirmOverrides` 设为 `'off'` 的能力连 `always` 也免。照旧免的是 owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排（运行身份见 [plugin-workflow](./plugin-workflow.md#定义者与运行身份)）。别人发起的回合照旧确认：群成员、别人的私聊里对方发起的、创建者不是 owner 的定时任务、MCP 客户端（`mcp:mcp-client` 不是 owner）、没有授权主体的回合（群里的频率触发、空闲触发、主动发言、白纸任务完成通知等，授权身份是匿名），以及定义者不是 owner 或没有定义者的编排。owner 在群里亲手发起、从 WebUI 往房间插话的回合，授权身份也是 owner，照旧免。其余情形 `always` 每次确认，cron 等无人可问的上下文即拒。
 2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（适配器没给发出者的消息）无从确认，直接拒。不走 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。
-3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。
+3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。审批推给覆盖这个会话的在场审批面：WebUI 与终端；owner 在与她的 IM 私聊里发起的，装了 [plugin-chat-approval](./plugin-chat-approval.md) 时也推回这个私聊，owner 引用审批消息回复「同意」或「拒绝 原因」即结。
 
 命中硬禁、封禁，或等级不够、所属组也不覆盖即拒：发起者本人不能靠确认给自己提权，白名单也不放宽授权。
 

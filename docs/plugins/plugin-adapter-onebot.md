@@ -83,6 +83,8 @@ export default definePlugin({
 
 出站消息带 `replyTo`（被引用消息的平台消息 id，见 [schema-message](../api/schema-message.md#outgoingmessage)）时，只给第一条分条加引用段：v11 写作 `{ type: 'reply', data: { id } }`（id 能转成数字的按数字给），v12 写作 `{ type: 'reply', data: { message_id } }`；正文里模型自己写了 `<reply id>` 标记的，以它为准，不加第二个。现在只有 plugin-agent 回复后台任务的结束通知时带它，引用起那次工具调用的消息。
 
+正文送达时，投递结果带上实现端给的各分条的 `message_id`（`messageIds`，按发送顺序，转成字符串，与入站引用段里的 id 同一写法）；附件的消息段与上传的文件不算在内。
+
 ## sessionId 格式
 
 ```

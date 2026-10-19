@@ -158,6 +158,7 @@ const approval = (id: string, sessionId: string): Approval => ({
   facts: { command: 'ls', params: {} },
   options: ['approve', 'deny'],
   contentHash: `hash-${id}`,
+  expiresAt: 300_000,
   state: 'pending',
 });
 

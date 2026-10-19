@@ -589,6 +589,8 @@ export const ApprovalSchema = z.object({
   options: z.array(z.enum(['approve', 'deny'])),
   /** 应答时原样带回 */
   contentHash: z.string(),
+  /** 到期的时刻（毫秒时间戳） */
+  expiresAt: z.number(),
   state: ApprovalStateSchema,
 });
 

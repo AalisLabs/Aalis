@@ -334,6 +334,7 @@ interface Approval {
   facts: { command?: string; cwd?: string; diff?: { path: string; patch?: string }; params: Record<string, unknown> };
   options: Array<'approve' | 'deny'>;
   contentHash: string;        // 应答时原样带回
+  expiresAt: number;          // 到期的时刻（毫秒时间戳）
   state: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled';
 }
 ```

@@ -1118,6 +1118,46 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-chat-approval:
+    dependencies:
+      '@aalis/api-approval':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-approval
+      '@aalis/api-authority':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-hooks
+      '@aalis/api-platform':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-platform
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
+      '@aalis/schema-message':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../schema-message
+      '@aalis/util-bounded-map':
+        specifier: workspace:>=0.6.1 <1.0.0
+        version: link:../util-bounded-map
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-checkpoint:
     dependencies:
       '@aalis/api-checkpoint':

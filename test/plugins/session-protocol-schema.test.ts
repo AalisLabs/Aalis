@@ -99,6 +99,7 @@ const approval: Approval = {
   facts: { diff: { path: 'workspace:/a.txt', patch: '-旧\n+新' }, params: {} },
   options: ['approve', 'deny'],
   contentHash: 'f'.repeat(64),
+  expiresAt: 300_000,
   state: 'pending',
 };
 

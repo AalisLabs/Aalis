@@ -347,11 +347,15 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
 
 /**
  * 传输端确认已接受消息，不代表收件人已阅读；失败也 resolve，避免无人等待时产生拒绝。
+ * 成功分支的 messageIds 是正文送达时平台给出的消息 id（分条发出的各一个，按发送顺序；与入站 replyTo.messageId 同一写法，
+ * 引用回复据此认出被引用的是哪一条），平台不给时没有。
  * 失败分支的 error 是给人看的原因，可以是文字对象（@aalis/schema-i18n 的 TextRef，按读者语言显示）；交给模型与写日志的
  * 一方取 toSource。unconfirmed 表示请求已经发出、只是没等到平台确认（如 OneBot 文件上传超时），消息可能已经送达：
  * 发起方不得自动重发，也不得劝模型重发。没有这个标记的失败才是确定没送达。
  */
-export type OutboundDeliveryResult = { ok: true } | { ok: false; error: string | TextRef; unconfirmed?: true };
+export type OutboundDeliveryResult =
+  | { ok: true; messageIds?: string[] }
+  | { ok: false; error: string | TextRef; unconfirmed?: true };
 
 /**
  * 发起方等待传输确认的上限。适配器自身的重试窗口可能更长（如 OneBot 单个附件最坏约 150 秒），

@@ -257,6 +257,12 @@ describe('create-aalis 生成的项目', () => {
     expect(servicesOf(pluginSet({ tier: 'full', catalog: null }, true)).has('reach')).toBe(true);
   });
 
+  it('standard 与 full 档带上聊天审批（owner 与她的 IM 私聊作审批面）', () => {
+    const name = '@aalis/plugin-chat-approval';
+    expect(pluginSet({ tier: 'standard', picks: defaultPicks('standard', false) }, true).has(name)).toBe(true);
+    expect(pluginSet({ tier: 'full', catalog: null }, true).has(name)).toBe(true);
+  });
+
   it('默认流程：对话模型三选一 × 平台组合 × 语义记忆要或不要 × 探到或没探到 Ollama，依赖都闭合', async () => {
     const broken: string[] = [];
     let checked = 0;

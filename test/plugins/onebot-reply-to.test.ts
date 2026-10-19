@@ -13,8 +13,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 出站的回复引用（OutgoingMessage.replyTo）：onebot 只给第一条分条加引用段，v11 与 v12 各按自己的消息段写法；
-// 没有 replyTo 的不加；她的回复（markup）正文里模型已经写了引用标记的，不再加第二个。本地起一个假的 OneBot 实现端记录
-// 发出的 action。
+// 没有 replyTo 的不加；她的回复（markup）正文里模型已经写了引用标记的，不再加第二个。投递结果带各分条的平台消息 id。
+// 本地起一个假的 OneBot 实现端记录发出的 action，发消息的 action 回一个递增的消息 id。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -91,12 +91,15 @@ async function boot(protocol: 'v11' | 'v12') {
         server.close(() => r());
       }),
   );
+  const sendAction = protocol === 'v11' ? 'send_group_msg' : 'send_message';
   const actions: Array<{ action: string; params: Record<string, unknown> }> = [];
+  let messageId = 100;
   server.on('connection', ws => {
     ws.on('message', raw => {
       const req = JSON.parse(raw.toString()) as { action: string; params: Record<string, unknown>; echo?: string };
       actions.push({ action: req.action, params: req.params });
-      if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }));
+      const data = req.action === sendAction ? { message_id: ++messageId } : { user_id: SELF };
+      if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data, echo: req.echo }));
     });
   });
 
@@ -118,12 +121,14 @@ async function boot(protocol: 'v11' | 'v12') {
   return {
     async send(msg: OutgoingMessage) {
       await host.events.use.emit('outbound:message', msg);
-      expect(await msg.delivery).toEqual({ ok: true });
+      const result = await msg.delivery;
+      expect(result?.ok).toBe(true);
+      return result;
     },
     /** 发出的各条消息的消息段 */
     sent: () =>
       actions
-        .filter(a => a.action === (protocol === 'v11' ? 'send_group_msg' : 'send_message'))
+        .filter(a => a.action === sendAction)
         .map(a => a.params.message as Array<{ type: string; data: Record<string, unknown> }>),
   };
 }
@@ -139,6 +144,18 @@ describe.each([
     expect(sent).toHaveLength(2);
     expect(sent[0][0]).toEqual(reply);
     expect(sent[1].some(segment => segment.type === 'reply')).toBe(false);
+  });
+
+  it('投递结果带各分条的平台消息 id，按发送顺序；不分条的正文只有一个', async () => {
+    const t = await boot(protocol);
+    expect(await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'agent', markup: true })).toEqual({
+      ok: true,
+      messageIds: ['101', '102'],
+    });
+    expect(await t.send({ sessionId: GROUP, content: TWO_PIECES, source: 'system' })).toEqual({
+      ok: true,
+      messageIds: ['103'],
+    });
   });
 
   it('没有 replyTo 时都不加', async () => {

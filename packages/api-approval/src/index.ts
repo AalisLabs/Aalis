@@ -7,7 +7,7 @@
  *
  * 三类使用方：
  * - 发起方（执行守卫）：`request(req, signal)` 发起一个审批并等它结算，拒绝时结果里带着回给模型的话；
- * - 审批面（WebUI、终端）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端 `attend` 一次，
+ * - 审批面（WebUI、终端、IM 私聊）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端 `attend` 一次，
  *   在场上报与应答都经它，审计里的审批面取登记身份，不取调用方自报；
  * - 展示方：`list()` 与 `approval:created`、`approval:settled` 事件。
  */
@@ -96,6 +96,8 @@ export interface Approval {
   options: Array<'approve' | 'deny'>;
   /** 请求内容（会话、回合、调用、工具与参数）的哈希，应答时原样带回 */
   contentHash: string;
+  /** 到期的时刻（毫秒时间戳），是这张审批自己的事实：审批服务推出时按它的等待时限填，到时没人应答即按过期结算 */
+  expiresAt: number;
   state: ApprovalState;
 }
 
@@ -153,15 +155,15 @@ export interface ApprovalAnswer {
 }
 
 /**
- * 应答被拒的原因：`forbidden` 应答人不是 owner；`not-found` 不是本服务签发的 id；`approval-settled` 已经结算
- * （先答先得，后到的都是它）；`hash-mismatch` 内容哈希对不上；`unavailable` 审批服务不在
+ * 应答被拒的原因：`forbidden` 应答人不是 owner；`not-found` 不是本服务签发的 id，或审批不在接入限定的会话里；
+ * `approval-settled` 已经结算（先答先得，后到的都是它）；`hash-mismatch` 内容哈希对不上；`unavailable` 审批服务不在
  */
 export type ApprovalRefusal = 'forbidden' | 'not-found' | 'approval-settled' | 'hash-mismatch' | 'unavailable';
 
 /** 应答的结果。被拒时 message 是给应答人看的原因，可以是文字对象（出口按读者语言渲染） */
 export type ApprovalResponse = { ok: true } | { ok: false; refusal: ApprovalRefusal; message: string | TextRef };
 
-/** 审批面的一个客户端（WebUI 的一条连接、终端）：在场上报与应答都记在它接入的审批面的登记身份名下 */
+/** 审批面的一个客户端（WebUI 的一条连接、终端、一个 IM 私聊）：在场上报与应答都记在它接入的审批面的登记身份名下 */
 export interface ApprovalAttendance {
   /**
    * 在场上报。true 表示刚有键盘或指针活动（WebUI 另要页面可见），最近一次这样的上报在时限内即算在场；
@@ -181,15 +183,18 @@ export interface ApprovalIdentity {
 
 /** 登记过的审批面 */
 export interface ApprovalSurface {
-  /** 登记名（webui、cli） */
+  /** 登记名（webui、cli、chat） */
   readonly name: string;
-  /** 接入一个客户端 */
-  attend(who: ApprovalIdentity, sink: ApprovalSink): ApprovalAttendance;
+  /**
+   * 接入一个客户端。给了 sessionId 的接入限定在这个会话：只算这个会话的在场、只收和只能应答这个会话的审批（如 IM 私聊，
+   * 每个私聊一份）；不给的覆盖全部会话（WebUI 的连接、终端）
+   */
+  attend(who: ApprovalIdentity, sink: ApprovalSink, sessionId?: string): ApprovalAttendance;
 }
 
 /** 提供者那一侧的审批面登记；登记撤回时 detach */
 export interface SurfaceBinding {
-  attend(who: ApprovalIdentity, sink: ApprovalSink): ApprovalAttendance;
+  attend(who: ApprovalIdentity, sink: ApprovalSink, sessionId?: string): ApprovalAttendance;
   detach(): void;
 }
 
@@ -234,13 +239,13 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
   });
 
   /** 客户端的句柄转到当前提供者的登记上；提供者换了，下一次调用时在新的登记上重新接入 */
-  function attend(entry: Entry, who: ApprovalIdentity, sink: ApprovalSink): ApprovalAttendance {
+  function attend(entry: Entry, who: ApprovalIdentity, sink: ApprovalSink, sessionId?: string): ApprovalAttendance {
     let left = false;
     let current: { binding: SurfaceBinding; attendance: ApprovalAttendance } | undefined;
     const bound = () => {
       const binding = entry.binding;
       if (left || !binding) return undefined;
-      if (current?.binding !== binding) current = { binding, attendance: binding.attend(who, sink) };
+      if (current?.binding !== binding) current = { binding, attendance: binding.attend(who, sink, sessionId) };
       return current.attendance;
     };
     bound();
@@ -259,7 +264,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
     registerSurface: (name: string): ApprovalSurface => {
       const entry: Entry = { name };
       surfaces.add(entry);
-      return { name, attend: (who, sink) => attend(entry, who, sink) };
+      return { name, attend: (who, sink, sessionId) => attend(entry, who, sink, sessionId) };
     },
   });
 });
