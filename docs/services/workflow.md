@@ -20,7 +20,11 @@ export interface WorkflowService {
   listWorkflows(): WorkflowDef[];
   /** 按 id 获取定义 */
   getWorkflow(id: string): WorkflowDef | undefined;
-  /** 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml */
+  /**
+   * 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml。
+   * 经这里定义或覆盖的没有定义者（运行身份见 runWorkflow）：服务认不出调用方是谁，定义者只由实现
+   * 自己认证过调用者的入口记下
+   */
   defineWorkflow(def: WorkflowDef, opts?: { persist?: boolean }): Promise<void>;
   /** 删除工作流（若 persist 文件存在则删除；有文件的定义删不掉文件时抛错） */
   removeWorkflow(id: string): Promise<boolean>;
@@ -58,7 +62,6 @@ export interface WorkflowDef {
   trigger: TriggerSpec;            // manual 表示仅手动调用
   nodes: NodeSpec[];               // DAG 节点
   enabled?: boolean;
-  definedBy?: { platform: string; userId: string };  // 定义者：调用方填自己的授权身份，不写进定义文件（见 §6）
 }
 ```
 
@@ -147,7 +150,7 @@ await events.use.emit('trigger:fired' as any, {
 
 `WorkflowService` 的 8 个方法都应实现（接口无可选成员）。最小语义：
 - `listWorkflows` / `getWorkflow`：返回内存中的定义。
-- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘；记下 `def.definedBy`，覆盖即换成覆盖者，落盘时不写进定义文件、载入时不从定义文件读（见 §6）。
+- `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘；经它定义或覆盖的没有定义者，覆盖即清掉原来的定义者（见 §6）。
 - `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必按运行身份执行内部工具调用与投递的消息**，定时与事件触发以定义者作调用者（见 §6）。
 - `cancelRun` / `getRun` / `listRuns`：运行实例管理（`cancelRun` 可降级为始终返回 false，但参考实现经 AbortSignal 真实支持）。
 
@@ -298,9 +301,9 @@ await events.use.emit('trigger:fired', {
 
 工作流按**定义者与调用者里不是 owner 的一方**裁决，杜绝借他人 workflow 提权，也借不到 owner 的免确认。参考实现各入口的定义者与调用者、哪几种编排没有定义者，见 [plugin-workflow](../plugins/plugin-workflow.md#定义者与运行身份)。provider 作者重实现时**必须守住下面几条**：
 
-- **定义者**：不写进定义文件，也不从定义文件读（工作区能被别的工具写，文件里的定义者伪造得出来）；记下定义者时连同写进文件的文本的哈希，载入时哈希对得上才认。`definedBy` 由调用方按认证出的身份填写，服务原样记下：转交外部来的定义之前先删掉这个键。
+- **定义者**：只由实现自己认证过调用者的入口记下（参考实现是 `workflow_define` 工具与工作流页），经服务的 `defineWorkflow` 定义或覆盖的没有定义者：服务认不出调用方是谁，契约也不收调用方报上来的定义者。定义者不写进定义文件，也不从定义文件读（工作区能被别的工具写，文件里的定义者伪造得出来）；记下定义者时连同写进文件的文本的哈希，载入时哈希对得上才认。
 - **运行身份**：调用者是 owner 时取定义者（没有即匿名），否则取调用者。
-- **触发**：定时与事件触发以定义者作调用者。事件参数与 `trigger:fired` 的 `payload` 作为 `vars` 进入这次运行，插值进 `agent` 节点的指令或 `send-message` 的正文时就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信。
+- **触发**：定时与事件触发以定义者作调用者。事件参数与 `trigger:fired` 的 `payload` 作为 `vars` 进入这次运行，插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 的正文时就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信：`event` 触发器不订阅负载带会话内容的事件（参考实现的列表见 [plugin-workflow](../plugins/plugin-workflow.md#触发器)）。
 - **传递**：运行身份放进 `toolCallContext.actor`（`platform` 保持 `'workflow'`），`tool` 节点按它过 authority 闸，`send-message` 与 `agent` 节点投递的消息带同一个 `actor`；匿名只能跑 `public`（risk safe、minLevel 0）工具。
 
 漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 调起成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。

@@ -16,7 +16,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
-// 工作流页：新建或覆盖是带输入的动作（粘贴完整 YAML），「查看 YAML」是定义表格的详情，启用与停用按行状态显示。
+// 工作流页：新建或覆盖是带输入的动作（粘贴完整 YAML），「查看 YAML」是定义表格的详情，启用与停用按行状态显示。定义表列出
+// 定义者，没有定义者的（如手写进定义目录的）写「匿名」。
 // 运行、定义与删除都推 invalidate；删除不存在的、运行失败的回错误。真 storage-local + 真 tools + webui-server 的真实登记表。
 // ════════════════════════════════════════════════════════════
 
@@ -94,13 +95,19 @@ describe('工作流页', () => {
     await boot();
     expect(pages.logs).toEqual([]);
     expect(pages.view('workflows')).toMatchObject({ title: '工作流', placement: 'plugin', icon: 'workflow' });
+    expect(toSource(pages.view('workflows').content)).toContainEqual(
+      expect.objectContaining({
+        id: 'workflows',
+        columns: expect.arrayContaining([{ key: 'definedBy', label: '定义者' }]),
+      }),
+    );
     expect(await pages.data('workflows', 'summary')).toEqual([
       { label: '定义', value: 1 },
       { label: '启用', value: 1 },
       { label: '24 小时运行', value: 0 },
       { label: '24 小时失败', value: 0 },
     ]);
-    expect(await pages.data('workflows', 'workflows')).toEqual([
+    expect(toSource(await pages.data('workflows', 'workflows'))).toEqual([
       {
         id: 'zz-manual',
         name: '手动计数',
@@ -110,6 +117,7 @@ describe('工作流页', () => {
         enabled: true,
         disabled: false,
         description: '每次运行计一次',
+        definedBy: '匿名',
       },
     ]);
     const yaml = await pages.data<string>('workflows', 'yaml', { rowKey: 'zz-manual' });
@@ -166,6 +174,9 @@ describe('工作流页', () => {
       body: { message: expect.objectContaining({ source: '已保存工作流 zz-second' }) },
     });
     expect(svc.getWorkflow('zz-second')).toBeDefined();
+    expect(toSource(await pages.data('workflows', 'workflows'))).toContainEqual(
+      expect.objectContaining({ id: 'zz-second', definedBy: 'webui:console' }),
+    );
     expect(existsSync(join(base, 'workspace', 'workflows', 'zz-second.yaml'))).toBe(true);
     expect(invalidated(before)).toContainEqual(WHOLE_PAGE);
 

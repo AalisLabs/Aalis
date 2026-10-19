@@ -1,5 +1,5 @@
-// 本插件自己的原文字典：运行的错误原因（节点失败）、运行的状态、「立即运行」没有成功的报错，以及保存与启停的回执和
-// once 记账读不出时的附注（附注与 workflow_define 共用，工具取原文）
+// 本插件自己的原文字典：运行的错误原因（节点失败）、运行的状态、「立即运行」没有成功的报错，保存与启停的回执和
+// once 记账读不出时的附注（附注与 workflow_define 共用，工具取原文），以及定义表的定义者一列
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -19,6 +19,8 @@ const SOURCE = {
   onceSkippedPersisted:
     'once 记账读取失败（见日志），本次运行不会触发；可用{manualRun}手动执行，修复运行历史文件后重启恢复',
   runNow: '「立即运行」',
+  definedBy: '定义者',
+  anonymous: '匿名',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -51,7 +51,7 @@
 ## 调度与运维
 | 服务 | 定位 |
 |---|---|
-| [workflow](workflow.md) | 工作流引擎 + 触发器；event 触发 payload 作为 `{{vars.X}}` 注入。 |
+| [workflow](workflow.md) | 工作流引擎 + 触发器；event 触发的事件参数以 `{{vars.args}}` 注入。 |
 | [cron-engine](cron-engine.md) | cron 调度原语（workflow/scheduler 触发器底层）。 |
 | [doctor](doctor.md) | 健康检查注册与聚合。 |
 

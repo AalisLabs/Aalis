@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type ToolCallContext, tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
+import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
 import { type App, events, provide, services } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
@@ -18,9 +18,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
-// 编排的运行身份取定义者与调用者里不是 owner 的一方。定义者由定义它的入口记下（workflow_define 取调用者的授权身份，
-// 工作流页取登录的 owner），覆盖即换成覆盖者，记在运行历史文件的账本里、连同定义文件文本的哈希；定时与事件触发以定义者
-// 作调用者，工作流页「立即运行」的调用者是登录的 owner。手写的、文件被改过的、账本读不出的没有定义者，按匿名。
+// 编排的运行身份取定义者与调用者里不是 owner 的一方。定义者由本插件自己的入口记下（workflow_define 取调用者的授权身份，
+// 工作流页取登录的 owner），经服务的 defineWorkflow 定义的没有定义者；覆盖即换成覆盖者，记在运行历史文件的账本里、连同
+// 定义文件文本的哈希；定时与事件触发以定义者作调用者，工作流页「立即运行」的调用者是登录的 owner。手写的、文件被改过的、
+// 账本读不出的没有定义者，按匿名。
 // 权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 // 真 storage-local、真工具注册表与权限插件：zz_whoami 记下每次执行时的授权身份；zz_confirm 声明需要确认，确认覆盖设为
 // off（只对 owner 免），没有审批服务，不免的一律拒。
@@ -169,6 +170,20 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed).toBe(0);
   });
 
+  it('经服务的 defineWorkflow 覆盖：没有定义者，账本里原来的定义者也清掉，重启后照旧按匿名', async () => {
+    const first = await boot();
+    await first.tool('workflow_define', { yaml: MANUAL }, OWNER);
+    // 原样覆盖：写进文件的文本与哈希都不变，只有清了账重启后才认不回 owner
+    await first.svc.defineWorkflow(first.svc.getWorkflow(ID) as WorkflowDef);
+    await first.tool('workflow_run', { id: ID }, OWNER);
+    await first.app.stop();
+
+    const second = await boot();
+    await second.tool('workflow_run', { id: ID }, OWNER);
+    expect(actors).toEqual([undefined, undefined]);
+    expect(confirmed).toBe(0);
+  });
+
   it('定义者取授权身份、不取物理发言者：物理发言者是 owner 的自发回合定义的，没有定义者', async () => {
     const s = await boot();
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER, selfInitiatedActor('onebot'));
@@ -208,13 +223,21 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     await s.act('runWorkflow', { rowKey: ID });
     expect(actors).toEqual([undefined]);
   });
+
+  it('权限服务不在时，同一身份定义又调起的编排按这个身份执行', async () => {
+    const s = await boot();
+    await s.tool('workflow_define', { yaml: MANUAL }, MEMBER);
+    expect(await s.app.plugins.disable(authorityPlugin.name)).toBe(true);
+    await s.svc.runWorkflow(ID, {}, 'manual', MEMBER);
+    expect(actors).toEqual([MEMBER]);
+  });
 });
 
 describe('定义者账本', () => {
   it('定义者不写进定义文件；文件没被改过的，重启后照旧按定义者', async () => {
     const first = await boot();
     await first.tool('workflow_define', { yaml: MANUAL }, MEMBER);
-    expect(readFileSync(defFile(), 'utf8')).not.toMatch(/definedBy|30001/);
+    expect(readFileSync(defFile(), 'utf8')).not.toMatch(/30001/);
     await first.app.stop();
 
     const second = await boot();

@@ -7,11 +7,10 @@
 //           definers: { <workflowId>: { platform, userId, sha256 } } }。
 // ============================================================
 
+import type { UserIdentity } from '@aalis/api-authority';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
-import type { WorkflowDef, WorkflowRun } from '@aalis/api-workflow';
+import type { WorkflowRun } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
-
-type Definer = NonNullable<WorkflowDef['definedBy']>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const filled = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
@@ -28,7 +27,7 @@ export class RunStore {
    * 定义者账本：workflowId → 定义者与写进定义文件的那份文本的哈希。不放进定义文件：工作区能被别的工具写，写在文件里的
    * 定义者伪造得出来。与运行历史同文件，读不出时没有定义者
    */
-  private definers: Record<string, Definer & { sha256: string }> = {};
+  private definers: Record<string, UserIdentity & { sha256: string }> = {};
   private writeChain: Promise<void> = Promise.resolve();
   /**
    * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整份快照，
@@ -130,13 +129,13 @@ export class RunStore {
   }
 
   /** 定义文件这份文本的定义者：账本里的哈希对得上才有，手写的、被改过的与没有记账的都没有 */
-  definerOf(workflowId: string, sha256: string): Definer | undefined {
+  definerOf(workflowId: string, sha256: string): UserIdentity | undefined {
     const entry = this.definers[workflowId];
     return entry?.sha256 === sha256 ? { platform: entry.platform, userId: entry.userId } : undefined;
   }
 
   /** 记下写进定义文件的这份文本的定义者；匿名定义的清掉这一条，不留覆盖之前的定义者 */
-  recordDefiner(workflowId: string, definer: Definer | undefined, sha256: string): void {
+  recordDefiner(workflowId: string, definer: UserIdentity | undefined, sha256: string): void {
     if (!definer && !this.definers[workflowId]) return;
     if (definer) this.definers[workflowId] = { platform: definer.platform, userId: definer.userId, sha256 };
     else delete this.definers[workflowId];

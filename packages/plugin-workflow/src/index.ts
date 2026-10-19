@@ -6,7 +6,7 @@
 // 定义存 workspace:/workflows/*.yaml。
 // ============================================================
 
-import { authority } from '@aalis/api-authority';
+import { authority, type UserIdentity } from '@aalis/api-authority';
 import { cronEngine } from '@aalis/api-cron-engine';
 import { hooks } from '@aalis/api-hooks';
 import { isStorageUri, storage } from '@aalis/api-storage';
@@ -17,10 +17,10 @@ import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, toSource } from '@aalis/schema-i18n';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 import { errorReason, runDag, validateGraph } from './engine.js';
-import { definitionText, normalizeDef, WorkflowLoader } from './loader.js';
+import { normalizeDef, WorkflowLoader } from './loader.js';
 import { RunStore } from './persistence.js';
 import { t } from './texts.js';
 import { TriggerManager } from './triggers.js';
@@ -77,9 +77,12 @@ function triggerSummary(t: { type: string; expr?: string; seconds?: number; runA
 }
 
 /** 有平台与用户 ID 的才是一个身份，缺一个即匿名 */
-function identityOf(who: { platform?: string; userId?: string } | undefined): WorkflowDef['definedBy'] {
+function identityOf(who: { platform?: string; userId?: string } | undefined): UserIdentity | undefined {
   return who?.platform && who.userId ? { platform: who.platform, userId: who.userId } : undefined;
 }
+
+/** 定义表里的定义者：平台:用户 ID，没有的写「匿名」 */
+const identityText = (who: UserIdentity | undefined) => (who ? `${who.platform}:${who.userId}` : t('anonymous'));
 
 function fmtDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';
@@ -116,19 +119,35 @@ const STATUS: Record<WorkflowRun['status'], { text: TextRef; state?: 'error' | '
 };
 
 /**
+ * 记定义者的定义口，只给本插件自己的入口（AI 工具、工作流页）：它们认证得出调用者，定义时记下定义者。经服务的
+ * defineWorkflow 定义或覆盖的一律没有定义者
+ */
+interface Definitions {
+  /** 定义或覆盖，定义者换成 definer（覆盖即换成覆盖者，undefined 即匿名） */
+  define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined): Promise<void>;
+  /** 现在的定义者，没有即匿名 */
+  definedBy(id: string): UserIdentity | undefined;
+}
+
+/**
  * 工作流页：处理函数是闭包，直接用本次激活构造的 WorkflowService，不按名回查容器（查到的可能是别人提供的同名服务）。
  * 返回页面的句柄：定义增删与运行起止时让它重取
  */
-function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLedgerReadable: () => boolean) {
+function defineWorkflowPage(
+  webui: BoundWebui,
+  service: WorkflowService,
+  definitions: Definitions,
+  onceLedgerReadable: () => boolean,
+) {
   const definitionOf = (id: string): WorkflowDef => {
     const def = service.getWorkflow(id);
     if (!def) throw new Error(`工作流 ${id} 不存在`);
     return def;
   };
-  /** 启用或停用：改的是写在磁盘上的定义 */
+  /** 启用或停用：改的是写在磁盘上的定义，定义者沿用原来的 */
   const setEnabled = async (id: string, enabled: boolean): Promise<TextRef> => {
     const next = { ...definitionOf(id), enabled };
-    await service.defineWorkflow(next, { persist: true });
+    await definitions.define(next, true, definitions.definedBy(id));
     const note = onceSkippedNote(next, true, onceLedgerReadable(), t('runNow'));
     return withNote(t(enabled ? 'enabled' : 'disabled', { id }), note);
   };
@@ -200,7 +219,7 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
           }
           const def = normalizeDef(raw, `wf-${Date.now()}`);
           if (!def) throw new Error('定义不合法：缺少 trigger 或 nodes');
-          await service.defineWorkflow({ ...def, definedBy: ctx.caller }, { persist: input.persist });
+          await definitions.define(def, input.persist, ctx.caller);
           const note = onceSkippedNote(def, input.persist, onceLedgerReadable(), t('runNow'));
           return withNote(t('saved', { id: def.id }), note);
         },
@@ -236,6 +255,7 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
           { key: 'trigger', label: '触发' },
           { key: 'nodes', label: '节点数' },
           { key: 'status', label: '状态', kind: 'status', primary: true },
+          { key: 'definedBy', label: t('definedBy') },
           { key: 'description', label: '描述', kind: 'long-text' },
         ],
         rowActions: [
@@ -254,13 +274,14 @@ function defineWorkflowPage(webui: BoundWebui, service: WorkflowService, onceLed
             enabled: d.enabled !== false,
             disabled: d.enabled === false,
             description: d.description ?? '',
+            definedBy: identityText(definitions.definedBy(d.id)),
           })),
         detail: [
           {
             type: 'markdown',
             id: 'yaml',
             label: 'YAML',
-            data: ({ rowKey }) => markdownCode(definitionText(definitionOf(rowKey)), 'yaml'),
+            data: ({ rowKey }) => markdownCode(stringify(definitionOf(rowKey)), 'yaml'),
           },
         ],
       },
@@ -366,7 +387,7 @@ async function run(caps: Caps): Promise<void> {
 
   /** 定时与事件触发：以定义者作调用者 */
   const runAsDefiner = (workflowId: string, vars: Record<string, unknown>, source: string) =>
-    runById(workflowId, vars, source, loader.get(workflowId)?.definedBy);
+    runById(workflowId, vars, source, loader.definedBy(workflowId));
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
   const triggers = new TriggerManager(
@@ -407,7 +428,7 @@ async function run(caps: Caps): Promise<void> {
    * 运行身份：调用者是 owner 时取定义者（没有即匿名），否则取调用者。两者都是 owner 才按 owner 跑，有一方不是 owner 就由
    * 那一方定：owner 调起别人定义或覆盖过的编排按那个人的等级执行，免确认也只对 owner 生效，借别人的编排提不了权
    */
-  function runIdentity(invoker: WorkflowDef['definedBy'], definer: WorkflowDef['definedBy']): WorkflowDef['definedBy'] {
+  function runIdentity(invoker: UserIdentity | undefined, definer: UserIdentity | undefined): UserIdentity | undefined {
     if (caps.authority.present) {
       return invoker && caps.authority.use.isOwner(invoker.platform, invoker.userId) ? definer : invoker;
     }
@@ -424,7 +445,7 @@ async function run(caps: Caps): Promise<void> {
     const def = loader.get(workflowId);
     if (!def) throw new Error(`workflow "${workflowId}" 不存在`);
     if (def.enabled === false) throw new Error(`workflow "${workflowId}" 已禁用`);
-    const actor = runIdentity(identityOf(caller), def.definedBy);
+    const actor = runIdentity(identityOf(caller), loader.definedBy(workflowId));
 
     const runId = `${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const vars = { ...(def.vars ?? {}), ...extraVars };
@@ -490,6 +511,19 @@ async function run(caps: Caps): Promise<void> {
     return run;
   }
 
+  /** 定义或覆盖：定义者记进账本，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存 */
+  async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
+    const err = validateGraph(def);
+    if (err) throw new Error(err);
+    if (persist) runStore.recordDefiner(def.id, definer, await loader.saveDef(def));
+    loader.putMemory(def, definer);
+    // 重新触发器
+    triggers.register(def);
+    page.invalidate();
+    logger.info(`workflow 已定义: ${def.id} (持久化=${persist})`);
+  }
+  const definitions: Definitions = { define, definedBy: id => loader.definedBy(id) };
+
   // ── WorkflowService ──
   const service: WorkflowService = {
     listWorkflows() {
@@ -498,19 +532,9 @@ async function run(caps: Caps): Promise<void> {
     getWorkflow(id) {
       return loader.get(id);
     },
-    async defineWorkflow(def, opts) {
-      const err = validateGraph(def);
-      if (err) throw new Error(err);
-      // 定义者记进账本，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存
-      if (opts?.persist !== false) {
-        runStore.recordDefiner(def.id, def.definedBy, await loader.saveDef(def));
-      } else {
-        loader.putMemory(def);
-      }
-      // 重新触发器
-      triggers.register(def);
-      page.invalidate();
-      logger.info(`workflow 已定义: ${def.id} (持久化=${opts?.persist !== false})`);
+    defineWorkflow(def, opts) {
+      // 认不出调用方是谁：没有定义者
+      return define(def, opts?.persist !== false, undefined);
     },
     async removeWorkflow(id) {
       // 先删文件，删不掉就抛错、触发器与 once 记账原样保留：先清账的话，重启后定义被重新载入，过期 once 会重放
@@ -538,12 +562,12 @@ async function run(caps: Caps): Promise<void> {
   };
 
   provide.use(workflow, service);
-  const page = defineWorkflowPage(webui.use, service, () => runStore.onceLedgerReadable());
+  const page = defineWorkflowPage(webui.use, service, definitions, () => runStore.onceLedgerReadable());
 
   // ── AI 工具 ──
   // tools 晚上线也无妨：登记口在提供者缺席时先挂账，上线后自动补挂
   if (config.enableTools) {
-    registerTools(tools.use, service, () => runStore.onceLedgerReadable());
+    registerTools(tools.use, service, definitions, () => runStore.onceLedgerReadable());
   }
 
   // ── 清理 ──
@@ -564,7 +588,12 @@ async function run(caps: Caps): Promise<void> {
 // ─── AI 工具注册 ───
 
 /** onceLedgerReadable：once 记账读不出时本次运行不安排 once，workflow_define 的回执据此如实说明 */
-function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerReadable: () => boolean): void {
+function registerTools(
+  tools: BoundTools,
+  service: WorkflowService,
+  definitions: Definitions,
+  onceLedgerReadable: () => boolean,
+): void {
   tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
 
   tools.register({
@@ -606,7 +635,7 @@ function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerRe
       try {
         // 定义者取调用者的授权身份，匿名的不记
         const definedBy = identityOf(callCtx.actor ?? { platform: callCtx.platform, userId: callCtx.userId });
-        await service.defineWorkflow({ ...def, definedBy }, { persist });
+        await definitions.define(def, persist, definedBy);
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
       }
