@@ -14,6 +14,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 //   之后追加的消息在段外，别的会话不动。
 // - 带条数的读法：条数为 0 时返回空，为 Infinity 时返回全部（跨会话查询收窄到后端配置的上限）；countHistory 是
 //   getHistory(…, Infinity) 的条数。
+// - updateMessageContent 改最近 recentLimit 条含 oldText（按字面，区分大小写）的消息，归档的也算。
 //
 // mongodb 的集合用内存替身，不经 apply（apply 会直连真实的 mongod）。替身照服务端的规矩：limit(0) 表示不限条数、
 // limit 不是整数时报错；排序键全部平票时按写入的逆序排——这是对抗方向：归档的排序去掉 _id 次键，同毫秒的几条就会
@@ -270,5 +271,24 @@ describe.each(BACKENDS)('%s：带条数的读法，条数为 0 时返回空、�
     expect(contents(await mem.getHistory('u'))).toEqual(['m0', 'm1', 'm2']);
     expect(await mem.updateMessageContent!('u', 'm', 'n', Infinity)).toBe(3);
     expect(contents(await mem.getHistory('u'))).toEqual(['n0', 'n1', 'n2']);
+  });
+
+  it('updateMessageContent（含归档）：改最近 recentLimit 条含 oldText 的消息，不含的不占条数', async () => {
+    const mem = await fresh();
+    for (const m of [msg('旧0', 1000), msg('旧1', 2000), msg('无关2', 3000), msg('无关3', 4000), msg('旧4', 5000)]) {
+      await mem.saveMessage('s', m);
+    }
+    await mem.archiveSpan('s', { count: 2, keep: [] });
+
+    expect(await mem.updateMessageContent!('s', '旧', '新', 2)).toBe(2);
+    expect(contents(await mem.getFullHistory!('s'))).toEqual(['旧0', '新1', '无关2', '无关3', '新4']);
+  });
+
+  it('updateMessageContent 按字面认 oldText：只是通配匹配或大小写不同的不算含，不占条数', async () => {
+    const mem = await fresh();
+    for (const m of [msg('img_A', 1000), msg('imgXA', 2000), msg('IMG_a', 3000)]) await mem.saveMessage('s', m);
+
+    expect(await mem.updateMessageContent!('s', 'img_A', 'new', 1)).toBe(1);
+    expect(contents(await mem.getHistory('s'))).toEqual(['new', 'imgXA', 'IMG_a']);
   });
 });

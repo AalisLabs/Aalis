@@ -216,7 +216,7 @@ export interface MemoryService {
    */
   commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
-  /** 在指定会话的最近 N 条消息中，将 content 里的 oldText 替换为 newText，返回受影响的条数 */
+  /** 指定会话 content 含 oldText 的消息（含归档）里最近的 recentLimit 条，把 oldText 替换为 newText，返回受影响的条数 */
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
 
   /** 按时间戳批量删除指定会话的消息（用于回滚整轮对话），返回实际删除条数 */
