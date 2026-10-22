@@ -495,6 +495,9 @@ importers:
 
   packages/api-message-archive:
     dependencies:
+      '@aalis/api-storage':
+        specifier: workspace:>=0.8.0 <1.0.0
+        version: link:../api-storage
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -925,7 +928,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-platform':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -1737,9 +1740,6 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-memory
-      '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-message-archive
       '@aalis/api-session-manager':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-session-manager
@@ -2253,11 +2253,14 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
@@ -2268,7 +2271,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
     devDependencies:
       '@aalis/core':
@@ -2769,6 +2772,9 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
+      '@aalis/api-message-archive':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-message-archive
       '@aalis/api-platform':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-platform
@@ -3733,7 +3739,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-package-manager':
         specifier: workspace:>=0.2.0 <1.0.0

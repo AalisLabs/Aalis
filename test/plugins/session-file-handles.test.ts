@@ -223,7 +223,7 @@ describe('会话条目里的文件句柄', () => {
     expect(fresh.snapshot.items, '历史里一样').toEqual(live.items());
   });
 
-  it('不是存储地址的文件（网址、data URL）：存档只记名字，历史里是「[文件] 名称」的通知，没有它的内容', async () => {
+  it('data URL 的文件：存档只记名字，历史里是「[文件] 名称」的通知，没有它的内容；网址的文件不签句柄，直接给网址', async () => {
     const { sm, send, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
     await send(s.id, [
@@ -231,9 +231,16 @@ describe('会话条目里的文件句柄', () => {
       { kind: 'file', data: 'https://example.invalid/a/b.pdf' },
     ]);
     const { snapshot } = await watch(s.id);
-    expect(snapshot.items.map(item => [item.kind, item.kind === 'notice' && item.text])).toEqual([
+    const shown = snapshot.items.map(item =>
+      item.kind === 'notice'
+        ? [item.kind, item.text]
+        : item.kind === 'agent-message'
+          ? [item.kind, item.attachments]
+          : [],
+    );
+    expect(shown).toEqual([
       ['notice', '[文件] 报告.pdf'],
-      ['notice', '[文件] b.pdf'],
+      ['agent-message', [{ kind: 'file', name: 'b.pdf', src: 'https://example.invalid/a/b.pdf' }]],
     ]);
     expect(JSON.stringify(snapshot.items)).not.toContain('enotaW5saW5lLWJ5dGVz');
   });

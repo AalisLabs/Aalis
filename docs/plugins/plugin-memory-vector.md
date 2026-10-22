@@ -57,13 +57,20 @@ export default definePlugin({
 ## 工作原理
 
 1. **消息入库**: 监听 `inbound:message:archived`（入站 user 消息）与 `assistant:message:archived`
-   （AI 自身落库回复）两个事件，metadata 带 `role`。入站侧 embed 归档文本（message-archive
-   已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀）；assistant 侧 embed 可见正文
+   （AI 自身落库回复，含她发出的附件的记录）两个事件，metadata 带 `role`。入站侧 embed 归档文本（message-archive
+   已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀），说话人、平台与群取存档记在元数据里的；assistant 侧 embed 可见正文
    （落库内容是结构化输出信封时取 metadata 的 `visibleContent`，缺省为 `content`），在取得自身身份时
    embed 前经 `prefixSender` 加自身发送者前缀；
    AI/系统撰写的伪 incoming 不入库（带 `hostNotice` 的宿主通知 / `source: idle-trigger` /
    `triggerType: proactive` / `source: scheduler` / `source: workflow:*` / `userId: parent:*`，
-   即宿主通知、闲聊主动触发、workflow agent 节点与定时/工作流/子任务派发）
+   即宿主通知、闲聊主动触发、workflow agent 节点与定时/工作流/子任务派发）；插件发出的媒体记成通知（role
+   `notice`），不进向量库
+   - 已落库的消息被改写（`memory:messages-rewritten`，如她发出的网址图片补上了识图描述）：排进同一个索引队列，
+     同一条（会话与时间戳）的收录或前一次改写还在做时先等它落定，同一条的几次改写按到达的先后落定。只管她与对方的发言：先按改写后的正文算出条目（assistant 按她的
+     发言，user 按存档消息的元数据，与入站收录同一份事实），算成了才按会话与时间戳删掉旧条目、写进新的；删不到的
+     （原来就没收录）不收录；向量化失败时旧条目留着，记一条 warn。向量存储没有 `deleteByFilter` 时记一条 warn、
+     不重收录，免得同一条留两份。条目按会话与时间戳认：存档给同一会话的出站记录错开了时间戳，但别的写入方（如 agent
+     存她的回复）按自己的时钟写，两条在同一毫秒落库时，换掉其中一条会连带删掉另一条的向量（回滚删向量同样如此）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
    - 将用户最新消息 embed 为查询向量
    - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；

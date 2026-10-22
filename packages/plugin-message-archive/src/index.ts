@@ -1,17 +1,19 @@
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
-import { messageArchive } from '@aalis/api-message-archive';
+import { messageArchive, outboundAddress, unaddressedText } from '@aalis/api-message-archive';
+import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import { isTextRef, type TextRef, truncateParams } from '@aalis/schema-i18n';
-import type { ArchivedAttachment, IncomingMessage, Message } from '@aalis/schema-message';
+import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
+import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } from '@aalis/schema-message';
 import {
   AttachmentRefKind,
   buildIncomingContent,
   getMessageName,
   outboundMarkerMessage,
+  outboundMediaMessage,
   parseAttachmentRefs,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -48,13 +50,15 @@ const REF_KINDS: Readonly<Record<ArchivedAttachment['kind'], string>> = {
   file: AttachmentRefKind.File,
 };
 
+const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
+
 /**
  * 能当地址的写法：网址，以及根在存储服务根表里的存储地址。预处理器换上的私有引用（形似存储地址、根不存在）与相对路径
  * 不算
  */
 function addressOf(value: string | undefined, roots: ReadonlySet<string>): string | undefined {
   if (!value) return undefined;
-  if (/^https?:\/\//i.test(value)) return value;
+  if (isWebUrl(value)) return value;
   return isStorageUri(value) && roots.has(parseUriRoot(value)) ? value : undefined;
 }
 
@@ -78,7 +82,74 @@ function recordText(meta: Record<string, unknown>, text: TextRef | undefined): v
   if (isTextRef(cut)) meta[WellKnownMetadataKeys.Text] = cut;
 }
 
-const uses = { memory, media: optional(media), storage: optional(storage), events, logger, config, provide };
+/** 她发的网址图片与视频补描述时等识图的上限：视频要抽帧加转写，放得更宽 */
+const DESCRIBE_TIMEOUT_MS = { image: 25_000, video: 30_000 } as const;
+
+/** 一条出站记录；pending 是记完之后要在后台补描述的（她发的、没带描述的网址图片与视频） */
+interface OutboundRecord {
+  message: Message;
+  pending?: { kind: keyof typeof DESCRIBE_TIMEOUT_MS; url: string };
+}
+
+/** 出站消息在会话历史里的各条，记法见 api-message-archive 的 recordOutbound */
+function outboundRecords(msg: OutgoingMessage): OutboundRecord[] {
+  const marker = outboundMarkerMessage(msg);
+  const records: OutboundRecord[] = marker ? [{ message: marker }] : [];
+  for (const att of msg.attachments ?? []) {
+    const address = outboundAddress(att);
+    if (address === undefined) {
+      const text = unaddressedText(att);
+      const metadata: Record<string, unknown> = {};
+      recordText(metadata, text);
+      records.push({
+        message: { role: 'system', kind: WellKnownKinds.EventMarker, content: toSource(text), metadata },
+      });
+      continue;
+    }
+    const file = att.kind === 'file';
+    const message: Message = {
+      ...outboundMediaMessage(att.kind, address, { desc: file ? att.name : att.description, source: msg.source }),
+      metadata: {
+        [WellKnownMetadataKeys.SentRef]: address,
+        ...(file && att.name ? { [WellKnownMetadataKeys.SentName]: att.name } : {}),
+      },
+    };
+    const { kind } = att;
+    const later = msg.source === 'agent' && (kind === 'image' || kind === 'video') && !att.description;
+    records.push(later && isWebUrl(address) ? { message, pending: { kind, url: address } } : { message });
+  }
+  // 每条记录的元数据带出站的来源、回合 id 与调用 id，都是有才记
+  const facts = {
+    ...(msg.source ? { [WellKnownMetadataKeys.Source]: msg.source } : {}),
+    ...(msg.turnId ? { [WellKnownMetadataKeys.TurnId]: msg.turnId } : {}),
+    ...(msg.callId ? { [WellKnownMetadataKeys.CallId]: msg.callId } : {}),
+  };
+  return records.map(({ message, pending }) => {
+    const metadata = { ...facts, ...message.metadata };
+    return { message: Object.keys(metadata).length > 0 ? { ...message, metadata } : message, pending };
+  });
+}
+
+/** work 在 ms 内没有结果就以「超时」拒绝 */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`识图超时（${ms / 1000} 秒）`)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+const uses = {
+  memory,
+  media: optional(media),
+  storage: optional(storage),
+  /** 认出子会话：它的出站没人认领时由这里认领；不在时判不出，不认领 */
+  sessionManager: optional(sessionManager),
+  events,
+  logger,
+  config,
+  provide,
+};
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -90,11 +161,22 @@ export default definePlugin({
   uses,
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
-    caps.provide.use(messageArchive, createArchiveService(caps, cfg.debugLogs));
-    // 不是她回复的出站文字（指令的回复、宿主提示）在平台送达之后记进会话历史，记法见 outboundMarkerMessage；快照里文字为空的不记
-    caps.events.use.on('outbound:delivered', async msg => {
-      const marker = outboundMarkerMessage(msg);
-      if (marker) await caps.memory.use.saveMessage(msg.sessionId, { ...marker, timestamp: Date.now() });
+    const archive = createArchiveService(caps, cfg.debugLogs);
+    caps.provide.use(messageArchive, archive);
+    // 适配器送达之后发的快照记进会话历史；不等它写完，免得拖住同一事件的其它监听
+    caps.events.use.on('outbound:delivered', msg => {
+      archive
+        .recordOutbound(msg)
+        .catch(err => caps.logger.use.warn('[message-archive] 出站消息没能记进会话历史:', err));
+    });
+    // 子会话没有窗口，任何适配器都不认领它的出站：还没人认领的由这里认领，记进子会话自己的历史即算送达
+    caps.events.use.on('outbound:message', msg => {
+      if (msg.delivery || !caps.sessionManager.present) return;
+      if (!caps.sessionManager.use.getSession(msg.sessionId)?.parentId) return;
+      msg.delivery = archive.recordOutbound(msg).then(
+        () => ({ ok: true as const }),
+        error => ({ ok: false as const, error: textOf(error) }),
+      );
     });
   },
 });
@@ -105,19 +187,72 @@ function createArchiveService(
 ): MessageArchiveService {
   // 经 memory 的业务句柄调用：一次激活内胜者也可能换人（偏好变更、更高优先级的提供者登场），
   // 句柄每次调用都打到当时选中的那一家。
+  async function saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
+    await memory.use.saveMessage(sessionId, message);
+    void announce(sessionId, message);
+    if (debugLogs && options?.debugLabel) {
+      logger.use.debug(options.debugLabel);
+    }
+  }
+
+  /**
+   * 落库之后通知监听者，回这次派发（落库的一方不等它）。只发 assistant「对外可见的回复」（memory-vector 据此索引 AI 自身发言）：
+   * 带 toolCalls 的行是工具调用回合的内部前言（「我来查一下」），从未发给任何人，不该进语义记忆；tool/摘要等其他 saveMessage
+   * 用途同理不发。core 的 emit 恒 resolve（per-handler try/catch），无需 catch。
+   */
+  function announce(sessionId: string, message: Message): Promise<void> {
+    if (message.role !== 'assistant' || !message.content?.trim() || message.toolCalls?.length) return Promise.resolve();
+    return events.use.emit('assistant:message:archived', { sessionId, message });
+  }
+
+  /**
+   * 她发的网址图片与视频记完之后补描述：识图拿到描述就把这一条正文里的附件引用换成带描述的（只改这个会话里最近一条含它的），
+   * 改到了发 memory:messages-rewritten。记忆后端不支持改写或媒体服务不在时不补；识图超时或失败记一条 warn，这一条保持不带描述
+   */
+  async function describeLater(
+    sessionId: string,
+    record: Message,
+    { kind, url }: NonNullable<OutboundRecord['pending']>,
+  ) {
+    const mem = memory.use;
+    if (!mem.updateMessageContent || !media.present) return;
+    const service = media.use;
+    const described = kind === 'image' ? service.describeImage(url) : service.describeVideo(url);
+    const desc = (await withTimeout(described, DESCRIBE_TIMEOUT_MS[kind])).trim();
+    if (!desc) return;
+    const before = outboundMediaMessage(kind, url, { source: 'agent' }).content;
+    const { content } = outboundMediaMessage(kind, url, { desc, source: 'agent' });
+    if ((await mem.updateMessageContent(sessionId, before, content, 1)) === 0) return;
+    await events.use.emit('memory:messages-rewritten', { sessionId, messages: [{ ...record, content }] });
+  }
+
+  /** 上次出站记录用掉的时间戳：同一毫秒里的几次出站往后错开，同一会话里的出站记录时间戳各不相同 */
+  let lastOutboundAt = 0;
+
   return {
-    async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
-      await memory.use.saveMessage(sessionId, message);
-      // assistant 回复落库后通知监听者（memory-vector 据此索引 AI 自身发言）。
-      // 只发「对外可见的回复」：带 toolCalls 的行是工具调用回合的内部前言
-      //（「我来查一下」），从未发给任何人，不该进语义记忆；tool/摘要等其他
-      // saveMessage 用途同理不发。core 的 emit 恒 resolve（per-handler try/catch），无需 catch。
-      if (message.role === 'assistant' && message.content?.trim() && !message.toolCalls?.length) {
-        void events.use.emit('assistant:message:archived', { sessionId, message });
+    saveMessage,
+
+    async recordOutbound(msg: OutgoingMessage): Promise<void> {
+      // 要记的内容在第一次等待之前取走（契约：调用之后对消息的改写不算）
+      const { sessionId } = msg;
+      const at = Math.max(Date.now(), lastOutboundAt + 1);
+      const records = outboundRecords(msg).map(({ message, pending }, i) => ({
+        message: { ...message, timestamp: at + i },
+        pending,
+      }));
+      lastOutboundAt = Math.max(lastOutboundAt, at + records.length - 1);
+      const announced: Promise<void>[] = [];
+      for (const { message } of records) {
+        await memory.use.saveMessage(sessionId, message);
+        announced.push(announce(sessionId, message));
       }
-      if (debugLogs && options?.debugLabel) {
-        logger.use.debug(options.debugLabel);
-      }
+      // 补描述等这一条的落库通知派发完再开始：改写通知赶在它前面到的话，收录它的一方（memory-vector）删不到还没收录的旧条目
+      records.forEach(({ message, pending }, i) => {
+        if (!pending) return;
+        announced[i]
+          .then(() => describeLater(sessionId, message, pending))
+          .catch(err => logger.use.warn('[message-archive] 发出的附件没能补上描述，这一条不带描述:', err));
+      });
     },
 
     async archiveIncoming(incoming: IncomingMessage) {

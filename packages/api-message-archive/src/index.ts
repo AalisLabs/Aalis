@@ -1,6 +1,8 @@
+import { isStorageUri } from '@aalis/api-storage';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message, MessageAttachment, OutgoingMessage } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 export interface ArchiveIncomingResult {
   message: Message;
@@ -41,6 +43,24 @@ export interface ArchiveNoticeOptions {
 export interface MessageArchiveService {
   saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void>;
   archiveIncoming(message: IncomingMessage): Promise<ArchiveIncomingResult>;
+  /**
+   * 按送达的快照把出站消息记进会话历史，所有平台一条规则（送达之后发 outbound:delivered 的适配器由存档据此调，送达本身就是写进
+   * 会话历史的适配器直接调、等它兑现，没有窗口的子会话由存档认领后调）。要记的内容在调用时同步取走：调用之后对消息的改写不算，
+   * 调用方不必另做快照。
+   *
+   * 1. 不是她回复的文字记成事件标记（schema-message 的 outboundMarkerMessage）；她的回复由 agent 存档，不记。
+   * 2. 附件逐个记，不分来源、种类，也不分是否随她的回复发出，按有没有地址分（{@link outboundAddress}）。有地址的按
+   *    outboundMediaMessage 记（她发的 role assistant，插件发的 role notice），元数据带 SentRef，文件的描述位写文件名、另带
+   *    SentName；没有地址的（data URL、file:// 与本机路径）记成事件标记，正文与元数据的文字对象是 {@link unaddressedText}，
+   *    不把内容写进正文。
+   * 3. 每条记录的元数据带出站的 Source、TurnId 与 CallId，都是有才记；同一会话里出站记录的时间戳各不相同（按会话与时间戳认
+   *    消息的下游据此分得开，如向量记忆换掉改写过的条目）。
+   * 4. 图、音、视频的描述取附件带的，发出即记、不等识图。她发的网址图片与视频没带描述时，参考实现记完之后在后台识图，补到后经
+   *    记忆的 updateMessageContent 改写这一条、发 memory:messages-rewritten；记忆后端不支持改写时不补。
+   *
+   * 全部记录写完才兑现（不等后台的识图），写失败时以原因拒绝，已写成的几条不撤回。
+   */
+  recordOutbound(message: OutgoingMessage): Promise<void>;
   /** 平台 notice/事件入档（系统级条目，不会触发 agent 响应） */
   archiveNotice?(options: ArchiveNoticeOptions): Promise<Message | null>;
   /**
@@ -49,6 +69,21 @@ export interface MessageArchiveService {
    * 命中返回归档消息；缺省 scanLimit=100。
    */
   findByMessageId?(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null>;
+}
+
+/**
+ * 出站附件记进会话历史用的地址（{@link MessageArchiveService.recordOutbound} 第 2 条）：ref，没有 ref 时 data 是网址或存储地址的
+ * 取 data；data URL、file:// 与本机路径没有。发送前要改写 data 的适配器（如换成自己落盘的副本）先按它把原来的地址留在 ref 上，
+ * 旁观出站的一方（如会话服务的实时推送）按它给出与历史相同的附件
+ */
+export function outboundAddress(att: MessageAttachment): string | undefined {
+  return att.ref ?? (/^https?:\/\//i.test(att.data) || isStorageUri(att.data) ? att.data : undefined);
+}
+
+/** 没有地址的出站附件记成的那一句（recordOutbound 第 2 条）：「[种类] 名字」，没有名字时只写种类 */
+export function unaddressedText(att: MessageAttachment): TextRef {
+  const kind = t(att.kind);
+  return att.name ? t('unaddressed', { kind, name: att.name }) : t('unaddressedKind', { kind });
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

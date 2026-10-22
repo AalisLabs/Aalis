@@ -33,7 +33,7 @@
 | `IncomingMessage` | interface | `index.ts` | 从适配器流入的原始消息：会话上下文 + `attachments` + `triggerType` + `actor`（授权身份）等 |
 | `OutgoingMessage` | interface | `index.ts` | 发往平台的回复：`content`/`attachments`/`source`/`modelInfo` |
 | `StreamChunkMessage` | interface | `index.ts` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`turnId`（所在回合）/`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
-| `MessageAttachment` | interface | `index.ts` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref`/`skipArchive` 等 |
+| `MessageAttachment` | interface | `index.ts` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref` 等 |
 
 ### LLM 出口工具（值导出）— `src/index.ts`
 
@@ -47,8 +47,8 @@
 | `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
 | `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口必调**：归一 role + 加前缀；不改原对象，返回浅拷贝；幂等 |
-| `outboundMediaMessage(kind, ref, desc?)` | function | `index.ts` | 发出的图片、音频、视频与文件在会话历史里的记法：一条 assistant 消息，`kind` 为 `OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`，正文是附件引用占位符（文件的描述位记文件名）；时间戳与 `metadata` 由调用方补上。出站附件的归档一律用它，`memory_recall` 与会话服务回看历史才能按同一格式命中、还原 |
-| `outboundMarkerMessage(msg)` | function | `index.ts` | 不是她回复的出站文字（`source` 不是 agent）在会话历史里的记法：一条事件标记，元数据记出站的 `Source`、`Text` 与 `TurnId`；她的回复与空文字回 `undefined`，时间戳由调用方补上。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知 |
+| `outboundMediaMessage(kind, ref, { desc, source }?)` | function | `index.ts` | 发出的图片、音频、视频与文件在会话历史里的记法：`kind` 为 `OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`，正文是附件引用占位符（文件的描述位记文件名）；`source` 是 agent 的是她发的（role `assistant`），其余是插件发的（role `notice`，进模型时是系统通知）；时间戳与 `metadata` 由调用方补上。出站附件的归档一律用它，`memory_recall` 与会话服务回看历史才能按同一格式命中、还原 |
+| `outboundMarkerMessage(msg)` | function | `index.ts` | 不是她回复的出站文字（`source` 不是 agent）在会话历史里的记法：一条事件标记，元数据记 `Text`（有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知 |
 
 > `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §10。
 
@@ -85,7 +85,7 @@
 | `'inbound:message'` | `[IncomingMessage]` | 适配器流入的入站消息 |
 | `'inbound:message:archived'` | `[{ sessionId, incoming: IncomingMessage, archivedMessage: Message }]` | 入站已落库（无论是否触发回复都发） |
 | `'outbound:message'` | `[OutgoingMessage]` | 发往平台的回复 |
-| `'outbound:delivered'` | `[OutgoingMessage]` | 传输端确认后的消息快照，供归档等旁观者使用：`content` 只在文字送达时有，`attachments` 只含成功的附件；发出方已自己记进历史的部分文字留空、附件标 `skipArchive`。认领回执的适配器在送达后对每条消息都发（只有文字的也发），整条都已自己记进历史的可以不发 |
+| `'outbound:delivered'` | `[OutgoingMessage]` | 送达之后的消息快照，给存档与旁观者用：`content` 只在文字送达时有，`attachments` 只含成功的附件。认领回执的适配器在送达后对每条消息都发（只有文字的也发），存档据此调 `recordOutbound` 记进会话历史；送达本身就是写进会话历史的适配器（WebUI）不发，改为直接调 `recordOutbound` |
 | `'outbound:stream'` | `[StreamChunkMessage]` | 流式片段（发往 WebUI 等前端） |
 
 > 该包仅以 `import type {} from '@aalis/core'` 锚定模块身份做增强（`index.ts`），运行时无副作用。listen/emit 这些事件的方式见 `docs/core/context.md` / `docs/concepts/service-model.md`。

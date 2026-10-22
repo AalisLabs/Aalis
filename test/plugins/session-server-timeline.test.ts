@@ -1162,6 +1162,125 @@ describe('条目', () => {
     expect(snap.snapshot.items, '实时推送与快照里的历史是同一批条目').toEqual(c.timeline(ROOM, sub));
   });
 
+  it('插件发的一条带文字与两张图的出站：实时推送与刷新后的历史都是三条通知，后两条各带一张图', async () => {
+    const { server, sm, host, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const out: OutgoingMessage = {
+      sessionId: s.id,
+      platform: 'webui',
+      content: '本周的图表',
+      source: 'command',
+      attachments: [
+        { kind: 'image', data: 'data:/images/a.png' },
+        { kind: 'image', data: 'https://example.invalid/b.png' },
+      ],
+    };
+    await host.events.use.emit('outbound:message', out);
+    await archive.recordOutbound(out);
+    const live = c.timeline(s.id, sub).map(shape);
+    expect(live).toEqual([
+      { kind: 'notice', topic: 'command-reply', text: '本周的图表', attachments: [] },
+      { kind: 'notice', topic: 'command-reply', text: '', attachments: [{ kind: 'image', src: 'data:/images/a.png' }] },
+      {
+        kind: 'notice',
+        topic: 'command-reply',
+        text: '',
+        attachments: [{ kind: 'image', src: 'https://example.invalid/b.png' }],
+      },
+    ]);
+    const fresh = client(server());
+    await fresh.init();
+    expect((await fresh.subscribe(s.id)).snapshot.items.map(shape)).toEqual(live);
+  });
+
+  it('插件发的没有地址的附件：实时推送与刷新后的历史都是存档记的那一句通知，不带附件', async () => {
+    const { server, sm, host, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(s.id);
+    const out: OutgoingMessage = {
+      sessionId: s.id,
+      platform: 'webui',
+      content: '',
+      source: 'system',
+      attachments: [
+        { kind: 'image', data: 'data:image/png;base64,iVBORw0KGgo=' },
+        { kind: 'file', data: 'file:///tmp/zz/report.pdf', name: '报告.pdf' },
+      ],
+    };
+    await host.events.use.emit('outbound:message', out);
+    await archive.recordOutbound(out);
+    const live = c.timeline(s.id, sub).map(shape);
+    expect(live).toEqual([
+      { kind: 'notice', topic: 'event-marker', text: '[图片]', attachments: [] },
+      { kind: 'notice', topic: 'event-marker', text: '[文件] 报告.pdf', attachments: [] },
+    ]);
+    const fresh = client(server());
+    await fresh.init();
+    expect((await fresh.subscribe(s.id)).snapshot.items.map(shape)).toEqual(live);
+  });
+
+  it('回合里经工具发出的附件带这一轮的 id：还没收尾时订阅的快照里有它，收尾之后的历史里同样只有一条', async () => {
+    const { server, sm, archive, openTurn } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const t = openTurn(s.id, { content: '发张图' });
+    await t.ask();
+    await t.toolStart('call-1', 'send_attachment', { kind: 'image' });
+    await t.inside(() =>
+      archive.recordOutbound({
+        sessionId: s.id,
+        platform: 'webui',
+        content: '',
+        source: 'agent',
+        turnId: t.turnId,
+        callId: 'call-1',
+        attachments: [{ kind: 'image', data: 'data:/images/cat.png' }],
+      }),
+    );
+    const sent = { kind: 'agent-message', text: '', attachments: [{ kind: 'image', src: 'data:/images/cat.png' }] };
+    const c = client(server());
+    await c.init();
+    const during = (await c.subscribe(s.id)).snapshot.items;
+    expect(during.map(shape).filter(item => item.kind === 'agent-message')).toEqual([sent]);
+    expect(during.find(item => item.kind === 'agent-message')?.turnId).toBe(t.turnId);
+    await t.toolEnd('call-1', 'send_attachment', '{"ok":true}', { kind: 'image' });
+    await t.finish('silent');
+    const fresh = client(server());
+    await fresh.init();
+    const after = (await fresh.subscribe(s.id)).snapshot.items;
+    expect(after.map(shape).filter(item => item.kind === 'agent-message')).toEqual([sent]);
+  });
+
+  it('别的会话的出站带了这一轮的 id：不并进这一轮，这一轮还没收尾时那个会话的快照里照样有它', async () => {
+    const { server, sm, archive, openTurn } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const other = await sm.createSession({ name: 'O' });
+    const t = openTurn(s.id, { content: '给 O 发张图' });
+    await t.ask();
+    await t.inside(() =>
+      archive.recordOutbound({
+        sessionId: other.id,
+        platform: 'webui',
+        content: '',
+        source: 'agent',
+        turnId: t.turnId,
+        attachments: [{ kind: 'image', data: 'data:/images/cat.png' }],
+      }),
+    );
+    const sent = { kind: 'agent-message', text: '', attachments: [{ kind: 'image', src: 'data:/images/cat.png' }] };
+    const c = client(server());
+    await c.init();
+    const own = (await c.subscribe(s.id)).snapshot.items;
+    expect(own.map(shape).filter(item => item.kind === 'agent-message')).toEqual([]);
+    const theirs = (await c.subscribe(other.id)).snapshot.items;
+    expect(theirs.map(shape).filter(item => item.kind === 'agent-message')).toEqual([sent]);
+    await t.finish('silent');
+  });
+
   it('带文件与图片的提问归档后：实时推送与快照里的正文只有发言人写的话，文件是带句柄的卡片、图片按地址；预处理器写的附件描述（file-reader 之外的写法也一样）不进正文', async () => {
     const { server, sm, archive } = await setup();
     const s = await sm.createSession({ name: 'S' });

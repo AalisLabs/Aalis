@@ -18,6 +18,8 @@
 export interface MessageArchiveService {
   saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void>;
   archiveIncoming(message: IncomingMessage): Promise<ArchiveIncomingResult>;
+  /** 按送达的快照把出站消息记进会话历史，所有平台一条规则；全部记录写完才兑现，写失败时以原因拒绝 */
+  recordOutbound(message: OutgoingMessage): Promise<void>;
   /** 平台 notice/事件入档（系统级条目，不会触发 agent 响应） */
   archiveNotice?(options: ArchiveNoticeOptions): Promise<Message | null>;
   /** 在指定会话最近 scanLimit 条历史中查找 metadata.messageId 命中的归档消息，缺省 scanLimit=100 */
@@ -27,8 +29,9 @@ export interface MessageArchiveService {
 
 方法语义：
 
-- **`saveMessage`**（必需）：直写一条已成形的 `Message` 到指定会话。最薄的一层——直接转发给 `memory.saveMessage`，`options.debugLabel` 仅用于按配置打调试日志（`packages/plugin-message-archive/src/index.ts`）。用于出站消息回档（如 image-sender 的图片占位、subtask 的系统提示）。
+- **`saveMessage`**（必需）：直写一条已成形的 `Message` 到指定会话。最薄的一层——直接转发给 `memory.saveMessage`，`options.debugLabel` 仅用于按配置打调试日志（`packages/plugin-message-archive/src/index.ts`）。role 为 `assistant`、有正文且不带工具调用的落库后发 `assistant:message:archived`。用于写已成形的条目（如 agent 的回复、subtask 的系统提示、投递失败提示）。
 - **`archiveIncoming`**（必需，核心）：吃一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件（消息尚无附件描述时；对传入的消息对象调用，识别结果写回入参，触发判定已启动的识别在这里命中，不再识别第二遍）、拼接发送者前缀 / 引用回复 / 附件描述（拼法是 `@aalis/schema-message` 的 `buildIncomingContent`）、抽取 @提及、写会话身份 `metadata`，落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。
+- **`recordOutbound`**（必需）：出站消息记进会话历史的唯一实现，所有平台一条规则。不是她回复的文字记成事件标记（`outboundMarkerMessage`）；附件逐个记、不分来源与种类，按有没有地址分（`outboundAddress`：`ref`，没有时 `data` 是存储地址或网址的取 `data`），有地址的按 `outboundMediaMessage` 记（她发的 role `assistant`，插件发的 role `notice`），元数据带 `SentRef`（文件另带 `SentName`），没有地址的（data URL、`file://` 与本机路径）记成事件标记「[种类] 名字」（`unaddressedText`）并带同一句的文字对象。每条记录带出站的 `Source`、`TurnId`、`CallId`（有才记），同一会话里出站记录的时间戳各不相同。图、音、视频的描述取附件带的，发出即记、不等识图；参考实现给她发的、没带描述的网址图片与视频在后台补描述，补到后经 `memory.updateMessageContent` 改写那一条并发 `memory:messages-rewritten`，记忆后端不支持改写时不补。全部记录写完才兑现（不等后台的识图），写失败时以原因拒绝，已写成的几条不撤回。要记的内容在调用时同步取走：调用之后对消息的改写不算，调用方不必另做快照。
 - **`archiveNotice?`**（可选）：把平台 notice/事件（禁言、撤回、入群等）作为 `role:'notice'` 系统条目入档，`kind` 取 `noticeType`。返回 `null` 表示内容为空被跳过。
 - **`findByMessageId?`**（可选）：按平台侧 `messageId` 在最近 `scanLimit`（夹取 1..500，缺省 100）条历史里从新往旧反查归档原文，命中我方已烘焙的富文本（含图片描述）。未命中返回 `null`。
 
@@ -39,7 +42,7 @@ export interface MessageArchiveService {
 - `Message`（来自 `@aalis/schema-message`，`packages/schema-message/src/index.ts`）：`role` + `content: string | null` + 可选 `name` / `kind` / `timestamp` / `metadata`。
 - `inbound:message:archived` 事件 payload（`packages/schema-message/src/index.ts`）：`{ sessionId, incoming: IncomingMessage, archivedMessage: Message }`。注意 `archivedMessage.content` 可能已不同于 `incoming.content`（已烘焙）。
 
-> `@aalis/api-message-archive` 是契约包（keywords 含 `aalis-api`），导出类型与 `messageArchive` 描述符（`defineService<MessageArchiveService>('message-archive')`），不含实现；运行时服务由 `plugin-message-archive` 提供。
+> `@aalis/api-message-archive` 是契约包（keywords 含 `aalis-api`），导出类型、`messageArchive` 描述符（`defineService<MessageArchiveService>('message-archive')`）与 `recordOutbound` 记法里的两样：`outboundAddress(att)`（出站附件的地址，没有时 `undefined`）与 `unaddressedText(att)`（没有地址的附件记成的那一句，文字对象）。发送前要改写 `data` 的适配器（如 onebot 换成自己落盘的副本）先按 `outboundAddress` 把原来的地址留在 `ref` 上；会话服务的实时推送按这两样给出与历史相同的通知。运行时服务由 `plugin-message-archive` 提供。
 
 ## 3. 谁提供 / 谁消费
 
@@ -50,17 +53,20 @@ export interface MessageArchiveService {
 - `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物。
 - `plugin-adapter-onebot`：`archiveNotice` 入档群事件；`findByMessageId` 反查引用原文；`saveMessage` 入档投递失败提示（一处）。
 - `plugin-flow-control` / 触发插件（`plugin-trigger-policy` 等）：把被流控/触发判定「吞掉」的入站消息做 **shadow 归档**（`plugin-flow-control/src/index.ts`；触发插件经 `api-trigger/src/index.ts` 的 `archiveSwallowed`）。
-- `plugin-image-sender`：`saveMessage` 回档发出的图片/语音/视频占位。
+- `plugin-webui-server`：发往 WebUI 自己会话的出站消息经 `recordOutbound` 记进历史，记成了回执才算送达（WebUI 的收件箱就是会话历史）。
 - `plugin-subtask` / `plugin-memory-summary`：`saveMessage` 写系统/摘要条目（`plugin-subtask/src/index.ts`，`plugin-memory-summary/src/index.ts`）。
 - `plugin-user-profile`：不直接调服务，而是监听 `inbound:message:archived` 事件做后台事实提取。
 
 ## 4. 写一个 provider
 
-最小必须实现：`saveMessage` + `archiveIncoming`。可选：`archiveNotice`（不实现则 OneBot 等 `if (!archive?.archiveNotice) return;` 静默跳过）、`findByMessageId`（不实现则引用反查回退到平台重新拉取）。消费方一律先判 `archive?.method` 再调，所以漏实现可选方法不会崩，只是降级。
+最小必须实现：`saveMessage` + `archiveIncoming` + `recordOutbound`。可选：`archiveNotice`（不实现则 OneBot 等 `if (!archive?.archiveNotice) return;` 静默跳过）、`findByMessageId`（不实现则引用反查回退到平台重新拉取）。消费方一律先判 `archive?.method` 再调，所以漏实现可选方法不会崩，只是降级。
 
 依赖：归档必须落到某个持久层。参考实现用 `memory`（`required`）+ `media`（`optional`，仅做附件识别）。
 
-送达快照：参考实现另监听 `outbound:delivered`，把不是她回复的出站文字（指令的回复、宿主提示）按 schema-message 的 `outboundMarkerMessage` 记进会话历史（快照里文字为空的不记）。这项职责不在 `MessageArchiveService` 契约里，替换实现要同样做（见下面的骨架），否则房间与终端会话里的这类消息不落库，只在实时推送里。
+出站：参考实现另监听两个事件，替换实现要同样做（见下面的骨架），否则房间、终端与子会话里发出的消息不落库，只在实时推送里：
+
+- `outbound:delivered`：适配器送达之后发的快照，调 `recordOutbound` 记进会话历史，写失败记 warn，不拖住同一事件的其它监听。
+- `outbound:message`：子会话没有窗口，任何适配器都不认领它的出站。还没人认领（`delivery` 未设）、会话记录有 `parentId` 的同步认领，回执取 `recordOutbound(msg)`：兑现回 `ok`，拒绝回 `ok: false` 带原因。会话管理不在时判不出，不认领。
 
 manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `export const`）：
 
@@ -70,7 +76,7 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
   "aalis": {
     "service": {
       "required": ["memory"],
-      "optional": ["media"],
+      "optional": ["media", "session-manager"],
       "provides": ["message-archive"]
     }
   }
@@ -81,16 +87,24 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 
 ```ts
 import { memory } from '@aalis/api-memory';
-import { messageArchive } from '@aalis/api-message-archive';
+import { messageArchive, outboundAddress } from '@aalis/api-message-archive';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
-import { definePlugin, events, logger, provide } from '@aalis/core';
-import { type IncomingMessage, type Message, outboundMarkerMessage } from '@aalis/schema-message';
+import { sessionManager } from '@aalis/api-session-manager';
+import { definePlugin, events, logger, optional, provide } from '@aalis/core';
+import {
+  type IncomingMessage,
+  type Message,
+  type OutgoingMessage,
+  outboundMarkerMessage,
+  outboundMediaMessage,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 
 export default definePlugin({
   name: '@aalis/plugin-my-archive',
   provides: [messageArchive],
-  uses: { provide, events, logger, memory },
-  apply({ provide, events, logger, memory }) {
+  uses: { provide, events, logger, memory, sessionManager: optional(sessionManager) },
+  apply({ provide, events, logger, memory, sessionManager }) {
     const service: MessageArchiveService = {
       async saveMessage(sessionId, message) {
         await memory.use.saveMessage(sessionId, message);
@@ -108,13 +122,36 @@ export default definePlugin({
           .catch(err => logger.use.debug(`inbound:message:archived 分发失败: ${err}`));
         return { message, content };
       },
+      async recordOutbound(msg: OutgoingMessage) {
+        // 要记的内容在第一次等待之前取走：调用之后对消息的改写不算
+        const { sessionId } = msg;
+        const marker = outboundMarkerMessage(msg);
+        const records: Message[] = marker ? [marker] : [];
+        for (const att of msg.attachments ?? []) {
+          const address = outboundAddress(att);
+          // 没有地址的：参考实现记成事件标记，正文是 unaddressedText(att)；另有 Source、TurnId、CallId 与时间戳各不相同，见契约说明
+          if (address === undefined) continue;
+          const desc = att.kind === 'file' ? att.name : att.description;
+          const record = outboundMediaMessage(att.kind, address, { desc, source: msg.source });
+          records.push({ ...record, metadata: { [WellKnownMetadataKeys.SentRef]: address } });
+        }
+        for (const record of records) await memory.use.saveMessage(sessionId, { ...record, timestamp: Date.now() });
+      },
     };
 
     provide.use(messageArchive, service);
-    // 送达之后记不是她回复的出站文字
-    events.use.on('outbound:delivered', async msg => {
-      const marker = outboundMarkerMessage(msg);
-      if (marker) await memory.use.saveMessage(msg.sessionId, { ...marker, timestamp: Date.now() });
+    // 适配器送达之后发的快照记进会话历史
+    events.use.on('outbound:delivered', msg => {
+      service.recordOutbound(msg).catch(err => logger.use.warn(`出站消息没能记进会话历史: ${err}`));
+    });
+    // 子会话没人认领的出站由存档认领
+    events.use.on('outbound:message', msg => {
+      if (msg.delivery || !sessionManager.present) return;
+      if (!sessionManager.use.getSession(msg.sessionId)?.parentId) return;
+      msg.delivery = service.recordOutbound(msg).then(
+        () => ({ ok: true as const }),
+        error => ({ ok: false as const, error: String(error) }),
+      );
     });
   },
 });
@@ -182,4 +219,4 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 
 - 概念：[服务模型](../concepts/service-model.md)、[懒服务访问](../concepts/lazy-service-access.md)、[manifest 元数据](../concepts/manifest-metadata.md)、[消息-LLM 管线](../concepts/message-llm-pipeline.md)、[安全模型](../concepts/security-model.md)、[storage URI 文法](../concepts/storage-uri-grammar.md)
 - 核心：[service](../core/service.md)、[context](../core/context.md)、[events](../core/events.md)、[types](../core/types.md)
-- 相关服务/契约：`@aalis/api-memory`（落库后端）、`@aalis/api-media`（附件识别）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `WellKnownKinds` / `inbound:message:archived` 事件）
+- 相关服务/契约：`@aalis/api-memory`（落库后端与 `memory:messages-rewritten` 改写通知）、`@aalis/api-media`（附件识别与补描述）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `OutgoingMessage` / `WellKnownKinds` / `outboundMediaMessage` / `inbound:message:archived` 与 `outbound:delivered` 事件）

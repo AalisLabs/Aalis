@@ -22,7 +22,7 @@ import { pluginSource } from '@aalis/api-plugin-source';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionProtocol } from '@aalis/api-session-protocol';
-import { isStorageUri, storage } from '@aalis/api-storage';
+import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
   CLIENT_TEXTS_FILE,
@@ -62,14 +62,7 @@ import {
   textOf,
   toSource,
 } from '@aalis/schema-i18n';
-import {
-  type Message,
-  type OutgoingMessage,
-  outboundMarkerMessage,
-  outboundMediaMessage,
-  WellKnownKinds,
-  WellKnownMetadataKeys,
-} from '@aalis/schema-message';
+import type { OutgoingMessage } from '@aalis/schema-message';
 import express from 'express';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
@@ -192,58 +185,6 @@ const configSchema = defineConfig({
 
 type WebUIConfig = ConfigOf<typeof configSchema>;
 
-// ===== WebUI 会话的收件箱 =====
-
-/**
- * 发往 WebUI 自己会话的出站消息里，要由本插件写进会话历史的部分。WebUI 的收件箱就是会话历史，记不记全不取决于
- * 别的插件是否在场。agent 的文字回复由 agent 存档，这里不再记，免得历史里重复。其余部分：
- * - 不是她说的文字（系统提示、指令回复、宿主通知）按 outboundMarkerMessage 记成事件标记：回看时显示成通知，不进模型上下文，
- *   与别的平台由 message-archive 在送达之后记的一样；
- * - 图片、视频、音频用 outboundMediaMessage 记，回看时还原成附件；
- * - 给的是存储地址的文件（插件发出的成品等）同样用 outboundMediaMessage 记，描述位记文件名，会话服务据此签发下载句柄。
- *   metadata 另记原样的地址与文件名（登记的键 SentRef、SentName）：占位符里的地址遇到「]」会截断，描述位的「]」「|」换成了全角。这样的文件以
- *   「[文件: 名称 | ref:…]」进模型上下文与记忆，不看全局出站归档记不记文件。不是存储地址的文件
- *   （网址、data URL）签不出句柄，记成事件标记「[文件] 名称」，内容不进历史；
- * - 快照里的 data 未经平台改写，就是页面上显示的那份，直接记它。带 skipArchive 的（history_ref 重发）原图已在
- *   历史里，不再记。别的平台上这些由出站归档在 outbound:delivered 上记（文字是 message-archive，她发出的媒体是
- *   全局出站归档）；发往 WebUI 的由这里记，outbound:delivered 的快照不带文字、附件标上 skipArchive，免得再记一份。
- *   代价是这些网址图片与视频不再由全局出站归档在后台补视觉描述
- */
-function inboxRecords(msg: OutgoingMessage): Message[] {
-  const timestamp = Date.now();
-  const records: Message[] = [];
-  const marker = outboundMarkerMessage(msg);
-  if (marker) records.push({ ...marker, timestamp });
-  for (const att of msg.attachments ?? []) {
-    if (att.skipArchive) continue;
-    if (att.kind !== 'file') {
-      records.push({
-        ...outboundMediaMessage(att.kind, att.data, att.description),
-        timestamp,
-        metadata: { [WellKnownMetadataKeys.Source]: 'webui-server', [WellKnownMetadataKeys.SentRef]: att.data },
-      });
-    } else if (isStorageUri(att.data)) {
-      records.push({
-        ...outboundMediaMessage('file', att.data, att.name),
-        timestamp,
-        metadata: {
-          [WellKnownMetadataKeys.Source]: 'webui-server',
-          [WellKnownMetadataKeys.SentRef]: att.data,
-          [WellKnownMetadataKeys.SentName]: att.name,
-        },
-      });
-    } else {
-      records.push({
-        role: 'system',
-        kind: WellKnownKinds.EventMarker,
-        content: `[文件] ${att.name ?? att.data.split('/').pop()}`,
-        timestamp,
-      });
-    }
-  }
-  return records;
-}
-
 // ===== 插件入口 =====
 
 /**
@@ -293,7 +234,7 @@ const uses = {
   llm: optional(llm),
   /** 插件经贡献点 webui:theme 提供的主题（GET /api/themes） */
   contributions: optional(contributions),
-  // 发往 WebUI 自己会话的出站消息由本插件写进会话历史（见 inboxRecords）
+  /** 发往 WebUI 自己会话的出站消息经它的 recordOutbound 记进会话历史，记成了才算送达 */
   archive: optional(messageArchive),
   /** 回应里的文字对象按全局默认层的语言渲染（localize.ts）；缺席时按原文 */
   i18n: optional(i18n),
@@ -968,31 +909,23 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   events.use.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
 
   // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
-  // 回执表示这条消息已经进了会话历史，不看有没有页面在线。owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）
-  // 由那个平台的适配器认领
+  // 回执表示这条消息已经由存档记进会话历史（recordOutbound），不看有没有页面在线；送达就是写进历史，不另发 outbound:delivered。
+  // owner 从 WebUI 驱动的 IM 房间（根会话记下了出生平台）由那个平台的适配器认领，子会话没有窗口、由存档认领
   events.use.on('outbound:message', (msg: OutgoingMessage) => {
     if (msg.delivery || msg.platform !== 'webui') return;
     const sm = caps.sessions.present ? caps.sessions.use : undefined;
-    const root = sm && rootSessionOf(sm.getSession(msg.sessionId), id => sm.getSession(id));
+    const session = sm?.getSession(msg.sessionId);
+    if (session?.parentId) return;
+    const root = sm && rootSessionOf(session, id => sm.getSession(id));
     if (root?.originPlatform !== undefined) return;
-    // 同步挂上 Promise，始终 resolve，即使其他 outbound 监听器随后耗时，也不会产生未处理的 rejection。
-    msg.delivery = (async () => {
-      try {
-        // 保存快照：下游处理不应受生产者或其他适配器后续改写影响。
-        const snapshot: OutgoingMessage = { ...msg, attachments: msg.attachments?.map(att => ({ ...att })) };
-        if (!caps.archive.present) return { ok: false as const, error: t('archiveAbsent') };
-        const archive = caps.archive.use;
-        for (const record of inboxRecords(snapshot)) await archive.saveMessage(msg.sessionId, record);
-        if (snapshot.attachments?.length) {
-          // 文字与附件已由上面记进会话历史（见 inboxRecords）：快照不带文字、附件标上 skipArchive，免得出站归档再记一份
-          const attachments = snapshot.attachments.map(att => ({ ...att, skipArchive: true }));
-          void events.use.emit('outbound:delivered', { ...snapshot, content: '', attachments, delivery: undefined });
-        }
-        return { ok: true as const };
-      } catch (error) {
-        return { ok: false as const, error: textOf(error) };
-      }
-    })();
+    if (!caps.archive.present) {
+      msg.delivery = Promise.resolve({ ok: false as const, error: t('archiveAbsent') });
+      return;
+    }
+    msg.delivery = caps.archive.use.recordOutbound(msg).then(
+      () => ({ ok: true as const }),
+      error => ({ ok: false as const, error: textOf(error) }),
+    );
   });
 
   // 前端切换「逃生页」：由 webui-server 直出、独立于任何可被切换的前端，故任意前端（哪怕

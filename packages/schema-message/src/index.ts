@@ -150,20 +150,15 @@ export interface MessageAttachment {
   /** 时长秒（仅音视频，如已知） */
   durationSec?: number;
   /**
-   * 出站附件：文本描述（vision/asr 结果）。由生产者（如 send_attachment）填充，
-   * 供全局出站归档写入 `[类型: desc | ref:xxx]` 标记，让 memory_recall 能命中。
+   * 出站附件：文本描述（识图、转写的结果），生产者已有时填上。出站记进会话历史时写进占位符的描述位
+   * （`[类型: desc | ref:xxx]`，见 api-message-archive 的 recordOutbound），memory_recall 据此命中
    */
   description?: string;
   /**
-   * 出站附件：稳定引用标识（http(s) url / storage uri）。用于出站归档与历史回放；
-   * 缺省时全局归档回退用 data。与平台落盘后改写的 data 解耦，避免归档到临时/不可访问路径。
+   * 出站附件：稳定的地址（网址或存储地址），出站记进会话历史时用它；没有时取 data 里的地址（见 recordOutbound）。
+   * 与平台落盘后改写的 data 无关
    */
   ref?: string;
-  /**
-   * 出站附件：跳过全局归档。用于 history_ref 重发等场景（同一媒体已在档，
-   * 避免向量库膨胀与重复入档）。缺省 false。
-   */
-  skipArchive?: boolean;
 }
 
 export interface IncomingMessage {
@@ -433,8 +428,8 @@ export interface OutgoingMessage {
   /** 由工具调用发出的消息：那次调用的 id（ToolCallContext.callId），会话的客户端据此把消息挂到对应的工具卡上 */
   callId?: string;
   /**
-   * agent 这一轮发出的消息（回复与 [错误] 等提示）：这一轮的 id。适配器记回复的投递失败时带上它，回看历史时据此标出这一轮的
-   * 回复没发出；不是回复的记成事件标记时同样记下（{@link outboundMarkerMessage}）
+   * 这一轮发出的消息（她的回复、[错误] 等提示与经工具发出的）：这一轮的 id。适配器记回复的投递失败时带上它，回看历史时据此标出
+   * 这一轮的回复没发出；出站记进会话历史的各条同样记下（api-message-archive 的 recordOutbound）
    */
   turnId?: string;
   /**
@@ -497,9 +492,9 @@ declare module '@aalis/core' {
     'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
     'outbound:message': [message: OutgoingMessage];
     /**
-     * 传输端确认后的消息快照，供归档等旁观者使用：content 只在文字送达时有，attachments 只包含成功的附件；发出方已自己记进
-     * 历史的部分文字留空、附件标 skipArchive。认领回执的适配器在送达后对每条消息都发，只有文字的也发；整条都已自己记进历史的
-     * 可以不发。
+     * 送达之后的消息快照，给存档与旁观者用：content 只在文字送达时有，attachments 只包含成功的附件。认领回执的适配器在送达后对
+     * 每条消息都发，只有文字的也发，存档据此记进会话历史；送达本身就是写进会话历史的适配器（如 WebUI）不发，改为调 api-message-archive
+     * 的 recordOutbound 并等它兑现。
      */
     'outbound:delivered': [message: OutgoingMessage];
     'outbound:stream': [chunk: StreamChunkMessage];
@@ -515,10 +510,10 @@ declare module '@aalis/core' {
  *
  * - `EventMarker`：纯 UI/控制标记（如对话压缩分隔条、不是她回复的出站文字）。LLM 出口与抽取均应排除。
  * - `CrossSessionDelegation`：代发任务——triggerType 为 proactive 的入站消息（如 workflow 的 agent 节点）归档时标的 kind。
- * - `OutboundImage`：assistant 已发出的图片占位（content 为 attachment ref 标签）。
- * - `OutboundAudio`：assistant 已发出的音频占位。
- * - `OutboundVideo`：assistant 已发出的视频占位。
- * - `OutboundFile`：assistant 已发出的文件占位（描述位是文件名）。
+ * - `OutboundImage`：发出的图片占位（content 为 attachment ref 标签，记法见 {@link outboundMediaMessage}）。
+ * - `OutboundAudio`：发出的音频占位。
+ * - `OutboundVideo`：发出的视频占位。
+ * - `OutboundFile`：发出的文件占位（描述位是文件名）。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
  * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
  *   让她知道刚才那条没送达。metadata 带 {@link WellKnownMetadataKeys} 的 `DeliveryError`（与投递结果同一句原因），以及那条
@@ -546,32 +541,37 @@ const OUTBOUND_MEDIA = {
 } as const;
 
 /**
- * 发出的图片、音频、视频与文件在会话历史里的记法：一条 assistant 消息，kind 为 OutboundImage / OutboundAudio /
- * OutboundVideo / OutboundFile，正文是附件引用占位符（{@link formatAttachmentRef}）。归档方一律用它，memory_recall 与
- * 会话服务回看历史才能按同一格式命中、还原。文件的 desc 记文件名。时间戳与 metadata 由调用方补上。
+ * 发出的图片、音频、视频与文件在会话历史里的记法：kind 为 OutboundImage / OutboundAudio / OutboundVideo / OutboundFile，
+ * 正文是附件引用占位符（{@link formatAttachmentRef}）。出站的 source 是 agent 的是她发的，role 为 assistant；其余是插件发的，
+ * role 为 notice（进模型时是一条系统通知，不算她的发言）。归档方一律用它，memory_recall 与会话服务回看历史才能按同一格式命中、
+ * 还原。文件的 desc 记文件名。时间戳与 metadata 由调用方补上。
  */
-export function outboundMediaMessage(kind: MessageAttachment['kind'], ref: string, desc?: string): Message {
+export function outboundMediaMessage(
+  kind: MessageAttachment['kind'],
+  ref: string,
+  { desc, source }: { desc?: string; source?: OutgoingMessage['source'] } = {},
+): Message & { content: string } {
   const media = OUTBOUND_MEDIA[kind];
-  return { role: 'assistant', kind: media.kind, content: formatAttachmentRef({ kind: media.ref, desc, ref }) };
+  return {
+    role: source === 'agent' ? 'assistant' : 'notice',
+    kind: media.kind,
+    content: formatAttachmentRef({ kind: media.ref, desc, ref }),
+  };
 }
 
 /**
- * 不是她回复的出站文字（`source` 不是 agent，如指令的回复、宿主提示）在会话历史里的记法：一条事件标记，不进模型的上下文；
- * 元数据记出站的 `source`、文字对象与回合 id（{@link WellKnownMetadataKeys} 的 `Source`、`Text`、`TurnId`），会话服务据此还原成
- * 通知、认出指令的回复与在途回合里的那一条。她的回复（agent 存档）与空文字不记，回 undefined。归档方一律用它；时间戳由调用方补上
+ * 不是她回复的出站文字（`source` 不是 agent，如指令的回复、宿主提示）在会话历史里的记法：一条事件标记，不进模型的上下文，
+ * 正文是 `content`，元数据记文字对象（{@link WellKnownMetadataKeys} 的 `Text`，有才记），会话服务据此还原成通知。她的回复
+ * （agent 存档）与空文字不记，回 undefined。归档方一律用它；时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与
+ * {@link outboundMediaMessage} 记的附件同一条规则，见 api-message-archive 的 recordOutbound）
  */
 export function outboundMarkerMessage(msg: OutgoingMessage): Message | undefined {
   if (msg.source === 'agent' || !msg.content.trim()) return undefined;
-  const metadata = {
-    ...(msg.source ? { [WellKnownMetadataKeys.Source]: msg.source } : {}),
-    ...(msg.text ? { [WellKnownMetadataKeys.Text]: msg.text } : {}),
-    ...(msg.turnId ? { [WellKnownMetadataKeys.TurnId]: msg.turnId } : {}),
-  };
   return {
     role: 'system',
     kind: WellKnownKinds.EventMarker,
     content: msg.content,
-    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+    ...(msg.text ? { metadata: { [WellKnownMetadataKeys.Text]: msg.text } } : {}),
   };
 }
 
@@ -605,26 +605,26 @@ export interface ArchivedAttachment {
  *   判断是不是群聊。
  * - `MessageId`：平台侧的消息 id（字符串，即入站消息的 `messageId`），存档写；存档按它反查被引用的原文，关系插件据此把
  *   引用与回复对回消息。
- * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；出站消息的文字记成事件标记时
- *   是出站的 `source`（如指令回复的 command）；插件自己写的其余记录（发出的附件、投递失败）写插件的名字。会话服务据此标出
- *   提问是不是内部注入的、认出指令的回复。
+ * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；出站消息记进历史的各条
+ *   （文字的事件标记与发出的附件）是出站的 `source`（如指令回复的 command）；插件自己写的其余记录（投递失败）写插件的名字。
+ *   会话服务据此标出提问是不是内部注入的、认出指令的回复。
  * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
  *   事实（`hostNotice.facts`），存档写；会话服务据此给出通知条目的种类、id 与事实。
  * - `TurnId`：所在回合的 id（字符串）。agent 写在这一轮落库的回复与工具结果上，平台适配器写在一轮回复的投递失败记录上，
- *   这一轮发出的不是回复的文字记成事件标记时由写方记下（{@link outboundMarkerMessage}）；会话服务据此把存档归回回合、标出哪一轮的
- *   回复没发出。
+ *   出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；会话服务据此把存档归回回合、标出哪一轮的回复没发出。
  * - `CallId`：工具调用的 id（字符串，即 `ToolCallContext.callId`）。agent 写在工具结果上，平台适配器写在经工具发出的
- *   消息的投递失败记录上；会话服务据此把历史里的工具卡对回实时推送。
+ *   消息的投递失败记录上，出站记进历史的各条由写方按出站消息的 callId 记下（有才记）；会话服务据此把历史里的工具卡对回实时推送。
  * - `ModelInfo`：一轮回复的模型与这一轮的 token，与 {@link OutgoingMessage}.modelInfo 同形；agent 写在这一轮最后的回复上，
  *   会话服务标在回复条目上。
  * - `SentRef`、`SentName`：发出的附件（`outboundMediaMessage` 记的那条）原样的地址与文件名（字符串）：占位符里的地址遇到
- *   「]」会截断、描述位的「]」「|」换成了全角。归档发出附件的一方写，会话服务优先取它们还原附件。
+ *   「]」会截断、描述位的「]」「|」换成了全角。记出站的一方写（api-message-archive 的 recordOutbound），会话服务优先取它们
+ *   还原附件。
  * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串或文字对象），
  *   平台适配器写；会话服务据此按读者语言写出回复为什么没发出。
  * - `Text`：通知与事件标记给人看的文字（@aalis/schema-i18n 的文字对象），`content` 是写给模型的话或它按原文渲染的整句。
  *   宿主通知的 `hostNotice.text`、平台通知的文字、平台事件合成的入站的 {@link IncomingMessage}.text、不是她回复的出站按
- *   {@link outboundMarkerMessage} 记成事件标记时的 {@link OutgoingMessage}.text 由写方记下，压缩分隔线同样；会话服务据此按读者
- *   语言显示（合成的入站画成通知），没有时显示 `content`。
+ *   {@link outboundMarkerMessage} 记成事件标记时的 {@link OutgoingMessage}.text 由写方记下，没有地址的出站附件记成的事件标记、
+ *   压缩分隔线同样；会话服务据此按读者语言显示（合成的入站画成通知），没有时显示 `content`。
  */
 export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',

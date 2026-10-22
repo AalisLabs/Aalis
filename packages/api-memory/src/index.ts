@@ -316,13 +316,18 @@ export function historyCleared(data: HookContextMap['memory:clear']): boolean {
 
 // ----- 记忆变更事件契约 -----
 //
-// 发射方：plugin-checkpoint（回滚删除消息时）；
-// 消费方：plugin-memory-vector（清理同时间戳向量）、plugin-webui-server（刷新历史视图）、
-// plugin-session-server（history:changed 时通知订阅的客户端重新取快照）。
+// 落库之后动了已有消息的一方发通知：删除由动手的检查点发（回滚），改写由改写的一方发（plugin-message-archive 给发出的附件补上
+// 识图描述、plugin-media 的 update_image_description 写回描述）。消费方：plugin-memory-vector（按会话与时间戳删掉或重收录派生
+// 的向量）、plugin-session-server（history:changed 时通知订阅的客户端重新取快照）。
 declare module '@aalis/core' {
   interface AalisEvents {
     /** 某会话的若干消息被按时间戳删除（回滚等场景），下游存储应同步清理 */
     'memory:messages-deleted': [payload: { sessionId: string; timestamps: number[] }];
+    /**
+     * 某会话已落库的消息正文被改写（如出站附件补上识图描述）：改写的一方在改写成功后发，messages 是改写后的整条（时间戳不变）。
+     * 建派生索引的下游按会话与时间戳换掉旧条目
+     */
+    'memory:messages-rewritten': [payload: { sessionId: string; messages: Message[] }];
     /** 某会话的历史发生结构性变化（删除/回滚），前端应重新拉取 */
     'history:changed': [payload: { sessionId: string }];
   }

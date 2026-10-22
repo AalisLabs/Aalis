@@ -652,7 +652,7 @@ describe('时间线', () => {
     expect(log.queryByRole('button', { name: '继续' })).toBeNull();
   });
 
-  it('附件：图片走媒体地址，外站图片经代理，取不到时显示替代；文件一行写名字与类型，按句柄下载，没有句柄的只写名字', async () => {
+  it('附件：图片走媒体地址，外站图片经代理，取不到时显示替代；文件一行写名字与类型，按句柄下载，网址的文件链到网址，没有句柄的只写名字', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot([
@@ -663,6 +663,7 @@ describe('时间线', () => {
               { kind: 'file', src: 'handle-1', name: '报告.pdf' },
               { kind: 'file', name: '只有名字.txt' },
               { kind: 'file', src: 'handle-3', name: 'Makefile' },
+              { kind: 'file', src: 'https://example.invalid/manual.pdf', name: '手册.pdf' },
             ],
           }),
         ]),
@@ -682,6 +683,9 @@ describe('时间线', () => {
     expect(log.getByText('只有名字.txt').closest('a, button')).toBeNull();
     expect(log.getByText('只有名字.txt').parentElement?.textContent).toBe('只有名字.txtTXT');
     expect(log.getByRole('link', { name: /Makefile/ }).textContent).toBe('Makefile文件');
+    expect(log.getByRole('link', { name: /手册\.pdf/ }).getAttribute('href')).toBe(
+      'https://example.invalid/manual.pdf',
+    );
   });
 
   it('文本类的文件与通知里的成品点开预览（Markdown 照常渲染），预览里也能下载；太大的、取不到的写明原因，只给下载', async () => {

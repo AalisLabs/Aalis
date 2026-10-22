@@ -210,6 +210,18 @@
 - api-commands 的 `OptionSpec.choices` 改成返回取值的函数，帮助与取值校验每次调用；`OptionRegisterOptions.choices` 另收返回取值的函数。
 - `/status` 只给计数：插件在跑与出错的个数、工具数、指令数，末尾写「逐项检查用 /doctor」；不再列八个服务可用与否，不用 emoji，标题不加粗。
 
+### 出站记历史一套规则（@aalis/schema-message、@aalis/api-message-archive、@aalis/api-memory、@aalis/api-session-protocol、@aalis/plugin-message-archive、@aalis/plugin-webui-server、@aalis/plugin-image-sender、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-workflow、@aalis/plugin-paper）
+
+- 出站消息记进会话历史只由 message-archive 做：api-message-archive 加必需成员 `recordOutbound(message)`，所有平台一条规则，全部记录写完才兑现，写失败时以原因拒绝。替换存档实现的要实现它，并照参考实现监听 `outbound:delivered` 调它、认领子会话没人认领的出站。送达本身就是写进会话历史的适配器调它并等它兑现：WebUI 改由它记，不再发 `outbound:delivered`。plugin-image-sender 不再记出站附件，不再依赖 message-archive。
+- `MessageAttachment.skipArchive` 删除：发出去的附件都记，`history_ref` 重发的与她回复里转出的各记一条，WebUI 实时时间线上看得到回复里转出的附件。
+- `outboundMediaMessage` 改为 `(kind, ref, { desc, source })`：出站的 `source` 不是 `agent` 的（插件发的）记成 `role: 'notice'`，进模型时是一条系统通知，不算她的发言，不发 `assistant:message:archived`、不进向量记忆；此前 WebUI 会话里插件发的图记成她的消息。`outboundMarkerMessage` 只给正文与文字对象，不再记 `Source`、`TurnId`：出站的来源、回合 id 与调用 id 由记出站的一方给每条记录补上。
+- 所有平台发出的文件与插件发的媒体都进会话历史（此前 IM 房间里只记她发的图、音、视频）：IM 房间里发出的文件（如白纸成品）在 WebUI 里看得到。附件记录的 `Source` 写出站的 `source`（此前写 `image-sender`、`webui-server`），并带出站的 `TurnId`、`CallId`（有才记）；`send_attachment` 与 `paper_send` 的出站消息带这次调用的回合 id。
+- 没有地址的附件（data URL、`file://` 与本机路径）记成事件标记「[图片] 名字」一类，带文字对象、按读者语言显示，回看时不显示附件本身；data URL 不再整串写进正文。
+- 她发的网址图片与视频在所有平台都发出即记、不等识图，识图描述在后台补上后改写同一条记录（此前 IM 上等描述完才记，WebUI 不补描述）。记忆后端没有 `updateMessageContent` 时不补；识图超时或失败记一条 warn，这一条不带描述。
+- api-memory 加事件 `memory:messages-rewritten`（`{ sessionId, messages }`，改写后的整条），改写已落库消息的一方在改写成功后发：message-archive 补描述、media 的 `update_image_description` 写回描述。memory-vector 据此按会话与时间戳删掉旧条目，删到了才按改写后的正文重收录，`update_image_description` 写回描述之后向量记忆里也换成带描述的；向量存储没有 `deleteByFilter` 时记一条 warn、不重收录。这个事件不能当编排的触发源。
+- 子会话里没人认领的出站由 message-archive 认领：记进子会话自己的历史即算送达，IM 房间与终端里派出的子任务能用 `send_attachment` 发图了（此前回「没有目标适配器确认」）。WebUI 会话的子会话同样由它认领，webui-server 不再认领子会话。会话管理不在时不认领。
+- 会话服务：插件发的附件在历史里还原成带附件的通知（种类同事件标记），实时推送里不是她发的出站按文字一条、每个附件各一条通知推出，与刷新后的历史一样（没有地址的附件推出存档记的那一句）；记着回合 id 的附件带上这一轮的 `turnId`，是这个会话的回合、这一轮还没收尾时并进这一轮（发到别的会话的不并进来）。文件的地址是网址时条目里直接给网址，WebUI 链到网址：会话协议里文件附件的 `src` 也可以是网址（此前只有句柄）。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

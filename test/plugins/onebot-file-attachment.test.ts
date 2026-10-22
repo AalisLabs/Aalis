@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { authority } from '../../packages/api-authority/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
-import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -15,6 +15,7 @@ import { App, events, type Logger, provide } from '../../packages/core/src/index
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import {
   type Message,
   type MessageAttachment,
@@ -265,12 +266,16 @@ async function boot(
   } as never);
   const delivered: OutgoingMessage[] = [];
   host.events.use.on('outbound:delivered', msg => void delivered.push(msg));
+  // 存档用真的：送达之后的快照由它记进会话历史，记忆是只记写入的替身
   const notes: Array<{ sessionId: string; message: Message }> = [];
-  host.provide.use(messageArchive, {
+  host.provide.use(memory, {
     async saveMessage(sessionId: string, message: Message) {
       notes.push({ sessionId, message });
     },
-  } as never);
+    getHistory: async (sessionId: string) => notes.filter(n => n.sessionId === sessionId).map(n => n.message),
+    clearSession: async () => {},
+  } as unknown as MemoryService);
+  await app.plugins.register(messageArchivePlugin, { debugLogs: false });
   await app.plugins.register(onebotPlugin, {
     connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
   });
@@ -381,6 +386,25 @@ describe('onebot 出站：文件附件', () => {
     // 送达快照：文字发出了，带 content
     await until(() => t.delivered.length > 0);
     expect(t.delivered.map(msg => msg.content)).toEqual(['成品在这']);
+  });
+
+  it('存储地址的附件（如白纸成品，没带 ref）：落盘的副本只用来发，记进历史的是原来的地址；data URL 的图记落盘的副本', async () => {
+    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+    await t.send({
+      sessionId: GROUP,
+      content: '',
+      source: 'agent',
+      attachments: [
+        { kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' },
+        { kind: 'image', data: `data:image/png;base64,${PNG.toString('base64')}` },
+      ],
+    });
+    await until(() => t.notes.length >= 2);
+    // 送达快照里消息段发出的附件在前、上传的文件在后
+    expect(t.notes.map(n => [n.message.kind, n.message.metadata?.ref])).toEqual([
+      ['outbound-image', expect.stringMatching(/^data:\/images\/onebot_10000_group_20001\/onebot\/[0-9a-f]{16}\.png$/)],
+      ['outbound-file', 'data:/paper-out/a.html'],
+    ]);
   });
 
   it('文字没发出、文件上传成功：送达快照的 content 是空串，只带上传了的文件', async () => {
@@ -830,7 +854,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(JSON.stringify(t.actions)).not.toContain(OTHER);
   });
 
-  it('群里：本会话的存储地址按同类附件发出（image、record 为语音、video），不另入档', async () => {
+  it('群里：本会话的存储地址按同类附件发出（image、record 为语音、video），送达之后与别的附件一样记进历史', async () => {
     const t = await boot({
       imageSender: true,
       gateway: true,
@@ -855,7 +879,8 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(byType('record')).toEqual([WAV]);
     expect(byType('video')).toEqual([MP4]);
     expect(textOf(t.sent())).toContain('一二三');
-    expect(t.imageNotes(), '她这条回复已带着标记落库，转出的附件不另入档').toEqual([]);
+    await until(() => t.imageNotes().length > 0);
+    expect(t.imageNotes().map(n => n.message.metadata?.ref)).toEqual([`data:/images/${GROUP_DIR}/a.png`]);
   });
 
   it('群里：网址的标记留在正文原处，由适配器经 safeFetch 下载内联，超过内联上限的去掉，网址不交给实现端', async () => {
@@ -934,7 +959,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(JSON.stringify(t.actions)).not.toContain('placeholder.png');
   });
 
-  it('受众只有 owner 的私聊：存储地址的标记不过判据，转成同类附件发出，不另入档', async () => {
+  it('受众只有 owner 的私聊：存储地址的标记不过判据，转成同类附件发出，送达之后记进历史', async () => {
     const elsewhere = 'data:/downloads/zz-placeholder.jpg';
     const t = await boot({
       imageSender: true,
@@ -953,7 +978,8 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
     expect(images.map(s => decode(s.data.file))).toEqual([PNG, JPEG]);
     expect(textOf(t.sent(), PRIVATE)).toContain('一二');
-    expect(t.imageNotes(), '她这条回复已带着标记落库，转出的附件不另入档').toEqual([]);
+    await until(() => t.imageNotes().length === 2);
+    expect(t.imageNotes().map(n => n.message.metadata?.ref)).toEqual([`data:/images/${GROUP_DIR}/a.png`, elsewhere]);
   });
 
   it('会话管理不在：私聊判不出受众，按不是 owner 的会话，别的会话的存储地址留在正文里由适配器去掉', async () => {

@@ -12,7 +12,7 @@ import './Attachments.css';
 
 // 条目里的附件（提问、回复与通知带的成品同一种画法）：图片、音频、视频按媒体地址取，外站图片经图片代理；
 // 其余是一行图标、名字与类型，有句柄的点开：文本类的在对话框里预览（Markdown 照常渲染、别的原样），其余直接下载；
-// 没有句柄的只写名字
+// 网址的链到网址，没有句柄的只写名字
 
 type Attachment = Extract<SessionItem, { kind: 'user-message' }>['attachments'][number];
 
@@ -75,7 +75,7 @@ function AttachmentView({ attachment, sessionId }: { attachment: Attachment; ses
   if (kind === 'audio' && media) return <audio className="attachment-media" controls src={media} />;
   // biome-ignore lint/a11y/useMediaCaption: 同上
   if (kind === 'video' && media) return <video className="attachment-media" controls src={media} />;
-  if (kind === 'file' && src !== undefined) {
+  if (kind === 'file' && src !== undefined && !isWebUrl(src)) {
     return (
       <FileAttachment
         name={name ?? tr('file')}

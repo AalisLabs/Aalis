@@ -4,7 +4,7 @@
 // Aalis 在多个地方需要把附件（图片 / 音频 / 视频 / 文件）以可读、可解析的
 // 形式塞回 LLM 上下文里。依赖 `[图片: desc | ref:xxx]` 这种格式的调用点：
 //   - plugin-adapter-onebot 入站构造附件占位
-//   - plugin-image-sender 出站归档自己刚发的图
+//   - plugin-message-archive 把发出的附件记进会话历史（outboundMediaMessage）
 //   - plugin-media 到达识别写入描述（service.ts），以及按 ref 匹配并重写
 //     历史描述（tools.ts，另有一处本地正则提取 ref）
 // 任何一处格式漂移都会让其它调用点的解析悄悄断链。

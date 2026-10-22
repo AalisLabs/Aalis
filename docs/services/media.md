@@ -124,7 +124,7 @@ interface MediaScopeDeps {
 - **会话管理不在**：一律只认本会话，owner 也一样。这时会话记录都取不到，房间类别一律是 internal，按第一条群里的 owner 回合就不受限了。
 - **历史引用**：`historyMediaRefs` 只读结构化字段，即入站附件清单（metadata 的 `Attachments` 各项的 `ref`）与发出的附件（`SentRef`），不读正文里的 `[图片 | ref:…]`：群友能打出伪造的占位符。目录按整棵会话树比，历史只取调用所在会话。
 - **规整**：`mediaRef` 消 `.`、`..`，带反斜杠的不收（有的系统按目录分隔解析它），盘符路径（`C:/…`）按本机路径不收，相对路径（`data/images/…`）不是存储地址、不收；网址只认协议名小写的 `http://`、`https://`，与适配器下载附件时认的一样。判据先规整 target，调用方读的也应是规整后的那个。
-- **出站转换**：plugin-image-sender 在 `outbound:dispatch` 上处理带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>`（`mediaRef` 规整出存储地址的，`base64://…` 也按根名 base64 的存储地址算）：受众只有 owner 的会话（房间类别 owner-only）里不过判据，其余会话按非 owner 过判据，会话管理不在时判不出受众，一律按其余会话；再与 `send_attachment` 一样按文件头核对，都过了的摘出来转成同类附件（标 `skipArchive`，这条回复已带着标记落库）。只摘掉转成了附件的标记：不过判据的、读不出的（如 `base64://…`）与不是对应媒体的，和别的写法（网址、`file://`、本机路径、data URI、协议名大写的网址等）一样留在正文里交给适配器：onebot 只发网址的，下载、核对文件头后内联，其余去掉并报投递失败（见 [onebot 适配器的「出站正文」](../plugins/plugin-adapter-onebot.md#出站正文)）；WebUI 与终端不解析标记，按原文显示。摘掉标记后两边的文字拼成的新标记同样留给适配器，它在解析出的消息段上判。没装 plugin-image-sender 时她回复里的存储媒体发不出。
+- **出站转换**：plugin-image-sender 在 `outbound:dispatch` 上处理带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>`（`mediaRef` 规整出存储地址的，`base64://…` 也按根名 base64 的存储地址算）：受众只有 owner 的会话（房间类别 owner-only）里不过判据，其余会话按非 owner 过判据，会话管理不在时判不出受众，一律按其余会话；再与 `send_attachment` 一样按文件头核对，都过了的摘出来转成同类附件，送达之后与别的附件一样由 message-archive 记进会话历史。只摘掉转成了附件的标记：不过判据的、读不出的（如 `base64://…`）与不是对应媒体的，和别的写法（网址、`file://`、本机路径、data URI、协议名大写的网址等）一样留在正文里交给适配器：onebot 只发网址的，下载、核对文件头后内联，其余去掉并报投递失败（见 [onebot 适配器的「出站正文」](../plugins/plugin-adapter-onebot.md#出站正文)）；WebUI 与终端不解析标记，按原文显示。摘掉标记后两边的文字拼成的新标记同样留给适配器，它在解析出的消息段上判。没装 plugin-image-sender 时她回复里的存储媒体发不出。
 - **会话目录名**：判据与写入方用同一个 `sessionDirName`（见上节），按目录的第二段比对；写入方的子目录在会话目录之下，判据不看它。新的写入方经 `sessionMediaUri` 把会话媒体写进这几个目录，房间里才取得到。
 
 判据按目录约定判归属，不是隔离，见 [安全模型的「媒体工具按受众」](../concepts/security-model.md#媒体工具按受众)。
@@ -149,7 +149,7 @@ interface MediaScopeDeps {
 | `plugin-file-reader` | `media.use.describeImage(uri)` | 识别 DOCX 内嵌图；先取 `media.present ? media.use : undefined`，再判 `if (!mediaService?.describeImage) return ''` |
 | `plugin-image-sender` | `media.use.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.use.lookupDescription(url)` | 只复用缓存、不触发识别 |
-| `plugin-message-archive` | `media.present` → `media.use` | 归档时取描述（消息尚无 `_attachmentDescriptions` 时才识别）；`uses optional:['media']` |
+| `plugin-message-archive` | `media.present` → `media.use` | 归档入站时取描述（消息尚无 `_attachmentDescriptions` 时才识别）；她发出的网址图片与视频记进历史之后，在后台调 `describeImage` / `describeVideo` 补描述（见 [plugin-message-archive](../plugins/plugin-message-archive.md)）；`uses optional:['media']` |
 | `plugin-agent` | `media.present` | 探测 media 是否在场：在场时当轮图片原样透传，缺席时自行兜底翻译 |
 
 ---

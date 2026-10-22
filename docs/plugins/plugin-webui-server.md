@@ -5,7 +5,7 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、页面数据变了、布局记录变了、「需要处理」变了、重启、换前端）。插件经 `webuiServer` 登记的页面（默认声明式，需要自绘时用插件前端）与提示由本插件收下、按质量门槛核过，页面的数据源与动作经本插件的服务端闸门调用，插件前端的文件由本插件在 `/frames/` 下托管（见下文「声明式页面」与「插件前端」）。发往 WebUI 会话的出站消息由本插件写进会话历史（见下文「WebUI 会话的收件箱」）。
+Express + WebSocket 实现的 Web 管理后台，提供 REST API 与 WebSocket 实时通信。WebSocket 端点 `/session` 是会话协议的传输：已认证的连接接到会话服务（`sessionProtocol`），本插件只依赖契约包 `@aalis/api-session-protocol`，不依赖它的实现；端点 `/admin` 推会话之外的管理面事件（日志、插件与页面登记表的变化、页面数据变了、布局记录变了、「需要处理」变了、重启、换前端）。插件经 `webuiServer` 登记的页面（默认声明式，需要自绘时用插件前端）与提示由本插件收下、按质量门槛核过，页面的数据源与动作经本插件的服务端闸门调用，插件前端的文件由本插件在 `/frames/` 下托管（见下文「声明式页面」与「插件前端」）。发往 WebUI 会话的出站消息由本插件认领、经 message-archive 写进会话历史（见下文「WebUI 会话的收件箱」）。
 
 本插件、会话服务（[plugin-session-server](./plugin-session-server.md)）与会话协议（[api-session-protocol](../api/api-session-protocol.md)）只认宿主契约，不认具体插件：源码与注释里不写别的插件的包名与短名；字符串里的词（协议另加字段名）不是别的插件登记的工具名、会话设置键、配置与输入的字段名、页面键、动作名或数据源名。契约包里有的词（服务名、事件名、契约的字段与取值）与字段声明的可选项来源（`dynamicOptions`）不算，由 `test/architecture/webui-client-guards.test.ts` 守住，插件前端的托管与转发也在其中。
 
@@ -295,16 +295,11 @@ socket.onmessage = event => {
 
 ## WebUI 会话的收件箱
 
-发往 WebUI 自己会话的出站消息（`outbound:message` 的 `platform` 为 `webui`，会话不是 IM 房间）由本插件认领投递回执：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。回执成功表示这条消息已进会话历史，不看有没有页面在线。owner 从 WebUI 驱动的 IM 房间（根会话有 session-manager 记下的出生平台，按会话字段判、不看会话 id 的写法）由那个平台的适配器认领；不带 `platform` 的出站消息本插件不认领；已有回执的消息不覆盖。
+发往 WebUI 自己会话的出站消息（`outbound:message` 的 `platform` 为 `webui`，会话不是 IM 房间也不是子会话）由本插件认领投递回执：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。回执成功表示这条消息已经由 message-archive 的 `recordOutbound` 记进会话历史，不看有没有页面在线；送达本身就是写进历史，本插件不发 `outbound:delivered`。owner 从 WebUI 驱动的 IM 房间（根会话有 session-manager 记下的出生平台，按会话字段判、不看会话 id 的写法）由那个平台的适配器认领；子会话（会话记录有 `parentId`）没有窗口，由 message-archive 认领；不带 `platform` 的出站消息本插件不认领；已有回执的消息不覆盖。
 
-- agent 的文字回复由 agent 存档，这里不再记；
-- 不是她说的文字（系统提示、指令回复、宿主通知）按 `outboundMarkerMessage` 经 message-archive 记成事件标记，回看时显示成通知，不进模型上下文；出站的 `source` 记在元数据的 `Source` 键上，会话服务据此把指令的回复还原成 `command-reply` 的通知。别的平台上这些文字由 message-archive 在送达之后记，记法相同；
-- 图片、视频、音频按 `outboundMediaMessage` 的格式记，会话服务据此还原成附件；
-- 给的是存储地址的文件同样按这个格式记（描述位记文件名，`metadata` 另记原样的 `ref` 与 `name`），会话服务给它签发下载句柄。这样的文件以 `[文件: 名称 | ref:…]` 进入模型上下文与记忆，与 QQ 等平台不同：image-sender 只归档图片、音频、视频，那些平台上发出的文件不进历史；
-- 不是存储地址的文件（网址、data URL）签不出句柄，记成事件标记 `[文件] 名称`，内容不进历史；
-- 带 `skipArchive` 的附件（`history_ref` 重发，原图已在历史里）不记。
+记法与别的平台相同，见 [plugin-message-archive](./plugin-message-archive.md)：她的文字回复由 agent 存档；不是她说的文字记成事件标记；附件按有没有地址分，有地址的按 `outboundMediaMessage` 记（她发的是她的消息，插件发的是带附件的通知），没有地址的（data URL 等）记成事件标记 `[文件] 名称` 一类，内容不进历史；她发的网址图片与视频发出即记、回执不等识图，描述在后台补上。
 
-记完之后发出的 `outbound:delivered` 快照不带文字、附件标上 `skipArchive`，message-archive 与 image-sender 不再记一份，因此发往 WebUI 的网址图片与视频不由 image-sender 补视觉描述。存档服务不在场或写入失败时回执失败。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败时回执失败，已写成的几条不撤回，发起方重发后这几条会重复。
+存档服务不在场时回执失败（文字对象，按读者语言显示）；记录写入失败时回执失败、带原因。一条消息要写多条记录（如正文加几个文件）时逐条写入，中途失败时回执失败，已写成的几条不撤回，发起方重发后这几条会重复。
 
 本插件仍以 `webui` 平台名登记一个平台适配器，平台档、会话范围的候选与用户关系认的平台名里才有它；连接状态数的是打开着的 `/session` 连接。WebUI 的会话不经这个适配器收发，它的 `sendMessage` 一律拒绝并写明原因。
 

@@ -53,6 +53,7 @@ function setup() {
         }),
       ),
       memory: ref(),
+      events: ref(),
       sessionManager: ref(),
       authority: ref(),
     },
