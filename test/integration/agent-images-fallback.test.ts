@@ -25,7 +25,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // 契约：
 //   - media 在场 → agent 原样透传（media 的缓存键/动图提示按原串命中，不得改形态）
 //   - media 缺席 → 存储地址经 storage 读成 data URI，读不出的丢弃该图；**其余一切形态原样透传**
-//     （维持 media 出现之前的既有行为）
+//     （维持 media 出现之前的既有行为）；主模型不能看图（acceptsImages 为 false）时当轮的图一张都不交，正文照旧
 // ════════════════════════════════════════════════════════════
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -35,16 +35,16 @@ const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 /**
  * `storageRoots` 给出目录时改用真实 storage-local，以它为家目录：用户根只配 workspace（排第一），data 是内置根（映射到 state/）；
- * 否则按 `storage` 决定是否提供单根假 storage。
+ * 否则按 `storage` 决定是否提供单根假 storage。主模型缺省登记视觉能力，`vision: false` 时不登记
  */
 async function loadStack(
   recorder: ChatModelRequest[],
-  opts: { media?: boolean; storage?: boolean; storageRoots?: string } = {},
+  opts: { media?: boolean; storage?: boolean; storageRoots?: string; vision?: boolean } = {},
 ) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, agent: agentService });
-  await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
+  await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder, vision: opts.vision ?? true }));
   if (opts.storageRoots !== undefined) {
     const base = opts.storageRoots;
     const root = (name: string) => ({
@@ -86,9 +86,9 @@ async function loadStack(
   return { app, agent: host.agent.use };
 }
 
-function incomingWith(images: string[]): IncomingMessage {
+function incomingWith(images: string[], content = '看图'): IncomingMessage {
   return {
-    content: '看图',
+    content,
     sessionId: 's1',
     platform: 'test',
     userId: 'u1',
@@ -97,10 +97,14 @@ function incomingWith(images: string[]): IncomingMessage {
   };
 }
 
-function lastUserImages(recorder: ChatModelRequest[]): string[] | undefined {
+function lastUser(recorder: ChatModelRequest[]) {
   const req = recorder[recorder.length - 1];
   const userMsgs = req.messages.filter(m => m.role === 'user');
-  return userMsgs[userMsgs.length - 1]?.images;
+  return userMsgs[userMsgs.length - 1];
+}
+
+function lastUserImages(recorder: ChatModelRequest[]): string[] | undefined {
+  return lastUser(recorder)?.images;
 }
 
 describe('media 缺席时的 images 兜底', () => {
@@ -130,6 +134,15 @@ describe('media 缺席时的 images 兜底', () => {
     const { agent } = await loadStack(recorder);
     await agent.handleMessage(incomingWith(['file:///tmp/x.png', STORED]));
     expect(lastUserImages(recorder)).toEqual(['file:///tmp/x.png', PNG_DATA_URI]);
+  });
+
+  it('media 缺席、主模型不能看图：当轮的图一张都不交，正文里的占位照旧', async () => {
+    const recorder: ChatModelRequest[] = [];
+    const { agent } = await loadStack(recorder, { vision: false });
+    const placeholder = `[图片 | ref:${STORED}]`;
+    await agent.handleMessage(incomingWith([STORED, PNG_DATA_URI, HTTP_URL], `看图 ${placeholder}`));
+    expect(lastUserImages(recorder)).toBeUndefined();
+    expect(lastUser(recorder)?.content).toContain(placeholder);
   });
 
   it('media 在场：原样透传，不做任何形态转换（缓存键/动图提示按原串命中）', async () => {

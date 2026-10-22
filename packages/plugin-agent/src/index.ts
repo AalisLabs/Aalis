@@ -17,6 +17,7 @@ import type { ChatModelRequest, ChatResponse, LLMModel, ModelRef } from '@aalis/
 import {
   estimateMsgTokens,
   estimateTextTokens,
+  LLMCapabilities,
   listLLMModels,
   llm as llmService,
   MODEL_REF_TEXT,
@@ -725,7 +726,9 @@ class DefaultAgent implements AgentService {
         return;
       }
       const llm = resolved.use;
-      const model = refOf(resolved);
+      // 这一轮的主模型能不能亲眼看图：按模型服务登记的能力（端点报告或单模型能力覆盖），
+      // 工具上下文与 agent:llm:before 同一个值
+      const acceptsImages = llm.capabilities.includes(LLMCapabilities.Vision);
 
       // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
       // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
@@ -747,7 +750,7 @@ class DefaultAgent implements AgentService {
         const level = settings.think;
         const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
 
-        const built = await this.buildMessages(incoming, historyLimit, personaOpts, archivedIncoming);
+        const built = await this.buildMessages(incoming, historyLimit, acceptsImages, personaOpts, archivedIncoming);
         const messages = built.messages;
         /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
         let historyMessages = built.historyMessages;
@@ -772,9 +775,8 @@ class DefaultAgent implements AgentService {
           actor: incoming.actor,
           // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
           enabledGroups,
-          model,
-          // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
-          acceptsImages: true,
+          // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
+          acceptsImages,
           // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
           // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入；
@@ -795,7 +797,7 @@ class DefaultAgent implements AgentService {
         const llmBeforeData = {
           messages,
           tools,
-          model,
+          acceptsImages,
           sessionId: incoming.sessionId,
           userId: incoming.userId,
           platform: incoming.platform,
@@ -1032,9 +1034,10 @@ class DefaultAgent implements AgentService {
                   : Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
                 executeDone = true;
                 let result = executed.content;
-                // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
-                // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
-                const resultImages = executed.images;
+                // 工具交给主模型看的图：主模型能看图时才随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
+                // 不能看时工具硬塞的也不交，模型只读文字结果；不进钩子/事件/时间线（那些面都是文本），
+                // 也不落库（见 saveToolCallGroup）。
+                const resultImages = acceptsImages ? executed.images : undefined;
 
                 // Hook: agent:tool:after — 插件可以处理工具执行结果，写进 metadata 的随结果落库
                 const toolAfterData = {
@@ -1161,7 +1164,7 @@ class DefaultAgent implements AgentService {
           const nextLlmData = {
             messages: llmBeforeData.messages,
             tools: [...originalTools],
-            model,
+            acceptsImages,
             sessionId: incoming.sessionId,
             userId: incoming.userId,
             platform: incoming.platform,
@@ -1482,11 +1485,13 @@ class DefaultAgent implements AgentService {
 
   /**
    * 构建发送给 LLM 的消息列表。历史按会话的条数线成段丢弃（见 readHistory）：historyLimit 为 0 或没设置时发全部活跃历史。
-   * historyMessages 是会话的活跃条数（含已归档的这一轮入站消息与没发给模型的部分），与之后的清洗、裁剪无关
+   * historyMessages 是会话的活跃条数（含已归档的这一轮入站消息与没发给模型的部分），与之后的清洗、裁剪无关。
+   * acceptsImages 是这一轮的主模型能不能看图，media 缺席时由它定当轮的图交不交
    */
   private async buildMessages(
     incoming: IncomingMessage,
     historyLimit: number | undefined,
+    acceptsImages: boolean,
     personaOpts?: PersonaSessionOptions,
     archivedIncoming?: Message,
   ): Promise<{ messages: Message[]; historyMessages: number }> {
@@ -1601,8 +1606,8 @@ class DefaultAgent implements AgentService {
         //（describe 剥离 / passthrough 物化），此处不做任何转换——它的描述缓存键与
         // 动图提示都按 attachment.data 原串命中，改形态会打散。
         userMessage.images = imageAtts.map(a => a.data);
-      } else {
-        // media 缺席兜底：存储地址（适配器落盘的附件引用）provider 解不了（当 base64 校验，整轮请求被拒，见
+      } else if (acceptsImages) {
+        // media 缺席兜底（主模型不能看图时当轮的图不交，正文里的占位照旧）：存储地址（适配器落盘的附件引用）provider 解不了（当 base64 校验，整轮请求被拒，见
         // test/plugins/media-model-images.test.ts 抬头的 400 事故），经 storage 读出转 data URI，保住「视觉主模型
         // 直通」的基础体验；读不出（storage 缺席/读失败）就丢弃该图。其余形态（data URI、http(s)、file:// 等）原样
         // 透传，与 media 出现之前的行为一致，各 provider 按自己的解析器处置。
@@ -2444,7 +2449,7 @@ function run(caps: Caps): void {
       const llmBeforeData = {
         messages,
         tools,
-        model: refOf(resolved),
+        acceptsImages: llm.capabilities.includes(LLMCapabilities.Vision),
         sessionId: data.sessionId,
         userId: '',
         platform,

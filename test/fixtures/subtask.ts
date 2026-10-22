@@ -132,7 +132,7 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
     await host.hooks.use.run('agent:llm:before', {
       messages,
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId,
       dryRun,
     });

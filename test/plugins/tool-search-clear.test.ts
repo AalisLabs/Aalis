@@ -45,7 +45,7 @@ async function world() {
     const data: HookContextMap['agent:llm:before'] = {
       messages,
       tools: [...ALL_TOOLS],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: 's1',
     };
     await host.hooks.use.run('agent:llm:before', data, async () => {});

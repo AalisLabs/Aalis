@@ -177,8 +177,8 @@
 - @aalis/api-session-settings（新包）：插件原来的 `registerSetting` 加 `resolveConfig` 改成「configSchema 字段写 `session`、apply 里调 `fields()` 拿读取器、调用路径上 `get(sessionId, { platform })`」，写自己的字段用读取器的 `set`；读取门面 `sessionFields` 与管理面 `sessionSettings` 两个描述符，管理面只给会话服务与建子会话的插件；`caps.config` 里读不到这类字段；跨插件改别人的设置改成调拥有它的插件的服务（如 agent 的 `assignModel`）；建子会话的插件在建之前取管理面的 `childMetadata` 并进 `metadata`，会话设置不在时不建；权限类的项不要把 `task` 排除在 `appliesTo` 之外，否则子会话里按全局取。另导出 `appliesIn`、`layerLabel`、`describeLayer`、`SETTINGS_ABSENT`、`SessionSettingsError` 等，`SessionSettingsLayerInfo` 带 `platform`、`type`（窗口场所）。
 - @aalis/api-session-protocol：设置行的身份改为 `(plugin, key)`，带去掉函数成员的字段声明与 `actual`，不再带 `resolved`；行上的 `dependsOn`、`unset` 挪进字段声明的 `session`（`field.session.dependsOn`、`field.session.unset`）；来源 `source` 只取层名（`global`、`platform`、`platformType`、`place`、`session`）或 `default`（全局层的值缺失或不合法、按作者默认），原来的 `defaults`、`type`、`parent` 没有了；层改为 `global`、`platform`、`platformType`、`place`；`session/config/update` 与 `layer/update` 的参数改为 `{ …, plugin, key, value }`，`SessionConfigUpdateParamsSchema` 改名 `SettingUpdateParamsSchema`，回包另带落盘失败的 `unsaved`（`SettingUpdateResultSchema`）；`session/config/get` 回包另带 `platform`（平台档按哪个平台取）；`session/config/layers` 回包的 `layers` 每一项从层改为 `{ layer, label?, platform?, type? }`（场所另带平台与类型名）；新方法 `session/config/overrides`（回包 `SettingOverridesSchema`）；握手的功能位多 `settings`，会话设置不在时设置方法回 `unsupported`，带 `parentId` 的 `session/create` 也回 `unsupported`；会话摘要的 `place` 改为可选，根会话是空记录时没有。
 - @aalis/api-persona：`PersonaSessionOptions` 改为 `{ sessionId?, platform? }`，人设服务按会话读自己的会话设置；`getPersonaSkills` 删掉；对 `SessionConfig` 的增强删掉。
-- @aalis/api-tools：`ToolService.sessionGroups(sessionId, platform?)`，提供者要实现；`ToolCallContext.model` 由发射者（agent）填；对 `SessionConfig` 的增强删掉。
-- @aalis/api-agent：`agent:llm:before` 的 `model` 与 `TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时媒体的交付判断与摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；会话删除（`session:deleted`）时实现者要停掉这个会话在飞的回合，不停的话删掉的会话里这一轮照样跑完；对 `SessionConfig` 的增强删掉。
+- @aalis/api-tools：`ToolService.sessionGroups(sessionId, platform?)`，提供者要实现；对 `SessionConfig` 的增强删掉。
+- @aalis/api-agent：`TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；会话删除（`session:deleted`）时实现者要停掉这个会话在飞的回合，不停的话删掉的会话里这一轮照样跑完；对 `SessionConfig` 的增强删掉。
 - @aalis/api-memory：共享的召回范围 `MEMORY_RECALL_SCOPE_SETTING`、`memoryRecallScope` 与类型 `MemoryRecallScope` 删掉，各记忆插件用自己的范围字段；新增 `historyCleared`（`memory:clear` 之后判消息历史清成没有）。
 - @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，档位与越界策略还不能按会话设。
 - @aalis/api-gateway：作用域函数 `extractTargetId`、`isScopeEnabled`、`resolveEffectiveConfig` 删掉；新增「生效范围」字段 `REPLY_AUDIENCE_FIELD`、判定 `audienceIncludes` 与 `InboundPhaseData.chat`（网关给没有 `source` 的入站算的聊天窗口）；网关在入站相位之前等会话管理收录。
@@ -245,6 +245,14 @@
 - 检查点不再按工具名认「这一轮跑过命令」：api-checkpoint 删掉 `execUsed`，清单不再记这个标记，会话协议删掉 `turn/checkpoint`。
 - WebUI 的回滚对话框打开即可确认，固定写一句「回滚只撤回经存储的文件改动，命令与外部工具的效果撤不回」，不再先查这一轮跑没跑命令、也没有查不到时的那句提示。
 - 每个会话只能回滚最近 `keepTurns`（默认 200）轮：每次提交回合后，这个会话超出的最旧回合连同备份删掉，没改文件、只有对话的回合也算一轮；设为 0 不限。此前一个会话的回合不限数量，只按会话数（`keepSessions`）清理。
+
+### 能不能看图由 agent 定（@aalis/api-agent、@aalis/api-tools、@aalis/plugin-agent、@aalis/plugin-media）
+
+- api-tools 的 `ToolCallContext.acceptsImages` 改为「这次调用的主模型能亲眼看图」：plugin-agent 按这一轮的模型在模型服务登记的能力（端点报告，或「单模型能力覆盖」里写的 `vision`）填，此前对所有模型都填 `true`；第三方 agent 要按模型能力填。为 `false` 时 agent 不把工具结果里的图交给模型（此前不论模型能不能看都交），工具不守约硬塞的图模型看不到、只读它的文字结果。
+- api-agent 的 `agent:llm:before` 新加必填的 `acceptsImages`，与工具上下文同一个值；第三方 agent 跑这个钩子要带上。
+- media 不在时，plugin-agent 自己的图片兜底也按 `acceptsImages` 判：主模型不能看图的这一轮不把当轮附件里的图交给模型，正文里的图片占位照旧（此前照交，存储地址读成 data URI）。
+- plugin-media 的 `vision.delivery` 为 `auto` 时按 `acceptsImages` 判当轮附件与 `analyze_image` 的交付，不再自己查模型能力（此前用会话设置里的模型或自己能取到的默认模型去查，可能与 agent 实际用的不是同一个）。
+- 端点没报告视觉能力的模型（如经中转站接入的）做主模型时按不能看图算，浏览器截图随之回文字与存储地址；要直接看图，在模型服务的「单模型能力覆盖」里给它加上 `vision`。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

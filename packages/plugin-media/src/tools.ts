@@ -195,10 +195,10 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           imageUrl = `data:${mime};base64,${Buffer.from(buf).toString('base64')}`;
         }
 
-        // 主模型自己能看且调用方接得住图（agent 工具循环）：图片随工具结果交出（规范化 +
-        // 动图抽帧与当轮附件同一出口），不经识别模型。mcp-server / workflow 只读 content，
-        // 对它们照常走识别模型出文字。
-        if (callCtx.acceptsImages && svc.resolveDelivery(callCtx.model) === 'passthrough') {
+        // 这次调用的主模型能看图（acceptsImages，agent 按模型登记的能力填）且交付不是转文字：图片随工具结果交出
+        // （规范化 + 动图抽帧与当轮附件同一出口），不经识别模型。不能看图的会话与只读 content 的
+        // mcp-server / workflow 照常走识别模型出文字，配置强制直通也一样：结果里的图交不到模型。
+        if (callCtx.acceptsImages && svc.resolveDelivery(true) === 'passthrough') {
           // 远端 URL 先在工具层下载并校验是图片：原样交给主请求的话，链接失效 / 不是图片会变成整轮 400，
           // 模型没有机会纠正；下载失败留在工具层返回错误，模型可换路。
           let source = imageUrl;

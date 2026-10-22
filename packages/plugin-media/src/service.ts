@@ -3,7 +3,7 @@
 // ============================================================
 
 import type { ASRService } from '@aalis/api-asr';
-import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import type { LLMModel, ModelRef } from '@aalis/api-llm';
 import {
   type BuildContextOptions,
   type DescribeImageOptions,
@@ -69,8 +69,7 @@ const UNRECOGNIZED = '获取或识别失败，内容未知';
 type ImageDescriber = MediaProcessor & Required<Pick<MediaProcessor, 'describe'>>;
 
 /**
- * 调度器用到的能力。llm / asr 是 processor 池的两个来源，llm 另供 auto 交付形态查对话模型的能力；memory 供识别上下文
- * 取历史与发送者画像。三者都可缺席（各自路径降级）。
+ * 调度器用到的能力。llm / asr 是 processor 池的两个来源；memory 供识别上下文取历史与发送者画像。三者都可缺席（各自路径降级）。
  */
 export interface MediaServiceCaps {
   logger: ServiceSelection<Logger>;
@@ -550,13 +549,12 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 主模型需要看图时的交付形态。auto：按这次调用的对话模型（agent:llm:before 的 model、工具上下文的 model）的
-   * vision 能力——有则直通原图，无则由识别模型转文字；调用方没给模型时按 llm 的默认条目。
+   * 主模型需要看图时的交付形态。auto：按调用方交来的 acceptsImages（agent:llm:before 与工具上下文的，agent 按这一轮
+   * 的模型登记的视觉能力填）——能看则直通原图，不能看则由识别模型转文字。
    */
-  resolveDelivery(model?: ModelRef): 'passthrough' | 'describe' {
+  resolveDelivery(acceptsImages: boolean): 'passthrough' | 'describe' {
     if (this.cfg.vision.delivery !== 'auto') return this.cfg.vision.delivery;
-    const entry = resolveLLMModel(this.caps.llm, model, ['chat']);
-    return entry?.use.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
+    return acceptsImages ? 'passthrough' : 'describe';
   }
 
   /**

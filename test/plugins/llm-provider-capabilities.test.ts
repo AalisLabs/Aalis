@@ -11,7 +11,7 @@ import openai from '../../packages/plugin-llm-openai/src/index.js';
 //   （Ollama /v1 的 qwen3:8b、OpenRouter 的 xxx:free）。按首个冒号切会把 id 截成
 //   qwen3，这行覆盖对真正的 qwen3:8b 静默失效。ollama 插件早已按末位冒号切，
 //   openai 与 deepseek 此前没跟上。
-// - openai 家族表：常见视觉族要带 vision，media 的视觉路由与 auto 交付才认得它们；
+// - openai 家族表：常见视觉族要带 vision，media 选识别模型与 agent 判主模型能不能看图才认得它们；
 //   gpt-4.1 不能被更短的 gpt-4 前缀抢先命中。
 // ════════════════════════════════════════════════════════════
 

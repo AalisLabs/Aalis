@@ -67,9 +67,8 @@ export interface ToolCallContext {
   /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
   enabledGroups?: string[];
   /**
-   * 调用方能把 {@link ToolExecutionResult.images} 交给主模型亲眼看（agent 工具循环置 true）。
-   * 缺省 false：mcp-server / workflow 等只读 content 的调用方拿不到图，能出图的工具应据此
-   * 退回文字结果，而不是交出一份只剩说明文字的空壳。
+   * 这次调用的主模型能亲眼看图（agent 按模型服务登记的能力填）。不能看时能出图的工具退回文字结果，调用方也不把
+   * {@link ToolExecutionResult.images} 交给模型；缺省 false：mcp-server / workflow 等只读 content 的调用方拿不到图。
    */
   acceptsImages?: boolean;
   /**
@@ -86,10 +85,6 @@ export interface ToolCallContext {
   inbound?: InboundTurn;
   /** 调用所在回合的 id（只由 agent 工具循环填写，与 inbound 同时出现） */
   turnId?: string;
-  /**
-   * 这一轮用的对话模型（只由 agent 工具循环填写），形状同 @aalis/api-llm 的 ModelRef：本包不依赖 api-llm（api-llm 依赖本包）
-   */
-  model?: { provider?: string; model?: string };
   /**
    * 这次工具调用的 id（只由 agent 工具循环填写）。由 agent 生成、全局唯一，不取模型给的 tool call id：
    * 模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
