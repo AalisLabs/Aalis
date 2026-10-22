@@ -23,6 +23,7 @@ const WINDOW = 'onebot:group:20001';
 const OWNER_PRIVATE = 'onebot:10000:private:30001';
 const OWNERS = [{ platform: 'onebot', userId: '30001' }];
 const DEFAULT_PLACE = 'workspace:default';
+const PROJECT = 'workspace:w1';
 const at = { platform: 'onebot' };
 
 const apps: App[] = [];
@@ -338,8 +339,9 @@ describe('一个实例写过的各处', () => {
 });
 
 describe('可设的层', () => {
-  it('全局；平台档是已装适配器的加文档里写过的；平台类型档按平台，是声明的加写过的，声明了显示名的带上它；没有类型档，文档里的 types 段告警一次；场所默认工作区在前、窗口写类型称呼与平台；名字不合写法的不列、告警一次', async () => {
+  it('全局；平台档是已装适配器的加文档里写过的；平台类型档按平台，是声明的加写过的，声明了显示名的带上它；没有类型档，文档里的 types 段告警一次；场所工作区在前（默认工作区最前）、称呼不带平台；名字不合写法的不列、告警一次', async () => {
     const { admin, warns, inbound } = await setup({
+      places: { [PROJECT]: { key: PROJECT, kind: 'workspace', name: '论文', createdAt: 1, updatedAt: 1 } },
       doc: {
         sessionConfig: {
           platforms: { 'zz-doc': {}, 'a:b': {} },
@@ -368,12 +370,14 @@ describe('可设的层', () => {
       { layer: { scope: 'platformType', platform: 'onebot', type: 'zz-extra' } },
       { layer: { scope: 'platformType', platform: 'zz-im', type: 'group' } },
       { layer: { scope: 'place', key: DEFAULT_PLACE }, label: expect.anything() },
+      { layer: { scope: 'place', key: PROJECT }, label: expect.anything() },
       { layer: { scope: 'place', key: WINDOW }, label: expect.anything(), platform: 'onebot', type: 'group' },
     ]);
-    // 场所的称呼：默认工作区写它的名字，窗口写声明里的类型称呼、窗口名与平台；窗口另带平台与类型名
+    // 场所的称呼不带平台（平台另给，界面在层的列表里补上）：默认工作区写「默认工作区」，取了名的工作区写「工作区「名字」」，
+    // 窗口写声明里的类型称呼与窗口名
     expect(
       admin.layers().flatMap(({ layer, label }) => (layer.scope === 'place' ? [toSource(label ?? '')] : [])),
-    ).toEqual(['默认工作区', '群「读书会」onebot']);
+    ).toEqual(['默认工作区', '工作区「论文」', '群「读书会」']);
     admin.layers();
     expect(warns.filter(w => w.includes('a:b'))).toHaveLength(1);
     expect(warns.filter(w => w.includes('sessionConfig.types'))).toHaveLength(1);

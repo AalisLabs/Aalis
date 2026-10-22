@@ -90,7 +90,7 @@ function SessionTitle({ summary }: { summary: SessionSummary }) {
  */
 function whereOf(summary: SessionSummary): string | undefined {
   if (summary.parentId) return undefined;
-  const head = summary.place.kind === 'window' ? summary.chat?.type : summary.place.name;
+  const head = summary.place?.kind === 'window' ? summary.chat?.type : summary.place?.name;
   return [head, summary.platform].filter(Boolean).join(' · ');
 }
 

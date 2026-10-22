@@ -20,6 +20,8 @@ export default definePlugin({
     llm,
     messageArchive: optional(messageArchive),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
     authority: optional(authority),
     config,
     logger,
@@ -33,7 +35,8 @@ export default definePlugin({
 });
 ```
 
-- `sessionManager`：登记会话设置项「自动压缩线」，并按会话解析它与条数线，读会话记录选摘要模板；不在场时压缩线按默认 0.8，不按条数压缩，摘要用工作模板。
+- `sessionManager`：读会话记录选摘要模板；不在场时摘要用工作模板。
+- `sessionFields`：按会话读「自动压缩线」；不在场时取插件配置里的值。条数线是 agent 的项，经 agent 服务按会话取（见下文）。
 - `authority`：选摘要模板时判一对一窗口的对端是不是 owner；不在场时按不是 owner。
 - `messageArchive`：压成后写一条压缩分隔事件消息；不在场时不写。
 
@@ -42,24 +45,21 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `summaryBudgetRatio` | number | `0.1` | 摘要预算（占压掉内容的比例），0 到 0.5：压缩时，摘要连同原样保留的原文合计约为这次重写的输入（上一份摘要加这次新压的对话）的这个比例，越旧的内容因此越浓缩。合计不少于 1000 token，其中保留的原文不超过这次新压的对话的这个比例（不算上一份摘要，也不按这个下限算）；摘要模型的输出上限与窗口、这个会话的压缩线另有封顶（见下文「摘要预算」） |
-| `summaryModelMode` | select | `'global'` | 摘要模型来源：global=沿用全局默认 LLM；custom=使用下方 summaryLLM 指定的模型。session（沿用会话当轮模型）暂未实现。 |
-| `summaryLLM` | llm-ref | — | 摘要模型：仅当 summaryModelMode=custom 时生效；provider 为 LLM 插件实例 contextId，model 为实例内某个模型名。 |
+| `compressAt` | number | `0.8` | 自动压缩线（占窗口比例），0 到 1；可按会话设（见下文「自动压缩线」） |
 
-## 会话设置项
+摘要模型没有配置项：取 llm 服务给本插件挑的能对话的那一个（本插件偏好 › 全局偏好 › 优先级，偏好指向的不在时落到下一级），在插件详情的「服务偏好」里给本插件设。没有能对话的模型时只打一条 warn，有了模型后再缺再打。
 
-本插件在 session-manager 上登记一个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：
+## 自动压缩线
 
-| 键 | 字段 | 显眼程度 | 没设置时 |
-|---|---|---|---|
-| `compressAt` | number「自动压缩线（占窗口比例）」，0 到 1 | advanced | `0.8` |
+`compressAt` 是可按会话覆盖的插件配置字段（[api-session-settings](../api/api-session-settings.md)），各种会话都适用，只有 owner 能改，显眼程度 advanced。
 
 - **含义**：用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）。压缩服务的 `compressAt(sessionId, platform)` 交出这个会话的生效值（0 时为 `undefined`）。实际在它与 agent 裁剪预算占窗口的比例中较小的那个上压缩（见下文「何时压缩」），会话服务的用量条目与界面的压缩线给的就是这个较小值。
-- **层**：全局默认、平台档、平台类型档（`sessionConfig.types.<平台>.<类型名>`）、场所与单个会话按层覆盖（见 [api-session-manager](../api/api-session-manager.md)）；没有出生平台的会话（WebUI、终端）按入口平台选平台档。登记为 liveOnly：子会话按自己的继承链实时解析，不冻结父会话当时的值。哪一层都没设时为 0.8，与字段的默认值是同一个常量，没有插件配置键。
+- **层**：全局（插件配置）、平台档、平台类型档、场所与单个会话按层覆盖；没有出生平台的会话（WebUI、终端）按入口平台选平台档。子会话在建立时写下父会话此刻的值，之后独立。
 - **默认 0.8**：面向本机使用，本机可以大方用满上下文；与 agent 默认的裁剪比例 1.0 之间留出输出预留与估算误差。
 - **在线平台**：在平台档（或它的平台类型档，如 `onebot` 的 `group`、`private`）上设较小的值，控制每轮的输入成本。
 - **随窗口重算**：压缩线是窗口比例，同一个值在窗口差得多的模型上含义差得多。0.06 在 100 万窗口是 6 万 token；在 12.8 万窗口只有 7680 token，压不掉的人设、工具定义与注入块可能就已超过它，几乎每轮都压。换主模型时按新窗口重算在线平台的压缩线。
 
-条数线是 [plugin-agent](./plugin-agent.md#会话设置项) 登记的会话设置项 `historyLimit`（「历史条数上限」），它同时是 agent 发给模型的历史条数上限（超过时成段丢弃最早的）。本插件按会话解析它（层与压缩线相同），会话条数到线就全量压缩，与用量到线同一条流程、同一套退避；0 或哪一层都没设时不按条数压缩。条数线与模型窗口无关，换主模型不用重算。
+条数线是 [plugin-agent](./plugin-agent.md#会话设置项) 的可按会话覆盖的字段 `historyLimit`（「历史条数上限」），它同时是 agent 发给模型的历史条数上限（超过时成段丢弃最早的）。本插件按会话取它（经 agent 记在用量事件上的 `historyLimit`），会话条数到线就全量压缩，与用量到线同一条流程、同一套退避；0 或哪一层都没设时不按条数压缩。条数线与模型窗口无关，换主模型不用重算。
 
 ## 摘要模板
 

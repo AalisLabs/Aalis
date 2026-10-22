@@ -135,7 +135,7 @@ export default definePlugin({
 - **登记**：始终经 `BoundWebui.definePage` / `notify`，不要绕过门面直接调 `WebUIService.addPage(..., instance)`——否则提供者换人时不会自动重挂，激活撤回也不会按条目退订。
 - **服务缺失**：未就绪时 `webui.present` 为 `false`，访问查询类成员会抛错；登记方法不受影响，用门面即可。
 - **错误边界**：数据源或处理函数抛错，路由回 `500 { error }`，界面在那一块或操作的人那里显示原因；处理函数成功时可以返回一句话，宿主用 Toast 显示。
-- **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server 聚合调该服务的 `listModels()`（`llm` 走 per-model entry 枚举）。
+- **动态选项**：表单字段标 `dynamicOptions: '<来源名>'`，前端经 webui-server 的 `/api/models/:service` 取：先找插件经贡献点 `webui:options` 交的同名来源；`llm`、`toolGroups`、`llm-thinking` 由宿主回答；其余合起那个服务各提供者的 `listModels()`（见 [api-webui](../api/api-webui.md#可选项与模型)）。
 - **密钥字段**：`secret: true` 的字段，宿主提供密钥存储时 `GET /api/plugins` 回的是配置文档里的引用 `{ $secret: '<键>' }`，不回原值（没有密钥存储的自组装宿主，文档里本就是明文，接口原样返回）。表单对已设置的字段显示「已设置」和键名，不显示值；输入新值即替换，不动（或输入后删空、点撤销）则原样回传引用、保持原值，点清除则清空。顶层与分组里的字段，键被几处配置共用时提示替换会一并影响它们；数组元素里的字段替换时另建新键，不影响共用者，不提示。标在 map、list 上的字段整个值算一个密钥，只写不回显，要改就整份重填。存放与写入规则见 [`docs/core/config.md`](../core/config.md#密钥配置) 的「密钥配置」一节。
 
 ## 6. 能力 / 风险 → 影响

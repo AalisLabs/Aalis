@@ -8,17 +8,17 @@
 
 owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发，只认宿主契约、不认具体插件（守卫见 [plugin-webui-server](./plugin-webui-server.md#概述)）：
 
-- **功能位**：握手回发送、回滚、压缩三项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）服务在不在。这三个服务可能变了（核心的 `service:changed` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
+- **功能位**：握手回发送、回滚、压缩、设置四项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）、会话设置（`session-settings`）服务在不在。这几个服务可能变了（核心的 `service:changed` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
 - **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted`、回合进出、审批的推出与结算、后台任务的开始、结束与删除各推一条 `sessions/changed`，带变了的会话连同各级父会话的摘要与最新的分组。
-- **按会话树算的字段**：摘要的 `background` 是本会话在跑的后台任务数，加各级子会话里有回合在跑或有后台任务在跑的会话数（运行中看下文的回合登记，后台任务看 `backgroundTasks`，一批摘要只遍历一次登记表）；`tokens` 把本会话与各级子会话的 `SessionInfo.tokens` 相加；`lastTurn` 取 `SessionInfo.lastTurn` 的结局与结束时间，状态为 error 时 `reason` 取它的原因；子会话另带 `ancestors`（各级父会话的 id 与标题，根在前）；`chat` 取根会话聊天窗口的类型名与多方标记，`place` 取 session-manager 的 `placeOf` 与场所记录的显示名（窗口还没有记录时是场所键）。子会话的回合进出、任务进出、token 记账（session-manager 据 `llm:usage` 累加、发 `session:updated`）都会改父会话的摘要，所以每次推送都连同各级父会话。`sessions/list` 带 `background` 时只列 `background` 大于 0 的，不看归档。
+- **按会话树算的字段**：摘要的 `background` 是本会话在跑的后台任务数，加各级子会话里有回合在跑或有后台任务在跑的会话数（运行中看下文的回合登记，后台任务看 `backgroundTasks`，一批摘要只遍历一次登记表）；`tokens` 把本会话与各级子会话的 `SessionInfo.tokens` 相加；`lastTurn` 取 `SessionInfo.lastTurn` 的结局与结束时间，状态为 error 时 `reason` 取它的原因；子会话另带 `ancestors`（各级父会话的 id 与标题，根在前）；`chat` 取根会话聊天窗口的类型名与多方标记，`place` 取 session-manager 的 `placeOf` 与场所记录的显示名（窗口还没有记录时是场所键），根会话是空记录（`isUnfiled`）时不给：这类会话没有场所层。子会话的回合进出、任务进出、token 记账（session-manager 据 `llm:usage` 累加、发 `session:updated`）都会改父会话的摘要，所以每次推送都连同各级父会话。`sessions/list` 带 `background` 时只列 `background` 大于 0 的，不看归档。
 - **运行中**：在 `agent:input:before` 中间件里登记回合，回合的 `next` 返回（含被下游拦下、出错）即撤销。同一会话按 lane 可以并行多轮，有一轮在跑就算运行中。房间只在她真的开始一轮时显示运行中。
 - **会话的增删改**：`session/create`、`rename`、`archive`、`unarchive`、`delete`、`batch` 转给 session-manager。
-  - 新建根会话不复制各层，配置经继承链实时生效；新建子会话复制父会话的生效配置（session-manager 的 `childConfig`，不带登记为 liveOnly 的项），因为继承链不经父会话自己的配置。
+  - 新建根会话不复制各层，设置经各层实时生效；带 `parentId` 新建子会话时，建之前取会话设置管理面的 `childMetadata`（父会话此刻每一项适用于子会话的生效值）并进 metadata 一次写下，入口平台按根会话取；会话设置不在时回 `unsupported`、不建。
   - 归档连同子会话，单个与批量一致；恢复同样连同子会话，状态改回 `completed`（最后一轮收尾后的状态），没归档的不动。
   - 批量逐个执行：开始前就不存在的、执行出错的列进 `failed`，其余照常；删父会话时一并删掉的子会话不算失败。
-- **会话设置**：设置项由各插件登记在 session-manager 上，本插件不认识具体的键。`session/config/get` 给出适用于这个会话种类的各行（只能设到场所为止的项不列）：字段、所属插件、显眼程度、可选项依赖的另一项（登记了 `dependsOn` 的）、没设时的含义（登记了 `unset` 的）、本会话的值、生效值与来源（层名），排好显眼程度与先后，`composer` 同一组最多两项、多出的退到 `common`。owner 自己的会话按入口平台选平台档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，都没有时取这条连接的平台。`session/config/update` 按键写本会话的覆盖，`null` 恢复继承。`session/config/layers` 回可以设的各层与层表（取自 api-session-manager 的 `SESSION_LAYERS`，本插件不另写层表）；`layer/get`、`layer/update` 按层读写全局默认、平台档、平台类型档与场所：前三种列全部，场所按它的类别列（窗口列适用于房间的项，工作区列适用于 owner 的会话的项），各行带解析到这一层为止的生效值与来源。生效值出自全局默认或哪一层都没设的行另带 `resolved`：全局默认层由服务偏好承担的项（「模型」）此刻实际用的那一个，取自 session-manager 的 `resolvedDefaults`。给值的键不适用于这个会话种类（场所按它的类别算）时回 `invalidParams`，`null` 不受限；读写被 session-manager 拒绝（没登记的键、不合字段的值、写进本会话的只能设到场所为止的项、不合法的层、没有记录的场所键）同样回 `invalidParams`。session-manager 发 `session:config:changed`（设置项登记或撤回、某一层或某个会话的覆盖被改写、llm 服务的偏好变了或提供者上下线）时，给每条连接推 `session/config/changed`。
+- **会话设置**：转给会话设置的管理面（[plugin-session-settings](./plugin-session-settings.md)），本插件不认识具体的项。一行的身份是 `(plugin, key)`：实例 id 与字段名。`session/config/get` 给出适用于这个会话的各行（只能设到场所为止的项不列）：字段声明（去掉函数成员）、显眼程度（`composer` 同一组最多两项、多出的退到 `common`）、本会话的值、生效值与来源（层名），没设的另带 `actual`（声明字段的插件给出的此刻实际在用的值，如没设模型时此刻用的模型），另带 `platform`：平台档按哪个平台取（房间是根会话的出生平台；其余是入口平台，按根会话取：接管根会话 id 的平台适配器，没有时取这条连接的平台）。`session/config/update` 写本会话这一层的一项，`null` 恢复继承。`session/config/layers` 回可以设的各层与层表 `order`（取自 api-session-settings 的 `SESSION_LAYERS`，本插件不另写层表）；`layer/get`、`layer/update` 按层读写全局（插件配置）、平台档、平台类型档与场所，各行带解析到这一层为止的生效值与来源。`session/config/overrides` 回一个实例的各项在全局之外写过的各处，按项分组，子会话逐个列出、带父会话。写宿主配置文档的几层落盘失败时回包另带 `unsaved`（与插件详情保存的回执同一句）。写入被拒（没有这一项、不合字段的值、不适用的项、不合法的层、没有记录的场所键）回 `invalidParams`；会话设置不在时这些方法回 `unsupported`，握手的功能位 `settings` 为假。收到 `session-settings:changed` 或宿主的 `host-config:changed` 时，给每条连接推 `session/config/changed`。
 - **已读**：`session/markSeen` 记下 owner 看过某个会话的时刻，落在 `pluginData:/session-server/seen.json`。「我的」区的会话在她最近一次开口（`SessionInfo.lastReplyAt`）晚于这个时刻时为完成未读；房间不记未读。会话删除后丢掉它的记录。
 - **订阅与条目**：`session/subscribe` 回快照，之后把 agent、工具与存档的事件拼成条目推给订阅的连接，见下文「条目从哪里来」。
 - **文件句柄**：条目里她发出的文件不给存储地址，给本插件签发的句柄；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
@@ -48,6 +48,7 @@ definePlugin({
     provide,
     plugins: pluginsService,
     platform: optional(platform),
+    sessionSettings: optional(sessionSettings),
     agent: optional(agent),
     checkpoint: optional(checkpoint),
     compression: optional(compression),
@@ -61,13 +62,14 @@ definePlugin({
 })
 ```
 
-- `sessionManager`：会话表、会话设置（登记的设置项、继承与各层）与增删改都经它。
+- `sessionManager`：会话表与增删改都经它。
+- `sessionSettings`：会话设置的管理面：设置的各行、各层、写入与写过的各处，建子会话时写下的那一层；缺席时这些方法与建子会话回 `unsupported`。
 - `storage`：已读记录的落点；签发文件句柄时按存储根的种类挡掉插件状态。
 - `paths`：审批的审计写在家目录的 `state/audit/approvals.jsonl`。
 - `memory`：历史从存档归并。
 - `hooks`：`agent:input:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`agent:tool:after` 把审批的结算、「已发到群」、「回合停止时还没结束」、退出码与转到后台的任务 id 写进工具结果的元数据；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
 - `plugins`：房间分组的组名取适配器实例的显示名。
-- `platform`：owner 自己的会话按哪个入口平台选档。
+- `platform`：没有出生平台的会话按哪个入口平台取平台档。
 - `agent`、`checkpoint`、`compression`、`todoList`：停止回合（含全部停止里子会话的回合）、回滚（与回滚之前查检查点）、压缩（用量条目的压缩线按会话取它的 `compressAt`）、计划的快照与清空；缺席时对应的方法回 `unsupported`，功能位对应的一项为 false，快照不带计划与压缩线。
 - `authority`：判说话人、审批的发起主体与应答人是不是 owner；缺席时都不是，审批一律按发起者不能产生审批拒绝。
 - `tools`：工具定义上声明的展示种类；缺席时工具卡与后台任务都没有 `display`，审批卡逐字列出全部参数。

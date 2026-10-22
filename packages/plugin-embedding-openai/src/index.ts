@@ -121,7 +121,8 @@ export default definePlugin({
     }
 
     provide.use(embedding, service, { label: `OpenAI / ${cfg.model}` });
-    // 「Embedding 模型」下拉只列本实例连着的这个端点的模型（按服务名合起各提供者会混进别家的）
+    // 「Embedding 模型」下拉只列这个插件连着的端点的模型（按服务名合起各提供者会混进别家的）；来源名按插件定，开了几个实例时
+    // WebUI 取最前那家
     contributions.use.contribute('webui:options', {
       id: 'embedding-openai',
       list: async () => (await service.listModels()).map(id => ({ value: id, label: id })),

@@ -159,18 +159,20 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 - 要密钥的插件（DeepSeek、OpenAI、OpenAI Embedding，以及 `full` 档的联网搜索）写一个 `apiKey` 段：粘贴了的写成 JSON 字符串（同时是合法的 YAML 双引号串，引号、反斜杠、冒号与 `#` 原样读回），跳过的留空 `apiKey: ""`。空串不算填了：DeepSeek、OpenAI Embedding 与联网搜索激活失败，在 WebUI 标「待配置」；OpenAI 对话模型的 apiKey 只在连官方地址时必填，显示为「失败」加原因，按钮「去处理」（见[第一次运行](./first-run.md)）。填了值的在启动时移进 `secrets.yaml`。
 - 设了 `OLLAMA_HOST` 时，两个 Ollama 插件写上 `baseUrl`。
 
-还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置在会话之上的一层，写在配置文档的顶层字段 `sessionConfig` 里（见 [plugin-session-manager](../plugins/plugin-session-manager.md#会话之上的各层)）。runtime 的 `--init` 写同样的平台档：
+还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置的一层，写在配置文档的顶层字段 `sessionConfig` 里，按插件实例 id 放这个实例的值（见 [plugin-session-settings](../plugins/plugin-session-settings.md)）。runtime 的 `--init` 写同样的平台档：
 
 ```yaml
 sessionConfig:
   platforms:
     cli:
-      enabledToolGroups: ["*"]
+      "@aalis/plugin-tools":
+        enabledToolGroups: ["*"]
     webui:
-      enabledToolGroups: ["*"]
+      "@aalis/plugin-tools":
+        enabledToolGroups: ["*"]
 ```
 
-带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）默认不暴露，平台档列出该**组名**或写 `"*"` 才对模型可见。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
+带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）默认不暴露（全局层即 plugin-tools 配置里的 `enabledToolGroups` 是 `[]`），平台档列出该**组名**或写 `"*"` 才对模型可见。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
@@ -191,7 +193,7 @@ npm create aalis-plugin@latest
 # 指定包名，其余逐项问
 npm create aalis-plugin@latest my-plugin
 
-# 全取默认（tool 模板，无 command / webui / 会话设置项）
+# 全取默认（tool 模板，无 command / webui / 可按会话设的配置项）
 npm create aalis-plugin@latest my-plugin -- --yes
 ```
 
@@ -217,7 +219,7 @@ npm run build
 | 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.use.command` 示例 |
 | 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.use.definePage` 示例 |
 | 页面用自带前端？ | 否 | 只在上一问选了「是」时问。选了就把页面写成插件前端：另生成 `webui/` 里的静态网页，见下文「页面用自带前端」 |
-| 登记会话设置项？ | 否 | 生成 `uses: { sessionManager: optional(sessionManager) }` 与一项会话设置项，见下文「会话设置项」 |
+| 声明可按会话设的配置项？ | 否 | 生成一个写了 `session` 的配置字段、`uses` 里的 `sessionFields`、`document` 与 `config`，见下文「可按会话设的配置项」 |
 
 `--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`。
 
@@ -254,8 +256,8 @@ my-plugin/
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
 - **`@aalis/core` 走 peerDependency**，区间 `>=0.20.0 <1.0.0`：模板用的是 core 0.20 起的服务调用形状（选择层与业务层两层）。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **依赖写区间**：`dependencies` 里的 `@aalis/api-*` 与 `devDependencies` 里的 `@aalis/core` 写 `>=<生成时源上的最新版> <1.0.0`。区间能被包管理器去重到与宿主同一份安装，跨次版本也不断；不写 `latest`（发布出去等于不设上限），也不写 caret（0.x 下跨次版本即断）。
-- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、会话设置项→`@aalis/api-session-manager`。描述符是值导入，不能只放 `devDependencies`。
-- **`aalis.service` 与 `uses` 对齐**：`required` 固定含 `logger`；勾选的扩展点按 `optional(...)` 的服务名写进 `optional`（tool → `tools`，command → `commands`，webui → `webui-server`，会话设置项 → `session-manager`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」与按服务搜都会缺项——核对纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
+- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、可按会话设的配置项→`@aalis/api-session-settings`、`@aalis/api-host-config` 与 `@aalis/schema-config`。描述符是值导入，不能只放 `devDependencies`。
+- **`aalis.service` 与 `uses` 对齐**：`required` 固定含 `logger`；勾选的扩展点按 `optional(...)` 的服务名写进 `optional`（tool → `tools`，command → `commands`，webui → `webui-server`，可按会话设的配置项 → `session-settings` 与 `host-config`，另在 `required` 加 `config`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」与按服务搜都会缺项——核对纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ### 生成的 `src/index.ts` 形状
 
@@ -308,15 +310,15 @@ export default definePlugin({
 
 脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法，以及入口与 `src/index.ts` 一致的 `uses`。
 
-### 会话设置项
+### 可按会话设的配置项
 
-「登记会话设置项？」选了「是」时，`src/index.ts` 多三样：
+「声明可按会话设的配置项？」选了「是」时，`src/index.ts` 多三样：
 
-- 用 declaration merging 把设置项的值类型加进 `@aalis/api-session-manager` 的 `SessionConfig`，键名是 `greeting` 接上包名的驼峰写法（如 `greetingMyPlugin`），各插件的设置项共用一张表，接上包名免得撞键；
-- `uses` 加 `sessionManager: optional(sessionManager)`，`apply` 里经 `sessionManager.use.registerSetting` 登记这一项：字段（类型、标签、说明与显示用的默认值）、适用的会话种类（`owner`、`room`、`task`）与显眼程度（`advanced`，收进会话设置的「高级」）。登记随这次激活撤回，会话管理晚上线时自动补上；
-- 同时选了工具时，示例工具按这次调用所在的会话读这一项的生效值：先看 `sessionManager.present`，在场时读 `sessionManager.use.resolveConfig(ctx.sessionId, ctx.platform).<键>`，会话自己的、平台档与全局默认逐层叠出；会话管理不在或哪层都没设时用默认的问候语。
+- 一份 `configSchema`（`defineConfig`），里面一个问候语字段 `greeting`，写了 `session: { prominence: 'advanced' }`：它可按会话设，收进会话设置的「高级」；不写 `appliesTo` 即适用全部会话种类。宿主不把它交给 `config`，`parseConfig` 也不产出它；
+- `uses` 加 `config`、`sessionFields: optional(sessionFields)` 与 `document: optional(ownHostConfig)`，`apply` 里调一次 `sessionFields.use.fields(configSchema, { config, document })` 拿读取器。登记随这次激活撤回，会话设置晚上线时自动补上；
+- 同时选了工具时，示例工具按这次调用所在的会话读这一项的生效值：`fields.get(ctx.sessionId, { platform: ctx.platform }).greeting`，本会话、群、平台档等逐层叠出，哪一层都没设时是插件配置里的值；会话设置插件不在时只取插件配置里的值。
 
-登记之后，这一项出现在 WebUI 的会话设置与设置里「会话默认」的各层里。契约见 [session-manager 服务的「设置项的登记与解析」](../services/session-manager.md#_2-5-设置项的登记与解析)。
+这一项出现在插件详情的配置里（标「可按会话设置」），也出现在 WebUI 的会话设置与设置里「会话默认」的各层里。契约见 [api-session-settings](../api/api-session-settings.md)。
 
 ### 页面用自带前端
 

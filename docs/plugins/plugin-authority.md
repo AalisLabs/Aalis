@@ -24,6 +24,7 @@ export default definePlugin({
     storage: optional(storage),
     approvals: optional(approvals),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
     contributions: optional(contributions),
   },
   apply(caps) { /* 见源码 */ },
@@ -133,7 +134,7 @@ WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 tok
 | 用户 | 登记了等级或组的外部身份（owner 不列）：身份、等级、权限组（没定义的组标「未定义」）、备注 | 行上「设等级」（输入等级，按这一行预填）、「设权限组」（多选组，按这一行预填，覆盖式，不选即清空；已被删掉的原有组标「（未定义）」，原样保存照收，新加没定义的组报错）、「删除记录」（destructive：删掉封禁记录就等于解封，所属权限组一并清掉）；「加用户」（输入平台、用户 ID、等级） |
 | 权限组 | `authorityGroups` 里的组：组名、放行条目、成员数；说明写明组只加放行、不开工具分组闸、需要确认的工具对不是 owner 的成员照旧用不了、本地效果，以及通配与 `tool-group:` 会纳入以后新登记的工具 | 行上「改条目」（按这一行预填，整组替换）、「删除」（destructive，不级联）；「建组」（输入组名与放行条目）。放行条目是多选，可选项来源 `authority-operations` 列全部指令与工具的能力键与每个已登记工具分组的 `tool-group:<名>`，也能手写通配；写法不对的当场报错 |
 | Owner | 配置里的 `owners`（本机控制台恒为 owner，不列） | 行上「移除」（destructive）；「加 owner」（输入平台与用户 ID，已经是 owner 的拒收） |
-| 操作门槛 | 指令与工具按所属插件分组：操作数、已改门槛的数量。选中一组，详情列出这一组的每个操作：默认门槛（权限服务按风险派生，不含覆盖）、生效门槛、确认要求（`session` 显示「每次（白名单可免）」，`always` 显示「每次（只有确认覆盖设为 off 能免）」） | 组那一行上「整组设门槛」，操作那一行上「设门槛」；输入最低等级，留空恢复默认。写进 `authorityOverrides` |
+| 操作门槛 | 指令、工具与会话设置项按所属插件（设置项按插件实例）分组：操作数、已改门槛的数量。选中一组，详情列出这一组的每个操作：默认门槛（指令与工具按风险派生，设置项按字段声明的 `minLevel`，没写的写「只有 owner」；不含覆盖）、生效门槛、确认要求（`session` 显示「每次（白名单可免）」，`always` 显示「每次（只有确认覆盖设为 off 能免）」） | 组那一行上「整组设门槛」，操作那一行上「设门槛」；输入最低等级，留空恢复默认。写进 `authorityOverrides` |
 | 禁用与免确认 | `deniedCapabilities` 与 `restrictedPolicy.allow` 里的规则；说明写明免确认只对以 owner 身份做的事生效 | 行上「移除」；「禁用」「免确认」（输入能力键或通配，重复的拒收） |
 
 - 设权限组的可选项来源是 `authority-groups`：已定义的组名，加上成员记录里指向的、已被删掉的组名（标「（未定义）」）。两个来源都经贡献点 `webui:options` 交付，WebUI 客户端不认本插件。

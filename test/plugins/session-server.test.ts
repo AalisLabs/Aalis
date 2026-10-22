@@ -263,7 +263,7 @@ describe('握手', () => {
 describe('会话列表', () => {
   it('两区：我的会话在前、房间在后，section 只取一区；房间行带平台、实例、账号与聊天窗口，每个会话带场所', async () => {
     const { host, server, sm } = await setup();
-    const mine = await sm.createSession({ name: '周报' });
+    const mine = await sm.createSession({ name: '周报' }, { createdFrom: 'webui' });
     clock(2_000);
     await recordRoom(host.events.use, 'onebot:10000:group:20001', '读书会');
     clock(3_000);
@@ -465,7 +465,7 @@ describe('会话列表', () => {
 
   it('parentId 列出直接子会话，子会话归在根会话的区里、不进根列表；父会话不存在回 not-found', async () => {
     const { host, server, sm } = await setup();
-    const root = await sm.createSession({ name: '根' });
+    const root = await sm.createSession({ name: '根' }, { createdFrom: 'webui' });
     const child = await sm.createChildSession(root.id, { name: '子' });
     const grandchild = await sm.createChildSession(child.id, { name: '孙' });
     await recordRoom(host.events.use, 'onebot:10000:group:1', '群');
@@ -485,6 +485,13 @@ describe('会话列表', () => {
     expect((await c.list({ parentId: 'onebot:10000:group:1' })).sessions.map(s => [s.id, s.section])).toEqual([
       [roomChild.id, 'rooms'],
     ]);
+    // 没收录的根会话（按 id 兜底建出的空记录）没有场所层，摘要里不给场所；它的子会话同样没有
+    const unfiled = await sm.ensureSession('zz-unfiled');
+    const underUnfiled = await sm.createChildSession(unfiled.id, { name: '空记录下的子会话' });
+    expect((await c.summary(unfiled.id)).place).toBeUndefined();
+    const [unfiledChild] = (await c.list({ parentId: unfiled.id })).sessions;
+    expect(unfiledChild).toMatchObject({ id: underUnfiled.id });
+    expect(unfiledChild.place).toBeUndefined();
     // 子会话的场所与聊天窗口取根会话的
     const [deep] = (await c.list({ parentId: child.id })).sessions;
     expect(deep).toMatchObject({ place: { key: 'workspace:default', kind: 'workspace' } });
@@ -870,8 +877,9 @@ describe('会话设置', () => {
       value: '<群白纸>',
     });
     expect(find(written.items, 'paperName')).toMatchObject({ value: '<群白纸>', source: 'place' });
-    const room = (await c.call('session/config/get', { sessionId: ROOM })).items;
-    expect(find(room, 'think')).toMatchObject({ effective: 'high', source: 'platformType' });
+    const room = await c.call('session/config/get', { sessionId: ROOM });
+    expect(find(room.items, 'think')).toMatchObject({ effective: 'high', source: 'platformType' });
+    expect(room.platform, '房间按出生平台取平台档').toBe('onebot');
 
     for (const params of [
       { layer: { scope: 'platform', platform: '' }, plugin: 'zz-agent', key: 'persona', value: 'x' },
@@ -965,8 +973,12 @@ describe('会话设置', () => {
 
     const s = await sm.createSession({ name: 'S' });
     expect([await persona(c, s.id), await persona(cli, s.id)]).toEqual(['<webui>', '<cli>']);
+    // 回包另带按哪个平台取的平台档，界面的来源文字照它写
+    expect((await c.call('session/config/get', { sessionId: s.id })).platform).toBe('webui');
+    expect((await cli.call('session/config/get', { sessionId: s.id })).platform).toBe('cli');
     await sm.ensureSession('cli-default');
     expect(await persona(c, 'cli-default')).toBe('<cli>');
+    expect((await c.call('session/config/get', { sessionId: 'cli-default' })).platform).toBe('cli');
     const child = await sm.createChildSession(s.id, { name: '子', metadata: { platform: 'cli' } });
     expect(await persona(c, child.id)).toBe('<webui>');
     const underCli = await sm.createChildSession('cli-default', { name: '子' });

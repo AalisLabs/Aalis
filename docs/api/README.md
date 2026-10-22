@@ -40,11 +40,12 @@
 | [api-package-manager](./api-package-manager.md) | `packageManager` 描述符（服务名 `package-manager`）+ `PackageManagerService` | plugin-package-manager |
 | [api-plugin-source](./api-plugin-source.md) | `pluginSource` 描述符（服务名 `plugin-source`）+ 插件入口判定 `pluginDefinitionOf` | 宿主提供（`@aalis/runtime`） |
 | [api-publish](./api-publish.md) | `publish` 描述符、提名快照、发布记录和展示面绑定 | plugin-publish-review；plugin-works-site 提供展示面 |
-| [api-reach](./api-reach.md) | `reach` 描述符（服务名 `reach`）+ `ReachService`；档位与越界策略（会话设置的两个键）、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、沙箱策略 `sandboxPolicyOf`、触及凭据的类型与品牌符号 | plugin-reach |
+| [api-reach](./api-reach.md) | `reach` 描述符（服务名 `reach`）+ `ReachService`；档位与越界策略、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、沙箱策略 `sandboxPolicyOf`、触及凭据的类型与品牌符号 | plugin-reach |
 | [api-remote-agent](./api-remote-agent.md) | `remoteAgent` 描述符（服务名 `remote-agent`）+ 提供者接口 `RemoteAgentProvider` + 按实例 id 精确取的 `resolveRemoteAgent` | plugin-remote-agent-cursor |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
-| [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |
+| [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符：会话、场所与会话树 | plugin-session-manager |
+| [api-session-settings](./api-session-settings.md) | `sessionFields`（读取门面）与 `sessionSettings`（管理面）描述符，服务名 `session-settings`：插件配置字段按会话覆盖的声明、层表与读取器 | plugin-session-settings |
 | [api-session-protocol](./api-session-protocol.md) | `sessionProtocol` 描述符（服务名 `session-protocol`）+ 会话协议的 zod schema：owner 客户端与守护进程之间的帧、会话列表、条目与回合控制（实验性） | plugin-session-server |
 | [api-storage](./api-storage.md) | `storage` 描述符 + `BoundStorage`（恒定义 `resolveLocalPath` / `readFileRange` / `watch`，插件私有目录 `own`）+ 路径文法 helper | plugin-storage-local |
 | [api-todo-list](./api-todo-list.md) | `todoList` 描述符（服务名 `todo-list`）+ `TodoListService`：读与清空会话的待办；`TodoItem` 与 `todo:updated` 事件 | plugin-todo-list |

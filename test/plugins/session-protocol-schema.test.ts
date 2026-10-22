@@ -668,7 +668,7 @@ const taskStatusInSync: Same<ProtocolTask['status'], RegisteredTask['status']> =
  */
 const layerInSync: Same<SettingLayer, SessionSettingsLayer> = true;
 const sourceInSync: Same<NonNullable<SettingRow['source']>, SessionSource> = true;
-const placeKindInSync: Same<SessionSummary['place']['kind'], SessionPlace['kind']> = true;
+const placeKindInSync: Same<NonNullable<SessionSummary['place']>['kind'], SessionPlace['kind']> = true;
 
 /** 经 JSON 往返后用 schema 解析：结果与原样例相等 */
 function roundTrip(schema: { parse(value: unknown): unknown }, value: unknown): unknown {
@@ -692,10 +692,10 @@ describe('会话协议 schema 往返', () => {
     expect(placeKindInSync).toBe(true);
   });
 
-  it('摘要：每个会话都有场所（键、类别、显示名），聊天窗口只带类型名与多方标记', () => {
+  it('摘要：已收录的会话带场所（键、类别、显示名），空记录没有；聊天窗口只带类型名与多方标记', () => {
     const schema = sessionMethods['session/create'].result;
     const { place: _, ...placeless } = summary;
-    expect(schema.safeParse({ session: placeless }).success).toBe(false);
+    expect(roundTrip(schema, { session: placeless })).toEqual({ session: placeless });
     expect(schema.safeParse({ session: { ...summary, place: { ...summary.place, kind: 'room' } } }).success).toBe(
       false,
     );

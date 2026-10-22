@@ -48,8 +48,8 @@ const REMOVED: Array<[string, string]> = [
   ['/api/tool-groups', 'WebUI 仪表盘的工具分组接口'],
   ['/api/llm-models', 'WebUI 仪表盘的模型列表接口'],
   ['/api/service-groups', 'WebUI 仪表盘的服务分组接口，插件区改按插件列表的 subsystem 分组'],
-  ['ROOM_ONLY_CONFIG_KEYS', '写死的房间专属设置键，由设置项登记的 liveOnly 取代'],
-  ['omitRoomOnlyKeys', '写死的房间专属设置键，由会话管理的 childConfig 取代'],
+  ['ROOM_ONLY_CONFIG_KEYS', '写死的房间专属设置键：设置项改由字段声明适用的会话种类（appliesTo）'],
+  ['omitRoomOnlyKeys', '写死的房间专属设置键：设置项改由字段声明适用的会话种类（appliesTo）'],
   ['sessionListSection', '会话列表分区函数，由会话种类函数 sessionKind 取代'],
   ['getPlatformProfiles', '平台档写在会话管理的插件配置里，改为宿主配置文档的 sessionConfig 按层读写'],
   ["'session:compress'", '压缩请求事件（没人监听也照样成功），由压缩服务 compression 取代'],
@@ -111,14 +111,14 @@ const REMOVED: Array<[string, string]> = [
   ['createdBy', '会话的创建者类型（没有读者），由只在建档时写的创建来源 createdFrom 取代'],
   ['inferSessionScope', '按会话 id 约定推断会话类型与目标，由会话记下的聊天窗口 originChat 取代'],
   ['OWNER_ENTRY_PLATFORMS', '会话管理按入口平台名单判自动标题，由会话的创建来源 createdFrom 取代'],
-  ['agent.historyLimit', '对话代理的插件配置键 historyLimit，由会话设置项 historyLimit（条数线）取代'],
+  ['agent.historyLimit', '对话代理按运行态配置读历史条数的写法：historyLimit 是可按会话覆盖的字段，经读取器读'],
   ['RoomAudience', '会话的受众（按会话 id 推出），由聊天窗口 originChat 的类型名与多方标记取代'],
   ['AUDIENCE_NAMES', '白纸插件里受众条目的称呼，由层表的称呼加平台与类型名取代'],
   ['resolveSessionOrigin', '按会话 id 推出出生平台与受众，由会话记下的出生平台与聊天窗口取代'],
   ['SessionOrigin', '按会话 id 推出的出生平台与受众，由会话记下的出生平台与聊天窗口取代'],
   [
     'defaultLLM',
-    '对话代理的插件配置键 defaultLLM（激活时改 llm 服务的偏好）：默认模型只有 llm 服务的偏好一处，经会话设置「模型」的全局默认层改',
+    '对话代理的插件配置键 defaultLLM（激活时改 llm 服务的偏好）：默认模型是对话代理的本插件服务偏好，经会话设置「模型」的全局（插件配置）层改',
   ],
   ['ServiceRef', '单层的服务引用（current / require / all），由选择层 ServiceSelection 与业务层 use 两层取代'],
   ['serviceRef', '单层的服务引用的构造函数'],
@@ -139,6 +139,45 @@ const REMOVED: Array<[string, string]> = [
   ['migrate-config-0.14', 'schema-config 0.14 的一次性配置迁移工具与它的说明（迁移由代理做，不放进仓库）'],
   ['migratePluginConfig', 'schema-config 0.14 的一次性配置迁移工具'],
   ['before-schema-0.14', '配置迁移工具写下的备份文件后缀'],
+  // 会话设置并进插件配置（字段写 session、apply 里经 fields() 取读取器），会话设置拆成 @aalis/plugin-session-settings。
+  // 旧的配置类型 SessionConfig 与解析方法 resolveConfig 按子串查会误中（新的 SessionConfigDoc、别的插件自己的 resolveConfig），
+  // 只列不会误撞的写法
+  ['`SessionConfig`', '会话管理的配置类型（各插件经 declaration merging 加键）'],
+  ['interface SessionConfig ', '会话管理的配置类型（各插件经 declaration merging 加键）'],
+  ['session-manager.resolveConfig', '会话管理按继承链解析设置，由读取器的 get 取代'],
+  ['.use.resolveConfig(', '会话管理按继承链解析设置，由读取器的 get 取代'],
+  ['resolveConfig(sessionId', '会话管理按继承链解析设置，由读取器的 get 取代'],
+  ['registerSetting', '会话管理的设置项登记，改为 configSchema 字段写 session、apply 里调 fields()'],
+  ['RegisteredSessionSetting', '会话管理的已登记设置项类型'],
+  ['listSettings', '会话管理列已登记设置项的方法，由读取门面的 getAll 取代'],
+  ['SettingProminence', '会话管理设置项的显眼程度类型，挪进字段声明的 session.prominence'],
+  ['SessionConfigPatch', '会话管理写会话设置的补丁类型'],
+  ['StoredSessionConfig', '会话记录上原样存的设置覆盖（SessionInfo.config），值改存在会话记录的 metadata 里'],
+  ['SessionConfigError', '写会话设置被拒的错误，由 api-session-settings 的 SessionSettingsError 取代'],
+  ['SessionConfigLayer', '会话管理的层标识，由 api-session-settings 的 SessionSettingsLayer 取代'],
+  ['SessionInheritance', '会话管理的继承链解析结果，解析改在 api-session-settings 的 resolveFields 一处'],
+  ['InheritanceSource', '会话管理继承链的来源层，由 api-session-settings 的 SessionSource 取代'],
+  ['resolveInheritance', '会话管理按继承链解析设置，由读取器的 get 取代'],
+  ['getOwnConfig', '会话管理取会话自己的设置覆盖'],
+  ['listLayers', '会话管理列可设的层，由管理面的 layers 取代'],
+  ['resolveLayer', '会话管理解析一层的设置，由管理面的 rows 取代'],
+  ['updateLayer', '会话管理写一层的设置，由管理面的 update 取代'],
+  ['BoundSessionManager', '会话管理带设置登记的业务层，会话管理的描述符不再另加方法'],
+  ['childConfig', '建子会话时复制的父会话配置，改为建立时由管理面的 childMetadata 写下父会话此刻的生效值'],
+  ['resolvedDefaults', '会话管理的全局默认层，全局层就是插件配置'],
+  ['preferenceBacked', '全局默认层由服务偏好承担的设置项，改为字段声明的 session.preference'],
+  ['liveOnly', '只经继承链实时解析的设置项：子会话建立时写下父会话此刻的生效值，之后独立'],
+  ['useDelegatedService', 'WebUI 服务偏好里「默认模型在会话默认里设」的特判'],
+  ['session:config:changed', '会话设置变了的事件，由 session-settings:changed 与宿主的 host-config:changed 取代'],
+  ['resolveEffectiveConfig', '回复策略按作用域取覆盖，参数改为可按会话覆盖的字段'],
+  ['extractTargetId', '回复策略作用域的目标段，作用域由「生效范围」字段取代'],
+  ['MEMORY_RECALL_SCOPE_SETTING', '共享的记忆召回范围设置项，各记忆插件改用自己的范围字段'],
+  ['memoryRecallScope', '共享的记忆召回范围设置项，各记忆插件改用自己的范围字段'],
+  ['MemoryRecallScope', '共享的记忆召回范围的取值类型'],
+  ['defaultProvider', '子任务插件的模型提供者配置，由可按会话覆盖的「子任务模型」取代'],
+  ['summaryModelMode', '记忆摘要的「摘要模型来源」开关，模型改在插件的服务偏好里设'],
+  ['gateway-scopes', 'WebUI 宿主按类型名拼回复策略作用域的可选项来源，作用域由「生效范围」字段取代'],
+  ['getPersonaSkills', '人设卡上的技能名单，由技能插件可按会话覆盖的「启用的技能」取代'],
 ];
 
 /**
@@ -203,9 +242,16 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
     "'background-task'",
     '执行器私有的结束通知种类，挪进 api-tools 作契约常量 BACKGROUND_TASK_NOTICE，执行器与界面都引用它',
   ],
-  // 会话层不认识具体的设置项：设置项由拥有功能的插件登记，会话管理、会话协议与会话服务的源码里不出现它们的键。
-  // 只列字面上不会误撞的键（llm、think、persona 这类常用词在这些包里另有正当用法）
-  ...['api-session-manager', 'plugin-session-manager', 'api-session-protocol', 'plugin-session-server'].flatMap(pkg =>
+  // 会话层不认识具体的设置项：设置项是各插件配置里写了 session 的字段，会话管理、会话设置、会话协议与会话服务的源码里不出现
+  // 它们的键。只列字面上不会误撞的键（llm、think、persona 这类常用词在这些包里另有正当用法）
+  ...[
+    'api-session-manager',
+    'plugin-session-manager',
+    'api-session-settings',
+    'plugin-session-settings',
+    'api-session-protocol',
+    'plugin-session-server',
+  ].flatMap(pkg =>
     [
       'paperEnabled',
       'paperName',
@@ -213,13 +259,20 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
       'remoteAgentUserDailyCents',
       'remoteAgentUserDailyTasks',
       'remoteAgentRoomDailyCents',
-      'memoryRecallScope',
       'systemPromptExtra',
       'maxToolIterations',
       'disableOutputFormat',
       'clientSideJsonRendering',
       'enabledToolGroups',
-    ].map((key): [string, string, string] => [pkg, key, '具体的设置项由插件登记，会话层不认识']),
+    ].map((key): [string, string, string] => [pkg, key, '具体的设置项是插件配置里的字段，会话层不认识']),
+  ),
+  // plugin-checkpoint 另有同名的局部函数，只在回复策略的契约与三个插件里查
+  ...['api-gateway', 'plugin-trigger-policy', 'plugin-trigger-laya', 'plugin-flow-control'].map(
+    (pkg): [string, string, string] => [
+      pkg,
+      'isScopeEnabled',
+      '回复策略的作用域判定，由「生效范围」字段与 audienceIncludes 取代',
+    ],
   ),
 ];
 

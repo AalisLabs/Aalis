@@ -14,9 +14,10 @@
 interface EmbeddingService {
   readonly modelId?: string;
   embed(text: string, options?: { signal?: AbortSignal }): Promise<number[]>;
-  listModels?(): Promise<string[]>;
 }
 ```
+
+契约里没有列模型的方法：提供者要给自己配置里的模型字段出下拉，经贡献点 `webui:options` 交自己的可选项来源（见 [api-webui](./api-webui.md#可选项与模型)）。
 
 `modelId` 是可选的向量空间标识：`modelId` 相同的两次 `embed` 结果可以直接比较，换模型必须换值。消费方可把它并入向量缓存的失效键，从而在换模型（包括同维度换模型）后识别并重算旧向量；提供者不声明时，消费方无法区分模型。两个第一方实现分别声明为 `openai:<model>` 与 `ollama:<model>`。
 

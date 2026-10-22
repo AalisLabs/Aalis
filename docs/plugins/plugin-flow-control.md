@@ -6,7 +6,7 @@
 
 只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由生效的触发插件（见 [trigger 服务](../services/trigger.md)，如 [plugin-trigger-policy](./plugin-trigger-policy.md)）决定，本插件不参与。
 
-逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）决定哪些会话受冷却与限速约束：入站过闸与回复计数都只对作用域内会话，闲置选会话读的是这份计数，因此同样只对作用域内会话生效；禁言不看作用域。默认 `*:group`；默认作用域不含 WebUI/CLI（它们的消息不带会话类型），纳入（如 `webui`、`cli` 或 `*`）管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息。房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)），作用域怎么配都不受禁言、冷却与限速约束。`overrides` 里的数值按会话记录的 sessionType / targetId 匹配。
+逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。「生效范围」`audience`（api-gateway 的 `REPLY_AUDIENCE_FIELD`：不生效、多方房间、一对一房间、全部房间，默认多方房间）决定哪些房间受冷却与限速约束：入站过闸与回复计数都只对生效范围内的房间，闲置选会话读的是这份计数，因此同样只对它们生效；禁言不看生效范围。生效范围只按聊天窗口的多方标记判，onebot 的群与频道都是多方房间，默认就受管；WebUI、终端与子任务没有聊天窗口，不是房间，不在任何生效范围里。房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)）。生效范围与三个参数都可按会话覆盖（见「配置」）。
 
 ## 插件声明
 
@@ -24,6 +24,8 @@ export default definePlugin({
     storage: optional(storage),
     messageArchive: optional(messageArchive),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -43,9 +45,9 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 进入本相位时，生效的触发插件已判定要开口并写好 `message.triggerType`。处理顺序：
 
-1. 会话处于禁言期 → 吞掉。不看作用域、不看来源：闲置触发、定时任务注入的消息在禁言期同样不说话。禁言状态只由禁言关键词或平台禁言事件针对具体会话写入，作用域之外的会话不会被误伤。
-2. 不在作用域内 → `next()` 放行。带 `source` 的内部注入（闲置触发、定时任务、workflow）不带会话类型，判作用域与回复计数同一口径：先用流控状态里记下的平台与类型，没有再取会话管理记下的出生平台与聊天窗口（见「出站联动」）。所以默认 `*:group` 下，bot 在某个群的限速窗口已满时（此时会话已记下群类型），发往该群的内部注入同样被第 4 步挡下。其余消息按消息自身的 platform / sessionType / targetId 判，包括 WebUI、CLI 发进平台会话的真人消息（它们不带会话类型，默认 `*:group` 下在作用域外），以及自带会话类型的内部注入。
-3. 记录会话元数据（platform / sessionType / targetId，取自会话记下的聊天窗口的同样记下，供分作用域覆盖匹配）。
+1. 会话处于禁言期 → 吞掉。不看生效范围、不看来源：闲置触发、定时任务注入的消息在禁言期同样不说话。禁言状态只由禁言关键词或平台禁言事件针对具体会话写入，生效范围之外的会话不会被误伤。
+2. 不在生效范围内 → `next()` 放行。没有 `source` 的入站（真人消息，含从 WebUI、终端发进房间的插话）按网关算的聊天窗口（`InboundPhaseData.chat`）判；带 `source` 的内部注入（闲置触发、定时任务、workflow）没有它，与回复计数同一口径：先取会话管理记下的出生平台与聊天窗口，没有再用流控状态里记下的（见「出站联动」）。所以 bot 在某个群的限速窗口已满时，发往该群的内部注入同样被第 4 步挡下。生效范围按这个会话现读：同一个群在场所层设了别的生效范围，就按那一层。
+3. 记录会话的平台与多方标记。
 4. `triggerType !== 'immediate'` 时，冷却期内或限速窗口已满 → 吞掉。被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速。带 `source` 的内部注入（闲置触发、定时任务、workflow）不过冷却，定时提醒等不会被回复后冷却静默吞掉，但仍受限速约束；真人消息由平台适配器投递，不设 `source`。
 5. `next()` 进入 dispatch。
 
@@ -53,11 +55,11 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 ## 出站联动
 
-监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判。会话没有流控状态（例如重启后没人说话的群、消息都被 trigger 吞掉的群），或只有缺会话类型的状态（例如只有禁言记录的群）时，取会话管理给这个会话记下的出生平台与聊天窗口（类型名与目标：群为群号、私聊为对方 id），不看出站消息的平台；子任务没有聊天窗口。结果只写进本插件的会话状态，用于回复计数与分作用域覆盖，不回写消息。入站带 `source` 的内部注入判作用域与这里同一口径（见「接入相位」第 2 步）。没有聊天窗口的会话（WebUI、CLI、子任务，或没装会话管理）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中。因此默认 `*:group` 下，定时任务、workflow 发往群的回复照常计入（平台写成 `internal` 的定时任务也一样，按会话记下的出生平台算）；发往私聊或 WebUI 的不计入；别人的私聊需要限制时在 `scopes` 里纳入，owner 自己的会话入站不经本相位，纳入了也只计数、不挡消息。命令回复与系统回复不计入。
+监听 `outbound:message`：`source === 'agent'` 的出站消息（与带宿主通知的系统回复）对**生效范围内**的房间记一次回复——按这个会话此刻的参数设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。窗口先取会话管理记下的出生平台与聊天窗口，不看出站消息的平台；会话管理缺席或会话没有记录时用流控状态里记下的（真人消息经过本相位时记下）。会话记录排在流控状态之前：从 WebUI 往群里插一句话时，流控状态记下的是插话那一端，按它判会把群当成一对一。结果只写进本插件的会话状态，不回写消息。入站带 `source` 的内部注入与这里同一口径（见「接入相位」第 2 步）。没有聊天窗口的会话（WebUI、终端、子任务）不是房间，不计入。因此默认的多方房间下，定时任务、workflow 发往群的回复照常计入（平台写成 `internal` 的定时任务也一样，按会话记下的出生平台算）；发往私聊或 WebUI 的不计入；别人的私聊需要限制时把那一层的生效范围设成一对一房间或全部房间。命令回复与系统回复不计入。
 
 冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
-分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息，或会话管理记下的聊天窗口（入站带 `source` 的内部注入与回复计数）。两处都得不到的会话（从未有真人消息经过本相位、又没有聊天窗口，如仅经定时任务、编排抵达的内部会话）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
+从 WebUI 往群里插话（owner 的插话）时，这条入站的聊天窗口是插话那一端（一对一）：生效范围设成一对一房间或全部房间时，这条插话会受这个群的冷却与限速约束。
 
 ## 禁言
 
@@ -69,13 +71,12 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 冷却与限速只对作用域内会话生效：入站过闸与回复计数都看它（闲置选会话读的是这份计数）；禁言不看作用域。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认作用域不含 WebUI/CLI；纳入 `webui`、`cli` 管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息，owner 自己的会话不经本相位，作用域怎么配都一样。 |
+| `audience` | select | `'multiParty'` | 生效范围：`off` 不生效、`multiParty` 多方房间、`oneToOne` 一对一房间、`all` 全部房间 |
 | `cooldownSeconds` | number | `10` | 回复后冷却（秒） |
 | `rateLimitWindow` | number | `0` | 限速窗口（秒，0=关闭） |
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |
-| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段（`cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`）；字段留空（或不填）= 沿用上方默认。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。类型与目标都未知的会话不吃按类型或目标写的覆盖，见「出站联动」。 |
 
-`scopes` 用数组表示：`null` 或未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用作用域。空串与纯空白成员会被忽略，避免扩大到所有会话。
+四项都是可按会话覆盖的字段（[api-session-settings](../api/api-session-settings.md)），只适用于房间，只有 owner 能改：全局层是这里的插件配置，另可按平台档、平台类型档、群（场所）与单个会话设，例如在 onebot 的 `private` 平台类型档上把生效范围设成一对一房间、冷却设成 10 秒。每条消息按会话现读，改了不重载插件，下一条消息起生效。会话设置不在场时只取插件配置里的值。
 
 ## 状态清理
 
@@ -86,6 +87,6 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 本相位吞掉消息时不通知发起方，由此有以下局限：
 
 - 定时任务的消息被禁言或限速吞掉时，plugin-scheduler 仍把这次运行记为成功（`lastResult`），WebUI 上看不出提醒没有发出；被吞的消息只做影子归档，不重试。
-- plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或落在作用域内且限速窗口已满时，指令被吞掉，节点等到 `timeoutSeconds` 超时才失败；等待期间同一会话若有其它回合结束（例如有人 @ bot，immediate 穿透限速），节点会把那次回复当作自己的结果（按 sessionId 捕获回合结束，是 workflow 引擎原有的做法）。
+- plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或在生效范围内且限速窗口已满时，指令被吞掉，节点等到 `timeoutSeconds` 超时才失败；等待期间同一会话若有其它回合结束（例如有人 @ bot，immediate 穿透限速），节点会把那次回复当作自己的结果（按 sessionId 捕获回合结束，是 workflow 引擎原有的做法）。
 - trigger-policy 的 session 档闲置触发到点时只查禁言与自己是否生效（禁言期或不生效时跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。
 - 禁言只在入站把关，挡的是禁言之后才开始的回合。命中禁言关键词时 agent 若正在为同一会话生成回复（例如有人刚 @ 过 bot），这条回复照常发出：命中关键词的那条在触发相位就被吞掉，不会中止在途回合，出站方向也不查禁言。平台禁言下适配器本来发不出去，不受影响。

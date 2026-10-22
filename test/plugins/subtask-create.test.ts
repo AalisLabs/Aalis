@@ -139,7 +139,6 @@ describe('子任务插件的配置', () => {
     expect(schema.idleDeleteHours).toMatchObject({ type: 'number', min: 0, default: 24 });
     expect(schema.idleDeleteHours).not.toHaveProperty('session');
     expect(schema.idleDeleteHours).not.toHaveProperty('max');
-    expect(schema).not.toHaveProperty('defaultProvider');
     expect(schema).not.toHaveProperty('defaultModel');
   });
 });

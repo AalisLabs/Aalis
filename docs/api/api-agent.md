@@ -17,10 +17,15 @@ interface AgentService {
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   getPreprocessors?(): PreprocessorInfo[];
   getPluginGroups?(): PluginGroupInfo[];
+  assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
 ```
 
 对话调用经业务句柄 `agent.use` 转发给选中的那一家（`agent.use.handleMessage(...)`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。
+
+`assignModel` 把一个会话本会话层的对话模型设成 `model`（写进会话设置）：子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。实现者必须提供它。
+
+会话删除（`session:deleted`）时实现者停掉这个会话在飞的回合并等它收尾：会话管理在这个事件之后才清数据，不停的话删掉的会话里这一轮照样跑完、落库。
 
 `abort` 不带 `turnId` 时停这个会话所有在飞的回合；带 `turnId` 时只停那一轮，它已经结束或换成了新一轮时什么也不停。返回值是有没有停下回合，调用方据此分辨「turnId 对不上」。
 
@@ -43,6 +48,7 @@ interface AgentService {
 - `trimmed`：本回合到这次调用为止经过了硬裁剪，即这次或之前某次调用组装后的估算超过了 `tokenBudget`（不一定真裁掉了内容）。之后的调用在首次调用裁剪过的列表上追加，所以有过一次，本回合之后各次都算。
 - `untrimmedHistory`：按没经过硬裁剪的消息列表估算的历史与工具结果 token；`breakdown` 的 `history`、`toolResults` 两项按发出的列表算。裁掉的部分仍在会话历史里，全量压缩能把它们一并压掉，摘要插件以它为可压缩部分。
 - `historyMessages`：会话历史的条数，即这一轮开头会话的活跃历史条数（含这一轮的入站消息，也含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果。与硬裁剪无关；快照只有活跃历史条数。
+- `historyLimit`：这一轮的历史条数上限（会话设置「历史条数上限」，0 为不按条数），由 agent 填：摘要插件按它判定按条数压缩，第三方 agent 不填时摘要的条数线静默失效。
 
 `breakdown` 与 `parts` 是同一份输入按来源估算的拆分，各项之和不必等于 `used`。`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
 
@@ -56,18 +62,9 @@ interface TokenUsagePart {
 
 会话服务把 `parts` 原样放进会话协议的 `usage` 条目，界面按条目画行、不认分项的键。别的实现照样给出自己的分项与显示名。
 
-## 会话设置项的键
+## 会话设置项
 
-本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加四个键，由 plugin-agent 登记：
-
-```ts
-interface SessionConfig {
-  llm?: ModelRef;               // 会话用的模型；没设置时跟随 llm 服务的偏好
-  think?: string;               // 深度思考的档位 id；没设置、当前模型没有这一档或不能调时按模型的默认档
-  maxToolIterations?: number;   // 一轮里工具调用循环的最大次数（正整数）；没设置时不限
-  historyLimit?: number;        // 历史条数上限（非负整数）：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的一半，也是按条数压缩的线；0 或没设置时发全部活跃历史
-}
-```
+模型、深度思考、最大工具迭代与历史条数上限是 [plugin-agent](../plugins/plugin-agent.md#会话设置项) 的可按会话覆盖的配置字段，不在本契约里；别的插件要给一个会话指定模型调 `assignModel`。
 
 ## 绑定接口
 
@@ -94,7 +91,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | 钩子 | 时机 | payload |
 |---|---|---|
 | `agent:input:before` | 进入 Agent 之前；`next` 之后是这一轮的全部，不调即拦下整条消息 | `{ message, turnId, metadata }` |
-| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, sessionId, source?, ... }`；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
+| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, model, sessionId, source?, ... }`；`model` 是这一轮用的对话模型（媒体等按它判断能不能直接看图，第三方 agent 不填时这类判断静默失效）；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |

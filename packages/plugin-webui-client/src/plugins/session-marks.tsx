@@ -9,7 +9,7 @@ import { tr } from '../language';
 import type { SessionClient } from '../protocol/session-client';
 import { paths } from '../routes';
 import { type Field, formatValue } from '../settings/field';
-import { type LayerInfo, type LayerOrder, layerAddress, layerParam, layerTitle, useLayers } from '../settings/layers';
+import { type LayerInfo, type LayerOrder, labelIn, layerAddress, layerTitle, useLayers } from '../settings/layers';
 import { useSessionQuery } from '../settings/setting-rows';
 import './session-marks.css';
 
@@ -50,12 +50,9 @@ export function useSessionPlaces(plugin: string, wanted: boolean): SessionPlaces
   );
 }
 
-/** 一处写在哪：层按层表的称呼，场所取层的列表里的称呼；会话写标题，子会话另写父会话 */
+/** 一处写在哪：层写它的标题（场所取层的列表里的称呼）；会话写标题，子会话另写父会话 */
 function whereOf(target: Override['target'], order: LayerOrder, layers: readonly LayerInfo[]): string {
-  if ('layer' in target) {
-    const key = layerParam(target.layer);
-    return layerTitle(order, target.layer, layers.find(info => layerParam(info.layer) === key)?.label);
-  }
+  if ('layer' in target) return layerTitle(order, target.layer, labelIn(layers, target.layer));
   return target.parent
     ? tr('childEntry', { title: target.title, parent: target.parent.title })
     : tr('sessionEntry', { title: target.title });

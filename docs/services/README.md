@@ -33,7 +33,7 @@
 | [llm](llm.md) | LLM 对话 provider：出口必调 `prepareLLMMessages`、流式 + 工具调用、model 句柄带能力元数据。参考实现 llm-openai/llm-deepseek/llm-ollama。 |
 | [persona](persona.md) | 人设角色卡 + `outputFormat` + 状态持久化 + skills 白名单。 |
 | [commands](commands.md) | `/command` 注册与分发；authority risk 门控。 |
-| [session-manager](session-manager.md) | 会话配置解析（persona/输出格式）+ 生命周期 + subtask `inputContext`。 |
+| [session-manager](session-manager.md) | 会话生命周期、场所与会话树 + subtask `inputContext`；按会话覆盖插件配置见 [api-session-settings](../api/api-session-settings.md)。 |
 
 ## 安全与确认
 | 服务 | 定位 |

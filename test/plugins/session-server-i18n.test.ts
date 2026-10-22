@@ -586,7 +586,7 @@ describe('会话设置与默认名按全局语言渲染', () => {
     const { session } = await c.call('session/create', {});
     const { session: child } = await c.call('session/create', { parentId: session.id });
     expectProcessTimeZoneDistinct(session.createdAt);
-    expect([session.title, session.place.name, child.title, child.ancestors?.[0]?.title]).toEqual([
+    expect([session.title, session.place?.name, child.title, child.ancestors?.[0]?.title]).toEqual([
       `Session ${at('en', session.createdAt, 'short')}`,
       'Default workspace',
       `Subtask ${at('en', child.createdAt)}`,
@@ -596,7 +596,7 @@ describe('会话设置与默认名按全局语言渲染', () => {
     await setLanguage(['zh-CN']);
     const root = (await c.list()).sessions.find(s => s.id === session.id);
     const [sub] = (await c.list({ parentId: session.id })).sessions;
-    expect([root?.title, root?.place.name, sub?.title]).toEqual([
+    expect([root?.title, root?.place?.name, sub?.title]).toEqual([
       `会话 ${at('zh-CN', session.createdAt, 'short')}`,
       '默认工作区',
       `子任务 ${at('zh-CN', child.createdAt)}`,

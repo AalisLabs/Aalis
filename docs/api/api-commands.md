@@ -110,7 +110,7 @@ interface CommandService {
 }
 ```
 
-`execute` 的回复按 `ctx` 的 `{ sessionId, platform }`（会话设置 `language`；owner 会话与它的子会话按全局默认层）的语言渲染成字符串交出。
+`execute` 的回复按 `ctx` 的 `{ sessionId, platform }`（plugin-i18n 的会话设置 `language`；owner 会话与它的子会话按全局层）的语言渲染成字符串交出。
 
 `setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的指令退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
 

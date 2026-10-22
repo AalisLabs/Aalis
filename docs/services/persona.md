@@ -25,21 +25,19 @@ export interface PersonaService {
   listModels?(): Promise<string[]>;
   getNickNames?(options?: PersonaSessionOptions): string[];
   isTimeInjectionEnabled?(): boolean;
-  getPersonaSkills?(options?: PersonaSessionOptions): string[] | undefined;
 }
 ```
 
 只有 `getSystemPrompt()` 与 `getPersonaName()` 是必须实现的（接口里非可选），其余方法全部带 `?`。消费者对可选方法都做了存在性判断（见 §3、§5）。各方法语义如下：
 
-- `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，`options.systemPromptExtra`（会话级额外提示），以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
+- `getSystemPrompt(options?)` — 渲染这个会话生效角色卡的静态人设：名字、描述、性格、prompt，这个会话的「额外提示」，以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
-- `getPersonaName(options?)` — 返回角色卡的 `name`。`options.persona` 指定了会话用的卡时返回那张卡的（找不到该卡时回落主卡），不传时返回主卡的。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
-- `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
-- `isClientSideJsonRendering(options?)` — 是否由客户端渲染 JSON：`options.clientSideJsonRendering` 给了值时以它为准，否则看该卡的声明。为真时服务端不提取回复字段，整段 JSON 透传给前端。
-- `listModels()` — 列出已扫描到的全部角色卡名，供 WebUI 的人设下拉框（webui-server 的 `/models`）与 agent 的 `/persona` 指令使用。
+- `getPersonaName(options?)` — 返回角色卡的 `name`：按 `options` 这个会话的「人设」取卡（找不到该卡时回落主卡），不给会话时按人设插件的配置。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
+- `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；这个会话设了「不用结构化输出」时也返回 `undefined`。
+- `isClientSideJsonRendering(options?)` — 是否由客户端渲染 JSON：这个会话的「客户端渲染 JSON」是开或关时以它为准，按角色卡时看该卡的声明。为真时服务端不提取回复字段，整段 JSON 透传给前端。
+- `listModels()` — 列出已扫描到的全部角色卡名，供会话设置里「人设」的可选项（webui-server 按服务名合起各提供者的 `listModels()`）。
 - `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
 - `isTimeInjectionEnabled()` — persona 是否已注入当前时间。其它插件据此决定是否还要注册 `system_time` 工具。
-- `getPersonaSkills(options?)` — 返回角色卡的 skill 白名单。约定：返回 `undefined` 表示未声明白名单（全部开放），返回 `[]` 表示禁用所有 skill。
 
 ### 2.2 重要类型
 
@@ -57,14 +55,12 @@ export interface OutputFormat {
 }
 
 export interface PersonaSessionOptions {
-  persona?: string;             // 覆盖角色卡名称
-  disableOutputFormat?: boolean;// 禁用结构化输出格式
-  clientSideJsonRendering?: boolean;
-  systemPromptExtra?: string;   // 会话级额外系统提示，追加在人设提示之后、结构化输出格式说明之前
+  sessionId?: string;   // 按这个会话读人设插件自己的会话设置
+  platform?: string;    // 入口平台：只对没有出生平台的会话起作用
 }
 ```
 
-`PersonaSessionOptions` 的来源约定很关键：persona 服务的方法不读 session-manager，只根据传入的选项调整行为。会话级的覆盖由调用方（agent、persona 自己的 reply 钩子，以及触发插件共用的名字表 `createBotNames`）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
+调用方只交会话，人设服务按这个会话读自己的四项会话设置（人设、额外提示、两个结构化输出开关，见 [plugin-persona](../plugins/plugin-persona.md)）。不给会话时按人设插件的配置。
 
 服务描述符随契约包导出，类型随描述符走：
 
@@ -76,16 +72,15 @@ export const persona = defineService<PersonaService>('persona');
 
 ## 3. 谁提供 / 谁消费
 
-提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide.use(persona, service)` 注册。这是当前唯一的参考实现。它还经 `sessionManager.use.registerSetting` 登记四项会话设置：`persona`（会话用的角色卡，可选项来自 `listModels()`）、`systemPromptExtra`、`disableOutputFormat`、`clientSideJsonRendering`，即 `PersonaSessionOptions` 的来源。
+提供者是 `@aalis/plugin-persona`。其中 `PersonaServiceImpl` 实现接口，`apply()` 里通过 `provide.use(persona, service)` 注册。这是当前唯一的参考实现。四项会话设置（`persona`、`systemPromptExtra`、`disableOutputFormat`、`clientSideJsonRendering`）是它的可按会话覆盖的插件配置字段，经会话设置的读取器按 `PersonaSessionOptions` 给的会话读。
 
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.present ? this.caps.persona.use : undefined`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
-- `@aalis/plugin-skills` — 按会话取白名单：`getPersonaSkills({ persona })`（`persona` 取自 session-manager 解析的会话配置，没有会话管理或没有会话时不指定、即主卡）过滤 `list_skills`、`load_skill`、技能发现那一行与触发词自动激活看得到的 skill。
-- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`（`options.persona` 取自 session-manager 解析的会话配置），收集 bot 名字与昵称，做点名识别。
+- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.present && persona.use.isTimeInjectionEnabled?.()` 判断，已注入时间则跳过注册 `system_time` 工具。
-- `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）走通用的 `/models` 枚举（`services.use.all('persona')` 后调 `listModels()`）。
-- `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ persona })`（`persona` 取自终端会话的配置），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
+- `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合起各提供者的 `listModels()`。
+- `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ sessionId, platform: 'cli' })`（终端会话的生效人设），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
 
 消费者都把描述符 `persona` 写进 `uses`（以 `optional` 声明），类型随描述符走。只有按字符串名动态查询时（如 webui-server 的 `services.use.all('persona')`）不带类型，由消费侧窄化。
 
@@ -156,10 +151,9 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 - 业务句柄是活的。`persona.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
-- persona 是可选依赖。在 `uses optional` 里声明它（agent、cli、skills、tool-system 与两个触发插件都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
-- 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`、`persona?.getPersonaSkills?.()`，因为第三方 provider 可能没有实现。
+- persona 是可选依赖。在 `uses optional` 里声明它（agent、cli、tool-system 与两个触发插件都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
+- 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`，因为第三方 provider 可能没有实现。
 - 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（persona 自身读 session-manager 就这么处理），不要让 persona 不可用拖垮主链路。
-- 区分 `getPersonaSkills` 的三态语义：`undefined` 表示全开，`[]` 表示全禁，`['a','b']` 表示白名单。消费者必须区分 `undefined` 与 `[]`——skills 插件的判断是 `if (whitelist === undefined) return all`。
 
 ## 6. 能力 / 风险 → 影响
 

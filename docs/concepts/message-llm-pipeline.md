@@ -280,7 +280,7 @@ const handle = resolveLLMModel(caps.llm, ref, ['vision'])?.use;
 await handle?.chat({ messages });   // 条目已固定是哪个 model
 ```
 
-默认 model 由用户在 WebUI 设置「会话默认」的「模型」或宿主配置的 `servicePreferences` 选定（两处写的都是 llm 服务的全局偏好，管理面代码写作 `services.use.prefer('llm', '<provider>/<model>')`）。详见 `docs/services/llm.md`、`docs/core/service.md`。
+对话的默认 model 是 agent 对 llm 服务的本插件偏好（WebUI 设置「会话默认」全局层的「模型」，或插件详情里 agent 的服务偏好），没设时跟随全局偏好（设置「系统 › 服务偏好」的 llm 一行，或宿主配置的 `servicePreferences`，管理面代码写作 `services.use.prefer('llm', '<provider>/<model>')`）；单个会话、场所、平台档上另设的按会话设置的层压过它。详见 `docs/services/llm.md`、`docs/core/service.md`。
 
 ---
 

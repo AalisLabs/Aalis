@@ -115,7 +115,7 @@ await entry?.use.chat({ messages });
 | `api-host-logs` | — | `host-logs` | — | `HostLogs`：最近的日志（`recent`）与订阅（`subscribe`，先补发历史再接实时，seq 连续）；业务层的订阅随激活撤回；由宿主提供 |
 | `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
-| `api-reach` | — | `reach` | — | `ReachService`（`forCall` 签发凭据）、`ReachCredential` 与品牌符号、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、`SandboxPolicy` / `sandboxPolicyOf`；向 `SessionConfig`（`@aalis/api-session-manager`）注入 `accessTier`、`accessOnBoundary`；默认提供者 plugin-reach |
+| `api-reach` | — | `reach` | — | `ReachService`（`forCall` 签发凭据）、`ReachCredential` 与品牌符号、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、`SandboxPolicy` / `sandboxPolicyOf`；默认提供者 plugin-reach |
 | `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；业务层带 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |
 | `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
 | `api-checkpoint` | — | `checkpoint` | — | `CheckpointService`, `RollbackResult`, `RollbackWithChatResult`；默认提供者 plugin-checkpoint |
@@ -130,7 +130,8 @@ await entry?.use.chat({ messages });
 | `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃选择层的 `list`，条目是 `ProviderEntry`） |
 | `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `makeTempDirViaStorage` helper |
 | `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
-| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`（各插件经 declaration merging 加键）, `SessionSetting`, `SessionInfo`；导出 `sessionKind`；业务层带 `registerSetting` |
+| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionInfo`, `PlaceInfo`；导出 `sessionKind` / `roomClass` / `isUnfiled` / `placeLabel` |
+| `api-session-settings` | — | `session-settings` | — | 两个同名描述符：读取门面 `sessionFields`（`fields()` 取读取器、`getAll`）与管理面 `sessionSettings`；`SessionFieldSpec`（并进 schema-config）、层表 `SESSION_LAYERS`、解析 `resolveFields`、`SessionSettingsError`；默认提供者 plugin-session-settings |
 | `api-session-protocol` | — | `session-protocol` | — | `SessionProtocolService`, `SessionPeer`, `SessionConnection`；会话协议的 zod schema（`sessionMethods` / `sessionNotifications`、帧与错误码），类型由 schema 推导；默认提供者 plugin-session-server |
 | `api-todo-list` | — | `todo-list` | — | `TodoListService`, `TodoItem`；注入事件 `todo:updated`；默认提供者 plugin-todo-list |
 | `api-user-relation` | — | `user-relation` | — | `UserRelationService`；默认提供者 plugin-user-relation |

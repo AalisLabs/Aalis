@@ -290,7 +290,7 @@ describe('右侧面板与会话头', () => {
     expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
   });
 
-  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪一份（类型写声明的显示名），落到作者默认写「默认」', async () => {
+  it('设置的来源写「来自：…」：场所写场所的称呼与层名，平台档写会话服务按哪个平台取的（WebUI 与终端的会话写入口平台），平台类型档写类型的显示名，落到作者默认写「默认」', async () => {
     const sources = ['place', 'platformType', 'platform', 'global', 'default'] as const;
     const rows = sources.map(source =>
       row(source, { field: { type: 'string', label: `<${source}>` }, effective: '<值>', source }),
@@ -300,18 +300,28 @@ describe('右侧面板与会话头', () => {
       chat: { type: 'group', multiParty: true },
       place: { key: 'onebot:group:20001', kind: 'window', name: '读书会' },
     } as const;
+    const layers = () => ({
+      layers: [
+        { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } as const, label: '群' },
+        { layer: { scope: 'place', key: 'workspace:p1' } as const, label: '工作区「论文」' },
+        {
+          layer: { scope: 'place', key: window.place.key } as const,
+          label: '群「读书会」',
+          platform: 'onebot',
+          type: 'group',
+        },
+      ],
+      order: LAYER_ORDER,
+    });
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([], { session: window }),
-      'session/config/get': () => ({ items: rows }),
-      'session/config/layers': () => ({
-        layers: [{ layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' }],
-        order: LAYER_ORDER,
-      }),
+      'session/config/get': () => ({ items: rows, platform: 'onebot' }),
+      'session/config/layers': layers,
     });
     await panel().findByRole('group', { name: '<place>' });
     const origin = (source: string) => settingRow(`<${source}>`).getByText(/^来自：/).textContent;
     expect(sources.map(origin)).toEqual([
-      '来自：群『读书会』',
+      '来自：群「读书会」（场所）',
       '来自：平台类型档 onebot · 群',
       '来自：平台档 onebot',
       '来自：全局（插件配置）',
@@ -322,11 +332,12 @@ describe('右侧面板与会话头', () => {
     const project = { place: { key: 'workspace:p1', kind: 'workspace', name: '论文' } } as const;
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([], { session: project }),
-      'session/config/get': () => ({ items: rows }),
+      'session/config/get': () => ({ items: rows, platform: 'webui' }),
+      'session/config/layers': layers,
     });
     await panel().findByRole('group', { name: '<place>' });
-    expect(origin('place')).toBe('来自：工作区『论文』');
-    expect(origin('platform'), '没有出生平台的会话不写平台').toBe('来自：平台档');
+    expect(origin('place')).toBe('来自：工作区「论文」（场所）');
+    expect(origin('platform'), '没有出生平台的会话写会话服务取平台档用的入口平台').toBe('来自：平台档 webui');
   });
 
   it('改时选写到哪一层：只这个会话、这个场所（工作区、群、私聊）、全局（插件配置），平台档与平台类型档不在选项里；选哪个写进哪一层，生效值出自那一层的行有「恢复继承」，全局层的叫「恢复默认」', async () => {
@@ -413,6 +424,18 @@ describe('右侧面板与会话头', () => {
     }
   });
 
+  it('没有场所层的根会话（摘要里没有场所，如按 id 兜底建出的空记录）：「改到」只有只这个会话与全局（插件配置）', async () => {
+    const rows = [row('persona', { field: { type: 'string', label: '人设' }, effective: '<值>', source: 'global' })];
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: { place: undefined } }),
+      'session/config/get': () => ({ items: rows }),
+    });
+    expect(optionsOf(await panel().findByRole('combobox', { name: '改到' }))).toEqual([
+      '只这个会话',
+      '全局（插件配置）',
+    ]);
+  });
+
   it('子会话：「改到」只有「只这个会话」；建立时写下的各项与本会话设的一样显示，行尾「恢复继承」', async () => {
     const rows = [
       row('persona', {
@@ -448,6 +471,10 @@ describe('右侧面板与会话头', () => {
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([], { session: { place } }),
       'session/config/get': () => ({ items: rows }),
+      'session/config/layers': () => ({
+        layers: [{ layer: { scope: 'place', key: place.key }, label: '工作区「论文」' }],
+        order: LAYER_ORDER,
+      }),
     });
     const scope = await panel().findByRole('combobox', { name: '改到' });
     const masked = () => ['额外提示', '人设', '风格'].filter(label => settingRow(label).queryByText(/^这里还被/));
@@ -458,7 +485,7 @@ describe('右侧面板与会话头', () => {
     expect(settingRow('人设').getByText(/^这里还被/).textContent).toBe('这里还被本会话覆盖');
     choose(scope, '全局（插件配置）');
     expect(masked()).toEqual(['额外提示', '人设']);
-    expect(settingRow('额外提示').getByText(/^这里还被/).textContent).toBe('这里还被工作区『论文』覆盖');
+    expect(settingRow('额外提示').getByText(/^这里还被/).textContent).toBe('这里还被工作区「论文」（场所）覆盖');
   });
 
   it('层表没取到：设置行照常列出，来源按层名写，另写一句层表没取到', async () => {

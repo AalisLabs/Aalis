@@ -221,7 +221,8 @@ describe('会话默认', () => {
     { layer: ONEBOT_GROUP, label: '群' },
     { layer: { scope: 'platformType', platform: 'onebot', type: 'private' }, label: '私聊' },
     { layer: { scope: 'place', key: 'workspace:default' }, label: '默认工作区' },
-    { layer: WINDOW, label: '群「读书会」onebot', platform: 'onebot', type: 'group' },
+    { layer: { scope: 'place', key: 'workspace:w1' }, label: '工作区「论文」' },
+    { layer: WINDOW, label: '群「读书会」', platform: 'onebot', type: 'group' },
   ];
   const MODEL = { type: 'llm-ref', label: '模型', session: { preference: 'llm', unset: '跟随服务偏好' } } as const;
   const chat = (model: string) => ({ provider: 'zz-llm', model });
@@ -286,14 +287,14 @@ describe('会话默认', () => {
       ]);
   const settingRow = (label: string) => within(section().getByRole('group', { name: label }));
 
-  it('第一步选层：全局、平台档、平台类型档、场所四组，称呼取自层表，平台类型写声明的显示名（没有时写类型名）；第二步改这一层的项，所选的层记进地址；宽屏左右并排', async () => {
+  it('第一步选层：全局、平台档、平台类型档、场所四组，组名取自层表，平台类型写声明的显示名（没有时写类型名），窗口场所在称呼后补平台；第二步改这一层的项，所选的层记进地址；宽屏左右并排', async () => {
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
     await layerList().findByRole('link', { name: '全局（插件配置）' });
     expect(groups()).toEqual([
       ['全局（插件配置）', ['全局（插件配置）']],
       ['平台档', ['cli', 'onebot', 'webui']],
       ['平台类型档', ['onebot · channel', 'onebot · 群', 'onebot · 私聊']],
-      ['场所', ['默认工作区', '群「读书会」onebot']],
+      ['场所', ['默认工作区', '工作区「论文」', '群「读书会」onebot']],
     ]);
     expect(section().getByText('先在左边选一层')).toBeTruthy();
     expect(requests('session/config/layer/get')).toEqual([]);
@@ -323,7 +324,7 @@ describe('会话默认', () => {
     );
   });
 
-  it('地址带着层打开就是那一层；场所的标题写场所的称呼；地址里的层不在了时回到选层', async () => {
+  it('地址带着层打开就是那一层；场所的标题写场所的称呼与层名、不带平台；地址里的层不在了时回到选层', async () => {
     app = await renderApp('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup', handlers(), settingsRest());
     expect(await section().findByRole('heading', { name: '平台类型档 onebot · 群' })).toBeTruthy();
     await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: ONEBOT_GROUP }]));
@@ -334,7 +335,7 @@ describe('会话默认', () => {
       handlers(),
       settingsRest(),
     );
-    expect(await section().findByRole('heading', { name: '群「读书会」onebot（场所）' })).toBeTruthy();
+    expect(await section().findByRole('heading', { name: '群「读书会」（场所）' })).toBeTruthy();
     await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: WINDOW }]));
     app.close();
 

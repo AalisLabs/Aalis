@@ -725,10 +725,9 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 | `GET /api/models/:service` | 查询参数 `dependency?` | `LLMModelsResponse`（`:service` 是 `llm`）或 `OptionsResponse`（其余） |
 | `POST /api/llm-providers/:contextId/refresh` | — | `{ ok: true, added, removed, total }` |
 
-- `llm`：模型列表，模型字段的可选项走它。
-- 宿主回答的来源：`platform`（平台名）、`gateway-scopes`（会话范围）、`toolGroups`（工具分组，`'*'` 是全部分组）、`llm-thinking`（深度思考的档位，按 `dependency` 取那个模型声明的档位，`dependency` 是模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，写法不对回 400；模型不能调时 `models` 与 `details` 为空）。
-- 其余服务名调那个服务各提供者的 `listModels()`，回 `{ models }`。
-- **局限**：只有上面宿主回答的几个来源带名字、说明与默认档，也只有 `llm-thinking` 收依赖项的值；它们都取自契约（api-platform、api-llm、api-tools），任何实现都成立。第三方插件给自己的设置项开新来源时走 `listModels()`，只拿得到取值，拿不到依赖值（行上的 `dependsOn` 对它不起作用）。有插件要用到名字或依赖值时再按加法加，现在不另设契约。
+- 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项带名字与说明（`OptionDetail`）。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
+- 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前，登记过的分组下面一行写它的说明）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
+- 其余服务名合起那个服务各提供者的 `listModels()`，回 `{ models }`（如人设）。
 - 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
 
 ```ts
@@ -759,7 +758,7 @@ interface OptionDetail {
 |---|---|---|
 | `GET /api/pages` | — | `{ pages: PageView[] }`：登记着的全部页面，加上所属实例 `instance`，`placement` 总是给出；按 `order`、实例、key 排好。声明式页面（`DeclarativePageView`）是声明去掉函数（数据源、处理函数、`applies`）；插件前端页面（`FramePageView`）见上文「插件前端」 |
 | `GET /api/session-pages` | 查询参数 `sessionId` | `{ pages: PageRef[] }`：这个会话适用的会话面板页面。会话不存在回 404 |
-| `GET /api/pages/:instance/:pageKey/texts` | — | `FrameTexts`：这一页所属插件的字典（`texts`，schema-i18n 的目录条目，插件没有字典时为 `null`）与语言包按全局默认层的语言链给它补的译文（`packs`），原样交出、不渲染；插件前端的宿主随 `init` 交给框架。页面不在回 404 |
+| `GET /api/pages/:instance/:pageKey/texts` | — | `FrameTexts`：这一页所属插件的字典（`texts`，schema-i18n 的目录条目，插件没有字典时为 `null`）与语言包按全局层的语言链给它补的译文（`packs`），原样交出、不渲染；插件前端的宿主随 `init` 交给框架。页面不在回 404 |
 | `GET /api/pages/:instance/:pageKey/data/:componentId` | 查询参数 `PageDataQuery` | `PageDataResponse`（声明式页面，按组件种类见 `PageDataByType`）或 `FrameDataResponse`（插件前端的数据源，`componentId` 是数据源名，`data` 是数据源返回的值） |
 | `POST /api/pages/:instance/:pageKey/actions/:action` | `PageActionRequest` | `{ message? }` |
 | `GET /api/layout` | — | `LayoutRecords` |

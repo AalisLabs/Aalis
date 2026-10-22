@@ -154,7 +154,7 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                   filter={{ fields: filterFields, values: filterValues, onChange: setFilter }}
                   rowActions={s =>
                     settings &&
-                    s.place.kind === 'window' && (
+                    s.place?.kind === 'window' && (
                       <Button variant="text" onClick={() => setOpened(s)}>
                         {tr('placeSettings')}
                       </Button>
@@ -196,13 +196,13 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
       </Panel>
       <Dialog
         open={opened !== undefined}
-        title={tr('placeSettingsOf', { name: opened?.place.name ?? '' })}
+        title={tr('placeSettingsOf', { name: opened?.place?.name ?? '' })}
         size="form"
         onClose={() => setOpened(undefined)}
         footer={<Button onClick={() => setOpened(undefined)}>{tr('close')}</Button>}
       >
         {layers.error && <SessionsFetchError what={tr('settingLayers')} error={layers.error} retry={layers.retry} />}
-        {opened && layers.value && (
+        {opened?.place && layers.value && (
           <LayerRows
             layer={{ scope: 'place', key: opened.place.key }}
             order={layers.value.order}

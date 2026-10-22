@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-session-protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
   "dependencies": {
     "@aalis/api-approval": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "zod": "^3.25.76"
   },

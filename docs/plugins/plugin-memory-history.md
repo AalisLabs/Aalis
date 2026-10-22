@@ -24,20 +24,22 @@ export default definePlugin({
     contributions,
     tools: optional(tools),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-## 按房间收窄
+## 按会话设范围
 
-会话配置的 `memoryRecallScope`（见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间收得比 `scope` 更窄，被动注入与 `recent_messages` 都照它：
+「跨会话历史范围」`scope` 可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），是被动注入与 `recent_messages` 的上限，每次查询按调用所在会话现读：
 
-- `session`：本插件注入的全是其他会话的原文，这个房间整块不注入；`recent_messages` 返回「本房间的召回范围限于本会话，不能查询其他会话的近期消息。」
-- `platform`：最多查同平台，插件配置或工具参数写了 `cross-platform` 也按 `same-platform` 查。
-- `all` 或未设置：按插件配置与工具参数。
+- `session`（仅本会话）：本插件注入的全是其他会话的原文，这个会话整块不注入；`recent_messages` 返回「本会话的跨会话历史范围限于本会话，不能查询其他会话的近期消息。」
+- `same-platform`：最多查同平台，工具参数写了 `cross-platform` 也按 `same-platform` 查。
+- `cross-platform`：按工具参数，没传时按它。
 
-房间范围在每次查询时按会话所属平台现算；session-manager 不在场时不收窄。这一项由跨会话取料的几个插件各自登记同一份定义（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`），本插件是其中之一，只要有一个在场它就有效。
+某一层写坏了的值按仅本会话处理，不回落到更宽的层。会话设置不在场时只取插件配置里的值。
 
 ## 配置
 
@@ -46,7 +48,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `injectEnabled` | boolean | `true` | 被动注入 prompt：是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。 |
-| `scope` | select | `'same-platform'` | 查询作用域（被动注入 + 工具默认）：被动注入使用该作用域；工具调用未显式传 scope 时也使用该值。要“关闭被动注入”请调 injectEnabled。 |
+| `scope` | select | `'same-platform'` | 跨会话历史范围：`session` / `same-platform` / `cross-platform`，被动注入与工具的上限；可按会话设（见上文）。要“关闭被动注入”请调 injectEnabled。 |
 | `limit` | number | `30` | 注入条数上限：每次注入的最大消息条数；工具调用未指定 limit 时也用这个值。 |
 | `maxAgeMinutes` | number | `180` | 时间窗口（分钟）：只取最近 N 分钟内的消息；0 表示不限时间。 |
 | `perSessionLimit` | number | `5` | 每会话最多条数：同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；为 0 = 不做 per-session cap。 |

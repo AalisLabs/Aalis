@@ -19,7 +19,8 @@ const SOURCE = {
   notObject: '配置文件里的 {path} 不是对象，先改正它再写这一层',
   unknownProvider: '{item} 指向的 {contextId} 不是 {service} 的提供者',
   // 层的称呼
-  windowPlace: '{type}「{name}」{platform}',
+  workspacePlace: '工作区「{name}」',
+  windowPlace: '{type}「{name}」',
   // 文字读成取值
   notBoolean: '要写 on、off、true、false、1 或 0',
   notNumber: '要写一个数字',

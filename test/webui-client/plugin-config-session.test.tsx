@@ -125,13 +125,14 @@ const STORED = {
   token: '<令牌>',
   entries: [],
 };
-/** 全局之外写过的各处：平台类型档一处、一个子会话一处 */
+/** 全局之外写过的各处：平台类型档、群的场所、一个子会话各一处 */
 const OVERRIDES: SessionMethodResult<'session/config/overrides'> = {
   items: [
     {
       key: 'iterations',
       entries: [
         { target: { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } }, value: 15 },
+        { target: { layer: { scope: 'place', key: 'onebot:group:20001' } }, value: 10 },
         { target: { sessionId: 's2', title: '<子>', parent: { sessionId: 's1', title: '<父>' } }, value: 5 },
       ],
     },
@@ -208,6 +209,12 @@ async function boot({
         layers: [
           { layer: { scope: 'global' } },
           { layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' },
+          {
+            layer: { scope: 'place', key: 'onebot:group:20001' },
+            label: '群「读书会」',
+            platform: 'onebot',
+            type: 'group',
+          },
         ],
         order: LAYER_ORDER,
       }),
@@ -262,24 +269,25 @@ describe('作者默认', () => {
 });
 
 describe('可按会话设置的项', () => {
-  it('标「可按会话设置」，另有设过的标「另有 N 处设置」，点开逐个列出（子会话带父会话），每处链到那一层或那个会话的设置；模型不在表里，在服务偏好块里带标记', async () => {
+  it('标「可按会话设置」，另有设过的标「另有 N 处设置」，点开逐个列出（场所写称呼与层名、不带平台，子会话带父会话，引号用「」），每处链到那一层或那个会话的设置；模型不在表里，在服务偏好块里带标记', async () => {
     await boot();
     await vi.waitFor(() => expect(rowOf('最大工具迭代').getByText('可按会话设置')).toBeTruthy());
     expect(rowOf('行为准则').queryByText('可按会话设置')).toBeNull();
     expect(requests('session/config/overrides')).toEqual([{ plugin: NAME }]);
     expect(form().queryByText('模型', { selector: 'label' })).toBeNull();
-    const toggle = rowOf('最大工具迭代').getByRole('button', { name: '另有 2 处设置' });
+    const toggle = rowOf('最大工具迭代').getByRole('button', { name: '另有 3 处设置' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
-    const places = within(rowOf('最大工具迭代').getByRole('list', { name: '另有 2 处设置' }));
+    const places = within(rowOf('最大工具迭代').getByRole('list', { name: '另有 3 处设置' }));
     expect(places.getAllByRole('listitem').map(item => item.textContent)).toEqual([
       '平台类型档 onebot · 群15',
-      '子会话『<子>』（父会话『<父>』）5',
+      '群「读书会」（场所）10',
+      '子会话「<子>」（父会话「<父>」）5',
     ]);
     expect(places.getByRole('link', { name: '平台类型档 onebot · 群' }).getAttribute('href')).toBe(
       '/settings/session-defaults?layer=platformType%3Aonebot%3Agroup',
     );
-    expect(places.getByRole('link', { name: '子会话『<子>』（父会话『<父>』）' }).getAttribute('href')).toBe(
+    expect(places.getByRole('link', { name: '子会话「<子>」（父会话「<父>」）' }).getAttribute('href')).toBe(
       '/s/s2/settings',
     );
     fireEvent.click(toggle);

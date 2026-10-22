@@ -36,6 +36,7 @@ interface ExecutionGuardContext {
   type: 'command' | 'tool';
   visibility: CapabilityVisibility;  // 主能力生效可见性（注册时已由 resolveCapabilityPolicy 展开）
   risk?: CapabilityRisk;             // 原始风险声明（透传，供 authority 派生 minLevel；缺省回退 visibility）
+  minLevel?: number;                 // 操作自己声明的最低等级（如会话设置项按字段声明的门槛），压过 risk 与 visibility 的派生、让位于 authorityOverrides；Infinity 即只有 owner
   confirm?: CapabilityConfirm;       // 生效确认要求（轴 B；缺省=不确认）
   sessionId: string;
   platform: string;
@@ -87,11 +88,15 @@ interface AuthorityService {
 
   // capability 统一闸：null 放行 | string 拒绝原因
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > 用户 level >= 操作 minLevel > 所属权限组覆盖；
-  // minLevel 由 request.risk/visibility/config.authorityOverrides 派生，组的放行条目取自 config.authorityGroups。
+  // minLevel 取 config.authorityOverrides，没有时取 request.minLevel，再没有时由 request.risk/visibility 派生；组的放行条目取自 config.authorityGroups。
   authorize(
     identity: UserIdentity | { platform: string; userId?: string },
-    request: AuthorizeRequest, // { capability, visibility, risk?, toolGroups? }
+    request: AuthorizeRequest, // { capability, visibility, risk?, minLevel?, toolGroups? }
   ): string | null;
+
+  // 这个身份的等级够不够 minLevel：owner 恒过，封禁（等级为负数）恒不过，其余登记等级不低于 minLevel 才过；
+  // minLevel 为 Infinity 即只有 owner。不看能力、权限组与硬禁（那些归 authorize），给会话设置按层固定的门槛用。提供者要实现它
+  meetsLevel(identity: UserIdentity | { platform: string; userId?: string }, minLevel: number): boolean;
 
   // 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且记录里没有备注等别的内容则清记录）。
   // 单 owner 终态：权限只由 owner 管理。调用方自行确保仅 owner 可达（防自授）。
