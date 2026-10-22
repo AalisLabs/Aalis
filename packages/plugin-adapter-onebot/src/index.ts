@@ -7,7 +7,7 @@ import { llm } from '@aalis/api-llm';
 import { clearSessionMedia, media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive, outboundAddress } from '@aalis/api-message-archive';
-import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
+import { type PlatformAdapter, type PlatformConnection, platform, type SessionTypeDecl } from '@aalis/api-platform';
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
@@ -369,6 +369,13 @@ function makeSessionId(
   }
   return `onebot:${selfId}:${detailType}:${targetId}`;
 }
+
+/** 本平台的类型：消息带的类型名（v11 的 message_type、v12 的 detail_type）与会话 id 的第三段，群与频道多方、私聊一对一 */
+const SESSION_TYPES: readonly SessionTypeDecl[] = [
+  { name: 'group', label: t('typeGroup'), multiParty: true },
+  { name: 'private', label: t('typePrivate'), multiParty: false },
+  { name: 'channel', label: t('typeChannel'), multiParty: true },
+];
 
 /** 解析 sessionId 回连接信息 */
 function parseSessionId(sessionId: string): {
@@ -1266,11 +1273,7 @@ function runAdapter(caps: Caps): void {
   const adapter = {
     adapterName: 'OneBot',
     platform: 'onebot',
-    sessionTypes: [
-      { name: 'group', multiParty: true },
-      { name: 'private', multiParty: false },
-      { name: 'channel', multiParty: true },
-    ],
+    sessionTypes: SESSION_TYPES,
 
     getConnections(): PlatformConnection[] {
       return states.map(s => ({
@@ -2326,7 +2329,9 @@ function runAdapter(caps: Caps): void {
       if (!ownsSession(view.sessionId)) return null;
       const blocks: string[] = [];
 
-      if (view.sessionId?.includes(':group:')) {
+      // 多方的聊天窗口（群与频道）：按会话 id 里的类型查本平台声明的多方标记
+      const type = parseSessionId(view.sessionId ?? '')?.detailType;
+      if (SESSION_TYPES.some(decl => decl.name === type && decl.multiParty)) {
         // 措辞不用「以上」——本块落点在检索材料/状态块之后，位置指代会把
         // 非历史的注入材料错误圈进去；按内容指称写成位置无关的表述。
         blocks.push(

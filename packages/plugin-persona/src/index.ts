@@ -11,7 +11,7 @@ import {
   type PersonaSessionOptions,
   persona,
 } from '@aalis/api-persona';
-import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
+import { getPlatformSelfIdentity, platform as platformService, sessionTypeLabel } from '@aalis/api-platform';
 import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
@@ -25,6 +25,7 @@ import {
   provide as provideCap,
 } from '@aalis/core';
 import { defineConfig, parseConfig, type SessionFieldsOf } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
 import { t } from './texts.js';
@@ -36,8 +37,10 @@ interface PersonaIdentity {
   platform?: string;
   /** 消息的入口平台，只在与房间的出生平台不同时填（如从 WebUI 往群里插话） */
   entryPlatform?: string;
-  /** 平台类型名 */
+  /** 会话类型：根会话的聊天窗口的类型，写平台声明的显示名（原文），没声明时写类型名；没有聊天窗口时不写 */
   sessionType?: string;
+  /** 根会话的聊天窗口是多方：群信息与身份判定段只按它给 */
+  multiParty?: boolean;
   /** 群号：多方聊天窗口的目标 */
   groupId?: string;
   selfId?: string;
@@ -375,8 +378,8 @@ class PersonaServiceImpl implements PersonaService {
         const selfLabel = id.selfNickname ? `${id.selfNickname}${id.selfId ? `（${id.selfId}）` : ''}` : id.selfId;
         prompt += `你在当前平台的账号：${selfLabel}\n`;
       }
-      if (id.sessionType === 'group') {
-        prompt += '会话类型：群聊\n';
+      if (id.sessionType) prompt += `会话类型：${id.sessionType}\n`;
+      if (id.multiParty) {
         if (id.groupName) prompt += `群名称：${id.groupName}\n`;
         if (id.groupId) prompt += `群号：${id.groupId}\n`;
         // 自身群身份（关键：避免 LLM 误以为自己是普通群员）
@@ -387,10 +390,6 @@ class PersonaServiceImpl implements PersonaService {
         if (id.selfTitle) {
           prompt += `你在该群的专属头衔：${id.selfTitle}\n`;
         }
-      } else if (id.sessionType === 'private') {
-        prompt += '会话类型：私聊\n';
-      } else if (id.sessionType === 'channel') {
-        prompt += '会话类型：频道\n';
       }
       if (id.entryPlatform) {
         prompt += `当前消息经 ${id.entryPlatform} 发来\n`;
@@ -408,13 +407,12 @@ class PersonaServiceImpl implements PersonaService {
       if (id.senderTitle) {
         prompt += `当前消息发送者群头衔：${id.senderTitle}\n`;
       }
-      if (id.sessionType === 'group') {
+      if (id.multiParty) {
         // 防误认：群名片可被改成「群主」等字样，曾导致把普通成员当群主。
         prompt +=
           '身份判定：「群身份」由平台核验，可信；昵称与头衔只是可自定义的显示文本，可能出现「群主」「管理员」等与真实身份不符的字样，历史消息前缀里的名字同理。判断成员真实身份只认群身份字段，未标注时不要凭名字或头衔推断。\n';
       }
-      prompt +=
-        '短期历史范围：上下文中的历史消息均来自当前会话，即上述群聊/私聊/频道；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
+      prompt += '短期历史范围：上下文中的历史消息均来自当前会话；跨会话或跨群内容只会以长期记忆片段形式单独标注。\n';
     }
 
     // 状态持久化注入
@@ -731,25 +729,26 @@ async function run(caps: Caps): Promise<void> {
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
-  // 会话事实（平台、自身账号、会话类型与群号）按会话记下的来源字段取：出生平台与自身账号取根会话的（房间里的子任务也在
-  // 房间的平台与账号上），聊天窗口只取会话自己的（子任务不是群里的对话）；从 WebUI 往群里插话时回复发进群里。没有来源
-  // 字段的会话按消息。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
+  // 会话事实（平台、自身账号、会话类型与群号）按根会话记下的来源字段取（房间里的子任务也在房间的平台、账号与聊天窗口上）；
+  // 从 WebUI 往群里插话时回复发进群里。没有出生平台的会话按消息的平台；没有聊天窗口的（WebUI、终端，或没装会话管理）不写
+  // 会话类型与群信息，不看消息上的类型名。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
   hooks.use.middleware('agent:input:before', async (data, next) => {
     const { message } = data;
     const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const session = sm?.getSession(message.sessionId);
     const root = sm && rootSessionOf(session, id => sm.getSession(id));
     const origin = root?.originPlatform;
-    const chat = session?.originChat;
+    const chat = root?.originChat;
     const sessionPlatform = origin ?? message.platform;
     const selfIdentity = getPlatformSelfIdentity(caps.platform, sessionPlatform, root?.id ?? message.sessionId);
     const identity: PersonaIdentity = {
       sessionId: message.sessionId,
       platform: sessionPlatform,
       entryPlatform: origin !== undefined && origin !== message.platform ? message.platform : undefined,
-      // 合成回合（定时任务、编排、闲置）与经别的入口发来的消息不带类型名：按会话记下的聊天窗口。只用于提示词，不回写消息
-      sessionType: message.sessionType ?? chat?.type,
-      groupId: chat?.multiParty ? chat.targetId : message.groupId,
+      // 只用于提示词，不回写消息
+      sessionType: chat && toSource(sessionTypeLabel(caps.platform, sessionPlatform, chat.type) ?? chat.type),
+      multiParty: chat?.multiParty,
+      groupId: chat?.multiParty ? chat.targetId : undefined,
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
       userId: message.userId,

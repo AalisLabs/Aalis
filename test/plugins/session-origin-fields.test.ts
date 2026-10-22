@@ -103,12 +103,21 @@ describe('平台类型的声明', () => {
     expect(sessionTypesOf(adapter('plain', []))).toEqual([{ name: 'private', multiParty: false }]);
   });
 
-  it('resolveSessionType：不带类型名时，声明里有多方类型的按它（失败关闭），没声明或只有一对一类型的按 private、一对一', () => {
-    expect(resolveSessionType(ONEBOT_TYPES, undefined)).toEqual({ name: 'group', multiParty: true, undeclared: false });
+  it('resolveSessionType：不带类型名时，声明里有多方类型的按它（失败关闭），只有一对一类型的按第一个，没声明的按 private、一对一', () => {
+    expect(resolveSessionType(ONEBOT_TYPES, undefined)).toEqual({
+      name: 'group',
+      label: '群',
+      multiParty: true,
+      undeclared: false,
+    });
     expect(resolveSessionType(FORUM_TYPES, undefined)).toEqual({ name: 'thread', multiParty: true, undeclared: false });
-    const privateOnly = [{ name: 'private', multiParty: false }];
-    expect(resolveSessionType(privateOnly, undefined)).toEqual({
-      name: 'private',
+    const dmOnly = [
+      { name: 'dm', label: '私信', multiParty: false },
+      { name: 'whisper', multiParty: false },
+    ];
+    expect(resolveSessionType(dmOnly, undefined)).toEqual({
+      name: 'dm',
+      label: '私信',
       multiParty: false,
       undeclared: false,
     });
@@ -120,10 +129,16 @@ describe('平台类型的声明', () => {
     });
   });
 
-  it('resolveSessionType：声明里有的按声明；声明里没有的按多方并标出', () => {
-    expect(resolveSessionType(ONEBOT_TYPES, 'group')).toEqual({ name: 'group', multiParty: true, undeclared: false });
+  it('resolveSessionType：声明里有的按声明，带上声明的显示名；声明里没有的按多方并标出', () => {
+    expect(resolveSessionType(ONEBOT_TYPES, 'group')).toEqual({
+      name: 'group',
+      label: '群',
+      multiParty: true,
+      undeclared: false,
+    });
     expect(resolveSessionType(ONEBOT_TYPES, 'private')).toEqual({
       name: 'private',
+      label: '私聊',
       multiParty: false,
       undeclared: false,
     });

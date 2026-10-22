@@ -4,6 +4,7 @@ import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { memory } from '@aalis/api-memory';
+import { platform, sessionTypeLabel } from '@aalis/api-platform';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
@@ -20,6 +21,7 @@ import {
   type ServiceSelection,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -213,12 +215,6 @@ function extractMentions(text: string): string[] {
   return [...ids];
 }
 
-/** 人可读的平台名（cli 不叠加避免噪音） */
-function platformLabel(platform: string | undefined): string {
-  if (!platform || platform === 'cli') return '';
-  return platform;
-}
-
 /** 剥掉 agent 在某条消息开头注入的临时时间标签（如 "(9/25 14:30) " / "(2025/12/31 23:59) "）。
  * 只剥首个括号对，保留后续内容（包括 [发送者] 前缀）。
  */
@@ -245,7 +241,7 @@ function visibleText(m: Message): string {
  * 口吻按语义相关度回流，正是「戳戳月卡」自我强化事故的机制。角色词根取
  * memory-history 的 Assistant/Notice，assistant 额外缀「你自己」强化自指
  * （tool 在彼处不渲染，此处自定）。 */
-function renderMessage(m: Message, max: number): string {
+function renderMessage(m: Message, max: number, typeLabel: (platform: string, type: string) => string): string {
   const meta = m.metadata ?? {};
   const ts = m.timestamp ?? 0;
   const date = new Date(ts).toLocaleString('zh-CN');
@@ -253,20 +249,18 @@ function renderMessage(m: Message, max: number): string {
   const userId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? m.name ?? '';
   const nickname = meta[WellKnownMetadataKeys.Nickname] as string | undefined;
   const groupName = meta[WellKnownMetadataKeys.GroupName] as string | undefined;
-  const platform = platformLabel(meta[WellKnownMetadataKeys.Platform] as string | undefined);
+  const platformName = (meta[WellKnownMetadataKeys.Platform] as string | undefined) ?? '';
   const sessionType = meta[WellKnownMetadataKeys.SessionType] as string | undefined;
 
-  // 位置描述：优先群名、其次会话类型
+  // 位置描述：优先群名、其次会话类型的显示名
   let where = '';
   if (groupName) {
     where = `群「${groupName}」/`;
-  } else if (sessionType === 'private') {
-    where = '私聊/';
-  } else if (sessionType === 'channel') {
-    where = '频道/';
+  } else if (sessionType) {
+    where = `${typeLabel(platformName, sessionType)}/`;
   }
   // 平台前缀
-  const platformPrefix = platform ? `${platform}/` : '';
+  const platformPrefix = platformName ? `${platformName}/` : '';
 
   let who: string;
   let cleanContent = visibleText(m);
@@ -312,6 +306,8 @@ const uses = {
    * 当前会话、候选所在会话的出生平台（子会话取根会话的）。不在场时当前平台取入口平台，同平台过滤只认向量记下的入口平台
    */
   sessionManager: optional(sessionManager),
+  /** 召回片段的位置写平台声明的类型显示名；缺席时写类型名 */
+  platform: optional(platform),
   /** 按会话读跨会话检索模式；缺席时取插件配置里的值 */
   sessionFields: optional(sessionFields),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
@@ -394,6 +390,11 @@ async function run(caps: Caps): Promise<void> {
   /** 候选池放大倍率：others-only 档的角色过滤发生在检索后，候选池放大一倍补偿，否则 assistant 语料
    * 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条） */
   const candidateOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
+
+  /** 平台声明的类型显示名，取原文（召回片段是写给模型的）；平台不在、没声明显示名时为类型名 */
+  function typeLabel(platformName: string, type: string): string {
+    return toSource(sessionTypeLabel(caps.platform, platformName, type) ?? type);
+  }
 
   /** 会话管理记下的出生平台（子会话取根会话的）；会话管理不在或会话没有出生平台时为 undefined */
   function originPlatformOf(sessionId: string): string | undefined {
@@ -1039,7 +1040,7 @@ async function run(caps: Caps): Promise<void> {
         // 按时间排序混排
         const sortedAll = [...collected.values()].sort((a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0));
 
-        const lines = sortedAll.map(({ msg }) => renderMessage(msg, cfg.search.perItemMaxChars));
+        const lines = sortedAll.map(({ msg }) => renderMessage(msg, cfg.search.perItemMaxChars, typeLabel));
 
         // 片段含非 user 角色（扩窗带出的 Assistant/Notice/Tool）时在标题行内附加自指说明，
         // 防模型把自己的历史回复当他人发言引用（自我强化事故的入口形态）。
@@ -1199,7 +1200,7 @@ async function run(caps: Caps): Promise<void> {
                 ctxArr.push({
                   ts: m.timestamp ?? 0,
                   role: m.role,
-                  text: renderMessage(m, cfg.search.perItemMaxChars),
+                  text: renderMessage(m, cfg.search.perItemMaxChars, typeLabel),
                 });
               }
               if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
@@ -1220,7 +1221,7 @@ async function run(caps: Caps): Promise<void> {
           const ctxArr = contextBySessionPivot.get(`${sid}|${ts}`);
           const base: Record<string, unknown> = {
             score: Number(r.finalScore.toFixed(4)),
-            text: renderMessage(m, cfg.search.perItemMaxChars),
+            text: renderMessage(m, cfg.search.perItemMaxChars, typeLabel),
             sessionId: sid,
           };
           if (ctxArr && ctxArr.length > 0) {

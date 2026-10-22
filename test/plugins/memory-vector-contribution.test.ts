@@ -4,6 +4,7 @@ import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/a
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
@@ -89,6 +90,8 @@ function hit(
     userId?: string;
     nickname?: string;
     platform?: string;
+    sessionType?: string;
+    groupName?: string;
     role?: string;
     mentions?: string[];
   },
@@ -113,6 +116,8 @@ interface SetupOptions {
   embedImpl?: (text: string, options?: EmbeddingRequestOptions) => Promise<number[]>;
   /** 装上会话管理桩，会话表里是这些已收录的房间 */
   rooms?: string[];
+  /** 装上这些平台适配器（声明类型） */
+  adapters?: Pick<PlatformAdapter, 'platform' | 'sessionTypes'>[];
 }
 
 /** 本文件创建的 App 全部登记在此，用例结束统一停掉，避免索引队列与监听器泄漏到别的用例 */
@@ -133,6 +138,10 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.withArchive) await app.plugin(messageArchivePlugin, { debugLogs: false });
 
   if (opts.rooms) host.provide.use(sessionManager, sessionTableManager(opts.rooms.map(id => storedRoom(id))));
+  for (const adapter of opts.adapters ?? [])
+    host.provide.use(platform, { ...adapter, getConnections: () => [], sendMessage: async () => {} } as never, {
+      entryId: adapter.platform,
+    });
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   host.provide.use(embedding, embedder.service);
@@ -957,5 +966,99 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('另一段旧记忆');
     expect(block).not.toContain('信封里的回复');
+  });
+});
+
+describe('plugin-memory-vector：召回片段写出说话的位置', () => {
+  it('有群名写群名，否则写平台声明的类型显示名，没声明显示名或平台不在时写类型名；终端会话也写平台名', async () => {
+    const { toolHandlers } = await setup({
+      adapters: [
+        {
+          platform: 'onebot',
+          sessionTypes: [
+            { name: 'group', label: '群聊', multiParty: true },
+            { name: 'private', label: '私聊', multiParty: false },
+          ],
+        },
+        {
+          platform: 'forum',
+          sessionTypes: [
+            { name: 'dm', label: '私信', multiParty: false },
+            { name: 'room', multiParty: true },
+          ],
+        },
+      ],
+      hits: [
+        hit(0.99, {
+          sessionId: 's-1',
+          timestamp: BASE_TS,
+          content: '群里说的',
+          platform: 'onebot',
+          sessionType: 'group',
+          groupName: '<群名>',
+          userId: 'u1',
+        }),
+        hit(0.98, {
+          sessionId: 's-2',
+          timestamp: BASE_TS + 1,
+          content: '群名没记下',
+          platform: 'onebot',
+          sessionType: 'group',
+          userId: 'u1',
+        }),
+        hit(0.97, {
+          sessionId: 's-3',
+          timestamp: BASE_TS + 2,
+          content: '私聊里说的',
+          platform: 'onebot',
+          sessionType: 'private',
+          userId: 'u1',
+        }),
+        hit(0.96, {
+          sessionId: 's-4',
+          timestamp: BASE_TS + 3,
+          content: '私信里说的',
+          platform: 'forum',
+          sessionType: 'dm',
+          userId: 'u1',
+        }),
+        hit(0.95, {
+          sessionId: 's-5',
+          timestamp: BASE_TS + 4,
+          content: '房间里说的',
+          platform: 'forum',
+          sessionType: 'room',
+          userId: 'u1',
+        }),
+        hit(0.94, {
+          sessionId: 's-6',
+          timestamp: BASE_TS + 5,
+          content: '平台不在',
+          platform: 'gone',
+          sessionType: 'channel',
+          userId: 'u1',
+        }),
+        hit(0.93, {
+          sessionId: 's-7',
+          timestamp: BASE_TS + 6,
+          content: '终端里说的',
+          platform: 'cli',
+          userId: 'console',
+        }),
+      ],
+      search: { topK: 10 },
+    });
+    const recall = toolHandlers.get('memory_recall')!;
+    const out = JSON.parse(await recall({ query: '说的' }, { sessionId: 's-cur', platform: 'onebot' }));
+    const tags = (out.results ?? []).map((r: { text: string }) => r.text.slice(0, r.text.indexOf(' @ ')));
+    expect(tags).toEqual([
+      '[onebot/群「<群名>」/u1',
+      '[onebot/群聊/u1',
+      '[onebot/私聊/u1',
+      '[forum/私信/u1',
+      '[forum/room/u1',
+      '[gone/channel/u1',
+      '[cli/console',
+    ]);
   });
 });

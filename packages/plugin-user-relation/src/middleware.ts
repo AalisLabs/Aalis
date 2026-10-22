@@ -16,7 +16,6 @@
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
 import type { ServiceSelection } from '@aalis/core';
-import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -45,18 +44,22 @@ interface MiddlewareConfig {
   maxGlobalHotEvents: number;
   /** 全局热点：最近被提及的实体数量，0 关闭 */
   maxGlobalHotEntities: number;
-  /** 仅 sessionType === 'group' 时注入 */
+  /** 仅在多方会话（根会话记下的聊天窗口是多方）注入 */
   groupOnly: boolean;
 }
 
-/** 注入贡献用到的：贡献点，与这个会话的关系图范围是否限于本会话（platform 是入口平台） */
+/**
+ * 注入贡献用到的：贡献点，这个会话的关系图范围是否限于本会话（platform 是入口平台），与这个会话是不是多方（按会话记下的
+ * 聊天窗口，子会话取根会话的；判不出时为否）
+ */
 interface ContributionDeps {
   contributions: ServiceSelection<Contributions>;
   sessionOnly(sessionId: string | undefined, platform: string | undefined): boolean;
+  multiParty(sessionId: string | undefined): boolean;
 }
 
 export function registerRelationContribution(
-  { contributions, sessionOnly }: ContributionDeps,
+  { contributions, sessionOnly, multiParty }: ContributionDeps,
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
@@ -66,6 +69,7 @@ export function registerRelationContribution(
     async build(view) {
       // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
       if (view.dryRun) return null;
+      if (cfg.groupOnly && !multiParty(view.sessionId)) return null;
       return buildBlock(service, view, cfg, sessionOnly(view.sessionId, view.platform));
     },
   });
@@ -81,14 +85,6 @@ async function buildBlock(
   const trigger = data.triggerType ?? 'direct';
   if (trigger !== 'direct' && trigger !== 'immediate') return null;
   if (!data.userId || !data.platform) return null;
-
-  if (cfg.groupOnly) {
-    const looksLikeGroup = data.messages.some(m => {
-      const meta = m.metadata ?? {};
-      return !!meta[WellKnownMetadataKeys.GroupId] || meta[WellKnownMetadataKeys.SessionType] === 'group';
-    });
-    if (!looksLikeGroup) return null;
-  }
 
   const personId = `${data.platform}:${data.userId}`;
   // 全图只加载一次，喂给下面两处消费者（子图遍历 + 全局热点）。`loadAll()` 是 O(全图)

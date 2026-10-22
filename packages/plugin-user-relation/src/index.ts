@@ -23,6 +23,7 @@ import { ownHostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
@@ -510,7 +511,13 @@ function start(caps: Caps): void {
       fields.get(sessionId, { platform }).recallScope !== 'all';
 
     if (cfg.agentInjection) {
-      registerRelationContribution({ contributions: caps.contributions, sessionOnly }, service, {
+      // 仅群聊按会话记下的多方标记判（子会话取根会话的）；会话管理不在、会话不在表里或没有聊天窗口时判不出，按否
+      const multiParty = (sessionId: string | undefined) => {
+        if (sessionId === undefined || !caps.sessionManager.present) return false;
+        const sm = caps.sessionManager.use;
+        return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.multiParty === true;
+      };
+      registerRelationContribution({ contributions: caps.contributions, sessionOnly, multiParty }, service, {
         maxDepth: cfg.injectionMaxDepth,
         maxBreadth: cfg.injectionMaxBreadth,
         maxEvents: cfg.maxInjectedEvents,
@@ -630,6 +637,8 @@ const uses = {
   commands: optional(commands),
   webui: optional(webuiServer),
   embedding: optional(embedding),
+  /** 「仅在群聊中注入」按会话记下的多方标记判；缺席时判不出，不注入 */
+  sessionManager: optional(sessionManager),
   /** 按会话读关系图范围；缺席时取插件配置里的值 */
   sessionFields: optional(sessionFields),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */

@@ -95,7 +95,9 @@ onebot:{selfId}:{detailType}:{targetId}
 
 `detailType` 取 `private`、`group` 或 `channel`；其中 `channel`（v12）的 `targetId` 为 `{guildId}:{channelId}`。
 
-入站消息的 `sessionType` 原样带实现端给的消息类型（v11 的 `message_type`、v12 的 `detail_type`，缺省为 `private`）。适配器声明了 `group`（多方）、`private`（一对一）与 `channel`（多方）三种平台类型（`PlatformAdapter.sessionTypes`）；声明以外的类型（如部分 v11 实现扩展的 `guild`）照样带出，会话管理按多方记下并告警。频道消息的 `groupId` 是 `{guildId}:{channelId}`，与会话 ID 的目标段一致。
+入站消息的 `sessionType` 原样带实现端给的消息类型（v11 的 `message_type`、v12 的 `detail_type`，缺省为 `private`）。适配器声明了 `group`（多方）、`private`（一对一）与 `channel`（多方）三种平台类型（`PlatformAdapter.sessionTypes`），显示名是群聊、私聊、频道（文字对象，带英文）：设置页的平台类型档按读者语言显示，模型看到的会话类型与召回片段取原文；声明以外的类型（如部分 v11 实现扩展的 `guild`）照样带出，会话管理按多方记下并告警。频道消息的 `groupId` 是 `{guildId}:{channelId}`，与会话 ID 的目标段一致。
+
+平台提示（`agent:prompt` 贡献点的 turn-hint 锚位）：会话 ID 里的类型在本插件的声明里是多方（群与频道）时，提醒模型这一轮的历史里有多位群友的发言、留意时间先后；私聊不给。
 
 ## 多实例与路由
 

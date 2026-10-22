@@ -8,7 +8,7 @@
 
 import { parseWindowKey } from '@aalis/api-gateway';
 import type { HostConfig } from '@aalis/api-host-config';
-import { getPlatformAdapters } from '@aalis/api-platform';
+import { getPlatformAdapters, sessionTypeLabel } from '@aalis/api-platform';
 import {
   isUnfiled,
   placeKind,
@@ -43,7 +43,6 @@ import {
   type SchemaField,
   type SessionFieldSpec,
 } from '@aalis/schema-config';
-import type { TextRef } from '@aalis/schema-i18n';
 import type { Caps } from './caps.js';
 import { SettingsEditor } from './commands.js';
 import { type DocLayers, isLayerName, isRecord, putDocValue, readDoc, type Values } from './doc.js';
@@ -366,7 +365,7 @@ export class SessionSettingsProvider implements SessionSettingsService {
         .filter(a => a.platform === platform)
         .flatMap(a => (a.sessionTypes ?? []).map(d => d.name));
       for (const type of sorted([...declared, ...(doc.platformTypes.get(platform)?.keys() ?? [])])) {
-        const label = this.typeLabel(platform, type);
+        const label = sessionTypeLabel(this.caps.platform, platform, type);
         out.push({ layer: { scope: 'platformType', platform, type }, ...(label === undefined ? {} : { label }) });
       }
     }
@@ -384,20 +383,12 @@ export class SessionSettingsProvider implements SessionSettingsService {
         continue;
       }
       const label = t('windowPlace', {
-        type: this.typeLabel(window.platform, window.type) ?? window.type,
+        type: sessionTypeLabel(this.caps.platform, window.platform, window.type) ?? window.type,
         name: placeLabel(place),
       });
       out.push({ layer, label, platform: window.platform, type: window.type });
     }
     return out;
-  }
-
-  /** 平台类型的显示名：这个平台的适配器声明的；没声明时为 undefined，称呼里写类型名 */
-  typeLabel(platform: string, type: string): string | TextRef | undefined {
-    return getPlatformAdapters(this.caps.platform)
-      .filter(a => a.platform === platform)
-      .flatMap(a => a.sessionTypes ?? [])
-      .find(decl => decl.name === type)?.label;
   }
 
   /**

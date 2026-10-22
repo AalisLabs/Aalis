@@ -29,6 +29,7 @@ export default definePlugin({
     commands: optional(commands),
     webui: optional(webuiServer),
     embedding: optional(embedding),
+    sessionManager: optional(sessionManager),
     sessionFields: optional(sessionFields),
     document: optional(ownHostConfig),
   },
@@ -280,7 +281,7 @@ $$
 | `maxCooccurrencePartners` | number | `5` | 注入：共现伙伴展示数：基于事件桥统计的隐式二跳；0 关闭该小节 |
 | `maxGlobalHotEvents` | number | `5` | 注入：全局热点事件数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭 |
 | `maxGlobalHotEntities` | number | `5` | 注入：全局热点实体数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭 |
-| `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文 |
+| `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文。按会话管理记下的聊天窗口判，根会话（子会话取根会话的）的窗口是多方才注入：OneBot 的群与频道、第三方平台声明的多方类型都算，owner 从 WebUI 往群里插话的一轮也算；WebUI、终端会话不算，不看消息带不带群号。会话管理不在时判不出，不注入 |
 | `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等） |
 | `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予） |
 | `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。 |

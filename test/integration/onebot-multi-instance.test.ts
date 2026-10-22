@@ -257,11 +257,11 @@ describe('会话管理按原生入站收录房间：所属实例与来源字段'
     });
   });
 
-  it('适配器声明 group、private 与 channel 三个类型', async () => {
+  it('适配器声明 group、private 与 channel 三个类型（显示名见 onebot-platform-hint.test.ts）', async () => {
     const { host } = await world(TWO_INSTANCES);
 
     for (const entry of host.platform.list()) {
-      expect(sessionTypesOf(entry.use), entry.id).toEqual([
+      expect(sessionTypesOf(entry.use), entry.id).toMatchObject([
         { name: 'group', multiParty: true },
         { name: 'private', multiParty: false },
         { name: 'channel', multiParty: true },
