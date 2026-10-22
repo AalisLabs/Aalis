@@ -25,7 +25,7 @@
  *   rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias
  *
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。session_scope 不超过调用所在会话的关系图范围：
- * 为仅本会话时只能是这个会话。
+ * 为仅本会话时只能是这个会话；没有这个参数的 resolve_node、find_path、score、shared、list_edges 此时也只取这个会话的事件。
  */
 
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
@@ -167,7 +167,7 @@ export function registerRelationTools(
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim() : '';
       if (!keyword) return JSON.stringify({ error: 'keyword 不能为空' });
       const wanted = new Set(
@@ -185,7 +185,7 @@ export function registerRelationTools(
         for (const e of list) out.push({ kind: 'entity', ...serializeEntity(e) });
       }
       if (wantAll || wanted.has('event')) {
-        const list = await service.searchEvents({ keyword, limit });
+        const list = await service.searchEvents({ keyword, sessionScope: scopeOf({}, ctx), limit });
         for (const e of list) out.push({ kind: 'event', ...serializeEventForSearch(e) });
       }
       return JSON.stringify({ keyword, count: out.length, candidates: out }, null, 2);
@@ -233,13 +233,13 @@ export function registerRelationTools(
       if (err) return err;
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
-      const scope = scopeOf(args, ctx);
       const sub = await service.traverseSubgraph({
         startNodeIds: [nodeId],
         maxDepth: depth,
         maxBreadth: breadth,
+        sessionScope: scopeOf(args, ctx),
       });
-      return JSON.stringify(serializeSubgraph(filterSubgraphByScope(sub, scope)), null, 2);
+      return JSON.stringify(serializeSubgraph(sub), null, 2);
     },
   });
 
@@ -274,7 +274,7 @@ export function registerRelationTools(
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const from = String(args.from_node_id ?? '').trim();
       const to = String(args.to_node_id ?? '').trim();
       if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
@@ -283,7 +283,7 @@ export function registerRelationTools(
       const toErr = await validateNodeId(service, to, 'to_node_id');
       if (toErr) return toErr;
       const depth = clampNum(args.max_depth, cfg.findPathDefaultMaxDepth, 1, cfg.findPathHardMaxDepth);
-      const path = await service.findPath(from, to, depth);
+      const path = await service.findPath(from, to, depth, scopeOf({}, ctx));
       if (!path) return JSON.stringify({ found: false });
       return JSON.stringify(
         {
@@ -358,7 +358,7 @@ export function registerRelationTools(
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const from = String(args.from_node_id ?? '').trim();
       const to = String(args.to_node_id ?? '').trim();
       if (!from || !to) return JSON.stringify({ error: 'from_node_id / to_node_id 不能为空' });
@@ -370,7 +370,7 @@ export function registerRelationTools(
       const topPaths = clampNum(args.top_paths, 3, 1, 20);
       const rawMode = String(args.mode ?? 'symmetric').trim();
       const mode: 'symmetric' | 'directed' = rawMode === 'directed' ? 'directed' : 'symmetric';
-      const r = await service.scoreBetween(from, to, { maxDepth, topPaths, mode });
+      const r = await service.scoreBetween(from, to, { maxDepth, topPaths, mode, sessionScope: scopeOf({}, ctx) });
       return JSON.stringify(
         {
           from_id: r.fromId,
@@ -393,7 +393,7 @@ export function registerRelationTools(
             nodes: p.nodes.map(n => serializeNode(n)),
             edges: p.edges.map(e => serializeEdge(e)),
           })),
-          common_neighbors: r.commonNeighbors.map(c => ({
+          common_neighbors: r.commonNeighbors.slice(0, topPaths).map(c => ({
             degree: c.degree,
             aa_contribution: Number(c.aaContribution.toFixed(4)),
             node: serializeNode(c.node),
@@ -509,11 +509,12 @@ export function registerRelationTools(
     handler: async (args, ctx) => {
       const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
-      const scope = scopeOf(args, ctx);
-      // scope 过滤前先多拉一些（×3）避免过滤后池子太小
-      const poolLimit = scope ? cfg.searchEventsHardMaxLimit * 3 : cfg.searchEventsHardMaxLimit;
-      const raw = await service.searchEvents({ keyword, days, limit: poolLimit });
-      const pool = raw.filter(e => inScope(scope, e.sessionScope)).slice(0, cfg.searchEventsHardMaxLimit);
+      const pool = await service.searchEvents({
+        keyword,
+        days,
+        sessionScope: scopeOf(args, ctx),
+        limit: cfg.searchEventsHardMaxLimit,
+      });
       const { items, pagination } = paginate(
         pool,
         args.offset,
@@ -577,7 +578,7 @@ export function registerRelationTools(
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const kinds = Array.isArray(args.kinds)
         ? (args.kinds as unknown[]).filter((k): k is RelationEdge['kind'] => typeof k === 'string')
         : undefined;
@@ -599,6 +600,7 @@ export function registerRelationTools(
         fromId,
         toId,
         days,
+        sessionScope: scopeOf({}, ctx),
         limit: cfg.searchEventsHardMaxLimit * 2,
       });
       const { items, pagination } = paginate(
@@ -647,14 +649,14 @@ export function registerRelationTools(
       const err = await validateNodeId(service, nodeId, 'node_id');
       if (err) return err;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
-      const scope = scopeOf(args, ctx);
-      const poolLimit = scope ? cfg.searchEventsHardMaxLimit * 6 : cfg.searchEventsHardMaxLimit * 2;
-      const itemsAll = await service.getTimeline({ nodeId, days, limit: poolLimit });
-      const filtered = itemsAll
-        .filter(it => inScope(scope, it.event.sessionScope))
-        .slice(0, cfg.searchEventsHardMaxLimit * 2);
+      const pool = await service.getTimeline({
+        nodeId,
+        days,
+        sessionScope: scopeOf(args, ctx),
+        limit: cfg.searchEventsHardMaxLimit * 2,
+      });
       const { items, pagination } = paginate(
-        filtered,
+        pool,
         args.offset,
         args.limit,
         cfg.searchEventsDefaultLimit * 2,
@@ -698,8 +700,7 @@ export function registerRelationTools(
             max_depth: { type: 'number', description: 'scoreBetween 路径深度，默认 3，硬上限 5' },
             session_scope: {
               type: 'string',
-              description:
-                '仅在该会话作用域内做推荐：候选池只走该 scope 下的事件相连节点，且解释路径过滤掉跨会话事件。不传=全图。',
+              description: '仅在该会话作用域内做推荐：分数、共同邻居与解释路径只经该 scope 下的事件。不传=全图。',
             },
             ...paginationSchema(5, 15, '推荐'),
           },
@@ -719,12 +720,12 @@ export function registerRelationTools(
       const scope = scopeOf(args, ctx);
 
       // 1) 拿 2 跳子图作为候选池
-      const subRaw = await service.traverseSubgraph({
+      const sub = await service.traverseSubgraph({
         startNodeIds: [nodeId],
         maxDepth: 2,
         maxBreadth: poolSize,
+        sessionScope: scope,
       });
-      const sub = filterSubgraphByScope(subRaw, scope);
 
       // 2) 排除自身 + 已 person-person 直连
       const directLinked = new Set<string>();
@@ -749,19 +750,14 @@ export function registerRelationTools(
       }> = [];
       for (const cand of candidates) {
         try {
-          const r = await service.scoreBetween(nodeId, cand.id, { maxDepth: depth, topPaths: 3, mode: 'symmetric' });
+          const r = await service.scoreBetween(nodeId, cand.id, {
+            maxDepth: depth,
+            topPaths: 1,
+            mode: 'symmetric',
+            sessionScope: scope,
+          });
           if (r.score <= 0) continue;
-          // 路径若含跨 scope 事件，从展示里剔除（不影响 score 数值）
-          const visiblePaths = r.topPaths.filter(p =>
-            scope
-              ? p.nodes.every(
-                  n =>
-                    !('title' in n && !('platform' in n) && !('entityKind' in n)) ||
-                    inScope(scope, (n as EventNode).sessionScope),
-                )
-              : true,
-          );
-          const top = visiblePaths[0];
+          const top = r.topPaths[0];
           scored.push({
             person: serializePerson(cand),
             score: Number(r.score.toFixed(4)),
@@ -829,10 +825,9 @@ export function registerRelationTools(
     handler: async (args, ctx) => {
       const scope = scopeOf(args, ctx);
       const days = typeof args.days === 'number' && args.days >= 0 ? args.days : 7;
-      const pool = await service.searchEvents({ days: days > 0 ? days : undefined, limit: 200 });
-      const filtered = pool.filter(e => inScope(scope, e.sessionScope));
+      const pool = await service.searchEvents({ days: days > 0 ? days : undefined, sessionScope: scope, limit: 200 });
       const now = Date.now();
-      const scored = filtered.map(e => {
+      const scored = pool.map(e => {
         const ageDays = Math.max(0, (now - e.lastReinforcedAt) / 86400_000);
         const recency = 0.5 ** (ageDays / 14); // 14 天半衰
         const heat = e.weight * (1 + Math.log1p(e.evidence.length)) * recency;
@@ -882,12 +877,17 @@ export function registerRelationTools(
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const a = String(args.a_id ?? '').trim();
       const b = String(args.b_id ?? '').trim();
       if (!a || !b) return JSON.stringify({ error: 'a_id / b_id 不能为空' });
       const kind = typeof args.kind === 'string' ? args.kind : 'any';
-      const r = await service.scoreBetween(a, b, { maxDepth: 2, topPaths: 1, mode: 'symmetric' });
+      const r = await service.scoreBetween(a, b, {
+        maxDepth: 2,
+        topPaths: 1,
+        mode: 'symmetric',
+        sessionScope: scopeOf({}, ctx),
+      });
       const filtered = r.commonNeighbors.filter(c => {
         if (kind === 'any') return true;
         if (kind === 'person') return 'platform' in c.node;
@@ -1641,36 +1641,6 @@ async function validateNodeId(service: RelationService, id: string, paramName = 
     ? '该 ID 在图中不存在。检查拼写；person 节点请用 user_relation_resolve_node 或 user_relation_search_persons 按名字/userId 查到正确 ID 再调用。'
     : '该 ID 在图中不存在。person 节点 ID 必须是 `<platform>:<userId>` 完整格式（如 `onebot:123456`），不能只填 userId。若不确定 platform 或想由名字反查，先调 user_relation_resolve_node。';
   return JSON.stringify({ error: `节点 "${id}" 不存在`, hint });
-}
-
-/** 事件 sessionScope 与调用者传入 scope 是否匹配。`scope` 未传 = 不过滤。 */
-function inScope(scope: string | undefined, evScope: string): boolean {
-  if (!scope) return true;
-  return evScope === scope;
-}
-
-/** 取边上所有事件节点引用 id（用于按 event 集合过滤边）。 */
-function getEventIdsFromEdge(e: RelationEdge): string[] {
-  if (e.kind === 'person-event') return [(e as PersonEventEdge).toEventId];
-  if (e.kind === 'event-event') return [(e as EventEventEdge).fromEventId, (e as EventEventEdge).toEventId];
-  if (e.kind === 'event-entity') return [(e as EventEntityEdge).fromEventId];
-  return [];
-}
-
-/** 按 sessionScope 过滤子图：退出限定会话外的 events，连带过滤所有引用这些 event 的边。Person/Entity 节点保留。 */
-function filterSubgraphByScope<
-  T extends { persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] },
->(sub: T, scope: string | undefined): T {
-  if (!scope) return sub;
-  const keepEvIds = new Set(sub.events.filter(e => inScope(scope, e.sessionScope)).map(e => e.id));
-  return {
-    ...sub,
-    events: sub.events.filter(e => keepEvIds.has(e.id)),
-    edges: sub.edges.filter(e => {
-      const refs = getEventIdsFromEdge(e);
-      return refs.every(id => keepEvIds.has(id));
-    }),
-  };
 }
 
 function serializeSubgraph(sub: {

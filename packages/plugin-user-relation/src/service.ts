@@ -93,6 +93,7 @@ import {
   trimDescription,
   trimEvidence,
   type WeightDecayCfg,
+  withinScope,
 } from './utils.js';
 
 export class RelationService {
@@ -1566,6 +1567,8 @@ export class RelationService {
     startNodeIds: string[];
     maxDepth: number;
     maxBreadth: number;
+    /** 只在这个会话作用域的事件上展开（见 withinScope）；不传走全图 */
+    sessionScope?: string;
     /**
      * 复用调用方已加载的全图，省掉一次 `loadAll()`。
      *
@@ -1583,7 +1586,7 @@ export class RelationService {
     const effectiveDepth = opts.maxDepth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxDepth;
     const effectiveBreadth = opts.maxBreadth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxBreadth;
 
-    const snapshot = opts._snapshot ?? (await this.store.loadAll());
+    const snapshot = withinScope(opts._snapshot ?? (await this.store.loadAll()), opts.sessionScope);
     const {
       peByPerson,
       ppByPerson,
@@ -1687,15 +1690,17 @@ export class RelationService {
   /**
    * 寻找两个人之间的最短关系链。BFS，事件节点作为中间桥（A→事件→B 算 2 跳）。
    * - maxDepth：路径最大边数；超过返回 null。
+   * - sessionScope：只走这个会话作用域的事件（见 withinScope）；不传走全图。
    * - 返回 { nodes, edges } 节点列表按路径顺序排列；找不到返回 null。
    */
   async findPath(
     fromNodeId: string,
     toNodeId: string,
     maxDepth: number,
+    sessionScope?: string,
   ): Promise<{ nodes: Array<PersonNode | EventNode | EntityNode>; edges: RelationEdge[] } | null> {
     if (maxDepth < 1) return null;
-    const snapshot = await this.store.loadAll();
+    const snapshot = withinScope(await this.store.loadAll(), sessionScope);
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
@@ -1802,9 +1807,12 @@ export class RelationService {
     toNodeId: string,
     opts: {
       maxDepth?: number;
+      /** 返回贡献最高的几条路径；共同邻居不按它截，全部按 AA 贡献降序返回 */
       topPaths?: number;
       /** 'symmetric'（默认）= 联系紧密度；'directed' = 关注/影响传播度 */
       mode?: ScoreMode;
+      /** 只在这个会话作用域的事件上算（见 withinScope）；不传算全图 */
+      sessionScope?: string;
       /**
        * 内部优化：复用调用方已加载的 snapshot，跳过本函数内的 `store.loadAll()`。
        * 仅在 consolidate 等批量场景使用——上层保证 snapshot 在批处理期间不变。
@@ -1845,7 +1853,7 @@ export class RelationService {
     const beta = 0.5; // Katz 路径长度衰减 β
     const topK = Math.max(1, Math.min(20, opts.topPaths ?? 3));
 
-    const snapshot = opts._snapshot ?? (await this.store.loadAll());
+    const snapshot = withinScope(opts._snapshot ?? (await this.store.loadAll()), opts.sessionScope);
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
@@ -2072,17 +2080,23 @@ export class RelationService {
       forwardKatzScore: forwardKatz,
       backwardKatzScore: backwardKatz,
       topPaths,
-      commonNeighbors: commonNeighborsList.slice(0, topK),
+      commonNeighbors: commonNeighborsList,
     };
   }
 
   /**
    * 按关键词搜索事件（substring，标题 + summary，不区分大小写）。
    * - days：仅返回 lastReinforcedAt 在 N 天内的事件；0/未传 → 不限
+   * - sessionScope：只在这个会话作用域的事件上搜（见 withinScope），在截断之前；未传 → 不限
    * - limit：返回上限（默认 20）
    */
-  async searchEvents(opts: { keyword?: string; days?: number; limit?: number }): Promise<EventNode[]> {
-    const snapshot = await this.store.loadAll();
+  async searchEvents(opts: {
+    keyword?: string;
+    days?: number;
+    sessionScope?: string;
+    limit?: number;
+  }): Promise<EventNode[]> {
+    const snapshot = withinScope(await this.store.loadAll(), opts.sessionScope);
     const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
     const kw = opts.keyword?.trim().toLowerCase() ?? '';
     const res = snapshot.events.filter(e => {
@@ -2148,6 +2162,7 @@ export class RelationService {
    * - nodeId：边的任一端等于该 id（用于"这条边和某节点相关"）
    * - fromId/toId：方向敏感（注意无向边的 from/to 由 LLM 提取时给定，未必符合直觉）
    * - days：仅返回 lastReinforcedAt 在 N 天内的；0/未传 → 不限
+   * - sessionScope：连着别的会话作用域的事件的边不列（见 withinScope）；未传 → 不限
    * - limit：返回上限（默认 50）
    * 按 lastReinforcedAt 降序。
    */
@@ -2159,9 +2174,10 @@ export class RelationService {
     fromId?: string;
     toId?: string;
     days?: number;
+    sessionScope?: string;
     limit?: number;
   }): Promise<RelationEdge[]> {
-    const snapshot = await this.store.loadAll();
+    const snapshot = withinScope(await this.store.loadAll(), opts.sessionScope);
     const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
     const kindSet = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : undefined;
     const relSet = opts.relationTypes && opts.relationTypes.length > 0 ? new Set(opts.relationTypes) : undefined;
@@ -2194,13 +2210,15 @@ export class RelationService {
    * - 节点是 entity → 返回涉及该实体的事件（按 eventEntity.lastReinforcedAt 降序）
    * - 节点是 event → 返回该事件 + 由 event-event 边相连的相关事件
    * 返回每个事件附带触达它的边信息（用于追溯"为什么相关"）。
+   * sessionScope：只在这个会话作用域的事件上取（见 withinScope），在截断之前；未传 → 不限。
    */
   async getTimeline(opts: {
     nodeId: string;
     days?: number;
+    sessionScope?: string;
     limit?: number;
   }): Promise<Array<{ event: EventNode; viaEdge: RelationEdge }>> {
-    const snapshot = await this.store.loadAll();
+    const snapshot = withinScope(await this.store.loadAll(), opts.sessionScope);
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const cutoff = opts.days && opts.days > 0 ? Date.now() - opts.days * 86400_000 : 0;
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 30;

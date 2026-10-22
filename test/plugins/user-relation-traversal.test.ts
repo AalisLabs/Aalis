@@ -434,10 +434,45 @@ describe('plugin-user-relation: 多层遍历', () => {
       expect(r.length).toBe(2);
     });
 
+    it('sessionScope 在截断之前过滤：更新的别处事件再多也不挤掉本会话的', async () => {
+      const svc = await setup();
+      const mine = await svc.createEvent({ title: '本群', sessionScope: 'S', evidence: [] });
+      await new Promise(r => setTimeout(r, 2));
+      for (let i = 0; i < 3; i++) await svc.createEvent({ title: `别处${i}`, sessionScope: 'T', evidence: [] });
+      const r = await svc.searchEvents({ sessionScope: 'S', limit: 1 });
+      expect(r.map(e => e.id)).toEqual([mine.id]);
+    });
+
     it('空关键词 + 无事件 → []', async () => {
       const svc = await setup();
       const r = await svc.searchEvents({});
       expect(r).toEqual([]);
+    });
+  });
+
+  describe('getTimeline', () => {
+    it('sessionScope 在截断之前过滤：更新的别处事件再多也不挤掉本会话的', async () => {
+      const svc = await setup();
+      await svc.observePerson('onebot', 'a', 'A');
+      const mine = await svc.createEvent({ title: '本群', sessionScope: 'S', evidence: [] });
+      await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: mine.id, role: 'participant' });
+      await new Promise(r => setTimeout(r, 2));
+      for (let i = 0; i < 3; i++) {
+        const ev = await svc.createEvent({ title: `别处${i}`, sessionScope: 'T', evidence: [] });
+        await svc.addPersonEventEdge({ fromPersonId: 'onebot:a', toEventId: ev.id, role: 'participant' });
+      }
+      const r = await svc.getTimeline({ nodeId: 'onebot:a', sessionScope: 'S', limit: 1 });
+      expect(r.map(it => it.event.id)).toEqual([mine.id]);
+    });
+
+    it('sessionScope 下以别处的事件为起点：连着它的边一并去掉，本会话的事件也不经它带出', async () => {
+      const svc = await setup();
+      const mine = await svc.createEvent({ title: '本群', sessionScope: 'S', evidence: [] });
+      const elsewhere = await svc.createEvent({ title: '别处', sessionScope: 'T', evidence: [] });
+      await svc.addEventEventEdge({ fromEventId: elsewhere.id, toEventId: mine.id, relationType: 'related' });
+      expect(await svc.getTimeline({ nodeId: elsewhere.id, sessionScope: 'S' })).toEqual([]);
+      const all = await svc.getTimeline({ nodeId: elsewhere.id });
+      expect(all.map(it => it.event.id)).toEqual([mine.id]);
     });
   });
 
