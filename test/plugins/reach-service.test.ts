@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OriginTurn } from '../../packages/api-authority/src/index.js';
+import { type OriginTurn, originTurnOf } from '../../packages/api-authority/src/index.js';
 import { isReachCredential, type ReachCredential, type ReachRequest } from '../../packages/api-reach/src/index.js';
 import { placePaperId, type SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -9,6 +9,7 @@ import type { App, Logger } from '../../packages/core/src/index.js';
 import { paperDirUri } from '../../packages/plugin-paper/src/artifacts.js';
 import reachPlugin from '../../packages/plugin-reach/src/index.js';
 import { sessionTmpOf, sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
+import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import {
   OWNER_QQ,
   OWNER_TURN,
@@ -25,8 +26,8 @@ import {
 import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 触及服务：按一次工具调用签发凭据。发起类别取权限服务的 originOf，房间类别、绑定取会话管理里的记录，档位固定为工作区档、
-// 越界要问，清单按真实路径生成；子任务随发起它的那一轮父会话；本会话临时区按需建、随会话删、定期清扫；污点与白纸的来源记录
+// 触及服务：按一次工具调用签发凭据。主体取权限服务的 principalOf，房间类别、绑定取会话管理里的记录，档位固定为工作区档、
+// 越界要问，清单按真实路径生成；子任务随派它的那一轮；本会话临时区按需建、随会话删、定期清扫；污点与白纸的来源记录
 // 落在插件数据里。
 // ════════════════════════════════════════════════════════════
 
@@ -250,63 +251,91 @@ describe('场所、绑定与档位', () => {
   });
 });
 
-describe('子任务随发起它的那一轮父会话', () => {
-  /** 父会话的一轮发出任务消息（与子任务插件相同：source 为 subtask，发言者记作父会话） */
-  const dispatch = (host: Awaited<ReturnType<typeof start>>['host'], child: string, parent: string) =>
-    host.events.use.emit('inbound:message', {
+describe('子任务随派它的那一轮', () => {
+  /**
+   * 父会话的一轮派出子任务：与子任务插件相同，发出 source 为 subtask、发言者记作父会话、带着派它的那一轮的任务消息；
+   * 返回 agent 由这条消息拼出的子任务回合
+   */
+  const dispatch = async (
+    host: Awaited<ReturnType<typeof start>>['host'],
+    child: string,
+    parent: string,
+    from: Pick<IncomingMessage, 'fromTurn'>,
+  ): Promise<OriginTurn> => {
+    const message: IncomingMessage = {
       content: '<任务>',
       sessionId: child,
       platform: 'webui',
       userId: `parent:${parent}`,
-      actor: OWNER_TURN,
       source: 'subtask',
-    });
-  const subtaskTurn = (child: string, parent: string): OriginTurn => ({
-    sessionId: child,
-    platform: 'webui',
-    userId: `parent:${parent}`,
-    actor: OWNER_TURN,
-    inbound: { source: 'subtask' },
-  });
+      ...from,
+    };
+    await host.events.use.emit('inbound:message', message);
+    return originTurnOf([message]);
+  };
+  /** owner 在 WebUI 亲手那一轮 */
+  const OWNER_HAND: FromTurn = { platform: 'webui', userId: 'console', participants: [OWNER_TURN] };
+  /** owner 建的定时任务那一轮 */
+  const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER_TURN], source: 'scheduler' };
 
-  it('owner 发起的：子任务与父会话一样，写自己的临时区；父会话受污染后随之', async () => {
+  it('owner 亲手那一轮派的（那一轮没签发过凭据）：子任务与父会话一样，写自己的临时区；子任务里转后台的调用的续做随之；父会话受污染后随之', async () => {
     const { host, sm, svc, webui } = await start();
-    await svc.forCall(ownerTurn(webui));
     const child = (await sm.createChildSession(webui, {})).id;
-    await dispatch(host, child, webui);
+    const turn = await dispatch(host, child, webui, { fromTurn: OWNER_HAND });
 
-    const issued = await svc.forCall(subtaskTurn(child, webui));
+    const issued = await svc.forCall(turn);
     expect(issued).toMatchObject({ exec: 'sandbox', home: paperOf(dirs.home, DEFAULT_WORKSPACE) });
     expect(issued.allows('write', join(sessionTmpIn(dirs.home, child), 'x'))).toBe(true);
     const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(issued.allows('write', note)).toBe(true);
 
+    const resumed: OriginTurn = {
+      sessionId: child,
+      platform: 'webui',
+      userId: `parent:${webui}`,
+      actor: OWNER_TURN,
+      inbound: {
+        source: 'bg:bg_1',
+        fromTurn: {
+          platform: 'webui',
+          userId: `parent:${webui}`,
+          participants: [OWNER_TURN],
+          source: 'subtask',
+          fromTurn: OWNER_HAND,
+        },
+      },
+    };
+    expect((await svc.forCall(resumed)).exec).toBe('sandbox');
+
     svc.markTainted(webui, ['群「<群名>」']);
-    expect((await svc.forCall(subtaskTurn(child, webui))).tainted).toEqual(['群「<群名>」']);
+    expect((await svc.forCall(turn)).tainted).toEqual(['群「<群名>」']);
     expect(await verdict(issued, { effect: 'network', via: 'url' }), '已签发的也随父会话受污染').toContain(
       '读进过别人写的内容',
     );
   });
 
-  it('自主回合发出的子任务没有本地效果，之后 owner 在父会话里发言也不抬高它', async () => {
+  it('owner 的会话里 owner 那一轮签发过凭据，之后定时任务那一轮派的子任务没有本地效果；owner 那一轮再追问，那一轮的子任务回合随 owner', async () => {
     const { host, sm, svc, webui } = await start();
-    await svc.forCall({ sessionId: webui, platform: 'webui', actor: OWNER_TURN, inbound: { source: 'scheduler' } });
-    const child = (await sm.createChildSession(webui, {})).id;
-    await dispatch(host, child, webui);
-    expect((await svc.forCall(subtaskTurn(child, webui))).exec).toBe('none');
-
     await svc.forCall(ownerTurn(webui));
-    expect((await svc.forCall(subtaskTurn(child, webui))).exec).toBe('none');
-    // owner 的一轮再发任务消息，这条消息之后的子任务回合才随 owner
-    await dispatch(host, child, webui);
-    expect((await svc.forCall(subtaskTurn(child, webui))).exec).toBe('sandbox');
+    const child = (await sm.createChildSession(webui, {})).id;
+    const scheduled = await dispatch(host, child, webui, { fromTurn: SCHEDULED });
+    expect((await svc.forCall(scheduled)).exec).toBe('none');
+
+    const asked = await dispatch(host, child, webui, { fromTurn: OWNER_HAND });
+    expect((await svc.forCall(asked)).exec).toBe('sandbox');
+    expect((await svc.forCall(scheduled)).exec, '定时任务派的那一轮照旧').toBe('none');
   });
 
-  it('父会话里没有签发过凭据的回合发来的任务消息：没有本地效果', async () => {
-    const { host, sm, svc, webui } = await start();
-    const child = (await sm.createChildSession(webui, {})).id;
-    await dispatch(host, child, webui);
-    expect((await svc.forCall(subtaskTurn(child, webui))).exec).toBe('none');
+  it('群里 owner 那一轮签发过凭据，之后群成员那一轮派的子任务没有本地效果', async () => {
+    const { host, sm, svc } = await start();
+    await recordRoom(host.events.use, GROUP);
+    await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    const child = (await sm.createChildSession(GROUP, {})).id;
+    const member = { platform: 'onebot', userId: '30001' };
+    const turn = await dispatch(host, child, GROUP, {
+      fromTurn: { platform: 'onebot', userId: member.userId, participants: [member] },
+    });
+    expect((await svc.forCall(turn)).exec).toBe('none');
   });
 });
 

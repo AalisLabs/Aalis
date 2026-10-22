@@ -240,6 +240,6 @@ interface ProvenanceRecord {
 const reach = defineService<ReachService>('reach');
 ```
 
-- `forCall`：按一次工具调用签发凭据。`OriginTurn` 是 api-authority 判发起类别要的回合信息（会话、平台、发言者、授权身份、入站回合），与执行守卫上下文同一口径。没有本地效果的调用拿到 `exec` 为 `none` 的凭据。
+- `forCall`：按一次工具调用签发凭据。`OriginTurn` 是 api-authority 判发起类别与主体要的回合信息（会话、平台、发言者、授权身份、入站回合），与执行守卫上下文同一口径。没有本地效果的调用拿到 `exec` 为 `none` 的凭据。
 - `markTainted`：记下这个会话读进了别人写的内容。来源称呼至少一个、不能是空白，否则抛错；粘在会话上，之后签发的凭据都带着。
 - `provenanceOf`：来源记录里白纸上一个文件（真实路径）的记录。受污染的会话经凭据写进白纸的文件才有记录，没有记录的按 owner 写的算。

@@ -302,6 +302,11 @@
 - 群里没点名、被频率触发挑中的话按说话的人算：owner 的这样一轮能产生审批；群友按他自己的等级、权限组与免确认（此前一律按无主体的默认 0 级）；这一轮能交白纸任务（此前回「这一回合没有发起人」），建的定时任务记说话的人为创建者。
 - 聊天审批认 owner 亲手发的消息时另核对一对一窗口的对端就是发言者：机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那条消息不再算 owner 在场，也不再能应答审批。
 
+### 子任务跟派它的那一轮（@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-subtask、@aalis/plugin-reach）
+
+- api-authority 的 `AuthorityService` 加 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者是 owner 的为 owner（含它的续做），子任务随派它的那一轮，其余为 other。替换权限服务实现的要提供它。
+- plugin-subtask 在入站回合里派出的任务消息与 `send_to_subtask` 的追问带 `fromTurn`（派它的那一轮），不再带 `actor`；子任务那一轮的授权身份取它的参与者，与此前的 `actor` 相同，要从消息取授权身份的用 api-authority 的 `originTurnOf`。不在入站回合里派的（编排的工具节点、mcp-server）照旧带 `actor`、不带 `fromTurn`。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

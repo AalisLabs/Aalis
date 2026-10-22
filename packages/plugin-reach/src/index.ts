@@ -19,7 +19,6 @@ import {
 import { paperDirName, placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/schema-message';
 import { issueCredential } from './credential.js';
 import { codeDirsOf, entryOf, formOf, gitDirOf, realRootsOf } from './host-dirs.js';
 import { loginEnvs } from './process-env.js';
@@ -29,8 +28,8 @@ import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js'
 // ════════════════════════════════════════════════════════════
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
-// 按一次工具调用签发凭据：发起类别取权限服务的 originOf（人亲手发起、授权身份是 owner 的算 owner，含它的续做；子任务随发起
-// 它的那一轮父会话），房间类别、场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘
+// 按一次工具调用签发凭据：主体取权限服务的 principalOf（owner 亲手那一轮与它的续做为 owner；子任务随派它的那一轮，为 owner 时
+// 随父会话实时的触及），房间类别、场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘
 // 找，三张清单在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次
 // 判定时取当时的，受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源记录。
 // ════════════════════════════════════════════════════════════
@@ -53,7 +52,7 @@ const uses = {
   sessionManager,
   /** 污点与来源记录落在插件数据里 */
   storage,
-  /** 发起类别与 owner 判定；缺席时谁都不是 owner，一律没有本地效果 */
+  /** 这一轮的主体与 owner 判定；缺席时谁都不是 owner，一律没有本地效果 */
   authority: optional(authority),
   /** 取 owner 的 login shell 环境；缺席时子进程用守护进程的环境 */
   process: optional(processService),
@@ -100,10 +99,6 @@ async function run(caps: Caps): Promise<void> {
    */
   const paperOf = (sessionId: string) => join(paths.stage.paper, paperDirName(placePaperId(sm.placeOf(sessionId).key)));
 
-  /** 每个会话最近一次签发凭据的那一轮的主体：子任务的任务消息发出时，据它定那条消息之后的子任务回合随谁 */
-  const lastPrincipal = new Map<string, 'owner' | 'other'>();
-  /** 子会话：发来最近一条任务消息的那一轮父会话的主体 */
-  const spawnedBy = new Map<string, 'owner' | 'other'>();
   /** 删会话时在后台删着的临时区 */
   const deleting = new Map<string, Promise<void>>();
 
@@ -136,21 +131,17 @@ async function run(caps: Caps): Promise<void> {
     };
   }
 
-  async function principalOf(call: OriginTurn): Promise<Principal> {
-    const origin = caps.authority.present ? caps.authority.use.originOf(call) : undefined;
-    if (origin === 'subtask') {
-      const parentId = sm.getSession(call.sessionId)?.parentId;
-      return parentId && spawnedBy.get(call.sessionId) === 'owner' ? reachOf(parentId, 'owner') : 'other';
-    }
-    const identity = call.actor ?? { platform: call.platform, userId: call.userId ?? '' };
-    const principal = origin === 'hand' && isOwner(identity.platform, identity.userId) ? 'owner' : 'other';
-    lastPrincipal.set(call.sessionId, principal);
-    return principal;
+  /** 这一轮的主体：主体是 owner 的子任务回合随父会话实时的触及，父会话按子会话的 parentId 找 */
+  async function principalFor(call: OriginTurn): Promise<Principal> {
+    if (!caps.authority.present || caps.authority.use.principalOf(call) === 'other') return 'other';
+    if (caps.authority.use.originOf(call) !== 'subtask') return 'owner';
+    const parentId = sm.getSession(call.sessionId)?.parentId;
+    return parentId ? reachOf(parentId, 'owner') : 'other';
   }
 
   const service: ReachService = {
     async forCall(call) {
-      const credential = issueCredential(await reachOf(call.sessionId, await principalOf(call)), {
+      const credential = issueCredential(await reachOf(call.sessionId, await principalFor(call)), {
         sessionId: call.sessionId,
         papers: paths.stage.paper,
         userHome,
@@ -168,16 +159,8 @@ async function run(caps: Caps): Promise<void> {
     provenanceOf: provenance.provenanceOf,
   };
 
-  // 子任务插件在父会话的一轮里发出任务消息（source 为 subtask）：那一轮的主体就是这条消息之后的子任务回合的主体
-  events.use.on('inbound:message', (msg: IncomingMessage) => {
-    if (msg.source !== 'subtask' || !msg.sessionId) return;
-    const parentId = sm.getSession(msg.sessionId)?.parentId;
-    spawnedBy.set(msg.sessionId, (parentId && lastPrincipal.get(parentId)) || 'other');
-  });
   // 删会话时在后台删它的临时区，不拖住删会话；删不掉记 warn
   events.use.on('session:deleted', sessionId => {
-    lastPrincipal.delete(sessionId);
-    spawnedBy.delete(sessionId);
     const dir = sessionTmpOf(paths.tmp, sessionId);
     const done = rm(dir, { recursive: true, force: true })
       .catch(err => logger.use.warn(`删不掉会话 ${sessionId} 的临时区 ${dir}:`, err))

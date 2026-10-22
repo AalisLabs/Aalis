@@ -54,7 +54,7 @@ interface ExecutionGuardContext {
 
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
-  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做带着起它的那一轮（类型见 schema-message）
+  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做带着起它的那一轮，子任务带着派它的那一轮（类型见 schema-message）
   messageId?: string;                // 同 IncomingMessage.messageId：入站消息的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
@@ -89,6 +89,10 @@ interface AuthorityService {
   // 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
   originOf(turn: OriginTurn): OriginKind;
 
+  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）是 owner 的为 owner，含它的续做；子任务随派它的那一轮
+  // （inbound.fromTurn，没有时为 other），不按子任务回合自己的授权身份；其余为 other
+  principalOf(turn: OriginTurn): 'owner' | 'other';
+
   // capability 统一闸：null 放行 | string 拒绝原因
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > 用户 level >= 操作 minLevel > 所属权限组覆盖；
   // minLevel 取 config.authorityOverrides，没有时取 request.minLevel，再没有时由 request.risk/visibility 派生；组的放行条目取自 config.authorityGroups。
@@ -113,7 +117,7 @@ interface AuthorityService {
 }
 ```
 
-`OriginTurn` 是判发起类别要的回合信息，取执行守卫上下文的五项。由入站消息拼一轮用 `originTurnOf`，调用方不各自拼：
+`OriginTurn` 是判发起类别与主体要的回合信息，取执行守卫上下文的五项。由入站消息拼一轮用 `originTurnOf`，调用方不各自拼：
 
 ```ts
 type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
@@ -123,7 +127,7 @@ type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId
 function originTurnOf(inputs: readonly [IncomingMessage, ...IncomingMessage[]]): OriginTurn;
 ```
 
-agent 用 `originTurnOf([incoming])` 填工具调用上下文。判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)。
+agent 用 `originTurnOf([incoming])` 填工具调用上下文。判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)与[这一轮的主体](../plugins/plugin-authority.md#这一轮的主体)。
 
 ## 守卫流程：授权与确认
 

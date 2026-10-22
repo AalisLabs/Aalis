@@ -88,7 +88,7 @@ export default definePlugin({
 
 ### 发起回合的类别
 
-只看这一轮从哪里来，不看会话类型与受众，不判是不是 owner，不读会话记录；也不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner 亲手。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）与授权身份（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。权限服务以 `originOf(turn)` 对外给出同一个判定：执行守卫据它定审批的发起类别，触及服务（[plugin-reach](./plugin-reach.md)）据它定这一轮的主体。是不是 owner 由用到类别的地方按身份判：审批服务看参与者里有没有 owner。
+只看这一轮从哪里来，不看会话类型与受众，不判是不是 owner，不读会话记录；也不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner 亲手。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）与授权身份（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。权限服务以 `originOf(turn)` 对外给出同一个判定，执行守卫据它定审批的发起类别。是不是 owner 由用到类别的地方按身份判：审批服务看参与者里有没有 owner，这一轮的主体见下节。
 
 按下面的顺序判，先命中的算：
 
@@ -97,6 +97,14 @@ export default definePlugin({
 3. 续做（带起它的那一轮 `inbound.fromTurn`，如后台任务结束通知开的一轮）：与起它的那一轮同一类别，按那一轮的事实再判一次，不按通知上的身份推；
 4. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件）：`autonomous`；
 5. 人亲手发来的消息（没有 `source`，含群里没点名、被频率触发挑中的插话）：`hand`，不论在哪个会话、是谁；授权身份没有账号的（没有人的消息）是她自己开口，失败关闭为 `autonomous`。
+
+### 这一轮的主体
+
+权限服务的 `principalOf(turn)` 定这一轮的主体（`owner` 或 `other`），触及服务（[plugin-reach](./plugin-reach.md)）据它定本地效果。判据在类别之上按身份判（`principalKind`，与 `originKind` 同在 `authority-model.ts`）：
+
+- `hand`：参与者（授权身份 `actor ?? 发言者`）是 owner 为 `owner`，否则 `other`。续做的类别与授权身份都随起它的那一轮，不另判；
+- `subtask`：随派它的那一轮。子任务插件在入站回合里派出的任务消息与追问带着派它的那一轮（`inbound.fromTurn`），按那一轮的事实再判一次；子任务里转后台的调用的续做经起它的子任务那一轮递归到派它的那一轮。不在入站回合里派出的（编排的工具节点、mcp-server）不带它，为 `other`。不按子任务回合自己的授权身份判：派它的若是 owner 建的定时任务，授权身份是 owner，这一轮却没有 owner 的话；
+- 其余（`autonomous`）为 `other`。
 
 ## 配置项
 

@@ -2633,9 +2633,6 @@ importers:
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
-      '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
-        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*

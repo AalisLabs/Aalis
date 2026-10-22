@@ -56,6 +56,9 @@ export interface AuthorityService {
   // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，不按授权身份判
   originOf(turn: OriginTurn): OriginKind;
 
+  // 这一轮的主体，定本地效果：hand 且参与者是 owner 的为 owner（含它的续做）；子任务随派它的那一轮（inbound.fromTurn）；其余 other
+  principalOf(turn: OriginTurn): 'owner' | 'other';
+
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > level >= minLevel > 所属权限组覆盖
   authorize(identity: UserIdentity | { platform: string; userId?: string },
@@ -146,9 +149,9 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 4.1 必须实现 vs 可选
 
-`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`ownerOn`（存档、触发判定与 agent 据它写发送者前缀）、`originOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
+`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`ownerOn`（存档、触发判定与 agent 据它写发送者前缀）、`originOf` 与 `principalOf`（触及服务据它们定主体，主体是 owner 的子任务随父会话）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
-- **必须**：`isOwner`、`ownerOn`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
+- **必须**：`isOwner`、`ownerOn`、`originOf`、`principalOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
 - **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按 `actor` 判，这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批。
 
@@ -199,6 +202,10 @@ class MyAuthority implements AuthorityService {
   originOf(turn: OriginTurn): OriginKind {
     // 按这一轮从哪里来判：不在入站回合里为 autonomous，子任务为 subtask，续做随起它的那一轮……（判据见 plugin-authority）
     return 'autonomous';
+  }
+  principalOf(turn: OriginTurn): 'owner' | 'other' {
+    // hand 且参与者是 owner 为 owner，子任务随派它的那一轮（判据见 plugin-authority）
+    return 'other';
   }
   authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
     // 1) deniedCapabilities 硬禁（压过 owner） 2) owner 放行 3) level >= minLevel

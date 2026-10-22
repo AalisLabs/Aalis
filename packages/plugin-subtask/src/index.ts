@@ -6,7 +6,7 @@ import { historyCleared } from '@aalis/api-memory'; // 也是 declaration mergin
 import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
-import { tools } from '@aalis/api-tools';
+import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
@@ -40,6 +40,38 @@ import { t } from './texts.js';
  * 派发与追问同一个值，共用一条 lane，追问照旧打断子任务在跑的那一轮。
  */
 const SUBTASK_SOURCE = 'subtask';
+
+/**
+ * 发给子会话的任务消息（派发与追问同一个写法）。userId 是归档用的物理来源标记（authority 查不到，等价匿名），身份：
+ * - 调用在入站回合里：带着这次调用所在那一轮（fromTurn：平台、发言者、参与者即授权身份、来源与那一轮自己的 fromTurn），
+ *   不填 actor；子任务那一轮的授权身份取它的参与者，权限服务按它判子任务这一轮的主体，不按父会话里别的哪一轮；
+ * - 不在入站回合里（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor（callCtx.actor，没有时取物理身份；
+ *   匿名则子任务同样匿名）。
+ * 追问与派发同源，同一子任务会话的权限不在轮次间跳变。
+ */
+function taskMessage(callCtx: ToolCallContext, sessionId: string, content: string): IncomingMessage {
+  const { platform, userId, actor, inbound } = callCtx;
+  const message: IncomingMessage = {
+    content,
+    sessionId,
+    platform: platform || 'internal',
+    userId: `parent:${callCtx.sessionId}`,
+    source: SUBTASK_SOURCE,
+  };
+  if (inbound) {
+    message.fromTurn = {
+      platform: message.platform,
+      userId,
+      participants: [actor ?? { platform: platform ?? '', userId: userId ?? '' }],
+      source: inbound.source,
+      fromTurn: inbound.fromTurn,
+    };
+    return message;
+  }
+  const identity = actor ?? (platform && userId ? { platform, userId } : undefined);
+  if (identity) message.actor = identity;
+  return message;
+}
 
 const configSchema = defineConfig({
   enabled: { type: 'boolean', label: '启用子任务工具', default: true, onInvalid: 'error' },
@@ -353,22 +385,7 @@ function registerSubtask(
         }
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）
-        const incoming: IncomingMessage = {
-          content: task,
-          sessionId: child.id,
-          platform: callCtx.platform || 'internal',
-          userId: `parent:${parentId}`,
-          nickname: undefined,
-          source: SUBTASK_SOURCE,
-        };
-        // 授权身份透传（schema-message 的 actor 契约）：userId 是归档用的物理来源标记
-        //（authority 查不到 `parent:*`，等价匿名），授权身份走 actor——子任务工具以创建者的
-        // 权限等级执行。优先 callCtx.actor（链式），否则物理身份；匿名则子任务同样匿名。
-        const createActor =
-          callCtx.actor ??
-          (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
-        if (createActor) incoming.actor = createActor;
-        events.use.emit('inbound:message', incoming).catch(err => {
+        events.use.emit('inbound:message', taskMessage(callCtx, child.id, task)).catch(err => {
           logger.use.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
 
@@ -505,21 +522,7 @@ function registerSubtask(
       pendingStart.add(subtaskId);
 
       // 派发消息
-      const followUp: IncomingMessage = {
-        content: message,
-        sessionId: subtaskId,
-        platform: callCtx.platform || 'internal',
-        userId: `parent:${callCtx.sessionId}`,
-        nickname: undefined,
-        source: SUBTASK_SOURCE,
-      };
-      // 授权身份透传：与 create_subtask 同源。缺了这一处会造成同一子任务会话的权限
-      // 在轮次间跳变——创建轮有创建者等级、追问轮掉回匿名。
-      const followUpActor =
-        callCtx.actor ??
-        (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
-      if (followUpActor) followUp.actor = followUpActor;
-      events.use.emit('inbound:message', followUp).catch(err => {
+      events.use.emit('inbound:message', taskMessage(callCtx, subtaskId, message)).catch(err => {
         logger.use.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
       });
 
