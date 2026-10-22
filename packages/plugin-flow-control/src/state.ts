@@ -1,14 +1,12 @@
 // ----- 流控会话状态 + 限速计数 + TTL 清扫 -----
 
-import type { FlowControlConfig } from './config.js';
+import type { FlowControlSettings } from './config.js';
 
 export interface MutableFlowSessionState {
-  /** 该 session 所属 platform（用于 per-scope 覆盖匹配与禁言落盘） */
+  /** 该 session 所属 platform（按会话读参数时的入口平台，也写进禁言落盘） */
   platform: string;
-  /** 该 session 的 sessionType（如 group/private/channel）；用于 per-scope 覆盖匹配 */
-  sessionType: string;
-  /** 该 session 的目标 id（群号/用户号/频道号）；用于 per-scope 覆盖匹配 */
-  targetId: string;
+  /** 所在聊天窗口的多方标记：真人消息经过本相位或回复计数时记下；还不知道时为 undefined */
+  multiParty?: boolean;
   mutedUntil: number;
   cooldownUntil: number;
   /** 滑动窗口内的回复时间戳（用于限速） */
@@ -17,11 +15,10 @@ export interface MutableFlowSessionState {
   lastSeenAt: number;
 }
 
-export function createState(platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
+export function createState(platform: string, multiParty?: boolean): MutableFlowSessionState {
   return {
     platform,
-    sessionType,
-    targetId,
+    multiParty,
     mutedUntil: 0,
     cooldownUntil: 0,
     replyTimestamps: [],
@@ -29,7 +26,7 @@ export function createState(platform: string, sessionType = '', targetId = ''): 
   };
 }
 
-export function rateLimitUsedNow(state: MutableFlowSessionState, cfg: FlowControlConfig): number {
+export function rateLimitUsedNow(state: MutableFlowSessionState, cfg: FlowControlSettings): number {
   const windowStart = Date.now() - cfg.rateLimitWindow * 1000;
   return state.replyTimestamps.filter(t => t > windowStart).length;
 }

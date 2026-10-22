@@ -41,7 +41,7 @@ const configSchema = defineConfig({
     dynamicOptions: 'toolGroups',
     allowCustom: true,
     default: [],
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common', order: 30 },
+    session: { prominence: 'common', order: 30 },
   },
 });
 

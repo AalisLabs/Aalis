@@ -1,16 +1,16 @@
 // ════════════════════════════════════════════════════════════
 // 宿主配置文档里的两层：sessionConfig 的平台档（platforms）与平台类型档（platformTypes），每处按插件实例 id 放这个实例的值。
-// 读的时候核形状：不认识的段、名字不合层标识写法的条目、不是对象的实例值告警后忽略（按层写时整份重写，它们不再写回）；既没
-// 登记、配置文档的 plugins 里也没有的实例 id 告警一次，值留着不生效。值本身在解析时按字段校验。
+// 读的时候核形状：不认识的段、名字不合层标识写法的条目、不是对象的实例值告警后忽略；既没登记、配置文档的 plugins 里也没有的
+// 实例 id 告警一次，值留着不生效。值本身在解析时按字段校验。写的时候在原样的文档上只改这一处的这一项，读不懂的部分原样留着。
+// 留空的段（配置文件里只剩键名，读出来是 null）读写都与没有这一段同样处理。
 // ════════════════════════════════════════════════════════════
 
-import type { SessionConfigDoc } from '@aalis/api-session-settings';
 import { isUnsafeConfigKey } from '@aalis/schema-config';
 
 /** 一个实例在一处写的值 */
 export type Values = Record<string, unknown>;
 /** 实例 id → 值 */
-export type Instances = Map<string, Values>;
+type Instances = Map<string, Values>;
 
 /** 文档里的两层，形状已核过 */
 export interface DocLayers {
@@ -38,7 +38,7 @@ interface ReadContext {
 /** 名字 → 对象的一张表：名字不合写法、值不是对象的告警后忽略 */
 function table(value: unknown, path: string, ctx: ReadContext): Map<string, Values> {
   const out = new Map<string, Values>();
-  if (value === undefined) return out;
+  if (value == null) return out;
   if (!isRecord(value)) {
     ctx.warn(`宿主配置 ${path} 不是对象，已忽略`);
     return out;
@@ -46,7 +46,7 @@ function table(value: unknown, path: string, ctx: ReadContext): Map<string, Valu
   for (const [name, entry] of Object.entries(value)) {
     if (!isLayerName(name)) ctx.warn(`宿主配置 ${path} 里的「${name}」不合法（非空、不含 :、不是 *），已忽略`);
     else if (isRecord(entry)) out.set(name, entry);
-    else ctx.warn(`宿主配置 ${path}.${name} 不是对象，已忽略`);
+    else if (entry != null) ctx.warn(`宿主配置 ${path}.${name} 不是对象，已忽略`);
   }
   return out;
 }
@@ -55,7 +55,7 @@ function table(value: unknown, path: string, ctx: ReadContext): Map<string, Valu
 function instances(value: Values, path: string, ctx: ReadContext): Instances {
   const out: Instances = new Map();
   for (const [instance, values] of Object.entries(value)) {
-    if (isUnsafeConfigKey(instance)) continue;
+    if (isUnsafeConfigKey(instance) || values == null) continue;
     if (!isRecord(values)) {
       ctx.warn(`宿主配置 ${path}.${instance} 不是对象，已忽略`);
       continue;
@@ -66,10 +66,10 @@ function instances(value: Values, path: string, ctx: ReadContext): Instances {
   return out;
 }
 
-/** 读出文档里的两层（交出的是复制品之上的整理结果，调用方可以就地改） */
+/** 读出文档里的两层（交出的是复制品之上的整理结果） */
 export function readDoc(doc: unknown, ctx: ReadContext): DocLayers {
   const layers: DocLayers = { platforms: new Map(), platformTypes: new Map() };
-  if (doc === undefined) return layers;
+  if (doc == null) return layers;
   if (!isRecord(doc)) {
     ctx.warn('宿主配置 sessionConfig 不是对象，已忽略');
     return layers;
@@ -92,25 +92,34 @@ export function readDoc(doc: unknown, ctx: ReadContext): DocLayers {
   return layers;
 }
 
-/** 名字 → 内容的表写回：空了的条目删掉 */
-function writeTable<T>(entries: Map<string, T>, write: (value: T) => object | undefined) {
-  const kept = [...entries].flatMap(([name, value]) => {
-    const written = write(value);
-    return written ? [[name, written] as const] : [];
-  });
-  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
-}
-
-/** 一处各实例的值写回：空了的实例删掉 */
-const writeInstances = (entries: Instances) =>
-  writeTable(entries, values => (Object.keys(values).length > 0 ? values : undefined));
-
-/** 两层整理成文档的形状：空了的层与表删掉，形状不对、已被忽略的部分不再写回 */
-export function writeDoc(layers: DocLayers): SessionConfigDoc {
-  const doc: SessionConfigDoc = {};
-  const platforms = writeTable(layers.platforms, writeInstances);
-  const platformTypes = writeTable(layers.platformTypes, byType => writeTable(byType, writeInstances));
-  if (platforms) doc.platforms = platforms as SessionConfigDoc['platforms'];
-  if (platformTypes) doc.platformTypes = platformTypes as SessionConfigDoc['platformTypes'];
-  return doc;
+/**
+ * 在原样的 sessionConfig 上只改一处（path 是 sessionConfig 之下到实例的各段）的这一项：stored 为 null 即删掉，删空了的对象沿路径
+ * 逐级删掉（sessionConfig 自己留着）；别的部分（含读不懂的）原样留着。要写的路径上已有的值不是对象时不改，返回那一段的路径；删的
+ * 时候路径不在就什么都不改
+ */
+export function putDocValue(
+  doc: unknown,
+  path: readonly string[],
+  key: string,
+  stored: unknown,
+): { doc: unknown } | { notObject: string } {
+  const segments = ['sessionConfig', ...path];
+  const holder: Values = { sessionConfig: doc };
+  const nodes = [holder];
+  for (const [i, name] of segments.entries()) {
+    const node = nodes[i];
+    const next = Object.hasOwn(node, name) ? node[name] : undefined;
+    if (next == null) {
+      if (stored === null) return { doc };
+      node[name] = {};
+    } else if (!isRecord(next)) {
+      return stored === null ? { doc } : { notObject: segments.slice(0, i + 1).join('.') };
+    }
+    nodes.push(node[name] as Values);
+  }
+  const target = nodes[segments.length];
+  if (stored === null) delete target[key];
+  else target[key] = stored;
+  for (let i = segments.length; i > 1 && Object.keys(nodes[i]).length === 0; i--) delete nodes[i - 1][segments[i - 1]];
+  return { doc: holder.sessionConfig };
 }

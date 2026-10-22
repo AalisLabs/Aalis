@@ -15,14 +15,16 @@ import {
   layerParam,
   layerTitle,
   type SourceContext,
+  typeText,
   useLayers,
 } from './layers';
 
 // 设置的「会话默认」：第一步选层，第二步改这一层的项。层的列表按层表分组（全局、平台档、平台类型档、场所），顶上可以
-// 按层的称呼、平台名、类型名、场所名与场所键搜索；所选的层记进地址（?layer=），刷新与分享链接都回到这一层。宽屏两步左右并排，
-// 手机上是两屏，第二屏顶上「换一层」回到选层。可以选的层与称呼、继承的先后都取自会话服务给的层表，插件启停与设置变了时重取
+// 按层的称呼、平台名、类型名与类型的显示名、场所名与场所键搜索；所选的层记进地址（?layer=），刷新与分享链接都回到这一层。
+// 宽屏两步左右并排，手机上是两屏，第二屏顶上「换一层」回到选层。可以选的层与称呼、继承的先后都取自会话服务给的层表，插件启停
+// 与设置变了时重取
 
-/** 列表里一层的名字：全局写层表里的称呼，平台档写平台名，平台类型档写「平台 · 类型」，场所写称呼 */
+/** 列表里一层的名字：全局写层表里的称呼，平台档写平台名，平台类型档写「平台 · 类型的显示名」（没有时写类型名），场所写称呼 */
 function itemName(order: LayerOrder, { layer, label }: LayerInfo): string {
   switch (layer.scope) {
     case 'global':
@@ -30,17 +32,17 @@ function itemName(order: LayerOrder, { layer, label }: LayerInfo): string {
     case 'platform':
       return layer.platform;
     case 'platformType':
-      return `${layer.platform} · ${layer.type}`;
+      return `${layer.platform} · ${label ?? layer.type}`;
     case 'place':
       return label ?? layer.key;
   }
 }
 
 /** 一层的来源取的是哪一份：平台档、平台类型档按这一层自己的平台与类型，窗口场所按层的列表给的 */
-const contextOf = ({ layer, platform, type }: LayerInfo): SourceContext => ({
-  platform: 'platform' in layer ? layer.platform : platform,
-  chatType: 'type' in layer ? layer.type : type,
-});
+function contextOf(layers: readonly LayerInfo[], { layer, platform, type }: LayerInfo): SourceContext {
+  const at = 'platform' in layer ? layer.platform : platform;
+  return { platform: at, chatType: typeText(layers, at, 'type' in layer ? layer.type : type) };
+}
 
 export function SessionDefaults() {
   const phone = usePhone();
@@ -54,7 +56,12 @@ export function SessionDefaults() {
   const needle = lower(query.trim());
   const matches = (info: LayerInfo) =>
     !needle ||
-    [itemName(order, info), labelOf(order, info.layer.scope), 'key' in info.layer ? info.layer.key : '']
+    [
+      itemName(order, info),
+      labelOf(order, info.layer.scope),
+      'type' in info.layer ? info.layer.type : '',
+      'key' in info.layer ? info.layer.key : '',
+    ]
       .map(lower)
       .some(text => text.includes(needle));
 
@@ -102,7 +109,7 @@ export function SessionDefaults() {
       <p className="settings-note">
         {tr('settingsOrderNote', { layers: order.map(entry => entry.label).toReversed() })}
       </p>
-      <LayerRows layer={chosen.layer} order={order} at={contextOf(chosen)} what={tr('sessionDefaults')} />
+      <LayerRows layer={chosen.layer} order={order} at={contextOf(value.layers, chosen)} what={tr('sessionDefaults')} />
     </div>
   ) : (
     <p className="settings-note">{tr('pickLayer')}</p>

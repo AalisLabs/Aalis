@@ -16,6 +16,7 @@ const SOURCE = {
   badLayerName: '层的标识不合法：{name}（非空、不含 :、不是 *）',
   unknownLayer: '不认识这一层：{layer}',
   noHostConfig: '宿主没有提供配置文档，全局层与平台档、平台类型档无处保存',
+  notObject: '配置文件里的 {path} 不是对象，先改正它再写这一层',
   unknownProvider: '{item} 指向的 {contextId} 不是 {service} 的提供者',
   // 层的称呼
   windowPlace: '{type}「{name}」{platform}',
@@ -30,7 +31,7 @@ const SOURCE = {
   on: '开',
   off: '关',
   listValue: '{items, list}',
-  emptyList: '（空）',
+  empty: '无',
   // 指令
   sessionDescription: '查看当前对话里你能改的设置。每项另写它来自哪一层',
   setDescription:
@@ -39,12 +40,13 @@ const SOURCE = {
   atDescription: '写到哪一层：session（本会话，缺省）、place、platformType、platform、global',
   nameDescription: '会话显示名',
   itemArgument: '项：字段名，几个插件同名时写 <实例 id>/<键>',
-  valueArgument: '值：余下的整行',
+  valueArgument: '值：余下的整行；列表与映射写 [] 、文字写 "" 即设成空',
   authorityAbsent: '要装上权限插件才能在聊天里改设置',
   notFiled: '这个会话还没收录，没有场所层',
   noPlatformType: '这个会话没有聊天窗口，不属于任何平台类型档',
   placeLayer: '{layer}「{name}」',
   namedLayer: '{layer} {name}',
+  platformTypeLayer: '{layer} {platform} · {type}',
   noSuchItem: '没有这一项：{item}',
   ambiguous: '有几个插件都有 {item}，要写成 <实例 id>/<键>：{items, list}',
   editable: '{layer}里你能改的：{items, list}',

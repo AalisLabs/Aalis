@@ -173,9 +173,9 @@ describe('字段声明', () => {
       type: 'number',
       integer: true,
       min: 1,
-      default: 30,
-      session: { prominence: 'advanced' },
+      session: { prominence: 'advanced', unset: expect.anything() },
     });
+    expect(maxToolIterations.default, '没设即不限').toBeUndefined();
     expect(historyLimit).toMatchObject({
       type: 'number',
       integer: true,

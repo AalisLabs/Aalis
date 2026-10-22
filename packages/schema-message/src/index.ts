@@ -246,7 +246,7 @@ export interface IncomingMessage {
   /**
    * 触发类型（下游插件可据此区分主发言者语义）。真人消息由 inbound:trigger 相位生效的触发插件写入
    * （immediate / interval），平台适配器不设置；内部注入由注入方自带（idle、proactive）。flow 相位对
-   * immediate 不查回复后冷却与限速，所以不经触发插件改写时（作用域外、没装触发插件），入站消息上预设的
+   * immediate 不查回复后冷却与限速，所以不经触发插件改写时（生效范围外、没装触发插件），入站消息上预设的
    * immediate 会原样生效。
    * - 'direct'    私聊或单一用户直连（默认语义：userId 是主发言者）
    * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）

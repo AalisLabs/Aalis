@@ -45,4 +45,5 @@ export default defineLocale<Source>()({
   exit4: 'self-healing exit: inference failed repeatedly',
   exit5: 'the parent process is not the one given by --parent-pid',
   restartIn: '{reason}, restarting in {seconds}s',
+  thresholdUnset: 'The model threshold returned by the sidecar',
 });

@@ -57,8 +57,11 @@ describe('plugin-memory-summary：自动压缩线', () => {
       min: 0,
       max: 1,
       default: 0.8,
-      session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+      session: { prominence: 'advanced' },
     });
+    expect(
+      (memorySummary.configSchema?.compressAt as { session: { appliesTo?: unknown } }).session.appliesTo,
+    ).toBeUndefined();
     const { host } = await setup();
     expect(host.sessionSettings.use.getAll().find(entry => entry.key === 'compressAt')).toEqual({
       plugin: ID,

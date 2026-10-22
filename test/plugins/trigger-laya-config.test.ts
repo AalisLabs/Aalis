@@ -9,15 +9,15 @@ import { registerHubs } from '../fixtures/hubs.js';
 const readConfig = (raw: unknown) => normalizeConfig(parseConfig(configSchema, raw));
 
 describe('trigger-laya 配置解析', () => {
-  it('保留默认 sidecar 管理方式、阈值哨兵与逗号名单派生', () => {
+  it('保留默认 sidecar 管理方式与逗号名单派生；生效范围与阈值按会话读，不在插件配置的解析结果里', () => {
     expect(readConfig({})).toMatchObject({
       endpoint: 'http://127.0.0.1:17878',
       sidecarDir: '',
-      scopes: ['*:group'],
       triggerNames: [],
       muteKeywords: [],
     });
-    expect(readConfig({}).threshold).toBeUndefined();
+    expect(readConfig({ audience: 'all', threshold: 0.5 })).not.toHaveProperty('audience');
+    expect(readConfig({ threshold: 0.5 })).not.toHaveProperty('threshold');
     expect(
       readConfig({
         endpoint: ' http://127.0.0.1:17879/ ',
@@ -25,7 +25,6 @@ describe('trigger-laya 配置解析', () => {
         triggerNames: 'a, b',
         muteKeywords: '静音\n停止',
         muteTimeSeconds: 0,
-        overrides: [{ scope: ' onebot:group ', threshold: null }, { scope: '   ' }],
       }),
     ).toMatchObject({
       endpoint: 'http://127.0.0.1:17879',
@@ -33,15 +32,10 @@ describe('trigger-laya 配置解析', () => {
       triggerNames: ['a', 'b'],
       muteKeywords: ['静音', '停止'],
       muteTimeSeconds: 60,
-      overrides: [{ scope: 'onebot:group' }],
     });
   });
 
-  it('scopes 的 null 取默认，空数组保持空，空白成员被丢弃；坏地址提前拒绝', () => {
-    expect(readConfig({ scopes: null }).scopes).toEqual(['*:group']);
-    expect(readConfig({ scopes: [] }).scopes).toEqual([]);
-    expect(readConfig({ scopes: ['   ', 'onebot:group'] }).scopes).toEqual(['onebot:group']);
-    expect(readConfig({ scopes: 'onebot:group,cli:*' }).scopes).toEqual(['*:group']);
+  it('坏地址提前拒绝', () => {
     for (const endpoint of [{ host: 'bad' }, 'ftp://localhost/path', 'http://localhost/?key=secret']) {
       const err = (() => {
         try {

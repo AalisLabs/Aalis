@@ -89,8 +89,8 @@ async function loadStack() {
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(commandsPlugin, {});
-  await app.plugin(triggerPolicyPlugin, { scopes: ['*:group'] });
-  await app.plugin(flowControlPlugin, { scopes: ['*:group'] });
+  await app.plugin(triggerPolicyPlugin, {});
+  await app.plugin(flowControlPlugin, {});
   for (const plugin of [toolsPlugin, sessionManagerPlugin, sessionSettingsPlugin, personaSetting]) {
     await registerFromDoc(app, store, plugin);
   }

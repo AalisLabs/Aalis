@@ -93,17 +93,21 @@ describe('到期销毁', () => {
     expect(exists(hub, child.id)).toBe(false);
   });
 
-  it('写回报的这一拍里发出的追问：子会话不删、回报撤回，追问那一轮结束后照常销毁', async () => {
+  it('写回报的这一拍里发出的追问：子会话不删、回报撤回，这一拍里的父会话提醒不把它说成已销毁；追问那一轮结束后照常销毁', async () => {
     const { hub, parent, child, call } = await setup(0);
     let followed = false;
+    let reminded: string | undefined;
     hub.host.events.use.on('session:updated', async session => {
       if (followed || session.id !== parent.id || reports(hub, parent.id).length === 0) return;
       followed = true;
       await call('send_to_subtask', { subtask_id: child.id, message: '<追问>' });
+      reminded = await hub.reminder(parent.id);
     });
     await hub.turn(child.id, 'replied');
     await advance(0);
     expect(followed).toBe(true);
+    expect(reminded).toContain('<子任务>');
+    expect(reminded).not.toContain('已销毁');
     expect(exists(hub, child.id)).toBe(true);
     expect(reports(hub, parent.id)).toEqual([]);
     await hub.turn(child.id, 'replied');
@@ -211,6 +215,45 @@ describe('回报', () => {
     expect((await call('check_subtask', { subtask_ids: [child.id] })).subtasks).toEqual([
       { id: child.id, error: NOT_FOUND },
     ]);
+  });
+
+  it('子会话还在时 check_subtask、wait_subtasks 取过的结果：到期销毁时不再写回报；之后的追问交回新结果的照常写', async () => {
+    for (const tool of ['check_subtask', 'wait_subtasks']) {
+      const { hub, parent, child, call } = await setup(1);
+      await hub.turn(child.id, 'replied');
+      const taken = await call(tool, { subtask_ids: [child.id] });
+      expect(taken.subtasks, tool).toEqual([expect.objectContaining({ result: '<结果>' })]);
+      expect(taken.subtasks[0], tool).not.toHaveProperty('destroyed');
+      await advance(61 * MINUTE);
+      expect(exists(hub, child.id), tool).toBe(false);
+      expect(reports(hub, parent.id), tool).toEqual([]);
+      expect(await hub.reminder(parent.id), tool).toBeUndefined();
+
+      const again = await hub.sm.createChildSession(parent.id, { name: '<又一个>' });
+      await hub.turn(again.id, 'replied');
+      await call(tool, { subtask_ids: [again.id] });
+      await call('send_to_subtask', { subtask_id: again.id, message: '<追问>' });
+      await hub.turn(again.id, 'error', { error: '<原因>' });
+      await advance(61 * MINUTE);
+      expect(exists(hub, again.id), tool).toBe(false);
+      expect(reports(hub, parent.id), tool).toEqual([expect.objectContaining({ id: again.id, status: 'error' })]);
+      vi.useRealTimers();
+    }
+  });
+
+  it('写回报的这一拍里 check_subtask 取走了结果：子会话照常销毁，回报不留在父会话记录上、提醒不再列出', async () => {
+    const { hub, parent, child, call } = await setup(0);
+    let checked: Record<string, unknown> | undefined;
+    hub.host.events.use.on('session:updated', async session => {
+      if (checked || session.id !== parent.id || reports(hub, parent.id).length === 0) return;
+      checked = await call('check_subtask', { subtask_ids: [child.id] });
+    });
+    await hub.turn(child.id, 'replied');
+    await advance(0);
+    expect(checked?.subtasks).toEqual([expect.objectContaining({ id: child.id, result: '<结果>' })]);
+    expect(exists(hub, child.id)).toBe(false);
+    expect(reports(hub, parent.id)).toEqual([]);
+    expect(await hub.reminder(parent.id)).toBeUndefined();
   });
 
   it('出错的子任务回报带原因', async () => {

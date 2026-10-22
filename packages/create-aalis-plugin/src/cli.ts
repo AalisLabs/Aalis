@@ -433,9 +433,9 @@ const configSchema = defineConfig({
     label: '问候语',
     description: '示例配置项：按会话设一个问候语',
     default: '你好',
-    // appliesTo 是适用的会话种类：owner 是 WebUI 与终端里 owner 的会话，room 是群与私聊，task 是子会话；
-    // prominence 是显眼程度：composer 放在输入框旁，common 排在设置前面，advanced 收进「高级」
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    // prominence 是显眼程度：composer 放在输入框旁，common 排在设置前面，advanced 收进「高级」。不写 appliesTo 即适用全部会话
+    // 种类；只适用一部分时才写，如 appliesTo: ['room']（owner 是 WebUI 与终端里 owner 的会话，room 是群与私聊，task 是子会话）
+    session: { prominence: 'advanced' },
   },
 });
 `

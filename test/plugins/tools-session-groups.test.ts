@@ -25,10 +25,10 @@ describe('工具分组字段', () => {
       dynamicOptions: 'toolGroups',
       allowCustom: true,
       default: [],
-      session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common', order: 30 },
+      session: { prominence: 'common', order: 30 },
     });
-    const session = field.session as { minLevel?: number; unset?: unknown };
-    expect([session.minLevel, session.unset]).toEqual([undefined, undefined]);
+    const session = field.session as { appliesTo?: unknown; minLevel?: number; unset?: unknown };
+    expect([session.appliesTo, session.minLevel, session.unset]).toEqual([undefined, undefined, undefined]);
   });
 });
 

@@ -1,14 +1,10 @@
 // ----- 触发会话状态 + 衰减/计数算法 + TTL 清扫 -----
 
-import type { TriggerPolicyConfig } from './config.js';
+import type { TriggerPolicySettings } from './config.js';
 
 export interface TriggerSessionState {
-  /** 该 session 所属 platform（用于 per-scope 覆盖匹配与 idle 注入） */
+  /** 该 session 所属 platform（按会话读参数时的入口平台，idle 注入也用它） */
   platform: string;
-  /** 该 session 的 sessionType（如 group/private/channel）；用于 per-scope 覆盖匹配 */
-  sessionType: string;
-  /** 该 session 的目标 id（群号/用户号/频道号）；用于 per-scope 覆盖匹配 */
-  targetId: string;
   messageCount: number;
   activityScore: number;
   lastMessageTime: number;
@@ -22,11 +18,9 @@ export interface TriggerSessionState {
   idleBackoff: number;
 }
 
-export function createState(platform: string, sessionType = '', targetId = ''): TriggerSessionState {
+export function createState(platform: string): TriggerSessionState {
   return {
     platform,
-    sessionType,
-    targetId,
     messageCount: 0,
     activityScore: 0,
     lastMessageTime: 0,
@@ -44,7 +38,7 @@ export function lastActivityOf(state: TriggerSessionState): number {
 }
 
 /** 当前阈值（动态衰减） */
-export function getCurrentThreshold(state: TriggerSessionState, cfg: TriggerPolicyConfig): number {
+export function getCurrentThreshold(state: TriggerSessionState, cfg: TriggerPolicySettings): number {
   if (state.lastTriggerTime === 0) return cfg.activityScoreLower;
   const elapsed = Date.now() - state.lastTriggerTime;
   const decayMs = cfg.activityDecayMinutes * 60 * 1000;
@@ -53,7 +47,7 @@ export function getCurrentThreshold(state: TriggerSessionState, cfg: TriggerPoli
 }
 
 /** 评分按距离上次消息的时间线性衰减（原地修改） */
-export function applyScoreDecay(state: TriggerSessionState, cfg: TriggerPolicyConfig): void {
+export function applyScoreDecay(state: TriggerSessionState, cfg: TriggerPolicySettings): void {
   if (cfg.scoreDecayMinutes <= 0 || state.activityScore <= 0 || state.lastMessageTime === 0) return;
   const elapsed = Date.now() - state.lastMessageTime;
   const decayMs = cfg.scoreDecayMinutes * 60 * 1000;
@@ -63,7 +57,11 @@ export function applyScoreDecay(state: TriggerSessionState, cfg: TriggerPolicyCo
 }
 
 /** 计算单条入站对评分的增量（受用户交互权重影响） */
-export function calculateScoreIncrement(state: TriggerSessionState, cfg: TriggerPolicyConfig, userId?: string): number {
+export function calculateScoreIncrement(
+  state: TriggerSessionState,
+  cfg: TriggerPolicySettings,
+  userId?: string,
+): number {
   const base = 1.0 / Math.max(1, cfg.fixedInterval);
   let userWeight = 1.0;
   if (userId) {

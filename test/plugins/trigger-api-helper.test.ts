@@ -202,36 +202,32 @@ describe('markTriggered', () => {
 
   it('点名为 immediate，授权主体维持缺省', () => {
     const m = group();
-    markTriggered(m, true);
+    markTriggered(m, true, true);
     expect(m.triggerType).toBe('immediate');
     expect(m.actor).toBeUndefined();
   });
 
-  it('非点名为 interval：多人会话回填无主体授权，发言者字段不变', () => {
+  it('非点名为 interval：多方窗口回填无主体授权，发言者字段不变', () => {
     const m = group();
-    markTriggered(m, false);
+    markTriggered(m, false, true);
     expect(m.triggerType).toBe('interval');
     expect(m.actor).toEqual({ platform: 'onebot', userId: '' });
     expect(m.userId).toBe('10001');
   });
 
-  it('频道等其它多人会话的 interval 同样回填：条件是「不是私聊」，不是「是群聊」', () => {
-    const channel = group({
-      sessionType: 'channel',
-      sessionId: 'onebot:10000:channel:40001:50001',
-      groupId: undefined,
-    });
-    markTriggered(channel, false);
-    expect(channel.triggerType).toBe('interval');
+  it('条件是调用方给的多方标记，不看类型名：一对一窗口的类型名不叫 private 也不回填，叫 group 的多方窗口照常回填', () => {
+    const dm = group({ sessionType: 'dm', sessionId: 'zz:dm:10001', groupId: undefined });
+    markTriggered(dm, false, false);
+    expect(dm.triggerType).toBe('interval');
+    expect(dm.actor).toBeUndefined();
+    const channel = group({ sessionType: 'channel', sessionId: 'onebot:10000:channel:40001:50001' });
+    markTriggered(channel, false, true);
     expect(channel.actor).toEqual({ platform: 'onebot', userId: '' });
   });
 
-  it('私聊的 interval 不回填；消息已带 actor 时不覆盖', () => {
-    const priv = group({ sessionType: 'private', sessionId: 'onebot:10000:private:10001', groupId: undefined });
-    markTriggered(priv, false);
-    expect(priv.actor).toBeUndefined();
+  it('消息已带 actor 时不覆盖', () => {
     const delegated = group({ actor: { platform: 'webui', userId: 'console' } });
-    markTriggered(delegated, false);
+    markTriggered(delegated, false, true);
     expect(delegated.actor).toEqual({ platform: 'webui', userId: 'console' });
   });
 });

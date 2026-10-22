@@ -412,7 +412,7 @@ class SessionManager implements SessionManagerService {
   /**
    * 原生入站的收录与补记。会话表里还没有记录的真人入站（不带 source）按这条消息建档：出生平台取消息的平台，聊天窗口按这个
    * 平台的类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，走快路径。带 source 的是
-   * 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），id 带 `::` 的是内部会话，都不登记。
+   * 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记；子会话按 parentId 不登记（recorded）。
    * 消息带的类型名不在平台的声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名、按平台声明的第一个多方类型记下时，
    * 每个平台告警一次。按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，升级前的记录只记了出生平台、没有
    * 聊天窗口，两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认出生平台的入站）。
@@ -426,7 +426,7 @@ class SessionManager implements SessionManagerService {
    */
   recordInbound(msg: IncomingMessage): Promise<void> {
     const { sessionId } = msg;
-    if (!sessionId || msg.source || sessionId.includes('::')) return Promise.resolve();
+    if (!sessionId || msg.source) return Promise.resolve();
     const known = this.sessions.get(sessionId);
     if (this.recorded(known, msg)) {
       this.noteRecorded(known, msg);

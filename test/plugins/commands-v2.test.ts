@@ -212,6 +212,12 @@ describe('commands v2 — 链式 builder', () => {
     expect(r.parseCommand('hi a b')).toBeNull();
     expect(r.parseCommand('  ')).toBeNull();
   });
+
+  it('parseCommand：引号里的整段是一个参数，空的引号是一个空参数', () => {
+    const r = new CommandRegistry(makeLogger(), ref(), ref());
+    r.command('hi', '').action(async () => 'hello');
+    expect(r.parseCommand(`/hi "a b" '' "" c`)?.args).toEqual(['a b', '', '', 'c']);
+  });
 });
 
 // ════════════════════════════════════════════════════════════

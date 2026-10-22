@@ -2,21 +2,24 @@
 //
 // session 范围：每会话一个 setTimeout，触发时合成 system 提示注入 gateway。
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
+// 参数不在这里存：每次排定时器与每个 tick 都按会话现读（platform 范围的开关与间隔取全局层），改了下一次起生效。
 // 到点时本插件不是生效的触发插件（trigger 服务胜者）就不开口：不注入，也不记为 bot 开口。
 
 import type { FlowControlService } from '@aalis/api-flow-control';
-import { type GatewayService, resolveEffectiveConfig } from '@aalis/api-gateway';
+import type { GatewayService } from '@aalis/api-gateway';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
-import type { TriggerPolicyConfig } from './config.js';
+import type { TriggerPolicyConfig, TriggerPolicySettings } from './config.js';
 import { lastActivityOf, type TriggerSessionState } from './state.js';
 
-/** 调度器用到的能力：日志、网关与流控闸门（只读当前提供者），以及本插件此刻是否生效 */
+/** 调度器用到的能力：日志、网关与流控闸门（只读当前提供者）、本插件此刻是否生效，以及按会话现读参数 */
 export interface IdleCaps {
   logger: Logger;
   gateway: Pick<ServiceSelection<GatewayService>, 'present' | 'use'>;
   flowControl: Pick<ServiceSelection<FlowControlService>, 'present' | 'use'>;
   isActive(): boolean;
+  /** 一个会话此刻的参数；不给会话时取全局层 */
+  settingsOf(sessionId?: string, platform?: string): TriggerPolicySettings;
 }
 
 const DEFAULT_PROMPT =
@@ -49,12 +52,12 @@ async function injectIdle(caps: IdleCaps, msg: IncomingMessage): Promise<void> {
 
 export function scheduleSessionIdle(
   caps: IdleCaps,
-  cfg: TriggerPolicyConfig,
   state: TriggerSessionState,
   sessionId: string,
   reschedule: () => void,
 ): void {
   clearSessionIdle(state);
+  const cfg = caps.settingsOf(sessionId, state.platform);
   if (cfg.idleTriggerScope !== 'session') return;
   if (cfg.idleTriggerMinutes <= 0) return;
 
@@ -113,13 +116,13 @@ export class PlatformIdleScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   /** stop() 之后不再重排——tick 回调可能已在飞行中，回来时要认这面旗，否则留下僵尸定时器 */
-  private stopped = false;
+  private stopped = true;
   /** start() 时刻——无任何活动记录时拿它当「最后一次活动」的基准 */
   private startedAt = 0;
 
   constructor(
     private readonly caps: IdleCaps,
-    private readonly cfg: TriggerPolicyConfig,
+    private readonly strategy: TriggerPolicyConfig['idleTriggerStrategy'],
     private readonly states: Map<string, TriggerSessionState>,
   ) {}
 
@@ -127,6 +130,11 @@ export class PlatformIdleScheduler {
     this.stopped = false;
     this.startedAt = Date.now();
     this.schedule();
+  }
+
+  /** 全局层改了：没在排 tick（原来关着）时按新值排一次；已在排的到下一个 tick 自然按新值 */
+  wake(): void {
+    if (!this.timer && !this.running) this.schedule();
   }
 
   stop(): void {
@@ -156,10 +164,10 @@ export class PlatformIdleScheduler {
     const flow = this.caps.flowControl.present ? this.caps.flowControl.use : undefined;
     let best: { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null = null;
     for (const [sid, s] of this.states) {
-      // 禁言会话选了也会被 flow 相位吞掉；冷却对闲置注入只在这里把关（flow 相位对内部注入不查冷却），限速在 flow 相位（作用域内）还会再查一次
+      // 禁言会话选了也会被 flow 相位吞掉；冷却对闲置注入只在这里把关（flow 相位对内部注入不查冷却），限速在 flow 相位（生效范围内）还会再查一次
       if (flow?.isMuted(sid) || flow?.isCoolingDown(sid) || flow?.isRateLimited(sid)) continue;
-      const e = resolveEffectiveConfig(this.cfg, s.platform, s.sessionType, s.targetId);
-      // per-scope 覆盖单独关掉（'off'）或改成 session 档的会话不能被 platform 档抓来开聊
+      const e = this.caps.settingsOf(sid, s.platform);
+      // 按会话单独关掉（'off'）或改成 session 档的会话不能被 platform 档抓来开聊
       if (e.idleTriggerScope !== 'platform') continue;
       const lastActivity = lastActivityOf(s);
       if (!best || lastActivity < best.lastActivity) {
@@ -197,27 +205,31 @@ export class PlatformIdleScheduler {
     }
   }
 
-  private schedule(minDelayMs = 0): void {
+  /** 排下一个 tick；afterTick 为真时至少隔一个阈值量级（见回调末尾） */
+  private schedule(afterTick = false): void {
     if (this.stopped) return;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (this.cfg.idleTriggerScope !== 'platform') return;
-    if (this.cfg.idleTriggerMinutes <= 0) return;
+    // 开关与间隔取全局层，每次排时现读
+    const global = this.caps.settingsOf();
+    if (global.idleTriggerScope !== 'platform') return;
+    if (global.idleTriggerMinutes <= 0) return;
 
-    const baseMs = this.cfg.idleTriggerMinutes * 60_000;
+    const baseMs = global.idleTriggerMinutes * 60_000;
     let delay: number;
-    if (this.cfg.idleTriggerStrategy === 'fixed') {
+    if (this.strategy === 'fixed') {
       delay = baseMs;
     } else {
       delay = this.timeUntilAllQuiet(baseMs);
       if (delay === 0) delay = 1000;
     }
-    if (delay < minDelayMs) delay = minDelayMs;
+    if (afterTick) delay = Math.max(delay, baseMs, IDLE_RETRY_MIN_MS);
 
     this.timer = setTimeout(async () => {
-      if (this.cfg.idleTriggerStrategy === 'all-quiet') {
+      this.timer = null;
+      if (this.strategy === 'all-quiet') {
         const remaining = this.timeUntilAllQuiet(baseMs);
         if (remaining > 0) {
           this.schedule();
@@ -226,8 +238,8 @@ export class PlatformIdleScheduler {
       }
       await this.runOnce();
       // 每轮之后**无条件**退避一个阈值量级：无候选时静默达标条件在 tick 之后仍然成立，
-      // 照 delay===0→1s 重排就是 1 Hz 死转。发没发出去都一样等，语义是「每轮之间至少隔一个阈值量级」。
-      this.schedule(Math.max(baseMs, IDLE_RETRY_MIN_MS));
+      // 照 delay===0→1s 重排就是 1 Hz 死转。发没发出去都一样等，语义是「每轮之间至少隔一个阈值量级」（按此刻的全局值）。
+      this.schedule(true);
     }, delay);
   }
 }

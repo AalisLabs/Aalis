@@ -11,6 +11,7 @@ import {
   HOME_PLACE,
   INIT,
   installDialog,
+  LAYER_ORDER,
   listRequests,
   optionsOf,
   renderApp,
@@ -215,6 +216,10 @@ describe('房间表', () => {
       'sessions/list': () => ({ sessions: [...ROOMS, mine], groups: GROUPS }),
       'session/config/layer/get': () => ({ items: rows }),
       'session/config/layer/update': () => ({ items: rows }),
+      'session/config/layers': () => ({
+        layers: [{ layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' }],
+        order: LAYER_ORDER,
+      }),
     });
     await vi.waitFor(() => expect(names()).toHaveLength(5));
     const own = screen.getByRole('row', { name: /<我的私聊>/ });
@@ -224,7 +229,7 @@ describe('房间表', () => {
     const persona = within(await dialog.findByRole('group', { name: '人设' }));
     expect(requests('session/config/layer/get')).toEqual([{ layer: place }]);
     expect(persona.getByText('<群人设>')).toBeTruthy();
-    expect(persona.getByText('来自：平台类型档 onebot · group')).toBeTruthy();
+    expect(persona.getByText('来自：平台类型档 onebot · 群'), '平台类型写声明的显示名').toBeTruthy();
     expect(persona.queryByRole('button', { name: '恢复继承' })).toBeNull();
     const paper = within(dialog.getByRole('group', { name: '开启白纸' }));
     expect(paper.queryByText(/^来自：/), '这一层自己设的不写来源').toBeNull();

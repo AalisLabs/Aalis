@@ -8,17 +8,17 @@ import {
   SESSION_TTL_MS,
   sweepStaleStates,
 } from '../../packages/plugin-trigger-policy/src/state.js';
-import { defaultTriggerPolicyConfig, resolveTriggerPolicyConfig } from './trigger-policy-config.js';
+import { defaultTriggerPolicySettings, resolveTriggerPolicySettings } from './trigger-policy-config.js';
 
-describe('trigger-policy config', () => {
+describe('trigger-policy 按会话的参数（全局层）', () => {
   it('resolve 默认值', () => {
-    const c = resolveTriggerPolicyConfig({});
-    expect(c.intervalMode).toBe(defaultTriggerPolicyConfig.intervalMode);
+    const c = resolveTriggerPolicySettings({});
+    expect(c.intervalMode).toBe(defaultTriggerPolicySettings.intervalMode);
     expect(c.triggerOnAt).toBe(true);
   });
 
   it('评分与闲置触发字段（自 flow-control 迁入）字段名与默认值不变', () => {
-    const c = resolveTriggerPolicyConfig({});
+    const c = resolveTriggerPolicySettings({});
     expect(c).toMatchObject({
       fixedInterval: 5,
       activityScoreLower: 0.3,
@@ -26,56 +26,58 @@ describe('trigger-policy config', () => {
       activityDecayMinutes: 10,
       scoreDecayMinutes: 0,
       idleTriggerScope: 'off',
-      idleTriggerStrategy: 'all-quiet',
       idleTriggerMinutes: 180,
       idleTriggerStyle: 'exponential',
       idleTriggerMaxMinutes: 1440,
       idleTriggerJitter: true,
       idleTriggerPrompt: '',
     });
-    const set = resolveTriggerPolicyConfig({ fixedInterval: 100, scoreDecayMinutes: 10, idleTriggerScope: 'session' });
+    const set = resolveTriggerPolicySettings({
+      fixedInterval: 100,
+      scoreDecayMinutes: 10,
+      idleTriggerScope: 'session',
+    });
     expect(set).toMatchObject({ fixedInterval: 100, scoreDecayMinutes: 10, idleTriggerScope: 'session' });
   });
 
   it('resolve 逗号分隔 triggerNames', () => {
-    const c = resolveTriggerPolicyConfig({ triggerNames: 'aalis, alice\nbob' });
+    const c = resolveTriggerPolicySettings({ triggerNames: 'aalis, alice\nbob' });
     expect(c.triggerNames).toEqual(['aalis', 'alice', 'bob']);
   });
 
   it('resolve 逗号分隔 muteKeywords', () => {
-    const c = resolveTriggerPolicyConfig({ muteKeywords: '闭嘴,别说话' });
+    const c = resolveTriggerPolicySettings({ muteKeywords: '闭嘴,别说话' });
     expect(c.muteKeywords).toEqual(['闭嘴', '别说话']);
   });
 
-  it('scopes 的 null 取默认，[] 保持空；旧逗号串不在运行时拆分', () => {
-    expect(resolveTriggerPolicyConfig({ scopes: null }).scopes).toEqual(['*:group']);
-    expect(resolveTriggerPolicyConfig({ scopes: [] }).scopes).toEqual([]);
-    expect(resolveTriggerPolicyConfig({ scopes: 'onebot:group,cli:*' }).scopes).toEqual(['*:group']);
+  it('生效范围默认只管多方房间；不认识的取值回退默认', () => {
+    expect(resolveTriggerPolicySettings({}).audience).toBe('multiParty');
+    expect(resolveTriggerPolicySettings({ audience: 'everyone' }).audience).toBe('multiParty');
   });
 
   it('intervalMode 非法值回退', () => {
-    const c = resolveTriggerPolicyConfig({ intervalMode: 'bogus' as unknown });
-    expect(c.intervalMode).toBe(defaultTriggerPolicyConfig.intervalMode);
+    const c = resolveTriggerPolicySettings({ intervalMode: 'bogus' });
+    expect(c.intervalMode).toBe(defaultTriggerPolicySettings.intervalMode);
   });
 
   it('idleTriggerScope 非法值回退默认', () => {
-    const c = resolveTriggerPolicyConfig({ idleTriggerScope: 'bogus' as unknown });
-    expect(c.idleTriggerScope).toBe(defaultTriggerPolicyConfig.idleTriggerScope);
+    const c = resolveTriggerPolicySettings({ idleTriggerScope: 'bogus' });
+    expect(c.idleTriggerScope).toBe(defaultTriggerPolicySettings.idleTriggerScope);
   });
 });
 
 describe('trigger-policy state', () => {
   it('calculateScoreIncrement 默认权重 = 1/fixedInterval', () => {
     const s = createState('p');
-    const inc = calculateScoreIncrement(s, defaultTriggerPolicyConfig);
-    expect(inc).toBeCloseTo(1 / defaultTriggerPolicyConfig.fixedInterval, 5);
+    const inc = calculateScoreIncrement(s, defaultTriggerPolicySettings);
+    expect(inc).toBeCloseTo(1 / defaultTriggerPolicySettings.fixedInterval, 5);
   });
 
   it('calculateScoreIncrement 用户高频时权重抬升', () => {
     const s = createState('p');
     s.userInteractions.set('u1', 20);
-    const incHigh = calculateScoreIncrement(s, defaultTriggerPolicyConfig, 'u1');
-    const incBase = calculateScoreIncrement(s, defaultTriggerPolicyConfig);
+    const incHigh = calculateScoreIncrement(s, defaultTriggerPolicySettings, 'u1');
+    const incBase = calculateScoreIncrement(s, defaultTriggerPolicySettings);
     expect(incHigh).toBeGreaterThan(incBase);
     // 上限 1.5×
     expect(incHigh).toBeLessThanOrEqual(incBase * 1.5 + 1e-6);
@@ -85,12 +87,12 @@ describe('trigger-policy state', () => {
     const s = createState('p');
     s.activityScore = 0.8;
     s.lastMessageTime = Date.now() - 60_000;
-    applyScoreDecay(s, defaultTriggerPolicyConfig);
+    applyScoreDecay(s, defaultTriggerPolicySettings);
     expect(s.activityScore).toBe(0.8);
   });
 
   it('applyScoreDecay 时间过去半周期 ≈ 半值', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, scoreDecayMinutes: 10 };
+    const cfg = { ...defaultTriggerPolicySettings, scoreDecayMinutes: 10 };
     const s = createState('p');
     s.activityScore = 1.0;
     s.lastMessageTime = Date.now() - 5 * 60 * 1000; // 半个衰减周期
@@ -100,7 +102,7 @@ describe('trigger-policy state', () => {
   });
 
   it('applyScoreDecay 超过周期清零', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, scoreDecayMinutes: 1 };
+    const cfg = { ...defaultTriggerPolicySettings, scoreDecayMinutes: 1 };
     const s = createState('p');
     s.activityScore = 1.0;
     s.lastMessageTime = Date.now() - 10 * 60 * 1000;
@@ -110,16 +112,16 @@ describe('trigger-policy state', () => {
 
   it('getCurrentThreshold 首次触发前 = lower', () => {
     const s = createState('p');
-    expect(getCurrentThreshold(s, defaultTriggerPolicyConfig)).toBe(defaultTriggerPolicyConfig.activityScoreLower);
+    expect(getCurrentThreshold(s, defaultTriggerPolicySettings)).toBe(defaultTriggerPolicySettings.activityScoreLower);
   });
 
   it('getCurrentThreshold 刚触发后 ≈ upper；bot 开口不影响阈值', () => {
     const s = createState('p');
     s.lastBotActivityAt = Date.now();
-    expect(getCurrentThreshold(s, defaultTriggerPolicyConfig)).toBe(defaultTriggerPolicyConfig.activityScoreLower);
+    expect(getCurrentThreshold(s, defaultTriggerPolicySettings)).toBe(defaultTriggerPolicySettings.activityScoreLower);
     s.lastTriggerTime = Date.now();
-    const t = getCurrentThreshold(s, defaultTriggerPolicyConfig);
-    expect(t).toBeGreaterThan(defaultTriggerPolicyConfig.activityScoreUpper - 0.01);
+    const t = getCurrentThreshold(s, defaultTriggerPolicySettings);
+    expect(t).toBeGreaterThan(defaultTriggerPolicySettings.activityScoreUpper - 0.01);
   });
 });
 
@@ -156,17 +158,25 @@ import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { phaseData } from '../fixtures/inbound-phase.js';
+import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 
 /** 每条消息都达到计数阈值：非直触发的群消息一律判 interval，用来观察是否走到了意愿评估 */
 const EVERY_MESSAGE = { intervalMode: 'fixed', fixedInterval: 1 };
 
-async function setupPolicy(config: Record<string, unknown> = {}, personas: PersonaService[] = []) {
+/** sessions 是会话设置的替身：会话 id → 本会话层的值 */
+async function setupPolicy(
+  config: Record<string, unknown> = {},
+  personas: PersonaService[] = [],
+  sessions?: Record<string, Record<string, unknown>>,
+) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, hooks });
   host.provide.use(gateway, {} as never); // 满足 required 依赖；相位判定本身不经过 gateway
   // 同一激活登记多家：各给一个条目 id，list() 才分得清
   for (const [i, p] of personas.entries()) host.provide.use(persona, p, { entryId: `persona-${i}` });
+  if (sessions) await app.plugins.register(sessionValuesPlugin(sessions), {});
   await app.plugins.register(triggerPolicyPlugin, config);
   await app.plugins.idle();
   // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -181,7 +191,7 @@ async function runTriggerPhase(
   message: IncomingMessage,
 ): Promise<{ reached: boolean; message: IncomingMessage }> {
   let reached = false;
-  await chain.run('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+  await chain.run('inbound:trigger', phaseData(message), async () => {
     reached = true;
   });
   return { reached, message };
@@ -214,8 +224,8 @@ describe('trigger-policy inbound:trigger（poke）', () => {
     }
   });
 
-  it('真实激活时纯空白 scopes 不扩大到所有会话', async () => {
-    const { app, host } = await setupPolicy({ scopes: ['   '], ...EVERY_MESSAGE });
+  it('生效范围设成不生效：戳一戳也直接放行，不写 triggerType', async () => {
+    const { app, host } = await setupPolicy({ audience: 'off', ...EVERY_MESSAGE });
     try {
       const { reached, message } = await runTriggerPhase(host.hooks.use, pokeMsg());
       expect(reached).toBe(true);
@@ -248,11 +258,8 @@ describe('trigger-policy inbound:trigger（poke）', () => {
     expect(reached).toBe(false);
   });
 
-  it('分作用域覆盖：仅指定 scope 关闭 poke 直触发，其余平台不受影响', async () => {
-    const { app, host } = await setupPolicy({
-      ...EVERY_MESSAGE,
-      overrides: [{ scope: 'onebot:group', triggerOnPoke: false }],
-    });
+  it('按会话设：只在那个会话关闭 poke 直触发，别的会话不受影响', async () => {
+    const { app, host } = await setupPolicy(EVERY_MESSAGE, [], { 'onebot:bot:group:g1': { triggerOnPoke: false } });
     const onebot = await runTriggerPhase(host.hooks.use, pokeMsg('onebot'));
     const telegram = await runTriggerPhase(host.hooks.use, pokeMsg('telegram'));
     await app.stop();
@@ -308,12 +315,10 @@ describe('trigger-policy inbound:trigger（人设故障）', () => {
   });
 });
 
-describe('trigger-policy config (triggerOnPoke)', () => {
-  it('默认 true；显式 false 可关；override 解析布尔', () => {
-    expect(resolveTriggerPolicyConfig({}).triggerOnPoke).toBe(true);
-    expect(resolveTriggerPolicyConfig({ triggerOnPoke: false }).triggerOnPoke).toBe(false);
-    const c = resolveTriggerPolicyConfig({ overrides: [{ scope: '*:group', triggerOnPoke: false }] });
-    expect(c.overrides[0]?.triggerOnPoke).toBe(false);
+describe('trigger-policy 按会话的参数（triggerOnPoke）', () => {
+  it('默认 true；显式 false 可关', () => {
+    expect(resolveTriggerPolicySettings({}).triggerOnPoke).toBe(true);
+    expect(resolveTriggerPolicySettings({ triggerOnPoke: false }).triggerOnPoke).toBe(false);
   });
 });
 
@@ -355,10 +360,10 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     expect(message.actor).toBeUndefined();
   });
 
-  it('私聊纳入 scope 时的 interval：发言者就是唯一主体，不回填无主体 actor', async () => {
-    // scope 可配成 `*` / `onebot:*` / `*:private`（WebUI 下拉一等公民值），私聊里没人 @ 就是 interval；
+  it('私聊纳入生效范围时的 interval：发言者就是唯一主体，不回填无主体 actor', async () => {
+    // 生效范围可设成一对一房间或全部房间，私聊里没人 @ 就是 interval；
     // 若也回填无主体，owner 在私聊里调任何 sensitive 工具都会变成「权限不足」。
-    const { app, host } = await setupPolicy({ scopes: ['onebot:*'], ...EVERY_MESSAGE });
+    const { app, host } = await setupPolicy({ audience: 'all', ...EVERY_MESSAGE });
     const msg = {
       platform: 'onebot',
       sessionType: 'private',

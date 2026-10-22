@@ -482,7 +482,7 @@ export interface WebuiRestRoutes {
 
   /**
    * 按来源取可选项：先找贡献点 webui:options 里同名的来源（dependency 原样交给它），回 `{ models, details }`；没有时
-   * llm 回模型；toolGroups、llm-thinking 与 gateway-scopes 由宿主回答：toolGroups 是已登记的分组与工具上出现过的分组的并集，
+   * llm 回模型；toolGroups 与 llm-thinking 由宿主回答：toolGroups 是已登记的分组与工具上出现过的分组的并集，
    * llm-thinking 收 dependency（条目 id `<提供者实例 id>/<模型 id>`，没带时回空的可选项）；其余服务合起各提供者的
    * listModels()，回 `{ models }`
    */

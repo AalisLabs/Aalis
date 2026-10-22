@@ -324,6 +324,12 @@ importers:
       '@aalis/api-platform':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-platform
+      '@aalis/schema-config':
+        specifier: workspace:>=0.15.0 <1.0.0
+        version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
@@ -762,6 +768,9 @@ importers:
       '@aalis/api-persona':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-persona
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -1559,18 +1568,27 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-message-archive':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-session-manager':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/api-session-settings':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-settings
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1602,6 +1620,9 @@ importers:
       '@aalis/api-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-i18n
+      '@aalis/api-platform':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-platform
       '@aalis/api-session-manager':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-session-manager
@@ -3224,6 +3245,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-media':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-media
@@ -3242,6 +3266,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/api-session-settings':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-settings
       '@aalis/api-trigger':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-trigger
@@ -3279,18 +3306,30 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-message-archive':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-persona':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-persona
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-session-settings':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-settings
       '@aalis/api-trigger':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-trigger
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message

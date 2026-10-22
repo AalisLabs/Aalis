@@ -320,7 +320,6 @@ describe('管理面 REST 的回应与契约', () => {
   const errors: Sample[] = [];
   let registered: string[] = [];
   let mixedModels: unknown;
-  let gatewayScopes: unknown;
   let home: string;
   let app: App;
 
@@ -481,7 +480,6 @@ describe('管理面 REST 的回应与契约', () => {
     for (const service of ['llm', 'llm-thinking', 'toolGroups', 'zz-names', 'i18n-languages']) {
       await ok('GET /api/models/:service', `/api/models/${service}`);
     }
-    gatewayScopes = (await ok('GET /api/models/:service', '/api/models/gateway-scopes')).models;
     mixedModels = await ok('GET /api/models/:service', '/api/models/zz-mixed');
     await ok('GET /api/models/:service', `/api/models/llm-thinking?dependency=${enc('zz-rest-llm/zz-model')}`);
     await ok('POST /api/llm-providers/:contextId/refresh', '/api/llm-providers/zz-rest-llm/refresh');
@@ -591,10 +589,6 @@ describe('管理面 REST 的回应与契约', () => {
     const expected = [...jsonKeys, ...fileKeys].filter(key => !key.startsWith('GET /frames/_base/'));
     expect(registered).toContain('GET /api/plugins');
     expect([...registered].sort()).toEqual(expected.sort());
-  });
-
-  it('作用域的候选按各平台声明的类型名列：没声明类型的平台（WebUI）只有一个类型 private', () => {
-    expect(gatewayScopes).toEqual(['*', '*:group', '*:private', 'zz:*', 'zz:group', 'webui:*', 'webui:private']);
   });
 
   it('/api/models 合起各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的；取不到的跳过，记 warn 点名', () => {

@@ -1,5 +1,7 @@
-import { configSchema, normalizeConfig } from '../../packages/plugin-trigger-policy/src/config.js';
-import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { resolveFields } from '../../packages/api-session-settings/src/index.js';
+import { configSchema, normalizeSettings } from '../../packages/plugin-trigger-policy/src/config.js';
 
-export const resolveTriggerPolicyConfig = (raw: unknown) => normalizeConfig(parseConfig(configSchema, raw));
-export const defaultTriggerPolicyConfig = resolveTriggerPolicyConfig({});
+/** 只有全局层（插件配置）时一个会话的参数：与插件按会话读的同一解析 */
+export const resolveTriggerPolicySettings = (raw: Record<string, unknown>) =>
+  normalizeSettings(resolveFields(configSchema, raw, { parts: [] }, () => {}).values as never);
+export const defaultTriggerPolicySettings = resolveTriggerPolicySettings({});

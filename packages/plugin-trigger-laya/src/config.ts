@@ -1,19 +1,17 @@
+import { REPLY_AUDIENCE_FIELD } from '@aalis/api-gateway';
+import type {} from '@aalis/api-session-settings'; // 按会话字段的声明成员经 declaration merging 并入 SessionFieldSpec
 import { type ConfigOf, defineConfig } from '@aalis/schema-config';
+import { t } from './texts.js';
 
+// 生效范围与开口阈值可按会话设（平台档、平台类型档、场所、本会话），每条消息按会话现读；其余是插件配置
 export const configSchema = defineConfig({
-  scopes: {
-    type: 'multiselect',
-    label: '生效作用域',
-    default: ['*:group'],
-    dynamicOptions: 'gateway-scopes',
-    allowCustom: true,
-    description:
-      '格式 platform:sessionType，支持通配 *。作用域外的消息直接放行，由后面的流控与 agent 照常处理（默认不含私聊：模型只用群聊训练）。',
-  },
+  // 范围外的消息直接放行，由后面的流控与 agent 照常处理（默认不含私聊：判别模型只用群聊训练过，频道里同样没有训练依据）
+  audience: { ...REPLY_AUDIENCE_FIELD, session: { appliesTo: ['room'], prominence: 'common' } },
   threshold: {
     type: 'number',
     label: '开口阈值',
     description: 'logit ≥ 阈值即开口。留空 = 用侧车返回的模型阈值（随模型版本给出）。',
+    session: { appliesTo: ['room'], prominence: 'advanced', unset: t('thresholdUnset') },
   },
   triggerOnAt: {
     type: 'boolean',
@@ -61,22 +59,6 @@ export const configSchema = defineConfig({
     default: 80,
     description: '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
   },
-  overrides: {
-    type: 'array',
-    label: '分作用域覆盖',
-    description:
-      '每项 {scope: "platform:sessionType[:targetId]", threshold} 仅在该 scope 命中时覆盖阈值，最具体者胜；留空 = 沿用上方设置。写一条 override 自动启用该 scope。',
-    default: [],
-    items: {
-      scope: {
-        type: 'string',
-        label: '作用域',
-        description: '格式 platform:sessionType[:targetId]，支持 *',
-        required: true,
-      },
-      threshold: { type: 'number', label: '开口阈值' },
-    },
-  },
 });
 
 type ParsedConfig = ConfigOf<typeof configSchema>;
@@ -93,15 +75,7 @@ function splitNames(value: string): string[] {
 }
 
 /** 文本名单与运行参数在解析后派生；无效地址在注册服务或托管侧车前拒绝。 */
-export function normalizeConfig(cfg: ParsedConfig, logger?: { warn(message: string): void }): LayaConfig {
-  const scopes = cfg.scopes.filter(s => s.trim() !== '');
-  if (scopes.length !== cfg.scopes.length) logger?.warn('配置项 scopes 含空白作用域，已忽略');
-  const overrides: ParsedConfig['overrides'] = [];
-  for (const item of cfg.overrides) {
-    const scope = item.scope.trim();
-    if (scope) overrides.push({ ...item, scope });
-    else logger?.warn('配置项 overrides 中有一项 scope 只含空白，已忽略该项');
-  }
+export function normalizeConfig(cfg: ParsedConfig): LayaConfig {
   const endpoint = cfg.endpoint.trim().replace(/\/+$/, '') || configSchema.endpoint.default;
   let url: URL;
   try {
@@ -114,8 +88,6 @@ export function normalizeConfig(cfg: ParsedConfig, logger?: { warn(message: stri
   }
   return {
     ...cfg,
-    scopes,
-    overrides,
     endpoint,
     sidecarDir: cfg.sidecarDir.trim().replace(/(.)\/+$/, '$1'),
     triggerNames: splitNames(cfg.triggerNames),

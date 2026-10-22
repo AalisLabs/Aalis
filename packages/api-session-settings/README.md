@@ -4,7 +4,7 @@
 
 ## 角色
 
-- 声明：在 configSchema 的顶层字段上写 `session`（`appliesTo`、`prominence`，可选 `narrowest`、`order`、`dependsOn`、`unset`、`minLevel`、`preference`），这一项即可按会话覆盖。宿主不把它交给插件的运行态配置（`caps.config` 里没有），改了不重载插件。
+- 声明：在 configSchema 的顶层字段上写 `session`（`prominence`，可选 `appliesTo`、`narrowest`、`order`、`dependsOn`、`unset`、`minLevel`、`preference`；`appliesTo` 不写即适用全部会话种类，含子会话），这一项即可按会话覆盖。宿主不把它交给插件的运行态配置（`caps.config` 里没有），改了不重载插件。
 - 层（后面的压过前面的）：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话。要对所有群生效的设置按平台分别设在平台类型档。层表是 `SESSION_LAYERS`，解析是纯函数 `resolveFields`。
 - `sessionFields`：读取门面。插件在 apply 里调 `fields(configSchema, caps)` 拿读取器，调用路径上 `get(sessionId, { platform })` 读生效值；读取器的 `set` 只写本实例、本会话层。会话设置缺席时只取全局层，插件配置里的值照常生效。
 - `sessionSettings`：管理面，只给会话服务与建子会话的插件：各层的行、写入、可设的层、写过的各处、建子会话时并进 metadata 的 `childMetadata`，以及以给定身份写本会话层的 `setAs`。
@@ -29,7 +29,7 @@ const configSchema = defineConfig({
     type: 'string',
     label: 'Greeting',
     default: 'hello',
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common', minLevel: 1 },
+    session: { prominence: 'common', minLevel: 1 },
   },
 });
 

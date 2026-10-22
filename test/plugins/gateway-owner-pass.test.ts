@@ -23,8 +23,8 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 网关跳过 inbound:trigger 与 inbound:flow，指令相位之后直接派发。
 //
 // 经真实插件（gateway + session-manager + flow-control + 触发插件）走入站相位链；规则版（trigger-policy）与
-// Laya 版各一遍，作用域在四种配置下同时下发给触发插件与流控。agent 是记录型假件，每条都回复（回复经网关出站，
-// 流控按作用域记冷却与限速）；authority 只给 owner 谓词；Laya 的侧车是本地假服务，判定恒为不开口；memory 是内存替身。
+// Laya 版各一遍，生效范围的四个取值同时下发给触发插件与流控。agent 是记录型假件，每条都回复（回复经网关出站，
+// 流控按生效范围记冷却与限速）；authority 只给 owner 谓词；Laya 的侧车是本地假服务，判定恒为不开口；memory 是内存替身。
 // 触发插件配成未点名的消息一律不开口、带禁言关键词，流控配成回复后冷却并限速一次：走了相位的消息会被吞。
 // ════════════════════════════════════════════════════════════
 
@@ -35,7 +35,7 @@ const GROUP = `onebot:${SELF}:group:20001`;
 const OWNER_DM = `onebot:${SELF}:private:${OWNER}`;
 const OTHER_DM = `onebot:${SELF}:private:${MEMBER}`;
 const MUTE_WORD = '闭嘴';
-const SCOPES = [['*:group'], ['*'], ['webui:*'], ['*:private']];
+const AUDIENCES = ['multiParty', 'all', 'off', 'oneToOne'];
 const TRIGGERS = ['policy', 'laya'] as const;
 type TriggerKind = (typeof TRIGGERS)[number];
 
@@ -119,7 +119,8 @@ async function flush(): Promise<void> {
 
 interface SetupOptions {
   trigger: TriggerKind;
-  scopes: string[];
+  /** 生效范围：同时下发给触发插件与流控 */
+  audience: string;
   /** 不装 authority：owner 谓词恒为否 */
   noAuthority?: boolean;
   /** 不装会话管理 */
@@ -171,15 +172,15 @@ async function setup(opts: SetupOptions) {
   if (!opts.noSessionManager) plugins.push([sessionManagerPlugin, {}]);
   plugins.push([
     flowControlPlugin,
-    { scopes: opts.scopes, cooldownSeconds: 600, rateLimitWindow: 600, rateLimitMaxReplies: 1 },
+    { audience: opts.audience, cooldownSeconds: 600, rateLimitWindow: 600, rateLimitMaxReplies: 1 },
   ]);
   plugins.push(
     sidecar
-      ? [layaPlugin, { endpoint: sidecar.url, scopes: opts.scopes, muteKeywords: MUTE_WORD, muteTimeSeconds: 600 }]
+      ? [layaPlugin, { endpoint: sidecar.url, audience: opts.audience, muteKeywords: MUTE_WORD, muteTimeSeconds: 600 }]
       : [
           triggerPolicyPlugin,
           {
-            scopes: opts.scopes,
+            audience: opts.audience,
             intervalMode: 'fixed',
             fixedInterval: 100,
             muteKeywords: MUTE_WORD,
@@ -239,11 +240,11 @@ const OWNER_KINDS: Array<[string, (h: Harness) => Promise<string>, Sender]> = [
 ];
 
 describe.each(TRIGGERS)('结构性放行（%s）', trigger => {
-  describe.each(SCOPES)('作用域 %s', scope => {
+  describe.each(AUDIENCES)('生效范围 %s', audience => {
     it.each(
       OWNER_KINDS,
     )('%s：不进判定、不因禁言关键词设禁言、不被禁言吞、不受冷却与限速，回复照常发出', async (_, create, from) => {
-      const h = await setup({ trigger, scopes: [scope] });
+      const h = await setup({ trigger, audience });
       const sid = await create(h);
       // 未点名的、回复后冷却与限速期内的、禁言关键词、禁言期内的
       await h.send(from(sid, '随便聊聊'));
@@ -260,9 +261,9 @@ describe.each(TRIGGERS)('结构性放行（%s）', trigger => {
     });
   });
 
-  // 禁言吞噬不看作用域：一种作用域就够
+  // 禁言吞噬不看生效范围：一种取值就够
   it('群房间、别人的私聊、owner 从 WebUI 往群里插话与 internal 会话照常走全部相位：禁言期的消息被吞', async () => {
-    const h = await setup({ trigger, scopes: ['*'] });
+    const h = await setup({ trigger, audience: 'all' });
     const internal = await h.sm().ensureSession('session-zz-legacy');
     for (const [sid, platform] of [
       [GROUP, 'onebot'],
@@ -278,19 +279,19 @@ describe.each(TRIGGERS)('结构性放行（%s）', trigger => {
     expect(h.received).toEqual([]);
   });
 
-  it('对照：作用域为 * 时群房间、别人的私聊与 owner 往群里的插话照常判定，未点名的被吞', async () => {
-    const h = await setup({ trigger, scopes: ['*'] });
+  it('对照：生效范围为全部房间时群房间与别人的私聊照常判定，未点名的被吞；owner 从 WebUI 往群里的插话不判定、照常派发', async () => {
+    const h = await setup({ trigger, audience: 'all' });
     await h.send(fromGroup('有人吗'));
     await h.send(fromWebui(GROUP, '插一句'));
     await h.send(fromOtherDm('在吗'));
-    expect(h.received).toEqual([]);
-    expect(h.judged(GROUP)).toHaveLength(2);
+    expect(h.received.map(m => m.content)).toEqual(['插一句']);
+    expect(h.judged(GROUP)).toHaveLength(1);
     expect(h.judged(OTHER_DM)).toHaveLength(1);
-    if (trigger === 'laya') expect(h.sidecarRequests()).toBe(3);
+    if (trigger === 'laya') expect(h.sidecarRequests()).toBe(2);
   });
 
   it('owner 第一次私聊（会话表里还没有这个房间）：会话管理在同一个入站事件上收录后即放行', async () => {
-    const h = await setup({ trigger, scopes: ['*'], rooms: [GROUP] });
+    const h = await setup({ trigger, audience: 'all', rooms: [GROUP] });
     h.flow().setMuted(OWNER_DM, 600, 'onebot');
     await h.emit(fromOwnerDm(OWNER_DM, '在吗'));
     expect(h.sm().getSession(OWNER_DM)?.originChat).toMatchObject({ multiParty: false, targetId: OWNER });
@@ -298,7 +299,7 @@ describe.each(TRIGGERS)('结构性放行（%s）', trigger => {
   });
 
   it('不装 authority：owner 的 IM 私聊照常走全部相位，WebUI 会话照样放行', async () => {
-    const h = await setup({ trigger, scopes: ['*'], noAuthority: true });
+    const h = await setup({ trigger, audience: 'all', noAuthority: true });
     const plain = await h.sm().createSession({ name: '<聊天>' }, { createdFrom: 'webui' });
     h.flow().setMuted(OWNER_DM, 600, 'onebot');
     h.flow().setMuted(plain.id, 600, 'webui');
@@ -309,7 +310,7 @@ describe.each(TRIGGERS)('结构性放行（%s）', trigger => {
   });
 
   it('没有会话服务：判不出房间类别，全部照常走', async () => {
-    const h = await setup({ trigger, scopes: ['*'], noSessionManager: true });
+    const h = await setup({ trigger, audience: 'all', noSessionManager: true });
     h.flow().setMuted(OWNER_DM, 600, 'onebot');
     h.flow().setMuted('session-zz-webui', 600, 'webui');
     await h.send(fromOwnerDm(OWNER_DM, '在吗'));
@@ -323,7 +324,7 @@ describe('结构性放行：trigger-policy 的状态表', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     const h = await setup({
       trigger: 'policy',
-      scopes: ['*'],
+      audience: 'all',
       policy: {
         idleTriggerScope: 'session',
         idleTriggerMinutes: 1,

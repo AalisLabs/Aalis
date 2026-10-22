@@ -13,11 +13,12 @@ import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/in
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { recordingLogger } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // agent 的按会话字段。
-// - maxToolIterations：一轮里工具调用循环的最大次数，正整数，作者默认 30；会话设了按会话的。模型每轮都要求调工具（响应
-//   耗尽后重复最后一条），工具真实执行次数即循环轮数。
+// - maxToolIterations：一轮里工具调用循环的最大次数，正整数，没设即不限；会话设了按会话的。模型先连着要求调 calls 次工具、
+//   再给出回复，工具真实执行次数即循环轮数。
 // - llm：字段类型 llm-ref 不经 schema-config 校验，形状由字段展开的 MODEL_REF_TEXT 核：服务与模型都是非空字符串。
 // ════════════════════════════════════════════════════════════
 
@@ -35,14 +36,27 @@ async function use(app: App, module: PluginDefinition, config?: Record<string, u
 const uses = { agent, sessionManager, sessionSettings, tools };
 type Host = BoundOf<typeof uses>;
 
-async function boot(): Promise<{ app: App; host: Host; executed: () => number; reset: () => void }> {
-  const app = new App({ name: 'E2E', logLevel: 'error' });
+/** 模型每次回合都先连着要求调 calls 次工具，再给出回复；warns 收集告警 */
+async function boot(calls = 1): Promise<{
+  app: App;
+  host: Host;
+  executed: () => number;
+  reset: () => void;
+  warns: string[];
+}> {
+  const warns: string[] = [];
+  const app = new App({ name: 'E2E', logger: recordingLogger(warns) });
   await registerHubs(app);
   const toolCall: ChatResponse = {
     content: null,
     toolCalls: [{ id: 'c1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
   };
-  await use(app, createMockLLMPlugin({ responses: [toolCall] }));
+  // 按这一轮里已有几条工具结果给响应：不受标题生成等别的调用打乱
+  const responses = (request: { messages: Array<{ role: string }> }): ChatResponse => {
+    const results = request.messages.filter(m => m.role === 'tool').length;
+    return results < calls ? toolCall : { content: '<回复>' };
+  };
+  await use(app, createMockLLMPlugin({ responses }));
   await use(app, toolsPlugin, {});
   await use(app, memoryInMemoryPlugin);
   await use(app, messageArchivePlugin, { debugLogs: false });
@@ -68,6 +82,7 @@ async function boot(): Promise<{ app: App; host: Host; executed: () => number; r
     reset: () => {
       n = 0;
     },
+    warns,
   };
 }
 
@@ -95,16 +110,24 @@ const rejected = async (write: Promise<unknown>) => {
 };
 
 describe('会话级 maxToolIterations', () => {
-  it('会话设 2 → 循环两轮即停；没设时是作者默认 30；非正整数写不进去', async () => {
-    const { app, host, executed, reset } = await boot();
+  it('没设即不限：一轮跑过 31 次工具调用照常走完，不记「工具调用达到上限」', async () => {
+    const { app, host, executed, warns } = await boot(31);
     try {
-      await set(host, 'test:iter-two', 'maxToolIterations', 2);
-      await ask(host, 'test:iter-two');
-      expect(executed(), '会话级上限应生效').toBe(2);
-
-      reset();
       await ask(host, 'test:iter-default');
-      expect(executed(), '没设的会话用作者默认 30').toBe(30);
+      expect(executed()).toBe(31);
+      expect(warns.filter(w => w.includes('工具调用达到上限'))).toEqual([]);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('会话设 3 → 第 3 次之后收尾、记一条达到上限；非正整数写不进去', async () => {
+    const { app, host, executed, warns } = await boot(31);
+    try {
+      await set(host, 'test:iter-three', 'maxToolIterations', 3);
+      await ask(host, 'test:iter-three');
+      expect(executed(), '会话级上限应生效').toBe(3);
+      expect(warns.filter(w => w.includes('工具调用达到上限 (3)'))).toHaveLength(1);
 
       for (const value of [0, 1.5]) await rejected(set(host, 'test:iter-zero', 'maxToolIterations', value));
     } finally {

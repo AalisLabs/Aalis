@@ -14,7 +14,7 @@ import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import type { SessionSummary } from '../protocol/session-client';
 import { groupFromParams, inGroup, paths, type RoomGroupAddress } from '../routes';
 import { LayerRows } from '../settings/LayerRows';
-import { useLayers } from '../settings/layers';
+import { typeText, useLayers } from '../settings/layers';
 import { SessionGate, SessionsFetchError } from '../shell/SessionGate';
 import { Main } from '../shell/Shell';
 import { useSessionActions } from './actions';
@@ -206,7 +206,10 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
           <LayerRows
             layer={{ scope: 'place', key: opened.place.key }}
             order={layers.value.order}
-            at={{ platform: opened.platform, chatType: opened.chat?.type }}
+            at={{
+              platform: opened.platform,
+              chatType: typeText(layers.value.layers, opened.platform, opened.chat?.type),
+            }}
             what={tr('placeSettings')}
           />
         )}

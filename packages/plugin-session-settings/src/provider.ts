@@ -20,10 +20,12 @@ import {
 } from '@aalis/api-session-manager';
 import {
   type ActualValue,
+  appliesIn,
   describeLayer,
   resolveFields,
   type SessionAt,
   type SessionChain,
+  type SessionConfigDoc,
   type SessionFieldEntry,
   type SessionFieldRow,
   type SessionLayerName,
@@ -41,9 +43,10 @@ import {
   type SchemaField,
   type SessionFieldSpec,
 } from '@aalis/schema-config';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { Caps } from './caps.js';
 import { SettingsEditor } from './commands.js';
-import { type DocLayers, type Instances, isLayerName, isRecord, readDoc, type Values, writeDoc } from './doc.js';
+import { type DocLayers, isLayerName, isRecord, putDocValue, readDoc, type Values } from './doc.js';
 import { t } from './texts.js';
 
 /** 会话与场所记录 metadata 里本插件的键 */
@@ -98,7 +101,7 @@ function wire(field: Field): SessionFieldRow['field'] {
 }
 
 /** 平台类型档只有房间与房间的子会话会取 */
-const forRooms = (field: Field) => field.session.appliesTo.includes('room') || field.session.appliesTo.includes('task');
+const forRooms = (field: Field) => appliesIn(field.session, 'room') || appliesIn(field.session, 'task');
 
 export class SessionSettingsProvider implements SessionSettingsService {
   /** 实例 id → 登记，按登记先后 */
@@ -174,11 +177,10 @@ export class SessionSettingsProvider implements SessionSettingsService {
   ): (field: Field) => boolean {
     switch (name) {
       case 'session':
-        return field =>
-          (kind === undefined || field.session.appliesTo.includes(kind)) && field.session.narrowest === undefined;
+        return field => (kind === undefined || appliesIn(field.session, kind)) && field.session.narrowest === undefined;
       case 'place': {
         const where = place && placeKind(place);
-        return field => where !== undefined && field.session.appliesTo.includes(where);
+        return field => where !== undefined && appliesIn(field.session, where);
       }
       case 'platformType':
         return forRooms;
@@ -358,12 +360,14 @@ export class SessionSettingsProvider implements SessionSettingsService {
     const platforms = sorted([...adapters.map(a => a.platform), ...doc.platforms.keys(), ...doc.platformTypes.keys()]);
     const out: SessionSettingsLayerInfo[] = [{ layer: { scope: 'global' } }];
     for (const platform of platforms) out.push({ layer: { scope: 'platform', platform } });
+    // 平台类型档：声明了显示名的带上它
     for (const platform of platforms) {
       const declared = adapters
         .filter(a => a.platform === platform)
         .flatMap(a => (a.sessionTypes ?? []).map(d => d.name));
       for (const type of sorted([...declared, ...(doc.platformTypes.get(platform)?.keys() ?? [])])) {
-        out.push({ layer: { scope: 'platformType', platform, type } });
+        const label = this.typeLabel(platform, type);
+        out.push({ layer: { scope: 'platformType', platform, type }, ...(label === undefined ? {} : { label }) });
       }
     }
     // 场所：工作区在前（默认工作区最前），窗口在后；窗口写声明里的类型称呼、窗口名与平台，另带平台与类型名
@@ -375,15 +379,22 @@ export class SessionSettingsProvider implements SessionSettingsService {
         out.push({ layer, label: placeLabel(place) });
         continue;
       }
-      const declared = adapters.filter(a => a.platform === window.platform).flatMap(a => a.sessionTypes ?? []);
       const label = t('windowPlace', {
-        type: declared.find(decl => decl.name === window.type)?.label ?? window.type,
+        type: this.typeLabel(window.platform, window.type) ?? window.type,
         name: placeLabel(place),
         platform: window.platform,
       });
       out.push({ layer, label, platform: window.platform, type: window.type });
     }
     return out;
+  }
+
+  /** 平台类型的显示名：这个平台的适配器声明的；没声明时为 undefined，称呼里写类型名 */
+  typeLabel(platform: string, type: string): string | TextRef | undefined {
+    return getPlatformAdapters(this.caps.platform)
+      .filter(a => a.platform === platform)
+      .flatMap(a => a.sessionTypes ?? [])
+      .find(decl => decl.name === type)?.label;
   }
 
   /**
@@ -472,7 +483,7 @@ export class SessionSettingsProvider implements SessionSettingsService {
     if (!session) throw sessionSettingsError(t('noSession', { id: sessionId }));
     if (stored !== null) {
       if (field.session.narrowest === 'place') throw sessionSettingsError(t('placeOnly', { item: key }));
-      if (kind !== undefined && !field.session.appliesTo.includes(kind)) {
+      if (kind !== undefined && !appliesIn(field.session, kind)) {
         throw sessionSettingsError(t('notApplicable', { item: key, kind }));
       }
     }
@@ -501,24 +512,17 @@ export class SessionSettingsProvider implements SessionSettingsService {
         return this.writeGlobal(entry, key, field, stored);
       case 'platform':
         assertName(layer.platform);
-        return this.writeDoc(doc => {
-          doc.platforms.set(layer.platform, put(doc.platforms.get(layer.platform), plugin, key, stored));
-        });
-      case 'platformType': {
+        return this.writeDoc(['platforms', layer.platform, plugin], key, stored);
+      case 'platformType':
         assertName(layer.platform);
         assertName(layer.type);
         assertRooms();
-        return this.writeDoc(doc => {
-          const byType = doc.platformTypes.get(layer.platform) ?? new Map<string, Instances>();
-          byType.set(layer.type, put(byType.get(layer.type), plugin, key, stored));
-          doc.platformTypes.set(layer.platform, byType);
-        });
-      }
+        return this.writeDoc(['platformTypes', layer.platform, layer.type, plugin], key, stored);
       case 'place': {
         const record = typeof layer.key === 'string' ? this.sm.getPlace(layer.key) : undefined;
         if (!record) throw sessionSettingsError(t('noPlace', { key: String(layer.key) }));
         const kind = placeKind(record);
-        if (stored !== null && !field.session.appliesTo.includes(kind)) {
+        if (stored !== null && !appliesIn(field.session, kind)) {
           throw sessionSettingsError(t('notApplicable', { item: key, kind }));
         }
         const values = this.written(record.metadata, `场所 ${layer.key}`, plugin, key, stored);
@@ -558,12 +562,12 @@ export class SessionSettingsProvider implements SessionSettingsService {
     }
   }
 
-  /** 改文档里的两层：在现读的一份上改，整份写回 */
-  private writeDoc(change: (doc: DocLayers) => void): Promise<{ saveError?: unknown }> {
+  /** 改文档里的一处的一项：在现读的原样文档上只改这一项，读不懂的部分原样留着；路径上的值不是对象时拒收 */
+  private writeDoc(path: string[], key: string, stored: unknown): Promise<{ saveError?: unknown }> {
     const host = this.host();
-    const doc = this.readDoc();
-    change(doc);
-    host.set('sessionConfig', writeDoc(doc));
+    const written = putDocValue(host.get('sessionConfig'), path, key, stored);
+    if ('notObject' in written) throw sessionSettingsError(t('notObject', { path: written.notObject }));
+    host.set('sessionConfig', written.doc as SessionConfigDoc);
     return this.save(host);
   }
 
@@ -611,7 +615,7 @@ export class SessionSettingsProvider implements SessionSettingsService {
       const resolved = resolveFields(entry.schema, entry.readGlobal(), chain, this.warnOnce).values;
       for (const key of entry.keys) {
         const field = entry.schema[key] as Field;
-        if (!field.session.appliesTo.includes('task') || field.session.narrowest !== undefined) continue;
+        if (!appliesIn(field.session, 'task') || field.session.narrowest !== undefined) continue;
         if (Object.hasOwn(resolved, key)) {
           values.push({ plugin: entry.plugin, key, value: resolved[key] });
           continue;
@@ -632,14 +636,4 @@ export class SessionSettingsProvider implements SessionSettingsService {
     }
     return { [KEY]: { values } };
   }
-}
-
-/** 一处各实例的值里换掉一个实例的一项（stored 为 null 即删掉），返回改过的那一份 */
-function put(instances: Instances | undefined, plugin: string, key: string, stored: unknown): Instances {
-  const next = new Map(instances);
-  const values = { ...next.get(plugin) };
-  if (stored === null) delete values[key];
-  else values[key] = stored;
-  next.set(plugin, values);
-  return next;
 }

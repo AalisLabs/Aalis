@@ -656,7 +656,7 @@ describe('WebUI 服务端只认契约不认插件', () => {
     expect([...collected(keys => keys.schemaFields)]).toEqual(
       expect.arrayContaining(['discoverModels', 'numberTheory']),
     );
-    expect([...optionSources]).toEqual(expect.arrayContaining(['toolGroups', 'gateway-scopes', 'llm-thinking']));
+    expect([...optionSources]).toEqual(expect.arrayContaining(['toolGroups', 'persona', 'llm-thinking']));
     expect([...contractFor(PROTOCOL)]).toEqual(expect.arrayContaining(['webui-client', 'skipArchive', 'sessionKind']));
     expect(contractFor(PROTOCOL).has('sessionProtocol')).toBe(false);
   });

@@ -927,9 +927,10 @@ class DefaultAgent implements AgentService {
 
         const assistantMetadata = this.buildAssistantMetadata(incoming, turnId);
 
-        // 工具调用循环
+        // 工具调用循环：上限没设即不限
         let iterations = 0;
-        while (!reportOnly && response.toolCalls && response.toolCalls.length > 0 && iterations < maxToolIterations) {
+        const withinLimit = () => maxToolIterations === undefined || iterations < maxToolIterations;
+        while (!reportOnly && response.toolCalls && response.toolCalls.length > 0 && withinLimit()) {
           if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
           iterations++;
           this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
@@ -1203,8 +1204,7 @@ class DefaultAgent implements AgentService {
         }
 
         // 检测是否因工具调用次数达到上限而退出循环
-        const toolLimitReached =
-          iterations >= maxToolIterations && response.toolCalls != null && response.toolCalls.length > 0;
+        const toolLimitReached = !withinLimit() && response.toolCalls != null && response.toolCalls.length > 0;
         if (toolLimitReached) {
           this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
         }
@@ -2250,9 +2250,6 @@ class DefaultAgent implements AgentService {
 
 // ----- 插件导出 -----
 
-/** 四项按会话字段对各种会话都适用 */
-const ALL_SESSIONS = ['owner', 'room', 'task'] as const;
-
 const configSchema = defineConfig({
   systemPrompt: {
     type: 'textarea',
@@ -2294,7 +2291,7 @@ const configSchema = defineConfig({
     description: t('llmDescription'),
     ...MODEL_REF_TEXT,
     // 全局层不在插件配置里：是本插件的 llm 偏好
-    session: { appliesTo: ALL_SESSIONS, prominence: 'composer', preference: 'llm', unset: t('llmUnset'), minLevel: 1 },
+    session: { prominence: 'composer', preference: 'llm', unset: t('llmUnset'), minLevel: 1 },
   },
   think: {
     type: 'select',
@@ -2302,14 +2299,7 @@ const configSchema = defineConfig({
     description: t('thinkDescription'),
     // 可选项是「模型」这一项生效的那个模型声明的档位
     dynamicOptions: 'llm-thinking',
-    session: {
-      appliesTo: ALL_SESSIONS,
-      prominence: 'common',
-      order: 20,
-      dependsOn: 'llm',
-      unset: t('thinkUnset'),
-      minLevel: 1,
-    },
+    session: { prominence: 'common', order: 20, dependsOn: 'llm', unset: t('thinkUnset'), minLevel: 1 },
   },
   maxToolIterations: {
     type: 'number',
@@ -2317,8 +2307,7 @@ const configSchema = defineConfig({
     description: t('maxToolIterationsDescription'),
     integer: true,
     min: 1,
-    default: 30,
-    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+    session: { prominence: 'advanced', unset: t('maxToolIterationsUnset') },
   },
   historyLimit: {
     type: 'number',
@@ -2327,7 +2316,7 @@ const configSchema = defineConfig({
     integer: true,
     min: 0,
     default: 0,
-    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 });
 

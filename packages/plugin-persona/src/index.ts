@@ -55,9 +55,6 @@ interface PersonaIdentity {
 /** 主卡：「人设」的作者默认（人设目录里的 default.yaml，没有时用内置的默认角色） */
 const DEFAULT_PERSONA = 'default';
 
-/** 按会话字段对各种会话都适用 */
-const ALL_SESSIONS = ['owner', 'room', 'task'] as const;
-
 const configSchema = defineConfig({
   personasDir: {
     type: 'string',
@@ -94,21 +91,21 @@ const configSchema = defineConfig({
     dynamicOptions: 'persona',
     allowCustom: true,
     default: DEFAULT_PERSONA,
-    session: { appliesTo: ALL_SESSIONS, prominence: 'common', order: 10, minLevel: 1 },
+    session: { prominence: 'common', order: 10, minLevel: 1 },
   },
   systemPromptExtra: {
     type: 'textarea',
     label: t('extraLabel'),
     description: t('extraDescription'),
     default: '',
-    session: { appliesTo: ALL_SESSIONS, prominence: 'common', order: 40 },
+    session: { prominence: 'common', order: 40 },
   },
   disableOutputFormat: {
     type: 'boolean',
     label: t('plainLabel'),
     description: t('plainDescription'),
     default: false,
-    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
   clientSideJsonRendering: {
     type: 'select',
@@ -120,7 +117,7 @@ const configSchema = defineConfig({
       { value: 'off', label: t('renderOff') },
     ],
     default: 'card',
-    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 });
 

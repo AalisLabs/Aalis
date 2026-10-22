@@ -335,7 +335,7 @@ const configSchema = defineConfig({
       { label: t('recallScopeSession'), value: 'session' },
       { label: t('recallScopeAll'), value: 'all' },
     ],
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 
   // ────── Agent 工具侧 ──────
@@ -502,39 +502,41 @@ function start(caps: Caps): void {
     extractor.start();
   }
 
-  // ─── Middleware 注入（读取）─── 受 agentInjection 控制
-  if (cfg.agentInjection) {
+  // ─── 注入与工具 ─── 各受 agentInjection、toolsEnabled 控制；两者都关着时不登记关系图范围
+  if (cfg.agentInjection || cfg.toolsEnabled) {
+    // 关系图范围：注入与工具的会话作用域都不超过它。每次现读，改了下一轮即生效；不是「全部」的（含写坏了的）一律按仅本会话
     const fields = caps.sessionFields.use.fields(configSchema, caps);
-    // 关系图范围每轮现读，改了下一轮即生效；不是「全部」的（含写坏了的）一律按仅本会话
     const sessionOnly = (sessionId: string | undefined, platform: string | undefined) =>
       fields.get(sessionId, { platform }).recallScope !== 'all';
-    registerRelationContribution({ contributions: caps.contributions, sessionOnly }, service, {
-      maxDepth: cfg.injectionMaxDepth,
-      maxBreadth: cfg.injectionMaxBreadth,
-      maxEvents: cfg.maxInjectedEvents,
-      maxRelations: cfg.maxInjectedRelations,
-      maxParticipantsPerEvent: cfg.maxParticipantsPerEvent,
-      maxCooccurrencePartners: cfg.maxCooccurrencePartners,
-      maxGlobalHotEvents: cfg.maxGlobalHotEvents,
-      maxGlobalHotEntities: cfg.maxGlobalHotEntities,
-      groupOnly: cfg.groupOnly,
-    });
-  }
 
-  // ─── Agent 工具 ─── 受 toolsEnabled 控制
-  if (cfg.toolsEnabled) {
-    registerRelationTools({ tools: caps.tools.use, logger: caps.logger.use }, service, {
-      defaultMaxDepth: cfg.digToolDefaultMaxDepth,
-      defaultMaxBreadth: cfg.digToolDefaultMaxBreadth,
-      hardMaxDepth: cfg.digToolHardMaxDepth,
-      hardMaxBreadth: cfg.digToolHardMaxBreadth,
-      findPathDefaultMaxDepth: cfg.findPathDefaultMaxDepth,
-      findPathHardMaxDepth: cfg.findPathHardMaxDepth,
-      searchEventsDefaultLimit: cfg.searchEventsDefaultLimit,
-      searchEventsHardMaxLimit: cfg.searchEventsHardMaxLimit,
-      communityAlgorithm: eviction.communityAlgorithm,
-      debug,
-    });
+    if (cfg.agentInjection) {
+      registerRelationContribution({ contributions: caps.contributions, sessionOnly }, service, {
+        maxDepth: cfg.injectionMaxDepth,
+        maxBreadth: cfg.injectionMaxBreadth,
+        maxEvents: cfg.maxInjectedEvents,
+        maxRelations: cfg.maxInjectedRelations,
+        maxParticipantsPerEvent: cfg.maxParticipantsPerEvent,
+        maxCooccurrencePartners: cfg.maxCooccurrencePartners,
+        maxGlobalHotEvents: cfg.maxGlobalHotEvents,
+        maxGlobalHotEntities: cfg.maxGlobalHotEntities,
+        groupOnly: cfg.groupOnly,
+      });
+    }
+
+    if (cfg.toolsEnabled) {
+      registerRelationTools({ tools: caps.tools.use, logger: caps.logger.use, sessionOnly }, service, {
+        defaultMaxDepth: cfg.digToolDefaultMaxDepth,
+        defaultMaxBreadth: cfg.digToolDefaultMaxBreadth,
+        hardMaxDepth: cfg.digToolHardMaxDepth,
+        hardMaxBreadth: cfg.digToolHardMaxBreadth,
+        findPathDefaultMaxDepth: cfg.findPathDefaultMaxDepth,
+        findPathHardMaxDepth: cfg.findPathHardMaxDepth,
+        searchEventsDefaultLimit: cfg.searchEventsDefaultLimit,
+        searchEventsHardMaxLimit: cfg.searchEventsHardMaxLimit,
+        communityAlgorithm: eviction.communityAlgorithm,
+        debug,
+      });
+    }
   }
 
   // 关系图页与原始数据页

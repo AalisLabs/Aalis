@@ -193,7 +193,7 @@ describe('placeOf', () => {
     expect(new Set(keys).size).toBe(3);
     expect(placePaperId(keys[0])).not.toBe(placePaperId(keys[1]));
     expect(placeRow(keys[2], 'persona')?.source).toBe('platform');
-    expect(reader().trace('zz:3').sources.persona).toBe('platform');
+    expect(reader().get('zz:3').persona).toBe('<平台>');
   });
 });
 

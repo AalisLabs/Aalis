@@ -76,7 +76,7 @@ export function createSelfCheck(report: (line: string) => void, capacity = 1000,
       }
     },
 
-    /** 消息归档后比对，取出即删；没记过的键（作用域外、没发请求、已淘汰）不计 */
+    /** 消息归档后比对，取出即删；没记过的键（生效范围外、没发请求、已淘汰）不计 */
     settle(sessionId: string, messageId: string | undefined, archived: string): void {
       if (!messageId) return;
       const key = `${sessionId}:${messageId}`;

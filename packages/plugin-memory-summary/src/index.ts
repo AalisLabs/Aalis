@@ -246,7 +246,7 @@ const configSchema = defineConfig({
     max: 1,
     default: 0.8,
     description: t('compressAtDescription'),
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 });
 

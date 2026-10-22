@@ -16,6 +16,7 @@ const PACKAGES = join(__dirname, '../../packages');
 /** 现在声明了按会话字段的第一方插件 */
 const DECLARING = [
   '@aalis/plugin-agent',
+  '@aalis/plugin-flow-control',
   '@aalis/plugin-i18n',
   '@aalis/plugin-memory-history',
   '@aalis/plugin-memory-summary',
@@ -26,6 +27,8 @@ const DECLARING = [
   '@aalis/plugin-subtask',
   '@aalis/plugin-tool-session',
   '@aalis/plugin-tools',
+  '@aalis/plugin-trigger-laya',
+  '@aalis/plugin-trigger-policy',
   '@aalis/plugin-user-relation',
 ];
 
@@ -76,6 +79,18 @@ describe('第一方插件的按会话字段不进运行态配置', () => {
       }
       expect(seen, `${id} 激活了`).toBeDefined();
       for (const key of keys) expect(seen?.[key], `${id}.${key}`).toBeUndefined();
+    }
+  }, 120_000);
+});
+
+describe('第一方插件的按会话声明', () => {
+  it('适用全部会话种类的不写 appliesTo，只适用一部分时才写：同一个意思只有一种写法', async () => {
+    for (const [id, { definition, keys }] of await declaring()) {
+      const schema = definition.configSchema as ConfigSchema;
+      for (const key of keys) {
+        const kinds = (schema[key] as { session: { appliesTo?: readonly string[] } }).session.appliesTo;
+        expect(kinds && [...kinds].sort(), `${id}.${key}`).not.toEqual(['owner', 'room', 'task']);
+      }
     }
   }, 120_000);
 });

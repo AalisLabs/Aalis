@@ -10,13 +10,13 @@ import {
 } from '../../packages/plugin-trigger-policy/src/idle-scheduler.js';
 import { createState, type TriggerSessionState } from '../../packages/plugin-trigger-policy/src/state.js';
 import { fixedRef } from '../fixtures/service-ref.js';
-import { resolveTriggerPolicyConfig } from './trigger-policy-config.js';
+import { resolveTriggerPolicySettings } from './trigger-policy-config.js';
 
 // 背景：platform 档 all-quiet 策略在「已达标但无候选」和「压根没有活动记录」两种情形下
 // 都把重排间隔压成 1s，形成 1 Hz 死转（每秒一个 timer + 一条 debug）。契约是**每轮之间至少隔
 // 一个阈值量级**，一轮只发一条。
-// 背景：platform 档挑候选时不看 per-scope overrides，单独配了 idleTriggerScope:'off'
-// 的会话照样被主动开聊，提示词也恒用顶层的那份。
+// 背景：platform 档挑候选时不看按会话设的参数，单独设了 idleTriggerScope:'off'
+// 的会话照样被主动开聊，提示词也恒用全局的那份。参数按会话现读，这里给全局层与各会话的值。
 // 背景（BQ）：stop() 只清当前 timer，飞行中的 tick 回来照样 schedule() —— 拆卸后留下僵尸定时器，
 // 一直把闲置消息注进已停的插件。契约：stop() 之后任何重排都是空操作。
 // 流控状态（禁言/冷却/限速）归 flow-control，调度器只经服务读取；这里用可控的假服务。
@@ -28,7 +28,8 @@ interface FakeFlow {
   limited: Set<string>;
 }
 
-function setup() {
+/** global 是全局层的参数，sessions 是各会话自己设的（会话 id → 值）；调度器按会话现读 */
+function setup(global: Record<string, unknown>, sessions: Record<string, Record<string, unknown>> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const bound = app.bind({ logger });
   const flow: FakeFlow = { muted: new Set(), cooling: new Set(), limited: new Set() };
@@ -52,13 +53,14 @@ function setup() {
     } as never),
     flowControl: fixedRef(service),
     isActive: () => trigger.active,
+    settingsOf: sessionId => resolveTriggerPolicySettings({ ...global, ...(sessionId ? sessions[sessionId] : {}) }),
   };
   return { app, caps, seen, flow, gw, trigger };
 }
 
 /** 造一个「很久没动过」的状态（满足 all-quiet） */
-function quietState(targetId = 'g1', minutesAgo = 10): TriggerSessionState {
-  const s = createState('onebot', 'group', targetId);
+function quietState(minutesAgo = 10): TriggerSessionState {
+  const s = createState('onebot');
   s.lastMessageTime = Date.now() - minutesAgo * 60_000;
   return s;
 }
@@ -72,15 +74,14 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
   });
 
   it('候选被禁言挤出后退避到阈值量级，解除禁言也不会在 1s 内开聊', async () => {
-    const { app, caps, seen, flow } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen, flow } = setup({
       idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'all-quiet',
       idleTriggerMinutes: 1,
     });
+    const strategy = 'all-quiet';
     const states = new Map<string, TriggerSessionState>([['S1', quietState()]]);
     flow.muted.add('S1');
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
 
     // 第一次 tick：静默已达标但唯一候选被禁言 → 无候选
@@ -100,15 +101,14 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
   });
 
   it('会话无任何活动记录时按整个阈值等，而非立刻开聊', async () => {
-    const { app, caps, seen } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen } = setup({
       idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'all-quiet',
       idleTriggerMinutes: 1,
     });
+    const strategy = 'all-quiet';
     const states = new Map<string, TriggerSessionState>();
-    states.set('S1', createState('onebot', 'group', 'g1')); // lastMessageTime/lastBotActivityAt 全 0
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    states.set('S1', createState('onebot')); // lastMessageTime/lastBotActivityAt 全 0
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -130,53 +130,46 @@ describe('PlatformIdleScheduler：候选筛选', () => {
   });
 
   it('单独关掉闲置触发的会话不被抓来开聊，提示词取该会话的有效配置', async () => {
-    const { app, caps, seen } = setup();
-    const cfg = resolveTriggerPolicyConfig({
-      idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'all-quiet',
-      idleTriggerMinutes: 1,
-      idleTriggerPrompt: '顶层提示',
-      overrides: [
-        { scope: 'onebot:group:g-off', idleTriggerScope: 'off' },
-        { scope: 'onebot:group:g-on', idleTriggerPrompt: '本群专属提示' },
-      ],
-    });
+    const { app, caps, seen } = setup(
+      { idleTriggerScope: 'platform', idleTriggerMinutes: 1, idleTriggerPrompt: '全局提示' },
+      { 'S-off': { idleTriggerScope: 'off' }, 'S-on': { idleTriggerPrompt: '本会话专属提示' } },
+    );
+    const strategy = 'all-quiet';
     // 关掉的那个「更久没联系」，修复前必被选中
     const states = new Map<string, TriggerSessionState>([
-      ['S-off', quietState('g-off', 60)],
-      ['S-on', quietState('g-on', 10)],
+      ['S-off', quietState(60)],
+      ['S-on', quietState(10)],
     ]);
 
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
     await vi.advanceTimersByTimeAsync(1_100);
     sched.stop();
 
     expect(seen).toHaveLength(1);
     expect(seen[0].sessionId, 'idleTriggerScope:off 的会话不该被主动开聊').toBe('S-on');
-    expect(seen[0].content, '提示词应取候选会话的有效配置').toBe('本群专属提示');
+    expect(seen[0].content, '提示词应取候选会话的参数').toBe('本会话专属提示');
     await app.stop();
   });
 
   it('禁言、冷却、限速中的会话都不当候选', async () => {
-    const { app, caps, seen, flow } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen, flow } = setup({
       idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'fixed',
       idleTriggerMinutes: 1,
     });
+    const strategy = 'fixed';
     // 三个过不了流控硬闸的会话都比可选的那个更久没联系
     const states = new Map<string, TriggerSessionState>([
-      ['S-muted', quietState('g1', 60)],
-      ['S-cooling', quietState('g2', 50)],
-      ['S-limited', quietState('g3', 40)],
-      ['S-ok', quietState('g4', 10)],
+      ['S-muted', quietState(60)],
+      ['S-cooling', quietState(50)],
+      ['S-limited', quietState(40)],
+      ['S-ok', quietState(10)],
     ]);
     flow.muted.add('S-muted');
     flow.cooling.add('S-cooling');
     flow.limited.add('S-limited');
 
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
     await vi.advanceTimersByTimeAsync(60_500);
     sched.stop();
@@ -186,18 +179,17 @@ describe('PlatformIdleScheduler：候选筛选', () => {
   });
 
   it('agent 对闲置提示沉默时，注入本身记为开口，下一轮轮到其他会话', async () => {
-    const { app, caps, seen } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen } = setup({
       idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'fixed',
       idleTriggerMinutes: 1,
     });
+    const strategy = 'fixed';
     const states = new Map<string, TriggerSessionState>([
-      ['S-A', quietState('gA', 60)],
-      ['S-B', quietState('gB', 30)],
+      ['S-A', quietState(60)],
+      ['S-B', quietState(30)],
     ]);
 
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
     // 没有任何 agent 回复：只有注入本身能刷新活动时间
     await vi.advanceTimersByTimeAsync(60_500);
@@ -220,15 +212,14 @@ describe('闲置触发只在触发策略生效时开口', () => {
   });
 
   it('platform 档：未生效时到点不注入、不记 bot 开口；重新生效后照常', async () => {
-    const { app, caps, seen, trigger } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen, trigger } = setup({
       idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'fixed',
       idleTriggerMinutes: 1,
     });
+    const strategy = 'fixed';
     const states = new Map<string, TriggerSessionState>([['S1', quietState()]]);
     trigger.active = false;
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
 
     await vi.advanceTimersByTimeAsync(60_500);
@@ -244,15 +235,14 @@ describe('闲置触发只在触发策略生效时开口', () => {
   });
 
   it('session 档：未生效时到点跳过、按原退避重排，不记 bot 开口；重新生效后照常', async () => {
-    const { app, caps, seen, trigger } = setup();
-    const cfg = resolveTriggerPolicyConfig({
+    const { app, caps, seen, trigger } = setup({
       idleTriggerScope: 'session',
       idleTriggerStyle: 'exponential',
       idleTriggerMinutes: 1,
       idleTriggerJitter: false,
     });
     const state = quietState();
-    const reschedule = () => scheduleSessionIdle(caps, cfg, state, 'S1', reschedule);
+    const reschedule = () => scheduleSessionIdle(caps, state, 'S1', reschedule);
     trigger.active = false;
     reschedule();
 
@@ -281,19 +271,18 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
   });
 
   it('tick 飞行中 stop() 后不再重排（无僵尸定时器）', async () => {
-    const { app, caps, seen, gw } = setup();
+    const { app, caps, seen, gw } = setup({
+      idleTriggerScope: 'platform',
+      idleTriggerMinutes: 1,
+    });
     let release!: () => void;
     const inFlight = new Promise<void>(r => {
       release = r;
     });
     gw.hold = () => inFlight; // 卡住注入，制造「tick 飞行中」的窗口
-    const cfg = resolveTriggerPolicyConfig({
-      idleTriggerScope: 'platform',
-      idleTriggerStrategy: 'all-quiet',
-      idleTriggerMinutes: 1,
-    });
+    const strategy = 'all-quiet';
     const states = new Map<string, TriggerSessionState>([['S1', quietState()]]);
-    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, strategy, states);
     sched.start();
 
     await vi.advanceTimersByTimeAsync(1_100);

@@ -113,10 +113,10 @@ describe('启用的技能字段', () => {
       dynamicOptions: 'skills',
       allowCustom: true,
       default: ['*'],
-      session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+      session: { prominence: 'advanced' },
     });
-    const session = field.session as { minLevel?: number; unset?: unknown };
-    expect([session.minLevel, session.unset]).toEqual([undefined, undefined]);
+    const session = field.session as { appliesTo?: unknown; minLevel?: number; unset?: unknown };
+    expect([session.appliesTo, session.minLevel, session.unset]).toEqual([undefined, undefined, undefined]);
   });
 
   it('可选项来源 skills：先是「全部技能」，再是各技能，说明取技能的 description', async () => {

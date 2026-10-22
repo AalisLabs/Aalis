@@ -207,7 +207,7 @@ async function boot({
       'session/config/layers': () => ({
         layers: [
           { layer: { scope: 'global' } },
-          { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } },
+          { layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' },
         ],
         order: LAYER_ORDER,
       }),
@@ -273,10 +273,10 @@ describe('可按会话设置的项', () => {
     fireEvent.click(toggle);
     const places = within(rowOf('最大工具迭代').getByRole('list', { name: '另有 2 处设置' }));
     expect(places.getAllByRole('listitem').map(item => item.textContent)).toEqual([
-      '平台类型档 onebot · group15',
+      '平台类型档 onebot · 群15',
       '子会话『<子>』（父会话『<父>』）5',
     ]);
-    expect(places.getByRole('link', { name: '平台类型档 onebot · group' }).getAttribute('href')).toBe(
+    expect(places.getByRole('link', { name: '平台类型档 onebot · 群' }).getAttribute('href')).toBe(
       '/settings/session-defaults?layer=platformType%3Aonebot%3Agroup',
     );
     expect(places.getByRole('link', { name: '子会话『<子>』（父会话『<父>』）' }).getAttribute('href')).toBe(

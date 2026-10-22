@@ -45,8 +45,8 @@ async function loadStack() {
   await seedRooms(app.bind({ memory: memoryService }).memory.use, { [GROUP]: '<群名占位>' });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
-  await app.plugin(triggerPolicyPlugin, { scopes: ['*:group'] });
-  await app.plugin(flowControlPlugin, { scopes: ['*:group'] });
+  await app.plugin(triggerPolicyPlugin, {});
+  await app.plugin(flowControlPlugin, {});
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(memoryHistoryPlugin, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
   await app.plugin(agentPlugin, { systemPrompt: 'test bot' });

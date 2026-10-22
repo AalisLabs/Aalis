@@ -113,7 +113,7 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   │
   ├─ 7. hooks.use.run('agent:llm:after')
   │
-  ├─ 8. 工具调用循环 (最多 maxToolIterations 次)
+  ├─ 8. 工具调用循环 (最多 maxToolIterations 次，没设不限)
   │     ├─ hooks.use.run('agent:tool:before')
   │     ├─ tools.use.execute() ← 权限检查 + 执行
   │     ├─ hooks.use.run('agent:tool:after')
