@@ -130,7 +130,7 @@ export function resolveCapabilityPolicy(
 export interface InboundTurn {
   /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
   source?: string;
-  /** 同 IncomingMessage.fromTurn：续做带着起它的那一轮，这一轮与它同一类别 */
+  /** 同 IncomingMessage.fromTurn：续做带着起它的那一轮，这一轮与它同一类别；子任务带着派它的那一轮，主体随它 */
   fromTurn?: FromTurn;
   /** 同 IncomingMessage.messageId：入站消息的平台消息 id。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
   messageId?: string;
@@ -180,7 +180,7 @@ export interface ExecutionGuardContext {
   signal?: AbortSignal;
 }
 
-/** 判发起回合的类别要的信息：执行守卫上下文的这几项，调用方按同样的口径填（由入站消息拼时用 {@link originTurnOf}） */
+/** 判发起回合的类别与主体要的信息：执行守卫上下文的这几项，调用方按同样的口径填（由入站消息拼时用 {@link originTurnOf}） */
 export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
 
 /**
@@ -272,6 +272,12 @@ export interface AuthorityService {
    * 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
    */
   originOf(turn: OriginTurn): OriginKind;
+
+  /**
+   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）是 owner 的为 owner，含它的续做；子任务随派它的那一轮
+   * （inbound.fromTurn，没有时为 other），不按子任务回合自己的授权身份；其余为 other。消费方不自己读受众
+   */
+  principalOf(turn: OriginTurn): 'owner' | 'other';
 
   /**
    * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。

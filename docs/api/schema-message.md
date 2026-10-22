@@ -30,7 +30,7 @@ interface IncomingMessage {
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-  fromTurn?: FromTurn;                 // 起它的那一轮：续做带着，见下文
+  fromTurn?: FromTurn;                 // 起它的那一轮：续做与子任务带着，见下文
   hostNotice?: {                       // 宿主撰写的事件通知，见下文
     kind: string;
     id?: string;
@@ -59,7 +59,7 @@ interface IncomingMessage {
 
 ### 起它的那一轮（fromTurn）
 
-续做（如后台任务的结束通知开的一轮）带着起它的那次调用所在那一轮的事实：
+续做（如后台任务的结束通知开的一轮）与子任务（子任务插件在入站回合里派出的任务消息与追问）带着起它的那次调用所在那一轮的事实：
 
 ```ts
 interface FromTurn {
@@ -71,7 +71,7 @@ interface FromTurn {
 }
 ```
 
-权限服务按那一轮判这一轮的类别（续做与它延续的那一轮同一类别）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与授权身份填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在只有后台任务结束通知），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
+权限服务按那一轮判这一轮的类别（续做与它延续的那一轮同一类别）与主体（子任务随派它的那一轮）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与授权身份填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在是后台任务结束通知与子任务的任务消息），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
 
 ### 经 owner 过目的注入（ownerApproved）
 

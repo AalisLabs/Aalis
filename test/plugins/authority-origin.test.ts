@@ -99,3 +99,75 @@ describe('权限服务的 originOf', () => {
     expect(manager.originOf(turn)).toBe(kind);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 这一轮的主体：人亲手那一轮（含它的续做）的参与者是 owner 即 owner；子任务随派它的那一轮（任务消息带着的 fromTurn），
+// 不按子任务回合自己的授权身份；其余（自主回合、没带 fromTurn 的子任务）为 other。
+// ════════════════════════════════════════════════════════════
+
+/** 子任务回合：发言者记作父会话，授权身份取派它的那一轮的参与者 */
+const subtaskOf = (parent: string, from: FromTurn): OriginTurn => ({
+  sessionId: `${parent}::abcd1234`,
+  platform: from.platform,
+  userId: `parent:${parent}`,
+  actor: from.participants[0],
+  inbound: { source: 'subtask', fromTurn: from },
+});
+
+/** 那一轮里转后台的调用的续做那一轮的事实 */
+const resumedFacts = (from: FromTurn): FromTurn => ({
+  platform: from.platform,
+  userId: from.userId,
+  participants: from.participants,
+  source: 'bg:bg_x_1',
+  fromTurn: from,
+});
+
+/** 子任务那一轮的事实：派它的是 from 那一轮 */
+const subtaskFacts = (parent: string, from: FromTurn): FromTurn => ({
+  platform: from.platform,
+  userId: `parent:${parent}`,
+  participants: from.participants,
+  source: 'subtask',
+  fromTurn: from,
+});
+
+/** 定时任务那一轮的事实：授权身份是创建者 owner */
+const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER], source: 'scheduler' };
+const CHILD = `${WEBUI}::abcd1234`;
+
+const principals: Array<[string, OriginTurn, 'owner' | 'other']> = [
+  ['owner 在群里亲手发来', { sessionId: GROUP, ...OWNER_ON_QQ, inbound: {} }, 'owner'],
+  ['owner 在 WebUI 亲手发来', { sessionId: WEBUI, ...OWNER, inbound: {} }, 'owner'],
+  ['群成员在群里亲手发来', { sessionId: GROUP, ...MEMBER, inbound: {} }, 'other'],
+  ['owner 那一轮的续做', resumed(GROUP, handTurn(OWNER_ON_QQ)), 'owner'],
+  ['群成员那一轮的续做', resumed(GROUP, handTurn(MEMBER)), 'other'],
+  ['子任务：派自 owner 亲手那一轮', subtaskOf(GROUP, handTurn(OWNER_ON_QQ)), 'owner'],
+  ['子任务：派自 owner 那一轮的续做', subtaskOf(GROUP, resumedFacts(handTurn(OWNER_ON_QQ))), 'owner'],
+  ['子任务：派自群成员那一轮', subtaskOf(GROUP, handTurn(MEMBER)), 'other'],
+  ['子任务：派自定时任务那一轮（授权身份是 owner）', subtaskOf(WEBUI, SCHEDULED), 'other'],
+  [
+    '子任务里转后台的调用的续做：派子任务的是 owner 亲手那一轮',
+    resumed(CHILD, subtaskFacts(WEBUI, handTurn(OWNER))),
+    'owner',
+  ],
+  ['子任务里转后台的调用的续做：派子任务的是定时任务那一轮', resumed(CHILD, subtaskFacts(WEBUI, SCHEDULED)), 'other'],
+  [
+    '没带起它的那一轮的子任务（授权身份是 owner）',
+    { sessionId: CHILD, platform: 'webui', userId: `parent:${WEBUI}`, actor: OWNER, inbound: { source: 'subtask' } },
+    'other',
+  ],
+  [
+    '自主回合：owner 建的定时任务',
+    { sessionId: WEBUI, platform: 'webui', actor: OWNER, inbound: { source: 'scheduler' } },
+    'other',
+  ],
+];
+
+describe('权限服务的 principalOf', () => {
+  const manager = new AuthorityManager(mkConfig({ owners: [OWNER_ON_QQ] }), silentLogger(), noFileStorage);
+
+  it.each(principals)('%s', (_label, turn, principal) => {
+    expect(manager.principalOf(turn)).toBe(principal);
+  });
+});

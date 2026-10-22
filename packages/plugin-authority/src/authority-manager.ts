@@ -15,6 +15,7 @@ import {
   matchAnyCap,
   OWNER_RANK,
   originKind,
+  principalKind,
   resolveAccess,
   resolveMinLevel,
 } from './authority-model.js';
@@ -67,6 +68,10 @@ export class AuthorityManager implements AuthorityService {
 
   originOf(turn: OriginTurn): OriginKind {
     return originKind(turn);
+  }
+
+  principalOf(turn: OriginTurn): 'owner' | 'other' {
+    return principalKind(turn, (platform, userId) => this.isOwner(platform, userId));
   }
 
   /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。平台身份（如 onebot 群角色）不参与。 */

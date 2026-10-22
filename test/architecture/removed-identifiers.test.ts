@@ -207,6 +207,8 @@ const REMOVED: Array<[string, string]> = [
   ['callerUserId', '后台任务结束通知上那次调用的发言者，由续做带着的起它的那一轮 fromTurn 取代'],
   ['owner-chain', '发起类别「owner 链的延续」：续做与它延续的那一轮同一类别'],
   ['noticeCallers', 'agent 让起它的人说话就停下续做的那套：新消息怎么对待在跑的一轮归通道层'],
+  ['lastPrincipal', '触及服务记的父会话最近一次签发凭据那一轮的主体：子任务改随派它的那一轮'],
+  ['spawnedBy', '触及服务记的子会话由哪一轮派出：子任务改随任务消息带着的那一轮'],
 ];
 
 /**

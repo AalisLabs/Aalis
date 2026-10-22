@@ -12,7 +12,8 @@
 //   4. 等级 level >= 操作 minLevel   → 放行
 //   5. 所属组里有条目覆盖这个操作    → 放行；否则拒
 // 确认轴（confirm/HITL）正交，不在此函数（owner 也吃，防注入借权）。
-// 内含 glob 工具 matchAnyCap（硬禁、白名单与组条目的匹配）、组名与条目的写法，以及工具调用发起回合的类别 originKind。
+// 内含 glob 工具 matchAnyCap（硬禁、白名单与组条目的匹配）、组名与条目的写法，以及工具调用发起回合的类别 originKind
+// 与这一轮的主体 principalKind。
 // ════════════════════════════════════════════════════════════
 
 /** owner 等级（∞）：不入等级轴，靠 owners 列表归属；任何有限门槛都压不过它（防自锁）。 */
@@ -113,12 +114,12 @@ export function resolveAccess(input: AccessInput): boolean {
   return grantsCover(input.granted, input.capability, input.toolGroups); // 5. 所属组覆盖
 }
 
-/** 判类别要的那几项：起它的那一轮还原成的一轮没有会话 */
-type Turn = Pick<OriginTurn, 'userId' | 'actor' | 'inbound'>;
+/** 判类别与主体要的那几项：起它的那一轮还原成的一轮没有会话 */
+type Turn = Pick<OriginTurn, 'platform' | 'userId' | 'actor' | 'inbound'>;
 
 /** 起它的那一轮还原成一轮：授权身份取它的参与者 */
-function turnOf({ userId, participants, source, fromTurn }: NonNullable<InboundTurn['fromTurn']>): Turn {
-  return { userId, actor: participants[0], inbound: { source, fromTurn } };
+function turnOf({ platform, userId, participants, source, fromTurn }: NonNullable<InboundTurn['fromTurn']>): Turn {
+  return { platform, userId, actor: participants[0], inbound: { source, fromTurn } };
 }
 
 /**
@@ -138,4 +139,25 @@ export function originKind(turn: Turn): OriginKind {
   if (inbound.fromTurn) return originKind(turnOf(inbound.fromTurn));
   if (inbound.source !== undefined) return 'autonomous';
   return (turn.actor ?? turn).userId ? 'hand' : 'autonomous';
+}
+
+/**
+ * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：
+ * - hand（含它的续做，续做的授权身份就是起它的那一轮的参与者）：参与者是 owner 为 owner；
+ * - 子任务随派它的那一轮（inbound.fromTurn），没带的为 other；子任务里的续做经起它的子任务那一轮递归到派它的那一轮；
+ * - 其余为 other。
+ */
+export function principalKind(turn: Turn, isOwner: (platform: string, userId?: string) => boolean): 'owner' | 'other' {
+  switch (originKind(turn)) {
+    case 'hand': {
+      const { platform, userId } = turn.actor ?? turn;
+      return isOwner(platform, userId) ? 'owner' : 'other';
+    }
+    case 'subtask': {
+      const from = turn.inbound?.fromTurn;
+      return from ? principalKind(turnOf(from), isOwner) : 'other';
+    }
+    default:
+      return 'other';
+  }
 }

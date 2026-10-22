@@ -595,7 +595,7 @@ export interface ProvenanceRecord {
 
 export interface ReachService {
   /**
-   * 按一次工具调用签发凭据：发起类别取权限服务的 originOf，会话与绑定取会话管理里的记录。没有本地效果的调用拿到
+   * 按一次工具调用签发凭据：主体取权限服务的 principalOf，会话与绑定取会话管理里的记录。没有本地效果的调用拿到
    * exec 为 none 的凭据
    */
   forCall(call: OriginTurn): Promise<ReachCredential>;
