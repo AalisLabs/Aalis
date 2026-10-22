@@ -188,6 +188,12 @@ const REMOVED: Array<[string, string]> = [
   ['execUsed', '检查点按工具名认「这一轮跑过命令」的标记与查询：回滚对话框固定写明命令与外部工具的效果撤不回'],
   ['turn/checkpoint', '会话协议里回滚之前查这一轮跑没跑命令的方法'],
   ['rewindCheckFailed', '回滚对话框查不到这一轮跑没跑命令时的提示'],
+  ['getPluginGroups', 'agent 服务按写死的服务名列出的插件分组，没有调用方'],
+  ['PluginGroupInfo', 'agent 服务按写死的服务名列出的插件分组，没有调用方'],
+  ['getPreprocessors', 'agent 服务列出已登记的预处理器，没有调用方'],
+  ['PreprocessorInfo', 'agent 服务列出已登记的预处理器，没有调用方'],
+  ['isTimeInjectionEnabled', '人设服务报告是否注入了时间，系统工具据此不登记 system_time：现在照样登记'],
+  ['BuildContextOptions', 'media 服务上转调识图上下文的 buildContext，没有调用方'],
 ];
 
 /**

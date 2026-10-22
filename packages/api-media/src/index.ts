@@ -4,7 +4,8 @@
 // Aalis 把"媒体 → 文本"的处理路径抽象为 MediaProcessor。
 // plugin-media 既是该契约的调度器，也是 LLM 服务的内置 adapter
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
-// 真正"非 LLM"的 backend（如 whisper.cpp / 云 ASR）则注册为独立 processor。
+// 音频后端（如 whisper.cpp / 云 ASR）走 asr 服务（@aalis/api-asr），由 plugin-media 包成音频 processor；
+// registerProcessor 只用于非音频、非 LLM 的 backend。
 // 另导出会话媒体的目录约定（session-media.ts：写入方写在哪、怎么清）与媒体按受众的判据（scope.ts，发媒体、看图的
 // 工具与出站转换共用）。
 //
@@ -124,12 +125,10 @@ export interface TranscribeResult {
 
 /** plugin-media 暴露的服务（subsystem='media'） */
 export interface MediaService {
-  /** 注册非 LLM 的 backend（LLM 走内置 adapter 自动注册，无需手动调用） */
+  /** 注册非音频、非 LLM 的 backend（LLM 走内置 adapter 自动注册，音频后端走 asr 服务，都无需手动调用） */
   registerProcessor(p: MediaProcessor): () => void;
   /** 列出当前可用 processor */
   listProcessors(cap?: MediaCapability): MediaProcessor[];
-  /** 选 processor：优先 prefer（可是 processor name 字符串或 LLM ModelRef），再按 priority；找不到返回 null */
-  pickProcessor(cap: MediaCapability, prefer?: string | ModelRef | null): MediaProcessor | null;
 
   /** 描述：根据每个 attachment 的 kind/mime 自动选 processor */
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
@@ -145,7 +144,7 @@ export interface MediaService {
    */
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;
 
-  // ===== 描述缓存 / 上下文构造（image-rec 合并而来）=====
+  // ===== 单图、单视频识别与描述缓存（image-rec 合并而来）=====
 
   /**
    * 主动描述单张图片（含动图自动多帧）。没有可用的 vision processor、识别结果为空，或动图取不到、
@@ -168,23 +167,14 @@ export interface MediaService {
    */
   lookupDescription(imageUrl: string): string | null;
 
-  /** 写入描述缓存（一般由 describeImage 自动调用，外部很少用）。来源的传法同 lookupDescription */
-  rememberDescription(imageUrl: string, description: string): void;
-
   /**
    * 登记「原始来源（网址、data URI）→ 落盘的存储地址」别名：由**落盘方**在落盘成功后调一次
    * （适配器把远端网址落成 `data:/images/…` 时、WebUI 的 base64 落盘时）。
-   * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘地址的那条描述——
+   * 此后按**原始来源**查描述（lookupDescription）、识别后写描述都落到落盘地址的那条描述上——
    * OneBot 引用消息只拿得到原始网址时也不必重认。别名按来源串相等命中；
    * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次（见 plugin-adapter-onebot）。
    */
   rememberDescriptionAlias(source: string, landedRef: string): void;
-
-  /**
-   * 为含图消息构造视觉识别上下文（当前消息 + 引用消息 + 最近历史）。
-   * 用作 vision LLM 的 hint，让模型聚焦用户真正关心的问题。
-   */
-  buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string>;
 }
 
 export interface DescribeImageOptions {
@@ -217,11 +207,6 @@ export interface DescribeVideoOptions {
   hint?: string;
   /** 本地缓存路径（避免重新下载） */
   localPath?: string;
-}
-
-export interface BuildContextOptions {
-  /** 最近前文条数，默认由实现决定 */
-  beforeLimit?: number;
 }
 
 export interface DescribeOptions {

@@ -14,15 +14,14 @@
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/api-agent/src/index.ts`）。注意只有 `handleMessage` 是必须的，其余全为可选方法：
+`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage` 与 `assignModel` 必须实现，`abort` 与 `registerPreprocessor` 可选：
 
 ```ts
 export interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
   abort?(sessionId: string, turnId?: string): boolean;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
-  getPreprocessors?(): PreprocessorInfo[];
-  getPluginGroups?(): PluginGroupInfo[];
+  assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
 
 export interface BoundAgent extends AgentService {
@@ -34,6 +33,7 @@ export interface BoundAgent extends AgentService {
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。
 - `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
+- `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
 - **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:input:before`、`agent:turn:after`、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
 
@@ -69,12 +69,12 @@ export interface BoundAgent extends AgentService {
 
 99% 的需求用**钩子**就够了，无需替换整个服务。只有当你要彻底接管编排逻辑时才自己 provide `agent`。
 
-**最小必须**：只需 `handleMessage`。省略 `abort` 则前端「停止生成」失效，省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
+**最小必须**：`handleMessage` 与 `assignModel`。省略 `abort` 则前端「停止生成」失效，省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
 
 ```ts
 import { agent, type AgentService } from '@aalis/api-agent';
 import { definePlugin, optional, provide } from '@aalis/core';
-import { llm } from '@aalis/api-llm';
+import { llm, type ModelRef } from '@aalis/api-llm';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 class MyAgent implements AgentService {
@@ -83,6 +83,9 @@ class MyAgent implements AgentService {
   }
   abort(_sessionId: string, _turnId?: string): boolean {
     return false;
+  }
+  async assignModel(_sessionId: string, _model: ModelRef): Promise<void> {
+    throw new Error('不支持给会话指定模型');
   }
 }
 
@@ -152,8 +155,6 @@ export default definePlugin({
 **abort 路径不回滚已完成的工具记录**（有意为之）：删除会让 agent「忘记自己刚做过的有副作用的事」导致下一轮重复调用。真正的 orphan 由 `sanitizeToolCallHistory` 在装载历史时兜底过滤。
 
 **工具链路异常只影响该工具**：同一批并行工具中，某个工具的 `agent:tool:before` / `agent:tool:after` 钩子、守卫或结果处理抛错时，该工具得到一条错误结果（执行前失败为「工具调用失败」；执行后失败为「工具已执行，但结果处理失败」，不回退到原始输出），同批其它工具的结果与整组记录照常落库，回合继续。
-
-**`getPluginGroups()` 硬编码子系统服务集**：只纳入 `llm/memory/persona/message-archive`，不含 `platform`。
 
 ## 8. 交叉链接
 

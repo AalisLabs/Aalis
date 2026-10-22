@@ -330,12 +330,11 @@ describe('agent 预处理器退订按条目身份', () => {
     const oldOff = svc.registerPreprocessor!('x', handler('old'));
     svc.registerPreprocessor!('x', handler('new'));
     oldOff();
-    expect(
-      svc.getPreprocessors?.().map(p => p.name),
-      '旧闭包对已被替换的登记应无动作',
-    ).toEqual(['x']);
+    await run();
+    expect(ran, '同名替换之后链上只跑最新的那个，旧闭包对已被替换的登记无动作').toEqual(['new']);
 
     // 账目仍在，所以第三次同名登记能替换掉「new」的中间件——链上只剩最新一个
+    ran.length = 0;
     svc.registerPreprocessor!('x', handler('newer'));
     await run();
     expect(ran).toEqual(['newer']);

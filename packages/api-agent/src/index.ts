@@ -15,18 +15,6 @@ import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 /**
- * 插件分组信息（按子系统聚合）
- *
- * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构。
- */
-export interface PluginGroupInfo {
-  /** 分组显示名称：可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染 */
-  label: string | TextRef;
-  /** 该分组包含的插件 instanceId 列表 */
-  plugins: string[];
-}
-
-/**
  * 消息预处理器函数
  *
  * 在消息到达 LLM 之前对 IncomingMessage 进行变换。
@@ -34,12 +22,6 @@ export interface PluginGroupInfo {
  * 不调用则中断整个流程（LLM 不会被调用）。
  */
 export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
-
-/** 已注册预处理器的元信息 */
-export interface PreprocessorInfo {
-  /** 预处理器名称 */
-  name: string;
-}
 
 /**
  * Agent 服务 —— 对话编排引擎
@@ -70,17 +52,6 @@ export interface AgentService {
    * 底层通过中间件系统实现，按注册顺序洋葱式执行。
    */
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
-
-  /** 获取当前所有已注册预处理器的元信息 */
-  getPreprocessors?(): PreprocessorInfo[];
-
-  /**
-   * 获取 Agent 子系统的插件分组
-   *
-   * 按 Agent 域服务名（llm / memory / persona / message-archive，不含 platform）
-   * 找出提供这些服务的插件，返回分组信息。
-   */
-  getPluginGroups?(): PluginGroupInfo[];
 
   /**
    * 把这个会话本会话层的对话模型设成 model（写进会话设置）：子任务插件给子会话指定模型时，在建好之后、发首条消息之前调。

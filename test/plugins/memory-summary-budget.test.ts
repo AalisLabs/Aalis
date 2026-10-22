@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
 import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { todoList } from '../../packages/api-todo-list/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -77,21 +78,16 @@ describe('plugin-memory-summary: 摘要预算', () => {
 
   it('输入算上工作模板附的待办那一行', async () => {
     const llm = fakeSummaryLLM({ contextLength: 200_000, maxOutputTokens: 32_000 });
-    const { memory, compression } = await setup({}, llm.model);
+    const { memory, compression, host } = await setup({}, llm.model);
+    host.provide.use(todoList, {
+      get: async () => [{ id: 1, title: '整理发布清单', status: 'not-started' }],
+      clear: async () => {},
+    });
     const lines = await seed(memory, 's', 121, 100);
-    const todo = JSON.stringify({ todoList: [{ title: '整理发布清单' }] });
-    const call = { id: 't1', type: 'function' as const, function: { name: 'manage_todo_list', arguments: todo } };
-    await memory.saveMessage('s', { role: 'assistant', content: '', toolCalls: [call] });
-    await memory.saveMessage('s', { role: 'tool', toolCallId: 't1', content: 'ok' });
 
     await compression.compress('s', { reason: 'manual' });
 
-    const rows = [
-      ...lines,
-      `助手: 调用 manage_todo_list(${todo})`,
-      '工具结果(manage_todo_list): ok',
-      `当前任务列表状态：\n${todo}`,
-    ];
+    const rows = [...lines, '当前任务列表状态：\n- [not-started] 整理发布清单'];
     expect(budgetOf(llm.requests[0])).toBe(Math.floor(0.1 * tokensOf(rows)));
   });
 

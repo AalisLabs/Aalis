@@ -20,11 +20,8 @@ export interface PersonaService {
   getSystemPrompt(options?: PersonaSessionOptions): string;
   getVolatilePrompt?(options?: PersonaSessionOptions): string;
   getPersonaName(options?: PersonaSessionOptions): string;
-  getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
-  isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
   listModels?(): Promise<string[]>;
   getNickNames?(options?: PersonaSessionOptions): string[];
-  isTimeInjectionEnabled?(): boolean;
 }
 ```
 
@@ -33,27 +30,12 @@ export interface PersonaService {
 - `getSystemPrompt(options?)` — 渲染这个会话生效角色卡的静态人设：名字、描述、性格、prompt，这个会话的「额外提示」，以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
 - `getPersonaName(options?)` — 返回角色卡的 `name`：按 `options` 这个会话的「人设」取卡（找不到该卡时回落主卡），不给会话时按人设插件的配置。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
-- `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；这个会话设了「不用结构化输出」时也返回 `undefined`。
-- `isClientSideJsonRendering(options?)` — 是否由客户端渲染 JSON：这个会话的「客户端渲染 JSON」是开或关时以它为准，按角色卡时看该卡的声明。为真时服务端不提取回复字段，整段 JSON 透传给前端。
 - `listModels()` — 列出已扫描到的全部角色卡名，供会话设置里「人设」的可选项（webui-server 按服务名合起各提供者的 `listModels()`）。
 - `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
-- `isTimeInjectionEnabled()` — persona 是否已注入当前时间。其它插件据此决定是否还要注册 `system_time` 工具。
 
 ### 2.2 重要类型
 
 ```ts
-export interface OutputFormatField {
-  description: string;                       // 写入 system prompt 供 LLM 理解
-  type?: 'string' | 'number' | 'boolean';   // 影响占位符渲染 + 输出后类型强制
-  reply?: boolean;                           // 是否为发给用户的回复字段（有且仅有一个）
-}
-
-export interface OutputFormat {
-  fields: Record<string, OutputFormatField>; // key = JSON 字段名
-  replyField: string;                        // 自动推断，取 reply:true 的那个 key
-  retries: number;                           // 校验失败时额外重试次数，缺省 1，0=不重试
-}
-
 export interface PersonaSessionOptions {
   sessionId?: string;   // 按这个会话读人设插件自己的会话设置
   platform?: string;    // 入口平台：只对没有出生平台的会话起作用
@@ -78,7 +60,6 @@ export const persona = defineService<PersonaService>('persona');
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.present ? this.caps.persona.use : undefined`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
-- `@aalis/plugin-tool-system` — 通过 `persona.present && persona.use.isTimeInjectionEnabled?.()` 判断，已注入时间则跳过注册 `system_time` 工具。
 - `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合起各提供者的 `listModels()`。
 - `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ sessionId, platform: 'cli' })`（终端会话的生效人设），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
 
@@ -88,11 +69,11 @@ export const persona = defineService<PersonaService>('persona');
 
 ### 4.1 最小必须 vs 可选
 
-必须实现的是 `getSystemPrompt()` 与 `getPersonaName()`。只实现这两个，agent、cli、trigger 就能运行——trigger 只是少了几个昵称，tool-system 不会跳过 `system_time`。
+必须实现的是 `getSystemPrompt()` 与 `getPersonaName()`。只实现这两个，agent、cli、trigger 就能运行——trigger 只是少了几个昵称。
 
-其余带 `?` 的方法都是可选的。但要注意：如果你想支持 outputFormat 结构化输出，只实现 `getOutputFormat()` 是不够的。真正的 JSON 解析、回填、状态持久化与重试，发生在参考实现自己注册的 `agent:reply:before` 中间件里，而不是 agent 替你完成的。你的 provider 要复刻这套行为，就得自己挂同名钩子。
+其余带 `?` 的方法都是可选的。契约里没有结构化输出的方法：如果你想支持 outputFormat 结构化输出，JSON 指令块写进 `getSystemPrompt()`，JSON 解析、回填、状态持久化与重试发生在参考实现自己注册的 `agent:reply:before` 中间件里，而不是 agent 替你完成的。你的 provider 要复刻这套行为，就得自己挂同名钩子。
 
-如果不打算做结构化输出，可以整块省略 `getOutputFormat`、`isClientSideJsonRendering` 与 reply 钩子。这种情况下 agent 会把 LLM 原文当作回复直接发出。
+如果不打算做结构化输出，不挂 reply 钩子即可。这种情况下 agent 会把 LLM 原文当作回复直接发出。
 
 ### 4.2 注册（priority / entryId / label）与双源同步
 
@@ -114,7 +95,7 @@ manifest 的两个来源必须同步：除了运行时的 `provides: [persona]`�
 
 ```ts
 import { persona } from '@aalis/api-persona';
-import type { OutputFormat, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import { platform } from '@aalis/api-platform';
 import { config, definePlugin, optional, provide } from '@aalis/core';
 
@@ -126,9 +107,6 @@ class MyPersona implements PersonaService {
   }
   getPersonaName(): string {
     return this.nameStr;
-  }
-  getOutputFormat(_options?: PersonaSessionOptions): OutputFormat | undefined {
-    return undefined;
   }
 }
 
@@ -151,7 +129,7 @@ export default definePlugin({
 ## 5. 标准消费方式
 
 - 业务句柄是活的。`persona.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
-- persona 是可选依赖。在 `uses optional` 里声明它（agent、cli、tool-system 与两个触发插件都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
+- persona 是可选依赖。在 `uses optional` 里声明它（agent、cli 与两个触发插件都如此），使用前先看 `persona.present` 并给出降级值。agent 的降级是只用 base prompt，cli 的降级是 `?? 'Aalis'`。
 - 可选方法先判存在再调。接口里除两个核心方法外全带 `?`，统一写成 `persona?.getNickNames?.()`，因为第三方 provider 可能没有实现。
 - 注意错误边界。跨会话与可选读取统一用 `try/catch` 后静默忽略（persona 自身读 session-manager 就这么处理），不要让 persona 不可用拖垮主链路。
 
@@ -167,13 +145,13 @@ export default definePlugin({
 
 **状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：scope 为 all 时清全部会话的，否则清当前会话的；只在未指定 type、或 type 含 `context` 或 `persona` 时参与（`persona` 类型由参考实现登记）。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
-**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
+**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自角色卡的 `outputFormatRetries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
 
 ## 7. 边界与常见错误
 
 **「单例 PersonaService 跨平台」是真实约束。** 触发插件共用的点名识别（`@aalis/api-trigger`）的注释明确指出：mute 关键词不从 persona 读，以避免单例 PersonaService 跨平台泄漏。persona 是进程级单例，会话差异全部依靠 `PersonaSessionOptions` 与 `AsyncLocalStorage` 身份来承载；任何「当前会话状态」都不能写进裸字段。
 
-**结构化输出的逻辑不在 service 方法里，而在 reply 钩子里。** `getOutputFormat()` 只返回声明本身；真正的解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。仅调用 `getOutputFormat()` 并不能得到结构化结果。
+**结构化输出的逻辑在 reply 钩子里，不在契约方法里。** 角色卡的格式声明与会话的两个结构化输出开关只在参考实现内部读；解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。
 
 **reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会按同一张表加上 `message` 尝试解包。这是容错行为，不是契约保证。
 
@@ -188,5 +166,5 @@ export default definePlugin({
 ## 8. 交叉链接
 
 - 概念：`docs/concepts/service-model.md`（按名 DI、挑选规则）、`docs/concepts/lazy-service-access.md`（业务句柄是活的）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path` 与 `personasDir`）、`docs/concepts/message-llm-pipeline.md`（`agent:input:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
-- 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/tools.md`（`system_time` 跳过）、`docs/services/commands.md`（session 与 persona 配置）。
+- 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/commands.md`（session 与 persona 配置）。
 - 核心：`docs/core/service.md`、`docs/core/context.md`、`docs/core/plugin.md`。

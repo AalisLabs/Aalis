@@ -3,7 +3,7 @@
 `media` 把「媒体 → 文本」的多模态识别（图片描述、音频转写描述、视频抽帧加音轨）抽象成一个统一调度器。上层——agent preprocessor、工具、适配器——只需要向 `media` 提问，由它在一个 processor 池里仲裁并执行。这个池由「vision/audio LLM」与「独立的 ASR/Whisper backend」共同组成。
 
 - **服务注册名**：`'media'`（描述符 `media`，消费方经 `media.use` 调用）。
-- **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM 的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`；写「服务消费」时只用 `MediaService`。
+- **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM、非音频的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`（音频 backend 写成 `asr` provider，见 [§4](#4-写一个-provider)）；写「服务消费」时只用 `MediaService`。
 - **参考实现**：`@aalis/plugin-media`，声明 `provides=['media']`，通过 `provide.use(media, svc)` 提供，实现类是 `MediaServiceImpl`。
 - **它不是沙箱**：媒体的下载与落盘走 `safeFetch`（SSRF 守卫）加 `storage`，但 storage 本身不是隔离边界，详见 [§6](#6-能力-风险-影响)。
 
@@ -18,9 +18,8 @@
 ```ts
 export interface MediaService {
   // ----- processor 池管理 -----
-  registerProcessor(p: MediaProcessor): () => void;                              // 注册非 LLM backend，返回注销函数
+  registerProcessor(p: MediaProcessor): () => void;                              // 注册非音频、非 LLM 的 backend，返回注销函数
   listProcessors(cap?: MediaCapability): MediaProcessor[];
-  pickProcessor(cap: MediaCapability, prefer?: string | ModelRef | null): MediaProcessor | null;
 
   // ----- 批量识别（按 attachment.kind 自动选 processor）-----
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
@@ -33,9 +32,7 @@ export interface MediaService {
   describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 30 天缓存；识别出错时抛出
   describeVideo(videoUrl: string, opts?: DescribeVideoOptions): Promise<string>; // 抽帧+可选音轨；失败返回空串
   lookupDescription(imageUrl: string): string | null;                            // 只查缓存不触发识别
-  rememberDescription(imageUrl: string, description: string): void;
   rememberDescriptionAlias(source: string, landedRef: string): void;    // 落盘方登记「来源 → 落盘 ref」
-  buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string>; // 为含图消息造视觉上下文 hint
 }
 ```
 
@@ -74,7 +71,7 @@ export interface MediaProcessor {
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
 - **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）、`BuildContextOptions`。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）
@@ -304,7 +301,7 @@ export default definePlugin({
 
 **来源 → 落盘 ref 别名**：网址与 data URI 本身不是存储地址，落盘后才有存储地址。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data:/images/<会话目录>/onebot/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘地址的那条键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照不收原始来源串做键，见上段）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。带会话语境的描述按原始来源查不到（键是落盘的存储地址，只在本会话命中）。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到落盘地址的键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
 
-`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
+`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
 ### storage URI 用法（provider 与调度器都要懂）
 
@@ -334,7 +331,7 @@ export default definePlugin({
 
 `media` 服务本身不挂 authority 的 risk/visibility 门——它是 preprocessor 链路上的内部增强，调用语境（agent / 工具）由各自的 authority 把关。
 
-不过落盘路径按会话分目录（`data:/images/<会话目录>/media/`），`buildContext` 也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体按受众的判据](#媒体按受众的判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
+不过落盘路径按会话分目录（`data:/images/<会话目录>/media/`），识别时拼的对话上下文也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体按受众的判据](#媒体按受众的判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
 
 ### storage 不是沙箱
 

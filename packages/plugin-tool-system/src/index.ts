@@ -1,5 +1,4 @@
 import { commands } from '@aalis/api-commands';
-import { persona } from '@aalis/api-persona';
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
@@ -85,7 +84,6 @@ const uses = {
   logger,
   config,
   commands: optional(commands),
-  persona: optional(persona),
   storage: optional(storage),
   process: optional(processService),
 };
@@ -101,7 +99,7 @@ export default definePlugin({
 });
 
 function registerSystemToolset(caps: Caps): void {
-  const { tools, logger, persona } = caps;
+  const { tools, logger } = caps;
   const parsed = parseConfig(configSchema, caps.config.use, logger.use);
   const cfg = {
     ...parsed,
@@ -153,9 +151,8 @@ function registerSystemToolset(caps: Caps): void {
   }
 
   if (cfg.system.enabled) {
-    const skipTimeTool = persona.present && !!persona.use.isTimeInjectionEnabled?.();
-    registerSystemTools(systemTools, { cwdState, storage, skipTimeTool });
-    logger.use.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
+    registerSystemTools(systemTools, { cwdState, storage });
+    logger.use.info('系统工具已启用');
   }
 
   if (cfg.http.enabled) {

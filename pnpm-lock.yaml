@@ -2184,6 +2184,9 @@ importers:
       '@aalis/api-session-settings':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-session-settings
+      '@aalis/api-todo-list':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-todo-list
       '@aalis/schema-config':
         specifier: workspace:>=0.16.0 <1.0.0
         version: link:../schema-config
@@ -3225,9 +3228,6 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-commands
-      '@aalis/api-persona':
-        specifier: workspace:>=0.9.0 <1.0.0
-        version: link:../api-persona
       '@aalis/api-process':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-process

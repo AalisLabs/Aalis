@@ -24,7 +24,6 @@ interface SystemConfig {
   cwdState: CwdState;
   /** 用于 cwd 工具回显可用根清单与 cd 工具校验目标根存在性 */
   storage?: StorageService;
-  skipTimeTool?: boolean;
 }
 
 export function registerSystemTools(tools: BoundTools, config: SystemConfig): void {
@@ -153,39 +152,38 @@ export function registerSystemTools(tools: BoundTools, config: SystemConfig): vo
   });
 
   // ==================== system_time ====================
-  if (!config.skipTimeTool)
-    tools.register({
-      definition: {
-        type: 'function',
-        function: {
-          name: 'system_time',
-          description: '获取当前系统时间、时区和 Unix 时间戳。',
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: [],
-            additionalProperties: false,
-          },
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'system_time',
+        description: '获取当前系统时间、时区和 Unix 时间戳。',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
+          additionalProperties: false,
         },
       },
-      handler: async () => {
-        const now = new Date();
-        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const offsetParts =
-          new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
-            .formatToParts(now)
-            .find(p => p.type === 'timeZoneName')?.value ?? '';
-        return JSON.stringify({
-          iso: now.toISOString(),
-          local: now.toLocaleString('en-CA', { hour12: false }).replace(',', ''),
-          timezone: tz,
-          offset: offsetParts,
-          utcOffsetHours: -now.getTimezoneOffset() / 60,
-          unix: Math.floor(now.getTime() / 1000),
-          unixMs: now.getTime(),
-        });
-      },
-    });
+    },
+    handler: async () => {
+      const now = new Date();
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const offsetParts =
+        new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+          .formatToParts(now)
+          .find(p => p.type === 'timeZoneName')?.value ?? '';
+      return JSON.stringify({
+        iso: now.toISOString(),
+        local: now.toLocaleString('en-CA', { hour12: false }).replace(',', ''),
+        timezone: tz,
+        offset: offsetParts,
+        utcOffsetHours: -now.getTimezoneOffset() / 60,
+        unix: Math.floor(now.getTime() / 1000),
+        unixMs: now.getTime(),
+      });
+    },
+  });
 
   // ==================== cwd ====================
   // 设计为"廉价的发现入口"：调用一次就同时拿到当前目录 + 所有可用 storage 根。
