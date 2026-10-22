@@ -336,7 +336,10 @@ class OllamaClient {
   readonly keepAlive: string;
   private logger: Logger;
   private proc: ProcessService | null;
-  /** 生成请求的连接池：不设等响应头与读响应体的时限（默认各 300 秒），timeout 是唯一的时限 */
+  /**
+   * 生成请求的连接池：不设等响应头与读响应体的时限（默认各 300 秒），timeout 是唯一的时限。dispatcher 是 Node 自带 fetch
+   * 认的扩展字段，DOM 的 RequestInit 里没有（测试的类型检查带 DOM），带它的选项按 RequestInit 断言
+   */
   private readonly dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
   constructor(config: OllamaConfig, logger: Logger, proc: ProcessService | null) {
@@ -508,7 +511,7 @@ class OllamaClient {
         body: JSON.stringify(body),
         signal: idleTimeout(this.timeout, request.signal).signal,
         dispatcher: this.dispatcher,
-      });
+      } as RequestInit);
       text = await response.text();
     } catch (err) {
       throw this.requestError(err, request, startedAt);
@@ -593,7 +596,7 @@ class OllamaClient {
         body: JSON.stringify(body),
         signal: timer.signal,
         dispatcher: this.dispatcher,
-      });
+      } as RequestInit);
     } catch (err) {
       clearTimeout(slowConnectTimer);
       throw this.requestError(err, request, reqStart);
@@ -973,7 +976,7 @@ class OllamaClient {
         body: JSON.stringify(body),
         signal: idleTimeout(this.timeout, request.signal).signal,
         dispatcher: this.dispatcher,
-      });
+      } as RequestInit);
       respText = await resp.text();
     } catch (err) {
       throw this.requestError(err, request, httpT0);
