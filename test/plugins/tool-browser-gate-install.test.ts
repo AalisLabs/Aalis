@@ -51,7 +51,7 @@ const fake = vi.hoisted(() => {
         state.closed = true;
         return closeResult();
       },
-      newPage: async () => page,
+      createBrowserContext: async () => ({ newPage: async () => page }),
     };
   });
   return { launch, goto, closeResult, instances };

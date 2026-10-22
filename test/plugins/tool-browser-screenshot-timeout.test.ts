@@ -28,7 +28,8 @@ vi.mock(
   async importOriginal => {
     // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
     type Page = { evaluate(expr: string): Promise<unknown>; screenshot(opts: unknown): Promise<Uint8Array> };
-    type Browser = { connected: boolean; newPage(opts?: unknown): Promise<Page> };
+    type Context = { newPage(opts?: unknown): Promise<Page> };
+    type Browser = { connected: boolean; createBrowserContext(): Promise<Context> };
     type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<Browser>;
     const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
     const launch: Launch = async options => {
@@ -41,20 +42,26 @@ vi.mock(
         ],
       });
       probe.browsers.push(browser);
-      const newPage = browser.newPage.bind(browser);
-      browser.newPage = async opts => {
-        const page = await newPage(opts);
-        probe.pages.push(page);
-        const screenshot = page.screenshot.bind(page);
-        page.screenshot = async shotOpts => {
-          if (probe.hangNextScreenshot) {
-            probe.hangNextScreenshot = false;
-            page.evaluate('for(;;){}').catch(() => {});
-            await new Promise(r => setTimeout(r, 300));
-          }
-          return screenshot(shotOpts);
+      // 页面开在各会话的浏览器上下文里
+      const createBrowserContext = browser.createBrowserContext.bind(browser);
+      browser.createBrowserContext = async () => {
+        const context = await createBrowserContext();
+        const newPage = context.newPage.bind(context);
+        context.newPage = async opts => {
+          const page = await newPage(opts);
+          probe.pages.push(page);
+          const screenshot = page.screenshot.bind(page);
+          page.screenshot = async shotOpts => {
+            if (probe.hangNextScreenshot) {
+              probe.hangNextScreenshot = false;
+              page.evaluate('for(;;){}').catch(() => {});
+              await new Promise(r => setTimeout(r, 300));
+            }
+            return screenshot(shotOpts);
+          };
+          return page;
         };
-        return page;
+        return context;
       };
       return browser;
     };

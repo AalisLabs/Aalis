@@ -122,9 +122,10 @@ afterAll(async () => {
   await rm(base, { recursive: true, force: true });
 }, 30_000);
 
-async function navigate(): Promise<string> {
+/** 打开页面：页面归打开它的会话，截图要在同一个会话里取 */
+async function navigate(sessionId = 's'): Promise<string> {
   const out = JSON.parse(
-    (await handlers.browser_navigate({ url: `http://127.0.0.1:${port}/` }, { sessionId: 's' })) as string,
+    (await handlers.browser_navigate({ url: `http://127.0.0.1:${port}/` }, { sessionId })) as string,
   );
   if (out.error) throw new Error(`导航失败: ${out.error}`);
   return out.pageId as string;
@@ -132,7 +133,7 @@ async function navigate(): Promise<string> {
 
 describe('browser_screenshot 的交付形态', () => {
   it('调用方接得住图：PNG 随 images 交出，content 只有元信息 + storage_uri、不含 base64', async () => {
-    const pageId = await navigate();
+    const pageId = await navigate('onebot:t:group:1');
     const result = (await handlers.browser_screenshot(
       { pageId },
       { sessionId: 'onebot:t:group:1', acceptsImages: true },
@@ -167,7 +168,7 @@ describe('browser_screenshot 的交付形态', () => {
   }, 60_000);
 
   it('同一张图重截落在同一个文件上（文件名取内容 sha256 前 16 位，零增量）', async () => {
-    const pageId = await navigate();
+    const pageId = await navigate('zzz-dedup');
     const dir = join(base, 'tmp', 'browser', 'zzz-dedup');
     const shoot = async (): Promise<string> =>
       JSON.parse((await handlers.browser_screenshot({ pageId }, { sessionId: 'zzz-dedup' })) as string).storage_uri;
@@ -178,7 +179,7 @@ describe('browser_screenshot 的交付形态', () => {
   }, 60_000);
 
   it('落盘失败：接得住图的仍拿到图（只丢 storage_uri），只读 content 的拿到明确错误而非 base64', async () => {
-    const pageId = await navigate();
+    const pageId = await navigate('zzz-fail');
     // 真 storage 的写口上挂失败：落盘那一步失败，其余全真。storage-local 按根逐条提供，取登记了 tmp 根的那个
     const storageSvc = host.services.use
       .all(storage)
