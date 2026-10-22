@@ -17,6 +17,11 @@ const apps: App[] = [];
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
+  // 启动时的模型发现与能力探测答空，不连本机的 Ollama
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => Response.json({ models: [] })),
+  );
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'teststream' });
   await app.plugins.idle();
   const state = app.plugins.getPlugin(ollama.name)?.state;
