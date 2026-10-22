@@ -31,7 +31,6 @@ export const trigger = defineService<TriggerService>('trigger');
 | `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
 | `createBotNames(persona, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`（`persona` 只用 `present` 与 `use`）：每次调用按 `message` 的会话现取别名与在用的人设（`persona.use`，按触发插件自己的服务偏好选出）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：这条消息的 `{ sessionId, platform }` 交给它的 `getPersonaName` / `getNickNames`，人设服务按这个会话的「人设」取卡。读名字抛错时名字表只剩别名，记一条 warn，同一原因只记一次（读成功一次后再出错会再记）。触发插件激活时建一个 |
 | `isAddressed(message, names, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`names` 里任一个出现在正文里即命中，`names` 通常取自 `createBotNames`） |
-| `fromElsewhere(message, sessionManager)` | 这条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。触发插件对它直接放行。会话管理缺席、房间没有出生平台时判不出，按否 |
 | `markTriggered(message, addressed, multiParty)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在多方窗口里（`multiParty` 取网关算的 `data.chat.multiParty`，不看类型名）且消息未带 `actor` 时回填无主体授权 |
 | `archiveSwallowed(message, archive, logger, tag)` | 吞掉前影子归档；先看 `archive.present`，message-archive 缺席时跳过，失败记 warn |
 
@@ -58,11 +57,10 @@ import { INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
-import { sessionManager } from '@aalis/api-session-manager';
+import { fromElsewhere, sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
-  fromElsewhere,
   isActiveTrigger,
   isAddressed,
   markTriggered,

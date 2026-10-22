@@ -23,7 +23,7 @@ import { ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
 // 回复策略的生效范围（audience）与按会话的参数：三个回复策略插件（trigger-policy、trigger-laya、flow-control）的「生效范围」
 // 是 api-gateway 导出的同一个字段，取值不生效、多方房间（默认）、一对一房间、全部房间；冷却、阈值等参数可按会话设，每条消息
 // 按会话现读。聊天窗口的多方与否由网关按这个平台的类型声明算一次（data.chat），带 source 的内部注入不给，插件对它们照旧取会话
-// 记下的窗口。owner 从 WebUI 往群里插话时触发插件直接放行。
+// 记下的窗口。owner 从 WebUI 往房间里插话时触发插件与流控都直接放行。
 // 经真实的网关、会话管理、会话设置与回复策略插件走入站相位链；agent 是记录型假件，回复由用例显式发出。
 // ════════════════════════════════════════════════════════════
 
@@ -207,6 +207,26 @@ describe('生效范围', () => {
     await send({ content: '<插话>', sessionId: GROUP, platform: 'webui', userId: 'console' });
     await send(fromGroup('<群友>'));
     expect(contents()).toEqual(['<插话>']);
+  });
+
+  it.each<[string, string, (content: string) => IncomingMessage]>([
+    ['群', GROUP, content => fromGroup(content)],
+    ['私聊', PRIVATE, fromPrivate],
+  ])('owner 从 WebUI 往%s里插话：流控直接放行，刚回复后的冷却与限速不吞它；房间里的消息照旧受冷却', async (_, room, native) => {
+    const { send, reply, contents } = await setup({
+      doc: {
+        plugins: {
+          [POLICY]: { audience: 'all', intervalMode: 'fixed', fixedInterval: 1 },
+          [FLOW]: { audience: 'all', cooldownSeconds: 600, rateLimitWindow: 600, rateLimitMaxReplies: 1 },
+        },
+      },
+      rooms: [room],
+    });
+    await send(native('<房间 1>'));
+    await reply(room);
+    await send({ content: '<插话>', sessionId: room, platform: 'webui', userId: 'console' });
+    await send(native('<冷却中>'));
+    expect(contents()).toEqual(['<房间 1>', '<插话>']);
   });
 });
 

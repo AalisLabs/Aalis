@@ -4,12 +4,11 @@ import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
-import { sessionManager } from '@aalis/api-session-manager';
+import { fromElsewhere, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import {
   archiveSwallowed,
   createBotNames,
-  fromElsewhere,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,

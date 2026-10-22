@@ -3,7 +3,7 @@ import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { messageArchive } from '@aalis/api-message-archive';
-import { sessionManager } from '@aalis/api-session-manager';
+import { fromElsewhere, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
@@ -23,7 +23,10 @@ const uses = {
   // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
   storage: optional(storage),
   messageArchive: optional(messageArchive),
-  /** 带 source 的内部注入与回复计数按会话记下的聊天窗口判生效范围；缺席时只认真人消息经过本相位时记下的 */
+  /**
+   * 带 source 的内部注入与回复计数按会话记下的聊天窗口判生效范围，也用来判从别的平台往房间里插话；缺席时只认真人消息经过
+   * 本相位时记下的，插话判不出
+   */
   sessionManager: optional(sessionManager),
   /** 按会话读生效范围与参数；缺席时取插件配置里的值 */
   sessionFields: optional(sessionFields),
@@ -173,9 +176,8 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 手里没有聊天窗口时用的平台与多方标记：先取会话记下的出生平台与聊天窗口，会话管理缺席或没有记录时用状态里记下的（真人消息
-   * 经过本相位时按网关算的窗口记下；从别的平台插话记下的是插话那一端，所以排在会话记录之后）。入站带 source 的内部注入（定时
-   * 任务、workflow、闲置注入等合成回合）与出站回复计数都走这里，同一口径；结果只进本插件的状态、不回写消息。没有聊天窗口的
-   * 会话（WebUI、终端、子任务）不是房间，不在任何生效范围里
+   * 经过本相位时按网关算的窗口记下）。入站带 source 的内部注入（定时任务、workflow、闲置注入等合成回合）与出站回复计数都走
+   * 这里，同一口径；结果只进本插件的状态、不回写消息。没有聊天窗口的会话（WebUI、终端、子任务）不是房间，不在任何生效范围里
    */
   function knownWindow(sessionId: string, platform: string | undefined): { platform: string; multiParty?: boolean } {
     const session = caps.sessionManager.present ? caps.sessionManager.use.getSession(sessionId) : undefined;
@@ -279,9 +281,11 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    // 没有 source 的入站（真人消息，含 WebUI、CLI 发进平台会话的）按网关算的聊天窗口判；带 source 的内部注入没有，与回复
-    // 计数同一口径
-    const window = data.chat ?? knownWindow(sessionId, message.platform);
+    // 没有 source 的入站（真人消息）按网关算的聊天窗口判；带 source 的内部注入没有，与回复计数同一口径。没有 source 的入站里
+    // 从别的平台往房间里插话的（owner 从 WebUI 往群里发）与触发插件同一判法，直接放行，不进冷却与限速
+    const { chat } = data;
+    if (chat && fromElsewhere(message, caps.sessionManager)) return next();
+    const window = chat ?? knownWindow(sessionId, message.platform);
     if (!inAudience(sessionId, window)) return next();
 
     getOrCreate(sessionId, window.platform, window.multiParty);

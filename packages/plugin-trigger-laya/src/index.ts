@@ -22,12 +22,11 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive, speakerOf } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import { processService } from '@aalis/api-process';
-import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { fromElsewhere, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import {
   archiveSwallowed,
   createBotNames,
-  fromElsewhere,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,

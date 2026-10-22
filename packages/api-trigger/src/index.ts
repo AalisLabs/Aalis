@@ -6,7 +6,7 @@
 // inbound:trigger 相位挂中间件。服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一：
 // 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
-// 本包另含触发插件共用的函数：生效者判断、从别的平台插话的判断、禁言关键词、名字表与点名识别、放行收尾与吞掉时的影子归档。
+// 本包另含触发插件共用的函数：生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉时的影子归档。
 // 模块状态只有 isActiveTrigger 按每次入站记下的胜者（进程内全部副本共用一张表）；createBotNames
 // 返回的名字表各自记着告警过的故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
 //
@@ -15,7 +15,6 @@
 
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService } from '@aalis/api-persona';
-import { rootSessionOf, type SessionManagerService } from '@aalis/api-session-manager';
 import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
@@ -57,22 +56,6 @@ export function isActiveTrigger(
 ): boolean {
   if (!judgedBy.has(phase)) judgedBy.set(phase, ref.list().find(p => p.selected)?.id);
   return judgedBy.get(phase) === selfId;
-}
-
-// ----- 从别的平台插话 -----
-
-/**
- * 这条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。触发插件
- * 对它直接放行，不判定。会话管理缺席、房间没有出生平台时判不出，按否
- */
-export function fromElsewhere(
-  message: Pick<IncomingMessage, 'sessionId' | 'platform'>,
-  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
-): boolean {
-  if (!sessionManager.present) return false;
-  const sm = sessionManager.use;
-  const room = rootSessionOf(sm.getSession(message.sessionId), id => sm.getSession(id));
-  return room?.originPlatform !== undefined && room.originPlatform !== message.platform;
 }
 
 // ----- 禁言关键词与点名 -----

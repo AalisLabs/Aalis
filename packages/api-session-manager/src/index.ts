@@ -8,7 +8,7 @@
 import { Buffer } from 'node:buffer';
 // 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { defineService, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { t } from './texts.js';
@@ -280,6 +280,20 @@ export function roomClass(
     return chat && !chat.multiParty && isOwner(root.originPlatform, chat.targetId) ? 'owner-only' : 'room';
   }
   return root?.createdFrom !== undefined ? 'owner-only' : 'internal';
+}
+
+/**
+ * 这条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。触发插件
+ * 与流控对它直接放行。会话管理缺席、房间没有出生平台时判不出，按否
+ */
+export function fromElsewhere(
+  message: Pick<IncomingMessage, 'sessionId' | 'platform'>,
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
+): boolean {
+  if (!sessionManager.present) return false;
+  const sm = sessionManager.use;
+  const room = rootSessionOf(sm.getSession(message.sessionId), id => sm.getSession(id));
+  return room?.originPlatform !== undefined && room.originPlatform !== message.platform;
 }
 
 /** 改会话时调用方能给的字段：metadata 合并式改（顶层键整键替换） */
