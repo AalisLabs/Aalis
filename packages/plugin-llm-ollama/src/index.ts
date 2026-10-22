@@ -7,7 +7,7 @@ import type {
   ThinkingLevel,
   ThinkingLevels,
 } from '@aalis/api-llm';
-import { idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import { IDLE_TIMEOUT_MAX_MS, idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
 import { type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import {
@@ -26,6 +26,7 @@ import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 import { truncateChars } from '@aalis/util-text-normalize';
+import { Agent } from 'undici';
 
 // ===== 插件元数据 =====
 
@@ -335,17 +336,24 @@ class OllamaClient {
   readonly keepAlive: string;
   private logger: Logger;
   private proc: ProcessService | null;
+  /** 生成请求的连接池：不设等响应头与读响应体的时限（默认各 300 秒），timeout 是唯一的时限 */
+  private readonly dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
   constructor(config: OllamaConfig, logger: Logger, proc: ProcessService | null) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限（见 idleTimeout）
-    this.timeout = config.timeout * 1000;
+    // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限，超过定时器上限按上限计，报错里的秒数是生效的值（见 idleTimeout）
+    this.timeout = Math.min(config.timeout * 1000, IDLE_TIMEOUT_MAX_MS);
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
     this.contextLength = config.contextLength;
     this.keepAlive = config.keepAlive;
     this.logger = logger;
     this.proc = proc;
+  }
+
+  /** 停用时关掉生成请求的连接池，之后的请求被拒。不等在飞的请求读完：它们是调用方的，等它们会让重载卡到回复写完 */
+  close(): void {
+    void this.dispatcher.close();
   }
 
   /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 httpErrorMessage */
@@ -496,6 +504,7 @@ class OllamaClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: idleTimeout(this.timeout, request.signal).signal,
+        dispatcher: this.dispatcher,
       });
       text = await response.text();
     } catch (err) {
@@ -553,7 +562,21 @@ class OllamaClient {
 
     this.logger.debug(`流式请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息`);
 
+    // 交出一段期间不计时：调用方处理一段的时间不算停顿
     const timer = idleTimeout(this.timeout, request.signal);
+    for await (const chunk of this.readStream(body, request, timer)) {
+      timer.pause();
+      yield chunk;
+      timer.resume();
+    }
+  }
+
+  /** 发出流式请求并逐段解析，timer 管这次请求的停顿超时 */
+  private async *readStream(
+    body: Record<string, unknown>,
+    request: ChatModelRequest,
+    timer: ReturnType<typeof idleTimeout>,
+  ): AsyncIterable<ChatStreamChunk> {
     const reqStart = Date.now();
     const slowConnectTimer = setTimeout(() => {
       this.logger.warn(`Ollama 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/api/chat)`);
@@ -566,6 +589,7 @@ class OllamaClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: timer.signal,
+        dispatcher: this.dispatcher,
       });
     } catch (err) {
       clearTimeout(slowConnectTimer);
@@ -945,6 +969,7 @@ class OllamaClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: idleTimeout(this.timeout, request.signal).signal,
+        dispatcher: this.dispatcher,
       });
       respText = await resp.text();
     } catch (err) {
@@ -1243,6 +1268,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   }
 
   const client = new OllamaClient(cfg, logger.use, proc.use);
+  lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
   const baseLabel = `Ollama (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
   const shownBaseUrl = redactUrl(cfg.baseUrl);
 

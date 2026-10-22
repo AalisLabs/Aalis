@@ -259,19 +259,46 @@ export function metered(model: LLMModel, events: Pick<Events, 'emit'>): LLMModel
 
 // ----- 生成请求的超时 -----
 
+/** 定时器能表示的最长时限（2^31−1 毫秒，约 24.8 天）：idleTimeout 的 ms 超过它时按它计，报错里写时限的照它截 */
+export const IDLE_TIMEOUT_MAX_MS = 2 ** 31 - 1;
+
 /**
- * 生成请求的超时按停顿计，给服务商用：signal 交给请求，从调用起计时，每次 touch 重新计时，连续 ms 毫秒没有 touch 时 signal 以
- * TimeoutError 中止；调用方的 signal 中止时 signal 随之中止，原因照抄。ms 为 0 或负数时不限，超过定时器上限（2^31−1，约 24.8
- * 天）时按上限计。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的名字与参数）调一次 touch，保活注释、空行与没有
- * 生成内容的帧不调；不流式的请求不调，即 ms 内没读完整份回复就中止。计时器不拖住进程退出，请求结束后不用收尾
+ * 生成请求的超时按停顿计，给服务商用：signal 交给请求，从调用起计时，每次 touch 重新计时，停顿（不算 pause 到 resume 之间）满
+ * ms 毫秒时 signal 以 TimeoutError 中止；调用方的 signal 中止时 signal 随之中止，原因照抄。ms 为 0 或负数时不限，超过
+ * IDLE_TIMEOUT_MAX_MS 时按它计，不是数（含 NaN）时抛 RangeError。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的
+ * 名字与参数）调一次 touch，保活注释、空行与没有生成内容的帧不调；交出一段之前调 pause、调用方回来取下一段时调 resume，其间不
+ * 计时、之后接着计，调用方处理一段的时间不算停顿。不流式的请求都不调，即 ms 内没读完整份回复就中止。计时器不拖住进程退出，
+ * 请求结束后不用收尾。Node 自带的 fetch 等响应头与读响应体默认各有 300 秒时限，生成请求要换一个不设这两个时限的
+ * dispatcher，ms 才是唯一的时限
  */
-export function idleTimeout(ms: number, signal?: AbortSignal): { readonly signal: AbortSignal; touch(): void } {
+export function idleTimeout(
+  ms: number,
+  signal?: AbortSignal,
+): { readonly signal: AbortSignal; touch(): void; pause(): void; resume(): void } {
+  if (typeof ms !== 'number' || Number.isNaN(ms))
+    throw new RangeError(`idleTimeout: ms is not a number: ${String(ms)}`);
   const controller = new AbortController();
-  const abort = () => controller.abort(new DOMException(`No new content within ${ms}ms`, 'TimeoutError'));
-  const timer = ms > 0 ? setTimeout(abort, Math.min(ms, 2 ** 31 - 1)).unref() : undefined;
+  const limit = Math.min(ms, IDLE_TIMEOUT_MAX_MS);
+  const abort = () => controller.abort(new DOMException(`No new content within ${limit}ms`, 'TimeoutError'));
+  /** 到时限的时刻；暂停时 left 记着还剩多久 */
+  let deadline = performance.now() + limit;
+  let left = limit;
+  let timer = limit > 0 ? setTimeout(abort, limit).unref() : undefined;
   return {
     signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
-    touch: () => void timer?.refresh(),
+    touch: () => {
+      deadline = performance.now() + limit;
+      timer?.refresh();
+    },
+    pause: () => {
+      clearTimeout(timer);
+      left = deadline - performance.now();
+    },
+    resume: () => {
+      if (!timer) return;
+      deadline = performance.now() + left;
+      timer = setTimeout(abort, Math.max(left, 0)).unref();
+    },
   };
 }
 

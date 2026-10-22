@@ -250,6 +250,23 @@ describe('超时与连不上：各一句，原因只进 warn', () => {
     expect(warns.filter(w => w.includes('aborted due to timeout'))).toHaveLength(1);
   });
 
+  it.each(everyCall)('$name / $via / timeout 超过定时器上限：秒数按实际生效的时限写', async ({
+    plugin,
+    config,
+    provider,
+    call,
+  }) => {
+    const state = stubFetch();
+    state.reply = () => {
+      throw TIMEOUT();
+    };
+    const { handle } = await start(plugin, { ...config, timeout: 3_000_000 });
+
+    expect(await messageOf(() => call.run(handle))).toBe(
+      `${provider} 请求超时：2147483.647 秒内没有收到新的生成内容，可在配置里调大 timeout`,
+    );
+  });
+
   it.each(everyCall)('$name / $via / 读响应体时超时', async ({ plugin, config, provider, call }) => {
     const state = stubFetch();
     state.reply = () => failingBody(TIMEOUT());
