@@ -20,6 +20,7 @@ export default definePlugin({
     memory: optional(memory),
     tools: optional(tools),
     sessionManager: optional(sessionManager),
+    platform: optional(platform),
     sessionFields: optional(sessionFields),
     document: optional(ownHostConfig),
     events,
@@ -82,6 +83,9 @@ export default definePlugin({
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注
      （`Assistant·你自己` 等），AI 自己的历史回复不会以他人发言形态回流；正文优先取 metadata 的
      `visibleContent`，缺省按 `content` 呈现（升级前落库的消息没有该键）
+   - 每条片段带来源标签 `[平台/位置/说话人 @ 时间]`：平台取向量记下的平台（终端会话也写）；位置有群名写 `群「名」`，
+     否则写说话所在类型的显示名（平台声明的 `label` 取原文，如 OneBot 的私聊、频道；平台不在或没声明显示名时写类型名），
+     都没有时不写
    - `recallRoles` 配置控制 AI 自身回复是否参与召回（`all` 默认 / `others-only`）；
      角色标注不随该开关关闭。存量未打 role 的旧向量按对方对待
 3. **主动召回**: 注册 `memory_recall` 工具，按任意 query 检索，与被动注入共用同一检索排序
@@ -113,4 +117,5 @@ export default definePlugin({
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
 - **memory**（可选）: 消息存储服务，两个用途：提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身；记忆元数据存放存量标记（见上节），缺失时存量向量按当前模型对待。该服务在调用点惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效。plugin-memory-inmemory 的元数据不持久，与持久化向量库（plugin-vectorstore-flat / plugin-vectorstore-lancedb）搭配时，每次重启都会按当时的模型重记存量标记
 - **session-manager**（可选）: 读会话记下的出生平台，在调用点现取；缺失时当前平台取入口平台，同平台过滤只认向量记下的入口平台
+- **platform**（可选）: 召回片段的位置写类型的显示名，取平台声明里的 `label`（原文）；缺失或没声明显示名时写类型名
 - **session-settings**（可选）: 按会话读 `crossSessionMode`（见「按会话设检索范围」）；缺失时只取插件配置里的值

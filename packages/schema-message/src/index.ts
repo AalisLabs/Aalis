@@ -185,8 +185,10 @@ export interface IncomingMessage {
    */
   _attachmentDescriptions?: Array<string | undefined>;
   /**
-   * 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一（如 OneBot 的 group、private、channel）。
-   * 不带时，平台声明了多方类型的按多方，没声明或只有一对一类型的按 private、一对一（api-platform 的 resolveSessionType）
+   * 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一（如 OneBot 的 group、private、channel）。会话管理在
+   * IM 房间建档时按它记下聊天窗口；判是不是多方读会话记录的 originChat.multiParty（子会话取根会话的），不看消息上的它。
+   * 不带时，平台声明了多方类型的按其中第一个、多方，只声明了一对一类型的按第一个，没声明的按 private、一对一
+   * （api-platform 的 resolveSessionType）
    */
   sessionType?: string;
   /** 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id） */
@@ -601,8 +603,8 @@ export interface ArchivedAttachment {
  * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
  *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
  * - `GroupId`、`GroupName`、`SessionType`：说话所在的群号、群名与会话类型（字符串，即入站消息的 `groupId`、`groupName`、
- *   `sessionType`）。存档写入站消息的，agent 给她自己的回复写这一轮的；向量记忆与最近消息据此写出说话的位置，关系插件据此
- *   判断是不是群聊。
+ *   `sessionType`）。存档写入站消息的，agent 给她自己的回复写这一轮的；向量记忆与最近消息据此写出说话的位置，只用于显示：
+ *   判是不是多方读会话记录的 originChat.multiParty（子会话取根会话的）。
  * - `MessageId`：平台侧的消息 id（字符串，即入站消息的 `messageId`），存档写；存档按它反查被引用的原文，关系插件据此把
  *   引用与回复对回消息。
  * - `Source`：这条记录的来源（字符串）：入站消息是它的 `source`（内部注入的来源，真人发言没有）；出站消息记进历史的各条

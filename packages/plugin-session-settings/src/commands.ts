@@ -11,6 +11,7 @@
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandArgv } from '@aalis/api-commands';
 import { saveFailureText } from '@aalis/api-host-config';
+import { sessionTypeLabel } from '@aalis/api-platform';
 import { placeLabel, sessionLabel } from '@aalis/api-session-manager';
 import {
   isSessionSettingsError,
@@ -96,7 +97,7 @@ export class SettingsEditor {
         return t('platformTypeLayer', {
           layer: layerLabel(name),
           platform,
-          type: this.provider.typeLabel(platform, type) ?? type,
+          type: sessionTypeLabel(this.caps.platform, platform, type) ?? type,
         });
       case 'place':
         return place ? this.placeText(place.key) : layerLabel(name);

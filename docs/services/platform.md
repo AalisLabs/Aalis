@@ -41,7 +41,7 @@ export interface PlatformAdapter {
 
 helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（这个 adapter 的业务句柄）、`id`（插件实例 id，即 contextId），另有 `label?` / `priority` / `selected`。
 
-`SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与窗口键 `平台:类型:目标` 的第二段同一套写法）/ `label?`（给人看的显示名，可以是文字对象；不给时界面写类型名）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
+`SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与窗口键 `平台:类型:目标` 的第二段同一套写法）/ `label?`（给人看的显示名，可以是文字对象；界面按读者语言显示，写给模型的会话类型与召回片段的位置取原文；不给时写类型名）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
 
 ### 聚合 / 路由 helper（纯函数，第一参是 `Pick<ServiceSelection<PlatformAdapter>, 'list'>`）
 
@@ -55,7 +55,8 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 | `aggregatePlatformDetails(source)` | 聚合展示详情（每项 `{ adapterName, platform, contextId, connections }`，`contextId` 取条目的 `id`） |
 | `getPlatformSelfIdentity(source, platform, sessionId?)` | 按平台名取自身身份；同平台装了多个实例时，取第一个认得这个会话的实例给出的身份 |
 | `sessionTypesOf(adapter)` | 平台的类型：声明的条目；没声明（没写、空列表，或平台没有适配器）时为 `[{ name: 'private', multiParty: false }]` |
-| `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带类型名时，声明里有多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared` |
+| `resolveSessionType(types, name)` | 按平台的类型解析消息带的类型名：不带类型名时，声明里有多方类型的按其中第一个、多方，只有一对一类型的按第一个，没声明的按 `private`、一对一；声明里有的按声明；声明里没有的按多方并标出 `undeclared`。解析到声明的类型时带上它的 `label` |
+| `sessionTypeLabel(source, platform, type)` | 平台类型的显示名：这个平台各适配器声明里这个类型的 `label`；平台不在、类型没声明或没给显示名时为 `undefined`，调用方写类型名 |
 | `resolvePlatformBySession(source, sessionId, logger?)` | 按 sessionId 找接管它的 adapter 条目（`ProviderEntry<PlatformAdapter>`，`use` 是那个 adapter，`id` 是插件实例 id；优先 `canHandle`，否则 `startsWith(platform+':')` 兜底），按 `list()` 的顺序取第一个认领者；`canHandle` 抛错按不认领，经 `logger` 告警 |
 | `claimantsOf(source, sessionId, logger?)` | 认领 sessionId 的全部 adapter 条目，按 `list()` 的顺序；判定与 `resolvePlatformBySession` 相同，逐个问、不在第一个认领者处停。用来看出一个 id 是不是同时归几个平台 |
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错，见下） |
@@ -69,7 +70,7 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `canHandle`、`getSelfIdentity`、`callAction`，声明 `group`（多方）、`private`（一对一）、`channel`（多方）三个类型，入站消息带类型名与机器人账号（`selfId`），在插件 `apply` 里注册。它可以装多个实例（`reusable`），每个实例可带多个账号：`canHandle` 只认本实例连接里的账号（含配置里写明、连接还没上来的），会话 ID `onebot:<selfId>:…` 因此按账号路由到所属实例。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了可选方法 `canHandle`、`getSelfIdentity`、`callAction`，声明 `group`（多方）、`private`（一对一）、`channel`（多方）三个类型（显示名群聊、私聊、频道），入站消息带类型名与机器人账号（`selfId`），在插件 `apply` 里注册。它可以装多个实例（`reusable`），每个实例可带多个账号：`canHandle` 只认本实例连接里的账号（含配置里写明、连接还没上来的），会话 ID `onebot:<selfId>:…` 因此按账号路由到所属实例。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
 - **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；不声明类型，整个平台算一个一对一类型 `private`。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
@@ -77,10 +78,11 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 ### 典型消费点
 
 - **plugin-agent**：`getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses` 中声明 `platform: optional(platform)`。
-- **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
+- **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt；会话类型按根会话记下的聊天窗口经 `sessionTypeLabel` 取显示名（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
+- **plugin-memory-vector**：召回片段的位置没有群名时写说话所在类型的显示名，按向量记下的平台与类型名经 `sessionTypeLabel` 取（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）。
-- **plugin-session-settings**：`getPlatformAdapters(platform)` 列可设的平台档与各平台声明的平台类型档，类型的显示名取声明里的 `label`。
+- **plugin-session-settings**：`getPlatformAdapters(platform)` 列可设的平台档与各平台声明的平台类型档，类型的显示名经 `sessionTypeLabel` 取。
 - **plugin-gateway**：按入站消息的平台取适配器的类型声明，算出聊天范围（`data.chat`），回复策略三个插件按它判生效范围。
 - **plugin-session-manager**：房间建档时按入站消息的平台取适配器的类型声明（`sessionTypesOf`），经 api-gateway 的 `chatScopeOf` 记下聊天窗口；建档与补记之前用 `claimantsOf` 问遍认领这个会话 id 的适配器，不止一个平台认领时不建档、不补记，否则第一个认领者记进 `SessionInfo.originInstance`，供会话列表按实例分组；建档时没有认领者的，之后用 `resolvePlatformBySession` 补记（`src/index.ts`）。
 - **plugin-tool-onebot**：平台动作经 `callPlatformAction(platform, 'onebot:<selfId>:internal:0', action, params)` 发出，按账号路由到所属实例；撤回自己发的消息、处理好友申请与群请求按会话（或账号）用 `resolvePlatformBySession` 找到所属实例，自身禁言列表汇总所有 onebot 实例（`src/index.ts`）。
@@ -92,7 +94,7 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，`sendPlatformMessage` / `callPlatformAction` 都找不到你的 adapter。插件能装多个实例（`reusable`）时同样**必须**实现 `canHandle()`，只认自己实例的会话：前缀兜底会让第一个实例接下这个平台的全部会话。
 **按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）。
-**有多方会话就必须声明**：`sessionTypes`（类型名与一对一还是多方），并在入站消息上带类型名。不声明的平台整个算一个一对一类型 `private`：它的群会按一对一记下，群里任何人都会被当成那个唯一的对端。声明了多方类型、消息却没带类型名的，按声明里第一个多方类型记下（失败关闭，一对一的聊天也当多方）。消息带了声明里没有的类型名时按多方记下，session-manager 每个平台与类型名告警一次。
+**有多方会话就必须声明**：`sessionTypes`（类型名与一对一还是多方），并在入站消息上带类型名。不声明的平台整个算一个一对一类型 `private`：它的群会按一对一记下，群里任何人都会被当成那个唯一的对端。声明了多方类型、消息却没带类型名的，按声明里第一个多方类型记下（失败关闭，一对一的聊天也当多方）；只声明了一对一类型的，按其中第一个记下。给类型写 `label`，设置页的平台类型档、模型看到的会话类型与召回片段都用它，不写时写类型名。消息带了声明里没有的类型名时按多方记下，session-manager 每个平台与类型名告警一次。
 
 ### 会话 ID 约定
 

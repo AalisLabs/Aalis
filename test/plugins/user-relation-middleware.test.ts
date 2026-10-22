@@ -13,7 +13,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 /**
  * 登记贡献（middleware）与收集贡献（组装器）共用宿主根激活绑定的 contributions + logger，
  * 注入块的 injector 全局键因此冠同一个激活 id；memory 只为给 RelationStore 一个后端。
- * 本文件只测不收窄的注入（关系图范围见 user-relation-recall-scope.test.ts）。
+ * 本文件只测不收窄的注入（关系图范围见 user-relation-recall-scope.test.ts，仅群聊见 user-relation-group-only.test.ts）。
  */
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
@@ -38,22 +38,25 @@ async function runMiddleware(
     platform?: string;
     triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
     initialMessages?: Message[];
-    groupOnly?: boolean;
     maxDepth?: number;
   },
 ): Promise<Message[]> {
-  registerRelationContribution({ contributions: host.contributions, sessionOnly: () => false }, service, {
-    maxDepth: opts.maxDepth ?? 1,
-    maxBreadth: 5,
-    maxEvents: 5,
-    maxRelations: 5,
-    maxParticipantsPerEvent: 5,
-    maxCooccurrencePartners: 5,
-    // 曾漏传这两个必填项 —— 于是全局热点的两条限流在本测试里从未生效
-    maxGlobalHotEvents: 5,
-    maxGlobalHotEntities: 5,
-    groupOnly: opts.groupOnly ?? false,
-  });
+  registerRelationContribution(
+    { contributions: host.contributions, sessionOnly: () => false, multiParty: () => false },
+    service,
+    {
+      maxDepth: opts.maxDepth ?? 1,
+      maxBreadth: 5,
+      maxEvents: 5,
+      maxRelations: 5,
+      maxParticipantsPerEvent: 5,
+      maxCooccurrencePartners: 5,
+      // 曾漏传这两个必填项 —— 于是全局热点的两条限流在本测试里从未生效
+      maxGlobalHotEvents: 5,
+      maxGlobalHotEntities: 5,
+      groupOnly: false,
+    },
+  );
   const data = {
     messages: opts.initialMessages ?? [
       { role: 'system' as const, content: '原 system' },
@@ -146,24 +149,6 @@ describe('plugin-user-relation: middleware', () => {
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('friend');
     expect(content).toContain('u2');
-  });
-
-  it('groupOnly=true 且 messages 无 group 标记 → 不注入', async () => {
-    const { host, service } = await setup();
-    await service.observePerson('onebot', 'u1', 'Alice');
-    const ev = await service.createEvent({ title: 'x', evidence: [] });
-    await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ev.id, role: 'participant' });
-    const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-      groupOnly: true,
-      initialMessages: [
-        { role: 'system', content: 'sys' },
-        { role: 'user', content: '你好' }, // 无 groupId
-      ],
-    });
-    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
   it('实体别名 → 注入显示「（别名: …）」', async () => {

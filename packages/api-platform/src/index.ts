@@ -32,7 +32,10 @@ export interface PlatformSelfIdentity {
 export interface SessionTypeDecl {
   /** 类型名：非空，不含 `:`，不是 `*`；与窗口键 `平台:类型:目标` 的第二段同一套写法 */
   name: string;
-  /** 给人看的显示名（如平台类型档与窗口场所的称呼），可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；不给时界面写类型名 */
+  /**
+   * 给人看的显示名（如平台类型档与窗口场所的称呼），可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；写给模型的
+   * 会话类型与召回片段的位置取原文。不给时写类型名
+   */
   label?: string | TextRef;
   /** 多方（受众里不止机器人与对端两方）为 true，一对一为 false */
   multiParty: boolean;
@@ -135,24 +138,28 @@ export interface ResolvedSessionType extends SessionTypeDecl {
 }
 
 /**
- * 按平台的类型解析消息带的类型名，都是失败关闭：宁可把一对一当多方。
+ * 按平台的类型解析消息带的类型名，都是失败关闭：宁可把一对一当多方。解析到声明的类型时带上它的显示名。
  * - 不带类型名：声明里有多方类型的按其中第一个（适配器漏带了类型名，调用方据消息上没有类型名告警，每个平台一次）；
- *   没声明、或声明里只有一对一类型的按 private、一对一；
+ *   声明里只有一对一类型的按第一个（没声明的平台即 private）；
  * - 声明里有的按声明，多方标记不是 false 的（漏写、写错）按多方；
  * - 声明里没有的按多方，标出 undeclared
  */
 export function resolveSessionType(types: readonly SessionTypeDecl[], name: string | undefined): ResolvedSessionType {
   const multiParty = (type: SessionTypeDecl) => type.multiParty !== false;
-  if (name === undefined) {
-    const shared = types.find(multiParty);
-    return shared
-      ? { name: shared.name, multiParty: true, undeclared: false }
-      : { name: 'private', multiParty: false, undeclared: false };
-  }
+  const resolved = (type: SessionTypeDecl) => ({ ...type, multiParty: multiParty(type), undeclared: false });
+  if (name === undefined) return resolved(types.find(multiParty) ?? types[0] ?? UNDECLARED_TYPES[0]);
   const declared = types.find(type => type.name === name);
-  return declared
-    ? { name, multiParty: multiParty(declared), undeclared: false }
-    : { name, multiParty: true, undeclared: true };
+  return declared ? resolved(declared) : { name, multiParty: true, undeclared: true };
+}
+
+/**
+ * 平台类型的显示名：这个平台各适配器声明里这个类型的 `label`。平台不在、类型没声明或没给显示名时为 undefined，调用方写类型名
+ */
+export function sessionTypeLabel(source: Adapters, platform: string, type: string): string | TextRef | undefined {
+  return getPlatformAdapters(source)
+    .filter(a => a.platform === platform)
+    .flatMap(a => a.sessionTypes ?? [])
+    .find(decl => decl.name === type)?.label;
 }
 
 /** 聚合所有 adapter 的连接 */
