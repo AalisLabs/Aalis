@@ -59,7 +59,6 @@ listWorkspaces(): WorkspaceInfo[];
 removeWorkspace(id: string): Promise<void>;
 
 // 标题
-generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;  // 调 LLM 总结
 updateSessionTitle(sessionId: string, title: string): Promise<void>;
 ```
 
@@ -158,7 +157,7 @@ interface SessionInfo {
 1. 有出生平台：一对一而对端是 owner 身份的（owner 的 IM 私聊）为默认工作区 `workspace:default`；其余为窗口，键是 api-gateway 的 `windowKey` 拼出的 `平台:类型:目标`，不含机器人账号，同一个群里两个账号的会话是同一个窗口。聊天窗口缺失（读表时类型不对被去掉）或目标为空的坏数据同样为窗口，键里缺的段按空串拼，日志点名一次，不落进默认工作区，免得 owner 给工作区设的值套到房间上。owner 谓词取 authority 的 `isOwner`，与房间类别同一判据；参考实现以 `optional(authority)` 取它（plugin-authority 也以 optional 用会话管理，两边成可选环），没有 authority 时一对一窗口按窗口算。
 2. 没有出生平台的按根会话记下的工作区：有值的为 `workspace:<id>`，不看绑定目录；没有的为默认工作区（默认工作区里建的 WebUI 与终端会话、`mcp-server`、编排与定时任务的会话、按 id 建档且还没补记来源字段的会话、会话表里没有的 id）。记下的工作区没有记录（坏数据）时按默认工作区，日志点名。
 
-场所记录 `{ key, kind, name?, root?, metadata?, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随本插件选中的记忆后端加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（没有名字，显示经 `placeLabel` 写「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的数据。`getPlace(key)` 回这条记录（工作区的目录经 `listWorkspaces` 取），`listPlaces()` 列出全部，`updatePlace` 合并式改它的 `metadata`、随会话表落盘，没有这个键的记录时抛错。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张。
+场所记录 `{ key, kind, name?, root?, metadata?, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随本插件选中的记忆后端加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（没有名字，显示经 `placeLabel` 写「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的数据。`getPlace(key)` 回这条记录（工作区的目录经 `listWorkspaces` 取），`listPlaces()` 列出全部，`updatePlace` 合并式改它的 `metadata`、随会话表落盘，没有这个键的记录时抛错。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张；白纸在白纸根里的目录名由 `paperDirName(paperId)` 给出，白纸插件与触及都调它。
 
 工作区由 owner 经会话服务登记，会话管理只管记录：
 
@@ -187,7 +186,7 @@ interface SessionInfo {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期、场所与会话树。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `createChildSession` / `completeSession` / `placeOf`。其余（场所与工作区、`generateTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `createChildSession` / `completeSession` / `placeOf`。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **必须复刻的语义**：
 
@@ -355,9 +354,6 @@ class MySessionManager implements SessionManagerService {
   async removeWorkspace(): Promise<void> {
     throw new Error('默认工作区不能取消登记');
   }
-  async generateTitle() {
-    return undefined;
-  }
   async updateSessionTitle(sessionId: string, title: string) {
     const s = this.sessions.get(sessionId);
     if (s) s.title = title;
@@ -454,7 +450,7 @@ const { persona } = fields.get(message.sessionId, { platform: message.platform }
 
 ### 6.5 标题生成会调 LLM
 
-`generateTitle` 会真发一次 LLM `chat`（模型最浅的思考档，`temperature:0.3`），有成本与延迟；参考实现只给带创建来源的根会话（WebUI 新建的、终端建的，§2.6）在首条消息时自动触发，按会话字段判，不按入口平台，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。IM 房间、按 id 建档的会话与子会话不生成，owner 从 WebUI 往房间插话也不拿来给房间起名。标题监听不建档：WebUI 与终端的会话在第一条消息之前都已建档。第三方平台自动调用前请自行权衡。
+自动标题是参考实现自己的行为，不在契约里：它会真发一次 LLM `chat`（模型最浅的思考档，`temperature:0.3`），有成本与延迟；只给带创建来源的根会话（WebUI 新建的、终端建的，§2.6）在首条消息时自动触发，按会话字段判，不按入口平台，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。IM 房间、按 id 建档的会话与子会话不生成，owner 从 WebUI 往房间插话也不拿来给房间起名。标题监听不建档：WebUI 与终端的会话在第一条消息之前都已建档。自己实现会话管理的，要不要自动起标题自行权衡。
 
 ### 6.6 IM 房间收录
 

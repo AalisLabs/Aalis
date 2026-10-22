@@ -113,6 +113,8 @@ interface WorkspaceInfo {
 function placeLabel(place: Pick<PlaceInfo, 'name'>): string | TextRef;
 /** 场所的白纸 id：`p:` 加场所键的 UTF-8 十六进制（只有小写，大小写不敏感的文件系统上不同的键不会落进同一个目录） */
 function placePaperId(key: string): string;
+/** 白纸在白纸根（stage/paper）里的目录名：白纸 id 的 `:` 换成 `-`；白纸插件与触及都按它取 */
+function paperDirName(paperId: string): string;
 ```
 
 `placeOf(sessionId)` 按根会话取第一条：
@@ -157,7 +159,6 @@ interface SessionManagerService {
   listWorkspaces(): WorkspaceInfo[];
   removeWorkspace(id: string): Promise<void>;
 
-  generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
 ```

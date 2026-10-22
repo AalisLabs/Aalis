@@ -122,7 +122,7 @@ describe('paper_send：发出', () => {
     expect(tool?.risk).toBeUndefined();
   });
 
-  it('发出的消息带这次工具调用的回合 id 与 callId：界面据此给工具卡标「已发到群」，记进会话历史的那几条据此归回回合', async () => {
+  it('发出的消息带这次工具调用的回合 id 与 callId：界面据此给工具卡标「已发出」，记进会话历史的那几条据此归回回合', async () => {
     const h = await hub();
     const call = { ...human(), turnId: 'turn-9', callId: 'call-9' };
     expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, call)).toMatchObject({ ok: true });

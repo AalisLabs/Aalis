@@ -16,7 +16,7 @@ import {
   resolveReach,
   withRealRoots,
 } from '@aalis/api-reach';
-import { placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { paperDirName, placePaperId, roomClass, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -94,9 +94,11 @@ async function run(caps: Caps): Promise<void> {
   const lists = withRealRoots(declared, root => realRoots.get(root));
   const provenance = await openProvenance(caps.storage.use.own, logger.use);
   const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use });
-  /** 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名把 `:` 换成 `-`（与白纸插件同一写法） */
-  const paperOf = (sessionId: string) =>
-    join(paths.stage.paper, placePaperId(sm.placeOf(sessionId).key).replace(':', '-'));
+  /**
+   * 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名与白纸插件同取 paperDirName。房间写的具名白纸只决定白纸任务用哪一块，
+   * 不换这里
+   */
+  const paperOf = (sessionId: string) => join(paths.stage.paper, paperDirName(placePaperId(sm.placeOf(sessionId).key)));
 
   /** 每个会话最近一次签发凭据的那一轮的主体：子任务的任务消息发出时，据它定那条消息之后的子任务回合随谁 */
   const lastPrincipal = new Map<string, 'owner' | 'other'>();

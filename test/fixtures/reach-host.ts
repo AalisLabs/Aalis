@@ -5,6 +5,7 @@ import type { OriginTurn } from '../../packages/api-authority/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { reach } from '../../packages/api-reach/src/index.js';
 import {
+  paperDirName,
   placePaperId,
   type SessionManagerService,
   sessionManager,
@@ -26,9 +27,9 @@ import { fakeMemory } from './session-memory.js';
 export const OWNER_QQ = '99999';
 export const OWNER_TURN = { platform: 'webui', userId: 'console' } as const;
 
-/** 场所的白纸目录：stage/paper 下按白纸 id 取的子目录，`:` 换成 `-` */
+/** 场所的白纸目录：stage/paper 下按白纸 id 取的子目录 */
 export const paperOf = (home: string, placeKey: string) =>
-  join(home, 'stage', 'paper', placePaperId(placeKey).replace(':', '-'));
+  join(home, 'stage', 'paper', paperDirName(placePaperId(placeKey)));
 
 /** 在项目工作区里建一个 owner 的会话，返回会话 id：工作区的目录是 workspaceRoot（缺省为绑定目录），绑定在 root 上 */
 export async function projectSession(sm: SessionManagerService, root: string, workspaceRoot = root): Promise<string> {

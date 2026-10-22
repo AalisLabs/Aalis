@@ -174,7 +174,7 @@ describe('时间线', () => {
     expect(log.getByText('晴')).toBeTruthy();
 
     expect(log.getByRole('button', { name: /执行 false/ }).textContent).toContain('失败');
-    expect(log.getByRole('button', { name: /调用 send_group_message/ }).textContent).toContain('已发到群 · 0.3 秒');
+    expect(log.getByRole('button', { name: /调用 send_group_message/ }).textContent).toContain('已发出 · 0.3 秒');
   });
 
   it('工具卡的结局：退出码不为 0 的写退出码、用危险色；停止时还没结束的写「已停止」、不用危险色；没有退出码的失败写「失败」', async () => {
@@ -429,13 +429,27 @@ describe('时间线', () => {
         ),
     });
     const log = within(await timeline());
-    expect(main().getByText('你正在以 owner 身份在「示例群 A」发言，按群的人设和能力运行')).toBeTruthy();
+    expect(main().getByText('你正在以 owner 身份在「示例群 A」发言')).toBeTruthy();
     expect(main().getByText('group · onebot')).toBeTruthy();
     expect(log.getByText('小林')).toBeTruthy();
     expect(log.getByText('你')).toBeTruthy();
     const reply = log.getByText('不客气').closest('.message') as HTMLElement;
     expect(within(reply).getByText('<应用名>')).toBeTruthy();
     expect(log.getByText('没有发出：这一轮静默结束')).toBeTruthy();
+  });
+
+  it('私聊房间的提示条与群用同一句，只有房间名不同', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([userMessage('u1', '在吗')], {
+          session: room('onebot:10000:private:30001', 'im-a', {
+            title: '小林',
+            chat: { type: 'private', multiParty: false },
+          }),
+        }),
+    });
+    await timeline();
+    expect(main().getByText('你正在以 owner 身份在「小林」发言')).toBeTruthy();
   });
 
   it('「我的」会话没有提示条，也不逐条写说话人', async () => {

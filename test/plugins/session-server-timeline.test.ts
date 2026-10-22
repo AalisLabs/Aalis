@@ -814,7 +814,7 @@ describe('条目', () => {
     }
   });
 
-  it('房间里经工具发出、平台收下的消息：工具卡标「已发到群」并写进工具结果的元数据；没收下的不标', async () => {
+  it('房间里经工具发出、平台收下的消息：工具卡标「已发出」并写进工具结果的元数据；没收下的不标', async () => {
     const { server, host, openTurn } = await setup();
     await recordRoom(host.events.use, ROOM, '群');
     host.events.use.on('outbound:message', msg => {
@@ -1596,7 +1596,7 @@ describe('历史', () => {
     ]);
   });
 
-  it('刷新后仍在：平台没收下的回复按投递失败记录标出，已发到群与审批的结局按工具结果的元数据还原', async () => {
+  it('刷新后仍在：平台没收下的回复按投递失败记录标出，已发出与审批的结局按工具结果的元数据还原', async () => {
     const { server, host, archive } = await setup();
     await recordRoom(host.events.use, ROOM, '群');
     const save = (m: Message) => archive.saveMessage(ROOM, m);

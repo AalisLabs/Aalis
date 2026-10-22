@@ -45,7 +45,7 @@ definePlugin({
 | 主体 | 权限服务的 `originOf(call)`：`owner` 与 `owner-chain` 为 owner；`subtask` 见下文「子任务」；其余（自主回合、房间、别人、没有回合的调用）没有本地效果 |
 | 房间类别 | api-session-manager 的 `roomClass`，子会话取根会话的；owner 判定取权限服务的 `isOwner` |
 | 档位、越界策略 | 固定为工作区档、越界要问（还不能按会话设） |
-| 场所的主目录与白纸 | 会话的场所取会话管理的 `placeOf`（子会话取根会话的），白纸是 `stage/paper/` 下按 api-session-manager 的 `placePaperId(场所键)` 取的子目录（`:` 换成 `-`，与白纸插件同一写法）；主目录：项目工作区（根会话带绑定）是绑定目录，其余是场所的白纸 |
+| 场所的主目录与白纸 | 会话的场所取会话管理的 `placeOf`（子会话取根会话的），白纸是 `stage/paper/` 下的子目录 `paperDirName(placePaperId(场所键))`（都是 api-session-manager 的函数，白纸插件取目录名也用 `paperDirName`）；房间写的具名白纸（白纸插件的 `paperName`）只决定白纸任务用哪一块，不换这里；主目录：项目工作区（根会话带绑定）是绑定目录，其余是场所的白纸 |
 | 绑定 | 根会话的附加可写目录与本会话树建的 worktree |
 | 仓库的 git 目录 | 从绑定目录往上找 `.git`（见下文） |
 | 污点 | 这个会话记下的来源（见下文「污点」） |

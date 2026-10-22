@@ -289,15 +289,18 @@ describe('trigger-policy inbound:trigger（poke）', () => {
 });
 
 describe('trigger-policy inbound:trigger（人设故障）', () => {
-  it('某个人设读名字抛错：只跳过它的名字，照常判定，不直接放行', async () => {
+  it('在用人设读名字抛错：名字表只剩别名，照常判定，不直接放行', async () => {
     const broken: PersonaService = {
       getSystemPrompt: () => '',
       getPersonaName: () => {
         throw new Error('persona 故障');
       },
     };
-    const good: PersonaService = { getSystemPrompt: () => '', getPersonaName: () => 'Aalis' };
-    const { app, host } = await setupPolicy({ intervalMode: 'fixed', fixedInterval: 100 }, [broken, good]);
+    const other: PersonaService = { getSystemPrompt: () => '', getPersonaName: () => 'Aalis' };
+    const { app, host } = await setupPolicy({ intervalMode: 'fixed', fixedInterval: 100, triggerNames: '阿狸' }, [
+      broken,
+      other,
+    ]);
     const msg = (content: string) =>
       ({
         platform: 'onebot',
@@ -307,11 +310,11 @@ describe('trigger-policy inbound:trigger（人设故障）', () => {
         userId: 'u1',
         content,
       }) as IncomingMessage;
-    const plain = await runTriggerPhase(host.hooks.use, msg('随便聊聊'));
-    const named = await runTriggerPhase(host.hooks.use, msg('Aalis 在吗'));
+    const plain = await runTriggerPhase(host.hooks.use, msg('Aalis 在吗'));
+    const named = await runTriggerPhase(host.hooks.use, msg('阿狸 在吗'));
     await app.stop();
-    expect(plain.reached, '没点名、计数未到：照常判定后吞掉').toBe(false);
-    expect(named.message.triggerType, '另一个人设的名字照常算点名').toBe('immediate');
+    expect(plain.reached, '没在用的人设的名字不算点名，计数未到：照常判定后吞掉').toBe(false);
+    expect(named.message.triggerType, '别名照常算点名').toBe('immediate');
   });
 });
 

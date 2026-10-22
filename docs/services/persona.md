@@ -59,7 +59,7 @@ export const persona = defineService<PersonaService>('persona');
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.present ? this.caps.persona.use : undefined`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
-- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取全部已登记人设的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
+- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取在用的人设（触发插件按自己的服务偏好选出的提供者）的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合起各提供者的 `listModels()`。
 - `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ sessionId, platform: 'cli' })`（终端会话的生效人设），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
 

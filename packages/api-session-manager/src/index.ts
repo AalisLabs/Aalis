@@ -75,6 +75,11 @@ export function placePaperId(key: string): string {
   return `p:${Buffer.from(key, 'utf8').toString('hex')}`;
 }
 
+/** 白纸在白纸根（宿主家目录的 stage/paper）里的目录名：白纸 id 的 `:` 换成 `-`。白纸插件与触及都按它取，不各写一份 */
+export function paperDirName(paperId: string): string {
+  return paperId.replace(':', '-');
+}
+
 /**
  * IM 房间的聊天窗口：建档时按入站消息记下（api-gateway 的 chatScopeOf），之后不变
  */
@@ -393,8 +398,6 @@ export interface SessionManagerService {
 
   // ---- 标题管理 ----
 
-  /** 自动生成会话标题（调用 LLM 总结），返回生成的标题或 undefined。可传入 userMessage 避免依赖历史记录。 */
-  generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;
   /** 手动更新会话标题 */
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }

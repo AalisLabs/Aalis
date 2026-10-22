@@ -39,6 +39,8 @@ export default definePlugin({
 
 宿主通知（`kind: 'host-notice'`）不计入每个会话的提取计数；提取读取历史时（同会话读取、跨会话读取与跨会话降级三条路径）滤掉指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务与宿主通知），它们不是任何人的发言，不交给模型抽关系。
 
+`/relation` 的长任务（consolidate、rewrite-weights、event-duplicates、compress、maintain）开跑时先往当前会话推一句「正在跑」，只推给有平台适配器认领的会话，定时任务发进群里的也照推；没有认领者的会话（如编排的内部会话）不推。
+
 「关系图范围」`recallScope`（`session` 仅本会话 / `all` 全部，默认 `all`）可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），开着注入（`agentInjection`）或工具（`toolsEnabled`）时才登记，两者都关着时会话设置里不列它。不是 `all` 的（含写坏了的）一律按仅本会话：注入只留本会话的内容：近期事件只列 `sessionScope` 等于当前会话的事件（全局事件与别的会话的事件都不列，共现伙伴随之收窄），不出「所属跨会话话题」行，也不出「最近热点（全局）」整节；人际关系与关注的事物照常注入。带会话作用域参数 `session_scope` 的六个工具（`user_relation_expand_node`、`user_relation_search_events`、`user_relation_timeline`、`user_relation_recommend_persons`、`user_relation_gossip`、`user_relation_community_overview`）的会话作用域只能是本会话；没有这个参数的工具（如 `user_relation_resolve_node`、`user_relation_find_path`、`user_relation_list_edges`、`user_relation_shared`、`user_relation_score`）仍按全图取，可能带出别的会话的事件。范围每轮现读，会话设置不在场时只取插件配置里的值。
 
 ## 存储结构
