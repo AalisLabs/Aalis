@@ -4,13 +4,7 @@ import { contributions as contributionsCap } from '@aalis/api-contributions';
 import { hooks as hooksCap } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子与 memory:clear-type 贡献点）——删掉会丢键类型，不可删
-import {
-  type OutputFormat,
-  type OutputFormatField,
-  type PersonaService,
-  type PersonaSessionOptions,
-  persona,
-} from '@aalis/api-persona';
+import { type PersonaService, type PersonaSessionOptions, persona } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService, sessionTypeLabel } from '@aalis/api-platform';
 import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
@@ -129,6 +123,29 @@ const configSchema = defineConfig({
 type PersonaSettings = SessionFieldsOf<typeof configSchema>;
 
 // ===== 角色卡格式 =====
+
+/** 输出格式中单个字段的定义 */
+interface OutputFormatField {
+  /** 字段用途描述（写入 system prompt 供 LLM 理解） */
+  description: string;
+  /** 字段类型（影响 system prompt 占位符和输出后的类型强制） */
+  type?: 'string' | 'number' | 'boolean';
+  /** 是否为发送给用户的回复字段（有且仅有一个） */
+  reply?: boolean;
+}
+
+/** 角色卡定义的结构化输出格式 */
+interface OutputFormat {
+  /** 字段定义表：key = JSON 字段名 */
+  fields: Record<string, OutputFormatField>;
+  /** 回复字段名（自动推断，取 reply: true 的那个 key） */
+  replyField: string;
+  /**
+   * 格式校验失败时允许的最大重试次数（额外向 LLM 请求的次数，不含首次）。
+   * 缺省为 1。设为 0 时不重试，第一次失败即静默丢弃。
+   */
+  retries: number;
+}
 
 interface PersonaCard {
   name: string;
@@ -453,10 +470,6 @@ class PersonaServiceImpl implements PersonaService {
 
   getNickNames(options?: PersonaSessionOptions): string[] {
     return this.cardFor(this.settingsOf(options).persona).nick_name ?? [];
-  }
-
-  isTimeInjectionEnabled(): boolean {
-    return this.timeInjection;
   }
 
   async listModels(): Promise<string[]> {

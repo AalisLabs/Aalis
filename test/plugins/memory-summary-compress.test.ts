@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { todoList } from '../../packages/api-todo-list/src/index.js';
 import type { App } from '../../packages/core/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import {
@@ -466,28 +467,26 @@ describe('plugin-memory-summary: 分块', () => {
     expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
-  it('待办参数作为最后一行一起分块：每次请求仍装得下，附的是待摘要部分里最后一次待办的参数', async () => {
+  it('待办作为最后一行一起分块：每次请求仍装得下，只在最后一块出现一次', async () => {
     // 窗口取到待办那一行不超过每次容量的一半：超过一半的会切成几段
     const llm = fakeSummaryLLM({ contextLength: 5000, maxOutputTokens: 512 });
-    const { memory, compression } = await setup({}, llm.model);
-    const todo = (label: string) => JSON.stringify({ todoList: [{ title: `${label}${'办'.repeat(380)}` }] });
-    const todoCall = async (id: string, label: string) => {
-      const call = { id, type: 'function' as const, function: { name: 'manage_todo_list', arguments: todo(label) } };
-      await memory.saveMessage('s', { role: 'assistant', content: '', toolCalls: [call] });
-      await memory.saveMessage('s', { role: 'tool', toolCallId: id, content: 'ok' });
-    };
-    await todoCall('t1', '旧');
-    for (let i = 0; i < 4; i++)
+    const { memory, compression, host } = await setup({}, llm.model);
+    const title = `核对${'办'.repeat(380)}`;
+    host.provide.use(todoList, {
+      get: async () => [{ id: 1, title, status: 'in-progress' }],
+      clear: async () => {},
+    });
+    for (let i = 0; i < 5; i++)
       await memory.saveMessage('s', { role: 'user', content: `第 ${i} 条${'。'.repeat(260)}` });
-    await todoCall('t2', '新');
 
     await compression.compress('s', { reason: 'manual' });
 
     const chunks = llm.requests.map(conversationOf);
     expect(chunks.length).toBeGreaterThan(1);
     for (const request of llm.requests) expect(requestTokens(request)).toBeLessThanOrEqual(5000);
-    expect(chunks.at(-1)).toContain(`当前任务列表状态：\n${todo('新')}`);
-    expect(chunks.join('\n')).not.toContain(todo('旧'));
+    const todoLine = `当前任务列表状态：\n- [in-progress] ${title}`;
+    expect(chunks.at(-1)).toContain(todoLine);
+    expect(chunks.filter(chunk => chunk.includes('当前任务列表状态'))).toHaveLength(1);
   });
 
   it('中间一块失败：整次失败，摘要与历史都不动', async () => {

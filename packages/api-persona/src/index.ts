@@ -3,29 +3,6 @@
 
 import { defineService } from '@aalis/core';
 
-/** 输出格式中单个字段的定义 */
-export interface OutputFormatField {
-  /** 字段用途描述（写入 system prompt 供 LLM 理解） */
-  description: string;
-  /** 字段类型（影响 system prompt 占位符和输出后的类型强制） */
-  type?: 'string' | 'number' | 'boolean';
-  /** 是否为发送给用户的回复字段（有且仅有一个） */
-  reply?: boolean;
-}
-
-/** 角色卡定义的结构化输出格式 */
-export interface OutputFormat {
-  /** 字段定义表：key = JSON 字段名 */
-  fields: Record<string, OutputFormatField>;
-  /** 回复字段名（自动推断，取 reply: true 的那个 key） */
-  replyField: string;
-  /**
-   * 格式校验失败时允许的最大重试次数（额外向 LLM 请求的次数，不含首次）。
-   * 缺省为 1。设为 0 时不重试，第一次失败即静默丢弃。
-   */
-  retries: number;
-}
-
 /**
  * 按会话取设置的选项：人设服务按这个会话（platform 是入口平台，只对没有出生平台的会话起作用）读自己的会话设置（人设、额外
  * 提示、结构化输出的两个开关）。不给 sessionId 时按人设插件的配置
@@ -58,16 +35,10 @@ export interface PersonaService {
    * 终端按自己的会话取它作署名。卡没取名时返回空串，不给兜底的名字：要显示名字的一方自己兜底，点名识别跳过空串。
    */
   getPersonaName(options?: PersonaSessionOptions): string;
-  /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
-  getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
-  /** 该角色卡是否配置为客户端渲染 JSON */
-  isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
   /** 列出可用的人设卡（用于前端下拉框） */
   listModels?(): Promise<string[]>;
   /** 获取角色卡定义的昵称列表（用于触发检测）；按 options 取卡，同 getPersonaName */
   getNickNames?(options?: PersonaSessionOptions): string[];
-  /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
-  isTimeInjectionEnabled?(): boolean;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

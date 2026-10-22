@@ -36,7 +36,7 @@ describe('cwd 工具的存储根清单', () => {
     const cwdState = { get: () => 'workspace:/', getInitial: () => 'workspace:/' };
     registerSystemTools(
       stubBoundTools({ onRegister: tool => handlers.set(tool.definition.function.name, tool.handler) }),
-      { cwdState: cwdState as unknown as CwdState, storage: storage as StorageService, skipTimeTool: true },
+      { cwdState: cwdState as unknown as CwdState, storage: storage as StorageService },
     );
     const cwd = handlers.get('cwd');
     if (!cwd) throw new Error('cwd 工具未登记');

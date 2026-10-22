@@ -12,7 +12,7 @@
 
 待办属于会话级短期上下文，以 `context` 类型参与 `memory:clear`：会话级清理（`/clear` 与删除会话）删除本会话的待办，全局清理（`/clear all`）删除全部会话的待办。
 
-插件提供 `todo-list` 服务：`get(sessionId)` 读当前待办，`clear(sessionId)` 清空并发空清单的 `todo:updated`。会话服务用它给订阅的快照带上当前计划、执行 `plan/clear`。服务不随 `enabled` 开关：工具关掉之后，之前留下的待办照样读得到、清得掉。
+插件提供 `todo-list` 服务：`get(sessionId)` 读当前待办，`clear(sessionId)` 清空并发空清单的 `todo:updated`。会话服务用它给订阅的快照带上当前计划、执行 `plan/clear`；记忆摘要压缩时按它写工作模板的待办。服务不随 `enabled` 开关：工具关掉之后，之前留下的待办照样读得到、清得掉。
 
 ## 插件声明
 

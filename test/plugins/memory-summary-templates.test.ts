@@ -3,6 +3,7 @@ import { authority } from '../../packages/api-authority/src/index.js';
 import { type ChatModelRequest, llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -35,7 +36,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup({ withAuthority = true } = {}) {
+async function setup({ withAuthority = true, todos }: { withAuthority?: boolean; todos?: TodoItem[] } = {}) {
   const { app } = hostedApp();
   apps.push(app);
   await registerHubs(app);
@@ -49,6 +50,7 @@ async function setup({ withAuthority = true } = {}) {
       isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === OWNER_QQ,
     } as never);
   host.provide.use(llm, summaryLLM.model);
+  if (todos) host.provide.use(todoList, { get: async () => todos, clear: async () => {} });
   await app.plugin(memorySummary);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
@@ -151,20 +153,25 @@ describe('plugin-memory-summary: 模板的共同规则', () => {
   });
 });
 
-describe('plugin-memory-summary: 待办参数只交给工作模板', () => {
+describe('plugin-memory-summary: 待办只交给工作模板', () => {
   it.each([
-    ['工作模板的输入带上待办参数那一行', OWNER_DM, true],
+    ['工作模板的输入最后一行列出待办插件此刻的待办', OWNER_DM, true],
     ['聊天模板的输入不带', GROUP, false],
   ])('%s', async (_label, sessionId, expected) => {
-    const { store, summarize } = await setup();
-    const call = {
-      id: 't1',
-      type: 'function' as const,
-      function: { name: 'manage_todo_list', arguments: '{"todoList":[]}' },
-    };
-    await store.saveMessage(sessionId, { role: 'assistant', content: '', toolCalls: [call] });
-    await store.saveMessage(sessionId, { role: 'tool', toolCallId: 't1', content: 'ok' });
+    const { summarize } = await setup({
+      todos: [
+        { id: 1, title: '整理发布清单', status: 'completed' },
+        { id: 2, title: '核对版本号', status: 'in-progress' },
+      ],
+    });
     const input = String((await summarize(sessionId)).messages.at(-1)?.content);
-    expect(input.includes('当前任务列表状态：\n{"todoList":[]}')).toBe(expected);
+    const todoLine = '当前任务列表状态：\n- [completed] 整理发布清单\n- [in-progress] 核对版本号';
+    expect(input.endsWith(todoLine)).toBe(expected);
+    expect(input.includes('当前任务列表状态')).toBe(expected);
+  });
+
+  it('待办插件里没有待办时不写那一行', async () => {
+    const { summarize } = await setup({ todos: [] });
+    expect(String((await summarize(OWNER_DM)).messages.at(-1)?.content)).not.toContain('当前任务列表状态');
   });
 });

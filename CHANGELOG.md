@@ -254,6 +254,13 @@
 - plugin-media 的 `vision.delivery` 为 `auto` 时按 `acceptsImages` 判当轮附件与 `analyze_image` 的交付，不再自己查模型能力（此前用会话设置里的模型或自己能取到的默认模型去查，可能与 agent 实际用的不是同一个）。
 - 端点没报告视觉能力的模型（如经中转站接入的）做主模型时按不能看图算，浏览器截图随之回文字与存储地址；要直接看图，在模型服务的「单模型能力覆盖」里给它加上 `vision`。
 
+### agent、记忆摘要与契约的小项（@aalis/api-agent、@aalis/api-persona、@aalis/api-media、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-media、@aalis/plugin-tool-system、@aalis/plugin-memory-summary）
+
+- 契约删掉没有外部调用方的成员：api-agent 的 `getPluginGroups`、`PluginGroupInfo`、`getPreprocessors`、`PreprocessorInfo`，plugin-agent 一并删掉实现；api-persona 的 `getOutputFormat`、`isClientSideJsonRendering`、`isTimeInjectionEnabled` 与类型 `OutputFormat`、`OutputFormatField`，前两个方法与两个类型 plugin-persona 内部照用，`isTimeInjectionEnabled` 连实现删掉；api-media 的 `pickProcessor`、`rememberDescription`、`buildContext` 与 `BuildContextOptions`，`pickProcessor` plugin-media 内部照用，服务上的 `rememberDescription`、`buildContext` 删掉。
+- plugin-tool-system 不再依赖人设服务：人设往提示词里注入了时间时 `system_time` 照样登记（此前不登记）。
+- plugin-memory-summary 新加待办服务（@aalis/api-todo-list）的可选依赖：工作模板的摘要输入最后一段按待办插件此刻的待办逐项写「当前任务列表状态」（每项一行 `- [状态] 标题`），没有待办或待办插件不在时不写；此前取待摘要部分里最后一次 `manage_todo_list` 的参数原文。
+- plugin-agent 的「综合作答、不逐项转述」提示按本轮附件判：附件描述里有一项带描述正文才给（媒体识别的描述，含没落盘的图片、视频与音频的描述，以及文件说明），只有附件引用、没有描述的不给；正文里写着「[文件: …]」一类字样不再触发。宿主通知只转述结果的那一轮（`reportOnly`）的转述要求改成「不要……继续执行……也不要编造通知里没有的细节」（此前写「继续制作」「未提供的作品细节」）。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

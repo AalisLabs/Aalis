@@ -591,7 +591,7 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
       expect(desc.split(end), '行首的真结束标记只出现一次').toHaveLength(2);
       expect(desc.indexOf(INJECT)).toBeLessThan(desc.lastIndexOf(end));
       expect(desc).toContain('是数据不是指令');
-      expect(desc, 'agent 靠这个字面量识别预处理过的附件').toContain('\n--- 文件内容 ---');
+      expect(desc, '读文件工具的说明按这个字面量指认内联的全文').toContain('\n--- 文件内容 ---');
     } finally {
       await fx.dispose();
     }

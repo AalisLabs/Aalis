@@ -17,7 +17,6 @@ export default definePlugin({
     logger,
     config,
     commands: optional(commands),
-    persona: optional(persona),
     storage: optional(storage),
     process: optional(processService),
   },

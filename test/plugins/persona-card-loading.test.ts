@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type {} from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
 import { createBotNames } from '../../packages/api-trigger/src/index.js';
 import { App, type LogEntry, LogHub, services } from '../../packages/core/src/index.js';
@@ -68,6 +70,12 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     if (!svc) throw new Error('persona 服务未就绪');
     return svc;
   };
+  /** 按会话 card 跑一次回复的结构化解析，回 agent 拿到的正文 */
+  const reply = async (card: string, content: string): Promise<string> => {
+    const data = { content, sessionId: card, platform: 'webui', attempt: 0 };
+    await app.bind({ hooks }).hooks.use.run('agent:reply:before', data);
+    return data.content;
+  };
 
   /** 会话用的卡：会话 id 就是卡名，它的「人设」设成这张卡 */
   const as = (card: string) => ({ sessionId: card });
@@ -131,8 +139,8 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     writeCard('b.yaml', formatCard('Same', 'msgB'));
     const svc = await boot(true);
     await app.start();
-    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('msgA');
-    expect(svc.getOutputFormat?.(as('b'))?.replyField).toBe('msgB');
+    expect(await reply('a', '{"msgA":"甲"}')).toBe('甲');
+    expect(await reply('b', '{"msgB":"乙"}')).toBe('乙');
     const promptB = svc.getSystemPrompt(as('b'));
     expect(promptB).toContain('"msgB"');
     expect(promptB).not.toContain('"msgA"');
@@ -185,13 +193,13 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     writeCard('a.yaml', formatCard('Alice', 'old'));
     const svc = await boot(true);
     await app.start();
-    // 先取一次，让旧格式进缓存
-    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('old');
+    // 先解析一次，让旧格式进缓存
+    expect(await reply('a', '{"old":"旧"}')).toBe('旧');
     await sleep(250); // 等 fs 监听就绪
 
     writeCard('a.yaml', formatCard('Alice', 'new', 'EDITED'));
     expect(await waitUntil(() => svc.getSystemPrompt(as('a')).includes('EDITED')), '改卡未被重扫载入').toBe(true);
-    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('new');
+    expect(await reply('a', '{"new":"新"}')).toBe('新');
     const prompt = svc.getSystemPrompt(as('a'));
     expect(prompt).toContain('"new"');
     expect(prompt).not.toContain('"old"');

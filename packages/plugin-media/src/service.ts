@@ -5,7 +5,6 @@
 import type { ASRService } from '@aalis/api-asr';
 import type { LLMModel, ModelRef } from '@aalis/api-llm';
 import {
-  type BuildContextOptions,
   type DescribeImageOptions,
   type DescribeOptions,
   type DescribeVideoOptions,
@@ -726,22 +725,14 @@ export class MediaServiceImpl implements MediaService {
     return processors;
   }
 
-  // ===== 描述缓存 / 上下文构造 =====
+  // ===== 单图、单视频识别与描述缓存 =====
 
   lookupDescription(imageUrl: string): string | null {
     return lookupCachedDescription(imageUrl);
   }
 
-  rememberDescription(imageUrl: string, description: string): void {
-    rememberDescription(imageUrl, description);
-  }
-
   rememberDescriptionAlias(source: string, landedRef: string): void {
     rememberDescriptionAlias(source, landedRef);
-  }
-
-  async buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string> {
-    return buildIncomingImageContext(this.contextCaps, msg, opts?.beforeLimit, this.cfg.senderContext);
   }
 
   /**
@@ -858,7 +849,7 @@ async function safeBuildContext(
     const text = await buildIncomingImageContext(caps, msg, beforeLimit, senderCfg);
     return text && text.trim().length > 0 ? text : undefined;
   } catch (err) {
-    caps.logger.debug(`buildContext 失败，跳过: ${err instanceof Error ? err.message : err}`);
+    caps.logger.debug(`识别上下文构造失败，跳过: ${err instanceof Error ? err.message : err}`);
     return undefined;
   }
 }

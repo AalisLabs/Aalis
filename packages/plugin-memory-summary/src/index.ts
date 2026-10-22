@@ -10,6 +10,7 @@ import { clearMetadataNamespaces, compression, compressionDue, compressionLine, 
 import { messageArchive } from '@aalis/api-message-archive';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
+import { todoList } from '@aalis/api-todo-list';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
@@ -127,7 +128,7 @@ function samePrefix(span: Message[], current: Message[]): boolean {
 
 /** 摘要输入里能整体留下或整体不留的一块：一条不带工具调用的消息，或带工具调用的 assistant 连同紧随其后的全部工具结果 */
 interface Unit {
-  /** 在归档段里的下标（工具组是连续的几条；待办那一行没有） */
+  /** 在归档段里的下标（工具组是连续的几条；待办那一段没有） */
   at: number[];
   /** 进摘要输入的文字：各行同 formatMsgForSummary，以换行相接；有编号时开头加标注 */
   text: string;
@@ -368,6 +369,8 @@ const uses = {
   document: optional(ownHostConfig),
   /** 选摘要模板时判一对一窗口的对端是不是 owner；不在场时按不是 */
   authority: optional(authority),
+  /** 工作模板的「未完成的事」以它此刻的待办为准；不在场时不写待办 */
+  todoList: optional(todoList),
   config,
   logger,
   events,
@@ -395,6 +398,7 @@ async function run(caps: Caps): Promise<void> {
     messageArchive,
     sessionManager,
     authority,
+    todoList,
     logger,
     events,
     hooks,
@@ -594,13 +598,13 @@ async function run(caps: Caps): Promise<void> {
   ): Promise<{ summary: string; kept: Unit[] }> {
     const template = templateOf(sessionId);
     const units = buildUnits(span);
-    // 工作模板的「未完成的事」以待办为准：归档段里最后一次待办的参数作为最后一行，不能保留
-    if (template === WORK_TEMPLATE) {
-      const todo = span
-        .flatMap(m => m.toolCalls ?? [])
-        .filter(call => call.function.name === 'manage_todo_list')
-        .at(-1)?.function.arguments;
-      if (todo) units.push({ at: [], text: `当前任务列表状态：\n${todo}`, cost: 0, whole: false });
+    // 工作模板的「未完成的事」以待办插件此刻的待办为准：逐项写成最后一段，不能保留；没有待办时不写
+    if (template === WORK_TEMPLATE && todoList.present) {
+      const todos = await todoList.use.get(sessionId);
+      if (todos.length > 0) {
+        const text = ['当前任务列表状态：', ...todos.map(item => `- [${item.status}] ${item.title}`)].join('\n');
+        units.push({ at: [], text, cost: 0, whole: false });
+      }
     }
     // 物理上限：摘要模型一次写得出的长度，至多它窗口的四分之一（请求里的已有摘要与输出各占至多四分之一，另一半留给提示词与对话）
     const physical = Math.min(model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(model.contextLength / 4));

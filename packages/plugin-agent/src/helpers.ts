@@ -10,6 +10,7 @@ import { estimateMsgTokens } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
+import { formatAttachmentRef, parseAttachmentRefs } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 /**
@@ -90,6 +91,18 @@ export function buildFocusGuidance(
     ].join('\n'),
     metadata: { injector: 'focus-guidance' },
   };
+}
+
+/**
+ * 本轮附件有没有描述正文：附件描述里有一项去掉不带描述的附件引用（只是指针，如关了到达识别时的 `[图片 | ref:…]`）之后
+ * 还有文字。媒体识别的描述（带引用的、没落盘的、视频与音频）与文件说明都算
+ */
+export function hasAttachmentDescriptions(incoming: Pick<IncomingMessage, '_attachmentDescriptions'>): boolean {
+  return (incoming._attachmentDescriptions ?? []).some(desc => {
+    if (!desc) return false;
+    const pointers = parseAttachmentRefs(desc).filter(ref => !ref.desc);
+    return pointers.reduce((rest, ref) => rest.replace(formatAttachmentRef(ref), ''), desc).trim() !== '';
+  });
 }
 
 // ----- Token 估算 -----

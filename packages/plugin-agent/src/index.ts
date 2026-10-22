@@ -1,12 +1,5 @@
 import { Buffer } from 'node:buffer';
-import {
-  type AgentService,
-  agent as agentService,
-  type PluginGroupInfo,
-  type PreprocessorFn,
-  type PreprocessorInfo,
-  type TokenUsageEvent,
-} from '@aalis/api-agent';
+import { type AgentService, agent as agentService, type PreprocessorFn, type TokenUsageEvent } from '@aalis/api-agent';
 import { authority as authorityService } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
@@ -74,6 +67,7 @@ import {
   estimateTokens,
   formatTimeLabel,
   formatToolArgsForLog,
+  hasAttachmentDescriptions,
   INPUT_CONVENTIONS,
   isSameMessage,
   parseToolArguments,
@@ -385,36 +379,6 @@ class DefaultAgent implements AgentService {
     this.preprocessors.set(name, entry);
     this.logger.info(`预处理器已注册: ${name}`);
     return entry.dispose;
-  }
-
-  /**
-   * 获取当前所有已注册预处理器的元信息（按注册顺序返回）
-   */
-  getPreprocessors(): PreprocessorInfo[] {
-    return [...this.preprocessors.keys()].map(name => ({ name }));
-  }
-
-  /**
-   * 获取 Agent 子系统的插件分组
-   *
-   * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
-   * （平台属于独立子系统，由 api-platform 的 helper 负责）。
-   */
-  getPluginGroups(): PluginGroupInfo[] {
-    if (!this.caps.plugins.present) return [];
-    const pm = this.caps.plugins.use;
-
-    // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
-    const targetServices = new Set(['llm', 'memory', 'persona', 'message-archive']);
-    const grouped: string[] = [];
-
-    for (const p of pm.getStatus()) {
-      if (p.provides?.some(s => targetServices.has(s))) {
-        grouped.push(p.instanceId);
-      }
-    }
-
-    return [{ label: 'Agent', plugins: grouped }];
   }
 
   /**
@@ -825,7 +789,7 @@ class DefaultAgent implements AgentService {
             content:
               `[宿主通知]\n${incoming.content}${incoming.hostNotice?.untrusted ? `\n\n${incoming.hostNotice.untrusted}` : ''}\n\n` +
               '本轮只转述以上已确认的结果。沿用当前人设和回复格式，向当前会话自然地说明结果，保留通知中的链接；' +
-              '不要调用工具、重新查询状态或继续制作，不把编号、内部流程当成回复正文，也不要编造未提供的作品细节。请给出非空回复。',
+              '不要调用工具、重新查询状态或继续执行，不把编号、内部流程当成回复正文，也不要编造通知里没有的细节。请给出非空回复。',
             metadata: { injector: WellKnownKinds.HostNotice },
           });
         }
@@ -1578,9 +1542,8 @@ class DefaultAgent implements AgentService {
     }
 
     // 3b. 普通用户消息分支
-    // 检测预处理附件内容——引导 LLM 综合分析而非逐项转述
-    const hasPreprocessed = /\[图片\d*[:：]|\[文件[:：]|--- 文件内容 ---/.test(currentContent);
-    if (hasPreprocessed) {
+    // 本轮附件有描述正文（媒体识别的描述、文件说明）时，引导 LLM 综合作答而非逐项转述
+    if (hasAttachmentDescriptions(incoming)) {
       messages.push({
         role: 'system',
         content:

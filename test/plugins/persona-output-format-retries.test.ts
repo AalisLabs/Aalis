@@ -3,8 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
-import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
-import { App, type BoundOf, services } from '../../packages/core/src/index.js';
+import { App, type BoundOf } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -16,8 +15,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 真 fs 角色卡 + 真 agent:reply:before 钩子驱动（生产路径），断言 0 = 不重试。
 // ════════════════════════════════════════════════════════════
 
-/** 宿主侧要的两样：驱动钩子链、取 persona 服务 */
-const hostUses = { hooks, services };
+/** 宿主侧驱动钩子链 */
+const hostUses = { hooks };
 
 describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => {
   let base: string;
@@ -25,7 +24,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   let host: BoundOf<typeof hostUses>;
 
   /** 选中的卡写成主卡 default.yaml */
-  const boot = async (name: string): Promise<PersonaService> => {
+  const boot = async (name: string): Promise<void> => {
     writeFileSync(join(base, 'self', 'personas', 'default.yaml'), card(RETRIES[name]));
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
@@ -38,9 +37,6 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
     expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
     host = app.bind(hostUses);
-    const svc = host.services.use.get(persona);
-    if (!svc) throw new Error('persona 服务未就绪');
-    return svc;
   };
 
   /** 各张卡的 outputFormatRetries 一行 */
@@ -67,8 +63,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   });
 
   it('角色卡 outputFormatRetries: 0 → 不重试，首次不合格即丢弃', async () => {
-    const svc = await boot('zz-no-retry');
-    expect(svc.getOutputFormat?.()?.retries).toBe(0);
+    await boot('zz-no-retry');
 
     // 缺 mood 字段（声明字段必须齐全）→ 校验失败
     const data: Record<string, unknown> = {
@@ -85,8 +80,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   });
 
   it('角色卡未写该键 → 仍是缺省 1 次重试', async () => {
-    const svc = await boot('zz-default');
-    expect(svc.getOutputFormat?.()?.retries).toBe(1);
+    await boot('zz-default');
 
     const data: Record<string, unknown> = {
       sessionId: 'zz-s',
@@ -161,7 +155,14 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     ['zz-fractional', '小数'],
     ['zz-string', '字符串'],
   ])('角色卡 outputFormatRetries 写脏值（%s，%s）→ 按未设处理，回落缺省 1', async name => {
-    const svc = await boot(name);
-    expect(svc.getOutputFormat?.()?.retries).toBe(1);
+    await boot(name);
+    const data: Record<string, unknown> = {
+      sessionId: 'zz-s',
+      platform: 'test',
+      content: '{"message":"你好"}',
+      attempt: 0,
+    };
+    await host.hooks.use.run('agent:reply:before', data as never);
+    expect(data.maxRetries).toBe(1);
   });
 });

@@ -15,8 +15,6 @@ interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
   abort?(sessionId: string, turnId?: string): boolean;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
-  getPreprocessors?(): PreprocessorInfo[];
-  getPluginGroups?(): PluginGroupInfo[];
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
 ```
