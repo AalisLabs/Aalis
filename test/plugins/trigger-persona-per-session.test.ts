@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
-import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
@@ -13,11 +12,12 @@ import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
-// 名字表按会话取人设：会话配置（session-manager 的 resolveConfig）里的 persona 指定角色卡时，点名识别用那张卡的
-// 名字与昵称，别的会话照旧用主卡，两边不串。真 storage-local + 真 persona（两张卡）+ 真 trigger-policy；
-// session-manager 用替身（按会话给 persona）。Laya 发给侧车的 selfNames 按会话取见 trigger-laya.test.ts。
+// 名字表按会话取人设：会话的「人设」指定角色卡时，点名识别用那张卡的名字与昵称，别的会话照旧用主卡，两边不串。
+// 真 storage-local + 真 persona（两张卡）+ 真 trigger-policy；会话设置用替身（按会话给「人设」）。Laya 发给侧车的
+// selfNames 按会话取见 trigger-laya.test.ts。
 // ════════════════════════════════════════════════════════════
 
 const root = (name: string, path: string) => ({
@@ -78,6 +78,7 @@ async function boot() {
       definition: storageLocal,
       config: { roots: [root('workspace', join(base, 'workspace'))] },
     },
+    { definition: sessionValuesPlugin({ [SESSION_BOB]: { persona: 'bob' } }) },
     {
       definition: personaPlugin,
       config: { personasDir: 'personas:/', timeInjection: false },
@@ -86,13 +87,6 @@ async function boot() {
   await app.plugins.idle();
   const host = app.bind({ provide, hooks, services });
   host.provide.use(gateway, {} as never); // 满足 trigger-policy 的 required 依赖；相位判定本身不经过 gateway
-  const resolved: Array<[sessionId: string, platform: string | undefined]> = [];
-  host.provide.use(sessionManager, {
-    resolveConfig(sessionId: string, platform?: string) {
-      resolved.push([sessionId, platform]);
-      return sessionId === SESSION_BOB ? { persona: 'bob' } : {};
-    },
-  } as unknown as SessionManagerService);
   // 计数到不了阈值：没点名的消息一律吞掉，点名的记 immediate 放行
   await app.plugins.register(triggerPolicyPlugin, { intervalMode: 'fixed', fixedInterval: 100 });
   await app.plugins.idle();
@@ -103,13 +97,13 @@ async function boot() {
   }
   const svc = host.services.use.get(persona) as PersonaService;
   // 前提：两张卡都已载入，否则下面测的是回落主卡（用提示词核：它早就按会话取卡）
-  if (!svc.getSystemPrompt({ persona: 'bob' }).includes('副卡名')) throw new Error('卡 bob 未载入');
-  return { host, resolved };
+  if (!svc.getSystemPrompt({ sessionId: SESSION_BOB }).includes('副卡名')) throw new Error('卡 bob 未载入');
+  return { host };
 }
 
 describe('名字表按会话取人设（trigger-policy + 真 persona）', () => {
   it('会话改用别的卡：那张卡的名字、昵称算点名，主卡的不算；别的会话照旧用主卡，两边不串', async () => {
-    const { host, resolved } = await boot();
+    const { host } = await boot();
     const send = (sid: string, content: string) => runTriggerPhase(host.hooks.use, groupMsg(sid, content));
 
     expect(await send(SESSION_BOB, '副卡名 在吗')).toEqual({ reached: true, triggerType: 'immediate' });
@@ -119,8 +113,5 @@ describe('名字表按会话取人设（trigger-policy + 真 persona）', () => 
     expect(await send(SESSION_MAIN, '主卡名 在吗')).toEqual({ reached: true, triggerType: 'immediate' });
     expect(await send(SESSION_MAIN, '主卡昵称 在吗')).toEqual({ reached: true, triggerType: 'immediate' });
     expect((await send(SESSION_MAIN, '副卡名 在吗')).reached, '用主卡的会话里叫副卡名不算点名').toBe(false);
-
-    expect(resolved, '与 agent 同一取法：按会话 ID 与平台解析').toContainEqual([SESSION_BOB, 'onebot']);
-    expect(resolved).toContainEqual([SESSION_MAIN, 'onebot']);
   });
 });

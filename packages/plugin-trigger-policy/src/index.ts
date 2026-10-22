@@ -3,7 +3,6 @@ import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffecti
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
-import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
@@ -48,8 +47,6 @@ const uses = {
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
   flowControl: optional(flowControl),
   persona: optional(persona),
-  // 名字表按会话取人设：解析会话配置里的角色卡；缺席时取全局默认的卡
-  sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
 };
@@ -70,7 +67,7 @@ function run(caps: Caps): void {
   const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
   const states = new Map<string, TriggerSessionState>();
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, caps.sessionManager, logger.use, '[trigger]');
+  const botNames = createBotNames(caps.persona, logger.use, '[trigger]');
 
   // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行、
   // 闲置也不开口

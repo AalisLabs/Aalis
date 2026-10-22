@@ -128,18 +128,24 @@
   }
 }
 
-/* 底部一条：几项未保存与保存的结果，贴着滚动区的底边 */
+/* 底部一条：几项未保存与保存的结果，别处改了配置时上面另有一行，贴着滚动区的底边 */
 .config-bar {
   position: sticky;
   bottom: 0;
   z-index: var(--z-sticky);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-2) 0;
   border-top: 1px solid var(--color-border);
   background: var(--surface);
+}
+
+.config-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .config-bar-text {

@@ -10,7 +10,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
-import { type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   SESSION_PROTOCOL_VERSION,
   type SessionItem,
@@ -28,9 +28,12 @@ import {
   type ServerConnection,
 } from '../../packages/plugin-session-server/src/connection.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
+import { defineConfig } from '../../packages/schema-config/src/index.js';
 import { defineTexts, TextError, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -38,15 +41,15 @@ import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js'
 import { recordRoom } from '../fixtures/rooms.js';
 import { client, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { settingsPlugin } from '../fixtures/session-settings.js';
+import { ALL, fieldsPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话协议的出口按全局默认层的语言渲染文字对象（读者是 owner 自己，握手不带语言与时区，时间按服务进程的时区）；i18n 是
 // 真的 plugin-i18n，缺席时一律原文，渲染出错时这一帧按原文发出。夹具在结果（sessions/list
 // 的分组名，取适配器的显示名）、连接级推送（sessions/changed 的分组名）、会话推送（用量条目的分项名）与错误帧（检查点
 // 抛出的 TextError）里交出文字对象；工具调用的参数、审批的逐字参数、用户消息正文、设置项的取值与字段的默认值是原样数据，里面伪造的文字对象不被换掉。
-// 会话设置一路：设置项的标签与没设时的说明（登记方的字典）、层名（api-session-manager 的字典）、写入被拒的原因，以及没取名的
-// 会话与场所的默认名（存储里不再有生成的名字，读者经 sessionLabel 与 placeLabel 取）。
+// 会话设置一路：设置项的标签与没设时的说明（声明字段的插件的字典）、层名（api-session-settings 的字典）、写入被拒的原因，以及
+// 没取名的会话与场所的默认名（存储里不再有生成的名字，读者经 sessionLabel 与 placeLabel 取）。
 // ════════════════════════════════════════════════════════════
 
 const NS = '@zz/session-server-i18n';
@@ -87,33 +90,26 @@ const ROOM = 'onebot:10000:group:1';
 const POOL_ROOM = 'onebot:40000:group:2';
 const OWNER = { platform: 'webui', userId: 'console' };
 
-/** 字符串映射的设置项（键不在 SessionConfig 里）：形如文字对象的取值（三个键都是字符串）也是合法的映射 */
-const ENV: SessionSetting = {
-  key: 'env' as never,
-  field: { type: 'map', label: '环境变量', default: FORGED },
-  appliesTo: ['owner', 'room', 'task'],
-  prominence: 'advanced',
-};
-
-/** 标签与没设时的说明是文字对象的设置项，只适用于房间 */
-const TONE: SessionSetting = {
-  key: 'tone' as never,
-  field: { type: 'string', label: t('tone') },
-  appliesTo: ['room'],
-  prominence: 'common',
-  unset: t('toneUnset'),
-};
-
-/** validate 会抛错的设置项：全局默认层里存着它的值时，读这一层不能抛 */
-const BROKEN: SessionSetting = {
-  key: 'broken' as never,
-  field: { type: 'string', label: '坏校验' },
-  appliesTo: ['owner', 'room', 'task'],
-  prominence: 'advanced',
-  validate: () => {
-    throw new Error('<校验器坏了>');
+/**
+ * 设置项：env 是字符串映射（形如文字对象的取值也是合法的映射）；tone 的标签与没设时的说明是文字对象，只适用于房间；broken 的
+ * validate 会抛错，全局层里存着它的值时读这一层不能抛
+ */
+const SCHEMA = defineConfig({
+  env: { type: 'map', label: '环境变量', default: FORGED, session: { appliesTo: ALL, prominence: 'advanced' } },
+  tone: {
+    type: 'string',
+    label: t('tone'),
+    session: { appliesTo: ['room'], prominence: 'common', unset: t('toneUnset') },
   },
-};
+  broken: {
+    type: 'string',
+    label: '坏校验',
+    validate: () => {
+      throw new Error('<校验器坏了>');
+    },
+    session: { appliesTo: ALL, prominence: 'advanced', unset: '<没设>' },
+  },
+});
 
 const ENGLISH = { result: ['QQ bot', 'QQ bot (work)'], notify: ['QQ bot', 'QQ bot (work)'], session: ['History'] };
 const CHINESE = {
@@ -161,6 +157,7 @@ const usage = (label: TextRef): TokenUsageEvent => ({
   trimmed: false,
   untrimmedHistory: 10,
   historyMessages: 1,
+  historyLimit: 0,
   breakdown: {
     system: 0,
     persona: 0,
@@ -179,12 +176,21 @@ const usage = (label: TextRef): TokenUsageEvent => ({
 });
 
 /**
- * 会话服务连同会话管理与两个适配器实例（各接管一个房间），审批面由一个测试插件登记；记忆、存储、owner 判定与检查点是替身，
- * 检查点的回滚抛 TextError。defaults 是宿主配置文档里会话设置的全局默认层，setLanguage 改它的语言。withI18n 为假时没有
- * i18n 服务。render 是 i18n 服务 render 的探针
+ * 会话服务连同会话管理、会话设置与两个适配器实例（各接管一个房间），审批面由一个测试插件登记；记忆、存储、owner 判定与检查点
+ * 是替身，检查点的回滚抛 TextError。language 是全局语言（plugin-i18n 的配置段），setLanguage 改它；plugins 另写这些实例的
+ * 配置段。withI18n 为假时没有 i18n 服务。render 是 i18n 服务 render 的探针
  */
-async function setup({ withI18n = true, defaults }: { withI18n?: boolean; defaults?: Record<string, unknown> } = {}) {
-  const { app } = hostedApp(defaults ? { sessionConfig: { defaults } } : {}, { logger: silent });
+async function setup({
+  withI18n = true,
+  language,
+  plugins = {},
+}: {
+  withI18n?: boolean;
+  language?: string[];
+  plugins?: Record<string, Record<string, unknown>>;
+} = {}) {
+  const doc = { plugins: { ...(language ? i18nSection(language).plugins : {}), ...plugins } };
+  const { app, store } = hostedApp(doc, { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-i18n-'));
   homes.push(home);
@@ -214,6 +220,7 @@ async function setup({ withI18n = true, defaults }: { withI18n?: boolean; defaul
   await app.plugin(adapterPlugin('qq', 'onebot:10000:'));
   await app.plugin(adapterPlugin('qq-pool', 'onebot:40000:', true), {}, 'qq-pool:work');
   await app.plugin(sessionManagerPlugin, {});
+  await registerFromDoc(app, store, sessionSettingsPlugin);
   await app.plugin(sessionServerPlugin, {});
   const surfaces: Record<string, ApprovalSurface> = {};
   const surfacePlugin = definePlugin({
@@ -224,9 +231,9 @@ async function setup({ withI18n = true, defaults }: { withI18n?: boolean; defaul
     },
   });
   await app.plugin(surfacePlugin);
-  const settings = settingsPlugin('@zz/session-i18n-settings', [ENV, TONE, BROKEN]);
-  await app.plugin(settings);
-  if (withI18n) await app.plugin(i18nPlugin);
+  const settings = fieldsPlugin('@zz/session-i18n-settings', SCHEMA).definition;
+  await registerFromDoc(app, store, settings);
+  if (withI18n) await registerFromDoc(app, store, i18nPlugin);
   await app.plugins.idle();
   for (const name of [
     sessionServerPlugin.name,
@@ -246,8 +253,8 @@ async function setup({ withI18n = true, defaults }: { withI18n?: boolean; defaul
     await c.init();
     return c;
   };
-  /** 改全局默认层的语言 */
-  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
+  /** 改全局语言 */
+  const setLanguage = async (next: string[]) => setHostLanguage(app, next);
   const render = withI18n ? vi.spyOn(host.services.use.get(i18n) as I18nService, 'render') : undefined;
   return { app, host, mem, open, connect, setLanguage, render };
 }
@@ -291,7 +298,7 @@ const processTime = (language: string) => new Intl.DateTimeFormat(language, { ti
 describe('会话协议按全局默认层的语言渲染', () => {
   it('握手里多带的语言与时区（旧客户端）不认：连接之后全局默认层从 zh-CN 改成 en，之后的结果与推送按 en，时间按服务进程的时区', async () => {
     expectProcessTimeZoneDistinct();
-    const { host, open, setLanguage } = await setup({ defaults: { language: ['zh-CN'] } });
+    const { host, open, setLanguage } = await setup({ language: ['zh-CN'] });
     const c = open();
     const legacy = { languages: ['zh-CN'], timeZone: 'Asia/Tokyo' };
     await c.call('initialize', {
@@ -312,12 +319,12 @@ describe('会话协议按全局默认层的语言渲染', () => {
     ['zh-CN', CHINESE],
     ['en', ENGLISH],
   ])('结果、连接级推送与会话推送里的文字对象按全局默认层的语言（设为 %s）', async (language, expected) => {
-    const { host, connect } = await setup({ defaults: { language: [language] } });
+    const { host, connect } = await setup({ language: [language] });
     expect(await observe(host, [await connect()])).toEqual([expected]);
   });
 
-  it('设置项的 validate 抛错、全局默认层里存着它的值：连接照常收到推送，按全局默认层渲染（没设语言时按 en）', async () => {
-    const { host, connect } = await setup({ defaults: { broken: 'x' } });
+  it('设置项的 validate 抛错、全局层（插件配置）里存着它的值：连接照常收到推送，按全局语言渲染（没设语言时按 en）', async () => {
+    const { host, connect } = await setup({ plugins: { '@zz/session-i18n-settings': { broken: 'x' } } });
     expect(await observe(host, [await connect()])).toEqual([ENGLISH]);
   });
 
@@ -348,7 +355,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     } as unknown as MethodHandlers;
     const server = createSessionServer(
       handlers,
-      () => ({ features: { send: false, rewind: false, compress: false }, appName: 'T' }),
+      () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
       { ...silent, warn },
       { present: true, use: flaky },
     );
@@ -385,7 +392,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('i18n 缺席时一律原文', async () => {
-    const { host, connect } = await setup({ withI18n: false, defaults: { language: ['en'] } });
+    const { host, connect } = await setup({ withI18n: false, language: ['en'] });
     expect(await observe(host, [await connect()])).toEqual([CHINESE]);
   });
 
@@ -393,7 +400,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     [true, 'Checkpoint service down'],
     [false, '检查点服务掉线'],
   ])('回合出错的原因（lastTurn.error，会话列表的 reason）按全局默认层的语言（i18n 在场：%s）', async (withI18n, expected) => {
-    const { host, connect } = await setup({ withI18n, defaults: { language: ['en'] } });
+    const { host, connect } = await setup({ withI18n, language: ['en'] });
     const { id: sessionId } = await host.sessionManager.use.createSession({ name: '<会话>' });
     const message: IncomingMessage = { content: '<提问>', sessionId, platform: 'webui' };
     const turnId = 'zz-turn';
@@ -417,7 +424,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     const conns = [await connect(), await connect(), await connect()];
     for (const c of conns) await c.subscribe(ROOM);
     render?.mockClear();
-    await host.events.use.emit('session:config:changed');
+    await host.events.use.emit('session-settings:changed');
     expect(conns.map(c => pushed(c, 'session/config/changed'))).toEqual([[{}], [{}], [{}]]);
     expect(render?.mock.calls).toHaveLength(1);
     render?.mockClear();
@@ -427,7 +434,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('错误帧：TextError 按全局默认层的语言渲染进 error.message', async () => {
-    const { connect, setLanguage } = await setup({ defaults: { language: ['en'] } });
+    const { connect, setLanguage } = await setup({ language: ['en'] });
     const c = await connect();
     const rewind = async () => (await c.fail('turn/rewind', { sessionId: ROOM, turnId: 't1', scope: 'code' })).message;
     expect(await rewind()).toBe('Checkpoint service down');
@@ -436,7 +443,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('回滚结果里没回滚成的原因是文字对象：按全局默认层的语言渲染', async () => {
-    const { connect, setLanguage } = await setup({ defaults: { language: ['en'] } });
+    const { connect, setLanguage } = await setup({ language: ['en'] });
     const c = await connect();
     const reasons = async () => {
       const result = await c.call('turn/rewind', { sessionId: ROOM, turnId: 't1', scope: 'code-and-chat' });
@@ -459,7 +466,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     } as unknown as MethodHandlers;
     const server = createSessionServer(
       handlers,
-      () => ({ features: { send: false, rewind: false, compress: false }, appName: 'T' }),
+      () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
       silent,
       app.bind({ i18n }).i18n,
     );
@@ -473,7 +480,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('原样数据里伪造的文字对象不被换掉：工具调用的参数、审批的逐字参数（快照与推送），用户消息正文（推送）', async () => {
-    const { host, connect } = await setup({ defaults: { language: ['en'] } });
+    const { host, connect } = await setup({ language: ['en'] });
     const watcher = await connect();
     await watcher.call('presence/update', { active: true });
     await watcher.subscribe(ROOM);
@@ -516,9 +523,14 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('设置项一行里的取值与字段的默认值不渲染：形如文字对象的映射原样读回', async () => {
-    const { connect } = await setup({ defaults: { language: ['en'] } });
+    const { connect } = await setup({ language: ['en'] });
     const c = await connect();
-    const { items } = await c.call('session/config/update', { sessionId: ROOM, patch: { env: FORGED } });
+    const { items } = await c.call('session/config/update', {
+      sessionId: ROOM,
+      plugin: '@zz/session-i18n-settings',
+      key: 'env',
+      value: FORGED,
+    });
     expect(items.find(row => row.key === 'env')).toMatchObject({
       field: { label: '环境变量', default: FORGED },
       value: FORGED,
@@ -527,56 +539,47 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 });
 
-describe('会话设置与默认名按全局默认层的语言渲染', () => {
+describe('会话设置与默认名按全局语言渲染', () => {
   it('设置项的标签、没设时的说明与层名：en 拿英文，zh-CN 拿原文', async () => {
-    const { connect, setLanguage } = await setup({ defaults: { language: ['en'] } });
+    const { connect, setLanguage } = await setup({ language: ['en'] });
     const c = await connect();
     const view = async () => {
       const row = (await c.call('session/config/get', { sessionId: ROOM })).items.find(r => r.key === 'tone');
       const { order } = await c.call('session/config/layers', {});
-      return { label: row?.field.label, unset: row?.unset, layers: order.map(layer => layer.label) };
+      return { label: row?.field.label, unset: row?.field.session.unset, layers: order.map(layer => layer.label) };
     };
     expect(await view()).toEqual({
       label: 'Tone',
       unset: 'As the persona says',
-      layers: [
-        'Global default',
-        'Platform profile',
-        'Platform-type profile',
-        'Place',
-        'Parent session',
-        'This session',
-      ],
+      layers: ['Global (plugin config)', 'Platform profile', 'Platform-type profile', 'Place', 'This session'],
     });
     await setLanguage(['zh-CN']);
     expect(await view()).toEqual({
       label: '语气',
       unset: '按人设',
-      layers: ['全局默认', '平台档', '平台类型档', '场所', '父会话', '本会话'],
+      layers: ['全局（插件配置）', '平台档', '平台类型档', '场所', '本会话'],
     });
   });
 
-  it('写入被拒的原因：取值无效、不适用于这种会话，按全局默认层的语言渲染', async () => {
-    const { connect, setLanguage } = await setup({ defaults: { language: ['en'] } });
+  it('写入被拒的原因：取值无效、不适用于这种会话，按全局语言渲染', async () => {
+    const { connect, setLanguage } = await setup({ language: ['en'] });
     const c = await connect();
     const { session } = await c.call('session/create', { name: '<我的>' });
+    const plugin = '@zz/session-i18n-settings';
     const refusals = async () => [
-      (await c.fail('session/config/update', { sessionId: ROOM, patch: { env: 'x' } })).message,
-      (await c.fail('session/config/update', { sessionId: session.id, patch: { tone: '<轻快>' } })).message,
+      (await c.fail('session/config/update', { sessionId: ROOM, plugin, key: 'env', value: 'x' })).message,
+      (await c.fail('session/config/update', { sessionId: session.id, plugin, key: 'tone', value: '<轻快>' })).message,
     ];
     expect(await refusals()).toEqual([
-      'Invalid value for session setting env: expected an object (map), got string',
-      'Session setting tone does not apply to my sessions',
+      'Invalid value for env: expected an object (map), got string',
+      'tone does not apply to owner sessions',
     ]);
     await setLanguage(['zh-CN']);
-    expect(await refusals()).toEqual([
-      '会话设置项 env 的值无效：期望对象（映射），得到 string',
-      '会话设置项 tone 不适用于我的会话',
-    ]);
+    expect(await refusals()).toEqual(['env 的值不合法：期望对象（映射），得到 string', 'tone 不适用于owner 的会话']);
   });
 
   it('没取名的会话与场所：存储里没有生成的名字；en 拿英文默认名，zh-CN 拿原文，时间按服务进程的时区', async () => {
-    const { app, host, mem, connect, setLanguage } = await setup({ defaults: { language: ['en'] } });
+    const { app, host, mem, connect, setLanguage } = await setup({ language: ['en'] });
     const at = (language: string, time: number, dateStyle?: 'short') =>
       new Intl.DateTimeFormat(language, { dateStyle, timeStyle: 'short' }).format(time);
     const c = await connect();

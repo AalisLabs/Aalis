@@ -9,34 +9,30 @@ import {
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
-import { gateway as gatewayService } from '@aalis/api-gateway';
+import { chatScopeOf, gateway as gatewayService } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
-import type { ChatModelRequest, ChatResponse, LLMModel, ThinkingLevels } from '@aalis/api-llm';
+import { ownHostConfig } from '@aalis/api-host-config';
+import type { ChatModelRequest, ChatResponse, LLMModel, ModelRef } from '@aalis/api-llm';
 import {
   estimateMsgTokens,
   estimateTextTokens,
   listLLMModels,
   llm as llmService,
+  MODEL_REF_TEXT,
   resolveLLMModel,
 } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
 import { memory as memoryService } from '@aalis/api-memory';
 import { messageArchive as messageArchiveService } from '@aalis/api-message-archive';
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
-import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import {
-  type InheritanceSource,
-  placeLabel,
-  rootSessionOf,
-  SESSION_LAYERS,
-  type SessionConfig,
-  type SessionConfigPatch,
-  type SessionInheritance,
-  type SessionManagerService,
-  type SessionSetting,
-  sessionLabel,
-  sessionManager as sessionManagerService,
-} from '@aalis/api-session-manager';
+  getPlatformAdapters,
+  getPlatformSelfIdentity,
+  platform as platformService,
+  sessionTypesOf,
+} from '@aalis/api-platform';
+import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { type SessionFieldReader, sessionFields as sessionFieldsService } from '@aalis/api-session-settings';
 import { storage as storageService } from '@aalis/api-storage';
 import {
   type ToolCallContext,
@@ -59,7 +55,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
+import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
@@ -80,7 +76,6 @@ import {
   isSameMessage,
   parseToolArguments,
   readHistory,
-  toPersonaOptions,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
 import { t } from './texts.js';
@@ -105,6 +100,10 @@ const uses = {
   persona: optional(personaService),
   messageArchive: optional(messageArchiveService),
   sessionManager: optional(sessionManagerService),
+  /** 按会话读本插件的四项（模型、深度思考、最大工具迭代、历史条数上限）；缺席时只取插件配置里的值 */
+  sessionFields: optional(sessionFieldsService),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   platform: optional(platformService),
   media: optional(mediaService),
   storage: optional(storageService),
@@ -134,13 +133,14 @@ type AgentCaps = Omit<Caps, 'provide' | 'commands' | 'lifecycle'>;
 
 /** 统一读取 LLM 单次最大输出 token；缺省回退 4096（与各 adapter 默认一致）。 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
-/** 会话设置「最大工具迭代」没设时一轮里工具调用循环的最大次数 */
-const MAX_TOOL_ITERATIONS = 30;
 // 宿主通知的公开链接须在最终正文保留；同时识别普通文本和 Markdown 链接的边界。
 const NOTICE_URL = /https?:\/\/[^\s<>()[\]"'`*“”‘’，。！？；、]+/gu;
 function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
   return llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
+
+/** 条目固定的那个模型写成模型引用 */
+const refOf = (entry: ProviderEntry<LLMModel>): ModelRef => ({ provider: entry.use.providerId, model: entry.use.id });
 
 /** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容） */
 interface TrimmedMessages {
@@ -160,6 +160,7 @@ type UsageReport = Pick<
   | 'trimmed'
   | 'untrimmedHistory'
   | 'historyMessages'
+  | 'historyLimit'
 > & {
   messages: Message[];
   tools: ToolDefinition[];
@@ -194,10 +195,10 @@ class DefaultAgent implements AgentService {
   private noticeCallers = new Map<string, { sessionId: string; callerUserId: string; controller: AbortController }>();
 
   /**
-   * 在飞回合 Promise。关停时 abort 之后等它们以 AbortError（或正常完成）收尾，
+   * 在飞回合 Promise → 所在会话。关停与删除会话时 abort 之后等它们以 AbortError（或正常完成）收尾，
    * 而不是等 LLM 跑完——收尾里的钩子 / 出站事件还要用 memory。
    */
-  private inflightTurns = new Set<Promise<void>>();
+  private inflightTurns = new Map<Promise<void>, string>();
 
   /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
   private archiveQueues = new Map<string, Promise<void>>();
@@ -219,6 +220,9 @@ class DefaultAgent implements AgentService {
   /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
+  /** 本插件的按会话字段：每一轮按会话现读；模型没设时的 actual 是服务此刻为本插件挑的那一个 */
+  readonly fields: SessionFieldReader<typeof configSchema>;
+
   constructor(
     caps: AgentCaps,
     cfg: ConfigOf<typeof configSchema>,
@@ -226,6 +230,12 @@ class DefaultAgent implements AgentService {
     private readonly instanceId: string,
   ) {
     this.caps = caps;
+    this.fields = caps.sessionFields.use.fields(configSchema, caps, {
+      llm: () => {
+        const entry = this.resolveLLM(undefined);
+        return entry && { value: refOf(entry) };
+      },
+    });
     this.logger = caps.logger.use.child('agent');
     this.systemPrompt = cfg.systemPrompt;
     this.memoryTokenBudget = cfg.memoryTokenBudget;
@@ -236,19 +246,15 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 根据优先级链解析当前会话该用哪个 LLMModel entry。
+   * 解析会话该用哪个 LLMModel entry：ref 是这个会话的「模型」（按会话字段 llm 的生效值）。
    *
-   * 会话设置的 llm 交给 session-manager.resolveConfig 解析（按层表叠加，全局默认层即 llm 服务的偏好）；
-   * 全局默认之上哪一层都没设时不给值，由 resolveLLMModel 落到本插件此刻选中的那一个（本插件偏好 > 全局偏好 > 提供者优先级 >
-   * 登记先后）。这时该生效的偏好（设了本插件偏好就是它，否则是全局偏好）指向的模型不在（模型删了、提供者在重载或激活失败），
-   * 服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
+   * 「模型」的全局层是本插件的 llm 偏好，哪一层都没设时不给值，由 resolveLLMModel 落到本插件此刻选中的那一个（本插件偏好 >
+   * 全局偏好 > 提供者优先级 > 登记先后）。这时该生效的偏好（设了本插件偏好就是它，否则是全局偏好）指向的模型不在（模型删了、
+   * 提供者在重载或激活失败），服务落到别的模型上：照常用它，每个（偏好，实际）组合告警一次。
    *
    * 返回 llm 的提供者条目（id 与这一家的业务句柄 use），条目固定那一个模型。
    */
-  private async resolveLLM(platform?: string, sessionId?: string): Promise<ProviderEntry<LLMModel> | undefined> {
-    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
-    const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
-
+  resolveLLM(ref: ModelRef | undefined): ProviderEntry<LLMModel> | undefined {
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     const entry = resolveLLMModel(this.caps.llm, ref, ['chat']);
     if (ref || !entry) return entry;
@@ -267,11 +273,14 @@ class DefaultAgent implements AgentService {
   }
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
-  private explainLLMFailure(platform?: string, sessionId?: string): TextRef {
+  private explainLLMFailure(wanted: ModelRef | undefined): TextRef {
     const available = listLLMModels(this.caps.llm, { caps: ['chat'] }).map(e => e.id);
-    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
-    const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
     return describeLLMFailure(available, wanted, this.erroredLLMPlugins());
+  }
+
+  /** 把这个会话本会话层的「模型」设成 model：经读取器写本插件的字段，会话设置不在时抛错 */
+  async assignModel(sessionId: string, model: ModelRef): Promise<void> {
+    await this.fields.set(sessionId, 'llm', model);
   }
 
   /** 激活失败且声明提供 llm 的插件实例名——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
@@ -327,13 +336,17 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 关停收尾：中止在飞回合并等待其 AbortError（或正常完成）收尾落定。
-   * 超时由 core 对 onDrain 回调的 disposeTimeoutMs 护栏负责，不另加配置键。
+   * 中止在飞回合并等它们以 AbortError（或正常完成）收尾落定：给 sessionId 时只停这个会话的（删除会话），不给时停全部（关停）。
+   * 关停的超时由 core 对 onDrain 回调的 disposeTimeoutMs 护栏负责，不另加配置键；删除会话时没有上限，不响应中止的工具会让它
+   * 一直等到工具返回
    */
-  async abortInflightAndSettle(): Promise<void> {
-    this.abortAll();
-    if (this.inflightTurns.size === 0) return;
-    await Promise.allSettled([...this.inflightTurns]);
+  async abortInflightAndSettle(sessionId?: string): Promise<void> {
+    if (sessionId === undefined) this.abortAll();
+    else this.abort(sessionId);
+    const turns = [...this.inflightTurns].flatMap(([turn, owner]) =>
+      sessionId === undefined || owner === sessionId ? [turn] : [],
+    );
+    if (turns.length > 0) await Promise.allSettled(turns);
   }
 
   /** 会话删除时丢弃其节流日志状态（订阅见 run() 的 session:deleted）。 */
@@ -646,7 +659,7 @@ class DefaultAgent implements AgentService {
         if (this.noticeCallers.get(lane)?.controller === controller) this.noticeCallers.delete(lane);
       }
     })();
-    this.inflightTurns.add(turn);
+    this.inflightTurns.set(turn, incoming.sessionId);
     try {
       await turn;
     } finally {
@@ -680,9 +693,11 @@ class DefaultAgent implements AgentService {
 
       const archivedIncoming = await this.archiveIncomingMessageInOrder(lane, incoming);
 
-      const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
+      // 这一轮按会话读本插件的四项（下一轮再读，改了不必重载）
+      const settings = this.fields.get(incoming.sessionId, { platform: incoming.platform });
+      const resolved = this.resolveLLM(settings.llm);
       if (!resolved) {
-        const why = this.explainLLMFailure(incoming.platform, incoming.sessionId);
+        const why = this.explainLLMFailure(settings.llm);
         this.logger.warn(`LLM 解析失败，无法处理消息：${toSource(why)}`);
         if (!reportOnly) {
           const text = t('systemNotice', { why });
@@ -707,6 +722,7 @@ class DefaultAgent implements AgentService {
         return;
       }
       const llm = resolved.use;
+      const model = refOf(resolved);
 
       // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
       // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
@@ -720,39 +736,25 @@ class DefaultAgent implements AgentService {
       const turnPersistedTimestamps: number[] = [];
 
       try {
-        // 统一解析 session 配置（一次解析，多处复用）
-        const sessionMgr = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
-        const resolved =
-          sessionMgr && incoming.sessionId
-            ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
-            : undefined;
-        // 会话设置的 maxToolIterations 按登记的字段解析过（正整数），没设置时用默认值
-        const maxToolIterations = resolved?.maxToolIterations ?? MAX_TOOL_ITERATIONS;
-
-        // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
-        const personaOpts = toPersonaOptions(resolved);
+        const { maxToolIterations, historyLimit } = settings;
+        // 人设服务按这个会话自己读它的设置（人设、额外提示、结构化输出的两个开关）
+        const personaOpts: PersonaSessionOptions = { sessionId: incoming.sessionId, platform: incoming.platform };
 
         // 会话的深度思考档位：当前模型有这一档才带上；没设置、模型没有这一档或不能调时不带，由模型服务按它的默认档
-        const level = resolved?.think;
+        const level = settings.think;
         const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
 
-        const built = await this.buildMessages(incoming, resolved?.historyLimit, personaOpts, archivedIncoming);
+        const built = await this.buildMessages(incoming, historyLimit, personaOpts, archivedIncoming);
         const messages = built.messages;
         /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
         let historyMessages = built.historyMessages;
-        // 通过 resolved config 获取工具分组
-        let enabledGroups: string[] | undefined;
-        if (resolved?.enabledToolGroups && resolved.enabledToolGroups.length > 0) {
-          enabledGroups = resolved.enabledToolGroups;
-        }
-        this.logger.debug(
-          `工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`,
-        );
-        const tools = reportOnly
-          ? []
-          : this.caps.tools.present
-            ? this.caps.tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined)
-            : [];
+        // 这个会话启用的工具分组：工具注册表按会话读它的设置，不在时没有工具
+        const enabledGroups = this.caps.tools.present
+          ? this.caps.tools.use.sessionGroups(incoming.sessionId, incoming.platform)
+          : [];
+        this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
+        const tools =
+          reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域都靠它们）；
@@ -765,9 +767,9 @@ class DefaultAgent implements AgentService {
           userId: incoming.userId ?? incoming.hostNotice?.callerUserId,
           platform: incoming.platform,
           actor: incoming.actor,
-          // 恒为数组：平台档没配分组时给 []（列举面本就等价于「只给无分组工具」），
-          // 让执行面的分组闸总是生效，而不是在「未配置」时整个失效。
-          enabledGroups: enabledGroups ?? [],
+          // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
+          enabledGroups,
+          model,
           // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
           acceptsImages: true,
           // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
@@ -790,6 +792,7 @@ class DefaultAgent implements AgentService {
         const llmBeforeData = {
           messages,
           tools,
+          model,
           sessionId: incoming.sessionId,
           userId: incoming.userId,
           platform: incoming.platform,
@@ -861,6 +864,7 @@ class DefaultAgent implements AgentService {
             trimmed: turnTrimmed,
             untrimmedHistory: sent.untrimmedHistory,
             historyMessages,
+            historyLimit,
             promptTokens: response.usage?.promptTokens,
           });
 
@@ -1153,6 +1157,7 @@ class DefaultAgent implements AgentService {
           const nextLlmData = {
             messages: llmBeforeData.messages,
             tools: [...originalTools],
+            model,
             sessionId: incoming.sessionId,
             userId: incoming.userId,
             platform: incoming.platform,
@@ -1614,9 +1619,10 @@ class DefaultAgent implements AgentService {
       messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
     }
 
-    // 群聊焦点指引：仅 sessionType=group + triggerType ∈ {direct, immediate} 时注入，
-    // 紧贴在当前 user 消息前，告诉 LLM "下一条就是焦点"。详细动机见 helpers.ts。
-    const focusGuidance = buildFocusGuidance(incoming);
+    // 群聊焦点指引：多方窗口里 triggerType ∈ {direct, immediate} 时注入，紧贴在当前 user 消息前，告诉 LLM "下一条就是焦点"。
+    // 多方标记与网关算聊天范围同一个算法（这个平台适配器的类型声明），详细动机见 helpers.ts。
+    const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === incoming.platform);
+    const focusGuidance = buildFocusGuidance(incoming, chatScopeOf(incoming, sessionTypesOf(adapter)).multiParty);
     if (focusGuidance) messages.push(focusGuidance);
 
     messages.push(userMessage);
@@ -1669,6 +1675,7 @@ class DefaultAgent implements AgentService {
     trimmed,
     untrimmedHistory,
     historyMessages,
+    historyLimit,
     promptTokens,
   }: UsageReport): Promise<void> {
     // 按来源分类统计各消息的 token 占用
@@ -1764,6 +1771,7 @@ class DefaultAgent implements AgentService {
       trimmed,
       untrimmedHistory,
       historyMessages,
+      historyLimit,
       breakdown: {
         system: systemTokens,
         persona: personaTokens,
@@ -2242,6 +2250,9 @@ class DefaultAgent implements AgentService {
 
 // ----- 插件导出 -----
 
+/** 四项按会话字段对各种会话都适用 */
+const ALL_SESSIONS = ['owner', 'room', 'task'] as const;
+
 const configSchema = defineConfig({
   systemPrompt: {
     type: 'textarea',
@@ -2274,86 +2285,58 @@ const configSchema = defineConfig({
     label: '裁剪触发比例',
     default: 1.0,
     description:
-      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件登记）与历史条数上限（本插件登记）。',
+      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
+  },
+  // ----- 按会话字段：各层可覆盖，每一轮按会话读 -----
+  llm: {
+    type: 'llm-ref',
+    label: t('llmLabel'),
+    description: t('llmDescription'),
+    ...MODEL_REF_TEXT,
+    // 全局层不在插件配置里：是本插件的 llm 偏好
+    session: { appliesTo: ALL_SESSIONS, prominence: 'composer', preference: 'llm', unset: t('llmUnset'), minLevel: 1 },
+  },
+  think: {
+    type: 'select',
+    label: t('thinkLabel'),
+    description: t('thinkDescription'),
+    // 可选项是「模型」这一项生效的那个模型声明的档位
+    dynamicOptions: 'llm-thinking',
+    session: {
+      appliesTo: ALL_SESSIONS,
+      prominence: 'common',
+      order: 20,
+      dependsOn: 'llm',
+      unset: t('thinkUnset'),
+      minLevel: 1,
+    },
+  },
+  maxToolIterations: {
+    type: 'number',
+    label: t('maxToolIterationsLabel'),
+    description: t('maxToolIterationsDescription'),
+    integer: true,
+    min: 1,
+    default: 30,
+    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+  },
+  historyLimit: {
+    type: 'number',
+    label: t('historyLimitLabel'),
+    description: t('historyLimitDescription'),
+    integer: true,
+    min: 0,
+    default: 0,
+    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
   },
 });
-
-/**
- * 本插件登记的会话设置项：模型（输入框旁的快捷切换）、深度思考、工具迭代上限与历史条数上限，各种会话都适用。模型的全局
- * 默认层就是 llm 服务的偏好（会话管理按字段类型承担），界面写服务实际用的那一个
- */
-const SESSION_SETTINGS: SessionSetting[] = [
-  {
-    key: 'llm',
-    field: {
-      type: 'llm-ref',
-      label: '模型',
-      description:
-        '没设置时用默认模型：给本插件设了 llm 的服务偏好时用它，否则是全局默认层的「模型」，那里也没设时用第一个可用的对话模型',
-    },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'composer',
-    // 会话选的是一个具体的模型：服务与模型都要给
-    validate: value => {
-      const ref = value as { provider?: unknown; model?: unknown } | null;
-      return typeof ref?.provider === 'string' &&
-        ref.provider !== '' &&
-        typeof ref.model === 'string' &&
-        ref.model !== ''
-        ? undefined
-        : '要是 { provider, model }，两项都是非空字符串';
-    },
-  },
-  {
-    key: 'think',
-    field: {
-      type: 'select',
-      label: '深度思考',
-      dynamicOptions: 'llm-thinking',
-      description: '可选的档位随所用的模型；没设置或当前模型没有这一档时按模型的默认档',
-    },
-    // 可选项是「模型」这一项生效的那个模型声明的档位
-    dependsOn: 'llm',
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'common',
-    order: 20,
-    validate: value => (typeof value === 'string' && value !== '' ? undefined : '要是档位 id（非空字符串）'),
-  },
-  {
-    key: 'maxToolIterations',
-    field: {
-      type: 'number',
-      label: '最大工具迭代',
-      integer: true,
-      min: 1,
-      default: MAX_TOOL_ITERATIONS,
-      description: '一轮里工具调用循环的最大次数',
-    },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'advanced',
-  },
-  {
-    key: 'historyLimit',
-    field: {
-      type: 'number',
-      label: '历史条数上限',
-      integer: true,
-      min: 0,
-      default: 0,
-      description: t('historyLimitDescription'),
-    },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'advanced',
-    // 子会话按自己的继承链实时解析，不冻结父会话当时的值
-    liveOnly: true,
-  },
-];
 
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
   promptBuildTimeoutMs: number;
-  resolveLLM(platform?: string, sessionId?: string): Promise<ProviderEntry<LLMModel> | undefined>;
+  fields: SessionFieldReader<typeof configSchema>;
+  resolveLLM(ref: ModelRef | undefined): ProviderEntry<LLMModel> | undefined;
   computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   trimMessages(messages: Message[], budget: number): TrimmedMessages;
@@ -2362,7 +2345,6 @@ type InternalAgent = {
 
 function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.use.registerSetting(setting);
   const agentImpl = new DefaultAgent(caps, cfg, caps.lifecycle.use.id);
   caps.provide.use(agentService, agentImpl);
   // 收尾段中止在飞回合并等 AbortError 落定。
@@ -2372,93 +2354,15 @@ function run(caps: Caps): void {
   caps.lifecycle.use.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
   // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。
   caps.lifecycle.use.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
-  // 会话删除：丢弃该会话的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
-  caps.events.use.on('session:deleted', sessionId => agentImpl.dropTokenLogState(sessionId));
+  // 会话删除：会话管理先发这个事件再清数据。停掉这个会话在跑的回合并等它们收尾（被停的一轮不落库、不外发），清数据因此在
+  // 回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
+  caps.events.use.on('session:deleted', async sessionId => {
+    await agentImpl.abortInflightAndSettle(sessionId);
+    agentImpl.dropTokenLogState(sessionId);
+  });
   const agent = agentImpl as unknown as InternalAgent;
 
-  // ===== 会话级配置指令 =====
-  // /session 查（模型+人设+名+来源） · /session.set 改 · /session.reset 复位 · /model 列可用模型
-  // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
-
-  /** 会话设置存在会话管理里：它没在运行时三条会话指令都回这一句 */
-  const NO_SESSION_MANAGER = t('noSessionManager');
-
-  /**
-   * 继承值的来源：层表里这一层的称呼，平台档、平台类型档与场所另写这个会话取的是哪一份（「平台档 onebot」
-   * 「平台类型档 onebot · group」「场所『<显示名>』」）；哪一层都没设时为「默认」。层名与场所的显示名原样作参数，按读者显示
-   */
-  function sourceName(
-    smSvc: SessionManagerService,
-    sessionId: string,
-    inheritance: SessionInheritance,
-    layer: InheritanceSource | undefined,
-  ): TextRef {
-    if (layer === undefined) return t('fromDefault');
-    const label = SESSION_LAYERS.find(({ name }) => name === layer)!.label;
-    if (layer === 'platform') return t('fromPlatform', { layer: label, platform: inheritance.platform! });
-    if (layer === 'type') {
-      return t('fromType', { layer: label, platform: inheritance.platform!, type: inheritance.type! });
-    }
-    if (layer !== 'place') return label;
-    const { key } = smSvc.placeOf(sessionId);
-    const place = smSvc.getPlace(key);
-    return t('fromPlace', { layer: label, place: place ? placeLabel(place) : key });
-  }
-
-  /**
-   * 组装某会话某字段的视图行：生效值与来源（会话覆盖，或继承链上的层，见 sourceName）；会话有覆盖时另起一行列出被覆盖的
-   * 继承值与来源。继承值与来源取自 session-manager 的 resolveInheritance，与实际回合同一口径（房间会话按出生平台与聊天
-   * 窗口的类型名选档）。pick 从配置里提取并格式化该字段。
-   */
-  type CfgView = SessionConfig | undefined;
-  function resolutionLines(
-    smSvc: SessionManagerService,
-    sessionId: string,
-    platform: string,
-    field: TextRef,
-    key: 'llm' | 'persona' | 'think',
-    pick: (c: CfgView) => string | undefined,
-  ): TextRef[] {
-    const inheritance = smSvc.resolveInheritance(sessionId, platform);
-    const inherited = pick(inheritance.values) ?? t('unsetValue');
-    const from = sourceName(smSvc, sessionId, inheritance, inheritance.sources[key]);
-    const own = pick(smSvc.getOwnConfig(sessionId));
-    if (own == null) return [t('inheritedLine', { field, value: inherited, from })];
-    return [t('overrideLine', { field, value: own }), t('overriddenLine', { value: inherited, from })];
-  }
-  const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
-  const fmtPersona = (c: CfgView): string | undefined => c?.persona;
-  const fmtThink = (c: CfgView): string | undefined => c?.think;
-  /**
-   * /session 模型那一行之后：这一轮实际会用的模型与显示的生效值不同时写出来（哪一层都没设、偏好也没有时，或偏好指向的
-   * 模型不在时，服务落到别的模型上）
-   */
-  async function modelNote(
-    smSvc: SessionManagerService,
-    sessionId: string,
-    platform: string,
-  ): Promise<TextRef | undefined> {
-    const actual = (await agent.resolveLLM(platform, sessionId))?.id;
-    const shown =
-      fmtModel(smSvc.getOwnConfig(sessionId)) ?? fmtModel(smSvc.resolveInheritance(sessionId, platform).values);
-    return actual && actual !== shown ? t('modelInUse', { model: actual }) : undefined;
-  }
-
-  /** 模型的档位逐个写成「id（名字）」，由浅到深 */
-  const levelList = (thinking: ThinkingLevels) =>
-    thinking.levels.map(({ id, label }) => t('thinkingLevel', { id, label }));
-
-  /** /session 深度思考那一行之后：这一轮会用的模型的档位与默认档，生效的档位它没有时写明按默认 */
-  async function thinkingNote(sessionId: string, platform: string): Promise<TextRef> {
-    const thinking = (await agent.resolveLLM(platform, sessionId))?.use.thinking;
-    if (!thinking) return t('thinkingFixed');
-    const level = caps.sessionManager.present
-      ? caps.sessionManager.use.resolveConfig(sessionId, platform).think
-      : undefined;
-    const missing = level !== undefined && !thinking.levels.some(({ id }) => id === level);
-    const params = { levels: levelList(thinking), fallback: thinking.default };
-    return missing ? t('thinkingLevelsMissing', params) : t('thinkingLevels', params);
-  }
+  // /model 列可用模型、/persona 列可用人设；会话设置的查看与修改是会话设置插件的 /session 系列
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
   const PAGE_SIZE = 20;
@@ -2502,138 +2406,6 @@ function run(caps: Caps): void {
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
 
-  // ---- 会话级「模型 + 人设 + 深度思考 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
-  caps.commands.use
-    .command('session', '查看当前对话生效的设定及来源。设定指模型、人设、深度思考与名称', { risk: 'sensitive' })
-    .action(async argv => {
-      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
-      const smSvc = caps.sessionManager.use;
-      const sid = argv.session.sessionId;
-      const session = smSvc.getSession(sid);
-      const lines = [
-        t('sessionLine', { session: session ? sessionLabel(session) : sid }),
-        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldModel'), 'llm', fmtModel),
-        await modelNote(smSvc, sid, argv.session.platform),
-        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldPersona'), 'persona', fmtPersona),
-        ...resolutionLines(smSvc, sid, argv.session.platform, t('fieldThink'), 'think', fmtThink),
-        await thinkingNote(sid, argv.session.platform),
-        session ? undefined : t('noOwnRecord'),
-        '────',
-        t('setHint'),
-        t('resetHint'),
-      ];
-      return textLines(lines.filter(line => line !== undefined));
-    });
-
-  caps.commands.use
-    .command('session.set', '设定当前对话的模型、人设、深度思考或显示名。会话级覆盖，持久化，重启不丢', {
-      risk: 'sensitive',
-      examples: [
-        '/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl',
-        '/session.set -p strict-reviewer',
-        '/session.set -t off',
-        '/session.set -n 深夜助手',
-      ],
-    })
-    .option('model', '-m <ref:string>', { description: '模型 provider/model（LLM entry 的 contextId；/model 可列出）' })
-    .option('persona', '-p <name:string>', { description: '人设卡名（不含后缀）' })
-    .option('think', '-t <level:string>', {
-      description: '深度思考的档位 id，按当前模型的档位（/session 列出；会话级覆盖，/session.reset 后回落默认）',
-    })
-    .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
-    .action(async argv => {
-      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
-      const smSvc = caps.sessionManager.use;
-      const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
-      const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
-      const level = typeof argv.options.think === 'string' ? argv.options.think.trim() : '';
-      const displayName = typeof argv.options.name === 'string' ? argv.options.name.trim() : '';
-      if (!modelRef && !personaName && !level && !displayName) {
-        return '至少给一项。敲 /session.set -h 看用法';
-      }
-      const config: SessionConfigPatch = {};
-      // 模型：校验存在再落，避免错名静默回退默认
-      let chosen: ProviderEntry<LLMModel> | undefined;
-      if (modelRef) {
-        const lastSlash = modelRef.lastIndexOf('/');
-        if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
-          return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-llm-openai:main/gpt-4o`';
-        }
-        const chatModels = listLLMModels(caps.llm, { caps: ['chat'] });
-        chosen = chatModels.find(e => e.id === modelRef);
-        if (!chosen) {
-          return `未知模型 "${modelRef}"。用 /model <关键词> 搜索（如 /model grok），共 ${chatModels.length} 个可用。`;
-        }
-        config.llm = { provider: modelRef.slice(0, lastSlash), model: modelRef.slice(lastSlash + 1) };
-      }
-      // 深度思考：按这一轮会用的模型（同时改了模型时按新模型）的档位校验
-      if (level) {
-        const thinking = (chosen ?? (await agent.resolveLLM(argv.session.platform, argv.session.sessionId)))?.use
-          .thinking;
-        if (!thinking) return '当前模型不能调深度思考';
-        if (!thinking.levels.some(({ id }) => id === level)) {
-          return t('noSuchLevel', { level, levels: levelList(thinking) });
-        }
-        config.think = level;
-      }
-      // 人设：人设插件不在时这一项没有登记，session-manager 拒绝写入
-      if (personaName) {
-        const persona = caps.persona.present ? caps.persona.use : undefined;
-        if (persona?.listModels) {
-          const names = await persona.listModels();
-          if (!names.includes(personaName)) {
-            return `未知人设 "${personaName}"。用 /persona 查看可用人设（共 ${names.length} 个）。`;
-          }
-        }
-        config.persona = personaName;
-      }
-      await smSvc.ensureSession(argv.session.sessionId, { config, ...(displayName ? { name: displayName } : {}) });
-      const lines = ['本对话已切换 →'];
-      if (config.llm) lines.push(`· 模型: ${config.llm.provider}/${config.llm.model}`);
-      if (config.persona) lines.push(`· 人设: ${config.persona}`);
-      if (config.think) lines.push(`· 深度思考: ${config.think}`);
-      if (displayName) lines.push(`· 名称: ${displayName}`);
-      lines.push('后续消息持续生效（已持久化，重启不丢）。/session.reset 可复位。');
-      return lines.join('\n');
-    });
-
-  caps.commands.use
-    .command('session.reset', '复位当前对话的会话级覆盖。默认清模型、人设与深度思考，-m/-p/-t 单独清对应项', {
-      risk: 'sensitive',
-      examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
-    })
-    .option('model', '-m', { description: '仅复位模型覆盖' })
-    .option('persona', '-p', { description: '仅复位人设覆盖' })
-    .option('think', '-t', { description: '仅复位深度思考覆盖' })
-    .action(async argv => {
-      if (!caps.sessionManager.present) return NO_SESSION_MANAGER;
-      const smSvc = caps.sessionManager.use;
-      const mFlag = argv.options.model === true;
-      const pFlag = argv.options.persona === true;
-      const tFlag = argv.options.think === true;
-      // 都不给 = 全清；给了任意 flag = 只清点名的那些
-      const noFlags = !mFlag && !pFlag && !tFlag;
-      const clearModel = mFlag || noFlags;
-      const clearPersona = pFlag || noFlags;
-      const clearThink = tFlag || noFlags;
-      const sid = argv.session.sessionId;
-      const session = smSvc.getSession(sid);
-      const willClear =
-        (clearModel && session?.config?.llm) ||
-        (clearPersona && session?.config?.persona) ||
-        (clearThink && session?.config?.think != null);
-      if (willClear) {
-        // null 删掉这一项，回到继承链
-        const patch: SessionConfigPatch = {};
-        if (clearModel) patch.llm = null;
-        if (clearPersona) patch.persona = null;
-        if (clearThink) patch.think = null;
-        await smSvc.updateSession(sid, { config: patch });
-      }
-      const eff = smSvc.resolveConfig(sid, argv.session.platform);
-      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}，深度思考: ${eff.think ?? '(默认)'}`;
-    });
-
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.use.on('token:request', async data => {
     if (!data?.sessionId) return;
@@ -2645,7 +2417,9 @@ function run(caps: Caps): void {
     const platform = data.platform ?? origin ?? 'webui';
 
     try {
-      const resolved = await agent.resolveLLM(platform, data.sessionId);
+      // 与真实回合同一份会话读法：模型、条数线；人设覆盖、结构化输出开关、额外提示由人设服务按会话读，都影响系统提示长度
+      const settings = agent.fields.get(data.sessionId, { platform });
+      const resolved = agent.resolveLLM(settings.llm);
       if (!resolved) return;
       const llm = resolved.use;
 
@@ -2653,33 +2427,30 @@ function run(caps: Caps): void {
       const maxTokens = getModelMaxOutput(llm);
       const tokenBudget = agent.computeTokenBudget(contextLength, maxTokens);
 
-      // 与真实回合同一份会话解析：人设覆盖、结构化输出开关、额外提示都影响系统提示长度
-      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
-
       // 获取历史消息并构建基础消息列表
       const memory = caps.memory.present ? caps.memory.use : undefined;
       const messages: Message[] = [];
 
       // 系统提示
-      const systemPrompt = agent.buildSystemPrompt(toPersonaOptions(sessionResolved));
+      const systemPrompt = agent.buildSystemPrompt({ sessionId: data.sessionId, platform });
       messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
       // 历史消息：与真实回合同一个读法
       const history = memory
-        ? await readHistory(memory, data.sessionId, sessionResolved?.historyLimit)
+        ? await readHistory(memory, data.sessionId, settings.historyLimit)
         : { messages: [], count: 0 };
       messages.push(...history.messages.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
-      const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
       const tools = caps.tools.present
-        ? caps.tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined)
+        ? caps.tools.use.getDefinitions({ groups: caps.tools.use.sessionGroups(data.sessionId, platform) })
         : [];
 
       const llmBeforeData = {
         messages,
         tools,
+        model: refOf(resolved),
         sessionId: data.sessionId,
         userId: '',
         platform,
@@ -2701,6 +2472,7 @@ function run(caps: Caps): void {
         trimmed: sent.trimmed,
         untrimmedHistory: estimateHistoryTokens(llmBeforeData.messages),
         historyMessages: history.count,
+        historyLimit: settings.historyLimit,
       });
     } catch (err) {
       caps.logger.use.debug('token:request 处理失败:', err);

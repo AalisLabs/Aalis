@@ -30,6 +30,7 @@ import {
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
@@ -86,7 +87,7 @@ afterEach(async () => {
  * 存储与 owner 判定是替身，会话表里预置了 ROOM。全局默认层的语言是 en，setLanguage 改它
  */
 async function setup() {
-  const { app } = hostedApp({ sessionConfig: { defaults: { language: ['en'] } } }, { logger: silent });
+  const { app } = hostedApp(i18nSection(['en']), { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-timeline-i18n-'));
   homes.push(home);
@@ -132,7 +133,7 @@ async function setup() {
     await c.init();
     return c;
   };
-  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
+  const setLanguage = async (language: string[]) => setHostLanguage(app, language);
   return { host, connect, setLanguage };
 }
 

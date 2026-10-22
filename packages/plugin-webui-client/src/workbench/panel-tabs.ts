@@ -30,13 +30,15 @@ interface HostData {
   usage?: UsageItem;
   /** 有子会话，或这个会话有后台任务（含保留着的结束的） */
   background: boolean;
+  /** 会话设置服务在（功能位 settings） */
+  settings: boolean;
   phone: boolean;
 }
 
 /** 宿主的标签：名字，与此刻可不可用 */
 const HOST_TABS: Record<HostPanelTab, { title: TextRef; available(data: HostData): boolean }> = {
   plan: { title: t('plan'), available: ({ plan }) => plan !== undefined && plan.entries.length > 0 },
-  settings: { title: t('settings'), available: () => true },
+  settings: { title: t('settings'), available: ({ settings }) => settings },
   // 手机上用量从会话头的百分比打开底部抽屉
   usage: { title: t('usage'), available: ({ usage, phone }) => usage !== undefined && !phone },
   background: { title: t('background'), available: ({ background }) => background },

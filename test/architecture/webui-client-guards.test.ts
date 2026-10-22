@@ -138,8 +138,8 @@ function parameterOf(identifier: ts.Identifier): { fn: string; index: number } |
 
 /**
  * 从源码收集：页面键取页面声明（带 key、title，且带 content 或 frame 的对象，标签不算）的 key，key 写成本文件里的字符串
- * 常量时取常量的值；动作名取页面声明的 actions 对象的键，数据源名取插件前端页面的 sources 对象的键；设置键取各包对
- * SessionConfig 的扩展（登记的键必须是 SessionConfig 的键）；工具名取带 name、description 与 parameters 的对象的 name，
+ * 常量时取常量的值；动作名取页面声明的 actions 对象的键，数据源名取插件前端页面的 sources 对象的键；设置键取带 type 与
+ * session 的对象（可按会话覆盖的配置字段）所在属性的名字；工具名取带 name、description 与 parameters 的对象的 name，
  * name 是本文件助手函数的形参时取本文件对这个函数每次调用在那个位置上的字面量或常量，取不全的把所在文件记进看不见的
  * 工具名（unseenTools，一处一条）；schema 字段名（配置键、动作与数据源的输入字段）取带 type 与 label 的对象、带 fields
  * 的分组所在属性的名字，只收复合词，单个小写词（如 port、shell）是通用词，判不出归属；字段声明的可选项来源
@@ -186,10 +186,6 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
     };
     const visit = (node: ts.Node, inPage: boolean): void => {
       let page = inPage;
-      if (ts.isInterfaceDeclaration(node) && node.name.text === 'SessionConfig') {
-        for (const member of node.members)
-          if (member.name && ts.isIdentifier(member.name)) settings.add(member.name.text);
-      }
       if (ts.isObjectLiteralExpression(node)) {
         const fields = new Map<string | undefined, ts.Node>(
           node.properties.flatMap(property =>
@@ -214,6 +210,7 @@ function collectKeys(sources: Iterable<ts.SourceFile>) {
           if (names.length === 0) unseenTools.push(source.fileName);
         }
         const field = ts.isPropertyAssignment(node.parent) ? propertyName(node.parent) : undefined;
+        if (field && fields.has('type') && fields.has('session')) settings.add(field);
         if (field && /[^a-z]/.test(field) && ((fields.has('type') && fields.has('label')) || fields.has('fields'))) {
           schemaFields.add(field);
         }
@@ -657,7 +654,7 @@ describe('WebUI 服务端只认契约不认插件', () => {
       ]),
     );
     expect([...collected(keys => keys.schemaFields)]).toEqual(
-      expect.arrayContaining(['discoverModels', 'summaryLLM', 'numberTheory']),
+      expect.arrayContaining(['discoverModels', 'numberTheory']),
     );
     expect([...optionSources]).toEqual(expect.arrayContaining(['toolGroups', 'gateway-scopes', 'llm-thinking']));
     expect([...contractFor(PROTOCOL)]).toEqual(expect.arrayContaining(['webui-client', 'skipArchive', 'sessionKind']));

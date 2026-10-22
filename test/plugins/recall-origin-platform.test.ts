@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
-import { type MemoryRecallScope, memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
@@ -13,8 +13,9 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { roomScopeManager } from '../fixtures/room-scope.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { sessionValuesPlugin } from '../fixtures/session-settings.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 
 // ════════════════════════════════════════════════════════════
 // 召回按出生平台：IM 房间不论从哪个入口驱动，跨会话料的「当前平台」都是会话管理记下的出生平台（子会话取根会话的），
@@ -89,7 +90,7 @@ describe('memory-history：同平台注入按出生平台', () => {
     }
     const { handlers, stub } = toolRecorder();
     host.provide.use(tools, stub);
-    host.provide.use(sessionManager, roomScopeManager({}, {}, SESSIONS));
+    host.provide.use(sessionManager, sessionTableManager(SESSIONS));
     await app.plugin(memoryHistory, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
     await app.plugins.idle();
     requireActive(app, memoryHistory.name);
@@ -181,7 +182,7 @@ describe('memory-vector：platform 范围按出生平台', () => {
     });
     const { handlers, stub } = toolRecorder();
     host.provide.use(tools, stub);
-    host.provide.use(sessionManager, roomScopeManager({}, {}, SESSIONS));
+    host.provide.use(sessionManager, sessionTableManager(SESSIONS));
     await app.plugins.register(memoryVector, {
       search: { topK: 10, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
       contextExpand: { window: 0, crossSession: true },
@@ -247,7 +248,8 @@ describe('memory-vector：platform 范围按出生平台', () => {
 describe('session-history：平台裁决按出生平台', () => {
   async function setup(
     historyScope: 'platform' | 'all',
-    room: { rooms?: Record<string, MemoryRecallScope>; profiles?: Record<string, MemoryRecallScope> } = {},
+    /** 各会话本会话层的值（会话设置的替身）；不给时不装会话设置 */
+    sessions?: Record<string, Record<string, unknown>>,
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
@@ -264,7 +266,8 @@ describe('session-history：平台裁决按出生平台', () => {
     host.provide.use(memoryService, {
       getHistory: async (sessionId: string) => [{ role: 'user', content: `${sessionId} 的原文`, timestamp: 1 }],
     } as never);
-    host.provide.use(sessionManager, roomScopeManager(room.rooms, room.profiles, SESSIONS));
+    host.provide.use(sessionManager, sessionTableManager(SESSIONS));
+    if (sessions) await app.plugin(sessionValuesPlugin(sessions));
     await app.plugin(sessionTools, { scope: historyScope });
     await app.plugins.idle();
     requireActive(app, sessionTools.name);
@@ -278,11 +281,11 @@ describe('session-history：平台裁决按出生平台', () => {
     expect(await read(WEBUI_INTO_GROUP, OWNER)).toEqual({ error: expect.stringContaining('当前=onebot') });
   });
 
-  it('房间召回范围为 platform 时同样按出生平台裁决', async () => {
-    const read = await setup('all', { rooms: { [GROUP]: 'platform' } });
+  it('房间的读取范围设成同平台时同样按出生平台裁决', async () => {
+    const read = await setup('all', { [GROUP]: { scope: 'platform' } });
     expect(await read(WEBUI_INTO_GROUP, OTHER_GROUP)).toMatchObject({ ok: true, sessionId: OTHER_GROUP });
     expect(await read(WEBUI_INTO_GROUP, OWNER)).toEqual({
-      error: expect.stringContaining('本房间的召回范围限于同平台会话（当前=onebot'),
+      error: expect.stringContaining('读取范围限于同平台会话（当前=onebot'),
     });
   });
 

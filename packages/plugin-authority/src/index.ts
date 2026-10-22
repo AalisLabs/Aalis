@@ -5,6 +5,7 @@ import { commands as commandsService } from '@aalis/api-commands';
 import { contributions as contributionsService } from '@aalis/api-contributions';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
@@ -24,6 +25,7 @@ import { t } from './texts.js';
 // （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
 // approvals 缺席时需要确认的工具调用一律拒绝。房间类别按 session-manager 记下的会话字段判：审批服务的提供者
 // plugin-session-server 本身依赖它，它缺席时也没有审批服务。权限页的两个可选项来源经贡献点交付，缺席时页上的多选没有选项。
+// 「操作门槛」里的设置项来自会话设置的只读列举，会话设置缺席时这一类为空。
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
@@ -35,6 +37,7 @@ const uses = {
   storage: optional(storageService),
   approvals: optional(approvals),
   sessionManager: optional(sessionManager),
+  sessionFields: optional(sessionFields),
   contributions: optional(contributionsService),
 };
 type Caps = BoundOf<typeof uses>;
@@ -56,7 +59,15 @@ async function run(caps: Caps): Promise<void> {
     caps.sessionManager.present ? caps.sessionManager.use.getSession(id) : undefined,
   );
   caps.provide.use(authorityService, manager);
-  const page = defineAuthorityPage({ webui, commands, tools, contributions, config, manager });
+  const page = defineAuthorityPage({
+    webui,
+    commands,
+    tools,
+    sessionFields: caps.sessionFields,
+    contributions,
+    config,
+    manager,
+  });
 
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
@@ -301,7 +312,7 @@ async function applyUserChange(
 // ===== 权限的设置页（用户等级、权限组、owner、操作门槛、禁用与免确认）=====
 
 /** 页面用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
-type PageDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'contributions'> & {
+type PageDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'sessionFields' | 'contributions'> & {
   config: HostConfig;
   manager: AuthorityManager;
 };
@@ -329,8 +340,11 @@ type RuleKind = keyof typeof RULE_KINDS;
  * 权限页放在设置里。改宿主配置的动作先改运行态（即刻生效）再等落盘：save 拒绝时从处理函数抛出，写明改动已在本次运行
  * 生效、没写进配置文件及原因。等级改动走 applyUserChange，回执注明没落盘的情形。每次改动后页面重取，落盘失败也一样
  */
-function defineAuthorityPage({ webui, commands, tools, contributions, config, manager }: PageDeps) {
-  /** 指令与工具统一成「操作」：能力键、所属插件、后端派生的默认门槛（不含 authorityOverrides） */
+function defineAuthorityPage({ webui, commands, tools, sessionFields, contributions, config, manager }: PageDeps) {
+  /**
+   * 指令、工具与设置项统一成「操作」：能力键、所属插件（设置项是实例）、默认门槛（指令与工具按风险派生，设置项按声明，没写的
+   * 只有 owner；不含 authorityOverrides）
+   */
   const operations = () => {
     const prefix = commands.present ? commands.use.prefix : '/';
     const entries = [
@@ -353,12 +367,26 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
         confirm: t.confirm,
       })),
     ];
-    return entries.map(op => ({
-      ...op,
-      capability: `${op.type}:${op.name}`,
-      minLevel: capabilityMinLevel({ risk: op.risk, visibility: op.visibility }),
+    const settings = (sessionFields.present ? sessionFields.use.getAll() : []).map(entry => ({
+      type: 'setting' as const,
+      name: `${entry.plugin}/${entry.key}`,
+      display: entry.label,
+      pluginName: entry.plugin,
+      confirm: undefined,
+      minLevel: entry.minLevel ?? Number.POSITIVE_INFINITY,
     }));
+    return [
+      ...entries.map(op => ({
+        ...op,
+        capability: `${op.type}:${op.name}`,
+        minLevel: capabilityMinLevel({ risk: op.risk, visibility: op.visibility }),
+      })),
+      ...settings.map(op => ({ ...op, capability: `${op.type}:${op.name}` })),
+    ];
   };
+  /** 门槛的显示：只有 owner 的不写 Infinity */
+  const levelText = (level: number) => (level === Number.POSITIVE_INFINITY ? t('ownerOnlyLevel') : level);
+  const KIND_TEXT = { command: '指令', tool: '工具', setting: t('settingKind') };
   const overrides = (): Record<string, number> => ({ ...(config.get('authorityOverrides') ?? {}) });
   const rules = (kind: RuleKind): string[] =>
     kind === 'deny' ? (config.get('deniedCapabilities') ?? []) : (config.get('restrictedPolicy')?.allow ?? []);
@@ -371,7 +399,9 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
     id: 'authority-operations',
     list: () =>
       [
-        ...operations().map(op => op.capability),
+        ...operations()
+          .filter(op => op.type !== 'setting')
+          .map(op => op.capability),
         ...(tools.present ? tools.use.getGroups() : []).map(group => `tool-group:${group.name}`),
       ].map(value => ({ value, label: value })),
   });
@@ -745,8 +775,8 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
               type: 'table',
               id: 'groups',
               rowKey: 'plugin',
-              description: '每个指令与工具有一个最低等级，默认按风险派生（安全 0、敏感 1、危险 2）；多数不用动。',
-              empty: '没有登记的指令或工具',
+              description: t('operationsDescription'),
+              empty: t('operationsEmpty'),
               columns: [
                 { key: 'plugin', label: '插件', primary: true },
                 { key: 'count', label: '操作数', primary: true },
@@ -786,9 +816,9 @@ function defineAuthorityPage({ webui, commands, tools, contributions, config, ma
                       .map(op => ({
                         capability: op.capability,
                         display: op.display,
-                        kind: op.type === 'command' ? '指令' : '工具',
-                        defaultLevel: op.minLevel,
-                        effectiveLevel: set[op.capability] ?? op.minLevel,
+                        kind: KIND_TEXT[op.type],
+                        defaultLevel: levelText(op.minLevel),
+                        effectiveLevel: levelText(set[op.capability] ?? op.minLevel),
                         // 设门槛的表单按它预填：只有改过的才有
                         level: set[op.capability],
                         confirm: op.confirm ? CONFIRM_TEXT[op.confirm] : '',

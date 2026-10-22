@@ -11,6 +11,7 @@ import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
+import { sessionSettings } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { todoList } from '@aalis/api-todo-list';
 import { backgroundTasks, tools } from '@aalis/api-tools';
@@ -30,17 +31,17 @@ import { createTurnControl } from './turns.js';
 // plugin-session-server — 会话协议的服务端（契约见 @aalis/api-session-protocol）
 //
 // owner 的客户端经传输层（WebUI 的 WebSocket 等）接到 sessionProtocol.connect。会话本身在 session-manager 里，
-// 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与设置（各插件登记的设置项与
-// 会话之上的各层），设置变了推 session/config/changed，另记「我的」区的已读时间；
+// 本插件把它投影成会话列表（分区、分组、状态）、按 session:* 事件推增量，转发会话的增删改与设置（会话设置的管理面：各插件
+// 声明的按会话字段与会话之上的各层），设置或宿主配置文档变了推 session/config/changed，另记「我的」区的已读时间；
 // 订阅一个会话时给出快照，之后把 agent、工具与存档的事件拼成条目推送；条目里她发出的文件给本服务签发的下载句柄，
 // 传输层经 resolveFile 核验之后下发；回合控制转给 agent、网关、检查点、压缩与待办。后台任务登记投影成列表与增量，
-// 取输出、停止与按会话树全部停止转给它与 agent。握手给出功能位（发送、回滚、压缩各看对话、检查点、压缩服务在不在），
+// 取输出、停止与按会话树全部停止转给它与 agent。握手给出功能位（发送、回滚、压缩、会话设置各看对话、检查点、压缩、会话设置服务在不在），
 // 服务上下线时推 features/changed；另给出宿主配置里的应用名。帧里的文字对象按全局默认层的语言渲染（见 connection.ts）。
 // 另提供审批服务（approvals，契约见 @aalis/api-approval）：审批推给在场的审批面，连接上的在场上报与应答经它所在的审批面。
 // ════════════════════════════════════════════════════════════
 
 const uses = {
-  /** 会话表、配置继承与增删改都经它 */
+  /** 会话表与增删改都经它 */
   sessionManager,
   /** 已读时间落在本插件的插件数据里；签发文件句柄时按存储根的种类挡掉插件状态 */
   storage,
@@ -60,8 +61,10 @@ const uses = {
   provide,
   /** 房间分组的组名：适配器实例的显示名 */
   plugins: pluginsService,
-  /** owner 自己的会话按哪个入口平台选档：看会话 id 归哪个平台适配器 */
+  /** 会话按哪个入口平台选平台档：看根会话的 id 归哪个平台适配器 */
   platform: optional(platform),
+  /** 会话设置的管理面：设置的各行、各层、写入与写过的各处，建子会话时写下的那一层；缺席时这些方法与建子会话回 unsupported */
+  sessionSettings: optional(sessionSettings),
   /** 停止回合 */
   agent: optional(agent),
   /** 回滚 */
@@ -122,6 +125,7 @@ async function run(caps: Caps): Promise<void> {
     runningTasks: () => background.runningBySession(),
     changed: id => push([id], []),
     platform: caps.platform,
+    settings: caps.sessionSettings,
     plugins: caps.plugins.use,
     logger: logger.use,
   });
@@ -176,6 +180,7 @@ async function run(caps: Caps): Promise<void> {
     send: caps.agent.present,
     rewind: caps.checkpoint.present,
     compress: caps.compression.present,
+    settings: caps.sessionSettings.present,
   });
   const server = createSessionServer(
     { ...sessions.handlers, ...timeline.handlers, ...control.handlers, ...background.handlers, ...approvalHandlers },
@@ -188,11 +193,11 @@ async function run(caps: Caps): Promise<void> {
   );
   // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
   let features = currentFeatures();
-  const featureServices = new Set([agent.name, checkpoint.name, compression.name]);
+  const featureServices = new Set([agent.name, checkpoint.name, compression.name, sessionSettings.name]);
   const refreshFeatures = (service: string) => {
     if (!featureServices.has(service)) return;
     const next = currentFeatures();
-    if (next.send === features.send && next.rewind === features.rewind && next.compress === features.compress) return;
+    if ((Object.keys(next) as Array<keyof Features>).every(key => next[key] === features[key])) return;
     features = next;
     server.notify(
       'features/changed',
@@ -235,14 +240,16 @@ async function run(caps: Caps): Promise<void> {
     timeline.forget(id);
     seen.forget(id).catch(err => logger.use.warn(`删除会话后清理已读记录失败 (${id}):`, err));
   });
-  // 设置变了（插件启停、某一层或某个会话的覆盖被改写）：每条连接各推一次，客户端重取打开着的会话的设置
-  events.use.on('session:config:changed', () =>
+  // 设置变了（字段登记增减、场所或会话这一层被改写、会话增删）或宿主配置文档变了（插件配置、平台档、平台类型档等）：每条连接各推
+  // 一次，客户端重取打开着的设置
+  const configChanged = () =>
     server.notify(
       'session/config/changed',
       () => ({}),
       () => true,
-    ),
-  );
+    );
+  events.use.on('session-settings:changed', configChanged);
+  events.use.on('host-config:changed', configChanged);
 
   // 回合真正开始（agent:input:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
   hooks.use.middleware('agent:input:before', async (data, next) => {

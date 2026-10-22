@@ -18,7 +18,7 @@ import type {} from '@aalis/api-contributions'; // declaration merging 锚点（
 import type { InstallResult, UninstallOptions, UpdateResult, UpdateTarget } from '@aalis/api-package-manager';
 import type { PlatformConnection } from '@aalis/api-platform';
 import type { LogEntry, PluginState, SelectionBasis } from '@aalis/core';
-import type { ConfigSchema, SchemaIssue } from '@aalis/schema-config';
+import type { ConfigSchema, SchemaIssue, WireConfigSchema } from '@aalis/schema-config';
 import type { Localized, TextRef } from '@aalis/schema-i18n';
 import type { DepOrigin } from '@aalis/util-dep-spec';
 import type { FrameTexts } from './frame.js';
@@ -98,7 +98,8 @@ export interface PluginListItem extends PluginBlockers {
   configSection: boolean;
   /** 配置文档里这一段：密钥字段上是引用 `{ $secret }`；宿主不提供配置文档时是运行态配置，去掉密钥字段 */
   config: Record<string, unknown>;
-  configSchema?: ConfigSchema;
+  /** 插件的 configSchema 经 JSON 下发：带 session 声明，没有函数成员（validate、fromText、toText） */
+  configSchema?: WireConfigSchema;
   defaultConfig: Record<string, unknown>;
 }
 
@@ -206,13 +207,12 @@ export interface PluginThemesResponse {
 
 // ----- 可选项与模型 -----
 
-/** 一个可选项：default 标没设时生效的那一项；工具分组另带说明与登记它的插件 */
+/** 一个可选项：default 标没设时生效的那一项；description 是写在选项下面的一行说明（如工具分组的概述） */
 export interface OptionDetail {
   value: string;
   label: string | TextRef;
   default?: true;
   description?: string | TextRef;
-  pluginName?: string;
 }
 
 /**
@@ -482,8 +482,9 @@ export interface WebuiRestRoutes {
 
   /**
    * 按来源取可选项：先找贡献点 webui:options 里同名的来源（dependency 原样交给它），回 `{ models, details }`；没有时
-   * llm 回模型；platform、gateway-scopes、toolGroups、llm-thinking 由宿主回答，llm-thinking 收 dependency
-   * （模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好）；其余服务合起各提供者的 listModels()，回 `{ models }`
+   * llm 回模型；toolGroups、llm-thinking 与 gateway-scopes 由宿主回答：toolGroups 是已登记的分组与工具上出现过的分组的并集，
+   * llm-thinking 收 dependency（条目 id `<提供者实例 id>/<模型 id>`，没带时回空的可选项）；其余服务合起各提供者的
+   * listModels()，回 `{ models }`
    */
   'GET /api/models/:service': { query: { dependency?: string }; response: LLMModelsResponse | OptionsResponse };
   /** :contextId 是提供者的插件实例，与模型的 contextId 相同 */

@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "会话管理：生命周期、平台配置、会话树",
+  "description": "会话管理：生命周期、场所、会话树",
   "type": "module",
   "keywords": [
     "aalis",
@@ -28,12 +28,10 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/api-agent": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
@@ -59,13 +57,11 @@
         "lifecycle",
         "logger",
         "memory",
-        "provide",
-        "services"
+        "provide"
       ],
       "optional": [
         "agent",
         "authority",
-        "host-config",
         "i18n",
         "llm",
         "platform"

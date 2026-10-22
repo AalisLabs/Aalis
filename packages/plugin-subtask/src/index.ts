@@ -1,12 +1,17 @@
-import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { agent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子）
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { MODEL_REF_TEXT, type ModelRef, modelRefOf } from '@aalis/api-llm';
+import { historyCleared } from '@aalis/api-memory'; // 也是 declaration merging 的激活点（memory:clear 钩子）
 import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
+import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 // =====================================================================
 // plugin-subtask —— 派发并行子会话（独立 sessionId 的子 agent）
@@ -23,6 +28,9 @@ import type { IncomingMessage } from '@aalis/schema-message';
 //   3. wait_subtasks 阻塞等待
 //   4. 父会话整合 → manage_todo_list 标记完成
 // 子会话内可自行再用 manage_todo_list / load_skill / workflow_run 等工具。
+//
+// 子会话在建立时写下父会话此刻的设置（会话设置管理面的 childMetadata），之后独立；父会话经 set_subtask_setting 改直接子会话
+// 本会话层的设置。子会话的一轮结束后闲置满 idleDeleteHours 即销毁，销毁之前给父会话写回报。
 // =====================================================================
 
 /**
@@ -37,23 +45,23 @@ const configSchema = defineConfig({
   enabled: { type: 'boolean', label: '启用子任务工具', default: true, onInvalid: 'error' },
 
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
-  defaultProvider: {
-    type: 'string',
-    label: '子任务默认 LLM provider',
-    default: '',
-    onInvalid: 'error',
-    description: '不填则继承父会话。建议填轻量本地模型（如 ollama）让子任务跑在更便宜的模型上，节省 token',
+  // 按会话字段：按派子任务的会话解析，能按群设；1 级可改
+  model: {
+    type: 'llm-ref',
+    label: t('modelLabel'),
+    description: t('modelDescription'),
+    ...MODEL_REF_TEXT,
+    session: { appliesTo: ['owner', 'room'], prominence: 'advanced', unset: t('modelUnset'), minLevel: 1 },
   },
-  defaultModel: {
-    type: 'string',
-    label: '子任务默认模型名',
-    default: '',
-    onInvalid: 'error',
-    description: '与 defaultProvider 配套。例如 qwen3:8b、deepseek-chat。两个都不填则继承父会话模型。',
-  },
+  idleDeleteHours: { type: 'number', label: t('idleLabel'), description: t('idleDescription'), default: 24, min: 0 },
 });
 
-type PluginConfig = ConfigOf<typeof configSchema>;
+type PluginConfig = Pick<ConfigOf<typeof configSchema>, 'maxWaitMs' | 'idleDeleteHours'>;
+type SubtaskFields = SessionFieldReader<typeof configSchema>;
+
+const HOUR_MS = 3_600_000;
+/** 到期定时器的最长延时：超过 2^31−1 毫秒的延时 Node 按 1 毫秒触发，截到一天、到点重判 */
+const MAX_TIMER_MS = 24 * HOUR_MS;
 
 /** 子任务报给父会话的状态：会话状态之外，最后一轮被停止、收口为 completed 的报成 stopped，不算完成 */
 type SubtaskStatus = SessionInfo['status'] | 'stopped';
@@ -82,13 +90,81 @@ const STATUS_LABELS: Partial<Record<SubtaskStatus, string>> = {
 
 const NOT_FOUND = '子任务不存在';
 
+/** 父会话记录 metadata 里本插件的键：到期销毁的子任务留下的回报 */
+const REPORTS_KEY = 'subtask';
+
+/** 到期销毁的子任务留给父会话的回报：check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮结束后删 */
+interface SubtaskReport {
+  id: string;
+  name: string;
+  status: SubtaskStatus;
+  reason?: string;
+  result?: string;
+  inputContext?: string;
+}
+
+/** 一个会话记录上的回报 */
+function reportsOf(session: SessionInfo | undefined): SubtaskReport[] {
+  const reports = (session?.metadata?.[REPORTS_KEY] as { reports?: unknown } | undefined)?.reports;
+  return Array.isArray(reports)
+    ? reports.filter((r): r is SubtaskReport => typeof (r as { id?: unknown } | null)?.id === 'string')
+    : [];
+}
+
+/** 子任务此刻的回报：不写没有的项 */
+function reportOf(session: SessionInfo): SubtaskReport {
+  const status = subtaskStatus(session);
+  const reason = errorReason(session, status);
+  return {
+    id: session.id,
+    name: nameOf(session),
+    status,
+    ...(reason === undefined ? {} : { reason }),
+    ...(session.result ? { result: session.result } : {}),
+    ...(session.inputContext ? { inputContext: session.inputContext } : {}),
+  };
+}
+
+function writeReports(sm: SessionManagerService, sessionId: string, reports: SubtaskReport[]): Promise<unknown> {
+  return sm.updateSession(sessionId, { metadata: { [REPORTS_KEY]: { reports } } });
+}
+
+/** 取走调用所在会话记录上某个子任务的回报（读到即删）；只在调用方自己的记录上找，别的会话的子任务取不到 */
+async function takeReport(
+  sm: SessionManagerService,
+  sessionId: string,
+  id: string,
+): Promise<SubtaskReport | undefined> {
+  const reports = reportsOf(sm.getSession(sessionId));
+  const report = reports.find(r => r.id === id);
+  if (report)
+    await writeReports(
+      sm,
+      sessionId,
+      reports.filter(r => r !== report),
+    );
+  return report;
+}
+
 /**
- * 按 id 取调用所在会话的直接子任务，四个按 id 操作的工具都经这里：别的会话的子任务、根会话与不存在的一样取不到，
+ * 按 id 取调用所在会话的直接子任务，五个按 id 操作的工具都经这里：别的会话的子任务、根会话与不存在的一样取不到，
  * 一律按 {@link NOT_FOUND} 回，不确认存在与否，也不交出、不等、不改它们
  */
 function directChild(sm: SessionManagerService, id: string, sessionId: string): SessionInfo | undefined {
   const session = sm.getSession(id);
   return session?.parentId === sessionId ? session : undefined;
+}
+
+/** 查一个子任务（check_subtask、wait_subtasks）：还在的直接子任务取此刻的回报，已销毁的取走调用所在会话记录上的回报 */
+async function lookup(
+  sm: SessionManagerService,
+  id: string,
+  sessionId: string,
+): Promise<{ report: SubtaskReport; destroyed: boolean } | undefined> {
+  const session = directChild(sm, id, sessionId);
+  if (session) return { report: reportOf(session), destroyed: false };
+  const report = await takeReport(sm, sessionId, id);
+  return report && { report, destroyed: true };
 }
 
 // ===== 插件入口 =====
@@ -101,6 +177,15 @@ const uses = {
   config,
   sessionManager: optional(sessionManager),
   messageArchive: optional(messageArchive),
+  /** 给子会话指定模型（工具参数或子任务模型）；不在时要指定模型的子任务不建 */
+  agent: optional(agent),
+  /**
+   * 会话设置的管理面：建子会话之前取 childMetadata、父会话改子会话的设置（setAs）、读本插件的子任务模型。不在时不建子会话：
+   * 子会话没法写下父会话此刻的设置
+   */
+  sessionSettings: optional(sessionSettings),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -112,21 +197,33 @@ export default definePlugin({
   uses,
   apply(caps) {
     const parsed = parseConfig(configSchema, caps.config.use, caps.logger.use);
+    if (!parsed.enabled) return;
     const cfg = {
-      ...parsed,
       maxWaitMs: parsed.maxWaitMs || configSchema.maxWaitMs.default,
-      defaultProvider: parsed.defaultProvider.trim(),
-      defaultModel: parsed.defaultModel.trim(),
+      idleDeleteHours: parsed.idleDeleteHours,
     };
-    if (!cfg.enabled) return;
-    registerSubtask(caps, cfg);
+    registerSubtask(caps, cfg, caps.sessionSettings.use.fields(configSchema, caps));
   },
 });
 
 function registerSubtask(
-  { tools, events, hooks, logger, sessionManager, messageArchive }: Caps,
+  { tools, events, hooks, logger, sessionManager, messageArchive, agent, sessionSettings }: Caps,
   cfg: PluginConfig,
+  fields: SubtaskFields,
 ): void {
+  // ---- 到期销毁的记录（见文末「到期销毁」）----
+  /** 在飞的回合数 */
+  const inflight = new Map<string, number>();
+  /** 发出了追问、下一轮还没开始的子会话 */
+  const pendingStart = new Set<string>();
+  /** 本插件记下的一轮结束时刻；重启或重载之后没有，取会话记录上的 lastTurn.endedAt */
+  const endedAt = new Map<string, number>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 父会话这一轮的提醒里列出过的回报（子会话 id）：这一轮结束时删 */
+  const listed = new Map<string, Set<string>>();
+  /** 跟随中的会话管理：定时器只在它在场时排 */
+  let tracked: SessionManagerService | undefined;
+
   // 注册工具分组
   tools.use.registerGroup({
     name: 'subtask',
@@ -156,10 +253,12 @@ function registerSubtask(
           '4. 创建完所有子任务后，必须立即调用 wait_subtasks 等待结果，不要在未等待的情况下继续主任务',
           '5. 子任务无法调用 create_subtask（不可嵌套）；保持 save 操作在主会话中执行',
           '',
-          '【模型选择】可选 provider+model 参数为子任务指定更便宜/轻量的模型：',
+          '【模型选择】可选 model 参数为子任务指定更便宜/轻量的模型，写条目 id「<提供者实例 id>/<模型 id>」，与 /model 列出的写法相同：',
           '- 适合轻量模型的任务：语法检查、格式转换、摄取信息、翻译、简单总结、文档快速审阅',
           '- 依然需要父同模型的任务：复杂推理、多步规划、代码生成、独立决策',
-          '- 不填则使用插件默认子任务模型，都未配置则继承父会话',
+          '- 不填则用本会话的子任务模型，没设时与本会话的模型相同',
+          '',
+          '子任务交回结果（一轮结束，不论回复、出错还是被停止）后闲置一段时间没人追问就会销毁，销毁后要重新创建。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -172,15 +271,10 @@ function registerSubtask(
               type: 'string',
               description: '子任务显示名称（可选，默认自动生成）',
             },
-            provider: {
-              type: 'string',
-              description:
-                '可选：为子任务指定 LLM provider（如 ollama 、 deepseek）。与 model 配套使用，二者同填才会生效。',
-            },
             model: {
               type: 'string',
               description:
-                '可选：为子任务指定 model 名称（如 qwen3:8b、deepseek-chat）。二者同填才会生效；未填则使用插件默认或父会话模型。',
+                '可选：为子任务指定模型，写条目 id「<提供者实例 id>/<模型 id>」（模型 id 里可以有斜杠）；不填则用本会话的子任务模型，没设时与本会话的模型相同。',
             },
           },
           required: ['task'],
@@ -203,32 +297,44 @@ function registerSubtask(
         return JSON.stringify({ error: '子任务中不能再创建子任务。请直接完成当前任务，由父会话负责任务拆分和协调。' });
       }
 
+      // 子会话在建立时写下本会话此刻的设置：会话设置不在时写不下，照常建的话本会话那一层的收窄就丢了
+      if (!sessionSettings.present) {
+        return JSON.stringify({ error: '会话设置不在，不能创建子任务：子会话要在创建时写下本会话此刻的设置' });
+      }
+
+      // 子会话的对话模型：工具参数 › 本会话此刻生效的子任务模型 › 随设置写下的本会话此刻的模型（不另指定）
+      const text = String(args.model ?? '').trim();
+      const argModel = text ? modelRefOf(text) : undefined;
+      if (text && !argModel) {
+        return JSON.stringify({
+          error: `model 写法不对：${text}。写成「<提供者实例 id>/<模型 id>」，与 /model 列出的相同`,
+        });
+      }
+      const model: ModelRef | undefined = argModel ?? fields.get(parentId, { platform: callCtx.platform }).model;
+      if (model && !agent.present) {
+        return JSON.stringify({ error: '要给子任务指定模型，但 agent 服务不在，不能创建子任务' });
+      }
+
       // 没给名字的不起名：显示名由读者按建档时间给（sessionLabel）
       const taskName = args.name ? String(args.name) : undefined;
 
       try {
-        // 子会话复制父会话的生效配置；登记为 liveOnly 的项（白纸与远端代理等）不随复制冻结，只经继承链实时解析
-        const inheritedConfig = sm.childConfig(parentId, callCtx.platform);
-
-        // 模型优先级：工具参数 > 插件默认 > 父会话继承
-        // 仅当 provider 和 model 同时提供才覆盖，避免半填产生歧义
-        const argProvider = String((args.provider as string | undefined) ?? '').trim();
-        const argModel = String((args.model as string | undefined) ?? '').trim();
-        let llmOverride: { provider: string; model: string } | undefined;
-        if (argProvider && argModel) {
-          llmOverride = { provider: argProvider, model: argModel };
-        } else if (cfg.defaultProvider && cfg.defaultModel) {
-          llmOverride = { provider: cfg.defaultProvider, model: cfg.defaultModel };
-        }
-        const childConfig = llmOverride ? { ...inheritedConfig, llm: llmOverride } : { ...inheritedConfig };
-
-        // 创建子会话（存储 platform 用于后续自动触发）
         const child = await sm.createChildSession(parentId, {
           name: taskName,
+          title: taskName,
           inputContext: task,
-          config: childConfig,
-          metadata: { platform: callCtx.platform || 'internal', title: taskName },
+          metadata: sessionSettings.use.childMetadata(parentId, { platform: callCtx.platform }),
         });
+        if (model) {
+          try {
+            await agent.use.assignModel(child.id, model);
+          } catch (err) {
+            await sm.deleteSession(child.id);
+            throw new Error(`给子会话指定模型失败（${err instanceof Error ? err.message : String(err)}）`, {
+              cause: err,
+            });
+          }
+        }
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）
         const incoming: IncomingMessage = {
@@ -273,7 +379,8 @@ function registerSubtask(
         description: [
           '查询一个或多个子任务的当前状态和结果。',
           '返回每个子任务的状态（active=进行中, completed=已完成, error=出错, stopped=已停止）、结果摘要等；出错的带 reason（出错原因）。',
-          '如果有子任务状态为 error，可使用 send_to_subtask 重新发送指令让其重试。',
+          '如果有子任务状态为 error，可在它销毁之前用 send_to_subtask 重新发送指令让其重试，已完成或出错的会重新进入进行中。',
+          '子任务交回结果后闲置一段时间没人追问就会销毁：销毁之后这里回它最后的状态与结果一次（destroyed 为 true），再查就是不存在，要接着做得重新创建。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -299,20 +406,25 @@ function registerSubtask(
           error: '缺少 subtask_ids 参数。正确用法: { "subtask_ids": ["<子任务ID1>", "<子任务ID2>"] }',
         });
       }
-      const results = ids.map(id => {
-        const session = directChild(sm, id, callCtx.sessionId);
-        if (!session) return { id, error: NOT_FOUND };
-        const status = subtaskStatus(session);
-        return {
+      const results = [];
+      for (const id of ids) {
+        const found = await lookup(sm, id, callCtx.sessionId);
+        if (!found) {
+          results.push({ id, error: NOT_FOUND });
+          continue;
+        }
+        const { report, destroyed } = found;
+        results.push({
           id,
-          name: nameOf(session),
-          status,
-          statusLabel: STATUS_LABELS[status] ?? status,
-          reason: errorReason(session, status),
-          result: session.result || null,
-          inputContext: session.inputContext || null,
-        };
-      });
+          name: report.name,
+          status: report.status,
+          statusLabel: STATUS_LABELS[report.status] ?? report.status,
+          reason: report.reason,
+          result: report.result ?? null,
+          inputContext: report.inputContext ?? null,
+          ...(destroyed ? { destroyed: true } : {}),
+        });
+      }
 
       const summary = {
         total: results.length,
@@ -338,7 +450,7 @@ function registerSubtask(
         description: [
           '向子任务会话发送追加消息（追问、补充指令等）。',
           '消息将作为父会话用户身份注入子任务，触发子任务 agent 继续处理。',
-          '子任务如已完成，将被重新激活为 active 状态。',
+          '子任务如已完成或出错，将被重新激活为 active 状态，闲置计时从这一轮结束重新算；已销毁的子任务要重新创建。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -369,10 +481,12 @@ function registerSubtask(
       const session = directChild(sm, subtaskId, callCtx.sessionId);
       if (!session) return JSON.stringify({ error: `${NOT_FOUND}: ${subtaskId}` });
 
-      // 如果子任务已完成，重新激活
-      if (session.status === 'completed') {
+      // 已完成或出错的重新激活；归档的不翻（与回合开始时同一口径）
+      if (session.status === 'completed' || session.status === 'error') {
         await sm.updateSession(subtaskId, { status: 'active' });
       }
+      // 发出到开跑之间不判到期：被追问打断的那一轮先收口时，追问那一轮还没开始
+      pendingStart.add(subtaskId);
 
       // 派发消息
       const followUp: IncomingMessage = {
@@ -398,6 +512,54 @@ function registerSubtask(
         sent: true,
         message: `消息已发送到子任务 "${nameOf(session)}"`,
       });
+    },
+  });
+
+  // ---- set_subtask_setting ----
+  tools.use.register({
+    groups: ['subtask'],
+    // 模型给自己派的子会话放权等于自己给自己授权：要 owner 确认（免确认只对以 owner 身份做的事生效），项的门槛另按这一轮
+    // 发起的人逐项判
+    risk: 'sensitive',
+    confirm: 'session',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'set_subtask_setting',
+        description: [
+          '改一个直接子任务（本会话派出的子会话，不含它再派出的）这个会话自己那一层的一项设置，下一轮起生效。',
+          '写法同 /session.set：key 是项名，几个插件同名时写「<实例 id>/<键>」；value 是取值的文字，模型写「<提供者实例 id>/<模型 id>」，列表用逗号分隔。',
+          '只写值，不能恢复继承。项写错、不适用或重名时，回执列出能改的项。每次调用都要 owner 确认。',
+        ].join('\n'),
+        parameters: {
+          type: 'object',
+          properties: {
+            subtask_id: { type: 'string', description: '子任务 ID' },
+            key: { type: 'string', description: '项名，如 persona；同名时写「<实例 id>/<键>」' },
+            value: { type: 'string', description: '取值的文字' },
+          },
+          required: ['subtask_id', 'key', 'value'],
+          additionalProperties: false,
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      if (!sessionManager.present) return JSON.stringify({ error: 'session-manager 服务不可用' });
+      if (!sessionSettings.present) return JSON.stringify({ error: '会话设置不在，改不了子任务的设置' });
+      const sm = sessionManager.use;
+
+      const subtaskId = String(args.subtask_id || '').trim();
+      const key = String(args.key || '').trim();
+      if (!subtaskId || !key) return JSON.stringify({ error: '缺少子任务 ID 或项名' });
+
+      const session = directChild(sm, subtaskId, callCtx.sessionId);
+      if (!session) return JSON.stringify({ error: `${NOT_FOUND}: ${subtaskId}` });
+
+      // 门槛按这一轮发起的人：授权身份，没有时取物理身份（与派发时透传给子任务的取法相同）
+      const identity = callCtx.actor ?? { platform: callCtx.platform ?? '', userId: callCtx.userId ?? '' };
+      const receipt = await sessionSettings.use.setAs(identity, subtaskId, key, String(args.value ?? ''));
+      // 给模型的一律原文
+      return toSource(receipt.text);
     },
   });
 
@@ -467,7 +629,8 @@ function registerSubtask(
           '【必须调用】创建子任务后，必须调用此工具等待所有子任务完成。',
           '不等待就继续主任务会导致：子任务结果丢失、文档内容不完整、最终输出质量差。',
           '调用后请检查返回的 allCompleted 字段和每个子任务的 result，确认所有子任务均成功完成。',
-          '如有子任务失败或超时，可使用 send_to_subtask 补充指令后再次等待。',
+          '如有子任务失败或超时，可在它销毁之前使用 send_to_subtask 补充指令后再次等待，已完成或出错的会重新进入进行中。',
+          '交回结果后闲置到期而销毁的子任务，这里回它最后的状态与结果一次（destroyed 为 true），之后就是不存在，要重新创建。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -556,21 +719,26 @@ function registerSubtask(
         });
       }
 
-      // 收集结果
-      const results = ids.map(id => {
-        const session = directChild(sm, id, callCtx.sessionId);
-        if (!session) return { id, error: NOT_FOUND };
-        const status = subtaskStatus(session);
-        return {
+      // 收集结果：等着时销毁了的取回报
+      const results = [];
+      for (const id of ids) {
+        const found = await lookup(sm, id, callCtx.sessionId);
+        if (!found) {
+          results.push({ id, error: NOT_FOUND });
+          continue;
+        }
+        const { report, destroyed } = found;
+        results.push({
           id,
-          name: nameOf(session),
-          status,
-          reason: errorReason(session, status),
-          inputContext: session.inputContext || null,
-          result: session.result || null,
-          completed: status === 'completed',
-        };
-      });
+          name: report.name,
+          status: report.status,
+          reason: report.reason,
+          inputContext: report.inputContext ?? null,
+          result: report.result ?? null,
+          completed: report.status === 'completed',
+          ...(destroyed ? { destroyed: true } : {}),
+        });
+      }
 
       const allCompleted = results.every(r => 'completed' in r && r.completed);
       // 出错、被停止的已经结束，不算超时：只有等满时还没结束的才算
@@ -661,9 +829,11 @@ function registerSubtask(
     // 工具循环中 wait_subtasks 返回后，下一轮 LLM 看到的是刷新过的状态而非首轮快照
     // （这也是它不走 agent:prompt 贡献点的原因：贡献按全局键幂等，物化一次后同回合
     // 不再刷新）。
+    // 子会话销毁之后，它的回报在父会话记录上：也要列出，否则最后一个子会话销毁后回报就没人列
     if (!session?.parentId && session) {
       const children = session.children;
-      if (children && children.length > 0) {
+      const destroyed = reportsOf(session);
+      if (children.length > 0 || destroyed.length > 0) {
         const activeChildren: string[] = [];
         const completedChildren: string[] = [];
         const errorChildren: string[] = [];
@@ -696,7 +866,8 @@ function registerSubtask(
           activeChildren.length > 0 ||
           completedChildren.length > 0 ||
           errorChildren.length > 0 ||
-          stoppedChildren.length > 0
+          stoppedChildren.length > 0 ||
+          destroyed.length > 0
         ) {
           const lines: string[] = [PARENT_CONTEXT_MARKER];
 
@@ -712,7 +883,7 @@ function registerSubtask(
             lines.push(...errorChildren);
             lines.push('');
             lines.push(
-              '可使用 send_to_subtask 向出错的子任务发送修正指令让其重试，或使用 check_subtask 查看详细状态。',
+              '可在销毁之前使用 send_to_subtask 向出错的子任务发送修正指令让其重试（已完成或出错的会重新进入进行中），或使用 check_subtask 查看详细状态；销毁了的要重新创建。',
             );
           }
 
@@ -724,6 +895,23 @@ function registerSubtask(
           if (completedChildren.length > 0) {
             lines.push(`以下子任务已完成，请检查结果：`);
             lines.push(...completedChildren);
+          }
+
+          if (destroyed.length > 0) {
+            lines.push(
+              '以下子任务交回结果后闲置到期，已销毁；这是它们最后的状态与结果，只列这一轮，要接着做得重新创建：',
+            );
+            for (const report of destroyed) {
+              const detail = report.status === 'error' ? (report.reason ?? '(无错误详情)') : report.result;
+              const label = STATUS_LABELS[report.status] ?? report.status;
+              lines.push(`  - [${label}] ${report.name} (ID: ${report.id})${detail ? `: ${detail}` : ''}`);
+            }
+            // 干跑（用量快照）不算列出：那不是这一轮给模型看的
+            if (!data.dryRun) {
+              const ids = listed.get(sessionId) ?? new Set<string>();
+              for (const report of destroyed) ids.add(report.id);
+              listed.set(sessionId, ids);
+            }
           }
 
           lines.push('--- 活跃子任务提醒结束 ---');
@@ -796,6 +984,136 @@ function registerSubtask(
     } catch (err) {
       logger.use.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }
+  });
+
+  // ---- 到期销毁 ----
+  // 子会话的一轮结束（不论结局）满 idleDeleteHours 就删掉，追问让它在下一轮结束时重新计时，从没跑过一轮的不计时。在飞的一轮与
+  // 发出还没开跑的追问由本插件自己记，不看会话状态（归档的子会话跑一轮时状态不翻；被追问打断的那一轮可能先把状态收口）。
+  // 删除只在定时器里做：删除要等这个会话的回合收尾，在回合里删就互相等。销毁之前把回报写进父会话记录
+
+  /** 起点：一轮结束的时刻；从没跑过一轮的没有 */
+  const startOf = (child: SessionInfo) => endedAt.get(child.id) ?? child.lastTurn?.endedAt;
+
+  /** 排这个子会话的到期定时器（离到期还差多久与一天取较短的，到点重判）；不是子会话或不计时的不排 */
+  function schedule(childId: string): void {
+    clearTimeout(timers.get(childId));
+    timers.delete(childId);
+    const child = tracked?.getSession(childId);
+    const start = child?.parentId === undefined ? undefined : startOf(child);
+    if (start === undefined) return;
+    const left = start + cfg.idleDeleteHours * HOUR_MS - Date.now();
+    timers.set(
+      childId,
+      setTimeout(() => void expire(childId), Math.min(Math.max(left, 0), MAX_TIMER_MS)),
+    );
+  }
+
+  /**
+   * 到点重判：一轮在飞或追问还没开跑的等那一轮收尾时再排；没到期的再排；到期的写回报、删掉。写回报要等一拍：这一拍里发出的
+   * 追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾时重新排
+   */
+  async function expire(childId: string): Promise<void> {
+    timers.delete(childId);
+    const sm = tracked;
+    const child = sm?.getSession(childId);
+    if (!sm || child?.parentId === undefined) return;
+    const busy = () => inflight.has(childId) || pendingStart.has(childId);
+    if (busy()) return;
+    const start = startOf(child);
+    if (start === undefined) return;
+    if (Date.now() < start + cfg.idleDeleteHours * HOUR_MS) {
+      schedule(childId);
+      return;
+    }
+    const parentId = child.parentId;
+    /** 父会话记录上别的子任务的回报 */
+    const others = () => reportsOf(sm.getSession(parentId)).filter(r => r.id !== childId);
+    try {
+      if (sm.getSession(parentId)) await writeReports(sm, parentId, [...others(), reportOf(child)]);
+      if (busy() || tracked !== sm) {
+        if (sm.getSession(parentId)) await writeReports(sm, parentId, others());
+        return;
+      }
+      await sm.deleteSession(childId);
+      logger.use.info(`子任务交回结果后闲置到期，已销毁: ${nameOf(child)} (${childId})`);
+    } catch (err) {
+      logger.use.warn(`子任务到期销毁失败 (${childId}):`, err);
+    }
+  }
+
+  /** 这个会话这一轮的提醒里列出过的回报：这一轮结束时删 */
+  async function dropListed(sessionId: string): Promise<void> {
+    const ids = listed.get(sessionId);
+    const sm = tracked;
+    if (!ids || !sm) return;
+    listed.delete(sessionId);
+    const reports = reportsOf(sm.getSession(sessionId));
+    const rest = reports.filter(r => !ids.has(r.id));
+    if (rest.length === reports.length) return;
+    try {
+      await writeReports(sm, sessionId, rest);
+    } catch (err) {
+      logger.use.warn(`删除已列出的子任务回报失败 (${sessionId}):`, err);
+    }
+  }
+
+  // 一轮从开始（agent:input:before）到它的 next 返回为止：子会话记在飞，结束时记下时刻、排定时器；父会话删掉这一轮列出过的回报
+  hooks.use.middleware('agent:input:before', async (data, next) => {
+    const { sessionId, source } = data.message;
+    const sm = sessionManager.present ? sessionManager.use : undefined;
+    const session = sm?.getSession(sessionId);
+    // 已删的子会话：发出、还没开跑的派发与追问不跑
+    if (sm && source === SUBTASK_SOURCE && !session) return;
+    const child = session?.parentId !== undefined;
+    if (child) {
+      pendingStart.delete(sessionId);
+      inflight.set(sessionId, (inflight.get(sessionId) ?? 0) + 1);
+    }
+    try {
+      await next();
+    } finally {
+      if (child) {
+        const rest = (inflight.get(sessionId) ?? 1) - 1;
+        if (rest > 0) inflight.set(sessionId, rest);
+        else inflight.delete(sessionId);
+        if (tracked?.getSession(sessionId)) {
+          endedAt.set(sessionId, Date.now());
+          schedule(sessionId);
+        }
+      }
+      await dropListed(sessionId);
+    }
+  });
+
+  events.use.on('session:deleted', sessionId => {
+    clearTimeout(timers.get(sessionId));
+    timers.delete(sessionId);
+    pendingStart.delete(sessionId);
+    endedAt.delete(sessionId);
+    listed.delete(sessionId);
+  });
+
+  // 父会话的消息历史清成了：回报一并清掉（在 next 之后看结果，与会话管理连带删除子会话同一判法）；会话不在表里时什么都不做
+  hooks.use.middleware('memory:clear', async (data, next) => {
+    await next();
+    if (!historyCleared(data)) return;
+    const sm = sessionManager.present ? sessionManager.use : undefined;
+    if (!sm) return;
+    const targets = data.scope === 'all' ? sm.listSessions() : [sm.getSession(data.sessionId ?? '')];
+    for (const session of targets) {
+      if (session && reportsOf(session).length > 0) await writeReports(sm, session.id, []);
+    }
+  });
+
+  // 会话管理上线（含本插件激活、会话管理晚到）时扫一遍子会话排定时器；下线与关闭时撤掉
+  sessionManager.follow(sm => {
+    tracked = sm;
+    for (const session of sm.listSessions()) if (session.parentId !== undefined) schedule(session.id);
+    return () => {
+      tracked = undefined;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
   });
 
   logger.use.info('子任务工具已注册');

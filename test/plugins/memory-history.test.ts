@@ -10,7 +10,7 @@ import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 /**
@@ -242,14 +242,16 @@ describe('plugin-memory-history', () => {
 // ════════════════════════════════════════════════════════════
 
 async function bootGuarded() {
-  // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供
-  const { app } = hostedApp();
+  // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供；跨会话历史范围按会话读，全局层在文档里
+  const { app, store } = hostedApp({
+    plugins: { [memoryHistory.name]: { scope: 'cross-platform', maxAgeMinutes: 0 } },
+  });
   await registerHubs(app);
   const host = app.bind({ services, authority, tools });
   await app.plugin(memoryInMemory);
   await app.plugin(toolsPlugin, {});
   await app.plugin(authorityPlugin, {});
-  await app.plugin(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
+  await registerFromDoc(app, store, memoryHistory);
   await app.plugins.idle();
   // 守卫是 authority 激活时挂上去的：任一插件停在 pending，下面的拒绝断言会退化成恒真或恒假
   for (const p of [memoryInMemory, toolsPlugin, authorityPlugin, memoryHistory]) {

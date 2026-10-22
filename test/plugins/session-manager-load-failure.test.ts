@@ -5,7 +5,6 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
 
 // 读不到会话表时（连接抖动、后端不可用），先按 1s、3s、10s 的间隔有限重试，其间仍用原来的会话表与落盘目标；
 // 用尽仍失败时，空表不能当作权威表和落盘目标：否则之后 ensureSession 新建的空白记录会覆盖后端里的原记录，
@@ -20,7 +19,7 @@ const original = {
   title: '原标题',
   status: 'completed',
   children: ['old-1::child'],
-  config: { llm: { provider: 'p', model: 'm' } },
+  metadata: { note: '<原记录的>' },
   createdAt: 1,
   updatedAt: 1,
 };
@@ -83,8 +82,6 @@ async function setup(stores: Array<[ReturnType<typeof fakeMemory>, number]>, adv
   const registered = app.plugin(sessionManagerPlugin);
   await vi.advanceTimersByTimeAsync(advanceMs);
   await registered;
-  // 用例经 ensureSession 改人设，人设这一项要有人登记
-  await app.plugin(settingsPlugin('test-settings', [PERSONA]));
   await app.plugins.idle();
   return { app, host, logger, sm: () => host.sessionManager.use };
 }
@@ -96,10 +93,10 @@ describe('session-manager 会话表加载失败', () => {
 
     expect(store.state.calls).toBe(2);
     expect(sm().getSession('old-1')?.name).toBe('上次运行的会话');
-    await sm().ensureSession('old-1', { config: { persona: 'x' } });
+    await sm().ensureSession('old-1', { metadata: { note: 'x' } });
     await app.stop();
 
-    expect(store.meta.get('old-1')).toMatchObject({ name: '上次运行的会话', config: { persona: 'x' } });
+    expect(store.meta.get('old-1')).toMatchObject({ name: '上次运行的会话', metadata: { note: 'x' } });
   });
 
   it('冷启动读表始终失败：重试用尽后，之后建档与停机都不覆盖后端原记录', async () => {
@@ -113,7 +110,7 @@ describe('session-manager 会话表加载失败', () => {
     ).toEqual([LOAD_FAILED]);
     expect(abortedLines(logger), '重试用尽不是中止').toBe(0);
     expect(sm().getSession('old-1')).toBeUndefined();
-    await sm().ensureSession('old-1', { config: { persona: 'x' } });
+    await sm().ensureSession('old-1', { metadata: { note: 'x' } });
     await app.stop();
 
     expect(store.meta.get('old-1')).toEqual(original);
@@ -193,8 +190,8 @@ describe('session-manager 会话表加载失败', () => {
     expect(preferred.state.calls).toBe(4);
     expect(sm().getSession('old-1')).toBeUndefined();
 
-    await sm().ensureSession('old-1', { config: { persona: 'x' } });
-    await sm().ensureSession('pref-1', { config: { persona: 'x' } });
+    await sm().ensureSession('old-1', { metadata: { note: 'x' } });
+    await sm().ensureSession('pref-1', { metadata: { note: 'x' } });
     await app.stop();
 
     expect(fallback.meta.get('old-1')).toEqual(original);

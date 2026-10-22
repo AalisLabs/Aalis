@@ -79,7 +79,7 @@ const SOURCE = {
   scopeType: '*:{type} （所有平台的 {label} 会话）',
   scopePlatformType: '{scope} （{label}）',
   scopePlatform: '{platform}:* （{platform} 全部类型）',
-  dependencyInvalid: "dependency 要是模型引用 '{ provider, model }' 的 JSON",
+  dependencyInvalid: 'dependency 要是条目 id <提供者实例 id>/<模型 id>',
   allGroups: '* （全部分组）',
   pluginMissing: '插件 {instance} 不存在',
   refused:

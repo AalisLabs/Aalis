@@ -1,9 +1,11 @@
-import { sessionManager } from '@aalis/api-session-manager';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { backgroundTasks, tools } from '@aalis/api-tools';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { BackgroundTasks, DEFAULT_LIMITS } from './background.js';
+import { t } from './texts.js';
 import { ToolRegistry } from './tools.js';
 
 const configSchema = defineConfig({
@@ -31,6 +33,16 @@ const configSchema = defineConfig({
       },
     },
   },
+  // 按会话字段：空列表即只给不属于任何分组的工具，只有 owner 能改
+  enabledToolGroups: {
+    type: 'multiselect',
+    label: t('groupsLabel'),
+    description: t('groupsDescription'),
+    dynamicOptions: 'toolGroups',
+    allowCustom: true,
+    default: [],
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common', order: 30 },
+  },
 });
 
 export default definePlugin({
@@ -46,28 +58,17 @@ export default definePlugin({
     events,
     lifecycle,
     config,
-    /** 会话设置项「工具分组」登记在会话管理上；没有会话管理时各会话只拿到不属于任何分组的工具 */
-    sessionManager: optional(sessionManager),
+    /** 按会话读「工具分组」；缺席时各会话取插件配置里的值 */
+    sessionFields: optional(sessionFields),
+    /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+    document: optional(ownHostConfig),
     /** 后台任务登记写进插件数据；没有时只记在内存里 */
     storage: optional(storage),
   },
   apply(caps) {
-    const { logger, events, lifecycle, sessionManager } = caps;
+    const { logger, events, lifecycle } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
-    sessionManager.use.registerSetting({
-      key: 'enabledToolGroups',
-      field: {
-        type: 'multiselect',
-        label: '工具分组',
-        dynamicOptions: 'toolGroups',
-        allowCustom: true,
-        description: '这个会话能用的工具分组，* 为全部；没设置或为空时只给不属于任何分组的工具',
-      },
-      appliesTo: ['owner', 'room', 'task'],
-      prominence: 'common',
-      order: 30,
-      unset: '只给不属于任何分组的工具',
-    });
+    const fields = caps.sessionFields.use.fields(configSchema, caps);
 
     const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background });
     events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
@@ -83,7 +84,9 @@ export default definePlugin({
       void tasks.restore(store.own);
     });
 
-    caps.provide.use(tools, new ToolRegistry(logger.use, tasks));
+    const sessionGroups = (sessionId: string, platform?: string) =>
+      fields.get(sessionId, { platform }).enabledToolGroups;
+    caps.provide.use(tools, new ToolRegistry(logger.use, tasks, sessionGroups));
     caps.provide.use(backgroundTasks, tasks);
   },
 });

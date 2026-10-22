@@ -9,7 +9,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { ONEBOT_TYPES, PERSONA, settingsPlugin } from '../fixtures/session-settings.js';
+import { ONEBOT_TYPES } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // IM 房间收录：会话表里还没有记录、不是子任务的会话，首条真人入站（不带 source）即按这条消息登记，记下出生平台与
@@ -81,8 +81,6 @@ async function setup(
     await app.plugin(adapterPlugin('cli', { platform: 'cli', canHandle: id => id === 'cli-default' }));
   }
   await app.plugin(sessionManagerPlugin);
-  // 用例经 ensureSession 落人设（/session.set 的落点），人设这一项要有人登记
-  await app.plugin(settingsPlugin('test-settings', [PERSONA]));
   await app.plugins.idle();
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
@@ -261,7 +259,6 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
     name: '<群名>',
     children: [],
     status: 'completed',
-    config: {},
     createdAt: 1,
     updatedAt: 1,
     kind: 'room',
@@ -270,14 +267,14 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
   };
   const stored = (info: SessionInfo) => ({ [info.id]: info as unknown as Record<string, unknown> });
 
-  it('原生入站建出的房间各记各的实例；按 id 建档的（子任务兜底、/session 落配置）在补记来源字段之后才记；认不出的、owner 面会话与子任务不记', async () => {
+  it('原生入站建出的房间各记各的实例；按 id 建档的（子任务兜底、写设置时建档）在补记来源字段之后才记；认不出的、owner 面会话与子任务不记', async () => {
     const { sm, inbound } = await setup([], { instances: true });
     const B_GROUP = 'onebot:20000:group:20001';
     const B_PRIVATE = 'onebot:20000:private:30001';
     const UNKNOWN = 'onebot:30000:group:20001';
     const instanceOf = (id: string) => sm.getSession(id)?.originInstance;
 
-    await sm.ensureSession(B_PRIVATE, { config: { persona: '<人设>' } }); // /session.set 的落点
+    await sm.ensureSession(B_PRIVATE, { metadata: { note: '<备注>' } }); // 收录不了的会话上写设置的落点
     const child = await sm.createChildSession(B_GROUP, { name: '<子任务>' });
     await sm.ensureSession(UNKNOWN, {});
     expect([B_PRIVATE, B_GROUP, UNKNOWN].map(instanceOf), '没有来源字段，还不是房间').toEqual([
@@ -311,13 +308,13 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
 
     const arriving = inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupName: '<群名>' });
     expect(gated.asked, '认领已经在问').toContain(GROUP);
-    await sm.ensureSession(GROUP, { config: { persona: '<人设>' } });
+    await sm.ensureSession(GROUP, { metadata: { note: '<备注>' } });
     gated.release();
     await arriving;
     await settle();
 
     expect(created).toEqual([GROUP]);
-    expect(sm.getSession(GROUP)).toMatchObject({ originPlatform: 'onebot', config: { persona: '<人设>' } });
+    expect(sm.getSession(GROUP)).toMatchObject({ originPlatform: 'onebot', metadata: { note: '<备注>' } });
     expect(sm.getSession(GROUP)?.originInstance).toBeTypeOf('string');
   });
 
@@ -345,7 +342,6 @@ describe('房间记下接管它的适配器实例：建档时解析，没记下�
       name: '<群名>',
       children: [],
       status: 'completed',
-      config: {},
       createdAt: 1,
       updatedAt: 1,
       kind: 'room',
@@ -460,7 +456,6 @@ describe('房间取名与补名', () => {
           id: GROUP,
           children: [],
           status: 'waiting',
-          config: {},
           createdAt: 1,
           updatedAt: 1,
           originPlatform: 'onebot',
@@ -511,7 +506,7 @@ describe('房间取名与补名', () => {
   });
 
   it('升级前只记了出生平台的记录（没有聊天窗口、创建来源与绑定）：出生平台的原生入站补记聊天窗口与群名，场所成为它自己的窗口', async () => {
-    const legacy = { id: GROUP, children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 };
+    const legacy = { id: GROUP, children: [], status: 'waiting', createdAt: 1, updatedAt: 1 };
     const { sm, inbound } = await setup([], {
       instances: true,
       stored: { [GROUP]: { ...legacy, originPlatform: 'onebot' } },
@@ -674,7 +669,7 @@ describe('状态在回合开始时翻 active', () => {
     // 回合里才建档（如 create_subtask 兜底建父会话档）：这时已有回合在跑
     let during: string | undefined;
     await running('cli-other', async () => {
-      await sm.ensureSession('cli-other', { config: {} });
+      await sm.ensureSession('cli-other');
       during = sm.getSession('cli-other')?.status;
     });
     expect(during).toBe('active');

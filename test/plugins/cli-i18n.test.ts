@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ApprovalRequest, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { persona } from '../../packages/api-persona/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
@@ -16,6 +16,7 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { defineTexts, TextError } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
@@ -27,11 +28,12 @@ import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// 终端界面是 owner 自己看的，按全局默认层的语言（{ host: true }）显示，不看终端会话自己的语言设置：欢迎行、帮助页、审批卡的
-// 标题与按键提示、附件类别取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
-// 全局默认层变了立即重绘；帮助页按终端宽度折行，审批卡上事实的标签补齐到同一宽度（译文长短不一）。
+// 终端界面是 owner 自己看的，按全局层的语言（{ host: true }，plugin-i18n 的插件配置）显示，不看终端会话自己的语言设置：欢迎行、
+// 帮助页、审批卡的标题与按键提示、附件类别取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
+// 宿主配置里的语言变了立即重绘；帮助页按终端宽度折行，审批卡上事实的标签补齐到同一宽度（译文长短不一）。
 // i18n 缺席或渲染抛错时按原文，抛错只告警一次。送达失败（含只带附件的出站）的原因是挂着文字对象的报错时交出文字对象。
-// 真的 plugin-i18n、会话管理、会话服务（审批服务）与 TUI（假 TTY，收集 stdout 帧），记忆是内存实现，存储与 owner 判定是替身。
+// 真的 plugin-i18n、会话管理与会话设置、会话服务（审批服务）与 TUI（假 TTY，收集 stdout 帧），记忆是内存实现，存储与 owner
+// 判定是替身。
 // ════════════════════════════════════════════════════════════
 
 const NS = '@zz/cli-i18n';
@@ -67,7 +69,7 @@ afterEach(async () => {
 });
 
 /**
- * 全局默认层的语言是 language；cliLanguage 给了就另设 cli 平台档的语言（终端会话按平台档取到它，界面不看它）。i18n 为
+ * 全局层的语言是 language；cliLanguage 给了就另设 cli 平台档的语言（终端会话按平台档取到它，界面不看它）。i18n 为
  * absent 时没有 i18n 服务，broken 时由抛错的替身代替 plugin-i18n。终端缺省 40 行 120 列
  */
 async function setup({
@@ -95,10 +97,10 @@ async function setup({
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const { app } = hostedApp(
     {
-      sessionConfig: {
-        defaults: { language },
-        ...(cliLanguage ? { platforms: { cli: { language: cliLanguage } } } : {}),
-      },
+      plugins: { [i18nPlugin.name]: { language } },
+      ...(cliLanguage
+        ? { sessionConfig: { platforms: { cli: { [i18nPlugin.name]: { language: cliLanguage } } } } }
+        : {}),
     },
     { logger },
   );
@@ -106,7 +108,7 @@ async function setup({
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);
   provideHostPaths(app, home);
-  const host = app.bind({ provide, events, approvals, tools, sessionManager });
+  const host = app.bind({ provide, events, approvals, tools, hostConfig });
   host.provide.use(storage, memoryStorage(new Map()));
   // 终端身份是不是 owner：demote 之后不再是，应答被拒
   let consoleIsOwner = true;
@@ -119,6 +121,7 @@ async function setup({
   declareToolSystemDisplays(host.tools.use);
   const plugins = [
     sessionManagerPlugin,
+    sessionSettingsPlugin,
     sessionServerPlugin,
     ...(i18nMode === 'plugin' ? [i18nPlugin] : []),
     cliPlugin,
@@ -161,8 +164,8 @@ async function setup({
     host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', ...message });
   /** 告警里带着 i18n 抛出的那个错的 */
   const renderWarnings = () => warn.mock.calls.filter(call => call.includes(BROKEN));
-  /** 改全局默认层的语言 */
-  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
+  /** 改全局层的语言：宿主配置里 plugin-i18n 的配置段 */
+  const setLanguage = (language: string[]) => host.hostConfig.use.setPluginConfig(i18nPlugin.name, { language });
   const demote = () => {
     consoleIsOwner = false;
   };
@@ -186,11 +189,11 @@ const EN = {
   help: 'Switching views',
 };
 
-describe('终端界面按全局默认层的语言', () => {
+describe('终端界面按全局层的语言', () => {
   it.each([
-    ['全局默认层为 en：英文', { language: ['en'] }, EN, ZH],
-    ['全局默认层为 zh-CN：原文', { language: ['zh-CN'] }, ZH, EN],
-    ['终端会话自己设了 en、全局默认层为 zh-CN：原文', { language: ['zh-CN'], cliLanguage: ['en'] }, ZH, EN],
+    ['全局层为 en：英文', { language: ['en'] }, EN, ZH],
+    ['全局层为 zh-CN：原文', { language: ['zh-CN'] }, ZH, EN],
+    ['终端会话自己设了 en、全局层为 zh-CN：原文', { language: ['zh-CN'], cliLanguage: ['en'] }, ZH, EN],
     ['i18n 缺席：原文', { language: ['en'], i18nMode: 'absent' as const }, ZH, EN],
   ])('%s', async (_case, options, shown, other) => {
     const s = await setup(options);
@@ -217,7 +220,7 @@ describe('终端界面按全局默认层的语言', () => {
     expect(s.frame()).not.toContain(other.help);
   });
 
-  it('全局默认层变了立即重绘：停在帮助页时把语言改成 zh-CN，不按键就换成中文', async () => {
+  it('宿主配置里的语言变了立即重绘：停在帮助页时把语言改成 zh-CN，不按键就换成中文', async () => {
     const s = await setup({ language: ['en'] });
     await s.ctrl('g');
     expect(s.frame()).toContain(EN.help);

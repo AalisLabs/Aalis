@@ -1,24 +1,14 @@
 // ════════════════════════════════════════════════════════════
 // 会话列表与会话的增删改：摘要、分区与分组、排序与分页、搜索、按组取与归档区；建、改名、归档与恢复、删除与批量；
-// 会话设置的各行（会话与各层，层表取自 api-session-manager）；已读。会话本身都在 session-manager 里，这里只做投影与转发。
+// 会话设置（行、层、写入与写过的各处，转给会话设置的管理面，层表取自 api-session-settings）；已读。会话本身都在
+// session-manager 里，这里只做投影与转发。
 // 「需要我处理」由未结的审批驱动；房间按接管的适配器实例分组，组名取实例的显示名。
 // 摘要里有几项按会话树算：在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话；聊天窗口与场所取根会话的。
 // ════════════════════════════════════════════════════════════
 
+import { saveFailureText } from '@aalis/api-host-config';
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
-import {
-  isSessionConfigError,
-  placeKind,
-  placeLabel,
-  type RegisteredSessionSetting,
-  SESSION_LAYERS,
-  type SessionConfig,
-  type SessionConfigPatch,
-  type SessionInfo,
-  type SessionKind,
-  type SessionManagerService,
-  sessionLabel,
-} from '@aalis/api-session-manager';
+import { placeLabel, type SessionInfo, type SessionManagerService, sessionLabel } from '@aalis/api-session-manager';
 import {
   type RoomGroup,
   RPC_ERROR_CODES,
@@ -26,9 +16,14 @@ import {
   type SessionMethodResult,
   type SessionPeer,
   type SessionSummary,
-  type SettingLayer,
-  type SettingRow,
 } from '@aalis/api-session-protocol';
+import {
+  isSessionSettingsError,
+  SESSION_LAYERS,
+  SETTINGS_ABSENT,
+  type SessionSettingsAdmin,
+  type SessionSettingsLayer,
+} from '@aalis/api-session-settings';
 import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { asText, type TextRef, textOf } from '@aalis/schema-i18n';
 import { failure, type MethodHandlers, ProtocolError } from './connection.js';
@@ -50,6 +45,8 @@ interface SessionDeps {
   /** 摘要因会话表之外的原因变了（已读），推给 watch 的连接 */
   changed(sessionId: string): void;
   platform: ServiceSelection<PlatformAdapter>;
+  /** 会话设置的管理面：session/config/* 与建子会话时写下的那一层都经它；不在时这些方法回 unsupported */
+  settings: ServiceSelection<SessionSettingsAdmin>;
   /** 组名：适配器实例的显示名 */
   plugins: Pick<PluginManagerService, 'getPlugin'>;
   logger: Logger;
@@ -57,27 +54,25 @@ interface SessionDeps {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** 写过的一处：一层，或某个会话 */
+type Override = SessionMethodResult<'session/config/overrides'>['items'][number]['entries'][number];
+
 /** 层表：名字与称呼，按先后 */
 const LAYER_ORDER = SESSION_LAYERS.map(({ name, label }) => ({ name, label }));
 
-/** 输入框旁的快捷切换最多放几项：多出的 composer 退到 common */
-const COMPOSER_LIMIT = 2;
-const PROMINENCE_RANK = { composer: 0, common: 1, advanced: 2 } as const;
-
-/** 显眼程度在前，同一显眼程度按 order，没给 order 的按登记的先后排在后面（排序是稳定的） */
-const byProminence = (a: RegisteredSessionSetting, b: RegisteredSessionSetting) =>
-  PROMINENCE_RANK[a.prominence] - PROMINENCE_RANK[b.prominence] ||
-  (a.order ?? Number.POSITIVE_INFINITY) - (b.order ?? Number.POSITIVE_INFINITY);
-
-/** 会话管理拒绝的读写（没登记的键、不合字段的值、只能设到场所为止的项、不合法的层）是参数错误，别的照常上抛 */
+/** 会话设置拒绝的读写（没登记的项、不合字段的值、不适用于这一处的项、不合法的层）是参数错误，别的照常上抛 */
 async function checked<T>(run: () => T | Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    if (isSessionConfigError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, textOf(err));
+    if (isSessionSettingsError(err)) throw new ProtocolError(RPC_ERROR_CODES.invalidParams, textOf(err));
     throw err;
   }
 }
+
+/** 写进宿主文档的几层落盘失败时回包另带的那一句 */
+const unsaved = ({ saveError }: { saveError?: unknown }) =>
+  saveError === undefined ? {} : { unsaved: saveFailureText(saveError, 'reload') };
 
 /**
  * 搜索：名称、标题、id 包含查询串（不分大小写），或查询串是「平台:目标」——出生平台与聊天窗口的目标
@@ -276,113 +271,46 @@ export function createSessions(deps: SessionDeps) {
   }
 
   /**
-   * owner 自己的会话按哪个入口平台选档：会话记下的平台（子任务建档时写入）、接管会话 id 的平台适配器，
-   * 都没有时取这条连接的平台。房间与它的子会话钉死出生平台，不看入口。
+   * 会话按哪个入口平台选平台档（只对没有出生平台的会话起作用）：子会话按根会话取，接管根会话 id 的平台适配器，没有时取这条
+   * 连接的平台。房间与它的子会话钉死出生平台，不看入口
    */
   async function entryPlatform(session: SessionInfo, peer: SessionPeer): Promise<string | undefined> {
-    if (rootOf(session).originPlatform) return undefined;
-    const recorded = session.metadata?.platform;
-    if (typeof recorded === 'string' && recorded) return recorded;
-    const adapter = await resolvePlatformBySession(deps.platform, session.id, deps.logger);
+    const root = rootOf(session);
+    if (root.originPlatform) return undefined;
+    const adapter = await resolvePlatformBySession(deps.platform, root.id, deps.logger);
     return adapter?.use.platform ?? peer.identity.platform;
   }
 
-  /**
-   * 设置项的各行：只列 applies 选中的项，排好显眼程度与先后，composer 多出的退到 common。own 是这一层自己的值，
-   * effective 与 sources 是解析到这一层为止（含这一层）的生效值与来源。生效值出自全局默认或哪一层都没设的行另带服务此刻实际
-   * 用的那一个（只有全局默认层由服务偏好承担的项有）
-   */
-  function rows(
-    applies: (setting: RegisteredSessionSetting) => boolean,
-    own: SessionConfig,
-    effective: SessionConfig,
-    sources: Record<string, SettingRow['source']>,
-  ): SessionMethodResult<'session/config/get'> {
-    let composers = 0;
-    const settings = sm
-      .listSettings()
-      .filter(applies)
-      .sort(byProminence)
-      .map(setting =>
-        setting.prominence === 'composer' && ++composers > COMPOSER_LIMIT
-          ? { ...setting, prominence: 'common' as const }
-          : setting,
-      )
-      .sort(byProminence);
-    const ownValues = own as Record<string, unknown>;
-    const effectiveValues = effective as Record<string, unknown>;
-    const resolved = sm.resolvedDefaults() as Record<string, unknown>;
-    return {
-      items: settings.map(({ key, field, plugin, prominence, dependsOn, unset }) => ({
-        key,
-        field,
-        plugin,
-        prominence,
-        dependsOn,
-        unset,
-        value: ownValues[key],
-        effective: effectiveValues[key],
-        source: sources[key],
-        resolved: sources[key] === undefined || sources[key] === 'defaults' ? resolved[key] : undefined,
-      })),
-    };
+  /** 会话设置的管理面；不在时回 unsupported */
+  const admin = (): SessionSettingsAdmin => {
+    if (!deps.settings.present) throw failure('unsupported', SETTINGS_ABSENT);
+    return deps.settings.use;
+  };
+
+  async function sessionRows(sessionId: string, peer: SessionPeer): Promise<SessionMethodResult<'session/config/get'>> {
+    const settings = admin();
+    const at = { platform: await entryPlatform(requireSession(sessionId), peer) };
+    return { items: settings.rows({ sessionId, at }) };
   }
 
-  /** 一个会话的各行：只列适用于它的种类的项，只能设到场所为止的不列；本层是会话自己的覆盖 */
-  async function sessionRows(
-    session: SessionInfo,
-    peer: SessionPeer,
-  ): Promise<SessionMethodResult<'session/config/get'>> {
-    const platform = await entryPlatform(session, peer);
-    const inheritance = sm.resolveInheritance(session.id, platform);
-    const own = sm.getOwnConfig(session.id);
-    const sources: Record<string, SettingRow['source']> = { ...inheritance.sources };
-    for (const key of Object.keys(own)) sources[key] = 'session';
-    return rows(
-      setting => setting.appliesTo.includes(session.kind) && !setting.narrowest,
-      own,
-      { ...inheritance.values, ...own },
-      sources,
-    );
-  }
+  const layerRows = (layer: SessionSettingsLayer) => checked(() => ({ items: admin().rows({ layer }) }));
 
-  /**
-   * 写入只收适用于这个种类的项：不适用的写进去照样参与解析，界面却列不出来、恢复不了继承。null 照常放行，
-   * 好让已经写进去的清得掉；没登记的键由会话管理拒绝
-   */
-  function assertApplies(kind: SessionKind, patch: Record<string, unknown>): void {
-    const settings = sm.listSettings();
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === null) continue;
-      const setting = settings.find(s => s.key === key);
-      if (setting && !setting.appliesTo.includes(kind)) {
-        throw new ProtocolError(RPC_ERROR_CODES.invalidParams, t('notApplicable', { key, kind }));
+  /** 一个实例写过的各处按项分组；会话带标题，子会话另带父会话 */
+  function overrides(plugin: string): SessionMethodResult<'session/config/overrides'> {
+    const titled = (info: SessionInfo) => ({ sessionId: info.id, title: info.title || sessionLabel(info) });
+    const items = new Map<string, Override[]>();
+    for (const { key, value, at } of admin().placements(plugin)) {
+      let target: Override['target'];
+      if ('layer' in at) target = { layer: at.layer };
+      else {
+        const info = sm.getSession(at.sessionId);
+        if (!info) continue;
+        const parent = parentOf(info);
+        target = { ...titled(info), ...(parent ? { parent: titled(parent) } : {}) };
       }
+      items.set(key, [...(items.get(key) ?? []), { target, value }]);
     }
-  }
-
-  /**
-   * 一层按哪种会话列与收设置项：场所按它的类别；全局默认、平台档与平台类型档不限（owner 的 IM 私聊带平台类型，场所却是
-   * 工作区，两类项都可能落到它）。没有记录的场所键由会话管理拒绝
-   */
-  function layerKind(layer: SettingLayer): SessionKind | undefined {
-    if (layer.scope !== 'place') return undefined;
-    const place = sm.getPlace(layer.key);
-    return place && placeKind(place);
-  }
-
-  /** 一层的各行：只列这一层适用的项，各带解析到这一层为止的生效值与来源 */
-  function layerRows(layer: SettingLayer) {
-    const kind = layerKind(layer);
-    return checked(() => {
-      const { values, sources } = sm.resolveLayer(layer);
-      return rows(
-        setting => kind === undefined || setting.appliesTo.includes(kind),
-        sm.getLayer(layer),
-        values,
-        sources,
-      );
-    });
+    return { items: [...items].map(([key, entries]) => ({ key, entries })) };
   }
 
   const handlers: Pick<
@@ -400,6 +328,7 @@ export function createSessions(deps: SessionDeps) {
     | 'session/config/layers'
     | 'session/config/layer/get'
     | 'session/config/layer/update'
+    | 'session/config/overrides'
     | 'session/markSeen'
   > = {
     'sessions/list': list,
@@ -409,11 +338,13 @@ export function createSessions(deps: SessionDeps) {
     },
     'session/create': async ({ name, parentId }, conn) => {
       const parent = parentId === undefined ? undefined : requireSession(parentId);
-      // 根会话不复制各层，配置经继承链实时生效；子会话复制父会话的生效配置（继承链不经父会话自己的配置）
-      const config = parent ? sm.childConfig(parent.id, await entryPlatform(parent, conn.peer)) : {};
+      // 子会话建立时写下父会话此刻每一项适用于子会话的生效值（并进 metadata，建档时一次写下）；会话设置不在时不建
+      const metadata = parent
+        ? admin().childMetadata(parent.id, { platform: await entryPlatform(parent, conn.peer) })
+        : undefined;
       // 根会话的创建来源取这条连接所在审批面的登记名（传输层登记得到），不取连接自报的；子会话不带，按根会话取
       const session = await sm.createSession(
-        { name, parentId, config, status: 'waiting' },
+        { name, parentId, status: 'waiting', ...(metadata ? { metadata } : {}) },
         parent ? undefined : { createdFrom: conn.peer.surface.name },
       );
       return { session: summarize(session) };
@@ -450,20 +381,19 @@ export function createSessions(deps: SessionDeps) {
       }
       return { failed };
     },
-    'session/config/get': ({ sessionId }, conn) => sessionRows(requireSession(sessionId), conn.peer),
-    'session/config/update': async ({ sessionId, patch }, conn) => {
-      assertApplies(requireSession(sessionId).kind, patch);
-      await checked(() => sm.updateSession(sessionId, { config: patch as SessionConfigPatch }));
-      return sessionRows(requireSession(sessionId), conn.peer);
+    'session/config/get': ({ sessionId }, conn) => sessionRows(sessionId, conn.peer),
+    'session/config/update': async ({ sessionId, plugin, key, value }, conn) => {
+      requireSession(sessionId);
+      const written = await checked(() => admin().update({ sessionId }, { plugin, key, value }));
+      return { ...(await sessionRows(sessionId, conn.peer)), ...unsaved(written) };
     },
-    'session/config/layers': () => ({ layers: sm.listLayers(), order: LAYER_ORDER }),
+    'session/config/layers': () => ({ layers: admin().layers(), order: LAYER_ORDER }),
     'session/config/layer/get': ({ layer }) => layerRows(layer),
-    'session/config/layer/update': async ({ layer, patch }) => {
-      const kind = layerKind(layer);
-      if (kind) assertApplies(kind, patch);
-      await checked(() => sm.updateLayer(layer, patch as SessionConfigPatch));
-      return layerRows(layer);
+    'session/config/layer/update': async ({ layer, plugin, key, value }) => {
+      const written = await checked(() => admin().update({ layer }, { plugin, key, value }));
+      return { ...(await layerRows(layer)), ...unsaved(written) };
     },
+    'session/config/overrides': ({ plugin }) => overrides(plugin),
     'session/markSeen': async ({ sessionId }) => {
       requireSession(sessionId);
       await seen.mark(sessionId, Date.now());

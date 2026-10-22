@@ -4,7 +4,6 @@ import {
   type RemoteRunSummary,
   type RunActivity,
 } from '../../packages/api-remote-agent/src/index.js';
-import type { SessionConfig } from '../../packages/api-session-manager/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 import { LEDGER_URI } from '../fixtures/paper.js';
 import {
@@ -398,7 +397,7 @@ describe('配置', () => {
 });
 
 describe('出队复核', () => {
-  type Ctx = { a: ScriptedRemote; rooms: Record<string, SessionConfig> };
+  type Ctx = { a: ScriptedRemote; rooms: Record<string, Record<string, unknown>> };
   const CHANGES: Array<[string, (ctx: Ctx) => void]> = [
     [
       '房间关了 paperEnabled',

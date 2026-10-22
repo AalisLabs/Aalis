@@ -18,6 +18,19 @@
   line-height: var(--leading-sm);
 }
 
+/* 带说明的一项：名字下面一行写说明 */
+.field-check-text {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 作者默认的说明只占一行，悬停看全文 */
+.field-default {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 有序的多选的一行（选不选都包一层，勾选时复选框不重挂）：选中的上移、下移在行尾对齐 */
 .field-ordered {
   display: flex;

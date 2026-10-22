@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { hooks as hooksCap } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import {
   type OutputFormat,
@@ -10,11 +11,8 @@ import {
   persona,
 } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
-import {
-  rootSessionOf,
-  type SessionSetting,
-  sessionManager as sessionManagerService,
-} from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
 import {
   type BoundOf,
@@ -25,9 +23,10 @@ import {
   optional,
   provide as provideCap,
 } from '@aalis/core';
-import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { defineConfig, parseConfig, type SessionFieldsOf } from '@aalis/schema-config';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
+import { t } from './texts.js';
 
 /** 当前处理消息的会话身份（经 AsyncLocalStorage 按异步上下文隔离，杜绝并发会话间串档）。 */
 interface PersonaIdentity {
@@ -53,8 +52,11 @@ interface PersonaIdentity {
 
 // ===== 插件元数据 =====
 
-/** 主卡：会话设置「人设」没设时用的角色卡（人设目录里的 default.yaml，没有时用内置的默认角色） */
+/** 主卡：「人设」的作者默认（人设目录里的 default.yaml，没有时用内置的默认角色） */
 const DEFAULT_PERSONA = 'default';
+
+/** 按会话字段对各种会话都适用 */
+const ALL_SESSIONS = ['owner', 'room', 'task'] as const;
 
 const configSchema = defineConfig({
   personasDir: {
@@ -83,7 +85,47 @@ const configSchema = defineConfig({
     description: '例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。',
     default: '',
   },
+  // ----- 按会话字段：人设服务按调用方给的会话读 -----
+  persona: {
+    type: 'select',
+    label: t('personaLabel'),
+    description: t('personaDescription'),
+    // 可选项是人设服务的 listModels
+    dynamicOptions: 'persona',
+    allowCustom: true,
+    default: DEFAULT_PERSONA,
+    session: { appliesTo: ALL_SESSIONS, prominence: 'common', order: 10, minLevel: 1 },
+  },
+  systemPromptExtra: {
+    type: 'textarea',
+    label: t('extraLabel'),
+    description: t('extraDescription'),
+    default: '',
+    session: { appliesTo: ALL_SESSIONS, prominence: 'common', order: 40 },
+  },
+  disableOutputFormat: {
+    type: 'boolean',
+    label: t('plainLabel'),
+    description: t('plainDescription'),
+    default: false,
+    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+  },
+  clientSideJsonRendering: {
+    type: 'select',
+    label: t('renderLabel'),
+    description: t('renderDescription'),
+    options: [
+      { value: 'card', label: t('renderCard') },
+      { value: 'on', label: t('renderOn') },
+      { value: 'off', label: t('renderOff') },
+    ],
+    default: 'card',
+    session: { appliesTo: ALL_SESSIONS, prominence: 'advanced' },
+  },
 });
+
+/** 一个会话的四项：人设、额外提示、两个结构化输出开关 */
+type PersonaSettings = SessionFieldsOf<typeof configSchema>;
 
 // ===== 角色卡格式 =====
 
@@ -100,11 +142,8 @@ interface PersonaCard {
   /** outputFormat 校验失败时允许重试的最大次数（不含首次）。缺省 1，`0` = 不重试（首次不合格即丢弃）。 */
   outputFormatRetries?: number;
   nick_name?: string[];
-  /** JSON 内容由客户端渲染，服务端不提取回复字段 */
+  /** JSON 内容由客户端渲染，服务端不提取回复字段（会话的「客户端渲染 JSON」为「按角色卡」时按它） */
   clientSideJsonRendering?: boolean;
-  /** 该角色卡可用的 skill 名称白名单（@aalis/plugin-skills 用于过滤暴露给 LLM 的 skill 列表）。
-   *  缺省/undefined 表示不限制；空数组表示该角色不暴露任何 skill。 */
-  skills?: string[];
 }
 
 // ===== 实现 =====
@@ -125,7 +164,12 @@ class PersonaServiceImpl implements PersonaService {
   /** 当前处理消息的会话身份（按异步上下文隔离，杜绝并发会话间串档）。 */
   private identityStore = new AsyncLocalStorage<PersonaIdentity>();
 
-  constructor(card: PersonaCard, options: { statePersistence: boolean; timeInjection: boolean; timeZone: string }) {
+  constructor(
+    card: PersonaCard,
+    options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
+    /** 调用方给的会话的四项：插件按会话读，不给会话时按插件配置 */
+    private readonly settingsOf: (options?: PersonaSessionOptions) => PersonaSettings,
+  ) {
     this.card = card;
     this.statePersistence = options.statePersistence;
     this.timeInjection = options.timeInjection;
@@ -193,12 +237,9 @@ class PersonaServiceImpl implements PersonaService {
     this.sessionStates.clear();
   }
 
-  /** 根据 options 获取生效的角色卡（不查 session-manager，由调用方传入） */
-  private getEffectiveCard(options?: PersonaSessionOptions): PersonaCard {
-    if (options?.persona && options.persona !== DEFAULT_PERSONA) {
-      return this.loadCard(options.persona) ?? this.card;
-    }
-    return this.card;
+  /** 「人设」指的角色卡：主卡之外的卡找不到时回落主卡 */
+  private cardFor(persona: string): PersonaCard {
+    return persona !== DEFAULT_PERSONA ? (this.loadCard(persona) ?? this.card) : this.card;
   }
 
   /** 按名称动态加载角色卡（仅查 cache，启动时预填） */
@@ -223,7 +264,8 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   getSystemPrompt(options?: PersonaSessionOptions): string {
-    const effectiveCard = this.getEffectiveCard(options);
+    const settings = this.settingsOf(options);
+    const effectiveCard = this.cardFor(settings.persona);
     let prompt = '';
 
     if (effectiveCard.name) {
@@ -238,11 +280,11 @@ class PersonaServiceImpl implements PersonaService {
     prompt += effectiveCard.prompt;
 
     // 会话级额外提示：接在人设之后、格式说明之前，格式说明仍是整段的收尾
-    const extra = options?.systemPromptExtra?.trim();
+    const extra = settings.systemPromptExtra.trim();
     if (extra) prompt += `\n\n${extra}`;
 
-    // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
-    const effectiveFormat = options?.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
+    // 追加结构化输出指令 — 这个会话设了不用结构化输出时不加
+    const effectiveFormat = settings.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
     if (effectiveFormat) {
       // 角色卡若提供 outputFormatPrompt，则用其替换默认 header/footer；
       // schema 块仍由插件根据 fields 自动生成，避免与字段定义脱节。
@@ -397,35 +439,28 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   getPersonaName(options?: PersonaSessionOptions): string {
-    return this.getEffectiveCard(options).name;
+    return this.cardFor(this.settingsOf(options).persona).name;
   }
 
-  /** 该角色卡是否配置为客户端渲染 JSON */
+  /** 这个会话是否客户端渲染 JSON：「客户端渲染 JSON」为开或关时按它，按角色卡时看卡上的 */
   isClientSideJsonRendering(options?: PersonaSessionOptions): boolean {
-    if (options?.clientSideJsonRendering !== undefined) {
-      return options.clientSideJsonRendering;
-    }
-    const effectiveCard = this.getEffectiveCard(options);
-    return !!effectiveCard.clientSideJsonRendering;
+    const settings = this.settingsOf(options);
+    if (settings.clientSideJsonRendering !== 'card') return settings.clientSideJsonRendering === 'on';
+    return !!this.cardFor(settings.persona).clientSideJsonRendering;
   }
 
   getOutputFormat(options?: PersonaSessionOptions): OutputFormat | undefined {
-    if (options?.disableOutputFormat) return undefined;
-    const effectiveCard = this.getEffectiveCard(options);
-    return this.getCardOutputFormat(effectiveCard);
+    const settings = this.settingsOf(options);
+    if (settings.disableOutputFormat) return undefined;
+    return this.getCardOutputFormat(this.cardFor(settings.persona));
   }
 
   getNickNames(options?: PersonaSessionOptions): string[] {
-    return this.getEffectiveCard(options).nick_name ?? [];
+    return this.cardFor(this.settingsOf(options).persona).nick_name ?? [];
   }
 
   isTimeInjectionEnabled(): boolean {
     return this.timeInjection;
-  }
-
-  getPersonaSkills(options?: PersonaSessionOptions): string[] | undefined {
-    const effectiveCard = this.getEffectiveCard(options);
-    return effectiveCard.skills;
   }
 
   async listModels(): Promise<string[]> {
@@ -434,52 +469,6 @@ class PersonaServiceImpl implements PersonaService {
 }
 
 // ===== 插件入口 =====
-
-/**
- * 本插件登记的会话设置项：人设、额外提示与结构化输出的两个开关。都由人设服务生效，各种会话都适用；
- * 人设的可选项来自人设服务的 listModels
- */
-const SESSION_SETTINGS: SessionSetting[] = [
-  {
-    key: 'persona',
-    field: {
-      type: 'select',
-      label: '人设',
-      dynamicOptions: 'persona',
-      allowCustom: true,
-      default: DEFAULT_PERSONA,
-      description: '角色卡名（不含后缀）；没设置时用 default 卡',
-    },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'common',
-    order: 10,
-  },
-  {
-    key: 'systemPromptExtra',
-    field: { type: 'textarea', label: '额外提示', description: '追加在人设提示之后、结构化输出格式说明之前' },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'common',
-    order: 40,
-    unset: '不追加',
-  },
-  {
-    key: 'disableOutputFormat',
-    field: { type: 'boolean', label: '不用结构化输出', description: '不用角色卡的结构化输出格式，回复纯文本' },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'advanced',
-  },
-  {
-    key: 'clientSideJsonRendering',
-    field: {
-      type: 'boolean',
-      label: '客户端渲染 JSON',
-      description: '结构化输出的 JSON 原样交给客户端渲染，不提取回复字段；没设置时按角色卡',
-    },
-    appliesTo: ['owner', 'room', 'task'],
-    prominence: 'advanced',
-    unset: '按角色卡',
-  },
-];
 
 const uses = {
   provide: provideCap,
@@ -490,6 +479,10 @@ const uses = {
   platform: optional(platformService),
   storage: optional(storageService),
   sessionManager: optional(sessionManagerService),
+  /** 按会话读本插件的四项；缺席时只取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -568,7 +561,6 @@ async function run(caps: Caps): Promise<void> {
           : undefined,
       nick_name: asNickNames(parsed.nick_name, uri),
       clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
-      skills: parsed.skills as string[] | undefined,
     };
   }
 
@@ -634,12 +626,10 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  const service = new PersonaServiceImpl(card, {
-    statePersistence,
-    timeInjection,
-    timeZone,
-  });
-  for (const setting of SESSION_SETTINGS) caps.sessionManager.use.registerSetting(setting);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
+  const service = new PersonaServiceImpl(card, { statePersistence, timeInjection, timeZone }, options =>
+    fields.get(options?.sessionId, { platform: options?.platform }),
+  );
   provide.use(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */
@@ -784,22 +774,8 @@ async function run(caps: Caps): Promise<void> {
   hooks.use.middleware('agent:reply:before', async (data, next) => {
     await next();
 
-    // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
-    let personaOpts: PersonaSessionOptions | undefined;
-    try {
-      const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
-      if (sm && data.sessionId) {
-        const resolved = sm.resolveConfig(data.sessionId, data.platform);
-        personaOpts = {
-          persona: resolved.persona,
-          disableOutputFormat: resolved.disableOutputFormat,
-          clientSideJsonRendering: resolved.clientSideJsonRendering,
-        };
-      }
-    } catch {
-      /* session-manager 不可用，使用全局默认 */
-    }
-
+    // 按这一轮的会话取卡与两个结构化输出开关
+    const personaOpts: PersonaSessionOptions = { sessionId: data.sessionId, platform: data.platform };
     const outputFormat = service.getOutputFormat(personaOpts);
 
     // ===== 无 outputFormat：回退 JSON 提取 =====

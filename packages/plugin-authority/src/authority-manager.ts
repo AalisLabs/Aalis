@@ -101,9 +101,10 @@ export class AuthorityManager implements AuthorityService {
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
     const authorityOverrides = (this.config.get('authorityOverrides') ?? {}) as Record<string, number>;
 
-    // 主能力：minLevel 由 authorityOverrides > risk > visibility 派生
+    // 主能力：minLevel 由 authorityOverrides > 请求声明的门槛 > risk > visibility 派生
     const minLevel = resolveMinLevel(request.capability, {
       authorityOverrides,
+      minLevel: request.minLevel,
       risk: request.risk,
       visibility: request.visibility,
     });
@@ -124,9 +125,15 @@ export class AuthorityManager implements AuthorityService {
       // commands 两个注入点），而开源项目里能力存在性本就公开——防泄漏不是这里的目标，
       // 说清「差多少等级」对用户更有用。指令的帮助（/help、-h、裸敲分组）另按本函数过滤，
       // 用不了的在那里当作不存在；直接执行时仍是这条点名的拒绝。
+      if (minLevel === OWNER_RANK) return t('ownerOnlyCapability', { capability: request.capability });
       return t('levelTooLow', { capability: request.capability, required: minLevel, level });
     }
     return null;
+  }
+
+  meetsLevel(identity: { platform: string; userId?: string }, minLevel: number): boolean {
+    const level = this.level(identity.platform, identity.userId);
+    return level === OWNER_RANK || (level >= 0 && level >= minLevel);
   }
 
   // ── 等级与组成员设置（owner 管理）──────────

@@ -44,20 +44,19 @@ export function matchAnyCap(patterns: readonly string[], value: string): boolean
 }
 
 /**
- * 操作最低等级解析：authorityOverrides[cap] > risk 派生 > visibility 兜底。
+ * 操作最低等级解析：authorityOverrides[cap] > 操作声明的门槛（minLevel，如设置项的）> risk 派生 > visibility 兜底。
  * visibility 兜底仅在拿不到 risk 时用（public→0 / restricted→RESTRICTED_LEVEL）。
  */
 export function resolveMinLevel(
   capability: string,
   opts: {
     authorityOverrides?: Record<string, number>;
+    minLevel?: number;
     risk?: 'safe' | 'sensitive' | 'dangerous';
     visibility?: 'public' | 'restricted';
   },
 ): number {
-  const ov = opts.authorityOverrides?.[capability];
-  if (ov !== undefined) return ov;
-  return capabilityMinLevel(opts);
+  return opts.authorityOverrides?.[capability] ?? opts.minLevel ?? capabilityMinLevel(opts);
 }
 
 // ── 权限组的写法 ──────────────

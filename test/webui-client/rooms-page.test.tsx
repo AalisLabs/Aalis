@@ -9,6 +9,7 @@ import {
   group,
   type Harness,
   HOME_PLACE,
+  INIT,
   installDialog,
   listRequests,
   optionsOf,
@@ -193,7 +194,11 @@ describe('房间表', () => {
   it('「场所设置」在页内打开这一行窗口的设置：按层读写这个场所，行与会话默认同一套；场所不是窗口的行（owner 的 IM 私聊）没有这个动作', async () => {
     const place = { scope: 'place', key: 'onebot:group:g1' } as const;
     const rows = [
-      settingRow('persona', { field: { type: 'string', label: '人设' }, effective: '<群人设>', source: 'type' }),
+      settingRow('persona', {
+        field: { type: 'string', label: '人设' },
+        effective: '<群人设>',
+        source: 'platformType',
+      }),
       settingRow('paperEnabled', {
         field: { type: 'boolean', label: '开启白纸' },
         value: true,
@@ -219,19 +224,30 @@ describe('房间表', () => {
     const persona = within(await dialog.findByRole('group', { name: '人设' }));
     expect(requests('session/config/layer/get')).toEqual([{ layer: place }]);
     expect(persona.getByText('<群人设>')).toBeTruthy();
-    expect(persona.getByText('平台类型档')).toBeTruthy();
+    expect(persona.getByText('来自：平台类型档 onebot · group')).toBeTruthy();
     expect(persona.queryByRole('button', { name: '恢复继承' })).toBeNull();
     const paper = within(dialog.getByRole('group', { name: '开启白纸' }));
-    expect(paper.getByText('场所')).toBeTruthy();
+    expect(paper.queryByText(/^来自：/), '这一层自己设的不写来源').toBeNull();
+    expect(paper.getByRole('button', { name: '恢复继承' })).toBeTruthy();
 
     fireEvent.click(paper.getByRole('switch', { name: '开启白纸' }));
     await vi.waitFor(() =>
       expect(requests('session/config/layer/update')).toEqual([
-        { layer: place satisfies SettingLayer, patch: { paperEnabled: false } },
+        { layer: place satisfies SettingLayer, plugin: '@aalis/demo', key: 'paperEnabled', value: false },
       ]),
     );
     fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('功能位 settings 为假：没有「场所设置」与去「会话默认」的提示', async () => {
+    app = await renderApp('/rooms?instance=im-a', {
+      initialize: () => ({ ...INIT, features: { ...INIT.features, settings: false } }),
+      'sessions/list': () => ({ sessions: ROOMS, groups: GROUPS }),
+    });
+    await vi.waitFor(() => expect(names()).toHaveLength(4));
+    expect(screen.queryByRole('button', { name: '场所设置' })).toBeNull();
+    expect(screen.queryByRole('link', { name: '去会话默认' })).toBeNull();
   });
 
   it('多账号的组有账号列', async () => {

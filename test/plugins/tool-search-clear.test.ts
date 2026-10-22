@@ -42,7 +42,12 @@ async function world() {
   const host = app.bind({ hooks });
   /** 本轮发给模型的工具名（不含 search_tools） */
   async function visible(messages: Message[]): Promise<string[]> {
-    const data: HookContextMap['agent:llm:before'] = { messages, tools: [...ALL_TOOLS], sessionId: 's1' };
+    const data: HookContextMap['agent:llm:before'] = {
+      messages,
+      tools: [...ALL_TOOLS],
+      model: { provider: '<提供者>', model: '<模型>' },
+      sessionId: 's1',
+    };
     await host.hooks.use.run('agent:llm:before', data, async () => {});
     return data.tools.map(t => t.function.name).filter(n => n !== 'search_tools');
   }

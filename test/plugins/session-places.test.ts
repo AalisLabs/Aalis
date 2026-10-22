@@ -15,13 +15,13 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { adapterPlugin, ONEBOT_TYPES, PERSONA, startSessionManager, THINK } from '../fixtures/session-settings.js';
+import { adapterPlugin, fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 场所：每个会话恰好一个，子会话取根会话的。有聊天窗口的根会话是窗口（键 `平台:类型:目标`，不含机器人账号），
 // 一对一而对端是 owner 的（owner 的 IM 私聊）是默认工作区；其余按根会话记下的工作区，没记的是默认工作区。
-// 场所记录存在记忆后端里，带显示名与这个场所的设置，换会话照样生效；默认工作区没有名字，显示名由读者经 placeLabel 给。
-// 工作区由 owner 登记，以随机的固定编号标识，取消登记只删记录与它的设置，原属会话归默认工作区。每个场所一张白纸，
+// 场所记录存在记忆后端里，带显示名与插件的 metadata（会话设置的场所层就在那里），换会话照样生效；默认工作区没有名字，显示名由
+// 读者经 placeLabel 给。工作区由 owner 登记，以随机的固定编号标识，取消登记只删记录（连同它的设置），原属会话归默认工作区。每个场所一张白纸，
 // 白纸 id 由场所键算出。
 // ════════════════════════════════════════════════════════════
 
@@ -47,14 +47,25 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup(options: Partial<Parameters<typeof startSessionManager>[0]> = {}) {
-  const started = await startSessionManager({
-    settings: [PERSONA, THINK],
+/** 设场所层的值与按会话读的插件 */
+const FIELDS = fieldsPlugin('zz-a', SCHEMA);
+const reader = () => FIELDS.reader();
+
+async function setup(options: Partial<Parameters<typeof startSettings>[0]> = {}) {
+  const started = await startSettings({
+    fields: [FIELDS.definition],
     adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
     ...options,
   });
   apps.push(started.app);
-  return started;
+  const { admin } = started;
+  /** 给场所 key 设一项（zz-a 的字段） */
+  const setPlace = (key: string, field: string, value: unknown) =>
+    admin.update({ layer: { scope: 'place', key } }, { plugin: 'zz-a', key: field, value });
+  /** 场所 key 这一层的一行 */
+  const placeRow = (key: string, field: string) =>
+    admin.rows({ layer: { scope: 'place', key } }).find(row => row.plugin === 'zz-a' && row.key === field);
+  return { ...started, setPlace, placeRow };
 }
 
 const record = (id: string, fields: Partial<SessionInfo> = {}) => ({
@@ -62,7 +73,6 @@ const record = (id: string, fields: Partial<SessionInfo> = {}) => ({
   name: id,
   children: [],
   status: 'waiting',
-  config: {},
   createdAt: 1,
   updatedAt: 1,
   ...fields,
@@ -74,7 +84,6 @@ const workspace = (id: string, root: string) => ({
   kind: 'workspace',
   name: id,
   root,
-  config: {},
   createdAt: 1,
   updatedAt: 1,
 });
@@ -138,19 +147,19 @@ describe('placeOf', () => {
   });
 
   it('有出生平台的坏数据（聊天窗口读表时去掉了、目标为空）按窗口算，缺的段按空串拼：取不到给默认工作区设的值，日志点名一次', async () => {
-    const { sm, warns } = await setup({
+    const { sm, warns, setPlace } = await setup({
       stored: {
         'zz-no-chat': record('zz-no-chat', { originPlatform: 'onebot', originChat: { type: 'private' } as never }),
         'zz-no-target': room('zz-no-target', 'private', false, '', '10000'),
       },
       owners: OWNERS,
     });
-    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { think: 'high' });
+    await setPlace('workspace:default', 'think', 'high');
 
     expect(sm.placeOf('zz-no-chat')).toEqual({ kind: 'window', key: 'onebot::' });
     expect(sm.placeOf('zz-no-target')).toEqual({ kind: 'window', key: 'onebot:private:' });
     for (const id of ['zz-no-chat', 'zz-no-target']) {
-      expect(sm.resolveConfig(id).think, id).toBeUndefined();
+      expect(reader().get(id).think, id).toBeUndefined();
       expect(
         warns.filter(w => w.includes(id) && w.includes('按窗口')),
         id,
@@ -172,8 +181,8 @@ describe('placeOf', () => {
   });
 
   it('类型名不合段写法（适配器发出带冒号或空的类型名）：场所键不二义，场所层的视图照样在平台档之上', async () => {
-    const { sm, inbound } = await setup({
-      layers: { platforms: { zz: { persona: '<平台>' } } },
+    const { sm, inbound, placeRow } = await setup({
+      doc: { sessionConfig: { platforms: { zz: { 'zz-a': { persona: '<平台>' } } } } },
       adapters: [{ platform: 'zz' }],
     });
     await inbound({ sessionId: 'zz:1', platform: 'zz', sessionType: 'a:b', groupId: 'c' });
@@ -183,8 +192,8 @@ describe('placeOf', () => {
     const keys = ['zz:1', 'zz:2', 'zz:3'].map(id => sm.placeOf(id).key);
     expect(new Set(keys).size).toBe(3);
     expect(placePaperId(keys[0])).not.toBe(placePaperId(keys[1]));
-    expect(sm.resolveLayer({ scope: 'place', key: keys[2] }).sources).toEqual({ persona: 'platform' });
-    expect(sm.resolveInheritance('zz:3').sources).toEqual({ persona: 'platform' });
+    expect(placeRow(keys[2], 'persona')?.source).toBe('platform');
+    expect(reader().trace('zz:3').sources.persona).toBe('platform');
   });
 });
 
@@ -193,7 +202,7 @@ describe('场所记录', () => {
     const { app, sm, mem } = await setup();
     expect(sm.getPlace('workspace:default')).toEqual(DEFAULT);
     await app.stop();
-    expect(mem.places.get('workspace:default')).toMatchObject({ kind: 'workspace', config: {} });
+    expect(mem.places.get('workspace:default')).toMatchObject({ kind: 'workspace' });
     expect(mem.places.get('workspace:default')?.name).toBeUndefined();
   });
 
@@ -249,33 +258,33 @@ describe('场所记录', () => {
   });
 
   it('删掉房间会话，同一个窗口里别的机器人账号再来消息建出的新会话照样取到场所的设置', async () => {
-    const { sm, inbound } = await setup();
+    const { sm, inbound, setPlace, placeRow } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001' });
-    await sm.updateLayer({ scope: 'place', key: WINDOW }, { persona: '<场所人设>' });
+    await setPlace(WINDOW, 'persona', '<场所人设>');
     await sm.deleteSession(GROUP);
 
     await inbound({ sessionId: GROUP_B, platform: 'onebot', sessionType: 'group', groupId: '20001' });
-    expect(sm.getLayer({ scope: 'place', key: WINDOW })).toEqual({ persona: '<场所人设>' });
-    expect(sm.resolveConfig(GROUP_B).persona).toBe('<场所人设>');
+    expect(placeRow(WINDOW, 'persona')?.value).toBe('<场所人设>');
+    expect(reader().get(GROUP_B).persona).toBe('<场所人设>');
   });
 
   it('给默认工作区设的值，WebUI 的新会话与 owner 的 IM 私聊都取到，群取不到', async () => {
-    const { sm, inbound } = await setup({ owners: OWNERS });
-    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { think: 'high' });
+    const { sm, inbound, setPlace } = await setup({ owners: OWNERS });
+    await setPlace('workspace:default', 'think', 'high');
     const mine = await sm.createSession({}, { createdFrom: 'webui' });
     await inbound({ sessionId: OWNER_PRIVATE, platform: 'onebot', sessionType: 'private', userId: '30001' });
     await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001' });
 
-    expect(sm.resolveConfig(mine.id, 'webui').think).toBe('high');
-    expect(sm.resolveConfig(OWNER_PRIVATE).think).toBe('high');
-    expect(sm.resolveConfig(GROUP).think).toBeUndefined();
+    expect(reader().get(mine.id, { platform: 'webui' }).think).toBe('high');
+    expect(reader().get(OWNER_PRIVATE).think).toBe('high');
+    expect(reader().get(GROUP).think).toBeUndefined();
   });
 
   it('记忆后端换胜者：新后端的场所记录整体替换，旧后端的未落盘改动写回旧后端', async () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory(
       {},
-      { [WINDOW]: { key: WINDOW, kind: 'window', name: '<群名>', config: {}, createdAt: 1, updatedAt: 1 } },
+      { [WINDOW]: { key: WINDOW, kind: 'window', name: '<群名>', createdAt: 1, updatedAt: 1 } },
     );
     const { app } = hostedApp({});
     apps.push(app);
@@ -355,11 +364,11 @@ describe('工作区', () => {
   });
 
   it('取消登记：只删记录与场所设置，不动文件；原属会话树归默认工作区，绑定与当前目录清掉，没有坏数据告警；默认工作区不能取消登记', async () => {
-    const { app, sm, warns } = await setup();
+    const { app, sm, warns, admin, setPlace } = await setup();
     const dir = folder('remove');
     const { workspace: added } = sm.addWorkspace(dir);
     const key = `workspace:${added.id}`;
-    await sm.updateLayer({ scope: 'place', key }, { think: 'high' });
+    await setPlace(key, 'think', 'high');
     const work = await sm.createSession({}, { createdFrom: 'webui', workspace: added.id, work: { root: dir } });
     await sm.setCurrentDir(work.id, join(dir, 'sub'));
     const child = await sm.createChildSession(work.id, {});
@@ -381,14 +390,16 @@ describe('工作区', () => {
       expect(session?.currentDir, id).toBeUndefined();
       expect(sm.placeOf(id), id).toEqual(DEFAULT);
     }
-    expect(sm.resolveConfig(work.id).think).toBeUndefined();
+    expect(reader().get(work.id).think).toBeUndefined();
     expect(sm.getSession(other.id)?.currentDir, '别的会话不动').toBe(TMP);
     expect(updated.sort()).toEqual([work.id, child.id].sort());
     expect(warns.filter(w => w.includes(added.id))).toEqual([]);
 
     await expect(sm.removeWorkspace('default')).rejects.toThrow();
     await expect(sm.removeWorkspace(added.id)).rejects.toThrow();
-    await expect(sm.updateLayer({ scope: 'place', key }, { think: 'off' })).rejects.toThrow();
+    await expect(
+      admin.update({ layer: { scope: 'place', key } }, { plugin: 'zz-a', key: 'think', value: 'off' }),
+    ).rejects.toThrow();
 
     const again = sm.addWorkspace(dir);
     expect(again.existed).toBe(false);

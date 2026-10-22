@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：宿主写的后台任务中断原因与结束通知给人看的那句
+// 本插件自己的原文字典：宿主写的后台任务中断原因与结束通知给人看的那句，按会话字段「工具分组」的称呼与说明
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -9,6 +9,8 @@ const SOURCE = {
   noticeCompleted: '后台任务 {id}（{tool}）已完成，用时 {ms, duration}',
   noticeFailedExit: '后台任务 {id}（{tool}）失败：退出码 {code}，用时 {ms, duration}',
   noticeFailed: '后台任务 {id}（{tool}）失败，用时 {ms, duration}',
+  groupsLabel: '工具分组',
+  groupsDescription: '这个会话能用的工具分组，* 为全部；为空时只给不属于任何分组的工具',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -81,7 +81,7 @@ export default defineLocale<Source>()({
   scopeType: '*:{type} ({label} sessions on every platform)',
   scopePlatformType: '{scope} ({label})',
   scopePlatform: '{platform}:* (all {platform} types)',
-  dependencyInvalid: "dependency must be the JSON of a model reference '{ provider, model }'",
+  dependencyInvalid: 'dependency must be an entry id <provider instance id>/<model id>',
   allGroups: '* (all groups)',
   pluginMissing: 'Plugin {instance} does not exist',
   refused:

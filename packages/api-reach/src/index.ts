@@ -3,7 +3,7 @@
  *
  * 一次工具调用最多能触及本机的什么：先按「主体 × 房间类别」定上限，只有 owner 在受众只有 owner 的会话里有本地效果；
  * 再按档位收窄，按污点把送出会话的动作改成问；子任务另与父会话实时的触及取较小值。本包只有类型与纯函数：
- * - 档位与越界策略，经 declaration merging 成为会话设置的两个键；
+ * - 档位与越界策略；
  * - `resolveReach` 解析出一份触及，`judgeReach` 判一个目标放行、问或拒；
  * - `protectedLists` 生成宿主控制面、持久化与自动执行落点、拒读清单三张清单，`withRealRoots` 按真实路径补上链接出去的根，
  *   工具边界与沙箱用同一份；
@@ -31,15 +31,6 @@ export type AccessTier = (typeof ACCESS_TIERS)[number];
  * 越界策略：需要问的时候在场就问、不在场按拒绝（ask），或一律直接拒绝（deny）。对修改确认档不起作用，那一档本身就是逐步确认
  */
 export type BoundaryPolicy = 'ask' | 'deny';
-
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 档位：只对 owner 自己的会话起作用，子会话按根会话实时取 */
-    accessTier?: AccessTier;
-    /** 越界策略：子会话按根会话实时取 */
-    accessOnBoundary?: BoundaryPolicy;
-  }
-}
 
 // ════════════════════════════════════════════════════════════
 // 路径规则与三张清单

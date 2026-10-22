@@ -2,13 +2,15 @@
 // 配置：全局上限、换日时区、白纸的默认属性与具名白纸
 //
 // 配置表单只能表达字段、分组与「数组项全是基础字段」的对象数组，所以白纸的属性拍平成 papers[] 项的
-// 同名字段；具名白纸除日额度外，没写的字段取 defaults 分组。房间级的开关与上限在会话配置里（paperEnabled 等），
-// 不在这里。
+// 同名字段；具名白纸除日额度外，没写的字段取 defaults 分组。房间级的开关与上限（paperEnabled 等六项）是按会话覆盖的
+// 字段：只对房间适用，只能设到场所为止（按窗口设，换会话不丢），本插件经会话设置的读取器按房间读。
 // ============================================================
 
 import type { ArtifactLimits, EgressCeiling } from '@aalis/api-remote-agent';
+import type {} from '@aalis/api-session-settings'; // 按会话字段的声明成员经 declaration merging 并入 SessionFieldSpec
 import type { Logger } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig } from '@aalis/schema-config';
+import { t } from './texts.js';
 
 const PAPER_NAME_PATTERN = '^[a-z0-9][a-z0-9-]{0,31}$';
 const PUBLISH_TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -41,6 +43,9 @@ const SPEC_NUMBER_DEFAULTS = {
 } as const;
 const ARTIFACT_DEFAULTS = { maxFileMB: 25, maxRunMB: 50, maxRunFiles: 200, maxBundleMB: 50, maxPaperMB: 2048 } as const;
 
+/** 房间的一项：只对房间适用，只能设到场所为止（按窗口设，换会话不丢），收在高级里 */
+const ROOM_FIELD = { appliesTo: ['room'], narrowest: 'place', prominence: 'advanced' } as const;
+
 export const configSchema = defineConfig({
   globalDailyCents: {
     type: 'number',
@@ -49,7 +54,7 @@ export const configSchema = defineConfig({
     integer: true,
     onInvalid: 'error',
     description:
-      '所有白纸合计每天能花多少；留空不限制，0 禁止开新任务。房间自己的上限在会话配置 remoteAgentRoomDailyCents',
+      '所有白纸合计每天能花多少；留空不限制，0 禁止开新任务。房间自己的上限是按场所设的 remoteAgentRoomDailyCents',
   },
   reserveDefaultCents: {
     type: 'number',
@@ -91,6 +96,52 @@ export const configSchema = defineConfig({
     description:
       'paper_send 发图片与视频的大小上限。onebot 出站只把不超过 10 MiB 的媒体内联发出，更大的改交宿主路径，' +
       'NapCat 在容器里时读不到、发不出',
+  },
+  paperEnabled: {
+    type: 'boolean',
+    label: t('paperEnabledLabel'),
+    description: t('paperEnabledDescription'),
+    default: false,
+    session: { ...ROOM_FIELD, order: 0 },
+  },
+  paperName: {
+    type: 'string',
+    label: t('paperNameLabel'),
+    description: t('paperNameDescription'),
+    default: '',
+    session: { ...ROOM_FIELD, order: 1 },
+  },
+  remoteAgentTypes: {
+    type: 'multiselect',
+    label: t('remoteTypesLabel'),
+    description: t('remoteTypesDescription'),
+    allowCustom: true,
+    default: [],
+    session: { ...ROOM_FIELD, order: 2 },
+  },
+  // 两个金额：没设不另加限制；写坏了原样交来，预算按 0 处理
+  remoteAgentUserDailyCents: {
+    type: 'number',
+    label: t('userCentsLabel'),
+    description: t('userCentsDescription'),
+    min: 0,
+    onInvalid: 'error',
+    session: { ...ROOM_FIELD, order: 3, unset: t('noExtraLimit') },
+  },
+  remoteAgentUserDailyTasks: {
+    type: 'number',
+    label: t('userTasksLabel'),
+    description: t('userTasksDescription'),
+    min: 0,
+    session: { ...ROOM_FIELD, order: 4, unset: t('userTasksUnset') },
+  },
+  remoteAgentRoomDailyCents: {
+    type: 'number',
+    label: t('roomCentsLabel'),
+    description: t('roomCentsDescription'),
+    min: 0,
+    onInvalid: 'error',
+    session: { ...ROOM_FIELD, order: 5, unset: t('noExtraLimit') },
   },
   pendingHintHours: {
     type: 'number',

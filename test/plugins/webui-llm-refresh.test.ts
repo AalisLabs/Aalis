@@ -9,9 +9,10 @@ import { freePort, waitListening } from '../helpers/net.js';
 // 可选项给的 contextId 要是实例 id，界面拼出的 { provider, model } 才解析得到；刷新按实例 id 找名下带 refresh 的条目，
 // 按条目 contextId 等于实例 id 去找永远找不到。
 // 找不到时如实说明：provider 名下有模型但都不提供 refresh（如关闭了模型发现 discoverModels），与名下一个模型都没有，是两回事。
-// 深度思考的可选项：`/api/models/llm-thinking` 按依赖的模型（llm-ref 的取值，经 dependency 查询参数带来）取它声明的
-// 档位，默认档标 default；另给 labels：各模型声明过的档位的名字（换了模型后存着的档位不在可选项里，界面按它写名字）；
-// 没带时按服务偏好解析，与对话时的解析一致；模型不能调时没有可选项；dependency 不是模型引用时回 400。
+// 深度思考的可选项：`/api/models/llm-thinking` 按依赖的模型（条目 id `<提供者实例 id>/<模型 id>`，经 dependency 查询参数
+// 带来，按 api-llm 的 modelRefOf 拆）取它声明的档位，默认档标 default；另给 labels：各模型声明过的档位的名字（换了模型后存着
+// 的档位不在可选项里，界面按它写名字）；没带依赖时没有可选项（不替调用方挑模型）；模型不能调时没有可选项；dependency 拆不出
+// 模型引用时回 400。
 
 const TOKEN = 'zz-refresh-token-placeholder-0000';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -132,7 +133,7 @@ it('按 provider 刷新：有 refresh 的调它；名下模型都不提供 refre
 
 it('深度思考的可选项按依赖的模型给出它的档位，默认档标出；另给各模型声明过的档位的名字；不能调的模型没有可选项', async () => {
   const { port } = await boot();
-  expect(await thinkingOptions(port, JSON.stringify({ provider: 'zz-dynamic', model: 'm1' }))).toEqual({
+  expect(await thinkingOptions(port, 'zz-dynamic/m1')).toEqual({
     status: 200,
     body: {
       models: ['off', 'high', 'max'],
@@ -144,23 +145,22 @@ it('深度思考的可选项按依赖的模型给出它的档位，默认档标�
       labels: LABELS,
     },
   });
-  expect(await thinkingOptions(port, JSON.stringify({ provider: 'zz-static', model: 's1' }))).toEqual({
+  expect(await thinkingOptions(port, 'zz-static/s1')).toEqual({
     status: 200,
     body: { models: [], details: [], labels: LABELS },
   });
 });
 
-it('深度思考的可选项没带依赖的值时按服务偏好解析', async () => {
+it('深度思考的可选项没带依赖时没有可选项：不按本插件的服务偏好替调用方挑模型', async () => {
   const { app, port } = await boot();
-  expect((await thinkingOptions(port)).body).toMatchObject({ models: ['off', 'high', 'max'] });
-  app.bind({ services }).services.use.prefer(llm, 'zz-static/s1');
-  expect((await thinkingOptions(port)).body).toEqual({ models: [], details: [], labels: LABELS });
+  app.bind({ services }).services.use.prefer(llm, 'zz-dynamic/m1');
+  expect(await thinkingOptions(port)).toEqual({ status: 200, body: { models: [], details: [], labels: LABELS } });
 });
 
-it('深度思考的可选项依赖的值不是模型引用时回 400', async () => {
+it('深度思考的可选项依赖的值拆不出模型引用时回 400', async () => {
   const { port } = await boot();
-  for (const dependency of ['{', '"m1"', '[1]', JSON.stringify({ provider: 1 })]) {
+  for (const dependency of ['', 'zz-dynamic', JSON.stringify({ provider: 'zz-dynamic', model: 'm1' })]) {
     const { status, body } = await thinkingOptions(port, dependency);
-    expect([status, body], dependency).toEqual([400, { error: 'dependency 要是模型引用 { provider, model } 的 JSON' }]);
+    expect([status, body], dependency).toEqual([400, { error: 'dependency 要是条目 id <提供者实例 id>/<模型 id>' }]);
   }
 });

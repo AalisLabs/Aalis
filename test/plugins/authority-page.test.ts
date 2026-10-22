@@ -8,6 +8,7 @@ import {
 } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
+import { type SessionFieldEntry, sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type StorageRootInfo, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
@@ -89,6 +90,8 @@ interface BootOptions {
   writeFile?: () => Promise<void>;
   /** 给出即替换 users.json 的读取（优先于 usersJson） */
   readFile?: () => Promise<string>;
+  /** 给出即提供会话设置的桩，getAll 返回这份已登记的设置项 */
+  settings?: SessionFieldEntry[];
 }
 
 const DATA_ROOT: StorageRootInfo = {
@@ -123,6 +126,8 @@ async function boot(opts: BootOptions = {}) {
   } as never);
   host.provide.use(commands, fakeCommandService(opts.operations ?? [], handlers) as never);
   host.provide.use(tools, fakeToolService(opts.operations ?? [], opts.toolGroups ?? []) as never);
+  const settings = opts.settings;
+  if (settings) host.provide.use(sessionSettings, { getAll: () => settings } as never);
 
   await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();
@@ -486,6 +491,52 @@ describe('操作门槛', () => {
     });
     expect(await act('setGroupLevel', { rowKey: 'zz-a', input: {} })).toBe('zz-a 的 4 项操作已恢复默认门槛');
     expect(config.get('authorityOverrides')).toEqual({ 'tool:sen': 1 });
+  });
+});
+
+describe('操作门槛里的设置项', () => {
+  const SETTINGS: SessionFieldEntry[] = [
+    { plugin: 'zz-agent', key: 'llm', label: '模型', minLevel: 1 },
+    { plugin: 'zz-agent', key: 'groups', label: '工具分组' },
+  ];
+
+  it('按实例分组列出，种类为设置项、显示称呼；默认门槛按声明，没写的写「只有 owner」；改过的按改过的', async () => {
+    const { pages } = await boot({
+      settings: SETTINGS,
+      config: { authorityOverrides: { 'setting:zz-agent/groups': 2 } },
+    });
+    expect(await pages.data('authority', 'groups')).toEqual([{ plugin: 'zz-agent', count: 2, overridden: 1 }]);
+    const rows = toSource(
+      await pages.data<Array<Record<string, unknown>>>('authority', 'operations', { rowKey: 'zz-agent' }),
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        capability: 'setting:zz-agent/llm',
+        display: '模型',
+        kind: '设置项',
+        defaultLevel: 1,
+        effectiveLevel: 1,
+      }),
+      expect.objectContaining({
+        capability: 'setting:zz-agent/groups',
+        display: '工具分组',
+        kind: '设置项',
+        defaultLevel: '只有 owner',
+        effectiveLevel: 2,
+        level: 2,
+      }),
+    ]);
+  });
+
+  it('设门槛写进 authorityOverrides；设置项不进权限组的放行条目可选项；会话设置不在时这一类为空', async () => {
+    const { act, config, options } = await boot({ settings: SETTINGS });
+    expect(await act('setOperationLevel', { rowKey: 'setting:zz-agent/groups', input: { level: 1 } })).toBe(
+      'setting:zz-agent/groups 的门槛已设为 1',
+    );
+    expect(config.get('authorityOverrides')).toEqual({ 'setting:zz-agent/groups': 1 });
+    expect((await options('authority-operations')).map(o => o.value)).not.toContain('setting:zz-agent/groups');
+    const { pages } = await boot();
+    expect(await pages.data('authority', 'groups')).toEqual([]);
   });
 });
 

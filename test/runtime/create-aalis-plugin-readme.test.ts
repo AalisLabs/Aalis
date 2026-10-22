@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { ownHostConfig } from '../../packages/api-host-config/src/index.js';
+import { sessionFields } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type FramePageDefinition, type PageHandle, webuiServer } from '../../packages/api-webui/src/index.js';
 import { optionalNames, requiredNames } from '../../packages/core/src/composition/descriptors.js';
@@ -17,6 +18,7 @@ import {
 } from '../../packages/create-aalis-plugin/src/cli.js';
 import { checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
+import { defineConfig } from '../../packages/schema-config/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。生成的示例页面过 webui-server 登记时的质量门槛；
@@ -47,7 +49,9 @@ const VERSIONS = {
   '@aalis/api-tools': '0.9.0',
   '@aalis/api-commands': '0.8.0',
   '@aalis/api-webui': '0.12.0',
-  '@aalis/api-session-manager': '0.10.0',
+  '@aalis/api-session-settings': '0.1.0',
+  '@aalis/api-host-config': '0.2.0',
+  '@aalis/schema-config': '0.16.0',
 };
 
 const COMBOS = [
@@ -84,7 +88,9 @@ describe('create-aalis-plugin README 与 index 同源', () => {
       '@aalis/api-tools': { tools },
       '@aalis/api-commands': { commands },
       '@aalis/api-webui': { webuiServer },
-      '@aalis/api-session-manager': { sessionManager },
+      '@aalis/api-session-settings': { sessionFields },
+      '@aalis/api-host-config': { ownHostConfig },
+      '@aalis/schema-config': { defineConfig },
     };
     for (let mask = 0; mask < 8; mask++) {
       for (const webui of [false, 'declarative', 'frame'] as const) {
@@ -109,7 +115,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
         );
         expect(exports.default).toBeDefined();
         const declared = JSON.parse(renderPackageJson(a, VERSIONS)).aalis.service;
-        expect(declared.required).toEqual(['logger']);
+        expect(declared.required).toEqual(a.features.sessionSetting ? ['logger', 'config'] : ['logger']);
         expect(declared.required).toEqual(requiredNames(exports.default!.uses ?? {}));
         expect(declared.optional ?? []).toEqual(optionalNames(exports.default!.uses ?? {}));
       }

@@ -2,9 +2,9 @@
 // @aalis/plugin-paper — 白纸枢纽
 //
 // 试点群里真人提需求，她调 paper_task 把任务交给远端代理（remote-agent 提供者，按白纸配置里写的实例 id
-// 精确取）；受理后排队、记账，前台自然确认，不额外回显原文。房间用哪块白纸、每天能花多少由本插件登记的会话设置项决定
-// （paperEnabled、paperName、remoteAgentTypes、remoteAgent*DailyCents，见 rooms.ts），白纸本身的属性与全局上限在
-// 本插件配置里。运行驱动（driver.ts）按白纸排队开轮、跟踪到终态、取回成品放进白纸根、按轮记账，并定期核对。
+// 精确取）；受理后排队、记账，前台自然确认，不额外回显原文。房间用哪块白纸、每天能花多少由本插件的按会话字段决定
+// （paperEnabled、paperName、remoteAgentTypes、remoteAgent*DailyCents，按场所设，见 config.ts 与 rooms.ts），白纸本身的
+// 属性与全局上限是普通的插件配置。运行驱动（driver.ts）按白纸排队开轮、跟踪到终态、取回成品放进白纸根、按轮记账，并定期核对。
 // 显式 publish:false 的任务到终态后以宿主通知回到发起房间（notices.ts），她用 paper_send 把成品发回；没发回的在之后的对话里
 // 一直有待交付提示。owner 在 WebUI 白纸页（webui.ts）看白纸、任务、成品、账本与告警，并做换新、归档、清空、
 // 恢复、取消与告警已读，开了白纸的群在会话面板里看本群的；诊断项（doctor.ts）报让远端任务开不了的配置与记录问题。
@@ -18,9 +18,11 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { doctor } from '@aalis/api-doctor';
 import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { publish } from '@aalis/api-publish';
 import { remoteAgent } from '@aalis/api-remote-agent';
 import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
@@ -33,7 +35,7 @@ import { PaperDriver } from './driver.js';
 import { LedgerStore } from './ledger.js';
 import { PaperNotices, registerPendingHint } from './notices.js';
 import { PaperPublication } from './publication.js';
-import { Isolation, ROOM_SETTINGS } from './rooms.js';
+import { Isolation } from './rooms.js';
 import { TaskJournal } from './task-journal.js';
 import { registerPaperTools } from './tools.js';
 import { registerPaperPage } from './webui.js';
@@ -48,6 +50,10 @@ const uses = {
   gateway: optional(gateway),
   webui: optional(webuiServer),
   doctor: optional(doctor),
+  /** 按房间读本插件的六个按会话字段；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   events,
   hooks,
   lifecycle,
@@ -72,7 +78,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     // 只为认出写错的具名白纸；不传日志器，告警已由上面的正式解析报过
     parseConfig(paperAuditSchema, caps.config.use).papers,
   );
-  for (const setting of ROOM_SETTINGS) caps.sessionManager.use.registerSetting(setting);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
   const storage = caps.storage.use;
   const ledger = new LedgerStore(storage.own, logger.use);
   await ledger.load();
@@ -110,6 +116,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     journal,
     remote: caps.remoteAgent,
     sessionManager: caps.sessionManager,
+    fields,
     storage,
     ledger,
     isolation,
@@ -132,6 +139,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     journal,
     tools: caps.tools.use,
     sessionManager: caps.sessionManager,
+    fields,
     remote: caps.remoteAgent,
     gateway: caps.gateway,
     events: caps.events.use,
@@ -151,6 +159,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     signal: lifecycle.use.signal,
     tools: caps.tools.use,
     sessionManager: caps.sessionManager,
+    fields,
     publish: caps.publish,
     storage,
     ledger,
@@ -165,6 +174,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
     remote: caps.remoteAgent,
     publish: caps.publish,
     sessionManager: caps.sessionManager,
+    fields,
     cfg,
     signal: lifecycle.use.signal,
     now,
@@ -172,6 +182,7 @@ async function run(caps: BoundOf<typeof uses>): Promise<void> {
   registerPaperDoctor({
     doctor: caps.doctor.use,
     sessionManager: caps.sessionManager,
+    fields,
     remote: caps.remoteAgent,
     ledger,
     isolation,

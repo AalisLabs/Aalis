@@ -5,12 +5,12 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { provideHostLanguage } from '../fixtures/host-language.js';
+import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// 包管理的装卸与更新结果：message 与 conflicts 可以是文字对象，WebUI 的市场接口按全局默认层的语言渲染（en 拿英文，zh-CN
-// 拿原文），原样的字符串照旧。包管理服务与会话管理是替身，webui-server 与 plugin-i18n 是真的。
+// 包管理的装卸与更新结果：message 与 conflicts 可以是文字对象，WebUI 的市场接口按全局层的语言渲染（en 拿英文，zh-CN
+// 拿原文），原样的字符串照旧。包管理服务是替身，webui-server 与 plugin-i18n 是真的，全局语言写在宿主配置文档里。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-package-results-token-placeholder';
@@ -42,10 +42,10 @@ afterEach(async () => {
 
 async function setup() {
   const port = await freePort();
-  const { app } = hostedApp({}, { logger: silent });
+  const { app } = hostedApp(i18nSection(['en']), { logger: silent });
   apps.push(app);
   app.bind({ provide }).provide.use(packageManager, fake);
-  const setLanguage = provideHostLanguage(app, ['en']);
+  const setLanguage = (language: string[]) => setHostLanguage(app, language);
   await app.plugin(i18nPlugin);
   await app.plugin(webuiServer, { port, host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken: TOKEN });
   await app.plugins.idle();
@@ -62,7 +62,7 @@ async function setup() {
   return { post, setLanguage };
 }
 
-describe('包管理结果按全局默认层的语言', () => {
+describe('包管理结果按全局层的语言', () => {
   it('更新的 message 与 conflicts、卸载的 message：en 拿英文，zh-CN 拿原文，原样的字符串照旧', async () => {
     const { post, setLanguage } = await setup();
     const update = { targets: [{ name: '@zz/a', version: '1.0.0' }] };

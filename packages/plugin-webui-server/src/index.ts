@@ -14,13 +14,12 @@ import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { i18n } from '@aalis/api-i18n';
-import { llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import { llm, modelRefOf, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
 import {
   aggregatePlatformDetails,
   getPlatformAdapters,
-  getPlatformNames,
   type PlatformConnection,
   platform,
   type SessionTypeDecl,
@@ -104,22 +103,6 @@ import { registerProxyRoutes } from './routes/proxy.js';
 import { acceptSessionSocket, SESSION_PATH } from './session-transport.js';
 import { t } from './texts.js';
 import { createWsHeartbeat } from './ws-heartbeat.js';
-
-/** 可选项接口的 dependency 查询参数当模型引用读（llm-ref 的取值，JSON）：没带为 undefined，写法不对为 null */
-function modelRefOf(raw: unknown): ModelRef | undefined | null {
-  if (raw === undefined) return undefined;
-  let value: unknown;
-  try {
-    value = typeof raw === 'string' ? JSON.parse(raw) : undefined;
-  } catch {
-    return null;
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const { provider, model } = value as Record<string, unknown>;
-  return (provider === undefined || typeof provider === 'string') && (model === undefined || typeof model === 'string')
-    ? { provider, model }
-    : null;
-}
 
 // ===== 插件元数据 =====
 
@@ -872,12 +855,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 特殊处理 platform：通过 helper 获取已注册的平台名称
-    if (serviceName === 'platform') {
-      res.json({ models: getPlatformNames(caps.platform) });
-      return;
-    }
-
     // 特殊处理 gateway-scopes：已注册平台与它们的类型（sessionTypesOf：没声明类型的平台只有一个类型 private）
     // 的笛卡尔积。类型有显示名的写显示名，没有的写类型名
     if (serviceName === 'gateway-scopes') {
@@ -905,16 +882,17 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 深度思考的档位：可选项依赖「模型」这一项，dependency 带它的生效值；没带时按服务偏好解析，与对话时同一种解析。
-    // 默认档标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项。labels 是各模型声明过的档位的名字
-    // （同一个 id 取先登记的）：换了模型以后存着的档位不在可选项里，界面按它写出名字
+    // 深度思考的档位：可选项依赖「模型」这一项，dependency 带它的值（条目 id，按 api-llm 的写法拆）；没带时没有可选项，
+    // 不替调用方挑模型。默认档标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项。labels 是各模型声明过的
+    // 档位的名字（同一个 id 取先登记的）：换了模型以后存着的档位不在可选项里，界面按它写出名字
     if (serviceName === 'llm-thinking') {
-      const ref = modelRefOf(req.query.dependency);
-      if (ref === null) {
+      const { dependency } = req.query;
+      const ref = typeof dependency === 'string' ? modelRefOf(dependency) : undefined;
+      if (dependency !== undefined && !ref) {
         res.status(400).json({ error: t('dependencyInvalid') });
         return;
       }
-      const thinking = resolveLLMModel(caps.llm, ref, ['chat'])?.use.thinking;
+      const thinking = ref && resolveLLMModel(caps.llm, ref, ['chat'])?.use.thinking;
       const levels = thinking?.levels ?? [];
       const labels: Record<string, string | TextRef> = {};
       for (const entry of caps.llm.list()) {
@@ -932,34 +910,21 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具。概述取分组的 summary（description 只给模型）
+    // 工具分组：已登记的分组与工具上出现过的分组取并集，按名字排；登记过的写名字、说明取 summary（description 只给模型），
+    // 没登记的写原名。'*' 是全部分组（api-tools 的分组约定），总在最前
     if (serviceName === 'toolGroups') {
-      const groups = caps.tools.present ? caps.tools.use.getGroups() : [];
-      // '*' = 全部分组（api-tools 的分组约定），与会话范围选项的「* （全部平台）」同一写法
-      if (groups.length > 0) {
-        res.json({
-          models: ['*', ...groups.map(g => g.name).sort()],
-          details: [
-            { value: '*', label: t('allGroups') },
-            ...groups.map(g => ({
-              value: g.name,
-              label: g.label,
-              description: g.summary,
-              pluginName: g.pluginName,
-            })),
-          ],
-        });
-      } else {
-        // 回退：从已注册工具中提取分组名称
-        const allTools = caps.tools.present ? caps.tools.use.getAll() : [];
-        const groupSet = new Set<string>();
-        for (const tool of allTools) {
-          tool.groups?.forEach((g: string) => {
-            groupSet.add(g);
-          });
-        }
-        res.json({ models: ['*', ...[...groupSet].sort()] });
-      }
+      const registered = new Map((caps.tools.present ? caps.tools.use.getGroups() : []).map(g => [g.name, g]));
+      const names = new Set(registered.keys());
+      for (const tool of caps.tools.present ? caps.tools.use.getAll() : [])
+        for (const g of tool.groups ?? []) names.add(g);
+      const details: OptionDetail[] = [...names].sort().map(name => {
+        const group = registered.get(name);
+        return group ? { value: name, label: group.label, description: group.summary } : { value: name, label: name };
+      });
+      res.json({
+        models: ['*', ...details.map(detail => detail.value)],
+        details: [{ value: '*', label: t('allGroups') }, ...details],
+      });
       return;
     }
 
@@ -1030,6 +995,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     admin.send({ type: 'plugins.changed' });
     attention.pluginsChanged();
   });
+  // 宿主配置文档变了（插件详情保存、手改配置文件、会话设置写全局层与偏好）：插件详情与界面语言据它重取
+  events.use.on('host-config:changed', () => admin.send({ type: 'plugins.changed' }));
   events.use.on('approval:created', () => attention.changed());
   events.use.on('approval:settled', () => attention.changed());
   events.use.on('app:restarting', () => admin.send({ type: 'app.restarting' }));

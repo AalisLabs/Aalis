@@ -1240,6 +1240,7 @@ describe('条目', () => {
       trimmed: false,
       untrimmedHistory: 100,
       historyMessages: 0,
+      historyLimit: 0,
       breakdown: {
         system: 1,
         persona: 2,
@@ -1678,7 +1679,7 @@ describe('回合控制', () => {
     }
   });
 
-  it('功能位：握手回发送、回滚、压缩三项，各看对话、检查点、压缩服务在不在；服务上下线时推 features/changed', async () => {
+  it('功能位：握手回发送、回滚、压缩、会话设置四项，各看对话、检查点、压缩、会话设置服务在不在；服务上下线时推 features/changed', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
     provideHome(app);
@@ -1692,31 +1693,39 @@ describe('回合控制', () => {
     await app.plugins.idle();
     const c = client(host.sessionProtocol.use);
     const hello = await c.init();
-    expect(hello.features).toEqual({ send: false, rewind: false, compress: false });
+    expect(hello.features).toEqual({ send: false, rewind: false, compress: false, settings: false });
 
     const pushed = () => c.notifications('features/changed').map(p => p.features);
     const offCheckpoint = host.provide.use(checkpoint, {} as never);
-    await vi.waitFor(() => expect(pushed()).toEqual([{ send: false, rewind: true, compress: false }]));
+    await vi.waitFor(() => expect(pushed()).toEqual([{ send: false, rewind: true, compress: false, settings: false }]));
     const offCompression = host.provide.use(compression, { compressAt: () => undefined, compress: async () => {} });
-    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: true, compress: true }));
+    await vi.waitFor(() =>
+      expect(pushed().at(-1)).toEqual({ send: false, rewind: true, compress: true, settings: false }),
+    );
     offCheckpoint();
-    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: true }));
+    await vi.waitFor(() =>
+      expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: true, settings: false }),
+    );
     offCompression();
-    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
+    await vi.waitFor(() =>
+      expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false, settings: false }),
+    );
     // 已有检查点时再来一个提供者、又撤掉：功能位没变，不推
     const first = host.provide.use(checkpoint, {} as never);
     await vi.waitFor(() => expect(pushed()).toHaveLength(5));
     const second = host.provide.use(checkpoint, {} as never);
     second();
     first();
-    await vi.waitFor(() => expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false }));
+    await vi.waitFor(() =>
+      expect(pushed().at(-1)).toEqual({ send: false, rewind: false, compress: false, settings: false }),
+    );
     expect(pushed()).toEqual([
-      { send: false, rewind: true, compress: false },
-      { send: false, rewind: true, compress: true },
-      { send: false, rewind: false, compress: true },
-      { send: false, rewind: false, compress: false },
-      { send: false, rewind: true, compress: false },
-      { send: false, rewind: false, compress: false },
+      { send: false, rewind: true, compress: false, settings: false },
+      { send: false, rewind: true, compress: true, settings: false },
+      { send: false, rewind: false, compress: true, settings: false },
+      { send: false, rewind: false, compress: false, settings: false },
+      { send: false, rewind: true, compress: false, settings: false },
+      { send: false, rewind: false, compress: false, settings: false },
     ]);
 
     const later = client(host.sessionProtocol.use);
@@ -1725,6 +1734,7 @@ describe('回合控制', () => {
       send: false,
       rewind: false,
       compress: true,
+      settings: false,
     });
   });
 });

@@ -23,7 +23,8 @@ import {
   platform,
   resolvePlatformBySession,
 } from '@aalis/api-platform';
-import { sessionManager } from '@aalis/api-session-manager';
+import { isUnfiled, sessionManager } from '@aalis/api-session-manager';
+import type {} from '@aalis/api-session-settings'; // declaration merging 激活点（session-settings:changed 事件）
 import { storage } from '@aalis/api-storage';
 import {
   type BoundOf,
@@ -390,8 +391,9 @@ class CliTui {
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
-    // 会话设置变了（全局默认层的语言、终端会话的人设）：界面立即按新的设置重绘，已写进聊天区的行不变
-    this.caps.events.use.on('session:config:changed', this.queueRender);
+    // 设置变了（全局层的语言、终端会话的人设，在宿主配置文档或会话设置里）：界面立即按新的设置重绘，已写进聊天区的行不变
+    this.caps.events.use.on('session-settings:changed', this.queueRender);
+    this.caps.events.use.on('host-config:changed', this.queueRender);
 
     this.caps.lifecycle.use.onDispose(() => this.stop());
     this.render();
@@ -485,17 +487,10 @@ class CliTui {
     if (this.view === 'chat') this.queueRender();
   }
 
-  /** 终端会话设置的「人设」（卡的 id）；没有会话管理或没设时为 undefined */
-  private personaCard(): string | undefined {
-    return this.caps.sessionManager.present
-      ? this.caps.sessionManager.use.resolveConfig(this.sessionId, 'cli').persona
-      : undefined;
-  }
-
-  /** 终端会话生效的人设的名字：按会话设置的「人设」取卡，与回合同一口径；没有人设服务或卡没取名时为 undefined */
+  /** 终端会话生效的人设的名字：人设服务按这个会话取卡，与回合同一口径；没有人设服务或卡没取名时为 undefined */
   private personaName(): string | undefined {
     return this.caps.persona.present
-      ? this.caps.persona.use.getPersonaName({ persona: this.personaCard() }) || undefined
+      ? this.caps.persona.use.getPersonaName({ sessionId: this.sessionId, platform: 'cli' }) || undefined
       : undefined;
   }
 
@@ -747,7 +742,7 @@ class CliTui {
   private async deliver(text: string): Promise<void> {
     const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
     const session = sm?.getSession(this.sessionId);
-    const unfiled = !session || (!session.createdFrom && !session.originPlatform && !session.work);
+    const unfiled = !session || isUnfiled(session);
     if (sm && unfiled && !(await this.claimedElsewhere())) {
       await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
     }
@@ -863,8 +858,8 @@ class CliTui {
   }
 
   private renderHeader(width: number): string {
-    // 卡没取名时写会话用的卡的 id，没设人设（用主卡）时写 default
-    const persona = this.personaName() || this.personaCard() || 'default';
+    // 卡没取名时写 -，同状态页
+    const persona = this.personaName() ?? '-';
     const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
     const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
       .map(v => {

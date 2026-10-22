@@ -79,7 +79,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
     expect(m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' })).toBeNull();
   });
 
-  it('authorityOverrides 写成 Infinity：拒绝语照样点名能力与门槛，不露出原文模板的花括号', () => {
+  it('authorityOverrides 写成 Infinity：拒绝语点名能力、写只限 owner，不写 Infinity，不露出原文模板的花括号', () => {
     const m = new AuthorityManager(
       mkConfig({ authorityOverrides: { 'tool:weather': Number.POSITIVE_INFINITY } }),
       silentLogger(),
@@ -87,10 +87,8 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
       noSessions,
     );
     const denied = m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' }) as TextRef;
-    expect(denied.source).toBe('权限不足: "tool:weather" 需等级 Infinity（当前 0）');
-    expect(resolveText(denied, ['en'])).toBe(
-      'Insufficient permission: "tool:weather" needs level Infinity (current 0)',
-    );
+    expect(denied.source).toBe('权限不足: "tool:weather" 只限 owner');
+    expect(resolveText(denied, ['en'])).toBe('Insufficient permission: "tool:weather" is owner-only');
   });
 
   it('全局 deniedCapabilities 连 owner 都压过', () => {
@@ -220,5 +218,49 @@ describe('持久化（v5 save/load 往返）', () => {
     const m2 = new AuthorityManager(mkConfig(), silentLogger(), s.svc, noSessions);
     await m2.init();
     expect(m2.listUsers().find(u => u.userId === 'a')?.level).toBe(3);
+  });
+});
+
+describe('设置项的门槛（setting: 能力）', () => {
+  const owners = [{ platform: 'onebot', userId: 'boss' }];
+  const cap = 'setting:zz-agent/groups';
+
+  it('meetsLevel：owner 恒过，封禁恒不过，其余按登记等级；门槛为 Infinity 时只有 owner', () => {
+    const m = new AuthorityManager(mkConfig({ owners }), silentLogger(), noFileStorage, noSessions);
+    m.setUserLevel(onebot('1'), 1);
+    m.setUserLevel(onebot('2'), 2);
+    m.setUserLevel(onebot('banned'), -1);
+    expect(m.meetsLevel(onebot('boss'), Number.POSITIVE_INFINITY)).toBe(true);
+    expect(m.meetsLevel(onebot('2'), Number.POSITIVE_INFINITY)).toBe(false);
+    expect(m.meetsLevel(onebot('1'), 2)).toBe(false);
+    expect(m.meetsLevel(onebot('2'), 2)).toBe(true);
+    expect(m.meetsLevel(onebot('banned'), -5)).toBe(false);
+    expect(m.meetsLevel(onebot('stranger'), 0)).toBe(true);
+  });
+
+  it('authorize 的门槛：authorityOverrides › 请求带的 minLevel › risk 与 visibility；只有 owner 时拒绝文字不写 Infinity', () => {
+    const request = { capability: cap, visibility: 'restricted' as const, minLevel: Number.POSITIVE_INFINITY };
+    const m = new AuthorityManager(mkConfig({ owners }), silentLogger(), noFileStorage, noSessions);
+    m.setUserLevel(onebot('2'), 2);
+    expect(m.authorize(onebot('boss'), request)).toBeNull();
+    const refused = m.authorize(onebot('2'), request);
+    expect(toSource(refused)).toContain('只限 owner');
+    expect(toSource(refused)).not.toContain('Infinity');
+    expect(m.authorize(onebot('2'), { ...request, minLevel: 1 })).toBeNull();
+
+    const lowered = new AuthorityManager(
+      mkConfig({ owners, authorityOverrides: { [cap]: 0 } }),
+      silentLogger(),
+      noFileStorage,
+      noSessions,
+    );
+    expect(lowered.authorize(onebot('stranger'), request)).toBeNull();
+    const denied = new AuthorityManager(
+      mkConfig({ owners, deniedCapabilities: ['setting:*'] }),
+      silentLogger(),
+      noFileStorage,
+      noSessions,
+    );
+    expect(denied.authorize(onebot('boss'), request)).not.toBeNull();
   });
 });

@@ -56,57 +56,46 @@ function cfgWith(vision: Partial<MediaConfigResolved['vision']>): MediaConfigRes
   } as unknown as MediaConfigResolved;
 }
 
-/** MediaServiceImpl 的能力桩：可挂若干 LLM entry（带 capabilities）与一个 session-manager */
-function makeCaps(
-  entries: Array<{ contextId: string; caps: string[] }>,
-  sessionLLM?: { provider: string; model: string },
-): MediaServiceCaps {
+/** MediaServiceImpl 的能力桩：可挂若干 LLM entry（带 capabilities） */
+function makeCaps(entries: Array<{ contextId: string; caps: string[] }>): MediaServiceCaps {
   const models: ServiceView<LLMModel>[] = entries.map(e => ({
     contextId: e.contextId,
     instance: { id: e.contextId.split('/')[1], capabilities: e.caps } as unknown as LLMModel,
     priority: 0,
   }));
-  const sessionManager: ServiceView<SessionManagerService>[] = sessionLLM
-    ? [
-        {
-          contextId: 'session-manager',
-          instance: { resolveConfig: () => ({ llm: sessionLLM }) } as unknown as SessionManagerService,
-          priority: 0,
-        },
-      ]
-    : [];
-  return { logger: fixedRef(logger), llm: ref(models), asr: ref(), sessionManager: ref(sessionManager), memory: ref() };
+  return { logger: fixedRef(logger), llm: ref(models), asr: ref(), memory: ref() };
 }
 
-describe('resolveDelivery：auto 按本会话生效主模型的 vision 能力', () => {
-  it('默认 entry 有 vision → passthrough；无 vision → describe', () => {
+/** 两个模型：列表首个能看图，另一个不能 */
+const VISION_FIRST = [
+  { contextId: 'p/vision-model', caps: ['chat', 'vision'] },
+  { contextId: 'p/text-model', caps: ['chat'] },
+];
+
+describe('resolveDelivery：auto 按这次调用的对话模型的 vision 能力', () => {
+  it('调用方没给模型时按 llm 的默认条目：有 vision → passthrough；无 vision → describe；没有模型 → describe', () => {
     expect(
-      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]), cfgWith({})).resolveDelivery(
-        's',
-      ),
+      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]), cfgWith({})).resolveDelivery(),
     ).toBe('passthrough');
-    expect(
-      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat'] }]), cfgWith({})).resolveDelivery('s'),
-    ).toBe('describe');
-    expect(new MediaServiceImpl(makeCaps([]), cfgWith({})).resolveDelivery('s')).toBe('describe');
+    expect(new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat'] }]), cfgWith({})).resolveDelivery()).toBe(
+      'describe',
+    );
+    expect(new MediaServiceImpl(makeCaps([]), cfgWith({})).resolveDelivery()).toBe('describe');
   });
 
-  it('会话指定了模型时按该模型判（与 agent 的解析链同源），而不是按列表首个', () => {
-    const entries = [
-      { contextId: 'p/vision-model', caps: ['chat', 'vision'] },
-      { contextId: 'p/text-model', caps: ['chat'] },
-    ];
-    const svc = new MediaServiceImpl(makeCaps(entries, { provider: 'p', model: 'text-model' }), cfgWith({}));
-    expect(svc.resolveDelivery('s', 'onebot')).toBe('describe');
-    const svc2 = new MediaServiceImpl(makeCaps(entries, { provider: 'p', model: 'vision-model' }), cfgWith({}));
-    expect(svc2.resolveDelivery('s', 'onebot')).toBe('passthrough');
+  it('给了模型时按那个模型判，而不是按列表首个', () => {
+    const svc = new MediaServiceImpl(makeCaps(VISION_FIRST), cfgWith({}));
+    expect(svc.resolveDelivery({ provider: 'p', model: 'text-model' })).toBe('describe');
+    expect(svc.resolveDelivery({ provider: 'p', model: 'vision-model' })).toBe('passthrough');
   });
 
   it('显式 passthrough / describe 不看模型能力', () => {
     const noLLM = makeCaps([]);
-    expect(new MediaServiceImpl(noLLM, cfgWith({ delivery: 'passthrough' })).resolveDelivery('s')).toBe('passthrough');
+    expect(new MediaServiceImpl(noLLM, cfgWith({ delivery: 'passthrough' })).resolveDelivery()).toBe('passthrough');
     const vision = makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
-    expect(new MediaServiceImpl(vision, cfgWith({ delivery: 'describe' })).resolveDelivery('s')).toBe('describe');
+    expect(
+      new MediaServiceImpl(vision, cfgWith({ delivery: 'describe' })).resolveDelivery({ provider: 'p', model: 'm' }),
+    ).toBe('describe');
   });
 });
 
@@ -178,13 +167,14 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     acceptsImages: boolean,
     uri: string,
     extraArgs: Record<string, unknown> = {},
+    model?: ToolCallContext['model'],
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
     const host = app.bind({ services, tools, memory });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
-    const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
+    const svc = new MediaServiceImpl(makeCaps(VISION_FIRST), cfgWith(vision));
     const calls = withFakeVision(svc);
     registerMediaTools({ ...host, sessionManager: ref(), authority: ref() }, svc);
     const registry = host.services.use.get(tools);
@@ -192,7 +182,12 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     const result = await registry.execute(
       'analyze_image',
       { image: uri, ...extraArgs },
-      { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },
+      {
+        sessionId: 's',
+        platform: 'test',
+        ...(acceptsImages ? { acceptsImages: true } : {}),
+        ...(model ? { model } : {}),
+      },
     );
     await app.stop();
     return { result, calls };
@@ -272,6 +267,15 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls[0].hint).toContain('用户需求: 看看这题');
     expect(calls[0].hint).toContain('分析提示词: 请用 LaTeX 抄录所有公式');
     expect(calls[0].hint).toContain('补充上下文: 这是第 3 页');
+  });
+
+  it('auto：按这次调用的模型判（工具上下文的 model），能看图的直通、不能的交识别模型', async () => {
+    const text = await withTool({ delivery: 'auto' }, true, toolUri(5), {}, { provider: 'p', model: 'text-model' });
+    expect(text.calls).toHaveLength(1);
+    expect(text.result.images).toBeUndefined();
+    const vision = await withTool({ delivery: 'auto' }, true, toolUri(6), {}, { provider: 'p', model: 'vision-model' });
+    expect(vision.calls).toHaveLength(0);
+    expect(vision.result.images).toEqual([toolUri(6)]);
   });
 
   it('describe：识别模型出文字，不带 images；识别按调用工具的会话记账', async () => {

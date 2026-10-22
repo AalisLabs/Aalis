@@ -23,7 +23,6 @@ import type {
   ExecutionGuard,
   InboundTurn,
 } from '@aalis/api-authority';
-import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 
@@ -87,6 +86,10 @@ export interface ToolCallContext {
   inbound?: InboundTurn;
   /** 调用所在回合的 id（只由 agent 工具循环填写，与 inbound 同时出现） */
   turnId?: string;
+  /**
+   * 这一轮用的对话模型（只由 agent 工具循环填写），形状同 @aalis/api-llm 的 ModelRef：本包不依赖 api-llm（api-llm 依赖本包）
+   */
+  model?: { provider?: string; model?: string };
   /**
    * 这次工具调用的 id（只由 agent 工具循环填写）。由 agent 生成、全局唯一，不取模型给的 tool call id：
    * 模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
@@ -253,6 +256,12 @@ export interface ToolService {
   }>;
 
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
+
+  /**
+   * 这个会话启用的工具分组（会话设置「工具分组」的生效值，`'*'` 为全部分组）；platform 是入口平台，只对没有出生平台的会话
+   * 起作用。空列表即只给不属于任何分组的工具
+   */
+  sessionGroups(sessionId: string, platform?: string): string[];
 
   /** 注入执行守卫，用于能力裁决与确认；传 undefined 摘掉，需要更高等级或确认的工具退回 fail-closed */
   setExecutionGuard(guard: ExecutionGuard | undefined): void;
@@ -434,11 +443,3 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
     registerGroup: (group: Omit<ToolGroupInfo, 'pluginName'>) => groups.add(group),
   });
 });
-
-// ----- 会话设置项（plugin-tools 登记）-----
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 启用的工具分组，`'*'` 为全部分组；没设置或为空时只给不属于任何分组的工具 */
-    enabledToolGroups?: string[];
-  }
-}

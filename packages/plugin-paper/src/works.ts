@@ -19,7 +19,7 @@ import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
-import { actorKey, checkEligibility, effectiveActor, paperLabel } from './rooms.js';
+import { actorKey, checkEligibility, effectiveActor, type PaperFields, paperLabel } from './rooms.js';
 import { enterPaperRoom } from './tools.js';
 
 interface WorksDeps {
@@ -27,6 +27,7 @@ interface WorksDeps {
   signal: AbortSignal;
   tools: BoundTools;
   sessionManager: ServiceSelection<SessionManagerService>;
+  fields: PaperFields;
   publish: ServiceSelection<PublishService>;
   storage: StorageService;
   ledger: LedgerStore;

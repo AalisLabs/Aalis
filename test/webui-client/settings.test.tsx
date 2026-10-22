@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { SettingLayer, SettingRow } from '../../packages/api-session-protocol/src/index.js';
+import type { SessionMethodResult, SettingLayer, SettingRow } from '../../packages/api-session-protocol/src/index.js';
+import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import {
   BUILTIN_THEMES,
   type DeclarativePageView,
@@ -13,6 +14,7 @@ import {
   type ThemeFile,
 } from '../../packages/api-webui/src/index.js';
 import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
+import { resolveText } from '../../packages/schema-i18n/src/index.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
@@ -20,6 +22,7 @@ import {
   type FakeRequest,
   type FakeRest,
   type Harness,
+  INIT,
   installDialog,
   LAYER_ORDER,
   language,
@@ -35,12 +38,12 @@ import { dataPath, hostTab, hostTabs, layoutStore, NOTES, pageTab, refOf, SETTIN
 
 // ════════════════════════════════════════════════════════════
 // 设置：宿主分区（会话默认、外观、系统）与插件分区（位置为设置的页面）同一个目录、同一套路由。
-// - 会话默认按层读写（存在配置文件里的层，不列场所），层的称呼与继承先后取自会话服务给的层表，行与会话设置同一套组件，
-//   全局默认层的「模型」读写的是服务偏好；会话服务不在时整个分区不出现；
+// - 会话默认先选层（全局、平台档、平台类型档与场所四组，可搜索，所选的层记进地址；宽屏左右并排、手机两屏），
+//   再改这一层的项；层的称呼与继承先后取自会话服务给的层表，行与会话设置同一套组件；全局层写作者默认、按钮叫「恢复默认」；
+//   会话服务不在、功能位 settings 为假时整个分区不出现；
 // - 插件分区从目录与地址都能进入，手动刷新让页面重取；
 // - 外观：主题选择（跟随系统时深浅各选一个）、导入与导出、插件经贡献点提供的主题，快捷栏与会话面板标签的排序与开关；
-// - 系统：宿主配置（来源与生效时机，要重启的键保存后出「重启以生效」）、服务偏好（偏好由会话设置承担的模型服务不单列，
-//   指向「会话默认」）与家目录。
+// - 系统：宿主配置（来源与生效时机，要重启的键保存后出「重启以生效」）、服务偏好（全局偏好，模型服务照常一行）与家目录。
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -206,170 +209,233 @@ describe('目录与路由', () => {
 });
 
 describe('会话默认', () => {
-  const DEFAULTS: SettingLayer = { scope: 'defaults' };
-  const WEBUI: SettingLayer = { scope: 'platform', platform: 'webui' };
-  const QQ: SettingLayer = { scope: 'platform', platform: 'qq' };
-  const QQ_GROUP: SettingLayer = { scope: 'type', platform: 'qq', type: 'group' };
-  const HOME: SettingLayer = { scope: 'place', key: 'workspace:default' };
-  const MODEL = { type: 'llm-ref', label: '模型' } as const;
+  const GLOBAL: SettingLayer = { scope: 'global' };
+  const ONEBOT_GROUP: SettingLayer = { scope: 'platformType', platform: 'onebot', type: 'group' };
+  const WINDOW: SettingLayer = { scope: 'place', key: 'onebot:group:20001' };
+  const LAYERS: SessionMethodResult<'session/config/layers'>['layers'] = [
+    { layer: GLOBAL },
+    { layer: { scope: 'platform', platform: 'cli' } },
+    { layer: { scope: 'platform', platform: 'onebot' } },
+    { layer: { scope: 'platform', platform: 'webui' } },
+    { layer: { scope: 'platformType', platform: 'onebot', type: 'channel' } },
+    { layer: ONEBOT_GROUP },
+    { layer: { scope: 'platformType', platform: 'onebot', type: 'private' } },
+    { layer: { scope: 'place', key: 'workspace:default' }, label: '默认工作区' },
+    { layer: WINDOW, label: '群「读书会」onebot', platform: 'onebot', type: 'group' },
+  ];
+  const MODEL = { type: 'llm-ref', label: '模型', session: { preference: 'llm', unset: '跟随服务偏好' } } as const;
   const chat = (model: string) => ({ provider: 'zz-llm', model });
-  const ROWS = {
-    defaults: [
+  const ITERATIONS = { type: 'number', label: '最大工具迭代', default: 30 } as const;
+  const ROWS: Record<string, SettingRow[]> = {
+    global: [
       row('llm', {
         field: MODEL,
         plugin: 'zz-agent',
         prominence: 'composer',
-        unset: '跟随服务偏好',
-        resolved: chat('zz-chat'),
+        actual: { value: chat('zz-chat'), label: 'zz-chat' },
       }),
       row('persona', {
-        field: { type: 'string', label: '人设' },
+        field: { type: 'string', label: '人设', default: '<默认人设>' },
         value: '<默认人设>',
         effective: '<默认人设>',
-        source: 'defaults',
+        source: 'global',
       }),
-      row('iterations', {
-        field: { type: 'number', label: '最大工具迭代' },
-        plugin: 'zz-agent',
-        prominence: 'advanced',
+      row('iterations', { field: ITERATIONS, plugin: 'zz-agent', value: 50, effective: 50, source: 'global' }),
+      row('groups', {
+        field: { type: 'multiselect', label: '工具分组', default: [], options: [{ label: '网页', value: 'web' }] },
+        value: [],
+        effective: [],
+        source: 'global',
+      }),
+      row('extra', {
+        field: { type: 'textarea', label: '额外提示', default: '' },
+        value: '<额外>',
+        effective: '<额外>',
+        source: 'global',
       }),
     ],
-    qq: [row('persona', { field: { type: 'string', label: '人设' }, effective: '<默认人设>', source: 'defaults' })],
     group: [
       row('persona', {
-        field: { type: 'string', label: '人设' },
+        field: { type: 'string', label: '人设', default: '<默认人设>' },
         value: '<群人设>',
         effective: '<群人设>',
-        source: 'type',
+        source: 'platformType',
       }),
+      row('iterations', { field: ITERATIONS, plugin: 'zz-agent', effective: 50, source: 'global' }),
     ],
   };
-  const layerKey = (layer: SettingLayer) =>
-    layer.scope === 'defaults' ? 'defaults' : layer.scope === 'platform' ? 'qq' : 'group';
+  const rowsOf = (layer: SettingLayer) => ROWS[layer.scope === 'global' ? 'global' : 'group'];
 
-  function handlers(layers: SettingLayer[] = [DEFAULTS, QQ, WEBUI, QQ_GROUP, HOME], order = LAYER_ORDER) {
+  function handlers(layers = LAYERS, order = LAYER_ORDER) {
     return {
       'session/config/layers': () => ({ layers, order }),
-      'session/config/layer/get': ({ layer }: { layer: SettingLayer }) => ({ items: ROWS[layerKey(layer)] }),
-      'session/config/layer/update': ({ layer }: { layer: SettingLayer }) => ({ items: ROWS[layerKey(layer)] }),
+      'session/config/layer/get': ({ layer }: { layer: SettingLayer }) => ({ items: rowsOf(layer) }),
+      'session/config/layer/update': ({ layer }: { layer: SettingLayer }) => ({ items: rowsOf(layer) }),
     };
   }
-  const picker = () => section().getByRole('combobox', { name: '层' });
+  const layerList = () => within(section().getByRole('navigation', { name: '会话设置的层' }));
+  /** 各组的层：组名（全局没有组名）与组里各层的名字 */
+  const groups = () =>
+    layerList()
+      .getAllByRole('list')
+      .map(list => [
+        list.getAttribute('aria-label'),
+        within(list)
+          .getAllByRole('link')
+          .map(link => link.textContent),
+      ]);
   const settingRow = (label: string) => within(section().getByRole('group', { name: label }));
 
-  it('层选择器列出存在配置文件里的层（不列场所），平台档与平台类型档写明是哪个平台与类型；行与会话设置同一套：常用在前、「高级」折叠，每行写生效值与来源', async () => {
+  it('第一步选层：全局、平台档、平台类型档、场所四组，称呼取自层表；第二步改这一层的项，所选的层记进地址；宽屏左右并排', async () => {
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
-    await section().findByRole('group', { name: '人设' });
-    expect(optionsOf(picker())).toEqual(['全局默认', '平台档：qq', '平台档：webui', '平台类型档：qq · group']);
-    expect(requests('session/config/layer/get')).toEqual([{ layer: DEFAULTS }]);
-    expect(
-      section().getByText(/^会话设置按本会话、父会话、场所、平台类型档、平台档、全局默认的先后，取第一个设了值的一层/),
-    ).toBeTruthy();
-    expect(settingRow('人设').getByText('<默认人设>')).toBeTruthy();
-    expect(settingRow('人设').getByText('全局默认')).toBeTruthy();
-    expect(section().queryByRole('group', { name: '最大工具迭代' })).toBeNull();
-    expect(section().getByRole('button', { name: '高级' }).getAttribute('aria-expanded')).toBe('false');
-    expect(section().queryByText(/按平台名生效/)).toBeNull();
+    await layerList().findByRole('link', { name: '全局（插件配置）' });
+    expect(groups()).toEqual([
+      ['全局（插件配置）', ['全局（插件配置）']],
+      ['平台档', ['cli', 'onebot', 'webui']],
+      ['平台类型档', ['onebot · channel', 'onebot · group', 'onebot · private']],
+      ['场所', ['默认工作区', '群「读书会」onebot']],
+    ]);
+    expect(section().getByText('先在左边选一层')).toBeTruthy();
+    expect(requests('session/config/layer/get')).toEqual([]);
 
-    choose(picker(), '平台类型档：qq · group');
-    await vi.waitFor(() => expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: QQ_GROUP }));
-    await vi.waitFor(() => expect(settingRow('人设').getByText('<群人设>')).toBeTruthy());
-    expect(settingRow('人设').getByText('平台类型档')).toBeTruthy();
-    expect(section().getByText(/平台档按平台名生效，不区分实例/)).toBeTruthy();
-  });
-
-  it('英文界面：继承先后的说明、选层与层的称呼按英文，层的列表按英文连接', async () => {
-    app = await renderApp('/settings/session-defaults', handlers(), settingsRest(language(['en'])));
+    fireEvent.click(layerList().getByRole('link', { name: 'onebot · group' }));
+    expect(app.where()).toBe('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup');
+    await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: ONEBOT_GROUP }]));
+    expect(section().getByRole('heading', { name: '平台类型档 onebot · group' })).toBeTruthy();
+    expect(layerList().getByRole('link', { name: 'onebot · group' }).getAttribute('aria-current')).toBe('page');
     await section().findByRole('group', { name: '人设' });
-    const layer = section().getByRole('combobox', { name: 'Layer' });
-    expect(optionsOf(layer)).toEqual(['全局默认', '平台档: qq', '平台档: webui', '平台类型档: qq · group']);
+    expect(settingRow('人设').getByText('<群人设>')).toBeTruthy();
+    expect(settingRow('人设').queryByText(/^来自：/), '这一层自己设的不写来源').toBeNull();
+    expect(settingRow('人设').getByRole('button', { name: '恢复继承' })).toBeTruthy();
+    expect(settingRow('最大工具迭代').getByText('来自：全局（插件配置）')).toBeTruthy();
     expect(
       section().getByText(
-        'Session settings take the first layer that has a value, in the order 本会话, 父会话, 场所, 平台类型档, 平台档, 全局默认; when no layer sets an item, its own default applies. Changes take effect from the next turn.',
+        '会话设置按本会话、场所、平台类型档、平台档、全局（插件配置）的先后，取第一个设了值的一层；哪一层都没设时按各项自己的默认。改动从下一轮起生效。',
       ),
     ).toBeTruthy();
-    expect(section().getByRole('button', { name: 'Advanced' })).toBeTruthy();
-  });
+    expect(section().queryByText(/类型档互不包含/)).toBeNull();
 
-  it('层的称呼与继承的先后都取自层表，前端不另存一份', async () => {
-    const order = LAYER_ORDER.map(entry => ({ ...entry, label: `<${entry.label}>` }));
-    app = await renderApp('/settings/session-defaults', handlers(undefined, order), settingsRest());
-    await section().findByRole('group', { name: '人设' });
-    expect(optionsOf(picker())).toEqual(['<全局默认>', '<平台档>：qq', '<平台档>：webui', '<平台类型档>：qq · group']);
-    expect(
-      section().getByText(/^会话设置按<本会话>、<父会话>、<场所>、<平台类型档>、<平台档>、<全局默认>的先后/),
-    ).toBeTruthy();
-    expect(settingRow('人设').getByText('<全局默认>')).toBeTruthy();
-  });
-
-  it('改一项写进选中的这一层；生效值出自这一层的行有「恢复继承」，写 null', async () => {
-    app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
-    choose(await section().findByRole('combobox', { name: '层' }), '平台类型档：qq · group');
-    await vi.waitFor(() => expect(settingRow('人设').getByText('<群人设>')).toBeTruthy());
-    fireEvent.click(settingRow('人设').getByRole('button', { name: /人设/ }));
-    const box = settingRow('人设').getByRole('textbox', { name: '人设' });
-    fireEvent.change(box, { target: { value: '<新的群人设>' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.click(settingRow('人设').getByRole('button', { name: '恢复继承' }));
     await vi.waitFor(() =>
       expect(requests('session/config/layer/update')).toEqual([
-        { layer: QQ_GROUP, patch: { persona: '<新的群人设>' } },
+        { layer: ONEBOT_GROUP, plugin: '@aalis/demo', key: 'persona', value: null },
       ]),
-    );
-    const reset = settingRow('人设').getByRole('button', { name: '恢复继承' }) as HTMLButtonElement;
-    await vi.waitFor(() => expect(reset.disabled).toBe(false));
-    fireEvent.click(reset);
-    await vi.waitFor(() =>
-      expect(requests('session/config/layer/update').at(-1)).toEqual({ layer: QQ_GROUP, patch: { persona: null } }),
     );
   });
 
-  it('全局默认层的「模型」读写的是服务偏好：没设时写「默认（<模型名>）」；偏好指向的模型不在时标出、写明正在用哪个，改了写进全局默认层', async () => {
-    app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
-    expect(await settingRow('模型').findByText('默认（zz-chat）')).toBeTruthy();
-    expect(settingRow('模型').queryByText('跟随服务偏好')).toBeNull();
+  it('地址带着层打开就是那一层；场所的标题写场所的称呼；地址里的层不在了时回到选层', async () => {
+    app = await renderApp('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup', handlers(), settingsRest());
+    expect(await section().findByRole('heading', { name: '平台类型档 onebot · group' })).toBeTruthy();
+    await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: ONEBOT_GROUP }]));
     app.close();
 
-    const dangling = row('llm', {
-      field: MODEL,
-      prominence: 'composer',
-      value: chat('gone'),
-      effective: chat('gone'),
-      source: 'defaults',
-      resolved: chat('zz-chat'),
-    });
     app = await renderApp(
-      '/settings/session-defaults',
+      `/settings/session-defaults?layer=${encodeURIComponent('place:onebot:group:20001')}`,
+      handlers(),
+      settingsRest(),
+    );
+    expect(await section().findByRole('heading', { name: '群「读书会」onebot（场所）' })).toBeTruthy();
+    await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: WINDOW }]));
+    app.close();
+
+    app = await renderApp('/settings/session-defaults?layer=platform%3Agone', handlers(), settingsRest());
+    expect(await section().findByText('先在左边选一层')).toBeTruthy();
+  });
+
+  it('窗口场所这一层：从平台档、平台类型档继承来的项写明取的是哪一份', async () => {
+    app = await renderApp(
+      `/settings/session-defaults?${new URLSearchParams({ layer: 'place:onebot:group:20001' })}`,
+      handlers(),
+      settingsRest(),
+    );
+    expect(await settingRow('人设').findByText('来自：平台类型档 onebot · group')).toBeTruthy();
+  });
+
+  it('搜索：按层的称呼、平台名、类型名、场所名与场所键过滤', async () => {
+    app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
+    const search = await section().findByRole('searchbox', { name: '搜索层' });
+    fireEvent.change(search, { target: { value: 'onebot' } });
+    expect(groups()).toEqual([
+      ['平台档', ['onebot']],
+      ['平台类型档', ['onebot · channel', 'onebot · group', 'onebot · private']],
+      ['场所', ['群「读书会」onebot']],
+    ]);
+    fireEvent.change(search, { target: { value: 'private' } });
+    expect(groups()).toEqual([['平台类型档', ['onebot · private']]]);
+    fireEvent.change(search, { target: { value: 'group:20001' } });
+    expect(groups()).toEqual([['场所', ['群「读书会」onebot']]]);
+  });
+
+  it('全局层：每项写作者默认，等于默认标「默认」，不等写「默认：<值>」（空列表、空文字写「无」），行尾「恢复默认」写 null；模型没设时写「跟随全局偏好（此刻：<模型名>）」', async () => {
+    app = await renderApp('/settings/session-defaults?layer=global', handlers(), settingsRest());
+    expect(await section().findByRole('heading', { name: '全局（插件配置）' })).toBeTruthy();
+    expect(await settingRow('模型').findByText('跟随全局偏好（此刻：zz-chat）')).toBeTruthy();
+    expect(settingRow('人设').getByText('默认')).toBeTruthy();
+    expect(settingRow('人设').queryByRole('button', { name: '恢复默认' })).toBeNull();
+    expect(settingRow('最大工具迭代').getByText('默认：30')).toBeTruthy();
+    expect(settingRow('工具分组').getByText('无')).toBeTruthy();
+    expect(settingRow('额外提示').getByText('默认：无')).toBeTruthy();
+    expect(settingRow('最大工具迭代').queryByText(/^来自：/)).toBeNull();
+    fireEvent.click(settingRow('最大工具迭代').getByRole('button', { name: '恢复默认' }));
+    await vi.waitFor(() =>
+      expect(requests('session/config/layer/update')).toEqual([
+        { layer: GLOBAL, plugin: 'zz-agent', key: 'iterations', value: null },
+      ]),
+    );
+  });
+
+  it('写进配置文件失败：这一行下面写回包里 unsaved 的那一句', async () => {
+    app = await renderApp(
+      '/settings/session-defaults?layer=global',
       {
         ...handlers(),
-        'session/config/layer/get': () => ({ items: [dangling] }),
-        'session/config/layer/update': () => ({ items: [dangling] }),
+        'session/config/layer/update': () => ({
+          items: ROWS.global,
+          unsaved: '已在运行态生效，但未写入配置文件（<原因>）',
+        }),
       },
       settingsRest(),
     );
-    expect(await settingRow('模型').findByText('所选模型不在，正在用zz-chat')).toBeTruthy();
-    expect(settingRow('模型').getByText('gone')).toBeTruthy();
-    fireEvent.click(settingRow('模型').getByRole('button', { name: /模型/ }));
-    choose(await settingRow('模型').findByRole('combobox', { name: '模型' }), 'zz-chat');
-    await vi.waitFor(() =>
-      expect(requests('session/config/layer/update')).toEqual([{ layer: DEFAULTS, patch: { llm: chat('zz-chat') } }]),
+    fireEvent.click(await settingRow('最大工具迭代').findByRole('button', { name: '恢复默认' }));
+    expect(await settingRow('最大工具迭代').findByText('已在运行态生效，但未写入配置文件（<原因>）')).toBeTruthy();
+  });
+
+  it('手机上两屏：先选层，选了进这一层的项，「换一层」回到选层', async () => {
+    stubViewport(390);
+    app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
+    fireEvent.click(await layerList().findByRole('link', { name: 'onebot · group' }));
+    expect(await section().findByRole('heading', { name: '平台类型档 onebot · group' })).toBeTruthy();
+    expect(section().queryByRole('navigation', { name: '会话设置的层' })).toBeNull();
+    fireEvent.click(section().getByRole('link', { name: '换一层' }));
+    await vi.waitFor(() => expect(app?.where()).toBe('/settings/session-defaults'));
+    expect(await layerList().findByRole('link', { name: 'onebot · group' })).toBeTruthy();
+    expect(section().queryByRole('heading', { name: '平台类型档 onebot · group' })).toBeNull();
+  });
+
+  it('英文界面：层的称呼与先后说明按英文', async () => {
+    const order = SESSION_LAYERS.map(({ name, label }) => ({ name, label: resolveText(label, ['en']) }));
+    app = await renderApp(
+      '/settings/session-defaults?layer=global',
+      handlers(LAYERS, order),
+      settingsRest(language(['en'])),
     );
-    const reset = settingRow('模型').getByRole('button', { name: '恢复继承' }) as HTMLButtonElement;
-    await vi.waitFor(() => expect(reset.disabled).toBe(false));
-    fireEvent.click(reset);
-    await vi.waitFor(() =>
-      expect(requests('session/config/layer/update').at(-1)).toEqual({ layer: DEFAULTS, patch: { llm: null } }),
-    );
+    expect(await section().findByRole('heading', { name: 'Global (plugin config)' })).toBeTruthy();
+    expect(
+      section().getByText(
+        'Session settings take the first layer that has a value, in the order This session, Place, Platform-type profile, Platform profile, Global (plugin config); when no layer sets an item, its own default applies. Changes take effect from the next turn.',
+      ),
+    ).toBeTruthy();
   });
 
   it('没取到时写明原因，可以重试，「查看日志」链到提供会话协议的实例的日志', async () => {
     let fail = true;
     app = await renderApp(
-      '/settings/session-defaults',
+      '/settings/session-defaults?layer=global',
       {
         ...handlers(),
-        'session/config/layer/get': ({ layer }: { layer: SettingLayer }) => {
+        'session/config/layer/get': () => {
           if (fail) throw new Error('设置读不出');
-          return { items: ROWS[layerKey(layer)] };
+          return { items: ROWS.global };
         },
       },
       settingsRest(),
@@ -385,73 +451,46 @@ describe('会话默认', () => {
     expect(section().queryByRole('alert')).toBeNull();
   });
 
-  it('设置项或层变了（session/config/changed、插件启停）时重取；选中的层没了回到全局默认', async () => {
-    let layers = [DEFAULTS, QQ, QQ_GROUP, WEBUI];
-    app = await renderApp(
-      '/settings/session-defaults',
-      { ...handlers(), 'session/config/layers': () => ({ layers, order: LAYER_ORDER }) },
-      settingsRest(),
-    );
-    choose(await section().findByRole('combobox', { name: '层' }), '平台档：qq');
-    await vi.waitFor(() => expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: QQ }));
-
+  it('设置项或层变了（session/config/changed、插件启停）时重取', async () => {
+    app = await renderApp('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup', handlers(), settingsRest());
+    await vi.waitFor(() => expect(requests('session/config/layer/get')).toHaveLength(1));
     act(() => server().notify('session/config/changed', {}));
     await vi.waitFor(() => expect(requests('session/config/layers')).toHaveLength(2));
-    await vi.waitFor(() => expect(requests('session/config/layer/get')).toHaveLength(3));
-    expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: QQ });
-
-    layers = [DEFAULTS, WEBUI];
+    await vi.waitFor(() => expect(requests('session/config/layer/get')).toHaveLength(2));
     act(() => admin().push({ type: 'plugins.changed' }));
     await vi.waitFor(() => expect(requests('session/config/layers')).toHaveLength(3));
-    await vi.waitFor(() => expect(picker().textContent).toBe('全局默认'));
-    await vi.waitFor(() => expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: DEFAULTS }));
-
-    // 那一层之后再出现也不自己切回去：改动照旧写进看着的全局默认
-    layers = [DEFAULTS, QQ, QQ_GROUP, WEBUI];
-    act(() => admin().push({ type: 'plugins.changed' }));
-    await vi.waitFor(() => expect(requests('session/config/layers')).toHaveLength(4));
-    await vi.waitFor(() => expect(optionsOf(picker())).toHaveLength(4));
-    expect(picker().textContent).toBe('全局默认');
-    expect(requests('session/config/layer/get').at(-1)).toEqual({ layer: DEFAULTS });
   });
 
-  it('可选项依赖另一项的行按这一层的生效值取：换了层，按那一层的模型重取深度思考的档位', async () => {
-    const model = (name: string) => ({ provider: 'zz-llm', model: name });
-    const levels = (name: string) =>
-      `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify(model(name)))}`;
-    const rowsFor = (name: string) => [
-      row('llm', { field: MODEL, effective: model(name), source: 'defaults' }),
-      row('think', {
-        field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
-        dependsOn: 'llm',
-        effective: 'high',
-        source: 'defaults',
-      }),
-    ];
-    app = await renderApp(
-      '/settings/session-defaults',
-      {
-        ...handlers(),
-        'session/config/layer/get': ({ layer }: { layer: SettingLayer }) => ({
-          items: rowsFor(layer.scope === 'defaults' ? 'deep' : 'plain'),
-        }),
+  it('可选项依赖另一项的行按这一层的生效值取，依赖的模型没设时按它此刻实际在用的模型', async () => {
+    const levels = `/api/models/llm-thinking?dependency=${encodeURIComponent('zz-llm/zz-chat')}`;
+    const think = row('think', {
+      field: {
+        type: 'select',
+        label: '深度思考',
+        dynamicOptions: 'llm-thinking',
+        session: { dependsOn: 'llm', unset: '按模型的默认档' },
       },
+      plugin: 'zz-agent',
+    });
+    app = await renderApp(
+      '/settings/session-defaults?layer=global',
+      { ...handlers(), 'session/config/layer/get': () => ({ items: [ROWS.global[0], think] }) },
       settingsRest({
         '/api/models/llm': { providers: [] },
-        [levels('deep')]: {
-          details: [
-            { value: 'off', label: '关' },
-            { value: 'high', label: '高', default: true },
-          ],
-        },
-        [levels('plain')]: { details: [] },
+        [levels]: { details: [{ value: 'high', label: '高', default: true }] },
       }),
     );
-    await section().findByRole('group', { name: '深度思考' });
-    expect(await settingRow('深度思考').findByText('高')).toBeTruthy();
-    choose(picker(), '平台档：qq');
-    await vi.waitFor(() => expect(settingRow('深度思考').getByText('当前模型不能调')).toBeTruthy());
-    expect(calls(levels('plain'))).toHaveLength(1);
+    expect(await settingRow('深度思考').findByText('高（默认）')).toBeTruthy();
+    expect(calls(levels)).toHaveLength(1);
+  });
+
+  it('功能位 settings 为假：目录里没有「会话默认」', async () => {
+    app = await renderApp(
+      '/settings',
+      { initialize: () => ({ ...INIT, features: { ...INIT.features, settings: false } }) },
+      settingsRest(),
+    );
+    await vi.waitFor(() => expect(sectionNames()).toEqual(['权限', '技能', '外观', '系统']));
   });
 });
 
@@ -931,39 +970,12 @@ describe('系统', () => {
     await vi.waitFor(() => expect(calls('/api/services/llm/prefer', 'DELETE')).toHaveLength(1));
   });
 
-  it('会话设置的全局默认层里有模型字段的项时，模型服务的偏好不单列，写一行指向「会话默认」；没有这样的项或会话服务没启用时照常列出', async () => {
-    const model = row('llm', { field: { type: 'llm-ref', label: '模型' }, prominence: 'composer' });
-    const persona = row('persona', { field: { type: 'string', label: '人设' } });
-    const withRows = (items: SettingRow[]) => ({ 'session/config/layer/get': () => ({ items }) });
-    const memory = { contextId: 'zz-memory-b', priority: 0, exclusive: false };
-    const services = {
-      services: {
-        ...SERVICES.services,
-        memory: { ...SERVICES.services.memory, providers: [...SERVICES.services.memory.providers, memory] },
-      },
-    };
-
-    app = await renderApp('/settings/system', withRows([persona, model]), systemRest({ '/api/services': services }));
-    expect(await section().findByRole('group', { name: 'memory' })).toBeTruthy();
-    await vi.waitFor(() => expect(section().getByText('默认模型在「会话默认」里设')).toBeTruthy());
-    expect(section().queryByRole('group', { name: 'llm' })).toBeNull();
-    expect(section().getByRole('link', { name: '去会话默认' }).getAttribute('href')).toBe('/settings/session-defaults');
-    expect(requests('session/config/layer/get')).toEqual([{ layer: { scope: 'defaults' } }]);
-    app.close();
-
-    app = await renderApp('/settings/system', withRows([persona]), systemRest({ '/api/services': services }));
-    await vi.waitFor(() => expect(requests('session/config/layer/get')).toHaveLength(1));
-    expect(await section().findByRole('group', { name: 'llm' })).toBeTruthy();
-    expect(section().queryByText('默认模型在「会话默认」里设')).toBeNull();
-    app.close();
-
-    const sessionless = systemRest({
-      '/api/services': services,
-      '/api/plugins': () => ({ plugins: [AUTH, THEMES], secretRefCounts: {} }),
-    });
-    app = await renderApp('/settings/system', withRows([persona, model]), sessionless);
-    expect(await section().findByRole('group', { name: 'llm' })).toBeTruthy();
-    expect(section().queryByText('默认模型在「会话默认」里设')).toBeNull();
+  it('模型服务的偏好（全局偏好）照常列成一行：标题生成、摘要等没设本插件偏好的插件用它', async () => {
+    app = await renderApp('/settings/system', {}, systemRest());
+    const llm = within(await section().findByRole('group', { name: 'llm' }));
+    expect(llm.getByText('备用模型')).toBeTruthy();
+    expect(section().queryByText(/会话默认/)).toBeNull();
+    expect(requests('session/config/layer/get')).toEqual([]);
   });
 
   it('宿主配置没取到：写明原因、可以重试，「查看日志」链到提供界面的实例的日志', async () => {

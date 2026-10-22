@@ -123,9 +123,6 @@ const doubles = definePlugin({
     provide.use(approvals, service);
     provide.use(sessionManager, {
       getSession: (id: string) => ({ id, name: id, title: '整理周报', kind: 'owner' }) as unknown as SessionInfo,
-      // WebUI 的读者按全局默认层：i18n 读这一层，诊断枚举的层只有它
-      getLayer: () => ({}),
-      listLayers: () => [{ scope: 'defaults' }],
     } as never);
     provide.use(sessionProtocol, {
       connect: () => ({ receive: async () => {}, close() {} }),
@@ -481,15 +478,12 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('GET /api/logs/tail', '/api/logs/tail?limit=5');
     await ok('GET /api/logs/range', '/api/logs/range?before=2&limit=5');
     await ok('GET /api/themes', '/api/themes');
-    for (const service of ['llm', 'llm-thinking', 'platform', 'toolGroups', 'zz-names', 'i18n-languages']) {
+    for (const service of ['llm', 'llm-thinking', 'toolGroups', 'zz-names', 'i18n-languages']) {
       await ok('GET /api/models/:service', `/api/models/${service}`);
     }
     gatewayScopes = (await ok('GET /api/models/:service', '/api/models/gateway-scopes')).models;
     mixedModels = await ok('GET /api/models/:service', '/api/models/zz-mixed');
-    await ok(
-      'GET /api/models/:service',
-      `/api/models/llm-thinking?dependency=${enc(JSON.stringify({ provider: 'zz-rest-llm', model: 'zz-model' }))}`,
-    );
+    await ok('GET /api/models/:service', `/api/models/llm-thinking?dependency=${enc('zz-rest-llm/zz-model')}`);
     await ok('POST /api/llm-providers/:contextId/refresh', '/api/llm-providers/zz-rest-llm/refresh');
     await ok('GET /api/i18n/languages', '/api/i18n/languages');
     await ok('GET /api/i18n/messages', '/api/i18n/messages?ns=zz-ns');

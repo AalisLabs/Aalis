@@ -16,8 +16,6 @@ export interface EmbeddingService {
   readonly modelId?: string;
   /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求。 */
   embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]>;
-  /** 列出远端可用模型（用于前端下拉框）*/
-  listModels?(): Promise<string[]>;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

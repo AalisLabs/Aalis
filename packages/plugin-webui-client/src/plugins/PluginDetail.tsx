@@ -1,5 +1,5 @@
 import type { FrameHostCapability, PageView } from '@aalis/api-webui';
-import type { ConfigSchema } from '@aalis/schema-config';
+import type { WireConfigSchema } from '@aalis/schema-config';
 import type { Localized, TextRef } from '@aalis/schema-i18n';
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
@@ -14,6 +14,7 @@ import { Menu } from '../components/Menu';
 import { Panel } from '../components/Panel';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
+import { useFeatures } from '../connection';
 import { compareText, listText } from '../format';
 import { AttentionList } from '../health/AttentionList';
 import { useAttention } from '../health/attention';
@@ -21,6 +22,7 @@ import { text, tr } from '../language';
 import { instanceName, pageAddress, usePages } from '../pages/registry';
 import { deleteJson, isRecord, postJson, RestError } from '../rest';
 import { paths } from '../routes';
+import { type Field, isSessionEntry } from '../settings/field';
 import { SettingRow } from '../settings/SettingRow';
 import { useServices } from '../settings/services';
 import { Main, useShell } from '../shell/Shell';
@@ -29,6 +31,7 @@ import { messageOf, type PluginAction, usePluginAction } from './action';
 import { ConfigForm } from './ConfigForm';
 import { Lines, UninstallWarning } from './disclosure';
 import { labelOf, type PluginRow, useFindPlugin, useHost, usePackageManager, usePlugins } from './list';
+import { type SessionPlaces, useSessionMarks, useSessionPlaces } from './session-marks';
 import { markerOf, pluginName, reasonOf, rootAction, rootText, statusOf, unmetText } from './status';
 import './PluginDetail.css';
 
@@ -103,14 +106,15 @@ function Detail({ row }: { row: PluginRow }) {
     if (hash === '#config') document.getElementById('config')?.scrollIntoView();
   }, [hash]);
   const schema = row.configSchema && Object.keys(row.configSchema).length > 0 ? row.configSchema : undefined;
+  const places = useSessionPlaces(row.instanceId, Object.values(schema ?? {}).some(isSessionEntry));
   return (
     <Panel title={labelOf(row)} meta={instanceName(row.instanceId)} back={paths.plugins}>
       <div className="page-screen plugin-detail">
         <Summary row={row} />
         <Notices row={row} />
-        {schema && <ConfigSection row={row} schema={schema} />}
+        {schema && <ConfigSection row={row} schema={schema} places={places} />}
         <Relations row={row} />
-        <ServicePreferences row={row} />
+        <ServicePreferences row={row} places={places} />
         <Pages row={row} />
         {row.reusable && <Instances row={row} />}
       </div>
@@ -287,17 +291,26 @@ function RemoveInstanceDialog({ target, current, action, onClose }: RemoveInstan
   );
 }
 
-function ConfigSection({ row, schema }: { row: PluginRow; schema: Localized<ConfigSchema> }) {
+function ConfigSection({
+  row,
+  schema,
+  places,
+}: {
+  row: PluginRow;
+  schema: Localized<WireConfigSchema>;
+  places?: SessionPlaces;
+}) {
   const { refresh } = usePlugins();
   const [result, setResult] = useState<string>();
-  // 写进配置文件之后换上新的表单：重取的配置一样（无改动）时也换
+  // 写进配置文件之后换上新的表单：重取的配置一样（无改动）时也换。别处改了配置由表单自己处理，不重挂
   const [generation, setGeneration] = useState(0);
   return (
     <section id="config" className="page-block">
       <ConfigForm
-        key={`${generation}:${JSON.stringify(row.config)}`}
+        key={generation}
         row={row}
         schema={schema}
+        places={places}
         result={result}
         onSaved={async message => {
           await refresh();
@@ -412,17 +425,28 @@ const BASIS: Record<string, TextRef> = {
 
 /**
  * 本插件偏好：它声明的服务里有几个提供者（或设过偏好）的各一行，设了只对它生效，「跟随全局」清除；每行写它此刻用的那一家
- * 与依据。什么时候不该设写在提示里，两类会出错的服务见用户文档的服务偏好一节
+ * 与依据。可按会话设置的项全局层由这个服务的偏好承担的（字段声明 session.preference），会话设置服务在时这一行总列出、另带
+ * 可按会话设置的两个标记。什么时候不该设写在提示里，两类会出错的服务见用户文档的服务偏好一节
  */
-function ServicePreferences({ row }: { row: PluginRow }) {
+function ServicePreferences({ row, places }: { row: PluginRow; places?: SessionPlaces }) {
   const { services, error, refetch } = useServices();
   const { refresh } = usePlugins();
+  const { settings } = useFeatures();
   const host = useHost();
   const declared = new Set([...row.requiredServices, ...row.optionalServices]);
   const own = (name: string) =>
     Object.hasOwn(row.servicePreferences, name) ? row.servicePreferences[name] : undefined;
+  /** 全局层由这个服务的偏好承担的那一项 */
+  const backingOf = (name: string) =>
+    Object.entries(row.configSchema ?? {}).flatMap(([key, entry]) =>
+      isSessionEntry(entry) && entry.session.preference === name ? [{ name: key, field: entry }] : [],
+    )[0];
   const shown = (services ?? []).filter(
-    service => declared.has(service.name) && (service.providers.length > 1 || own(service.name) !== undefined),
+    service =>
+      declared.has(service.name) &&
+      (service.providers.length > 1 ||
+        own(service.name) !== undefined ||
+        (settings && backingOf(service.name) !== undefined)),
   );
   if (!error && shown.length === 0) return null;
   const base = (name: string) => `/api/plugins/${enc(row.instanceId)}/services/${enc(name)}/prefer`;
@@ -459,27 +483,42 @@ function ServicePreferences({ row }: { row: PluginRow }) {
                 ? tr('usingProviderBy', { provider, basis })
                 : tr('usingProvider', { provider });
           const missingText = missing ? tr('providerAbsent') : undefined;
+          const backing = backingOf(service.name);
           return (
-            <SettingRow
-              key={service.name}
-              field={{
-                type: 'select',
-                label: service.name,
-                options: service.providers.map(provider => ({ label: provider.label, value: provider.contextId })),
-              }}
-              value={preferred}
-              source={preferred === undefined ? undefined : tr('basisPlugin')}
-              note={
-                missingText && using ? tr('notePair', { first: missingText, second: using }) : (missingText ?? using)
-              }
-              unset={tr('followGlobalPreference')}
-              reset={preferred === undefined ? undefined : tr('followGlobal')}
-              save={save(service.name)}
-            />
+            <div key={service.name}>
+              <SettingRow
+                field={{
+                  type: 'select',
+                  label: service.name,
+                  options: service.providers.map(provider => ({ label: provider.label, value: provider.contextId })),
+                }}
+                value={preferred}
+                source={preferred === undefined ? undefined : tr('basisPlugin')}
+                note={
+                  missingText && using ? tr('notePair', { first: missingText, second: using }) : (missingText ?? using)
+                }
+                unset={tr('followGlobalPreference')}
+                reset={preferred === undefined ? undefined : tr('followGlobal')}
+                save={save(service.name)}
+              />
+              {backing && <PreferenceMarks name={backing.name} field={backing.field} places={places} />}
+            </div>
           );
         })}
       </div>
     </Block>
+  );
+}
+
+/** 由服务偏好承担全局层的那一项的两个标记（可按会话设置、另有 N 处设置），写在偏好那一行下面 */
+function PreferenceMarks({ name, field, places }: { name: string; field: Field; places?: SessionPlaces }) {
+  const { badges, list } = useSessionMarks(field, name, places);
+  if (!badges) return null;
+  return (
+    <div className="plugin-preference-marks">
+      <div className="plugin-preference-badges">{badges}</div>
+      {list}
+    </div>
   );
 }
 

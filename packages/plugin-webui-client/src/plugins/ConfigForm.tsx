@@ -1,32 +1,31 @@
-import {
-  type SchemaArray as DeclaredArray,
-  type SchemaField as DeclaredField,
-  type SchemaGroup as DeclaredGroup,
-  type ConfigSchema as DeclaredSchema,
-  isSecretRef,
-  type SecretRef,
-} from '@aalis/schema-config';
+import { isSecretRef, type SecretRef, type WireConfigSchema } from '@aalis/schema-config';
 import type { Localized } from '@aalis/schema-i18n';
 import { Plus } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { tr } from '../language';
 import { isRecord, putJson, RestError } from '../rest';
 import { type FieldCommon, FieldInput, FieldRow, UNREADABLE } from '../settings/FieldInput';
+import { authorDefault, dependencyText, isSessionEntry, sameValue } from '../settings/field';
 import { type PluginRow, usePlugins } from './list';
+import { type SessionPlaces, useSessionMarks } from './session-marks';
 import './ConfigForm.css';
 
-// 插件配置：按 schema 画的整张表，改完再保存（保存会重载插件）。改了没保存的项左边一条竖线、行尾可以撤销，底部一条写着几项
-// 未保存，保存的结果也写在这条上。只送改了的顶层键（分组、数组整块），清空的顶层键送 null，由服务端回到默认值。
+// 插件配置：按 schema 画的整张表，改完再保存。改了没保存的项左边一条竖线、行尾可以撤销，底部一条写着几项未保存，保存的结果
+// 也写在这条上；只改了可按会话设置的项时只保存，不重载插件。只送改了的顶层键（分组、数组整块），清空的顶层键送 null，由
+// 服务端回到默认值。每项写作者默认：等于默认标「默认」，不等写「默认：<值>」与「恢复默认」（规则见 field.ts 的 authorDefault）。
+// 可按会话设置的项另带两个标记（见 session-marks.tsx）；全局层由服务偏好承担的项不在表里，在下方的服务偏好块里。
+// 这个实例的配置在别处改了：草稿没改动时静默换上，有改动时底部写明并可载入新值，自己保存在途时收到的不算。
 // 密钥只写不回显：文档里是引用，引用原样留着即保持原值；「更换」后写的新值替换，「清除」送空值；顶层与分组里的替换写进
 // 原来的键（别处共用这个键的一并改到），数组元素里的另建新键。插件停用或失败时照样能改
 
-// 插件列表交来的 schema：给人看的文字已按读者语言渲染成字符串
-type ConfigSchema = Localized<DeclaredSchema>;
-type SchemaArray = Localized<DeclaredArray>;
-type SchemaField = Localized<DeclaredField>;
-type SchemaGroup = Localized<DeclaredGroup>;
+// 插件列表交来的 schema：给人看的文字已按读者语言渲染成字符串，没有函数成员
+type ConfigSchema = Localized<WireConfigSchema>;
 type Entry = ConfigSchema[string];
+type SchemaArray = Extract<Entry, { type: 'array' }>;
+type SchemaGroup = Extract<Entry, { fields: unknown }>;
+type SchemaField = Exclude<Entry, SchemaArray | SchemaGroup>;
 const isArrayEntry = (entry: Entry): entry is SchemaArray => 'type' in entry && entry.type === 'array';
 const isGroupEntry = (entry: Entry): entry is SchemaGroup => 'fields' in entry;
 
@@ -92,17 +91,6 @@ function keepStoredSecrets(
   return out;
 }
 
-/** 草稿与存着的值一样没有：空串与没填算一样，值为 undefined 的键当作没有（JSON 丢掉它们） */
-function same(a: unknown, b: unknown): boolean {
-  if (a === b || ((a === '' || a === undefined) && (b === '' || b === undefined))) return true;
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((item, i) => same(item, b[i]));
-  if (isRecord(a) && isRecord(b)) {
-    const keys = (value: Record<string, unknown>) => Object.keys(value).filter(key => value[key] !== undefined);
-    return keys(a).length === keys(b).length && keys(a).every(key => same(a[key], b[key]));
-  }
-  return false;
-}
-
 const unreadable = (value: unknown): boolean =>
   value === UNREADABLE ||
   (Array.isArray(value) ? value.some(unreadable) : isRecord(value) && Object.values(value).some(unreadable));
@@ -111,10 +99,10 @@ const unreadable = (value: unknown): boolean =>
 function countChanges(schema: ConfigSchema, base: Record<string, unknown>, draft: Record<string, unknown>): number {
   let count = 0;
   for (const [key, entry] of Object.entries(schema)) {
-    if (!isGroupEntry(entry)) count += same(draft[key], base[key]) ? 0 : 1;
+    if (!isGroupEntry(entry)) count += sameValue(draft[key], base[key]) ? 0 : 1;
     else {
       const [now, before] = [draft[key], base[key]] as Array<Record<string, unknown>>;
-      for (const name of Object.keys(entry.fields)) count += same(now[name], before[name]) ? 0 : 1;
+      for (const name of Object.keys(entry.fields)) count += sameValue(now[name], before[name]) ? 0 : 1;
     }
   }
   return count;
@@ -133,6 +121,8 @@ function formatPlaceholder(format: SchemaField['format']): string | undefined {
 interface ConfigFormProps {
   row: PluginRow;
   schema: ConfigSchema;
+  /** 可按会话设置的项在全局之外写过的各处（会话设置服务不在时没有） */
+  places?: SessionPlaces;
   /** 写进配置文件之后：由上层重取插件列表、换上新的表单，回执写在底部那条上 */
   onSaved(message: string): Promise<void>;
   /** 上一次保存的回执 */
@@ -145,9 +135,11 @@ const problemAt = (issues: readonly Issue[], path: string) =>
   issues.find(issue => issue.path === path || issue.path.startsWith(`${path}[`) || issue.path.startsWith(`${path}.`))
     ?.message;
 
-export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
+export function ConfigForm({ row, schema, places, onSaved, result }: ConfigFormProps) {
   const { refresh, secretRefCounts } = usePlugins();
-  const base = useMemo(() => buildDraft(schema, row.config), [schema, row.config]);
+  /** 表单所依的配置：打开或上次载入时的；别处改了之后由下面换上或提示 */
+  const [stored, setStored] = useState(row.config);
+  const base = useMemo(() => buildDraft(schema, stored), [schema, stored]);
   const [draft, setDraft] = useState(base);
   // 控件的版本：恢复默认、放弃时全部重建，逐项撤销时只重建这一项（控件里正在写的文字与「更换」的状态随之丢掉）
   const [epoch, setEpoch] = useState(0);
@@ -155,7 +147,22 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [issues, setIssues] = useState<readonly Issue[]>([]);
+  /** 别处改了这个实例的配置，而草稿有改动 */
+  const [conflict, setConflict] = useState(false);
+  /** 上一次看到的配置：只在这个实例的配置变了时处理，别的插件的状态变化推来的同一份不算 */
+  const [seen, setSeen] = useState(row.config);
   const changes = countChanges(schema, base, draft);
+  const changedKeys = Object.keys(schema).filter(key => !sameValue(draft[key], base[key]));
+  /** 只改了可按会话设置的项：只保存，不重载插件 */
+  const sessionOnly = changedKeys.every(key => isSessionEntry(schema[key]));
+  /** 可选项依赖同一 schema 里另一项的（session.dependsOn）：那一项由服务偏好承担时取这个实例此刻选中的那一家，其余取草稿 */
+  const dependencyOf = (field: SchemaField): string | undefined => {
+    const key = field.session?.dependsOn;
+    const target = key === undefined ? undefined : schema[key];
+    if (key === undefined || !isSessionEntry(target)) return undefined;
+    const service = target.session.preference;
+    return service === undefined ? dependencyText(target, draft[key]) : row.serviceSelections[service]?.contextId;
+  };
 
   const replaceAll = (next: Record<string, unknown>) => {
     setDraft(next);
@@ -163,17 +170,26 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
     setError(undefined);
     setIssues([]);
   };
+  const load = (config: Record<string, unknown>) => {
+    setStored(config);
+    setConflict(false);
+    replaceAll(buildDraft(schema, config));
+  };
+  // 配置在别处改了：草稿没改动时静默换上，有改动时提示（又改回表单所依的那一份时收起）；自己保存在途时推来的不处理，保存完成后
+  // 由上层统一重取
+  if (!sameValue(row.config, seen)) {
+    setSeen(row.config);
+    const moved = !sameValue(row.config, stored);
+    if (!saving && moved && changes === 0) load(row.config);
+    else if (!saving) setConflict(moved);
+  }
   const revert = (path: string, apply: (current: Record<string, unknown>) => Record<string, unknown>) => {
     setDraft(apply);
     setRevisions(current => ({ ...current, [path]: (current[path] ?? 0) + 1 }));
   };
 
   const save = async () => {
-    const patch = Object.fromEntries(
-      Object.keys(schema)
-        .filter(key => !same(draft[key], base[key]))
-        .map(key => [key, draft[key] === undefined ? null : draft[key]]),
-    );
+    const patch = Object.fromEntries(changedKeys.map(key => [key, draft[key] === undefined ? null : draft[key]]));
     if (unreadable(patch)) {
       setError(tr('configInvalid'));
       return;
@@ -203,7 +219,7 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
         {Object.keys(row.defaultConfig).length > 0 && (
           <Button
             variant="text"
-            onClick={() => replaceAll(buildDraft(schema, keepStoredSecrets(schema, row.defaultConfig, row.config)))}
+            onClick={() => replaceAll(buildDraft(schema, keepStoredSecrets(schema, row.defaultConfig, stored)))}
           >
             {tr('resetDefault')}
           </Button>
@@ -217,7 +233,7 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
               name={key}
               entry={entry}
               items={draft[key] as unknown[]}
-              changed={!same(draft[key], base[key])}
+              changed={!sameValue(draft[key], base[key])}
               issues={issues}
               onChange={items => setDraft(current => ({ ...current, [key]: items }))}
               onRevert={() => revert(key, current => ({ ...current, [key]: base[key] }))}
@@ -226,7 +242,7 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
         }
         if (isGroupEntry(entry)) {
           const group = draft[key] as Record<string, unknown>;
-          const stored = base[key] as Record<string, unknown>;
+          const saved = base[key] as Record<string, unknown>;
           return (
             <Section key={key} title={entry.label ?? key} description={entry.description}>
               {Object.entries(entry.fields).map(([name, field]) => {
@@ -238,13 +254,19 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
                     field={field}
                     problem={problemAt(issues, path)}
                     value={group[name]}
-                    changed={!same(group[name], stored[name])}
-                    refCount={secretCount(secretRefCounts, group[name], stored[name])}
+                    changed={!sameValue(group[name], saved[name])}
+                    refCount={secretCount(secretRefCounts, group[name], saved[name])}
                     onChange={value => setDraft(current => ({ ...current, [key]: { ...group, [name]: value } }))}
                     onRevert={() =>
                       revert(path, current => ({
                         ...current,
-                        [key]: { ...(current[key] as Record<string, unknown>), [name]: stored[name] },
+                        [key]: { ...(current[key] as Record<string, unknown>), [name]: saved[name] },
+                      }))
+                    }
+                    onDefault={() =>
+                      revert(path, current => ({
+                        ...current,
+                        [key]: { ...(current[key] as Record<string, unknown>), [name]: structuredClone(field.default) },
                       }))
                     }
                   />
@@ -253,6 +275,8 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
             </Section>
           );
         }
+        // 全局层由服务偏好承担的项不在表里，在服务偏好块里改
+        if (entry.session?.preference !== undefined) return null;
         return (
           <ConfigRow
             key={keyOf(key)}
@@ -260,32 +284,45 @@ export function ConfigForm({ row, schema, onSaved, result }: ConfigFormProps) {
             field={entry}
             problem={problemAt(issues, key)}
             value={draft[key]}
-            changed={!same(draft[key], base[key])}
+            changed={!sameValue(draft[key], base[key])}
             refCount={secretCount(secretRefCounts, draft[key], base[key])}
+            dependency={dependencyOf(entry)}
+            places={places}
             onChange={value => setDraft(current => ({ ...current, [key]: value }))}
             onRevert={() => revert(key, current => ({ ...current, [key]: base[key] }))}
+            onDefault={() => revert(key, current => ({ ...current, [key]: structuredClone(entry.default) }))}
           />
         );
       })}
-      {(changes > 0 || error || result) && (
+      {(changes > 0 || error || result || conflict) && (
         <div className="config-bar">
-          {error ? (
-            <p className="config-bar-text" role="alert">
-              {error}
-            </p>
-          ) : (
-            <p className="config-bar-text">{changes > 0 ? tr('configUnsaved', { count: changes }) : result}</p>
-          )}
-          {changes > 0 && (
-            <>
-              <Button variant="text" disabled={saving} onClick={() => replaceAll(base)}>
-                {tr('discard')}
+          {conflict && (
+            <div className="config-bar-row" role="status">
+              <span className="config-bar-text">{tr('configChangedElsewhere')}</span>
+              <Button variant="text" onClick={() => load(row.config)}>
+                {tr('loadNewConfig')}
               </Button>
-              <Button variant="primary" busy={saving} onClick={() => void save()}>
-                {row.state === 'disabled' ? tr('save') : tr('saveAndReload')}
-              </Button>
-            </>
+            </div>
           )}
+          <div className="config-bar-row">
+            {error ? (
+              <p className="config-bar-text" role="alert">
+                {error}
+              </p>
+            ) : (
+              <p className="config-bar-text">{changes > 0 ? tr('configUnsaved', { count: changes }) : result}</p>
+            )}
+            {changes > 0 && (
+              <>
+                <Button variant="text" disabled={saving} onClick={() => replaceAll(base)}>
+                  {tr('discard')}
+                </Button>
+                <Button variant="primary" busy={saving} onClick={() => void save()}>
+                  {row.state === 'disabled' || sessionOnly ? tr('save') : tr('saveAndReload')}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -342,8 +379,12 @@ interface ArrayBlockProps {
   onRevert(): void;
 }
 
-/** 对象数组：整块算一项；新条目只预填有默认值的字段，密钥字段不预填（默认值会被当成新密钥存起来） */
+/**
+ * 对象数组：整块算一项，与作者默认不同时写「默认：N 项」；新条目只预填有默认值的字段，密钥字段不预填（默认值会被当成新密钥
+ * 存起来）
+ */
 function ArrayBlock({ name, entry, items, changed, issues, onChange, onRevert }: ArrayBlockProps) {
+  const defaults = entry.default ?? [];
   const add = () => {
     const item: Record<string, unknown> = {};
     for (const [field, spec] of Object.entries(entry.items)) {
@@ -365,6 +406,9 @@ function ArrayBlock({ name, entry, items, changed, issues, onChange, onRevert }:
         </Button>
       </div>
       {entry.description && <p className="field-note">{entry.description}</p>}
+      {!sameValue(items, defaults) && (
+        <p className="field-note">{tr('defaultIs', { value: tr('defaultItems', { count: defaults.length }) })}</p>
+      )}
       {items.length === 0 && <p className="field-note">{tr('configNoEntries')}</p>}
       {items.map((item, index) => {
         const record = isRecord(item) ? item : {};
@@ -410,34 +454,78 @@ function ArrayBlock({ name, entry, items, changed, issues, onChange, onRevert }:
 }
 
 interface ConfigRowProps {
-  /** 字段的键：没写 secret 时按它判断要不要用密码框 */
+  /** 字段的键：没写 secret 时按它判断要不要用密码框；可按会话设置的项按它找写过的各处 */
   name: string;
   field: SchemaField;
   value: unknown;
   problem?: string;
   /** 密钥键被引用的处数 */
   refCount: number;
-  /** 在数组元素里：替换密钥另建新键，改动随整个数组算 */
+  /** 在数组元素里：替换密钥另建新键，改动随整个数组算，不单写作者默认 */
   inArray?: boolean;
   /** 改了没保存（数组元素里的不单算） */
   changed?: boolean;
+  /** 可选项依赖的那一项的取值写成的 dependency */
+  dependency?: string;
+  /** 可按会话设置的项在全局之外写过的各处 */
+  places?: SessionPlaces;
   onChange(value: unknown): void;
   onRevert?(): void;
+  /** 改回作者默认（数组元素里没有） */
+  onDefault?(): void;
 }
 
-function ConfigRow({ name, field, value, problem, refCount, inArray, changed, onChange, onRevert }: ConfigRowProps) {
+function ConfigRow({
+  name,
+  field,
+  value,
+  problem,
+  refCount,
+  inArray,
+  changed,
+  dependency,
+  places,
+  onChange,
+  onRevert,
+  onDefault,
+}: ConfigRowProps) {
+  const marks = useSessionMarks(field, name, places);
+  // 数组元素里的不单写作者默认
+  const fallback = inArray ? undefined : authorDefault(field, value);
   return (
     <FieldRow
       field={field}
       problem={problem}
       changed={changed}
+      badges={
+        <>
+          {fallback?.isDefault && <Badge>{tr('sourceDefault')}</Badge>}
+          {marks.badges}
+        </>
+      }
+      after={
+        <>
+          {fallback?.note && (
+            <p className="field-note field-default" title={fallback.note}>
+              {fallback.note}
+            </p>
+          )}
+          {marks.list}
+        </>
+      }
       trailing={
-        changed &&
-        onRevert && (
-          <Button variant="text" aria-label={tr('undoField', { label: field.label })} onClick={onRevert}>
-            {tr('undo')}
-          </Button>
-        )
+        <>
+          {changed && onRevert && (
+            <Button variant="text" aria-label={tr('undoField', { label: field.label })} onClick={onRevert}>
+              {tr('undo')}
+            </Button>
+          )}
+          {fallback?.isDefault === false && onDefault && (
+            <Button variant="text" aria-label={tr('resetFieldDefault', { label: field.label })} onClick={onDefault}>
+              {tr('resetDefault')}
+            </Button>
+          )}
+        </>
       }
     >
       {common =>
@@ -458,6 +546,7 @@ function ConfigRow({ name, field, value, problem, refCount, inArray, changed, on
             common={common}
             masked={field.secret === undefined && SECRET_NAME.test(name)}
             placeholder={formatPlaceholder(field.format)}
+            dependency={dependency}
           />
         )
       }

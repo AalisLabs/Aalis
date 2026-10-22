@@ -125,13 +125,25 @@ export function pushDelta(itemId: string, text: string, sessionId = 's1'): void 
   FakeWebSocket.at('/session').notify('item/delta', { sessionId, epoch: EPOCH, seq: ++seq, itemId, text });
 }
 
-export const row = (key: string, fields: Partial<SettingRow> = {}): SettingRow => ({
-  key,
-  field: { type: 'string', label: key },
-  plugin: '@aalis/demo',
-  prominence: 'common',
-  ...fields,
-});
+/** 设置的一行：字段缺省是文字，session 声明缺省适用全部会话、显眼程度跟这一行，给出的声明成员并进去 */
+export const row = (
+  key: string,
+  {
+    field = { type: 'string', label: key },
+    ...fields
+  }: Omit<Partial<SettingRow>, 'field'> & {
+    field?: Omit<SettingRow['field'], 'session'> & { session?: Partial<SettingRow['field']['session']> };
+  } = {},
+): SettingRow => {
+  const prominence = fields.prominence ?? 'common';
+  return {
+    key,
+    plugin: '@aalis/demo',
+    prominence,
+    ...fields,
+    field: { ...field, session: { appliesTo: ['owner', 'room', 'task'], prominence, ...field.session } },
+  };
+};
 
 /** 会话 s1 里转了后台的一次工具调用：在跑，从 AT 开始，工具卡的 itemId 是 call-<id> */
 export const backgroundTask = (id: string, fields: Partial<BackgroundTask> = {}): BackgroundTask => ({

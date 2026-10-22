@@ -6,11 +6,14 @@ import { auditRawConfig, readPluginSources } from '../helpers/raw-config-audit.j
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const FIXTURE = join(ROOT, 'test/architecture/__raw-config-fixture.ts');
 const prelude = `
-import { config as rawDescriptor, definePlugin, type BoundOf } from '@aalis/core';
+import { config as rawDescriptor, definePlugin, optional, type BoundOf } from '@aalis/core';
 import { parseConfig as read } from '@aalis/schema-config';
-import type { HostConfig } from '@aalis/api-host-config';
+import { type HostConfig, ownHostConfig } from '@aalis/api-host-config';
+import { sessionFields } from '@aalis/api-session-settings';
 const uses = { config: rawDescriptor };
 type Caps = BoundOf<typeof uses>;
+const fieldUses = { config: rawDescriptor, document: optional(ownHostConfig), sessionFields: optional(sessionFields) };
+type FieldCaps = BoundOf<typeof fieldUses>;
 const aliasedUses = { settings: rawDescriptor };
 type AliasCaps = BoundOf<typeof aliasedUses>;
 const schema = { token: { type: 'string', label: 'Token' } } as const;
@@ -35,6 +38,17 @@ describe('插件原始 config 读取守卫', () => {
     expect(result.violations).toEqual([]);
     expect(result.rawSites).toBe(2);
     expect(result.parseCalls).toBe(2);
+  });
+
+  it('按会话字段的读取器：整份 caps 交给 fields() 放行，拆出 config 交给它算原始读取', () => {
+    const passed = fixture(`
+      function run(caps: FieldCaps) { const fields = caps.sessionFields.use.fields(schema, caps); helper(fields.get()); }
+    `);
+    expect(passed.violations).toEqual([]);
+    const split = fixture(`
+      function run(caps: FieldCaps) { caps.sessionFields.use.fields(schema, { config: caps.config, document: caps.document }); }
+    `);
+    expect(split.violations).toHaveLength(1);
   });
 
   it.each([

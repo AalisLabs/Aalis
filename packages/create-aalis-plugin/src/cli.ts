@@ -30,7 +30,7 @@ interface Answers {
     command: boolean;
     /** WebUI 页面：不要、声明式，或自带前端（插件前端） */
     webui: false | 'declarative' | 'frame';
-    /** 登记一个会话设置项 */
+    /** 声明一个可按会话设的配置项 */
     sessionSetting: boolean;
   };
 }
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
     const command = await askYesNo('注册斜杠命令？', false);
     const page = await askYesNo('提供 WebUI 页面？', false);
     const frame = page && (await askYesNo('页面用自带前端？', false));
-    const sessionSetting = await askYesNo('登记会话设置项？', false);
+    const sessionSetting = await askYesNo('声明可按会话设的配置项？', false);
     const features: Answers['features'] = {
       tool,
       command,
@@ -243,14 +243,6 @@ function pageKeyOf(pkg: string): string {
   return shortName(pkg).replace(/^plugin-/, '');
 }
 
-/** 示例会话设置项的键：各插件的设置项共用一张表，接上包名免得撞上别的插件 */
-function settingKeyOf(pkg: string): string {
-  const words = pageKeyOf(pkg)
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  return `greeting${words.map(w => w[0].toUpperCase() + w.slice(1)).join('')}`;
-}
-
 export async function generate(dir: string, a: Answers, versions: Versions): Promise<void> {
   await mkdir(resolve(dir, 'src'), { recursive: true });
 
@@ -265,9 +257,17 @@ export async function generate(dir: string, a: Answers, versions: Versions): Pro
   }
 }
 
-/** 要向源查版本的 @aalis 包：开发依赖 core，加上所选能力的契约包 */
+/** 要向源查版本的 @aalis 包：开发依赖 core，加上运行时依赖 */
 function dependencyPackages(features: Answers['features']): string[] {
-  return ['@aalis/core', ...selectedCapabilityUses(features).map(c => c.pkg)];
+  return ['@aalis/core', ...runtimePackages(features)];
+}
+
+/** 运行时依赖：所选能力的契约包；声明了可按会话设的配置项时另有定义 schema 的 schema-config */
+function runtimePackages(features: Answers['features']): string[] {
+  return [
+    ...selectedCapabilityUses(features).map(c => c.pkg),
+    ...(features.sessionSetting ? ['@aalis/schema-config'] : []),
+  ];
 }
 
 /** 写进依赖的范围：下界是生成时源上的最新版，上界统一到 1.0 之前——0.x 下 caret 跨次版本即断 */
@@ -279,7 +279,7 @@ export function renderPackageJson(a: Answers, versions: Versions): string {
   // core 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删——用了某版本才有的 API，
   // 就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
   const caps = selectedCapabilityUses(a.features);
-  const deps = Object.fromEntries(caps.map(c => [c.pkg, rangeOf(versions[c.pkg])]));
+  const deps = Object.fromEntries(runtimePackages(a.features).map(pkg => [pkg, rangeOf(versions[pkg])]));
 
   // aalis.service：声明运行时服务依赖/提供，供市场装前披露，须与 definePlugin 的 uses / provides 一致。
   const json: Record<string, unknown> = {
@@ -310,7 +310,7 @@ export function renderPackageJson(a: Answers, versions: Versions): string {
     // 市场据此做安装前能力披露，须与 definePlugin 的 uses / provides 保持一致：
     // { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
     aalis: {
-      service: { required: ['logger'], ...(caps.length ? { optional: caps.map(c => c.service) } : {}) },
+      service: { required: coreUses(a.features), ...(caps.length ? { optional: caps.map(c => c.service) } : {}) },
     },
   };
   return `${JSON.stringify(json, null, 2)}\n`;
@@ -381,54 +381,84 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
     });
   }
   if (features.sessionSetting) {
-    out.push({
-      usesKey: 'sessionManager',
-      descriptor: 'sessionManager',
-      pkg: '@aalis/api-session-manager',
-      service: 'session-manager',
-      what: '会话设置项',
-    });
+    out.push(
+      {
+        usesKey: 'sessionFields',
+        descriptor: 'sessionFields',
+        pkg: '@aalis/api-session-settings',
+        service: 'session-settings',
+        what: '按会话读可按会话设的配置项',
+      },
+      {
+        usesKey: 'document',
+        descriptor: 'ownHostConfig',
+        pkg: '@aalis/api-host-config',
+        service: 'host-config',
+        what: '只读宿主配置里本插件那一段，作可按会话设的配置项的全局层',
+      },
+    );
   }
   return out;
 }
 
+/** 用到的 core 内置能力：logger 总有；声明了可按会话设的配置项时另有 config（没有宿主配置文档时它的全局层取这里） */
+function coreUses(features: Answers['features']): string[] {
+  return features.sessionSetting ? ['logger', 'config'] : ['logger'];
+}
+
 function usesObjectLiteral(features: Answers['features']): string {
   const caps = selectedCapabilityUses(features);
-  const parts = ['logger', ...caps.map(c => `${c.usesKey}: optional(${c.descriptor})`)];
+  const parts = [...coreUses(features), ...caps.map(c => `${c.usesKey}: optional(${c.descriptor})`)];
   return `{ ${parts.join(', ')} }`;
 }
 
 export function renderIndexTs(a: Answers): string {
   // 没有默认注入：apply 只收到 uses 里声明的各项
   const caps = selectedCapabilityUses(a.features);
-  const coreImports = ['definePlugin', 'logger'];
+  const core = coreUses(a.features);
+  const coreImports = ['definePlugin', ...core];
   if (caps.length > 0) coreImports.push('optional');
   const imports: string[] = [
     ...caps.map(c => `import { ${c.descriptor} } from '${c.pkg}';`),
     `import { ${coreImports.sort().join(', ')} } from '@aalis/core';`,
+    ...(a.features.sessionSetting ? ["import { defineConfig } from '@aalis/schema-config';"] : []),
   ];
-  const settingKey = settingKeyOf(a.packageName);
-  const declarations = a.features.sessionSetting
+  const schema = a.features.sessionSetting
     ? `
-// 会话设置项的值类型：经 declaration merging 加进 SessionConfig，与登记的键对应
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    ${settingKey}?: string;
-  }
-}
+// 配置项。写了 session 的字段可按会话设：各会话、群、平台档等可以各自设，没设时取插件配置里的值；宿主不把这类字段交给
+// config，apply 里经会话设置的读取器读
+const configSchema = defineConfig({
+  greeting: {
+    type: 'string',
+    label: '问候语',
+    description: '示例配置项：按会话设一个问候语',
+    default: '你好',
+    // appliesTo 是适用的会话种类：owner 是 WebUI 与终端里 owner 的会话，room 是群与私聊，task 是子会话；
+    // prominence 是显眼程度：composer 放在输入框旁，common 排在设置前面，advanced 收进「高级」
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+  },
+});
 `
     : '';
 
-  const params = ['logger', ...caps.map(c => c.usesKey)];
+  const params = [...core, ...caps.map(c => c.usesKey)];
   const body: string[] = [];
+  if (a.features.sessionSetting) {
+    body.push(
+      a.features.tool
+        ? `    // 可按会话设的配置项：apply 里调一次 fields() 登记给会话设置（随这次激活撤回，会话设置晚上线时自动补上），拿到读取器。
+    // 会话设置是可选依赖，不在时读取器只取插件配置里的值
+    const fields = sessionFields.use.fields(configSchema, { config, document });`
+        : `    // 可按会话设的配置项：apply 里调一次 fields() 登记给会话设置（随这次激活撤回，会话设置晚上线时自动补上），返回读取器，
+    // 按会话读写作 fields.get(会话 id, { platform: 入口平台 }).greeting；会话设置是可选依赖，不在时只取插件配置里的值
+    sessionFields.use.fields(configSchema, { config, document });`,
+    );
+  }
   if (a.features.tool) {
     const handler = a.features.sessionSetting
       ? `      async handler(args, ctx) {
-        // 按这次调用所在的会话读设置项的生效值（会话自己的、平台档与全局默认逐层叠出）；会话管理是可选依赖，先看它在不在，
-        // 不在或哪层都没设时用默认的问候语
-        const greeting =
-          (sessionManager.present ? sessionManager.use.resolveConfig(ctx.sessionId, ctx.platform).${settingKey} : undefined) ??
-          '你好';
+        // 按这次调用所在的会话读配置项的生效值：本会话、群、平台档等逐层叠出，哪一层都没设时是插件配置里的值
+        const { greeting } = fields.get(ctx.sessionId, { platform: ctx.platform });
         return \`\${greeting}, \${(args as { name: string }).name}!\`;
       },`
       : `      async handler(args) {
@@ -505,28 +535,14 @@ ${handler}
       },
     });`);
   }
-  if (a.features.sessionSetting) {
-    body.push(`    // 登记一个会话设置项：出现在会话设置里，各会话、各平台档可以各自设；登记随这次激活撤回，会话管理晚上线时自动补上。
-    // 读法：sessionManager.use.resolveConfig(会话 id, 平台).${settingKey}，哪层都没设时没有这个键；会话管理是可选依赖，
-    // 读之前先看 sessionManager.present（不在时访问成员抛错）
-    sessionManager.use.registerSetting({
-      key: '${settingKey}',
-      // 字段：类型、标签与说明，写入时按它校验；default 只供界面显示，要与哪层都没设时的行为一致
-      field: { type: 'string', label: '问候语', description: '示例设置项：按会话设一个问候语', default: '你好' },
-      // 适用的会话种类：owner 是 WebUI 与终端里 owner 的会话，room 是群与私聊，task 是子会话
-      appliesTo: ['owner', 'room', 'task'],
-      // 显眼程度：composer 放在输入框旁，common 排在设置前面，advanced 收进「高级」
-      prominence: 'advanced',
-    });`);
-  }
 
   return `${imports.join('\n')}
-${declarations}
+${schema}
 // 入口必须默认导出 definePlugin 的产物：加载器只认它
 export default definePlugin({
   name: '${a.packageName}',
   displayName: ${JSON.stringify(a.displayName)},
-  // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
+${a.features.sessionSetting ? '  configSchema,\n' : ''}  // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
   uses: ${usesObjectLiteral(a.features)},
   apply({ ${params.join(', ')} }) {
     logger.use.info('插件已加载');
@@ -572,7 +588,7 @@ npm install ${a.packageName}                 # 发布到 npm 之后
 读取配置时安装 \`@aalis/schema-config\`（>=0.15.0），用 \`defineConfig\` 定义 schema，
 在 apply 开头调用 \`parseConfig(schema, config.use, logger.use)\`。\`config\` 与 \`logger\` 都要写进 uses；
 后续只读取解析结果。地址、启动参数等字段用 \`onInvalid: 'error'\` 拒绝错误值。
-
+${a.features.sessionSetting ? SESSION_FIELD_README : ''}
 ## 扩展点
 
 入口是 \`export default definePlugin({ uses, apply })\`。用到的服务经描述符导入后写进
@@ -584,6 +600,13 @@ ${bullets ? `${bullets}\n` : ''}
 请打开 \`src/index.ts\` 按需修改。
 ${a.features.webui === 'frame' ? FRAME_README : ''}`;
 }
+
+/** 声明了可按会话设的配置项时 README 多的一段 */
+const SESSION_FIELD_README = `
+写了 \`session\` 的字段可按会话设（本模板的问候语）：宿主不把它交给 \`config\`，\`parseConfig\` 也不产出它；
+在 apply 里调一次 \`sessionFields.use.fields(configSchema, { config, document })\` 拿读取器，按会话读
+\`fields.get(会话 id, { platform: 入口平台 })\`。会话设置插件不在时读取器只取插件配置里的值。
+`;
 
 /** 选了自带前端时 README 多的一节 */
 const FRAME_README = `

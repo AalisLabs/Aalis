@@ -84,3 +84,17 @@
   flex: 1;
   min-width: 0;
 }
+
+/* 偏好那一行下面的可按会话设置的标记，与行里的字对齐 */
+.plugin-preference-marks {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.plugin-preference-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}

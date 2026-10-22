@@ -18,6 +18,7 @@ export function stubBoundTools(options: { onRegister?(tool: ToolSpec): void; cur
     getAll: missing,
     execute: missing,
     setExecutionGuard: missing,
+    sessionGroups: missing,
     getGroups: missing,
   };
   return Object.assign(Object.create(reads) as BoundTools, {

@@ -21,7 +21,6 @@ import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import {
   dependencyOf,
-  effectiveOf,
   formatValue,
   hasChoices,
   type Option,
@@ -285,7 +284,7 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
 
 interface ComposerSettingsProps {
   rows: readonly Row[];
-  update(key: string, value: unknown): Promise<void>;
+  update(row: Row, value: unknown): Promise<unknown>;
   /** 不能在这里选的设置项点了去会话的「设置」标签：链接写它的地址，点按交给 openSettings（标签关着时先打开） */
   settingsPath: string;
   openSettings(): void;
@@ -297,10 +296,15 @@ export function ComposerSettings({ rows, update, settingsPath, openSettings }: C
     .filter(row => row.prominence === 'composer')
     .map(row =>
       hasChoices(row.field) ? (
-        <SettingSelect key={row.key} row={row} dependency={dependencyOf(rows, row)?.value} update={update} />
+        <SettingSelect
+          key={`${row.plugin}/${row.key}`}
+          row={row}
+          dependency={dependencyOf(rows, row)?.value}
+          update={update}
+        />
       ) : (
         <SettingLink
-          key={row.key}
+          key={`${row.plugin}/${row.key}`}
           row={row}
           dependency={dependencyOf(rows, row)?.value}
           settingsPath={settingsPath}
@@ -311,18 +315,18 @@ export function ComposerSettings({ rows, update, settingsPath, openSettings }: C
 }
 
 /**
- * 不能就地选的项写生效值（按可选项的标签），没有值时写登记方给的「没设时」，都没有才写名字；点了去会话的「设置」标签。
- * 样子与就地选的选择器一样，只是不带箭头
+ * 不能就地选的项写生效值（按可选项的标签），没有值时写声明给的「没设时」（另写此刻实际在用的值），都没有才写名字；点了去
+ * 会话的「设置」标签。样子与就地选的选择器一样，只是不带箭头
  */
 function SettingLink({
   row,
   dependency,
   settingsPath,
   openSettings,
-}: { row: Row; dependency: unknown } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
+}: { row: Row; dependency?: string } & Pick<ComposerSettingsProps, 'settingsPath' | 'openSettings'>) {
   const { options, names } = useFieldOptions(row.field, 0, dependency);
-  const effective = effectiveOf(row);
-  const shown = effective === undefined ? unsetOf(row) : formatValue(row.field, effective, [...options, ...names]);
+  const shown =
+    row.effective === undefined ? unsetOf(row) : formatValue(row.field, row.effective, [...options, ...names]);
   const name = shown === undefined ? row.field.label : tr('settingValue', { label: row.field.label, value: shown });
   return (
     <Link
@@ -352,14 +356,14 @@ function SettingSelect({
   update,
 }: {
   row: Row;
-  dependency: unknown;
+  dependency?: string;
   update: ComposerSettingsProps['update'];
 }) {
   const { field } = row;
   const toast = useToast();
   const sessions = useProvider(SESSION_PROTOCOL);
   const { options, names, error } = useFieldOptions(field, 0, dependency);
-  const current = effectiveOf(row);
+  const current = row.effective;
   const choices = withCurrent(field, options, current, names);
   const fallback = options.find(option => option.isDefault);
   const failed = error && tr('optionsFailed', { error: error.message });
@@ -376,7 +380,7 @@ function SettingSelect({
       ]}
       onChange={key => {
         const chosen = choices.find(option => option.key === key) as Option;
-        update(row.key, chosen.value).catch((err: Error) =>
+        update(row, chosen.value).catch((err: Error) =>
           toast({
             kind: 'danger',
             text: tr('settingNotChanged', { label: field.label, error: err.message }),

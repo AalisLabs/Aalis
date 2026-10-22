@@ -30,12 +30,12 @@ import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js'
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
 // 按一次工具调用签发凭据：发起类别取权限服务的 originOf（只有 owner 本人与 owner 链的延续算 owner，子任务随发起它的那一轮
-// 父会话），房间类别、档位与越界策略（根会话的生效设置）、场所与绑定取会话管理里的记录，仓库的 git 目录按磁盘找，三张清单
-// 在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次判定时取
-// 当时的，降档与受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源记录。
+// 父会话），房间类别、场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张
+// 清单在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次判定时
+// 取当时的，受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源记录。
 // ════════════════════════════════════════════════════════════
 
-/** 哪一层都没设时的档位与越界策略 */
+/** 档位与越界策略：还不能按会话设，固定为工作区档、越界要问 */
 const DEFAULT_TIER: AccessTier = 'workspace';
 const DEFAULT_BOUNDARY: BoundaryPolicy = 'ask';
 
@@ -49,7 +49,7 @@ const uses = {
   logger,
   /** 家目录布局：三张清单、白纸与本会话临时区都按它 */
   paths: hostPaths,
-  /** 会话记录、绑定，档位与越界策略的生效值 */
+  /** 会话记录与绑定 */
   sessionManager,
   /** 污点与来源记录落在插件数据里 */
   storage,
@@ -106,21 +106,20 @@ async function run(caps: Caps): Promise<void> {
   const deleting = new Map<string, Promise<void>>();
 
   /**
-   * 一个会话的触及，返回每次调用都重算的函数：绑定与仓库的 git 目录（按磁盘找，异步）在这里取好；档位与越界策略（子会话不读
-   * 自己的，按根会话的生效设置）、房间类别、污点与子任务的父会话在每次调用时取当时的
+   * 一个会话的触及，返回每次调用都重算的函数：绑定与仓库的 git 目录（按磁盘找，异步）在这里取好；房间类别、污点与子任务的
+   * 父会话在每次调用时取当时的
    */
-  async function reachOf(sessionId: string, platform: string, principal: Principal): Promise<() => Reach> {
+  async function reachOf(sessionId: string, principal: Principal): Promise<() => Reach> {
     const work = rootSessionOf(sm.getSession(sessionId), lookup)?.work;
     const gitDir = work && (await gitDirOf(work.root));
     return () => {
       const info = sm.getSession(sessionId);
-      const config = sm.resolveConfig(rootSessionOf(info, lookup)?.id ?? sessionId, platform);
       const paper = paperOf(sessionId);
       return resolveReach({
         principal: typeof principal === 'function' ? { subtaskOf: principal() } : principal,
         roomClass: roomClass(info, lookup, isOwner),
-        tier: config.accessTier ?? DEFAULT_TIER,
-        onBoundary: config.accessOnBoundary ?? DEFAULT_BOUNDARY,
+        tier: DEFAULT_TIER,
+        onBoundary: DEFAULT_BOUNDARY,
         tainted: provenance.taintOf(sessionId),
         // 主目录：项目工作区是绑定目录，其余是场所的白纸
         place: { home: work?.root ?? paper, paper },
@@ -139,9 +138,7 @@ async function run(caps: Caps): Promise<void> {
     const origin = caps.authority.present ? caps.authority.use.originOf(call) : undefined;
     if (origin === 'subtask') {
       const parentId = sm.getSession(call.sessionId)?.parentId;
-      return parentId && spawnedBy.get(call.sessionId) === 'owner'
-        ? reachOf(parentId, call.platform, 'owner')
-        : 'other';
+      return parentId && spawnedBy.get(call.sessionId) === 'owner' ? reachOf(parentId, 'owner') : 'other';
     }
     const principal = origin === 'owner' || origin === 'owner-chain' ? 'owner' : 'other';
     lastPrincipal.set(call.sessionId, principal);
@@ -150,7 +147,7 @@ async function run(caps: Caps): Promise<void> {
 
   const service: ReachService = {
     async forCall(call) {
-      const credential = issueCredential(await reachOf(call.sessionId, call.platform, await principalOf(call)), {
+      const credential = issueCredential(await reachOf(call.sessionId, await principalOf(call)), {
         sessionId: call.sessionId,
         papers: paths.stage.paper,
         userHome,

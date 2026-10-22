@@ -214,8 +214,8 @@ interface SetupOptions {
   media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
   /** persona 提供者，按顺序登记（先登记者为胜者） */
   personas?: PersonaService[];
-  /** session-manager 替身：只用 resolveConfig 与 getSession */
-  sessionManager?: Partial<Pick<SessionManagerService, 'resolveConfig' | 'getSession'>>;
+  /** session-manager 替身：只用 getSession */
+  sessionManager?: Partial<Pick<SessionManagerService, 'getSession'>>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
   /** process 服务替身（托管侧车用） */
@@ -628,9 +628,9 @@ describe('plugin-trigger-laya：判定各步骤', () => {
   });
 
   it('名字表按会话取人设：两个会话用不同的卡，点名识别与发给侧车的 selfNames 各用各的，不串', async () => {
-    const byCard: Record<string, [string, string[]]> = { bob: ['Bob', ['阿B']] };
+    // 人设服务按会话选卡：GROUP_SID 用 bob 卡，别的会话用主卡
     const pick = (o?: PersonaSessionOptions): [string, string[]] =>
-      (o?.persona && byCard[o.persona]) || ['Aalis', ['小A']];
+      o?.sessionId === GROUP_SID ? ['Bob', ['阿B']] : ['Aalis', ['小A']];
     const card: PersonaService = {
       getSystemPrompt: () => '',
       getPersonaName: o => pick(o)[0],
@@ -638,10 +638,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     };
     // 兜底 speak = 是否被点名：用 422 让判定落到兜底，放行与否即点名与否
     sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
-    const { send } = await setup({
-      personas: [card],
-      sessionManager: { resolveConfig: sid => (sid === GROUP_SID ? { persona: 'bob' } : {}) },
-    });
+    const { send } = await setup({ personas: [card] });
     const inOther = (content: string) => groupMsg(content, { sessionId: 'onebot:10000:group:20002', groupId: '20002' });
 
     expect((await send(groupMsg('Bob 在吗'))).reached).toBe(true);
@@ -926,7 +923,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     ]);
     const { send } = await setup({
       laya: { scopes: ['*'] },
-      sessionManager: { resolveConfig: () => ({}), getSession: id => rooms.get(id) },
+      sessionManager: { getSession: id => rooms.get(id) },
     });
     const webui = (sessionId: string): IncomingMessage => ({ content: '插一句', platform: 'webui', sessionId });
 

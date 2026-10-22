@@ -38,6 +38,7 @@
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
@@ -59,6 +60,7 @@
         "storage",
         "approvals",
         "session-manager",
+        "session-settings",
         "contributions"
       ],
       "provides": [

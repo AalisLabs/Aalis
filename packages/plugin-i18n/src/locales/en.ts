@@ -27,7 +27,6 @@ export default defineLocale<Source>()({
   settingLabel: 'Language',
   settingDescription:
     'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used. "Follow system" uses the system language of the machine running the service, not the reader’s',
-  settingUnset: 'English',
   followSystem: 'Follow system (currently: {current})',
   badLanguage: '{tag} is not a valid language tag',
   languagesProvided: 'Every language in the language list is provided by a plugin',
@@ -37,7 +36,7 @@ export default defineLocale<Source>()({
     'Follow system in {layer} is currently {language}, which no plugin provides; {used} is used instead',
   layerLanguageUnprovided: '{language} in {layer} is not provided by any plugin; {used} is used instead',
   layerPlatform: '{layer} {platform}',
-  layerType: '{layer} {platform} · {type}',
+  layerPlatformType: '{layer} {platform} · {type}',
   layerPlace: '{layer} “{place}”',
   installPack:
     'Install a language pack that provides it (search the plugin market or npm for the keyword {keywords, list, or}), or adjust the “Language” list in the session settings for {layer}',

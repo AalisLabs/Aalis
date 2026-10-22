@@ -26,7 +26,7 @@ const TRIGGERABLE = new Map<string, string>([
   ['app:restarting', '没有负载'],
   ['app:stopping', '没有负载'],
   ['doctor:updated', '诊断时刻与各级计数'],
-  ['session:config:changed', '没有负载'],
+  ['session-settings:changed', '没有负载'],
   ['terminal:claimed', '占用终端的插件名'],
   ['terminal:released', '占用终端的插件名'],
   ['scheduler:job:start', '任务名（owner 写下或审批过）'],

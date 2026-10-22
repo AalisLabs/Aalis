@@ -51,7 +51,7 @@ vi.mock(import('../../packages/util-offline-render/src/index.js'), async importO
 }));
 
 function session(id: string, fields: Partial<SessionInfo> = {}): SessionInfo {
-  return { id, children: [], status: 'waiting', config: {}, createdAt: 0, updatedAt: 0, kind: 'room', ...fields };
+  return { id, children: [], status: 'waiting', createdAt: 0, updatedAt: 0, kind: 'room', ...fields };
 }
 
 /** 会话表：群（带一个子会话与孙会话）、owner 的 IM 私聊、WebUI 会话、另一个群 */

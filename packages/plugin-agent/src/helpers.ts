@@ -8,8 +8,6 @@
  */
 import { estimateMsgTokens } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
-import type { PersonaSessionOptions } from '@aalis/api-persona';
-import type { SessionConfig } from '@aalis/api-session-manager';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -56,7 +54,7 @@ export const INPUT_CONVENTIONS = [
 ].join('\n');
 
 /**
- * 群聊焦点指引 —— 仅在群聊被显式触发（@ / 直接对话）时注入。
+ * 群聊焦点指引 —— 仅在多方窗口被显式触发（@ / 直接对话）时注入。
  *
  * 背景痛点：群里多人陈述某事件 E，A 突然 @bot「你怎么看 E」。bot 看到的 messages 是
  * 「B 长篇陈述 → C 长篇陈述 → D 长篇陈述 → A 简短@」，注意力容易被最显眼的陈述吸走，
@@ -66,11 +64,14 @@ export const INPUT_CONVENTIONS = [
  *   - 评价对象（被引用 / 被讨论的事件 E）
  *   - 引用者（发言者本人）
  *
- * 仅 sessionType=group 且 triggerType ∈ {direct, immediate} 时返回，其他场景返回 null
- * （interval/idle/proactive/witness 没有清晰诉求主体，强加焦点反而会误导）。
+ * 仅多方窗口（multiParty：调用方与网关同一算法按这个平台的类型声明算出，不认类型名）且 triggerType ∈ {direct, immediate}
+ * 时返回，其他场景返回 null（interval/idle/proactive/witness 没有清晰诉求主体，强加焦点反而会误导）。
  */
-export function buildFocusGuidance(incoming: IncomingMessage): Message | null {
-  if (incoming.sessionType !== 'group') return null;
+export function buildFocusGuidance(
+  incoming: Pick<IncomingMessage, 'triggerType'>,
+  multiParty: boolean,
+): Message | null {
+  if (!multiParty) return null;
   const t = incoming.triggerType;
   if (t !== 'direct' && t !== 'immediate') return null;
 
@@ -197,20 +198,6 @@ export function describeLLMFailure(
   // 就必命中。所以走到这里意味着取数与解析看到的不是同一份快照（例如两次调用之间服务被
   // 注销），**不是**「没有可用 entry」。文案要说这个，别谎称都不可用。
   return t('llmUnresolved', { count: available.length });
-}
-
-/**
- * 会话解析结果 → persona 的会话选项。真实回合与 token:request 快照共用这一份构造，
- * 快照里 persona 那一桶才会按会话实际人设与额外提示估算。无 session-manager 时给 undefined（全局默认）。
- */
-export function toPersonaOptions(resolved: SessionConfig | undefined): PersonaSessionOptions | undefined {
-  if (!resolved) return undefined;
-  return {
-    persona: resolved.persona,
-    disableOutputFormat: resolved.disableOutputFormat,
-    clientSideJsonRendering: resolved.clientSideJsonRendering,
-    systemPromptExtra: resolved.systemPromptExtra,
-  };
 }
 
 /**

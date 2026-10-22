@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Approval, ApprovalSettlement } from '../../packages/api-approval/src/index.js';
-import type { SessionConfigLayer, SessionPlace } from '../../packages/api-session-manager/src/index.js';
+import type { SessionPlace } from '../../packages/api-session-manager/src/index.js';
 import {
   type ApprovalSchema,
   type ApprovalSettlementSchema,
@@ -19,9 +19,11 @@ import {
   type SessionNotificationParams,
   type SessionSummary,
   type SettingLayer,
+  type SettingRow,
   sessionMethods,
   sessionNotifications,
 } from '../../packages/api-session-protocol/src/index.js';
+import type { SessionSettingsLayer, SessionSource } from '../../packages/api-session-settings/src/index.js';
 import type { BackgroundTask as RegisteredTask } from '../../packages/api-tools/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 
@@ -103,28 +105,46 @@ const approval: Approval = {
   state: 'pending',
 };
 
+const ALL = ['owner', 'room', 'task'] as const;
+/** 行上的字段原样带 session 声明；模型没设时带此刻实际在用的那一个 */
 const settingRows: SessionMethodResult<'session/config/get'> = {
   items: [
     {
-      key: 'llm',
-      field: { type: 'llm-ref', label: '模型' },
       plugin: '@aalis/plugin-agent',
+      key: 'llm',
+      field: {
+        type: 'llm-ref',
+        label: '模型',
+        session: { appliesTo: ALL, prominence: 'composer', preference: 'llm', unset: '跟随服务偏好', minLevel: 1 },
+      },
       prominence: 'composer',
-      resolved: { provider: 'zz-llm', model: 'zz-chat' },
+      actual: { value: { provider: 'zz-llm', model: 'zz-chat' }, label: 'zz-chat' },
     },
     {
-      key: 'persona',
-      field: { type: 'select', label: '人设', dynamicOptions: 'persona', allowCustom: true },
       plugin: '@aalis/plugin-persona',
+      key: 'persona',
+      field: {
+        type: 'select',
+        label: '人设',
+        dynamicOptions: 'persona',
+        allowCustom: true,
+        default: 'default',
+        session: { appliesTo: ALL, prominence: 'common', minLevel: 1 },
+      },
       prominence: 'common',
       value: 'aalis',
       effective: 'aalis',
       source: 'session',
     },
     {
-      key: 'enabledToolGroups',
-      field: { type: 'multiselect', label: '工具分组' },
       plugin: '@aalis/plugin-tools',
+      key: 'enabledToolGroups',
+      field: {
+        type: 'multiselect',
+        label: '工具分组',
+        default: [],
+        session: { appliesTo: ALL, prominence: 'common' },
+      },
       prominence: 'common',
       effective: ['*'],
       source: 'platform',
@@ -132,6 +152,7 @@ const settingRows: SessionMethodResult<'session/config/get'> = {
   ],
 };
 const [modelRow, personaRow] = settingRows.items;
+const { session: _declared, ...undeclaredField } = personaRow.field;
 
 type Pair<T> = { valid: T; invalid: unknown };
 type MethodSamples = {
@@ -151,7 +172,7 @@ const methodSamples: MethodSamples = {
         server: { name: '@aalis/plugin-session-server' },
         identity: { platform: 'webui', userId: 'console' },
         surface: 'webui',
-        features: { send: true, rewind: false, compress: true },
+        features: { send: true, rewind: false, compress: true, settings: true },
         appName: 'Aalis',
       },
       invalid: {
@@ -160,7 +181,7 @@ const methodSamples: MethodSamples = {
         server: { name: '@aalis/plugin-session-server' },
         identity: { platform: 'webui', userId: 'console' },
         surface: 'webui',
-        features: { send: true },
+        features: { send: true, rewind: false, compress: true },
       },
     },
   },
@@ -234,33 +255,38 @@ const methodSamples: MethodSamples = {
     params: { valid: { sessionId: 'session-1' }, invalid: { id: 'session-1' } },
     result: {
       valid: settingRows,
-      invalid: { items: [{ ...personaRow, source: 1 }] },
+      // 字段要带 session 声明；来源只取层名与 default
+      invalid: { items: [{ ...personaRow, field: undeclaredField }] },
     },
   },
   'session/config/update': {
     params: {
-      valid: { sessionId: 'session-1', patch: { persona: null, llm: { provider: 'p', model: 'm' }, think: 'off' } },
-      invalid: { sessionId: 'session-1', patch: ['persona'] },
+      valid: { sessionId: 'session-1', plugin: '@aalis/plugin-persona', key: 'persona', value: null },
+      // 一次写一项，不收整块的 patch；value 不能不给
+      invalid: { sessionId: 'session-1', plugin: '@aalis/plugin-persona', key: 'persona' },
     },
-    result: { valid: settingRows, invalid: { items: [{ ...modelRow, field: { type: 'llm-ref' } }] } },
+    result: {
+      valid: { ...settingRows, unsaved: '已在运行态生效，但未写入配置文件' },
+      invalid: { items: [{ ...modelRow, source: 'defaults' }] },
+    },
   },
   'session/config/layers': {
     params: { valid: {}, invalid: null },
     result: {
       valid: {
         layers: [
-          { scope: 'defaults' },
-          { scope: 'platform', platform: 'onebot' },
-          { scope: 'type', platform: 'onebot', type: 'group' },
-          { scope: 'place', key: 'workspace:default' },
+          { layer: { scope: 'global' } },
+          { layer: { scope: 'platform', platform: 'onebot' } },
+          { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } },
+          { layer: { scope: 'place', key: 'workspace:default' }, label: '默认工作区' },
         ],
         order: [
-          { name: 'defaults', label: '全局默认' },
+          { name: 'global', label: '全局（插件配置）' },
           { name: 'platform', label: '平台档' },
         ],
       },
-      // 层表随回包给出，客户端不另存一份
-      invalid: { layers: [{ scope: 'defaults' }] },
+      // 层带在 layer 里，层表随回包给出
+      invalid: { layers: [{ scope: 'global' }], order: [] },
     },
   },
   'session/config/layer/get': {
@@ -272,10 +298,42 @@ const methodSamples: MethodSamples = {
   },
   'session/config/layer/update': {
     params: {
-      valid: { layer: { scope: 'type', platform: 'onebot', type: 'private' }, patch: { persona: 'aalis' } },
-      invalid: { layer: { scope: 'type', platform: 'onebot' }, patch: {} },
+      valid: {
+        layer: { scope: 'platformType', platform: 'onebot', type: 'private' },
+        plugin: '@aalis/plugin-persona',
+        key: 'persona',
+        value: 'aalis',
+      },
+      // 没有单独的类型档：要对所有群生效按平台分别设在平台类型档
+      invalid: {
+        layer: { scope: 'type', type: 'group' },
+        plugin: '@aalis/plugin-persona',
+        key: 'persona',
+        value: 'aalis',
+      },
     },
     result: { valid: settingRows, invalid: { items: [{ ...modelRow, plugin: undefined }] } },
+  },
+  'session/config/overrides': {
+    params: { valid: { plugin: '@aalis/plugin-agent' }, invalid: {} },
+    result: {
+      valid: {
+        items: [
+          {
+            key: 'maxToolIterations',
+            entries: [
+              { target: { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } }, value: 15 },
+              { target: { sessionId: 'session-1', title: '会话' }, value: 40 },
+              {
+                target: { sessionId: 'task-1', title: '子任务', parent: { sessionId: 'session-1', title: '会话' } },
+                value: 5,
+              },
+            ],
+          },
+        ],
+      },
+      invalid: { items: [{ key: 'maxToolIterations', entries: [{ target: { sessionId: 'task-1' }, value: 5 }] }] },
+    },
   },
   'session/markSeen': {
     params: { valid: { sessionId: 'session-1' }, invalid: { sessionId: null } },
@@ -590,8 +648,8 @@ const notificationSamples: NotificationSamples = {
     invalid: { approvalId: 'ap-1', state: 'pending', source: 'absent', at: 9 },
   },
   'features/changed': {
-    valid: { features: { send: true, rewind: true, compress: false } },
-    invalid: { features: { send: true, rewind: true } },
+    valid: { features: { send: true, rewind: true, compress: false, settings: false } },
+    invalid: { features: { send: true, rewind: true, compress: false } },
   },
 };
 
@@ -604,8 +662,12 @@ type ProtocolTask = ReturnType<(typeof BackgroundTaskSchema)['parse']>;
 /** 后台任务的种类与状态取 api-tools 登记表的同一组值（类型检查守） */
 const taskKindInSync: Same<ProtocolTask['kind'], RegisteredTask['kind']> = true;
 const taskStatusInSync: Same<ProtocolTask['status'], RegisteredTask['status']> = true;
-/** 按层读写的层与 api-session-manager 的 SessionConfigLayer 同形，摘要里场所的类别与 SessionPlace 同一组值（类型检查守） */
-const layerInSync: Same<SettingLayer, SessionConfigLayer> = true;
+/**
+ * 按层读写的层与 api-session-settings 的 SessionSettingsLayer 同形，行的来源与 SessionSource 同一组值，摘要里场所的类别与
+ * SessionPlace 同一组值（类型检查守）
+ */
+const layerInSync: Same<SettingLayer, SessionSettingsLayer> = true;
+const sourceInSync: Same<NonNullable<SettingRow['source']>, SessionSource> = true;
 const placeKindInSync: Same<SessionSummary['place']['kind'], SessionPlace['kind']> = true;
 
 /** 经 JSON 往返后用 schema 解析：结果与原样例相等 */
@@ -624,8 +686,9 @@ describe('会话协议 schema 往返', () => {
     expect(taskStatusInSync).toBe(true);
   });
 
-  it('层与 SessionConfigLayer 同形，场所的类别与 SessionPlace 同一组值（类型检查守）', () => {
+  it('层与 SessionSettingsLayer 同形，来源与 SessionSource、场所的类别与 SessionPlace 同一组值（类型检查守）', () => {
     expect(layerInSync).toBe(true);
+    expect(sourceInSync).toBe(true);
     expect(placeKindInSync).toBe(true);
   });
 
@@ -670,10 +733,29 @@ describe('会话协议 schema 往返', () => {
         },
       ],
       [
-        sessionMethods['session/config/get'].result,
-        { items: [{ ...personaRow, field: { type: 'string', label: text }, unset: text }] },
+        sessionMethods['session/config/update'].result,
+        {
+          items: [
+            {
+              ...modelRow,
+              field: { ...modelRow.field, label: text, session: { ...modelRow.field.session, unset: text } },
+              actual: { value: 'm', label: text },
+            },
+          ],
+          unsaved: text,
+        },
       ],
-      [sessionMethods['session/config/layers'].result, { layers: [], order: [{ name: 'defaults', label: text }] }],
+      [
+        sessionMethods['session/config/layers'].result,
+        {
+          layers: [{ layer: { scope: 'place', key: 'onebot:group:20001' }, label: text }],
+          order: [{ name: 'global', label: text }],
+        },
+      ],
+      [
+        sessionMethods['session/config/overrides'].result,
+        { items: [{ key: 'k', entries: [{ target: { sessionId: 's', title: text }, value: 1 }] }] },
+      ],
       [
         sessionNotifications['item/completed'],
         item({ kind: 'agent-message', itemId: 'a', at: 1, text: 'x', attachments: [], undelivered: { reason: text } }),

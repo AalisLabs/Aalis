@@ -84,7 +84,7 @@ function world(opts: WorldOptions = {}) {
     events: events as never,
     limits: { maxWaitSeconds: opts.maxWaitSeconds ?? 600, maxPerSession: opts.maxPerSession ?? 4 },
   });
-  const registry = new ToolRegistry(logger, tasks);
+  const registry = new ToolRegistry(logger, tasks, () => []);
   const guarded: ExecutionGuardContext[] = [];
   registry.setExecutionGuard(async ctx => {
     guarded.push(ctx);

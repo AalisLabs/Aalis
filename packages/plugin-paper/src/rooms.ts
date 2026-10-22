@@ -1,153 +1,51 @@
 // ============================================================
 // 房间与资格：房间用哪块白纸、谁能发起、远端条件是否成立
 //
-// - 房间白纸：会话配置 paperEnabled 为 true 才开；写了 paperName 用同名的具名白纸，否则每个窗口（场所）一块。
+// - 房间白纸：本插件的按会话字段 paperEnabled 为 true 才开；写了 paperName 用同名的具名白纸，否则每个窗口（场所）一块。
 // - 资格：交任务与取消只受理真人在房间会话本身里当面发起的回合（ctx.inbound 存在且 source 缺省、
 //   有效授权身份的 userId 非空）；查状态与发成品只要求房间会话本身与入站回合。
 // - 远端条件：提供者按白纸写的实例 id 精确取（不用默认选中的那一家，不回落到别的提供者），出网不超过白纸上限，
 //   不违反同账号隔离，记录读取正常，白纸没有停开，提供者实例没有未读的未登记代理告警。
 // - 共用：一块具名白纸被哪些房间共用（WebUI 白纸页与诊断项用），长期代理的对话与工作区对它们都可见。
-// - 房间的开关与上限是本插件登记的会话设置项（ROOM_SETTINGS），只对房间适用，只能设到场所为止（按窗口设，换会话不丢），
-//   不随建子会话复制。
+// - 房间的开关与上限是本插件的六个按会话字段（config.ts），只对房间适用，只能设到场所为止（按窗口设，换会话不丢），
+//   建子会话时不写进子会话（子会话本来就不适用）。
 // ============================================================
 
 import { type EgressReport, egressWithin, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
-import {
-  type InheritanceSource,
-  placePaperId,
-  SESSION_LAYERS,
-  type SessionConfig,
-  type SessionConfigLayer,
-  type SessionInfo,
-  type SessionInheritance,
-  type SessionManagerService,
-  type SessionSetting,
-} from '@aalis/api-session-manager';
+import { placePaperId, type SessionInfo, type SessionManagerService } from '@aalis/api-session-manager';
+import { describeLayer, type SessionFieldReader, type SessionSettingsLayer } from '@aalis/api-session-settings';
 import type { ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
-import type { PaperConfig, PaperSpec } from './config.js';
+import type { SessionFieldsOf } from '@aalis/schema-config';
+import type { configSchema, PaperConfig, PaperSpec } from './config.js';
 import type { LedgerStore, PaperLedger } from './ledger.js';
 import { category, describe } from './util.js';
 
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 本房间开启白纸（默认关） */
-    paperEnabled?: boolean;
-    /** 白纸名；不写则每个房间各一块，属性取白纸插件配置的 defaults */
-    paperName?: string;
-    /** 允许的远端代理类型（远端代理插件实例 id）；空或缺省即关 */
-    remoteAgentTypes?: string[];
-    /**
-     * 每人每天金额上限（美分）；缺省不增加这一层限制，0 禁止新远端任务。写坏了的原值照样交出（字段标了
-     * onInvalid: 'error'），预算按 0 处理
-     */
-    remoteAgentUserDailyCents?: unknown;
-    /** 每人每天件数上限；缺省不按人限制 */
-    remoteAgentUserDailyTasks?: number;
-    /** 本房间每天金额上限（美分）；缺省、0 与写坏了的处理同每人每天金额 */
-    remoteAgentRoomDailyCents?: unknown;
-  }
-}
+/** 本插件按会话字段的读取器 */
+export type PaperFields = SessionFieldReader<typeof configSchema>;
 
-/**
- * 房间专用的一项：只对房间适用，只能设到场所为止（按窗口设，换会话不丢），只经继承链实时解析（建子会话不复制，免得子会话
- * 凭冻结的值开远端任务）；unset 是没设时的含义
- */
-const roomSetting = (
-  order: number,
-  key: SessionSetting['key'],
-  field: SessionSetting['field'],
-  unset?: string,
-): SessionSetting => ({
-  key,
-  field,
-  appliesTo: ['room'],
-  narrowest: 'place',
-  prominence: 'advanced',
-  order,
-  liveOnly: true,
-  unset,
-});
-
-/** 本插件登记的会话设置项：房间的白纸开关与远端代理的类型、上限 */
-export const ROOM_SETTINGS: SessionSetting[] = [
-  roomSetting(0, 'paperEnabled', { type: 'boolean', label: '开启白纸', description: '这个房间开启白纸（默认关）' }),
-  roomSetting(
-    1,
-    'paperName',
-    {
-      type: 'string',
-      label: '白纸名',
-      description: '留空则每个窗口各一块白纸，属性取白纸插件配置的 defaults；几个窗口写同一个名字就共用一块',
-    },
-    '每个窗口各一块',
-  ),
-  roomSetting(
-    2,
-    'remoteAgentTypes',
-    {
-      type: 'multiselect',
-      label: '远端代理类型',
-      allowCustom: true,
-      description: '允许的远端代理插件实例 id；空即关',
-    },
-    '不允许',
-  ),
-  roomSetting(
-    3,
-    'remoteAgentUserDailyCents',
-    {
-      type: 'number',
-      label: '每人每天金额上限（美分）',
-      min: 0,
-      onInvalid: 'error',
-      description: '留空不增加每人金额限制，0 禁止新远端任务；写坏了按 0',
-    },
-    '不另加限制',
-  ),
-  roomSetting(
-    4,
-    'remoteAgentUserDailyTasks',
-    {
-      type: 'number',
-      label: '每人每天件数上限',
-      min: 0,
-      description: '留空即不按人限制',
-    },
-    '不按人限制',
-  ),
-  roomSetting(
-    5,
-    'remoteAgentRoomDailyCents',
-    {
-      type: 'number',
-      label: '每房间每天金额上限（美分）',
-      min: 0,
-      onInvalid: 'error',
-      description: '留空不增加房间金额限制，0 禁止新远端任务；写坏了按 0',
-    },
-    '不另加限制',
-  ),
-];
+/** 一个房间的六项生效值 */
+export type RoomSettings = SessionFieldsOf<typeof configSchema>;
 
 export interface RoomPaper {
   /** n:<名>，或场所的白纸 id（api-session-manager 的 placePaperId） */
   paperId: string;
   spec: PaperSpec;
-  /** 房间的生效会话配置 */
-  room: SessionConfig;
+  /** 房间的六项生效值 */
+  room: RoomSettings;
 }
 
 /** 房间用哪块白纸；不开时给出原因。不写名字的用房间所在场所的那一块：同一个窗口里几个机器人账号的会话共用 */
 export function resolveRoomPaper(
   sm: SessionManagerService,
+  fields: PaperFields,
   cfg: PaperConfig,
   sessionId: string,
   platform: string | undefined,
 ): RoomPaper | { unavailable: string } {
-  const room = sm.resolveConfig(sessionId, platform);
+  const room = fields.get(sessionId, { platform });
   if (room.paperEnabled !== true) return { unavailable: '本房间没有开启白纸' };
-  const name = room.paperName?.trim() ?? '';
+  const name = room.paperName.trim();
   if (!name) return { paperId: placePaperId(sm.placeOf(sessionId).key), spec: cfg.defaults, room };
   const broken = cfg.brokenPapers.get(name);
   if (broken) return { unavailable: `白纸「${name}」的配置有误（${broken}），改对之前不能用` };
@@ -161,58 +59,53 @@ export function paperLabel(paperId: string): string {
   return paperId.startsWith('n:') ? paperId.slice(2) : `房间白纸 ${paperId}`;
 }
 
-/** 已登记的 IM 房间与各自的继承链：某个键落到了哪些房间、来自哪一层，对房间逐个看 */
-function imRoomInheritance(
-  sm: SessionManagerService,
-): Array<{ session: SessionInfo; inheritance: SessionInheritance }> {
+/**
+ * 已登记的 IM 房间与各自的白纸名。白纸设置只能设到场所为止，生效值只来自覆盖一类房间的三层与所在窗口的场所（哪一层都没设时
+ * 是空名字，配不上具名白纸），不用再按来源筛
+ */
+function imRoomPapers(sm: SessionManagerService, fields: PaperFields): Array<{ session: SessionInfo; name: string }> {
   return sm
     .listSessions()
     .filter(session => session.kind === 'room')
-    .map(session => ({ session, inheritance: sm.resolveInheritance(session.id) }));
+    .map(session => ({ session, name: fields.get(session.id).paperName }));
 }
 
 /**
- * 覆盖一类房间的层：全局默认覆盖全部房间，平台档覆盖这个平台的全部房间，平台类型档覆盖这个平台这种类型的全部房间（都包括
- * 还没登记的）
+ * 覆盖一类房间的层：全局（插件配置）覆盖全部房间，平台档覆盖这个平台的全部房间，平台类型档覆盖这个平台这种类型的全部房间
+ * （都包括还没登记的）
  */
-type ProfileLayer = Exclude<SessionConfigLayer, { scope: 'place' }>;
+type ProfileLayer = Exclude<SessionSettingsLayer, { scope: 'place' }>;
 
-/** 房间的白纸设置继承自这几层时算进共用：覆盖一类房间的三层与房间所在的窗口 */
-const SHARING_SOURCES: ReadonlySet<InheritanceSource> = new Set(['defaults', 'platform', 'type', 'place']);
-
-/** 写了某个设置项的全局默认、平台档与平台类型档，各带这一层的值 */
+/** 写了某一项的全局层、平台档与平台类型档，各带这一层的值 */
 export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
-  sm: SessionManagerService,
+  fields: PaperFields,
   key: K,
-): Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> {
-  const found: Array<{ layer: ProfileLayer; value: NonNullable<SessionConfig[K]> }> = [];
-  for (const layer of sm.listLayers()) {
+): Array<{ layer: ProfileLayer; value: RoomSettings[K] }> {
+  const found: Array<{ layer: ProfileLayer; value: RoomSettings[K] }> = [];
+  for (const { layer, values } of fields.layers()) {
     if (layer.scope === 'place') continue;
-    const value = sm.getLayer(layer)[key];
-    if (value !== undefined) found.push({ layer, value });
+    const value = values[key];
+    if (value !== undefined) found.push({ layer, value: value as RoomSettings[K] });
   }
   return found;
 }
 
-/** 覆盖一类房间的层的称呼：层表里的称呼，两档另加平台（与类型名），如「全局默认」「平台档 onebot」「平台类型档 onebot · group」 */
-export function profileName(layer: ProfileLayer): string {
-  const label = SESSION_LAYERS.find(({ name }) => name === layer.scope)?.label.source;
-  if (layer.scope === 'type') return `${label} ${layer.platform} · ${layer.type}`;
-  return layer.scope === 'platform' ? `${label} ${layer.platform}` : `${label}`;
-}
-
-/** 一层覆盖的全部房间的称呼，如「全局默认的全部房间」「平台档 onebot 的全部房间」（以平台名收尾的称呼与汉字隔一个空格） */
-const allRoomsOf = (layer: ProfileLayer) => `${profileName(layer)}${layer.scope === 'defaults' ? '' : ' '}的全部房间`;
+/**
+ * 一层覆盖的全部房间的称呼，如「全局（插件配置）的全部房间」「平台档 onebot 的全部房间」「平台类型档 onebot · group 的全部
+ * 房间」（以平台名或类型名收尾的称呼与汉字隔一个空格）
+ */
+const allRoomsOf = (layer: ProfileLayer) => `${describeLayer(layer)}${layer.scope === 'global' ? '' : ' '}的全部房间`;
 
 /**
- * 共用一块白纸的房间：已登记的 IM 房间里，从全局默认、平台档、平台类型档或所在窗口的场所继承了这个白纸名的；写了它的全局
- * 默认、平台档与平台类型档（覆盖一类房间，包括还没登记的）；以及记录里还没结束、或在上次清空之后才结束的任务所在的房间（它们的原文还在代理的
- * 对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。不写名字的白纸只有记录里的房间。
- * labels 是显示用的称呼（房间会话 id；覆盖一类房间的层写成「全局默认的全部房间」「平台档 X 的全部房间」「平台类型档 X · T
- * 的全部房间」）；shared：多于一个房间，或有覆盖一类房间的层写了它。
+ * 共用一块白纸的房间：已登记的 IM 房间里，从全局层、平台档、平台类型档或所在窗口的场所取到了这个白纸名的；写了它的全局层、
+ * 平台档与平台类型档（覆盖一类房间，包括还没登记的）；以及记录里还没结束、或在上次清空之后才结束的任务所在的
+ * 房间（它们的原文还在代理的对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。不写名字的白纸只有记录里的
+ * 房间。labels 是显示用的称呼（房间会话 id；覆盖一类房间的层写成「全局（插件配置）的全部房间」「平台档 X 的全部房间」
+ * 「平台类型档 X · T 的全部房间」）；shared：多于一个房间，或有覆盖一类房间的层写了它。
  */
 export function sharingRooms(
   sm: SessionManagerService,
+  fields: PaperFields,
   ledger: PaperLedger,
   paperId: string,
 ): { labels: string[]; shared: boolean } {
@@ -221,13 +114,10 @@ export function sharingRooms(
   if (paperId.startsWith('n:')) {
     const name = paperId.slice(2);
     const names = (value: string | undefined) => value?.trim() === name;
-    for (const { layer, value } of layersWith(sm, 'paperName')) {
+    for (const { layer, value } of layersWith(fields, 'paperName')) {
       if (names(value)) profiles.add(allRoomsOf(layer));
     }
-    for (const { session, inheritance } of imRoomInheritance(sm)) {
-      const source = inheritance.sources.paperName;
-      if (source && SHARING_SOURCES.has(source) && names(inheritance.values.paperName)) rooms.add(session.id);
-    }
+    for (const { session, name: paper } of imRoomPapers(sm, fields)) if (names(paper)) rooms.add(session.id);
   }
   const since = ledger.papers[paperId]?.lastClearedAt ?? 0;
   for (const task of Object.values(ledger.tasks)) {
@@ -378,8 +268,8 @@ export async function checkRemote(deps: {
   if (ledger.failure) return { unavailable: '白纸记录读取失败，远端任务暂停，等 owner 处理' };
   const type = spec.remoteAgentType;
   if (!type) return { unavailable: '这块白纸没有配置远端代理类型' };
-  const allowed = Array.isArray(paper.room.remoteAgentTypes) ? paper.room.remoteAgentTypes : [];
-  if (!allowed.includes(type)) return { unavailable: `本房间没有允许这块白纸的远端代理类型「${type}」` };
+  if (!paper.room.remoteAgentTypes.includes(type))
+    return { unavailable: `本房间没有允许这块白纸的远端代理类型「${type}」` };
   const provider = resolveRemoteAgent(remote, type);
   if (!provider) return { unavailable: `远端代理「${type}」不在场` };
   let egress: EgressReport;

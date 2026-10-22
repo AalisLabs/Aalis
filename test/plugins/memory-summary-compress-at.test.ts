@@ -1,125 +1,102 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { authority } from '../../packages/api-authority/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
-import { isSessionConfigError, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { isSessionSettingsError, sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { endTurn, fakeSummaryLLM } from '../fixtures/memory-summary.js';
-import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 自动压缩线是会话设置项 compressAt（摘要插件登记）：占窗口比例，各层都没设时 0.8，0 表示不按用量压缩。
-// 全局默认、平台档、平台类型档、场所与单个会话按层覆盖；没有出生平台的会话按入口平台选平台档。
+// 自动压缩线是摘要插件的按会话字段 compressAt：占窗口比例，0 到 1，作者默认 0.8，0 表示不按用量压缩，只有 owner 能改。
+// 全局层是插件配置；各会话按会话设置的各层取（层的先后由会话设置的用例钉住），没有出生平台的会话按入口平台选平台档。
+// 会话设置不在时取插件配置。
 // ════════════════════════════════════════════════════════════
 
-const ROOM = 'onebot:10000:group:1';
-/** 同一个群里另一个机器人账号的会话 */
-const ROOM_B = 'onebot:20000:group:1';
-const WINDOW = 'onebot:group:1';
-/** 别人的私聊 */
-const OTHER_DM = 'onebot:10000:private:30001';
-/** owner 的 IM 私聊：场所是默认工作区 */
-const OWNER_DM = 'onebot:10000:private:99999';
-
+const ID = memorySummary.name;
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup() {
-  const { app } = hostedApp();
+/** settings 为 false 时不装会话设置 */
+async function setup(doc: Partial<AalisConfig> = {}, { settings = true } = {}) {
+  const { app, store } = hostedApp(doc);
   apps.push(app);
   await registerHubs(app);
   const summaryLLM = fakeSummaryLLM();
-  const host = app.bind({ provide, events, hooks, memory, compression, sessionManager });
+  const host = app.bind({ provide, events, hooks, memory, compression, sessionManager, sessionSettings });
   await app.plugin(memoryInMemory);
-  await app.plugins.idle();
-  // 房间收录过（预置进会话表）：选平台档读会话记下的出生平台
-  await seedRooms(host.memory.use, { [ROOM]: '群', [ROOM_B]: '群', [OTHER_DM]: '别人', [OWNER_DM]: 'owner' });
-  host.provide.use(authority, {
-    isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === '99999',
-  } as never);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
+  if (settings) await app.plugin(sessionSettingsPlugin);
   host.provide.use(llm, summaryLLM.model);
-  await app.plugin(memorySummary);
+  await registerFromDoc(app, store, memorySummary);
   await app.plugins.idle();
-  if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
+  if (app.plugins.getPlugin(ID)?.state !== 'active') throw new Error('plugin-memory-summary 未激活');
   const sm = host.sessionManager.use;
   const owner = await sm.createSession({ name: '本机会话' });
-  const child = await sm.createChildSession(ROOM, { name: '群里派出的子任务' });
-  return { host, sm, owner, child, summaryLLM, compressAt: host.compression.use.compressAt };
+  /** 写这个会话本会话层的压缩线（会话设置的写入口，校验与门槛以外的写法同协议） */
+  const setOwn = (sessionId: string, value: unknown) =>
+    host.sessionSettings.use.update({ sessionId }, { plugin: ID, key: 'compressAt', value });
+  return { host, sm, owner, summaryLLM, setOwn, compressAt: host.compression.use.compressAt };
 }
 
-describe('plugin-memory-summary: 自动压缩线', () => {
-  it('登记为高级设置项：0 到 1，默认 0.8，只经继承链实时解析', async () => {
-    const { sm } = await setup();
-    const setting = sm.listSettings().find(s => s.key === 'compressAt');
-    expect(setting).toMatchObject({
-      plugin: memorySummary.name,
-      field: { type: 'number', min: 0, max: 1, default: 0.8 },
-      prominence: 'advanced',
-      liveOnly: true,
+describe('plugin-memory-summary：自动压缩线', () => {
+  it('按会话字段：0 到 1，作者默认 0.8，高级，适用全部会话，只有 owner 能改', async () => {
+    expect(memorySummary.configSchema?.compressAt).toMatchObject({
+      type: 'number',
+      min: 0,
+      max: 1,
+      default: 0.8,
+      session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    });
+    const { host } = await setup();
+    expect(host.sessionSettings.use.getAll().find(entry => entry.key === 'compressAt')).toEqual({
+      plugin: ID,
+      key: 'compressAt',
+      label: expect.anything(),
     });
   });
 
-  it('哪一层都没设时 0.8：本机根会话、群的根会话与子会话相同', async () => {
-    const { owner, child, compressAt } = await setup();
-    expect([compressAt(owner.id, 'webui'), compressAt(ROOM), compressAt(child.id)]).toEqual([0.8, 0.8, 0.8]);
+  it('哪一层都没设时取插件配置；插件配置没写时 0.8', async () => {
+    expect((await setup()).compressAt('<任意会话>', 'webui')).toBe(0.8);
+    const { owner, compressAt } = await setup({ plugins: { [ID]: { compressAt: 0.5 } } });
+    expect(compressAt(owner.id, 'webui')).toBe(0.5);
   });
 
-  it('全局默认、平台档与会话自己的设置按层生效；没有出生平台的会话按入口平台选平台档', async () => {
-    const { sm, owner, compressAt } = await setup();
-    await sm.updateLayer({ scope: 'defaults' }, { compressAt: 0.5 });
-    expect([compressAt(owner.id, 'webui'), compressAt(ROOM)]).toEqual([0.5, 0.5]);
-
-    await sm.updateLayer({ scope: 'platform', platform: 'webui' }, { compressAt: 0.3 });
-    await sm.updateLayer({ scope: 'platform', platform: 'onebot' }, { compressAt: 0.06 });
-    expect([compressAt(owner.id, 'webui'), compressAt(owner.id, 'cli'), compressAt(ROOM, 'webui')]).toEqual([
-      0.3, 0.5, 0.06,
-    ]);
-
-    await sm.updateSession(ROOM, { config: { compressAt: 0.1 } });
-    expect(compressAt(ROOM)).toBe(0.1);
+  it('会话自己的值压过插件配置；没有出生平台的会话按入口平台选平台档', async () => {
+    const { sm, owner, setOwn, compressAt } = await setup({
+      plugins: { [ID]: { compressAt: 0.5 } },
+      sessionConfig: { platforms: { webui: { [ID]: { compressAt: 0.3 } } } },
+    });
+    expect([compressAt(owner.id, 'webui'), compressAt(owner.id, 'cli')]).toEqual([0.3, 0.5]);
+    const other = await sm.createSession({ name: '另一个会话' });
+    await setOwn(owner.id, 0.1);
+    expect([compressAt(owner.id, 'webui'), compressAt(other.id, 'webui')]).toEqual([0.1, 0.3]);
   });
 
-  it('平台类型档：群的值给群里各个机器人账号的会话与群的子会话，别人的私聊与 WebUI 会话不受影响', async () => {
-    const { sm, owner, child, compressAt } = await setup();
-    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { compressAt: 0.06 });
-    expect([compressAt(ROOM), compressAt(ROOM_B), compressAt(child.id)]).toEqual([0.06, 0.06, 0.06]);
-    expect([compressAt(OTHER_DM), compressAt(owner.id, 'webui')]).toEqual([0.8, 0.8]);
-  });
-
-  it('场所压过平台类型档：窗口场所的值给这个群的会话；默认工作区的值压过 owner 的 IM 私聊上的类型档', async () => {
-    const { sm, compressAt } = await setup();
-    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'group' }, { compressAt: 0.06 });
-    await sm.updateLayer({ scope: 'type', platform: 'onebot', type: 'private' }, { compressAt: 0.1 });
-    await sm.updateLayer({ scope: 'place', key: WINDOW }, { compressAt: 0.2 });
-    await sm.updateLayer({ scope: 'place', key: 'workspace:default' }, { compressAt: 0.5 });
-    expect([compressAt(ROOM), compressAt(ROOM_B)]).toEqual([0.2, 0.2]);
-    expect([compressAt(OWNER_DM), compressAt(OTHER_DM)]).toEqual([0.5, 0.1]);
+  it('会话设置不在：取插件配置', async () => {
+    const { owner, compressAt } = await setup({ plugins: { [ID]: { compressAt: 0.5 } } }, { settings: false });
+    expect(compressAt(owner.id, 'webui')).toBe(0.5);
   });
 
   it.each([1.5, -0.1])('写 %d 被拒', async value => {
-    const { sm, owner } = await setup();
-    for (const write of [
-      sm.updateLayer({ scope: 'defaults' }, { compressAt: value }),
-      sm.updateSession(owner.id, { config: { compressAt: value } }),
-    ]) {
-      await expect(write).rejects.toSatisfy(isSessionConfigError);
-    }
+    const { owner, setOwn } = await setup();
+    await expect(setOwn(owner.id, value)).rejects.toSatisfy(isSessionSettingsError);
   });
 
   it('设为 0：压缩线为 undefined，用量到线的回合结束也不压缩；手动压缩照常', async () => {
-    const { host, sm, owner, summaryLLM, compressAt } = await setup();
-    await sm.updateSession(owner.id, { config: { compressAt: 0 } });
+    const { host, owner, setOwn, summaryLLM, compressAt } = await setup();
+    await setOwn(owner.id, 0);
     expect(compressAt(owner.id, 'webui')).toBeUndefined();
     await host.memory.use.saveMessage(owner.id, { role: 'user', content: '在吗' });
 
@@ -132,8 +109,9 @@ describe('plugin-memory-summary: 自动压缩线', () => {
   });
 
   it('回合结束的判定按会话与用量事件上的平台取压缩线', async () => {
-    const { host, sm, owner, summaryLLM } = await setup();
-    await sm.updateLayer({ scope: 'platform', platform: 'webui' }, { compressAt: 0.3 });
+    const { host, sm, owner, summaryLLM } = await setup({
+      sessionConfig: { platforms: { webui: { [ID]: { compressAt: 0.3 } } } },
+    });
     const other = await sm.createSession({ name: '终端会话' });
     for (const id of [owner.id, other.id]) await host.memory.use.saveMessage(id, { role: 'user', content: '在吗' });
 

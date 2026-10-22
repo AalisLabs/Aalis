@@ -1,53 +1,117 @@
-import type { SettingLayer } from '@aalis/api-session-protocol';
-import { useId, useMemo, useState } from 'react';
-import { Select } from '../components/Select';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
+import { List, ListItem } from '../components/List';
+import { lower } from '../format';
 import { tr } from '../language';
+import { paths } from '../routes';
 import { SessionsFetchError } from '../shell/SessionGate';
+import { usePhone } from '../shell/Shell';
 import { LayerRows } from './LayerRows';
-import { type LayerOrder, layerLabel, useLayers } from './layers';
+import {
+  type LayerInfo,
+  type LayerOrder,
+  labelOf,
+  layerAddress,
+  layerParam,
+  layerTitle,
+  type SourceContext,
+  useLayers,
+} from './layers';
 
-// 设置的「会话默认」：顶部选层（存在配置文件里的几种：全局默认、各平台档、各平台类型档；场所在房间页与会话列表里改），下面是
-// 这一层的设置项，行与会话的「设置」标签同一套。可以选的层与它们的称呼、继承的先后都取自会话服务给的层表，插件启停与设置变了
-// 时重取；选中的层没了回到全局默认，那一层之后再出现也不自己切回去
+// 设置的「会话默认」：第一步选层，第二步改这一层的项。层的列表按层表分组（全局、平台档、平台类型档、场所），顶上可以
+// 按层的称呼、平台名、类型名、场所名与场所键搜索；所选的层记进地址（?layer=），刷新与分享链接都回到这一层。宽屏两步左右并排，
+// 手机上是两屏，第二屏顶上「换一层」回到选层。可以选的层与称呼、继承的先后都取自会话服务给的层表，插件启停与设置变了时重取
 
-const DEFAULTS: SettingLayer = { scope: 'defaults' };
+/** 列表里一层的名字：全局写层表里的称呼，平台档写平台名，平台类型档写「平台 · 类型」，场所写称呼 */
+function itemName(order: LayerOrder, { layer, label }: LayerInfo): string {
+  switch (layer.scope) {
+    case 'global':
+      return labelOf(order, layer.scope);
+    case 'platform':
+      return layer.platform;
+    case 'platformType':
+      return `${layer.platform} · ${layer.type}`;
+    case 'place':
+      return label ?? layer.key;
+  }
+}
 
-/** 层的标识：选择框的值，也用来比较两个层是不是同一个 */
-const keyOf = (layer: SettingLayer): string => JSON.stringify(layer, Object.keys(layer).sort());
-
-/** 继承先后的说明：层表按先后排，说明从压过别人的那一层说起 */
-const orderNote = (order: LayerOrder) =>
-  tr('settingsOrderNote', { layers: order.map(entry => entry.label).toReversed() });
+/** 一层的来源取的是哪一份：平台档、平台类型档按这一层自己的平台与类型，窗口场所按层的列表给的 */
+const contextOf = ({ layer, platform, type }: LayerInfo): SourceContext => ({
+  platform: 'platform' in layer ? layer.platform : platform,
+  chatType: 'type' in layer ? layer.type : type,
+});
 
 export function SessionDefaults() {
-  const pickerId = useId();
+  const phone = usePhone();
+  const [params] = useSearchParams();
   const { value, error, retry } = useLayers();
-  const [chosen, setChosen] = useState(keyOf(DEFAULTS));
-  const layers = value?.layers.filter(layer => layer.scope !== 'place') ?? [];
-  if (value && !layers.some(layer => keyOf(layer) === chosen)) setChosen(keyOf(DEFAULTS));
-  const layer = useMemo(() => JSON.parse(chosen) as SettingLayer, [chosen]);
+  const [query, setQuery] = useState('');
+  if (error) return <SessionsFetchError what={tr('sessionDefaultLayers')} error={error} retry={retry} />;
+  if (!value) return null;
+  const { order } = value;
+  const chosen = value.layers.find(info => layerParam(info.layer) === params.get('layer'));
+  const needle = lower(query.trim());
+  const matches = (info: LayerInfo) =>
+    !needle ||
+    [itemName(order, info), labelOf(order, info.layer.scope), 'key' in info.layer ? info.layer.key : '']
+      .map(lower)
+      .some(text => text.includes(needle));
 
-  return (
-    <div className="page-screen settings-screen">
-      {error && <SessionsFetchError what={tr('sessionDefaultLayers')} error={error} retry={retry} />}
-      {value && (
-        <>
-          <div className="settings-head">
-            <p className="settings-note">{orderNote(value.order)}</p>
-            <div className="settings-field">
-              <label htmlFor={pickerId}>{tr('layerPicker')}</label>
-              <Select
-                id={pickerId}
-                value={chosen}
-                options={layers.map(each => ({ value: keyOf(each), label: layerLabel(value.order, each) }))}
-                onChange={setChosen}
-              />
-            </div>
-            {layer.scope !== 'defaults' && <p className="settings-note">{tr('platformLayerNote')}</p>}
-          </div>
-          <LayerRows layer={layer} order={value.order} what={tr('sessionDefaults')} />
-        </>
+  const list = (
+    <nav className="session-defaults-layers" aria-label={tr('settingLayers')}>
+      <input
+        type="search"
+        aria-label={tr('searchLayers')}
+        placeholder={tr('searchLayers')}
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+      />
+      {order.map(({ name, label }) => {
+        const shown = value.layers.filter(info => info.layer.scope === name && matches(info));
+        return (
+          shown.length > 0 && (
+            <section key={name}>
+              <p className="settings-group" aria-hidden>
+                {label}
+              </p>
+              <List label={label}>
+                {shown.map(info => (
+                  <ListItem
+                    key={layerParam(info.layer)}
+                    to={layerAddress(info.layer)}
+                    title={itemName(order, info)}
+                    current={info === chosen}
+                  />
+                ))}
+              </List>
+            </section>
+          )
+        );
+      })}
+    </nav>
+  );
+  const detail = chosen ? (
+    <div className="session-defaults-rows">
+      {phone && (
+        <Link className="session-defaults-back" to={paths.settingsSection('session-defaults')}>
+          {tr('otherLayer')}
+        </Link>
       )}
+      <h3 className="session-defaults-title">{layerTitle(order, chosen.layer, chosen.label)}</h3>
+      <p className="settings-note">
+        {tr('settingsOrderNote', { layers: order.map(entry => entry.label).toReversed() })}
+      </p>
+      <LayerRows layer={chosen.layer} order={order} at={contextOf(chosen)} what={tr('sessionDefaults')} />
+    </div>
+  ) : (
+    <p className="settings-note">{tr('pickLayer')}</p>
+  );
+  if (phone) return <div className="page-screen settings-screen">{chosen ? detail : list}</div>;
+  return (
+    <div className="page-screen session-defaults">
+      {list}
+      {detail}
     </div>
   );
 }

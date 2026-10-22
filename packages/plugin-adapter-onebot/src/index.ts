@@ -56,10 +56,6 @@ function parseForwardConfig(fwdRaw: ConfigOf<typeof configSchema>['forward']): F
     imageRecognitionConcurrency: Math.max(1, Math.floor(fwdRaw.imageRecognitionConcurrency)),
     recognitionMaxItems: Math.max(0, Math.floor(fwdRaw.recognitionMaxItems)),
     summarize: fwdRaw.summarize,
-    summaryLLM:
-      fwdRaw.summaryLLM?.provider && fwdRaw.summaryLLM.model
-        ? { provider: fwdRaw.summaryLLM.provider, model: fwdRaw.summaryLLM.model }
-        : undefined,
     summaryMaxChars: Math.max(80, Math.floor(fwdRaw.summaryMaxChars)),
     summaryInputLimit: Math.max(0, Math.floor(fwdRaw.summaryInputLimit)),
     summaryPrompt: fwdRaw.summaryPrompt,
@@ -201,11 +197,6 @@ const configSchema = defineConfig({
         label: '生成摘要',
         default: true,
         description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。',
-      },
-      summaryLLM: {
-        type: 'llm-ref',
-        label: '摘要模型',
-        description: '留空使用默认 LLM 服务；指定后按 (provider, model) 精确定位。建议挑便宜/快的模型。',
       },
       summaryMaxChars: {
         type: 'number',

@@ -39,7 +39,9 @@
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0"
+    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/api-agent": "workspace:*",
@@ -67,7 +69,9 @@
         "gateway",
         "publish",
         "remote-agent",
-        "webui-server"
+        "webui-server",
+        "host-config",
+        "session-settings"
       ]
     }
   }

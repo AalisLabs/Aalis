@@ -10,6 +10,7 @@ import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
@@ -18,6 +19,7 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import { defineTexts, type Localized } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -29,11 +31,11 @@ import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════
 // 聊天出站按会话的语言：处理函数交出的文字对象由 plugin-commands 原样交给网关（content 是原文），网关按这条消息所在会话
-// （{ sessionId, platform }，房间按会话设置 language，owner 会话按全局默认层）的语言渲染进 content，再交给平台；WebUI 会话里
-// 由会话服务按全局默认层的语言渲染。指令系统自己的句子（解析报错、/help 的版式）与网关的兜底回复进各自的字典；/help 按会话的语言渲染说明之后再取
+// （{ sessionId, platform }，房间按会话设置 language，owner 会话按全局层即 plugin-i18n 的插件配置）的语言渲染进 content，再交给
+// 平台；WebUI 会话里由会话服务按全局层的语言渲染。指令系统自己的句子（解析报错、/help 的版式）与网关的兜底回复进各自的字典；/help 按会话的语言渲染说明之后再取
 // 摘要，回复是这种语言的字符串。CommandService.execute 按执行输入的 { sessionId, platform } 渲染。i18n 渲染抛错时各出口按原文
 // 发出，各自告警一次。
-// 真的 plugin-i18n、plugin-commands、plugin-gateway、会话管理与会话服务，记忆是内存实现，存储与 owner 判定是替身。
+// 真的 plugin-i18n、plugin-commands、plugin-gateway、会话管理、会话设置与会话服务，记忆是内存实现，存储与 owner 判定是替身。
 // ════════════════════════════════════════════════════════════
 
 const NS = '@zz/commands-i18n';
@@ -81,7 +83,7 @@ afterEach(async () => {
 
 /**
  * withI18n 为假时没有 i18n 服务，i18nService 给了就用这个替身代替 plugin-i18n；stubGateway 为真时网关是替身：入站只跑指令
- * 相位，出站原样发出、不渲染（与 plugin-commands 在网关缺席时直接发出的是同一条消息）；defaults 是全局默认层的语言
+ * 相位，出站原样发出、不渲染（与 plugin-commands 在网关缺席时直接发出的是同一条消息）；defaults 是全局层的语言
  */
 async function setup({
   withI18n = true,
@@ -96,13 +98,22 @@ async function setup({
 } = {}) {
   const warn = vi.fn();
   const logger: Logger = { debug() {}, info() {}, warn, error() {}, child: () => logger };
-  const { app } = hostedApp(defaults ? { sessionConfig: { defaults: { language: defaults } } } : {}, { logger });
+  const { app } = hostedApp(defaults ? { plugins: { [i18nPlugin.name]: { language: defaults } } } : {}, { logger });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-commands-i18n-'));
   homes.push(home);
   provideHostPaths(app, home);
   await registerHubs(app);
-  const host = app.bind({ provide, events, hooks, commands, gateway, sessionManager, sessionProtocol });
+  const host = app.bind({
+    provide,
+    events,
+    hooks,
+    commands,
+    gateway,
+    sessionManager,
+    sessionSettings,
+    sessionProtocol,
+  });
   host.provide.use(storage, memoryStorage(new Map()));
   if (i18nService) host.provide.use(i18n, i18nService);
   host.provide.use(authority, {
@@ -125,6 +136,7 @@ async function setup({
   await seedRooms(app.bind({ memory }).memory.use, Object.fromEntries(ROOMS.map(id => [id, id])));
   const plugins = [
     sessionManagerPlugin,
+    sessionSettingsPlugin,
     ...(stubGateway ? [] : [gatewayPlugin]),
     commandsPlugin,
     sessionServerPlugin,
@@ -158,7 +170,12 @@ async function setup({
   /** 下一个预置的房间；language 是它自己的会话设置 */
   const session = async (language?: string[]) => {
     const id = ROOMS[rooms++];
-    if (language) await host.sessionManager.use.updateSession(id, { config: { language } });
+    if (language) {
+      await host.sessionSettings.use.update(
+        { sessionId: id },
+        { plugin: i18nPlugin.name, key: 'language', value: language },
+      );
+    }
     return id;
   };
   const connect = async () => {
@@ -181,12 +198,9 @@ describe('指令回复按会话的语言', () => {
     expect((await s.ask(await s.session(['zh-CN']), '/zz-hello')).content).toBe('你好，zz');
   });
 
-  it('owner 会话一律按全局默认层：WebUI 建的会话自己存着 en 也按 zh-CN，房间自己设的 en 照旧生效', async () => {
+  it('owner 会话一律按全局层，房间自己设的 en 照旧生效', async () => {
     const s = await setup({ defaults: ['zh-CN'] });
-    const owner = await s.host.sessionManager.use.createSession(
-      { config: { language: ['en'] } },
-      { createdFrom: 'webui' },
-    );
+    const owner = await s.host.sessionManager.use.createSession({}, { createdFrom: 'webui' });
     expect(owner.kind).toBe('owner');
     const run = (sessionId: string, platform: string) =>
       s.host.commands.use.execute('zz-hello', { sessionId, platform, args: [], raw: '/zz-hello' });
@@ -206,7 +220,7 @@ describe('指令回复按会话的语言', () => {
     expect(out.text).toMatchObject({ i18n: NS, key: 'hello', params: { name: 'zz' } });
   });
 
-  it('回复发往 WebUI 会话：连接按全局默认层的语言看到通知（没设时按 en）', async () => {
+  it('回复发往 WebUI 会话：连接按全局层的语言看到通知（没设时按 en）', async () => {
     const s = await setup();
     const c = await s.connect();
     const { session } = await c.call('session/create', {});

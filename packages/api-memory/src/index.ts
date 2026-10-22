@@ -1,11 +1,9 @@
 // ----- 记忆服务接口 -----
-import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
-import type { SessionSetting } from '@aalis/api-session-manager'; // 也是下方 SessionConfig 增强的锚点
+import type { HookContextMap } from '@aalis/api-hooks'; // 也是 declaration merging 的锚点（下方 HookContextMap 增强）
 import type {} from '@aalis/core';
 import { defineService, type Logger } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
-import { t } from './texts.js';
 
 /** 跨会话最近消息查询参数 */
 export interface RecentMessagesAcrossSessionsQuery {
@@ -288,6 +286,16 @@ declare module '@aalis/api-hooks' {
   }
 }
 
+/**
+ * memory:clear 在 next() 之后：这次清了消息历史（没指定类型或类型含 context），结果里消息历史的各行（type 为 context）都清成了。
+ * 清空之后要连带做事的中间件按它判，消息历史没清成就不动
+ */
+export function historyCleared(data: HookContextMap['memory:clear']): boolean {
+  if (data.types && !data.types.includes('context')) return false;
+  const history = data.results.filter(result => result.type === 'context');
+  return history.length > 0 && history.every(result => result.success);
+}
+
 // ----- 记忆变更事件契约 -----
 //
 // 发射方：plugin-checkpoint（回滚删除消息时）；
@@ -385,39 +393,6 @@ declare module '@aalis/core' {
 }
 
 export const compression = defineService<CompressionService>('compression');
-
-// ----- 会话设置项：记忆召回范围 -----
-
-/** 记忆召回范围：session=仅本会话，platform=同平台，all=不限 */
-export type MemoryRecallScope = 'session' | 'platform' | 'all';
-
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 记忆召回范围，只能比各记忆插件自己的配置更窄；随子会话复制，否则经子任务就绕过了收窄 */
-    memoryRecallScope?: MemoryRecallScope;
-  }
-}
-
-/**
- * 会话设置项「记忆召回范围」。跨会话取料的插件（跨会话历史、向量记忆、会话历史工具、关系图）都遵守它，各自登记
- * 这同一份定义：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄。文字取自本包的字典
- */
-export const MEMORY_RECALL_SCOPE_SETTING: SessionSetting = {
-  key: 'memoryRecallScope',
-  field: {
-    type: 'select',
-    label: t('recallScopeLabel'),
-    description: t('recallScopeDescription'),
-    options: [
-      { label: t('recallScopeSession'), value: 'session' },
-      { label: t('recallScopePlatform'), value: 'platform' },
-      { label: t('recallScopeAll'), value: 'all' },
-    ],
-  },
-  appliesTo: ['owner', 'room', 'task'],
-  prominence: 'advanced',
-  unset: t('recallScopeUnset'),
-};
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const memory = defineService<MemoryService>('memory');

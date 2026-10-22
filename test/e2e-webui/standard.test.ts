@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { backgroundTasks } from '../../packages/api-tools/src/index.js';
 import type { WebuiRestResponse } from '../../packages/api-webui/src/index.js';
@@ -207,8 +207,9 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.keyboard.press('Enter');
     await page.keyboard.up('Control');
     await page.waitForSelector(`${extra} ${aria('恢复继承', 'button')}`);
-    const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
-    expect(sessions.getOwnConfig(sessionId).systemPromptExtra).toBe('回答简短');
+    const admin = stack.app.bind({ sessionSettings }).sessionSettings.use;
+    const own = admin.rows({ sessionId }).find(row => row.key === 'systemPromptExtra');
+    expect([own?.value, own?.source]).toEqual(['回答简短', 'session']);
 
     // 后台：命令要批准，批准后立即转到后台；在「后台」标签里停掉，进程随之结束
     await page.goto(`${stack.origin}/s/${encodeURIComponent(sessionId)}`);
@@ -281,10 +282,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
         .sort(),
     );
 
-    await page.goto(`${stack.origin}/settings/session-defaults`);
-    await page.locator(`main ${aria('层', 'combobox')}`).click();
-    await page.locator(aria('平台档：webui', 'option')).click();
-    // 换层之后这一行原地换值，按文字找的选择器在这里等不到新值（实测），直接读这一行的文字
+    await page.goto(`${stack.origin}/settings/session-defaults?layer=platform%3Awebui`);
+    // 直接读这一行的文字：按文字找的选择器等不到原地换上的值（实测）
     await page.waitForFunction(() =>
       document.querySelector('main .setting-row[aria-label="工具分组"]')?.textContent?.includes('* （全部分组）'),
     );

@@ -3,18 +3,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
+import { MINIMAL_BASE, pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
 import { derivePaths, initHome } from '../../packages/runtime/src/home.js';
+import { isLoadablePlugin } from '../../packages/runtime/src/node-modules-loader.js';
+import { defineConfig } from '../../packages/schema-config/src/index.js';
+import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
 
 // 脚手架生成的 aalis.config.yaml：owner 专用平台（cli / webui）的平台档开箱给全部工具分组，多人平台不代开——
 // 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md）。
-// 平台档是会话设置的一层，写在配置文档的 sessionConfig 里，由 session-manager 读。
+// 平台档是会话设置的一层，写在配置文档的 sessionConfig 里、按插件实例嵌套，由会话设置插件读。
 
 const CLI = '@aalis/plugin-cli';
 
 const configOf = (enabled: Set<string>, keys = {}, ollama?: string) =>
   parse(renderConfig(pluginSettings(enabled, keys, ollama)));
-const OWNER_PROFILES = { platforms: { cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } } };
+const TOOLS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
+const OWNER_PROFILES = { platforms: { cli: TOOLS, webui: TOOLS } };
 
 describe('create-aalis renderConfig', () => {
   it.each([
@@ -74,5 +78,54 @@ describe('平台档：create-aalis 与 --init 一致', () => {
     const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
     initHome(paths);
     expect(parse(readFileSync(paths.config, 'utf-8')).sessionConfig).toEqual(configOf(new Set()).sessionConfig);
+  });
+});
+
+// 最小档装上会话设置插件：靠 aalis-plugin 关键词经插件发现加载，不另手动登记；--init 写出的平台档由它读到
+describe('最小档带会话设置', () => {
+  it('MINIMAL_BASE 在会话管理之后列出会话设置插件，它的 package.json 带 aalis-plugin 关键词', () => {
+    const at = MINIMAL_BASE.indexOf('@aalis/plugin-session-settings');
+    expect(at).toBe(MINIMAL_BASE.indexOf('@aalis/plugin-session-manager') + 1);
+    const manifest = JSON.parse(
+      readFileSync(new URL('../../packages/plugin-session-settings/package.json', import.meta.url), 'utf-8'),
+    );
+    expect(isLoadablePlugin(manifest)).toBe(true);
+  });
+});
+
+describe('--init 写出的平台档', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('终端会话经会话设置读到工具插件在平台档里的全部工具分组', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-init-profile-'));
+    dirs.push(dir);
+    const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
+    initHome(paths);
+    const tools = fieldsPlugin(
+      '@aalis/plugin-tools',
+      defineConfig({
+        enabledToolGroups: {
+          type: 'multiselect',
+          label: '<工具分组>',
+          allowCustom: true,
+          default: [],
+          session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common' },
+        },
+      }),
+    );
+    const { app, sm } = await startSettings({
+      doc: parse(readFileSync(paths.config, 'utf-8')),
+      fields: [tools.definition],
+    });
+    try {
+      await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
+      expect(tools.reader().get('cli-default', { platform: 'cli' }).enabledToolGroups).toEqual(['*']);
+      expect(tools.reader().get('cli-default', { platform: 'onebot' }).enabledToolGroups).toEqual([]);
+    } finally {
+      await app.stop();
+    }
   });
 });

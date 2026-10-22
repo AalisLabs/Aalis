@@ -44,6 +44,7 @@ export const MINIMAL_BASE = [
   '@aalis/plugin-prompt-budget',
   '@aalis/plugin-authority',
   '@aalis/plugin-session-manager',
+  '@aalis/plugin-session-settings',
   '@aalis/plugin-session-server',
   '@aalis/plugin-message-archive',
   '@aalis/plugin-memory-history',
@@ -671,8 +672,8 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 
 // 只有 owner 能进的平台（本地终端 / 单 token WebUI）的平台档开箱给全部工具分组，无条件写：平台没装时这一层不起作用，
 // 之后从市场装上即生效。多人平台（OneBot 等）不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸
-// （docs/concepts/security-model.md），由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里，
-// 由 session-manager 读。runtime 的 `--init`（home.ts 的 initHome）写同样的平台档，两边由用例核完全相等。
+// （docs/concepts/security-model.md），由 owner 在平台档里按需列组。平台档是会话设置的一层，写在配置文档的 sessionConfig 里、
+// 按插件实例嵌套，由会话设置插件读。runtime 的 `--init`（home.ts 的 initHome）写同样的平台档，两边由用例核完全相等。
 const OWNER_PLATFORMS = ['cli', 'webui'];
 
 /** Ollama 的两个插件：设了 OLLAMA_HOST 时写上它的 baseUrl */
@@ -710,7 +711,9 @@ export function renderConfig(settings: Record<string, Record<string, string>>): 
     lines.push('plugins: {}');
   }
   lines.push('sessionConfig:', '  platforms:');
-  for (const platform of OWNER_PLATFORMS) lines.push(`    ${platform}:`, '      enabledToolGroups: ["*"]');
+  for (const platform of OWNER_PLATFORMS) {
+    lines.push(`    ${platform}:`, '      "@aalis/plugin-tools":', '        enabledToolGroups: ["*"]');
+  }
   lines.push('disabledPlugins: []');
   return `${lines.join('\n')}\n`;
 }

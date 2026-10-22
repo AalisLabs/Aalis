@@ -8,8 +8,8 @@ import { App, optional, provide } from '../../packages/core/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { roomScopeManager } from '../fixtures/room-scope.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 
 // ════════════════════════════════════════════════════════════
 // tool-onebot 与可选依赖的上线顺序无关。
@@ -60,7 +60,7 @@ async function setup() {
     registerGroup: () => () => {},
   } as never);
   host.provide.use(memory, { getHistory: async () => [] } as never);
-  host.provide.use(sessionManager, roomScopeManager({}, {}, [storedRoom(GROUP), storedRoom(PRIVATE)]));
+  host.provide.use(sessionManager, sessionTableManager([storedRoom(GROUP), storedRoom(PRIVATE)]));
 
   /** 群会话里读取同账号某私聊的历史（直接走 session-history 服务，与通用工具同一条规则链） */
   const readPrivateFromGroup = () => {

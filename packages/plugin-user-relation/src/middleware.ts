@@ -8,14 +8,13 @@
  * - 仅在 direct/immediate 触发下注入（避免 idle/interval 占用 token）
  * - 与 plugin-user-profile 解耦：profile 侧重"是谁/喜好"，relation 侧重"经历过什么/与谁有关系"
  * - 深度 / 宽度由配置控制；带 visited 防环
- * - 当前会话所在房间的召回范围（会话配置 memoryRecallScope）为 session 时，跳过全局热点与跨会话事件
+ * - 当前会话的关系图范围（本插件的按会话字段 recallScope）限于本会话时，跳过全局热点与跨会话事件
  *   （别的会话里抽出的事件、所属跨会话话题），只留本会话的事件；人际关系与关注的事物照常注入
  * - 失败不阻断 agent 流程：构建抛错由组装器记 warn，本贡献本轮缺席
  */
 
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
-import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { ServiceSelection } from '@aalis/core';
 import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
@@ -50,15 +49,14 @@ interface MiddlewareConfig {
   groupOnly: boolean;
 }
 
-/** 注入贡献用到的能力 */
-interface ContributionCaps {
+/** 注入贡献用到的：贡献点，与这个会话的关系图范围是否限于本会话（platform 是入口平台） */
+interface ContributionDeps {
   contributions: ServiceSelection<Contributions>;
-  /** 房间的召回范围（可选依赖）；不在场时不收窄 */
-  sessionManager: ServiceSelection<SessionManagerService>;
+  sessionOnly(sessionId: string | undefined, platform: string | undefined): boolean;
 }
 
 export function registerRelationContribution(
-  { contributions, sessionManager }: ContributionCaps,
+  { contributions, sessionOnly }: ContributionDeps,
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
@@ -68,13 +66,7 @@ export function registerRelationContribution(
     async build(view) {
       // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
       if (view.dryRun) return null;
-      // 房间的召回范围每轮现算：房间或平台档改了下一轮即生效
-      const sessionOnly =
-        !!view.sessionId &&
-        (sessionManager.present
-          ? sessionManager.use.resolveConfig(view.sessionId, view.platform).memoryRecallScope
-          : undefined) === 'session';
-      return buildBlock(service, view, cfg, sessionOnly);
+      return buildBlock(service, view, cfg, sessionOnly(view.sessionId, view.platform));
     },
   });
 }
@@ -83,7 +75,7 @@ async function buildBlock(
   service: RelationService,
   data: PromptContributionView,
   cfg: MiddlewareConfig,
-  /** 房间的召回范围限于本会话：只留本会话的事件，不出跨会话话题与全局热点 */
+  /** 关系图范围限于本会话：只留本会话的事件，不出跨会话话题与全局热点 */
   sessionOnly: boolean,
 ): Promise<string | null> {
   const trigger = data.triggerType ?? 'direct';

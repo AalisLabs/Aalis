@@ -3,11 +3,11 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
+import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话设置的层表只在 api-session-manager 一处：会话服务经 session/config/layers 把它交给客户端，来源文字、先后说明与
+// 会话设置的层表只在 api-session-settings 一处：会话服务经 session/config/layers 把它交给客户端，来源文字、先后说明与
 // 选层的称呼都按它写。会话服务与 WebUI 客户端不另存一份：源码里不出现层的称呼（层表里文字对象的原文），也不出现层名的
 // 列表（两个以上层名的数组、三个以上层名作键的对象）。引用单个层名（如判断「这一层是不是场所」）不算列表。按语法树查，
 // 测试不在其列。
@@ -56,21 +56,21 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-describe('会话设置的层表只在 api-session-manager 一处', () => {
+describe('会话设置的层表只在 api-session-settings 一处', () => {
   it('判据本身：称呼、两个以上层名的数组、三个以上层名作键的对象算；单个层名与只有两个层名键的对象不算', () => {
     const text = [
-      "const SOURCES = { defaults: '全局默认', platform: '平台档', session: '本会话' };",
-      "const ORDER = ['session', 'place', 'defaults'];",
+      "const SOURCES = { global: '全局（插件配置）', platform: '平台档', session: '本会话' };",
+      "const ORDER = ['session', 'place', 'global'];",
       "if (layer.scope !== 'place') return;",
-      "const layer = { scope: 'type', platform: 'onebot', type: 'group' };",
+      "const at = { scope: 'platformType', platform: 'onebot', place: 'onebot:group:20001' };",
       "const label = '默认（模型）';",
     ].join('\n');
     expect(layerTables('probe.tsx', text)).toEqual([
-      '1 以层名作键的对象 defaults、platform、session',
-      '1 层的称呼「全局默认」',
+      '1 以层名作键的对象 global、platform、session',
+      '1 层的称呼「全局（插件配置）」',
       '1 层的称呼「平台档」',
       '1 层的称呼「本会话」',
-      '2 层名的数组 session、place、defaults',
+      '2 层名的数组 session、place、global',
     ]);
   });
 

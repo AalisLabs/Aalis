@@ -1,16 +1,18 @@
-import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点、token:usage 事件与会话设置的 historyLimit）——删掉会丢键类型，不可删
+import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点与 token:usage 事件）——删掉会丢键类型，不可删
 import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import type { LLMModel } from '@aalis/api-llm';
-import { estimateMsgTokens, estimateTextTokens, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { chatModelPicker, estimateMsgTokens, estimateTextTokens, lightestThinking, llm } from '@aalis/api-llm';
 import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, compressionLine, memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import { roomClass, type SessionSetting, sessionManager } from '@aalis/api-session-manager';
+import { roomClass, sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -25,9 +27,6 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
 /** 摘要预算的下限：压掉的内容很少时也留够写全各小节的篇幅 */
 const MIN_BUDGET = 1000;
-
-/** 自动压缩线的默认值：会话设置的各层都没设时用它，也是设置项字段的默认值 */
-const DEFAULT_COMPRESS_AT = 0.8;
 
 /** 后台压缩连续没压成时，两次尝试之间至多隔这么多轮 */
 const MAX_RETRY_INTERVAL_TURNS = 32;
@@ -239,52 +238,24 @@ const configSchema = defineConfig({
     max: 0.5,
     description: t('budgetRatioDescription', { min: MIN_BUDGET }),
   },
-  summaryModelMode: {
-    type: 'select',
-    label: '摘要模型来源',
-    default: 'global',
-    options: [
-      { label: '沿用全局默认 LLM', value: 'global' },
-      { label: '自定义 provider/model', value: 'custom' },
-    ],
-    description:
-      'global=沿用全局默认 LLM；custom=使用下方 summaryLLM 指定的模型。session（沿用会话当轮模型）暂未实现。',
-  },
-  summaryLLM: {
-    type: 'llm-ref',
-    label: '摘要模型',
-    description: '仅当 summaryModelMode=custom 时生效；provider 为 LLM 插件实例 contextId，model 为实例内某个模型名。',
+  // 按会话字段：只有 owner 能改
+  compressAt: {
+    type: 'number',
+    label: t('compressAtLabel'),
+    min: 0,
+    max: 1,
+    default: 0.8,
+    description: t('compressAtDescription'),
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
   },
 });
 
-// ===== 配置 =====
-
-type SummaryConfig = ConfigOf<typeof configSchema>;
-
-// ===== 会话设置项：自动压缩线 =====
-
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 自动压缩线：用量占上下文窗口的比例，0 到 1；0 表示不按用量压缩（条数线照样起作用） */
-    compressAt?: number;
+/** 挑不出能对话的模型：这个原因只打一条统一的 warn，不再逐次打「压缩没有压成」 */
+class NoChatModel extends Error {
+  constructor() {
+    super('没有可用的对话模型');
   }
 }
-
-/** 会话设置项「自动压缩线」：适用于全部会话；子会话按自己的继承链实时解析，不冻结父会话当时的值 */
-const COMPRESS_AT_SETTING: SessionSetting = {
-  key: 'compressAt',
-  field: {
-    type: 'number',
-    label: '自动压缩线（占窗口比例）',
-    min: 0,
-    max: 1,
-    default: DEFAULT_COMPRESS_AT,
-    description: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）',
-  },
-  appliesTo: ['owner', 'room', 'task'],
-  prominence: 'advanced',
-  liveOnly: true,
-};
 
 // ===== 摘要模板 =====
 
@@ -389,11 +360,12 @@ const uses = {
   memory,
   llm,
   messageArchive: optional(messageArchive),
-  /**
-   * 登记会话设置项「自动压缩线」，按会话解析它与条数线，读会话记录选摘要模板；不在场时压缩线按默认 0.8、不按条数压缩，
-   * 摘要用工作模板
-   */
+  /** 读会话记录选摘要模板；不在场时摘要用工作模板 */
   sessionManager: optional(sessionManager),
+  /** 按会话读自动压缩线；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   /** 选摘要模板时判一对一窗口的对端是不是 owner；不在场时按不是 */
   authority: optional(authority),
   config,
@@ -430,18 +402,8 @@ async function run(caps: Caps): Promise<void> {
     lifecycle,
     provide,
   } = caps;
-  const parsed = parseConfig(configSchema, caps.config.use, logger.use);
-  const cfg: SummaryConfig = {
-    ...parsed,
-    summaryLLM:
-      parsed.summaryLLM &&
-      typeof parsed.summaryLLM === 'object' &&
-      parsed.summaryLLM.provider &&
-      parsed.summaryLLM.model
-        ? parsed.summaryLLM
-        : undefined,
-  };
-  sessionManager.use.registerSetting(COMPRESS_AT_SETTING);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
 
   logger.use.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
@@ -483,19 +445,27 @@ async function run(caps: Caps): Promise<void> {
   const compressions = new Map<string, number>();
   const turnStarts = new Map<string, { compressions: number; cleared: () => boolean }>();
 
-  /**
-   * 这个会话的两条线：自动压缩线在会话设置的各层都没设（或没有会话管理）时为默认 0.8；条数线是 agent 登记的 historyLimit，
-   * 没设时不按条数压缩。platform 是入口平台：没有出生平台的会话按它选平台档
-   */
-  function linesOf(sessionId: string, platform?: string): CompressionLines {
-    const resolved = sessionManager.present ? sessionManager.use.resolveConfig(sessionId, platform) : undefined;
-    return { compressAt: resolved?.compressAt ?? DEFAULT_COMPRESS_AT, historyLimit: resolved?.historyLimit };
-  }
+  /** 这个会话此刻的自动压缩线：每次现读，改了下一轮即生效。platform 是入口平台：没有出生平台的会话按它选平台档 */
+  const compressAtOf = (sessionId: string, platform?: string) => fields.get(sessionId, { platform }).compressAt;
+
+  /** 一次用量对应的两条线：自动压缩线按这个会话现读，条数线是 agent 在这次用量里记下的 historyLimit（0 即不按条数压缩） */
+  const linesOf = (usage: TokenUsageEvent): CompressionLines => ({
+    compressAt: compressAtOf(usage.sessionId, usage.platform),
+    historyLimit: usage.historyLimit,
+  });
 
   /** 这个会话的压缩线（compressionLine），按最近一次用量算；还没有用量时为 Infinity（不封顶） */
   function usageLine(sessionId: string): number {
     const usage = lastUsages.get(sessionId);
-    return usage ? compressionLine(usage, linesOf(sessionId, usage.platform).compressAt) : Infinity;
+    return usage ? compressionLine(usage, compressAtOf(sessionId, usage.platform)) : Infinity;
+  }
+
+  const pickChatModel = chatModelPicker(llm, () => logger.use.warn('没有可用的对话模型，记忆摘要跳过'));
+  /** 摘要模型：llm 服务给本插件挑的能对话的那一个（见 chatModelPicker） */
+  function summaryModel(): LLMModel {
+    const model = pickChatModel()?.use;
+    if (!model) throw new NoChatModel();
+    return model;
   }
 
   /**
@@ -675,10 +645,10 @@ async function run(caps: Caps): Promise<void> {
    * 条数规则：设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的 after 条与要写的分隔标记，与 agent 数的
    * 活跃条数同一口径）不超过条数线的一半（向下取整）为止：超出的从最早的保留单位起整个去掉，直到不超或一个不剩（去掉的在这次
    * 的输入里，摘要覆盖了它们）。保留上限按 token 算，一条很长的正文能把它撑大、留下很多短消息，没有这一条时压完的条数可能仍到线、
-   * 每轮都压。条数线按最近一次用量的入口平台解析
+   * 每轮都压。条数线取这个会话最近一次用量里的
    */
   function withinHalfLine(kept: Unit[], after: number, sessionId: string): Unit[] {
-    const { historyLimit } = linesOf(sessionId, lastUsages.get(sessionId)?.platform);
+    const historyLimit = lastUsages.get(sessionId)?.historyLimit;
     if (!historyLimit) return kept;
     const room = Math.floor(historyLimit / 2) - after - (messageArchive.present ? 1 : 0);
     let rest = kept;
@@ -737,7 +707,7 @@ async function run(caps: Caps): Promise<void> {
    * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部（归档段）连同已有摘要压成一份新摘要，写摘要、核对快照
    * 前缀没被改过、归档这一段、写分隔标记；摘要模型挑出的单位（过了条数规则的，见 withinHalfLine）与切分点之后的消息（快照之后
    * 到达的、没写全的工具调用组）原样留在活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面
-   * 据此插「对话已压缩」）。没压成（摘要模型不在、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要
+   * 据此插「对话已压缩」）。没压成（没有能对话的模型、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要
    * 回滚）；待摘要部分没有对话时什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
    */
   async function compressHistory(sessionId: string): Promise<void> {
@@ -757,16 +727,7 @@ async function run(caps: Caps): Promise<void> {
       if (!span.some(entersSummary)) return;
       report('start');
       started = true;
-      // global 按默认优先级选首个能对话的模型；custom 按 summaryLLM 精确匹配，常见的落空是它指向的 provider 被卸载或重载中
-      const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
-      const model = resolveLLMModel(llm, ref, ['chat'])?.use;
-      if (!model) {
-        throw new Error(
-          ref
-            ? `摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活）`
-            : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）',
-        );
-      }
+      const model = summaryModel();
       const store = new SummaryStore(provider);
       const previous = (await store.getSummary(sessionId))?.summary || undefined;
       const { summary, kept } = await summarize(model, sessionId, span, previous, cleared);
@@ -782,7 +743,7 @@ async function run(caps: Caps): Promise<void> {
       failures.delete(sessionId);
       report('done');
     } catch (err) {
-      logger.use.warn(`压缩没有压成: session=${sessionId}`, err);
+      if (!(err instanceof NoChatModel)) logger.use.warn(`压缩没有压成: session=${sessionId}`, err);
       if (started) report('error');
       throw err;
     } finally {
@@ -811,7 +772,7 @@ async function run(caps: Caps): Promise<void> {
         logger.use.info(`收到压缩请求: session=${sessionId}, reason=${request.reason}`);
         return compressHistory(sessionId);
       },
-      compressAt: (sessionId, platform) => linesOf(sessionId, platform).compressAt || undefined,
+      compressAt: (sessionId, platform) => compressAtOf(sessionId, platform) || undefined,
     },
     { label: '会话压缩' },
   );
@@ -856,7 +817,7 @@ async function run(caps: Caps): Promise<void> {
       trimmed: usage.trimmed,
       historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
     };
-    if (!compressionDue(amounts, linesOf(sessionId, usage.platform))) return;
+    if (!compressionDue(amounts, linesOf(usage))) return;
     logger.use.info(
       `到了压缩线（用量 ${usage.used}/${usage.contextWindow}${usage.trimmed ? '，被硬裁剪过' : ''}，会话条数 ${amounts.historyMessages}），后台压缩: session=${sessionId}`,
     );

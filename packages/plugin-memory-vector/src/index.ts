@@ -2,8 +2,10 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
-import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aalis/api-memory';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { memory } from '@aalis/api-memory';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import {
@@ -115,10 +117,12 @@ const configSchema = defineConfig({
       { label: '只召回对方（过滤 AI 自己的回复）', value: 'others-only' },
     ],
   },
+  // 按会话字段：生效值是被动召回与 memory_recall 的上限；坏值原样交来，按不互通处理
   crossSessionMode: {
     type: 'select',
     label: '跨会话检索模式',
     default: 'all',
+    onInvalid: 'error',
     description: '控制向量记忆的跨会话可见范围',
     options: [
       { label: '不互通（仅当前会话）', value: 'isolated' },
@@ -126,6 +130,7 @@ const configSchema = defineConfig({
       { label: '同平台（仅相同平台的会话）', value: 'platform' },
       { label: '全部打通（所有平台所有会话）', value: 'all' },
     ],
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
   },
 });
 
@@ -137,10 +142,13 @@ type Visibility = 'session' | 'platform' | 'all';
 /** 可见范围由窄到宽的次序 */
 const VISIBILITY_RANK: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
 
-/** 插件配置的可见范围与房间配置取较窄者；房间未设置或 session-manager 不在场时用插件配置 */
-function effectiveVisibility(cfgVisibility: Visibility, room: MemoryRecallScope | undefined): Visibility {
-  return room && VISIBILITY_RANK[room] < VISIBILITY_RANK[cfgVisibility] ? room : cfgVisibility;
-}
+/** 跨会话检索模式的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all；坏值按不互通 */
+const MODE_VISIBILITY: ReadonlyMap<unknown, Visibility> = new Map([
+  ['isolated', 'session'],
+  ['user', 'all'],
+  ['platform', 'platform'],
+  ['all', 'all'],
+]);
 
 /** 过了准入与可见范围的命中，带时间加权与同用户加权后的终分 */
 type RankedHit = VectorSearchResult & { finalScore: number };
@@ -300,10 +308,13 @@ const uses = {
   memory: optional(memory),
   tools: optional(tools),
   /**
-   * 房间的召回范围（会话配置 memoryRecallScope），与当前会话、候选所在会话的出生平台（子会话取根会话的）。不在场时只按
-   * 插件配置：当前平台取入口平台，同平台过滤只认向量记下的入口平台
+   * 当前会话、候选所在会话的出生平台（子会话取根会话的）。不在场时当前平台取入口平台，同平台过滤只认向量记下的入口平台
    */
   sessionManager: optional(sessionManager),
+  /** 按会话读跨会话检索模式；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   events,
   hooks,
   contributions,
@@ -323,19 +334,20 @@ export default definePlugin({
   apply: run,
 });
 
-async function run({
-  vectorstore,
-  embedding,
-  memory,
-  tools,
-  sessionManager,
-  events,
-  hooks,
-  contributions,
-  provide,
-  logger,
-  config,
-}: Caps): Promise<void> {
+async function run(caps: Caps): Promise<void> {
+  const {
+    vectorstore,
+    embedding,
+    memory,
+    tools,
+    sessionManager,
+    events,
+    hooks,
+    contributions,
+    provide,
+    logger,
+    config,
+  } = caps;
   // memory 是可选依赖，provider 换人不级联 bounce 本插件：引用与能力探测都必须在调用点现算，
   // 否则 provider 晚于本插件注册时 hasRangeQuery 永久为假，或扩窗落在已关闭的旧实例上。
   function hasRangeQuery(): boolean {
@@ -343,7 +355,7 @@ async function run({
   }
 
   const parsed = parseConfig(configSchema, config.use, logger.use);
-  sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
 
   const cfg: VectorMemoryConfig = {
     search: {
@@ -358,7 +370,6 @@ async function run({
       concurrency: Math.floor(parsed.indexing.concurrency),
       maxQueueSize: Math.floor(parsed.indexing.maxQueueSize),
     },
-    crossSessionMode: parsed.crossSessionMode,
     recallRoles: parsed.recallRoles,
   };
 
@@ -383,10 +394,6 @@ async function run({
    * 占比升高后对方消息会被挤出候选（同语料实测 2→0 条） */
   const candidateOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
 
-  /** 插件配置对应的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all */
-  const cfgVisibility: Visibility =
-    cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
-
   /** 会话管理记下的出生平台（子会话取根会话的）；会话管理不在或会话没有出生平台时为 undefined */
   function originPlatformOf(sessionId: string): string | undefined {
     const sm = sessionManager.present ? sessionManager.use : undefined;
@@ -402,16 +409,11 @@ async function run({
   }
 
   /**
-   * 当前会话的可见范围：插件配置再按房间的召回范围（会话配置 memoryRecallScope）收窄。
-   * 每次检索现算，房间或平台档改了下一轮即生效；session-manager 是可选依赖，同样在调用点取。
+   * 这个会话的跨会话检索模式（每次检索现读，改了下一轮即生效）：可见范围（检索的上限）与是否按同用户加权。platform 是入口平台
    */
-  function sessionVisibility(sessionId: string | undefined, platform: string): Visibility {
-    const room = sessionId
-      ? sessionManager.present
-        ? sessionManager.use.resolveConfig(sessionId, platform).memoryRecallScope
-        : undefined
-      : undefined;
-    return effectiveVisibility(cfgVisibility, room);
+  function modeOf(sessionId: string | undefined, platform: string | undefined) {
+    const mode = fields.get(sessionId, { platform }).crossSessionMode;
+    return { visibility: MODE_VISIBILITY.get(mode) ?? 'session', userBoost: mode === 'user' };
   }
 
   // === embedding 模型（向量空间）===
@@ -855,6 +857,7 @@ async function run({
         const curSessionId = data.sessionId;
         const curPlatform = currentPlatformOf(curSessionId, data.platform);
         const curUserId = data.userId ?? '';
+        const mode = modeOf(curSessionId, data.platform);
 
         const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.use.size());
         data.signal?.throwIfAborted();
@@ -865,10 +868,10 @@ async function run({
         const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, modelId, candidateCount, {
-          visibility: sessionVisibility(curSessionId, curPlatform),
+          visibility: mode.visibility,
           curSessionId,
           curPlatform,
-          boostUserId: cfg.crossSessionMode === 'user' ? curUserId : undefined,
+          boostUserId: mode.userBoost ? curUserId : undefined,
         });
         data.signal?.throwIfAborted();
 
@@ -1015,8 +1018,8 @@ async function run({
               enum: ['session', 'platform', 'all'],
               description:
                 'session=仅当前会话；platform=同平台所有会话；all=全部。' +
-                `默认沿用插件配置（当前=${cfgVisibility}${cfg.crossSessionMode === 'user' ? '，当前用户本人发言或被 @ 的记录优先' : ''}）。` +
-                '为安全起见，scope 只能比插件配置更窄，不能更宽；所在房间设了更窄的召回范围时再按房间收窄。',
+                '默认按这个会话的跨会话检索模式（同用户加权档下，当前用户本人发言或被 @ 的记录优先）。' +
+                '为安全起见，scope 只能比它更窄，不能更宽。',
             },
             contextWindow: {
               type: 'number',
@@ -1061,11 +1064,12 @@ async function run({
       const curSessionId = callCtx.sessionId;
       const curPlatform = currentPlatformOf(curSessionId, callCtx.platform);
 
-      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility）并按房间收窄，再与请求取较窄者。
+      // scope 收紧规则：这个会话的跨会话检索模式先映成**可见范围**，再与请求取较窄者。
       // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它
       // 排在 platform 之前，于是「显式请求 platform」会被静默放宽回 all——与工具描述
       // 承诺的「scope 只能更窄」相反。
-      const allowedScope = sessionVisibility(curSessionId, curPlatform);
+      const mode = modeOf(curSessionId, callCtx.platform);
+      const allowedScope = mode.visibility;
       const effectiveScope: Visibility =
         requestedScope && VISIBILITY_RANK[requestedScope] < VISIBILITY_RANK[allowedScope]
           ? requestedScope
@@ -1089,7 +1093,7 @@ async function run({
             visibility: effectiveScope,
             curSessionId,
             curPlatform,
-            boostUserId: cfg.crossSessionMode === 'user' ? callCtx.userId : undefined,
+            boostUserId: mode.userBoost ? callCtx.userId : undefined,
           },
         );
 

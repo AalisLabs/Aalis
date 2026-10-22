@@ -7,6 +7,7 @@ import { FetchError } from '../components/FetchError';
 import { IconButton } from '../components/IconButton';
 import { List, ListItem } from '../components/List';
 import { Panel } from '../components/Panel';
+import { useConnection, useSessionless } from '../connection';
 import { text, tr } from '../language';
 import { PageContent } from '../pages/PageContent';
 import { PageMissing } from '../pages/PluginPage';
@@ -24,8 +25,9 @@ import './SettingsArea.css';
 import type { Localized } from '@aalis/schema-i18n';
 
 // 设置：宿主的分节（会话默认、外观、系统）与插件的分节（位置为设置的页面）是同一张分节表，宿主先占好位置：会话默认在最前，
-// 插件的按页面的先后排在它后面，外观与系统在最后。左栏是这张表的目录，主区按地址打开一节。会话默认要会话服务在，
-// 插件的分节要它的页面登记着，外观与系统总在。桌面上 /settings 落到第一节，手机上它就是目录这一层。
+// 插件的按页面的先后排在它后面，外观与系统在最后。左栏是这张表的目录，主区按地址打开一节。会话默认要会话服务在、它的功能位
+// settings 为真（会话设置服务在），插件的分节要它的页面登记着，外观与系统总在。桌面上 /settings 落到第一节（会话服务在时等
+// 握手定下功能位），手机上它就是目录这一层。
 // 插件列表或页面表没取到时只少依赖它的那几节，目录写明原因、可以重试
 
 const HOST = {
@@ -50,6 +52,7 @@ function useSections(): SectionEntry[] | undefined {
   const { pages, pagesError } = usePages();
   const { error: pluginsError } = usePlugins();
   const sessions = useSessionService();
+  const { features } = useConnection();
   if ((sessions === undefined && !pluginsError) || (pages === undefined && !pagesError)) return undefined;
   const host = (section: HostSettings): SectionEntry => ({
     path: paths.settingsSection(section),
@@ -57,7 +60,7 @@ function useSections(): SectionEntry[] | undefined {
     host: section,
   });
   return [
-    ...(sessions ? [host('session-defaults')] : []),
+    ...(sessions && features.settings ? [host('session-defaults')] : []),
     ...(pages ?? [])
       .filter(isSettingsPage)
       .map(page => ({ path: paths.settingsPage(refOf(page)), title: pageName(page), page })),
@@ -111,11 +114,14 @@ export function SettingsDirectory() {
   );
 }
 
-/** /settings：桌面上落到第一节；手机上这一层是目录，主区不出现 */
+/** /settings：桌面上落到第一节，会话服务在时等握手定下功能位（会话默认在不在）；手机上这一层是目录，主区不出现 */
 export function SettingsHome() {
   const sections = useSections();
   const phone = usePhone();
-  if (phone || !sections) return null;
+  const sessions = useSessionService();
+  const { ready } = useConnection();
+  const sessionless = useSessionless();
+  if (phone || !sections || (sessions === true && !ready && !sessionless)) return null;
   return <Navigate to={sections[0].path} replace />;
 }
 
@@ -146,6 +152,7 @@ const isHost = (section: string | undefined): section is HostSettings =>
 export function SettingsSection() {
   const { section, instance, pageKey } = useParams();
   const sessions = useSessionService();
+  const { features, ready } = useConnection();
   const { error: pluginsError, refresh } = usePlugins();
   if (instance !== undefined && pageKey !== undefined) {
     return <PluginSection key={`${instance}\n${pageKey}`} instance={instance} pageKey={pageKey} />;
@@ -153,6 +160,10 @@ export function SettingsSection() {
   if (!isHost(section)) return <Navigate to={paths.settings} replace />;
   const title = text(HOST[section].title);
   const { Content } = HOST[section];
+  // 会话设置服务不在：没有这一节
+  if (section === 'session-defaults' && sessions === true && !features.settings) {
+    return ready ? <Navigate to={paths.settings} replace /> : null;
+  }
   if (section === 'session-defaults' && sessions !== true) {
     return (
       <Section title={title}>

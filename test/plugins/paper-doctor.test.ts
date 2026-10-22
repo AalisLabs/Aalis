@@ -48,7 +48,7 @@ function ledgerWith(mutate: (ledger: ReturnType<typeof emptyLedger>) => void) {
 
 describe('诊断项 paper.config', () => {
   it('对照：试点形态（一块具名白纸、一个房间、出网来自提供者接口）为 ok', async () => {
-    const result = await check({ listed: { [ROOM]: {} }, placeProfiles: { [WINDOW]: PILOT_ROOM } });
+    const result = await check({ listed: [ROOM], places: { [WINDOW]: PILOT_ROOM } });
     expect(result.level).toBe('ok');
     expect(result.message).not.toMatch(/未核实/);
   });
@@ -79,14 +79,14 @@ describe('诊断项 paper.config', () => {
   });
 
   it('平台档写了 remoteAgentTypes 时 warn，写明平台', async () => {
-    const result = await check({ profiles: { onebot: { remoteAgentTypes: [REMOTE] } } });
+    const result = await check({ platforms: { onebot: { remoteAgentTypes: [REMOTE] } } });
     expect(result.level).toBe('warn');
     expect(result.message).toContain('onebot');
     expect(result.message).toContain('remoteAgentTypes');
   });
 
   it('对照：平台档的 remoteAgentTypes 为空数组时不报', async () => {
-    const result = await check({ profiles: { onebot: { remoteAgentTypes: [] } } });
+    const result = await check({ platforms: { onebot: { remoteAgentTypes: [] } } });
     expect(result.level).toBe('ok');
   });
 
@@ -128,8 +128,8 @@ describe('诊断项 paper.config', () => {
 
   it('一块具名白纸被两个房间共用时 warn，写明长期代理对这些房间都可见', async () => {
     const result = await check({
-      listed: { [ROOM]: {}, [ROOM2]: {} },
-      placeProfiles: { [WINDOW]: PILOT_ROOM, [WINDOW2]: PILOT_ROOM },
+      listed: [ROOM, ROOM2],
+      places: { [WINDOW]: PILOT_ROOM, [WINDOW2]: PILOT_ROOM },
     });
     expect(result.level).toBe('warn');
     expect(result.message).toContain(ROOM);
@@ -138,50 +138,50 @@ describe('诊断项 paper.config', () => {
   });
 
   it('平台档写了 paperName 时同样按多个房间共用 warn', async () => {
-    const result = await check({ profiles: { onebot: { paperName: PAPER } } });
+    const result = await check({ platforms: { onebot: { paperName: PAPER } } });
     expect(result.level).toBe('warn');
     expect(result.message).toContain('onebot');
     expect(result.message).toContain('可见');
   });
 
   it('平台类型档写了 remoteAgentTypes 时 warn（不必先有这个类型的房间登记），写明平台与类型名', async () => {
-    const group = await check({ typeProfiles: { 'onebot/group': { remoteAgentTypes: [REMOTE] } } });
+    const group = await check({ platformTypes: { 'onebot/group': { remoteAgentTypes: [REMOTE] } } });
     expect(group.level).toBe('warn');
     expect(group.message).toContain('写在平台类型档 onebot · group');
 
-    const priv = await check({ typeProfiles: { 'onebot/private': { remoteAgentTypes: [REMOTE] } } });
+    const priv = await check({ platformTypes: { 'onebot/private': { remoteAgentTypes: [REMOTE] } } });
     expect(priv.level).toBe('warn');
     expect(priv.message).toContain('写在平台类型档 onebot · private');
   });
 
   it('对照：平台类型档的 remoteAgentTypes 为空数组时不报；平台档写了只报平台档；窗口的场所写了不报（按窗口设是正常写法）', async () => {
     const empty = await check({
-      listed: { [ROOM]: {} },
-      typeProfiles: { 'onebot/group': { remoteAgentTypes: [] } },
+      listed: [ROOM],
+      platformTypes: { 'onebot/group': { remoteAgentTypes: [] } },
     });
     expect(empty.level).toBe('ok');
 
-    const base = await check({ listed: { [ROOM]: {} }, profiles: { onebot: { remoteAgentTypes: [REMOTE] } } });
+    const base = await check({ listed: [ROOM], platforms: { onebot: { remoteAgentTypes: [REMOTE] } } });
     expect(base.message).toContain('写在平台档 onebot');
     expect(base.message).not.toContain('平台类型档');
 
-    const window = await check({ listed: { [ROOM]: {} }, placeProfiles: { [WINDOW]: { remoteAgentTypes: [REMOTE] } } });
+    const window = await check({ listed: [ROOM], places: { [WINDOW]: { remoteAgentTypes: [REMOTE] } } });
     expect(window.level).toBe('ok');
   });
 
-  it('全局默认写了 remoteAgentTypes 或 paperName 时同样 warn：全部房间都继承', async () => {
-    const types = await check({ listed: { [ROOM]: {} }, defaults: { remoteAgentTypes: [REMOTE] } });
-    expect(types.message).toContain('写在全局默认');
-    const name = await check({ listed: { [ROOM]: {} }, defaults: { paperName: PAPER } });
+  it('全局层（插件配置）写了 remoteAgentTypes 或 paperName 时同样 warn：全部房间都继承', async () => {
+    const types = await check({ listed: [ROOM], global: { remoteAgentTypes: [REMOTE] } });
+    expect(types.message).toContain('写在全局（插件配置）');
+    const name = await check({ listed: [ROOM], global: { paperName: PAPER } });
     expect(name.level).toBe('warn');
     expect(name.message).toContain(ROOM);
-    expect(name.message).toContain('全局默认的全部房间');
+    expect(name.message).toContain('全局（插件配置）的全部房间');
   });
 
   it('平台类型档写了 paperName 时按共用 warn：列出继承它的房间与这一档的全部房间', async () => {
     const result = await check({
-      listed: { [ROOM]: {} },
-      typeProfiles: { 'onebot/group': { paperName: PAPER } },
+      listed: [ROOM],
+      platformTypes: { 'onebot/group': { paperName: PAPER } },
     });
     expect(result.level).toBe('warn');
     expect(result.message).toContain(ROOM);
@@ -191,9 +191,9 @@ describe('诊断项 paper.config', () => {
 
   it('窗口的场所盖掉了平台类型档的 paperName：这个房间不列入，平台类型档覆盖的其余房间照报', async () => {
     const result = await check({
-      listed: { [ROOM]: {} },
-      typeProfiles: { 'onebot/group': { paperName: PAPER } },
-      placeProfiles: { [WINDOW]: { paperName: 'zz-paper-own' } },
+      listed: [ROOM],
+      platformTypes: { 'onebot/group': { paperName: PAPER } },
+      places: { [WINDOW]: { paperName: 'zz-paper-own' } },
     });
     expect(result.level).toBe('warn');
     expect(result.message).toContain('平台类型档 onebot · group 的全部房间');
@@ -218,7 +218,7 @@ describe('诊断项 paper.config', () => {
         delivered: false,
       };
     });
-    const result = await check({ files, listed: { [ROOM]: {} }, placeProfiles: { [WINDOW]: PILOT_ROOM } });
+    const result = await check({ files, listed: [ROOM], places: { [WINDOW]: PILOT_ROOM } });
     expect(result.level).toBe('warn');
     expect(result.message).toContain(ROOM2);
 
@@ -240,9 +240,7 @@ describe('诊断项 paper.config', () => {
         delivered: false,
       };
     });
-    expect(
-      (await check({ files: cleared, listed: { [ROOM]: {} }, placeProfiles: { [WINDOW]: PILOT_ROOM } })).level,
-    ).toBe('ok');
+    expect((await check({ files: cleared, listed: [ROOM], places: { [WINDOW]: PILOT_ROOM } })).level).toBe('ok');
   });
 
   it('有停开的白纸时 error，写明原因', async () => {

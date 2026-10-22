@@ -38,7 +38,9 @@
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -65,7 +67,9 @@
       "optional": [
         "authority",
         "message-archive",
-        "session-manager"
+        "session-manager",
+        "host-config",
+        "session-settings"
       ],
       "provides": [
         "compression"

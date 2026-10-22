@@ -15,6 +15,7 @@ import {
   type AppOptions,
   DefaultLogger,
   definePlugin,
+  events,
   type Logger,
   LogHub,
   provide,
@@ -159,6 +160,17 @@ describe('/admin 管理面推送', () => {
     await app.plugins.enable(probePlugin.name);
     await vi.waitFor(() => expect(a.count('plugins.changed')).toBeGreaterThan(afterDisable));
     expect(new Set(a.events.map(e => JSON.stringify(e)))).toEqual(new Set(['{"type":"plugins.changed"}']));
+  });
+
+  it('宿主配置文档变了（host-config:changed）：推 plugins.changed，插件详情与界面语言据它重取', async () => {
+    const app = quietApp();
+    const port = await start(app);
+    const a = await openAdmin(port);
+    const before = a.count('plugins.changed');
+    await app.bind({ events }).events.use.emit('host-config:changed', { instanceId: 'zz-probe' });
+    await vi.waitFor(() => expect(a.count('plugins.changed')).toBe(before + 1));
+    await app.bind({ events }).events.use.emit('host-config:changed', { document: true });
+    await vi.waitFor(() => expect(a.count('plugins.changed')).toBe(before + 2));
   });
 
   it('页面登记与撤回：插件状态不变，也各推一次 plugins.changed', async () => {

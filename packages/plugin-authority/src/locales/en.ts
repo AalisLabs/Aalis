@@ -4,11 +4,17 @@ import type { Source } from '../texts.js';
 export default defineLocale<Source>()({
   capabilityDenied: 'Disabled by the system: {capability}',
   levelTooLow: 'Insufficient permission: "{capability}" needs level {required} (current {level})',
+  ownerOnlyCapability: 'Insufficient permission: "{capability}" is owner-only',
   intentUnreachable:
     'Operation cancelled: {capability} needs confirmation from the sender in person, but this command was not typed by a person, so it cannot be confirmed',
   intentDeclined: 'Operation cancelled: {capability} was not confirmed by the sender',
   approvalsAbsent:
     'Operation cancelled: {capability} needs owner approval, but the approval service is absent (provided by @aalis/plugin-session-server)',
+  operationsDescription:
+    'Each command, tool and setting has a minimum level: commands and tools default to one derived from their risk (safe 0, sensitive 1, dangerous 2), settings to the level they declare; most need no change. Which layer a setting is written to has its own fixed threshold, not adjusted here.',
+  operationsEmpty: 'No commands, tools or settings are registered',
+  settingKind: 'Setting',
+  ownerOnlyLevel: 'Owner only',
   confirmSession: 'Every time (the waiver list can waive it)',
   confirmAlways: 'Every time (only a confirmation override set to off waives it)',
   rulesDescription:

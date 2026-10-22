@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
-import { placePaperId, type SessionConfig } from '../../packages/api-session-manager/src/index.js';
+import { placePaperId } from '../../packages/api-session-manager/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
-import { ROOM_SETTINGS } from '../../packages/plugin-paper/src/rooms.js';
+import { configSchema } from '../../packages/plugin-paper/src/config.js';
+import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
+import { isSessionField } from '../../packages/schema-config/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { type FakeCursor, startFakeCursor } from '../fixtures/fake-cursor.js';
 import {
@@ -22,7 +24,7 @@ import {
   stopPaperHubs,
 } from '../fixtures/paper.js';
 import { recordRoom } from '../fixtures/rooms.js';
-import { ONEBOT_TYPES, startSessionManager } from '../fixtures/session-settings.js';
+import { fieldsPlugin, ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的资格判定：paper_task 只受理真人在房间会话本身里当面发起的任务，房间要开了白纸、
@@ -276,9 +278,9 @@ describe('房间白纸一个窗口一张', () => {
   });
 });
 
-describe('房间设置项设在窗口的场所上', () => {
+describe('房间的六项设在窗口的场所上', () => {
   /** 六项各一个合法的值 */
-  const SAMPLES: SessionConfig = {
+  const SAMPLES: Record<string, unknown> = {
     paperEnabled: true,
     paperName: PAPER,
     remoteAgentTypes: [REMOTE],
@@ -287,22 +289,38 @@ describe('房间设置项设在窗口的场所上', () => {
     remoteAgentRoomDailyCents: 500,
   };
 
-  it('只能设到场所为止：写进会话自己的覆盖被拒；窗口的场所照收，同一窗口里另一个机器人账号的会话取到场所的值', async () => {
-    const { app, host, sm } = await startSessionManager({
-      settings: ROOM_SETTINGS,
+  it('按会话字段：只适用于房间、只能设到场所为止，收在高级里依次排开', () => {
+    const declared = Object.entries(configSchema).filter(([, field]) => isSessionField(field));
+    expect(declared.map(([key]) => key)).toEqual(Object.keys(SAMPLES));
+    declared.forEach(([key, field], order) => {
+      expect((field as { session?: unknown }).session, key).toMatchObject({
+        appliesTo: ['room'],
+        narrowest: 'place',
+        prominence: 'advanced',
+        order,
+      });
+    });
+  });
+
+  it('只能设到场所为止：写进会话自己那一层被拒；窗口的场所照收，同一窗口里另一个机器人账号的会话取到场所的值', async () => {
+    const paper = fieldsPlugin(paperPlugin.name, configSchema);
+    const { app, admin, host } = await startSettings({
+      fields: [paper.definition],
       adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
     });
     try {
       await recordRoom(host.events.use, ROOM, '群');
-      expect(ROOM_SETTINGS.map(setting => setting.key).sort()).toEqual(Object.keys(SAMPLES).sort());
       for (const [key, value] of Object.entries(SAMPLES)) {
-        await expect(sm.updateSession(ROOM, { config: { [key]: value } }), key).rejects.toThrow(
-          '这一项在场所及以上设置',
+        await expect(admin.update({ sessionId: ROOM }, { plugin: paperPlugin.name, key, value }), key).rejects.toThrow(
+          '只能设到场所为止',
+        );
+        await admin.update(
+          { layer: { scope: 'place', key: 'onebot:group:20001' } },
+          { plugin: paperPlugin.name, key, value },
         );
       }
-      await sm.updateLayer({ scope: 'place', key: 'onebot:group:20001' }, SAMPLES);
       await recordRoom(host.events.use, 'onebot:10001:group:20001', '群');
-      expect(sm.resolveConfig('onebot:10001:group:20001')).toMatchObject(SAMPLES);
+      expect(paper.reader().get('onebot:10001:group:20001')).toMatchObject(SAMPLES);
     } finally {
       await app.stop();
     }

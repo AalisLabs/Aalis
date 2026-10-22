@@ -381,9 +381,7 @@ function registerBuiltinChecks(
           const fix =
             plugin !== undefined
               ? `改选偏好：WebUI 插件详情（${plugin}）的服务偏好，或配置文件的 pluginServicePreferences；要用原来的，启用提供 ${preferred} 的插件`
-              : name === 'llm'
-                ? `改选偏好：在 WebUI 设置「会话默认」的全局默认层改「模型」（写进配置文件的 servicePreferences.llm）；要用原来的，启用提供 ${preferred} 的插件`
-                : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`;
+              : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`;
           results.push({
             id: plugin === undefined ? `services.preferences.${name}` : `services.preferences.${plugin}.${name}`,
             category: 'service',

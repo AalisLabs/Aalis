@@ -27,10 +27,6 @@ const REGISTERED_KEYS: ReadonlySet<string> = new Set(Object.values(WellKnownMeta
 /** 名字叫 metadata、却不是存档消息元数据的读：「文件 键」→ 理由。每条都要还读着 */
 const NOT_ARCHIVE_READS = new Map([
   [
-    'packages/plugin-session-server/src/sessions.ts platform',
-    '会话记录（api-session-manager 的 SessionInfo）的元数据，子任务建档时写入，不是存档消息的',
-  ],
-  [
     'packages/plugin-memory-vector/src/index.ts platform',
     '向量条目的元数据：本插件写入向量库时自己定的字段，按平台筛召回结果',
   ],

@@ -13,7 +13,8 @@ import { t } from './texts.js';
 // ----- 入口 -----
 
 // gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
-// 会话管理与 authority 用来判房间类别（结构性放行）；authority 缺席时没有人是 owner。
+// 会话管理在场时入站相位之前先等它收录这条消息的会话；会话管理与 authority 还用来判房间类别（结构性放行），authority 缺席时
+// 没有人是 owner。
 // 出站消息带文字对象时按会话的语言渲染进 content；i18n 缺席或渲染抛错时按原文
 const uses = {
   events,
@@ -81,17 +82,18 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
    *
    * 前三相位任一被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    * 房间类别为 owner-only 的会话跳过 trigger 与 flow（结构性放行），这两个相位不运行、不发 gateway:phase:done。
+   * 会话管理在场时先等它收录（recordInbound）：新房间的第一条消息进入相位时会话已建档、带聊天窗口，各读取方按记下的字段取
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
     // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上
     const data: InboundPhaseData = { message, metadata: {}, agent: agent.present ? agent.use : undefined };
 
     try {
+      if (sessionManager.present) await sessionManager.use.recordInbound(message);
       // 前置相位 = INBOUND_PHASE_ORDER 中除终相 DISPATCH 外的全部（单一真相：新增相位只改 gateway-api）。
       // 任一相位被 swallow 即停止后续调度。
       const preDispatch = INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH);
-      // 房间类别到第一个可跳过的相位才判（指令相位之后）：IM 房间的第一条消息由会话管理在同一个入站事件上收录，
-      // 判早了这个房间可能还不在会话表里
+      // 房间类别到第一个可跳过的相位才判，只判一次（指令相位之后；会话在相位之前已收录）
       let ownerOnly: boolean | undefined;
       for (const phase of preDispatch) {
         if (OWNER_ONLY_SKIPPED.has(phase)) {

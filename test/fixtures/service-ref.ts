@@ -38,7 +38,7 @@ export function ref<P>(
 
 /** MediaServiceImpl 的能力桩：各服务一律无提供者 */
 export function emptyMediaCaps(logger: Logger): MediaServiceCaps {
-  return { logger: fixedRef(logger), llm: ref(), asr: ref(), sessionManager: ref(), memory: ref() };
+  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref() };
 }
 
 /** 只有一家（或缺席）的选择层 */

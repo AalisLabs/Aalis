@@ -72,6 +72,8 @@ export type ConnectionNotification = Exclude<
 export interface SessionClient {
   /** 握手完成才算 open */
   readonly state: ConnectionState;
+  /** 这一次连接已握手完成（握手后的 onReady 调用之前就为真，state 这时可能还不是 open）：之后登记的 onReady 要到下一次握手才调用 */
+  readonly ready: boolean;
   onState(listener: (state: ConnectionState) => void): () => void;
   /** 每次握手完成（包括重连后的）时调用 */
   onReady(listener: (init: InitializeResult) => void): () => void;
@@ -276,6 +278,9 @@ export function createSessionClient(): SessionClient {
   return {
     get state() {
       return socket.state;
+    },
+    get ready() {
+      return ready;
     },
     onState: listener => socket.onState(listener),
     onReady(listener) {

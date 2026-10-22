@@ -8,14 +8,14 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { provideHostLanguage } from '../fixtures/host-language.js';
+import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 的可选项接口按全局默认层的语言渲染产出方交来的文字对象：工具分组的名字与概述（/api/models/toolGroups），深度思考档位的
+// WebUI 的可选项接口按全局层的语言渲染产出方交来的文字对象：工具分组的名字与概述（/api/models/toolGroups），深度思考档位的
 // 名字（/api/models/llm-thinking 的可选项与 labels），平台类型的显示名（/api/models/gateway-scopes，没有显示名的照旧写类型名）。
-// 分组的 description 只给模型，不进可选项：没有概述的分组不显示概述。i18n 是真的 plugin-i18n，缺席时一律原文；会话管理是
-// 只给全局默认层的替身。
+// 分组的 description 只给模型，不进可选项：没有概述的分组不显示概述。i18n 是真的 plugin-i18n，缺席时一律原文；全局语言
+// 写在宿主配置文档里 plugin-i18n 的配置段。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-options-i18n-token-placeholder-0';
@@ -84,9 +84,9 @@ const owner = definePlugin({
 
 async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   const port = await freePort();
-  const { app } = hostedApp({}, { logger: silent });
+  const { app } = hostedApp(i18nSection(['en']), { logger: silent });
   apps.push(app);
-  const setLanguage = provideHostLanguage(app, ['en']);
+  const setLanguage = (language: string[]) => setHostLanguage(app, language);
   await app.plugin(toolsPlugin, {});
   if (withI18n) await app.plugin(i18nPlugin);
   await app.plugin(owner);
@@ -101,7 +101,7 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   /** 读者看到的：分组可选项（不含「全部分组」）、档位可选项与 labels、作用域可选项里与平台类型有关的几项 */
   const shown = async () => {
     const groups = await get('/api/models/toolGroups');
-    const dependency = encodeURIComponent(JSON.stringify({ provider: OWNER, model: 'm1' }));
+    const dependency = encodeURIComponent(`${OWNER}/m1`);
     const thinking = await get(`/api/models/llm-thinking?dependency=${dependency}`);
     const scopes = await get('/api/models/gateway-scopes');
     return {
@@ -116,8 +116,8 @@ async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
 
 const CHINESE = {
   groups: [
-    { value: 'zz-translate', label: '翻译工具', description: '把文字译成别的语言', pluginName: OWNER },
-    { value: 'zz-bare', label: 'zz-bare', pluginName: OWNER },
+    { value: 'zz-bare', label: 'zz-bare' },
+    { value: 'zz-translate', label: '翻译工具', description: '把文字译成别的语言' },
   ],
   levels: [
     { value: 'off', label: '关' },
@@ -134,13 +134,8 @@ const CHINESE = {
 
 const ENGLISH = {
   groups: [
-    {
-      value: 'zz-translate',
-      label: 'Translation tools',
-      description: 'Turns text into other languages',
-      pluginName: OWNER,
-    },
-    { value: 'zz-bare', label: 'zz-bare', pluginName: OWNER },
+    { value: 'zz-bare', label: 'zz-bare' },
+    { value: 'zz-translate', label: 'Translation tools', description: 'Turns text into other languages' },
   ],
   levels: [
     { value: 'off', label: 'Off' },
@@ -155,7 +150,7 @@ const ENGLISH = {
   ],
 };
 
-describe('可选项接口按全局默认层的语言渲染', () => {
+describe('可选项接口按全局层的语言渲染', () => {
   it('分组的名字与概述、档位名、平台类型的显示名：en 拿英文，zh-CN 拿原文；没有概述的分组不显示概述，没有显示名的类型写类型名', async () => {
     const { shown, setLanguage } = await setup();
     expect(await shown()).toEqual(ENGLISH);

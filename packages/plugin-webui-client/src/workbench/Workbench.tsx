@@ -106,7 +106,9 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const toast = useToast();
   const sessions = useProvider(SESSION_PROTOCOL);
   const live = useLiveSession(sessionId);
-  const settings = useSettingRows(useMemo(() => ({ sessionId }), [sessionId]));
+  const settings = useSettingRows(
+    useMemo(() => (features.settings ? { sessionId } : undefined), [features, sessionId]),
+  );
   const composer = useRef<ComposerHandle>(null);
   const fold = useFold();
   const { summary, usage, plan } = live;
@@ -122,6 +124,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
     plan,
     usage,
     background: (summary?.childCount ?? 0) > 0 || own.length > 0 || background > 0 || backgroundError !== undefined,
+    settings: features.settings,
   });
   /** 打开着日志的后台任务 */
   const [log, setLog] = useState<string>();

@@ -12,7 +12,7 @@ import { provideHostLanguage } from '../fixtures/host-language.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 合并转发摘要的输出语言取自全局默认层的语言列表（经 api-i18n 的 outputLanguageFor，读者是 host），不写死简体中文；
+// 合并转发摘要的输出语言取自全局层的语言列表（经 api-i18n 的 outputLanguageFor，读者是 host），不写死简体中文；
 // 目标长度按字符计。会话管理的替身里会话读者是 en（没设），读者错按会话时变成 English。摘要模型用替身，记下收到的消息
 // ════════════════════════════════════════════════════════════
 
@@ -41,7 +41,7 @@ afterEach(async () => {
 });
 
 describe('合并转发摘要的提示词', () => {
-  it('全局默认层设 ja-JP：system 写 日本語 (日本)（ja-JP），user 的目标长度按字符', async () => {
+  it('全局层设 ja-JP：system 写 日本語 (日本)（ja-JP），user 的目标长度按字符', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     provideHostLanguage(app, ['ja-JP']);

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
@@ -15,6 +15,7 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -26,7 +27,7 @@ import { seedRooms } from '../fixtures/rooms.js';
 // ════════════════════════════════════════════════════════════
 // 执行守卫的拒绝语是 plugin-authority 字典里的文字对象：指令一路由 plugin-commands 作为回复交出，网关按房间的语言渲染
 // （en 房间拿英文、zh-CN 房间拿原文）；工具一路交给模型，取原文。真的 plugin-authority、plugin-commands、plugin-gateway、
-// plugin-tools、会话管理与 plugin-i18n，记忆是内存实现，存储是替身。
+// plugin-tools、会话管理、会话设置与 plugin-i18n，记忆是内存实现，存储是替身。
 // ════════════════════════════════════════════════════════════
 
 const CHAT = 'zz-chat';
@@ -50,13 +51,21 @@ async function setup() {
   homes.push(home);
   provideHostPaths(app, home);
   await registerHubs(app);
-  const host = app.bind({ provide, events, commands, gateway, sessionManager, tools });
+  const host = app.bind({ provide, events, commands, gateway, sessionSettings, tools });
   host.provide.use(storage, memoryStorage(new Map()));
   // 房间要在会话管理读表之前预置进记忆后端
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   await seedRooms(app.bind({ memory }).memory.use, Object.fromEntries(ROOMS.map(id => [id, id])));
-  const plugins = [sessionManagerPlugin, gatewayPlugin, commandsPlugin, toolsPlugin, authorityPlugin, i18nPlugin];
+  const plugins = [
+    sessionManagerPlugin,
+    sessionSettingsPlugin,
+    gatewayPlugin,
+    commandsPlugin,
+    toolsPlugin,
+    authorityPlugin,
+    i18nPlugin,
+  ];
   await app.pluginAll(plugins.map(definition => ({ definition, config: {} })));
   await app.plugins.idle();
   for (const { name } of [memoryInMemory, ...plugins]) {
@@ -83,7 +92,7 @@ async function setup() {
   /** 在下一个预置的房间里把语言设成 language、敲一条指令，取它引出的回复 */
   const ask = async (language: string[], content: string): Promise<string> => {
     const sessionId = ROOMS[rooms++];
-    await host.sessionManager.use.updateSession(sessionId, { config: { language } });
+    await host.sessionSettings.use.update({ sessionId }, { plugin: i18nPlugin.name, key: 'language', value: language });
     const before = sent.length;
     void host.gateway.use.ingressMessage({ content, sessionId, platform: CHAT, userId: USER });
     await vi.waitFor(() => expect(sent.length).toBe(before + 1));

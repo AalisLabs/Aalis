@@ -2,14 +2,15 @@ import { vi } from 'vitest';
 import type { BoundDoctor, CheckResult, CheckSpec } from '../../packages/api-doctor/src/index.js';
 import type { GatewayService } from '../../packages/api-gateway/src/index.js';
 import type { RemoteAgentProvider } from '../../packages/api-remote-agent/src/index.js';
-import type { SessionConfig, SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { resolveFields, type SessionChain } from '../../packages/api-session-settings/src/index.js';
 import type { RegisteredTool, ToolCallContext } from '../../packages/api-tools/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
 import { configSchema, paperAuditSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { registerPaperDoctor } from '../../packages/plugin-paper/src/doctor.js';
 import { PaperDriver } from '../../packages/plugin-paper/src/driver.js';
 import { LedgerStore, type PaperLedger, type TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import { Isolation } from '../../packages/plugin-paper/src/rooms.js';
+import { Isolation, type PaperFields } from '../../packages/plugin-paper/src/rooms.js';
 import { TaskJournal } from '../../packages/plugin-paper/src/task-journal.js';
 import { registerPaperTools } from '../../packages/plugin-paper/src/tools.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
@@ -22,11 +23,11 @@ import { fixedRef, ref } from './service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸运行驱动的测试台：照 plugin-paper 的 apply 把记录、隔离、工具与驱动接在一起（不经 App），
-// 周边一律替身——远端用 ScriptedRemote，会话管理按会话 id 给房间配置，storage 是 pluginData 与 paper
+// 周边一律替身——远端用 ScriptedRemote，读取器按会话 id 给房间所在场所的六项（经 resolveFields 解析），storage 是 pluginData 与 paper
 // 两个根的内存实现（文件表可跨「重启」复用），网关记下出站消息。时钟用 vitest 的假时钟：
 // 用例在 beforeEach 里 useFakeTimers（含 Date），驱动的 now 取 Date.now。
 // owner 的管理动作（恢复、换新、清空、标为已读）直接调驱动的方法，WebUI 的接线在白纸页。诊断项 paper.config
-// 与驱动接在同一份记录上（doctor() 跑一次），会话管理的替身没有平台档、会话列表为空。
+// 与驱动接在同一份记录上（doctor() 跑一次），读取器的替身没有平台档等覆盖一类房间的层，会话管理的会话列表为空。
 // 完成通知不接（驱动交给它的回调是空的），通知经真实 App 测，见 paper-notices.test.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -58,7 +59,7 @@ export const DRIVER_CONFIG = {
   ],
 };
 
-const room = (paperName: string): SessionConfig => ({
+const room = (paperName: string): Record<string, unknown> => ({
   paperEnabled: true,
   paperName,
   remoteAgentTypes: [REMOTE_A, REMOTE_B],
@@ -66,7 +67,7 @@ const room = (paperName: string): SessionConfig => ({
 });
 
 /** ROOM_A 与 ROOM_A2 共用白纸 a，ROOM_B 用白纸 b */
-export const DRIVER_ROOMS: Record<string, SessionConfig> = {
+export const DRIVER_ROOMS: Record<string, Record<string, unknown>> = {
   [ROOM_A]: room(PAPER_A),
   [ROOM_A2]: room(PAPER_A),
   [ROOM_B]: room(PAPER_B),
@@ -74,7 +75,8 @@ export const DRIVER_ROOMS: Record<string, SessionConfig> = {
 
 export interface DriverHubOptions {
   config?: Record<string, unknown>;
-  rooms?: Record<string, SessionConfig>;
+  /** 会话 id → 这个房间所在场所写的六项（现读，改了下一次读取即生效）；缺省 DRIVER_ROOMS */
+  rooms?: Record<string, Record<string, unknown>>;
   /** 实例 id → 提供者；缺省只有 REMOTE_A 一个 ScriptedRemote */
   remotes?: Record<string, RemoteAgentProvider>;
   /** remotes 里一开始不在场的实例 id（模拟提供者插件停用）；用 setPresent 让它回来 */
@@ -144,11 +146,21 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   const remote = ref(present);
   const rooms = opts.rooms ?? DRIVER_ROOMS;
   const sessionManager = fixedRef({
-    resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
     getSession: (id: string) => sessionInfoOf(id),
-    listLayers: () => [],
     listSessions: () => [],
   } as unknown as SessionManagerService);
+  /** 房间所在场所的一层：插件配置里没有这六项，全局层为空 */
+  const chainOf = (sessionId: string): SessionChain => ({
+    kind: 'room',
+    placeKind: 'room',
+    parts: [{ layer: 'place', where: 'place', values: { ...(rooms[sessionId] ?? {}) } }],
+  });
+  const resolve = (sessionId: string) => resolveFields(configSchema, {}, chainOf(sessionId), () => {});
+  const fields = {
+    get: (sessionId: string) => resolve(sessionId).values,
+    trace: (sessionId: string) => resolve(sessionId),
+    layers: () => [{ layer: { scope: 'global' }, values: {} }],
+  } as unknown as PaperFields;
   const outbound: OutgoingMessage[] = [];
   const gateway = fixedRef<GatewayService>({
     async dispatchOutbound(message: OutgoingMessage) {
@@ -162,6 +174,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
     journal: new TaskJournal(ownView(storage, 'paper'), logger, now),
     remote,
     sessionManager,
+    fields,
     storage,
     ledger: store,
     isolation,
@@ -175,6 +188,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   registerPaperTools({
     tools: stubBoundTools({ onRegister: tool => void handlers.set(tool.definition.function.name, tool.handler) }),
     sessionManager,
+    fields,
     remote,
     gateway,
     events: { emit: async () => {} } as unknown as Events,
@@ -197,6 +211,7 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
       },
     } as unknown as BoundDoctor,
     sessionManager,
+    fields,
     remote,
     ledger: store,
     isolation,

@@ -161,8 +161,8 @@ describe('buildFocusGuidance', () => {
     userId: 'u1',
   };
 
-  it('群聊 + immediate（@触发）→ 返回 system 焦点指引', () => {
-    const msg = buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'immediate' });
+  it('多方窗口 + immediate（@触发）→ 返回 system 焦点指引', () => {
+    const msg = buildFocusGuidance({ ...base, triggerType: 'immediate' }, true);
     expect(msg).not.toBeNull();
     expect(msg?.role).toBe('system');
     expect(msg?.content).toContain('【当前焦点】');
@@ -170,33 +170,18 @@ describe('buildFocusGuidance', () => {
     expect(msg?.metadata?.injector).toBe('focus-guidance');
   });
 
-  it('群聊 + direct（直接对话）→ 返回 system 焦点指引', () => {
-    const msg = buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'direct' });
-    expect(msg).not.toBeNull();
+  it('多方窗口 + direct（直接对话）→ 返回 system 焦点指引', () => {
+    expect(buildFocusGuidance({ ...base, triggerType: 'direct' }, true)).not.toBeNull();
   });
 
-  it('私聊 → 返回 null（私聊本身就是 1v1，无需焦点指引）', () => {
-    expect(buildFocusGuidance({ ...base, sessionType: 'private', triggerType: 'direct' })).toBeNull();
+  it('一对一 → 返回 null（本身就是 1v1，无需焦点指引）', () => {
+    expect(buildFocusGuidance({ ...base, triggerType: 'direct' }, false)).toBeNull();
   });
 
-  it('群聊 + interval（被动触发）→ 返回 null（无明确焦点）', () => {
-    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'interval' })).toBeNull();
-  });
-
-  it('群聊 + idle → 返回 null', () => {
-    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'idle' })).toBeNull();
-  });
-
-  it('群聊 + proactive（代发任务）→ 返回 null（任务由 system 块传递）', () => {
-    expect(buildFocusGuidance({ ...base, sessionType: 'group', triggerType: 'proactive' })).toBeNull();
-  });
-
-  it('triggerType 缺失 → 返回 null（按 direct 兼容但仅在 sessionType 明确为 group 时不主动注入）', () => {
-    expect(buildFocusGuidance({ ...base, sessionType: 'group' })).toBeNull();
-  });
-
-  it('sessionType 缺失 → 返回 null', () => {
-    expect(buildFocusGuidance({ ...base, triggerType: 'immediate' })).toBeNull();
+  it('多方窗口里没有明确焦点的触发（interval、idle、proactive、没有 triggerType）→ 返回 null', () => {
+    for (const triggerType of ['interval', 'idle', 'proactive', undefined] as const) {
+      expect(buildFocusGuidance({ ...base, triggerType }, true), String(triggerType)).toBeNull();
+    }
   });
 });
 

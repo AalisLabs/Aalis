@@ -73,7 +73,6 @@ const record = (id: string, extra: Record<string, unknown> = {}) => ({
   name: id,
   children: [],
   status: 'completed',
-  config: {},
   createdAt: 1,
   updatedAt: 2,
   ...extra,
@@ -99,7 +98,6 @@ describe('坏数据只坏它自己', () => {
       'webui:children': record('webui:children', { children: null }),
       'webui:times': record('webui:times', { updatedAt: '昨天' }),
       'webui:status': record('webui:status', { status: 'weird' }),
-      'webui:config': record('webui:config', { config: 'x' }),
       'webui:key': record('webui:other'),
     };
     const { c, mem } = await setup({

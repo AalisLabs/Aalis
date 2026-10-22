@@ -1,13 +1,11 @@
 import { basename } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
-import { chatScopeOf, parseWindowKey, windowKey } from '@aalis/api-gateway';
+import { chatScopeOf, windowKey } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
-import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
-import { type LLMUsageEvent, lightestThinking, llm, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
-import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
+import { type LLMUsageEvent, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { historyCleared, type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import {
   claimantsOf,
   getPlatformAdapters,
@@ -16,24 +14,15 @@ import {
   sessionTypesOf,
 } from '@aalis/api-platform';
 import {
-  type InheritanceSource,
+  isUnfiled,
   type NewSessionFields,
   type OriginChat,
   type PlaceInfo,
-  type RegisteredSessionSetting,
   rootSessionOf,
-  SESSION_LAYERS,
-  type SessionConfig,
-  SessionConfigError,
-  type SessionConfigLayer,
-  type SessionConfigPatch,
   type SessionCreation,
   type SessionInfo,
-  type SessionInheritance,
-  type SessionLayerName,
   type SessionManagerService,
   type SessionPlace,
-  type SessionSetting,
   type SessionUpdates,
   sessionKind,
   sessionLabel,
@@ -41,23 +30,11 @@ import {
   type WorkBinding,
   type WorkspaceInfo,
 } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide, services } from '@aalis/core';
+import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
-import {
-  applyPatch,
-  assertName,
-  assertSessionPatch,
-  checkPatch,
-  type DocLayers,
-  isLayerName,
-  readLayers,
-  readSetting,
-  SettingRegistry,
-  type SettingValues,
-  writeLayers,
-} from './settings.js';
+import { t } from './texts.js';
 
 // ===== 常量 =====
 
@@ -97,23 +74,11 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 
 /**
  * SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM 与输出语言、中止读表重试的 lifecycle，
- * 解析接管房间的适配器实例的 platform，存放会话设置三层的宿主配置文档，判 owner 的 IM 私聊的 authority，
- * 以及承担全局默认模型的服务偏好
+ * 收录房间时问认领者、取类型声明、解析接管房间的适配器实例的 platform，与判 owner 的 IM 私聊的 authority
  */
 type ManagerCaps = Pick<
   Caps,
-  | 'memory'
-  | 'events'
-  | 'hooks'
-  | 'logger'
-  | 'llm'
-  | 'i18n'
-  | 'agent'
-  | 'lifecycle'
-  | 'platform'
-  | 'hostConfig'
-  | 'authority'
-  | 'services'
+  'memory' | 'events' | 'hooks' | 'logger' | 'llm' | 'i18n' | 'agent' | 'lifecycle' | 'platform' | 'authority'
 >;
 
 /** 回合的结局（api-agent 的 agent:turn:after） */
@@ -122,53 +87,16 @@ type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
 /** IM 房间收录按原生入站记下的来源字段，与收录之前解析到的接管它的适配器实例（没有适配器认领时不带） */
 type RoomOrigin = Required<Pick<SessionInfo, 'originPlatform' | 'originChat'>> & Pick<SessionInfo, 'originInstance'>;
 
-/** 场所记录：显示名、项目工作区的目录，与这个场所对各设置项的值（与层同一套校验，没登记的键原样保留） */
+/** 场所记录：显示名、插件的扩展元数据与项目工作区的目录 */
 interface PlaceRecord extends PlaceInfo {
   /** 目录的真实路径：只有项目工作区带 */
   root?: string;
-  config: SettingValues;
   createdAt: number;
   updatedAt: number;
 }
 
 /** 存在记忆后端元数据里的两张表 */
 type Table = typeof SESSIONS | typeof PLACES;
-
-type ConfigScope = SessionConfigLayer['scope'];
-type LayerOf<S extends ConfigScope> = Extract<SessionConfigLayer, { scope: S }>;
-
-/** 选层的依据：一个会话的（子会话按根会话），或一层的视图在哪些层之上 */
-interface LayerContext {
-  platform?: string;
-  type?: string;
-  place?: SessionPlace;
-  /** 父会话：它的 sessionDefaults（旧数据）是父会话层 */
-  parent?: SessionInfo;
-}
-
-/**
- * 会话之上一层的实现：在一个会话上取哪一份（不适用时为 undefined）、层标识的校验、存在哪（读与整份写）、可设的各份、
- * 日志里的称呼，以及这一层的视图在哪些层之上
- */
-interface LayerImpl<L extends SessionConfigLayer> {
-  select(ctx: LayerContext): L | undefined;
-  assert(layer: L): void;
-  read(layer: L): SettingValues | undefined;
-  write(layer: L, values: SettingValues): Promise<void>;
-  list(): L[];
-  describe(layer: L): string;
-  context(layer: L): LayerContext;
-}
-
-/** 继承链的一段：一处设置的原样值、来源层、日志里的称呼 */
-type Part = [values: object | undefined, source: InheritanceSource, where: string];
-
-/** 层表里这一层的称呼（原文），日志里点名层时用 */
-const layerLabel = (name: SessionLayerName): string =>
-  toSource(SESSION_LAYERS.find(layer => layer.name === name)!.label);
-
-/** 全局默认层由服务偏好承担的项：字段类型为 llm-ref（选 llm 服务的提供者）的设置项，读写 llm 服务的偏好 */
-const preferenceBacked = (setting: SessionSetting): boolean => setting.field.type === 'llm-ref';
 
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
@@ -191,10 +119,10 @@ class SessionManager implements SessionManagerService {
   private store: MemoryService | undefined;
   /** 最近一次挂接的加载；apply 等它完成再对外提供服务 */
   loading: Promise<void> = Promise.resolve();
-  /** 插件登记的设置项：登记与撤回都发 session:config:changed */
-  private readonly settings = new SettingRegistry(() => void this.caps.events.use.emit('session:config:changed'));
-  /** 已告警过的设置问题：取值无效、文档形状不对。解析每轮都跑，同一处只告警一次 */
+  /** 已告警过的问题（坏数据、收录判不出的认领）：同一处只告警一次 */
   private readonly warned = new Set<string>();
+  /** 正在收录或补记的会话：同一会话并发的原生入站共用这一次 */
+  private readonly recording = new Map<string, Promise<void>>();
   /**
    * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:input:before 进出登记与注销，结局由
    * agent:turn:after 记下（消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知
@@ -204,73 +132,6 @@ class SessionManager implements SessionManagerService {
   /** 正在解析所属实例的会话记录：同一条记录不并发解析，后到的调用不等它、直接返回 */
   private resolving = new WeakSet<SessionInfo>();
   private readonly lookup = (id: string) => this.sessions.get(id);
-
-  /** 层表的实现：一层一条，继承链、按层读写与可设的层都遍历它（先后取自 SESSION_LAYERS） */
-  private readonly layerTable: { [S in ConfigScope]: LayerImpl<LayerOf<S>> } = {
-    defaults: {
-      select: () => ({ scope: 'defaults' }),
-      assert: () => {},
-      read: () => this.readDefaults(),
-      write: (_layer, values) => this.writeDefaults(values),
-      list: () => [{ scope: 'defaults' }],
-      describe: () => layerLabel('defaults'),
-      context: () => ({}),
-    },
-    platform: {
-      select: ({ platform }) => (platform === undefined ? undefined : { scope: 'platform', platform }),
-      assert: layer => assertName('平台名', layer.platform),
-      read: layer => this.docLayers().platforms.get(layer.platform),
-      write: (layer, values) => this.writeDoc(doc => doc.platforms.set(layer.platform, values)),
-      list: () => this.platformNames().map(platform => ({ scope: 'platform', platform })),
-      describe: layer => `${layerLabel('platform')} ${layer.platform}`,
-      context: ({ platform }) => ({ platform }),
-    },
-    type: {
-      select: ({ platform, type }) =>
-        platform === undefined || type === undefined ? undefined : { scope: 'type', platform, type },
-      assert: layer => {
-        assertName('平台名', layer.platform);
-        assertName('类型名', layer.type);
-      },
-      read: layer => this.docLayers().types.get(layer.platform)?.get(layer.type),
-      write: (layer, values) =>
-        this.writeDoc(doc =>
-          doc.types.set(layer.platform, new Map(doc.types.get(layer.platform)).set(layer.type, values)),
-        ),
-      list: () =>
-        this.platformNames().flatMap(platform =>
-          this.typeNames(platform).map(type => ({ scope: 'type' as const, platform, type })),
-        ),
-      describe: layer => `${layerLabel('type')} ${layer.platform} · ${layer.type}`,
-      context: ({ platform, type }) => ({ platform, type }),
-    },
-    place: {
-      select: ({ place }) => place && { scope: 'place', key: place.key },
-      assert: layer => {
-        if (typeof layer.key !== 'string' || !this.places.has(layer.key)) {
-          throw new SessionConfigError(`场所不存在：${String(layer.key)}`);
-        }
-      },
-      read: layer => this.places.get(layer.key)?.config,
-      write: async (layer, values) => {
-        const record = this.places.get(layer.key)!;
-        record.config = values;
-        record.updatedAt = Date.now();
-        this.markDirty();
-      },
-      list: () =>
-        [...this.places.keys()]
-          .sort()
-          .sort(defaultFirst)
-          .map(key => ({ scope: 'place', key })),
-      describe: layer => `${layerLabel('place')} ${layer.key}`,
-      context: layer => {
-        const { kind, key } = this.places.get(layer.key)!;
-        const window = kind === 'window' ? parseWindowKey(key) : undefined;
-        return { platform: window?.platform, type: window?.type, place: { kind, key } };
-      },
-    },
-  };
 
   constructor(caps: ManagerCaps) {
     this.caps = caps;
@@ -456,9 +317,9 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），未命中以传入 id 建档。
-   * 创建来源在建档时写；命中按 id 兜底建档留下的空记录（没有创建来源、出生平台与绑定）时补写，随这次更新落盘。
-   * 终端配置的会话 id、/session.set 落配置覆盖时用
+   * 按精确 id 幂等 upsert：命中走 updateSession（emit `session:updated`），未命中以传入 id 建档。
+   * 创建来源在建档时写；命中按 id 兜底建档留下的空记录（{@link isUnfiled}）时补写，随这次更新落盘。
+   * 终端配置的会话 id、在收录不了的会话上写设置时用
    */
   async ensureSession(
     id: string,
@@ -467,9 +328,7 @@ class SessionManager implements SessionManagerService {
   ): Promise<SessionInfo> {
     const session = this.sessions.get(id);
     if (!session) return this.insert(id, patch, creation ? { createdFrom: creation.createdFrom } : {});
-    if (creation && !session.createdFrom && !session.originPlatform && !session.work) {
-      session.createdFrom = creation.createdFrom;
-    }
+    if (creation && isUnfiled(session)) session.createdFrom = creation.createdFrom;
     return this.updateSession(id, patch);
   }
 
@@ -530,19 +389,15 @@ class SessionManager implements SessionManagerService {
     patch: SessionUpdates,
     fields: Pick<SessionInfo, 'createdFrom' | 'originPlatform' | 'originChat' | 'originInstance'>,
   ): Promise<SessionInfo> {
-    const config = this.checkedConfig(patch.config);
     const now = Date.now();
     const session: SessionInfo = {
       id,
       name: patch.name || undefined,
-      title: patch.metadata?.title as string | undefined,
       parentId: undefined,
       children: [],
       status: patch.status || (this.hasTurnInFlight(id) ? 'active' : 'waiting'),
-      config,
       createdAt: now,
       updatedAt: now,
-      inputContext: patch.metadata?.inputContext as string | undefined,
       metadata: patch.metadata,
       ...fields,
       ...describeSession(fields),
@@ -552,6 +407,110 @@ class SessionManager implements SessionManagerService {
     await this.caps.events.use.emit('session:created', session);
     this.caps.logger.use.info(`会话建档(ensure): ${toSource(sessionLabel(session))} (${id})`);
     return session;
+  }
+
+  /**
+   * 原生入站的收录与补记。会话表里还没有记录的真人入站（不带 source）按这条消息建档：出生平台取消息的平台，聊天窗口按这个
+   * 平台的类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，走快路径。带 source 的是
+   * 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），id 带 `::` 的是内部会话，都不登记。
+   * 消息带的类型名不在平台的声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名、按平台声明的第一个多方类型记下时，
+   * 每个平台告警一次。按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，升级前的记录只记了出生平台、没有
+   * 聊天窗口，两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认出生平台的入站）。
+   * 收录与补记之前问遍认领这个 id 的适配器（claimantsOf），第一个认领者随来源字段记作所属实例。认领它的平台不止一个
+   * （如终端配置的会话 id 配成了群的 id）时判不出它是谁的窗口，不收录、不补记，每个 id 告警一次：结果不能取决于
+   * 适配器的登记先后。问的期间别的入站可能已收录，问完按会话表此刻的记录判，再建档或补记。同一会话并发的调用共用这一次。
+   * 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省不取名（群的首条入站可能是不带群名的戳一戳，
+   * 不回退到昵称）。没有名字时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，不补。
+   * 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
+   * 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。不会拒绝：收录失败只告警
+   */
+  recordInbound(msg: IncomingMessage): Promise<void> {
+    const { sessionId } = msg;
+    if (!sessionId || msg.source || sessionId.includes('::')) return Promise.resolve();
+    const known = this.sessions.get(sessionId);
+    if (this.recorded(known, msg)) {
+      this.noteRecorded(known, msg);
+      return Promise.resolve();
+    }
+    const pending = this.recording.get(sessionId);
+    if (pending) return pending;
+    const recording = this.record(msg)
+      .catch(err => this.caps.logger.use.warn(`IM 房间登记失败 (${sessionId}):`, err))
+      .finally(() => this.recording.delete(sessionId));
+    this.recording.set(sessionId, recording);
+    return recording;
+  }
+
+  /** 不经这条入站收录或补记的会话：子会话（没有窗口），有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
+  private recorded(session: SessionInfo | undefined, msg: IncomingMessage): session is SessionInfo {
+    return (
+      session !== undefined &&
+      (Boolean(session.parentId || session.originChat || session.createdFrom || session.work) ||
+        (session.originPlatform ?? msg.platform) !== msg.platform)
+    );
+  }
+
+  /** 已收录的会话：出生平台的入站补名、更新窗口的显示名，还没记下所属实例的再解析一次（都不等） */
+  private noteRecorded(session: SessionInfo, msg: IncomingMessage): void {
+    const chat = session.originChat;
+    if (chat && session.originPlatform === msg.platform) {
+      const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
+      if (nativeName && session.name === undefined)
+        this.updateSession(session.id, { name: nativeName }).catch(() => {});
+      void this.noteWindow(session.id, nativeName);
+    }
+    void this.recordOriginInstance(session);
+  }
+
+  /** 问完认领者再收录或补记，见 {@link recordInbound} */
+  private async record(msg: IncomingMessage): Promise<void> {
+    const { sessionId } = msg;
+    const claimants = await claimantsOf(this.caps.platform, sessionId, this.caps.logger.use);
+    const session = this.sessions.get(sessionId);
+    if (this.recorded(session, msg)) {
+      this.noteRecorded(session, msg);
+      return;
+    }
+    const platforms = [...new Set(claimants.map(({ use: instance }) => instance.platform))];
+    if (platforms.length > 1) {
+      this.warnOnce(
+        `会话 ${sessionId} 同时由平台「${platforms.join('」「')}」认领：判不出它是哪个平台的聊天窗口，不收录。` +
+          '改配置，一个会话 id 只归一个平台',
+        `claim:${sessionId}`,
+      );
+      return;
+    }
+    // 补记只认这个 id 归消息平台的适配器管的入站：WebUI 与终端往房间插话不算
+    if (session && platforms[0] !== msg.platform) return;
+    const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === msg.platform);
+    const scope = chatScopeOf(msg, sessionTypesOf(adapter));
+    if (scope.undeclared) {
+      this.warnOnce(
+        `平台「${scope.platform}」没有声明类型「${scope.type}」（${sessionId}）：这个聊天窗口按多方记下。` +
+          '适配器要在 sessionTypes 里声明它发出的类型名',
+        `type:${scope.platform}:${scope.type}`,
+      );
+    } else if (msg.sessionType === undefined && scope.multiParty) {
+      this.warnOnce(
+        `平台「${scope.platform}」的消息没带类型名（${sessionId}）：这个聊天窗口按类型「${scope.type}」、多方记下。` +
+          '适配器要在消息上带类型名',
+        `untyped:${scope.platform}`,
+      );
+    }
+    const originChat: OriginChat = {
+      type: scope.type,
+      multiParty: scope.multiParty,
+      ...(msg.selfId === undefined ? {} : { selfId: msg.selfId }),
+      targetId: scope.targetId,
+    };
+    const nativeName = scope.multiParty ? msg.groupName : msg.nickname;
+    const origin: RoomOrigin = {
+      originPlatform: msg.platform,
+      originChat,
+      ...(claimants[0] ? { originInstance: claimants[0].id } : {}),
+    };
+    if (session) await this.backfillRoom(session, nativeName, origin);
+    else await this.recordRoom(sessionId, nativeName, origin);
   }
 
   /**
@@ -580,7 +539,6 @@ class SessionManager implements SessionManagerService {
     if (creation && opts?.parentId)
       throw new Error('建档专用参数只给根会话：子会话按根会话取创建来源、所属工作区与绑定');
     const created = creation ? this.creationFields(creation) : {};
-    const config = this.checkedConfig(opts?.config);
     // 子会话的 id 同样不带父会话的 id：平台按会话 id 认领窗口，子会话没有窗口。撞上已有的会话就重抽
     let id: string;
     do id = `session-${crypto.randomUUID().slice(0, 8)}`;
@@ -591,14 +549,13 @@ class SessionManager implements SessionManagerService {
     const session: SessionInfo = {
       id,
       name: opts?.name || undefined,
-      title: opts?.metadata?.title as string | undefined,
+      title: opts?.title,
       parentId: opts?.parentId,
       children: [],
       status: opts?.status || 'active',
-      config,
       createdAt: now,
       updatedAt: now,
-      inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext as string | undefined),
+      inputContext: opts?.inputContext,
       metadata: opts?.metadata,
       ...created,
       // 子会话的当前目录取父会话此刻的值，之后各改各的
@@ -665,29 +622,29 @@ class SessionManager implements SessionManagerService {
   async updateSession(id: string, updates: SessionUpdates): Promise<SessionInfo> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`会话不存在: ${id}`);
-    // 先校验再动记录：配置被拒时什么都不改
-    const config = updates.config && this.checkedPatch(updates.config);
 
     if (updates.name !== undefined) session.name = updates.name;
     if (updates.status !== undefined) session.status = updates.status;
     if (updates.metadata !== undefined) session.metadata = { ...session.metadata, ...updates.metadata };
-    if (config) session.config = applyPatch(session.config, config);
     session.updatedAt = Date.now();
 
     this.markDirty();
     await this.caps.events.use.emit('session:updated', session);
-    if (config) await this.caps.events.use.emit('session:config:changed');
     return session;
   }
 
   async deleteSession(id: string): Promise<void> {
+    await this.remove(id);
+  }
+
+  /** 删掉一个会话连同下面各级子会话，返回删掉的会话数（不在表里的算 0） */
+  private async remove(id: string): Promise<number> {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) return 0;
 
     // 递归删除所有子会话（含活跃子会话）
-    for (const childId of [...session.children]) {
-      await this.deleteSession(childId);
-    }
+    let removed = 1;
+    for (const childId of [...session.children]) removed += await this.remove(childId);
 
     // 从父会话的 children 中移除：父会话的子会话列表变了，删除之后再给它发一次 session:updated
     const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
@@ -698,13 +655,14 @@ class SessionManager implements SessionManagerService {
 
     this.sessions.delete(id);
     this.deleted[SESSIONS].set(id, Symbol(id));
-
-    await this.clearDeletedSessionData(id);
-
     this.markDirty();
+
+    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西（如在飞的回合），清数据时就不会有回合中途写回来
     await this.caps.events.use.emit('session:deleted', id);
+    await this.clearDeletedSessionData(id);
     if (parent) await this.caps.events.use.emit('session:updated', parent);
     this.caps.logger.use.info(`会话删除: ${toSource(sessionLabel(session))} (${id})`);
+    return removed;
   }
 
   private async clearDeletedSessionData(id: string): Promise<void> {
@@ -730,6 +688,20 @@ class SessionManager implements SessionManagerService {
         `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${toSource(r.message)}`).join('; ')}`,
       );
     }
+  }
+
+  /**
+   * 删掉一个会话的全部子会话（连同下面各级），不给 parentId 即删掉全部子会话；会话不在表里时什么都不删。返回这次删掉的会话数
+   * （途中别处建的、删的会话不算）
+   */
+  async deleteChildren(parentId: string | undefined): Promise<number> {
+    if (parentId !== undefined && !this.sessions.has(parentId)) return 0;
+    const targets = [...this.sessions.values()].filter(s =>
+      parentId === undefined ? s.parentId !== undefined : s.parentId === parentId,
+    );
+    let removed = 0;
+    for (const { id } of targets) removed += await this.remove(id);
+    return removed;
   }
 
   // ---- 树形操作 ----
@@ -809,6 +781,22 @@ class SessionManager implements SessionManagerService {
     return record && placeInfo(record);
   }
 
+  listPlaces(): PlaceInfo[] {
+    return [...this.places.keys()]
+      .sort()
+      .sort(defaultFirst)
+      .map(key => placeInfo(this.places.get(key)!));
+  }
+
+  async updatePlace(key: string, updates: Pick<PlaceInfo, 'metadata'>): Promise<PlaceInfo> {
+    const record = this.places.get(key);
+    if (!record) throw new Error(`场所不存在：${key}`);
+    if (updates.metadata !== undefined) record.metadata = { ...record.metadata, ...updates.metadata };
+    record.updatedAt = Date.now();
+    this.markDirty();
+    return placeInfo(record);
+  }
+
   addWorkspace(root: string): { workspace: WorkspaceInfo; existed: boolean } {
     const existing = [...this.places.values()].find(record => record.root === root);
     if (existing) return { workspace: workspaceInfo(existing), existed: true };
@@ -850,7 +838,6 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
     this.caps.logger.use.info(`取消登记工作区: ${record.name} (${key})，${affected.length} 个会话归默认工作区`);
     for (const session of changed) await this.caps.events.use.emit('session:updated', session);
-    await this.caps.events.use.emit('session:config:changed');
   }
 
   // ---- 生命周期 ----
@@ -955,316 +942,10 @@ class SessionManager implements SessionManagerService {
     await this.caps.events.use.emit('session:updated', session);
   }
 
-  // ---- 会话设置 ----
-
-  registerSetting(setting: SessionSetting, plugin: string): () => void {
-    return this.settings.register(setting, plugin);
-  }
-
-  listSettings(): RegisteredSessionSetting[] {
-    return this.settings.list();
-  }
-
-  /**
-   * 解析指定会话的最终生效配置：继承链之上叠会话自己的覆盖。由服务偏好承担的项在全局默认之上各层都没设时不给值：
-   * 取用方交给 resolveLLMModel，偏好指向的模型不在时也落得到服务此刻解析到的那一个
-   */
-  resolveConfig(sessionId: string, platform?: string): SessionConfig {
-    const { values, sources } = this.resolveInheritance(sessionId, platform);
-    const inherited: SettingValues = { ...values };
-    for (const setting of this.settings.list()) {
-      if (preferenceBacked(setting) && sources[setting.key] === 'defaults') delete inherited[setting.key];
-    }
-    return { ...inherited, ...this.getOwnConfig(sessionId) };
-  }
-
-  /**
-   * 继承链解析：不含会话自身 config，按层表的先后叠加，另记下每个键来自哪一层。子会话按根会话取：有出生平台的会话不论从
-   * 哪个入口驱动都按出生平台选平台档，按聊天窗口的类型名选平台类型档；传入的入口平台只对没有出生平台的会话起作用
-   */
-  resolveInheritance(sessionId: string, platform?: string): SessionInheritance {
-    const session = this.sessions.get(sessionId);
-    const root = rootSessionOf(session, this.lookup);
-    const ctx = {
-      platform: root?.originPlatform ?? platform,
-      type: root?.originPlatform === undefined ? undefined : root.originChat?.type,
-      place: this.placeOf(sessionId),
-      parent: session?.parentId ? this.sessions.get(session.parentId) : undefined,
-    };
-    return { platform: ctx.platform, type: ctx.type, ...this.stack(this.chain(ctx)) };
-  }
-
-  getOwnConfig(sessionId: string): SessionConfig {
-    return this.valid(this.sessions.get(sessionId)?.config, `会话 ${sessionId}`, true);
-  }
-
-  childConfig(parentId: string, platform?: string): SessionConfig {
-    const config = this.resolveConfig(parentId, platform) as SettingValues;
-    for (const setting of this.settings.list()) {
-      if (setting.liveOnly || setting.narrowest) delete config[setting.key];
-    }
-    return config;
-  }
-
-  resolvedDefaults(): SessionConfig {
-    // 按真正调模型的 agent 插件的解析顺序取（它可能设了本插件偏好）；没装 agent 时按本插件的
-    const agentId = this.caps.agent.list().find(p => p.selected)?.id;
-    const entries = this.caps.llm.list();
-    const ordered =
-      agentId === undefined
-        ? entries
-        : this.caps.services.use
-            .inspect(llm, { for: agentId })
-            .flatMap(info => entries.filter(e => e.id === info.contextId));
-    const entry = resolveLLMModel({ list: () => ordered }, undefined, ['chat']);
-    if (!entry) return {};
-    const model: ModelRef = { provider: entry.use.providerId, model: entry.use.id };
-    return Object.fromEntries(this.settings.list().flatMap(s => (preferenceBacked(s) ? [[s.key, model]] : [])));
-  }
-
-  listLayers(): SessionConfigLayer[] {
-    return SESSION_LAYERS.flatMap(({ name }): SessionConfigLayer[] =>
-      Object.hasOwn(this.layerTable, name) ? this.layerTable[name as ConfigScope].list() : [],
-    );
-  }
-
-  getLayer(layer: SessionConfigLayer): SessionConfig {
-    const impl = this.implOf(layer);
-    impl.assert(layer);
-    return this.valid(impl.read(layer), impl.describe(layer));
-  }
-
-  resolveLayer(layer: SessionConfigLayer): Pick<SessionInheritance, 'values' | 'sources'> {
-    const impl = this.implOf(layer);
-    impl.assert(layer);
-    return this.stack(this.chain(impl.context(layer), layer.scope));
-  }
-
-  async updateLayer(layer: SessionConfigLayer, patch: SessionConfigPatch): Promise<void> {
-    const impl = this.implOf(layer);
-    impl.assert(layer);
-    const checked = checkPatch(this.settings, patch);
-    await impl.write(layer, applyPatch(impl.read(layer), checked));
-    this.caps.logger.use.info(`会话设置已改：${impl.describe(layer)}（${[...checked.keys()].join('、')}）`);
-    void this.caps.events.use.emit('session:config:changed');
-  }
-
-  /** 这一层的实现；不认识的层抛 {@link SessionConfigError} */
-  private implOf<L extends SessionConfigLayer>(layer: L): LayerImpl<L> {
-    const scope: unknown = layer?.scope;
-    if (typeof scope !== 'string' || !Object.hasOwn(this.layerTable, scope)) {
-      throw new SessionConfigError(`会话设置的层不认识：${String(scope)}`);
-    }
-    return this.layerTable[scope as ConfigScope] as unknown as LayerImpl<L>;
-  }
-
-  /**
-   * 按层表的先后取一个会话（或一层的视图）上各层的值，到 until 为止：会话之上的层各按自己的实现选那一份，父会话层是
-   * 父会话的 sessionDefaults（旧数据）
-   */
-  private chain(ctx: LayerContext, until: InheritanceSource = 'parent'): Part[] {
-    const parts: Part[] = [];
-    for (const { name } of SESSION_LAYERS) {
-      if (name === 'session') break;
-      if (name === 'parent') {
-        if (ctx.parent) parts.push([ctx.parent.config.sessionDefaults, name, `会话 ${ctx.parent.id} 给子会话的默认值`]);
-      } else {
-        const impl = this.layerTable[name] as LayerImpl<SessionConfigLayer>;
-        const layer = impl.select(ctx);
-        if (layer) parts.push([impl.read(layer), name, impl.describe(layer)]);
-      }
-      if (name === until) break;
-    }
-    return parts;
-  }
-
-  /** 按顺序叠加几处设置：后面的覆盖前面的，逐键记下来源 */
-  private stack(parts: Part[]): Pick<SessionInheritance, 'values' | 'sources'> {
-    const values: SettingValues = {};
-    const sources: Record<string, InheritanceSource> = {};
-    for (const [raw, source, where] of parts) {
-      for (const [key, value] of Object.entries(this.valid(raw, where, source === 'parent'))) {
-        values[key] = value;
-        sources[key] = source;
-      }
-    }
-    return { values, sources };
-  }
-
-  /** 宿主配置文档里的三层；没有文档时为空 */
-  private docLayers(): DocLayers {
-    return readLayers(
-      this.caps.hostConfig.present ? this.caps.hostConfig.use.get('sessionConfig') : undefined,
-      message => this.warnOnce(message),
-    );
-  }
-
-  /** 改宿主配置文档并落盘：change 改文档并返回撤回它的函数。没有文档时抛错；落盘失败时撤回、以拒绝传出 */
-  private async saveHost(change: (host: HostConfig) => () => void): Promise<void> {
-    if (!this.caps.hostConfig.present) throw new Error('宿主没有提供配置文档（host-config），会话设置的各层无处保存');
-    const host = this.caps.hostConfig.use;
-    const revert = change(host);
-    try {
-      await host.save();
-    } catch (err) {
-      // 拒写与写入失败都撤回：免得下一次任意保存把这次没存下的修改写进文件
-      revert();
-      throw err;
-    }
-  }
-
-  /** 改文档里的三层：在现读的一份上改，整份写回 */
-  private writeDoc(update: (layers: DocLayers) => void): Promise<void> {
-    return this.saveHost(host => {
-      const previous = host.get('sessionConfig');
-      const layers = this.docLayers();
-      update(layers);
-      host.set('sessionConfig', writeLayers(layers));
-      return () => host.set('sessionConfig', previous);
-    });
-  }
-
-  /**
-   * 全局默认层：文档里的 defaults，由服务偏好承担的项换成 llm 服务的偏好。文档里写了这些项的告警后忽略（按层写时不再写回）
-   */
-  private readDefaults(): SettingValues {
-    const values: SettingValues = { ...this.docLayers().defaults };
-    const preferred = this.preferredModel();
-    for (const setting of this.settings.list()) {
-      if (!preferenceBacked(setting)) continue;
-      if (setting.key in values) {
-        this.warnOnce(
-          `宿主配置 sessionConfig.defaults.${setting.key} 不再生效，已忽略：默认模型只在 llm 服务的偏好里，` +
-            '在「会话默认」的全局默认层改',
-        );
-      }
-      delete values[setting.key];
-      if (preferred) values[setting.key] = preferred;
-    }
-    return values;
-  }
-
-  /**
-   * llm 服务的偏好写成模型引用：条目在时按它的提供者与模型 id；不在时按还装着的提供者拆（取能作为 `<提供者>/` 前缀的最长的
-   * 一个，模型 id 里的斜杠留在模型里），提供者也不在时按最后一个斜杠拆。拆不出、或拆出的提供者只剩 npm scope（偏好只写了
-   * 提供者，如 `@scope/llm-x`）的读不成模型引用，偏好没有生效由 doctor 报出
-   */
-  private preferredModel(): ModelRef | undefined {
-    const contextId = this.caps.services.use.preferred(llm);
-    if (contextId === undefined) return undefined;
-    const entries = this.caps.llm.list();
-    const entry = entries.find(e => e.id === contextId);
-    if (entry) return { provider: entry.use.providerId, model: entry.use.id };
-    const provider = entries
-      .map(e => e.use.providerId)
-      .filter(id => contextId.startsWith(`${id}/`))
-      .sort((a, b) => b.length - a.length)[0];
-    const cut = provider === undefined ? contextId.lastIndexOf('/') : provider.length;
-    const ref = { provider: contextId.slice(0, cut), model: contextId.slice(cut + 1) };
-    return cut > 0 && !/^@[^/]*$/.test(ref.provider) ? ref : undefined;
-  }
-
-  /**
-   * 写全局默认层：由服务偏好承担的项写 llm 服务的偏好（运行态与文档的 servicePreferences，没有值即取消偏好），其余写文档的
-   * defaults。这一层读出的是偏好（{@link readDefaults}），按读出的值比：只有这一项改了才动偏好，几项都由偏好承担时取改了的
-   * 那一项。读不成模型引用的偏好（手写的）读出来没有这一项，改别的项不碰它。落盘失败时偏好与文档一并撤回
-   */
-  private writeDefaults(values: SettingValues): Promise<void> {
-    const backed = this.settings.list().filter(preferenceBacked);
-    const preferred = this.preferredModel();
-    const changed = backed.find(setting => !isDeepStrictEqual(values[setting.key], preferred));
-    const ref = changed && (values[changed.key] as ModelRef | undefined);
-    const rest = { ...values };
-    for (const { key } of backed) delete rest[key];
-    return this.saveHost(host => {
-      const revertPreference = changed ? this.setPreference(host, ref && `${ref.provider}/${ref.model}`) : () => {};
-      const previous = host.get('sessionConfig');
-      host.set('sessionConfig', writeLayers({ ...this.docLayers(), defaults: rest }));
-      return () => {
-        host.set('sessionConfig', previous);
-        revertPreference();
-      };
-    });
-  }
-
-  /** 改 llm 服务的偏好（运行态与文档），返回撤回它的函数 */
-  private setPreference(host: HostConfig, contextId: string | undefined): () => void {
-    const runtime = this.caps.services.use.preferred(llm);
-    const documented = host.getServicePreferences()[llm.name];
-    const apply = (live: string | undefined, doc: string | undefined) => {
-      if (live === undefined) this.caps.services.use.unprefer(llm);
-      else this.caps.services.use.prefer(llm, live);
-      if (doc === undefined) host.removeServicePreference(llm.name);
-      else host.setServicePreference(llm.name, doc);
-    };
-    apply(contextId, contextId);
-    return () => apply(runtime, documented);
-  }
-
-  /**
-   * 平台档可设的平台：已装适配器的平台加文档里写过的（两段里的都算），按名字排。名字不合层标识写法的不列（文档里的读时已滤掉）：
-   * 列出的层都要能按层读写
-   */
-  private platformNames(): string[] {
-    const doc = this.docLayers();
-    const names = new Set([...doc.platforms.keys(), ...doc.types.keys()]);
-    for (const adapter of getPlatformAdapters(this.caps.platform)) names.add(adapter.platform);
-    return [...names].filter(isLayerName).sort();
-  }
-
-  /** 平台类型档可设的类型：适配器声明的类型加文档里写过的，按名字排；没声明类型的适配器不单列，名字不合写法的不列 */
-  private typeNames(platform: string): string[] {
-    const names = new Set(this.docLayers().types.get(platform)?.keys());
-    for (const adapter of getPlatformAdapters(this.caps.platform)) {
-      if (adapter.platform === platform) for (const type of adapter.sessionTypes ?? []) names.add(type.name);
-    }
-    return [...names].filter(isLayerName).sort();
-  }
-
-  /**
-   * 一处设置里已登记的项：没登记的不参与解析；取值不合登记字段的当作没设置，字段标了 onInvalid: 'error' 的原样交出、
-   * 由登记它的插件按拒绝处理。会话上的设置（会话自己的覆盖、父会话给子会话的默认值）里只能设到场所为止的项不参与解析：
-   * 写入不收它，旧数据里留着的不能压过场所。这两种问题同一处同一项只告警一次
-   */
-  private valid(values: object | undefined, where: string, onSession = false): SettingValues {
-    const out: SettingValues = {};
-    for (const [key, value] of Object.entries(values ?? {})) {
-      // 清掉的覆盖经 BSON 落盘读回来是 null，与没有同义
-      if (value === undefined || value === null) continue;
-      const setting = this.settings.get(key);
-      if (!setting) continue;
-      if (onSession && setting.narrowest) {
-        this.warnOnce(`设置项 ${key}（${where}）只能设到场所为止，会话上的值不生效：改到场所或以上的层，再清掉它`);
-        continue;
-      }
-      const read = readSetting(setting, value);
-      if (!('invalid' in read)) {
-        if (read.value !== undefined) out[key] = read.value;
-      } else if (setting.field.onInvalid === 'error') {
-        this.warnOnce(`设置项 ${key}（${where}）取值无效（${toSource(read.invalid)}），原样交给登记它的插件按拒绝处理`);
-        out[key] = value;
-      } else {
-        this.warnOnce(`设置项 ${key}（${where}）取值无效（${toSource(read.invalid)}），按没设置处理`);
-      }
-    }
-    return out;
-  }
-
-  /** 写会话自己的覆盖：按登记的设置项校验，只能设到场所为止的项不收 */
-  private checkedPatch(patch: SessionConfigPatch): Map<string, unknown> {
-    const checked = checkPatch(this.settings, patch);
-    assertSessionPatch(this.settings, checked);
-    return checked;
-  }
-
-  /** 建会话时给的配置：校验后作为会话自己的覆盖 */
-  private checkedConfig(config: SessionConfigPatch | undefined): SettingValues {
-    return config ? applyPatch({}, this.checkedPatch(config)) : {};
-  }
-
-  private warnOnce(message: string): void {
-    if (this.warned.has(message)) return;
-    this.warned.add(message);
+  /** 同一处只告警一次：key 缺省为这句话本身 */
+  private warnOnce(message: string, key = message): void {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
     this.caps.logger.use.warn(message);
   }
 
@@ -1372,14 +1053,14 @@ function describeSession(session: Pick<SessionInfo, 'parentId' | 'originPlatform
   return { kind: sessionKind(session) };
 }
 
-/** 新建的场所记录：设置为空；默认工作区没有名字 */
+/** 新建的场所记录：默认工作区没有名字 */
 function newPlace(place: SessionPlace, name?: string, root?: string): PlaceRecord {
   const now = Date.now();
-  return { ...place, name, ...(root === undefined ? {} : { root }), config: {}, createdAt: now, updatedAt: now };
+  return { ...place, name, ...(root === undefined ? {} : { root }), createdAt: now, updatedAt: now };
 }
 
-function placeInfo({ kind, key, name }: PlaceRecord): PlaceInfo {
-  return { kind, key, name };
+function placeInfo({ kind, key, name, metadata }: PlaceRecord): PlaceInfo {
+  return { kind, key, name, ...(metadata === undefined ? {} : { metadata }) };
 }
 
 function workspaceInfo({ key, name, root }: PlaceRecord): WorkspaceInfo {
@@ -1452,7 +1133,6 @@ function storedSession(
     id: record.id === key,
     children: isTextList(record.children),
     status: SESSION_STATUSES.has(record.status),
-    config: isRecord(record.config),
     createdAt: isTime(record.createdAt),
     updatedAt: isTime(record.updatedAt),
   };
@@ -1467,7 +1147,7 @@ function storedSession(
 
 /**
  * 读回的场所记录：必填字段不对（含类别与键对不上：工作区的键以 `workspace:` 开头，窗口的不是）时回这个字段名，整条不载入；
- * 可选的名字（默认工作区没有）与目录类型不对时去掉它
+ * 可选的名字（默认工作区没有）、目录与 metadata 类型不对时去掉它
  */
 function storedPlace(
   key: string,
@@ -1479,13 +1159,15 @@ function storedPlace(
     kind:
       (record.kind === 'workspace' || record.kind === 'window') &&
       (record.kind === 'workspace') === key.startsWith(WORKSPACE_PREFIX),
-    config: isRecord(record.config),
     createdAt: isTime(record.createdAt),
     updatedAt: isTime(record.updatedAt),
   };
   const wrong = Object.keys(required).find(field => !required[field]);
   if (wrong) return { wrong };
-  const dropped = ['name', 'root'].filter(field => record[field] !== undefined && !isText(record[field]));
+  const dropped = [
+    ...['name', 'root'].filter(field => record[field] !== undefined && !isText(record[field])),
+    ...(record.metadata !== undefined && !isRecord(record.metadata) ? ['metadata'] : []),
+  ];
   for (const field of dropped) delete record[field];
   return { record: record as unknown as PlaceRecord, dropped };
 }
@@ -1496,32 +1178,25 @@ const uses = {
   /** 会话档案与消息历史的唯一落点：没有 memory 就没有会话管理 */
   memory,
   /**
-   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型，并据它认出真正调模型的那个插件（默认模型按它的选择写）。
+   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
    * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
    * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */
   agent: optional(agent),
-  /** 自动标题的模型来源（没有 LLM 时退回用户消息首段）；全局默认层的「模型」按偏好指向的条目写出提供者与模型 */
+  /** 自动标题的模型来源（没有 LLM 时退回用户消息首段） */
   llm: optional(llm),
   /**
-   * 自动标题的输出语言：取全局默认层的语言列表（读者是 owner），缺席时按中文。plugin-i18n 也以 optional 用会话管理，
+   * 自动标题的输出语言：取全局语言（读者是 owner），缺席时按中文。plugin-i18n 也以 optional 用会话管理，
    * 两边成可选环
    */
   i18n: optional(i18n),
-  /** 房间建档时取平台的类型声明记下聊天窗口；解析接管房间的适配器实例（originInstance）；可设的平台与类型 */
+  /** 房间建档时问认领者、取平台的类型声明记下聊天窗口；解析接管房间的适配器实例（originInstance） */
   platform: optional(platform),
-  /**
-   * 会话设置的全局默认、平台档与平台类型档存放在宿主配置文档的 sessionConfig 字段里。由宿主在根上提供、没有插件
-   * provide 它，写进激活闸只会挂一条解析不到提供者的告警；缺席时这三层为空、按层写被拒
-   */
-  hostConfig: optional(hostConfig),
   /**
    * owner 的 IM 私聊在默认工作区：placeOf 按它认对端是不是 owner，与房间类别同一判据。plugin-authority 也以 optional
    * 用会话管理，两边成可选环；缺席时认不出 owner，一对一窗口按窗口算
    */
   authority: optional(authority),
-  /** 全局默认层的「模型」读写 llm 服务的偏好 */
-  services,
   events,
   hooks,
   lifecycle,
@@ -1554,104 +1229,25 @@ async function run(caps: Caps): Promise<void> {
   provide.use(sessionManager, manager, { label: '会话管理' });
 
   // ===== IM 房间收录 =====
-  // 会话表里还没有记录的真人入站（不带 source）按这条消息建档：出生平台取消息的平台，聊天窗口按这个平台的
-  // 类型声明经 chatScopeOf 记下，之后不变。WebUI 与终端的会话在入站之前已建档、带创建来源，不经这里。带 source 的是
-  // 内部注入（工作流、定时任务、空闲开话题、宿主通知、好友申请与入群邀请的合成通知），不登记。消息带的类型名不在平台的
-  // 声明里时按多方记下，每个平台与类型名告警一次；消息没带类型名、按平台声明的第一个多方类型记下时，每个平台告警一次。
-  // 按 id 兜底建档的根会话（注入回合在未登记的房间开子任务）没有来源字段，升级前的记录只记了出生平台、没有聊天窗口，
-  // 两者都由第一条归它的适配器管的原生入站补记（backfillRoom；后者只认出生平台的入站）。
-  // 收录与补记之前问遍认领这个 id 的适配器（claimantsOf），第一个认领者随来源字段记作所属实例。认领它的平台不止一个
-  // （如终端配置的会话 id 配成了群的 id）时判不出它是谁的窗口，不收录、不补记，每个 id 告警一次：结果不能取决于
-  // 适配器的登记先后。问的期间别的入站可能已收录，问完按会话表此刻的记录判，再同步建档或补记。
-  // 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省不取名（群的首条入站可能是不带群名的戳一戳，
-  // 不回退到昵称）。没有名字时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，
-  // 不补。
-  // 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
-  // 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。
-  const warned = new Set<string>();
-  const warnOnce = (key: string, message: string) => {
-    if (warned.has(key)) return;
-    warned.add(key);
-    logger.use.warn(message);
-  };
-  /** 不经这条入站收录或补记的会话：子会话（没有窗口），有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
-  const recorded = (session: SessionInfo | undefined, msg: IncomingMessage): session is SessionInfo =>
-    session !== undefined &&
-    (Boolean(session.parentId || session.originChat || session.createdFrom || session.work) ||
-      (session.originPlatform ?? msg.platform) !== msg.platform);
-  /** 已收录的会话：出生平台的入站补名、更新窗口的显示名，还没记下所属实例的再解析一次 */
-  const noteRecorded = (session: SessionInfo, msg: IncomingMessage) => {
-    const chat = session.originChat;
-    if (chat && session.originPlatform === msg.platform) {
-      const nativeName = chat.multiParty ? msg.groupName : msg.nickname;
-      if (nativeName && session.name === undefined)
-        manager.updateSession(session.id, { name: nativeName }).catch(() => {});
-      void manager.noteWindow(session.id, nativeName);
-    }
-    void manager.recordOriginInstance(session);
-  };
-  events.use.on('inbound:message', async (msg: IncomingMessage) => {
-    const { sessionId } = msg;
-    if (!sessionId || msg.source) return;
-    const known = manager.getSession(sessionId);
-    if (recorded(known, msg)) {
-      noteRecorded(known, msg);
-      return;
-    }
-    const claimants = await claimantsOf(caps.platform, sessionId, logger.use);
-    const session = manager.getSession(sessionId);
-    if (recorded(session, msg)) {
-      noteRecorded(session, msg);
-      return;
-    }
-    const platforms = [...new Set(claimants.map(({ use: instance }) => instance.platform))];
-    if (platforms.length > 1) {
-      warnOnce(
-        `claim:${sessionId}`,
-        `会话 ${sessionId} 同时由平台「${platforms.join('」「')}」认领：判不出它是哪个平台的聊天窗口，不收录。` +
-          '改配置，一个会话 id 只归一个平台',
-      );
-      return;
-    }
-    // 补记只认这个 id 归消息平台的适配器管的入站：WebUI 与终端往房间插话不算
-    if (session && platforms[0] !== msg.platform) return;
-    const adapter = getPlatformAdapters(caps.platform).find(a => a.platform === msg.platform);
-    const scope = chatScopeOf(msg, sessionTypesOf(adapter));
-    if (scope.undeclared) {
-      warnOnce(
-        `type:${scope.platform}:${scope.type}`,
-        `平台「${scope.platform}」没有声明类型「${scope.type}」（${sessionId}）：这个聊天窗口按多方记下。` +
-          '适配器要在 sessionTypes 里声明它发出的类型名',
-      );
-    } else if (msg.sessionType === undefined && scope.multiParty) {
-      warnOnce(
-        `untyped:${scope.platform}`,
-        `平台「${scope.platform}」的消息没带类型名（${sessionId}）：这个聊天窗口按类型「${scope.type}」、多方记下。` +
-          '适配器要在消息上带类型名',
-      );
-    }
-    const originChat: OriginChat = {
-      type: scope.type,
-      multiParty: scope.multiParty,
-      ...(msg.selfId === undefined ? {} : { selfId: msg.selfId }),
-      targetId: scope.targetId,
-    };
-    const nativeName = scope.multiParty ? msg.groupName : msg.nickname;
-    const origin: RoomOrigin = {
-      originPlatform: msg.platform,
-      originChat,
-      ...(claimants[0] ? { originInstance: claimants[0].id } : {}),
-    };
-    (session
-      ? manager.backfillRoom(session, nativeName, origin)
-      : manager.recordRoom(sessionId, nativeName, origin)
-    ).catch(err => logger.use.warn(`IM 房间登记失败 (${sessionId}):`, err));
-  });
+  // 原生入站的收录与补记见 recordInbound；网关在入站相位之前也等它，同一会话共用同一次
+  events.use.on('inbound:message', msg => manager.recordInbound(msg));
 
-  // 全局默认层的「模型」就是 llm 服务的偏好：偏好从别处改了（宿主启动时应用）、llm 的提供者上下线（偏好指向的模型在不在、
-  // 服务实际用的那一个随之变）同样算会话设置变了
-  events.use.on('service:changed', name => {
-    if (name === llm.name) void events.use.emit('session:config:changed');
+  // ===== 清空连带删除子会话 =====
+  // 会话的消息历史清成功（结果里 type 为 context 的行都成功了）之后，它的子会话一并删除：范围为 session 删这个会话的，为 all
+  // 删全部子会话，删了的在结果里加一行。只清别的类型、消息历史没清成时不删；会话不在表里（删除会话自己触发的那次清理，会话已
+  // 先从表里摘掉）时什么都不做
+  hooks.use.middleware('memory:clear', async (data, next) => {
+    await next();
+    if (!historyCleared(data)) return;
+    const deleted = await manager.deleteChildren(data.scope === 'all' ? undefined : data.sessionId);
+    if (deleted > 0) {
+      data.results.push({
+        source: 'session-manager',
+        type: 'context',
+        success: true,
+        message: t('childrenDeleted', { count: deleted }),
+      });
+    }
   });
 
   // ===== 会话状态 =====

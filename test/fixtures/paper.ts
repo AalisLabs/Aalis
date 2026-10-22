@@ -3,17 +3,20 @@ import { type GatewayService, gateway, windowKey } from '../../packages/api-gate
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { type EgressReport, type RemoteAgentProvider, remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
-  type InheritanceSource,
+  placeKind,
   rootSessionOf,
-  type SessionConfig,
-  type SessionConfigLayer,
   type SessionInfo,
-  type SessionInheritance,
   type SessionManagerService,
   type SessionPlace,
   sessionKind,
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
+import {
+  type SessionChain,
+  type SessionPlacement,
+  type SessionSettingsLayer,
+  sessionSettings,
+} from '../../packages/api-session-settings/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import {
   type RegisteredTool,
@@ -37,8 +40,9 @@ import { storedRoom } from './rooms.js';
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
 // - 远端代理：每个替身是一个带名字的提供者插件（实例 id 即白纸配置里写的类型）；
-// - 会话管理：按会话 id 给房间配置，另可指定哪些会话是子会话；OneBot 写法的房间 id 带上收录时记下的来源字段；
-//   平台档、平台类型档与场所按参考实现的口径叠加；
+// - 会话管理：会话记录按会话 id 现造，另可指定哪些会话是子会话；OneBot 写法的房间 id 带上收录时记下的来源字段；
+// - 会话设置：本插件六项的平台档、平台类型档与场所的值按参考实现的口径交给读取器（解析在读取器里）；全局层是
+//   插件配置；
 // - storage：pluginData 与 paper 两个根的内存实现，文件表可跨「重启」复用；
 // - tools / gateway / doctor：记下登记的工具与出站消息，诊断项按需运行；网关替身像目标适配器一样填 delivery，
 //   缺省立即确认收下；
@@ -199,7 +203,6 @@ export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
     parentId,
     children: [],
     status: 'active' as const,
-    config: {},
     createdAt: 0,
     updatedAt: 0,
     ...(originPlatform === undefined
@@ -218,34 +221,58 @@ function placeOf(id: string, lookup: (id: string) => SessionInfo): SessionPlace 
     : { kind: 'workspace', key: 'workspace:default' };
 }
 
+/** 会话设置替身的各层（全局层是插件配置，不在这里） */
+type SettingsLayers = Pick<PaperHubOptions, 'platforms' | 'platformTypes'> & {
+  places: Record<string, Record<string, unknown>>;
+};
+
 /**
- * session-manager 替身的继承链解析：与参考实现同一口径，子会话按根会话取；有出生平台的会话按出生平台取平台档、按聊天窗口的
- * 类型名叠加平台类型档，其余按入口平台取平台档；全局默认在最前，最后叠加场所（{@link placeOf}）的设置。父会话的
- * sessionDefaults 不模拟
+ * 会话设置的替身：与参考实现同一口径交出一个会话在全局之上的各层，子会话按根会话取；有出生平台的会话按出生平台取平台档，
+ * 其余按入口平台取，有聊天窗口的另叠平台类型档，最后是场所（{@link placeOf}）的值。placements 扁平列出各层写过的值
  */
-function inheritanceOf(
-  id: string,
-  platform: string | undefined,
-  opts: Pick<PaperHubOptions, 'defaults' | 'profiles' | 'typeProfiles' | 'placeProfiles'>,
-  lookup: (id: string) => SessionInfo,
-): SessionInheritance {
-  const root = rootSessionOf(lookup(id), lookup);
-  const pinned = root?.originPlatform ?? platform;
-  const chat = root?.originPlatform === undefined ? undefined : root.originChat;
-  const values: Record<string, unknown> = {};
-  const sources: SessionInheritance['sources'] = {};
-  const layer = (config: SessionConfig | undefined, source: InheritanceSource) => {
-    for (const [key, value] of Object.entries(config ?? {})) {
-      values[key] = value;
-      sources[key] = source;
-    }
+function settingsStandIn(layers: SettingsLayers, lookup: (id: string) => SessionInfo) {
+  const groups = (): Array<{ layer: SessionSettingsLayer; values: Record<string, unknown> }> => [
+    ...Object.entries(layers.platforms ?? {}).map(([platform, values]) => ({
+      layer: { scope: 'platform' as const, platform },
+      values,
+    })),
+    ...Object.entries(layers.platformTypes ?? {}).map(([key, values]) => {
+      const [platform, type] = key.split('/') as [string, string];
+      return { layer: { scope: 'platformType' as const, platform, type }, values };
+    }),
+    ...Object.entries(layers.places).map(([key, values]) => ({ layer: { scope: 'place' as const, key }, values })),
+  ];
+  return {
+    register: () => () => {},
+    chain(_plugin: string, sessionId: string, at: { platform?: string } = {}): SessionChain {
+      const info = lookup(sessionId);
+      const root = rootSessionOf(info, lookup);
+      const platform = root?.originPlatform ?? at.platform;
+      const type = root?.originChat?.type;
+      const place = placeOf(sessionId, lookup);
+      const parts: SessionChain['parts'] = [];
+      const push = (layer: SessionChain['parts'][number]['layer'], values: Record<string, unknown> | undefined) => {
+        if (values) parts.push({ layer, where: layer, values: { ...values } });
+      };
+      if (platform) push('platform', layers.platforms?.[platform]);
+      if (platform && type) push('platformType', layers.platformTypes?.[`${platform}/${type}`]);
+      push('place', layers.places[place.key]);
+      return { kind: info.kind, placeKind: placeKind(place), parts };
+    },
+    placements: (): SessionPlacement[] =>
+      groups().flatMap(({ layer, values }) =>
+        Object.entries(values).map(([key, value]) => ({
+          key,
+          value,
+          at: layer.scope === 'place' ? { layer, placeKind: placeKind(placeAt(layer.key)) } : { layer },
+        })),
+      ),
   };
-  layer(opts.defaults, 'defaults');
-  if (pinned) layer(opts.profiles?.[pinned], 'platform');
-  if (pinned && chat) layer(opts.typeProfiles?.[`${pinned}/${chat.type}`], 'type');
-  layer(opts.placeProfiles?.[placeOf(id, lookup).key], 'place');
-  return { platform: pinned, type: chat?.type, values, sources };
 }
+
+/** 场所键对应的场所：窗口键（三段）是窗口，其余是工作区 */
+const placeAt = (key: string): SessionPlace =>
+  key.startsWith('workspace:') ? { kind: 'workspace', key } : { kind: 'window', key };
 
 /** 空记录（与枢纽写出的结构相同），供用例预置 */
 export function emptyLedger(): PaperLedger {
@@ -257,7 +284,7 @@ export const PILOT_CONFIG = {
   globalDailyCents: 1000,
   papers: [{ name: PAPER, remoteAgentType: REMOTE, remoteAgentEgress: 'allowlist' }],
 };
-export const PILOT_ROOM: SessionConfig = {
+export const PILOT_ROOM: Record<string, unknown> = {
   paperEnabled: true,
   paperName: PAPER,
   remoteAgentTypes: [REMOTE],
@@ -266,20 +293,23 @@ export const PILOT_ROOM: SessionConfig = {
 
 export interface PaperHubOptions {
   config?: Record<string, unknown>;
-  /** 会话 id → resolveConfig 的结果；缺省时 ROOM 与 ROOM2 都用 PILOT_ROOM */
-  rooms?: Record<string, SessionConfig>;
+  /**
+   * 会话 id → 这个会话所在场所（窗口）写的六项（房间的六项只能设到场所为止）；缺省时 ROOM 与 ROOM2 都用 PILOT_ROOM。
+   * places 给同一个场所写的同名项压过这里的
+   */
+  rooms?: Record<string, Record<string, unknown>>;
   /** 子会话 id → 父会话 id */
   children?: Record<string, string>;
-  /** 全局默认层；缺省没有 */
-  defaults?: SessionConfig;
+  /** 全局层：并进插件配置的六项；缺省没有 */
+  global?: Record<string, unknown>;
   /** 平台档，键为平台名；缺省没有 */
-  profiles?: Record<string, SessionConfig>;
+  platforms?: Record<string, Record<string, unknown>>;
   /** 平台类型档，键为 `<平台>/<类型名>`；缺省没有 */
-  typeProfiles?: Record<string, SessionConfig>;
-  /** 场所的设置，键为场所键（窗口为 `平台:类型:目标`）；缺省没有 */
-  placeProfiles?: Record<string, SessionConfig>;
-  /** 会话列表里的会话 id → 会话自身的 config（listSessions 的结果）；缺省没有 */
-  listed?: Record<string, SessionConfig>;
+  platformTypes?: Record<string, Record<string, unknown>>;
+  /** 场所的值，键为场所键（窗口为 `平台:类型:目标`）；缺省没有 */
+  places?: Record<string, Record<string, unknown>>;
+  /** 会话列表里的会话 id（listSessions 的结果）；缺省没有 */
+  listed?: string[];
   /** 实例 id → 替身提供者；缺省只有 REMOTE 一个 */
   remotes?: Record<string, RemoteAgentProvider>;
   /** services.prefer('remote-agent', …) 指向的实例 id */
@@ -358,34 +388,16 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
       return () => {};
     },
   } as never);
+  const lookup = (id: string) => sessionInfoOf(id, children[id]);
   host.provide.use(sessionManager, {
-    resolveConfig: (sessionId: string) => ({ ...(rooms[sessionId] ?? {}) }),
-    registerSetting: () => () => {},
-    listLayers: (): SessionConfigLayer[] => [
-      ...(opts.defaults ? [{ scope: 'defaults' as const }] : []),
-      ...Object.keys(opts.profiles ?? {}).map(platform => ({ scope: 'platform' as const, platform })),
-      ...Object.keys(opts.typeProfiles ?? {}).map(key => {
-        const [platform, type] = key.split('/') as [string, string];
-        return { scope: 'type' as const, platform, type };
-      }),
-      ...Object.keys(opts.placeProfiles ?? {}).map(key => ({ scope: 'place' as const, key })),
-    ],
-    getLayer: (layer: SessionConfigLayer) =>
-      layer.scope === 'platform'
-        ? (opts.profiles?.[layer.platform] ?? {})
-        : layer.scope === 'type'
-          ? (opts.typeProfiles?.[`${layer.platform}/${layer.type}`] ?? {})
-          : layer.scope === 'place'
-            ? (opts.placeProfiles?.[layer.key] ?? {})
-            : (opts.defaults ?? {}),
-    getOwnConfig: (id: string) => ({ ...(opts.listed?.[id] ?? {}) }),
-    resolveInheritance: (id: string, platform?: string) =>
-      inheritanceOf(id, platform, opts, x => sessionInfoOf(x, children[x])),
-    placeOf: (id: string) => placeOf(id, x => sessionInfoOf(x, children[x])),
-    listSessions: (): SessionInfo[] =>
-      Object.entries(opts.listed ?? {}).map(([id, config]) => ({ ...sessionInfoOf(id, children[id]), config })),
-    getSession: (id: string): SessionInfo => sessionInfoOf(id, children[id]),
+    placeOf: (id: string) => placeOf(id, lookup),
+    listSessions: (): SessionInfo[] => (opts.listed ?? []).map(lookup),
+    getSession: lookup,
   } as unknown as SessionManagerService);
+  const places: Record<string, Record<string, unknown>> = {};
+  for (const [id, values] of Object.entries(rooms)) places[placeOf(id, lookup).key] = { ...values };
+  for (const [key, values] of Object.entries(opts.places ?? {})) places[key] = { ...places[key], ...values };
+  host.provide.use(sessionSettings, settingsStandIn({ ...opts, places }, lookup) as never);
   host.provide.use(storage, memoryStorage(files));
   host.provide.use(gateway, {
     async dispatchOutbound(message: OutgoingMessage) {
@@ -416,7 +428,7 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   }
   if (opts.prefer) host.services.use.prefer(remoteAgent, opts.prefer);
 
-  await app.plugin(paperPlugin, opts.config ?? PILOT_CONFIG);
+  await app.plugin(paperPlugin, { ...(opts.config ?? PILOT_CONFIG), ...opts.global });
   await app.plugins.idle();
   const state = app.plugins.getPlugin(paperPlugin.name)?.state;
   if (state !== 'active') throw new Error(`plugin-paper 未激活（state=${state}）`);
