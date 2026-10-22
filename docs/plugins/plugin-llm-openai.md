@@ -38,7 +38,7 @@ export default definePlugin({
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming |
 | `timeout` | number | `120` | 停顿超时 (秒)：多久收不到新的生成内容算超时（秒）。一直在输出不算超时；不流式的请求要在这段时间内收到整份回复。模型思考时不发出思考内容（如 OpenAI 官方的推理模型）或输入很长时，建议适当调大。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
-| `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数 |
+| `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数，须为正整数，否则实例转为出错 |
 | `contextLength` | number | `128000` | 上下文长度：模型上下文窗口大小 |
 | `thinkingParam` | select | `'reasoning_effort'` | 思考档位的写法：能思考的模型（内置表里的 o 系列与 gpt-5 系列，gpt-5-chat 除外，或单模型能力覆盖里写了 thinking 的）按这种写法提供深度思考的档位。`reasoning_effort`：档位按模型族，发 `reasoning_effort`（OpenAI 官方与多数兼容端点）；`thinking`：关、开，发 `thinking: {type: enabled\|disabled}`（DeepSeek 风格的端点或中转）。请求指定了档位才发对应字段，没指定时不发、按端点自己的默认。端点不认所选字段时会拒收指定了档位的请求，这时换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。 |
 

@@ -42,7 +42,7 @@ export default definePlugin({
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：兜底默认能力:仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测,通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming |
 | `timeout` | number | `120` | 停顿超时 (秒)：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
-| `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数（num_predict） |
+| `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数（num_predict），须为正整数，否则实例转为出错 |
 | `contextLength` | number | `8192` | 上下文长度：模型上下文窗口大小（num_ctx） |
 | `keepAlive` | string | `'5m'` | 模型保活时间：模型在显存中保留的时间，如 5m、1h、0（立即卸载） |
 | `thinking` | select | `'on'` | 默认思考档位：报告了思考能力的模型（或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。可选 `off`（关）、`on`（开）。没有思考能力的模型不发 think 参数。 |

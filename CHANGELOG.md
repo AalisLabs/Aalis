@@ -182,6 +182,10 @@
 - @aalis/api-webui：插件列表的 `configSchema` 改为线上类型 `WireConfigSchema`（带 `session`，没有函数成员）；可选项来源 `llm-thinking` 的 `dependency` 改收条目 id、没带时回空；`OptionDetail.pluginName` 删掉；宿主不再回答可选项来源 `platform` 与 `gateway-scopes`。
 - @aalis/plugin-trigger-policy、@aalis/plugin-flow-control：不再导出配置类型 `TriggerPolicyConfig`、`FlowControlConfig`，参数改为按会话的字段。
 
+### maxTokens 须为正整数（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-media）
+
+- 三家的 `maxTokens` 与 plugin-media 的 `vision.maxTokens`、`audio.maxTokens` 须为正整数：填小于 1、不是整数或不是数的值时实例转为出错，错误信息点名该字段。此前 0 与负数照常启动，llm-ollama 按不封顶生成（超时改按停顿计之后，一直在输出的生成截不住），llm-openai、llm-deepseek 原样发给端点，plugin-media 的两项原样交给识别模型；小数照常启动、原样发出；不是数的值回落默认值并告警。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

@@ -35,7 +35,7 @@ definePlugin({
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming |
 | `timeout` | number | `120` | 停顿超时 (秒)：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
-| `maxTokens` | number | `8192` | 最大 Token：单次回复最大生成 token 数 |
+| `maxTokens` | number | `8192` | 最大 Token：单次回复最大生成 token 数，须为正整数，否则实例转为出错 |
 | `contextLength` | number | `131072` | 上下文长度：模型上下文窗口大小 |
 | `strictToolCalls` | boolean | `false` | Strict 工具调用：启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com） |
 | `forceJsonOutput` | boolean | `false` | 强制 JSON 输出：启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。 |

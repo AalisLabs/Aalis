@@ -188,7 +188,15 @@ const configSchema = defineConfig({
       '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。',
   },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
-  maxTokens: { type: 'number', label: '最大 Token', default: 8192, description: '单次回复最大生成 token 数' },
+  maxTokens: {
+    type: 'number',
+    label: '最大 Token',
+    default: 8192,
+    min: 1,
+    integer: true,
+    onInvalid: 'error',
+    description: '单次回复最大生成 token 数，须为正整数，否则实例转为出错',
+  },
   contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
   strictToolCalls: {
     type: 'boolean',
