@@ -9,6 +9,7 @@ export const BROWSER_TESTS = [
   '**/test/plugins/draw-delivery-chain.test.ts',
   '**/test/plugins/tool-browser-ssrf-gate.test.ts',
   '**/test/plugins/tool-browser-background-page.test.ts',
+  '**/test/plugins/tool-browser-login-isolation.test.ts',
   '**/test/plugins/tool-browser-screenshot.test.ts',
   '**/test/plugins/tool-browser-screenshot-timeout.test.ts',
   '**/test/utils/offline-render-*.test.ts',

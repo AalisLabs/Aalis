@@ -18,7 +18,9 @@ export default definePlugin({
     config,
     logger,
     lifecycle,
+    events,
     tools: optional(tools),
+    sessionManager: optional(sessionManager),
     webui: optional(webuiServer),
     proc: optional(processService),
     storage: optional(storage),
@@ -46,13 +48,23 @@ export default definePlugin({
 
 | 工具 | 说明 |
 |---|---|
-| `browser_navigate` | 打开指定 URL（可用 pageId 复用已有页面、用 waitFor 等待 CSS 选择器），返回 pageId、标题、URL 和截断后的页面文本 |
+| `browser_navigate` | 打开指定 URL（可用 pageId 复用本会话打开的页面、用 waitFor 等待 CSS 选择器），返回 pageId、标题、URL 和截断后的页面文本 |
 | `browser_get_text` | 获取页面文本，可按 CSS 选择器取特定元素 |
 | `browser_click` | 点击页面元素 |
 | `browser_type` | 在输入框中输入文本（默认先清空，可选回车提交） |
 | `browser_screenshot` | 对指定页面截图（可截整页或指定元素）。PNG 一律先落在 `tmp` 根，文本结果恒带 `storage_uri`；调用方能把图交给主模型时，PNG 同时随工具结果的 `images` 交出。两种情况下文本结果都不含 base64（见下节） |
 | `browser_get_links` | 获取页面上的链接（href 与文本，默认上限 50） |
 | `browser_close_page` | 关闭指定页面 |
+
+## 页面与登录态的归属
+
+页面与登录态都归打开它的根会话，子会话归它的根会话（取法同 api-session-manager 的 `rootSessionOf`）。每个根会话用自己的浏览器上下文（puppeteer 的 `createBrowserContext`），页面开在它里面，cookie、localStorage 与缓存只在这个会话里有效：在一个会话里登录的站点，别的会话打开不带这个登录态。上下文按需建，浏览器崩溃或重启后随之清空、再按需重建，登录态不保留。
+
+带 `pageId` 的工具只取得到调用所在的根会话打开的页面：同一根会话里（根会话与它的子会话）能取、能关；别的会话打开的页面与不存在的一样，回「页面不存在」，`browser_navigate` 带别的会话的 `pageId` 时开一个新页面。没有会话管理、或会话不在会话表里（编排、mcp-server 等）时按调用所在的会话自己算，没有会话的调用（`sessionId` 为空）共用一个上下文，只取得到同样没有会话打开的页面。
+
+会话删除时（`session:deleted`）关掉它的上下文，连同页面与登录态；删子会话不动根会话的。
+
+会话里在场的人共用这个会话的页面与登录态：群聊等多人会话里，谁都能操作别人在这个会话里打开的页面、带着别人在这个会话里登录的身份访问网站，所以写类操作（`browser_navigate`、`browser_click`、`browser_type`、`browser_close_page`）声明 `risk: 'sensitive'`。`maxPages` 是进程级的上限，超出时关闭全部页面里最久没访问的那个，可能属于别的会话。
 
 ## SSRF 防护
 
@@ -92,7 +104,7 @@ Chromium 按需启动，进程级共享一个实例与一张页面表；并发�
 
 ## 浏览器页
 
-WebUI 插件详情里的「浏览器」页（`key: 'browser'`）列出打开着的页面（ID、标题、地址、最后访问），行动作「关闭」，另有「关闭所有页面」（确认框）。关闭不存在的页面回错误，不当成功。开页、关页、导航或点击改了标题与地址、浏览器重启清空页面表时，页面都重取。
+WebUI 插件详情里的「浏览器」页（`key: 'browser'`）列出打开着的页面（不分会话；ID、标题、地址、最后访问），行动作「关闭」，另有「关闭所有页面」（确认框）。关闭不存在的页面回错误，不当成功。开页、关页、导航或点击改了标题与地址、浏览器重启清空页面表时，页面都重取。
 
 ## 配置校验
 

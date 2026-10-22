@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node:net';
 import { processService } from '@aalis/api-process';
+import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
@@ -8,6 +9,7 @@ import {
   type BoundOf,
   config as configService,
   definePlugin,
+  events as eventsService,
   type Logger,
   lifecycle as lifecycleService,
   logger as loggerService,
@@ -28,6 +30,8 @@ import { assertAddressesSafe, assertPortAllowed, isPrivateHost, pinnedLookup } f
 interface PageSlot {
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Page 类型动态导入，避免在顶层 import puppeteer 增加启动负担
   page: any; // puppeteer Page
+  /** 打开它的根会话，见 ownerOf；页面开在这个会话的浏览器上下文里 */
+  owner: string;
   url: string;
   title: string;
   lastAccess: number;
@@ -104,12 +108,14 @@ type BrowserConfig = ConfigOf<typeof configSchema>;
 
 // tools / webui-server 全部声明为 optional：登记面在提供者缺席时排队，上线后自动补挂，
 // 不必把激活闸架在它们身上。storage 仅截图落盘用（不接图的调用方那一路），
-// process 仅首次自动下载 Chrome 时用（缺席则自动下载这步不可用）。
+// process 仅首次自动下载 Chrome 时用（缺席则自动下载这步不可用），session-manager 仅取根会话用（缺席时按调用所在的会话）。
 const uses = {
   config: configService,
   logger: loggerService,
   lifecycle: lifecycleService,
+  events: eventsService,
   tools: optional(toolsService),
+  sessionManager: optional(sessionManagerService),
   webui: optional(webuiServer),
   proc: optional(processService),
   storage: optional(storageService),
@@ -138,17 +144,52 @@ function runBrowserTools(caps: Caps): void {
   let launching: Promise<any> | null = null;
   let gate: NetworkGate | null = null;
   const pages = new Map<string, PageSlot>();
-  let pageCounter = 0;
+  /**
+   * 各根会话的浏览器上下文：登录态（cookie、localStorage、缓存）归它，它的页面都开在里面。按需建，同一会话并发的首次开页
+   * 共用同一次创建；浏览器重启时随页面表一起清掉，在新的浏览器上重建
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer BrowserContext 类型动态导入
+  const contexts = new Map<string, Promise<any>>();
+  /** 正在开的页面与它所属的根会话：开好之前这个会话被删了（见 session:deleted），不登记 */
+  const opening = new Set<{ owner: string; deleted: boolean }>();
 
-  /** 关掉一个页面；不在表里回 false */
+  /**
+   * 页面与登录态归打开它的根会话：子会话取根会话，与它共用。会话管理不在、会话不在会话表里（编排、mcp-server 等）时按调用所在的
+   * 会话自己算，没有会话的调用为空串，只与同样没有会话的调用共用
+   */
+  function ownerOf(sessionId: string): string {
+    const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
+    return (sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.id) ?? sessionId;
+  }
+
+  /** 调用所在的根会话打开的页面；别的会话打开的与不存在的一样，取不到 */
+  function ownPage(pageId: unknown, sessionId: string): PageSlot | undefined {
+    const slot = pages.get(pageId as string);
+    return slot?.owner === ownerOf(sessionId) ? slot : undefined;
+  }
+
+  /** 这个根会话的浏览器上下文，没有就建；建不成的不留，下次调用重建 */
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser / BrowserContext 类型动态导入
+  function contextOf(b: any, owner: string): Promise<any> {
+    const held = contexts.get(owner);
+    if (held) return held;
+    const created = b.createBrowserContext();
+    contexts.set(owner, created);
+    created.catch(() => {
+      if (contexts.get(owner) === created) contexts.delete(owner);
+    });
+    return created;
+  }
+
+  /** 关掉一个页面；不在表里回 false。先从表里摘掉，关闭落定之前就已取不到 */
   async function closePage(id: string): Promise<boolean> {
     const slot = pages.get(id);
     if (!slot) return false;
+    pages.delete(id);
+    browserPage.invalidate();
     try {
       await slot.page.close();
     } catch {}
-    pages.delete(id);
-    browserPage.invalidate();
     return true;
   }
 
@@ -246,9 +287,10 @@ function runBrowserTools(caps: Caps): void {
   async function launchBrowser(): Promise<any> {
     // 停用后才到的调用不再起闸与浏览器：onDispose 已经收过尾，这时起的东西没人关
     if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
-    // 重新启动时页面表一起清，否则列出的是已经不存在的死页面
+    // 重新启动时页面表与各会话的上下文一起清，否则列出的是已经不存在的死页面，开页也会落到旧浏览器的上下文上
     browser = null;
     pages.clear();
+    contexts.clear();
     browserPage.invalidate();
     // 仅 blockPrivate 时起网络闸（关掉即零开销、本地全通，便于 owner 测本地）。
     // 闸先于浏览器起好，起不来就不启动浏览器：浏览器不会在没有闸的情况下运行
@@ -304,6 +346,7 @@ function runBrowserTools(caps: Caps): void {
       if (browser !== instance) return;
       browser = null;
       pages.clear();
+      contexts.clear();
       browserPage.invalidate();
     });
     logger.info('浏览器已启动');
@@ -320,6 +363,7 @@ function runBrowserTools(caps: Caps): void {
     if (browser !== instance) return;
     browser = null;
     pages.clear();
+    contexts.clear();
     browserPage.invalidate();
     logger.warn(`${reason}，关闭这一代浏览器，下次调用时重新启动`);
     instance
@@ -355,35 +399,48 @@ function runBrowserTools(caps: Caps): void {
 
   // ── 获取或创建页面 ──
 
-  async function getOrCreatePage(id?: string): Promise<{ id: string; slot: PageSlot }> {
-    if (id && pages.has(id)) {
-      const slot = pages.get(id)!;
-      slot.lastAccess = Date.now();
-      return { id, slot };
+  /** 取调用所在的根会话打开的这个页面；没有给、不存在或是别的会话打开的，都为它开一个新页面 */
+  async function getOrCreatePage(id: string | undefined, sessionId: string): Promise<{ id: string; slot: PageSlot }> {
+    const own = ownPage(id, sessionId);
+    if (id && own) {
+      own.lastAccess = Date.now();
+      return { id, slot: own };
     }
 
-    // 超出最大页面数，关闭最早的
-    if (pages.size >= config.maxPages) {
-      let oldest: string | null = null;
-      let oldestTime = Infinity;
-      for (const [k, v] of pages) {
-        if (v.lastAccess < oldestTime) {
-          oldest = k;
-          oldestTime = v.lastAccess;
+    // 所属的根会话先定下：下面要等关页面、启动浏览器、建上下文与开页面，这期间会话可能被删
+    const pending = { owner: ownerOf(sessionId), deleted: false };
+    opening.add(pending);
+    try {
+      // 超出最大页面数，关闭最早的
+      if (pages.size >= config.maxPages) {
+        let oldest: string | null = null;
+        let oldestTime = Infinity;
+        for (const [k, v] of pages) {
+          if (v.lastAccess < oldestTime) {
+            oldest = k;
+            oldestTime = v.lastAccess;
+          }
         }
+        if (oldest) await closePage(oldest);
       }
-      if (oldest) await closePage(oldest);
-    }
 
-    const b = await ensureBrowser();
-    // 每页独占一个窗口：同一窗口里的标签页会互相压到后台，而后台页上的点击等操作会一直挂住（见 browser_click）
-    const page = await b.newPage({ type: 'window' });
-    page.setDefaultTimeout(config.defaultTimeout);
-    const newId = `page_${++pageCounter}`;
-    const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
-    pages.set(newId, slot);
-    browserPage.invalidate();
-    return { id: newId, slot };
+      const b = await ensureBrowser();
+      // 会话已删除就不再为它建上下文
+      if (pending.deleted) throw new Error('调用所在的会话已删除');
+      // 每页独占一个窗口：同一窗口里的标签页会互相压到后台，而后台页上的点击等操作会一直挂住（见 browser_click）
+      const page = await (await contextOf(b, pending.owner)).newPage({ type: 'window' });
+      // 开页途中会话被删：删除时已关掉它的上下文，这一页随之关闭，不登记
+      if (pending.deleted) throw new Error('调用所在的会话已删除');
+      page.setDefaultTimeout(config.defaultTimeout);
+      // 随机串而不是递增序号：序号的空档会透露别的会话开过几页
+      const newId = `page_${randomUUID().slice(0, 8)}`;
+      const slot: PageSlot = { page, owner: pending.owner, url: 'about:blank', title: '', lastAccess: Date.now() };
+      pages.set(newId, slot);
+      browserPage.invalidate();
+      return { id: newId, slot };
+    } finally {
+      opening.delete(pending);
+    }
   }
 
   // ── 截断文本 ──
@@ -406,9 +463,9 @@ function runBrowserTools(caps: Caps): void {
   // 1. 导航 (navigate)
   tools.use.register({
     groups: ['browser'],
-    // 浏览器页面池是**进程级共享**、取页时不校验会话归属：拿到 pageId 就能操作
-    // 别人（含 owner）打开的页面，那页面可能带着登录态。写类浏览器操作一律 sensitive(L1)。
-    // 导航本身有 SSRF 闸（入口 isPrivateHost 快判 + 浏览器网络闸），但仍会占用与复用共享页面槽位。
+    // 页面与登录态归打开它的根会话（见 ownerOf），会话里在场的人共用：群聊等多人会话里，谁都能操作别人在这个会话里打开的页面，
+    // 带着别人在这个会话里登录的身份访问网站。写类浏览器操作一律 sensitive(L1)。
+    // 导航本身有 SSRF 闸（入口 isPrivateHost 快判 + 浏览器网络闸），但仍会占用进程级共享的页面槽位（maxPages）。
     risk: 'sensitive',
     definition: {
       type: 'function',
@@ -426,12 +483,12 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       try {
         const targetUrl = args.url as string;
         const urlError = validateUrl(targetUrl, config);
         if (urlError) return JSON.stringify({ error: urlError });
-        const { id, slot } = await getOrCreatePage(args.pageId as string);
+        const { id, slot } = await getOrCreatePage(args.pageId as string | undefined, callCtx.sessionId);
         await slot.page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: config.defaultTimeout });
         if (args.waitFor) {
           await slot.page.waitForSelector(args.waitFor as string, { timeout: config.defaultTimeout });
@@ -477,8 +534,8 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
-      const slot = pages.get(args.pageId as string);
+    handler: async (args, callCtx) => {
+      const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         let text: string;
@@ -501,7 +558,7 @@ function runBrowserTools(caps: Caps): void {
   // 3. 点击元素
   tools.use.register({
     groups: ['browser'],
-    // 对共享页面池里的任意页面点击——见 browser_navigate 处的说明。
+    // 点击会话里共用的页面——见 browser_navigate 处的说明。
     risk: 'sensitive',
     definition: {
       type: 'function',
@@ -518,8 +575,8 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
-      const slot = pages.get(args.pageId as string);
+    handler: async (args, callCtx) => {
+      const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         // 页面自己开出的窗口或标签页会把它压到后台，后台页不跑渲染，puppeteer 的点击等它进入视口会一直挂住
@@ -540,7 +597,7 @@ function runBrowserTools(caps: Caps): void {
   // 4. 输入文本
   tools.use.register({
     groups: ['browser'],
-    // 向共享页面池里的任意页面输入文本（可能是他人已登录的表单）。
+    // 向会话里共用的页面输入文本（可能是在场的别人已登录的表单）。
     risk: 'sensitive',
     definition: {
       type: 'function',
@@ -560,8 +617,8 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
-      const slot = pages.get(args.pageId as string);
+    handler: async (args, callCtx) => {
+      const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         const selector = args.selector as string;
@@ -603,7 +660,7 @@ function runBrowserTools(caps: Caps): void {
       },
     },
     handler: async (args, callCtx) => {
-      const slot = pages.get(args.pageId as string);
+      const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         const buffer: Buffer | null = await withScreenshotTimeout(
@@ -688,8 +745,8 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args => {
-      const slot = pages.get(args.pageId as string);
+    handler: async (args, callCtx) => {
+      const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
         const limit = (args.limit as number) || 50;
@@ -711,7 +768,7 @@ function runBrowserTools(caps: Caps): void {
   // 7. 关闭页面
   tools.use.register({
     groups: ['browser'],
-    // 关闭他人正在用的页面。
+    // 关闭会话里在场的别人正在用的页面。
     risk: 'sensitive',
     definition: {
       type: 'function',
@@ -727,8 +784,29 @@ function runBrowserTools(caps: Caps): void {
         },
       },
     },
-    handler: async args =>
-      JSON.stringify((await closePage(args.pageId as string)) ? { ok: true } : { error: '页面不存在' }),
+    handler: async (args, callCtx) =>
+      JSON.stringify(
+        ownPage(args.pageId, callCtx.sessionId) && (await closePage(args.pageId as string))
+          ? { ok: true }
+          : { error: '页面不存在' },
+      ),
+  });
+
+  // 会话删除时摘掉它的页面与上下文，在后台关掉上下文（页面随之关闭），不等关闭落定：浏览器卡住时关闭会一直排着，不能拖住删除。
+  // 页面与上下文记在根会话名下，删子会话不动它们
+  caps.events.use.on('session:deleted', sessionId => {
+    for (const pending of opening) if (pending.owner === sessionId) pending.deleted = true;
+    const before = pages.size;
+    for (const [id, slot] of pages) if (slot.owner === sessionId) pages.delete(id);
+    if (pages.size < before) browserPage.invalidate();
+    const context = contexts.get(sessionId);
+    if (!context) return;
+    contexts.delete(sessionId);
+    context
+      .then(c => c.close())
+      .catch(err =>
+        logger.warn(`关闭已删除会话的浏览器上下文失败: ${err instanceof Error ? err.message : String(err)}`),
+      );
   });
 
   // ── 清理 ──

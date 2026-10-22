@@ -69,6 +69,13 @@
 - `check_subtask`、`wait_subtasks` 只认调用所在会话的直接子任务，与 `send_to_subtask`、`delete_subtask` 同一判据：给的是别的会话的子任务或根会话时，这一项与不存在的一样回「子任务不存在」，不交出它的状态、任务与结果，`wait_subtasks` 也不等它。此前任何会话都能按 id 查、等任意会话的状态与结果。
 - `send_to_subtask`、`delete_subtask` 对别的会话的子任务与根会话同样回「子任务不存在」，不再回带着调用所在会话与对方父会话 id 的拒绝原因；`delete_subtask` 的结果去掉 `notFound` 与 `denied`。
 
+### 浏览器页面与登录态按会话归属（@aalis/plugin-tool-browser）
+
+- 页面与登录态都归打开它的根会话，子会话归它的根会话。每个根会话用自己的浏览器上下文，cookie、localStorage 与缓存不跨会话：在一个会话里登录的站点，别的会话打开不再带这个登录态。此前全部页面开在同一个浏览器上下文里，登录态进程级共享。
+- `browser_get_text`、`browser_click`、`browser_type`、`browser_screenshot`、`browser_get_links`、`browser_close_page` 只取得到同一根会话里打开的页面，别的会话打开的回「页面不存在」，与不存在的页面一样；`browser_navigate` 带别的会话的 `pageId` 时开一个新页面，不再复用。此前页面表进程级共享、取页不看会话，拿到 `pageId` 就能读、操作、截图、关闭别的会话打开的页面。
+- 没有会话的调用共用一个上下文，只取得到同样没有会话打开的页面；编排、mcp-server 等不在会话表里的会话按各自的会话 id 算。会话删除时关掉它的上下文，连同页面与登录态。
+- `pageId` 改为随机串，不再按打开的先后编号（编号的空档会透露别的会话开过几页）。
+
 ### 免确认只对授权身份是 owner 的回合（plugin-authority、plugin-workflow、api-workflow）
 
 - `confirmOverrides` 的 `'off'`、`restrictedPolicy` 白名单与执行守卫的 `skipConfirm` 只对授权身份（守卫上下文的 `actor`，缺省即会话身份）是 owner 的回合生效。别人发起的照旧确认：`'off'` 回落到插件的声明，工具要 owner 批准、不能产生审批的直接拒绝，指令当面问发出者本人。不再免确认的有：群成员（含开了相应工具组的群里的 2 级成员）、别人的私聊里对方发起的、群友亲手输入的指令、创建者不是 owner 的定时任务里的指令（需要确认的直接拒绝）、MCP 客户端、没有授权主体的回合（群里的频率触发、空闲触发、owner 会话里的主动发言、白纸任务完成通知），以及定义者不是 owner 或没有定义者的编排。owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排照旧免。

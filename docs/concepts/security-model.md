@@ -179,12 +179,20 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
   读类档位牺牲的是爬网页与跨群感知这类核心体验，且 http_request 有分组闸兜底（见上）。
   其中 `recent_messages` 已于 2026-09-27 改为 `sensitive`，见本节末。
 - 定档纪律：引用其他工具档位作判据前先读其注释的真实理由（`browser_navigate` 的 sensitive
-  源于共享页面池带登录态、`file_read` 源于本机隐私，均与「出网」无关）。
+  源于会话里在场的人共用这个会话的页面与登录态，`file_read` 源于本机隐私，均与「出网」无关）。
 
 执行器的四个后台任务工具（`background_list`、`background_output`、`background_wait`、`background_stop`，
 `plugin-tools`）同样未声明 risk 与 visibility，解析为 public，按会话放行：本会话里的后台任务谁都能查、能停，不论是谁
 起的；别的会话里的一律回「不存在」，不确认存在与否。取输出也不另设等级闸：任务的输出与结果本来就在这个会话里，与前台
 调用的结果一样，谁在场谁看得到。结束通知开的那一轮仍按起它的人的身份运行。
+
+浏览器工具（`plugin-tool-browser`）的页面与登录态都归打开它的根会话，子会话归它的根会话。每个根会话用自己的浏览器上下文，
+cookie、localStorage 与缓存不跨会话，别的会话打开同一站点不带这个会话的登录态。同一根会话里的页面能取、能关，别的会话取不到，
+回的与不存在的页面一样，不确认存在与否；带别的会话的 `pageId` 导航开的是新页面。不在会话表里的会话（编排、mcp-server 等）
+按它自己算，没有会话的调用共用一个上下文。会话删除时关掉它的上下文，连同页面与登录态。写类操作（navigate、click、type、
+close_page）仍为 `sensitive`：会话里在场的人共用这个会话的页面与登录态，群聊等多人会话里，谁都能带着别人在这个会话里登录的
+身份访问网站。页面数上限 `maxPages` 是进程级的，超出时关闭的是全部页面里最久没访问的那个，可能属于别的会话。WebUI 的「浏览器」
+页是 owner 的管理面，列出并能关闭全部页面。
 
 跨会话委派工具组 `session-delegate`（`list_known_sessions` 与 `delegate_to_session`）已删除，问题不在档位：
 `list_known_sessions` 不按调用者过滤，把各会话最近一条消息的前 80 字交给任何触发者；`delegate_to_session`
