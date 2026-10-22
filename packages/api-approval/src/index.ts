@@ -21,25 +21,21 @@ import { t } from './texts.js';
 // ════════════════════════════════════════════════════════════
 
 /**
- * 发起回合的类别，由发起方（第一方是 plugin-authority 的执行守卫）按回合的来源算出（不按授权身份算：owner 建的定时任务
- * 会把创建者回填成授权身份）：
- * - `owner`：owner 自己的会话里 owner 亲手发来的消息；
- * - `owner-chain`：同一 owner 会话里后台任务完成后的续做；
+ * 发起回合的类别，由发起方（第一方是 plugin-authority 的执行守卫）按这一轮从哪里来算出，不看会话类型与受众，也不判是不是
+ * owner（不按授权身份算：owner 建的定时任务会把创建者回填成授权身份）：
+ * - `hand`：人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话），不论在哪个会话、是不是 owner，以及它的续做；
  * - `subtask`：子任务回合；
- * - `autonomous`：定时任务、定时触发、空闲与主动发言、开话题，以及它们触发的编排；
- * - `room`：群房间，以及对端不是 owner 的私聊，owner 在 WebUI 里驱动房间也算；
- * - `other`：其余真人回合与续做：群成员或其他用户发起的，以及受众判不出的会话（没有来源字段也没有创建来源）里
- *   owner 发起的。
+ * - `autonomous`：定时任务、编排、空闲与主动发言、开话题、平台请求事件等其余注入与它们的续做，以及不在入站回合里的调用。
  *
- * 只有 `owner` 与 `owner-chain` 能产生审批，其余一律直接拒绝，不推给任何审批面。
+ * 能不能产生审批由审批服务按类别与参与者判；不能的一律直接拒绝，不推给任何审批面。
  */
-export type OriginKind = 'owner' | 'owner-chain' | 'subtask' | 'autonomous' | 'room' | 'other';
+export type OriginKind = 'hand' | 'subtask' | 'autonomous';
 
-/** 发起回合的直接主体与它的类别 */
+/** 发起回合的类别与参与者 */
 export interface ApprovalOrigin {
   kind: OriginKind;
-  platform: string;
-  userId?: string;
+  /** 这一轮的参与者（授权身份）：现在一轮只有一个 */
+  participants: { platform: string; userId: string }[];
 }
 
 /** 发起一个审批：要执行的工具与它的参数（目前只有工具这一种目标） */
@@ -129,7 +125,7 @@ export interface ApprovalSettlement {
   at: number;
 }
 
-/** 审批的结局。拒绝时 message 是回给模型的话：写明被什么拦下、能不能再申请；发起类别为 room 的只有一句通用的拒绝 */
+/** 审批的结局。拒绝时 message 是回给模型的话：写明被什么拦下、能不能再申请 */
 export type ApprovalOutcome =
   | { approvalId: string; approved: true }
   | { approvalId: string; approved: false; source: ApprovalSource; message: string };

@@ -122,7 +122,11 @@ describe('无人值守的多步任务', () => {
         .map(line => JSON.parse(line));
     await vi.waitFor(() => expect(read()).toHaveLength(2));
     expect(read()).toMatchObject([
-      { type: 'request', tool: DEPLOY, origin: { kind: 'owner', platform: 'cli', userId: 'console' } },
+      {
+        type: 'request',
+        tool: DEPLOY,
+        origin: { kind: 'hand', participants: [{ platform: 'cli', userId: 'console' }] },
+      },
       { type: 'decision', state: 'expired', source: 'absent' },
     ]);
   });

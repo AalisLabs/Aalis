@@ -1134,7 +1134,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       .sessionManager.use.createSession({ name: '审批探针' });
     await stack.app.bind({ approvals }).approvals.use.request({
       sessionId,
-      origin: { kind: 'autonomous', platform: 'webui', userId: 'console' },
+      origin: { kind: 'autonomous', participants: [{ platform: 'webui', userId: 'console' }] },
       tool: DEPLOY,
       args: { command: COMMAND },
       rule: 'e2e',

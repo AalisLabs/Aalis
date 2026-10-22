@@ -134,9 +134,9 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等 owner 审批期间被 abort 的工具不再执行）、`inbound`（本回合的 `source`、续做的调用者 `callerUserId` 与入站消息的平台消息 id `messageId`），以及 `turnId` 与每次调用各自的 `callId`。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。宿主通知延续某次工具调用时（如后台任务结束通知）不带发言者，`userId` 与 `inbound.callerUserId` 取 `hostNotice.callerUserId`，执行守卫据后者认出 owner 链的延续；归档与提示词钩子仍按消息本身的 `userId`（没有）。
+**ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 api-authority 的 `originTurnOf([incoming])` 拼会话、`platform`、`userId`、`actor` 与 `inbound`：`incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等 owner 审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留 actor 语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取起它的那一轮的发言者、`actor` 取那一轮的参与者，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。
 
-**lane 与打断**：同一会话按 `source` 分 lane，同一 lane 的新消息中止旧回合，不同 lane 互不打断。例外只有一条：真人消息（不带 `source`）到达时，中止同一会话里 `hostNotice.callerUserId` 等于这条消息 `userId` 的宿主通知回合，起它的人说话就能叫停她自己开的那一轮；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
+**lane 与打断**：同一会话按 `source` 分 lane，同一 lane 的新消息中止旧回合，不同 lane 互不打断，没有例外：真人消息不打断续做开的一轮（起它的人说话也一样），宿主通知也从不打断别的回合。
 
 **reply:before 重试协议**：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries`；用尽后若仍 `retryRequested` 强制把 `content` 置空。上游吐空流时同样按此重试，只是没有失败输出可回放，只追加反馈消息。
 

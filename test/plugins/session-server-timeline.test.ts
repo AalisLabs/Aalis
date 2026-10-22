@@ -1620,7 +1620,7 @@ describe('历史', () => {
     });
     await save({
       role: 'tool',
-      content: '{"error":"需要 owner 批准的操作没有执行"}',
+      content: '{"error":"需要批准的操作没有执行"}',
       toolCallId: 'm2',
       timestamp: 3,
       metadata: { turnId: 't1', callId: 'c2', approval: { id: 'ap-1', ...settlement } },
@@ -1699,7 +1699,7 @@ describe('历史', () => {
     // 等着批准时被停下：审批随之撤销，停止在前，按停止算
     await save({
       role: 'tool',
-      content: '{"error":"需要 owner 批准的操作没有执行"}',
+      content: '{"error":"需要批准的操作没有执行"}',
       toolCallId: 'm4',
       timestamp: 4,
       metadata: {

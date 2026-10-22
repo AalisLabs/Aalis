@@ -20,7 +20,7 @@ import {
 } from '@aalis/api-tools';
 import type { Events, Logger } from '@aalis/core';
 import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
-import type { IncomingMessage } from '@aalis/schema-message';
+import type { FromTurn, IncomingMessage } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 
@@ -71,9 +71,12 @@ function identityOf(ctx: ToolCallContext): Identity {
   return ctx.actor ?? { platform: ctx.platform ?? '', userId: ctx.userId ?? '' };
 }
 
-/** 对话回合里的调用：有 turnId 与 callId，转到后台后有可以通知的对话 */
+/**
+ * 对话回合里的调用：在入站回合里（inbound 在）、有 turnId 与 callId，转到后台后有可以通知的对话。结束通知带着起它的那一轮，
+ * 只有入站回合里的调用给得出它
+ */
 export function inTurn(ctx: ToolCallContext): ctx is ToolCallContext & { turnId: string; callId: string } {
-  return ctx.turnId !== undefined && ctx.callId !== undefined;
+  return ctx.inbound !== undefined && ctx.turnId !== undefined && ctx.callId !== undefined;
 }
 
 /** text 的末尾 n 字，不从代理对中间切开 */
@@ -170,14 +173,11 @@ interface Call {
 }
 
 /**
- * 结束通知送到哪个平台、以谁的身份运行、调用者是谁、回复时引用哪条消息：起它那次调用上下文的快照，会话取任务的。
- * 只在本次运行里有，不落盘：读回的任务不通知
+ * 结束通知带着的起它的那一轮（结束通知开的那一轮与它同一类别、按它的参与者运行，平台同它）与回复时引用哪条消息：起它那次调用
+ * 上下文的快照，会话取任务的。只在本次运行里有，不落盘：读回的任务不通知
  */
 interface NoticeTarget {
-  platform: string;
-  /** 起它的那次调用的授权身份：结束通知开的那一轮按它的身份运行 */
-  actor: Identity;
-  callerUserId?: string;
+  fromTurn: FromTurn;
   replyTo?: string;
 }
 
@@ -360,7 +360,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ---- 执行器 ----
 
-  /** 不可转后台的调用的输出口：有 turnId 与 callId 时转成 tool:output */
+  /** 不可转后台的调用的输出口：对话回合里的转成 tool:output */
   outputFor(ctx: ToolCallContext): (text: string) => void {
     let sent = 0;
     return text => {
@@ -405,8 +405,8 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /**
    * 跑一次占到位置、过了守卫的可转后台调用。让出时限从这里算起，前台时回合中止一并中止它。到时没结束或要求立即转后台：
-   * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有 turnId 或 callId，
-   * 没有可通知的对话）中止并回报已有输出
+   * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有可通知的对话）
+   * 中止并回报已有输出
    */
   async run(call: Call, spec: RunSpec): Promise<ToolExecutionResult> {
     const { ctx } = spec;
@@ -496,7 +496,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   // ---- 内部 ----
 
   /**
-   * 推给界面：有 turnId 与 callId 时转成 tool:output。sent 是这次调用此前写过的字数，推出的总量不超过 OUTPUT_LIMIT：
+   * 推给界面：对话回合里的调用转成 tool:output。sent 是这次调用此前写过的字数，推出的总量不超过 OUTPUT_LIMIT：
    * 界面按条目累加输出，前台最多要等 maxWaitSeconds，持续大量输出的命令不能把它撑满
    */
   private stream(ctx: ToolCallContext, text: string, sent: number): void {
@@ -549,14 +549,18 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(lastAt !== undefined ? { lastOutputAt: lastAt } : {}),
       },
       output: call.output,
-      // 身份跟链源头：platform、actor 与 callerUserId 都取这次调用，通知回合的权限不高于它
+      // 起它的那一轮就是这次调用所在那一轮：平台、发言者、参与者（授权身份）、来源，以及那一轮自己的 fromTurn
       ...(chained
         ? {}
         : {
             notice: {
-              platform: ctx.platform ?? 'unknown',
-              actor: identityOf(ctx),
-              ...(ctx.userId !== undefined ? { callerUserId: ctx.userId } : {}),
+              fromTurn: {
+                platform: ctx.platform ?? 'unknown',
+                userId: ctx.userId,
+                participants: [identityOf(ctx)],
+                source: ctx.inbound?.source,
+                fromTurn: ctx.inbound?.fromTurn,
+              },
               ...(ctx.inbound?.messageId !== undefined ? { replyTo: ctx.inbound.messageId } : {}),
             },
           }),
@@ -662,13 +666,12 @@ export class BackgroundTasks implements BackgroundTaskService {
     const message: IncomingMessage = {
       content: `后台任务 ${task.id}（${task.label}）${ending}，用时 ${formatDuration(durationMs)}。结果与输出用 background_output 查看。`,
       sessionId: task.sessionId,
-      platform: target.platform,
+      platform: target.fromTurn.platform,
       source: `${NOTICE_SOURCE_PREFIX}${task.id}`,
-      actor: target.actor,
+      fromTurn: target.fromTurn,
       hostNotice: {
         kind: BACKGROUND_TASK_NOTICE,
         id: task.id,
-        ...(target.callerUserId !== undefined ? { callerUserId: target.callerUserId } : {}),
         ...(target.replyTo !== undefined ? { replyTo: target.replyTo } : {}),
         facts,
         text,

@@ -82,7 +82,7 @@ describe('发起者：真人、房间会话本身、入站回合', () => {
     });
   });
 
-  it('安全：actor 为 selfInitiatedActor（interval 回合）被拒', async () => {
+  it('安全：actor 为 selfInitiatedActor（没有人的注入）被拒', async () => {
     const hub = await startPaperHub();
     await expectRefused(hub, /发起人/, {
       sessionId: ROOM,

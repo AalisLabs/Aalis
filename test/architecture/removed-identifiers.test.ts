@@ -203,6 +203,10 @@ const REMOVED: Array<[string, string]> = [
   ['allowCrossPrivate', 'OneBot 工具插件读历史的开关，并进会话管理的「读别人的私聊」'],
   ['allowCrossGroup', 'OneBot 工具插件读历史的开关，换成会话管理的「读别的群」'],
   ['allowCrossSelf', 'OneBot 工具插件读历史的开关，换成会话管理的「跨机器人账号」'],
+  ['ROOM_DENIAL', '审批服务给房间里的回合的通用拒绝：发起类别不再看会话，回给模型的话一律按固定格式'],
+  ['callerUserId', '后台任务结束通知上那次调用的发言者，由续做带着的起它的那一轮 fromTurn 取代'],
+  ['owner-chain', '发起类别「owner 链的延续」：续做与它延续的那一轮同一类别'],
+  ['noticeCallers', 'agent 让起它的人说话就停下续做的那套：新消息怎么对待在跑的一轮归通道层'],
 ];
 
 /**

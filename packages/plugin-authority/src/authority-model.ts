@@ -22,8 +22,7 @@ export const OWNER_RANK = Number.POSITIVE_INFINITY;
 // 判断「两份能力声明谁更严」的地方不止这里（plugin-commands 合并同名指令的多份声明时也要），
 // 两份实现必然漂移 —— 曾因此漏掉「risk 遮蔽 visibility」这条性质，酿成一条提权面。
 import type { OriginKind } from '@aalis/api-approval';
-import { capabilityMinLevel, DEFAULT_AUTHORITY, type OriginTurn } from '@aalis/api-authority';
-import { roomClass, type SessionInfo } from '@aalis/api-session-manager';
+import { capabilityMinLevel, DEFAULT_AUTHORITY, type InboundTurn, type OriginTurn } from '@aalis/api-authority';
 import { isUnsafeConfigKey } from '@aalis/schema-config';
 
 export { DEFAULT_AUTHORITY };
@@ -114,40 +113,29 @@ export function resolveAccess(input: AccessInput): boolean {
   return grantsCover(input.granted, input.capability, input.toolGroups); // 5. 所属组覆盖
 }
 
-type IsOwner = (platform: string, userId?: string) => boolean;
+/** 判类别要的那几项：起它的那一轮还原成的一轮没有会话 */
+type Turn = Pick<OriginTurn, 'userId' | 'actor' | 'inbound'>;
+
+/** 起它的那一轮还原成一轮：授权身份取它的参与者 */
+function turnOf({ userId, participants, source, fromTurn }: NonNullable<InboundTurn['fromTurn']>): Turn {
+  return { userId, actor: participants[0], inbound: { source, fromTurn } };
+}
 
 /**
- * 工具调用发起回合的类别（契约见 api-approval 的 OriginKind），只有 owner 与 owner-chain 能产生审批。
- * 按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 actor，按 actor 判它就成了 owner。
- * lookup 按 id 取会话管理里的记录，房间类别按记下的字段判（api-session-manager 的 roomClass）。
+ * 工具调用发起回合的类别（契约见 api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，
+ * 不读会话记录。按这一轮从哪里来判，不按授权身份判：owner 建的定时任务会把创建者回填成 actor，按 actor 判它就成了 owner 亲手。
  * - 不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：没有人在这一轮亲手发起它，是 autonomous；
- * - 子任务回合是 subtask；房间里的回合（多方的聊天窗口，或对端不是 owner 的一对一，子会话按根会话算）是 room，
- *   不论谁发言；
- * - 真人消息：带 actor 的是触发器把这一轮记成了自发的（群里的频率触发），是 autonomous；
- *   否则受众只有 owner 的会话（owner-only）里发言者是 owner 为 owner，其余为 other：受众判不出的会话（internal，
- *   如按 id 兜底建档的、会话管理不在时）失败关闭；
- * - 宿主通知延续某次工具调用：在 owner-only 的会话里、那次调用的发言者与授权身份都是 owner 才是 owner-chain，否则 other；
- * - 其余注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）是 autonomous。
+ * - 子任务回合是 subtask；
+ * - 续做（带起它的那一轮）与起它的那一轮同一类别，不按通知上的身份推；
+ * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件）是 autonomous；
+ * - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）是 hand；授权身份没有账号的（没有人的消息）是她自己开口，
+ *   失败关闭为 autonomous。
  */
-export function originKind(
-  turn: OriginTurn,
-  isOwner: IsOwner,
-  lookup: (sessionId: string) => SessionInfo | undefined,
-): OriginKind {
-  const { inbound, actor } = turn;
+export function originKind(turn: Turn): OriginKind {
+  const { inbound } = turn;
   if (!inbound) return 'autonomous';
   if (inbound.source === 'subtask') return 'subtask';
-  const room = roomClass(lookup(turn.sessionId), lookup, isOwner);
-  if (room === 'room') return 'room';
-  const ownerOnly = room === 'owner-only';
-  if (inbound.source === undefined) {
-    if (actor) return 'autonomous';
-    return ownerOnly && isOwner(turn.platform, turn.userId) ? 'owner' : 'other';
-  }
-  if (inbound.callerUserId !== undefined) {
-    const chained =
-      ownerOnly && isOwner(turn.platform, inbound.callerUserId) && !!actor && isOwner(actor.platform, actor.userId);
-    return chained ? 'owner-chain' : 'other';
-  }
-  return 'autonomous';
+  if (inbound.fromTurn) return originKind(turnOf(inbound.fromTurn));
+  if (inbound.source !== undefined) return 'autonomous';
+  return (turn.actor ?? turn).userId ? 'hand' : 'autonomous';
 }

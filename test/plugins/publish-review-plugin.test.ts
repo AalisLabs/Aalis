@@ -121,7 +121,7 @@ describe('审核插件实际入口', () => {
     await vi.waitFor(() => expect(h.messages).toHaveLength(1));
     expect(h.messages[0]).toMatchObject({ source: `publish:${result.id}`, hostNotice: { kind: 'publish-review' } });
     expect((h.messages[0] as IncomingMessage).hostNotice?.untrusted).toContain('作品');
-    expect(h.messages[0]).not.toHaveProperty('callerUserId');
+    expect(h.messages[0]).not.toHaveProperty('fromTurn');
     // 停用之前取下提供者实例本身：停用后业务句柄打不到它，要看的是这个实例自己拒收
     const stopped = h.app.bind({ services }).services.use.get(publish)!;
     await h.app.plugins.disable(review.name);

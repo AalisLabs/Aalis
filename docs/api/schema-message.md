@@ -30,11 +30,11 @@ interface IncomingMessage {
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
+  fromTurn?: FromTurn;                 // 起它的那一轮：续做带着，见下文
   hostNotice?: {                       // 宿主撰写的事件通知，见下文
     kind: string;
     id?: string;
     untrusted?: string;
-    callerUserId?: string;
     replyTo?: string;
     facts?: Record<string, string | number>;
   };
@@ -51,11 +51,27 @@ interface IncomingMessage {
 |---|---|
 | `direct` | 私聊或单一用户直连，userId 是主发言者 |
 | `immediate` | 群聊被 @/名字主动触发 |
-| `interval` | 群聊因频率/活跃度被动触发，userId 仅是"最后一条" |
+| `interval` | 群聊没点名、因频率/活跃度被挑中；提示词按无明确主发言者写，授权身份照旧是这条消息的发言者 |
 | `idle` | 空闲自动触发，无 userId |
 | `proactive` | 系统代发给 agent 的任务指令，如 workflow 的 agent 节点；content 是任务描述而非用户消息 |
 
-真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的生效范围外（或没装触发插件时）会原样生效。
+真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的生效范围外（或没装触发插件时）会原样生效。点名只决定她回不回与触发类型，不动授权身份：送进这一轮的话都按说它的人算，只有没有人的话引起的一轮（空闲开话题、没有创建者的定时任务等）才是她自己开口。
+
+### 起它的那一轮（fromTurn）
+
+续做（如后台任务的结束通知开的一轮）带着起它的那次调用所在那一轮的事实：
+
+```ts
+interface FromTurn {
+  platform: string;
+  userId?: string;                                         // 那一轮的物理发言者
+  participants: readonly { platform: string; userId: string }[]; // 那一轮的参与者（授权身份 actor ?? 发言者），现在一轮只有一个
+  source?: string;                                         // 那一轮的来源，人亲手发来的没有
+  fromTurn?: FromTurn;                                     // 那一轮自己的起它的那一轮
+}
+```
+
+权限服务按那一轮判这一轮的类别（续做与它延续的那一轮同一类别）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与授权身份填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在只有后台任务结束通知），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
 
 ### 经 owner 过目的注入（ownerApproved）
 
@@ -66,17 +82,16 @@ interface IncomingMessage {
 `hostNotice` 标记一条由宿主撰写的事件通知，它不是任何人的发言（如白纸枢纽的任务完成通知）。注入方的约定：
 
 - 必须同时设 `source`；不设 `userId`、`nickname`、`sessionType`、`triggerType`。
-- 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`，不设 `callerUserId`。延续某次工具调用的通知（如 plugin-tools 执行器的后台任务结束通知）沿用那次调用的身份、不高于它：`platform` 同那次调用，`actor` 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为 `selfInitiatedActor`），`callerUserId` 为那次调用的 `userId`。允许延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记，现在只有后台任务结束通知一处。
+- 身份：不延续某次调用的通知（如白纸的完成通知），`actor` 用 `selfInitiatedActor(platform)`。延续某次工具调用的通知（如 plugin-tools 执行器的后台任务结束通知）不设 `actor`，改带 `fromTurn`（那次调用所在那一轮，见上文），`platform` 同那一轮。
 - `replyTo` 是回复这条通知时要引用的平台消息 id，取自起那次调用的入站消息（`ToolCallContext.inbound.messageId`）；入站消息没有平台消息 id 的不设。plugin-agent 回复时把它带进出站消息的 `replyTo`。
 - `kind` 是通知的子类（如 `'paper-task'`），`id` 是注入方生成的通知标识，供日志与注入方自己的记录对位；`id` 的含义随 `kind`，如后台任务结束通知的是任务 id。
 - `facts` 是给界面的事实：扁平的键值，键由定义这个 `kind` 的契约约定（如 [api-tools 的结束通知](./api-tools.md#结束通知)）。界面认得的 `kind` 据此画成状态，写给模型的 `content` 不给人看；`facts` 不进模型的上下文。
 - 宿主撰写的行一律放在 `content` 里。`untrusted` 放注入方已用 `wrapUntrustedContent`（`@aalis/api-tools`）包好的不可信段，如远端代理的说明，放在最后。
-- `callerUserId` 不是发言者：plugin-agent 只用它填这一轮工具调用上下文的 `userId`（工具眼里是谁在调）与 `inbound.callerUserId`（执行守卫据此判这一轮是不是 owner 链的延续），并让这位用户在同一会话发来的真人消息中止这一轮；归档、用户档案、关系与提示词钩子都不看它。
 
 第一方各插件对它的处理：
 
-- plugin-agent 以一条 system 消息呈现，内容为 `[宿主通知]`、`content`，再接 `untrusted`；不推当前 user 消息。工具调用上下文的 `userId` 取 `callerUserId`（见上）。
-- plugin-message-archive 归档为 `role: 'notice'`、`kind: 'host-notice'`，元数据按登记的键记子类、`id` 与 `facts`（`HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`）；只归档 `content`，`untrusted`、`callerUserId` 与 `replyTo` 不写进消息也不写进 metadata。之后的回合从历史里只看得到宿主正文。
+- plugin-agent 以一条 system 消息呈现，内容为 `[宿主通知]`、`content`，再接 `untrusted`；不推当前 user 消息。工具调用上下文的 `userId` 与授权身份取 `fromTurn`（见上文）。
+- plugin-message-archive 归档为 `role: 'notice'`、`kind: 'host-notice'`，元数据按登记的键记子类、`id` 与 `facts`（`HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`）；只归档 `content`，`untrusted`、`fromTurn` 与 `replyTo` 不写进消息也不写进 metadata。之后的回合从历史里只看得到宿主正文。
 - 不进向量记忆，不计入关系图与用户档案的抽取计数，也不出现在它们的抽取窗口与记忆扩窗里；plugin-memory-history 的跨会话注入与 `recent_messages` 不带别的会话的宿主通知（见下文 `DIRECTIVE_KINDS`）。
 
 带 `source` 的消息不经触发判定、不查回复后冷却，禁言与限速照常：禁言期被吞掉的通知经影子归档落成 notice，同样不含 `untrusted`。

@@ -259,8 +259,9 @@ export function isUnfiled(session: Pick<SessionInfo, 'originPlatform' | 'created
 }
 
 /**
- * 房间类别：这个会话的受众里有谁，由此定回合最多能触及什么。owner-only 是受众只有 owner 的会话，room 是受众里有别人的，
- * internal 是没有受众的内部会话与判不出的
+ * 房间类别：这个会话的受众里有谁。owner-only 是受众只有 owner 的会话，room 是受众里有别人的，internal 是没有受众的内部会话
+ * 与判不出的。它不定这一轮谁能做什么（那按这一轮的触发者，见 api-authority 的 originOf），只用在按受众定的行为上，如网关对受众
+ * 只有 owner 的会话跳过触发与流控、摘要模板、检查点的默认范围、发送者前缀
  */
 export type RoomClass = 'owner-only' | 'room' | 'internal';
 

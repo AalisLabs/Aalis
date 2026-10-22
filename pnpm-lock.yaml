@@ -175,7 +175,7 @@ importers:
   packages/api-authority:
     dependencies:
       '@aalis/api-approval':
-        specifier: workspace:>=0.1.0 <1.0.0
+        specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-approval
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
@@ -183,6 +183,9 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/schema-message':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1112,7 +1115,7 @@ importers:
   packages/plugin-authority:
     dependencies:
       '@aalis/api-approval':
-        specifier: workspace:>=0.1.0 <1.0.0
+        specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
@@ -1126,9 +1129,6 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
-      '@aalis/api-session-manager':
-        specifier: workspace:>=0.12.0 <1.0.0
-        version: link:../api-session-manager
       '@aalis/api-session-settings':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-session-settings
@@ -1164,7 +1164,7 @@ importers:
   packages/plugin-chat-approval:
     dependencies:
       '@aalis/api-approval':
-        specifier: workspace:>=0.1.0 <1.0.0
+        specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.11.0 <1.0.0
@@ -1179,7 +1179,7 @@ importers:
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-platform
       '@aalis/api-session-manager':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -1253,7 +1253,7 @@ importers:
   packages/plugin-cli:
     dependencies:
       '@aalis/api-approval':
-        specifier: workspace:>=0.1.0 <1.0.0
+        specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-approval
       '@aalis/api-commands':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -2773,7 +2773,7 @@ importers:
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
       '@aalis/api-approval':
-        specifier: workspace:>=0.1.0 <1.0.0
+        specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-approval
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
@@ -3281,7 +3281,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0

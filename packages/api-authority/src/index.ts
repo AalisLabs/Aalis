@@ -14,6 +14,7 @@ import { defineService } from '@aalis/core';
 import type { OriginKind } from '@aalis/api-approval';
 import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
 import type { TextRef } from '@aalis/schema-i18n';
+import type { FromTurn, IncomingMessage } from '@aalis/schema-message';
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
@@ -129,11 +130,8 @@ export function resolveCapabilityPolicy(
 export interface InboundTurn {
   /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
   source?: string;
-  /**
-   * 宿主通知延续某次工具调用时，那次调用的发言者（IncomingMessage.hostNotice.callerUserId）。
-   * 那次调用是 owner 在自己会话里发起的，这一轮才是 owner 链的延续
-   */
-  callerUserId?: string;
+  /** 同 IncomingMessage.fromTurn：续做带着起它的那一轮，这一轮与它同一类别 */
+  fromTurn?: FromTurn;
   /** 同 IncomingMessage.messageId：入站消息的平台消息 id。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
   messageId?: string;
 }
@@ -182,8 +180,24 @@ export interface ExecutionGuardContext {
   signal?: AbortSignal;
 }
 
-/** 判发起回合的类别要的信息：执行守卫上下文的这几项，调用方按同样的口径填 */
+/** 判发起回合的类别要的信息：执行守卫上下文的这几项，调用方按同样的口径填（由入站消息拼时用 {@link originTurnOf}） */
 export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+
+/**
+ * 由一轮的输入拼这一轮，拼一轮的唯一函数：agent 据它填工具调用上下文，调用方不各自拼。现在一轮只有一条输入。
+ * 发言者缺省时取起它的那一轮的（续做的通知不带发言者，工具眼里是起它的人在调），授权身份缺省时取起它的那一轮的参与者
+ */
+export function originTurnOf(inputs: readonly [IncomingMessage, ...IncomingMessage[]]): OriginTurn {
+  const [message] = inputs;
+  const { sessionId, platform, source, fromTurn, messageId } = message;
+  return {
+    sessionId,
+    platform,
+    userId: message.userId ?? fromTurn?.userId,
+    actor: message.actor ?? fromTurn?.participants[0],
+    inbound: { source, fromTurn, messageId },
+  };
+}
 
 /**
  * 执行守卫函数。返回 null 放行；返回原因拦截：可以是文字对象（@aalis/schema-i18n），指令一路作为回复交给发出者、由出口按
@@ -254,9 +268,8 @@ export interface AuthorityService {
   ownerOn(platform: string): UserIdentity | undefined;
 
   /**
-   * 这一轮是谁发起的（契约见 api-approval 的 OriginKind）：按回合的来源判，不按授权身份判，会话的受众按会话管理里
-   * 记下的字段判。只有 owner 与 owner-chain 能产生审批；本地效果由触及服务按这一类别定主体：owner 与 owner-chain 为
-   * owner，subtask 随派出它的那一轮父会话，其余没有本地效果
+   * 这一轮从哪里来（契约见 api-approval 的 OriginKind）：只看消息事实（来源、起它的那一轮、授权身份有没有账号），
+   * 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
    */
   originOf(turn: OriginTurn): OriginKind;
 

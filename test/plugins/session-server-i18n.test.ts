@@ -486,7 +486,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     await watcher.subscribe(ROOM);
     void host.approvals.use.request({
       sessionId: ROOM,
-      origin: { kind: 'owner', ...OWNER },
+      origin: { kind: 'hand', participants: [OWNER] },
       tool: 'exec',
       args: { x: FORGED },
       rule: 'test',

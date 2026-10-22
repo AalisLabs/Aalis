@@ -132,7 +132,7 @@ describe('message-archive：宿主通知归档', () => {
     expect(seen[0].archivedMessage).toBe(message);
   });
 
-  it('通知的 id 与带给界面的事实按登记的键记下；调用者与回复引用不记', async () => {
+  it('通知的 id 与带给界面的事实按登记的键记下；起它的那一轮与回复引用不记', async () => {
     const app = newApp();
     await registerHubs(app);
     await app.plugin(memoryInMemory);
@@ -143,7 +143,9 @@ describe('message-archive：宿主通知归档', () => {
     const { message } = await host.messageArchive.use.archiveIncoming(
       hostNoticeIncoming({
         source: 'bg:bg_1',
-        hostNotice: { kind: 'background-task', id: 'bg_1', callerUserId: '30002', replyTo: 'zz-msg-1', facts },
+        actor: undefined,
+        fromTurn: { platform: 'onebot', userId: '30002', participants: [{ platform: 'onebot', userId: '30002' }] },
+        hostNotice: { kind: 'background-task', id: 'bg_1', replyTo: 'zz-msg-1', facts },
       }),
     );
     const K = WellKnownMetadataKeys;

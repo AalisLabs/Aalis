@@ -6,9 +6,9 @@
 
 ## 概述
 
-owner 在与她的 IM 私聊里让她做要审批的事时，审批推回这个私聊，owner 引用那条审批消息回复「同意」或「拒绝 原因」即结。只推在这个私聊里发起的审批：WebUI 与终端的会话、别的私聊里的审批不推到这里。群里与别人的私聊不推：这些回合本就不能产生审批（见 api-approval 的「谁能产生审批」），审批服务在任何审批面之前直接拒绝。
+owner 在与她的 IM 私聊里让她做要审批的事时，审批推回这个私聊，owner 引用那条审批消息回复「同意」或「拒绝 原因」即结。只推在这个私聊里发起的审批：WebUI 与终端的会话、群里与别的私聊里的审批不推到这里。
 
-只经契约组合，不认平台：owner 取权限服务的发起类别，一对一取适配器的声明，引用取投递结果里的平台消息 id（schema-message 的 `messageIds`）。
+只经契约组合，不认平台：owner 取权限服务的判定，一对一取适配器的声明，引用取投递结果里的平台消息 id（schema-message 的 `messageIds`）。
 
 ## 插件声明
 
@@ -38,9 +38,12 @@ definePlugin({
 
 一条入站消息算 owner 在与她的一对一窗口里亲手发的，要同时满足：
 
-- 权限服务的 `originOf` 判这一轮为 `owner`，与执行守卫判发起类别同一份定义：消息不带 `source` 与 `actor`，会话的房间类别为 owner-only，发言者是 owner（owner 的 IM 身份要登记在 `owners` 里）；
+- 消息不带 `source`，发言者是 owner（权限服务的 `isOwner`，owner 的 IM 身份要登记在 `owners` 里）。不带 `source` 的消息不带 `actor`（触发器不给没点名的话回填身份），这与权限服务判这一轮为 `hand` 且参与者是 owner 等价；
 - 根会话有出生平台，且就是消息的平台：WebUI 往这个私聊插话（平台是 `webui`）不算；
-- 出生平台的适配器（与会话管理建档时判一对一用的同一个）在 `sessionTypes` 里明确声明了这个窗口的类型（`originChat.type`）为一对一。不声明会话类型的平台整个按一对一推断（api-platform 的 `sessionTypesOf`），这种推断出的一对一不算：那样的平台上群员也会被当成唯一的对端。
+- 出生平台的适配器（与会话管理建档时判一对一用的同一个）在 `sessionTypes` 里明确声明了这个窗口的类型（`originChat.type`）为一对一。不声明会话类型的平台整个按一对一推断（api-platform 的 `sessionTypesOf`），这种推断出的一对一不算：那样的平台上群员也会被当成唯一的对端；
+- 对端（`originChat.targetId`）就是发言者。实现端上报了机器人自己发的消息、机器人账号又登记成 owner 时，那条消息的发言者是机器人账号、不是对端，不算。
+
+后三条即 api-session-manager 的 `oneToOneWith`（不给 `isOwner`）。
 
 在场与应答都用这一判定。
 

@@ -15,7 +15,12 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
-import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import {
+  type FromTurn,
+  type IncomingMessage,
+  type Message,
+  selfInitiatedActor,
+} from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -112,28 +117,24 @@ describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站�
   });
 });
 
-describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具调用上下文的 userId', () => {
+describe('续做：工具调用上下文取起它的那一轮（通知的 fromTurn）', () => {
   const QQ = '10001';
-  const notice = (callerUserId?: string): IncomingMessage => ({
+  const from = { platform: 'onebot', userId: QQ, participants: [{ platform: 'onebot', userId: QQ }] };
+  const notice = (fromTurn?: FromTurn): IncomingMessage => ({
     content: '后台任务 bg_0a1b2c_1（exec）失败：退出码 1，用时 3 秒。结果与输出用 background_output 查看。',
     sessionId: SESSION,
     platform: 'onebot',
     source: 'bg:bg_0a1b2c_1',
-    actor: { platform: 'onebot', userId: QQ },
-    hostNotice: {
-      kind: 'background-task',
-      id: 'bg_0a1b2c_1',
-      ...(callerUserId !== undefined ? { callerUserId } : {}),
-    },
+    ...(fromTurn ? { fromTurn } : { actor: selfInitiatedActor('onebot') }),
+    hostNotice: { kind: 'background-task', id: 'bg_0a1b2c_1' },
   });
 
-  it('安全：带 callerUserId：探针上下文的 userId 与 inbound.callerUserId 为它，actor、platform、inbound.source 原样；提示词钩子与归档不认它', async () => {
-    const { ctx, llmBeforeUserIds, llmBeforeSources, history } = await observedAgentTurn(notice(QQ));
+  it('安全：带 fromTurn：探针上下文的 userId 取它的发言者、actor 取它的参与者，inbound 带着它；提示词钩子与归档不认它', async () => {
+    const { ctx, llmBeforeUserIds, llmBeforeSources, history } = await observedAgentTurn(notice(from));
     expect(ctx?.userId).toBe(QQ);
-    expect(ctx?.inbound?.callerUserId, '守卫据它认出 owner 链的延续').toBe(QQ);
     expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
+    expect(ctx?.inbound).toEqual({ source: 'bg:bg_0a1b2c_1', fromTurn: from });
     expect(ctx?.platform).toBe('onebot');
-    expect(ctx?.inbound?.source).toBe('bg:bg_0a1b2c_1');
     expect(llmBeforeUserIds.length).toBeGreaterThan(0);
     expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
     expect(llmBeforeSources).toEqual(['bg:bg_0a1b2c_1', 'bg:bg_0a1b2c_1']);
@@ -143,11 +144,11 @@ describe('宿主通知延续某次调用：hostNotice.callerUserId 只填工具�
     expect(archived?.metadata?.userId).toBeUndefined();
   });
 
-  it('安全：不带 callerUserId 的宿主通知：探针上下文的 userId 与 inbound.callerUserId 为 undefined', async () => {
+  it('安全：不延续调用的宿主通知：探针上下文的 userId 为 undefined，actor 是通知自己的', async () => {
     const { ctx, llmBeforeUserIds } = await observedAgentTurn(notice());
     expect(ctx?.userId).toBeUndefined();
-    expect(ctx?.inbound?.callerUserId).toBeUndefined();
-    expect(ctx?.actor).toEqual({ platform: 'onebot', userId: QQ });
+    expect(ctx?.actor).toEqual(selfInitiatedActor('onebot'));
+    expect(ctx?.inbound).toEqual({ source: 'bg:bg_0a1b2c_1' });
     expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
   });
 });

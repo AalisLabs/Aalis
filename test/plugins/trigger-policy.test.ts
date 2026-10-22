@@ -218,7 +218,7 @@ describe('trigger-policy inbound:trigger（poke）', () => {
       const second = await runTriggerPhase(host.hooks.use, message());
       expect(second.reached).toBe(true);
       expect(second.message.triggerType).toBe('interval');
-      expect(second.message.actor).toEqual({ platform: 'onebot', userId: '' });
+      expect(second.message.actor).toBeUndefined();
     } finally {
       await app.stop();
     }
@@ -326,7 +326,7 @@ describe('trigger-policy 按会话的参数（triggerOnPoke）', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// inbound:trigger 中间件写进 message 的身份：interval 回合无主体
+// inbound:trigger 中间件不动 message 的身份：点名与否，授权身份都是说这句话的人
 // ════════════════════════════════════════════════════════════
 
 const groupMsg = (content: string, userId = 'owner-1'): IncomingMessage =>
@@ -341,16 +341,14 @@ const groupMsg = (content: string, userId = 'owner-1'): IncomingMessage =>
   }) as unknown as IncomingMessage;
 
 describe('trigger-policy inbound:trigger 授权身份', () => {
-  it('interval 触发：回填无主体 actor（空 userId），不继承撞阈值那条消息的发言者身份', async () => {
-    // 事故形态（2026-09 日志实测 1415 次 interval 触发）：authority 经 actor ?? {platform,userId}
-    // 回退到最后发言者——99.4% 回合按陌生人 0 级判权，owner 恰好最后发言时整轮按 owner 执行。
+  it('interval 触发：不回填 actor，授权身份是说这句话的人', async () => {
+    // 点名只决定她回不回：被频率触发挑中的那句话按说它的人算（他的等级、组与免确认），只有没有人的话引起的一轮才是她自己开口
     const { app, host } = await setupPolicy(EVERY_MESSAGE);
     const { reached, message } = await runTriggerPhase(host.hooks.use, groupMsg('随便聊聊'));
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('interval');
-    expect(message.actor).toEqual({ platform: 'onebot', userId: '' });
-    // 物理发言者保持会话语义（归档/档案/记忆平台域都靠它）
+    expect(message.actor).toBeUndefined();
     expect(message.userId).toBe('owner-1');
   });
 
@@ -361,34 +359,6 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('immediate');
     expect(message.actor).toBeUndefined();
-  });
-
-  it('私聊纳入生效范围时的 interval：发言者就是唯一主体，不回填无主体 actor', async () => {
-    // 生效范围可设成一对一房间或全部房间，私聊里没人 @ 就是 interval；
-    // 若也回填无主体，owner 在私聊里调任何 sensitive 工具都会变成「权限不足」。
-    const { app, host } = await setupPolicy({ audience: 'all', ...EVERY_MESSAGE });
-    const msg = {
-      platform: 'onebot',
-      sessionType: 'private',
-      sessionId: 'onebot:bot:private:owner-1',
-      userId: 'owner-1',
-      content: '帮我看下日志',
-    } as unknown as IncomingMessage;
-    const { reached, message } = await runTriggerPhase(host.hooks.use, msg);
-    await app.stop();
-    expect(reached).toBe(true);
-    expect(message.triggerType).toBe('interval');
-    expect(message.actor).toBeUndefined();
-  });
-
-  it('interval 但消息已带 actor：不覆盖既有授权身份', async () => {
-    const { app, host } = await setupPolicy(EVERY_MESSAGE);
-    const msg = groupMsg('派发任务');
-    msg.actor = { platform: 'webui', userId: 'console' };
-    const { message } = await runTriggerPhase(host.hooks.use, msg);
-    await app.stop();
-    expect(message.triggerType).toBe('interval');
-    expect(message.actor).toEqual({ platform: 'webui', userId: 'console' });
   });
 });
 

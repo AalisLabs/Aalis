@@ -99,7 +99,7 @@ describe('上限：只有 owner 在自己的会话里有本地效果', () => {
       platform,
       userId,
       actor: { platform, userId },
-      inbound: { source: 'bg:bg_1', callerUserId: userId },
+      inbound: { source: 'bg:bg_1', fromTurn: { platform, userId, participants: [{ platform, userId }] } },
     });
     expect((await svc.forCall(resume(webui, 'webui', 'console'))).exec).toBe('sandbox');
     expect((await svc.forCall(resume(GROUP, 'onebot', OWNER_QQ))).exec).toBe('none');

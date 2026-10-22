@@ -3,17 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Approval, type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
+import { authority, originTurnOf } from '../../packages/api-authority/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { markTriggered } from '../../packages/api-trigger/src/index.js';
 import { type App, definePlugin, events, optional, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import { type FromTurn, type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -24,8 +26,8 @@ import { client } from '../fixtures/session-client.js';
 // ════════════════════════════════════════════════════════════
 // 需要确认的工具调用 → 执行守卫 → owner 审批，整条接线：真实的工具注册表、权限插件与会话服务，
 // 一个 WebUI 审批面上有一条在场的 owner 连接。探针工具人人有权调用、声明需要确认，
-// 所以每一行只看发起回合的类别：只有 owner 本人与 owner 链的延续出卡，其余直接拒、不推给任何面，
-// 模型收到对应的话。上下文按 agent 工具循环的填法构造。房间经原生入站收录，房间类别按会话管理记下的字段判。
+// 所以每一行只看这一轮的触发者：这一轮里有 owner 的话（人亲手发起，含它的续做）就出卡，不论在哪个会话；
+// 其余直接拒、不推给任何面，模型收到对应的话。上下文按 agent 工具循环的填法构造。房间经原生入站收录。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'webui', userId: 'console' };
@@ -38,9 +40,8 @@ const MEMBER_DM = `onebot:10000:private:${MEMBER_QQ.userId}`;
 const PROBE = 'zz_confirm_probe';
 
 /** 审批服务回给模型的话（见 plugin-session-server 的 approvals.ts） */
-const INELIGIBLE = '这一轮不是 owner 亲手发起的，不能产生审批';
-const SUBTASK = '子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行';
-const ROOM_DENIAL = '需要批准的操作在这里不能执行。';
+const INELIGIBLE = '这一轮里没有 owner 的话，要 owner 确认的操作不能执行';
+const SUBTASK = '子任务里需要确认的操作不上浮，请在发起它的会话里执行';
 
 const apps: App[] = [];
 const homes: string[] = [];
@@ -63,9 +64,10 @@ interface Setup {
   withoutApprovals?: boolean;
   appConfig?: Record<string, unknown>;
   confirm?: 'session' | 'always';
+  risk?: 'sensitive';
 }
 
-async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'session' }: Setup = {}) {
+async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'session', risk }: Setup = {}) {
   const { app } = hostedApp({ owners: [OWNER_QQ], ...appConfig });
   apps.push(app);
   await registerHubs(app);
@@ -73,7 +75,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   const home = mkdtempSync(join(tmpdir(), 'aalis-guard-approvals-'));
   homes.push(home);
   const { state } = provideHostPaths(app, home);
-  const host = app.bind({ provide, events, tools, sessionManager, sessionProtocol });
+  const host = app.bind({ provide, events, tools, sessionManager, sessionProtocol, authority });
   host.provide.use(storage, memoryStorage(new Map()));
   await app.plugin(toolsPlugin, {});
   await app.plugin(authorityPlugin, {});
@@ -95,6 +97,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   const received: Array<Record<string, unknown>> = [];
   host.tools.use.register({
     confirm,
+    ...(risk ? { risk } : {}),
     // 卡上的事实按声明的展示种类取：探针把 command 声明成命令
     display: { kind: 'command', fields: { command: 'command' } },
     definition: {
@@ -144,6 +147,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
     conn?.call('approval/respond', { approvalId: approval.id, decision, contentHash: approval.contentHash, note });
   return {
     app,
+    host,
     call,
     pushed,
     card,
@@ -156,21 +160,38 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
 
 type Ctx = Omit<ToolCallContext, 'turnId' | 'callId'>;
 
-describe('能产生审批的回合：owner 本人与 owner 链的延续', () => {
-  const rows: Array<[string, Ctx]> = [
-    ['owner 在 WebUI 亲手发起', { sessionId: MINE, ...OWNER, inbound: {} }],
-    ['owner 在自己的 QQ 私聊亲手发起（推到 WebUI）', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }],
-    [
-      'owner 会话里后台任务结束后的续做',
-      { sessionId: MINE, ...OWNER, actor: OWNER, inbound: { source: 'bg:bg_x_1', callerUserId: 'console' } },
-    ],
+/** 起它的那一轮：人亲手发来的 */
+const handTurn = (who: { platform: string; userId: string }): FromTurn => ({
+  platform: who.platform,
+  userId: who.userId,
+  participants: [who],
+});
+
+/** 续做那一轮：按 agent 的填法，工具眼里是起它的人在调，授权身份取起它的那一轮的参与者 */
+const resumed = (sessionId: string, from: FromTurn): Ctx => ({
+  sessionId,
+  platform: from.platform,
+  userId: from.userId,
+  actor: from.participants[0],
+  inbound: { source: 'bg:bg_x_1', fromTurn: from },
+});
+
+describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪个会话', () => {
+  const rows: Array<[string, Ctx, { platform: string; userId: string }]> = [
+    ['owner 在 WebUI 亲手发起', { sessionId: MINE, ...OWNER, inbound: {} }, OWNER],
+    ['owner 在自己的 QQ 私聊亲手发起（推到 WebUI）', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }, OWNER_QQ],
+    ['owner 在群里亲手发起', { sessionId: ROOM, ...OWNER_QQ, inbound: {} }, OWNER_QQ],
+    ['owner 从 WebUI 往群里插话发起', { sessionId: ROOM, ...OWNER, inbound: {} }, OWNER],
+    ['owner 会话里后台任务结束后的续做', resumed(MINE, handTurn(OWNER)), OWNER],
+    ['owner 在群里转到后台的调用，结束后的续做', resumed(ROOM, handTurn(OWNER_QQ)), OWNER_QQ],
   ];
 
-  it.each(rows)('%s：出卡，批准后执行，卡上带着回合与调用 id', async (_label, ctx) => {
+  it.each(rows)('%s：出卡，参与者是她，批准后执行，卡上带着回合与调用 id', async (_label, ctx, who) => {
     const s = await setup();
     const { ctx: full, result } = s.call(ctx);
     const approval = await s.card();
     expect(approval).toMatchObject({ sessionId: ctx.sessionId, turnId: full.turnId, callId: full.callId, tool: PROBE });
+    expect(approval.origin).toEqual({ kind: 'hand', participants: [who] });
     expect(approval.facts.command).toBe('rm -rf build');
     expect(s.runs(), '批准之前不得执行').toBe(0);
     await s.answer(approval, 'approve');
@@ -192,14 +213,15 @@ describe('能产生审批的回合：owner 本人与 owner 链的延续', () => 
   it.each([
     ['owner 的会话', { sessionId: MINE, ...OWNER, inbound: {} }],
     ['owner 自己的 QQ 私聊', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }],
-  ])('owner 拒绝（%s）：不执行，模型收到拒绝与说明', async (_label, ctx) => {
+    ['群里', { sessionId: ROOM, ...OWNER_QQ, inbound: {} }],
+  ])('owner 拒绝（%s）：不执行，模型收到拒绝与说明，不指名应答人', async (_label, ctx) => {
     const s = await setup();
     const { result } = s.call(ctx);
     await s.answer(await s.card(), 'deny', '先别删，备份一下');
     const out = (await result).content;
     expect(s.runs()).toBe(0);
-    expect(out).toContain('owner 拒绝了');
-    expect(out).toContain('先别删，备份一下');
+    expect(out).toContain('被拒绝了，说明：先别删，备份一下');
+    expect(out).not.toContain('owner');
   });
 
   it('等待中回合中止：审批撤销，不执行', async () => {
@@ -215,26 +237,12 @@ describe('能产生审批的回合：owner 本人与 owner 链的延续', () => 
 
 describe('不能产生审批的回合：不推给任何面，模型收到对应的话', () => {
   const rows: Array<[string, Ctx, string]> = [
+    ['群成员在群里发起', { sessionId: ROOM, ...MEMBER_QQ, inbound: {} }, INELIGIBLE],
     [
       'owner 建的定时任务（创建者回填成授权身份）',
       { sessionId: MINE, platform: 'webui', actor: OWNER, inbound: { source: 'scheduler' } },
       INELIGIBLE,
     ],
-    [
-      '定时任务触发的编排：agent 节点的一轮',
-      { sessionId: MINE, platform: 'webui', actor: OWNER, inbound: { source: 'workflow:daily:summarize' } },
-      INELIGIBLE,
-    ],
-    ['编排的工具节点', { sessionId: 'workflow::daily', platform: 'workflow', actor: OWNER }, INELIGIBLE],
-    [
-      '频率触发记成自发的一轮（owner 恰好是最后发言者）',
-      { sessionId: MINE, ...OWNER, actor: selfInitiatedActor('webui'), inbound: {} },
-      INELIGIBLE,
-    ],
-    ['群成员在群房间里', { sessionId: ROOM, ...MEMBER_QQ, inbound: {} }, ROOM_DENIAL],
-    ['owner 在群房间里亲手发起', { sessionId: ROOM, ...OWNER_QQ, inbound: {} }, ROOM_DENIAL],
-    ['owner 在 WebUI 驱动群房间', { sessionId: ROOM, ...OWNER, inbound: {} }, ROOM_DENIAL],
-    ['对端不是 owner 的私聊', { sessionId: MEMBER_DM, ...MEMBER_QQ, inbound: {} }, ROOM_DENIAL],
     [
       '子任务回合',
       {
@@ -269,6 +277,35 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
   });
 });
 
+describe('群里没点名、被频率触发挑中的话按说话的人算', () => {
+  /** 群里一句没点名的话，触发器挑中放行，agent 按它拼这一轮 */
+  const interjection = (who: { platform: string; userId: string }): Ctx => {
+    const message: IncomingMessage = { content: '<闲聊>', sessionId: ROOM, ...who, sessionType: 'group' };
+    markTriggered(message, false);
+    return originTurnOf([message]);
+  };
+
+  it('owner 的一句：WebUI 的接入收到审批，参与者是她，批准即执行', async () => {
+    const s = await setup();
+    const { result } = s.call(interjection(OWNER_QQ));
+    const approval = await s.card();
+    expect(approval.origin).toEqual({ kind: 'hand', participants: [OWNER_QQ] });
+    await s.answer(approval, 'approve');
+    expect((await result).content).toBe('ran');
+  });
+
+  it('1 级群友的一句：按他的等级裁决，需要确认的被拒，拿到这一轮里没有 owner 的话那句', async () => {
+    const s = await setup({ risk: 'sensitive' });
+    const zero = (await s.call(interjection(MEMBER_QQ)).result).content;
+    expect(zero, '0 级：等级不够').toContain('权限不足');
+    s.host.authority.use.setUserLevel(MEMBER_QQ, 1);
+    const one = (await s.call(interjection(MEMBER_QQ)).result).content;
+    expect(one).toContain(INELIGIBLE);
+    expect(s.pushed()).toEqual([]);
+    expect(s.runs()).toBe(0);
+  });
+});
+
 describe('确认的豁免与缺席', () => {
   it('审批服务不在：立即拒并说明原因', async () => {
     const s = await setup({ withoutApprovals: true });
@@ -280,12 +317,12 @@ describe('确认的豁免与缺席', () => {
   const OFF = { confirmOverrides: { [`tool:${PROBE}`]: 'off' } };
   const WAIVE = { restrictedPolicy: { allow: [`tool:${PROBE}`] } };
 
-  it('confirmOverrides 关掉确认只对 owner：群成员在群里照旧要审批，回房间那一句、不执行，审计记插件的声明', async () => {
+  it('confirmOverrides 关掉确认只对 owner：群成员在群里照旧要审批，被拒、不执行，审计记插件的声明', async () => {
     const s = await setup({ appConfig: OFF });
     const out = (await s.call({ sessionId: ROOM, ...MEMBER_QQ, inbound: {} }).result).content;
     expect(s.runs()).toBe(0);
     expect(s.pushed()).toEqual([]);
-    expect(out).toContain(ROOM_DENIAL);
+    expect(out).toContain(INELIGIBLE);
     await vi.waitFor(() => expect(readFileSync(s.auditFile, 'utf8').trim().split('\n')).toHaveLength(2));
     const [request] = readFileSync(s.auditFile, 'utf8')
       .trim()
@@ -308,7 +345,7 @@ describe('确认的豁免与缺席', () => {
   });
 
   const notOwner: Array<[string, Ctx, string]> = [
-    ['对端不是 owner 的私聊里对方发起的', { sessionId: MEMBER_DM, ...MEMBER_QQ, inbound: {} }, ROOM_DENIAL],
+    ['对端不是 owner 的私聊里对方发起的', { sessionId: MEMBER_DM, ...MEMBER_QQ, inbound: {} }, INELIGIBLE],
     ['匿名编排的工具节点', { sessionId: 'workflow::daily', platform: 'workflow' }, INELIGIBLE],
   ];
   it.each(notOwner)('restrictedPolicy 白名单只对 owner：别人的回合照旧拒（%s）', async (_label, ctx, text) => {
@@ -322,7 +359,7 @@ describe('确认的豁免与缺席', () => {
   it.each([
     ['confirmOverrides 设为 off', OFF],
     ['restrictedPolicy 白名单', WAIVE],
-  ])('物理发言者是 owner、授权身份是自发的一轮（%s）：照旧不免，不执行', async (_label, appConfig) => {
+  ])('物理发言者是 owner、授权身份没有账号的一轮（%s）：照旧不免，不执行', async (_label, appConfig) => {
     const s = await setup({ appConfig });
     const ctx = { sessionId: MINE, ...OWNER, actor: selfInitiatedActor('webui'), inbound: {} };
     expect((await s.call(ctx).result).content).toContain(INELIGIBLE);

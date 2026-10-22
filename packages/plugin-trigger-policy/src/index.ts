@@ -220,7 +220,7 @@ function run(caps: Caps): void {
     // 判定放行即复位：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
     resetCounters(s);
     s.lastTriggerTime = Date.now();
-    markTriggered(message, addressed, chat.multiParty);
+    markTriggered(message, addressed);
     await next();
   });
 

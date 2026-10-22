@@ -29,10 +29,10 @@ import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js'
 // ════════════════════════════════════════════════════════════
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
-// 按一次工具调用签发凭据：发起类别取权限服务的 originOf（只有 owner 本人与 owner 链的延续算 owner，子任务随发起它的那一轮
-// 父会话），房间类别、场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张
-// 清单在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次判定时
-// 取当时的，受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源账本。
+// 按一次工具调用签发凭据：发起类别取权限服务的 originOf（人亲手发起、授权身份是 owner 的算 owner，含它的续做；子任务随发起
+// 它的那一轮父会话），房间类别、场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘
+// 找，三张清单在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好，其余每次
+// 判定时取当时的，受污染对已签发的凭据立即生效。另管本会话临时区、子进程环境、污点与白纸的来源账本。
 // ════════════════════════════════════════════════════════════
 
 /** 档位与越界策略：还不能按会话设，固定为工作区档、越界要问 */
@@ -142,7 +142,8 @@ async function run(caps: Caps): Promise<void> {
       const parentId = sm.getSession(call.sessionId)?.parentId;
       return parentId && spawnedBy.get(call.sessionId) === 'owner' ? reachOf(parentId, 'owner') : 'other';
     }
-    const principal = origin === 'owner' || origin === 'owner-chain' ? 'owner' : 'other';
+    const identity = call.actor ?? { platform: call.platform, userId: call.userId ?? '' };
+    const principal = origin === 'hand' && isOwner(identity.platform, identity.userId) ? 'owner' : 'other';
     lastPrincipal.set(call.sessionId, principal);
     return principal;
   }

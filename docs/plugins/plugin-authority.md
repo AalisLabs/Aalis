@@ -23,7 +23,6 @@ export default definePlugin({
     tools: optional(tools),
     storage: optional(storage),
     approvals: optional(approvals),
-    sessionManager: optional(sessionManager),
     sessionFields: optional(sessionFields),
     contributions: optional(contributions),
   },
@@ -31,7 +30,7 @@ export default definePlugin({
 });
 ```
 
-裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内照样经 `hostConfig.use` 读取：宿主未提供配置文档时访问它的成员抛 `ServiceUnavailableError`，本插件激活失败。其余 optional 依赖缺席时只少对应的接线；`approvals` 缺席时需要确认的工具调用一律拒绝；`sessionManager` 用来按会话字段判房间（见「发起回合的类别」）；`contributions` 用来交付权限页的两个可选项来源，缺席时页上的多选没有选项。WebUI 权限页改动配置后经 `host-config` 的 `save()` 落盘。
+裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内照样经 `hostConfig.use` 读取：宿主未提供配置文档时访问它的成员抛 `ServiceUnavailableError`，本插件激活失败。其余 optional 依赖缺席时只少对应的接线；`approvals` 缺席时需要确认的工具调用一律拒绝；`contributions` 用来交付权限页的两个可选项来源，缺席时页上的多选没有选项。WebUI 权限页改动配置后经 `host-config` 的 `save()` 落盘。
 
 ## 两轴正交模型
 
@@ -81,24 +80,23 @@ export default definePlugin({
 
 授权已过（owner 或等级够）但操作声明了 `confirm`（经 `confirmOverrides` 覆盖后）时，仍要有人确认。守卫的判定顺序：
 
-1. **可免的确认**：只对授权身份是 owner 的回合（授权身份取守卫上下文的 `actor`，缺省即会话身份，不看物理发言者）。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认；`confirmOverrides` 设为 `'off'` 的能力连 `always` 也免。照旧免的是 owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排（运行身份见 [plugin-workflow](./plugin-workflow.md#定义者与运行身份)）。别人发起的回合照旧确认：群成员、别人的私聊里对方发起的、创建者不是 owner 的定时任务、MCP 客户端（`mcp:mcp-client` 不是 owner）、没有授权主体的回合（群里的频率触发、空闲触发、主动发言、白纸任务完成通知等，授权身份是匿名），以及定义者不是 owner 或没有定义者的编排。owner 在群里亲手发起、从 WebUI 往房间插话的回合，授权身份也是 owner，照旧免。其余情形 `always` 每次确认，cron 等无人可问的上下文即拒。
+1. **可免的确认**：只对授权身份是 owner 的回合（授权身份取守卫上下文的 `actor`，缺省即会话身份，不看物理发言者）。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（scheduler 触发的指令：owner 建任务时已经授权；runtime 一次性子命令：owner 在本机终端亲手输入）与 `restrictedPolicy` 白名单命中的能力免确认；`confirmOverrides` 设为 `'off'` 的能力连 `always` 也免。照旧免的是 owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排（运行身份见 [plugin-workflow](./plugin-workflow.md#定义者与运行身份)）。别人发起的回合照旧确认：群成员、别人的私聊里对方发起的、创建者不是 owner 的定时任务、MCP 客户端（`mcp:mcp-client` 不是 owner）、没有授权主体的回合（空闲触发、主动发言、白纸任务完成通知等，授权身份是匿名），以及定义者不是 owner 或没有定义者的编排。owner 在群里亲手发起（含没点名、被频率触发挑中的话）、从 WebUI 往房间插话的回合，授权身份也是 owner，照旧免。其余情形 `always` 每次确认，cron 等无人可问的上下文即拒。
 2. **指令**：确认的是发出者本人的意图。plugin-commands 给人亲手输入的指令带上 `confirmIntent`，在同一会话里问发出者，只认他在这个会话里的下一条消息，带 `source` 的注入不认，60 秒不回即取消。没有 `confirmIntent` 的指令（适配器没给发出者的消息）无从确认，直接拒。不走 owner 审批：1 级成员在私聊里用 `/clear` 清自己的记忆照样能确认。
-3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。审批推给覆盖这个会话的在场审批面：WebUI 与终端；owner 在与她的 IM 私聊里发起的，装了 [plugin-chat-approval](./plugin-chat-approval.md) 时也推回这个私聊，owner 引用审批消息回复「同意」或「拒绝 原因」即结。
+3. **工具**：确认是 owner 审批。守卫算出发起回合的类别（见下节），带上这一轮的参与者（授权身份 `actor ?? 发言者`）调 `approvals.request`；这一轮里有 owner 的话（类别为 `hand` 且参与者里有 owner，不论在哪个会话）才能产生审批，其余由审批服务立即拒绝、不推给任何面，并记进审批审计。批准则执行，拒绝时把审批服务给的话作为工具结果回给模型。审批服务不在时立即拒并说明原因。审批推给覆盖这个会话的在场审批面：WebUI 与终端；owner 在与她的 IM 私聊里发起的，装了 [plugin-chat-approval](./plugin-chat-approval.md) 时也推回这个私聊，owner 引用审批消息回复「同意」或「拒绝 原因」即结。
 
 命中硬禁、封禁，或等级不够、所属组也不覆盖即拒：发起者本人不能靠确认给自己提权，白名单也不放宽授权。
 
 ### 发起回合的类别
 
-按回合的来源判，不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）、`actor` 与会话的房间类别（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。权限服务以 `originOf(turn)` 对外给出同一个判定：执行守卫据它定审批的发起类别，触及服务（[plugin-reach](./plugin-reach.md)）据它定这一轮的主体。房间类别按 session-manager 记下的会话字段判（api-session-manager 的 `roomClass`），不看会话 id 的写法，也不看平台类型名；审批服务的提供者 plugin-session-server 本身依赖 session-manager，它不在时也没有审批。
+只看这一轮从哪里来，不看会话类型与受众，不判是不是 owner，不读会话记录；也不按授权身份判：owner 建的定时任务会把创建者回填成 `actor`，按 `actor` 判它就成了 owner 亲手。判据是执行守卫上下文里的 `inbound`（agent 工具循环填写）与授权身份（`originKind`，`packages/plugin-authority/src/authority-model.ts`）。权限服务以 `originOf(turn)` 对外给出同一个判定：执行守卫据它定审批的发起类别，触及服务（[plugin-reach](./plugin-reach.md)）据它定这一轮的主体。是不是 owner 由用到类别的地方按身份判：审批服务看参与者里有没有 owner。
 
 按下面的顺序判，先命中的算：
 
 1. 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：`autonomous`；
 2. `source: 'subtask'`：`subtask`；
-3. 房间：聊天窗口为多方的（群、频道等），以及一对一而对端不是 owner 身份的（子会话按根会话算）：`room`，不论谁发言，owner 在 WebUI 里驱动房间也一样；
-4. 真人消息（没有 `source`）：带 `actor` 的是触发器把这一轮记成了自发的（例如频率触发），为 `autonomous`；否则在受众只有 owner 的会话（房间类别 `owner-only`）里发言者是 owner 为 `owner`，其余为 `other`。受众判不出的会话（房间类别 `internal`：按 id 建档、没有来源字段与创建来源的，会话管理不在时的全部会话）失败关闭，owner 发言也是 `other`；
-5. 宿主通知延续某次工具调用（`hostNotice.callerUserId`）：在 `owner-only` 的会话里、那次调用的发言者与授权身份都是 owner 为 `owner-chain`，否则 `other`；
-6. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知）：`autonomous`。
+3. 续做（带起它的那一轮 `inbound.fromTurn`，如后台任务结束通知开的一轮）：与起它的那一轮同一类别，按那一轮的事实再判一次，不按通知上的身份推；
+4. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件）：`autonomous`；
+5. 人亲手发来的消息（没有 `source`，含群里没点名、被频率触发挑中的插话）：`hand`，不论在哪个会话、是谁；授权身份没有账号的（没有人的消息）是她自己开口，失败关闭为 `autonomous`。
 
 ## 配置项
 

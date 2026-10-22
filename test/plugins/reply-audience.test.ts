@@ -286,7 +286,7 @@ describe('按会话的参数', () => {
     expect(contents()).toEqual(['<提醒 1>']);
   });
 
-  it('频道里未点名的放行回合回填无主体授权身份；一对一类型不叫 private 的平台上，私聊里的不回填', async () => {
+  it('频道里与一对一类型不叫 private 的私聊里，未点名的放行回合都不回填授权身份', async () => {
     const { send, received } = await setup({
       types: [
         { name: 'room', multiParty: true },
@@ -297,7 +297,7 @@ describe('按会话的参数', () => {
     await send({ ...fromGroup('<多方>'), sessionType: 'room' });
     await send({ ...fromPrivate('<一对一>'), sessionType: 'dm' });
     expect(received.map(m => [m.triggerType, m.actor])).toEqual([
-      ['interval', { platform: 'onebot', userId: '' }],
+      ['interval', undefined],
       ['interval', undefined],
     ]);
   });

@@ -111,9 +111,8 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     expect([anon.ran, owner.ran], '两种身份得到同一结论 —— 守卫没在读 callCtx').toEqual([false, true]);
   });
 
-  it('无主体 actor（AI 自发回合）：物理发言者是 owner 也不放行 sensitive——等级按默认、owner 判定不命中空串', async () => {
-    // interval 触发复用的是恰好撞阈值的那条真人消息；trigger-policy 回填 selfInitiatedActor，
-    // 授权轴据此不再让「最后发言者」（陌生人或 owner）决定 AI 自发行为的工具能力。
+  it('无主体 actor（没有人的注入）：物理发言者是 owner 也不放行 sensitive——等级按默认、owner 判定不命中空串', async () => {
+    // 没有人的注入回填 selfInitiatedActor：授权轴按它，不回退到物理发言者字段
     const { ran, out } = await runTool('sensitive', {
       platform: 'webui',
       userId: 'console',

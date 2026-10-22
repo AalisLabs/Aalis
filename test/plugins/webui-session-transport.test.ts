@@ -234,7 +234,7 @@ describe('/session 接上真的会话服务', () => {
 
     const outcome = host.approvals.use.request({
       sessionId: session.id,
-      origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+      origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
       tool: 'exec',
       args: { command: 'ls' },
       rule: 'tool:exec 声明需确认',

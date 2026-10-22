@@ -25,7 +25,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 // 只有人亲手写的文字才执行指令：真人入站（不带 source）照常解析；带 source 的注入只有声明了 ownerApproved 的
 // （定时任务：建任务时 owner 过目过原文）照常解析，其余当普通消息往下走，判据不看 source 的名字。
 // 真实的网关、指令、权限、工具、子任务与定时任务插件，编排走真实的 DAG 引擎；指令是两条探针：halt 与 /shutdown 同为
-// restricted（owner 链的注入以 owner 身份到达），probe 不设门槛（不带 owner 身份的注入）。往下走的消息在 dispatch 相位记下。
+// restricted（续做等带 owner 授权身份的注入以 owner 身份到达），probe 不设门槛（不带 owner 身份的注入）。往下走的消息在 dispatch 相位记下。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'webui', userId: 'console' };
@@ -174,8 +174,8 @@ describe('其余带 source 的注入：不过指令解析，当普通消息交�
         sessionId: 'webui:s1',
         platform: 'webui',
         source: 'bg:bg-1',
-        actor: OWNER,
-        hostNotice: { kind: BACKGROUND_TASK_NOTICE, id: 'bg-1', callerUserId: OWNER.userId },
+        fromTurn: { ...OWNER, participants: [OWNER] },
+        hostNotice: { kind: BACKGROUND_TASK_NOTICE, id: 'bg-1' },
       },
     ],
     [

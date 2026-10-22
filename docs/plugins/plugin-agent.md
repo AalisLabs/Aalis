@@ -124,11 +124,11 @@ definePlugin({
 
 这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
 
-回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断，宿主通知也从不打断别的回合。唯一的例外是本人说话打断通知回合：延续某次工具调用身份的宿主通知（带 `hostNotice.callerUserId`，如后台任务结束通知）开的回合，在同一会话收到 `userId` 等于 `callerUserId` 的真人消息（不带 `source`）时被中止，本人说话就停得下她自己开的一轮；别人的消息、不延续任何人身份的通知（白纸等）开的回合都不受影响。
+回合按「会话 + `source`」分道，同一道的新消息中止旧回合，不同道互不打断：宿主通知从不打断别的回合，真人消息也不打断续做（后台任务结束通知等）开的一轮，起它的人在同一会话说话也一样。
 
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时填写 `inbound: { source: incoming.source, callerUserId: incoming.hostNotice?.callerUserId, messageId: incoming.messageId }`：真人消息的 `source` 为 `undefined`，内部注入为注入方标识；延续某次工具调用的宿主通知另带那次调用的发言者；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`，宿主通知不带它，延续某次工具调用的通知取 `hostNotice.callerUserId`；`callerUserId` 不进归档，也不作为提示词钩子的 `userId`。
+工具循环构造 `ToolCallContext` 时，会话、`platform`、`userId`、`actor` 与 `inbound` 取 api-authority 的 `originTurnOf([incoming])`：`inbound` 为 `{ source, fromTurn, messageId }`，真人消息的 `source` 为 `undefined`，内部注入为注入方标识；续做带着起它的那一轮（`fromTurn`）；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`；续做的通知不带它，取起它的那一轮的发言者，`actor` 同样取那一轮的参与者。起它的那一轮不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 

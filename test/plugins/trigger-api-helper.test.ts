@@ -191,35 +191,15 @@ describe('markTriggered', () => {
     ...extra,
   });
 
-  it('点名为 immediate，授权主体维持缺省', () => {
-    const m = group();
-    markTriggered(m, true, true);
-    expect(m.triggerType).toBe('immediate');
-    expect(m.actor).toBeUndefined();
-  });
-
-  it('非点名为 interval：多方窗口回填无主体授权，发言者字段不变', () => {
-    const m = group();
-    markTriggered(m, false, true);
-    expect(m.triggerType).toBe('interval');
-    expect(m.actor).toEqual({ platform: 'onebot', userId: '' });
-    expect(m.userId).toBe('10001');
-  });
-
-  it('条件是调用方给的多方标记，不看类型名：一对一窗口的类型名不叫 private 也不回填，叫 group 的多方窗口照常回填', () => {
-    const dm = group({ sessionType: 'dm', sessionId: 'zz:dm:10001', groupId: undefined });
-    markTriggered(dm, false, false);
-    expect(dm.triggerType).toBe('interval');
-    expect(dm.actor).toBeUndefined();
-    const channel = group({ sessionType: 'channel', sessionId: 'onebot:10000:channel:40001:50001' });
-    markTriggered(channel, false, true);
-    expect(channel.actor).toEqual({ platform: 'onebot', userId: '' });
-  });
-
-  it('消息已带 actor 时不覆盖', () => {
-    const delegated = group({ actor: { platform: 'webui', userId: 'console' } });
-    markTriggered(delegated, false, true);
-    expect(delegated.actor).toEqual({ platform: 'webui', userId: 'console' });
+  it('点名为 immediate，没点名为 interval；只写触发类型，授权身份照旧是发言者', () => {
+    const named = group();
+    markTriggered(named, true);
+    const picked = group();
+    markTriggered(picked, false);
+    expect([named, picked]).toEqual([
+      { ...group(), triggerType: 'immediate' },
+      { ...group(), triggerType: 'interval' },
+    ]);
   });
 });
 

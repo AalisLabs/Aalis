@@ -88,7 +88,7 @@ export const approval = (id: string, fields: Partial<Approval> = {}): Approval =
   sessionId: 's1',
   turnId: 't1',
   callId: 'c1',
-  origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+  origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
   target: 'tool',
   tool: 'exec',
   facts: { params: {} },

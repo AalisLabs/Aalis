@@ -40,6 +40,10 @@ import { seedRooms } from '../fixtures/rooms.js';
 const SELF = '10000';
 const OWNER_QQ = { platform: 'onebot', userId: '99999' };
 const OWNER_DM = `onebot:${SELF}:private:${OWNER_QQ.userId}`;
+/** 群号恰好是 owner 的 QQ 号的群：会话 id 里的目标与 owner 私聊的相同 */
+const OWNER_NUMBER_GROUP = `onebot:${SELF}:group:${OWNER_QQ.userId}`;
+/** 机器人账号自己 */
+const BOT = { platform: 'onebot', userId: SELF };
 const PROBE = 'zz_confirm_probe';
 const WAIT_MS = 300_000;
 /** 覆盖审批的在场都失效之后的重连宽限 */
@@ -69,16 +73,18 @@ async function settle(): Promise<void> {
 
 /**
  * declared 为假时适配器不声明会话类型：私聊的一对一是推断出来的。deliver 给出平台对一条出站（带它的平台消息 id）的
- * 投递结果
+ * 投递结果；owners 是配置里的 owner
  */
 async function setup({
   declared = true,
   deliver = id => ({ ok: true, messageIds: [id] }),
+  owners = [OWNER_QQ],
 }: {
   declared?: boolean;
   deliver?: (id: string) => OutboundDeliveryResult | Promise<OutboundDeliveryResult>;
+  owners?: Array<{ platform: string; userId: string }>;
 } = {}) {
-  const { app } = hostedApp({ owners: [OWNER_QQ] });
+  const { app } = hostedApp({ owners });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-chat-approval-'));
   homes.push(home);
@@ -89,7 +95,7 @@ async function setup({
   // 私聊要在会话管理读表之前预置进记忆后端
   await app.plugin(memoryInMemoryPlugin);
   await app.plugins.idle();
-  await seedRooms(host.memory.use, { [OWNER_DM]: 'owner' });
+  await seedRooms(host.memory.use, { [OWNER_DM]: 'owner', [OWNER_NUMBER_GROUP]: '群' });
 
   /** 平台收下的出站，各带平台给的消息 id */
   const outbound: Array<{ message: OutgoingMessage; id: string }> = [];
@@ -200,10 +206,10 @@ async function setup({
   const reply = (content: string, quoted: string, over: Partial<IncomingMessage> = {}) =>
     say(content, { replyTo: { messageId: quoted }, ...over });
   /** 这一轮调探针：owner 在私聊里亲手发起；box 在调用结束时拿到结果 */
-  const call = (args: Record<string, unknown> = { command: 'rm -rf build' }, who = OWNER_QQ) => {
+  const call = (args: Record<string, unknown> = { command: 'rm -rf build' }, who = OWNER_QQ, sessionId = OWNER_DM) => {
     seq++;
     const ctx: ToolCallContext = {
-      sessionId: OWNER_DM,
+      sessionId,
       ...who,
       inbound: {},
       turnId: `turn-${seq}`,
@@ -278,7 +284,7 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
-  it('回「拒绝 太危险」：不执行，模型收到 owner 拒绝与说明', async () => {
+  it('回「拒绝 太危险」：不执行，模型收到拒绝与说明', async () => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
@@ -286,8 +292,7 @@ describe('应答：引用那条审批消息回复', () => {
     await s.reply('拒绝 太危险', id);
     const out = await r.result;
     expect(s.runs()).toBe(0);
-    expect(out).toContain('owner 拒绝了');
-    expect(out).toContain('太危险');
+    expect(out).toContain('被拒绝了，说明：太危险');
   });
 
   it.each(['同意。', '  同意！', 'Approve.'])('首尾的空白与标点不论、英文不分大小写：「%s」也算批准', async text => {
@@ -435,15 +440,25 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
-  it('带 source 或 actor 的注入引用审批消息回「同意」：不是 owner 亲手发的，不批', async () => {
+  it('带 source 的注入引用审批消息回「同意」：不是 owner 亲手发的，不批', async () => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
     const { id } = await s.requested();
     await s.reply('同意', id, { source: 'system' });
-    await s.reply('同意', id, { actor: OWNER_QQ });
     expect(r.content).toBeUndefined();
     expect(s.runs()).toBe(0);
+  });
+
+  it('一对一窗口的对端不是发言者（机器人账号登记成了 owner，实现端上报了它自己发的消息）：引用审批消息的「同意」不认', async () => {
+    const s = await setup({ owners: [OWNER_QQ, BOT] });
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const echoed = await s.reply('同意', id, BOT);
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
+    expect(s.received.map(m => m.messageId)).toContain(echoed.messageId);
   });
 });
 
@@ -664,13 +679,30 @@ describe('时限与在场', () => {
     await s.requested();
   });
 
-  it('只有带 source 或 actor 的入站、owner 没亲手发过言：不算在场，发起的审批按不在场拒', async () => {
+  it('只有带 source 的入站、owner 没亲手发过言：不算在场，发起的审批按不在场拒', async () => {
     const s = await setup();
     await s.say('定时任务的提醒', { source: 'system' });
-    await s.say('接着做', { actor: OWNER_QQ });
     const r = s.call();
     expect(await r.result).toContain(ABSENT);
     expect(s.requests()).toEqual([]);
+  });
+
+  it('群号恰好是 owner 的 QQ 号的群不是她的私聊：她在群里说话不算在场，群里发起的不推进群里；在群里引用审批消息回「同意」不批，照常交给 agent', async () => {
+    const s = await setup();
+    const inGroup = { sessionId: OWNER_NUMBER_GROUP, sessionType: 'group', groupId: OWNER_QQ.userId };
+    await s.say('帮我清一下', inGroup);
+    const fromGroup = s.call(undefined, OWNER_QQ, OWNER_NUMBER_GROUP);
+    await settle();
+    expect(s.requests()).toEqual([]);
+    expect(await fromGroup.result).toContain(ABSENT);
+
+    await s.say('我在');
+    const r = s.call();
+    const { id } = await s.requested();
+    const quoted = await s.reply('同意', id, inGroup);
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
+    expect(s.received.map(m => m.messageId)).toContain(quoted.messageId);
   });
 
   it('适配器没声明会话类型、一对一是推断出来的：不推，按不在场拒', async () => {
