@@ -19,7 +19,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 // 的生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉归档都走这里。
 // ════════════════════════════════════════════════════════════
 
-/** 名字表枚举 persona 的全部提供者：给出 list 即可 */
+/** 人设的选择层：第一家是选中的那一家 */
 const personasRef = (...services: PersonaService[]) =>
   ref(services.map((instance, i) => ({ instance, contextId: `persona-${i}` })));
 /** 名字表按会话取时传的消息：只用 sessionId 与 platform */
@@ -73,26 +73,24 @@ describe('createBotNames', () => {
     getPersonaName: () => name,
     ...(nicks ? { getNickNames: () => nicks as string[] } : {}),
   });
-  const broken = (message: string): PersonaService => ({
-    getSystemPrompt: () => '',
-    getPersonaName: () => {
-      throw new Error(message);
-    },
-  });
 
-  it('别名与全部人设的名字、昵称的并集：别名在前，去重、去空与非字符串', () => {
+  it('别名与在用人设的名字、昵称的并集：别名在前，去重、去空与非字符串；没有人设时只有别名', () => {
     const { logger } = recordingLogger();
-    const names = createBotNames(
-      personasRef(card('Aalis', ['', '小A', 'Aalis']), card('Bob', ['阿狸', 7])),
-      logger,
-      '[t]',
-    );
-    expect(names(['阿狸', ''], AT_GROUP)).toEqual(['阿狸', 'Aalis', '小A', 'Bob']);
-    expect(names([], AT_GROUP), '每次调用现取').toEqual(['Aalis', '小A', 'Bob', '阿狸']);
+    const names = createBotNames(personasRef(card('Aalis', ['', '小A', 'Aalis', 7])), logger, '[t]');
+    expect(names(['阿狸', ''], AT_GROUP)).toEqual(['阿狸', 'Aalis', '小A']);
+    expect(names([], AT_GROUP), '每次调用现取').toEqual(['Aalis', '小A']);
     expect(createBotNames(personasRef(), logger, '[t]')(['别名'], AT_GROUP)).toEqual(['别名']);
   });
 
-  it('某个人设读名字抛错：只跳过它的名字，其余照常；同一原因只告警一次，恢复后再出错再告警', () => {
+  it('装了两个人设提供者：只取选中的那一家，叫没在用的那家的名字不算点名', () => {
+    const { logger } = recordingLogger();
+    const names = createBotNames(personasRef(card('Aalis', ['小A']), card('Bob', ['阿B'])), logger, '[t]');
+    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis', '小A']);
+    expect(isAddressed(text('Bob 在吗'), names(['别名'], AT_GROUP), opts())).toBe(false);
+    expect(isAddressed(text('Aalis 在吗'), names(['别名'], AT_GROUP), opts())).toBe(true);
+  });
+
+  it('在用人设读名字抛错：名字表只剩别名，点名照常；同一原因只告警一次，恢复后再出错再告警', () => {
     const { logger, warns } = recordingLogger();
     let reason: string | undefined = 'persona 故障';
     const flaky: PersonaService = {
@@ -103,27 +101,21 @@ describe('createBotNames', () => {
       },
     };
     const names = createBotNames(personasRef(flaky, card('Aalis', ['小A'])), logger, '[t]');
-    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis', '小A']);
-    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis', '小A']);
+    expect(names(['阿狸'], AT_GROUP)).toEqual(['阿狸']);
+    expect(names(['阿狸'], AT_GROUP)).toEqual(['阿狸']);
+    expect(isAddressed(text('阿狸在吗'), names(['阿狸'], AT_GROUP), opts())).toBe(true);
+    expect(isAddressed(text('Aalis 在吗'), names(['阿狸'], AT_GROUP), opts())).toBe(false);
     expect(warns).toHaveLength(1);
-    expect(warns[0]).toMatch(/^\[t\] 人设「persona-0」读名字失败.*persona 故障/);
+    expect(warns[0]).toMatch(/^\[t\] 人设读名字失败.*persona 故障/);
 
     reason = '另一个故障';
     names([], AT_GROUP);
     expect(warns, '原因变了再记一次').toHaveLength(2);
     reason = undefined;
-    expect(names([], AT_GROUP)).toEqual(['Carol', 'Aalis', '小A']);
+    expect(names([], AT_GROUP)).toEqual(['Carol']);
     reason = '另一个故障';
     names([], AT_GROUP);
     expect(warns, '读成功一次后再出错，同一原因也再记').toHaveLength(3);
-  });
-
-  it('人设全部抛错时只剩别名，点名识别照常（不抛错）', () => {
-    const { logger } = recordingLogger();
-    const names = createBotNames(personasRef(broken('故障甲'), broken('故障乙')), logger, '[t]');
-    expect(names(['阿狸'], AT_GROUP)).toEqual(['阿狸']);
-    expect(isAddressed(text('阿狸在吗'), names(['阿狸'], AT_GROUP), opts())).toBe(true);
-    expect(isAddressed(text('随便聊聊'), names(['阿狸'], AT_GROUP), opts())).toBe(false);
   });
 
   /** 按会话选卡的人设提供者（卡由提供者按会话取，没有该卡时回落主卡），记下每次调用收到的参数 */
@@ -141,17 +133,16 @@ describe('createBotNames', () => {
     return { svc, calls };
   }
 
-  it('按会话取：消息的会话与入口平台交给每个人设提供者，由它按会话选卡；两个会话各用各的卡', () => {
+  it('按会话取：消息的会话与入口平台交给在用的人设，由它按会话选卡；两个会话各用各的卡', () => {
     const { logger } = recordingLogger();
     const inBob = { sessionId: 'onebot:10000:group:1', platform: 'onebot' };
     const inMain = { sessionId: 'onebot:10000:group:2', platform: 'onebot' };
-    const first = cards(['Aalis', ['小A']], { [inBob.sessionId]: ['Bob', ['阿B']] });
-    const second = cards(['Carol', []], {});
-    const names = createBotNames(personasRef(first.svc, second.svc), logger, '[t]');
+    const persona = cards(['Aalis', ['小A']], { [inBob.sessionId]: ['Bob', ['阿B']] });
+    const names = createBotNames(personasRef(persona.svc), logger, '[t]');
 
-    expect(names(['别名'], inBob)).toEqual(['别名', 'Bob', '阿B', 'Carol']);
-    expect(names(['别名'], inMain)).toEqual(['别名', 'Aalis', '小A', 'Carol']);
-    expect(second.calls, '每个提供者收到同一份会话选项').toEqual([inBob, inMain]);
+    expect(names(['别名'], inBob)).toEqual(['别名', 'Bob', '阿B']);
+    expect(names(['别名'], inMain)).toEqual(['别名', 'Aalis', '小A']);
+    expect(persona.calls, '收到这条消息的会话选项').toEqual([inBob, inMain]);
   });
 });
 

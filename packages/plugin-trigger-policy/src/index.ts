@@ -80,7 +80,7 @@ function run(caps: Caps): void {
   const settingsOf = (sessionId?: string, platform?: string): TriggerPolicySettings =>
     normalizeSettings(fields.get(sessionId, { platform }));
   const states = new Map<string, TriggerSessionState>();
-  /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  /** 名字表：别名与在用的人设按会话取的名字、昵称；人设读名字出错时只剩别名 */
   const botNames = createBotNames(caps.persona, logger.use, '[trigger]');
 
   // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行、

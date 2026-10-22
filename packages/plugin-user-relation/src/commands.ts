@@ -19,7 +19,7 @@
 
 import type { BoundCommands } from '@aalis/api-commands';
 import type { LLMModel } from '@aalis/api-llm';
-import { type PlatformAdapter, sendPlatformMessage } from '@aalis/api-platform';
+import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
@@ -249,13 +249,14 @@ export function registerRelationCommands(
   /**
    * 长任务前的"立即反馈"：fire-and-forget 推送一条 ack 给当前会话，
    * 让用户知道命令已被接到、正在跑（consolidate/compress 在大图上可能跑数秒到数十秒）。
-   * - 失败静默（CLI 会话没有 platform adapter 会抛错，不影响主流程）
-   * - 不 await 完成，纯并发
+   * - 只推给有平台适配器认领的会话（定时任务发进群里的也推）；没有认领者的会话（如编排的内部会话）没有人在等，不推
+   * - 推送失败静默，不 await 完成，纯并发
    */
-  function ackBackground(sessionId: string, platformName: string, text: string): void {
-    // internal 平台（scheduler / workflow 等系统触发）没有真实用户等待，跳过推送
-    if (platformName === 'internal') return;
-    void sendPlatformMessage(platform, sessionId, text).catch(err => {
+  function ackBackground(sessionId: string, text: string): void {
+    void (async () => {
+      const adapter = await resolvePlatformBySession(platform, sessionId, logger);
+      await adapter?.use.sendMessage(sessionId, text);
+    })().catch(err => {
       logger.debug(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
     });
   }
@@ -334,7 +335,6 @@ export function registerRelationCommands(
         const useLlm = argv.options['no-llm'] !== true && !!options.consolidateLLM;
         ackBackground(
           argv.session.sessionId,
-          argv.session.platform,
           `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
         );
         const r = await service.consolidate(buildConsolidateOpts(autoLink, useLlm));
@@ -379,7 +379,6 @@ export function registerRelationCommands(
         }
         ackBackground(
           argv.session.sessionId,
-          argv.session.platform,
           `⏳ 正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
         );
         const r = await service.rewriteWeights({ halfLifeDays, floor });
@@ -409,11 +408,7 @@ export function registerRelationCommands(
       const gate = tryAcquireCommand('relation.event-duplicates');
       if (!gate.ok) return `⏳ 上一次 /relation event-duplicates 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
-        ackBackground(
-          argv.session.sessionId,
-          argv.session.platform,
-          '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…',
-        );
+        ackBackground(argv.session.sessionId, '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…');
         const r = await service.findEventDuplicates({
           ...(options.consolidateLLM
             ? {
@@ -464,11 +459,7 @@ export function registerRelationCommands(
       if (!gate.ok) return `⏳ 上一次 /relation compress 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
         const ev = options.eviction;
-        ackBackground(
-          argv.session.sessionId,
-          argv.session.platform,
-          '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…',
-        );
+        ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
         const before = await service.loadAll();
         let deletedPersons = 0;
         let deletedEvents = 0;
@@ -518,7 +509,6 @@ export function registerRelationCommands(
         const autoLink = argv.options['no-auto-link'] !== true && options.consolidateAutoLink;
         ackBackground(
           argv.session.sessionId,
-          argv.session.platform,
           `⏳ 正在体检关系图：先整理再压缩（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
         );
 

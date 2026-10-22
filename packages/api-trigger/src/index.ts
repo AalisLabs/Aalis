@@ -109,25 +109,24 @@ function mentionsSelf(content: string): boolean {
 }
 
 /**
- * 建一个名字表：每次调用按这条消息的会话现取，返回别名（triggerNames）与全部已登记人设的名字、昵称的并集，
- * 去重、去空，别名在前、人设按服务解析顺序在后。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames
- * 用同一份。
+ * 建一个名字表：每次调用按这条消息的会话现取，返回别名（triggerNames）与这个会话在用的人设的名字、昵称的并集，
+ * 去重、去空，别名在前。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames 用同一份。
  *
- * 人设按会话取，与 agent 同一取法：这条消息的会话与入口平台（`{ sessionId, platform }`）交给每个人设提供者的
- * getPersonaName / getNickNames，由人设服务按这个会话的「人设」取卡。会话改用别的角色卡时，那张卡的名字、昵称算点名，
- * 主卡的不算。
+ * 在用的人设是人设服务此刻的胜者（`persona.use`，按触发插件自己的服务偏好选出）：同时装了多个人设插件时，只有它的名字、
+ * 昵称算点名；给 agent 单设了人设偏好时，触发插件要设同一个。人设按会话取，与 agent 同一取法：这条消息的会话与入口平台
+ * （`{ sessionId, platform }`）交给它的 getPersonaName / getNickNames，由人设服务按这个会话的「人设」取卡。会话改用别的角色卡时，
+ * 那张卡的名字、昵称算点名，主卡的不算。
  *
- * 取全部人设提供者（persona.list()）而不只取当前胜者：同时装了多个人设插件时，叫其中任何一个的名字都算点名。
- * 某个人设提供者读名字抛错时只跳过它的名字，其余照常：记一条 warn，同一提供者同一原因只记一次（它读成功一次后
- * 再出错会再记）。禁言关键词不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
+ * 读名字抛错时名字表只剩别名，照常判定：记一条 warn，同一原因只记一次（读成功一次后再出错会再记）。禁言关键词不从 persona 读：
+ * 避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
  */
 export function createBotNames(
-  persona: Pick<ServiceSelection<PersonaService>, 'list'>,
+  persona: Pick<ServiceSelection<PersonaService>, 'present' | 'use'>,
   logger: Logger,
   tag: string,
 ): (triggerNames: readonly string[], message: Pick<IncomingMessage, 'sessionId' | 'platform'>) => string[] {
-  /** 正在出错的提供者（条目 id）→ 已告警的原因 */
-  const failing = new Map<string, string>();
+  /** 读名字失败时已告警的原因；undefined = 上次读成功 */
+  let failure: string | undefined;
 
   return (triggerNames, message) => {
     const names = new Set<string>();
@@ -135,21 +134,19 @@ export function createBotNames(
       if (typeof n === 'string' && n) names.add(n);
     };
     for (const n of triggerNames) add(n);
-    const options = { sessionId: message.sessionId, platform: message.platform };
-    for (const { use, id, label } of persona.list()) {
-      let own: unknown[];
+    if (persona.present) {
+      const options = { sessionId: message.sessionId, platform: message.platform };
       try {
-        own = [use.getPersonaName(options), ...(use.getNickNames?.(options) ?? [])];
+        const own = [persona.use.getPersonaName(options), ...(persona.use.getNickNames?.(options) ?? [])];
+        failure = undefined;
+        for (const n of own) add(n);
       } catch (err) {
         const reason = `${err}`;
-        if (failing.get(id) !== reason) {
-          failing.set(id, reason);
-          logger.warn(`${tag} 人设「${label ?? id}」读名字失败，点名识别跳过它的名字: ${reason}`);
+        if (failure !== reason) {
+          failure = reason;
+          logger.warn(`${tag} 人设读名字失败，点名识别只用别名: ${reason}`);
         }
-        continue;
       }
-      failing.delete(id);
-      for (const n of own) add(n);
     }
     return [...names];
   };

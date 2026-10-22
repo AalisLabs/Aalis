@@ -261,6 +261,13 @@
 - plugin-memory-summary 新加待办服务（@aalis/api-todo-list）的可选依赖：工作模板的摘要输入最后一段按待办插件此刻的待办逐项写「当前任务列表状态」（每项一行 `- [状态] 标题`），没有待办或待办插件不在时不写；此前取待摘要部分里最后一次 `manage_todo_list` 的参数原文。
 - plugin-agent 的「综合作答、不逐项转述」提示按本轮附件判：附件描述里有一项带描述正文才给（媒体识别的描述，含没落盘的图片、视频与音频的描述，以及文件说明），只有附件引用、没有描述的不给；正文里写着「[文件: …]」一类字样不再触发。宿主通知只转述结果的那一轮（`reportOnly`）的转述要求改成「不要……继续执行……也不要编造通知里没有的细节」（此前写「继续制作」「未提供的作品细节」）。
 
+### 会话与房间的小项，WebUI 横幅与工具卡（@aalis/api-session-manager、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-user-relation、@aalis/plugin-webui-client、@aalis/plugin-session-server）
+
+- api-session-manager 的 `SessionManagerService` 删掉 `generateTitle`：自动标题是 plugin-session-manager 自己的行为（只给带创建来源的根会话在首条消息时生成），不再是契约成员。
+- api-trigger 的 `createBotNames` 改收人设服务的 `present` 与 `use`（此前用 `list`）：名字表只取人设服务此刻的胜者（触发插件按自己的服务偏好选出）的名字与昵称。同时装了多个人设插件时，叫没在用的那家的名字不再算点名；给 agent 单设了人设偏好时，触发插件要设同一个。读名字抛错时名字表只剩别名（此前只跳过出错的那家）。
+- WebUI 驱动房间时头部的提示改为「你正在以 owner 身份在「房间名」发言」，群与私聊同一句（此前写「按群的人设和能力运行」）；房间里经工具发出、平台收下的消息，工具卡标「已发出」（此前「已发到群」）；房间里调用工具之前说的话标「没有发出：调用工具之前说的话不发到房间里」（此前「…不发到群里」）。英文同改。
+- plugin-user-relation 的 `/relation` 长任务（consolidate、rewrite-weights 等）开跑时的「正在…」提示按会话有没有平台适配器认领判，不再看平台名：定时任务（平台写 `internal`）在群里跑这些长任务时，群里也会收到这句（此前跳过）。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

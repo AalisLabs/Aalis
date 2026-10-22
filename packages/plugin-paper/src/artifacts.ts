@@ -2,14 +2,15 @@
 // 成品：白纸根里的目录布局、提供者交来文件的写入口、按文件头判定类型
 //
 // 白纸文件：paper:/<目录>/tasks/<任务 id>/out/<产物 id>.<判定类型的扩展名>，工程包 paper:/<目录>/workspace.tar.gz，
-// 目录名 n-<名> 或 r-<哈希前 12 位>。远端给的相对路径（rel）只写进记录供 WebUI 显示，不出现在白纸根的
-// 路径里：出站附件的 data 会被写进会话历史，远端控制的文件名不能借此进入历史与记忆。
+// 目录名取 api-session-manager 的 paperDirName（n-<名> 或 p-<场所键的十六进制>）。远端给的相对路径（rel）只写进记录
+// 供 WebUI 显示，不出现在白纸根的路径里：出站附件的 data 会被写进会话历史，远端控制的文件名不能借此进入历史与记忆。
 //
 // 写入口不只信提供者：rel 再按契约的 artifactRelProblem 净化一次，单文件、单轮总量、文件数、工程包与白纸目录总占用
 // 各有上限，不合格就抛错（提供者把它记进 rejected）。白纸目录超过总占用上限后，本轮余下的文件一律拒收。
 // ============================================================
 
 import { type ArtifactSink, artifactRelProblem } from '@aalis/api-remote-agent';
+import { paperDirName } from '@aalis/api-session-manager';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { ArtifactCaps } from './config.js';
 import { randomHex, type TaskRecord } from './ledger.js';
@@ -40,7 +41,7 @@ export const MIME_TYPES: Record<Exclude<ArtifactType, 'other'>, string> = {
 
 /** 白纸在白纸根里的目录 */
 export function paperDirUri(paperId: string): string {
-  return `paper:/${paperId.replace(':', '-')}`;
+  return `paper:/${paperDirName(paperId)}`;
 }
 
 /** 一件任务的成品目录 */

@@ -157,7 +157,7 @@ const uses = {
   trigger: optional(trigger),
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
   flowControl: optional(flowControl),
-  // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
+  // 名字检测与发给侧车的 selfNames 取在用的人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
   // 消息不带机器人账号时取房间建档时记下的，也用来判从别的平台往房间里插话、当前消息的发送者前缀（与存档同一规则）；
   // 缺席时不带账号的消息按兜底
@@ -202,7 +202,7 @@ function run(caps: Caps): void {
   const selfId = caps.lifecycle.use.id;
   caps.provide.use(trigger, self, { priority: PRIORITY, label: self.label });
   const winner = () => caps.trigger.list().find(p => p.selected);
-  /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  /** 名字表：别名与在用的人设按会话取的名字、昵称；人设读名字出错时只剩别名 */
   const botNames = createBotNames(caps.persona, logger.use, '[laya]');
 
   // ----- 可用性：熔断与告警 -----

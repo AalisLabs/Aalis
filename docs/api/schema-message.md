@@ -109,7 +109,7 @@ interface OutgoingMessage {
 
 `replyTo` 是被引用消息的平台消息 id。支持引用的适配器把引用加在这条消息的第一条分条前（OneBot v11、v12 各按自己的消息段写法，正文里模型已写了引用标记的不再加第二个），其余适配器忽略。现在只有 plugin-agent 回复带 `replyTo` 的宿主通知时带上它。
 
-`callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发到群」。
+`callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发出」。
 
 `turnId` 是 agent 这一轮发出的消息（回复与 `[错误]` 等提示）所在回合的 id。平台适配器记回复的投递失败（`WellKnownKinds.OutboundDeliveryFailed`）时把 `turnId` 或 `callId` 连同原因写进记录的元数据（登记的键 `TurnId`、`CallId`、`DeliveryError`），会话服务回看历史时据此标出哪条没发出；出站记进会话历史的各条（不是回复的文字记成的事件标记、发出的附件）由存档同样记下 `TurnId`（api-message-archive 的 `recordOutbound`），会话服务据此认出在途回合里的那一条，取快照时不与实时条目重复。
 
@@ -188,7 +188,7 @@ interface ArchivedAttachment {
 
 附件的 `data` 不是地址时（内联数据、本机路径），存档取预处理器给这个附件写的描述里用 `formatAttachmentRef` 写的同种附件的引用作地址：预处理器把附件落盘后，在描述里这样写出落盘的位置，读历史的一方就能显示它。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
 
-会话服务读历史只认登记的键，会话服务自己经 `agent:tool:after` 写进工具结果元数据的几个（审批结算、已发到群、停止时还没结束、退出码、后台任务 id）除外：api-agent 约定 agent 把这份元数据原样落库。没有 `SpokenContent`、`Attachments` 的旧提问按存档正文原样显示。
+会话服务读历史只认登记的键，会话服务自己经 `agent:tool:after` 写进工具结果元数据的几个（审批结算、已发出、停止时还没结束、退出码、后台任务 id）除外：api-agent 约定 agent 把这份元数据原样落库。没有 `SpokenContent`、`Attachments` 的旧提问按存档正文原样显示。
 
 **局限：**
 
