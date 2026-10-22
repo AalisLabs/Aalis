@@ -18,7 +18,7 @@ import { authority } from '@aalis/api-authority';
 import { doctor } from '@aalis/api-doctor';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
-import { media } from '@aalis/api-media';
+import { clearSessionMedia, media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
@@ -26,24 +26,19 @@ import { storage as storageService } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig, type SchemaField } from '@aalis/schema-config';
-import {
-  clearDescriptionCache,
-  DESCRIPTION_KINDS,
-  type DescriptionKind,
-  flushDescriptionCache,
-  loadDescriptionCache,
-} from './cache.js';
+import { textOf } from '@aalis/schema-i18n';
+import { clearDescriptionCache, DESCRIPTION_KINDS, flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
-import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
+import { MEDIA_WRITER, type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { t } from './texts.js';
 import { registerMediaTools } from './tools.js';
 
 const name = '@aalis/plugin-media';
 
-/** /clear 回执里描述缓存类型的称呼 */
-const DESCRIPTION_KIND_LABELS: Record<DescriptionKind, string> = { image: '图片', video: '视频' };
+/** /clear 回执里描述缓存类型的称呼（字典键） */
+const DESCRIPTION_KIND_NOUNS = { image: 'kindImage', video: 'kindVideo' } as const;
 
 const configSchema = defineConfig({
   vision: {
@@ -363,26 +358,39 @@ function run(caps: Caps): void {
   });
   caps.lifecycle.use.onDispose(() => flushDescriptionCache());
 
-  // 参与 memory:clear（/clear 与删除会话）：视频描述（describeVideo 写入）归 video 类型，其余描述归 image 类型，
-  // 按所选类型清理。全局清理删掉所选类型的内存条目与别名，两类都清时删掉快照、只清一类时重写快照；
-  // 会话级只删带本会话语境的描述（以含会话目录的落盘路径为键），内容哈希键跨会话共享、无从按会话归属，保留。
+  // 参与 memory:clear（/clear 与删除会话），按所选类型清理，各行标 type：
+  // - 上传的图片（本插件在会话媒体目录里的子目录）归 image：会话级清这个会话的，全局清各会话的；
+  // - 描述缓存：视频描述（describeVideo 写入）归 video，其余描述归 image，各回一行。全局清理删掉所选类型的内存条目与
+  //   别名，两类都清时删掉快照、只清一类时重写快照；会话级只删键落在本会话媒体目录下的描述（带本会话语境的、文件名
+  //   不是内容哈希的），内容哈希键跨会话共享、无从按会话归属，保留。
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
-    const sessionDir = data.scope === 'all' ? undefined : data.sessionId?.replace(/[:/\\]/g, '_');
-    const kinds = DESCRIPTION_KINDS.filter(k => !data.types || data.types.includes(k));
-    if (kinds.length > 0 && (data.scope === 'all' || sessionDir)) {
-      const label = kinds.map(k => DESCRIPTION_KIND_LABELS[k]).join('与');
-      try {
-        const removed = await clearDescriptionCache(sessionDir, kinds);
-        data.results.push({
-          source: 'media-description',
-          success: true,
-          message: sessionDir
-            ? `当前会话${label}描述缓存已清空（${removed} 条）`
-            : `所有${label}描述缓存已清空（${removed} 条）`,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'media-description', success: false, message: `${label}描述缓存清空失败: ${msg}` });
+    const sessionId = data.scope === 'all' ? undefined : data.sessionId;
+    if (data.scope === 'all' || sessionId) {
+      if (!data.types || data.types.includes('image')) {
+        const line = { source: 'media-image', type: 'image' };
+        try {
+          const count = await clearSessionMedia(caps.storage.use, 'image', MEDIA_WRITER, sessionId);
+          data.results.push({ ...line, success: true, message: t('uploadsCleared', { count }) });
+        } catch (err) {
+          data.results.push({ ...line, success: false, message: t('uploadsFailed', { error: textOf(err) }) });
+        }
+      }
+      const kinds = DESCRIPTION_KINDS.filter(k => !data.types || data.types.includes(k));
+      if (kinds.length > 0) {
+        const source = 'media-description';
+        try {
+          const removed = await clearDescriptionCache(sessionId, kinds);
+          for (const type of kinds) {
+            const params = { kind: t(DESCRIPTION_KIND_NOUNS[type]), count: removed[type] };
+            const message = t(sessionId ? 'descriptionsClearedSession' : 'descriptionsClearedAll', params);
+            data.results.push({ source, type, success: true, message });
+          }
+        } catch (err) {
+          for (const type of kinds) {
+            const message = t('descriptionsFailed', { kind: t(DESCRIPTION_KIND_NOUNS[type]), error: textOf(err) });
+            data.results.push({ source, type, success: false, message });
+          }
+        }
       }
     }
     await next();
@@ -402,7 +410,7 @@ function run(caps: Caps): void {
   const transformed = new WeakSet<object>();
   caps.hooks.use.middleware('agent:llm:before', async (data, next) => {
     // 所有交付形态都要进来——这道闸此前被模式挡住，于是 describe 模式下
-    // agent 塞进 message.images 的历史相对路径 ref（`data/images/…`）一路畅通到 provider，
+    // agent 塞进 message.images 的附件引用一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
     if (!data.dryRun) {
       for (let i = data.messages.length - 1; i >= 0; i--) {

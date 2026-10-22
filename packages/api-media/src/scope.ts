@@ -5,14 +5,14 @@
 // 与调用所在会话历史里系统记下的引用。发媒体、看图的工具与出站转换共用这一份判据。
 //
 // 判据按写入方的目录约定判归属，不是隔离：同一个根里的符号链接，或能往本会话目录写文件的工具，都能把别处的媒体伪装成
-// 本会话的。目录名由会话 id 把 `:`、`/`、`\` 换成 `_` 得来，换法有损：适配器的会话 id 不能只在这几个字符上有区别
-// （`x:a_b` 与 `x:a:b` 落进同一个目录）；大小写不敏感的卷上只差大小写的也落进同一个目录。不在会话表里的会话按 internal
+// 本会话的。会话目录名取自 session-media 的 sessionDirName，换法有损（见它的说明）。不在会话表里的会话按 internal
 // （编排与定时任务的会话不进会话表），群会话要已收录才认得出是房间。
 // ============================================================
 
 import { roomClass, rootSessionOf, type SessionInfo } from '@aalis/api-session-manager';
-import { isHostAbsolutePath, isStorageUri, parseStorageUri, toStorageUri } from '@aalis/api-storage';
+import { isHostAbsolutePath, isStorageUri, parseStorageUri } from '@aalis/api-storage';
 import { type ArchivedAttachment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { MEDIA_KIND_DIRS, sessionDirName } from './session-media.js';
 
 /** 一次调用：所在的会话与授权身份，字段同工具调用上下文（actor 缺省即 platform、userId；没有 userId 即匿名） */
 export interface MediaScopeCall {
@@ -32,27 +32,19 @@ export interface MediaScopeDeps {
   history: (sessionId: string) => Promise<readonly Message[]>;
 }
 
-/** 会话媒体的目录：根、根下的一级目录，会话目录在它们下面 */
-const SESSION_MEDIA_DIRS: ReadonlyArray<readonly [root: string, dir: string]> = [
-  ['data', 'images'],
-  ['data', 'audios'],
-  ['data', 'videos'],
-  ['data', 'files'],
-  ['tmp', 'browser'],
-];
+/** 会话媒体的目录，会话目录在它们下面：各种类的目录（{@link MEDIA_KIND_DIRS}）与浏览器截图的 `tmp:/browser` */
+const SESSION_MEDIA_DIRS: ReadonlySet<string> = new Set([...Object.values(MEDIA_KIND_DIRS), 'tmp:/browser']);
 
 /**
- * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载附件时认的一样）原样；存储地址与历史相对路径
- * （`data/images/…`）规整成存储地址（消 `.`、`..`）；其余不是网址也不是存储地址的（本机路径含盘符路径、`file://`、
- * data URI，以及带反斜杠的：有的系统按目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，过不了判据
+ * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载附件时认的一样）原样；存储地址规整（消 `.`、
+ * `..`）；其余不是网址也不是存储地址的（相对路径、本机路径含盘符路径、`file://`、data URI，以及带反斜杠的：有的系统按
+ * 目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，过不了判据
  */
 export function mediaRef(input: string): string | undefined {
   const s = input.trim();
   if (/^https?:\/\//.test(s)) return s;
-  if (s.includes('\\') || isHostAbsolutePath(s)) return undefined;
-  const uri = /^[A-Za-z][\w-]*\/[^:]*$/.test(s) ? toStorageUri(s) : s;
-  if (!isStorageUri(uri)) return undefined;
-  const { root, segments } = parseStorageUri(uri);
+  if (s.includes('\\') || isHostAbsolutePath(s) || !isStorageUri(s)) return undefined;
+  const { root, segments } = parseStorageUri(s);
   return `${root}:/${segments.join('/')}`;
 }
 
@@ -92,8 +84,8 @@ export async function mediaInScope(target: string, call: MediaScopeCall, deps: M
   const uri = mediaRef(target);
   if (!uri || !isStorageUri(uri)) return false;
   const { root, segments } = parseStorageUri(uri);
-  if (segments.length >= 3 && SESSION_MEDIA_DIRS.some(([r, d]) => r === root && d === segments[0])) {
-    const dirs = [...sessionTree(call.sessionId, getSession)].flatMap(sessionDirNames);
+  if (segments.length >= 3 && SESSION_MEDIA_DIRS.has(`${root}:/${segments[0]}`)) {
+    const dirs = [...sessionTree(call.sessionId, getSession)].map(sessionDirName);
     if (dirs.includes(segments[1])) return true;
   }
   return historyMediaRefs(await deps.history(call.sessionId)).includes(uri);
@@ -110,13 +102,4 @@ function sessionTree(sessionId: string, getSession: MediaScopeDeps['getSession']
     pending.push(...(getSession?.(id)?.children ?? []));
   }
   return tree.add(sessionId);
-}
-
-/**
- * 写入方给会话起的目录名：把 `:`、`/`、`\` 换成 `_`（onebot 附件缓存、媒体识别、浏览器截图），绘图另把 `..` 与前导点换成 `_`。
- * 写入方改了换法要同步这里，契约用例跑真实写入方钉住
- */
-function sessionDirNames(sessionId: string): string[] {
-  const plain = sessionId.replace(/[:/\\]/g, '_');
-  return [plain, plain.replace(/\.\./g, '_').replace(/^\.+/, '_')];
 }

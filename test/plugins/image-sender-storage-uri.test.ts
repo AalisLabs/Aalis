@@ -13,20 +13,18 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// send_attachment 的 storage_uri 归一化——「图明明在却报找不到」回归。
+// send_attachment 的 storage_uri 只收存储地址。
 //
-// 事故（真机 2026-08-18）：归档给 agent 看的 ref 是历史相对路径 data/images/...
-// （无冒号），agent 照 ref 填 send_attachment 的 storage_uri，但 resolveStorageUri
-// 漏了 toStorageUri 归一化、直接拿相对路径 stat（storage 需要 data:/images/... 带
-// 冒号的 URI），必然 stat 失败 → "存储资源不存在" → agent 6 次全挂、群里回"找不到了"，
-// 而文件其实好好在盘上。契约的 toStorageUri 本就该被复用（"勿各自重抄"）。
+// 历史里的附件引用一律是存储地址（`data:/images/<会话目录>/<写入方>/…`），agent 照引用填 storage_uri 即可；
+// 照旧写成相对路径（`data/images/…`，没有冒号）的回「要写存储地址」，不再替它补成存储地址。发出的附件引用
+// 记规整后的存储地址。
 //
 // 会话是群（会话表里预置收录过的房间）：只能发本会话收到或产生的媒体，先判后读。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';
 
-describe('send_attachment storage_uri 归一化', () => {
+describe('send_attachment 的 storage_uri', () => {
   let base: string;
   let app: App;
   let hostEvents: Events;
@@ -36,10 +34,10 @@ describe('send_attachment storage_uri 归一化', () => {
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-'));
     // data 是 storage-local 的内置根，映射到家目录的 state/
-    mkdirSync(join(base, 'state', 'images', 'onebot_x_group_1'), { recursive: true });
+    mkdirSync(join(base, 'state', 'images', 'onebot_x_group_1', 'onebot'), { recursive: true });
     // 落一张真图（内容随意，只验证路径解析）
     writeFileSync(
-      join(base, 'state', 'images', 'onebot_x_group_1', 'abcd1234.jpg'),
+      join(base, 'state', 'images', 'onebot_x_group_1', 'onebot', 'abcd1234.jpg'),
       Buffer.from([0xff, 0xd8, 0xff, 0]),
     );
     // 别的群的图与不是媒体的文件
@@ -81,20 +79,19 @@ describe('send_attachment storage_uri 归一化', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('历史相对路径（data/images/...，无冒号）→ 成功发送（删归一化即红）', async () => {
+  it('相对路径（data/images/…，没有冒号）→ 回「要写存储地址」，不出站', async () => {
     const outbound: unknown[] = [];
     hostEvents.on('outbound:message', m => {
       outbound.push(m); // 花括号吞掉 push 的返回值：监听器签名要求 void | Promise<void>
     });
     const out = JSON.parse(
       await handlers.send_attachment(
-        { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/abcd1234.jpg' },
+        { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/onebot/abcd1234.jpg' },
         { sessionId: 'onebot:x:group:1' },
       ),
     );
-    expect(out.error).toBeUndefined();
-    expect(out.ok).toBe(true);
-    expect(outbound).toHaveLength(1);
+    expect(out.error).toBe('storage_uri 要写存储地址（如 data:/images/…），不能写本机路径');
+    expect(outbound).toHaveLength(0);
   });
 
   it('发出的消息带这次工具调用的 callId：界面据此把它挂到对应的工具卡上', async () => {
@@ -102,27 +99,35 @@ describe('send_attachment storage_uri 归一化', () => {
     hostEvents.on('outbound:message', m => {
       outbound.push(m);
     });
-    await handlers.send_attachment({ kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/abcd1234.jpg' }, {
-      sessionId: 'onebot:x:group:1',
-      callId: 'call-7',
-    } as { sessionId: string });
+    await handlers.send_attachment(
+      { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/onebot/abcd1234.jpg' },
+      {
+        sessionId: 'onebot:x:group:1',
+        callId: 'call-7',
+      } as { sessionId: string },
+    );
     expect(outbound.map(m => m.callId)).toEqual(['call-7']);
   });
 
-  it('storage URI（data:/images/...，带冒号）→ 同样成功（归一化对已是 URI 幂等）', async () => {
+  it('存储地址 → 成功发送，发出的附件引用记规整后的地址', async () => {
+    const outbound: OutgoingMessage[] = [];
+    hostEvents.on('outbound:message', m => {
+      outbound.push(m);
+    });
     const out = JSON.parse(
       await handlers.send_attachment(
-        { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/abcd1234.jpg' },
+        { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/onebot/./abcd1234.jpg' },
         { sessionId: 'onebot:x:group:1' },
       ),
     );
     expect(out.ok).toBe(true);
+    expect(outbound.map(m => m.attachments?.[0]?.ref)).toEqual(['data:/images/onebot_x_group_1/onebot/abcd1234.jpg']);
   });
 
-  it('真不存在的图 → 如实报错（归一化不掩盖真缺失）', async () => {
+  it('真不存在的图 → 如实报错', async () => {
     const out = JSON.parse(
       await handlers.send_attachment(
-        { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/nonexistent.jpg' },
+        { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/onebot/nonexistent.jpg' },
         { sessionId: 'onebot:x:group:1' },
       ),
     );
@@ -163,7 +168,7 @@ describe('send_attachment storage_uri 归一化', () => {
     confirmDelivery = false;
     const out = JSON.parse(
       await handlers.send_attachment(
-        { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/abcd1234.jpg' },
+        { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/onebot/abcd1234.jpg' },
         { sessionId: 'onebot:x:group:1' },
       ),
     );

@@ -257,9 +257,7 @@ function registerImageSender(caps: Caps): void {
           refTag = url;
           via = 'url';
         } else if (storageUri) {
-          // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
-          // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
-          // 先判后读：判据与读取用同一个规整后的地址
+          // 先判后读：判据、读取与附件引用用同一个规整后的地址
           const uri = mediaRef(storageUri);
           if (!uri || !isStorageUri(uri)) {
             return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
@@ -268,8 +266,7 @@ function registerImageSender(caps: Caps): void {
           const loaded = await loadStorageMedia(uri, kind);
           if (!loaded.ok) return JSON.stringify({ error: loaded.error });
           data = loaded.data;
-          // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致；history_ref 回查时两边都规整再比。
-          refTag = storageUri;
+          refTag = uri;
           via = 'storage_uri';
         } else if (historyRef) {
           refTag = historyRef.replace(/^ref:/, '').trim();

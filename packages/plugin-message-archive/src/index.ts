@@ -2,7 +2,7 @@ import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive } from '@aalis/api-message-archive';
-import { isStorageUri, parseUriRoot, storage, toStorageUri } from '@aalis/api-storage';
+import { isStorageUri, parseUriRoot, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, truncateParams } from '@aalis/schema-i18n';
@@ -49,14 +49,13 @@ const REF_KINDS: Readonly<Record<ArchivedAttachment['kind'], string>> = {
 };
 
 /**
- * 能当地址的写法：网址，以及根在存储服务根表里的存储地址；相对的存储路径（`<根>/路径`，平台适配器与媒体识别落盘后的写法）
- * 先归一成存储地址。预处理器换上的私有引用（形似存储地址、根不存在）不算
+ * 能当地址的写法：网址，以及根在存储服务根表里的存储地址。预处理器换上的私有引用（形似存储地址、根不存在）与相对路径
+ * 不算
  */
 function addressOf(value: string | undefined, roots: ReadonlySet<string>): string | undefined {
   if (!value) return undefined;
   if (/^https?:\/\//i.test(value)) return value;
-  const uri = /^[A-Za-z][\w-]*\/[^:]*$/.test(value) ? toStorageUri(value) : value;
-  return isStorageUri(uri) && roots.has(parseUriRoot(uri)) ? uri : undefined;
+  return isStorageUri(value) && roots.has(parseUriRoot(value)) ? value : undefined;
 }
 
 /**

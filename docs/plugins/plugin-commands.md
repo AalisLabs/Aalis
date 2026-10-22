@@ -16,7 +16,6 @@ export default definePlugin({
   uses: {
     commands: optional(commands),
     gateway,
-    storage: optional(storage),
     memory: optional(memory),
     authority: optional(authority),
     tools: optional(tools),
@@ -91,17 +90,17 @@ export default definePlugin({
 
 ## `/clear` 类型
 
-`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身负责 `context` 中的消息历史（经 memory 服务清空，含归档）和 `image` / `video` / `audio` / `file` 四类附件缓存（`data:/images` 等目录，按会话划分子目录），其余内容由对应插件的中间件处理。可用类型（`/help clear` 在 `--type` 选项下逐项列出）：
+`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身只负责 `context` 中的消息历史（经 memory 服务清空，含归档），其余内容由对应插件的中间件处理。`image` / `video` / `audio` / `file` 四类附件由写入它们的插件各清自己的子目录（见 [会话媒体的目录约定](../services/media.md#会话媒体的目录约定)），删除会话时同样由它们清理，不装本插件也清。可用类型（`/help clear` 在 `--type` 选项下逐项列出）：
 
 | 类型 | 内容 |
 |---|---|
 | `context` | 消息历史（含归档）与会话上下文：会话摘要、角色状态、已发现工具、待办；`/clear all` 时另清 OneBot 合并转发原文 |
 | `summary` | 会话摘要 |
 | `vector` | 向量记忆 |
-| `image` | 图片缓存；plugin-media 在场时另清图片描述缓存（会话级只清带本会话语境的描述） |
-| `video` | 视频缓存；plugin-media 在场时另清视频描述缓存（视频描述跨会话共享，会话级清理不删） |
-| `audio` | 语音缓存 |
-| `file` | 文件缓存 |
+| `image` | 图片：OneBot 收发的、上传的（plugin-media）与绘图产物（plugin-draw），各出一行；plugin-media 另清图片描述缓存（会话级只清键落在本会话媒体目录下的描述） |
+| `video` | 视频：OneBot 收发的；plugin-media 另清视频描述缓存（视频描述跨会话共享，会话级清理不删） |
+| `audio` | 语音：OneBot 收发的 |
+| `file` | 文件：OneBot 收发的 |
 | `persona` | 会话角色状态 |
 | `checkpoint` | 检查点（对话回滚存档） |
 | `user-profile` | 用户档案，仅全局清理 |

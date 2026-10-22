@@ -75,7 +75,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
       await handlers.draw_animation({ source: SPIN_SVG, fps: 8, duration_seconds: 1 }, { sessionId: session }),
     );
     expect(drawn.error).toBeUndefined();
-    expect(drawn.uri).toMatch(/^data:\/images\//);
+    expect(drawn.uri).toMatch(/^data:\/images\/onebot_t_group_7\/draw\//);
 
     // 2. 捕获出站请求；模拟适配器确认，让本测试继续验证后续本地编码。
     const outbound: Array<{ sessionId: string; attachments?: Array<{ kind: string; data: string }> }> = [];
@@ -96,9 +96,8 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     const local = await cacheOneAttachment(files, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
       warn: () => {},
     });
-    expect(local).toMatch(/^data\/images\//);
-    const storageUri = (local ?? '').replace(/^([^/]+)\//, '$1:/');
-    const { segments } = await materializeAttachments([{ kind: 'image', data: storageUri }], files, logger);
+    expect(local).toMatch(/^data:\/images\/onebot_t_group_7\/onebot\//);
+    const { segments } = await materializeAttachments([{ kind: 'image', data: local ?? '' }], files, logger);
     expect(segments.map(s => s.type)).toEqual(['image']);
     const file = String(segments[0]?.data.url);
     expect(file.startsWith('base64://'), `出站消息段形态不符: ${file.slice(0, 120)}`).toBe(true);

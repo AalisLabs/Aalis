@@ -179,17 +179,10 @@ export async function materializeAttachment(
       return await safeDownloadToTemp(data);
     }
     // storage URI（如 data:/images/...）→ 解析到本地路径。
-    // 同时兼容历史相对路径（如 `data/images/...`，缺少冒号），统一补成 storage URI。
-    let storageUri: string | null = null;
     if (isStorageUri(data)) {
-      storageUri = data;
-    } else if (/^data\//.test(data)) {
-      storageUri = `data:/${data.slice('data/'.length)}`;
-    }
-    if (storageUri) {
       try {
-        const local = await storage.resolveLocalPath?.(storageUri, 'read');
-        if (local) return { path: local, uri: storageUri, cleanup: async () => {} };
+        const local = await storage.resolveLocalPath?.(data, 'read');
+        if (local) return { path: local, uri: data, cleanup: async () => {} };
       } catch {
         /* fall through */
       }

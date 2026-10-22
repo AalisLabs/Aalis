@@ -133,12 +133,14 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     expect(m._attachmentDescriptions?.[0]).toContain('一只猫');
   });
 
-  it('关：不调识别模型；OneBot 的图（data 是落盘后的相对路径、正文已有 ref）描述位留空', async () => {
+  it('关：不调识别模型；OneBot 的图（data 是落盘后的存储地址、正文已有这个引用）描述位留空', async () => {
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: false }));
     const calls = withFakeVision(svc);
+    const landed = 'data:/images/s/onebot/0123456789abcdef.png';
     const m: IncomingMessage = {
       ...msg(),
-      attachments: [{ kind: 'image', data: 'data/images/s/x.png', mimeType: 'image/png' }],
+      content: `[图片 | ref:${landed}]`,
+      attachments: [{ kind: 'image', data: landed, mimeType: 'image/png' }],
     };
     const report = await svc.processMessage(m);
     expect(calls).toHaveLength(0);
@@ -157,7 +159,7 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     const m = { ...msg(), content: '' } as IncomingMessage;
     await svc.processMessage(m);
     expect(written).toHaveLength(1);
-    expect(m._attachmentDescriptions?.[0]).toMatch(/^\[图片 \| ref:data\/images\/s\/[0-9a-f]{16}\.png\]$/);
+    expect(m._attachmentDescriptions?.[0]).toMatch(/^\[图片 \| ref:data:\/images\/s\/media\/[0-9a-f]{16}\.png\]$/);
   });
 });
 
@@ -240,6 +242,14 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('历史占位符里的引用是网址：按网址处理', async () => {
+    download.next = null;
+    const url = 'https://example.invalid/cat.png';
+    const { result } = await withTool({ delivery: 'passthrough' }, true, `[图片 | ref:${url}]`);
+    expect(download.seen.at(-1)).toEqual({ url, imageOnly: true });
+    expect(JSON.parse(result.content).error).toMatch(/无法下载/);
+  });
+
   it('passthrough + 调用方接图（agent 循环）：图片随结果交给主模型，识别模型一次不调；content 对后续回合也成立', async () => {
     const { result, calls } = await withTool({ delivery: 'passthrough' }, true, toolUri(1));
     expect(calls).toHaveLength(0);
@@ -299,7 +309,7 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
   async function analyze(
     files: Record<string, Uint8Array>,
     image: string,
-    opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallContext; sessions?: SessionInfo[] },
+    opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallContext; sessions?: SessionInfo[]; owner?: boolean },
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ services, tools, memory });
@@ -320,14 +330,14 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
         throw new Error('只整读一次，不另读文件头');
       },
     } as unknown as StorageService;
-    // 读存储与裸相对路径按存储根路由，都取自媒体运行时
+    // 读存储取自媒体运行时
     setMediaRuntime({ proc: {} as never, storage: storageStub });
     const sessions = new Map((opts.sessions ?? []).map(info => [info.id, info]));
     registerMediaTools(
       {
         ...host,
         sessionManager: fixedRef({ getSession: (id: string) => sessions.get(id) } as unknown as SessionManagerService),
-        authority: fixedRef({ isOwner: () => false } as unknown as AuthorityService),
+        authority: fixedRef({ isOwner: () => opts.owner === true } as unknown as AuthorityService),
       },
       svc,
     );
@@ -352,15 +362,73 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
     expect(reads).toEqual(['data:/images/s/cat.png']);
   });
 
+  it('历史里的占位符：取出其中的引用读', async () => {
+    const { result, reads } = await analyze(
+      { 'data:/images/s/cat.png': PNG },
+      '[图片: 一只猫 | ref:data:/images/s/cat.png]',
+      { delivery: 'passthrough' },
+    );
+    expect(result.images).toEqual([`data:image/png;base64,${Buffer.from(PNG).toString('base64')}`]);
+    expect(reads).toEqual(['data:/images/s/cat.png']);
+  });
+
   it.each([
     ['文本', YAML],
     ['音频', MP3],
   ])('扩展名是 .png、内容是%s：用本工具的话拒，不交给识别模型', async (_label, content) => {
-    const { result, calls } = await analyze({ 'data:/images/s/fake.png': content }, 'data/images/s/fake.png', {
+    const { result, calls } = await analyze({ 'data:/images/s/fake.png': content }, 'data:/images/s/fake.png', {
       delivery: 'describe',
     });
     expect(JSON.parse(result.content).error).toBe('目标不是图片（文件内容不是受支持的图片格式）');
     expect(calls).toHaveLength(0);
+  });
+
+  /** owner 在只有自己的会话里调用：判据不限，读不读、读哪个只看来源怎么规整 */
+  const ownCall: ToolCallContext = { sessionId: 's', platform: 'test', userId: 'u1', acceptsImages: true };
+
+  it.each([
+    ['out.png', 'workspace:/out.png'],
+    ['./pics/out.png', 'workspace:/pics/out.png'],
+  ])('相对路径（%s）与 file_* 工具一致归到工作区：读 %s', async (image, uri) => {
+    const { result, reads } = await analyze({ [uri]: PNG }, image, {
+      delivery: 'passthrough',
+      call: ownCall,
+      owner: true,
+    });
+    expect(result.images).toEqual([`data:image/png;base64,${Buffer.from(PNG).toString('base64')}`]);
+    expect(reads).toEqual([uri]);
+  });
+
+  it('data/images/… 不按首段补成存储地址，当成工作区路径；找不到时回错误，提示存储地址的写法', async () => {
+    const { result, calls, reads } = await analyze({ 'data:/images/s/cat.png': PNG }, 'data/images/s/cat.png', {
+      delivery: 'describe',
+      call: ownCall,
+      owner: true,
+    });
+    expect(JSON.parse(result.content).error).toBe(
+      '找不到 workspace:/data/images/s/cat.png：相对路径按工作区（workspace:/）找，别处的图要写带根名的存储地址，如 data:/images/…',
+    );
+    expect(calls).toHaveLength(0);
+    expect(reads).toEqual(['workspace:/data/images/s/cat.png']);
+  });
+
+  it('房间里写成相对路径：判据不放行时同样提示存储地址的写法，不读文件', async () => {
+    const image = `data/images/${GROUP_DIR}/onebot/0123456789abcdef.png`;
+    const { result, reads } = await analyze({ [`data:/images/${GROUP_DIR}/onebot/0123456789abcdef.png`]: PNG }, image, {
+      delivery: 'describe',
+      call: { sessionId: GROUP, platform: 'onebot', userId: '90002' },
+      sessions: [storedRoom(GROUP) as unknown as SessionInfo],
+    });
+    expect(JSON.parse(result.content).error).toBe(
+      `找不到 workspace:/${image}：相对路径按工作区（workspace:/）找，别处的图要写带根名的存储地址，如 data:/images/…`,
+    );
+    expect(reads).toEqual([]);
+  });
+
+  it.each(['/srv/pics/cat.png', 'C:\\pics\\cat.png'])('本机路径（%s）：回「不能写本机路径」，不读文件', async image => {
+    const { result, reads } = await analyze({}, image, { delivery: 'describe', call: ownCall, owner: true });
+    expect(JSON.parse(result.content).error).toBe('图片来源要写历史引用、存储地址或网址，不能写本机路径');
+    expect(reads).toEqual([]);
   });
 
   it('房间里看别的会话的图：拒，不读文件', async () => {
@@ -383,7 +451,7 @@ describe('update_image_description：只改调用所在会话', () => {
   it('传 session_id 被参数校验拒；不传时改调用所在会话', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     const updates: Array<[string, string, string]> = [];
-    const history: Message[] = [{ role: 'user', content: '[图片 | ref:data/images/s/a.png]', timestamp: 1 }];
+    const history: Message[] = [{ role: 'user', content: '[图片 | ref:data:/images/s/a.png]', timestamp: 1 }];
     const memoryStub = {
       getHistory: async () => history,
       updateMessageContent: async (sessionId: string, oldText: string, newText: string) => {
@@ -401,17 +469,17 @@ describe('update_image_description：只改调用所在会话', () => {
     const call = { sessionId: 's', platform: 'test' };
     const refused = await registry.execute(
       'update_image_description',
-      { image_ref: 'data/images/s/a.png', description: '一只猫', session_id: 'other' },
+      { image_ref: 'data:/images/s/a.png', description: '一只猫', session_id: 'other' },
       call,
     );
     expect(JSON.parse(refused.content).error).toContain('包含未知参数 "session_id"');
     expect(updates).toEqual([]);
     await registry.execute(
       'update_image_description',
-      { image_ref: 'data/images/s/a.png', description: '一只猫' },
+      { image_ref: 'data:/images/s/a.png', description: '一只猫' },
       call,
     );
     await app.stop();
-    expect(updates).toEqual([['s', '[图片 | ref:data/images/s/a.png]', '[图片: 一只猫 | ref:data/images/s/a.png]']]);
+    expect(updates).toEqual([['s', '[图片 | ref:data:/images/s/a.png]', '[图片: 一只猫 | ref:data:/images/s/a.png]']]);
   });
 });

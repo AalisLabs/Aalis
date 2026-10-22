@@ -41,7 +41,7 @@ afterEach(async () => {
 const UNVIEWABLE = (n: number) => `[附了 ${n} 张图，当前无法查看]`;
 /** 每个用例各自的图：描述缓存是模块级的，同一张图会命中前一个用例的描述 */
 const png = (seed: string) => `data:image/png;base64,${Buffer.from(`png-${seed}`).toString('base64')}`;
-const LANDED = /^\[图片 \| ref:data\/images\/webui-default\/[0-9a-f]{16}\.png\]$/;
+const LANDED = /^\[图片 \| ref:data:\/images\/webui-default\/media\/[0-9a-f]{16}\.png\]$/;
 
 function cfg(recognizeOnArrival: boolean): MediaConfigResolved {
   return {
@@ -100,7 +100,7 @@ describe('没有能看图的模型', () => {
     const content = buildIncomingContent(msg);
     expect(content.split(UNVIEWABLE(2))).toHaveLength(2);
     const refs = parseAttachmentRefs(content);
-    expect(refs.map(r => r.ref)).toEqual(written.map(uri => uri.replace('data:/', 'data/')));
+    expect(refs.map(r => r.ref)).toEqual(written);
     expect(refs.every(r => r.desc === undefined)).toBe(true);
   });
 
@@ -124,17 +124,17 @@ describe('没有能看图的模型', () => {
     expect(svc.imageDescriber()).toBeNull();
   });
 
-  it('OneBot 的图（正文已带引用、data 是落盘后的相对路径）：描述位不再重复写引用，只写那一行', async () => {
+  it('OneBot 的图（正文已带引用、data 是落盘后的存储地址）：描述位不再重复写引用，只写那一行', async () => {
     landInMemory();
     const svc = new MediaServiceImpl(emptyMediaCaps(logger), cfg(true));
     const msg: IncomingMessage = {
-      content: '[图片 | ref:data/images/g/a.jpg][图片 | ref:data/images/g/b.jpg]',
+      content: '[图片 | ref:data:/images/g/onebot/a.jpg][图片 | ref:data:/images/g/onebot/b.jpg]',
       sessionId: 'onebot:10000:group:20001',
       platform: 'onebot',
       userId: '30001',
       attachments: [
-        { kind: 'image', data: 'data/images/g/a.jpg' },
-        { kind: 'image', data: 'data/images/g/b.jpg' },
+        { kind: 'image', data: 'data:/images/g/onebot/a.jpg' },
+        { kind: 'image', data: 'data:/images/g/onebot/b.jpg' },
       ],
     };
     await svc.processMessage(msg);
@@ -170,7 +170,7 @@ describe('有能看图的模型', () => {
     const msg = webui([{ kind: 'image', data: png('d1') }]);
     await svc.processMessage(msg);
     const [only] = msg._attachmentDescriptions ?? [];
-    expect(only).toMatch(/^\[图片: 一只猫 \| ref:data\/images\/webui-default\/[0-9a-f]{16}\.png\]$/);
+    expect(only).toMatch(/^\[图片: 一只猫 \| ref:data:\/images\/webui-default\/media\/[0-9a-f]{16}\.png\]$/);
   });
 
   it.each([
@@ -191,7 +191,7 @@ describe('有能看图的模型', () => {
     expect(written).toHaveLength(1);
     const [only] = msg._attachmentDescriptions ?? [];
     expect(parseAttachmentRefs(only ?? '')).toEqual([
-      { kind: '图片', desc: '获取或识别失败，内容未知', ref: written[0].replace('data:/', 'data/') },
+      { kind: '图片', desc: '获取或识别失败，内容未知', ref: written[0] },
     ]);
     expect(only).not.toContain('无法查看');
     expect(report.successCount).toBe(0);

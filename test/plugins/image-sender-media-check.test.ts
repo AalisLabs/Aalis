@@ -205,7 +205,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     const history: Message[] = [
       {
         role: 'user',
-        content: '[图片 | ref:data/images/s/cat.png]',
+        content: '[图片 | ref:data:/images/s/cat.png]',
         timestamp: 1,
         metadata: { [WellKnownMetadataKeys.Attachments]: [{ kind: 'image', ref: 'data:/images/s/cat.png' }] },
       },
@@ -219,9 +219,9 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
       },
       {
         role: 'assistant',
-        content: '[音频 | ref:data/images/s/song.mp3]',
+        content: '[音频 | ref:data:/images/s/song.mp3]',
         timestamp: 3,
-        metadata: { [WellKnownMetadataKeys.SentRef]: 'data/images/s/song.mp3' },
+        metadata: { [WellKnownMetadataKeys.SentRef]: 'data:/images/s/song.mp3' },
       },
     ];
     const started = startApp({ [OWNER_SESSION]: history, [ROOM]: history });
@@ -249,7 +249,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   it.each([
     ['data:/secret/config.yaml', 'image', '图片'],
-    ['data/secret/token.txt', 'audio', '音频'],
+    ['data:/secret/token.txt', 'audio', '音频'],
     ['data:/secret/memory.db', 'video', '视频'],
   ])('storage_uri 指向非媒体文件（%s，按 %s）→ 拒发，不出站', async (uri, kind, label) => {
     const out = await send({ kind, storage_uri: uri });
@@ -259,7 +259,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   });
 
   it('storage_uri 是媒体但 kind 不符 → 拒发，说出检测到的格式与该用的 kind', async () => {
-    const out = await send({ kind: 'image', storage_uri: 'data/images/s/song.mp3' });
+    const out = await send({ kind: 'image', storage_uri: 'data:/images/s/song.mp3' });
     expect(out.error).toBe('文件是 MP3 音频，不能按 image 发送；请改用 kind=audio 重新发送');
     expect(outbound).toHaveLength(0);
   });
@@ -283,8 +283,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   });
 
   it('storage_uri 指向合法 PNG → 照常发出', async () => {
-    const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
-    expect(out).toEqual({ ok: true, sent: { kind: 'image', via: 'storage_uri', ref: 'data/images/s/cat.png' } });
+    const out = await send({ kind: 'image', storage_uri: 'data:/images/s/cat.png' });
+    expect(out).toEqual({ ok: true, sent: { kind: 'image', via: 'storage_uri', ref: 'data:/images/s/cat.png' } });
     expect(outbound).toHaveLength(1);
     expect(outbound[0].attachments?.[0].data, '交出 storage URI，送达形态由平台适配器定').toBe(
       'data:/images/s/cat.png',
@@ -295,8 +295,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     ['owner 在自己的会话里', OWNER_CALL],
     ['群友在群里', ROOM_CALL],
   ])('history_ref 按真实落库的形状找到并发出（%s）：入站附件清单与发出的附件都算', async (_label, call) => {
-    const image = await send({ kind: 'image', history_ref: 'ref:data/images/s/cat.png' }, call);
-    expect(image).toEqual({ ok: true, sent: { kind: 'image', via: 'history_ref', ref: 'data/images/s/cat.png' } });
+    const image = await send({ kind: 'image', history_ref: 'ref:data:/images/s/cat.png' }, call);
+    expect(image).toEqual({ ok: true, sent: { kind: 'image', via: 'history_ref', ref: 'data:/images/s/cat.png' } });
     const audio = await send({ kind: 'audio', history_ref: 'data:/images/s/song.mp3' }, call);
     expect(audio.ok).toBe(true);
     expect(outbound.map(m => m.attachments?.[0].data)).toEqual(['data:/images/s/cat.png', 'data:/images/s/song.mp3']);
@@ -306,10 +306,13 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     ['owner 在自己的会话里', OWNER_CALL],
     ['群友在群里', ROOM_CALL],
   ])('history_ref 指向存在、但不在本会话历史里的文件 → 拒（%s）', async (_label, call) => {
-    const out = await send({ kind: 'image', history_ref: 'data/images/s/other.png' }, call);
-    expect(out.error).toBe('未在本会话历史中找到引用: data/images/s/other.png');
-    const elsewhere = await send({ kind: 'image', history_ref: 'data/images/s/cat.png' }, { ...call, sessionId: 'zz' });
-    expect(elsewhere.error).toBe('未在本会话历史中找到引用: data/images/s/cat.png');
+    const out = await send({ kind: 'image', history_ref: 'data:/images/s/other.png' }, call);
+    expect(out.error).toBe('未在本会话历史中找到引用: data:/images/s/other.png');
+    const elsewhere = await send(
+      { kind: 'image', history_ref: 'data:/images/s/cat.png' },
+      { ...call, sessionId: 'zz' },
+    );
+    expect(elsewhere.error).toBe('未在本会话历史中找到引用: data:/images/s/cat.png');
     expect(outbound).toHaveLength(0);
   });
 
@@ -353,7 +356,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
       source: { refused: '模拟平台拒绝' },
     });
     deliveryResult = { ok: false, error: t('refused') };
-    const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
+    const out = await send({ kind: 'image', storage_uri: 'data:/images/s/cat.png' });
     expect(out.ok).toBeUndefined();
     expect(out.error).toBe('模拟平台拒绝');
     expect(outbound).toHaveLength(1);
@@ -361,7 +364,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   it('平台报结果未知（可能已经送达）：不报告成功，也不劝重发——不靠适配器的措辞', async () => {
     deliveryResult = { ok: false, error: 'upload timeout', unconfirmed: true };
-    const out = await send({ kind: 'image', storage_uri: 'data/images/s/cat.png' });
+    const out = await send({ kind: 'image', storage_uri: 'data:/images/s/cat.png' });
     expect(out.ok).toBeUndefined();
     expect(out.error).toContain('可能已经送达');
     expect(out.error).toContain('请勿重发');

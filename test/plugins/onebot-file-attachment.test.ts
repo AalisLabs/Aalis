@@ -1086,9 +1086,9 @@ describe('onebot 出站：send_attachment 投递结果', () => {
     const url = `${httpBase}/ok.png`;
     expect(await t.sendAttachment({ kind: 'image', url })).toMatchObject({ ok: true });
     expect(aliases).toEqual([
-      [url, expect.stringMatching(/^data\/images\/onebot_10000_group_20001\/[0-9a-f]{16}\.png$/)],
+      [url, expect.stringMatching(/^data:\/images\/onebot_10000_group_20001\/onebot\/[0-9a-f]{16}\.png$/)],
     ]);
-    expect(t.files.get(aliases[0][1].replace(/^data\//, 'data:/'))).toEqual(PNG);
+    expect(t.files.get(aliases[0][1])).toEqual(PNG);
   });
 
   it('混合附件部分失败：只归档已投递的 PNG', async () => {

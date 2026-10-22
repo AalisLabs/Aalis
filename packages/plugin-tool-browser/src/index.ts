@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node:net';
+import { sessionDirName } from '@aalis/api-media';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { storage as storageService } from '@aalis/api-storage';
@@ -684,8 +685,7 @@ function runBrowserTools(caps: Caps): void {
         // 文件名取内容 sha256 前 16 位：同一张图重截复用同一文件，零增量。
         // 只有落盘失败才退回只给 images。base64 只在真要交图的分支上现算。
         const digest = createHash('sha256').update(png).digest('hex').slice(0, 16);
-        const safeSession = (callCtx.sessionId || 'unknown').replace(/[:/\\]/g, '_');
-        const uri = `tmp:/browser/${safeSession}/shot-${digest}.png`;
+        const uri = `tmp:/browser/${sessionDirName(callCtx.sessionId)}/shot-${digest}.png`;
         let storedUri: string | undefined;
         try {
           await storage.writeFile(uri, png);

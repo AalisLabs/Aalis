@@ -1,16 +1,15 @@
 // ============================================================
 // attachment-cache.ts — 统一附件落盘（storage URI 版）
 //
-// 入站/出站的 image / audio / video / file 统一缓存到
-//   data:/{kind}s/{safeSessionId}/{sha256-16}.{ext}
+// 入站/出站的 image / audio / video / file 统一缓存到本适配器自己的子目录
+//   data:/{kind}s/{会话目录}/onebot/{sha256-16}.{ext}（@aalis/api-media 的会话媒体目录约定）
 //
 // 设计要点：
 // - cacheAttachmentBuffer 只接受 Buffer；cacheOneAttachment 负责下载与音频的 ffmpeg 转码；
 //   get_record 由调用方负责
 // - 单文件 size cap 由调用方传入，超限直接返回 null
-// - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重
-// - 返回的 ref 仍是相对路径（如 `data/audios/.../xxx.wav`）以兼容历史 ref:
-//   解析；存盘走 storage.writeFile('data:/...')
+// - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重（api-media 的命名约定）
+// - 返回落盘的存储地址，写进附件引用
 //
 // loadAttachmentBuffer 遇到 file:// / OS 绝对路径时改走 ProcessService.readExternalFile，
 // 避免 adapter 直接依赖 node:fs。原因：OneBot daemon 推来的路径可能不在任何 storage
@@ -19,29 +18,19 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { sessionMediaUri } from '@aalis/api-media';
 import type { ProcessService } from '@aalis/api-process';
 import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 
-export const KIND_DIR: Record<AttachmentKind, string> = {
-  image: 'images',
-  audio: 'audios',
-  video: 'videos',
-  file: 'files',
-};
-
-/** 把 sessionId 转为文件系统安全的名字（替换 `:`/`/`/`\\`）。 */
-function safeSessionDir(sessionId: string): string {
-  return sessionId.replace(/[:/\\]/g, '_');
-}
+/** 本适配器在会话媒体目录里的子目录名（写入方） */
+export const MEDIA_WRITER = 'onebot';
 
 /**
- * 把 Buffer 落盘到 `data:/{kind}s/{session}/{hash}.{ext}`。
+ * 把 Buffer 落盘到 `data:/{kind}s/{会话目录}/onebot/{hash}.{ext}`，返回这个存储地址。
  * 超过 maxBytes 时返回 null，由调用方决定降级策略。
- * 返回值是 `data/{kind}s/{session}/{filename}` 这一历史相对路径，
- * 用于写入 attachment ref；storage 落盘走 `data:/...` URI。
  */
 async function cacheAttachmentBuffer(
   storage: StorageService,
@@ -54,11 +43,9 @@ async function cacheAttachmentBuffer(
   if (buf.byteLength > maxBytes) return null;
   const digest = await crypto.subtle.digest('SHA-256', buf);
   const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-  const dirRel = `${KIND_DIR[kind]}/${safeSessionDir(sessionId)}`;
-  const filename = `${hash}.${ext.replace(/^\.+/, '') || 'bin'}`;
-  const uri = `data:/${dirRel}/${filename}`;
+  const uri = `${sessionMediaUri(kind, sessionId, MEDIA_WRITER)}/${hash}.${ext.replace(/^\.+/, '') || 'bin'}`;
   await storage.writeFile(uri, buf);
-  return `data/${dirRel}/${filename}`;
+  return uri;
 }
 
 /**
@@ -129,7 +116,7 @@ async function loadAttachmentBuffer(
 }
 
 /**
- * 把单个附件下载（必要时转码）后落盘，返回相对路径。失败返回 null。
+ * 把单个附件下载（必要时转码）后落盘，返回落盘的存储地址。失败返回 null。
  * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
  *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
  * - 其他 kind：原样落盘，扩展名按 magic header 推断。

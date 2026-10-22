@@ -119,8 +119,8 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
     );
 
     expect(described, '识别应拿到落盘后的 ref，而非原始 src').toHaveLength(1);
-    expect(described[0]).toMatch(/^data\/images\/onebot_t_group_1\/[0-9a-f]{16}\.png$/);
-    expect(readdirSync(join(base, 'state', 'images', 'onebot_t_group_1'))).toHaveLength(1);
+    expect(described[0]).toMatch(/^data:\/images\/onebot_t_group_1\/onebot\/[0-9a-f]{16}\.png$/);
+    expect(readdirSync(join(base, 'state', 'images', 'onebot_t_group_1', 'onebot'))).toHaveLength(1);
     expect(existsSync(join(base, 'workspace', 'images'))).toBe(false);
     expect(out).toContain('[图片: 述]');
   });

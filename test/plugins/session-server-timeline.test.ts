@@ -1178,7 +1178,10 @@ describe('条目', () => {
         { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA' },
       ],
       // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述
-      _attachmentDescriptions: ['〔附件 报告.txt：三页的周报，ID 9f〕', '[图片: 一只橘猫 | ref:data/images/s/cat.png]'],
+      _attachmentDescriptions: [
+        '〔附件 报告.txt：三页的周报，ID 9f〕',
+        '[图片: 一只橘猫 | ref:data:/images/s/media/cat.png]',
+      ],
     });
     expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('〔附件 报告.txt');
     const asked = c.timeline(s.id, sub).map(shape);
@@ -1188,7 +1191,7 @@ describe('条目', () => {
         text: '看看这两个',
         attachments: [
           { kind: 'file', name: '报告.txt', src: expect.any(String) },
-          { kind: 'image', name: 'cat.png', src: 'data:/images/s/cat.png' },
+          { kind: 'image', name: 'cat.png', src: 'data:/images/s/media/cat.png' },
         ],
         speaker: { platform: 'webui', userId: 'console', owner: true },
       },

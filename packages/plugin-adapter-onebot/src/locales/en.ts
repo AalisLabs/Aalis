@@ -33,4 +33,10 @@ export default defineLocale<Source>()({
   pokedOther: '{user} poked {target}',
   uploaded: '{user} uploaded {file}',
   unknownFile: 'an unknown file',
+  mediaImage: 'images',
+  mediaVideo: 'videos',
+  mediaAudio: 'voice messages',
+  mediaFile: 'files',
+  mediaCleared: 'Cleared {kind} sent and received over OneBot ({count, plural, one {# file} other {# files}})',
+  mediaFailed: 'Failed to clear {kind} sent and received over OneBot: {error}',
 });
