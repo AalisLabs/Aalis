@@ -151,9 +151,9 @@ export function idleTimeout(
 服务商给生成请求计超时用，按停顿计：从调用起计时，每次 `touch` 重新计时，停顿（不算 `pause` 到 `resume` 之间）满 `ms` 毫秒时 `signal` 以 `TimeoutError`（`DOMException`）中止；调用方的 `signal` 中止时随之中止，原因照抄。`ms` 为 0 或负数时不限，超过定时器上限 `IDLE_TIMEOUT_MAX_MS`（2^31−1 毫秒，约 24.8 天）时按上限计，不是数（含 `NaN`）时抛 `RangeError`。报错里要写时限的，按截到上限之后的值写。
 
 - 把 `signal` 交给请求。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的名字与参数）调一次 `touch`；保活注释、空行与没有生成内容的帧（如只有角色的首帧）不调，停住时只发这些的连接照样超时。
-- 交出一段之前调 `pause`，调用方回来取下一段时调 `resume`：其间不计时，之后接着计、不从头计。调用方处理一段的时间不算停顿，没有生成内容的帧也不会因为交出过而重新计时。
+- 交出一段之前调 `pause`，调用方回来取下一段时调 `resume`：其间不计时，之后接着计、不从头计。调用方处理一段的时间不算停顿，没有生成内容的帧也不会因为交出过而重新计时。已暂停时再调 `pause`、没暂停时调 `resume` 都不起作用。
 - 不流式的请求都不调：整份回复是唯一的一段，`ms` 内没读完就中止。
-- Node 自带的 `fetch` 等响应头与读响应体默认各有 300 秒时限，到了就断开连接，报错也不是 `TimeoutError`。生成请求要换一个不设这两个时限的 dispatcher（如 undici 的 `Agent`，`headersTimeout` 与 `bodyTimeout` 设 0），`ms` 才是唯一的时限，为 0 或大于 300 秒时才管得住。
+- Node 自带的 `fetch` 等响应头与读响应体默认各有 300 秒时限，到了就断开连接，报错也不是 `TimeoutError`。生成请求要换一个不设这两个时限的 dispatcher（如 undici 的 `Agent`，`headersTimeout` 与 `bodyTimeout` 设 0），`ms` 才是唯一的时限，为 0 或大于 300 秒时才管得住。带了自己的 dispatcher 的请求不走全局 dispatcher，经 `NODE_USE_ENV_PROXY` 或 `setGlobalDispatcher` 配的代理对它不起作用。
 - 计时器不拖住进程退出，请求结束后不用收尾。
 
 ## 模型引用解析

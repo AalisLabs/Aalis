@@ -267,9 +267,9 @@ export const IDLE_TIMEOUT_MAX_MS = 2 ** 31 - 1;
  * ms 毫秒时 signal 以 TimeoutError 中止；调用方的 signal 中止时 signal 随之中止，原因照抄。ms 为 0 或负数时不限，超过
  * IDLE_TIMEOUT_MAX_MS 时按它计，不是数（含 NaN）时抛 RangeError。流式请求每解析出一段带生成内容的增量（正文、思考、工具调用的
  * 名字与参数）调一次 touch，保活注释、空行与没有生成内容的帧不调；交出一段之前调 pause、调用方回来取下一段时调 resume，其间不
- * 计时、之后接着计，调用方处理一段的时间不算停顿。不流式的请求都不调，即 ms 内没读完整份回复就中止。计时器不拖住进程退出，
- * 请求结束后不用收尾。Node 自带的 fetch 等响应头与读响应体默认各有 300 秒时限，生成请求要换一个不设这两个时限的
- * dispatcher，ms 才是唯一的时限
+ * 计时、之后接着计，调用方处理一段的时间不算停顿；已暂停时再调 pause、没暂停时调 resume 都不起作用。不流式的请求都不调，即
+ * ms 内没读完整份回复就中止。计时器不拖住进程退出，请求结束后不用收尾。Node 自带的 fetch 等响应头与读响应体默认各有 300 秒
+ * 时限，生成请求要换一个不设这两个时限的 dispatcher，ms 才是唯一的时限
  */
 export function idleTimeout(
   ms: number,
@@ -283,6 +283,7 @@ export function idleTimeout(
   /** 到时限的时刻；暂停时 left 记着还剩多久 */
   let deadline = performance.now() + limit;
   let left = limit;
+  let paused = false;
   let timer = limit > 0 ? setTimeout(abort, limit).unref() : undefined;
   return {
     signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
@@ -291,10 +292,14 @@ export function idleTimeout(
       timer?.refresh();
     },
     pause: () => {
+      if (paused) return;
+      paused = true;
       clearTimeout(timer);
       left = deadline - performance.now();
     },
     resume: () => {
+      if (!paused) return;
+      paused = false;
       if (!timer) return;
       deadline = performance.now() + left;
       timer = setTimeout(abort, Math.max(left, 0)).unref();

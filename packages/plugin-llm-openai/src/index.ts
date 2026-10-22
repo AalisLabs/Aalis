@@ -14,7 +14,7 @@ import { type ConfigOf, configError, defineConfig, missingConfigError, parseConf
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
-import { Agent } from 'undici';
+import { Agent, errors } from 'undici';
 
 // ===== 插件元数据 =====
 
@@ -322,7 +322,7 @@ class OpenAIClient {
     this.logger = logger;
   }
 
-  /** 停用时关掉生成请求的连接池，之后的请求被拒。不等在飞的请求读完：它们是调用方的，等它们会让重载卡到回复写完 */
+  /** 停用时关掉生成请求的连接池，之后的请求被拒（报插件已停用或重载）。不等在飞的请求读完：它们是调用方的，等它们会让重载卡到回复写完 */
   close(): void {
     void this.dispatcher.close();
   }
@@ -341,8 +341,8 @@ class OpenAIClient {
   }
 
   /**
-   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时与连不上各换成一句说明，其它错误
-   * 原样返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾
+   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时、连不上与连接池已关闭（插件停用或重载）
+   * 各换成一句说明，其它错误原样返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾
    */
   private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
     if (request.signal?.aborted) return err;
@@ -351,6 +351,9 @@ class OpenAIClient {
       return new Error(`LLM 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
+      if (err.cause instanceof errors.ClientClosedError || err.cause instanceof errors.ClientDestroyedError) {
+        return new Error('LLM 插件已停用或重载，这次请求没有发出');
+      }
       return new Error('LLM 连不上服务：检查 baseUrl 与网络，详情见日志');
     }
     return err;

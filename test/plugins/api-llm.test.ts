@@ -56,4 +56,25 @@ describe('idleTimeout', () => {
     await sleep(450);
     expect(timer.signal.reason, 'resume 之后从头计了').toMatchObject({ name: 'TimeoutError' });
   });
+
+  it('没暂停时调 resume 不起作用：仍只有一个计时，touch 照常重新计时', async () => {
+    const timer = idleTimeout(500);
+    timer.resume();
+    timer.resume();
+    await sleep(300);
+    timer.touch();
+    await sleep(350);
+    expect(timer.signal.aborted, '多挂了一个计时').toBe(false);
+  });
+
+  it('已暂停时再调 pause 不起作用：剩下的时间只算第一次暂停时的', async () => {
+    const timer = idleTimeout(500);
+    await sleep(150);
+    timer.pause();
+    await sleep(300);
+    timer.pause();
+    timer.resume();
+    await sleep(200);
+    expect(timer.signal.aborted, '第二次暂停把暂停期间也扣掉了').toBe(false);
+  });
 });
