@@ -1,22 +1,10 @@
-import { ownHostConfig } from '@aalis/api-host-config';
 import { memory } from '@aalis/api-memory';
-import {
-  type AccessChecker,
-  type AccessCheckerDisposer,
-  type SessionHistoryReadResult,
-  type SessionHistoryService,
-  sessionHistory,
-} from '@aalis/api-session-history';
-import {
-  rootSessionOf,
-  type SessionInfo,
-  type SessionManagerService,
-  sessionManager,
-} from '@aalis/api-session-manager';
-import { sessionFields } from '@aalis/api-session-settings';
-import { type ToolCallContext, tools } from '@aalis/api-tools';
+import { type SessionHistoryReadResult, type SessionHistoryService, sessionHistory } from '@aalis/api-session-history';
+import { sessionManager, takeFrom } from '@aalis/api-session-manager';
+import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 import { CONTROL_KINDS, type Message } from '@aalis/schema-message';
 
 // ===== 插件元数据与能力声明 =====
@@ -35,19 +23,6 @@ const configSchema = defineConfig({
     default: 20,
     description: '不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。',
   },
-  // 按会话字段：坏值原样交来，按仅当前会话处理
-  scope: {
-    type: 'select',
-    label: '允许读取范围',
-    default: 'platform',
-    onInvalid: 'error',
-    options: [
-      { label: '仅当前会话', value: 'current' },
-      { label: '同平台会话', value: 'platform' },
-      { label: '全部会话', value: 'all' },
-    ],
-    session: { prominence: 'advanced' },
-  },
   includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
   perMessageMaxChars: {
     type: 'number',
@@ -63,21 +38,12 @@ const uses = {
   config,
   provide,
   memory: optional(memory),
-  /**
-   * 当前会话、目标会话的出生平台（子会话取根会话的）。不在场时没有出生平台：当前平台取入口平台，目标会话不属于任何平台，
-   * 同平台范围里读不到别的会话
-   */
+  /** 能不能读目标会话按它的规则判（takeFrom）；不在时只能读当前会话 */
   sessionManager: optional(sessionManager),
-  /** 按会话读允许读取范围；缺席时取插件配置里的值 */
-  sessionFields: optional(sessionFields),
-  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
-  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 type HistoryCaps = Pick<Caps, 'memory' | 'logger' | 'sessionManager'>;
 type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
-
-type HistoryScope = 'current' | 'platform' | 'all';
 
 type PluginConfig = ConfigOf<typeof configSchema>;
 
@@ -158,11 +124,6 @@ export function resolveTimeRange(
   return null;
 }
 
-/** 会话的根会话：子会话的窗口与出生平台都取它的；会话管理不在或会话不在表里时为 undefined */
-function rootOf(sm: SessionManagerService | undefined, sessionId: string): SessionInfo | undefined {
-  return sm && rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id));
-}
-
 /** 交给模型的历史不含事件标记（CONTROL_KINDS，如压缩分隔线、指令的回复）：它们不是对话内容 */
 const isSaid = (message: Message) => !CONTROL_KINDS.includes(message.kind ?? '');
 
@@ -187,66 +148,11 @@ function formatHistoryMessage(message: Message, index: number, perMessageMaxChar
   };
 }
 
-/** 允许读取范围的取值；不在其中的（写坏了的）按 current */
-const HISTORY_SCOPES: ReadonlySet<unknown> = new Set<HistoryScope>(['current', 'platform', 'all']);
-
-/**
- * 当前会话能否读目标会话的历史。scope 是当前会话的允许读取范围（生效值）。平台都按会话管理记下的出生平台：当前会话没有
- * 出生平台的取入口平台，目标会话没有出生平台的不属于任何平台（同平台范围里读不到）。范围粗筛按当前会话本身，平台规则按调用
- * 所在的窗口 currentWindowId（子会话没有窗口，取根会话的）
- */
-function canReadSessionHistory(
-  currentSessionId: string,
-  currentWindowId: string,
-  targetSessionId: string,
-  currentPlatform: string | undefined,
-  targetPlatform: string | undefined,
-  scope: HistoryScope,
-  checkers: readonly AccessChecker[],
-  callCtx: ToolCallContext,
-): { ok: true } | { ok: false; reason: string } {
-  // 1. 范围粗筛：先于平台规则裁决，平台规则只能在它放行之后再收窄
-  if (targetSessionId === currentSessionId) {
-    // 同会话仍允许平台 checker 表态（防御性）
-  } else if (scope === 'current') {
-    return { ok: false, reason: '读取范围限于当前会话' };
-  } else if (scope === 'platform') {
-    if (!currentPlatform || !targetPlatform || currentPlatform !== targetPlatform) {
-      const detail = `（当前=${currentPlatform || 'unknown'}, 目标=${targetPlatform || 'unknown'}）`;
-      return { ok: false, reason: `读取范围限于同平台会话${detail}` };
-    }
-  }
-  // scope === 'all' 直接走 checker 链
-
-  // 2. 问管目标会话 id 的 checker（契约：目标 id 以 `<checker.platform>:` 开头，id 的写法归那个平台），any-deny 短路；
-  //    无匹配 checker 默认通过
-  const matched = checkers.filter(c => targetSessionId.startsWith(`${c.platform}:`));
-  for (const checker of matched) {
-    const verdict = checker.check({ currentSessionId: currentWindowId, targetSessionId, callCtx });
-    if (verdict?.decision === 'deny') {
-      return { ok: false, reason: verdict.reason || `平台 ${checker.platform} 拒绝此次跨会话访问` };
-    }
-  }
-  return { ok: true };
-}
-
-/** scopeOf 读调用所在会话此刻的允许读取范围（生效值，坏值原样）；platform 是入口平台 */
 function createSessionHistoryService(
   { memory, logger, sessionManager }: HistoryCaps,
   cfg: PluginConfig,
-  scopeOf: (sessionId: string, platform: string | undefined) => unknown,
 ): SessionHistoryService {
-  const checkers: AccessChecker[] = [];
-
   return {
-    registerAccessChecker(checker: AccessChecker): AccessCheckerDisposer {
-      checkers.push(checker);
-      return () => {
-        const idx = checkers.indexOf(checker);
-        if (idx >= 0) checkers.splice(idx, 1);
-      };
-    },
-
     async getHistory(options, callCtx) {
       if (!memory.present) return { error: 'memory 服务不可用' };
       const store = memory.use;
@@ -254,23 +160,10 @@ function createSessionHistoryService(
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
-      const sm = sessionManager.present ? sessionManager.use : undefined;
-      const root = rootOf(sm, callCtx.sessionId);
-      // 当前平台：房间会话按出生平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）按入口平台
-      const currentPlatform = root?.originPlatform ?? callCtx.platform;
-      // 允许读取范围每次现读，改了下一次读取即生效；坏值按 current
-      const scope = scopeOf(callCtx.sessionId, callCtx.platform);
-      const verdict = canReadSessionHistory(
-        callCtx.sessionId,
-        root?.id ?? callCtx.sessionId,
-        targetSessionId,
-        currentPlatform,
-        rootOf(sm, targetSessionId)?.originPlatform,
-        HISTORY_SCOPES.has(scope) ? (scope as HistoryScope) : 'current',
-        checkers,
-        callCtx,
-      );
-      if (!verdict.ok) return { error: verdict.reason };
+      const { userId } = callCtx;
+      const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
+      const verdict = takeFrom(sessionManager, callCtx.sessionId, targetSessionId, principal);
+      if (!verdict.ok) return { error: toSource(verdict.reason) };
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || cfg.defaultLimit)));
       const includeArchived =
@@ -375,7 +268,7 @@ function registerSessionHistoryTools(
           '  取该会话落在区间内的消息（含归档完整记录），按时间正序返回最早的 limit 条；',
           '  窗口内更多时结果带 truncated:true（请缩小时间窗再查）。',
           '适合在用户明确提到另一个会话、需要核实原文上下文、或要查「某段时间里聊了什么」时使用。',
-          '默认只允许读取配置范围内的会话；不要把它当作全局搜索工具，语义检索请用 memory_recall。',
+          '能读哪些会话按会话管理的跨会话规则（默认同平台、不读别人的私聊）；不要把它当作全局搜索工具，语义检索请用 memory_recall。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -455,12 +348,7 @@ export default definePlugin({
     };
     if (!cfg.enabled) return;
 
-    const fields = caps.sessionFields.use.fields(configSchema, caps);
-    const historyService = createSessionHistoryService(
-      caps,
-      cfg,
-      (sessionId, platform) => fields.get(sessionId, { platform }).scope,
-    );
+    const historyService = createSessionHistoryService(caps, cfg);
     caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' });
     registerSessionHistoryTools(caps, historyService, cfg);
   },

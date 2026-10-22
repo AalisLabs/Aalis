@@ -30,12 +30,11 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/api-session-history": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-session-history": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.12.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
-    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -50,9 +49,7 @@
       "optional": [
         "tools",
         "memory",
-        "session-manager",
-        "host-config",
-        "session-settings"
+        "session-manager"
       ],
       "provides": [
         "session-history"

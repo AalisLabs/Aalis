@@ -175,7 +175,8 @@ interface SessionFieldReader<S> {
 | [plugin-skills](../plugins/plugin-skills.md) | `enabledSkills` | 全部 | owner | `['*']` |
 | [plugin-memory-summary](../plugins/plugin-memory-summary.md) | `compressAt` | 全部 | owner | 0.8 |
 | [plugin-checkpoint](../plugins/plugin-checkpoint.md) | `coverage`（记检查点的会话） | 全部 | owner | 按受众（`ownerOnly`） |
-| [plugin-memory-history](../plugins/plugin-memory-history.md)、[plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-tool-session](../plugins/plugin-tool-session.md)、[plugin-user-relation](../plugins/user-relation.md) | 各自的范围：`scope`、`crossSessionMode`、`scope`、`recallScope` | 全部 | owner | 各插件的作者默认 |
+| [plugin-session-manager](../plugins/plugin-session-manager.md) | 取别的会话的范围 `takeScope` 与三个开关 `takeOtherGroups`、`takeOthersPrivate`、`takeCrossBot` | 全部 | owner | 同平台；读别的群；不读别人的私聊；不跨机器人账号 |
+| [plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-user-relation](../plugins/user-relation.md) | 各自的范围：`crossSessionMode`、`recallScope` | 全部 | owner | 各插件的作者默认 |
 | [plugin-subtask](../plugins/plugin-subtask.md) | `model`（子任务模型） | owner 会话与房间 | 1 级 | 不另指定（与本会话相同） |
 | plugin-i18n | `language` | 房间 | 1 级 | `['en']` |
 | [plugin-paper](../plugins/plugin-paper.md) | 白纸与远端代理的六项 | 房间，只能设到场所 | owner | 关；每个窗口各一块；不允许；不另加限制 |

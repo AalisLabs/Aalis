@@ -11,6 +11,7 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 
 - **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:input:before` 中间件翻 `active`，同一会话的最后一轮结束时由它收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间经可等待的 `recordInbound` 收录（§6.6），网关在入站相位之前等它。
 - **场所与工作区**：每个会话恰好一个场所（聊天窗口或工作区），子会话取根会话的；工作区由 owner 登记（§2.7）。
+- **取别的会话的东西**：一个会话能不能取另一个会话的历史与媒体只有一条规则，就是 `canTake`，范围与三个开关是本插件的按会话字段（§2.8）。
 - **插件按会话、按场所存的数据**：会话记录与场所记录各有一份 `metadata`，插件自己读写（§2.4）。session-manager 不认识设置：会话设置的场所层与本会话层由 [plugin-session-settings](../plugins/plugin-session-settings.md) 存在这里。
 
 它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据与场所记录持久化到 `memory` 的 metadata 命名空间 `sessions` 与 `places`（`plugin-session-manager/src/index.ts`）。
@@ -34,6 +35,9 @@ ensureSession(id: string, patch?: SessionUpdates, creation?: { createdFrom: stri
 deleteSession(id: string): Promise<void>;            // 连同各级子会话：先发 session:deleted，再清数据（§2.5）
 // 原生入站的收录与补记，可等待（§6.6）
 recordInbound(message: IncomingMessage): Promise<void>;
+
+// 取别的会话的东西（§2.8）：同步，不抛错。消费方经契约的 takeFrom 调
+canTake(currentId: string, targetId: string, principal?: { platform: string; userId: string }): TakeVerdict;
 
 // 树形
   // 父会话未建档时（带 source 的注入回合落在还没建档的会话上）先按原样 id 兜底建档，再挂子会话；兜底建的档没有来源字段与创建来源，是房间的由之后的原生入站补记（§6.6）
@@ -62,7 +66,7 @@ removeWorkspace(id: string): Promise<void>;
 updateSessionTitle(sessionId: string, title: string): Promise<void>;
 ```
 
-`getSession` / `listSessions` / `getChildren` / `placeOf` / `getPlace` / `listPlaces` / `listWorkspaces` 是**同步**方法（读内存里的会话表与场所表），不要 `await`。
+`getSession` / `listSessions` / `getChildren` / `canTake` / `placeOf` / `getPlace` / `listPlaces` / `listWorkspaces` 是**同步**方法（读内存里的会话表与场所表），不要 `await`。
 
 ### 2.2 重要类型
 
@@ -167,9 +171,24 @@ interface SessionInfo {
 - `listWorkspaces()`：默认工作区在前，其后按登记先后；目录在不在不存储，由用到它的一方在用时检查。
 - `removeWorkspace(id)`：只删工作区记录（连同它的 `metadata`），不动文件；原属会话（根会话记下的是它的）清掉所属工作区与绑定，会话树里的当前目录一并清掉，回到默认工作区，改了的会话各发 `session:updated`。默认工作区与没有记录的 id 抛错。再添加同一个目录得到的是新工作区。
 
+### 2.8 取别的会话的东西
+
+`canTake(currentId, targetId, principal?)` 是取别的会话的东西（历史、媒体）的唯一规则，回 `{ ok: true }` 或 `{ ok: false, reason }`（`reason` 是文字对象，交给模型的取它的 `source`）。`principal` 是这次动作的授权身份：工具传这次调用的（`actor`，没有时取 `platform` 与 `userId`，没有 `userId` 不传），不是谁要的取用（跨会话历史的被动注入）不传。依次：
+
+1. 同一会话 id 放行；两边的根会话都判得出且是同一个（同一棵会话树）放行。两个判不出的根会话不算相同。
+2. 任一边的根会话判不出：拒绝，原因是契约导出的 `TAKE_UNKNOWN`。判不出的有：不在会话表里、父会话链断了、按 id 兜底建档的空记录（§2.5）、有出生平台却没有聊天窗口（升级前的旧记录，等下一条原生入站补记）。过了这一步，根会话只有两种：IM 房间（出生平台加聊天窗口）与 owner 的面（有创建来源：WebUI、终端与项目会话）。
+3. 范围，取当前会话的生效值：本会话拒绝；同平台要两边根会话的平台相等；全部不比。根会话的平台：IM 房间取出生平台，owner 的面取创建来源（第一方的登记名 `webui`、`cli` 与平台名相同）。
+4. 按目标：两边同平台、都记了机器人账号且不同，要「跨机器人账号」（不同平台之间只由范围管）；目标多方（按根会话记下的 `originChat.multiParty`）要「读别的群」；目标一对一（IM 的一对一窗口，以及按与 owner 的一对一处理的 owner 的面）是授权身份自己的私聊的放行，否则要「读别人的私聊」。
+
+「自己的私聊」：owner 的面看授权身份是不是 owner（参考实现取已有的 `optional(authority)`，不在时没有人是 owner）；IM 的一对一窗口按契约导出的纯函数 `oneToOneWith(root, principal, declared, isOwner?)` 判：`declared` 是调用方算好的「出生平台的适配器明确声明了这个窗口的类型为一对一」（推断出的不算：没声明类型的平台整个按一对一记，记下的对端是收录时的第一位发言者），成立时对端就是授权身份的账号、授权身份的平台就是出生平台，或者两边都是 owner 的身份（`isOwner` 由调用方给）。参考实现按已有的 `optional(platform)` 取出生平台适配器的类型声明，取不到时为否。
+
+范围（`takeScope`）与三个开关（`takeOtherGroups`、`takeOthersPrivate`、`takeCrossBot`）是参考实现 configSchema 里的按会话字段（[plugin-session-manager](../plugins/plugin-session-manager.md#配置)），按当前会话取生效值，对所有人一样，owner 也不例外；只看目标，不看当前会话的种类与有没有聊天窗口。
+
+消费方一律调契约的包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`，不直接调方法、不各写退路：会话管理在时转调 `canTake`，不在时只放行同一会话 id，其余回 `TAKE_UNKNOWN`。第一方消费方：session-history 服务的 `getHistory`（`session_get_history`、`onebot_get_session_history` 都经它）、plugin-tool-onebot 的 `onebot_get_msg`、plugin-memory-history 的被动注入与 `recent_messages`。向量记忆的召回与关系图不经这条规则，各有自己的范围（[安全模型](../concepts/security-model.md)）。
+
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide.use(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有内置的 `events`、`hooks`、`lifecycle` 等）、`optional = ['agent','authority','i18n','llm','platform']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
+**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide.use(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有内置的 `config`、`events`、`hooks`、`lifecycle` 等）、`optional = ['agent','authority','host-config','i18n','llm','platform','session-settings']`（`index.ts`）：会话设置与宿主配置用来按会话读取别的会话的范围与开关。plugin-session-settings 以 required 用会话管理，两边一边 required、一边 optional：会话管理先激活，读取器的登记随会话设置上线补上，会话设置不在时只取插件配置里的值。没有 `memory` 时直接拒绝启动（`index.ts`）。
 
 **典型消费点**：
 
@@ -182,6 +201,7 @@ interface SessionInfo {
 | `plugin-session-server` | 会话协议的会话列表与增删改：`listSessions`、`createSession`、`updateSession`、`deleteSession`，摘要的场所取 `placeOf`、`getPlace`（空记录不给，§2.5），分区按 `kind`（§2.2） | `plugin-session-server/src/sessions.ts` |
 | `plugin-memory-summary` | 选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时用工作模板） | `plugin-memory-summary/src/index.ts` |
 | `plugin-trigger-policy`、`plugin-trigger-laya`、`plugin-flow-control` | 按 `fromElsewhere` 认出从别的平台往房间里插话，直接放行 | 各自的 `src/index.ts` |
+| `plugin-tool-session`、`plugin-tool-onebot`、`plugin-memory-history` | 取别的会话的历史与消息前调 `takeFrom`（§2.8） | 各自的 `src/index.ts` |
 | `plugin-i18n` | 读者按根会话取语言；诊断写场所的显示名（`getPlace`） | `plugin-i18n/src/index.ts` |
 | `plugin-cli` | 终端配置的会话在发出入站之前 `ensureSession` 建档并写创建来源 `cli` | `plugin-cli/src/index.ts` |
 
@@ -189,15 +209,16 @@ interface SessionInfo {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期、场所与会话树。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `createChildSession` / `completeSession` / `placeOf`。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史与按 id 取消息都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **必须复刻的语义**：
 
 - `metadata` 合并式改（顶层键整键替换），会话与场所两种记录都随记录落盘：会话设置的场所层与本会话层存在这里，丢了就丢了设置。
 - `deleteSession` 先发 `session:deleted` 再清数据，agent 才能在清之前停掉在跑的回合（§2.5）。
 - `recordInbound` 在建档或补记落定之后才兑现：网关等它，入站管道里的读取方按已收录的会话取设置。
+- `canTake` 判不出时拒绝（§2.8）：会话表里没有的、空记录与判不出窗口的根会话之间不跨会话取用。
 
-下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化：
+下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化；取别的会话只放行同一棵会话树：
 
 ```ts
 import { windowKey } from '@aalis/api-gateway';
@@ -213,6 +234,8 @@ import {
   rootSessionOf,
   sessionKind,
   sessionManager,
+  TAKE_UNKNOWN,
+  type TakeVerdict,
 } from '@aalis/api-session-manager';
 import { type Events, definePlugin, events, hooks, logger, provide } from '@aalis/core';
 
@@ -295,6 +318,13 @@ class MySessionManager implements SessionManagerService {
   }
   /** 这个骨架不收录 IM 房间：会话都由 createSession、ensureSession 建 */
   async recordInbound() {}
+  /** 只放行同一棵会话树，别的一律判不出（比 §2.8 窄） */
+  canTake(currentId: string, targetId: string): TakeVerdict {
+    const lookup = (id: string) => this.sessions.get(id);
+    const current = rootSessionOf(lookup(currentId), lookup);
+    const same = currentId === targetId || (current !== undefined && current === rootSessionOf(lookup(targetId), lookup));
+    return same ? { ok: true } : { ok: false, reason: TAKE_UNKNOWN };
+  }
   async createChildSession(parentId: string, opts: Omit<NewSessionFields, 'parentId'> = {}) {
     if (!this.sessions.has(parentId)) await this.ensureSession(parentId);
     return this.createSession({ ...opts, parentId });
@@ -389,8 +419,8 @@ export default definePlugin({
 "keywords": ["aalis", "aalis-plugin"],
 "aalis": {
   "service": {
-    "required": ["events", "hooks", "lifecycle", "logger", "memory", "provide"],
-    "optional": ["agent", "authority", "i18n", "llm", "platform"],
+    "required": ["config", "events", "hooks", "lifecycle", "logger", "memory", "provide"],
+    "optional": ["agent", "authority", "host-config", "i18n", "llm", "platform", "session-settings"],
     "provides": ["session-manager"]
   }
 }
@@ -436,7 +466,7 @@ const { persona } = fields.get(message.sessionId, { platform: message.platform }
 
 ### 6.2 会话隔离边界
 
-`sessionId` 是隔离边界：`deleteSession` 会**递归删子会话**，先发 `session:deleted`，再经 `memory:clear` 钩子清空该会话历史（§2.5，`plugin-session-manager/src/index.ts`）。消费方不要跨 `sessionId` 复用配置或历史。
+`sessionId` 是隔离边界：`deleteSession` 会**递归删子会话**，先发 `session:deleted`，再经 `memory:clear` 钩子清空该会话历史（§2.5，`plugin-session-manager/src/index.ts`）。消费方不要跨 `sessionId` 复用配置或历史；要取别的会话的历史与媒体，一律先调 `takeFrom`（§2.8），不自己判范围。
 
 ### 6.3 子任务指令走顶层 `inputContext`（关键约定）
 

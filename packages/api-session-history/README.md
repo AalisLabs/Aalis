@@ -1,6 +1,6 @@
 # @aalis/api-session-history
 
-会话历史服务契约：统一读历史入口与平台访问控制。本包由 `@aalis/api-tool-session` 改名而来，服务名 `session-history` 不变。
+会话历史服务契约：统一的读历史入口，能读哪些会话按会话管理的规则（`@aalis/api-session-manager` 的 `takeFrom`）。本包由 `@aalis/api-tool-session` 改名而来，服务名 `session-history` 不变。
 
 ## 安装
 

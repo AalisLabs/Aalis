@@ -194,6 +194,15 @@ const REMOVED: Array<[string, string]> = [
   ['PreprocessorInfo', 'agent 服务列出已登记的预处理器，没有调用方'],
   ['isTimeInjectionEnabled', '人设服务报告是否注入了时间，系统工具据此不登记 system_time：现在照样登记'],
   ['BuildContextOptions', 'media 服务上转调识图上下文的 buildContext，没有调用方'],
+  ['registerAccessChecker', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],
+  ['AccessChecker', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],
+  ['AccessDecision', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],
+  ['AccessCheckArgs', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],
+  ['registerOneBotHistoryAccessChecker', 'OneBot 工具插件登记的会话历史访问规则，由会话管理的规则取代'],
+  ['allowGroupReadPrivate', 'OneBot 工具插件读历史的开关，并进会话管理的「读别人的私聊」'],
+  ['allowCrossPrivate', 'OneBot 工具插件读历史的开关，并进会话管理的「读别人的私聊」'],
+  ['allowCrossGroup', 'OneBot 工具插件读历史的开关，换成会话管理的「读别的群」'],
+  ['allowCrossSelf', 'OneBot 工具插件读历史的开关，换成会话管理的「跨机器人账号」'],
 ];
 
 /**

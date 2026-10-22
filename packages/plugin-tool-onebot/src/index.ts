@@ -7,17 +7,17 @@ import {
   platform as platformService,
   resolvePlatformBySession,
 } from '@aalis/api-platform';
-import { type AccessChecker, sessionHistory } from '@aalis/api-session-history';
+import { sessionHistory } from '@aalis/api-session-history';
+import { sessionManager, TAKE_UNKNOWN, takeFrom } from '@aalis/api-session-manager';
 import { type StorageService, storage } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { toSource } from '@aalis/schema-i18n';
 
 // ===== 插件元数据 =====
 
-// 这里的开关都不标 onInvalid:'error'：本插件同时提供 OneBot 会话历史的拒绝规则，插件一进 error，规则跟着消失，
-// 而 session_get_history 对没有规则的平台默认放行。坏值回落到默认值并告警：默认拒绝的跨读开关回落后仍是拒绝。
 const configSchema = defineConfig({
   groupManagement: {
     label: '群管理工具',
@@ -71,7 +71,7 @@ const configSchema = defineConfig({
         label: '启用 OneBot 专属历史工具',
         default: true,
         description:
-          '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。只管这两个工具：下面的访问规则始终生效，同样约束通用的 session_get_history。',
+          '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。能读哪些会话按会话管理的跨会话规则。',
       },
       maxLimit: {
         type: 'number',
@@ -85,30 +85,6 @@ const configSchema = defineConfig({
         default: 20,
         description: '不能超过 maxLimit。',
       },
-      allowGroupReadPrivate: {
-        type: 'boolean',
-        label: '允许群聊读取私聊历史',
-        default: false,
-        description: '在群会话中调用历史读取工具时，是否允许目标是某个私聊。',
-      },
-      allowCrossSelf: {
-        type: 'boolean',
-        label: '允许跨机器人账号读取',
-        default: false,
-        description: '不同 selfId 之间跨读。多账号部署才需要。',
-      },
-      allowCrossGroup: {
-        type: 'boolean',
-        label: '允许群聊读取其他群聊历史',
-        default: true,
-        description: '群会话 → 另一个群会话。默认允许（便于跨群取上下文）。',
-      },
-      allowCrossPrivate: {
-        type: 'boolean',
-        label: '允许私聊读取其他私聊历史',
-        default: false,
-        description: '私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。',
-      },
     },
   },
 });
@@ -121,6 +97,8 @@ const uses = {
   storage: optional(storage),
   media: optional(media),
   sessionHistory: optional(sessionHistory),
+  /** onebot_get_msg 取到的消息所在的会话按它的规则判（takeFrom）；不在时只能取当前会话里的 */
+  sessionManager: optional(sessionManager),
   events,
   logger,
   config,
@@ -133,6 +111,8 @@ type PlatformRef = Caps['platform'];
 type ToolCaps = Pick<Caps, 'platform' | 'logger'>;
 /** 合并转发展开还要识别其中的图片 */
 type ForwardCaps = Pick<Caps, 'platform' | 'logger' | 'media'>;
+/** 群信息查询另有按 id 取消息：取到的消息所在的会话按会话管理的规则判 */
+type GroupInfoCaps = ForwardCaps & Pick<Caps, 'sessionManager'>;
 
 // ===== 辅助函数 =====
 
@@ -192,6 +172,21 @@ function resolveGroupTarget(
 
 function buildOneBotSessionId(selfId: string, detailType: string, targetId: string): string {
   return `onebot:${selfId}:${detailType}:${targetId}`;
+}
+
+/**
+ * get_msg 取到的消息所在的会话：群按群号，私聊按对端账号（发送者不是机器人自己时就是发送者）。她自己发的私聊消息与没给这些
+ * 字段的实现端拼不出，为 undefined
+ */
+function sessionOfMessage(selfId: string, data: Record<string, unknown> | null): string | undefined {
+  const sender = data?.sender as Record<string, unknown> | undefined;
+  if (data?.message_type === 'group' && data.group_id != null) {
+    return buildOneBotSessionId(selfId, 'group', String(data.group_id));
+  }
+  if (data?.message_type === 'private' && sender?.user_id != null && String(sender.user_id) !== selfId) {
+    return buildOneBotSessionId(selfId, 'private', String(sender.user_id));
+  }
+  return undefined;
 }
 
 /**
@@ -569,17 +564,7 @@ export default definePlugin({
 
     const maxLimit = Math.max(1, Math.min(1000, cfg.sessionHistory.maxLimit || 100));
     const defaultLimitRaw = Math.max(1, Math.floor(cfg.sessionHistory.defaultLimit || 20));
-    const historyCfg: OneBotSessionHistoryConfig = {
-      maxLimit,
-      defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate,
-      allowCrossSelf: cfg.sessionHistory.allowCrossSelf,
-      allowCrossGroup: cfg.sessionHistory.allowCrossGroup,
-      allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate,
-    };
-    // 访问规则始终注册：它同样约束通用的 session_get_history，不随专属工具开关撤掉（关掉工具不能反倒放宽读取）。
-    // 规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关：不进下面的平台闸。
-    registerOneBotHistoryAccessChecker(caps, historyCfg);
+    const historyCfg: OneBotSessionHistoryConfig = { maxLimit, defaultLimit: Math.min(defaultLimitRaw, maxLimit) };
 
     // 仅当 OneBot 平台可用时才注册工具。platform 是可选的多提供者服务，OneBot 适配器可能晚于
     // app:ready 上线（WebUI 启用、市场热装、启动失败后修好），且作为非胜者上线时 follow 不触发：
@@ -1017,8 +1002,8 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
 
 // ===== 群信息查询工具 =====
 
-function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bundle: OneBotToolBundle): void {
-  const { platform, logger } = caps;
+function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bundle: OneBotToolBundle): void {
+  const { platform, logger, sessionManager } = caps;
   const { daily } = bundle;
   // ---- 查看合并转发 ----
   daily.register({
@@ -1319,7 +1304,7 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
       function: {
         name: 'onebot_get_msg',
         description:
-          '按 message_id 获取单条消息的完整内容（包括发送者、消息段等）。可用于回溯查看历史中的某条消息，或在收到撤回通知后查看被撤回的内容。不限定会话类型，群聊和私聊消息均可查询。',
+          '按 message_id 获取单条消息的完整内容（包括发送者、消息段等）。可用于回溯查看历史中的某条消息，或在收到撤回通知后查看被撤回的内容。消息所在的会话按会话管理的跨会话规则判（默认不取别人私聊里的消息）。',
         parameters: {
           type: 'object',
           properties: {
@@ -1333,10 +1318,18 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
       const selfId = resolveSelfId(platform, callCtx, args);
       if (!args.message_id) return '参数错误：缺少 message_id';
       try {
-        const data = await callAction(platform, selfId, 'get_msg', {
+        const data = (await callAction(platform, selfId, 'get_msg', {
           message_id: Number(args.message_id),
-        });
-        return JSON.stringify(data);
+        })) as Record<string, unknown> | null;
+        // 取到的消息按所在的窗口拼出会话 id 过规则：拼不出（她自己发的私聊消息、实现端不给字段）的按判不出拒绝
+        const target = sessionOfMessage(selfId, data);
+        const { userId } = callCtx;
+        const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
+        const verdict =
+          target === undefined
+            ? { ok: false as const, reason: TAKE_UNKNOWN }
+            : takeFrom(sessionManager, callCtx.sessionId, target, principal);
+        return verdict.ok ? JSON.stringify(data) : toSource(verdict.reason);
       } catch (err) {
         return `获取消息失败：${err instanceof Error ? err.message : String(err)}。该消息可能已过期或不在当前 OneBot 实现的作用域内。`;
       }
@@ -1704,66 +1697,10 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
 
 /** 平台专属历史工具：查历史服务 + 平台适配器解析 selfId */
 type HistoryToolCaps = Pick<Caps, 'platform' | 'logger' | 'sessionHistory'>;
-/** 访问规则注入：跟随历史服务提供者挂规则 */
-type HistoryCheckerCaps = Pick<Caps, 'logger' | 'sessionHistory'>;
 
 interface OneBotSessionHistoryConfig {
   maxLimit: number;
   defaultLimit: number;
-  allowGroupReadPrivate: boolean;
-  allowCrossSelf: boolean;
-  allowCrossGroup: boolean;
-  allowCrossPrivate: boolean;
-}
-
-/**
- * 把 OneBot 的细粒度访问规则注册到 session-history 服务。
- * 通用工具 session_get_history 和平台专属工具 onebot_get_session_history
- * 调用 service 时都会走这条规则链 —— 不存在绕过路径。
- */
-function registerOneBotHistoryAccessChecker(caps: HistoryCheckerCaps, cfg: OneBotSessionHistoryConfig): void {
-  const { logger, sessionHistory } = caps;
-  const checker: AccessChecker = {
-    platform: 'onebot',
-    check({ currentSessionId, targetSessionId }) {
-      const target = parseOneBotSession(targetSessionId);
-      if (!target) return undefined; // 不是合法 onebot 目标, 不表态
-      const current = parseOneBotSession(currentSessionId);
-      // 跨平台调用（current 不是 onebot）走默认放行: session-history scope 已粗筛
-      if (!current) return undefined;
-
-      if (current.selfId !== target.selfId && !cfg.allowCrossSelf) {
-        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨机器人账号读取会话历史' };
-      }
-      if (current.detailType === 'group' && target.detailType === 'private' && !cfg.allowGroupReadPrivate) {
-        return { decision: 'deny', reason: '当前 OneBot 配置不允许从群聊读取私聊历史' };
-      }
-      if (
-        current.detailType === 'group' &&
-        target.detailType === 'group' &&
-        current.targetId !== target.targetId &&
-        !cfg.allowCrossGroup
-      ) {
-        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨群读取其他群历史' };
-      }
-      if (
-        current.detailType === 'private' &&
-        target.detailType === 'private' &&
-        current.targetId !== target.targetId &&
-        !cfg.allowCrossPrivate
-      ) {
-        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨私聊读取其他私聊历史' };
-      }
-      return undefined;
-    },
-  };
-  // 规则登记在 session-history 提供者实例的局部状态里：提供者重启或换人后，新实例身上没有这条规则，
-  // 须跟随提供者重挂；返回的注销作为跟随清理，本插件 bounce / 卸载时一并撤回，不在下层泄漏。
-  sessionHistory.follow(svc => {
-    const dispose = svc.registerAccessChecker(checker);
-    logger.use.info('OneBot 会话历史访问规则已注册到 session-history');
-    return dispose;
-  });
 }
 
 function registerSessionHistoryTools(
@@ -1806,14 +1743,6 @@ function registerSessionHistoryTools(
       const argSelfId = args.self_id ? String(args.self_id).trim() : '';
       const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
-      // 跨账号限制：仅在当前也是 OneBot 会话时才作为参考点检查
-      if (current && !cfg.allowCrossSelf && selfId !== current.selfId) {
-        return JSON.stringify({
-          error: '当前配置不允许跨机器人账号解析会话',
-          currentSelfId: current.selfId,
-          requestedSelfId: selfId,
-        });
-      }
       return JSON.stringify({
         ok: true,
         sessionId: buildOneBotSessionId(selfId, targetType, targetId),
@@ -1832,7 +1761,7 @@ function registerSessionHistoryTools(
         description: [
           '按 QQ 群号或 QQ 号读取对应 OneBot 会话最近若干条历史消息。',
           '适用场景：用户明确要求你回忆某个群/私聊最近说过什么，或需要核实另一个 OneBot 会话的原文上下文。',
-          '默认禁止从群聊读取私聊历史；如需语义搜索历史，请优先使用 memory_recall。',
+          '能读哪些会话按会话管理的跨会话规则（默认不读别人的私聊）；如需语义搜索历史，请优先使用 memory_recall。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -1877,8 +1806,7 @@ function registerSessionHistoryTools(
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
 
       try {
-        // 访问控制（跨账号/群读私/跨群/跨私）由 session-history 服务统一执行，
-        // OneBot 的规则已通过 registerOneBotHistoryAccessChecker 注册。
+        // 能不能读由 session-history 服务按会话管理的规则判（带这次调用的授权身份）。
         // includeArchived 故意不暴露：archived 是 memory 内部细节，被 summary 替代的老消息
         // 默认就不该再翻原文（会与 summary 内容双重计费）。如需考古应另起独立工具。
         const result = await history.getHistory({ sessionId, limit }, callCtx);

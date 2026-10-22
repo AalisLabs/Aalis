@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-memory-history
 `definePlugin` 默认导出：
 
 - provides：无
-- uses：`memory`、`config`、`logger`、`contributions`；可选 `tools`
+- uses：`memory`、`config`、`logger`、`contributions`；可选 `tools`、`sessionManager`（能取哪些会话按它的规则；不在时只取得到当前会话）
 
 ## 文档
 

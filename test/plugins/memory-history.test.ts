@@ -8,16 +8,46 @@ import { assemblePromptContributions } from '../../packages/plugin-agent/src/pro
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
+/** 这些会话在会话表里都是群（平台各给各的）：跨会话历史按取别的会话的规则逐条过，会话表里没有的取不到 */
+const GROUPS: Record<string, string> = {
+  current: 'onebot',
+  other: 'onebot',
+  's-a': 'onebot',
+  's-b': 'webui',
+  's-spam': 'onebot',
+  's-quiet': 'onebot',
+};
+
+async function fileGroups(memory: MemoryService, groups: Record<string, string>) {
+  await memory.commitMetadata(
+    Object.entries(groups).map(([id, platform]) => ({
+      op: 'put' as const,
+      namespace: 'sessions',
+      key: id,
+      data: {
+        id,
+        children: [],
+        status: 'waiting',
+        createdAt: 0,
+        updatedAt: 0,
+        originPlatform: platform,
+        originChat: { type: 'group', multiParty: true, targetId: id },
+      },
+    })),
+  );
+}
+
 /**
- * 宿主侧装好 memory 后端。host 是根激活的绑定门面：`collect` 看到的是全局贡献，
+ * 宿主侧装好 memory 后端与会话管理（smConfig 是会话管理的配置）。host 是根激活的绑定门面：`collect` 看到的是全局贡献，
  * 与 agent 组装器在生产里拿到的同一份视图。
  */
-async function boot() {
+async function boot(smConfig: Record<string, unknown> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ services, contributions, logger });
@@ -25,6 +55,10 @@ async function boot() {
   await app.plugins.idle();
   const memory = host.services.use.get(memoryService);
   if (!memory) throw new Error('memory 服务未就绪');
+  await fileGroups(memory, GROUPS);
+  await app.plugin(sessionManagerPlugin, smConfig);
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(sessionManagerPlugin.name)?.state !== 'active') throw new Error('会话管理未激活');
   return { app, host, memory };
 }
 
@@ -43,8 +77,8 @@ async function saveAcross(
 }
 
 describe('plugin-memory-history', () => {
-  it('cross-platform: 注入跨会话最近消息为独立 system block', async () => {
-    const { app, host, memory } = await boot();
+  it('范围全部：注入跨会话最近消息为独立 system block', async () => {
+    const { app, host, memory } = await boot({ takeScope: 'all' });
 
     const baseTs = Date.now() - 10_000;
     await saveAcross(memory, [
@@ -54,7 +88,6 @@ describe('plugin-memory-history', () => {
     ]);
 
     await app.plugin(memoryHistory, {
-      scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
       headerText: '[TEST-HEADER]',
@@ -89,7 +122,7 @@ describe('plugin-memory-history', () => {
     expect(messages[4].role).toBe('user');
   });
 
-  it('same-platform: 仅注入当前 platform 的消息', async () => {
+  it('范围同平台（默认）：仅注入当前会话所在平台的消息', async () => {
     const { app, host, memory } = await boot();
 
     const baseTs = Date.now() - 5000;
@@ -99,7 +132,6 @@ describe('plugin-memory-history', () => {
     ]);
 
     await app.plugin(memoryHistory, {
-      scope: 'same-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
     });
@@ -126,7 +158,7 @@ describe('plugin-memory-history', () => {
       { sessionId: 'other', platform: 'onebot', content: 'OTHER', ts: baseTs + 2 },
     ]);
 
-    await app.plugin(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
+    await app.plugin(memoryHistory, { maxAgeMinutes: 0 });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
     await assemblePromptContributions(host, {
@@ -163,7 +195,6 @@ describe('plugin-memory-history', () => {
     ]);
 
     await app.plugin(memoryHistory, {
-      scope: 'cross-platform',
       maxAgeMinutes: 5,
       excludeCurrentSession: false,
     });
@@ -183,7 +214,6 @@ describe('plugin-memory-history', () => {
     await saveAcross(memory, [{ sessionId: 's-a', platform: 'onebot', content: 'X', ts: Date.now() - 1000 }]);
 
     await app.plugin(memoryHistory, {
-      scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
     });
@@ -216,7 +246,6 @@ describe('plugin-memory-history', () => {
     });
 
     await app.plugin(memoryHistory, {
-      scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
       limit: 10,
@@ -235,38 +264,42 @@ describe('plugin-memory-history', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// recent_messages 权限档：它查的是别的会话（默认排除当前会话；same-platform 含同平台别的群与
-// 别人的私聊，cross-platform 含 WebUI），与 session_get_history 同属跨会话读取，同挂
-// risk: 'sensitive'——挡等级 0，等级 1 起照常可用、不弹确认。
+// recent_messages 权限档：它查的是别的会话（默认排除当前会话，能取哪些按取别的会话的规则），与 session_get_history
+// 同属跨会话读取，同挂 risk: 'sensitive'——挡等级 0，等级 1 起照常可用、不弹确认。
 // 走真链路：plugin-tools 执行 → plugin-authority 守卫 → 本插件 handler。
 // ════════════════════════════════════════════════════════════
 
+const GUARDED_GROUP = 'onebot:10000:group:20000';
+const OTHER_GROUP = 'onebot:10000:group:20009';
+
 async function bootGuarded() {
-  // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供；跨会话历史范围按会话读，全局层在文档里
-  const { app, store } = hostedApp({
-    plugins: { [memoryHistory.name]: { scope: 'cross-platform', maxAgeMinutes: 0 } },
-  });
+  // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供
+  const { app, store } = hostedApp({ plugins: { [memoryHistory.name]: { maxAgeMinutes: 0 } } });
   await registerHubs(app);
   const host = app.bind({ services, authority, tools });
   await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  const memory = host.services.use.get(memoryService);
+  if (!memory) throw new Error('memory 服务未就绪');
+  await fileGroups(memory, { [GUARDED_GROUP]: 'onebot', [OTHER_GROUP]: 'onebot' });
   await app.plugin(toolsPlugin, {});
   await app.plugin(authorityPlugin, {});
+  await registerFromDoc(app, store, sessionManagerPlugin);
   await registerFromDoc(app, store, memoryHistory);
   await app.plugins.idle();
   // 守卫是 authority 激活时挂上去的：任一插件停在 pending，下面的拒绝断言会退化成恒真或恒假
-  for (const p of [memoryInMemory, toolsPlugin, authorityPlugin, memoryHistory]) {
+  for (const p of [memoryInMemory, toolsPlugin, authorityPlugin, sessionManagerPlugin, memoryHistory]) {
     const state = app.plugins.getPlugin(p.name)?.state;
     if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
   }
-  const memory = host.services.use.get(memoryService);
   const toolSvc = host.tools.present ? host.tools.use : undefined;
   const authoritySvc = host.authority.present ? host.authority.use : undefined;
-  if (!memory || !toolSvc || !authoritySvc) throw new Error('服务未就绪');
-  await memory.saveMessage('webui:console', {
+  if (!toolSvc || !authoritySvc) throw new Error('服务未就绪');
+  await memory.saveMessage(OTHER_GROUP, {
     role: 'user',
-    content: 'OWNER-WEBUI-ONLY',
+    content: 'OTHER-GROUP-ONLY',
     timestamp: Date.now() - 1000,
-    metadata: { platform: 'webui' },
+    metadata: { platform: 'onebot' },
   });
   return { app, toolSvc, authoritySvc };
 }
@@ -274,7 +307,7 @@ async function bootGuarded() {
 /** 群会话里开了 session-history 组：被拒只能来自权限档，不是分组闸 */
 function groupCall(userId: string): ToolCallContext {
   return {
-    sessionId: 'onebot:10000:group:20000',
+    sessionId: GUARDED_GROUP,
     platform: 'onebot',
     userId,
     enabledGroups: ['session-history'],
@@ -284,17 +317,17 @@ function groupCall(userId: string): ToolCallContext {
 describe('recent_messages 权限档（sensitive）', () => {
   it('等级 0 的群成员调用被拒，拿不到别的会话的内容', async () => {
     const { app, toolSvc } = await bootGuarded();
-    const out = await toolSvc.execute('recent_messages', { scope: 'cross-platform' }, groupCall('20001'));
+    const out = await toolSvc.execute('recent_messages', {}, groupCall('20001'));
     await app.stop();
     expect(out.content).toContain('权限不足');
-    expect(out.content).not.toContain('OWNER-WEBUI-ONLY');
+    expect(out.content).not.toContain('OTHER-GROUP-ONLY');
   });
 
   it('等级 1 的群成员照常调用，且不需确认（本实例没有审批服务，需要确认就会被拒）', async () => {
     const { app, toolSvc, authoritySvc } = await bootGuarded();
     authoritySvc.setUserLevel({ platform: 'onebot', userId: '20002' }, 1);
-    const out = await toolSvc.execute('recent_messages', { scope: 'cross-platform' }, groupCall('20002'));
+    const out = await toolSvc.execute('recent_messages', {}, groupCall('20002'));
     await app.stop();
-    expect(out.content).toContain('OWNER-WEBUI-ONLY');
+    expect(out.content).toContain('OTHER-GROUP-ONLY');
   });
 });

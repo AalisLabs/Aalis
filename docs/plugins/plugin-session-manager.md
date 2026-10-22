@@ -5,7 +5,7 @@
 
 ## 概述
 
-会话生命周期管理，支持会话树形结构；场所与工作区的记录。本插件不认识设置：插件按会话、按场所存的数据放在会话与场所记录的 `metadata` 里，会话设置（[plugin-session-settings](./plugin-session-settings.md)）的场所层与本会话层就存在这里。
+会话生命周期管理，支持会话树形结构；场所与工作区的记录；取别的会话的东西的规则（`canTake`）。本插件不认识设置：插件按会话、按场所存的数据放在会话与场所记录的 `metadata` 里，会话设置（[plugin-session-settings](./plugin-session-settings.md)）的场所层与本会话层就存在这里。
 
 ## 插件声明
 
@@ -20,6 +20,9 @@ export default definePlugin({
     i18n: optional(i18n),
     platform: optional(platform),
     authority: optional(authority),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
+    config,
     events,
     hooks,
     lifecycle,
@@ -32,7 +35,16 @@ export default definePlugin({
 
 ## 配置
 
-本插件没有插件配置。会话设置的层与存放见 [plugin-session-settings](./plugin-session-settings.md)。
+四项都是按会话字段（会话设置的高级区，可按平台档、平台类型档、场所与本会话设，只有 owner 能改），管取别的会话的东西（[session-manager 服务](../services/session-manager.md) §2.8）。按取的一方所在的会话取生效值，对所有人一样；全局层就是这里的插件配置，会话设置不在时只取它。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `takeScope` | select | `'platform'` | 取别的会话的范围：`session`（本会话，只取本会话与它派出的子任务）、`platform`（同平台，按两边根会话的平台比，WebUI、终端各算一个平台）、`all`（全部） |
+| `takeOtherGroups` | boolean | `true` | 读别的群：范围之内能不能取别的群里的内容 |
+| `takeOthersPrivate` | boolean | `false` | 读别人的私聊：范围之内能不能取别人与她的私聊，owner 在 WebUI、终端里的会话也算；调用工具的人取他自己与她的私聊不用打开 |
+| `takeCrossBot` | boolean | `false` | 跨机器人账号：范围之内，同一平台上能不能取她另一个机器人账号下的会话 |
+
+四项都写坏了不回落到更宽的层：范围按本会话，开关按否。开关按场所生效：在哪个场所打开，那里的每个人都拿得到。要把「群里读私聊」与「私聊读私聊」分开，在平台类型档各设一次。会话设置的层与存放见 [plugin-session-settings](./plugin-session-settings.md)。
 
 ## 功能
 
@@ -40,6 +52,7 @@ export default definePlugin({
 - **清空连带删除子会话**: `memory:clear` 清了一个会话的消息历史（没指定类型或类型含 `context`，消息历史那一行清成功）之后，删掉它的子会话；范围为 `all` 时删掉全部子会话。只清别的类型或消息历史没清成时不删（见 [session-manager 服务](../services/session-manager.md) §2.5）
 - **插件数据**: 会话与场所记录各有一份 `metadata`，`updateSession`、`updatePlace` 合并式改（顶层键整键替换），随记录落盘、随记录删除；建会话时给的 `metadata` 原样存下，里面的 `title`、`inputContext` 不当成同名字段读
 - **会话树**: 支持父子会话关系（用于子任务系统）
+- **取别的会话的东西**: `canTake` 按上面四项与会话记录判一个会话能不能取另一个会话的历史与媒体；「自己的私聊」按出生平台适配器明确声明的一对一类型认（以 `optional(platform)` 取声明），owner 的身份以 `optional(authority)` 认。规则与消费方见 [session-manager 服务](../services/session-manager.md) §2.8
 - **会话种类与列表分区**: 会话种类按 `sessionKind` 给出：子会话为 task，群与私聊为 room，其余为 owner。群与私聊的首条真人消息到达即按这条消息登记（`recordInbound`，可等待：网关在入站相位之前等它收录完），记下出生平台与聊天窗口（平台类型名、多方标记、机器人账号、目标），会话列表把它们列在「IM 房间」区，owner 自己的 WebUI、CLI 会话列在「我的会话」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。WebUI 与终端的会话在入站之前建档，记下创建来源（`webui`、`cli`）；自动标题只给带创建来源的根会话生成。所属工作区、项目会话的绑定与当前目录随会话表持久化（见 [session-manager 服务](../services/session-manager.md) §2.6）。房间建档或补记来源字段时记下接管它的平台适配器实例（`originInstance`），供会话列表按实例分组；没有适配器认领的，下一次有消息进来时补记
 - **场所与工作区**: 每个会话恰好一个场所，子会话取根会话的：IM 的群与别人的私聊是窗口（键 `平台:类型:目标`，不含机器人账号），owner 的 IM 私聊（以 `optional(authority)` 认对端是 owner）与本机的会话在默认工作区或记下的项目工作区。场所记录存于 memory 的元数据命名空间 `places`，与会话表一同加载与落盘：默认工作区的记录激活时就在，窗口的记录在房间建档时建、显示名随入站更新（建了或改了名，场所是这个窗口的根会话各发一次 `session:updated`，会话列表里场所的显示名跟着变），工作区的记录由 `addWorkspace` 建（同一个真实路径只登记一个，编号随机），`removeWorkspace` 只删记录（连同它的 `metadata`）、不动文件，原属会话归默认工作区（见 [session-manager 服务](../services/session-manager.md) §2.7）
 - **会话状态**: 回合开始翻 `active`（已归档的不翻，只有手动恢复才回到列表），会话里最后一轮结束时按这一轮的结局收口为 `error` 或 `completed`，根会话与子会话一样；每一轮结束时记下这一轮的结局、结束时间与出错原因（`lastTurn`），结局为 `replied` 时另记下她最近开口的时间（`lastReplyAt`）（见 [session-manager 服务](../services/session-manager.md) §7.1）

@@ -129,8 +129,8 @@ await entry?.use.chat({ messages });
 | `api-persona` | — | `persona` | — | `PersonaService`, `PersonaSessionOptions` |
 | `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃选择层的 `list`，条目是 `ProviderEntry`） |
 | `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `makeTempDirViaStorage` helper |
-| `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
-| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionInfo`, `PlaceInfo`；导出 `sessionKind` / `roomClass` / `isUnfiled` / `placeLabel` |
+| `api-session-history` | — | `session-history` | — | `SessionHistoryService`；默认提供者 plugin-tool-session |
+| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionInfo`, `PlaceInfo`；导出 `sessionKind` / `roomClass` / `isUnfiled` / `placeLabel` / `takeFrom` / `oneToOneWith` / `TAKE_UNKNOWN` |
 | `api-session-settings` | — | `session-settings` | — | 两个同名描述符：读取门面 `sessionFields`（`fields()` 取读取器、`getAll`）与管理面 `sessionSettings`；`SessionFieldSpec`（并进 schema-config）、层表 `SESSION_LAYERS`、解析 `resolveFields`、`SessionSettingsError`；默认提供者 plugin-session-settings |
 | `api-session-protocol` | — | `session-protocol` | — | `SessionProtocolService`, `SessionPeer`, `SessionConnection`；会话协议的 zod schema（`sessionMethods` / `sessionNotifications`、帧与错误码），类型由 schema 推导；默认提供者 plugin-session-server |
 | `api-todo-list` | — | `todo-list` | — | `TodoListService`, `TodoItem`；注入事件 `todo:updated`；默认提供者 plugin-todo-list |

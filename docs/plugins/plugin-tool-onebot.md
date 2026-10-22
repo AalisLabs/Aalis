@@ -20,6 +20,7 @@ export default definePlugin({
     storage: optional(storage),
     media: optional(media),
     sessionHistory: optional(sessionHistory),
+    sessionManager: optional(sessionManager),
     events,
     logger,
     config,
@@ -29,7 +30,7 @@ export default definePlugin({
 ```
 
 
-> 工具经 `withToolGroups(tools, …)` 登记到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具在 `app:ready` 与每次 `platform` 提供者上线时检测，出现 OneBot 平台即注册一次，平台离场不反注册；没有 OneBot 平台时不注册。会话历史访问规则与平台在场无关，跟随 `session-history` 提供者注册。
+> 工具经 `withToolGroups(tools, …)` 登记到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具在 `app:ready` 与每次 `platform` 提供者上线时检测，出现 OneBot 平台即注册一次，平台离场不反注册；没有 OneBot 平台时不注册。
 
 ## 跨会话调用
 
@@ -69,7 +70,7 @@ export default definePlugin({
 | `onebot_get_group_member_list` | 群成员列表，支持关键词、角色筛选与分页 |
 | `onebot_get_group_honor_info` | 群荣誉（龙王、群聊之火等） |
 | `onebot_get_forward_msg` | 解析合并转发消息，可调用 `media` 服务识别其中的图片 |
-| `onebot_get_msg` | 按 message_id 取原始消息 |
+| `onebot_get_msg` | 按 message_id 取原始消息；取到的消息所在的会话按会话管理的跨会话规则判，规则不放行时回原因，判不出对端的（她自己发的私聊消息、实现端不给群号或发送者）拒绝 |
 | `onebot_get_self_mute_status` | 查询机器人在某群被禁言剩余时长 |
 | `onebot_list_self_mutes` | 列出所有"我在被禁言"的群 |
 
@@ -100,7 +101,7 @@ export default definePlugin({
 | `onebot_resolve_session_id` | 把（self_id, target_type, target_id）解析成 Aalis 内部 sessionId |
 | `onebot_get_session_history` | 按 QQ 群/私聊号读取最近若干条历史 |
 
-这两个工具可从任意会话调用。当调用方本身处于 OneBot 会话时，读取受下文 `sessionHistory.allow*` 配置约束；从非 OneBot 会话调用时，这些规则不参与判定。
+这两个工具可从任意会话调用。`onebot_resolve_session_id` 只拼会话 id、不读历史；`onebot_get_session_history` 能读哪些会话按会话管理的跨会话规则（[plugin-session-manager](./plugin-session-manager.md)），与通用的 `session_get_history` 同一条。
 
 ### 请求处理（无配置开关）
 
@@ -123,17 +124,13 @@ export default definePlugin({
 | `interaction` | object | — | 特殊交互 |
 | `interaction.enabled` | boolean | `true` | 启用特殊交互：戳一戳、群打卡等 |
 | `sessionHistory` | object | — | 会话历史读取 |
-| `sessionHistory.enabled` | boolean | `true` | 启用 OneBot 专属历史工具：注册 `onebot_resolve_session_id` / `onebot_get_session_history`。只管这两个工具，下面的 `allow*` 访问规则始终生效 |
+| `sessionHistory.enabled` | boolean | `true` | 启用 OneBot 专属历史工具：注册 `onebot_resolve_session_id` / `onebot_get_session_history` |
 | `sessionHistory.maxLimit` | number | `100` | 单次最多读取条数上限：agent 传入的 limit 参数会被截断到该上限。 |
 | `sessionHistory.defaultLimit` | number | `20` | 默认读取条数（agent 不传 limit 时）：不能超过 maxLimit。 |
-| `sessionHistory.allowGroupReadPrivate` | boolean | `false` | 允许群聊读取私聊历史：在群会话中调用历史读取工具时，是否允许目标是某个私聊。 |
-| `sessionHistory.allowCrossSelf` | boolean | `false` | 允许跨机器人账号读取：不同 selfId 之间跨读。多账号部署才需要。 |
-| `sessionHistory.allowCrossGroup` | boolean | `true` | 允许群聊读取其他群聊历史：群会话 → 另一个群会话。默认允许（便于跨群取上下文）。 |
-| `sessionHistory.allowCrossPrivate` | boolean | `false` | 允许私聊读取其他私聊历史：私聊会话 → 另一个 QQ 的私聊。默认拒绝（隐私敏感）。 |
 
-工具启用开关及 `sessionHistory.allow*` 访问开关若显式给出非布尔值（如 YAML 的 `no`、带引号的 `'false'`），按表中默认值处理并告警，插件照常激活。这里不拒绝激活：本插件同时提供 OneBot 会话历史的拒绝规则，插件不在场时 `session_get_history` 对 OneBot 会话不做这些限制。历史条数仍按既有上下限收口。
+工具启用开关若显式给出非布尔值（如 YAML 的 `no`、带引号的 `'false'`），按表中默认值处理并告警，插件照常激活。历史条数仍按既有上下限收口。
 
-> `allow*` 规则以访问检查器（AccessChecker）的形式注册到 `session-history` 服务，通用的 `session_get_history` 和 `onebot_get_session_history` 都会经过它；规则只在调用方处于 OneBot 会话（子会话按根会话算）时生效。规则不受 `sessionHistory.enabled` 影响：关掉专属工具后，通用工具读取 OneBot 会话仍受这些规则约束。群管理等工具不要求在目标群的会话内调用；除 `checkAdminPermission` 检查机器人在群内的角色外，插件本身不对调用者做访问控制。
+> 群管理等工具不要求在目标群的会话内调用；除 `checkAdminPermission` 检查机器人在群内的角色外，插件本身不对调用者做访问控制。
 
 ## 行为说明
 

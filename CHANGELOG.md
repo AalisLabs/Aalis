@@ -55,14 +55,13 @@
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
 - 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转上面所说范围内的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（别处的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
 
-### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-tool-session、@aalis/plugin-scheduler）
+### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-scheduler）
 
 - 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`，按 id 前缀找子会话或父会话的改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。
 - 会话服务的时间线上，房间的子会话里她说的话不再标「没有发出」（工具调用之前说的、没有适配器接手的回复）。
 - 会话管理的房间收录按会话记录跳过子会话，不再看 id 里有没有 `::`：适配器的窗口 id 里带 `::` 的照常收录。
 - 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；不带 `self_id` 时用先上线的账号。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
 - plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，报错里给出根会话的 id 作候选，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
-- 访问检查器收到的 `AccessCheckArgs.currentSessionId` 改为调用所在的窗口：当前会话本身，子会话取根会话的。子任务里读历史与在它的根会话里读受同样的平台规则约束；此前按子会话的 id 判，群里建的子任务读本群在不许跨群（`allowCrossGroup: false`）时被拒。自己实现 session-history 的，交给访问检查器的 `currentSessionId` 按 `rootSessionOf` 取根会话的 id。
 
 ### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
 
@@ -144,7 +143,7 @@
 - 回复策略（trigger-policy、trigger-laya、flow-control）：「生效作用域」与「分作用域覆盖」两块没有了，换成「生效范围」：不生效、多方房间、一对一房间、全部房间，默认多方房间。冷却、阈值等参数出现在会话设置的高级区，可按平台档、平台类型档、群（场所）与会话设，每条消息现读，改了不重载插件。WebUI 和终端的会话不再能纳入回复策略。onebot 的频道也是多方房间，新装与现有部署开箱都受这三个插件管：原来 `*:group` 不含频道，频道里的消息都直接放行，现在和群一样按触发判定、冷却与限速，Laya 也会对频道消息做判断（它的判别模型只用群聊训练过）。
 - 回复策略：owner 从 WebUI 往群里插话时，两个触发插件一律放行；flow-control 按插话那一端（一对一）判，生效范围设成一对一房间或全部房间时插话会受冷却与限速。一对一类型名不叫 `private` 的平台上，私聊里的 interval 回合不再回填无主体授权（按多方标记判，不认类型名）。trigger-policy 的闲置参数改了不重载插件：session 档下一次排定时器时现读；跨会话（platform 档）的开关与节奏只看全局层，从关闭改成 `platform` 时随即开始排，会话层设成 `platform` 不会开起跨会话选举。
 - 最大工具迭代默认不限，界面写「不限」；要限的在会话设置或插件配置里设。卡在工具调用里的一轮只能手动停下，调用成本随轮数放大。
-- 记忆召回范围：会话设置里原来的一行「召回范围」没有了，改成四个记忆插件各自的范围（跨会话历史、向量记忆、读会话历史工具、关系图），一个群要分别设，只有 owner 能改。跨会话历史的范围从「工具默认」变成上限，模型不能再主动要更宽的范围，并多出「仅本会话」一档。某一层写坏了的范围值按最窄处理，不再回落到更宽的层。向量记忆为「同用户加权」档、某个群收窄到同平台的，这个群里没有同用户加权。新装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。
+- 记忆召回范围：会话设置里原来的一行「召回范围」没有了，改成向量记忆、关系图各自的范围与会话管理的取别的会话的范围（见本节之后的「取别的会话的东西一条规则」），一个群要分别设，只有 owner 能改。某一层写坏了的范围值按最窄处理，不再回落到更宽的层。向量记忆为「同用户加权」档、某个群收窄到同平台的，这个群里没有同用户加权。新装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。
 - 关系图范围设成仅本会话时，关系图工具里带会话作用域参数的只能取本会话；「关系图范围」只在注入或工具开着时出现在会话设置里。
 - 后台插件的模型：QQ 转发摘要、记忆摘要（连「摘要模型来源」开关）、用户画像、网页搜索压缩四处的模型字段删掉，改在插件详情的「服务偏好」里给这个插件设。指定的模型不在时从「报错或静默跳过」变成回落到下一级；没有能对话的模型时这四处都只打一条 warn。关系图的提取模型字段只填一半时按没填处理。
 - 人设卡里的技能名单（`skills`）不再生效，改成技能插件的「启用的技能」，和工具分组一样能按平台档、平台类型档、群与会话设，默认全部、只有 owner 能改。
@@ -279,6 +278,16 @@
 ### 别处往房间插话不进冷却与限速（@aalis/plugin-flow-control）
 
 - owner 从别的平台往房间里插话（如从 WebUI 往群里或私聊里发）时，流控与触发插件同一判法（api-session-manager 的 `fromElsewhere`），直接放行，不进冷却与限速；禁言期照旧吞掉。此前流控按插话那一端的一对一窗口判，生效范围设成全部房间或一对一房间时，房间里刚回复过，插话就被冷却或限速吞掉并影子归档，WebUI 上没有回应。插话得到的回复照常记一次回复，此后房间里的消息照旧受冷却与限速。
+
+### 取别的会话的东西一条规则（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history）
+
+- api-session-manager 的 `SessionManagerService` 新增必填成员 `canTake(currentId, targetId, principal?)`：取别的会话的东西（历史、媒体）的唯一规则，同步回 `{ ok: true }` 或 `{ ok: false, reason }`。自己实现会话管理的要实现它，没有可选写法。另导出包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`（会话管理不在时只放行同一会话 id，其余回判不出）、判「自己的私聊」的纯函数 `oneToOneWith`、判不出时的原因 `TAKE_UNKNOWN` 与类型 `TakeVerdict`。
+- api-session-history 删掉 `AccessChecker`、`AccessDecision`、`AccessCheckArgs`、`AccessCheckerDisposer` 与 `SessionHistoryService.registerAccessChecker`：`getHistory` 每次按会话管理的规则判能不能读，平台插件不再注入访问规则。自己实现 session-history 的，在 `getHistory` 里调 `takeFrom`。
+- plugin-tool-session 删掉「允许读取范围」`scope`，plugin-memory-history 删掉「跨会话历史范围」`scope`，`recent_messages` 删掉 `scope` 参数；plugin-tool-onebot 删掉 `sessionHistory` 的 `allowGroupReadPrivate`、`allowCrossSelf`、`allowCrossGroup`、`allowCrossPrivate` 四个开关（`enabled`、`maxLimit`、`defaultLimit` 照旧）。配置里写着的这些键不再生效，换成 plugin-session-manager 的四个按会话字段（会话设置的高级区，可按平台档、平台类型档、场所与会话设，只有 owner 能改）：取别的会话的范围 `takeScope`（本会话、同平台、全部，默认同平台）、读别的群 `takeOtherGroups`（默认是）、读别人的私聊 `takeOthersPrivate`（默认否）、跨机器人账号 `takeCrossBot`（默认否）。开关按场所生效，在哪个场所打开，那里的每个人都拿得到（此前 onebot 的开关是全局的）；「群读私聊」「私聊读私聊」两个开关并成一个，要分开得在平台类型档各设一次；私聊读群此前总放行，现在也受「读别的群」管。plugin-session-manager 新加会话设置与宿主配置的可选依赖，plugin-tool-onebot 新加会话管理的可选依赖。
+- 第一方的跨会话取用一律按这条规则判：`session_get_history`、`onebot_get_session_history`、`onebot_get_msg`、`recent_messages` 与跨会话历史的被动注入。规则只看取的目标：多方要「读别的群」；一对一要「读别人的私聊」，这一轮授权身份自己与她的私聊除外（只认适配器明确声明为一对一的窗口）；WebUI、终端与项目会话按与 owner 的一对一，owner 本人那一轮算自己的私聊。对所有人一样，owner 也不例外。会话管理不在时，以及会话表里没有的、按 id 兜底建档的空记录与只记了出生平台的旧房间记录，都不跨会话取用。向量记忆的召回照旧按自己的 `crossSessionMode`。
+- 跨会话历史的被动注入与 `recent_messages` 不再把同平台别人的私聊带进群回合（此前默认带）。被动注入不传授权身份，不享受「自己的私聊」：WebUI、终端会话的被动注入默认不再带别的 WebUI、终端会话。跨会话历史一律超取后逐条过规则，被拒的多时注入少于上限。
+- WebUI、终端会话默认只取同一创建来源的会话：owner 用 `session_get_history` 读别的 WebUI 会话由拒绝变成放行；要在 WebUI 里读 IM 的会话，把 WebUI 平台档的范围设成全部，别人的私聊另开。同平台不同机器人账号之间默认不取，不同平台之间只看范围。
+- `onebot_get_msg` 取不到规则不放行的会话里的消息（此前按 `message_id` 什么都取得到），判不出所在会话的（她自己发的私聊消息、实现端不给群号或发送者）同样不给，工具说明删掉「不限定会话类型」；`onebot_resolve_session_id` 不再检查跨机器人账号，只拼会话 id。拒绝时回给模型的原因换成会话管理的几句（如「取别的会话的范围限于同平台」）。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

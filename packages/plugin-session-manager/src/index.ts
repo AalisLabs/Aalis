@@ -3,6 +3,7 @@ import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import { chatScopeOf, windowKey } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 import { type LLMUsageEvent, lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
 import { historyCleared, type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
@@ -17,6 +18,7 @@ import {
   isUnfiled,
   type NewSessionFields,
   type OriginChat,
+  oneToOneWith,
   type PlaceInfo,
   rootSessionOf,
   type SessionCreation,
@@ -27,14 +29,64 @@ import {
   sessionKind,
   sessionLabel,
   sessionManager,
+  TAKE_UNKNOWN,
+  type TakeVerdict,
   type WorkBinding,
   type WorkspaceInfo,
 } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type SessionFieldReader, sessionFields } from '@aalis/api-session-settings';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { defineConfig } from '@aalis/schema-config';
 import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
+
+// ===== 配置 =====
+
+// 取别的会话的东西（canTake）的范围与三个开关：都是按会话字段，按取的一方所在的会话生效。坏值原样交来，范围按本会话、开关按否
+const configSchema = defineConfig({
+  takeScope: {
+    type: 'select',
+    label: '取别的会话的范围',
+    description:
+      '从别的会话取原文（读会话历史的工具、按消息 id 取消息、跨会话历史）时能取哪些会话：本会话只取本会话与它派出的子任务，' +
+      '同平台按两边的平台比（WebUI、终端各算一个平台），全部不比。写坏了按本会话',
+    default: 'platform',
+    onInvalid: 'error',
+    options: [
+      { label: '本会话', value: 'session' },
+      { label: '同平台', value: 'platform' },
+      { label: '全部', value: 'all' },
+    ],
+    session: { prominence: 'advanced' },
+  },
+  takeOtherGroups: {
+    type: 'boolean',
+    label: '读别的群',
+    description: '范围之内能不能取别的群里的内容。写坏了按否',
+    default: true,
+    onInvalid: 'error',
+    session: { prominence: 'advanced' },
+  },
+  takeOthersPrivate: {
+    type: 'boolean',
+    label: '读别人的私聊',
+    description:
+      '范围之内能不能取别人与她的私聊，owner 在 WebUI、终端里的会话也算；调用工具的人取他自己与她的私聊不用打开。写坏了按否',
+    default: false,
+    onInvalid: 'error',
+    session: { prominence: 'advanced' },
+  },
+  takeCrossBot: {
+    type: 'boolean',
+    label: '跨机器人账号',
+    description: '范围之内，同一平台上能不能取她另一个机器人账号下的会话。写坏了按否',
+    default: false,
+    onInvalid: 'error',
+    session: { prominence: 'advanced' },
+  },
+});
 
 // ===== 常量 =====
 
@@ -133,7 +185,11 @@ class SessionManager implements SessionManagerService {
   private resolving = new WeakSet<SessionInfo>();
   private readonly lookup = (id: string) => this.sessions.get(id);
 
-  constructor(caps: ManagerCaps) {
+  /** take 读取的一方所在会话此刻的取别的会话的范围与三个开关（生效值，坏值原样） */
+  constructor(
+    caps: ManagerCaps,
+    private readonly take: SessionFieldReader<typeof configSchema>,
+  ) {
     this.caps = caps;
   }
 
@@ -531,6 +587,48 @@ class SessionManager implements SessionManagerService {
     } finally {
       this.resolving.delete(session);
     }
+  }
+
+  // ---- 取别的会话的东西 ----
+
+  canTake(currentId: string, targetId: string, principal?: { platform: string; userId: string }): TakeVerdict {
+    if (currentId === targetId) return { ok: true };
+    const current = rootSessionOf(this.sessions.get(currentId), this.lookup);
+    const target = rootSessionOf(this.sessions.get(targetId), this.lookup);
+    // 同一棵会话树：两个判不出的根会话（都是 undefined）不算相同
+    if (current && current === target) return { ok: true };
+    const from = platformOf(current);
+    const to = platformOf(target);
+    if (!current || !target || from === undefined || to === undefined) return { ok: false, reason: TAKE_UNKNOWN };
+    const values = this.take.get(currentId, { platform: from });
+    // 范围写坏了的按本会话
+    if (values.takeScope !== 'platform' && values.takeScope !== 'all') return { ok: false, reason: t('scopeSession') };
+    if (values.takeScope === 'platform' && from !== to) return { ok: false, reason: t('scopePlatform') };
+    // 机器人账号只在同一平台里有意义：跨平台由范围管
+    const ownBot = current.originChat?.selfId;
+    const chat = target.originChat;
+    const otherBot = from === to && ownBot !== undefined && chat?.selfId !== undefined && chat.selfId !== ownBot;
+    if (otherBot && values.takeCrossBot !== true) return { ok: false, reason: t('crossBot') };
+    if (chat?.multiParty) {
+      return values.takeOtherGroups === true ? { ok: true } : { ok: false, reason: t('otherGroups') };
+    }
+    if (this.ownChat(target, principal)) return { ok: true };
+    return values.takeOthersPrivate === true ? { ok: true } : { ok: false, reason: t('othersPrivate') };
+  }
+
+  /**
+   * 一对一的目标（根会话）是不是授权身份自己与她的私聊。owner 的面按与 owner 的一对一，看授权身份是不是 owner；IM 窗口按
+   * oneToOneWith，出生平台的适配器（与收录时判一对一用的同一个）明确声明了它的类型为一对一才算。权限服务不在时没有人是 owner
+   */
+  private ownChat(root: SessionInfo, principal: { platform: string; userId: string } | undefined): boolean {
+    const authority = this.caps.authority.present ? this.caps.authority.use : undefined;
+    const isOwner = authority && ((platform: string, userId: string) => authority.isOwner(platform, userId));
+    if (root.originPlatform === undefined) {
+      return Boolean(principal?.userId && isOwner?.(principal.platform, principal.userId));
+    }
+    const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === root.originPlatform);
+    const declared = adapter?.sessionTypes?.find(type => type.name === root.originChat?.type)?.multiParty === false;
+    return oneToOneWith(root, principal, declared, isOwner);
   }
 
   // ---- CRUD ----
@@ -1053,6 +1151,15 @@ function describeSession(session: Pick<SessionInfo, 'parentId' | 'originPlatform
   return { kind: sessionKind(session) };
 }
 
+/**
+ * 判得出的根会话的平台：IM 房间（出生平台加聊天窗口）取出生平台，owner 的面（有创建来源）取创建来源。不在会话表里的、按 id
+ * 兜底建档的空记录与只记了出生平台的旧房间记录（等下一条原生入站补记）判不出
+ */
+function platformOf(root: SessionInfo | undefined): string | undefined {
+  if (root?.originPlatform !== undefined) return root.originChat ? root.originPlatform : undefined;
+  return root?.createdFrom;
+}
+
 /** 新建的场所记录：默认工作区没有名字 */
 function newPlace(place: SessionPlace, name?: string, root?: string): PlaceRecord {
   const now = Date.now();
@@ -1197,6 +1304,14 @@ const uses = {
    * 用会话管理，两边成可选环；缺席时认不出 owner，一对一窗口按窗口算
    */
   authority: optional(authority),
+  /**
+   * 按会话读取别的会话的范围与三个开关；缺席时取插件配置里的值。plugin-session-settings 以 required 用会话管理：这边可选，
+   * 读取器的登记随它上线补上
+   */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
+  config,
   events,
   hooks,
   lifecycle,
@@ -1209,6 +1324,7 @@ export default definePlugin({
   name: '@aalis/plugin-session-manager',
   displayName: '会话管理',
   subsystem: 'session',
+  configSchema,
   provides: [sessionManager],
   uses,
   apply: run,
@@ -1217,7 +1333,7 @@ export default definePlugin({
 async function run(caps: Caps): Promise<void> {
   const { memory, events, hooks, lifecycle, logger, provide } = caps;
 
-  const manager = new SessionManager(caps);
+  const manager = new SessionManager(caps, caps.sessionFields.use.fields(configSchema, caps));
 
   // 会话表跟随 memory 胜者：首次挂接即加载；运行中胜者换人时先写回旧后端再读新后端
   memory.follow(instance => manager.attach(instance));

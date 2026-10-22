@@ -5,11 +5,18 @@
 
 ## 概述
 
-把跨会话最近 N 条消息作为可选上下文注入 agent。数据来源为 `MemoryService.getRecentMessagesAcrossSessions`（直查数据库），插件本身不维护进程内缓冲。注入方式是向 `agent:prompt` 贡献点提交一块内容，锚位为 `turn-context`，并按 `scope` 决定是否按平台过滤。`toolEnabled` 为 true（默认）时，还会把 `recent_messages` 工具注册到 `session-history` 工具分组，供 agent 主动查询跨会话近期消息；`tools` 是可选依赖，服务就绪后才完成注册。该工具声明 `risk: 'sensitive'`，与 `session_get_history` 同档：它查到的是其他会话的消息（默认排除当前会话；`same-platform` 含同平台别的群与别人的私聊，`cross-platform` 还含 WebUI），等级 0 的调用者被权限守卫拒绝，等级 1 起可用，不弹确认。被动注入不经工具，不受这一档位约束：是否注入由 `injectEnabled` 决定，范围跟随 `scope`，设为 `cross-platform` 时也会注入 WebUI 等其他平台会话的原文。与对话代理读的本会话历史的区别：对话代理按会话设置 `historyLimit` 读的是当前 sessionId 的历史，本插件注入的是跨 session 聚合的近期片段。默认 `excludeCurrentSession: true` 会把当前会话排除掉，避免两者重复；关闭该项后，两者内容可能重叠。
+把跨会话最近 N 条消息作为可选上下文注入 agent。数据来源为 `MemoryService.getRecentMessagesAcrossSessions`（直查数据库），插件本身不维护进程内缓冲。注入方式是向 `agent:prompt` 贡献点提交一块内容，锚位为 `turn-context`。`toolEnabled` 为 true（默认）时，还会把 `recent_messages` 工具注册到 `session-history` 工具分组，供 agent 主动查询跨会话近期消息；`tools` 是可选依赖，服务就绪后才完成注册。该工具声明 `risk: 'sensitive'`，与 `session_get_history` 同档：它查到的是其他会话的消息（默认排除当前会话），等级 0 的调用者被权限守卫拒绝，等级 1 起可用，不弹确认。被动注入不经工具，不受这一档位约束：是否注入由 `injectEnabled` 决定。与对话代理读的本会话历史的区别：对话代理按会话设置 `historyLimit` 读的是当前 sessionId 的历史，本插件注入的是跨 session 聚合的近期片段。默认 `excludeCurrentSession: true` 会把当前会话排除掉，避免两者重复；关闭该项后，两者内容可能重叠。
 
 取数只取 user、assistant、notice 三种角色，并排除指令类 kind（`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)）：宿主通知与代发任务的指令只对所在会话的那一轮有意义，被动注入与 `recent_messages` 都不带别的会话的这类消息，戳一戳等普通通知照常带上。
 
-`same-platform` 的当前平台：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的，不从会话 ID 推；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会取到 owner 自己 WebUI 会话的原文；没有出生平台的会话（WebUI、CLI 等）取入口平台。被动注入与 `recent_messages` 同一取法。同平台按消息落库时记下的 `metadata.platform` 过滤，这个值记的是入口平台：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`，不注入同平台别的房间，会出现在 owner 自己 WebUI 会话的同平台注入里。
+## 能取哪些会话
+
+本插件不设自己的范围：取到的每条消息按所在的会话过会话管理的取别的会话的规则（[plugin-session-manager](./plugin-session-manager.md)，契约的 `takeFrom`），同一次查询里同一会话只判一次。被动注入不是谁要的，不带授权身份，「自己的私聊」不适用；`recent_messages` 带这次调用的授权身份，调用者自己与她的私聊照取。默认（范围同平台、读别的群、不读别人的私聊、不跨机器人账号）下：
+
+- 被动注入只带同平台、同一机器人账号的群；别人的私聊、owner 与她的私聊、WebUI 与终端的会话（按与 owner 的一对一）、会话表里没有或判不出窗口的会话都不带。
+- `recent_messages` 另带调用者自己与她的私聊；调用者是 owner 时，同平台的 owner 的面（WebUI、终端里的会话）也照取。
+
+会话按会话记录判，不按消息落库时记下的 `metadata.platform`：owner 从 WebUI 往群里插话的那一轮，按群取。查询先超取（`limit` 的十倍、封顶 1000），从新到旧逐条过规则，被拒的不占名额，再按每会话上限与总数截；被拒的多时，注入可能少于上限。会话管理不在时只取得到当前会话的消息（默认又排除当前会话，于是不注入）。
 
 ## 插件声明
 
@@ -24,22 +31,10 @@ export default definePlugin({
     contributions,
     tools: optional(tools),
     sessionManager: optional(sessionManager),
-    sessionFields: optional(sessionFields),
-    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
-
-## 按会话设范围
-
-「跨会话历史范围」`scope` 可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），是被动注入与 `recent_messages` 的上限，每次查询按调用所在会话现读：
-
-- `session`（仅本会话）：本插件注入的全是其他会话的原文，这个会话整块不注入；`recent_messages` 返回「本会话的跨会话历史范围限于本会话，不能查询其他会话的近期消息。」
-- `same-platform`：最多查同平台，工具参数写了 `cross-platform` 也按 `same-platform` 查。
-- `cross-platform`：按工具参数，没传时按它。
-
-某一层写坏了的值按仅本会话处理，不回落到更宽的层。会话设置不在场时只取插件配置里的值。
 
 ## 配置
 
@@ -48,7 +43,6 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `injectEnabled` | boolean | `true` | 被动注入 prompt：是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。 |
-| `scope` | select | `'same-platform'` | 跨会话历史范围：`session` / `same-platform` / `cross-platform`，被动注入与工具的上限；可按会话设（见上文）。要“关闭被动注入”请调 injectEnabled。 |
 | `limit` | number | `30` | 注入条数上限：每次注入的最大消息条数；工具调用未指定 limit 时也用这个值。 |
 | `maxAgeMinutes` | number | `180` | 时间窗口（分钟）：只取最近 N 分钟内的消息；0 表示不限时间。 |
 | `perSessionLimit` | number | `5` | 每会话最多条数：同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；为 0 = 不做 per-session cap。 |

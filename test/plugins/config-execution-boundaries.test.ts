@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { processService } from '../../packages/api-process/src/index.js';
-import { sessionHistory } from '../../packages/api-session-history/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import draw from '../../packages/plugin-draw/src/index.js';
 import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
-import onebotTools from '../../packages/plugin-tool-onebot/src/index.js';
 import toolSystem from '../../packages/plugin-tool-system/src/index.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
@@ -16,19 +14,14 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function start(
-  plugin: typeof codeRunner | typeof toolSystem | typeof draw | typeof onebotTools,
-  config: Record<string, unknown>,
-) {
+async function start(plugin: typeof codeRunner | typeof toolSystem | typeof draw, config: Record<string, unknown>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide });
   const registry = makeToolRegistry(app.logger);
   const registerTool = vi.spyOn(registry, 'register');
   const registerGroup = vi.spyOn(registry, 'registerGroup');
-  const registerChecker = vi.fn(() => () => {});
   host.provide.use(tools, registry);
-  host.provide.use(sessionHistory, { registerAccessChecker: registerChecker } as never);
   if (plugin === codeRunner) {
     host.provide.use(storage, {} as never);
     host.provide.use(processService, {} as never);
@@ -40,7 +33,6 @@ async function start(
     registry,
     registerTool,
     registerGroup,
-    registerChecker,
   };
 }
 
@@ -90,23 +82,5 @@ describe('执行工具配置边界', () => {
     expect(registerGroup).toHaveBeenCalled();
     expect(registerTool).toHaveBeenCalled();
     expect(registry.getAll().map(tool => tool.name)).toContain('draw_image');
-  });
-
-  // OneBot 插件同时提供会话历史的拒绝规则，进 error 会连规则一起撤掉，所以坏开关回落默认值、照常注册规则
-  it.each([
-    { groupManagement: { enabled: 'false' } },
-    { sessionHistory: { allowCrossPrivate: 'false' } },
-  ])('OneBot 的坏工具或历史访问开关回落默认值，仍注册访问规则：%j', async config => {
-    const { state, registerChecker } = await start(onebotTools, config);
-    expect(state?.state).toBe('active');
-    expect(registerChecker).toHaveBeenCalledOnce();
-  });
-
-  it('OneBot 合法配置可激活并注册会话历史访问规则', async () => {
-    const { state, registerChecker } = await start(onebotTools, {
-      sessionHistory: { allowCrossPrivate: false },
-    });
-    expect(state?.state).toBe('active');
-    expect(registerChecker).toHaveBeenCalledOnce();
   });
 });

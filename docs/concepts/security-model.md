@@ -200,20 +200,31 @@ close_page）仍为 `sensitive`：会话里在场的人共用这个会话的页�
 发起会话，任务正文还会永久写进目标会话的历史。会话之间的协作将以「会话间消息」重新设计：权限跟随消息链的源头，
 工具取接收会话自己的，会话之间互不信任。
 
-跨会话读取另行处理。`recent_messages`（`plugin-memory-history`）与 `list_known_sessions` 用同一个后端查询，
-同样不按调用者过滤：默认排除当前会话，查到的都是其他会话的消息原文——`same-platform` 含同平台别的群与别人的私聊，
-模型传 `scope: 'cross-platform'` 时不按平台过滤，含 owner 的 WebUI 会话——每次最多取到 memory 后端的
-`crossSessionMaxLimit` 条（默认 1000）。它与 `session_get_history` 同属跨会话读取，2026-09-27 起声明
-`risk: 'sensitive'`，与后者同档：等级 0 的调用者（多人平台上的普通群成员）被拒，等级 1 起可用，不弹确认。
-这改变了上面维持 public 的结论。被动注入不经工具，不受档位约束：该插件的 `injectEnabled` 开启
-（默认）时，其他会话的近期消息原文仍会注入每个回合的提示词。注入范围跟随 `scope`，这一项同时是工具的默认作用域：
-默认 `same-platform` 取同平台其他会话，含别人与 bot 的私聊；设为 `cross-platform` 时还包括 WebUI 等其他平台的会话。
-IM 房间的「同平台」按房间的出生平台算：owner 从 WebUI 往群里插话时，被动注入、`recent_messages`、`plugin-memory-vector`
-的同平台召回与 `session_get_history` 的同平台裁决都按该群的平台取，不带入 owner 自己 WebUI 会话的内容。
-注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合
-这一点目前维持原样，是否保留尚未定案，它与 `plugin-tool-onebot` 默认不许在群会话里读私聊历史
-（`sessionHistory.allowGroupReadPrivate: false`）并不一致；不需要的关掉 `injectEnabled`。
-`scope` 可按会话设：单个房间可以把它设成 `session`，这个房间不再注入、也查不了别的会话的近期消息；跨会话读取的另外三处各有自己的范围字段，见 §7。
+跨会话读取另行处理：取别的会话的东西只有一条规则，在会话管理（[session-manager 服务](../services/session-manager.md#_2-8-取别的会话的东西)
+的 `canTake`）。范围（本会话、同平台、全部，默认同平台）与读别的群（默认是）、读别人的私聊（默认否）、跨机器人账号（默认否）
+三个开关是 owner 设的按会话字段（`plugin-session-manager`，可按平台档、平台类型档、场所与会话设），对所有人一样，owner
+也不例外。规则只看取的目标：目标多方要「读别的群」，目标一对一要「读别人的私聊」，除非是这一轮授权身份自己与她的私聊
+（只认适配器明确声明为一对一的窗口）；WebUI、终端与项目会话按与 owner 的一对一，owner 本人那一轮算自己的私聊，其余要
+「读别人的私聊」。开关按场所生效：在哪个场所打开，那里的每个人都拿得到。会话表里没有的会话、按 id 兜底建档的空记录与
+只记了出生平台的旧房间记录判不出，取不到，从它们那里也取不了别的会话。
+
+它管 `session_get_history`、`onebot_get_session_history`（`onebot_resolve_session_id` 只拼会话 id、不读）、`onebot_get_msg`、
+`recent_messages` 与跨会话历史（`plugin-memory-history`）的被动注入。工具按这一轮的授权身份认「自己的私聊」；被动注入不是
+谁要的，不传授权身份、不享受，所以默认只带同平台、同一机器人账号的群，别人的私聊、owner 与她的私聊、WebUI 与终端的会话
+都不带。IM 房间的平台按出生平台、WebUI 与终端按创建来源：owner 从 WebUI 往群里插话的那一轮按群判，被动注入、
+`recent_messages`、`session_get_history` 都不带入 owner 自己 WebUI 会话的内容。`recent_messages` 与 `session_get_history`
+同属跨会话读取，2026-09-27 起声明 `risk: 'sensitive'`，与后者同档：等级 0 的调用者（多人平台上的普通群成员）被拒，等级 1
+起可用，不弹确认。这改变了上面维持 public 的结论。被动注入不经工具，不受档位约束，另受 `limit`、
+`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束；不需要的关掉 `injectEnabled`。
+
+不归这条规则的路径：
+
+- 向量记忆的被动召回与 `memory_recall` 照旧按 `plugin-memory-vector` 自己的 `crossSessionMode`，默认全部打通：群里的一轮
+  仍可能召回别人私聊里的原文，「读别人的私聊」关着也一样；要收窄得按会话设它（§7「召回收窄的范围」）。
+- `onebot_get_forward_msg` 只读收到的合并转发（id 来自收到的消息，经适配器接收时展开的缓存）。
+- `plugin-office` 的插图工具与 `pdf_convert` 的输出目录、`system` 组的文件工具不按会话限定，能读写别的会话媒体目录里的
+  文件，转出的文件再经 `send_attachment` 就按本会话发出；这些是存储工具，靠工具分组与等级挡。
+- 关系图的召回与抽取、画像的事实给的是整理出的人物、关系、事件摘要与事实，各有自己的范围（§7）。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
@@ -495,13 +506,13 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 ### 召回收窄的范围
 
-跨会话取料的四个插件各有一个范围字段，都可按会话设（平台档、平台类型档、群与会话），值是这个会话取料的上限，只有 owner
-能改，某一层写坏了按最窄处理（[api-memory](../api/api-memory.md) 的「跨会话取料的范围」）。要让单个房间不把别的会话的内容
-带进提示词，四项要分别设成最窄：
+要让单个房间不把别的会话的内容带进提示词，三处要分别收窄。它们都可按会话设（平台档、平台类型档、群与会话），只有 owner
+能改，某一层写坏了按最窄处理（[api-memory](../api/api-memory.md) 的「跨会话取料的范围」）：
 
-- `plugin-memory-vector` 的 `crossSessionMode` 设成 `isolated`：被动召回与 `memory_recall` 只取本会话；
-- `plugin-memory-history` 的 `scope` 设成 `session`：跨会话注入整块不注入，`recent_messages` 拒绝；
-- `plugin-tool-session` 的 `scope` 设成 `current`：`session_get_history` 与 `onebot_get_session_history` 读别的会话一律拒绝；
+- `plugin-session-manager` 的取别的会话的范围 `takeScope` 设成 `session`：跨会话历史不注入别的会话，`recent_messages`、
+  `session_get_history`、`onebot_get_session_history` 与 `onebot_get_msg` 取别的会话一律拒绝（这个会话派出的子任务照常）；
+- `plugin-memory-vector` 的 `crossSessionMode` 设成 `isolated`：被动召回与 `memory_recall` 只取本会话。向量召回不经取别的
+  会话的规则，默认全部打通：不设的话，群里的一轮仍可能召回别人私聊里的原文；
 - `plugin-user-relation` 的 `recallScope` 设成 `session`：注入跳过跨会话事件、所属跨会话话题与全局热点，带会话作用域参数的
   六个工具只能取本会话，解析节点、最短路径、联系分数、共同邻居与列边不经过别的会话的事件。
 

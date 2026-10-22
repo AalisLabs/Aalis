@@ -79,17 +79,17 @@ export default definePlugin({
 `x.follow(attach)` 在选中的那一家上挂副作用，换人时先清理旧的再挂新的，交接规则与约束见 [follow](../core/context.md#follow)。
 
 ```typescript
-import { sessionHistory } from '@aalis/api-session-history';
+import { sessionManager } from '@aalis/api-session-manager';
 import { definePlugin, logger, optional } from '@aalis/core';
 
 export default definePlugin({
   name: 'example-follow',
-  uses: { sessionHistory: optional(sessionHistory), logger },
-  apply({ sessionHistory, logger }) {
-    sessionHistory.follow(history => {
-      const off = history.registerAccessChecker({ platform: 'example', check: () => undefined });
-      logger.use.debug('访问规则已登记');
-      return off;
+  uses: { sessionManager: optional(sessionManager), logger },
+  apply({ sessionManager, logger }) {
+    // 定时器跟着选中的会话管理：上线时排上，换人时先撤旧的再排，下线与本插件关闭时撤掉
+    sessionManager.follow(sm => {
+      const timer = setInterval(() => logger.use.debug(`会话 ${sm.listSessions().length} 个`), 60_000);
+      return () => clearInterval(timer);
     });
   },
 });
