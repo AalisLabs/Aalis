@@ -11,7 +11,7 @@ import type { AuthorityService } from '@aalis/api-authority';
 import { type MediaScopeDeps, mediaInScope, mediaRef } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import { isStorageUri } from '@aalis/api-storage';
+import { isHostAbsolutePath, isStorageNotFound, isStorageUri } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import type { ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
@@ -35,46 +35,17 @@ const IMAGE_MIME: Record<string, string> = {
   HEIC: 'image/heic',
 };
 
-/** 不参与裸路径首段路由的根类型：插件私有的内置根，agent 给的裸路径不会指向它们 */
-const PRIVATE_ROOT_KINDS: ReadonlySet<string> = new Set(['self', 'cache', 'logs', 'pluginData', 'paper', 'public']);
-
 /**
- * 把 agent 传入的图片路径规整为 storage URI。
- *
- * 支持：
- * - `[图片: desc | ref:xxx]` 占位符 — 提取 ref 后递归解析
- * - 已是 storage URI：`workspace:/foo`、`data:/images/x.jpg` — 原样返回
- * - 裸名以已知 storage root 开头：`data/images/x.jpg`、`tmp/y.png` —
- *   按首段路由到对应根（修复了 agent 传 `data/images/...` 被错误塞进 workspace 的问题）。
- *   插件私有的内置根（人设卡、技能、编排定义、缓存、日志、插件数据、白纸、公开作品）不参与：
- *   工作目录里同名的子目录（如 `skills/x.png`）照常归到 workspace
- * - 其它相对路径：归到 `workspace:/`（默认）
+ * 存储里没有这个文件时回给模型的话，相对路径过不了判据时也回它（不透露文件在不在）：相对路径归到了工作区，写成
+ * `data/images/…` 的多半是想写存储地址
  */
-export function resolveImageStorageUri(input: string): string {
-  // [图片(: desc)? | ref:xxx] 占位符 → 提取 ref 后递归
+const notFound = (uri: string) =>
+  `找不到 ${uri}：相对路径按工作区（workspace:/）找，别处的图要写带根名的存储地址，如 data:/images/…`;
+
+/** agent 传入的图片来源：历史里的 `[图片(: desc)? | ref:xxx]` 占位符取出其中的引用，其余取原文，都去掉首尾空白 */
+function imageRefOf(input: string): string {
   const refMatch = input.match(/\|\s*ref:([^\]\n]+)\]/);
-  if (refMatch) return resolveImageStorageUri(refMatch[1].trim());
-  const cleaned = input.replace(/^\.?\/+/, '');
-  if (cleaned.includes(':/')) return cleaned;
-  const firstSeg = cleaned.split('/', 1)[0];
-  if (firstSeg) {
-    try {
-      const { storage } = getMediaRuntime();
-      const rootNames = new Set(
-        storage
-          .listRoots()
-          .filter(r => !PRIVATE_ROOT_KINDS.has(r.kind))
-          .map(r => r.name),
-      );
-      if (rootNames.has(firstSeg)) {
-        const rest = cleaned.slice(firstSeg.length + 1);
-        return `${firstSeg}:/${rest}`;
-      }
-    } catch {
-      // runtime 未注入 / listRoots 报错时回退到 workspace 默认
-    }
-  }
-  return `workspace:/${cleaned}`;
+  return (refMatch ? refMatch[1] : input).trim();
 }
 
 function normalizeImageRef(input: string): string {
@@ -149,9 +120,8 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
             image: {
               type: 'string',
               description:
-                '图片来源：本地路径（如 data/images/onebot_xxx/xxx.jpg）、' +
-                'storage URI（如 data:/images/...、tmp:/browser/...）或网络 URL。' +
-                '裸相对路径会按首段匹配 storage 根（如 data/、workspace/、tmp/），未命中时归到 workspace:/ 下。',
+                '图片来源：历史里的 `[图片 | ref:…]` 引用、存储地址（如 data:/images/onebot_xxx/onebot/xxx.jpg、' +
+                'tmp:/browser/...）或网络 URL。相对路径按工作区（workspace:/）找，别处的图要写带根名的存储地址。',
             },
             prompt: { type: 'string', description: '分析提示词（可选）。数学/代码/表格类务必写明具体要求。' },
             task: { type: 'string', description: '本次分析需求（可选）。' },
@@ -192,21 +162,32 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           .filter(Boolean)
           .join('\n');
 
-        // 内嵌数据只认 data URI（`data:/…` 是存储地址）；存储里的图先判后读，整读一次、按文件头认格式与 mime
+        // 只按取出的引用判一次：网址与 data URI（`data:/…` 是存储地址）直接用；相对路径与 file_* 工具一致归到 `workspace:/`，
+        // 不按首段补成别的根；本机路径不收。存储里的图先判后读，整读一次、按文件头认格式与 mime
+        const ref = imageRefOf(imageInput);
         let imageUrl: string;
         if (
-          imageInput.startsWith('http://') ||
-          imageInput.startsWith('https://') ||
-          (imageInput.startsWith('data:') && !isStorageUri(imageInput))
+          ref.startsWith('http://') ||
+          ref.startsWith('https://') ||
+          (ref.startsWith('data:') && !isStorageUri(ref))
         ) {
-          imageUrl = imageInput;
+          imageUrl = ref;
         } else {
-          const uri = mediaRef(resolveImageStorageUri(imageInput));
+          const relative = !ref.includes(':/') && !isHostAbsolutePath(ref);
+          const uri = mediaRef(relative ? `workspace:/${ref}` : ref);
           if (!uri || !isStorageUri(uri)) {
             return JSON.stringify({ error: '图片来源要写历史引用、存储地址或网址，不能写本机路径' });
           }
-          if (!(await mediaInScope(uri, callCtx, scopeDeps()))) return JSON.stringify({ error: OUT_OF_SCOPE });
-          const buf = (await getMediaRuntime().storage.readFile(uri)) as Uint8Array;
+          if (!(await mediaInScope(uri, callCtx, scopeDeps()))) {
+            return JSON.stringify({ error: relative ? notFound(uri) : OUT_OF_SCOPE });
+          }
+          let buf: Uint8Array;
+          try {
+            buf = (await getMediaRuntime().storage.readFile(uri)) as Uint8Array;
+          } catch (err) {
+            if (!isStorageNotFound(err)) throw err;
+            return JSON.stringify({ error: notFound(uri) });
+          }
           const format = detectMediaFormat(buf.subarray(0, MEDIA_HEAD_BYTES));
           const mime = format && IMAGE_MIME[format.format];
           if (!mime) return JSON.stringify({ error: '目标不是图片（文件内容不是受支持的图片格式）' });
@@ -273,7 +254,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           properties: {
             image_ref: {
               type: 'string',
-              description: '图片引用路径（ref: 后面的部分），如 data/images/onebot_xxx/abc123.jpg',
+              description: '图片引用（ref: 后面的部分），如 data:/images/onebot_xxx/onebot/abc123.jpg',
             },
             description: { type: 'string', description: '图片描述文字' },
           },

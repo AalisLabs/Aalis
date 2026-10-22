@@ -161,6 +161,17 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
     vi.unstubAllGlobals();
   });
 
+  it('存储地址经 storage 读出上传', async () => {
+    const cap = captureUpload();
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({
+      attachment: { kind: 'audio', data: 'data:/audios/s/onebot/0123456789abcdef.wav' },
+    });
+    expect(r.text).toBe('转写文本');
+    expect(cap.filename()).toBe('audio.wav');
+    vi.unstubAllGlobals();
+  });
+
   it('无扩展名的本地路径同样不把整条路径当后缀', async () => {
     const local = join(base, 'voicenote'); // 刻意无后缀
     await writeFile(local, MP3);
@@ -171,6 +182,28 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
     expect(cap.filename()).toBe('audio.wav'); // 无 mime 可依时的白名单兜底
     expect(cap.filename()).not.toContain('/');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('plugin-asr-whisper-cpp：音频来源', () => {
+  it('存储地址按 storage 解析成本机路径', async () => {
+    const resolved: string[] = [];
+    const asr = await bootAsr(
+      asrWhisper,
+      { modelPath: join(base, 'ggml-base.bin') },
+      {
+        process: procService(join(base, 'whisper-in')),
+        storage: {
+          ...storageService([]),
+          resolveLocalPath: async (uri: string) => {
+            resolved.push(uri);
+            return join(base, 'voicenote.wav');
+          },
+        },
+      },
+    );
+    await asr.transcribe({ attachment: { kind: 'audio', data: 'data:/audios/s/onebot/0123456789abcdef.wav' } });
+    expect(resolved).toEqual(['data:/audios/s/onebot/0123456789abcdef.wav']);
   });
 });
 

@@ -45,6 +45,7 @@ async function apply() {
     ),
     storage: ref(),
     processService: ref(),
+    hooks: fixedRef({ middleware: () => () => {} } as never),
     logger: fixedRef(silentLogger()),
     lifecycle: fixedRef({ signal: new AbortController().signal, onDispose: () => () => {} } as unknown as LifecycleCap),
     config: fixedRef({}),

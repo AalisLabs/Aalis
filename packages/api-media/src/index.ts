@@ -5,10 +5,11 @@
 // plugin-media 既是该契约的调度器，也是 LLM 服务的内置 adapter
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
 // 真正"非 LLM"的 backend（如 whisper.cpp / 云 ASR）则注册为独立 processor。
-// 另导出媒体按受众的判据（scope.ts），发媒体、看图的工具与出站转换共用。
+// 另导出会话媒体的目录约定（session-media.ts：写入方写在哪、怎么清）与媒体按受众的判据（scope.ts，发媒体、看图的
+// 工具与出站转换共用）。
 //
 // 依赖：@aalis/core、@aalis/schema-message、@aalis/api-llm（仅 ModelRef 类型）、
-// @aalis/api-session-manager 与 @aalis/api-storage（判据用的纯函数）。
+// @aalis/api-session-manager 与 @aalis/api-storage（目录约定与判据用的纯函数）。
 // ============================================================
 
 import type { ModelRef } from '@aalis/api-llm';
@@ -150,8 +151,8 @@ export interface MediaService {
    * 主动描述单张图片（含动图自动多帧）。没有可用的 vision processor、识别结果为空，或动图取不到、
    * 抽不出帧时返回空串；识别过程出错（识别模型调用失败、静态图取不到等）时抛出，调用方需自行 try/catch。
    * 与 describe([att]) 不同：本方法专为 `analyze_image` 等单图工具优化，
-   * 内部走描述缓存（30 天滑动 TTL；键取落盘路径里的内容哈希，非内容寻址的来源经
-   * 落盘时登记的别名收敛到同一条）；可传 hint 注入用户意图（带 hint 不读写缓存）。
+   * 内部走描述缓存（30 天滑动 TTL；文件名按内容寻址的存储地址取文件名里的内容哈希做键，见 session-media 的命名
+   * 约定，网址与 data URI 经落盘时登记的别名收敛到落盘地址的键上）；可传 hint 注入用户意图（带 hint 不读写缓存）。
    */
   describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>;
 
@@ -161,17 +162,20 @@ export interface MediaService {
    */
   describeVideo(videoUrl: string, opts?: DescribeVideoOptions): Promise<string>;
 
-  /** 查描述缓存（不触发识别）。未命中返回 null。 */
+  /**
+   * 查描述缓存（不触发识别）。未命中返回 null。传原始来源（网址、data URI、存储地址）；落盘方登记过别名的来源按
+   * 原始来源同样命中落盘后的描述。带会话语境识别的描述只在本会话命中（键是落盘的存储地址），这里查不到
+   */
   lookupDescription(imageUrl: string): string | null;
 
-  /** 写入描述缓存（一般由 describeImage 自动调用，外部很少用）。 */
+  /** 写入描述缓存（一般由 describeImage 自动调用，外部很少用）。来源的传法同 lookupDescription */
   rememberDescription(imageUrl: string, description: string): void;
 
   /**
-   * 登记「来源 URL / data URI → 落盘 ref」别名：由**落盘方**在落盘成功后调一次
-   * （适配器把远端 URL 落成 `data/images/…` 时、WebUI base64 落盘时）。
-   * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘 ref
-   * 那条内容哈希键——OneBot 引用消息只拿得到原始 URL 时也不必重认。别名按来源串相等命中；
+   * 登记「原始来源（网址、data URI）→ 落盘的存储地址」别名：由**落盘方**在落盘成功后调一次
+   * （适配器把远端网址落成 `data:/images/…` 时、WebUI 的 base64 落盘时）。
+   * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘地址的那条描述——
+   * OneBot 引用消息只拿得到原始网址时也不必重认。别名按来源串相等命中；
    * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次（见 plugin-adapter-onebot）。
    */
   rememberDescriptionAlias(source: string, landedRef: string): void;
@@ -260,3 +264,4 @@ declare module '@aalis/core' {
 export const media = defineService<MediaService>('media');
 
 export * from './scope.js';
+export * from './session-media.js';

@@ -22,6 +22,9 @@ Aalis 里所有「文件」都不用宿主机绝对路径表示，而是用一�
 2. **判别字符串**：你收到一个可能是 URI、可能是 http URL、可能是 base64 data-URI 的字符串，要分流 → 用 `isStorageUri`。
 3. **归一配置**：用户在你的 configSchema 里填了个路径/裸名，你要把它变成合法 URI → 用 `toStorageUri`。
 
+`toStorageUri` 只用于配置路径。消息附件的引用（存档的附件清单、正文里的 `[图片 | ref:…]`、发出的附件）一律是完整的存储地址，
+消费方只认存储地址，不把相对路径（如 `data/images/…`）补成存储地址；会话媒体的目录布局见 [media 服务的「会话媒体的目录约定」](../services/media.md#会话媒体的目录约定)。
+
 **核心原则：文法与判别一律复用 `@aalis/api-storage` 导出的 helper，不要各自重写正则。**
 这几个函数是「权威文法」（authoritative grammar），全体内置消费者（onebot / media / asr / persona /
 checkpoint …）都复用它们。自行重写一份正则，迟早与它们漂移，触发下文「常见错误与边界情形」列出的问题。
@@ -74,7 +77,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 
 判别依赖 `STORAGE_URI_RE` 中的 `:\/`：`data:/` 命中，`data:image/...` 不命中（注释见 `index.ts`）。
 真实消费侧的分流见 `plugin-media/src/service.ts`：先 `isStorageUri(data)`（命中即走 storage 路径），
-未命中再以 `data.startsWith('data:')` 按 base64 data-URI 解码。**顺序不可颠倒：先判 `isStorageUri`，再判 data-URI。**
+未命中再按 base64 data-URI（`data:<mime>;base64,…`）解码。**顺序不可颠倒：先判 `isStorageUri`，再判 data-URI。**
 
 ---
 

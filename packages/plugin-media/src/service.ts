@@ -4,23 +4,27 @@
 
 import type { ASRService } from '@aalis/api-asr';
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
-import type {
-  BuildContextOptions,
-  DescribeImageOptions,
-  DescribeOptions,
-  DescribeVideoOptions,
-  MediaCapability,
-  MediaProcessor,
-  MediaProcessReport,
-  MediaService,
-  TranscribeInput,
-  TranscribeOptions,
+import {
+  type BuildContextOptions,
+  type DescribeImageOptions,
+  type DescribeOptions,
+  type DescribeVideoOptions,
+  type MediaCapability,
+  type MediaProcessor,
+  type MediaProcessReport,
+  type MediaService,
+  sessionMediaUri,
+  type TranscribeInput,
+  type TranscribeOptions,
 } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
-import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
+import { isStorageUri } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
-import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
+import { AttachmentRefKind, formatAttachmentRef, parseAttachmentRefs } from '@aalis/schema-message';
+
+/** 本插件在会话媒体目录里的子目录名（写入方）：上传的图片落在这里 */
+export const MEDIA_WRITER = 'media';
 
 /** 附件 kind → 中文显示名。复用 schema-message 的单一来源，避免 `[audio：…]` 这种中英混排。 */
 const ATTACHMENT_KIND_LABEL: Record<string, string> = {
@@ -303,13 +307,12 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 对入站附件图片进行落盘，返回可写入 AttachmentRef 的相对路径。
+   * 对入站附件图片进行落盘，返回写进附件引用的存储地址。
    *
-   * - `data:` URI（WebUI base64）→ 解码后写入 `data:/images/{session}/{hash}.{ext}`，
-   *   返回 `data/images/{session}/{hash}.{ext}`（历史相对路径格式），并登记
-   *   「来源 → 落盘 ref」描述缓存别名（见 cache.rememberDescriptionAlias）。
+   * - `data:` URI（WebUI base64）→ 解码后写进本插件的子目录 `data:/images/{会话目录}/media/{hash}.{ext}`，
+   *   并登记「来源 → 落盘地址」描述缓存别名（见 cache.rememberDescriptionAlias）。
    * - `http(s)://` URL → 直接返回原 URL（analyze_image 可直接处理）。
-   * - 已是 storage URI（如 `data:/images/...`，OneBot 已落盘）→ 转换为相对路径。
+   * - 已是存储地址（如适配器已落盘）→ 原样返回。
    * - 其它无法处理的格式 → 返回 null（描述仍写入，不含 ref）。
    * - 落盘失败（磁盘满、没有写权限）→ 抛出，消息以「图片落盘失败」开头：没法识别时调用方整条按失败写，
    *   还能识别时照常识别、描述不带引用。
@@ -317,14 +320,8 @@ export class MediaServiceImpl implements MediaService {
   private async cacheImageRef(att: MessageAttachment, sessionId: string): Promise<string | null> {
     const data = att.data;
     if (typeof data !== 'string' || !data) return null;
-    if (data.startsWith('http://') || data.startsWith('https://')) return data;
-    // 已是 storage URI（含 data:/，根名 data，OneBot 已落盘）→ 转为相对路径 root/rest
-    if (isStorageUri(data)) {
-      const root = parseUriRoot(data);
-      return `${root}/${data.slice(root.length + 2)}`;
-    }
+    if (data.startsWith('http://') || data.startsWith('https://') || isStorageUri(data)) return data;
     // base64 data URI（WebUI 上传的原始图片）
-    if (!data.startsWith('data:')) return null;
     const m = data.match(/^data:([^;]+);base64,(.*)$/);
     if (!m) return null;
     const mimeType = m[1];
@@ -333,16 +330,13 @@ export class MediaServiceImpl implements MediaService {
     const buf = Buffer.from(m[2], 'base64');
     const digest = await crypto.subtle.digest('SHA-256', buf);
     const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-    const safeSession = sessionId.replace(/[:/\\]/g, '_');
-    const dirRel = `images/${safeSession}`;
-    const filename = `${hash}.${ext}`;
+    const ref = `${sessionMediaUri('image', sessionId, MEDIA_WRITER)}/${hash}.${ext}`;
     const { storage } = getMediaRuntime();
     try {
-      await storage.writeFile(`data:/${dirRel}/${filename}`, buf);
+      await storage.writeFile(ref, buf);
     } catch (err) {
       throw new Error(`图片落盘失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
-    const ref = `data/${dirRel}/${filename}`;
     // 落盘时登记一次别名：原始来源串（这条整段 base64 data URI）此后经别名落到
     // ref 的内容哈希键上——同一张图从别的来源再进来只识别一次，描述也进得了快照。
     rememberDescriptionAlias(data, ref);
@@ -378,6 +372,13 @@ export class MediaServiceImpl implements MediaService {
     // 只在本会话内复用（键退回含会话目录的落盘路径），否则会把 A 群语境搬进 B 群。
     const shareable = !ctxText;
 
+    // 落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后把占位符改写成了引用）不再重复写
+    const contentRefs = new Set(parseAttachmentRefs(msg.content).map(r => r.ref));
+    const landImage = async (att: MessageAttachment): Promise<string | null> => {
+      const ref = await this.cacheImageRef(att, msg.sessionId);
+      return ref && !contentRefs.has(ref) ? ref : null;
+    };
+
     const descriptions: Array<string | undefined> = new Array(attachments.length).fill(undefined);
     const vision = this.imageDescriber();
 
@@ -400,7 +401,7 @@ export class MediaServiceImpl implements MediaService {
           if (!this.cfg.vision.recognizeOnArrival || !vision) {
             // 只留指针：不识别（关了到达即识别，或没有模型看得到图）。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
             // base64 上传没有落盘 ref，这里落一份并写指针，否则档案里图片零痕迹、按需看无从下手。
-            const ref = await this.cacheImageRef(att, msg.sessionId);
+            const ref = await landImage(att);
             item.description = ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref }) : undefined;
             descriptions[i] = item.description;
           } else {
@@ -414,7 +415,7 @@ export class MediaServiceImpl implements MediaService {
               if (animated) {
                 item.description = cached;
               } else {
-                const ref = await this.cacheImageRef(att, msg.sessionId).catch(unstored);
+                const ref = await landImage(att).catch(unstored);
                 item.description = ref
                   ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: cached, ref })
                   : `[图片描述] ${cached}`;
@@ -432,7 +433,7 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               item.processor = vision.name;
               // 先落盘：识别失败或返回空串时引用照留，原图不丢
-              imageRef = await this.cacheImageRef(att, msg.sessionId).catch(unstored);
+              imageRef = await landImage(att).catch(unstored);
               // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
               // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
               // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
@@ -566,8 +567,8 @@ export class MediaServiceImpl implements MediaService {
    *   主模型不看图。实测一张 57KB 的图挂上去要多花 1,090 token、4.7 秒预填充——同一张图识别两遍。
    * - passthrough：主模型亲自看图 → 动图抽帧为多张静图，静图规范化后交出。
    *
-   * 直通必须过**形态规范化**：适配器给 attachment.data 的是历史相对路径 ref
-   * （`data/images/…`），而 provider 只认 data URI / http / file:// / 绝对路径，裸路径
+   * 直通必须过**形态规范化**：适配器给 attachment.data 的是落盘的存储地址
+   * （`data:/images/…`），而 provider 只认 data URI / http / file:// / 绝对路径，原样交出
    * 会被当成 base64 送出去，触发 `illegal base64 data at input byte N`（实测 400、整轮
    * 回复失败）。已经是 data URI / http 的逐字节原样返回；交不出合法形态的那一张丢弃并
    * warn——留着它等于让整轮请求被 provider 拒收。

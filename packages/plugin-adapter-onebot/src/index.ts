@@ -4,7 +4,7 @@ import { flowControl } from '@aalis/api-flow-control';
 import { hooks } from '@aalis/api-hooks';
 import { i18n } from '@aalis/api-i18n';
 import { llm } from '@aalis/api-llm';
-import { media } from '@aalis/api-media';
+import { clearSessionMedia, media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
@@ -12,7 +12,7 @@ import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type TextRef, toSource } from '@aalis/schema-i18n';
+import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
@@ -27,7 +27,7 @@ import {
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
-import { cacheOneAttachment } from './attachment-cache.js';
+import { cacheOneAttachment, MEDIA_WRITER } from './attachment-cache.js';
 import { inlineMarkupMedia, materializeAttachments } from './attachments.js';
 import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
@@ -234,7 +234,7 @@ const configSchema = defineConfig({
   attachmentCache: {
     label: '附件本地缓存',
     description:
-      '入站 / 出站的 image / audio / video / file 统一缓存到 data/{kind}s/{session}/，与图片目录布局一致，便于人工归档与多轮工具复用',
+      '入站 / 出站的 image / audio / video / file 统一缓存到 data:/{kind}s/{会话目录}/onebot/，便于人工归档与多轮工具复用；/clear 与删除会话时由本适配器清理',
     fields: {
       maxBytes: {
         type: 'number',
@@ -393,8 +393,16 @@ function nextEcho(): string {
 
 // ===== 附件统一缓存 =====
 //
-// image/audio/video/file 一律落盘到 data/{kind}s/{session}/{hash}.{ext}，便于人工归档、
+// image/audio/video/file 一律落盘到 data:/{kind}s/{会话目录}/onebot/{hash}.{ext}，便于人工归档、
 // 跨轮工具复用、多模态历史回放。详见 ./attachment-cache.ts。
+
+/** /clear 回执里各种附件的称呼（字典键） */
+const MEDIA_NOUNS = [
+  ['image', 'mediaImage'],
+  ['video', 'mediaVideo'],
+  ['audio', 'mediaAudio'],
+  ['file', 'mediaFile'],
+] as const;
 
 /** 占位符 → AttachmentRefKind 映射（与 v11/v12 segmentsToText 的输出对齐） */
 const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placeholder: string; ref: AttachmentRefKind }> =
@@ -407,7 +415,7 @@ const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placehold
 
 /**
  * 把 text 中所有 [图片]/[语音]/[视频]/[文件] 占位按 attachments 顺序替换为
- * `[xxx | ref:data/...]`。落盘失败的占位保持原样。
+ * `[xxx | ref:data:/...]`。落盘失败的占位保持原样。
  */
 function rewritePlaceholdersWithRefs(
   text: string,
@@ -1066,22 +1074,37 @@ function runAdapter(caps: Caps): void {
   });
   const { getOrLoadForward, fetchForwardOnce, expandForwardsInText } = forwardExpander;
 
-  // 参与 memory:clear：转发原文是聊天内容，归入 context。条目没有会话维度，只在全局清理时清，
-  // 会话级清理不动它（靠持久化层的 7 天回收）。多实例共用同一命名空间、各有一份内存缓存：
-  // 每个实例都清自己的缓存（持久化层重复删是空操作），回显合并成一条——已有成功项时不再追加，
-  // 前一实例失败而本实例成功时改写那一条。
+  // 参与 memory:clear。转发原文是聊天内容，归入 context：条目没有会话维度，只在全局清理时清，会话级清理不动它（靠持久化层的
+  // 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。多实例共用同一
+  // 命名空间与目录、各有一份内存缓存：每个实例都清一遍（重复删是空操作），回显按来源合成一行——已有成功项时不再追加，前一
+  // 实例失败而本实例成功时改写那一行。
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
-    if (data.scope === 'all' && (!data.types || data.types.includes('context'))) {
-      const prev = data.results.find(r => r.source === 'onebot-forward');
+    const report = (line: (typeof data.results)[number]) => {
+      const prev = data.results.find(r => r.source === line.source);
+      if (!prev) data.results.push(line);
+      else if (!prev.success && line.success) Object.assign(prev, line);
+    };
+    const wants = (type: string) => !data.types || data.types.includes(type);
+    if (data.scope === 'all' && wants('context')) {
       try {
         const removed = await forwardExpander.clearAll();
-        const done = { source: 'onebot-forward', success: true, message: `合并转发原文已清空（${removed} 条）` };
-        if (!prev) data.results.push(done);
-        else if (!prev.success) Object.assign(prev, done);
+        report({ source: 'onebot-forward', success: true, message: `合并转发原文已清空（${removed} 条）` });
       } catch (err) {
-        if (!prev) {
-          const msg = err instanceof Error ? err.message : String(err);
-          data.results.push({ source: 'onebot-forward', success: false, message: `合并转发原文清空失败: ${msg}` });
+        const msg = err instanceof Error ? err.message : String(err);
+        report({ source: 'onebot-forward', success: false, message: `合并转发原文清空失败: ${msg}` });
+      }
+    }
+    const sessionId = data.scope === 'all' ? undefined : data.sessionId;
+    if (data.scope === 'all' || sessionId) {
+      for (const [type, noun] of MEDIA_NOUNS) {
+        if (!wants(type)) continue;
+        const kind = t(noun);
+        const line = { source: `onebot-${type}`, type };
+        try {
+          const count = await clearSessionMedia(storage, type, MEDIA_WRITER, sessionId);
+          report({ ...line, success: true, message: t('mediaCleared', { kind, count }) });
+        } catch (err) {
+          report({ ...line, success: false, message: t('mediaFailed', { kind, error: textOf(err) }) });
         }
       }
     }
@@ -1705,7 +1728,7 @@ function runAdapter(caps: Caps): void {
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;
 
       // ----- 统一附件落盘 -----
-      // 所有 image / audio / video / file 统一缓存到 data/{kind}s/{session}/，
+      // 所有 image / audio / video / file 统一缓存到 data:/{kind}s/{会话目录}/onebot/，
       // 让历史回放、跨轮工具调用、人工归档使用同一份目录布局。
       //
       // 特别地：
@@ -1767,7 +1790,7 @@ function runAdapter(caps: Caps): void {
         }),
       );
 
-      // 把 [图片]/[语音]/[视频]/[文件] 占位重写为 [xxx | ref:data/...]
+      // 把 [图片]/[语音]/[视频]/[文件] 占位重写为 [xxx | ref:data:/...]
       if (atts.length > 0) event.text = rewritePlaceholdersWithRefs(event.text, atts, localPaths);
 
       // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
@@ -2400,7 +2423,7 @@ function runAdapter(caps: Caps): void {
               );
               if (local) {
                 rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.data, local);
-                att.data = local.replace(/^([^/]+)\//, '$1:/');
+                att.data = local;
                 if (att.kind === 'audio') att.mimeType = 'audio/wav';
               }
             } catch (err) {

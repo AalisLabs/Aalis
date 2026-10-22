@@ -18,7 +18,10 @@ import { media } from '@aalis/api-media';
 
 实现见 `@aalis/plugin-media`。
 
-另导出媒体按受众的判据（纯函数，不依赖 `media` 服务在场）：`mediaInScope`、`mediaRef`、`historyMediaRefs`。
+另导出两组纯函数（不依赖 `media` 服务在场）：
+
+- 会话媒体的目录约定：`MEDIA_KIND_DIRS`、`sessionDirName`、`sessionMediaUri`、`clearSessionMedia`。写入方把会话里收发与产生的媒体写进 `data:/<种类目录>/<会话目录>/<写入方>/`，并挂 `memory:clear` 中间件清自己的子目录。
+- 媒体按受众的判据：`mediaInScope`、`mediaRef`、`historyMediaRefs`。
 
 ## 文档
 

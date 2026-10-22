@@ -33,14 +33,14 @@ describe('stripRkey', () => {
     );
     expect(stripRkey(qq('EhQabc', 'CAQSKAB1'))).toBe(stripRkey(qq('EhQabc', 'CAQSKAB2')));
     expect(stripRkey('https://example.invalid/a.jpg?x=1')).toBe('https://example.invalid/a.jpg?x=1');
-    expect(stripRkey('data/images/s/0123456789abcdef.jpg')).toBe('data/images/s/0123456789abcdef.jpg');
+    expect(stripRkey('data:/images/s/onebot/0123456789abcdef.jpg')).toBe('data:/images/s/onebot/0123456789abcdef.jpg');
   });
 });
 
 describe('落盘别名跨 rkey 轮换命中', () => {
   it('按 rkey=1 登记、识别写入落盘键，rkey=2 的引用消息查得到同一条描述；不同 fileid 不串', () => {
     const a = qq('EhQcat', 'CAQSKAB1');
-    const landed = 'data/images/onebot_1_group_2/0123456789abcdef.jpg';
+    const landed = 'data:/images/onebot_1_group_2/onebot/0123456789abcdef.jpg';
     rememberLandedAlias(media, 'image', a, landed);
     rememberDescription(a, '一只猫'); // 识别阶段按原始 URL 写入 → 经别名落到落盘键
     expect(lookupCachedDescription(landed)).toBe('一只猫');
@@ -61,7 +61,7 @@ describe('落盘别名跨 rkey 轮换命中', () => {
 
   it('会话私有描述（shareable=false，带对话语境）不经 URL 路径复用——rkey 归一不改变这一边界', () => {
     const a = qq('EhQctx', 'CAQSKAB1');
-    const landed = 'data/images/onebot_1_group_2/fedcba9876543210.jpg';
+    const landed = 'data:/images/onebot_1_group_2/onebot/fedcba9876543210.jpg';
     rememberLandedAlias(media, 'image', a, landed);
     rememberDescription(a, '带语境的描述', false);
     expect(lookupDescriptionByUrl(media, a)).toBeNull();
@@ -71,18 +71,18 @@ describe('落盘别名跨 rkey 轮换命中', () => {
   it('音频与非 http 来源不登记（与登记面的既有约束一致）；无 rkey 的 URL 只登记一条', () => {
     const calls: string[] = [];
     const spy = { rememberDescriptionAlias: (s: string) => calls.push(s) } as unknown as MediaService;
-    rememberLandedAlias(spy, 'audio', qq('EhQaud', 'CAQSKAB1'), 'data/audios/s/0123456789abcdef.amr');
-    rememberLandedAlias(spy, 'image', 'data:image/png;base64,AAAA', 'data/images/s/0123456789abcdef.png');
+    rememberLandedAlias(spy, 'audio', qq('EhQaud', 'CAQSKAB1'), 'data:/audios/s/onebot/0123456789abcdef.amr');
+    rememberLandedAlias(spy, 'image', 'data:image/png;base64,AAAA', 'data:/images/s/onebot/0123456789abcdef.png');
     expect(calls).toEqual([]);
-    rememberLandedAlias(spy, 'image', 'https://example.invalid/p.jpg', 'data/images/s/0123456789abcdef.jpg');
+    rememberLandedAlias(spy, 'image', 'https://example.invalid/p.jpg', 'data:/images/s/onebot/0123456789abcdef.jpg');
     expect(calls).toEqual(['https://example.invalid/p.jpg']);
-    rememberLandedAlias(spy, 'image', qq('EhQtwo', 'CAQSKAB1'), 'data/images/s/0123456789abcdef.jpg');
+    rememberLandedAlias(spy, 'image', qq('EhQtwo', 'CAQSKAB1'), 'data:/images/s/onebot/0123456789abcdef.jpg');
     expect(calls.slice(1)).toEqual([qq('EhQtwo', 'CAQSKAB1'), stripRkey(qq('EhQtwo', 'CAQSKAB1'))]);
   });
 
   it('media 未装即跳过：不抛（调用点在 try 内，抛出会连带丢掉已落盘的 ref）', () => {
     expect(() =>
-      rememberLandedAlias(undefined, 'image', qq('EhQnone', 'CAQSKAB1'), 'data/images/s/0123456789abcdef.jpg'),
+      rememberLandedAlias(undefined, 'image', qq('EhQnone', 'CAQSKAB1'), 'data:/images/s/onebot/0123456789abcdef.jpg'),
     ).not.toThrow();
   });
 });

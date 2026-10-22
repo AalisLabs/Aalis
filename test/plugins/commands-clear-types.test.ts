@@ -30,15 +30,15 @@ afterEach(async () => {
 });
 
 /**
- * 装 plugin-commands 与只有 clear/clearAll 的记忆替身；附件缓存放在 storage-local 的内置 data 根（临时家目录的 state/），
- * noDataRoot 时不注册存储根（附件清理走失败行）；vectorHandler 时另装一个标注 vector 的清理中间件
+ * 装 plugin-commands 与只有 clear/clearAll 的记忆替身，存储是 storage-local（临时家目录）；noStorage 时不装存储；
+ * vectorHandler 时另装一个标注 vector 的清理中间件
  */
-async function world(opts: { vectorHandler?: boolean; noDataRoot?: boolean } = {}) {
+async function world(opts: { vectorHandler?: boolean; noStorage?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
-  if (!opts.noDataRoot) {
+  if (!opts.noStorage) {
     const base = mkdtempSync(join(tmpdir(), 'aalis-clear-types-'));
     cleanups.push(() => rmSync(base, { recursive: true, force: true }));
     provideHostPaths(app, base);
@@ -120,20 +120,17 @@ describe('/clear 的类型说明', () => {
 });
 
 describe('/clear 显式指定的类型没有处理者', () => {
-  it('没有插件处理 vector：与图片一起指定时照常清图片，另说明向量未清理（会话级与全局）', async () => {
+  it('没有插件处理 vector：与消息历史一起指定时照常清消息历史，另说明向量未清理（会话级与全局）', async () => {
     const { exec } = await world();
     const vectorNote = `⚠ 向量记忆：${NO_HANDLER}，未清理`;
-    expect(await exec('/clear -t vector -t image')).toBe(['✅ 当前会话无图片缓存', vectorNote].join('\n'));
-    expect(await exec('/clear all -t vector -t image')).toBe(
-      ['✅ 图片缓存目录不存在，无需清空', vectorNote].join('\n'),
-    );
+    expect(await exec('/clear -t vector -t context')).toBe(['✅ 当前会话消息历史已清空', vectorNote].join('\n'));
+    expect(await exec('/clear all -t vector -t context')).toBe(['✅ 所有消息历史和归档已清空', vectorNote].join('\n'));
   });
 
-  it('附件缓存清理失败：照实报失败，不另说明无处理者', async () => {
-    const { exec } = await world({ noDataRoot: true });
-    const out = await exec('/clear -t image');
-    expect(out.startsWith('⚠ 图片缓存清空失败: ')).toBe(true);
-    expect(out).not.toContain(NO_HANDLER);
+  it('附件归写入方清：没有存储时 /clear 只清消息历史，不出附件的失败行', async () => {
+    const { exec } = await world({ noStorage: true });
+    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
+    expect(await exec('/clear -t image')).toBe(`⚠ 图片缓存：${NO_HANDLER}，未清理`);
   });
 
   it('单独 -t vector：回说明，而不是「无可清除的记忆模块」', async () => {

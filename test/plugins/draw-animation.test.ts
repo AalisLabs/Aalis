@@ -167,7 +167,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
         ),
       );
       expect(out.error).toBeUndefined();
-      expect(out.uri).toMatch(/^data:\/images\/onebot_t_group_9\/draw-[0-9a-f]{16}\.gif$/);
+      expect(out.uri).toMatch(/^data:\/images\/onebot_t_group_9\/draw\/draw-[0-9a-f]{16}\.gif$/);
       expect(out.check_frames).toHaveLength(2);
       expect((out.warnings ?? []).some((w: string) => w.includes('漂移'))).toBe(true);
       // 产物真的在（storage.stat 走真文件系统）

@@ -1,5 +1,5 @@
 // 本插件自己的原文字典：平台通知、请求事件合成的入站与戳一戳、群文件上传转成的入站给人看的那句（写给模型的正文另带
-// [notice/…]、处理办法与工具用法）
+// [notice/…]、处理办法与工具用法），与 /clear 清理收发附件的回执
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -36,6 +36,12 @@ const SOURCE = {
   pokedOther: '{user} 戳了 {target}',
   uploaded: '{user} 上传了 {file}',
   unknownFile: '未知文件',
+  mediaImage: '图片',
+  mediaVideo: '视频',
+  mediaAudio: '语音',
+  mediaFile: '文件',
+  mediaCleared: 'OneBot 收发的{kind}已清空（{count, number} 个）',
+  mediaFailed: 'OneBot 收发的{kind}清空失败: {error}',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -79,15 +79,6 @@ const SOURCE = {
   clearFailed: '清空失败: {error}',
   memoryGone: '记忆服务在清理期间下线',
   noGlobalClearMidway: '清理期间换上的记忆后端不支持全局清空',
-  kindImage: '图片',
-  kindVideo: '视频',
-  kindAudio: '语音',
-  kindFile: '文件',
-  cacheClearedAll: '所有{kind}缓存已清空（{count, number} 个会话目录）',
-  cacheMissingAll: '{kind}缓存目录不存在，无需清空',
-  cacheClearedSession: '当前会话{kind}缓存已清空（{count, number} 个）',
-  cacheMissingSession: '当前会话无{kind}缓存',
-  cacheFailed: '{kind}缓存清空失败: {error}',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -186,13 +186,12 @@ function detectAudioFormat(buf: Buffer): string {
  * 供 LLM provider 直接消费。处理策略：
  * - 已经是 `data:image/...;base64,...` → 原样返回
  * - http(s) URL → 原样返回（由 provider 自行下载）
- * - 其他形式（storage URI `data:/...`、相对路径 `data/...`、file://、绝对路径）
+ * - 其他形式（storage URI `data:/...`、file://、绝对路径）
  *   → 走 materializeAttachment 物化到 storage，读出字节后转为 data URL
  *
- * 历史上 adapter-onebot 直接把 `data/images/...` 这种"相对路径 ref"塞进
- * att.data。ollama provider 的 resolveImage 只认 data URI / http / file:// / 绝对路径，
- * 这种 bare 相对路径会被原样当作 base64 送给 Ollama，触发 `illegal base64 data at input byte N`。
- * 在 media 层统一规范化为 data URL 后，所有 vision provider 都能正确解码。
+ * 适配器把落盘的存储地址（`data:/images/...`）写进 att.data。ollama provider 的 resolveImage
+ * 只认 data URI / http / file:// / 绝对路径，存储地址会被原样当作 base64 送给 Ollama，触发
+ * `illegal base64 data at input byte N`。在 media 层统一规范化为 data URL 后，所有 vision provider 都能正确解码。
  */
 export async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<string> {
   if (/^data:image\/[^;]+;base64,/.test(data)) return data;

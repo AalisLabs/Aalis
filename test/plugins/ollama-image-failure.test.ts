@@ -183,7 +183,12 @@ describe('识别失败的如实上报', () => {
     await app.plugins.idle();
 
     const svc = host.services.use.get(media);
-    const msg = { sessionId: 's', attachments: [{ kind: 'image', data: PNG_1PX, mimeType: 'image/png' }] };
+    const msg = {
+      sessionId: 's',
+      platform: 'test',
+      content: '',
+      attachments: [{ kind: 'image', data: PNG_1PX, mimeType: 'image/png' }],
+    };
     const report = await svc!.processMessage(msg as unknown as IncomingMessage);
 
     expect(report.total).toBe(1);

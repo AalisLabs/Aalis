@@ -81,13 +81,35 @@ export interface MediaProcessor {
 
 `'media:processed': [{ sessionId, report }]`。一条入站消息的所有附件处理完毕后发出，无论成功还是失败都会发，供 webui、archive、调试等消费。
 
+### 会话媒体的目录约定
+
+会话里收发与产生的媒体（适配器落盘的附件、上传的图片、绘图产物）按种类与会话分目录，每个写入方用自己的子目录：
+
+```
+data:/<种类目录>/<会话目录>/<写入方>/<文件>
+```
+
+契约包导出这组约定，纯函数，media 缺席时也能用：
+
+```ts
+const MEDIA_KIND_DIRS: Readonly<Record<'image' | 'audio' | 'video' | 'file', string>>; // data:/images 等
+function sessionDirName(sessionId: string): string;                                   // 会话 id → 会话目录名
+function sessionMediaUri(kind, sessionId: string, writer: string): string;             // 写入方在这个会话里这种媒体的目录
+function clearSessionMedia(storage, kind, writer: string, sessionId?: string): Promise<number>;
+```
+
+- **会话目录名**：`sessionDirName` 把会话 id 里的 `:`、`/`、`\`、`..` 与前导点换成 `_`，空 id 抛错（工具调用上下文的 `sessionId` 必填，空的是调用方的缺陷）。换法有损：会话 id 不能只在这几处有区别（`x:a_b` 与 `x:a:b` 落进同一个目录），大小写不敏感的卷上只差大小写的也落进同一个目录。
+- **写入方**：第一方有三家，onebot（收发的图片、语音、视频、文件）、media（上传的图片）、draw（绘图产物）；第三方写入方用自己的名字作子目录，经 `sessionMediaUri` 取目录。附件引用（存档的附件清单、正文里的 `[图片 | ref:…]`、发出的附件）一律写完整的存储地址，不写相对路径。
+- **命名约定**：按内容寻址的写入方把文件名写成内容 SHA-256 的前 16 位小写十六进制加扩展名（onebot、media 是这样），描述缓存据此让不带会话语境的描述跨会话复用（见[描述缓存](#描述缓存)）；文件名不是这种写法的（如绘图产物）按存储地址各存一条。
+- **谁清**：谁写的谁清。写入方挂 `memory:clear` 中间件，所选类型含它写的种类时调 `clearSessionMedia` 清自己的子目录：给会话时只删这个会话的，不给时删各会话的，回删掉的文件数，要删的不在时回 0，其余存储错误照抛。会话目录删空了一并删掉，别的写入方的子目录不动。每种一行结果、标 `type`，会话级与全局清理用同一句「已清空（N 个）」，存储不在时不出结果行。`/clear` 与删除会话都走这一条，不装指令插件时删会话也清附件。浏览器截图落在 `tmp:/browser/<会话目录>/`（同一个 `sessionDirName`），不进 `/clear`。
+
 ### 媒体按受众的判据
 
 契约包另导出一组纯函数，判一次调用能取哪些存储里的媒体。`send_attachment`、`analyze_image` 与 plugin-image-sender 的出站转换共用它；它不是 `media` 服务的方法，media 缺席时也能判。
 
 ```ts
 function mediaInScope(target: string, call: MediaScopeCall, deps: MediaScopeDeps): Promise<boolean>;
-function mediaRef(input: string): string | undefined;          // 网址原样；存储地址与历史相对路径规整成存储地址
+function mediaRef(input: string): string | undefined;          // 网址原样；存储地址规整；相对路径等不收
 function historyMediaRefs(messages: readonly Message[]): string[]; // 历史里系统记下的媒体引用
 
 interface MediaScopeCall { sessionId: string; platform?: string; userId?: string; actor?: { platform: string; userId: string } }
@@ -101,9 +123,9 @@ interface MediaScopeDeps {
 - **判法**：授权身份取 `actor`，缺省为 `platform`、`userId`，没有 `userId` 即匿名。会话管理在场、调用所在会话的房间类别（api-session-manager 的 `roomClass`）不是 room、且授权身份是 owner 时不限；其余只认两样：本会话树（根会话加它的全部子会话）任一会话的媒体目录里的文件，即 `data:/{images,audios,videos,files}/<会话目录>/` 与 `tmp:/browser/<会话目录>/`；调用所在会话历史里系统记下的引用。先比目录，不中再读历史。
 - **会话管理不在**：一律只认本会话，owner 也一样。这时会话记录都取不到，房间类别一律是 internal，按第一条群里的 owner 回合就不受限了。
 - **历史引用**：`historyMediaRefs` 只读结构化字段，即入站附件清单（metadata 的 `Attachments` 各项的 `ref`）与发出的附件（`SentRef`），不读正文里的 `[图片 | ref:…]`：群友能打出伪造的占位符。目录按整棵会话树比，历史只取调用所在会话。
-- **规整**：`mediaRef` 消 `.`、`..`，带反斜杠的不收（有的系统按目录分隔解析它），盘符路径（`C:/…`）按本机路径不收；网址只认协议名小写的 `http://`、`https://`，与适配器下载附件时认的一样。判据先规整 target，调用方读的也应是规整后的那个。
-- **出站转换**：plugin-image-sender 在 `outbound:dispatch` 上处理带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>`（`mediaRef` 规整出存储地址的，含历史相对路径，`base64://…` 也按根名 base64 的存储地址算）：受众只有 owner 的会话（房间类别 owner-only）里不过判据，其余会话按非 owner 过判据，会话管理不在时判不出受众，一律按其余会话；再与 `send_attachment` 一样按文件头核对，都过了的摘出来转成同类附件（标 `skipArchive`，这条回复已带着标记落库）。只摘掉转成了附件的标记：不过判据的、读不出的（如 `base64://…`）与不是对应媒体的，和别的写法（网址、`file://`、本机路径、data URI、协议名大写的网址等）一样留在正文里交给适配器：onebot 只发网址的，下载、核对文件头后内联，其余去掉并报投递失败（见 [onebot 适配器的「出站正文」](../plugins/plugin-adapter-onebot.md#出站正文)）；WebUI 与终端不解析标记，按原文显示。摘掉标记后两边的文字拼成的新标记同样留给适配器，它在解析出的消息段上判。没装 plugin-image-sender 时她回复里的存储媒体发不出。
-- **会话目录名**：判据按写入方的换法正向比对：会话 id 里的 `:`、`/`、`\` 换成 `_`（onebot 附件缓存、媒体识别、浏览器截图），绘图另把 `..` 与前导点换成 `_`。换法有损：适配器的会话 id 不能只在这几个字符上有区别（`x:a_b` 与 `x:a:b` 落进同一个目录）。新的写入方要把会话媒体写进这几个目录，房间里才取得到。
+- **规整**：`mediaRef` 消 `.`、`..`，带反斜杠的不收（有的系统按目录分隔解析它），盘符路径（`C:/…`）按本机路径不收，相对路径（`data/images/…`）不是存储地址、不收；网址只认协议名小写的 `http://`、`https://`，与适配器下载附件时认的一样。判据先规整 target，调用方读的也应是规整后的那个。
+- **出站转换**：plugin-image-sender 在 `outbound:dispatch` 上处理带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>`（`mediaRef` 规整出存储地址的，`base64://…` 也按根名 base64 的存储地址算）：受众只有 owner 的会话（房间类别 owner-only）里不过判据，其余会话按非 owner 过判据，会话管理不在时判不出受众，一律按其余会话；再与 `send_attachment` 一样按文件头核对，都过了的摘出来转成同类附件（标 `skipArchive`，这条回复已带着标记落库）。只摘掉转成了附件的标记：不过判据的、读不出的（如 `base64://…`）与不是对应媒体的，和别的写法（网址、`file://`、本机路径、data URI、协议名大写的网址等）一样留在正文里交给适配器：onebot 只发网址的，下载、核对文件头后内联，其余去掉并报投递失败（见 [onebot 适配器的「出站正文」](../plugins/plugin-adapter-onebot.md#出站正文)）；WebUI 与终端不解析标记，按原文显示。摘掉标记后两边的文字拼成的新标记同样留给适配器，它在解析出的消息段上判。没装 plugin-image-sender 时她回复里的存储媒体发不出。
+- **会话目录名**：判据与写入方用同一个 `sessionDirName`（见上节），按目录的第二段比对；写入方的子目录在会话目录之下，判据不看它。新的写入方经 `sessionMediaUri` 把会话媒体写进这几个目录，房间里才取得到。
 
 判据按目录约定判归属，不是隔离，见 [安全模型的「媒体工具按受众」](../concepts/security-model.md#媒体工具按受众)。
 
@@ -272,11 +294,15 @@ export default definePlugin({
 
 ### 描述缓存
 
-缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才吃得到跨天的表情包复用）。key 取落盘路径里的内容哈希，非内容寻址的来源（远端 URL、data-URI）原样做键；值只存裸描述，ref 标记等包装由各消费点重建。
+缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才吃得到跨天的表情包复用）。值只存裸描述，ref 标记等包装由各消费点重建。键按来源取：
 
-**快照与清理**：缓存防抖落盘到 `data:/media/descriptions.json`，启动时灌回。快照收两类内容寻址的键：内容哈希键（不带会话语境的描述，跨会话共享），以及带会话目录的本地落盘路径键（开启 `contextHistory` 后带着会话语境识别出的描述，只在本会话内复用；`senderContext` 只随 `contextHistory` 并入语境，单独开启不产生这类键）；远端 URL 与 data-URI 做键的条目不落盘。本插件参与 `memory:clear`，按所选类型清理：`describeVideo` 写入的视频描述归 `video` 类型（键带 `#video` 后缀），其余描述（静态图、动图）归 `image` 类型；别名按落盘 ref 归类，指向 `videos/` 的归 `video`。`/clear all` 清空所选类型的内存条目与别名，两类都清时删掉快照文件，只清一类时重写快照、另一类留在其中；会话级 `/clear` 与删除会话只删键里带该会话目录的条目及指向该目录的别名，删掉了条目时重写快照。内容哈希键跨会话共享、无法归属到某个会话，会话级清理不删；视频描述不带会话语境、键里没有会话目录，会话级清理删不到。启动时读快照失败（文件不存在以外的原因）的那次运行不写快照，此时会话级清理只能清内存，回执报失败；`/clear all` 照样删掉快照文件（只清一类时也整份删掉，读不出旧快照就无从只删一类），此后本次运行的会话级清理不再报失败（磁盘上已没有会在重启时恢复的描述）。
+- **存储地址**：不带会话语境、文件名按[命名约定](#会话媒体的目录约定)是内容哈希的，以哈希为键，跨会话复用；带会话语境的（开启 `contextHistory` 后识别出的）与文件名不是内容哈希的（如绘图产物），以存储地址为键，只在本会话命中。只认存储地址，不要求落在会话媒体目录；网址不按文件名认（图床直链也有这种文件名）。
+- **网址**：原样做键；落盘方登记的别名把它落到落盘地址的键上（见下文「来源 → 落盘 ref 别名」）。
+- **data URI**：原样做键；media 落盘后登记别名，同上。
 
-**来源 → 落盘 ref 别名**：非内容寻址的来源串本身不含内容哈希，落盘后才有内容寻址路径。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data/images/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘 ref 的那条内容哈希键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照不收原始来源串做键，见上段）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到已有的落盘键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
+**快照与清理**：缓存防抖落盘到 `data:/media/descriptions.json`，启动时灌回。快照收落盘的两种键：内容哈希键（不带会话语境的描述，跨会话共享），以及存储地址键（带会话语境的描述，`senderContext` 只随 `contextHistory` 并入语境、单独开启不产生这类键；文件名不是内容哈希的描述）；网址与 data-URI 做键的条目不落盘。本插件参与 `memory:clear`，按所选类型清理，图片、视频各回一行、各标 `type`：`describeVideo` 写入的视频描述归 `video` 类型（键带 `#video` 后缀），其余描述（静态图、动图）归 `image` 类型；别名按落盘地址所在的种类目录归类，视频目录下的归 `video`。`/clear all` 清空所选类型的内存条目与别名，两类都清时删掉快照文件，只清一类时重写快照、另一类留在其中；会话级 `/clear` 与删除会话只删键与别名以 `data:/<种类目录>/<会话目录>/` 开头的（不论哪家写的，绘图产物的描述也在内），删掉了条目时重写快照。内容哈希键跨会话共享、无法归属到某个会话，会话级清理不删；视频描述不带会话语境、以内容哈希为键，会话级清理删不到。同一个 `memory:clear` 里本插件另清自己写的上传图片（见[会话媒体的目录约定](#会话媒体的目录约定)）。启动时读快照失败（文件不存在以外的原因）的那次运行不写快照，此时会话级清理只能清内存，回执报失败；`/clear all` 照样删掉快照文件（只清一类时也整份删掉，读不出旧快照就无从只删一类），此后本次运行的会话级清理不再报失败（磁盘上已没有会在重启时恢复的描述）。
+
+**来源 → 落盘 ref 别名**：网址与 data URI 本身不是存储地址，落盘后才有存储地址。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data:/images/<会话目录>/onebot/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘地址的那条键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照不收原始来源串做键，见上段）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。带会话语境的描述按原始来源查不到（键是落盘的存储地址，只在本会话命中）。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到落盘地址的键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
 
 `describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
@@ -285,8 +311,10 @@ export default definePlugin({
 内部的 `cacheImageRef` 在三种字符串形态间分流，顺序很重要：
 
 1. `http(s)://` → 原样保留（下载走 `safeFetch`，见下）。
-2. `isStorageUri(data)` 命中（即 storage 路径，含 `data:/...`，OneBot 已落盘）→ 转成相对路径 `root/rest`。
-3. 否则若 `data.startsWith('data:')`，当作 base64 data-URI 解码，经 `storage.writeFile` 落盘到 `data:/images/{session}/{hash}.{ext}`，并登记上节的「来源 → 落盘 ref」描述缓存别名。
+2. `isStorageUri(data)` 命中（即 storage 路径，含 `data:/...`，适配器已落盘）→ 原样保留。
+3. 否则若是 base64 data-URI，解码后经 `storage.writeFile` 落盘到本插件的子目录 `data:/images/<会话目录>/media/<hash>.<ext>`，并登记上节的「来源 → 落盘 ref」描述缓存别名。
+
+落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后把占位符改写成了引用）不再重复写。
 
 ::: warning 先问 isStorageUri，再问 startsWith('data:')
 `data:/images/x.jpg`（storage 根 `data`）与 `data:image/png;base64,...`（浏览器 data-URI）只靠冒号后是否紧跟 `/` 区分。判定顺序反了，会把 data-URI 误判成 storage 路径。完整文法见 [docs/concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)（§3 `data:/` 与 data-URI），它直接以本服务为示例。
@@ -306,7 +334,7 @@ export default definePlugin({
 
 `media` 服务本身不挂 authority 的 risk/visibility 门——它是 preprocessor 链路上的内部增强，调用语境（agent / 工具）由各自的 authority 把关。
 
-不过落盘路径按 `session` 做了 key 隔离（`images/{safeSession}`），`buildContext` 也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体按受众的判据](#媒体按受众的判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
+不过落盘路径按会话分目录（`data:/images/<会话目录>/media/`），`buildContext` 也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体按受众的判据](#媒体按受众的判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
 
 ### storage 不是沙箱
 
@@ -323,8 +351,8 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **没有能看图的模型时图照样存下**：到达识别找不到能描述图片的识图处理器时，每张图只落盘写成不带描述的引用，这条消息另加一行 `[附了 N 张图，当前无法查看]`，不留空气泡、原图不丢；识别失败或返回空串的，引用照留、描述写「获取或识别失败，内容未知」。plugin-media 同时向 doctor 报 `service/media.vision` 警告。
 - **describe 交付不向主模型交图**：识别是识别模型的职责，结果已作为文字拼进消息正文，出口会把末条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。`analyze_image` 在这条交付下返回文字描述。
 - **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。变换只作用于末条 user 消息、每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。
-- **直通必须过形态规范化**：适配器给 `attachment.data` 的是内容寻址的相对路径 ref（`data/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。裸路径会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
-- **描述缓存跨会话共享是有条件的**：缓存键取落盘路径里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory` 开启、描述里掺进了本会话的对话语境（`senderContext` 开启时还有发送者画像）时，键退回含会话目录的原路径，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
+- **直通必须过形态规范化**：适配器给 `attachment.data` 的是落盘的存储地址（`data:/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。存储地址原样交出会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
+- **描述缓存跨会话共享是有条件的**：缓存键取落盘文件名里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory` 开启、描述里掺进了本会话的对话语境（`senderContext` 开启时还有发送者画像）时，键退回含会话目录的存储地址，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
 - **视频只有「抽帧 → vision」一条路**：media 不再为声明 Video 能力的 LLM 注册 `video.passthrough` processor（service 从不按该 cap 选 processor），抽帧描述用的是 `vision.maxTokens`。`MediaCapability` 里保留该 cap 只为第三方 processor 契约兼容。
 - **缺 ffmpeg/ffprobe 时视频降级为占位**：抽帧或抽音轨失败时返回 `[视频] …` 占位串而非空串，让主 LLM 知道有视频到达但读不了，避免幻觉。
 

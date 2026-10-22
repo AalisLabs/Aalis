@@ -58,7 +58,7 @@ export default definePlugin({
 | `forward.summaryPrompt` | textarea | `''` | 摘要 system prompt（高级，留空使用内置）：留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。 内置默认 prompt 如下（&lt;输出语言&gt; 取全局层（plugin-i18n 的配置）的语言列表的第一项），可作为撰写参考： 你是聊天记录摘要助手。给定一段合并转发的原始内容，用 &lt;输出语言&gt;输出一段含多人互动细节的摘要： - 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄； - 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侃、追问的点； - 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点； - 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来； - 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本； - 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。 |
 | `reply` | object | — | 引用消息处理：收到引用回复时如何展开被引用消息链 |
 | `reply.maxDepth` | number | `5` | 引用链深度上限：递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。 |
-| `attachmentCache` | object | — | 附件本地缓存：入站 / 出站的 image / audio / video / file 统一缓存到 data/{kind}s/{session}/，与图片目录布局一致，便于人工归档与多轮工具复用 |
+| `attachmentCache` | object | — | 附件本地缓存：入站 / 出站的 image / audio / video / file 统一缓存到 data:/{kind}s/{会话目录}/onebot/，便于人工归档与多轮工具复用；/clear 与删除会话时由本适配器清理 |
 | `attachmentCache.maxBytes` | number | `10485760` | 单文件大小上限 (Byte)：超过此尺寸的附件不落盘，保留原 URL（典型场景：长视频）。默认 10 MiB。 |
 
 ## 文件结构
@@ -69,7 +69,7 @@ export default definePlugin({
 | `types.ts` | 类型定义、`segmentsToText()` 富文本渲染、CQ 字符串→消息段规范化、forward 段解析工具 |
 | `v11.ts` | OneBot v11 协议处理器 |
 | `v12.ts` | OneBot v12 协议处理器 |
-| `attachment-cache.ts` | 入站/出站附件统一落盘缓存（`data/{kind}s/{session}/`，含单文件大小上限） |
+| `attachment-cache.ts` | 入站/出站附件统一落盘缓存（`data:/{kind}s/{会话目录}/onebot/`，含单文件大小上限） |
 | `attachments.ts` | 出站附件按文件头分流：能内联的媒体物化为消息段，文件附件与不能内联的媒体物化为上传文件；她回复正文里的媒体标记只发网址的，下载后内联，其余去掉 |
 | `forward.ts` | 合并转发展开与摘要信封构造 |
 | `forward-expand.ts` | 合并转发自动展开器（缓存、媒体识别、LLM 摘要、默认摘要 prompt） |
@@ -122,7 +122,9 @@ onebot:{selfId}:{detailType}:{targetId}
 
 ## 附件与图片
 
-入站和出站的图片、语音、视频、文件统一缓存到 `data/{kind}s/{session}/`，单文件超过 `attachmentCache.maxBytes` 时不落盘、保留原 URL。入站文本中的 `[图片]`、`[语音]` 等占位符会改写为带本地引用的形式。
+入站和出站的图片、语音、视频、文件统一缓存到本适配器在会话媒体目录里的子目录 `data:/{kind}s/{会话目录}/onebot/`（[会话媒体的目录约定](../services/media.md#会话媒体的目录约定)），文件名是内容哈希，单文件超过 `attachmentCache.maxBytes` 时不落盘、保留原 URL。入站文本中的 `[图片]`、`[语音]` 等占位符会改写为带存储地址的引用（`[图片 | ref:data:/images/…]`），附件的 `data` 也换成这个存储地址。
+
+`/clear` 与删除会话经 `memory:clear` 清这个子目录：所选类型含 `image`、`video`、`audio`、`file` 中的哪种就清哪种，会话级清这个会话的，`/clear all` 清各会话的，每种一行结果；多个实例各清一遍，结果合成一行。
 
 适配器不对普通入站图片调用视觉模型。合并转发内的图片在 `forward.imageRecognition` 开启时送 media 服务识别，语音与视频在 media 服务具备相应能力时一并识别。引用消息中的图片只复用 media 服务已有的描述缓存，写成 `[图片: 描述]`，查不到时保留 `[图片]`。
 

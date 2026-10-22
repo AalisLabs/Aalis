@@ -4,7 +4,6 @@ import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gatewa
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { i18n } from '@aalis/api-i18n';
 import { memory } from '@aalis/api-memory';
-import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import {
   appService,
@@ -35,23 +34,6 @@ const configSchema = defineConfig({
   },
 });
 
-/**
- * 删除目录及内部所有内容，返回顶层子项数（用于"清了 N 张/N 个会话"提示）。
- * 目录不存在返回 -1。
- */
-async function removeDirCounted(storage: StorageService, dirUri: string): Promise<number> {
-  try {
-    const st = await storage.stat(dirUri);
-    if (!st.isDirectory) return -1;
-    const list = await storage.list(dirUri);
-    await storage.delete(dirUri);
-    return list.entries.length;
-  } catch (err) {
-    if (isStorageNotFound(err)) return -1;
-    throw err;
-  }
-}
-
 /** 可清理类型。globalOnly：跨会话数据，只在 /clear all 时清理 */
 export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: TextRef; globalOnly?: boolean }> = [
   { id: 'context', label: t('typeContext') },
@@ -66,19 +48,6 @@ export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: TextRef; globalOnly
   { id: 'user-profile', label: t('typeUserProfile'), globalOnly: true },
   { id: 'user-relation', label: t('typeUserRelation'), globalOnly: true },
 ];
-
-/**
- * 附件缓存种类 → `data:/` 目录 + 显示名。
- * 目录名与 @aalis/plugin-adapter-onebot 的 attachment-cache `KIND_DIR` 对齐
- * （image→images / video→videos / audio→audios / file→files），落盘路径为
- * `data:/{dir}/{safeSessionId}/{hash}.{ext}`。改这里即同步 /clear 覆盖面。
- */
-export const ATTACHMENT_KINDS = [
-  { type: 'image', dir: 'images', label: t('kindImage') },
-  { type: 'video', dir: 'videos', label: t('kindVideo') },
-  { type: 'audio', dir: 'audios', label: t('kindAudio') },
-  { type: 'file', dir: 'files', label: t('kindFile') },
-] as const;
 
 const CLEAR_TYPE_ALIASES: Record<string, string> = {
   history: 'context',
@@ -114,7 +83,6 @@ const uses = {
    */
   commands: optional(commandsService),
   gateway,
-  storage: optional(storage),
   memory: optional(memory),
   authority: optional(authority),
   /** /status 列已登记的工具数 */
@@ -146,7 +114,6 @@ export default definePlugin({
 function registerCommands({
   commands,
   gateway,
-  storage,
   memory,
   authority,
   tools,
@@ -171,54 +138,6 @@ function registerCommands({
 
   // 注册服务
   provide.use(commandsService, registry);
-
-  // ===== 统一 memory:clear 中间件：附件缓存清理（图片/视频/语音/文件）=====
-  //
-  // 附件按 data:/{images|videos|audios|files}/{safeSessionId} 落盘（与 onebot
-  // attachment-cache 的 KIND_DIR 对齐）。独立 middleware 使 /clear 与 deleteSession
-  // 走同一清理路径——deleteSession 触发的 memory:clear 也清附件，杜绝文件泄漏
-  // （四类必须齐清，漏掉任一类即留下残留文件）。
-  //
-  // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
-  hooks.use.middleware('memory:clear', async (data, next) => {
-    const safeSessionId = data.sessionId?.replace(/[:/\\]/g, '_');
-    for (const k of ATTACHMENT_KINDS) {
-      if (data.types && !data.types.includes(k.type)) continue;
-      try {
-        if (data.scope === 'all') {
-          const removed = await removeDirCounted(storage.use, `data:/${k.dir}`);
-          data.results.push({
-            source: `${k.type}-cache`,
-            type: k.type,
-            success: true,
-            message:
-              removed >= 0
-                ? t('cacheClearedAll', { kind: k.label, count: removed })
-                : t('cacheMissingAll', { kind: k.label }),
-          });
-        } else if (safeSessionId) {
-          const removed = await removeDirCounted(storage.use, `data:/${k.dir}/${safeSessionId}`);
-          data.results.push({
-            source: `${k.type}-cache`,
-            type: k.type,
-            success: true,
-            message:
-              removed >= 0
-                ? t('cacheClearedSession', { kind: k.label, count: removed })
-                : t('cacheMissingSession', { kind: k.label }),
-          });
-        }
-      } catch (err) {
-        data.results.push({
-          source: `${k.type}-cache`,
-          type: k.type,
-          success: false,
-          message: t('cacheFailed', { kind: k.label, error: textOf(err) }),
-        });
-      }
-    }
-    await next();
-  });
 
   // ===== inbound:command 相位：命令命中则执行并中断后续相位 =====
   //
@@ -438,8 +357,7 @@ function registerCommands({
         });
       }
 
-      // 图片缓存与 vectorstore/persona/user-profile 等子系统的清理
-      // 统一由各自的 memory:clear middleware 处理（见上面的附件缓存 middleware）。
+      // 附件、向量、人设、用户档案等子系统的清理由各自的 memory:clear 中间件处理（附件归写入它的插件）。
       // runClear 仅负责调度 hook 与处理 memory 主体。
     });
 

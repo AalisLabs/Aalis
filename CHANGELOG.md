@@ -49,7 +49,7 @@
 ### 媒体按受众（plugin-image-sender、plugin-media）
 
 - 有别人在场的会话里，以及授权身份不是 owner 的回合里，`send_attachment` 的 `storage_uri`、`history_ref` 与 `analyze_image` 的存储地址只认本会话树的媒体目录（`data:/{images,audios,videos,files}/<会话目录>/`、`tmp:/browser/<会话目录>/`）与调用所在会话历史里系统记下的引用，别处的拒绝。
-- `storage_uri` 只收存储地址与历史相对路径（`data/images/…`）：只写文件名或带 `./` 前缀的不再补成存储地址，按「要写存储地址」拒绝。
+- `storage_uri` 只收存储地址：只写文件名或带 `./` 前缀的不再补成存储地址，按「要写存储地址」拒绝（相对路径 `data/images/…` 同样拒绝，见「附件归写入方，引用写成存储地址」一节）。
 - `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
 - `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
@@ -192,6 +192,15 @@
 ### maxTokens 须为正整数（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-media）
 
 - 三家的 `maxTokens` 与 plugin-media 的 `vision.maxTokens`、`audio.maxTokens` 须为正整数：填小于 1、不是整数或不是数的值时实例转为出错，错误信息点名该字段。此前 0 与负数照常启动，llm-ollama 按不封顶生成（超时改按停顿计之后，一直在输出的生成截不住），llm-openai、llm-deepseek 原样发给端点，plugin-media 的两项原样交给识别模型；小数照常启动、原样发出；不是数的值回落默认值并告警。
+
+### 附件归写入方，引用写成存储地址（@aalis/api-media、@aalis/plugin-adapter-onebot、@aalis/plugin-media、@aalis/plugin-draw、@aalis/plugin-tool-browser、@aalis/plugin-commands、@aalis/plugin-agent、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-message-archive、@aalis/plugin-image-sender）
+
+- 会话媒体按写入方分子目录：`data:/<images|audios|videos|files>/<会话目录>/<写入方>/<文件>`，onebot 收发的附件在 `onebot/`，WebUI 上传的图片在 `media/`，绘图产物在 `draw/`。会话目录名统一由 api-media 的 `sessionDirName` 换（`:`、`/`、`\`、`..` 与前导点换成 `_`），浏览器截图的 `tmp:/browser/<会话目录>/` 同一个换法；会话 id 为空时绘图与浏览器截图回工具错误，不再写进 `nosession`、`unknown` 目录。
+- 附件引用一律写存储地址（`data:/…`）：onebot 入站附件的 `data` 与正文里的 `[图片 | ref:…]`、媒体识别写的引用、`send_attachment` 发出附件的引用（记规整后的地址），不再写相对路径 `data/…`。正文里已有引用的图片（如 OneBot 的图），媒体识别的描述位不再重复写引用。
+- 相对路径不再当地址：api-media 的 `mediaRef` 不再收 `data/…`；`send_attachment` 的 `storage_uri` 写成相对路径时回「要写存储地址」；`analyze_image` 的来源不再按首段补成存储地址，相对路径照旧归到 `workspace:/`（与 file_* 工具一致）：`data/images/…` 会被当成工作区路径，找不到或过不了媒体判据时回错误，错误句提示存储地址的写法；历史占位符里的引用是网址时按网址看（此前回「不能写本机路径」）；消息存档的附件清单、两家 ASR、media 的附件物化不再把 `data/…` 补成 `data:/…`；agent 在 media 缺席时把存储地址的图读成 data URI 交给模型（此前只认 `data/…`、存储地址原样交出）。
+- `/clear` 与删除会话的附件清理改由写入方负责：onebot、media、draw 各挂 `memory:clear` 中间件，只清自己的子目录，每种一行、写明是谁的文件、标 `type`，不带 `-t` 时比此前多几行；会话级与全局清理用同一句、按删掉的文件数计（此前全局清理计会话目录数，没有可清的另回「无需清空」「无缓存」）；会话目录删空了一并删掉，别的写入方的子目录不动（`/clear all -t image` 不再删掉整个 `data:/images`）。不装 plugin-commands 时删会话也清附件；存储不在时 `/clear` 不再出四行附件的失败结果。
+- plugin-commands 不再清附件，导出的 `ATTACHMENT_KINDS` 删除。第三方写入方用 api-media 新导出的 `sessionMediaUri` 取目录写、`clearSessionMedia` 清，并自己挂 `memory:clear`。
+- 媒体识别的描述缓存：`/clear` 的结果拆成图片、视频两行，各标 `type`。存储地址的文件名是内容哈希（16 位小写十六进制）时，不带会话语境的描述按哈希跨会话复用，不再要求落在会话媒体目录；网址不按文件名认。文件名不是内容哈希的（如绘图产物）以存储地址为键、进快照，会话级清理删得到（此前删不到）。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

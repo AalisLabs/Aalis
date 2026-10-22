@@ -5,14 +5,13 @@
 // 复用 vision 识别结果。值**只存裸描述**：ref 标记等包装由各消费点按自己的
 // 形态重建，存格式化文本会让另一侧拿到嵌套包装（[图片: [图片 | ref:...]]）。
 //
-// 键：附件落盘是内容寻址的（`{kind}s/{session}/{sha256前16}.{ext}`，见 adapter 的
-// attachment-cache 与 service.cacheImageRef），路径里带着会话名，同一张图在不同群会
-// 落成两条路径。**无上下文**的描述取其中的内容哈希做键，让表情包这类高频重复内容
-// 跨会话只识别一次；**带会话上下文**的描述（contextHistory 开启、识别时带上了会话语境）
-// 用原路径做键，只在本会话内复用——否则等于把 A 群的语境搬进 B 群。
-// 非内容寻址来源（http URL / data: base64）一律原样做键，与改前行为一致；但这类来源
-// **落盘后**就有内容寻址路径了，落盘点登记一次「来源 → 落盘 ref」别名（见
-// rememberDescriptionAlias），此后按原始来源串查也落到同一条内容哈希键上。
+// 键：附件落盘的存储地址带着会话目录（`data:/{kind}s/{会话目录}/{写入方}/{文件}`，见 @aalis/api-media 的
+// 会话媒体目录约定），同一张图在不同群会落成两个地址。按内容寻址的写入方把文件名写成内容哈希（api-media 的命名
+// 约定），**无上下文**的描述取文件名里的内容哈希做键，让表情包这类高频重复内容跨会话只识别一次；**带会话上下文**
+// 的描述（contextHistory 开启、识别时带上了会话语境）与文件名不是内容哈希的（如绘图产物）用存储地址做键，只在
+// 本会话内复用——否则等于把 A 群的语境搬进 B 群。
+// 网址与 data URI 一律原样做键；但这类来源**落盘后**就有存储地址了，落盘点登记一次「来源 → 落盘地址」别名
+// （见 rememberDescriptionAlias），此后按原始来源串查也落到落盘地址的键上。
 //
 // 落盘：一次识别少则十几秒、动图要一分钟，而纯内存缓存进程一重启就全丢。
 // 快照写在 `data:/media/descriptions.json`，启动灌回、写入后防抖落盘。
@@ -20,7 +19,8 @@
 // /clear 与删除会话经 clearDescriptionCache 清理内存条目与快照（memory:clear 中间件在 index.ts）。
 // ============================================================
 
-import { isStorageNotFound } from '@aalis/api-storage';
+import { MEDIA_KIND_DIRS, sessionDirName } from '@aalis/api-media';
+import { isStorageNotFound, isStorageUri } from '@aalis/api-storage';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { getMediaRuntime } from './runtime.js';
 
@@ -34,11 +34,11 @@ const PERSIST_DEBOUNCE_MS = 30_000;
 const cache = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS });
 
 /**
- * 「来源 → 落盘 ref」别名表。非内容寻址的来源串（WebUI 上传的 base64 data URI、
- * 远端 URL）本身不含内容哈希，落盘后才有内容寻址路径可用。
+ * 「来源 → 落盘 ref」别名表。网址与 data URI（WebUI 上传的 base64）本身不是存储地址，
+ * 落盘后才有存储地址可用。
  *
- * 键空间不变：别名只把来源映到**已有**的落盘键（descriptionKey 认的那种路径），
- * 不引入新键形态。纯派生、不进快照——快照里只有内容寻址键，重启后由新一轮落盘重登记。
+ * 键空间不变：别名只把来源映到落盘的存储地址，键照它的规则取（内容哈希或存储地址），
+ * 不引入新键形态。纯派生、不进快照——快照里只有落盘的键，重启后由新一轮落盘重登记。
  */
 const aliases = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS });
 
@@ -57,33 +57,27 @@ let snapshotDeleted = false;
  */
 let snapshotIO: Promise<void> = Promise.resolve();
 
-/**
- * 本地落盘布局 `data:/{kind}s/{会话目录}/{16 位十六进制}.{ext}` 与其历史相对形式。
- * 分组 1 为种类目录，分组 2 为会话目录，分组 3 为内容哈希。
- */
-const LANDED_PATH = /^data[:/](?:\/)?(images|videos|audios|files)\/([^/]+)\/([0-9a-f]{16})\.[a-z0-9]+$/;
+/** 按内容寻址的文件名（api-media 的命名约定）：分组 1 为内容哈希 */
+const CONTENT_NAME = /\/([0-9a-f]{16})\.[a-z0-9]+$/;
 
 /**
  * 描述在 `/clear` 里归属的类型：describeVideo 的视频描述归 video，其余（静态图、动图）归 image。
  * 视频描述的键带 {@link VIDEO_VARIANT} 后缀，与图片描述不共键，才分得开。
  */
 export const DESCRIPTION_KINDS = ['image', 'video'] as const;
-export type DescriptionKind = (typeof DESCRIPTION_KINDS)[number];
+type DescriptionKind = (typeof DESCRIPTION_KINDS)[number];
 
 /** 视频描述的键后缀，与详略档共用后缀位（见 cacheKey）。 */
 export const VIDEO_VARIANT = 'video';
 
 /**
- * 本地落盘布局 → 内容哈希键；其余来源（远端 URL、data URI）原样返回。
+ * 文件名按内容寻址的存储地址 → 内容哈希键；其余来源（网址、data URI、文件名不是内容哈希的存储地址）原样返回。
  *
- * 只认**本地**落盘布局 `data:/{kind}s/{会话目录}/{16 位十六进制}.{ext}` 与其历史相对
- * 形式，故锚定 `data:` / `data/` 起头、且只认小写十六进制（落盘侧 toString('hex')
- * 只产小写）。不做宽泛的「结尾像哈希就当哈希」：图床用 `/images/{段}/{16位hex}.jpg`
- * 布局的远端直链同样会命中那种宽正则，把两张不同的图判成同一张。
+ * 只认存储地址、且只认小写十六进制（落盘侧 toString('hex') 只产小写），不认网址：图床用
+ * `/images/{段}/{16位hex}.jpg` 布局的远端直链同样有这种文件名，按它认会把两张不同的图判成同一张。
  */
 export function descriptionKey(source: string): string {
-  const m = LANDED_PATH.exec(source);
-  return m ? m[3] : source;
+  return (isStorageUri(source) && CONTENT_NAME.exec(source)?.[1]) || source;
 }
 
 /**
@@ -111,10 +105,10 @@ function isFailurePlaceholder(raw: string): boolean {
  * 登记「来源 → 落盘 ref」别名。**落盘时调一次**（本插件 cacheImageRef 落盘成功处；
  * 适配器落远端 URL 时经 MediaService.rememberDescriptionAlias 调进来），
  * 此后按原始来源串读写描述都经别名落到落盘 ref 的键上：同一张图经不同来源
- * （WebUI base64 / 适配器已落盘路径）进来只识别一次，且描述能进快照续命
- * （快照只收内容寻址键，原始 base64 串做键的条目重启即丢）。
+ * （WebUI base64 / 适配器已落盘的存储地址）进来只识别一次，且描述能进快照续命
+ * （快照只收落盘的键，原始 base64 串做键的条目重启即丢）。
  *
- * 来源与 ref 相同（http URL 原样返回、storage URI 只换写法）时不登记——恒等别名无意义。
+ * 来源与 ref 相同（http URL 与存储地址原样返回）时不登记——恒等别名无意义。
  *
  * 登记**之前**已按原始来源串写入的条目不迁移：那要求登记时反查旧键搬运，而能走到这一步
  * 的只有「先识别、后落盘」的窄场景，代价是多识别一次，判跳。
@@ -135,7 +129,7 @@ function resolveAlias(source: string): string {
  * `shareable=false` 时不跨会话共享——描述若掺进了**当前会话的对话上下文**
  * （contextHistory 开启时 vision prompt 里带着近期聊天，senderContext 也开时还有发送者画像），
  * 那它就是「这张图在这个群此刻的解读」，复用到别的群等于把 A 群的语境搬进 B 群。
- * 这类描述退回按落盘路径（含会话目录）做键，只在本会话内复用。
+ * 这类描述退回按存储地址（含会话目录）做键，只在本会话内复用。
  */
 export function rememberDescription(key: string, raw: string, shareable = true, variant?: string): void {
   if (!raw || isFailurePlaceholder(raw)) return;
@@ -205,35 +199,40 @@ export async function flushDescriptionCache(): Promise<void> {
 }
 
 /**
- * 清理描述缓存里属于 kinds 的条目，返回删掉的条目数。/clear 与删除会话（memory:clear）用。
- * 条目按键归类（视频描述带 {@link VIDEO_VARIANT} 后缀），别名按落盘 ref 归类（`videos/` 下的归 video）。
+ * 清理描述缓存里属于 kinds 的条目，按类型回删掉的条目数。/clear 与删除会话（memory:clear）用。
+ * 条目按键归类（视频描述带 {@link VIDEO_VARIANT} 后缀），别名按落盘地址所在的种类目录归类（视频目录下的归 video）。
  *
- * 不传会话目录即全局清理：删掉所选类型的全部条目与别名。两类都清时删掉快照文件；只清一类时重写快照，
+ * 不传会话即全局清理：删掉所选类型的全部条目与别名。两类都清时删掉快照文件；只清一类时重写快照，
  * 另一类留在快照里。本次运行因读快照失败而禁写时，全局清理一律删掉快照文件：读不出就无从只删一类，
  * 那份旧快照里也有要清的描述；另一类随之从磁盘上消失，代价只是重启后重新识别。
  *
- * 传会话目录（`sessionId` 中 `:` `/` `\` 换成 `_`，与落盘目录同名）只删带该会话语境的条目：
- * 它们以含会话目录的落盘路径为键；内容哈希键跨会话共享，无从按会话归属，保留。指向该会话目录的
- * 别名一并删掉（别名不进快照），删掉了条目时重写快照。禁写时磁盘上的旧快照无从改写，内存侧清完后
- * 抛错说明；本次运行里全局清理已删掉快照文件时不抛，那时磁盘上已没有会在重启时恢复的描述。
+ * 传会话只删键与别名落在这个会话的媒体目录下（`data:/<种类目录>/<会话目录>/`，不论哪家写的）的：带该会话语境的
+ * 描述与文件名不是内容哈希的描述以存储地址为键；内容哈希键跨会话共享，无从按会话归属，保留。别名不进快照，删掉了
+ * 条目时重写快照。禁写时磁盘上的旧快照无从改写，内存侧清完后抛错说明；本次运行里全局清理已删掉快照文件时不抛，
+ * 那时磁盘上已没有会在重启时恢复的描述。
  */
 export function clearDescriptionCache(
-  sessionDir: string | undefined,
+  sessionId: string | undefined,
   kinds: readonly DescriptionKind[],
-): Promise<number> {
+): Promise<Record<DescriptionKind, number>> {
   return queueSnapshotIO(async () => {
-    const inScope = (landed: string) => sessionDir === undefined || sessionDirOf(landed) === sessionDir;
-    let removed = 0;
+    const prefixes =
+      sessionId === undefined
+        ? undefined
+        : Object.values(MEDIA_KIND_DIRS).map(dir => `${dir}/${sessionDirName(sessionId)}/`);
+    const inScope = (landed: string) => !prefixes || prefixes.some(prefix => landed.startsWith(prefix));
+    const removed: Record<DescriptionKind, number> = { image: 0, video: 0 };
     for (const [key] of cache.entries()) {
-      if (kinds.includes(kindOfKey(key)) && inScope(key.replace(/#[a-z]+$/, ''))) {
+      const kind = kindOfKey(key);
+      if (kinds.includes(kind) && inScope(key)) {
         cache.delete(key);
-        removed++;
+        removed[kind]++;
       }
     }
     for (const [source, ref] of aliases.entries()) {
       if (kinds.includes(kindOfRef(ref)) && inScope(ref)) aliases.delete(source);
     }
-    if (sessionDir === undefined && (!persistLogger || DESCRIPTION_KINDS.every(k => kinds.includes(k)))) {
+    if (sessionId === undefined && (!persistLogger || DESCRIPTION_KINDS.every(k => kinds.includes(k)))) {
       try {
         await getMediaRuntime().storage.delete(SNAPSHOT_URI);
       } catch (err) {
@@ -242,17 +241,14 @@ export function clearDescriptionCache(
       snapshotDeleted = true;
       return removed;
     }
+    const total = removed.image + removed.video;
     if (!persistLogger) {
       if (snapshotDeleted) return removed;
-      throw new Error(`内存中已删除 ${removed} 条，但本次运行未能读取描述快照，磁盘上的快照未改写，重启后会恢复`);
+      throw new Error(`内存中已删除 ${total} 条，但本次运行未能读取描述快照，磁盘上的快照未改写，重启后会恢复`);
     }
-    if (removed > 0) await writeSnapshot();
+    if (total > 0) await writeSnapshot();
     return removed;
   });
-}
-
-function sessionDirOf(key: string): string | undefined {
-  return LANDED_PATH.exec(key)?.[2];
 }
 
 function kindOfKey(key: string): DescriptionKind {
@@ -260,13 +256,13 @@ function kindOfKey(key: string): DescriptionKind {
 }
 
 function kindOfRef(ref: string): DescriptionKind {
-  return LANDED_PATH.exec(ref)?.[1] === 'videos' ? 'video' : 'image';
+  return ref.startsWith(`${MEDIA_KIND_DIRS.video}/`) ? 'video' : 'image';
 }
 
-/** 可进快照的键：内容哈希键（可带详略档或视频后缀），或本地落盘路径键（内容寻址，只是带着会话目录）。 */
+/** 可进快照的键：落盘的两种键，内容哈希键与存储地址键（都可带详略档或视频后缀）。 */
 function isDurableKey(key: string): boolean {
   const base = key.replace(/#[a-z]+$/, '');
-  return /^[0-9a-f]{16}$/.test(base) || descriptionKey(base) !== base;
+  return /^[0-9a-f]{16}$/.test(base) || isStorageUri(base);
 }
 
 function queueSnapshotIO<T>(op: () => Promise<T>): Promise<T> {
@@ -299,9 +295,9 @@ async function persist(): Promise<void> {
 }
 
 async function writeSnapshot(): Promise<void> {
-  // 只落内容寻址的键：内容哈希键，以及带会话上下文的描述所用的本地落盘路径键
-  // （descriptionKey 认得的那种，体积可控，重启后同会话重发的图照样命中）。
-  // 非内容寻址的来源（WebUI 上传的整条 base64 data URI 可达数 MB、远端 URL）写进快照
+  // 只落落盘的键：内容哈希键，以及带会话上下文的描述、文件名不是内容哈希的描述所用的存储地址键
+  // （体积可控，重启后同会话重发的图照样命中）。
+  // 网址与 data URI 做键的条目（WebUI 上传的整条 base64 data URI 可达数 MB）写进快照
   // 会让这份纯派生缓存产生数量级的写放大，且重启后也无从复用。
   const durable = cache.entries().filter(([k]) => isDurableKey(k));
   await getMediaRuntime().storage.writeFile(SNAPSHOT_URI, JSON.stringify(durable));

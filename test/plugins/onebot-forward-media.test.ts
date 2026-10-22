@@ -340,14 +340,14 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     expect(h.describeCalls).toHaveLength(5);
   });
 
-  it('识别收到的是落盘后的本地相对路径，而非原始 URL（rkey 过期从此无关）', async () => {
+  it('识别收到的是落盘后的存储地址，而非原始 URL（rkey 过期从此无关）', async () => {
     const h = makeHarness();
     const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, undefined, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length > 0);
     h.releaseDescribe();
     await pending;
     for (const src of h.describeCalls) {
-      expect(src).toMatch(/^data\/images\/onebot_test_group_1\//);
+      expect(src).toMatch(/^data:\/images\/onebot_test_group_1\/onebot\//);
     }
     // 本夹具的图是 data URI：适配器只给 http(s) 来源登记「原始 URL → 落盘 ref」别名
     // （data URI 由 plugin-media 落盘处自登记，适配器再登记只会把整段 base64 钉进别名表）

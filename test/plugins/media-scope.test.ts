@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type MediaScopeDeps, mediaInScope, mediaRef } from '../../packages/api-media/src/index.js';
+import { type MediaScopeDeps, mediaInScope, mediaRef, sessionDirName } from '../../packages/api-media/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import type { BoundStorage } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
@@ -22,8 +22,8 @@ import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 // 媒体按受众的判据（api-media 的 mediaInScope）：受众里没有别人、且授权身份是 owner 的调用不限；其余只认本会话树
 // 媒体目录里的文件与调用所在会话历史里系统记下的引用。会话表、owner 判定与历史都是内存替身；真实写入方一节跑
-// onebot 附件缓存、绘图（离线渲染是替身）与媒体识别的落盘，断言判据接受它们产出的路径。浏览器截图的那条在
-// tool-browser-screenshot 里（要起真浏览器）。
+// onebot 附件缓存、绘图（离线渲染是替身）与媒体识别的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受
+// 它们产出的地址，是会话目录名的唯一守卫。浏览器截图的那条在 tool-browser-screenshot 里（要起真浏览器）。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';
@@ -126,9 +126,9 @@ describe('房间', () => {
 });
 
 describe('地址规整（mediaRef）', () => {
-  it('小写协议名的网址原样，存储地址与历史相对路径规整成存储地址', () => {
+  it('小写协议名的网址原样，存储地址规整（消 `.`、`..`）', () => {
     expect(mediaRef('https://example.invalid/a.png')).toBe('https://example.invalid/a.png');
-    expect(mediaRef(`data/images/${GROUP_DIR}/./x/../a.png`)).toBe(`data:/images/${GROUP_DIR}/a.png`);
+    expect(mediaRef(`data:/images/${GROUP_DIR}/./x/../a.png`)).toBe(`data:/images/${GROUP_DIR}/a.png`);
   });
 
   it.each([
@@ -138,6 +138,7 @@ describe('地址规整（mediaRef）', () => {
     ['本机绝对路径', '/pics/a.png'],
     ['file://', 'file:///pics/a.png'],
     ['data URI', 'data:image/png;base64,AAAA'],
+    ['相对路径（不是存储地址）', `data/images/${GROUP_DIR}/a.png`],
   ])('%s：没有', (_label, input) => {
     expect(mediaRef(input)).toBeUndefined();
   });
@@ -172,17 +173,17 @@ describe('调用所在会话历史里系统记下的引用', () => {
     },
     {
       role: 'assistant',
-      content: '[图片 | ref:data/images/onebot_10000_group_20002/sent.png]',
+      content: '[图片 | ref:data:/images/onebot_10000_group_20002/onebot/sent.png]',
       timestamp: 2,
-      metadata: { [WellKnownMetadataKeys.SentRef]: 'data/images/onebot_10000_group_20002/sent.png' },
+      metadata: { [WellKnownMetadataKeys.SentRef]: 'data:/images/onebot_10000_group_20002/onebot/sent.png' },
     },
   ];
 
-  it('入站附件清单与发出的附件（相对路径写法）都算；正文里的占位符不算', async () => {
+  it('入站附件清单与发出的附件都算；正文里的占位符不算', async () => {
     const call = { sessionId: GROUP, actor: member };
     const d = deps({ [GROUP]: history });
     expect(await mediaInScope('workspace:/pics/inbound.png', call, d)).toBe(true);
-    expect(await mediaInScope('data:/images/onebot_10000_group_20002/sent.png', call, d)).toBe(true);
+    expect(await mediaInScope('data:/images/onebot_10000_group_20002/onebot/sent.png', call, d)).toBe(true);
     expect(await mediaInScope('workspace:/pics/forged.png', call, d)).toBe(false);
   });
 
@@ -290,13 +291,13 @@ describe('真实写入方产出的路径判据都接受', () => {
       if (!ref) throw new Error(`${kind} 没有落盘`);
       refs.push(ref);
     }
-    expect(refs.map(r => r.split('/')[1])).toEqual(['images', 'audios', 'videos', 'files']);
-    for (const ref of refs) {
-      expect(await mediaInScope(ref.replace(/^data\//, 'data:/'), { sessionId }, deps()), ref).toBe(true);
-    }
+    expect(refs.map(r => r.split('/').slice(1, 4))).toEqual(
+      ['images', 'audios', 'videos', 'files'].map(dir => [dir, sessionDirName(sessionId), 'onebot']),
+    );
+    for (const ref of refs) expect(await mediaInScope(ref, { sessionId }, deps()), ref).toBe(true);
   });
 
-  it.each([GROUP, 'zz..odd'])('绘图落盘（会话 %s；会话 id 带 .. 时绘图另有换法）', async sessionId => {
+  it.each([GROUP, 'zz..odd'])('绘图落盘（会话 %s）', async sessionId => {
     renders.png = PNG;
     const { files, storage } = memStorage();
     const registered: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
@@ -310,6 +311,7 @@ describe('真实写入方产出的路径判据都接受', () => {
       ),
       storage: fixedRef(storage),
       processService: ref(),
+      hooks: fixedRef({ middleware: () => () => {} } as never),
       logger: fixedRef(silentLogger()),
       lifecycle: fixedRef({
         signal: new AbortController().signal,
@@ -323,6 +325,7 @@ describe('真实写入方产出的路径判据都接受', () => {
     );
     const { uri } = JSON.parse(typeof out === 'string' ? out : out.content) as { uri: string };
     expect([...files.keys()]).toEqual([uri]);
+    expect(uri.startsWith(`data:/images/${sessionDirName(sessionId)}/draw/`), uri).toBe(true);
     expect(await mediaInScope(uri, { sessionId }, deps())).toBe(true);
   });
 
@@ -346,7 +349,7 @@ describe('真实写入方产出的路径判据都接受', () => {
     } as IncomingMessage;
     await svc.processMessage(msg);
     const [uri] = [...files.keys()];
-    expect(uri).toMatch(/^data:\/images\//);
+    expect(uri.startsWith(`data:/images/${sessionDirName(OWNER_PRIVATE)}/media/`), uri).toBe(true);
     expect(await mediaInScope(uri, { sessionId: OWNER_PRIVATE }, deps())).toBe(true);
   });
 });

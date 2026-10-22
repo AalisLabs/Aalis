@@ -3,7 +3,8 @@
 //
 // LLM 写标记（SVG 或 HTML+内联 CSS），本插件经离线渲染库（@aalis/util-offline-render：
 // 开沙箱、禁脚本、零网络、每次渲染全新上下文，见该包头注释）渲染成 PNG，或把声明式动画
-// （CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘 data:/images/ 后由 send_attachment 投递进聊天。
+// （CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘到本插件在会话媒体目录里的子目录
+// data:/images/<会话目录>/draw/（@aalis/api-media 的目录约定，/clear 与删会话时由本插件清理）后由 send_attachment 投递进聊天。
 // 标记是不可信输入；渲染请求里只有外壳文档一个资源（见 plan.renderRequest）。
 //
 // 格式分工（工具描述同步教给模型）：
@@ -12,14 +13,19 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { hooks } from '@aalis/api-hooks';
+import { clearSessionMedia, sessionMediaUri } from '@aalis/api-media';
+import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子类型
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { textOf } from '@aalis/schema-i18n';
 import { OfflineRenderer } from '@aalis/util-offline-render';
 import { framesToGif } from './gif.js';
 import { type DrawCaps, lintAnimationSource, renderRequest, resolveCanvas } from './plan.js';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   defaultWidth: {
@@ -144,22 +150,16 @@ function cssSize(png: Uint8Array, scale: number): { width: number; height: numbe
   return { width: Math.round(view.getUint32(16) / scale), height: Math.round(view.getUint32(20) / scale) };
 }
 
-/** sessionId → 文件系统安全目录名（与 adapter 附件缓存同规，另中和 .. 与前导点做纵深防御）。 */
-function safeSessionDir(sessionId: string): string {
-  return (
-    sessionId
-      .replace(/[:/\\]/g, '_')
-      .replace(/\.\./g, '_')
-      .replace(/^\.+/, '_') || 'nosession'
-  );
-}
+/** 本插件在会话媒体目录里的子目录名（写入方） */
+const MEDIA_WRITER = 'draw';
 
-// 三项服务都是 optional：缺 tools 时登记排队、缺 storage/process 时落盘与编码在调用点报错，
+// 四项服务都是 optional：缺 tools、hooks 时登记排队，缺 storage/process 时落盘与编码在调用点报错、清理不出回执，
 // 插件本身照常激活（离线渲染不依赖它们启动）。
 const uses = {
   tools: optional(tools),
   storage: optional(storage),
   processService: optional(processService),
+  hooks: optional(hooks),
   logger,
   lifecycle,
   config,
@@ -193,6 +193,22 @@ function registerDraw(caps: Caps): void {
     logger,
   });
   caps.lifecycle.use.onDispose(() => renderer.dispose());
+
+  // 参与 memory:clear（/clear 与删除会话）：所选类型含 image 时清本插件在会话媒体目录里的子目录，会话级清这个会话的、
+  // 全局清各会话的；存储不在时不清、不出回执
+  caps.hooks.use.middleware('memory:clear', async (data, next) => {
+    const sessionId = data.scope === 'all' ? undefined : data.sessionId;
+    if (caps.storage.present && (data.scope === 'all' || sessionId) && (!data.types || data.types.includes('image'))) {
+      const line = { source: 'draw', type: 'image' };
+      try {
+        const count = await clearSessionMedia(caps.storage.use, 'image', MEDIA_WRITER, sessionId);
+        data.results.push({ ...line, success: true, message: t('cleared', { count }) });
+      } catch (err) {
+        data.results.push({ ...line, success: false, message: t('clearFailed', { error: textOf(err) }) });
+      }
+    }
+    await next();
+  });
 
   tools.use.registerGroup({
     name: 'draw',
@@ -231,6 +247,7 @@ function registerDraw(caps: Caps): void {
     },
     handler: async (args, callCtx) => {
       try {
+        const dir = sessionMediaUri('image', callCtx.sessionId, MEDIA_WRITER);
         const source = String(args.source ?? '');
         if (!source.trim()) return JSON.stringify({ error: 'source 为空' });
         if (Buffer.byteLength(source) > cfg.maxSourceBytes) {
@@ -247,8 +264,7 @@ function registerDraw(caps: Caps): void {
 
         const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(png));
         const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-        const dir = safeSessionDir(callCtx.sessionId || 'nosession');
-        const uri = `data:/images/${dir}/draw-${hash}.png`;
+        const uri = `${dir}/draw-${hash}.png`;
         await storage.writeFile(uri, png);
         logger.info(`draw_image 渲染完成 mode=${plan.mode} ${width}x${height}@${cfg.scale}x → ${uri}`);
         return JSON.stringify({
@@ -299,6 +315,7 @@ function registerDraw(caps: Caps): void {
     },
     handler: async (args, callCtx) => {
       try {
+        const dir = sessionMediaUri('image', callCtx.sessionId, MEDIA_WRITER);
         const source = String(args.source ?? '');
         if (!source.trim()) return JSON.stringify({ error: 'source 为空' });
         if (Buffer.byteLength(source) > cfg.maxSourceBytes) {
@@ -331,8 +348,7 @@ function registerDraw(caps: Caps): void {
 
         const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(gif));
         const hash = Buffer.from(digest).toString('hex').slice(0, 16);
-        const dir = safeSessionDir(callCtx.sessionId || 'nosession');
-        const uri = `data:/images/${dir}/draw-${hash}.gif`;
+        const uri = `${dir}/draw-${hash}.gif`;
         await storage.writeFile(uri, gif);
         // 检查帧：首帧+中帧落盘，供 agent 在没把握时**可选**用 analyze_image 核对——
         // 不是默认路径。本地视觉推理慢（33b 单张可达数分钟），默认自检会把 2 秒的动图
@@ -343,7 +359,7 @@ function registerDraw(caps: Caps): void {
           ['f0', 0],
           ['fmid', midIdx],
         ] as const) {
-          const fUri = `data:/images/${dir}/draw-${hash}-${tag}.png`;
+          const fUri = `${dir}/draw-${hash}-${tag}.png`;
           await storage.writeFile(fUri, frames[idx]);
           checkFrames.push(fUri);
         }

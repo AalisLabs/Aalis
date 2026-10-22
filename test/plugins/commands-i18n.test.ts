@@ -282,11 +282,14 @@ describe('内置指令的说明与回复按会话的语言', () => {
     );
   });
 
-  it('en 会话里 /clear 的结果是英文：消息历史与附件缓存的结果行', async () => {
+  it('en 会话里 /clear 的结果是英文：消息历史的结果行与没有处理者的说明', async () => {
     const s = await setup();
     s.host.commands.use.setExecutionGuard(async () => null);
     expect((await s.ask(await s.session(['en']), '/clear -t context,image')).content).toBe(
-      ['✅ No image cache in this session', "✅ This session's message history cleared"].join('\n'),
+      [
+        "✅ This session's message history cleared",
+        '⚠ Image cache: no enabled plugin handles this type, so it was not cleared',
+      ].join('\n'),
     );
   });
 

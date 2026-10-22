@@ -123,7 +123,7 @@ async function downloadAudio(url: string): Promise<{ bytes: Buffer; contentType:
 /**
  * 把附件 data 解析为本地可读路径；返回路径 + 清理函数（仅对下载/解码出的临时文件有意义）。
  * 与 plugin-media 的规范实现 ffmpeg.ts:materializeAttachment 对齐：base64 data URL、file://、
- * http(s)、storage URI（scheme:/）、以及历史裸相对路径 `data/...`（补成 `data:/...`）都支持。
+ * http(s)、storage URI（scheme:/）都支持。
  */
 async function materializeAudio(
   proc: ProcessService,
@@ -148,12 +148,9 @@ async function materializeAudio(
     await storage.writeFile(`${tmp.uri}/audio.${ext}`, bytes);
     return { path: `${tmp.path}/audio.${ext}`, cleanup: tmp.cleanup };
   }
-  // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...），统一解析到本地路径
-  let storageUri: string | null = null;
-  if (isStorageUri(data)) storageUri = data;
-  else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
-  if (storageUri) {
-    const local = await storage.resolveLocalPath?.(storageUri, 'read');
+  // storage URI（scheme:/...）解析到本地路径
+  if (isStorageUri(data)) {
+    const local = await storage.resolveLocalPath?.(data, 'read');
     if (local) return { path: local, cleanup: async () => {} };
   }
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);

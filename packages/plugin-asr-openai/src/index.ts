@@ -129,13 +129,10 @@ async function attachmentToBlob(
       filename: `audio.${guessAudioExt(data, contentType)}`,
     };
   }
-  // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...）→ 经 storage 读取
-  let storageUri: string | null = null;
-  if (isStorageUri(data)) storageUri = data;
-  else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
-  if (storageUri) {
-    const bytes = (await storage.readFile(storageUri)) as Uint8Array;
-    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${guessAudioExt(storageUri)}` };
+  // 存储地址（scheme:/...）→ 经 storage 读取
+  if (isStorageUri(data)) {
+    const bytes = (await storage.readFile(data)) as Uint8Array;
+    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${guessAudioExt(data)}` };
   }
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }

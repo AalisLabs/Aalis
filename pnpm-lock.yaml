@@ -916,7 +916,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-media':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -1338,9 +1338,6 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
-      '@aalis/api-storage':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-tools
@@ -1429,6 +1426,12 @@ importers:
 
   packages/plugin-draw:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-hooks
+      '@aalis/api-media':
+        specifier: workspace:>=0.13.0 <1.0.0
+        version: link:../api-media
       '@aalis/api-process':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-process
@@ -1441,10 +1444,16 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/util-offline-render':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-offline-render
     devDependencies:
+      '@aalis/api-memory':
+        specifier: workspace:*
+        version: link:../api-memory
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1711,7 +1720,7 @@ importers:
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-media':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -1949,7 +1958,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-media':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -2973,6 +2982,9 @@ importers:
 
   packages/plugin-tool-browser:
     dependencies:
+      '@aalis/api-media':
+        specifier: workspace:>=0.13.0 <1.0.0
+        version: link:../api-media
       '@aalis/api-process':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-process
