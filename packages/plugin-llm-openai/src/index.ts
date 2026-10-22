@@ -215,7 +215,15 @@ const configSchema = defineConfig({
       '模型思考时不发出思考内容（如 OpenAI 官方的推理模型）或输入很长时，建议适当调大。0 = 不限制。',
   },
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
-  maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
+  maxTokens: {
+    type: 'number',
+    label: '最大 Token',
+    default: 4096,
+    min: 1,
+    integer: true,
+    onInvalid: 'error',
+    description: '单次回复最大生成 token 数，须为正整数，否则实例转为出错',
+  },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
   thinkingParam: {
     type: 'select',

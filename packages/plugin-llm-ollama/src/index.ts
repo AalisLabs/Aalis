@@ -197,7 +197,10 @@ const configSchema = defineConfig({
     type: 'number',
     label: '最大 Token',
     default: 4096,
-    description: '单次回复最大生成 token 数（num_predict）',
+    min: 1,
+    integer: true,
+    onInvalid: 'error',
+    description: '单次回复最大生成 token 数（num_predict），须为正整数，否则实例转为出错',
   },
   contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
   keepAlive: {

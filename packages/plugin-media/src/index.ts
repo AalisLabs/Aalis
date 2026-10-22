@@ -73,7 +73,15 @@ const configSchema = defineConfig({
         default: 'auto',
         description: '决定当轮附件与 analyze_image 的交付形态。',
       },
-      maxTokens: { type: 'number', label: '描述最大 token', default: 300 },
+      maxTokens: {
+        type: 'number',
+        label: '描述最大 token',
+        default: 300,
+        min: 1,
+        integer: true,
+        onInvalid: 'error',
+        description: '须为正整数，否则实例转为出错',
+      },
       think: {
         type: 'boolean',
         label: '启用思考链 (thinking)',
@@ -133,7 +141,11 @@ const configSchema = defineConfig({
         type: 'number',
         label: '最大输出 token',
         default: 1024,
-        description: 'LLM-as-audio 专用。e4b 等小模型在 thinking enabled 下需 ≥1024，否则空响应。',
+        min: 1,
+        integer: true,
+        onInvalid: 'error',
+        description:
+          'LLM-as-audio 专用，须为正整数，否则实例转为出错。e4b 等小模型在 thinking enabled 下需 ≥1024，否则空响应。',
       },
       think: {
         type: 'boolean',
