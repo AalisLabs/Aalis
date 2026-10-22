@@ -15,19 +15,20 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 工具结果携图（analyze_image 直通分支的原语）在 agent 工具循环里的三条接线：
+// 工具结果携图（analyze_image 直通分支的原语）在 agent 工具循环里的接线：
 //   1. images 随本回合的 tool 消息送进下一次 LLM 请求（出口编码由 prepareLLMMessages 负责，
 //      mock provider 不走它，故这里看到的是原始 tool 消息）；上一轮工具的图在下一轮前剥掉，不累积；
 //   2. agent:tool:after 与工具时间线只看到文本 content（hook/事件契约不变）；
 //   3. 落库的 tool 消息不带 images——在 archive.saveMessage 的实参处断言（两个内置后端都白名单
 //      落字段，只查 getHistory 会恒真）；
-//   4. 调用方声明 acceptsImages: true（能出图的工具据此决定交图还是出文字）。
+//   4. acceptsImages 按这一轮的模型登记的视觉能力填，工具上下文与 agent:llm:before 同一个值（能出图的工具据此
+//      决定交图还是出文字）；不能看图时工具硬塞的图不挂到 tool 消息上。
 // ════════════════════════════════════════════════════════════
 
 const IMG = 'data:image/png;base64,iVBORw0KGgo=';
 const SESSION = 'test:tool-images';
 
-async function runTurn() {
+async function runTurn(vision: boolean) {
   const app = new App({ name: 'E2E', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({
@@ -43,7 +44,7 @@ async function runTurn() {
     toolCalls: [{ id, type: 'function', function: { name: 'probe_img', arguments: '{}' } }],
   });
   await app.plugin(
-    createMockLLMPlugin({ responses: [toolCall('call-1'), toolCall('call-2'), { content: 'done' }], recorder }),
+    createMockLLMPlugin({ responses: [toolCall('call-1'), toolCall('call-2'), { content: 'done' }], recorder, vision }),
   );
   await app.plugin(toolsPlugin, {});
   await app.plugin(memoryInMemoryPlugin);
@@ -81,6 +82,11 @@ async function runTurn() {
     hookResult = data.result;
     return next();
   });
+  const llmAccepts: boolean[] = [];
+  host.hooks.use.middleware('agent:llm:before', async (data, next) => {
+    llmAccepts.push(data.acceptsImages);
+    return next();
+  });
 
   await host.agent.use.handleMessage({
     content: '看图',
@@ -91,12 +97,12 @@ async function runTurn() {
   });
   const history = (await host.memory.use.getHistory(SESSION, 50)) ?? [];
   await app.stop();
-  return { recorder, hookResult, history, saved, seenCtx };
+  return { recorder, hookResult, history, saved, seenCtx, llmAccepts };
 }
 
 describe('工具结果携图：agent 工具循环接线', () => {
-  it('images 随 tool 消息进入下一次请求且不跨轮累积；hook 只见文本；落库实参不带 images；acceptsImages 已声明', async () => {
-    const { recorder, hookResult, history, saved, seenCtx } = await runTurn();
+  it('能看图的模型：images 随 tool 消息进入下一次请求且不跨轮累积；hook 只见文本；落库实参不带 images；acceptsImages 为 true', async () => {
+    const { recorder, hookResult, history, saved, seenCtx, llmAccepts } = await runTurn(true);
     expect(recorder.length, 'mock LLM 应被调三次：两轮工具调用 + 收尾').toBeGreaterThanOrEqual(3);
     // 第二次请求：call-1 的 tool 消息带图
     const r1 = recorder[1].messages.find(m => m.role === 'tool' && m.toolCallId === 'call-1');
@@ -110,10 +116,23 @@ describe('工具结果携图：agent 工具循环接线', () => {
 
     expect(hookResult).toBe('{"ok":true}');
     expect(seenCtx?.acceptsImages).toBe(true);
+    expect(llmAccepts).toEqual([true, true, true]);
 
     const savedTools = saved.filter(m => m.role === 'tool');
     expect(savedTools.length, 'tool 消息应经 archive.saveMessage 落库').toBeGreaterThanOrEqual(2);
     expect(savedTools.every(m => !('images' in m))).toBe(true);
     expect(history.filter(m => m.role === 'tool').every(m => m.images === undefined)).toBe(true);
+  });
+
+  it('模型没登记视觉能力：工具上下文与 agent:llm:before 的 acceptsImages 都为 false，工具硬塞的图不交给模型', async () => {
+    const { recorder, seenCtx, llmAccepts } = await runTurn(false);
+    expect(seenCtx?.acceptsImages).toBe(false);
+    expect(llmAccepts).toEqual([false, false, false]);
+    const toolMessages = recorder.flatMap(r => r.messages.filter(m => m.role === 'tool'));
+    expect(toolMessages.length).toBeGreaterThanOrEqual(2);
+    for (const m of toolMessages) {
+      expect(m.content).toBe('{"ok":true}');
+      expect(m.images).toBeUndefined();
+    }
   });
 });

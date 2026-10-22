@@ -1,4 +1,10 @@
-import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
+import type {
+  ChatModelRequest,
+  ChatResponse,
+  ChatStreamChunk,
+  LLMCapability,
+  LLMModel,
+} from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm, metered } from '../../packages/api-llm/src/index.js';
 import { definePlugin, events, provide } from '../../packages/core/src/index.js';
 
@@ -38,6 +44,8 @@ export interface MockLLMOptions {
   contextLength?: number;
   /** 流式的正文流出第一块后，等它回的 Promise 落定再流下去（回 undefined 不停）：用例借此看回复流到一半时的界面 */
   hold?: (request: ChatModelRequest) => Promise<void> | undefined;
+  /** 登记视觉能力（agent 据此判断主模型能不能亲眼看图），缺省不登记 */
+  vision?: boolean;
 }
 
 export class MockLLMService implements LLMModel {
@@ -58,10 +66,16 @@ export class MockLLMService implements LLMModel {
   /** provider 建议的最大输出 token */
   readonly maxOutputTokens = 1024;
   /** 能力元数据（与真实 provider 一致，挂在 model handle 实例上供 resolveLLMModel/listLLMModels 读取）。 */
-  readonly capabilities = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming];
+  readonly capabilities: LLMCapability[];
 
   constructor(options: MockLLMOptions = {}) {
     this.contextLength = options.contextLength ?? 8192;
+    this.capabilities = [
+      LLMCapabilities.Chat,
+      LLMCapabilities.ToolCalling,
+      LLMCapabilities.Streaming,
+      ...(options.vision ? [LLMCapabilities.Vision] : []),
+    ];
     this.opts = {
       responses: options.responses ?? [{ content: 'mock response' }],
       recorder: options.recorder,

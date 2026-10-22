@@ -89,11 +89,10 @@ interface ToolCallContext {
   platform?: string;                                // 会话所属平台
   actor?: { platform: string; userId: string };    // 授权身份；缺省即 (platform, userId)
   enabledGroups?: string[];                         // 当前会话启用的工具分组
-  acceptsImages?: boolean;                          // 调用方能把结果里的图片交给主模型
+  acceptsImages?: boolean;                          // 这次调用的主模型能亲眼看图
   signal?: AbortSignal;                             // 调用方回合的中止信号
   inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
-  model?: { provider?: string; model?: string };   // 这一轮用的对话模型（形状同 api-llm 的 ModelRef），只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
   output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
 }
@@ -113,7 +112,7 @@ interface ToolCallContext {
 
 `turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一（模型生成参数时报过进度的，用那时随进度推出的那一个），不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 
-`model` 由 agent 填这一轮实际用的模型，按它判断能不能把图片等交给主模型的工具（如媒体交付）读它；第三方 agent 不填时这类判断按「不知道」处理，会静默失效。
+`acceptsImages` 是这次调用的主模型能不能亲眼看图。第一方 agent 按模型服务给这个模型登记的能力填：端点报告了视觉能力，或在模型服务的「单模型能力覆盖」（`modelCapabilities`）里写了 `vision`；第三方 agent 要按同一事实填。为 `false` 时能出图的工具退回文字结果（浏览器截图回 `storage_uri` 与说明，`analyze_image` 走识别模型），调用方也不把结果里的 `images` 交给模型：工具不守约照样回了图，第一方 agent 只把文字结果交给模型。缺省为 `false`：mcp-server、workflow 等只读 `content` 的调用方拿不到图。
 
 ## 会话启用的工具分组
 

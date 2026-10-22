@@ -57,7 +57,7 @@ async function pendingHintFor(hub: PaperHub, source?: string): Promise<string> {
   const data: HookContextMap['agent:llm:before'] = {
     messages: [{ role: 'user', content: '在吗' }],
     tools: [],
-    model: { provider: '<提供者>', model: '<模型>' },
+    acceptsImages: false,
     sessionId: ROOM,
     platform: 'onebot',
     ...(source ? { source } : {}),
@@ -877,7 +877,7 @@ describe('待交付提示', () => {
         { role: 'user', content: '本件作品已上线' },
       ],
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: ROOM,
       platform: 'onebot',
       source,
@@ -897,7 +897,7 @@ describe('待交付提示', () => {
     const data: HookContextMap['agent:llm:before'] = {
       messages: [{ role: 'system', content: 'persona' }],
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: ROOM,
       platform: 'onebot',
       source: `paper:${PAPER_ID}:t-00000001`,
@@ -920,7 +920,7 @@ describe('待交付提示', () => {
         { role: 'user', content: '做好了吗' },
       ],
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: ROOM,
       platform: 'onebot',
     };
@@ -969,7 +969,7 @@ describe('待交付提示', () => {
     const data: HookContextMap['agent:llm:before'] = {
       messages: [{ role: 'system', content: 'persona' }],
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: ROOM2,
       platform: 'onebot',
     };
@@ -988,7 +988,7 @@ describe('待交付提示', () => {
         { role: 'user', content: '在吗' },
       ],
       tools: [],
-      model: { provider: '<提供者>', model: '<模型>' },
+      acceptsImages: false,
       sessionId: ROOM,
       platform: 'onebot',
     };

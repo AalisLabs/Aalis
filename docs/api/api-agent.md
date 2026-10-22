@@ -91,7 +91,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | 钩子 | 时机 | payload |
 |---|---|---|
 | `agent:input:before` | 进入 Agent 之前；`next` 之后是这一轮的全部，不调即拦下整条消息 | `{ message, turnId, metadata }` |
-| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, model, sessionId, source?, ... }`；`model` 是这一轮用的对话模型（媒体等按它判断能不能直接看图，第三方 agent 不填时这类判断静默失效）；`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
+| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, acceptsImages, sessionId, source?, ... }`；`acceptsImages` 是这一轮的主模型能不能亲眼看图，与工具上下文的 `acceptsImages` 同一个值（媒体按它决定当轮附件交原图还是交描述）。第一方 agent 按模型服务给这个模型登记的能力填：端点报告了视觉能力，或在模型服务的「单模型能力覆盖」（`modelCapabilities`）里写了 `vision`；第三方 agent 要按同一事实填。`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |

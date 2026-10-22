@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
-import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import {
   type ChatModelRequest,
@@ -25,8 +24,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // agent 的四项按会话设置（模型、深度思考、最大工具迭代、历史条数上限）：字段写在 agent 的 configSchema 上，每一轮经读取器
 // 按这个会话现读，改了下一轮起生效、不重载插件。模型没设时交给服务选择（本插件偏好 › 全局偏好 › 优先级）；会话设置不在时
-// 读插件配置。assignModel 经读取器写这个会话本会话层的模型；字段登记时交的 actual 与回合里挑的是同一个模型。一轮里
-// agent:llm:before 带这一轮的模型，用量事件带这一轮的历史条数上限。
+// 读插件配置。assignModel 经读取器写这个会话本会话层的模型；字段登记时交的 actual 与回合里挑的是同一个模型。用量事件
+// 带这一轮的历史条数上限。各会话用了哪个模型看替身模型服务收到的请求。
 // ════════════════════════════════════════════════════════════
 
 const PROVIDER = 'zz-llm';
@@ -105,7 +104,7 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
   for (const { name } of definitions) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
-  const host = app.bind({ agent: agentService, tools, events, hooks, services, sessionManager });
+  const host = app.bind({ agent: agentService, tools, events, services, sessionManager });
   let executed = 0;
   host.tools.use.register({
     definition: {
@@ -119,11 +118,6 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
   });
   const usages: TokenUsageEvent[] = [];
   host.events.use.on('token:usage', usage => void usages.push(usage));
-  const seen: ModelRef[] = [];
-  host.hooks.use.middleware('agent:llm:before', async (data, next) => {
-    seen.push(data.model);
-    await next();
-  });
   const ask = (sessionId: string, platform = 'webui') =>
     host.agent.use.handleMessage({ content: '在吗', sessionId, platform, userId: 'u1' });
   const admin = () => app.bind({ sessionSettings }).sessionSettings.use;
@@ -137,7 +131,6 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
     host,
     sent,
     usages,
-    seen,
     ask,
     admin,
     set,
@@ -201,7 +194,6 @@ describe('每一轮按会话读', () => {
     await s.ask('s1');
     expect(s.sent.at(-1)).toMatchObject({ model: 'b', request: { think: 'max' } });
     expect(s.usages.at(-1)?.historyLimit).toBe(4);
-    expect(s.seen.at(-1)).toEqual(ref('b'));
 
     s.toolTurns(true);
     await s.set('s1', 'maxToolIterations', 2);
@@ -213,7 +205,6 @@ describe('每一轮按会话读', () => {
     expect(s.sent.at(-1)?.model).toBe('a');
     expect('think' in (s.sent.at(-1)?.request ?? {})).toBe(false);
     expect(s.usages.at(-1)?.historyLimit).toBe(0);
-    expect(s.seen.at(-1)).toEqual(ref('a'));
   });
 
   it('模型的档位里没有设的那一档时请求不带 think', async () => {

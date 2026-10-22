@@ -36,7 +36,7 @@ vi.mock(import('../../packages/plugin-media/src/safe-fetch.js'), async importOri
 // ════════════════════════════════════════════════════════════
 // 图片处理重定位（2026-09）：识别模型 + 两个正交开关
 //   recognizeOnArrival：接触到图立即识别落描述（关 = 档案只留指针）
-//   delivery：主模型需要看图时怎么给——auto 按本会话生效主模型的 vision 能力；
+//   delivery：主模型需要看图时怎么给——auto 按调用方交来的 acceptsImages（agent 按这一轮的模型登记的视觉能力填）；
 //             当轮附件（agent:llm:before 出口）与 analyze_image 走同一判定
 // ════════════════════════════════════════════════════════════
 
@@ -66,36 +66,19 @@ function makeCaps(entries: Array<{ contextId: string; caps: string[] }>): MediaS
   return { logger: fixedRef(logger), llm: ref(models), asr: ref(), memory: ref() };
 }
 
-/** 两个模型：列表首个能看图，另一个不能 */
-const VISION_FIRST = [
-  { contextId: 'p/vision-model', caps: ['chat', 'vision'] },
-  { contextId: 'p/text-model', caps: ['chat'] },
-];
+const VISION_LLM = makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
 
-describe('resolveDelivery：auto 按这次调用的对话模型的 vision 能力', () => {
-  it('调用方没给模型时按 llm 的默认条目：有 vision → passthrough；无 vision → describe；没有模型 → describe', () => {
-    expect(
-      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]), cfgWith({})).resolveDelivery(),
-    ).toBe('passthrough');
-    expect(new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat'] }]), cfgWith({})).resolveDelivery()).toBe(
-      'describe',
+describe('resolveDelivery：auto 只按调用方交来的 acceptsImages', () => {
+  it('能看图直通、不能看交描述，不查 media 自己取得到的模型', () => {
+    expect(new MediaServiceImpl(VISION_LLM, cfgWith({})).resolveDelivery(false)).toBe('describe');
+    expect(new MediaServiceImpl(makeCaps([]), cfgWith({})).resolveDelivery(true)).toBe('passthrough');
+  });
+
+  it('显式 passthrough / describe 不看 acceptsImages', () => {
+    expect(new MediaServiceImpl(makeCaps([]), cfgWith({ delivery: 'passthrough' })).resolveDelivery(false)).toBe(
+      'passthrough',
     );
-    expect(new MediaServiceImpl(makeCaps([]), cfgWith({})).resolveDelivery()).toBe('describe');
-  });
-
-  it('给了模型时按那个模型判，而不是按列表首个', () => {
-    const svc = new MediaServiceImpl(makeCaps(VISION_FIRST), cfgWith({}));
-    expect(svc.resolveDelivery({ provider: 'p', model: 'text-model' })).toBe('describe');
-    expect(svc.resolveDelivery({ provider: 'p', model: 'vision-model' })).toBe('passthrough');
-  });
-
-  it('显式 passthrough / describe 不看模型能力', () => {
-    const noLLM = makeCaps([]);
-    expect(new MediaServiceImpl(noLLM, cfgWith({ delivery: 'passthrough' })).resolveDelivery()).toBe('passthrough');
-    const vision = makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
-    expect(
-      new MediaServiceImpl(vision, cfgWith({ delivery: 'describe' })).resolveDelivery({ provider: 'p', model: 'm' }),
-    ).toBe('describe');
+    expect(new MediaServiceImpl(VISION_LLM, cfgWith({ delivery: 'describe' })).resolveDelivery(true)).toBe('describe');
   });
 });
 
@@ -169,14 +152,14 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     acceptsImages: boolean,
     uri: string,
     extraArgs: Record<string, unknown> = {},
-    model?: ToolCallContext['model'],
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
     const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
-    const svc = new MediaServiceImpl(makeCaps(VISION_FIRST), cfgWith(vision));
+    // media 自己取不到对话模型：交付只看工具上下文的 acceptsImages
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
     const calls = withFakeVision(svc);
     registerMediaTools({ ...host, sessionManager: ref(), authority: ref() }, svc);
     const registry = host.services.use.get(tools);
@@ -184,12 +167,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     const result = await registry.execute(
       'analyze_image',
       { image: uri, ...extraArgs },
-      {
-        sessionId: 's',
-        platform: 'test',
-        ...(acceptsImages ? { acceptsImages: true } : {}),
-        ...(model ? { model } : {}),
-      },
+      { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },
     );
     await app.stop();
     return { result, calls };
@@ -279,13 +257,14 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls[0].hint).toContain('补充上下文: 这是第 3 页');
   });
 
-  it('auto：按这次调用的模型判（工具上下文的 model），能看图的直通、不能的交识别模型', async () => {
-    const text = await withTool({ delivery: 'auto' }, true, toolUri(5), {}, { provider: 'p', model: 'text-model' });
-    expect(text.calls).toHaveLength(1);
-    expect(text.result.images).toBeUndefined();
-    const vision = await withTool({ delivery: 'auto' }, true, toolUri(6), {}, { provider: 'p', model: 'vision-model' });
-    expect(vision.calls).toHaveLength(0);
-    expect(vision.result.images).toEqual([toolUri(6)]);
+  it('auto：按工具上下文的 acceptsImages 判，能看图的直通、不能看图的会话走识别模型', async () => {
+    const blind = await withTool({ delivery: 'auto' }, false, toolUri(5));
+    expect(blind.calls).toHaveLength(1);
+    expect(blind.result.images).toBeUndefined();
+    expect(JSON.parse(blind.result.content).description).toBe('一只猫');
+    const sees = await withTool({ delivery: 'auto' }, true, toolUri(6));
+    expect(sees.calls).toHaveLength(0);
+    expect(sees.result.images).toEqual([toolUri(6)]);
   });
 
   it('describe：识别模型出文字，不带 images；识别按调用工具的会话记账', async () => {

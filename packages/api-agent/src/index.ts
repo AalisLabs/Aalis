@@ -167,8 +167,11 @@ declare module '@aalis/api-hooks' {
     'agent:llm:before': {
       messages: Message[];
       tools: ToolDefinition[];
-      /** 这一轮用的对话模型：按它判断能不能直接看图等 */
-      model: ModelRef;
+      /**
+       * 这一轮的主模型能亲眼看图（agent 按模型服务登记的能力填，与工具上下文的 acceptsImages 同一个值）：
+       * 媒体等按它决定当轮附件交原图还是交描述
+       */
+      acceptsImages: boolean;
       sessionId?: string;
       userId?: string;
       platform?: string;

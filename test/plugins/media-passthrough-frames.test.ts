@@ -146,15 +146,14 @@ describe('transformModelImages 交付形态真值表', () => {
 
 describe('agent:llm:before 中间件接线', () => {
   /** 装一份真 media：process / storage 是它的 required 依赖，不放桩它停在 pending、中间件不挂 */
-  async function bootMedia(delivery: string) {
+  async function bootMedia(delivery: string, capabilities = ['chat']) {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     host.provide.use(processService, {} as never);
     host.provide.use(storage, {} as never);
-    // 两个对话模型：默认条目（先登记的）能看图，另一个不能
-    host.provide.use(llm, { id: 'vision', capabilities: ['chat', 'vision'] } as never, { entryId: 'zz-p/vision' });
-    host.provide.use(llm, { id: 'text', capabilities: ['chat'] } as never, { entryId: 'zz-p/text' });
+    // media 自己取得到的对话模型：交付不看它，只看钩子交来的 acceptsImages
+    host.provide.use(llm, { id: 'm', capabilities } as never, { entryId: 'zz-p/m' });
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery } });
     await app.plugins.idle();
@@ -162,8 +161,8 @@ describe('agent:llm:before 中间件接线', () => {
     return { app, host };
   }
 
-  async function runHookWith(delivery: string, dryRun: boolean, model = 'vision') {
-    const { app, host } = await bootMedia(delivery);
+  async function runHookWith(delivery: string, dryRun: boolean, acceptsImages = true, capabilities?: string[]) {
+    const { app, host } = await bootMedia(delivery, capabilities);
     const data = {
       messages: [
         { role: 'system' as const, content: '头' },
@@ -172,7 +171,7 @@ describe('agent:llm:before 中间件接线', () => {
       ],
       tools: [],
       sessionId: 's',
-      model: { provider: 'zz-p', model },
+      acceptsImages,
       dryRun,
     };
     await host.hooks.use.run('agent:llm:before', data as never);
@@ -197,11 +196,11 @@ describe('agent:llm:before 中间件接线', () => {
     expect(data.messages[1].images).toEqual([GIF_DATA]); // 仅末条，历史 user 消息不动
   });
 
-  it('auto：按这一轮的模型（data.model）判，不能看图的模型清空末条 user 的 images，能看图的抽帧交出', async () => {
-    const text = await runHookWith('auto', false, 'text');
-    expect(text.messages[2].images).toEqual([]);
-    const vision = await runHookWith('auto', false, 'vision');
-    expect(vision.messages[2].images).toEqual(['frame-0', 'frame-1', 'frame-2', 'frame-3', 'frame-4', PLAIN_URL]);
+  it('auto：只按这一轮交来的 acceptsImages 判，不查 media 自己取得到的模型：不能看图清空末条 user 的 images，能看图抽帧交出', async () => {
+    const blind = await runHookWith('auto', false, false, ['chat', 'vision']);
+    expect(blind.messages[2].images).toEqual([]);
+    const sees = await runHookWith('auto', false, true, ['chat']);
+    expect(sees.messages[2].images).toEqual(['frame-0', 'frame-1', 'frame-2', 'frame-3', 'frame-4', PLAIN_URL]);
   });
 
   it('工具循环重跑钩子：每条消息只处理一次（成功不重做，失败不重试）', async () => {
