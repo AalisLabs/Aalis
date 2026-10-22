@@ -6,7 +6,9 @@ import { type PlatformAdapter, platform, type SessionTypeDecl } from '../../pack
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   type ActualValue,
+  type SessionAt,
   type SessionFieldReader,
+  type SessionSettingsAdmin,
   sessionFields,
   sessionSettings,
 } from '../../packages/api-session-settings/src/index.js';
@@ -194,6 +196,17 @@ export function sessionValuesPlugin(values: Record<string, Record<string, unknow
       } as never);
     },
   });
+}
+
+/**
+ * 一个实例在一个会话里适用的各项的生效值与来源：读管理面的会话行，与协议、界面同一读法（不适用的、只能设到场所的项不列）
+ */
+export function traceOf(admin: SessionSettingsAdmin, plugin: string, sessionId: string, at?: SessionAt) {
+  const rows = admin.rows({ sessionId, at }).filter(row => row.plugin === plugin);
+  return {
+    values: Object.fromEntries(rows.flatMap(row => (row.effective === undefined ? [] : [[row.key, row.effective]]))),
+    sources: Object.fromEntries(rows.flatMap(row => (row.source === undefined ? [] : [[row.key, row.source]]))),
+  };
 }
 
 /** 以插件实例提供一个平台适配器：同一平台可以装几个 */

@@ -26,7 +26,9 @@
     "@aalis/api-agent": "workspace:>=0.10.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0"
+    "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

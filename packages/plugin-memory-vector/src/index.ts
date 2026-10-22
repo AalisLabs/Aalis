@@ -130,7 +130,7 @@ const configSchema = defineConfig({
       { label: '同平台（仅相同平台的会话）', value: 'platform' },
       { label: '全部打通（所有平台所有会话）', value: 'all' },
     ],
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 });
 

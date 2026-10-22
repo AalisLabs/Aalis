@@ -12,6 +12,7 @@ import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { phaseData } from '../fixtures/inbound-phase.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -81,7 +82,10 @@ interface SetupOptions {
   laya?: Record<string, unknown> | false;
   /** Laya 先登记：它的中间件在链上排在规则插件前面（缺省规则插件先登记） */
   layaFirst?: boolean;
-  /** 宿主配置文档（YAML 原文）：与 runtime 启动同序，在登记任何插件之前经 installHostConfig 应用其中的服务偏好 */
+  /**
+   * 宿主配置文档（YAML 原文）：与 runtime 启动同序，在登记任何插件之前经 installHostConfig 应用其中的服务偏好；两个插件的配置
+   * 与 runtime 一样写进文档的 plugins（按会话字段的全局层取自文档）
+   */
   hostConfig?: string;
 }
 
@@ -91,7 +95,14 @@ async function setup(opts: SetupOptions = {}) {
   logHub.onEntry(e => logs.push(e));
   const app = new App({ name: 'T', logLevel: 'debug', logHub });
   booted.push(app);
-  if (opts.hostConfig !== undefined) installHostConfig(app, createConfigStore(parseYaml(opts.hostConfig)));
+  const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
+  if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);
+  if (opts.laya !== false) plugins.push([layaPlugin, { endpoint: sidecar.url, ...opts.laya }]);
+  if (opts.layaFirst) plugins.reverse();
+  if (opts.hostConfig !== undefined) {
+    const sections = Object.fromEntries(plugins.map(([def, config]) => [def.name, config]));
+    installHostConfig(app, createConfigStore({ ...parseYaml(opts.hostConfig), plugins: sections }));
+  }
   await registerHubs(app);
   const host = app.bind({ provide, hooks, services, events });
   // 规则插件的 required 依赖；闲置注入经它进入站（这里只记下）
@@ -102,10 +113,6 @@ async function setup(opts: SetupOptions = {}) {
     },
   } as never);
   host.provide.use(memory, { getFullHistory: async () => [] } as never);
-  const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
-  if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);
-  if (opts.laya !== false) plugins.push([layaPlugin, { endpoint: sidecar.url, ...opts.laya }]);
-  if (opts.layaFirst) plugins.reverse();
   for (const [def, config] of plugins) await app.plugins.register(def, config);
   const defs = plugins.map(([def]) => def);
   await app.plugins.idle();
@@ -132,7 +139,7 @@ async function setup(opts: SetupOptions = {}) {
 
 async function run(chain: Hooks, message: IncomingMessage) {
   let reached = false;
-  await chain.run('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+  await chain.run('inbound:trigger', phaseData(message), async () => {
     reached = true;
   });
   return { reached, message };

@@ -1791,7 +1791,7 @@ describe('plugin-user-relation: community_overview 默认算法取配置', () =>
       await service.addPersonEventEdge({ fromPersonId: pid, toEventId: e.id, role: 'participant', evidence: [ev()] });
     }
     const cap = captureTools();
-    registerRelationTools({ tools: cap.tools, logger: app.logger }, service, {
+    registerRelationTools({ tools: cap.tools, logger: app.logger, sessionOnly: () => false }, service, {
       defaultMaxDepth: 2,
       defaultMaxBreadth: 8,
       hardMaxDepth: 4,

@@ -30,9 +30,9 @@ export interface PlatformSelfIdentity {
  * 平台类型：一个平台里聊天窗口的一种（如 OneBot 的群与私聊）。类型名由平台自定，消息经 IncomingMessage.sessionType 带上它
  */
 export interface SessionTypeDecl {
-  /** 类型名：非空，不含 `:`，不是 `*`；与作用域 `平台:类型:目标` 的第二段同一套写法 */
+  /** 类型名：非空，不含 `:`，不是 `*`；与窗口键 `平台:类型:目标` 的第二段同一套写法 */
   name: string;
-  /** 给人看的显示名（如作用域的可选项），可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；不给时界面写类型名 */
+  /** 给人看的显示名（如平台类型档与窗口场所的称呼），可以是文字对象（@aalis/schema-i18n），出口按读者语言渲染；不给时界面写类型名 */
   label?: string | TextRef;
   /** 多方（受众里不止机器人与对端两方）为 true，一对一为 false */
   multiParty: boolean;
@@ -53,7 +53,7 @@ export interface PlatformAdapter {
   platform: string;
   /**
    * 这个平台的类型，消息在 IncomingMessage.sessionType 上带类型名。IM 房间建档时按它记下聊天窗口是一对一还是多方，
-   * 作用域的候选也按它列。
+   * 会话设置的平台类型档也按它列。
    *
    * 不声明（没写或空列表）的平台整个算一个一对一类型 `private`（见 {@link sessionTypesOf}）。有多方会话的平台必须声明
    * 类型并在消息上带类型名：不声明的，它的群按一对一处理，任何群员都会被当成那个唯一的对端；声明了却没在消息上带类型名的，

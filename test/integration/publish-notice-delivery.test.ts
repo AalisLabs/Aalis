@@ -457,9 +457,9 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
   });
 
   it('固定通知也计入会话限速，不能靠连续静默通知绕过回复上限', async () => {
-    // 房间已收录：通知不带会话类型，流控按会话记下的聊天窗口判作用域
+    // 房间已收录：通知不带会话类型，流控按会话记下的聊天窗口判生效范围（默认只管多方房间）
     const h = await boot([{ content: '{"message":"","mood":"平静"}' }], {}, undefined, [ROOM]);
-    await h.app.plugin(flowControlPlugin, { scopes: ['onebot:group'], rateLimitWindow: 60, rateLimitMaxReplies: 1 });
+    await h.app.plugin(flowControlPlugin, { rateLimitWindow: 60, rateLimitMaxReplies: 1 });
     await h.app.plugins.idle();
     expect(h.app.plugins.getPlugin(flowControlPlugin.name)?.state).toBe('active');
     await h.send();

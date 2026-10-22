@@ -6,7 +6,15 @@ import { tr } from '../language';
 import type { SessionSummary } from '../protocol/session-client';
 import { SessionsFetchError } from '../shell/SessionGate';
 import type { Row } from './field';
-import { type LayerOrder, labelOf, type SourceContext, sourceTitle, useLayers } from './layers';
+import {
+  type LayerInfo,
+  type LayerOrder,
+  labelOf,
+  type SourceContext,
+  sourceTitle,
+  typeText,
+  useLayers,
+} from './layers';
 import { SettingRows } from './SettingRows';
 import type { useSettingRows } from './setting-rows';
 
@@ -25,9 +33,15 @@ function placeTexts(summary: SessionSummary): { name: string; scope: string } {
     : { name: tr('privatePlace', place), scope: tr('scopePrivate') };
 }
 
-/** 这个会话取的是哪一份：根会话的平台、聊天窗口的类型名与场所 */
-const contextOf = (summary: SessionSummary | undefined): SourceContext =>
-  summary ? { platform: summary.platform, chatType: summary.chat?.type, placeName: placeTexts(summary).name } : {};
+/** 这个会话取的是哪一份：根会话的平台、聊天窗口的类型（显示名）与场所 */
+const contextOf = (summary: SessionSummary | undefined, layers: readonly LayerInfo[]): SourceContext =>
+  summary
+    ? {
+        platform: summary.platform,
+        chatType: typeText(layers, summary.platform, summary.chat?.type),
+        placeName: placeTexts(summary).name,
+      }
+    : {};
 
 /** 层在层表里的先后：后面的压过前面的 */
 const rankOf = (order: LayerOrder, name: string) => order.findIndex(entry => entry.name === name);
@@ -76,7 +90,7 @@ export function SessionSettings({
   if (!rows || (!layers.value && !layers.error)) return null;
   if (rows.length === 0) return <p className="session-panel-note">{tr('sessionNoSettings')}</p>;
   const { layer } = scope;
-  const at = contextOf(summary);
+  const at = contextOf(summary, layers.value?.layers ?? []);
   /** 「来自：…」；来源比所选的层更窄（压过它）时写这里还被它覆盖 */
   const sourceLine = (source: string) => {
     const where = sourceTitle(order, source, at);

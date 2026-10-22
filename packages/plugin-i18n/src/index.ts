@@ -14,14 +14,9 @@ import { contributions } from '@aalis/api-contributions';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { type Audience, i18n, type LanguageInfo } from '@aalis/api-i18n';
+import { placeLabel, type SessionInfo, type SessionManagerService, sessionManager } from '@aalis/api-session-manager';
 import {
-  placeLabel,
-  type SessionInfo,
-  type SessionKind,
-  type SessionManagerService,
-  sessionManager,
-} from '@aalis/api-session-manager';
-import {
+  appliesIn,
   layerLabel,
   type SessionFieldReader,
   type SessionSettingsLayer,
@@ -201,9 +196,8 @@ function checkLanguages(layers: readonly LayerSetting[], system: string, availab
  * （窗口，工作区按 owner 的会话、不收），写在那里也改不了的不报
  */
 function layerSettings(caps: Caps, fields: Fields): LayerSetting[] {
-  const appliesTo: readonly SessionKind[] = configSchema.language.session.appliesTo;
   return fields.layers().flatMap(({ layer, placeKind, values }) => {
-    if (placeKind !== undefined && !appliesTo.includes(placeKind)) return [];
+    if (placeKind !== undefined && !appliesIn(configSchema.language.session, placeKind)) return [];
     const setting = values.language ?? [];
     return setting.length > 0 ? [{ layer, name: layerName(caps, layer), setting }] : [];
   });

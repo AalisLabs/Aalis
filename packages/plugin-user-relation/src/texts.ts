@@ -5,7 +5,7 @@ import en from './locales/en.js';
 const SOURCE = {
   recallScopeLabel: '关系图范围',
   recallScopeDescription:
-    '注入关系图时取哪些会话的事件：仅本会话时不带别的会话里抽出的事件、跨会话话题与全局热点，人际关系照常；写坏了按仅本会话',
+    '注入关系图与关系图工具取哪些会话的事件：仅本会话时注入不带别的会话里抽出的事件、跨会话话题与全局热点，人际关系照常，工具的会话作用域只能是本会话；写坏了按仅本会话',
   recallScopeSession: '仅本会话',
   recallScopeAll: '全部',
 } as const;

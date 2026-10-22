@@ -16,7 +16,9 @@ import type { AgentService } from '@aalis/api-agent';
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import { resolveSessionType, type SessionTypeDecl } from '@aalis/api-platform';
 import { defineService } from '@aalis/core';
+import type { SchemaField } from '@aalis/schema-config';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 /**
  * 入站相位共享数据结构
@@ -29,6 +31,11 @@ export interface InboundPhaseData {
   metadata: Record<string, unknown>;
   /** 当前可用的 agent 服务；plugin-gateway 在调度前已注入。 */
   agent: AgentService | undefined;
+  /**
+   * 这条入站所在的聊天窗口：网关对没有 source 的入站按这个平台适配器的类型声明算一次（{@link chatScopeOf}），平台服务缺席时
+   * 按没声明类型算；带 source 的内部注入没有。回复策略据它的多方标记判生效范围
+   */
+  chat?: ChatScope;
 }
 
 // ----- Gateway 域钩子声明 -----
@@ -147,45 +154,31 @@ export const INBOUND_PHASE_ORDER = [
 
 export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];
 
-// ----- 会话作用域匹配 -----
+// ----- 回复策略的生效范围 -----
 //
-// 按会话作用域生效的相位插件（flow-control / trigger-policy 等）共用的纯函数。
-// 作用域字符串写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）。
-// 插件配置约定两个字段：`scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope`
-// 与要覆盖的字段）；写一条 override 即视为启用该作用域。
+// 回复策略（触发判定、流控）只管房间：生效范围是一个可按会话设的字段，三个回复策略插件各自展开它，再写上自己的按会话声明
+// （api-gateway 不依赖会话设置的契约）。取值：不生效、多方房间（默认）、一对一房间、全部房间；多方与否取聊天窗口的多方标记。
 
-interface ScopePattern {
-  platform: string;
-  sessionType: string;
-  targetId: string;
+/** 「生效范围」字段：插件写 `audience: { ...REPLY_AUDIENCE_FIELD, session: { appliesTo: ['room'], prominence: 'common' } }` */
+export const REPLY_AUDIENCE_FIELD = {
+  type: 'select',
+  label: t('audienceLabel'),
+  description: t('audienceDescription'),
+  default: 'multiParty',
+  options: [
+    { label: t('audienceOff'), value: 'off' },
+    { label: t('audienceMultiParty'), value: 'multiParty' },
+    { label: t('audienceOneToOne'), value: 'oneToOne' },
+    { label: t('audienceAll'), value: 'all' },
+  ],
+} satisfies SchemaField;
+
+/** 聊天窗口（多方标记 multiParty）在不在生效范围 audience 里；不认识的取值按不生效 */
+export function audienceIncludes(audience: string, multiParty: boolean): boolean {
+  return audience === 'all' || audience === (multiParty ? 'multiParty' : 'oneToOne');
 }
 
-function parseScope(scope: string): ScopePattern {
-  const parts = (scope || '').split(':');
-  return { platform: parts[0] || '*', sessionType: parts[1] || '*', targetId: parts[2] || '*' };
-}
-
-function matchScope(pat: ScopePattern, platform: string, sessionType: string, targetId: string): boolean {
-  return (
-    (pat.platform === '*' || pat.platform === platform) &&
-    (pat.sessionType === '*' || pat.sessionType === sessionType) &&
-    (pat.targetId === '*' || pat.targetId === targetId)
-  );
-}
-
-/** 具体度：targetId > sessionType > platform > 通配 */
-function scopeSpecificity(pat: ScopePattern): number {
-  return (pat.platform !== '*' ? 4 : 0) + (pat.sessionType !== '*' ? 2 : 0) + (pat.targetId !== '*' ? 1 : 0);
-}
-
-/** 入站消息在作用域里的 targetId：群聊取 groupId，私聊取 userId，其他为空串。 */
-export function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | 'groupId' | 'userId'>): string {
-  if (message.sessionType === 'group') return message.groupId ?? '';
-  if (message.sessionType === 'private') return message.userId ?? '';
-  return '';
-}
-
-/** 入站消息所在的聊天窗口：作用域 `平台:类型:目标` 的三段与多方标记 */
+/** 入站消息所在的聊天窗口：窗口键 `平台:类型:目标` 的三段与多方标记 */
 export interface ChatScope {
   platform: string;
   /** 平台类型名 */
@@ -212,7 +205,7 @@ export function chatScopeOf(
   return { platform: message.platform, type: name, multiParty, undeclared, targetId };
 }
 
-/** 聊天窗口在作用域里的三段：平台、类型名、目标 */
+/** 窗口键的三段：平台、类型名、目标 */
 type WindowParts = Pick<ChatScope, 'platform' | 'type' | 'targetId'>;
 
 /** 键的前两段里的 `%` 与 `:` 按百分号转义：不合写法的名字（带 `:`）拼出来也不与别的窗口撞键 */
@@ -220,7 +213,7 @@ const escapeSegment = (segment: string) => segment.replace(/[%:]/g, char => (cha
 const unescapeSegment = (segment: string) => segment.replace(/%25|%3A/g, code => (code === '%25' ? '%' : ':'));
 
 /**
- * 聊天窗口的键 `平台:类型:目标`：场所的窗口键与作用域同一套写法。不含机器人账号，同一个群里几个账号的会话是同一个窗口。
+ * 聊天窗口的键 `平台:类型:目标`（场所的窗口键）。不含机器人账号，同一个群里几个账号的会话是同一个窗口。
  * 平台名与类型名按约定不含 `:`；适配器发出不合约定的名字时，前两段里的 `%` 与 `:` 转义成 `%25`、`%3A`，不同的窗口不会拼成
  * 同一个键。目标可以含 `:`（如频道的 `<guild>:<channel>`），原样放在最后
  */
@@ -238,56 +231,6 @@ export function parseWindowKey(key: string): WindowParts | undefined {
     type: unescapeSegment(key.slice(first + 1, second)),
     targetId: key.slice(second + 1),
   };
-}
-
-/** `(platform, sessionType, targetId)` 是否命中 `scopes` 或任一 `overrides[].scope`。 */
-export function isScopeEnabled(
-  cfg: { scopes: readonly string[]; overrides: readonly { scope: string }[] },
-  platform: string | undefined,
-  sessionType: string | undefined,
-  targetId?: string,
-): boolean {
-  const p = platform ?? '';
-  const t = sessionType ?? '';
-  const tid = targetId ?? '';
-  return (
-    cfg.scopes.some(s => matchScope(parseScope(s), p, t, tid)) ||
-    cfg.overrides.some(o => matchScope(parseScope(o.scope), p, t, tid))
-  );
-}
-
-/**
- * 取 `overrides` 中命中且最具体的一项，按键叠加到 `base` 之上（跳过 `scope` 与值为 `undefined`
- * 的键）；无命中时原样返回 `base`。具体度相同时取先出现的一项。
- */
-export function resolveEffectiveConfig<T extends { overrides: readonly { scope: string }[] }>(
-  base: T,
-  platform: string | undefined,
-  sessionType: string | undefined,
-  targetId?: string,
-): T {
-  if (base.overrides.length === 0) return base;
-  const p = platform ?? '';
-  const t = sessionType ?? '';
-  const tid = targetId ?? '';
-  let best: { scope: string } | undefined;
-  let bestSpec = -1;
-  for (const o of base.overrides) {
-    const pat = parseScope(o.scope);
-    if (!matchScope(pat, p, t, tid)) continue;
-    const spec = scopeSpecificity(pat);
-    if (spec > bestSpec) {
-      best = o;
-      bestSpec = spec;
-    }
-  }
-  if (!best) return base;
-  const merged: Record<string, unknown> = { ...base };
-  for (const [k, v] of Object.entries(best)) {
-    if (k === 'scope' || v === undefined) continue;
-    merged[k] = v;
-  }
-  return merged as T;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

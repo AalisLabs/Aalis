@@ -27,8 +27,8 @@ export function useLayers(wanted = true) {
 export const labelOf = (order: LayerOrder, name: string) => order.find(entry => entry.name === name)?.label ?? name;
 
 /**
- * 一层的称呼：层表里的称呼，后面写这一层取的是哪一份，如「平台档 onebot」「平台类型档 onebot · group」；
- * 场所写场所的称呼（label，没有时是场所键）与层名，如「群「读书会」onebot（场所）」
+ * 一层的称呼：层表里的称呼，后面写这一层取的是哪一份，如「平台档 onebot」「平台类型档 onebot · 群」（类型写层的列表给的显示名
+ * label，没有时写类型名）；场所写场所的称呼（label，没有时是场所键）与层名，如「群「读书会」onebot（场所）」
  */
 export function layerTitle(order: LayerOrder, layer: SettingLayer, label?: string): string {
   const name = labelOf(order, layer.scope);
@@ -38,7 +38,7 @@ export function layerTitle(order: LayerOrder, layer: SettingLayer, label?: strin
     case 'platform':
       return tr('layerDetail', { layer: name, detail: layer.platform });
     case 'platformType':
-      return tr('layerDetail', { layer: name, detail: `${layer.platform} · ${layer.type}` });
+      return tr('layerDetail', { layer: name, detail: `${layer.platform} · ${label ?? layer.type}` });
     case 'place':
       return tr('placeLayer', { place: label ?? layer.key, layer: name });
   }
@@ -62,11 +62,20 @@ export function layerParam(layer: SettingLayer): string {
 export const layerAddress = (layer: SettingLayer) =>
   `${paths.settingsSection('session-defaults')}?${new URLSearchParams({ layer: layerParam(layer) })}`;
 
-/** 来源取的是哪一份：平台、聊天窗口的类型名，场所的称呼（如「群『读书会』」）；不知道的不写 */
+/** 来源取的是哪一份：平台、聊天窗口的类型（显示名，见 {@link typeText}），场所的称呼（如「群『读书会』」）；不知道的不写 */
 export interface SourceContext {
   platform?: string;
   chatType?: string;
   placeName?: string;
+}
+
+/** 平台类型在称呼里的写法：层的列表里这个平台类型档带的显示名，没有时写类型名；不知道类型时为 undefined */
+export function typeText(layers: readonly LayerInfo[], platform?: string, type?: string): string | undefined {
+  if (type === undefined) return undefined;
+  const info = layers.find(
+    ({ layer }) => layer.scope === 'platformType' && layer.platform === platform && layer.type === type,
+  );
+  return info?.label ?? type;
 }
 
 /** 来源的称呼：层表里的称呼，平台档、平台类型档另写取的是哪一份，场所写场所的称呼，作者默认写「默认」 */

@@ -7,28 +7,28 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 ## 定位
 
 - 向 `trigger` 服务提供自己的实例（标签「Laya 模型」，优先级 -10），并在 `inbound:trigger` 相位挂中间件。与规则触发插件 [plugin-trigger-policy](../../docs/plugins/plugin-trigger-policy.md)（优先级 0）二选一：`trigger` 服务的胜者生效，两个都启用、没有偏好时 trigger-policy 生效，本插件对每条消息直接放行、什么都不做；偏好指向本插件时本插件生效，trigger-policy 对每条消息直接放行，计数与闲置都停下。
-- 没有计数：作用域内的每条消息都交给模型判定，`logit ≥ 阈值` 即开口。
-- **@、叫名字、戳一戳不强制开口**：开不开口由模型决定。点名只决定开口后的类别（点名为 `immediate`，点名者即授权主体；否则为 `interval`，群聊回填无主体授权），以及判定不了时的兜底。
+- 没有计数：生效范围内的每条消息都交给模型判定，`logit ≥ 阈值` 即开口。
+- **@、叫名字、戳一戳不强制开口**：开不开口由模型决定。点名只决定开口后的类别（点名为 `immediate`，点名者即授权主体；否则为 `interval`，多方窗口里回填无主体授权），以及判定不了时的兜底。
 - 模型判定不了时兜底：**只回点名**，其余消息吞掉并归档。不回退到 trigger-policy：本插件出问题不牵连它，它也不替本插件判定。
 
 ## 依赖
 
-- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（按会话取人设的名字，缺席时取全局默认的卡）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）、`process`（托管侧车时用来拉起它，缺席时拉不起，判定不可用）。
+- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（消息不带机器人账号时取房间记下的，判从别的平台往房间里插话）、`session-settings` 与 `host-config`（按会话读生效范围与阈值，缺席时取插件配置）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）、`process`（托管侧车时用来拉起它，缺席时拉不起，判定不可用）。
 - 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1。配置了 `sidecarDir` 时由本插件托管（见「托管侧车」），否则由外部运行，本插件只按 `endpoint` 连接。构建、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
 
 ## 判定流程
 
 1. 本插件不是生效的触发插件 → 放行，什么都不做（不请求、不识别、不归档）。
 2. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ 放行，不改 `triggerType`。
-3. 不在作用域（`scopes` / `overrides`，默认 `*:group`）→ 放行，不写 `triggerType`，由后面的 flow 与 agent 照常处理。私聊默认不在作用域内。
+3. 从别的平台往房间里插话（入口平台与房间的出生平台不同，如 owner 从 WebUI 往群里发），或不在生效范围（`audience`，按会话现读，默认只管多方房间）→ 放行，不写 `triggerType`，由后面的 flow 与 agent 照常处理。私聊默认不在范围内；频道是多方房间，开箱受管，而模型只用群聊训练过，频道里的判定没有训练依据。
 4. 会话处于禁言期 → 放行给 flow 相位吞掉；不识别禁言关键词。
 5. 命中禁言关键词（`muteKeywords`；戳一戳的合成文案不算）→ 设自禁言 `muteTimeSeconds` 秒、归档后吞掉，不问模型。
-6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取，与 agent 同一取法：session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给人设的 `getPersonaName` / `getNickNames`；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。session-manager 缺席时取全局默认的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
-7. 判定前检查：bot 自己的账号 `selfId` 取消息上收到它的机器人账号（`IncomingMessage.selfId`，由适配器填，OneBot 填 `self_id`），不看平台与类型名；消息不带它的（从 WebUI 往房间插话）取 session-manager 在房间建档时记下的机器人账号（`originChat.selfId`，子会话取根会话的）；都没有的兜底，每类消息（平台与类型名）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底；托管的侧车还在启动或等重启时兜底（见「托管侧车」）。
+6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取：会话与入口平台传给人设的 `getPersonaName` / `getNickNames`，人设插件经会话设置取这个会话用的角色卡（`persona`），与 agent 同一取法；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。会话设置缺席时取人设插件配置里的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
+7. 判定前检查：bot 自己的账号 `selfId` 取消息上收到它的机器人账号（`IncomingMessage.selfId`，由适配器填，OneBot 填 `self_id`），不看平台与类型名；消息不带它的（适配器没填）取 session-manager 在房间建档时记下的机器人账号（`originChat.selfId`，子会话取根会话的）；都没有的兜底，每类消息（平台与类型名）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底；托管的侧车还在启动或等重启时兜底（见「托管侧车」）。
 8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致：只有工具调用的 assistant 行以空串落库，两边都计入窗口，到侧车渲染时才丢弃；正文不是字符串的行只有本插件滤掉，目前只有 subtask 在子任务会话里合成的 report 行是这样。最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。
 9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
 10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能兜底；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
-11. `speak = logit ≥ 阈值`，阈值取作用域生效的 `threshold`，留空时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
+11. `speak = logit ≥ 阈值`，阈值取这个会话生效的 `threshold`（按会话现读），没设时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
 
 兜底即 `speak = 是否被点名`：点名的消息记 `immediate` 放行，其余归档后吞掉。第 7 步就兜底的不等附件识别。
 
@@ -86,7 +86,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 不算判定不可用、不记转入的 error、诊断项也不反映的兜底：
 
 - 取历史抛错（如 memory 后端的数据库不可用）：每条记一行 warn，本条兜底，不计入熔断。
-- 不带机器人账号、所在会话也没有记下的消息（适配器没有填 `selfId`，如 WebUI、终端自己的会话；session-manager 缺席时从 WebUI 往房间插话也是）：始终兜底，每类消息首次遇到时记一条 warn。要让它们照常回复，把它们移出 `scopes`，或切到 trigger-policy。模型只用 onebot 的群聊训练，频道与别的平台的会话带了账号就照常判定，属分布外，默认的 `*:group` 不含频道。
+- 不带机器人账号、所在会话也没有记下的消息（适配器没有填 `selfId`；session-manager 缺席时 WebUI、终端的会话与从 WebUI 往房间插话也是）：始终兜底，每类消息首次遇到时记一条 warn。要让它们照常回复，把它们移出生效范围，或切到 trigger-policy。模型只用 onebot 的群聊训练，频道与别的平台的会话带了账号就照常判定，属分布外；频道是多方房间，默认的生效范围就含它。
 - 422、413 与请求体超限：只让这一条兜底（见「侧车接口」）。
 
 侧车停掉或重启时，群里的表现是只有点名的消息得到回复，直到侧车恢复。要改由规则判定，按「切换与回滚」手动切到 trigger-policy。
@@ -95,8 +95,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 作用域，格式 `platform:sessionType[:targetId]`，支持 `*`。作用域外的消息直接放行，由 flow 与 agent 照常处理。私聊默认不在内（模型只用群聊训练） |
-| `threshold` | number | 留空 | 开口阈值，`logit ≥ 阈值` 即开口；留空用侧车返回的模型阈值（随模型版本给出） |
+| `audience` | select | `multiParty` | 生效范围：不生效（`off`）、多方房间（`multiParty`）、一对一房间（`oneToOne`）、全部房间（`all`），可按会话设。范围外的消息直接放行，由 flow 与 agent 照常处理。私聊默认不在内（模型只用群聊训练） |
+| `threshold` | number | 留空 | 开口阈值，`logit ≥ 阈值` 即开口，可按会话设；没设用侧车返回的模型阈值（随模型版本给出） |
 | `triggerOnAt` | boolean | `true` | @ 自己算点名 |
 | `triggerOnPoke` | boolean | `true` | 戳一戳算点名 |
 | `triggerNames` | string | `''` | 点名别名（逗号或换行分隔），全部已登记人设按本会话取的名字与昵称自动合并；同一份名字表作为 `selfNames` 发给侧车 |
@@ -107,11 +107,8 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `sidecarDir` | string | `''` | 侧车目录的绝对路径。填了则由本插件托管侧车，端口取 `endpoint` 的（见「托管侧车」）；留空 = 侧车由外部运行 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
 | `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |
-| `overrides` | array | `[]` | 分作用域覆盖阈值：每项 `{scope, threshold}`，`scope` 格式同上；只取命中的最具体一条，留空沿用顶层。写一条覆盖即启用该作用域 |
 
-点名与禁言关键词的字段只看顶层，不按作用域覆盖。
-
-`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略。`sidecarDir` 留空仍表示由外部运行侧车。
+生效范围与开口阈值可按会话设（平台档、平台类型档、场所、本会话，见会话设置），每条消息按会话现读；其余字段只在插件配置里。`sidecarDir` 留空仍表示由外部运行侧车。
 
 ## 日志
 
@@ -144,19 +141,19 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 ## 调阈值
 
 1. 确认侧车在跑：`curl http://127.0.0.1:17878/health`，或看诊断项 `trigger.laya`。
-2. 把日志级别开到 debug，看判定行：逐条看「被点名但模型没开口」（`addressed=true` 且 `speak=false`），抽看「没点名但模型开口」，据此调阈值（顶层 `threshold`，或按作用域覆盖）。阈值越低开口越多；agent 自己可以选择不回复，频率上限另由 flow-control 的冷却与限速兜底。
+2. 把日志级别开到 debug，看判定行：逐条看「被点名但模型没开口」（`addressed=true` 且 `speak=false`），抽看「没点名但模型开口」，据此调阈值（插件配置里的 `threshold`，或按会话设）。阈值越低开口越多；agent 自己可以选择不回复，频率上限另由 flow-control 的冷却与限速兜底。
 3. 用自检汇总行判断线上输入是否偏离训练口径：`不一致:其它` 应接近 0，持续出现说明有未知的改写；`不一致:缺附件描述` 占结清总数的比例偏高时，考虑调大 `mediaWaitMs`（带附件消息的判定耗时随之变长）；`不一致:含文件附件` 是已知缺口，它占结清总数的比例就是受影响的判定比例；`未归档` 持续增长时先确认 plugin-message-archive 已启用。
 
-私聊：模型只用群聊数据训练，私聊属分布外，默认不在作用域内（私聊消息放行，由 agent 照常处理）。要让某个私聊走模型，在 `scopes` 里加它（如 `onebot:private:<QQ号>`），或加一条带阈值的覆盖 `{scope: 'onebot:private:<QQ号>', threshold: <阈值>}`：覆盖条目之间不叠加，一条消息只取命中的最具体那一条。
+私聊：模型只用群聊数据训练，私聊属分布外，默认不在生效范围内（私聊消息放行，由 agent 照常处理）。要让某个私聊走模型，在它的场所或本会话把生效范围设成一对一房间或全部房间，阈值同样可以按会话设。
 
 ## 切换与回滚
 
 - **启用模型判定**：默认由 trigger-policy 判定。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，随配置热重载生效。托管侧车时，切过来才拉起侧车，就绪前约 11 秒只回点名。
 - **切到规则判定（即时）**：在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做，托管的侧车随之关掉。切回同理。
 - **停用本插件**：WebUI 插件管理里停用，trigger-policy 在下一条消息接手。
-- **让某些会话不走模型**：把它们移出 `scopes`（作用域是白名单，要排除单个群就改为列出其余的群）。移出后这些消息直接放行、不经任何触发判定；要按规则判定，只能整体切到 trigger-policy。
+- **让某些会话不走模型**：在它们的层上（某个群的场所、某个平台类型档等）把生效范围设成不生效。这些消息随之直接放行、不经任何触发判定；要按规则判定，只能整体切到 trigger-policy。
 - 手改 `aalis.config.yaml` 的 `servicePreferences` 随配置热重载生效。
-- 禁言关键词与时长、点名的别名与开关、作用域在两个插件里各配一份，只有生效者的起作用：切换后按新生效者的配置执行（本插件的 `muteKeywords` 默认为空）。要在切换后保持一致，两边须同样配置。
+- 禁言关键词与时长、点名的别名与开关、生效范围在两个插件里各配一份，只有生效者的起作用：切换后按新生效者的配置执行（本插件的 `muteKeywords` 默认为空）。要在切换后保持一致，两边须同样配置。
 
 ## 已知局限
 
@@ -164,4 +161,4 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 - **识别超时时 `cur` 缺附件描述**：附件识别超过 `mediaWaitMs` 时照常判定，`cur` 里缺这些描述，归档时补上。自检汇总计入 `不一致:缺附件描述`。
 - **带附件的消息可能晚于同会话后到的消息放行**：等识别的那段（至多 `mediaWaitMs`）在判定之内，这期间同一会话后到、不用等识别的消息可能先判完、先放行。agent 按会话 latest-wins：先到的这条晚放行时，若后到那一轮仍在生成，agent 会中止它，改以先到的为当前消息；后到的那条在它的回合开始时已经归档，中止不回滚，在接替回合里是可见的历史，但得不到针对它的回复。先发图再说一句时，文字那一轮开始时带图的那条还没判完、没有归档，这一轮的回复看不到图；带图的那条判为不开口时要到判定结束才归档，只出现在之后回合的历史里；判为开口时它那一轮能同时看到两条（文字那一轮仍在生成则被它中止接替）。按到达先后处理同一会话的消息由通道层负责（网关入口按到达先后编号，同一会话的消息按到达先后排队与合并，当前消息取最新到达的），通道层尚未实现；本插件不核对放行顺序。
 - **超大窗口时只回点名**：请求体超过侧车的 1 MiB 上限时本条兜底。plugin-file-reader 默认把 10 万字以内的文件全文写进附件描述并随消息归档，窗口里有几条这样的消息就可能超限，直到它们滚出窗口。插件不截断行也不丢行：侧车的发言人编号与截断都基于完整窗口，客户端改窗口会偏离训练口径。未超限的大行也会拉长侧车的渲染耗时。
-- **突发会触发熔断**：侧车单线程串行处理请求。一时涌入的请求排队超过 `timeoutMs` 时，超时的请求计为失败，连续 3 次即熔断 30 秒，这期间所有作用域内的会话只回点名。这是设计内的降级。客户端超时放弃的请求，侧车仍会逐个算完。
+- **突发会触发熔断**：侧车单线程串行处理请求。一时涌入的请求排队超过 `timeoutMs` 时，超时的请求计为失败，连续 3 次即熔断 30 秒，这期间生效范围内的会话只回点名。这是设计内的降级。客户端超时放弃的请求，侧车仍会逐个算完。

@@ -85,7 +85,7 @@ export interface OriginChat {
   multiParty: boolean;
   /** 机器人账号：消息上带了才有 */
   selfId?: string;
-  /** 目标：多方为窗口 id（群号），一对一为对端账号；与作用域第三段同口径 */
+  /** 目标：多方为窗口 id（群号），一对一为对端账号；与窗口键第三段同口径 */
   targetId: string;
 }
 
@@ -330,7 +330,7 @@ export interface SessionManagerService {
   deleteSession(id: string): Promise<void>;
 
   /**
-   * 原生入站的收录与补记，可等待：带 source 的、没有会话 id 的、会话 id 带 `::` 的直接兑现；已收录的照旧补名、更新窗口的
+   * 原生入站的收录与补记，可等待：带 source 的、没有会话 id 的直接兑现，子会话按 parentId 不收录；已收录的照旧补名、更新窗口的
    * 显示名（不等这些）；要收录或补记的问完认领者、建档或补记落定之后才兑现。同一会话并发调用共用同一次收录。不会拒绝
    * （收录失败只告警）。网关在入站相位之前等它，入站管道里的读取方看到的都是已收录的会话
    */

@@ -8,9 +8,9 @@ import {
   sessionSettings,
 } from '../../packages/api-session-settings/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import type { ConfigSchema } from '../../packages/schema-config/src/index.js';
+import { type ConfigSchema, defineConfig } from '../../packages/schema-config/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { ALL, fieldsPlugin, SCHEMA, startSettings } from '../fixtures/session-settings.js';
+import { ALL, fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 读取器：插件在 apply 里调 fields() 拿到它，按会话读自己的带标记字段。全局值取宿主文档里本实例那一段的原样值（没有宿主文档
@@ -133,6 +133,32 @@ describe('fields() 校验声明', () => {
     expect(() => assertSessionFields(schema)).toThrow(TypeError);
   });
 
+  it('appliesTo 不写即适用全部会话种类：房间、owner 的会话与子会话都取到各层的值，各层照收', async () => {
+    const OPEN = defineConfig({
+      open: { type: 'string', label: '<不写适用>', default: '<默认>', session: { prominence: 'common' } },
+    });
+    expect(() => assertSessionFields(OPEN)).not.toThrow();
+    const open = fieldsPlugin('zz-open', OPEN);
+    const { admin, sm, inbound } = await setup({
+      adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
+      doc: { sessionConfig: { platformTypes: { onebot: { group: { 'zz-open': { open: '<群>' } } } } } },
+      fields: [open.definition],
+    });
+    const group = 'onebot:10000:group:20001';
+    await inbound({ sessionId: group, platform: 'onebot', sessionType: 'group', groupId: '20001', userId: '30002' });
+    expect(open.reader().get(group, { platform: 'onebot' }).open).toBe('<群>');
+
+    const { id: webui } = await sm.createSession({}, { createdFrom: 'webui' });
+    const workspace = { layer: { scope: 'place', key: 'workspace:default' } } as const;
+    await admin.update(workspace, { plugin: 'zz-open', key: 'open', value: '<工作区>' });
+    expect(open.reader().get(webui, { platform: 'webui' }).open).toBe('<工作区>');
+
+    const child = await sm.createSession({ parentId: group, metadata: admin.childMetadata(group) });
+    expect(open.reader().get(child.id, { platform: 'onebot' }).open).toBe('<群>');
+    await admin.update({ sessionId: child.id }, { plugin: 'zz-open', key: 'open', value: '<子会话>' });
+    expect(open.reader().get(child.id, { platform: 'onebot' }).open).toBe('<子会话>');
+  });
+
   it('合格的声明不抛；不合格的插件激活失败', async () => {
     expect(() => assertSessionFields(SCHEMA)).not.toThrow();
     const bad = fieldsPlugin('zz-bad', {
@@ -149,14 +175,15 @@ describe('读取器的 set', () => {
   it('只写本实例、本会话层：别的实例的同名项不变；校验同 update；null 恢复继承', async () => {
     const A = fieldsPlugin('zz-a', SCHEMA);
     const B = fieldsPlugin('zz-b', SCHEMA);
-    const { sm } = await setup({ fields: [A.definition, B.definition] });
+    const { sm, admin } = await setup({ fields: [A.definition, B.definition] });
     const { id } = await sm.createSession({}, { createdFrom: 'webui' });
+    const source = () => admin.rows({ sessionId: id }).find(r => r.plugin === 'zz-a' && r.key === 'iterations')?.source;
     await A.reader().set(id, 'iterations', 5);
     expect(sm.getSession(id)?.metadata?.['session-settings']).toEqual({
       values: [{ plugin: 'zz-a', key: 'iterations', value: 5 }],
     });
-    expect(A.reader().trace(id).values.iterations).toBe(5);
-    expect(A.reader().trace(id).sources.iterations).toBe('session');
+    expect(A.reader().get(id).iterations).toBe(5);
+    expect(source()).toBe('session');
     expect(B.reader().get(id).iterations).toBe(30);
 
     const rejected = A.reader().set(id, 'iterations', 0);
@@ -164,7 +191,7 @@ describe('读取器的 set', () => {
     await rejected.catch(err => expect(isSessionSettingsError(err)).toBe(true));
 
     await A.reader().set(id, 'iterations', null);
-    expect(A.reader().trace(id).sources.iterations).toBe('default');
+    expect(source()).toBe('default');
   });
 
   it('会话设置缺席时抛错', async () => {
@@ -195,6 +222,8 @@ describe('两个门面', () => {
     expect(Object.keys(reading).sort()).toEqual(['fields', 'getAll']);
     expect(Object.getPrototypeOf(reading)).toBe(Object.prototype);
     expect('register' in reading || 'chain' in reading || 'update' in reading).toBe(false);
+    // 读取器只交生效值、各层自己写的值与写本会话层；来源经管理面的行读
+    expect(Object.keys(A.reader()).sort()).toEqual(['get', 'layers', 'set']);
   });
 
   it('getAll 列出已登记的各项（实例 id、键、称呼、门槛），不含值；实例撤回登记后不再列', async () => {

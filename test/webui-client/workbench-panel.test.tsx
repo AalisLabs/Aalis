@@ -11,6 +11,7 @@ import {
   type Harness,
   INIT,
   installDialog,
+  LAYER_ORDER,
   lists,
   main,
   optionsOf,
@@ -289,7 +290,7 @@ describe('右侧面板与会话头', () => {
     expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
   });
 
-  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪一份，落到作者默认写「默认」', async () => {
+  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪一份（类型写声明的显示名），落到作者默认写「默认」', async () => {
     const sources = ['place', 'platformType', 'platform', 'global', 'default'] as const;
     const rows = sources.map(source =>
       row(source, { field: { type: 'string', label: `<${source}>` }, effective: '<值>', source }),
@@ -302,12 +303,16 @@ describe('右侧面板与会话头', () => {
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([], { session: window }),
       'session/config/get': () => ({ items: rows }),
+      'session/config/layers': () => ({
+        layers: [{ layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' }],
+        order: LAYER_ORDER,
+      }),
     });
     await panel().findByRole('group', { name: '<place>' });
     const origin = (source: string) => settingRow(`<${source}>`).getByText(/^来自：/).textContent;
     expect(sources.map(origin)).toEqual([
       '来自：群『读书会』',
-      '来自：平台类型档 onebot · group',
+      '来自：平台类型档 onebot · 群',
       '来自：平台档 onebot',
       '来自：全局（插件配置）',
       '来自：默认',

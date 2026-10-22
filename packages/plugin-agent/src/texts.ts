@@ -31,7 +31,8 @@ const SOURCE = {
   thinkDescription: '可选的档位随所用的模型；没设或当前模型没有这一档时按模型的默认档',
   thinkUnset: '按模型的默认档',
   maxToolIterationsLabel: '最大工具迭代',
-  maxToolIterationsDescription: '一轮里工具调用循环的最大次数',
+  maxToolIterationsDescription: '一轮里工具调用循环的最大次数；没设即不限，卡在工具调用里的一轮只能手动停下',
+  maxToolIterationsUnset: '不限',
   historyLimitLabel: '历史条数上限',
   historyLimitDescription:
     '发给模型的会话历史不超过这么多条：超过时一次丢掉最早的一半，之后照常累积到这个条数再丢一段；丢掉的只是这一轮发给模型的，会话历史本身保留，压缩时照样进摘要。装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：发全部活跃历史，只按自动压缩线压缩',

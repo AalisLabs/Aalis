@@ -823,7 +823,8 @@ export const sessionMethods = {
   'session/config/update': { params: SettingUpdateParamsSchema, result: SettingUpdateResultSchema },
   /**
    * 可以设的各层，按层的先后：全局；各平台档（已装适配器的平台加配置里写过的）；各平台类型档（每个平台声明的类型加配置里写过的，
-   * 没声明类型的平台不单列）；全部场所（默认工作区在前，称呼是场所的显示名，窗口另带平台与类型名）。order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、先后说明与选层都按它
+   * 没声明类型的平台不单列；声明了显示名的称呼是它）；全部场所（默认工作区在前，称呼是场所的显示名，窗口另带平台与类型名）。
+   * order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、先后说明与选层都按它
    */
   'session/config/layers': {
     params: EmptySchema,

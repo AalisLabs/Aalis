@@ -158,7 +158,7 @@ const configSchema = defineConfig({
     dynamicOptions: 'skills',
     allowCustom: true,
     default: ['*'],
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
 });
 type SkillsConfig = ConfigOf<typeof configSchema>;

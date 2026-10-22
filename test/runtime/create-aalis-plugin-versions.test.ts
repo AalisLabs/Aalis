@@ -91,7 +91,7 @@ describe('生成的源码', () => {
     const withTool = renderIndexTs(answers({ tool: true, command: false, webui: false, sessionSetting: true }));
     expect(withTool).toContain("import { defineConfig } from '@aalis/schema-config';");
     expect(withTool).toContain('const configSchema = defineConfig({');
-    expect(withTool).toContain("session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },");
+    expect(withTool).toContain("session: { prominence: 'advanced' },");
     expect(withTool).toContain('\n  configSchema,\n');
     expect(withTool).toContain('sessionFields: optional(sessionFields), document: optional(ownHostConfig)');
     expect(withTool).toContain('const fields = sessionFields.use.fields(configSchema, { config, document });');

@@ -26,8 +26,8 @@ import { t } from './texts.js';
 
 declare module '@aalis/schema-config' {
   interface SessionFieldSpec {
-    /** 适用的会话种类：不适用的会话只取全局层与作者默认，也不收这一项的写入 */
-    appliesTo: readonly SessionKind[];
+    /** 适用的会话种类：不适用的会话只取全局层与作者默认，也不收这一项的写入。不写即适用全部会话种类（含子会话） */
+    appliesTo?: readonly SessionKind[];
     /** 只能设到场所为止：本会话层不收它，会话记录上存着的值也不参与解析 */
     narrowest?: 'place';
     /**
@@ -105,7 +105,7 @@ export interface SessionChain {
 
 /**
  * 校验声明，不合格抛 TypeError 点名字段（fields() 调它，插件因此激活失败）：session 只写在顶层字段上；不同时写 secret 或
- * required；appliesTo、prominence、narrowest、minLevel 的取值；dependsOn 指向另一个带标记字段且本字段有 dynamicOptions；外来
+ * required；appliesTo（写了的）、prominence、narrowest、minLevel 的取值；dependsOn 指向另一个带标记字段且本字段有 dynamicOptions；外来
  * 字段类型带 validate；没有 default 的写非空的 unset；写了 preference 的值非空、带 toText 与 fromText、没有 default 与 narrowest
  */
 export function assertSessionFields(schema: ConfigSchema): void {
@@ -121,8 +121,8 @@ export function assertSessionFields(schema: ConfigSchema): void {
     const spec = entry.session;
     if (entry.secret === true || entry.required === true) fail('不能同时写 secret 或 required');
     const kinds: unknown = spec.appliesTo;
-    if (!Array.isArray(kinds) || kinds.length === 0 || !kinds.every(kind => KINDS.has(kind))) {
-      fail('appliesTo 要是 owner、room、task 里的一项或几项');
+    if (kinds !== undefined && (!Array.isArray(kinds) || kinds.length === 0 || !kinds.every(kind => KINDS.has(kind)))) {
+      fail('appliesTo 不写，或是 owner、room、task 里的一项或几项');
     }
     if (!PROMINENCES.has(spec.prominence)) fail('prominence 要是 composer、common、advanced 之一');
     if (spec.narrowest !== undefined && spec.narrowest !== 'place') fail('narrowest 只能是 place');
@@ -152,6 +152,9 @@ export function assertSessionFields(schema: ConfigSchema): void {
 
 const KINDS: ReadonlySet<unknown> = new Set<SessionKind>(['owner', 'room', 'task']);
 const PROMINENCES: ReadonlySet<unknown> = new Set(['composer', 'common', 'advanced']);
+
+/** 这一项适用于这种会话：appliesTo 不写即适用全部会话种类 */
+export const appliesIn = (spec: SessionFieldSpec, kind: SessionKind): boolean => spec.appliesTo?.includes(kind) ?? true;
 
 /** 层表里这一层的称呼 */
 export const layerLabel = (name: SessionLayerName): TextRef => SESSION_LAYERS.find(layer => layer.name === name)!.label;
@@ -213,10 +216,10 @@ export function resolveFields(
       values[key] = fromGlobal.value;
       sources[key] = 'global';
     }
-    if (chain.kind === undefined || spec.appliesTo.includes(chain.kind)) {
+    if (chain.kind === undefined || appliesIn(spec, chain.kind)) {
       for (const part of chain.parts) {
         if (part.layer === 'session' && spec.narrowest === 'place') continue;
-        if (part.layer === 'place' && !(chain.placeKind && spec.appliesTo.includes(chain.placeKind))) continue;
+        if (part.layer === 'place' && !(chain.placeKind && appliesIn(spec, chain.placeKind))) continue;
         const read = layerValue(key, entry, part.values, part.where, warn);
         if (!read) continue;
         values[key] = read.value;
@@ -235,11 +238,6 @@ export function resolveFields(
 export interface SessionFieldReader<S extends ConfigSchema> {
   /** 生效值。不给 sessionId 时只取全局层与作者默认 */
   get(sessionId?: string, at?: SessionAt): SessionFieldsOf<S>;
-  /** 同上，另给每个键的来源（诊断与白纸用） */
-  trace(
-    sessionId: string,
-    at?: SessionAt,
-  ): { values: SessionFieldsOf<S>; sources: Partial<Record<keyof SessionFieldsOf<S>, SessionSource>> };
   /** 本实例在各层自己写的值（诊断用）：全局在前，场所另带场所种类，会话上的不列；只含取值合法的项（严格字段的坏值原样） */
   layers(): Array<{ layer: SessionSettingsLayer; placeKind?: SessionKind; values: Partial<SessionFieldsOf<S>> }>;
   /**
@@ -295,7 +293,10 @@ export type SessionPlacement = {
   at: { layer: SessionSettingsLayer; placeKind?: SessionKind } | { sessionId: string };
 };
 
-/** 可以设的一层：场所另带场所的显示名，窗口场所另带平台与类型名（从平台档、平台类型档继承来的值取的是哪一份） */
+/**
+ * 可以设的一层：平台类型档另带适配器声明的类型显示名（没声明时没有），场所另带场所的显示名，窗口场所另带平台与类型名（从平台档、
+ * 平台类型档继承来的值取的是哪一份）
+ */
 export interface SessionSettingsLayerInfo {
   layer: SessionSettingsLayer;
   label?: string | TextRef;
@@ -431,13 +432,6 @@ function fieldsFor(port: BindingPort<SessionSettingsService>): SessionFields['fi
         register: (provider, item) => provider.register(port.id, item.schema, item.readGlobal, item.actual),
       })
       .add({ schema, readGlobal, actual: actual as Readonly<Record<string, ActualValue>> });
-    const resolve = (sessionId: string | undefined, at: SessionAt = {}) =>
-      resolveFields(
-        schema,
-        readGlobal(),
-        sessionId !== undefined && port.present ? port.provider.chain(port.id, sessionId, at) : { parts: [] },
-        warn,
-      );
     /** 一处写下的值里取值合法的项（与解析同一判定） */
     const own = (values: Record<string, unknown>, where: string) => {
       const out: Record<string, unknown> = {};
@@ -449,8 +443,13 @@ function fieldsFor(port: BindingPort<SessionSettingsService>): SessionFields['fi
     };
     type Values = SessionFieldsOf<typeof schema>;
     return {
-      get: (sessionId, at) => resolve(sessionId, at).values as Values,
-      trace: (sessionId, at) => resolve(sessionId, at) as ReturnType<SessionFieldReader<typeof schema>['trace']>,
+      get: (sessionId, at = {}) =>
+        resolveFields(
+          schema,
+          readGlobal(),
+          sessionId !== undefined && port.present ? port.provider.chain(port.id, sessionId, at) : { parts: [] },
+          warn,
+        ).values as Values,
       layers() {
         const out: ReturnType<SessionFieldReader<typeof schema>['layers']> = [
           {

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { userRelation } from '../../packages/api-user-relation/src/index.js';
-import { App, logger } from '../../packages/core/src/index.js';
+import { App, definePlugin, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userRelationPlugin, { type RelationService } from '../../packages/plugin-user-relation/src/index.js';
@@ -12,7 +14,8 @@ import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 // ════════════════════════════════════════════════════════════
 // 关系图范围（user-relation 的 recallScope，可按会话设）：为「仅本会话」时，关系图注入跳过全局热点与跨会话事件（别的会话里
 // 抽出的事件、所属跨会话话题），只留本会话的事件；人际关系与关注的事物照常注入（它们是按人的摘要，与 user-profile 的参与者
-// 事实同类，owner 定为保留）。写坏了按「仅本会话」；为「全部」或会话设置不在时维持现状。
+// 事实同类，owner 定为保留）。写坏了按「仅本会话」；为「全部」或会话设置不在时维持现状。关系图工具的会话作用域参数同样不超过
+// 它：为「仅本会话」时只能是调用所在的会话，模型传别的会话或不传都按它。
 // ════════════════════════════════════════════════════════════
 
 const CUR = 'onebot:10000:group:20001';
@@ -127,5 +130,114 @@ describe('plugin-user-relation：关系图范围', () => {
     expectUnnarrowed(await inject());
     expectUnnarrowed(await inject({}, { [PRIV]: { recallScope: 'session' } }));
     expectUnnarrowed(await inject({ recallScope: 'session' }, { [CUR]: { recallScope: 'all' } }));
+  });
+});
+
+/** 装上关系图插件（只开工具），工具登记在一个记下处理函数的替身上；备好两个会话里的事件，返回按会话调工具的函数 */
+async function relationTools(sessions: Record<string, Record<string, unknown>>) {
+  const app = new App({ name: 'T', logLevel: 'error' });
+  apps.push(app);
+  await registerHubs(app);
+  await app.plugin(memoryInMemory);
+  const handlers = new Map<string, RegisteredTool['handler']>();
+  app.bind({ provide }).provide.use(tools, {
+    registerGroup: () => () => {},
+    register: (tool: RegisteredTool) => {
+      handlers.set(tool.definition.function.name, tool.handler);
+      return () => handlers.delete(tool.definition.function.name);
+    },
+  } as never);
+  await app.plugin(sessionValuesPlugin(sessions));
+  await app.plugin(userRelationPlugin, {
+    extractionEnabled: false,
+    toolsEnabled: true,
+    commandsEnabled: false,
+    agentInjection: false,
+  });
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(userRelationPlugin.name)?.state !== 'active')
+    throw new Error('plugin-user-relation 未激活');
+  const service = app.bind({ relation: userRelation }).relation.use as RelationService;
+  await service.observePerson('onebot', 'u1', 'Alice');
+  for (const [title, sessionScope] of [
+    ['本群开黑', CUR],
+    ['私聊约饭', PRIV],
+  ]) {
+    const event = await service.createEvent({ title, sessionScope, evidence: [] });
+    await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: event.id, role: 'participant' });
+  }
+  return async (sessionId: string, name: string, args: Record<string, unknown> = {}) => {
+    const handler = handlers.get(name);
+    if (!handler) throw new Error(`工具未登记：${name}`);
+    const out = await handler(args, { sessionId, platform: 'onebot', userId: 'u1' });
+    return typeof out === 'string' ? out : out.content;
+  };
+}
+
+describe('plugin-user-relation：关系图工具的会话作用域', () => {
+  const SCOPED: Array<[string, Record<string, unknown>]> = [
+    ['user_relation_search_events', {}],
+    ['user_relation_timeline', { node_id: 'onebot:u1' }],
+    ['user_relation_expand_node', { node_id: 'onebot:u1' }],
+    ['user_relation_gossip', { days: 0 }],
+  ];
+
+  it('仅本会话：带会话作用域的工具只取调用所在会话的事件，模型传别的会话或不传都一样', async () => {
+    const call = await relationTools({ [CUR]: { recallScope: 'session' } });
+    for (const [name, args] of SCOPED) {
+      for (const scope of [{}, { session_scope: PRIV }, { session_scope: 'global' }]) {
+        const out = await call(CUR, name, { ...args, ...scope });
+        expect(out, `${name} ${JSON.stringify(scope)}`).toContain('本群开黑');
+        expect(out, `${name} ${JSON.stringify(scope)}`).not.toContain('私聊约饭');
+      }
+    }
+    const overview = await call(CUR, 'user_relation_community_overview', { session_scope: PRIV });
+    expect(overview).not.toContain('私聊约饭');
+  });
+
+  it('全部（默认）：照模型传的作用域取，不传不过滤', async () => {
+    const call = await relationTools({ [PRIV]: { recallScope: 'session' } });
+    expect(await call(CUR, 'user_relation_search_events', { session_scope: PRIV })).toContain('私聊约饭');
+    const all = await call(CUR, 'user_relation_search_events');
+    expect(all).toContain('本群开黑');
+    expect(all).toContain('私聊约饭');
+  });
+});
+
+describe('plugin-user-relation：关系图范围的登记', () => {
+  /** 按这份配置装上关系图插件，返回它有没有向会话设置登记按会话字段 */
+  async function registers(config: Record<string, unknown>): Promise<boolean> {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    await app.plugin(memoryInMemory);
+    const registered: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'zz-session-settings',
+        provides: [sessionSettings],
+        uses: { provide },
+        apply: ({ provide }) => {
+          provide.use(sessionSettings, {
+            register: (plugin: string) => {
+              registered.push(plugin);
+              return () => {};
+            },
+            chain: () => ({ parts: [] }),
+          } as never);
+        },
+      }),
+    );
+    await app.plugin(userRelationPlugin, { extractionEnabled: false, commandsEnabled: false, ...config });
+    await app.plugins.idle();
+    if (app.plugins.getPlugin(userRelationPlugin.name)?.state !== 'active')
+      throw new Error('plugin-user-relation 未激活');
+    return registered.includes(userRelationPlugin.name);
+  }
+
+  it('注入与工具都关着时不登记（这一项不影响任何东西）；开着其中一个时登记', async () => {
+    expect(await registers({ agentInjection: false, toolsEnabled: false })).toBe(false);
+    expect(await registers({ agentInjection: true, toolsEnabled: false })).toBe(true);
+    expect(await registers({ agentInjection: false, toolsEnabled: true })).toBe(true);
   });
 });

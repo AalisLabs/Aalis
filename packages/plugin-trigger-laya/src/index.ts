@@ -2,8 +2,8 @@
 // @aalis/plugin-trigger-laya — Laya 模型触发（trigger 服务的触发插件）
 //
 // 经本机 HTTP 问 laya-listener 侧车"这条消息 Aalis 此刻该不该开口"，侧车返回 logit，logit ≥ 阈值即开口。
-// 自成一体：是 trigger 服务的胜者时，本插件在 inbound:trigger 相位判定作用域内的消息（禁言、禁言关键词、
-// 点名识别、附件识别、模型判定），没有计数；不是胜者时对每条消息直接放行，什么都不做。
+// 自成一体：是 trigger 服务的胜者时，本插件在 inbound:trigger 相位判定生效范围内的消息（禁言、禁言关键词、
+// 点名识别、附件识别、模型判定），没有计数；不是胜者时对每条消息直接放行，什么都不做。生效范围与阈值按会话现读。
 // @ 与叫名字不强制开口，开不开口由模型决定；点名只决定开口后的类别、授权主体与兜底。
 // 模型判定不了时兜底：只回点名，其余吞掉并归档，不回退到别的触发插件。判定不可用（侧车熔断、memory 缺席、
 // 托管的侧车退出、没有 process 服务）由正常转入时记 error、恢复时记 warn，状态也经 doctor 检查项报告。
@@ -13,17 +13,20 @@
 
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { flowControl } from '@aalis/api-flow-control';
-import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
+import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import {
   archiveSwallowed,
   createBotNames,
+  fromElsewhere,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,
@@ -155,8 +158,12 @@ const uses = {
   flowControl: optional(flowControl),
   // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
-  // 消息不带机器人账号时取房间建档时记下的；缺席时不带账号的消息按兜底
+  // 消息不带机器人账号时取房间建档时记下的，也用来判从别的平台往房间里插话；缺席时不带账号的消息按兜底
   sessionManager: optional(sessionManager),
+  /** 按会话读生效范围与阈值；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
   // 缺席时不等附件识别，cur 里缺附件描述
@@ -182,7 +189,8 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { logger } = caps;
-  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
+  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use));
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
   const url = `${cfg.endpoint}/v1/score`;
 
   // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行
@@ -337,8 +345,8 @@ function run(caps: Caps): void {
     threshold?: number,
   ): Promise<Verdict> {
     const fallback = (why: string): Verdict => ({ speak: addressed, fallback: why });
-    // 侧车按机器人账号认出窗口里哪些是她自己说的：取消息上收到它的账号；消息不带（从 WebUI 往房间插话）时取房间建档时
-    // 记下的（子会话取根会话的），都没有的判定不了
+    // 侧车按机器人账号认出窗口里哪些是她自己说的：取消息上收到它的账号；消息不带（适配器没填）时取房间建档时记下的
+    // （子会话取根会话的），都没有的判定不了
     const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const selfId =
       message.selfId ??
@@ -349,7 +357,7 @@ function run(caps: Caps): void {
         unsupported.add(kind);
         logger.use.warn(
           `[laya] ${kind} 的消息不带机器人账号，所在会话也没有记下（适配器没有填 selfId），这类消息一律按兜底只回点名；` +
-            '要让它们照常回复，把它们移出 scopes，或切到 trigger-policy',
+            '要让它们照常回复，把它们移出生效范围，或切到 trigger-policy',
         );
       }
       return fallback('没有机器人账号');
@@ -465,15 +473,16 @@ function run(caps: Caps): void {
   caps.hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不请求、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, selfId)) return next();
-    const { message } = data;
-    // 内部注入（闲置触发、定时任务、workflow）都带 source，不经判定、不改 triggerType
-    if (message.source) return next();
+    const { message, chat } = data;
+    // 内部注入（闲置触发、定时任务、workflow）都带 source（网关不给聊天窗口），不经判定、不改 triggerType；从别的平台往
+    // 房间里插话（owner 从 WebUI 往群里发）同样直接放行
+    if (!chat || fromElsewhere(message, caps.sessionManager)) return next();
 
-    // 作用域外直接放行；必须在禁言关键词之前，否则群聊的关键词会作用到私聊、WebUI 等作用域外的会话
-    const tid = extractTargetId(message);
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) return next();
-
+    // 生效范围外直接放行；必须在禁言关键词之前，否则群聊的关键词会作用到私聊等范围外的会话
     const sid = message.sessionId;
+    const { audience, threshold } = fields.get(sid, { platform: message.platform });
+    if (!audienceIncludes(audience, chat.multiParty)) return next();
+
     const flow = caps.flowControl.present ? caps.flowControl.use : undefined;
     // 禁言期：放行给 flow 相位吞掉并归档；不再识别禁言关键词，避免缩短平台禁言
     if (flow?.isMuted(sid)) return next();
@@ -489,7 +498,6 @@ function run(caps: Caps): void {
     const names = botNames(cfg.triggerNames, message);
     const addressed = isAddressed(message, names, cfg);
 
-    const { threshold } = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
     const started = Date.now();
     let verdict: Verdict;
     try {
@@ -514,7 +522,7 @@ function run(caps: Caps): void {
       await archiveSwallowed(message, caps.messageArchive, logger.use, '[laya]');
       return; // swallow
     }
-    markTriggered(message, addressed);
+    markTriggered(message, addressed, chat.multiParty);
     await next();
   });
 
@@ -596,9 +604,10 @@ function run(caps: Caps): void {
     },
   });
 
+  // 启动日志写全局层；按会话设的另在各层
+  const global = fields.get();
   logger.use.info(
-    `[laya] 已启用 (阈值=${cfg.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, ` +
-      `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'}, ` +
-      `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
+    `[laya] 已启用 (生效范围=${global.audience}, 阈值=${global.threshold ?? '侧车'}, endpoint=${cfg.endpoint}, ` +
+      `侧车=${managed ? `托管 ${managed.dir}` : '外部运行'})`,
   );
 }

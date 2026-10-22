@@ -1,13 +1,14 @@
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
-import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
+import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { messageArchive } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import { parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
-import { configSchema, type FlowControlConfig, normalizeScopes } from './config.js';
+import { configSchema } from './config.js';
 import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';
 
 // ----- 入口 -----
@@ -22,8 +23,12 @@ const uses = {
   // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
   storage: optional(storage),
   messageArchive: optional(messageArchive),
-  /** 手里没有会话类型时，按会话记下的聊天窗口判作用域；缺席时只有类型段为通配的作用域命中 */
+  /** 带 source 的内部注入与回复记账按会话记下的聊天窗口判生效范围；缺席时只认真人消息经过本相位时记下的 */
   sessionManager: optional(sessionManager),
+  /** 按会话读生效范围与参数；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -39,7 +44,7 @@ export default definePlugin({
 
 async function run(caps: Caps): Promise<void> {
   const { logger, events, hooks, lifecycle, provide, messageArchive } = caps;
-  const cfg = normalizeScopes(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
   const states = new Map<string, MutableFlowSessionState>();
 
   // ===== mutedUntil 持久化（仅此字段） =====
@@ -149,51 +154,47 @@ async function run(caps: Caps): Promise<void> {
   // storage 已在线时 follow 是同步首挂：把读取等完再让 apply 返回；storage 晚上线时无从等待，仍异步
   if (loading) await loading;
 
-  /** 取或建状态：补全缺失的会话元数据（setMuted / 出站建出的状态可能缺 sessionType 等），刷新 lastSeenAt */
-  function getOrCreate(sessionId: string, platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
+  /** 取或建状态：补全缺失的会话元数据（setMuted 建出的状态缺多方标记），刷新 lastSeenAt */
+  function getOrCreate(sessionId: string, platform: string, multiParty?: boolean): MutableFlowSessionState {
     let s = states.get(sessionId);
     if (!s) {
-      s = createState(platform, sessionType, targetId);
+      s = createState(platform, multiParty);
       states.set(sessionId, s);
     } else {
       if (!s.platform && platform) s.platform = platform;
-      if (!s.sessionType && sessionType) s.sessionType = sessionType;
-      if (!s.targetId && targetId) s.targetId = targetId;
+      if (s.multiParty === undefined && multiParty !== undefined) s.multiParty = multiParty;
       s.lastSeenAt = Date.now();
     }
     return s;
   }
 
-  /** 按 state 上下文解析生效 cfg（应用 overrides） */
-  function eff(s: MutableFlowSessionState): FlowControlConfig {
-    return resolveEffectiveConfig(cfg, s.platform, s.sessionType, s.targetId);
-  }
+  /** 这个会话此刻的参数，按会话现读（改了下一条消息起生效）；platform 是入口平台 */
+  const settingsOf = (sessionId: string, platform: string | undefined) => fields.get(sessionId, { platform });
 
   /**
-   * 手里没有会话类型时判作用域用的平台、类型与目标：先用状态里记下的，状态没有或缺类型（没有真人消息经过本相位的群、
-   * 只有禁言记录的群）再取会话记下的出生平台与聊天窗口。入站带 source 且不带会话类型的内部注入（定时任务、workflow、
-   * 闲置注入等合成回合）与出站回复记账都走这里，同一口径；结果只进本插件的状态、不回写消息。没有聊天窗口的会话
-   * （WebUI、终端、子任务）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
+   * 手里没有聊天窗口时用的平台与多方标记：先取会话记下的出生平台与聊天窗口，会话管理缺席或没有记录时用状态里记下的（真人消息
+   * 经过本相位时按网关算的窗口记下；从别的平台插话记下的是插话那一端，所以排在会话记录之后）。入站带 source 的内部注入（定时
+   * 任务、workflow、闲置注入等合成回合）与出站回复记账都走这里，同一口径；结果只进本插件的状态、不回写消息。没有聊天窗口的
+   * 会话（WebUI、终端、子任务）不是房间，不在任何生效范围里
    */
-  function knownScope(
-    sessionId: string,
-    platform: string | undefined,
-  ): { platform: string; sessionType?: string; targetId?: string } {
-    const s = states.get(sessionId);
-    const p = s?.platform || platform || '';
-    if (s?.sessionType) return { platform: p, sessionType: s.sessionType, targetId: s.targetId };
+  function knownWindow(sessionId: string, platform: string | undefined): { platform: string; multiParty?: boolean } {
     const session = caps.sessionManager.present ? caps.sessionManager.use.getSession(sessionId) : undefined;
     if (session?.originPlatform !== undefined && session.originChat) {
-      const { type, targetId } = session.originChat;
-      return { platform: session.originPlatform, sessionType: type, targetId };
+      return { platform: session.originPlatform, multiParty: session.originChat.multiParty };
     }
-    return { platform: p };
+    const s = states.get(sessionId);
+    return { platform: s?.platform || platform || '', multiParty: s?.multiParty };
   }
 
+  /** 这个窗口在不在这个会话的生效范围里：不知道多方与否的不在 */
+  const inAudience = (sessionId: string, window: { platform: string; multiParty?: boolean }) =>
+    window.multiParty !== undefined &&
+    audienceIncludes(settingsOf(sessionId, window.platform).audience, window.multiParty);
+
   /** agent 真实回复一次：补全会话元数据，设冷却、记限速时间戳 */
-  function recordReply(sessionId: string, platform: string, sessionType?: string, targetId?: string): void {
-    const s = getOrCreate(sessionId, platform, sessionType, targetId);
-    const e = eff(s);
+  function recordReply(sessionId: string, platform: string, multiParty?: boolean): void {
+    const s = getOrCreate(sessionId, platform, multiParty);
+    const e = settingsOf(sessionId, s.platform);
     const now = Date.now();
     if (e.cooldownSeconds > 0) s.cooldownUntil = now + e.cooldownSeconds * 1000;
     s.replyTimestamps.push(now);
@@ -228,7 +229,7 @@ async function run(caps: Caps): Promise<void> {
     isRateLimited(sessionId) {
       const s = states.get(sessionId);
       if (!s) return false;
-      const e = eff(s);
+      const e = settingsOf(sessionId, s.platform);
       if (e.rateLimitWindow <= 0 || e.rateLimitMaxReplies <= 0) return false;
       return rateLimitUsedNow(s, e) >= e.rateLimitMaxReplies;
     },
@@ -254,9 +255,11 @@ async function run(caps: Caps): Promise<void> {
 
   provide.use(flowControl, service);
 
+  // 启动日志写全局层；按会话设的另在各层
+  const global = fields.get();
   logger.use.info(
-    `[flow] 已启用 (冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
-      `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
+    `[flow] 已启用 (生效范围=${global.audience}, 冷却=${global.cooldownSeconds}s, ` +
+      `限速=${global.rateLimitWindow}s/${global.rateLimitMaxReplies}次)`,
   );
 
   // ===== inbound:flow 相位：节流硬闸 =====
@@ -266,8 +269,8 @@ async function run(caps: Caps): Promise<void> {
     const { message } = data;
     const sessionId = message.sessionId;
 
-    // 禁言期一律吞：不看作用域、不看来源（idle、调度消息同样不说话）。
-    // 禁言状态只由关键词或平台禁言针对具体会话写入，作用域之外的会话不会被误伤。
+    // 禁言期一律吞：不看生效范围、不看来源（idle、调度消息同样不说话）。
+    // 禁言状态只由关键词或平台禁言针对具体会话写入，范围之外的会话不会被误伤。
     // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
     if (loading) await loading;
     if (service.isMuted(sessionId)) {
@@ -276,15 +279,12 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    // 带 source 且不带会话类型的内部注入与回复记账同一口径；其余消息（真人消息，含 WebUI、CLI 发进平台会话的；
-    // 自带会话类型的注入）按消息自身的平台、类型与目标判
-    const scope =
-      message.source && !message.sessionType
-        ? knownScope(sessionId, message.platform)
-        : { platform: message.platform, sessionType: message.sessionType, targetId: extractTargetId(message) };
-    if (!isScopeEnabled(cfg, scope.platform, scope.sessionType, scope.targetId)) return next();
+    // 没有 source 的入站（真人消息，含 WebUI、CLI 发进平台会话的）按网关算的聊天窗口判；带 source 的内部注入没有，与回复
+    // 记账同一口径
+    const window = data.chat ?? knownWindow(sessionId, message.platform);
+    if (!inAudience(sessionId, window)) return next();
 
-    getOrCreate(sessionId, scope.platform, scope.sessionType, scope.targetId);
+    getOrCreate(sessionId, window.platform, window.multiParty);
 
     // immediate（@/戳一戳/名字）穿透冷却与限速。内部注入（带 source：闲置触发、定时任务、workflow）
     // 不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
@@ -303,15 +303,15 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // agent 真实回复后记冷却与限速，只对作用域内会话，闲置选会话读的就是这份记账。作用域与入站带 source 的
-  // 内部注入同一口径（knownScope）
+  // agent 真实回复后记冷却与限速，只对生效范围内的房间，闲置选会话读的就是这份记账。窗口与入站带 source 的
+  // 内部注入同一口径（knownWindow）
   events.use.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     // 宿主通知的固定正文代替了 Agent 转述，同样占用回复额度；普通命令/系统提示不计。
     if (msg.source !== 'agent' && !(msg.source === 'system' && msg.hostNotice)) return;
-    const scope = knownScope(msg.sessionId, msg.platform);
-    if (!isScopeEnabled(cfg, scope.platform, scope.sessionType, scope.targetId)) return;
-    recordReply(msg.sessionId, scope.platform, scope.sessionType, scope.targetId);
+    const window = knownWindow(msg.sessionId, msg.platform);
+    if (!inAudience(msg.sessionId, window)) return;
+    recordReply(msg.sessionId, window.platform, window.multiParty);
   });
 
   // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天未见且无禁言/冷却挂起的会话
@@ -329,6 +329,3 @@ async function run(caps: Caps): Promise<void> {
     states.clear();
   });
 }
-
-// 重新导出配置类型，方便其他插件使用
-export type { FlowControlConfig };

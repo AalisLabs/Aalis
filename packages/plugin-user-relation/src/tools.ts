@@ -24,10 +24,11 @@
  * 带保护门的写工具（risk: 'sensitive'，reason 必填）：
  *   rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias
  *
- * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
+ * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。session_scope 不超过调用所在会话的关系图范围：
+ * 为仅本会话时只能是这个会话。
  */
 
-import type { BoundTools } from '@aalis/api-tools';
+import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
@@ -63,14 +64,25 @@ interface ToolsConfig {
   debug: boolean;
 }
 
-/** 工具注册用到的能力 */
+/** 工具注册用到的能力；sessionOnly 判一个会话的关系图范围是不是仅本会话（按会话现读） */
 interface ToolsCaps {
   tools: BoundTools;
   logger: Logger;
+  sessionOnly(sessionId: string, platform: string | undefined): boolean;
 }
 
-export function registerRelationTools({ tools, logger }: ToolsCaps, service: RelationService, cfg: ToolsConfig): void {
+export function registerRelationTools(
+  { tools, logger, sessionOnly }: ToolsCaps,
+  service: RelationService,
+  cfg: ToolsConfig,
+): void {
   const groupName = 'user-relation';
+
+  /** 这次调用的会话作用域：关系图范围是仅本会话时只能是调用所在的会话（模型传别的或不传都按它），否则照模型传的、不传不过滤 */
+  const scopeOf = (args: Record<string, unknown>, ctx: ToolCallContext): string | undefined => {
+    if (sessionOnly(ctx.sessionId, ctx.platform)) return ctx.sessionId;
+    return typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+  };
 
   tools.registerGroup({
     name: groupName,
@@ -83,6 +95,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       '- event / entity 节点 ID：UUID 字符串（不含冒号）。',
       '- 只知道名字 / 不确定 ID 时，**先调 user_relation_resolve_node** 把关键词解析成 ID 再传给其它工具。',
       '- 工具收到不存在的 ID 会返回 `{ "error": "节点 "xxx" 不存在", "hint": ... }`；看到这种返回**就是 ID 错了**，不是系统问题，请改用 resolve_node / search_persons 重新拿 ID，不要继续猜参数。',
+      '- session_scope：这个会话的关系图范围是「仅本会话」时一律按本会话，传别的会话不起作用。',
       '',
       '🧭 常见任务 → 推荐工具（避免选错）：',
       '- "查 A 与 B 关系紧密 / 是否认识" → 先 `user_relation_resolve_node`（拿到完整 ID）→ `user_relation_score`（**两节点之间** Katz+AA 联系分）',
@@ -214,14 +227,13 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const nodeId = String(args.node_id ?? '').trim();
       const err = await validateNodeId(service, nodeId, 'node_id');
       if (err) return err;
       const depth = clampNum(args.max_depth, cfg.defaultMaxDepth, 0, cfg.hardMaxDepth);
       const breadth = clampNum(args.max_breadth, cfg.defaultMaxBreadth, 1, cfg.hardMaxBreadth);
-      const scope =
-        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const scope = scopeOf(args, ctx);
       const sub = await service.traverseSubgraph({
         startNodeIds: [nodeId],
         maxDepth: depth,
@@ -494,11 +506,10 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
-      const scope =
-        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const scope = scopeOf(args, ctx);
       // scope 过滤前先多拉一些（×3）避免过滤后池子太小
       const poolLimit = scope ? cfg.searchEventsHardMaxLimit * 3 : cfg.searchEventsHardMaxLimit;
       const raw = await service.searchEvents({ keyword, days, limit: poolLimit });
@@ -631,13 +642,12 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const nodeId = String(args.node_id ?? '').trim();
       const err = await validateNodeId(service, nodeId, 'node_id');
       if (err) return err;
       const days = typeof args.days === 'number' && args.days > 0 ? args.days : undefined;
-      const scope =
-        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const scope = scopeOf(args, ctx);
       const poolLimit = scope ? cfg.searchEventsHardMaxLimit * 6 : cfg.searchEventsHardMaxLimit * 2;
       const itemsAll = await service.getTimeline({ nodeId, days, limit: poolLimit });
       const filtered = itemsAll
@@ -699,15 +709,14 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const nodeId = String(args.node_id ?? '').trim();
       if (!nodeId?.includes(':')) {
         return JSON.stringify({ error: 'node_id 必须是 person（platform:userId）' });
       }
       const poolSize = clampNum(args.candidate_pool, 20, 1, 50);
       const depth = clampNum(args.max_depth, 3, 1, 5);
-      const scope =
-        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+      const scope = scopeOf(args, ctx);
 
       // 1) 拿 2 跳子图作为候选池
       const subRaw = await service.traverseSubgraph({
@@ -817,9 +826,8 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
-      const scope =
-        typeof args.session_scope === 'string' && args.session_scope.trim() ? args.session_scope.trim() : undefined;
+    handler: async (args, ctx) => {
+      const scope = scopeOf(args, ctx);
       const days = typeof args.days === 'number' && args.days >= 0 ? args.days : 7;
       const pool = await service.searchEvents({ days: days > 0 ? days : undefined, limit: 200 });
       const filtered = pool.filter(e => inScope(scope, e.sessionScope));
@@ -1037,15 +1045,12 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       },
     },
     groups: [groupName],
-    handler: async args => {
+    handler: async (args, ctx) => {
       const algorithm =
         args.algorithm === 'leiden' || args.algorithm === 'louvain' || args.algorithm === 'slpa'
           ? (args.algorithm as 'louvain' | 'leiden' | 'slpa')
           : cfg.communityAlgorithm;
-      const sessionScope =
-        typeof args.session_scope === 'string' && args.session_scope.trim().length > 0
-          ? String(args.session_scope).trim()
-          : undefined;
+      const sessionScope = scopeOf(args, ctx);
       const topN = typeof args.top_n === 'number' ? args.top_n : undefined;
       const explicitResolution =
         typeof args.resolution === 'number' && Number.isFinite(args.resolution) && args.resolution > 0

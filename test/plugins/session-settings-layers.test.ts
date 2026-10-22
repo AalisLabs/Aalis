@@ -3,7 +3,14 @@ import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js
 import type { App } from '../../packages/core/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerFromDoc } from '../fixtures/app.js';
-import { fieldsPlugin, ONEBOT_TYPES, OTHER_SCHEMA, SCHEMA, startSettings } from '../fixtures/session-settings.js';
+import {
+  fieldsPlugin,
+  ONEBOT_TYPES,
+  OTHER_SCHEMA,
+  SCHEMA,
+  startSettings,
+  traceOf,
+} from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 层的解析：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话。子会话一律按根会话取平台、聊天窗口的类型与场所。会话种类不适用时只取全局层；场所层只在适用于场所种类时生效。不在会话表里的会话与按 id 兜底建档的
@@ -72,7 +79,7 @@ describe('层的先后', () => {
     });
     await group();
     const persona = () => {
-      const { values, sources } = a.reader().trace(GROUP, at);
+      const { values, sources } = traceOf(admin, 'zz-a', GROUP, at);
       return [values.persona, sources.persona];
     };
     expect(persona()).toEqual(['<平台档>', 'platform']);
@@ -97,7 +104,7 @@ describe('层的先后', () => {
 
   it('平台类型档按根会话记下的平台与类型名取，子会话按根会话取，别的平台的同名类型不算；WebUI 与终端的会话没有这一层；文档里的 types 段不认识，告警一次、不生效', async () => {
     const a = A();
-    const { sm, group, warns } = await setup({
+    const { admin, sm, group, warns } = await setup({
       doc: {
         plugins: { 'zz-a': { persona: '<全局>' } },
         sessionConfig: {
@@ -114,7 +121,7 @@ describe('层的先后', () => {
     expect(a.reader().get(GROUP, at).persona).toBe('<onebot 的群>');
     expect(a.reader().get(child.id, { platform: 'webui' }).persona).toBe('<onebot 的群>');
     expect(a.reader().get('zz-im:group:1', { platform: 'zz-im' }).persona).toBe('<全局>');
-    expect(a.reader().trace(webui.id, { platform: 'webui' }).sources.persona).toBe('global');
+    expect(traceOf(admin, 'zz-a', webui.id, { platform: 'webui' }).sources.persona).toBe('global');
     expect(warns.filter(w => w.includes('sessionConfig.types'))).toHaveLength(1);
   });
 });
@@ -136,7 +143,7 @@ describe('适用', () => {
     });
     await group();
     const webui = await sm.createSession({}, { createdFrom: 'webui' });
-    expect(other.reader().trace(GROUP, at).sources.ownerOnly).toBe('default');
+    expect(other.reader().get(GROUP, at).ownerOnly, '只给 owner 会话的项在群里只取全局层').toBe('<默认>');
     expect(a.reader().get(webui.id, { platform: 'webui' }).language).toEqual(['en']);
   });
 
@@ -152,7 +159,7 @@ describe('适用', () => {
       fields: [a.definition],
     });
     await inbound({ sessionId: OWNER_PRIVATE, platform: 'onebot', sessionType: 'private', userId: '30001' });
-    const { values } = a.reader().trace(OWNER_PRIVATE, at);
+    const values = a.reader().get(OWNER_PRIVATE, at);
     expect(values.persona).toBe('<工作区人设>');
     expect(values.language).toEqual(['en']);
   });
@@ -177,7 +184,7 @@ describe('适用', () => {
 describe('坏值与形状', () => {
   it('严格字段的坏值原样交出、不往下回落；非严格的坏值按没设处理，只告警一次', async () => {
     const a = A();
-    const { warns, group } = await setup({
+    const { admin, warns, group } = await setup({
       doc: {
         sessionConfig: {
           platforms: { onebot: { 'zz-a': { iterations: 20, scope: 'session' } } },
@@ -195,7 +202,7 @@ describe('坏值与形状', () => {
     });
     await group();
     for (let i = 0; i < 3; i++) {
-      const { values, sources } = a.reader().trace(GROUP, at);
+      const { values, sources } = traceOf(admin, 'zz-a', GROUP, at);
       expect([values.scope, sources.scope]).toEqual(['<坏值>', 'session']);
       expect([values.iterations, sources.iterations]).toEqual([20, 'platform']);
     }
@@ -331,7 +338,7 @@ describe('一个实例写过的各处', () => {
 });
 
 describe('可设的层', () => {
-  it('全局；平台档是已装适配器的加文档里写过的；平台类型档按平台，是声明的加写过的；没有类型档，文档里的 types 段告警一次；场所默认工作区在前、窗口写类型称呼与平台；名字不合写法的不列、告警一次', async () => {
+  it('全局；平台档是已装适配器的加文档里写过的；平台类型档按平台，是声明的加写过的，声明了显示名的带上它；没有类型档，文档里的 types 段告警一次；场所默认工作区在前、窗口写类型称呼与平台；名字不合写法的不列、告警一次', async () => {
     const { admin, warns, inbound } = await setup({
       doc: {
         sessionConfig: {
@@ -355,9 +362,9 @@ describe('可设的层', () => {
       { layer: { scope: 'platform', platform: 'onebot' } },
       { layer: { scope: 'platform', platform: 'zz-doc' } },
       { layer: { scope: 'platform', platform: 'zz-im' } },
-      { layer: { scope: 'platformType', platform: 'onebot', type: 'channel' } },
-      { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } },
-      { layer: { scope: 'platformType', platform: 'onebot', type: 'private' } },
+      { layer: { scope: 'platformType', platform: 'onebot', type: 'channel' }, label: '频道' },
+      { layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' },
+      { layer: { scope: 'platformType', platform: 'onebot', type: 'private' }, label: '私聊' },
       { layer: { scope: 'platformType', platform: 'onebot', type: 'zz-extra' } },
       { layer: { scope: 'platformType', platform: 'zz-im', type: 'group' } },
       { layer: { scope: 'place', key: DEFAULT_PLACE }, label: expect.anything() },

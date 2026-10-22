@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../packages/core/src/index.js';
 import { defineConfig } from '../../packages/schema-config/src/index.js';
 import { registerFromDoc } from '../fixtures/app.js';
-import { ALL, fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/session-settings.js';
+import { ALL, fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings, traceOf } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 子会话建立时写下父会话此刻的生效值（childMetadata 并进建会话的 metadata）：适用于子会话、不是只能设到场所的每一项，按子会话
@@ -58,7 +58,7 @@ describe('建立时写下', () => {
     });
     await admin.update({ sessionId: GROUP }, { plugin: 'zz-agent', key: 'groups', value: ['<收窄>'] });
     const sub = await child();
-    const { values, sources } = AGENT.reader().trace(sub.id, at);
+    const { values, sources } = traceOf(admin, 'zz-agent', sub.id, at);
     expect(values).toMatchObject({
       llm: { provider: 'zz-llm', model: `actual-of-${GROUP}` },
       persona: '<全局人设>',
@@ -117,14 +117,14 @@ describe('建立时写下', () => {
 
     await registerFromDoc(app, store, later.definition);
     await app.plugins.idle();
-    expect(later.reader().trace(sub.id, at)).toMatchObject({
+    expect(traceOf(admin, 'zz-later', sub.id, at)).toMatchObject({
       values: { groups: ['<平台档>'] },
       sources: { groups: 'platform' },
     });
 
     await admin.update({ sessionId: sub.id }, { plugin: 'zz-agent', key: 'persona', value: '<子会话>' });
     const grandchild = await child(sub.id);
-    expect(AGENT.reader().trace(grandchild.id, at)).toMatchObject({
+    expect(traceOf(admin, 'zz-agent', grandchild.id, at)).toMatchObject({
       values: { persona: '<子会话>' },
       sources: { persona: 'session' },
     });
@@ -144,6 +144,9 @@ describe('没登记的实例', () => {
     await app.plugins.disable('zz-tools');
     const sub = await child();
     await app.plugins.enable('zz-tools');
-    expect(tools.reader().trace(sub.id, at)).toMatchObject({ values: { groups: [] }, sources: { groups: 'session' } });
+    expect(traceOf(admin, 'zz-tools', sub.id, at)).toMatchObject({
+      values: { groups: [] },
+      sources: { groups: 'session' },
+    });
   });
 });

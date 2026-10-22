@@ -12,6 +12,7 @@ import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { phaseData } from '../fixtures/inbound-phase.js';
 import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
@@ -46,7 +47,7 @@ const groupMsg = (sessionId: string, content: string): IncomingMessage => ({
 
 async function runTriggerPhase(chain: Hooks, message: IncomingMessage) {
   let reached = false;
-  await chain.run('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+  await chain.run('inbound:trigger', phaseData(message), async () => {
     reached = true;
   });
   return { reached, triggerType: message.triggerType };

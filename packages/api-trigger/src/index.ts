@@ -6,7 +6,7 @@
 // inbound:trigger 相位挂中间件。服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一：
 // 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
-// 本包另含触发插件共用的函数：生效者判断、禁言关键词、名字表与点名识别、放行收尾与吞掉时的影子归档。
+// 本包另含触发插件共用的函数：生效者判断、从别的平台插话的判断、禁言关键词、名字表与点名识别、放行收尾与吞掉时的影子归档。
 // 模块状态只有 isActiveTrigger 按每次入站记下的胜者（进程内全部副本共用一张表）；createBotNames
 // 返回的名字表各自记着告警过的故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
 //
@@ -15,6 +15,7 @@
 
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService } from '@aalis/api-persona';
+import { rootSessionOf, type SessionManagerService } from '@aalis/api-session-manager';
 import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
@@ -56,6 +57,22 @@ export function isActiveTrigger(
 ): boolean {
   if (!judgedBy.has(phase)) judgedBy.set(phase, ref.list().find(p => p.selected)?.id);
   return judgedBy.get(phase) === selfId;
+}
+
+// ----- 从别的平台插话 -----
+
+/**
+ * 这条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。触发插件
+ * 对它直接放行，不判定。会话管理缺席、房间没有出生平台时判不出，按否
+ */
+export function fromElsewhere(
+  message: Pick<IncomingMessage, 'sessionId' | 'platform'>,
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
+): boolean {
+  if (!sessionManager.present) return false;
+  const sm = sessionManager.use;
+  const room = rootSessionOf(sm.getSession(message.sessionId), id => sm.getSession(id));
+  return room?.originPlatform !== undefined && room.originPlatform !== message.platform;
 }
 
 // ----- 禁言关键词与点名 -----
@@ -158,17 +175,16 @@ export function isAddressed(
 // ----- 放行与吞掉 -----
 
 /**
- * 放行收尾：写 triggerType，点名为 immediate，否则为 interval。interval 回合无主发言者，在多人会话
+ * 放行收尾：写 triggerType，点名为 immediate，否则为 interval。interval 回合无主发言者，在多方窗口里
  * 且消息未带 actor 时回填无主体授权身份：不让「恰好撞上判定的那个人」（陌生人或 owner）的等级决定
  * AI 自发行为能调什么工具。immediate 是被点名，点名者就是主体，维持缺省（actor 回退到会话身份）。
- * 私聊可以被配进作用域，私聊里的 interval 只是频率闸，发言者就是唯一主体，不回填。
+ * multiParty 是这条入站所在窗口的多方标记（网关算的 data.chat），不看类型名：一对一窗口可以被纳入生效范围，那里的 interval
+ * 只是频率闸，发言者就是唯一主体，不回填。
  */
-export function markTriggered(message: IncomingMessage, addressed: boolean): void {
+export function markTriggered(message: IncomingMessage, addressed: boolean, multiParty: boolean): void {
   const kind = addressed ? 'immediate' : 'interval';
   message.triggerType = kind;
-  if (kind === 'interval' && message.sessionType !== 'private' && !message.actor) {
-    message.actor = selfInitiatedActor(message.platform);
-  }
+  if (kind === 'interval' && multiParty && !message.actor) message.actor = selfInitiatedActor(message.platform);
 }
 
 /** 吞掉前把消息影子归档（与 flow-control 吞掉时的归档对齐）。message-archive 缺席时跳过，归档失败记 warn，不抛错 */

@@ -8,8 +8,8 @@ import { fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/s
 
 // ════════════════════════════════════════════════════════════
 // 入站收录先于入站相位：会话管理的 recordInbound 可等待，网关在跑入站相位之前等它。新群的第一条消息进入指令相位时会话已经
-// 建档、带聊天窗口，各层按记下的类型取。同一会话并发的入站只收录一次；带 source 的、没有会话 id 的、id 带 `::` 的与已收录的
-// 会话不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端的会话不写聊天窗口。
+// 建档、带聊天窗口，各层按记下的类型取。同一会话并发的入站只收录一次；带 source 的、没有会话 id 的、子会话与已收录的会话
+// 不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端的会话不写聊天窗口。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -137,14 +137,37 @@ describe('recordInbound', () => {
     expect(slow.counter.claims).toBe(1);
   });
 
-  it('带 source 的、id 带 :: 的入站直接兑现，不问认领者、不建档', async () => {
+  it('带 source 的入站直接兑现，不问认领者、不建档：工作流节点的一次性会话的消息也带 source', async () => {
     const slow = slowAdapter();
     const { sm } = await setup(slow.adapter);
     await sm.recordInbound({ ...fromGroup(), source: 'scheduler' });
-    await sm.recordInbound({ ...fromGroup('workflow::<编排>::<节点>'), platform: 'workflow' });
+    await sm.recordInbound({
+      ...fromGroup('workflow::<编排>::<节点>'),
+      platform: 'workflow',
+      source: 'workflow:<编排>:<节点>',
+    });
     expect(slow.counter.claims).toBe(0);
     expect(sm.getSession(GROUP)).toBeUndefined();
     expect(sm.getSession('workflow::<编排>::<节点>')).toBeUndefined();
+  });
+
+  it('子会话的入站不收录、不问认领者：按 parentId 判，与会话 id 的写法无关', async () => {
+    const slow = slowAdapter();
+    const { sm } = await setup(slow.adapter);
+    const parent = await sm.createSession({}, { createdFrom: 'webui' });
+    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
+    await sm.recordInbound({ ...fromGroup(child.id), platform: 'webui' });
+    expect(slow.counter.claims).toBe(0);
+    expect(sm.getSession(child.id)?.originChat).toBeUndefined();
+  });
+
+  it('会话 id 带 :: 的原生入站照常收录：不按 id 的写法判', async () => {
+    const slow = slowAdapter();
+    slow.release();
+    const { sm } = await setup(slow.adapter);
+    const id = 'onebot:10000:group:<分区>::<群>';
+    await sm.recordInbound(fromGroup(id));
+    expect(sm.getSession(id)?.originChat).toMatchObject({ type: 'group', multiParty: true });
   });
 
   it('已收录的会话不等认领者：照旧补上没取的名字', async () => {

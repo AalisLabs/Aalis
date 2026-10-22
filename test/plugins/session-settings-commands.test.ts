@@ -54,7 +54,7 @@ const storagePlugin = definePlugin({
   },
 });
 
-/** 外来类型而没有 fromText 的项：指令里写不进去 */
+/** 外来类型而没有 fromText 的项：指令里写不进去；映射在聊天里只能写空值 */
 const RAW_SCHEMA = defineConfig({
   raw: {
     type: 'llm-ref',
@@ -62,6 +62,7 @@ const RAW_SCHEMA = defineConfig({
     validate: () => undefined,
     session: { appliesTo: ALL, prominence: 'advanced', unset: '<没设>', minLevel: 1 },
   },
+  env: { type: 'map', label: '<映射>', default: { A: '1' }, session: { appliesTo: ALL, prominence: 'advanced' } },
 });
 
 async function setup({
@@ -101,16 +102,17 @@ async function setup({
   }
   await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001', userId: L1.userId });
   await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', userId: L1.userId });
-  /** 以 who 的身份在 sessionId 里执行一条指令，回复取渲染后的文字 */
+  /** 以 who 的身份在 sessionId 里执行一条指令（按聊天里的写法拆参数），回复取渲染后的文字 */
   const run = async (who: { platform: string; userId: string }, sessionId: string, line: string) => {
-    const [name, ...args] = line.split(' ');
+    const parsed = host.commands.use.parseCommand(`/${line}`);
+    if (!parsed) throw new Error(`不是指令：${line}`);
     return String(
-      await host.commands.use.execute(name, {
+      await host.commands.use.execute(parsed.name, {
         sessionId,
         platform: who.platform,
         userId: who.userId,
-        args,
-        raw: `/${line}`,
+        args: parsed.args,
+        raw: parsed.raw,
       }),
     );
   };
@@ -171,6 +173,31 @@ describe('本会话层', () => {
     expect(value('mode')).toBe('off');
     await run(OWNER, GROUP, 'session.set raw x');
     expect(value('raw', GROUP, raw.reader() as never)).toBeUndefined();
+  });
+
+  it('写空值：列表与映射写 []、文字写 ""（拆参数后是空串），与界面写空值同一结果，回执写「无」；父会话改子会话设置的工具传空串', async () => {
+    const { run, value, raw, admin } = await setup();
+    await run(OWNER, GROUP, 'session.set groups system');
+    const list = await run(OWNER, GROUP, 'session.set groups []');
+    expect(value('groups')).toEqual([]);
+    expect(list).toContain('为 无');
+    const text = await run(OWNER, GROUP, 'session.set persona ""');
+    expect(value('persona')).toBe('');
+    expect(text).toContain('为 无');
+    expect(await run(OWNER, GROUP, 'session.set zz-raw/env []')).toContain('为 无');
+    expect(value('env', GROUP, raw.reader() as never)).toEqual({});
+    expect(await run(OWNER, GROUP, 'session.set persona')).toContain('要写出 persona 的值');
+
+    await run(OWNER, GROUP, 'session.set persona <人设>');
+    expect(await admin.setAs(OWNER, GROUP, 'persona', '')).toMatchObject({ ok: true });
+    expect(value('persona')).toBe('');
+    // 两个引号不是空值的写法：文字项与动态可选项的选择项都照原样写下
+    for (const key of ['persona', 'think']) {
+      expect(await admin.setAs(OWNER, GROUP, key, '""'), key).toMatchObject({ ok: true });
+      expect(value(key), key).toBe('""');
+    }
+    expect(await admin.setAs(OWNER, GROUP, 'language', '[]')).toMatchObject({ ok: true });
+    expect(value('language')).toEqual([]);
   });
 
   it('setAs 与指令同一份：按给的身份判，1 级身份写工具分组被拒，项不存在时列出这个身份能改的项', async () => {
@@ -286,6 +313,16 @@ describe('会话与层的情形', () => {
     expect(reply).toContain('<写不进去>');
     expect(reply).toContain('已在运行态生效');
     expect(doc.getPluginConfig('zz-agent').persona).toBe('<人设>');
+  });
+});
+
+describe('平台类型档的称呼', () => {
+  it('回执与 /session 的来源写适配器声明的类型显示名，没声明时写类型名', async () => {
+    const { run } = await setup();
+    expect(await run(OWNER, GROUP, 'session.set --at platformType persona <群人设>')).toContain(
+      '平台类型档 onebot · 群',
+    );
+    expect(await run(OWNER, GROUP, 'session')).toContain('来自 平台类型档 onebot · 群');
   });
 });
 

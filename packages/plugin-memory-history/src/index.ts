@@ -61,7 +61,7 @@ const configSchema = defineConfig({
       { label: t('scopeCrossPlatform'), value: 'cross-platform' },
     ],
     description: t('scopeDescription'),
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
   limit: {
     type: 'number',

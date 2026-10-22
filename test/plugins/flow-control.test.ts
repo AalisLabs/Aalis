@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { resolveFields } from '../../packages/api-session-settings/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
-import { configSchema, normalizeScopes } from '../../packages/plugin-flow-control/src/config.js';
+import { configSchema, type FlowControlSettings } from '../../packages/plugin-flow-control/src/config.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import {
   createState,
@@ -11,72 +12,40 @@ import {
   sweepStaleStates,
 } from '../../packages/plugin-flow-control/src/state.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
-import { parseConfig } from '../../packages/schema-config/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
-/** 与插件 apply 同一条路径：parseConfig 之后做作用域核对 */
-function readConfig(raw: Record<string, unknown>) {
-  const warns: string[] = [];
-  const logger = { warn: (message: string) => void warns.push(message) };
-  return { cfg: normalizeScopes(parseConfig(configSchema, raw, logger), logger), warns };
-}
+/** 只有全局层（插件配置）时一个会话的参数：与插件按会话读的同一解析 */
+const settingsOf = (raw: Record<string, unknown>) =>
+  resolveFields(configSchema, raw, { parts: [] }, () => {}).values as FlowControlSettings;
 
-describe('flow-control config', () => {
-  it('缺省字段取 schema 默认值', () => {
-    const { cfg, warns } = readConfig({});
-    expect(cfg).toEqual({
-      scopes: ['*:group'],
-      overrides: [],
+describe('flow-control 按会话的参数', () => {
+  it('四项都可按会话设，只适用于房间；缺省取 schema 默认值，生效范围默认只管多方房间', () => {
+    expect(Object.keys(configSchema).sort()).toEqual(
+      ['audience', 'cooldownSeconds', 'rateLimitMaxReplies', 'rateLimitWindow'].sort(),
+    );
+    for (const field of Object.values(configSchema)) expect(field.session.appliesTo).toEqual(['room']);
+    expect(settingsOf({})).toEqual({
+      audience: 'multiParty',
       cooldownSeconds: 10,
       rateLimitWindow: 0,
       rateLimitMaxReplies: 10,
     });
-    expect(warns).toEqual([]);
   });
 
-  it('scopes 不是数组（含逗号分隔的字符串）时回落默认值并告警', () => {
-    const { cfg, warns } = readConfig({ scopes: 'onebot:group, cli:*' });
-    expect(cfg.scopes).toEqual(['*:group']);
-    expect(warns).toEqual([expect.stringContaining('配置项 scopes 期望数组')]);
-  });
-
-  it('scopes 的 null 取默认，[] 保持空', () => {
-    expect(readConfig({ scopes: null }).cfg.scopes).toEqual(['*:group']);
-    expect(readConfig({ scopes: [] }).cfg.scopes).toEqual([]);
-  });
-
-  it('数组 scopes 直接用，数字元素转成字符串', () => {
-    expect(readConfig({ scopes: ['onebot:private', 20002] }).cfg.scopes).toEqual(['onebot:private', '20002']);
-  });
-
-  it('scopes 里的空串与纯空白丢弃并告警；空数组照旧表示不生效', () => {
-    const { cfg, warns } = readConfig({ scopes: ['onebot:group', '', '   '] });
-    expect(cfg.scopes).toEqual(['onebot:group']);
-    expect(warns).toEqual([expect.stringContaining('配置项 scopes 含空白作用域')]);
-    expect(readConfig({ scopes: [] }).cfg.scopes).toEqual([]);
-  });
-
-  it('只保留节流字段：评分与闲置触发字段已归 trigger-policy', () => {
-    const { cfg } = readConfig({ fixedInterval: 100, idleTriggerScope: 'session' });
-    expect(Object.keys(cfg).sort()).toEqual(
-      ['cooldownSeconds', 'overrides', 'rateLimitMaxReplies', 'rateLimitWindow', 'scopes'].sort(),
-    );
-  });
-
-  it('激活后 scopes 里的空串与纯空白不生效：作用域外的 WebUI 会话回复后不进冷却', async () => {
+  it('激活后只管生效范围内的房间：WebUI 会话回复后不进冷却，群照常', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     try {
       await registerHubs(app);
       const host = app.bind({ events, provide, services });
       host.provide.use(memory, fakeMemory() as never);
       await app.plugin(sessionManagerPlugin);
-      await app.plugin(flowControlPlugin, { scopes: ['onebot:group', '', '   '], cooldownSeconds: 30 });
+      await app.plugin(flowControlPlugin, { cooldownSeconds: 30 });
       await app.plugins.idle();
       const svc = host.services.use.get(flowControl);
       if (!svc) throw new Error('flow-control 服务未注册');
-      // 群按原生入站收录，会话管理记下它的聊天窗口，回复记账按它判作用域
+      // 群按原生入站收录，会话管理记下它的聊天窗口，回复记账按它判生效范围
       await recordRoom(host.events.use, 'onebot:10001:group:20002');
       for (const [sessionId, platform] of [
         ['webui:console', 'webui'],
@@ -102,7 +71,7 @@ describe('flow-control state', () => {
   });
 
   it('rateLimitUsedNow 仅计窗口内', () => {
-    const cfg = { ...parseConfig(configSchema, {}), rateLimitWindow: 60 };
+    const cfg = settingsOf({ rateLimitWindow: 60 });
     const s = createState('p');
     const now = Date.now();
     s.replyTimestamps = [now - 90_000, now - 30_000, now - 10_000];

@@ -155,18 +155,6 @@ function directChild(sm: SessionManagerService, id: string, sessionId: string): 
   return session?.parentId === sessionId ? session : undefined;
 }
 
-/** 查一个子任务（check_subtask、wait_subtasks）：还在的直接子任务取此刻的回报，已销毁的取走调用所在会话记录上的回报 */
-async function lookup(
-  sm: SessionManagerService,
-  id: string,
-  sessionId: string,
-): Promise<{ report: SubtaskReport; destroyed: boolean } | undefined> {
-  const session = directChild(sm, id, sessionId);
-  if (session) return { report: reportOf(session), destroyed: false };
-  const report = await takeReport(sm, sessionId, id);
-  return report && { report, destroyed: true };
-}
-
 // ===== 插件入口 =====
 
 const uses = {
@@ -221,6 +209,34 @@ function registerSubtask(
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 父会话这一轮的提醒里列出过的回报（子会话 id）：这一轮结束时删 */
   const listed = new Map<string, Set<string>>();
+  /**
+   * 子会话还在时 check_subtask、wait_subtasks 交出过的结果（子会话 id → 那一份回报）：到期销毁时同一份不再写回报。只记在内存里，
+   * 重启或重载之后到期的照样写回报
+   */
+  const taken = new Map<string, string>();
+
+  /**
+   * 查一个子任务（check_subtask、wait_subtasks）：还在的直接子任务取此刻的回报，结束了的记下交出过这一份，并取走到期销毁这一拍里
+   * 已写进调用所在会话记录的同一条回报；已销毁的取走调用所在会话记录上的回报
+   */
+  async function lookup(
+    sm: SessionManagerService,
+    id: string,
+    sessionId: string,
+  ): Promise<{ report: SubtaskReport; destroyed: boolean } | undefined> {
+    const session = directChild(sm, id, sessionId);
+    if (session) {
+      const report = reportOf(session);
+      if (report.status !== 'active') {
+        taken.set(id, JSON.stringify(report));
+        await takeReport(sm, sessionId, id);
+      }
+      return { report, destroyed: false };
+    }
+    const report = await takeReport(sm, sessionId, id);
+    return report && { report, destroyed: true };
+  }
+
   /** 跟随中的会话管理：定时器只在它在场时排 */
   let tracked: SessionManagerService | undefined;
 
@@ -528,7 +544,7 @@ function registerSubtask(
         name: 'set_subtask_setting',
         description: [
           '改一个直接子任务（本会话派出的子会话，不含它再派出的）这个会话自己那一层的一项设置，下一轮起生效。',
-          '写法同 /session.set：key 是项名，几个插件同名时写「<实例 id>/<键>」；value 是取值的文字，模型写「<提供者实例 id>/<模型 id>」，列表用逗号分隔。',
+          '写法同 /session.set：key 是项名，几个插件同名时写「<实例 id>/<键>」；value 是取值的文字，模型写「<提供者实例 id>/<模型 id>」，列表用逗号分隔；列表与映射写 []、文字传空串即设成空。',
           '只写值，不能恢复继承。项写错、不适用或重名时，回执列出能改的项。每次调用都要 owner 确认。',
         ].join('\n'),
         parameters: {
@@ -536,7 +552,7 @@ function registerSubtask(
           properties: {
             subtask_id: { type: 'string', description: '子任务 ID' },
             key: { type: 'string', description: '项名，如 persona；同名时写「<实例 id>/<键>」' },
-            value: { type: 'string', description: '取值的文字' },
+            value: { type: 'string', description: '取值的文字；空列表写 []，空文字传空串' },
           },
           required: ['subtask_id', 'key', 'value'],
           additionalProperties: false,
@@ -832,7 +848,8 @@ function registerSubtask(
     // 子会话销毁之后，它的回报在父会话记录上：也要列出，否则最后一个子会话销毁后回报就没人列
     if (!session?.parentId && session) {
       const children = session.children;
-      const destroyed = reportsOf(session);
+      // 子会话还在的回报不列：写回报与撤回之间（这一拍里有追问）它还活着，不能说成已销毁
+      const destroyed = reportsOf(session).filter(report => !sm.getSession(report.id));
       if (children.length > 0 || destroyed.length > 0) {
         const activeChildren: string[] = [];
         const completedChildren: string[] = [];
@@ -1009,8 +1026,8 @@ function registerSubtask(
   }
 
   /**
-   * 到点重判：一轮在飞或追问还没开跑的等那一轮收尾时再排；没到期的再排；到期的写回报、删掉。写回报要等一拍：这一拍里发出的
-   * 追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾时重新排
+   * 到点重判：一轮在飞或追问还没开跑的等那一轮收尾时再排；没到期的再排；到期的写回报、删掉（父会话在它还在时已经取走过同一份
+   * 结果的不写回报）。写回报要等一拍：这一拍里发出的追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾时重新排
    */
   async function expire(childId: string): Promise<void> {
     timers.delete(childId);
@@ -1028,8 +1045,11 @@ function registerSubtask(
     const parentId = child.parentId;
     /** 父会话记录上别的子任务的回报 */
     const others = () => reportsOf(sm.getSession(parentId)).filter(r => r.id !== childId);
+    const report = reportOf(child);
+    // 父会话在它还在时已经取走过这一份结果：不再写回报
+    const fresh = taken.get(childId) !== JSON.stringify(report);
     try {
-      if (sm.getSession(parentId)) await writeReports(sm, parentId, [...others(), reportOf(child)]);
+      if (fresh && sm.getSession(parentId)) await writeReports(sm, parentId, [...others(), report]);
       if (busy() || tracked !== sm) {
         if (sm.getSession(parentId)) await writeReports(sm, parentId, others());
         return;
@@ -1091,6 +1111,7 @@ function registerSubtask(
     pendingStart.delete(sessionId);
     endedAt.delete(sessionId);
     listed.delete(sessionId);
+    taken.delete(sessionId);
   });
 
   // 父会话的消息历史清成了：回报一并清掉（在 next 之后看结果，与会话管理连带删除子会话同一判法）；会话不在表里时什么都不做

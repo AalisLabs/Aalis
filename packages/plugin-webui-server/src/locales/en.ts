@@ -77,10 +77,6 @@ export default defineLocale<Source>()({
   refreshUnsupported:
     'Provider {provider} does not support refreshing its model list at runtime (for example, model discovery is off)',
   refreshNoModels: 'Provider {provider} has no registered models right now and cannot be refreshed',
-  scopeAll: '* (all platforms × all types)',
-  scopeType: '*:{type} ({label} sessions on every platform)',
-  scopePlatformType: '{scope} ({label})',
-  scopePlatform: '{platform}:* (all {platform} types)',
   dependencyInvalid: 'dependency must be an entry id <provider instance id>/<model id>',
   allGroups: '* (all groups)',
   pluginMissing: 'Plugin {instance} does not exist',

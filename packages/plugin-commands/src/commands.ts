@@ -759,9 +759,12 @@ function needsAuthority(cmd: Command): boolean {
   );
 }
 
+/** 按空白拆参数：引号里的整段是一个参数（空的引号是一个空参数），反斜杠转义下一个字符 */
 function tokenize(input: string): string[] {
   const tokens: string[] = [];
   let current = '';
+  /** 这个参数写过引号：空的也算一个 */
+  let quoted = false;
   let quote: '"' | "'" | undefined;
   let escaped = false;
   for (const ch of input) {
@@ -781,18 +784,20 @@ function tokenize(input: string): string[] {
     }
     if (ch === '"' || ch === "'") {
       quote = ch;
+      quoted = true;
       continue;
     }
     if (/\s/.test(ch)) {
-      if (current) {
+      if (current || quoted) {
         tokens.push(current);
         current = '';
+        quoted = false;
       }
       continue;
     }
     current += ch;
   }
-  if (current) tokens.push(current);
+  if (current || quoted) tokens.push(current);
   return tokens;
 }
 

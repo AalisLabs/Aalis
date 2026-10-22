@@ -87,13 +87,17 @@ export class SettingsEditor {
     }
   }
 
-  /** 一层的称呼：平台档、平台类型档与场所另写这个会话取的是哪一份 */
+  /** 一层的称呼：平台档、平台类型档与场所另写这个会话取的是哪一份；平台类型写声明的显示名，没声明时写类型名 */
   private layerText(name: SessionLayerName, { platform = '', type = '', place }: SessionContext): string | TextRef {
     switch (name) {
       case 'platform':
         return t('namedLayer', { layer: layerLabel(name), name: platform });
       case 'platformType':
-        return t('namedLayer', { layer: layerLabel(name), name: `${platform} · ${type}` });
+        return t('platformTypeLayer', {
+          layer: layerLabel(name),
+          platform,
+          type: this.provider.typeLabel(platform, type) ?? type,
+        });
       case 'place':
         return place ? this.placeText(place.key) : layerLabel(name);
       default:
@@ -210,9 +214,8 @@ export class SettingsEditor {
     const item = this.resolve(identity, target, itemText);
     if ('ok' in item) return item;
     const name = this.nameOf(item);
-    if (valueText === undefined || valueText.trim() === '') {
-      return refuse(this.withChoices(t('needValue', { item: name }), item.field));
-    }
+    // 空串是写出来的空值（聊天里的 `""`），照文字读法读
+    if (valueText === undefined) return refuse(this.withChoices(t('needValue', { item: name }), item.field));
     const parsed = readText(item.field, valueText);
     const read = 'invalid' in parsed ? parsed : readFieldValue(item.field, parsed.value);
     if ('invalid' in read)

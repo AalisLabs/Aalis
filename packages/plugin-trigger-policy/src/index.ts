@@ -1,11 +1,15 @@
 import { flowControl } from '@aalis/api-flow-control';
-import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
+import { audienceIncludes, gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import {
   archiveSwallowed,
   createBotNames,
+  fromElsewhere,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,
@@ -16,7 +20,7 @@ import {
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import type { OutgoingMessage } from '@aalis/schema-message';
-import { configSchema, normalizeConfig, type TriggerPolicyConfig } from './config.js';
+import { configSchema, normalizeSettings, type TriggerPolicySettings } from './config.js';
 import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
   applyScoreDecay,
@@ -49,6 +53,12 @@ const uses = {
   persona: optional(persona),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
+  // 判从别的平台往房间里插话（入口平台与房间的出生平台不同）；缺席时判不出，按消息自身判
+  sessionManager: optional(sessionManager),
+  /** 按会话读生效范围与参数；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -64,7 +74,11 @@ export default definePlugin({
 
 function run(caps: Caps): void {
   const { logger, events, hooks, lifecycle, provide, flowControl, messageArchive } = caps;
-  const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger.use), logger.use);
+  const cfg = parseConfig(configSchema, caps.config.use, logger.use);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
+  /** 一个会话此刻的参数，每次现读（改了下一条消息起生效）；不给会话时取全局层 */
+  const settingsOf = (sessionId?: string, platform?: string): TriggerPolicySettings =>
+    normalizeSettings(fields.get(sessionId, { platform }));
   const states = new Map<string, TriggerSessionState>();
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
   const botNames = createBotNames(caps.persona, logger.use, '[trigger]');
@@ -76,8 +90,8 @@ function run(caps: Caps): void {
   provide.use(trigger, self, { label: self.label });
   const isActive = (): boolean => caps.trigger.list().find(p => p.selected)?.id === selfId;
 
-  const idleCaps: IdleCaps = { logger: logger.use, gateway: caps.gateway, flowControl, isActive };
-  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
+  const idleCaps: IdleCaps = { logger: logger.use, gateway: caps.gateway, flowControl, isActive, settingsOf };
+  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg.idleTriggerStrategy, states);
 
   /** 计数与活跃指数清零（禁言与判定放行时） */
   function resetCounters(s: TriggerSessionState): void {
@@ -85,16 +99,15 @@ function run(caps: Caps): void {
     s.activityScore = 0;
   }
 
-  /** 按会话重排 session 档 idle（非 session 档时只清定时器） */
+  /** 按会话重排 session 档 idle（非 session 档时只清定时器）；参数按会话现读 */
   function rescheduleIdle(sessionId: string): void {
     const s = states.get(sessionId);
     if (!s) return;
-    const e = resolveEffectiveConfig(cfg, s.platform, s.sessionType, s.targetId);
-    scheduleSessionIdle(idleCaps, e, s, sessionId, () => rescheduleIdle(sessionId));
+    scheduleSessionIdle(idleCaps, s, sessionId, () => rescheduleIdle(sessionId));
   }
 
   /** 记一条真人入站的计数：评分衰减、计数、评分增量、用户交互。衰减按上一条消息的时间算，须在 recordActivity 之前调用 */
-  function recordIncoming(s: TriggerSessionState, e: TriggerPolicyConfig, userId: string | undefined): void {
+  function recordIncoming(s: TriggerSessionState, e: TriggerPolicySettings, userId: string | undefined): void {
     applyScoreDecay(s, e);
     if (userId) s.userInteractions.set(userId, (s.userInteractions.get(userId) ?? 0) + 1);
     s.messageCount++;
@@ -103,7 +116,7 @@ function run(caps: Caps): void {
 
   /**
    * 记一次真人活动：最近消息时间、闲置退避复位为 1，并从现在起重排 session 档 idle。
-   * 作用域内的真人消息都算，禁言期内与命中禁言关键词的也算（它们只是不计数）
+   * 生效范围内的真人消息都算，禁言期内与命中禁言关键词的也算（它们只是不计数）
    */
   function recordActivity(sessionId: string, s: TriggerSessionState): void {
     s.lastMessageTime = Date.now();
@@ -114,7 +127,7 @@ function run(caps: Caps): void {
   /** 要不要开口：点名直接开口，否则按会话此刻的计数与评分判定 */
   function decide(
     s: TriggerSessionState,
-    e: TriggerPolicyConfig,
+    e: TriggerPolicySettings,
     addressed: boolean,
   ): { speak: boolean; reason: string } {
     if (addressed) return { speak: true, reason: '点名' };
@@ -138,12 +151,13 @@ function run(caps: Caps): void {
     return { speak, reason };
   }
 
+  // 启动日志写全局层；按会话设的另在各层
+  const global = settingsOf();
   logger.use.info(
-    `[trigger] 已启用 (模式=${cfg.intervalMode}, 固定间隔=${cfg.fixedInterval}, ` +
-      `阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, @提及=${cfg.triggerOnAt}, ` +
-      `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, mute时长=${cfg.muteTimeSeconds}s, ` +
-      `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
-      `overrides=${cfg.overrides.length})`,
+    `[trigger] 已启用 (生效范围=${global.audience}, 模式=${global.intervalMode}, 固定间隔=${global.fixedInterval}, ` +
+      `阈值=${global.activityScoreLower}~${global.activityScoreUpper}, @提及=${global.triggerOnAt}, ` +
+      `别名=${global.triggerNames.length}, mute关键词=${global.muteKeywords.length}, mute时长=${global.muteTimeSeconds}s, ` +
+      `idle=${global.idleTriggerScope}/${cfg.idleTriggerStrategy})`,
   );
 
   // ===== inbound:trigger 相位：要不要开口 =====
@@ -153,22 +167,22 @@ function run(caps: Caps): void {
   hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, selfId)) return next();
-    const { message } = data;
-    // 内部注入（闲置触发、定时任务、workflow）都带 source，跳过策略：不计数、不改 triggerType。
-    // 真人消息由平台适配器投递，不设 source。
-    if (message.source) return next();
-
-    // 不在触发策略作用域内（默认 *:group）：直接放行。
-    // 必须在 mute 检查之前进行，否则 QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话。
-    const tid = extractTargetId(message);
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType, tid)) return next();
+    const { message, chat } = data;
+    // 内部注入（闲置触发、定时任务、workflow）都带 source（网关不给聊天窗口），跳过策略：不计数、不改 triggerType。
+    // 真人消息由平台适配器投递，不设 source。从别的平台往房间里插话（owner 从 WebUI 往群里发）同样直接放行
+    if (!chat || fromElsewhere(message, caps.sessionManager)) return next();
 
     const sessionId = message.sessionId;
+    const e = settingsOf(sessionId, message.platform);
+    // 不在生效范围内（默认只管多方房间）：直接放行。
+    // 必须在 mute 检查之前进行，否则群里的 mute 关键词会泄漏到私聊等不在范围内的会话。
+    if (!audienceIncludes(e.audience, chat.multiParty)) return next();
+
     const flow = flowControl.present ? flowControl.use : undefined;
-    // 作用域内的真人消息都是会话活动，禁言期内的也是：会话还没有状态（如平台禁言先于任何消息）就在这里建
+    // 范围内的真人消息都是会话活动，禁言期内的也是：会话还没有状态（如平台禁言先于任何消息）就在这里建
     let s = states.get(sessionId);
     if (!s) {
-      s = createState(message.platform, message.sessionType, tid);
+      s = createState(message.platform);
       states.set(sessionId, s);
     }
 
@@ -179,8 +193,6 @@ function run(caps: Caps): void {
       recordActivity(sessionId, s);
       return next();
     }
-
-    const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
 
     // 禁言关键词：设置自禁言、计数与评分当场清零，记为真人活动，吞掉本条
     if (hitsMuteKeyword(message, e.muteKeywords)) {
@@ -209,7 +221,7 @@ function run(caps: Caps): void {
     // 判定放行即复位：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
     resetCounters(s);
     s.lastTriggerTime = Date.now();
-    markTriggered(message, addressed);
+    markTriggered(message, addressed, chat.multiParty);
     await next();
   });
 
@@ -223,10 +235,11 @@ function run(caps: Caps): void {
     rescheduleIdle(msg.sessionId);
   });
 
-  // 平台级 idle 启动
+  // 平台级 idle 启动；全局层改了（宿主文档变化）时原来关着的随即按新值排
   events.use.on('app:ready', () => {
     platformIdle.start();
   });
+  events.use.on('host-config:changed', () => platformIdle.wake());
 
   // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天无活动且无 idle 定时器的会话
   const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -245,5 +258,3 @@ function run(caps: Caps): void {
     states.clear();
   });
 }
-
-export type { TriggerPolicyConfig };

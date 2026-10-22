@@ -197,6 +197,95 @@ describe('宿主文档里的两层', () => {
   });
 });
 
+describe('宿主文档里读不懂的部分', () => {
+  it('写平台档、平台类型档只改这一层的这一项：不认识的段、名字不合写法的条目、不是对象的值与别的实例原样留着，告警照旧', async () => {
+    const a = fieldsPlugin('zz-a', SCHEMA);
+    const unreadable = {
+      types: { group: { 'zz-a': { persona: '<types 段>' } } },
+      platfroms: { onebot: { 'zz-a': { persona: '<拼错的段>' } } },
+      platforms: {
+        'a:b': { 'zz-a': { persona: '<名字不合写法>' } },
+        onebot: { 'zz-a': { mode: 'off' }, 'zz-gone': { persona: '<没装>' }, 'zz-bad': '<不是对象>' },
+      },
+      platformTypes: { onebot: { group: '<不是对象>', private: { 'zz-a': { plain: true } } } },
+    };
+    const { admin, doc, warns } = await setup({ doc: { sessionConfig: unreadable as never }, fields: [a.definition] });
+    await admin.update(
+      { layer: { scope: 'platform', platform: 'onebot' } },
+      { plugin: 'zz-a', key: 'iterations', value: 5 },
+    );
+    await admin.update(
+      { layer: { scope: 'platformType', platform: 'onebot', type: 'private' } },
+      { plugin: 'zz-a', key: 'plain', value: null },
+    );
+    await admin.update(
+      { layer: { scope: 'platformType', platform: 'zz-new', type: 'group' } },
+      { plugin: 'zz-a', key: 'persona', value: '<新的>' },
+    );
+    expect(doc.get('sessionConfig')).toEqual({
+      ...unreadable,
+      platforms: {
+        ...unreadable.platforms,
+        onebot: { ...unreadable.platforms.onebot, 'zz-a': { mode: 'off', iterations: 5 } },
+      },
+      platformTypes: { onebot: { group: '<不是对象>' }, 'zz-new': { group: { 'zz-a': { persona: '<新的>' } } } },
+    });
+    // 读的时候照旧告警（写入不读整理后的文档）
+    admin.layers();
+    for (const part of ['sessionConfig.types', 'sessionConfig.platfroms', 'a:b', 'zz-gone', 'zz-bad']) {
+      expect(
+        warns.filter(w => w.includes(part)),
+        part,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('要写的那一处在文档里不是对象：拒收、文档不动', async () => {
+    const a = fieldsPlugin('zz-a', SCHEMA);
+    const sessionConfig = { platformTypes: { onebot: { group: '<不是对象>' } } };
+    const { admin, doc } = await setup({ doc: { sessionConfig: sessionConfig as never }, fields: [a.definition] });
+    await rejectedWith(
+      admin.update(
+        { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } },
+        { plugin: 'zz-a', key: 'persona', value: '<群>' },
+      ),
+    );
+    expect(doc.get('sessionConfig')).toEqual(sessionConfig);
+  });
+
+  it('留空的段（配置文件里只剩键名，读出来是 null）与没有同样处理：读的时候不告警，照写', async () => {
+    const a = fieldsPlugin('zz-a', SCHEMA);
+    for (const sessionConfig of [
+      null,
+      { platforms: null, platformTypes: { onebot: { group: null } } },
+      { platforms: { onebot: { 'zz-a': null } }, platformTypes: null },
+    ]) {
+      const label = JSON.stringify(sessionConfig);
+      const { admin, doc, warns } = await setup({
+        doc: { sessionConfig: sessionConfig as never },
+        fields: [a.definition],
+      });
+      admin.layers();
+      expect(
+        warns.filter(w => w.includes('sessionConfig')),
+        label,
+      ).toEqual([]);
+      await admin.update(
+        { layer: { scope: 'platform', platform: 'onebot' } },
+        { plugin: 'zz-a', key: 'iterations', value: 5 },
+      );
+      await admin.update(
+        { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } },
+        { plugin: 'zz-a', key: 'persona', value: '<群>' },
+      );
+      expect(doc.get('sessionConfig'), label).toEqual({
+        platforms: { onebot: { 'zz-a': { iterations: 5 } } },
+        platformTypes: { onebot: { group: { 'zz-a': { persona: '<群>' } } } },
+      });
+    }
+  });
+});
+
 describe('校验', () => {
   it('没登记的实例、不带标记的字段、不合字段的值、不合法的层标识、不存在的会话与场所、不适用的目标都拒收', async () => {
     const a = fieldsPlugin('zz-a', SCHEMA);

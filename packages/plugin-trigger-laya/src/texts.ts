@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：诊断项的说明，与判定不可用、侧车退出与不托管的原因（原因同时写进日志，日志取原文）
+// 本插件自己的原文字典：诊断项的说明，判定不可用、侧车退出与不托管的原因（原因同时写进日志，日志取原文），与开口阈值没设时的说法
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -45,6 +45,8 @@ const SOURCE = {
   exit4: '自愈退出：推理连续失败',
   exit5: '父进程不是 --parent-pid 给的进程',
   restartIn: '{reason}，{seconds}s 后重启',
+  // 按会话字段「开口阈值」没设时
+  thresholdUnset: '用侧车返回的模型阈值',
 } as const;
 export type Source = typeof SOURCE;
 

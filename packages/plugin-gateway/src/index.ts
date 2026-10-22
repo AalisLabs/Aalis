@@ -1,9 +1,10 @@
 import { type AgentService, agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import type { GatewayService, InboundPhase, InboundPhaseData } from '@aalis/api-gateway';
-import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
+import { chatScopeOf, gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { i18n, localizeFor } from '@aalis/api-i18n';
+import { getPlatformAdapters, platform, sessionTypesOf } from '@aalis/api-platform';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
@@ -14,7 +15,7 @@ import { t } from './texts.js';
 
 // gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
 // 会话管理在场时入站相位之前先等它收录这条消息的会话；会话管理与 authority 还用来判房间类别（结构性放行），authority 缺席时
-// 没有人是 owner。
+// 没有人是 owner。没有 source 的入站按这个平台适配器的类型声明算聊天窗口（data.chat），平台服务缺席时按没声明类型算。
 // 出站消息带文字对象时按会话的语言渲染进 content；i18n 缺席或渲染抛错时按原文
 const uses = {
   events,
@@ -25,6 +26,7 @@ const uses = {
   sessionManager: optional(sessionManager),
   authority: optional(authority),
   i18n: optional(i18n),
+  platform: optional(platform),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -43,7 +45,7 @@ export default definePlugin({
   apply: runGateway,
 });
 
-function runGateway({ events, hooks, logger, provide, agent, sessionManager, authority, i18n }: Caps): void {
+function runGateway({ events, hooks, logger, provide, agent, sessionManager, authority, i18n, platform }: Caps): void {
   logger.use.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
 
   /** 会话的房间类别是不是 owner-only（子会话取根会话的）；会话管理缺席时判不出，按否 */
@@ -52,6 +54,13 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
     return (
       roomClass(lookup(sessionId), lookup, (p, u) => authority.present && authority.use.isOwner(p, u)) === 'owner-only'
     );
+  }
+
+  /** 入站所在的聊天窗口：带 source 的内部注入没有 */
+  function chatOf(message: IncomingMessage): InboundPhaseData['chat'] {
+    if (message.source) return undefined;
+    const adapter = getPlatformAdapters(platform).find(a => a.platform === message.platform);
+    return chatScopeOf(message, sessionTypesOf(adapter));
   }
 
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复。 */
@@ -82,11 +91,17 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
    *
    * 前三相位任一被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    * 房间类别为 owner-only 的会话跳过 trigger 与 flow（结构性放行），这两个相位不运行、不发 gateway:phase:done。
-   * 会话管理在场时先等它收录（recordInbound）：新房间的第一条消息进入相位时会话已建档、带聊天窗口，各读取方按记下的字段取
+   * 会话管理在场时先等它收录（recordInbound）：新房间的第一条消息进入相位时会话已建档、带聊天窗口，各读取方按记下的字段取。
+   * 没有 source 的入站带上聊天窗口（data.chat），回复策略据它判生效范围
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
     // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上
-    const data: InboundPhaseData = { message, metadata: {}, agent: agent.present ? agent.use : undefined };
+    const data: InboundPhaseData = {
+      message,
+      metadata: {},
+      agent: agent.present ? agent.use : undefined,
+      chat: chatOf(message),
+    };
 
     try {
       if (sessionManager.present) await sessionManager.use.recordInbound(message);

@@ -24,7 +24,9 @@ import { createSelfCheck } from '../../packages/plugin-trigger-laya/src/self-che
 import { defineTexts, localize, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { buildIncomingContent, type IncomingMessage, type Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { phaseData } from '../fixtures/inbound-phase.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort } from '../helpers/net.js';
 
@@ -216,6 +218,8 @@ interface SetupOptions {
   personas?: PersonaService[];
   /** session-manager 替身：只用 getSession */
   sessionManager?: Partial<Pick<SessionManagerService, 'getSession'>>;
+  /** 会话设置的替身：会话 id → 本会话层的值 */
+  sessions?: Record<string, Record<string, unknown>>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
   /** process 服务替身（托管侧车用） */
@@ -273,6 +277,7 @@ async function setup(opts: SetupOptions = {}) {
   // 同一激活登记多家：各给一个条目 id，list() 才分得清
   for (const [i, p] of (opts.personas ?? []).entries()) host.provide.use(persona, p, { entryId: `persona-${i}` });
   if (opts.sessionManager) host.provide.use(sessionManager, opts.sessionManager as SessionManagerService);
+  if (opts.sessions) await app.plugins.register(sessionValuesPlugin(opts.sessions), {});
   if (opts.process) host.provide.use(processService, opts.process);
   opts.beforeLaya?.(host);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
@@ -303,7 +308,7 @@ async function setup(opts: SetupOptions = {}) {
 /** 驱动 inbound:trigger 钩子链；记下是否放行 */
 async function run(chain: Hooks, message: IncomingMessage) {
   let reached = false;
-  await chain.run('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+  await chain.run('inbound:trigger', phaseData(message), async () => {
     reached = true;
   });
   return { reached, message };
@@ -399,25 +404,26 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect((await fromConfig.send(groupMsg('b'))).reached).toBe(true);
   });
 
-  it('按作用域覆盖阈值，最具体者胜；只写阈值的覆盖也启用该作用域', async () => {
+  it('阈值与生效范围可按会话设：每条消息按会话现读，没设的会话用插件配置的', async () => {
     sidecar.reply = () => score(0.5, 0);
+    const other = 'onebot:10000:group:20002';
     const { send, logs } = await setup({
-      laya: {
-        threshold: 0.2,
-        overrides: [
-          { scope: '*:group', threshold: 0.4 },
-          { scope: 'onebot:group:20002', threshold: 0.8 },
-          { scope: 'onebot:private:30001', threshold: 0.6 },
-        ],
-      },
+      laya: { threshold: 0.2 },
+      sessions: { [other]: { threshold: 0.8 }, [privateMsg('').sessionId]: { audience: 'all', threshold: 0.6 } },
     });
-    const inGroup = (gid: string) => groupMsg('x', { sessionId: `onebot:10000:group:${gid}`, groupId: gid });
+    expect((await send(groupMsg('x'))).reached).toBe(true);
+    expect((await send(groupMsg('y', { sessionId: other, groupId: '20002' }))).reached).toBe(false);
+    expect((await send(privateMsg('z'))).reached, '这个私聊设成全部房间，按它的 0.6 判').toBe(false);
+    expect(decisions(logs).map(e => e.message.match(/阈值=([\d.]+)/)?.[1])).toEqual(['0.2', '0.8', '0.6']);
+  });
 
-    expect((await send(inGroup('20001'))).reached, '*:group 的 0.4').toBe(true);
-    expect((await send(inGroup('20002'))).reached, 'targetId 级 0.8 压过 *:group').toBe(false);
-    expect((await send(privateMsg('y'))).reached, '私聊不在默认作用域，但覆盖条目启用了它').toBe(false);
-    expect(sidecar.requests).toHaveLength(3);
-    expect(decisions(logs).map(e => e.message.match(/阈值=([\d.]+)/)?.[1])).toEqual(['0.4', '0.8', '0.6']);
+  it('owner 从 WebUI 往群里插话（入口平台与房间的出生平台不同）：生效范围是全部房间也直接放行，不问侧车', async () => {
+    const rooms = new Map([[GROUP_SID, storedRoom(GROUP_SID) as unknown as SessionInfo]]);
+    const { send } = await setup({ laya: { audience: 'all' }, sessionManager: { getSession: id => rooms.get(id) } });
+    const r = await send({ content: '插一句', platform: 'webui', sessionId: GROUP_SID });
+    expect(r.reached).toBe(true);
+    expect(r.message.triggerType).toBeUndefined();
+    expect(sidecar.requests).toHaveLength(0);
   });
 
   it('判定日志：每次判定一行 debug（会话、开口、点名、logit、阈值、版本、耗时），不含正文与昵称', async () => {
@@ -455,7 +461,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(sidecar.requests).toHaveLength(0);
   });
 
-  it('作用域：私聊不在默认作用域，直接放行、不写 triggerType；scopes 纳入后照常判定', async () => {
+  it('生效范围：私聊不在默认范围（多方房间），直接放行、不写 triggerType；设成全部房间后照常判定', async () => {
     sidecar.reply = () => score(-3);
     const byDefault = await setup();
     const r = await byDefault.send(privateMsg('在吗'));
@@ -463,7 +469,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(r.message.triggerType).toBeUndefined();
     expect(sidecar.requests).toHaveLength(0);
 
-    const withPrivate = await setup({ laya: { scopes: ['*:group', '*:private'] } });
+    const withPrivate = await setup({ laya: { audience: 'all' } });
     expect((await withPrivate.send(privateMsg('在吗'))).reached).toBe(false);
     expect(sidecar.requests).toHaveLength(1);
   });
@@ -477,7 +483,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(sidecar.requests).toHaveLength(0);
   });
 
-  it('作用域外的禁言关键词：放行，不设禁言、不归档、不判定（作用域判断先于禁言关键词）', async () => {
+  it('生效范围外的禁言关键词：放行，不设禁言、不归档、不判定（范围判断先于禁言关键词）', async () => {
     const { send, flow, archived } = await setup({ laya: { muteKeywords: '闭嘴' } });
     const r = await send(privateMsg('你闭嘴吧'));
     expect(r.reached).toBe(true);
@@ -909,32 +915,30 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
   });
 
   it('消息不带机器人账号（如 WebUI）：只回点名，不发请求', async () => {
-    const { send } = await setup({ laya: { scopes: ['*'] } });
+    const { send } = await setup({ laya: { audience: 'all' } });
     const webui: IncomingMessage = { content: 'hi', platform: 'webui', sessionId: 'session-a1b2c3d4' };
     expect((await send(webui)).reached).toBe(false);
     expect((await send({ ...webui, content: `${AT}在吗` })).reached).toBe(true);
     expect(sidecar.requests).toHaveLength(0);
   });
 
-  it('消息不带机器人账号时取房间记下的（WebUI 往群里插话，子会话取根会话的）：照常问侧车', async () => {
+  it('消息不带机器人账号时取房间记下的（适配器没填，子会话取根会话的）：照常问侧车', async () => {
+    const child = `${GROUP_SID}::abcd1234`;
     const rooms = new Map<string, SessionInfo>([
       [GROUP_SID, storedRoom(GROUP_SID) as unknown as SessionInfo],
-      [`${GROUP_SID}::abcd1234`, { id: `${GROUP_SID}::abcd1234`, parentId: GROUP_SID } as SessionInfo],
+      [child, { id: child, parentId: GROUP_SID } as SessionInfo],
     ]);
-    const { send } = await setup({
-      laya: { scopes: ['*'] },
-      sessionManager: { getSession: id => rooms.get(id) },
-    });
-    const webui = (sessionId: string): IncomingMessage => ({ content: '插一句', platform: 'webui', sessionId });
+    const { send } = await setup({ sessionManager: { getSession: id => rooms.get(id) } });
+    const unmarked = (sessionId: string) => groupMsg('没带账号', { sessionId, selfId: undefined });
 
-    expect((await send(webui(GROUP_SID))).reached).toBe(true);
-    expect((await send(webui(`${GROUP_SID}::abcd1234`))).reached).toBe(true);
-    expect((await send(webui('session-a1b2c3d4'))).reached, '没有记下账号的会话照旧兜底').toBe(false);
+    expect((await send(unmarked(GROUP_SID))).reached).toBe(true);
+    expect((await send(unmarked(child))).reached).toBe(true);
+    expect((await send(unmarked('onebot:10000:group:20009'))).reached, '没有记下账号的会话照旧兜底').toBe(false);
     expect(sidecar.requests.map(r => r.body.selfId)).toEqual(['10000', '10000']);
   });
 
   it('机器人账号取消息上的：别的平台、别的类型名（频道、thread）带了账号就照常问侧车', async () => {
-    const { send } = await setup({ laya: { scopes: ['*'] } });
+    const { send } = await setup();
     const channel = groupMsg('频道', { sessionType: 'channel', sessionId: 'onebot:10000:channel:40001:50001' });
     const thread: IncomingMessage = {
       content: '帖子里说话',
@@ -1631,7 +1635,7 @@ describe('plugin-trigger-laya：运行期自检', () => {
       await archive.archiveIncoming(m);
     };
 
-    // 不发请求的判定不记：作用域外的私聊；请求体超限（窗口里有一条 1.2 MB 的行，没点名的兜底吞掉并由本插件归档）
+    // 不发请求的判定不记：生效范围外的私聊；请求体超限（窗口里有一条 1.2 MB 的行，没点名的兜底吞掉并由本插件归档）
     await decideThenArchive({ ...privateMsg('私聊'), messageId: 'p1' });
     await archive.archiveIncoming(groupMsg('字'.repeat(400_000), { sessionId: 'onebot:10000:group:20003' }));
     expect((await send(next({ sessionId: 'onebot:10000:group:20003', groupId: '20003' }))).reached).toBe(false);

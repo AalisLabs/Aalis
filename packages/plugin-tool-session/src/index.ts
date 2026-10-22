@@ -46,7 +46,7 @@ const configSchema = defineConfig({
       { label: '同平台会话', value: 'platform' },
       { label: '全部会话', value: 'all' },
     ],
-    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+    session: { prominence: 'advanced' },
   },
   includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
   perMessageMaxChars: {

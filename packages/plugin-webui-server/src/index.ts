@@ -17,14 +17,7 @@ import { i18n } from '@aalis/api-i18n';
 import { llm, modelRefOf, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
 import { packageManager } from '@aalis/api-package-manager';
-import {
-  aggregatePlatformDetails,
-  getPlatformAdapters,
-  type PlatformConnection,
-  platform,
-  type SessionTypeDecl,
-  sessionTypesOf,
-} from '@aalis/api-platform';
+import { aggregatePlatformDetails, type PlatformConnection, platform } from '@aalis/api-platform';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
@@ -852,33 +845,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       const { dependency } = req.query;
       const options = await source.spec.list(typeof dependency === 'string' ? dependency : undefined);
       res.json({ models: options.map(option => option.value), details: options });
-      return;
-    }
-
-    // 特殊处理 gateway-scopes：已注册平台与它们的类型（sessionTypesOf：没声明类型的平台只有一个类型 private）
-    // 的笛卡尔积。类型有显示名的写显示名，没有的写类型名
-    if (serviceName === 'gateway-scopes') {
-      const platformTypes = new Map<string, readonly SessionTypeDecl[]>();
-      /** 类型名 → 显示名：几个平台有同名类型时取先给出的那个 */
-      const typeLabels = new Map<string, string | TextRef | undefined>();
-      for (const a of getPlatformAdapters(caps.platform)) {
-        const types = sessionTypesOf(a);
-        platformTypes.set(a.platform, types);
-        for (const { name, label } of types) typeLabels.set(name, typeLabels.get(name) ?? label);
-      }
-      const scopes: OptionDetail[] = [];
-      scopes.push({ value: '*', label: t('scopeAll') });
-      for (const type of [...typeLabels.keys()].sort()) {
-        scopes.push({ value: `*:${type}`, label: t('scopeType', { type, label: typeLabels.get(type) ?? type }) });
-      }
-      for (const [p, types] of platformTypes) {
-        scopes.push({ value: `${p}:*`, label: t('scopePlatform', { platform: p }) });
-        for (const { name, label } of types) {
-          const scope = `${p}:${name}`;
-          scopes.push({ value: scope, label: label === undefined ? scope : t('scopePlatformType', { scope, label }) });
-        }
-      }
-      res.json({ models: scopes.map(s => s.value), details: scopes });
       return;
     }
 
