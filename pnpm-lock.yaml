@@ -1206,6 +1206,9 @@ importers:
 
   packages/plugin-checkpoint:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-checkpoint':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-checkpoint
@@ -1215,9 +1218,18 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.3.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-session-manager
+      '@aalis/api-session-settings':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-session-settings
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage

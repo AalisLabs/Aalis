@@ -865,13 +865,6 @@ export const sessionMethods = {
    * 压缩或生成摘要时直接拒绝，同样回内部错误，时间线上没有新的通知
    */
   'session/compress': { params: SessionTargetSchema, result: EmptySchema },
-  /**
-   * 回滚之前查一轮的检查点：execUsed 为真表示这一轮执行过命令，命令的效果不经存储，回滚撤不回；没有这一轮的检查点时为 false
-   */
-  'turn/checkpoint': {
-    params: z.object({ sessionId: z.string(), turnId: z.string() }),
-    result: z.object({ execUsed: z.boolean() }),
-  },
   'turn/rewind': { params: TurnRewindParamsSchema, result: TurnRewindResultSchema },
   /** 清空待办 */
   'plan/clear': { params: SessionTargetSchema, result: EmptySchema },

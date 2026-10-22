@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
@@ -7,9 +7,9 @@ import { text, tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
 import { t } from '../texts';
 
-// 回滚一轮：只回滚文件，或连这一轮的对话一起删。回滚撤不回来，先确认，焦点落在「取消」上。确认之前先查这一轮的检查点：
-// 执行过命令的写明命令的效果不会撤回（命令的副作用不经存储），没查到的写明原因，查完才能确认。这一轮有转到后台的调用的
-// 写明它们在这一轮结束之后写的文件不会撤回（回合提交之后的写入不进这一轮的检查点）。
+// 回滚一轮：只回滚文件，或连这一轮的对话一起删。回滚撤不回来，先确认，焦点落在「取消」上。确认里固定写明只撤回经存储的
+// 文件改动，命令与外部工具的效果撤不回；这一轮有转到后台的调用的另写明它们在这一轮结束之后写的文件不会撤回（回合提交之后的
+// 写入不进这一轮的检查点）。
 // 结果如实回报：恢复与删除了几个文件、删掉几条消息；之后的回合也改过的文件，那些改动一并撤掉了，点名写出；没能回滚的写原因。
 // 对话真的删掉了的，那一轮 owner 发的文字放回输入框，不自动发，附件不放回
 
@@ -42,24 +42,6 @@ export function RewindDialog({
   const toast = useToast();
   const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
-  const [check, setCheck] = useState<{ execUsed: boolean } | { error: string }>();
-
-  useEffect(() => {
-    setCheck(undefined);
-    if (!target) return;
-    let current = true;
-    client.request('turn/checkpoint', { sessionId, turnId: target.turnId }).then(
-      result => {
-        if (current) setCheck(result);
-      },
-      (err: Error) => {
-        if (current) setCheck({ error: err.message });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [client, sessionId, target]);
 
   const rewind = async ({ turnId, scope, prompt }: RewindTarget) => {
     setBusy(true);
@@ -108,7 +90,7 @@ export function RewindDialog({
             <Button data-autofocus onClick={onClose}>
               {tr('cancel')}
             </Button>
-            <Button variant="primary" danger busy={busy || check === undefined} onClick={() => void rewind(target)}>
+            <Button variant="primary" danger busy={busy} onClick={() => void rewind(target)}>
               {tr('rewind')}
             </Button>
           </>
@@ -116,8 +98,7 @@ export function RewindDialog({
       }
     >
       {target && <p>{text(TEXT[target.scope].body)}</p>}
-      {check && 'error' in check && <p role="alert">{tr('rewindCheckFailed', { error: check.error })}</p>}
-      {check && 'execUsed' in check && check.execUsed && <p>{tr('rewindExecUsed')}</p>}
+      {target && <p>{tr('rewindLimits')}</p>}
       {target?.backgrounded && <p>{tr('rewindBackgrounded')}</p>}
     </Dialog>
   );

@@ -10,7 +10,7 @@ export const CHECKPOINT_ROOT = 'ws:/checkpoints';
  * checkpoint 自己的 blob/manifest 与用户文件共用这块磁盘，以复现递归路径。
  * `unreadable` 里的 URI「存在但读不出来」：stat 成功、读取抛错；`warns` 收集服务记的告警。
  */
-export function makeCheckpointService() {
+export function makeCheckpointService({ keepTurns = 0 }: { keepTurns?: number } = {}) {
   const disk = new Map<string, string>();
   const unreadable = new Set<string>();
   let svc: CheckpointServiceImpl;
@@ -42,9 +42,12 @@ export function makeCheckpointService() {
       if (cur === undefined) throw new Error(`ENOENT: ${uri}`);
       return Buffer.from(cur);
     },
+    // 删目录连同其下全部文件（GC 删回合与会话目录）
     delete: async (uri: string) => {
       await snapshot(uri, 'delete');
-      if (!disk.delete(uri)) throw new Error(`ENOENT: ${uri}`);
+      const inside = [...disk.keys()].filter(key => key.startsWith(`${uri}/`));
+      if (!disk.delete(uri) && inside.length === 0) throw new Error(`ENOENT: ${uri}`);
+      for (const key of inside) disk.delete(key);
     },
     move: async (from: string, to: string) => {
       await snapshot(from, 'rename', to);
@@ -81,7 +84,7 @@ export function makeCheckpointService() {
 
   const warns: string[] = [];
   const logger = { debug() {}, info() {}, warn: (msg: string) => void warns.push(msg), error() {} };
-  const cfg = { rootUri: CHECKPOINT_ROOT, maxFileSize: 1024 * 1024, keepSessions: 0, scopes: ['*'] };
+  const cfg = { rootUri: CHECKPOINT_ROOT, maxFileSize: 1024 * 1024, keepSessions: 0, keepTurns };
   // 不注入 memory：commitTurn 跳过消息时间戳，仅凭文件改动判断是否落盘
   svc = new CheckpointServiceImpl(cfg, logger as never, storage as never);
   return { svc, disk, storage, unreadable, warns };

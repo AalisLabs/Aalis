@@ -304,7 +304,7 @@ describe('checkpoint 用 agent 的回合 id', () => {
             },
           ],
         });
-        await app.plugin(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
+        await app.plugin(checkpointPlugin, { rootDir: 'data:/checkpoints', coverage: 'all', keepSessions: 0 });
       },
     );
     const app = apps.at(-1) as App;

@@ -21,8 +21,8 @@ import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, t
 
 // ════════════════════════════════════════════════════════════
 // 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局），
-// 流式拼接，工具卡按 display 渲染（生成参数期间写「正在生成」），全部折叠，回合上的回滚按功能位出现、确认前查这一轮
-// 执行过命令没有，驱动房间的提示条，更早的历史，
+// 流式拼接，工具卡按 display 渲染（生成参数期间写「正在生成」），全部折叠，回合上的回滚按功能位出现、打开即可确认，
+// 驱动房间的提示条，更早的历史，
 // 完成未读的清除，会话被删掉时回首页，Esc 停止，订阅失败的错误态，附件
 // ════════════════════════════════════════════════════════════
 
@@ -319,7 +319,6 @@ describe('时间线', () => {
           userMessage('u3', '还在吗'),
           turn('t3'),
         ]),
-      'turn/checkpoint': ({ turnId }) => ({ execUsed: turnId === 't2' }),
       'turn/rewind': params => {
         rewound.push(params);
         return {
@@ -338,15 +337,15 @@ describe('时间线', () => {
     const rewinds = log.getAllByRole('button', { name: '回滚这一轮' });
     expect(rewinds).toHaveLength(2);
 
+    const sent = server().frames.length;
     fireEvent.click(rewinds[0]);
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
     const dialog = within(screen.getByRole('dialog', { name: '回滚这一轮的文件改动？' }));
     expect(document.activeElement).toBe(dialog.getByRole('button', { name: '取消' }));
     const confirm = dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement;
-    expect(confirm.disabled, '查完这一轮有没有执行过命令之前不能确认').toBe(true);
-    await vi.waitFor(() => expect(confirm.disabled).toBe(false));
-    expect(requests('turn/checkpoint')).toEqual([{ sessionId: 's1', turnId: 't1' }]);
-    expect(dialog.queryByText(/命令的效果不会撤回/), '这一轮没执行过命令').toBeNull();
+    expect(confirm.disabled, '打开即可确认').toBe(false);
+    expect(server().frames.slice(sent), '打开对话框不发请求').toEqual([]);
+    expect(dialog.getByText('回滚只撤回经存储的文件改动，命令与外部工具的效果撤不回。')).toBeTruthy();
     fireEvent.click(confirm);
     await vi.waitFor(() => expect(rewound).toEqual([{ sessionId: 's1', turnId: 't1', scope: 'code' }]));
     const toasts = within(screen.getByRole('region', { name: '通知' }));
@@ -356,32 +355,13 @@ describe('时间线', () => {
     fireEvent.click(rewinds[1]);
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动与这一轮对话' }));
     const second = within(screen.getByRole('dialog'));
-    expect(await second.findByText('这一轮执行过命令，命令的效果不会撤回。')).toBeTruthy();
+    expect(second.getByText('回滚只撤回经存储的文件改动，命令与外部工具的效果撤不回。')).toBeTruthy();
     fireEvent.click(second.getByRole('button', { name: '回滚' }));
     await vi.waitFor(() => expect(rewound).toHaveLength(2));
     expect(rewound[1]).toEqual({ sessionId: 's1', turnId: 't2', scope: 'code-and-chat' });
 
     act(() => server().notify('features/changed', { features: { ...INIT.features, rewind: false } }));
     expect(log.queryAllByRole('button', { name: '回滚这一轮' })).toHaveLength(0);
-  });
-
-  it('回滚前没查到这一轮有没有执行过命令：对话框写明原因，仍可以回滚', async () => {
-    app = await renderApp('/s/s1', {
-      'session/subscribe': () => snapshot([userMessage('u1', '改一下'), turn('t1', { outcome: 'replied' })]),
-      'turn/checkpoint': () => {
-        throw new Error('检查点读不出来');
-      },
-      'turn/rewind': () => ({ ok: true, restored: [], deleted: [], errors: [], alsoChangedBy: [] }),
-    });
-    const log = within(await timeline());
-    fireEvent.click(log.getByRole('button', { name: '回滚这一轮' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
-    const dialog = within(screen.getByRole('dialog'));
-    expect((await dialog.findByRole('alert')).textContent).toBe(
-      '没能确认这一轮有没有执行过命令（检查点读不出来）；命令的效果不会随回滚撤回。',
-    );
-    fireEvent.click(dialog.getByRole('button', { name: '回滚' }));
-    await vi.waitFor(() => expect(requests('turn/rewind')).toHaveLength(1));
   });
 
   it('回滚确认：这一轮有转到后台的调用（工具卡带 taskId）时写明它们在这一轮结束之后写的文件不会撤回，没有时不写', async () => {
@@ -397,7 +377,6 @@ describe('时间线', () => {
           toolCall('c2', 'exec', { turnId: 't2' }),
           agentMessage('a2', '改好了', { turnId: 't2' }),
         ]),
-      'turn/checkpoint': () => ({ execUsed: false }),
     });
     const log = within(await timeline());
     const note = '这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。';
@@ -409,9 +388,6 @@ describe('时间线', () => {
       fireEvent.click(button);
       fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
       const dialog = within(screen.getByRole('dialog'));
-      await vi.waitFor(() =>
-        expect((dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement).disabled).toBe(false),
-      );
       expect(dialog.queryByText(note) !== null).toBe(shown);
       fireEvent.click(dialog.getByRole('button', { name: '取消' }));
     }
@@ -427,7 +403,6 @@ describe('时间线', () => {
           userMessage('u2', '顺便看看日志'),
           agentMessage('a1', '放到后台了', { turnId: 't1' }),
         ]),
-      'turn/checkpoint': () => ({ execUsed: false }),
     });
     const log = within(await timeline());
     const buttons = log.getAllByRole('button', { name: '回滚这一轮' });
@@ -435,9 +410,6 @@ describe('时间线', () => {
     fireEvent.click(buttons[1] as HTMLElement);
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
     const dialog = within(screen.getByRole('dialog'));
-    await vi.waitFor(() =>
-      expect((dialog.getByRole('button', { name: '回滚' }) as HTMLButtonElement).disabled).toBe(false),
-    );
     expect(dialog.getByText('这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。')).toBeTruthy();
   });
 
@@ -948,7 +920,6 @@ describe('回滚放回输入框', () => {
           turn('t1', { outcome: 'replied' }),
           agentMessage('a1', '改好了', { turnId: 't1' }),
         ]),
-      'turn/checkpoint': () => ({ execUsed: false }),
       'turn/rewind': ({ scope }) => rewound(scope),
       'turn/send': () => ({}),
     });
@@ -957,9 +928,7 @@ describe('回滚放回输入框', () => {
     const rewind = async (item: string) => {
       fireEvent.click(log.getByRole('button', { name: '回滚这一轮' }));
       fireEvent.click(screen.getByRole('menuitem', { name: item }));
-      const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: '回滚' }) as HTMLButtonElement;
-      await vi.waitFor(() => expect(confirm.disabled).toBe(false));
-      fireEvent.click(confirm);
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '回滚' }));
       await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     };
     await rewind('回滚文件改动');

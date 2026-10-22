@@ -72,7 +72,6 @@ function doubles() {
       bus.current = events.use;
       provide.use(checkpoint, {
         beforeMutate: async () => {},
-        execUsed: async () => true,
         rollback: async (_sessionId, turnId) => rollback(turnId),
         rollbackWithChat: async (_sessionId, turnId) => ({
           ...rollback(turnId),
@@ -224,12 +223,12 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       `，到 ${AUTO_COMPRESS * 100}% 自动压缩`,
     );
 
-    // 回滚：检查点在场就有回滚入口（平时藏着，悬停在这一轮上才出现，触屏上常显），确认里写明这一轮执行过命令
+    // 回滚：检查点在场就有回滚入口（平时藏着，悬停在这一轮上才出现，触屏上常显），确认里写明命令与外部工具的效果撤不回
     if (!phone) await page.hover('.turn:has(.turn-rewind)');
     await page.locator(aria('回滚这一轮', 'button')).click();
     await page.locator(aria('回滚文件改动', 'menuitem')).click();
     const confirm = aria('回滚这一轮的文件改动？', 'dialog');
-    await page.waitForSelector(`${confirm} ${text('这一轮执行过命令，命令的效果不会撤回。')}`);
+    await page.waitForSelector(`${confirm} ${text('回滚只撤回经存储的文件改动，命令与外部工具的效果撤不回。')}`);
     await page.locator(`${confirm} ${aria('回滚', 'button')}`).click();
     await toastSays(page, '已回滚：恢复 1 个文件');
     expect(stack.rewound).toHaveLength(1);

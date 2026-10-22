@@ -34,7 +34,7 @@ describe('checkpoint × 家目录布局的内置根', () => {
         { name: 'ws', path: join(base, 'ws'), kind: 'workspace', readable: true, writable: true, deletable: true },
       ],
     });
-    await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
+    await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', keepSessions: 0 });
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
     storage = host.storage.use;

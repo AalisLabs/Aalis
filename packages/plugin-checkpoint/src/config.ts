@@ -20,21 +20,26 @@ export const configSchema = defineConfig({
     description: 'GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。',
     default: 20,
   },
-  scopes: {
-    type: 'multiselect',
-    label: '启用作用域',
+  keepTurns: {
+    type: 'number',
+    label: '每个会话保留的回合数',
     description:
-      '仅在匹配下列 platform:sessionType 的会话中参与 turn 生命周期（建 checkpoint）。格式举例：`webui:*` / `onebot:group` / `*` 表示全部。默认仅 `webui:*`：onebot 等聊天平台不会为每条消息创建 checkpoint。留空数组 = 禁用 checkpoint（仅允许手动 rollback）。',
-    // 常用选项之外的作用域也合法
-    allowCustom: true,
+      '每次提交回合后，这个会话的回合数超过此值就删除最早的几轮（连同备份），只能回滚最近这么多轮；没改文件、只有对话的回合也算一轮。设为 0 不限。',
+    default: 200,
+  },
+  // 按会话字段：在哪一层读都是字面意思，在某个群的场所层选「记」就是这个群记
+  coverage: {
+    type: 'select',
+    label: '记检查点的会话',
+    description:
+      '哪些会话的回合建检查点（回滚靠它）。「按受众」只在受众只有你的会话里记：WebUI、终端与你自己的 IM 私聊；群与别人的私聊不记，你从 WebUI 发进群的那一轮也不记。',
+    default: 'ownerOnly',
     options: [
-      { label: '所有会话', value: '*' },
-      { label: 'WebUI 会话（推荐）', value: 'webui:*' },
-      { label: 'OneBot 群聊', value: 'onebot:group' },
-      { label: 'OneBot 私聊', value: 'onebot:private' },
-      { label: 'CLI', value: 'cli:*' },
+      { label: '不记', value: 'off' },
+      { label: '按受众（只有你时记）', value: 'ownerOnly' },
+      { label: '记', value: 'all' },
     ],
-    default: ['webui:*'],
+    session: { prominence: 'advanced' },
   },
 });
 

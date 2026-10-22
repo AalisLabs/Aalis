@@ -239,6 +239,13 @@
 - 存档不在时 agent 当轮发给模型的正文与存档同一份拼法，也拼进引用回复与附件描述（此前只加发送者前缀）。
 - api-authority 的 `AuthorityService` 新增必填成员 `ownerOn(platform)`：owner 在这个平台登记的账号（配置 `owners` 里这个平台的第一个，本机控制台身份不算），自己实现权限服务的要实现它。plugin-message-archive、plugin-trigger-laya、plugin-agent 新加权限服务的可选依赖。
 
+### 检查点默认只记受众只有 owner 的会话，回滚提示固定一句（@aalis/api-checkpoint、@aalis/plugin-checkpoint、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client）
+
+- plugin-checkpoint 的 `scopes`（按平台与类型名匹配，默认 `webui:*`）删掉，换成可按会话覆盖的「记检查点的会话」`coverage`：不记（`off`）、按受众（`ownerOnly`，默认）、记（`all`），能按平台档、平台类型档、场所与单个会话设，在某个群的场所层选「记」就是这个群记。按受众只记房间类别为 `owner-only` 的会话：WebUI 与终端的会话、owner 自己的 IM 私聊记（此前终端与 IM 私聊默认不记），群与别人的私聊不记，owner 从 WebUI 发进群的那一轮也不再记；会话管理不在时一律不记（此前 WebUI 的回合照记）。新加会话管理、权限服务、会话设置与宿主配置的可选依赖。
+- 检查点不再按工具名认「这一轮跑过命令」：api-checkpoint 删掉 `execUsed`，清单不再记这个标记，会话协议删掉 `turn/checkpoint`。
+- WebUI 的回滚对话框打开即可确认，固定写一句「回滚只撤回经存储的文件改动，命令与外部工具的效果撤不回」，不再先查这一轮跑没跑命令、也没有查不到时的那句提示。
+- 每个会话只能回滚最近 `keepTurns`（默认 200）轮：每次提交回合后，这个会话超出的最旧回合连同备份删掉，没改文件、只有对话的回合也算一轮；设为 0 不限。此前一个会话的回合不限数量，只按会话数（`keepSessions`）清理。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

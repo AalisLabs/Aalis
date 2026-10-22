@@ -180,6 +180,14 @@ const REMOVED: Array<[string, string]> = [
   ['getPersonaSkills', '人设卡上的技能名单，由技能插件可按会话覆盖的「启用的技能」取代'],
   ['skipArchive', '出站附件跳过归档的标记：发出去的都记，出站记历史只由 message-archive 的 recordOutbound 做'],
   ['inboxRecords', 'webui-server 自己记 WebUI 会话的出站，改由 message-archive 的 recordOutbound 记'],
+  [
+    'isScopeEnabled',
+    '按平台与类型名匹配的作用域判定：回复策略的由「生效范围」字段与 audienceIncludes 取代，检查点的由可按会话覆盖的 coverage 取代',
+  ],
+  // 含 markExecUsed、rewindExecUsed
+  ['execUsed', '检查点按工具名认「这一轮跑过命令」的标记与查询：回滚对话框固定写明命令与外部工具的效果撤不回'],
+  ['turn/checkpoint', '会话协议里回滚之前查这一轮跑没跑命令的方法'],
+  ['rewindCheckFailed', '回滚对话框查不到这一轮跑没跑命令时的提示'],
 ];
 
 /**
@@ -267,14 +275,6 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
       'clientSideJsonRendering',
       'enabledToolGroups',
     ].map((key): [string, string, string] => [pkg, key, '具体的设置项是插件配置里的字段，会话层不认识']),
-  ),
-  // plugin-checkpoint 另有同名的局部函数，只在回复策略的契约与三个插件里查
-  ...['api-gateway', 'plugin-trigger-policy', 'plugin-trigger-laya', 'plugin-flow-control'].map(
-    (pkg): [string, string, string] => [
-      pkg,
-      'isScopeEnabled',
-      '回复策略的作用域判定，由「生效范围」字段与 audienceIncludes 取代',
-    ],
   ),
 ];
 
