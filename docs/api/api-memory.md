@@ -67,16 +67,16 @@ export default definePlugin({
 
 ## 跨会话取料的范围
 
-没有共享的召回范围：跨会话取料的插件各有自己的范围字段，都标成可按会话覆盖（[api-session-settings](./api-session-settings.md)），值就是这个会话取料的上限，只有 owner 能改：
+取别的会话的原文（跨会话历史的被动注入与 `recent_messages`、读会话历史的工具、按消息 id 取消息）只有一条规则，在会话管理（[api-session-manager](./api-session-manager.md#取别的会话的东西) 的 `canTake`，消费方经 `takeFrom` 调）：范围与读别的群、读别人的私聊、跨机器人账号三个开关是 [plugin-session-manager](../plugins/plugin-session-manager.md#配置) 的按会话字段，只有 owner 能改。
+
+另有两个插件的取料不经这条规则，各有自己的按会话字段：
 
 | 插件 | 字段 | 取值 |
 |---|---|---|
-| [plugin-memory-history](../plugins/plugin-memory-history.md) | `scope` | `session`、`same-platform`、`cross-platform` |
 | [plugin-memory-vector](../plugins/plugin-memory-vector.md) | `crossSessionMode` | `isolated`、`user`、`platform`、`all` |
-| [plugin-tool-session](../plugins/plugin-tool-session.md) | `scope` | `current`、`platform`、`all` |
 | [plugin-user-relation](../plugins/user-relation.md) | `recallScope` | `session`、`all` |
 
-四个字段都标 `onInvalid: 'error'`：某一层写坏了的值原样交给插件，插件按最窄处理，不回落到更宽的层。后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它，要另外设。
+向量记忆召回的是原文片段，默认全部打通（群里的一轮也可能召回别人私聊里的原文，见 [安全模型](../concepts/security-model.md)）；关系图给的是整理出的人物、关系与事件摘要。这些字段都标 `onInvalid: 'error'`：某一层写坏了的值原样交给插件，插件按最窄处理，不回落到更宽的层。后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它，要另外设。
 
 ## 压缩服务
 

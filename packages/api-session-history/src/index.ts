@@ -1,53 +1,13 @@
 /**
- * api-session-history —— `session-history` 服务的公共类型，
- * 以及供平台插件注入访问控制规则的 hook 接口。
+ * api-session-history —— `session-history` 服务的公共类型。
  *
- * 设计要点：
- * - `SessionHistoryService.getHistory` 是统一入口，无论调用方是通用工具
- *   `session_get_history` 还是平台专属工具（如 `onebot_get_session_history`），
- *   都会走同一条 access checker 链 —— 不存在"绕过"路径。
- * - 平台插件用 `registerAccessChecker({ platform: 'onebot', check })` 注入
- *   各自的细粒度规则。每个 checker 只关心自己 platform 前缀的 sessionId，
- *   跨平台目标由 service 自带的 scope 配置粗筛。
- * - any-deny 短路：同一 platform 多个 checker 时，只要任一个返回 deny 即拒绝。
+ * `SessionHistoryService.getHistory` 是读会话历史的统一入口：通用工具 `session_get_history` 与平台专属工具（如
+ * `onebot_get_session_history`）都经它读，每次按会话管理的规则判能不能读（api-session-manager 的 `takeFrom`），
+ * 带这次调用的授权身份。
  */
 
 import type { ToolCallContext } from '@aalis/api-tools';
 import { defineService } from '@aalis/core';
-
-/**
- * Access checker 的判定结果。
- * - `allow` / `deny` 表示显式表态
- * - 返回 `undefined` = "我不表态，继续走下一个 checker / 默认通过"
- */
-export type AccessDecision = { decision: 'allow' | 'deny'; reason?: string };
-
-export interface AccessCheckArgs {
-  /** 调用所在的窗口：当前会话（callCtx 提供）本身，子会话取根会话的（子会话没有窗口） */
-  currentSessionId: string;
-  /** LLM 想读取的目标 sessionId */
-  targetSessionId: string;
-  /** 完整的工具调用上下文（含 platform/userId 等） */
-  callCtx: ToolCallContext;
-}
-
-export interface AccessChecker {
-  /**
-   * 该 checker 只对 `targetSessionId.startsWith(platform + ':')` 的目标生效。
-   * 例如 onebot 插件传 'onebot'，仅当目标是 `onebot:*` 时被询问。
-   */
-  platform: string;
-  /**
-   * 同步判定：返回 `deny` 立即拒绝；`allow` 标记显式通过；
-   * 返回 `undefined` 表示不表态，由后续 checker 或默认策略接管。
-   */
-  check(args: AccessCheckArgs): AccessDecision | undefined;
-}
-
-/**
- * Disposer 模式：调用一次即解除注册（插件 dispose 时使用）。
- */
-export type AccessCheckerDisposer = () => void;
 
 /**
  * `session-history` 返回结果。要么 `ok: true` 携带消息列表，要么 `error` 携带原因。
@@ -76,6 +36,10 @@ export type SessionHistoryReadResult =
  * 平台插件 / webui 等：`import { sessionHistory } from '@aalis/api-session-history'`，写入 uses。
  */
 export interface SessionHistoryService {
+  /**
+   * 读 options.sessionId 的历史。callCtx 的会话是取的一方，授权身份取 callCtx 的 actor（没有时取 platform 与 userId）；
+   * 会话管理的规则不放行时回 `{ error: 原因 }`
+   */
   getHistory(
     options: {
       sessionId: string;
@@ -88,11 +52,6 @@ export interface SessionHistoryService {
     },
     callCtx: ToolCallContext,
   ): Promise<SessionHistoryReadResult>;
-
-  /**
-   * 注册一个 access checker。返回 disposer，平台插件在 dispose 时调用以解绑。
-   */
-  registerAccessChecker(checker: AccessChecker): AccessCheckerDisposer;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

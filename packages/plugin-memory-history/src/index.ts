@@ -8,8 +8,9 @@
  *   - 与 vector / summary 同样走 DB，行为一致、可审计。
  *
  * 注入策略：
- *   - 向 `agent:prompt` 贡献点交一块（turn-context 锚位：随其它会话滚动、准每轮变，落历史后护前缀缓存），按这个会话的跨会话
- *     历史范围（scope，可按会话设）决定是否过滤 platform；范围是被动注入与工具的上限。
+ *   - 向 `agent:prompt` 贡献点交一块（turn-context 锚位：随其它会话滚动、准每轮变，落历史后护前缀缓存）。
+ *   - 能取哪些会话的消息按会话管理的跨会话规则逐条判（takeFrom）：被动注入不是谁要的，不带授权身份；recent_messages
+ *     带这次调用的授权身份。
  *   - 排重由组装器统一按全局键做，贡献方无需自查。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
@@ -21,21 +22,14 @@
 
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
-import { ownHostConfig } from '@aalis/api-host-config';
 import { memory, type RecentMessageRecord } from '@aalis/api-memory';
-import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
-import { sessionFields } from '@aalis/api-session-settings';
+import { sessionManager, takeFrom } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
-import { t } from './texts.js';
 
 // ===== 配置 schema =====
-
-/** 跨会话历史范围，由窄到宽 */
-const HISTORY_SCOPES = ['session', 'same-platform', 'cross-platform'] as const;
-export type HistoryScope = (typeof HISTORY_SCOPES)[number];
 
 const DEFAULT_HEADER_TEXT =
   '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。';
@@ -48,20 +42,6 @@ const configSchema = defineConfig({
     default: true,
     description:
       '是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。',
-  },
-  // 按会话字段：坏值原样交来，按最窄处理
-  scope: {
-    type: 'select',
-    label: t('scopeLabel'),
-    default: 'same-platform',
-    onInvalid: 'error',
-    options: [
-      { label: t('scopeSession'), value: 'session' },
-      { label: t('scopeSamePlatform'), value: 'same-platform' },
-      { label: t('scopeCrossPlatform'), value: 'cross-platform' },
-    ],
-    description: t('scopeDescription'),
-    session: { prominence: 'advanced' },
   },
   limit: {
     type: 'number',
@@ -111,10 +91,6 @@ type HistoryConfig = ConfigOf<typeof configSchema>;
 const TOOL_NAME = 'recent_messages';
 
 interface QueryOptions {
-  /** 跨会话的查询范围（不是 session） */
-  scope: Exclude<HistoryScope, 'session'>;
-  currentPlatform?: string;
-  currentSessionId?: string;
   limit?: number;
   maxAgeMinutes?: number;
   /** 覆盖 perSessionLimit；不传则用配置默认值 */
@@ -173,12 +149,8 @@ const uses = {
   logger,
   contributions,
   tools: optional(tools),
-  /** 当前会话的出生平台（子会话取根会话的）；不在场时当前平台取入口平台 */
+  /** 能取哪些会话的消息按它的规则判（takeFrom）；不在时只取得到当前会话的 */
   sessionManager: optional(sessionManager),
-  /** 按会话读跨会话历史范围；缺席时取插件配置里的值 */
-  sessionFields: optional(sessionFields),
-  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
-  document: optional(ownHostConfig),
 };
 
 export default definePlugin({
@@ -190,38 +162,20 @@ export default definePlugin({
   apply(caps) {
     const { memory, config, logger, contributions, tools, sessionManager } = caps;
     const cfg = normalizeConfig(parseConfig(configSchema, config.use, logger.use));
-    const fields = caps.sessionFields.use.fields(configSchema, caps);
 
     logger.use.info(
       `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
     );
 
     /**
-     * same-platform 按哪个平台取：房间会话按会话管理记下的出生平台（子会话取根会话的），不论从哪个入口驱动，
-     * owner 从 WebUI 往群里插话时不取 owner 自己的 WebUI 会话；没有出生平台的会话（WebUI、CLI 等）按入口平台
+     * 当前会话之外的近期消息，按时间升序。超取（limit 的十倍、封顶 1000）后从新到旧逐条过会话管理的规则（同一会话只判一次），
+     * 被拒的不占名额，过了的再按每会话上限与总数截。principal 是这次取用的授权身份，被动注入不传
      */
-    function currentPlatformOf(sessionId: string | undefined, entryPlatform: string | undefined): string | undefined {
-      const sm = sessionManager.present ? sessionManager.use : undefined;
-      if (!sm || sessionId === undefined) return entryPlatform;
-      return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originPlatform ?? entryPlatform;
-    }
-
-    /**
-     * 这一次能查的范围：这个会话的跨会话历史范围（每次现读，改了下一轮即生效；坏值按 session），要的更窄时取要的。为
-     * session 时不做跨会话查询，返回 undefined。platform 是入口平台
-     */
-    function allowedScope(
-      sessionId: string | undefined,
-      platform: string | undefined,
-      requested?: HistoryScope,
-    ): QueryOptions['scope'] | undefined {
-      const value = fields.get(sessionId, { platform }).scope;
-      const cap = HISTORY_SCOPES.includes(value as HistoryScope) ? (value as HistoryScope) : 'session';
-      const scope = requested && HISTORY_SCOPES.indexOf(requested) < HISTORY_SCOPES.indexOf(cap) ? requested : cap;
-      return scope === 'session' ? undefined : scope;
-    }
-
-    async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
+    async function queryRecent(
+      currentSessionId: string,
+      principal: { platform: string; userId: string } | undefined,
+      opts: QueryOptions = {},
+    ): Promise<RecentMessageRecord[]> {
       // 每次查询取当前提供者：换后端时下一次查询自然走新实例
       const backend = memory.present ? memory.use : undefined;
       if (!backend?.getRecentMessagesAcrossSessions) {
@@ -232,40 +186,35 @@ export default definePlugin({
       const limit = Math.max(1, opts.limit ?? cfg.limit);
       const maxAge = opts.maxAgeMinutes ?? cfg.maxAgeMinutes;
       const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
-      const platform = opts.scope === 'same-platform' ? opts.currentPlatform : undefined;
-      const excludeSessionIds =
-        cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
-
-      // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
-      // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
+      const excludeSessionIds = cfg.excludeCurrentSession ? [currentSessionId] : undefined;
       const perSessionLimit = Math.max(0, opts.perSessionLimit ?? cfg.perSessionLimit);
-      const backendLimit = perSessionLimit > 0 ? Math.min(limit * 10, 1000) : limit;
 
       const raw = await backend.getRecentMessagesAcrossSessions({
-        limit: backendLimit,
+        limit: Math.min(limit * 10, 1000),
         sinceTs,
-        platform,
         excludeSessionIds,
         roles: ['user', 'assistant', 'notice'],
         // 宿主通知与代发任务的指令只对所在会话的那一轮有意义，不带进别的会话（注入与 recent_messages 同一口径）
         excludeKinds: [...DIRECTIVE_KINDS],
       });
 
-      if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
-
-      // raw 是时间升序；为做 per-session cap 时优先保留每会话最新若干条，
-      // 先反转为降序遍历，命中即累计；累计到 limit 或扫完为止；最后再反转回升序。
+      // raw 是时间升序：从新到旧取，优先保留每个会话最新的几条，最后再反转回升序
+      const allowed = new Map<string, boolean>();
       const perSessionCount = new Map<string, number>();
       const picked: RecentMessageRecord[] = [];
       for (let i = raw.length - 1; i >= 0 && picked.length < limit; i--) {
         const rec = raw[i];
+        let ok = allowed.get(rec.sessionId);
+        if (ok === undefined) {
+          ok = takeFrom(sessionManager, currentSessionId, rec.sessionId, principal).ok;
+          allowed.set(rec.sessionId, ok);
+        }
         const cnt = perSessionCount.get(rec.sessionId) ?? 0;
-        if (cnt >= perSessionLimit) continue;
+        if (!ok || (perSessionLimit > 0 && cnt >= perSessionLimit)) continue;
         perSessionCount.set(rec.sessionId, cnt + 1);
         picked.push(rec);
       }
-      picked.reverse();
-      return picked;
+      return picked.reverse();
     }
 
     // ---- 注入贡献（agent:prompt / turn-context 槽；幂等与落点由组装器统一保障）----
@@ -275,30 +224,22 @@ export default definePlugin({
         id: 'memory-history',
         anchor: 'turn-context',
         async build(view) {
-          const scope = allowedScope(view.sessionId, view.platform);
-          // 范围限于本会话：本插件注入的全是其他会话的原文，整块不交
-          if (!scope) return null;
-          const platform = currentPlatformOf(view.sessionId, view.platform);
+          if (!view.sessionId) return null;
           let records: RecentMessageRecord[];
           try {
-            records = await queryRecent({
-              scope,
-              currentPlatform: platform,
-              currentSessionId: view.sessionId,
-            });
+            // 被动注入不是谁要的：不带授权身份，自己的私聊不适用
+            records = await queryRecent(view.sessionId, undefined);
           } catch (err) {
             logger.use.warn('memory-history: 查询近期消息失败，跳过注入:', err);
             return null;
           }
           if (records.length === 0) {
-            logger.use.debug(
-              `memory-history: 未找到可注入的跨会话消息 (scope=${scope}, platform=${platform ?? '?'}, session=${view.sessionId ?? '?'})`,
-            );
+            logger.use.debug(`memory-history: 未找到可注入的跨会话消息 (session=${view.sessionId})`);
             return null;
           }
           const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
           logger.use.debug(
-            `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${scope}, platform=${platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
+            `memory-history: 已注入 ${records.length} 条跨会话消息 (sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
           );
           return block;
         },
@@ -317,16 +258,10 @@ export default definePlugin({
           function: {
             name: TOOL_NAME,
             description:
-              '查询跨会话近期消息上下文。返回按时间升序排列的消息片段，可用于了解平台/跨平台的近期对话动态。每条格式为 [time][platform/session][role/sender] content。',
+              '查询别的会话的近期消息，可用于了解最近的对话动态。能取哪些会话按会话管理的跨会话规则（默认同平台、不取别人的私聊）。返回按时间升序排列的消息片段，每条格式为 [time][platform/session][role/sender] content。',
             parameters: {
               type: 'object',
               properties: {
-                scope: {
-                  type: 'string',
-                  enum: ['same-platform', 'cross-platform'],
-                  description:
-                    'same-platform = 仅取与当前会话同平台的历史；cross-platform = 跨所有平台聚合。不传则按这个会话的跨会话历史范围；比它宽时按它。',
-                },
                 limit: {
                   type: 'number',
                   description: `返回条数上限（默认 ${cfg.limit}）。`,
@@ -344,23 +279,17 @@ export default definePlugin({
             },
           },
         },
-        // 读的是别的会话（默认排除当前会话；同平台别的群与私聊，cross-platform 含 WebUI），
-        // 与 session_get_history 同属跨会话读取：等级 1 起可用，挡住 0 级；不弹确认
+        // 读的是别的会话（默认排除当前会话），与 session_get_history 同属跨会话读取：等级 1 起可用，挡住 0 级；不弹确认
         risk: 'sensitive',
         handler: async (args, callCtx) => {
-          const requested = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
-          const scope = allowedScope(callCtx.sessionId, callCtx.platform, requested);
-          if (!scope) return '本会话的跨会话历史范围限于本会话，不能查询其他会话的近期消息。';
-          const platform = currentPlatformOf(callCtx.sessionId, callCtx.platform);
-          const records = await queryRecent({
-            scope,
-            currentPlatform: platform,
-            currentSessionId: callCtx.sessionId,
+          const { userId } = callCtx;
+          const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
+          const records = await queryRecent(callCtx.sessionId, principal, {
             limit: typeof args.limit === 'number' ? args.limit : undefined,
             maxAgeMinutes: typeof args.maxAgeMinutes === 'number' ? args.maxAgeMinutes : undefined,
             perSessionLimit: typeof args.perSessionLimit === 'number' ? args.perSessionLimit : undefined,
           });
-          if (records.length === 0) return '（最近没有匹配的消息）';
+          if (records.length === 0) return '（最近没有可取的消息：能取哪些会话按会话管理的跨会话规则）';
           return formatRecords(records);
         },
       });

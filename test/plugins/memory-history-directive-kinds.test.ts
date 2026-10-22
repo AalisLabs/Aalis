@@ -6,8 +6,10 @@ import { App, logger, provide, services } from '../../packages/core/src/index.js
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 跨会话注入不带指令类消息（安全）。
@@ -15,7 +17,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 宿主通知（白纸的完成通知、后台任务结束通知）与代发任务的指令归档为 notice，kind 属于 DIRECTIVE_KINDS。
 // 它们只对所在会话的那一轮有意义；memory-history 按 user、assistant、notice 取别的会话的近期消息，
 // 不排除这些 kind 时，试点群的宿主通知正文会进同平台其他会话（包括 owner 私聊）的 turn-context，
-// recent_messages 也能读出来。普通 notice（戳一戳等事件）照旧带上。
+// recent_messages 也能读出来。普通 notice（戳一戳等事件）照旧带上。两个会话已收录，同平台的群按取别的会话的规则取得到。
 // ════════════════════════════════════════════════════════════
 
 /** 当前会话：owner 的私聊（占位号） */
@@ -45,6 +47,7 @@ async function setup() {
   await app.plugins.idle();
   const memory = host.services.use.get(memoryService);
   if (!memory) throw new Error('memory 服务未就绪');
+  await seedRooms(memory, { [OWNER_PRIVATE]: '<owner>', [PILOT]: '<试点群>' });
   const baseTs = Date.now() - 10_000;
   const seeds: Message[] = [
     { role: 'user', content: '试点群原文', timestamp: baseTs + 1, metadata: { platform: 'onebot' } },
@@ -75,9 +78,12 @@ async function setup() {
     },
     registerGroup: () => () => {},
   } as never);
+  await app.plugin(sessionManagerPlugin);
   await app.plugin(memoryHistory, { maxAgeMinutes: 0, perSessionLimit: 0 });
   await app.plugins.idle();
-  if (app.plugins.getPlugin(memoryHistory.name)?.state !== 'active') throw new Error('plugin-memory-history 未激活');
+  for (const name of [sessionManagerPlugin.name, memoryHistory.name]) {
+    if (app.plugins.getPlugin(name)?.state !== 'active') throw new Error(`${name} 未激活`);
+  }
   const recentMessages = toolHandlers.get('recent_messages');
   if (!recentMessages) throw new Error('recent_messages 未注册');
   return { assembly, recentMessages };
@@ -99,12 +105,10 @@ describe('plugin-memory-history：跨会话读取排除指令类 kind（安全�
 
   it('recent_messages：同样读不到别的会话的宿主通知与代发任务指令', async () => {
     const { recentMessages } = await setup();
-    for (const scope of ['same-platform', 'cross-platform']) {
-      const out = await recentMessages({ scope }, { sessionId: OWNER_PRIVATE, platform: 'onebot' });
-      expect(out, `scope=${scope}`).toContain('试点群原文');
-      expect(out, `scope=${scope}`).toContain(PLAIN_NOTICE);
-      expect(out, `scope=${scope}`).not.toContain(HOST_NOTICE);
-      expect(out, `scope=${scope}`).not.toContain(DELEGATION);
-    }
+    const out = await recentMessages({}, { sessionId: OWNER_PRIVATE, platform: 'onebot' });
+    expect(out).toContain('试点群原文');
+    expect(out).toContain(PLAIN_NOTICE);
+    expect(out).not.toContain(HOST_NOTICE);
+    expect(out).not.toContain(DELEGATION);
   });
 });

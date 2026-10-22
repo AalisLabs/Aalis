@@ -296,6 +296,44 @@ export function fromElsewhere(
   return room?.originPlatform !== undefined && room.originPlatform !== message.platform;
 }
 
+/** 取别的会话的东西行不行（{@link SessionManagerService.canTake}）：拒绝时带一句原因，交给模型的取它的 source */
+export type TakeVerdict = { ok: true } | { ok: false; reason: TextRef };
+
+/** 判不出会话的来历时的原因：会话管理不在、会话不在会话表里或判不出窗口。包装函数与会话管理的实现共用 */
+export const TAKE_UNKNOWN = t('takeUnknown');
+
+/**
+ * 取别的会话的东西：消费方一律调它，不直接调方法、不各写退路。会话管理在时转调 {@link SessionManagerService.canTake}；
+ * 不在时只放行同一会话 id，其余判不出
+ */
+export function takeFrom(
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
+  currentId: string,
+  targetId: string,
+  principal?: { platform: string; userId: string },
+): TakeVerdict {
+  if (sessionManager.present) return sessionManager.use.canTake(currentId, targetId, principal);
+  return currentId === targetId ? { ok: true } : { ok: false, reason: TAKE_UNKNOWN };
+}
+
+/**
+ * IM 的一对一窗口是不是授权身份自己与她的私聊：出生平台的适配器明确声明了这个窗口的类型为一对一（declared，由调用方按适配器的
+ * 声明算；推断出的不算：没声明类型的平台整个按一对一记，记下的对端是收录时的第一位发言者），并且对端就是授权身份的账号、
+ * 授权身份的平台就是出生平台，或者两边都是 owner 的身份（isOwner 由调用方给，不给时只认前一种）。没有授权身份、授权身份没有
+ * 账号的不算。room 是根会话
+ */
+export function oneToOneWith(
+  room: Pick<SessionInfo, 'originPlatform' | 'originChat'>,
+  principal: { platform: string; userId: string } | undefined,
+  declared: boolean,
+  isOwner?: (platform: string, userId: string) => boolean,
+): boolean {
+  const { originPlatform, originChat } = room;
+  if (!declared || !principal?.userId || originPlatform === undefined || !originChat) return false;
+  if (principal.platform === originPlatform && principal.userId === originChat.targetId) return true;
+  return Boolean(isOwner?.(principal.platform, principal.userId) && isOwner(originPlatform, originChat.targetId));
+}
+
 /** 改会话时调用方能给的字段：metadata 合并式改（顶层键整键替换） */
 export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'metadata'>>;
 
@@ -307,6 +345,7 @@ export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'meta
  *
  * 设计要点：
  * - 会话管理不认识设置：插件按会话、按场所存的数据放在两种记录的 metadata 里（如会话设置）
+ * - 取别的会话的东西（历史、媒体）只有一条规则，就是 {@link canTake}，提供者必须实现；消费方经 {@link takeFrom} 调
  * - 树形结构通过 parentId/children 维护，支持未来的任务拆分场景
  * - 会话生命周期事件通过 EventBus 广播
  */
@@ -354,6 +393,22 @@ export interface SessionManagerService {
    * （收录失败只告警）。网关在入站相位之前等它，入站管道里的读取方看到的都是已收录的会话
    */
   recordInbound(message: IncomingMessage): Promise<void>;
+
+  // ---- 取别的会话的东西 ----
+
+  /**
+   * 当前会话 current 能不能取会话 target 的东西（历史、媒体）。principal 是这次动作的授权身份：工具传这次调用的（actor，没有时
+   * 取 platform 与 userId，没有 userId 不传），不是谁要的取用（跨会话历史的被动注入）不传。依次：
+   * 1. 同一会话 id，或两边的根会话都判得出且是同一个（同一棵会话树）：放行
+   * 2. 任一边的根会话判不出（不在会话表里、父会话链断了、按 id 兜底建档的空记录、有出生平台却没有聊天窗口）：拒绝
+   * 3. 范围，取当前会话的生效值：本会话拒绝；同平台要两边根会话的平台相等；全部不比。根会话的平台：IM 房间取出生平台，owner 的面
+   *    （WebUI、终端与项目会话）取创建来源
+   * 4. 按目标：两边同平台、都记了机器人账号且不同，要「跨机器人账号」；目标多方要「读别的群」；目标一对一（IM 的一对一窗口，以及
+   *    按与 owner 的一对一处理的 owner 的面）是授权身份自己的私聊的放行（IM 窗口按 {@link oneToOneWith}，owner 的面看授权身份是
+   *    不是 owner），否则要「读别人的私聊」
+   * 范围与三个开关由提供者按会话给出，对所有人一样，owner 也不例外；只看目标，不看当前会话有没有聊天窗口。同步给出，不抛错
+   */
+  canTake(currentId: string, targetId: string, principal?: { platform: string; userId: string }): TakeVerdict;
 
   // ---- 树形操作 ----
   // 会话的消息历史被清空（memory:clear 没指定类型或类型含 context，且消息历史那一行清成功）时，它的子会话一并删除：

@@ -17,10 +17,9 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 从 WebUI 驱动 IM 群房间时，提示词贡献方取跨会话料的「当前平台」是房间的出生平台：
-// memory-history 的同平台注入只取 onebot 的会话，不带 owner 自己 WebUI 会话的原文。
-// token:request 快照（webui-server 只带 sessionId，agent 按出生平台兜底）与真实回合同一口径，
-// 两处注入的是同一块内容。群房间已收录（出生平台是会话管理记下的字段），在会话管理读表之前预置。
+// 从 WebUI 驱动 IM 群房间时，跨会话料按群判：memory-history 的注入按取别的会话的规则，从群取同平台别的群，
+// 不带 owner 自己 WebUI 会话的原文。token:request 快照（webui-server 只带 sessionId，agent 按出生平台兜底）与真实回合
+// 同一口径，两处注入的是同一块内容。两个群已收录（出生平台是会话管理记下的字段），在会话管理读表之前预置。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -42,13 +41,16 @@ async function loadStack() {
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '<回复占位>' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
   await app.plugins.idle();
-  await seedRooms(app.bind({ memory: memoryService }).memory.use, { [GROUP]: '<群名占位>' });
+  await seedRooms(app.bind({ memory: memoryService }).memory.use, {
+    [GROUP]: '<群名占位>',
+    [OTHER_GROUP]: '<别的群名占位>',
+  });
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});
   await app.plugin(triggerPolicyPlugin, {});
   await app.plugin(flowControlPlugin, {});
   await app.plugin(sessionManagerPlugin, {});
-  await app.plugin(memoryHistoryPlugin, { scope: 'same-platform', maxAgeMinutes: 0, perSessionLimit: 0 });
+  await app.plugin(memoryHistoryPlugin, { maxAgeMinutes: 0, perSessionLimit: 0 });
   await app.plugin(agentPlugin, { systemPrompt: 'test bot' });
   await app.plugins.idle();
   // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿

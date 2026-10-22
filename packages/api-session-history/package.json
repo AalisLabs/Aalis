@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-session-history",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -37,5 +37,5 @@
     "aalis",
     "aalis-api"
   ],
-  "description": "会话历史契约：session-history 服务描述符、统一读历史入口与平台访问规则（默认提供者 @aalis/plugin-tool-session）"
+  "description": "会话历史契约：session-history 服务描述符与统一读历史入口，能读哪些会话按会话管理的规则（默认提供者 @aalis/plugin-tool-session）"
 }

@@ -5,7 +5,9 @@
 
 ## 概述
 
-注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。默认仅允许读取同平台范围内的会话，避免被当作全局搜索工具误用（语义检索请用 `memory_recall`）。读出的消息不含事件标记（schema-message 的 `CONTROL_KINDS`，如压缩分隔线、指令的回复）：它们不是对话内容，不交给模型；按条数读时多读一倍再去掉它们，取最后 `limit` 条；还是凑不满 `limit` 条时，结果带 `omittedNonConversation`，写明略去了几条非对话记录（没略去的不带）。「同平台」比较当前会话的平台与目标会话的平台，两边都取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不从会话 ID 推：当前会话是 IM 房间（群与私聊，含其子任务）时取房间的出生平台，不论这一轮从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）取入口平台。目标会话没有出生平台的（WebUI、CLI 的会话，以及会话表里没有记录、按 ID 建档的会话）不属于任何平台，同平台范围里读不到；会话管理不在场时所有会话都没有出生平台，同平台范围里读不到别的会话。读取范围按会话设成 `platform` 时的裁决同一取法。
+注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。不要把它当作全局搜索工具（语义检索请用 `memory_recall`）。读出的消息不含事件标记（schema-message 的 `CONTROL_KINDS`，如压缩分隔线、指令的回复）：它们不是对话内容，不交给模型；按条数读时多读一倍再去掉它们，取最后 `limit` 条；还是凑不满 `limit` 条时，结果带 `omittedNonConversation`，写明略去了几条非对话记录（没略去的不带）。
+
+能读哪些会话按会话管理的取别的会话的规则（[plugin-session-manager](./plugin-session-manager.md)），本插件不另设范围：每次读都调契约的 `takeFrom`，当前会话取调用所在的会话，授权身份取这次调用的。
 
 ## 插件声明
 
@@ -21,8 +23,6 @@ export default definePlugin({
     provide,
     memory: optional(memory),
     sessionManager: optional(sessionManager),
-    sessionFields: optional(sessionFields),
-    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -32,7 +32,7 @@ export default definePlugin({
 
 | 工具组 | 工具 | 说明 |
 |---|---|---|
-| `session-history` | `session_get_history` | 按 sessionId 读取近期消息（受 scope 限制） |
+| `session-history` | `session_get_history` | 按 sessionId 读取近期消息（按会话管理的跨会话规则） |
 
 `enabled` 为 false 时本插件不注册任何服务与工具。
 
@@ -43,7 +43,6 @@ export default definePlugin({
 | `enabled` | boolean | `true` | 启用会话历史读取工具 |
 | `maxLimit` | number | `100` | 单次最多读取条数：session_get_history 一次能返回的硬上限；LLM 传入 limit 超过此值会被 cap。建议 50~200。 |
 | `defaultLimit` | number | `20` | 默认读取条数（LLM 不传 limit 时）：不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。 |
-| `scope` | select | `'platform'` | 允许读取范围；可按会话设 |
 | `includeArchivedDefault` | boolean | `false` | 默认包含已归档消息 |
 | `perMessageMaxChars` | number | `0` | 每条消息截断字数：返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
 
@@ -63,15 +62,7 @@ interface SessionHistoryService {
     },
     callCtx: ToolCallContext,
   ): Promise<SessionHistoryReadResult>;
-  registerAccessChecker(checker: AccessChecker): AccessCheckerDisposer;
 }
 ```
 
-平台插件可用 `registerAccessChecker` 注入访问规则：checker 只管 ID 以 `<checker.platform>:` 开头的目标（这些 ID 由那个平台的适配器写，规则自己解析），同平台多个 checker 任一返回 deny 即拒绝。
-
-读取别的会话时依次裁决，前一步拒绝即止：
-
-1. **读取范围 `scope`**：`current` / `platform` / `all` 粗筛。这一项可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），按调用所在的会话每次现读：某个群设成 `current`，这个群里读别的会话一律拒绝。某一层写坏了的值按最窄（`current`）处理，不回落到更宽的层。
-2. **平台规则**：管目标会话 ID 的 checker 链，任一 deny 即拒绝。checker 收到的当前会话是调用所在的窗口：子会话没有窗口，取根会话的（与出生平台同一取法）；第一步按子会话本身判。
-
-平台规则只能在第一步放行之后再收窄。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，读取范围一处管住两个工具。
+读别的会话的结果：规则放行时照常读出；不放行时回 `{ error: 原因 }`，原因是会话管理给的一句（如「取别的会话的范围限于同平台」）。会话管理不在、目标不在会话表里或判不出窗口时只读得到当前会话。`session_get_history` 与 plugin-tool-onebot 的 `onebot_get_session_history` 都经这个服务读取，同一条规则。

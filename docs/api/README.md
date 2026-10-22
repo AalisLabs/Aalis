@@ -43,7 +43,7 @@
 | [api-reach](./api-reach.md) | `reach` 描述符（服务名 `reach`）+ `ReachService`；档位与越界策略、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、沙箱策略 `sandboxPolicyOf`、触及凭据的类型与品牌符号 | plugin-reach |
 | [api-remote-agent](./api-remote-agent.md) | `remoteAgent` 描述符（服务名 `remote-agent`）+ 提供者接口 `RemoteAgentProvider` + 按实例 id 精确取的 `resolveRemoteAgent` | plugin-remote-agent-cursor |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
-| [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
+| [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`），按会话 id 读历史 | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符：会话、场所与会话树 | plugin-session-manager |
 | [api-session-settings](./api-session-settings.md) | `sessionFields`（读取门面）与 `sessionSettings`（管理面）描述符，服务名 `session-settings`：插件配置字段按会话覆盖的声明、层表与读取器 | plugin-session-settings |
 | [api-session-protocol](./api-session-protocol.md) | `sessionProtocol` 描述符（服务名 `session-protocol`）+ 会话协议的 zod schema：owner 客户端与守护进程之间的帧、会话列表、条目与回合控制（实验性） | plugin-session-server |

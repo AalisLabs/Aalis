@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义会话的树形层级、会话种类、场所与工作区。会话管理不认识设置：插件按会话、按场所存的数据放在会话记录与场所记录的 `metadata` 里，各插件自己读写。会话设置（模型、人设、工具分组等插件配置字段按平台档、平台类型档、场所与会话覆盖）由 [api-session-settings](./api-session-settings.md) 定义、[@aalis/plugin-session-settings](../plugins/plugin-session-settings.md) 实现，场所层与本会话层的值就存在这两种记录的 `metadata` 里。
+定义会话的树形层级、会话种类、场所与工作区，以及取别的会话的东西的唯一规则。会话管理不认识设置：插件按会话、按场所存的数据放在会话记录与场所记录的 `metadata` 里，各插件自己读写。会话设置（模型、人设、工具分组等插件配置字段按平台档、平台类型档、场所与会话覆盖）由 [api-session-settings](./api-session-settings.md) 定义、[@aalis/plugin-session-settings](../plugins/plugin-session-settings.md) 实现，场所层与本会话层的值就存在这两种记录的 `metadata` 里。
 
 ## 会话
 
@@ -93,6 +93,43 @@ interface SessionInfo {
 - `deleteSession(id)` 连同下面各级子会话删除：先从表里摘掉并发 `session:deleted`，再经 `memory:clear` 清它的消息历史与各插件按会话存的数据。监听方在 `session:deleted` 里停掉这个会话在跑的东西：参考实现的 agent 在这里中止这个会话的回合并等它收尾，所以消息历史在回合停下之后才清。
 - 一个会话的消息历史被清空（`memory:clear` 没指定类型或类型含 `context`，且消息历史那一行清成功，判法是 [api-memory](./api-memory.md) 的 `historyCleared`）时，它的子会话一并删除：范围为 `session` 删这个会话的子会话，为 `all` 删全部子会话。只清别的类型、或消息历史没清成时不删。
 
+## 取别的会话的东西
+
+一个会话能不能取另一个会话的东西（历史、媒体）只有一条规则，就是服务上的必填方法 `canTake`；消费方一律调包装函数 `takeFrom`。
+
+```ts
+type TakeVerdict = { ok: true } | { ok: false; reason: TextRef };
+/** 判不出会话的来历时的原因：包装函数与实现共用 */
+const TAKE_UNKNOWN: TextRef;
+/** 会话管理在时转调 canTake；不在时只放行同一会话 id，其余回 TAKE_UNKNOWN */
+function takeFrom(
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
+  currentId: string,
+  targetId: string,
+  principal?: { platform: string; userId: string },
+): TakeVerdict;
+/** IM 的一对一窗口是不是授权身份自己与她的私聊（room 是根会话） */
+function oneToOneWith(
+  room: Pick<SessionInfo, 'originPlatform' | 'originChat'>,
+  principal: { platform: string; userId: string } | undefined,
+  declared: boolean,
+  isOwner?: (platform: string, userId: string) => boolean,
+): boolean;
+```
+
+`canTake(currentId, targetId, principal?)` 同步给出、不抛错，`principal` 是这次动作的授权身份（工具传这次调用的 `actor`，没有时取 `platform` 与 `userId`，没有 `userId` 不传；跨会话历史的被动注入不传）。依次：
+
+1. 同一会话 id，或两边的根会话都判得出且是同一个：放行。
+2. 任一边的根会话判不出（不在会话表里、父会话链断了、`isUnfiled` 的空记录、有出生平台却没有聊天窗口）：拒绝，原因 `TAKE_UNKNOWN`。
+3. 范围，取当前会话的生效值：本会话拒绝；同平台要两边根会话的平台相等（IM 房间取出生平台，WebUI、终端与项目会话取创建来源）；全部不比。
+4. 按目标：两边同平台、都记了机器人账号且不同，要「跨机器人账号」；目标多方要「读别的群」；目标一对一（IM 的一对一窗口，以及按与 owner 的一对一处理的 WebUI、终端与项目会话）是授权身份自己的私聊的放行，否则要「读别人的私聊」。
+
+范围与三个开关是参考实现的按会话字段（[plugin-session-manager](../plugins/plugin-session-manager.md#配置)），对所有人一样，owner 也不例外。拒绝的原因是文字对象，交给模型的取它的 `source`，不写平台名。
+
+`oneToOneWith` 判「自己的私聊」：`declared` 是调用方算好的「出生平台的适配器明确声明了这个窗口的类型为一对一」（推断出的不算；本包不读适配器的声明）；成立时对端就是授权身份的账号、授权身份的平台就是出生平台，或者两边都是 owner 的身份（`isOwner` 由调用方给，不给时只认前一种）。没有授权身份、授权身份没有账号的不算。
+
+`canTake` 是 `SessionManagerService` 的必填成员：自己实现会话管理的要实现它，没有可选写法。
+
 ## 场所与工作区
 
 每个会话恰好一个场所，子会话取根会话的。场所只管归属与插件按场所存的数据（白纸、会话设置的场所层），不管权限（上限按主体与房间类别）。
@@ -145,6 +182,7 @@ interface SessionManagerService {
   ensureSession(id, patch?, creation?: { createdFrom: string }): Promise<SessionInfo>;
   deleteSession(id: string): Promise<void>;                            // 先发 session:deleted，再清数据
   recordInbound(message: IncomingMessage): Promise<void>;              // 原生入站的收录与补记，可等待
+  canTake(currentId: string, targetId: string, principal?): TakeVerdict;  // 取别的会话的东西，消费方经 takeFrom 调
   createChildSession(parentId, opts?): Promise<SessionInfo>;
   getChildren(parentId: string): SessionInfo[];
   completeSession(id: string, result?: string): Promise<void>;

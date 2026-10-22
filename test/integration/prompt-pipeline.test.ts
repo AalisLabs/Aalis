@@ -11,6 +11,7 @@ import memoryHistoryPlugin from '../../packages/plugin-memory-history/src/index.
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummaryPlugin from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -162,6 +163,7 @@ const ACTIVE_IDS = [
   '@aalis/test-fixture-probe-llm',
   '@aalis/plugin-memory-inmemory',
   '@aalis/plugin-message-archive',
+  '@aalis/plugin-session-manager',
   '@aalis/plugin-memory-history',
   '@aalis/plugin-memory-summary',
   '@aalis/test-fixture-prompt-probe',
@@ -184,7 +186,23 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   if (!host.memory.present) throw new Error('memory 服务未就绪');
   const memoryService = host.memory.use;
 
-  // 种子一：另一会话的消息 → memory-history 的 context 贡献料
+  // 种子一：另一会话的消息 → memory-history 的 context 贡献料。两个会话在会话表里都是同一平台的群，取别的会话的规则放行
+  await memoryService.commitMetadata(
+    [SESSION, CROSS_SESSION].map(id => ({
+      op: 'put' as const,
+      namespace: 'sessions',
+      key: id,
+      data: {
+        id,
+        children: [],
+        status: 'waiting',
+        createdAt: 0,
+        updatedAt: 0,
+        originPlatform: 'test',
+        originChat: { type: 'group', multiParty: true, targetId: id },
+      },
+    })),
+  );
   await memoryService.saveMessage(CROSS_SESSION, {
     role: 'user',
     content: 'CROSS-SESSION-SEED',
@@ -199,9 +217,9 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   });
 
   await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(sessionManagerPlugin);
   await app.plugin(memoryHistoryPlugin, {
     injectEnabled: true,
-    scope: 'cross-platform',
     maxAgeMinutes: 0,
     excludeCurrentSession: true,
     headerText: '[HISTORY-HEADER]',

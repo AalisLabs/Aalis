@@ -49,7 +49,7 @@ async function readHistory(args: Record<string, unknown>, stored = STORED) {
     getHistory: async (_sessionId: string, limit: number) => stored.slice(-limit),
     getMessagesBySessionRange: async () => stored,
   } as never);
-  await app.plugin(sessionTools, { scope: 'current' });
+  await app.plugin(sessionTools);
   await app.start();
   const handler = handlers.get('session_get_history');
   if (!handler) throw new Error('session_get_history 未注册');

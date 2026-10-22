@@ -32,11 +32,14 @@
     "@aalis/api-authority": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.15.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0"
   },
@@ -52,6 +55,7 @@
   "aalis": {
     "service": {
       "required": [
+        "config",
         "events",
         "hooks",
         "lifecycle",
@@ -62,9 +66,11 @@
       "optional": [
         "agent",
         "authority",
+        "host-config",
         "i18n",
         "llm",
-        "platform"
+        "platform",
+        "session-settings"
       ],
       "provides": [
         "session-manager"
