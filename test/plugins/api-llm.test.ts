@@ -40,4 +40,20 @@ describe('idleTimeout', () => {
     await sleep(50);
     expect(signal.aborted).toBe(false);
   });
+
+  it.each([Number.NaN, '5', undefined])('ms 不是数（%s）时抛 RangeError，不当作不限', ms => {
+    expect(() => idleTimeout(ms as number)).toThrow(RangeError);
+  });
+
+  it('pause 到 resume 之间不计时，resume 之后接着计、不从头计', async () => {
+    const timer = idleTimeout(500);
+    await sleep(200);
+    timer.pause();
+    await sleep(700);
+    expect(timer.signal.aborted, '暂停期间也计了时').toBe(false);
+
+    timer.resume();
+    await sleep(450);
+    expect(timer.signal.reason, 'resume 之后从头计了').toMatchObject({ name: 'TimeoutError' });
+  });
 });
