@@ -152,7 +152,7 @@ const bystander = definePlugin({ name: 'zz-attention-bystander', apply() {} });
 const approval = (id: string, sessionId: string): Approval => ({
   id,
   sessionId,
-  origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+  origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
   target: 'tool',
   tool: 'exec',
   facts: { command: 'ls', params: {} },

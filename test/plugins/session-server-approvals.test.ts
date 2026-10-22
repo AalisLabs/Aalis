@@ -53,6 +53,9 @@ const PRESENCE_MS = 10 * 60_000;
 /** 在场的面全部消失之后的重连宽限 */
 const GRACE_MS = 30_000;
 
+/** 发起回合的类别与参与者：这一轮只有 who 一个人 */
+const originOf = (kind: OriginKind, who: { platform: string; userId: string }) => ({ kind, participants: [who] });
+
 const isOwner = (p: string, u?: string) =>
   ((p === 'webui' || p === 'cli') && u === 'console') || (p === OWNER_QQ.platform && u === OWNER_QQ.userId);
 
@@ -139,7 +142,7 @@ async function setup() {
     const promise = service().request(
       {
         sessionId,
-        origin: { kind: 'owner', ...OWNER },
+        origin: originOf('hand', OWNER),
         tool: 'exec',
         args: { command: 'ls' },
         rule: 'tool:exec 声明需确认',
@@ -202,28 +205,24 @@ const pushed = (c: ReturnType<typeof client>) => c.notifications('approval/reque
 const approve = (c: ReturnType<typeof client>, approval: Approval, note?: string) =>
   c.call('approval/respond', { approvalId: approval.id, decision: 'approve', contentHash: approval.contentHash, note });
 
-describe('谁能产生审批：只有 owner 本人与 owner 链的延续', () => {
+describe('谁能产生审批：这一轮里有 owner 的话（人亲手发起，含它的续做）', () => {
   const cases: Array<[string, OriginKind, typeof OWNER, 'card' | 'ineligible' | 'subtask']> = [
-    ['owner 亲手发起', 'owner', OWNER, 'card'],
-    ['owner 在 QQ 上亲手发起', 'owner', OWNER_QQ, 'card'],
-    ['后台任务完成后的续做', 'owner-chain', OWNER, 'card'],
-    ['类别写成 owner、主体却不是 owner', 'owner', MEMBER, 'ineligible'],
-    ['类别写成续做、主体却不是 owner', 'owner-chain', MEMBER, 'ineligible'],
+    ['owner 亲手发起', 'hand', OWNER, 'card'],
+    ['owner 在 QQ 上亲手发起', 'hand', OWNER_QQ, 'card'],
+    ['群成员亲手发起', 'hand', MEMBER, 'ineligible'],
     ['子任务回合', 'subtask', OWNER, 'subtask'],
     // 哪些回合归 autonomous（定时任务回填了 owner 的授权身份、它触发的编排等）在 authority-origin.test.ts 里测
     ['自主回合', 'autonomous', OWNER, 'ineligible'],
-    ['owner 在 WebUI 里驱动房间', 'room', OWNER, 'ineligible'],
-    ['群成员发起', 'other', MEMBER, 'ineligible'],
   ];
 
   it.each(cases)('%s', async (_case, kind, who, expected) => {
     const { mine, connect, request, flush, service } = await setup();
     const c = await connect();
-    const r = request(mine, { origin: { kind, ...who } });
+    const r = request(mine, { origin: originOf(kind, who) });
     await flush();
     if (expected === 'card') {
       expect(pushed(c)).toHaveLength(1);
-      expect(pushed(c)[0].origin).toEqual({ kind, ...who });
+      expect(pushed(c)[0].origin).toEqual(originOf(kind, who));
       expect(r.outcome).toBeUndefined();
       return;
     }
@@ -233,7 +232,7 @@ describe('谁能产生审批：只有 owner 本人与 owner 链的延续', () =>
     expect(service().list()).toEqual([]);
     if (expected === 'subtask') {
       expect(r.outcome?.approved === false && r.outcome.message).toContain(
-        '子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行',
+        '子任务里需要确认的操作不上浮，请在发起它的会话里执行',
       );
     }
   });
@@ -413,7 +412,7 @@ describe('重连宽限：在场的面全部消失之后再等 30 秒', () => {
     const waiting = request(mine, { callId: 'call-1' });
     await flush();
     await c.call('presence/update', { active: false });
-    const fresh = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    const fresh = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     expect(fresh.outcome).toMatchObject({ approved: false, source: 'absent' });
     expect(waiting.outcome).toBeUndefined();
@@ -450,7 +449,7 @@ describe('限定会话的接入', () => {
 
     const c = await connect();
     request(mine);
-    request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     // 再报一次在场：补推也只补它的会话
     dm.presence(true);
@@ -466,7 +465,7 @@ describe('限定会话的接入', () => {
     surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM).presence(true);
     await vi.advanceTimersByTimeAsync(60_000);
     const uncovered = request(mine);
-    const covered = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    const covered = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     // mine 的接入在第 10 分钟失效，DM 的到第 15 分钟
     await vi.advanceTimersByTimeAsync(4 * 60_000 + GRACE_MS - 1);
@@ -494,7 +493,7 @@ describe('限定会话的接入', () => {
       OWNER_DM,
     );
     dm.attendance.presence(true);
-    const origin = { kind: 'owner' as const, ...OWNER_QQ };
+    const origin = originOf('hand', OWNER_QQ);
     const first = request(OWNER_DM, { origin, callId: 'call-1' });
     const second = request(OWNER_DM, { origin, callId: 'call-2' });
     await flush();
@@ -515,7 +514,7 @@ describe('限定会话的接入', () => {
     const dm = surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM);
     dm.presence(true);
     const early = request(mine);
-    const late = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    const late = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     web.presence(false);
     await vi.advanceTimersByTimeAsync(10_000);
@@ -608,7 +607,7 @@ describe('应答', () => {
     expect(r.outcome).toMatchObject({ approved: true });
   });
 
-  it('owner 拒绝并附说明：回给模型的话写明被 owner 拒绝与说明', async () => {
+  it('owner 拒绝并附说明：回给模型的话写明被拒绝与说明', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     const r = request(mine);
@@ -623,8 +622,7 @@ describe('应答', () => {
     await flush();
     expect(r.outcome).toMatchObject({ approved: false, source: 'owner' });
     const message = r.outcome?.approved === false ? r.outcome.message : '';
-    expect(message).toContain('owner 拒绝');
-    expect(message).toContain('先备份再删');
+    expect(message).toContain('被拒绝了，说明：先备份再删');
     expect(c.notifications('approval/settled')).toEqual([
       { approvalId: approval.id, state: 'denied', source: 'owner', at: Date.now() },
     ]);
@@ -684,7 +682,7 @@ describe('排队与频率上限', () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     request(mine);
-    request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     expect(pushed(c).map(a => a.sessionId)).toEqual([mine, OWNER_DM]);
   });
@@ -705,7 +703,7 @@ describe('排队与频率上限', () => {
     expect(over.outcome?.approved === false && over.outcome.message).toContain('上限');
     expect(pushed(c)).toHaveLength(10);
     // 别的会话不受影响
-    request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     expect(pushed(c)).toHaveLength(11);
 
@@ -752,7 +750,7 @@ describe('结算', () => {
     await connect();
     const turn = openTurn(mine);
     const r = request(mine, { turnId: turn.turnId });
-    const other = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ }, turnId: 'another-turn' });
+    const other = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ), turnId: 'another-turn' });
     await flush();
     await turn.end();
     await flush();
@@ -812,24 +810,29 @@ describe('结算', () => {
 });
 
 describe('回给模型的话', () => {
-  it('owner 与 owner 链的请求写明被什么拦下、能不能再申请，owner 自己的 QQ 私聊也一样；房间里的回合不论什么原因都只有一句通用的拒绝', async () => {
+  it('写明被什么拦下、能不能再申请，不论在哪个会话发起；只有不能产生审批的那句点到 owner，其余不指名应答人', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect({ active: false });
     const message = (r: { outcome?: ApprovalOutcome }) => (r.outcome?.approved === false ? r.outcome.message : '');
     const absent = request(mine);
-    const dmAbsent = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
-    const roomIneligible = request(ROOM, { origin: { kind: 'room', ...OWNER } });
+    const roomAbsent = request(ROOM, { origin: originOf('hand', OWNER_QQ) });
+    const ineligible = request(ROOM, { origin: originOf('hand', MEMBER) });
     const ended = new AbortController();
     ended.abort();
-    const roomEnded = request(ROOM, { origin: { kind: 'room', ...OWNER_QQ } }, ended.signal);
+    const roomEnded = request(ROOM, { origin: originOf('hand', OWNER_QQ) }, ended.signal);
     await flush();
-    expect(message(absent)).toMatch(/原因：.*没人在场.*能否再申请：/);
-    expect(message(dmAbsent)).toBe(message(absent));
-    expect(message(roomIneligible)).toBe('需要批准的操作在这里不能执行。');
-    expect(message(roomEnded)).toBe(message(roomIneligible));
+    expect(message(absent)).toBe(
+      '需要批准的操作没有执行。原因：没人在场，没有人能批准。能否再申请：有能批的人在场时可以再申请；不要换别的办法绕过，先说明需要批准什么。',
+    );
+    expect(message(roomAbsent)).toBe(message(absent));
+    expect(message(ineligible)).toBe(
+      '需要批准的操作没有执行。原因：这一轮里没有 owner 的话，要 owner 确认的操作不能执行。能否再申请：不能；不要换别的办法绕过。',
+    );
+    expect(message(roomEnded)).toMatch(/原因：发起它的回合已结束.*能否再申请：/);
+    for (const r of [absent, roomAbsent, roomEnded]) expect(message(r)).not.toContain('owner');
 
     await c.call('presence/update', { active: true });
-    const denied = request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    const denied = request(ROOM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     const [approval] = pushed(c);
     await c.call('approval/respond', {
@@ -839,7 +842,8 @@ describe('回给模型的话', () => {
       note: '先备份再删',
     });
     await flush();
-    expect(message(denied)).toMatch(/owner 拒绝了，说明：先备份再删.*能否再申请：/);
+    expect(message(denied)).toMatch(/被拒绝了，说明：先备份再删.*能否再申请：/);
+    expect(message(denied)).not.toContain('owner');
   });
 });
 
@@ -935,7 +939,7 @@ describe('审计', () => {
     await flush();
     await vi.advanceTimersByTimeAsync(1_234);
     await approve(c, pushed(c)[0]);
-    const ineligible = request(mine, { origin: { kind: 'autonomous', ...OWNER } });
+    const ineligible = request(mine, { origin: originOf('autonomous', OWNER) });
     await flush();
     await c.call('presence/update', { active: false });
     const absent = request(mine);
@@ -949,7 +953,7 @@ describe('审计', () => {
       sessionId: mine,
       turnId: 't1',
       callId: 'c1',
-      origin: { kind: 'owner', ...OWNER },
+      origin: originOf('hand', OWNER),
       tool: 'exec',
       facts: { command: 'ls', params: {} },
       rule: 'tool:exec 声明需确认',
@@ -993,7 +997,7 @@ describe('日志', () => {
   it('每个审批结算记一行 info：会话、工具、结局与原因；发起时就拒绝的（自主回合）也记', async () => {
     const { mine, connect, request, flush, infos } = await setup();
     const c = await connect();
-    request(mine, { origin: { kind: 'autonomous', ...OWNER }, tool: 'file_write' });
+    request(mine, { origin: originOf('autonomous', OWNER), tool: 'file_write' });
     request(mine);
     await flush();
     await approve(c, pushed(c)[0]);
@@ -1001,7 +1005,7 @@ describe('日志', () => {
     await flush();
     await vi.advanceTimersByTimeAsync(WAIT_MS);
     expect(infos.filter(message => message.startsWith('审批'))).toEqual([
-      `审批结算：会话 ${mine}，工具 file_write，拒绝（这一轮不是 owner 亲手发起的，不能产生审批）`,
+      `审批结算：会话 ${mine}，工具 file_write，拒绝（这一轮里没有 owner 的话，要 owner 确认的操作不能执行）`,
       `审批结算：会话 ${mine}，工具 exec，批准（owner 应答）`,
       `审批结算：会话 ${mine}，工具 exec，过期（等了 300 秒没有人应答）`,
     ]);
@@ -1054,7 +1058,7 @@ describe('会话协议上的审批', () => {
     const newer = (await sm.createSession({ name: '更新的' }, { createdFrom: 'webui' })).id;
     await c.call('sessions/watch', {});
     request(mine);
-    request(OWNER_DM, { origin: { kind: 'owner', ...OWNER_QQ } });
+    request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
     const page = await c.list();
     // 需要我处理的排在「我的」区最前，哪怕别的会话更新
@@ -1111,13 +1115,13 @@ describe('会话协议上的审批', () => {
     // 结算随工具结果落库：agent 跑工具结果的钩子时，会话服务写进这次结果的元数据
     const after = {
       name: 'exec',
-      result: '{"error":"需要 owner 批准的操作没有执行"}',
+      result: '{"error":"需要批准的操作没有执行"}',
       toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
       metadata: {} as Record<string, unknown>,
     };
     await host.hooks.use.run('agent:tool:after', after);
     expect(after.metadata).toEqual({ approval: { id: approval.id, ...settlement } });
-    await turn.tool('end', 'call-1', { command: 'ls' }, '{"error":"需要 owner 批准的操作没有执行"}');
+    await turn.tool('end', 'call-1', { command: 'ls' }, '{"error":"需要批准的操作没有执行"}');
     expect(card(watcher.timeline(mine, sub))).toMatchObject({ status: 'denied', approvalId: approval.id, settlement });
     const again = await watcher.subscribe(mine);
     expect(again.snapshot.approvals).toEqual([]);
@@ -1125,10 +1129,10 @@ describe('会话协议上的审批', () => {
   });
 
   it.each([
-    ['没人在场', 'owner', 'expired', 'absent'],
+    ['没人在场', 'hand', 'expired', 'absent'],
     ['发起者不能产生审批', 'autonomous', 'denied', 'ineligible'],
     ['子任务', 'subtask', 'denied', 'subtask'],
-    ['超过频率上限', 'owner', 'denied', 'rate-limit'],
+    ['超过频率上限', 'hand', 'denied', 'rate-limit'],
   ] as const)('发起时就结算（%s）：工具卡同样是 denied 并带结算，结算写进工具结果的元数据；不推卡、不算需要我处理', async (_case, kind, state, source) => {
     const { host, mine, connect, request, flush, openTurn } = await setup();
     const c = await connect({ active: source !== 'absent' });
@@ -1144,15 +1148,17 @@ describe('会话协议上的审批', () => {
     const sub = await c.subscribe(mine);
     const turn = openTurn(mine);
     await turn.tool('start', 'call-1', { command: 'ls' });
-    const r = request(mine, { turnId: turn.turnId, callId: 'call-1', origin: { kind, ...OWNER } });
+    const r = request(mine, { turnId: turn.turnId, callId: 'call-1', origin: originOf(kind, OWNER) });
     await flush();
     expect(r.outcome).toMatchObject({ approved: false, source });
+    const said = r.outcome?.approved === false ? r.outcome.message : '';
+    expect(said.includes('owner'), '只有不能产生审批的那句点到 owner').toBe(source === 'ineligible');
     const approvalId = r.outcome?.approvalId;
     const settlement = { state, source, at: Date.now() };
     const card = () => c.timeline(mine, sub).find(item => item.itemId === 'call-1');
     expect(card()).toMatchObject({ status: 'denied', approvalId, settlement });
 
-    const denial = '{"error":"需要 owner 批准的操作没有执行"}';
+    const denial = '{"error":"需要批准的操作没有执行"}';
     const after = {
       name: 'exec',
       result: denial,
@@ -1192,7 +1198,7 @@ describe('会话协议上的审批', () => {
     const seen: Array<[string, string]> = [];
     host.events.use.on('approval:created', approval => void seen.push(['created', approval.state]));
     host.events.use.on('approval:settled', approval => void seen.push(['settled', approval.state]));
-    request(mine, { origin: { kind: 'autonomous', ...OWNER } });
+    request(mine, { origin: originOf('autonomous', OWNER) });
     request(mine);
     await flush();
     await approve(c, pushed(c)[0]);

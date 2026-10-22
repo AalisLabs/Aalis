@@ -11,7 +11,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { mkConfig, noFileStorage, noSessions, silentLogger } from '../fixtures/authority.js';
+import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { storedRoom } from '../fixtures/rooms.js';
@@ -199,7 +199,7 @@ describe('存档不在时 agent 当轮的正文', () => {
 describe('权限服务的 ownerOn', () => {
   it('取配置 owners 里这个平台的第一个账号；本机控制台恒为 owner 但不是登记的账号，不算', () => {
     const owners = [OWNER, { platform: 'onebot', userId: '40002' }, { platform: 'acme', userId: 'me' }];
-    const manager = new AuthorityManager(mkConfig({ owners }), silentLogger(), noFileStorage, noSessions);
+    const manager = new AuthorityManager(mkConfig({ owners }), silentLogger(), noFileStorage);
     expect(manager.ownerOn('onebot')).toEqual(OWNER);
     expect(manager.ownerOn('acme')).toEqual({ platform: 'acme', userId: 'me' });
     expect(manager.isOwner('webui', 'console')).toBe(true);

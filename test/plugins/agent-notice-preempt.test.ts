@@ -8,13 +8,13 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 真人打断延续其本人身份的宿主通知回合：真人消息（不带 source）到达时，中止同一会话里 hostNotice.callerUserId
-// 等于这条消息 userId 的通知回合。别人的消息、不延续任何人身份的通知（白纸等）不受影响；宿主通知从不打断别的回合。
+// 续做与真人消息互不打断：同一会话不同来源的回合各走各的道，起它的人在同一会话说话也不中止续做那一轮，宿主通知也不打断
+// 真人的回合。新消息怎么对待在跑的一轮（并进、排队）归通道层。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-slice1-preempt';
@@ -80,64 +80,38 @@ async function boot() {
   return { agent: host.agent.use, held, release, turns };
 }
 
-const notice = (callerUserId?: string): IncomingMessage => ({
+const OWNER = { platform: 'webui', userId: 'console' };
+
+/** 后台任务的结束通知：带着起它的那一轮（owner 亲手那一轮） */
+const notice: IncomingMessage = {
   content: '后台任务 bg_0a1b2c_1（exec）失败：退出码 1，用时 3 秒。结果与输出用 background_output 查看。',
   sessionId: SESSION,
   platform: 'webui',
   source: 'bg:bg_0a1b2c_1',
-  actor: callerUserId !== undefined ? { platform: 'webui', userId: callerUserId } : selfInitiatedActor('webui'),
-  hostNotice: {
-    kind: 'background-task',
-    id: 'bg_0a1b2c_1',
-    ...(callerUserId !== undefined ? { callerUserId } : {}),
-  },
-});
+  fromTurn: { ...OWNER, participants: [OWNER] },
+  hostNotice: { kind: 'background-task', id: 'bg_0a1b2c_1' },
+};
 
-const human = (userId: string): IncomingMessage => ({
-  content: '停',
-  sessionId: SESSION,
-  platform: 'webui',
-  userId,
-});
+const human: IncomingMessage = { content: '停', sessionId: SESSION, ...OWNER };
 
-describe('真人打断延续其本人身份的宿主通知回合', () => {
-  it('安全：通知回合在飞时，本人在同一会话说话，通知回合被中止', async () => {
+describe('续做与真人消息互不打断', () => {
+  it('起它的人在同一会话说话：续做那一轮不中止', async () => {
     const h = await boot();
-    const noticeTurn = h.agent.handleMessage(notice('console'));
-    await waitFor(() => h.held.length === 1, '通知回合卡在工具上');
-    await h.agent.handleMessage(human('console'));
-    await noticeTurn;
-    expect(h.held[0].signal?.aborted).toBe(true);
-    expect(h.turns).toContainEqual({ source: 'bg:bg_0a1b2c_1', outcome: 'aborted' });
-    expect(h.turns).toContainEqual({ source: undefined, outcome: 'replied' });
-  });
-
-  it('别人的消息不中止通知回合', async () => {
-    const h = await boot();
-    const noticeTurn = h.agent.handleMessage(notice('console'));
-    await waitFor(() => h.held.length === 1, '通知回合卡在工具上');
-    await h.agent.handleMessage(human('someone-else'));
+    const noticeTurn = h.agent.handleMessage(notice);
+    await waitFor(() => h.held.length === 1, '续做那一轮卡在工具上');
+    await h.agent.handleMessage(human);
     expect(h.held[0].signal?.aborted).toBe(false);
     h.release();
     await noticeTurn;
     expect(h.turns).toContainEqual({ source: 'bg:bg_0a1b2c_1', outcome: 'replied' });
-  });
-
-  it('不延续任何人身份的通知（不带 callerUserId）不被真人消息中止', async () => {
-    const h = await boot();
-    const noticeTurn = h.agent.handleMessage(notice());
-    await waitFor(() => h.held.length === 1, '通知回合卡在工具上');
-    await h.agent.handleMessage(human('console'));
-    expect(h.held[0].signal?.aborted).toBe(false);
-    h.release();
-    await noticeTurn;
+    expect(h.turns).toContainEqual({ source: undefined, outcome: 'replied' });
   });
 
   it('宿主通知到达不中止在飞的真人回合', async () => {
     const h = await boot();
-    const humanTurn = h.agent.handleMessage(human('console'));
+    const humanTurn = h.agent.handleMessage(human);
     await waitFor(() => h.held.length === 1, '真人回合卡在工具上');
-    await h.agent.handleMessage(notice('console'));
+    await h.agent.handleMessage(notice);
     expect(h.held[0].signal?.aborted).toBe(false);
     h.release();
     await humanTurn;

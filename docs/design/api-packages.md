@@ -107,7 +107,7 @@ await entry?.use.chat({ messages });
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`、`PageDefinition`、`Notice`、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式等；业务层带 `definePage` / `notify`；向 `PluginMeta` 注入 `extends` |
-| `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf`）, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `OriginTurn`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
+| `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf`）, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `OriginTurn`, 拼一轮的 `originTurnOf`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn` |
 | `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |
 | `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |

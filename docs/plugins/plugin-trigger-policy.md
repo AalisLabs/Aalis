@@ -52,7 +52,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数；记为真人活动：更新最近消息时间，闲置退避复位为 1，并从这条消息起重排 session 档闲置触发。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与在用的人设按本会话取的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
 7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
-8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多方房间且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`（api-trigger 的 `markTriggered` 按网关给的多方标记判，不认类型名）：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，这一轮也不能产生 owner 审批。一对一房间纳入生效范围后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
+8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`（api-trigger 的 `markTriggered`）；`next()`。点名只决定她回不回与触发类型，不动授权身份：被频率挑中的那句话照旧按说它的人算（他的等级、权限组与免确认，owner 的能产生审批）。不开口：影子归档后吞掉。
 
 在用的人设读名字抛错时，名字检测只用别名，照常判定，记一条 warn（同一原因只记一次）：
 

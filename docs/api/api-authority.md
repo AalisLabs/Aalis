@@ -54,7 +54,7 @@ interface ExecutionGuardContext {
 
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
-  callerUserId?: string;             // 宿主通知延续某次工具调用时，那次调用的发言者（hostNotice.callerUserId）
+  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做带着起它的那一轮（类型见 schema-message）
   messageId?: string;                // 同 IncomingMessage.messageId：入站消息的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
@@ -85,9 +85,8 @@ interface AuthorityService {
   // 恒为 owner，但不是登记的账号，不算。入站正文的发送者前缀据它写 owner 从别的平台往房间里插话的那条（api-message-archive 的 speakerOf）
   ownerOn(platform: string): UserIdentity | undefined;
 
-  // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判，不按授权身份判，会话的受众按会话管理里记下的字段判。
-  // 只有 owner 与 owner-chain 能产生审批；本地效果由触及服务按这一类别定主体：owner 与 owner-chain 为 owner，
-  // subtask 随派出它的那一轮父会话，其余没有本地效果
+  // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实（来源、起它的那一轮、授权身份有没有账号），
+  // 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
   originOf(turn: OriginTurn): OriginKind;
 
   // capability 统一闸：null 放行 | string 拒绝原因
@@ -114,13 +113,17 @@ interface AuthorityService {
 }
 ```
 
-`OriginTurn` 是判发起类别要的回合信息，取执行守卫上下文的五项：
+`OriginTurn` 是判发起类别要的回合信息，取执行守卫上下文的五项。由入站消息拼一轮用 `originTurnOf`，调用方不各自拼：
 
 ```ts
 type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+
+// 由一轮的输入拼这一轮（现在一轮只有一条输入）：发言者缺省时取起它的那一轮的（续做的通知不带发言者，
+// 工具眼里是起它的人在调），授权身份缺省时取起它的那一轮的参与者，inbound 取 { source, fromTurn, messageId }
+function originTurnOf(inputs: readonly [IncomingMessage, ...IncomingMessage[]]): OriginTurn;
 ```
 
-判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)。
+agent 用 `originTurnOf([incoming])` 填工具调用上下文。判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)。
 
 ## 守卫流程：授权与确认
 
@@ -130,7 +133,7 @@ type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId
 
 - **可免的确认**：只对授权身份是 owner 的回合。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（带 `ownerApproved` 的注入即定时任务触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认；`always` 只有 `confirmOverrides` 设为 `'off'` 能免。授权身份不是 owner 的回合照旧确认，`'off'` 回落到插件的声明。
 - **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。
-- **工具**：确认是 owner 审批。守卫按发起回合的类别（`inbound`、`actor`、续做的调用者与会话受众，不按授权身份）调 `approvals.request`，只有 owner 本人与 owner 链的延续能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
+- **工具**：确认是 owner 审批。守卫带上发起回合的类别（`originOf`）与这一轮的参与者（授权身份 `actor ?? 发言者`）调 `approvals.request`；这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
 
 ## 关键类型（请求）
 

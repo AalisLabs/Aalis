@@ -125,7 +125,7 @@ const requester = definePlugin({
             sessionId: ctx.sessionId,
             turnId: ctx.turnId,
             callId: ctx.callId,
-            origin: { kind: 'owner', platform: ctx.platform ?? '', userId: ctx.userId },
+            origin: { kind: 'hand', participants: [{ platform: ctx.platform ?? '', userId: ctx.userId ?? '' }] },
             tool: PUBLISH,
             args,
             rule: 'zz-e2e-requester',

@@ -17,7 +17,7 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService } from '@aalis/api-persona';
 import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
-import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
+import { type IncomingMessage, WellKnownNoticeTypes } from '@aalis/schema-message';
 
 /**
  * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿选中那一条的 id 与自己的实例 id 比，
@@ -155,16 +155,11 @@ export function isAddressed(
 // ----- 放行与吞掉 -----
 
 /**
- * 放行收尾：写 triggerType，点名为 immediate，否则为 interval。interval 回合无主发言者，在多方窗口里
- * 且消息未带 actor 时回填无主体授权身份：不让「恰好撞上判定的那个人」（陌生人或 owner）的等级决定
- * AI 自发行为能调什么工具。immediate 是被点名，点名者就是主体，维持缺省（actor 回退到会话身份）。
- * multiParty 是这条入站所在窗口的多方标记（网关算的 data.chat），不看类型名：一对一窗口可以被纳入生效范围，那里的 interval
- * 只是频率闸，发言者就是唯一主体，不回填。
+ * 放行收尾：写 triggerType，点名为 immediate，否则为 interval。点名只决定她回不回与触发类型，不动授权身份：被频率触发挑中的
+ * 那句话照旧按说它的人算
  */
-export function markTriggered(message: IncomingMessage, addressed: boolean, multiParty: boolean): void {
-  const kind = addressed ? 'immediate' : 'interval';
-  message.triggerType = kind;
-  if (kind === 'interval' && multiParty && !message.actor) message.actor = selfInitiatedActor(message.platform);
+export function markTriggered(message: IncomingMessage, addressed: boolean): void {
+  message.triggerType = addressed ? 'immediate' : 'interval';
 }
 
 /** 吞掉前把消息影子归档（与 flow-control 吞掉时的归档对齐）。message-archive 缺席时跳过，归档失败记 warn，不抛错 */

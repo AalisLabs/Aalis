@@ -95,7 +95,7 @@ const approval: Approval = {
   sessionId: 'session-1',
   turnId: 't1',
   callId: 'c1',
-  origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+  origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
   target: 'tool',
   tool: 'file_edit',
   facts: { diff: { path: 'workspace:/a.txt', patch: '-旧\n+新' }, params: {} },

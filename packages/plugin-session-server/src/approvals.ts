@@ -1,10 +1,10 @@
 // ════════════════════════════════════════════════════════════
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
-// 只有 owner 本人与 owner 链的延续发起的回合能产生审批，其余直接拒绝，不推给任何审批面。能产生的先看这个会话有没有人在场：
-// 审批面上身份是 owner、覆盖这个会话的客户端（接入时没限定会话，或限定的就是它）上报活动，最近一次活动在 10 分钟内的算在场，
-// 发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，只推给覆盖它的客户端，等待从推出那一刻算起；等满 300 秒、
-// 覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余直接拒绝，不推给任何审批面。能产生的
+// 先看这个会话有没有人在场：审批面上身份是 owner、覆盖这个会话的客户端（接入时没限定会话，或限定的就是它）上报活动，最近一次
+// 活动在 10 分钟内的算在场，发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，只推给覆盖它的客户端，等待从推出
+// 那一刻算起；等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
 // 应答先答先得，核两项：应答人是 owner；id 由本服务签发、未结算、在接入覆盖的会话里，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
@@ -52,9 +52,6 @@ const RATE_WINDOW_MS = 10 * 60_000;
 const RATE_LIMIT = 10;
 /** 记住最近结算的这么多个 id 与它们的会话：后到的应答回 approval-settled，更早的按不认识的 id 处理 */
 const SETTLED_MEMORY = 1000;
-
-/** 房间里的回合（发起类别 room）不论被什么拦下都只回这一句，不透露 owner 的文件布局与说明 */
-const ROOM_DENIAL = '需要批准的操作在这里不能执行。';
 
 interface SurfaceRecord {
   name: string;
@@ -142,15 +139,15 @@ function hashOf(req: ApprovalRequest): string {
 
 // ───────── 回给模型的话 ─────────
 
-/** 各结算来源：被什么拦下、能不能再申请（owner 的拒绝另附说明） */
+/** 各结算来源：被什么拦下、能不能再申请（拒绝另附说明）。不指名应答人，点到 owner 的只有不能产生审批的那句 */
 const REASONS: Record<Exclude<ApprovalSource, 'owner'>, [reason: string, again: string]> = {
-  absent: ['没人在场，没有人能批准', 'owner 在场时可以再申请；不要换别的办法绕过，先说明需要批准什么'],
+  absent: ['没人在场，没有人能批准', '有能批的人在场时可以再申请；不要换别的办法绕过，先说明需要批准什么'],
   timeout: [`等了 ${APPROVAL_WAIT_MS / 1000} 秒没有人应答`, '可以再申请；不要换别的办法绕过'],
-  ineligible: ['这一轮不是 owner 亲手发起的，不能产生审批', '不能；不要换别的办法绕过'],
-  subtask: ['子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行', '在子任务里不能'],
+  ineligible: ['这一轮里没有 owner 的话，要 owner 确认的操作不能执行', '不能；不要换别的办法绕过'],
+  subtask: ['子任务里需要确认的操作不上浮，请在发起它的会话里执行', '在子任务里不能'],
   'rate-limit': [
     `这个会话 ${RATE_WINDOW_MS / 60_000} 分钟内的审批已达 ${RATE_LIMIT} 张的上限`,
-    '稍后可以；先停下来向 owner 说明在做什么',
+    '稍后可以；先停下来说明在做什么',
   ],
   'turn-ended': ['发起它的回合已结束', '可以在新的一轮里再申请'],
   shutdown: ['审批服务已停止', '服务恢复后可以再申请'],
@@ -162,9 +159,9 @@ const OUTCOMES: Record<SettledState, string> = { approved: '批准', denied: '�
 function denialFor(source: ApprovalSource, note: string | undefined): string {
   const [reason, again] =
     source === 'owner'
-      ? [`owner 拒绝了${note ? `，说明：${note}` : ''}`, '不要原样再申请，按 owner 的意思调整']
+      ? [`被拒绝了${note ? `，说明：${note}` : ''}`, '不要原样再申请，按拒绝的意思调整']
       : REASONS[source];
-  return `需要 owner 批准的操作没有执行。原因：${reason}。能否再申请：${again}。`;
+  return `需要批准的操作没有执行。原因：${reason}。能否再申请：${again}。`;
 }
 
 // ───────── 服务 ─────────
@@ -328,7 +325,7 @@ export function createApprovals(deps: ApprovalDeps) {
             approvalId: pending.id,
             approved: false,
             source,
-            message: pending.req.origin.kind === 'room' ? ROOM_DENIAL : denialFor(source, by?.note),
+            message: denialFor(source, by?.note),
           },
     );
     if (index === 0 && queue.length > 0) show(queue[0]);
@@ -383,8 +380,8 @@ export function createApprovals(deps: ApprovalDeps) {
     if (closed) return ['cancelled', 'shutdown'];
     if (signal?.aborted) return ['cancelled', 'turn-ended'];
     if (origin.kind === 'subtask') return ['denied', 'subtask'];
-    const eligible = origin.kind === 'owner' || origin.kind === 'owner-chain';
-    if (!eligible || !deps.isOwner(origin.platform, origin.userId)) return ['denied', 'ineligible'];
+    if (origin.kind !== 'hand' || !origin.participants.some(({ platform, userId }) => deps.isOwner(platform, userId)))
+      return ['denied', 'ineligible'];
     if (present(at, req.sessionId).length === 0) return ['expired', 'absent'];
     if (recentCards(req.sessionId, at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
     return undefined;

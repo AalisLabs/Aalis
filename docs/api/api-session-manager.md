@@ -55,7 +55,7 @@ interface SessionInfo {
 }
 ```
 
-会话种类是会话列表的分区、会话设置字段的 `appliesTo` 与会话协议的 `SessionSummary.kind` 共同的来源。它与审批的发起类别是两回事：owner 在自己的 QQ 私聊里亲手发起的回合照样能产生审批。
+会话种类是会话列表的分区、会话设置字段的 `appliesTo` 与会话协议的 `SessionSummary.kind` 共同的来源。它与审批的发起类别是两回事：审批按这一轮的触发者，owner 在哪个会话里亲手发起的回合都能产生审批。
 
 会话之间的差别按字段判，不按会话 ID 的写法：
 
@@ -67,7 +67,7 @@ interface SessionInfo {
 
 `createSession`、`createChildSession`、`ensureSession` 的会话字段参数里带上这几项一律丢弃。`kind` 由 session-manager 按 `parentId` 与出生平台推出，新建、建档、补记与加载时覆盖写入，调用方传的值与存储里的旧值都不采信；参数类型里同样没有它们，也没有下面四个由 session-manager 写入的字段。
 
-房间类别 `roomClass(info, lookup, isOwner)` 是按这些字段判「受众里有谁」的纯函数，子会话取根会话的：有出生平台的，聊天窗口为多方的是 `room`，一对一而对端是 owner 身份的是 `owner-only`（`isOwner` 由调用方传入），其余一对一是 `room`，只认多方标记、不认类型名；没有出生平台、带创建来源的是 `owner-only`；其余（不在会话表里的、按 ID 建档的、`mcp-server`、编排与定时任务的会话）一律 `internal`。
+房间类别 `roomClass(info, lookup, isOwner)` 是按这些字段判「受众里有谁」的纯函数，子会话取根会话的；它不定这一轮谁能做什么（那按这一轮的触发者，见 api-authority 的 `originOf`），只用在按受众定的行为上（网关的结构性放行、摘要模板、检查点的默认范围、发送者前缀等）：有出生平台的，聊天窗口为多方的是 `room`，一对一而对端是 owner 身份的是 `owner-only`（`isOwner` 由调用方传入），其余一对一是 `room`，只认多方标记、不认类型名；没有出生平台、带创建来源的是 `owner-only`；其余（不在会话表里的、按 ID 建档的、`mcp-server`、编排与定时任务的会话）一律 `internal`。
 
 `fromElsewhere(message, sessionManager)` 判一条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。`sessionManager` 只用 `present` 与 `use`；会话管理缺席、房间没有出生平台时判不出，按否。触发插件与流控对它直接放行。
 

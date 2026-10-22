@@ -88,7 +88,7 @@ const TRANSPORT_HEADERS = new Set([
 const APPROVAL: Approval = {
   id: 'zz-approval',
   sessionId: 's-1',
-  origin: { kind: 'owner', platform: 'webui', userId: 'console' },
+  origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
   target: 'tool',
   tool: 'exec',
   facts: { command: 'ls', params: {} },

@@ -13,7 +13,7 @@ import type { Logger } from '../../packages/core/src/index.js';
 import { BackgroundTasks } from '../../packages/plugin-tools/src/background.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
-import { type IncomingMessage, selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { ownView } from '../fixtures/own-storage.js';
 
 // ════════════════════════════════════════════════════════════
@@ -404,7 +404,7 @@ describe('上限', () => {
   });
 });
 
-describe('不在对话回合里的调用（没有 turnId 或 callId）', () => {
+describe('不在对话回合里的调用（不在入站回合里，或没有 turnId、callId）', () => {
   const outside: ToolCallContext = { sessionId: 'zz-mcp', platform: 'mcp', userId: 'zz-client' };
 
   it('runInBackground 直接回错，不执行', async () => {
@@ -416,6 +416,10 @@ describe('不在对话回合里的调用（没有 turnId 或 callId）', () => {
       await w.registry.execute('zz_slow', { runInBackground: true }, turn({ turnId: undefined }).ctx),
     );
     expect(String(noTurn.error), '只有 callId、没有 turnId 的同样').toContain('不在对话回合里');
+    const noInbound = parse(
+      await w.registry.execute('zz_slow', { runInBackground: true }, turn({ inbound: undefined }).ctx),
+    );
+    expect(String(noInbound.error), '有 turnId 与 callId、不在入站回合里的同样').toContain('不在对话回合里');
     expect(w.runs).toEqual([]);
   });
 
@@ -798,45 +802,38 @@ describe('落盘', () => {
 
 describe('结束通知', () => {
   const owner = { platform: 'webui', userId: 'console' };
-  const cases: Array<{
-    name: string;
-    ctx: Partial<ToolCallContext>;
-    platform: string;
-    actor: { platform: string; userId: string };
-    callerUserId?: string;
-  }> = [
-    { name: 'owner 的 WebUI 回合（没有 actor）', ctx: {}, platform: 'webui', actor: owner, callerUserId: 'console' },
+  const ownerHand = { platform: 'webui', userId: 'console', participants: [owner] };
+  const cases: Array<{ name: string; ctx: Partial<ToolCallContext>; fromTurn: FromTurn }> = [
+    { name: 'owner 的 WebUI 回合（没有 actor）', ctx: {}, fromTurn: ownerHand },
     {
       name: '子任务回合（actor 为创建者，userId 为 parent:<id>）',
       ctx: { userId: `parent:${OTHER}`, actor: owner, inbound: { source: 'subtask' } },
-      platform: 'webui',
-      actor: owner,
-      callerUserId: `parent:${OTHER}`,
+      fromTurn: { platform: 'webui', userId: `parent:${OTHER}`, participants: [owner], source: 'subtask' },
     },
     {
       name: '定时任务回合（actor 为创建者，没有 userId）',
       ctx: { userId: undefined, actor: owner, inbound: { source: 'scheduler' } },
-      platform: 'webui',
-      actor: owner,
+      fromTurn: { platform: 'webui', participants: [owner], source: 'scheduler' },
     },
     {
-      name: '自发回合（actor 为无主体，userId 为最后发言的群友）',
-      ctx: { sessionId: GROUP, platform: 'onebot', userId: '30001', actor: selfInitiatedActor('onebot') },
-      platform: 'onebot',
-      actor: { platform: 'onebot', userId: '' },
-      callerUserId: '30001',
+      name: '群里被频率触发挑中的插话（没有 actor，授权身份是发言者）',
+      ctx: { sessionId: GROUP, platform: 'onebot', userId: '30001' },
+      fromTurn: { platform: 'onebot', userId: '30001', participants: [{ platform: 'onebot', userId: '30001' }] },
     },
     {
-      name: '群里的群友（没有 actor）',
-      ctx: { sessionId: GROUP, platform: 'onebot', userId: '30002' },
-      platform: 'onebot',
-      actor: { platform: 'onebot', userId: '30002' },
-      callerUserId: '30002',
+      name: '续做那一轮的调用带着它自己的 fromTurn',
+      ctx: { sessionId: GROUP, platform: 'onebot', userId: '30002', inbound: { fromTurn: ownerHand } },
+      fromTurn: {
+        platform: 'onebot',
+        userId: '30002',
+        participants: [{ platform: 'onebot', userId: '30002' }],
+        fromTurn: ownerHand,
+      },
     },
   ];
 
   for (const c of cases) {
-    it(`身份取起它的那次调用：${c.name}`, async () => {
+    it(`带着起它的那一轮：${c.name}`, async () => {
       const w = world();
       w.slow();
       const { ctx } = turn(c.ctx);
@@ -848,13 +845,13 @@ describe('结束通知', () => {
       expect(w.notices()).toHaveLength(1);
       const [notice] = w.notices();
       expect(notice.sessionId).toBe(ctx.sessionId);
-      expect(notice.platform).toBe(c.platform);
+      expect(notice.platform).toBe(c.fromTurn.platform);
       expect(notice.source).toBe(`bg:${taskId}`);
-      expect(notice.actor).toEqual(c.actor);
+      expect(notice.fromTurn).toEqual(c.fromTurn);
+      expect(notice).not.toHaveProperty('actor');
       expect(notice.hostNotice).toEqual({
         kind: BACKGROUND_TASK_NOTICE,
         id: taskId,
-        ...(c.callerUserId !== undefined ? { callerUserId: c.callerUserId } : {}),
         facts: { tool: 'zz_slow', status: 'completed', durationMs: 65_000 },
         text: expect.objectContaining({ key: 'noticeCompleted' }),
       });
@@ -879,7 +876,6 @@ describe('结束通知', () => {
       {
         kind: BACKGROUND_TASK_NOTICE,
         id: taskId,
-        callerUserId: '30002',
         replyTo: 'zz-msg-1',
         facts: { tool: 'zz_slow', status: 'completed', durationMs: 0 },
         text: expect.objectContaining({ key: 'noticeCompleted' }),

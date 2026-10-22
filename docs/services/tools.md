@@ -56,7 +56,7 @@ export interface ToolCallContext {
   enabledGroups?: string[];
   acceptsImages?: boolean;
   signal?: AbortSignal;
-  inbound?: { source?: string; callerUserId?: string; messageId?: string };
+  inbound?: { source?: string; fromTurn?: FromTurn; messageId?: string }; // FromTurn 见 schema-message
   turnId?: string;
   callId?: string;
   output?: (text: string) => void;
@@ -175,7 +175,7 @@ const result = tools.present
 
 **提供者必须遵守**：写/删/越权读/外发类工具都要声明 `risk` 或显式 `visibility/confirm`。外发网络走 `safeFetch`。访问文件系统只走 storage URI。
 
-**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则把调用上下文（身份、回合与调用 id、`inbound`、中止信号）交给它。需要确认的工具调用由守卫请 owner 审批，只有 owner 本人与 owner 链的延续发起的回合能产生审批。owner 视为等级 ∞。
+**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则把调用上下文（身份、回合与调用 id、`inbound`、中止信号）交给它。需要确认的工具调用由守卫请 owner 审批，这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批。owner 视为等级 ∞。
 
 ## 7. 注意事项
 

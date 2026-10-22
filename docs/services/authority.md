@@ -53,7 +53,7 @@ export interface AuthorityService {
   // owner 在这个平台登记的账号：配置 owners 里这个平台的第一个，没有时为 undefined；本机控制台身份不算
   ownerOn(platform: string): UserIdentity | undefined;
 
-  // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判、不按授权身份判，会话受众按会话管理里记下的字段判
+  // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，不按授权身份判
   originOf(turn: OriginTurn): OriginKind;
 
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
@@ -97,7 +97,7 @@ interface ExecutionGuardContext {
   toolGroups?: readonly string[];    // 工具所属的工具分组（工具一路由执行器填）：原样转给 authorize，权限组的 tool-group: 条目按它覆盖
   skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
   turnId?; callId?;                  // 工具调用所在回合与这次调用的 id（agent 工具循环填写）
-  inbound?: InboundTurn;             // { source?, callerUserId? }：调用所在的入站回合，判发起类别用
+  inbound?: InboundTurn;             // { source?, fromTurn?, messageId? }：调用所在的入站回合，判发起类别用
   confirmIntent?: () => Promise<boolean>; // 指令用：向发出者本人核对意图
   signal?: AbortSignal;              // 回合中止信号：等 owner 审批期间中止即撤销
 }
@@ -150,7 +150,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 - **必须**：`isOwner`、`ownerOn`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
-- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
+- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按 `actor` 判，这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批。
 
 ### 4.2 注册（provide）
 
@@ -197,8 +197,8 @@ class MyAuthority implements AuthorityService {
   isOwner(platform: string, userId?: string) { /* owners 命中判定 */ return false; }
   ownerOn(_p: string): UserIdentity | undefined { return undefined; }
   originOf(turn: OriginTurn): OriginKind {
-    // 按回合的来源判：不在入站回合里为 autonomous，子任务为 subtask，房间为 room……（判据见 plugin-authority）
-    return 'other';
+    // 按这一轮从哪里来判：不在入站回合里为 autonomous，子任务为 subtask，续做随起它的那一轮……（判据见 plugin-authority）
+    return 'autonomous';
   }
   authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
     // 1) deniedCapabilities 硬禁（压过 owner） 2) owner 放行 3) level >= minLevel
@@ -302,7 +302,7 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 - `confirm:'always'` → 只有 `'off'` 能免（cron 等无人可问即拒）。
 - `confirm:'session'` → `skipConfirm`（scheduler 触发的指令、runtime 一次性子命令）或 `restrictedPolicy` 白名单命中时免确认；两者都**不绕 `authorize`**（仍评估等级，防提权）。
 - 指令：调 `confirmIntent` 向发出者本人核对意图（plugin-commands 只给人亲手输入的指令带上）；没有就拒。
-- 工具：按发起回合的类别（`authority-model.ts` 的 `originKind`）调 `approvals.request`；只有 owner 本人与 owner 链的延续能产生审批，定时任务、编排、房间、子任务与他人的回合由审批服务立即拒绝、不推给任何面。审批服务不在时立即拒。
+- 工具：带上发起回合的类别（`authority-model.ts` 的 `originKind`）与这一轮的参与者（授权身份）调 `approvals.request`；这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，定时任务、编排、子任务与别人亲手发起的回合由审批服务立即拒绝、不推给任何面。审批服务不在时立即拒。
 
 `restrictedPolicy` 白名单的 `duration` 用运行时态 `policyEnabledAt`（不持久化，重启失效，`authority-manager.ts`）。
 

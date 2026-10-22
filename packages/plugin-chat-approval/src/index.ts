@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 // 聊天审批：受众只有 owner 的 IM 私聊作审批面（登记名 chat）。owner 在私聊里亲手发言即在场，每个私聊一份限定在它的接入，
 // 只收这个私聊里发起的审批；审批推回这里，owner 引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。
-// 只经契约组合，不认平台：owner 取权限服务的发起类别，一对一取出生平台的适配器的声明，引用取投递结果里的平台消息 id。
+// 只经契约组合，不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，引用取投递结果里的平台消息 id。
 // ════════════════════════════════════════════════════════════
 
 import {
@@ -16,7 +16,7 @@ import { authority } from '@aalis/api-authority';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { getPlatformAdapters, platform } from '@aalis/api-platform';
-import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { oneToOneWith, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type TextRef, textLines, toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
@@ -154,24 +154,23 @@ function runChatApproval({
   const keyOf = (sessionId: string, messageId: string) => `${sessionId}\n${messageId}`;
 
   /**
-   * 这条消息是 owner 在与她的一对一窗口里亲手发的，就交出 owner 的身份：发起类别为 owner（与执行守卫判发起类别同一份定义），
-   * 根会话有出生平台且就是消息的平台（WebUI 往这个私聊插话不算），出生平台的适配器（与会话管理建档时判一对一用的同一个）
-   * 明确声明了它的窗口类型为一对一（推断出的一对一不算）
+   * 这条消息是 owner 在与她的一对一窗口里亲手发的，就交出 owner 的身份。亲手发的：不带 source、发言者是 owner。不带 source 的
+   * 消息不带 actor（触发器不给没点名的话回填身份），这与权限服务判这一轮为 hand 且参与者是 owner 等价。一对一窗口按
+   * oneToOneWith：根会话的出生平台就是消息的平台（WebUI 往这个私聊插话不算），出生平台的适配器（与会话管理建档时判一对一用的
+   * 同一个）明确声明了它的窗口类型为一对一（推断出的一对一不算），对端就是发言者（实现端上报了机器人自己发的消息、机器人账号
+   * 又登记成 owner 时，发言者不是对端）
    */
   function ownerOf(message: IncomingMessage): ApprovalIdentity | undefined {
     if (!authority.present || !sessionManager.present || !platform.present) return undefined;
-    const { sessionId, platform: from, userId, actor, source } = message;
-    const turn = { sessionId, platform: from, userId, actor, inbound: { source } };
-    if (userId === undefined || authority.use.originOf(turn) !== 'owner') return undefined;
+    const { sessionId, platform: from, userId, source } = message;
+    if (source !== undefined || userId === undefined || !authority.use.isOwner(from, userId)) return undefined;
     const lookup = (id: string) => sessionManager.use.getSession(id);
     const root = rootSessionOf(lookup(sessionId), lookup);
-    const origin = root?.originChat;
-    const born = root?.originPlatform;
-    if (!root || !origin || born !== from) return undefined;
-    const adapter = getPlatformAdapters(platform).find(entry => entry.platform === born);
-    return adapter?.sessionTypes?.find(type => type.name === origin.type)?.multiParty === false
-      ? { platform: from, userId }
-      : undefined;
+    if (!root) return undefined;
+    const adapter = getPlatformAdapters(platform).find(entry => entry.platform === root.originPlatform);
+    const declared = adapter?.sessionTypes?.find(type => type.name === root.originChat?.type)?.multiParty === false;
+    const owner = { platform: from, userId };
+    return oneToOneWith(root, owner, declared) ? owner : undefined;
   }
 
   /**

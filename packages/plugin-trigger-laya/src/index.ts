@@ -528,7 +528,7 @@ function run(caps: Caps): void {
       await archiveSwallowed(message, caps.messageArchive, logger.use, '[laya]');
       return; // swallow
     }
-    markTriggered(message, addressed, chat.multiParty);
+    markTriggered(message, addressed);
     await next();
   });
 

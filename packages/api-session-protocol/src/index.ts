@@ -619,11 +619,10 @@ export const ApprovalSchema = z.object({
   sessionId: z.string(),
   turnId: z.string().optional(),
   callId: z.string().optional(),
-  /** 发起回合的直接主体与它的类别（能产生审批的只有 owner 与 owner-chain） */
+  /** 发起回合的类别与参与者（授权身份） */
   origin: z.object({
-    kind: z.enum(['owner', 'owner-chain', 'subtask', 'autonomous', 'room', 'other']),
-    platform: z.string(),
-    userId: z.string().optional(),
+    kind: z.enum(['hand', 'subtask', 'autonomous']),
+    participants: z.array(z.object({ platform: z.string(), userId: z.string() })),
   }),
   target: z.literal('tool'),
   tool: z.string(),

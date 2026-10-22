@@ -161,6 +161,19 @@ export interface MessageAttachment {
   ref?: string;
 }
 
+/** 一轮的事实（见 {@link IncomingMessage.fromTurn}） */
+export interface FromTurn {
+  platform: string;
+  /** 物理发言者（同 {@link IncomingMessage.userId}，没有时不设，如定时任务那一轮） */
+  userId?: string;
+  /** 参与者：这一轮的授权身份 `actor ?? 发言者`，现在一轮只有一个 */
+  participants: readonly { platform: string; userId: string }[];
+  /** 那一轮的来源（同 {@link IncomingMessage.source}，人亲手发来的没有） */
+  source?: string;
+  /** 那一轮自己的起它的那一轮 */
+  fromTurn?: FromTurn;
+}
+
 export interface IncomingMessage {
   content: string;
   sessionId: string;
@@ -247,7 +260,7 @@ export interface IncomingMessage {
    * immediate 会原样生效。
    * - 'direct'    私聊或单一用户直连（默认语义：userId 是主发言者）
    * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
-   * - 'interval'  群聊中因消息频率/活跃度被动触发（无明确主发言者，userId 仅为最后一条消息发送者）
+   * - 'interval'  群聊中没点名、因消息频率/活跃度被挑中（提示词按无明确主发言者写；授权身份照旧是发言者）
    * - 'idle'      空闲自动触发（无 userId / 无主发言者）
    * - 'proactive' 系统代发给 agent 的任务指令，如 workflow 的 agent 节点（content 是任务描述而非用户消息）
    * 未设置时下游插件按 'direct' 兼容处理。
@@ -265,20 +278,25 @@ export interface IncomingMessage {
    * 触发器（如 scheduler）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
    * 不能由 LLM/AI 在工具入参中自由指定，避免提权。
    *
-   * AI 自发回合（无主发言者，如群聊 'interval' 触发）没有可代之人：触发器应回填
-   * {@link selfInitiatedActor}（userId 为空串 = 无主体），authority 按默认等级裁决、
-   * 永不视为 owner。'idle' 合成消息本就不带 userId，天然无主体，无需回填。
+   * 没有人的注入（不延续调用的宿主通知等）没有可代之人：注入方回填 {@link selfInitiatedActor}（userId 为空串 = 无主体），
+   * authority 按默认等级裁决、永不视为 owner。'idle' 合成消息本就不带 userId，天然无主体，无需回填。
+   * 带 {@link IncomingMessage.fromTurn} 的消息不设此字段，授权身份取它的参与者。
    */
   actor?: {
     platform: string;
     userId: string;
   };
   /**
+   * 起它的那一轮：续做（如后台任务的结束通知）的消息带着起它的那次调用所在那一轮的事实，权限服务按那一轮判这一轮的类别，
+   * 这一轮的授权身份取它的参与者（agent 经 api-authority 的 originTurnOf 拼工具调用上下文）。只由登记的注入方填
+   * （`test/architecture/host-notice-identity.test.ts`），只在那次调用在入站回合里时填，不由模型给；不进归档与提示词钩子
+   */
+  fromTurn?: FromTurn;
+  /**
    * 宿主撰写的事件通知（不是任何人的发言）。带这个字段的消息：
    * - 注入方必须同时设 `source`；不设 userId、nickname、sessionType、triggerType；
-   * - actor：不延续某次调用的通知用 {@link selfInitiatedActor}、不设 `callerUserId`；延续某次工具调用的（如后台任务
-   *   结束通知），platform 同那次调用，actor 取那次调用的有效授权身份 `actor ?? { platform, userId }`（都没有时仍为
-   *   selfInitiatedActor），并设 `callerUserId`。延续身份的注入方要在 `test/architecture/host-notice-identity.test.ts` 登记；
+   * - 身份：不延续某次调用的通知的 actor 用 {@link selfInitiatedActor}；延续某次工具调用的（如后台任务结束通知）不设
+   *   actor，改带 {@link IncomingMessage.fromTurn}（那次调用所在那一轮），platform 同那一轮；
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
    * - 不进向量记忆、抽取与记忆扩窗。
    *
@@ -301,12 +319,6 @@ export interface IncomingMessage {
      */
     reportOnly?: boolean;
     /**
-     * 通知延续某次工具调用时，那次调用的 ToolCallContext.userId。plugin-agent 只用它填本轮工具调用上下文的 userId
-     * （工具眼里是谁在调）与 inbound.callerUserId（执行守卫据此判这一轮是不是 owner 链的延续），并让这位发言者在同一会话的
-     * 消息打断这一轮；不当作发言者：归档、用户档案、关系与提示词钩子都不看它。须与 actor 取自同一次调用；不延续某次调用的通知不设。
-     */
-    callerUserId?: string;
-    /**
      * 回复这条通知时引用哪条消息：平台消息 id，取自起那次调用的入站消息（ToolCallContext.inbound.messageId）。
      * plugin-agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
      */
@@ -325,12 +337,8 @@ export interface IncomingMessage {
 }
 
 /**
- * AI 自发回合的授权身份：无主体。
- *
- * 'interval' 触发复用的是恰好撞上频率阈值的那条真人消息，若不回填 actor，授权轴会经
- * `actor ?? {platform, userId}` 回退到「最后发言者」——绝大多数回合按陌生人 0 级判权
- * （自发回合工具全挂），而 owner 恰好最后发言时整轮（含群内任何提示注入）以 owner 等级
- * 执行。契约（triggerType 注释）与 prompt 侧特判都把 interval 当无主发言者，授权轴应一致。
+ * 没有人的注入的授权身份：无主体。只给没有人的注入（不延续调用的宿主通知等）用；人发来的话（含群里没点名、被频率触发挑中的）
+ * 按说话的人算，不用它。
  *
  * userId 取空串而非缺省：`actor?.userId ?? userId` 回退链遇空串不回退（?? 只认 null/undefined），
  * 由此派生的定时任务/子任务保持匿名，不会漂回物理发言者；authority 的等级查表以空

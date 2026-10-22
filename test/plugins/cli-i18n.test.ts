@@ -152,7 +152,7 @@ async function setup({
   const request = async (over: Partial<ApprovalRequest> = {}) => {
     void host.approvals.use.request({
       sessionId: 'cli-default',
-      origin: { kind: 'owner', ...CONSOLE },
+      origin: { kind: 'hand', participants: [CONSOLE] },
       tool: 'exec',
       args: { command: 'ls' },
       rule: 'tool:exec 声明需确认',

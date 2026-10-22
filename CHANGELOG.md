@@ -289,6 +289,19 @@
 - WebUI、终端会话默认只取同一创建来源的会话：owner 用 `session_get_history` 读别的 WebUI 会话由拒绝变成放行；要在 WebUI 里读 IM 的会话，把 WebUI 平台档的范围设成全部，别人的私聊另开。同平台不同机器人账号之间默认不取，不同平台之间只看范围。
 - `onebot_get_msg` 取不到规则不放行的会话里的消息（此前按 `message_id` 什么都取得到），判不出所在会话的（她自己发的私聊消息、实现端不给群号或发送者）同样不给，工具说明删掉「不限定会话类型」；`onebot_resolve_session_id` 不再检查跨机器人账号，只拼会话 id。拒绝时回给模型的原因换成会话管理的几句（如「取别的会话的范围限于同平台」）。
 
+### 权限按这一轮的触发者：发起类别、插话与续做（@aalis/api-approval、@aalis/api-session-protocol、@aalis/schema-message、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya）
+
+- api-approval 的 `OriginKind` 只留 `hand`（人亲手发来的消息与它的续做，不论在哪个会话、是谁）、`subtask`、`autonomous`，删掉 `owner`、`owner-chain`、`room`、`other`；`ApprovalOrigin` 删掉 `platform`，`userId` 换成 `participants`（这一轮的参与者，即授权身份，现在一轮只有一个）。api-session-protocol 审批对象的 `origin` 与审批审计的请求行同改。审批服务按「类别为 `hand` 且参与者里有 owner」判能不能产生审批。
+- schema-message 的 `IncomingMessage` 加 `fromTurn`（类型 `FromTurn`：起它的那次调用所在那一轮的平台、发言者、参与者、来源与那一轮自己的 `fromTurn`），删掉 `hostNotice.callerUserId`。后台任务的结束通知不再带 `actor`，改带 `fromTurn`；自己注入延续某次调用的通知的，照这个写。
+- api-authority 的 `InboundTurn` 删掉 `callerUserId`、加 `fromTurn`；新导出 `originTurnOf(inputs)`，由一轮的输入拼执行守卫要的回合信息（发言者与授权身份缺省时取 `fromTurn` 的），自己实现 agent 的要用它填工具调用上下文。`originOf` 不再看会话的受众，续做与起它的那一轮同一类别；api-authority 新加 schema-message 的依赖。
+- plugin-authority 不再用会话管理（删掉 `session-manager` 的可选依赖）。
+- api-trigger 的 `markTriggered(message, addressed)` 删掉 `multiParty` 参数，不再给多方窗口里没点名的话回填无主体授权身份。
+- owner 在群里点名她、戳她、没点名而被频率触发挑中、从 WebUI 往群里插话，以及在受众判不出的会话里，亲手发起需要确认的工具：推审批卡到 WebUI 与终端，批了就执行。此前直接拒，模型拿到「需要批准的操作在这里不能执行。」。前提是这个群开的工具分组里有这样的工具。
+- 续做按起它的那一轮判：owner 在群里转到后台的调用，结束后的续做也能产生审批（此前拒）；owner 自己的平台请求事件（她申请入群、邀请机器人进群）那一轮里转后台的调用，续做不再能产生审批；子任务里转后台的调用，续做被拦时原因改为子任务那句。起它的人在同一会话说话不再中止续做那一轮。
+- 回给模型的拒绝语不论在哪个会话发起都是固定格式，不再指名 owner：「需要批准的操作没有执行」「被拒绝了，说明：…」「有能批的人在场时可以再申请」「子任务里需要确认的操作不上浮」；不能产生审批的那句改为「这一轮里没有 owner 的话，要 owner 确认的操作不能执行」。群成员、群里的定时任务等回合被拦下时拿到这句，不再是「需要批准的操作在这里不能执行。」。owner 在群里发起的一轮被拦下时，她拒绝时写的说明与「没人在场」「等满时限」也交给模型，群里那一轮可能转述出去。
+- 群里没点名、被频率触发挑中的话按说话的人算：owner 的这样一轮能产生审批；群友按他自己的等级、权限组与免确认（此前一律按无主体的默认 0 级）；这一轮能交白纸任务（此前回「这一回合没有发起人」），建的定时任务记说话的人为创建者。
+- 聊天审批认 owner 亲手发的消息时另核对一对一窗口的对端就是发言者：机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那条消息不再算 owner 在场，也不再能应答审批。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

@@ -7,7 +7,6 @@ import type {
   UserIdentity,
 } from '@aalis/api-authority';
 import type { HostConfig } from '@aalis/api-host-config';
-import type { SessionInfo } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import { TextError, type TextRef } from '@aalis/schema-i18n';
@@ -37,14 +36,10 @@ export class AuthorityManager implements AuthorityService {
   /** 免确认白名单（restrictedPolicy）的开启时间戳（运行时态，不持久化；重启即失效） */
   private policyEnabledAt: number | null = null;
 
-  /**
-   * @param sessions 按 id 取会话管理里的记录：发起类别按记下的会话字段判受众，会话管理不在时取不到（失败关闭）
-   */
   constructor(
     private readonly config: HostConfig,
     private readonly logger: Logger,
     storage: StorageService,
-    private readonly sessions: (sessionId: string) => SessionInfo | undefined,
   ) {
     this.store = new UserStore(storage, this.logger.child('authority'));
   }
@@ -71,7 +66,7 @@ export class AuthorityManager implements AuthorityService {
   }
 
   originOf(turn: OriginTurn): OriginKind {
-    return originKind(turn, (platform, userId) => this.isOwner(platform, userId), this.sessions);
+    return originKind(turn);
   }
 
   /** 触发者有效等级（owner→∞；登记等级；无记录→默认 0）。平台身份（如 onebot 群角色）不参与。 */

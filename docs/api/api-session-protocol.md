@@ -333,7 +333,7 @@ interface Approval {
   sessionId: string;
   turnId?: string;
   callId?: string;            // 工具卡的 itemId
-  origin: { kind: 'owner' | 'owner-chain' | 'subtask' | 'autonomous' | 'room' | 'other'; platform: string; userId?: string };
+  origin: { kind: 'hand' | 'subtask' | 'autonomous'; participants: { platform: string; userId: string }[] };
   target: 'tool';
   tool: string;
   facts: { command?: string; cwd?: string; diff?: { path: string; patch?: string }; params: Record<string, unknown> };

@@ -4,7 +4,6 @@ import { authority as authorityService, capabilityMinLevel } from '@aalis/api-au
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions as contributionsService } from '@aalis/api-contributions';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
-import { sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
@@ -23,8 +22,7 @@ import { t } from './texts.js';
 // 故 apply 里直接用它的业务句柄、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
 // （commands / tools / webui / storage）缺席时只是少一条接线，不该拦住权限服务本身上线。
-// approvals 缺席时需要确认的工具调用一律拒绝。房间类别按 session-manager 记下的会话字段判：审批服务的提供者
-// plugin-session-server 本身依赖它，它缺席时也没有审批服务。权限页的两个可选项来源经贡献点交付，缺席时页上的多选没有选项。
+// approvals 缺席时需要确认的工具调用一律拒绝。权限页的两个可选项来源经贡献点交付，缺席时页上的多选没有选项。
 // 「操作门槛」里的设置项来自会话设置的只读列举，会话设置缺席时这一类为空。
 const uses = {
   provide,
@@ -36,7 +34,6 @@ const uses = {
   tools: optional(toolsService),
   storage: optional(storageService),
   approvals: optional(approvals),
-  sessionManager: optional(sessionManager),
   sessionFields: optional(sessionFields),
   contributions: optional(contributionsService),
 };
@@ -55,9 +52,7 @@ async function run(caps: Caps): Promise<void> {
   const { commands, contributions, lifecycle, logger, storage, tools, webui } = caps;
   const config = caps.hostConfig.use;
 
-  const manager = new AuthorityManager(config, logger.use, storage.use, id =>
-    caps.sessionManager.present ? caps.sessionManager.use.getSession(id) : undefined,
-  );
+  const manager = new AuthorityManager(config, logger.use, storage.use);
   caps.provide.use(authorityService, manager);
   const page = defineAuthorityPage({
     webui,
@@ -115,8 +110,8 @@ async function run(caps: Caps): Promise<void> {
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   const guard = async (g: ExecutionGuardContext): Promise<string | TextRef | null> => {
     const capability = `${g.type}:${g.name}`;
-    // 授权身份（actor 缺省即会话身份）：等级裁决与免确认都按它，不看物理发言者
-    const identity = g.actor ?? { platform: g.platform, userId: g.userId };
+    // 授权身份（actor 缺省即会话身份，没有发言者时账号为空串，即无主体）：等级裁决、免确认与审批的参与者都按它，不看物理发言者
+    const identity = g.actor ?? { platform: g.platform, userId: g.userId ?? '' };
     const ownerActs = manager.isOwner(identity.platform, identity.userId);
     // 确认覆盖：覆盖值优先，回退插件声明；'off' 只对授权身份是 owner 的回合关掉确认，别人的回落到插件声明
     const confOv = (config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
@@ -145,7 +140,7 @@ async function run(caps: Caps): Promise<void> {
       return (await g.confirmIntent()) ? null : t('intentDeclined', { capability });
     }
 
-    // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别裁决，不能的立即拒绝、不推给任何面
+    // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别与参与者裁决，不能的立即拒绝、不推给任何面
     if (!caps.approvals.present) return t('approvalsAbsent', { capability });
     const service = caps.approvals.use;
     const outcome = await service.request(
@@ -153,11 +148,8 @@ async function run(caps: Caps): Promise<void> {
         sessionId: g.sessionId,
         turnId: g.turnId,
         callId: g.callId,
-        origin: {
-          kind: manager.originOf(g),
-          platform: g.platform,
-          userId: g.userId,
-        },
+        // 参与者是这一轮的授权身份（现在一轮只有一个），不是物理发言者
+        origin: { kind: manager.originOf(g), participants: [identity] },
         tool: g.name,
         args: g.args ?? {},
         // 覆盖生效时记覆盖；'off' 没生效（授权身份不是 owner）时记插件的声明

@@ -18,18 +18,15 @@
 
 ## 谁能产生审批
 
-请求带发起回合的类别（`origin.kind`），由发起方按回合的来源算出，不按授权身份算：owner 建的定时任务会把创建者回填成授权身份，按授权身份算它就成了 owner。第一方的发起方是 plugin-authority 的执行守卫，判据见 [plugin-authority](../plugins/plugin-authority.md) 的「发起回合的类别」。
+请求带发起回合的类别（`origin.kind`）与这一轮的参与者（`origin.participants`，即授权身份，现在一轮只有一个）。类别由发起方按这一轮从哪里来算出，不看会话类型与受众，也不按授权身份算：owner 建的定时任务会把创建者回填成授权身份，按授权身份算它就成了 owner 亲手。第一方的发起方是 plugin-authority 的执行守卫，判据见 [plugin-authority](../plugins/plugin-authority.md) 的「发起回合的类别」。
 
 | `kind` | 回合 | 处理 |
 |---|---|---|
-| `owner` | owner 自己的会话里 owner 亲手发来的消息 | 能产生审批 |
-| `owner-chain` | 同一 owner 会话里后台任务完成后的续做 | 能产生审批 |
-| `subtask` | 子任务回合 | 直接拒绝：子任务里需要确认的操作不会转给 owner，请在发起它的会话里执行 |
-| `autonomous` | 定时任务、定时触发、空闲与主动发言、开话题，以及它们触发的编排 | 直接拒绝 |
-| `room` | 群房间，以及对端不是 owner 的私聊；owner 在 WebUI 里驱动房间也算 | 直接拒绝 |
-| `other` | 其余真人回合与续做：群成员或其他用户发起的，以及受众判不出的会话（没有来源字段也没有创建来源）里 owner 发起的 | 直接拒绝 |
+| `hand` | 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话），不论在哪个会话、是谁，以及它的续做 | 参与者里有 owner 时能产生审批，否则直接拒绝 |
+| `subtask` | 子任务回合 | 直接拒绝：子任务里需要确认的操作不上浮，请在发起它的会话里执行 |
+| `autonomous` | 定时任务、编排、空闲与主动发言、开话题、平台请求事件等其余注入与它们的续做，以及不在入站回合里的调用 | 直接拒绝 |
 
-能产生审批的两类还要求发起回合的直接主体（`origin.platform`、`origin.userId`）是 owner。直接拒绝的请求不推给任何审批面，照样记审计。
+能不能产生审批由审批服务按类别与参与者判：这一轮里有 owner 的话（`hand` 且参与者里有 owner），不论在哪个会话。直接拒绝的请求不推给任何审批面，照样记审计。
 
 ## 流程
 
@@ -39,7 +36,7 @@
 4. **推送**：推出时推给覆盖这个会话的在场客户端；不在场的客户端变为在场时补推它覆盖的、还没结的。身份不是 owner 的客户端收不到推送，限定了会话的客户端收不到别的会话的审批。
 5. **应答**：先答先得，核两项：应答人是 owner；`approvalId` 是本服务签发的、还没结算，并且 `contentHash` 一致。后到的应答回 `approval-settled`。
 6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中覆盖它的在场客户端都断开或变为不在场时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
-7. **回给模型**：批准时工具照常执行。拒绝时结局里的 `message` 写明被什么拦下、能不能再申请；发起类别是 `room` 的（房间里的回合）只回一句通用的拒绝，不透露 owner 的文件布局与说明。owner 自己的 QQ 私聊不算房间，照样拿到写明原因的格式。
+7. **回给模型**：批准时工具照常执行。拒绝时结局里的 `message` 写明被什么拦下、能不能再申请，不论在哪个会话发起都是这个格式，不指名应答人。
 8. **审计**：请求与决定成对记下，不进模型上下文。
 
 时限、在场的判据、重连宽限、频率上限与审计的落点由实现定，默认实现的取值见 [plugin-session-server](../plugins/plugin-session-server.md#审批)。
@@ -47,12 +44,11 @@
 ## 类型
 
 ```ts
-type OriginKind = 'owner' | 'owner-chain' | 'subtask' | 'autonomous' | 'room' | 'other';
+type OriginKind = 'hand' | 'subtask' | 'autonomous';
 
 interface ApprovalOrigin {
   kind: OriginKind;
-  platform: string;           // 发起回合的直接主体
-  userId?: string;
+  participants: { platform: string; userId: string }[]; // 这一轮的参与者（授权身份），现在一轮只有一个
 }
 
 interface ApprovalRequest {
@@ -195,7 +191,7 @@ const outcome = await service.request(
     sessionId,
     turnId,
     callId,
-    origin: { kind: 'owner', platform, userId },
+    origin: { kind: 'hand', participants: [actor] }, // actor：这一轮的授权身份
     tool: name,
     args,
     rule: `${capability} 声明需确认`,

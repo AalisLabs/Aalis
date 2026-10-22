@@ -547,14 +547,14 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(spoke.message.actor).toBeUndefined();
   });
 
-  it('没点名、模型判回：记 interval 并回填无主体授权；判不回：归档后吞掉', async () => {
+  it('没点名、模型判回：记 interval，授权身份是发言者；判不回：归档后吞掉', async () => {
     let next = score(1);
     sidecar.reply = () => next;
     const { send, archived } = await setup();
     const spoke = await send(groupMsg('随便聊聊'));
     expect(spoke.reached).toBe(true);
     expect(spoke.message.triggerType).toBe('interval');
-    expect(spoke.message.actor).toEqual({ platform: 'onebot', userId: '' });
+    expect(spoke.message.actor).toBeUndefined();
 
     next = score(-1);
     const silent = await send(groupMsg('再聊聊'));
@@ -581,7 +581,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(sidecar.requests).toHaveLength(1);
     expect(result.reached).toBe(true);
     expect(result.message.triggerType).toBe('interval');
-    expect(result.message.actor).toEqual({ platform: 'onebot', userId: '' });
+    expect(result.message.actor).toBeUndefined();
     sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
     expect((await send(message())).reached).toBe(false);
     expect(archived).toEqual([message().content]);

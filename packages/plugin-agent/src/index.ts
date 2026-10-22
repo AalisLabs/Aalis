@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { type AgentService, agent as agentService, type PreprocessorFn, type TokenUsageEvent } from '@aalis/api-agent';
-import { authority as authorityService } from '@aalis/api-authority';
+import { authority as authorityService, originTurnOf } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { chatScopeOf, gateway as gatewayService } from '@aalis/api-gateway';
@@ -185,12 +185,6 @@ class DefaultAgent implements AgentService {
    * 独立管理，互不打断；同来源新消息会中止旧的生成。
    */
   private activeControllers = new Map<string, { controller: AbortController; turnId: string }>();
-
-  /**
-   * 延续某位发言者身份的宿主通知回合（lane → 会话与 hostNotice.callerUserId）。那位发言者在同一会话发来的真人消息
-   * 中止这些回合；别人的消息与不延续任何人身份的通知（白纸等）不受影响，宿主通知也从不打断别的回合。
-   */
-  private noticeCallers = new Map<string, { sessionId: string; callerUserId: string; controller: AbortController }>();
 
   /**
    * 在飞回合 Promise → 所在会话。关停与删除会话时 abort 之后等它们以 AbortError（或正常完成）收尾，
@@ -598,23 +592,11 @@ class DefaultAgent implements AgentService {
     // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
     const prev = this.activeControllers.get(lane);
     if (prev) prev.controller.abort();
-    // 例外：真人消息打断延续其本人身份的宿主通知回合，本人说话就停得下她自己开的那一轮。
-    if (incoming.source === undefined && incoming.userId !== undefined) {
-      for (const notice of this.noticeCallers.values()) {
-        if (notice.sessionId === incoming.sessionId && notice.callerUserId === incoming.userId) {
-          notice.controller.abort();
-        }
-      }
-    }
 
     const controller = new AbortController();
     // 回合 id：这一轮的入站钩子、流式片段、工具调用、用量与回合结束都带它，停止键也能按它只停这一轮
     const turnId = crypto.randomUUID();
     this.activeControllers.set(lane, { controller, turnId });
-    const callerUserId = incoming.hostNotice?.callerUserId;
-    if (callerUserId !== undefined) {
-      this.noticeCallers.set(lane, { sessionId: incoming.sessionId, callerUserId, controller });
-    }
 
     const turn = (async () => {
       try {
@@ -624,7 +606,6 @@ class DefaultAgent implements AgentService {
         if (this.activeControllers.get(lane)?.controller === controller) {
           this.activeControllers.delete(lane);
         }
-        if (this.noticeCallers.get(lane)?.controller === controller) this.noticeCallers.delete(lane);
       }
     })();
     this.inflightTurns.set(turn, incoming.sessionId);
@@ -726,31 +707,15 @@ class DefaultAgent implements AgentService {
         const tools =
           reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
         const toolCtx: ToolCallContext = {
-          sessionId: incoming.sessionId,
-          // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域都靠它们）；
-          // 授权身份单独走 actor——authority 守卫按 actor 查等级，
-          // scheduler/workflow/subtask 等触发的 AI 因此以创建者等级执行而非匿名。
-          // 不可再用 actor 覆盖 platform：actor 来自另一平台时（如跨平台的定时任务、workflow）
-          // 会把上述下游全路由到发起者平台。
-          // 延续某次工具调用的宿主通知不带发言者，userId 取那次调用的（hostNotice.callerUserId），工具眼里是起它的人在调。
-          // 只用在这里，归档与提示词钩子仍按消息本身的 userId（没有）。
-          userId: incoming.userId ?? incoming.hostNotice?.callerUserId,
-          platform: incoming.platform,
-          actor: incoming.actor,
+          // 会话、发言者、授权身份与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext）；入站回合只有这里填，工具据此
+          // 正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，归档与提示词钩子仍按消息本身的 userId
+          ...originTurnOf([incoming]),
           // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
           enabledGroups,
           // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
           acceptsImages,
           // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
           signal,
-          // 本回合的入站来源：只有这里填写，工具据此正向区分真人消息（source 缺省）与内部注入；
-          // 延续某次调用的宿主通知另带那次调用的发言者，执行守卫据此认出 owner 链的延续；
-          // 入站消息的平台消息 id 供转到后台的调用结束时，通知的回复引用它
-          inbound: {
-            source: incoming.source,
-            callerUserId: incoming.hostNotice?.callerUserId,
-            messageId: incoming.messageId,
-          },
           turnId,
         };
 

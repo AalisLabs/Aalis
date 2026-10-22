@@ -61,7 +61,7 @@ interface RegisteredTool {
 
 - 发给模型的参数表多两项：`runInBackground`（布尔，立即转后台）与 `waitSeconds`（前台最多等多少秒）。执行时这两项先取出，再做参数校验、过守卫、交给工具；审批事实与工具拿到的参数里都没有它们。参数表里已有同名项的工具当作没声明，执行器记一条警告，工具照常登记。`takenBackgroundParams(parameters)` 回参数表里已有的这两项的名字，执行器按它判断；桥接远端工具的插件据此不声明，等多久照远端调用自己的超时。
 - 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合中止（停止键、新消息打断）一并中止它。
-- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（没有 `turnId` 或 `callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
+- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（不在入站回合里，或没有 `turnId`、`callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
 - 同一会话里对话回合中在跑的可转后台调用有上限（前台与后台一起数），满了时新的调用在过守卫之前就被拒绝。不在对话回合里的调用不会转后台，不占名额。
 
 没声明的工具照旧等到底，照它们自己的超时。`background` 不进 `ToolDefinition`（那是发给模型的线上格式）。
@@ -91,7 +91,7 @@ interface ToolCallContext {
   enabledGroups?: string[];                         // 当前会话启用的工具分组
   acceptsImages?: boolean;                          // 这次调用的主模型能亲眼看图
   signal?: AbortSignal;                             // 调用方回合的中止信号
-  inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
+  inbound?: InboundTurn;                            // 调用所在的入站回合（source、起它的那一轮 fromTurn、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
   output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
@@ -100,7 +100,7 @@ interface ToolCallContext {
 
 `signal` 由调用方传回合的中止信号。可转后台的工具拿到的是执行器给这次调用的信号：在前台时随回合一并中止，转到后台之后只随停止、工具撤回登记与执行器停用中止。
 
-`output` 由执行器填写，调用方不填。工具执行中把输出写进它：有 `turnId` 与 `callId` 时转成 `tool:output` 推给界面，一次调用推出的总量不超过 64 KiB；可转后台的调用另留进这次调用的输出缓冲（只留末尾 64 KiB），后台任务的最后一行、最后输出时间与取输出都取它。工具结果照旧在调用结束时一次给出。
+`output` 由执行器填写，调用方不填。工具执行中把输出写进它：调用在入站回合里（`inbound` 在）且有 `turnId` 与 `callId` 时转成 `tool:output` 推给界面，一次调用推出的总量不超过 64 KiB；可转后台的调用另留进这次调用的输出缓冲（只留末尾 64 KiB），后台任务的最后一行、最后输出时间与取输出都取它。工具结果照旧在调用结束时一次给出。
 
 `inbound` 用来正向判断「这次调用来自由入站消息驱动的 agent 回合」：
 

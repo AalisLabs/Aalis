@@ -130,7 +130,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
     const promise = host.approvals.use.request(
       {
         sessionId: 'cli-default',
-        origin: { kind: 'owner', ...CONSOLE },
+        origin: { kind: 'hand', participants: [CONSOLE] },
         tool: 'exec',
         args: { command: 'ls' },
         rule: 'tool:exec 声明需确认',
@@ -212,7 +212,7 @@ describe('在场：终端最近有输入才算在场', () => {
 
   it('权限服务不认终端身份是 owner：按键也不算在场，收不到卡；审批只推给在场的 owner 客户端', async () => {
     const s = await setup({ owner: (p, u) => p === 'webui' && u === 'console' });
-    const origin = { kind: 'owner' as const, platform: 'webui', userId: 'console' };
+    const origin = { kind: 'hand' as const, participants: [{ platform: 'webui', userId: 'console' }] };
     await s.type('a');
     expect(await s.request({ origin }).promise).toMatchObject({ approved: false, source: 'absent' });
 
@@ -379,7 +379,9 @@ describe('模态应答', () => {
     const s = await setup({ owner: (p, u) => (p === 'webui' || (p === 'cli' && terminalIsOwner)) && u === 'console' });
     s.webuiPresent();
     await s.type('a');
-    const r = s.request({ origin: { kind: 'owner', platform: 'webui', userId: 'console' } });
+    const r = s.request({
+      origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
+    });
     await settle();
     expect(s.frame()).toContain('需要批准');
     terminalIsOwner = false;
