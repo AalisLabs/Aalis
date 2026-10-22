@@ -15,8 +15,9 @@ import { describe, expect, it } from 'vitest';
 //    不出现插件实现包。消费方依赖契约包；依赖实现包会把实现连同它的依赖树一起装进来，
 //    也让「换一个提供者」在包管理层面做不到。确有需要的（如打包一整套插件的发行包）
 //    进 ALLOWED_PLUGIN_DEPS 并写明理由。devDependencies 不发布，不在此列。
-// 3. 只读窄面只供消费：与完整描述符同名、业务层更窄的描述符（api-host-config 的 ownHostConfig）只写在插件的 uses 里，
-//    第一方没有插件 provide 它。拿它去 provide 会在同一个服务名下造出第二家提供者，也会触发同名服务来自两个描述符的告警。
+// 3. 只读窄面只供消费：与完整描述符同名、业务层更窄的描述符（api-host-config 的 ownHostConfig、api-session-settings 的
+//    sessionFields）只写在插件的 uses 里，第一方没有插件 provide 它。拿它去 provide 会在同一个服务名下造出第二家提供者，
+//    也会触发同名服务来自两个描述符的告警。
 //
 // 扫描面是 packages/*/src 与根 src；测试里为替身随手定义的描述符不算。
 // ════════════════════════════════════════════════════════════
@@ -113,6 +114,7 @@ interface NarrowFacade {
 }
 const NARROW_FACADES: NarrowFacade[] = [
   { service: 'host-config', module: '@aalis/api-host-config', name: 'ownHostConfig' },
+  { service: 'session-settings', module: '@aalis/api-session-settings', name: 'sessionFields' },
 ];
 
 /**

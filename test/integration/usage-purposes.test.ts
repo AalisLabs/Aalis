@@ -101,7 +101,7 @@ describe('模型调用的用途与会话', () => {
     }
     await host.compression.use.compress(owner.id, { reason: 'manual' });
     const media = new MediaServiceImpl(
-      { logger: fixedRef(quiet), llm: host.llm, asr: ref(), sessionManager: ref(), memory: ref() },
+      { logger: fixedRef(quiet), llm: host.llm, asr: ref(), memory: ref() },
       MEDIA_CONFIG,
     );
     for (const processor of scanLLMProcessors({ llm: host.llm, logger: quiet })) media.registerProcessor(processor);

@@ -378,8 +378,8 @@ export const LLMCapabilities = {
 } as const satisfies LLMCapabilityRegistry;
 
 // SchemaFieldTypes 属配置表单词汇,扩展点随词汇一起住在 @aalis/schema-config
-// （空 import 使本文件对其构成 module augmentation 而非 ambient 声明）。
-import type {} from '@aalis/schema-config';
+// （import 使本文件对其构成 module augmentation 而非 ambient 声明）。
+import type { SchemaField } from '@aalis/schema-config';
 
 declare module '@aalis/schema-config' {
   interface SchemaFieldTypes {
@@ -405,6 +405,34 @@ export interface ModelRef {
   /** model id（provider 内唯一，如 `gpt-4o`）。 */
   model?: string;
 }
+
+/** 模型引用写成文字：条目 id `<提供者实例 id>/<模型 id>`，与 `/model` 列出的写法相同 */
+export function entryIdOf(ref: ModelRef): string {
+  return `${ref.provider}/${ref.model}`;
+}
+
+/**
+ * 条目 id 读成模型引用：开头的 npm scope（`@scope/`）跳过，到下一个 `/` 为止是提供者实例 id，余下是模型 id（模型 id 里的
+ * 斜杠留在模型里）；拆不出非空的两段时为 undefined。提供者实例 id 的后缀里带 `/` 的拆不准，这类实例的模型要在界面里选
+ */
+export function modelRefOf(text: string): ModelRef | undefined {
+  const start = text.startsWith('@') ? text.indexOf('/') + 1 : 0;
+  const cut = text.indexOf('/', start);
+  if (cut <= start || cut === text.length - 1) return undefined;
+  return { provider: text.slice(0, cut), model: text.slice(cut + 1) };
+}
+
+/** llm-ref 字段的取值校验与文字读写：服务与模型都是非空字符串，文字是条目 id。字段定义里展开它 */
+export const MODEL_REF_TEXT = {
+  validate(value: unknown) {
+    const ref = value as ModelRef | null;
+    return typeof ref?.provider === 'string' && ref.provider !== '' && typeof ref.model === 'string' && ref.model !== ''
+      ? undefined
+      : t('badModelRef');
+  },
+  fromText: modelRefOf,
+  toText: (value: unknown) => entryIdOf(value as ModelRef),
+} satisfies Pick<SchemaField, 'validate' | 'fromText' | 'toText'>;
 
 /**
  * 按能力过滤 llm 的提供者条目 —— 能力源为模型自带的元数据 `use.capabilities`，
@@ -445,6 +473,23 @@ export function resolveLLMModel(
   if (ref?.provider) return all.find(e => e.id.startsWith(`${ref.provider}/`));
   if (ref?.model) return all.find(e => e.use.id === ref.model);
   return all[0];
+}
+
+/**
+ * 后台功能取对话模型（摘要、提取、压缩这类插件）：每次取 llm 服务给本插件挑的能对话的那一个（本插件偏好 › 全局偏好 › 优先级，
+ * 偏好指向的不在时落到下一级）。取不到时 onMissing 只在连着取不到的第一次调（一个插件只告警一次），取到之后复位
+ */
+export function chatModelPicker(
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
+  onMissing: () => void,
+): () => ProviderEntry<LLMModel> | undefined {
+  let missing = false;
+  return () => {
+    const entry = resolveLLMModel(source, undefined, ['chat']);
+    if (!entry && !missing) onMissing();
+    missing = entry === undefined;
+    return entry;
+  };
 }
 
 // ----- Token 估算 -----

@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {} from '../../packages/api-host-config/src/index.js';
 import { type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
+import type {} from '../../packages/api-session-settings/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
-import { PERSONA, startSessionManager } from '../fixtures/session-settings.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// 终端显示的人设名按终端会话生效的「人设」取：欢迎行、头部与回复前的署名都写这个会话实际用的那张卡，与回合同一口径，
-// 不是人设服务的主卡。起真 TUI（假 TTY，收集 stdout 帧），会话设置是真的会话管理，人设服务是按卡名给名字的替身
+// 终端显示的人设名按终端会话取：人设服务按 { sessionId, platform: 'cli' } 取这个会话的卡，欢迎行、头部与回复前的署名都写
+// 这张卡的名字，与回合同一口径，不是人设服务的主卡。会话设置或宿主配置变了时立即按新的名字重绘。起真 TUI（假 TTY，收集
+// stdout 帧），人设服务是按会话给名字的替身
 // ════════════════════════════════════════════════════════════
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
@@ -20,20 +23,24 @@ afterEach(async () => {
 });
 
 describe('终端显示的人设名', () => {
-  /** 起终端界面，会话设置的各层是 layers（缺省全局默认层的「人设」设为 <别的卡>）；返回发一条回复之后的最后一帧（去掉控制序列） */
-  async function terminal(
-    getPersonaName: (options?: PersonaSessionOptions) => string,
-    layers: Parameters<typeof startSessionManager>[0]['layers'] = { defaults: { persona: '<别的卡>' } },
-  ) {
+  /** 起终端界面；返回发一条回复之后的最后一帧（去掉控制序列）与收到的人设选项 */
+  async function terminal(getPersonaName: (options?: PersonaSessionOptions) => string) {
     const writes: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
       writes.push(String(chunk));
       return true;
     });
     cleanups.push(fakeTty(30, 120).restore);
-    const { app, host } = await startSessionManager({ layers, settings: [PERSONA] });
+    const app = new App({ name: 'T', logLevel: 'error' });
     cleanups.push(() => app.stop());
-    host.provide.use(persona, { getPersonaName } as never);
+    const host = app.bind({ provide, events });
+    const asked: Array<PersonaSessionOptions | undefined> = [];
+    host.provide.use(persona, {
+      getPersonaName: (options?: PersonaSessionOptions) => {
+        asked.push(options);
+        return getPersonaName(options);
+      },
+    } as never);
     await app.plugin(cliPlugin, { startupView: 'chat' });
     await app.plugins.idle();
     if (app.plugins.getPlugin(cliPlugin.name)?.state !== 'active') throw new Error('plugin-cli 未激活');
@@ -45,27 +52,36 @@ describe('终端显示的人设名', () => {
     };
     await host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', content: '<回复>' });
     await vi.waitFor(() => expect(frame()).toContain('<回复>'));
-    return frame();
+    return { frame, asked, emit: host.events.use.emit };
   }
 
-  it('owner 在全局默认层设了别的人设：欢迎行、头部与回复的署名写它的名字', async () => {
-    const names: Record<string, string> = { '<别的卡>': '<别的卡的名字>' };
-    const frame = await terminal(options => names[options?.persona ?? ''] ?? '<主卡的名字>');
-    expect(frame).toContain('✦ <别的卡的名字>');
-    expect(frame).toContain('欢迎使用 <别的卡的名字>。');
-    expect(frame).toContain('Aalis · <别的卡的名字>');
-    expect(frame).not.toContain('<主卡的名字>');
+  it('按终端会话取卡：欢迎行、头部与回复的署名写这个会话的卡的名字', async () => {
+    const { frame, asked } = await terminal(options =>
+      options?.sessionId === 'cli-default' && options.platform === 'cli' ? '<会话的卡的名字>' : '<主卡的名字>',
+    );
+    expect(frame()).toContain('✦ <会话的卡的名字>');
+    expect(frame()).toContain('欢迎使用 <会话的卡的名字>。');
+    expect(frame()).toContain('Aalis · <会话的卡的名字>');
+    expect(frame()).not.toContain('<主卡的名字>');
+    expect(asked.every(options => options?.sessionId === 'cli-default' && options.platform === 'cli')).toBe(true);
   });
 
-  it('会话用的卡没取名（名字是空串）：欢迎行与署名写 Aalis，头部写卡的 id', async () => {
-    const frame = await terminal(() => '');
-    expect(frame).toContain('✦ Aalis');
-    expect(frame).toContain('欢迎使用 Aalis。');
-    expect(frame).toContain('Aalis · <别的卡>');
+  it('会话用的卡没取名（名字是空串）：欢迎行与署名写 Aalis，头部写 -', async () => {
+    const { frame } = await terminal(() => '');
+    expect(frame()).toContain('✦ Aalis');
+    expect(frame()).toContain('欢迎使用 Aalis。');
+    expect(frame()).toContain('Aalis · -');
   });
 
-  it('哪一层都没设人设、主卡没取名：头部写 default', async () => {
-    const frame = await terminal(() => '', {});
-    expect(frame).toContain('Aalis · default');
+  it('会话设置或宿主配置变了：立即按新的名字重绘', async () => {
+    let name = '<旧名字>';
+    const { frame, emit } = await terminal(() => name);
+    expect(frame()).toContain('Aalis · <旧名字>');
+    name = '<新名字>';
+    await emit('session-settings:changed');
+    await vi.waitFor(() => expect(frame()).toContain('Aalis · <新名字>'));
+    name = '<再改的名字>';
+    await emit('host-config:changed', { instanceId: '@aalis/plugin-persona' });
+    await vi.waitFor(() => expect(frame()).toContain('Aalis · <再改的名字>'));
   });
 });

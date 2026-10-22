@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import type { ElementHandle, Frame, HTTPResponse, Page, Viewport } from 'puppeteer';
 import { describe, expect, it, vi } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
+import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { backgroundTasks, tools } from '../../packages/api-tools/src/index.js';
 import { type FrameClient, type PageHandle, type TableRow, webuiServer } from '../../packages/api-webui/src/index.js';
 import { config, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
@@ -19,7 +21,7 @@ import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { settingsPlugin } from '../fixtures/session-settings.js';
+import { fieldsPlugin } from '../fixtures/session-settings.js';
 import {
   aria,
   attentionRows,
@@ -823,12 +825,26 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('场所与在哪用就在哪改：房间表一行的「场所设置」写这个窗口，同一个群里另一个机器人账号的会话取到、写明来自这个群；会话设置里改到「这个工作区」写进默认工作区、新会话取到，改到「所有会话」写进全局默认；「模型」没设时写「默认（<模型名>）」；系统页的服务偏好写一行指向「会话默认」', async () => {
+  it('场所与在哪用就在哪改：房间表一行的「场所设置」写这个窗口，同一个群里另一个机器人账号的会话取到、写明来自这个群；会话设置里改到「这个工作区」写进默认工作区、新会话取到，改到「全局（插件配置）」写进插件配置；「模型」没设时写此刻在用的模型', async () => {
     const stack = await startStack({}, [], {
       'onebot:10000:group:20001': '读书会',
       'onebot:10001:group:20001': '读书会小号',
     });
-    const sm = stack.app.bind({ sessionManager }).sessionManager.use;
+    const {
+      sessionManager: sessions,
+      sessionSettings: admin,
+      hostConfig: doc,
+    } = stack.app.bind({
+      sessionManager,
+      sessionSettings,
+      hostConfig,
+    });
+    const sm = sessions.use;
+    const AGENT = '@aalis/plugin-agent';
+    /** 场所这一层写的最大工具迭代 */
+    const atPlace = (key: string) =>
+      admin.use.rows({ layer: { scope: 'place', key } }).find(r => r.plugin === AGENT && r.key === 'maxToolIterations')
+        ?.value;
     const { page, problems } = await openPage(stack, viewport);
     const ITERATIONS = '.setting-row[aria-label="最大工具迭代"]';
     /** 在 scope 里把「最大工具迭代」改成 value（编辑框里先是生效值，全选后改写），按回车存 */
@@ -858,7 +874,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const dialog = aria('场所设置：读书会', 'dialog');
     await page.waitForSelector(`${dialog} .setting-row`);
     await setIterations(dialog, '7');
-    expect(sm.getLayer({ scope: 'place', key: 'onebot:group:20001' }).maxToolIterations).toBe(7);
+    expect(atPlace('onebot:group:20001')).toBe(7);
     await page.locator(`${dialog} ${aria('关闭', 'button')}`).click();
     await page.waitForSelector(dialog, { hidden: true });
     expect(await iterationsOf('onebot:10001:group:20001')).toBe('最大工具迭代7来自：群『读书会』');
@@ -869,24 +885,20 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await scope?.click();
     await page.locator(aria('这个工作区', 'option')).click();
     await setIterations('body', '9');
-    expect(sm.getLayer({ scope: 'place', key: 'workspace:default' }).maxToolIterations).toBe(9);
+    expect(atPlace('workspace:default')).toBe(9);
     const other = await sm.createSession({ name: '<乙>' }, { createdFrom: 'webui' });
     expect(await iterationsOf(other.id)).toBe('最大工具迭代9来自：工作区『默认工作区』');
-    expect(await page.$eval('.setting-row[aria-label="模型"]', row => row.textContent)).toBe('模型默认（mock-model）');
+    const now = '跟随服务偏好（此刻：mock-model）';
+    expect(await page.$eval('.setting-row[aria-label="模型"]', row => row.textContent)).toBe(`模型${now}`);
 
     await (await page.waitForSelector(aria('改到', 'combobox')))?.click();
-    await page.locator(aria('所有会话', 'option')).click();
+    await page.locator(aria('全局（插件配置）', 'option')).click();
     await typeIterations('body', '11');
     await page.waitForSelector(`${ITERATIONS} ${aria('最大工具迭代', 'textbox')}`, { hidden: true });
-    expect(sm.getLayer({ scope: 'defaults' }).maxToolIterations).toBe(11);
+    expect(doc.use.getPluginConfig(AGENT).maxToolIterations).toBe(11);
     await page.goto(`${stack.origin}/s/${encodeURIComponent(other.id)}`);
     const model = await page.waitForSelector(`main ${aria('模型', 'combobox')}`);
-    expect(await model?.evaluate(select => select.textContent)).toBe('默认（mock-model）');
-
-    await page.goto(`${stack.origin}/settings/system`);
-    await page.waitForSelector(`main ${text('默认模型在「会话默认」里设')}`);
-    await page.locator(`main ${aria('去会话默认', 'link')}`).click();
-    await page.waitForFunction(() => location.pathname === '/settings/session-defaults');
+    expect(await model?.evaluate(select => select.textContent)).toBe(now);
     expect(problems).toEqual([]);
   }, 60_000);
 
@@ -1026,7 +1038,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('设置（最少插件组合）：目录是会话默认、权限、外观、系统；会话默认的层只有全局默认与 webui 平台档，行正是登记着的设置项，假模型不声明档位、「深度思考」写明当前模型不能调；外观只有内置 8 个主题，会话面板标签里没有插件标签；权限从目录与地址都能进、刷新后仍在', async () => {
+  it('设置（最少插件组合）：目录是会话默认、权限、外观、系统；会话默认先选层（全局、webui 平台档与默认工作区，宽屏左右并排、手机两屏），全局层的行正是登记着的设置项，假模型不声明档位、「深度思考」写明当前模型不能调；外观只有内置 8 个主题，会话面板标签里没有插件标签；权限从目录与地址都能进、刷新后仍在', async () => {
     const stack = await startStack();
     const { page, problems } = await openPage(stack, viewport);
     const directory = 'nav[aria-label="设置"]';
@@ -1055,38 +1067,24 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     };
 
     await open('会话默认');
-    // 层选择器：桌面上在按钮下方左对齐弹出，手机上从底部弹出、占满宽，每项不矮于点按范围
-    const picker = await page.waitForSelector(`main ${aria('层', 'combobox')}`);
-    await picker?.click();
-    const list = await page.waitForSelector(aria('层', 'listbox'));
-    expect(await list?.$$eval('[role="option"]', options => options.map(option => option.textContent))).toEqual([
-      '全局默认',
-      '平台档：webui',
+    const layers = 'main nav[aria-label="会话设置的层"]';
+    await page.waitForSelector(`${layers} ${aria('全局（插件配置）', 'link')}`);
+    expect(await page.$$eval(`${layers} a`, links => links.map(link => link.textContent))).toEqual([
+      '全局（插件配置）',
+      'webui',
+      '默认工作区',
     ]);
-    const placed = await page.$eval(
-      '.select-popup',
-      (popup, trigger) => {
-        const box = popup.getBoundingClientRect();
-        const at = (trigger as Element).getBoundingClientRect();
-        const option = (popup.querySelector('[role="option"]') as Element).getBoundingClientRect();
-        return {
-          sheet: Math.round(box.bottom) === innerHeight && box.left === 0 && Math.round(box.width) === innerWidth,
-          below: Math.round(box.left) === Math.round(at.left) && box.top >= at.bottom,
-          option: option.height,
-        };
-      },
-      picker,
-    );
-    expect(placed).toMatchObject(phone ? { sheet: true, option: 48 } : { sheet: false, below: true, option: 32 });
-    await page.keyboard.press('Escape');
-    await page.waitForSelector('.select-popup', { hidden: true });
+    await page.locator(`${layers} ${aria('全局（插件配置）', 'link')}`).click();
+    await page.waitForSelector(`main ${aria('全局（插件配置）', 'heading')}`);
+    // 宽屏两步左右并排，手机上第二屏只有这一层的项
+    expect(Boolean(await page.$(layers))).toBe(!phone);
     await page.waitForSelector('main .setting-row');
     await page.locator(`main ${aria('高级', 'button')}`).click();
     const rows = await page.$$eval('main .setting-row', fieldsets => fieldsets.map(f => f.getAttribute('aria-label')));
     const registered = stack.app
-      .bind({ sessionManager })
-      .sessionManager.use.listSettings()
-      .map(setting => toSource(setting.field.label));
+      .bind({ sessionSettings })
+      .sessionSettings.use.getAll()
+      .map(entry => toSource(entry.label));
     expect([...rows].sort()).toEqual([...registered].sort());
     await page.waitForSelector(`main .setting-row[aria-label="深度思考"] ${text('当前模型不能调')}`);
 
@@ -1894,10 +1892,13 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   it('子会话：「后台」标签按会话树列出子会话，带状态、耗时与 token；停掉父会话在等的那个，父会话的等待随即返回，「全部停止」停掉余下的；子会话页的路径逐层退回；父会话用量的累计含子会话', async () => {
     const stack = await startStack({}, [subtaskPlugin]);
     const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
-    const { id: parentId } = await sessions.createSession(
-      { config: { enabledToolGroups: ['subtask'] } },
-      { createdFrom: 'webui' },
-    );
+    const { id: parentId } = await sessions.createSession({}, { createdFrom: 'webui' });
+    await stack.app
+      .bind({ sessionSettings })
+      .sessionSettings.use.update(
+        { sessionId: parentId },
+        { plugin: '@aalis/plugin-tools', key: 'enabledToolGroups', value: ['subtask'] },
+      );
     const { page, problems } = await openPage(stack, viewport, `/s/${encodeURIComponent(parentId)}`);
     await send(page, SPLIT);
     // 整理目录的很快回完，另两个一直在跑
@@ -2561,15 +2562,15 @@ describe('控件与文字的比例', () => {
     }, filled);
 
   it('桌面：按钮、图标按钮、输入框与选择框都是 28 像素高，左栏头部、输入框区、审批卡与改名框里同一处同高，带开关的设置行不被开关撑高；有底色的按钮字重常规，文字按钮中等；插件前端的按钮、输入框与宿主的次要按钮、输入框一样', async () => {
-    // 最少插件组合里没有开关型的会话设置项：另登记一个
-    const toggle = settingsPlugin('zz-e2e-toggle', [
-      {
-        key: 'clientSideJsonRendering',
-        field: { type: 'boolean', label: '<开关>' },
-        appliesTo: ['owner'],
-        prominence: 'common',
+    // 最少插件组合里常用一档没有开关型的会话设置项：另声明一个
+    const toggle = fieldsPlugin('zz-e2e-toggle', {
+      flag: {
+        type: 'boolean',
+        label: '<开关>',
+        default: false,
+        session: { appliesTo: ['owner'], prominence: 'common' },
       },
-    ]);
+    }).definition;
     const stack = await startStack({}, [await scaffolded(), toggle]);
     const { page, problems } = await openPage(stack, VIEWPORTS.desktop);
     const box = await page.waitForSelector(aria('消息', 'textbox'));
@@ -2593,8 +2594,15 @@ describe('控件与文字的比例', () => {
       host.primary.weight,
     ]).toEqual([28, 28, '400', 28, '400']);
 
-    // 带开关的一行与只有一行字的行同高：行高只由字与上下内边距定
+    // 带开关的一行与只有一行字的行同高：行高只由字与上下内边距定。这一项设在本会话这一层，值下面不写来源
+    await stack.app
+      .bind({ sessionSettings })
+      .sessionSettings.use.update(
+        { sessionId: await sessionIdOf(page) },
+        { plugin: 'zz-e2e-toggle', key: 'flag', value: true },
+      );
     await page.locator(aria('设置', 'tab')).click();
+    await page.waitForSelector(`.setting-row[aria-label="<开关>"] ${aria('恢复继承', 'button')}`);
     const toggled = await page.waitForSelector('.setting-row-main:has(.toggle)');
     expect(
       await toggled?.evaluate(row => {
@@ -2615,20 +2623,20 @@ describe('控件与文字的比例', () => {
   }, 60_000);
 
   it('触屏：设置行行尾的「恢复继承」与名字竖直居中对齐，只有名字的一行与名字下面写着值的一行一样；插件配置行尾的「撤销」与标签对齐', async () => {
-    const align = settingsPlugin('zz-e2e-align', [
-      {
-        key: 'clientSideJsonRendering',
-        field: { type: 'boolean', label: '<开关>' },
-        appliesTo: ['owner'],
-        prominence: 'common',
+    const align = fieldsPlugin('zz-e2e-align', {
+      flag: {
+        type: 'boolean',
+        label: '<开关>',
+        default: false,
+        session: { appliesTo: ['owner'], prominence: 'common' },
       },
-      {
-        key: 'systemPromptExtra',
-        field: { type: 'string', label: '<额外提示>' },
-        appliesTo: ['owner'],
-        prominence: 'common',
+      extra: {
+        type: 'string',
+        label: '<额外提示>',
+        default: '',
+        session: { appliesTo: ['owner'], prominence: 'common' },
       },
-    ]);
+    }).definition;
     const stack = await startStack({ 你好: '在的。' }, [align]);
     await stack.app.plugin(needsConfig, {});
     await stack.app.plugins.idle();
@@ -2657,10 +2665,10 @@ describe('控件与文字的比例', () => {
     await page.locator(aria('<开关>', 'switch')).click();
     const single = '.setting-row[aria-label="<开关>"]';
     await page.waitForSelector(`${single} ${aria('恢复继承', 'button')}`);
-    await page.locator(`.setting-row ${aria('<额外提示>', 'button')}`).click();
-    await (await page.waitForSelector(`.setting-row ${aria('<额外提示>', 'textbox')}`))?.type('简短');
-    await page.keyboard.press('Enter');
     const double = '.setting-row[aria-label="<额外提示>"]';
+    await page.locator(`${double} .setting-row-main`).click();
+    await (await page.waitForSelector(`${double} ${aria('<额外提示>', 'textbox')}`))?.type('简短');
+    await page.keyboard.press('Enter');
     await page.waitForSelector(`${double} ${aria('恢复继承', 'button')}`);
     expect([
       await offset(single, '.setting-row-label', '.button'),

@@ -19,10 +19,11 @@ import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
-import { MEMORY_RECALL_SCOPE_SETTING, memory } from '@aalis/api-memory';
+import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
-import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
@@ -34,6 +35,7 @@ import { registerRelationContribution } from './middleware.js';
 import { startRenameWatcher } from './rename-watcher.js';
 import { RelationService } from './service.js';
 import { RelationStore } from './store.js';
+import { t } from './texts.js';
 import { registerRelationTools } from './tools.js';
 import { registerRelationPages } from './webui.js';
 
@@ -322,6 +324,19 @@ const configSchema = defineConfig({
     description: '私聊一般无需关系图上下文',
     default: false,
   },
+  // 按会话字段：坏值原样交来，按仅本会话处理
+  recallScope: {
+    type: 'select',
+    label: t('recallScopeLabel'),
+    description: t('recallScopeDescription'),
+    default: 'all',
+    onInvalid: 'error',
+    options: [
+      { label: t('recallScopeSession'), value: 'session' },
+      { label: t('recallScopeAll'), value: 'all' },
+    ],
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+  },
 
   // ────── Agent 工具侧 ──────
   toolsEnabled: {
@@ -455,7 +470,11 @@ function start(caps: Caps): void {
         candidateEventDays: cfg.candidateEventDays,
         candidateEventLimit: cfg.candidateEventLimit,
         senderNeighborhoodEdgeLimit: cfg.senderNeighborhoodEdgeLimit,
-        extractionModel: cfg.extractionModel,
+        // 两项不齐按没填处理，与其余模型字段一致
+        extractionModel:
+          cfg.extractionModel?.provider && cfg.extractionModel.model
+            ? { provider: cfg.extractionModel.provider, model: cfg.extractionModel.model }
+            : undefined,
         disableThinking: cfg.extractionDisableThinking,
         strictSelfAssertion: cfg.strictSelfAssertion,
         evictionEnabled: cfg.evictionEnabled,
@@ -485,8 +504,11 @@ function start(caps: Caps): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (cfg.agentInjection) {
-    caps.sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
-    registerRelationContribution({ contributions: caps.contributions, sessionManager: caps.sessionManager }, service, {
+    const fields = caps.sessionFields.use.fields(configSchema, caps);
+    // 关系图范围每轮现读，改了下一轮即生效；不是「全部」的（含写坏了的）一律按仅本会话
+    const sessionOnly = (sessionId: string | undefined, platform: string | undefined) =>
+      fields.get(sessionId, { platform }).recallScope !== 'all';
+    registerRelationContribution({ contributions: caps.contributions, sessionOnly }, service, {
       maxDepth: cfg.injectionMaxDepth,
       maxBreadth: cfg.injectionMaxBreadth,
       maxEvents: cfg.maxInjectedEvents,
@@ -598,8 +620,10 @@ const uses = {
   commands: optional(commands),
   webui: optional(webuiServer),
   embedding: optional(embedding),
-  /** 房间的召回范围（会话配置 memoryRecallScope），注入时收窄跨会话内容；不在场时不收窄 */
-  sessionManager: optional(sessionManager),
+  /** 按会话读关系图范围；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 

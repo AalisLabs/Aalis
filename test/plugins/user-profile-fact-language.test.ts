@@ -9,7 +9,7 @@ import { provideHostLanguage } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 事实提取的提示词：每条事实的语言取自全局默认层的语言列表（经 api-i18n 的 outputLanguageFor，读者是 host），不写死中文；
+// 事实提取的提示词：每条事实的语言取自全局层的语言列表（经 api-i18n 的 outputLanguageFor，读者是 host），不写死中文；
 // 长度上限按字符计。会话管理的替身里会话读者是 en（没设），读者错按会话时变成 English。提取模型用替身，记下收到的 system 消息
 // ════════════════════════════════════════════════════════════
 
@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe('plugin-user-profile: 事实的语言', () => {
-  it('全局默认层设 ja-JP：system 写「一句简洁的 日本語 (日本)（ja-JP）」，上限按字符', async () => {
+  it('全局层设 ja-JP：system 写「一句简洁的 日本語 (日本)（ja-JP）」，上限按字符', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);

@@ -1,22 +1,17 @@
 import { useReducer, useState } from 'react';
 import { Block } from '../components/Block';
 import { Button } from '../components/Button';
-import { ButtonLink } from '../components/ButtonLink';
 import { FetchError } from '../components/FetchError';
 import { useToast } from '../components/Toast';
 import { tr } from '../language';
-import { LLM, useHost } from '../plugins/list';
+import { useHost } from '../plugins/list';
 import { deleteJson, isRecord, postJson, putJson, useJson } from '../rest';
-import { paths } from '../routes';
-import { useSessionService } from '../shell/SessionGate';
-import { type Field, isModelField } from './field';
+import type { Field } from './field';
 import { SettingRow } from './SettingRow';
 import { useServices } from './services';
-import { useSettingRows } from './setting-rows';
 
 // 设置的「系统」：宿主配置的核心键（来源是配置文件或默认，要重启的键写明，改了之后出「重启以生效」与重启按钮）、
-// 服务偏好（有几个提供者的服务选用哪一个，界面前端也在其中）与家目录。会话设置的全局默认层里有模型字段的设置项时，
-// 模型服务的偏好就是它（默认模型），不在这里单列，写一行指向「会话默认」
+// 服务偏好（全局偏好：有几个提供者的服务选用哪一个，界面前端与模型服务也在其中）与家目录
 
 interface HostConfigView {
   /** 配置文件里写了的核心键 */
@@ -115,24 +110,12 @@ function HostConfig({ view, saved }: { view: HostConfigView; saved(): void }) {
   );
 }
 
-const DEFAULTS_LAYER = { layer: { scope: 'defaults' } } as const;
-
-/** 偏好由会话设置承担的服务：全局默认层里有模型字段的设置项时是模型服务（按字段类型认，不认插件名） */
-function useDelegatedService(): string | undefined {
-  const sessions = useSessionService();
-  const { rows } = useSettingRows(DEFAULTS_LAYER);
-  return sessions && rows?.some(row => isModelField(row.field)) ? LLM : undefined;
-}
-
 /** 有几个提供者（或写过偏好）的服务：选用哪一个，改了立即生效并写进配置文件。插件启停、管理连接重连后重取 */
 function ServicePreferences() {
   const host = useHost();
-  const delegated = useDelegatedService();
   const { services: value, error, refetch } = useServices();
-  const services = (value ?? []).filter(
-    service => service.name !== delegated && (service.providers.length > 1 || service.preferred !== null),
-  );
-  if (!error && services.length === 0 && !delegated) return null;
+  const services = (value ?? []).filter(service => service.providers.length > 1 || service.preferred !== null);
+  if (!error && services.length === 0) return null;
   const base = (name: string) => `/api/services/${encodeURIComponent(name)}/prefer`;
   const save = (name: string) => async (contextId: unknown) => {
     await (contextId === null ? deleteJson(base(name)) : postJson(base(name), { contextId }));
@@ -141,14 +124,6 @@ function ServicePreferences() {
   return (
     <Block title={tr('servicePreferences')}>
       <p className="settings-note">{tr('servicePreferencesHostNote')}</p>
-      {delegated && (
-        <p className="settings-note">
-          {tr('defaultModelNote')}
-          <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
-            {tr('goToSessionDefaults')}
-          </ButtonLink>
-        </p>
-      )}
       {error && (
         <FetchError
           what={tr('serviceList')}

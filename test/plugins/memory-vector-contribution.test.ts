@@ -15,8 +15,8 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { roomScopeManager } from '../fixtures/room-scope.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 
 // 从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging 不在
 // 该路径生效——vitest 不做类型检查，用 never 断言绕过贡献点键约束（同 prompt-assembly.test.ts）。
@@ -132,15 +132,7 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.withMemory) await app.plugin(memoryInMemory);
   if (opts.withArchive) await app.plugin(messageArchivePlugin, { debugLogs: false });
 
-  if (opts.rooms)
-    host.provide.use(
-      sessionManager,
-      roomScopeManager(
-        {},
-        {},
-        opts.rooms.map(id => storedRoom(id)),
-      ),
-    );
+  if (opts.rooms) host.provide.use(sessionManager, sessionTableManager(opts.rooms.map(id => storedRoom(id))));
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   host.provide.use(embedding, embedder.service);

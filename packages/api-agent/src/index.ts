@@ -9,7 +9,6 @@
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type { ChatResponse, ModelRef } from '@aalis/api-llm';
-import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -82,6 +81,12 @@ export interface AgentService {
    * 找出提供这些服务的插件，返回分组信息。
    */
   getPluginGroups?(): PluginGroupInfo[];
+
+  /**
+   * 把这个会话本会话层的对话模型设成 model（写进会话设置）：子任务插件给子会话指定模型时，在建好之后、发首条消息之前调。
+   * 会话设置不在或写入被拒时抛错
+   */
+  assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
 
 // ----- Agent 域钩子声明（通过 declaration merging 注入 @aalis/api-hooks 的 HookContextMap）-----
@@ -162,6 +167,8 @@ declare module '@aalis/api-hooks' {
     'agent:llm:before': {
       messages: Message[];
       tools: ToolDefinition[];
+      /** 这一轮用的对话模型：按它判断能不能直接看图等 */
+      model: ModelRef;
       sessionId?: string;
       userId?: string;
       platform?: string;
@@ -332,6 +339,8 @@ export interface TokenUsageEvent {
    * 调用为止追加的工具调用与结果。与硬裁剪无关；快照只有活跃历史条数
    */
   historyMessages: number;
+  /** 这一轮的历史条数上限（会话设置「历史条数上限」，0 为不按条数）：摘要插件按它判定按条数压缩 */
+  historyLimit: number;
   breakdown: TokenUsageBreakdown;
   parts: TokenUsagePart[];
 }
@@ -370,23 +379,3 @@ export const agent = defineService<AgentService, BoundAgent>('agent', port => {
     registerPreprocessor: (name: string, handler: PreprocessorFn) => preprocessors.add({ name, handler }),
   });
 });
-
-// ----- 会话设置项（plugin-agent 登记）-----
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 会话用的模型：provider 为 LLM 插件实例 id，model 为它登记的模型 id；没设置时跟随 llm 服务的偏好 */
-    llm?: ModelRef;
-    /**
-     * 深度思考的档位：会话所用模型声明的档位 id（api-llm 的 LLMModel.thinking）。没设置、当前模型没有这一档或不能调时
-     * 按模型的默认档
-     */
-    think?: string;
-    /** 一轮里工具调用循环的最大次数（正整数）；没设置时为 30 */
-    maxToolIterations?: number;
-    /**
-     * 历史条数上限（非负整数）：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的一半、之后累积到这个条数再丢一段；
-     * 也是按条数压缩的线。0 或没设置时发全部活跃历史、不按条数压缩
-     */
-    historyLimit?: number;
-  }
-}

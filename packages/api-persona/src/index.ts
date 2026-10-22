@@ -1,7 +1,6 @@
 // ----- 人格服务接口 -----
 // 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
-import type {} from '@aalis/api-session-manager'; // declaration merging 锚点（下方 SessionConfig 增强）
 import { defineService } from '@aalis/core';
 
 /** 输出格式中单个字段的定义 */
@@ -28,18 +27,12 @@ export interface OutputFormat {
 }
 
 /**
- * 会话级选项，由调用方（如 @aalis/plugin-agent、@aalis/api-trigger 的名字表）从 SessionConfig 构造后传入。
- * PersonaService 本身不关心 session-manager，只根据传入的选项调整行为。
+ * 按会话取设置的选项：人设服务按这个会话（platform 是入口平台，只对没有出生平台的会话起作用）读自己的会话设置（人设、额外
+ * 提示、结构化输出的两个开关）。不给 sessionId 时按人设插件的配置
  */
 export interface PersonaSessionOptions {
-  /** 覆盖角色卡名称 */
-  persona?: string;
-  /** 禁用结构化输出格式 */
-  disableOutputFormat?: boolean;
-  /** 客户端渲染 JSON 覆盖 */
-  clientSideJsonRendering?: boolean;
-  /** 会话级额外系统提示（SessionConfig.systemPromptExtra）：追加在人设提示之后、结构化输出格式说明之前 */
-  systemPromptExtra?: string;
+  sessionId?: string;
+  platform?: string;
 }
 
 export interface PersonaService {
@@ -61,9 +54,8 @@ export interface PersonaService {
    */
   getVolatilePrompt?(options?: PersonaSessionOptions): string;
   /**
-   * 角色卡的名字。options.persona 指定了会话用的卡时返回那张卡的（找不到该卡时与其它方法一样回落主卡），
-   * 不传时返回主卡的。触发插件按会话取它做点名识别，终端按自己会话的配置取它作署名。卡没取名时返回空串，
-   * 不给兜底的名字：要显示名字的一方自己兜底，点名识别跳过空串。
+   * 角色卡的名字：按 options 这个会话的「人设」取卡（找不到该卡时与其它方法一样回落主卡）。触发插件按会话取它做点名识别，
+   * 终端按自己的会话取它作署名。卡没取名时返回空串，不给兜底的名字：要显示名字的一方自己兜底，点名识别跳过空串。
    */
   getPersonaName(options?: PersonaSessionOptions): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
@@ -76,26 +68,7 @@ export interface PersonaService {
   getNickNames?(options?: PersonaSessionOptions): string[];
   /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
   isTimeInjectionEnabled?(): boolean;
-  /**
-   * 获取角色卡声明的可用 skill 白名单（@aalis/plugin-skills 用于过滤暴露给 LLM 的 skill 列表）。
-   * 返回 undefined 表示角色卡未声明白名单（应全开）；返回 [] 表示该角色禁用所有 skill。
-   */
-  getPersonaSkills?(options?: PersonaSessionOptions): string[] | undefined;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----
 export const persona = defineService<PersonaService>('persona');
-
-// ----- 会话设置项（plugin-persona 登记）-----
-declare module '@aalis/api-session-manager' {
-  interface SessionConfig {
-    /** 角色卡名（不含后缀）；没设置时用人设插件的默认卡 */
-    persona?: string;
-    /** 额外系统提示：追加在人设提示之后、结构化输出格式说明之前 */
-    systemPromptExtra?: string;
-    /** 不用角色卡的结构化输出格式，回复纯文本 */
-    disableOutputFormat?: boolean;
-    /** 结构化输出的 JSON 留给客户端渲染，不提取回复字段 */
-    clientSideJsonRendering?: boolean;
-  }
-}

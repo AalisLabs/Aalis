@@ -27,6 +27,7 @@ import {
   checkRemote,
   effectiveActor,
   type Isolation,
+  type PaperFields,
   type RoomPaper,
   resolveRoomPaper,
 } from './rooms.js';
@@ -44,6 +45,7 @@ interface PaperToolDeps {
   journal?: TaskJournal;
   tools: BoundTools;
   sessionManager: ServiceSelection<SessionManagerService>;
+  fields: PaperFields;
   remote: ServiceSelection<RemoteAgentProvider>;
   gateway: ServiceSelection<GatewayService>;
   events: Events;
@@ -63,14 +65,14 @@ interface PaperToolDeps {
 
 /** 白纸工具与作品工具共用房间、回合和白纸归属检查。 */
 export async function enterPaperRoom(
-  deps: Pick<PaperToolDeps, 'sessionManager' | 'cfg'>,
+  deps: Pick<PaperToolDeps, 'sessionManager' | 'fields' | 'cfg'>,
   ctx: ToolCallContext,
   kind: 'initiate' | 'use',
 ): Promise<{ paper: RoomPaper } | { refused: string }> {
   const sm = deps.sessionManager.use;
   const refused = checkEligibility(sm, ctx, kind);
   if (refused) return { refused };
-  const paper = resolveRoomPaper(sm, deps.cfg, ctx.sessionId, ctx.platform);
+  const paper = resolveRoomPaper(sm, deps.fields, deps.cfg, ctx.sessionId, ctx.platform);
   return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
 }
 

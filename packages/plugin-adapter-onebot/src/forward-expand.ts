@@ -1,5 +1,5 @@
 import { type I18nService, outputLanguageFor } from '@aalis/api-i18n';
-import { type LLMModel, lightestThinking, resolveLLMModel } from '@aalis/api-llm';
+import { chatModelPicker, type LLMModel, lightestThinking } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
 import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
@@ -50,7 +50,6 @@ export interface ForwardConfig {
   /** 单条合并转发内媒体识别数量上限（图片/语音/视频合计，超出的以占位符保留）。0=不限。默认 32。 */
   recognitionMaxItems: number;
   summarize: boolean;
-  summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
   /** 喂给摘要 LLM 的原文最大字符数。原文超过则前段截断；<=0 表示不截断 */
   summaryInputLimit: number /**
@@ -293,18 +292,20 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return null;
   }
 
-  /** 用 LLM 给一段 forward 原文生成摘要；失败/未配置则返回 null。 */
+  const pickChatModel = chatModelPicker(llm, () => logger.warn('没有可用的对话模型，转发摘要跳过'));
+
+  /**
+   * 用 LLM 给一段 forward 原文生成摘要；失败/没有能对话的模型则返回 null。模型取 llm 服务给本插件挑的能对话的那一个
+   * （见 chatModelPicker）
+   */
   async function summarizeForward(
     text: string,
     hint: { count: number; participants: string[] },
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    const entry = resolveLLMModel(llm, forwardCfg.summaryLLM, ['chat']);
-    if (!entry) {
-      logger.debug('forward 摘要：无可用 LLM 服务，跳过');
-      return null;
-    }
+    const entry = pickChatModel();
+    if (!entry) return null;
     const model = entry.use;
 
     const inputLimit = forwardCfg.summaryInputLimit;
@@ -331,9 +332,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
-        logger.debug(
-          `forward 摘要返回空内容: model=${forwardCfg.summaryLLM ? `${forwardCfg.summaryLLM.provider}/${forwardCfg.summaryLLM.model}` : 'default'}, chars=${forwardCfg.summaryMaxChars}`,
-        );
+        logger.debug(`forward 摘要返回空内容: model=${entry.id}, chars=${forwardCfg.summaryMaxChars}`);
         return null;
       }
       return out;

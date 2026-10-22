@@ -44,8 +44,8 @@ interface FieldInputProps {
   placeholder?: string;
   /** 文字框用密码框 */
   masked?: boolean;
-  /** 可选项依赖的那一项的生效值（设置项的 dependsOn） */
-  dependency?: unknown;
+  /** 可选项依赖的那一项的取值写成的 dependency（字段声明的 dependsOn，见 field.ts 的 dependencyText） */
+  dependency?: string;
   /** 调用方已经取到的可选项：给了就不再另取 */
   options?: FieldOptions;
 }
@@ -216,11 +216,15 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
   return (
     <fieldset {...common} ref={group} className="field-choices" tabIndex={-1}>
       {listed.map((option, index) => {
+        // 带说明的项：名字另起一个 id 作读屏名，说明作描述
+        const described = option.description === undefined ? undefined : `${common.id}-${index}`;
         const check = (
           <label key={option.key} className="field-check">
             <input
               ref={keep(0, option.key)}
               type="checkbox"
+              aria-labelledby={described && `${described}-name`}
+              aria-describedby={described}
               checked={keys.has(option.key)}
               onChange={e => {
                 touched.current = { key: option.key };
@@ -231,7 +235,16 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
                 );
               }}
             />
-            {option.label}
+            {described ? (
+              <span className="field-check-text">
+                <span id={`${described}-name`}>{option.label}</span>
+                <span id={described} className="field-note">
+                  {option.description}
+                </span>
+              </span>
+            ) : (
+              option.label
+            )}
           </label>
         );
         if (!field.ordered) return check;
@@ -375,6 +388,10 @@ interface FieldRowProps {
   autofocus?: boolean;
   /** 改了没保存 */
   changed?: boolean;
+  /** 标签旁的标记，例如插件配置的「默认」「可按会话设置」 */
+  badges?: ReactNode;
+  /** 说明与问题下面另放的，例如作者默认的那一句 */
+  after?: ReactNode;
   /** 行尾，例如撤销 */
   trailing?: ReactNode;
   /** 控件：拿到 id 与读屏、校验、焦点的属性 */
@@ -382,7 +399,7 @@ interface FieldRowProps {
 }
 
 /** 表单里的一行：标签与「必填」、控件、说明与问题。多选的控件是一组，标签是一段文字，控件组经 aria-labelledby 认它 */
-export function FieldRow({ field, problem, autofocus, changed, trailing, children }: FieldRowProps) {
+export function FieldRow({ field, problem, autofocus, changed, badges, after, trailing, children }: FieldRowProps) {
   const id = useId();
   const group = field.type === 'multiselect';
   const describedBy = [field.description && `${id}-description`, problem && `${id}-problem`].filter(Boolean).join(' ');
@@ -398,6 +415,7 @@ export function FieldRow({ field, problem, autofocus, changed, trailing, childre
       <div className="field-row-label">
         {group ? <span id={`${id}-label`}>{field.label}</span> : <label htmlFor={id}>{field.label}</label>}
         {field.required && <span className="field-row-required">{tr('fieldRequired')}</span>}
+        {badges}
       </div>
       <div className="field-row-control">
         {children(common)}
@@ -411,6 +429,7 @@ export function FieldRow({ field, problem, autofocus, changed, trailing, childre
             {problem}
           </p>
         )}
+        {after}
       </div>
       {trailing}
     </div>

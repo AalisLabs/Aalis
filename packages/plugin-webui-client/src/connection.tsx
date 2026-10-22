@@ -21,13 +21,15 @@ interface Connection {
   restarting: boolean;
   /** 握手之前全是 false */
   features: Features;
+  /** 握手完成过（之后断线重连也算） */
+  ready: boolean;
   /** 标签页标题与房间里她的回复用它 */
   appName: string;
   /** 推给这条连接、还没结算的审批 */
   approvals: ReadonlyMap<string, Approval>;
 }
 
-const NO_FEATURES: Features = { send: false, rewind: false, compress: false };
+const NO_FEATURES: Features = { send: false, rewind: false, compress: false, settings: false };
 
 const Context = createContext<Connection | undefined>(undefined);
 
@@ -66,7 +68,7 @@ export function ConnectionProvider({
   children: ReactNode;
 }) {
   const [restarting, setRestarting] = useState(false);
-  const [features, setFeatures] = useState(NO_FEATURES);
+  const [features, setFeatures] = useState<Features>();
   const [appName, setAppName] = useState(() => document.title);
   const [approvals, setApprovals] = useState<ReadonlyMap<string, Approval>>(new Map());
 
@@ -112,6 +114,18 @@ export function ConnectionProvider({
   }, [admin, restarting]);
 
   return (
-    <Context.Provider value={{ session, admin, restarting, features, appName, approvals }}>{children}</Context.Provider>
+    <Context.Provider
+      value={{
+        session,
+        admin,
+        restarting,
+        features: features ?? NO_FEATURES,
+        ready: features !== undefined,
+        appName,
+        approvals,
+      }}
+    >
+      {children}
+    </Context.Provider>
   );
 }

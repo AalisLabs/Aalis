@@ -1,0 +1,173 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
+import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
+import { type App, definePlugin } from '../../packages/core/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/session-settings.js';
+
+// ════════════════════════════════════════════════════════════
+// 入站收录先于入站相位：会话管理的 recordInbound 可等待，网关在跑入站相位之前等它。新群的第一条消息进入指令相位时会话已经
+// 建档、带聊天窗口，各层按记下的类型取。同一会话并发的入站只收录一次；带 source 的、没有会话 id 的、id 带 `::` 的与已收录的
+// 会话不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端的会话不写聊天窗口。
+// ════════════════════════════════════════════════════════════
+
+const GROUP = 'onebot:10000:group:20001';
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop();
+});
+
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>(r => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
+const fromGroup = (sessionId = GROUP): IncomingMessage => ({
+  content: '<消息>',
+  sessionId,
+  platform: 'onebot',
+  sessionType: 'group',
+  groupId: '20001',
+  userId: '30002',
+  selfId: '10000',
+});
+
+/** 认领要等一阵的 onebot 适配器：release 之前认领不返回，hold 之后的认领又不返回；claims 记下被问了几次 */
+function slowAdapter() {
+  let gate = deferred();
+  const counter = { claims: 0 };
+  const adapter = {
+    platform: 'onebot',
+    sessionTypes: ONEBOT_TYPES,
+    canHandle: async (id: string) => {
+      counter.claims++;
+      await gate.promise;
+      return id.startsWith('onebot:');
+    },
+  };
+  return {
+    adapter,
+    counter,
+    release: () => gate.resolve(),
+    hold: () => {
+      gate = deferred();
+    },
+  };
+}
+
+/** 在指令相位记下会话此刻的样子与读取器读到的工具分组 */
+function phaseProbe(read: (sessionId: string) => unknown) {
+  const seen: Array<{ session: SessionInfo | undefined; read: unknown }> = [];
+  return {
+    seen,
+    plugin: (lookup: (id: string) => SessionInfo | undefined) =>
+      definePlugin({
+        name: 'zz-probe',
+        uses: { hooks },
+        apply({ hooks }) {
+          hooks.use.middleware('inbound:command', async (data, next) => {
+            seen.push({ session: structuredClone(lookup(data.message.sessionId)), read: read(data.message.sessionId) });
+            await next();
+          });
+        },
+      }),
+  };
+}
+
+describe('网关等收录', () => {
+  it('新群第一条消息进入指令相位时已建档、带聊天窗口；平台档开 system、平台类型档 onebot · group 不开时第一轮拿不到 system', async () => {
+    const tools = fieldsPlugin('zz-tools', SCHEMA);
+    const slow = slowAdapter();
+    // 网关先于会话管理登记：它的入站监听先跑，不等收录的话指令相位会先于建档
+    const started = await startSettings({
+      doc: {
+        sessionConfig: {
+          platforms: { onebot: { 'zz-tools': { groups: ['system'] } } },
+          platformTypes: { onebot: { group: { 'zz-tools': { groups: [] } } } },
+        },
+      },
+      first: [gatewayPlugin],
+      fields: [tools.definition],
+      adapters: [slow.adapter],
+    });
+    apps.push(started.app);
+    const probe = phaseProbe(id => tools.reader().get(id, { platform: 'onebot' }).groups);
+    await started.app.plugin(probe.plugin(id => started.sm.getSession(id)));
+    await started.app.plugins.idle();
+
+    const done = new Promise<void>(resolve => started.host.events.use.on('gateway:phase:done', () => resolve()));
+    const emitting = started.inbound(fromGroup());
+    slow.release();
+    await emitting;
+    await done;
+    expect(probe.seen).toHaveLength(1);
+    expect(probe.seen[0].session?.originChat).toEqual({
+      type: 'group',
+      multiParty: true,
+      selfId: '10000',
+      targetId: '20001',
+    });
+    expect(probe.seen[0].read).toEqual([]);
+  });
+});
+
+describe('recordInbound', () => {
+  async function setup(adapter: Record<string, unknown> = { platform: 'onebot', sessionTypes: ONEBOT_TYPES }) {
+    const started = await startSettings({ adapters: [adapter] });
+    apps.push(started.app);
+    let created = 0;
+    started.host.events.use.on('session:created', () => void created++);
+    return { ...started, created: () => created };
+  }
+
+  it('同一会话并发两条入站只收录一次，两次调用都在建档落定之后兑现', async () => {
+    const slow = slowAdapter();
+    const { sm, created } = await setup(slow.adapter);
+    const first = sm.recordInbound(fromGroup());
+    const second = sm.recordInbound(fromGroup());
+    slow.release();
+    await Promise.all([first, second]);
+    expect(sm.getSession(GROUP)?.originChat?.type).toBe('group');
+    expect(created()).toBe(1);
+    expect(slow.counter.claims).toBe(1);
+  });
+
+  it('带 source 的、id 带 :: 的入站直接兑现，不问认领者、不建档', async () => {
+    const slow = slowAdapter();
+    const { sm } = await setup(slow.adapter);
+    await sm.recordInbound({ ...fromGroup(), source: 'scheduler' });
+    await sm.recordInbound({ ...fromGroup('workflow::<编排>::<节点>'), platform: 'workflow' });
+    expect(slow.counter.claims).toBe(0);
+    expect(sm.getSession(GROUP)).toBeUndefined();
+    expect(sm.getSession('workflow::<编排>::<节点>')).toBeUndefined();
+  });
+
+  it('已收录的会话不等认领者：照旧补上没取的名字', async () => {
+    const slow = slowAdapter();
+    const { sm } = await setup(slow.adapter);
+    const recording = sm.recordInbound(fromGroup());
+    slow.release();
+    await recording;
+    // 之后的认领一直不返回：已收录的会话不该等它
+    slow.hold();
+    await sm.recordInbound({ ...fromGroup(), groupName: '<群名>' });
+    await expect.poll(() => sm.getSession(GROUP)?.name).toBe('<群名>');
+  });
+
+  it('WebUI 与终端的会话走快路径：不写聊天窗口，不问认领者', async () => {
+    const slow = slowAdapter();
+    const { sm } = await setup(slow.adapter);
+    const webui = await sm.createSession({}, { createdFrom: 'webui' });
+    const cli = await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
+    await sm.recordInbound({ content: '<消息>', sessionId: webui.id, platform: 'webui', userId: 'console' });
+    await sm.recordInbound({ content: '<消息>', sessionId: cli.id, platform: 'cli', userId: 'console' });
+    expect(sm.getSession(webui.id)?.originChat).toBeUndefined();
+    expect(sm.getSession(cli.id)?.originChat).toBeUndefined();
+    expect(slow.counter.claims).toBe(0);
+  });
+});

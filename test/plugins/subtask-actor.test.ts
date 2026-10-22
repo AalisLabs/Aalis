@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
@@ -35,9 +36,15 @@ async function setup(): Promise<{
   host.provide.use(sessionManager, {
     // parent-1 无 parentId（非嵌套）；child-session-1 供 send_to_subtask 的归属校验
     getSession: (id: string) => (id === 'child-session-1' ? { id, parentId: 'parent-1', status: 'active' } : undefined),
-    childConfig: () => ({}),
+    listSessions: () => [],
     createChildSession: async () => ({ id: 'child-session-1' }),
     updateSession: async () => {},
+  } as never);
+  // 会话设置的替身：父会话没有各层的值，子会话不写下什么
+  host.provide.use(sessionSettings, {
+    register: () => () => {},
+    chain: () => ({ parts: [] }),
+    childMetadata: () => ({}),
   } as never);
 
   // 派发走的是 inbound:message 通道：只订阅这一个事件，收到即证明通道正确

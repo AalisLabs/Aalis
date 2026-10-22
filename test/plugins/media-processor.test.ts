@@ -18,7 +18,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
 function caps(over: Partial<MediaServiceCaps> = {}): MediaServiceCaps {
-  return { logger: fixedRef(logger), llm: ref(), asr: ref(), sessionManager: ref(), memory: ref(), ...over };
+  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref(), ...over };
 }
 
 const cfg = {

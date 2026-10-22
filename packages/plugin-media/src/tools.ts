@@ -216,7 +216,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
         // 主模型自己能看且调用方接得住图（agent 工具循环）：图片随工具结果交出（规范化 +
         // 动图抽帧与当轮附件同一出口），不经识别模型。mcp-server / workflow 只读 content，
         // 对它们照常走识别模型出文字。
-        if (callCtx.acceptsImages && svc.resolveDelivery(callCtx.sessionId, callCtx.platform) === 'passthrough') {
+        if (callCtx.acceptsImages && svc.resolveDelivery(callCtx.model) === 'passthrough') {
           // 远端 URL 先在工具层下载并校验是图片：原样交给主请求的话，链接失效 / 不是图片会变成整轮 400，
           // 模型没有机会纠正；下载失败留在工具层返回错误，模型可换路。
           let source = imageUrl;

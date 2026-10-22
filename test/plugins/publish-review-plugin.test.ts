@@ -49,6 +49,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
         hostNotice: message.hostNotice,
       });
     },
+    async assignModel() {},
   });
   await app.plugin(gatewayPlugin);
   await app.plugins.idle();

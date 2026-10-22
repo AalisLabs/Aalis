@@ -1,6 +1,5 @@
-import type { SettingLayer } from '@aalis/api-session-protocol';
 import { MessagesSquare } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
@@ -8,6 +7,7 @@ import { Dialog } from '../components/Dialog';
 import { FetchError } from '../components/FetchError';
 import { Panel } from '../components/Panel';
 import { Table, type TableColumn } from '../components/Table';
+import { useFeatures } from '../connection';
 import { listTime } from '../format';
 import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
@@ -25,7 +25,7 @@ import './RoomsPage.css';
 // 房间表：一组房间（一个适配器实例，或还没记下实例的一个平台）一次取全，筛选、排序、搜索与分页都在客户端。
 // 类型与状态的筛选写进地址；类型是平台自定的类型名，按本组出现过的原样列出。批量动作只有归档与删除。
 // 每行的「场所设置」在页内打开这一行所在窗口的设置（与「会话默认」同一套行）；统一设置一个平台或一种类型在设置的
-// 「会话默认」，表格下面一句话指过去
+// 「会话默认」，表格下面一句话指过去。会话设置服务不在（功能位 settings 为假）时这两处都没有
 
 const statusField = () => ({
   key: 'status',
@@ -64,9 +64,9 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   const actions = useSessionActions();
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  /** 打开着「场所设置」的那个窗口 */
-  const [place, setPlace] = useState<SessionSummary['place']>();
-  const layer = useMemo((): SettingLayer | undefined => place && { scope: 'place', key: place.key }, [place]);
+  const { settings } = useFeatures();
+  /** 打开着「场所设置」的那一行 */
+  const [opened, setOpened] = useState<SessionSummary>();
   const layers = useLayers();
   const filterFields = [typeField(list.sessions ?? []), statusField()];
   const group = list.groups.find(g => inGroup(g, query));
@@ -153,8 +153,9 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                   search={s => `${s.title} ${s.id}`}
                   filter={{ fields: filterFields, values: filterValues, onChange: setFilter }}
                   rowActions={s =>
+                    settings &&
                     s.place.kind === 'window' && (
-                      <Button variant="text" onClick={() => setPlace(s.place)}>
+                      <Button variant="text" onClick={() => setOpened(s)}>
                         {tr('placeSettings')}
                       </Button>
                     )
@@ -182,24 +183,33 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
                 />
               )
             )}
-            <div className="rooms-hint">
-              <p>{tr('roomsHint')}</p>
-              <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
-                {tr('goToSessionDefaults')}
-              </ButtonLink>
-            </div>
+            {settings && (
+              <div className="rooms-hint">
+                <p>{tr('roomsHint')}</p>
+                <ButtonLink to={paths.settingsSection('session-defaults')} variant="text">
+                  {tr('goToSessionDefaults')}
+                </ButtonLink>
+              </div>
+            )}
           </div>
         </SessionGate>
       </Panel>
       <Dialog
-        open={place !== undefined}
-        title={tr('placeSettingsOf', { name: place?.name ?? '' })}
+        open={opened !== undefined}
+        title={tr('placeSettingsOf', { name: opened?.place.name ?? '' })}
         size="form"
-        onClose={() => setPlace(undefined)}
-        footer={<Button onClick={() => setPlace(undefined)}>{tr('close')}</Button>}
+        onClose={() => setOpened(undefined)}
+        footer={<Button onClick={() => setOpened(undefined)}>{tr('close')}</Button>}
       >
         {layers.error && <SessionsFetchError what={tr('settingLayers')} error={layers.error} retry={layers.retry} />}
-        {layer && layers.value && <LayerRows layer={layer} order={layers.value.order} what={tr('placeSettings')} />}
+        {opened && layers.value && (
+          <LayerRows
+            layer={{ scope: 'place', key: opened.place.key }}
+            order={layers.value.order}
+            at={{ platform: opened.platform, chatType: opened.chat?.type }}
+            what={tr('placeSettings')}
+          />
+        )}
       </Dialog>
     </Main>
   );

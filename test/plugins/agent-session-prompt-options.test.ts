@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agent as agentService, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { sessionManager as sessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { App, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -19,10 +21,10 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 // 会话级提示选项在真实回合与 token:request 快照里口径一致：
 //   1. 快照的 tokenBudget 曾少乘 trimThresholdRatio，与真实回合对不上；
-//   2. 快照的系统提示曾不带会话选项（人设覆盖 / 结构化输出开关 / 额外提示），persona 桶按全局默认估算；
-//   3. SessionConfig.systemPromptExtra 曾只有 WebUI 输入框写入、无人读取：现由 agent 透传给 persona，
-//      接在人设提示之后、结构化输出格式说明之前。
-// 真 fs 角色卡 + 真 session-manager + mock LLM。
+//   2. 快照的系统提示曾不带会话选项（人设覆盖 / 结构化输出开关 / 额外提示），persona 桶按全局层估算；
+//   3. 额外提示（人设插件的按会话字段 systemPromptExtra）接在人设提示之后、结构化输出格式说明之前：agent 把会话交给人设服务，
+//      由它按会话读。
+// 真 fs 角色卡 + 真会话管理与会话设置 + mock LLM。
 // ════════════════════════════════════════════════════════════
 
 const CARD = [
@@ -52,21 +54,20 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugin(sessionManagerPlugin, {});
+    await app.plugin(sessionSettingsPlugin, {});
     await app.plugin(personaPlugin, { personasDir: 'personas:/', timeInjection: false });
-    await app.plugin(agentPlugin, {
-      systemPrompt: '',
-      memoryTokenBudget: 1024,
-      // 插件配置里留着的旧键：不再起作用，「最大工具迭代」没设时是 30
-      maxToolIterations: 3,
-      trimThresholdRatio,
-      preferredModel: '',
-    });
+    await app.plugin(agentPlugin, { systemPrompt: '', memoryTokenBudget: 1024, trimThresholdRatio });
     await app.plugins.idle();
     for (const id of [storageLocalPlugin.name, sessionManagerPlugin.name, personaPlugin.name, agentPlugin.name]) {
       const state = app.plugins.getPlugin(id)?.state;
       if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
     }
-    const host = app.bind({ events, agent: agentService, sessionManager: sessionManagerService });
+    const host = app.bind({ events, agent: agentService, sessionManager: sessionManagerService, sessionSettings });
+    /** 写这个会话本会话层人设插件的一项（会话先建档） */
+    const set = async (sessionId: string, key: string, value: unknown) => {
+      await host.sessionManager.use.ensureSession(sessionId);
+      await host.sessionSettings.use.update({ sessionId }, { plugin: personaPlugin.name, key, value });
+    };
     const usage: TokenUsageEvent[] = [];
     host.events.use.on('token:usage', u => {
       usage.push(u);
@@ -78,7 +79,7 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
       expect(usage.length, 'token:request 未产出快照').toBe(before + 1);
       return usage[usage.length - 1];
     };
-    return { host, recorder, usage, snapshot, sm: host.sessionManager.use, agent: host.agent.use };
+    return { host, recorder, usage, snapshot, set, agent: host.agent.use };
   };
 
   beforeEach(() => {
@@ -90,20 +91,6 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
   afterEach(async () => {
     await app.stop();
     rmSync(base, { recursive: true, force: true });
-  });
-
-  it('登记的设置项写得出没设时的样子：人设的默认值是自带的 default，工具迭代上限的默认值是 30、与插件配置无关，模型不写（界面写服务实际用的那一个），其余给没设时的含义', async () => {
-    const { sm } = await boot(1);
-    const unsetOf = Object.fromEntries(
-      sm.listSettings().map(setting => [setting.key, setting.field.default ?? setting.unset]),
-    );
-    expect(unsetOf).toMatchObject({
-      llm: undefined,
-      maxToolIterations: 30,
-      persona: 'default',
-      systemPromptExtra: '不追加',
-      clientSideJsonRendering: '按角色卡',
-    });
   });
 
   it('快照的 tokenBudget 与真实回合同一公式（trimThresholdRatio ≠ 1）', async () => {
@@ -119,10 +106,10 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     expect(snap.tokenBudget).toBeLessThan(snap.contextWindow - snap.maxTokens - 512);
   });
 
-  it('快照的系统提示按会话配置构建：额外提示与结构化输出开关计入 persona 桶', async () => {
-    const { sm, snapshot } = await boot(1);
-    await sm.ensureSession('test:extra', { config: { systemPromptExtra: '额外'.repeat(1000) } });
-    await sm.ensureSession('test:plain-output', { config: { disableOutputFormat: true } });
+  it('快照的系统提示按会话设置构建：额外提示与结构化输出开关计入 persona 桶', async () => {
+    const { set, snapshot } = await boot(1);
+    await set('test:extra', 'systemPromptExtra', '额外'.repeat(1000));
+    await set('test:plain-output', 'disableOutputFormat', true);
 
     const baseline = (await snapshot('test:default')).breakdown.persona;
     expect((await snapshot('test:extra')).breakdown.persona).toBeGreaterThan(baseline + 500);
@@ -131,8 +118,8 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
   });
 
   it('真实回合：systemPromptExtra 接在人设提示之后、格式说明之前；未设置的会话不带', async () => {
-    const { agent, sm, recorder } = await boot(1);
-    await sm.ensureSession('test:with-extra', { config: { systemPromptExtra: '  本会话只用英文回答。  ' } });
+    const { agent, set, recorder } = await boot(1);
+    await set('test:with-extra', 'systemPromptExtra', '  本会话只用英文回答。  ');
 
     await agent.handleMessage({ content: '你好', sessionId: 'test:with-extra', platform: 'test', userId: 'u1' });
     const system = String(recorder[0].messages[0].content);

@@ -5,6 +5,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -40,9 +41,10 @@ async function setup() {
     registerGroup: () => () => {},
   } as never);
   await app.plugin(sessionManagerPlugin);
+  await app.plugin(sessionSettingsPlugin);
   await app.plugin(subtask, {});
   await app.plugins.idle();
-  for (const name of [sessionManagerPlugin.name, subtask.name]) {
+  for (const name of [sessionManagerPlugin.name, sessionSettingsPlugin.name, subtask.name]) {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
@@ -76,7 +78,12 @@ async function setup() {
       { role: 'system', content: '<人设>' },
       { role: 'user', content: '<提问>' },
     ];
-    await host.hooks.use.run('agent:llm:before', { messages, tools: [], sessionId: parent.id });
+    await host.hooks.use.run('agent:llm:before', {
+      messages,
+      tools: [],
+      model: { provider: '<提供者>', model: '<模型>' },
+      sessionId: parent.id,
+    });
     return messages.find(m => m.metadata?.injector === 'subtask/parent-status')?.content as string | undefined;
   };
 

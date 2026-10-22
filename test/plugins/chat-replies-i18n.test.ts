@@ -7,6 +7,7 @@ import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionLabel, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -17,6 +18,7 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import { defineTexts, localize, resolveText, TextError } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -26,10 +28,10 @@ import { memoryStorage } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 第一方发到聊天里的固定文字按会话的语言：/doctor 的报告版式、/session 的版式与说明句（层名、默认会话名、默认工作区随读者），
-// agent 发出的「[系统]」「[错误]」两句。它们交出文字对象，网关按消息所在房间（会话设置 language）的语言渲染；i18n 缺席时
-// 是原文。房间是 owner 在聊天平台上的私聊（场所是默认工作区）。真的 plugin-i18n、plugin-commands、plugin-gateway、
-// plugin-agent、plugin-doctor 与会话管理，记忆是内存实现，存储与 owner 判定是替身。
+// 第一方发到聊天里的固定文字按会话的语言：/doctor 的报告版式、/session 的版式（设置项的称呼、层名、默认会话名、默认工作区
+// 随读者），agent 发出的「[系统]」「[错误]」两句。它们交出文字对象，网关按消息所在房间（会话设置 language）的语言渲染；
+// i18n 缺席时是原文。房间是 owner 在聊天平台上的私聊（场所是默认工作区）。真的 plugin-i18n、plugin-commands、plugin-gateway、
+// plugin-agent、plugin-doctor、会话管理与会话设置，记忆是内存实现，存储与 owner 判定是替身。
 // ════════════════════════════════════════════════════════════
 
 const t = defineTexts({
@@ -65,11 +67,12 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
   homes.push(home);
   provideHostPaths(app, home);
   await registerHubs(app);
-  const host = app.bind({ provide, events, commands, gateway, sessionManager });
+  const host = app.bind({ provide, events, commands, gateway, sessionManager, sessionSettings });
   host.provide.use(storage, memoryStorage(new Map()));
   host.provide.use(authority, {
     isOwner: (platform: string, userId?: string) => platform === CHAT && userId === OWNER,
     authorize: () => null,
+    meetsLevel: () => true,
   } as never);
   // 房间要在会话管理读表之前预置进记忆后端
   await app.plugin(memoryInMemory);
@@ -83,6 +86,7 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
     ...(llm ? [{ definition: llm }] : []),
     { definition: messageArchivePlugin, config: { debugLogs: false } },
     { definition: sessionManagerPlugin },
+    { definition: sessionSettingsPlugin },
     { definition: gatewayPlugin },
     { definition: commandsPlugin },
     { definition: agentPlugin, config: { systemPrompt: 'test', memoryTokenBudget: 1024 } },
@@ -114,9 +118,13 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
   /** 下一个预置的房间；language 是它自己的会话设置 */
   const session = async (language?: string[]) => {
     const id = ROOMS[rooms++];
-    return language
-      ? host.sessionManager.use.updateSession(id, { config: { language } })
-      : (host.sessionManager.use.getSession(id) as SessionInfo);
+    if (language) {
+      await host.sessionSettings.use.update(
+        { sessionId: id },
+        { plugin: i18nPlugin.name, key: 'language', value: language },
+      );
+    }
+    return host.sessionManager.use.getSession(id) as SessionInfo;
   };
   return { host, ask, session };
 }
@@ -142,46 +150,36 @@ describe('/doctor 的报告按会话的语言', () => {
 describe('/session 按会话的语言', () => {
   /** 默认工作区这个场所设了深度思考：来源写场所的显示名（默认工作区没有名字） */
   const placeThink = (s: Awaited<ReturnType<typeof setup>>) =>
-    s.host.sessionManager.use.updateLayer({ scope: 'place', key: 'workspace:default' }, { think: 'deep' });
+    s.host.sessionSettings.use.update(
+      { layer: { scope: 'place', key: 'workspace:default' } },
+      { plugin: agentPlugin.name, key: 'think', value: 'deep' },
+    );
 
   /** 没取名的会话的默认名，按这种语言显示 */
   const nameIn = (info: SessionInfo, language: string) =>
     localize(sessionLabel(info), text => resolveText(text, [language]));
 
-  const chinese = (session: string) => [
-    `会话: ${session}`,
-    '模型: (默认)  [来源: 默认]',
-    '人设: (默认)  [来源: 默认]',
-    '深度思考: deep  [来源: 场所『默认工作区』]',
-    '  当前模型不能调',
-    '────',
-    '改配置: /session.set -m <模型> -p <人设> -t <档位> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
-    '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅深度思考）',
-  ];
-
-  it('en 会话：版式、说明句、层名、默认会话名与默认工作区都是英文；zh-CN 会话是原文', async () => {
+  it('en 会话：版式、设置项的称呼、层名、默认会话名与默认工作区都是英文；zh-CN 会话是原文', async () => {
     const s = await setup();
     await placeThink(s);
     const en = await s.session(['en']);
-    expect(await s.ask(en.id, '/session')).toEqual([
-      `Session: ${nameIn(en, 'en')}`,
-      'Model: (default)  [source: default]',
-      'Persona: (default)  [source: default]',
-      'Thinking: deep  [source: Place “Default workspace”]',
-      '  Not adjustable on the current model',
-      '────',
-      'Change settings: /session.set -m <model> -p <persona> -t <level> [-n <name>]   (/model lists the available models; a wrong persona name lists the available personas)',
-      'Reset:   /session.reset          (-m model only / -p persona only / -t thinking only)',
-    ]);
+    const english = await s.ask(en.id, '/session');
+    expect(english[0]).toBe(`Settings of ${nameIn(en, 'en')}:`);
+    expect(english).toContain('Thinking (think): deep — from Place “Default workspace”');
+    expect(english).toContain('Language (language): en — from This session');
     const zh = await s.session(['zh-CN']);
-    expect(await s.ask(zh.id, '/session')).toEqual(chinese(nameIn(zh, 'zh-CN')));
+    const chinese = await s.ask(zh.id, '/session');
+    expect(chinese[0]).toBe(`${nameIn(zh, 'zh-CN')} 的设置：`);
+    expect(chinese).toContain('深度思考（think）：deep — 来自 场所「默认工作区」');
   });
 
   it('i18n 缺席：原文', async () => {
     const s = await setup({ withI18n: false });
     await placeThink(s);
     const info = await s.session();
-    expect(await s.ask(info.id, '/session')).toEqual(chinese(nameIn(info, 'zh-CN')));
+    const lines = await s.ask(info.id, '/session');
+    expect(lines[0]).toBe(`${nameIn(info, 'zh-CN')} 的设置：`);
+    expect(lines).toContain('深度思考（think）：deep — 来自 场所「默认工作区」');
   });
 });
 

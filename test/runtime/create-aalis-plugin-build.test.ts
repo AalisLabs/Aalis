@@ -10,7 +10,15 @@ import { generate } from '../../packages/create-aalis-plugin/src/cli.js';
 // 宿主一侧的 core 与插件解析到的是同一个文件。
 
 const ROOT = join(import.meta.dirname, '../..');
-const CONTRACTS = ['core', 'api-tools', 'api-commands', 'api-webui', 'api-session-manager'];
+const CONTRACTS = [
+  'core',
+  'api-tools',
+  'api-commands',
+  'api-webui',
+  'api-session-settings',
+  'api-host-config',
+  'schema-config',
+];
 const VERSIONS = Object.fromEntries(CONTRACTS.map(dir => [`@aalis/${dir}`, '0.1.0']));
 
 type Webui = false | 'declarative' | 'frame';
@@ -29,8 +37,8 @@ for (let mask = 0; mask < 8; mask++) {
 }
 
 /**
- * 子进程：每个插件装进一个新 App（示例工具与指令同名，不能同处一个 App），宿主一侧是钩子、工具服务与会话管理的真插件，
- * 加上假的记忆、指令服务与用真页面登记表的 WebUI 服务。打印每个插件的激活状态与登记了什么
+ * 子进程：每个插件装进一个新 App（示例工具与指令同名，不能同处一个 App），宿主一侧是钩子、工具服务、会话管理与会话设置的
+ * 真插件，加上假的记忆、指令服务与用真页面登记表的 WebUI 服务。打印每个插件的激活状态与登记了什么
  */
 const DRIVER = `
 import { join } from 'node:path';
@@ -43,10 +51,13 @@ const { commands } = await load('api-commands/dist/index.js');
 const { memory } = await load('api-memory/dist/index.js');
 const { tools } = await load('api-tools/dist/index.js');
 const { sessionManager } = await load('api-session-manager/dist/index.js');
+const { sessionSettings } = await load('api-session-settings/dist/index.js');
 const { webuiServer } = await load('api-webui/dist/index.js');
 const { createPageRegistry } = await load('plugin-webui-server/dist/pages.js');
 const hostPlugins = await Promise.all(
-  ['plugin-hooks', 'plugin-tools', 'plugin-session-manager'].map(async dir => (await load(dir + '/dist/index.js')).default),
+  ['plugin-hooks', 'plugin-tools', 'plugin-session-manager', 'plugin-session-settings'].map(
+    async dir => (await load(dir + '/dist/index.js')).default,
+  ),
 );
 const quiet = () => {};
 const loader = createNodeModulesPluginLoader(appDir, { hostCoreDir: join(root, 'packages/core') });
@@ -56,7 +67,7 @@ for (const desc of await loader.discover()) {
   const logger = { debug: quiet, info: quiet, warn: quiet, error: (...args) => errors.push(args.map(String).join(' ')) };
   logger.child = () => logger;
   const app = new App({ name: 'T', logLevel: 'error' });
-  const host = app.bind({ provide, tools, sessionManager });
+  const host = app.bind({ provide, tools, sessionManager, sessionSettings });
   host.provide.use(memory, {
     listMetadata: async () => [],
     commitMetadata: async () => {},
@@ -82,16 +93,20 @@ for (const desc of await loader.discover()) {
     addNotice: () => quiet,
   });
   for (const plugin of hostPlugins) await app.plugin(plugin);
+  await app.plugins.idle();
+  // 会话设置自己的指令不算：只记生成的插件登记的
+  commandNames.length = 0;
   await app.plugin(await loader.load(desc));
   await app.plugins.idle();
-  const sm = host.sessionManager.use;
+  const admin = host.sessionSettings.use;
   const toolService = host.tools.use;
-  const settings = sm.listSettings().filter(s => s.plugin === desc.name).map(s => s.key);
+  const settings = admin.getAll().filter(s => s.plugin === desc.name).map(s => s.key);
   const greet = async sessionId => (await toolService.execute('hello', { name: '小明' }, { sessionId, platform: 'webui' })).content;
   const toolList = toolService.getAll().filter(t => t.pluginName === desc.name);
   const greetings = toolList.length === 0 ? [] : [await greet('plain')];
   if (toolList.length > 0 && settings.length > 0) {
-    await sm.ensureSession('tuned', { config: { [settings[0]]: '早上好' } });
+    await host.sessionManager.use.ensureSession('tuned');
+    await admin.update({ sessionId: 'tuned' }, { plugin: desc.name, key: settings[0], value: '早上好' });
     greetings.push(await greet('tuned'));
   }
   report[desc.name] = {
@@ -115,7 +130,7 @@ describe('create-aalis-plugin 生成的插件真构建、真加载', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('全部组合：tsc 按生成的 tsconfig 构建通过；加载器认得出，激活后工具、指令、页面与会话设置项都登记上', {
+  it('全部组合：tsc 按生成的 tsconfig 构建通过；加载器认得出，激活后工具、指令、页面与可按会话设的配置项都登记上', {
     timeout: 180_000,
   }, async () => {
     base = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-scaffold-build-')));
@@ -159,8 +174,8 @@ describe('create-aalis-plugin 生成的插件真构建、真加载', () => {
       expect(r.tools, label).toEqual(f.tool ? [{ name: 'hello', risk: 'safe' }] : []);
       expect(r.commands, label).toEqual(f.command ? ['hello'] : []);
       expect(r.pages, label).toEqual(f.webui ? [names[i]] : []);
-      expect(r.settings, label).toEqual(f.sessionSetting ? [`greetingZzScaffold${i}`] : []);
-      // 工具按会话读设置项的生效值：没设时是默认的问候语
+      expect(r.settings, label).toEqual(f.sessionSetting ? ['greeting'] : []);
+      // 工具按会话读配置项的生效值：没设时是作者默认的问候语，本会话层设了按设的
       const greetings = f.tool ? ['你好, 小明!', ...(f.sessionSetting ? ['早上好, 小明!'] : [])] : [];
       expect(r.greetings, label).toEqual(greetings);
     }

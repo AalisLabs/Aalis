@@ -7,8 +7,9 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { budgetOf, endTurn, fakeSummaryLLM, setupSummary, systemOf, usageEvent } from '../fixtures/memory-summary.js';
 
@@ -156,11 +157,15 @@ describe('plugin-memory-summary: 摘要预算', () => {
   });
 
   it.each([
-    ['全局默认设 0.1', { scope: 'defaults' }, 0.1, 75],
-    ['全局默认设 0 时取裁剪预算', { scope: 'defaults' }, 0, 700],
-    ['会话没有出生平台时按用量的入口平台选平台档', { scope: 'platform', platform: 'webui' }, 0.1, 75],
-  ] as const)('压缩线按这个会话的自动压缩线算：%s', async (_label, layer, compressAt, budget) => {
-    const { app } = hostedApp();
+    ['插件配置设 0.1', { plugins: { [memorySummary.name]: { compressAt: 0.1 } } }, 75],
+    ['插件配置设 0 时取裁剪预算', { plugins: { [memorySummary.name]: { compressAt: 0 } } }, 700],
+    [
+      '会话没有出生平台时按用量的入口平台选平台档',
+      { sessionConfig: { platforms: { webui: { [memorySummary.name]: { compressAt: 0.1 } } } } },
+      75,
+    ],
+  ] as const)('压缩线按这个会话的自动压缩线算：%s', async (_label, doc, budget) => {
+    const { app, store } = hostedApp(doc);
     apps.push(app);
     await registerHubs(app);
     const summaryLLM = fakeSummaryLLM({ contextLength: 64_000, maxOutputTokens: 8000 });
@@ -168,12 +173,12 @@ describe('plugin-memory-summary: 摘要预算', () => {
     await app.plugin(memoryInMemory);
     await app.plugin(messageArchive, { debugLogs: false });
     await app.plugin(sessionManagerPlugin);
+    await app.plugin(sessionSettingsPlugin);
     host.provide.use(llm, summaryLLM.model);
-    await app.plugin(memorySummary);
+    await registerFromDoc(app, store, memorySummary);
     await app.plugins.idle();
     const sm = host.sessionManager.use;
     const { id } = await sm.createSession({ name: '本机会话' });
-    await sm.updateLayer(layer, { compressAt });
     await seed(host.memory.use, id, 2);
     await host.events.use.emit(
       'token:usage',

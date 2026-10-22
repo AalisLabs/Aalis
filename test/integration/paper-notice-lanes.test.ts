@@ -15,7 +15,6 @@ import {
 import { memory } from '../../packages/api-memory/src/index.js';
 import { remoteAgent } from '../../packages/api-remote-agent/src/index.js';
 import {
-  type SessionConfig,
   type SessionInfo,
   type SessionManagerService,
   sessionManager,
@@ -57,16 +56,14 @@ const REMOTE = 'zz-remote-a';
 const NOTE_SENTINEL = 'REMOTE-NOTE-SENTINEL-4d2b';
 const HINT_MARK = '还没发回本群';
 
-const ROOM_CONFIG: SessionConfig = {
+/** 白纸插件的配置：没有会话设置，房间的六项取这里写的全局层 */
+const PAPER_CONFIG = {
+  globalDailyCents: 100_000,
+  papers: [{ name: PAPER, remoteAgentType: REMOTE, remoteAgentEgress: 'allowlist' }],
   paperEnabled: true,
   paperName: PAPER,
   remoteAgentTypes: [REMOTE],
   remoteAgentRoomDailyCents: 100_000,
-  enabledToolGroups: ['paper'],
-};
-const PAPER_CONFIG = {
-  globalDailyCents: 100_000,
-  papers: [{ name: PAPER, remoteAgentType: REMOTE, remoteAgentEgress: 'allowlist' }],
 };
 
 const text = (m: Message) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
@@ -147,10 +144,10 @@ async function boot(
   const model = new ScriptedLLM(decide);
   const host = app.bind({ provide, events, hooks, agent, memory, gateway, flowControl, tools });
 
+  // 会话管理的替身：会话记录按 id 现造（房间都算已收录），网关在入站相位之前等的收录直接落定
   host.provide.use(sessionManager, {
-    registerSetting: () => () => {},
-    resolveConfig: (sessionId: string) => (sessionId === ROOM ? { ...ROOM_CONFIG } : {}),
     getSession: (id: string): SessionInfo => sessionInfoOf(id),
+    recordInbound: async () => {},
   } as unknown as SessionManagerService);
   host.provide.use(storage, memoryStorage(files));
   const indexed: Array<Record<string, unknown>> = [];
@@ -183,7 +180,8 @@ async function boot(
       apply: ({ provide }) => void provide.use(llm, model, { entryId: `${model.providerId}/${model.id}` }),
     }),
   );
-  await app.plugin(toolsPlugin, {});
+  // 没有会话设置：工具分组取工具插件配置里的全局层
+  await app.plugin(toolsPlugin, { enabledToolGroups: ['paper'] });
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(gatewayPlugin, {});

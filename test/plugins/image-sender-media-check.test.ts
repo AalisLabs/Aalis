@@ -163,7 +163,6 @@ function startApp(histories: Record<string, Message[]>) {
     id: OWNER_SESSION,
     children: [],
     status: 'waiting',
-    config: {},
     createdAt: 0,
     updatedAt: 0,
     kind: 'room',

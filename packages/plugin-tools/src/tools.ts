@@ -44,7 +44,12 @@ export class ToolRegistry implements ToolService {
   private readonly tasks: BackgroundTasks;
   private _guard?: ExecutionGuard;
 
-  constructor(logger: Logger, tasks: BackgroundTasks) {
+  constructor(
+    logger: Logger,
+    tasks: BackgroundTasks,
+    /** 这个会话启用的工具分组：插件按会话读「工具分组」 */
+    readonly sessionGroups: (sessionId: string, platform?: string) => string[],
+  ) {
     this.logger = logger.child('tools');
     this.tasks = tasks;
     this.taskTools = new Map(

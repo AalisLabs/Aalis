@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCESS_TIERS,
-  type AccessTier,
   isReachCredential,
   judgeReach,
   REACH_CREDENTIAL,
   type ReachInput,
   type ReachRequest,
 } from '../../packages/api-reach/src/index.js';
-import type { RoomClass, SessionConfig } from '../../packages/api-session-manager/src/index.js';
+import type { RoomClass } from '../../packages/api-session-manager/src/index.js';
 import { codeOf, DEFAULT_PLACE, PAPERS, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
@@ -311,19 +310,6 @@ describe('子任务不超过父会话：随父会话实时的触及', () => {
   it('父会话没有本地效果（别人发起的那一轮），子任务也没有', () => {
     expect(subtask(reachOf({ principal: 'other' }))).toEqual({ exec: 'none' });
     expect(subtask(reachOf({ roomClass: 'room' }))).toEqual({ exec: 'none' });
-  });
-});
-
-describe('会话设置的两个键', () => {
-  it('档位与越界策略经 declaration merging 进 SessionConfig（由 test-types 门禁做类型检查）', () => {
-    const tiers: AccessTier[] = ['readonly', 'confirm', 'workspace', 'full'];
-    const config: SessionConfig = { accessTier: 'full', accessOnBoundary: 'deny' };
-    // @ts-expect-error 档位只有四档
-    const wrongTier: SessionConfig = { accessTier: 'admin' };
-    // @ts-expect-error 越界策略只有问与拒
-    const wrongPolicy: SessionConfig = { accessOnBoundary: 'allow' };
-    expect([...ACCESS_TIERS]).toEqual(tiers);
-    expect([config, wrongTier, wrongPolicy]).toHaveLength(3);
   });
 });
 

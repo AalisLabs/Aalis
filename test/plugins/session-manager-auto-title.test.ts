@@ -14,9 +14,9 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 
 type Chat = (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string }>;
 
-/** language 给出时装上 i18n，全局默认层的语言设成它 */
+/** language 给出时装上 i18n，全局层的语言（它的插件配置）设成它 */
 async function setup(chat: Chat = async () => ({ content: '装修预算' }), language?: string[]) {
-  const { app } = hostedApp(language ? { sessionConfig: { defaults: { language } } } : {});
+  const { app } = hostedApp(language ? { plugins: { [i18nPlugin.name]: { language } } } : {});
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide.use(memory, fakeMemory() as never);
@@ -119,7 +119,7 @@ describe('标题的语言与截断', () => {
     return title;
   }
 
-  it('标题的语言取自全局默认层的语言列表（会话自己设的不算）：提示词里写 English（en），不写死中文、不让模型跟对话的语言', async () => {
+  it('标题的语言取自全局层的语言列表：提示词里写 English（en），不写死中文、不让模型跟对话的语言', async () => {
     const systems: string[] = [];
     const { app, host, sm } = await setup(
       async req => {
@@ -129,7 +129,6 @@ describe('标题的语言与截断', () => {
       ['en', 'zh-CN'],
     );
     const session = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
-    await sm.updateSession(session.id, { config: { language: ['ja'] } });
     await host.events.use.emit('inbound:message', {
       content: '帮我算下厨房装修预算',
       sessionId: session.id,

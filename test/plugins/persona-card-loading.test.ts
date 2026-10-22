@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
-import { type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { createBotNames } from '../../packages/api-trigger/src/index.js';
-import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
+import { App, type LogEntry, LogHub, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // persona 从 storage 载入角色卡：
@@ -20,7 +20,7 @@ import { HUB_PLUGINS } from '../fixtures/hubs.js';
 //      热改非主卡的 outputFormat 要重启才生效（此时 outputFormatPrompt 已是新文本，两边对不上）。
 //      现按卡对象缓存，重扫换入新卡对象后旧缓存自然失效。
 //   3. 热改主卡：监听触发重扫，经 reloadPrimaryCardFromCache 换入新卡，人设名与提示词不必重启即更新。
-// 真 storage-local（workspace 根 + 内置 personas 根）+ 真 persona。
+// 真 storage-local（workspace 根 + 内置 personas 根）+ 真 persona；会话用哪张卡由会话设置的替身给（会话 id 即卡名）。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -69,17 +69,19 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     return svc;
   };
 
+  /** 会话用的卡：会话 id 就是卡名，它的「人设」设成这张卡 */
+  const as = (card: string) => ({ sessionId: card });
+  const SESSIONS = Object.fromEntries(
+    ['a', 'b', 'c', 'd', 'nameless', 'missing'].map(card => [card, { persona: card }]),
+  );
+
   /**
    * storageFirst=false 时 persona 排在 storage-local 前面同批登记；传 logHub 时收 warn 及以上的日志；
-   * config 并进人设插件的配置；settings 给了就提供一个会话管理替身，登记的设置项记进去
+   * config 并进人设插件的配置
    */
   async function boot(
     storageFirst: boolean,
-    {
-      logHub,
-      config = {},
-      settings,
-    }: { logHub?: LogHub; config?: Record<string, unknown>; settings?: SessionSetting[] } = {},
+    { logHub, config = {} }: { logHub?: LogHub; config?: Record<string, unknown> } = {},
   ): Promise<PersonaService> {
     const personaEntry = {
       definition: personaPlugin,
@@ -92,16 +94,9 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     };
     app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
     provideHostPaths(app, base);
-    if (settings) {
-      app.bind({ provide }).provide.use(sessionManager, {
-        registerSetting(setting: SessionSetting) {
-          settings.push(setting);
-          return () => {};
-        },
-      } as never);
-    }
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
+      { definition: sessionValuesPlugin(SESSIONS) },
       ...(storageFirst ? [storageEntry, personaEntry] : [personaEntry, storageEntry]),
     ]);
     await app.plugins.idle();
@@ -136,9 +131,9 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     writeCard('b.yaml', formatCard('Same', 'msgB'));
     const svc = await boot(true);
     await app.start();
-    expect(svc.getOutputFormat?.({ persona: 'a' })?.replyField).toBe('msgA');
-    expect(svc.getOutputFormat?.({ persona: 'b' })?.replyField).toBe('msgB');
-    const promptB = svc.getSystemPrompt({ persona: 'b' });
+    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('msgA');
+    expect(svc.getOutputFormat?.(as('b'))?.replyField).toBe('msgB');
+    const promptB = svc.getSystemPrompt(as('b'));
     expect(promptB).toContain('"msgB"');
     expect(promptB).not.toContain('"msgA"');
   });
@@ -150,20 +145,16 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     const svc = await boot(true);
     await app.start();
     expect([svc.getPersonaName(), svc.getNickNames?.()]).toEqual(['Main', ['小M']]);
-    expect([svc.getPersonaName({ persona: 'b' }), svc.getNickNames?.({ persona: 'b' })]).toEqual(['Bob', ['阿B']]);
-    expect([svc.getPersonaName({ persona: 'nameless' }), svc.getNickNames?.({ persona: 'nameless' })]).toEqual([
-      '',
-      [],
-    ]);
-    expect(svc.getPersonaName({ persona: 'missing' })).toBe('Main');
+    expect([svc.getPersonaName(as('b')), svc.getNickNames?.(as('b'))]).toEqual(['Bob', ['阿B']]);
+    expect([svc.getPersonaName(as('nameless')), svc.getNickNames?.(as('nameless'))]).toEqual(['', []]);
+    expect(svc.getPersonaName(as('missing'))).toBe('Main');
   });
 
   it('主卡没写名字：点名的名字表只有别名与昵称，不混进兜底文字', async () => {
     writeCard('default.yaml', 'nick_name: [小N]\ndescription: m\nprompt: m\n');
     await boot(true);
     await app.start();
-    const { persona: personas, sessionManager: sessions } = app.bind({ persona, sessionManager });
-    const names = createBotNames(personas, sessions, app.logger, '[t]');
+    const names = createBotNames(app.bind({ persona }).persona, app.logger, '[t]');
     expect(names(['别名'], { sessionId: 's', platform: 'onebot' })).toEqual(['别名', '小N']);
   });
 
@@ -178,9 +169,9 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     const svc = await boot(true, { logHub });
     await app.start();
     expect(svc.getNickNames?.()).toEqual(['小明同学']);
-    expect(svc.getNickNames?.({ persona: 'b' })).toEqual(['阿B', '阿波']);
-    expect(svc.getNickNames?.({ persona: 'c' })).toEqual([]);
-    expect(svc.getNickNames?.({ persona: 'd' }), '留空（null）与不写相同').toEqual([]);
+    expect(svc.getNickNames?.(as('b'))).toEqual(['阿B', '阿波']);
+    expect(svc.getNickNames?.(as('c'))).toEqual([]);
+    expect(svc.getNickNames?.(as('d')), '留空（null）与不写相同').toEqual([]);
     const warns = logs.filter(e => e.level === 'warn').map(e => e.message);
     expect(warns.some(m => m.includes('nick_name 应为字符串列表') && m.includes('c.yaml'))).toBe(true);
     expect(
@@ -195,15 +186,13 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     const svc = await boot(true);
     await app.start();
     // 先取一次，让旧格式进缓存
-    expect(svc.getOutputFormat?.({ persona: 'a' })?.replyField).toBe('old');
+    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('old');
     await sleep(250); // 等 fs 监听就绪
 
     writeCard('a.yaml', formatCard('Alice', 'new', 'EDITED'));
-    expect(await waitUntil(() => svc.getSystemPrompt({ persona: 'a' }).includes('EDITED')), '改卡未被重扫载入').toBe(
-      true,
-    );
-    expect(svc.getOutputFormat?.({ persona: 'a' })?.replyField).toBe('new');
-    const prompt = svc.getSystemPrompt({ persona: 'a' });
+    expect(await waitUntil(() => svc.getSystemPrompt(as('a')).includes('EDITED')), '改卡未被重扫载入').toBe(true);
+    expect(svc.getOutputFormat?.(as('a'))?.replyField).toBe('new');
+    const prompt = svc.getSystemPrompt(as('a'));
     expect(prompt).toContain('"new"');
     expect(prompt).not.toContain('"old"');
   });
@@ -222,16 +211,15 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect(prompt).not.toContain('旧主卡正文');
   });
 
-  it('主卡是自带的 default，与插件配置无关：配置里留着旧的 persona 也不换主卡；「人设」设置项没设时写 default', async () => {
+  it('「人设」的全局层是插件配置：作者默认 default 即主卡；配置里写了别的卡时没设人设的会话也用它，会话设的压过它', async () => {
     writeCard('default.yaml', 'name: 默认卡\ndescription: d\nprompt: 默认卡正文\n');
     writeCard('other.yaml', 'name: 别的卡\ndescription: o\nprompt: 别的卡正文\n');
-    const settings: SessionSetting[] = [];
-    const svc = await boot(true, { config: { persona: 'other' }, settings });
+    writeCard('b.yaml', 'name: Bob\ndescription: b\nprompt: b\n');
+    expect((personaPlugin.configSchema as Record<string, { default?: unknown }>).persona.default).toBe('default');
+    const svc = await boot(true, { config: { persona: 'other' } });
     await app.start();
-    expect(svc.getPersonaName()).toBe('默认卡');
-    expect(svc.getSystemPrompt()).toContain('默认卡正文');
-    // 选别的卡只经会话设置「人设」
-    expect(svc.getPersonaName({ persona: 'other' })).toBe('别的卡');
-    expect(settings.find(setting => setting.key === 'persona')?.field.default).toBe('default');
+    expect(svc.getPersonaName()).toBe('别的卡');
+    expect(svc.getSystemPrompt({ sessionId: '<没设人设的会话>' })).toContain('别的卡正文');
+    expect(svc.getPersonaName(as('b'))).toBe('Bob');
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, LogHub } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -9,6 +10,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -96,13 +98,21 @@ async function boot(summaryConfig: Record<string, unknown> = {}) {
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
+  await app.plugin(sessionSettingsPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'zz cache bot' });
   await app.plugin(memorySummary, summaryConfig);
   await app.plugins.idle();
-  for (const plugin of [openaiPlugin, toolsPlugin, sessionManagerPlugin, agentPlugin, memorySummary]) {
+  for (const plugin of [
+    openaiPlugin,
+    toolsPlugin,
+    sessionManagerPlugin,
+    sessionSettingsPlugin,
+    agentPlugin,
+    memorySummary,
+  ]) {
     expect(app.plugins.getPlugin(plugin.name)?.state, `${plugin.name} 未激活`).toBe('active');
   }
-  const host = app.bind({ agent, events, sessionManager, tools });
+  const host = app.bind({ agent, events, sessionManager, sessionSettings, tools });
   host.tools.use.register({
     definition: {
       type: 'function',
@@ -110,7 +120,11 @@ async function boot(summaryConfig: Record<string, unknown> = {}) {
     },
     handler: async () => 'ok',
   });
-  await host.sessionManager.use.ensureSession(SESSION, { config: { historyLimit: LIMIT } });
+  await host.sessionManager.use.ensureSession(SESSION);
+  await host.sessionSettings.use.update(
+    { sessionId: SESSION },
+    { plugin: agentPlugin.name, key: 'historyLimit', value: LIMIT },
+  );
   const statuses: string[] = [];
   host.events.use.on('session:compressing', info => void statuses.push(info.status));
 

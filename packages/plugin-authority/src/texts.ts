@@ -5,9 +5,15 @@ import en from './locales/en.js';
 const SOURCE = {
   capabilityDenied: '已被系统禁用: {capability}',
   levelTooLow: '权限不足: "{capability}" 需等级 {required}（当前 {level}）',
+  ownerOnlyCapability: '权限不足: "{capability}" 只限 owner',
   intentUnreachable: '操作已取消：{capability} 需要发出者本人确认，这条指令不是人亲手输入的，无从确认',
   intentDeclined: '操作已取消：{capability} 没有得到发出者确认',
   approvalsAbsent: '操作已取消：{capability} 需要 owner 批准，但审批服务不在（由 @aalis/plugin-session-server 提供）',
+  operationsDescription:
+    '每个指令、工具与设置项有一个最低等级：指令与工具默认按风险派生（安全 0、敏感 1、危险 2），设置项默认按声明；多数不用动。写在哪一层另有固定的门槛，不在这里调。',
+  operationsEmpty: '没有登记的指令、工具或设置项',
+  settingKind: '设置项',
+  ownerOnlyLevel: '只有 owner',
   confirmSession: '每次（白名单可免）',
   confirmAlways: '每次（只有确认覆盖设为 off 能免）',
   rulesDescription:

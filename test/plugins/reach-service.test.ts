@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OriginTurn } from '../../packages/api-authority/src/index.js';
 import { isReachCredential, type ReachCredential, type ReachRequest } from '../../packages/api-reach/src/index.js';
-import type { SessionInfo, SessionSetting } from '../../packages/api-session-manager/src/index.js';
+import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import type { App, Logger } from '../../packages/core/src/index.js';
 import reachPlugin from '../../packages/plugin-reach/src/index.js';
 import { sessionTmpOf, sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
@@ -23,35 +23,15 @@ import {
 import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 触及服务：按一次工具调用签发凭据。发起类别取权限服务的 originOf，房间类别、档位、绑定取会话管理里的记录，
-// 清单按真实路径生成；子任务随发起它的那一轮父会话；本会话临时区按需建、随会话删、定期清扫；污点与白纸的来源账本
-// 落在插件数据里。档位与越界策略的登记在审批接入那一步，这里的用例自己登记两项来改它们。
+// 触及服务：按一次工具调用签发凭据。发起类别取权限服务的 originOf，房间类别、绑定取会话管理里的记录，档位固定为工作区档、
+// 越界要问，清单按真实路径生成；子任务随发起它的那一轮父会话；本会话临时区按需建、随会话删、定期清扫；污点与白纸的来源账本
+// 落在插件数据里。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_DM = `onebot:10000:private:${OWNER_QQ}`;
 const MEMBER_DM = 'onebot:10000:private:30001';
 const GROUP = 'onebot:10000:group:20001';
-const ALL_KINDS = ['owner', 'room', 'task'] as const;
 const DEFAULT_WORKSPACE = 'workspace:default';
-
-const TIER: SessionSetting = {
-  key: 'accessTier',
-  field: {
-    type: 'select',
-    label: '档位',
-    options: ['readonly', 'confirm', 'workspace', 'full'].map(value => ({ label: value, value })),
-  },
-  appliesTo: ALL_KINDS,
-  prominence: 'composer',
-  liveOnly: true,
-};
-const BOUNDARY: SessionSetting = {
-  key: 'accessOnBoundary',
-  field: { type: 'select', label: '越界策略', options: ['ask', 'deny'].map(value => ({ label: value, value })) },
-  appliesTo: ALL_KINDS,
-  prominence: 'advanced',
-  liveOnly: true,
-};
 
 let dirs: ReachDirs;
 let savedHome: string | undefined;
@@ -238,30 +218,16 @@ describe('场所、绑定与档位', () => {
     });
   });
 
-  it('档位与越界策略取根会话的生效设置；没设时为工作区档、越界要问；子会话自己的设置不起作用', async () => {
-    const { sm, svc, webui } = await start();
+  it('档位固定为工作区档、越界要问', async () => {
+    const { svc, webui } = await start();
     const outside = write(join(dirs.user, 'elsewhere', 'x'));
-    let cred = await svc.forCall(ownerTurn(webui));
+    const cred = await svc.forCall(ownerTurn(webui));
     expect(cred.exec).toBe('sandbox');
     expect(await verdict(cred, outside)).toContain('要 owner 批准');
-
-    sm.registerSetting(TIER);
-    sm.registerSetting(BOUNDARY);
-    await sm.updateSession(webui, { config: { accessTier: 'full' } });
-    expect((await svc.forCall(ownerTurn(webui))).exec).toBe('host');
-    expect(await verdict(await svc.forCall(ownerTurn(webui)), outside)).toBe('allow');
-
-    await sm.updateSession(webui, { config: { accessTier: 'workspace', accessOnBoundary: 'deny' } });
-    cred = await svc.forCall(ownerTurn(webui));
-    expect(await verdict(cred, outside)).toContain('越界策略是直接拒绝');
-
-    const child = await sm.createChildSession(webui, { config: { accessTier: 'full' } });
-    expect((await svc.forCall(ownerTurn(child.id))).exec, '子会话按根会话实时取').toBe('sandbox');
   });
 
-  it('签发之后受污染或降档，同一张凭据的 require、allows、沙箱策略与来源账本随之', async () => {
-    const { sm, svc, webui } = await start();
-    sm.registerSetting(TIER);
+  it('签发之后受污染，同一张凭据的 require、allows 与来源账本随之', async () => {
+    const { svc, webui } = await start();
     const cred = await svc.forCall(ownerTurn(webui));
     const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(await verdict(cred, { effect: 'network', via: 'url' })).toBe('allow');
@@ -271,11 +237,6 @@ describe('场所、绑定与档位', () => {
     expect(await verdict(cred, { effect: 'network', via: 'url' })).toContain('读进过别人写的内容');
     cred.noteWrite(note);
     expect(svc.provenanceOf(note)).toMatchObject({ sources: ['群「<群名>」'] });
-
-    await sm.updateSession(webui, { config: { accessTier: 'readonly' } });
-    expect(cred.allows('write', note)).toBe(false);
-    expect(await verdict(cred, write(note))).toContain('可写范围');
-    expect(cred.sandboxPolicy().write).toEqual([sessionTmpIn(dirs.home, webui)]);
   });
 });
 
@@ -298,9 +259,8 @@ describe('子任务随发起它的那一轮父会话', () => {
     inbound: { source: 'subtask' },
   });
 
-  it('owner 发起的：子任务与父会话一样，写自己的临时区；父会话降档、受污染后随之', async () => {
+  it('owner 发起的：子任务与父会话一样，写自己的临时区；父会话受污染后随之', async () => {
     const { host, sm, svc, webui } = await start();
-    sm.registerSetting(TIER);
     await svc.forCall(ownerTurn(webui));
     const child = (await sm.createChildSession(webui, {})).id;
     await dispatch(host, child, webui);
@@ -310,10 +270,6 @@ describe('子任务随发起它的那一轮父会话', () => {
     expect(issued.allows('write', join(sessionTmpIn(dirs.home, child), 'x'))).toBe(true);
     const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
     expect(issued.allows('write', note)).toBe(true);
-
-    await sm.updateSession(webui, { config: { accessTier: 'readonly' } });
-    expect(issued.allows('write', note), '已签发的子任务凭据随父会话实时的触及').toBe(false);
-    expect((await svc.forCall(subtaskTurn(child, webui))).allows('write', note)).toBe(false);
 
     svc.markTainted(webui, ['群「<群名>」']);
     expect((await svc.forCall(subtaskTurn(child, webui))).tainted).toEqual(['群「<群名>」']);
@@ -361,10 +317,8 @@ describe('清单按真实路径', () => {
     symlinkSync(linkedPkg, join(dirs.app, 'packages', 'zz-pkg'));
     const appLink = join(dirs.base, 'app-link');
     symlinkSync(dirs.app, appLink);
-    const { sm, svc } = await start({ appPath: appLink });
-    sm.registerSetting(TIER);
-    const full = (await sm.createSession({ name: 'f', config: { accessTier: 'full' } }, { createdFrom: 'webui' })).id;
-    const cred = await svc.forCall(ownerTurn(full));
+    const { svc, webui } = await start({ appPath: appLink });
+    const cred = await svc.forCall(ownerTurn(webui));
     for (const path of [
       join(dirs.app, 'node_modules', 'x', 'index.js'),
       join(dirs.app, 'packages', 'inside', 'dist', 'index.js'),
@@ -375,18 +329,13 @@ describe('清单按真实路径', () => {
       expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
     }
     for (const path of [join(dirs.app, 'packages', 'inside', 'src', 'index.ts'), join(linkedPkg, 'src', 'index.ts')]) {
-      expect(await verdict(cred, write(path)), `源码不在内：${path}`).toBe('allow');
+      expect(await verdict(cred, write(path)), `源码不在内：${path}`).not.toContain('宿主控制面');
     }
   });
 
-  /** 全权档的 owner 会话 */
-  async function fullSession(started: Awaited<ReturnType<typeof start>>) {
-    started.sm.registerSetting(TIER);
-    const session = await started.sm.createSession(
-      { name: 'f', config: { accessTier: 'full' } },
-      { createdFrom: 'webui' },
-    );
-    return started.svc.forCall(ownerTurn(session.id));
+  /** owner 在 WebUI 会话里的一轮签发的凭据 */
+  async function ownerCredential(started: Awaited<ReturnType<typeof start>>) {
+    return started.svc.forCall(ownerTurn(started.webui));
   }
 
   /** 起实例时守护进程的入口（插件激活时按 process.argv[1] 取） */
@@ -421,10 +370,10 @@ describe('清单按真实路径', () => {
       }
     });
 
-    it('宿主控制面：全权档写 secrets.yaml 与主配置的真实路径照样拒', async () => {
+    it('宿主控制面：写 secrets.yaml 与主配置的真实路径照样拒', async () => {
       const secrets = linkFromDotfiles('secrets.yaml', join(dirs.home, 'secrets.yaml'));
       const config = linkFromDotfiles('aalis.config.yaml', join(dirs.home, 'aalis.config.yaml'));
-      const cred = await fullSession(await start());
+      const cred = await ownerCredential(await start());
       for (const path of [secrets, config]) {
         expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
       }
@@ -464,7 +413,7 @@ describe('清单按真实路径', () => {
       writeFileSync(join(dirs.app, 'package.json'), '{}');
       dirs.home = join(dirs.app, 'home');
       mkdirSync(dirs.home);
-      const cred = await fullSession(await startWithEntry(entry));
+      const cred = await ownerCredential(await startWithEntry(entry));
       for (const path of [entry, join(dirs.app, 'package.json')]) {
         expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
       }
@@ -476,9 +425,9 @@ describe('清单按真实路径', () => {
       mkdirSync(join(dirs.app, 'packages'));
       writeFileSync(entry, '');
       writeFileSync(join(dirs.app, 'package.json'), '{}');
-      const cred = await fullSession(await startWithEntry(entry));
+      const cred = await ownerCredential(await startWithEntry(entry));
       for (const path of [entry, join(dirs.app, 'package.json')]) {
-        expect(await verdict(cred, write(path)), path).toBe('allow');
+        expect(await verdict(cred, write(path)), path).not.toContain('宿主控制面');
       }
     });
   });
@@ -664,18 +613,6 @@ describe('污点与来源账本', () => {
     expect(second.svc.provenanceOf(join(paper, 'from-group.md'))).toMatchObject({ sessionId: first.webui });
   });
 
-  it('全权档的凭据不带污点（卡上不写来源）；受污染时经它写进白纸的照样记进来源账本', async () => {
-    const { sm, svc, webui } = await start();
-    sm.registerSetting(TIER);
-    await sm.updateSession(webui, { config: { accessTier: 'full' } });
-    svc.markTainted(webui, ['群「<群名>」']);
-    const cred = await svc.forCall(ownerTurn(webui));
-    expect(cred.tainted).toBeUndefined();
-    const file = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'from-group.md');
-    cred.noteWrite(file);
-    expect(svc.provenanceOf(file)).toMatchObject({ sessionId: webui, sources: ['群「<群名>」'] });
-  });
-
   it('记录读不出时不激活：不能当作谁都没读进过别人的内容', async () => {
     seedProvenance(dirs, '{ not json');
     const { app } = await startReach(dirs);
@@ -692,16 +629,12 @@ describe('污点与来源账本', () => {
 });
 
 describe('沙箱策略', () => {
-  it('只读与工作区档有：可写根含场所的主目录与本会话临时区；修改确认与全权没有', async () => {
-    const { sm, svc, webui } = await start();
+  it('只读与工作区档有：可写根含场所的主目录与本会话临时区', async () => {
+    const { svc, webui } = await start();
     const policy = (await svc.forCall(ownerTurn(webui))).sandboxPolicy();
     expect(policy.write).toEqual(
       expect.arrayContaining([paperOf(dirs.home, DEFAULT_WORKSPACE), sessionTmpIn(dirs.home, webui)]),
     );
     expect(policy.network).toBe('on');
-
-    sm.registerSetting(TIER);
-    await sm.updateSession(webui, { config: { accessTier: 'full' } });
-    await expect(svc.forCall(ownerTurn(webui)).then(cred => cred.sandboxPolicy())).rejects.toThrow('沙箱');
   });
 });

@@ -13,6 +13,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { i18nSection } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -33,9 +34,9 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-/** 全局默认层的语言是 language；返回后台任务推送里中断原因的取法 */
+/** 全局语言（plugin-i18n 的配置段）是 language；返回后台任务推送里中断原因的取法 */
 async function setup({ withI18n = true, language }: { withI18n?: boolean; language: string[] }) {
-  const { app } = hostedApp({ sessionConfig: { defaults: { language } } }, { logger: silent });
+  const { app } = hostedApp(i18nSection(language), { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-i18n-'));
   homes.push(home);

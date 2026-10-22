@@ -57,7 +57,7 @@ import {
 } from './ledger.js';
 import { normalizeActivity, progressLabel } from './progress.js';
 import { buildPrompt } from './prompt.js';
-import { actorKey, checkRemote, type Isolation, pausedReason, resolveRoomPaper } from './rooms.js';
+import { actorKey, checkRemote, type Isolation, type PaperFields, pausedReason, resolveRoomPaper } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
 import { category, describe, truncate } from './util.js';
 
@@ -125,6 +125,7 @@ interface DriverDeps {
   journal: TaskJournal;
   remote: ServiceSelection<RemoteAgentProvider>;
   sessionManager: ServiceSelection<SessionManagerService>;
+  fields: PaperFields;
   storage: StorageService;
   ledger: LedgerStore;
   /** 同账号隔离（出队时与受理时同一套核对） */
@@ -539,7 +540,13 @@ export class PaperDriver {
     const type = spec.remoteAgentType;
     if (pausedReason(ledger.data, task.paperId, type)) return 'pause';
 
-    const roomPaper = resolveRoomPaper(this.#d.sessionManager.use, cfg, task.room, task.platform || undefined);
+    const roomPaper = resolveRoomPaper(
+      this.#d.sessionManager.use,
+      this.#d.fields,
+      cfg,
+      task.room,
+      task.platform || undefined,
+    );
     if ('unavailable' in roomPaper) return this.#fail(task, `出队时核对不过：${roomPaper.unavailable}`);
     if (roomPaper.paperId !== task.paperId) {
       return this.#fail(task, '出队时核对不过：发起房间现在用的不是这块白纸');

@@ -155,6 +155,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
     async handleMessage() {
       /* 测试不驱动完整对话 */
     },
+    async assignModel() {},
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {

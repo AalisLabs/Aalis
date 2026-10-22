@@ -4,7 +4,7 @@ import { defineService } from '@aalis/core';
 // 模型：操作能力（capability）+ 用户数字等级（level，整数，越大越高）+ 操作最低等级（minLevel）+ 权限组（具名的放行集合）。
 //   - owner = ∞，可执行任意能力、可管理所有人的权限（不入等级表）。
 //   - 裁决：deniedCapabilities（全局硬禁）> owner(∞) > 封禁（level < 0）> 用户 level >= 操作 minLevel > 所属权限组覆盖；
-//     minLevel 由操作的 risk / visibility / config.authorityOverrides 派生，组定义在 config.authorityGroups。
+//     minLevel 取 config.authorityOverrides，没有时取操作声明的门槛，再由 risk / visibility 派生，组定义在 config.authorityGroups。
 //   - restricted：门槛较高的能力；等级不够、所属组也不覆盖即拒，没有别的放行口。
 //   - 单 owner 终态：等级与组成员只由 owner 管理（无委托树 / 子委托）。
 //
@@ -202,12 +202,17 @@ export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | Te
  * tools / commands 的执行守卫在操作边界调用 authorize 过这道闸。
  */
 export interface AuthorizeRequest {
-  /** 操作主能力（tool:<name> / command:<name>） */
+  /** 操作主能力（tool:<name> / command:<name> / setting:<实例 id>/<键>） */
   capability: CapabilityId;
   /** 主能力的默认可见性（操作声明；无 risk 时据它兜底 minLevel） */
   visibility: CapabilityVisibility;
   /** 操作原始风险（透传，供 minLevel 派生；缺省回退 visibility） */
   risk?: CapabilityRisk;
+  /**
+   * 操作自己声明的最低等级（如会话设置项按字段声明的门槛），压过 risk 与 visibility 的派生、让位于 config.authorityOverrides；
+   * Number.POSITIVE_INFINITY 即只有 owner
+   */
+  minLevel?: number;
   /** 被裁决的工具所属的工具分组（工具一路由执行器填，指令没有）：权限组的 `tool-group:` 条目按它覆盖，权限服务不反查工具表 */
   toolGroups?: readonly string[];
 }
@@ -252,13 +257,20 @@ export interface AuthorityService {
   /**
    * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。
    * 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁（level < 0）> 用户 level >= 操作 minLevel > 所属权限组覆盖；
-   * minLevel 由 request.risk/visibility/config.authorityOverrides 派生，组的放行条目取自 config.authorityGroups。
+   * minLevel 取 config.authorityOverrides，没有时取 request.minLevel，再没有时由 request.risk/visibility 派生，组的放行条目取自
+   * config.authorityGroups。门槛为只有 owner 时拒绝语写「只有 owner 能改」，不写 Infinity。
    * @returns null 放行；否则为拒绝原因，可以是文字对象（读法同 {@link ExecutionGuard} 的返回值）
    */
   authorize(
     identity: UserIdentity | { platform: string; userId?: string },
     request: AuthorizeRequest,
   ): string | TextRef | null;
+
+  /**
+   * 这个身份的等级够不够 minLevel：owner 恒过，封禁（等级为负数）恒不过，其余登记等级不低于 minLevel 才过；minLevel 为
+   * Number.POSITIVE_INFINITY 即只有 owner。不看能力、权限组与硬禁（那些归 authorize），给按层固定的门槛用
+   */
+  meetsLevel(identity: UserIdentity | { platform: string; userId?: string }, minLevel: number): boolean;
 
   /**
    * 设置 target 外部身份的等级（覆盖式整数；level=0 默认值且记录里没有备注等别的内容则清记录）。
@@ -286,7 +298,7 @@ declare module '@aalis/api-host-config' {
     /** 全局能力封禁（glob）：命中即拒，连 owner 都压过（系统级硬禁用，慎用）。 */
     deniedCapabilities?: string[];
     /**
-     * 管理员对单条操作的最低等级覆盖（能力键 `type:name`，如 `tool:weather` → 任意整数）。
+     * 管理员对单条操作的最低等级覆盖（能力键 `type:name`，如 `tool:weather`、`setting:<实例 id>/<键>` → 任意整数）。
      * 让 owner 调某操作的门槛等级，无需改插件声明；优先于 risk/visibility 派生。
      */
     authorityOverrides?: Record<string, number>;

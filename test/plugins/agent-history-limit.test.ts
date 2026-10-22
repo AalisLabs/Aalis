@@ -2,20 +2,26 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { type ChatModelRequest, type ChatResponse, estimateMsgTokens } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { isSessionConfigError, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import {
+  isSessionSettingsError,
+  type SessionSettingsLayer,
+  sessionSettings,
+} from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, LogHub } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 条数线 historyLimit 是 agent 登记的会话设置项：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的半条线，之后照常
+// 条数线 historyLimit 是 agent 的按会话字段：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的半条线，之后照常
 // 累积到线再丢一段（起点只由活跃条数与条数线算出），也是摘要插件按条数压缩的线；0 或哪一层都没设时发全部活跃历史。
 // 真实回合与 token:request 的快照都按会话取、按同一个起点切。用量事件的 historyMessages 是这一轮开头会话的活跃条数
 // （含当前这条消息与没发给模型的部分）加本回合追加的工具调用与结果，快照只有活跃条数。
@@ -55,12 +61,13 @@ async function boot(responses?: ChatResponse[]) {
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
+  await app.plugin(sessionSettingsPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugins.idle();
-  for (const name of [toolsPlugin.name, sessionManagerPlugin.name, agentPlugin.name]) {
+  for (const name of [toolsPlugin.name, sessionManagerPlugin.name, sessionSettingsPlugin.name, agentPlugin.name]) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
-  const host = app.bind({ agent: agentService, tools, events, memory, sessionManager });
+  const host = app.bind({ agent: agentService, tools, events, memory, sessionManager, sessionSettings });
   host.tools.use.register({
     definition: {
       type: 'function',
@@ -90,33 +97,37 @@ async function boot(responses?: ChatResponse[]) {
   /** 一次模型请求里发出的历史：去掉系统消息与当前这条 */
   const historyIn = (request: ChatModelRequest | undefined) =>
     (request?.messages ?? []).filter(m => m.role !== 'system').slice(0, -1);
-  return { host, sm: host.sessionManager.use, recorder, usages, logs, ask, seed, oldIn, historyIn };
+  /** 写条数线：会话（不在表里先建档）或一层 */
+  const limit = async (at: string | SessionSettingsLayer, value: number) => {
+    if (typeof at === 'string') await host.sessionManager.use.ensureSession(at);
+    const target = typeof at === 'string' ? { sessionId: at } : { layer: at };
+    await host.sessionSettings.use.update(target, { plugin: agentPlugin.name, key: 'historyLimit', value });
+  };
+  return { host, sm: host.sessionManager.use, recorder, usages, logs, ask, seed, oldIn, historyIn, limit };
 }
 
-describe('会话设置项 historyLimit', () => {
-  it('登记为高级设置项：不小于 0 的整数，默认 0，只经继承链实时解析', async () => {
-    const { sm } = await boot();
-    expect(sm.listSettings().find(s => s.key === 'historyLimit')).toMatchObject({
-      plugin: agentPlugin.name,
-      field: { type: 'number', integer: true, min: 0, default: 0 },
-      prominence: 'advanced',
-      liveOnly: true,
+describe('按会话字段 historyLimit', () => {
+  it('高级项：不小于 0 的整数，作者默认 0', () => {
+    expect((agentPlugin.configSchema as Record<string, unknown>).historyLimit).toMatchObject({
+      type: 'number',
+      integer: true,
+      min: 0,
+      default: 0,
+      session: { prominence: 'advanced' },
     });
   });
 
   it('写 0 与 300 写得进，写 -1 与 1.5 被拒', async () => {
-    const { sm } = await boot();
+    const { sm, limit } = await boot();
     const owner = await sm.createSession({ name: '本机会话' });
     for (const value of [0, 300]) {
-      await sm.updateLayer({ scope: 'defaults' }, { historyLimit: value });
-      await sm.updateSession(owner.id, { config: { historyLimit: value } });
+      await limit({ scope: 'global' }, value);
+      await limit(owner.id, value);
     }
     for (const value of [-1, 1.5]) {
-      for (const write of [
-        sm.updateLayer({ scope: 'defaults' }, { historyLimit: value }),
-        sm.updateSession(owner.id, { config: { historyLimit: value } }),
-      ]) {
-        await expect(write, String(value)).rejects.toSatisfy(isSessionConfigError);
+      for (const at of [{ scope: 'global' } as const, owner.id]) {
+        const err = await limit(at, value).catch((e: unknown) => e);
+        expect(isSessionSettingsError(err), String(value)).toBe(true);
       }
     }
   });
@@ -124,9 +135,9 @@ describe('会话设置项 historyLimit', () => {
 
 describe('按会话的条数线读历史', () => {
   it('设为 N：超过时按半条线成段丢弃；historyMessages 是活跃条数（含当前这条），再加本回合追加的工具调用与结果', async () => {
-    const { sm, recorder, usages, ask, seed, oldIn } = await boot([callProbe, { content: '查好了' }]);
+    const { recorder, usages, ask, seed, oldIn, limit } = await boot([callProbe, { content: '查好了' }]);
     await seed('zz-ctx-five', 30);
-    await sm.ensureSession('zz-ctx-five', { config: { historyLimit: 5 } });
+    await limit('zz-ctx-five', 5);
     await ask('zz-ctx-five');
 
     // 活跃 31 条，条数线 5、半条线 3：从第 27 条发起
@@ -134,8 +145,8 @@ describe('按会话的条数线读历史', () => {
     expect(usages.map(u => u.historyMessages)).toEqual([31, 33]);
   });
 
-  it('全局默认、平台档与会话自己的设置按层生效；没有出生平台的会话按入口平台选平台档', async () => {
-    const { sm, recorder, ask, seed, historyIn } = await boot();
+  it('全局层、平台档与会话自己的设置按层生效；没有出生平台的会话按入口平台选平台档', async () => {
+    const { sm, recorder, ask, seed, historyIn, limit } = await boot();
     const owner = await sm.createSession({ name: '本机会话' });
     await seed(owner.id, 30);
     const sentOn = async (platform: string) => {
@@ -144,18 +155,18 @@ describe('按会话的条数线读历史', () => {
     };
 
     // 每轮落两条，四轮开头的活跃条数是 31、33、35、37
-    await sm.updateLayer({ scope: 'defaults' }, { historyLimit: 20 });
+    await limit({ scope: 'global' }, 20);
     expect(await sentOn('webui')).toBe(10);
 
-    await sm.updateLayer({ scope: 'platform', platform: 'webui' }, { historyLimit: 10 });
+    await limit({ scope: 'platform', platform: 'webui' }, 10);
     expect([await sentOn('webui'), await sentOn('cli')]).toEqual([7, 14]);
 
-    await sm.updateSession(owner.id, { config: { historyLimit: 5 } });
+    await limit(owner.id, 5);
     expect(await sentOn('webui')).toBe(3);
   });
 
   it('起点落在工具调用组中间：组首连同结果一起丢，不告警不完整的组', async () => {
-    const { host, sm, recorder, logs, ask, oldIn, historyIn } = await boot();
+    const { host, recorder, logs, ask, oldIn, historyIn, limit } = await boot();
     const SESSION = 'zz-ctx-tool-edge';
     const call = { id: 'call-old', type: 'function' as const, function: { name: PROBE, arguments: '{}' } };
     for (let i = 0; i < 9; i++) {
@@ -169,7 +180,7 @@ describe('按会话的条数线读历史', () => {
             : { role: i % 2 ? 'assistant' : 'user', content: `zz-old ${i}`, timestamp },
       );
     }
-    await sm.ensureSession(SESSION, { config: { historyLimit: 6 } });
+    await limit(SESSION, 6);
     await ask(SESSION);
 
     // 加上这一轮的入站共 10 条，条数线 6、半条线 3：起点 6 正是第 5 条调用的结果
@@ -179,7 +190,7 @@ describe('按会话的条数线读历史', () => {
   });
 
   it('没设或设为 0 时读全部活跃历史：600 条全进上下文，快照同样', async () => {
-    const { host, sm, recorder, usages, ask, seed, oldIn } = await boot();
+    const { host, recorder, usages, ask, seed, oldIn, limit } = await boot();
     await seed('zz-ctx-all', 600);
 
     await host.events.use.emit('token:request', { sessionId: 'zz-ctx-all' });
@@ -189,15 +200,15 @@ describe('按会话的条数线读历史', () => {
     expect(oldIn(recorder.at(-1))).toHaveLength(600);
     expect(usages.at(-1)?.historyMessages).toBe(601);
 
-    await sm.ensureSession('zz-ctx-all', { config: { historyLimit: 0 } });
+    await limit('zz-ctx-all', 0);
     await ask('zz-ctx-all');
     expect(oldIn(recorder.at(-1))).toHaveLength(600);
   });
 
   it('快照按同一个起点切，historyMessages 是活跃条数，不带 turnId', async () => {
-    const { host, sm, usages, seed } = await boot();
+    const { host, usages, seed, limit } = await boot();
     await seed('zz-ctx-snapshot', 30);
-    await sm.ensureSession('zz-ctx-snapshot', { config: { historyLimit: 5 } });
+    await limit('zz-ctx-snapshot', 5);
     await host.events.use.emit('token:request', { sessionId: 'zz-ctx-snapshot' });
 
     // 活跃 30 条，条数线 5、半条线 3：从第 27 条发起

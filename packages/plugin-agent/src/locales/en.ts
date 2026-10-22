@@ -12,31 +12,6 @@ export default defineLocale<Source>()({
   llmMore: ' ({count, number} in total; use /model to see all)',
   llmUnresolved:
     'LLM resolution failed: {count, plural, one {# entry is} other {# entries are}} available after capability filtering, but none was obtained during resolution (the service may be loading or unloading; try again later).',
-  noSessionManager:
-    'Session management is not running, and session settings depend on it: enable “Session management” in the WebUI plugin area, or remove it from disabledPlugins in the config file; if it still does not start, use /doctor to see why',
-  sessionLine: 'Session: {session}',
-  fieldModel: 'Model',
-  fieldPersona: 'Persona',
-  fieldThink: 'Thinking',
-  inheritedLine: '{field}: {value}  [source: {from}]',
-  overrideLine: '{field}: {value}  [source: session override]',
-  overriddenLine: '  Overridden inherited value: {value}  [source: {from}]',
-  unsetValue: '(default)',
-  fromDefault: 'default',
-  fromPlatform: '{layer} {platform}',
-  fromType: '{layer} {platform} · {type}',
-  fromPlace: '{layer} “{place}”',
-  modelInUse: '  This turn will use: {model}',
-  thinkingFixed: '  Not adjustable on the current model',
-  thinkingLevels: '  Levels of the current model: {levels, list}; default {fallback}',
-  thinkingLevelsMissing:
-    '  Levels of the current model: {levels, list}; default {fallback}; the current model does not have this level, so the default is used',
-  thinkingLevel: '{id} ({label})',
-  noSuchLevel: 'The current model has no level “{level}”; options: {levels, list, or}',
-  noOwnRecord: '(This conversation has no settings of its own yet; everything is inherited from the defaults)',
-  setHint:
-    'Change settings: /session.set -m <model> -p <persona> -t <level> [-n <name>]   (/model lists the available models; a wrong persona name lists the available personas)',
-  resetHint: 'Reset:   /session.reset          (-m model only / -p persona only / -t thinking only)',
   partHistory: 'History',
   partToolResults: 'Tool results',
   partToolDefs: 'Tool definitions',
@@ -47,6 +22,17 @@ export default defineLocale<Source>()({
   partPlatform: 'Platform prompt',
   partSubtask: 'Subtasks',
   partSystemOther: 'Other system prompts',
+  llmLabel: 'Model',
+  llmDescription:
+    'The chat model this session uses. When unset it follows the service preference: the llm service preference set for this plugin if any, otherwise the global preference, and failing both the first available chat model',
+  llmUnset: 'Follow the service preference',
+  thinkLabel: 'Thinking',
+  thinkDescription:
+    'The available levels depend on the model in use; when unset, or when the current model lacks the level, the model’s default level is used',
+  thinkUnset: 'The model’s default level',
+  maxToolIterationsLabel: 'Max tool iterations',
+  maxToolIterationsDescription: 'The maximum number of tool-call rounds in one turn',
+  historyLimitLabel: 'History limit',
   historyLimitDescription:
     'At most this many messages of the conversation history are sent to the model: when exceeded, the oldest half is dropped at once, and history then builds up to this count again before the next chunk is dropped. The drop only affects what is sent to the model; the conversation history itself is kept and still goes into the summary when compacting. With the summary plugin installed, the conversation is compacted when its messages reach this count. 0 means no count limit: all active history is sent, and compaction follows only the automatic compaction threshold',
 });

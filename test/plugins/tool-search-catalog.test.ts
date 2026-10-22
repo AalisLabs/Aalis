@@ -70,6 +70,7 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
     const data: HookContextMap['agent:llm:before'] = {
       messages: [],
       tools: service.getDefinitions({ groups }),
+      model: { provider: '<提供者>', model: '<模型>' },
       sessionId: 'room-1',
     };
     await host.hooks.use.run('agent:llm:before', data, async () => {});

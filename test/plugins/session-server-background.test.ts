@@ -97,6 +97,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   const hanging = new Map<string, Array<() => void>>();
   const agentDouble: AgentService = {
     handleMessage: async () => {},
+    assignModel: async () => {},
     abort(sessionId) {
       aborted.push(sessionId);
       const ends = hanging.get(sessionId) ?? [];

@@ -1,5 +1,7 @@
+import { contributions } from '@aalis/api-contributions';
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
-import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
+import type {} from '@aalis/api-webui'; // 贡献点 webui:options 的键类型经 declaration merging 并入，删掉会丢类型
+import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
 // ===== 配置 =====
@@ -24,7 +26,7 @@ const configSchema = defineConfig({
     type: 'select',
     label: 'Embedding 模型',
     default: 'text-embedding-3-small',
-    dynamicOptions: 'embedding',
+    dynamicOptions: 'embedding-openai',
     description: '用于生成文本向量的模型',
   },
   timeoutMs: {
@@ -74,6 +76,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
     return data.data[0].embedding;
   }
 
+  /** 这个端点的全部模型：本插件的可选项来源 embedding-openai 用它 */
   async listModels(): Promise<string[]> {
     try {
       const res = await fetch(`${this.baseUrl}/models`, {
@@ -98,8 +101,9 @@ export default definePlugin({
   configSchema,
   reusable: true,
   provides: [embedding],
-  uses: { config, logger, lifecycle, provide },
-  async apply({ config, logger, lifecycle, provide }) {
+  /** contributions 交「Embedding 模型」下拉的可选项来源，缺席时下拉没有可选项 */
+  uses: { config, logger, lifecycle, provide, contributions: optional(contributions) },
+  async apply({ config, logger, lifecycle, provide, contributions }) {
     const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
@@ -117,5 +121,10 @@ export default definePlugin({
     }
 
     provide.use(embedding, service, { label: `OpenAI / ${cfg.model}` });
+    // 「Embedding 模型」下拉只列本实例连着的这个端点的模型（按服务名合起各提供者会混进别家的）
+    contributions.use.contribute('webui:options', {
+      id: 'embedding-openai',
+      list: async () => (await service.listModels()).map(id => ({ value: id, label: id })),
+    });
   },
 });

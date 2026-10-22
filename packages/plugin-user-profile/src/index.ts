@@ -3,7 +3,7 @@ import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
-import { lightestThinking, llm, resolveLLMModel } from '@aalis/api-llm';
+import { chatModelPicker, lightestThinking, llm } from '@aalis/api-llm';
 import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
@@ -118,12 +118,6 @@ const configSchema = defineConfig({
     description:
       '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示旁观不加分；互动次数与最近互动时戳仍照记（衰减基准与最近互动排序的唯一来源）',
     default: 0.1,
-  },
-  extractLLM: {
-    type: 'llm-ref',
-    label: '提取用模型',
-    description:
-      '留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本',
   },
   allowGlobalBackfill: {
     type: 'boolean',
@@ -335,19 +329,14 @@ function registerUserProfile({
     relationIncrementImmediate: Math.max(0, parsed.relationIncrementImmediate),
     relationIncrementInterval: Math.max(0, parsed.relationIncrementInterval),
     relationIncrementWitness: Math.max(0, parsed.relationIncrementWitness),
-    extractLLM:
-      parsed.extractLLM &&
-      typeof parsed.extractLLM === 'object' &&
-      parsed.extractLLM.provider &&
-      parsed.extractLLM.model
-        ? parsed.extractLLM
-        : undefined,
   };
 
   /** 每会话每用户累计入站消息数（用于 extractEveryNMessages 计数），不随提取重置 */
   const userMessageCount = new Map<string, number>();
   /** 防止同一用户的提取并发触发 */
   const inflightExtractions = new Set<string>();
+  /** 提取模型：llm 服务给本插件挑的能对话的那一个（见 chatModelPicker） */
+  const pickChatModel = chatModelPicker(llm, () => logger.use.warn('没有可用的对话模型，事实提取跳过'));
   const relationScorePrecision = Math.min(
     6,
     Math.max(
@@ -713,8 +702,7 @@ function registerUserProfile({
       `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}` +
       `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
-    // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
-    const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
+    const entry = pickChatModel();
     if (!entry) return empty;
     const extractLlm = entry.use;
 

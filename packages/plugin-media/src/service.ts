@@ -17,7 +17,6 @@ import type {
   TranscribeOptions,
 } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
-import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
@@ -66,14 +65,13 @@ const UNRECOGNIZED = '获取或识别失败，内容未知';
 type ImageDescriber = MediaProcessor & Required<Pick<MediaProcessor, 'describe'>>;
 
 /**
- * 调度器用到的能力。llm / asr 是 processor 池的两个来源；sessionManager 供 auto 交付形态
- * 解析本会话主模型；memory 供识别上下文取历史与发送者画像。四者都可缺席（各自路径降级）。
+ * 调度器用到的能力。llm / asr 是 processor 池的两个来源，llm 另供 auto 交付形态查对话模型的能力；memory 供识别上下文
+ * 取历史与发送者画像。三者都可缺席（各自路径降级）。
  */
 export interface MediaServiceCaps {
   logger: ServiceSelection<Logger>;
   llm: ServiceSelection<LLMModel>;
   asr: ServiceSelection<ASRService>;
-  sessionManager: ServiceSelection<SessionManagerService>;
   memory: ServiceSelection<MemoryService>;
 }
 
@@ -86,7 +84,7 @@ export interface MediaConfigResolved {
     recognizeOnArrival: boolean;
     /**
      * 主模型需要看图（当轮附件、analyze_image）时怎么给：直通原图（需主模型 vision 能力，
-     * 动图抽帧）/ 由识别模型转文字；auto 按本会话生效主模型的 vision 能力自动选。
+     * 动图抽帧）/ 由识别模型转文字；auto 按这次调用的对话模型的 vision 能力自动选。
      */
     delivery: 'auto' | 'passthrough' | 'describe';
     prefer?: string | ModelRef;
@@ -551,15 +549,12 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 主模型需要看图时的交付形态。auto：按本会话生效主模型的 vision 能力——有则直通原图，
-   * 无则由识别模型转文字。解析链与 agent 同源（session-manager：会话 > 父默认 > 平台档），
-   * 拿不到 session-manager 或会话未指定模型时退回 LLM 默认 entry。
+   * 主模型需要看图时的交付形态。auto：按这次调用的对话模型（agent:llm:before 的 model、工具上下文的 model）的
+   * vision 能力——有则直通原图，无则由识别模型转文字；调用方没给模型时按 llm 的默认条目。
    */
-  resolveDelivery(sessionId?: string, platform?: string): 'passthrough' | 'describe' {
+  resolveDelivery(model?: ModelRef): 'passthrough' | 'describe' {
     if (this.cfg.vision.delivery !== 'auto') return this.cfg.vision.delivery;
-    const sm = this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined;
-    const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
-    const entry = resolveLLMModel(this.caps.llm, ref?.provider && ref?.model ? ref : undefined, ['chat']);
+    const entry = resolveLLMModel(this.caps.llm, model, ['chat']);
     return entry?.use.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
   }
 

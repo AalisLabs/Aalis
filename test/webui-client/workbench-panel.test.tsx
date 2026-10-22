@@ -26,9 +26,10 @@ import { plan, push, row, snapshot, toolCall, turn, usage, userMessage } from '.
 import { hostTab, layoutStore } from './pages.js';
 
 // ════════════════════════════════════════════════════════════
-// 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件分组，
+// 右侧面板与会话头：设置（只列服务端给的行，composer 与 common 在前，advanced 收进默认折叠的「高级」按插件实例分组，
 // 每行写生效值与「来自：…」（场所、平台档与平台类型档写这个会话取的是哪一份），改时选写到哪一层（只这个会话、这个场所、
-// 所有会话），就地修改即存，恢复继承，收到 session/config/changed 重取）、会话头的副信息（场所与平台）、用量（头部百分比、压缩线与换色，
+// 全局（插件配置），子会话只有本会话），就地修改即存，恢复继承，收到 session/config/changed 重取；功能位 settings 为假时没有），
+// 会话头的副信息（场所与平台）、用量（头部百分比、压缩线与换色，
 // 拆分表的行名与次序取条目，不显示为 0 的行，带注入者明细的一行按插件合并，上方堆叠的进度条与图例、剩余一行，
 // 会话树累计的 token）、
 // 计划（有条目才有，可以清空），功能位决定压缩入口，手机上用量从底部弹出，最少插件组合下这些入口都不出现；
@@ -115,7 +116,7 @@ const ROWS: SettingRow[] = [
     plugin: '@aalis/plugin-a',
     prominence: 'advanced',
     effective: 20,
-    source: 'defaults',
+    source: 'global',
   }),
   row('roomOnly', {
     field: { type: 'boolean', label: '开启白纸' },
@@ -153,15 +154,32 @@ describe('右侧面板与会话头', () => {
   }
   const button = (name: string) => panel().getByRole('button', { name }) as HTMLButtonElement;
 
-  it('设置：只列服务端给的行；常用的在前，「高级」默认折叠、按插件分组；每行写生效值与来源，顶部写生效时机', async () => {
-    app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: ROWS }) }, PLUGINS);
+  it('设置：只列服务端给的行；常用的在前，「高级」默认折叠、按插件实例分组（后缀实例写「显示名 · 实例名」）；每行写生效值与来源，顶部写生效时机', async () => {
+    const rows = [
+      ...ROWS,
+      row('scope', {
+        field: { type: 'string', label: '历史范围' },
+        plugin: '@aalis/plugin-c',
+        prominence: 'advanced',
+        effective: '<主实例>',
+        source: 'global',
+      }),
+      row('scope', {
+        field: { type: 'string', label: '历史范围' },
+        plugin: '@aalis/plugin-c:two',
+        prominence: 'advanced',
+        effective: '<第二个实例>',
+        source: 'global',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', { ...subscribe(), 'session/config/get': () => ({ items: rows }) }, PLUGINS);
     await panel().findByRole('group', { name: '人设' });
     expect(requests('session/config/get')).toEqual([{ sessionId: 's1' }]);
     expect(panel().getByText('改动从下一轮起生效')).toBeTruthy();
     expect(settingRow('人设').getByText('群聊人设')).toBeTruthy();
     expect(settingRow('人设').getByText('来自：平台档')).toBeTruthy();
     expect(settingRow('开关项').getByRole('switch', { name: '开关项' }).getAttribute('aria-checked')).toBe('true');
-    expect(settingRow('开关项').getByText('来自：本会话')).toBeTruthy();
+    expect(settingRow('开关项').queryByText(/^来自：/), '本会话这一层设的不写来源').toBeNull();
     expect(panel().queryByRole('group', { name: '最大工具迭代' })).toBeNull();
 
     const advanced = panel().getByRole('button', { name: '高级' });
@@ -169,8 +187,10 @@ describe('右侧面板与会话头', () => {
     fireEvent.click(advanced);
     const agent = within(panel().getByRole('region', { name: '对话代理' }));
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('20')).toBeTruthy();
-    expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('来自：全局默认')).toBeTruthy();
+    expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('来自：全局（插件配置）')).toBeTruthy();
     expect(within(panel().getByRole('region', { name: '白纸' })).getByRole('group', { name: '开启白纸' })).toBeTruthy();
+    expect(within(panel().getByRole('region', { name: '跨会话历史' })).getByText('<主实例>')).toBeTruthy();
+    expect(within(panel().getByRole('region', { name: '跨会话历史 · two' })).getByText('<第二个实例>')).toBeTruthy();
   });
 
   it('设置没取到：写明原因，可以重试，「查看日志」链到提供会话协议的实例的日志', async () => {
@@ -197,7 +217,7 @@ describe('右侧面板与会话头', () => {
     expect(panel().queryByRole('alert')).toBeNull();
   });
 
-  it('设置：点行就地修改、改完即存；开关立即存；被本会话覆盖的行有「恢复继承」；写不进去、写法不对时原因写在行下', async () => {
+  it('设置：点行就地修改、改完即存（一次写一项，带所属实例与键）；开关立即存；本会话设的行有「恢复继承」；写不进去、写法不对时原因写在行下', async () => {
     let rows = ROWS;
     const updates: unknown[] = [];
     app = await renderApp(
@@ -206,8 +226,8 @@ describe('右侧面板与会话头', () => {
         ...subscribe(),
         'session/config/get': () => ({ items: rows }),
         'session/config/update': params => {
-          updates.push(params.patch);
-          if ('extra' in params.patch && params.patch.extra === 'bad') {
+          updates.push({ [`${params.plugin}/${params.key}`]: params.value });
+          if (params.key === 'extra' && params.value === 'bad') {
             throw Object.assign(new Error('额外提示：写不进去'), { code: 'conflict' });
           }
           return { items: rows };
@@ -222,7 +242,7 @@ describe('右侧面板与会话头', () => {
     expect(document.activeElement).toBe(text);
     fireEvent.change(text, { target: { value: '说话简短些' } });
     fireEvent.keyDown(text, { key: 'Enter' });
-    await vi.waitFor(() => expect(updates).toEqual([{ extra: '说话简短些' }]));
+    await vi.waitFor(() => expect(updates).toEqual([{ '@aalis/plugin-a/extra': '说话简短些' }]));
 
     fireEvent.click(settingRow('人设').getByRole('button', { name: /人设/ }));
     // 选择器的弹层挂在 body 上：焦点进了弹层不算离开这一行，过一拍弹层还在
@@ -230,13 +250,13 @@ describe('右侧面板与会话头', () => {
     await act(() => new Promise(resolve => setTimeout(resolve, 10)));
     fireEvent.click(screen.getByRole('option', { name: '私聊人设' }));
     await vi.waitFor(() => expect(updates).toHaveLength(2));
-    expect(updates[1]).toEqual({ persona: 'private' });
+    expect(updates[1]).toEqual({ '@aalis/plugin-a/persona': 'private' });
 
     fireEvent.click(settingRow('开关项').getByRole('switch', { name: '开关项' }));
-    await vi.waitFor(() => expect(updates[2]).toEqual({ 'zz-flag': false }));
+    await vi.waitFor(() => expect(updates[2]).toEqual({ '@aalis/plugin-a/zz-flag': false }));
     expect(settingRow('人设').queryByRole('button', { name: '恢复继承' })).toBeNull();
     fireEvent.click(settingRow('开关项').getByRole('button', { name: '恢复继承' }));
-    await vi.waitFor(() => expect(updates[3]).toEqual({ 'zz-flag': null }));
+    await vi.waitFor(() => expect(updates[3]).toEqual({ '@aalis/plugin-a/zz-flag': null }));
 
     fireEvent.click(settingRow('额外提示').getByRole('button', { name: /额外提示/ }));
     const again = settingRow('额外提示').getByRole('textbox', { name: '额外提示' });
@@ -258,7 +278,7 @@ describe('右侧面板与会话头', () => {
     expect(settingRow('最大工具迭代').getByText('要填一个数')).toBeTruthy();
     fireEvent.change(number, { target: { value: '30' } });
     fireEvent.keyDown(number, { key: 'Enter' });
-    await vi.waitFor(() => expect(updates.at(-1)).toEqual({ maxIterations: 30 }));
+    await vi.waitFor(() => expect(updates.at(-1)).toEqual({ '@aalis/plugin-a/maxIterations': 30 }));
     expect(updates).toHaveLength(6);
 
     rows = ROWS.filter(r => r.plugin !== '@aalis/plugin-a');
@@ -269,8 +289,8 @@ describe('右侧面板与会话头', () => {
     expect(await panel().findByRole('group', { name: '人设' })).toBeTruthy();
   });
 
-  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪个平台与类型', async () => {
-    const sources = ['session', 'parent', 'place', 'type', 'platform', 'defaults'];
+  it('设置的来源写「来自：…」：场所写工作区或群、私聊与它的显示名，平台档与平台类型档写这个会话取的是哪一份，落到作者默认写「默认」', async () => {
+    const sources = ['place', 'platformType', 'platform', 'global', 'default'] as const;
     const rows = sources.map(source =>
       row(source, { field: { type: 'string', label: `<${source}>` }, effective: '<值>', source }),
     );
@@ -286,12 +306,11 @@ describe('右侧面板与会话头', () => {
     await panel().findByRole('group', { name: '<place>' });
     const origin = (source: string) => settingRow(`<${source}>`).getByText(/^来自：/).textContent;
     expect(sources.map(origin)).toEqual([
-      '来自：本会话',
-      '来自：父会话',
       '来自：群『读书会』',
       '来自：平台类型档 onebot · group',
       '来自：平台档 onebot',
-      '来自：全局默认',
+      '来自：全局（插件配置）',
+      '来自：默认',
     ]);
     app.close();
 
@@ -305,7 +324,7 @@ describe('右侧面板与会话头', () => {
     expect(origin('platform'), '没有出生平台的会话不写平台').toBe('来自：平台档');
   });
 
-  it('改时选写到哪一层：只这个会话、这个场所（工作区、群、私聊）、所有会话，平台档与平台类型档不在选项里；选哪个写进哪一层，生效值出自那一层的行有「恢复继承」', async () => {
+  it('改时选写到哪一层：只这个会话、这个场所（工作区、群、私聊）、全局（插件配置），平台档与平台类型档不在选项里；选哪个写进哪一层，生效值出自那一层的行有「恢复继承」，全局层的叫「恢复默认」', async () => {
     const rows = [
       row('extra', { field: { type: 'string', label: '额外提示' }, effective: '<场所的>', source: 'place' }),
       row('persona', {
@@ -314,6 +333,7 @@ describe('右侧面板与会话头', () => {
         effective: '<自己的>',
         source: 'session',
       }),
+      row('style', { field: { type: 'string', label: '风格' }, effective: '<全局的>', source: 'global' }),
     ];
     const place = { key: 'workspace:p1', kind: 'workspace', name: '论文' } as const;
     app = await renderApp('/s/s1/settings', {
@@ -323,7 +343,7 @@ describe('右侧面板与会话头', () => {
       'session/config/layer/update': () => ({ items: [] }),
     });
     const scope = await panel().findByRole('combobox', { name: '改到' });
-    expect(optionsOf(scope)).toEqual(['只这个会话', '这个工作区', '所有会话']);
+    expect(optionsOf(scope)).toEqual(['只这个会话', '这个工作区', '全局（插件配置）']);
     expect(scope.textContent).toBe('只这个会话');
     expect(settingRow('额外提示').queryByRole('button', { name: '恢复继承' })).toBeNull();
     const edit = async (label: string, value: string) => {
@@ -335,25 +355,34 @@ describe('右侧面板与会话头', () => {
     };
 
     await edit('人设', '<改本会话>');
-    expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { persona: '<改本会话>' } }]);
+    expect(requests('session/config/update')).toEqual([
+      { sessionId: 's1', plugin: '@aalis/demo', key: 'persona', value: '<改本会话>' },
+    ]);
 
     choose(scope, '这个工作区');
     expect(settingRow('人设').queryByRole('button', { name: '恢复继承' })).toBeNull();
     await edit('人设', '<改工作区>');
     fireEvent.click(settingRow('额外提示').getByRole('button', { name: '恢复继承' }));
+    const place1 = { scope: 'place', key: 'workspace:p1' };
     await vi.waitFor(() =>
       expect(requests('session/config/layer/update')).toEqual([
-        { layer: { scope: 'place', key: 'workspace:p1' }, patch: { persona: '<改工作区>' } },
-        { layer: { scope: 'place', key: 'workspace:p1' }, patch: { extra: null } },
+        { layer: place1, plugin: '@aalis/demo', key: 'persona', value: '<改工作区>' },
+        { layer: place1, plugin: '@aalis/demo', key: 'extra', value: null },
       ]),
     );
 
-    choose(scope, '所有会话');
+    choose(scope, '全局（插件配置）');
     await edit('人设', '<改全部>');
     expect(requests('session/config/layer/update').at(-1)).toEqual({
-      layer: { scope: 'defaults' },
-      patch: { persona: '<改全部>' },
+      layer: { scope: 'global' },
+      plugin: '@aalis/demo',
+      key: 'persona',
+      value: '<改全部>',
     });
+    fireEvent.click(settingRow('风格').getByRole('button', { name: '恢复默认' }));
+    await vi.waitFor(() =>
+      expect(requests('session/config/layer/update').at(-1)).toMatchObject({ key: 'style', value: null }),
+    );
     expect(requests('session/config/update')).toHaveLength(1);
     app.close();
 
@@ -373,13 +402,33 @@ describe('右侧面板与会话头', () => {
       expect(optionsOf(await panel().findByRole('combobox', { name: '改到' }))).toEqual([
         '只这个会话',
         label,
-        '所有会话',
+        '全局（插件配置）',
       ]);
       app.close();
     }
   });
 
-  it('选的那一层被更窄的层压住时，行下写明改了不生效：本会话压过场所与所有会话，场所压过所有会话', async () => {
+  it('子会话：「改到」只有「只这个会话」；建立时写下的各项与本会话设的一样显示，行尾「恢复继承」', async () => {
+    const rows = [
+      row('persona', {
+        field: { type: 'string', label: '人设' },
+        value: '<写下的>',
+        effective: '<写下的>',
+        source: 'session',
+      }),
+    ];
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([], { session: { parentId: 's0', kind: 'task' } }),
+      'session/config/get': () => ({ items: rows }),
+    });
+    await panel().findByRole('group', { name: '人设' });
+    expect(panel().queryByRole('combobox', { name: '改到' })).toBeNull();
+    expect(panel().getByText('改到：只这个会话')).toBeTruthy();
+    expect(settingRow('人设').getByText('<写下的>')).toBeTruthy();
+    expect(settingRow('人设').getByRole('button', { name: '恢复继承' })).toBeTruthy();
+  });
+
+  it('选的那一层被更窄的层盖住时，行下写「这里还被<层>覆盖」：本会话盖过场所与全局，场所盖过全局', async () => {
     const rows = [
       row('extra', { field: { type: 'string', label: '额外提示' }, effective: '<场所的>', source: 'place' }),
       row('persona', {
@@ -388,7 +437,7 @@ describe('右侧面板与会话头', () => {
         effective: '<自己的>',
         source: 'session',
       }),
-      row('style', { field: { type: 'string', label: '风格' }, effective: '<全局的>', source: 'defaults' }),
+      row('style', { field: { type: 'string', label: '风格' }, effective: '<全局的>', source: 'global' }),
     ];
     const place = { key: 'workspace:p1', kind: 'workspace', name: '论文' } as const;
     app = await renderApp('/s/s1/settings', {
@@ -396,18 +445,19 @@ describe('右侧面板与会话头', () => {
       'session/config/get': () => ({ items: rows }),
     });
     const scope = await panel().findByRole('combobox', { name: '改到' });
-    const masked = () => ['额外提示', '人设', '风格'].filter(label => settingRow(label).queryByText(/改了不生效/));
+    const masked = () => ['额外提示', '人设', '风格'].filter(label => settingRow(label).queryByText(/^这里还被/));
 
     expect(masked()).toEqual([]);
     choose(scope, '这个工作区');
     expect(masked()).toEqual(['人设']);
-    expect(settingRow('人设').getByText(/^来自：/).textContent).toBe('来自：本会话（压过「这个工作区」，改了不生效）');
-    choose(scope, '所有会话');
+    expect(settingRow('人设').getByText(/^这里还被/).textContent).toBe('这里还被本会话覆盖');
+    choose(scope, '全局（插件配置）');
     expect(masked()).toEqual(['额外提示', '人设']);
+    expect(settingRow('额外提示').getByText(/^这里还被/).textContent).toBe('这里还被工作区『论文』覆盖');
   });
 
   it('层表没取到：设置行照常列出，来源按层名写，另写一句层表没取到', async () => {
-    const rows = [row('persona', { field: { type: 'string', label: '人设' }, effective: '<值>', source: 'defaults' })];
+    const rows = [row('persona', { field: { type: 'string', label: '人设' }, effective: '<值>', source: 'global' })];
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([]),
       'session/config/get': () => ({ items: rows }),
@@ -416,23 +466,44 @@ describe('右侧面板与会话头', () => {
       },
     });
     await panel().findByRole('group', { name: '人设' });
-    expect(settingRow('人设').getByText(/^来自：/).textContent).toBe('来自：defaults');
+    expect(settingRow('人设').getByText(/^来自：/).textContent).toBe('来自：global');
     expect(panel().getByText(/层表没取到/).textContent).toContain('<层表坏了>');
   });
 
-  it('全局默认层的「模型」哪一层都没设时，设置与输入框旁写「默认（<服务实际用的模型>）」', async () => {
+  it('模型哪一层都没设时，设置与输入框旁写「跟随服务偏好（此刻：<此刻在用的模型>）」；子任务模型没设时写它的「没设时」', async () => {
     const model = row('llm', {
-      field: { type: 'llm-ref', label: '模型' },
+      field: { type: 'llm-ref', label: '模型', session: { preference: 'llm', unset: '跟随服务偏好' } },
       prominence: 'composer',
-      unset: '跟随服务偏好',
-      resolved: { provider: 'zz-llm', model: 'zz-chat' },
+      actual: { value: { provider: 'zz-llm', model: 'zz-chat' }, label: 'zz-chat' },
+    });
+    const subtask = row('model', {
+      field: { type: 'llm-ref', label: '子任务模型', session: { unset: '不另指定（与本会话相同）' } },
+      plugin: '@aalis/plugin-subtask',
     });
     app = await renderApp('/s/s1/settings', {
       'session/subscribe': () => snapshot([]),
-      'session/config/get': () => ({ items: [model] }),
+      'session/config/get': () => ({ items: [model, subtask] }),
     });
-    expect(await settingRow('模型').findByText('默认（zz-chat）')).toBeTruthy();
-    expect(main().getByRole('combobox', { name: '模型' }).textContent).toContain('默认（zz-chat）');
+    expect(await settingRow('模型').findByText('跟随服务偏好（此刻：zz-chat）')).toBeTruthy();
+    expect(main().getByRole('combobox', { name: '模型' }).textContent).toContain('跟随服务偏好（此刻：zz-chat）');
+    expect(settingRow('子任务模型').getByText('不另指定（与本会话相同）')).toBeTruthy();
+  });
+
+  it('功能位 settings 为假：没有「设置」标签与输入框旁的快捷切换，也不取设置', async () => {
+    const rows = [row('extra', { field: { type: 'string', label: '额外提示' }, prominence: 'composer' })];
+    app = await renderApp('/s/s1', {
+      initialize: () => ({ ...INIT, features: { ...INIT.features, settings: false } }),
+      'session/subscribe': () => snapshot([userMessage('u1', '在吗')]),
+      'session/config/get': () => ({ items: rows }),
+    });
+    await main().findByRole('region', { name: '对话' });
+    expect(
+      panel()
+        .queryAllByRole('tab')
+        .map(tab => tab.textContent),
+    ).not.toContain('设置');
+    expect(main().queryByRole('link', { name: '额外提示' })).toBeNull();
+    expect(requests('session/config/get')).toEqual([]);
   });
 
   it('会话头的副信息：场所是窗口的写「类型名 · 平台」，是工作区的写场所的显示名，出生平台是 IM 的另写平台；子会话不写', async () => {
@@ -614,7 +685,7 @@ describe('右侧面板与会话头', () => {
     expect(usageBar()?.querySelector('[data-mark]'), '没有压缩线就不标').toBeNull();
   });
 
-  it('设置的值按可选项的标签显示（动态可选项里的值也一样）；没设的显示字段默认值，没有默认值的写登记方给的「没设时」（开关写在开关下面），都没有的不写「未设置」', async () => {
+  it('设置的值按可选项的标签显示（动态可选项里的值也一样）；没有生效值的写声明给的「没设时」（开关写在开关下面），都没有的不写「未设置」', async () => {
     const rows = [
       row('groups', {
         field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
@@ -631,10 +702,12 @@ describe('右侧面板与会话头', () => {
             { label: '乙', value: 'b' },
           ],
         },
+        effective: 'b',
+        source: 'default',
       }),
       row('extra', { field: { type: 'string', label: '额外提示' } }),
-      row('limit', { field: { type: 'number', label: '上限' }, unset: '<不另加限制>' }),
-      row('json', { field: { type: 'boolean', label: '渲染 JSON' }, unset: '<按角色卡>' }),
+      row('limit', { field: { type: 'number', label: '上限', session: { unset: '<不另加限制>' } } }),
+      row('json', { field: { type: 'boolean', label: '渲染 JSON', session: { unset: '<按角色卡>' } } }),
     ];
     app = await renderApp(
       '/s/s1/settings',
@@ -649,7 +722,7 @@ describe('右侧面板与会话头', () => {
     expect(extra.textContent).toBe('额外提示');
   });
 
-  it('设置：哪一层都没设的项按字段的默认值显示与编辑', async () => {
+  it('设置：落到作者默认的项按生效值显示与编辑', async () => {
     const rows = [
       row('mode', {
         field: {
@@ -661,6 +734,8 @@ describe('右侧面板与会话头', () => {
             { label: '乙', value: 'b' },
           ],
         },
+        effective: 'b',
+        source: 'default',
       }),
       row('tags', {
         field: {
@@ -672,8 +747,14 @@ describe('右侧面板与会话头', () => {
             { label: '歪', value: 'y' },
           ],
         },
+        effective: ['x'],
+        source: 'default',
       }),
-      row('note', { field: { type: 'string', label: '备注', default: '<默认备注>' } }),
+      row('note', {
+        field: { type: 'string', label: '备注', default: '<默认备注>' },
+        effective: '<默认备注>',
+        source: 'default',
+      }),
     ];
     app = await renderApp('/s/s1/settings', {
       ...subscribe(),
@@ -687,13 +768,40 @@ describe('右侧面板与会话头', () => {
     expect((panel().getByRole('checkbox', { name: '叉' }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(panel().getByRole('checkbox', { name: '歪' }));
     await vi.waitFor(() =>
-      expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { tags: ['x', 'y'] } }]),
+      expect(requests('session/config/update')).toEqual([
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'tags', value: ['x', 'y'] },
+      ]),
     );
     fireEvent.click(panel().getByRole('button', { name: '完成' }));
     fireEvent.click(settingRow('备注').getByRole('button', { name: /备注/ }));
     expect((settingRow('备注').getByRole('textbox', { name: '备注' }) as HTMLInputElement).value).toBe('<默认备注>');
   });
 
+  it('多选的可选项带说明时，每一项下面写它（工具分组的概述）', async () => {
+    const rows = [
+      row('groups', {
+        field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
+        value: ['web'],
+        effective: ['web'],
+        source: 'session',
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        '/api/models/toolGroups': {
+          details: [
+            { value: '*', label: '全部分组' },
+            { value: 'web', label: '联网', description: '搜索与抓取网页' },
+          ],
+        },
+      },
+    );
+    fireEvent.click(await settingRow('工具分组').findByRole('button', { name: /工具分组/ }));
+    const web = panel().getByRole('checkbox', { name: '联网' });
+    expect(document.getElementById(web.getAttribute('aria-describedby') ?? '')?.textContent).toBe('搜索与抓取网页');
+  });
   it('有序的多选：选中的按取值的先后排在前面，各带上移、下移（读屏名是整句）；移动后写回新的顺序，焦点留在被移动的项上', async () => {
     let value = ['zh-CN', 'en'];
     const rows = () => [
@@ -716,8 +824,8 @@ describe('右侧面板与会话头', () => {
     app = await renderApp('/s/s1/settings', {
       ...subscribe(),
       'session/config/get': () => ({ items: rows() }),
-      'session/config/update': ({ patch }) => {
-        value = patch.language as string[];
+      'session/config/update': params => {
+        value = params.value as string[];
         return { items: rows() };
       },
     });
@@ -735,7 +843,9 @@ describe('右侧面板与会话头', () => {
     button('下移 中文').focus();
     fireEvent.click(button('下移 中文'));
     await vi.waitFor(() =>
-      expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { language: ['en', 'zh-CN'] } }]),
+      expect(requests('session/config/update')).toEqual([
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'language', value: ['en', 'zh-CN'] },
+      ]),
     );
     await vi.waitFor(() => expect(listed()).toEqual(['English', '中文', '日本語']));
     await vi.waitFor(() => expect(document.activeElement).toBe(button('上移 中文')));
@@ -841,8 +951,8 @@ describe('右侧面板与会话头', () => {
     app = await renderApp('/s/s1/settings', {
       ...subscribe(),
       'session/config/get': () => ({ items: rows() }),
-      'session/config/update': ({ patch }) => {
-        value = patch.tags as string[];
+      'session/config/update': params => {
+        value = params.value as string[];
         return { items: rows() };
       },
     });
@@ -862,8 +972,15 @@ describe('右侧面板与会话头', () => {
   it('可选项依赖另一项（dependsOn）：带上那一项的生效值去取，它变了就重取；当前值不在可选项里写它的名字（取不到名字写原样）并写明按默认的哪一档，没有可选项写明不能调', async () => {
     const model = (name: string) => ({ provider: '@aalis/llm-a', model: name });
     const levels = (name: string) =>
-      `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify(model(name)))}`;
+      `/api/models/llm-thinking?dependency=${encodeURIComponent(`@aalis/llm-a/${name}`)}`;
     const rowsFor = (name: string) => [
+      // 别的实例里同名的「模型」不算：依赖只在同一实例里找
+      row('llm', {
+        field: { type: 'llm-ref', label: '别的模型' },
+        plugin: '@aalis/plugin-b',
+        effective: model('other'),
+        source: 'session',
+      }),
       row('llm', {
         field: { type: 'llm-ref', label: '模型' },
         plugin: '@aalis/plugin-a',
@@ -871,9 +988,13 @@ describe('右侧面板与会话头', () => {
         source: 'session',
       }),
       row('think', {
-        field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
+        field: {
+          type: 'select',
+          label: '深度思考',
+          dynamicOptions: 'llm-thinking',
+          session: { dependsOn: 'llm', unset: '按模型的默认档' },
+        },
         plugin: '@aalis/plugin-a',
-        dependsOn: 'llm',
         value: 'max',
         effective: 'max',
         source: 'session',
@@ -935,17 +1056,21 @@ describe('右侧面板与会话头', () => {
     expect(restCalls().map(call => call.path)).not.toContain('/api/models/llm-thinking');
   });
 
-  it('依赖型可选项没设时写生效的那一档：可选项接口标了默认的那一项', async () => {
-    const levels = `/api/models/llm-thinking?dependency=${encodeURIComponent(
-      JSON.stringify({ provider: '@aalis/llm-a', model: 'deep' }),
-    )}`;
+  it('依赖型可选项没设时写生效的那一档：可选项接口标了默认的那一项；依赖的模型没设时带它此刻实际在用的模型', async () => {
+    const levels = `/api/models/llm-thinking?dependency=${encodeURIComponent('@aalis/llm-a/deep')}`;
     const rows = [
       row('llm', {
-        field: { type: 'llm-ref', label: '模型' },
-        effective: { provider: '@aalis/llm-a', model: 'deep' },
-        source: 'session',
+        field: { type: 'llm-ref', label: '模型', session: { unset: '跟随服务偏好' } },
+        actual: { value: { provider: '@aalis/llm-a', model: 'deep' } },
       }),
-      row('think', { field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' }, dependsOn: 'llm' }),
+      row('think', {
+        field: {
+          type: 'select',
+          label: '深度思考',
+          dynamicOptions: 'llm-thinking',
+          session: { dependsOn: 'llm', unset: '按模型的默认档' },
+        },
+      }),
     ];
     app = await renderApp(
       '/s/s1/settings',
@@ -998,10 +1123,7 @@ describe('右侧面板与会话头', () => {
     fireEvent.change(number, { target: { value: '' } });
     fireEvent.keyDown(number, { key: 'Enter' });
     await vi.waitFor(() =>
-      expect(requests('session/config/update').map(params => (params as { patch: unknown }).patch)).toEqual([
-        { extra: '' },
-        { iterations: null },
-      ]),
+      expect(requests('session/config/update').map(params => (params as { value: unknown }).value)).toEqual(['', null]),
     );
   });
 
@@ -1030,7 +1152,9 @@ describe('右侧面板与会话头', () => {
     expect(third.matches(':disabled')).toBe(true);
     act(() => server().reply('session/config/update', { items: rows }));
     await vi.waitFor(() => expect(third.matches(':disabled')).toBe(false));
-    expect(requests('session/config/update')).toEqual([{ sessionId: 's1', patch: { tags: ['a', 'b'] } }]);
+    expect(requests('session/config/update')).toEqual([
+      { sessionId: 's1', plugin: '@aalis/demo', key: 'tags', value: ['a', 'b'] },
+    ]);
   });
 
   it('模型行的可选项只取一次，编辑控件用这一份；旁边的刷新按下时不抢走焦点（有的浏览器点按钮不把焦点给它，先失焦会把编辑控件收起、点按落空），刷新后重取', async () => {
@@ -1117,7 +1241,7 @@ describe('右侧面板与会话头', () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot([userMessage('u1', '在吗'), turn('t1', { outcome: 'replied' }), toolCall('c1', 'exec')]),
-      initialize: () => ({ ...INIT, features: { send: true, rewind: false, compress: false } }),
+      initialize: () => ({ ...INIT, features: { send: true, rewind: false, compress: false, settings: true } }),
       'session/config/get': () => ({ items: [] }),
     });
     await main().findByRole('region', { name: '对话' });

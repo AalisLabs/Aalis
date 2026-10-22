@@ -27,6 +27,8 @@ import { seedRooms } from './rooms.js';
 // ════════════════════════════════════════════════════════════
 
 const CLIENT = join(import.meta.dirname, '../../packages/plugin-webui-client');
+/** 界面语言写在它的插件配置里 */
+const I18N = '@aalis/plugin-i18n';
 
 export const TOKEN = 'zz-e2e-webui-token-placeholder-0000';
 
@@ -103,8 +105,8 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 /**
  * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
  * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份），
- * rooms 是会话表里预置的已收录房间（会话 id → 名字）。界面语言写在全局默认层，是中文（doc 写了的照它）：哪一层都没设时
- * 按英文，用例按中文的文字与读屏名找元素。
+ * rooms 是会话表里预置的已收录房间（会话 id → 名字）。界面语言写在 plugin-i18n 的插件配置（全局层），是中文（doc 写了的照它）：
+ * 哪一层都没设时按英文，用例按中文的文字与读屏名找元素。
  * 日志与 runtime 一样记到 info、写进家目录的 logs/latest.log，日志标签的历史读它。收尾登记进 cleanups
  */
 export async function webuiStack(options: {
@@ -119,8 +121,24 @@ export async function webuiStack(options: {
 }): Promise<{ app: App; port: number }> {
   const { clientDir, model, extra, cleanups, webui, slowThresholdMs, doc, rooms } = options;
   const home = mkdtempSync(join(tmpdir(), 'aalis-e2e-webui-'));
-  const sessionConfig = { ...doc?.sessionConfig, defaults: { language: ['zh-CN'], ...doc?.sessionConfig?.defaults } };
-  const { app } = hostedApp({ ...doc, sessionConfig, logLevel: 'info' }, { slowThresholdMs });
+  const minimal = await Promise.all(
+    MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
+  );
+  const definitions = [
+    ...minimal,
+    ...(rooms ? [] : [memoryInMemoryPlugin]),
+    ...(model ? [model] : []),
+    webuiServerPlugin,
+    ...extra,
+  ];
+  // 登记的插件在配置文档里各有一段，但是空的：runtime 加载插件时还会补写作者默认，这里不补，按会话的项没设时来源是作者默认、
+  // 不是全局层
+  const sections = Object.fromEntries(definitions.map(definition => [definition.name, {}]));
+  const i18n = { language: ['zh-CN'], ...doc?.plugins?.[I18N] };
+  const { app } = hostedApp(
+    { ...doc, plugins: { ...sections, ...doc?.plugins, [I18N]: i18n }, logLevel: 'info' },
+    { slowThresholdMs },
+  );
   cleanups.push(async () => {
     await app.stop();
     rmSync(home, { recursive: true, force: true });
@@ -132,9 +150,6 @@ export async function webuiStack(options: {
   const host = app.bind({ provide }).provide;
   host.use(hostLogs, createHostLogs(LogHub.default, fileLog, app.logger), { exclusive: true });
   host.use(webuiClient, { getClientDir: () => clientDir });
-  const minimal = await Promise.all(
-    MINIMAL_BASE.map(async name => ((await import(name)) as { default: PluginDefinition }).default),
-  );
   const port = await freePort();
   // 房间的来源字段只经原生入站记下，而这里起的是整条入站链（发原生入站会跑一轮回合）：要房间时内存记忆先起，
   // 在会话管理读表之前把收录过的记录预置进去
@@ -143,13 +158,6 @@ export async function webuiStack(options: {
     await app.plugins.idle();
     await seedRooms(app.bind({ memory }).memory.use, rooms);
   }
-  const definitions = [
-    ...minimal,
-    ...(rooms ? [] : [memoryInMemoryPlugin]),
-    ...(model ? [model] : []),
-    webuiServerPlugin,
-    ...extra,
-  ];
   await app.pluginAll(
     definitions.map(definition => ({
       definition,

@@ -1,3 +1,6 @@
+/// <reference types="@aalis/api-session-settings" preserve="true" />
+// 上一行：设置行的字段带 session 声明，它的成员（SessionFieldSpec）由 api-session-settings 经 declaration merging 并入，
+// 声明文件里要带上它
 /**
  * @aalis/api-session-protocol — 会话协议（实验性）
  *
@@ -16,8 +19,9 @@
  */
 
 import type { ApprovalSurface } from '@aalis/api-approval';
+import { SESSION_LAYERS, type SessionSettingsLayer, type SessionSource } from '@aalis/api-session-settings';
 import { defineService } from '@aalis/core';
-import type { SchemaField } from '@aalis/schema-config';
+import type { SessionFieldSpec, WireSchemaField } from '@aalis/schema-config';
 import { asText, isTextRef, type TextRef } from '@aalis/schema-i18n';
 import { z } from 'zod';
 
@@ -57,7 +61,7 @@ export const ResultFrameSchema = z.object({
  * - `conflict`：与当前状态冲突；
  * - `approval-settled`、`hash-mismatch`：审批已结算、应答的内容哈希对不上；
  * - `expected-turn-mismatch`：`turn/abort` 带的回合 id 不是正在跑的那一轮；
- * - `unsupported`：协议版本不兼容，或服务端不支持这项操作。
+ * - `unsupported`：协议版本不兼容，或服务端不支持这项操作（如会话设置服务不在时的 session/config/*）。
  */
 export const ErrorCodeSchema = z.enum([
   'not-found',
@@ -117,13 +121,14 @@ export const InitializeParamsSchema = z.object({
 });
 
 /**
- * 功能位：发送、回滚、压缩，各看对话、检查点、压缩服务在不在。界面按它决定入口出现与否；服务上下线时推
+ * 功能位：发送、回滚、压缩、会话设置，各看对话、检查点、压缩、会话设置服务在不在。界面按它决定入口出现与否；服务上下线时推
  * features/changed。计划、审批、用量按数据出现，不在这里
  */
 export const FeaturesSchema = z.object({
   send: z.boolean(),
   rewind: z.boolean(),
   compress: z.boolean(),
+  settings: z.boolean(),
 });
 export type Features = z.infer<typeof FeaturesSchema>;
 
@@ -265,7 +270,10 @@ export const SessionsChangedParamsSchema = z.object({
 
 const SessionTargetSchema = z.object({ sessionId: z.string() });
 
-/** 新建会话：给 parentId 时建它的子会话，复制父会话的生效配置（只经继承链实时解析的设置项除外） */
+/**
+ * 新建会话：给 parentId 时建它的子会话，建立时把父会话此刻每一项适用于子会话的设置写进子会话自己那一层，之后父会话与上面各层
+ * 再改都不影响它；会话设置服务不在时回 unsupported、不建
+ */
 export const SessionCreateParamsSchema = z.object({
   name: z.string().min(1).optional(),
   parentId: z.string().optional(),
@@ -285,75 +293,114 @@ export const SessionBatchResultSchema = z.object({
 
 // ----- 会话设置 -----
 
-/** schema-config 的字段：类型、标签、说明、默认值、校验与可选项来源（dynamicOptions），词汇见 @aalis/schema-config */
-const SettingFieldSchema = z.custom<SchemaField>(
+/**
+ * 设置项的字段：schema-config 的字段经 JSON 下发（没有函数成员），带可按会话覆盖的声明 session（词汇见
+ * @aalis/api-session-settings 的 SessionFieldSpec：适用的会话种类、显眼程度、可选项依赖、没设时的含义、全局层由服务偏好承担等）
+ */
+const SettingFieldSchema = z.custom<WireSchemaField & { session: SessionFieldSpec }>(
   value =>
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { type?: unknown }).type === 'string' &&
-    asText((value as { label?: unknown }).label) !== undefined,
-  { message: '期望 schema-config 字段（带 type 与 label）' },
+    asText((value as { label?: unknown }).label) !== undefined &&
+    typeof (value as { session?: unknown }).session === 'object' &&
+    (value as { session?: unknown }).session !== null,
+  { message: '期望带 session 声明的 schema-config 字段（带 type 与 label）' },
 );
 
-/** 生效值出自哪一层：层名，取自 `session/config/layers` 回包的层表（order），界面按它写称呼 */
-export const SettingSourceSchema = z.string();
+/** 生效值出自哪一层：层表里的层名（称呼取自 `session/config/layers` 回包的层表 order）；default 是全局层的值缺失或不合法、按作者默认 */
+export const SettingSourceSchema = z.enum([
+  'default',
+  ...SESSION_LAYERS.map(layer => layer.name),
+]) satisfies z.ZodType<SessionSource>;
 
 /**
- * 一个设置项的一行。设置项由插件登记，协议与客户端都不认识具体的键，按 field 渲染。一组行已排好：composer、common
- * 在前，advanced 在后，同一显眼程度按登记的先后；composer 也出现在输入框旁的快捷切换，同一组最多两项，多出的已退到 common
+ * 设置的一行，(plugin, key) 是身份。设置项来自插件 configSchema 上声明了 session 的字段，协议与客户端都不认识具体的键，按
+ * field 渲染。一组行已排好：composer、common 在前，advanced 在后，同一显眼程度按 order 与登记的先后；composer 也出现在输入框
+ * 旁的快捷切换，同一组最多两项，多出的已退到 common（prominence 是生效的那一档）
  */
 export const SettingRowSchema = z.object({
+  /** 声明它的插件实例 id：「高级」里按它分组 */
+  plugin: z.string(),
+  /** 字段名 */
   key: z.string(),
   field: SettingFieldSchema,
-  /** 登记它的插件实例 id：「高级」里按它分组，组名取插件显示名 */
-  plugin: z.string(),
   prominence: z.enum(['composer', 'common', 'advanced']),
-  /** 可选项依赖的另一行的键：取这一行的动态可选项时带上那一行的生效值，那一行变了就重取 */
-  dependsOn: z.string().optional(),
-  /** 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置 */
-  unset: TextSchema.optional(),
-  /** 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值；没写的没有 */
+  /** 这一处自己写的原样值：会话的行里是本会话这一层，层的行里是这一层；全局层不合法的值也照样给出。没写的没有 */
   value: z.unknown().optional(),
-  /** 生效值；哪一层都没设时没有，界面按字段的默认值显示 */
+  /** 解析到这一处为止的生效值（校验过）；哪一层都没有、字段又没有默认值时没有 */
   effective: z.unknown().optional(),
-  /** 生效值出自哪一层；哪一层都没设时没有 */
+  /** 生效值出自哪一层；没有生效值时没有 */
   source: SettingSourceSchema.optional(),
-  /**
-   * 全局默认层由服务偏好承担的项（字段类型为 llm-ref 的「模型」，全局默认层读写的就是 llm 服务的偏好）：服务此刻实际用的那一个。
-   * 生效值出自全局默认、或哪一层都没设时才有；生效值出自全局默认而与它不同，即偏好指向的已不在
-   */
-  resolved: z.unknown().optional(),
+  /** 没有生效值时，声明字段的插件给出的此刻实际在用的值（如没设模型时此刻用的模型）与它的称呼 */
+  actual: z.object({ value: z.unknown(), label: TextSchema.optional() }).optional(),
 });
 export type SettingRow = z.infer<typeof SettingRowSchema>;
 
 export const SettingRowsSchema = z.object({ items: z.array(SettingRowSchema) });
 
 /**
- * 写设置：给值即写入这一层（按登记的校验与字段），null 删掉这一项、恢复继承，没给的键不动。给值的键须适用于这个会话种类
- * （场所按它的类别），null 不受限
+ * 写一项之后的各行；写进宿主配置文档的几层（全局、平台档、平台类型档）已在运行态生效、落盘失败时另带 unsaved：
+ * 与插件详情保存的回执同一句（拒写与其余写入失败两句不同）
  */
-const SettingPatchSchema = z.record(z.unknown());
+export const SettingUpdateResultSchema = SettingRowsSchema.extend({ unsaved: TextSchema.optional() });
 
 /**
- * 改本会话的覆盖；没登记的键、不合字段的值、不适用于这个会话种类的项、只能设到场所为止的项（会话的行里不列）回参数错误，
- * 什么都不改
- */
-export const SessionConfigUpdateParamsSchema = z.object({ sessionId: z.string(), patch: SettingPatchSchema });
-
-/**
- * 会话之上能单独读写的一层：全局默认、平台档（按平台名生效，不区分适配器实例）、平台类型档（这个平台这种类型的聊天窗口）、
- * 场所（键取自会话摘要的 place）。各层的先后与称呼见 `session/config/layers` 回包的层表
+ * 会话之上能单独读写的一层：全局（插件配置）、平台档（按平台名，不区分适配器实例）、平台类型档（这个平台这种类型的聊天窗口）、
+ * 场所（键取自会话摘要的 place）。各层的先后与称呼见 `session/config/layers`
  */
 export const SettingLayerSchema = z.discriminatedUnion('scope', [
-  z.object({ scope: z.literal('defaults') }),
+  z.object({ scope: z.literal('global') }),
   z.object({ scope: z.literal('platform'), platform: z.string().min(1) }),
-  z.object({ scope: z.literal('type'), platform: z.string().min(1), type: z.string().min(1) }),
+  z.object({ scope: z.literal('platformType'), platform: z.string().min(1), type: z.string().min(1) }),
   z.object({ scope: z.literal('place'), key: z.string().min(1) }),
-]);
+]) satisfies z.ZodType<SessionSettingsLayer>;
 export type SettingLayer = z.infer<typeof SettingLayerSchema>;
 
 export const SettingLayerTargetSchema = z.object({ layer: SettingLayerSchema });
-export const SettingLayerUpdateParamsSchema = z.object({ layer: SettingLayerSchema, patch: SettingPatchSchema });
+
+/** 写入的值：给值即写入这一处（按字段校验），null 删掉这一处（全局层恢复默认，其余层恢复继承）；不能不给 */
+const SettingValueSchema = z.custom<unknown>(value => value !== undefined, { message: '要给出 value，null 即恢复' });
+
+/** 写本会话这一层的一项 */
+export const SettingUpdateParamsSchema = z.object({
+  sessionId: z.string(),
+  plugin: z.string(),
+  key: z.string(),
+  value: SettingValueSchema,
+});
+
+/** 写一层的一项 */
+export const SettingLayerUpdateParamsSchema = z.object({
+  layer: SettingLayerSchema,
+  plugin: z.string(),
+  key: z.string(),
+  value: SettingValueSchema,
+});
+
+/**
+ * 一个实例的设置项在全局之外写过的各处，按项分组：每处是一层，或某个会话的本会话层（带标题，子会话另带父会话）
+ */
+export const SettingOverridesSchema = z.object({
+  items: z.array(
+    z.object({
+      key: z.string(),
+      entries: z.array(
+        z.object({
+          target: z.union([
+            z.object({ layer: SettingLayerSchema }),
+            z.object({
+              sessionId: z.string(),
+              title: TextSchema,
+              parent: z.object({ sessionId: z.string(), title: TextSchema }).optional(),
+            }),
+          ]),
+          value: z.unknown(),
+        }),
+      ),
+    }),
+  ),
+});
 
 // ════════════════════════════════════════════════════════════
 // 订阅与条目
@@ -745,7 +792,7 @@ export const ApprovalRequestedParamsSchema = z.object({ approval: ApprovalSchema
 /** 审批结算了：推给拿到过 approval/requested 的连接 */
 export const ApprovalSettledParamsSchema = ApprovalSettlementSchema.extend({ approvalId: z.string() });
 
-/** 功能位变了（对话、检查点或压缩服务上线或下线）：给出最新的功能位 */
+/** 功能位变了（对话、检查点、压缩或会话设置服务上线或下线）：给出最新的功能位 */
 export const FeaturesChangedParamsSchema = z.object({ features: FeaturesSchema });
 
 // ════════════════════════════════════════════════════════════
@@ -769,29 +816,38 @@ export const sessionMethods = {
   /** 删除会话连同子会话，并清空它们的消息历史与长期记忆 */
   'session/delete': { params: SessionTargetSchema, result: EmptySchema },
   'session/batch': { params: SessionBatchParamsSchema, result: SessionBatchResultSchema },
-  /** 适用于这个会话的设置项（只能设到场所为止的不列），各带本会话的值、生效值与来源 */
+  // 会话设置：会话设置服务不在时这几个方法都回 unsupported。写入不合字段、不适用于这一处、没登记的项回参数错误，什么都不改
+  /** 适用于这个会话的设置项（只能设到场所为止的不列），各带本会话这一层的值、生效值与来源 */
   'session/config/get': { params: SessionTargetSchema, result: SettingRowsSchema },
-  /** 按键改本会话的覆盖，回最新的各行 */
-  'session/config/update': { params: SessionConfigUpdateParamsSchema, result: SettingRowsSchema },
+  /** 写本会话这一层的一项，回最新的各行 */
+  'session/config/update': { params: SettingUpdateParamsSchema, result: SettingUpdateResultSchema },
   /**
-   * 可以设的各层，按层的先后：全局默认；各平台档（已装适配器的平台加配置里写过的）；各平台类型档（适配器声明的类型加配置里
-   * 写过的，没声明类型的平台不单列）；全部场所。order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、
-   * 先后说明与选层都按它
+   * 可以设的各层，按层的先后：全局；各平台档（已装适配器的平台加配置里写过的）；各平台类型档（每个平台声明的类型加配置里写过的，
+   * 没声明类型的平台不单列）；全部场所（默认工作区在前，称呼是场所的显示名，窗口另带平台与类型名）。order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、先后说明与选层都按它
    */
   'session/config/layers': {
     params: EmptySchema,
     result: z.object({
-      layers: z.array(SettingLayerSchema),
+      layers: z.array(
+        z.object({
+          layer: SettingLayerSchema,
+          label: TextSchema.optional(),
+          platform: z.string().optional(),
+          type: z.string().optional(),
+        }),
+      ),
       order: z.array(z.object({ name: z.string(), label: TextSchema })),
     }),
   },
-  /** 一层的各行，形状与会话的相同，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项 */
+  /** 一层的各行（只列在这一层可写的项），形状与会话的相同，各带解析到这一层为止的生效值与来源 */
   'session/config/layer/get': { params: SettingLayerTargetSchema, result: SettingRowsSchema },
   /**
-   * 按键改一层的值，回最新的各行。全局默认、平台档与平台类型档写进宿主的配置文档（全局默认层的「模型」写的是 llm 服务的
-   * 偏好），场所写进场所记录
+   * 写一层的一项，回最新的各行。全局层就是插件配置；写了 preference 的字段，全局层是声明它的插件的本插件偏好。全局、平台档与
+   * 平台类型档写进宿主的配置文档，场所写进场所记录
    */
-  'session/config/layer/update': { params: SettingLayerUpdateParamsSchema, result: SettingRowsSchema },
+  'session/config/layer/update': { params: SettingLayerUpdateParamsSchema, result: SettingUpdateResultSchema },
+  /** 一个插件实例的设置项在全局之外写过的各处，按项分组；子会话逐个列出 */
+  'session/config/overrides': { params: z.object({ plugin: z.string() }), result: SettingOverridesSchema },
   /** 记下 owner 看过这个会话，用于「我的」区的完成未读 */
   'session/markSeen': { params: SessionTargetSchema, result: EmptySchema },
   'session/subscribe': { params: SessionTargetSchema, result: SessionSnapshotSchema },
@@ -842,8 +898,8 @@ export const sessionNotifications = {
   'features/changed': FeaturesChangedParamsSchema,
   'sessions/changed': SessionsChangedParamsSchema,
   /**
-   * 会话设置变了：插件启停使设置项增减，或某一层、某个会话的覆盖被改写。不带参数，客户端重取打开着的会话的设置
-   * 与输入框旁的快捷切换
+   * 会话设置变了：设置项随插件启停增减、场所或会话这一层被改写、会话增删，或宿主配置文档变了（插件配置、平台档、平台类型档等）。
+   * 不带参数，客户端重取打开着的设置
    */
   'session/config/changed': EmptySchema,
   'item/started': ItemPushParamsSchema,

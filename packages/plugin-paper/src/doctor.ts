@@ -2,8 +2,8 @@
 // 诊断项 paper.config：让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题
 //
 // - error：账本读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的账本外代理告警。
-// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；全局默认、平台档或平台类型档写了 remoteAgentTypes（全部
-//   房间、这个平台或这种类型的全部房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
+// - warn：取不到提供者的账号标识（写明原因，按冲突处理）；全局层、平台档或平台类型档写了 remoteAgentTypes（全部房间、这个
+//   平台或这个平台这种类型的全部房间都继承）；具名白纸引用的提供者不在场；一块具名白纸被多个房间共用；globalDailyCents 为 0；对账里列代理或轮次连续失败到 3 次（写类别与次数，
 //   不写提供者报错的原文）；有任务认领失败后仍在开轮中（与放弃跟踪同一判据：账本里有它的 claim-failed 告警，不论
 //   是否已读；报出时 owner 就能在任务表放弃跟踪）。
 // - 出网方式取自 owner 配置（提供者核实不了）时在说明里标「未核实」，不影响级别。
@@ -12,10 +12,11 @@
 import type { BoundDoctor, CheckLevel, CheckResult } from '@aalis/api-doctor';
 import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
+import { describeLayer } from '@aalis/api-session-settings';
 import type { ServiceSelection } from '@aalis/core';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
-import { type Isolation, layersWith, paperLabel, profileName, sharingRooms } from './rooms.js';
+import { type Isolation, layersWith, type PaperFields, paperLabel, sharingRooms } from './rooms.js';
 import { describe } from './util.js';
 
 const CHECK_ID = 'paper.config';
@@ -23,6 +24,7 @@ const CHECK_ID = 'paper.config';
 export function registerPaperDoctor(deps: {
   doctor: BoundDoctor;
   sessionManager: ServiceSelection<SessionManagerService>;
+  fields: PaperFields;
   remote: ServiceSelection<RemoteAgentProvider>;
   ledger: LedgerStore;
   isolation: Isolation;
@@ -64,10 +66,10 @@ export function registerPaperDoctor(deps: {
             '按冲突处理：引用同类提供者的具名白纸都不开',
         );
       }
-      for (const { layer, value } of layersWith(sm, 'remoteAgentTypes')) {
+      for (const { layer, value } of layersWith(deps.fields, 'remoteAgentTypes')) {
         if (value.length === 0) continue;
         warnings.push(
-          `remoteAgentTypes（${value.join('、')}）写在${profileName(layer)}，这一层覆盖的开了白纸的房间都会继承；` +
+          `remoteAgentTypes（${value.join('、')}）写在${describeLayer(layer)}，这一层覆盖的开了白纸的房间都会继承；` +
             '按窗口写在房间的场所设置里即可',
         );
       }
@@ -75,7 +77,7 @@ export function registerPaperDoctor(deps: {
         const type = spec.remoteAgentType;
         if (type && !resolveRemoteAgent(deps.remote, type))
           warnings.push(`白纸 ${name} 引用的远端代理「${type}」不在场`);
-        const { labels, shared } = sharingRooms(sm, ledger.data, `n:${name}`);
+        const { labels, shared } = sharingRooms(sm, deps.fields, ledger.data, `n:${name}`);
         if (shared) {
           warnings.push(
             `白纸 ${name} 被多个房间共用（${labels.join('、')}）：长期代理的对话与工作区对所有这些房间可见`,

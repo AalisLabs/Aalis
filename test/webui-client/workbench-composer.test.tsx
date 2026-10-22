@@ -212,7 +212,7 @@ describe('输入框', () => {
         field: { type: 'llm-ref', label: '模型' },
         prominence: 'composer',
         effective: { provider: '@aalis/llm-a', model: 'alpha' },
-        source: 'defaults',
+        source: 'global',
       }),
       row('zz-flag', { field: { type: 'boolean', label: '开关项' }, prominence: 'common' }),
     ];
@@ -232,7 +232,7 @@ describe('输入框', () => {
     choose(model, 'beta');
     await vi.waitFor(() =>
       expect(requests('session/config/update')).toEqual([
-        { sessionId: 's1', patch: { llm: { provider: '@aalis/llm-a', model: 'beta' } } },
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'llm', value: { provider: '@aalis/llm-a', model: 'beta' } },
       ]),
     );
 
@@ -244,18 +244,22 @@ describe('输入框', () => {
   it('快捷切换里可选项依赖另一项的，带上那一项的生效值去取，它变了就重取', async () => {
     stubViewport(1440);
     const levels = (name: string) =>
-      `/api/models/llm-thinking?dependency=${encodeURIComponent(JSON.stringify({ provider: '@aalis/llm-a', model: name }))}`;
+      `/api/models/llm-thinking?dependency=${encodeURIComponent(`@aalis/llm-a/${name}`)}`;
     const rowsFor = (name: string) => [
       row('llm', {
         field: { type: 'llm-ref', label: '模型' },
         prominence: 'composer',
         effective: { provider: '@aalis/llm-a', model: name },
-        source: 'defaults',
+        source: 'global',
       }),
       row('think', {
-        field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
+        field: {
+          type: 'select',
+          label: '深度思考',
+          dynamicOptions: 'llm-thinking',
+          session: { dependsOn: 'llm', unset: '按模型的默认档' },
+        },
         prominence: 'composer',
-        dependsOn: 'llm',
       }),
     ];
     let rows = rowsFor('alpha');
@@ -276,16 +280,21 @@ describe('输入框', () => {
     await vi.waitFor(() => expect(optionsOf(think())).toEqual(['浅']));
   });
 
-  it('快捷切换的可选项没取到时写明原因；哪一层都没设的项按字段的默认值显示', async () => {
+  it('快捷切换的可选项没取到时写明原因；落到作者默认的项按生效值显示', async () => {
     stubViewport(1440);
     const rows = [
       row('llm', {
         field: { type: 'llm-ref', label: '模型' },
         prominence: 'composer',
         effective: { provider: '@aalis/llm-a', model: 'alpha' },
-        source: 'defaults',
+        source: 'global',
       }),
-      row('extra', { field: { type: 'string', label: '额外提示', default: '<默认提示>' }, prominence: 'composer' }),
+      row('extra', {
+        field: { type: 'string', label: '额外提示', default: '<默认提示>' },
+        prominence: 'composer',
+        effective: '<默认提示>',
+        source: 'default',
+      }),
     ];
     app = await renderApp(
       '/s/s1',
@@ -300,17 +309,17 @@ describe('输入框', () => {
     expect([extra.textContent, extra.title]).toEqual(['<默认提示>', '额外提示：<默认提示>']);
   });
 
-  it('快捷切换里不能就地选的项按可选项的标签显示；没设又没有默认值的写登记方给的「没设时」，都没有才写名字', async () => {
+  it('快捷切换里不能就地选的项按可选项的标签显示；没有生效值的写声明给的「没设时」，都没有才写名字', async () => {
     stubViewport(1440);
     const rows = [
       row('groups', {
         field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups' },
         prominence: 'composer',
         effective: ['*'],
-        source: 'defaults',
+        source: 'global',
       }),
       row('note', { field: { type: 'string', label: '备注' }, prominence: 'composer' }),
-      row('limit', { field: { type: 'number', label: '上限' }, prominence: 'composer', unset: '<不限>' }),
+      row('limit', { field: { type: 'number', label: '上限', session: { unset: '<不限>' } }, prominence: 'composer' }),
     ];
     app = await renderApp(
       '/s/s1',

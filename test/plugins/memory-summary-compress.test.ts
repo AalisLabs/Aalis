@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { App, Logger } from '../../packages/core/src/index.js';
+import type { App } from '../../packages/core/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import {
   conversationOf,
@@ -238,29 +238,6 @@ describe('plugin-memory-summary: 没压成', () => {
 
     expect(await summaryOf(memory, 's')).toBe('GOOD-OLD-SUMMARY');
     expect((await active(memory, 's')).map(m => m.content)).toEqual([0, 1, 2, 3, 4, 5].map(i => `第 ${i} 条消息`));
-    expect(statuses).toEqual(['s:start', 's:error']);
-  });
-
-  it('custom 指向的摘要模型不在：以点名这个模型的原因拒绝并报 error，只记一条告警', async () => {
-    const warns: string[] = [];
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
-      error() {},
-      child: () => logger,
-    };
-    const { memory, compression, statuses } = await setup(
-      { summaryModelMode: 'custom', summaryLLM: { provider: 'gone', model: 'x' } },
-      undefined,
-      logger,
-    );
-    await seed(memory, 's', 2);
-
-    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow(
-      '摘要模型解析失败（gone/x 不存在或未激活）',
-    );
-    expect(warns.filter(line => line.includes('摘要模型'))).toHaveLength(1);
     expect(statuses).toEqual(['s:start', 's:error']);
   });
 

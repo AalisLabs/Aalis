@@ -1,4 +1,5 @@
-import { MEMORY_RECALL_SCOPE_SETTING, type MemoryRecallScope, memory } from '@aalis/api-memory';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { memory } from '@aalis/api-memory';
 import {
   type AccessChecker,
   type AccessCheckerDisposer,
@@ -12,6 +13,7 @@ import {
   type SessionManagerService,
   sessionManager,
 } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -33,6 +35,7 @@ const configSchema = defineConfig({
     default: 20,
     description: '不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。',
   },
+  // 按会话字段：坏值原样交来，按仅当前会话处理
   scope: {
     type: 'select',
     label: '允许读取范围',
@@ -43,6 +46,7 @@ const configSchema = defineConfig({
       { label: '同平台会话', value: 'platform' },
       { label: '全部会话', value: 'all' },
     ],
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
   },
   includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
   perMessageMaxChars: {
@@ -60,10 +64,14 @@ const uses = {
   provide,
   memory: optional(memory),
   /**
-   * 当前会话所在房间的召回范围（会话配置 memoryRecallScope），与当前会话、目标会话的出生平台（子会话取根会话的）。
-   * 不在场时不按房间收窄，也没有出生平台：当前平台取入口平台，目标会话不属于任何平台，同平台范围里读不到别的会话
+   * 当前会话、目标会话的出生平台（子会话取根会话的）。不在场时没有出生平台：当前平台取入口平台，目标会话不属于任何平台，
+   * 同平台范围里读不到别的会话
    */
   sessionManager: optional(sessionManager),
+  /** 按会话读允许读取范围；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 type HistoryCaps = Pick<Caps, 'memory' | 'logger' | 'sessionManager'>;
@@ -179,12 +187,13 @@ function formatHistoryMessage(message: Message, index: number, perMessageMaxChar
   };
 }
 
-const SCOPE_RANK: Record<HistoryScope, number> = { current: 0, platform: 1, all: 2 };
+/** 允许读取范围的取值；不在其中的（写坏了的）按 current */
+const HISTORY_SCOPES: ReadonlySet<unknown> = new Set<HistoryScope>(['current', 'platform', 'all']);
 
 /**
- * 当前会话能否读目标会话的历史。平台都按会话管理记下的出生平台：当前会话没有出生平台的取入口平台，目标会话没有出生平台的
- * 不属于任何平台（同平台范围里读不到）。范围粗筛按当前会话本身，平台规则按调用所在的窗口 currentWindowId（子会话没有窗口，
- * 取根会话的）
+ * 当前会话能否读目标会话的历史。scope 是当前会话的允许读取范围（生效值）。平台都按会话管理记下的出生平台：当前会话没有
+ * 出生平台的取入口平台，目标会话没有出生平台的不属于任何平台（同平台范围里读不到）。范围粗筛按当前会话本身，平台规则按调用
+ * 所在的窗口 currentWindowId（子会话没有窗口，取根会话的）
  */
 function canReadSessionHistory(
   currentSessionId: string,
@@ -193,29 +202,21 @@ function canReadSessionHistory(
   currentPlatform: string | undefined,
   targetPlatform: string | undefined,
   scope: HistoryScope,
-  roomScope: MemoryRecallScope | undefined,
   checkers: readonly AccessChecker[],
   callCtx: ToolCallContext,
 ): { ok: true } | { ok: false; reason: string } {
-  // 1. 范围粗筛：插件 scope 与房间的召回范围（会话配置 memoryRecallScope，session 即 current）取较窄的一个，
-  //    先于平台规则裁决，平台规则只能在它放行之后再收窄；拒绝原因按是谁收窄的写
-  const fromRoom = roomScope === 'session' ? 'current' : roomScope;
-  const byRoom = fromRoom !== undefined && SCOPE_RANK[fromRoom] < SCOPE_RANK[scope];
-  const effective = byRoom ? fromRoom : scope;
+  // 1. 范围粗筛：先于平台规则裁决，平台规则只能在它放行之后再收窄
   if (targetSessionId === currentSessionId) {
     // 同会话仍允许平台 checker 表态（防御性）
-  } else if (effective === 'current') {
-    return { ok: false, reason: byRoom ? '本房间的召回范围限于本会话' : '当前配置仅允许读取当前会话历史' };
-  } else if (effective === 'platform') {
+  } else if (scope === 'current') {
+    return { ok: false, reason: '读取范围限于当前会话' };
+  } else if (scope === 'platform') {
     if (!currentPlatform || !targetPlatform || currentPlatform !== targetPlatform) {
       const detail = `（当前=${currentPlatform || 'unknown'}, 目标=${targetPlatform || 'unknown'}）`;
-      return {
-        ok: false,
-        reason: byRoom ? `本房间的召回范围限于同平台会话${detail}` : `当前配置仅允许读取同平台会话历史${detail}`,
-      };
+      return { ok: false, reason: `读取范围限于同平台会话${detail}` };
     }
   }
-  // effective === 'all' 直接走 checker 链
+  // scope === 'all' 直接走 checker 链
 
   // 2. 问管目标会话 id 的 checker（契约：目标 id 以 `<checker.platform>:` 开头，id 的写法归那个平台），any-deny 短路；
   //    无匹配 checker 默认通过
@@ -229,9 +230,11 @@ function canReadSessionHistory(
   return { ok: true };
 }
 
+/** scopeOf 读调用所在会话此刻的允许读取范围（生效值，坏值原样）；platform 是入口平台 */
 function createSessionHistoryService(
   { memory, logger, sessionManager }: HistoryCaps,
   cfg: PluginConfig,
+  scopeOf: (sessionId: string, platform: string | undefined) => unknown,
 ): SessionHistoryService {
   const checkers: AccessChecker[] = [];
 
@@ -255,16 +258,15 @@ function createSessionHistoryService(
       const root = rootOf(sm, callCtx.sessionId);
       // 当前平台：房间会话按出生平台，不论从哪个入口驱动；没有出生平台的会话（WebUI、CLI 等）按入口平台
       const currentPlatform = root?.originPlatform ?? callCtx.platform;
-      // 房间的召回范围每次现算：房间或平台档改了下一次读取即生效
-      const roomScope = sm?.resolveConfig(callCtx.sessionId, currentPlatform).memoryRecallScope;
+      // 允许读取范围每次现读，改了下一次读取即生效；坏值按 current
+      const scope = scopeOf(callCtx.sessionId, callCtx.platform);
       const verdict = canReadSessionHistory(
         callCtx.sessionId,
         root?.id ?? callCtx.sessionId,
         targetSessionId,
         currentPlatform,
         rootOf(sm, targetSessionId)?.originPlatform,
-        cfg.scope,
-        roomScope,
+        HISTORY_SCOPES.has(scope) ? (scope as HistoryScope) : 'current',
         checkers,
         callCtx,
       );
@@ -453,8 +455,12 @@ export default definePlugin({
     };
     if (!cfg.enabled) return;
 
-    caps.sessionManager.use.registerSetting(MEMORY_RECALL_SCOPE_SETTING);
-    const historyService = createSessionHistoryService(caps, cfg);
+    const fields = caps.sessionFields.use.fields(configSchema, caps);
+    const historyService = createSessionHistoryService(
+      caps,
+      cfg,
+      (sessionId, platform) => fields.get(sessionId, { platform }).scope,
+    );
     caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' });
     registerSessionHistoryTools(caps, historyService, cfg);
   },

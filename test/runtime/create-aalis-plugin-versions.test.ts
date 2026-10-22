@@ -11,7 +11,7 @@ import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import { renderIndexTs, renderPackageJson, renderReadme } from '../../packages/create-aalis-plugin/src/cli.js';
 
-// create-aalis-plugin 生成的依赖写法、工具的风险声明、会话设置项一问，以及给作者的 npm 指引。
+// create-aalis-plugin 生成的依赖写法、工具的风险声明、可按会话设的配置项一问，以及给作者的 npm 指引。
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL('../../packages/create-aalis-plugin/src/cli.ts', import.meta.url));
@@ -29,7 +29,9 @@ const VERSIONS = {
   '@aalis/api-tools': '0.9.0',
   '@aalis/api-commands': '0.8.0',
   '@aalis/api-webui': '0.12.0',
-  '@aalis/api-session-manager': '0.10.0',
+  '@aalis/api-session-settings': '0.1.0',
+  '@aalis/api-host-config': '0.2.0',
+  '@aalis/schema-config': '0.16.0',
 };
 
 /** 与 dep-ranges 守卫同一判据：下界是源上的版本，上界统一 <1.0.0 */
@@ -41,13 +43,15 @@ describe('生成的依赖', () => {
     const aalis = [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies].flatMap(deps =>
       Object.entries(deps as Record<string, string>).filter(([name]) => name.startsWith('@aalis/')),
     );
-    expect(aalis.length).toBe(6);
+    expect(aalis.length).toBe(8);
     for (const [name, range] of aalis) expect(range, name).toMatch(RANGE);
     expect(pkg.dependencies).toEqual({
       '@aalis/api-tools': '>=0.9.0 <1.0.0',
       '@aalis/api-commands': '>=0.8.0 <1.0.0',
       '@aalis/api-webui': '>=0.12.0 <1.0.0',
-      '@aalis/api-session-manager': '>=0.10.0 <1.0.0',
+      '@aalis/api-session-settings': '>=0.1.0 <1.0.0',
+      '@aalis/api-host-config': '>=0.2.0 <1.0.0',
+      '@aalis/schema-config': '>=0.16.0 <1.0.0',
     });
     expect(pkg.devDependencies['@aalis/core']).toBe('>=0.19.1 <1.0.0');
     // peer 的下限是模板所用的服务调用形状（选择层与业务层两层）首次出现的版本
@@ -55,7 +59,7 @@ describe('生成的依赖', () => {
     expect(JSON.stringify(pkg)).not.toMatch(/latest|workspace:/);
   });
 
-  it('模板从 core 只取 definePlugin、logger 与 optional，调用写成两层形状：peer 下限 0.20.0 由此成立', () => {
+  it('模板从 core 只取 definePlugin、logger、optional 与 config，调用写成两层形状：peer 下限 0.20.0 由此成立', () => {
     for (let mask = 0; mask < 8; mask++) {
       for (const webui of [false, 'declarative', 'frame'] as const) {
         const source = renderIndexTs(
@@ -63,7 +67,7 @@ describe('生成的依赖', () => {
         );
         const imported = /import \{ ([^}]+) \} from '@aalis\/core';/.exec(source)?.[1].split(', ') ?? [];
         expect(
-          imported.every(name => ['definePlugin', 'logger', 'optional'].includes(name)),
+          imported.every(name => ['config', 'definePlugin', 'logger', 'optional'].includes(name)),
           imported.join(),
         ).toBe(true);
         expect(source).toContain('logger.use.');
@@ -83,21 +87,30 @@ describe('生成的源码', () => {
     expect(source).not.toMatch(/^\s+background:/m);
   });
 
-  it('会话设置项：合并进 SessionConfig、经 sessionManager 登记，适用种类与显眼程度写全；选了工具时工具按会话读它', () => {
+  it('可按会话设的配置项：字段写在 configSchema 上、带 session，apply 里调一次 fields() 拿读取器；选了工具时工具按会话读它', () => {
     const withTool = renderIndexTs(answers({ tool: true, command: false, webui: false, sessionSetting: true }));
-    expect(withTool).toContain("declare module '@aalis/api-session-manager'");
-    expect(withTool).toContain('interface SessionConfig');
-    expect(withTool).toContain('greetingAalisPluginDemo?: string;');
-    expect(withTool).toContain('sessionManager: optional(sessionManager)');
-    expect(withTool).toContain('sessionManager.use.registerSetting({');
-    expect(withTool).toContain("appliesTo: ['owner', 'room', 'task'],");
-    expect(withTool).toContain("prominence: 'advanced',");
-    expect(withTool).toContain('resolveConfig(ctx.sessionId, ctx.platform).greetingAalisPluginDemo');
+    expect(withTool).toContain("import { defineConfig } from '@aalis/schema-config';");
+    expect(withTool).toContain('const configSchema = defineConfig({');
+    expect(withTool).toContain("session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },");
+    expect(withTool).toContain('\n  configSchema,\n');
+    expect(withTool).toContain('sessionFields: optional(sessionFields), document: optional(ownHostConfig)');
+    expect(withTool).toContain('const fields = sessionFields.use.fields(configSchema, { config, document });');
+    expect(withTool).toContain('fields.get(ctx.sessionId, { platform: ctx.platform })');
+    expect(withTool).not.toMatch(/resolveConfig|registerSetting|api-session-manager|declare module/);
     const alone = renderIndexTs(answers({ tool: false, command: false, webui: false, sessionSetting: true }));
-    expect(alone).toContain('sessionManager.use.registerSetting({');
+    expect(alone).toContain('\n    sessionFields.use.fields(configSchema, { config, document });');
     expect(alone).not.toContain('ctx.sessionId');
+    const plain = renderIndexTs(answers({ tool: true, command: false, webui: false, sessionSetting: false }));
+    expect(plain).not.toMatch(/configSchema|sessionFields|config, /);
     const pkg = JSON.parse(renderPackageJson(answers(ALL), VERSIONS));
-    expect(pkg.aalis.service.optional).toContain('session-manager');
+    expect(pkg.aalis.service.required).toEqual(['logger', 'config']);
+    expect(pkg.aalis.service.optional).toEqual([
+      'tools',
+      'commands',
+      'webui-server',
+      'session-settings',
+      'host-config',
+    ]);
   });
 
   it('显示名带单引号与反斜杠：按字符串字面量写进源码，生成的源码没有语法错误，值与输入逐字相同', () => {

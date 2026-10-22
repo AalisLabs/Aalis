@@ -96,6 +96,9 @@ class FakeToolService implements ToolService {
   setExecutionGuard(): void {
     /* noop */
   }
+  sessionGroups(): string[] {
+    return [];
+  }
   getGroups(): ToolGroupInfo[] {
     return [...this.groups.values()];
   }

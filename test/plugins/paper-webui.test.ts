@@ -248,8 +248,8 @@ describe('页面登记', () => {
         papers: [{ name: PAPER, remoteAgentType: REMOTE, dailyCents: 200 }],
       },
       rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: PILOT_ROOM },
-      listed: { [ROOM]: {}, [ROOM2]: {} },
-      placeProfiles: { 'onebot:group:20001': PILOT_ROOM, 'onebot:group:20002': PILOT_ROOM },
+      listed: [ROOM, ROOM2],
+      places: { 'onebot:group:20001': PILOT_ROOM, 'onebot:group:20002': PILOT_ROOM },
     });
     const detail = await info(hub);
     expect(String(detail.get('共用的房间'))).toContain('共用（2）');
@@ -430,21 +430,24 @@ describe('跑完一件任务后的几张表', () => {
 describe('白纸详情的「共用的房间」', () => {
   it('平台类型档写了 paperName：列出继承它的已登记房间与这一档的全部房间，标为共用', async () => {
     const hub = await startPaperHub({
-      listed: { [ROOM]: {} },
-      typeProfiles: { 'onebot/group': { paperName: PAPER } },
+      listed: [ROOM],
+      platformTypes: { 'onebot/group': { paperName: PAPER } },
     });
     expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台类型档 onebot · group 的全部房间`);
   });
 
-  it('全局默认写了 paperName：列出继承它的已登记房间与全局默认的全部房间，标为共用', async () => {
-    const hub = await startPaperHub({ listed: { [ROOM]: {} }, defaults: { paperName: PAPER } });
-    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、全局默认的全部房间`);
+  /** 窗口的场所只开了白纸、没写白纸名：白纸名取覆盖一类房间的层 */
+  const UNNAMED = { [ROOM]: { ...PILOT_ROOM, paperName: undefined } };
+
+  it('全局层写了 paperName：列出继承它的已登记房间与全局（插件配置）的全部房间，标为共用', async () => {
+    const hub = await startPaperHub({ listed: [ROOM], rooms: UNNAMED, global: { paperName: PAPER } });
+    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、全局（插件配置）的全部房间`);
   });
 
   it('对照：只有一个窗口的场所写了 paperName、没有平台档与平台类型档时不算共用', async () => {
     const hub = await startPaperHub({
-      listed: { [ROOM]: {} },
-      placeProfiles: { 'onebot:group:20001': { paperName: PAPER } },
+      listed: [ROOM],
+      places: { 'onebot:group:20001': { paperName: PAPER } },
     });
     expect((await info(hub)).get('共用的房间')).toBe(ROOM);
   });

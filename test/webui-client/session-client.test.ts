@@ -28,7 +28,7 @@ const init: SessionMethodResult<'initialize'> = {
   server: { name: 'server' },
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
-  features: { send: true, rewind: false, compress: true },
+  features: { send: true, rewind: false, compress: true, settings: true },
   appName: 'Aalis',
 };
 
@@ -270,9 +270,9 @@ describe('连接级推送', () => {
     client.on('features/changed', features);
     await vi.waitFor(() => socket.request('sessions/watch'));
     socket.notify('sessions/changed', { upserts: [], removes: ['a'], groups: [] });
-    socket.notify('features/changed', { features: { send: true, rewind: true, compress: false } });
+    socket.notify('features/changed', { features: { send: true, rewind: true, compress: false, settings: false } });
     expect(changed).toHaveBeenCalledWith({ upserts: [], removes: ['a'], groups: [] });
-    expect(features).toHaveBeenCalledWith({ features: { send: true, rewind: true, compress: false } });
+    expect(features).toHaveBeenCalledWith({ features: { send: true, rewind: true, compress: false, settings: false } });
   });
 
   it('有人关心后台任务时发 background/watch，只发一次；重连后与 sessions/watch 在同一处重发', async () => {

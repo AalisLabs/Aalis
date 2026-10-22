@@ -3,39 +3,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
-import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
-import { llm } from '../../packages/api-llm/src/index.js';
+import {
+  type AalisConfig,
+  ConfigSaveRefusedError,
+  hostConfig,
+  saveFailureText,
+} from '../../packages/api-host-config/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
-import { SESSION_LAYERS, type SessionSetting, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   ErrorFrameSchema,
   RPC_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
+  type SessionMethod,
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
+import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
+import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
-import { recordRoom, storedRoom } from '../fixtures/rooms.js';
+import { recordRoom } from '../fixtures/rooms.js';
 import { CLIENT, client, DETACHED_SURFACE, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import {
-  ITERATIONS,
-  MODEL,
-  modelPlugin,
-  PAPER_NAME,
-  PERSONA,
-  settingsPlugin,
-  TOOL_GROUPS,
-} from '../fixtures/session-settings.js';
+import { fieldsPlugin, ONEBOT_TYPES, OTHER_SCHEMA, SCHEMA } from '../fixtures/session-settings.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -76,43 +75,11 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
     },
   });
 
-const ALL = ['owner', 'room', 'task'] as const;
-const MODEL_FIRST: SessionSetting = { ...MODEL, order: 0 };
-/** 可选项依赖模型：行上带 dependsOn */
-const THINK: SessionSetting = {
-  key: 'think',
-  field: { type: 'select', label: '深度思考', dynamicOptions: 'llm-thinking' },
-  appliesTo: ALL,
-  prominence: 'composer',
-  order: 1,
-  dependsOn: 'llm',
-  validate: value => (typeof value === 'string' && value !== '' ? undefined : '要是档位 id'),
-};
-/** 第三个 composer：同一组最多两项，它退到 common */
-const EXTRA: SessionSetting = {
-  key: 'systemPromptExtra',
-  field: { type: 'textarea', label: '额外提示' },
-  appliesTo: ALL,
-  prominence: 'composer',
-  order: 5,
-  unset: '<不追加>',
-};
-/** 白纸名：与白纸插件的登记一样只能设到场所为止 */
-const PAPER_AT_PLACE: SessionSetting = { ...PAPER_NAME, narrowest: 'place' };
-/** 只对 owner 的会话 */
-const JSON_RENDERING: SessionSetting = {
-  key: 'clientSideJsonRendering',
-  field: { type: 'boolean', label: '客户端渲染 JSON' },
-  appliesTo: ['owner'],
-  prominence: 'advanced',
-};
-/** 代替拥有这些设置项的插件 */
-const SETTING_PLUGINS = [
-  settingsPlugin('agent-settings', [MODEL_FIRST, THINK, ITERATIONS]),
-  settingsPlugin('persona-settings', [PERSONA, EXTRA, JSON_RENDERING]),
-  settingsPlugin('tools-settings', [TOOL_GROUPS]),
-  settingsPlugin('paper-settings', [PAPER_AT_PLACE]),
-];
+/** 此刻实际在用的模型：没设模型时行上带它（声明字段的插件交给会话设置的 actual） */
+const NOW_MODEL = { provider: 'zz-llm', model: 'm1' };
+/** 代替声明这些字段的插件：一个声明各种项，另一个与它有同名的项（scope） */
+const AGENT = () => fieldsPlugin('zz-agent', SCHEMA, { llm: () => ({ value: NOW_MODEL, label: '<此刻的模型>' }) });
+const OTHER = () => fieldsPlugin('zz-other', OTHER_SCHEMA);
 
 /** 时钟只假 Date：会话的创建、改动与开口时间取 Date.now()，定时器照常走 */
 function clock(at: number): void {
@@ -120,23 +87,25 @@ function clock(at: number): void {
 }
 
 /**
- * stored：会话表里预置的记录；files：插件数据（已读记录）；layers：宿主配置文档里会话设置的各层；
- * unreadable：这些 URI 存在但读不出来（权限错，不是不存在）；models：llm 服务的模型（[provider, model]，各由一个插件提供）
+ * stored：会话表里预置的记录；files：插件数据（已读记录）；doc：宿主配置文档（插件配置与 sessionConfig）；
+ * unreadable：这些 URI 存在但读不出来（权限错，不是不存在）；save：宿主配置的落盘；settings 为 false 时不装会话设置插件
  */
 async function setup({
   stored = {},
   files = new Map<string, string | Uint8Array>(),
-  layers,
+  doc = {},
   unreadable = [],
   unwritable = false,
-  models = [],
+  save,
+  settings = true,
 }: {
   stored?: Record<string, Record<string, unknown>>;
   files?: Map<string, string | Uint8Array>;
-  layers?: AalisConfig['sessionConfig'];
+  doc?: Partial<AalisConfig>;
   unreadable?: string[];
   unwritable?: boolean;
-  models?: Array<[provider: string, model: string]>;
+  save?: (config: AalisConfig) => Promise<void>;
+  settings?: boolean;
 } = {}) {
   vi.useFakeTimers({ toFake: ['Date'] });
   clock(1_000);
@@ -148,7 +117,7 @@ async function setup({
     error() {},
     child: () => logger,
   };
-  const { app } = hostedApp(layers ? { sessionConfig: layers } : {}, { logger });
+  const { app, store } = hostedApp(doc, { logger, provider: save ? { save } : undefined });
   apps.push(app);
   provideHome(app);
   await registerHubs(app);
@@ -162,17 +131,17 @@ async function setup({
   }) as typeof disk.readFile;
   if (unwritable) disk.writeFile = async () => Promise.reject(new Error('ENOSPC: 磁盘已满'));
   host.provide.use(storage, disk);
-  await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => /^onebot:1000[01]:/.test(id) }));
-  await app.plugin(adapterPlugin('onebot-b', { platform: 'onebot', canHandle: id => id.startsWith('onebot:20000:') }));
+  const onebot = { platform: 'onebot', sessionTypes: ONEBOT_TYPES };
+  await app.plugin(adapterPlugin('onebot-a', { ...onebot, canHandle: id => /^onebot:1000[01]:/.test(id) }));
+  await app.plugin(adapterPlugin('onebot-b', { ...onebot, canHandle: id => id.startsWith('onebot:20000:') }));
   await app.plugin(adapterPlugin('cli', { platform: 'cli', canHandle: id => id === 'cli-default' }));
-  const providers = new Map<string, string[]>();
-  for (const [provider, model] of models) providers.set(provider, [...(providers.get(provider) ?? []), model]);
-  for (const [provider, ids] of providers) await app.plugin(modelPlugin(provider, ids));
   await app.plugin(sessionManagerPlugin);
-  for (const plugin of SETTING_PLUGINS) await app.plugin(plugin);
+  const fields = [AGENT(), OTHER()];
+  const plugins = [...(settings ? [sessionSettingsPlugin] : []), ...fields.map(field => field.definition)];
+  for (const plugin of plugins) await registerFromDoc(app, store, plugin);
   await app.plugin(sessionServerPlugin, {});
   await app.plugins.idle();
-  for (const name of [sessionManagerPlugin.name, sessionServerPlugin.name, ...SETTING_PLUGINS.map(p => p.name)]) {
+  for (const name of [sessionManagerPlugin.name, sessionServerPlugin.name, ...plugins.map(p => p.name)]) {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
@@ -201,8 +170,7 @@ async function setup({
     });
   };
 
-  const doc = () => host.hostConfig.use.get('sessionConfig');
-  return { app, host, sm, files, warns, turn, doc, server: () => host.sessionProtocol.use };
+  return { app, host, store, sm, files, warns, turn, server: () => host.sessionProtocol.use };
 }
 
 describe('握手', () => {
@@ -215,7 +183,7 @@ describe('握手', () => {
       server: { name: '@aalis/plugin-session-server' },
       identity: { platform: 'webui', userId: 'console' },
       surface: 'webui',
-      features: { send: false, rewind: false, compress: false },
+      features: { send: false, rewind: false, compress: false, settings: true },
       appName: 'T',
     });
     expect(c.disconnects).toEqual([]);
@@ -693,9 +661,9 @@ describe('已读记录的读取', () => {
 });
 
 describe('建、改名、归档、删除与批量', () => {
-  it('create：根会话不复制各层，按继承链生效；子会话复制父会话的生效配置，只经继承链实时解析的项除外', async () => {
+  it('create：根会话不写设置；子会话建出来就带着父会话此刻每一项适用于子会话的生效值（写在它自己那一层），之后父会话再改不影响它', async () => {
     const { server, sm } = await setup({
-      layers: { defaults: { paperName: '<白纸名>' }, platforms: { webui: { persona: 'aalis-webui' } } },
+      doc: { sessionConfig: { platforms: { webui: { 'zz-agent': { persona: '<WebUI 人设>' } } } } },
     });
     const c = client(server());
     await c.init();
@@ -703,16 +671,30 @@ describe('建、改名、归档、删除与批量', () => {
     const { session: root } = await c.call('session/create', {});
     expect(root.title).toMatch(/^会话 /);
     expect(sm.getSession(root.id)).toMatchObject({ status: 'waiting', createdFrom: 'webui' });
-    expect(sm.getSession(root.id)?.config).toEqual({});
-    const persona = (await c.call('session/config/get', { sessionId: root.id })).items.find(r => r.key === 'persona');
-    expect([persona?.effective, persona?.source]).toEqual(['aalis-webui', 'platform']);
+    expect(sm.getSession(root.id)?.metadata).toBeUndefined();
+    await c.call('session/config/update', { sessionId: root.id, plugin: 'zz-agent', key: 'iterations', value: 9 });
 
-    await sm.updateSession(root.id, { config: { think: 'high' } });
     const { session: child } = await c.call('session/create', { name: '子', parentId: root.id });
     expect(child).toMatchObject({ title: '子', parentId: root.id, kind: 'task' });
-    expect(sm.getSession(child.id)?.config).toEqual({ persona: 'aalis-webui', think: 'high' });
+    const row = async (key: string) =>
+      (await c.call('session/config/get', { sessionId: child.id })).items.find(r => r.key === key);
+    // 入口平台按根会话取（连接的平台 webui）：父会话这一刻的平台档人设、本会话层的迭代与此刻在用的模型都写下了
+    expect(await row('persona')).toMatchObject({ value: '<WebUI 人设>', source: 'session' });
+    expect(await row('iterations')).toMatchObject({ value: 9, source: 'session' });
+    expect(await row('llm')).toMatchObject({ value: NOW_MODEL, source: 'session' });
+    await c.call('session/config/update', { sessionId: root.id, plugin: 'zz-agent', key: 'iterations', value: 3 });
+    expect(await row('iterations')).toMatchObject({ value: 9, source: 'session' });
 
     expect((await c.fail('session/create', { parentId: 'session-nope' })).data?.code).toBe('not-found');
+  });
+
+  it('create：会话设置不在时带 parentId 的回 unsupported、不建子会话；根会话照常建', async () => {
+    const { server, sm } = await setup({ settings: false });
+    const c = client(server());
+    await c.init();
+    const { session: root } = await c.call('session/create', {});
+    expect((await c.fail('session/create', { name: '子', parentId: root.id })).data?.code).toBe('unsupported');
+    expect(sm.getChildren(root.id)).toEqual([]);
   });
 
   it('create 的创建来源取连接所在审批面的登记名，不取连接自报的客户端名与身份里的平台；子会话不带，按根会话取', async () => {
@@ -789,330 +771,250 @@ describe('建、改名、归档、删除与批量', () => {
 });
 
 describe('会话设置', () => {
-  const LAYERS = {
-    defaults: { persona: 'aalis' },
-    platforms: {
-      webui: { persona: 'aalis-webui' },
-      cli: { persona: 'aalis-cli' },
-      onebot: { enabledToolGroups: ['onebot'] },
-    },
-    types: { onebot: { group: { think: 'high', paperName: '<群白纸>' } } },
-  };
   const ROOM = 'onebot:10000:group:1';
-  /** ROOM 所在的窗口与默认工作区两个场所 */
   const WINDOW = { scope: 'place', key: 'onebot:group:1' } as const;
-  const HOME = { scope: 'place', key: 'workspace:default' } as const;
-  const GROUP = { scope: 'type', platform: 'onebot', type: 'group' } as const;
-  type Rows = Array<{ key: string; value?: unknown; effective?: unknown; source?: string }>;
-  /** 每行的键、本层的值、生效值与来源 */
-  const values = (rows: Rows) => rows.map(r => [r.key, r.value, r.effective, r.source]);
-  const keys = (rows: Rows) => rows.map(r => r.key);
+  const GROUP = { scope: 'platformType', platform: 'onebot', type: 'group' } as const;
+  const find = <R extends { plugin: string; key: string }>(rows: R[], key: string, plugin = 'zz-agent') =>
+    rows.find(r => r.plugin === plugin && r.key === key);
 
-  it('config/get：只列适用于这种会话的项，composer、common 在前，composer 最多两项；每行带字段、所属插件、本会话的值、生效值与来源（层名）', async () => {
-    const { host, server, sm } = await setup({
-      layers: LAYERS,
-      stored: {
-        'session-old': {
-          id: 'session-old',
-          name: '旧',
-          children: [],
-          status: 'completed',
-          config: { persona: null, think: 'high', memoryRecallScope: 'session' },
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      },
+  it('config/get：一行一项、(plugin, key) 是身份，同名的项各列一行；field 带 session 声明，函数成员不下发；没设的项带此刻实际在用的值', async () => {
+    const { server } = await setup();
+    const c = client(server());
+    await c.init();
+    const { session: s } = await c.call('session/create', { name: 'S' });
+    const { items } = await c.call('session/config/get', { sessionId: s.id });
+
+    expect(items.filter(r => r.key === 'scope').map(r => r.plugin)).toEqual(['zz-agent', 'zz-other']);
+    expect(new Set(items.map(r => `${r.plugin}/${r.key}`)).size).toBe(items.length);
+    const model = find(items, 'llm');
+    expect(model?.field.session).toMatchObject({ preference: 'llm', unset: '跟随服务偏好' });
+    expect(['validate', 'fromText', 'toText'].filter(name => Object.hasOwn(model?.field ?? {}, name))).toEqual([]);
+    expect(model).toMatchObject({ actual: { value: NOW_MODEL, label: '<此刻的模型>' } });
+    expect(model).not.toHaveProperty('effective');
+    expect(find(items, 'persona')).toMatchObject({ effective: 'default', source: 'default' });
+    expect(find(items, 'persona')).not.toHaveProperty('actual');
+    // 只能设到场所为止与不适用于 owner 会话的项不列
+    expect(items.map(r => r.key)).not.toEqual(expect.arrayContaining(['paperName']));
+    expect(items.map(r => r.key)).not.toEqual(expect.arrayContaining(['language']));
+    expect((await c.fail('session/config/get', { sessionId: 'session-nope' })).data?.code).toBe('not-found');
+  });
+
+  it('config/update：写本会话这一层的一项，回写完之后的行；null 恢复继承；不合字段、没登记、不适用的回参数错误，什么都不改', async () => {
+    const { server } = await setup();
+    const c = client(server());
+    await c.init();
+    const { session: s } = await c.call('session/create', { name: 'S' });
+    const update = (plugin: string, key: string, value: unknown) =>
+      c.call('session/config/update', { sessionId: s.id, plugin, key, value });
+
+    const set = await update('zz-agent', 'persona', '<人设>');
+    expect(find(set.items, 'persona')).toMatchObject({ value: '<人设>', effective: '<人设>', source: 'session' });
+    expect(set).not.toHaveProperty('unsaved');
+    const other = await update('zz-other', 'scope', 'current');
+    expect([find(other.items, 'scope')?.effective, find(other.items, 'scope', 'zz-other')?.effective]).toEqual([
+      'all',
+      'current',
+    ]);
+    const reset = await update('zz-agent', 'persona', null);
+    expect(find(reset.items, 'persona')).toMatchObject({ effective: 'default', source: 'default' });
+
+    for (const [plugin, key, value] of [
+      ['zz-agent', 'iterations', 0],
+      ['zz-agent', 'bogus', 1],
+      ['zz-nope', 'persona', 'x'],
+      ['zz-agent', 'paperName', '<白纸>'],
+      ['zz-agent', 'language', ['en']],
+    ] as const) {
+      const err = await c.fail('session/config/update', { sessionId: s.id, plugin, key, value });
+      expect(err.code, `${plugin}/${key}`).toBe(RPC_ERROR_CODES.invalidParams);
+    }
+    expect(find((await c.call('session/config/get', { sessionId: s.id })).items, 'iterations')?.source).toBe('default');
+    const missing = await c.fail('session/config/update', { sessionId: s.id, plugin: 'zz-agent', key: 'persona' });
+    expect(missing.code).toBe(RPC_ERROR_CODES.invalidParams);
+    expect(
+      (
+        await c.fail('session/config/update', {
+          sessionId: 'session-nope',
+          plugin: 'zz-agent',
+          key: 'persona',
+          value: 'x',
+        })
+      ).data?.code,
+    ).toBe('not-found');
+  });
+
+  it('按层读写：layers 回可以设的各层（只带层与称呼，窗口另带平台与类型名，不带计数）与层表；一层的行解析到这一层为止；写一层回写完之后的行', async () => {
+    const { host, server } = await setup({
+      doc: { sessionConfig: { platformTypes: { onebot: { group: { 'zz-agent': { think: 'high' } } } } } },
     });
     await recordRoom(host.events.use, ROOM, '群');
-    await sm.updateLayer(WINDOW, { persona: '<群人设>' });
     const c = client(server());
     await c.init();
 
-    const old = await c.call('session/config/get', { sessionId: 'session-old' });
-    expect(old.items.map(r => [r.key, r.prominence, r.plugin])).toEqual([
-      ['llm', 'composer', 'agent-settings'],
-      ['think', 'composer', 'agent-settings'],
-      ['systemPromptExtra', 'common', 'persona-settings'],
-      ['persona', 'common', 'persona-settings'],
-      ['enabledToolGroups', 'common', 'tools-settings'],
-      ['maxToolIterations', 'advanced', 'agent-settings'],
-      ['clientSideJsonRendering', 'advanced', 'persona-settings'],
-    ]);
-    expect(old.items[0].field).toEqual(MODEL_FIRST.field);
-    expect(old.items.filter(r => r.dependsOn !== undefined).map(r => [r.key, r.dependsOn])).toEqual([['think', 'llm']]);
-    expect(old.items.filter(r => r.unset !== undefined).map(r => [r.key, r.unset])).toEqual([
-      ['systemPromptExtra', '<不追加>'],
-    ]);
-    expect(values(old.items)).toEqual([
-      ['llm', undefined, undefined, undefined],
-      ['think', 'high', 'high', 'session'],
-      ['systemPromptExtra', undefined, undefined, undefined],
-      ['persona', undefined, 'aalis-webui', 'platform'],
-      ['enabledToolGroups', undefined, undefined, undefined],
-      ['maxToolIterations', undefined, undefined, undefined],
-      ['clientSideJsonRendering', undefined, undefined, undefined],
-    ]);
+    const { layers, order } = await c.call('session/config/layers', {});
+    expect(order).toEqual(SESSION_LAYERS.map(({ name, label }) => ({ name, label: toSource(label) })));
+    expect(layers.map(entry => entry.layer)).toEqual(expect.arrayContaining([{ scope: 'global' }, GROUP, WINDOW]));
+    for (const entry of layers)
+      expect(Object.keys(entry).filter(key => !['layer', 'label', 'platform', 'type'].includes(key))).toEqual([]);
+    expect(layers.find(entry => entry.layer.scope === 'place' && entry.layer.key === WINDOW.key)).toMatchObject({
+      platform: 'onebot',
+      type: 'group',
+    });
 
-    // 房间按层表叠加：平台档、平台类型档（聊天窗口的类型名）、场所（它的窗口）；只能设到场所为止的白纸名不列
-    const room = await c.call('session/config/get', { sessionId: ROOM });
-    expect(values(room.items)).toEqual([
-      ['llm', undefined, undefined, undefined],
-      ['think', undefined, 'high', 'type'],
-      ['systemPromptExtra', undefined, undefined, undefined],
-      ['persona', undefined, '<群人设>', 'place'],
-      ['enabledToolGroups', undefined, ['onebot'], 'platform'],
-      ['maxToolIterations', undefined, undefined, undefined],
-    ]);
+    const window = (await c.call('session/config/layer/get', { layer: WINDOW })).items;
+    expect(find(window, 'think')).toMatchObject({ effective: 'high', source: 'platformType' });
+    const written = await c.call('session/config/layer/update', {
+      layer: WINDOW,
+      plugin: 'zz-agent',
+      key: 'paperName',
+      value: '<群白纸>',
+    });
+    expect(find(written.items, 'paperName')).toMatchObject({ value: '<群白纸>', source: 'place' });
+    const room = (await c.call('session/config/get', { sessionId: ROOM })).items;
+    expect(find(room, 'think')).toMatchObject({ effective: 'high', source: 'platformType' });
 
-    // owner 的会话按连接的入口平台选档：先看会话记下的平台，再看接管会话 id 的适配器，最后才取连接的平台
+    for (const params of [
+      { layer: { scope: 'platform', platform: '' }, plugin: 'zz-agent', key: 'persona', value: 'x' },
+      {
+        layer: { scope: 'platformType', platform: 'onebot', type: '*' },
+        plugin: 'zz-agent',
+        key: 'persona',
+        value: 'x',
+      },
+      { layer: { scope: 'type', type: 'group' }, plugin: 'zz-agent', key: 'persona', value: 'x' },
+      { layer: { scope: 'place', key: 'onebot:group:404' }, plugin: 'zz-agent', key: 'persona', value: 'x' },
+      { layer: { scope: 'defaults' }, plugin: 'zz-agent', key: 'persona', value: 'x' },
+    ]) {
+      expect((await c.fail('session/config/layer/update', params)).code, JSON.stringify(params)).toBe(
+        RPC_ERROR_CODES.invalidParams,
+      );
+    }
+    expect(
+      (await c.fail('session/config/layer/get', { layer: { scope: 'place', key: 'onebot:group:404' } })).code,
+    ).toBe(RPC_ERROR_CODES.invalidParams);
+  });
+
+  it('写进宿主文档的几层落盘失败：已在运行态生效，回包带 unsaved（与插件详情保存的回执同一句，拒写与其余失败两句不同）', async () => {
+    let failure: Error | undefined;
+    const { server, store } = await setup({
+      save: async () => {
+        if (failure) throw failure;
+      },
+    });
+    const c = client(server());
+    await c.init();
+    const write = (value: string) =>
+      c.call('session/config/layer/update', { layer: { scope: 'global' }, plugin: 'zz-agent', key: 'persona', value });
+
+    expect(await write('<存得下>')).not.toHaveProperty('unsaved');
+    failure = new ConfigSaveRefusedError('<配置文件有外部修改>');
+    const refused = await write('<拒写>');
+    expect(refused.unsaved).toBe(toSource(saveFailureText(failure, 'reload')));
+    expect(find(refused.items, 'persona')).toMatchObject({ value: '<拒写>', source: 'global' });
+    failure = new Error('<磁盘满了>');
+    const failed = await write('<写失败>');
+    expect(failed.unsaved).toBe(toSource(saveFailureText(failure, 'reload')));
+    expect(failed.unsaved).not.toBe(refused.unsaved);
+    expect(store.getPluginConfig('zz-agent').persona).toBe('<写失败>');
+  });
+
+  it('overrides：一个实例在全局之外写过的各处按项分组，会话带标题，子会话逐个列出、带父会话', async () => {
+    const { server, sm } = await setup({
+      doc: { sessionConfig: { platforms: { onebot: { 'zz-agent': { iterations: 20 } } } } },
+    });
+    const root = await sm.createSession({ name: '根' });
+    await sm.updateSessionTitle(root.id, '<根会话>');
+    const c = client(server());
+    await c.init();
+    await c.call('session/config/update', { sessionId: root.id, plugin: 'zz-agent', key: 'iterations', value: 40 });
+    const { session: child } = await c.call('session/create', { name: '<子会话>', parentId: root.id });
+
+    const { items } = await c.call('session/config/overrides', { plugin: 'zz-agent' });
+    const iterations = items.find(item => item.key === 'iterations');
+    expect(iterations?.entries).toEqual([
+      { target: { layer: { scope: 'platform', platform: 'onebot' } }, value: 20 },
+      { target: { sessionId: root.id, title: '<根会话>' }, value: 40 },
+      {
+        target: { sessionId: child.id, title: '<子会话>', parent: { sessionId: root.id, title: '<根会话>' } },
+        value: 40,
+      },
+    ]);
+    expect(new Set(items.map(item => item.key)).size).toBe(items.length);
+    expect((await c.call('session/config/overrides', { plugin: 'zz-other' })).items).toEqual(
+      expect.arrayContaining([{ key: 'scope', entries: [expect.objectContaining({ value: 'platform' })] }]),
+    );
+  });
+
+  it('owner 会话按入口平台选平台档：接管会话 id 的适配器，没有时取连接的平台；子会话按根会话取，不读 metadata 里的 platform', async () => {
+    const { server, sm } = await setup({
+      doc: {
+        sessionConfig: {
+          platforms: { webui: { 'zz-agent': { persona: '<webui>' } }, cli: { 'zz-agent': { persona: '<cli>' } } },
+        },
+      },
+    });
     const persona = async (conn: ReturnType<typeof client>, sessionId: string) =>
-      (await conn.call('session/config/get', { sessionId })).items.find(r => r.key === 'persona')?.effective;
+      find((await conn.call('session/config/get', { sessionId })).items, 'persona')?.effective;
+    const c = client(server());
+    await c.init();
     const cli = client(server(), {
       identity: { platform: 'cli', userId: 'console' },
       surface: { ...DETACHED_SURFACE, name: 'cli' },
     });
     await cli.init();
-    expect(await persona(cli, 'session-old')).toBe('aalis-cli');
-    const recorded = await sm.createSession({ name: '子任务建的', metadata: { platform: 'cli' } });
-    expect(await persona(c, recorded.id)).toBe('aalis-cli');
+
+    const s = await sm.createSession({ name: 'S' });
+    expect([await persona(c, s.id), await persona(cli, s.id)]).toEqual(['<webui>', '<cli>']);
     await sm.ensureSession('cli-default');
-    expect(await persona(c, 'cli-default')).toBe('aalis-cli');
-    expect((await c.fail('session/config/get', { sessionId: 'session-nope' })).data?.code).toBe('not-found');
+    expect(await persona(c, 'cli-default')).toBe('<cli>');
+    const child = await sm.createChildSession(s.id, { name: '子', metadata: { platform: 'cli' } });
+    expect(await persona(c, child.id)).toBe('<webui>');
+    const underCli = await sm.createChildSession('cli-default', { name: '子' });
+    expect(await persona(c, underCli.id)).toBe('<cli>');
   });
 
-  it('config/update：按键写成本会话的覆盖，null 恢复继承，回最新的行；没登记的键与不合字段的值回参数错误、什么都不改', async () => {
-    const { server, sm } = await setup({ layers: LAYERS });
+  it('会话设置不在：session/config/* 六个方法都回 unsupported', async () => {
+    const { server, sm } = await setup({ settings: false });
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
     await c.init();
-    const pick = (rows: Rows, ...keys: string[]) => values(rows.filter(r => keys.includes(r.key)));
-
-    const set = await c.call('session/config/update', { sessionId: s.id, patch: { persona: '<人设>', think: 'off' } });
-    expect(pick(set.items, 'persona', 'think')).toEqual([
-      ['think', 'off', 'off', 'session'],
-      ['persona', '<人设>', '<人设>', 'session'],
-    ]);
-
-    const reset = await c.call('session/config/update', { sessionId: s.id, patch: { persona: null } });
-    expect(pick(reset.items, 'persona')).toEqual([['persona', undefined, 'aalis-webui', 'platform']]);
-    expect(sm.getSession(s.id)?.config).toEqual({ think: 'off' });
-
-    for (const patch of [
-      { think: 1 },
-      { bogus: 1 },
-      { persona: '<另一个>', maxToolIterations: 0 },
-      { llm: 'x' },
-      { llm: { provider: 1, model: {} } },
-    ]) {
-      const err = await c.fail('session/config/update', { sessionId: s.id, patch });
-      expect(err.code, JSON.stringify(patch)).toBe(RPC_ERROR_CODES.invalidParams);
+    const layer = { scope: 'global' } as const;
+    for (const [method, params] of [
+      ['session/config/get', { sessionId: s.id }],
+      ['session/config/update', { sessionId: s.id, plugin: 'zz-agent', key: 'persona', value: 'x' }],
+      ['session/config/layers', {}],
+      ['session/config/layer/get', { layer }],
+      ['session/config/layer/update', { layer, plugin: 'zz-agent', key: 'persona', value: 'x' }],
+      ['session/config/overrides', { plugin: 'zz-agent' }],
+    ] satisfies Array<[SessionMethod, object]>) {
+      expect((await c.fail(method, params)).data?.code, method).toBe('unsupported');
     }
-    expect(sm.getSession(s.id)?.config).toEqual({ think: 'off' });
-    expect((await c.fail('session/config/update', { sessionId: 'session-nope', patch: {} })).data?.code).toBe(
-      'not-found',
+  });
+
+  it('功能位 settings 随会话设置服务上下线：握手带它，停用与启用各推一次 features/changed', async () => {
+    const { app, server } = await setup();
+    const c = client(server());
+    expect((await c.init()).features.settings).toBe(true);
+    await app.plugins.disable(sessionSettingsPlugin.name);
+    await vi.waitFor(() => expect(c.notifications('features/changed').map(p => p.features.settings)).toEqual([false]));
+    await app.plugins.enable(sessionSettingsPlugin.name);
+    await vi.waitFor(() =>
+      expect(c.notifications('features/changed').map(p => p.features.settings)).toEqual([false, true]),
     );
   });
 
-  it('只能设到场所为止的项：会话的行里没有，写进本会话被拒（这一项在场所及以上设置）、清掉照收；全局默认、平台档、平台类型档与场所照列照收', async () => {
-    const { host, server, sm, doc } = await setup({
-      stored: { [`${ROOM}-legacy`]: { ...storedRoom(`${ROOM}-legacy`), config: { paperName: '<旧数据>' } } },
-    });
-    await recordRoom(host.events.use, ROOM, '群');
-    const c = client(server());
-    await c.init();
-
-    expect(keys((await c.call('session/config/get', { sessionId: ROOM })).items)).not.toContain('paperName');
-    const err = await c.fail('session/config/update', { sessionId: ROOM, patch: { paperName: '<白纸>' } });
-    expect(err.code).toBe(RPC_ERROR_CODES.invalidParams);
-    expect(err.message).toContain('这一项在场所及以上设置');
-    expect(sm.getSession(ROOM)?.config).toEqual({});
-    await c.call('session/config/update', { sessionId: `${ROOM}-legacy`, patch: { paperName: null } });
-    expect(sm.getSession(`${ROOM}-legacy`)?.config).toEqual({});
-
-    const onebot = { scope: 'platform', platform: 'onebot' } as const;
-    for (const layer of [{ scope: 'defaults' } as const, onebot, GROUP, WINDOW]) {
-      const rows = (await c.call('session/config/layer/update', { layer, patch: { paperName: '<白纸>' } })).items;
-      expect(
-        rows.find(r => r.key === 'paperName'),
-        JSON.stringify(layer),
-      ).toMatchObject({ value: '<白纸>' });
-    }
-    expect(doc()).toEqual({
-      defaults: { paperName: '<白纸>' },
-      platforms: { onebot: { paperName: '<白纸>' } },
-      types: { onebot: { group: { paperName: '<白纸>' } } },
-    });
-    expect(sm.getLayer(WINDOW)).toEqual({ paperName: '<白纸>' });
-  });
-
-  it('场所写入只收适用于它的类别的项（窗口按房间、工作区按 owner 的会话）：不适用的回参数错误、什么都不改；平台类型档收全部', async () => {
-    const { host, server, sm, doc } = await setup({ layers: LAYERS });
-    await recordRoom(host.events.use, ROOM, '群');
-    const c = client(server());
-    await c.init();
-    const rejected = async (params: object) =>
-      expect((await c.fail('session/config/layer/update', params)).code, JSON.stringify(params)).toBe(
-        RPC_ERROR_CODES.invalidParams,
-      );
-
-    await rejected({ layer: WINDOW, patch: { clientSideJsonRendering: true } });
-    await rejected({ layer: HOME, patch: { paperName: '<白纸>' } });
-    expect(sm.getLayer(WINDOW)).toEqual({});
-    expect(sm.getLayer(HOME)).toEqual({});
-
-    await c.call('session/config/layer/update', { layer: GROUP, patch: { clientSideJsonRendering: true } });
-    expect(doc()?.types).toEqual({
-      onebot: { group: { think: 'high', paperName: '<群白纸>', clientSideJsonRendering: true } },
-    });
-  });
-
-  it('按层读写：layers 按层表的先后列出可以设的各层，另带层表；一层的行与会话的同形，各带解析到这一层为止的生效值与来源；场所只列适用于它的类别的项', async () => {
-    const { host, server, sm, doc } = await setup({ layers: LAYERS });
-    await recordRoom(host.events.use, ROOM, '群');
-    const c = client(server());
-    await c.init();
-    const onebot = { scope: 'platform', platform: 'onebot' } as const;
-
-    expect(await c.call('session/config/layers', {})).toEqual({
-      layers: [
-        { scope: 'defaults' },
-        { scope: 'platform', platform: 'cli' },
-        onebot,
-        { scope: 'platform', platform: 'webui' },
-        GROUP,
-        HOME,
-        WINDOW,
-      ],
-      order: SESSION_LAYERS.map(({ name, label }) => ({ name, label: toSource(label) })),
-    });
-    const defaults = await c.call('session/config/layer/get', { layer: { scope: 'defaults' } });
-    expect(keys(defaults.items)).toEqual(expect.arrayContaining(['clientSideJsonRendering', 'paperName']));
-    const group = (await c.call('session/config/layer/get', { layer: GROUP })).items;
-    expect(keys(group)).toEqual(expect.arrayContaining(['clientSideJsonRendering', 'paperName']));
-    expect(values(group).filter(([, , effective]) => effective !== undefined)).toEqual([
-      ['think', 'high', 'high', 'type'],
-      ['persona', undefined, 'aalis', 'defaults'],
-      ['enabledToolGroups', undefined, ['onebot'], 'platform'],
-      ['paperName', '<群白纸>', '<群白纸>', 'type'],
-    ]);
-
-    // 窗口场所在它的平台档与平台类型档之上；工作区场所只在全局默认之上
-    await sm.updateLayer(WINDOW, { persona: '<群人设>' });
-    const window = (await c.call('session/config/layer/get', { layer: WINDOW })).items;
-    expect(keys(window)).not.toContain('clientSideJsonRendering');
-    expect(values(window).filter(([, , effective]) => effective !== undefined)).toEqual([
-      ['think', undefined, 'high', 'type'],
-      ['persona', '<群人设>', '<群人设>', 'place'],
-      ['enabledToolGroups', undefined, ['onebot'], 'platform'],
-      ['paperName', undefined, '<群白纸>', 'type'],
-    ]);
-    const home = (await c.call('session/config/layer/get', { layer: HOME })).items;
-    expect(keys(home)).toContain('clientSideJsonRendering');
-    expect(keys(home)).not.toContain('paperName');
-    expect(values(home).filter(([, , effective]) => effective !== undefined)).toEqual([
-      ['persona', undefined, 'aalis', 'defaults'],
-    ]);
-
-    // 场所写进场所记录，不进宿主配置；同一窗口里另一个机器人账号的会话照样取到
-    const updated = await c.call('session/config/layer/update', { layer: WINDOW, patch: { persona: '<新群人设>' } });
-    expect(values(updated.items).find(([key]) => key === 'persona')).toEqual([
-      'persona',
-      '<新群人设>',
-      '<新群人设>',
-      'place',
-    ]);
-    expect(doc()).toEqual(LAYERS);
-    await recordRoom(host.events.use, 'onebot:10001:group:1', '群');
-    const other = (await c.call('session/config/get', { sessionId: 'onebot:10001:group:1' })).items;
-    expect(values(other).find(([key]) => key === 'persona')).toEqual(['persona', undefined, '<新群人设>', 'place']);
-
-    await c.call('session/config/layer/update', { layer: onebot, patch: { persona: '<平台人设>' } });
-    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<平台人设>' });
-
-    for (const params of [
-      { layer: onebot, patch: { bogus: 1 } },
-      { layer: onebot, patch: { think: 1 } },
-      { layer: { scope: 'platform', platform: '' }, patch: { persona: '<人设>' } },
-      { layer: { scope: 'type', platform: 'onebot', type: '*' }, patch: { persona: '<人设>' } },
-      { layer: { scope: 'place', key: 'onebot:group:404' }, patch: { persona: '<人设>' } },
-      { layer: { scope: 'audience', platform: 'onebot', audience: 'group' }, patch: { persona: '<人设>' } },
-    ]) {
-      const err = await c.fail('session/config/layer/update', params);
-      expect(err.code, JSON.stringify(params)).toBe(RPC_ERROR_CODES.invalidParams);
-    }
-    expect(doc()?.platforms?.onebot).toEqual({ enabledToolGroups: ['onebot'], persona: '<平台人设>' });
-  });
-
-  it('全局默认层的「模型」：生效值出自全局默认或哪一层都没设时，行上带服务此刻实际用的那一个；偏好指向的模型不在时两者不同；上面的层设了不带', async () => {
-    const A = '@zz/llm-a';
-    const { host, server, sm } = await setup({
-      models: [
-        [A, 'm1'],
-        [A, 'm2'],
-      ],
-    });
-    const s = await sm.createSession({ name: 'S' });
-    const c = client(server());
-    await c.init();
-    const model = async () =>
-      (await c.call('session/config/get', { sessionId: s.id })).items.find(r => r.key === 'llm');
-    const atDefaults = async () =>
-      (await c.call('session/config/layer/get', { layer: { scope: 'defaults' } })).items.find(r => r.key === 'llm');
-    const m1 = { provider: A, model: 'm1' };
-
-    const unset = await model();
-    expect([unset?.effective, unset?.source, unset?.resolved]).toEqual([undefined, undefined, m1]);
-    const layer = await atDefaults();
-    expect([layer?.value, layer?.resolved]).toEqual([undefined, m1]);
-    expect(
-      (await c.call('session/config/get', { sessionId: s.id })).items.filter(r => r.resolved !== undefined),
-    ).toHaveLength(1);
-
-    const set = await c.call('session/config/layer/update', {
-      layer: { scope: 'defaults' },
-      patch: { llm: { provider: A, model: 'm2' } },
-    });
-    expect(host.services.use.preferred(llm)).toBe(`${A}/m2`);
-    expect(set.items.find(r => r.key === 'llm')).toMatchObject({
-      value: { provider: A, model: 'm2' },
-      source: 'defaults',
-      resolved: { provider: A, model: 'm2' },
-    });
-
-    await c.call('session/config/layer/update', {
-      layer: { scope: 'defaults' },
-      patch: { llm: { provider: A, model: 'gone' } },
-    });
-    expect(await model()).toMatchObject({
-      effective: { provider: A, model: 'gone' },
-      source: 'defaults',
-      resolved: m1,
-    });
-
-    await c.call('session/config/update', { sessionId: s.id, patch: { llm: { provider: A, model: 'm2' } } });
-    const own = await model();
-    expect(own).toMatchObject({ source: 'session' });
-    expect(own).not.toHaveProperty('resolved');
-  });
-
-  it('插件启停推 session/config/changed：每条连接都收到；停用后它的项不再出现、值还在，重新启用后恢复', async () => {
-    const { app, host, server, sm } = await setup();
-    await recordRoom(host.events.use, ROOM);
-    await sm.updateLayer(WINDOW, { paperName: '<窗口白纸>' });
+  it('session-settings:changed 与 host-config:changed 各推一次 session/config/changed，每条连接都收到', async () => {
+    const { host, server } = await setup();
     const a = client(server());
     const b = client(server());
     await a.init();
     await b.init();
-    const paperRow = async () =>
-      (await a.call('session/config/layer/get', { layer: WINDOW })).items.find(r => r.key === 'paperName');
-
-    await app.plugins.disable('paper-settings');
-    expect(a.notifications('session/config/changed')).toHaveLength(1);
-    expect(b.notifications('session/config/changed')).toHaveLength(1);
-    expect(await paperRow()).toBeUndefined();
-    expect(sm.getPlace(WINDOW.key)).toBeDefined();
-    await app.plugins.enable('paper-settings');
-    expect(b.notifications('session/config/changed')).toHaveLength(2);
-    expect(await paperRow()).toMatchObject({ value: '<窗口白纸>', source: 'place' });
+    await host.events.use.emit('session-settings:changed');
+    expect([a, b].map(conn => conn.notifications('session/config/changed'))).toEqual([[{}], [{}]]);
+    await host.events.use.emit('host-config:changed', { document: true });
+    expect([a, b].map(conn => conn.notifications('session/config/changed'))).toEqual([
+      [{}, {}],
+      [{}, {}],
+    ]);
   });
 });

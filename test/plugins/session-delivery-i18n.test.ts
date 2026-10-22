@@ -22,6 +22,7 @@ import {
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -73,7 +74,7 @@ const adapterPlugin = definePlugin({
  * setLanguage 改它。平台没收下她发进房间的消息：送达结果的原因是文字对象，并像适配器一样记下投递失败
  */
 async function setup() {
-  const { app } = hostedApp({ sessionConfig: { defaults: { language: ['en'] } } }, { logger: silent });
+  const { app } = hostedApp(i18nSection(['en']), { logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-delivery-i18n-'));
   homes.push(home);
@@ -150,7 +151,7 @@ async function setup() {
     await c.init();
     return c;
   };
-  const setLanguage = (language: string[]) => host.sessionManager.use.updateLayer({ scope: 'defaults' }, { language });
+  const setLanguage = async (language: string[]) => setHostLanguage(app, language);
   return { turn, connect, setLanguage };
 }
 

@@ -35,7 +35,10 @@
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "yaml": "^2.7.0",
-    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -52,7 +55,9 @@
       "optional": [
         "platform",
         "storage",
-        "session-manager"
+        "session-manager",
+        "host-config",
+        "session-settings"
       ],
       "provides": [
         "persona"

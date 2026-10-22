@@ -1,5 +1,7 @@
+import { contributions } from '@aalis/api-contributions';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
+import type {} from '@aalis/api-webui'; // 贡献点 webui:options 的键类型经 declaration merging 并入，删掉会丢类型
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 
@@ -19,7 +21,7 @@ const configSchema = defineConfig({
     type: 'select',
     label: 'Embedding 模型',
     default: 'nomic-embed-text',
-    dynamicOptions: 'embedding',
+    dynamicOptions: 'embedding-ollama',
     description: '用于生成文本向量的模型',
   },
   timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 30000, description: '单次 embedding 请求超时时间' },
@@ -175,6 +177,7 @@ class OllamaEmbeddingService implements EmbeddingService {
     return data.embedding;
   }
 
+  /** 本机 Ollama 的全部模型：本插件的可选项来源 embedding-ollama 用它 */
   async listModels(): Promise<string[]> {
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(this.timeoutMs) });
@@ -194,8 +197,11 @@ class OllamaEmbeddingService implements EmbeddingService {
 
 // ===== 插件入口 =====
 
-/** doctor 是可选依赖：服务注册成功 != 模型可用，健康状况经 registerCheck 上报 */
-const uses = { config, logger, lifecycle, provide, doctor: optional(doctor) };
+/**
+ * doctor 是可选依赖：服务注册成功 != 模型可用，健康状况经 registerCheck 上报。contributions 交「Embedding 模型」下拉的
+ * 可选项来源，缺席时下拉没有可选项
+ */
+const uses = { config, logger, lifecycle, provide, doctor: optional(doctor), contributions: optional(contributions) };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -209,7 +215,14 @@ export default definePlugin({
   apply: startOllamaEmbedding,
 });
 
-async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor }: Caps): Promise<void> {
+async function startOllamaEmbedding({
+  config,
+  logger,
+  lifecycle,
+  provide,
+  doctor,
+  contributions,
+}: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, config.use, logger.use);
   if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
     throw configError('baseUrl 需为不带用户名或密码的完整 URL');
@@ -228,6 +241,11 @@ async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor
   }
 
   provide.use(embedding, service, { label: `Ollama / ${model}` });
+  // 「Embedding 模型」下拉只列本实例连着的这台 Ollama 的模型（按服务名合起各提供者会混进别家的）
+  contributions.use.contribute('webui:options', {
+    id: 'embedding-ollama',
+    list: async () => (await service.listModels()).map(name => ({ value: name, label: name })),
+  });
 
   // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
   // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只判存在性，

@@ -155,7 +155,7 @@ const uses = {
   flowControl: optional(flowControl),
   // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
-  // 名字表按会话取人设：解析会话配置里的角色卡；消息不带机器人账号时取房间记下的。缺席时取全局默认的卡，不带账号的兜底
+  // 消息不带机器人账号时取房间建档时记下的；缺席时不带账号的消息按兜底
   sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
@@ -191,7 +191,7 @@ function run(caps: Caps): void {
   caps.provide.use(trigger, self, { priority: PRIORITY, label: self.label });
   const winner = () => caps.trigger.list().find(p => p.selected);
   /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, caps.sessionManager, logger.use, '[laya]');
+  const botNames = createBotNames(caps.persona, logger.use, '[laya]');
 
   // ----- 可用性：熔断与告警 -----
 

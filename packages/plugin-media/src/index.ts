@@ -378,8 +378,8 @@ function run(caps: Caps): void {
 
   // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定末条 user 消息的 images[]
   // 交给主模型什么——describe 清空（识别归识别模型，结果已在正文文字里），passthrough
-  // 规范化形态并把动图抽帧（真值表见 service.transformModelImages）。auto 按本会话生效
-  // 主模型的 vision 能力现场解析。放中间件而非改 api-media 契约或 plugin-agent——
+  // 规范化形态并把动图抽帧（真值表见 service.transformModelImages）。auto 按这一轮的
+  // 对话模型（data.model）的 vision 能力现场解析。放中间件而非改 api-media 契约或 plugin-agent——
   // 形态知识整体留在本插件内（契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于
   // 末条 user 消息（尾部），不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
   //
@@ -398,7 +398,7 @@ function run(caps: Caps): void {
         if (m.role === 'user' && m.images && m.images.length > 0) {
           if (!transformed.has(m)) {
             transformed.add(m);
-            m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.sessionId, data.platform));
+            m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.model));
           }
           break;
         }

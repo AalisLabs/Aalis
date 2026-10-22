@@ -7,6 +7,8 @@ const SOURCE = {
   budgetRatioLabel: '摘要预算（占压掉内容的比例）',
   budgetRatioDescription:
     '压缩时，摘要连同原样保留的原文合计约为这次重写的输入（上一份摘要加这次新压的对话）的这个比例，越旧的内容因此越浓缩。合计不少于 {min} token，其中保留的原文不超过这次新压的对话的这个比例（不算上一份摘要，也不按这个下限算）；摘要模型的输出上限与窗口、这个会话的压缩线另有封顶',
+  compressAtLabel: '自动压缩线（占窗口比例）',
+  compressAtDescription: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）',
 } as const;
 export type Source = typeof SOURCE;
 

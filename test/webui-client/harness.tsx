@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { expect, vi } from 'vitest';
-import { SESSION_LAYERS } from '../../packages/api-session-manager/src/index.js';
 import type { SessionMethodParams, SessionMethodResult } from '../../packages/api-session-protocol/src/index.js';
+import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import { PAGE_LANGUAGE_ID, type PageLanguage } from '../../packages/api-webui/src/index.js';
 import { App } from '../../packages/plugin-webui-client/src/App.js';
 import { setLanguage } from '../../packages/plugin-webui-client/src/language.js';
@@ -26,7 +26,7 @@ export const INIT: SessionMethodResult<'initialize'> = {
   server: { name: 'server' },
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
-  features: { send: true, rewind: true, compress: true },
+  features: { send: true, rewind: true, compress: true, settings: true },
   appName: 'Aalis',
 };
 
@@ -290,7 +290,7 @@ export async function renderApp(
   const all: FakeHandlers = {
     initialize: () => INIT,
     'sessions/watch': () => ({}),
-    'session/config/layers': () => ({ layers: [{ scope: 'defaults' }], order: LAYER_ORDER }),
+    'session/config/layers': () => ({ layers: [{ layer: { scope: 'global' } }], order: LAYER_ORDER }),
     ...handlers,
   };
   const session = createSessionClient();

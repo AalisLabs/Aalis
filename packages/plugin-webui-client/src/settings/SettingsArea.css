@@ -147,3 +147,40 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+/* 会话默认：左边选层、右边这一层的项；手机上两屏，各占一屏 */
+.session-defaults {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-6);
+}
+
+.session-defaults-layers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.session-defaults-layers > input {
+  width: 100%;
+}
+
+.session-defaults-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: var(--measure-page);
+}
+
+.session-defaults-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-md);
+}
+
+.session-defaults-back {
+  align-self: flex-start;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}

@@ -3,6 +3,7 @@ import { commands } from '../../packages/api-commands/src/index.js';
 import type {} from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { BACKGROUND_TASK_NOTICE, tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, provide, services } from '../../packages/core/src/index.js';
@@ -44,10 +45,16 @@ async function setup(schedulerConfig: Record<string, unknown> = {}) {
   host.provide.use(storage, memoryStorage().service as never);
   host.provide.use(sessionManager, {
     getSession: (id: string) => (id === CHILD ? { id, parentId: PARENT, status: 'active' } : undefined),
-    childConfig: () => ({}),
+    listSessions: () => [],
+    recordInbound: async () => {},
     createChildSession: async () => ({ id: CHILD }),
     updateSession: async () => {},
-    registerSetting: () => () => {},
+  } as never);
+  // 会话设置的替身：父会话没有各层的值，子会话不写下什么
+  host.provide.use(sessionSettings, {
+    register: () => () => {},
+    chain: () => ({ parts: [] }),
+    childMetadata: () => ({}),
   } as never);
   for (const plugin of [gatewayPlugin, commandsPlugin, authorityPlugin, toolsPlugin, cronEnginePlugin, subtaskPlugin]) {
     await app.plugin(plugin);

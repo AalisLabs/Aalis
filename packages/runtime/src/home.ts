@@ -214,9 +214,11 @@ export function isHomeInitialized(paths: HostPaths): boolean {
 
 /**
  * 只有 owner 进得来的平台（本地终端、单 token 的 WebUI）的平台档开箱给全部工具分组，无条件写：平台没装时这一层不起作用，
- * 之后从市场装上即生效。多人平台不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸。与 create-aalis 生成的平台档一致
+ * 之后从市场装上即生效。多人平台不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸。平台档按插件实例放
+ * 这个实例的值。与 create-aalis 生成的平台档一致
  */
-const OWNER_PLATFORM_PROFILES = { cli: { enabledToolGroups: ['*'] }, webui: { enabledToolGroups: ['*'] } };
+const ALL_TOOL_GROUPS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
+const OWNER_PLATFORM_PROFILES = { cli: ALL_TOOL_GROUPS, webui: ALL_TOOL_GROUPS };
 
 /**
  * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置里写上 owner 平台的平台档。

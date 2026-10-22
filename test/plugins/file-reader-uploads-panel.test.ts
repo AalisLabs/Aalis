@@ -55,6 +55,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
   let preprocessor: PreprocessorFn | undefined;
   host.provide.use(agent, {
     async handleMessage() {},
+    async assignModel() {},
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {

@@ -5,7 +5,6 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
-import { settingsPlugin, THINK } from '../fixtures/session-settings.js';
 
 // 背景：带 source 的注入回合（定时任务、编排）可能落在还没建档的会话上，createChildSession 原本对未建档的父
 // 直接抛「父会话不存在」，create_subtask 在这些会话里必败。
@@ -17,7 +16,6 @@ async function setup() {
   const host = app.bind({ provide, events, sessionManager });
   host.provide.use(memory, fakeMemory() as never);
   await app.plugin(sessionManagerPlugin);
-  await app.plugin(settingsPlugin('test-settings', [THINK]));
   await app.plugins.idle();
   // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
@@ -44,13 +42,13 @@ describe('createChildSession：父会话未建档时兜底建档', () => {
   it('父会话已建档时不改动其既有字段（兜底不越权覆盖）', async () => {
     const { app, sm } = await setup();
     const parentId = 'cli-default';
-    await sm.ensureSession(parentId, { name: '终端', config: { think: 'off' } }, { createdFrom: 'cli' });
+    await sm.ensureSession(parentId, { name: '终端', metadata: { note: '<父会话的>' } }, { createdFrom: 'cli' });
 
-    const child = await sm.createChildSession(parentId, { name: '子任务 B', config: { think: 'high' } });
+    const child = await sm.createChildSession(parentId, { name: '子任务 B', metadata: { note: '<子会话的>' } });
 
     const parent = sm.getSession(parentId);
     expect(parent?.name).toBe('终端');
-    expect(parent?.config).toEqual({ think: 'off' });
+    expect(parent?.metadata).toEqual({ note: '<父会话的>' });
     expect(parent?.createdFrom).toBe('cli');
     expect(parent?.children).toContain(child.id);
     await app.stop();

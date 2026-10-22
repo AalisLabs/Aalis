@@ -11,7 +11,7 @@ import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { hostedApp } from '../fixtures/app.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -28,9 +28,9 @@ afterEach(async () => {
 const PROBE = 'zz_ctx_probe';
 const LONG = 'a'.repeat(2000);
 
-/** callsTool：第一次对话调用先调一次探针工具，之后都直接回复 */
-async function boot(contextLength: number, { systemPrompt = 'test bot', callsTool = false } = {}) {
-  const { app } = hostedApp();
+/** callsTool：第一次对话调用先调一次探针工具，之后都直接回复；historyLimit 是对话代理配置里的条数线 */
+async function boot(contextLength: number, { systemPrompt = 'test bot', callsTool = false, historyLimit = 0 } = {}) {
+  const { app, store } = hostedApp({ plugins: { [agentPlugin.name]: { systemPrompt, historyLimit } } });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];
@@ -55,7 +55,7 @@ async function boot(contextLength: number, { systemPrompt = 'test bot', callsToo
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchive, { debugLogs: false });
   await app.plugin(sessionManagerPlugin);
-  await app.plugin(agentPlugin, { systemPrompt });
+  await registerFromDoc(app, store, agentPlugin);
   await app.plugin(memorySummary);
   await app.plugins.idle();
   for (const plugin of [sessionManagerPlugin, agentPlugin, memorySummary]) {
@@ -97,9 +97,8 @@ async function boot(contextLength: number, { systemPrompt = 'test bot', callsToo
 const textsOf = (request: ChatModelRequest | undefined) => (request?.messages ?? []).map(m => String(m.content ?? ''));
 
 it('条数线：回合结束时会话条数（含落库的最终回复）到线就全量压缩，下一轮读之前已压完；用量远不到压缩线', async () => {
-  const { host, recorder, statuses, usages, ask, summaries, active } = await boot(100_000);
+  const { recorder, statuses, usages, ask, summaries, active } = await boot(100_000, { historyLimit: 4 });
   const SESSION = 'zz-ctx-count';
-  await host.sessionManager.use.ensureSession(SESSION, { config: { historyLimit: 4 } });
 
   // 第一轮读进 1 条、落库回复后 2 条；第二轮读进 3 条、落库回复后 4 条，到线
   await ask(SESSION, '第一问');

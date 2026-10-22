@@ -3,6 +3,7 @@ import { storage } from '@aalis/api-storage';
 import { App, type Logger, provide } from '@aalis/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { emptyMediaCaps } from '../fixtures/service-ref.js';
@@ -151,6 +152,9 @@ describe('agent:llm:before 中间件接线', () => {
     const host = app.bind({ provide, hooks });
     host.provide.use(processService, {} as never);
     host.provide.use(storage, {} as never);
+    // 两个对话模型：默认条目（先登记的）能看图，另一个不能
+    host.provide.use(llm, { id: 'vision', capabilities: ['chat', 'vision'] } as never, { entryId: 'zz-p/vision' });
+    host.provide.use(llm, { id: 'text', capabilities: ['chat'] } as never, { entryId: 'zz-p/text' });
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery } });
     await app.plugins.idle();
@@ -158,7 +162,7 @@ describe('agent:llm:before 中间件接线', () => {
     return { app, host };
   }
 
-  async function runHookWith(delivery: string, dryRun: boolean) {
+  async function runHookWith(delivery: string, dryRun: boolean, model = 'vision') {
     const { app, host } = await bootMedia(delivery);
     const data = {
       messages: [
@@ -168,6 +172,7 @@ describe('agent:llm:before 中间件接线', () => {
       ],
       tools: [],
       sessionId: 's',
+      model: { provider: 'zz-p', model },
       dryRun,
     };
     await host.hooks.use.run('agent:llm:before', data as never);
@@ -190,6 +195,13 @@ describe('agent:llm:before 中间件接线', () => {
     const data = await runHookWith('describe', false);
     expect(data.messages[2].images).toEqual([]);
     expect(data.messages[1].images).toEqual([GIF_DATA]); // 仅末条，历史 user 消息不动
+  });
+
+  it('auto：按这一轮的模型（data.model）判，不能看图的模型清空末条 user 的 images，能看图的抽帧交出', async () => {
+    const text = await runHookWith('auto', false, 'text');
+    expect(text.messages[2].images).toEqual([]);
+    const vision = await runHookWith('auto', false, 'vision');
+    expect(vision.messages[2].images).toEqual(['frame-0', 'frame-1', 'frame-2', 'frame-3', 'frame-4', PLAIN_URL]);
   });
 
   it('工具循环重跑钩子：每条消息只处理一次（成功不重做，失败不重试）', async () => {

@@ -2,14 +2,15 @@ import { Buffer } from 'node:buffer';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
-import { persona } from '@aalis/api-persona';
-import { sessionManager } from '@aalis/api-session-manager';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, isStorageUri, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills — Agent Skills（兼容 Anthropic Agent Skills 标准）
@@ -26,7 +27,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 //   2. Activation: 调用 load_skill(name) 或 triggers regex 命中自动激活
 //   3. Execution: SKILL.md body 注入下一轮，agent 按指令使用 scripts/references
 //
-// 与 persona 协同：persona 卡可声明 `skills: [...]` 白名单，按调用所在会话的人设取。
+// 启用哪些技能是按会话字段 enabledSkills（'*' 即全部技能），以上三阶段都按调用所在的会话取。
 // ════════════════════════════════════════════════════════════
 
 // ──────────── 数据结构 ────────────
@@ -149,6 +150,16 @@ const configSchema = defineConfig({
     default: true,
     description: '匹配 SKILL.md frontmatter 中的 triggers regex 时自动加载该 skill。',
   },
+  // 按会话字段：'*' 即全部技能（与工具分组同一写法），空列表一个都不启用；只有 owner 能改
+  enabledSkills: {
+    type: 'multiselect',
+    label: t('enabledLabel'),
+    description: t('enabledDescription'),
+    dynamicOptions: 'skills',
+    allowCustom: true,
+    default: ['*'],
+    session: { appliesTo: ['owner', 'room', 'task'], prominence: 'advanced' },
+  },
 });
 type SkillsConfig = ConfigOf<typeof configSchema>;
 
@@ -267,9 +278,10 @@ const uses = {
   tools: optional(tools),
   webui: optional(webuiServer),
   storage: optional(storage),
-  persona: optional(persona),
-  /** 会话用哪张人设卡：按调用所在会话的生效设置取；不在场时取主卡 */
-  sessionManager: optional(sessionManager),
+  /** 启用的技能按调用所在的会话读；缺席时只取本插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   contributions,
   hooks,
   events,
@@ -290,9 +302,10 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { tools, webui, persona, sessionManager, contributions, hooks, events, provide } = caps;
+  const { tools, webui, contributions, hooks, events, provide } = caps;
   const logger = caps.logger.use.child('skills');
   const config: SkillsConfig = parseConfig(configSchema, caps.config.use, logger);
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
   if (!isStorageUri(config.skillsUri)) throw configError('skillsUri 必须是 storage URI');
 
   // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
@@ -508,19 +521,23 @@ function run(caps: Caps): void {
     return s;
   }
 
-  // ── 会话的人设卡允许的技能：卡取会话生效设置里的人设（没有会话管理或没有会话时为主卡），白名单由人设服务给 ──
+  // ── 这个会话启用的技能：按调用所在的会话取 enabledSkills 的生效值（没有会话时取全局层），'*' 即全部 ──
   function getAllowedSkills(sessionId: string | undefined, platform: string | undefined): SkillDefinition[] {
     const all = [...skillsCache.values()];
-    const card = sessionId
-      ? sessionManager.present
-        ? sessionManager.use.resolveConfig(sessionId, platform).persona
-        : undefined
-      : undefined;
-    const whitelist = persona.present ? persona.use.getPersonaSkills?.({ persona: card }) : undefined;
-    if (whitelist === undefined) return all;
-    const set = new Set(whitelist);
+    const enabled = fields.get(sessionId, { platform }).enabledSkills;
+    if (enabled.includes('*')) return all;
+    const set = new Set(enabled);
     return all.filter(s => set.has(s.name));
   }
+
+  // 「启用的技能」下拉的可选项：'*'（全部技能）在前，其余是现有的技能，说明取技能的 description
+  contributions.use.contribute('webui:options', {
+    id: 'skills',
+    list: () => [
+      { value: '*', label: t('allSkills') },
+      ...[...skillsCache.values()].map(s => ({ value: s.name, label: s.name, description: s.description })),
+    ],
+  });
 
   // ── 注入源标记 ──
   const DISCOVERY_SOURCE = 'skills-discovery';
@@ -830,7 +847,7 @@ function run(caps: Caps): void {
       }
       if (!skill) return JSON.stringify({ error: `skill "${skillName}" 不存在` });
       if (!getAllowedSkills(callCtx?.sessionId, callCtx?.platform).includes(skill)) {
-        return JSON.stringify({ error: `skill "${skillName}" 不在这个会话的角色卡的技能白名单里` });
+        return JSON.stringify({ error: `skill "${skillName}" 不在这个会话启用的技能里` });
       }
       const sessionId = callCtx?.sessionId;
       if (!sessionId) {
@@ -864,7 +881,7 @@ function run(caps: Caps): void {
       function: {
         name: 'list_skills',
         description:
-          '列出可用 skills（受角色卡白名单过滤后），可按关键词模糊匹配 name/description。翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
+          '列出这个会话启用的 skills，可按关键词模糊匹配 name/description。翻页：下次调用传 offset = 上次 offset + limit，直到 has_more=false。',
         parameters: {
           type: 'object',
           properties: {

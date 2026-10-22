@@ -2,7 +2,7 @@
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
-const SOURCE = { invalidValue: '会话设置项 {key} 的值无效：{reason}' } as const;
+const SOURCE = { childrenDeleted: '已删除 {count, number} 个子会话' } as const;
 export type Source = typeof SOURCE;
 
 export const t = defineTexts({

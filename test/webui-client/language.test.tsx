@@ -9,6 +9,7 @@ import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
   type FakeRest,
   type Harness,
+  INIT,
   installDialog,
   language,
   pluginRow,
@@ -20,7 +21,8 @@ import {
 // ════════════════════════════════════════════════════════════
 // 界面的语言：外壳的文字与随前端打包的库字典（子系统组名）按全局默认层的语言链渲染，语言包补自带字典没有的语言，
 // i18n 不在（链为空）时按原文；<html lang> 是实际用的语言。首帧按服务端写进页面的语言块画，没有这一块时先按原文画再取。
-// 全局语言与语言包在别处改了：收到 session/config/changed 后重取语言与补充，链或补上的译文变了就换语言——外壳换成新的
+// 全局语言与语言包在别处改了：收到 session/config/changed 或管理连接的 plugins.changed 后重取语言与补充，链或补上的译文
+// 变了就换语言——外壳换成新的
 // 语言、缓存的数据重取、会话连接重连；都没变时什么都不动。取不到时按退避再取，补充没取到不挡换语言
 // ════════════════════════════════════════════════════════════
 
@@ -127,6 +129,22 @@ describe('界面的语言', () => {
     expect(sessionSockets()).toHaveLength(2);
     expect(gets('/api/plugins')).toHaveLength(settled.fetched);
     expect(screen.getByRole('link', { name: 'Market' })).toBeTruthy();
+  });
+  it('管理连接推 plugins.changed 也重取：会话设置不在时从插件详情改 i18n 的语言，界面照样跟着换', async () => {
+    let chain = ['zh-CN'];
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    app = await renderApp(
+      '/plugins',
+      { initialize: () => ({ ...INIT, features: { ...INIT.features, settings: false } }) },
+      plugins({ '/api/i18n/languages': () => ({ languages: [], chain, timeZone }) }),
+    );
+    expect(await screen.findByRole('link', { name: '市场' })).toBeTruthy();
+    chain = ['en'];
+    await act(async () => FakeWebSocket.at('/admin').push({ type: 'plugins.changed' }));
+    await vi.waitFor(() => expect(sessionSockets()).toHaveLength(2));
+    await app.reconnect();
+    expect(await screen.findByRole('link', { name: 'Market' })).toBeTruthy();
+    expect(document.documentElement.lang).toBe('en');
   });
 });
 

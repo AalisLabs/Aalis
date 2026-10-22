@@ -36,13 +36,15 @@
     "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-user-relation": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-user-relation": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -70,7 +72,8 @@
         "embedding",
         "commands",
         "platform",
-        "session-manager"
+        "host-config",
+        "session-settings"
       ],
       "provides": [
         "user-relation"

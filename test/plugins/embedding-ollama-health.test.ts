@@ -22,7 +22,7 @@ import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js
 
 type Mode = 'ok' | 'modelMissing' | 'hang' | 'stallBody' | 'tagsHang';
 
-/** 本插件的 embedding 实现始终带 listModels，而契约里它是可选方法 */
+/** 本插件的 embedding 实现带 listModels（不在契约里，本插件的可选项来源用它） */
 type OllamaEmbedding = EmbeddingService & { listModels(): Promise<string[]> };
 
 interface Fake {

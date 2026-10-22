@@ -102,7 +102,7 @@ describe('actor 消费端：agent 把 incoming.actor 折进 ToolCallContext', ()
 });
 
 describe('分组闸：平台档没配分组时执行面仍按「只给无分组工具」拦', () => {
-  it('没装 session-manager（无 enabledToolGroups）时，模型按名叫出有分组的工具也不执行', async () => {
+  it('会话设置不在、工具注册表配置里没开分组时，模型按名叫出有分组的工具也不执行', async () => {
     const recorder: ChatModelRequest[] = [];
     const callCtx = await runTurn(
       { content: 'hi', sessionId: 'onebot:1:group:2', platform: 'onebot', userId: 'u1', sessionType: 'group' },

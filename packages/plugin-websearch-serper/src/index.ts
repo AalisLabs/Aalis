@@ -1,4 +1,4 @@
-import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { chatModelPicker, llm } from '@aalis/api-llm';
 import { tools, wrapUntrustedContent } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -33,11 +33,6 @@ const configSchema = defineConfig({
     label: '启用搜索结果压缩',
     default: false,
     description: '启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
-  },
-  compressionLLM: {
-    type: 'llm-ref',
-    label: '压缩模型',
-    description: '选择用于压缩搜索结果的模型。留空则使用默认 LLM 提供者。',
   },
   compressionPrompt: {
     type: 'textarea',
@@ -218,8 +213,6 @@ export default definePlugin({
 
 function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   const cfg = parseConfig(configSchema, config.use, logger.use);
-  // 部分引用沿用默认模型，不把不完整的对象传入解析器。
-  const compressionLLM = cfg.compressionLLM?.provider && cfg.compressionLLM.model ? cfg.compressionLLM : undefined;
 
   const limiter = new RateLimiter(cfg);
 
@@ -228,9 +221,13 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
     '保留关键事实、数据和来源，去除重复和无关信息。用中文回答。\n\n' +
     '搜索关键词: {query}\n\n搜索结果:\n{results}';
 
-  /** 使用 LLM 压缩搜索结果 */
+  const pickChatModel = chatModelPicker(llm, () => logger.use.warn('没有可用的对话模型，搜索结果压缩跳过'));
+
+  /**
+   * 使用 LLM 压缩搜索结果；没有能对话的模型时返回原始结果。模型取 llm 服务给本插件挑的能对话的那一个（见 chatModelPicker）
+   */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    const entry = resolveLLMModel(llm, compressionLLM, ['chat']);
+    const entry = pickChatModel();
     if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;

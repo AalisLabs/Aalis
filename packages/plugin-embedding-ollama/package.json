@@ -38,6 +38,7 @@
   "aalis": {
     "service": {
       "optional": [
+        "contributions",
         "doctor"
       ],
       "provides": [
@@ -54,6 +55,8 @@
   "dependencies": {
     "@aalis/api-doctor": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-embedding": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0"
+    "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0"
   }
 }

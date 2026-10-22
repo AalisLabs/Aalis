@@ -1,7 +1,7 @@
 import { PAGE_LANGUAGE_ID, type PackedText, type PageLanguage } from '@aalis/api-webui';
 import { catalogEntries, type PackIndex } from '@aalis/schema-i18n';
 import { Fragment, type ReactNode, useEffect, useState } from 'react';
-import { useSessionClient } from './connection';
+import { useConnection } from './connection';
 import { language, pageLanguage, setLanguage } from './language';
 import { RETRY_DELAYS_MS } from './protocol/socket';
 import { getJson, isRecord } from './rest';
@@ -11,7 +11,8 @@ import { getJson, isRecord } from './rest';
 // 语言包给前端自带的字典（外壳与随前端打包的库字典）补的译文。全局语言与语言包可能在别处改了：会话设置变了
 // （session/config/changed，插件启停也推它）、会话连接重新握手时两样都重取，语言链、时区或补上的译文变了就换语言——重连会话
 // 协议、重挂整个界面（缓存的数据随之重取，插件框架随之重挂），<html lang> 跟着改；头一次取到时换了也不重连，会话的数据本来
-// 就是按服务端现在的语言取的。没取到、回应的形状不对时照现在的显示，按会话连接的退避（1、2、5、10 秒，之后每 30 秒）再取；
+// 就是按服务端现在的语言取的。全局语言是 i18n 的插件配置：会话设置不在时从插件详情改它，管理连接推 plugins.changed，
+// 同样重取。没取到、回应的形状不对时照现在的显示，按会话连接的退避（1、2、5、10 秒，之后每 30 秒）再取；
 // 只是补充没取到时语言链与时区照换，补充先空着
 
 const sameChain = (a: readonly string[], b: readonly string[]) =>
@@ -69,7 +70,7 @@ function fetchPacks(chain: readonly string[], signal: AbortSignal): Promise<Pack
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const session = useSessionClient();
+  const { session, admin } = useConnection();
   // 首帧之前换上页面里写好的语言：子组件画的时候取的就是它
   const [written] = useState(() => {
     const found = writtenLanguage();
@@ -111,13 +112,17 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       setGeneration(n => n + 1);
     };
     void load(written);
-    const offs = [session.onReady(() => void load()), session.on('session/config/changed', () => void load())];
+    const offs = [
+      session.onReady(() => void load()),
+      session.on('session/config/changed', () => void load()),
+      admin.on('plugins.changed', () => void load()),
+    ];
     return () => {
       controller.abort();
       clearTimeout(timer);
       for (const off of offs) off();
     };
-  }, [session, written]);
+  }, [session, admin, written]);
 
   return <Fragment key={generation}>{children}</Fragment>;
 }

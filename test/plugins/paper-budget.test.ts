@@ -7,11 +7,12 @@ import {
   paperBudgetUsage,
   reserveFor,
 } from '../../packages/plugin-paper/src/budget.js';
+import { configSchema } from '../../packages/plugin-paper/src/config.js';
+import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import { ROOM_SETTINGS } from '../../packages/plugin-paper/src/rooms.js';
 import { emptyLedger, human, PILOT_ROOM, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
-import { startSessionManager } from '../fixtures/session-settings.js';
+import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的每日上限：全局、白纸、房间与按人金额均可不填，不填即不增加该层限制；
@@ -390,18 +391,23 @@ describe('paper_task 按上限受理', () => {
   });
 });
 
-describe('房间设置项经会话管理交给预算', () => {
-  it('平台档里写坏的金额原样交出、按 0 拒绝：不回落到全局默认里的金额，也不退成不限', async () => {
-    const { app, sm } = await startSessionManager({
-      settings: ROOM_SETTINGS,
-      stored: { [ROOM]: storedRoom(ROOM) },
-      layers: {
-        defaults: { remoteAgentRoomDailyCents: 10_000 },
-        platforms: { onebot: { remoteAgentRoomDailyCents: -1, remoteAgentUserDailyCents: 'many' } },
+describe('房间的金额经会话设置交给预算', () => {
+  it('平台档里写坏的金额原样交出、按 0 拒绝：不回落到全局层（插件配置）里的金额，也不退成不限', async () => {
+    const paper = fieldsPlugin(paperPlugin.name, configSchema);
+    const { app } = await startSettings({
+      doc: {
+        plugins: { [paperPlugin.name]: { remoteAgentRoomDailyCents: 10_000 } },
+        sessionConfig: {
+          platforms: {
+            onebot: { [paperPlugin.name]: { remoteAgentRoomDailyCents: -1, remoteAgentUserDailyCents: 'many' } },
+          },
+        },
       },
+      stored: { [ROOM]: storedRoom(ROOM) },
+      fields: [paper.definition],
     });
     try {
-      const room = sm.resolveConfig(ROOM);
+      const room = paper.reader().get(ROOM);
       expect(room.remoteAgentRoomDailyCents).toBe(-1);
       const caps = { roomCents: room.remoteAgentRoomDailyCents, userCents: room.remoteAgentUserDailyCents };
       expect(canStart(emptyLedger(), DAY, 'n:zz-paper', ROOM_KEY, USER, limits(caps), 50).ok).toBe(false);

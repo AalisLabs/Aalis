@@ -20,7 +20,7 @@ const init: SessionMethodResult<'initialize'> = {
   server: { name: 'server' },
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
-  features: { send: true, rewind: true, compress: true },
+  features: { send: true, rewind: true, compress: true, settings: true },
   appName: 'Aalis',
 };
 

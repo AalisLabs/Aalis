@@ -8,8 +8,8 @@ import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { type ConfigSchema, deepMergeDefaults, defaultsFrom } from '../../packages/schema-config/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { roomScopeManager } from '../fixtures/room-scope.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 
 // tool-onebot 同时提供 OneBot 会话历史的拒绝规则，而 session_get_history 对没有规则的平台默认放行。
 // 所以写坏的开关不能让插件进 error：那会连同拒绝规则一起撤掉，群聊反而能读私聊。
@@ -48,7 +48,7 @@ async function setup(
   } as never);
   host.provide.use(memory, { getHistory: async () => [] } as never);
   const records = rooms.map(id => storedRoom(id));
-  host.provide.use(sessionManager, roomScopeManager({}, {}, records));
+  host.provide.use(sessionManager, sessionTableManager(records));
   await app.pluginAll([
     { definition: sessionTools, config: scope ? { scope } : {} },
     { definition: toolOnebot, config: deepMergeDefaults(defaultsFrom(schema), onebotFileConfig) },

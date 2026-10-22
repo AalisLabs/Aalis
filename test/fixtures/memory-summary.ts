@@ -107,12 +107,14 @@ export interface TurnAmounts {
   contextWindow?: number;
   tokenBudget?: number;
   historyMessages?: number;
+  /** 这一轮的历史条数上限，缺省 0（不按条数） */
+  historyLimit?: number;
 }
 
 /** 一条用量事件：没被硬裁剪，可压缩部分全记在历史一项；不给 turnId 即 token:request 的快照 */
 export function usageEvent(
   sessionId: string,
-  { used, compressible, contextWindow = 1000, tokenBudget = 1000, historyMessages = 0 }: TurnAmounts,
+  { used, compressible, contextWindow = 1000, tokenBudget = 1000, historyMessages = 0, historyLimit = 0 }: TurnAmounts,
   extra: { turnId?: string; platform?: string } = {},
 ): TokenUsageEvent {
   return {
@@ -127,6 +129,7 @@ export function usageEvent(
     trimmed: false,
     untrimmedHistory: compressible,
     historyMessages,
+    historyLimit,
     breakdown: {
       system: 0,
       persona: 0,

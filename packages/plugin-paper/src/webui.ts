@@ -25,7 +25,7 @@ import { type PaperConfig, type PaperSpec, specOf } from './config.js';
 import type { PaperDriver } from './driver.js';
 import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { currentProgress } from './progress.js';
-import { actorKey, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
+import { actorKey, type PaperFields, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
 import { t } from './texts.js';
 import { describe, formatDuration, formatSize } from './util.js';
 
@@ -100,6 +100,7 @@ export function registerPaperPage(deps: {
   remote: ServiceSelection<RemoteAgentProvider>;
   publish: ServiceSelection<PublishService>;
   sessionManager: ServiceSelection<SessionManagerService>;
+  fields: PaperFields;
   cfg: PaperConfig;
   signal: AbortSignal;
   now: () => number;
@@ -255,7 +256,7 @@ export function registerPaperPage(deps: {
     const state = ledger.data.papers[paperId];
     const spec = specOf(cfg, paperId);
     const { spentCents, unattributedCents, reservedCents } = paperBudgetUsage(ledger.data, today(), paperId);
-    const { labels, shared } = sharingRooms(deps.sessionManager.use, ledger.data, paperId);
+    const { labels, shared } = sharingRooms(deps.sessionManager.use, deps.fields, ledger.data, paperId);
     return [
       { label: '共用的房间', value: shared ? `共用（${labels.length}）：${labels.join('、')}` : labels.join('') },
       { label: '远端类型', value: spec ? spec.remoteAgentType || '（未配置）' : '（配置里已没有这块白纸）' },
@@ -620,8 +621,7 @@ export function registerPaperPage(deps: {
     title: '白纸',
     icon: 'file',
     placement: 'session',
-    applies: ({ sessionId, kind }) =>
-      kind === 'room' && deps.sessionManager.use.resolveConfig(sessionId).paperEnabled === true,
+    applies: ({ sessionId, kind }) => kind === 'room' && deps.fields.get(sessionId).paperEnabled === true,
     actions: {
       cancelTask: {
         label: '取消',
@@ -638,7 +638,7 @@ export function registerPaperPage(deps: {
         effect: 'write',
         async handler({ ctx }) {
           writable();
-          const paper = resolveRoomPaper(deps.sessionManager.use, cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.use, deps.fields, cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) throw new Error(paper.unavailable);
           if (!(await driver.resume(paper.paperId))) throw new Error('这块白纸没有停开');
           return '已恢复';
@@ -650,7 +650,7 @@ export function registerPaperPage(deps: {
         type: 'info',
         id: 'room',
         async data({ ctx }) {
-          const paper = resolveRoomPaper(deps.sessionManager.use, cfg, ctx.sessionId, undefined);
+          const paper = resolveRoomPaper(deps.sessionManager.use, deps.fields, cfg, ctx.sessionId, undefined);
           if ('unavailable' in paper) return [{ label: '白纸', value: paper.unavailable }];
           const day = today();
           const usage = paperBudgetUsage(ledger.data, day, paper.paperId);
