@@ -50,6 +50,9 @@ export interface AuthorityService {
   // 是否 owner（owners 配置命中 → 拥有 `*`）
   isOwner(platform: string, userId?: string): boolean;
 
+  // owner 在这个平台登记的账号：配置 owners 里这个平台的第一个，没有时为 undefined；本机控制台身份不算
+  ownerOn(platform: string): UserIdentity | undefined;
+
   // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判、不按授权身份判，会话受众按会话管理里记下的字段判
   originOf(turn: OriginTurn): OriginKind;
 
@@ -134,6 +137,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`（带上工具的分组 `toolGroups`），非 null 即拦截 |
 | plugin-commands 执行点 | `packages/plugin-commands/src/index.ts` | 人亲手输入的指令带 `confirmIntent`，守卫需要确认时经它问发出者本人 |
 | plugin-gateway 入站 | `packages/plugin-gateway/src/index.ts` | 以 `isOwner` 作 `roomClass` 的 owner 谓词判会话的房间类别，`owner-only` 的跳过触发与流控（结构性放行）；缺席时没有人是 owner |
+| 入站正文的发送者前缀 | `packages/api-message-archive/src/index.ts`（`speakerOf`，plugin-message-archive、plugin-trigger-laya、plugin-agent 调） | 以 `isOwner` 判房间类别与授权身份是不是 owner，owner 从别的平台往房间里插话时以 `ownerOn` 取 owner 在房间所在平台登记的账号写进前缀；缺席时没有人是 owner |
 | 权限页 | `packages/plugin-authority/src/index.ts` | 设置里的声明式页面（用户等级、权限组、owner、操作门槛、禁用与免确认），处理函数经闭包里本次激活的 manager 调用；组成员的读写（`setUserGroups`、带组的用户列表）只在 manager 上，不在契约里 |
 
 ## 4. 写一个 provider（替换默认 authority 实现）
@@ -142,9 +146,9 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 4.1 必须实现 vs 可选
 
-`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`originOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
+`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`ownerOn`（存档、触发判定与 agent 据它写发送者前缀）、`originOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
-- **必须**：`isOwner`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
+- **必须**：`isOwner`、`ownerOn`、`originOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
 - **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按回合的来源判、不按 `actor` 判，只有 owner 本人与 owner 链的延续能产生审批。
 
@@ -191,6 +195,7 @@ import { definePlugin, optional, provide } from '@aalis/core';
 
 class MyAuthority implements AuthorityService {
   isOwner(platform: string, userId?: string) { /* owners 命中判定 */ return false; }
+  ownerOn(_p: string): UserIdentity | undefined { return undefined; }
   originOf(turn: OriginTurn): OriginKind {
     // 按回合的来源判：不在入站回合里为 autonomous，子任务为 subtask，房间为 room……（判据见 plugin-authority）
     return 'other';

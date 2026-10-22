@@ -1,3 +1,4 @@
+import { roomClass, rootSessionOf, type SessionInfo } from '@aalis/api-session-manager';
 import { isStorageUri } from '@aalis/api-storage';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -84,6 +85,45 @@ export function outboundAddress(att: MessageAttachment): string | undefined {
 export function unaddressedText(att: MessageAttachment): TextRef {
   const kind = t(att.kind);
   return att.name ? t('unaddressed', { kind, name: att.name }) : t('unaddressedKind', { kind });
+}
+
+/** {@link speakerOf} 判说话人要问的两个服务，都可缺：调用方按自己可选依赖的在场情况给 */
+export interface SpeakerDeps {
+  /** 会话管理：按 id 取会话记录 */
+  sessionManager?: { getSession(sessionId: string): SessionInfo | undefined };
+  /** 权限服务：谁是 owner、owner 在某个平台登记的账号 */
+  authority?: {
+    isOwner(platform: string, userId?: string): boolean;
+    ownerOn(platform: string): { userId: string } | undefined;
+  };
+}
+
+/**
+ * 入站消息归档文本的说话人，交给 schema-message 的 buildIncomingContent 加前缀；存档、触发判定与 agent 的兜底正文都按它，
+ * 判定方看到的当前消息与存档逐字一致。依次：
+ * 1. 带 source 的（子任务、定时任务、编排、宿主通知、平台事件合成的通知等内部注入）不给：不是任何人的发言；
+ * 2. 根会话的受众只有 owner（api-session-manager 的 roomClass 为 owner-only）时不给；
+ * 3. 从别的平台往房间里插话（入口平台不是根会话的出生平台）、授权身份（actor，没有时取物理身份）是 owner 时，给 owner 在
+ *    出生平台登记的账号，没登记时给这条消息自己的身份；
+ * 4. 其余给这条消息自己的昵称与账号。
+ * 会话管理不在时第 2、3 条判不出，按第 4 条；权限服务不在时没有人是 owner。
+ */
+export function speakerOf(
+  incoming: IncomingMessage,
+  { sessionManager, authority }: SpeakerDeps,
+): Pick<IncomingMessage, 'nickname' | 'userId'> | undefined {
+  if (incoming.source) return undefined;
+  const own = { nickname: incoming.nickname, userId: incoming.userId };
+  if (!sessionManager) return own;
+  const lookup = (id: string) => sessionManager.getSession(id);
+  const isOwner = (platform: string, userId?: string) => authority?.isOwner(platform, userId) ?? false;
+  const session = lookup(incoming.sessionId);
+  if (roomClass(session, lookup, isOwner) === 'owner-only') return undefined;
+  const birth = rootSessionOf(session, lookup)?.originPlatform;
+  const { platform, userId } = incoming.actor ?? incoming;
+  if (birth === undefined || birth === incoming.platform || !isOwner(platform, userId)) return own;
+  const account = authority?.ownerOn(birth);
+  return account ? { userId: account.userId } : own;
 }
 
 // ----- 服务描述符（调用型：业务层就是提供者的形状）-----

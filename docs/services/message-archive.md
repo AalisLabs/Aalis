@@ -30,7 +30,7 @@ export interface MessageArchiveService {
 方法语义：
 
 - **`saveMessage`**（必需）：直写一条已成形的 `Message` 到指定会话。最薄的一层——直接转发给 `memory.saveMessage`，`options.debugLabel` 仅用于按配置打调试日志（`packages/plugin-message-archive/src/index.ts`）。role 为 `assistant`、有正文且不带工具调用的落库后发 `assistant:message:archived`。用于写已成形的条目（如 agent 的回复、subtask 的系统提示、投递失败提示）。
-- **`archiveIncoming`**（必需，核心）：吃一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件（消息尚无附件描述时；对传入的消息对象调用，识别结果写回入参，触发判定已启动的识别在这里命中，不再识别第二遍）、拼接发送者前缀 / 引用回复 / 附件描述（拼法是 `@aalis/schema-message` 的 `buildIncomingContent`）、抽取 @提及、写会话身份 `metadata`，落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。
+- **`archiveIncoming`**（必需，核心）：吃一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件（消息尚无附件描述时；对传入的消息对象调用，识别结果写回入参，触发判定已启动的识别在这里命中，不再识别第二遍）、拼接发送者前缀 / 引用回复 / 附件描述（拼法是 `@aalis/schema-message` 的 `buildIncomingContent`，说话人按本包的 `speakerOf` 给，见下）、抽取 @提及、写会话身份 `metadata`，落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。
 - **`recordOutbound`**（必需）：出站消息记进会话历史的唯一实现，所有平台一条规则。不是她回复的文字记成事件标记（`outboundMarkerMessage`）；附件逐个记、不分来源与种类，按有没有地址分（`outboundAddress`：`ref`，没有时 `data` 是存储地址或网址的取 `data`），有地址的按 `outboundMediaMessage` 记（她发的 role `assistant`，插件发的 role `notice`），元数据带 `SentRef`（文件另带 `SentName`），没有地址的（data URL、`file://` 与本机路径）记成事件标记「[种类] 名字」（`unaddressedText`）并带同一句的文字对象。每条记录带出站的 `Source`、`TurnId`、`CallId`（有才记），同一会话里出站记录的时间戳各不相同。图、音、视频的描述取附件带的，发出即记、不等识图；参考实现给她发的、没带描述的网址图片与视频在后台补描述，补到后经 `memory.updateMessageContent` 改写那一条并发 `memory:messages-rewritten`，记忆后端不支持改写时不补。全部记录写完才兑现（不等后台的识图），写失败时以原因拒绝，已写成的几条不撤回。要记的内容在调用时同步取走：调用之后对消息的改写不算，调用方不必另做快照。
 - **`archiveNotice?`**（可选）：把平台 notice/事件（禁言、撤回、入群等）作为 `role:'notice'` 系统条目入档，`kind` 取 `noticeType`。返回 `null` 表示内容为空被跳过。
 - **`findByMessageId?`**（可选）：按平台侧 `messageId` 在最近 `scanLimit`（夹取 1..500，缺省 100）条历史里从新往旧反查归档原文，命中我方已烘焙的富文本（含图片描述）。未命中返回 `null`。
@@ -42,7 +42,16 @@ export interface MessageArchiveService {
 - `Message`（来自 `@aalis/schema-message`，`packages/schema-message/src/index.ts`）：`role` + `content: string | null` + 可选 `name` / `kind` / `timestamp` / `metadata`。
 - `inbound:message:archived` 事件 payload（`packages/schema-message/src/index.ts`）：`{ sessionId, incoming: IncomingMessage, archivedMessage: Message }`。注意 `archivedMessage.content` 可能已不同于 `incoming.content`（已烘焙）。
 
-> `@aalis/api-message-archive` 是契约包（keywords 含 `aalis-api`），导出类型、`messageArchive` 描述符（`defineService<MessageArchiveService>('message-archive')`）与 `recordOutbound` 记法里的两样：`outboundAddress(att)`（出站附件的地址，没有时 `undefined`）与 `unaddressedText(att)`（没有地址的附件记成的那一句，文字对象）。发送前要改写 `data` 的适配器（如 onebot 换成自己落盘的副本）先按 `outboundAddress` 把原来的地址留在 `ref` 上；会话服务的实时推送按这两样给出与历史相同的通知。运行时服务由 `plugin-message-archive` 提供。
+> `@aalis/api-message-archive` 是契约包（keywords 含 `aalis-api`），导出类型、`messageArchive` 描述符（`defineService<MessageArchiveService>('message-archive')`）、入站正文的说话人 `speakerOf` 与 `recordOutbound` 记法里的两样：`outboundAddress(att)`（出站附件的地址，没有时 `undefined`）与 `unaddressedText(att)`（没有地址的附件记成的那一句，文字对象）。发送前要改写 `data` 的适配器（如 onebot 换成自己落盘的副本）先按 `outboundAddress` 把原来的地址留在 `ref` 上；会话服务的实时推送按这两样给出与历史相同的通知。运行时服务由 `plugin-message-archive` 提供。
+
+**发送者前缀**：`speakerOf(incoming, { sessionManager?, authority? })` 给出入站正文前缀里的说话人（交给 `buildIncomingContent`），存档、触发判定（plugin-trigger-laya 发给侧车的当前消息）与 agent 在存档不在时自己拼的当轮正文都按它，判定方看到的与存档逐字一致。两个服务按调用方可选依赖的在场情况给，依次：
+
+1. 带 `source` 的（子任务、定时任务、编排、宿主通知、平台事件合成的通知等内部注入）不给：不是任何人的发言；
+2. 根会话的受众只有 owner（api-session-manager 的 `roomClass` 为 `owner-only`：owner 自己的 IM 私聊，WebUI、终端与第三方客户端建的会话）时不给；
+3. 从别的平台往房间里插话（入口平台不是根会话的出生平台，如 owner 从 WebUI 往群里发）、授权身份（`actor`，没有时取物理身份）是 owner 时，给 owner 在出生平台登记的账号（权限服务的 `ownerOn`，前缀写成 `[账号]: `，没有昵称），没登记时给这条消息自己的身份；
+4. 其余给这条消息自己的昵称与账号。
+
+会话管理不在时第 2、3 条判不出，按第 4 条（WebUI 的消息也带 `[console]: `）；权限服务不在时没有人是 owner。
 
 ## 3. 谁提供 / 谁消费
 
@@ -62,6 +71,8 @@ export interface MessageArchiveService {
 最小必须实现：`saveMessage` + `archiveIncoming` + `recordOutbound`。可选：`archiveNotice`（不实现则 OneBot 等 `if (!archive?.archiveNotice) return;` 静默跳过）、`findByMessageId`（不实现则引用反查回退到平台重新拉取）。消费方一律先判 `archive?.method` 再调，所以漏实现可选方法不会崩，只是降级。
 
 依赖：归档必须落到某个持久层。参考实现用 `memory`（`required`）+ `media`（`optional`，仅做附件识别）。
+
+入站正文的发送者前缀照参考实现调 `speakerOf` 再交给 `buildIncomingContent`：触发判定拼的当前消息按同一规则，两边不一致时判定看到的与历史里存下的那条不同。
 
 出站：参考实现另监听两个事件，替换实现要同样做（见下面的骨架），否则房间、终端与子会话里发出的消息不落库，只在实时推送里：
 

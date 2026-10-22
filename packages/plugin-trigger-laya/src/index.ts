@@ -11,6 +11,7 @@
 // 另监听入站归档事件做运行期自检（self-check.ts）。
 // ============================================================
 
+import { authority } from '@aalis/api-authority';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
 import { flowControl } from '@aalis/api-flow-control';
 import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
@@ -18,7 +19,7 @@ import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
-import { messageArchive } from '@aalis/api-message-archive';
+import { messageArchive, speakerOf } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
@@ -158,8 +159,11 @@ const uses = {
   flowControl: optional(flowControl),
   // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
-  // 消息不带机器人账号时取房间建档时记下的，也用来判从别的平台往房间里插话；缺席时不带账号的消息按兜底
+  // 消息不带机器人账号时取房间建档时记下的，也用来判从别的平台往房间里插话、当前消息的发送者前缀（与存档同一规则）；
+  // 缺席时不带账号的消息按兜底
   sessionManager: optional(sessionManager),
+  // 当前消息的发送者前缀判谁是 owner（与存档同一规则）；缺席时没有人是 owner
+  authority: optional(authority),
   /** 按会话读生效范围与阈值；缺席时取插件配置里的值 */
   sessionFields: optional(sessionFields),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
@@ -377,7 +381,7 @@ function run(caps: Caps): void {
     // 窗口是最近 historyRows 条 user / assistant 且正文是字符串的行：多取一倍，过滤后再取（见 toRows）
     const fetched = cfg.historyRows * 2;
     const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
-    // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
+    // 当前消息与归档用同一个 buildIncomingContent 拼、说话人按同一个 speakerOf 给，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
     await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger.use);
     const pointerOnly = imagesPointerOnly(message);
@@ -387,7 +391,10 @@ function run(caps: Caps): void {
     }
     // 取历史与等识别期间可能已熔断：熔断期不发请求
     if (circuitOpen()) return fallback('侧车熔断中');
-    const cur = buildIncomingContent(message);
+    const cur = buildIncomingContent(
+      message,
+      speakerOf(message, { sessionManager: sm, authority: caps.authority.present ? caps.authority.use : undefined }),
+    );
     // 字符串里的孤代理换成 U+FFFD：侧车的分词器不接受孤代理（整条回 422 bad_text 只能兜底，更早的侧车回 500，
     // 计入熔断）；历史行经库往返后本来也是 U+FFFD。自检记的仍是换之前的 cur，与归档事件带的原文同一口径
     const body = JSON.stringify(
