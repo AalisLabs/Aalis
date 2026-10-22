@@ -18,6 +18,7 @@ const PACKAGES = join(__dirname, '../../packages');
 /** 现在声明了按会话字段的第一方插件 */
 const DECLARING = [
   '@aalis/plugin-agent',
+  '@aalis/plugin-checkpoint',
   '@aalis/plugin-flow-control',
   '@aalis/plugin-i18n',
   '@aalis/plugin-memory-history',

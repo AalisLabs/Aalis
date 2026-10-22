@@ -108,8 +108,6 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       rewinds.push(['code', sessionId, turnId]);
       return { ok: true, restored: ['workspace:/a.txt'], deleted: [], errors: [], alsoChangedBy: [] };
     },
-    /** 这一组用例里 turn-exec 那一轮执行过命令 */
-    execUsed: async (_sessionId: string, turnId: string) => turnId === 'turn-exec',
     async rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult> {
       rewinds.push(['code-and-chat', sessionId, turnId]);
       await host.events.use.emit('history:changed', { sessionId });
@@ -1765,16 +1763,6 @@ describe('回合控制', () => {
     ]);
   });
 
-  it('turn/checkpoint 回这一轮有没有执行过命令（命令的效果回滚撤不回）；会话不存在回 not-found', async () => {
-    const { server, sm } = await setup();
-    const s = await sm.createSession({ name: 'S' });
-    const c = client(server());
-    await c.init();
-    expect(await c.call('turn/checkpoint', { sessionId: s.id, turnId: 'turn-exec' })).toEqual({ execUsed: true });
-    expect(await c.call('turn/checkpoint', { sessionId: s.id, turnId: 'turn-edit' })).toEqual({ execUsed: false });
-    expect((await c.fail('turn/checkpoint', { sessionId: 'session-nope', turnId: 't' })).data?.code).toBe('not-found');
-  });
-
   it('没有 agent、检查点、待办服务时，对应的方法回 unsupported', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
@@ -1793,7 +1781,6 @@ describe('回合控制', () => {
     for (const [method, params] of [
       ['turn/abort', { sessionId: s.id }],
       ['turn/rewind', { sessionId: s.id, turnId: 't', scope: 'code' }],
-      ['turn/checkpoint', { sessionId: s.id, turnId: 't' }],
       ['session/compress', { sessionId: s.id }],
       ['plan/clear', { sessionId: s.id }],
     ] as const) {

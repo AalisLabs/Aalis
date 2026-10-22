@@ -25,8 +25,7 @@ const parseServiceConfig = (raw: unknown) => normalizeConfig(parseConfig(configS
 //   3) 不记录的根（tmp / data 等）的写入被记录 → tmp 在回合结束前已被 cleanup 删掉 → 回滚必 ENOENT；
 //      data 是别的平台/插件也在写的共享区 → 回滚会误删别人的文件
 // 另守：回滚逆序撤销（LIFO，「移走后又改写目标」才能一并回退）、回落删目标只豁免 ENOENT
-// （重复回滚仍 ok:true，权限失败则入 errors）、写目录在快照前就被拒（否则幽灵 write-new 让回滚删掉整棵目录）、
-// 以及 execUsed 判据（exec 与 run_* 算「命令副作用不可回滚」）。
+// （重复回滚仍 ok:true，权限失败则入 errors）、写目录在快照前就被拒（否则幽灵 write-new 让回滚删掉整棵目录）。
 // ════════════════════════════════════════════════════════════
 
 describe('checkpoint × storage (真 fs)', () => {
@@ -52,7 +51,7 @@ describe('checkpoint × storage (真 fs)', () => {
     });
     await app.plugins.register(checkpointPlugin, {
       rootDir: 'data:/checkpoints',
-      scopes: ['*'],
+      coverage: 'all',
       keepSessions: 0,
     });
     await app.plugins.idle();
@@ -250,7 +249,7 @@ describe('checkpoint × storage (真 fs)', () => {
     });
     const logger = { debug() {}, info() {}, warn() {}, error() {} };
     const faultySvc = new CheckpointServiceImpl(
-      parseServiceConfig({ rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 }),
+      parseServiceConfig({ rootDir: 'data:/checkpoints', keepSessions: 0 }),
       logger as never,
       faulty,
     );
@@ -349,29 +348,6 @@ describe('checkpoint × storage (真 fs)', () => {
     });
     expect((await svc.listTurns('h2')).map(t => [t.turnId, t.fileCount])).toEqual([['turn-blocked', 1]]);
   });
-
-  it('execUsed：exec 与 run_python 算命令副作用', async () => {
-    for (const [sessionId, toolName] of [
-      ['e1', 'exec'],
-      ['e2', 'run_python'],
-      ['e3', 'file_write'],
-    ] as const) {
-      const turnId = await runTurn(sessionId, async () => {
-        await hooks.run('agent:tool:before', {
-          name: toolName,
-          args: {},
-          toolCallContext: { sessionId },
-        } as never);
-        await storage.writeFile(`ws:/${sessionId}.txt`, 'x'); // 有改动才落盘 manifest
-      });
-      const [summary] = await svc.listTurns(sessionId);
-      expect(summary?.turnId).toBe(turnId);
-      expect(summary?.execUsed ?? false).toBe(toolName !== 'file_write');
-      expect(await svc.execUsed(sessionId, turnId), `契约上的查询：${toolName}`).toBe(toolName !== 'file_write');
-    }
-    expect(await svc.execUsed('e1', 'turn-nope'), '没有这一轮的检查点').toBe(false);
-    expect(await svc.execUsed('e3', 'turn-e1'), '回合 id 按会话找').toBe(false);
-  });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -397,13 +373,11 @@ describe('checkpoint rootDir 配置', () => {
     expect(() => parseServiceConfig({ rootDir: input })).toThrow(/rootDir 不是 storage URI/);
   });
 
-  it('scopes null 取默认、[] 禁用；数值哨兵仍夹紧', () => {
-    expect(parseServiceConfig({ scopes: null }).scopes).toEqual(['webui:*']);
-    expect(parseServiceConfig({ scopes: [] }).scopes).toEqual([]);
-    expect(parseServiceConfig({ scopes: ['   ', 'onebot:group'] }).scopes).toEqual(['onebot:group']);
-    expect(parseServiceConfig({ maxFileSize: 2, keepSessions: -1 })).toMatchObject({
+  it('数值哨兵夹紧', () => {
+    expect(parseServiceConfig({ maxFileSize: 2, keepSessions: -1, keepTurns: -1 })).toMatchObject({
       maxFileSize: 1024,
       keepSessions: 0,
+      keepTurns: 0,
     });
   });
 

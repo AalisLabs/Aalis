@@ -417,10 +417,6 @@ const methodSamples: MethodSamples = {
       invalid: { ok: true, restored: [], deleted: [], errors: [] },
     },
   },
-  'turn/checkpoint': {
-    params: { valid: { sessionId: 'session-1', turnId: 't1' }, invalid: { sessionId: 'session-1' } },
-    result: { valid: { execUsed: true }, invalid: {} },
-  },
   'plan/clear': {
     params: { valid: { sessionId: 'session-1' }, invalid: {} },
     result: { valid: {}, invalid: null },

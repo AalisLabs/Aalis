@@ -34,7 +34,11 @@
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-authority": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -58,7 +62,11 @@
       ],
       "optional": [
         "memory",
-        "contributions"
+        "contributions",
+        "session-manager",
+        "authority",
+        "session-settings",
+        "host-config"
       ],
       "provides": [
         "checkpoint"

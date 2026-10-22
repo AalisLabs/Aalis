@@ -31,7 +31,7 @@ function makeService(files: Record<string, string | Error>, turns: string[], lis
     listRoots: () => [{ name: 'ws', kind: 'workspace' }],
   };
   const logger = { debug() {}, info() {}, warn: (msg: string) => void warns.push(msg), error() {} };
-  const cfg = { rootUri: ROOT, maxFileSize: 1024, keepSessions: 0, scopes: ['*'] };
+  const cfg = { rootUri: ROOT, maxFileSize: 1024, keepSessions: 0, keepTurns: 0 };
   const svc = new CheckpointServiceImpl(cfg, logger as never, storage as never);
   const setListError = (err: Error | undefined) => {
     listError = err;

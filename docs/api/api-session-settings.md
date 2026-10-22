@@ -174,6 +174,7 @@ interface SessionFieldReader<S> {
 | [plugin-tools](../plugins/plugin-tools.md) | `enabledToolGroups` | 全部 | owner | `[]` |
 | [plugin-skills](../plugins/plugin-skills.md) | `enabledSkills` | 全部 | owner | `['*']` |
 | [plugin-memory-summary](../plugins/plugin-memory-summary.md) | `compressAt` | 全部 | owner | 0.8 |
+| [plugin-checkpoint](../plugins/plugin-checkpoint.md) | `coverage`（记检查点的会话） | 全部 | owner | 按受众（`ownerOnly`） |
 | [plugin-memory-history](../plugins/plugin-memory-history.md)、[plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-tool-session](../plugins/plugin-tool-session.md)、[plugin-user-relation](../plugins/user-relation.md) | 各自的范围：`scope`、`crossSessionMode`、`scope`、`recallScope` | 全部 | owner | 各插件的作者默认 |
 | [plugin-subtask](../plugins/plugin-subtask.md) | `model`（子任务模型） | owner 会话与房间 | 1 级 | 不另指定（与本会话相同） |
 | plugin-i18n | `language` | 房间 | 1 级 | `['en']` |

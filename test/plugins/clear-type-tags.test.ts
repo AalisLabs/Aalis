@@ -31,7 +31,7 @@ async function world() {
   provideHostPaths(app, base);
   await app.plugins.register(storageLocal, {});
   await app.plugins.register(personaPlugin, {});
-  await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
+  await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', keepSessions: 0 });
   await app.plugins.idle();
   const inactive = app.plugins
     .getStatus()

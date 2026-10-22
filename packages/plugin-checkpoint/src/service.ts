@@ -51,8 +51,6 @@ export interface TurnManifest {
   files: CheckpointFileRecord[];
   /** 这一轮对话消息的时间戳，rollbackWithChat 据此删除消息与向量条目 */
   messageTimestamps?: number[];
-  /** 这一轮调用过 exec / run_* 等命令类工具：它们的副作用不经存储，回滚覆盖不到 */
-  execUsed?: boolean;
 }
 
 /** 回合列表的一行（listTurns） */
@@ -62,8 +60,6 @@ interface TurnSummary {
   startedAt: number;
   endedAt?: number;
   fileCount: number;
-  /** 见 {@link TurnManifest.execUsed} */
-  execUsed?: boolean;
   /** 前 3 个文件的 URI */
   filesPreview: string[];
 }
@@ -79,7 +75,7 @@ interface ServiceConfig {
   rootUri: string;
   maxFileSize: number;
   keepSessions: number;
-  scopes: string[];
+  keepTurns: number;
 }
 
 /**
@@ -94,8 +90,7 @@ interface ServiceConfig {
  *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
  * - 本插件在 `agent:input:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
  *   记进这一轮，回合跑完（含被下游拦下、出错）即提交。
- * - exec / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
- *   （前端 UI 标注「未保护」）。
+ * - 命令与外部工具的副作用不经存储，不在本服务保护范围内（回滚对话框写明）。
  */
 export class CheckpointServiceImpl implements CheckpointService {
   /**
@@ -173,22 +168,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     const turnDir = this.turnDir(m.sessionId, m.turnId);
     await this.storage.writeFile(joinUri(turnDir, 'manifest.json'), JSON.stringify(m, null, 2));
     this.logger.info(`checkpoint 回合提交 turn=${m.turnId} 文件数=${m.files.length}`);
-    this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
-  }
-
-  /**
-   * 调用所在的那一轮：异步上下文带着的回合还没结束才算。回合里起的异步任务可能在回合提交之后才写入，
-   * 它们仍带着这一轮的上下文，但改动已不属于任何一轮。
-   */
-  private currentTurn(): ActiveTurn | undefined {
-    const turn = this.scope.getStore();
-    return turn && this.turns.get(turn.manifest.turnId) === turn ? turn : undefined;
-  }
-
-  /** 标记调用所在的那一轮调用过 exec / run_* 等命令类工具：记进清单的 execUsed */
-  markExecUsed(): void {
-    const turn = this.currentTurn();
-    if (turn) turn.manifest.execUsed = true;
+    this.gc(m.sessionId).catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
   }
 
   // ──────────── beforeMutate ────────────
@@ -199,10 +179,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
     toUri?: string,
   ): Promise<void> {
-    // 只记进写入所在的那一轮。回合外的改动（WebUI 发起的回滚、别的插件在后台的写入）不属于任何一轮，
-    // 存储每次写入都会调到这里，回合外的写入先在这一步返回
-    const turn = this.currentTurn();
-    if (!turn) return;
+    // 只记进写入所在的那一轮：异步上下文带着的回合还没结束才算。回合外的改动（WebUI 发起的回滚、别的插件在后台的写入）
+    // 不属于任何一轮；回合里起的异步任务在回合提交之后才写入的仍带着这一轮的上下文，改动也已不属于任何一轮。存储每次写入
+    // 都会调到这里，这些写入先在这一步返回
+    const turn = this.scope.getStore();
+    if (!turn || this.turns.get(turn.manifest.turnId) !== turn) return;
     // 自身根下的写入（blob / manifest）不快照：storage 的写前钩子会把它们递归送回这里，
     // 而 blob 此刻在磁盘上尚不存在 → 会给自己记一条 write-new 假记录，且排在真实条目之前，
     // 回滚时先删备份再读同一 blob → ENOENT，覆盖/删除类恢复必败。
@@ -280,10 +261,6 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   // ──────────── 查询 ────────────
 
-  async execUsed(sessionId: string, turnId: string): Promise<boolean> {
-    return (await this.getManifest(sessionId, turnId))?.execUsed === true;
-  }
-
   async listTurns(sessionId: string): Promise<TurnSummary[]> {
     const summaries: TurnSummary[] = (await this.manifests(sessionId)).map(manifest => ({
       turnId: manifest.turnId,
@@ -291,7 +268,6 @@ export class CheckpointServiceImpl implements CheckpointService {
       startedAt: manifest.startedAt,
       endedAt: manifest.endedAt,
       fileCount: manifest.files.length,
-      execUsed: manifest.execUsed,
       filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
     }));
     summaries.sort((a, b) => b.startedAt - a.startedAt);
@@ -520,7 +496,20 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   // ──────────── GC ────────────
 
-  private async gc(): Promise<void> {
+  /** 提交回合后清理：这个会话超出 keepTurns 的最旧回合连同备份删掉；会话目录超出 keepSessions 时删最旧的会话 */
+  private async gc(sessionId: string): Promise<void> {
+    if (this.cfg.keepTurns > 0) {
+      // 只数已提交的回合（有清单的），还在跑的回合目录里只有备份、没有清单，不算也不删。每次提交都读一遍这个会话的清单
+      // （最多 keepTurns + 1 份），GC 在提交后异步跑，不拖回合
+      for (const turn of (await this.listTurns(sessionId)).slice(this.cfg.keepTurns)) {
+        try {
+          await this.storage.delete(this.turnDir(sessionId, turn.turnId));
+        } catch (err) {
+          // 同一会话的几次清理撞在一起时可能删同一个回合，已不在就是删过了
+          if (!isStorageNotFound(err)) this.logger.warn(`GC 删除回合 ${turn.turnId} 失败: ${(err as Error).message}`);
+        }
+      }
+    }
     if (this.cfg.keepSessions <= 0) return;
     let sessions: Array<{ name: string; uri: string }>;
     try {
@@ -631,7 +620,7 @@ export function normalizeConfig(cfg: CheckpointConfig): ServiceConfig {
     rootUri: resolveRootUri(cfg.rootDir),
     maxFileSize: Math.max(1024, cfg.maxFileSize),
     keepSessions: Math.max(0, Math.floor(cfg.keepSessions)),
-    scopes: cfg.scopes.filter(s => s.trim() !== ''),
+    keepTurns: Math.max(0, Math.floor(cfg.keepTurns)),
   };
 }
 

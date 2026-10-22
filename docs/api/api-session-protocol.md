@@ -269,11 +269,10 @@ interface ApprovalSettlement {
 | `turn/continue` | `{ sessionId }` | `{}`；工具调用达到上限后请她接着做 |
 | `turn/abort` | `{ sessionId, turnId? }` | `{}`；不带 `turnId` 停这个会话所有在跑的回合，带 `turnId` 时只停那一轮，对不上回 `expected-turn-mismatch` |
 | `session/compress` | `{ sessionId }` | `{}`；调压缩服务，压完才回，进度以 `compress` 通知推送，之后推最新用量。没压成（摘要模型不在或失败、期间会话被清空或历史被改动）回 `internalError`，错误信息写明原因，压缩通知同样写明失败；这个会话正在压缩时直接拒绝，同样回 `internalError`，时间线上没有新的通知 |
-| `turn/checkpoint` | `{ sessionId, turnId }` | `{ execUsed: boolean }`；回滚之前查这一轮的检查点：为真表示这一轮执行过命令（`exec` 等直接起子进程的工具），命令的效果不经存储，回滚撤不回，界面在回滚确认里写明。没有这一轮的检查点时为 false |
 | `turn/rewind` | `{ sessionId, turnId, scope: 'code' \| 'code-and-chat' }` | 回滚结果，字段同 [api-checkpoint](./api-checkpoint.md) 的 `RollbackResult`，连对话一起回滚时另有 `deletedMessages`、`chatDeleted`；回合 id 就是 agent 的 `turnId`。检查点只按已提交（收尾）的回合回滚，在跑的回合没有可回滚的清单；界面只在这个会话没有回合在跑时，给已收尾的回合出回滚入口 |
 | `plan/clear` | `{ sessionId }` | `{}` |
 
-发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/checkpoint`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
+发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
 
 ## 后台任务
 

@@ -1,8 +1,12 @@
 import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
+import { authority } from '@aalis/api-authority';
 import { checkpoint } from '@aalis/api-checkpoint';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
+import { ownHostConfig } from '@aalis/api-host-config';
 import { memory } from '@aalis/api-memory';
+import { roomClass, sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
@@ -27,6 +31,14 @@ const uses = {
   memory: optional(memory),
   /** 登记 /clear 的 checkpoint 类型 */
   contributions: optional(contributions),
+  /** 判会话的受众（房间类别，子会话取根会话的）：coverage 为按受众时用；会话管理缺席时判不出，不记 */
+  sessionManager: optional(sessionManager),
+  /** 房间类别里谁是 owner；缺席时没有人是 owner */
+  authority: optional(authority),
+  /** 按会话读 coverage；缺席时取插件配置里的值 */
+  sessionFields: optional(sessionFields),
+  /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
+  document: optional(ownHostConfig),
   events,
   hooks,
   lifecycle,
@@ -47,7 +59,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { storage, memory, events, hooks, lifecycle, provide, contributions } = caps;
+  const { storage, memory, events, hooks, lifecycle, provide, contributions, sessionManager, authority } = caps;
   /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
   const logger = caps.logger.use.child('checkpoint');
   const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger));
@@ -74,36 +86,23 @@ function run(caps: Caps): void {
   // ──────────── 回合生命周期 ────────────
   // agent:input:before 的 next 就是这一轮的全部（后续中间件、模型调用、工具、回合结束钩子），
   // 用 agent 给的 turnId 把它包进 runTurn：期间的存储改动记进这一轮，next 返回（含被下游拦下、出错）即提交。
-  // 仅对配置 scopes 匹配的会话参与回合生命周期，避免 onebot 等聊天平台为每条消息都创建空 checkpoint。
-  const isScopeEnabled = (platform?: string, sessionType?: string): boolean => {
-    if (cfg.scopes.length === 0) return false;
-    const p = platform ?? '';
-    const t = sessionType ?? '';
-    for (const raw of cfg.scopes) {
-      const [sp = '*', st = '*'] = raw.includes(':') ? raw.split(':', 2) : [raw, '*'];
-      const platOk = sp === '*' || sp === '' || sp === p;
-      const typeOk = st === '*' || st === '' || st === t;
-      if (platOk && typeOk) return true;
-    }
-    return false;
+  // 只包 coverage 覆盖的会话：按受众时看根会话的房间类别，不看这一轮从哪个入口进来。
+  const fields = caps.sessionFields.use.fields(configSchema, caps);
+  const lookup = (id: string) => (sessionManager.present ? sessionManager.use.getSession(id) : undefined);
+  const isOwner = (platform: string, userId: string) => authority.present && authority.use.isOwner(platform, userId);
+  const covered = (sessionId: string, platform: string): boolean => {
+    const coverage = fields.get(sessionId, { platform }).coverage;
+    return (
+      coverage === 'all' || (coverage === 'ownerOnly' && roomClass(lookup(sessionId), lookup, isOwner) === 'owner-only')
+    );
   };
 
   hooks.use.middleware('agent:input:before', async (data, next) => {
-    if (isScopeEnabled(data.message.platform, data.message.sessionType)) {
+    if (covered(data.message.sessionId, data.message.platform)) {
       await service.runTurn(data.turnId, data.message.sessionId, next);
     } else {
       await next();
     }
-  });
-
-  // 监听命令类工具调用，给调用所在的那一轮在清单里打 execUsed 标记：
-  // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
-  hooks.use.middleware('agent:tool:before', async (data, next) => {
-    const name = data.name;
-    if (name === 'exec' || name.startsWith('run_')) {
-      service.markExecUsed();
-    }
-    await next();
   });
 
   // ──────────── 参与统一的 memory:clear ────────────
@@ -148,7 +147,5 @@ function run(caps: Caps): void {
   // 拆卸时提交所有还在跑的回合，避免崩溃/重载时丢失
   lifecycle.use.onDispose(() => service.flushAll());
 
-  logger.info(
-    `checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize} scopes=${cfg.scopes.join('|') || '<空>'}`,
-  );
+  logger.info(`checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize}`);
 }

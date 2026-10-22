@@ -11,7 +11,7 @@
 两类使用方：
 
 - **存储实现**在每次改动前探测本服务，在场就调 `beforeMutate` 留一次快照机会。`@aalis/plugin-storage-local` 经 `services.use.get(checkpoint)` 动态查它，不写进 `uses`：checkpoint 自己要用存储，写进 `uses` 会让两者互为依赖。
-- **会话服务**按回合回滚（会话协议的 `turn/rewind`，见 [api-session-protocol](./api-session-protocol.md)），回滚之前查这一轮执行过命令没有（`turn/checkpoint`）。
+- **会话服务**按回合回滚（会话协议的 `turn/rewind`，见 [api-session-protocol](./api-session-protocol.md)）。
 
 回合 id 与 agent 的回合 id 相同（见 [api-agent](./api-agent.md#回合-id)），调用方可以直接拿 `agent:turn:after`、`outbound:stream` 等带的 `turnId` 去回滚那一轮。
 
@@ -25,15 +25,12 @@ interface CheckpointService {
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
     toUri?: string,
   ): Promise<void>;
-  execUsed(sessionId: string, turnId: string): Promise<boolean>;
   rollback(sessionId: string, turnId: string): Promise<RollbackResult>;
   rollbackWithChat(sessionId: string, turnId: string): Promise<RollbackWithChatResult>;
 }
 ```
 
 - `beforeMutate`：存储每次改动前都调它，写入不在任何一轮里时直接返回，不读原文件。改动记进调用所在的那一轮：同一会话里同时有几轮在跑时（agent 按会话与来源分 lane），按写入发生在哪一轮的异步上下文里归属。同一 URI 在一轮里只备份最早的原内容；`loadOriginal` 只有「不存在」与「是目录」返回 `null`，读不出来要抛出，否则回合前就存在的文件会被记成本轮新建、回滚时被删掉。`toUri` 只对 `rename` 有意义，回滚时据它原路移回。
-- `execUsed`：这一轮调用过命令类工具（`exec`、`run_*` 这类直接起子进程的）。它们的副作用不经存储，回滚撤不回，界面在回滚确认里据此写明。只看已提交的回合，与 `rollback` 读同一份清单；没有这一轮的清单（不在做记录的会话里、已被清理、还没提交）时为 `false`。
-  - **局限**：哪些是命令类工具，plugin-checkpoint 按工具名认（`exec` 与 `run_` 开头的），第三方插件的命令类工具用别的名字时认不出来，回滚确认里就不提醒。正解是工具在定义上声明自己有不经存储的副作用、`execUsed` 按声明判；这项声明还没有，这之前第三方的命令类工具可沿用这两种命名。
 - `rollbackWithChat`：先回滚文件，再按这一轮记下的消息时间戳删除这一轮的对话消息，并发出 `memory:messages-deleted` 与 `history:changed`。
 
 列出回合、读取清单与清理检查点是实现自己的事（plugin-checkpoint 的 `memory:clear` 中间件），不在契约里。

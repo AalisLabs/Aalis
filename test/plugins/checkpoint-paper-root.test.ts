@@ -35,7 +35,7 @@ describe('checkpoint × 白纸根', () => {
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
       ],
     });
-    await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 });
+    await app.plugins.register(checkpointPlugin, { rootDir: 'data:/checkpoints', keepSessions: 0 });
     await app.plugins.idle();
     const host = app.bind({ storage: storageService, checkpoint });
     storage = host.storage.use;

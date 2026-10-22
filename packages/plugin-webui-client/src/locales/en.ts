@@ -486,9 +486,8 @@ export default defineLocale<Source>()({
   rewindNothing: 'This turn has no changes to rewind',
   rewindAlsoChanged: 'Later turns also changed these files, and those changes were undone too: {uris, list}',
   rewindErrors: '{count, plural, one {# change} other {# changes}} couldn’t be rewound: {uri} ({reason})',
-  rewindCheckFailed:
-    'Couldn’t confirm whether this turn ran commands ({error}); the effects of commands aren’t undone by a rewind.',
-  rewindExecUsed: 'This turn ran commands; their effects won’t be undone.',
+  rewindLimits:
+    'Rewinding only undoes file changes made through storage; the effects of commands and external tools can’t be undone.',
   rewindBackgrounded:
     'This turn has calls moved to the background; files they write after the turn ends won’t be undone.',
   panelTabsIncomplete: 'Not all panel tabs could be loaded: {error} (click to retry)',
