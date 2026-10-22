@@ -15,4 +15,5 @@ export default defineLocale<Source>()({
   renderCard: 'Per card',
   renderOn: 'On',
   renderOff: 'Off',
+  clearType: 'Session persona state',
 });

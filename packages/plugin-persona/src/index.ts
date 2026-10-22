@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { contributions as contributionsCap } from '@aalis/api-contributions';
 import { hooks as hooksCap } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
-import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
+import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子与 memory:clear-type 贡献点）——删掉会丢键类型，不可删
 import {
   type OutputFormat,
   type OutputFormatField,
@@ -473,6 +474,8 @@ const uses = {
   logger: loggerCap,
   events: eventsCap,
   hooks: hooksCap,
+  /** 登记 /clear 的 persona 类型 */
+  contributions: optional(contributionsCap),
   platform: optional(platformService),
   storage: optional(storageService),
   sessionManager: optional(sessionManagerService),
@@ -702,7 +705,8 @@ async function run(caps: Caps): Promise<void> {
     await first;
   });
 
-  // 参与 memory:clear 清除当前会话的 persona 状态
+  // 参与 memory:clear 清除当前会话的 persona 状态；登记 persona 类型，/clear -t 才选得中
+  caps.contributions.use.contribute('memory:clear-type', { id: 'persona', label: t('clearType') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     // 类型过滤：仅在清除 context/persona/全部 时参与
     if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {

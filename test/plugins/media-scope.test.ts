@@ -312,6 +312,7 @@ describe('真实写入方产出的路径判据都接受', () => {
       storage: fixedRef(storage),
       processService: ref(),
       hooks: fixedRef({ middleware: () => () => {} } as never),
+      contributions: fixedRef({ contribute: () => () => {} } as never),
       logger: fixedRef(silentLogger()),
       lifecycle: fixedRef({
         signal: new AbortController().signal,

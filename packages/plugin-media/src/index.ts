@@ -15,6 +15,7 @@
 import { agent } from '@aalis/api-agent';
 import { asr } from '@aalis/api-asr';
 import { authority } from '@aalis/api-authority';
+import { contributions } from '@aalis/api-contributions';
 import { doctor } from '@aalis/api-doctor';
 import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
@@ -305,6 +306,8 @@ const uses = {
   sessionManager: optional(sessionManager),
   authority: optional(authority),
   doctor: optional(doctor),
+  /** 登记 /clear 的 image、video 类型 */
+  contributions: optional(contributions),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -363,6 +366,9 @@ function run(caps: Caps): void {
   // - 描述缓存：视频描述（describeVideo 写入）归 video，其余描述归 image，各回一行。全局清理删掉所选类型的内存条目与
   //   别名，两类都清时删掉快照、只清一类时重写快照；会话级只删键落在本会话媒体目录下的描述（带本会话语境的、文件名
   //   不是内容哈希的），内容哈希键跨会话共享、无从按会话归属，保留。
+  // 两个类型都登记，/clear -t 才选得中（别的写入方也登记同名类型，帮助里只列一次）。
+  caps.contributions.use.contribute('memory:clear-type', { id: 'image', label: t('clearTypeImage') });
+  caps.contributions.use.contribute('memory:clear-type', { id: 'video', label: t('clearTypeVideo') });
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
     const sessionId = data.scope === 'all' ? undefined : data.sessionId;
     if (data.scope === 'all' || sessionId) {

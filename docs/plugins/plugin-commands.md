@@ -19,6 +19,9 @@ export default definePlugin({
     memory: optional(memory),
     authority: optional(authority),
     tools: optional(tools),
+    plugins: optional(pluginsService),
+    contributions: optional(contributions),
+    i18n: optional(i18n),
     app: appService,
     events,
     hooks,
@@ -26,7 +29,6 @@ export default definePlugin({
     logger,
     config,
     provide,
-    services,
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -43,7 +45,7 @@ export default definePlugin({
 | 指令 | 参数 | 说明 | 可见性 |
 |---|---|---|---|
 | `/help` | `[name]` | 无参时列出你能用的顶层指令（子指令只显示个数）；带指令名时显示用法详情，空格和点两种写法都可以，如 `/help clear all` | public |
-| `/status` | — | 系统状态 | public |
+| `/status` | — | 系统状态：插件在跑与出错的个数（插件管理服务不在时不写这一行）、已注册的工具数与指令数，末尾写「逐项检查用 /doctor」。不列服务名 | public |
 | `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型；清了消息历史时它的子会话一并删除 | restricted（risk: sensitive，等级 1，需确认 confirm: session） |
 | `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话中指定类型的内容；不指定类型时清空全部类型 | restricted（risk: dangerous，等级 2，需确认 confirm: session） |
 | `/shutdown` | — | 关闭应用 | restricted |
@@ -90,27 +92,27 @@ export default definePlugin({
 
 ## `/clear` 类型
 
-`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身只负责 `context` 中的消息历史（经 memory 服务清空，含归档），其余内容由对应插件的中间件处理。`image` / `video` / `audio` / `file` 四类附件由写入它们的插件各清自己的子目录（见 [会话媒体的目录约定](../services/media.md#会话媒体的目录约定)），删除会话时同样由它们清理，不装本插件也清。可用类型（`/help clear` 在 `--type` 选项下逐项列出）：
+`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身只负责 `context` 中的消息历史（经 memory 服务清空，含归档），其余内容由对应插件的中间件处理。清理类型由处理它的插件经贡献点 `memory:clear-type` 登记（见 [api-memory](../api/api-memory.md)）：`-t` 只认登记了的类型，`/help clear` 在 `--type` 选项下按登记表现取、逐项列出（`all` 在前，同一类型几家登记只列一次，显示名取收集次序里第一家的）。装了新插件就多一项，第三方类型同样选得中，插件停用后它的类型随之不认。没有贡献点插件（plugin-contributions）时只认 `all`，带别的类型一律回「未知清理类型」，不带类型的 `/clear` 照常清。第一方插件登记的类型：
 
-| 类型 | 内容 |
-|---|---|
-| `context` | 消息历史（含归档）与会话上下文：会话摘要、角色状态、已发现工具、待办；`/clear all` 时另清 OneBot 合并转发原文 |
-| `summary` | 会话摘要 |
-| `vector` | 向量记忆 |
-| `image` | 图片：OneBot 收发的、上传的（plugin-media）与绘图产物（plugin-draw），各出一行；plugin-media 另清图片描述缓存（会话级只清键落在本会话媒体目录下的描述） |
-| `video` | 视频：OneBot 收发的；plugin-media 另清视频描述缓存（视频描述跨会话共享，会话级清理不删） |
-| `audio` | 语音：OneBot 收发的 |
-| `file` | 文件：OneBot 收发的 |
-| `persona` | 会话角色状态 |
-| `checkpoint` | 检查点（对话回滚存档） |
-| `user-profile` | 用户档案，仅全局清理 |
-| `user-relation` | 用户关系图谱，仅全局清理 |
+| 类型 | 登记方 | 内容 |
+|---|---|---|
+| `context` | 本插件 | 消息历史（含归档）与会话上下文：会话摘要、角色状态、已发现工具、待办随它清（这些插件不另登记）；`/clear all` 时另清 OneBot 合并转发原文 |
+| `summary` | plugin-memory-summary | 会话摘要 |
+| `vector` | plugin-memory-vector | 向量记忆 |
+| `image` | plugin-adapter-onebot、plugin-media、plugin-draw | 图片：OneBot 收发的、上传的与绘图产物，各清自己的子目录、各出一行（见 [会话媒体的目录约定](../services/media.md#会话媒体的目录约定)）；plugin-media 另清图片描述缓存（会话级只清键落在本会话媒体目录下的描述） |
+| `video` | plugin-adapter-onebot、plugin-media | 视频：OneBot 收发的；plugin-media 另清视频描述缓存（视频描述跨会话共享，会话级清理不删） |
+| `audio` | plugin-adapter-onebot | 语音：OneBot 收发的 |
+| `file` | plugin-adapter-onebot | 文件：OneBot 收发的 |
+| `persona` | plugin-persona | 会话角色状态 |
+| `checkpoint` | plugin-checkpoint | 检查点（对话回滚存档） |
+| `user-profile` | plugin-user-profile | 用户档案（跨会话） |
+| `user-relation` | plugin-user-relation | 用户关系图谱（跨会话） |
 
-不指定类型等于全部类型。`context` 只管会话级的短期上下文；向量、用户档案与关系图属于跨会话的长期记忆，不随 `context` 清理，只在指定对应类型或不指定类型时清理：会话级 `/clear` 只删除本会话的向量，档案与关系图只在 `/clear all` 时清理。OneBot 合并转发原文没有会话归属，会话级清理不动它，由适配器按 7 天期限回收。
+不指定类型等于全部类型。`context` 只管会话级的短期上下文；向量、用户档案与关系图属于跨会话的长期记忆，不随 `context` 清理，只在指定对应类型或不指定类型时清理：会话级 `/clear` 只删除本会话的向量，档案与关系图只在 `/clear all` 时清理。附件由写入它们的插件清，删除会话时同样由它们清理，不装本插件也清。OneBot 合并转发原文没有会话归属，会话级清理不动它，由适配器按 7 天期限回收。
 
 任何类型都不清会话表（会话名称、父子关系与会话设置，随删除会话清理），只是消息历史清成了时（指定了 `context` 或不指定类型）会话管理删掉被清空会话的子会话，`/clear all` 删掉全部子会话，回执多一行「已删除 N 个子会话」；只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。也不清第三方插件的绑定数据（如 plugin-maimai 的好友码绑定，用 `/maimai unbind` 解除）。各部分数据由归属插件自己清理，插件未安装或未激活时，它的数据不在清理范围内。整体清空命名空间的部分（用户档案与指令、关系图、摘要、待办、合并转发原文）连同记忆后端里读不出的条目（手改或损坏的数据）一并删除，带条数的回执包含它们，日志另记一条 info 点名这些条目；第三方记忆后端没有实现 `listMetadataKeys` 时，读不出的条目留在库里。
 
-回执逐行列出各部分的结果。用 `--type` 显式指定的类型若没有插件处理（插件未安装或未激活），回执另加一行说明该类型未清理；会话级 `/clear` 显式指定 `user-profile` 或 `user-relation` 时，说明它们只在 `/clear all` 时清理。不指定类型时不加这类说明。判断依据是各插件在 `memory:clear` 结果行上标注的 `type`（见 [记忆服务](../services/memory.md)）。
+回执逐行列出各部分的结果。用 `--type` 显式指定的类型登记了、却没有一行标注它（处理它的插件这次没出结果，如存储不在时的绘图产物）时，回执另加一行说明该类型未清理；不指定类型时不加这类说明。判断依据是各插件在 `memory:clear` 结果行上标注的 `type`（见 [记忆服务](../services/memory.md)）。会话级 `/clear` 显式指定 `user-profile` 或 `user-relation` 时，由画像与关系图插件各回一行未清理，写明是跨会话数据、只在清理全部会话时清。
 
 要清消息历史（指定了 `context` 或不指定类型）而没有在运行的记忆后端，或 `/clear all` 时记忆后端没有实现 `clearAll`，整条指令不执行、不清任何类型，回执说明原因与怎么办（前者写在 WebUI 插件区启用一个记忆后端，或把它从配置文件的 `disabledPlugins` 里删掉，启用了还起不来就用 `/doctor` 看原因）；不含 `context` 的类型照常清理。
 

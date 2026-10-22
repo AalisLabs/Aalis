@@ -102,6 +102,7 @@ EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做�
 | api 包 | 注入的贡献点键 |
 |---|---|
 | `@aalis/api-agent` | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-context / turn-hint） |
+| `@aalis/api-memory` | `memory:clear-type`（`/clear` 的清理类型） |
 
 ---
 

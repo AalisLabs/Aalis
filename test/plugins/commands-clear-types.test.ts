@@ -1,27 +1,22 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
-import commandsPlugin, { CLEAR_TYPES } from '../../packages/plugin-commands/src/index.js';
-import storageLocal from '../../packages/plugin-storage-local/src/index.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
-import { provideHostPaths } from '../fixtures/host-paths.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import drawPlugin from '../../packages/plugin-draw/src/index.js';
+import hooksPlugin from '../../packages/plugin-hooks/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// /clear 的类型说明与回执：
-// - 只读的 `/clear list` 沿点路径继承了 /clear 的确认，列个类型也要真人点确认。已删掉，类型说明并进
-//   --type 选项（/help clear 可见）。老习惯敲 `/clear list` 时 list 落成 /clear 的多余参数，
-//   必须在确认之前报「未知子指令或多余参数」并指向 /help clear，不能进入清理确认。
-// - 显式指定的类型没有插件处理（插件未装或未激活）时，回执曾只字不提；单独 -t vector 回
-//   「无可清除的记忆模块」。现在逐个核对 memory:clear 结果行上的 type，没有就照实说明。
+// /clear 的类型由处理它的插件经贡献点 memory:clear-type 登记：-t 的可选项、帮助里的说明与「不认识的类型」都按登记表现取，
+// 第三方类型选得中，同一类型几家登记只列一次、显示名取收集次序里第一家的。贡献点插件不在时只认 all。
+// 只读的 `/clear list` 已删掉，老习惯敲它时 list 落成多余参数，在确认之前报错。
+// 显式指定的类型登记了却没有一行标注它（处理它的插件这次没出结果）时照实说明。
 // ════════════════════════════════════════════════════════════
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -29,44 +24,50 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 
+/** 登记清理类型的插件；handles 为真时另挂中间件处理它们，各行标 type */
+function probe(name: string, types: Array<{ id: string; label: string }>, handles = false) {
+  return definePlugin({
+    name,
+    uses: { hooks, contributions },
+    apply({ hooks, contributions }) {
+      for (const type of types) contributions.use.contribute('memory:clear-type', type);
+      if (!handles) return;
+      hooks.use.middleware('memory:clear', async (data, next) => {
+        for (const { id } of types)
+          if (!data.types || data.types.includes(id))
+            data.results.push({ source: name, type: id, success: true, message: `${id} 已清` });
+        await next();
+      });
+    },
+  });
+}
+
 /**
- * 装 plugin-commands 与只有 clear/clearAll 的记忆替身，存储是 storage-local（临时家目录）；noStorage 时不装存储；
- * vectorHandler 时另装一个标注 vector 的清理中间件
+ * 装 plugin-commands 与只有 clear/clearAll 的记忆替身，不装存储；noContributions 时只装钩子插件、不装贡献点插件；draw 时
+ * 另装绘图（附件的写入方之一）
  */
-async function world(opts: { vectorHandler?: boolean; noStorage?: boolean } = {}) {
+async function world(opts: { probes?: ReturnType<typeof probe>[]; noContributions?: boolean; draw?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   cleanups.push(() => app.stop());
-  await registerHubs(app);
-  const host = app.bind({ provide, commands: commandsService });
-  if (!opts.noStorage) {
-    const base = mkdtempSync(join(tmpdir(), 'aalis-clear-types-'));
-    cleanups.push(() => rmSync(base, { recursive: true, force: true }));
-    provideHostPaths(app, base);
-    await app.plugin(storageLocal, {});
+  if (opts.noContributions) {
+    await app.plugin(hooksPlugin);
+    await app.plugins.idle();
+  } else {
+    await registerHubs(app);
   }
+  const host = app.bind({ provide, commands: commandsService });
   const clearSession = vi.fn(async (_sessionId: string) => {});
   host.provide.use(memory, { clearSession, clearAll: async () => {} } as unknown as MemoryService);
   host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
   // /help 按权限服务列出调用者能用的指令；这里测的是类型说明，给一个放行的替身
   host.provide.use(authority, { authorize: () => null } as unknown as AuthorityService);
-  if (opts.vectorHandler) {
-    await app.plugin(
-      definePlugin({
-        name: 'vector-probe',
-        uses: { hooks },
-        apply({ hooks }) {
-          hooks.use.middleware('memory:clear', async (data, next) => {
-            if (!data.types || data.types.includes('vector'))
-              data.results.push({ source: 'vector-probe', type: 'vector', success: true, message: '向量已清' });
-            await next();
-          });
-        },
-      }),
-    );
-  }
+  for (const definition of opts.probes ?? []) await app.plugin(definition);
+  if (opts.draw) await app.plugin(drawPlugin, {});
   await app.plugin(commandsPlugin, {});
   await app.plugins.idle();
   const registry = host.commands.use as unknown as CommandRegistry;
+  // 内置指令随 plugin-commands 激活登记，等它们出现
+  await vi.waitFor(() => expect(registry.get('clear')).toBeDefined());
   const guardCalls: string[] = [];
   registry.setExecutionGuard(async ctx => {
     guardCalls.push(ctx.name);
@@ -86,77 +87,85 @@ async function world(opts: { vectorHandler?: boolean; noStorage?: boolean } = {}
     });
     return String(out);
   };
-  return { registry, exec, guardCalls, clearSession };
+  /** /help clear 里 --type 下面列出的取值 */
+  const typeLines = async () => (await exec('/help clear')).split('\n').filter(line => line.startsWith('  - '));
+  return { registry, exec, typeLines, guardCalls, clearSession };
 }
 
 const NO_HANDLER = '没有已启用的插件处理这一类型';
 
+describe('/clear 的类型由各插件登记', () => {
+  it('第三方插件登记并处理 foo：/clear -t foo 执行，/help clear 列出 foo', async () => {
+    const { exec, typeLines } = await world({ probes: [probe('zz-foo', [{ id: 'foo', label: '探针数据' }], true)] });
+    expect(await typeLines()).toEqual([
+      '  - all：全部类型',
+      '  - context：消息历史与会话上下文（含摘要与待办）',
+      '  - foo：探针数据',
+    ]);
+    expect(await exec('/clear -t foo')).toBe('✅ foo 已清');
+  });
+
+  it('不认识的类型（含删掉的别名 history）：回不认识并列出现有类型，不清理', async () => {
+    const { exec, clearSession } = await world({ probes: [probe('zz-foo', [{ id: 'foo', label: '探针数据' }], true)] });
+    expect(await exec('/clear -t history')).toBe(
+      '未知清理类型: history。可用类型: all, context, foo。说明见 /help clear',
+    );
+    expect(clearSession).not.toHaveBeenCalled();
+  });
+
+  it('同一类型几家登记：帮助只列一次，显示名取收集次序里第一家的', async () => {
+    const { exec, typeLines } = await world({
+      probes: ['c', 'a', 'b'].map(n => probe(`zz-${n}`, [{ id: 'shared', label: `${n.toUpperCase()} 的说法` }])),
+    });
+    expect((await typeLines()).filter(line => line.startsWith('  - shared'))).toEqual(['  - shared：A 的说法']);
+    expect(await exec('/clear -t shared')).toBe(`⚠ A 的说法：${NO_HANDLER}，未清理`);
+  });
+
+  it('贡献点插件不在：-t 只认 all，/clear -t context 回不认识；/clear 照常清', async () => {
+    const { exec, typeLines, clearSession } = await world({ noContributions: true });
+    expect(await typeLines()).toEqual(['  - all：全部类型']);
+    expect(await exec('/clear -t context')).toBe('未知清理类型: context。可用类型: all。说明见 /help clear');
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
+    expect(clearSession).toHaveBeenCalledWith('s-cur');
+  });
+});
+
 describe('/clear 的类型说明', () => {
-  it('不再注册 clear.list；/help clear 列出每个类型的取值与中文说明', async () => {
-    const { registry, exec } = await world();
+  it('不再注册 clear.list', async () => {
+    const { registry } = await world();
     expect(registry.getAll().map(c => c.name)).not.toContain('clear.list');
-    const help = await exec('/help clear');
-    for (const t of CLEAR_TYPES) {
-      expect(help).toContain(`${t.id}：${toSource(t.label)}`);
-    }
   });
 
   it('老习惯敲 /clear list、选项值用空格写多了：报未知子指令或多余参数并指向 /help clear，不进确认、不清理', async () => {
     const { exec, guardCalls, clearSession } = await world();
     expect(await exec('/clear list')).toBe('未知子指令或多余参数: list。输入 /help clear 查看用法。');
-    // -t 只取下一个词，vector 落成多余参数
-    expect(await exec('/clear -t context vector')).toBe('未知子指令或多余参数: vector。输入 /help clear 查看用法。');
+    // -t 只取下一个词，第二个 context 落成多余参数
+    expect(await exec('/clear -t context context')).toBe('未知子指令或多余参数: context。输入 /help clear 查看用法。');
     expect(guardCalls).toEqual([]);
-    expect(clearSession).not.toHaveBeenCalled();
-  });
-
-  it('未知清理类型的提示指向 /help clear', async () => {
-    const { exec, clearSession } = await world();
-    const out = await exec('/clear -t bogus');
-    expect(out.startsWith('未知清理类型: bogus')).toBe(true);
-    expect(out.endsWith('说明见 /help clear')).toBe(true);
     expect(clearSession).not.toHaveBeenCalled();
   });
 });
 
 describe('/clear 显式指定的类型没有处理者', () => {
-  it('没有插件处理 vector：与消息历史一起指定时照常清消息历史，另说明向量未清理（会话级与全局）', async () => {
-    const { exec } = await world();
-    const vectorNote = `⚠ 向量记忆：${NO_HANDLER}，未清理`;
-    expect(await exec('/clear -t vector -t context')).toBe(['✅ 当前会话消息历史已清空', vectorNote].join('\n'));
-    expect(await exec('/clear all -t vector -t context')).toBe(['✅ 所有消息历史和归档已清空', vectorNote].join('\n'));
+  const unhandled = () => probe('zz-kind', [{ id: 'zz-kind', label: '探针类型' }]);
+
+  it('登记了却没有一行标注它：与消息历史一起指定时照常清消息历史，另说明它未清理（会话级与全局）', async () => {
+    const { exec } = await world({ probes: [unhandled()] });
+    const note = `⚠ 探针类型：${NO_HANDLER}，未清理`;
+    expect(await exec('/clear -t zz-kind -t context')).toBe(['✅ 当前会话消息历史已清空', note].join('\n'));
+    expect(await exec('/clear all -t zz-kind -t context')).toBe(['✅ 所有消息历史和归档已清空', note].join('\n'));
   });
 
-  it('附件归写入方清：没有存储时 /clear 只清消息历史，不出附件的失败行', async () => {
-    const { exec } = await world({ noStorage: true });
+  it('存储不在：附件的写入方（绘图）不出失败行，/clear 只清消息历史，-t image 照实说明未清理', async () => {
+    const { exec } = await world({ draw: true });
     expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
     expect(await exec('/clear -t image')).toBe(`⚠ 图片缓存：${NO_HANDLER}，未清理`);
   });
 
-  it('单独 -t vector：回说明，而不是「无可清除的记忆模块」', async () => {
-    const { exec } = await world();
-    expect(await exec('/clear -t vector')).toBe(`⚠ 向量记忆：${NO_HANDLER}，未清理`);
-  });
-
-  it('有插件以 type 标注处理了 vector：不再说明', async () => {
-    const { exec } = await world({ vectorHandler: true });
-    expect(await exec('/clear -t vector')).toBe('✅ 向量已清');
-  });
-
-  it('会话级显式指定 user-profile / user-relation：说明只在 /clear all 时清理；全局且无处理者时说明无处理者', async () => {
-    const { exec } = await world();
-    expect(await exec('/clear -t user-profile,user-relation')).toBe(
-      ['⚠ 用户档案只在 /clear all 时清理，本次未清理', '⚠ 用户关系图谱只在 /clear all 时清理，本次未清理'].join('\n'),
-    );
-    expect(await exec('/clear all -t user-relation')).toBe(`⚠ 用户关系图谱：${NO_HANDLER}，未清理`);
-  });
-
   it('不指定类型的 /clear 与 /clear all 不追加任何说明', async () => {
-    const { exec } = await world();
-    for (const line of ['/clear', '/clear all']) {
-      const out = await exec(line);
-      expect(out, line).not.toContain(NO_HANDLER);
-      expect(out, line).not.toContain('只在 /clear all 时清理');
-    }
+    const { exec } = await world({ probes: [unhandled()] });
+    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
+    expect(await exec('/clear all')).toBe('✅ 所有消息历史和归档已清空');
   });
 });

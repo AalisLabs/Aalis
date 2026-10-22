@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -30,13 +31,14 @@ async function world(withMemory = true) {
   const clearSession = vi.fn(async (_sessionId: string) => {});
   if (withMemory) host.provide.use(memory, { clearSession } as unknown as MemoryService);
   host.provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
-  // 记下每次 memory:clear 中间件被调用时的 scope：代表其它插件的清理是否已经发生
+  // 登记 vector 类型，记下每次 memory:clear 中间件被调用时的 scope：代表其它插件的清理是否已经发生
   const middlewareRuns: string[] = [];
   await app.plugin(
     definePlugin({
       name: 'clear-probe',
-      uses: { hooks },
-      apply({ hooks }) {
+      uses: { hooks, contributions },
+      apply({ hooks, contributions }) {
+        contributions.use.contribute('memory:clear-type', { id: 'vector', label: '向量记忆' });
         hooks.use.middleware('memory:clear', async (data, next) => {
           middlewareRuns.push(data.scope);
           await next();

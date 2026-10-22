@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionDirName } from '../../packages/api-media/src/index.js';
 import type {} from '../../packages/api-memory/src/index.js'; // declaration merging：memory:clear 钩子类型
@@ -221,7 +222,7 @@ describe('/clear 的附件清理归写入方', () => {
     cleanups.push(() => app.stop());
     await registerHubs(app);
     provideHostPaths(app, base);
-    const host = app.bind({ provide, hooks });
+    const host = app.bind({ provide, hooks, contributions });
     host.provide.use(processService, {} as never);
     await app.plugin(storageLocalPlugin, {});
     await app.plugin(onebotPlugin, { connections: [] });
@@ -241,8 +242,26 @@ describe('/clear 的附件清理归写入方', () => {
     }
     const left = (kindDir: string, dir: string) =>
       existsSync(state(kindDir, dir)) ? readdirSync(state(kindDir, dir)).sort() : [];
-    return { clear, left };
+    /** 登记的清理类型：全局键 → 类型 id */
+    const registered = () =>
+      Object.fromEntries(host.contributions.use.collect('memory:clear-type').map(({ key, spec }) => [key, spec.id]));
+    return { clear, left, registered };
   }
+
+  it('各写入方登记自己清的种类，/clear -t 选得中', async () => {
+    const { registered } = await world();
+    const ids = Object.entries(registered());
+    for (const [instance, kinds] of [
+      [onebotPlugin.name, ['audio', 'file', 'image', 'video']],
+      [`${onebotPlugin.name}:b`, ['audio', 'file', 'image', 'video']],
+      [mediaPlugin.name, ['image', 'video']],
+      [drawPlugin.name, ['image']],
+    ] as const)
+      expect(
+        ids.filter(([key]) => key.startsWith(`${instance}/`)).map(([, id]) => id),
+        instance,
+      ).toEqual(kinds);
+  });
 
   it('会话级 -t image：onebot、媒体识别、绘图各删本会话自己的子目录，各出一行标 image 的结果；别的会话、别的种类与第三方不动', async () => {
     const { clear, left } = await world();
@@ -309,6 +328,7 @@ describe('绘图：会话 id 为空', () => {
       storage: fixedRef({ writeFile: async (uri: string) => void written.push(uri) } as never),
       processService: ref(),
       hooks: fixedRef({ middleware: () => () => {} } as never),
+      contributions: fixedRef({ contribute: () => () => {} } as never),
       logger: fixedRef(silentLogger()),
       lifecycle: fixedRef({
         signal: new AbortController().signal,

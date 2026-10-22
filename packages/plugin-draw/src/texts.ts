@@ -1,8 +1,9 @@
-// 本插件自己的原文字典：/clear 清理绘图产物的回执
+// 本插件自己的原文字典：/clear 的类型显示名与清理绘图产物的回执
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  clearType: '图片缓存',
   cleared: '绘图产物已清空（{count, number} 个）',
   clearFailed: '绘图产物清空失败: {error}',
 } as const;

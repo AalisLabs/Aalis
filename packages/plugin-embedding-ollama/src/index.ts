@@ -249,7 +249,7 @@ async function startOllamaEmbedding({
   });
 
   // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
-  // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只判存在性，
+  // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只数插件状态，
   // 插件状态是 active，向量记忆则每条消息静默失败。把真实健康状况交给 doctor 上报。
   // doctor 的 runChecks 顺序 await 且不设超时（plugin-doctor/src/index.ts:runChecks），
   // 而 embed 最长要等 (retries + 1) × timeoutMs（默认 60s）。/doctor 正是出问题时才跑的

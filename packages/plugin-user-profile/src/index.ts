@@ -1241,13 +1241,17 @@ function registerUserProfile({
   });
 
   // ─── 参与统一的 memory:clear ───
+  // 用户档案是跨会话的，只在清理全部会话时清：会话级清理不动它，显式选了 user-profile 时回一行未清理（不带类型的会话级清理，
+  // 含删除会话，不出这一行）
+  contributions.use.contribute('memory:clear-type', { id: 'user-profile', label: t('clearType') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('user-profile')) {
       await next();
       return;
     }
     if (data.scope !== 'all') {
-      // 用户档案是跨会话的，会话级清除不动它
+      if (data.types)
+        data.results.push({ source: 'user-profile', type: 'user-profile', success: false, message: t('clearSkipped') });
       await next();
       return;
     }

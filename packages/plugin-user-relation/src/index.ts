@@ -567,14 +567,22 @@ function start(caps: Caps): void {
   }
 
   // ─── 参与统一的 memory:clear（与 plugin-user-profile 对称） ───
-  // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动。
+  // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动，显式选了 user-relation 时回一行未清理。
   // types 过滤：未指定 / 包含 'user-relation' 时执行。
+  caps.contributions.use.contribute('memory:clear-type', { id: 'user-relation', label: t('clearType') });
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('user-relation')) {
       await next();
       return;
     }
     if (data.scope !== 'all') {
+      if (data.types)
+        data.results.push({
+          source: 'user-relation',
+          type: 'user-relation',
+          success: false,
+          message: t('clearSkipped'),
+        });
       await next();
       return;
     }

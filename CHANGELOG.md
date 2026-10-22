@@ -202,6 +202,14 @@
 - plugin-commands 不再清附件，导出的 `ATTACHMENT_KINDS` 删除。第三方写入方用 api-media 新导出的 `sessionMediaUri` 取目录写、`clearSessionMedia` 清，并自己挂 `memory:clear`。
 - 媒体识别的描述缓存：`/clear` 的结果拆成图片、视频两行，各标 `type`。存储地址的文件名是内容哈希（16 位小写十六进制）时，不带会话语境的描述按哈希跨会话复用，不再要求落在会话媒体目录；网址不按文件名认。文件名不是内容哈希的（如绘图产物）以存储地址为键、进快照，会话级清理删得到（此前删不到）。
 
+### 清理类型由各插件登记，/status 只给计数（@aalis/api-memory、@aalis/api-commands、@aalis/plugin-commands、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-persona、@aalis/plugin-checkpoint、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-media、@aalis/plugin-adapter-onebot、@aalis/plugin-draw）
+
+- `/clear -t` 只认已装插件登记的清理类型：处理 `memory:clear` 的插件经 api-memory 新加的贡献点 `memory:clear-type`（`{ id, label }`）登记它处理的类型，没登记的类型选不中、回「未知清理类型」。帮助里的类型按登记表列出，装了新插件就多一项，第三方类型也选得中；同一类型几家登记只列一次，显示名取收集次序里第一家的。没有贡献点插件时 `-t` 只认 `all`，不带类型的 `/clear` 照常清。plugin-commands 导出的 `CLEAR_TYPES` 删除。
+- `/clear` 的四个别名 `history`、`messages`、`profile`、`profiles` 删掉，按未知类型拒绝。
+- 会话级 `/clear -t user-profile`（或 `user-relation`）的回复改由画像与关系图插件各回一行未清理，写明是跨会话数据、只在清理全部会话时清，指令插件不再出「只在 /clear all 时清理」那一行；帮助里这两项不再标「仅全局清理」，显示名写明跨会话。`memory:clear` 的契约随之写明：只在清理全部会话时清的数据，由处理它的插件在会话级清理、`types` 显式含它时自己推一行未清理。
+- api-commands 的 `OptionSpec.choices` 改成返回取值的函数，帮助与取值校验每次调用；`OptionRegisterOptions.choices` 另收返回取值的函数。
+- `/status` 只给计数：插件在跑与出错的个数、工具数、指令数，末尾写「逐项检查用 /doctor」；不再列八个服务可用与否，不用 emoji，标题不加粗。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

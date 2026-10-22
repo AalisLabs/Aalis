@@ -900,8 +900,15 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
     description: opts?.description,
     default: opts?.default,
     required: opts?.required === true,
-    choices: opts?.choices?.map(c => (typeof c === 'string' ? { value: c } : c)),
+    choices: choicesOf(opts?.choices),
   };
+}
+
+/** 登记写的取值收成每次现取的函数，只写值的一项补成 { value } */
+function choicesOf(choices: OptionRegisterOptions['choices']): OptionSpec['choices'] {
+  if (!choices) return undefined;
+  const list = typeof choices === 'function' ? choices : () => choices;
+  return () => list().map(c => (typeof c === 'string' ? { value: c } : c));
 }
 
 function findOption(defs: OptionSpec[], nameOrAlias: string): OptionSpec | undefined {
@@ -931,10 +938,9 @@ function parseOptionValue(def: OptionSpec, rawValue: string, previous: unknown):
     ];
   }
   // string
-  if (def.choices && !def.choices.some(c => c.value === rawValue)) {
-    throw new TextError(
-      t('optionChoices', { option: `--${def.name}`, choices: def.choices.map(c => c.value).join(', ') }),
-    );
+  const choices = def.choices?.();
+  if (choices && !choices.some(c => c.value === rawValue)) {
+    throw new TextError(t('optionChoices', { option: `--${def.name}`, choices: choices.map(c => c.value).join(', ') }));
   }
   return rawValue;
 }

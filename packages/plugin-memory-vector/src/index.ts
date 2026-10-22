@@ -23,6 +23,7 @@ import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
+import { t } from './texts.js';
 
 // ===== 插件元数据 =====
 
@@ -791,8 +792,9 @@ async function run(caps: Caps): Promise<void> {
     }
   });
 
-  // === 统一记忆清除 ===
+  // === 统一记忆清除（登记 vector 类型，/clear -t 才选得中）===
 
+  contributions.use.contribute('memory:clear-type', { id: 'vector', label: t('clearType') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('vector')) {
       await next();

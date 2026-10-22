@@ -124,7 +124,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 入站和出站的图片、语音、视频、文件统一缓存到本适配器在会话媒体目录里的子目录 `data:/{kind}s/{会话目录}/onebot/`（[会话媒体的目录约定](../services/media.md#会话媒体的目录约定)），文件名是内容哈希，单文件超过 `attachmentCache.maxBytes` 时不落盘、保留原 URL。入站文本中的 `[图片]`、`[语音]` 等占位符会改写为带存储地址的引用（`[图片 | ref:data:/images/…]`），附件的 `data` 也换成这个存储地址。
 
-`/clear` 与删除会话经 `memory:clear` 清这个子目录：所选类型含 `image`、`video`、`audio`、`file` 中的哪种就清哪种，会话级清这个会话的，`/clear all` 清各会话的，每种一行结果；多个实例各清一遍，结果合成一行。
+`/clear` 与删除会话经 `memory:clear` 清这个子目录：四种各登记一个清理类型（`image`、`video`、`audio`、`file`），所选类型含哪种就清哪种，会话级清这个会话的，`/clear all` 清各会话的，每种一行结果；多个实例各清一遍，结果合成一行。
 
 适配器不对普通入站图片调用视觉模型。合并转发内的图片在 `forward.imageRecognition` 开启时送 media 服务识别，语音与视频在 media 服务具备相应能力时一并识别。引用消息中的图片只复用 media 服务已有的描述缓存，写成 `[图片: 描述]`，查不到时保留 `[图片]`。
 

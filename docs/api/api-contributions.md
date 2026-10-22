@@ -101,6 +101,7 @@ interface ContributionRegistry {
 | 贡献点 | owner | spec | 说明 |
 |---|---|---|---|
 | `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/api-agent`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-context` / `turn-hint`（前三者在历史前、供会话级稳定材料，`turn-context` 在历史后、供每轮取材的材料——分界依据见概念文档《消息与 LLM 管线》），`build(view)` 返回 `string | string[] | null` |
+| `memory:clear-type` | `@aalis/plugin-commands` | `ClearTypeContribution`（`@aalis/api-memory`） | 清理类型：`{ id, label }`，处理这个类型的 `memory:clear` 中间件所在的插件登记；`/clear -t` 只认登记了的类型，帮助按登记表列出，同一类型几家登记时显示名取收集次序里第一家的 |
 | `webui:theme` | `@aalis/plugin-webui-server` | `ThemeContribution`（`@aalis/api-webui`） | 界面主题：一份主题文件（只收颜色令牌），经 `parseTheme` 校验后由 `GET /api/themes` 列出，出现在设置「外观」的主题选择里；不合格式的不列出、告警一次 |
 
 ## 定义自己的贡献点
