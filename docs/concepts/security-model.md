@@ -503,13 +503,13 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 - `plugin-memory-history` 的 `scope` 设成 `session`：跨会话注入整块不注入，`recent_messages` 拒绝；
 - `plugin-tool-session` 的 `scope` 设成 `current`：`session_get_history` 与 `onebot_get_session_history` 读别的会话一律拒绝；
 - `plugin-user-relation` 的 `recallScope` 设成 `session`：注入跳过跨会话事件、所属跨会话话题与全局热点，带会话作用域参数的
-  六个工具只能取本会话。
+  六个工具只能取本会话，解析节点、最短路径、联系分数、共同邻居与列边不经过别的会话的事件。
 
 后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。不覆盖：
 
 - `plugin-user-profile` 注入的发言者与其他参与者的事实：这些事实按人、跨会话，可能抽自私聊；
   保留它们是为了在群里认人。
-- `plugin-user-relation` 没有会话作用域参数的工具（如 `user_relation_resolve_node`、`user_relation_find_path`、`user_relation_shared`）：仍按全图取。
+- `plugin-user-relation` 按节点 id 取单个节点的工具（如 `user_relation_node_score`）：给了别的会话的事件 id 时照样取到它。
 
 这几项默认不收窄，也挡不住群友直接在群里向模型套话：模型在别的会话里知道的事，只要进了上述不覆盖的来源，
 仍可能出现在回复里或被写进交给远端的任务正文。受理时不会自动回显任务正文，但远端代理会收到它。

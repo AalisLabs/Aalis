@@ -560,6 +560,20 @@ export function edgeEndpoints(e: RelationEdge): [string, string] {
   }
 }
 
+/** 只留一个会话作用域的事件：别的会话作用域的事件与连着它们的边都去掉，人与实体照留；不给作用域时原样返回 */
+export function withinScope<T extends { events: EventNode[]; edges: RelationEdge[] }>(
+  graph: T,
+  sessionScope: string | undefined,
+): T {
+  if (!sessionScope) return graph;
+  const dropped = new Set(graph.events.filter(e => e.sessionScope !== sessionScope).map(e => e.id));
+  return {
+    ...graph,
+    events: graph.events.filter(e => !dropped.has(e.id)),
+    edges: graph.edges.filter(e => !edgeEndpoints(e).some(id => dropped.has(id))),
+  };
+}
+
 type NodeKind = 'person' | 'event' | 'entity';
 
 /** 各 edge kind 的 [from 端, to 端] 节点类别 */
