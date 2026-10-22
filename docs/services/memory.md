@@ -76,9 +76,10 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 ### 2.4 配套的钩子与事件契约（同包声明）
 
-`api-memory` 还通过 declaration merging 注入以下钩子与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，事件注入 `@aalis/core` 的 `AalisEvents`）：
+`api-memory` 还通过 declaration merging 注入以下钩子、贡献点与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，贡献点注入 `@aalis/api-contributions` 的 `ContributionPointMap`，事件注入 `@aalis/core` 的 `AalisEvents`）：
 
-- Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型（取值同 `/clear --type`）：处理某个清理类型的中间件须在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，第三方中间件处理内置类型却不标注，会被回执误报为「没有已启用的插件处理」。
+- Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型：处理某个清理类型的插件登记它（见下一条），并在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。只在清理全部会话时清的数据（跨会话的，如用户档案），由处理它的插件在会话级清理、`types` 显式含它时自己推一行未清理的结果。
+- 贡献点 `'memory:clear-type'`：清理类型的登记表，spec 是 `{ id, label }`（`ClearTypeContribution`）。`id` 是类型名（`/clear -t` 的写法、结果行的 `type`），`label` 是显示名，可以是文字对象。`/clear` 只认登记了的类型，帮助按登记表列出；同一类型可由几家登记，显示名取收集次序里第一家的。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。
 - Event `'history:changed'`：会话历史发生结构性变化，前端据此重新拉取。
 - Event `'session:compressing'`：会话压缩的进度（开始、压成、没压成）。压缩本身是服务 `compression`，见 [api-memory](../api/api-memory.md#压缩服务)。

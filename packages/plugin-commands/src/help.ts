@@ -83,7 +83,7 @@ function optionLines(option: OptionSpec): (string | TextRef)[] {
   const value = option.type === 'boolean' ? '' : option.valueOptional ? ` [${placeholder}]` : ` <${placeholder}>`;
   return [
     described(`- ${[...flags].join(', ')}${value}`, option.description),
-    ...(option.choices ?? []).map(c => described(`  - ${c.value}`, c.description)),
+    ...(option.choices?.() ?? []).map(c => described(`  - ${c.value}`, c.description)),
   ];
 }
 

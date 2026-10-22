@@ -1,5 +1,6 @@
 import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
 import { checkpoint } from '@aalis/api-checkpoint';
+import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { storage } from '@aalis/api-storage';
@@ -7,6 +8,7 @@ import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional
 import { parseConfig } from '@aalis/schema-config';
 import { configSchema } from './config.js';
 import { CheckpointServiceImpl, normalizeConfig } from './service.js';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-checkpoint — 文件操作快照与回滚（契约见 @aalis/api-checkpoint）
@@ -23,6 +25,8 @@ const uses = {
   storage,
   /** 只有「回滚整轮对话」用得到（抓消息时间戳、删消息）；没有 memory 也能做纯文件回滚 */
   memory: optional(memory),
+  /** 登记 /clear 的 checkpoint 类型 */
+  contributions: optional(contributions),
   events,
   hooks,
   lifecycle,
@@ -43,7 +47,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { storage, memory, events, hooks, lifecycle, provide } = caps;
+  const { storage, memory, events, hooks, lifecycle, provide, contributions } = caps;
   /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
   const logger = caps.logger.use.child('checkpoint');
   const cfg = normalizeConfig(parseConfig(configSchema, caps.config.use, logger));
@@ -104,7 +108,8 @@ function run(caps: Caps): void {
 
   // ──────────── 参与统一的 memory:clear ────────────
   // /clear 与 session-manager.deleteSession 都通过 memory:clear hook 编排，
-  // 不监听的话 checkpoint 目录无人清理，长期泄漏。
+  // 不监听的话 checkpoint 目录无人清理，长期泄漏。登记 checkpoint 类型，/clear -t 才选得中。
+  contributions.use.contribute('memory:clear-type', { id: 'checkpoint', label: t('clearType') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('checkpoint')) {
       await next();

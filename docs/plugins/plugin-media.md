@@ -49,7 +49,7 @@ export default definePlugin({
 
 ## 参与 /clear
 
-`memory:clear`（`/clear` 与删除会话）里按所选类型清两样，各行标 `type`：
+登记清理类型 `image`、`video`，`memory:clear`（`/clear` 与删除会话）里按所选类型清两样，各行标 `type`：
 
 - 上传的图片（`image`）：本插件在会话媒体目录里的子目录，会话级清这个会话的，`/clear all` 清各会话的。
 - 描述缓存：图片描述（`image`）与视频描述（`video`）各回一行，规则见 [media 服务的「描述缓存」](../services/media.md#描述缓存)。

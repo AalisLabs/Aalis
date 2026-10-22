@@ -37,6 +37,10 @@ export default defineLocale<Source>()({
   mediaVideo: 'videos',
   mediaAudio: 'voice messages',
   mediaFile: 'files',
+  clearTypeImage: 'Image cache',
+  clearTypeVideo: 'Video cache',
+  clearTypeAudio: 'Voice cache',
+  clearTypeFile: 'File cache',
   mediaCleared: 'Cleared {kind} sent and received over OneBot ({count, plural, one {# file} other {# files}})',
   mediaFailed: 'Failed to clear {kind} sent and received over OneBot: {error}',
 });

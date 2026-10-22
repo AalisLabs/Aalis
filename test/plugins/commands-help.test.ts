@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
 import type {} from '../../packages/api-gateway/src/index.js';
-import { type App, events, type Logger } from '../../packages/core/src/index.js';
+import { type App, definePlugin, events, type Logger } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import { brief } from '../../packages/plugin-commands/src/help.js';
@@ -211,6 +211,20 @@ describe('help: 登记', () => {
     expect(await run(['-t', 'k'])).toBe('选项 --to 只能是: c, f');
   });
 
+  it('取值可以是函数：帮助与取值校验每次现取', async () => {
+    const reg = r();
+    const units: string[] = ['c'];
+    reg
+      .command('unit')
+      .option('to', '-t <to:string>', { choices: () => units })
+      .action(argv => String(argv.options.to));
+    const run = (args: string[]) => reg.execute('unit', { sessionId: 's', platform: 'test', args, raw: '' });
+    expect(await run(['-t', 'f'])).toBe('选项 --to 只能是: c');
+    units.push('f');
+    expect(reg.detail(['unit'], caller).split('\n').slice(-2)).toEqual(['  - c', '  - f']);
+    expect(await run(['-t', 'f'])).toBe('f');
+  });
+
   it('负数没有同名选项时是位置参数；有同名选项的照旧当选项', async () => {
     const reg = r();
     reg.command('level <target:string> <level:number>').action((_argv, target, level) => `${target} ${level}`);
@@ -393,5 +407,23 @@ describe('help: 按调用者的等级过滤', () => {
       for (const line of ['/help', '/help clear', '/help probe', '/mixed', '/probe -h'])
         expectPlain(await ask(who, line));
     }
+  });
+});
+
+describe('/status：只给计数', () => {
+  it('群成员调用：写插件在跑与出错的个数、工具数、指令数，不列服务名、不用 emoji；末尾写「逐项检查用 /doctor」', async () => {
+    const { app, ask } = await setup();
+    await app.plugin(
+      definePlugin({
+        name: 'zz-broken',
+        apply() {
+          throw new Error('坏了');
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(await ask(MEMBER, '/status')).toMatch(
+      /^系统状态：\n\n- 插件: 在跑 6 个，出错 1 个\n- 已注册工具: 0 个\n- 已注册指令: \d+ 个\n\n逐项检查用 \/doctor$/,
+    );
   });
 });

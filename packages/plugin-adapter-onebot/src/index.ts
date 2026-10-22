@@ -396,12 +396,12 @@ function nextEcho(): string {
 // image/audio/video/file 一律落盘到 data:/{kind}s/{会话目录}/onebot/{hash}.{ext}，便于人工归档、
 // 跨轮工具复用、多模态历史回放。详见 ./attachment-cache.ts。
 
-/** /clear 回执里各种附件的称呼（字典键） */
-const MEDIA_NOUNS = [
-  ['image', 'mediaImage'],
-  ['video', 'mediaVideo'],
-  ['audio', 'mediaAudio'],
-  ['file', 'mediaFile'],
+/** 附件的种类：/clear 的类型，回执里的称呼与类型显示名（字典键） */
+const MEDIA_KINDS = [
+  ['image', 'mediaImage', 'clearTypeImage'],
+  ['video', 'mediaVideo', 'clearTypeVideo'],
+  ['audio', 'mediaAudio', 'clearTypeAudio'],
+  ['file', 'mediaFile', 'clearTypeFile'],
 ] as const;
 
 /** 占位符 → AttachmentRefKind 映射（与 v11/v12 segmentsToText 的输出对齐） */
@@ -1077,7 +1077,9 @@ function runAdapter(caps: Caps): void {
   // 参与 memory:clear。转发原文是聊天内容，归入 context：条目没有会话维度，只在全局清理时清，会话级清理不动它（靠持久化层的
   // 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。多实例共用同一
   // 命名空间与目录、各有一份内存缓存：每个实例都清一遍（重复删是空操作），回显按来源合成一行——已有成功项时不再追加，前一
-  // 实例失败而本实例成功时改写那一行。
+  // 实例失败而本实例成功时改写那一行。四种附件各登记一个类型，/clear -t 才选得中（别的写入方也登记同名类型，帮助里只列一次）。
+  for (const [type, , label] of MEDIA_KINDS)
+    contributions.use.contribute('memory:clear-type', { id: type, label: t(label) });
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
     const report = (line: (typeof data.results)[number]) => {
       const prev = data.results.find(r => r.source === line.source);
@@ -1096,7 +1098,7 @@ function runAdapter(caps: Caps): void {
     }
     const sessionId = data.scope === 'all' ? undefined : data.sessionId;
     if (data.scope === 'all' || sessionId) {
-      for (const [type, noun] of MEDIA_NOUNS) {
+      for (const [type, noun] of MEDIA_KINDS) {
         if (!wants(type)) continue;
         const kind = t(noun);
         const line = { source: `onebot-${type}`, type };

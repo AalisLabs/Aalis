@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
@@ -46,12 +47,14 @@ const t = defineTexts({
     hello: '你好，{name}',
     helloDescription: '打个招呼。回一句问候',
     longDescription: '一句很长的说明。后面是细节',
+    kindLabel: '探针类型',
   } as const,
   locales: {
     en: {
       hello: 'Hello, {name}',
       helloDescription: 'Say hello. Replies with a greeting',
       longDescription: 'Explains at great length what this command does and more. Details',
+      kindLabel: 'Probe kind',
     },
   },
 });
@@ -105,6 +108,7 @@ async function setup({
   provideHostPaths(app, home);
   await registerHubs(app);
   const host = app.bind({
+    contributions,
     provide,
     events,
     hooks,
@@ -277,18 +281,29 @@ describe('内置指令的说明与回复按会话的语言', () => {
     const s = await setup();
     s.host.commands.use.setExecutionGuard(async () => null);
     expect((await s.ask(await s.session(['en']), '/clear -t bogus')).content).toBe(
-      'Unknown clear type: bogus. Available types: all, context, summary, vector, image, video, audio, file, persona, ' +
-        'checkpoint, user-profile, user-relation. See /help clear',
+      'Unknown clear type: bogus. Available types: all, context. See /help clear',
     );
+  });
+
+  it('en 会话里 /help clear 的类型说明是英文，登记方给的文字对象按会话的语言', async () => {
+    const s = await setup();
+    s.host.contributions.use.contribute('memory:clear-type', { id: 'zz-kind', label: t('kindLabel') });
+    const lines = (await s.ask(await s.session(['en']), '/help clear')).content.split('\n');
+    expect(lines.filter(line => line.startsWith('  - '))).toEqual([
+      '  - all: All types',
+      '  - context: Message history and session context (including summaries and to-dos)',
+      '  - zz-kind: Probe kind',
+    ]);
   });
 
   it('en 会话里 /clear 的结果是英文：消息历史的结果行与没有处理者的说明', async () => {
     const s = await setup();
     s.host.commands.use.setExecutionGuard(async () => null);
-    expect((await s.ask(await s.session(['en']), '/clear -t context,image')).content).toBe(
+    s.host.contributions.use.contribute('memory:clear-type', { id: 'zz-kind', label: t('kindLabel') });
+    expect((await s.ask(await s.session(['en']), '/clear -t context,zz-kind')).content).toBe(
       [
         "✅ This session's message history cleared",
-        '⚠ Image cache: no enabled plugin handles this type, so it was not cleared',
+        '⚠ Probe kind: no enabled plugin handles this type, so it was not cleared',
       ].join('\n'),
     );
   });

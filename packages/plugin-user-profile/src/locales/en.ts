@@ -18,4 +18,7 @@ export default defineLocale<Source>()({
   factTimeHint: 'time hint: {hint}',
   factObserved: 'recorded {at, date, short}',
   factTemporary: 'temporary',
+  clearType: 'User profiles (across sessions)',
+  clearSkipped:
+    'User profiles are cross-session data and are cleared only when clearing all sessions, so they were not cleared this time',
 });

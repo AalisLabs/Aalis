@@ -1,4 +1,5 @@
 // ----- 记忆服务接口 -----
+import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import type { HookContextMap } from '@aalis/api-hooks'; // 也是 declaration merging 的锚点（下方 HookContextMap 增强）
 import type {} from '@aalis/core';
 import { defineService, type Logger } from '@aalis/core';
@@ -269,20 +270,37 @@ declare module '@aalis/api-hooks' {
     'memory:clear': {
       /** 清除范围: session=当前会话, all=全局 */
       scope: 'session' | 'all';
-      /** 指定清除的子系统（为空则全部清除） */
+      /** 指定清除的类型（为空则全部清除），取值是 {@link ClearTypeContribution} 登记的 id */
       types?: string[];
       /** 当前会话 ID（scope=session 时必填） */
       sessionId?: string;
       /**
        * 各子系统报告的结果（由中间件填充）。
        *
-       * `type` 是这一行所属的清理类型（取值同 `/clear --type`，如 `'vector'`）。处理某个清理类型的中间件
-       * 须在各行标注它，成败都标：`/clear` 对显式要求的每个类型核对有没有标注它的行，没有就回报「没有
-       * 已启用的插件处理这一类型」。第三方中间件处理内置类型却不标注，会被误报为无处理者。
+       * `type` 是这一行所属的清理类型。处理某个清理类型的插件经贡献点 `memory:clear-type` 登记它，并在各行标注它，成败都标：
+       * `/clear` 只认登记了的类型，对显式要求的每个类型核对有没有标注它的行，没有就回报「没有已启用的插件处理这一类型」。
+       * 只在清理全部会话时清的数据（跨会话的），由处理它的插件在会话级清理、types 显式含它时自己推一行未清理的结果。
        * `message` 给人看，可以是文字对象（@aalis/schema-i18n），`/clear` 按会话的语言回给发指令的人；写日志的取 toSource。
        */
       results: Array<{ source: string; type?: string; success: boolean; message: string | TextRef }>;
     };
+  }
+}
+
+/**
+ * 一个清理类型：处理它的插件登记，`/clear -t` 的可选项、帮助里的说明与认不认这个类型都按登记表现取。同一类型可由几家登记
+ * （如几家写入方都清图片），显示名取收集次序里第一家的
+ */
+export interface ClearTypeContribution {
+  /** 类型名：`/clear -t` 的写法，也是 memory:clear 结果行的 type */
+  id: string;
+  /** 显示名，可以是文字对象 */
+  label: string | TextRef;
+}
+
+declare module '@aalis/api-contributions' {
+  interface ContributionPointMap {
+    'memory:clear-type': ClearTypeContribution;
   }
 }
 

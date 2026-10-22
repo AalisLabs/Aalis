@@ -13,9 +13,10 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { clearSessionMedia, sessionMediaUri } from '@aalis/api-media';
-import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子类型
+import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子与 memory:clear-type 贡献点类型
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
@@ -160,6 +161,8 @@ const uses = {
   storage: optional(storage),
   processService: optional(processService),
   hooks: optional(hooks),
+  /** 登记 /clear 的 image 类型 */
+  contributions: optional(contributions),
   logger,
   lifecycle,
   config,
@@ -195,7 +198,8 @@ function registerDraw(caps: Caps): void {
   caps.lifecycle.use.onDispose(() => renderer.dispose());
 
   // 参与 memory:clear（/clear 与删除会话）：所选类型含 image 时清本插件在会话媒体目录里的子目录，会话级清这个会话的、
-  // 全局清各会话的；存储不在时不清、不出回执
+  // 全局清各会话的；存储不在时不清、不出回执。登记 image 类型，/clear -t 才选得中（别的写入方也登记它，帮助里只列一次）
+  caps.contributions.use.contribute('memory:clear-type', { id: 'image', label: t('clearType') });
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
     const sessionId = data.scope === 'all' ? undefined : data.sessionId;
     if (caps.storage.present && (data.scope === 'all' || sessionId) && (!data.types || data.types.includes('image'))) {

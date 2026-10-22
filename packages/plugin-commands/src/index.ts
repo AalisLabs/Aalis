@@ -1,9 +1,10 @@
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
+import { contributions } from '@aalis/api-contributions';
 import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { i18n } from '@aalis/api-i18n';
-import { memory } from '@aalis/api-memory';
+import { type ClearTypeContribution, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
 import {
   appService,
@@ -14,8 +15,8 @@ import {
   lifecycle,
   logger,
   optional,
+  pluginsService,
   provide,
-  services,
 } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, TextError, type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
@@ -34,40 +35,21 @@ const configSchema = defineConfig({
   },
 });
 
-/** 可清理类型。globalOnly：跨会话数据，只在 /clear all 时清理 */
-export const CLEAR_TYPES: ReadonlyArray<{ id: string; label: TextRef; globalOnly?: boolean }> = [
-  { id: 'context', label: t('typeContext') },
-  { id: 'summary', label: t('typeSummary') },
-  { id: 'vector', label: t('typeVector') },
-  { id: 'image', label: t('typeImage') },
-  { id: 'video', label: t('typeVideo') },
-  { id: 'audio', label: t('typeAudio') },
-  { id: 'file', label: t('typeFile') },
-  { id: 'persona', label: t('typePersona') },
-  { id: 'checkpoint', label: t('typeCheckpoint') },
-  { id: 'user-profile', label: t('typeUserProfile'), globalOnly: true },
-  { id: 'user-relation', label: t('typeUserRelation'), globalOnly: true },
-];
-
-const CLEAR_TYPE_ALIASES: Record<string, string> = {
-  history: 'context',
-  messages: 'context',
-  profile: 'user-profile',
-  profiles: 'user-profile',
-};
-
-function normalizeClearTypes(raw: unknown, prefix: string): string[] | undefined {
+/** 按登记表核对 -t 的取值：不给或含 all 时清全部类型（undefined），有不认识的抛给人看的错 */
+function normalizeClearTypes(
+  raw: unknown,
+  known: readonly ClearTypeContribution[],
+  prefix: string,
+): string[] | undefined {
   const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
   const types = values
     .flatMap(v => String(v).split(','))
     .map(v => v.trim())
-    .filter(Boolean)
-    .map(v => CLEAR_TYPE_ALIASES[v] ?? v);
+    .filter(Boolean);
   if (types.length === 0 || types.includes('all')) return undefined;
-  const known = new Set(CLEAR_TYPES.map(type => type.id));
-  const unknown = types.find(type => !known.has(type));
+  const unknown = types.find(type => !known.some(k => k.id === type));
   if (unknown) {
-    const ids = ['all', ...CLEAR_TYPES.map(type => type.id)].join(', ');
+    const ids = ['all', ...known.map(k => k.id)].join(', ');
     throw new TextError(t('unknownClearType', { type: unknown, types: ids, prefix }));
   }
   return [...new Set(types)];
@@ -85,8 +67,12 @@ const uses = {
   gateway,
   memory: optional(memory),
   authority: optional(authority),
-  /** /status 列已登记的工具数 */
+  /** /status 写已登记的工具数 */
   tools: optional(tools),
+  /** /status 写插件在跑与出错的个数；缺席时不写这一行 */
+  plugins: optional(pluginsService),
+  /** /clear 的类型按 memory:clear-type 的登记表取；缺席时只认 all */
+  contributions: optional(contributions),
   /** 回复与帮助按这条指令所在会话的语言渲染；缺席时按原文 */
   i18n: optional(i18n),
   app: appService,
@@ -97,7 +83,6 @@ const uses = {
   logger,
   config,
   provide,
-  services,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -117,6 +102,8 @@ function registerCommands({
   memory,
   authority,
   tools,
+  plugins,
+  contributions,
   i18n,
   app,
   events,
@@ -125,7 +112,6 @@ function registerCommands({
   logger,
   config,
   provide,
-  services,
 }: Caps): void {
   const cfg = parseConfig(configSchema, config.use, logger.use);
   // 创建指令注册表并注册为服务
@@ -263,27 +249,18 @@ function registerCommands({
       return path.length > 0 ? registry.detail(path, argv.session) : registry.overview(argv.session);
     });
 
+  // 只给计数：逐项的检查（哪个插件为什么没起来、缺什么服务）交给 /doctor，末尾指过去
   commands.use.command('status', t('statusDescription')).action(async () => {
-    // 按名枚举：这张表回答的只是"在不在"，其中大半个子系统本插件并不依赖，
-    // 按名动态查不产生依赖边，也就不会把它们拖进本插件的激活闸与关停顺序。
-    const checks = [
-      ['WebUI Server', 'webui-server'],
-      ['CLI', 'cli'],
-      [t('serviceLLM'), 'llm'],
-      ['Agent', 'agent'],
-      [t('serviceMemory'), 'memory'],
-      [t('servicePersona'), 'persona'],
-      ['Embedding', 'embedding'],
-      [t('serviceVectorstore'), 'vectorstore'],
-    ] as const;
+    const status = plugins.present ? plugins.use.getStatus() : undefined;
+    const count = (state: string) => status?.filter(p => p.state === state).length ?? 0;
     return textLines([
       t('statusTitle'),
       '',
-      ...checks.map(([service, name]) =>
-        t(services.use.get(name) !== undefined ? 'statusUp' : 'statusDown', { service }),
-      ),
+      ...(status ? [t('statusPlugins', { active: count('active'), error: count('error') })] : []),
       t('statusTools', { count: tools.present ? tools.use.getAll().length : 0 }),
       t('statusCommands', { count: registry.getAll().length }),
+      '',
+      t('statusDoctor', { prefix: registry.prefix }),
     ]);
   });
 
@@ -303,11 +280,24 @@ function registerCommands({
 
   // ===== /clear —— 清空记忆 =====
   // 默认清当前会话；全局清理通过显式危险子指令 /clear all 进入，避免把高危语义藏在普通选项里。
+  // 类型由处理它的插件登记（本插件登记它清的消息历史 context），-t 的可选项按登记表现取，同一类型只列一次。
+  contributions.use.contribute('memory:clear-type', { id: 'context', label: t('typeContext') });
+
+  /** 登记的清理类型，按收集次序去重：同一类型几家登记时取第一家的显示名 */
+  function clearTypes(): ClearTypeContribution[] {
+    if (!contributions.present) return [];
+    const byId = new Map<string, ClearTypeContribution>();
+    for (const { spec } of contributions.use.collect('memory:clear-type'))
+      if (!byId.has(spec.id)) byId.set(spec.id, spec);
+    return [...byId.values()];
+  }
+
   type ClearScope = 'session' | 'all';
   async function runClear(
     cmdCtx: { sessionId: string },
     scope: ClearScope,
     types: string[] | undefined,
+    known: readonly ClearTypeContribution[],
   ): Promise<TextRef> {
     const isGlobal = scope === 'all';
     // 预检：消息历史清不了就整条不执行。各插件的 memory:clear 中间件先于消息清理运行，放行就会清掉摘要、待办、
@@ -365,35 +355,29 @@ function registerCommands({
       t(r.success ? 'cleared' : 'notCleared', { message: r.message }),
     );
     // 显式要求的类型逐个核对：没有任何一行标注该类型，就是没有已启用的插件处理它，照实说明
-    for (const { id, label, globalOnly } of CLEAR_TYPES) {
+    for (const { id, label } of known) {
       if (!types?.includes(id) || clearData.results.some(r => r.type === id)) continue;
-      lines.push(
-        !isGlobal && globalOnly
-          ? t('globalOnlySkipped', { type: label, prefix: registry.prefix })
-          : t('unhandledType', { type: label }),
-      );
+      lines.push(t('unhandledType', { type: label }));
     }
     return lines.length === 0 ? t('nothingCleared') : textLines(lines);
   }
 
   async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string | TextRef> {
+    const known = clearTypes();
     let types: string[] | undefined;
     try {
-      types = normalizeClearTypes(argv.options.type, registry.prefix);
+      types = normalizeClearTypes(argv.options.type, known, registry.prefix);
     } catch (err) {
       return textOf(err);
     }
-    return runClear({ sessionId: argv.session.sessionId }, scope, types);
+    return runClear({ sessionId: argv.session.sessionId }, scope, types, known);
   }
 
   const clearTypeOption = {
     description: t('clearTypeDescription'),
-    choices: [
+    choices: () => [
       { value: 'all', description: t('clearTypeAll') },
-      ...CLEAR_TYPES.map(({ id, label, globalOnly }) => ({
-        value: id,
-        description: globalOnly ? t('clearTypeGlobalOnly', { type: label }) : label,
-      })),
+      ...clearTypes().map(({ id, label }) => ({ value: id, description: label })),
     ],
   };
 

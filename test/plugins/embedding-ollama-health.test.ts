@@ -14,7 +14,7 @@ import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js
 
 // ════════════════════════════════════════════════════════════
 // 「服务注册成功 != 模型可用」：连通性检查失败只 warn、服务照常注册（刻意，Ollama 可能
-// 晚于 Aalis 起来）。代价是模型没 pull 时——/status 只判服务存在性、插件状态是 active、
+// 晚于 Aalis 起来）。代价是模型没 pull 时——/status 只数插件状态、插件状态是 active、
 // 向量记忆每条消息静默失败——用户除了启动时一条 warn 之外拿不到任何信号。
 // 现在健康状况经 doctor registerCheck 上报，且错误里带上 Ollama 的响应体
 // （「模型没 pull」与「端点不存在」都是 404，只有响应体能区分）。

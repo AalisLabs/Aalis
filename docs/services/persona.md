@@ -165,7 +165,7 @@ export default definePlugin({
 这是一处安全约束。第三方 provider 若也注入会话上下文，必须保证同等的隔离——不要用裸实例字段存储「当前会话」。
 :::
 
-**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：scope 为 all 时清全部会话的，否则清当前会话的；只在未指定 type、或 type 含 `context` 或 `persona` 时参与。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
+**状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：scope 为 all 时清全部会话的，否则清当前会话的；只在未指定 type、或 type 含 `context` 或 `persona` 时参与（`persona` 类型由参考实现登记）。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
 **outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
 

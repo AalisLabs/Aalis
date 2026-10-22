@@ -36,7 +36,7 @@ interface OptionRegisterOptions {
   description?: string | TextRef;
   default?: unknown;
   required?: boolean;
-  choices?: readonly (string | OptionChoice)[];
+  choices?: readonly (string | OptionChoice)[] | (() => readonly (string | OptionChoice)[]);
 }
 
 interface OptionChoice {
@@ -60,7 +60,7 @@ interface CommandMeta {
 - **描述的第一句是摘要**：`/help` 概览与子指令列表只显示描述的第一句（按句子切分，分号与换行另算句末），显示宽度超过 48 列（中日韩文字记 2 列）截断加省略号；详情里显示完整描述。所以第一句写成一句短话，细节写在后面，如 `'清空当前会话记忆；用 --type 选择清理类型'`。不另设摘要字段。
 - **说明与回复可以是文字对象**：描述、位置参数与选项的说明、取值的说明可以写本包字典的 `t('键')`（`@aalis/schema-i18n`），handler 也可以返回文字对象，都按这条指令所在会话的语言显示；`usage` 与 `example` 是用户照着敲的写法，保持字符串。
 - **位置参数的说明**：`argument(name, description)` 给 DSL 里声明的位置参数加说明，名字不在 DSL 里时抛错。帮助里位置参数写成 `<名字>`（必填）与 `[名字]`（可选），带说明的另列在「参数」下。
-- **带说明的取值**：`choices` 的每一项可以只写值，也可以写成 `{ value, description }`，帮助里逐项列在选项下面。`string` 选项只收其中之一，取值不在里面时回「只能是」；`string[]` 选项不按它校验，由指令自己核（如 `/clear --type` 认别名）。
+- **带说明的取值**：`choices` 的每一项可以只写值，也可以写成 `{ value, description }`，帮助里逐项列在选项下面。`string` 选项只收其中之一，取值不在里面时回「只能是」；`string[]` 选项不按它校验，由指令自己核（如 `/clear --type` 按登记的清理类型核）。取值随运行时变化的（如按登记表列出的）把 `choices` 写成返回它们的函数，帮助与取值校验每次调用、现取。注册表交出的 `OptionSpec.choices` 一律是这样的函数（登记时写的数组也包一层），读它的调用一次得到当前的取值。
 - **`-h` 与 `--help` 是保留选项**：任何指令后面写 `-h` 或 `--help`（`--` 之前），回的就是 `/help <指令>`，别的参数一概不管、不执行；声明名为 `help`、`h` 或别名为 `-h`、`--help` 的选项时登记抛错。
 
 ### 子指令

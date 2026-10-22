@@ -130,7 +130,7 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     return { namespaces, messages };
   }
 
-  return { run, snapshot, vec, mem, store };
+  return { app, run, snapshot, vec, mem, store };
 }
 
 /** SEED 去掉给定命名空间（整个清空）后的期望 */
@@ -167,14 +167,35 @@ describe('/clear 按层清理', () => {
     expect(vec).toEqual({ cleared: 1, deletedBy: [] });
   });
 
-  it('/clear（会话级）：只清本会话的消息、摘要、待办与向量，转发原文与长期层不动', async () => {
+  it('/clear（会话级）：只清本会话的消息、摘要、待办与向量，转发原文与长期层不动，不出档案与关系图的行', async () => {
     const { run, snapshot, vec } = await world();
-    await run('clear');
+    const out = await run('clear');
+    expect(out).not.toMatch(/档案|关系图/);
     expect(await snapshot()).toEqual({
       namespaces: { ...SEED, summary: ['s-other'], 'todo-list': ['s-other'] },
       messages: { 's-cur': 0, 's-other': 3 },
     });
     expect(vec).toEqual({ cleared: 0, deletedBy: [{ sessionId: 's-cur' }] });
+  });
+
+  it('会话级显式指定 user-profile、user-relation：两家各推一行未清理，写明是跨会话数据；指令插件不另出行', async () => {
+    const { run, snapshot } = await world();
+    expect(await run('clear', ['user-profile', 'user-relation'])).toBe(
+      [
+        '⚠ 用户档案是跨会话数据，只在清理全部会话时清，本次未清理',
+        '⚠ 关系图是跨会话数据，只在清理全部会话时清，本次未清理',
+      ].join('\n'),
+    );
+    expect((await snapshot()).namespaces).toEqual(SEED);
+  });
+
+  it('卸掉 memory-vector 之后 -t vector 回不认识，列出的现有类型里没有它', async () => {
+    const { app, run } = await world();
+    await app.plugins.disable(memoryVector.name);
+    await app.plugins.idle();
+    const out = await run('clear', ['vector']);
+    expect(out).toMatch(/^未知清理类型: vector。可用类型: all, [^。]+。说明见 \/help clear$/);
+    expect(out.split('。')[1].split(', ')).not.toContain('vector');
   });
 
   it('逐个指定已装插件处理的类型：各插件的结果行都标注了类型，回执不报「没有插件处理」', async () => {

@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },

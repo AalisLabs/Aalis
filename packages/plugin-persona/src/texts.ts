@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：按会话字段的称呼、说明与选项
+// 本插件自己的原文字典：按会话字段的称呼、说明与选项，/clear 的类型显示名
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -14,6 +14,7 @@ const SOURCE = {
   renderCard: '按角色卡',
   renderOn: '开',
   renderOff: '关',
+  clearType: '会话角色状态',
 } as const;
 export type Source = typeof SOURCE;
 

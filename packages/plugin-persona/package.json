@@ -36,6 +36,7 @@
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
     "yaml": "^2.7.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
@@ -57,7 +58,8 @@
         "storage",
         "session-manager",
         "host-config",
-        "session-settings"
+        "session-settings",
+        "contributions"
       ],
       "provides": [
         "persona"

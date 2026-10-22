@@ -470,6 +470,9 @@ importers:
 
   packages/api-memory:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
@@ -1197,11 +1200,14 @@ importers:
       '@aalis/api-checkpoint':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-checkpoint
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-memory':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -1324,8 +1330,11 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-commands':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1426,6 +1435,9 @@ importers:
 
   packages/plugin-draw:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
@@ -1948,6 +1960,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-doctor':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-doctor
@@ -2209,6 +2224,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.16.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
@@ -2422,6 +2440,9 @@ importers:
 
   packages/plugin-persona:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks

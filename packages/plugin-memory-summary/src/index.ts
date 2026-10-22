@@ -828,7 +828,8 @@ async function run(caps: Caps): Promise<void> {
     });
   });
 
-  // 统一记忆清除：通过 memory:clear hook 参与编排（删除会话也走它）
+  // 统一记忆清除：通过 memory:clear hook 参与编排（删除会话也走它）；登记 summary 类型，/clear -t 才选得中
+  contributions.use.contribute('memory:clear-type', { id: 'summary', label: t('clearType') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     // 类型过滤：摘要是归档消息的压缩，随 context 一起清（也可单独选 summary）；两者都不含时跳过
     if (data.types && !data.types.includes('summary') && !data.types.includes('context')) {

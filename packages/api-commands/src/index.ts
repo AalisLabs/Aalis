@@ -74,8 +74,11 @@ export interface OptionSpec {
   description?: string | TextRef;
   default?: unknown;
   required: boolean;
-  /** 可选的取值，帮助里逐项列出。`string` 选项只收其中之一；`string[]` 不按它校验，由指令自己核 */
-  choices?: readonly OptionChoice[];
+  /**
+   * 可选的取值，每次用时现取：帮助逐项列出，`string` 选项只收其中之一；`string[]` 不按它校验，由指令自己核。
+   * 登记时写的数组也包成函数
+   */
+  choices?: () => readonly OptionChoice[];
 }
 
 // ===== 命令元数据 =====
@@ -150,8 +153,8 @@ export interface OptionRegisterOptions {
   description?: string | TextRef;
   default?: unknown;
   required?: boolean;
-  /** 可选的取值：只写值，或带上说明 */
-  choices?: readonly (string | OptionChoice)[];
+  /** 可选的取值：只写值，或带上说明；随运行时变化的（如按登记表列出的）写成返回它们的函数，每次用时现取 */
+  choices?: readonly (string | OptionChoice)[] | (() => readonly (string | OptionChoice)[]);
 }
 
 export interface CommandBuilder {
