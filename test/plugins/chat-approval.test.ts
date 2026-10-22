@@ -372,9 +372,29 @@ describe('应答：引用那条审批消息回复', () => {
     s.call();
     await s.requested();
     const started = performance.now();
-    const long = await s.say(`a${' '.repeat(40_000)}x`);
+    const long = await s.say(`a${' '.repeat(100_000)}x`);
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(s.received.map(m => m.messageId)).toContain(long.messageId);
+  });
+
+  it('恰好 200 字、去掉首尾标点后为「同意」：算批准', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply(`同意${'。'.repeat(198)}`, id);
+    await vi.waitFor(() => expect(r.content).toBe('ran'));
+  });
+
+  it('超过 200 字的：去掉首尾标点后恰为「同意」也不算应答，照常交给 agent，审批照旧等', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const said = await s.reply(`同意${'。'.repeat(199)}`, id);
+    expect(s.received.map(m => m.messageId)).toContain(said.messageId);
+    expect(r.content).toBeUndefined();
+    expect(s.runs()).toBe(0);
   });
 
   it.each([
@@ -494,6 +514,24 @@ describe('时限与在场', () => {
     await settle();
     expect(again.content).toEqual(expect.stringContaining(ABSENT));
     expect(s.requests()).toHaveLength(1);
+  });
+
+  it('结算之后、到点之前又推出一张：到点不收回在场，这张等满时限', async () => {
+    const s = await setup();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    await vi.advanceTimersByTimeAsync(4 * MINUTE);
+    const first = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await first.result).toContain('300 秒');
+    await vi.advanceTimersByTimeAsync(MINUTE / 2);
+    const second = s.call();
+    await s.requested(2);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(second.content).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await second.result).toContain('300 秒');
   });
 
   it('结算之后、到点之前 owner 又亲手说了话：在场从这句起算，到点不再收回', async () => {
