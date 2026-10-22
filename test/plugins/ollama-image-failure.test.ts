@@ -31,6 +31,11 @@ const WAV_1B = 'data:audio/wav;base64,UklGRg==';
 
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  // 启动时的模型发现与能力探测答空，不连本机的 Ollama
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => Response.json({ models: [] })),
+  );
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'testvision' });
   await app.plugins.idle();
   const entries = app.bind({ llm }).llm.list();
