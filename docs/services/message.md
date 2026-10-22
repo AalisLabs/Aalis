@@ -76,7 +76,7 @@
 
 | 符号 | file:line | 说明 |
 | --- | --- | --- |
-| `buildIncomingContent(incoming)` | `incoming-content.ts` | 入站消息 → 归档文本：发送者前缀（webui、cli 除外）+ 引用回复 + `_attachmentDescriptions`。plugin-message-archive 落库与触发判定共用，保证判定时看到的当前消息与归档逐字一致；只拼接，不触发识别 |
+| `buildIncomingContent(incoming, speaker?)` | `incoming-content.ts` | 入站消息 → 归档文本：发送者前缀（给了说话人才加，说话人按 api-message-archive 的 `speakerOf`）+ 引用回复 + `_attachmentDescriptions`。plugin-message-archive 落库与触发判定共用，保证判定时看到的当前消息与归档逐字一致；只拼接，不触发识别 |
 
 ### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts`
 

@@ -13,7 +13,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 依赖
 
-- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（消息不带机器人账号时取房间记下的，判从别的平台往房间里插话）、`session-settings` 与 `host-config`（按会话读生效范围与阈值，缺席时取插件配置）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）、`process`（托管侧车时用来拉起它，缺席时拉不起，判定不可用）。
+- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`session-manager`（消息不带机器人账号时取房间记下的，判从别的平台往房间里插话，判当前消息的发送者前缀）、`authority`（当前消息的发送者前缀判谁是 owner，缺席时没有人是 owner）、`session-settings` 与 `host-config`（按会话读生效范围与阈值，缺席时取插件配置）、`message-archive`（吞掉时归档）、`media`（附件识别，缺席时带附件的消息判定时没有描述）、`doctor`（诊断项）、`process`（托管侧车时用来拉起它，缺席时拉不起，判定不可用）。
 - 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1。配置了 `sidecarDir` 时由本插件托管（见「托管侧车」），否则由外部运行，本插件只按 `endpoint` 连接。构建、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
 
 ## 判定流程
@@ -26,7 +26,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取：会话与入口平台传给人设的 `getPersonaName` / `getNickNames`，人设插件经会话设置取这个会话用的角色卡（`persona`），与 agent 同一取法；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。会话设置缺席时取人设插件配置里的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
 7. 判定前检查：bot 自己的账号 `selfId` 取消息上收到它的机器人账号（`IncomingMessage.selfId`，由适配器填，OneBot 填 `self_id`），不看平台与类型名；消息不带它的（适配器没填）取 session-manager 在房间建档时记下的机器人账号（`originChat.selfId`，子会话取根会话的）；都没有的兜底，每类消息（平台与类型名）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底；托管的侧车还在启动或等重启时兜底（见「托管侧车」）。
 8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致：只有工具调用的 assistant 行以空串落库，两边都计入窗口，到侧车渲染时才丢弃；正文不是字符串的行只有本插件滤掉，目前只有 subtask 在子任务会话里合成的 report 行是这样。最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。
-9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
+9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`，发送者前缀里的说话人按 `@aalis/api-message-archive` 的 `speakerOf` 给（受众只有 owner 的会话不带前缀，见 [services/message-archive.md](../../docs/services/message-archive.md) 的「发送者前缀」）。归档用的是同一个函数与同一条规则，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
 10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能兜底；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 11. `speak = logit ≥ 阈值`，阈值取这个会话生效的 `threshold`（按会话现读），没设时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
 
@@ -157,6 +157,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 已知局限
 
+- **新旧存档的发送者前缀不同**：CHANGELOG「发送者前缀按房间类别」一节之前，归档正文的前缀按平台加（webui、cli 不加，其余都加）；之后按房间类别加：owner 自己的 IM 私聊、带来源的注入（子任务的任务正文、好友申请等合成的通知）不再带前缀，owner 从 WebUI 往群里发的那条带 `[owner 在该平台的账号]: `。旧记录不补，导训练数据时要按落地时间分开看。
 - **文件描述不进 `cur`**：文件附件的描述由 plugin-file-reader 在 agent 预处理阶段才写入，判定时还没有，放行的带文件消息归档里有文件描述而 `cur` 里没有。自检汇总计入 `不一致:含文件附件`。
 - **识别超时时 `cur` 缺附件描述**：附件识别超过 `mediaWaitMs` 时照常判定，`cur` 里缺这些描述，归档时补上。自检汇总计入 `不一致:缺附件描述`。
 - **带附件的消息可能晚于同会话后到的消息放行**：等识别的那段（至多 `mediaWaitMs`）在判定之内，这期间同一会话后到、不用等识别的消息可能先判完、先放行。agent 按会话 latest-wins：先到的这条晚放行时，若后到那一轮仍在生成，agent 会中止它，改以先到的为当前消息；后到的那条在它的回合开始时已经归档，中止不回滚，在接替回合里是可见的历史，但得不到针对它的回复。先发图再说一句时，文字那一轮开始时带图的那条还没判完、没有归档，这一轮的回复看不到图；带图的那条判为不开口时要到判定结束才归档，只出现在之后回合的历史里；判为开口时它那一轮能同时看到两条（文字那一轮仍在生成则被它中止接替）。按到达先后处理同一会话的消息由通道层负责（网关入口按到达先后编号，同一会话的消息按到达先后排队与合并，当前消息取最新到达的），通道层尚未实现；本插件不核对放行顺序。

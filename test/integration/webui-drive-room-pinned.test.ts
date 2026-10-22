@@ -73,6 +73,7 @@ async function loadStack() {
   // /session 只列请求者能改的项：owner 都能改（本文件测的不是鉴权）
   app.bind({ provide }).provide.use(authority, {
     isOwner: () => true,
+    ownerOn: () => undefined,
     authorize: () => null,
     meetsLevel: () => true,
   } as never);

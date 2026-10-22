@@ -12,10 +12,12 @@ import {
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 入站消息的归档文本：自 plugin-message-archive 原样移到 schema-message，归档与触发判定共用。
-// 下面钉住逐字输出；归档用例确认归档写入的正文就是这个函数的结果，两边不会各拼一份，另核归档另记的发言人写的话与
-// 附件清单。
+// 入站消息的归档文本：schema-message 的 buildIncomingContent，归档与触发判定共用；说话人由调用方给（谁算说话人见
+// speaker-prefix.test.ts）。下面钉住逐字输出；归档用例确认归档写入的正文就是这个函数的结果，两边不会各拼一份，另核归档另记的
+// 发言人写的话与附件清单。
 // ════════════════════════════════════════════════════════════
+
+const SPEAKER = { nickname: '甲', userId: '30001' };
 
 const group = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
   content: '看这个',
@@ -29,31 +31,32 @@ const group = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
 });
 
 describe('buildIncomingContent', () => {
-  it('多用户平台加发送者前缀；单用户平台（webui / cli）不加', () => {
-    expect(buildIncomingContent(group())).toBe('[甲(30001)]: 看这个');
-    expect(buildIncomingContent(group({ nickname: undefined }))).toBe('[30001]: 看这个');
-    expect(buildIncomingContent({ content: '你好', sessionId: 'webui-default', platform: 'webui', userId: 'u' })).toBe(
-      '你好',
-    );
-    expect(buildIncomingContent({ content: '你好', sessionId: 'cli-default', platform: 'cli', userId: 'u' })).toBe(
-      '你好',
-    );
+  it('给了说话人才加前缀，不看平台', () => {
+    expect(buildIncomingContent(group(), SPEAKER)).toBe('[甲(30001)]: 看这个');
+    expect(buildIncomingContent(group(), { userId: '30001' })).toBe('[30001]: 看这个');
+    expect(buildIncomingContent(group())).toBe('看这个');
+    expect(
+      buildIncomingContent({ content: '你好', sessionId: 'webui-1', platform: 'webui' }, { userId: 'console' }),
+    ).toBe('[console]: 你好');
   });
 
   it('引用回复拼在末尾；被引用者无标签时记为 ?', () => {
     expect(
-      buildIncomingContent(group({ replyTo: { messageId: 'm1', content: '原话', nickname: '乙', userId: '30002' } })),
+      buildIncomingContent(
+        group({ replyTo: { messageId: 'm1', content: '原话', nickname: '乙', userId: '30002' } }),
+        SPEAKER,
+      ),
     ).toBe('[甲(30001)]: 看这个\n[引用 乙(30002) 的消息: 原话]');
-    expect(buildIncomingContent(group({ replyTo: { messageId: 'm1', content: '原话' } }))).toBe(
+    expect(buildIncomingContent(group({ replyTo: { messageId: 'm1', content: '原话' } }), SPEAKER)).toBe(
       '[甲(30001)]: 看这个\n[引用 ? 的消息: 原话]',
     );
     // 被引用消息没有正文：不拼
-    expect(buildIncomingContent(group({ replyTo: { messageId: 'm1' } }))).toBe('[甲(30001)]: 看这个');
+    expect(buildIncomingContent(group({ replyTo: { messageId: 'm1' } }), SPEAKER)).toBe('[甲(30001)]: 看这个');
   });
 
   it('附件描述按下标顺序追加，跳过空白与缺项；正文为空时只剩描述', () => {
     const descs = ['[图片: 一只猫 | ref:data/a.png]', undefined, '  ', '[音频] 你好'];
-    expect(buildIncomingContent(group({ _attachmentDescriptions: descs }))).toBe(
+    expect(buildIncomingContent(group({ _attachmentDescriptions: descs }), SPEAKER)).toBe(
       '[甲(30001)]: 看这个\n[图片: 一只猫 | ref:data/a.png]\n[音频] 你好',
     );
     expect(
@@ -100,7 +103,8 @@ describe('归档', () => {
       _attachmentDescriptions: ['[图片: 一只猫 | ref:data/a.png]'],
     });
     const { content, message } = await (await archiveService()).archiveIncoming(msg);
-    expect(content).toBe(buildIncomingContent(msg));
+    // 会话管理不在：说话人是这条消息自己的
+    expect(content).toBe(buildIncomingContent(msg, SPEAKER));
     expect(message.content).toBe('[甲(30001)]: 看这个\n[引用 乙(30002) 的消息: 原话]\n[图片: 一只猫 | ref:data/a.png]');
   });
 
@@ -148,11 +152,7 @@ describe('归档', () => {
       content: '你好',
       sessionId: 'webui-default',
       platform: 'webui',
-      userId: 'console',
     });
-    expect(Object.keys(message.metadata ?? {}).sort()).toEqual([
-      WellKnownMetadataKeys.Platform,
-      WellKnownMetadataKeys.UserId,
-    ]);
+    expect(Object.keys(message.metadata ?? {})).toEqual([WellKnownMetadataKeys.Platform]);
   });
 });

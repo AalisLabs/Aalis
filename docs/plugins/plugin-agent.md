@@ -28,6 +28,7 @@ definePlugin({
     persona: optional(persona),
     messageArchive: optional(messageArchive),
     sessionManager: optional(sessionManager),
+    authority: optional(authority),
     platform: optional(platform),
     media: optional(media),
     storage: optional(storage),
@@ -112,7 +113,7 @@ definePlugin({
 
 **会话删除**：收到 `session:deleted` 时中止这个会话在飞的回合，并等它们收尾（与关停时同一套），之后会话管理才清它的数据：删除一个正在跑的会话（WebUI 里删除、删除子任务、清空或删除父会话连带的子会话）时，这一轮当场停下，不再写进记录、不再发出。等收尾没有时限：不响应中止的工具会让删除一直等到它返回。
 
-`message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
+`message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆，当轮发给模型的正文由 Agent 按存档同一份拼法自己拼（`buildIncomingContent`，发送者前缀按 api-message-archive 的 `speakerOf`，判房间类别与 owner 用 `session-manager` 与 `authority`）；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
 
 ## 指令类回合
 

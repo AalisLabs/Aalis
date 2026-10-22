@@ -7,6 +7,7 @@ import {
   type PreprocessorInfo,
   type TokenUsageEvent,
 } from '@aalis/api-agent';
+import { authority as authorityService } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { chatScopeOf, gateway as gatewayService } from '@aalis/api-gateway';
@@ -23,7 +24,7 @@ import {
 } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
 import { memory as memoryService } from '@aalis/api-memory';
-import { messageArchive as messageArchiveService } from '@aalis/api-message-archive';
+import { messageArchive as messageArchiveService, speakerOf } from '@aalis/api-message-archive';
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
 import {
   getPlatformAdapters,
@@ -58,9 +59,9 @@ import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
+  buildIncomingContent,
   CONTROL_KINDS,
   getMessageName,
-  getSenderLabel,
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
@@ -100,6 +101,8 @@ const uses = {
   persona: optional(personaService),
   messageArchive: optional(messageArchiveService),
   sessionManager: optional(sessionManagerService),
+  /** 存档不在时当轮正文的发送者前缀判谁是 owner（与存档同一规则，speakerOf） */
+  authority: optional(authorityService),
   /** 按会话读本插件的四项（模型、深度思考、最大工具迭代、历史条数上限）；缺席时只取插件配置里的值 */
   sessionFields: optional(sessionFieldsService),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
@@ -1525,11 +1528,18 @@ class DefaultAgent implements AgentService {
     // 内容主体由 message-archive 烘焙：sender 前缀 / 引用回复 / 图片描述 / 附件描述
     // 都已经写进 archivedIncoming.content。这里只在外层加一个时间标注，
     // 保证「LLM 看到的当前消息」与「历史消息」「向量库存档」三者一致。
-    const senderLabel = getSenderLabel(incoming.nickname, incoming.userId);
+    // 存档不在时按同一份拼法与同一条说话人规则自己拼（schema-message 的 buildIncomingContent、api-message-archive 的 speakerOf）。
     const nowLabel = formatTimeLabel(Date.now(), Date.now());
-    const archivedBody = archivedIncoming?.content;
-    const fallbackBody = senderLabel ? `[${senderLabel}]: ${incoming.content}` : incoming.content;
-    const currentContent = `(${nowLabel}) ${archivedBody ?? fallbackBody}`;
+    const body =
+      archivedIncoming?.content ??
+      buildIncomingContent(
+        incoming,
+        speakerOf(incoming, {
+          sessionManager: this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined,
+          authority: this.caps.authority.present ? this.caps.authority.use : undefined,
+        }),
+      );
+    const currentContent = `(${nowLabel}) ${body}`;
 
     // 宿主通知分支：宿主撰写的事件通知不是任何人的发言，与 proactive 一样以 system 呈现、
     // 不推当前 user 消息与易变块。不可信段只在当轮接在宿主正文之后（归档只留正文），

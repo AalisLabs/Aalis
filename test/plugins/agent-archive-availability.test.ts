@@ -77,8 +77,9 @@ describe('agent 可选归档服务', () => {
     expect(h.host.agent.use).toBe(instance);
     await h.send('after-archive');
     const history = await h.host.memory.use.getHistory('after-archive', 20);
+    // 没有会话管理：判不出房间类别，正文写这条消息自己的说话人
     expect(history.map(message => [message.role, message.content])).toEqual([
-      ['user', '你好'],
+      ['user', '[u1]: 你好'],
       ['assistant', '已回复'],
     ]);
     expect(h.warnings).toHaveLength(1);

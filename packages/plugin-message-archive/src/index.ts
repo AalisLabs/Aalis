@@ -1,7 +1,8 @@
+import { authority } from '@aalis/api-authority';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
-import { messageArchive, outboundAddress, unaddressedText } from '@aalis/api-message-archive';
+import { messageArchive, outboundAddress, speakerOf, unaddressedText } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
@@ -143,8 +144,13 @@ const uses = {
   memory,
   media: optional(media),
   storage: optional(storage),
-  /** 认出子会话：它的出站没人认领时由这里认领；不在时判不出，不认领 */
+  /**
+   * 认出子会话：它的出站没人认领时由这里认领；入站的发送者前缀按根会话的房间类别给（speakerOf）。不在时判不出，不认领，
+   * 入站一律写这条消息自己的说话人
+   */
   sessionManager: optional(sessionManager),
+  /** 发送者前缀判谁是 owner、取 owner 在房间所在平台登记的账号；不在时没有人是 owner */
+  authority: optional(authority),
   events,
   logger,
   config,
@@ -182,7 +188,7 @@ export default definePlugin({
 });
 
 function createArchiveService(
-  { memory, media, storage, events, logger }: Caps,
+  { memory, media, storage, sessionManager, authority, events, logger }: Caps,
   debugLogs: boolean,
 ): MessageArchiveService {
   // 经 memory 的业务句柄调用：一次激活内胜者也可能换人（偏好变更、更高优先级的提供者登场），
@@ -278,7 +284,13 @@ function createArchiveService(
           : incoming._attachmentDescriptions,
       };
 
-      const content = buildIncomingContent(working);
+      const content = buildIncomingContent(
+        working,
+        speakerOf(working, {
+          sessionManager: sessionManager.present ? sessionManager.use : undefined,
+          authority: authority.present ? authority.use : undefined,
+        }),
+      );
 
       // 把会话身份信息存入 metadata，供向量检索/上下文渲染等场景使用
       const meta: Record<string, unknown> = {};

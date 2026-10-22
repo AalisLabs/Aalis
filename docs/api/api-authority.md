@@ -81,6 +81,10 @@ interface AuthorityService {
   // 是否 owner（owners 配置命中 → 拥有一切，level = ∞）
   isOwner(platform: string, userId?: string): boolean;
 
+  // owner 在这个平台登记的账号：配置 owners 里这个平台的第一个，没有时为 undefined。本机控制台（webui、cli 的 console）
+  // 恒为 owner，但不是登记的账号，不算。入站正文的发送者前缀据它写 owner 从别的平台往房间里插话的那条（api-message-archive 的 speakerOf）
+  ownerOn(platform: string): UserIdentity | undefined;
+
   // 这一轮是谁发起的（api-approval 的 OriginKind）：按回合的来源判，不按授权身份判，会话的受众按会话管理里记下的字段判。
   // 只有 owner 与 owner-chain 能产生审批；本地效果由触及服务按这一类别定主体：owner 与 owner-chain 为 owner，
   // subtask 随派出它的那一轮父会话，其余没有本地效果

@@ -158,7 +158,8 @@ describe('没有能看图的模型', () => {
       webui([{ kind: 'image', data: png('c1') }], '看看这个'),
     );
     expect(message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([{ kind: 'image', ref: written[0] }]);
-    expect(message.content?.split('\n')).toEqual(['看看这个', expect.stringMatching(LANDED), UNVIEWABLE(1)]);
+    // 没有会话管理：判不出房间类别，正文写这条消息自己的说话人
+    expect(message.content?.split('\n')).toEqual(['[console]: 看看这个', expect.stringMatching(LANDED), UNVIEWABLE(1)]);
   });
 });
 

@@ -140,5 +140,5 @@ export default definePlugin({
 - [plugins/plugin-trigger-policy](../plugins/plugin-trigger-policy.md) — 规则判定的处理顺序、配置与闲置触发。
 - [services/flow-control](./flow-control.md) — 下一相位的禁言、冷却与限速。
 - [services/media](./media.md) — `processMessage` 与附件描述。
-- [services/message](./message.md) — `buildIncomingContent`：与归档逐字一致的当前消息文本。
+- [services/message](./message.md) — `buildIncomingContent`：与归档逐字一致的当前消息文本（说话人按 [api-message-archive 的 `speakerOf`](./message-archive.md)）。
 - [concepts/service-model](../concepts/service-model.md) — 多提供者的解析顺序（本插件偏好 > 全局偏好 > 优先级 > 注册顺序）。

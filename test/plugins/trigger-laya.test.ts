@@ -2,6 +2,7 @@ import { createServer, type IncomingHttpHeaders, type Server, type ServerRespons
 import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { type CheckResult, type CheckSpec, doctor } from '../../packages/api-doctor/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
@@ -218,6 +219,8 @@ interface SetupOptions {
   personas?: PersonaService[];
   /** session-manager 替身：只用 getSession */
   sessionManager?: Partial<Pick<SessionManagerService, 'getSession'>>;
+  /** 权限服务替身：只用 isOwner 与 ownerOn */
+  authority?: { isOwner(platform: string, userId?: string): boolean; ownerOn(platform: string): undefined };
   /** 会话设置的替身：会话 id → 本会话层的值 */
   sessions?: Record<string, Record<string, unknown>>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
@@ -277,6 +280,7 @@ async function setup(opts: SetupOptions = {}) {
   // 同一激活登记多家：各给一个条目 id，list() 才分得清
   for (const [i, p] of (opts.personas ?? []).entries()) host.provide.use(persona, p, { entryId: `persona-${i}` });
   if (opts.sessionManager) host.provide.use(sessionManager, opts.sessionManager as SessionManagerService);
+  if (opts.authority) host.provide.use(authority, opts.authority as never);
   if (opts.sessions) await app.plugins.register(sessionValuesPlugin(opts.sessions), {});
   if (opts.process) host.provide.use(processService, opts.process);
   opts.beforeLaya?.(host);
@@ -336,7 +340,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(headers['content-type']).toBe('application/json');
     expect(Number(headers['content-length']), '侧车要求 Content-Length').toBeGreaterThan(0);
     expect(body.rows).toEqual(EXPECTED_ROWS);
-    expect(body.cur).toBe(buildIncomingContent(message));
+    expect(body.cur).toBe(buildIncomingContent(message, { nickname: '甲', userId: '30001' }));
     expect(body.cur).toContain('[图片: 一只猫]');
     expect(body.cur).toContain('原话');
     expect(body).toMatchObject({ curUserId: '30001', curNick: '甲', selfId: '10000', selfNames: [] });
@@ -424,6 +428,24 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(r.reached).toBe(true);
     expect(r.message.triggerType).toBeUndefined();
     expect(sidecar.requests).toHaveLength(0);
+  });
+
+  it('owner 自己的私聊在生效范围内：发给侧车的当前消息与存档正文一样不带发送者前缀', async () => {
+    const sid = privateMsg('').sessionId;
+    const rooms = new Map([[sid, storedRoom(sid) as unknown as SessionInfo]]);
+    const { host, send } = await setup({
+      realArchive: true,
+      laya: { audience: 'all' },
+      sessionManager: { getSession: id => rooms.get(id) },
+      authority: {
+        isOwner: (platform, userId) => platform === 'onebot' && userId === '30001',
+        ownerOn: () => undefined,
+      },
+    });
+    const message = privateMsg('在吗');
+    await send(message);
+    expect(sidecar.requests.map(r => r.body.cur)).toEqual(['在吗']);
+    expect((await host.messageArchive.use.archiveIncoming(message)).content).toBe('在吗');
   });
 
   it('判定日志：每次判定一行 debug（会话、开口、点名、logit、阈值、版本、耗时），不含正文与昵称', async () => {

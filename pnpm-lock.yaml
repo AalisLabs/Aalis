@@ -495,6 +495,9 @@ importers:
 
   packages/api-message-archive:
     dependencies:
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
@@ -982,6 +985,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-commands':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-commands
@@ -1007,7 +1013,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-persona':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -1034,7 +1040,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0
@@ -2252,6 +2258,9 @@ importers:
 
   packages/plugin-message-archive:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-media':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-media
@@ -3278,6 +3287,9 @@ importers:
 
   packages/plugin-trigger-laya:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-doctor':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-doctor
@@ -3300,7 +3312,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-persona':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -3324,7 +3336,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.9.1 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0

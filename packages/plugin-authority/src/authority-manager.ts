@@ -66,6 +66,10 @@ export class AuthorityManager implements AuthorityService {
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
   }
 
+  ownerOn(platform: string): UserIdentity | undefined {
+    return (this.config.get('owners') ?? []).find((o: UserIdentity) => o.platform === platform);
+  }
+
   originOf(turn: OriginTurn): OriginKind {
     return originKind(turn, (platform, userId) => this.isOwner(platform, userId), this.sessions);
   }

@@ -59,7 +59,7 @@ export default definePlugin({
 
 1. **消息入库**: 监听 `inbound:message:archived`（入站 user 消息）与 `assistant:message:archived`
    （AI 自身落库回复，含她发出的附件的记录）两个事件，metadata 带 `role`。入站侧 embed 归档文本（message-archive
-   已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀），说话人、平台与群取存档记在元数据里的；assistant 侧 embed 可见正文
+   已烘入引用与附件描述，发送者前缀按 api-message-archive 的 `speakerOf`），说话人、平台与群取存档记在元数据里的；assistant 侧 embed 可见正文
    （落库内容是结构化输出信封时取 metadata 的 `visibleContent`，缺省为 `content`），在取得自身身份时
    embed 前经 `prefixSender` 加自身发送者前缀；
    AI/系统撰写的伪 incoming 不入库（带 `hostNotice` 的宿主通知 / `source: idle-trigger` /

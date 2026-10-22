@@ -8,16 +8,16 @@
 import { getSenderLabel, prefixSender } from './identity.js';
 import type { IncomingMessage } from './index.js';
 
-/** 单用户平台：无需发送者前缀（不存在多人说话歧义） */
-const SINGLE_USER_PLATFORMS = new Set(['webui', 'cli']);
-
 /**
- * 入站消息 → 归档文本：多用户平台加发送者前缀，引用回复与附件描述（`_attachmentDescriptions`）
- * 追加在末尾。附件描述须已写好（识别由 plugin-media 负责，本函数只拼接）。
+ * 入站消息 → 归档文本：给了说话人（speaker）就加发送者前缀（getSenderLabel 的写法），不给不加；引用回复与附件描述
+ * （`_attachmentDescriptions`）追加在末尾。谁算说话人由调用方定（参考规则是 api-message-archive 的 speakerOf），
+ * 本函数不看平台。附件描述须已写好（识别由 plugin-media 负责，本函数只拼接）。
  */
-export function buildIncomingContent(incoming: IncomingMessage): string {
-  const useSenderPrefix = !SINGLE_USER_PLATFORMS.has(incoming.platform);
-  let content = useSenderPrefix ? prefixSender(incoming.content, incoming.nickname, incoming.userId) : incoming.content;
+export function buildIncomingContent(
+  incoming: IncomingMessage,
+  speaker?: Pick<IncomingMessage, 'nickname' | 'userId'>,
+): string {
+  let content = speaker ? prefixSender(incoming.content, speaker.nickname, speaker.userId) : incoming.content;
 
   // 引用回复：把被引用消息的标签 + 内容拼到末尾，作为不可分割的上下文
   // 与图片描述、forward 摘要相同处理逻辑——把"非当前指令"的素材烘焙进归档文本，

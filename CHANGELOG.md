@@ -232,6 +232,13 @@
 - OneBot 平台提示里「群聊历史记录包含多位群友的发言」一句按会话 ID 里的类型查本插件声明的多方标记，频道也给（此前只给群）。
 - memory-vector 召回片段的位置：没有群名时写说话所在类型的显示名，没声明显示名或平台不在时写类型名（此前只写私聊、频道，别的类型不写）；终端会话也写平台名 `cli`（此前不写）。新加平台服务的可选依赖。
 
+### 发送者前缀按房间类别（@aalis/schema-message、@aalis/api-message-archive、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-message-archive、@aalis/plugin-trigger-laya、@aalis/plugin-agent）
+
+- schema-message 的 `buildIncomingContent(incoming, speaker?)` 改收调用方给的说话人：给了才加发送者前缀，不再按平台判（删掉 webui、cli 不加的特判）。直接调它的要自己给说话人，参考规则是 api-message-archive 新导出的 `speakerOf(incoming, { sessionManager?, authority? })`。
+- 存档正文的发送者前缀按房间类别给，触发判定看到的当前消息（Laya 发给侧车的 `cur`）与存档不在时 agent 当轮的正文同一规则：带 `source` 的注入不带（子任务的任务正文与 `send_to_subtask` 的追问不再带 `[parent:…]: `，onebot 好友申请、入群邀请与加群申请的合成通知不再带 `[账号]: `）；受众只有 owner 的会话不带（owner 自己的 IM 私聊不再带 `[昵称(账号)]: `，第三方客户端建的会话也不带）；owner 从别的平台往房间里插话（如从 WebUI 往群里发）带 `[owner 在房间所在平台登记的账号]: `（此前 WebUI 来的不带），那个平台没登记账号时带这条消息自己的身份（`[console]: `）；其余照旧带 `[昵称(账号)]: `。会话管理不在时判不出房间，一律带这条消息自己的说话人，WebUI 与终端的消息也带（如 `[console]: `）；权限服务不在时没有人是 owner。已存的记录不改。
+- 存档不在时 agent 当轮发给模型的正文与存档同一份拼法，也拼进引用回复与附件描述（此前只加发送者前缀）。
+- api-authority 的 `AuthorityService` 新增必填成员 `ownerOn(platform)`：owner 在这个平台登记的账号（配置 `owners` 里这个平台的第一个，本机控制台身份不算），自己实现权限服务的要实现它。plugin-message-archive、plugin-trigger-laya、plugin-agent 新加权限服务的可选依赖。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

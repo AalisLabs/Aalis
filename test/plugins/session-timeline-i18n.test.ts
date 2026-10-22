@@ -358,7 +358,8 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     expect(said(live.timeline(id, base))).toEqual([notice]);
     expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual([notice]);
     const [stored] = await host.memory.use.getHistory(id, Infinity);
-    expect(stored).toMatchObject({ role: 'user', content: `[30001]: ${content}` });
+    // 带来源的注入不是任何人的发言，不带发送者前缀
+    expect(stored).toMatchObject({ role: 'user', content });
   });
 
   it('平台事件转成的入站不带来源（如戳一戳）：通知的 topic 是它的 noticeType，存档仍是 user 消息、子类记成 kind', async () => {
@@ -379,6 +380,7 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     expect(said(live.timeline(id, base))).toEqual([notice]);
     expect(said((await (await connect()).subscribe(id)).snapshot.items)).toEqual([notice]);
     const [stored] = await host.memory.use.getHistory(id, Infinity);
-    expect(stored).toMatchObject({ role: 'user', kind: 'poke', content: '[30001]: [戳一戳: 30001 戳了你]' });
+    // WebUI 建的会话受众只有 owner，不带发送者前缀
+    expect(stored).toMatchObject({ role: 'user', kind: 'poke', content: '[戳一戳: 30001 戳了你]' });
   });
 });
