@@ -173,7 +173,7 @@
 
 - @aalis/schema-config：`SchemaField` 新增 `session`（声明可按会话覆盖，成员由 api-session-settings 并入）、`validate`、`fromText`、`toText`；带 `session` 的顶层字段 `parseConfig` 不交出、不补 default，`ConfigOf` 里没有，读到的类型见新增的 `SessionFieldsOf`；新增 `isSessionField`、`readFieldValue`、`WireSchemaField`、`WireConfigSchema` 与 `CORE_RESTART_KEYS`；`validateConfig` 的问题多一种 code `validate`（字段的 `validate` 判为不合法）。
 - @aalis/api-host-config：新事件 `host-config:changed`（只由宿主发，带改了哪个实例或整份文档）；新只读窄面 `ownHostConfig`（同一服务名，只有 `get()`，只能写在 `uses` 里）；新增 `saveFailureText`；`applyPluginConfig` 的 `reloaded` 为 `false` 改为「解析出的配置与运行态相同、实例不在 error 态」；读法返回复制品。
-- @aalis/api-session-manager：设置接口删掉：`registerSetting`、`listSettings`、`resolveConfig`、`resolveInheritance`、`getOwnConfig`、`childConfig`、`resolvedDefaults`、`listLayers`、`getLayer`、`resolveLayer`、`updateLayer`，类型 `SessionConfig`、`StoredSessionConfig`、`SessionConfigPatch`、`SessionSetting`、`RegisteredSessionSetting`、`SettingProminence`、`SessionConfigLayer`、`SessionInheritance`、`InheritanceSource`、`SESSION_LAYERS`、`SessionLayerName`、`SessionConfigError`、`isSessionConfigError` 与带 `registerSetting` 的业务层 `BoundSessionManager`；`SessionInfo.config` 删掉，建会话与 `updateSession` 不再收 `config`。`'session:config:changed'` 删掉，旧监听不会报错、只是永远收不到。新增 `PlaceInfo.metadata`、`updatePlace`、`listPlaces`、`recordInbound`、`isUnfiled`。`session:deleted` 改在会话从表里摘掉、清数据之前发；一个会话的消息历史被清空时它的子会话一并删除；建会话时 `metadata` 里的 `title`、`inputContext` 不再当同名字段读。自己实现会话管理的要实现新增的方法与这几条语义。
+- @aalis/api-session-manager：设置接口删掉：`registerSetting`、`listSettings`、`resolveConfig`、`resolveInheritance`、`getOwnConfig`、`childConfig`、`resolvedDefaults`、`listLayers`、`getLayer`、`resolveLayer`、`updateLayer`，类型 `SessionConfig`、`StoredSessionConfig`、`SessionConfigPatch`、`SessionSetting`、`RegisteredSessionSetting`、`SettingProminence`、`SessionConfigLayer`、`SessionInheritance`、`InheritanceSource`、`SESSION_LAYERS`、`SessionLayerName`、`SessionConfigError`、`isSessionConfigError` 与带 `registerSetting` 的业务层 `BoundSessionManager`；`SessionInfo.config` 删掉，建会话与 `updateSession` 不再收 `config`。`'session:config:changed'` 删掉，旧监听不会报错、只是永远收不到。新增 `PlaceInfo.metadata`、`updatePlace`、`listPlaces`、`recordInbound`、`isUnfiled` 与判从别的平台往房间里插话的 `fromElsewhere`。`session:deleted` 改在会话从表里摘掉、清数据之前发；一个会话的消息历史被清空时它的子会话一并删除；建会话时 `metadata` 里的 `title`、`inputContext` 不再当同名字段读。自己实现会话管理的要实现新增的方法与这几条语义。
 - @aalis/api-session-settings（新包）：插件原来的 `registerSetting` 加 `resolveConfig` 改成「configSchema 字段写 `session`、apply 里调 `fields()` 拿读取器、调用路径上 `get(sessionId, { platform })`」，写自己的字段用读取器的 `set`；读取门面 `sessionFields` 与管理面 `sessionSettings` 两个描述符，管理面只给会话服务与建子会话的插件；`caps.config` 里读不到这类字段；跨插件改别人的设置改成调拥有它的插件的服务（如 agent 的 `assignModel`）；建子会话的插件在建之前取管理面的 `childMetadata` 并进 `metadata`，会话设置不在时不建；权限类的项不要把 `task` 排除在 `appliesTo` 之外，否则子会话里按全局取。另导出 `appliesIn`、`layerLabel`、`describeLayer`、`SETTINGS_ABSENT`、`SessionSettingsError` 等，`SessionSettingsLayerInfo` 带 `platform`、`type`（窗口场所）。
 - @aalis/api-session-protocol：设置行的身份改为 `(plugin, key)`，带去掉函数成员的字段声明与 `actual`，不再带 `resolved`；行上的 `dependsOn`、`unset` 挪进字段声明的 `session`（`field.session.dependsOn`、`field.session.unset`）；来源 `source` 只取层名（`global`、`platform`、`platformType`、`place`、`session`）或 `default`（全局层的值缺失或不合法、按作者默认），原来的 `defaults`、`type`、`parent` 没有了；层改为 `global`、`platform`、`platformType`、`place`；`session/config/update` 与 `layer/update` 的参数改为 `{ …, plugin, key, value }`，`SessionConfigUpdateParamsSchema` 改名 `SettingUpdateParamsSchema`，回包另带落盘失败的 `unsaved`（`SettingUpdateResultSchema`）；`session/config/get` 回包另带 `platform`（平台档按哪个平台取）；`session/config/layers` 回包的 `layers` 每一项从层改为 `{ layer, label?, platform?, type? }`（场所另带平台与类型名）；新方法 `session/config/overrides`（回包 `SettingOverridesSchema`）；握手的功能位多 `settings`，会话设置不在时设置方法回 `unsupported`，带 `parentId` 的 `session/create` 也回 `unsupported`；会话摘要的 `place` 改为可选，根会话是空记录时没有。
 - @aalis/api-persona：`PersonaSessionOptions` 改为 `{ sessionId?, platform? }`，人设服务按会话读自己的会话设置；`getPersonaSkills` 删掉；对 `SessionConfig` 的增强删掉。
@@ -182,7 +182,7 @@
 - @aalis/api-memory：共享的召回范围 `MEMORY_RECALL_SCOPE_SETTING`、`memoryRecallScope` 与类型 `MemoryRecallScope` 删掉，各记忆插件用自己的范围字段；新增 `historyCleared`（`memory:clear` 之后判消息历史清成没有）。
 - @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，档位与越界策略还不能按会话设。
 - @aalis/api-gateway：作用域函数 `extractTargetId`、`isScopeEnabled`、`resolveEffectiveConfig` 删掉；新增「生效范围」字段 `REPLY_AUDIENCE_FIELD`、判定 `audienceIncludes` 与 `InboundPhaseData.chat`（网关给没有 `source` 的入站算的聊天窗口）；网关在入站相位之前等会话管理收录。
-- @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读；`markTriggered` 多一个参数 `multiParty`；新增 `fromElsewhere`。
+- @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读；`markTriggered` 多一个参数 `multiParty`。
 - @aalis/api-embedding：`EmbeddingService.listModels?` 删掉，提供者要给配置下拉列模型就经贡献点 `webui:options` 交自己的来源。
 - @aalis/api-llm：新增模型引用的文字写法 `entryIdOf`、`modelRefOf` 与 `MODEL_REF_TEXT`（条目 id `<提供者实例 id>/<模型 id>`），以及后台功能取对话模型的 `chatModelPicker`。
 - @aalis/api-authority：`AuthorityService.meetsLevel`，提供者要实现；`AuthorizeRequest.minLevel`（操作自己声明的门槛，`Infinity` 即只有 owner）；能力键多一类 `setting:<实例 id>/<键>`。
@@ -275,6 +275,10 @@
 - `user_relation_expand_node` 在去掉作用域外事件的图上展开，只经作用域外的事件才连上的人不再出现在子图里。此前先按全图展开再去掉事件，人照留。
 - `user_relation_timeline` 带作用域时在去掉作用域外事件（连同连着它们的边）的图上取，在截断之前：本会话的事件不再被更新的别处事件挤掉；以作用域外的事件为起点时什么也不给，此前会经它带出相连的本会话事件。
 - `user_relation_shared` 返回全部共同邻居，再按类型过滤、分页。此前只取贡献最高的一个，分页形同虚设，按类型过滤时常常为空。
+
+### 别处往房间插话不进冷却与限速（@aalis/plugin-flow-control）
+
+- owner 从别的平台往房间里插话（如从 WebUI 往群里或私聊里发）时，流控与触发插件同一判法（api-session-manager 的 `fromElsewhere`），直接放行，不进冷却与限速；禁言期照旧吞掉。此前流控按插话那一端的一对一窗口判，生效范围设成全部房间或一对一房间时，房间里刚回复过，插话就被冷却或限速吞掉并影子归档，WebUI 上没有回应。插话得到的回复照常记一次回复，此后房间里的消息照旧受冷却与限速。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

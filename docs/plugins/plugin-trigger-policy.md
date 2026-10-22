@@ -45,7 +45,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序）：
 
 0. 本插件不是生效的触发插件（`trigger` 服务选中的是另一家）→ `next()`，什么都不做：不计数、不识别、不归档。生效者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
-1. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ `next()` 跳过策略：不计数，不改写 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。从别的平台往房间里插话（owner 从 WebUI 往群里发，api-trigger 的 `fromElsewhere`）同样直接放行。
+1. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ `next()` 跳过策略：不计数，不改写 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。从别的平台往房间里插话（owner 从 WebUI 往群里发，api-session-manager 的 `fromElsewhere`）同样直接放行。
 2. 不在生效范围内 → `next()` 放行。生效范围按网关算的聊天窗口（`InboundPhaseData.chat`）的多方标记判，按这个会话现读；WebUI 与终端的会话没有聊天窗口，不在任何生效范围里。生效范围判断先于禁言关键词，避免群聊的禁言关键词作用到私聊等不在生效范围内的会话。
 3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，记为真人活动（见第 5 步），`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。本插件还没有该会话的状态时（如平台禁言先于任何消息）照样建立。
 4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零，记为真人活动 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。

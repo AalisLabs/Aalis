@@ -9,6 +9,7 @@ import {
   sessionTypesOf,
 } from '../../packages/api-platform/src/index.js';
 import {
+  fromElsewhere,
   type RoomClass,
   roomClass,
   rootSessionOf,
@@ -349,12 +350,22 @@ describe('来源字段只存不推', () => {
   });
 });
 
+/** 直接给函数的会话记录：不经会话管理 */
+const session = (id: string, fields: Partial<SessionInfo> = {}): SessionInfo =>
+  ({
+    children: [],
+    status: 'waiting',
+    createdAt: 1,
+    updatedAt: 1,
+    id,
+    name: id,
+    kind: 'owner',
+    ...fields,
+  }) as SessionInfo;
+
 describe('roomClass：按会话字段判受众里有谁', () => {
   /** owner 在 onebot 与 forum 上各有一个身份，账号都是 30001 */
   const isOwner = (p: string, u: string) => (p === 'onebot' || p === 'forum') && u === '30001';
-  const base = { children: [], status: 'waiting', config: {}, createdAt: 1, updatedAt: 1 } as const;
-  const session = (id: string, fields: Partial<SessionInfo> = {}): SessionInfo =>
-    ({ ...base, id, name: id, kind: 'owner', ...fields }) as SessionInfo;
   const im = (platform: string, type: string, multiParty: boolean, targetId: string) =>
     ({ originPlatform: platform, originChat: { type, multiParty, targetId } }) as const;
 
@@ -430,6 +441,20 @@ describe('roomClass：按会话字段判受众里有谁', () => {
       steps = 0;
       expect(roomClass(loops.get(id), lookup, isOwner), id).toBe('internal');
     }
+  });
+});
+
+describe('fromElsewhere：从别的平台发进房间的入站', () => {
+  // 直接进房间的入站、没有出生平台的会话与会话管理不在的情形由触发插件与流控的用例经真实链路钉住，这里只钉子会话取根会话
+  it('群的子会话经 WebUI 入站：按根会话的出生平台判，为真', () => {
+    const table = new Map<string, SessionInfo>(
+      [
+        session('onebot:1:group:2', { originPlatform: 'onebot' }),
+        session('onebot:1:group:2::a', { parentId: 'onebot:1:group:2' }),
+      ].map(s => [s.id, s]),
+    );
+    const present = { present: true, use: { getSession: (id: string) => table.get(id) } } as never;
+    expect(fromElsewhere({ sessionId: 'onebot:1:group:2::a', platform: 'webui' }, present)).toBe(true);
   });
 });
 

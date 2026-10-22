@@ -150,6 +150,8 @@ interface SessionInfo {
 
 只认多方标记，不认类型名；判不出的一律 `internal`，失败关闭。
 
+**从别的平台插话**：纯函数 `fromElsewhere(message, sessionManager)` 判一条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。`sessionManager` 只用 `present` 与 `use`；会话管理缺席、房间没有出生平台时判不出，按否。
+
 ### 2.7 场所与工作区
 
 每个会话恰好一个场所（`SessionPlace`：`kind` 为 `window` 或 `workspace`，`key` 是场所键），子会话取根会话的；场所只管归属与插件按场所存的数据（白纸、会话设置的场所层），不管权限。`placeOf(sessionId)` 按根会话取第一条：
@@ -179,6 +181,7 @@ interface SessionInfo {
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, metadata })` 派发子任务（metadata 里是会话设置的 `childMetadata`）；`agent:turn:after` 里 `completeSession()` 回报父会话；按 `status` 与 `lastTurn` 报子任务的状态，交回结果后闲置到期 `deleteSession()` | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表与增删改：`listSessions`、`createSession`、`updateSession`、`deleteSession`，摘要的场所取 `placeOf`、`getPlace`（空记录不给，§2.5），分区按 `kind`（§2.2） | `plugin-session-server/src/sessions.ts` |
 | `plugin-memory-summary` | 选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时用工作模板） | `plugin-memory-summary/src/index.ts` |
+| `plugin-trigger-policy`、`plugin-trigger-laya`、`plugin-flow-control` | 按 `fromElsewhere` 认出从别的平台往房间里插话，直接放行 | 各自的 `src/index.ts` |
 | `plugin-i18n` | 读者按根会话取语言；诊断写场所的显示名（`getPlace`） | `plugin-i18n/src/index.ts` |
 | `plugin-cli` | 终端配置的会话在发出入站之前 `ensureSession` 建档并写创建来源 `cli` | `plugin-cli/src/index.ts` |
 

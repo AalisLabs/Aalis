@@ -69,6 +69,8 @@ interface SessionInfo {
 
 房间类别 `roomClass(info, lookup, isOwner)` 是按这些字段判「受众里有谁」的纯函数，子会话取根会话的：有出生平台的，聊天窗口为多方的是 `room`，一对一而对端是 owner 身份的是 `owner-only`（`isOwner` 由调用方传入），其余一对一是 `room`，只认多方标记、不认类型名；没有出生平台、带创建来源的是 `owner-only`；其余（不在会话表里的、按 ID 建档的、`mcp-server`、编排与定时任务的会话）一律 `internal`。
 
+`fromElsewhere(message, sessionManager)` 判一条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。`sessionManager` 只用 `present` 与 `use`；会话管理缺席、房间没有出生平台时判不出，按否。触发插件与流控对它直接放行。
+
 - `originInstance`：接管这个房间的适配器的插件实例 id（`contextId`），与 `@aalis/api-platform` 的 `resolvePlatformBySession` 解析到的相同：收录与补记来源字段之前已问过认领这个 ID 的适配器（`claimantsOf`），第一个认领者随来源字段一起记下，落盘保存，记下后不再重算。会话列表据此把同一插件的多个实例分组显示；路由不读它，平台动作仍按会话 ID 实时路由。还没有适配器认领（适配器没装好、连接还没上来、账号暂时不属于任何实例）的为 undefined，下一条真人入站时重新解析，认领到就补记并发 `session:updated`；同一条记录已有解析在途的不重复解析。按 ID 建档（`ensureSession`）的记录没有出生平台，补记来源字段时才记下。
 - `lastReplyAt`：回合结局（`agent:turn:after` 的 `outcome`）为 `replied` 时写入，`silent`、`aborted`、`error` 不改；同一会话别的回合还在跑时同样写入，随 `session:updated` 推出。
 - `lastTurn`：每一轮结束时写入这一轮的结局（取值同 `agent:turn:after` 的 `outcome`；消息被拦下、没有结局的一轮记为 `silent`）与结束时间；结局为 `error` 时带 `agent:turn:after` 给的一句原因（`error`，最多留 200 字，空串当作没给），其余结局不带。别的回合还在跑时同样写入，随 `session:updated` 推出并落盘。被停止的会话收口为 `completed`，从 `lastTurn.outcome` 为 `aborted` 看出。
