@@ -11,7 +11,7 @@
   - `languages()`：有文字可用的语言（目录里各字典的原文语言与译文语言、语言包的语言），带自称，语言选择用它。
 - 读者 `Audience`：
   - `{ sessionId, platform? }`：取会话设置的 `language`，按继承链解析，聊天平台上的读者用它；会话种类是 owner 的（WebUI 与终端的会话）与 `{ host: true }` 一样。
-  - `{ host: true }`：取全局默认层的设置，owner 自己看的出口（WebUI、会话协议、终端、宿主自己的输出）用它。
+  - `{ host: true }`：取全局层的设置（plugin-i18n 的插件配置），owner 自己看的出口（WebUI、会话协议、终端、宿主自己的输出）用它。
 
   语言只从 i18n 服务取，出口与插件不自己找语言来源（如浏览器语言、`Accept-Language`）；日期与时间一律按服务进程的时区。
 - 贡献点 `i18n:pack`：语言包，spec 是 `@aalis/schema-i18n` 的 `LanguagePack`。语言包只补字典没有的语言，取舍见该包 README「语言包」一节。

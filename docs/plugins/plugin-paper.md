@@ -34,6 +34,8 @@ export default definePlugin({
     gateway: optional(gateway),
     webui: optional(webuiServer),
     doctor: optional(doctor),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
     events,
     hooks,
     lifecycle,
@@ -51,7 +53,7 @@ export default definePlugin({
 
 ## 房间怎么开白纸
 
-房间级的开关与上限是本插件登记的会话设置项（[api-session-manager](../api/api-session-manager.md)），只对房间适用；本插件没启用时它们不出现，已写的值保留。它们登记为只能设到场所为止（`narrowest: 'place'`）：按窗口设在场所上（WebUI 房间表每行的「场所设置」），不设在单个会话上，换会话（删掉房间会话、同一个群里另一个机器人账号的会话）照样生效；也可以设在全局默认、平台档与平台类型档（设置的「会话默认」）。它们同时登记为 liveOnly：经继承链实时解析，不随建会话、建子任务复制。这里的 `paperName` 指向白纸插件 `papers[].name`；不填写则这个窗口单独一块白纸（id 由场所键算出，api-session-manager 的 `placePaperId`，同一个群里几个机器人账号的会话共用），取白纸插件的 `defaults` 属性：
+房间级的开关与上限是本插件可按会话覆盖的插件配置字段（[api-session-settings](../api/api-session-settings.md)），只适用于房间，只有 owner 能改；本插件没启用时它们不出现在会话设置里，已写的值保留。它们声明为只能设到场所为止（`narrowest: 'place'`）：按窗口设在场所上（WebUI 房间表每行的「场所设置」），不设在单个会话上，换会话（删掉房间会话、同一个群里另一个机器人账号的会话）照样生效；也可以设在全局（插件配置）、平台档与平台类型档（设置的「会话默认」）。它们不适用于子会话，建子任务时不写下，子任务按根会话的房间取。这里的 `paperName` 指向白纸插件 `papers[].name`；不填写则这个窗口单独一块白纸（id 由场所键算出，api-session-manager 的 `placePaperId`，同一个群里几个机器人账号的会话共用），取白纸插件的 `defaults` 属性：
 
 | 键 | 说明 |
 |---|---|
@@ -62,17 +64,18 @@ export default definePlugin({
 | `remoteAgentUserDailyCents` | 每人每天金额上限（美分）；不填不增加个人金额限制，`0` 禁止该用户开新任务，正数按额度限制 |
 | `remoteAgentUserDailyTasks` | 每人每天件数上限；缺省不按人限制 |
 
-写入时按登记的字段校验：两项金额与件数须是不小于 0 的数。手写的配置文件或旧数据里写坏了的金额不回落到下面的层，预算按 0 处理（不开新任务），不会退成不限额；写坏了的件数按没写处理。
+写入时按字段校验：两项金额与件数须是不小于 0 的数。手写的配置文件或旧数据里写坏了的金额不回落到下面的层，预算按 0 处理（不开新任务），不会退成不限额；写坏了的件数按没写处理。
 
-这些键一般只写在单个窗口的场所设置里。写在全局默认层里（`sessionConfig.defaults`），全部房间都会继承；写在平台档里（宿主配置文档的 `sessionConfig.platforms`），这个平台的所有房间都会继承；写在平台类型档里（`sessionConfig.types.<平台>.<类型名>`，如 `types.onebot.group`），这个平台这种类型的全部房间都会继承。这几种写法诊断项都会报 warn，不必先有这种类型的房间登记；写的是 `paperName` 时，白纸页的「共用的房间」也会列出。onebot 群会话在群里来过一条真人消息后即登记，出现在会话列表的「IM 房间」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。
+这些键一般只写在单个窗口的场所设置里。写在全局层里（本插件的配置），全部房间都会继承；写在平台档里（宿主配置文档的 `sessionConfig.platforms.<平台>.@aalis/plugin-paper`），这个平台的所有房间都会继承；写在平台类型档里（`sessionConfig.platformTypes.<平台>.<类型名>.@aalis/plugin-paper`，如 `platformTypes.onebot.group`），这个平台这种类型的全部房间都会继承。这几种写法诊断项都会报 warn，不必先有这种类型的房间登记；写的是 `paperName` 时，白纸页的「共用的房间」也会列出。onebot 群会话在群里来过一条真人消息后即登记，出现在会话列表的「IM 房间」区（收录口径见 [session-manager 服务](../services/session-manager.md) §6.6）。
 
-```yaml
-# 为 <试点群会话 id> 的会话设置写入
-enabledToolGroups: [<该群原有分组>, paper]
-paperEnabled: true
-paperName: '<白纸名>'
-remoteAgentTypes: ['@aalis/plugin-remote-agent-cursor']
-remoteAgentRoomDailyCents: 1000
+在试点群里由 owner 写到这个群的场所（也可以在 WebUI 房间表这一行的「场所设置」里改）：
+
+```
+/session.set --at place enabledToolGroups <该群原有分组>, paper
+/session.set --at place paperEnabled on
+/session.set --at place paperName <白纸名>
+/session.set --at place remoteAgentTypes @aalis/plugin-remote-agent-cursor
+/session.set --at place remoteAgentRoomDailyCents 1000
 ```
 
 ## 配置
@@ -282,7 +285,7 @@ plugins:
 `paper.config` 报让远端任务开不了、或让长期代理的可见范围超出预期的配置与账本问题：
 
 - **error**：账本读取失败；同一远端账号下多于一块具名白纸；有停开的白纸；有未读的账本外代理告警。
-- **warn**：取不到提供者的账号标识（写明原因，按冲突处理）；全局默认、平台档或平台类型档写了 `remoteAgentTypes`（窗口的场所写的是正常写法，不报）；具名白纸引用的提供者不在场；一块具名白纸被多个房间、全部房间、整个平台或平台的某种类型共用（从全局默认、平台档、平台类型档或所在窗口的场所继承了这个白纸名的房间都算；长期代理的对话与工作区对它们都可见）；`globalDailyCents` 为 0；对账时列代理或列轮次连续 3 次以上失败（写提供者实例、次数与失败的类别，不写报错原文；进程重启后重新计数，提供者停用或移除后不再报）；有任务认领失败后仍在开轮中（账本里有它的 `claim-failed` 告警，不论是否已读；这时可以放弃跟踪）。
+- **warn**：取不到提供者的账号标识（写明原因，按冲突处理）；全局层、平台档或平台类型档写了 `remoteAgentTypes`（窗口的场所写的是正常写法，不报）；具名白纸引用的提供者不在场；一块具名白纸被多个房间、全部房间、整个平台或平台的某种类型共用（从全局层、平台档、平台类型档或所在窗口的场所继承了这个白纸名的房间都算；长期代理的对话与工作区对它们都可见）；`globalDailyCents` 为 0；对账时列代理或列轮次连续 3 次以上失败（写提供者实例、次数与失败的类别，不写报错原文；进程重启后重新计数，提供者停用或移除后不再报）；有任务认领失败后仍在开轮中（账本里有它的 `claim-failed` 告警，不论是否已读；这时可以放弃跟踪）。
 - 出网方式取自 owner 配置时，在说明里标「未核实」，不影响级别。
 
 ## 注意事项
@@ -296,6 +299,6 @@ plugins:
 
 - 远端代理契约：[api-remote-agent](../api/api-remote-agent.md)
 - Cursor 提供者：[plugin-remote-agent-cursor](./plugin-remote-agent-cursor.md)
-- 会话配置的房间键：[api-session-manager](../api/api-session-manager.md)、[会话管理服务](../services/session-manager.md)
+- 按会话设的房间键：[api-session-settings](../api/api-session-settings.md)、[plugin-session-settings](./plugin-session-settings.md)
 - 白纸根：[plugin-storage-local](./plugin-storage-local.md)
 - 宿主通知：[schema-message](../api/schema-message.md)

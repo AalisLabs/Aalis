@@ -198,7 +198,7 @@ agent 按 `resolveLLMModel(this.caps.llm, ref, ['chat'])` 只要求 `chat` 能�
 
 ### 选默认 model
 
-未传 ref 时，`resolveLLMModel` 取 `list()` 里首个满足能力的条目（本插件选中的那一个模型在前）。全局默认 model 由用户设：WebUI 设置「会话默认」全局默认层的「模型」，或配置的 `servicePreferences`（见 [配置](../core/config.md)）；插件代码不写偏好，管理面代码对应 `services.use.prefer('llm', contextId)`（contextId = `${provider}/${model}`）。会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
+未传 ref 时，`resolveLLMModel` 取 `list()` 里首个满足能力的条目（本插件选中的那一个模型在前）。全局偏好由用户设：WebUI 设置「系统 › 服务偏好」的 llm 一行，或配置的 `servicePreferences`（见 [配置](../core/config.md)）；对话代理的模型是它的本插件偏好（「会话默认」全局层的「模型」，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）；插件代码不写偏好，管理面代码对应 `services.use.prefer('llm', contextId)`（contextId = `${provider}/${model}`）。会话级覆盖经会话设置的读取器（plugin-agent 的 `fields.get`，见 [api-session-settings](../api/api-session-settings.md#读取门面-sessionfields)）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
 
 ## 6. 能力 / 风险 → 影响
 

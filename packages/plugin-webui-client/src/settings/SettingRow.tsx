@@ -24,7 +24,7 @@ interface SettingRowProps {
   value: unknown;
   /** 名称旁的徽标：来源（配置文件、默认）或作者默认的「默认」 */
   source?: string;
-  /** 值下面的一句：来源（「来自：工作区『论文』」）、被下层盖住的提示等 */
+  /** 值下面的一句：来源（「来自：工作区「论文」（场所）」）、被下层盖住的提示等 */
   note?: string;
   /** 作者默认的那一句（「默认：30」，见 field.ts 的 authorDefault）：只占一行，悬停看全文 */
   defaultNote?: string;

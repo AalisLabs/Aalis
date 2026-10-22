@@ -286,7 +286,7 @@ auth.save();
 4. `level >= minLevel` → 放行。
 5. 所属权限组的放行条目覆盖这个操作 → 放行；否则拒。`tool-group:` 条目按请求的 `toolGroups` 比，其余按能力串匹配（通配同 `deniedCapabilities`），写法不对的条目不命中；成员指向没定义的组不放行。
 
-`minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > risk 派生 > visibility 兜底`。`capabilityMinLevel`（在 `@aalis/api-authority`）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`。
+`minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > 请求声明的 minLevel（如会话设置项按字段声明的门槛，`Infinity` 即只有 owner）> risk 派生 > visibility 兜底`。另有 `meetsLevel(identity, minLevel)`：只看等级够不够（owner 恒过、封禁恒不过），不看能力、权限组与硬禁，给会话设置按层固定的门槛用。`capabilityMinLevel`（在 `@aalis/api-authority`）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`。
 
 ### 6.2 确认轴（轴 B，对 owner 同样生效）
 

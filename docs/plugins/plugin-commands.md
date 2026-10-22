@@ -45,7 +45,7 @@ export default definePlugin({
 |---|---|---|---|
 | `/help` | `[name]` | 无参时列出你能用的顶层指令（子指令只显示个数）；带指令名时显示用法详情，空格和点两种写法都可以，如 `/help clear all` | public |
 | `/status` | — | 系统状态 | public |
-| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | restricted（risk: sensitive，等级 1，需确认 confirm: session） |
+| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型；清了消息历史时它的子会话一并删除 | restricted（risk: sensitive，等级 1，需确认 confirm: session） |
 | `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话中指定类型的内容；不指定类型时清空全部类型 | restricted（risk: dangerous，等级 2，需确认 confirm: session） |
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
@@ -109,7 +109,7 @@ export default definePlugin({
 
 不指定类型等于全部类型。`context` 只管会话级的短期上下文；向量、用户档案与关系图属于跨会话的长期记忆，不随 `context` 清理，只在指定对应类型或不指定类型时清理：会话级 `/clear` 只删除本会话的向量，档案与关系图只在 `/clear all` 时清理。OneBot 合并转发原文没有会话归属，会话级清理不动它，由适配器按 7 天期限回收。
 
-任何类型都不清会话表（会话名称、父子关系与会话级配置，随删除会话清理），也不清第三方插件的绑定数据（如 plugin-maimai 的好友码绑定，用 `/maimai unbind` 解除）。各部分数据由归属插件自己清理，插件未安装或未激活时，它的数据不在清理范围内。整体清空命名空间的部分（用户档案与指令、关系图、摘要、待办、合并转发原文）连同记忆后端里读不出的条目（手改或损坏的数据）一并删除，带条数的回执包含它们，日志另记一条 info 点名这些条目；第三方记忆后端没有实现 `listMetadataKeys` 时，读不出的条目留在库里。
+任何类型都不清会话表（会话名称、父子关系与会话设置，随删除会话清理），只是消息历史清成了时（指定了 `context` 或不指定类型）会话管理删掉被清空会话的子会话，`/clear all` 删掉全部子会话，回执多一行「已删除 N 个子会话」；只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。也不清第三方插件的绑定数据（如 plugin-maimai 的好友码绑定，用 `/maimai unbind` 解除）。各部分数据由归属插件自己清理，插件未安装或未激活时，它的数据不在清理范围内。整体清空命名空间的部分（用户档案与指令、关系图、摘要、待办、合并转发原文）连同记忆后端里读不出的条目（手改或损坏的数据）一并删除，带条数的回执包含它们，日志另记一条 info 点名这些条目；第三方记忆后端没有实现 `listMetadataKeys` 时，读不出的条目留在库里。
 
 回执逐行列出各部分的结果。用 `--type` 显式指定的类型若没有插件处理（插件未安装或未激活），回执另加一行说明该类型未清理；会话级 `/clear` 显式指定 `user-profile` 或 `user-relation` 时，说明它们只在 `/clear all` 时清理。不指定类型时不加这类说明。判断依据是各插件在 `memory:clear` 结果行上标注的 `type`（见 [记忆服务](../services/memory.md)）。
 

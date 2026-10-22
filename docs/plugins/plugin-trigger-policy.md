@@ -4,7 +4,7 @@
 
 ## 定位
 
-回答"这条消息要不要让 agent 开口"。本插件是一个触发插件（见 [`trigger` 服务](../services/trigger.md)）：持有每会话的计数、活跃指数与闲置调度状态，在 `inbound:trigger` 相位处理作用域、禁言、禁言关键词、点名识别与规则判定，放行时标记 `triggerType`。它只在自己是 `trigger` 服务选中的那一家（生效的触发插件）时判定；与模型触发插件 `@aalis/plugin-trigger-laya` 二选一。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
+回答"这条消息要不要让 agent 开口"。本插件是一个触发插件（见 [`trigger` 服务](../services/trigger.md)）：持有每会话的计数、活跃指数与闲置调度状态，在 `inbound:trigger` 相位处理生效范围、禁言、禁言关键词、点名识别与规则判定，放行时标记 `triggerType`。它只在自己是 `trigger` 服务选中的那一家（生效的触发插件）时判定；与模型触发插件 `@aalis/plugin-trigger-laya` 二选一。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
 
 ## 插件声明
 
@@ -25,12 +25,14 @@ export default definePlugin({
     persona: optional(persona),
     sessionManager: optional(sessionManager),
     messageArchive: optional(messageArchive),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-本插件向 `trigger` 服务提供自己的实例（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：经它判断自己是不是生效的触发插件，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。`session-manager` 用来按会话取人设的名字（见「与 persona 的协作」），缺席时取全局默认的卡。
+本插件向 `trigger` 服务提供自己的实例（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：经它判断自己是不是生效的触发插件，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。`session-manager` 用来判从别的平台往房间里插话（入口平台与房间的出生平台不同），缺席时判不出。`session-settings` 用来按会话读生效范围与参数，缺席时取插件配置里的值。
 
 ## 接入相位
 
@@ -38,19 +40,19 @@ export default definePlugin({
 inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发）
 ```
 
-房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)），作用域怎么配都不计数、不判定、不识别禁言关键词，也不进状态表、不排闲置话题。会话在本插件建过状态之后才变成 `owner-only` 的（如 owner 先在私聊里说过话、之后才登记为 owner），已建的状态与闲置定时器留到本插件停用或重启，其间闲置话题到点照常注入，注入直达 agent。
+房间类别为 `owner-only` 的会话（owner 自己的会话）入站不经本相位：plugin-gateway 跳过它（[结构性放行](./plugin-gateway.md#结构性放行)），生效范围怎么配都不计数、不判定、不识别禁言关键词，也不进状态表、不排闲置话题。会话在本插件建过状态之后才变成 `owner-only` 的（如 owner 先在私聊里说过话、之后才登记为 owner），已建的状态与闲置定时器留到本插件停用或重启，其间闲置话题到点照常注入，注入直达 agent。
 
 判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序）：
 
 0. 本插件不是生效的触发插件（`trigger` 服务选中的是另一家）→ `next()`，什么都不做：不计数、不识别、不归档。生效者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
-1. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ `next()` 跳过策略：不计数，不改写 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。
-2. 不在作用域内 → `next()` 放行。作用域判断先于禁言关键词，避免群聊的禁言关键词作用到 WebUI、私聊等不在作用域内的会话。
+1. 带 `source` 的内部注入（闲置触发、定时任务、workflow）→ `next()` 跳过策略：不计数，不改写 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。从别的平台往房间里插话（owner 从 WebUI 往群里发，api-trigger 的 `fromElsewhere`）同样直接放行。
+2. 不在生效范围内 → `next()` 放行。生效范围按网关算的聊天窗口（`InboundPhaseData.chat`）的多方标记判，按这个会话现读；WebUI 与终端的会话没有聊天窗口，不在任何生效范围里。生效范围判断先于禁言关键词，避免群聊的禁言关键词作用到私聊等不在生效范围内的会话。
 3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，记为真人活动（见第 5 步），`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。本插件还没有该会话的状态时（如平台禁言先于任何消息）照样建立。
 4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零，记为真人活动 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。
 5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数；记为真人活动：更新最近消息时间，闲置退避复位为 1，并从这条消息起重排 session 档闲置触发。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与全部已登记人设按本会话取的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
 7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
-8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，这一轮也不能产生 owner 审批。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
+8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多方房间且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`（api-trigger 的 `markTriggered` 按网关给的多方标记判，不认类型名）：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，这一轮也不能产生 owner 审批。一对一房间纳入生效范围后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
 
 某个人设提供者读名字抛错时，名字检测只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）：
 
@@ -95,11 +97,13 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 - `off`：关闭。
 - `session`：每会话一个定时器，真人消息到来时退避复位为 1 并重排。到点时会话处于禁言期则跳过并按原退避重排；否则 `gateway.ingressMessage` 注入一条 `source='idle-trigger'` 消息，`exponential` 风格下退避翻倍（上限 `idleTriggerMaxMinutes`）。只有真人消息复位退避，agent 回复（包括回复闲置提示）不复位。
-- `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最近活动最早的一个注入闲置触发消息。候选还要过分作用域覆盖：该会话有效配置的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话的有效 `idleTriggerPrompt` 取。节奏只看顶层配置，`idleTriggerMinutes` 与 `idleTriggerStrategy` 在 `platform` 档下不吃分作用域覆盖。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）。进程内还没有任何活动记录时，以启动时刻为静默起点。
+- `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最近活动最早的一个注入闲置触发消息。候选还要按它自己的设置：这个会话生效的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话生效的 `idleTriggerPrompt` 取。跨会话的开关与节奏只看全局层（插件配置）：`idleTriggerScope` 的全局层是 `platform` 才排这个定时器，`idleTriggerMinutes` 取全局层，`idleTriggerStrategy` 只在插件配置里；某个会话层设成 `platform` 不会开起跨会话选举。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）。进程内还没有任何活动记录时，以启动时刻为静默起点。
+
+闲置参数改了不重载插件：session 档下一次排定时器时现读；platform 档每次排定时器时现读全局层，宿主配置文档变了（`host-config:changed`）时随即重排，所以从关闭改成 `platform` 时不用重启就开始排。
 
 会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。禁言期内的真人消息与命中禁言关键词的那条同样算真人活动，只是不计数（判定流程第 3、4 步）：session 档从这条消息起重排、退避复位为 1，platform 档的静默计时与挑选候选看的最近活动也随之更新。
 
-注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话落在 flow-control 作用域内时限速也照常生效（消息不带会话类型，flow-control 按流控状态或会话管理记下的类型判作用域，默认 `*:group` 下发往群的闲置提示在限速窗口已满时被吞，闲置提示不做影子归档）。
+注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话在 flow-control 的生效范围内时限速也照常生效（内部注入没有网关算的聊天窗口，flow-control 按会话管理或流控状态记下的窗口判，默认的多方房间下发往群的闲置提示在限速窗口已满时被吞，闲置提示不做影子归档）。
 
 ## 出站联动
 
@@ -109,7 +113,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认作用域不含 WebUI/CLI；纳入 `webui`、`cli` 管的是从它们发进房间（群与别人的私聊）与 `internal` 会话的消息，owner 自己的会话不经本相位，作用域怎么配都一样。 |
+| `audience` | select | `'multiParty'` | 生效范围：`off` 不生效、`multiParty` 多方房间、`oneToOne` 一对一房间、`all` 全部房间 |
 | `intervalMode` | select | `'both'` | 间隔模式：`fixed` / `dynamic` / `both` |
 | `triggerOnAt` | boolean | `true` | 检测 @ 提及：@ 自己算被点名，点名直接开口，回合记为 immediate |
 | `triggerOnPoke` | boolean | `true` | 戳一戳直触发：戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。 |
@@ -128,9 +132,8 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 | `idleTriggerMaxMinutes` | number | `1440` | 闲置触发上限分钟 |
 | `idleTriggerJitter` | boolean | `true` | 闲置触发抖动（±10%，不低于 60 秒） |
 | `idleTriggerPrompt` | string | `''` | 闲置触发系统提示（留空用内置提示） |
-| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。 |
 
-`scopes` 的 `null` 与未填取默认，`[]` 使基础作用域为空；覆盖项仍可单独启用。空白成员被忽略。覆盖项中留空的 `triggerNames`、`muteKeywords` 与提示词继续继承顶层值。
+除 `idleTriggerStrategy` 外都是可按会话覆盖的字段（[api-session-settings](../api/api-session-settings.md)），只适用于房间，只有 owner 能改：全局层是这里的插件配置，另可按平台档、平台类型档、群（场所）与单个会话设，例如只给某个群设别的禁言关键词或固定间隔。每条消息按会话现读，改了不重载插件，下一条消息起生效。会话设置不在场时只取插件配置里的值。
 
 ## 状态清理
 
@@ -138,5 +141,5 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 与 persona 的协作
 
-- 名字检测（`@aalis/api-trigger` 的 `createBotNames` 与 `isAddressed`）自动合并全部已登记人设的 `getPersonaName()` 与 `getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。人设按会话取，与 agent 同一取法：session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给这两个方法；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。session-manager 缺席时取全局默认的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。
+- 名字检测（`@aalis/api-trigger` 的 `createBotNames` 与 `isAddressed`）自动合并全部已登记人设的 `getPersonaName()` 与 `getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。人设按会话取，与 agent 同一取法：把这条消息的会话交给这两个方法，人设服务按会话读它的「人设」；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。同时装了多个人设插件时，叫其中任何一个的名字都算点名。
 - 禁言关键词**不**合并 persona：统一由本插件配置下发，避免角色卡措辞意外成为禁言开关，也避免进程级单例 persona 跨平台泄漏。

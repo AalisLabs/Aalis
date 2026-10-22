@@ -9,6 +9,7 @@ import type { Row } from './field';
 import {
   type LayerInfo,
   type LayerOrder,
+  labelIn,
   labelOf,
   type SourceContext,
   sourceTitle,
@@ -19,29 +20,27 @@ import { SettingRows } from './SettingRows';
 import type { useSettingRows } from './setting-rows';
 
 // 会话的「设置」标签：这个会话适用的各行，每项写当前值与「来自：…」。在哪用就在哪改：顶部选改动写到哪一层——只这个会话、
-// 根会话的场所（这个工作区、这个群、这个私聊）、全局（插件配置）；平台档与平台类型档只在设置的「会话默认」里改。
-// 子会话的各项在建立时写在它自己那一层，改到场所或全局对它不起作用，只能改这个会话。生效值出自比所选更窄的层时，那一行写
+// 根会话的场所（这个工作区、这个群、这个私聊；根会话没有场所层时没有）、全局（插件配置）；平台档与平台类型档只在设置的「会话默认」
+// 里改。子会话的各项在建立时写在它自己那一层，改到场所或全局对它不起作用，只能改这个会话。生效值出自比所选更窄的层时，那一行写
 // 「这里还被<层>覆盖」。写进场所与全局之后，会话服务推 session/config/changed，这里的行随之重取。层表没取到时设置行照常列出，
 // 来源按层名写
 
-/** 场所的两种写法：称呼（「工作区『论文』」）与选它时的称呼。工作区，窗口按多方标记分群与私聊 */
-function placeTexts(summary: SessionSummary): { name: string; scope: string } {
-  const place = { name: summary.place.name };
-  if (summary.place.kind === 'workspace') return { name: tr('workspacePlace', place), scope: tr('scopeWorkspace') };
-  return summary.chat?.multiParty
-    ? { name: tr('groupPlace', place), scope: tr('scopeGroup') }
-    : { name: tr('privatePlace', place), scope: tr('scopePrivate') };
+/** 选场所时的称呼：工作区，窗口按多方标记分群与私聊 */
+function placeScope(summary: SessionSummary): string {
+  if (summary.place?.kind === 'workspace') return tr('scopeWorkspace');
+  return summary.chat?.multiParty ? tr('scopeGroup') : tr('scopePrivate');
 }
 
-/** 这个会话取的是哪一份：根会话的平台、聊天窗口的类型（显示名）与场所 */
-const contextOf = (summary: SessionSummary | undefined, layers: readonly LayerInfo[]): SourceContext =>
-  summary
-    ? {
-        platform: summary.platform,
-        chatType: typeText(layers, summary.platform, summary.chat?.type),
-        placeName: placeTexts(summary).name,
-      }
-    : {};
+/** 这个会话取的是哪一份：平台档按会话服务给的平台，聊天窗口的类型写显示名，场所写层的列表里的称呼 */
+const contextOf = (
+  summary: SessionSummary | undefined,
+  layers: readonly LayerInfo[],
+  platform: string | undefined,
+): SourceContext => ({
+  platform,
+  chatType: typeText(layers, platform, summary?.chat?.type),
+  place: summary?.place && labelIn(layers, { scope: 'place', key: summary.place.key }),
+});
 
 /** 层在层表里的先后：后面的压过前面的 */
 const rankOf = (order: LayerOrder, name: string) => order.findIndex(entry => entry.name === name);
@@ -54,14 +53,16 @@ interface Scope {
   layer?: SettingLayer;
 }
 
-/** 可以选的范围：只这个会话、根会话的场所、全局（插件配置）；子会话只有只这个会话 */
+/** 可以选的范围：只这个会话、根会话的场所（有场所层才有）、全局（插件配置）；子会话只有只这个会话 */
 function scopesOf(summary: SessionSummary | undefined, order: LayerOrder): Scope[] {
   const session = { name: 'session', label: tr('scopeSession') };
   if (!summary || summary.parentId) return [session];
+  const global: Scope = { name: 'global', label: labelOf(order, 'global'), layer: { scope: 'global' } };
+  if (!summary.place) return [session, global];
   return [
     session,
-    { name: 'place', label: placeTexts(summary).scope, layer: { scope: 'place', key: summary.place.key } },
-    { name: 'global', label: labelOf(order, 'global'), layer: { scope: 'global' } },
+    { name: 'place', label: placeScope(summary), layer: { scope: 'place', key: summary.place.key } },
+    global,
   ];
 }
 
@@ -90,7 +91,7 @@ export function SessionSettings({
   if (!rows || (!layers.value && !layers.error)) return null;
   if (rows.length === 0) return <p className="session-panel-note">{tr('sessionNoSettings')}</p>;
   const { layer } = scope;
-  const at = contextOf(summary, layers.value?.layers ?? []);
+  const at = contextOf(summary, layers.value?.layers ?? [], settings.platform);
   /** 「来自：…」；来源比所选的层更窄（压过它）时写这里还被它覆盖 */
   const sourceLine = (source: string) => {
     const where = sourceTitle(order, source, at);

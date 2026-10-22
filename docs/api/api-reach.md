@@ -10,7 +10,7 @@
 
 本包有类型、纯函数与服务描述符：
 
-- 档位与越界策略，经 declaration merging 成为会话设置的两个键；
+- 档位与越界策略；
 - `resolveReach` 解析出一份触及，`judgeReach` 判一个目标放行、问或拒；
 - `protectedLists` 生成三张清单（宿主控制面、持久化与自动执行落点、拒读清单），`matchesRule` 判一个路径落不落在某条规则里；
 - `sandboxPolicyOf` 按触及生成沙箱策略；
@@ -27,13 +27,9 @@
 const ACCESS_TIERS = ['readonly', 'confirm', 'workspace', 'full'] as const; // 从低到高
 type AccessTier = (typeof ACCESS_TIERS)[number];
 type BoundaryPolicy = 'ask' | 'deny';
-
-// declaration merging 进 @aalis/api-session-manager 的 SessionConfig
-interface SessionConfig {
-  accessTier?: AccessTier;
-  accessOnBoundary?: BoundaryPolicy;
-}
 ```
+
+档位与越界策略还不能按会话设：参考实现固定为工作区档、越界要问。
 
 owner 在干净的会话里：
 

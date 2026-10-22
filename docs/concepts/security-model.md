@@ -156,10 +156,10 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
 > session-history / scheduler / user-relation），故当前 bot 部署下不可达。与同文件 `http_download`
 >（`restricted + confirm`）的不对称是有意的：后者上闸因为**写 storage**，与出网无关。
 >
-> 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
-> `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
+> 这条判据的前提是分组闸：带分组的工具只在这个会话生效的工具分组（plugin-tools 的会话设置 `enabledToolGroups`）列出该组（或 `'*'`）时才暴露；
+> 全局层是 `[]`，`npm create aalis` 只给已选装的 `cli` / `webui` 的平台档写 `['*']`，多人平台一律不代开。
 >
-> 房间会话按出生平台与聊天窗口的类型选档（见 [session-manager 服务](../services/session-manager.md) §2.4），
+> 房间会话按出生平台与聊天窗口的类型选档（见 [plugin-session-settings](../plugins/plugin-session-settings.md)），
 > 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
 > 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`，`workflow_define`
 > 为 sensitive、不需确认），`tool` 节点又不过分组闸，所以房间的平台档不要开 `workflow` 组：
@@ -205,7 +205,7 @@ IM 房间的「同平台」按房间的出生平台算：owner 从 WebUI 往群�
 注入内容另受 `limit`、`maxAgeMinutes`、`perSessionLimit`、`excludeCurrentSession` 约束。私聊内容经注入进入群回合
 这一点目前维持原样，是否保留尚未定案，它与 `plugin-tool-onebot` 默认不许在群会话里读私聊历史
 （`sessionHistory.allowGroupReadPrivate: false`）并不一致；不需要的关掉 `injectEnabled`。
-单个房间可以用会话配置 `memoryRecallScope` 把被动注入与跨会话读取一起收窄，见 §7。
+`scope` 可按会话设：单个房间可以把它设成 `session`，这个房间不再注入、也查不了别的会话的近期消息；跨会话读取的另外三处各有自己的范围字段，见 §7。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
@@ -214,7 +214,7 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 同样刻意不声明 risk，解析为等级 0：白纸的用途就是让群友在房间里提需求，声明 `sensitive` 会把群友
 全部挡在外面。门槛由 handler 承担，前提有四条：
 
-- **分组与房间开关**：工具在 `paper` 分组，只在列出该组的会话里下发；房间还要在会话配置里开 `paperEnabled`、
+- **分组与房间开关**：工具在 `paper` 分组，只在列出该组的会话里下发；房间还要在场所设置里开 `paperEnabled`、
   写 `remoteAgentTypes`，否则一律拒绝。
 - **真人判据**：交任务与取消只受理由真人当面发起的回合，判据是工具调用上下文的 `inbound`
   （只由 agent 工具循环填写）存在且 `inbound.source` 为空，并且有效授权身份的 `userId` 非空。
@@ -487,21 +487,23 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 ### 召回收窄的范围
 
-会话配置 `memoryRecallScope`（`session` / `platform` / `all`，只能收窄）让单个房间不把别的会话的内容带进提示词。
-值为 `session` 时覆盖：
+跨会话取料的四个插件各有一个范围字段，都可按会话设（平台档、平台类型档、群与会话），值是这个会话取料的上限，只有 owner
+能改，某一层写坏了按最窄处理（[api-memory](../api/api-memory.md) 的「跨会话取料的范围」）。要让单个房间不把别的会话的内容
+带进提示词，四项要分别设成最窄：
 
-- `plugin-memory-vector` 的被动召回与 `memory_recall`；
-- `plugin-memory-history` 的跨会话注入（整块不注入）与 `recent_messages`（拒绝）；
-- `session-history` 服务，即 `session_get_history` 与 `onebot_get_session_history` 读别的会话（拒绝）；
-- `plugin-user-relation` 的注入：跳过跨会话事件、所属跨会话话题与全局热点。
+- `plugin-memory-vector` 的 `crossSessionMode` 设成 `isolated`：被动召回与 `memory_recall` 只取本会话；
+- `plugin-memory-history` 的 `scope` 设成 `session`：跨会话注入整块不注入，`recent_messages` 拒绝；
+- `plugin-tool-session` 的 `scope` 设成 `current`：`session_get_history` 与 `onebot_get_session_history` 读别的会话一律拒绝；
+- `plugin-user-relation` 的 `recallScope` 设成 `session`：注入跳过跨会话事件、所属跨会话话题与全局热点，带会话作用域参数的
+  六个工具只能取本会话。
 
-不覆盖：
+后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。不覆盖：
 
 - `plugin-user-profile` 注入的发言者与其他参与者的事实：这些事实按人、跨会话，可能抽自私聊；
   保留它们是为了在群里认人。
-- `plugin-user-relation` 的 `user_relation_*` 查询工具。
+- `plugin-user-relation` 没有会话作用域参数的工具（如 `user_relation_resolve_node`、`user_relation_find_path`、`user_relation_shared`）：仍按全图取。
 
-这个键默认不设，也挡不住群友直接在群里向模型套话：模型在别的会话里知道的事，只要进了上述不覆盖的来源，
+这几项默认不收窄，也挡不住群友直接在群里向模型套话：模型在别的会话里知道的事，只要进了上述不覆盖的来源，
 仍可能出现在回复里或被写进交给远端的任务正文。受理时不会自动回显任务正文，但远端代理会收到它。
 
 ### 残余风险

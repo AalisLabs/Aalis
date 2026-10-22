@@ -22,6 +22,8 @@ export default definePlugin({
     platform: optional(platform),
     storage: optional(storage),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -35,10 +37,14 @@ export default definePlugin({
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
 | `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。 |
+| `persona` | select | `'default'` | 人设：角色卡名，可选项来自 `listModels()`，可以写列表里没有的卡（找不到时用主卡）；可按会话设，1 级能改 |
+| `systemPromptExtra` | textarea | `''` | 额外提示：追加在人设提示之后、结构化输出格式说明之前；可按会话设，只有 owner 能改 |
+| `disableOutputFormat` | boolean | `false` | 不用结构化输出：回复纯文本；可按会话设，只有 owner 能改 |
+| `clientSideJsonRendering` | select | `'card'` | 客户端渲染 JSON：`card` 按角色卡、`on`、`off`；可按会话设，只有 owner 能改 |
 
-## 会话设置项
+## 按会话设
 
-本插件在 session-manager 上登记四个会话设置项（[api-session-manager](../api/api-session-manager.md)），各种会话都适用：`persona`（人设，可选项来自 `listModels()`，common）、`systemPromptExtra`（额外提示，追加在人设提示之后、结构化输出格式说明之前，common）、`disableOutputFormat`（不用结构化输出，advanced）、`clientSideJsonRendering`（JSON 留给客户端渲染，advanced）。没设置时分别用主卡 `default`、不追加、按角色卡、按角色卡。用哪张卡只在这一处设：全局默认在「会话默认」，也可以设到平台档、平台类型档、场所或单个会话，本插件的配置里没有人设一项。本插件没启用时这几项不出现，写过的值保留。
+后四项是可按会话覆盖的字段（[api-session-settings](../api/api-session-settings.md)），各种会话都适用：全局层就是本插件的配置（插件详情或「会话默认」的全局层改的是同一个值），也可以设到平台档、平台类型档、场所或单个会话。人设服务的方法按调用方给的会话（`PersonaSessionOptions` 的 `sessionId` 与入口平台）读它们。会话设置不在场时只取插件配置里的值。人设写成空串时回执写「无」，实际用主卡。
 
 ## 角色卡格式
 
@@ -67,7 +73,6 @@ outputFormat:
 | 字段 | 说明 |
 |---|---|
 | `nick_name` | 昵称列表（字符串列表），供触发检测使用。各项去掉首尾空白，非字符串与空串的项丢弃；写成单个字符串时按一个昵称取；留空（`nick_name:` 后不写值，即 null）与不写相同，不告警；其它类型整项忽略，每次载入该卡记一条 warn |
-| `skills` | 可用 skill 白名单；缺省不限制，空数组表示禁用全部 skill |
 | `outputFormatPrompt` | 替换默认的输出格式说明与字段说明；JSON 字段骨架仍按 `outputFormat` 自动生成。仅在定义了 `outputFormat` 时生效 |
 | `outputFormatRetries` | `outputFormat` 校验失败时允许的重试次数（不含首次），缺省 `1`；`0` = 不重试，首次不合格即丢弃该回复。仅接受非负整数，其它值按未设处理 |
 | `clientSideJsonRendering` | 为 `true` 时不提取回复字段，保留 JSON 由客户端渲染 |
@@ -79,20 +84,19 @@ outputFormat:
 当角色卡定义了 `outputFormat` 时：
 
 1. 在 system prompt 中追加 JSON 格式要求，指示 LLM 以特定 JSON 结构回复
-2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或会话配置如此覆盖）时不提取回复字段，保留原始 JSON 由客户端渲染。历史里存的是规范化后的整串 JSON，解码出的回复另作为可见正文随 assistant 消息的 metadata 落库
+2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或这个会话的「客户端渲染 JSON」设成开）时不提取回复字段，保留原始 JSON 由客户端渲染。历史里存的是规范化后的整串 JSON，解码出的回复另作为可见正文随 assistant 消息的 metadata 落库
 3. 所有声明字段都必须出现且类型正确，否则要求模型重试（次数由 `outputFormatRetries` 定，缺省 1 次，`0` 表示不重试）；重试用尽则丢弃本次回复
 4. 启用 `statePersistence` 时，非回复字段作为会话状态保存，下一轮注入提示
 5. 当回复字段为空字符串时跳过发送
 
 ## API
 
-- `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt、会话级额外提示 `systemPromptExtra` 及 outputFormat 格式说明），同一张卡下逐轮不变
+- `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt、这个会话的额外提示 `systemPromptExtra` 及 outputFormat 格式说明），同一张卡下逐轮不变
 - `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前。会话环境里的会话事实（当前平台、自己在该平台的账号、会话类型与群号）按会话管理记下的来源字段取：当前平台取根会话的出生平台（房间里的子任务也在房间的平台上；没有出生平台的会话取消息的平台），自己的账号同样取根会话所在的账号，会话类型与群号取会话自己记下的聊天窗口（子任务不取：它不是群里的对话）；说话人事实（发送者 ID、昵称、群身份）取自消息；消息的入口平台与出生平台不同（如 owner 从 WebUI 往群里插话，回复仍发进群里）时另加一行「当前消息经 `<入口平台>` 发来」。消息带了类型名时以它为准；不带时（定时、编排等合成回合，或经别的入口发来的消息）用会话记下的类型名，只用于提示词，不回写消息；没装会话管理、或会话没有聊天窗口时不写会话类型
-- `getPersonaName(options?)`: 返回角色名称；`options.persona` 指定会话用的卡时返回那张卡的（找不到该卡时回落主卡）
+- `getPersonaName(options?)`: 返回角色名称：按 `options` 这个会话的「人设」取卡（找不到该卡时回落主卡）
 - `getOutputFormat(options?)`: 返回生效角色卡的结构化输出定义；角色卡没有 outputFormat、没有字段标记 `reply: true`，或会话设置了 `disableOutputFormat` 时返回 undefined
-- `isClientSideJsonRendering(options?)`: 返回是否由客户端渲染 JSON；会话选项优先于角色卡设置
+- `isClientSideJsonRendering(options?)`: 返回是否由客户端渲染 JSON；这个会话设成开或关时优先于角色卡设置
 - `getNickNames(options?)`: 返回角色卡的 `nick_name` 列表，供触发检测使用；按 `options` 取卡，同上
-- `getPersonaSkills(options?)`: 返回角色卡的 `skills` 白名单；未声明时返回 undefined
 - `isTimeInjectionEnabled()`: 返回是否启用时间注入，供其它插件判断是否需要注册时间相关工具
 - `listModels()`: 列出可用的人设文件供 WebUI 下拉选择
 

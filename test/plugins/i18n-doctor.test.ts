@@ -140,9 +140,9 @@ describe('诊断 i18n.languages', () => {
           '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在会话设置的平台类型档 onebot · group里调整「语言」列表',
       },
       {
-        message: '场所『<群名>』里的 français 没有插件提供，实际用 English',
+        message: '场所「<群名>」里的 français 没有插件提供，实际用 English',
         detail:
-          '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-fr 找），或在会话设置的场所『<群名>』里调整「语言」列表',
+          '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-fr 找），或在会话设置的场所「<群名>」里调整「语言」列表',
       },
     ]);
   });

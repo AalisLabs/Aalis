@@ -41,7 +41,7 @@ export interface PlatformAdapter {
 
 helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（这个 adapter 的业务句柄）、`id`（插件实例 id，即 contextId），另有 `label?` / `priority` / `selected`。
 
-`SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与作用域 `平台:类型:目标` 的第二段同一套写法）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
+`SessionTypeDecl`（`src/index.ts`）——平台类型：`name`（类型名，非空、不含 `:`、不是 `*`，与窗口键 `平台:类型:目标` 的第二段同一套写法）/ `label?`（给人看的显示名，可以是文字对象；不给时界面写类型名）/ `multiParty`（多方为 true，一对一为 false）。类型名由平台自定，消息在 `IncomingMessage.sessionType` 上带它。
 
 ### 聚合 / 路由 helper（纯函数，第一参是 `Pick<ServiceSelection<PlatformAdapter>, 'list'>`）
 
@@ -79,7 +79,9 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 - **plugin-agent**：`getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses` 中声明 `platform: optional(platform)`。
 - **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
-- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypesOf` 生成 `gateway-scopes` 笛卡尔积（没声明类型的平台列 `<平台>:private`）。
+- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）。
+- **plugin-session-settings**：`getPlatformAdapters(platform)` 列可设的平台档与各平台声明的平台类型档，类型的显示名取声明里的 `label`。
+- **plugin-gateway**：按入站消息的平台取适配器的类型声明，算出聊天范围（`data.chat`），回复策略三个插件按它判生效范围。
 - **plugin-session-manager**：房间建档时按入站消息的平台取适配器的类型声明（`sessionTypesOf`），经 api-gateway 的 `chatScopeOf` 记下聊天窗口；建档与补记之前用 `claimantsOf` 问遍认领这个会话 id 的适配器，不止一个平台认领时不建档、不补记，否则第一个认领者记进 `SessionInfo.originInstance`，供会话列表按实例分组；建档时没有认领者的，之后用 `resolvePlatformBySession` 补记（`src/index.ts`）。
 - **plugin-tool-onebot**：平台动作经 `callPlatformAction(platform, 'onebot:<selfId>:internal:0', action, params)` 发出，按账号路由到所属实例；撤回自己发的消息、处理好友申请与群请求按会话（或账号）用 `resolvePlatformBySession` 找到所属实例，自身禁言列表汇总所有 onebot 实例（`src/index.ts`）。
 

@@ -49,7 +49,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
   server: { name: string };
   identity: { platform: string; userId: string };  // 传输层认证出的身份
   surface: string;                    // 这条连接所在审批面的登记名（webui、cli）
-  features: { send: boolean; rewind: boolean; compress: boolean };  // 功能位
+  features: { send: boolean; rewind: boolean; compress: boolean; settings: boolean };  // 功能位
   appName: string;                    // 应用名
 }
 ```
@@ -58,7 +58,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 
 主版本不同时回 `unsupported`，错误信息写明两边的版本，随即断开；只差次版本照常握手。握手之前的其它请求回 `invalidRequest`。
 
-**功能位**：发送、回滚、压缩三项，分别看对话服务（agent）、检查点服务、压缩服务（api-memory 的 `compression`）在不在，界面据此决定输入框能不能用、回滚与压缩的入口出不出现。这几个服务上线或下线、功能位变了时，服务端给每条连接推 `features/changed { features }`。计划、审批、用量不在功能位里，按数据出现：有计划条目才有计划，有用量条目才有用量。
+**功能位**：发送、回滚、压缩、设置四项，分别看对话服务（agent）、检查点服务、压缩服务（api-memory 的 `compression`）、会话设置服务（api-session-settings）在不在，界面据此决定输入框能不能用、回滚与压缩的入口与会话设置的各处出不出现。这几个服务上线或下线、功能位变了时，服务端给每条连接推 `features/changed { features }`。计划、审批、用量不在功能位里，按数据出现：有计划条目才有计划，有用量条目才有用量。
 
 ## 会话与列表
 
@@ -67,17 +67,18 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 | `sessions/list` | `{ section?, parentId?, instance?, platform?, archived?, background?, query?, cursor?, limit? }` | `{ sessions: SessionSummary[], nextCursor?, groups: RoomGroup[] }` |
 | `sessions/watch` | `{}` | `{}`；之后推 `sessions/changed` |
 | `sessions/changed`（通知） | `{ upserts: SessionSummary[], removes: string[], groups: RoomGroup[] }` | — |
-| `session/create` | `{ name?, parentId? }` | `{ session: SessionSummary }` |
+| `session/create` | `{ name?, parentId? }` | `{ session: SessionSummary }`；带 `parentId` 时会话设置服务不在回 `unsupported`、不建 |
 | `session/rename` | `{ sessionId, title }` | `{}` |
 | `session/archive` | `{ sessionId }` | `{}`，连同子会话 |
 | `session/unarchive` | `{ sessionId }` | `{}`，连同子会话，恢复成最后一轮收尾后的状态；没归档的不动 |
 | `session/delete` | `{ sessionId }` | `{}`，连同子会话，并清空它们的消息历史与长期记忆 |
 | `session/batch` | `{ op: 'archive' \| 'delete', ids }` | `{ failed: Array<{ sessionId, message }> }` |
-| `session/config/get` | `{ sessionId }` | `{ items: SettingRow[] }`，见下文「会话设置」 |
-| `session/config/update` | `{ sessionId, patch }` | 同 `session/config/get` |
-| `session/config/layers` | `{}` | `{ layers: SettingLayer[], order: Array<{ name, label }> }` |
+| `session/config/get` | `{ sessionId }` | `{ items: SettingRow[], platform? }`，见下文「会话设置」 |
+| `session/config/update` | `{ sessionId, plugin, key, value }` | 同 `session/config/get`，另带 `unsaved?` |
+| `session/config/layers` | `{}` | `{ layers: SettingLayerInfo[], order: Array<{ name, label }> }` |
 | `session/config/layer/get` | `{ layer }` | `{ items: SettingRow[] }` |
-| `session/config/layer/update` | `{ layer, patch }` | 同 `session/config/layer/get` |
+| `session/config/layer/update` | `{ layer, plugin, key, value }` | 同 `session/config/layer/get`，另带 `unsaved?` |
+| `session/config/overrides` | `{ plugin }` | `{ items: Array<{ key, entries: Array<{ target, value }> }> }` |
 | `session/config/changed`（通知） | `{}` | — |
 | `session/markSeen` | `{ sessionId }` | `{}` |
 | `features/changed`（通知） | `{ features }` | —，见「握手」的功能位 |
@@ -96,7 +97,7 @@ interface SessionSummary {
   instance?: string;          // 房间：接管它的适配器实例（插件实例 id）
   account?: string;           // 房间：根会话聊天窗口记下的机器人账号（originChat.selfId）
   chat?: { type: string; multiParty: boolean };  // 根会话的聊天窗口：平台类型名（平台自定，界面原样显示）与多方标记；IM 的群与私聊才有
-  place: { key: string; kind: 'window' | 'workspace'; name: string };  // 根会话的场所：场所键、类别与显示名
+  place?: { key: string; kind: 'window' | 'workspace'; name: string };  // 根会话的场所：场所键、类别与显示名；根会话是空记录时没有
   createdAt: number;
   updatedAt: number;          // 最后活动：会话档案最近一次变化
   lastReplyAt?: number;       // 她最近一次开口（回合结局为 replied）
@@ -122,7 +123,7 @@ interface RoomGroup {
 }
 ```
 
-- **`chat` 与 `place`**：子会话取根会话的。场所的类别 `window` 是 IM 的群与别人的私聊，`workspace` 是本机的工作区（默认工作区、项目工作区），owner 的 IM 私聊在默认工作区（见 [api-session-manager](./api-session-manager.md) 的场所）。显示名：窗口取群名或对方昵称，默认工作区为「默认工作区」，项目工作区默认取文件夹名；窗口还没有场所记录时是场所键。按层读写场所时层为 `{ scope: 'place', key }`。
+- **`chat` 与 `place`**：子会话取根会话的。场所的类别 `window` 是 IM 的群与别人的私聊，`workspace` 是本机的工作区（默认工作区、项目工作区），owner 的 IM 私聊在默认工作区（见 [api-session-manager](./api-session-manager.md) 的场所）。显示名：窗口取群名或对方昵称，默认工作区为「默认工作区」，项目工作区默认取文件夹名；窗口还没有场所记录时是场所键。按层读写场所时层为 `{ scope: 'place', key }`。根会话是按 ID 兜底建档的空记录（api-session-manager 的 `isUnfiled`）时没有 `place`：这类会话没有场所层，界面的「改到」不给场所。
 
 ### 列表的规则
 
@@ -153,39 +154,44 @@ interface RoomGroup {
 
 ### 会话设置
 
-设置项由拥有功能的插件登记（[api-session-manager](./api-session-manager.md)），协议与客户端都不认识具体的键：每一行带 schema-config 字段，客户端按字段渲染。
+会话设置是各插件配置里写了 `session` 的字段（[api-session-settings](./api-session-settings.md)），协议与客户端都不认识具体的项：一行的身份是 `(plugin, key)`，带去掉函数成员的字段声明，客户端按字段渲染。会话设置服务不在时这些方法回 `unsupported`，功能位 `settings` 为假。
 
 ```ts
 interface SettingRow {
-  key: string;
-  field: SchemaField;              // 类型、标签、说明、默认值、校验、可选项来源（dynamicOptions）
-  plugin: string;                  // 登记它的插件实例 id，「高级」里按它分组
-  prominence: 'composer' | 'common' | 'advanced';
-  dependsOn?: string;              // 可选项依赖的另一行的键
-  unset?: string;                  // 哪一层都没设、字段又没有默认值时这一项的含义（登记方给），界面写在生效值的位置
-  value?: unknown;                 // 这一层自己的值：会话的读写里是本会话的覆盖，层的读写里是这一层写的值
-  effective?: unknown;             // 生效值；哪一层都没设时没有，界面按字段的默认值显示
-  source?: string;                 // 生效值出自哪一层：层名，称呼取 session/config/layers 的层表
-  resolved?: unknown;              // 全局默认层由服务偏好承担的项：服务此刻实际用的那一个，见下文
+  plugin: string;                  // 声明它的插件实例 id，「高级」里按它分组
+  key: string;                     // 字段名
+  field: WireSchemaField & { session: SessionFieldSpec };  // 字段声明原样（含 session、default），去掉函数成员
+  prominence: 'composer' | 'common' | 'advanced';           // 生效的显眼程度
+  value?: unknown;                 // 这一处自己写的原样值：会话的行里是本会话这一层，层的行里是这一层；全局层不合法的值也照样给出
+  effective?: unknown;             // 解析到这一处为止的生效值（校验过）；哪一层都没有、字段又没有默认值时没有
+  source?: 'default' | 'global' | 'platform' | 'platformType' | 'place' | 'session';  // 生效值出自哪一层
+  actual?: { value: unknown; label?: string };  // 没有生效值时，声明字段的插件给出的此刻实际在用的值
 }
 
 type SettingLayer =
-  | { scope: 'defaults' }
-  | { scope: 'platform'; platform: string }                 // 按平台名生效，不区分适配器实例
-  | { scope: 'type'; platform: string; type: string }       // 平台类型档：这个平台这种类型的聊天窗口
+  | { scope: 'global' }                                     // 全局（插件配置）
+  | { scope: 'platform'; platform: string }                 // 平台档：按平台名，不区分适配器实例
+  | { scope: 'platformType'; platform: string; type: string }  // 平台类型档：这个平台这种类型的聊天窗口
   | { scope: 'place'; key: string };                        // 场所：键取自会话摘要的 place
+
+interface SettingLayerInfo {
+  layer: SettingLayer;
+  label?: string;      // 平台类型档：适配器声明的类型显示名；场所：场所的称呼（不带平台）
+  platform?: string;   // 窗口场所：平台与类型名
+  type?: string;
+}
 ```
 
-- **层表：** `session/config/layers` 回包的 `order` 是全部层的名字与称呼，按先后（后面的压过前面的）：全局默认（`defaults`）、平台档（`platform`）、平台类型档（`type`）、场所（`place`）、父会话（`parent`）、本会话（`session`）。层表定义在 api-session-manager 的 `SESSION_LAYERS`，客户端的来源文字、先后说明与选层的称呼都按回包里的这一份，不另存。
-- **哪些行：** 会话只列适用于它的种类（`SessionSummary.kind`）的项，只能设到场所为止的项（登记了 `narrowest: 'place'`，如白纸的六项）不列；全局默认、平台档与平台类型档列全部（owner 的 IM 私聊带平台类型，场所却是工作区，两类项都可能落到它）；场所按它的类别列：窗口列适用于房间的项，工作区列适用于 owner 的会话的项。登记它的插件没装或没启用时不列，值保留。
-- **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按登记时给的 `order`，没给的按登记的先后排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
-- **可选项：** 字段的 `dynamicOptions` 指向提供它的服务，客户端经 webui-server 的 `/api/models/:service` 取（人设走 `listModels()`，工具分组走 `toolGroups`）；`llm-ref` 字段按模型列表渲染。带 `dependsOn` 的行取可选项时把那一行的生效值（没有时取字段默认值）写成 JSON 放在 `dependency` 查询参数里，那一行变了就重取；例如深度思考（`llm-thinking`）按「模型」这一行取档位，回应另带 `labels`（各模型声明过的档位的名字），存着的档位不在这个模型的可选项里时按它写出名字。
-- **生效值：** 哪一层都没设时依次写字段的默认值、可选项接口标了默认的那一项、`unset`。按层读写的各行带解析到这一层为止的生效值与来源：这一层没写的项写它从更低的哪一层继承来；窗口场所在它的平台档与平台类型档之上，工作区场所只在全局默认之上。
-- **服务实际用的那一个：** 字段类型为 `llm-ref` 的项（「模型」）在全局默认层读写的就是 llm 服务的偏好（默认模型只在这一处）。这一行的生效值出自全局默认、或哪一层都没设时带 `resolved`：llm 服务此刻按偏好、提供者自带的优先级与注册先后解析到的模型。哪一层都没设时界面写「默认（<模型名>）」；生效值出自全局默认而与 `resolved` 不同，即偏好指向的模型已不在，界面写「所选模型不在，正在用<模型名>」。
-- **选层：** 子会话按根会话取。平台档：有出生平台的按出生平台，owner 自己的会话按入口平台，依次取会话记下的平台、接管会话 id 的平台适配器，都没有时取这条连接的平台；平台类型档按聊天窗口的类型名，没有聊天窗口的不取；场所按会话的场所。
-- **写：** `patch` 里给值即写入这一层（按登记的字段校验），`null` 删掉这一项、恢复继承，没给的键不动。没登记的键、不合字段的值、不适用于这个会话种类的项（场所按它的类别算），以及写进本会话的只能设到场所为止的项（错误说明写「这一项在场所及以上设置」）回 `invalidParams`，什么都不改；`null` 不看适用范围，已经写进去的照样清得掉。全局默认、平台档与平台类型档写进宿主的配置文档，保存失败时撤回、回内部错误；场所写进场所记录；没有记录的场所键回 `invalidParams`。
-- **`session/config/layers`：** 可以设的各层，按层表的先后：全局默认；各平台档（已装适配器的平台加上配置里写过的平台，卸了适配器后还能清掉）；各平台类型档（适配器声明的类型加上配置里写过的，没声明类型的平台不单列）；全部场所（默认工作区在前）。
-- **`session/config/changed`：** 插件启停使设置项增减，或某一层、某个会话的覆盖被改写时推给每条连接，不带参数；客户端重取打开着的会话的设置与快捷切换。
+- **层表：** `session/config/layers` 回包的 `order` 是全部层的名字与称呼，按先后（后面的压过前面的）：全局（插件配置）`global`、平台档 `platform`、平台类型档 `platformType`、场所 `place`、本会话 `session`。层表定义在 api-session-settings 的 `SESSION_LAYERS`，客户端的来源文字、先后说明与选层的称呼都按回包里的这一份，不另存。
+- **可以设的各层：** `layers` 按层表的先后：全局；各平台档（已装适配器的平台加上配置里写过的平台，卸了适配器后还能清掉）；各平台类型档（适配器声明的类型加上配置里写过的，没声明类型的平台不单列；声明了显示名的带 `label`）；全部场所（工作区在前，默认工作区最前）。场所的 `label` 不带平台：取了名的工作区写「工作区「名字」」，默认工作区写「默认工作区」，窗口写类型的显示名（没声明时写类型名）与窗口名；窗口另带 `platform`、`type`，界面在层的列表里据此补上平台。
+- **哪些行：** 会话的行只列适用于它的项（字段的 `appliesTo`，不写即全部），只能设到场所为止的项（`narrowest: 'place'`，如白纸的六项）不列；全局与平台档列全部；平台类型档只列适用于房间或子会话的项；场所按它的类别列：窗口列适用于房间的项，工作区列适用于 owner 的会话的项。声明它的插件没装或没启用时不列，值保留。
+- **排序：** `composer`、`common` 在前，`advanced` 在后；同一显眼程度按声明的 `order`，没给的排在后面。`composer` 也放进输入框旁的快捷切换，同一组最多两项，多出的已退到 `common`。
+- **可选项：** 字段的 `dynamicOptions` 是来源名，客户端经 webui-server 的 `/api/models/:service` 取（插件经贡献点 `webui:options` 交的来源、`toolGroups` 与 `llm-thinking` 由宿主回答，其余合起那个服务各提供者的 `listModels()`，见 [api-webui](./api-webui.md#可选项与模型)）；`llm-ref` 字段按模型列表渲染。声明了 `dependsOn` 的行取可选项时把依赖的那一行的生效值放在 `dependency` 查询参数里（那一行没设时传它的 `actual`；模型写成条目 id `<提供者实例 id>/<模型 id>`），那一行变了就重取。
+- **生效值：** 哪一层都没设时依次写字段的默认值、`actual`（如「跟随服务偏好（此刻：<模型名>）」）、`unset`。按层读写的各行带解析到这一层为止的生效值与来源：窗口场所在全局、平台档、平台类型档之上，工作区场所只在全局之上，平台类型档在全局、平台档之上，平台档只在全局之上。
+- **取哪几层：** 子会话按根会话取。平台档：有出生平台的按出生平台；其余按入口平台，按根会话取接管它的 id 的平台适配器，没有时取这条连接的平台；`session/config/get` 的回包另带 `platform`，就是这次取平台档用的平台，界面的来源文字照它写。平台类型档按聊天窗口的类型名，没有聊天窗口的不取。场所按会话的场所；空记录与不在会话表里的会话没有场所层。
+- **写：** `value` 给值即写入这一处，`null` 删掉这一处（全局层是恢复默认，其余层是恢复继承）。没有这一项、不合字段的值、不适用于这个会话或这一层的项、写进本会话的只能设到场所为止的项、不合法的层与没有记录的场所键回 `invalidParams`，什么都不改；`null` 不看适用范围。全局、平台档与平台类型档写进宿主的配置文档（写了 `preference` 的字段是声明它的插件的本插件偏好），先在运行态生效再落盘；落盘失败时不撤回，回包另带 `unsaved`：与插件详情保存的回执同一句（拒写与其余写入失败两句不同）。场所写进场所记录，本会话写进会话记录。
+- **`session/config/overrides`：** 一个插件实例的各项在全局之外写过的各处，按项分组：每处是一层，或某个会话的本会话层（带标题，子会话另带父会话）；子会话逐个列出。插件详情的「另有 N 处设置」用它。
+- **`session/config/changed`：** 会话设置变了（场所与会话记录上的值、字段登记增减、会话增删，即 `session-settings:changed`）或宿主配置文档变了（`host-config:changed`）时推给每条连接，不带参数；客户端重取打开着的会话的设置、层的列表与快捷切换。
 
 ## 订阅与条目
 

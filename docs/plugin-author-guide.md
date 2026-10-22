@@ -235,7 +235,7 @@ it('required 依赖到场后激活', async () => {
 | 隔离需求 | 用法 |
 |---|---|
 | 一个独立插件实例（默认）| `app.plugin(definition, cfg)` |
-| 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考 session-manager 的 `resolveConfig(sessionId)`），不需要上下文隔离 |
+| 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考会话设置的读取器 `fields.get(sessionId)`），不需要上下文隔离 |
 | 同一份定义跑多套独立配置 | 定义声明 `reusable: true`，再以 `app.plugin(definition, cfg, 'name:suffix')` 注册（插件内经 `plugins.register` 同签名）；每个实例是独立的顶层激活，由调度器管理。约束见第 4 节 |
 | 完全独立的事件总线 / 日志通道 / 服务容器 | `createApp(options)` 新建 App；日志通道另传独立的 `logHub` |
 
@@ -422,7 +422,7 @@ cell.innerHTML = member.nickname;
 | 插件详情的页面（`placement: 'plugin'`，默认） | 声明式页面或插件前端 | 插件详情里的页面入口，地址 `/p/:instance/:pageKey`；用户可以把它固定到图标栏 |
 | 设置的一节（`placement: 'settings'`） | 只收声明式页面 | 设置的分节目录 |
 | 会话右侧面板（`placement: 'session'`） | 声明式页面或插件前端，可用 `applies` 只对部分会话适用 | 面板标签栏的「+」，用户打开后记住 |
-| 会话设置项 | `sessionManager.use.registerSetting`：一个配置字段，加适用的会话种类与显眼程度；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-manager 的「登记设置项」](api/api-session-manager.md#登记设置项)）。可选项要按服务现取的，字段的 `dynamicOptions` 指向提供它的服务，界面调那个服务各提供者的 `listModels()`，只拿得到取值、拿不到依赖项的值（见 [api-webui 的「可选项与模型」](api/api-webui.md#可选项与模型)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
+| 会话设置项 | configSchema 的顶层字段写 `session`（显眼程度，可选适用的会话种类与门槛），apply 里调 `sessionFields.use.fields(configSchema, caps)` 拿读取器、按会话读；字段没有默认值时用 `unset` 写一句没设时怎样（见 [api-session-settings](api/api-session-settings.md)）。可选项要现取的，字段的 `dynamicOptions` 写来源名，插件经贡献点 `webui:options` 交这个来源（见 [api-webui 的「可选项与模型」](api/api-webui.md#可选项与模型)） | 会话的「设置」标签、设置的「会话默认」、输入框旁的快捷切换（`prominence: 'composer'`） |
 | 提示 | `webui.use.notify`：一条待处理事项或故障，带级别，可附跳转；事情处理好了就撤回 | 「需要处理」（运行状况页、首页摘要、运行状况的角标与标签页标题的数，每条计 1）与发出它的插件详情 |
 | 主题 | 经贡献点 `webui:theme` 交一份主题文件（`contributions.use.contribute('webui:theme', { id, theme })`，见 [api-webui 的「插件提供的主题」](api/api-webui.md#插件提供的主题)），只收颜色令牌，与导入的主题走同一套校验 | 设置「外观」的主题选择；插件停用后消失，正在用的回到同深浅的偏中性 |
 | 工具卡的展示 | 工具定义上的 `display`（命令、文件改动） | 时间线的工具卡与审批卡上的事实 |

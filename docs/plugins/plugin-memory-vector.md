@@ -20,6 +20,8 @@ export default definePlugin({
     memory: optional(memory),
     tools: optional(tools),
     sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
     events,
     hooks,
     contributions,
@@ -79,11 +81,11 @@ export default definePlugin({
    （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
    `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
-可见范围为同平台时（`crossSessionMode: platform`、会话配置 `memoryRecallScope` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台。向量入库时记下的平台（`metadata.platform`）是那一轮的入口平台，user 与 assistant 两侧同一口径：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`。候选向量记下的平台等于当前平台，或它所在会话记下的出生平台等于当前平台，即算同平台；平台都不从会话 ID 推。
+可见范围为同平台时（这个会话的 `crossSessionMode` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台。向量入库时记下的平台（`metadata.platform`）是那一轮的入口平台，user 与 assistant 两侧同一口径：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`。候选向量记下的平台等于当前平台，或它所在会话记下的出生平台等于当前平台，即算同平台；平台都不从会话 ID 推。
 
-## 按房间收窄召回
+## 按会话设检索范围
 
-会话配置的 `memoryRecallScope`（`session` / `platform` / `all`，见 [api-session-manager](../api/api-session-manager.md)）可以把一个房间的召回范围收得比 `crossSessionMode` 更窄：被动召回与 `memory_recall` 都取插件配置映出的可见范围与房间范围中较窄的一个，房间写得更宽时按插件配置。`memory_recall` 的 `scope` 参数再与这个结果取较窄者，传 `all` 也放不宽。房间范围每次检索时按会话所属平台现算，写在平台档里的同样生效；房间没设这个键或 session-manager 不在场时，行为与只看插件配置相同。本插件登记这一项（api-memory 的 `MEMORY_RECALL_SCOPE_SETTING`，与其他跨会话取料的插件同一份定义）。
+`crossSessionMode` 可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改）：能按平台档、平台类型档、群与单个会话分别设，被动召回与 `memory_recall` 都按调用所在会话的生效值，每次检索现读。它是这个会话的上限：`memory_recall` 的 `scope` 参数只能比它窄，传 `all` 也放不宽。某一层写坏了的值按最窄（不互通）处理，不回落到更宽的层。「同用户增强」只在这个会话的生效值就是 `user` 时加权：某个群收窄成 `platform` 时它在这个群里没有同用户加权。
 
 ## embedding 模型与存量向量
 
@@ -103,4 +105,5 @@ export default definePlugin({
 - **vectorstore**: 向量存储服务（如 plugin-vectorstore-flat 或 plugin-vectorstore-lancedb）
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
 - **memory**（可选）: 消息存储服务，两个用途：提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身；记忆元数据存放存量标记（见上节），缺失时存量向量按当前模型对待。该服务在调用点惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效。plugin-memory-inmemory 的元数据不持久，与持久化向量库（plugin-vectorstore-flat / plugin-vectorstore-lancedb）搭配时，每次重启都会按当时的模型重记存量标记
-- **session-manager**（可选）: 读房间的 `memoryRecallScope`（见「按房间收窄召回」）与会话记下的出生平台，在调用点现取；缺失时只按插件配置，当前平台取入口平台，同平台过滤只认向量记下的入口平台
+- **session-manager**（可选）: 读会话记下的出生平台，在调用点现取；缺失时当前平台取入口平台，同平台过滤只认向量记下的入口平台
+- **session-settings**（可选）: 按会话读 `crossSessionMode`（见「按会话设检索范围」）；缺失时只取插件配置里的值

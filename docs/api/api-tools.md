@@ -93,6 +93,7 @@ interface ToolCallContext {
   signal?: AbortSignal;                             // 调用方回合的中止信号
   inbound?: InboundTurn;                            // 调用所在的入站回合（source、续做的调用者 callerUserId、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
+  model?: { provider?: string; model?: string };   // 这一轮用的对话模型（形状同 api-llm 的 ModelRef），只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
   output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
 }
@@ -112,9 +113,18 @@ interface ToolCallContext {
 
 `turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一（模型生成参数时报过进度的，用那时随进度推出的那一个），不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 
-## 会话设置项的键
+`model` 由 agent 填这一轮实际用的模型，按它判断能不能把图片等交给主模型的工具（如媒体交付）读它；第三方 agent 不填时这类判断按「不知道」处理，会静默失效。
 
-本包经 declaration merging 给 [api-session-manager](./api-session-manager.md) 的 `SessionConfig` 加 `enabledToolGroups?: string[]`（启用的工具分组，`'*'` 为全部；没设置或为空时只给不属于任何分组的工具），由 [plugin-tools](../plugins/plugin-tools.md) 登记。agent 按会话的生效值填 `ToolCallContext.enabledGroups`。
+## 会话启用的工具分组
+
+```ts
+interface ToolService {
+  /** 这个会话启用的工具分组（'*' 为全部分组）；platform 是入口平台，只对没有出生平台的会话起作用。空列表即只给不属于任何分组的工具 */
+  sessionGroups(sessionId: string, platform?: string): string[];
+}
+```
+
+工具分组是 [plugin-tools](../plugins/plugin-tools.md) 的可按会话覆盖的字段 `enabledToolGroups`（全局层默认 `[]`），提供者经 `sessionGroups` 交出这个会话的生效值，第三方工具注册表要实现它。agent 按它填 `ToolCallContext.enabledGroups`。
 
 ## 描述符与绑定门面
 

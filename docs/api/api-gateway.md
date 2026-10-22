@@ -8,7 +8,7 @@
 
 Gateway 是 Aalis 的运行时编排中枢，负责：
 
-- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行触发四个相位的钩子链：
+- **入站**：监听 `inbound:message` 事件，会话管理在场时先等它收录这条入站（api-session-manager 的 `recordInbound`），再按 `INBOUND_PHASE_ORDER` 顺序串行触发四个相位的钩子链：
   ```
   inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
   ```
@@ -22,14 +22,28 @@ interface InboundPhaseData {
   message: IncomingMessage;
   metadata: Record<string, unknown>;
   agent: AgentService | undefined;
+  chat?: ChatScope;   // 这条入站所在的聊天窗口；带 source 的内部注入没有
 }
 ```
 
 四个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在各相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
 
-## 会话作用域匹配
+`chat` 由网关对没有 `source` 的入站按这个平台适配器的类型声明算一次（`chatScopeOf`），平台服务缺席时按没声明类型算（`private` 与不带类型名的按一对一，其余按多方）；带 `source` 的内部注入没有。回复策略按它的多方标记判生效范围。
 
-按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。消息上没有类型名的场合（定时任务、workflow 等合成回合）不从会话 ID 推断，改读会话记下的聊天窗口（session-manager 的 `originChat`，见 [会话管理](../services/session-manager.md)）。
+## 回复策略的生效范围
+
+回复策略三个插件（plugin-trigger-policy、plugin-trigger-laya、plugin-flow-control）共用的一个字段与它的判定：
+
+```ts
+/** 「生效范围」字段：插件写 audience: { ...REPLY_AUDIENCE_FIELD, session: { appliesTo: ['room'], prominence: 'common' } } */
+const REPLY_AUDIENCE_FIELD: SchemaField;   // select：off 不生效、multiParty 多方房间（默认）、oneToOne 一对一房间、all 全部房间
+/** 这个聊天窗口在不在生效范围里 */
+function audienceIncludes(audience: string, multiParty: boolean): boolean;
+```
+
+生效范围只按聊天窗口的多方标记判，不按平台与类型名：onebot 的频道也是多方房间，默认就受管；WebUI 与终端的会话没有聊天窗口，不在任何生效范围里。参数（冷却、阈值等）是各插件可按会话覆盖的字段，按平台档、平台类型档、场所与会话设（[api-session-settings](./api-session-settings.md)）。
+
+## 聊天窗口
 
 `chatScopeOf` 是入站消息所在聊天窗口的解析：平台取 `message.platform`；类型名与多方标记按这个平台的类型声明解析（api-platform 的 `sessionTypesOf` 与 `resolveSessionType`：不带类型名时，平台声明了多方类型的按其中第一个、多方，没声明或只有一对一类型的按 `private`、一对一；声明里没有的类型名按多方并标出 `undeclared`）；目标按多方标记取，多方取 `groupId`、一对一取 `userId`。OneBot 的临时会话在私聊消息上也带群号，所以目标按类型取，不按消息上有没有 `groupId` 取。session-manager 收录 IM 房间时用它记下聊天窗口。
 
@@ -45,17 +59,11 @@ function chatScopeOf(
   message: Pick<IncomingMessage, 'platform' | 'sessionType' | 'groupId' | 'userId'>,
   types: readonly SessionTypeDecl[],
 ): ChatScope;
-/** 群聊取 groupId，私聊取 userId，其他为空串 */
-function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | 'groupId' | 'userId'>): string;
-/** 是否命中 scopes 或任一 overrides[].scope */
-function isScopeEnabled(cfg: { scopes; overrides }, platform, sessionType, targetId?): boolean;
-/** 取命中且最具体的一项 override 按键叠加到 base（跳过 scope 与 undefined）；具体度 targetId > sessionType > platform */
-function resolveEffectiveConfig<T extends { overrides }>(base: T, platform, sessionType, targetId?): T;
 ```
 
 ## 窗口键
 
-`windowKey` 拼出聊天窗口的键 `平台:类型:目标`，与作用域同一套写法；session-manager 拿它作场所的窗口键（见 [会话管理](../services/session-manager.md) 的「场所」）。键里不含机器人账号：同一个群里几个账号的会话是同一个窗口。平台名与类型名按约定不含 `:`；适配器发出不合约定的名字时，前两段里的 `%` 与 `:` 转义成 `%25`、`%3A`，不同的窗口不会拼成同一个键。目标可以含 `:`（OneBot 频道的目标是 `<频道组>:<频道>`），原样放在最后。`parseWindowKey` 拆键时还原前两段的转义，目标取第二个 `:` 之后的全部，不到三段时返回 undefined。
+`windowKey` 拼出聊天窗口的键 `平台:类型:目标`；session-manager 拿它作场所的窗口键（见 [会话管理](../services/session-manager.md) 的「场所」）。键里不含机器人账号：同一个群里几个账号的会话是同一个窗口。平台名与类型名按约定不含 `:`；适配器发出不合约定的名字时，前两段里的 `%` 与 `:` 转义成 `%25`、`%3A`，不同的窗口不会拼成同一个键。目标可以含 `:`（OneBot 频道的目标是 `<频道组>:<频道>`），原样放在最后。`parseWindowKey` 拆键时还原前两段的转义，目标取第二个 `:` 之后的全部，不到三段时返回 undefined。
 
 ```ts
 function windowKey(window: { platform: string; type: string; targetId: string }): string;

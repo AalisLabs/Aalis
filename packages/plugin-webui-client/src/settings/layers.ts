@@ -27,21 +27,15 @@ export function useLayers(wanted = true) {
 export const labelOf = (order: LayerOrder, name: string) => order.find(entry => entry.name === name)?.label ?? name;
 
 /**
- * 一层的称呼：层表里的称呼，后面写这一层取的是哪一份，如「平台档 onebot」「平台类型档 onebot · 群」（类型写层的列表给的显示名
- * label，没有时写类型名）；场所写场所的称呼（label，没有时是场所键）与层名，如「群「读书会」onebot（场所）」
+ * 一层的标题：层表里的称呼，后面写这一层取的是哪一份（规则同 {@link sourceTitle}），如「平台档 onebot」「平台类型档 onebot · 群」
+ * 「群「读书会」（场所）」。label 是层的列表给这一层的称呼（类型的显示名、场所的称呼），没有时写类型名、场所键
  */
 export function layerTitle(order: LayerOrder, layer: SettingLayer, label?: string): string {
-  const name = labelOf(order, layer.scope);
-  switch (layer.scope) {
-    case 'global':
-      return name;
-    case 'platform':
-      return tr('layerDetail', { layer: name, detail: layer.platform });
-    case 'platformType':
-      return tr('layerDetail', { layer: name, detail: `${layer.platform} · ${label ?? layer.type}` });
-    case 'place':
-      return tr('placeLayer', { place: label ?? layer.key, layer: name });
-  }
+  return sourceTitle(order, layer.scope, {
+    platform: 'platform' in layer ? layer.platform : undefined,
+    chatType: layer.scope === 'platformType' ? (label ?? layer.type) : undefined,
+    place: layer.scope === 'place' ? (label ?? layer.key) : undefined,
+  });
 }
 
 /** 层在地址里的写法（设置的「会话默认」的 ?layer=）：层名，后面用 `:` 接这一层取的是哪一份；场所键可以带 `:`，放在最后 */
@@ -62,12 +56,16 @@ export function layerParam(layer: SettingLayer): string {
 export const layerAddress = (layer: SettingLayer) =>
   `${paths.settingsSection('session-defaults')}?${new URLSearchParams({ layer: layerParam(layer) })}`;
 
-/** 来源取的是哪一份：平台、聊天窗口的类型（显示名，见 {@link typeText}），场所的称呼（如「群『读书会』」）；不知道的不写 */
+/** 来源取的是哪一份：平台、聊天窗口的类型（显示名，见 {@link typeText}），场所的称呼（层的列表给的，如「群「读书会」」）；不知道的不写 */
 export interface SourceContext {
   platform?: string;
   chatType?: string;
-  placeName?: string;
+  place?: string;
 }
+
+/** 层的列表给这一层的称呼（平台类型档是类型的显示名，场所是场所的称呼）；列表里没有或没给时为 undefined */
+export const labelIn = (layers: readonly LayerInfo[], layer: SettingLayer): string | undefined =>
+  layers.find(info => layerParam(info.layer) === layerParam(layer))?.label;
 
 /** 平台类型在称呼里的写法：层的列表里这个平台类型档带的显示名，没有时写类型名；不知道类型时为 undefined */
 export function typeText(layers: readonly LayerInfo[], platform?: string, type?: string): string | undefined {
@@ -78,11 +76,14 @@ export function typeText(layers: readonly LayerInfo[], platform?: string, type?:
   return info?.label ?? type;
 }
 
-/** 来源的称呼：层表里的称呼，平台档、平台类型档另写取的是哪一份，场所写场所的称呼，作者默认写「默认」 */
+/**
+ * 来源的称呼（也是一层的标题）：层表里的称呼；平台档、平台类型档后面写取的是哪一份，场所写「<场所的称呼>（场所）」，不带平台；
+ * 不知道是哪一份时只写层的称呼。作者默认写「默认」
+ */
 export function sourceTitle(order: LayerOrder, source: string, at: SourceContext = {}): string {
   if (source === 'default') return tr('sourceDefault');
-  if (source === 'place' && at.placeName) return at.placeName;
   const name = labelOf(order, source);
+  if (source === 'place') return at.place ? tr('placeLayer', { place: at.place, layer: name }) : name;
   const detail =
     source === 'platform'
       ? at.platform

@@ -96,7 +96,7 @@ describe('生成的源码', () => {
     expect(withTool).toContain('sessionFields: optional(sessionFields), document: optional(ownHostConfig)');
     expect(withTool).toContain('const fields = sessionFields.use.fields(configSchema, { config, document });');
     expect(withTool).toContain('fields.get(ctx.sessionId, { platform: ctx.platform })');
-    expect(withTool).not.toMatch(/resolveConfig|registerSetting|api-session-manager|declare module/);
+    expect(withTool).not.toMatch(/resolveConfig|api-session-manager|declare module/);
     const alone = renderIndexTs(answers({ tool: false, command: false, webui: false, sessionSetting: true }));
     expect(alone).toContain('\n    sessionFields.use.fields(configSchema, { config, document });');
     expect(alone).not.toContain('ctx.sessionId');

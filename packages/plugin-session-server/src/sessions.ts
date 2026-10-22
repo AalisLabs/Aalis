@@ -8,7 +8,13 @@
 
 import { saveFailureText } from '@aalis/api-host-config';
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
-import { placeLabel, type SessionInfo, type SessionManagerService, sessionLabel } from '@aalis/api-session-manager';
+import {
+  isUnfiled,
+  placeLabel,
+  type SessionInfo,
+  type SessionManagerService,
+  sessionLabel,
+} from '@aalis/api-session-manager';
 import {
   type RoomGroup,
   RPC_ERROR_CODES,
@@ -130,8 +136,12 @@ export function createSessions(deps: SessionDeps) {
     return counted.reduce((sum, t) => ({ input: sum.input + t.input, output: sum.output + t.output }));
   }
 
-  /** 会话的场所：键与类别取 placeOf，显示名取场所记录（没取名的是默认名，窗口还没有记录时是场所键） */
+  /**
+   * 会话的场所：键与类别取 placeOf，显示名取场所记录（没取名的是默认名，窗口还没有记录时是场所键）。根会话是空记录时没有：
+   * 会话设置对它不取场所层
+   */
   function placeOf(info: SessionInfo): SessionSummary['place'] {
+    if (isUnfiled(rootOf(info))) return undefined;
     const place = sm.placeOf(info.id);
     const record = sm.getPlace(place.key);
     return { ...place, name: record ? placeLabel(record) : place.key };
@@ -147,6 +157,7 @@ export function createSessions(deps: SessionDeps) {
     const tokens = tokensOf([info, ...below]);
     const ancestors = ancestorsOf(info).map(parent => ({ id: parent.id, title: parent.title || sessionLabel(parent) }));
     const reason = info.status === 'error' ? info.lastTurn?.error : undefined;
+    const place = placeOf(info);
     return {
       id: info.id,
       title: info.title || sessionLabel(info),
@@ -158,7 +169,7 @@ export function createSessions(deps: SessionDeps) {
       instance: info.originInstance,
       account: root.originChat?.selfId,
       ...(chat ? { chat: { type: chat.type, multiParty: chat.multiParty } } : {}),
-      place: placeOf(info),
+      ...(place ? { place } : {}),
       createdAt: info.createdAt,
       updatedAt: info.updatedAt,
       lastReplyAt: info.lastReplyAt,
@@ -287,10 +298,13 @@ export function createSessions(deps: SessionDeps) {
     return deps.settings.use;
   };
 
+  /** 会话的各行，另带平台档按哪个平台取 */
   async function sessionRows(sessionId: string, peer: SessionPeer): Promise<SessionMethodResult<'session/config/get'>> {
     const settings = admin();
-    const at = { platform: await entryPlatform(requireSession(sessionId), peer) };
-    return { items: settings.rows({ sessionId, at }) };
+    const session = requireSession(sessionId);
+    const at = { platform: await entryPlatform(session, peer) };
+    const platform = rootOf(session).originPlatform ?? at.platform;
+    return { items: settings.rows({ sessionId, at }), ...(platform === undefined ? {} : { platform }) };
   }
 
   const layerRows = (layer: SessionSettingsLayer) => checked(() => ({ items: admin().rows({ layer }) }));

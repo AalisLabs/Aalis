@@ -203,7 +203,7 @@ function layerSettings(caps: Caps, fields: Fields): LayerSetting[] {
   });
 }
 
-/** 层的称呼：层表里的称呼，平台档、平台类型档与场所另写是哪一份（「平台档 onebot」「平台类型档 onebot · group」「场所『…』」） */
+/** 层的称呼：层表里的称呼，平台档、平台类型档与场所另写是哪一份（「平台档 onebot」「平台类型档 onebot · group」「场所「…」」） */
 function layerName(caps: Caps, layer: SessionSettingsLayer): TextRef {
   const label = layerLabel(layer.scope);
   if (layer.scope === 'platform') return t('layerPlatform', { layer: label, platform: layer.platform });

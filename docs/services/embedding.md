@@ -28,8 +28,6 @@ export interface EmbeddingService {
   readonly modelId?: string;
   /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求。 */
   embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]>;
-  /** 列出远端可用模型（用于前端下拉框）*/
-  listModels?(): Promise<string[]>;
 }
 ```
 
@@ -39,7 +37,7 @@ export interface EmbeddingService {
 
 - `embed(text)` 是**唯一必须实现**的方法，返回单条文本的向量。契约**未约定向量维度**——维度由具体模型决定，跨提供者 / 跨模型不可混用（见 §6）。
 - `modelId` 可选，是向量空间标识：同值即向量可比，换模型必须换值。它让消费方能在同维度换模型时识别旧向量；不声明则消费方无从区分。
-- `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4），不参与 embed 主链路。
+- 契约里没有列模型的方法。提供者要给自己配置里的模型字段出下拉，经贡献点 `webui:options` 交自己的可选项来源（字段的 `dynamicOptions` 写同一个名字），只列自己的模型，见 §4。
 - 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时需自行并发调 `embed()`（参考实现的连接细节见 §3）。
 
 `@aalis/api-embedding/package.json` 的 `keywords` 含 `aalis-api`——是契约包，不是可加载插件。
@@ -57,13 +55,14 @@ export interface EmbeddingService {
 
 OpenAI 实现（`packages/plugin-embedding-openai/src/index.ts`）：
 - `embed`：取响应 `data.data[0].embedding`；失败抛 `Error`，不静默。
-- `listModels`：拉 `{baseUrl}/models`，失败返回 `[]`。
+- 模型下拉：可选项来源 `embedding-openai`，拉 `{baseUrl}/models`，失败返回空。
 - `modelId`：`openai:<model>`。
 - 注册：`provide.use(embedding, service, { label: \`OpenAI / ${model}\` })`。
 
 Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 自动探测新旧 API：首次 `embed` 先试 `/api/embed`，失败则缓存为旧版走 `/api/embeddings`。
 - 自带超时（`AbortController`）+ 5xx 重试（`postJson`）；`embed` 失败时同样抛 `Error`。
+- 模型下拉：可选项来源 `embedding-ollama`，拉 `/api/tags`。
 - `modelId`：`ollama:<model>`。
 - 注册：`provide.use(embedding, service, { label: \`Ollama / ${model}\` })`。
 
@@ -81,14 +80,14 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 缺失即降级：`if (!embedding) return null;`（`ensureEntityEmbedding`），不报错、走非语义路径。
 - 向量失效键：节点的 `embeddingHash` 由文本指纹并入 `modelId` 得出，换模型后，下一次用到向量的整理（配置了 `consolidationModel` 且开启 auto-link 的 consolidate / maintain）或 `/relation event-duplicates` 会重算旧向量。
 
-**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `services.use.all('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
+**WebUI（`@aalis/plugin-webui-server`）** 按字段的 `dynamicOptions` 找贡献点 `webui:options` 里同名的来源取可选项：两个提供者各交各的来源，同时装了两个时各自的「Embedding 模型」下拉只列自己的模型。来源名按插件定：同一个提供者插件开了几个实例时来源同名，WebUI 取全局键最前的那家，各实例的下拉都列那一家端点的模型。
 
 ## 4. 写一个 provider
 
 ### 必须 vs 可选
 
 - 必须：实现 `embed(text): Promise<number[]>`；在 `apply` 里 `provide.use(embedding, impl)`。
-- 可选：`listModels()`（仅为 WebUI 下拉服务，不实现也能正常 embed）。
+- 可选：给模型字段出下拉，经贡献点 `webui:options` 交自己的可选项来源（不交也能正常 embed）。
 - 建议：声明 `modelId`（如 `foo:<model>`），让缓存向量的消费方能识别换模型。
 - 强烈建议：启动连通性自检失败时 **warn 而非 throw**（与两个参考实现一致），让插件能装上、错误暴露在第一次真实调用。
 
@@ -126,16 +125,6 @@ class FooEmbedding implements EmbeddingService {
     if (!res.ok) throw new Error(`foo embedding 失败: ${res.status} ${res.statusText}`);
     const data = (await res.json()) as { vector: number[] };
     return data.vector;
-  }
-
-  async listModels(): Promise<string[]> {
-    try {
-      const res = await fetch(`${this.endpoint}/models`);
-      if (!res.ok) return [];
-      return ((await res.json()) as { models: string[] }).models;
-    } catch {
-      return [];
-    }
   }
 }
 
@@ -202,7 +191,7 @@ const vec = await embedding.use.embed(text);
 
 ### 错误边界
 
-`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，不要让单条失败中断整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」。`listModels()` 按约定**永不抛**（失败返回 `[]`），消费方仍应防御性兜底。
+`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，不要让单条失败中断整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -215,7 +204,7 @@ const vec = await embedding.use.embed(text);
 
 - **「注册成功 ≠ 可用」**：连通性自检失败只 warn（§3），服务照样注册。消费者第一次 `embed` 才会真正暴露端点不可达 / key 错误，要做好首调错误处理。
 - **无批量 API**：契约只有单条 `embed`。大批量索引靠消费者并发，注意限流（memory-vector 的 `indexing.concurrency` / `maxQueueSize`）以免压垮本地服务。
-- **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型原样返回，刻意不按名字筛（选错模型的代价小于选不到，模型不可用由 doctor 检查项报出，见 `plugin-embedding-ollama/src/index.ts` 的注释），下拉里会混入非 embedding 模型，用户可能选错。
+- **Ollama 的模型下拉语义弱**：可选项来源 `embedding-ollama` 把 `/api/tags` 的**所有**模型原样返回，刻意不按名字筛（选错模型的代价小于选不到，模型不可用由 doctor 检查项报出，见 `plugin-embedding-ollama/src/index.ts` 的注释），下拉里会混入非 embedding 模型，用户可能选错。
 - **OpenAI 端点路径固定**：openai provider 在 `baseUrl`（完整前缀）后拼 `/embeddings`，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
 - **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的问题，文档 / 配置项应显式提醒重建。
 

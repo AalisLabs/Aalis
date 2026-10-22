@@ -55,36 +55,34 @@ export function useSessionQuery<T>(
   return { ...state, set, retry };
 }
 
-/** target 没有时不取（会话设置服务不在） */
+/** target 没有时不取（会话设置服务不在）。会话的各行另带 platform：平台档按哪个平台取 */
 export function useSettingRows(target: SettingsTarget | undefined) {
   const client = useSessionClient();
   const request = useMemo(
     () =>
       target &&
-      (async (session: SessionClient) =>
-        (
-          await ('sessionId' in target
-            ? session.request('session/config/get', target)
-            : session.request('session/config/layer/get', target))
-        ).items),
+      ((session: SessionClient) =>
+        'sessionId' in target
+          ? session.request('session/config/get', target)
+          : session.request('session/config/layer/get', target)),
     [target],
   );
-  const { value: rows, error, set, retry } = useSessionQuery<Row[]>(request);
+  const { value: result, error, set, retry } = useSessionQuery<{ items: Row[]; platform?: string }>(request);
 
   /** 改这个会话或这一层的一项：给值即写入，null 恢复继承（全局层恢复默认）；写不进去时抛错，没落盘时交回那一句 */
   const update = useCallback(
     async (row: Pick<Row, 'plugin' | 'key'>, value: unknown) => {
       if (!target) return undefined;
       const item = { plugin: row.plugin, key: row.key, value };
-      const { items, unsaved } =
+      const { unsaved, ...rows } =
         'sessionId' in target
           ? await client.request('session/config/update', { ...target, ...item })
           : await client.request('session/config/layer/update', { ...target, ...item });
-      set(items);
+      set(rows);
       return unsaved;
     },
     [client, target, set],
   );
 
-  return { rows, error, update, retry };
+  return { rows: result?.items, platform: result?.platform, error, update, retry };
 }

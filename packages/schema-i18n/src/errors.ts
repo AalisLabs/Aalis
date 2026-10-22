@@ -17,7 +17,7 @@ export class TextError extends Error {
 }
 
 /**
- * 给任意 Error 挂上文字对象并返回它本身，name 与类不变（ConfigError、SessionConfigError 这类按 name 判定的错误照旧认得）。
+ * 给任意 Error 挂上文字对象并返回它本身，name 与类不变（ConfigError、SessionSettingsError 这类按 name 判定的错误照旧认得）。
  * message 不动，由调用方给（通常就是 `text.source`）
  */
 export function withText<E extends Error>(error: E, text: TextRef): E & { readonly text: TextRef } {

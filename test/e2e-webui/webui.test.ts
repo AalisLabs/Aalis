@@ -877,7 +877,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(atPlace('onebot:group:20001')).toBe(7);
     await page.locator(`${dialog} ${aria('关闭', 'button')}`).click();
     await page.waitForSelector(dialog, { hidden: true });
-    expect(await iterationsOf('onebot:10001:group:20001')).toBe('最大工具迭代7来自：群『读书会』');
+    expect(await iterationsOf('onebot:10001:group:20001')).toBe('最大工具迭代7来自：group「读书会」（场所）');
 
     const mine = await sm.createSession({ name: '<甲>' }, { createdFrom: 'webui' });
     await page.goto(`${stack.origin}/s/${encodeURIComponent(mine.id)}/settings`);
@@ -887,7 +887,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await setIterations('body', '9');
     expect(atPlace('workspace:default')).toBe(9);
     const other = await sm.createSession({ name: '<乙>' }, { createdFrom: 'webui' });
-    expect(await iterationsOf(other.id)).toBe('最大工具迭代9来自：工作区『默认工作区』');
+    expect(await iterationsOf(other.id)).toBe('最大工具迭代9来自：默认工作区（场所）');
     const now = '跟随服务偏好（此刻：mock-model）';
     expect(await page.$eval('.setting-row[aria-label="模型"]', row => row.textContent)).toBe(`模型${now}`);
 

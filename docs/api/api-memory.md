@@ -65,20 +65,18 @@ export default definePlugin({
 });
 ```
 
-## 会话设置项：记忆召回范围
+## 跨会话取料的范围
 
-```ts
-type MemoryRecallScope = 'session' | 'platform' | 'all';
+没有共享的召回范围：跨会话取料的插件各有自己的范围字段，都标成可按会话覆盖（[api-session-settings](./api-session-settings.md)），值就是这个会话取料的上限，只有 owner 能改：
 
-// 经 declaration merging 加进 api-session-manager 的 SessionConfig
-interface SessionConfig {
-  memoryRecallScope?: MemoryRecallScope;
-}
+| 插件 | 字段 | 取值 |
+|---|---|---|
+| [plugin-memory-history](../plugins/plugin-memory-history.md) | `scope` | `session`、`same-platform`、`cross-platform` |
+| [plugin-memory-vector](../plugins/plugin-memory-vector.md) | `crossSessionMode` | `isolated`、`user`、`platform`、`all` |
+| [plugin-tool-session](../plugins/plugin-tool-session.md) | `scope` | `current`、`platform`、`all` |
+| [plugin-user-relation](../plugins/user-relation.md) | `recallScope` | `session`、`all` |
 
-const MEMORY_RECALL_SCOPE_SETTING: SessionSetting;   // key 'memoryRecallScope'，select，各种会话适用，advanced
-```
-
-房间的记忆召回范围：`session` 只召回本会话，`platform` 最多同平台，`all` 不限。它只能收窄、不能放宽各插件自己的范围配置，写得比插件配置宽时按插件配置；随子会话复制（不是 liveOnly），否则经子任务就绕过了收窄。跨会话取料的插件（[plugin-memory-history](../plugins/plugin-memory-history.md)、[plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-tool-session](../plugins/plugin-tool-session.md)、[plugin-user-relation](../plugins/user-relation.md)）都遵守它，各自登记这同一份定义（[api-session-manager](./api-session-manager.md) 允许几个插件以同一份定义登记同一个键）：只要其中一个在场这一项就有效，不会因为某一个插件停用而让其余插件不再收窄。
+四个字段都标 `onInvalid: 'error'`：某一层写坏了的值原样交给插件，插件按最窄处理，不回落到更宽的层。后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它，要另外设。
 
 ## 压缩服务
 
@@ -143,7 +141,9 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
 }
 ```
 
-`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。`clearAll` 只清消息与归档、不清元数据：在元数据里存了数据的插件，要挂这个中间件按 `scope` 与 `types` 清理自己的命名空间。结果行的 `type` 是这一行所属的清理类型（取值同 `/clear --type`），处理某个清理类型的中间件须在各行标注它，成败都标：`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。
+`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。
+
+清空之后要连带做事的中间件在 `next()` 之后用 `historyCleared(data)` 判：这次清了消息历史（没指定类型或类型含 `context`），且结果里消息历史的各行（`type` 为 `context`）都清成了；消息历史没清成就不动。会话管理据此删掉被清空会话的子会话，子任务插件据此清掉父会话记录上的回报。`clearAll` 只清消息与归档、不清元数据：在元数据里存了数据的插件，要挂这个中间件按 `scope` 与 `types` 清理自己的命名空间。结果行的 `type` 是这一行所属的清理类型（取值同 `/clear --type`），处理某个清理类型的中间件须在各行标注它，成败都标：`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。
 
 整体清空自己的命名空间用 `clearMetadataNamespaces(mem, namespaces, logger)`，它在一次 `commitMetadata` 里删掉这些命名空间的全部条目，返回各命名空间删掉的键（与传入顺序相同）。`listMetadata` 会跳过读不出的条目（数据损坏、不是对象），按它枚举键删不掉这些条目；后端实现了只列键的 `listMetadataKeys` 时，这个函数按它列键，读不出的条目一并删除、计入返回的键，并经 `logger` 记一条 info 点名（`namespace/key`，超过 10 条只列前 10 条）。后端没有实现时退回 `listMetadata`，读不出的条目留在库里。
 

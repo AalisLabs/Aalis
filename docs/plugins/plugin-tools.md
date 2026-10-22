@@ -20,8 +20,9 @@ export default definePlugin({
   provides: [tools, backgroundTasks],
   uses: {
     logger, provide, events, lifecycle, config,
-    sessionManager: optional(sessionManager),
     storage: optional(storage),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -29,7 +30,7 @@ export default definePlugin({
 
 - `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted` 与 `app:stopping`。
 - `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
-- 可选 `sessionManager`：登记会话设置项「工具分组」；没有时各会话只拿到通用工具。
+- 可选 `sessionFields`、`document`：按会话读「工具分组」（`sessionGroups`）；会话设置缺席时只取插件配置里的值。
 - 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
 
 权限钩子由消费方通过 `setExecutionGuard()` 注入。
@@ -40,6 +41,7 @@ export default definePlugin({
 |---|---|---|
 | `background.maxWaitSeconds` | 600 | 可转后台的工具调用在前台最多等多少秒：模型给的 `waitSeconds` 与工具声明的让出时限都不超过它。最大 2147483（计时器能表示的最长时限），超出时告警并回落默认 |
 | `background.maxPerSession` | 4 | 同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数，等审批的也算），满了时新的调用在过守卫之前就被拒绝，回给模型在跑的任务与「先等待或停掉一个」；不在对话回合里的调用不会转后台，不占名额 |
+| `enabledToolGroups` | `[]` | 工具分组：这个会话启用哪些分组，`'*'` 为全部分组，空列表只给不属于任何分组的工具；可按会话设（平台档、平台类型档、场所与会话），只有 owner 能改 |
 
 ## 主要能力
 
@@ -47,9 +49,9 @@ export default definePlugin({
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
   按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
-  （见 [security-model](../concepts/security-model.md)）；平台启用哪些分组由 session-manager 的平台档 /
-  会话配置 `enabledToolGroups` 决定。这一项由本插件在 session-manager 上登记（可选项取工具分组注册表，
-  common）；没有 session-manager 时没有会话设置，各会话只拿到通用工具。
+  （见 [security-model](../concepts/security-model.md)）；一个会话启用哪些分组由本插件的配置字段 `enabledToolGroups` 决定，
+  它可按会话覆盖（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改，显眼程度 common），
+  全局层默认 `[]`，开箱只有 `cli`、`webui` 的平台档写 `['*']`。`sessionGroups(sessionId, platform)` 交出这个会话的生效值。
 - **分组闸在执行面同样生效**：`execute()` 在调用方传了 `ToolCallContext.enabledGroups` 时按同一判据校验，
   不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。
   只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把

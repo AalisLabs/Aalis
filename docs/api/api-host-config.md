@@ -96,7 +96,32 @@ type ApplyPluginConfigResult =
 
 新键是 `<实例 id>.<字段路径>`，数组元素里的字段路径不带下标，被占用时依次加 `-2`、`-3`。宿主没有密钥存储时不拆，值原样进文档。本次提交新引入的悬空引用（键不在密钥存储里、也不是这次写入的）被拒绝：抛错，运行态与文档都不动；提交前就悬空、原样带回的不拦。
 
-返回值：运行态不受理（停机中、正在卸载，或新的后缀实例登记被拒）时为 `{ status: 'refused' }`，文档与密钥都不改。受理后为 `{ status: 'applied', reloaded, saveError? }`：`reloaded` 为 `false` 表示解析出的配置与运行态相同、实例在 active，没有重启；`saveError` 是落盘失败的原因（拒写用 `isConfigSaveRefused` 判定），此时改动已在运行态与文档里生效，只是没写进文件。实例 id 不合法、实例不存在且没有可用来新建它的同模块定义时抛错。
+返回值：运行态不受理（停机中、正在卸载，或新的后缀实例登记被拒）时为 `{ status: 'refused' }`，文档与密钥都不改。受理后为 `{ status: 'applied', reloaded, saveError? }`：`reloaded` 为 `false` 表示解析出的配置与运行态相同、实例不在 error 态，没有重启（可按会话覆盖的字段不进运行态，只改它们时不重启）；`saveError` 是落盘失败的原因（拒写用 `isConfigSaveRefused` 判定），此时改动已在运行态与文档里生效，只是没写进文件。实例 id 不合法、实例不存在且没有可用来新建它的同模块定义时抛错。
+
+## 变化通知
+
+```ts
+type HostConfigChange = { readonly instanceId: string } | { readonly document: true };
+// AalisEvents
+'host-config:changed': [change: HostConfigChange];
+```
+
+宿主配置文档在内存里确实被改了时由宿主发，别的插件不发：写方法改完、且改前改后确实不同时（写入相同的值不发；`setPluginEnabled` 不发，启停另有 `plugins:changed`），`applyPluginConfig` 受理且文档变了时（落盘失败也发），加载插件时补写了它的配置段之后，配置热重载换下文档之后。只改了一个实例的配置段时带它的 `instanceId`，其余带 `document`。不表示已落盘，也不保证恰好一次。会话设置、会话服务与 WebUI 据此重取。
+
+## 只读窄面 `ownHostConfig`
+
+```ts
+interface OwnHostConfig {
+  get(): Record<string, unknown>;   // 本实例在配置文档里的那一段（复制品，文档形态）；没有这一段时为空对象
+}
+const ownHostConfig: ServiceDescriptor;   // 与 hostConfig 同一个服务名，业务层只有 get
+```
+
+插件读自己那一段配置的文档形态时声明它（如 `document: optional(ownHostConfig)`），不必声明整份 `hostConfig`。会话设置的读取器经它取可按会话覆盖的字段的全局层。只供消费，写在 `uses` 里，不能拿去 provide。
+
+## 落盘失败的说法
+
+`saveFailureText(err, reconcile)` 给落盘失败的那一句（文字对象）：拒写（`isConfigSaveRefused`）说已在运行态生效、未写入配置文件，并按 `reconcile` 说之后怎样与文件对齐（`reload`：修好文件后按文件内容重载；`restart`：重启时以文件内容为准）；其余失败说写入失败、改动保留在文档里。WebUI 保存插件配置、会话设置写宿主文档的几层与会话协议的 `unsaved` 都用这一句。
 
 ## 启停与偏好：运行态与文档分开写
 
@@ -129,6 +154,7 @@ async function disablePersistently(id: string): Promise<boolean> {
 | plugin-cli | 记录最后视图 `lastView` | 不记录，下次启动回到默认视图 |
 | plugin-mcp-client | `mcp_set_server_enabled` 经 `applyPluginConfig` 改配置并落盘 | 工具返回失败，不改运行态 |
 | plugin-package-manager | 卸载后清掉禁用标记，选了同时删除配置时删配置块 | 不整理 |
+| plugin-session-settings | 写全局层（插件配置与本插件偏好）、平台档与平台类型档（`sessionConfig`） | 这三层写不了，平台档与平台类型档为空 |
 
 ## 相关
 

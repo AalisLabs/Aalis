@@ -181,9 +181,9 @@ export const SessionSummarySchema = z.object({
   chat: z.object({ type: z.string(), multiParty: z.boolean() }).optional(),
   /**
    * 根会话的场所：场所键、类别（window 是 IM 的群与别人的私聊，workspace 是本机的工作区）与显示名。按层读写场所时层为
-   * `{ scope: 'place', key }`
+   * `{ scope: 'place', key }`。根会话是空记录（api-session-manager 的 isUnfiled，如按 id 兜底建出的）时没有：这类会话没有场所层
    */
-  place: z.object({ key: z.string(), kind: z.enum(['window', 'workspace']), name: TextSchema }),
+  place: z.object({ key: z.string(), kind: z.enum(['window', 'workspace']), name: TextSchema }).optional(),
   createdAt: z.number(),
   /** 最后活动时间：会话档案最近一次变化 */
   updatedAt: z.number(),
@@ -337,7 +337,8 @@ export const SettingRowSchema = z.object({
 });
 export type SettingRow = z.infer<typeof SettingRowSchema>;
 
-export const SettingRowsSchema = z.object({ items: z.array(SettingRowSchema) });
+/** 一组行；会话的各行另带 platform：平台档按哪个平台取（房间是根会话的出生平台，其余是入口平台），层的各行没有 */
+export const SettingRowsSchema = z.object({ items: z.array(SettingRowSchema), platform: z.string().optional() });
 
 /**
  * 写一项之后的各行；写进宿主配置文档的几层（全局、平台档、平台类型档）已在运行态生效、落盘失败时另带 unsaved：
@@ -823,7 +824,8 @@ export const sessionMethods = {
   'session/config/update': { params: SettingUpdateParamsSchema, result: SettingUpdateResultSchema },
   /**
    * 可以设的各层，按层的先后：全局；各平台档（已装适配器的平台加配置里写过的）；各平台类型档（每个平台声明的类型加配置里写过的，
-   * 没声明类型的平台不单列；声明了显示名的称呼是它）；全部场所（默认工作区在前，称呼是场所的显示名，窗口另带平台与类型名）。
+   * 没声明类型的平台不单列；声明了显示名的称呼是它）；全部场所（默认工作区在前；称呼不带平台：取了名的工作区写「工作区「名字」」，
+   * 窗口写类型的显示名（没声明时写类型名）与窗口名，另带平台与类型名）。
    * order 是层表：全部层的名字与称呼，按先后（后面的压过前面的），界面的来源文字、先后说明与选层都按它
    */
   'session/config/layers': {

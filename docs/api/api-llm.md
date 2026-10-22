@@ -83,7 +83,7 @@ export function lightestThinking(model): string | undefined;
 - 档位由各提供者按自己的协议定义（id 是它自己的写法），不做跨服务商的统一档位表。请求的 `think` 填其中一档的 id，没带时按模型的默认档；模型不能调时不带。
 - 提供者把档位翻成线上字段之前先过 `requestedThinking`：请求带了模型没有的档位（含模型不能调时带了档位）时它抛错，请求不发出去。
 - 摘要、标题、结构化提取这类机械任务要压低思考时，带 `lightestThinking(model)`（最浅的一档；模型不能调时为 `undefined`）。
-- 会话设置「深度思考」存的是档位 id，可选项按会话生效的模型现取（plugin-agent 登记，见 [plugin-agent](../plugins/plugin-agent.md)）。
+- 会话设置「深度思考」存的是档位 id，可选项按会话生效的模型现取（plugin-agent 的字段，见 [plugin-agent](../plugins/plugin-agent.md)）。
 
 各提供者的档位：
 
@@ -179,6 +179,27 @@ export function resolveLLMModel(
 
 按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 `list()` 的次序拿首个（本插件选中的那一家在前，其余按 priority 与注册顺序）。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
 
+模型引用的文字写法是条目 id `<提供者实例 id>/<模型 id>`，与 `/model` 列出的相同：
+
+```ts
+export function entryIdOf(ref: ModelRef): string;                    // 写成文字
+export function modelRefOf(text: string): ModelRef | undefined;      // 读成引用：跳过开头的 npm scope，到下一个 / 为止是提供者实例 id，余下是模型 id
+export const MODEL_REF_TEXT: Pick<SchemaField, 'validate' | 'fromText' | 'toText'>;  // llm-ref 字段的取值校验与文字读写，字段定义里展开它
+```
+
+模型 id 里的斜杠留在模型里，中转站带斜杠的模型 id 拆得对；只有提供者实例的后缀里带 `/` 时拆不准，这类实例的模型要在界面里选。可按会话覆盖的 `llm-ref` 字段（agent 的「模型」、子任务插件的「子任务模型」）用 `MODEL_REF_TEXT`，`/session.set` 与会话协议的写入都按它读写。
+
+## 后台功能取对话模型
+
+```ts
+export function chatModelPicker(
+  source: Pick<ServiceSelection<LLMModel>, 'list'>,
+  onMissing: () => void,
+): () => ProviderEntry<LLMModel> | undefined;
+```
+
+摘要、提取、压缩这类后台功能每次取 llm 服务给本插件挑的能对话的那一个（本插件偏好 › 全局偏好 › 优先级，偏好指向的不在时落到下一级），模型在插件详情的「服务偏好」里给这个插件设，插件配置里不另设模型字段。取不到时 `onMissing` 只在连着取不到的第一次调（一个插件只告警一次），取到之后复位。第一方的记忆摘要、用户画像、QQ 转发摘要与网页搜索压缩都用它。
+
 ## Token 估算
 
 ```ts
@@ -226,4 +247,4 @@ export default definePlugin({
 ## 相关
 
 - 协议层 `Message` / `ToolCall` 在 `@aalis/schema-message`；`ToolDefinition` 在 `@aalis/api-tools`
-- 会话级 LLM 切换见 [api-session-manager](./api-session-manager.md)
+- 会话级 LLM 切换见 [plugin-agent 的会话设置项](../plugins/plugin-agent.md#会话设置项) 与 [api-session-settings](./api-session-settings.md)

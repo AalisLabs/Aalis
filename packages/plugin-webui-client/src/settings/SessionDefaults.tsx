@@ -24,8 +24,11 @@ import {
 // 宽屏两步左右并排，手机上是两屏，第二屏顶上「换一层」回到选层。可以选的层与称呼、继承的先后都取自会话服务给的层表，插件启停
 // 与设置变了时重取
 
-/** 列表里一层的名字：全局写层表里的称呼，平台档写平台名，平台类型档写「平台 · 类型的显示名」（没有时写类型名），场所写称呼 */
-function itemName(order: LayerOrder, { layer, label }: LayerInfo): string {
+/**
+ * 列表里一层的名字（组名已是层的称呼，这里写是哪一份、带平台）：全局写层表里的称呼，平台档写平台名，平台类型档写「平台 · 类型的
+ * 显示名」（没有时写类型名），场所写称呼，窗口场所另补平台
+ */
+function itemName(order: LayerOrder, { layer, label, platform }: LayerInfo): string {
   switch (layer.scope) {
     case 'global':
       return labelOf(order, layer.scope);
@@ -34,7 +37,7 @@ function itemName(order: LayerOrder, { layer, label }: LayerInfo): string {
     case 'platformType':
       return `${layer.platform} · ${label ?? layer.type}`;
     case 'place':
-      return label ?? layer.key;
+      return platform ? tr('placeOn', { place: label ?? layer.key, platform }) : (label ?? layer.key);
   }
 }
 

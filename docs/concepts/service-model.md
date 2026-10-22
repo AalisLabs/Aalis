@@ -148,7 +148,7 @@ caps.provide.use(llm, handle, {
 
 ## 7. 隔离：键控解析或新 App
 
-按会话 / 租户做差异化配置，用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp(options)`：每个 `App` 自有事件总线与服务容器，日志通道另传独立的 `logHub`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
+按会话 / 租户做差异化配置，用键控解析（会话设置的读取器 `fields.get(sessionId)`，见 [api-session-settings](../api/api-session-settings.md)）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp(options)`：每个 `App` 自有事件总线与服务容器，日志通道另传独立的 `logHub`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
 
 ---
 

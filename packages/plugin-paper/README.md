@@ -20,7 +20,7 @@ pnpm add @aalis/plugin-paper
 - 诊断项 `paper.config`
 - uses：`tools`、`session-manager`、`storage`、`events`、`hooks`、`lifecycle`、`logger`、`config`；可选 `remote-agent`、`gateway`、`webui-server`、`doctor`
 
-房间在会话配置里开启白纸（`paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentRoomDailyCents` 等）；白纸的属性（换新、闲置归档、定期清空）、全局每天金额上限、换日时区、单轮时长、成品上限、能否发网页与待交付提示的保留时长在本插件配置里。账本落在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。激活时不连网，进行中的任务在激活之后接回。
+房间在场所设置里开启白纸（`paperEnabled`、`paperName`、`remoteAgentTypes`、`remoteAgentRoomDailyCents` 等）；白纸的属性（换新、闲置归档、定期清空）、全局每天金额上限、换日时区、单轮时长、成品上限、能否发网页与待交付提示的保留时长在本插件配置里。账本落在 `pluginData:/paper/ledger.json`，读不出时远端任务一律不开、原文件不覆盖。激活时不连网，进行中的任务在激活之后接回。
 
 支持进度的提供者会报告规划、读写文件、执行命令等动作。WebUI 白纸页的任务表显示最近动作、时间和可用的工具、目标、摘要、退出码；`paper_status` 与聊天只显示固定动作类别和状态，不提供原始日志。动作不代表完成百分比。Cursor 的 thinking 事件只记“规划中”，不记录思维正文。
 

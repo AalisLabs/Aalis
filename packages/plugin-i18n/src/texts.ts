@@ -35,7 +35,7 @@ const SOURCE = {
   layerLanguageUnprovided: '{layer}里的 {language} 没有插件提供，实际用 {used}',
   layerPlatform: '{layer} {platform}',
   layerPlatformType: '{layer} {platform} · {type}',
-  layerPlace: '{layer}『{place}』',
+  layerPlace: '{layer}「{place}」',
   installPack:
     '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在会话设置的{layer}里调整「语言」列表',
 } as const;

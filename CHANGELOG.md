@@ -93,6 +93,95 @@
 - 超时的错误信息改为「<提供者> 请求超时：<timeout> 秒内没有收到新的生成内容，可在配置里调大 timeout」；配置项的标签改为「停顿超时 (秒)」。
 - api-llm 加 `idleTimeout(ms, signal?)` 与 `IDLE_TIMEOUT_MAX_MS`：给服务商用的按停顿计时，返回交给请求的 `signal`、收到新的生成内容时调用的 `touch`，与交出一段前后调用的 `pause`、`resume`；`ms` 不是数时抛 `RangeError`。见 [api-llm](docs/api/api-llm.md) 的「生成请求的超时」。
 
+### 插件配置可按会话覆盖，会话设置拆成新插件（新包 @aalis/api-session-settings、@aalis/plugin-session-settings；@aalis/schema-config、@aalis/api-host-config、@aalis/runtime、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-persona、@aalis/plugin-persona、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-skills、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-subtask、@aalis/plugin-paper、@aalis/plugin-i18n、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-commands、@aalis/api-gateway、@aalis/plugin-gateway、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-flow-control、@aalis/api-llm、@aalis/api-embedding、@aalis/plugin-embedding-openai、@aalis/plugin-embedding-ollama、@aalis/api-reach、@aalis/plugin-reach、@aalis/plugin-cli、@aalis/plugin-media、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-websearch-serper、@aalis/plugin-doctor、@aalis/create-aalis、@aalis/create-aalis-plugin）
+
+会话设置并进插件配置：插件配置字段写了 `session` 的可按会话覆盖，层为 全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话。存放、修改与 `/session` 系列指令在新插件 @aalis/plugin-session-settings 里，契约见 [api-session-settings](docs/api/api-session-settings.md)。
+
+**会话设置插件**
+
+- 会话设置拆成新插件 @aalis/plugin-session-settings，需另装：`npm create aalis` 的最小档装它，已有部署升级时不会自动装上。不装、没启用或会话管理没起来时，`/session` 系列指令、设置的「会话默认」、会话面板的「设置」标签、输入框旁的快捷切换与房间页的「场所设置」都没有，建不了子任务与经会话协议建的子会话；插件详情里这些字段照常能改，各插件只用插件配置里的值（平台档、平台类型档、场所与会话层这段时间不生效）。
+- 层：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话，后面的压过前面的。原来的「全局默认」改称「全局（插件配置）」，改它就是改对应插件的配置，插件详情同步显示；「父会话」一层没有了。没有跨平台按类型名生效的一层：要对所有群生效的设置按平台分别设在平台类型档。
+- 配置文件：`sessionConfig.defaults` 没有了，全局层就是各插件的配置段；平台档与平台类型档多一级插件实例 id（`sessionConfig.platforms.<平台>.<实例 id>.<字段>`）；原来的 `sessionConfig.types.<平台>.<类型>` 改名 `platformTypes`，`types` 段不再认：读到告警一次、不生效，按层写时原样留着。写了不认识的实例 id、或实例值不是对象时日志告警一次（原来静默不生效）；只剩键名的空段不告警。写平台档、平台类型档时只改这一项，配置文件里读不懂的部分原样留着；要写的路径上已有的值不是对象时拒收，回执点名那一段。
+- 存储：场所与会话的覆盖值从会话管理记录的 `config` 字段挪到同一条记录的 `metadata['session-settings']` 里，按插件实例分开。
+- 配置文件里多出这些项的作者默认（与其它配置项一样写进各插件的配置段）：工具分组 `[]`、额外提示 `''`、语言 `['en']`、客户端渲染 JSON 按角色卡、启用的技能 `['*']`。语言从 `sessionConfig.defaults.language` 搬到 `plugins['@aalis/plugin-i18n'].language`，i18n 插件第一次有配置区；会话管理起不来时界面仍按这个语言显示（原来会落成英文）。
+- 写进配置文件失败（配置文件被外部改过、拒写等）时，会话设置改的全局层、平台档、平台类型档与偏好已经生效，回执写与插件详情保存相同的那一句，拒写与其余写入失败两句不同。原来会撤回这次修改并报错。
+- 新群的第一条消息：网关先等会话管理收录完再跑入站相位，第一条消息就按已建档的房间取平台类型档与场所；原来回合可能先于收录开始，那时会套用默认工作区的场所值。新房间的第一条消息因此多等一次认领查询，已收录的房间不等。会话管理收录不了的会话与按 id 兜底建出的空记录只取全局层与平台档，不再套用默认工作区的值。
+- 刷新：插件详情保存、手改配置文件、会话设置写全局层或偏好，都会让已打开的会话设置、插件详情与界面语言自动重取。原来手改文件后不刷新。
+
+**指令**
+
+- `/session`、`/session.set`、`/session.reset` 从 plugin-agent 挪到会话设置插件，这个插件没装时三条都没有，`/help` 里的归属也变了。`-m`、`-p`、`-t` 删掉，旧写法报错。
+- `/session.set [--at <层>] <项> <值>` 能改本会话全部适用的项，也能写场所、平台类型档、平台档与全局（`--at place`、`platformType`、`platform`、`global`）。几个插件同名的项写成 `<实例 id>/<键>`。项写错（不存在、不适用或重名）时回执列出你在这一层能改的项。WebUI 与终端的会话里 `--at platformType` 回「这个会话没有聊天窗口，不属于任何平台类型档」。模型写 `/model` 列出的条目 id。
+- 门槛取「项的门槛」与「写在哪一层的门槛」两者中较高的，所有会话一律判，私聊也不例外；没装权限插件时聊天里改不了设置。项的门槛默认来自字段声明（第一方里 1 级就能改的是模型、深度思考、人设、语言与子任务模型，其余只有 owner），owner 能在权限页「操作门槛」里和指令、工具一样按项调；写群或私聊的场所要 2 级，写工作区场所、平台类型档、平台档与全局只有 owner，层的门槛不能调。原来 `-m`、`-p`、`-t` 只改三项、1 级即可、不分层。
+- `/session` 只列你能改的项，每项写生效值与来源，模型没设时写此刻实际在用的模型；原来另写的「模型档位」一句没有了。回执不再写「重启不丢」。设了不存在的模型、思考档或人设（全局层的模型除外）不再当场拒绝，下一轮由对应插件处理。校验函数自己出错时回执写「校验时出错」，不转述错误原文。
+- `/session.reset` 不带项只用于本会话与场所，清掉这一层你能改的全部项（原来只清三项）；平台类型档以上必须写明清哪一项。
+- 空值：列表与映射写 `[]`，文字写 `""`；回执与 `/session` 里空值写「无」，原来写「（空）」。所有指令里，空的引号（`""`）算一个空参数。
+
+**WebUI**
+
+- 插件详情 › 配置：每一项写作者默认，等于默认时标「默认」，不等时写「默认：<值>」并有「恢复默认」（空的写「无」）；没有作者默认的项没设时写「不设时：<说明>」，设了时写「默认：不设」。原来看不出默认值是多少。
+- 插件详情：可按会话覆盖的字段带「可按会话设置」，全局之外另外设过的带「另有 N 处设置」，点开逐个列出在哪一层、哪个会话（含子会话）设成了什么，每处链到设置的那一层或那个会话的「设置」标签。agent 多出深度思考、最大工具迭代、历史条数上限；人设插件多出人设、额外提示、不用结构化输出、客户端渲染 JSON；工具插件多出工具分组；技能插件多出启用的技能；摘要插件多出自动压缩线；白纸插件多出六项；子任务插件多出「子任务模型」与「交回后闲置销毁（小时）」；关系图多出「关系图范围」；回复策略三个插件的参数都在这里。
+- 插件详情：只改了可按会话覆盖的字段时按钮写「保存」，不重载插件，下一轮起生效（原来一律「保存并重载」）。有未保存的改动时这个插件的配置在别处被改了，不再静默丢掉草稿，底条写「配置已在别处改动」，附「载入新值」；草稿没改动时静默换上新值。原样保存一个禁用的插件，回执从「配置已更新；插件已禁用，启用时按新配置激活」变成「配置无改动，已写回配置文件」；原样保存等依赖或正在激活的插件不再触发重启。停用的插件的这类字段在插件详情里照常能改。
+- 设置 › 会话默认：先选层（全局、各平台档、各平台类型档与全部场所，顶上可以搜索），再改这一层的项；所选的层记在地址里，刷新与分享链接都回到这一层；宽屏左右并排，手机上两屏。原来只有一个下拉框，不列场所。
+- 称呼：层与场所的引号一律用「」。层的列表里平台类型档写「<平台> · <类型的显示名>」（适配器声明了显示名时写它，没声明时写类型名，搜显示名也能搜到），场所写「默认工作区」「工作区「<名字>」」「<类型的显示名>「<窗口名>」」，窗口另补平台；一层的标题与来源不带平台，场所写「<场所的称呼>（场所）」，如「来自：群「读书会」（场所）」。原来会话「设置」标签按多方标记写「群『读书会』」「工作区『论文』」（引号是『』，也不写层名）。
+- 会话面板「设置」标签：来源写「来自：全局（插件配置）」「来自：平台档 <平台>」「来自：平台类型档 <平台> · <类型>」「来自：<场所>（场所）」，全局层的值缺失或不合法时写「来自：默认」。WebUI 与终端的会话写入口平台（「来自：平台档 webui」），原来只写「来自：平台档」。「改到」第三项从「所有会话」改称「全局（插件配置）」；被下面的层盖住时写「这里还被<层>覆盖」。没有场所层的空记录（按 id 兜底建出的根会话）不再给「这个工作区」。子会话的「改到」只有「只这个会话」。
+- 行尾按钮：全局层叫「恢复默认」，其余层叫「恢复继承」。高级区按实例分组，后缀实例的组名写「显示名 · 实例名」（原来同一插件的两个实例并成一组）。空列表、空映射与空文字写「无」，页面动作的输入值、「另有 N 处设置」与快捷切换里也一样。
+- 模型没设时写此刻在用的模型：会话里哪一层都没设时写「跟随服务偏好（此刻：<模型名>）」，设置页全局层没设时写「跟随全局偏好（此刻：<模型名>）」，输入框旁的快捷切换同样写此刻的模型。子任务模型没设时写「不另指定（与本会话相同）」。
+- 默认模型：「会话默认 › 全局 › 模型」改的是 agent 的本插件偏好（插件详情「服务偏好」里 agent 的 llm 一行，两处是同一个值），原来改的是全进程的 llm 全局偏好，连带改掉标题生成和摘要用的模型。全局偏好挪回「设置 › 系统 › 服务偏好」作普通一行。agent 没设本插件偏好时照旧跟随全局偏好，聊天用的模型不变。全局层写不存在的模型被拒（与插件详情一致），其余层照旧不当场核对。agent 配置段里手写的 `llm` 键不生效，日志告警一次。
+- 深度思考的可选档按 agent 实际在用的模型列出：给 agent 单设了模型偏好时，原来列的是全局偏好那个模型的档位。会话设置不在、agent 也没设本插件偏好时，插件详情里深度思考的下拉没有可选档。
+- 工具分组的下拉：没登记的分组（如会话历史读取插件不在时它的分组）不再从列表里消失，`*` 总写「全部分组」，每个分组下面一行写它的说明。同时装了 Ollama 与 OpenAI 两个向量化提供者时，各自的「Embedding 模型」下拉只列自己的模型。可选项来源 `platform` 与 `gateway-scopes` 没有了。
+- 会话设置不在时 WebUI 收到的说法换成「会话设置不在（@aalis/plugin-session-settings 没装、没启用，或会话管理没起来）」。
+
+**各插件的项**
+
+- 回复策略（trigger-policy、trigger-laya、flow-control）：「生效作用域」与「分作用域覆盖」两块没有了，换成「生效范围」：不生效、多方房间、一对一房间、全部房间，默认多方房间。冷却、阈值等参数出现在会话设置的高级区，可按平台档、平台类型档、群（场所）与会话设，每条消息现读，改了不重载插件。WebUI 和终端的会话不再能纳入回复策略。onebot 的频道也是多方房间，新装与现有部署开箱都受这三个插件管：原来 `*:group` 不含频道，频道里的消息都直接放行，现在和群一样按触发判定、冷却与限速，Laya 也会对频道消息做判断（它的判别模型只用群聊训练过）。
+- 回复策略：owner 从 WebUI 往群里插话时，两个触发插件一律放行；flow-control 按插话那一端（一对一）判，生效范围设成一对一房间或全部房间时插话会受冷却与限速。一对一类型名不叫 `private` 的平台上，私聊里的 interval 回合不再回填无主体授权（按多方标记判，不认类型名）。trigger-policy 的闲置参数改了不重载插件：session 档下一次排定时器时现读；跨会话（platform 档）的开关与节奏只看全局层，从关闭改成 `platform` 时随即开始排，会话层设成 `platform` 不会开起跨会话选举。
+- 最大工具迭代默认不限，界面写「不限」；要限的在会话设置或插件配置里设。卡在工具调用里的一轮只能手动停下，调用成本随轮数放大。
+- 记忆召回范围：会话设置里原来的一行「召回范围」没有了，改成四个记忆插件各自的范围（跨会话历史、向量记忆、读会话历史工具、关系图），一个群要分别设，只有 owner 能改。跨会话历史的范围从「工具默认」变成上限，模型不能再主动要更宽的范围，并多出「仅本会话」一档。某一层写坏了的范围值按最窄处理，不再回落到更宽的层。向量记忆为「同用户加权」档、某个群收窄到同平台的，这个群里没有同用户加权。新装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。
+- 关系图范围设成仅本会话时，关系图工具里带会话作用域参数的只能取本会话；「关系图范围」只在注入或工具开着时出现在会话设置里。
+- 后台插件的模型：QQ 转发摘要、记忆摘要（连「摘要模型来源」开关）、用户画像、网页搜索压缩四处的模型字段删掉，改在插件详情的「服务偏好」里给这个插件设。指定的模型不在时从「报错或静默跳过」变成回落到下一级；没有能对话的模型时这四处都只打一条 warn。关系图的提取模型字段只填一半时按没填处理。
+- 人设卡里的技能名单（`skills`）不再生效，改成技能插件的「启用的技能」，和工具分组一样能按平台档、平台类型档、群与会话设，默认全部、只有 owner 能改。
+- 白纸：「全部房间共用」的判定与称呼按全局层、平台档与平台类型档。
+- 权限页「操作门槛」多出「设置项」一类：每个可按会话设的项一行，默认门槛按声明（1 级、2 级或只有 owner），owner 能像指令、工具一样改，改过的存进 `authorityOverrides`，能力键写作 `setting:<实例 id>/<键>`。写到哪一层的门槛不在这里。
+- 频道等多方房间里被点名时，她也拿到「当前焦点」指引（原来只认类型名 group）。
+- /doctor 报服务偏好没生效时，llm 的修法和其余服务一样写「系统」的服务偏好，不再指向「会话默认」。
+- 插件脚手架（create-aalis-plugin）的「登记会话设置项？」换成「声明可按会话设的配置项？」，生成写了 `session` 的配置字段与读取器，示例字段不写 `appliesTo`。
+
+**子任务与子会话**
+
+- 子会话的设置：子任务与经会话协议建的子会话同一规则，建立时把父会话此刻每一项的生效值（包括具体模型）写进子会话自己那一层，之后父会话与场所、平台档、全局再改都不影响它，追问也不重写。收窄场所或全局管不到已经建好的子任务，要逐个改或等它到期销毁。子会话「设置」标签里这些项和自己设的一样显示，「恢复继承」回到场所与全局等上面各层，不回到父会话。原来模型跟随服务偏好时、历史条数上限与自动压缩线不复制，之后随上面各层变。
+- 子任务模型：原来两个文字框（provider、model），改成和对话模型一样的模型选择「子任务模型」，能按群设，没设时与本会话的模型相同。`create_subtask` 的参数合成一个 `model`，写条目 id。子会话的模型按「工具参数 › 子任务模型 › 父会话此刻实际在用的模型」取；这个模型以后被删掉，这个子任务会报「配置指向的模型不存在」。
+- 建子任务与经协议建子会话：会话设置插件不在时回错误、不建（原来照常建）。要指定模型而 agent 不在时回错误、不建（原来会悄悄用父会话的模型）。
+- 父会话改子会话的设置：子任务组多一个工具 `set_subtask_setting`，能改自己直接的子会话（不含孙会话）本会话层的项，只写值、不能恢复继承；每次调用都要 owner 确认，owner 配了免确认时以 owner 身份做的不弹，群里别人发起的回合用不了它；项的门槛按这一轮发起的人判。
+- 子会话的销毁：子任务插件多一项「交回后闲置销毁（小时）」，默认 24、不设上限，0 即一轮结束立即销毁；子会话的一轮结束（回复、出错或被停止都算）满这个时长，就连同它的对话记录、各插件按会话存的数据和它下面的子会话一起删掉，追问一次重新计时，重启不丢。经协议（WebUI）建的子会话同样到期销毁，从没发过消息的不计时。已有的子会话第一次启动时，跑过至少一轮、闲置超过一天的立即销毁。
+- 销毁之后，父会话还能经 `check_subtask`、`wait_subtasks` 或父会话提醒拿到它最后的结果一次（`destroyed` 为真）；在它还在时已经取走过同一份结果的不再列出。每到期销毁一个子会话，父会话在会话列表里被顶到前面一次。
+- 清空（`/clear`）一个会话时，它的子会话一并删除，回执多一行「已删除 N 个子会话」；`/clear all` 删除全部子会话；只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。
+- 删除一个正在跑的会话（WebUI 里删除、删除子任务、清空或删除父会话连带的子会话）时，这一轮当场停下，不再写进记录、不再发出。原来删掉之后这一轮还会跑完。
+
+**依赖**
+
+- 约 15 个插件的依赖块多出可选的「会话设置」与「宿主配置」（只读本插件那一段）；网关多出可选的「平台」；权限插件多出可选的「会话设置」；子任务插件多出可选的「agent」与「会话设置」；两个向量化提供者多出可选的「贡献点」；技能插件不再依赖「人设」与「会话管理」；会话管理不再依赖「宿主配置」与「服务」。
+
+**破坏性（第三方）**
+
+- @aalis/schema-config：`SchemaField` 新增 `session`（声明可按会话覆盖，成员由 api-session-settings 并入）、`validate`、`fromText`、`toText`；带 `session` 的顶层字段 `parseConfig` 不交出、不补 default，`ConfigOf` 里没有，读到的类型见新增的 `SessionFieldsOf`；新增 `isSessionField`、`readFieldValue`、`WireSchemaField`、`WireConfigSchema` 与 `CORE_RESTART_KEYS`；`validateConfig` 的问题多一种 code `validate`（字段的 `validate` 判为不合法）。
+- @aalis/api-host-config：新事件 `host-config:changed`（只由宿主发，带改了哪个实例或整份文档）；新只读窄面 `ownHostConfig`（同一服务名，只有 `get()`，只能写在 `uses` 里）；新增 `saveFailureText`；`applyPluginConfig` 的 `reloaded` 为 `false` 改为「解析出的配置与运行态相同、实例不在 error 态」；读法返回复制品。
+- @aalis/api-session-manager：设置接口删掉：`registerSetting`、`listSettings`、`resolveConfig`、`resolveInheritance`、`getOwnConfig`、`childConfig`、`resolvedDefaults`、`listLayers`、`getLayer`、`resolveLayer`、`updateLayer`，类型 `SessionConfig`、`StoredSessionConfig`、`SessionConfigPatch`、`SessionSetting`、`RegisteredSessionSetting`、`SettingProminence`、`SessionConfigLayer`、`SessionInheritance`、`InheritanceSource`、`SESSION_LAYERS`、`SessionLayerName`、`SessionConfigError`、`isSessionConfigError` 与带 `registerSetting` 的业务层 `BoundSessionManager`；`SessionInfo.config` 删掉，建会话与 `updateSession` 不再收 `config`。`'session:config:changed'` 删掉，旧监听不会报错、只是永远收不到。新增 `PlaceInfo.metadata`、`updatePlace`、`listPlaces`、`recordInbound`、`isUnfiled`。`session:deleted` 改在会话从表里摘掉、清数据之前发；一个会话的消息历史被清空时它的子会话一并删除；建会话时 `metadata` 里的 `title`、`inputContext` 不再当同名字段读。自己实现会话管理的要实现新增的方法与这几条语义。
+- @aalis/api-session-settings（新包）：插件原来的 `registerSetting` 加 `resolveConfig` 改成「configSchema 字段写 `session`、apply 里调 `fields()` 拿读取器、调用路径上 `get(sessionId, { platform })`」，写自己的字段用读取器的 `set`；读取门面 `sessionFields` 与管理面 `sessionSettings` 两个描述符，管理面只给会话服务与建子会话的插件；`caps.config` 里读不到这类字段；跨插件改别人的设置改成调拥有它的插件的服务（如 agent 的 `assignModel`）；建子会话的插件在建之前取管理面的 `childMetadata` 并进 `metadata`，会话设置不在时不建；权限类的项不要把 `task` 排除在 `appliesTo` 之外，否则子会话里按全局取。另导出 `appliesIn`、`layerLabel`、`describeLayer`、`SETTINGS_ABSENT`、`SessionSettingsError` 等，`SessionSettingsLayerInfo` 带 `platform`、`type`（窗口场所）。
+- @aalis/api-session-protocol：设置行的身份改为 `(plugin, key)`，带去掉函数成员的字段声明与 `actual`，不再带 `resolved`；行上的 `dependsOn`、`unset` 挪进字段声明的 `session`（`field.session.dependsOn`、`field.session.unset`）；来源 `source` 只取层名（`global`、`platform`、`platformType`、`place`、`session`）或 `default`（全局层的值缺失或不合法、按作者默认），原来的 `defaults`、`type`、`parent` 没有了；层改为 `global`、`platform`、`platformType`、`place`；`session/config/update` 与 `layer/update` 的参数改为 `{ …, plugin, key, value }`，`SessionConfigUpdateParamsSchema` 改名 `SettingUpdateParamsSchema`，回包另带落盘失败的 `unsaved`（`SettingUpdateResultSchema`）；`session/config/get` 回包另带 `platform`（平台档按哪个平台取）；`session/config/layers` 回包的 `layers` 每一项从层改为 `{ layer, label?, platform?, type? }`（场所另带平台与类型名）；新方法 `session/config/overrides`（回包 `SettingOverridesSchema`）；握手的功能位多 `settings`，会话设置不在时设置方法回 `unsupported`，带 `parentId` 的 `session/create` 也回 `unsupported`；会话摘要的 `place` 改为可选，根会话是空记录时没有。
+- @aalis/api-persona：`PersonaSessionOptions` 改为 `{ sessionId?, platform? }`，人设服务按会话读自己的会话设置；`getPersonaSkills` 删掉；对 `SessionConfig` 的增强删掉。
+- @aalis/api-tools：`ToolService.sessionGroups(sessionId, platform?)`，提供者要实现；`ToolCallContext.model` 由发射者（agent）填；对 `SessionConfig` 的增强删掉。
+- @aalis/api-agent：`agent:llm:before` 的 `model` 与 `TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时媒体的交付判断与摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；会话删除（`session:deleted`）时实现者要停掉这个会话在飞的回合，不停的话删掉的会话里这一轮照样跑完；对 `SessionConfig` 的增强删掉。
+- @aalis/api-memory：共享的召回范围 `MEMORY_RECALL_SCOPE_SETTING`、`memoryRecallScope` 与类型 `MemoryRecallScope` 删掉，各记忆插件用自己的范围字段；新增 `historyCleared`（`memory:clear` 之后判消息历史清成没有）。
+- @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，档位与越界策略还不能按会话设。
+- @aalis/api-gateway：作用域函数 `extractTargetId`、`isScopeEnabled`、`resolveEffectiveConfig` 删掉；新增「生效范围」字段 `REPLY_AUDIENCE_FIELD`、判定 `audienceIncludes` 与 `InboundPhaseData.chat`（网关给没有 `source` 的入站算的聊天窗口）；网关在入站相位之前等会话管理收录。
+- @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读；`markTriggered` 多一个参数 `multiParty`；新增 `fromElsewhere`。
+- @aalis/api-embedding：`EmbeddingService.listModels?` 删掉，提供者要给配置下拉列模型就经贡献点 `webui:options` 交自己的来源。
+- @aalis/api-llm：新增模型引用的文字写法 `entryIdOf`、`modelRefOf` 与 `MODEL_REF_TEXT`（条目 id `<提供者实例 id>/<模型 id>`），以及后台功能取对话模型的 `chatModelPicker`。
+- @aalis/api-authority：`AuthorityService.meetsLevel`，提供者要实现；`AuthorizeRequest.minLevel`（操作自己声明的门槛，`Infinity` 即只有 owner）；能力键多一类 `setting:<实例 id>/<键>`。
+- @aalis/api-webui：插件列表的 `configSchema` 改为线上类型 `WireConfigSchema`（带 `session`，没有函数成员）；可选项来源 `llm-thinking` 的 `dependency` 改收条目 id、没带时回空；`OptionDetail.pluginName` 删掉；宿主不再回答可选项来源 `platform` 与 `gateway-scopes`。
+- @aalis/plugin-trigger-policy、@aalis/plugin-flow-control：不再导出配置类型 `TriggerPolicyConfig`、`FlowControlConfig`，参数改为按会话的字段。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

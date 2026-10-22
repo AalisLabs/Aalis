@@ -29,9 +29,10 @@ export const trigger = defineService<TriggerService>('trigger');
 |---|---|
 | `isActiveTrigger(phase, trigger, selfId)` | 这次入站是否由 `selfId`（触发插件登记 trigger 时的条目 id，缺省即它的实例 id `caps.lifecycle.use.id`）判定。trigger 选中那一条的 id 每次入站只取一次，以这次的相位数据为键记在进程内全部 api-trigger 副本共用的表里（见 §5） |
 | `hitsMuteKeyword(message, keywords)` | 正文是否包含任一禁言关键词；戳一戳通知恒不命中（正文是合成文案，内嵌戳者昵称） |
-| `createBotNames(persona, sessionManager, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`（`persona` 只用 `list`，`sessionManager` 只用 `present` / `use`）：每次调用按 `message` 的会话现取别名与**全部**已登记人设（`persona.list()`）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：`sessionManager.use.resolveConfig(sessionId, platform)` 的 `persona` 作为 `{ persona }` 传给每个提供者的 `getPersonaName` / `getNickNames`；session-manager 缺席（`present` 为 `false`）时不带参数取，解析抛错时同样不带参数取并记一条 warn（同一原因只记一次）。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
+| `createBotNames(persona, logger, tag)` | 建一个名字表，返回 `(triggerNames, message) => string[]`（`persona` 只用 `list`）：每次调用按 `message` 的会话现取别名与**全部**已登记人设（`persona.list()`）的名字、昵称的并集，去重、去空，别名在前。人设按会话取，与 agent 同一取法：这条消息的 `{ sessionId, platform }` 交给每个提供者的 `getPersonaName` / `getNickNames`，人设服务按这个会话的「人设」取卡。某个人设读名字抛错时只跳过它的名字，记一条 warn，同一提供者同一原因只记一次（它读成功一次后再出错会再记）。触发插件激活时建一个 |
 | `isAddressed(message, names, opts)` | 是否被点名：戳一戳只看 `triggerOnPoke`，不做 @ 与名字检测；其余消息看 `triggerOnAt` 的 `<at self>` 与名字检测（`names` 里任一个出现在正文里即命中，`names` 通常取自 `createBotNames`） |
-| `markTriggered(message, addressed)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在非私聊会话且消息未带 `actor` 时回填无主体授权 |
+| `fromElsewhere(message, sessionManager)` | 这条入站是不是从别的平台发进房间的（owner 从 WebUI 往群里插话）：入口平台与房间（子会话取根会话）的出生平台不同。触发插件对它直接放行。会话管理缺席、房间没有出生平台时判不出，按否 |
+| `markTriggered(message, addressed, multiParty)` | 放行收尾：点名写 `triggerType = 'immediate'`，否则 `'interval'`；`interval` 在多方窗口里（`multiParty` 取网关算的 `data.chat.multiParty`，不看类型名）且消息未带 `actor` 时回填无主体授权 |
 | `archiveSwallowed(message, archive, logger, tag)` | 吞掉前影子归档；先看 `archive.present`，message-archive 缺席时跳过，失败记 warn |
 
 ## 3. 谁提供 / 谁消费
@@ -61,6 +62,7 @@ import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
+  fromElsewhere,
   isActiveTrigger,
   isAddressed,
   markTriggered,
@@ -87,12 +89,13 @@ export default definePlugin({
     const self: TriggerService = { label: '我的触发判定' };
     const selfId = caps.lifecycle.use.id; // 登记 trigger 时的条目 id（未传 entryId 即实例 id）
     caps.provide.use(trigger, self, { priority: 5, label: self.label });
-    const botNames = createBotNames(caps.persona, caps.sessionManager, caps.logger.use, '[my-trigger]');
+    const botNames = createBotNames(caps.persona, caps.logger.use, '[my-trigger]');
 
     caps.hooks.use.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
       if (!isActiveTrigger(data, caps.trigger, selfId)) return next(); // 不是生效者：什么都不做
-      const { message } = data;
-      if (message.source) return next(); // 内部注入不经判定
+      const { message, chat } = data;
+      // 内部注入（网关不给 chat）与从别的平台插话不经判定；生效范围（这里只管多方房间）之外的直接放行
+      if (!chat || fromElsewhere(message, caps.sessionManager) || !chat.multiParty) return next();
       if (caps.flowControl.present && caps.flowControl.use.isMuted(message.sessionId)) return next(); // 禁言期交给 flow 相位吞
       const opts = { triggerOnAt: true, triggerOnPoke: true };
       const addressed = isAddressed(message, botNames([], message), opts);
@@ -101,7 +104,7 @@ export default definePlugin({
         await archiveSwallowed(message, caps.messageArchive, caps.logger.use, '[my-trigger]');
         return; // 吞掉
       }
-      markTriggered(message, addressed);
+      markTriggered(message, addressed, chat.multiParty);
       await next();
     });
   },
@@ -112,8 +115,8 @@ export default definePlugin({
 
 - 不是生效者时直接 `next()`，不计数、不识别、不归档、不请求外部服务。
 - 带 `source` 的内部注入（闲置触发、定时任务、workflow）直接放行，不改 `triggerType`（workflow agent 节点的 `proactive` 原样保留）。
-- 作用域判断先于禁言关键词：否则群聊的禁言关键词会作用到私聊、WebUI 等作用域外的会话。
-- 名字表取自全部人设提供者，按会话取：会话配置改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字出错不影响判定：只少它的名字。
+- 生效范围判断先于禁言关键词：否则群聊的禁言关键词会作用到私聊等生效范围外的会话。第一方触发插件的生效范围是 api-gateway 导出的「生效范围」字段，可按会话设。
+- 名字表取自全部人设提供者，按会话取：会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字出错不影响判定：只少它的名字。
 - 放行顺序：api-trigger 不要求触发插件按到达先后放行，也不提供共用的顺序处理。判定要等外部（附件识别、模型服务）时，同一会话先到的消息可能晚于后到的放行，后果见 §6。按到达先后处理同一会话的消息由通道层负责（网关入口按到达先后编号，同一会话的消息按到达先后排队与合并，当前消息取最新到达的），通道层尚未实现。
 - 判定日志不含消息正文与昵称。
 
@@ -122,9 +125,9 @@ export default definePlugin({
 - **二选一**。选中哪一家按服务的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的优先级 -10 低于它的 0，两者都是插件里的常量，选哪个只用偏好；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
 - **生效者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 trigger 选中那一条的 id，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
 - **切换即时生效**。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 随配置热重载生效。不要给单个触发插件设 `trigger` 的本插件偏好：生效者由相位里先跑到的那个触发插件按它自己的选择取下，各插件的选择不同时，谁生效取决于哪个先跑到。
-- **owner 自己的会话不经本相位**。房间类别为 `owner-only` 的会话由 plugin-gateway 跳过 `inbound:trigger`（[结构性放行](../plugins/plugin-gateway.md#结构性放行)），触发插件收不到这些消息，不必按平台或作用域另做判断。
+- **owner 自己的会话不经本相位**。房间类别为 `owner-only` 的会话由 plugin-gateway 跳过 `inbound:trigger`（[结构性放行](../plugins/plugin-gateway.md#结构性放行)），触发插件收不到这些消息，不必按平台或生效范围另做判断。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
-- **状态与配置不共享**。禁言关键词与时长、点名的别名与开关、作用域由各触发插件在自己的配置里分别设置，只有生效者的起作用：切换后按新生效者的配置执行，只在一边配了禁言关键词的，切到另一边后这些关键词不再生效；要在切换后保持一致，两边须同样配置。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
+- **状态与配置不共享**。禁言关键词与时长、点名的别名与开关、生效范围由各触发插件在自己的配置里分别设置（都可按会话覆盖），只有生效者的起作用：切换后按新生效者的配置执行，只在一边配了禁言关键词的，切到另一边后这些关键词不再生效；要在切换后保持一致，两边须同样配置。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
 - **附件只识别一次**。要看附件描述的触发插件自己调 media 的 `processMessage` 启动识别（Laya 判定前至多等 `mediaWaitMs`）；放行与吞掉都不等识别跑完。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。trigger-policy 不看附件，不启动识别。
 
 ## 6. 注意事项与边界情形

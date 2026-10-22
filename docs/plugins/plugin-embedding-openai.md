@@ -18,6 +18,7 @@ export default definePlugin({
     logger,
     lifecycle,
     provide,
+    contributions: optional(contributions),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -34,11 +35,11 @@ export default definePlugin({
 
 ## 特性
 
-- `embed()` / `listModels()` 的请求都带 `AbortSignal.timeout(timeoutMs)`。这不是可选项：`apply()` 会 await 一次启动连通性探测，对端不应答时，排在它后面的插件要等到慢激活阈值（默认 60 秒）它转入后台才继续激活，它自己此后也一直停在激活中；索引路径上则是 `plugin-memory-vector` 的一个并发槽被无限期占用
+- `embed()` 与取模型列表的请求都带 `AbortSignal.timeout(timeoutMs)`。这不是可选项：`apply()` 会 await 一次启动连通性探测，对端不应答时，排在它后面的插件要等到慢激活阈值（默认 60 秒）它转入后台才继续激活，它自己此后也一直停在激活中；索引路径上则是 `plugin-memory-vector` 的一个并发槽被无限期占用
 
 
 - 调用 `/embeddings` 端点
-- `listModels()` 从 `/models` 获取可用模型
+- 模型下拉（贡献点 `webui:options` 的来源 `embedding-openai`，即 `model` 字段的 `dynamicOptions`）从 `/models` 获取可用模型，只列本插件的
 - apiKey 缺失时抛错
 - 启动时用 `embed('ping')` 做一次连通性检查。apply 会等检查结束，停用或停机时中止；检查失败只记警告，服务照常注册
 - 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务（须写到完整前缀，如 `http://host/v1`）

@@ -370,19 +370,22 @@ export class SessionSettingsProvider implements SessionSettingsService {
         out.push({ layer: { scope: 'platformType', platform, type }, ...(label === undefined ? {} : { label }) });
       }
     }
-    // 场所：工作区在前（默认工作区最前），窗口在后；窗口写声明里的类型称呼、窗口名与平台，另带平台与类型名
+    // 场所：工作区在前（默认工作区最前），窗口在后。称呼不带平台：取了名的工作区写「工作区「名字」」，窗口写类型的显示名
+    // （没声明时写类型名）与窗口名，另带平台与类型名
     const places = this.sm.listPlaces();
     for (const place of [...places.filter(p => p.kind === 'workspace'), ...places.filter(p => p.kind === 'window')]) {
       const layer = { scope: 'place', key: place.key } as const;
       const window = place.kind === 'window' ? parseWindowKey(place.key) : undefined;
       if (!window) {
-        out.push({ layer, label: placeLabel(place) });
+        out.push({
+          layer,
+          label: place.name === undefined ? placeLabel(place) : t('workspacePlace', { name: place.name }),
+        });
         continue;
       }
       const label = t('windowPlace', {
         type: this.typeLabel(window.platform, window.type) ?? window.type,
         name: placeLabel(place),
-        platform: window.platform,
       });
       out.push({ layer, label, platform: window.platform, type: window.type });
     }

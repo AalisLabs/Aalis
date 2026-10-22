@@ -20,6 +20,7 @@ export default definePlugin({
     lifecycle,
     provide,
     doctor: optional(doctor),
+    contributions: optional(contributions),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -42,7 +43,7 @@ export default definePlugin({
 - 向 doctor 注册检查项 `service/embedding.ollama`：每次 `/doctor` 现场探一次，模型不可用时报 error，`detail` 先给 Ollama 的原话，再写怎么修（确认 Ollama 在运行、执行 `ollama pull <model>`，或把 `model` 改成本机已有的嵌入模型）。服务注册成功不等于模型可用——`/status` 只判服务是否注册，插件状态也仍是 active，缺了这条检查，「模型没 pull」只会表现为向量记忆静默不工作
 - 该检查项的探测自带上限，取 5 秒与 `timeoutMs`（下限 1 秒，与服务自身的 clamp 一致）中的小者：doctor 顺序执行各检查项且不设超时，一条网络探测不应拖住整个 `/doctor`
 - 请求失败的错误消息带上 Ollama 响应体里的 `error` 字段：模型没 pull 与端点不存在都是 404，只有响应体能区分（前者是 `model "..." not found, try pulling it first`）
-- `listModels()` 从 `/api/tags` 获取本地已下载的模型，原样返回、不按名字筛 embedding：`model` 是 select 字段、没有自由输入，按名筛会让 `bge-m3` 这类名称不含 `embed` 的合法嵌入模型无法从下拉里选到。因此候选里会混有对话模型，选错模型导致的不可用由上面那条 doctor 检查项报出
+- 模型下拉（贡献点 `webui:options` 的来源 `embedding-ollama`，即 `model` 字段的 `dynamicOptions`）从 `/api/tags` 获取本地已下载的模型，只列本插件的，原样返回、不按名字筛 embedding：`model` 是 select 字段、没有自由输入，按名筛会让 `bge-m3` 这类名称不含 `embed` 的合法嵌入模型无法从下拉里选到。因此候选里会混有对话模型，选错模型导致的不可用由上面那条 doctor 检查项报出
 
 ## 配置校验
 
