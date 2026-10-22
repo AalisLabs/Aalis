@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger, ServiceView } from '@aalis/core';
-import { App, services } from '@aalis/core';
+import { App, events, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
@@ -173,7 +173,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
-    const host = app.bind({ services, tools, memory });
+    const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
     const svc = new MediaServiceImpl(makeCaps(VISION_FIRST), cfgWith(vision));
@@ -312,7 +312,7 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
     opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallContext; sessions?: SessionInfo[]; owner?: boolean },
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
-    const host = app.bind({ services, tools, memory });
+    const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ delivery: opts.delivery }));
@@ -459,7 +459,7 @@ describe('update_image_description：只改调用所在会话', () => {
         return 1;
       },
     } as unknown as MemoryService;
-    const host = app.bind({ services, tools });
+    const host = app.bind({ services, tools, events });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith({}));

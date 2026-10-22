@@ -173,7 +173,7 @@ parseAttachmentRefs(text): AttachmentRef[]
 
 ### 4.4 与结构化附件的关系
 
-`MessageAttachment` 是 v2 的结构化主字段，所有适配器优先填 `IncomingMessage.attachments` / `OutgoingMessage.attachments`。出站附件的 `description` 与 `ref` 字段，正是全局出站归档写 `[类型: desc | ref:xxx]` 标记的数据来源，让 `memory_recall` 能命中。`skipArchive` 用于 history_ref 重发场景，避免向量库膨胀。
+`MessageAttachment` 是 v2 的结构化主字段，所有适配器优先填 `IncomingMessage.attachments` / `OutgoingMessage.attachments`。出站附件的 `description` 与 `ref` 字段，正是出站记进会话历史时写 `[类型: desc | ref:xxx]` 标记的数据来源（message-archive 的 `recordOutbound`），让 `memory_recall` 能命中。发出去的附件都记，重发的也记一条。
 
 出站媒体归档一律用 `outboundMediaMessage`（见 [schema-message](../api/schema-message.md)），不要自行组合 kind 与占位符。
 

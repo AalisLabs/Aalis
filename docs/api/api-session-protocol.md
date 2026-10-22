@@ -219,12 +219,12 @@ interface SettingLayerInfo {
 | `agent-message` | 文字与附件（可以只有附件）、`model`：生成这条回复的服务商与模型，以及这一轮的 token（`promptTokens` 是这一轮最后一次调用的上下文，`completionTokens` 是这一轮各次调用的输出合计；服务商没报时没有），实时与历史里还原的一致；房间里没发出去的带 `undelivered.reason`（房间的子会话没有窗口，不带）：工具调用之前说的话（她只把一轮最后的回复发进群）、重试丢掉的那版、没回复就收尾的一轮（静默、中止、出错）里最后一次工具调用之后说的话、平台没收下或发送出错的回复 |
 | `reasoning` | 思考文字 |
 | `tool-call` | `itemId` 就是工具调用的 callId；存档里没记 callId 的旧数据除外，它们在历史里的 `itemId` 是别的不透明 id。工具名、参数、状态（generating、running、completed、failed、denied、aborted）、流式输出（`exec` 等）、结果、耗时；结果是带 `error` 的 JSON 对象、或 `display` 里的退出码不为 0 时为 failed。模型还在生成参数时卡片已推出，状态是 generating，只有工具名、`args` 为空；开始执行时同一个 `itemId` 转为 running。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发，包括生成了还没执行的）为 aborted，停止之后工具照样返回了结果也不改；历史里没有结果的调用（重启或中断）同样为 aborted。生成了却没有执行、回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾；生成了却没有执行的，收尾时结果都是「没有执行」。参数不合法、执行前出错这类没有执行就失败的调用，按回给模型的错误收成 failed，历史里同样以 callId 为 id。`display` 是按工具定义上声明的展示种类解析好的展示（见下文），没声明的没有，界面走通用卡。这次调用的审批推给了审批面时带 `approvalId`（挂上时再推一次 `item/started`），结算后带 `approvalId` 与 `settlement`（再推一次），发起时就结算、没推给审批面的同样带；没批准的（拒绝、没人应答、撤销）状态是 denied。房间里经工具发出、平台收下的消息，工具卡带 `sentToRoom`。转到后台的调用带 `taskId`（后台任务的 id，见下文「后台任务」）：卡片本身以转后台时回给模型的那段结果收尾（completed），任务的状态、耗时、最后一行与输出按 `taskId` 看后台任务；后台任务登记里已经找不到的（超出保留被清掉），只画这次调用本身 |
-| `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`）。不是她回复的外发消息（`OutgoingMessage.source` 不是 `agent`）也是通知：指令的回复为 `command-reply`（`COMMAND_REPLY_TOPIC`，`text` 是整段回复），其余（宿主提示等）为 `event-marker`；实时与历史一样：WebUI 自己的会话由收件箱记进历史，房间与终端会话由 message-archive 在平台送达之后记（见 [schema-message](./schema-message.md) 的 `outboundMarkerMessage`；送达之前与平台没收下的见下文「不落库的」）。宿主通知另带 `noticeId`（`hostNotice.id`）与 `facts`（`hostNotice.facts`，给界面的事实，键由定义这个种类的契约约定，见 [schema-message](./schema-message.md#宿主通知-hostnotice)）。界面认得的种类按事实画成状态、不显示 `text`（写给模型的那句话），如后台任务的结束通知（[api-tools](./api-tools.md#结束通知) 的 `BACKGROUND_TASK_NOTICE`，`noticeId` 是任务 id） |
+| `notice` | 宿主事件，`topic` 区分种类：宿主通知取通知的种类（如 `paper-task`），压缩为 `compress`，存档里的压缩分隔线为 `event-marker`，达到工具调用上限为 `tool-limit`（带 `canContinue`，可以 `turn/continue`）。不是她发的外发消息（`OutgoingMessage.source` 不是 `agent`）也是通知，文字一条、每个附件各一条（有地址的附件那几条 `text` 为空、带这个附件；没有地址的是存档记的那一句，如「[图片] 名字」，不带附件）：指令的回复为 `command-reply`（`COMMAND_REPLY_TOPIC`，`text` 是整段回复），其余（宿主提示、插件发的附件等）为 `event-marker`；实时与历史一样：message-archive 在送达之后记进历史（WebUI 自己的会话在认领时记，见 [schema-message](./schema-message.md) 的 `outboundMarkerMessage` 与 `outboundMediaMessage`；送达之前与平台没收下的见下文「不落库的」）。宿主通知另带 `noticeId`（`hostNotice.id`）与 `facts`（`hostNotice.facts`，给界面的事实，键由定义这个种类的契约约定，见 [schema-message](./schema-message.md#宿主通知-hostnotice)）。界面认得的种类按事实画成状态、不显示 `text`（写给模型的那句话），如后台任务的结束通知（[api-tools](./api-tools.md#结束通知) 的 `BACKGROUND_TASK_NOTICE`，`noticeId` 是任务 id） |
 | `plan` | 待办，整份替换；每个会话一条，`itemId` 固定为 `plan` |
 | `usage` | 最近一次的 token 用量与分项；每个会话一条，`itemId` 固定为 `usage`，整份替换。它不是时间线上的一条，界面画在会话头部（用量百分比与拆分表）。`parts` 是产出方给的拆分表（显示名、token 数，按显示的次序，不含为回复预留的 `maxTokens`），界面照它画行、不认分项；某一项带 `injectors` 时是它按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」，界面按实例前缀合并到插件；`compressAt` 是这个会话实际压缩的用量比例（与 `usageRatio` 同一口径）：取压缩服务按会话给的自动压缩线与 `tokenBudget / contextWindow` 中较小的那个，没有压缩服务或不按用量压缩时没有 |
 | `turn` | 回合开始（`by` 是发起方）与结束（`outcome` 取 replied、silent、aborted、error；被下游拦下、没有结局的一轮为 silent）。回合条目在她这一轮第一次有动静时推出，提问总排在它前面；历史里没有回合条目，其余条目带 `turnId` |
 
-附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是会话服务签发的不透明句柄。取不到可下载的来源时没有 `src`，只有名字，例如入站时只有内联数据、没有落盘的上传。
+附件（`ItemAttachmentSchema`）有 `kind`、`src`、`name`。`src`：图片、音频、视频是媒体地址（存储地址或网址），其他文件是网址，或会话服务签发的不透明句柄（存储里的文件）。取不到可下载的来源时没有 `src`，只有名字，例如入站时只有内联数据、没有落盘的上传。
 
 **文件句柄**：
 
@@ -258,7 +258,7 @@ interface ApprovalSettlement {
 - **工具结果的元数据**：会话服务在工具结果落库之前（agent 的 `agent:tool:after` 钩子），把审批的结算、「平台已收下经它发出的消息」、「回合停止时这次调用还没结束」、命令的退出码与转到后台的任务 id 写进这次结果的元数据，历史里的工具卡据此带上 `approvalId`、`settlement`、`sentToRoom`、`taskId`，状态为 aborted，`display` 带上退出码（结果过长时 agent 落库的是截断后的结果，从中取不到）。
 - **投递失败**：回复平台没收下时，适配器在存档里记一条投递失败（schema-message 的 `OutboundDeliveryFailed`，带这一轮的 `turnId`），历史据此给那一轮的回复标 `undelivered`。
 - **重试与工具调用之前**：重试丢掉的几版与工具调用之前说的话由存档的时间线推出，历史里同样标 `undelivered`。
-- **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。不是她回复的外发消息（指令的回复、宿主提示等）在发出时推出，送达之后才记进存档：送达之前订阅的快照里没有，送达之后的历史里才有；平台没收下时只在实时推送里。房间与终端会话里的这类消息由 message-archive 记，没装它时不落库，只在实时推送里。
+- **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。不是她发的外发消息（指令的回复、宿主提示、插件发的附件等）在发出时推出，送达之后才记进存档：送达之前订阅的快照里没有，送达之后的历史里才有；平台没收下时只在实时推送里。这类消息由 message-archive 记，没装它时不落库，只在实时推送里。
 - **发起时就被拒的审批**：发起时没人在场、发起者不能产生审批、子任务、超过频率上限，审批没推给审批面，工具卡照样带 `approvalId` 与 `settlement`、状态是 denied，结算同样写进工具结果的元数据；不推 `approval/requested`，不算「需要我处理」。
 
 ## 回合控制

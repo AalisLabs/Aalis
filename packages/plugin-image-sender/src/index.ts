@@ -4,8 +4,8 @@
 // 工具：
 //   1. preview_image    —— 在选图前用 vision 看清候选图（搜索结果标题常误导）
 //   2. send_attachment  —— 统一的出站附件接口：把 image/audio/video 发出去；
-//                          由出站归档监听器在后台描述并入档，让"AI 之前
-//                          发过的图/视频"能被 memory_recall 召回
+//                          送达之后由 message-archive 记进会话历史（recordOutbound），
+//                          让"AI 之前发过的图/视频"能被 memory_recall 召回
 //
 // 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，受众只有 owner 的会话
 // 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给适配器。
@@ -22,29 +22,17 @@ import type {} from '@aalis/api-gateway'; // declaration merging 锚点（outbou
 import { hooks } from '@aalis/api-hooks';
 import { historyMediaRefs, type MediaScopeDeps, media, mediaInScope, mediaRef } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
-import { messageArchive } from '@aalis/api-message-archive';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
-import {
-  awaitDelivery,
-  type Message,
-  type MessageAttachment,
-  type OutgoingMessage,
-  outboundMediaMessage,
-  WellKnownMetadataKeys,
-} from '@aalis/schema-message';
+import { awaitDelivery, type Message, type MessageAttachment, type OutgoingMessage } from '@aalis/schema-message';
 import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
 
 /** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
  *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */
 const PREVIEW_TIMEOUT_MS = 25_000;
-/** 出站归档描述等待上限。该描述在后台计算、不阻塞发送，可放宽。 */
-const ARCHIVE_DESCRIBE_TIMEOUT_MS = 25_000;
-/** 视频描述等待上限（视频需抽帧+ASR，耗时远高于图片）。 */
-const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
 /** 按受众判出来不能取时回给模型的话：先判后读，不存在与不是媒体也回这一句，拿它探测不出存储根里有什么 */
@@ -55,8 +43,7 @@ const HISTORY_LIMIT = 200;
 const MEDIA_MARKUP = /<(image|video|record)\s+url=["']([^"']*)["']\s*\/>/g;
 const MARKUP_KIND: Record<string, MediaKind> = { image: 'image', video: 'video', record: 'audio' };
 
-// tools 与 hooks 不入激活闸：出站附件归档（outbound:delivered 监听）只靠 archive / media，
-// 没有工具服务时也该照常挂上；工具与中间件登记走注册账本，提供者上线后自动补挂。
+// tools 与 hooks 不入激活闸：工具与中间件登记走注册账本，提供者上线后自动补挂。
 // 会话管理、权限与记忆给媒体按受众的判据用，缺席时判据按它的约定取值（只认本会话、没人是 owner、历史为空）。
 const uses = {
   tools: optional(tools),
@@ -66,15 +53,10 @@ const uses = {
   storage: optional(storage),
   media: optional(media),
   memory: optional(memory),
-  archive: optional(messageArchive),
   sessionManager: optional(sessionManager),
   authority: optional(authority),
 };
 type Caps = BoundOf<typeof uses>;
-/** 描述媒体只需要 media 与日志。 */
-type DescribeCaps = Pick<Caps, 'media' | 'logger'>;
-/** 出站入档只需要归档服务与日志。 */
-type ArchiveCaps = Pick<Caps, 'archive' | 'logger'>;
 
 export default definePlugin({
   name: '@aalis/plugin-image-sender',
@@ -85,7 +67,7 @@ export default definePlugin({
 });
 
 function registerImageSender(caps: Caps): void {
-  const { tools, hooks, events, logger, media, memory, archive, sessionManager, authority } = caps;
+  const { tools, hooks, events, logger, media, memory, sessionManager, authority } = caps;
   const storage = caps.storage.use;
 
   /** 调用所在会话最近的历史：记忆不在时为空 */
@@ -287,22 +269,16 @@ function registerImageSender(caps: Caps): void {
           return JSON.stringify({ error: '必须提供 url / storage_uri / history_ref 之一' });
         }
 
-        // 等待传输确认，但不等 vision：描述由成功归档监听器在后台计算。
-        // 用稳定 ref 规避平台落盘改写 data 的竞态。
-        const attachment: MessageAttachment = {
-          kind,
-          data,
-          // 归档承载：ref 随事件携带，成功投递后才入档。
-          // history_ref 重发标记 skipArchive，避免重复入档 / 向量库膨胀。
-          ref: refTag ?? data,
-          skipArchive: via === 'history_ref',
-        };
+        // 等待传输确认，不等识图：送达之后由 message-archive 记进会话历史，网址的图在后台补描述。
+        // ref 是稳定的地址，平台落盘后改写 data 也不影响记进历史的那一份
+        const attachment: MessageAttachment = { kind, data, ref: refTag ?? data };
         const outgoing: OutgoingMessage = {
           sessionId: callCtx.sessionId,
           platform: callCtx.platform,
           content: '',
           attachments: [attachment],
           source: 'agent',
+          turnId: callCtx.turnId,
           callId: callCtx.callId,
         };
         await events.use.emit('outbound:message', outgoing);
@@ -329,8 +305,8 @@ function registerImageSender(caps: Caps): void {
   // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据（出站
   // 不带授权身份，按非 owner）；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头。这里只摘掉
   // 转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、本机路径、data URI 等）都留在正文里，去不去掉
-  // 由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件不另入档：这条回复已带着标记落库。
-  // 网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
+  // 由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件与别的附件一样，送达之后记进
+  // 会话历史。网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
     if (message.markup) await markupToAttachments(message);
     await next();
@@ -351,7 +327,7 @@ function registerImageSender(caps: Caps): void {
     for (const { kind, ref } of tags) {
       converted.push(
         ref && (await markupMediaAllowed(ref, kind, message.sessionId, ownerOnly, deps))
-          ? { kind, data: ref, skipArchive: true }
+          ? { kind, data: ref }
           : undefined,
       );
     }
@@ -380,98 +356,5 @@ function registerImageSender(caps: Caps): void {
       );
       return false;
     }
-  }
-
-  // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
-  // 只归档传输端确认后的附件，出站请求本身不代表发送成功。
-  // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
-  // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
-  // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过已在档的（history_ref 重发、WebUI 收件箱已记下的）。
-  events.use.on('outbound:delivered', msg => {
-    if (msg.source !== 'agent' || !msg.attachments?.length) return;
-    if (!archive.present || typeof archive.use.saveMessage !== 'function') return;
-    for (const att of msg.attachments) {
-      if (att.skipArchive) continue;
-      if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') continue;
-      // 用稳定 ref（生产者声明）而非 att.data：避免 onebot 等适配器落盘后改写 data。
-      const ref = att.ref ?? att.data;
-      const kind = att.kind;
-      const carried = att.description ?? '';
-      // 后台异步：监听器同步返回，避免阻塞出站事件链（emit 串行 await，阻塞会拖慢 onebot/webui 发送）。
-      // 描述用宽松超时在背景补齐，让档案 [图片: desc | ref] 能被 memory_recall 命中。
-      void (async () => {
-        let desc = carried;
-        if (!desc && (kind === 'image' || kind === 'video') && /^https?:\/\//i.test(ref)) {
-          desc = await safeDescribeMedia({ media, logger }, kind, ref);
-        }
-        await archiveOutboundAttachment({ archive, logger }, msg.sessionId, ref, desc, kind);
-      })();
-    }
-  });
-}
-
-/** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribeMedia(caps: DescribeCaps, kind: 'image' | 'video', data: string): Promise<string> {
-  return kind === 'image' ? safeDescribe(caps, data) : safeDescribeVideo(caps, data);
-}
-
-/** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribe(caps: DescribeCaps, imageData: string): Promise<string> {
-  const service = caps.media.present ? caps.media.use : undefined;
-  if (!service?.describeImage) return '';
-  try {
-    const desc = await Promise.race([
-      service.describeImage(imageData),
-      new Promise<string>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('vision 超时')), ARCHIVE_DESCRIBE_TIMEOUT_MS),
-      ),
-    ]);
-    return (desc ?? '').trim();
-  } catch (err) {
-    caps.logger.use.debug(`[image-sender] vision 失败，跳过描述: ${err instanceof Error ? err.message : err}`);
-    return '';
-  }
-}
-
-/** 调 media.describeVideo，超时或失败返回空串（视频抽帧耗时长，用更宽松的超时）。 */
-async function safeDescribeVideo(caps: DescribeCaps, videoUrl: string): Promise<string> {
-  const service = caps.media.present ? caps.media.use : undefined;
-  if (!service?.describeVideo) return '';
-  try {
-    const desc = await Promise.race([
-      service.describeVideo(videoUrl),
-      new Promise<string>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('video 描述超时')), VIDEO_DESCRIBE_TIMEOUT_MS),
-      ),
-    ]);
-    return (desc ?? '').trim();
-  } catch (err) {
-    caps.logger.use.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
-    return '';
-  }
-}
-
-/** 把 AI 自己发出的图/语音/视频入档为一条 assistant 消息，让 memory_recall 能找到。 */
-async function archiveOutboundAttachment(
-  caps: ArchiveCaps,
-  sessionId: string,
-  ref: string,
-  description: string,
-  kind: MediaKind,
-): Promise<void> {
-  const archive = caps.archive.present ? caps.archive.use : undefined;
-  if (!archive?.saveMessage) return;
-  const label = kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '图片';
-  const message: Message = {
-    ...outboundMediaMessage(kind, ref, description),
-    timestamp: Date.now(),
-    metadata: { [WellKnownMetadataKeys.Source]: 'image-sender', [WellKnownMetadataKeys.SentRef]: ref },
-  };
-  try {
-    await archive.saveMessage(sessionId, message, {
-      debugLabel: `[image-sender] 已入档发送的${label}`,
-    });
-  } catch (err) {
-    caps.logger.use.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
   }
 }

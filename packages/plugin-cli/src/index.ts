@@ -268,8 +268,8 @@ function startCli(caps: Caps): void {
       written.catch(err => logger.use.warn('[cli] 写到终端失败:', err));
       return;
     }
-    // 写出即算送达，同步认领回执（作品通知等要等它）；写不出时回执交出原因。送达之后发 outbound:delivered，不是她回复的
-    // 文字与她发出的附件据此记进历史
+    // 写出即算送达，同步认领回执（作品通知等要等它）；写不出时回执交出原因。送达之后发 outbound:delivered，存档据此把
+    // 不是她回复的文字与发出的附件记进历史
     msg.delivery = written.then(
       () => {
         void events.use.emit('outbound:delivered', { ...msg, attachments, delivery: undefined });

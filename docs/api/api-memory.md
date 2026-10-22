@@ -149,6 +149,22 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
 
 整体清空自己的命名空间用 `clearMetadataNamespaces(mem, namespaces, logger)`，它在一次 `commitMetadata` 里删掉这些命名空间的全部条目，返回各命名空间删掉的键（与传入顺序相同）。`listMetadata` 会跳过读不出的条目（数据损坏、不是对象），按它枚举键删不掉这些条目；后端实现了只列键的 `listMetadataKeys` 时，这个函数按它列键，读不出的条目一并删除、计入返回的键，并经 `logger` 记一条 info 点名（`namespace/key`，超过 10 条只列前 10 条）。后端没有实现时退回 `listMetadata`，读不出的条目留在库里。
 
+## 记忆变更事件
+
+落库之后动了已有消息的一方发通知，事件经 declaration merging 注入 `@aalis/core` 的 `AalisEvents`：
+
+```ts
+'memory:messages-deleted':   [payload: { sessionId: string; timestamps: number[] }]
+'memory:messages-rewritten': [payload: { sessionId: string; messages: Message[] }]
+'history:changed':           [payload: { sessionId: string }]
+```
+
+- `memory:messages-deleted`：某会话的若干消息被按时间戳删除（回滚），由动手的检查点发。
+- `memory:messages-rewritten`：某会话已落库的消息正文被改写（`updateMessageContent`），由改写的一方在改写成功后发，`messages` 是改写后的整条（时间戳不变）。第一方的发出方有两个：message-archive 给她发出的网址图片与视频补上识图描述（见 [plugin-message-archive](../plugins/plugin-message-archive.md)），media 的 `update_image_description` 写回描述。建派生索引的下游按会话与时间戳换掉旧条目：plugin-memory-vector 删掉旧条目，删到了才按改写后的正文重收录。
+- `history:changed`：会话历史发生结构性变化，会话服务据此通知订阅的客户端重新取快照。
+
+三个事件的负载都带会话 id，不能当编排的触发源。
+
 ## 实现者
 
 - [@aalis/plugin-memory-inmemory](../plugins/plugin-memory-inmemory.md) — 进程内 Map

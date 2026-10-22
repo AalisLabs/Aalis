@@ -5,7 +5,7 @@ import {
   formatAttachmentRef,
   parseAttachmentRefs,
 } from '../../packages/schema-message/src/attachment-ref.js';
-import { outboundMediaMessage } from '../../packages/schema-message/src/index.js';
+import { outboundMarkerMessage, outboundMediaMessage } from '../../packages/schema-message/src/index.js';
 
 describe('attachment-ref helpers', () => {
   describe('formatAttachmentRef', () => {
@@ -121,30 +121,67 @@ describe('attachment-ref helpers', () => {
     });
   });
 
-  describe('outboundMediaMessage（出站媒体的归档写法，image-sender 与 webui-server 共用）', () => {
+  describe('outboundMediaMessage（出站媒体记进会话历史的写法，message-archive 的 recordOutbound 用它）', () => {
     it('图片、音频、视频各对应 outbound-* kind 与同一种占位符；音频写「音频」，客户端回看时才认得出', () => {
-      expect(outboundMediaMessage('image', 'data:/images/cat.png', '一只猫')).toEqual({
+      expect(outboundMediaMessage('image', 'data:/images/cat.png', { desc: '一只猫', source: 'agent' })).toEqual({
         role: 'assistant',
         kind: 'outbound-image',
         content: '[图片: 一只猫 | ref:data:/images/cat.png]',
       });
-      expect(outboundMediaMessage('audio', 'data:/audio/hello.mp3')).toEqual({
+      expect(outboundMediaMessage('audio', 'data:/audio/hello.mp3', { source: 'agent' })).toEqual({
         role: 'assistant',
         kind: 'outbound-audio',
         content: '[音频 | ref:data:/audio/hello.mp3]',
       });
-      expect(outboundMediaMessage('video', 'https://example.invalid/v.mp4', '')).toEqual({
+      expect(outboundMediaMessage('video', 'https://example.invalid/v.mp4', { desc: '', source: 'agent' })).toEqual({
         role: 'assistant',
         kind: 'outbound-video',
         content: '[视频 | ref:https://example.invalid/v.mp4]',
       });
     });
 
+    it('出站的 source 不是 agent 的（插件发的、没写来源的）记成 notice，不算她的发言', () => {
+      for (const source of ['command', 'system', undefined] as const) {
+        expect(outboundMediaMessage('image', 'data:/images/chart.png', { source })).toEqual({
+          role: 'notice',
+          kind: 'outbound-image',
+          content: '[图片 | ref:data:/images/chart.png]',
+        });
+      }
+    });
+
     it('正文能被 parseAttachmentRefs 解析回同一个 ref', () => {
-      const { content } = outboundMediaMessage('audio', 'data:/audio/hello.mp3', '问好');
+      const { content } = outboundMediaMessage('audio', 'data:/audio/hello.mp3', { desc: '问好' });
       expect(parseAttachmentRefs(String(content))).toEqual([
         { kind: AttachmentRefKind.Audio, desc: '问好', ref: 'data:/audio/hello.mp3' },
       ]);
+    });
+  });
+
+  describe('outboundMarkerMessage（不是她回复的出站文字记进会话历史的写法）', () => {
+    const text = { i18n: '@zz/marker', key: 'k', source: '指令列表' };
+
+    it('记成事件标记，只带正文与文字对象；来源、回合 id 与调用 id 由记出站的一方给每条记录补上', () => {
+      expect(
+        outboundMarkerMessage({
+          sessionId: 'zz',
+          content: '指令列表',
+          text,
+          source: 'command',
+          turnId: 'turn-1',
+          callId: 'call-1',
+        }),
+      ).toEqual({ role: 'system', kind: 'event-marker', content: '指令列表', metadata: { text } });
+      expect(outboundMarkerMessage({ sessionId: 'zz', content: '提示', source: 'system' })).toEqual({
+        role: 'system',
+        kind: 'event-marker',
+        content: '提示',
+      });
+    });
+
+    it('她的回复与空文字不记', () => {
+      expect(outboundMarkerMessage({ sessionId: 'zz', content: '她的回复', source: 'agent' })).toBeUndefined();
+      expect(outboundMarkerMessage({ sessionId: 'zz', content: '  ', source: 'command' })).toBeUndefined();
     });
   });
 });

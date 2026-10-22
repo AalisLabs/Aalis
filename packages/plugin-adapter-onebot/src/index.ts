@@ -6,7 +6,7 @@ import { i18n } from '@aalis/api-i18n';
 import { llm } from '@aalis/api-llm';
 import { clearSessionMedia, media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
-import { messageArchive } from '@aalis/api-message-archive';
+import { messageArchive, outboundAddress } from '@aalis/api-message-archive';
 import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
@@ -2410,7 +2410,7 @@ function runAdapter(caps: Caps): void {
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
       if (msg.attachments?.length) {
-        // 缓存与发送仍经 storage 和受保护下载；稳定 ref 不随落盘改写。
+        // 缓存与发送仍经 storage 和受保护下载；落盘的副本只用来发，原来的地址留在 ref 上，送达之后记进历史的是它。
         await Promise.all(
           msg.attachments.map(async att => {
             try {
@@ -2425,6 +2425,8 @@ function runAdapter(caps: Caps): void {
               );
               if (local) {
                 rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.data, local);
+                const address = outboundAddress(att);
+                if (address) att.ref = address;
                 att.data = local;
                 if (att.kind === 'audio') att.mimeType = 'audio/wav';
               }
@@ -2481,7 +2483,7 @@ function runAdapter(caps: Caps): void {
     }
 
     if (textSent || delivered.length) {
-      // 只交成功附件的快照；失败的图片不能写成“已发送”历史。
+      // 存档据此把送达的部分记进会话历史：只交成功附件的快照，失败的图片不能写成“已发送”历史。
       void events.use.emit('outbound:delivered', {
         ...msg,
         delivery: undefined,

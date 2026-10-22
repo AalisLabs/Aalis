@@ -3,16 +3,17 @@
 //
 // 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
 // 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
-// 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与她发出的附件
-// 各自单独成条；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实，通知与事件标记的
-// 文字先取存档另记的文字对象（没记的旧记录取正文）。存档元数据只按 schema-message 登记的键读（WellKnownMetadataKeys），
-// 会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、「已发到群」、回合停止时还没结束、命令的退出码与转到后台的
+// 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与发出的附件
+// 各自单独成条（她发的附件是只有附件的她的消息，插件发的是带附件的通知）；提问的正文与附件取存档另记的发言人写的话与附件
+// 清单，宿主通知另带它的 id 与给界面的事实，通知与事件标记的文字先取存档另记的文字对象（没记的旧记录取正文）。
+// 存档元数据只按 schema-message 登记的键读（WellKnownMetadataKeys），会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、「已发到群」、回合停止时还没结束、命令的退出码与转到后台的
 // 任务 id 取自工具结果的元数据（会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
 // 房间里她只把最后的回复发进群（api-agent 的约定）：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复
 // 按适配器记的投递失败标出，与实时推送一致。
 // ════════════════════════════════════════════════════════════
 
 import type { MemoryService } from '@aalis/api-memory';
+import { outboundAddress, unaddressedText } from '@aalis/api-message-archive';
 import { ApprovalSettlementSchema, COMMAND_REPLY_TOPIC, type SessionItem } from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
@@ -21,6 +22,7 @@ import {
   type ArchivedAttachment,
   type ContentSegment,
   type Message,
+  type MessageAttachment,
   type OutgoingMessage,
   parseAttachmentRefs,
   WellKnownKinds,
@@ -44,13 +46,13 @@ export const RETRIED = t('retried');
 export const notAccepted = (error: string | TextRef) => t('notAccepted', { error });
 
 /**
- * 事件标记还原成的通知的 topic：来源（出站消息的 source，outboundMarkerMessage 记在 Source 键上）是 command 的是指令的回复，
+ * 事件标记还原成的通知的 topic：来源（出站消息的 source，存档记在 Source 键上）是 command 的是指令的回复，
  * 其余（宿主提示、压缩分隔线等）是事件标记。实时推送按出站消息的 source 取同一个
  */
 export const markerTopic = (source: unknown) =>
   source === 'command' ? COMMAND_REPLY_TOPIC : WellKnownKinds.EventMarker;
 
-/** 给她发出的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
+/** 给会话里的文件签发下载句柄（绑定所在的会话）：存储地址与文件名 → 句柄；不签发的回 undefined */
 export type SignFile = (uri: string, name: string) => string | undefined;
 
 /** 归并一个会话的存档要的东西 */
@@ -75,21 +77,25 @@ const OUTBOUND_KINDS: Readonly<Record<string, Attachment['kind']>> = {
 const ATTACHMENT_KINDS: ReadonlySet<string> = new Set(Object.values(OUTBOUND_KINDS));
 
 const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** 她发出的附件归档成 outbound-* 的 assistant 消息，正文是附件引用占位符；认不出引用的按普通回复，回 undefined */
+/**
+ * 发出的附件归档成 outbound-* 的消息（她发的 role assistant，插件发的 role notice），正文是附件引用占位符；认不出引用的
+ * 回 undefined（她的按普通回复）
+ */
 function sentRefs(message: Message) {
   const kind = message.kind ? OUTBOUND_KINDS[message.kind] : undefined;
-  if (message.role !== 'assistant' || !kind) return undefined;
+  if ((message.role !== 'assistant' && message.role !== 'notice') || !kind) return undefined;
   const refs = parseAttachmentRefs(message.content ?? '');
   return refs.length > 0 ? { kind, refs } : undefined;
 }
 
 /**
- * 一个附件还原成条目里的附件：图片、音频、视频的来源就是地址（存储地址或网址）；文件不给存储地址，有地址时给句柄，
- * 名字没有时取地址的最后一段
+ * 一个附件还原成条目里的附件：图片、音频、视频的来源就是地址（存储地址或网址）；文件的地址是网址时直接给网址，存储地址不给，
+ * 给句柄；名字没有时取地址的最后一段
  */
 function restored(
   kind: Attachment['kind'],
@@ -101,11 +107,22 @@ function restored(
     return { kind, ...(ref === undefined ? {} : { src: ref }), ...(name === undefined ? {} : { name }) };
   }
   const fileName = name ?? ref.slice(ref.lastIndexOf('/') + 1);
-  return { kind, name: fileName, src: signFile(ref, fileName) };
+  return { kind, name: fileName, src: isWebUrl(ref) ? ref : signFile(ref, fileName) };
 }
 
 /**
- * 她发出的附件还原成条目里的附件。文件的地址与名字先取存档时元数据里原样记下的（占位符里的地址遇到「]」会截断，
+ * 出站消息的一个附件推成的通知里的文字与附件，与存档记它的一样（api-message-archive 的 recordOutbound）：有地址的
+ * （outboundAddress）带这个附件、文字为空，文件带名字；没有地址的是存档记的那一句（unaddressedText），不带附件
+ */
+export function outboundAttachmentPart(att: MessageAttachment, signFile: SignFile) {
+  const address = outboundAddress(att);
+  return address === undefined
+    ? { text: unaddressedText(att), attachments: [] }
+    : { text: '', attachments: [restored(att.kind, address, att.kind === 'file' ? att.name : undefined, signFile)] };
+}
+
+/**
+ * 发出的附件还原成条目里的附件。文件的地址与名字先取存档时元数据里原样记下的（占位符里的地址遇到「]」会截断，
  * 描述位的「]」「|」换成了全角），没有时取占位符的引用与描述位
  */
 function sentAttachments(message: Message, signFile: SignFile): Attachment[] | undefined {
@@ -188,8 +205,9 @@ function speakerOf(message: Message, isOwner: IsOwner) {
 }
 
 /**
- * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、她发出的附件。她的回复与工具调用要成组归并，
- * 其余系统消息与组外的工具结果不显示，都回 undefined
+ * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、发出的附件（她发的是只有附件的她的消息，
+ * 插件发的是带附件的通知，topic 同事件标记按来源取）。附件与通知带记下的回合 id，与实时推送一样并进回合。她的回复与工具调用
+ * 要成组归并，其余系统消息与组外的工具结果不显示，都回 undefined
  */
 export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
   const itemId = archivedItemId(message);
@@ -206,6 +224,21 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       attachments: askedAttachments(message.metadata?.[WellKnownMetadataKeys.Attachments], signFile),
       speaker: speakerOf(message, isOwner),
     };
+  }
+  const sent = sentAttachments(message, signFile);
+  if (sent) {
+    const turnId = text(message.metadata?.[WellKnownMetadataKeys.TurnId]);
+    return message.role === 'notice'
+      ? {
+          kind: 'notice',
+          itemId,
+          turnId,
+          at,
+          topic: markerTopic(message.metadata?.[WellKnownMetadataKeys.Source]),
+          text: '',
+          attachments: sent,
+        }
+      : { kind: 'agent-message', itemId, turnId, at, text: '', attachments: sent };
   }
   if (
     message.role === 'user' ||
@@ -232,8 +265,7 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       facts: noticeFacts(meta?.[WellKnownMetadataKeys.HostNoticeFacts]),
     };
   }
-  const sent = sentAttachments(message, signFile);
-  return sent ? { kind: 'agent-message', itemId, at, text: '', attachments: sent } : undefined;
+  return undefined;
 }
 
 /** 成组的消息：她的回复（不是发出的附件）与带 toolCallId 的工具结果 */

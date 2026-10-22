@@ -144,7 +144,7 @@ describe('历史归并', () => {
       },
       {
         // 占位符里的地址遇到「]」截断、名字里的「]」换成全角，原样的地址与名字记在元数据里
-        ...outboundMediaMessage('file', 'workspace:/out/周报].md', '周报].md'),
+        ...outboundMediaMessage('file', 'workspace:/out/周报].md', { desc: '周报].md', source: 'agent' }),
         timestamp: 6,
         metadata: { [K.Source]: 'webui-server', [K.SentRef]: 'workspace:/out/周报].md', [K.SentName]: '周报].md' },
       },
@@ -572,10 +572,11 @@ describe('服务端归并的条目', () => {
   });
 
   it('回合里发出的 [错误] 记成的事件标记：还原出的通知带这一轮的 id，与实时推送一样并进回合；没记回合的不带', () => {
+    // 存档给每条出站记录补上出站的回合 id（api-message-archive 的 recordOutbound）
     const marker = (content: string, turnId?: string) => {
-      const message = outboundMarkerMessage({ sessionId: 'zz', platform: 'onebot', source: 'system', content, turnId });
+      const message = outboundMarkerMessage({ sessionId: 'zz', platform: 'onebot', source: 'system', content });
       if (!message) throw new Error('outboundMarkerMessage 没给出事件标记');
-      return message;
+      return turnId ? { ...message, metadata: { [WellKnownMetadataKeys.TurnId]: turnId } } : message;
     };
     const items = mergeArchive(
       [

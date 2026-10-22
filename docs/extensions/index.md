@@ -62,7 +62,7 @@ EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做�
 | `@aalis/api-doctor` | `doctor:updated` |
 | `@aalis/api-gateway` | `gateway:phase:done` |
 | `@aalis/api-media` | `media:processed` |
-| `@aalis/api-memory` | `memory:messages-deleted` / `history:changed` / `session:compressing` |
+| `@aalis/api-memory` | `memory:messages-deleted` / `memory:messages-rewritten` / `history:changed` / `session:compressing` |
 | `@aalis/api-session-manager` | `session:created` / `session:updated` / `session:completed` / `session:deleted` |
 | `@aalis/api-tools` | `tool:execute` |
 | `@aalis/api-workflow` | `trigger:fired` / `workflow:run:start` / `workflow:run:done` / `workflow:run:error` / `workflow:node:done` |

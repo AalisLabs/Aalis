@@ -35,7 +35,6 @@
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-media": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-message-archive": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
@@ -56,7 +55,6 @@
         "hooks",
         "memory",
         "media",
-        "message-archive",
         "session-manager",
         "storage",
         "tools"

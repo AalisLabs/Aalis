@@ -81,6 +81,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 - Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型：处理某个清理类型的插件登记它（见下一条），并在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。只在清理全部会话时清的数据（跨会话的，如用户档案），由处理它的插件在会话级清理、`types` 显式含它时自己推一行未清理的结果。
 - 贡献点 `'memory:clear-type'`：清理类型的登记表，spec 是 `{ id, label }`（`ClearTypeContribution`）。`id` 是类型名（`/clear -t` 的写法、结果行的 `type`），`label` 是显示名，可以是文字对象。`/clear` 只认登记了的类型，帮助按登记表列出；同一类型可由几家登记，显示名取收集次序里第一家的。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。
+- Event `'memory:messages-rewritten'`：某会话已落库的消息正文被改写（如出站附件补上识图描述）后广播，载荷 `{ sessionId, messages }`，`messages` 是改写后的整条（时间戳不变）。改写的一方在改写成功后发（message-archive 补描述、media 的 `update_image_description`），建派生索引的下游按会话与时间戳换掉旧条目。负载带会话 id 与正文，不能当编排的触发源。
 - Event `'history:changed'`：会话历史发生结构性变化，前端据此重新拉取。
 - Event `'session:compressing'`：会话压缩的进度（开始、压成、没压成）。压缩本身是服务 `compression`，见 [api-memory](../api/api-memory.md#压缩服务)。
 
@@ -102,7 +103,8 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 - **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃条数，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息（摘要模型挑出、原样保留的不归档），摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
-- **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
+- **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，监听 `memory:messages-rewritten` 按改写后的正文重收录，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
+- **`plugin-message-archive`** 与 **`plugin-media`**（改写已落库的消息）：经可选的 `updateMessageContent` 改写，改到了发 `memory:messages-rewritten`；后端没有实现它时不改写。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
 
 ## 4. 写一个 provider
@@ -234,7 +236,7 @@ export default definePlugin({
 
 - **本服务不做 authority 鉴权**。memory 是内部基础设施服务，调用方拿到引用即可读写任意 `sessionId` 的全部消息；没有 visibility/risk 分级，也没有逐调用确认。跨会话隔离完全依赖调用方传入正确的 `sessionId`，以及 `getRecentMessagesAcrossSessions` 的 `excludeSessionIds` / `platform` 过滤。**provider 不得自行添加额外鉴权门**，否则会破坏 agent 流水线。authority 模型见 `docs/plugins/plugin-authority.md` 与 `docs/concepts/security-model.md`。
 - **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `caps.storage.use.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
-- **删除要广播**。实现 `deleteMessagesByTimestamps` 的 provider，删除后下游（向量库、前端）靠 `memory:messages-deleted` / `history:changed` 事件同步；但 emit 事件是**消费方**（checkpoint）的责任，不是 memory 服务自身。
+- **删除与改写要广播**。实现 `deleteMessagesByTimestamps` 的 provider，删除后下游（向量库、前端）靠 `memory:messages-deleted` / `history:changed` 事件同步；`updateMessageContent` 改写之后靠 `memory:messages-rewritten`。emit 事件是**动手的消费方**（删除是 checkpoint，改写是 message-archive 与 media）的责任，不是 memory 服务自身。
 - **PII 注意**。消息原文（含用户昵称、平台 ID 等）会原样落库。示例代码一律用占位符，不要在 configSchema、默认值或日志里硬编码真实账号信息。
 
 ## 7. 边界与注意事项

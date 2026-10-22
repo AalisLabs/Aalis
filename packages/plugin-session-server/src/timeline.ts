@@ -4,9 +4,11 @@
 // 在途回合的条目由 agent 的事件实时拼出：回合开始与结束、流式的思考与正文、工具调用与它的输出、她的回复。
 // 工具卡在模型生成参数时就出现（流式的生成进度带着这次调用的 callId），开始执行时转为 running；生成了却没有执行的
 // 在回合结束时收尾。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发）落成 aborted，之后工具返回什么都不改。
-// 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId。不是她回复的外发消息（指令回复、宿主
-// 提示）推成通知，与送达之后记进存档的事件标记在历史里还原的那一条相同，带文字对象（text）时给出它而不是 content，由连接按
-// 读者渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的送达原因原样作参数。
+// 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId；带这个会话的回合 id 的（回合里发出的附件）
+// 在这一轮还没收尾时并进这一轮，快照的历史跳过它、由在途条目给出，别的会话的回合 id 不算。不是她发的外发消息（指令回复、
+// 宿主提示、插件发的附件）推成通知：文字一条、每个附件各一条，与送达之后记进存档的几条在历史里还原的相同，带文字对象（text）
+// 时给出它而不是 content，由连接按读者渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的
+// 送达原因原样作参数。
 // 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
 // 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
@@ -55,6 +57,7 @@ import {
   type MergeContext,
   markerTopic,
   notAccepted,
+  outboundAttachmentPart,
   RETRIED,
   readHistory,
   replyModel,
@@ -281,14 +284,14 @@ export function createTimeline(deps: TimelineDeps) {
   }
 
   /**
-   * 不进历史的存档消息：属于 shown 里的回合（取快照时还没收尾，由在途条目给出），或取快照（seq 为 at）之后才结束、
-   * 才开始的回合（由推送给出）
+   * 这个会话不进历史的存档消息：属于 shown 里的回合（取快照时还没收尾，由在途条目给出），或这个会话里取快照（seq 为 at）
+   * 之后才结束、才开始的回合（由推送给出）。别的会话的回合不算：带它的 id 的条目不并进它（见 archived）
    */
-  const skipFor = (at: number, shown: ReadonlySet<string>) => (stored: Message) => {
+  const skipFor = (sessionId: string, at: number, shown: ReadonlySet<string>) => (stored: Message) => {
     const turnId = stored.metadata?.[WellKnownMetadataKeys.TurnId];
     if (typeof turnId !== 'string') return false;
     const turn = turns.get(turnId);
-    return shown.has(turnId) || (turn !== undefined && (turn.end === undefined || turn.end > at));
+    return shown.has(turnId) || (turn?.sessionId === sessionId && (turn.end === undefined || turn.end > at));
   };
 
   /** 这个会话还没收尾的回合：在跑，或已结束、还在等平台的送达结果 */
@@ -521,42 +524,53 @@ export function createTimeline(deps: TimelineDeps) {
     if (turn) closeStream(turn);
   }
 
-  /** 不是她回复的外发消息推成的通知：字段同 history 的 archivedItem 由事件标记还原的那一条 */
-  const outboundNotice = (out: OutgoingMessage, itemId: string, turnId?: string): Item<'notice'> => ({
-    kind: 'notice',
-    itemId,
-    turnId,
-    at: Date.now(),
-    topic: markerTopic(out.source),
-    text: out.text ?? out.content,
-    attachments: [],
-  });
-
   function outbound(out: OutgoingMessage): void {
-    const turn = current();
-    if (turn && turn.sessionId === out.sessionId) {
-      if (out.callId) turn.sent.set(out.callId, out);
-      // 只有附件的消息落库后按存档推送
+    const running = current();
+    const turn = running?.sessionId === out.sessionId ? running : undefined;
+    if (turn && out.callId) turn.sent.set(out.callId, out);
+    if (out.source === 'agent') {
+      // 她发的只有附件的消息落库后按存档推送
       if (!out.content.trim()) return;
-      if (out.source === 'agent') reply(turn, out);
-      else complete(turn, add(turn, outboundNotice(out, `${turn.turnId}/${++turn.next}`, turn.turnId)));
+      if (turn) reply(turn, out);
+      else {
+        const itemId = `out/${crypto.randomUUID()}`;
+        emit(out.sessionId, 'item/completed', {
+          kind: 'agent-message',
+          itemId,
+          at: Date.now(),
+          text: out.content,
+          attachments: [],
+        });
+      }
       return;
     }
-    if (!out.content.trim()) return;
-    const itemId = `out/${crypto.randomUUID()}`;
-    emit(
-      out.sessionId,
-      'item/completed',
-      out.source === 'agent'
-        ? { kind: 'agent-message', itemId, at: Date.now(), text: out.content, attachments: [] }
-        : outboundNotice(out, itemId),
-    );
+    // 不是她发的：文字一条、每个附件各一条通知，字段同 history 的 archivedItem 由存档的几条还原的
+    const sign = signerOf(out.sessionId);
+    const parts = [
+      ...(out.content.trim() ? [{ text: out.text ?? out.content, attachments: [] }] : []),
+      ...(out.attachments ?? []).map(att => outboundAttachmentPart(att, sign)),
+    ];
+    for (const part of parts) {
+      const notice: Item<'notice'> = {
+        kind: 'notice',
+        itemId: turn ? `${turn.turnId}/${++turn.next}` : `out/${crypto.randomUUID()}`,
+        turnId: turn?.turnId,
+        at: Date.now(),
+        topic: markerTopic(out.source),
+        ...part,
+      };
+      if (turn) complete(turn, add(turn, notice));
+      else emit(out.sessionId, 'item/completed', notice);
+    }
   }
 
-  /** 落了库的提问、通知与她发出的附件 */
+  /** 落了库的提问、通知与她发出的附件；带这个会话的回合 id、这一轮还没收尾的并进这一轮 */
   function archived(sessionId: string, stored: Message): void {
     const item = archivedItem(stored, deps.isOwner, signerOf(sessionId));
-    if (item) emit(sessionId, 'item/completed', item);
+    if (!item) return;
+    const turn = item.turnId === undefined ? undefined : turns.get(item.turnId);
+    if (turn?.sessionId === sessionId && (turn.end === undefined || turn.receipts > 0)) add(turn, item);
+    emit(sessionId, 'item/completed', item);
   }
 
   function plan(sessionId: string, entries: TodoItem[]): void {
@@ -639,7 +653,7 @@ export function createTimeline(deps: TimelineDeps) {
       const history = await readHistory(
         deps.memory.use,
         sessionId,
-        { limit: HISTORY_PAGE, skip: skipFor(at, shown) },
+        { limit: HISTORY_PAGE, skip: skipFor(sessionId, at, shown) },
         mergeContext(sessionId),
         deps.logger,
       );
@@ -677,7 +691,7 @@ export function createTimeline(deps: TimelineDeps) {
       return readHistory(
         deps.memory.use,
         sessionId,
-        { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(seq, shown) },
+        { before, limit: limit ?? HISTORY_PAGE, skip: skipFor(sessionId, seq, shown) },
         mergeContext(sessionId),
         deps.logger,
       );

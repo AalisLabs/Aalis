@@ -178,6 +178,8 @@ const REMOVED: Array<[string, string]> = [
   ['summaryModelMode', '记忆摘要的「摘要模型来源」开关，模型改在插件的服务偏好里设'],
   ['gateway-scopes', 'WebUI 宿主按类型名拼回复策略作用域的可选项来源，作用域由「生效范围」字段取代'],
   ['getPersonaSkills', '人设卡上的技能名单，由技能插件可按会话覆盖的「启用的技能」取代'],
+  ['skipArchive', '出站附件跳过归档的标记：发出去的都记，出站记历史只由 message-archive 的 recordOutbound 做'],
+  ['inboxRecords', 'webui-server 自己记 WebUI 会话的出站，改由 message-archive 的 recordOutbound 记'],
 ];
 
 /**

@@ -38,12 +38,13 @@ export const BLOCKED_EVENT_TRIGGERS: ReadonlySet<string> = new Set([
   'session:created',
   'session:updated',
   'session:completed',
-  // 会话的活动：模型用量与用量快照的请求、入站相位、消息删除与历史变更、压缩、会话删除，带会话 id，有的另带平台
+  // 会话的活动：模型用量与用量快照的请求、入站相位、消息的删除与改写、历史变更、压缩、会话删除，带会话 id，有的另带平台与正文
   'token:usage',
   'token:request',
   'llm:usage',
   'gateway:phase:done',
   'memory:messages-deleted',
+  'memory:messages-rewritten',
   'history:changed',
   'session:compressing',
   'session:deleted',

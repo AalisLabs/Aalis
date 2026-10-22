@@ -13,7 +13,7 @@ import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isHostAbsolutePath, isStorageNotFound, isStorageUri } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
-import type { ServiceSelection } from '@aalis/core';
+import type { Events, ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
 import { getMediaRuntime } from './runtime.js';
@@ -71,12 +71,13 @@ function recentHistory(service: MemoryService, sessionId: string): Promise<Messa
 }
 
 /**
- * 工具登记用到的能力：登记门面 tools；update_image_description 回写历史的 memory；判媒体归属的会话管理、权限和记忆
- * （缺席时判据按它的约定取值）。存储取自媒体运行时
+ * 工具登记用到的能力：登记门面 tools；update_image_description 回写历史的 memory 与发改写通知的 events；判媒体归属的会话管理、
+ * 权限和记忆（缺席时判据按它的约定取值）。存储取自媒体运行时
  */
 interface ToolsCaps {
   tools: ServiceSelection<BoundTools>;
   memory: ServiceSelection<MemoryService>;
+  events: ServiceSelection<Events>;
   sessionManager: ServiceSelection<SessionManagerService>;
   authority: ServiceSelection<AuthorityService>;
 }
@@ -279,14 +280,21 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
       const oldTexts = findImageDescriptionTokens(history, imageRef);
       if (oldTexts.length === 0) oldTexts.push(formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: imageRef }));
 
+      const replaced = oldTexts.filter(oldText => oldText !== newText);
       let updated = 0;
-      for (const oldText of oldTexts) {
-        if (oldText === newText) continue;
+      for (const oldText of replaced) {
         updated += await memory.updateMessageContent(sessionId, oldText, newText, HISTORY_LIMIT);
       }
-      return updated > 0
-        ? `已更新 ${updated} 条消息中的图片描述`
-        : `未找到匹配的图片引用（session=${sessionId}，可能引用路径不匹配或描述已相同）`;
+      if (updated === 0) return `未找到匹配的图片引用（session=${sessionId}，可能引用路径不匹配或描述已相同）`;
+      // 改写通知带改写后的整条：按改写前读到的这段历史、同一替换算出（更早的消息改到了也不在其中）
+      const rewritten = history.flatMap(message => {
+        const content = replaced.reduce((text, oldText) => text.replaceAll(oldText, newText), message.content ?? '');
+        return content === (message.content ?? '') ? [] : [{ ...message, content }];
+      });
+      if (rewritten.length > 0) {
+        await caps.events.use.emit('memory:messages-rewritten', { sessionId, messages: rewritten });
+      }
+      return `已更新 ${updated} 条消息中的图片描述`;
     },
   });
 }

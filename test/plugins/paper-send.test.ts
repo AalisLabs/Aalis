@@ -122,12 +122,11 @@ describe('paper_send：发出', () => {
     expect(tool?.risk).toBeUndefined();
   });
 
-  it('发出的消息带这次工具调用的 callId：界面据此给工具卡标「已发到群」', async () => {
+  it('发出的消息带这次工具调用的回合 id 与 callId：界面据此给工具卡标「已发到群」，记进会话历史的那几条据此归回回合', async () => {
     const h = await hub();
-    expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, { ...human(), callId: 'call-9' })).toMatchObject({
-      ok: true,
-    });
-    expect(h.outbound.map(m => m.callId)).toEqual(['call-9']);
+    const call = { ...human(), turnId: 'turn-9', callId: 'call-9' };
+    expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, call)).toMatchObject({ ok: true });
+    expect(h.outbound.map(m => [m.turnId, m.callId])).toEqual([['turn-9', 'call-9']]);
   });
 
   it('PNG 走 image：出站附件指向白纸根，文件名按任务名重写，平台确认收下后标为已交付', async () => {

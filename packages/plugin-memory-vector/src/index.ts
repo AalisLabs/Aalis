@@ -619,14 +619,27 @@ async function run(caps: Caps): Promise<void> {
     return windows;
   }
 
-  // === 索引：入站 user 消息 + assistant 落库回复，触发即写 ===
+  // === 索引：入站 user 消息 + assistant 落库回复，触发即写；已落库的消息被改写时换掉旧条目 ===
 
-  /** 待索引项：user 带归档消息（文本与时间戳都以落库形态为准）；assistant 自带 */
+  /** 待索引项：user 带归档消息（文本与时间戳都以落库形态为准）；assistant 自带；rewritten 是改写后的整条 */
   type PendingIndexItem =
     | { kind: 'user'; msg: IncomingMessage; archived: Message }
-    | { kind: 'assistant'; sessionId: string; message: Message };
+    | { kind: 'assistant' | 'rewritten'; sessionId: string; message: Message };
   const pendingIndexMessages: PendingIndexItem[] = [];
   let activeIndexers = 0;
+  /**
+   * 在途的收录与重收录，按会话与时间戳：改写项先等同一条在途的那个落定再删旧条目。识图命中缓存时改写通知紧跟着落库到来，不等
+   * 的话删不到还没写进去的旧条目，原来那条随后照旧写进去；同一条的几次改写也这样排成一串，按到达的先后落定
+   */
+  const indexing = new Map<string, Promise<void>>();
+  const entryKey = (sessionId: string, timestamp: number | undefined) => `${sessionId}\n${timestamp}`;
+
+  function track(key: string, work: Promise<void>): Promise<void> {
+    indexing.set(key, work);
+    return work.finally(() => {
+      if (indexing.get(key) === work) indexing.delete(key);
+    });
+  }
 
   function enqueueIndexMessage(item: PendingIndexItem): void {
     pendingIndexMessages.push(item);
@@ -646,8 +659,18 @@ async function run(caps: Caps): Promise<void> {
       activeIndexers++;
       void (async () => {
         try {
-          if (next.kind === 'user') await indexUserMessage(next.msg, next.archived);
-          else await indexAssistantMessage(next.sessionId, next.message);
+          if (next.kind === 'user') {
+            await track(
+              entryKey(next.msg.sessionId, next.archived.timestamp),
+              indexUserMessage(next.msg, next.archived),
+            );
+          } else if (next.kind === 'assistant') {
+            const work = indexEntry(() => assistantEntry(next.sessionId, next.message), 'assistant 向量索引失败:');
+            await track(entryKey(next.sessionId, next.message.timestamp), work);
+          } else {
+            const key = entryKey(next.sessionId, next.message.timestamp);
+            await track(key, reindexRewritten(next.sessionId, next.message, indexing.get(key)));
+          }
         } finally {
           activeIndexers--;
           void drainIndexQueue();
@@ -670,43 +693,62 @@ async function run(caps: Caps): Promise<void> {
     if (msg.source === 'scheduler') return;
     if (msg.source?.startsWith('workflow:')) return;
     if (msg.userId?.startsWith('parent:')) return;
-    // 向量文本 = 归档文本（单一来源）：archive 已按平台规则加发送者前缀、烘入引用与
-    // 附件描述。若 embed 的是 incoming.content，图片消息只剩 [图片 | ref:…] 占位符，
-    // 识别出的描述从未进向量空间，图片记忆不可召回。
-    const rawText = clipForEmbed(archived.content?.trim() ?? '');
-    if (!rawText) return;
-    // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
-    const messageTimestamp = archived.timestamp ?? Date.now();
+    await indexEntry(() => userEntry(msg.sessionId, archived), '向量索引失败:');
+  }
+
+  /** 一条消息算成的向量条目 */
+  interface VectorEntry {
+    vec: number[];
+    metadata: Record<string, unknown>;
+  }
+
+  /** 算出条目、写进向量库；不收录的（算出 undefined）不写，出错记 warn */
+  async function indexEntry(build: () => Promise<VectorEntry | undefined>, failure: string): Promise<void> {
     try {
-      // 向量空间标识与向量出自同一实例，在发起计算时一并读下：那一家中途撤回后钉住的句柄就不可用了
-      const provider = pinned(embedding);
-      const { modelId } = provider;
-      const vec = await provider.embed(rawText);
-      const mentions = extractMentions(rawText);
-      const metadata: Record<string, unknown> = {
-        sessionId: msg.sessionId,
-        // 前向打角色（2026-08-27 起）：存量旧向量无此字段，检索侧按 user（对方）对待
-        role: 'user',
-        userId: msg.userId ?? '',
-        nickname: msg.nickname ?? '',
-        platform: msg.platform,
-        groupName: msg.groupName ?? '',
-        groupId: msg.groupId ?? '',
-        sessionType: msg.sessionType ?? '',
-        timestamp: messageTimestamp,
-        // 兜底内容：归档文本（消息表老化后供渲染兜底；user 角色的发送者前缀由渲染侧剥除）
-        content: rawText,
-        // @提及到的用户 ID 列表，用于检索时同用户加权
-        mentions,
-      };
-      // 检索时只与同模型的查询向量比较
-      if (modelId) metadata.modelId = modelId;
+      const entry = await build();
+      if (!entry) return;
       const store = pinned(vectorstore);
-      await store.add(vec, metadata);
+      await store.add(entry.vec, entry.metadata);
       await store.save();
     } catch (err) {
-      logger.use.warn('向量索引失败:', err);
+      logger.use.warn(failure, err);
     }
+  }
+
+  /**
+   * 对方的一条发言算成向量条目。向量文本 = 归档文本（单一来源）：archive 已按平台规则加发送者前缀、烘入引用与附件描述；若 embed
+   * 的是 incoming.content，图片消息只剩 [图片 | ref:…] 占位符，识别出的描述从未进向量空间，图片记忆不可召回。说话人与位置取存档
+   * 记在元数据里的（与入站消息同一份事实），改写后重收录时同样取它们
+   */
+  async function userEntry(sessionId: string, archived: Message): Promise<VectorEntry | undefined> {
+    const rawText = clipForEmbed(archived.content?.trim() ?? '');
+    if (!rawText) return undefined;
+    const meta = archived.metadata ?? {};
+    const fact = (key: string) => (typeof meta[key] === 'string' ? (meta[key] as string) : '');
+    // 向量空间标识与向量出自同一实例，在发起计算时一并读下：那一家中途撤回后钉住的句柄就不可用了
+    const provider = pinned(embedding);
+    const { modelId } = provider;
+    const vec = await provider.embed(rawText);
+    const metadata: Record<string, unknown> = {
+      sessionId,
+      // 前向打角色（2026-08-27 起）：存量旧向量无此字段，检索侧按 user（对方）对待
+      role: 'user',
+      userId: fact(WellKnownMetadataKeys.UserId),
+      nickname: fact(WellKnownMetadataKeys.Nickname),
+      platform: fact(WellKnownMetadataKeys.Platform),
+      groupName: fact(WellKnownMetadataKeys.GroupName),
+      groupId: fact(WellKnownMetadataKeys.GroupId),
+      sessionType: fact(WellKnownMetadataKeys.SessionType),
+      // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
+      timestamp: archived.timestamp ?? Date.now(),
+      // 兜底内容：归档文本（消息表老化后供渲染兜底；user 角色的发送者前缀由渲染侧剥除）
+      content: rawText,
+      // @提及到的用户 ID 列表，用于检索时同用户加权
+      mentions: extractMentions(rawText),
+    };
+    // 检索时只与同模型的查询向量比较
+    if (modelId) metadata.modelId = modelId;
+    return { vec, metadata };
   }
 
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
@@ -716,53 +758,84 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // assistant 自身发言入库（2026-08-27，recallRoles 双模式的存储侧）：
-  // 经 archive.saveMessage 落库的 assistant 回复（含 image-sender 的出站附件档案）。
+  // 经 archive.saveMessage 落库的 assistant 回复（含她发出的附件的记录）。
   // metadata 带 role='assistant'，检索側据此过滤与标注；渲染必带「Assistant·你自己」。
   events.use.on('assistant:message:archived', data => {
     enqueueIndexMessage({ kind: 'assistant', sessionId: data.sessionId, message: data.message });
   });
 
-  async function indexAssistantMessage(sessionId: string, message: Message): Promise<void> {
+  /** 她的一条发言算成向量条目 */
+  async function assistantEntry(sessionId: string, message: Message): Promise<VectorEntry | undefined> {
     // 向量文本 = 可见正文：落库的是结构化输出信封时取解码后的回复（见 visibleText）
     const rawText = clipForEmbed(visibleText(message).trim());
-    if (!rawText) return;
+    if (!rawText) return undefined;
     // 防御性冗余：EventMarker 现产者全是 role:system、被发射门先挡；此处兜第三方发射者
-    if (message.kind === WellKnownKinds.EventMarker) return;
+    if (message.kind === WellKnownKinds.EventMarker) return undefined;
     const meta = message.metadata ?? {};
+    const nickname = (meta[WellKnownMetadataKeys.Nickname] as string | undefined) ?? '';
+    // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 UserId 键
+    //（值=identity.selfId），并带群名、群号与会话类型——全部透传，
+    // 使 assistant 条目的渲染位置段（群「X」/私聊/）与 user 侧对齐。
+    // 注意没有 selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
+    const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
+    // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
+    const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
+    const provider = pinned(embedding);
+    const { modelId } = provider;
+    const vec = await provider.embed(embedText);
+    const metadata: Record<string, unknown> = {
+      sessionId,
+      role: 'assistant',
+      // userId=自身标识：crossSessionMode='user' 的同用户加权按调用者 userId 匹配，
+      // 不会误中 bot 自身；空串与 user 侧缺省语义一致
+      userId: selfUserId,
+      nickname,
+      // 与 user 侧同一口径：这一轮的入口平台
+      platform: (meta[WellKnownMetadataKeys.Platform] as string | undefined) ?? '',
+      groupName: (meta[WellKnownMetadataKeys.GroupName] as string | undefined) ?? '',
+      groupId: (meta[WellKnownMetadataKeys.GroupId] as string | undefined) ?? '',
+      sessionType: (meta[WellKnownMetadataKeys.SessionType] as string | undefined) ?? '',
+      timestamp: message.timestamp ?? Date.now(),
+      content: rawText,
+      mentions: extractMentions(rawText),
+    };
+    if (modelId) metadata.modelId = modelId;
+    return { vec, metadata };
+  }
+
+  // 已落库的消息被改写（出站附件补上描述等）：排进同一个索引队列，先等同一条在途的收录落定
+  events.use.on('memory:messages-rewritten', ({ sessionId, messages }) => {
+    for (const message of messages) enqueueIndexMessage({ kind: 'rewritten', sessionId, message });
+  });
+
+  /**
+   * 改写后的一条换掉旧条目：只管她与对方的发言（assistant 按她的发言，user 按存档消息的元数据），先按改写后的正文算出条目，
+   * 算成了才按会话与时间戳删掉旧条目（与回滚删向量同一写法）、写进新的；向量化失败时旧条目留着。删不到的（原来就没收录，
+   * 如宿主通知与内部注入）不收录，入站的过滤规则不必再写一遍。向量存储不支持按条件删除时不重收录，免得同一条留两份。
+   * previous 是同一条在途的那个（收录或前一次改写），先等它落定
+   */
+  async function reindexRewritten(
+    sessionId: string,
+    message: Message,
+    previous: Promise<void> | undefined,
+  ): Promise<void> {
+    await previous;
+    const entryOf = message.role === 'assistant' ? assistantEntry : message.role === 'user' ? userEntry : undefined;
+    const { timestamp } = message;
+    if (!entryOf || timestamp === undefined) return;
     try {
-      const nickname = (meta[WellKnownMetadataKeys.Nickname] as string | undefined) ?? '';
-      // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 UserId 键
-      //（值=identity.selfId），并带群名、群号与会话类型——全部透传，
-      // 使 assistant 条目的渲染位置段（群「X」/私聊/）与 user 侧对齐。
-      // 注意没有 selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
-      const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
-      // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
-      const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
-      const provider = pinned(embedding);
-      const { modelId } = provider;
-      const vec = await provider.embed(embedText);
-      const metadata: Record<string, unknown> = {
-        sessionId,
-        role: 'assistant',
-        // userId=自身标识：crossSessionMode='user' 的同用户加权按调用者 userId 匹配，
-        // 不会误中 bot 自身；空串与 user 侧缺省语义一致
-        userId: selfUserId,
-        nickname,
-        // 与 user 侧同一口径：这一轮的入口平台
-        platform: (meta[WellKnownMetadataKeys.Platform] as string | undefined) ?? '',
-        groupName: (meta[WellKnownMetadataKeys.GroupName] as string | undefined) ?? '',
-        groupId: (meta[WellKnownMetadataKeys.GroupId] as string | undefined) ?? '',
-        sessionType: (meta[WellKnownMetadataKeys.SessionType] as string | undefined) ?? '',
-        timestamp: message.timestamp ?? Date.now(),
-        content: rawText,
-        mentions: extractMentions(rawText),
-      };
-      if (modelId) metadata.modelId = modelId;
+      const entry = await entryOf(sessionId, message);
+      if (!entry) return;
       const store = pinned(vectorstore);
-      await store.add(vec, metadata);
+      if (!store.deleteByFilter) {
+        logger.use.warn('当前向量存储不支持按条件删除，改写过的消息不重收录');
+        return;
+      }
+      if ((await store.deleteByFilter({ sessionId, timestamp })) === 0) return;
+      await store.add(entry.vec, entry.metadata);
       await store.save();
     } catch (err) {
-      logger.use.warn('assistant 向量索引失败:', err);
+      logger.use.warn('改写过的消息重收录失败:', err);
     }
   }
 
