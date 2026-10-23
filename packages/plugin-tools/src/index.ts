@@ -1,3 +1,4 @@
+import { authority } from '@aalis/api-authority';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
@@ -64,13 +65,17 @@ export default definePlugin({
     document: optional(ownHostConfig),
     /** 后台任务登记写进插件数据；没有时只记在内存里 */
     storage: optional(storage),
+    /** 停后台任务时判这一轮里有没有 owner；不在时没有人是 owner */
+    authority: optional(authority),
   },
   apply(caps) {
     const { logger, events, lifecycle } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
     const fields = caps.sessionFields.use.fields(configSchema, caps);
 
-    const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background });
+    const isOwner = (platform: string, userId: string) =>
+      caps.authority.present && caps.authority.use.isOwner(platform, userId);
+    const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background, isOwner });
     events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
     events.use.on('app:stopping', () => tasks.shutdown());
     // 停接新活时：在跑的落成 aborted 并写盘，这时依赖的存储还在

@@ -62,7 +62,8 @@
       "optional": [
         "storage",
         "host-config",
-        "session-settings"
+        "session-settings",
+        "authority"
       ]
     }
   }
