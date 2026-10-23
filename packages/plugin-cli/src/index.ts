@@ -1092,8 +1092,8 @@ class CliTui {
   }
 
   /**
-   * 审批卡：标题行、事实、应答项，上下边框。卡片最多高到正文只剩 3 行：事实放不下时保留首尾几行，写明省略了多少行。
-   * 事实显示前经 clipForCard 清洗，太长的保留首尾、写明省略了多少字
+   * 审批卡：标题行、事实、应答项，上下边框。子会话里的审批在事实之前多一行「子任务」，写根会话以下的各级标题。卡片最多高到
+   * 正文只剩 3 行：事实放不下时保留首尾几行，写明省略了多少行。事实显示前经 clipForCard 清洗，太长的保留首尾、写明省略了多少字
    */
   private renderCard(width: number, height: number): string[] {
     const card = this.cards[0];
@@ -1107,12 +1107,13 @@ class CliTui {
           ? t('cardSubjectWaiting', { tool, session, count: this.cards.length - 1 })
           : t('cardSubject', { tool, session }),
       labels: FACT_LABELS,
+      chain: card.chain?.map(level => level.title),
       approve: t('approve'),
       deny: t('deny'),
       keys: t('cardKeys'),
     });
     const title = `${chalk.bold.yellow(text.heading)} ${text.subject}`;
-    const rows = cardFacts(card.facts, text.labels);
+    const rows = cardFacts(card.facts, text.chain, text.labels);
     const labelWidth = Math.max(0, ...rows.map(([label]) => visibleLen(label)));
     const clipped = (value: string) => {
       const { head, omitted, tail } = clipForCard(value, CARD_FACT_LIMIT);
@@ -1236,6 +1237,7 @@ const CARD_FACT_LIMIT = 1000;
 
 /** 卡上事实的标签 */
 const FACT_LABELS = {
+  subtask: t('factSubtask'),
   command: t('factCommand'),
   cwd: t('factCwd'),
   file: t('factFile'),
@@ -1243,9 +1245,17 @@ const FACT_LABELS = {
   params: t('factParams'),
 };
 
-/** 卡上的事实：标签（已按读者渲染）与原文 */
-function cardFacts(facts: ApprovalFacts, labels: Localized<typeof FACT_LABELS>): Array<[label: string, text: string]> {
+/**
+ * 卡上的事实：标签（已按读者渲染）与原文。子会话里的审批先写来源链的各级标题（已按读者渲染），以「 › 」相接；标题里的换行与
+ * 别的多行事实一样成续行，缩进到值的那一列，冒充不了带标签的一行
+ */
+function cardFacts(
+  facts: ApprovalFacts,
+  chain: string[] | undefined,
+  labels: Localized<typeof FACT_LABELS>,
+): Array<[label: string, text: string]> {
   const rows: Array<[string, string]> = [];
+  if (chain?.length) rows.push([labels.subtask, chain.join(' › ')]);
   if (facts.command !== undefined) rows.push([labels.command, facts.command]);
   if (facts.cwd !== undefined) rows.push([labels.cwd, facts.cwd]);
   if (facts.diff) rows.push([labels.file, facts.diff.path], [labels.patch, facts.diff.patch]);

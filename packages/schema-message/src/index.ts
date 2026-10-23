@@ -293,7 +293,7 @@ export interface IncomingMessage {
   };
   /**
    * 起它的那一轮：续做（如后台任务的结束通知）与子任务（任务消息与追问）的消息带着起它的那次调用所在那一轮的事实，权限服务
-   * 按那一轮判续做这一轮的类别与子任务这一轮的主体，这一轮的参与者取它的参与者（agent 经 api-authority 的 originTurnOf
+   * 按那一轮判续做与子任务这一轮的类别与主体，这一轮的参与者取它的参与者（agent 经 api-authority 的 originTurnOf
    * 拼工具调用上下文）。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`），只在那次调用在入站回合里时填，
    * 不由模型给；不进归档与提示词钩子
    */

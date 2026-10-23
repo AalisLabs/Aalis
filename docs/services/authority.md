@@ -56,7 +56,7 @@ export interface AuthorityService {
   // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，不按授权身份判
   originOf(turn: OriginTurn): OriginKind;
 
-  // 这一轮的主体，定本地效果：hand 且参与者是 owner 的为 owner（含它的续做）；子任务随派它的那一轮（inbound.fromTurn）；其余 other
+  // 这一轮的主体，定本地效果：hand（含随起它的那一轮的续做与子任务）且参与者都是 owner 的为 owner；其余 other
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
@@ -203,11 +203,11 @@ class MyAuthority implements AuthorityService {
   isOwner(platform: string, userId?: string) { /* owners 命中判定 */ return false; }
   ownerOn(_p: string): UserIdentity | undefined { return undefined; }
   originOf(turn: OriginTurn): OriginKind {
-    // 按这一轮从哪里来判：不在入站回合里为 autonomous，子任务为 subtask，续做随起它的那一轮……（判据见 plugin-authority）
+    // 按这一轮从哪里来判：不在入站回合里为 autonomous，续做与子任务随起它的那一轮……（判据见 plugin-authority）
     return 'autonomous';
   }
   principalOf(turn: OriginTurn): 'owner' | 'other' {
-    // hand 且参与者都是 owner 为 owner，子任务随派它的那一轮（判据见 plugin-authority）
+    // hand 且参与者都是 owner 为 owner（判据见 plugin-authority）
     return 'other';
   }
   authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
@@ -319,7 +319,7 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 - `confirm:'always'` → 只有 `'off'` 能免（cron 等无人可问即拒）。
 - `confirm:'session'` → `skipConfirm`（scheduler 触发的指令、runtime 一次性子命令）或 `restrictedPolicy` 白名单命中时免确认；两者都**不绕 `authorize`**（仍评估等级，防提权）。
 - 指令：调 `confirmIntent` 向发出者本人核对意图（plugin-commands 只给人亲手输入的指令带上）；没有就拒。
-- 工具：要一道只有 owner 能批的审批，与参与者审批（有参与者自己做不了这个动作时）合成一张。带上发起回合的类别（`authority-model.ts` 的 `originKind`）与这一轮的参与者（授权身份）调 `approvals.request`；人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有 owner 才能产生，定时任务、编排、子任务与没有 owner 参与的回合由审批服务立即拒绝、不推给任何面。批过的调用按批的人执行。审批服务不在时立即拒。
+- 工具：要一道只有 owner 能批的审批，与参与者审批（有参与者自己做不了这个动作时）合成一张。带上发起回合的类别（`authority-model.ts` 的 `originKind`）与这一轮的参与者（授权身份）调 `approvals.request`；人亲手发起的一轮（含它的续做与派出的子任务，不论在哪个会话）、参与者里有 owner 才能产生，起它的那一轮不是人亲手的（定时任务、编排与它们派的子任务等）与没有 owner 参与的回合由审批服务立即拒绝、不推给任何面。批过的调用按批的人执行。审批服务不在时立即拒。
 
 `restrictedPolicy` 白名单的 `duration` 用运行时态 `policyEnabledAt`（不持久化，重启失效，`authority-manager.ts`）。
 

@@ -291,25 +291,25 @@
 
 ### 权限按这一轮的触发者：发起类别、插话与续做（@aalis/api-approval、@aalis/api-session-protocol、@aalis/schema-message、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya）
 
-- api-approval 的 `OriginKind` 只留 `hand`（人亲手发来的消息与它的续做，不论在哪个会话、是谁）、`subtask`、`autonomous`，删掉 `owner`、`owner-chain`、`room`、`other`；`ApprovalOrigin` 删掉 `platform`，`userId` 换成 `participants`（这一轮的参与者，即授权身份，现在一轮只有一个）。api-session-protocol 审批对象的 `origin` 与审批审计的请求行同改。审批服务按「类别为 `hand` 且参与者里有 owner」判能不能产生审批。
+- api-approval 的 `OriginKind` 只留 `hand`（人亲手发来的消息与它的续做、派出的子任务，不论在哪个会话、是谁）与 `autonomous`，删掉 `owner`、`owner-chain`、`subtask`、`room`、`other`（子任务与续做一样随起它的那一轮，见「子任务的审批上浮」一节）；`ApprovalOrigin` 删掉 `platform`，`userId` 换成 `participants`（这一轮的参与者，即授权身份，现在一轮只有一个）。api-session-protocol 审批对象的 `origin` 与审批审计的请求行同改。审批服务按「类别为 `hand` 且参与者里有 owner」判能不能产生审批。
 - schema-message 的 `IncomingMessage` 加 `fromTurn`（类型 `FromTurn`：起它的那次调用所在那一轮的平台、发言者、参与者、来源与那一轮自己的 `fromTurn`），删掉 `hostNotice.callerUserId`。后台任务的结束通知不再带 `actor`，改带 `fromTurn`；自己注入延续某次调用的通知的，照这个写。
 - api-authority 的 `InboundTurn` 删掉 `callerUserId`、加 `fromTurn`；新导出 `originTurnOf(inputs)`，由一轮的输入拼执行守卫要的回合信息（发言者与授权身份缺省时取 `fromTurn` 的），自己实现 agent 的要用它填工具调用上下文。`originOf` 不再看会话的受众，续做与起它的那一轮同一类别；api-authority 新加 schema-message 的依赖。
 - plugin-authority 不再用会话管理（删掉 `session-manager` 的可选依赖）。
 - api-trigger 的 `markTriggered(message, addressed)` 删掉 `multiParty` 参数，不再给多方窗口里没点名的话回填无主体授权身份。
 - owner 在群里点名她、戳她、没点名而被频率触发挑中、从 WebUI 往群里插话，以及在受众判不出的会话里，亲手发起需要确认的工具：推审批卡到 WebUI 与终端，批了就执行。此前直接拒，模型拿到「需要批准的操作在这里不能执行。」。前提是这个群开的工具分组里有这样的工具。
-- 续做按起它的那一轮判：owner 在群里转到后台的调用，结束后的续做也能产生审批（此前拒）；owner 自己的平台请求事件（她申请入群、邀请机器人进群）那一轮里转后台的调用，续做不再能产生审批；子任务里转后台的调用，续做被拦时原因改为子任务那句。起它的人在同一会话说话不再中止续做那一轮。
-- 回给模型的拒绝语不论在哪个会话发起都是固定格式，不再指名 owner：「需要批准的操作没有执行」「被拒绝了，说明：…」「有能批的人在场时可以再申请」「子任务里需要确认的操作不上浮」；不能产生审批的那句改为「这一轮里没有 owner 的话，要 owner 确认的操作不能执行」。群成员、群里的定时任务等回合被拦下时拿到这句，不再是「需要批准的操作在这里不能执行。」。owner 在群里发起的一轮被拦下时，她拒绝时写的说明与「没人在场」「等满时限」也交给模型，群里那一轮可能转述出去。
+- 续做按起它的那一轮判：owner 在群里转到后台的调用，结束后的续做也能产生审批（此前拒）；owner 自己的平台请求事件（她申请入群、邀请机器人进群）那一轮里转后台的调用，续做不再能产生审批。起它的人在同一会话说话不再中止续做那一轮。
+- 回给模型的拒绝语不论在哪个会话发起都是固定格式，不再指名 owner：「需要批准的操作没有执行」「被拒绝了，说明：…」「有能批的人在场时可以再申请」；不能产生审批的那句改为「这一轮里没有 owner 的话，要 owner 确认的操作不能执行」。群成员、群里的定时任务等回合被拦下时拿到这句，不再是「需要批准的操作在这里不能执行。」。owner 在群里发起的一轮被拦下时，她拒绝时写的说明与「没人在场」「等满时限」也交给模型，群里那一轮可能转述出去。
 - 群里没点名、被频率触发挑中的话按说话的人算：owner 的这样一轮能产生审批；群友按他自己的等级、权限组与免确认（此前一律按无主体的默认 0 级）；这一轮能交白纸任务（此前回「这一回合没有发起人」），建的定时任务记说话的人为创建者。
 - 聊天审批认 owner 亲手发的消息时另核对一对一窗口的对端就是发言者：机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那条消息不再算 owner 在场，也不再能应答审批。
 
 ### 子任务跟派它的那一轮（@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-subtask、@aalis/plugin-reach）
 
-- api-authority 的 `AuthorityService` 加 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者是 owner 的为 owner（含它的续做），子任务随派它的那一轮，其余为 other。替换权限服务实现的要提供它。
+- api-authority 的 `AuthorityService` 加 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者都是 owner 的为 owner（续做与子任务的类别沿 `fromTurn` 随起它的那一轮，批过的调用按批的人），其余为 other。替换权限服务实现的要提供它。
 - plugin-subtask 在入站回合里派出的任务消息与 `send_to_subtask` 的追问带 `fromTurn`（派它的那一轮），不再带 `actor`；子任务那一轮的授权身份取它的参与者，与此前的 `actor` 相同，要从消息取授权身份的用 api-authority 的 `originTurnOf`。不在入站回合里派的（编排的工具节点、mcp-server）照旧带 `actor`、不带 `fromTurn`。
 
 ### 触及只按这一轮的主体，删掉污点与来源账本（@aalis/api-reach、@aalis/plugin-reach）
 
-- api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 随派它的那一轮。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
+- api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 判（类别随派它的那一轮，参与者按这次调用的）。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
 - plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。触及接线之后，owner 在群里亲手发起的一轮有本地效果，主目录是这个群所在场所的白纸。
 - plugin-reach 沙箱里的命令拿到完整的登录环境，不再按名字或值猜凭据：名字像凭据的变量（含 `TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL` 等，或按 `_` 分段有 `KEY`、`PASS`、`AUTH` 等一段的）、值里带密码的网址与密码管理器的会话令牌照样带上（此前去掉）；能进沙箱的只有主体是 owner 的一轮。只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`。登录环境里原有的 git 命令行配置（`GIT_CONFIG_COUNT` 与各组、`GIT_CONFIG_PARAMETERS`）照留，沙箱注入的几项接在原有的那组后面编号（此前整组去掉、注入的从 0 编号）。
 
@@ -329,7 +329,7 @@
 - 审批卡的改动一律照给：api-approval 的 `ApprovalFacts.diff.patch` 与 api-session-protocol 审批对象的 `facts.diff.patch` 改为必有，审批服务不再按路径（`.env`、私钥、凭据文件等）或内容（令牌前缀、「密钥名 = 值」等）猜密钥、整段不给。改 `.env`、内容像密钥的改动，WebUI、终端与 IM 私聊的卡上都逐字显示，审计里也有；替换审批服务实现的要给出 `patch`。
 - api-approval 的 `ApprovalSurface.attend` 与 `SurfaceBinding.attend` 加可选的第三个参数 `scope`（类型 `AttendScope`，`{ selfId? }`）：给了的接入只覆盖这一轮的参与者里有它的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）就是 `selfId` 的审批，只因它们算在场、只收和只能应答它们；不给的覆盖全部。替换审批服务实现的要按它判推给谁、算谁在场、认谁的应答。
 - 推给审批面客户端、还没结的审批让它一直算在场：终端推出卡之后不再按键，卡照样等到结算或满 300 秒（此前到最近一次按键满 10 分钟就进 30 秒宽限，按没人在场结算）。客户端上报离开时，推给它、还没结的对它算没收到，再报在场时同一张再推一次：WebUI 页面转到后台再回来时会再收到同一张（按 id 收，不重复），自己实现审批面的要按审批 id 去重。
-- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入，她经这个账号第一次亲手说话时建，会话管理里有她与这个账号的私聊才建，没有就等她私聊这个账号之后。她经这个账号发起的审批，在私聊里、在群里都推到这个私聊，这种审批不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场。应答只认在这个私聊里引用审批消息、正文是应答词的回复：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。卡没送达时 WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。插件新加 `events` 的必需依赖。
+- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入，她经这个账号第一次亲手说话时建，会话管理里有她与这个账号的私聊才建，没有就等她私聊这个账号之后。她经这个账号发起的审批，在私聊里、在群里都推到这个私聊，这种审批不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注；子会话里的审批在来源一行之后另有一行「子任务：…」，写根会话以下各级子会话的标题。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场。应答只认在这个私聊里引用审批消息、正文是应答词的回复：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。卡没送达时 WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。插件新加 `events` 的必需依赖。
 
 ### 通道层：多人的一轮逐动作审批（@aalis/api-tools、@aalis/api-authority、@aalis/api-approval、@aalis/api-media、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-authority、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-subtask、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-paper、@aalis/plugin-mcp-server、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history、@aalis/plugin-image-sender、@aalis/plugin-media）
 
@@ -371,7 +371,16 @@
 
 ### 通道层：群里的审批消息（@aalis/plugin-chat-approval）
 
-- plugin-chat-approval（还没发布过）在 owner 的 IM 私聊之外加群窗口的接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），10 分钟内没说话、推给他的都已结时撤掉，再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
+- plugin-chat-approval（还没发布过）在 owner 的 IM 私聊之外加群窗口的接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），10 分钟内没说话、推给他的都已结时撤掉，再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
+
+### 子任务的审批上浮（@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-cli、@aalis/plugin-chat-approval）
+
+- api-approval 的 `ApprovalSource` 删掉 `subtask`；`Approval` 加可选的 `chain`（来源链：所在会话在根会话以下时，从根会话往下到它的各级子会话的 id 与标题，不含根会话）。api-session-protocol 的审批对象加 `chain`，审批结算的来源同删 `subtask`。替换权限服务实现的，`originOf` 让续做与带 `fromTurn` 的子任务都随起它的那一轮；替换审批服务实现的，推出时按会话树填 `chain`。
+- 子任务里需要审批的调用不再一律拒：类别按派它的那一轮，人亲手那一轮派的能产生审批，与主会话同一条规则，批过的按批的人执行。推送按根会话：要 owner 确认的推到她的 WebUI、终端与 IM 私聊（她用这个机器人账号派的），几个人派出的子任务里有人自己做不了的动作，参与者审批发在父会话所在的群里。定时任务、编排、mcp-server 派的子任务照旧拒，回「这一轮里没有 owner 的话」那句；给模型的「子任务里需要确认的操作不会转给 owner」那句不再出现。
+- 审批的频率上限按根会话算：根会话连同各级子会话 10 分钟内合计 10 张（此前按会话各算各的），超出时回给模型的话写「这个会话树」。
+- 会话协议的会话摘要 `attention` 与房间组的 `attention` 按子树算：子会话在等审批时，父会话也标需要我处理，「我的」区排在最前，房间的组计一个需要处理。WebUI「后台」标签与运行状况「正在运行」里，在等审批的子会话写「等你批准」。
+- 终端的审批卡在子会话里的事实之前多一行「子任务」，写各级标题。
+- WebUI 工具卡的结算原因「子任务里的审批不转交」删掉；旧存档里这样结算的工具卡，刷新后显示为失败、不带结算句。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

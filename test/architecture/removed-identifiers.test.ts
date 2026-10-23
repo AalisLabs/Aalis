@@ -228,6 +228,8 @@ const REMOVED: Array<[string, string]> = [
   ['GIT_CONFIG_ENV', '沙箱环境整组去掉登录环境里的 git 命令行配置：原有的照留，注入的接在后面编号'],
   ['laneKey', 'agent 按会话加来源分道、同一道的新消息中止旧回合：每个会话同一时刻最多一轮，新消息不打断（通道层）'],
   ['archiveIncomingMessageInOrder', 'agent 按道串行的入站归档队列：输入改在进入一轮时归档'],
+  ['settledBySubtask', 'WebUI 工具卡上子任务的审批不转交的结算原因：子任务里的审批与主会话同一规则'],
+  ['不上浮', '子任务里的审批一律拒：子任务与续做一样随起它的那一轮，推送按根会话'],
 ];
 
 /**

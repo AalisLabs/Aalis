@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：显示名，推到私聊的审批消息（含来源一行）与发在群里的审批消息、提示与过期行
+// 本插件自己的原文字典：显示名，推到私聊的审批消息（含来源一行）与发在群里的审批消息（子会话里的另有子任务一行）、提示与过期行
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -7,6 +7,8 @@ const SOURCE = {
   request: '需要你批准：{tool}',
   source: '来源：{kind, select, group {群} private {私聊} other {会话}} {id}{name}',
   sourceName: '（{name}）',
+  subtask: '子任务：{chain}',
+  chainStep: '{head} › {tail}',
   factCommand: '命令：{value}',
   factCwd: '目录：{value}',
   factFile: '文件：{value}',

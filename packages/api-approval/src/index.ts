@@ -24,13 +24,14 @@ import { t } from './texts.js';
 /**
  * 发起回合的类别，由发起方（第一方是 plugin-authority 的执行守卫）按这一轮从哪里来算出，不看会话类型与受众，也不判是不是
  * owner（不按授权身份算：owner 建的定时任务会把创建者回填成授权身份）：
- * - `hand`：人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话），不论在哪个会话、是不是 owner，以及它的续做；
- * - `subtask`：子任务回合；
- * - `autonomous`：定时任务、编排、空闲与主动发言、开话题、平台请求事件等其余注入与它们的续做，以及不在入站回合里的调用。
+ * - `hand`：人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话），不论在哪个会话、是不是 owner；还有沿起它的那一轮
+ *   回到这样一轮的续做，以及它派出的子任务；
+ * - `autonomous`：定时任务、编排、空闲与主动发言、开话题、平台请求事件等其余注入与它们的续做、派出的子任务，以及不在入站回合里的
+ *   调用（含编排的工具节点、mcp-server 派出的子任务）。
  *
  * 能不能产生审批由审批服务按类别与参与者判；不能的一律直接拒绝，不推给任何审批面。
  */
-export type OriginKind = 'hand' | 'subtask' | 'autonomous';
+export type OriginKind = 'hand' | 'autonomous';
 
 /** 发起回合的类别与参与者 */
 export interface ApprovalOrigin {
@@ -102,6 +103,11 @@ export interface Approval {
   /** 到期的时刻（毫秒时间戳），是这张审批自己的事实：审批服务推出时按它的等待时限填，到时没人应答即按过期结算 */
   expiresAt: number;
   state: ApprovalState;
+  /**
+   * 来源链：所在会话不是根会话时，从根会话往下到它的各级子会话（不含根会话，按层级先后）的 id 与标题（没有标题时是会话名，
+   * 子任务没取名的是默认名），审批面据它写是哪个子任务；所在会话就是根会话时没有。审批服务推出时按会话树填
+   */
+  chain?: { id: string; title: string | TextRef }[];
 }
 
 /**
@@ -109,21 +115,12 @@ export interface Approval {
  * - `answer`：能批的人应答（批准或拒绝）；
  * - `absent`：没人在场（发起时，或等待中在场的审批面都断开、变为不在场，且宽限内没有恢复）；
  * - `timeout`：等满时限；
- * - `ineligible`：发起回合的类别或参与者不能产生审批（不是人亲手发起的，或参与者里没有人能批）；
- * - `subtask`：子任务回合的审批不上浮；
- * - `rate-limit`：同一会话的审批超过频率上限；
+ * - `ineligible`：发起回合的类别或参与者不能产生审批（起它的那一轮不是人亲手的，或参与者里没有人能批）；
+ * - `rate-limit`：同一会话树（根会话连同各级子会话）的审批超过频率上限；
  * - `turn-ended`：发起它的回合结束或中止；
  * - `shutdown`：审批服务停止。
  */
-export type ApprovalSource =
-  | 'answer'
-  | 'absent'
-  | 'timeout'
-  | 'ineligible'
-  | 'subtask'
-  | 'rate-limit'
-  | 'turn-ended'
-  | 'shutdown';
+export type ApprovalSource = 'answer' | 'absent' | 'timeout' | 'ineligible' | 'rate-limit' | 'turn-ended' | 'shutdown';
 
 /** 一个审批怎样结算的：结局、从哪里来、结算的时刻（毫秒时间戳），有人应答的带上应答人 */
 export interface ApprovalSettlement {
@@ -191,8 +188,8 @@ export interface ApprovalIdentity {
 
 /**
  * 接入的限定，两种：
- * - 群窗口（给 `window`，群窗口的根会话 id；根会话已经定了机器人账号，不再给 selfId）：只覆盖这个窗口发起的、不是只有 owner
- *   能批的审批。群窗口是公开的面，不发只有 owner 能批的；
+ * - 群窗口（给 `window`，群窗口的根会话 id；根会话已经定了机器人账号，不再给 selfId）：只覆盖所在会话的根会话就是这个窗口的
+ *   （连同它下面的子会话）、不是只有 owner 能批的审批。群窗口是公开的面，不发只有 owner 能批的；
  * - IM 私聊（不给 `window`）：只覆盖只有 owner 能批的、这一轮的参与者里有接入的身份、且所在会话的根会话的机器人账号
  *   （`originChat.selfId`）等于 `selfId` 的审批，两边都没有账号算相同
  */

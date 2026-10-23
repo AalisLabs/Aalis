@@ -32,6 +32,7 @@ const SOURCE = {
   cardHeading: '需要批准',
   cardSubject: '{tool} · 会话 {session}',
   cardSubjectWaiting: '{tool} · 会话 {session} · 还有 {count, number} 张',
+  factSubtask: '子任务',
   factCommand: '命令',
   factCwd: '目录',
   factFile: '文件',

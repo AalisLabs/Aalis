@@ -137,7 +137,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的参与者**：agent 构造工具上下文时用 api-authority 的 `originTurnOf(这一轮的输入, isOwner)` 拼会话、`platform`、`userId`、`participants` 与 `inbound`：各条输入的 `actor`（没有时是发言者）作授权身份，按身份去重、owner 的各个身份合成一个，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留参与者语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取起它的那一轮的发言者、参与者取那一轮的，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。子任务插件在入站回合里派出的任务消息同样不带 `actor`，参与者取派它的那次调用的，`userId` 是消息本身的 `parent:<父会话 id>`。
+**ToolCallContext 的参与者**：agent 构造工具上下文时用 api-authority 的 `originTurnOf(这一轮的输入, isOwner)` 拼会话、`platform`、`userId`、`participants` 与 `inbound`：各条输入的 `actor`（没有时是发言者）作授权身份，按身份去重、owner 的各个身份合成一个，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留参与者语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取起它的那一轮的发言者、参与者取那一轮的，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。子任务插件在入站回合里派出的任务消息同样不带 `actor`，参与者取派它的那次调用的，执行守卫同样按派它的那一轮判类别，`userId` 是消息本身的 `parent:<父会话 id>`。
 
 **新消息怎么处理（通道层）**：新消息从不打断在跑的一轮：真人消息叠进由真人消息开的那一轮或排在它之后，带来源的注入各自成一轮。规则见 [plugin-agent](../plugins/plugin-agent.md) 的「新消息怎么处理」。
 

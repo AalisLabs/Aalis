@@ -1,13 +1,14 @@
 // ════════════════════════════════════════════════════════════
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
-// 审批只有一种，发起方给出这一张谁能批（canAnswer）并标出只有 owner 能批的。人亲手发起的一轮（含它的续做，不论在哪个会话）、
-// 参与者里有人能批才能产生审批，子任务的不上浮，其余直接拒绝，不推给任何审批面。
+// 审批只有一种，发起方给出这一张谁能批（canAnswer）并标出只有 owner 能批的。人亲手发起的一轮（含它的续做与它派出的子任务，
+// 类别沿起它的那一轮读，不论在哪个会话）、参与者里有人能批才能产生审批，其余直接拒绝，不推给任何审批面。
 // 推给谁、算谁在场、认谁的应答是一条规则：客户端的身份能批这一张，且它的接入覆盖这张审批：没限定的（WebUI、终端）全部覆盖；
-// 限定了群窗口的覆盖这个窗口发起的、不是只有 owner 能批的；IM 私聊只覆盖只有 owner 能批的、这一轮的参与者里有它、审批所在
-// 会话的根会话经这个机器人账号的。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时推给它、还没结的卡对它
-// 算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、
-// 覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 限定了群窗口的覆盖根会话是这个窗口的（连同它的子会话）、不是只有 owner 能批的；IM 私聊只覆盖只有 owner 能批的、这一轮的
+// 参与者里有它、审批所在会话的根会话经这个机器人账号的。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时推给
+// 它、还没结的卡对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出那一刻
+// 算起；频率上限按根会话连同它的子会话合计。子会话里的审批对象带来源链（根会话以下的各级子会话）。等满 300 秒、覆盖它的在场
+// 客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
 // 应答先答先得：已结算的一律回已结算；还在等的，id 由本服务签发、归这个接入覆盖（否则不认识），应答人能批这一张，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
@@ -50,7 +51,7 @@ const PRESENCE_WINDOW_MS = 10 * 60_000;
  * 桌面上切一下标签页，都会让连接挂起或页面转为不可见，回来时重连、重报在场，卡片照常等着。不延长总的等待时限
  */
 const ABSENCE_GRACE_MS = 30_000;
-/** 频率上限：同一会话在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
+/** 频率上限：同一会话树（根会话连同各级子会话）在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
 const RATE_WINDOW_MS = 10 * 60_000;
 const RATE_LIMIT = 10;
 /** 记住最近结算的这么多个 id：后到的应答回 approval-settled，更早的按不认识的 id 处理 */
@@ -78,8 +79,8 @@ interface Attendee {
 interface Pending {
   id: string;
   req: ApprovalRequest;
-  /** 所在会话的根会话：限定了群窗口的接入按它的 id 认，限定了机器人账号的按它的机器人账号认 */
-  root?: { id: string; bot?: string };
+  /** 所在会话的根会话：限定了群窗口的接入按它的 id 认，限定了机器人账号的按它的机器人账号认，频率上限按它的 id 算 */
+  root?: SessionRoot;
   signal?: AbortSignal;
   /** 发起的时刻，等待时长从这里算 */
   at: number;
@@ -97,6 +98,13 @@ interface Pending {
 /** 工具卡认审批用的几项：推出的审批对象，或发起时就结算、没有对象的请求 */
 type ApprovalRef = Pick<Approval, 'id' | 'sessionId' | 'turnId' | 'callId'>;
 
+/** 会话的根会话：id 与机器人账号（`originChat.selfId`）；会话在它以下时另带来源链（审批对象的 chain） */
+interface SessionRoot {
+  id: string;
+  bot?: string;
+  chain?: Approval['chain'];
+}
+
 interface ApprovalDeps {
   events: Events;
   logger: Logger;
@@ -104,8 +112,8 @@ interface ApprovalDeps {
   auditFile: string;
   /** 工具定义上声明的展示种类：卡片上的事实按它取 */
   displaySpec(tool: string): ToolDisplay | undefined;
-  /** 会话的根会话：id 与机器人账号（`originChat.selfId`）；不在会话表里时为 undefined */
-  rootOf(sessionId: string): { id: string; bot?: string } | undefined;
+  /** 会话的根会话；会话或某一级父会话不在会话表里时为 undefined */
+  rootOf(sessionId: string): SessionRoot | undefined;
   /** 一个审批推出或结算了（结算时带上怎样结算的，发起时就结算的也算）：会话列表与工具卡跟着变 */
   changed(approval: ApprovalRef, settlement?: ApprovalSettlement): void;
 }
@@ -143,9 +151,8 @@ const REASONS: Record<Exclude<ApprovalSource, 'answer'>, [reason: string, again:
   absent: ['没人在场，没有人能批准', '有能批的人在场时可以再申请；不要换别的办法绕过，先说明需要批准什么'],
   timeout: [`等了 ${APPROVAL_WAIT_MS / 1000} 秒没有人应答`, '可以再申请；不要换别的办法绕过'],
   ineligible: ['这一轮里没有 owner 的话，要 owner 确认的操作不能执行', '不能；不要换别的办法绕过'],
-  subtask: ['子任务里需要确认的操作不上浮，请在发起它的会话里执行', '在子任务里不能'],
   'rate-limit': [
-    `这个会话 ${RATE_WINDOW_MS / 60_000} 分钟内的审批已达 ${RATE_LIMIT} 张的上限`,
+    `这个会话树（根会话连同各级子会话）${RATE_WINDOW_MS / 60_000} 分钟内的审批已达 ${RATE_LIMIT} 张的上限`,
     '稍后可以；先停下来说明在做什么',
   ],
   'turn-ended': ['发起它的回合已结束', '可以在新的一轮里再申请'],
@@ -169,7 +176,7 @@ export function createApprovals(deps: ApprovalDeps) {
   const surfaces = new Set<SurfaceRecord>();
   /** 每个会话的审批队列：队首推出了就有 approval，其余排着 */
   const queues = new Map<string, Pending[]>();
-  /** 每个会话最近排进队的时刻，算频率上限：发起时就结算的不算，排着没推出就结算的退还 */
+  /** 每个会话树（按根会话 id）最近排进队的时刻，算频率上限：发起时就结算的不算，排着没推出就结算的退还 */
   const cards = new Map<string, number[]>();
   /** 最近结算的审批 id */
   const settledIds = createBoundedMap<string, true>({ max: SETTLED_MEMORY });
@@ -300,7 +307,7 @@ export function createApprovals(deps: ApprovalDeps) {
       void deps.events.emit('approval:settled', approval);
     } else if (index >= 0) {
       // 排进过队、没推出就结算了：退还它占的频率额度
-      const times = cards.get(sessionId) ?? [];
+      const times = cards.get(rateKey(pending)) ?? [];
       const at = times.indexOf(pending.at);
       if (at >= 0) times.splice(at, 1);
     }
@@ -363,6 +370,7 @@ export function createApprovals(deps: ApprovalDeps) {
       contentHash: pending.contentHash,
       expiresAt: now + APPROVAL_WAIT_MS,
       state: 'pending',
+      ...(pending.root?.chain && { chain: pending.root.chain }),
     };
     pending.approval = approval;
     pending.timer = setTimeout(() => settle(pending, 'expired', 'timeout'), APPROVAL_WAIT_MS);
@@ -372,8 +380,9 @@ export function createApprovals(deps: ApprovalDeps) {
     recheck();
   }
 
-  const recentCards = (sessionId: string, at: number) =>
-    (cards.get(sessionId) ?? []).filter(t => at - t < RATE_WINDOW_MS);
+  /** 频率额度记在哪：所在会话的根会话，根会话不在会话表里时退回会话自己 */
+  const rateKey = (pending: Pending) => pending.root?.id ?? pending.req.sessionId;
+  const recentCards = (key: string, at: number) => (cards.get(key) ?? []).filter(t => at - t < RATE_WINDOW_MS);
 
   /** 发起时就结算的：服务已停、回合已中止、发起者不能产生审批、没人在场、超过频率上限 */
   function refusalOf(pending: Pending): [SettledState, ApprovalSource] | undefined {
@@ -381,10 +390,9 @@ export function createApprovals(deps: ApprovalDeps) {
     const { origin } = req;
     if (closed) return ['cancelled', 'shutdown'];
     if (signal?.aborted) return ['cancelled', 'turn-ended'];
-    if (origin.kind === 'subtask') return ['denied', 'subtask'];
     if (origin.kind !== 'hand' || !origin.participants.some(who => req.canAnswer(who))) return ['denied', 'ineligible'];
     if (present(at, pending).length === 0) return ['expired', 'absent'];
-    if (recentCards(req.sessionId, at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
+    if (recentCards(rateKey(pending), at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
     return undefined;
   }
 
@@ -411,6 +419,7 @@ export function createApprovals(deps: ApprovalDeps) {
         turnId,
         callId,
         origin,
+        ...(pending.root?.chain && { chain: pending.root.chain }),
         tool,
         facts: pending.facts,
         contentHash: pending.contentHash,
@@ -421,7 +430,8 @@ export function createApprovals(deps: ApprovalDeps) {
         settle(pending, ...refusal);
         return;
       }
-      cards.set(sessionId, [...recentCards(sessionId, at), at]);
+      const key = rateKey(pending);
+      cards.set(key, [...recentCards(key, at), at]);
 
       if (signal) {
         const onAbort = () => settle(pending, 'cancelled', 'turn-ended');

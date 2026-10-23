@@ -151,9 +151,16 @@ async function run(caps: Caps): Promise<void> {
     logger: logger.use,
     auditFile: join(caps.paths.use.state, 'audit', 'approvals.jsonl'),
     displaySpec,
+    // 来源链是根会话以下的各级父会话与它自己。找得到根会话时父会话链完整、不成环，ancestorsOf 的第一级就是它
     rootOf: sessionId => {
-      const root = rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id));
-      return root && { id: root.id, bot: root.originChat?.selfId };
+      const info = sm.getSession(sessionId);
+      const root = rootSessionOf(info, id => sm.getSession(id));
+      if (!info || !root) return undefined;
+      return {
+        id: root.id,
+        bot: root.originChat?.selfId,
+        ...(root !== info && { chain: [...sessions.ancestorsOf(info).slice(1), info].map(sessions.labelOf) }),
+      };
     },
     changed: (card, settlement) => {
       timeline.approval(card, settlement);

@@ -6,6 +6,8 @@ export default defineLocale<Source>()({
   request: 'Needs your approval: {tool}',
   source: 'From: {kind, select, group {group} private {private chat} other {session}} {id}{name}',
   sourceName: ' ({name})',
+  subtask: 'Subtask: {chain}',
+  chainStep: '{head} › {tail}',
   factCommand: 'Command: {value}',
   factCwd: 'Directory: {value}',
   factFile: 'File: {value}',

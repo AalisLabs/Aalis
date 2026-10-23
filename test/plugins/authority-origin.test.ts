@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { OriginKind } from '../../packages/api-approval/src/index.js';
 import { type OriginTurn, originTurnOf } from '../../packages/api-authority/src/index.js';
 import { markTriggered } from '../../packages/api-trigger/src/index.js';
@@ -10,9 +10,9 @@ import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js'
 // ════════════════════════════════════════════════════════════
 // 发起回合的类别：按这一轮从哪里来判，不看会话类型与受众，也不判是不是 owner。
 // - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）为 hand，不论在哪个会话、是谁；
-// - 子任务回合为 subtask；
-// - 续做（带起它的那一轮 fromTurn）与它延续的那一轮同一类别；几个人的一轮同样按这几条判；
-// - 其余注入与不在入站回合里的调用为 autonomous：按授权身份判会把 owner 建的定时任务当成 owner 亲手。
+// - 子任务与续做一样随起它的那一轮（fromTurn）：与它同一类别；几个人的一轮同样按这几条判；
+// - 其余注入（含没带起它的那一轮的子任务）与不在入站回合里的调用为 autonomous：按授权身份判会把 owner 建的定时任务当成
+//   owner 亲手。
 // 是不是 owner 由用到类别的地方（审批服务等）按身份判，所以类别对 owner 与群成员一样。
 // ════════════════════════════════════════════════════════════
 
@@ -39,6 +39,28 @@ const resumed = (sessionId: string, from: FromTurn): OriginTurn => ({
   participants: from.participants,
   inbound: { source: 'bg:bg_x_1', fromTurn: from },
 });
+
+/** 子任务回合：发言者记作父会话，授权身份取派它的那一轮的参与者 */
+const subtaskOf = (parent: string, from: FromTurn): OriginTurn => ({
+  sessionId: `${parent}::abcd1234`,
+  platform: from.platform,
+  userId: `parent:${parent}`,
+  participants: from.participants,
+  inbound: { source: 'subtask', fromTurn: from },
+});
+
+/** 子任务那一轮的事实：派它的是 from 那一轮 */
+const subtaskFacts = (parent: string, from: FromTurn): FromTurn => ({
+  platform: from.platform,
+  userId: `parent:${parent}`,
+  participants: from.participants,
+  source: 'subtask',
+  fromTurn: from,
+});
+
+/** 定时任务那一轮的事实：授权身份是创建者 owner */
+const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER], source: 'scheduler' };
+const CHILD = `${WEBUI}::abcd1234`;
 
 const rows: Array<[string, OriginTurn, OriginKind]> = [
   ['owner 在 WebUI 亲手发来', { sessionId: WEBUI, ...OWNER, participants: [OWNER], inbound: {} }, 'hand'],
@@ -74,26 +96,24 @@ const rows: Array<[string, OriginTurn, OriginKind]> = [
     }),
     'autonomous',
   ],
+  ['子任务：派自 owner 亲手那一轮', subtaskOf(WEBUI, handTurn(OWNER)), 'hand'],
+  ['子任务：派自群成员那一轮', subtaskOf(GROUP, handTurn(MEMBER)), 'hand'],
+  ['子任务：派自定时任务那一轮（授权身份是 owner）', subtaskOf(WEBUI, SCHEDULED), 'autonomous'],
   [
-    '续做：子任务回合里起的',
-    resumed(`${WEBUI}::abcd1234`, {
-      platform: 'webui',
-      userId: `parent:${WEBUI}`,
-      participants: [OWNER],
-      source: 'subtask',
-    }),
-    'subtask',
-  ],
-  [
-    '子任务回合',
+    '没带起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
     {
-      sessionId: `${WEBUI}::abcd1234`,
+      sessionId: CHILD,
       platform: 'webui',
       userId: `parent:${WEBUI}`,
       participants: [OWNER],
       inbound: { source: 'subtask' },
     },
-    'subtask',
+    'autonomous',
+  ],
+  [
+    '子任务里转后台的调用的续做：派子任务的是 owner 亲手那一轮',
+    resumed(CHILD, subtaskFacts(WEBUI, handTurn(OWNER))),
+    'hand',
   ],
   [
     '几个人的一轮：owner 点名开轮、群成员的话叠进来',
@@ -116,21 +136,16 @@ describe('权限服务的 originOf', () => {
     // @ts-expect-error originKind 只收这一轮，不收判 owner 的函数
     expect(originKind(turn, () => true)).toBe('hand');
   });
+
+  it('类别只有 hand 与 autonomous 两值：子任务与续做一样随起它的那一轮，不单设一类（类型层断言，带测试的类型检查守着）', () => {
+    expectTypeOf<OriginKind>().toEqualTypeOf<'hand' | 'autonomous'>();
+  });
 });
 
 // ════════════════════════════════════════════════════════════
-// 这一轮的主体：人亲手那一轮（含它的续做）的参与者是 owner 即 owner；子任务随派它的那一轮（任务消息带着的 fromTurn），
-// 不按子任务回合自己的授权身份；其余（自主回合、没带 fromTurn 的子任务）为 other。
+// 这一轮的主体：类别为 hand（含随起它的那一轮的续做与子任务）且参与者都是 owner 即 owner，参与者是这次调用的（子任务那一轮
+// 取派它的那一轮的，批过的是批的人）；其余（自主回合、没带 fromTurn 的子任务）为 other。
 // ════════════════════════════════════════════════════════════
-
-/** 子任务回合：发言者记作父会话，授权身份取派它的那一轮的参与者 */
-const subtaskOf = (parent: string, from: FromTurn): OriginTurn => ({
-  sessionId: `${parent}::abcd1234`,
-  platform: from.platform,
-  userId: `parent:${parent}`,
-  participants: from.participants,
-  inbound: { source: 'subtask', fromTurn: from },
-});
 
 /** 那一轮里转后台的调用的续做那一轮的事实 */
 const resumedFacts = (from: FromTurn): FromTurn => ({
@@ -140,19 +155,6 @@ const resumedFacts = (from: FromTurn): FromTurn => ({
   source: 'bg:bg_x_1',
   fromTurn: from,
 });
-
-/** 子任务那一轮的事实：派它的是 from 那一轮 */
-const subtaskFacts = (parent: string, from: FromTurn): FromTurn => ({
-  platform: from.platform,
-  userId: `parent:${parent}`,
-  participants: from.participants,
-  source: 'subtask',
-  fromTurn: from,
-});
-
-/** 定时任务那一轮的事实：授权身份是创建者 owner */
-const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER], source: 'scheduler' };
-const CHILD = `${WEBUI}::abcd1234`;
 
 const principals: Array<[string, OriginTurn, 'owner' | 'other']> = [
   ['owner 在群里亲手发来', { sessionId: GROUP, ...OWNER_ON_QQ, participants: [OWNER_ON_QQ], inbound: {} }, 'owner'],
@@ -196,6 +198,11 @@ const principals: Array<[string, OriginTurn, 'owner' | 'other']> = [
     '子任务：派自 owner 与群成员那一轮',
     subtaskOf(GROUP, { platform: 'onebot', participants: [OWNER_ON_QQ, MEMBER] }),
     'other',
+  ],
+  [
+    '子任务里批过的调用：派自 owner 与群成员那一轮，参与者已换成批的人 owner',
+    { ...subtaskOf(GROUP, { platform: 'onebot', participants: [OWNER_ON_QQ, MEMBER] }), participants: [OWNER_ON_QQ] },
+    'owner',
   ],
   [
     '自主回合：owner 建的定时任务',

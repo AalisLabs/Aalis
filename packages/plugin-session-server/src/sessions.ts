@@ -3,7 +3,8 @@
 // 会话设置（行、层、写入与写过的各处，转给会话设置的管理面，层表取自 api-session-settings）；已读。会话本身都在
 // session-manager 里，这里只做投影与转发。
 // 「需要我处理」由未结的审批驱动；房间按接管的适配器实例分组，组名取实例的显示名。
-// 摘要里有几项按会话树算：在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话；聊天窗口与场所取根会话的。
+// 摘要里有几项按会话树算：需要我处理、在跑的后台工作数与 token 合计含各级子会话，子会话另带各级父会话；聊天窗口与场所取
+// 根会话的。
 // ════════════════════════════════════════════════════════════
 
 import { saveFailureText } from '@aalis/api-host-config';
@@ -118,6 +119,9 @@ export function createSessions(deps: SessionDeps) {
     return parent ? [...ancestorsOf(parent), parent] : [];
   };
 
+  /** 会话树里的一级：id 与标题（没取标题的是会话名或默认名），会话摘要的 ancestors 与审批的来源链同一写法 */
+  const labelOf = (info: SessionInfo) => ({ id: info.id, title: info.title || sessionLabel(info) });
+
   /** 各级子会话 */
   const descendantsOf = (info: SessionInfo): SessionInfo[] =>
     info.children.flatMap(id => {
@@ -155,7 +159,7 @@ export function createSessions(deps: SessionDeps) {
     const seenAt = seen.get(info.id);
     const below = descendantsOf(info);
     const tokens = tokensOf([info, ...below]);
-    const ancestors = ancestorsOf(info).map(parent => ({ id: parent.id, title: parent.title || sessionLabel(parent) }));
+    const ancestors = ancestorsOf(info).map(labelOf);
     const reason = info.status === 'error' ? info.lastTurn?.error : undefined;
     const place = placeOf(info);
     return {
@@ -176,7 +180,7 @@ export function createSessions(deps: SessionDeps) {
       running: deps.isRunning(info.id),
       error: info.status === 'error',
       unread: !room && info.lastReplyAt !== undefined && (seenAt === undefined || info.lastReplyAt > seenAt),
-      attention: deps.hasApproval(info.id),
+      attention: [info, ...below].some(each => deps.hasApproval(each.id)),
       archived: info.status === 'archived',
       background:
         (tasks.get(info.id) ?? 0) + below.filter(child => deps.isRunning(child.id) || tasks.has(child.id)).length,
@@ -215,7 +219,7 @@ export function createSessions(deps: SessionDeps) {
       };
       group.rooms++;
       if (info.originChat?.selfId !== undefined) group.accounts.add(info.originChat.selfId);
-      if (deps.hasApproval(info.id)) group.attention++;
+      if ([info, ...descendantsOf(info)].some(each => deps.hasApproval(each.id))) group.attention++;
       byKey.set(key, group);
     }
     return [...byKey.values()]
@@ -416,5 +420,5 @@ export function createSessions(deps: SessionDeps) {
     },
   };
 
-  return { handlers, summarize, groups, requireSession, sectionOf, ancestorsOf, descendantsOf };
+  return { handlers, summarize, groups, requireSession, sectionOf, ancestorsOf, descendantsOf, labelOf };
 }

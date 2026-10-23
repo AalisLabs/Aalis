@@ -419,7 +419,6 @@ const SOURCE = {
   settledByAbsent: '没人在场',
   settledByTimeout: '等待超时',
   settledByIneligible: '这一轮不能产生审批',
-  settledBySubtask: '子任务里的审批不转交',
   settledByRateLimit: '审批太频繁',
   settledByTurnEnded: '回合已结束',
   settledByShutdown: '审批服务已停止',

@@ -2,8 +2,9 @@
 // 聊天审批：IM 里的审批面（登记名 chat），两种接入：
 // - owner 的 IM 私聊：每个（owner 的 IM 身份，机器人账号）一份，限定这个账号。她经这个账号亲手说话（私聊与群里，点没点名都算）
 //   即在场；她经这个账号发起的、只有她能批的审批推到她与这个账号的私聊，卡上写来源；
-// - 群窗口：每个（群窗口，发言者）一份，限定这个窗口（根会话）。他在这个群里亲手说话即在场；这个群发起的参与者审批、他能批的
-//   发在这个群里，同一张只发一条。
+// - 群窗口：每个（群窗口，发言者）一份，限定这个窗口（根会话）。他在这个群里亲手说话即在场；这个群发起的参与者审批（连同它的
+//   子会话里的）、他能批的发在这个群里，同一张只发一条。
+// 子会话里的审批另写一行是哪个子任务（审批对象的来源链）。
 // 引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。接入不在场（最近一次亲手说话已过在场时限、推给它的都已结）
 // 时撤掉，再说话时重建。只经契约组合，不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，群窗口取会话表记下的
 // 多方标记，引用取投递结果里的平台消息 id。
@@ -90,13 +91,24 @@ function fact(value: string): string | TextRef {
 }
 
 /**
- * 审批消息。推到私聊的（给了 source，来源一行）：工具，来源，命令、目录、文件、改动、参数各一行，末行是怎么回复；发在群里的
- * （不给 source：就发在发起它的这个群里）：工具与各项事实，一行写这一轮里有人自己做不了，末行是能做的人怎么回复。末行写还剩
- * 几分钟（按审批的到期时刻算，不足一分钟按一分钟，墙钟已过到期时刻、等待的计时器还没到时也写一分钟）
+ * 会话名放进卡上的一行：换行与制表符换成空格，再与事实一样清洗并截断（群名、子任务名由别人或模型起，不能另起一行冒充来源或
+ * 事实，也不能把消息撑长）
  */
-function requestText({ tool, facts, expiresAt }: Approval, source: TextRef | undefined, now: number): TextRef {
+const oneLine = (name: string) => fact(name.replace(/[\n\t]/g, ' '));
+
+/**
+ * 审批消息。推到私聊的（给了 source，来源一行）：工具，来源，子任务，命令、目录、文件、改动、参数各一行，末行是怎么回复；
+ * 发在群里的（不给 source：就发在发起它的这个群里）：工具，子任务，各项事实，一行写这一轮里有人自己做不了，末行是能做的人怎么
+ * 回复。子任务一行只在子会话里的审批有，写来源链的各级标题（默认名是文字对象，原样作参数）。末行写还剩几分钟（按审批的到期时刻
+ * 算，不足一分钟按一分钟，墙钟已过到期时刻、等待的计时器还没到时也写一分钟）
+ */
+function requestText({ tool, facts, expiresAt, chain }: Approval, source: TextRef | undefined, now: number): TextRef {
   const { command, cwd, diff, params } = facts;
+  const titles = (chain ?? []).map(({ title }) => (typeof title === 'string' ? oneLine(title) : title));
+  const subtask =
+    titles.length === 0 ? [] : [t('subtask', { chain: titles.reduce((head, tail) => t('chainStep', { head, tail })) })];
   const lines = [
+    ...subtask,
     ...(command === undefined ? [] : [t('factCommand', { value: fact(command) })]),
     ...(cwd === undefined ? [] : [t('factCwd', { value: fact(cwd) })]),
     ...(diff ? [t('factFile', { value: fact(diff.path) }), t('factPatch', { value: fact(diff.patch) })] : []),
@@ -251,8 +263,7 @@ function runChatApproval({
     return t('source', {
       kind: chatWindow ? (chatWindow.multiParty ? 'group' : 'private') : 'session',
       id: sanitizeForCard(chatWindow?.targetId ?? sessionId),
-      name:
-        root?.name === undefined ? '' : t('sourceName', { name: sanitizeForCard(root.name.replace(/[\n\t]/g, ' ')) }),
+      name: root?.name === undefined ? '' : t('sourceName', { name: oneLine(root.name) }),
     });
   }
 
