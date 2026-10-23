@@ -40,7 +40,7 @@ export default definePlugin({
 
 | 相位（钩子键） | 数据 | 占据者 | 默认动作 |
 |---|---|---|---|
-| `inbound:command` | `InboundPhaseData` | plugin-commands；plugin-chat-approval（owner 回审批的消息） | （无）|
+| `inbound:command` | `InboundPhaseData` | plugin-commands；plugin-chat-approval（回审批的消息） | （无）|
 | `inbound:trigger` | `InboundPhaseData` | 生效的触发插件（如 plugin-trigger-policy） | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |

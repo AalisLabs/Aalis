@@ -11,7 +11,7 @@
 三类使用方：
 
 - **发起方**（执行守卫）：`request(req, signal)` 发起一个审批并等它结算。拒绝时结局里带着回给模型的话。
-- **审批面**（WebUI、终端、owner 与她的 IM 私聊、群窗口）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端、owner 的一个 IM 身份经一个机器人账号、群窗口里的一个人）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。IM 私聊这一面由 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 登记。
+- **审批面**（WebUI、终端、owner 与她的 IM 私聊、群窗口）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端、owner 的一个 IM 身份经一个机器人账号、群窗口里的一个人）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。IM 私聊与群窗口这两种接入由 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 登记（审批面 `chat`）。
 - **展示方**：`list()` 列出推出、还没结的审批；`approval:created`、`approval:settled` 事件。
 
 目前审批的目标只有工具调用。
