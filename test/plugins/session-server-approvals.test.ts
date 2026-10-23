@@ -222,13 +222,12 @@ const pushed = (c: ReturnType<typeof client>) => c.notifications('approval/reque
 const approve = (c: ReturnType<typeof client>, approval: Approval, note?: string) =>
   c.call('approval/respond', { approvalId: approval.id, decision: 'approve', contentHash: approval.contentHash, note });
 
-describe('谁能产生审批：这一轮里有 owner 的话（人亲手发起，含它的续做）', () => {
-  const cases: Array<[string, OriginKind, typeof OWNER, 'card' | 'ineligible' | 'subtask']> = [
+describe('谁能产生审批：这一轮里有 owner 的话（人亲手发起，含它的续做与派出的子任务）', () => {
+  const cases: Array<[string, OriginKind, typeof OWNER, 'card' | 'ineligible']> = [
     ['owner 亲手发起', 'hand', OWNER, 'card'],
     ['owner 在 QQ 上亲手发起', 'hand', OWNER_QQ, 'card'],
     ['群成员亲手发起', 'hand', MEMBER, 'ineligible'],
-    ['子任务回合', 'subtask', OWNER, 'subtask'],
-    // 哪些回合归 autonomous（定时任务回填了 owner 的授权身份、它触发的编排等）在 authority-origin.test.ts 里测
+    // 哪些回合归 autonomous（定时任务回填了 owner 的授权身份、它触发的编排、它们派的子任务等）在 authority-origin.test.ts 里测
     ['自主回合', 'autonomous', OWNER, 'ineligible'],
   ];
 
@@ -247,11 +246,6 @@ describe('谁能产生审批：这一轮里有 owner 的话（人亲手发起，
     expect(r.outcome).toMatchObject({ approved: false, source: expected });
     expect(pushed(c)).toEqual([]);
     expect(service().list()).toEqual([]);
-    if (expected === 'subtask') {
-      expect(r.outcome?.approved === false && r.outcome.message).toContain(
-        '子任务里需要确认的操作不上浮，请在发起它的会话里执行',
-      );
-    }
   });
 });
 
@@ -700,11 +694,12 @@ describe('排队与频率上限', () => {
     expect(pushed(c)).toHaveLength(1);
   });
 
-  it('排着、没推出就结算的（回合中止）不占额度', async () => {
-    const { mine, connect, request, flush } = await setup();
+  it('排着、没推出就结算的（回合中止）不占额度：子会话里排着的退还给它的会话树', async () => {
+    const { sm, mine, connect, request, flush } = await setup();
     const c = await connect();
+    const child = (await sm.createChildSession(mine)).id;
     const turn = new AbortController();
-    for (let i = 0; i < 10; i++) request(mine, {}, turn.signal);
+    for (let i = 0; i < 10; i++) request(child, {}, turn.signal);
     await flush();
     expect(pushed(c)).toHaveLength(1);
     turn.abort();
@@ -749,6 +744,91 @@ describe('排队与频率上限', () => {
     request(mine);
     await flush();
     expect(pushed(c)).toHaveLength(12);
+  });
+});
+
+describe('子会话里的审批：按会话树', () => {
+  it('推出的审批对象带来源链：根会话以下到所在会话的各级子会话的 id 与标题（没取名的是默认名，WebUI 收到渲染好的文字）；根会话的没有；审计的请求行带同一份', async () => {
+    const { sm, connect, request, flush, audit } = await setup();
+    const c = await connect();
+    const named = await sm.createChildSession(ROOM, { name: '整理资料' });
+    const grand = await sm.createChildSession(named.id, { name: '细分' });
+    const unnamed = await sm.createChildSession(ROOM);
+    const origin = originOf('hand', OWNER_QQ);
+    for (const sessionId of [ROOM, named.id, grand.id, unnamed.id]) request(sessionId, { origin });
+    await flush();
+    const bySession = new Map(pushed(c).map(approval => [approval.sessionId, approval]));
+    expect(bySession.get(ROOM)).not.toHaveProperty('chain');
+    expect(bySession.get(named.id)?.chain).toEqual([{ id: named.id, title: '整理资料' }]);
+    expect(bySession.get(grand.id)?.chain).toEqual([
+      { id: named.id, title: '整理资料' },
+      { id: grand.id, title: '细分' },
+    ]);
+    const [fallback] = bySession.get(unnamed.id)?.chain ?? [];
+    expect(fallback.id).toBe(unnamed.id);
+    expect(fallback.title).toMatch(/^子任务 \S/);
+
+    const lines = await audit(4);
+    const requested = (sessionId: string) =>
+      lines.find(line => line.type === 'request' && line.sessionId === sessionId);
+    expect(requested(named.id)?.chain).toEqual([{ id: named.id, title: '整理资料' }]);
+    expect(requested(ROOM)).not.toHaveProperty('chain');
+  });
+
+  it('限定机器人账号的接入按根会话的账号认：子会话里只有 owner 能批的推到根会话经这个账号的私聊接入，另一个账号的根会话下的不推', async () => {
+    const { host, sm, surfaces, request, flush } = await setup();
+    await recordRoom(host.events.use, ROOM_OTHER_BOT, '读书会');
+    const dm: Approval[] = [];
+    surfaces.webui.attend(OWNER_QQ, { requested: a => void dm.push(a), settled() {} }, { selfId: SELF }).presence(true);
+    const child = (await sm.createChildSession(ROOM)).id;
+    const otherBotChild = (await sm.createChildSession(ROOM_OTHER_BOT)).id;
+    request(child, { origin: originOf('hand', OWNER_QQ), callId: 'same-bot' });
+    request(otherBotChild, { origin: originOf('hand', OWNER_QQ), callId: 'other-bot' });
+    await flush();
+    expect(dm.map(a => a.callId)).toEqual(['same-bot']);
+  });
+
+  it('队列按会话：根会话与它的子会话同时各请求一张，两张都推出，不互相排队', async () => {
+    const { sm, connect, request, flush } = await setup();
+    const c = await connect();
+    const child = (await sm.createChildSession(ROOM)).id;
+    const origin = originOf('hand', OWNER_QQ);
+    request(ROOM, { origin });
+    request(child, { origin });
+    await flush();
+    expect(pushed(c).map(a => a.sessionId)).toEqual([ROOM, child]);
+  });
+
+  it('频率上限按根会话：根会话连同各级子会话 10 分钟内合计 10 张，第 11 张不论发在哪一级都拒并写明会话树；别的会话照常，窗口过去之后照常', async () => {
+    const { sm, connect, request, flush } = await setup();
+    const c = await connect();
+    const first = (await sm.createChildSession(ROOM)).id;
+    const second = (await sm.createChildSession(ROOM)).id;
+    const origin = originOf('hand', OWNER_QQ);
+    const spread = [ROOM, ROOM, ROOM, ROOM, first, first, first, second, second, second];
+    for (const [i, sessionId] of spread.entries()) {
+      const r = request(sessionId, { origin });
+      await flush();
+      await approve(c, pushed(c)[i]);
+      await flush();
+      expect(r.outcome).toMatchObject({ approved: true });
+    }
+    for (const sessionId of [ROOM, first]) {
+      const over = request(sessionId, { origin });
+      await flush();
+      expect(over.outcome).toMatchObject({ approved: false, source: 'rate-limit' });
+      expect(over.outcome?.approved === false && over.outcome.message).toContain('会话树');
+    }
+    request(OWNER_DM, { origin });
+    await flush();
+    expect(pushed(c).at(-1)?.sessionId).toBe(OWNER_DM);
+
+    await vi.advanceTimersByTimeAsync(PRESENCE_MS);
+    await c.call('presence/update', { active: true });
+    const later = request(second, { origin });
+    await flush();
+    expect(later.outcome).toBeUndefined();
+    expect(pushed(c).at(-1)?.sessionId).toBe(second);
   });
 });
 
@@ -1111,6 +1191,44 @@ describe('会话协议上的审批', () => {
     ).toBe(false);
   });
 
+  it('子会话里有未结的审批：各级父会话同样标「需要我处理」，排在「我的」区最前；房间的组按房间连同它的子会话计；都批掉之后两处都回落', async () => {
+    const { sm, mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const mineChild = (await sm.createChildSession(mine, { name: '子任务' })).id;
+    const roomChild = (await sm.createChildSession(ROOM, { name: '房间的子任务' })).id;
+    await vi.advanceTimersByTimeAsync(1);
+    const newer = (await sm.createSession({ name: '更新的' }, { createdFrom: 'webui' })).id;
+    await c.call('sessions/watch', {});
+    request(mineChild);
+    request(roomChild, { origin: originOf('hand', OWNER_QQ) });
+    await flush();
+    const page = await c.list();
+    expect(page.sessions.map(s => s.id).slice(0, 2)).toEqual([mine, newer]);
+    expect(Object.fromEntries(page.sessions.map(s => [s.id, s.attention]))).toEqual({
+      [mine]: true,
+      [newer]: false,
+      [OWNER_DM]: false,
+      [ROOM]: true,
+    });
+    expect(page.groups.map(group => group.attention)).toEqual([1]);
+    /** 最近一次推送的 mine 的摘要标没标需要我处理 */
+    const pushedAttention = () =>
+      c
+        .notifications('sessions/changed')
+        .flatMap(n => n.upserts)
+        .findLast(s => s.id === mine)?.attention;
+    expect(pushedAttention()).toBe(true);
+    const children = await c.list({ parentId: mine });
+    expect(children.sessions.map(s => [s.id, s.attention])).toEqual([[mineChild, true]]);
+
+    for (const approval of pushed(c)) await approve(c, approval);
+    await flush();
+    expect((await c.summary(mine)).attention).toBe(false);
+    expect((await c.summary(ROOM)).attention).toBe(false);
+    expect((await c.list()).groups.map(group => group.attention)).toEqual([0]);
+    expect(pushedAttention()).toBe(false);
+  });
+
   it('快照带这个会话未结的审批；工具卡挂上 approvalId、结算后带上结算（订阅着的连接收到重推），被拒的状态是 denied，结算写进工具结果的元数据', async () => {
     const { host, mine, connect, request, flush, openTurn } = await setup();
     const c = await connect();
@@ -1155,7 +1273,6 @@ describe('会话协议上的审批', () => {
   it.each([
     ['没人在场', 'hand', 'expired', 'absent'],
     ['发起者不能产生审批', 'autonomous', 'denied', 'ineligible'],
-    ['子任务', 'subtask', 'denied', 'subtask'],
     ['超过频率上限', 'hand', 'denied', 'rate-limit'],
   ] as const)('发起时就结算（%s）：工具卡同样是 denied 并带结算，结算写进工具结果的元数据；不推卡、不算需要我处理', async (_case, kind, state, source) => {
     const { host, mine, connect, request, flush, openTurn } = await setup();

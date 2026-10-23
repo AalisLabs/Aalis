@@ -130,7 +130,7 @@ export function resolveCapabilityPolicy(
 export interface InboundTurn {
   /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
   source?: string;
-  /** 同 IncomingMessage.fromTurn：续做带着起它的那一轮，这一轮与它同一类别；子任务带着派它的那一轮，主体随它 */
+  /** 同 IncomingMessage.fromTurn：续做与子任务都带着起它的那一轮，这一轮与它同一类别，主体按同一条判 */
   fromTurn?: FromTurn;
   /** 这一轮最近一条输入的平台消息 id（IncomingMessage.messageId）。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
   messageId?: string;
@@ -313,9 +313,8 @@ export interface AuthorityService {
   originOf(turn: OriginTurn): OriginKind;
 
   /**
-   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner，含它的续做；子任务随派它的那一轮
-   * （inbound.fromTurn，没有时为 other），不按子任务回合自己的参与者；其余为 other（owner 与别人同在的一轮也是）。消费方
-   * 不自己读受众
+   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随起它的
+   * 那一轮，参与者是那一轮交来的（批过的调用是批的人）；其余为 other（owner 与别人同在的一轮也是）。消费方不自己读受众
    */
   principalOf(turn: OriginTurn): 'owner' | 'other';
 

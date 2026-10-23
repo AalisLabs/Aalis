@@ -10,6 +10,7 @@ import {
   approvals,
 } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, optional, provide } from '../../packages/core/src/index.js';
@@ -86,7 +87,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);
   const { state } = provideHostPaths(app, home);
-  const host = app.bind({ provide, events, approvals, tools });
+  const host = app.bind({ provide, events, approvals, tools, sessionManager });
   host.provide.use(storage, memoryStorage(new Map()));
   host.provide.use(authority, { isOwner: owner } as never);
   // 卡上的事实按工具声明的展示种类取
@@ -164,7 +165,19 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
       .presence(true);
     return received;
   };
-  return { writes, rawFrame, frame, press, type, request, pending, inbound, audit, webuiPresent };
+  return {
+    writes,
+    rawFrame,
+    frame,
+    press,
+    type,
+    request,
+    pending,
+    inbound,
+    audit,
+    webuiPresent,
+    sm: host.sessionManager.use,
+  };
 }
 
 describe('在场：终端最近有输入才算在场', () => {
@@ -284,6 +297,41 @@ describe('卡片显示', () => {
     // 卡片挤不掉标题栏与页脚
     expect(frame).toContain('[CHAT]');
     expect(frame).toContain('^C exit');
+  });
+
+  it('子会话里的审批：事实之前多一行「子任务」，写根会话以下的各级标题；名字里的转义序列照清洗显示，换行与别的多行事实一样成续行、缩进到值的那一列；根会话的卡没有这一行', async () => {
+    const s = await setup();
+    await s.type('a');
+    const parent = (await s.sm.createSession({ name: '父会话' }, { createdFrom: 'cli' })).id;
+    const named = (await s.sm.createChildSession(parent, { name: '整理资料' })).id;
+    const odd = (await s.sm.createChildSession(parent, { name: '坏\x1b[2J\n名字' })).id;
+    const lines = () => s.frame().split('\n');
+    const lineOf = (text: string) => lines().findIndex(line => line.includes(text));
+    /** text 在这一行从第几列显示起：这里出现的汉字各占两列 */
+    const columnOf = (line: string, text: string) =>
+      [...line.slice(0, line.indexOf(text))].reduce((n, c) => n + (c >= '\u4e00' && c <= '\u9fff' ? 2 : 1), 0);
+
+    s.request({ sessionId: parent });
+    await settle();
+    expect(lineOf('命令')).toBeGreaterThan(0);
+    expect(s.frame()).not.toContain('子任务');
+    await s.press('y', { ctrl: true });
+
+    s.request({ sessionId: named });
+    await settle();
+    expect(lines()[lineOf('子任务')]).toContain('整理资料');
+    expect(lineOf('子任务')).toBeLessThan(lineOf('命令'));
+    await s.press('y', { ctrl: true });
+
+    s.request({ sessionId: odd });
+    await settle();
+    const row = lineOf('子任务');
+    expect(lines()[row]).toContain('坏\\x1B[2J');
+    expect(lines()[row + 1]).toContain('名字');
+    expect(columnOf(lines()[row + 1], '名字'), '续行缩进到值的那一列，冒充不了带标签的一行').toBe(
+      columnOf(lines()[row], '坏'),
+    );
+    expect(s.writes.join('')).not.toContain('坏\x1b[2J');
   });
 
   it('几张卡同时在：先显示先到的并写明还有几张，答完显示下一张', async () => {

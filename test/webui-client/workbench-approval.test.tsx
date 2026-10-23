@@ -378,7 +378,7 @@ describe('审批卡', () => {
               status: 'denied',
               display: { kind: 'command', command: 'make' },
               approvalId: 'ap1',
-              settlement: { state: 'expired', source: 'subtask', at },
+              settlement: { state: 'expired', source: 'ineligible', at },
             }),
           ]),
       },
@@ -386,7 +386,7 @@ describe('审批卡', () => {
     );
     const log = within(await main().findByRole('region', { name: 'Conversation' }));
     const status = log.getByRole('button', { name: /Run make/ }).querySelector('.tool-line-status') as HTMLElement;
-    expect(status.getAttribute('title')).toBe('Treated as denied · Approvals in subtasks aren’t forwarded · 09:05');
+    expect(status.getAttribute('title')).toBe('Treated as denied · This turn can’t raise approvals · 09:05');
     expect(getComputedStyle(status).maxWidth).toBe('50%');
   });
 });

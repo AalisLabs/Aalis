@@ -236,6 +236,18 @@ describe('「后台」标签', () => {
     expect(rowOf(within(calls).getByText('pdf_convert')).textContent).toContain('已停止');
   });
 
+  it('子会话在等审批：这一行写「等你批准」，不写运行中', async () => {
+    const children = {
+      s1: [summary('c-wait', { title: '子任务一', kind: 'task', parentId: 's1', running: true, attention: true })],
+    };
+    app = await renderApp('/s/s1/background', handlers({ session: { childCount: 1, background: 1 }, children }));
+    const sessions = await panel().findByRole('region', { name: '子会话 · 1' });
+    const waiting = await within(sessions).findByRole('link', { name: /子任务一/ });
+    expect(waiting.textContent).toContain('等你批准');
+    expect(waiting.textContent).not.toContain('运行中');
+    expect(waiting.querySelector('.status-text')?.getAttribute('data-state')).toBe('attention');
+  });
+
   it('失败与中断的行写一句原因', async () => {
     const tasks = [
       backgroundTask('t-error', { label: 'http_download', status: 'failed', endedAt: AT + 2000, reason: '连接被拒绝' }),

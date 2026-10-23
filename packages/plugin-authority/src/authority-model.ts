@@ -126,39 +126,30 @@ function turnOf({ platform, userId, participants, source, fromTurn }: NonNullabl
  * 工具调用发起回合的类别（契约见 api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，
  * 不读会话记录。按这一轮从哪里来判，不按授权身份判：owner 建的定时任务会把创建者回填成 actor，按 actor 判它就成了 owner 亲手。
  * - 不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：没有人在这一轮亲手发起它，是 autonomous；
- * - 子任务回合是 subtask；
- * - 续做（带起它的那一轮）与起它的那一轮同一类别，不按通知上的身份推；
- * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件）是 autonomous；
+ * - 带起它的那一轮的续做与入站回合里派出的子任务，与起它的那一轮同一类别，不按通知或任务消息上的身份推；
+ * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件，以及没带起它的那一轮的子任务）是
+ *   autonomous；
  * - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）的一轮是 hand，几条一起进来的也是；参与者都没有账号的
  *   （没有人的消息）是她自己开口，失败关闭为 autonomous。
  */
 export function originKind(turn: Turn): OriginKind {
   const { inbound } = turn;
   if (!inbound) return 'autonomous';
-  if (inbound.source === 'subtask') return 'subtask';
   if (inbound.fromTurn) return originKind(turnOf(inbound.fromTurn));
   if (inbound.source !== undefined) return 'autonomous';
   return turn.participants.some(who => who.userId) ? 'hand' : 'autonomous';
 }
 
 /**
- * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：
- * - hand（含它的续做，续做的参与者就是起它的那一轮的参与者）：参与者都是 owner 为 owner，owner 与别人同在的为 other；
- * - 子任务随派它的那一轮（inbound.fromTurn），没带的为 other；子任务里的续做经起它的子任务那一轮递归到派它的那一轮；
- * - 其余为 other。
+ * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：类别为 hand（含随起它的那一轮的
+ * 续做与子任务）且参与者都是 owner 为 owner，其余为 other（owner 与别人同在的一轮也是）。参与者是这一轮交来的：续做与子任务的
+ * 取起它的那一轮的，批过的调用是批的人
  */
 export function principalKind(turn: Turn, isOwner: (platform: string, userId?: string) => boolean): 'owner' | 'other' {
-  switch (originKind(turn)) {
-    case 'hand': {
-      const { participants } = turn;
-      const owners = participants.length > 0 && participants.every(who => isOwner(who.platform, who.userId));
-      return owners ? 'owner' : 'other';
-    }
-    case 'subtask': {
-      const from = turn.inbound?.fromTurn;
-      return from ? principalKind(turnOf(from), isOwner) : 'other';
-    }
-    default:
-      return 'other';
-  }
+  const { participants } = turn;
+  return originKind(turn) === 'hand' &&
+    participants.length > 0 &&
+    participants.every(who => isOwner(who.platform, who.userId))
+    ? 'owner'
+    : 'other';
 }

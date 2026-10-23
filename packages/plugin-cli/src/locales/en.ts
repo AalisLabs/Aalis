@@ -35,6 +35,7 @@ export default defineLocale<Source>()({
   cardHeading: 'Approval needed',
   cardSubject: '{tool} · session {session}',
   cardSubjectWaiting: '{tool} · session {session} · {count, number} more',
+  factSubtask: 'Subtask',
   factCommand: 'Command',
   factCwd: 'Directory',
   factFile: 'File',

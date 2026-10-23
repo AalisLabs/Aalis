@@ -55,7 +55,7 @@ interface ExecutionGuardContext {
 
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
-  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做带着起它的那一轮，子任务带着派它的那一轮（类型见 schema-message）
+  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做与子任务都带着起它的那一轮，与它同一类别（类型见 schema-message）
   messageId?: string;                // 这一轮最近一条输入的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
@@ -91,8 +91,8 @@ interface AuthorityService {
   // 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
   originOf(turn: OriginTurn): OriginKind;
 
-  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner，含它的续做；子任务随派它的那一轮
-  // （inbound.fromTurn，没有时为 other），不按子任务回合自己的参与者；其余为 other（owner 与别人同在的一轮也是）
+  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随起它的
+  // 那一轮，参与者是那一轮交来的（批过的调用是批的人）；其余为 other（owner 与别人同在的一轮也是）
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
   // capability 统一闸：null 放行 | string 拒绝原因

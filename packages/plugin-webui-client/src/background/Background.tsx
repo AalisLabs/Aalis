@@ -257,8 +257,14 @@ function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }
   );
 }
 
-/** 子会话的状态：在跑、出错（写原因）、被停止、完成；还没跑完一轮的没有 */
-function childState(session: SessionSummary): { text: string; tone?: 'running' | 'error' | 'inactive' } | undefined {
+/**
+ * 子会话的状态：等你批准（它或它下面的子会话有推出、还没结的审批）、在跑、出错（写原因）、被停止、完成；还没跑完一轮的
+ * 没有
+ */
+function childState(
+  session: SessionSummary,
+): { text: string; tone?: 'attention' | 'running' | 'error' | 'inactive' } | undefined {
+  if (session.attention) return { text: tr('waitingApproval'), tone: 'attention' };
   if (active(session)) return { text: tr('running'), tone: 'running' };
   if (session.error) return { text: session.reason ?? tr('error'), tone: 'error' };
   if (session.lastTurn?.outcome === 'aborted') return { text: tr('stopped'), tone: 'inactive' };

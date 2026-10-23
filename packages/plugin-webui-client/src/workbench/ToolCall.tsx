@@ -32,7 +32,6 @@ const SETTLED_BY: Record<Exclude<Settlement['source'], 'answer'>, TextRef> = {
   absent: t('settledByAbsent'),
   timeout: t('settledByTimeout'),
   ineligible: t('settledByIneligible'),
-  subtask: t('settledBySubtask'),
   'rate-limit': t('settledByRateLimit'),
   'turn-ended': t('settledByTurnEnded'),
   shutdown: t('settledByShutdown'),

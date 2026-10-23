@@ -35,7 +35,6 @@ const BG_TAKE = 'zz_bg_take_probe';
 
 const NOBODY = '这一轮的参与者里没有人能做这件事';
 const INELIGIBLE = '这一轮里没有 owner 的话，要 owner 确认的操作不能执行';
-const SUBTASK = '子任务里需要确认的操作不上浮，请在发起它的会话里执行';
 
 type Identity = { platform: string; userId: string };
 
@@ -307,13 +306,68 @@ describe('审批服务：能批且覆盖才推、才算在场、才认应答', (
   });
 });
 
-describe('派生的一轮', () => {
-  it('owner 与 0 级群友派出的子任务里：0 级群友做不了的动作直接拒，不出卡（子任务不上浮）', async () => {
+describe('派生的一轮：子任务里照同样的逐动作规则判，审批推送按根会话', () => {
+  /** 派它的那一轮：owner 点名开轮、0 级群友的话叠进来，两人都能派子任务、没经审批 */
+  const from: FromTurn = { platform: 'onebot', participants: [OWNER_QQ, L0] };
+  /** 在 ROOM 下新建的一个子任务里调一次门槛 1 的探针：按任务消息的填法，参与者取派它的那一轮的 */
+  const inSubtask = async (s: Awaited<ReturnType<typeof setup>>, name: string, signal?: AbortSignal) => {
+    const child = await s.host.sessionManager.use.createChildSession(ROOM, { name });
+    const result = s.execute(
+      SENSITIVE,
+      { what: name },
+      {
+        sessionId: child.id,
+        platform: 'onebot',
+        userId: `parent:${ROOM}`,
+        participants: from.participants,
+        inbound: { source: 'subtask', fromTurn: from },
+        signal,
+      },
+    );
+    return { child: child.id, result };
+  };
+
+  it('owner 与 0 级群友派出的子任务里，0 级群友做不了的动作：出一张参与者审批，推给 WebUI 与根会话这个群里能批的人，按批的人执行', async () => {
     const s = await setup();
-    const from: FromTurn = { platform: 'onebot', participants: [OWNER_QQ, L0] };
-    const out = await s.call([OWNER_QQ, L0], SENSITIVE, {}, { inbound: { source: 'subtask', fromTurn: from } });
-    expect(out).toContain(SUBTASK);
-    expect(s.webuiCards()).toEqual([]);
+    const elsewhere = s.attend(L1_ELSEWHERE, { window: ROOM });
+    const zero = s.attend(L0, { window: ROOM });
+    const otherRoom = s.attend(L1, { window: OTHER_ROOM });
+    const ownerChat = s.attend(OWNER_QQ, { selfId: BOT });
+    const { child, result } = await inSubtask(s, '整理资料');
+    const card = await cardOf(elsewhere);
+    expect(card).toMatchObject({ sessionId: child, chain: [{ id: child, title: '整理资料' }] });
+    expect(card.origin).toEqual({ kind: 'hand', participants: [OWNER_QQ, L0] });
+    await vi.waitFor(() => expect(s.webuiCards()).toHaveLength(1));
+    expect(otherRoom.requested).toEqual([]);
+    expect(ownerChat.requested, 'owner 的 IM 私聊只收只有她能批的').toEqual([]);
+    expect(zero.answer(card, 'approve')).toMatchObject({ ok: false, refusal: 'forbidden' });
+    expect(otherRoom.answer(card, 'approve')).toMatchObject({ ok: false, refusal: 'not-found' });
+    expect(s.seen, '批准之前不得执行').toEqual([]);
+    expect(elsewhere.answer(card, 'approve')).toEqual({ ok: true });
+    expect(await result).toBe('ran');
+    expect(s.seen[0].participants).toEqual([L1_ELSEWHERE]);
+  });
+
+  it('两个子任务各等一张：同时推给群里能批的人，各带自己的会话与来源链；批第一张只执行第一个，中止第二个子任务的那一轮只撤第二张', async () => {
+    const s = await setup({ webui: false });
+    const elsewhere = s.attend(L1_ELSEWHERE, { window: ROOM });
+    const second = new AbortController();
+    const one = await inSubtask(s, '甲');
+    const two = await inSubtask(s, '乙', second.signal);
+    await cardOf(elsewhere, 2);
+    const [first, next] = elsewhere.requested;
+    expect([first, next].map(card => [card.sessionId, card.chain])).toEqual([
+      [one.child, [{ id: one.child, title: '甲' }]],
+      [two.child, [{ id: two.child, title: '乙' }]],
+    ]);
+    elsewhere.answer(first, 'approve');
+    expect(await one.result).toBe('ran');
+    expect(s.seen.map(ctx => ctx.sessionId)).toEqual([one.child]);
+    expect(elsewhere.settled).toEqual([first.id]);
+    second.abort();
+    expect(await two.result).toContain('发起它的回合已结束');
+    expect(elsewhere.settled).toEqual([first.id, next.id]);
+    expect(s.seen).toHaveLength(1);
   });
 });
 

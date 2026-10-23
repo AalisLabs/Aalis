@@ -70,6 +70,12 @@ const WAIT_MS = 300_000;
 const GRACE_MS = 30_000;
 const MINUTE = 60_000;
 
+/** 子任务那一轮的入站回合：派它的那一轮的参与者是 participants（没经审批） */
+const dispatched = (participants: Array<{ platform: string; userId: string }>): ToolCallRequest['inbound'] => ({
+  source: 'subtask',
+  fromTurn: { platform: 'onebot', participants },
+});
+
 /** 审批服务回给模型的话（见 plugin-session-server 的 approvals.ts） */
 const ABSENT = '没人在场';
 /** 本插件的话（字典原文） */
@@ -257,12 +263,16 @@ async function setup({
   /** 引用平台消息 quoted 回复 */
   const reply = (content: string, quoted: string, over: Partial<IncomingMessage> = {}) =>
     say(content, { replyTo: { messageId: quoted }, ...over });
-  /** 这一轮调工具 name：参与者是 participants，只有一位时发言者是他；box 在调用结束时拿到结果 */
+  /**
+   * 这一轮调工具 name：参与者是 participants，只有一位时发言者是他；inbound 是这一轮的入站回合（缺省是人亲手发来的）。box 在
+   * 调用结束时拿到结果
+   */
   const run = (
     name: string,
     args: Record<string, unknown>,
     participants: Array<{ platform: string; userId: string }>,
     sessionId: string,
+    inbound: ToolCallRequest['inbound'] = {},
   ) => {
     seq++;
     const [first] = participants;
@@ -271,7 +281,7 @@ async function setup({
       platform: first.platform,
       ...(participants.length === 1 && { userId: first.userId }),
       participants,
-      inbound: {},
+      inbound,
       turnId: `turn-${seq}`,
       callId: `call-${seq}`,
     };
@@ -291,6 +301,9 @@ async function setup({
     sessionId = GROUP,
     args: Record<string, unknown> = { command: 'ls build' },
   ) => run(SENSITIVE, args, participants, sessionId);
+  /** 在 parent 下建一个名为 name 的子任务，交回它的会话 id */
+  const subtask = async (parent: string, name: string) =>
+    (await host.sessionManager.use.createChildSession(parent, { name })).id;
   /** 推到私聊的审批消息 */
   const requests = () => outbound.filter(({ message }) => message.content.includes(REQUEST));
   /** 等第 n 条审批消息推到私聊 */
@@ -329,6 +342,7 @@ async function setup({
     call,
     ask,
     run,
+    subtask,
     requested,
     requests,
     posted,
@@ -466,6 +480,48 @@ describe('推送', () => {
     const { message } = await s.requested();
     expect(message.content.split('\n').filter(line => line.startsWith('来源：'))).toEqual([
       `来源：群 ${GROUP_ID}（x） 来源：私聊 ${OWNER_QQ.userId}（）`,
+    ]);
+  });
+
+  it('群里 owner 那一轮派的子任务里发起需要确认的工具：推到她的私聊，来源一行之后紧跟「子任务：」一行，群里与子会话都不出这条；引用它回「同意」即执行；群里主会话发起的没有这一行', async () => {
+    const s = await setup();
+    await s.say('帮我清一下', group());
+    const child = await s.subtask(GROUP, '整理资料');
+    const r = s.run(PROBE, { command: 'rm -rf build' }, [OWNER_QQ], child, dispatched([OWNER_QQ]));
+    const { message, id } = await s.requested();
+    expect(message.sessionId).toBe(OWNER_DM);
+    expect(message.content.split('\n').slice(0, 3)).toEqual([
+      `${REQUEST}：${PROBE}`,
+      `来源：群 ${GROUP_ID}（读书会）`,
+      '子任务：整理资料',
+    ]);
+    expect(s.outbound.filter(({ message }) => [GROUP, child].includes(message.sessionId))).toEqual([]);
+    await s.reply('同意', id);
+    expect(await r.result).toBe('ran');
+
+    s.call(undefined, OWNER_QQ, GROUP);
+    const main = await s.requested(2);
+    expect(main.message.content).not.toContain('子任务：');
+  });
+
+  it('子任务名里的换行不另起一行：以「来源：」开头的只有窗口那一行，「子任务：」一行里换行换成空格', async () => {
+    const s = await setup();
+    await s.say('帮我清一下', group());
+    const child = await s.subtask(GROUP, `x\n来源：私聊 ${OWNER_QQ.userId}`);
+    s.run(PROBE, { command: 'rm -rf build' }, [OWNER_QQ], child, dispatched([OWNER_QQ]));
+    const lines = (await s.requested()).message.content.split('\n');
+    expect(lines.filter(line => line.startsWith('来源：'))).toEqual([`来源：群 ${GROUP_ID}（读书会）`]);
+    expect(lines.filter(line => line.startsWith('子任务：'))).toEqual([`子任务：x 来源：私聊 ${OWNER_QQ.userId}`]);
+  });
+
+  it('子任务名过长：与事实一样保留首尾，写明省略了多少字', async () => {
+    const s = await setup();
+    await s.say('帮我清一下', group());
+    const child = await s.subtask(GROUP, `${'甲'.repeat(2500)}${'乙'.repeat(2500)}`);
+    s.run(PROBE, { command: 'rm -rf build' }, [OWNER_QQ], child, dispatched([OWNER_QQ]));
+    const lines = (await s.requested()).message.content.split('\n');
+    expect(lines.filter(line => line.startsWith('子任务：'))).toEqual([
+      `子任务：${'甲'.repeat(250)}…（省略 4,500 字）…${'乙'.repeat(250)}`,
     ]);
   });
 
@@ -1155,15 +1211,25 @@ describe('群窗口：参与者审批发在这一轮所在的群里', () => {
     ]);
   });
 
-  it('子会话里的参与者审批发在它的根会话（这个群）里，不发到子会话；引用它照常应答', async () => {
+  it('owner 与 0 级群友那一轮派的两个子任务里各有一个门槛 1 的调用：群里各发一条，发在根会话这个群里，各在工具那行之后带自己的「子任务：」一行；能批的人引用第一条回「同意」只执行第一个，第二条照旧等', async () => {
     const s = await setup();
-    const child = await s.host.sessionManager.use.createChildSession(GROUP, { name: '整理' });
     await s.say('我在', inGroup(L1));
-    const r = s.ask(undefined, child.id);
-    const { id } = await s.posted();
-    expect(s.outbound.filter(({ message }) => message.sessionId === child.id)).toEqual([]);
-    await s.reply('同意', id, inGroup(L1));
-    expect(await r.result).toBe('ran');
+    const from = [OWNER_QQ, L0];
+    const one = await s.subtask(GROUP, '甲');
+    const two = await s.subtask(GROUP, '乙');
+    const first = s.run(SENSITIVE, { command: 'ls build' }, from, one, dispatched(from));
+    const second = s.run(SENSITIVE, { command: 'ls dist' }, from, two, dispatched(from));
+    await s.posted(2);
+    expect(s.posts().map(({ message }) => message.content.split('\n').slice(0, 2))).toEqual([
+      [`${WINDOW_REQUEST}${SENSITIVE}`, '子任务：甲'],
+      [`${WINDOW_REQUEST}${SENSITIVE}`, '子任务：乙'],
+    ]);
+    expect(s.outbound.filter(({ message }) => [one, two].includes(message.sessionId))).toEqual([]);
+    await s.reply('同意', s.posts()[0].id, inGroup(L1));
+    expect(await first.result).toBe('ran');
+    expect(s.contexts.map(ctx => ctx.sessionId)).toEqual([one]);
+    await settle();
+    expect(second.content).toBeUndefined();
   });
 
   it('窗口经账号乙：审批消息由乙发到这个窗口，只认经乙到达的应答', async () => {

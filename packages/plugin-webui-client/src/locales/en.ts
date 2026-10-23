@@ -429,7 +429,6 @@ export default defineLocale<Source>()({
   settledByAbsent: 'Nobody present',
   settledByTimeout: 'Timed out',
   settledByIneligible: 'This turn can’t raise approvals',
-  settledBySubtask: 'Approvals in subtasks aren’t forwarded',
   settledByRateLimit: 'Too many approvals',
   settledByTurnEnded: 'Turn ended',
   settledByShutdown: 'Approval service stopped',

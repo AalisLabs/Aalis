@@ -26,7 +26,7 @@ import { client } from '../fixtures/session-client.js';
 // ════════════════════════════════════════════════════════════
 // 需要确认的工具调用 → 执行守卫 → owner 审批，整条接线：真实的工具注册表、权限插件与会话服务，
 // 一个 WebUI 审批面上有一条在场的 owner 连接。探针工具人人有权调用、声明需要确认，
-// 所以每一行只看这一轮的触发者：这一轮里有 owner 的话（人亲手发起，含它的续做）就出卡，不论在哪个会话；
+// 所以每一行只看这一轮的触发者：这一轮里有 owner 的话（人亲手发起，含它的续做与派出的子任务）就出卡，不论在哪个会话；
 // 其余直接拒、不推给任何面，模型收到对应的话。上下文按 agent 工具循环的填法构造。房间经原生入站收录。
 // ════════════════════════════════════════════════════════════
 
@@ -41,7 +41,6 @@ const PROBE = 'zz_confirm_probe';
 
 /** 审批服务回给模型的话（见 plugin-session-server 的 approvals.ts） */
 const INELIGIBLE = '这一轮里没有 owner 的话，要 owner 确认的操作不能执行';
-const SUBTASK = '子任务里需要确认的操作不上浮，请在发起它的会话里执行';
 
 const apps: App[] = [];
 const homes: string[] = [];
@@ -167,6 +166,18 @@ const handTurn = (who: { platform: string; userId: string }): FromTurn => ({
   participants: [who],
 });
 
+/** 子任务那一轮：按 plugin-subtask 的任务消息与 agent 的填法，发言者记作父会话，授权身份取派它的那一轮的参与者 */
+const subtask = (sessionId: string, parent: string, from: FromTurn): Ctx => ({
+  sessionId,
+  platform: from.platform,
+  userId: `parent:${parent}`,
+  participants: from.participants,
+  inbound: { source: 'subtask', fromTurn: from },
+});
+
+/** 定时任务那一轮：授权身份是创建者 owner */
+const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER], source: 'scheduler' };
+
 /** 续做那一轮：按 agent 的填法，工具眼里是起它的人在调，授权身份取起它的那一轮的参与者 */
 const resumed = (sessionId: string, from: FromTurn): Ctx => ({
   sessionId,
@@ -230,6 +241,23 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
     expect(out).not.toContain('owner');
   });
 
+  it('owner 派的子任务：推给 WebUI，挂在子会话上，类别随派它的那一轮、带来源链；批准即执行，拒绝附说明时模型拿到说明', async () => {
+    const s = await setup();
+    const child = (await s.host.sessionManager.use.createChildSession(MINE, { name: '整理资料' })).id;
+    const ctx = subtask(child, MINE, handTurn(OWNER));
+    const first = s.call(ctx);
+    const approval = await s.card();
+    expect(approval).toMatchObject({ sessionId: child, chain: [{ id: child, title: '整理资料' }] });
+    expect(approval.origin).toEqual({ kind: 'hand', participants: [OWNER] });
+    await s.answer(approval, 'approve');
+    expect((await first.result).content).toBe('ran');
+
+    const second = s.call(ctx);
+    await s.answer(await s.card(2), 'deny', '先别删');
+    expect((await second.result).content).toContain('被拒绝了，说明：「先别删」');
+    expect(s.runs()).toBe(1);
+  });
+
   it('等待中回合中止：审批撤销，不执行', async () => {
     const s = await setup();
     const turn = new AbortController();
@@ -249,8 +277,10 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
       { sessionId: MINE, platform: 'webui', participants: [OWNER], inbound: { source: 'scheduler' } },
       INELIGIBLE,
     ],
+    ['群成员那一轮派的子任务', subtask(`${ROOM}::abcd1234`, ROOM, handTurn(MEMBER_QQ)), INELIGIBLE],
+    ['owner 建的定时任务那一轮派的子任务', subtask(`${MINE}::abcd1234`, MINE, SCHEDULED), INELIGIBLE],
     [
-      '子任务回合',
+      '没带起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
       {
         sessionId: `${MINE}::abcd1234`,
         platform: 'webui',
@@ -258,7 +288,7 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
         participants: [OWNER],
         inbound: { source: 'subtask' },
       },
-      SUBTASK,
+      INELIGIBLE,
     ],
   ];
 
@@ -270,10 +300,15 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
     expect(out).toContain(text);
   });
 
-  it('自主回合被拒记进审计：请求与决定成对，类别为 autonomous', async () => {
+  it.each<[string, Ctx]>([
+    [
+      'owner 建的定时任务',
+      { sessionId: MINE, platform: 'webui', participants: [OWNER], inbound: { source: 'scheduler' } },
+    ],
+    ['定时任务那一轮派的子任务', subtask(`${MINE}::abcd1234`, MINE, SCHEDULED)],
+  ])('自主回合被拒记进审计（%s）：请求与决定成对，类别为 autonomous', async (_label, ctx) => {
     const s = await setup();
-    await s.call({ sessionId: MINE, platform: 'webui', participants: [OWNER], inbound: { source: 'scheduler' } })
-      .result;
+    await s.call(ctx).result;
     await vi.waitFor(() => expect(readFileSync(s.auditFile, 'utf8').trim().split('\n')).toHaveLength(2));
     const [request, decision] = readFileSync(s.auditFile, 'utf8')
       .trim()

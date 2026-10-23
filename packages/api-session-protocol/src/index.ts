@@ -195,7 +195,7 @@ export const SessionSummarySchema = z.object({
   error: z.boolean(),
   /** 只用于「我的」区：她最近一次开口晚于 owner 上次看过（session/markSeen）；房间恒为 false */
   unread: z.boolean(),
-  /** 需要我处理：有未结的审批 */
+  /** 需要我处理：本会话或各级子会话有推出、还没结的审批（与 background、tokens 一样按子树算） */
   attention: z.boolean(),
   archived: z.boolean(),
   /**
@@ -224,7 +224,7 @@ export const RoomGroupSchema = z.object({
   rooms: z.number().int().nonnegative(),
   /** 组里房间涉及的机器人账号数 */
   accounts: z.number().int().nonnegative(),
-  /** 组里需要我处理的房间数 */
+  /** 组里需要我处理的房间数（房间或它的子会话有推出、还没结的审批） */
   attention: z.number().int().nonnegative(),
 });
 export type RoomGroup = z.infer<typeof RoomGroupSchema>;
@@ -445,11 +445,11 @@ const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
 
 /**
  * 审批的结算，与 @aalis/api-approval 的 ApprovalSettlement 对应：结局、从哪里来（有人应答、没人在场、超时、发起者不能产生审批、
- * 子任务、频率上限、回合结束、服务停止）、结算的时刻，有人应答的带上应答人（说话人的写法，客户端据 owner 判是不是 owner 批的）
+ * 频率上限、回合结束、服务停止）、结算的时刻，有人应答的带上应答人（说话人的写法，客户端据 owner 判是不是 owner 批的）
  */
 export const ApprovalSettlementSchema = z.object({
   state: SettledStateSchema,
-  source: z.enum(['answer', 'absent', 'timeout', 'ineligible', 'subtask', 'rate-limit', 'turn-ended', 'shutdown']),
+  source: z.enum(['answer', 'absent', 'timeout', 'ineligible', 'rate-limit', 'turn-ended', 'shutdown']),
   at: z.number(),
   by: SpeakerSchema.optional(),
 });
@@ -500,7 +500,7 @@ const itemBase = {
  *   回合不是被停止的（达到工具调用上限、回合出错）在回合结束时以 failed 收尾。生成了却没有执行的调用带 notExecuted、没有
  *   result（界面据此写出没有执行）；它们不落库，历史里没有。历史里没有结果的调用（重启或中断）是 aborted。
  *   这次调用要 owner 批准、审批推给了审批面时带 approvalId，再推一次 item/started；结算后带 approvalId 与 settlement，
- *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、子任务、频率上限）同样带；没批准的（拒绝、
+ *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、频率上限）同样带；没批准的（拒绝、
  *   没人应答、撤销）状态是 denied。转到后台的调用带 taskId（后台任务的 id），结果是转后台时回给模型的那段，任务的状态、
  *   最后一行与输出看后台任务。sentToRoom、approvalId、settlement、taskId 与停止时还没结束随工具结果落库，历史里同样还原；
  * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue。
@@ -622,7 +622,7 @@ export const ApprovalSchema = z.object({
   callId: z.string().optional(),
   /** 发起回合的类别与参与者（授权身份） */
   origin: z.object({
-    kind: z.enum(['hand', 'subtask', 'autonomous']),
+    kind: z.enum(['hand', 'autonomous']),
     participants: z.array(z.object({ platform: z.string(), userId: z.string() })),
   }),
   target: z.literal('tool'),
@@ -639,6 +639,8 @@ export const ApprovalSchema = z.object({
   /** 到期的时刻（毫秒时间戳） */
   expiresAt: z.number(),
   state: ApprovalStateSchema,
+  /** 来源链：所在会话在根会话以下时，从根会话往下到它的各级子会话（不含根会话）的 id 与标题；在根会话里的没有 */
+  chain: z.array(z.object({ id: z.string(), title: TextSchema })).optional(),
 });
 
 /**

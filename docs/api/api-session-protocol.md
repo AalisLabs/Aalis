@@ -104,7 +104,7 @@ interface SessionSummary {
   running: boolean;           // 有回合在跑
   error: boolean;             // 最近一轮出错
   unread: boolean;            // 只用于「我的」区，房间恒为 false
-  attention: boolean;         // 需要我处理：有推出、还没结的审批
+  attention: boolean;         // 需要我处理：本会话或各级子会话有推出、还没结的审批
   archived: boolean;
   background: number;         // 在跑的后台工作数，见下文
   tokens?: { input: number; output: number };  // 本会话与各级子会话的模型调用累计的 token
@@ -119,7 +119,7 @@ interface RoomGroup {
   label: string;              // 组名：实例的显示名（插件显示名，非默认实例另带实例名）；没有实例的组是平台名
   rooms: number;
   accounts: number;           // 组里房间涉及的机器人账号数，多于 1 时界面在行内标出账号
-  attention: number;          // 组里需要我处理的房间数
+  attention: number;          // 组里需要我处理的房间数（房间或它的子会话有推出、还没结的审批）
 }
 ```
 
@@ -139,6 +139,7 @@ interface RoomGroup {
 
 ### 按会话树算的字段
 
+- **`attention`**：本会话或各级子会话有推出、还没结的审批。子任务在等审批时，父会话同样标需要我处理，「我的」区排在最前，房间的组把它计进 `attention`。
 - **`background`**：本会话在跑的后台任务数（见下文「后台任务」），加各级子会话里有回合在跑、或有后台任务在跑的会话数（一个子会话算一个）。本会话自己的回合不算，那是 `running`。界面的「后台 N」取它。
 - **`tokens`**：本会话与各级子会话的模型调用累计的输入与输出 token（api-session-manager 的 `SessionInfo.tokens` 按子树相加），对话、摘要、识图、转写的调用都在里面；都还没有记账时没有。
 - **`lastTurn`、`reason`**：最近结束的一轮的结局与结束时间（被拦下、没有结局的一轮记为 silent）；`error` 为真时 `reason` 是那一轮的一句原因（agent 给的），没给原因的没有。子会话与根会话一样收口：出错为 error，其余为 completed，被停止的从 `lastTurn.outcome` 为 aborted 看出。
@@ -146,7 +147,7 @@ interface RoomGroup {
 
 ### 增量
 
-`sessions/watch` 之后，会话建档、改动、完成、删除，回合开始与结束，已读变化，审批推出与结算，后台任务的开始、结束与删除，以及 token 记账，都推一条 `sessions/changed`：变了的会话连同它的各级父会话给完整摘要（父会话的 `background`、`tokens` 按子树算），删掉的给 id，另附最新的分组。建、删子会话时父会话的子会话数变了，父会话也在 `upserts` 里。推送不去重，客户端按 id 用最新一条覆盖。连接关闭即停止推送。
+`sessions/watch` 之后，会话建档、改动、完成、删除，回合开始与结束，已读变化，审批推出与结算，后台任务的开始、结束与删除，以及 token 记账，都推一条 `sessions/changed`：变了的会话连同它的各级父会话给完整摘要（父会话的 `attention`、`background`、`tokens` 按子树算），删掉的给 id，另附最新的分组。建、删子会话时父会话的子会话数变了，父会话也在 `upserts` 里。推送不去重，客户端按 id 用最新一条覆盖。连接关闭即停止推送。
 
 ### 完成未读
 
@@ -248,7 +249,7 @@ type ToolDisplay =
 ```ts
 interface ApprovalSettlement {
   state: 'approved' | 'denied' | 'expired' | 'cancelled';
-  source: 'answer' | 'absent' | 'timeout' | 'ineligible' | 'subtask' | 'rate-limit' | 'turn-ended' | 'shutdown';
+  source: 'answer' | 'absent' | 'timeout' | 'ineligible' | 'rate-limit' | 'turn-ended' | 'shutdown';
   at: number;   // 结算的时刻
   by?: { platform: string; userId?: string; nickname?: string; owner: boolean }; // 应答人（source 为 answer 时有），同 user-message 的说话人：客户端据 owner 判是不是 owner 批的
 }
@@ -260,7 +261,7 @@ interface ApprovalSettlement {
 - **投递失败**：回复平台没收下时，适配器在存档里记一条投递失败（schema-message 的 `OutboundDeliveryFailed`，带这一轮的 `turnId`），历史据此给那一轮的回复标 `undelivered`。
 - **重试与工具调用之前**：重试丢掉的几版与工具调用之前说的话由存档的时间线推出，历史里同样标 `undelivered`。
 - **不落库的**：没回复就收尾的一轮（静默、重复跳过）最后说的话不落库，只在实时推送里，历史里没有这几条。不是她发的外发消息（指令的回复、宿主提示、插件发的附件等）在发出时推出，送达之后才记进存档：送达之前订阅的快照里没有，送达之后的历史里才有；平台没收下时只在实时推送里。这类消息由 message-archive 记，没装它时不落库，只在实时推送里。
-- **发起时就被拒的审批**：发起时没人在场、发起者不能产生审批、子任务、超过频率上限，审批没推给审批面，工具卡照样带 `approvalId` 与 `settlement`、状态是 denied，结算同样写进工具结果的元数据；不推 `approval/requested`，不算「需要我处理」。
+- **发起时就被拒的审批**：发起时没人在场、发起者不能产生审批、超过频率上限，审批没推给审批面，工具卡照样带 `approvalId` 与 `settlement`、状态是 denied，结算同样写进工具结果的元数据；不推 `approval/requested`，不算「需要我处理」。
 
 ## 回合控制
 
@@ -334,7 +335,7 @@ interface Approval {
   sessionId: string;
   turnId?: string;
   callId?: string;            // 工具卡的 itemId
-  origin: { kind: 'hand' | 'subtask' | 'autonomous'; participants: { platform: string; userId: string }[] };
+  origin: { kind: 'hand' | 'autonomous'; participants: { platform: string; userId: string }[] };
   target: 'tool';
   tool: string;
   facts: { command?: string; cwd?: string; diff?: { path: string; patch: string }; params: Record<string, unknown> };
@@ -342,6 +343,7 @@ interface Approval {
   contentHash: string;        // 应答时原样带回
   expiresAt: number;          // 到期的时刻（毫秒时间戳）
   state: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled';
+  chain?: Array<{ id: string; title: string }>;  // 来源链：所在会话在根会话以下时，根会话以下的各级子会话，根以下在前
 }
 ```
 
