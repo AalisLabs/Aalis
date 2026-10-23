@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：显示名，推到私聊的审批消息（含来源一行）、提示与过期行
+// 本插件自己的原文字典：显示名，推到私聊的审批消息（含来源一行）与发在群里的审批消息、提示与过期行
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -14,6 +14,10 @@ const SOURCE = {
   factParams: '参数：{value}',
   clipped: '{head}…（省略 {count, number} 字）…{tail}',
   howToAnswer: '引用这条消息回复「同意」，或「拒绝」加原因；{minutes, number} 分钟内不回按过期。',
+  windowRequest: '需要批准：{tool}',
+  windowWhy: '这一轮里有人自己做不了这件事。',
+  windowHowToAnswer:
+    '自己就能做这件事的人引用这条消息回复「同意」，或「拒绝」加原因；{minutes, number} 分钟内不回按过期。',
   answerElsewhere: '这条审批无法在这里应答，请到 WebUI 或终端处理。',
   alreadySettled: '这张已经处理过。',
   answerRefused: '应答没有生效：{reason}',

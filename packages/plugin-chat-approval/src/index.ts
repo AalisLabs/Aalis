@@ -1,14 +1,19 @@
 // ════════════════════════════════════════════════════════════
-// 聊天审批：owner 与她的 IM 私聊作审批面（登记名 chat）。每个（owner 的 IM 身份，机器人账号）一份接入，她第一次经这个账号
-// 亲手说话时建，建时定下她与这个账号的私聊；她经这个账号亲手说话（私聊与群里，点没点名都算）即在场，她经这个账号发起的审批
-// 推到这个私聊，卡上写来源。她在这个私聊里引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。
-// 只经契约组合，不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，引用取投递结果里的平台消息 id。
+// 聊天审批：IM 里的审批面（登记名 chat），两种接入：
+// - owner 的 IM 私聊：每个（owner 的 IM 身份，机器人账号）一份，限定这个账号。她经这个账号亲手说话（私聊与群里，点没点名都算）
+//   即在场；她经这个账号发起的、只有她能批的审批推到她与这个账号的私聊，卡上写来源；
+// - 群窗口：每个（群窗口，发言者）一份，限定这个窗口（根会话）。他在这个群里亲手说话即在场；这个群发起的参与者审批、他能批的
+//   发在这个群里，同一张只发一条。
+// 引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。接入不在场（最近一次亲手说话已过在场时限、推给它的都已结）
+// 时撤掉，再说话时重建。只经契约组合，不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，群窗口取会话表记下的
+// 多方标记，引用取投递结果里的平台消息 id。
 // ════════════════════════════════════════════════════════════
 
 import {
   type Approval,
   type ApprovalAttendance,
   type ApprovalIdentity,
+  type AttendScope,
   approvals,
   clipForCard,
   sanitizeForCard,
@@ -24,7 +29,7 @@ import { awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aali
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { t } from './texts.js';
 
-// 权限服务、会话管理或平台缺席时认不出 owner 的私聊：不接入、不推
+// 权限服务、会话管理或平台缺席时认不出 owner 的私聊：不接入、不推；会话管理缺席时认不出群窗口
 const uses = {
   approvals,
   events,
@@ -42,6 +47,11 @@ type Caps = BoundOf<typeof uses>;
 const FACT_LIMIT = 500;
 /** 记住最近这么多条审批消息（引用回复据它认出回的是哪一张）与应答过的入站消息 */
 const MEMORY = 1000;
+/**
+ * 在场时限，取审批服务默认实现的值：接入最近一次亲手说话超过这么久、推给它的审批都已结，就不在场，撤掉（审批服务的时限
+ * 更长时，撤掉之后新推的审批等他再说话时补推）
+ */
+const PRESENCE_MS = 10 * 60_000;
 
 /** 应答首尾不论的一个字：空白（含全角空格）与标点 */
 const EDGE = /[\s。！!.~，,？?：:]/;
@@ -80,20 +90,25 @@ function fact(value: string): string | TextRef {
 }
 
 /**
- * 推到私聊的审批消息：工具，来源，命令、目录、文件、改动、参数各一行，末行是怎么回复与还剩几分钟（按审批的到期时刻算，
- * 不足一分钟按一分钟，墙钟已过到期时刻、等待的计时器还没到时也写一分钟）
+ * 审批消息。推到私聊的（给了 source，来源一行）：工具，来源，命令、目录、文件、改动、参数各一行，末行是怎么回复；发在群里的
+ * （不给 source：就发在发起它的这个群里）：工具与各项事实，一行写这一轮里有人自己做不了，末行是能做的人怎么回复。末行写还剩
+ * 几分钟（按审批的到期时刻算，不足一分钟按一分钟，墙钟已过到期时刻、等待的计时器还没到时也写一分钟）
  */
-function requestText({ tool, facts, expiresAt }: Approval, source: TextRef, now: number): TextRef {
+function requestText({ tool, facts, expiresAt }: Approval, source: TextRef | undefined, now: number): TextRef {
   const { command, cwd, diff, params } = facts;
-  return textLines([
-    t('request', { tool: sanitizeForCard(tool) }),
-    source,
+  const lines = [
     ...(command === undefined ? [] : [t('factCommand', { value: fact(command) })]),
     ...(cwd === undefined ? [] : [t('factCwd', { value: fact(cwd) })]),
     ...(diff ? [t('factFile', { value: fact(diff.path) }), t('factPatch', { value: fact(diff.patch) })] : []),
     ...(Object.keys(params).length > 0 ? [t('factParams', { value: fact(JSON.stringify(params)) })] : []),
-    t('howToAnswer', { minutes: Math.max(1, Math.ceil((expiresAt - now) / 60_000)) }),
-  ]);
+  ];
+  const named = { tool: sanitizeForCard(tool) };
+  const left = { minutes: Math.max(1, Math.ceil((expiresAt - now) / 60_000)) };
+  return textLines(
+    source === undefined
+      ? [t('windowRequest', named), ...lines, t('windowWhy'), t('windowHowToAnswer', left)]
+      : [t('request', named), source, ...lines, t('howToAnswer', left)],
+  );
 }
 
 export default definePlugin({
@@ -104,21 +119,33 @@ export default definePlugin({
   apply: runChatApproval,
 });
 
-/** 推到私聊、还没结的一张审批 */
+/** 推到一处、还没结的一张审批 */
 interface Shown {
   approval: Approval;
   /** 投递的结果：还在发时没有 */
   sent?: 'delivered' | 'failed';
 }
 
-/** owner 的一个 IM 身份经一个机器人账号的接入 */
-interface Chat {
-  /** 建时定下的、她与这个账号的私聊 */
+/** 一个身份在一处的接入 */
+interface Attendee {
+  attendance: ApprovalAttendance;
+  /** 推给它、还没结的审批 id */
+  held: Set<string>;
+  /** 最近一次亲手说话的时刻 */
+  spokeAt: number;
+}
+
+/** 发审批消息的一处：owner 与一个机器人账号的私聊，或一个群窗口 */
+interface Place {
+  /** 私聊的会话 id，或群窗口的根会话 id */
   sessionId: string;
   platform: string;
-  attendance: ApprovalAttendance;
-  /** 推到这里、还没结的审批 */
+  /** 这里的接入的限定：私聊限定机器人账号，群窗口限定这个窗口 */
+  scope: AttendScope;
+  /** 推到这里、还没结的审批：同一张在这里只发一条 */
   shown: Map<string, Shown>;
+  /** 这里的接入，按身份：私聊只有 owner 的一份，群窗口每个发言者一份 */
+  attendees: Map<string, Attendee>;
 }
 
 function runChatApproval({
@@ -134,24 +161,33 @@ function runChatApproval({
 }: Caps): void {
   const { signal } = lifecycle.use;
   const surface = approvals.use.registerSurface('chat');
-  /** 每个（身份，机器人账号）一份 */
-  const chats = new Map<string, Chat>();
-  /** 审批消息的平台消息 id（按私聊）→ 那张审批的 id */
+  /** owner 的私聊，每个（身份，机器人账号）一处 */
+  const chats = new Map<string, Place>();
+  /** 群窗口，按根会话 id */
+  const windows = new Map<string, Place>();
+  /** 审批消息的平台消息 id（按私聊或群窗口）→ 那张审批的 id */
   const quoted = createBoundedMap<string, string>({ max: MEMORY });
-  /** 应答过的入站消息 id（按私聊） */
+  /** 应答过的入站消息 id（按私聊或群窗口） */
   const answered = createBoundedMap<string, true>({ max: MEMORY });
   const keyOf = (sessionId: string, messageId: string) => `${sessionId}\n${messageId}`;
-  const chatKey = ({ platform, userId }: ApprovalIdentity, selfId: string | undefined) =>
-    `${platform}\n${userId}\n${selfId ?? ''}`;
+  const whoKey = ({ platform, userId }: ApprovalIdentity) => `${platform}\n${userId}`;
+  const placeOf = (sessionId: string, platform: string, scope: AttendScope): Place => ({
+    sessionId,
+    platform,
+    scope,
+    shown: new Map(),
+    attendees: new Map(),
+  });
 
   /**
-   * 这条消息是 owner 亲手发的，就交出她的身份：不带 source、发言者是 owner。不带 source 的消息不带 actor（触发器不给没点名的
-   * 话回填身份），这与权限服务判这一轮为 hand 且参与者是 owner 等价
+   * 亲手发这条消息的人：不带 source 的消息的发言者。不带 source 的消息不带 actor（触发器不给没点名的话回填身份），按发言者认
+   * 与权限服务判这一轮为 hand、参与者就是发言者等价
    */
   function handOf({ platform: from, userId, source }: IncomingMessage): ApprovalIdentity | undefined {
-    if (!authority.present || source !== undefined || userId === undefined) return undefined;
-    return authority.use.isOwner(from, userId) ? { platform: from, userId } : undefined;
+    return source === undefined && userId ? { platform: from, userId } : undefined;
   }
+
+  const isOwner = (who: ApprovalIdentity) => authority.present && authority.use.isOwner(who.platform, who.userId);
 
   /**
    * 她与这个机器人账号的私聊：会话表里机器人账号相同、按 oneToOneWith 是她自己与她的私聊的根会话。出生平台就是身份的平台，
@@ -171,6 +207,39 @@ function runChatApproval({
       .find(root => root.originChat?.selfId === selfId && oneToOneWith(root, owner, declared(root)))?.id;
   }
 
+  /** 她与这个机器人账号的私聊这一处；她与这个账号还没有私聊时没有，等她来私聊 */
+  function chatOf(owner: ApprovalIdentity, selfId: string | undefined): Place | undefined {
+    const key = `${whoKey(owner)}\n${selfId ?? ''}`;
+    const known = chats.get(key);
+    if (known) return known;
+    const sessionId = privateChatOf(owner, selfId);
+    if (sessionId === undefined) return undefined;
+    const chat = placeOf(sessionId, owner.platform, { selfId });
+    chats.set(key, chat);
+    return chat;
+  }
+
+  /**
+   * 这条消息所在的群窗口这一处：会话是会话表里聊天窗口记成多方的根会话（只有 IM 房间的根会话记聊天窗口），消息从它的出生平台
+   * 来（从 WebUI 往群里插话的不是在群里说的）。不是在群窗口里说的没有
+   */
+  function windowOf({ sessionId, platform: from }: IncomingMessage): Place | undefined {
+    const room = sessionManager.present ? sessionManager.use.getSession(sessionId) : undefined;
+    if (!room?.originChat?.multiParty || room.originPlatform !== from) return undefined;
+    const known = windows.get(sessionId);
+    if (known) return known;
+    const place = placeOf(sessionId, from, { window: sessionId });
+    windows.set(sessionId, place);
+    return place;
+  }
+
+  /** 他说这条消息时接入的各处：owner 与这个机器人账号的私聊（她在私聊与群里说的都算），与这条消息所在的群窗口 */
+  function placesOf(message: IncomingMessage, who: ApprovalIdentity): Place[] {
+    const chat = isOwner(who) ? chatOf(who, message.selfId) : undefined;
+    const room = windowOf(message);
+    return [...(chat ? [chat] : []), ...(room ? [room] : [])];
+  }
+
   /**
    * 卡上的来源：审批所在会话的根会话是群还是私聊（宿主写的固定字）与窗口 id，会话名只作附注（换行与制表符换成空格，群名
    * 由群管理员控制，不能另起一行冒充来源或事实）；判不出窗口的写会话 id
@@ -188,100 +257,118 @@ function runChatApproval({
   }
 
   /**
-   * 发一句到这个私聊：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回平台的投递结果。停用之后不发、不等回执；
+   * 发一句到这一处：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回平台的投递结果。停用之后不发、不等回执；
    * 发不出或等不到回执时交回 undefined，不抛
    */
-  async function send(chat: Chat, text: TextRef) {
+  async function send(place: Place, text: TextRef) {
     if (signal.aborted || !gateway.present) return undefined;
     const message: OutgoingMessage = {
       content: toSource(text),
       text,
-      sessionId: chat.sessionId,
-      platform: chat.platform,
+      sessionId: place.sessionId,
+      platform: place.platform,
       source: 'system',
     };
     try {
       await gateway.use.dispatchOutbound(message);
       return message.delivery && (await awaitDelivery(message.delivery, signal));
     } catch (err) {
-      logger.use.warn('聊天审批往私聊发消息出错:', err);
+      logger.use.warn('聊天审批发消息出错:', err);
       return undefined;
     }
   }
 
   /**
-   * 推一张审批。没送达时她在这里看不到它：这张还在等就对这份接入上报离开，审批服务把推给它、还没结的都算没收到，她再说话时
-   * 补推。送达且平台给了消息 id 才认得出引用它的回复；不给时补一句这里无法应答。送达之前已经结了的只记下消息 id（引用它的
-   * 回复回「已经处理过」）
+   * 推一张审批：发到这一处（群窗口就是它的根会话，不按审批所在的会话找）。没送达时这里的人看不到它：这张还在等就对拿着它的
+   * 接入上报离开，审批服务把推给它们、还没结的都算没收到，他们再说话时补推。送达且平台给了消息 id 才认得出引用它的回复；不给时
+   * 补一句这里无法应答。送达之前已经结了的只记下消息 id（引用它的回复回「已经处理过」）
    */
-  async function push(chat: Chat, shown: Shown): Promise<void> {
+  async function push(place: Place, shown: Shown): Promise<void> {
     const { approval } = shown;
-    const result = await send(chat, requestText(approval, sourceOf(approval.sessionId), Date.now()));
-    const waiting = chat.shown.get(approval.id) === shown;
+    const source = place.scope.window === undefined ? sourceOf(approval.sessionId) : undefined;
+    const result = await send(place, requestText(approval, source, Date.now()));
+    const waiting = place.shown.get(approval.id) === shown;
     if (!result?.ok) {
       shown.sent = 'failed';
-      if (waiting) chat.attendance.presence(false);
+      if (!waiting) return;
+      for (const attendee of place.attendees.values()) {
+        if (attendee.held.has(approval.id)) attendee.attendance.presence(false);
+      }
       return;
     }
     shown.sent = 'delivered';
     const ids = result.messageIds ?? [];
-    for (const id of ids) quoted.set(keyOf(chat.sessionId, id), approval.id);
-    if (waiting && ids.length === 0) await send(chat, t('answerElsewhere'));
+    for (const id of ids) quoted.set(keyOf(place.sessionId, id), approval.id);
+    if (waiting && ids.length === 0) await send(place, t('answerElsewhere'));
   }
 
-  /** 建一份接入：她与这个账号没有私聊时不建，等她来私聊 */
-  function open(key: string, owner: ApprovalIdentity, selfId: string | undefined): Chat | undefined {
-    const sessionId = privateChatOf(owner, selfId);
-    if (sessionId === undefined) return undefined;
-    const shown = new Map<string, Shown>();
-    const chat: Chat = {
-      sessionId,
-      platform: owner.platform,
-      shown,
+  /** 他在这一处的接入，没有就建 */
+  function attendeeOf(place: Place, who: ApprovalIdentity): Attendee {
+    const key = whoKey(who);
+    const known = place.attendees.get(key);
+    if (known) return known;
+    const held = new Set<string>();
+    const attendee: Attendee = {
+      held,
+      spokeAt: Date.now(),
       attendance: surface.attend(
-        owner,
+        who,
         {
           requested: approval => {
-            // 补推的同一张：送达过的与还在发的不再发，没送达的重发
-            const known = shown.get(approval.id);
-            if (known && known.sent !== 'failed') return;
+            held.add(approval.id);
+            // 同一张在这里只发一条：推给这里别的接入的与补推的同一张，送达过的与还在发的不再发，没送达的重发
+            const posted = place.shown.get(approval.id);
+            if (posted && posted.sent !== 'failed') return;
             const entry: Shown = { approval };
-            shown.set(approval.id, entry);
-            push(chat, entry).catch(err => logger.use.warn('聊天审批推送审批出错:', err));
+            place.shown.set(approval.id, entry);
+            push(place, entry).catch(err => logger.use.warn('聊天审批推送审批出错:', err));
           },
           settled: (approvalId, { state }) => {
-            const entry = shown.get(approvalId);
-            shown.delete(approvalId);
-            // 只给送达过的、只在过期时说一句：在这里回的、在别处处理的与撤销的，回合自己的回复会说明结果
+            held.delete(approvalId);
+            const entry = place.shown.get(approvalId);
+            place.shown.delete(approvalId);
+            // 只给送达过的、只在过期时说一句（这里的每份接入都收到同一个结算，只说一次）：在这里回的、在别处处理的与撤销的，
+            // 回合自己的回复会说明结果
             if (entry?.sent === 'delivered' && state === 'expired')
-              void send(chat, t('expired', { tool: sanitizeForCard(entry.approval.tool) }));
+              void send(place, t('expired', { tool: sanitizeForCard(entry.approval.tool) }));
           },
         },
-        { selfId },
+        place.scope,
       ),
     };
-    chats.set(key, chat);
-    return chat;
+    place.attendees.set(key, attendee);
+    return attendee;
+  }
+
+  /** 撤掉不在场的接入（最近一次亲手说话已过在场时限、推给它的都已结），他再说话时重建：接入不随说过话的人一直增多 */
+  function sweep(now: number): void {
+    for (const place of [...chats.values(), ...windows.values()]) {
+      for (const [key, attendee] of place.attendees) {
+        if (attendee.held.size > 0 || now - attendee.spokeAt < PRESENCE_MS) continue;
+        attendee.attendance.leave();
+        place.attendees.delete(key);
+      }
+    }
   }
 
   /**
-   * 她经这个账号亲手说了话：有接入就上报在场，没有就试着建。建之前等会话管理收录这条入站（同一条共用同一次）：她第一次私聊
-   * 这个账号时，私聊与这条入站同拍建档
+   * 有人亲手说了话：先撤掉不在场的接入，再对他接入的各处上报在场（还没有接入就建）。这条消息的会话还不在会话表里时（她第一次
+   * 私聊这个账号、群里的第一条消息，会话与这条入站同拍建档），先等会话管理收录这条入站（同一条共用同一次）
    */
   async function spoke(message: IncomingMessage): Promise<void> {
-    const owner = handOf(message);
-    if (!owner) return;
-    const key = chatKey(owner, message.selfId);
-    if (!chats.has(key) && sessionManager.present) await sessionManager.use.recordInbound(message);
+    const who = handOf(message);
+    if (!who) return;
+    if (sessionManager.present && !sessionManager.use.getSession(message.sessionId)) {
+      await sessionManager.use.recordInbound(message);
+    }
     if (signal.aborted) return;
-    (chats.get(key) ?? open(key, owner, message.selfId))?.attendance.presence(true);
-  }
-
-  /** 这条消息是她在一份接入的私聊里亲手发的，就交出这份接入 */
-  function chatAt(message: IncomingMessage): Chat | undefined {
-    const owner = handOf(message);
-    const chat = owner && chats.get(chatKey(owner, message.selfId));
-    return chat?.sessionId === message.sessionId ? chat : undefined;
+    const now = Date.now();
+    sweep(now);
+    for (const place of placesOf(message, who)) {
+      const attendee = attendeeOf(place, who);
+      attendee.spokeAt = now;
+      attendee.attendance.presence(true);
+    }
   }
 
   // 在场：监听入站事件，没点名、在触发相位就被吞掉的群聊也算
@@ -289,28 +376,34 @@ function runChatApproval({
     spoke(message).catch(err => logger.use.warn('聊天审批记在场出错:', err));
   });
 
-  // 应答：引用了审批消息、正文是应答词的，在指令相位截下，不进指令解析、不交给 agent，也就不会起新的一轮把在跑的那一轮
-  // 中止；别的（没引用审批消息的、引用了但不是应答词的）照常往下，是交给这一轮的普通消息
+  // 应答：在私聊或群窗口里亲手发的、引用了那里的审批消息、正文是应答词的，在指令相位截下，不进指令解析、不交给 agent；别的
+  // （没引用审批消息的、引用了但不是应答词的）照常往下，是交给这一轮的普通消息。按发言者找他在这一处的接入应答，还没有就先建
   hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
-    const chat = chatAt(message);
-    const approvalId = chat && message.replyTo && quoted.get(keyOf(chat.sessionId, message.replyTo.messageId));
+    const { replyTo } = message;
+    const who = replyTo && handOf(message);
+    const place = who && placesOf(message, who).find(p => p.sessionId === message.sessionId);
+    const approvalId = replyTo && place && quoted.get(keyOf(place.sessionId, replyTo.messageId));
     const answer = approvalId && answerOf(message.content);
-    if (!chat || !approvalId || !answer) return next();
+    if (!who || !place || !approvalId || !answer) return next();
     if (message.messageId !== undefined) {
-      const key = keyOf(chat.sessionId, message.messageId);
+      const key = keyOf(place.sessionId, message.messageId);
       if (answered.get(key)) return;
       answered.set(key, true);
     }
-    const shown = chat.shown.get(approvalId);
+    const shown = place.shown.get(approvalId);
     if (!shown) {
-      await send(chat, t('alreadySettled'));
+      await send(place, t('alreadySettled'));
       return;
     }
-    const response = chat.attendance.respond({ approvalId, contentHash: shown.approval.contentHash, ...answer });
+    const response = attendeeOf(place, who).attendance.respond({
+      approvalId,
+      contentHash: shown.approval.contentHash,
+      ...answer,
+    });
     if (response.ok) return;
-    // 审批服务不认得的 id（服务重启过）同样是已经不在等的
+    // 审批服务不认得的 id（服务重启过）同样是已经不在等的；其余（应答人不能批这一张等）照审批服务给的原因回
     const settled = response.refusal === 'approval-settled' || response.refusal === 'not-found';
-    await send(chat, settled ? t('alreadySettled') : t('answerRefused', { reason: response.message }));
+    await send(place, settled ? t('alreadySettled') : t('answerRefused', { reason: response.message }));
   });
 }
