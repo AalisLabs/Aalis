@@ -207,7 +207,7 @@ function isReachCredential(value: unknown): value is ReachCredential;
 
 - `exec`、`home`、`paper` 按签发时的触及；`require`、`allows` 与 `sandboxPolicy` 每次按会话当时的设置重算，签发之后降档立即生效。
 - `require` 判不行时，`message` 写明要做什么、为什么不行、能不能申请；宿主控制面与拒读清单写明不可申请。
-- `processEnv`：子进程环境只从凭据来。`host` 是 owner 的 login shell 环境；`sandbox` 在它之上去掉凭据并注入沙箱要的几项（见 [plugin-reach](../plugins/plugin-reach.md#子进程环境)）。没有本地效果的凭据抛错。
+- `processEnv`：子进程环境只从凭据来。`host` 是 owner 的 login shell 环境；`sandbox` 是同一份环境，只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`，再注入沙箱要的几项（见 [plugin-reach](../plugins/plugin-reach.md#子进程环境)）。没有本地效果的凭据抛错。
 - `sandboxPolicy` 只在 `exec` 为 `sandbox` 时可取，其余抛错。
 
 ## 服务

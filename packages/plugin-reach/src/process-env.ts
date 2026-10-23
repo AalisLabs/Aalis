@@ -1,13 +1,14 @@
 // ============================================================
-// 子进程环境：owner 的 login shell 环境，沙箱内去掉凭据并注入沙箱要的几项
+// 子进程环境：owner 的 login shell 环境，沙箱内另去掉两样并注入沙箱要的几项
 //
 // 环境在场所的主目录下用 owner 的 login shell 取一次（项目的 .nvmrc、venv 这类按目录选的工具链与 owner 自己的终端一致），
 // 缓存在内存，不落盘；取不到时用守护进程的环境，1 分钟后再取（一次超时不能让这个主目录一直用守护进程的环境）。
-// 宿主执行用完整的环境；沙箱里的命令拿不到凭据：名字像凭据的变量、带密码的网址、AALIS_*、ssh-agent 的 socket 与 git 的
-// 命令行配置一律去掉。
+// 宿主执行与沙箱里的命令都拿到完整的登录环境，不按名字或值猜凭据：能进沙箱的只有主体是 owner 的一轮，密钥不靠出口过滤，
+// 靠权限隔离。沙箱里只去掉本实例自己的变量与 ssh-agent 的 socket，git 的命令行配置接上沙箱要的几项，npm 的用户配置换成
+// 去掉认证键的副本。
 // ============================================================
 
-// biome-ignore lint/style/noRestrictedImports: 读用户家目录的 .npmrc、在本会话临时区写去掉凭据的副本（不跟随链接）、按 PATH 找本机 Node 的头文件，这些路径不在存储根里
+// biome-ignore lint/style/noRestrictedImports: 读用户家目录的 .npmrc、在本会话临时区写去掉认证键的副本（不跟随链接）、按 PATH 找本机 Node 的头文件，这些路径不在存储根里
 import { access, lstat, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 // biome-ignore lint/style/noRestrictedImports: 没有 SHELL 时取操作系统账户登记的 login shell
 import { userInfo } from 'node:os';
@@ -23,32 +24,17 @@ const CAPTURE_TIMEOUT_MS = 10_000;
 /** 取不到时这么久之后再取 */
 const RETRY_AFTER_MS = 60_000;
 
-/** 这些名字的变量是凭据：AALIS_ 开头的本实例变量，密码管理器的会话令牌（OP_SESSION_ 开头的与 BW_SESSION） */
-const SECRET_NAMES = /^(AALIS_|OP_SESSION_|BW_SESSION$)/;
-/** 名字里含这些词的变量是凭据；webhook 的地址里就带着令牌 */
-const SECRET_WORDS = /TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|APIKEY|SSHPASS|WEBHOOK/i;
-/** 名字按 `_` 分段后有这些段的变量是凭据（KEY 不按包含判：KEYTIMEOUT 这类不是）；ssh-agent 的 SSH_AUTH_SOCK 在 AUTH 这一段里 */
-const SECRET_SEGMENTS = new Set(['KEY', 'KEYS', 'PAT', 'PASS', 'AUTH', 'COOKIE']);
-/** 值里带密码的网址（用户名可以为空）；只有用户名的照留 */
-const URL_WITH_PASSWORD = /:\/\/[^/\s@:]*:[^/\s@]+@/;
-/** git 的命令行配置：值里可能是凭据（如 extraheader 的认证头），整组不进沙箱，沙箱要的另从 0 编号注入 */
-const GIT_CONFIG_ENV = /^GIT_CONFIG_(COUNT$|PARAMETERS$|KEY_|VALUE_)/;
-/** npm 配置里的凭据行：令牌、用户名与密码、客户端证书与私钥（文件或内联） */
+/** AALIS_ 开头的是实例自己的命名空间（家目录这类本实例的配置），不交给沙箱里的命令 */
+const INSTANCE_VARS = /^AALIS_/;
+/** ssh-agent 的 socket：ssh-agent 不对沙箱开放，经 SSH 的推送要宿主执行 */
+const SSH_AGENT_SOCK = 'SSH_AUTH_SOCK';
+/**
+ * npm 定义的认证键：令牌、用户名与密码、客户端证书与私钥（文件或内联）。~/.npmrc 在拒读清单里，沙箱里的 npm 读的是去掉这些键
+ * 的副本
+ */
 const NPMRC_SECRET = /(^|:)(_authToken|_auth|_password|username|password|(cert|key)(file)?)\s*=/i;
-/** 公开仓库拉取改走匿名 HTTPS（沙箱里没有 SSH 凭据），推送仍是 SSH（沙箱里推不了，要宿主执行） */
+/** SSH 地址的拉取改走 HTTPS（沙箱里没有 SSH 凭据），推送仍是 SSH（沙箱里推不了，要宿主执行） */
 const HTTPS_HOSTS = ['github.com', 'gitlab.com'];
-
-function isSecret(name: string, value: string): boolean {
-  return (
-    SECRET_NAMES.test(name) ||
-    SECRET_WORDS.test(name) ||
-    name
-      .toUpperCase()
-      .split('_')
-      .some(segment => SECRET_SEGMENTS.has(segment)) ||
-    URL_WITH_PASSWORD.test(value)
-  );
-}
 
 /** 按 owner 的 login shell 取环境的入口：同一个主目录取到一次就一直用，同时来的调用共用一次取 */
 export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; userHome: string; logger: Logger }) {
@@ -107,12 +93,13 @@ export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; use
 }
 
 /**
- * 沙箱里的命令拿到的环境：去掉凭据，注入 npm 的用户配置（去掉凭据行的副本，写在本会话临时区）、本机 Node 的头文件、
- * 浏览器的缓存目录，关掉 pnpm 的构建产物缓存（沙箱里构建出的产物不能被沙箱外的安装直接复用），公开仓库拉取走 HTTPS
+ * 沙箱里的命令拿到的环境：完整的登录环境去掉本实例的变量与 ssh-agent 的 socket，注入 npm 的用户配置（去掉认证键的副本，写在
+ * 本会话临时区）、本机 Node 的头文件、浏览器的缓存目录，关掉 pnpm 的构建产物缓存（沙箱里构建出的产物不能被沙箱外的安装直接
+ * 复用），SSH 地址的拉取走 HTTPS
  */
 export async function sandboxEnv(login: Env, sessionTmp: string, userHome: string): Promise<Env> {
   const env = Object.fromEntries(
-    Object.entries(login).filter(([name, value]) => !GIT_CONFIG_ENV.test(name) && !isSecret(name, value)),
+    Object.entries(login).filter(([name]) => !INSTANCE_VARS.test(name) && name !== SSH_AGENT_SOCK),
   );
   const npmrc = join(sessionTmp, 'npmrc');
   const owned = await readFile(join(userHome, '.npmrc'), 'utf8').catch(err => {
@@ -147,11 +134,14 @@ export async function sandboxEnv(login: Env, sessionTmp: string, userHome: strin
       [`url.ssh://git@${host}/.pushInsteadOf`, `ssh://git@${host}/`],
     ],
   );
+  // git 的命令行配置只有一组连续编号：沙箱要的几项接在登录环境原有的那组后面重新编号，原有的照留（计数不是数字时 git 本就
+  // 读不了那组，从 0 编号）
+  const base = /^\d+$/.test(env.GIT_CONFIG_COUNT ?? '') ? Number(env.GIT_CONFIG_COUNT) : 0;
   git.forEach(([key, value], i) => {
-    env[`GIT_CONFIG_KEY_${i}`] = key;
-    env[`GIT_CONFIG_VALUE_${i}`] = value;
+    env[`GIT_CONFIG_KEY_${base + i}`] = key;
+    env[`GIT_CONFIG_VALUE_${base + i}`] = value;
   });
-  env.GIT_CONFIG_COUNT = String(git.length);
+  env.GIT_CONFIG_COUNT = String(base + git.length);
   return { ...env, ...injected };
 }
 

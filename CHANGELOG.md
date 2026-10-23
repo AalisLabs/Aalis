@@ -311,6 +311,7 @@
 
 - api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 随派它的那一轮。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
 - plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。触及接线之后，owner 在群里亲手发起的一轮有本地效果，主目录是这个群所在场所的白纸。
+- plugin-reach 沙箱里的命令拿到完整的登录环境，不再按名字或值猜凭据：名字像凭据的变量（含 `TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL` 等，或按 `_` 分段有 `KEY`、`PASS`、`AUTH` 等一段的）、值里带密码的网址与密码管理器的会话令牌照样带上（此前去掉）；能进沙箱的只有主体是 owner 的一轮。只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`。登录环境里原有的 git 命令行配置（`GIT_CONFIG_COUNT` 与各组、`GIT_CONFIG_PARAMETERS`）照留，沙箱注入的几项接在原有的那组后面编号（此前整组去掉、注入的从 0 编号）。
 
 ### 取别的会话的媒体按同一规则，本机文件按主体（@aalis/api-media、@aalis/plugin-image-sender、@aalis/plugin-media）
 
