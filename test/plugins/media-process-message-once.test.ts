@@ -146,6 +146,9 @@ async function fileReaderPreprocessor() {
     async handleMessage() {},
     async assignModel() {},
     abort: () => false,
+    async clearing(_sessionIds, clear) {
+      await clear();
+    },
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {};

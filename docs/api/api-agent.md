@@ -14,6 +14,7 @@
 interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
   abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void>;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
@@ -26,6 +27,8 @@ interface AgentService {
 会话删除（`session:deleted`）时实现者停掉这个会话在跑的一轮、放掉排着的输入并等它收尾：会话管理在这个事件之后才清数据，不停的话删掉的会话里这一轮照样跑完、落库。
 
 `abort` 停下这个会话在跑的一轮，实现者必须提供它（停止键、禁言、后台页的「全部停止」都经它）。`turnId` 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉：它们不开轮，在这个会话在跑的一轮落定之后归档（不带回合 id），否则照常开下一轮；`reason` 只写进回合结束那一行日志，不进界面与回合结局。返回值是有没有停下在跑的一轮，调用方据此分辨「turnId 对不上」。
+
+`clearing` 由清消息历史的一方调（第一方是 plugin-commands 的 `/clear` 与会话管理删会话时清数据），实现者必须提供它。`sessionIds` 不给即全部会话，`clear` 是整条清理（`memory:clear` 链连同默认动作）：先停下这些会话在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`；从停下到 `clear` 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。停下与按住都在各家清理之外，不看它们的中间件登记先后。
 
 事件 `agent:queue`（`{ sessionId, waiting }`）是这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 

@@ -354,24 +354,25 @@
 - onebot 的事件提示（戳一戳、群文件上传）按这一轮各条输入自带的事件种类（`noticeType`）给，不再按正文开头认：发起者昵称里带「]」时也给，群友打出的像事件的文字不再给。
 - plugin-file-reader 的「本轮新上传」按这一轮各条输入附件里本插件写下的文件引用认，不再按正文里的「[文件:」与 ID 认：正文里手写的文件描述不算新上传；这一轮的文件处理失败、没有引用时注入的是历史清单（此前不注入）。
 
-### 通道层：新消息不打断在跑的一轮（@aalis/api-agent、@aalis/schema-message、@aalis/api-gateway、@aalis/plugin-agent、@aalis/plugin-gateway、@aalis/plugin-flow-control、@aalis/plugin-session-server、@aalis/plugin-workflow、@aalis/plugin-subtask、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-persona、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-session-manager）
+### 通道层：新消息不打断在跑的一轮（@aalis/api-agent、@aalis/schema-message、@aalis/api-gateway、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-gateway、@aalis/plugin-flow-control、@aalis/plugin-session-server、@aalis/plugin-workflow、@aalis/plugin-subtask、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-persona、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-session-manager）
 
 - 新消息不再中止在跑的一轮。每个会话同一时刻最多一轮：真人消息叠进由真人消息开的、在跑的一轮（每次调用模型之前，第一次与每批工具之后都算），她已经在写最后的回复时才到的排到下一轮另回一条；带来源的注入（定时任务、宿主通知、编排节点、白纸与作品通知、好友申请、空闲开话题、子任务的派发与追问）各自成一轮，排在在跑的一轮之后，注入那一轮在跑时来的真人消息排在它之后。一轮结束后队首是真人消息时，排着的真人消息一起开下一轮，前面告诉她「下面几条是你上一轮进行期间到的」，多方房间里这几条全是没点名她的插话时另说「没有需要接的可以不说话」。排着开的那一轮不再过冷却与限速（这些消息到达时已过闸）。叠进来的人从下一批工具起算参与者。
 - 输入在进入一轮时归档，消息的时间标注是进入这一轮的时刻；排着、还没进一轮的不在历史里。这一轮的模型、深度思考、工具迭代上限、条数线、工具分组与人设选项在开轮时读一次，一轮进行中改了的下一轮才生效。焦点指引的多方判定改取根会话记下的聊天窗口（owner 从 WebUI 往群里发的话照样按群算），按时间与发送者账号逐条列出这一轮被点名的输入（没经触发判定的真人输入也算点名），插进被点名的输入时在它们之前另加一块，前面那块不改。
-- 带来源的注入（定时任务、编排、各种通知）不算点名：档案与关系图不再按它带的账号给完整档案与子图（如 onebot 的好友申请、入群申请通知那一轮），它开的一轮也没有焦点指引。
+- 带来源的注入（定时任务、编排、各种通知）不算点名：档案与关系图不再按它带的账号给完整档案与子图（如 onebot 的好友申请、入群申请通知那一轮），它开的一轮也没有焦点指引。用户档案的关系分只给真人的话：带来源的注入不加旁观增量与回复增量、不计提取，子任务的任务消息不再建出键为 `<平台>:parent:<会话>` 的档案，好友申请、入群申请通知不给申请人加分。
 - 读历史时，夹在一组工具调用与它的结果之间的别的消息挪到这组之后，不再整组丢掉：按时间戳读历史的存储（MongoDB、SQLite）里，组写入期间插进来的输入与被触发判定或流控吞掉的群聊会排进组中间，此前她因此忘了做过的调用。
 - 这一轮有几条输入时：人设只在各条输入的说话人相同时写说话人事实；档案给每位点名她的发言者完整档案；关系图把几位的子图合在一块，几位时小节标题注明是谁；向量记忆的检索词按先后相接各条输入的归档正文，超过 4000 字从最早的一条丢起，同用户加权取各条输入的发言者；媒体把各条带图的 user 消息都规范化。
-- api-agent：`AgentService.abort` 改为必须实现，参数改为 `abort(sessionId, { turnId?, queued?, reason? })`：只停在跑的一轮，`queued` 为真时连同排队与待插入的一起放掉（不开轮，在那一轮落定之后归档、不带回合 id），`reason` 只进日志。`handleMessage` 返回时这条输入已落定，被放掉也算。`agent:turn:before` 的 `inputs` 是活的，插进来的输入追加在末尾、归档的进入方式为 `joined`。自己实现 AgentService 的照新形状改。
+- api-agent：`AgentService.abort` 改为必须实现，参数改为 `abort(sessionId, { turnId?, queued?, reason? })`：只停在跑的一轮，`queued` 为真时连同排队与待插入的一起放掉（不开轮，在那一轮落定之后归档、不带回合 id），`reason` 只进日志。`handleMessage` 返回时这条输入已落定，被放掉也算。`agent:turn:before` 的 `inputs` 是活的，插进来的输入追加在末尾、归档的进入方式为 `joined`。`AgentService` 加必须实现的 `clearing(sessionIds, clear)`：清消息历史的一方（第一方是 `/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作）交给它，先停下这些会话在跑的一轮、放掉排着的（不归档），按住到清完；第一方 agent 不再挂 `memory:clear` 中间件。自己实现 AgentService 的照新形状改。
 - schema-message：`IncomingMessage.source` 不再表示并发隔离（带来源的输入各自成一轮）。
 - api-gateway：`ingressMessage` 在这条输入落定时返回（在相位里被挡下，或它所在的一轮结束、它被放掉）。网关在所有入站相位之前给每条入站打到达序号；规则版与 Laya 的判定行、流控与网关的吞噬行、agent 每条输入的去向与回合结束行带 `#序号`，不记正文与昵称。
-- 停下一轮：停止键只停在跑的一轮，它随即不再收输入，待插入的、排着的与之后到的照常开下一轮；禁言（`setMuted` 时长大于 0；关键词禁言不看说话人的等级）真的停下在跑的一轮，不外发、不落库回复，排着的不再开轮；后台页「全部停止」对每个下级会话连同排队项停，只有排着的追问、没有在跑一轮的子会话同样放掉；停机时排着的不再开轮；会话级 `/clear` 清消息历史时先停下在跑的一轮、放掉排着的（不记进历史）再清，停下到清完之间到的消息等清完再处理，`/clear -t vector` 这类不清消息历史的不停；会话删除放掉的不记进历史。
+- 停下一轮：停止键只停在跑的一轮，它随即不再收输入，待插入的、排着的与之后到的照常开下一轮；禁言（`setMuted` 时长大于 0；关键词禁言不看说话人的等级）真的停下在跑的一轮，不外发、不落库回复，排着的不再开轮；后台页「全部停止」对每个下级会话连同排队项停，只有排着的追问、没有在跑一轮的子会话同样放掉；停机时排着的不再开轮；`/clear` 与 `/clear all`（全部会话）清消息历史时经 agent 先停下在跑的一轮、放掉排着的（不记进历史）再跑整条清理，停下到清完之间到的消息等清完再处理，与各插件清理中间件的登记先后无关（plugin-commands 新加 `agent` 的可选依赖），`-t vector` 这类不清消息历史的不停；会话删除放掉的不记进历史，清数据期间才到的消息同样等清完再处理（会话管理经 agent 的 `clearing` 清数据）。
 - plugin-workflow：agent 节点经网关送达指令（没有网关时节点失败），按自己的异步上下文只认它开的那一轮，同一会话里别的回合的回复不再被当成它的结果；指向调起这次运行的会话、指令在网关相位被吞（禁言、限速）或被放掉时立即失败，不再等满节点超时。`workflow_run` 所在的一轮被停下时不再等这次运行，回已中止，这一轮随即落定；运行不取消。
 - plugin-subtask：追问经网关送达（没有网关时 `send_to_subtask` 回错误），排在子任务在跑的一轮之后，不再打断它；那一轮结束时还有没落定的追问，它的回复不交回、不完成，等追问那一轮；还有没落定的追问的子任务，`check_subtask` 与父会话的子任务提醒按进行中报，`wait_subtasks` 不返回。`wait_subtasks` 所在的一轮被停下（停止键、禁言、`/clear` 等）时不再等，回已中止，这一轮随即落定。
 - plugin-session-manager：删除会话期间（停下旧的一轮到清完数据）到的同一会话的入站等删除做完再往下走，是新的一代，它的存档不再被这次删除清掉。
 
-### 通道层：群里的审批消息（@aalis/plugin-chat-approval）
+### 通道层：群里的审批消息（@aalis/api-approval、@aalis/plugin-session-server、@aalis/plugin-chat-approval）
 
-- plugin-chat-approval（还没发布过）在 owner 的 IM 私聊之外加群窗口的接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），10 分钟内没说话、推给他的都已结时撤掉，再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
+- api-approval 的 `ApprovalAttendance` 加必须实现的 `present()`：这份接入此刻还算不算在场，由审批服务按它的在场规则判（审批服务不在时为假）。替换审批服务实现的照加。
+- plugin-chat-approval（还没发布过）在 owner 的 IM 私聊之外加群窗口的接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），审批服务说他已不在场时撤掉（默认实现：10 分钟内没说话、推给他的都已结），再说话时重建；私聊的接入同样。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答（回复开头 QQ 客户端自动插的对她的 @ 不算正文，私聊里同样）：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
 
 ### 子任务的审批上浮（@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-cli、@aalis/plugin-chat-approval）
 

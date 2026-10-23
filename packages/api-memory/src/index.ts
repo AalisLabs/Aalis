@@ -266,7 +266,10 @@ export async function clearMetadataNamespaces(
 
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
-    /** 记忆清除钩子（统一编排） */
+    /**
+     * 记忆清除钩子（统一编排）。清消息历史的发起方（第一方是 `/clear` 与会话管理删会话）经 agent 的 `AgentService.clearing`
+     * 跑整条链：先停下并按住这些会话再清，期间到的输入清完再处理；直接跑这条链的，期间到的输入照常开轮、回了话又被清掉
+     */
     'memory:clear': {
       /** 清除范围: session=当前会话, all=全局 */
       scope: 'session' | 'all';

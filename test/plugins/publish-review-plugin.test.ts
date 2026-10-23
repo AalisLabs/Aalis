@@ -51,6 +51,9 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
     },
     async assignModel() {},
     abort: () => false,
+    async clearing(_sessionIds, clear) {
+      await clear();
+    },
   });
   await app.plugin(gatewayPlugin);
   await app.plugins.idle();

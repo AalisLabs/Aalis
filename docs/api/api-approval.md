@@ -136,6 +136,7 @@ interface ApprovalSink {
 
 interface ApprovalAttendance {
   presence(active: boolean): void;
+  present(): boolean;
   respond(answer: ApprovalAnswer): ApprovalResponse;
   leave(): void;
 }
@@ -145,8 +146,9 @@ interface ApprovalAttendance {
 - `attend(who, sink, scope?)`：接入一个客户端，`who` 是它经认证得出的身份，应答人就是它。审批推送与结算推送经 `sink` 到达。一张审批只推给能批它、且接入覆盖它的客户端，只因这样的审批算在场；覆盖了却不能批的应答回 `forbidden`。
 - 接入的覆盖按限定：不给 `scope` 的覆盖全部，只给 owner 的面（WebUI 的连接、终端）：别的身份不限定地接入，会收到各会话里它能批的审批、看到别的会话的工具与参数，所以别人的接入一律给 `window`。给了 `window` 的（群窗口每个窗口与发言者接入一份）覆盖这个窗口发起的（所在会话的根会话就是这个窗口，连同它下面的子会话）、不是只有 owner 能批的审批：群窗口是公开的面，不发只有 owner 能批的，owner 自己在这个窗口的接入也一样。只给 `selfId` 的（IM 私聊每个身份与机器人账号接入一份）只覆盖只有 owner 能批的、这一轮的参与者里有 `who`、且所在会话的根会话的机器人账号（`originChat.selfId`）等于 `selfId` 的审批，两边都没有账号算相同：参与者审批不推到私聊，发在这一轮所在的聊天里。限定了的接入只因它覆盖的审批算在场、只收和只能应答它们。
 - `presence(true)` 表示刚有活动（WebUI 另要页面可见），`presence(false)` 表示离开、即刻不在场，推给它、还没结的审批对它算没收到，变为在场时补推。推给它、还没结的审批让它一直算在场，不随最近一次活动满时限失效。从没上报过的客户端不算在场。
+- `present()` 回它此刻还算不算在场（同上一条规则，由审批服务判，审批服务不在时为假）：审批面据它撤掉不在场的接入，不自己另记时限（聊天审批就是这样）。撤掉（`leave()`）的接入收不到推给过它、还没结的审批的结算，还要等结算的先别撤。
 - `respond(answer)` 回 `{ ok: true }` 或 `{ ok: false, refusal, message }`，`refusal` 取 `forbidden`（应答人不能批这一张）、`not-found`（不是本服务签发的 id，或还在等的审批不归这个接入覆盖）、`approval-settled`（已经结算，不论接入覆盖不覆盖它）、`hash-mismatch`、`unavailable`（审批服务不在）。
-- 审批服务不在场时，接入的客户端照样拿到句柄：在场上报不生效，应答回 `unavailable`。服务上线或换了提供者之后，下一次上报或应答时在新的登记上重新接入。
+- 审批服务不在场时，接入的客户端照样拿到句柄：在场上报不生效，`present()` 为假，应答回 `unavailable`。服务上线或换了提供者之后，下一次上报或应答时在新的登记上重新接入。
 - 登记撤回（登记它的插件停用）时，它的客户端都不再算在场。
 
 ### 卡片清洗

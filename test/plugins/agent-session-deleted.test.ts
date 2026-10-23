@@ -185,4 +185,49 @@ describe('删除会话时停掉它在跑的回合', () => {
       ['assistant', '回2'],
     ]);
   });
+
+  it('删除开始之前已过会话管理、在清数据期间才到 agent 的消息：等清完再作为新的一代开轮，回复不被这次删除清掉', async () => {
+    const model = new StepModel((_request, n) => ({ content: `回${n}` }));
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    await app.plugin(stepModelPlugin(model));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(sessionManagerPlugin);
+    await app.plugin(agentPlugin, { systemPrompt: 'test' });
+    await app.plugins.idle();
+    for (const name of [sessionManagerPlugin.name, agentPlugin.name]) {
+      expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
+    }
+    const host = app.bind({ agent: agentService, hooks, memory, sessionManager });
+    const sm = host.sessionManager.use;
+    const doomed = await sm.createSession({ name: '要删的' });
+    // 清数据的链上挂住一家：这期间那条消息到达 agent（它在删除开始之前已过会话管理收录，还在入站相位里）
+    const clearing = deferred();
+    const gate = deferred();
+    host.hooks.use.middleware('memory:clear', async (_data, next) => {
+      clearing.resolve();
+      await gate.promise;
+      await next();
+    });
+    const deleting = sm.deleteSession(doomed.id);
+    await clearing.promise;
+    const late = host.agent.use.handleMessage({
+      content: '<迟到>',
+      sessionId: doomed.id,
+      platform: 'webui',
+      userId: 'u1',
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(model.requests, '清数据期间不开轮').toHaveLength(0);
+    gate.resolve();
+    await Promise.all([late, deleting]);
+
+    const history = await host.memory.use.getHistory(doomed.id, Infinity);
+    expect(history.map(m => [m.role, m.content])).toEqual([
+      ['user', expect.stringContaining('<迟到>')],
+      ['assistant', '回1'],
+    ]);
+  });
 });

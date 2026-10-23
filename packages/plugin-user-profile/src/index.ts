@@ -29,7 +29,7 @@ import { t } from './texts.js';
 // - 渐进合并：每次提取由 LLM 输出 add/remove 两个数组，自然演化
 // - 零侵入：通过 events + middleware 接入，不修改 agent / persona / memory
 //
-// 关系强度（relationScore, 0~100）计算规则：
+// 关系强度（relationScore, 0~100）计算规则（只算真人的话，带来源的注入不加）：
 // - 每条入站消息（无论 agent 是否回复）：+ relationIncrementWitness（默认 0.1，旁观档）
 // - 若 agent 触发回复，额外叠加：
 //     direct（私聊）        + relationIncrementDirect    默认 1.0
@@ -992,9 +992,10 @@ function registerUserProfile({
   // 注:钩子无优先级机制,同相位 handler 按插件激活序执行;本 handler 只做副作用
   // (更新关系分数)不改消息,与其它 handler 顺序无关。
   // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
+  // 只算真人的话，与旁观那一路同一个判据：带来源的注入（子任务的任务消息、好友申请通知等）不是谁在跟她说话，不加
   hooks.use.middleware('agent:input:before', async (data, next) => {
-    const { userId, platform, triggerType } = data.message;
-    if (userId) {
+    const { userId, platform, triggerType, source } = data.message;
+    if (userId && !source) {
       const userKey = userKeyOf(platform, userId);
       try {
         // 仅叠加 score，互动计数与时戳由 witness 路径统一负责，
@@ -1013,7 +1014,8 @@ function registerUserProfile({
   events.use.on('inbound:message:archived', data => {
     const { sessionId, incoming } = data;
     const { userId, platform, nickname } = incoming;
-    if (!userId) return;
+    // 带来源的注入不是这个账号说的话：不计旁观、不计提取，也就不为它带的账号（如子任务的 parent:<父会话>）建档
+    if (!userId || incoming.source) return;
 
     // 旁观档位：每条入站消息都加 witness 增量（默认 0.1），与 agent 是否回复无关。
     // agent:input:before 中间件在触发回复时会再叠加 direct/immediate/interval 增量。

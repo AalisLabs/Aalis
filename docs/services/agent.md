@@ -14,12 +14,13 @@
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage`、`abort` 与 `assignModel` 必须实现，`registerPreprocessor` 可选：
+`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage`、`abort`、`clearing` 与 `assignModel` 必须实现，`registerPreprocessor` 可选：
 
 ```ts
 export interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
   abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void>;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
@@ -33,6 +34,7 @@ export interface BoundAgent extends AgentService {
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）。
 - `abort(sessionId, { turnId?, queued?, reason? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志。返回有没有停下在跑的一轮。
+- `clearing(sessionIds, clear)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理。停下与按住在各家清理之外，不看中间件的登记先后。
 - 事件 `agent:queue`：`{ sessionId, waiting }`，这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。

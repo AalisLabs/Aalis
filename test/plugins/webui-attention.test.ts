@@ -58,6 +58,7 @@ const approvalsDouble = definePlugin({
       attachSurface: () => ({
         attend: () => ({
           presence() {},
+          present: () => false,
           respond: () => ({ ok: false, refusal: 'unavailable', message: '替身不应答' }),
           leave() {},
         }),

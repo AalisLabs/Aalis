@@ -85,7 +85,8 @@ export interface AddressOptions {
  *
  * OneBot 的字符串消息格式（含 `[CQ:at,…]`）由 adapter 入站规范化成消息段，再经
  * segmentsToText 渲染成 `<at self id="…">`，CQ 码不会流到这里。其它平台适配器若要支持
- * @ 判定，须同样把提及渲染成 `<at self …>`——这里只认这一种文法。
+ * @ 判定，须同样把提及渲染成 `<at self …>`——这里只认这一种文法。聊天审批判应答词之前去掉开头的
+ * 这个标记（plugin-chat-approval 的 LEADING_AT_SELF），认的是同一种文法，改这里要一起改。
  */
 function mentionsSelf(content: string): boolean {
   return /<at self[\s>][\s\S]*?<\/at>/.test(content);

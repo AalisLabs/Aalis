@@ -57,6 +57,9 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
     async handleMessage() {},
     async assignModel() {},
     abort: () => false,
+    async clearing(_sessionIds, clear) {
+      await clear();
+    },
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {

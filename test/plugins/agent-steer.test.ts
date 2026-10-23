@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent as agentService, type TokenUsageEvent, type TurnInput } from '../../packages/api-agent/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -12,6 +14,8 @@ import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.
 import { workflow } from '../../packages/api-workflow/src/index.js';
 import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
@@ -30,9 +34,9 @@ import { deferred } from '../helpers/deferred.js';
 // 通道层：新消息从不打断在跑的一轮。每个会话同一时刻最多一轮；真人消息插进由真人消息开、还收输入的一轮（每次调用模型之前，
 // 贡献组装与 agent:llm:before 之后、调用之前），插不进的排队；一轮结束后队首是真人消息时，队里的真人消息一起开下一轮，
 // 前面说明是上一轮进行期间到的；带来源的注入各自成一轮。输入在进入一轮时归档。能停下一轮的只有停止（只停在跑的一轮）、
-// 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档），清消息
-// 历史从停下到清完之间到的输入清完再处理；停在等着别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时
-// 夹进工具调用组的别的消息挪到组后。
+// 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档）；/clear
+// 经 agent 先停下并按住会话再跑整条清理，清的期间到的输入清完再处理，不看各家清理中间件登记在 agent 之前还是之后；停在等着
+// 别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时夹进工具调用组的别的消息挪到组后。
 // 模型是能挂住某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
 // 看组内次序的用例换上按时间戳读历史的存储替身（同 Mongo 与 sqlite 的读法）。
 // ════════════════════════════════════════════════════════════
@@ -82,6 +86,8 @@ async function boot(
     decide?: (request: ChatModelRequest, n: number) => ChatResponse;
     /** 会话管理的替身：会话记录按 id 现造 */
     sessions?: boolean;
+    /** 装在 agent 之前的插件 */
+    before?: (app: App) => Promise<void>;
     /** 装在 agent 之后的插件 */
     after?: (app: App) => Promise<void>;
     /** 各会话启用的工具分组（不在分组里的探针总能用） */
@@ -103,6 +109,7 @@ async function boot(
   await app.plugin(toolsPlugin, { enabledToolGroups: opts.toolGroups ?? [] });
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await opts.before?.(app);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await opts.after?.(app);
   await app.plugins.idle();
@@ -758,76 +765,118 @@ describe('能停下一轮的', () => {
     expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '<戊>', '回2']);
   });
 
-  it('清消息历史的 /clear 先停下在跑的一轮（aborted），排着与待插入的不开轮、不归档，等它落定再清；/clear -t vector 不停也不碰', async () => {
-    const s = await boot();
+  it.each([
+    ['/clear', '这个会话', WEBUI],
+    ['/clear all', '别的会话', { ...WEBUI, sessionId: 'zz-steer-other' }],
+  ] as const)('清消息历史的 %s 先停下%s在跑的一轮（aborted），排着与待插入的不开轮、不归档，等它落定再跑清理链（登记在 agent 之前的一家也在这之后）；带 -t vector 的不停也不碰', async (line, _whose, where) => {
+    /** 登记在 agent 之前的一家清理：记下它跑的那一刻最近一轮的结局 */
+    const seen: Array<string | undefined> = [];
+    let latest = (): string | undefined => undefined;
+    const recorder = definePlugin({
+      name: 'zz-clear-recorder',
+      uses: { hooks },
+      apply: ({ hooks }) => {
+        hooks.use.middleware('memory:clear', async (_data, next) => {
+          seen.push(latest());
+          await next();
+        });
+      },
+    });
+    const s = await boot({
+      before: app => app.plugin(recorder).then(() => undefined),
+      after: async app => {
+        await withCommands(app);
+        await app.plugin(vectorType);
+      },
+    });
+    latest = () => s.turns.at(-1)?.outcome;
     const held = s.model.hold(1);
-    const a = s.say(WEBUI, '<甲>');
+    const a = s.say(where, '<甲>');
     await held.entered;
-    const b = s.say(WEBUI, '<乙>');
-    const x = s.notice(WEBUI.sessionId, '<通知>');
+    const b = s.say(where, '<乙>');
+    const x = s.notice(where.sessionId, '<通知>');
     await settle();
-    /** 与 /clear 同一个默认动作：清这个会话的消息历史，记下清的那一刻在跑的一轮落定了没有 */
-    const clear = async (types?: string[]) => {
-      let ended: string | undefined;
-      const data = { scope: 'session' as const, sessionId: WEBUI.sessionId, types, results: [] };
-      await s.host.hooks.use.run('memory:clear', data, async () => {
-        ended = s.turns.at(-1)?.outcome;
-        if (types && !types.includes('context')) return;
-        await s.host.memory.use.clearSession(WEBUI.sessionId);
-      });
-      return ended;
-    };
-    expect(await clear(), '清之前这一轮已经停下并落定').toBe('aborted');
+    await command(s, line);
+    expect(seen, '清理链跑之前这一轮已经停下并落定').toEqual(['aborted']);
     await Promise.all([a, b, x]);
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
-    expect(await s.history(WEBUI.sessionId)).toEqual([]);
+    expect(await s.history(where.sessionId)).toEqual([]);
 
     const next = s.model.hold(2);
-    const c = s.say(WEBUI, '<丙>');
+    const c = s.say(where, '<丙>');
     await next.entered;
-    expect(await clear(['vector'])).toBeUndefined();
+    await command(s, `${line} -t vector`);
+    expect(seen, '不清消息历史的不停').toEqual(['aborted', undefined]);
     next.release();
     await c;
     expect(s.outcomes().at(-1)).toEqual(['<丙>', 'replied']);
   });
 
   it.each([
-    'session',
-    'all',
-  ] as const)('/clear（范围 %s）停下在跑的一轮之后、清完之前到的输入等清完再处理：不开轮、不被清掉，清完照常开轮', async scope => {
-    const s = await boot();
-    const held = s.model.hold(1);
-    const a = s.say(WEBUI, '<甲>');
-    await held.entered;
-    // agent 之后的一家清理（如向量）挂住：这期间来一条
-    const entered = deferred();
-    const cleaned = deferred();
-    s.host.hooks.use.middleware('memory:clear', async (_data, next) => {
-      entered.resolve();
-      await cleaned.promise;
-      await next();
-    });
-    let opened: number | undefined;
-    const clear = s.host.hooks.use.run('memory:clear', { scope, sessionId: WEBUI.sessionId, results: [] }, async () => {
-      opened = s.turns.length;
-      const memory = s.host.memory.use;
-      await (scope === 'all' ? memory.clearAll?.() : memory.clearSession(WEBUI.sessionId));
-    });
-    await entered.promise;
+    '/clear',
+    '/clear all',
+  ])('%s，先清再调 next 的一家清理登记在 agent 之前：清的期间到的输入等清完再处理，不开轮、不被清掉，清完照常开轮', async line => {
+    const cleaner = slowCleaner();
+    const s = await boot({ before: app => app.plugin(cleaner.plugin).then(() => undefined), after: withCommands });
+    await s.say(WEBUI, '<甲>');
+    const clear = command(s, line);
+    await cleaner.entered;
     const b = s.say(WEBUI, '<乙>');
     await settle();
-    cleaned.resolve();
+    expect(s.turns, '清的期间没开新的一轮').toHaveLength(1);
+    cleaner.release();
     await clear;
-    await Promise.all([a, b]);
+    await b;
 
-    expect(opened, '清的那一刻只开过被停下的那一轮').toBe(1);
     expect(s.outcomes()).toEqual([
-      ['<甲>', 'aborted'],
+      ['<甲>', 'replied'],
       ['<乙>', 'replied'],
     ]);
     expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<乙>', '回2']);
   });
 });
+
+/** 装上 plugin-commands（网关是替身），清消息历史由它的 /clear 发起 */
+async function withCommands(app: App): Promise<void> {
+  app.bind({ provide }).provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  await app.plugin(commandsPlugin, {});
+}
+
+/** 登记一个不清消息历史的清理类型 vector（/clear -t vector 才认得） */
+const vectorType = definePlugin({
+  name: 'zz-vector-type',
+  uses: { contributions },
+  apply: ({ contributions }) => void contributions.use.contribute('memory:clear-type', { id: 'vector', label: '向量' }),
+});
+
+/**
+ * 清理链上先清再调 next 的一家（如人设、检查点），清的时候挂住：entered 在它开始清时落定，release 之后才调 next
+ */
+function slowCleaner() {
+  const entered = deferred();
+  const cleaned = deferred();
+  const plugin = definePlugin({
+    name: 'zz-slow-cleaner',
+    uses: { hooks },
+    apply: ({ hooks }) => {
+      hooks.use.middleware('memory:clear', async (_data, next) => {
+        entered.resolve();
+        await cleaned.promise;
+        await next();
+      });
+    },
+  });
+  return { plugin, entered: entered.promise, release: () => cleaned.resolve() };
+}
+
+/** owner 在 WebUI 会话里敲一条指令（指令守卫放行），交回回执 */
+async function command(s: Booted, line: string): Promise<string | undefined> {
+  const registry = s.app.bind({ commands: commandsService }).commands.use as unknown as CommandRegistry;
+  registry.setExecutionGuard(async () => ({ ok: true }));
+  const parsed = registry.parseCommand(line);
+  if (!parsed) throw new Error(`不是指令: ${line}`);
+  return registry.execute(parsed.name, { ...WEBUI, sessionType: 'private', args: parsed.args, raw: parsed.raw });
+}
 
 /**
  * 开轮的那次调用里调 name 这个一直等着的工具：它开始之后真人消息排着，停止键停下这一轮，期望工具马上回已中止、这一轮随即落定，

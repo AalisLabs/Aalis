@@ -761,12 +761,14 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
 
     // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西（如在飞的回合），清数据时就不会有回合中途写回来。这两步做完之前
-    // 到的同一会话的入站等着（见 recordInbound）
+    // 到的同一会话的入站等着（见 recordInbound）；删除开始之前已过收录、清数据期间才到 agent 的，经 agent 的 clearing 按住到
+    // 清完，再作为新的一代开轮
     let done!: () => void;
     this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
     try {
       await this.caps.events.use.emit('session:deleted', id);
-      await this.clearDeletedSessionData(id);
+      const clear = () => this.clearDeletedSessionData(id);
+      await (this.caps.agent.present ? this.caps.agent.use.clearing([id], clear) : clear());
     } finally {
       this.removing.delete(id);
       done();
@@ -1298,7 +1300,7 @@ const uses = {
   /** 会话档案与消息历史的唯一落点：没有 memory 就没有会话管理 */
   memory,
   /**
-   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
+   * 删除会话清数据时经它的 clearing 按住这个会话；另为 agent:* 钩子的键类型。
    * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
    * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */

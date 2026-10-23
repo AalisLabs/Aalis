@@ -28,6 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-agent": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
@@ -66,7 +67,8 @@
         "tools",
         "plugins",
         "contributions",
-        "i18n"
+        "i18n",
+        "agent"
       ],
       "provides": [
         "commands"

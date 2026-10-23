@@ -1,3 +1,4 @@
+import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
@@ -66,6 +67,8 @@ const uses = {
   commands: optional(commandsService),
   gateway,
   memory: optional(memory),
+  /** /clear 清消息历史时经它先停下并按住这些会话；缺席时没有在跑的回合要停 */
+  agent: optional(agent),
   authority: optional(authority),
   /** /status 写已登记的工具数 */
   tools: optional(tools),
@@ -100,6 +103,7 @@ function registerCommands({
   commands,
   gateway,
   memory,
+  agent,
   authority,
   tools,
   plugins,
@@ -313,43 +317,48 @@ function registerCommands({
       results: [],
     };
 
-    await hooks.use.run('memory:clear', clearData, async () => {
-      if (!clearsMessages) return;
-      try {
-        // 中间件链可能要等一阵（在途落库、向量清空与保存），期间 memory 胜者可能已更换：按此刻的胜者清理，
-        // 不复用预检取到的实例，免得清到已下线的旧后端
-        if (!memory.present) throw new TextError(t('memoryGone'));
-        const memoryService = memory.use;
-        if (isGlobal) {
-          if (!memoryService.clearAll) throw new TextError(t('noGlobalClearMidway'));
-          await memoryService.clearAll();
+    const run = () =>
+      hooks.use.run('memory:clear', clearData, async () => {
+        if (!clearsMessages) return;
+        try {
+          // 中间件链可能要等一阵（在途落库、向量清空与保存），期间 memory 胜者可能已更换：按此刻的胜者清理，
+          // 不复用预检取到的实例，免得清到已下线的旧后端
+          if (!memory.present) throw new TextError(t('memoryGone'));
+          const memoryService = memory.use;
+          if (isGlobal) {
+            if (!memoryService.clearAll) throw new TextError(t('noGlobalClearMidway'));
+            await memoryService.clearAll();
+            clearData.results.push({
+              source: 'memory',
+              type: 'context',
+              success: true,
+              message: t('historyClearedAll'),
+            });
+          } else {
+            await memoryService.clearSession(cmdCtx.sessionId);
+            clearData.results.push({
+              source: 'memory',
+              type: 'context',
+              success: true,
+              message: t('historyClearedSession'),
+            });
+          }
+        } catch (err) {
           clearData.results.push({
             source: 'memory',
             type: 'context',
-            success: true,
-            message: t('historyClearedAll'),
-          });
-        } else {
-          await memoryService.clearSession(cmdCtx.sessionId);
-          clearData.results.push({
-            source: 'memory',
-            type: 'context',
-            success: true,
-            message: t('historyClearedSession'),
+            success: false,
+            message: t('clearFailed', { error: textOf(err) }),
           });
         }
-      } catch (err) {
-        clearData.results.push({
-          source: 'memory',
-          type: 'context',
-          success: false,
-          message: t('clearFailed', { error: textOf(err) }),
-        });
-      }
 
-      // 附件、向量、人设、用户档案等子系统的清理由各自的 memory:clear 中间件处理（附件归写入它的插件）。
-      // runClear 仅负责调度 hook 与处理 memory 主体。
-    });
+        // 附件、向量、人设、用户档案等子系统的清理由各自的 memory:clear 中间件处理（附件归写入它的插件）。
+        // runClear 仅负责调度 hook 与处理 memory 主体。
+      });
+    // 清消息历史时经 agent 先停下这些会话在跑的一轮、按住它们，再跑整条清理链：停下与按住在各家清理之外，不看它们的登记先后
+    await (clearsMessages && agent.present
+      ? agent.use.clearing(isGlobal ? undefined : [cmdCtx.sessionId], run)
+      : run());
 
     const lines: (string | TextRef)[] = clearData.results.map(r =>
       t(r.success ? 'cleared' : 'notCleared', { message: r.message }),

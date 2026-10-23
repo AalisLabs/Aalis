@@ -13,6 +13,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
 import { type App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import chatApprovalPlugin from '../../packages/plugin-chat-approval/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -75,6 +76,30 @@ const dispatched = (participants: Array<{ platform: string; userId: string }>): 
   source: 'subtask',
   fromTurn: { platform: 'onebot', participants },
 });
+
+/** 一条群消息的这些消息段经 OneBot 适配器解析出的正文 */
+const parsed = (message: Array<{ type: string; data: Record<string, string> }>) =>
+  new OneBotV11().parseMessageEvent(
+    { time: 0, post_type: 'message', message_type: 'group', self_id: Number(SELF), message },
+    SELF,
+  )?.text ?? '';
+/**
+ * QQ 客户端引用一条消息回复时，在正文开头自动插一个对机器人的 @：这样一条入站（引用段、对机器人账号的 @、空格加 text）解析出的
+ * 正文
+ */
+const quotingWithAt = (text: string) =>
+  parsed([
+    { type: 'reply', data: { id: 'm1' } },
+    { type: 'at', data: { qq: SELF } },
+    { type: 'text', data: { text: ` ${text}` } },
+  ]);
+/** 正文中间有一个对机器人的 @：before、对机器人账号的 @、after 解析出的正文 */
+const atInside = (before: string, after: string) =>
+  parsed([
+    { type: 'text', data: { text: before } },
+    { type: 'at', data: { qq: SELF } },
+    { type: 'text', data: { text: after } },
+  ]);
 
 /** 审批服务回给模型的话（见 plugin-session-server 的 approvals.ts） */
 const ABSENT = '没人在场';
@@ -358,9 +383,10 @@ async function setup({
 
 /**
  * 审批服务是只记接入的替身（会话服务的审批要用会话管理，用它聊天审批就排不到会话管理前面），会话管理最后启用：它的入站监听
- * 排在聊天审批之后。emit 发一条入站（缺省是 owner 经账号甲在私聊里说的），等相位链跑完
+ * 排在聊天审批之后。替身的在场只看最近一次在场上报是不是在 presenceMs 之内。emit 发一条入站（缺省是 owner 经账号甲在私聊里
+ * 说的），等相位链跑完
  */
-async function stubbed() {
+async function stubbed(presenceMs = 10 * MINUTE) {
   const { app } = hostedApp({ owners: [OWNER_QQ] });
   apps.push(app);
   await registerHubs(app);
@@ -397,8 +423,13 @@ async function stubbed() {
           attend: (who, _sink, scope) => {
             const entry = { who, scope, presence: [] as boolean[], left: false };
             attended.push(entry);
+            let until = 0;
             return {
-              presence: active => void entry.presence.push(active),
+              presence: active => {
+                entry.presence.push(active);
+                until = active ? Date.now() + presenceMs : 0;
+              },
+              present: () => Date.now() < until,
               respond: () => ({ ok: true }),
               leave() {
                 entry.left = true;
@@ -550,6 +581,16 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
+  it('回复开头带 QQ 客户端自动插的对她的 @（适配器写下的 <at self> 标记）：照样算「同意」，这条回复不交给 agent', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const answer = await s.reply(quotingWithAt('同意'), id);
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+    expect(await r.result).toBe('ran');
+  });
+
   it('群里发起的：在私聊里引用回「同意」，群里那一轮的工具执行；她在群里说「同意」不截下、不回提示，照常交给 agent', async () => {
     const s = await setup();
     await s.say('帮我清一下', group());
@@ -593,6 +634,18 @@ describe('应答：引用那条审批消息回复', () => {
     const reason = '先别删'.repeat(100);
     await s.reply(`拒绝 ${reason}`, id);
     await vi.waitFor(() => expect(r.content).toContain(`被拒绝了，说明：「${reason}」。`));
+    expect(s.runs()).toBe(0);
+  });
+
+  it('拒绝的说明中间带对她的 @：只有开头的 @ 不算正文，说明里的照原样转给模型', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const text = atInside('拒绝 先问', '再删');
+    await s.reply(text, id);
+    const { error } = JSON.parse(await r.result) as { error: string };
+    expect(error).toContain(`被拒绝了，说明：「${text.slice('拒绝 '.length)}」。`);
     expect(s.runs()).toBe(0);
   });
 
@@ -675,6 +728,8 @@ describe('应答：引用那条审批消息回复', () => {
     '同意不了',
     '同意之前先说明一下',
     '先别批',
+    // 对她的 @ 不在开头：照样是正文
+    atInside('同意', ''),
   ])('引用审批消息、但不是应答词的「%s」：不批，照常交给这一轮，审批照旧等', async text => {
     const s = await setup();
     await s.say('帮我清一下');
@@ -909,6 +964,26 @@ describe('没送达', () => {
     expect(contents.filter(c => c.includes('rm -rf b'))).toHaveLength(2);
   });
 
+  it('一张送达、一张没送达之后别人在群里说话：她的接入还拿着这两张、不撤；两张等满时限过期时，私聊里为送达过的那张发一行过期', async () => {
+    const s = await setup({
+      deliver: id => (id === 'm2' ? { ok: false, error: '发送失败' } : { ok: true, messageIds: [id] }),
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const other = s.elsewhere();
+    other.presence(true);
+    await s.say('帮我清一下');
+    const a = s.call({ command: 'rm -rf a' });
+    await s.requested();
+    s.call({ command: 'rm -rf b' }, OWNER_QQ, GROUP);
+    await s.requested(2);
+    await settle();
+    await s.say('路过', { ...group(), userId: L0.userId });
+    await vi.advanceTimersByTimeAsync(WAIT_MS);
+    expect(await a.result).toContain('300 秒');
+    await settle();
+    expect(s.lines('已过期')).toHaveLength(1);
+  });
+
   it('过期那一行只发给送达过的：没送达的这张等满时限过期，私聊里不发', async () => {
     const s = await setup({ deliver: () => ({ ok: false, error: '发送失败' }) });
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
@@ -1052,6 +1127,34 @@ describe('群窗口：参与者审批发在这一轮所在的群里', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
+  it('1 级群友引用它回复、开头带 QQ 客户端自动插的对她的 @：照样算他的「同意」；开头 @ 的是别人的不算应答，交给这一轮', async () => {
+    const s = await setup();
+    await s.say('我在', inGroup(L1));
+    const r = s.ask();
+    const { id } = await s.posted();
+    const atOther = await s.reply(`<at id="${L0.userId}">${L0.userId}</at> 同意`, id, inGroup(L1));
+    expect(s.received.map(m => m.messageId)).toContain(atOther.messageId);
+    expect(r.content).toBeUndefined();
+    const answer = await s.reply(quotingWithAt('同意'), id, inGroup(L1));
+    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+    expect(await r.result).toBe('ran');
+    expect(s.contexts.map(ctx => ctx.participants)).toEqual([[L1]]);
+  });
+
+  it('owner 只从 WebUI 往群里说过话：群里不因她建接入、不算在场，发起时按没人在场结算，群里不发', async () => {
+    const s = await setup();
+    await s.say('从网页插一句', {
+      sessionId: GROUP,
+      platform: 'webui',
+      userId: 'console',
+      sessionType: undefined,
+      selfId: undefined,
+    });
+    const r = s.ask();
+    await vi.waitFor(() => expect(r.content).toEqual(expect.stringContaining(ABSENT)));
+    expect(s.posts()).toEqual([]);
+  });
+
   it('1 级群友引用它回「拒绝」加说明：这一个调用被拒，说明原样转给模型', async () => {
     const s = await setup();
     await s.say('我在', inGroup(L1));
@@ -1193,14 +1296,20 @@ describe('群窗口：参与者审批发在这一轮所在的群里', () => {
     expect(await r.result).toBe('ran');
   });
 
-  it('接入每个（窗口，发言者）一份、限定这个窗口；10 分钟内没说话、推给它的都已结时撤掉，再说话时重建', async () => {
+  it.each([
+    3, 20,
+  ])('接入每个（窗口，发言者）一份、限定这个窗口；审批服务的在场时限是 %i 分钟：它说不在场了才撤掉，再说话时重建', async minutes => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    const s = await stubbed();
+    const s = await stubbed(minutes * MINUTE);
     const say = (who: { userId: string }) => s.emit({ ...group(), userId: who.userId });
     await say(L1);
-    vi.setSystemTime(Date.now() + 5 * MINUTE);
+    vi.setSystemTime(Date.now() + (minutes - 1) * MINUTE);
     await say(L0);
-    vi.setSystemTime(Date.now() + 5 * MINUTE);
+    expect(
+      s.attended.map(({ left }) => left),
+      '还在审批服务的在场时限内，不撤',
+    ).toEqual([false, false]);
+    vi.setSystemTime(Date.now() + 2 * MINUTE);
     await say(L0);
     await say(L1);
     const scope = { window: GROUP };
