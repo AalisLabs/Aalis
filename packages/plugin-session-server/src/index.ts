@@ -9,7 +9,7 @@ import { hostPaths } from '@aalis/api-host-paths';
 import { i18n } from '@aalis/api-i18n';
 import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
-import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
 import { sessionSettings } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
@@ -41,7 +41,7 @@ import { createTurnControl } from './turns.js';
 // ════════════════════════════════════════════════════════════
 
 const uses = {
-  /** 会话表与增删改都经它 */
+  /** 会话表与增删改都经它；审批按根会话的机器人账号认限定了账号的接入 */
   sessionManager,
   /** 已读时间落在本插件的插件数据里；签发文件句柄时按存储根的种类挡掉插件状态 */
   storage,
@@ -152,6 +152,7 @@ async function run(caps: Caps): Promise<void> {
     logger: logger.use,
     auditFile: join(caps.paths.use.state, 'audit', 'approvals.jsonl'),
     displaySpec,
+    botOf: sessionId => rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.selfId,
     changed: (card, settlement) => {
       timeline.approval(card, settlement);
       push([card.sessionId], []);

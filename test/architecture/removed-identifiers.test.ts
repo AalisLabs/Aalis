@@ -215,6 +215,10 @@ const REMOVED: Array<[string, string]> = [
   ['othersContent', '触及里干净回合的沙箱读不到的别人的内容，随污点删掉'],
   ['provenanceDeny', '沙箱策略里干净回合拒读拒写别人的内容的一段，随污点删掉'],
   ['noteWrite', '触及凭据把受污染回合写进白纸的文件记进来源记录，随污点删掉'],
+  ['SECRET_TEXT', '审批服务按内容猜密钥、整段不给改动：改动一律照给'],
+  ['SECRET_PATH', '审批服务按路径猜放密钥的文件、整段不给改动：改动一律照给'],
+  ['patchHidden', '终端与聊天审批的卡上改动被整段不给时的说明：改动一律照给'],
+  ['approvalPatchHidden', 'WebUI 审批卡上改动被整段不给时的说明：改动一律照给'],
 ];
 
 /**

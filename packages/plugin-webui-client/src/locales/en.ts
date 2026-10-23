@@ -448,7 +448,6 @@ export default defineLocale<Source>()({
   approvalCommand: 'Wants to run a command · {tool}',
   approvalFileChange: 'Wants to change files · {tool}',
   approvalCall: 'Wants to call {tool}',
-  approvalPatchHidden: 'The path or content looks like it contains secrets; only the file name is shown',
   otherParams: 'Other parameters',
   denyReason: 'Reason for denying',
   denyWithReason: 'Deny with a reason',

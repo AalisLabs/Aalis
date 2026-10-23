@@ -53,7 +53,7 @@ export const MINIMAL_BASE = [
 // standard 在 minimal 之上增加的常用能力（人设 / 记忆增强 / 常用工具 / 调度套件 / 技能 / 会话增强 / 诊断）。
 // 平台与语义记忆由提问选；联网搜索要 key，默认不装，需要时在插件市场装（full 档带它）。
 // 触及签发凭据，接线后读写文件、执行命令经它，与系统工具同在这一档。
-// 聊天审批让 owner 在与她的 IM 私聊里批准她在那里要做的事，没选 IM 平台时它不接入任何会话。
+// 聊天审批让 owner 在与她的 IM 私聊里批准她经同一个机器人账号要做的事（群里发起的也推到这里），没选 IM 平台时它不接入。
 export const STANDARD_EXTRA = [
   '@aalis/plugin-persona',
   '@aalis/plugin-memory-summary',

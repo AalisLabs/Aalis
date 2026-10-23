@@ -222,7 +222,6 @@ function ApprovalCard({ approval }: { approval: Approval }) {
         ? tr('approvalFileChange', { tool })
         : tr('approvalCall', { tool });
   const command = facts.command === undefined ? undefined : sanitizeForCard(facts.command);
-  const patch = facts.diff?.patch === undefined ? undefined : sanitizeForCard(facts.diff.patch);
   const params =
     Object.keys(facts.params).length > 0 ? sanitizeForCard(JSON.stringify(facts.params, null, 2)) : undefined;
   const closeNote = () => {
@@ -260,11 +259,7 @@ function ApprovalCard({ approval }: { approval: Approval }) {
       {facts.diff && (
         <>
           <p className="approval-path">{sanitizeForCard(facts.diff.path)}</p>
-          {patch === undefined ? (
-            <p className="approval-meta">{tr('approvalPatchHidden')}</p>
-          ) : (
-            <Diff lines={patch.split('\n')} />
-          )}
+          <Diff lines={sanitizeForCard(facts.diff.patch).split('\n')} />
         </>
       )}
       {params !== undefined && (

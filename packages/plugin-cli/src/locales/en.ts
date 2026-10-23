@@ -40,7 +40,6 @@ export default defineLocale<Source>()({
   factFile: 'File',
   factPatch: 'Changes',
   factParams: 'Parameters',
-  patchHidden: 'Looks like it contains secrets; content not shown',
   linesOmitted: '…({count, plural, one {# line} other {# lines}} omitted)…',
   charsOmitted: '…({count, plural, one {# character} other {# characters}} omitted)…',
   approve: 'Approve',

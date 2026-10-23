@@ -1,11 +1,12 @@
 // ════════════════════════════════════════════════════════════
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
-// 这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余直接拒绝，不推给任何审批面。能产生的
-// 先看这个会话有没有人在场：审批面上身份是 owner、覆盖这个会话的客户端（接入时没限定会话，或限定的就是它）上报活动，最近一次
-// 活动在 10 分钟内的算在场，发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，只推给覆盖它的客户端，等待从推出
+// 这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余直接拒绝，不推给任何审批面。
+// 推给谁、算谁在场、认谁的应答是一条规则：客户端的身份是 owner（能批），且它覆盖这张审批（接入时没限定，或限定了机器人账号、
+// 这一轮的参与者里有它、审批所在会话的根会话经这个账号）。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时
+// 推给它、还没结的卡对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出
 // 那一刻算起；等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
-// 应答先答先得，核两项：应答人是 owner；id 由本服务签发、未结算、在接入覆盖的会话里，内容哈希一致。
+// 应答先答先得，核两项：应答人是 owner；id 由本服务签发、未结算、归这个接入覆盖，内容哈希一致；已结算的一律回已结算。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
 
@@ -26,6 +27,7 @@ import type {
   ApprovalSettlement,
   ApprovalSink,
   ApprovalSource,
+  AttendScope,
   SettledState,
   SurfaceBinding,
 } from '@aalis/api-approval';
@@ -50,7 +52,7 @@ const ABSENCE_GRACE_MS = 30_000;
 /** 频率上限：同一会话在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
 const RATE_WINDOW_MS = 10 * 60_000;
 const RATE_LIMIT = 10;
-/** 记住最近结算的这么多个 id 与它们的会话：后到的应答回 approval-settled，更早的按不认识的 id 处理 */
+/** 记住最近结算的这么多个 id：后到的应答回 approval-settled，更早的按不认识的 id 处理 */
 const SETTLED_MEMORY = 1000;
 
 interface SurfaceRecord {
@@ -64,15 +66,19 @@ interface Attendee {
   surface: SurfaceRecord;
   who: ApprovalIdentity;
   sink: ApprovalSink;
-  /** 接入时限定的会话：只覆盖这个会话；没有即覆盖全部会话 */
-  sessionId?: string;
+  /** 接入时的限定：只覆盖限定的那些审批；没有即覆盖全部 */
+  scope?: AttendScope;
   /** 在场到这个时刻为止；离开或从没上报过活动为 0 */
   until: number;
+  /** 推给它、还没结、它也没上报过离开的：有就算它在场 */
+  held: Set<Pending>;
 }
 
 interface Pending {
   id: string;
   req: ApprovalRequest;
+  /** 所在会话的根会话的机器人账号：限定了机器人账号的接入按它认 */
+  bot?: string;
   signal?: AbortSignal;
   /** 发起的时刻，等待时长从这里算 */
   at: number;
@@ -83,7 +89,7 @@ interface Pending {
   /** 推出之后才有 */
   approval?: Approval;
   timer?: ReturnType<typeof setTimeout>;
-  /** 推给过的客户端，结算时通知它们 */
+  /** 推给过的客户端（含之后上报过离开的），结算时通知它们 */
   delivered: Set<Attendee>;
 }
 
@@ -98,18 +104,13 @@ interface ApprovalDeps {
   auditFile: string;
   /** 工具定义上声明的展示种类：卡片上的事实按它取 */
   displaySpec(tool: string): ToolDisplay | undefined;
+  /** 会话的根会话的机器人账号（`originChat.selfId`）；不在会话表里或没有时为 undefined */
+  botOf(sessionId: string): string | undefined;
   /** 一个审批推出或结算了（结算时带上怎样结算的，发起时就结算的也算）：会话列表与工具卡跟着变 */
   changed(approval: ApprovalRef, settlement?: ApprovalSettlement): void;
 }
 
 // ───────── 事实与哈希 ─────────
-
-/** 疑似放密钥的文件：环境变量文件、包管理器与网络凭据、私钥与证书，以及密钥目录下的一切 */
-const SECRET_PATH =
-  /(?:^|[/:\\])(?:\.env(?:\.[^/\\]*)?|\.npmrc|\.netrc|\.pgpass|secrets?\.(?:ya?ml|json|toml)|id_(?:rsa|dsa|ecdsa|ed25519)|[^/\\]+\.(?:pem|key|p12|pfx))$|(?:^|[/:\\])(?:\.ssh|\.aws|\.gnupg|\.config[/\\]gh)[/\\]/i;
-/** 疑似密钥的内容：私钥块、常见的令牌前缀、Bearer 凭据，以及「密钥名 = 值」 */
-const SECRET_TEXT =
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password|passwd)["']?\s*[:=]\s*["']?[^\s"']{8,}/i;
 
 /**
  * 卡片上的事实：按工具声明的展示种类从参数里取，各项逐字；用掉的参数不在 params 里重复。没声明（或解析不出）的，
@@ -125,10 +126,8 @@ function factsOf(spec: ToolDisplay | undefined, args: Record<string, unknown>): 
     return { command: display.command, ...(display.cwd === undefined ? {} : { cwd: display.cwd }), params };
   }
   const { path, removed, added } = display;
-  const secret = SECRET_PATH.test(path) || [removed, added].some(text => text !== undefined && SECRET_TEXT.test(text));
   const lines = (text: string | undefined, sign: '-' | '+') => text?.split('\n').map(line => sign + line) ?? [];
-  const patch = [...lines(removed, '-'), ...lines(added, '+')].join('\n');
-  return { diff: secret ? { path } : { path, patch }, params };
+  return { diff: { path, patch: [...lines(removed, '-'), ...lines(added, '+')].join('\n') }, params };
 }
 
 /** 请求内容的哈希：会话、回合、调用、工具与参数 */
@@ -172,9 +171,8 @@ export function createApprovals(deps: ApprovalDeps) {
   const queues = new Map<string, Pending[]>();
   /** 每个会话最近排进队的时刻，算频率上限：发起时就结算的不算，排着没推出就结算的退还 */
   const cards = new Map<string, number[]>();
-  /** 最近结算的审批 id → 它的会话 */
-  const settledIds = createBoundedMap<string, string>({ max: SETTLED_MEMORY });
-  let lapse: ReturnType<typeof setTimeout> | undefined;
+  /** 最近结算的审批 id */
+  const settledIds = createBoundedMap<string, true>({ max: SETTLED_MEMORY });
   /** 每个会话从什么时候起推出的审批没有覆盖它的在场客户端：这个会话的重连宽限从这一刻算 */
   const uncoveredSince = new Map<string, number>();
   /** 定在最早到期的那个会话的宽限上：有没了覆盖的会话时才有 */
@@ -203,16 +201,20 @@ export function createApprovals(deps: ApprovalDeps) {
   }
 
   /**
-   * 只有身份是 owner 的客户端算出席：别人答不了，推给它、算它在场都只会让审批白等。并且只算覆盖这个会话的（接入时没限定
-   * 会话，或限定的就是它）
+   * 推给谁、算谁在场、认谁的应答都看这一条：客户端的身份能批（是 owner；别人答不了，推给它、算它在场都只会让审批白等），
+   * 且它覆盖这张（接入时没限定；或限定了机器人账号，这一轮的参与者里有它，所在会话的根会话经这个账号）
    */
-  const attends = (attendee: Attendee, sessionId: string) =>
-    deps.isOwner(attendee.who.platform, attendee.who.userId) &&
-    (attendee.sessionId === undefined || attendee.sessionId === sessionId);
-  /** 此刻覆盖这个会话的在场客户端 */
-  const present = (now: number, sessionId: string) =>
+  const attends = ({ who, scope }: Attendee, pending: Pending) =>
+    deps.isOwner(who.platform, who.userId) &&
+    (scope === undefined ||
+      (pending.req.origin.participants.some(p => p.platform === who.platform && p.userId === who.userId) &&
+        pending.bot === scope.selfId));
+  /** 此刻在场、覆盖这张的客户端：最近一次活动在时限内，或推给它的卡还没结 */
+  const present = (now: number, pending: Pending) =>
     [...surfaces].flatMap(surface =>
-      [...surface.attendees].filter(attendee => now < attendee.until && attends(attendee, sessionId)),
+      [...surface.attendees].filter(
+        attendee => (now < attendee.until || attendee.held.size > 0) && attends(attendee, pending),
+      ),
     );
   /** 已推出、还没结的 */
   const shown = () => [...queues.values()].flatMap(queue => (queue[0]?.approval ? [queue[0]] : []));
@@ -222,32 +224,26 @@ export function createApprovals(deps: ApprovalDeps) {
     return since !== undefined && now - since < ABSENCE_GRACE_MS;
   };
 
+  /** 推给它：它此刻拿着这张，结算时通知它；已经拿着的不重推 */
   function deliver(pending: Pending, attendee: Attendee): void {
     const { approval } = pending;
-    if (!approval || pending.delivered.has(attendee) || !attends(attendee, approval.sessionId)) return;
+    if (!approval || attendee.held.has(pending) || !attends(attendee, pending)) return;
+    attendee.held.add(pending);
     pending.delivered.add(attendee);
     tell('推出', () => attendee.sink.requested(approval));
   }
 
-  /** 覆盖推出的审批的在场客户端都会在某个时刻失效：在最早的那一刻再判一次（它可能是某张审批唯一覆盖它的） */
-  function rearm(): void {
-    clearTimeout(lapse);
-    lapse = undefined;
-    const now = Date.now();
-    const live = shown().flatMap(pending => present(now, pending.req.sessionId));
-    if (live.length > 0) lapse = setTimeout(recheck, Math.min(...live.map(attendee => attendee.until)) - now);
-  }
-
   /**
    * 在场或推出的审批有变：按会话记下推出的审批从什么时候起没有覆盖它的在场客户端，有了覆盖或队列空了即撤（队首刚结、下一张
-   * 还没推出的那一拍照旧记着）；宽限的计时器定在最早到期的会话上
+   * 还没推出的那一拍照旧记着）；宽限的计时器定在最早到期的会话上。覆盖推出的审批的在场客户端都拿着它，不会到时失效，
+   * 只在离开、断开、登记撤回时变
    */
   function recheck(): void {
     const now = Date.now();
     for (const sessionId of uncoveredSince.keys()) if (!queues.has(sessionId)) uncoveredSince.delete(sessionId);
     for (const pending of shown()) {
       const { sessionId } = pending.req;
-      if (present(now, sessionId).length > 0) uncoveredSince.delete(sessionId);
+      if (present(now, pending).length > 0) uncoveredSince.delete(sessionId);
       else if (!uncoveredSince.has(sessionId)) uncoveredSince.set(sessionId, now);
     }
     clearTimeout(grace);
@@ -255,7 +251,6 @@ export function createApprovals(deps: ApprovalDeps) {
       uncoveredSince.size === 0
         ? undefined
         : setTimeout(lapseGrace, Math.min(...uncoveredSince.values()) + ABSENCE_GRACE_MS - now);
-    rearm();
   }
 
   /** 宽限到期：宽限已过的会话里推出的审批按没人在场结算 */
@@ -287,8 +282,9 @@ export function createApprovals(deps: ApprovalDeps) {
     const approval = pending.approval;
     if (approval) {
       approval.state = state;
-      settledIds.set(approval.id, sessionId);
+      settledIds.set(approval.id, true);
       for (const attendee of pending.delivered) {
+        attendee.held.delete(pending);
         if (attendee.surface.attendees.has(attendee))
           tell('结算', () => attendee.sink.settled(approval.id, settlement));
       }
@@ -339,7 +335,7 @@ export function createApprovals(deps: ApprovalDeps) {
       return;
     }
     const now = Date.now();
-    const audience = present(now, pending.req.sessionId);
+    const audience = present(now, pending);
     if (audience.length === 0 && !inGrace(pending.req.sessionId, now)) {
       settle(pending, 'expired', 'absent');
       return;
@@ -371,18 +367,15 @@ export function createApprovals(deps: ApprovalDeps) {
     (cards.get(sessionId) ?? []).filter(t => at - t < RATE_WINDOW_MS);
 
   /** 发起时就结算的：服务已停、回合已中止、发起者不能产生审批、没人在场、超过频率上限 */
-  function refusalOf(
-    req: ApprovalRequest,
-    signal: AbortSignal | undefined,
-    at: number,
-  ): [SettledState, ApprovalSource] | undefined {
+  function refusalOf(pending: Pending): [SettledState, ApprovalSource] | undefined {
+    const { req, signal, at } = pending;
     const { origin } = req;
     if (closed) return ['cancelled', 'shutdown'];
     if (signal?.aborted) return ['cancelled', 'turn-ended'];
     if (origin.kind === 'subtask') return ['denied', 'subtask'];
     if (origin.kind !== 'hand' || !origin.participants.some(({ platform, userId }) => deps.isOwner(platform, userId)))
       return ['denied', 'ineligible'];
-    if (present(at, req.sessionId).length === 0) return ['expired', 'absent'];
+    if (present(at, pending).length === 0) return ['expired', 'absent'];
     if (recentCards(req.sessionId, at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
     return undefined;
   }
@@ -393,6 +386,7 @@ export function createApprovals(deps: ApprovalDeps) {
       const pending: Pending = {
         id: crypto.randomUUID(),
         req,
+        bot: deps.botOf(req.sessionId),
         signal,
         at,
         facts: factsOf(deps.displaySpec(req.tool), req.args),
@@ -414,7 +408,7 @@ export function createApprovals(deps: ApprovalDeps) {
         contentHash: pending.contentHash,
         rule,
       });
-      const refusal = refusalOf(req, signal, at);
+      const refusal = refusalOf(pending);
       if (refusal) {
         settle(pending, ...refusal);
         return;
@@ -438,18 +432,18 @@ export function createApprovals(deps: ApprovalDeps) {
     return {
       presence(active) {
         attendee.until = active ? Date.now() + PRESENCE_WINDOW_MS : 0;
-        // 变为在场：补推它覆盖的、还没结的审批
+        // 变为在场：补推它覆盖的、还没结、它没拿着的审批；离开：推给它、还没结的对它算没收到
         if (active) for (const pending of shown()) deliver(pending, attendee);
+        else attendee.held.clear();
         recheck();
       },
       respond(answer) {
         if (!deps.isOwner(attendee.who.platform, attendee.who.userId))
           return refuse('forbidden', t('responderNotOwner'));
-        // 限定了会话的接入只认那个会话的审批，别处的（含已经结了的）对它就是没有
-        const pending = shown().find(p => p.id === answer.approvalId && attends(attendee, p.req.sessionId));
+        const pending = shown().find(p => p.id === answer.approvalId && attends(attendee, p));
         if (!pending?.approval) {
-          const settledIn = settledIds.get(answer.approvalId);
-          return settledIn !== undefined && attends(attendee, settledIn)
+          // 已经结了的一律回已结算：id 是本服务签发的随机串，接入只拿得到推给它的，回已结算不泄露什么
+          return settledIds.get(answer.approvalId)
             ? refuse('approval-settled', t('approvalSettled'))
             : refuse('not-found', t('noSuchApproval', { id: answer.approvalId }));
         }
@@ -472,8 +466,8 @@ export function createApprovals(deps: ApprovalDeps) {
     const surface: SurfaceRecord = { name, registrant, attendees: new Set() };
     surfaces.add(surface);
     return {
-      attend(who, sink, sessionId) {
-        const attendee: Attendee = { surface, who, sink, sessionId, until: 0 };
+      attend(who, sink, scope) {
+        const attendee: Attendee = { surface, who, sink, scope, until: 0, held: new Set() };
         surface.attendees.add(attendee);
         return attendance(attendee);
       },
@@ -511,7 +505,6 @@ export function createApprovals(deps: ApprovalDeps) {
     close() {
       closed = true;
       settleAll(() => true, 'shutdown');
-      clearTimeout(lapse);
       clearTimeout(grace);
     },
     /** 已排进写入队列的审计都写完（写失败的已告警） */

@@ -11,7 +11,7 @@
 三类使用方：
 
 - **发起方**（执行守卫）：`request(req, signal)` 发起一个审批并等它结算。拒绝时结局里带着回给模型的话。
-- **审批面**（WebUI、终端、owner 与她的 IM 私聊）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端、一个 IM 私聊）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。IM 私聊这一面由 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 登记。
+- **审批面**（WebUI、终端、owner 与她的 IM 私聊）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端（WebUI 的一条连接、终端、owner 的一个 IM 身份经一个机器人账号）`attend` 一次，在场上报与应答都经它。审计里的审批面取登记身份（审批面名与登记它的插件实例），不取调用方自报。IM 私聊这一面由 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 登记。
 - **展示方**：`list()` 列出推出、还没结的审批；`approval:created`、`approval:settled` 事件。
 
 目前审批的目标只有工具调用。
@@ -31,11 +31,11 @@
 ## 流程
 
 1. **发起**：`request(req, signal)`。`signal` 是发起回合的中止信号。
-2. **在场**：审批面的客户端上报活动，最近一次活动在时限内的算在场；只算身份是 owner 的客户端，别人答不了，推给它只会让审批白等。接入时限定了会话的客户端只算那个会话的在场。发起时这个会话没人在场直接按拒绝结算，发起方立即拿到原因。
+2. **在场**：推给谁、算谁在场、认谁的应答是一条规则：客户端的身份能批（是 owner；别人答不了，推给它只会让审批白等），且它覆盖这张审批（见「审批面」的限定）。客户端上报活动，最近一次活动在时限内的算在场，推给它、还没结的审批也让它一直算在场。发起时没有覆盖它的在场客户端，直接按拒绝结算，发起方立即拿到原因。
 3. **排队**：同一会话的审批串行，一次只推出一张卡，不同会话之间并行；等待从卡推出那一刻算起，到期时刻是这张审批自己的事实，记在审批对象的 `expiresAt` 上。同一会话一段时间内推出的卡有上限，超出的直接拒绝并说明原因。
-4. **推送**：推出时推给覆盖这个会话的在场客户端；不在场的客户端变为在场时补推它覆盖的、还没结的。身份不是 owner 的客户端收不到推送，限定了会话的客户端收不到别的会话的审批。
-5. **应答**：先答先得，核两项：应答人是 owner；`approvalId` 是本服务签发的、还没结算，并且 `contentHash` 一致。后到的应答回 `approval-settled`。
-6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中覆盖它的在场客户端都断开或变为不在场时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
+4. **推送**：推出时推给覆盖它的在场客户端；不在场的客户端变为在场时补推它覆盖的、还没结的。客户端上报离开时，推给它、还没结的对它算没收到，之后变为在场时同一张再推一次（按 id 收即不重复）。身份不是 owner 的客户端收不到推送，限定了的客户端收不到它不覆盖的审批。
+5. **应答**：先答先得，核两项：应答人是 owner；`approvalId` 是本服务签发的、还没结算、归这个客户端覆盖，并且 `contentHash` 一致。已经结算的一律回 `approval-settled`，不论客户端覆盖不覆盖它。
+6. **结算**：owner 批准或拒绝；等满时限按拒绝结算；等待中覆盖它的在场客户端都断开或上报离开时先等一段重连宽限，宽限内有客户端恢复在场就照常等，没有就按拒绝结算（宽限不延长总的等待时限）；发起回合结束或中止、审批服务停止时按 cancelled 结算。结算推给拿到过这条请求的客户端，带上怎样结算的（`ApprovalSettlement`）。
 7. **回给模型**：批准时工具照常执行。拒绝时结局里的 `message` 写明被什么拦下、能不能再申请，不论在哪个会话发起都是这个格式，不指名应答人。
 8. **审计**：请求与决定成对记下，不进模型上下文。
 
@@ -102,19 +102,23 @@ type ApprovalOutcome =
 interface ApprovalFacts {
   command?: string;                         // 命令类工具声明的命令
   cwd?: string;                             // 命令类工具声明的工作目录
-  diff?: { path: string; patch?: string };  // 改文件类工具声明的路径与删、加两侧
+  diff?: { path: string; patch: string };   // 改文件类工具声明的路径与删、加两侧
   params: Record<string, unknown>;          // 其余参数，逐字
 }
 ```
 
-`diff.patch` 里删的行以 `-` 开头、加的行以 `+` 开头，例如 `file_edit` 声明 `oldText` 为删的一侧、`newText` 为加的一侧，`file_write` 与 `file_append` 只有加的一侧 `content`（不读原文件）。路径像密钥文件（`.env*`、`.npmrc`、私钥与证书、`.ssh` 等目录下）或内容像密钥（私钥块、常见的令牌前缀、「密钥名 = 值」）时没有 `patch`，只给路径。用掉的参数不在 `params` 里重复。没声明展示种类的工具（参数名叫 `command`、`path` 也一样）全部参数都在 `params` 里。
+`diff.patch` 里删的行以 `-` 开头、加的行以 `+` 开头，例如 `file_edit` 声明 `oldText` 为删的一侧、`newText` 为加的一侧，`file_write` 与 `file_append` 只有加的一侧 `content`（不读原文件）。用掉的参数不在 `params` 里重复。没声明展示种类的工具（参数名叫 `command`、`path` 也一样）全部参数都在 `params` 里。
 
 ## 审批面
 
 ```ts
 interface ApprovalSurface {
   readonly name: string;      // 登记名（webui、cli、chat）
-  attend(who: { platform: string; userId: string }, sink: ApprovalSink, sessionId?: string): ApprovalAttendance;
+  attend(who: { platform: string; userId: string }, sink: ApprovalSink, scope?: AttendScope): ApprovalAttendance;
+}
+
+interface AttendScope {
+  selfId?: string;            // 机器人账号
 }
 
 interface ApprovalSink {
@@ -130,10 +134,10 @@ interface ApprovalAttendance {
 ```
 
 - `registerSurface(name)` 经绑定门面登记：同一激活同名再登记替换旧的，提供者换人自动重挂，随激活撤回。审计记的审批面是登记名加登记它的插件实例。
-- `attend(who, sink, sessionId?)`：接入一个客户端，`who` 是它经认证得出的身份，应答人就是它。审批推送与结算推送经 `sink` 到达。`who` 不是 owner 的客户端不算在场、收不到推送，应答回 `forbidden`。
-- 给了 `sessionId` 的接入限定在这个会话：只算这个会话的在场、只收这个会话的审批（IM 私聊每个私聊接入一份）。不给的覆盖全部会话（WebUI 的连接、终端）。
-- `presence(true)` 表示刚有键盘或指针活动（WebUI 另要页面可见），`presence(false)` 表示离开、即刻不在场。从没上报过的客户端不算在场。
-- `respond(answer)` 回 `{ ok: true }` 或 `{ ok: false, refusal, message }`，`refusal` 取 `forbidden`（应答人不是 owner）、`not-found`（不是本服务签发的 id，或审批不在接入限定的会话里）、`approval-settled`、`hash-mismatch`、`unavailable`（审批服务不在）。
+- `attend(who, sink, scope?)`：接入一个客户端，`who` 是它经认证得出的身份，应答人就是它。审批推送与结算推送经 `sink` 到达。`who` 不是 owner 的客户端不算在场、收不到推送，应答回 `forbidden`。
+- 给了 `scope` 的接入只覆盖这一轮的参与者里有 `who`、且所在会话的根会话的机器人账号（`originChat.selfId`）等于 `scope.selfId` 的审批，两边都没有账号算相同（IM 私聊每个身份与机器人账号接入一份）：只因它们算在场、只收和只能应答它们。不给的覆盖全部（WebUI 的连接、终端）。
+- `presence(true)` 表示刚有活动（WebUI 另要页面可见），`presence(false)` 表示离开、即刻不在场，推给它、还没结的审批对它算没收到，变为在场时补推。推给它、还没结的审批让它一直算在场，不随最近一次活动满时限失效。从没上报过的客户端不算在场。
+- `respond(answer)` 回 `{ ok: true }` 或 `{ ok: false, refusal, message }`，`refusal` 取 `forbidden`（应答人不是 owner）、`not-found`（不是本服务签发的 id，或还在等的审批不归这个接入覆盖）、`approval-settled`（已经结算，不论接入覆盖不覆盖它）、`hash-mismatch`、`unavailable`（审批服务不在）。
 - 审批服务不在场时，接入的客户端照样拿到句柄：在场上报不生效，应答回 `unavailable`。服务上线或换了提供者之后，下一次上报或应答时在新的登记上重新接入。
 - 登记撤回（登记它的插件停用）时，它的客户端都不再算在场。
 

@@ -1234,14 +1234,13 @@ const SETTLED_LINES = {
 /** 每项事实显示的字数上限，超出的保留首尾 */
 const CARD_FACT_LIMIT = 1000;
 
-/** 卡上事实的标签，与疑似含密钥时代替改动的说明 */
+/** 卡上事实的标签 */
 const FACT_LABELS = {
   command: t('factCommand'),
   cwd: t('factCwd'),
   file: t('factFile'),
   patch: t('factPatch'),
   params: t('factParams'),
-  patchHidden: t('patchHidden'),
 };
 
 /** 卡上的事实：标签（已按读者渲染）与原文 */
@@ -1249,7 +1248,7 @@ function cardFacts(facts: ApprovalFacts, labels: Localized<typeof FACT_LABELS>):
   const rows: Array<[string, string]> = [];
   if (facts.command !== undefined) rows.push([labels.command, facts.command]);
   if (facts.cwd !== undefined) rows.push([labels.cwd, facts.cwd]);
-  if (facts.diff) rows.push([labels.file, facts.diff.path], [labels.patch, facts.diff.patch ?? labels.patchHidden]);
+  if (facts.diff) rows.push([labels.file, facts.diff.path], [labels.patch, facts.diff.patch]);
   if (Object.keys(facts.params).length > 0) rows.push([labels.params, JSON.stringify(facts.params)]);
   return rows;
 }

@@ -37,7 +37,6 @@ const SOURCE = {
   factFile: '文件',
   factPatch: '改动',
   factParams: '参数',
-  patchHidden: '疑似含密钥，不显示内容',
   linesOmitted: '…（省略 {count, number} 行）…',
   charsOmitted: '…（省略 {count, number} 字）…',
   approve: '批准',

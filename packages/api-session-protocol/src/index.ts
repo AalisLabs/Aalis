@@ -629,8 +629,7 @@ export const ApprovalSchema = z.object({
   facts: z.object({
     command: z.string().optional(),
     cwd: z.string().optional(),
-    /** 路径或内容疑似含密钥时没有 patch */
-    diff: z.object({ path: z.string(), patch: z.string().optional() }).optional(),
+    diff: z.object({ path: z.string(), patch: z.string() }).optional(),
     params: z.record(z.unknown()),
   }),
   options: z.array(z.enum(['approve', 'deny'])),
