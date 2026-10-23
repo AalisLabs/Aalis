@@ -219,6 +219,8 @@ const REMOVED: Array<[string, string]> = [
   ['SECRET_PATH', '审批服务按路径猜放密钥的文件、整段不给改动：改动一律照给'],
   ['patchHidden', '终端与聊天审批的卡上改动被整段不给时的说明：改动一律照给'],
   ['approvalPatchHidden', 'WebUI 审批卡上改动被整段不给时的说明：改动一律照给'],
+  ['ANSWER_LIMIT', '聊天审批按长度猜不是应答：引用了审批消息的应答词不论长短都算'],
+  ['quoteToAnswer', '聊天审批对没引用审批消息的应答词回「请引用」：没引用的一律是交给这一轮的普通消息'],
 ];
 
 /**
@@ -283,6 +285,8 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
     "'background-task'",
     '执行器私有的结束通知种类，挪进 api-tools 作契约常量 BACKGROUND_TASK_NOTICE，执行器与界面都引用它',
   ],
+  // 常见的词，只在聊天审批里查
+  ['plugin-chat-approval', 'ASKING', '聊天审批按结尾的问号猜是在问、不是应答：引用了审批消息的应答词照算'],
   // 会话层不认识具体的设置项：设置项是各插件配置里写了 session 的字段，会话管理、会话设置、会话协议与会话服务的源码里不出现
   // 它们的键。只列字面上不会误撞的键（llm、think、persona 这类常用词在这些包里另有正当用法）
   ...[

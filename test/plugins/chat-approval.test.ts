@@ -65,7 +65,6 @@ const MINUTE = 60_000;
 const ABSENT = '没人在场';
 /** 本插件的话（字典原文） */
 const REQUEST = '需要你批准';
-const QUOTE_TO_ANSWER = '要批准或拒绝，请引用那条审批消息回复';
 const ALREADY_SETTLED = '这张已经处理过';
 const ANSWER_ELSEWHERE = '这条审批无法在这里应答';
 
@@ -349,14 +348,15 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
-  it('群里发起的：在私聊里引用回「同意」，群里那一轮的工具执行；她在群里说「同意」不截下、不回「请引用」，照常交给 agent', async () => {
+  it('群里发起的：在私聊里引用回「同意」，群里那一轮的工具执行；她在群里说「同意」不截下、不回提示，照常交给 agent', async () => {
     const s = await setup();
     await s.say('帮我清一下', group());
     const r = s.call(undefined, OWNER_QQ, GROUP);
     const { id } = await s.requested();
+    const before = s.outbound.length;
     const inGroup = await s.say('同意', group());
     expect(s.received.map(m => m.messageId)).toContain(inGroup.messageId);
-    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(s.outbound, '不回提示').toHaveLength(before);
     expect(r.content).toBeUndefined();
     await s.reply('同意', id);
     expect(await r.result).toBe('ran');
@@ -370,10 +370,36 @@ describe('应答：引用那条审批消息回复', () => {
     await s.reply('拒绝 太危险', id);
     const out = await r.result;
     expect(s.runs()).toBe(0);
-    expect(out).toContain('被拒绝了，说明：太危险');
+    expect(out).toContain('被拒绝了，说明：「太危险');
   });
 
-  it.each(['同意。', '  同意！', 'Approve.'])('首尾的空白与标点不论、英文不分大小写：「%s」也算批准', async text => {
+  it('回「拒绝，为什么要删这些？」：算拒绝，原因原样转给模型，结尾的问号也在', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    await s.reply('拒绝，为什么要删这些？', id);
+    await vi.waitFor(() => expect(r.content).toContain('被拒绝了，说明：「为什么要删这些？」。'));
+    expect(s.runs()).toBe(0);
+  });
+
+  it('回 300 字的拒绝原因：照样算拒绝，原因整段转给模型', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const r = s.call();
+    const { id } = await s.requested();
+    const reason = '先别删'.repeat(100);
+    await s.reply(`拒绝 ${reason}`, id);
+    await vi.waitFor(() => expect(r.content).toContain(`被拒绝了，说明：「${reason}」。`));
+    expect(s.runs()).toBe(0);
+  });
+
+  it.each([
+    '同意。',
+    '  同意！',
+    '同意？',
+    'Approve.',
+  ])('首尾的空白与标点不论、英文不分大小写：「%s」也算批准', async text => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
@@ -412,110 +438,65 @@ describe('应答：引用那条审批消息回复', () => {
     expect(s.received.map(m => m.messageId)).not.toContain('in-dup');
   });
 
-  it('没引用审批消息的「同意」：不批，回一句怎么回复，不交给 agent', async () => {
+  it.each([
+    '同意',
+    '拒绝 太危险',
+    '拒绝了他的邀请',
+    '等一下，我先看看',
+  ])('有审批在等时没引用审批消息的「%s」：不截下、不回提示，照常交给这一轮，审批照旧等', async text => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
     await s.requested();
-    const answer = await s.say('同意');
-    expect(s.lines(QUOTE_TO_ANSWER)).toHaveLength(1);
+    const before = s.outbound.length;
+    const said = await s.say(text);
+    expect(s.received.map(m => m.messageId)).toContain(said.messageId);
+    expect(s.outbound, '不回提示').toHaveLength(before);
     expect(r.content).toBeUndefined();
     expect(s.runs()).toBe(0);
-    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
   });
 
-  it('没引用审批消息的「拒绝 太危险」：整条是一个应答，同样回一句怎么回复，不交给 agent', async () => {
-    const s = await setup();
-    await s.say('帮我清一下');
-    const r = s.call();
-    await s.requested();
-    const answer = await s.say('拒绝 太危险');
-    expect(s.lines(QUOTE_TO_ANSWER)).toHaveLength(1);
-    expect(r.content).toBeUndefined();
-    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
-  });
-
-  it.each([
-    '等一下，我先看看',
-    'denylist 里加一条 foo',
-  ])('有审批在等时不是应答的消息「%s」：照常交给 agent，不回提示，审批照旧等', async text => {
-    const s = await setup();
-    await s.say('帮我清一下');
-    const r = s.call();
-    await s.requested();
-    const chat = await s.say(text);
-    expect(s.received.map(m => m.messageId)).toContain(chat.messageId);
-    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
-    expect(r.content).toBeUndefined();
-  });
-
-  it('很长的一串空白后跟一个字：不算应答，不卡住入站', async () => {
+  it('引用审批消息、很长的一串空白后跟一个字：不是应答，不卡住入站', async () => {
     const s = await setup();
     await s.say('帮我清一下');
     s.call();
-    await s.requested();
+    const { id } = await s.requested();
     const started = performance.now();
-    const long = await s.say(`a${' '.repeat(100_000)}x`);
+    const long = await s.reply(`a${' '.repeat(100_000)}x`, id);
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(s.received.map(m => m.messageId)).toContain(long.messageId);
   });
 
-  it('恰好 200 字、去掉首尾标点后为「同意」：算批准', async () => {
-    const s = await setup();
-    await s.say('帮我清一下');
-    const r = s.call();
-    const { id } = await s.requested();
-    await s.reply(`同意${'。'.repeat(198)}`, id);
-    await vi.waitFor(() => expect(r.content).toBe('ran'));
-  });
-
-  it('超过 200 字的：去掉首尾标点后恰为「同意」也不算应答，照常交给 agent，审批照旧等', async () => {
-    const s = await setup();
-    await s.say('帮我清一下');
-    const r = s.call();
-    const { id } = await s.requested();
-    const said = await s.reply(`同意${'。'.repeat(199)}`, id);
-    expect(s.received.map(m => m.messageId)).toContain(said.messageId);
-    expect(r.content).toBeUndefined();
-    expect(s.runs()).toBe(0);
-  });
-
   it.each([
     '同意吗？',
-    '同意？',
-    'approve?',
-    '同意？！',
-    '同意?。',
-    'deny?',
-    '拒绝吗？',
     'denylist',
-    `拒绝 ${'很'.repeat(200)}`,
     '同意不了',
     '同意之前先说明一下',
     '先别批',
-  ])('引用审批消息、既不是批准也不是拒绝的「%s」：不批，照常交给 agent，审批照旧等', async text => {
+  ])('引用审批消息、但不是应答词的「%s」：不批，照常交给这一轮，审批照旧等', async text => {
     const s = await setup();
     await s.say('帮我清一下');
     const r = s.call();
     const { id } = await s.requested();
+    const before = s.outbound.length;
     const said = await s.reply(text, id);
     expect(s.received.map(m => m.messageId)).toContain(said.messageId);
-    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(s.outbound, '不回提示').toHaveLength(before);
     expect(r.content).toBeUndefined();
     expect(s.runs()).toBe(0);
   });
 
-  it('送达了但平台没给消息 id：私聊里补一句这里无法应答；之后回「同意」也回这一句，不给「请引用」的提示，审批照旧等', async () => {
+  it('送达了但平台没给消息 id：私聊里补一句这里无法应答；之后引用它回「同意」认不出引用，照常交给这一轮、不回提示，审批照旧等', async () => {
     const s = await setup({ deliver: () => ({ ok: true }) });
     await s.say('帮我清一下');
     const r = s.call();
     const { id } = await s.requested();
     await vi.waitFor(() => expect(s.lines(ANSWER_ELSEWHERE)).toHaveLength(1));
+    const before = s.outbound.length;
     const answer = await s.reply('同意', id);
-    expect(s.lines(ANSWER_ELSEWHERE)).toHaveLength(2);
-    expect(s.lines(QUOTE_TO_ANSWER)).toEqual([]);
+    expect(s.outbound, '不回提示').toHaveLength(before);
     expect(r.content).toBeUndefined();
-    expect(s.received.map(m => m.messageId)).not.toContain(answer.messageId);
+    expect(s.received.map(m => m.messageId)).toContain(answer.messageId);
   });
 
   it('带 source 的注入引用审批消息回「同意」：不是 owner 亲手发的，不批', async () => {

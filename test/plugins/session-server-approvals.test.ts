@@ -651,7 +651,7 @@ describe('应答', () => {
     await flush();
     expect(r.outcome).toMatchObject({ approved: false, source: 'owner' });
     const message = r.outcome?.approved === false ? r.outcome.message : '';
-    expect(message).toContain('被拒绝了，说明：先备份再删');
+    expect(message).toContain('被拒绝了，说明：「先备份再删」。');
     expect(c.notifications('approval/settled')).toEqual([
       { approvalId: approval.id, state: 'denied', source: 'owner', at: Date.now() },
     ]);
@@ -871,7 +871,7 @@ describe('回给模型的话', () => {
       note: '先备份再删',
     });
     await flush();
-    expect(message(denied)).toMatch(/被拒绝了，说明：先备份再删.*能否再申请：/);
+    expect(message(denied)).toMatch(/被拒绝了，说明：「先备份再删」。能否再申请：/);
     expect(message(denied)).not.toContain('owner');
   });
 });

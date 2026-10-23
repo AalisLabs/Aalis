@@ -43,39 +43,33 @@ const FACT_LIMIT = 500;
 /** 记住最近这么多条审批消息（引用回复据它认出回的是哪一张）与应答过的入站消息 */
 const MEMORY = 1000;
 
-/** 超过这么多字的不是应答 */
-const ANSWER_LIMIT = 200;
 /** 应答首尾不论的一个字：空白（含全角空格）与标点 */
 const EDGE = /[\s。！!.~，,？?：:]/;
-/** 尾部去掉的标点里有问号：是在问，不是应答 */
-const ASKING = /[？?]/;
 /**
  * 应答词，英文不分大小写：整条恰为「同意」「approve」为批准（「同意吗」「同意不了」不算）；「拒绝」「deny」开头为拒绝，后面可带
- * 原因（「denylist」不算）。不收 y、n：指令插件的意图确认在等时会把下一条消息当作对它的回答，词表避开它的词，免得回意图确认
- * 的那条被当成应答
+ * 原因（「denylist」不算）
  */
 const APPROVE = /^(?:同意|approve)$/i;
 const DENY = /^(?:拒绝|deny\b)/i;
 
 type Answer = { decision: 'approve' } | { decision: 'deny'; note?: string };
 
-/** 去掉首尾的空白与标点，逐字扫描：交出中间的正文与尾部去掉的那段 */
-function trimEdges(text: string): { body: string; tail: string } {
+/** 去掉开头的空白与标点（逐字扫描） */
+function trimStartEdges(text: string): string {
   let start = 0;
-  let end = text.length;
-  while (start < end && EDGE.test(text[start])) start++;
-  while (end > start && EDGE.test(text[end - 1])) end--;
-  return { body: text.slice(start, end), tail: text.slice(end) };
+  while (start < text.length && EDGE.test(text[start])) start++;
+  return text.slice(start);
 }
 
+/** 应答词交出应答，不是的交出 undefined。拒绝的原因照原样转交，只去掉它与「拒绝」之间的空白、标点与末尾的空白 */
 function answerOf(content: string): Answer | undefined {
-  if (content.length > ANSWER_LIMIT) return undefined;
-  const { body, tail } = trimEdges(content);
-  if (ASKING.test(tail)) return undefined;
-  if (APPROVE.test(body)) return { decision: 'approve' };
-  const match = DENY.exec(body);
+  const text = trimStartEdges(content);
+  let end = text.length;
+  while (end > 0 && EDGE.test(text[end - 1])) end--;
+  if (APPROVE.test(text.slice(0, end))) return { decision: 'approve' };
+  const match = DENY.exec(text);
   if (!match) return undefined;
-  const note = trimEdges(body.slice(match[0].length)).body;
+  const note = trimStartEdges(text.slice(match[0].length)).trimEnd();
   return note ? { decision: 'deny', note } : { decision: 'deny' };
 }
 
@@ -115,8 +109,6 @@ interface Shown {
   approval: Approval;
   /** 投递的结果：还在发时没有 */
   sent?: 'delivered' | 'failed';
-  /** 送达时平台给了消息 id：认得出引用它的回复 */
-  quotable: boolean;
 }
 
 /** owner 的一个 IM 身份经一个机器人账号的接入 */
@@ -234,12 +226,7 @@ function runChatApproval({
     shown.sent = 'delivered';
     const ids = result.messageIds ?? [];
     for (const id of ids) quoted.set(keyOf(chat.sessionId, id), approval.id);
-    if (!waiting) return;
-    if (ids.length === 0) {
-      await send(chat, t('answerElsewhere'));
-      return;
-    }
-    shown.quotable = true;
+    if (waiting && ids.length === 0) await send(chat, t('answerElsewhere'));
   }
 
   /** 建一份接入：她与这个账号没有私聊时不建，等她来私聊 */
@@ -258,7 +245,7 @@ function runChatApproval({
             // 补推的同一张：送达过的与还在发的不再发，没送达的重发
             const known = shown.get(approval.id);
             if (known && known.sent !== 'failed') return;
-            const entry: Shown = { approval, quotable: false };
+            const entry: Shown = { approval };
             shown.set(approval.id, entry);
             push(chat, entry).catch(err => logger.use.warn('聊天审批推送审批出错:', err));
           },
@@ -302,24 +289,18 @@ function runChatApproval({
     spoke(message).catch(err => logger.use.warn('聊天审批记在场出错:', err));
   });
 
-  // 应答：在指令相位截下，回审批的消息不进指令解析、不交给 agent，也就不会起新的一轮把在跑的那一轮中止
+  // 应答：引用了审批消息、正文是应答词的，在指令相位截下，不进指令解析、不交给 agent，也就不会起新的一轮把在跑的那一轮
+  // 中止；别的（没引用审批消息的、引用了但不是应答词的）照常往下，是交给这一轮的普通消息
   hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
     const chat = chatAt(message);
-    const answer = chat && answerOf(message.content);
-    if (!chat || !answer) return next();
-    const approvalId = message.replyTo && quoted.get(keyOf(chat.sessionId, message.replyTo.messageId));
-    if (!approvalId && chat.shown.size === 0) return next();
+    const approvalId = chat && message.replyTo && quoted.get(keyOf(chat.sessionId, message.replyTo.messageId));
+    const answer = approvalId && answerOf(message.content);
+    if (!chat || !approvalId || !answer) return next();
     if (message.messageId !== undefined) {
       const key = keyOf(chat.sessionId, message.messageId);
       if (answered.get(key)) return;
       answered.set(key, true);
-    }
-    if (!approvalId) {
-      // 推着的审批都没有消息 id 时，引用了也认不出
-      const quotable = [...chat.shown.values()].some(shown => shown.quotable);
-      await send(chat, t(quotable ? 'quoteToAnswer' : 'answerElsewhere'));
-      return;
     }
     const shown = chat.shown.get(approvalId);
     if (!shown) {

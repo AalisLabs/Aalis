@@ -14,7 +14,6 @@ const SOURCE = {
   factParams: '参数：{value}',
   clipped: '{head}…（省略 {count, number} 字）…{tail}',
   howToAnswer: '引用这条消息回复「同意」，或「拒绝」加原因；{minutes, number} 分钟内不回按过期。',
-  quoteToAnswer: '要批准或拒绝，请引用那条审批消息回复。',
   answerElsewhere: '这条审批无法在这里应答，请到 WebUI 或终端处理。',
   alreadySettled: '这张已经处理过。',
   answerRefused: '应答没有生效：{reason}',
