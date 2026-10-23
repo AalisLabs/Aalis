@@ -17,6 +17,7 @@ export default definePlugin({
     commands: optional(commands),
     gateway,
     memory: optional(memory),
+    agent: optional(agent),
     authority: optional(authority),
     tools: optional(tools),
     plugins: optional(pluginsService),
@@ -92,7 +93,7 @@ export default definePlugin({
 
 ## `/clear` 类型
 
-`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身只负责 `context` 中的消息历史（经 memory 服务清空，含归档），其余内容由对应插件的中间件处理。清理类型由处理它的插件经贡献点 `memory:clear-type` 登记（见 [api-memory](../api/api-memory.md)）：`-t` 只认登记了的类型，`/help clear` 在 `--type` 选项下按登记表现取、逐项列出（`all` 在前，同一类型几家登记只列一次，显示名取收集次序里第一家的）。装了新插件就多一项，第三方类型同样选得中，插件停用后它的类型随之不认。没有贡献点插件（plugin-contributions）时只认 `all`，带别的类型一律回「未知清理类型」，不带类型的 `/clear` 照常清。第一方插件登记的类型：
+`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身只负责 `context` 中的消息历史（经 memory 服务清空，含归档），其余内容由对应插件的中间件处理。清消息历史时（指定了 `context` 或不指定类型）整条清理经 agent 的 `clearing` 先停下并按住这个会话（`/clear all` 是全部会话）再清（见 [api-agent](../api/api-agent.md)）；agent 不在时照常清。清理类型由处理它的插件经贡献点 `memory:clear-type` 登记（见 [api-memory](../api/api-memory.md)）：`-t` 只认登记了的类型，`/help clear` 在 `--type` 选项下按登记表现取、逐项列出（`all` 在前，同一类型几家登记只列一次，显示名取收集次序里第一家的）。装了新插件就多一项，第三方类型同样选得中，插件停用后它的类型随之不认。没有贡献点插件（plugin-contributions）时只认 `all`，带别的类型一律回「未知清理类型」，不带类型的 `/clear` 照常清。第一方插件登记的类型：
 
 | 类型 | 登记方 | 内容 |
 |---|---|---|

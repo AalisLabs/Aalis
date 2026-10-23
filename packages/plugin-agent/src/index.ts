@@ -186,7 +186,7 @@ class DefaultAgent implements AgentService {
   /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
   private trimThresholdRatio: number;
 
-  /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机、会话删除与 /clear 由 run() 直接经它停 */
+  /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机与会话删除由 run() 直接经它停，清消息历史经 clearing */
   readonly queues: SessionQueues;
 
   /** 每次激活只在实际写入缺少归档时告警一次，不因插件加载顺序误报。 */
@@ -290,6 +290,20 @@ class DefaultAgent implements AgentService {
    */
   abort(sessionId: string, options: { turnId?: string; queued?: boolean; reason?: string } = {}): boolean {
     return this.queues.stop(sessionId, { ...options, archive: true });
+  }
+
+  /**
+   * 清消息历史：先按住这些会话，再停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再跑 clear。被停的一轮落定之前还会写
+   * 工具调用组，先停后清，清空的历史里才不留它的写入
+   */
+  async clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void> {
+    const release = this.queues.hold(sessionIds);
+    try {
+      await this.queues.stopAll(sessionIds ?? this.queues.sessions(), { archive: false, reason: '清消息历史' });
+      await clear();
+    } finally {
+      release();
+    }
   }
 
   /** 会话删除时丢弃其节流日志状态（订阅见 run() 的 session:deleted）。 */
@@ -2263,21 +2277,6 @@ function run(caps: Caps): void {
   caps.events.use.on('session:deleted', async sessionId => {
     await agentImpl.queues.delete(sessionId);
     agentImpl.dropTokenLogState(sessionId);
-  });
-  // 清消息历史（/clear 不指定类型或含 context）：先停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再清。被停的一轮
-  // 落定之前还会写工具调用组，先停后清，清空的历史里才不留它的写入。从停下到清完按住这些会话：这期间到的输入清完再处理，
-  // 不开轮，也就不会回了话又被清掉
-  caps.hooks.use.middleware('memory:clear', async (data, next) => {
-    if (data.types && !data.types.includes('context')) return next();
-    const { queues } = agentImpl;
-    const scope = data.scope === 'all' ? undefined : data.sessionId ? [data.sessionId] : [];
-    const release = queues.hold(scope);
-    try {
-      await queues.stopAll(scope ?? queues.sessions(), { archive: false, reason: '/clear' });
-      await next();
-    } finally {
-      release();
-    }
   });
   const agent = agentImpl as unknown as InternalAgent;
 

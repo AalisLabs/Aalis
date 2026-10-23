@@ -5,9 +5,8 @@
 // - 群窗口：每个（群窗口，发言者）一份，限定这个窗口（根会话）。他在这个群里亲手说话即在场；这个群发起的参与者审批（连同它的
 //   子会话里的）、他能批的发在这个群里，同一张只发一条。
 // 子会话里的审批另写一行是哪个子任务（审批对象的来源链）。
-// 引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。接入不在场（最近一次亲手说话已过在场时限、推给它的都已结）
-// 时撤掉，再说话时重建。只经契约组合，不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，群窗口取会话表记下的
-// 多方标记，引用取投递结果里的平台消息 id。
+// 引用那条审批消息回复「同意」或「拒绝 原因」即结，回复不交给 agent。审批服务说接入已不在场时撤掉，再说话时重建。只经契约组合，
+// 不认平台：owner 取权限服务的判定，一对一取出生平台的适配器的声明，群窗口取会话表记下的多方标记，引用取投递结果里的平台消息 id。
 // ════════════════════════════════════════════════════════════
 
 import {
@@ -48,11 +47,6 @@ type Caps = BoundOf<typeof uses>;
 const FACT_LIMIT = 500;
 /** 记住最近这么多条审批消息（引用回复据它认出回的是哪一张）与应答过的入站消息 */
 const MEMORY = 1000;
-/**
- * 在场时限，取审批服务默认实现的值：接入最近一次亲手说话超过这么久、推给它的审批都已结，就不在场，撤掉（审批服务的时限
- * 更长时，撤掉之后新推的审批等他再说话时补推）
- */
-const PRESENCE_MS = 10 * 60_000;
 
 /** 应答首尾不论的一个字：空白（含全角空格）与标点 */
 const EDGE = /[\s。！!.~，,？?：:]/;
@@ -62,6 +56,11 @@ const EDGE = /[\s。！!.~，,？?：:]/;
  */
 const APPROVE = /^(?:同意|approve)$/i;
 const DENY = /^(?:拒绝|deny\b)/i;
+/**
+ * 开头对她的 @：适配器按机器人账号写下的 `<at self …>` 标记（与 api-trigger 的 mentionsSelf 认 @ 的同一种文法，改那边要一起改）。
+ * 在群里引用她的消息回复时，QQ 客户端会自动在开头插一个，不算应答的正文
+ */
+const LEADING_AT_SELF = /^<at self[\s>][\s\S]*?<\/at>/;
 
 type Answer = { decision: 'approve' } | { decision: 'deny'; note?: string };
 
@@ -72,9 +71,12 @@ function trimStartEdges(text: string): string {
   return text.slice(start);
 }
 
-/** 应答词交出应答，不是的交出 undefined。拒绝的原因照原样转交，只去掉它与「拒绝」之间的空白、标点与末尾的空白 */
+/**
+ * 应答词交出应答，不是的交出 undefined。开头对她的 @ 不算正文；拒绝的原因照原样转交，只去掉它与「拒绝」之间的空白、标点与末尾的
+ * 空白
+ */
 function answerOf(content: string): Answer | undefined {
-  const text = trimStartEdges(content);
+  const text = trimStartEdges(content.replace(LEADING_AT_SELF, ''));
   let end = text.length;
   while (end > 0 && EDGE.test(text[end - 1])) end--;
   if (APPROVE.test(text.slice(0, end))) return { decision: 'approve' };
@@ -141,10 +143,8 @@ interface Shown {
 /** 一个身份在一处的接入 */
 interface Attendee {
   attendance: ApprovalAttendance;
-  /** 推给它、还没结的审批 id */
+  /** 推给它、还没结的审批 id：发不出去时对拿着它的接入上报离开；不空时这份接入不撤 */
   held: Set<string>;
-  /** 最近一次亲手说话的时刻 */
-  spokeAt: number;
 }
 
 /** 发审批消息的一处：owner 与一个机器人账号的私聊，或一个群窗口 */
@@ -321,7 +321,6 @@ function runChatApproval({
     const held = new Set<string>();
     const attendee: Attendee = {
       held,
-      spokeAt: Date.now(),
       attendance: surface.attend(
         who,
         {
@@ -351,11 +350,14 @@ function runChatApproval({
     return attendee;
   }
 
-  /** 撤掉不在场的接入（最近一次亲手说话已过在场时限、推给它的都已结），他再说话时重建：接入不随说过话的人一直增多 */
-  function sweep(now: number): void {
+  /**
+   * 撤掉审批服务说已不在场的接入，他再说话时重建：接入不随说过话的人一直增多。推给它、还没结的照留：这不是在场规则（发不出去、
+   * 上报离开之后它已不在场），是撤了就收不到这些卡的结算，过期那一行发不出，这一处记着的卡也删不掉
+   */
+  function sweep(): void {
     for (const place of [...chats.values(), ...windows.values()]) {
       for (const [key, attendee] of place.attendees) {
-        if (attendee.held.size > 0 || now - attendee.spokeAt < PRESENCE_MS) continue;
+        if (attendee.held.size > 0 || attendee.attendance.present()) continue;
         attendee.attendance.leave();
         place.attendees.delete(key);
       }
@@ -373,13 +375,8 @@ function runChatApproval({
       await sessionManager.use.recordInbound(message);
     }
     if (signal.aborted) return;
-    const now = Date.now();
-    sweep(now);
-    for (const place of placesOf(message, who)) {
-      const attendee = attendeeOf(place, who);
-      attendee.spokeAt = now;
-      attendee.attendance.presence(true);
-    }
+    sweep();
+    for (const place of placesOf(message, who)) attendeeOf(place, who).attendance.presence(true);
   }
 
   // 在场：监听入站事件，没点名、在触发相位就被吞掉的群聊也算

@@ -46,6 +46,12 @@ export interface AgentService {
    * 回合结束那一行日志，不进界面与回合结局。返回是否停下了在跑的一轮，调用方据此分辨「turnId 对不上」
    */
   abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  /**
+   * 清这些会话（不给即全部会话）的消息历史时由发起清理的一方调，clear 是整条清理（memory:clear 链连同默认动作）：先停下在跑的
+   * 一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 clear；从停下到 clear 结束按住这些会话，这期间到的输入等它结束再处理
+   * （不开轮，不会回了话又被清掉）。停下与按住都在各家清理之外，不看它们的登记先后
+   */
+  clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void>;
 
   /**
    * 注册消息预处理器

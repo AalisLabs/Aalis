@@ -225,12 +225,12 @@ export function createApprovals(deps: ApprovalDeps) {
    */
   const attends = (attendee: Attendee, pending: Pending) =>
     covers(attendee, pending) && pending.req.canAnswer(attendee.who);
-  /** 此刻在场、覆盖这张的客户端：最近一次活动在时限内，或推给它的卡还没结 */
+  /** 它此刻在场：最近一次活动在时限内，或推给它的卡还没结 */
+  const isPresent = (attendee: Attendee, now: number) => now < attendee.until || attendee.held.size > 0;
+  /** 此刻在场、覆盖这张的客户端 */
   const present = (now: number, pending: Pending) =>
     [...surfaces].flatMap(surface =>
-      [...surface.attendees].filter(
-        attendee => (now < attendee.until || attendee.held.size > 0) && attends(attendee, pending),
-      ),
+      [...surface.attendees].filter(attendee => isPresent(attendee, now) && attends(attendee, pending)),
     );
   /** 已推出、还没结的 */
   const shown = () => [...queues.values()].flatMap(queue => (queue[0]?.approval ? [queue[0]] : []));
@@ -455,6 +455,7 @@ export function createApprovals(deps: ApprovalDeps) {
         else attendee.held.clear();
         recheck();
       },
+      present: () => isPresent(attendee, Date.now()),
       respond(answer) {
         const pending = shown().find(p => p.id === answer.approvalId && covers(attendee, p));
         if (!pending?.approval) {

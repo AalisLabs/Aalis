@@ -1350,6 +1350,9 @@ importers:
 
   packages/plugin-commands:
     dependencies:
+      '@aalis/api-agent':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-agent
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority

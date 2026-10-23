@@ -224,7 +224,7 @@ case 'at': {
 const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
 ```
 
-触发插件用 `self` 属性判定「机器人是否被 @」（`@aalis/api-trigger` 的 `isAddressed`，点名的一种）。判定只认 `<at self>` 这一种文法——CQ 码已由 adapter 入站规范化掉：
+触发插件用 `self` 属性判定「机器人是否被 @」（`@aalis/api-trigger` 的 `isAddressed`，点名的一种）；聊天审批判应答词之前，按同一种文法去掉开头的这个标记（在群里引用她的消息回复时 QQ 客户端会自动插一个）。判定只认 `<at self>` 这一种文法——CQ 码已由 adapter 入站规范化掉：
 
 ```ts
 function mentionsSelf(content: string): boolean {

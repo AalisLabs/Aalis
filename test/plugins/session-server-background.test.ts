@@ -107,6 +107,9 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
       for (const end of ends) end();
       return ends.length > 0;
     },
+    async clearing(_sessionIds, clear) {
+      await clear();
+    },
   };
   host.provide.use(agent, agentDouble);
   if (registry) await app.plugin(toolsPlugin, {});

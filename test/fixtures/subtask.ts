@@ -15,7 +15,8 @@ import { type RequestDraft, toolContext } from './tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 子任务插件的测试台：真的会话管理与会话设置（startSettings）装上子任务插件；工具服务的替身记下登记的工具（含风险与确认的
 // 声明），按名字调处理器；zz-agent 是声明 SCHEMA 那几项的 agent 替身（模型一项的全局层是本插件偏好），agent 服务的替身实现
-// assignModel：与 agent 同一做法，经 zz-agent 的读取器写本会话层，可让它抛错。记下派发与追问的入站消息，派发那一刻读一次子会话
+// assignModel：与 agent 同一做法，经 zz-agent 的读取器写本会话层，可让它抛错；clearing 直接跑清理（会话管理删子会话时经它清
+// 数据），没有回合要停。记下派发与追问的入站消息，派发那一刻读一次子会话
 // 的设置。回合按 agent 的顺序在 agent:turn:before 的 next 里跑完、发 agent:turn:after。网关的替身收下追问，等用例让它落定：
 // 跑完追问开的那一轮（在送达它的那次调用的异步上下文里跑，与 agent 一样），或不开轮就落定（在网关相位被挡下、被放掉）。
 // ════════════════════════════════════════════════════════════
@@ -66,6 +67,9 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
           order.push(`assign ${sessionId}`);
           if (opts.assignFails) throw new Error('<写不进>');
           await agentFields.reader().set(sessionId, 'llm', model);
+        },
+        async clearing(_sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>) {
+          await clear();
         },
       } as never);
     },

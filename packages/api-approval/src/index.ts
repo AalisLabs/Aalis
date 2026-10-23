@@ -175,6 +175,11 @@ export interface ApprovalAttendance {
    * 算在场。false 表示离开（页面转到后台、IM 私聊推不到），即刻不在场：推给它、还没结的审批对它算没收到，它变为在场时补推
    */
   presence(active: boolean): void;
+  /**
+   * 它此刻还算不算在场（按上面同一条规则，由审批服务判）：审批面据它撤掉不在场的接入，不自己另记时限。撤掉（leave）的接入
+   * 收不到推给过它、还没结的卡的结算，还要等结算的先别撤。审批服务不在时不在场
+   */
+  present(): boolean;
   respond(answer: ApprovalAnswer): ApprovalResponse;
   /** 客户端断开 */
   leave(): void;
@@ -269,6 +274,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
     bound();
     return {
       presence: active => bound()?.presence(active),
+      present: () => bound()?.present() ?? false,
       respond: answer => bound()?.respond(answer) ?? { ok: false, refusal: 'unavailable', message: t('serviceAbsent') },
       leave() {
         left = true;
