@@ -156,27 +156,26 @@ interface TurnOptions {
 let turns = 0;
 
 /**
- * 开始一轮：与 agent 相同，整轮跑在 agent:input:before 的 next 里。end 时给了用量先发这一轮最后一次调用的用量
+ * 开始一轮：与 agent 相同，整轮跑在 agent:turn:before 的 next 里。end 时给了用量先发这一轮最后一次调用的用量
  * （带这一轮的 turnId），再跑 agent:turn:after，等这一轮结束
  */
 export function startTurn(host: Host, sessionId: string, options: TurnOptions = {}) {
   const turnId = `turn-${++turns}`;
   const platform = options.platform ?? 'webui';
-  const message = { sessionId, platform };
+  const inputs = [{ message: { content: '', sessionId, platform } }];
   let finish!: (amounts?: TurnAmounts) => void;
   const ending = new Promise<TurnAmounts | undefined>(r => (finish = r));
-  const running = host.hooks.use.run(
-    'agent:input:before' as never,
-    { message, turnId, metadata: {} } as never,
-    async () => {
-      const amounts = await ending;
-      if (amounts) await host.events.use.emit('token:usage', usageEvent(sessionId, amounts, { turnId, platform }));
-      await host.hooks.use.run(
-        'agent:turn:after' as never,
-        { message, reply: 'ok', outcome: options.outcome ?? 'replied', sessionId, turnId, metadata: {} } as never,
-      );
-    },
-  );
+  const running = host.hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, async () => {
+    const amounts = await ending;
+    if (amounts) await host.events.use.emit('token:usage', usageEvent(sessionId, amounts, { turnId, platform }));
+    await host.hooks.use.run('agent:turn:after', {
+      inputs,
+      reply: 'ok',
+      outcome: options.outcome ?? 'replied',
+      sessionId,
+      turnId,
+    });
+  });
   return {
     turnId,
     async end(amounts?: TurnAmounts): Promise<void> {

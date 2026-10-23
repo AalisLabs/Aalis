@@ -343,6 +343,17 @@
 - 要记一个人的按 `actingIdentity`：定时任务的创建者、编排的定义者与 `workflow_run` 的调用者，几个人都能做、没经审批的一轮按匿名；白纸交任务与取消在这样的一轮被拒，拒绝语改为「这一轮没有单一的发起人，不能交任务或取消任务」（没有人的注入也是这句，此前是「这一回合没有发起人」）。编排的工具调用上下文的唯一参与者是运行身份（匿名时是无主体），mcp-server 的是 `mcp:mcp-client`。
 - plugin-authority 的拒绝语「需要 owner 批准，但审批服务不在」改为「需要批准，但审批服务不在」。
 
+### 通道层：回合开始的钩子与按回合认消息（@aalis/api-agent、@aalis/api-message-archive、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-checkpoint、@aalis/plugin-image-sender、@aalis/plugin-subtask、@aalis/plugin-persona、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-adapter-onebot、@aalis/plugin-file-reader、@aalis/plugin-media、@aalis/plugin-publish-review）
+
+- api-agent：`agent:input:before` 改为每条输入一次，data 只有 `{ message }`（去掉 `turnId` 与 `metadata`），不调 `next` 即丢掉这条，`next` 在这条落定时返回；预处理器照旧挂在它上面。新增 `agent:turn:before`（`{ turnId, sessionId, inputs }`，一轮开始，`next` 之后是这一轮的全部，不调 `next` 即这一轮不跑、输入不归档、不发 `agent:turn:after`）与类型 `TurnInput`（`message`，归档之后带 `archived`）。`agent:turn:after` 用 `inputs` 取代 `message`、去掉 `metadata`；`agent:llm:before`、`agent:reply:before` 去掉 `userId` 与 `triggerType`；`PromptContributionView` 用 `inputs` 取代 `userId` 与 `triggerType`。用 `agent:input:before` 包一轮、取回合 id 或按 `view.userId` 取材的插件照新钩子改。实现者多一条约定：输入在进入一轮时经 message-archive 归档，`archiveIncoming` 带回合 id 与进入方式。
+- api-message-archive：`archiveIncoming` 多一个可选的回合参数 `{ turnId, entry: 'opened' | 'joined' }`，存档记成元数据的 `TurnId` 与新登记的 `TurnEntry`（schema-message）。进了一轮的输入因此带回合 id。
+- 连对话回滚（plugin-checkpoint）只删这一轮的消息：提交时只记时间窗里回合 id 是这一轮的（输入、工具调用组、回复、子任务合成的回报、带回合 id 的出站记录与投递失败记录）。这一轮进行期间同一会话里别的来源的输入、别的回合的产出与别人的消息不再被连带删掉。
+- 她回复里存储地址的媒体标记（plugin-image-sender）与 `send_attachment` 同一份判据，按回复所在那一轮的授权身份判（几个人的一轮不带授权身份），受众只有 owner 的会话不再免判据（此前见「发媒体、看图的取用」一节）：owner 私聊里别人私聊的图的标记不再转成附件；本机文件的标记只在主体是 owner 的一轮（或 owner 授权的自动运行且会话里没有别人）转，owner 在群里亲手那一轮也转；认不出这一轮的出站（不是回合里的回复）照旧不带授权身份判。
+- 子任务自动完成时在子会话历史里合成的 `report_to_parent` 两条带这一轮的回合 id，WebUI 子会话的历史里它们并进那一轮。
+- 向量记忆的检索词改取这一轮输入归档的正文（带发送者前缀与附件描述），不再取发给模型的那条去掉时间标签的正文；这一轮的输入都没有归档（没装存档插件、空闲开话题）时不检索。
+- onebot 的事件提示（戳一戳、群文件上传）按这一轮各条输入自带的事件种类（`noticeType`）给，不再按正文开头认：发起者昵称里带「]」时也给，群友打出的像事件的文字不再给。
+- plugin-file-reader 的「本轮新上传」按这一轮各条输入附件里本插件写下的文件引用认，不再按正文里的「[文件:」与 ID 认：正文里手写的文件描述不算新上传；这一轮的文件处理失败、没有引用时注入的是历史清单（此前不注入）。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

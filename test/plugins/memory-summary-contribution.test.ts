@@ -106,7 +106,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', '不该出现的摘要');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages });
+    await assemblePromptContributions(assembly, { messages }, []);
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
@@ -115,7 +115,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
   it('无摘要记录 → 不注入', async () => {
     const { assembly } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
@@ -126,7 +126,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', '');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
@@ -146,7 +146,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await app.plugins.idle();
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     const contents = messages.map(m => String(m.content));
     const idx = messages.findIndex(m => String(m.metadata?.injector ?? '').endsWith('/memory-summary'));
@@ -168,11 +168,11 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', 'A 会话摘要');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-b' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-b' }, []);
     expect(findSummaryBlock(messages)).toBeUndefined();
 
     const messagesA = baseMessages();
-    await assemblePromptContributions(assembly, { messages: messagesA, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages: messagesA, sessionId: 's-a' }, []);
     expect(String(findSummaryBlock(messagesA)?.content)).toContain('A 会话摘要');
   });
 
@@ -182,7 +182,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', longSummary);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     expect(String(findSummaryBlock(messages)?.content).endsWith(longSummary)).toBe(true);
   });
@@ -192,12 +192,12 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     const { assembly, memory } = await setup();
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
     expect(findSummaryBlock(messages)).toBeUndefined();
 
     // 模拟摘要在 agent:turn:after 异步落库：首轮之后、次轮之前才就绪
     await seedSummary(memory, 's-a', 'SUM-LATE 迟到的摘要');
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     expect(summaryBlocks(messages)).toHaveLength(1);
     expect(String(findSummaryBlock(messages)?.content)).toContain('SUM-LATE 迟到的摘要');
@@ -208,9 +208,9 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', 'SUM-BODY');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
     const lenAfterFirst = messages.length;
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' }, []);
 
     expect(summaryBlocks(messages)).toHaveLength(1);
     expect(messages).toHaveLength(lenAfterFirst);

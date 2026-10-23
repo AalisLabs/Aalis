@@ -16,6 +16,7 @@ import {
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // memory 是 memory-vector 的 optional 依赖，provider 重载不级联 bounce 本插件。
@@ -91,7 +92,7 @@ function baseMessages(): Message[] {
 
 async function injectedText(caps: PromptAssemblyCaps): Promise<string> {
   const messages = baseMessages();
-  await assemblePromptContributions(caps, { messages, sessionId: 's-cur' });
+  await assemblePromptContributions(caps, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
   const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
   return String(block?.content ?? '');
 }

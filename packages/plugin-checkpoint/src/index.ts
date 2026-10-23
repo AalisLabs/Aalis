@@ -84,9 +84,9 @@ function run(caps: Caps): void {
   });
 
   // ──────────── 回合生命周期 ────────────
-  // agent:input:before 的 next 就是这一轮的全部（后续中间件、模型调用、工具、回合结束钩子），
+  // agent:turn:before 的 next 就是这一轮的全部（后续中间件、输入的归档、模型调用、工具、回合结束钩子），
   // 用 agent 给的 turnId 把它包进 runTurn：期间的存储改动记进这一轮，next 返回（含被下游拦下、出错）即提交。
-  // 只包 coverage 覆盖的会话：按受众时看根会话的房间类别，不看这一轮从哪个入口进来。
+  // 只包 coverage 覆盖的会话：按受众时看根会话的房间类别，不看这一轮从哪个入口进来（入口平台取开轮那条输入的）。
   const fields = caps.sessionFields.use.fields(configSchema, caps);
   const lookup = (id: string) => (sessionManager.present ? sessionManager.use.getSession(id) : undefined);
   const isOwner = (platform: string, userId: string) => authority.present && authority.use.isOwner(platform, userId);
@@ -97,9 +97,9 @@ function run(caps: Caps): void {
     );
   };
 
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    if (covered(data.message.sessionId, data.message.platform)) {
-      await service.runTurn(data.turnId, data.message.sessionId, next);
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    if (covered(data.sessionId, data.inputs[0].message.platform)) {
+      await service.runTurn(data.turnId, data.sessionId, next);
     } else {
       await next();
     }

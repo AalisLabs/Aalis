@@ -154,11 +154,11 @@ export async function assemblePromptContributions(
   data: {
     messages: Message[];
     sessionId?: string;
-    userId?: string;
     platform?: string;
-    triggerType?: PromptContributionView['triggerType'];
     dryRun?: boolean;
   },
+  /** 这一轮的输入（视图的 inputs）：不在回合里的估算（token:request 的快照）给空数组 */
+  inputs: PromptContributionView['inputs'],
   opts?: {
     /**
      * 单个 build 的等待上限（毫秒；缺省/0 = 不设限）。挂死的 build（如网络
@@ -181,9 +181,8 @@ export async function assemblePromptContributions(
 
   const view: PromptContributionView = {
     sessionId: data.sessionId,
-    userId: data.userId,
     platform: data.platform,
-    triggerType: data.triggerType,
+    inputs,
     dryRun: data.dryRun === true,
     // 浅拷贝快照：build 是并行执行的，把活数组递进去，某个 build 若强转
     // readonly 去 splice 会与其他 build 的读跨 await 竞态（旧串行中间件无此

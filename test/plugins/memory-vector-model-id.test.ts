@@ -14,6 +14,7 @@ import { assemblePromptContributions } from '../../packages/plugin-agent/src/pro
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 向量只能与同一 embedding 模型算出的向量比较。换成同维度的另一模型后，
@@ -154,7 +155,7 @@ async function setup(opts: {
       { role: 'system', content: '人设' },
       { role: 'user', content: '还记得我上次说的吗' },
     ];
-    await assemblePromptContributions(host, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(host, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
     return String(block?.content ?? '');
   }

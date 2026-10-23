@@ -74,7 +74,7 @@ async function boot() {
   });
   const turns: Array<{ source?: string; outcome: string }> = [];
   host.hooks.use.middleware('agent:turn:after', async (data, next) => {
-    turns.push({ source: data.message.source, outcome: data.outcome });
+    turns.push({ source: data.inputs[0].message.source, outcome: data.outcome });
     await next();
   });
   return { agent: host.agent.use, held, release, turns };

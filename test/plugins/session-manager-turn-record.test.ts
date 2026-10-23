@@ -49,18 +49,21 @@ async function setup(stored?: Record<string, Record<string, unknown>>) {
   const turn = (sessionId: string, outcome?: Outcome, error?: string | TextRef) => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'webui' };
     const turnId = `t${++turns}`;
-    return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      if (!outcome) return;
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: outcome === 'replied' ? '<回复>' : '',
-        outcome,
-        ...(error === undefined ? {} : { error }),
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    return host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        if (!outcome) return;
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: outcome === 'replied' ? '<回复>' : '',
+          outcome,
+          ...(error === undefined ? {} : { error }),
+          sessionId,
+          turnId,
+        });
+      },
+    );
   };
 
   const usage = (fields: Partial<LLMUsageEvent>) =>

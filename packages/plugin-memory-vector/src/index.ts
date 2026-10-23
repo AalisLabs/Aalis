@@ -215,14 +215,6 @@ function extractMentions(text: string): string[] {
   return [...ids];
 }
 
-/** 剥掉 agent 在某条消息开头注入的临时时间标签（如 "(9/25 14:30) " / "(2025/12/31 23:59) "）。
- * 只剥首个括号对，保留后续内容（包括 [发送者] 前缀）。
- */
-function stripTimeLabel(content: string): string {
-  if (!content) return content;
-  return content.replace(/^\([^)]{1,16}\)\s+/, '');
-}
-
 /**
  * 消息的可见正文。回复经结构化输出（persona 的 outputFormat）时，content 存整串 JSON 信封，
  * agent 把解码后的回复另写进 metadata 的 VisibleContent 键；键缺省即 content 本身。
@@ -506,14 +498,19 @@ async function run(caps: Caps): Promise<void> {
    * 同模型：queryModelId 取自算查询向量的那个提供者；声明了时只留同模型的向量（存量向量按存量标记
    * 认定模型），未声明时不按模型过滤。
    * 准入：others-only 档过滤 AI 自身发言；存量旧向量无 role 字段，不等于 'assistant'，按对方对待。
-   * 同用户加权只在给出 boostUserId 时生效（crossSessionMode='user'）：作者是该用户或该用户被 @提及，
+   * 同用户加权只对 boostUserIds 里的用户（crossSessionMode='user' 时调用方给）：作者是其中一位或其中一位被 @提及，
    * 分数乘以 userPriorityBoost。
    */
   async function rankCandidates(
     queryVec: number[],
     queryModelId: string | undefined,
     candidateCount: number,
-    scope: { visibility: Visibility; curSessionId: string | undefined; curPlatform: string; boostUserId?: string },
+    scope: {
+      visibility: Visibility;
+      curSessionId: string | undefined;
+      curPlatform: string;
+      boostUserIds: readonly string[];
+    },
   ): Promise<RankedHit[]> {
     const candidates = await vectorstore.use.search(queryVec, candidateCount);
     const legacy = queryModelId ? await legacyModelId(queryModelId) : undefined;
@@ -547,14 +544,11 @@ async function run(caps: Caps): Promise<void> {
         let score =
           (1 - cfg.search.timeWeight) * c.score +
           cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
-        if (scope.boostUserId) {
-          const isAuthor = (c.metadata.userId as string) === scope.boostUserId;
-          const mentions = c.metadata.mentions as string[] | undefined;
-          const isMentioned = Array.isArray(mentions) && mentions.includes(scope.boostUserId);
-          if (isAuthor || isMentioned) {
-            score *= cfg.search.userPriorityBoost;
-          }
-        }
+        const mentions = c.metadata.mentions as string[] | undefined;
+        const boosted = scope.boostUserIds.some(
+          id => (c.metadata.userId as string) === id || (Array.isArray(mentions) && mentions.includes(id)),
+        );
+        if (boosted) score *= cfg.search.userPriorityBoost;
         return { ...c, finalScore: score };
       });
     if (queryModelId && excludedModels.size > 0 && !mismatchWarned.has(queryModelId)) {
@@ -915,7 +909,7 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // === 检索并注入上下文（agent:prompt 贡献 / turn-context 槽：按当前消息检索、每轮必变，落历史后护前缀缓存）===
+  // === 检索并注入上下文（agent:prompt 贡献 / turn-context 槽：按这一轮的输入检索、每轮必变，落历史后护前缀缓存）===
 
   contributions.use.contribute('agent:prompt', {
     id: 'memory-vector',
@@ -925,15 +919,18 @@ async function run(caps: Caps): Promise<void> {
       if (data.dryRun) return null;
       data.signal?.throwIfAborted();
 
-      const userMessages = data.messages.filter(m => m.role === 'user');
-      const lastUserMsg = userMessages[userMessages.length - 1];
-      if (!lastUserMsg?.content) return null;
+      // 检索词：这一轮各条输入归档的正文按先后相接（与入库时同一份正文），超过上限时从最早的一条丢起；都没归档时不检索
+      const texts = data.inputs.flatMap(({ archived }) => (archived?.content ? [archived.content] : []));
+      if (texts.length === 0) return null;
+      while (texts.length > 1 && texts.join('\n').length > MAX_EMBED_CHARS) texts.shift();
+      const query = clipForEmbed(texts.join('\n'));
 
       try {
         const curSessionId = data.sessionId;
         const curPlatform = currentPlatformOf(curSessionId, data.platform);
-        const curUserId = data.userId ?? '';
         const mode = modeOf(curSessionId, data.platform);
+        /** 同用户加权：这一轮各条输入的发言者 */
+        const speakers = data.inputs.flatMap(({ message }) => (message.userId ? [message.userId] : []));
 
         const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.use.size());
         data.signal?.throwIfAborted();
@@ -941,13 +938,13 @@ async function run(caps: Caps): Promise<void> {
 
         const provider = pinned(embedding);
         const { modelId } = provider;
-        const queryVec = await provider.embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
+        const queryVec = await provider.embed(query, { signal: data.signal });
         data.signal?.throwIfAborted();
         const ranked = await rankCandidates(queryVec, modelId, candidateCount, {
           visibility: mode.visibility,
           curSessionId,
           curPlatform,
-          boostUserId: mode.userBoost ? curUserId : undefined,
+          boostUserIds: mode.userBoost ? speakers : [],
         });
         data.signal?.throwIfAborted();
 
@@ -1169,7 +1166,7 @@ async function run(caps: Caps): Promise<void> {
             visibility: effectiveScope,
             curSessionId,
             curPlatform,
-            boostUserId: mode.userBoost ? callCtx.userId : undefined,
+            boostUserIds: mode.userBoost && callCtx.userId ? [callCtx.userId] : [],
           },
         );
 

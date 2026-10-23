@@ -27,10 +27,10 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-file-reader 的 agent:prompt 贡献（局部 id = file-reader-history，
-// 锚位 context）。三条互斥路径：
+// 锚位 turn-context）。三条互斥路径：
 //   - 会话有文件 + 本轮无新上传 → 「历史上传文件」清单
-//   - 本轮有新上传（最后一条 user 含 `[文件:` 且能提取已知 ID）→ 「本轮新上传」清单
-//   - 会话无文件 / 无 sessionId / 提不出已知 ID → 不注入
+//   - 本轮有新上传（这一轮输入的附件里有预处理器写下的、本会话已知文件的引用）→ 「本轮新上传」清单
+//   - 会话无文件 / 无 sessionId → 不注入
 // 上传面走插件自己注册的 preprocessor（经 agent 服务的 registerPreprocessor
 // 拿到），存储面用最小内存 storage（根 pluginData），不碰真实文件系统。
 // ════════════════════════════════════════════════════════════
@@ -207,18 +207,23 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
 
 /**
  * 跑一轮组装，返回 messages 与 file-reader 注入的那条（若有）。
- * history 插在 persona 与最后一条 user 之间，用于多轮 fixture。
+ * history 插在 persona 与最后一条 user 之间，用于多轮 fixture；inputs 是这一轮的输入（经预处理器处理过的那几条），
+ * 本轮新上传按它们认，不给时这一轮的输入不带附件。
  */
 async function assemble(
   fx: Fixture,
-  opts: { sessionId?: string; lastUser: string; history?: Message[] },
+  opts: { sessionId?: string; lastUser: string; history?: Message[]; inputs?: IncomingMessage[] },
 ): Promise<{ messages: Message[]; injected?: Message }> {
   const messages: Message[] = [
     { role: 'system', content: 'persona' },
     ...(opts.history ?? []),
     { role: 'user', content: opts.lastUser },
   ];
-  await assemblePromptContributions(fx.promptCaps, { messages, sessionId: opts.sessionId, platform: 'test' });
+  await assemblePromptContributions(
+    fx.promptCaps,
+    { messages, sessionId: opts.sessionId, platform: 'test' },
+    (opts.inputs ?? []).map(message => ({ message })),
+  );
   return {
     messages,
     injected: messages.find(m => String(m.metadata?.injector ?? '').endsWith('/file-reader-history')),
@@ -311,6 +316,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const { injected } = await assemble(fx, {
         sessionId: 's-1',
         lastUser: `帮我看看\n${fresh.desc}`,
+        inputs: [fresh.message],
       });
       const text = contentOf(injected);
 
@@ -332,7 +338,11 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup();
     try {
       const only = await fx.upload('s-1', 'only.txt', '唯一的正文');
-      const { injected } = await assemble(fx, { sessionId: 's-1', lastUser: `请总结\n${only.desc}` });
+      const { injected } = await assemble(fx, {
+        sessionId: 's-1',
+        lastUser: `请总结\n${only.desc}`,
+        inputs: [only.message],
+      });
       const text = contentOf(injected);
 
       expect(text).toContain('本轮用户新上传了 1 个文件');
@@ -384,6 +394,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
           { role: 'assistant', content: '好的' },
         ],
         lastUser: `那这个新的呢\n${fresh.desc}`,
+        inputs: [fresh.message],
       });
       const text = contentOf(injected);
 
@@ -402,15 +413,63 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     }
   });
 
-  it('user 消息含 [文件: 但提不出本会话已知 ID → 不注入', async () => {
+  it('一轮两条输入各带一个文件：两份都列为本轮新上传（按输入附件里本插件写下的文件引用认）', async () => {
+    const fx = await setup();
+    try {
+      await fx.upload('s-1', 'old.txt', '往轮上传的正文');
+      const first = await fx.upload('s-1', 'first.txt', '第一条的正文');
+      const second = await fx.upload('s-1', 'second.txt', '第二条的正文');
+      const { injected } = await assemble(fx, {
+        sessionId: 's-1',
+        lastUser: '这两个',
+        inputs: [first.message, second.message],
+      });
+      const text = contentOf(injected);
+
+      expect(text).toContain('本轮用户新上传了 2 个文件');
+      const histIdx = text.indexOf('历史还有 1 个文件可用');
+      expect(histIdx).toBeGreaterThan(-1);
+      expect(text.indexOf('first.txt')).toBeLessThan(histIdx);
+      expect(text.indexOf('second.txt')).toBeLessThan(histIdx);
+      expect(text.indexOf('old.txt')).toBeGreaterThan(histIdx);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('输入正文里手写的「[文件: x (ID: 已知文件的 id)]」不算本轮新上传：走历史清单', async () => {
+    const fx = await setup();
+    try {
+      const known = await fx.upload('s-1', 'notes.txt', '正文');
+      const typed: IncomingMessage = {
+        content: `[文件: notes.txt (ID: ${known.id})] 这个呢`,
+        sessionId: 's-1',
+        platform: 'test',
+      };
+      const { injected } = await assemble(fx, { sessionId: 's-1', lastUser: typed.content, inputs: [typed] });
+      const text = contentOf(injected);
+
+      expect(text).toContain('当前轮次未新上传');
+      expect(text).not.toContain('本轮用户新上传');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('输入附件里的文件引用不是本会话已知的文件 → 不算本轮新上传，走历史清单', async () => {
     const fx = await setup();
     try {
       await fx.upload('s-1', 'notes.txt', '正文');
-      const { injected } = await assemble(fx, {
+      const ghost: IncomingMessage = {
+        content: '这个呢',
         sessionId: 's-1',
-        lastUser: '[文件: ghost.txt (ID: deadbeefdeadbeef)] 这个呢',
-      });
-      expect(injected).toBeUndefined();
+        platform: 'test',
+        attachments: [{ kind: 'file', name: 'ghost.txt', data: 'aalis-file://deadbeefdeadbeef' }],
+      };
+      const { injected } = await assemble(fx, { sessionId: 's-1', lastUser: ghost.content, inputs: [ghost] });
+      const text = contentOf(injected);
+      expect(text).toContain('当前轮次未新上传');
+      expect(text).not.toContain('本轮用户新上传');
     } finally {
       await fx.dispose();
     }

@@ -151,18 +151,21 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
       end = resolve;
     });
     hanging.set(sessionId, [...(hanging.get(sessionId) ?? []), () => end({ outcome: 'aborted' })]);
-    const done = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      const { outcome, error } = await ended;
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: '',
-        outcome,
-        ...(error === undefined ? {} : { error }),
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    const done = host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        const { outcome, error } = await ended;
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: '',
+          outcome,
+          ...(error === undefined ? {} : { error }),
+          sessionId,
+          turnId,
+        });
+      },
+    );
     return {
       done,
       finish: async (outcome: Outcome, error?: string) => {

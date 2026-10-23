@@ -45,7 +45,6 @@ import {
   type OutboundDeliveryResult,
   type OutgoingMessage,
   type StreamChunkMessage,
-  WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import { type MethodHandlers, type ServerConnection, settlementItem } from './connection.js';
 import type { DisplayOf } from './display.js';
@@ -62,6 +61,7 @@ import {
   readHistory,
   replyModel,
   type SignFile,
+  turnOf,
 } from './history.js';
 import { t } from './texts.js';
 
@@ -288,8 +288,8 @@ export function createTimeline(deps: TimelineDeps) {
    * 之后才结束、才开始的回合（由推送给出）。别的会话的回合不算：带它的 id 的条目不并进它（见 archived）
    */
   const skipFor = (sessionId: string, at: number, shown: ReadonlySet<string>) => (stored: Message) => {
-    const turnId = stored.metadata?.[WellKnownMetadataKeys.TurnId];
-    if (typeof turnId !== 'string') return false;
+    const turnId = turnOf(stored);
+    if (turnId === undefined) return false;
     const turn = turns.get(turnId);
     return shown.has(turnId) || (turn?.sessionId === sessionId && (turn.end === undefined || turn.end > at));
   };
@@ -322,7 +322,10 @@ export function createTimeline(deps: TimelineDeps) {
 
   // ───────── 回合 ─────────
 
-  /** agent:input:before：回合开始。回的 run 在这一轮的异步上下文里跑回合（其中的回复与定稿校验归到这一轮），end 收尾 */
+  /**
+   * agent:turn:before：回合开始，回合条目的说话人取开轮那条输入的。回的 run 在这一轮的异步上下文里跑回合（其中的回复与定稿
+   * 校验归到这一轮），end 收尾
+   */
   function begin(turnId: string, incoming: IncomingMessage) {
     const { sessionId } = incoming;
     const turn: Turn = {

@@ -111,4 +111,31 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
     // 改后 describe 模式一张不交，附件引用与合法形态一起清空——主模型读正文里的识别结果。
     expect(data.messages[1].images).toEqual([]);
   });
+
+  it('同一轮两条带图的 user 消息（插进来的输入各带各的图）：每条都规范化，不只末条', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    const host = app.bind({ provide, hooks });
+    host.provide.use(processService, {} as never);
+    host.provide.use(storage, {} as never);
+    const media = (await import('../../packages/plugin-media/src/index.js')).default;
+    await app.plugin(media, { vision: { delivery: 'describe' } });
+    await app.plugins.idle();
+    if (app.plugins.getPlugin(media.name)?.state !== 'active') throw new Error('plugin-media 未激活');
+
+    const data = {
+      messages: [
+        { role: 'system' as const, content: '头' },
+        { role: 'user' as const, content: '第一条', images: [REF] },
+        { role: 'user' as const, content: '第二条', images: [DATA_URI] },
+      ],
+      tools: [],
+      sessionId: 's',
+      dryRun: false,
+    };
+    await host.hooks.use.run('agent:llm:before', data as never);
+    await app.stop();
+
+    expect(data.messages.map(m => m.images)).toEqual([undefined, [], []]);
+  });
 });

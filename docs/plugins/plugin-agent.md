@@ -91,7 +91,7 @@ definePlugin({
 
 ## 核心流程
 
-1. **`agent:input:before`**: 消息预处理 / 拦截；中间件不调用 `next()` 则以下步骤（含 LLM 调用）均不执行
+1. **`agent:input:before` → `agent:turn:before`**: 前者每条输入一次，做预处理，中间件不调用 `next()` 则这条输入不进一轮；后者是一轮开始，带回合 id、会话与这一轮的输入，中间件不调用 `next()` 则这一轮不跑（不归档、不调模型、不发 `agent:turn:after`），照发流结束标记。它的默认动作开头按先后归档这一轮的输入（`archiveIncoming` 带回合 id 与进入方式 `opened`），以下步骤都在它里面
 2. **构建系统提示词**: persona 提示词 + 配置的 `systemPrompt`（无人设时仅 `systemPrompt`），末尾固定追加输入约定块
 3. **加载历史**: 按会话设置 `historyLimit` 从 memory 服务读发给模型的那一段（活跃历史超过 N 条时成段丢弃最早的，见「会话设置项」；0 或没设置时读全部活跃历史），跳过不完整的工具调用组与控制类消息
 4. **收集工具**: 从 `tools` 服务获取工具定义：无分组的通用工具恒在，带分组的只取这个会话生效的工具分组（plugin-tools 的会话设置 `enabledToolGroups`，经 `sessionGroups` 取；`'*'` 为全部，空列表一个都不取）
@@ -108,7 +108,7 @@ definePlugin({
      - 每次调用都发一对 `tool:execute`（开始与结束）：没有执行就失败的（参数不合法、`agent:tool:before` 出错）同样发，结束带回给模型的错误，会话里的工具卡据此收尾
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
-6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
+6. **保存**: 输入在 `agent:turn:before` 的默认动作开头经 message-archive 归档，元数据记这一轮的回合 id 与进入方式（`TurnId`、`TurnEntry`）；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存
 7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复与回合里发出的 `[错误]`、`[系统]` 提示带这一轮的 `turnId`：平台适配器记回复的投递失败时带上它，提示记成事件标记时同样记下；回复宿主通知时带上通知的 `hostNotice`（只有 `kind`、`id`），通知带 `replyTo` 的另带出站的 `replyTo`，支持引用的平台据此引用起那次工具调用的消息
 
 **会话删除**：收到 `session:deleted` 时中止这个会话在飞的回合，并等它们收尾（与关停时同一套），之后会话管理才清它的数据：删除一个正在跑的会话（WebUI 里删除、删除子任务、清空或删除父会话连带的子会话）时，这一轮当场停下，不再写进记录、不再发出。等收尾没有时限：不响应中止的工具会让删除一直等到它返回。
@@ -128,7 +128,7 @@ definePlugin({
 
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时，会话、`platform`、`userId`、`participants` 与 `inbound` 取 api-authority 的 `originTurnOf`（这一轮的输入，owner 的各个身份按权限服务的 `isOwner` 合成一个参与者，权限服务不在时按字面身份）：`inbound` 为 `{ source, fromTurn, messageId }`，真人消息的 `source` 为 `undefined`，内部注入为注入方标识；续做带着起它的那一轮（`fromTurn`）；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份按参与者裁决（各条输入的 `actor`，没有时是发言者）。`userId` 取入站消息的 `userId`；续做的通知不带它，取起它的那一轮的发言者，参与者同样取那一轮的。起它的那一轮不进归档，也不作为提示词钩子的 `userId`。
+工具循环构造 `ToolCallContext` 时，会话、`platform`、`userId`、`participants` 与 `inbound` 取 api-authority 的 `originTurnOf`（这一轮的输入，owner 的各个身份按权限服务的 `isOwner` 合成一个参与者，权限服务不在时按字面身份）：`inbound` 为 `{ source, fromTurn, messageId }`，真人消息的 `source` 为 `undefined`，内部注入为注入方标识；续做带着起它的那一轮（`fromTurn`）；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份按参与者裁决（各条输入的 `actor`，没有时是发言者）。`userId` 取入站消息的 `userId`；续做的通知不带它，取起它的那一轮的发言者，参与者同样取那一轮的。起它的那一轮不进归档，也不进提示词贡献视图的输入。
 
 ## 上下文裁剪算法
 

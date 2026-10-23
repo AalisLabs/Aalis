@@ -402,12 +402,13 @@ function run(caps: Caps): void {
     await next();
   });
 
-  // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定末条 user 消息的 images[]
+  // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定带图的 user 消息的 images[]
   // 交给主模型什么——describe 清空（识别归识别模型，结果已在正文文字里），passthrough
   // 规范化形态并把动图抽帧（真值表见 service.transformModelImages）。auto 按 agent 交来的
   // data.acceptsImages（这一轮的主模型能不能看图）。放中间件而非改 api-media 契约或 plugin-agent——
-  // 形态知识整体留在本插件内（契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于
-  // 末条 user 消息（尾部），不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
+  // 形态知识整体留在本插件内（契约修改的复杂度与谨慎门槛高于插件内实现）。带图的只有这一轮的
+  // 输入（agent 只给这一轮的输入挂图，历史消息不带图），每条都变换（插进来的输入各带各的图），
+  // 不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
   //
   // WeakSet 标记「已处理过的消息」：本钩子在工具循环的每轮迭代都会重跑（轮数默认不限），
   // 而抽帧/物化都要拉远端资源——没有标记的话，一张拉不动的远端动图会在每轮重试
@@ -419,15 +420,10 @@ function run(caps: Caps): void {
     // agent 塞进 message.images 的附件引用一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
     if (!data.dryRun) {
-      for (let i = data.messages.length - 1; i >= 0; i--) {
-        const m = data.messages[i];
-        if (m.role === 'user' && m.images && m.images.length > 0) {
-          if (!transformed.has(m)) {
-            transformed.add(m);
-            m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages));
-          }
-          break;
-        }
+      for (const m of data.messages) {
+        if (m.role !== 'user' || !m.images?.length || transformed.has(m)) continue;
+        transformed.add(m);
+        m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages));
       }
     }
     return next();

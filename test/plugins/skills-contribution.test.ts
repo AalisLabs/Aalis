@@ -200,7 +200,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
       { role: 'system', content: 'persona-补充设定' },
       { role: 'user', content: '帮我处理一下' },
     ];
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
 
     const block = messages.find(isDiscovery);
     expect(block).toBeDefined();
@@ -235,7 +235,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
   it('无技能：不注入 discovery 块', async () => {
     const { assembly } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
 
     expect(messages.some(isDiscovery)).toBe(false);
     expect(messages).toHaveLength(2);
@@ -244,14 +244,14 @@ describe('plugin-skills: agent:prompt 贡献', () => {
   it('rescan 发现外部放入的技能后，discovery 路标才出现', async () => {
     const { store, skills, assembly } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     expect(messages.some(isDiscovery)).toBe(false);
 
     store.seed('skills:/gamma/SKILL.md', '---\nname: gamma\ndescription: 外部放入的技能\n---\n\nGAMMA-BODY\n');
     await skills.rescan();
     expect(skills.listSkills().map(s => s.name)).toEqual(['gamma']);
 
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     const content = String(messages.find(isDiscovery)?.content ?? '');
     expect(content).toContain('list_skills');
     expect(content).not.toContain('gamma');
@@ -272,7 +272,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     await app.plugins.idle();
 
     const loaded = baseMessages();
-    await assemblePromptContributions(assembly, { messages: loaded, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages: loaded, sessionId: 's-1' }, []);
     const block = loaded.find(activationOf('alpha'));
     expect(block).toBeDefined();
     const content = String(block?.content ?? '');
@@ -292,7 +292,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
 
     // 另一会话：discovery 有、激活块无
     const other = baseMessages();
-    await assemblePromptContributions(assembly, { messages: other, sessionId: 's-2' });
+    await assemblePromptContributions(assembly, { messages: other, sessionId: 's-2' }, []);
     expect(other.some(isDiscovery)).toBe(true);
     expect(other.some(activationOf('alpha'))).toBe(false);
   });
@@ -303,7 +303,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(skills.loadSkillForSession('s-1', 'nope')).toBe(false);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     expect(messages.some(activationOf('nope'))).toBe(false);
     expect(messages.some(activationOf('alpha'))).toBe(false);
   });
@@ -315,12 +315,11 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     // contributeActivation 的第二入口：triggers regex 命中 user 消息自动激活
     await hooks.use.run('agent:input:before', {
       message: { sessionId: 's-wx', content: '今天天气怎么样' },
-      metadata: {},
     } as never);
     expect(skills.getLoadedSkills('s-wx')).toEqual(['wx']);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-wx' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-wx' }, []);
     const content = String(messages.find(activationOf('wx'))?.content ?? '');
     expect(content).toContain('Skill 已激活: wx');
     expect(content).toContain('WX-BODY');
@@ -341,7 +340,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     skills.loadSkillForSession('s-1', 'alpha');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     const content = String(messages.find(activationOf('alpha'))?.content ?? '');
     expect(content).toContain('scripts/: run.sh');
     expect(content).toContain('references/: api.md');
@@ -356,13 +355,13 @@ describe('plugin-skills: agent:prompt 贡献', () => {
 
     const messages = baseMessages();
     skills.loadSkillForSession('s-1', 'alpha');
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     expect(messages.filter(activationOf('alpha'))).toHaveLength(1);
     expect(messages.some(activationOf('beta'))).toBe(false);
 
     // 模拟工具循环中途 load_skill 激活第二个技能
     skills.loadSkillForSession('s-1', 'beta');
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
 
     expect(messages.filter(activationOf('alpha'))).toHaveLength(1);
     expect(messages.filter(activationOf('beta'))).toHaveLength(1);
@@ -392,7 +391,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(skills.loadSkillForSession('s-1', 'a_b')).toBe(true);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     // 先占者（'a/b'）的正文注入；后者（'a_b'）的激活块不出现——撞键只物化一份
     const blocks = messages.filter(activationOf('a_b'));
     expect(blocks).toHaveLength(1);
@@ -406,7 +405,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(skills.loadSkillForSession('s-1', 'alpha')).toBe(true);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
 
     expect(messages.some(isDiscovery)).toBe(false);
     expect(messages.some(activationOf('alpha'))).toBe(false);
@@ -419,7 +418,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     skills.loadSkillForSession('s-1', 'alpha');
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages });
+    await assemblePromptContributions(assembly, { messages }, []);
     expect(messages.some(isDiscovery)).toBe(true);
     expect(messages.some(activationOf('alpha'))).toBe(false);
   });
@@ -431,7 +430,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(await skills.deleteSkill('alpha')).toBe(true);
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-1' }, []);
     expect(messages.some(isDiscovery)).toBe(false);
     expect(messages.some(activationOf('alpha'))).toBe(false);
     expect(skills.getLoadedSkills('s-1')).toEqual([]);

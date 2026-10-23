@@ -261,7 +261,7 @@ function createArchiveService(
       });
     },
 
-    async archiveIncoming(incoming: IncomingMessage) {
+    async archiveIncoming(incoming: IncomingMessage, turn?: { turnId: string; entry: 'opened' | 'joined' }) {
       // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
       // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
       // 对传入的消息对象调用（识别结果随之写回入参）：processMessage 按消息对象只处理一次，
@@ -311,6 +311,11 @@ function createArchiveService(
       // 也方便事后审计"agent 在 X 群做过什么"
       if (working.triggerType) meta.triggerType = working.triggerType;
       if (working.source) meta[WellKnownMetadataKeys.Source] = working.source;
+      // 进了哪一轮、怎么进的：会话服务据此把它归回回合，连对话回滚据此只删这一轮的
+      if (turn) {
+        meta[WellKnownMetadataKeys.TurnId] = turn.turnId;
+        meta[WellKnownMetadataKeys.TurnEntry] = turn.entry;
+      }
       // 平台事件合成的入站给人看的那句：读历史的一方据此把它画成通知
       recordText(meta, working.text);
       const mentions = extractMentions(content);

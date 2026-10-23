@@ -112,38 +112,41 @@ async function setup() {
   /** 房间里的一轮：她说了 said；replied 时这就是回复（落库并发进房间），否则这一轮静默结束 */
   const turn = (turnId: string, said: string, outcome: 'replied' | 'silent') => {
     const message: IncomingMessage = { content: '<提问>', sessionId: ROOM, platform: 'onebot', userId: '424242' };
-    return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      await host.events.use.emit('outbound:stream', {
-        sessionId: ROOM,
-        turnId,
-        platform: 'onebot',
-        contentDelta: said,
-      });
-      await host.hooks.use.run('agent:reply:before', { content: '', sessionId: ROOM, attempt: 0 });
-      if (outcome === 'replied') {
-        await host.messageArchive.use.saveMessage(ROOM, {
-          role: 'assistant',
-          content: said,
-          segments: [{ type: 'text', content: said }],
-          metadata: { [WellKnownMetadataKeys.TurnId]: turnId },
-        });
-        await host.events.use.emit('outbound:message', {
-          content: said,
+    return host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        await host.events.use.emit('outbound:stream', {
           sessionId: ROOM,
+          turnId,
           platform: 'onebot',
-          source: 'agent',
+          contentDelta: said,
+        });
+        await host.hooks.use.run('agent:reply:before', { content: '', sessionId: ROOM, attempt: 0 });
+        if (outcome === 'replied') {
+          await host.messageArchive.use.saveMessage(ROOM, {
+            role: 'assistant',
+            content: said,
+            segments: [{ type: 'text', content: said }],
+            metadata: { [WellKnownMetadataKeys.TurnId]: turnId },
+          });
+          await host.events.use.emit('outbound:message', {
+            content: said,
+            sessionId: ROOM,
+            platform: 'onebot',
+            source: 'agent',
+            turnId,
+          });
+        }
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: '',
+          outcome,
+          sessionId: ROOM,
           turnId,
         });
-      }
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: '',
-        outcome,
-        sessionId: ROOM,
-        turnId,
-        metadata: {},
-      });
-    });
+      },
+    );
   };
 
   const connect = async () => {

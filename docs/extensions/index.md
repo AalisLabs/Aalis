@@ -82,7 +82,7 @@ EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做�
 
 | api 包 | 注入的钩子键 |
 |---|---|
-| `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` |
+| `@aalis/api-agent` | `agent:input:before` / `agent:turn:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` |
 | `@aalis/api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` |
 | `@aalis/api-memory` | `memory:clear` |
 

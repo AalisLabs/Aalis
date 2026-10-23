@@ -349,6 +349,14 @@ export function selfInitiatedActor(platform: string): { platform: string; userId
   return { platform, userId: '' };
 }
 
+/**
+ * 一轮的各条输入是不是同一位物理发言者说的（平台与账号都相同）：会话语义的发言者（工具调用上下文的 userId、人设的说话人
+ * 事实）只在这时有
+ */
+export function oneSpeaker(inputs: readonly Pick<IncomingMessage, 'platform' | 'userId'>[]): boolean {
+  return inputs.every(m => m.platform === inputs[0].platform && m.userId === inputs[0].userId);
+}
+
 // ----- 出站消息 -----
 
 /**
@@ -621,8 +629,10 @@ export interface ArchivedAttachment {
  *   会话服务据此标出提问是不是内部注入的、认出指令的回复。
  * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
  *   事实（`hostNotice.facts`），存档写；会话服务据此给出通知条目的种类、id 与事实。
- * - `TurnId`：所在回合的 id（字符串）。agent 写在这一轮落库的回复与工具结果上，平台适配器写在一轮回复的投递失败记录上，
- *   出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；会话服务据此把存档归回回合、标出哪一轮的回复没发出。
+ * - `TurnId`：所在回合的 id（字符串）。进了一轮的输入由存档按 agent 归档时交来的回合记下，agent 写在这一轮落库的回复与工具
+ *   结果上，平台适配器写在一轮回复的投递失败记录上，出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；会话服务据此
+ *   把存档归回回合、标出哪一轮的回复没发出，连对话回滚据此只删这一轮的消息。
+ * - `TurnEntry`：输入怎么进的这一轮（字符串）：`opened` 是开轮的，`joined` 是插进在跑的一轮的。与 `TurnId` 一起由存档记下。
  * - `CallId`：工具调用的 id（字符串，即 `ToolCallContext.callId`）。agent 写在工具结果上，平台适配器写在经工具发出的
  *   消息的投递失败记录上，出站记进历史的各条由写方按出站消息的 callId 记下（有才记）；会话服务据此把历史里的工具卡对回实时推送。
  * - `ModelInfo`：一轮回复的模型与这一轮的 token，与 {@link OutgoingMessage}.modelInfo 同形；agent 写在这一轮最后的回复上，
@@ -653,6 +663,7 @@ export const WellKnownMetadataKeys = {
   HostNoticeId: 'hostNoticeId',
   HostNoticeFacts: 'hostNoticeFacts',
   TurnId: 'turnId',
+  TurnEntry: 'turnEntry',
   CallId: 'callId',
   ModelInfo: 'modelInfo',
   SentRef: 'ref',

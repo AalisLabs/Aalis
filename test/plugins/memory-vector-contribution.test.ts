@@ -18,6 +18,7 @@ import { type Message, WellKnownMetadataKeys } from '../../packages/schema-messa
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { sessionTableManager } from '../fixtures/session-table.js';
+import { inputFromLastUser, turnInput } from '../fixtures/turn-input.js';
 
 // 从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging 不在
 // 该路径生效——vitest 不做类型检查，用 never 断言绕过贡献点键约束（同 prompt-assembly.test.ts）。
@@ -221,7 +222,9 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     });
     const messages = baseMessages();
 
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages), {
+      buildTimeoutMs: 30,
+    });
 
     expect(observedAbort, 'memory-vector 必须把 prompt build 的 signal 透传给 embedding').toBe(true);
     expect(store.calls.search, '取消后不得继续检索或扩窗').toBe(0);
@@ -233,7 +236,11 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '我最喜欢吃火锅' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur', dryRun: true });
+    await assemblePromptContributions(
+      assembly,
+      { messages, sessionId: 's-cur', dryRun: true },
+      inputFromLastUser(messages),
+    );
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
@@ -246,7 +253,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '我最喜欢吃火锅' })],
     });
     const messages: Message[] = [{ role: 'system', content: '人设' }];
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     expect(messages).toHaveLength(1);
     expect(embedder.calls).toHaveLength(0);
@@ -256,7 +263,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   it('向量库为空（size=0）→ 不注入，且不触发 embedding', async () => {
     const { assembly, embedder, store } = await setup({ hits: [] });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
@@ -293,7 +300,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await app.plugin(anchorProbe('zz-probe-knowledge', 'kn', 'knowledge', 'KN'));
     await app.plugins.idle();
 
-    // 前缀时间标签（agent 注入的 "(刚刚) "）应在 embed 前被剥掉。
+    // 检索词取这一轮输入归档的正文，不带 agent 发给模型时加的时间标签（"(刚刚) "）。
     // fixture 带一轮历史：没有它时"第一条非 system"与"最后一条 user"重合，
     // context 与 turn-hint 落点相同、锚位断言对 turn-hint 恒真。
     const messages: Message[] = [
@@ -302,7 +309,9 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       { role: 'assistant', content: '旧答' },
       { role: 'user', content: '(刚刚) 还记得我上次说的吗' },
     ];
-    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' }, [
+      turnInput({}, { role: 'user', content: '还记得我上次说的吗' }),
+    ]);
 
     expect(messages).toHaveLength(6);
     // turn-context 锚位落在历史**之后**、最后一条 user 之前——这是缓存命中的
@@ -340,7 +349,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ),
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     // topK=1、库中 6 条 → 候选池取 1*4=4
     expect(store.lastTopK).toBe(4);
@@ -355,7 +364,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('高分记忆内容');
@@ -368,7 +377,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       hits: [hit(0.3, { sessionId: 's-a', timestamp: BASE_TS, content: '够不着阈值' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
@@ -383,7 +392,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await app.plugins.idle();
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     expect(injectedBlock(messages)).toBeUndefined();
     expect(messages.some(m => String(m.content) === 'PROBE-OK')).toBe(true);
@@ -398,7 +407,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages('完全一样的一句话');
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('另一段旧记忆');
@@ -414,7 +423,11 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(
+      assembly,
+      { messages, sessionId: 'onebot:g1', platform: 'onebot' },
+      inputFromLastUser(messages),
+    );
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('本会话旧消息');
@@ -437,7 +450,11 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(
+      assembly,
+      { messages, sessionId: 'onebot:g1', platform: 'onebot' },
+      inputFromLastUser(messages),
+    );
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('平台字段命中的记忆');
@@ -463,7 +480,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await mem.saveMessage('s-old', { role: 'user', content: 'FAR-Q', timestamp: BASE_TS + 120_000 });
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('PREV-A');
@@ -488,7 +505,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('纯用户记忆');
     expect(block).toContain('Alice(u1)');
@@ -513,7 +530,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await mem.saveMessage('s-old', { role: 'notice', content: '[系统通知] 某某事件', timestamp: BASE_TS + 60_000 });
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     // 锚定完整标签形态（含 @ 前缀）：裸词 'Notice'/'Tool' 会被标题行说明句满足，
     // 对 renderMessage 是否真有该分支零敏感（2026-08-27 审计变异实测）。
@@ -569,7 +586,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await mem.saveMessage('s-old', { role: 'notice', content: 'X事件文本', timestamp: BASE_TS });
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect((block.match(/X事件文本/g) ?? []).length).toBe(1);
     expect(block).toContain('[Notice @');
@@ -580,11 +597,71 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '只该出现一次的记忆' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
 
     expect(messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))).toHaveLength(1);
     expect(embedder.calls).toHaveLength(1);
+  });
+});
+
+describe('检索词取这一轮各条输入的归档正文', () => {
+  const archivedAs = (content: string): Message => ({ role: 'user', content, timestamp: BASE_TS });
+
+  it('几条输入的归档正文按先后依次相接（与入库时同一份正文，不剥时间标签）', async () => {
+    const { assembly, embedder } = await setup({
+      hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '旧记忆' })],
+    });
+    await assemblePromptContributions(assembly, { messages: baseMessages(), sessionId: 's-cur' }, [
+      turnInput({ userId: 'u1' }, archivedAs('[甲(u1)]: 第一句')),
+      turnInput({ userId: 'u2' }, archivedAs('[乙(u2)]: 第二句')),
+    ]);
+    expect(embedder.calls).toEqual(['[甲(u1)]: 第一句\n[乙(u2)]: 第二句']);
+  });
+
+  it('相接之后超过上限：从最早的一条丢起', async () => {
+    const { assembly, embedder } = await setup({
+      hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '旧记忆' })],
+    });
+    const early = 'a'.repeat(3000);
+    const late = 'b'.repeat(2000);
+    await assemblePromptContributions(assembly, { messages: baseMessages(), sessionId: 's-cur' }, [
+      turnInput({}, archivedAs(early)),
+      turnInput({}, archivedAs(late)),
+    ]);
+    expect(embedder.calls).toEqual([late]);
+  });
+
+  it('输入都没有归档（没有存档插件、空闲开话题）：不检索', async () => {
+    const { assembly, embedder, store } = await setup({
+      hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '旧记忆' })],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, [turnInput({ content: '在吗' })]);
+    expect(embedder.calls).toEqual([]);
+    expect(store.calls.search).toBe(0);
+    expect(injectedBlock(messages)).toBeUndefined();
+  });
+
+  it('同用户加权取各条输入的发言者', async () => {
+    const { assembly } = await setup({
+      crossSessionMode: 'user',
+      search: { topK: 2, userPriorityBoost: 10 },
+      hits: [
+        hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '别人的高分记忆', userId: 'u9' }),
+        hit(0.5, { sessionId: 's-a', timestamp: BASE_TS + 1, content: '甲的记忆', userId: 'u1' }),
+        hit(0.4, { sessionId: 's-a', timestamp: BASE_TS + 2, content: '乙的记忆', userId: 'u2' }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, [
+      turnInput({ userId: 'u1' }, archivedAs('第一句')),
+      turnInput({ userId: 'u2' }, archivedAs('第二句')),
+    ]);
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('甲的记忆');
+    expect(block).toContain('乙的记忆');
+    expect(block).not.toContain('别人的高分记忆');
   });
 });
 
@@ -727,7 +804,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('旧数据无角色');
     expect(block).not.toContain('我自己说过的话');
@@ -782,7 +859,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('老化后的自我发言');
     expect(block).toContain('[Assistant·你自己(Aalis) @');
@@ -801,7 +878,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('我承诺过明天提醒');
     expect(block).toContain('[Assistant·你自己(Aalis) @');
@@ -828,7 +905,10 @@ describe('检索管线：被动注入与 memory_recall 共用', () => {
     });
     // 被动注入：0.6×2 与 0.55×2 都压过 0.9，topK=1 取加权后最高的本人发言
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur', userId: 'u1' });
+    const [current] = messages.slice(-1);
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, [
+      turnInput({ userId: 'u1' }, current),
+    ]);
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('本人的记忆');
     expect(block).not.toContain('别人的高分记忆');
@@ -937,7 +1017,7 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
     });
 
     const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('[Assistant·你自己(Aalis) @');
     expect(block).toContain('信封里的回复');
@@ -962,7 +1042,7 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
       { role: 'assistant', content: ENVELOPE, metadata: VISIBLE },
       { role: 'user', content: '还记得我上次说的吗' },
     ];
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('另一段旧记忆');
     expect(block).not.toContain('信封里的回复');

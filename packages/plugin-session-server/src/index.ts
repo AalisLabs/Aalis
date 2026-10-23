@@ -50,7 +50,7 @@ const uses = {
   /** 历史从存档归并 */
   memory,
   /**
-   * 回合进出（agent:input:before、agent:turn:after）与定稿校验（agent:reply:before）拼出在途条目，工具结果落库前
+   * 回合进出（agent:turn:before、agent:turn:after）与定稿校验（agent:reply:before）拼出在途条目，工具结果落库前
    * （agent:tool:after）写上历史要还原的结局；memory:clear 之后重新取快照
    */
   hooks,
@@ -255,10 +255,10 @@ async function run(caps: Caps): Promise<void> {
   events.use.on('session-settings:changed', configChanged);
   events.use.on('host-config:changed', configChanged);
 
-  // 回合真正开始（agent:input:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    const { sessionId } = data.message;
-    const turn = timeline.begin(data.turnId, data.message);
+  // 回合真正开始（agent:turn:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    const { sessionId } = data;
+    const turn = timeline.begin(data.turnId, data.inputs[0].message);
     push([sessionId], []);
     try {
       await turn.run(next);

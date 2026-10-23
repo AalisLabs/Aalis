@@ -9,6 +9,7 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionValuesPlugin } from '../fixtures/session-settings.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 跨会话检索模式（crossSessionMode，可按会话设）：生效值是召回上限，被动召回与 memory_recall 都不超过它。
@@ -89,7 +90,11 @@ async function passive(assembly: Awaited<ReturnType<typeof setup>>['assembly']):
     { role: 'system', content: '人设' },
     { role: 'user', content: '还记得吗' },
   ];
-  await assemblePromptContributions(assembly, { messages, sessionId: CUR, platform: 'onebot' });
+  await assemblePromptContributions(
+    assembly,
+    { messages, sessionId: CUR, platform: 'onebot' },
+    inputFromLastUser(messages),
+  );
   const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
   return typeof block?.content === 'string' ? block.content : '';
 }

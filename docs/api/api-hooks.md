@@ -102,7 +102,7 @@ declare module '@aalis/api-hooks' {
 
 | 注入方 | 钩子键 | 用途 |
 |---|---|---|
-| `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` | agent 一轮处理的各阶段，见 [api-agent](./api-agent.md) |
+| `@aalis/api-agent` | `agent:input:before` / `agent:turn:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` | agent 一轮处理的各阶段，见 [api-agent](./api-agent.md) |
 | `@aalis/api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | 网关出入站的命名相位，见 [services/gateway](../services/gateway.md) |
 | `@aalis/api-memory` | `memory:clear` | 统一记忆清理编排，见 [api-memory](./api-memory.md) |
 
@@ -119,7 +119,7 @@ export default definePlugin({
   name: '@acme/plugin-example-hooks',
   uses: { hooks },
   apply({ hooks }) {
-    // 拦截消息：不调用 next，整条链终止
+    // 丢掉空消息：不调用 next，这条输入不进一轮
     hooks.use.middleware('agent:input:before', async (data, next) => {
       if (data.message.content.trim() === '') return;
       await next();

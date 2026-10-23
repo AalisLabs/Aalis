@@ -17,7 +17,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // persona 的群聊段（会话类型、群号、身份判定规则）曾因此整段缺席：LLM 不知道自己在群里。
 // 会话类型与群聊段只取根会话记下的聊天窗口（房间建档时记下的类型名、多方标记与目标），不看消息上的类型名，
 // 只用于提示词、不回写消息（这时入站相位已跑完，回写只会让它随归档写进消息元数据）。子任务取根会话的出生平台与聊天窗口。
-// 真 agent:input:before 钩子驱动（生产路径），在钩子链内读易变上下文。
+// 真 agent:turn:before 钩子驱动（生产路径），在钩子链内读易变上下文。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -54,14 +54,14 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
     svc = found;
   };
 
-  /** 经 agent:input:before 装上会话身份，在钩子链内取易变上下文 */
+  /** 经 agent:turn:before 装上会话身份，在钩子链内取易变上下文 */
   const volatileFor = async (message: IncomingMessage): Promise<{ prompt: string; message: IncomingMessage }> => {
     let prompt = '';
-    const data = { message, turnId: 't1', metadata: {} };
-    await host.hooks.use.run('agent:input:before', data, async () => {
+    const data = { turnId: 't1', sessionId: message.sessionId, inputs: [{ message }] };
+    await host.hooks.use.run('agent:turn:before', data, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
-    return { prompt, message: data.message };
+    return { prompt, message: data.inputs[0].message };
   };
 
   afterEach(async () => {

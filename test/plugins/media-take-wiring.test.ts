@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { TurnInput } from '../../packages/api-agent/src/index.js';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
-import { hooks } from '../../packages/api-hooks/src/index.js';
+import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionDirName } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -12,7 +13,7 @@ import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
-import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { emptyMediaCaps } from '../fixtures/service-ref.js';
@@ -25,7 +26,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - send_attachment 与 analyze_image 按这次调用过 api-media 的 mediaScopeOf：取用判定经契约的包装函数、带这次调用的授权
 //   身份（这里一轮只有一位参与者；几个人的一轮经 approveFor 逐个判，见 participant-take），本机文件交给本机文件判法（主体用
 //   权限插件的 principalKind）。逐行的表跑 send_attachment，analyze_image 只核接线；
-// - 她回复里存储地址的标记不带授权身份过同一份判据，受众只有 owner 的会话照旧不过判据。
+// - 她回复里存储地址的标记过同一份判据：按回复的回合 id 取回这一轮的输入（agent:turn:before 记下的引用），授权身份取
+//   actingIdentity（几个人时不传）；认不出这一轮的不带授权身份判。
 // 存储、权限与工具服务是替身。
 // ════════════════════════════════════════════════════════════
 
@@ -133,9 +135,30 @@ async function setup() {
     if (!handler) throw new Error(`工具 ${name} 未注册`);
     return handler(args, ctx);
   };
+  const host = app.bind({ hooks });
   const dispatch = (message: OutgoingMessage) =>
-    app.bind({ hooks }).hooks.use.run('outbound:dispatch', { message, metadata: {} }, async () => {});
-  return { call, dispatch };
+    host.hooks.use.run('outbound:dispatch', { message, metadata: {} }, async () => {});
+  let turns = 0;
+  /**
+   * 一轮里她的回复经网关派发：先跑 agent:turn:before（输入是 inputs），回复带这一轮的回合 id、发往 to（缺省是这一轮的会话）；
+   * during 在派发之前跑，拿到这一轮的钩子数据（往 inputs 里追加的就是插进来的输入）
+   */
+  const replyIn = async (
+    inputs: IncomingMessage[],
+    content: string,
+    { during, to }: { during?: (data: HookContextMap['agent:turn:before']) => void; to?: string } = {},
+  ) => {
+    const turnId = `t${++turns}`;
+    const sessionId = inputs[0].sessionId;
+    const message: OutgoingMessage = { sessionId: to ?? sessionId, source: 'agent', markup: true, content, turnId };
+    const data = { turnId, sessionId, inputs: inputs.map(m => ({ message: m })) };
+    await host.hooks.use.run('agent:turn:before', data, async () => {
+      during?.(data);
+      await dispatch(message);
+    });
+    return message.attachments?.map(att => att.data) ?? [];
+  };
+  return { call, dispatch, replyIn };
 }
 
 /** 在 G1 里亲手发来的一轮的工具调用 */
@@ -180,12 +203,60 @@ describe('她回复里存储地址的标记', () => {
     expect(message.attachments).toEqual([{ kind: 'image', data: imageOf(G2) }]);
     expect(message.content).toBe(`一二<image url="${imageOf(PB)}"/>三<image url="${LOCAL}"/>`);
   });
+});
 
-  it('受众只有 owner 的私聊：不过判据，都转成附件', async () => {
-    const { dispatch } = await setup();
-    const message: OutgoingMessage = { sessionId: PO, source: 'agent', markup: true, content: markup };
-    await dispatch(message);
-    expect(message.attachments?.map(att => att.data)).toEqual([imageOf(G2), imageOf(PB), LOCAL]);
-    expect(message.content).toBe('一二三');
+describe('她回复里存储地址的标记按这一轮的授权身份判（与工具同一份判据）', () => {
+  /** sessionId 里 who 亲手说的一句 */
+  const said = (sessionId: string, who: { platform: string; userId: string }): IncomingMessage => ({
+    content: '<占位>',
+    sessionId,
+    platform: who.platform,
+    userId: who.userId,
+  });
+  const tag = (uri: string) => `<image url="${uri}"/>`;
+
+  it('同平台别的群的：群成员那一轮、受众只有 owner 的会话里空闲开话题那一轮都转', async () => {
+    const { replyIn } = await setup();
+    expect(await replyIn([said(G1, A)], tag(imageOf(G2)))).toEqual([imageOf(G2)]);
+    const idle: IncomingMessage = { content: '<占位>', sessionId: PO, platform: 'onebot', source: 'idle-trigger' };
+    expect(await replyIn([idle], tag(imageOf(G2)))).toEqual([imageOf(G2)]);
+  });
+
+  it('别人私聊里的不转，owner 那一轮同样不转；群友 A 那一轮里他自己私聊里的转', async () => {
+    const { replyIn } = await setup();
+    expect(await replyIn([said(G1, A)], tag(imageOf(PB)))).toEqual([]);
+    expect(await replyIn([said(PO, OWNER)], tag(imageOf(PB)))).toEqual([]);
+    expect(await replyIn([said(G1, A)], tag(imageOf(PA)))).toEqual([imageOf(PA)]);
+  });
+
+  it('本机文件：只有 owner 的那一轮转，群成员那一轮不转；受众判不出的会话里授权身份是 owner 的非人回合也转', async () => {
+    const { replyIn } = await setup();
+    expect(await replyIn([said(PO, OWNER)], tag(LOCAL))).toEqual([LOCAL]);
+    expect(await replyIn([said(G1, OWNER)], tag(LOCAL))).toEqual([LOCAL]);
+    expect(await replyIn([said(G1, A)], tag(LOCAL))).toEqual([]);
+    const scheduled: IncomingMessage = {
+      content: '<占位>',
+      sessionId: 'zz-internal:1',
+      platform: 'onebot',
+      source: 'scheduler',
+      actor: OWNER,
+    };
+    expect(await replyIn([scheduled], tag(LOCAL))).toEqual([LOCAL]);
+  });
+
+  it('按回合记下的是 inputs 的引用：A 那一轮插进 owner 的输入之后，回复里 A 私聊的标记不再转', async () => {
+    const { replyIn } = await setup();
+    const sent = await replyIn([said(G1, A)], tag(imageOf(PA)), {
+      during: data => {
+        // 钩子数据里的 inputs 对中间件只读，插进来的输入由 agent 追加：这里替它追加
+        (data.inputs as TurnInput[]).push({ message: said(G1, OWNER) });
+      },
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it('取用范围按出站的目标会话判：带着这一轮的回合 id 发往别的会话的，那个会话自己的媒体照转', async () => {
+    const { replyIn } = await setup();
+    expect(await replyIn([said(G1, A)], tag(imageOf(PB)), { to: PB })).toEqual([imageOf(PB)]);
   });
 });

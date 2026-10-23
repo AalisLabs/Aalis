@@ -87,7 +87,7 @@ describe('assemblePromptContributions', () => {
         await h.contribute(pluginName, spec(id, anchor, out));
       }
       const messages = baseMessages();
-      await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+      await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
       layouts.push(messages.map(m => String(m.content)));
     }
     // persona → identity → knowledge → context → 历史 →（最后一条 user 前）
@@ -110,7 +110,7 @@ describe('assemblePromptContributions', () => {
         { role: 'user', content: 'hist-u2' },
         { role: 'system', content: '[跨会话委派] 任务', metadata: { injector: 'cross-session-delegation' } },
       ];
-      await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+      await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
       expect(messages.map(m => String(m.content))).toEqual([
         'persona',
         'hist-u1',
@@ -134,7 +134,7 @@ describe('assemblePromptContributions', () => {
         { role: 'system', content: '【当前焦点】', metadata: { injector: 'focus-guidance' } },
         { role: 'user', content: 'u2' },
       ];
-      await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+      await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
       expect(messages.map(m => String(m.content))).toEqual([
         'persona',
         'u1',
@@ -151,7 +151,7 @@ describe('assemblePromptContributions', () => {
       const h = await boot();
       await h.contribute('p-tctx', spec('tc', 'turn-context', 'TC'));
       const messages: Message[] = [{ role: 'system', content: 'persona' }];
-      await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+      await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
       expect(messages.map(m => String(m.content))).toEqual(['persona', 'TC']);
     }
   });
@@ -176,7 +176,7 @@ describe('assemblePromptContributions', () => {
         ...extraHistory,
         { role: 'user', content: '当前消息' },
       ];
-      await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+      await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
       return messages;
     };
 
@@ -205,13 +205,13 @@ describe('assemblePromptContributions', () => {
     const h = await boot();
     await h.contribute('p-a', spec('cx', 'context', 'CX'));
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
     expect(messages.filter(m => String(m.content) === 'CX')).toHaveLength(1);
 
     // 回合中途注册新贡献（如 load_skill 激活新技能）→ 下一轮增量物化
     await h.contribute('p-b', spec('kn', 'knowledge', 'KN'));
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
     expect(messages.filter(m => String(m.content) === 'KN')).toHaveLength(1);
     const knIdx = messages.findIndex(m => String(m.content) === 'KN');
     const firstUserIdx = messages.findIndex(m => m.role === 'user');
@@ -230,7 +230,7 @@ describe('assemblePromptContributions', () => {
     });
     await h.contribute('p-good', spec('good', 'context', 'OK'));
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
     expect(messages.some(m => String(m.content) === 'OK')).toBe(true);
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/bad'))).toBe(false);
   });
@@ -240,7 +240,7 @@ describe('assemblePromptContributions', () => {
     await h.contribute('p-multi', spec('m', 'identity', ['B1', '', 'B2']));
     await h.contribute('p-null', spec('n', 'identity', null));
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
     const contents = messages.map(m => String(m.content));
     expect(contents.indexOf('B1')).toBe(1);
     expect(contents.indexOf('B2')).toBe(2);
@@ -261,7 +261,7 @@ describe('assemblePromptContributions', () => {
     });
     await h.contribute('p-b', spec('th', 'turn-hint', 'TH'));
     const messages: Message[] = [{ role: 'system', content: 'persona' }];
-    await assemblePromptContributions(h.caps, { messages, dryRun: true });
+    await assemblePromptContributions(h.caps, { messages, dryRun: true }, []);
     expect(seen).toEqual([true]);
     expect(messages).toHaveLength(1); // turn-hint 无落点被弃置
   });
@@ -277,7 +277,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     await h.contribute('p-bad', spec('b', 'bogus-anchor', 'BAD'));
     await h.contribute('p-ok', spec('ok', 'context', 'OK'));
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, []);
     expect(messages.some(m => String(m.content) === 'OK')).toBe(true);
     expect(messages.some(m => String(m.content) === 'BAD')).toBe(false);
     expect(warns.some(w => w.includes('bogus-anchor') && w.includes('不是合法锚位'))).toBe(true);
@@ -298,14 +298,14 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     await h.contribute('p-fast', spec('fast', 'context', 'FAST'));
 
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, [], { buildTimeoutMs: 30 });
     expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
     expect(messages.some(m => String(m.content) === 'SLOW-DONE')).toBe(false);
     expect(warns.some(w => w.includes('/slow') && w.includes('超过 30ms'))).toBe(true);
 
     // 键未物化 → 下一轮恢复后补上
     stuck = false;
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, [], { buildTimeoutMs: 30 });
     expect(messages.filter(m => String(m.content) === 'SLOW-DONE')).toHaveLength(1);
     expect(messages.filter(m => String(m.content) === 'FAST')).toHaveLength(1); // 已物化不重复
   });
@@ -331,7 +331,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     await h.contribute('p-fast', spec('fast', 'context', 'FAST'));
 
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, [], { buildTimeoutMs: 30 });
 
     expect(aborted, '超时不能只放弃等待，必须通知底层构建取消').toBe(true);
     expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
@@ -353,7 +353,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     });
 
     await expect(
-      assemblePromptContributions(h.caps, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+      assemblePromptContributions(h.caps, { messages: baseMessages(), sessionId: 's' }, [], { signal: parent.signal }),
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(calls).toBe(0);
   });
@@ -381,7 +381,9 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     const timer = setTimeout(() => parent.abort(), 30);
     try {
       await expect(
-        assemblePromptContributions(h.caps, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+        assemblePromptContributions(h.caps, { messages: baseMessages(), sessionId: 's' }, [], {
+          signal: parent.signal,
+        }),
       ).rejects.toMatchObject({ name: 'AbortError' });
     } finally {
       clearTimeout(timer);
@@ -397,7 +399,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
       build: () => new Promise<string>(r => setTimeout(() => r('DONE'), 40)),
     });
     const messages = baseMessages();
-    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, { buildTimeoutMs: 0 });
+    await assemblePromptContributions(h.caps, { messages, sessionId: 's' }, [], { buildTimeoutMs: 0 });
     expect(messages.some(m => String(m.content) === 'DONE')).toBe(true);
   });
 });

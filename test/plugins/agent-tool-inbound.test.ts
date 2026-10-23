@@ -75,17 +75,15 @@ async function observedAgentTurn(incoming: IncomingMessage) {
       return 'ok';
     },
   });
-  const llmBeforeUserIds: Array<string | undefined> = [];
   const llmBeforeSources: Array<string | undefined> = [];
   host.hooks.use.middleware('agent:llm:before', async (data, next) => {
-    llmBeforeUserIds.push(data.userId);
     llmBeforeSources.push(data.source);
     await next();
   });
   await host.agent.use.handleMessage(incoming);
   expect(seen, '探针工具应在本回合被调用').toBeDefined();
   const history = (await host.memory.use.getHistory(incoming.sessionId, 20)) as Message[];
-  return { ctx: seen, llmBeforeUserIds, llmBeforeSources, history };
+  return { ctx: seen, llmBeforeSources, history };
 }
 
 describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站来源', () => {
@@ -129,14 +127,12 @@ describe('续做：工具调用上下文取起它的那一轮（通知的 fromTu
     hostNotice: { kind: 'background-task', id: 'bg_0a1b2c_1' },
   });
 
-  it('安全：带 fromTurn：探针上下文的 userId 取它的发言者、参与者取它的参与者，inbound 带着它；提示词钩子与归档不认它', async () => {
-    const { ctx, llmBeforeUserIds, llmBeforeSources, history } = await observedAgentTurn(notice(from));
+  it('安全：带 fromTurn：探针上下文的 userId 取它的发言者、参与者取它的参与者，inbound 带着它；归档不认它', async () => {
+    const { ctx, llmBeforeSources, history } = await observedAgentTurn(notice(from));
     expect(ctx?.userId).toBe(QQ);
     expect(ctx?.participants).toEqual([{ platform: 'onebot', userId: QQ }]);
     expect(ctx?.inbound).toEqual({ source: 'bg:bg_0a1b2c_1', fromTurn: from });
     expect(ctx?.platform).toBe('onebot');
-    expect(llmBeforeUserIds.length).toBeGreaterThan(0);
-    expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
     expect(llmBeforeSources).toEqual(['bg:bg_0a1b2c_1', 'bg:bg_0a1b2c_1']);
     const archived = history.find(m => m.role === 'notice');
     expect(archived, '通知应归档为 notice').toBeDefined();
@@ -145,11 +141,10 @@ describe('续做：工具调用上下文取起它的那一轮（通知的 fromTu
   });
 
   it('安全：不延续调用的宿主通知：探针上下文的 userId 为 undefined，参与者是通知自己的 actor', async () => {
-    const { ctx, llmBeforeUserIds } = await observedAgentTurn(notice());
+    const { ctx } = await observedAgentTurn(notice());
     expect(ctx?.userId).toBeUndefined();
     expect(ctx?.participants).toEqual([selfInitiatedActor('onebot')]);
     expect(ctx?.inbound).toEqual({ source: 'bg:bg_0a1b2c_1' });
-    expect(llmBeforeUserIds.every(u => u === undefined)).toBe(true);
   });
 });
 

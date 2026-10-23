@@ -9,7 +9,7 @@ session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / �
 
 核心职责：
 
-- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:input:before` 中间件翻 `active`，同一会话的最后一轮结束时由它收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间经可等待的 `recordInbound` 收录（§6.6），网关在入站相位之前等它。
+- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（回合开始的 `agent:turn:before` 中间件翻 `active`，同一会话的最后一轮结束时由它收口，见 §7.1），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。IM 房间经可等待的 `recordInbound` 收录（§6.6），网关在入站相位之前等它。
 - **场所与工作区**：每个会话恰好一个场所（聊天窗口或工作区），子会话取根会话的；工作区由 owner 登记（§2.7）。
 - **取别的会话的东西**：一个会话能不能取另一个会话的历史与媒体只有一条规则，就是 `canTake`，范围与三个开关是本插件的按会话字段（§2.8）。
 - **插件按会话、按场所存的数据**：会话记录与场所记录各有一份 `metadata`，插件自己读写（§2.4）。session-manager 不认识设置：会话设置的场所层与本会话层由 [plugin-session-settings](../plugins/plugin-session-settings.md) 存在这里。
@@ -511,7 +511,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 
 ### 7.1 会话状态：回合开始时翻 `active`，同一个中间件收口
 
-参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:input:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 记下这一轮（`lastTurn`），并按这一轮的结局收口仍为 `active` 的会话（根会话与子会话一样）：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及消息被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
+参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:turn:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 记下这一轮（`lastTurn`），并按这一轮的结局收口仍为 `active` 的会话（根会话与子会话一样）：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
 
 - `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
@@ -544,7 +544,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 - [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（本插件偏好 > 全局偏好 > priority > 注册顺序）。
 - [惰性服务访问](../concepts/lazy-service-access.md) —— 业务句柄为什么是活的。
 - [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`uses` 与 `package.json aalis.service` 双源同步与校验。
-- [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— 会话设置的生效值如何进入 `agent:input:before` / `agent:llm:before` / `agent:turn:after`。
+- [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— 会话设置的生效值如何进入 `agent:turn:before` / `agent:llm:before` / `agent:turn:after`。
 - [api-session-settings](../api/api-session-settings.md) —— 会话设置：层、读取器与管理面。
 - [Agent 服务](agent.md) —— 头号消费方。
 - [Memory 服务](memory.md) —— 会话元数据与历史的持久化后端。

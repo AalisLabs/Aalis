@@ -103,11 +103,15 @@ describe('plugin-memory-history', () => {
       { role: 'assistant', content: 'old-a' },
       { role: 'user', content: 'now' },
     ];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 'current',
-      platform: 'onebot',
-    });
+    await assemblePromptContributions(
+      host,
+      {
+        messages,
+        sessionId: 'current',
+        platform: 'onebot',
+      },
+      [],
+    );
 
     expect(messages.length).toBe(5);
     expect(messages[0].role).toBe('system');
@@ -139,11 +143,15 @@ describe('plugin-memory-history', () => {
     await app.plugins.idle();
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 'current',
-      platform: 'onebot',
-    });
+    await assemblePromptContributions(
+      host,
+      {
+        messages,
+        sessionId: 'current',
+        platform: 'onebot',
+      },
+      [],
+    );
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe('system');
     expect(messages[0].content).toContain('ONE');
@@ -162,11 +170,15 @@ describe('plugin-memory-history', () => {
     await app.plugin(memoryHistory, { maxAgeMinutes: 0 });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 'current',
-      platform: 'onebot',
-    });
+    await assemblePromptContributions(
+      host,
+      {
+        messages,
+        sessionId: 'current',
+        platform: 'onebot',
+      },
+      [],
+    );
     expect(messages.length).toBe(2);
     expect(messages[0].content).toContain('OTHER');
     expect(messages[0].content).not.toContain('SELF');
@@ -179,11 +191,15 @@ describe('plugin-memory-history', () => {
     await app.plugin(memoryHistory, { injectEnabled: false });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 'current',
-      platform: 'onebot',
-    });
+    await assemblePromptContributions(
+      host,
+      {
+        messages,
+        sessionId: 'current',
+        platform: 'onebot',
+      },
+      [],
+    );
     expect(messages.length).toBe(1);
   });
 
@@ -201,11 +217,15 @@ describe('plugin-memory-history', () => {
     });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 'current',
-      platform: 'onebot',
-    });
+    await assemblePromptContributions(
+      host,
+      {
+        messages,
+        sessionId: 'current',
+        platform: 'onebot',
+      },
+      [],
+    );
     expect(messages[0].content).toContain('NEW');
     expect(messages[0].content).not.toContain('OLD');
   });
@@ -220,8 +240,8 @@ describe('plugin-memory-history', () => {
     });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
-    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' }, []);
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' }, []);
     const injected = messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
     expect(injected.length).toBe(1);
   });
@@ -255,7 +275,7 @@ describe('plugin-memory-history', () => {
     await app.plugins.idle();
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' }, []);
     const block = messages[0].content as string;
     // s-spam 只允许 3 条
     const spamCount = (block.match(/spam-/g) ?? []).length;

@@ -19,7 +19,7 @@ interface AgentService {
 }
 ```
 
-对话调用经业务句柄 `agent.use` 转发给选中的那一家（`agent.use.handleMessage(...)`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。
+对话调用经业务句柄 `agent.use` 转发给选中的那一家（`agent.use.handleMessage(...)`）。Gateway 在 `inbound:dispatch` 相位调 `handleMessage`，业务层很少直接取。`handleMessage` 交一条入站消息，返回时这条输入已落定：它所在的一轮结束，或它没进一轮就被丢掉（`agent:input:before` 的中间件不调 `next`）。
 
 `assignModel` 把一个会话本会话层的对话模型设成 `model`（写进会话设置）：子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。实现者必须提供它。
 
@@ -29,7 +29,7 @@ interface AgentService {
 
 ## 回合 id
 
-实现者在一轮开始时生成回合 id（`turnId`），这一轮的 `agent:input:before`、`agent:turn:after`、流式片段（`outbound:stream`）、工具调用（`ToolCallContext` 与 `tool:execute`）、用量（`token:usage`）与这一轮发出的消息（回复与 `[错误]` 等提示的 `OutgoingMessage.turnId`）都带同一个 `turnId`。每次工具调用另有 `callId`，见 [api-tools](./api-tools.md#toolcallcontext)。回应 `token:request` 的用量快照不在任何回合里，不带 `turnId`。
+实现者在一轮开始时生成回合 id（`turnId`），这一轮的 `agent:turn:before`、`agent:turn:after`、输入的归档（见下一节）、流式片段（`outbound:stream`）、工具调用（`ToolCallContext` 与 `tool:execute`）、用量（`token:usage`）与这一轮发出的消息（回复与 `[错误]` 等提示的 `OutgoingMessage.turnId`）都带同一个 `turnId`。每次工具调用另有 `callId`，见 [api-tools](./api-tools.md#toolcallcontext)。回应 `token:request` 的用量快照不在任何回合里，不带 `turnId`。
 
 ## 落库与外发的约定
 
@@ -37,6 +37,7 @@ interface AgentService {
 
 - **元数据的键**：落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在元数据里记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的元数据与时间线的 `tool_call` 段记下这次调用的 `callId`；最终回复另记这一轮的模型与 token、这一轮的平台与她在那里的身份、这一轮的群与会话类型，回复是结构化输出的信封时另记解码后的可见正文。键一律用 schema-message 登记的 `WellKnownMetadataKeys`，各键见 [schema-message 的「存档元数据的键」](./schema-message.md#存档元数据的键)表里写方为 agent 的各项。`agent:tool:after` 里别的插件写进 `metadata` 的键随 tool 结果原样落库。
 - **房间里一轮只把最后一条回复交给平台**：房间（会话种类为 `room` 的 IM 群与私聊）里，一轮里工具调用之前说的话、格式校验没通过而重试丢掉的几版都不发出（不经 `outbound:message`），只有最后一条回复发出。会话服务回看历史时据此把那几段标「未发出」；实时推送按平台的送达结果标，不受影响。
+- **输入在进入一轮时归档**：这一轮的输入在 `agent:turn:before` 的默认动作开头经 message-archive 归档，`archiveIncoming` 带这一轮的回合 id 与进入方式（开轮的为 `opened`），存档记成登记的键 `TurnId`、`TurnEntry`。连对话回滚按回合 id 只删这一轮的消息，不写的话这一轮的输入回滚时删不掉。
 
 ## 用量（token:usage）
 
@@ -45,7 +46,7 @@ interface AgentService {
 - `used` 与 `usageRatio`：`used` 取模型服务返回的这次调用的输入 token（`ChatResponse.usage.promptTokens`），没有返回或不是正的有限数时（以及快照）按发出的消息与工具定义估算；`usageRatio` 是 `used / contextWindow`。
 - `trimmed`：本回合到这次调用为止经过了硬裁剪，即这次或之前某次调用组装后的估算超过了 `tokenBudget`（不一定真裁掉了内容）。之后的调用在首次调用裁剪过的列表上追加，所以有过一次，本回合之后各次都算。
 - `untrimmedHistory`：按没经过硬裁剪的消息列表估算的历史与工具结果 token；`breakdown` 的 `history`、`toolResults` 两项按发出的列表算。裁掉的部分仍在会话历史里，全量压缩能把它们一并压掉，摘要插件以它为可压缩部分。
-- `historyMessages`：会话历史的条数，即这一轮开头会话的活跃历史条数（含这一轮的入站消息，也含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果。与硬裁剪无关；快照只有活跃历史条数。
+- `historyMessages`：会话历史的条数，即这一轮开头会话的活跃历史条数（含这一轮开轮的输入，也含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果（插进来的输入与它们一样按追加计）。与硬裁剪无关；快照只有活跃历史条数。
 - `historyLimit`：这一轮的历史条数上限（会话设置「历史条数上限」，0 为不按条数），由 agent 填：摘要插件按它判定按条数压缩，第三方 agent 不填时摘要的条数线静默失效。
 
 `breakdown` 与 `parts` 是同一份输入按来源估算的拆分，各项之和不必等于 `used`。`breakdown` 是按固定桶的数，供 AI 自检（plugin-prompt-budget）判断；`parts` 是同一份数按显示的次序排好、带显示名的拆分表，不含为回复预留的 `maxTokens`，供界面照画：
@@ -82,23 +83,33 @@ plugin-file-reader 只经预处理器处理文件附件，没有别的入口：a
 type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
 ```
 
-洋葱模型：调用 `next()` 把控制权交给下一个；不调用即吞掉消息（LLM 不会被调用）。常见用法：把图片识别为文字、解析文件内容、注入会话级 metadata。
+预处理器挂在 `agent:input:before` 上，每条输入一次，在它进入一轮之前。洋葱模型：调用 `next()` 把控制权交给下一个；不调用即丢掉这条，不进一轮、不归档。常见用法：把图片识别为文字、解析文件内容。
 
 ## 钩子（HookContextMap）
 
 | 钩子 | 时机 | payload |
 |---|---|---|
-| `agent:input:before` | 进入 Agent 之前；`next` 之后是这一轮的全部，不调即拦下整条消息 | `{ message, turnId, metadata }` |
+| `agent:input:before` | 每条输入一次，在它进入一轮之前（预处理器挂在这里）。`next` 之前可以改写这条，不调 `next` 即丢掉它（不进一轮、不归档，agent 照发流结束标记）；`next` 返回时这条已落定 | `{ message }` |
+| `agent:turn:before` | 一轮开始。默认动作从按先后归档这一轮的输入开始，是这一轮的全部：中间件里输入还没归档（没有 `archived`），读历史也读不到它们。不调 `next` 即这一轮不跑、输入不归档、不发 `agent:turn:after`，实现者照发流结束标记 | `{ turnId, sessionId, inputs }`；`inputs` 是这一轮的输入（`TurnInput[]`，见下文），同一轮的输入会话与来源相同 |
 | `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, acceptsImages, sessionId, source?, ... }`；`acceptsImages` 是这一轮的主模型能不能亲眼看图，与工具上下文的 `acceptsImages` 同一个值（媒体按它决定当轮附件交原图还是交描述）。第一方 agent 按模型服务给这个模型登记的能力填：端点报告了视觉能力，或在模型服务的「单模型能力覆盖」（`modelCapabilities`）里写了 `vision`；第三方 agent 要按同一事实填。`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
-| `agent:turn:after` | 一轮处理完成（消息在 `agent:input:before` 被拦下时不触发） | `{ message, reply, outcome, error?, sessionId, turnId, metadata }` |
+| `agent:turn:after` | 一轮处理完成（这一轮在 `agent:turn:before` 被拦下时不触发） | `{ inputs, reply, outcome, error?, sessionId, turnId }`；`inputs` 与 `agent:turn:before` 的同一份 |
+
+一轮的输入是 `TurnInput`：
+
+```ts
+interface TurnInput {
+  readonly message: IncomingMessage;  // 入站消息，经过了预处理器
+  archived?: Message;                 // 归档进会话历史的那一条，归档之后才有；不归档的（空闲开话题）与没有存档插件时一直没有
+}
+```
 
 这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.use.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
 
-提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.use.contribute('agent:prompt', spec)`，契约见 [api-contributions](./api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。
+提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.use.contribute('agent:prompt', spec)`，契约见 [api-contributions](./api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。贡献的 `build(view)` 拿到的视图（`PromptContributionView`）有会话 id、平台、这一轮的输入 `inputs`（与 `agent:turn:before` 的同一份，已归档的带 `archived`；回应 `token:request` 的估算为空）、中止信号、干跑标记与消息列表的快照；按发言者取材的贡献（档案、关系图）看各条输入的发言者与 `triggerType`，按这一轮内容检索的（语义记忆）用各条的 `archived` 正文。
 
 ## 典型用法
 

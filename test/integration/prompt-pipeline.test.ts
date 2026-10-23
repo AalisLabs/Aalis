@@ -349,16 +349,16 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
     }
   });
 
-  it('单轮：view 由真实管线透传（sessionId / userId / platform / triggerType / dryRun=false）', async () => {
+  it('单轮：view 由真实管线透传（sessionId / platform / 这一轮的输入 / dryRun=false）', async () => {
     const stack = await loadStack([{ content: 'REPLY-1' }]);
     try {
-      await stack.agent.handleMessage(incoming('你好'));
+      const message = incoming('你好');
+      await stack.agent.handleMessage(message);
       expect(stack.views).toHaveLength(1);
       const view = stack.views[0];
       expect(view.sessionId).toBe(SESSION);
-      expect(view.userId).toBe('u1');
       expect(view.platform).toBe('test');
-      expect(view.triggerType).toBe('direct');
+      expect(view.inputs.map(input => input.message)).toEqual([message]);
       expect(view.dryRun).toBe(false);
       // view.messages 是快照，且已含 persona
       expect(view.messages[0].metadata?.injector).toBe('persona');

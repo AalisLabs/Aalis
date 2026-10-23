@@ -166,8 +166,8 @@ describe('agent:llm:before 中间件接线', () => {
     const data = {
       messages: [
         { role: 'system' as const, content: '头' },
-        { role: 'user' as const, content: '旧消息', images: [GIF_DATA] },
-        { role: 'user' as const, content: '当前消息', images: [GIF_DATA, PLAIN_URL] },
+        { role: 'user' as const, content: '先到的输入', images: [GIF_DATA] },
+        { role: 'user' as const, content: '后到的输入', images: [GIF_DATA, PLAIN_URL] },
       ],
       tools: [],
       sessionId: 's',
@@ -179,10 +179,10 @@ describe('agent:llm:before 中间件接线', () => {
     return data;
   }
 
-  it('passthrough：末条 user 的动图被抽帧替换，历史 user 消息不动', async () => {
+  it('passthrough：这一轮各条带图的 user 消息里的动图都被抽帧替换（历史消息不带图）', async () => {
     const data = await runHookWith('passthrough', false);
     expect(data.messages[2].images).toEqual(['frame-0', 'frame-1', 'frame-2', 'frame-3', 'frame-4', PLAIN_URL]);
-    expect(data.messages[1].images).toEqual([GIF_DATA]); // 仅末条，历史原样
+    expect(data.messages[1].images).toEqual(['frame-0', 'frame-1', 'frame-2', 'frame-3', 'frame-4']);
   });
 
   it('dryRun 估算轮：跳过变换', async () => {
@@ -190,13 +190,13 @@ describe('agent:llm:before 中间件接线', () => {
     expect(data.messages[2].images).toEqual([GIF_DATA, PLAIN_URL]);
   });
 
-  it('describe 交付：末条 user 的 images 被清空（主模型不重复识别）', async () => {
+  it('describe 交付：这一轮各条 user 的 images 都被清空（主模型不重复识别）', async () => {
     const data = await runHookWith('describe', false);
     expect(data.messages[2].images).toEqual([]);
-    expect(data.messages[1].images).toEqual([GIF_DATA]); // 仅末条，历史 user 消息不动
+    expect(data.messages[1].images).toEqual([]);
   });
 
-  it('auto：只按这一轮交来的 acceptsImages 判，不查 media 自己取得到的模型：不能看图清空末条 user 的 images，能看图抽帧交出', async () => {
+  it('auto：只按这一轮交来的 acceptsImages 判，不查 media 自己取得到的模型：不能看图清空 user 的 images，能看图抽帧交出', async () => {
     const blind = await runHookWith('auto', false, false, ['chat', 'vision']);
     expect(blind.messages[2].images).toEqual([]);
     const sees = await runHookWith('auto', false, true, ['chat']);

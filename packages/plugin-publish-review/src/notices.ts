@@ -90,7 +90,7 @@ export class ReviewNotices {
         sent = message;
     });
     const offTurn = this.hooks.middleware('agent:turn:after', async (data, next) => {
-      if (scope.getStore() && data.sessionId === sessionId && data.message.source === `publish:${id}`) {
+      if (scope.getStore() && data.sessionId === sessionId && data.inputs[0].message.source === `publish:${id}`) {
         outcome = data.outcome;
       }
       await next();

@@ -176,8 +176,8 @@ class SessionManager implements SessionManagerService {
   /** 正在收录或补记的会话：同一会话并发的原生入站共用这一次 */
   private readonly recording = new Map<string, Promise<void>>();
   /**
-   * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:input:before 进出登记与注销，结局由
-   * agent:turn:after 记下（消息被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知
+   * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:turn:before 进出登记与注销，结局由
+   * agent:turn:after 记下（被拦下的一轮不发它，没有结局）。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知
    * 与真人回合），会话在最后一轮结束时才收口；回合之外建档的会话按这里有没有回合定初始状态（见 ensureSession）
    */
   private turns = new Map<string, { sessionId: string; outcome?: TurnOutcome; error?: string | TextRef }>();
@@ -1367,13 +1367,13 @@ async function run(caps: Caps): Promise<void> {
   });
 
   // ===== 会话状态 =====
-  // 回合真正开始时（agent:input:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
+  // 回合真正开始时（agent:turn:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
   //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里记下这一轮并收口，根会话与子会话一样，这是
   // 唯一的收口：next() 返回时整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
   // 后面的中间件不调 next() 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里最后一轮结束
   // 才收口，别的 lane 还在跑时不显示已完成；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    manager.beginTurn(data.message.sessionId, data.turnId);
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    manager.beginTurn(data.sessionId, data.turnId);
     try {
       await next();
     } finally {

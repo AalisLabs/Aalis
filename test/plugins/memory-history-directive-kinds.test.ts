@@ -97,7 +97,7 @@ describe('plugin-memory-history：跨会话读取排除指令类 kind（安全�
   it('被动注入：试点群的宿主通知与代发任务指令不进 owner 私聊的 turn-context，普通消息与普通通知照旧', async () => {
     const { assembly } = await setup();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(assembly, { messages, sessionId: OWNER_PRIVATE, platform: 'onebot' });
+    await assemblePromptContributions(assembly, { messages, sessionId: OWNER_PRIVATE, platform: 'onebot' }, []);
     const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'))?.content;
     expect(typeof block).toBe('string');
     expect(block).toContain('试点群原文');

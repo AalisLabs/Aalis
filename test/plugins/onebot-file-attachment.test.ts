@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
@@ -18,6 +19,7 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import {
+  type IncomingMessage,
   type Message,
   type MessageAttachment,
   type OutgoingMessage,
@@ -35,8 +37,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
-// 带 markup 的正文（她的回复）里存储地址的媒体标记经网关派发时由 image-sender 转成附件：受众只有 owner 的私聊里不过判据，
-// 别的会话不带授权身份过媒体判据，都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
+// 带 markup 的正文（她的回复）里存储地址的媒体标记经网关派发时由 image-sender 转成附件：按回复所在那一轮的授权身份过媒体
+// 判据（不是回合里的不带授权身份），都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
 // 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端是 owner，取用规则一律不放行）。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
@@ -325,6 +327,16 @@ async function boot(
     await app.bind({ gateway }).gateway.use.dispatchOutbound(msg);
     if (msg.delivery) deliveries.push(msg.delivery);
   };
+  /** 她在一轮里的回复：这一轮的输入是 input，回复带这一轮的回合 id 经网关派发 */
+  const dispatchInTurn = (msg: OutgoingMessage, input: IncomingMessage) => {
+    const turnId = `turn-${input.userId ?? 'none'}`;
+    msg.turnId = turnId;
+    return app
+      .bind({ hooks })
+      .hooks.use.run('agent:turn:before', { turnId, sessionId: msg.sessionId, inputs: [{ message: input }] }, () =>
+        dispatch(msg),
+      );
+  };
   /** 等此前经 send 交出的消息都有了投递结果，再发一条哨兵文字并等它到达 */
   const flush = async (sessionId = GROUP) => {
     await Promise.allSettled(deliveries.splice(0));
@@ -347,6 +359,7 @@ async function boot(
     sent,
     send,
     dispatch,
+    dispatchInTurn,
     flush,
     warns,
     notes,
@@ -778,13 +791,13 @@ describe('onebot 出站：她回复里的媒体标记', () => {
   });
 
   it.each([
-    ['受众只有 owner 的私聊', PRIVATE, 'aalis:/aalis.config.yaml'],
+    ['owner 私聊里 owner 那一轮的本机文件', PRIVATE, 'aalis:/aalis.config.yaml'],
     ['群里本会话的目录', GROUP, `data:/images/${GROUP_DIR}/note.png`],
   ])('%s：不是媒体的存储文件的标记留在正文里由适配器去掉，投递报失败，也不复制进会话的媒体目录', async (_where, sessionId, uri) => {
     const t = await boot({ imageSender: true, gateway: true, files: { [uri]: CONFIG } });
     const content = `一<image url="${uri}"/>二`;
     const message: OutgoingMessage = { sessionId, source: 'agent', markup: true, content };
-    await t.dispatch(message);
+    await t.dispatchInTurn(message, { content: '<占位>', sessionId, platform: 'onebot', userId: '30001' });
     expect(message.content).toBe(content);
     expect(message.attachments ?? []).toEqual([]);
     expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
@@ -965,30 +978,28 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     expect(JSON.stringify(t.actions)).not.toContain('placeholder.png');
   });
 
-  it('受众只有 owner 的私聊：存储地址的标记不过判据，转成同类附件发出，送达之后记进历史', async () => {
+  it('owner 私聊里 owner 那一轮：本机文件的标记转成同类附件发出、送达之后记进历史；别的会话的按取用规则判，替身不放行，留在正文里由适配器去掉', async () => {
     const elsewhere = 'data:/downloads/zz-placeholder.jpg';
-    const t = await boot({
-      imageSender: true,
-      gateway: true,
-      files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG, [elsewhere]: JPEG },
-    });
+    const other = `data:/images/${GROUP_DIR}/a.png`;
+    const t = await boot({ imageSender: true, gateway: true, files: { [other]: PNG, [elsewhere]: JPEG } });
     const message: OutgoingMessage = {
       sessionId: PRIVATE,
       source: 'agent',
       markup: true,
-      content: `一<image url="data:/images/${GROUP_DIR}/a.png"/>二<image url="${elsewhere}"/>`,
+      content: `一<image url="${other}"/>二<image url="${elsewhere}"/>`,
     };
-    await t.dispatch(message);
-    expect(await message.delivery).toEqual({ ok: true });
+    await t.dispatchInTurn(message, { content: '<占位>', sessionId: PRIVATE, platform: 'onebot', userId: '30001' });
+    expect(message.content).toBe(`一<image url="${other}"/>二`);
+    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
     await t.flush(PRIVATE);
     const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
-    expect(images.map(s => decode(s.data.file))).toEqual([PNG, JPEG]);
-    expect(textOf(t.sent(), PRIVATE)).toContain('一二');
-    await until(() => t.imageNotes().length === 2);
-    expect(t.imageNotes().map(n => n.message.metadata?.ref)).toEqual([`data:/images/${GROUP_DIR}/a.png`, elsewhere]);
+    expect(images.map(s => decode(s.data.file))).toEqual([JPEG]);
+    expect(JSON.stringify(t.actions)).not.toContain(other);
+    await until(() => t.imageNotes().length === 1);
+    expect(t.imageNotes().map(n => n.message.metadata?.ref)).toEqual([elsewhere]);
   });
 
-  it('会话管理不在：私聊判不出受众，按不是 owner 的会话，别的会话的存储地址留在正文里由适配器去掉', async () => {
+  it('会话管理不在：反查不出图所在的会话，私聊里别的会话的存储地址留在正文里由适配器去掉', async () => {
     const t = await boot({
       imageSender: true,
       gateway: true,

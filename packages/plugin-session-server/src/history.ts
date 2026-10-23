@@ -205,9 +205,18 @@ function speakerOf(message: Message, isOwner: IsOwner) {
 }
 
 /**
+ * 存档消息归进的回合：元数据记下的回合 id。进了一轮的输入（存档另记了进入方式）不归进，照旧单独成条、在历史里给出：时间线
+ * 把输入画在回合之前
+ */
+export const turnOf = (message: Message) =>
+  message.metadata?.[WellKnownMetadataKeys.TurnEntry] === undefined
+    ? text(message.metadata?.[WellKnownMetadataKeys.TurnId])
+    : undefined;
+
+/**
  * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、发出的附件（她发的是只有附件的她的消息，
- * 插件发的是带附件的通知，topic 同事件标记按来源取）。附件与通知带记下的回合 id，与实时推送一样并进回合。她的回复与工具调用
- * 要成组归并，其余系统消息与组外的工具结果不显示，都回 undefined
+ * 插件发的是带附件的通知，topic 同事件标记按来源取）。附件与通知带归进的回合 id（{@link turnOf}），与实时推送一样并进回合。
+ * 她的回复与工具调用要成组归并，其余系统消息与组外的工具结果不显示，都回 undefined
  */
 export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
   const itemId = archivedItemId(message);
@@ -227,7 +236,7 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
   }
   const sent = sentAttachments(message, signFile);
   if (sent) {
-    const turnId = text(message.metadata?.[WellKnownMetadataKeys.TurnId]);
+    const turnId = turnOf(message);
     return message.role === 'notice'
       ? {
           kind: 'notice',
@@ -250,7 +259,7 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
       kind: 'notice',
       itemId,
       // 回合里发出的提示（如 [错误]）记成事件标记时带着这一轮的 id，与实时推送一样并进回合
-      turnId: text(meta?.[WellKnownMetadataKeys.TurnId]),
+      turnId: turnOf(message),
       at,
       topic:
         text(meta?.[WellKnownMetadataKeys.HostNoticeKind]) ??
@@ -270,8 +279,6 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
 
 /** 成组的消息：她的回复（不是发出的附件）与带 toolCallId 的工具结果 */
 const inGroup = (m: Message) => (m.role === 'assistant' && !sentRefs(m)) || (m.role === 'tool' && !!m.toolCallId);
-
-const turnOf = (message: Message) => text(message.metadata?.[WellKnownMetadataKeys.TurnId]);
 
 /** cur 接着 prev 在同一组：都是成组的消息，且属于同一轮（旧数据没记回合的不分） */
 function sameGroup(prev: Message, cur: Message): boolean {

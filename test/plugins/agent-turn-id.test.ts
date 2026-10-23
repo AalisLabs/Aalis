@@ -24,7 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// 回合 id 与工具调用 id：agent 在回合开始时生成 turnId，入站钩子、流式片段、工具开始与结束、用量、
+// 回合 id 与工具调用 id：agent 在回合开始时生成 turnId，回合开始的钩子、流式片段、工具开始与结束、用量、
 // 回合结束都带同一个 turnId；每次工具调用另有 callId，开始与结束靠它配对，跨回合、跨会话也不重复。
 // 停止键可以只停某一轮：abort 带 turnId 时只停那一轮，对不上就什么都不停并返回 false。
 // ════════════════════════════════════════════════════════════
@@ -79,8 +79,8 @@ async function startAgent(
     usages: [] as TokenUsageEvent[],
     turnEnds: [] as Array<{ sessionId: string; turnId: string; outcome: string }>,
   };
-  host.hooks.use.middleware('agent:input:before', async (data, next) => {
-    seen.inputs.push({ sessionId: data.message.sessionId, turnId: data.turnId });
+  host.hooks.use.middleware('agent:turn:before', async (data, next) => {
+    seen.inputs.push({ sessionId: data.sessionId, turnId: data.turnId });
     await next();
   });
   host.hooks.use.middleware('agent:turn:after', async (data, next) => {
@@ -103,7 +103,7 @@ const message = (sessionId: string, extra: Partial<IncomingMessage> = {}): Incom
 });
 
 describe('回合 id 贯穿一轮的各个事件', () => {
-  it('入站钩子、流式片段、工具开始与结束、工具上下文、用量、回合结束带同一个 turnId', async () => {
+  it('回合开始的钩子、流式片段、工具开始与结束、工具上下文、用量、回合结束带同一个 turnId', async () => {
     let ctx: ToolCallContext | undefined;
     const { agent, seen } = await startAgent([callProbe, { content: '查好了' }], async c => {
       ctx = c;
@@ -113,7 +113,7 @@ describe('回合 id 贯穿一轮的各个事件', () => {
 
     expect(seen.inputs).toHaveLength(1);
     const turnId = seen.inputs[0]?.turnId;
-    expect(turnId, 'agent:input:before 应带回合 id').toEqual(expect.any(String));
+    expect(turnId, 'agent:turn:before 应带回合 id').toEqual(expect.any(String));
     expect(turnId).not.toBe('');
 
     expect(seen.streams.length, '应有流式片段').toBeGreaterThan(1);
@@ -133,11 +133,11 @@ describe('回合 id 贯穿一轮的各个事件', () => {
     expect(seen.turnEnds).toEqual([{ sessionId: 'test:turn-id', turnId, outcome: 'replied' }]);
   });
 
-  it('消息被入站钩子拦下：收尾的流结束标记也带这一轮的 turnId', async () => {
+  it('这一轮被回合开始的钩子拦下：收尾的流结束标记也带这一轮的 turnId', async () => {
     const { agent, seen } = await startAgent([{ content: '不应调用' }], async () => 'ok');
     const app = apps.at(-1) as App;
-    app.bind({ hooks }).hooks.use.middleware('agent:input:before', async () => {
-      /* 不调 next：拦下整条消息 */
+    app.bind({ hooks }).hooks.use.middleware('agent:turn:before', async () => {
+      /* 不调 next：拦下这一轮 */
     });
     await agent.handleMessage(message('test:turn-id-blocked'));
 
@@ -176,16 +176,16 @@ describe('回合 id 贯穿一轮的各个事件', () => {
 });
 
 describe('落库的消息带回合 id', () => {
-  it('这一轮落库的工具调用组与最后的回复都带 turnId；提问不带（它在回合开头经消息归档落库）', async () => {
+  it('这一轮落库的提问、工具调用组与最后的回复都带 turnId；提问另带进入方式', async () => {
     const { agent, seen } = await startAgent([callProbe, { content: '查好了' }], async () => 'ok');
     await agent.handleMessage(message('test:archive-turn'));
     const turnId = seen.inputs[0]?.turnId;
     const stored = await (apps.at(-1) as App).bind({ memory }).memory.use.getHistory('test:archive-turn', 50);
-    expect(stored.map(m => [m.role, m.metadata?.turnId])).toEqual([
-      ['user', undefined],
-      ['assistant', turnId],
-      ['tool', turnId],
-      ['assistant', turnId],
+    expect(stored.map(m => [m.role, m.metadata?.turnId, m.metadata?.turnEntry])).toEqual([
+      ['user', turnId, 'opened'],
+      ['assistant', turnId, undefined],
+      ['tool', turnId, undefined],
+      ['assistant', turnId, undefined],
     ]);
   });
 

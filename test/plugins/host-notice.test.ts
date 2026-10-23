@@ -37,6 +37,7 @@ import {
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 宿主通知原语：宿主撰写的事件通知（IncomingMessage.hostNotice）不是任何人的发言。
@@ -304,7 +305,11 @@ describe('memory-vector：宿主通知不进向量记忆与扩窗', () => {
       { role: 'system', content: '人设' },
       { role: 'user', content: '上次那个任务' },
     ];
-    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:10000:private:30002' });
+    await assemblePromptContributions(
+      assembly,
+      { messages, sessionId: 'onebot:10000:private:30002' },
+      inputFromLastUser(messages),
+    );
     const block = String(
       messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))?.content ?? '',
     );
