@@ -7,9 +7,8 @@
 //                          送达之后由 message-archive 记进会话历史（recordOutbound），
 //                          让"AI 之前发过的图/视频"能被 memory_recall 召回
 //
-// 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，受众只有 owner 的会话
-// 不过判据，其余会话按 send_attachment 的判据、不带授权身份，转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给
-// 适配器。
+// 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，与 send_attachment 同一份
+// 判据，按回复所在那一轮的授权身份判（几个人时不带），转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给适配器。
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先过媒体判据（@aalis/api-media 的 mediaScopeOf：别的会话的媒体按会话管理的取用规则，本机文件按这一轮的
@@ -18,12 +17,13 @@
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
 
-import { authority } from '@aalis/api-authority';
+import type { TurnInput } from '@aalis/api-agent';
+import { authority, originTurnOf } from '@aalis/api-authority';
 import type {} from '@aalis/api-gateway'; // declaration merging 锚点（outbound:dispatch 钩子）
 import { hooks } from '@aalis/api-hooks';
-import { historyMediaRefs, media, mediaRef, mediaScopeOf } from '@aalis/api-media';
+import { historyMediaRefs, type MediaScopeCall, media, mediaRef, mediaScopeOf } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
-import { roomClass, sessionManager } from '@aalis/api-session-manager';
+import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { actingIdentity, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
@@ -84,8 +84,22 @@ function registerImageSender(caps: Caps): void {
   /** owner 判定：权限服务不在时恒为否 */
   const isOwner = (platform: string, userId: string) => authority.present && authority.use.isOwner(platform, userId);
 
-  /** 媒体判据要的服务：每次判时按一次调用交给 mediaScopeOf（工具交这次调用，回复里的标记不带授权身份） */
+  /** 媒体判据要的服务：每次判时按一次调用交给 mediaScopeOf（工具交这次调用，回复里的标记交它所在的那一轮） */
   const scopeServices = { sessionManager, authority, history: recentHistory };
+
+  /**
+   * 在跑的各轮的输入：agent:turn:before 交来的那一份的引用（插进来的输入会追加到它上面），这一轮结束删掉。回复在这一轮结束
+   * 之前出站，按它的回合 id 取回，用那时的输入判回复里的标记
+   */
+  const turnInputs = new Map<string, readonly TurnInput[]>();
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    turnInputs.set(data.turnId, data.inputs);
+    try {
+      await next();
+    } finally {
+      turnInputs.delete(data.turnId);
+    }
+  });
 
   // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
   // 记忆库等非媒体文件）。放行的交出 storage URI，送达形态由平台适配器决定：onebot 读回内容内联，超过内联上限
@@ -303,11 +317,12 @@ function registerImageSender(caps: Caps): void {
 
   // ── 带 markup 的正文里的媒体标记：存储地址的转成附件 ─────────────────────────────────
   // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址的去掉并报投递失败，
-  // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据，出站
-  // 不带授权身份：别的会话的按不带授权身份的取用规则判，本机文件不能取；会话管理不在时判不出受众，按不是只有 owner。转之前与
-  // send_attachment 一样核文件头。这里只摘掉转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、
-  // 本机路径、data URI 等）都留在正文里，去不去掉由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上
-  // 判。转出的附件与别的附件一样，送达之后记进会话历史。网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
+  // 存储里的媒体要靠这里转成附件才发得出。存储地址过与 send_attachment 同一份判据，没有可挂审批的工具调用，按回复所在那一轮
+  // 判：按回合 id 取回这一轮的输入拼出这一轮（originTurnOf），授权身份取 actingIdentity（只有一位参与者时是他，几个人时不带：
+  // 别人的私聊取不到，本机文件取不到）；认不出这一轮的（不是回合里的回复）不带授权身份判。转之前与 send_attachment 一样核文件头。
+  // 这里只摘掉转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、本机路径、data URI 等）都留在正文里，
+  // 去不去掉由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件与别的附件一样，送达
+  // 之后记进会话历史。网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
     if (message.markup) await markupToAttachments(message);
     await next();
@@ -320,17 +335,12 @@ function registerImageSender(caps: Caps): void {
       return { kind: MARKUP_KIND[tag], ref: ref && isStorageUri(ref) ? ref : undefined };
     });
     if (!tags.some(({ ref }) => ref)) return;
-    const call = { sessionId: message.sessionId, participants: [] };
-    const inScope = mediaScopeOf({ ...call, approveFor: async check => check(actingIdentity(call)) }, scopeServices);
-    const getSession = (id: string) => sessionManager.use.getSession(id);
-    const ownerOnly =
-      sessionManager.present && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';
+    const turn = turnOf(message);
+    const inScope = mediaScopeOf({ ...turn, approveFor: async check => check(actingIdentity(turn)) }, scopeServices);
     // 各标记转成的附件：没转成的为 undefined，标记留在正文里
     const converted: Array<MessageAttachment | undefined> = [];
     for (const { kind, ref } of tags) {
-      converted.push(
-        ref && (await markupMediaAllowed(ref, kind, ownerOnly, inScope)) ? { kind, data: ref } : undefined,
-      );
+      converted.push(ref && (await markupMediaAllowed(ref, kind, inScope)) ? { kind, data: ref } : undefined);
     }
     let i = 0;
     message.content = message.content.replace(MEDIA_MARKUP, whole => (converted[i++] ? '' : whole));
@@ -338,17 +348,27 @@ function registerImageSender(caps: Caps): void {
   }
 
   /**
-   * 回复里存储地址的标记能不能转成附件：受众只有 owner 的会话不过判据，其余不带授权身份判；再按 kind 核文件头。判不出、读不出
-   * （如读历史出错、根不存在）的按不能，标记留在正文里
+   * 出站消息所在的那一轮：按回合 id 取回在跑的那一轮的输入拼出，会话取出站的目标会话（取用范围按它判）；认不出的只有会话、
+   * 没有授权身份
+   */
+  function turnOf(message: OutgoingMessage): MediaScopeCall {
+    const [first, ...rest] = (message.turnId && turnInputs.get(message.turnId)) || [];
+    return first
+      ? { ...originTurnOf([first.message, ...rest.map(input => input.message)], isOwner), sessionId: message.sessionId }
+      : { sessionId: message.sessionId, participants: [] };
+  }
+
+  /**
+   * 回复里存储地址的标记能不能转成附件：先过判据，再按 kind 核文件头。判不出、读不出（如读历史出错、根不存在）的按不能，标记
+   * 留在正文里
    */
   async function markupMediaAllowed(
     uri: string,
     kind: MediaKind,
-    ownerOnly: boolean,
     inScope: (uri: string) => Promise<boolean>,
   ): Promise<boolean> {
     try {
-      if (!ownerOnly && !(await inScope(uri))) return false;
+      if (!(await inScope(uri))) return false;
       return (await loadStorageMedia(uri, kind)).ok;
     } catch (err) {
       logger.use.warn(

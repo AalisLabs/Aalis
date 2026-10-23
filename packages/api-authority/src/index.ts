@@ -14,7 +14,7 @@ import { defineService } from '@aalis/core';
 import type { OriginKind } from '@aalis/api-approval';
 import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
 import type { TextRef } from '@aalis/schema-i18n';
-import type { FromTurn, IncomingMessage } from '@aalis/schema-message';
+import { type FromTurn, type IncomingMessage, oneSpeaker } from '@aalis/schema-message';
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
@@ -230,11 +230,10 @@ export function originTurnOf(
       if (!participants.some(seen => sameParticipant(seen, who, isOwner))) participants.push(who);
     }
   }
-  const oneSpeaker = inputs.every(m => m.platform === platform && m.userId === first.userId);
   return {
     sessionId,
     platform,
-    userId: oneSpeaker ? (first.userId ?? fromTurn?.userId) : undefined,
+    userId: oneSpeaker(inputs) ? (first.userId ?? fromTurn?.userId) : undefined,
     participants,
     inbound: { source, fromTurn, messageId: inputs[inputs.length - 1].messageId },
   };

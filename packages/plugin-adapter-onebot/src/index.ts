@@ -2292,13 +2292,13 @@ function runAdapter(caps: Caps): void {
 
   // ----- 群聊时间感知提示 + 特殊事件触发上下文 -----
   // 群聊中多人消息平铺在历史中，注入提示帮助模型关注时间线
-  // 特殊事件（如戳一戳、文件上传）触发时注入说明，让模型知道触发原因
-  const noticePatterns: Array<{ pattern: RegExp; hint: string }> = [
+  // 特殊事件（戳一戳、群文件上传）转成的入站进了这一轮时注入说明，让模型知道触发原因：按入站自带的事件种类认，不看正文
+  const noticeHints: Array<{ noticeType: string; hint: string }> = [
     {
-      pattern: /^\[戳一戳:/,
+      noticeType: WellKnownNoticeTypes.Poke,
       hint: '这条消息是平台的「戳一戳」互动通知，不是用户输入的文字。请根据正文中的发起者和被戳对象理解事件，不要把群友互戳当成有人戳你。',
     },
-    { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
+    { noticeType: 'group_upload', hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
 
   /**
@@ -2340,18 +2340,9 @@ function runAdapter(caps: Caps): void {
         );
       }
 
-      // 特殊事件触发上下文：最后一条消息是非文本事件（戳一戳/文件上传）时说明缘由。
-      // 剥离顺序须与 agent 的消息装配一致：时间标签 `(M/D HH:MM) ` 在最外层，
-      // 其内才是发送者前缀 `[昵称(id)]: `——只剥后者会让事件正则永不命中。
-      const lastMsg = view.messages[view.messages.length - 1];
-      if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
-        const bare = lastMsg.content.replace(/^\([^)]*\)\s*/, '').replace(/^\[[^\]]*\]:\s*/, '');
-        for (const { pattern, hint } of noticePatterns) {
-          if (pattern.test(bare)) {
-            blocks.push(hint);
-            break;
-          }
-        }
+      // 特殊事件触发上下文：这一轮有一条输入是这种事件时说明缘由
+      for (const { noticeType, hint } of noticeHints) {
+        if (view.inputs.some(({ message }) => message.noticeType === noticeType)) blocks.push(hint);
       }
 
       return blocks.length > 0 ? blocks : null;

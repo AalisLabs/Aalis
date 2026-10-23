@@ -1,11 +1,11 @@
 /**
  * 关系图注入 —— agent:prompt 贡献点（turn-context 槽：按当前发言者取材、换人即变，落历史后护前缀缓存），注入：
- * - 当前主发言者的子图速览（按 BFS 深度/宽度展开）
+ * - 主发言者（这一轮点名她的各条输入的发言者）各自的子图速览（按 BFS 深度/宽度展开），合在一块里
  * - 每个事件的"其他参与者"（揭示群体动态）
  * - 高频共现伙伴（基于事件桥的隐式二跳）
  *
  * 设计原则：
- * - 仅在 direct/immediate 触发下注入（避免 idle/interval 占用 token）
+ * - 仅为 direct/immediate 触发（或没经触发判定）的输入的发言者注入（避免 idle/interval 占用 token）
  * - 与 plugin-user-profile 解耦：profile 侧重"是谁/喜好"，relation 侧重"经历过什么/与谁有关系"
  * - 深度 / 宽度由配置控制；带 visited 防环
  * - 当前会话的关系图范围（本插件的按会话字段 recallScope）限于本会话时，跳过全局热点与跨会话事件
@@ -25,6 +25,7 @@ import type {
   PersonEventEdge,
   PersonNode,
   PersonPersonEdge,
+  RelationGraphSnapshot,
 } from './types.js';
 
 interface MiddlewareConfig {
@@ -82,14 +83,83 @@ async function buildBlock(
   /** 关系图范围限于本会话：只留本会话的事件，不出跨会话话题与全局热点 */
   sessionOnly: boolean,
 ): Promise<string | null> {
-  const trigger = data.triggerType ?? 'direct';
-  if (trigger !== 'direct' && trigger !== 'immediate') return null;
-  if (!data.userId || !data.platform) return null;
+  // 主发言者：点名的输入里有账号的发言者，按人去重、按输入先后
+  const personIds = [
+    ...new Set(
+      data.inputs.flatMap(({ message: { triggerType = 'direct', platform, userId } }) =>
+        (triggerType === 'direct' || triggerType === 'immediate') && userId && platform
+          ? [`${platform}:${userId}`]
+          : [],
+      ),
+    ),
+  ];
+  if (personIds.length === 0) return null;
 
-  const personId = `${data.platform}:${data.userId}`;
-  // 全图只加载一次，喂给下面两处消费者（子图遍历 + 全局热点）。`loadAll()` 是 O(全图)
+  // 全图只加载一次，喂给下面几处消费者（各人的子图遍历 + 全局热点）。`loadAll()` 是 O(全图)
   // （实测 3090 条 / 41 MB / ≈540 ms），读两遍是本插件最大的一笔固定开销。
   const graph = await service.loadAll();
+  const sections: string[][] = [];
+  for (const personId of personIds) {
+    const section = await personSection(
+      service,
+      graph,
+      personId,
+      data.sessionId,
+      cfg,
+      sessionOnly,
+      personIds.length > 1,
+    );
+    if (section) sections.push(section);
+  }
+  if (sections.length === 0) return null;
+
+  const lines: string[] = [
+    '# 当前对话者的关系图速览',
+    '以下是从历史对话中沉淀的关系/事件记录，仅供你判断语境。若用户当下发言与此不符，以当下为准、不要硬撑：',
+    '',
+    ...sections.flat(),
+  ];
+
+  // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序；本会话限定时不出） ----
+  if (!sessionOnly && (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0)) {
+    const hotEvents =
+      cfg.maxGlobalHotEvents > 0
+        ? [...graph.events].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEvents)
+        : [];
+    const hotEntities =
+      cfg.maxGlobalHotEntities > 0
+        ? [...graph.entities].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEntities)
+        : [];
+    if (hotEvents.length > 0 || hotEntities.length > 0) {
+      lines.push('');
+      lines.push('## 最近热点（全局）');
+      for (const ev of hotEvents) {
+        const sum = ev.summary ? ` — ${truncate(ev.summary, 40)}` : '';
+        lines.push(`- 事件: ${ev.title}${sum}`);
+      }
+      for (const ent of hotEntities) {
+        const sum = ent.summary ? ` — ${truncate(ent.summary, 40)}` : '';
+        lines.push(`- 实体: ${ent.name} [${ent.entityKind}]${sum}`);
+      }
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+/**
+ * 一位主发言者的几个小节（近期事件、人际关系、关注的事物、共现伙伴）；他在关系图里什么都没有时为 undefined。labeled 为真时
+ * 各小节标题注明是谁的（这一轮有几个主发言者）
+ */
+async function personSection(
+  service: RelationService,
+  graph: RelationGraphSnapshot,
+  personId: string,
+  sessionId: string | undefined,
+  cfg: MiddlewareConfig,
+  sessionOnly: boolean,
+  labeled: boolean,
+): Promise<string[] | undefined> {
   const subgraph = await service.traverseSubgraph({
     startNodeIds: [personId],
     maxDepth: cfg.maxDepth,
@@ -98,7 +168,7 @@ async function buildBlock(
   });
 
   const self = subgraph.persons.find(p => p.id === personId);
-  if (!self && subgraph.events.length === 0) return null;
+  if (!self && subgraph.events.length === 0) return undefined;
 
   const personById = new Map(subgraph.persons.map(p => [p.id, p]));
   const entityById = new Map(subgraph.entities.map(e => [e.id, e]));
@@ -112,7 +182,7 @@ async function buildBlock(
   const selfEventEdges = personEventEdges.filter(e => e.fromPersonId === personId);
   const selfEventIds = new Set(selfEventEdges.map(e => e.toEventId));
   const selfEvents = subgraph.events.filter(
-    e => selfEventIds.has(e.id) && (!sessionOnly || e.sessionScope === data.sessionId),
+    e => selfEventIds.has(e.id) && (!sessionOnly || e.sessionScope === sessionId),
   );
 
   // 自己的人-人边
@@ -121,13 +191,12 @@ async function buildBlock(
   // 自己的人-实体边
   const selfPentEdges = personEntityEdges.filter(e => e.fromPersonId === personId);
 
-  if (selfEvents.length === 0 && selfPpEdges.length === 0 && selfPentEdges.length === 0) return null;
+  if (selfEvents.length === 0 && selfPpEdges.length === 0 && selfPentEdges.length === 0) return undefined;
 
-  const lines: string[] = [
-    '# 当前对话者的关系图速览',
-    '以下是从历史对话中沉淀的关系/事件记录，仅供你判断语境。若用户当下发言与此不符，以当下为准、不要硬撑：',
-    '',
-  ];
+  /** 各小节的标题：几个主发言者时注明是谁的 */
+  const who = labeled ? displayLabel(self, personId) : undefined;
+  const heading = (name: string) => (who ? `## ${name}（${who}）` : `## ${name}`);
+  const lines: string[] = [];
 
   // ---- 近期事件（含其他参与者） ----
   if (selfEvents.length > 0) {
@@ -138,7 +207,7 @@ async function buildBlock(
     }
     const sortedEvents = [...selfEvents].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxEvents);
 
-    lines.push('## 近期参与的事件');
+    lines.push(heading('近期参与的事件'));
     for (const ev of sortedEvents) {
       const r = roleByEventId.get(ev.id);
       const role = r?.role ?? 'participant';
@@ -187,7 +256,7 @@ async function buildBlock(
   // ---- 直接人际关系 ----
   if (selfPpEdges.length > 0) {
     const sorted = [...selfPpEdges].sort((a, b) => b.weight - a.weight).slice(0, cfg.maxRelations);
-    lines.push('## 与其他人的关系');
+    lines.push(heading('与其他人的关系'));
     for (const edge of sorted) {
       const otherId = edge.fromPersonId === personId ? edge.toPersonId : edge.fromPersonId;
       const other = personById.get(otherId);
@@ -203,7 +272,7 @@ async function buildBlock(
   // ---- 关注/合作的事物实体 ----
   if (selfPentEdges.length > 0) {
     const sorted = [...selfPentEdges].sort((a, b) => b.weight - a.weight).slice(0, cfg.maxRelations);
-    lines.push('## 关注/参与的事物');
+    lines.push(heading('关注/参与的事物'));
     for (const edge of sorted) {
       const ent = entityById.get(edge.toEntityId);
       if (!ent) continue;
@@ -238,7 +307,7 @@ async function buildBlock(
       .sort((a, b) => b[1].count - a[1].count || b[1].lastTs - a[1].lastTs)
       .slice(0, cfg.maxCooccurrencePartners);
     if (ranked.length > 0) {
-      lines.push('## 高频共现伙伴（基于事件，非直接声明的关系）');
+      lines.push(heading('高频共现伙伴（基于事件，非直接声明的关系）'));
       for (const [otherId, v] of ranked) {
         const label = displayLabel(personById.get(otherId), otherId);
         const sampleTitles = v.eventTitles.slice(0, 2).join('、');
@@ -257,32 +326,7 @@ async function buildBlock(
     }
   }
 
-  // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序；本会话限定时不出） ----
-  if (!sessionOnly && (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0)) {
-    const snap = graph;
-    const hotEvents =
-      cfg.maxGlobalHotEvents > 0
-        ? [...snap.events].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEvents)
-        : [];
-    const hotEntities =
-      cfg.maxGlobalHotEntities > 0
-        ? [...snap.entities].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEntities)
-        : [];
-    if (hotEvents.length > 0 || hotEntities.length > 0) {
-      lines.push('');
-      lines.push('## 最近热点（全局）');
-      for (const ev of hotEvents) {
-        const sum = ev.summary ? ` — ${truncate(ev.summary, 40)}` : '';
-        lines.push(`- 事件: ${ev.title}${sum}`);
-      }
-      for (const ent of hotEntities) {
-        const sum = ent.summary ? ` — ${truncate(ent.summary, 40)}` : '';
-        lines.push(`- 实体: ${ent.name} [${ent.entityKind}]${sum}`);
-      }
-    }
-  }
-
-  return lines.join('\n').trim();
+  return lines;
 }
 
 function formatDirection(edge: PersonPersonEdge, self: string): string {

@@ -29,7 +29,7 @@
 ## 智能体核心
 | 服务 | 定位 |
 |---|---|
-| [agent](agent.md) | agent 回合编排（LLM loop）；`agent:input:before`/`agent:turn:after` hook；abort 语义。 |
+| [agent](agent.md) | agent 回合编排（LLM loop）；`agent:input:before`/`agent:turn:before`/`agent:turn:after` hook；abort 语义。 |
 | [llm](llm.md) | LLM 对话 provider：出口必调 `prepareLLMMessages`、流式 + 工具调用、model 句柄带能力元数据。参考实现 llm-openai/llm-deepseek/llm-ollama。 |
 | [persona](persona.md) | 人设角色卡 + `outputFormat` + 状态持久化 + skills 白名单。 |
 | [commands](commands.md) | `/command` 注册与分发；authority risk 门控。 |

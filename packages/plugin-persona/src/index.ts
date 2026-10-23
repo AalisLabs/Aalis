@@ -20,6 +20,7 @@ import {
 } from '@aalis/core';
 import { defineConfig, parseConfig, type SessionFieldsOf } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
+import { oneSpeaker } from '@aalis/schema-message';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
 import { t } from './texts.js';
@@ -740,13 +741,14 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
+  // 跟踪当前会话信息（始终启用）：一轮开始时把身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
   // 会话事实（平台、自身账号、会话类型与群号）按根会话记下的来源字段取（房间里的子任务也在房间的平台、账号与聊天窗口上）；
-  // 从 WebUI 往群里插话时回复发进群里。没有出生平台的会话按消息的平台；没有聊天窗口的（WebUI、终端，或没装会话管理）不写
-  // 会话类型与群信息，不看消息上的类型名。说话人事实（发送者 ID、昵称、群身份）照旧取自消息。
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    const { message } = data;
+  // 从 WebUI 往群里插话时回复发进群里。没有出生平台的会话按开轮那条输入的平台；没有聊天窗口的（WebUI、终端，或没装会话管理）
+  // 不写会话类型与群信息，不看消息上的类型名。说话人事实（发送者 ID、昵称、群身份与头衔）取自开轮的输入，只在它们的说话人
+  // 相同时写：几个人的话一起开的一轮没有单一的当前发送者。
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    const [{ message }] = data.inputs;
     const sm = caps.sessionManager.present ? caps.sessionManager.use : undefined;
     const session = sm?.getSession(message.sessionId);
     const root = sm && rootSessionOf(session, id => sm.getSession(id));
@@ -764,13 +766,17 @@ async function run(caps: Caps): Promise<void> {
       groupId: chat?.multiParty ? chat.targetId : undefined,
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
-      userId: message.userId,
-      nickname: message.nickname,
       groupName: message.groupName,
       selfRole: message.selfRole,
       selfTitle: message.selfTitle,
-      senderRole: message.senderRole,
-      senderTitle: message.senderTitle,
+      ...(oneSpeaker(data.inputs.map(input => input.message))
+        ? {
+            userId: message.userId,
+            nickname: message.nickname,
+            senderRole: message.senderRole,
+            senderTitle: message.senderTitle,
+          }
+        : {}),
     };
     await service.runWithIdentity(identity, () => next());
   });

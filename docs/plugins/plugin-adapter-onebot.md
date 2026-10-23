@@ -97,7 +97,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 入站消息的 `sessionType` 原样带实现端给的消息类型（v11 的 `message_type`、v12 的 `detail_type`，缺省为 `private`）。适配器声明了 `group`（多方）、`private`（一对一）与 `channel`（多方）三种平台类型（`PlatformAdapter.sessionTypes`），显示名是群聊、私聊、频道（文字对象，带英文）：设置页的平台类型档按读者语言显示，模型看到的会话类型与召回片段取原文；声明以外的类型（如部分 v11 实现扩展的 `guild`）照样带出，会话管理按多方记下并告警。频道消息的 `groupId` 是 `{guildId}:{channelId}`，与会话 ID 的目标段一致。
 
-平台提示（`agent:prompt` 贡献点的 turn-hint 锚位）：会话 ID 里的类型在本插件的声明里是多方（群与频道）时，提醒模型这一轮的历史里有多位群友的发言、留意时间先后；私聊不给。
+平台提示（`agent:prompt` 贡献点的 turn-hint 锚位）：会话 ID 里的类型在本插件的声明里是多方（群与频道）时，提醒模型这一轮的历史里有多位群友的发言、留意时间先后；私聊不给。这一轮有一条输入是戳一戳或群文件上传转成的入站时，另说明这条消息是平台事件、不是用户输入的文字：按输入自带的事件种类（`noticeType` 为 `poke`、`group_upload`）认，不看正文，群友打出的像事件的文字不算。
 
 ## 多实例与路由
 

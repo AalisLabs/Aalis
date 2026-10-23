@@ -73,9 +73,10 @@ export default definePlugin({
      不重收录，免得同一条留两份。条目按会话与时间戳认：存档给同一会话的出站记录错开了时间戳，但别的写入方（如 agent
      存她的回复）按自己的时钟写，两条在同一毫秒落库时，换掉其中一条会连带删掉另一条的向量（回滚删向量同样如此）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
-   - 将用户最新消息 embed 为查询向量
+   - 检索词取这一轮各条输入归档的正文（与入库时同一份正文，带发送者前缀与附件描述）按先后相接，embed 为查询向量；
+     相接之后超过 4000 字时从最早的一条丢起；这一轮的输入都没有归档（没装存档插件、空闲开话题）时不检索
    - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；
-     `crossSessionMode: user` 时，当前用户本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
+     `crossSessionMode: user` 时，这一轮各条输入的发言者本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；
      否则只注入命中本身。结果与当前会话已有内容去重。指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务、

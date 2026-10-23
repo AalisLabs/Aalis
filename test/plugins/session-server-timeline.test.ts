@@ -155,7 +155,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
 
   let turns = 0;
   /**
-   * 开一轮：agent:input:before 的默认动作一直挂着，用例经 inside 把动作放进这一轮的异步上下文里执行，
+   * 开一轮：agent:turn:before 的默认动作一直挂着，用例经 inside 把动作放进这一轮的异步上下文里执行，
    * finish 发 agent:turn:after 收尾；finish('blocked') 是被下游拦下的一轮，不发 turn:after。
    */
   const openTurn = (sessionId: string, from: Partial<IncomingMessage> = {}) => {
@@ -171,25 +171,35 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     const jobs: Array<{ run: () => unknown; done: ReturnType<typeof deferred<void>> }> = [];
     let wake = deferred();
     let finished: { outcome: Outcome | 'blocked' } | undefined;
-    const ended = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      for (;;) {
-        for (let job = jobs.shift(); job; job = jobs.shift()) {
-          try {
-            await job.run();
-            job.done.resolve(undefined);
-          } catch (err) {
-            job.done.reject(err);
+    const ended = host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        for (;;) {
+          for (let job = jobs.shift(); job; job = jobs.shift()) {
+            try {
+              await job.run();
+              job.done.resolve(undefined);
+            } catch (err) {
+              job.done.reject(err);
+            }
           }
+          if (finished) break;
+          await wake.promise;
+          wake = deferred();
         }
-        if (finished) break;
-        await wake.promise;
-        wake = deferred();
-      }
-      const { outcome } = finished;
-      if (outcome !== 'blocked') {
-        await host.hooks.use.run('agent:turn:after', { message, reply: '', outcome, sessionId, turnId, metadata: {} });
-      }
-    });
+        const { outcome } = finished;
+        if (outcome !== 'blocked') {
+          await host.hooks.use.run('agent:turn:after', {
+            inputs: [{ message }],
+            reply: '',
+            outcome,
+            sessionId,
+            turnId,
+          });
+        }
+      },
+    );
     const inside = (run: () => unknown) => {
       const done = deferred();
       jobs.push({ run, done });
@@ -223,8 +233,8 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
       turnId,
       message,
       inside,
-      /** agent 在回合开头归档这条提问 */
-      ask: () => inside(() => archive.archiveIncoming(message)),
+      /** agent 在回合开头归档这条提问，带这一轮的回合 id 与进入方式 */
+      ask: () => inside(() => archive.archiveIncoming(message, { turnId, entry: 'opened' })),
       text: (contentDelta: string) => stream({ contentDelta }),
       think: (reasoningDelta: string) => stream({ reasoningDelta }),
       streamDone: (toolLimitReached = false) => stream({ done: true, toolLimitReached }),
@@ -329,7 +339,7 @@ describe('订阅与快照', () => {
     const sub = await c.subscribe(s.id);
     expect(sub.snapshot.epoch).toEqual(expect.any(String));
     expect(sub.snapshot.session.id).toBe(s.id);
-    // 在途回合落了库的工具调用组不进历史，由在途条目给出
+    // 在途回合落了库的工具调用组不进历史，由在途条目给出；带着回合 id 的提问照旧由历史给出，排在回合条目之前
     expect(sub.snapshot.items.map(shape)).toEqual([
       expect.objectContaining({ kind: 'user-message', text: '第一问' }),
       { kind: 'agent-message', text: '第一答', attachments: [] },

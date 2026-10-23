@@ -19,6 +19,7 @@ import { type Message, outboundMarkerMessage } from '../../packages/schema-messa
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 不是她回复的出站文字（指令的回复、宿主提示）在送达之后按 outboundMarkerMessage 记成事件标记。它不是对话内容：
@@ -134,7 +135,11 @@ describe('memory-vector：召回的扩窗不带出事件标记', () => {
       { role: 'system', content: '人设' },
       { role: 'user', content: '上次说了什么' },
     ];
-    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:10000:private:30002' });
+    await assemblePromptContributions(
+      assembly,
+      { messages, sessionId: 'onebot:10000:private:30002' },
+      inputFromLastUser(messages),
+    );
     const block = String(
       messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))?.content ?? '',
     );

@@ -11,6 +11,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 import { toolContext } from '../fixtures/tool-call.js';
+import { turnInput } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 关系图范围（user-relation 的 recallScope，可按会话设）：为「仅本会话」时，关系图注入跳过全局热点与跨会话事件（别的会话里
@@ -81,13 +82,9 @@ async function inject(pluginConfig: Record<string, unknown> = {}, sessions?: Rec
     { role: 'system', content: '人设' },
     { role: 'user', content: '你好', metadata: { groupId: '20001', sessionType: 'group' } },
   ];
-  await assemblePromptContributions(host, {
-    messages,
-    sessionId: CUR,
-    userId: 'u1',
-    platform: 'onebot',
-    triggerType: 'direct',
-  });
+  await assemblePromptContributions(host, { messages, sessionId: CUR, platform: 'onebot' }, [
+    turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' }),
+  ]);
   const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
   return typeof block?.content === 'string' ? block.content : '';
 }

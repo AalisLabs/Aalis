@@ -140,6 +140,9 @@ interface FileEntry extends FileMeta {
   metaUri: string;
 }
 
+/** 处理过的文件附件改写成的引用的前缀，后接文件 ID：预处理器写，本轮新上传的清单按它认 */
+const FILE_REF = 'aalis-file://';
+
 // ===== 工具名常量（硬编码，避免运行期改名） =====
 
 const TOOL_READ = 'read_uploaded_file';
@@ -771,10 +774,10 @@ async function run(caps: Caps): Promise<void> {
       if (att.kind !== 'file') continue;
       const fileName = sanitizeFileName(att.name ?? `file-${i}`);
       try {
-        // 幂等：data 字段是 aalis-file:// 引用 ⇒ 此前已处理；绝不再走 dataUrlToBuffer，
+        // 幂等：data 字段是文件引用 ⇒ 此前已处理；绝不再走 dataUrlToBuffer，
         // 否则会抛 "Invalid data URL" 把上次成功生成的描述覆盖成「处理失败」。
-        if (att.data.startsWith('aalis-file://')) {
-          const id = att.data.slice('aalis-file://'.length);
+        if (att.data.startsWith(FILE_REF)) {
+          const id = att.data.slice(FILE_REF.length);
           let entry = index.get(id);
           // 索引缺失时尝试从磁盘恢复一次（restoreIndex 后插件实例 swap、index 重建等场景）
           if (!entry) {
@@ -812,7 +815,7 @@ async function run(caps: Caps): Promise<void> {
         own.set(i, await buildAttachmentDesc(entry));
         // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer。按写回这一刻的附件展开：存盘期间
         // 并发的媒体识别可能已补上 mimeType，展开开头取的 att 会把它丢掉
-        msg.attachments[i] = { ...msg.attachments[i], data: `aalis-file://${entry.id}` };
+        msg.attachments[i] = { ...msg.attachments[i], data: `${FILE_REF}${entry.id}` };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         logger.use.warn(`文件处理失败 (${fileName}):`, errMsg);
@@ -853,17 +856,15 @@ async function run(caps: Caps): Promise<void> {
   // ===== 注册到 agent =====
   agent.use.registerPreprocessor('file-reader', preprocessFiles);
 
-  // ===== 历史 / 本轮新上传文件清单注入（agent:llm:before） =====
+  // ===== 历史 / 本轮新上传文件清单注入（agent:prompt 贡献） =====
   // 两种场景，互斥注入一条 system 提示，避免「上传完下一轮就忘」 或「本轮新文件
   // 与历史文件混淆」：
   //   - 本轮**无**新上传 + 会话有历史文件 → 注入「历史文件清单」（原行为）
   //   - 本轮**有**新上传                  → 注入「⭐ 本轮新上传 N 个文件 + 历史
   //                                          还有 M 个可用」清单，让 LLM 一眼区
   //                                          分本轮 vs 历史
-  // 判定「本轮无新上传」：扫描最后一条 user message content 是否出现由
-  // preprocessFiles 生成的 `[文件:` 前缀；若有说明本轮 user message 已经把
-  // 新文件描述带上了。本轮新上传的 ID 用正则 `\(ID:\s*([0-9a-fA-F]+)` 从这条
-  // user message 中提取（兼容 `(ID: xxx)` 和 `(ID: xxx，N KB)` 两种格式）。
+  // 本轮新上传：这一轮各条输入的附件里 preprocessFiles 写下的文件引用（FILE_REF 加 ID；视图的输入是处理过的那条），
+  // 是本会话已知文件的就是；正文里写的文件描述不算。
   if (historyHintEnabled) {
     contributions.use.contribute('agent:prompt', {
       id: HISTORY_HINT_SOURCE,
@@ -874,29 +875,17 @@ async function run(caps: Caps): Promise<void> {
           .filter(e => e.sessionId === view.sessionId)
           .sort((a, b) => b.uploadedAt - a.uploadedAt);
         if (files.length === 0) return null;
-        // 取最后一条 user message
-        let lastUserContent = '';
-        for (let i = view.messages.length - 1; i >= 0; i--) {
-          if (view.messages[i].role === 'user') {
-            const c = view.messages[i].content;
-            lastUserContent = typeof c === 'string' ? c : JSON.stringify(c);
-            break;
-          }
-        }
-        const hasNewUpload = lastUserContent.includes('[文件:');
+        const turnIds = new Set(
+          view.inputs.flatMap(({ message }) =>
+            (message.attachments ?? []).flatMap(({ data }) =>
+              data.startsWith(FILE_REF) ? [data.slice(FILE_REF.length)] : [],
+            ),
+          ),
+        );
+        const turnFiles = files.filter(f => turnIds.has(f.id));
+        const hasNewUpload = turnFiles.length > 0;
         let block: string;
         if (hasNewUpload) {
-          // 提取本轮新上传文件 ID
-          const turnIds = new Set<string>();
-          const idRegex = /\(ID:\s*([0-9a-fA-F]+)/g;
-          let m: RegExpExecArray | null = idRegex.exec(lastUserContent);
-          while (m !== null) {
-            turnIds.add(m[1]);
-            m = idRegex.exec(lastUserContent);
-          }
-          const turnFiles = files.filter(f => turnIds.has(f.id));
-          // user message 含 `[文件:` 但提不出已知 ID（异常情况）→ 不注入
-          if (turnFiles.length === 0) return null;
           const turnLines = turnFiles.map(
             f =>
               `- ${f.name} (ID: ${f.id}, ${f.mimeType}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,

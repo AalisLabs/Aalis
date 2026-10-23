@@ -4,6 +4,7 @@ import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
+import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import { type CheckpointConfig, configSchema } from './config.js';
 
 /**
@@ -49,7 +50,7 @@ export interface TurnManifest {
   startedAt: number;
   endedAt?: number;
   files: CheckpointFileRecord[];
-  /** 这一轮对话消息的时间戳，rollbackWithChat 据此删除消息与向量条目 */
+  /** 这一轮对话消息的时间戳（只记属于这一轮的，见 commitTurn），rollbackWithChat 据此删除消息与向量条目 */
   messageTimestamps?: number[];
 }
 
@@ -88,7 +89,7 @@ interface ServiceConfig {
  * 协作模型：
  * - plugin-storage-local 在执行 writeFile/delete/rename 之前先探测 checkpoint 服务，
  *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
- * - 本插件在 `agent:input:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
+ * - 本插件在 `agent:turn:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
  *   记进这一轮，回合跑完（含被下游拦下、出错）即提交。
  * - 命令与外部工具的副作用不经存储，不在本服务保护范围内（回滚对话框写明）。
  */
@@ -146,7 +147,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     }
   }
 
-  /** 提交一个回合：补 endedAt + 抓消息时间戳 + 落盘 manifest + 触发 GC。无改动则跳过。 */
+  /**
+   * 提交一个回合：补 endedAt + 抓消息时间戳 + 落盘 manifest + 触发 GC。无改动则跳过。
+   * 消息只记时间窗里属于这一轮的：元数据的回合 id 是这一轮的（输入、工具调用组、回复、带回合 id 的出站记录与投递失败记录，
+   * 经工具发出的也带它）。同一时间窗里别的来源的输入与别的回合的产出不记，回滚时不连带删掉
+   */
   private async commitTurn(turn: ActiveTurn): Promise<void> {
     const m = turn.manifest;
     m.endedAt = Date.now();
@@ -156,7 +161,8 @@ export class CheckpointServiceImpl implements CheckpointService {
       try {
         // 宽松边界 200ms，用于容纳 archiveIncoming/saveMessage 时钟偏差
         const msgs = await memory.getMessagesBySessionRange(m.sessionId, m.startedAt - 200, m.endedAt + 200);
-        m.messageTimestamps = msgs.map(msg => msg.timestamp).filter((t): t is number => typeof t === 'number');
+        const ours = msgs.filter(({ metadata }) => metadata?.[WellKnownMetadataKeys.TurnId] === m.turnId);
+        m.messageTimestamps = ours.map(msg => msg.timestamp).filter((t): t is number => typeof t === 'number');
       } catch (err) {
         this.logger.warn(`抓取本轮消息时间戳失败: ${(err as Error).message}`);
       }

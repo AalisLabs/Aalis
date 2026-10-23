@@ -153,21 +153,24 @@ async function setup({
     sessionId,
     platform: sessionId.startsWith('onebot:') ? 'onebot' : 'webui',
   });
-  /** 按 agent 的顺序跑一轮：agent:input:before 的默认动作里跑完回合，最后发 agent:turn:after */
+  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里跑完回合，最后发 agent:turn:after */
   const turn = async (sessionId: string, outcome: Outcome = 'replied', during?: () => Promise<void>) => {
     const message = messageOf(sessionId);
     const turnId = `t${++turns}`;
-    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      await during?.();
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: outcome === 'replied' ? '<回复>' : '',
-        outcome,
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        await during?.();
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: outcome === 'replied' ? '<回复>' : '',
+          outcome,
+          sessionId,
+          turnId,
+        });
+      },
+    );
   };
 
   return { app, host, store, sm, files, warns, turn, server: () => host.sessionProtocol.use };

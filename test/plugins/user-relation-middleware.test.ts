@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { TurnInput } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { App, logger } from '../../packages/core/src/index.js';
@@ -9,6 +10,7 @@ import { RelationService } from '../../packages/plugin-user-relation/src/service
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { turnInput } from '../fixtures/turn-input.js';
 
 /**
  * 登记贡献（middleware）与收集贡献（组装器）共用宿主根激活绑定的 contributions + logger，
@@ -34,9 +36,8 @@ async function runMiddleware(
   host: Host,
   service: RelationService,
   opts: {
-    userId?: string;
-    platform?: string;
-    triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
+    /** 这一轮的输入 */
+    inputs: TurnInput[];
     initialMessages?: Message[];
     maxDepth?: number;
   },
@@ -63,18 +64,20 @@ async function runMiddleware(
       { role: 'user' as const, content: '你好', metadata: { groupId: 'g1', sessionType: 'group' } },
     ],
     sessionId: 'sess1',
-    userId: opts.userId,
-    platform: opts.platform,
-    triggerType: opts.triggerType,
+    platform: 'onebot',
   };
-  await assemblePromptContributions(host, data);
+  await assemblePromptContributions(host, data, opts.inputs);
   return data.messages;
 }
 
+/** onebot 上 userId 说的一句，triggerType 是触发判定写的方式 */
+const said = (userId: string, triggerType: TurnInput['message']['triggerType']) =>
+  turnInput({ userId, platform: 'onebot', triggerType });
+
 describe('plugin-user-relation: middleware', () => {
-  it('无 userId / platform → 不注入', async () => {
+  it('没有 userId → 不注入', async () => {
     const { host, service } = await setup();
-    const messages = await runMiddleware(host, service, { triggerType: 'direct' });
+    const messages = await runMiddleware(host, service, { inputs: [turnInput({ triggerType: 'direct' })] });
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
@@ -86,7 +89,7 @@ describe('plugin-user-relation: middleware', () => {
     vi.spyOn(host.logger.use, 'warn').mockImplementation((...args: unknown[]) => {
       warns.push(args);
     });
-    const messages = await runMiddleware(host, service, { userId: 'u1', platform: 'onebot', triggerType: 'direct' });
+    const messages = await runMiddleware(host, service, { inputs: [said('u1', 'direct')] });
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
     expect(
       warns.some(
@@ -101,9 +104,7 @@ describe('plugin-user-relation: middleware', () => {
     await service.observePerson('onebot', 'u1', 'Alice');
     await service.createEvent({ title: '事件', evidence: [] });
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'interval',
+      inputs: [said('u1', 'interval')],
     });
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
@@ -119,15 +120,29 @@ describe('plugin-user-relation: middleware', () => {
       sentiment: 'positive',
     });
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
+      inputs: [said('u1', 'direct')],
     });
     const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     expect(injected).toBeDefined();
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('讨论直播');
     expect(content).toContain('initiator');
+  });
+
+  it('一轮两条点名的输入：两位的子图合在一块里', async () => {
+    const { host, service } = await setup();
+    await service.observePerson('onebot', 'u1', 'Alice');
+    await service.observePerson('onebot', 'u2', 'Bob');
+    const ev1 = await service.createEvent({ title: '讨论直播', evidence: [] });
+    const ev2 = await service.createEvent({ title: '组队开黑', evidence: [] });
+    await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ev1.id, role: 'initiator' });
+    await service.addPersonEventEdge({ fromPersonId: 'onebot:u2', toEventId: ev2.id, role: 'initiator' });
+    const messages = await runMiddleware(host, service, { inputs: [said('u1', 'direct'), said('u2', 'immediate')] });
+    const injected = messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
+    expect(injected).toHaveLength(1);
+    const content = String(injected[0]?.content);
+    expect(content).toContain('讨论直播');
+    expect(content).toContain('组队开黑');
   });
 
   it('用户有人-人关系 → 注入关系列表', async () => {
@@ -140,9 +155,7 @@ describe('plugin-user-relation: middleware', () => {
       relationType: 'friend',
     });
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'immediate',
+      inputs: [said('u1', 'immediate')],
     });
     const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     expect(injected).toBeDefined();
@@ -168,9 +181,7 @@ describe('plugin-user-relation: middleware', () => {
       role: 'enthusiast',
     });
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
+      inputs: [said('u1', 'direct')],
     });
     const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     const content = typeof injected?.content === 'string' ? injected.content : '';
@@ -194,9 +205,7 @@ describe('plugin-user-relation: middleware', () => {
       relationType: 'part-of',
     });
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
+      inputs: [said('u1', 'direct')],
       maxDepth: 2,
     });
     const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
@@ -230,9 +239,7 @@ describe('plugin-user-relation: middleware', () => {
     }
 
     const messages = await runMiddleware(host, service, {
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
+      inputs: [said('u1', 'direct')],
       maxDepth: 2,
     });
     const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));

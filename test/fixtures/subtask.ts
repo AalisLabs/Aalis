@@ -13,7 +13,7 @@ import { type RequestDraft, toolContext } from './tool-call.js';
 // 子任务插件的测试台：真的会话管理与会话设置（startSettings）装上子任务插件；工具服务的替身记下登记的工具（含风险与确认的
 // 声明），按名字调处理器；zz-agent 是声明 SCHEMA 那几项的 agent 替身（模型一项的全局层是本插件偏好），agent 服务的替身实现
 // assignModel：与 agent 同一做法，经 zz-agent 的读取器写本会话层，可让它抛错。记下派发与追问的入站消息，派发那一刻读一次子会话
-// 的设置。回合按 agent 的顺序在 agent:input:before 的 next 里跑完、发 agent:turn:after。
+// 的设置。回合按 agent 的顺序在 agent:turn:before 的 next 里跑完、发 agent:turn:after。
 // ════════════════════════════════════════════════════════════
 
 type Handler = RegisteredTool['handler'];
@@ -97,7 +97,7 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
 
   let turns = 0;
   /**
-   * 一个会话跑一轮：按 agent 的顺序，整轮在 agent:input:before 的 next 里，结束时发 agent:turn:after。during 在这一轮结束前跑；
+   * 一个会话跑一轮：按 agent 的顺序，整轮在 agent:turn:before 的 next 里，结束时发 agent:turn:after。during 在这一轮结束前跑；
    * 返回这一轮的默认动作有没有执行（被中间件拦下时为 false）
    */
   const turn = async (
@@ -108,19 +108,22 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
     const message = { content: '<任务>', sessionId, platform: 'webui', source };
     const turnId = `t${++turns}`;
     let ran = false;
-    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      ran = true;
-      await during?.();
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: outcome === 'replied' ? '<结果>' : '',
-        outcome,
-        ...(error === undefined ? {} : { error }),
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        ran = true;
+        await during?.();
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: outcome === 'replied' ? '<结果>' : '',
+          outcome,
+          ...(error === undefined ? {} : { error }),
+          sessionId,
+          turnId,
+        });
+      },
+    );
     return ran;
   };
 

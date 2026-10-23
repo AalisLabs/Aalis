@@ -92,28 +92,31 @@ async function setup(
   // 回合 id 每轮不同，与 agent 一致
   let turns = 0;
 
-  /** 按 agent 的顺序跑一轮：agent:input:before 的默认动作里跑完回合，最后发 agent:turn:after */
+  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里跑完回合，最后发 agent:turn:after */
   const turn = async (sessionId: string, during?: () => Promise<void> | void, outcome: Outcome = 'replied') => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'onebot' };
     const turnId = `t${++turns}`;
-    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      await during?.();
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: outcome === 'replied' ? '<回复>' : '',
-        outcome,
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        await during?.();
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: outcome === 'replied' ? '<回复>' : '',
+          outcome,
+          sessionId,
+          turnId,
+        });
+      },
+    );
   };
 
-  /** 开一轮、回合体由用例控制（不发 agent:turn:after：收口只看输入中间件的 finally） */
+  /** 开一轮、回合体由用例控制（不发 agent:turn:after：收口只看回合开始中间件的 finally） */
   const running = (sessionId: string, body: () => Promise<void>) =>
     host.hooks.use.run(
-      'agent:input:before',
-      { message: { content: '<占位>', sessionId, platform: 'onebot' }, turnId: `t${++turns}`, metadata: {} },
+      'agent:turn:before',
+      { turnId: `t${++turns}`, sessionId, inputs: [{ message: { content: '<占位>', sessionId, platform: 'onebot' } }] },
       body,
     );
 
@@ -593,19 +596,19 @@ describe('状态在回合开始时翻 active', () => {
     expect(sm.getSession(owner.id)?.status).toBe('completed');
   });
 
-  it('后面的输入中间件不调 next() 或抛错：房间都不停在 active', async () => {
+  it('后面的回合开始中间件不调 next() 或抛错：房间都不停在 active', async () => {
     const { sm, host, turn } = await setup();
     await sm.ensureSession(GROUP, { status: 'waiting' });
     const seen: (string | undefined)[] = [];
 
-    const swallow = host.hooks.use.middleware('agent:input:before', async () => {
+    const swallow = host.hooks.use.middleware('agent:turn:before', async () => {
       seen.push(sm.getSession(GROUP)?.status);
     });
     await turn(GROUP);
     swallow();
     expect(sm.getSession(GROUP)?.status, '被拦下的回合不该停在进行中').not.toBe('active');
 
-    host.hooks.use.middleware('agent:input:before', async () => {
+    host.hooks.use.middleware('agent:turn:before', async () => {
       seen.push(sm.getSession(GROUP)?.status);
       throw new Error('<预处理失败>');
     });

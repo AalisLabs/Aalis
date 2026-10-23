@@ -8,6 +8,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { turnInput } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile 的 agent:prompt 贡献 build（anchor='turn-context'，多块返回）
@@ -92,14 +93,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
 
     const messages = baseMessages();
     reads.count = 0; // 只统计本次组装期间的读取
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-      dryRun: true,
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot', dryRun: true }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' }),
+    ]);
     expect(injectedBlocks(messages)).toHaveLength(0);
     expect(messages).toHaveLength(3);
     // dryRun 的存在理由是跳过昂贵的档案加载——不止「没注入」，读取本身必须为零
@@ -115,13 +111,10 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType, // undefined 走插件内 `?? 'direct'` 默认分支
-    });
+    // triggerType 为 undefined 时走插件内 `= 'direct'` 的默认
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType }),
+    ]);
 
     const blocks = injectedBlocks(messages);
     expect(blocks).toHaveLength(1);
@@ -156,13 +149,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     const messages = baseMessages([
       { role: 'user', content: '我也在', metadata: { userId: 'u2', platform: 'onebot', nickname: '小二' } },
     ]);
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' }),
+    ]);
 
     const blocks = injectedBlocks(messages);
     expect(blocks).toHaveLength(2);
@@ -188,18 +177,41 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(messages[first + 2], '两块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
   });
 
+  it('一轮两条点名的输入：两位各给完整档案，在场参与者摘要里不再有他们', async () => {
+    const { host, memory } = await setup({ maxOtherParticipants: 3 });
+    await seedPrimaryProfile(memory);
+    await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
+      facts: [makeFact('f201', '常在深夜发言', '其他')],
+      relationScore: 3,
+      interactionCount: 2,
+      lastInteractionAt: TS,
+      updatedAt: TS,
+    });
+
+    const messages = baseMessages([
+      { role: 'user', content: '我也在', metadata: { userId: 'u2', platform: 'onebot', nickname: '小二' } },
+    ]);
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', triggerType: 'direct' }),
+      turnInput({ userId: 'u2', triggerType: 'immediate' }),
+    ]);
+
+    const contents = injectedBlocks(messages).map(b => String(b.content));
+    expect(contents).toHaveLength(2);
+    expect(contents[0]).toContain('关于当前对话者（u1）的已知事实');
+    expect(contents[0]).toContain('喜欢养猫');
+    expect(contents[1]).toContain('关于当前对话者（u2）的已知事实');
+    expect(contents[1]).toContain('常在深夜发言');
+  });
+
   it('triggerType=interval：不注入主发言者完整档案，改为「在场参与者」compact 摘要', async () => {
     const { host, memory } = await setup({ maxOtherParticipants: 3 });
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'interval',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'interval' }),
+    ]);
 
     const blocks = injectedBlocks(messages);
     expect(blocks).toHaveLength(1);
@@ -217,26 +229,18 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'interval',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'interval' }),
+    ]);
     expect(injectedBlocks(messages)).toHaveLength(0);
   });
 
   it('无任何档案：build 返回 null，不注入', async () => {
     const { host } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' }),
+    ]);
     expect(injectedBlocks(messages)).toHaveLength(0);
     expect(messages).toHaveLength(3);
   });
@@ -261,13 +265,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     });
 
     const messages = baseMessages();
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' }),
+    ]);
     expect(injectedBlocks(messages)).toHaveLength(0);
   });
 
@@ -289,12 +289,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       { role: 'system', content: 'persona' },
       { role: 'user', content: '（群里有人闲聊）' },
     ];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      platform: 'onebot',
-      triggerType: 'idle',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ platform: 'onebot', triggerType: 'idle' }),
+    ]);
 
     const blocks = injectedBlocks(messages);
     expect(blocks).toHaveLength(1);
@@ -325,12 +322,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       { role: 'system', content: 'persona' },
       { role: 'user', content: '（群里有人闲聊）' },
     ];
-    await assemblePromptContributions(host, {
-      messages,
-      sessionId: 's1',
-      platform: 'onebot',
-      triggerType: 'idle',
-    });
+    await assemblePromptContributions(host, { messages, sessionId: 's1', platform: 'onebot' }, [
+      turnInput({ platform: 'onebot', triggerType: 'idle' }),
+    ]);
 
     const content = String(injectedBlocks(messages)[0]?.content);
     expect(content).toContain('常在深夜发言');
@@ -343,15 +337,10 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    const view = {
-      messages,
-      sessionId: 's1',
-      userId: 'u1',
-      platform: 'onebot',
-      triggerType: 'direct' as const,
-    };
-    await assemblePromptContributions(host, view);
-    await assemblePromptContributions(host, view);
+    const data = { messages, sessionId: 's1', platform: 'onebot' };
+    const inputs = [turnInput({ userId: 'u1', platform: 'onebot', triggerType: 'direct' })];
+    await assemblePromptContributions(host, data, inputs);
+    await assemblePromptContributions(host, data, inputs);
     expect(injectedBlocks(messages)).toHaveLength(1);
   });
 });

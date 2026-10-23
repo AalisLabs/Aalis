@@ -405,17 +405,20 @@ describe('会话协议按全局默认层的语言渲染', () => {
     const { id: sessionId } = await host.sessionManager.use.createSession({ name: '<会话>' });
     const message: IncomingMessage = { content: '<提问>', sessionId, platform: 'webui' };
     const turnId = 'zz-turn';
-    await host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
-      await host.hooks.use.run('agent:turn:after', {
-        message,
-        reply: '',
-        outcome: 'error',
-        error: t('down'),
-        sessionId,
-        turnId,
-        metadata: {},
-      });
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        await host.hooks.use.run('agent:turn:after', {
+          inputs: [{ message }],
+          reply: '',
+          outcome: 'error',
+          error: t('down'),
+          sessionId,
+          turnId,
+        });
+      },
+    );
     const c = await connect();
     await vi.waitFor(async () => expect((await c.summary(sessionId)).reason).toBe(expected));
   });
@@ -498,17 +501,21 @@ describe('会话协议按全局默认层的语言渲染', () => {
     const late = await connect();
     let snapshot: Awaited<ReturnType<Client['subscribe']>>['snapshot'] | undefined;
     const message = { content: '<提问>', sessionId: ROOM, platform: 'onebot', userId: '30001' };
-    await host.hooks.use.run('agent:input:before', { message, turnId: 'turn-1', metadata: {} }, async () => {
-      await host.events.use.emit('tool:execute', {
-        sessionId: ROOM,
-        turnId: 'turn-1',
-        callId: 'c1',
-        toolName: 'exec',
-        args: { x: FORGED },
-        phase: 'start',
-      });
-      snapshot = (await late.subscribe(ROOM)).snapshot;
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId: 'turn-1', sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        await host.events.use.emit('tool:execute', {
+          sessionId: ROOM,
+          turnId: 'turn-1',
+          callId: 'c1',
+          toolName: 'exec',
+          args: { x: FORGED },
+          phase: 'start',
+        });
+        snapshot = (await late.subscribe(ROOM)).snapshot;
+      },
+    );
     await host.events.use.emit('inbound:message:archived', {
       sessionId: ROOM,
       incoming: message,

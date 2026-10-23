@@ -1,5 +1,11 @@
 import { Buffer } from 'node:buffer';
-import { type AgentService, agent as agentService, type PreprocessorFn, type TokenUsageEvent } from '@aalis/api-agent';
+import {
+  type AgentService,
+  agent as agentService,
+  type PreprocessorFn,
+  type TokenUsageEvent,
+  type TurnInput,
+} from '@aalis/api-agent';
 import { authority as authorityService, originTurnOf } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
@@ -594,7 +600,7 @@ class DefaultAgent implements AgentService {
     if (prev) prev.controller.abort();
 
     const controller = new AbortController();
-    // 回合 id：这一轮的入站钩子、流式片段、工具调用、用量与回合结束都带它，停止键也能按它只停这一轮
+    // 回合 id：这一轮的回合开始钩子、输入的归档、流式片段、工具调用、用量与回合结束都带它，停止键也能按它只停这一轮
     const turnId = crypto.randomUUID();
     this.activeControllers.set(lane, { controller, turnId });
 
@@ -622,217 +628,593 @@ class DefaultAgent implements AgentService {
     lane: string,
     turnId: string,
   ): Promise<void> {
-    // Hook: agent:input:before — 插件可以修改或拦截消息
-    // 中间件不调用 next() 即可中断整个流程（包括 LLM 调用）
-    const msgHookData: HookContextMap['agent:input:before'] = {
-      message: incoming,
-      turnId,
-      metadata: {},
-    };
+    // Hook: agent:input:before — 每条输入一次（预处理器挂在这里），中间件可以改写这条；不调 next() 即丢弃它，不进一轮
+    const inputData: HookContextMap['agent:input:before'] = { message: incoming };
+    let started = false;
+    await this.caps.hooks.use.run('agent:input:before', inputData, async () => {
+      // 这一轮的输入：通道按 lane 分，一轮只有这一条
+      const inputs: TurnInput[] = [{ message: inputData.message }];
+      // Hook: agent:turn:before — 一轮开始；中间件不调用 next() 即拦下这一轮（不归档、不调模型、不发 agent:turn:after）
+      await this.caps.hooks.use.run(
+        'agent:turn:before',
+        { turnId, sessionId: inputData.message.sessionId, inputs },
+        async () => {
+          started = true;
+          await this.runTurn(inputs, signal, lane, turnId);
+        },
+      );
+    });
+    // 输入被丢掉（如流控缓冲）或这一轮被拦下（如已删子会话的消息），通知前端结束 loading
+    if (!started) {
+      await this.caps.events.use.emit('outbound:stream', {
+        sessionId: inputData.message.sessionId,
+        turnId,
+        platform: inputData.message.platform,
+        done: true,
+      });
+    }
+  }
 
-    let handled = false;
+  /** agent:turn:before 的默认动作：先按先后归档这一轮的输入，再跑这一轮 */
+  private async runTurn(inputs: TurnInput[], signal: AbortSignal, lane: string, turnId: string): Promise<void> {
+    const [input] = inputs;
+    const incoming = input.message;
+    const reportOnly = incoming.hostNotice?.reportOnly === true;
+    const noticeLinks = reportOnly ? (incoming.content.match(NOTICE_URL) ?? []) : [];
 
-    await this.caps.hooks.use.run('agent:input:before', msgHookData, async () => {
-      handled = true;
-      // ===== defaultAction: 全部消息处理逻辑在此 =====
-      // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
-      incoming = msgHookData.message;
-      const reportOnly = incoming.hostNotice?.reportOnly === true;
-      const noticeLinks = reportOnly ? (incoming.content.match(NOTICE_URL) ?? []) : [];
+    input.archived = await this.archiveIncomingMessageInOrder(lane, incoming, turnId);
 
-      const archivedIncoming = await this.archiveIncomingMessageInOrder(lane, incoming);
+    // 这一轮按会话读本插件的四项（下一轮再读，改了不必重载）
+    const settings = this.fields.get(incoming.sessionId, { platform: incoming.platform });
+    const resolved = this.resolveLLM(settings.llm);
+    if (!resolved) {
+      const why = this.explainLLMFailure(settings.llm);
+      this.logger.warn(`LLM 解析失败，无法处理消息：${toSource(why)}`);
+      if (!reportOnly) {
+        const text = t('systemNotice', { why });
+        await this.dispatchOutbound({
+          content: toSource(text),
+          text,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          source: 'system',
+          turnId,
+        });
+      }
+      await this.caps.hooks.use.run('agent:turn:after', {
+        inputs,
+        reply: '',
+        outcome: signal.aborted ? 'aborted' : 'error',
+        ...(signal.aborted ? {} : { error: why }),
+        sessionId: incoming.sessionId,
+        turnId,
+      });
+      return;
+    }
+    const llm = resolved.use;
+    // 这一轮的主模型能不能亲眼看图：按模型服务登记的能力（端点报告或单模型能力覆盖），
+    // 工具上下文与 agent:llm:before 同一个值
+    const acceptsImages = llm.capabilities.includes(LLMCapabilities.Vision);
 
-      // 这一轮按会话读本插件的四项（下一轮再读，改了不必重载）
-      const settings = this.fields.get(incoming.sessionId, { platform: incoming.platform });
-      const resolved = this.resolveLLM(settings.llm);
-      if (!resolved) {
-        const why = this.explainLLMFailure(settings.llm);
-        this.logger.warn(`LLM 解析失败，无法处理消息：${toSource(why)}`);
-        if (!reportOnly) {
-          const text = t('systemNotice', { why });
-          await this.dispatchOutbound({
-            content: toSource(text),
-            text,
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            source: 'system',
-            turnId,
+    // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
+    // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
+    // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
+    const maxTokens = getModelMaxOutput(llm);
+    const contextLength = llm.contextLength;
+    const tokenBudget = this.computeTokenBudget(contextLength, maxTokens);
+
+    // 本回合经工具循环写入 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
+    // 只用于中止日志里的条数：中止时这些已完成的工具调用记录保留不回滚（见下方 catch 分支）。
+    const turnPersistedTimestamps: number[] = [];
+
+    try {
+      const { maxToolIterations, historyLimit } = settings;
+      // 人设服务按这个会话自己读它的设置（人设、额外提示、结构化输出的两个开关）
+      const personaOpts: PersonaSessionOptions = { sessionId: incoming.sessionId, platform: incoming.platform };
+
+      // 会话的深度思考档位：当前模型有这一档才带上；没设置、模型没有这一档或不能调时不带，由模型服务按它的默认档
+      const level = settings.think;
+      const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
+
+      const built = await this.buildMessages(incoming, historyLimit, acceptsImages, personaOpts, input.archived);
+      const messages = built.messages;
+      /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
+      let historyMessages = built.historyMessages;
+      // 这个会话启用的工具分组：工具注册表按会话读它的设置，不在时没有工具
+      const enabledGroups = this.caps.tools.present
+        ? this.caps.tools.use.sessionGroups(incoming.sessionId, incoming.platform)
+        : [];
+      this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
+      const tools =
+        reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
+      const toolCtx: ToolCallRequest = {
+        // 会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext，owner 的各个身份按权限服务合成
+        // 一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，
+        // 归档与提示词贡献仍按输入本身的 userId
+        ...originTurnOf(
+          [incoming],
+          (platform, userId) => this.caps.authority.present && this.caps.authority.use.isOwner(platform, userId),
+        ),
+        // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
+        enabledGroups,
+        // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
+        acceptsImages,
+        // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
+        signal,
+        turnId,
+      };
+
+      // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
+      const originalTools = [...tools];
+
+      // Hook: agent:llm:before — 插件可以修改消息或工具列表
+      const llmBeforeData = {
+        messages,
+        tools,
+        acceptsImages,
+        sessionId: incoming.sessionId,
+        platform: incoming.platform,
+        source: incoming.source,
+      };
+      // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
+      await assemblePromptContributions(this.caps, llmBeforeData, inputs, {
+        buildTimeoutMs: this.promptBuildTimeoutMs,
+        signal,
+      });
+      await this.caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+      if (reportOnly) {
+        llmBeforeData.tools = [];
+        // 这是结果汇报，不续跑历史工具链。保留人设与对话，去掉会诱发继续查任务的工具协议。
+        llmBeforeData.messages = llmBeforeData.messages.filter(
+          message =>
+            message.role !== 'tool' &&
+            !message.toolCalls?.length &&
+            message.metadata?.injector !== WellKnownKinds.HostNotice,
+        );
+        // 放在钩子之后、消息末尾，确保裁剪仍保留本次结果及转述要求。
+        llmBeforeData.messages.push({
+          role: 'system',
+          content:
+            `[宿主通知]\n${incoming.content}${incoming.hostNotice?.untrusted ? `\n\n${incoming.hostNotice.untrusted}` : ''}\n\n` +
+            '本轮只转述以上已确认的结果。沿用当前人设和回复格式，向当前会话自然地说明结果，保留通知中的链接；' +
+            '不要调用工具、重新查询状态或继续执行，不把编号、内部流程当成回复正文，也不要编造通知里没有的细节。请给出非空回复。',
+          metadata: { injector: WellKnownKinds.HostNotice },
+        });
+      }
+
+      /** 本回合到目前为止经过了硬裁剪：首次调用的裁剪结果写回底稿，之后各次调用都在它上面追加 */
+      let turnTrimmed = false;
+      /** 首次调用的硬裁剪从底稿里去掉的历史与工具结果：之后各次调用按底稿估算没裁剪的量时补回 */
+      let trimmedFromBase = 0;
+      /** 硬裁剪这次要发出的列表，删了消息时记一行日志；untrimmedHistory 按没经过硬裁剪的列表估算 */
+      const trimForCall = (list: Message[]) => {
+        const sent = this.trimMessages(list, tokenBudget);
+        if (sent.messages.length < list.length) {
+          this.logger.info(
+            `上下文硬裁剪: session=${incoming.sessionId}, ${list.length} → ${sent.messages.length} 条消息`,
+          );
+        }
+        turnTrimmed ||= sent.trimmed;
+        return { messages: sent.messages, untrimmedHistory: estimateHistoryTokens(list) + trimmedFromBase };
+      };
+
+      // 裁剪消息以确保不超过上下文窗口；裁剪结果写回，作为之后各次调用的底稿
+      const firstSent = trimForCall(llmBeforeData.messages);
+      trimmedFromBase = firstSent.untrimmedHistory - estimateHistoryTokens(firstSent.messages);
+      llmBeforeData.messages = firstSent.messages;
+
+      // 每次模型调用之后发一次用量：拆分按这次发出的消息与工具定义估算，used 取模型服务返回的输入 token
+      const reportUsage = (sent: ReturnType<typeof trimForCall>, sentTools: ToolDefinition[], response: ChatResponse) =>
+        this.emitTokenUsage({
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          turnId,
+          contextWindow: contextLength,
+          maxTokens,
+          tokenBudget,
+          messages: sent.messages,
+          tools: sentTools,
+          trimmed: turnTrimmed,
+          untrimmedHistory: sent.untrimmedHistory,
+          historyMessages,
+          historyLimit,
+          promptTokens: response.usage?.promptTokens,
+        });
+
+      this.logger.debug(
+        `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
+          `${llmBeforeData.tools.length} 个工具, ` +
+          `maxTokens=${maxTokens}`,
+      );
+
+      const t0 = Date.now();
+      // 本轮累加的用量，用于最终 assistant 消息的 modelInfo 元数据。
+      // 注：缓存命中量（usage.cachedPromptTokens）不进这里——本对象只喂
+      // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 turnModelInfo），
+      // 加进来也不会流到下游。命中率的观测出口是 LLM 响应日志那一行。
+      const turnUsageAcc = { promptTokens: 0, completionTokens: 0 };
+      const accUsage = (u: { promptTokens?: number; completionTokens?: number } | undefined) => {
+        if (!u) return;
+        // promptTokens 语义 = "生成这条回复时的上下文大小"。工具迭代循环里每轮都把同一份
+        // （不断增长的）上下文重新发给模型，若累加会把重复发送的上下文重复计入，导致单条
+        // 回复虚高到几十万 token。故取最后一次调用的 prompt（覆盖而非累加）= 回复定稿时的真实上下文。
+        if (u.promptTokens != null) turnUsageAcc.promptTokens = u.promptTokens;
+        // completionTokens 语义 = "本回合真正新生成的输出"（含中间 reasoning / tool-call 生成
+        // 与最终回复文本），每次调用都是不重复的新输出，故逐次累加。
+        turnUsageAcc.completionTokens += u.completionTokens ?? 0;
+      };
+      const firstResult = await this.consumeStream(
+        llm,
+        {
+          messages: llmBeforeData.messages,
+          tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
+          maxTokens,
+          signal,
+          ...thinking,
+        },
+        turnId,
+        incoming.sessionId,
+        incoming.platform,
+        !reportOnly,
+      );
+      await reportUsage(firstSent, llmBeforeData.tools, firstResult);
+      accUsage(firstResult.usage);
+      /** 这一次模型回复里各工具调用在生成进度里配好的 callId 与工具名，按调用的位置 */
+      let generating = firstResult.generating;
+
+      // 维护本轮（一次完整对话回合）的统一时间线 segments：
+      // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
+      const turnSegments: ContentSegment[] = [...firstResult.segments];
+
+      let response: ChatResponse = firstResult;
+
+      this.debugLogResponse(response, Date.now() - t0);
+
+      // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
+      const llmAfterData = { response, messages: llmBeforeData.messages };
+      await this.caps.hooks.use.run('agent:llm:after', llmAfterData);
+      response = llmAfterData.response;
+
+      // 收集工具调用摘要
+      const toolCallSummaries: string[] = [];
+
+      const assistantMetadata = this.buildAssistantMetadata(incoming, turnId);
+
+      // 工具调用循环：上限没设即不限
+      let iterations = 0;
+      const withinLimit = () => maxToolIterations === undefined || iterations < maxToolIterations;
+      while (!reportOnly && response.toolCalls && response.toolCalls.length > 0 && withinLimit()) {
+        if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
+        iterations++;
+        this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
+
+        // 先解析各次调用的参数：解析不了的，写进本回合消息与存档的那次调用的 arguments 换成 {}（见 parseToolArguments）
+        const parsedCalls = response.toolCalls.map(parseToolArguments);
+        const toolCalls = parsedCalls.map(parsed => parsed.toolCall);
+
+        // 将 assistant 消息 (含 toolCalls) 加入历史
+        llmBeforeData.messages.push({
+          role: 'assistant',
+          content: response.content,
+          toolCalls,
+          reasoningContent: response.reasoningContent,
+          metadata: assistantMetadata,
+        });
+
+        const assistantToolMessage: Message = {
+          role: 'assistant',
+          content: response.content,
+          toolCalls,
+          reasoningContent: response.reasoningContent,
+          metadata: assistantMetadata,
+        };
+        const toolMessages: Message[] = [];
+
+        // 并行执行所有工具调用（互不依赖的工具无需串行等待）
+        const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
+
+        const parallelResults = await Promise.all(
+          parsedCalls.map(async (parsed, position) => {
+            const { toolCall } = parsed;
+            // 这次调用的 id：开始与结束事件、工具上下文都带它。同一位置生成参数时报过同一个工具的进度，用那时配的
+            // （会话里已有它的工具卡）；没报过的、或钩子改过调用列表而对不上的现在生成，免得接管画着别的工具的卡。
+            // 自己生成而不用模型给的 toolCall.id——模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的
+            // 两轮会撞上），而 callId 要在全局配对开始与结束。模型的 id 只留在发回模型的 tool 消息里配对调用与结果。
+            const generated = generating.get(position);
+            const callId = generated?.name === toolCall.function.name ? generated.callId : crypto.randomUUID();
+            // 会话里的工具卡跟着这一对事件走：没执行就失败的调用（参数不合法、执行前的钩子出错）同样发一对，
+            // 结束带回给模型的错误，否则那张卡一直停在生成中
+            const announce = (
+              phase: 'start' | 'end',
+              toolName: string,
+              toolArgs: Record<string, unknown>,
+              result?: string,
+            ) =>
+              this.caps.events.use.emit('tool:execute', {
+                sessionId: incoming.sessionId,
+                turnId,
+                callId,
+                platform: incoming.platform,
+                toolName,
+                args: toolArgs,
+                phase,
+                result,
+              });
+            if ('error' in parsed) {
+              // 参数不是合法 JSON 对象：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
+              // 不能按空参数执行：「无必填参数」的工具会真的空参跑一遍（副作用已发生，模型却不知情）。
+              this.logger.warn(`工具参数解析失败: ${toolCall.function.name}: ${parsed.error}`);
+              const failedAt = Date.now();
+              const result = JSON.stringify({ error: parsed.error });
+              await announce('start', toolCall.function.name, {});
+              await announce('end', toolCall.function.name, {}, result);
+              return {
+                toolCall,
+                callId,
+                result,
+                resultImages: undefined,
+                toolName: toolCall.function.name,
+                toolArgs: {},
+                startTime: failedAt,
+                endTime: failedAt,
+              };
+            }
+
+            const callCtx: ToolCallRequest = { ...toolCtx, callId };
+            // Hook: agent:tool:before — 插件可以拦截或修改工具调用
+            const toolBeforeData = { name: toolCall.function.name, args: parsed.args, toolCallContext: callCtx };
+            // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：
+            // 整批照常落定、整组落库，兄弟工具已发生的副作用不会因连坐而从历史里消失。
+            // executeDone 区分失败发生在执行前还是执行后——后者须明说「已执行」，免得模型重做有副作用的操作。
+            let executeDone = false;
+            let toolT0: number | undefined;
+            try {
+              await this.caps.hooks.use.run('agent:tool:before', toolBeforeData);
+
+              // 通知平台：工具开始执行
+              await announce('start', toolBeforeData.name, toolBeforeData.args);
+              // 紧随 start 赋值：catch 据此判断 start 已发出
+              toolT0 = Date.now();
+
+              this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${formatToolArgsForLog(toolBeforeData.args)}`);
+              const executed: ToolExecutionResult = await (this.caps.tools.present
+                ? this.caps.tools.use.execute(toolBeforeData.name, toolBeforeData.args, callCtx)
+                : Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
+              executeDone = true;
+              let result = executed.content;
+              // 工具交给主模型看的图：主模型能看图时才随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
+              // 不能看时工具硬塞的也不交，模型只读文字结果；不进钩子/事件/时间线（那些面都是文本），
+              // 也不落库（见 saveToolCallGroup）。
+              const resultImages = acceptsImages ? executed.images : undefined;
+
+              // Hook: agent:tool:after — 插件可以处理工具执行结果，写进 metadata 的随结果落库
+              const toolAfterData = {
+                name: toolBeforeData.name,
+                result,
+                toolCallContext: callCtx,
+                metadata: {} as Record<string, unknown>,
+              };
+              await this.caps.hooks.use.run('agent:tool:after', toolAfterData);
+              result = toolAfterData.result;
+
+              // 工具结果截断：按上下文窗口比例限制单条工具结果长度
+              if (result.length > toolResultMaxChars) {
+                this.logger.info(
+                  `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
+                );
+                result = truncateChars(
+                  result,
+                  toolResultMaxChars,
+                  `\n... [工具输出已截断，原始长度 ${result.length} 字符]`,
+                );
+              }
+              const toolEndTime = Date.now();
+
+              this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
+
+              // 通知平台：工具执行完成
+              await announce('end', toolBeforeData.name, toolBeforeData.args, result);
+
+              return {
+                toolCall,
+                callId,
+                result,
+                resultImages,
+                resultMetadata: toolAfterData.metadata,
+                toolName: toolBeforeData.name,
+                toolArgs: toolBeforeData.args,
+                startTime: toolT0,
+                endTime: toolEndTime,
+              };
+            } catch (err) {
+              // 执行后的失败不回退到原始结果（fail-closed）：after 钩子可能是脱敏钩子，失败时原始输出不能漏给模型
+              const reason = err instanceof Error ? err.message : String(err);
+              this.logger.warn(
+                `工具${executeDone ? '已执行，但结果处理' : '调用'}失败: ${toolBeforeData.name} (${reason})`,
+              );
+              const failedAt = Date.now();
+              const result = JSON.stringify({
+                error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
+              });
+              // 执行前就失败的补发开始，再发配对的结束（emit 恒 resolve）
+              if (toolT0 === undefined) await announce('start', toolBeforeData.name, toolBeforeData.args);
+              await announce('end', toolBeforeData.name, toolBeforeData.args, result);
+              return {
+                toolCall,
+                callId,
+                result,
+                resultImages: undefined,
+                toolName: toolBeforeData.name,
+                toolArgs: toolBeforeData.args,
+                startTime: toolT0 ?? failedAt,
+                endTime: failedAt,
+              };
+            }
+          }),
+        );
+
+        // 工具交出的图只服务紧接着的这一次请求：上一轮工具结果里的图在这里剥掉，否则多轮
+        // 工具迭代会让图片在上下文里累积（每张数百 token，且不受文本裁剪约束）。
+        for (let i = 0; i < llmBeforeData.messages.length; i++) {
+          const m = llmBeforeData.messages[i];
+          if (m.role === 'tool' && m.images) {
+            const { images: _spent, ...rest } = m;
+            llmBeforeData.messages[i] = rest;
+          }
+        }
+
+        // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
+        for (const {
+          toolCall,
+          callId,
+          result,
+          resultImages,
+          resultMetadata,
+          toolName,
+          toolArgs,
+          startTime,
+          endTime,
+        } of parallelResults) {
+          const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
+          toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
+
+          // callId 随工具结果与时间线落库：没回复就收尾的一轮只落工具调用组，历史里的工具卡靠它对回这次调用
+          const toolMessage: Message = {
+            role: 'tool',
+            content: result,
+            toolCallId: toolCall.id,
+            ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
+            metadata: {
+              ...resultMetadata,
+              [WellKnownMetadataKeys.TurnId]: turnId,
+              [WellKnownMetadataKeys.CallId]: callId,
+            },
+          };
+          llmBeforeData.messages.push(toolMessage);
+          toolMessages.push(toolMessage);
+
+          // 工具调用追加到本回合的统一时间线
+          turnSegments.push({
+            type: 'tool_call',
+            name: toolName,
+            args: toolArgs,
+            result,
+            startTime,
+            endTime,
+            callId,
           });
         }
-        await this.caps.hooks.use.run('agent:turn:after', {
-          message: incoming,
-          reply: '',
-          outcome: signal.aborted ? 'aborted' : 'error',
-          ...(signal.aborted ? {} : { error: why }),
-          sessionId: incoming.sessionId,
-          turnId,
-          metadata: msgHookData.metadata,
-        });
-        return;
-      }
-      const llm = resolved.use;
-      // 这一轮的主模型能不能亲眼看图：按模型服务登记的能力（端点报告或单模型能力覆盖），
-      // 工具上下文与 agent:llm:before 同一个值
-      const acceptsImages = llm.capabilities.includes(LLMCapabilities.Vision);
+        historyMessages += 1 + toolMessages.length;
 
-      // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
-      // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
-      // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
-      const maxTokens = getModelMaxOutput(llm);
-      const contextLength = llm.contextLength;
-      const tokenBudget = this.computeTokenBudget(contextLength, maxTokens);
+        await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages, turnPersistedTimestamps);
 
-      // 本回合经工具循环写入 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
-      // 只用于中止日志里的条数：中止时这些已完成的工具调用记录保留不回滚（见下方 catch 分支）。
-      const turnPersistedTimestamps: number[] = [];
-
-      try {
-        const { maxToolIterations, historyLimit } = settings;
-        // 人设服务按这个会话自己读它的设置（人设、额外提示、结构化输出的两个开关）
-        const personaOpts: PersonaSessionOptions = { sessionId: incoming.sessionId, platform: incoming.platform };
-
-        // 会话的深度思考档位：当前模型有这一档才带上；没设置、模型没有这一档或不能调时不带，由模型服务按它的默认档
-        const level = settings.think;
-        const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
-
-        const built = await this.buildMessages(incoming, historyLimit, acceptsImages, personaOpts, archivedIncoming);
-        const messages = built.messages;
-        /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
-        let historyMessages = built.historyMessages;
-        // 这个会话启用的工具分组：工具注册表按会话读它的设置，不在时没有工具
-        const enabledGroups = this.caps.tools.present
-          ? this.caps.tools.use.sessionGroups(incoming.sessionId, incoming.platform)
-          : [];
-        this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
-        const tools =
-          reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
-        const toolCtx: ToolCallRequest = {
-          // 会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext，owner 的各个身份按权限服务合成
-          // 一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，
-          // 归档与提示词钩子仍按消息本身的 userId
-          ...originTurnOf(
-            [incoming],
-            (platform, userId) => this.caps.authority.present && this.caps.authority.use.isOwner(platform, userId),
-          ),
-          // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
-          enabledGroups,
-          // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
-          acceptsImages,
-          // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
-          signal,
-          turnId,
-        };
-
-        // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
-        const originalTools = [...tools];
-
-        // Hook: agent:llm:before — 插件可以修改消息或工具列表
-        const llmBeforeData = {
-          messages,
-          tools,
+        // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
+        const nextLlmData = {
+          messages: llmBeforeData.messages,
+          tools: [...originalTools],
           acceptsImages,
           sessionId: incoming.sessionId,
-          userId: incoming.userId,
           platform: incoming.platform,
-          triggerType: incoming.triggerType,
           source: incoming.source,
         };
-        // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
-        await assemblePromptContributions(this.caps, llmBeforeData, {
+        // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
+        await assemblePromptContributions(this.caps, nextLlmData, inputs, {
           buildTimeoutMs: this.promptBuildTimeoutMs,
           signal,
         });
-        await this.caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
-        if (reportOnly) {
-          llmBeforeData.tools = [];
-          // 这是结果汇报，不续跑历史工具链。保留人设与对话，去掉会诱发继续查任务的工具协议。
-          llmBeforeData.messages = llmBeforeData.messages.filter(
-            message =>
-              message.role !== 'tool' &&
-              !message.toolCalls?.length &&
-              message.metadata?.injector !== WellKnownKinds.HostNotice,
-          );
-          // 放在钩子之后、消息末尾，确保裁剪仍保留本次结果及转述要求。
-          llmBeforeData.messages.push({
-            role: 'system',
-            content:
-              `[宿主通知]\n${incoming.content}${incoming.hostNotice?.untrusted ? `\n\n${incoming.hostNotice.untrusted}` : ''}\n\n` +
-              '本轮只转述以上已确认的结果。沿用当前人设和回复格式，向当前会话自然地说明结果，保留通知中的链接；' +
-              '不要调用工具、重新查询状态或继续执行，不把编号、内部流程当成回复正文，也不要编造通知里没有的细节。请给出非空回复。',
-            metadata: { injector: WellKnownKinds.HostNotice },
-          });
-        }
+        await this.caps.hooks.use.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
-        /** 本回合到目前为止经过了硬裁剪：首次调用的裁剪结果写回底稿，之后各次调用都在它上面追加 */
-        let turnTrimmed = false;
-        /** 首次调用的硬裁剪从底稿里去掉的历史与工具结果：之后各次调用按底稿估算没裁剪的量时补回 */
-        let trimmedFromBase = 0;
-        /** 硬裁剪这次要发出的列表，删了消息时记一行日志；untrimmedHistory 按没经过硬裁剪的列表估算 */
-        const trimForCall = (list: Message[]) => {
-          const sent = this.trimMessages(list, tokenBudget);
-          if (sent.messages.length < list.length) {
-            this.logger.info(
-              `上下文硬裁剪: session=${incoming.sessionId}, ${list.length} → ${sent.messages.length} 条消息`,
-            );
-          }
-          turnTrimmed ||= sent.trimmed;
-          return { messages: sent.messages, untrimmedHistory: estimateHistoryTokens(list) + trimmedFromBase };
-        };
+        // 裁剪消息以确保不超过上下文窗口
+        const nextSent = trimForCall(nextLlmData.messages);
+        nextLlmData.messages = nextSent.messages;
 
-        // 裁剪消息以确保不超过上下文窗口；裁剪结果写回，作为之后各次调用的底稿
-        const firstSent = trimForCall(llmBeforeData.messages);
-        trimmedFromBase = firstSent.untrimmedHistory - estimateHistoryTokens(firstSent.messages);
-        llmBeforeData.messages = firstSent.messages;
-
-        // 每次模型调用之后发一次用量：拆分按这次发出的消息与工具定义估算，used 取模型服务返回的输入 token
-        const reportUsage = (
-          sent: ReturnType<typeof trimForCall>,
-          sentTools: ToolDefinition[],
-          response: ChatResponse,
-        ) =>
-          this.emitTokenUsage({
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            turnId,
-            contextWindow: contextLength,
-            maxTokens,
-            tokenBudget,
-            messages: sent.messages,
-            tools: sentTools,
-            trimmed: turnTrimmed,
-            untrimmedHistory: sent.untrimmedHistory,
-            historyMessages,
-            historyLimit,
-            promptTokens: response.usage?.promptTokens,
-          });
-
-        this.logger.debug(
-          `LLM 请求: ${llmBeforeData.messages.length} 条消息, ` +
-            `${llmBeforeData.tools.length} 个工具, ` +
-            `maxTokens=${maxTokens}`,
-        );
-
-        const t0 = Date.now();
-        // 本轮累加的用量，用于最终 assistant 消息的 modelInfo 元数据。
-        // 注：缓存命中量（usage.cachedPromptTokens）不进这里——本对象只喂
-        // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 turnModelInfo），
-        // 加进来也不会流到下游。命中率的观测出口是 LLM 响应日志那一行。
-        const turnUsageAcc = { promptTokens: 0, completionTokens: 0 };
-        const accUsage = (u: { promptTokens?: number; completionTokens?: number } | undefined) => {
-          if (!u) return;
-          // promptTokens 语义 = "生成这条回复时的上下文大小"。工具迭代循环里每轮都把同一份
-          // （不断增长的）上下文重新发给模型，若累加会把重复发送的上下文重复计入，导致单条
-          // 回复虚高到几十万 token。故取最后一次调用的 prompt（覆盖而非累加）= 回复定稿时的真实上下文。
-          if (u.promptTokens != null) turnUsageAcc.promptTokens = u.promptTokens;
-          // completionTokens 语义 = "本回合真正新生成的输出"（含中间 reasoning / tool-call 生成
-          // 与最终回复文本），每次调用都是不重复的新输出，故逐次累加。
-          turnUsageAcc.completionTokens += u.completionTokens ?? 0;
-        };
-        const firstResult = await this.consumeStream(
+        const tN = Date.now();
+        const nextResult = await this.consumeStream(
           llm,
           {
-            messages: llmBeforeData.messages,
-            tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
+            messages: nextLlmData.messages,
+            tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
+            maxTokens,
+            signal,
+            ...thinking,
+          },
+          turnId,
+          incoming.sessionId,
+          incoming.platform,
+        );
+        await reportUsage(nextSent, nextLlmData.tools, nextResult);
+        turnSegments.push(...nextResult.segments);
+        response = nextResult;
+        generating = nextResult.generating;
+        accUsage(response.usage);
+
+        this.debugLogResponse(response, Date.now() - tN, iterations);
+
+        const nextLlmAfterData = { response, messages: nextLlmData.messages };
+        await this.caps.hooks.use.run('agent:llm:after', nextLlmAfterData);
+        response = nextLlmAfterData.response;
+      }
+
+      // 检测是否因工具调用次数达到上限而退出循环
+      const toolLimitReached = !withinLimit() && response.toolCalls != null && response.toolCalls.length > 0;
+      if (toolLimitReached) {
+        this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
+      }
+
+      // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
+      let rawLlmContent = response.content ?? '';
+      let replyContent = rawLlmContent;
+
+      // Hook: agent:reply:before — 插件可以修改最终回复
+      // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
+      const responseData: HookContextMap['agent:reply:before'] = {
+        content: replyContent,
+        sessionId: incoming.sessionId,
+        platform: incoming.platform,
+        attempt: 0,
+      };
+      const validateReply = async (): Promise<void> => {
+        const attemptedTools = reportOnly && !!response.toolCalls?.length;
+        if (attemptedTools) responseData.content = '';
+        await this.caps.hooks.use.run('agent:reply:before', responseData);
+        // 误调用工具或静默先给模型一次纠正机会，复用格式重试预算，不能无限尝试或执行工具。
+        const replyLinks: string[] = reportOnly ? (responseData.content.match(NOTICE_URL) ?? []) : [];
+        const missingLink = noticeLinks.some(
+          link => !replyLinks.some(candidate => candidate === link || candidate.replace(/[.!;:]+$/u, '') === link),
+        );
+        if (reportOnly && (attemptedTools || !responseData.content.trim() || missingLink)) {
+          responseData.content = '';
+          responseData.maxRetries = Math.max(1, responseData.maxRetries ?? 0);
+          responseData.retryRequested = true;
+          responseData.retryFeedback =
+            `${responseData.retryFeedback ?? ''}\n本轮只需转述已给出的宿主结果，不要调用工具或查询状态。` +
+            '请沿用当前人设和规定的回复格式，给出包含结果与已有链接的非空回复。';
+        }
+      };
+      await validateReply();
+
+      // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
+      // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
+      // maxRetries 由 hook 端写入（plugin-persona 从 outputFormat.retries 读取，默认 1）。
+      // 上游吐空流同样会被判不合格：此时没有可回放的失败输出，只追加系统反馈再请求一次。
+      const maxRetries = Math.max(0, responseData.maxRetries ?? 0);
+      let attempt = 0;
+      while (responseData.retryRequested && attempt < maxRetries) {
+        attempt++;
+        this.logger.debug(
+          `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
+        );
+        if (rawLlmContent.length > 0) llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
+        llmBeforeData.messages.push({
+          role: 'system',
+          content: responseData.retryFeedback ?? '上一次回复未能通过格式校验，请严格按照系统提示中规定的格式重新输出。',
+        });
+        const retrySent = trimForCall(llmBeforeData.messages);
+        const retryResult = await this.consumeStream(
+          llm,
+          {
+            messages: retrySent.messages,
+            tools: undefined,
             maxTokens,
             signal,
             ...thinking,
@@ -842,576 +1224,190 @@ class DefaultAgent implements AgentService {
           incoming.platform,
           !reportOnly,
         );
-        await reportUsage(firstSent, llmBeforeData.tools, firstResult);
-        accUsage(firstResult.usage);
-        /** 这一次模型回复里各工具调用在生成进度里配好的 callId 与工具名，按调用的位置 */
-        let generating = firstResult.generating;
+        await reportUsage(retrySent, [], retryResult);
+        turnSegments.push(...retryResult.segments);
+        response = retryResult;
+        accUsage(response.usage);
+        rawLlmContent = response.content ?? '';
 
-        // 维护本轮（一次完整对话回合）的统一时间线 segments：
-        // 多次 LLM 调用 + 工具执行的输出按到达顺序拼接，保留模型原本的"思考/回答/工具/思考/回答"交错。
-        const turnSegments: ContentSegment[] = [...firstResult.segments];
-
-        let response: ChatResponse = firstResult;
-
-        this.debugLogResponse(response, Date.now() - t0);
-
-        // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
-        const llmAfterData = { response, messages: llmBeforeData.messages };
-        await this.caps.hooks.use.run('agent:llm:after', llmAfterData);
-        response = llmAfterData.response;
-
-        // 收集工具调用摘要
-        const toolCallSummaries: string[] = [];
-
-        const assistantMetadata = this.buildAssistantMetadata(incoming, turnId);
-
-        // 工具调用循环：上限没设即不限
-        let iterations = 0;
-        const withinLimit = () => maxToolIterations === undefined || iterations < maxToolIterations;
-        while (!reportOnly && response.toolCalls && response.toolCalls.length > 0 && withinLimit()) {
-          if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
-          iterations++;
-          this.logger.debug(`工具调用迭代 ${iterations}: ${response.toolCalls.map(tc => tc.function.name).join(', ')}`);
-
-          // 先解析各次调用的参数：解析不了的，写进本回合消息与存档的那次调用的 arguments 换成 {}（见 parseToolArguments）
-          const parsedCalls = response.toolCalls.map(parseToolArguments);
-          const toolCalls = parsedCalls.map(parsed => parsed.toolCall);
-
-          // 将 assistant 消息 (含 toolCalls) 加入历史
-          llmBeforeData.messages.push({
-            role: 'assistant',
-            content: response.content,
-            toolCalls,
-            reasoningContent: response.reasoningContent,
-            metadata: assistantMetadata,
-          });
-
-          const assistantToolMessage: Message = {
-            role: 'assistant',
-            content: response.content,
-            toolCalls,
-            reasoningContent: response.reasoningContent,
-            metadata: assistantMetadata,
-          };
-          const toolMessages: Message[] = [];
-
-          // 并行执行所有工具调用（互不依赖的工具无需串行等待）
-          const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
-
-          const parallelResults = await Promise.all(
-            parsedCalls.map(async (parsed, position) => {
-              const { toolCall } = parsed;
-              // 这次调用的 id：开始与结束事件、工具上下文都带它。同一位置生成参数时报过同一个工具的进度，用那时配的
-              // （会话里已有它的工具卡）；没报过的、或钩子改过调用列表而对不上的现在生成，免得接管画着别的工具的卡。
-              // 自己生成而不用模型给的 toolCall.id——模型给的 id 不保证唯一（有的 provider 用毫秒时间戳加序号拼，并发的
-              // 两轮会撞上），而 callId 要在全局配对开始与结束。模型的 id 只留在发回模型的 tool 消息里配对调用与结果。
-              const generated = generating.get(position);
-              const callId = generated?.name === toolCall.function.name ? generated.callId : crypto.randomUUID();
-              // 会话里的工具卡跟着这一对事件走：没执行就失败的调用（参数不合法、执行前的钩子出错）同样发一对，
-              // 结束带回给模型的错误，否则那张卡一直停在生成中
-              const announce = (
-                phase: 'start' | 'end',
-                toolName: string,
-                toolArgs: Record<string, unknown>,
-                result?: string,
-              ) =>
-                this.caps.events.use.emit('tool:execute', {
-                  sessionId: incoming.sessionId,
-                  turnId,
-                  callId,
-                  platform: incoming.platform,
-                  toolName,
-                  args: toolArgs,
-                  phase,
-                  result,
-                });
-              if ('error' in parsed) {
-                // 参数不是合法 JSON 对象：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
-                // 不能按空参数执行：「无必填参数」的工具会真的空参跑一遍（副作用已发生，模型却不知情）。
-                this.logger.warn(`工具参数解析失败: ${toolCall.function.name}: ${parsed.error}`);
-                const failedAt = Date.now();
-                const result = JSON.stringify({ error: parsed.error });
-                await announce('start', toolCall.function.name, {});
-                await announce('end', toolCall.function.name, {}, result);
-                return {
-                  toolCall,
-                  callId,
-                  result,
-                  resultImages: undefined,
-                  toolName: toolCall.function.name,
-                  toolArgs: {},
-                  startTime: failedAt,
-                  endTime: failedAt,
-                };
-              }
-
-              const callCtx: ToolCallRequest = { ...toolCtx, callId };
-              // Hook: agent:tool:before — 插件可以拦截或修改工具调用
-              const toolBeforeData = { name: toolCall.function.name, args: parsed.args, toolCallContext: callCtx };
-              // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：
-              // 整批照常落定、整组落库，兄弟工具已发生的副作用不会因连坐而从历史里消失。
-              // executeDone 区分失败发生在执行前还是执行后——后者须明说「已执行」，免得模型重做有副作用的操作。
-              let executeDone = false;
-              let toolT0: number | undefined;
-              try {
-                await this.caps.hooks.use.run('agent:tool:before', toolBeforeData);
-
-                // 通知平台：工具开始执行
-                await announce('start', toolBeforeData.name, toolBeforeData.args);
-                // 紧随 start 赋值：catch 据此判断 start 已发出
-                toolT0 = Date.now();
-
-                this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${formatToolArgsForLog(toolBeforeData.args)}`);
-                const executed: ToolExecutionResult = await (this.caps.tools.present
-                  ? this.caps.tools.use.execute(toolBeforeData.name, toolBeforeData.args, callCtx)
-                  : Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
-                executeDone = true;
-                let result = executed.content;
-                // 工具交给主模型看的图：主模型能看图时才随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
-                // 不能看时工具硬塞的也不交，模型只读文字结果；不进钩子/事件/时间线（那些面都是文本），
-                // 也不落库（见 saveToolCallGroup）。
-                const resultImages = acceptsImages ? executed.images : undefined;
-
-                // Hook: agent:tool:after — 插件可以处理工具执行结果，写进 metadata 的随结果落库
-                const toolAfterData = {
-                  name: toolBeforeData.name,
-                  result,
-                  toolCallContext: callCtx,
-                  metadata: {} as Record<string, unknown>,
-                };
-                await this.caps.hooks.use.run('agent:tool:after', toolAfterData);
-                result = toolAfterData.result;
-
-                // 工具结果截断：按上下文窗口比例限制单条工具结果长度
-                if (result.length > toolResultMaxChars) {
-                  this.logger.info(
-                    `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
-                  );
-                  result = truncateChars(
-                    result,
-                    toolResultMaxChars,
-                    `\n... [工具输出已截断，原始长度 ${result.length} 字符]`,
-                  );
-                }
-                const toolEndTime = Date.now();
-
-                this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
-
-                // 通知平台：工具执行完成
-                await announce('end', toolBeforeData.name, toolBeforeData.args, result);
-
-                return {
-                  toolCall,
-                  callId,
-                  result,
-                  resultImages,
-                  resultMetadata: toolAfterData.metadata,
-                  toolName: toolBeforeData.name,
-                  toolArgs: toolBeforeData.args,
-                  startTime: toolT0,
-                  endTime: toolEndTime,
-                };
-              } catch (err) {
-                // 执行后的失败不回退到原始结果（fail-closed）：after 钩子可能是脱敏钩子，失败时原始输出不能漏给模型
-                const reason = err instanceof Error ? err.message : String(err);
-                this.logger.warn(
-                  `工具${executeDone ? '已执行，但结果处理' : '调用'}失败: ${toolBeforeData.name} (${reason})`,
-                );
-                const failedAt = Date.now();
-                const result = JSON.stringify({
-                  error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
-                });
-                // 执行前就失败的补发开始，再发配对的结束（emit 恒 resolve）
-                if (toolT0 === undefined) await announce('start', toolBeforeData.name, toolBeforeData.args);
-                await announce('end', toolBeforeData.name, toolBeforeData.args, result);
-                return {
-                  toolCall,
-                  callId,
-                  result,
-                  resultImages: undefined,
-                  toolName: toolBeforeData.name,
-                  toolArgs: toolBeforeData.args,
-                  startTime: toolT0 ?? failedAt,
-                  endTime: failedAt,
-                };
-              }
-            }),
-          );
-
-          // 工具交出的图只服务紧接着的这一次请求：上一轮工具结果里的图在这里剥掉，否则多轮
-          // 工具迭代会让图片在上下文里累积（每张数百 token，且不受文本裁剪约束）。
-          for (let i = 0; i < llmBeforeData.messages.length; i++) {
-            const m = llmBeforeData.messages[i];
-            if (m.role === 'tool' && m.images) {
-              const { images: _spent, ...rest } = m;
-              llmBeforeData.messages[i] = rest;
-            }
-          }
-
-          // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
-          for (const {
-            toolCall,
-            callId,
-            result,
-            resultImages,
-            resultMetadata,
-            toolName,
-            toolArgs,
-            startTime,
-            endTime,
-          } of parallelResults) {
-            const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
-            toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
-
-            // callId 随工具结果与时间线落库：没回复就收尾的一轮只落工具调用组，历史里的工具卡靠它对回这次调用
-            const toolMessage: Message = {
-              role: 'tool',
-              content: result,
-              toolCallId: toolCall.id,
-              ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
-              metadata: {
-                ...resultMetadata,
-                [WellKnownMetadataKeys.TurnId]: turnId,
-                [WellKnownMetadataKeys.CallId]: callId,
-              },
-            };
-            llmBeforeData.messages.push(toolMessage);
-            toolMessages.push(toolMessage);
-
-            // 工具调用追加到本回合的统一时间线
-            turnSegments.push({
-              type: 'tool_call',
-              name: toolName,
-              args: toolArgs,
-              result,
-              startTime,
-              endTime,
-              callId,
-            });
-          }
-          historyMessages += 1 + toolMessages.length;
-
-          await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages, turnPersistedTimestamps);
-
-          // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
-          const nextLlmData = {
-            messages: llmBeforeData.messages,
-            tools: [...originalTools],
-            acceptsImages,
-            sessionId: incoming.sessionId,
-            userId: incoming.userId,
-            platform: incoming.platform,
-            triggerType: incoming.triggerType,
-            source: incoming.source,
-          };
-          // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
-          await assemblePromptContributions(this.caps, nextLlmData, {
-            buildTimeoutMs: this.promptBuildTimeoutMs,
-            signal,
-          });
-          await this.caps.hooks.use.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
-
-          // 裁剪消息以确保不超过上下文窗口
-          const nextSent = trimForCall(nextLlmData.messages);
-          nextLlmData.messages = nextSent.messages;
-
-          const tN = Date.now();
-          const nextResult = await this.consumeStream(
-            llm,
-            {
-              messages: nextLlmData.messages,
-              tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
-              maxTokens,
-              signal,
-              ...thinking,
-            },
-            turnId,
-            incoming.sessionId,
-            incoming.platform,
-          );
-          await reportUsage(nextSent, nextLlmData.tools, nextResult);
-          turnSegments.push(...nextResult.segments);
-          response = nextResult;
-          generating = nextResult.generating;
-          accUsage(response.usage);
-
-          this.debugLogResponse(response, Date.now() - tN, iterations);
-
-          const nextLlmAfterData = { response, messages: nextLlmData.messages };
-          await this.caps.hooks.use.run('agent:llm:after', nextLlmAfterData);
-          response = nextLlmAfterData.response;
-        }
-
-        // 检测是否因工具调用次数达到上限而退出循环
-        const toolLimitReached = !withinLimit() && response.toolCalls != null && response.toolCalls.length > 0;
-        if (toolLimitReached) {
-          this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
-        }
-
-        // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
-        let rawLlmContent = response.content ?? '';
-        let replyContent = rawLlmContent;
-
-        // Hook: agent:reply:before — 插件可以修改最终回复
-        // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
-        const responseData: HookContextMap['agent:reply:before'] = {
-          content: replyContent,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          userId: incoming.userId,
-          triggerType: incoming.triggerType,
-          attempt: 0,
-        };
-        const validateReply = async (): Promise<void> => {
-          const attemptedTools = reportOnly && !!response.toolCalls?.length;
-          if (attemptedTools) responseData.content = '';
-          await this.caps.hooks.use.run('agent:reply:before', responseData);
-          // 误调用工具或静默先给模型一次纠正机会，复用格式重试预算，不能无限尝试或执行工具。
-          const replyLinks: string[] = reportOnly ? (responseData.content.match(NOTICE_URL) ?? []) : [];
-          const missingLink = noticeLinks.some(
-            link => !replyLinks.some(candidate => candidate === link || candidate.replace(/[.!;:]+$/u, '') === link),
-          );
-          if (reportOnly && (attemptedTools || !responseData.content.trim() || missingLink)) {
-            responseData.content = '';
-            responseData.maxRetries = Math.max(1, responseData.maxRetries ?? 0);
-            responseData.retryRequested = true;
-            responseData.retryFeedback =
-              `${responseData.retryFeedback ?? ''}\n本轮只需转述已给出的宿主结果，不要调用工具或查询状态。` +
-              '请沿用当前人设和规定的回复格式，给出包含结果与已有链接的非空回复。';
-          }
-        };
+        // 用新输出再次跑 hook；hook 端根据 attempt 决定继续重试或走兜底（静默丢弃）
+        responseData.content = rawLlmContent;
+        responseData.archiveContent = undefined;
+        responseData.visibleContent = undefined;
+        responseData.retryRequested = false;
+        responseData.retryFeedback = undefined;
+        responseData.attempt = attempt;
         await validateReply();
-
-        // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
-        // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
-        // maxRetries 由 hook 端写入（plugin-persona 从 outputFormat.retries 读取，默认 1）。
-        // 上游吐空流同样会被判不合格：此时没有可回放的失败输出，只追加系统反馈再请求一次。
-        const maxRetries = Math.max(0, responseData.maxRetries ?? 0);
-        let attempt = 0;
-        while (responseData.retryRequested && attempt < maxRetries) {
-          attempt++;
-          this.logger.debug(
-            `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
-          );
-          if (rawLlmContent.length > 0) llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
-          llmBeforeData.messages.push({
-            role: 'system',
-            content:
-              responseData.retryFeedback ?? '上一次回复未能通过格式校验，请严格按照系统提示中规定的格式重新输出。',
-          });
-          const retrySent = trimForCall(llmBeforeData.messages);
-          const retryResult = await this.consumeStream(
-            llm,
-            {
-              messages: retrySent.messages,
-              tools: undefined,
-              maxTokens,
-              signal,
-              ...thinking,
-            },
-            turnId,
-            incoming.sessionId,
-            incoming.platform,
-            !reportOnly,
-          );
-          await reportUsage(retrySent, [], retryResult);
-          turnSegments.push(...retryResult.segments);
-          response = retryResult;
-          accUsage(response.usage);
-          rawLlmContent = response.content ?? '';
-
-          // 用新输出再次跑 hook；hook 端根据 attempt 决定继续重试或走兜底（静默丢弃）
-          responseData.content = rawLlmContent;
-          responseData.archiveContent = undefined;
-          responseData.visibleContent = undefined;
-          responseData.retryRequested = false;
-          responseData.retryFeedback = undefined;
-          responseData.attempt = attempt;
-          await validateReply();
-        }
-
-        // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
-        // 强制把 content 置空，避免原始未校验内容被外发。
-        if (responseData.retryRequested) {
-          this.logger.warn(
-            `agent:reply:before 重试用尽但 retryRequested 仍为 true，强制丢弃回复内容 (session=${incoming.sessionId})`,
-          );
-          responseData.content = '';
-          responseData.retryRequested = false;
-        }
-
-        replyContent = responseData.content;
-        const archiveContent = responseData.archiveContent ?? rawLlmContent;
-        const visibleContent = responseData.visibleContent ?? replyContent;
-
-        // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过。
-        // 比的是 archiveContent（与落库同源口径）——启用 outputFormat 时历史里存的是整串 JSON，
-        // 拿解码后的纯文本去比永远不成立。
-        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-        if (archiveContent && lastAssistant?.content && archiveContent === lastAssistant.content) {
-          this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
-          replyContent = '';
-        }
-
-        // 提交点：此后的流结束标记、落库与外发成组执行。流结束后到这里之间（llm:after / 工具循环退出 /
-        // reply:before / 重试）被 latest-wins、手动停止或拆卸掐掉的回合，走下方 AbortError 收尾，不落库、不外发。
-        if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
-
-        // 发出流结束标记
-        await this.caps.events.use.emit('outbound:stream', {
-          sessionId: incoming.sessionId,
-          turnId,
-          platform: incoming.platform,
-          done: true,
-          toolLimitReached,
-        });
-
-        // 空回复（outputFormat 中 reply 字段为空字符串或仅空白）时静默，不发送消息
-        if (replyContent.trim().length === 0) {
-          this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
-        } else {
-          const visibleSegments = !reportOnly && turnSegments.length > 0 ? turnSegments : undefined;
-
-          // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
-          // 由哪个 model 生成、用了多少 token"，方便用户验证模型切换是否生效。
-          const turnModelInfo = {
-            provider: llm.providerId,
-            model: llm.id,
-            promptTokens: turnUsageAcc.promptTokens || undefined,
-            completionTokens: turnUsageAcc.completionTokens || undefined,
-          };
-          const finalAssistantMetadata: Record<string, unknown> = {
-            ...(assistantMetadata ?? {}),
-            [WellKnownMetadataKeys.ModelInfo]: turnModelInfo,
-          };
-          // 落库的是信封（如 outputFormat 的整串 JSON）时，另带解码后的可见正文，供检索、摘要等按语义读历史的一方用
-          if (visibleContent !== archiveContent) {
-            finalAssistantMetadata[WellKnownMetadataKeys.VisibleContent] = visibleContent;
-          }
-
-          // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
-          // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
-          await this.saveToMemory(incoming.sessionId, {
-            role: 'assistant',
-            content: archiveContent,
-            reasoningContent: reportOnly ? undefined : response.reasoningContent,
-            timestamp: Date.now(),
-            metadata: finalAssistantMetadata,
-            segments: visibleSegments,
-          });
-
-          // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上；
-          // 正文是她写的，其中的 @、媒体与引用标记交适配器解析
-          await this.dispatchOutbound({
-            content: replyContent,
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            ...(incoming.hostNotice
-              ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
-              : {}),
-            ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
-            markup: true,
-            source: 'agent',
-            turnId,
-            modelInfo: turnModelInfo,
-          });
-        }
-
-        // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
-        const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
-        await this.caps.hooks.use.run('agent:turn:after', {
-          message: incoming,
-          reply: replyContent,
-          outcome: turnOutcome,
-          sessionId: incoming.sessionId,
-          turnId,
-          metadata: msgHookData.metadata,
-        });
-      } catch (err) {
-        // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer。
-        //
-        // 历史教训：早期版本会用 turnPersistedTimestamps 把"本轮已持久化的中间消息"全部删掉，
-        // 注释里写的是防"半截 assistant 内容 / 假回退"。但看 saveToolCallGroup（见下方）会发现：
-        //   1. saveToolCallGroup 只在并行工具全部落定后整组写入（assistant tool_call + 所有
-        //      tool result 一次性 push；单个工具的异常已在闭包内转成它自己的错误结果），不存在
-        //      写了一半的组；turnPersistedTimestamps 里只可能是"已落定、副作用已发生"的工具调用对。
-        //   2. 删除这些 = 让 agent 忘记自己刚刚做过的有副作用的事（戳一戳/发送消息/调度任务/…），
-        //      下一轮 LLM 看不到自己的行为，会重复调用，外部观察就是"agent 一直以为戳不了"。
-        //   3. 真正的 orphan 风险（assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory
-        //      在装载历史时兜底过滤，不需要 abort 路径主动删除。
-        // 所以这里不再回滚，让已完成的工具调用记录留在 memory，agent 下一轮能正确感知。
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          this.logger.info(
-            `生成已中止: session=${incoming.sessionId}` +
-              (turnPersistedTimestamps.length > 0
-                ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
-                : ''),
-          );
-          await this.caps.events.use.emit('outbound:stream', {
-            sessionId: incoming.sessionId,
-            turnId,
-            platform: incoming.platform,
-            done: true,
-          });
-
-          // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
-          // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
-          // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
-          await this.caps.hooks.use.run('agent:turn:after', {
-            message: incoming,
-            reply: '',
-            outcome: 'aborted',
-            sessionId: incoming.sessionId,
-            turnId,
-            metadata: msgHookData.metadata,
-          });
-
-          return;
-        }
-
-        const error = textOf(err);
-        this.logger.error(`处理消息失败: ${toSource(error)}`);
-
-        // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
-        // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
-        await this.caps.events.use.emit('outbound:stream', {
-          sessionId: incoming.sessionId,
-          turnId,
-          platform: incoming.platform,
-          done: true,
-        });
-        if (!reportOnly) {
-          const text = t('turnError', { error });
-          await this.dispatchOutbound({
-            content: toSource(text),
-            text,
-            sessionId: incoming.sessionId,
-            platform: incoming.platform,
-            source: 'system',
-            turnId,
-          });
-        }
-
-        // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
-        await this.caps.hooks.use.run('agent:turn:after', {
-          message: incoming,
-          reply: '',
-          outcome: 'error',
-          error,
-          sessionId: incoming.sessionId,
-          turnId,
-          metadata: msgHookData.metadata,
-        });
       }
-    });
 
-    // 消息被拦截（如流控缓冲），通知前端结束 loading
-    if (!handled) {
+      // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
+      // 强制把 content 置空，避免原始未校验内容被外发。
+      if (responseData.retryRequested) {
+        this.logger.warn(
+          `agent:reply:before 重试用尽但 retryRequested 仍为 true，强制丢弃回复内容 (session=${incoming.sessionId})`,
+        );
+        responseData.content = '';
+        responseData.retryRequested = false;
+      }
+
+      replyContent = responseData.content;
+      const archiveContent = responseData.archiveContent ?? rawLlmContent;
+      const visibleContent = responseData.visibleContent ?? replyContent;
+
+      // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过。
+      // 比的是 archiveContent（与落库同源口径）——启用 outputFormat 时历史里存的是整串 JSON，
+      // 拿解码后的纯文本去比永远不成立。
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+      if (archiveContent && lastAssistant?.content && archiveContent === lastAssistant.content) {
+        this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
+        replyContent = '';
+      }
+
+      // 提交点：此后的流结束标记、落库与外发成组执行。流结束后到这里之间（llm:after / 工具循环退出 /
+      // reply:before / 重试）被 latest-wins、手动停止或拆卸掐掉的回合，走下方 AbortError 收尾，不落库、不外发。
+      if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
+
+      // 发出流结束标记
       await this.caps.events.use.emit('outbound:stream', {
         sessionId: incoming.sessionId,
         turnId,
         platform: incoming.platform,
         done: true,
+        toolLimitReached,
+      });
+
+      // 空回复（outputFormat 中 reply 字段为空字符串或仅空白）时静默，不发送消息
+      if (replyContent.trim().length === 0) {
+        this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
+      } else {
+        const visibleSegments = !reportOnly && turnSegments.length > 0 ? turnSegments : undefined;
+
+        // 在 assistant 最终持久化时记录 modelInfo：前端从消息历史可还原 "这条回复
+        // 由哪个 model 生成、用了多少 token"，方便用户验证模型切换是否生效。
+        const turnModelInfo = {
+          provider: llm.providerId,
+          model: llm.id,
+          promptTokens: turnUsageAcc.promptTokens || undefined,
+          completionTokens: turnUsageAcc.completionTokens || undefined,
+        };
+        const finalAssistantMetadata: Record<string, unknown> = {
+          ...(assistantMetadata ?? {}),
+          [WellKnownMetadataKeys.ModelInfo]: turnModelInfo,
+        };
+        // 落库的是信封（如 outputFormat 的整串 JSON）时，另带解码后的可见正文，供检索、摘要等按语义读历史的一方用
+        if (visibleContent !== archiveContent) {
+          finalAssistantMetadata[WellKnownMetadataKeys.VisibleContent] = visibleContent;
+        }
+
+        // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
+        // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
+        await this.saveToMemory(incoming.sessionId, {
+          role: 'assistant',
+          content: archiveContent,
+          reasoningContent: reportOnly ? undefined : response.reasoningContent,
+          timestamp: Date.now(),
+          metadata: finalAssistantMetadata,
+          segments: visibleSegments,
+        });
+
+        // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上；
+        // 正文是她写的，其中的 @、媒体与引用标记交适配器解析
+        await this.dispatchOutbound({
+          content: replyContent,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          ...(incoming.hostNotice
+            ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
+            : {}),
+          ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
+          markup: true,
+          source: 'agent',
+          turnId,
+          modelInfo: turnModelInfo,
+        });
+      }
+
+      // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
+      const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
+      await this.caps.hooks.use.run('agent:turn:after', {
+        inputs,
+        reply: replyContent,
+        outcome: turnOutcome,
+        sessionId: incoming.sessionId,
+        turnId,
+      });
+    } catch (err) {
+      // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer。
+      //
+      // 历史教训：早期版本会用 turnPersistedTimestamps 把"本轮已持久化的中间消息"全部删掉，
+      // 注释里写的是防"半截 assistant 内容 / 假回退"。但看 saveToolCallGroup（见下方）会发现：
+      //   1. saveToolCallGroup 只在并行工具全部落定后整组写入（assistant tool_call + 所有
+      //      tool result 一次性 push；单个工具的异常已在闭包内转成它自己的错误结果），不存在
+      //      写了一半的组；turnPersistedTimestamps 里只可能是"已落定、副作用已发生"的工具调用对。
+      //   2. 删除这些 = 让 agent 忘记自己刚刚做过的有副作用的事（戳一戳/发送消息/调度任务/…），
+      //      下一轮 LLM 看不到自己的行为，会重复调用，外部观察就是"agent 一直以为戳不了"。
+      //   3. 真正的 orphan 风险（assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory
+      //      在装载历史时兜底过滤，不需要 abort 路径主动删除。
+      // 所以这里不再回滚，让已完成的工具调用记录留在 memory，agent 下一轮能正确感知。
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        this.logger.info(
+          `生成已中止: session=${incoming.sessionId}` +
+            (turnPersistedTimestamps.length > 0
+              ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
+              : ''),
+        );
+        await this.caps.events.use.emit('outbound:stream', {
+          sessionId: incoming.sessionId,
+          turnId,
+          platform: incoming.platform,
+          done: true,
+        });
+
+        // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
+        // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
+        // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
+        await this.caps.hooks.use.run('agent:turn:after', {
+          inputs,
+          reply: '',
+          outcome: 'aborted',
+          sessionId: incoming.sessionId,
+          turnId,
+        });
+
+        return;
+      }
+
+      const error = textOf(err);
+      this.logger.error(`处理消息失败: ${toSource(error)}`);
+
+      // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
+      // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
+      await this.caps.events.use.emit('outbound:stream', {
+        sessionId: incoming.sessionId,
+        turnId,
+        platform: incoming.platform,
+        done: true,
+      });
+      if (!reportOnly) {
+        const text = t('turnError', { error });
+        await this.dispatchOutbound({
+          content: toSource(text),
+          text,
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          source: 'system',
+          turnId,
+        });
+      }
+
+      // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
+      await this.caps.hooks.use.run('agent:turn:after', {
+        inputs,
+        reply: '',
+        outcome: 'error',
+        error,
+        sessionId: incoming.sessionId,
+        turnId,
       });
     }
   }
@@ -2135,9 +2131,13 @@ class DefaultAgent implements AgentService {
     return isSameMessage(a, b);
   }
 
-  private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMessage): Promise<Message | undefined> {
+  private async archiveIncomingMessageInOrder(
+    lane: string,
+    incoming: IncomingMessage,
+    turnId: string,
+  ): Promise<Message | undefined> {
     const previous = this.archiveQueues.get(lane) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => this.archiveIncomingMessage(incoming));
+    const current = previous.catch(() => undefined).then(() => this.archiveIncomingMessage(incoming, turnId));
     const tail = current.then(
       () => undefined,
       () => undefined,
@@ -2153,13 +2153,14 @@ class DefaultAgent implements AgentService {
     }
   }
 
-  private async archiveIncomingMessage(incoming: IncomingMessage): Promise<Message | undefined> {
+  /** 归档开轮的输入，记下它进的这一轮 */
+  private async archiveIncomingMessage(incoming: IncomingMessage, turnId: string): Promise<Message | undefined> {
     // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
     if (incoming.source === 'idle-trigger') return undefined;
     const archive = this.getArchiveForWrite();
     if (!archive) return undefined;
     try {
-      const result = await archive.archiveIncoming(incoming);
+      const result = await archive.archiveIncoming(incoming, { turnId, entry: 'opened' });
       return result.message;
     } catch (err) {
       this.logger.warn('归档用户消息失败:', err);
@@ -2383,11 +2384,11 @@ function run(caps: Caps): void {
         tools,
         acceptsImages: llm.capabilities.includes(LLMCapabilities.Vision),
         sessionId: data.sessionId,
-        userId: '',
         platform,
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
-      await assemblePromptContributions(caps, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
+      // 不在回合里：没有输入，各贡献按没有输入处理
+      await assemblePromptContributions(caps, llmBeforeData, [], { buildTimeoutMs: agent.promptBuildTimeoutMs });
       await caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       // 与真实回合同样过硬裁剪，拆分按裁剪之后的消息算

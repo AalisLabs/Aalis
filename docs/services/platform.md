@@ -78,7 +78,7 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 ### 典型消费点
 
 - **plugin-agent**：`getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses` 中声明 `platform: optional(platform)`。
-- **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt；会话类型按根会话记下的聊天窗口经 `sessionTypeLabel` 取显示名（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
+- **plugin-persona**：在 `agent:turn:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt；会话类型按根会话记下的聊天窗口经 `sessionTypeLabel` 取显示名（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-memory-vector**：召回片段的位置没有群名时写说话所在类型的显示名，按向量记下的平台与类型名经 `sessionTypeLabel` 取（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）。

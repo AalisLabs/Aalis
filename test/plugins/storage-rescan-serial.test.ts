@@ -355,7 +355,7 @@ describe('persona / skills 的目录重扫', () => {
     if (!svc || !loadSkill) throw new Error('skills 服务或 load_skill 未就绪');
     await svc.rescan();
     const say = (sessionId: string, content: string) =>
-      host.hooks.use.run('agent:input:before', { message: { sessionId, content }, metadata: {} } as never);
+      host.hooks.use.run('agent:input:before', { message: { sessionId, content } } as never);
 
     await say('s-1', '今天天气怎么样'); // 编译并缓存 wx 的 triggers
     expect(svc.getLoadedSkills('s-1')).toEqual(['wx']);

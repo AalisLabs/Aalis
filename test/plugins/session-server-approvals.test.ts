@@ -188,7 +188,11 @@ async function setup() {
     const turnId = `turn-${++turnSeq}`;
     const message = { content: '<提问>', sessionId, ...OWNER };
     const release = deferred();
-    const ended = host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, () => release.promise);
+    const ended = host.hooks.use.run(
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message }] },
+      () => release.promise,
+    );
     const tool = (phase: 'start' | 'end', callId: string, args: Record<string, unknown>, result?: string) =>
       host.events.use.emit('tool:execute', {
         sessionId,

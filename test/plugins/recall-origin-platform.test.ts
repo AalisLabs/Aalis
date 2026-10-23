@@ -18,6 +18,7 @@ import { storedRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { sessionTableManager } from '../fixtures/session-table.js';
 import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
+import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 召回按出生平台：IM 房间不论从哪个入口驱动，跨会话料的「当前平台」都是会话管理记下的出生平台（子会话取根会话的），
@@ -116,7 +117,7 @@ describe('memory-history：按群判', () => {
     requireActive(app, memoryHistory.name);
     const passive = async (sessionId: string, platform: string): Promise<string | undefined> => {
       const messages: Message[] = [{ role: 'user', content: 'now' }];
-      await assemblePromptContributions(assembly, { messages, sessionId, platform });
+      await assemblePromptContributions(assembly, { messages, sessionId, platform }, []);
       const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
       return typeof block?.content === 'string' ? block.content : undefined;
     };
@@ -201,7 +202,7 @@ describe('memory-vector：platform 范围按出生平台', () => {
         { role: 'system', content: '人设' },
         { role: 'user', content: '还记得吗' },
       ];
-      await assemblePromptContributions(assembly, { messages, sessionId, platform });
+      await assemblePromptContributions(assembly, { messages, sessionId, platform }, inputFromLastUser(messages));
       const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
       return typeof block?.content === 'string' ? block.content : '';
     };

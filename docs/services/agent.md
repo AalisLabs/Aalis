@@ -29,25 +29,26 @@ export interface BoundAgent extends AgentService {
 }
 ```
 
-- `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`；**不调 `next()` 即中断整条管线**。
+- `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`，挂在 `agent:input:before` 上，每条输入一次、在它进入一轮之前；**不调 `next()` 即丢掉这条输入**（不进一轮、不归档）。
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
-- 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。
+- 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它没进一轮就被丢掉）。
 - `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
-- **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:input:before`、`agent:turn:after`、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
+- **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:turn:before`、`agent:turn:after`、输入的归档（`archiveIncoming` 的回合参数，存档记成 `TurnId` 与进入方式 `TurnEntry`）、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
 
 `agent:*` 钩子（declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`）——这是 agent 服务最重要的扩展面：
 
 | 钩子 | 触发时机 | data 关键字段 |
 |---|---|---|
-| `agent:input:before` | 回合最开始，预处理 | `{ message, turnId, metadata }`。`next()` 之后是这一轮的全部；不调 `next()` → 拦截整条消息 |
+| `agent:input:before` | 每条输入一次，在它进入一轮之前（预处理） | `{ message }`。不调 `next()` → 丢掉这条，agent 照发流结束标记；`next()` 返回时这条已落定 |
+| `agent:turn:before` | 一轮开始 | `{ turnId, sessionId, inputs }`。`inputs` 是这一轮的输入（`TurnInput`：`message`，归档后带 `archived`）；`next()` 之后是这一轮的全部（从归档这些输入开始）；不调 `next()` → 这一轮不跑、输入不归档 |
 | `agent:llm:before` | 每次调 LLM 前（首轮 + 每次工具迭代） | `{ messages, tools, sessionId?, … }`。可改 `messages`/`tools` |
 | `agent:llm:after` | 每次 LLM 返回后 | `{ response, messages }` |
 | `agent:tool:before` | 每个工具执行前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 每个工具执行后 | `{ name, result, toolCallContext }` |
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, archiveContent?, visibleContent?, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
-| `agent:turn:after` | 回合终态（四条路径都发；消息被 `agent:input:before` 拦下时不发） | `{ message, reply, outcome, error?, sessionId, turnId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'`；`error` 只在结局为 `error` 时带，是一句原因 |
+| `agent:turn:after` | 回合终态（四条路径都发；这一轮被 `agent:turn:before` 拦下时不发） | `{ inputs, reply, outcome, error?, sessionId, turnId }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'`；`error` 只在结局为 `error` 时带，是一句原因 |
 
 钩子用 `hooks.use.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
 
@@ -79,7 +80,7 @@ import type { IncomingMessage } from '@aalis/schema-message';
 
 class MyAgent implements AgentService {
   async handleMessage(_message: IncomingMessage): Promise<void> {
-    // 跑 input:before → llm:before → 工具循环 → reply:before → turn:after
+    // 跑 input:before → turn:before（默认动作开头归档输入）→ llm:before → 工具循环 → reply:before → turn:after
   }
   abort(_sessionId: string, _turnId?: string): boolean {
     return false;
@@ -99,7 +100,7 @@ export default definePlugin({
 });
 ```
 
-default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
+default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，归档输入时把回合交给 `archiveIncoming`（不交的话连对话回滚删不掉这一轮的输入），必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
 
 ## 5. 标准消费方式
 

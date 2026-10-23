@@ -43,7 +43,14 @@ export interface ArchiveNoticeOptions {
 
 export interface MessageArchiveService {
   saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void>;
-  archiveIncoming(message: IncomingMessage): Promise<ArchiveIncomingResult>;
+  /**
+   * 归档一条入站消息。turn 是它进的那一轮（agent 开轮或插入时给）：回合 id 与进入方式（opened 开轮，joined 插进在跑的一轮）记进
+   * 元数据的 TurnId、TurnEntry；没进一轮的（被触发判定或流控吞掉的、被放掉的）不给
+   */
+  archiveIncoming(
+    message: IncomingMessage,
+    turn?: { turnId: string; entry: 'opened' | 'joined' },
+  ): Promise<ArchiveIncomingResult>;
   /**
    * 按送达的快照把出站消息记进会话历史，所有平台一条规则（送达之后发 outbound:delivered 的适配器由存档据此调，送达本身就是写进
    * 会话历史的适配器直接调、等它兑现，没有窗口的子会话由存档认领后调）。要记的内容在调用时同步取走：调用之后对消息的改写不算，

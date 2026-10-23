@@ -10,6 +10,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { sessionTableManager } from '../fixtures/session-table.js';
+import { turnInput } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 关系图的「仅在群聊中注入」（groupOnly）按会话记下的多方标记判：根会话的聊天窗口是多方才注入（子会话取根会话的），
@@ -68,7 +69,9 @@ async function boot(sessions: readonly Record<string, unknown>[] | undefined) {
       { role: 'system', content: '人设' },
       { role: 'user', content: '你好', metadata },
     ];
-    await assemblePromptContributions(host, { messages, sessionId, userId, platform, triggerType: 'direct' });
+    await assemblePromptContributions(host, { messages, sessionId, platform }, [
+      turnInput({ userId, platform, triggerType: 'direct' }),
+    ]);
     return messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
   };
 }

@@ -168,7 +168,7 @@ describe('跨会话历史过规则', () => {
       memory.saveMessage(sessionId, { role: 'user', content, timestamp: ts++, metadata: { platform } });
     const passive = async (): Promise<string> => {
       const messages: Message[] = [{ role: 'user', content: 'now' }];
-      await assemblePromptContributions(assembly, { messages, sessionId: G1, platform: 'onebot' });
+      await assemblePromptContributions(assembly, { messages, sessionId: G1, platform: 'onebot' }, []);
       const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
       return typeof block?.content === 'string' ? block.content : '';
     };

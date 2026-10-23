@@ -10,7 +10,7 @@ import { actingIdentity, type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
-import type { IncomingMessage } from '@aalis/schema-message';
+import { type IncomingMessage, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { t } from './texts.js';
 
 // =====================================================================
@@ -978,6 +978,8 @@ function registerSubtask(
       const archive = messageArchive.present ? messageArchive.use : undefined;
       if (archive) {
         const syntheticToolCallId = `report-${Date.now()}`;
+        // 两条都带这一轮的回合 id：连对话回滚这一轮时随它删
+        const metadata = { [WellKnownMetadataKeys.TurnId]: data.turnId };
         // 合成 assistant 消息（含 tool_calls）
         await archive.saveMessage(data.sessionId, {
           role: 'assistant',
@@ -993,6 +995,7 @@ function registerSubtask(
             },
           ],
           timestamp: Date.now(),
+          metadata,
         });
         // 合成 tool 结果消息
         await archive.saveMessage(data.sessionId, {
@@ -1000,6 +1003,7 @@ function registerSubtask(
           content: JSON.stringify({ success: true, message: '结果已报告给父会话' }),
           toolCallId: syntheticToolCallId,
           timestamp: Date.now(),
+          metadata,
         });
       }
 
@@ -1084,9 +1088,10 @@ function registerSubtask(
     }
   }
 
-  // 一轮从开始（agent:input:before）到它的 next 返回为止：子会话记在飞，结束时记下时刻、排定时器；父会话删掉这一轮列出过的回报
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    const { sessionId, source } = data.message;
+  // 一轮从开始（agent:turn:before）到它的 next 返回为止：子会话记在飞，结束时记下时刻、排定时器；父会话删掉这一轮列出过的回报
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    const { sessionId } = data;
+    const { source } = data.inputs[0].message;
     const sm = sessionManager.present ? sessionManager.use : undefined;
     const session = sm?.getSession(sessionId);
     // 已删的子会话：发出、还没开跑的派发与追问不跑

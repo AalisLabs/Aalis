@@ -15,7 +15,8 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 会话环境按会话记下的来源字段：WebUI 往 IM 房间插话时，这一轮的回复发进房间，会话事实（平台、自身账号、会话类型与群号）
 // 按根会话记下的出生平台与聊天窗口取；说话人事实（发送者 ID、昵称、群身份）照旧取自消息；入口与出生平台不同时注明消息经哪个
-// 入口发来。会话类型写平台声明的显示名（没声明时写类型名），群信息与身份判定段按记下的多方标记给，不看类型名。
+// 入口发来；一轮几条输入的说话人不同时不写说话人事实。会话类型写平台声明的显示名（没声明时写类型名），群信息与身份判定段
+// 按记下的多方标记给，不看类型名。
 // 会话表里预置已收录的房间，其中一个在另一个账号上，另有一个第三方平台的多方房间与一对一窗口；
 // onebot 的适配器桩照 onebot 声明类型，与 onebot 一样按会话 id 里的账号给身份，认不出的取先上线的账号。
 // ════════════════════════════════════════════════════════════
@@ -98,10 +99,11 @@ describe('persona 会话环境按出生平台', () => {
     svc = found;
   };
 
-  /** 经 agent:input:before 装上会话身份，在钩子链内取易变上下文 */
-  const volatileFor = async (message: IncomingMessage): Promise<string> => {
+  /** 经 agent:turn:before 装上会话身份，在钩子链内取易变上下文；给几条就是这一轮的几条输入 */
+  const volatileFor = async (message: IncomingMessage, ...more: IncomingMessage[]): Promise<string> => {
     let prompt = '';
-    await host.hooks.use.run('agent:input:before', { message, turnId: 't1', metadata: {} }, async () => {
+    const inputs = [message, ...more].map(m => ({ message: m }));
+    await host.hooks.use.run('agent:turn:before', { turnId: 't1', sessionId: message.sessionId, inputs }, async () => {
       prompt = svc.getVolatilePrompt?.() ?? '';
     });
     return prompt;
@@ -186,6 +188,30 @@ describe('persona 会话环境按出生平台', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  it('一轮两条输入、说话人不同：会话事实照写，不写说话人事实；说话人相同时照写', async () => {
+    await boot();
+    const from = (userId: string, nickname: string): IncomingMessage => ({
+      content: '<占位>',
+      sessionId: GROUP,
+      platform: 'onebot',
+      sessionType: 'group',
+      userId,
+      nickname,
+      groupName: '<群名>',
+      senderRole: 'member',
+      senderTitle: '<群友头衔>',
+    });
+    const two = await volatileFor(from('30001', '<群友甲>'), from('30002', '<群友乙>'));
+    expect(two).toContain('会话类型：群聊');
+    expect(two).toContain('群名称：<群名>');
+    expect(two).not.toContain('当前消息发送者');
+    const same = await volatileFor(from('30001', '<群友甲>'), from('30001', '<群友甲>'));
+    expect(same).toContain('当前消息发送者 ID：30001');
+    expect(same).toContain('当前消息发送者昵称：<群友甲>');
+    expect(same).toContain('当前消息发送者群身份：普通成员');
+    expect(same).toContain('当前消息发送者群头衔：<群友头衔>');
   });
 
   it('onebot 频道：写「频道」，按多方给群号与身份判定段', async () => {

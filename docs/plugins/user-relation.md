@@ -5,7 +5,7 @@
 
 ## 概述
 
-用 LLM 从对话中提取人物、事件、实体及其关系，维护一张人物关系图。每个会话累计 `triggerEveryNMessages` 条入站消息后自动提取一次；开启 `agentInjection` 时，把当前用户的子图速览经 `agent:prompt` 贡献点的 `turn-context` 槽注入。另提供 Agent 工具、`/relation` 指令与 WebUI 的关系图页与原始数据页（见文末），并登记清理类型 `user-relation`、参与 `memory:clear`：仅 scope 为 all 时清空整张图；会话级清理不动它，显式选了 `user-relation` 时回一行未清理，写明是跨会话数据、只在清理全部会话时清。字段与术语对照见 [关系图 · 字段含义速查](./user-relation-graph.md)。
+用 LLM 从对话中提取人物、事件、实体及其关系，维护一张人物关系图。每个会话累计 `triggerEveryNMessages` 条入站消息后自动提取一次；开启 `agentInjection` 时，把这一轮点名她的各位发言者（triggerType 为 direct、immediate 或没经触发判定的输入的发言者）的子图速览合在一块里，经 `agent:prompt` 贡献点的 `turn-context` 槽注入；有几位时各小节标题注明是谁的。另提供 Agent 工具、`/relation` 指令与 WebUI 的关系图页与原始数据页（见文末），并登记清理类型 `user-relation`、参与 `memory:clear`：仅 scope 为 all 时清空整张图；会话级清理不动它，显式选了 `user-relation` 时回一行未清理，写明是跨会话数据、只在清理全部会话时清。字段与术语对照见 [关系图 · 字段含义速查](./user-relation-graph.md)。
 
 ## 插件声明
 

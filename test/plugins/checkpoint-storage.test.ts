@@ -325,7 +325,7 @@ describe('checkpoint × storage (真 fs)', () => {
     expect(String(await storage.readFile('data:/state.json', 'utf-8')), 'data 根文件不得被回滚改回').toBe('v2');
   });
 
-  it('消息被下游钩子拦下、到不了回合结束：这一轮照样结束并落盘', async () => {
+  it('这一轮被下游钩子拦下、到不了回合结束：这一轮照样结束并落盘', async () => {
     // 拦截者登记在 checkpoint 之后，排在它的 next 里面
     await app.plugins.register(
       definePlugin({
@@ -333,8 +333,8 @@ describe('checkpoint × storage (真 fs)', () => {
         uses: { hooks: hooksCap, storage: storageService },
         apply({ hooks, storage }) {
           const gateway = storage.use;
-          hooks.use.middleware('agent:input:before', async () => {
-            await gateway.writeFile('ws:/blocked.txt', 'x'); // 不调 next：拦下整条消息
+          hooks.use.middleware('agent:turn:before', async () => {
+            await gateway.writeFile('ws:/blocked.txt', 'x'); // 不调 next：拦下这一轮
           });
         },
       }),
@@ -343,9 +343,13 @@ describe('checkpoint × storage (真 fs)', () => {
     expect(app.plugins.getPlugin('zz-block-input')?.state).toBe('active');
 
     const message = { sessionId: 'h2', platform: 'webui', content: '' } as IncomingMessage;
-    await hooks.run('agent:input:before', { message, turnId: 'turn-blocked', metadata: {} }, async () => {
-      throw new Error('拦截者不调 next，回合本体不该跑');
-    });
+    await hooks.run(
+      'agent:turn:before',
+      { turnId: 'turn-blocked', sessionId: message.sessionId, inputs: [{ message }] },
+      async () => {
+        throw new Error('拦截者不调 next，回合本体不该跑');
+      },
+    );
     expect((await svc.listTurns('h2')).map(t => [t.turnId, t.fileCount])).toEqual([['turn-blocked', 1]]);
   });
 });

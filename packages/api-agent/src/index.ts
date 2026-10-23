@@ -17,9 +17,9 @@ import type { IncomingMessage, Message } from '@aalis/schema-message';
 /**
  * 消息预处理器函数
  *
- * 在消息到达 LLM 之前对 IncomingMessage 进行变换。
+ * 每条输入一次，在它进入一轮之前对 IncomingMessage 进行变换。
  * 遵循洋葱模型：调用 `next()` 将控制权传递给下一个预处理器，
- * 不调用则中断整个流程（LLM 不会被调用）。
+ * 不调用则丢掉这条输入（不进一轮、不归档）。
  */
 export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
 
@@ -30,14 +30,15 @@ export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void
  * 组装系统提示、加载历史、调用 LLM、执行工具调用循环、发出回复。
  *
  * 默认由 @aalis/plugin-agent 提供。
- * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。实现者守两条约定，会话服务回看历史、标「未发出」
+ * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。实现者守三条约定，会话服务回看历史、标「未发出」
  * 依据它们：
  * - 落库的回复与工具结果在元数据里按 schema-message 登记的键（WellKnownMetadataKeys）记下回合与调用的 id、
  *   这一轮的模型与 token、她在这个平台上的身份；
- * - 房间里一轮只把最后一条回复交给平台，工具调用之前说的话与格式校验没通过而重试丢掉的几版不发出。
+ * - 房间里一轮只把最后一条回复交给平台，工具调用之前说的话与格式校验没通过而重试丢掉的几版不发出；
+ * - 输入在进入一轮时经 message-archive 归档（archiveIncoming 带这一轮的回合 id 与进入方式，记成登记的键 TurnId、TurnEntry）。
  */
 export interface AgentService {
-  /** 处理一条传入消息，完成完整的对话循环 */
+  /** 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它没进一轮就被丢掉） */
   handleMessage(message: IncomingMessage): Promise<void>;
   /**
    * 中止指定会话的在飞回合（可选实现）。不带 turnId 时停这个会话所有在飞的回合；带 turnId 时只停那一轮，
@@ -48,8 +49,8 @@ export interface AgentService {
   /**
    * 注册消息预处理器
    *
-   * 预处理器在 `agent:input:before` 阶段运行，可以修改 IncomingMessage（如将图片转文字、解析文件）。
-   * 底层通过中间件系统实现，按注册顺序洋葱式执行。
+   * 预处理器在 `agent:input:before` 阶段运行：每条输入一次，在它进入一轮之前，可以修改 IncomingMessage（如将图片转文字、
+   * 解析文件）。底层通过中间件系统实现，按注册顺序洋葱式执行。
    */
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
 
@@ -60,22 +61,39 @@ export interface AgentService {
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
 
+/**
+ * 一轮里的一条输入。archived 是这条归档进会话历史的那一条，在 agent:turn:before 的默认动作开头归档之后才有；没有归档插件、
+ * 不归档的输入（空闲开话题）一直没有
+ */
+export interface TurnInput {
+  readonly message: IncomingMessage;
+  archived?: Message;
+}
+
 // ----- Agent 域钩子声明（通过 declaration merging 注入 @aalis/api-hooks 的 HookContextMap）-----
 
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
     /**
-     * 一轮开始、消息进入 agent 之前。next 之后是这一轮的全部：不调 next 即拦下整条消息。
-     * turnId 是 agent 在回合开始时生成的回合 id，这一轮的流式片段、工具调用、用量与回合结束都带同一个。
+     * 每条输入一次，在它进入一轮之前（预处理器挂在这里）：next 之前可以改写这条，不调 next 即丢弃这条，不进一轮、不归档，
+     * agent 照发流结束标记。默认动作把它交给 agent 并等它落定，next 返回时这条已落定（所在的一轮结束）
      */
-    'agent:input:before': { message: IncomingMessage; turnId: string; metadata: Record<string, unknown> };
+    'agent:input:before': { message: IncomingMessage };
     /**
-     * 一轮 agent 处理结束时触发，回复已发出或这一轮已静默、中止、出错。消息在 agent:input:before 被拦下时不触发。
+     * 一轮开始。turnId 是 agent 在回合开始时生成的回合 id，这一轮的流式片段、工具调用、用量与回合结束都带同一个；inputs 是这一轮的
+     * 输入，同一轮的输入会话与来源相同（来源取 inputs[0].message.source）。默认动作从按先后归档这些输入开始，是这一轮的全部：
+     * 中间件里还没有 archived，读历史也还没有它们。不调 next 即这一轮不跑、输入不归档、不发 agent:turn:after，agent 照发流结束
+     * 标记（前端据此收起加载）
+     */
+    'agent:turn:before': { turnId: string; sessionId: string; inputs: readonly TurnInput[] };
+    /**
+     * 一轮 agent 处理结束时触发，回复已发出或这一轮已静默、中止、出错。这一轮在 agent:turn:before 被拦下时不触发。
      * 结局为 replied 时最终回复已写进会话历史：它在最后一次模型调用之后落库，不在那次用量的 historyMessages 里；
      * 其余结局不落库最终回复
      */
     'agent:turn:after': {
-      message: IncomingMessage;
+      /** 这一轮的输入，与 agent:turn:before 的同一份 */
+      inputs: readonly TurnInput[];
       reply: string;
       outcome: 'replied' | 'silent' | 'aborted' | 'error';
       /**
@@ -85,7 +103,6 @@ declare module '@aalis/api-hooks' {
       error?: string | TextRef;
       sessionId: string;
       turnId: string;
-      metadata: Record<string, unknown>;
     };
     'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallRequest };
     /**
@@ -111,8 +128,6 @@ declare module '@aalis/api-hooks' {
       visibleContent?: string;
       sessionId: string;
       platform?: string;
-      userId?: string;
-      triggerType?: IncomingMessage['triggerType'];
       /**
        * 当中间件检测到回复无法满足约束（如 outputFormat 解析失败）时，
        * 可将其置为 true 触发 agent 重试。agent 会按 `maxRetries` 循环重试，
@@ -144,9 +159,7 @@ declare module '@aalis/api-hooks' {
        */
       acceptsImages: boolean;
       sessionId?: string;
-      userId?: string;
       platform?: string;
-      triggerType?: IncomingMessage['triggerType'];
       /**
        * 本回合入站消息的系统侧来源标识；真人消息缺省。
        * 与 IncomingMessage.source 同义，供钩子区分内部注入与真人回合。
@@ -209,9 +222,9 @@ export type PromptAnchor = 'identity' | 'knowledge' | 'context' | 'turn-context'
  */
 export interface PromptContributionView {
   readonly sessionId?: string;
-  readonly userId?: string;
   readonly platform?: string;
-  readonly triggerType?: IncomingMessage['triggerType'];
+  /** 这一轮的输入（与 agent:turn:before 的同一份，已归档的带 archived）；不在回合里的估算（token:request 的快照）为空 */
+  readonly inputs: readonly TurnInput[];
   /** 本贡献构建超时或所属回合取消时中止；应传至底层请求，并在异步步骤之间检查。 */
   readonly signal?: AbortSignal;
   /**
@@ -309,8 +322,8 @@ export interface TokenUsageEvent {
    */
   untrimmedHistory: number;
   /**
-   * 会话历史的条数：这一轮开头会话的活跃历史条数（含这一轮的入站消息，也含条数线之外、没发给模型的部分），加本回合到这次
-   * 调用为止追加的工具调用与结果。与硬裁剪无关；快照只有活跃历史条数
+   * 会话历史的条数：这一轮开头会话的活跃历史条数（含这一轮开轮的输入，也含条数线之外、没发给模型的部分），加本回合到这次
+   * 调用为止追加的工具调用与结果（插进来的输入与它们一样按追加计）。与硬裁剪无关；快照只有活跃历史条数
    */
   historyMessages: number;
   /** 这一轮的历史条数上限（会话设置「历史条数上限」，0 为不按条数）：摘要插件按它判定按条数压缩 */

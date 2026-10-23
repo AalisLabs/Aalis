@@ -173,8 +173,10 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     const image = '![zz](https://e.com/tool.png)';
     await send(t('switched', { name: link }));
     const asked = { content: '<提问>', sessionId: id, platform: OWNER.platform, userId: OWNER.userId };
-    await host.hooks.use.run('agent:input:before', { message: asked, turnId: 'turn-1', metadata: {} }, () =>
-      send(t('stopped', { name: image })),
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId: 'turn-1', sessionId: asked.sessionId, inputs: [{ message: asked }] },
+      () => send(t('stopped', { name: image })),
     );
 
     const notice = (text: string) => ({ kind: 'notice', topic: WellKnownKinds.EventMarker, text });
@@ -254,21 +256,25 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     });
     const asked = { content: '<提问>', sessionId: ROOM, platform: 'onebot', userId: '30001' };
     let inTurn: ReturnType<typeof said> = [];
-    await host.hooks.use.run('agent:input:before', { message: asked, turnId: 'turn-1', metadata: {} }, async () => {
-      const error: OutgoingMessage = {
-        sessionId: ROOM,
-        platform: 'onebot',
-        source: 'system',
-        turnId: 'turn-1',
-        content: '[错误] 出错了',
-      };
-      await host.events.use.emit('outbound:message', error);
-      expect(await error.delivery).toEqual({ ok: true });
-      await vi.waitFor(async () =>
-        expect((await host.memory.use.getHistory(ROOM, Infinity)).map(m => m.content)).toContain('[错误] 出错了'),
-      );
-      inTurn = said((await (await connect()).subscribe(ROOM)).snapshot.items);
-    });
+    await host.hooks.use.run(
+      'agent:turn:before',
+      { turnId: 'turn-1', sessionId: asked.sessionId, inputs: [{ message: asked }] },
+      async () => {
+        const error: OutgoingMessage = {
+          sessionId: ROOM,
+          platform: 'onebot',
+          source: 'system',
+          turnId: 'turn-1',
+          content: '[错误] 出错了',
+        };
+        await host.events.use.emit('outbound:message', error);
+        expect(await error.delivery).toEqual({ ok: true });
+        await vi.waitFor(async () =>
+          expect((await host.memory.use.getHistory(ROOM, Infinity)).map(m => m.content)).toContain('[错误] 出错了'),
+        );
+        inTurn = said((await (await connect()).subscribe(ROOM)).snapshot.items);
+      },
+    );
 
     expect(inTurn).toEqual([{ kind: 'notice', topic: WellKnownKinds.EventMarker, text: '[错误] 出错了' }]);
   });

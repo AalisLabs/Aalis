@@ -44,8 +44,8 @@ function turnsOf(app: App) {
   const host = app.bind({ hooks, checkpoint });
   return (turnId: string, message: Pick<IncomingMessage, 'sessionId' | 'platform' | 'userId'>) =>
     host.hooks.use.run(
-      'agent:input:before',
-      { message: { content: '', ...message } as IncomingMessage, turnId, metadata: {} },
+      'agent:turn:before',
+      { turnId, sessionId: message.sessionId, inputs: [{ message: { content: '', ...message } }] },
       () => host.checkpoint.use.beforeMutate('workspace:/a.txt', 'write', async () => null),
     );
 }

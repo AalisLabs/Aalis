@@ -150,7 +150,7 @@ interface OutgoingMessage {
 'outbound:stream':           [chunk: StreamChunkMessage]
 ```
 
-`StreamChunkMessage` 带 `turnId`：所在回合的 id，由 agent 在回合开始时生成，同一轮的工具调用、用量与回合结束带同一个（见 [api-agent](./api-agent.md#回合-id)）。一轮的最后一个片段是 `done: true`，消息在 `agent:input:before` 被拦下时也会发这一片。
+`StreamChunkMessage` 带 `turnId`：所在回合的 id，由 agent 在回合开始时生成，同一轮的工具调用、用量与回合结束带同一个（见 [api-agent](./api-agent.md#回合-id)）。一轮的最后一个片段是 `done: true`，这一轮在 `agent:turn:before` 被拦下时也会发这一片。
 
 模型生成工具调用的参数时，片段带 `toolCallProgress { index, name, charsAccumulated, callId }`：`index` 是这次模型回复里的第几个调用，`charsAccumulated` 是已生成的参数字数，`callId` 是 agent 给这次调用配的 id，与之后执行它的 `tool:execute` 的 `callId` 相同，同一个调用的几次进度 `callId` 不变。会话服务据此在参数生成期间就给出工具卡。
 
@@ -167,9 +167,10 @@ outboundMediaMessage(
   opts?: { desc?: string; source?: OutgoingMessage['source'] },
 ): Message & { content: string };
 outboundMarkerMessage(msg: OutgoingMessage): Message | undefined;
+oneSpeaker(inputs: readonly Pick<IncomingMessage, 'platform' | 'userId'>[]): boolean;
 ```
 
-前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话与附件清单另记在元数据里（见下文）。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。
+前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话与附件清单另记在元数据里（见下文）。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。`oneSpeaker` 判一轮的各条输入是不是同一位物理发言者（平台与账号都相同）说的：会话语义的发言者（工具调用上下文的 `userId`、人设的说话人事实）只在这时有，api-authority 的 `originTurnOf` 与人设插件都用它。
 
 ## 存档元数据的键
 
@@ -186,7 +187,8 @@ outboundMarkerMessage(msg: OutgoingMessage): Message | undefined;
 | `Source` | `source` | 存档写入站消息的 `source`（内部注入的来源，真人发言没有）；出站消息记进历史的各条（文字的事件标记与发出的附件）写出站的 `source`（如指令回复的 `command`）；插件自己写的其余记录（投递失败）写插件的名字 | 字符串 | 会话服务标出提问是不是内部注入的、认出指令的回复，插件发的附件按它定通知的种类 |
 | `HostNoticeKind` | `hostNoticeKind` | 存档：宿主通知的子类（`hostNotice.kind`） | 字符串 | 会话服务给出通知条目的种类 |
 | `HostNoticeId`、`HostNoticeFacts` | `hostNoticeId`、`hostNoticeFacts` | 存档：宿主通知的 `id` 与给界面的事实（`hostNotice.id`、`hostNotice.facts`），有才写 | 字符串；扁平的键值（值是字符串或数） | 会话服务给出通知条目的 `noticeId` 与 `facts` |
-| `TurnId` | `turnId` | agent 写在这一轮落库的回复与工具结果上；平台适配器写在一轮回复的投递失败记录上；出站记进历史的各条由存档按出站消息的 `turnId` 记下（有才记） | 字符串 | 会话服务把存档归回回合、标出哪一轮的回复没发出 |
+| `TurnId` | `turnId` | 存档按 agent 归档时交来的回合写在进了一轮的输入上；agent 写在这一轮落库的回复与工具结果上；平台适配器写在一轮回复的投递失败记录上；出站记进历史的各条由存档按出站消息的 `turnId` 记下（有才记） | 字符串 | 会话服务把存档归回回合、标出哪一轮的回复没发出；连对话回滚据此只删这一轮的消息 |
+| `TurnEntry` | `turnEntry` | 存档与 `TurnId` 一起写在进了一轮的输入上 | `'opened'`（开轮的）或 `'joined'`（插进在跑的一轮的） | 输入怎么进的这一轮 |
 | `CallId` | `callId` | agent 写在工具结果上；平台适配器写在经工具发出的消息的投递失败记录上；出站记进历史的各条由存档按出站消息的 `callId` 记下（有才记） | 字符串，即 `ToolCallContext.callId` | 会话服务把历史里的工具卡对回实时推送 |
 | `ModelInfo` | `modelInfo` | agent 写在这一轮最后的回复上 | 同 `OutgoingMessage.modelInfo` | 会话服务标在回复条目上 |
 | `SentRef`、`SentName` | `ref`、`name` | 存档记发出的附件时（`outboundMediaMessage` 记的那条，见 api-message-archive 的 `recordOutbound`）：原样的地址与文件名 | 字符串 | 会话服务还原发出的附件：占位符里的地址遇到「]」会截断、描述位的「]」「\|」换成了全角，优先取这两个键 |

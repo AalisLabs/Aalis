@@ -1106,29 +1106,35 @@ function registerUserProfile({
     return `关系强度：${score.toFixed(relationScorePrecision)}/100；累计互动：${count} 次。`;
   }
 
-  // ─── LLM 调用前注入（agent:prompt 贡献 / turn-context 槽——档案按当前发言者取材、换人即变，落历史后护前缀缓存）：根据 triggerType 区分主发言者语义 ───
-  //   direct/immediate/undefined → view.userId 是主发言者，注入完整档案 + 其他参与者摘要
+  // ─── LLM 调用前注入（agent:prompt 贡献 / turn-context 槽——档案按当前发言者取材、换人即变，落历史后护前缀缓存）：按这一轮各条输入的 triggerType 区分主发言者语义 ───
+  //   direct/immediate/undefined → 点名的输入，它的发言者是主发言者：各注入完整档案，其余参与者给摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  // 多块返回保序共键：主发言者档案 → 其他参与者。
+  // 没有一条点名的输入时没有主发言者。多块返回保序共键：各主发言者档案（按输入先后）→ 其他参与者。
   contributions.use.contribute('agent:prompt', {
     id: 'user-profile',
     anchor: 'turn-context',
     async build(data) {
-      // 干跑(token 快照)跳过档案加载——该路径 userId 为空串,加载既昂贵又无意义
+      // 干跑(token 快照)跳过档案加载——该路径没有输入,加载既昂贵又无意义
       if (data.dryRun) return null;
 
       const mem = memory.present ? memory.use : undefined;
       const blocksToInsert: string[] = [];
-      const trigger = data.triggerType ?? 'direct';
-      const hasPrimarySpeaker = trigger === 'direct' || trigger === 'immediate';
+      const addressed = data.inputs
+        .map(({ message }) => message)
+        .filter(({ triggerType = 'direct' }) => triggerType === 'direct' || triggerType === 'immediate');
+      const hasPrimarySpeaker = addressed.length > 0;
+      /** 主发言者：点名的输入里有账号的发言者，按 userKey 去重、按输入先后 */
+      const primaries = new Map<string, string>();
+      for (const { platform, userId } of addressed) {
+        if (userId) primaries.set(userKeyOf(platform, userId), userId);
+      }
 
       // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
-      if (hasPrimarySpeaker && data.userId) {
-        const userKey = userKeyOf(data.platform, data.userId);
+      for (const [userKey, userId] of primaries) {
         const profile = await loadProfileLenient(mem, userKey);
         if (profile?.facts.some(isFactActive)) {
-          const body = renderProfileBlock(profile.facts, data.userId, false);
+          const body = renderProfileBlock(profile.facts, userId, false);
           const relationLine = renderRelationLine(profile);
           // 可选：从 user-relation 服务取「同社群活跃成员」（按配置的社群发现算法所得标签 + PageRank 排序）。
           // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
@@ -1146,7 +1152,7 @@ function registerUserProfile({
             logger.use.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
           }
           const block =
-            `# 关于当前对话者（${data.userId}）的已知事实\n` +
+            `# 关于当前对话者（${userId}）的已知事实\n` +
             '以下是你跨会话长期积累的关于该用户的事实，用于让回应更自然贴合其个性。' +
             '不要主动罗列这些事实，也不要让用户觉得你在「读档案」，而是让它自然影响你的语气和话题选择。' +
             '这些事实来自零散对话的推断，未必完全准确；也不要把它们与对话历史片段拼接成新的强陈述，' +
@@ -1162,10 +1168,8 @@ function registerUserProfile({
       // 2. 群聊其他参与者：按最近互动优先加载档案
       //    - 先从当前 LLM 上下文的 messages 中倒序收集最近发言者
       //    - 再从跨会话 user:profile metadata 中按 lastInteractionAt 倒序补齐
-      //    - hasPrimarySpeaker 为 true 时排除主发言者
-      //    - hasPrimarySpeaker 为 false 时（interval/idle）所有人平等显示
+      //    - 排除主发言者；没有主发言者时（interval/idle）所有人平等显示
       if (cfg.maxOtherParticipants > 0) {
-        const primaryKey = hasPrimarySpeaker && data.userId ? userKeyOf(data.platform, data.userId) : undefined;
         const others = new Map<string, { userId: string; nickname?: string; platform?: string }>();
         const candidateLimit = Math.max(cfg.maxOtherParticipants * 5, cfg.maxOtherParticipants + 10);
 
@@ -1173,7 +1177,7 @@ function registerUserProfile({
           const uid = userId.trim();
           if (!uid) return false;
           const userKey = userKeyOf(platform, uid);
-          if (primaryKey && userKey === primaryKey) return false;
+          if (primaries.has(userKey)) return false;
           if (others.has(userKey)) return false;
           others.set(userKey, { userId: uid, nickname, platform });
           return others.size >= candidateLimit;

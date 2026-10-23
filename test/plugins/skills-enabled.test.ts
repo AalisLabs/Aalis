@@ -92,14 +92,13 @@ async function setup(enabledSkills?: string[], options: { settings?: boolean } =
       { role: 'system', content: '<人设>' },
       { role: 'user', content: '<提问>' },
     ];
-    await assemblePromptContributions(caps, { messages, sessionId, platform });
+    await assemblePromptContributions(caps, { messages, sessionId, platform }, []);
     return messages.find(m => String(m.metadata?.injector ?? '').endsWith('/skills-discovery'));
   };
   /** 这个会话收到一条消息：触发词命中的技能自动激活，返回这个会话已激活的技能 */
   const say = async (sessionId: string, platform: string, content: string) => {
     await caps.hooks.use.run('agent:input:before', {
       message: { sessionId, platform, content },
-      metadata: {},
     } as never);
     return service.getLoadedSkills(sessionId);
   };

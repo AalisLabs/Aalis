@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
@@ -33,6 +34,11 @@ async function setup() {
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });
   host.provide.use(memory, fakeMemory() as never);
+  /** 经存档写进会话历史的消息（子任务自动完成时在子会话里合成的回报） */
+  const archived: Array<{ sessionId: string; message: Message }> = [];
+  host.provide.use(messageArchive, {
+    saveMessage: async (sessionId: string, message: Message) => void archived.push({ sessionId, message }),
+  } as never);
   const handlers = new Map<string, Handler>();
   host.provide.use(tools, {
     register(tool: { definition: { function: { name: string } }; handler: Handler }) {
@@ -57,18 +63,17 @@ async function setup() {
   let turns = 0;
   /** 子会话跑一轮，按 agent 的顺序发回合结束；during 在这一轮结束前跑（同一会话并行的另一轮） */
   const turn = (sessionId: string, outcome: Outcome, error?: string, during?: () => Promise<unknown>) => {
-    const message = { content: '<任务>', sessionId, platform: 'webui' };
+    const inputs = [{ message: { content: '<任务>', sessionId, platform: 'webui' } }];
     const turnId = `t${++turns}`;
-    return host.hooks.use.run('agent:input:before', { message, turnId, metadata: {} }, async () => {
+    return host.hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, async () => {
       await during?.();
       await host.hooks.use.run('agent:turn:after', {
-        message,
+        inputs,
         reply: outcome === 'replied' ? '<结果>' : '',
         outcome,
         ...(error === undefined ? {} : { error }),
         sessionId,
         turnId,
-        metadata: {},
       });
     });
   };
@@ -88,7 +93,7 @@ async function setup() {
     return messages.find(m => m.metadata?.injector === 'subtask/parent-status')?.content as string | undefined;
   };
 
-  return { sm, parent, call, turn, reminder };
+  return { sm, parent, call, turn, reminder, archived };
 }
 
 /** wait_subtasks 在 ms 毫秒内返回了没有：没返回为 'pending' */
@@ -163,6 +168,18 @@ describe('子会话收口后父会话的等待随即返回', () => {
       timedOut: false,
       subtasks: [{ id: child.id, status: 'completed', completed: true, result: '<结果>' }],
     });
+  });
+
+  it('正常回复：子会话历史里合成的回报两条带这一轮的回合 id（连对话回滚时随这一轮删）', async () => {
+    const { sm, parent, turn, archived } = await setup();
+    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
+
+    await turn(child.id, 'replied');
+
+    expect(archived.map(({ sessionId, message }) => [sessionId, message.role, message.metadata?.turnId])).toEqual([
+      [child.id, 'assistant', 't1'],
+      [child.id, 'tool', 't1'],
+    ]);
   });
 
   it('最后结束的一轮出错、会话已由并行的另一轮收口为完成：报 completed，不带 reason', async () => {

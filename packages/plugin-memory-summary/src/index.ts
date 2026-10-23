@@ -786,9 +786,9 @@ async function run(caps: Caps): Promise<void> {
     if (usage.turnId) turnUsages.set(usage.sessionId, usage);
   });
 
-  // 回合从开始（agent:input:before）到它的 next 返回为止：记下开始时的压缩代数与清空代数，被下游拦下、出错的一轮同样在 finally 里丢掉
-  hooks.use.middleware('agent:input:before', async (data, next) => {
-    const sessionId = data.message.sessionId;
+  // 回合从开始（agent:turn:before）到它的 next 返回为止：记下开始时的压缩代数与清空代数，被下游拦下、出错的一轮同样在 finally 里丢掉
+  hooks.use.middleware('agent:turn:before', async (data, next) => {
+    const { sessionId } = data;
     turnStarts.set(data.turnId, { compressions: compressions.get(sessionId) ?? 0, cleared: clearedSince(sessionId) });
     try {
       await next();

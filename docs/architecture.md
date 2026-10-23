@@ -91,10 +91,15 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   │     inbound:flow      节流硬闸：禁言、回复后冷却、限速
   │     inbound:dispatch  默认动作 → Agent.handleMessage(incoming)
   │
-  ├─ 1. hooks.use.run('agent:input:before', { message, turnId, metadata }, defaultAction)
+  ├─ 1. hooks.use.run('agent:input:before', { message }, defaultAction)
   │     │
   │     ├─ [预处理中间件] 图像识别、文件提取等
-  │     └─ 全部通过 → defaultAction() 进入 Agent 处理
+  │     └─ 全部通过 → defaultAction() 把这条输入交给一轮
+  │
+  ├─ 1a. hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, defaultAction)
+  │     │
+  │     ├─ [回合中间件] 会话状态、检查点、人设身份等
+  │     └─ 全部通过 → defaultAction() 先归档这一轮的输入（带 turnId），再跑这一轮
   │
   ├─ 2. buildMessages()
   │     └─ [系统提示词] + [历史消息(≤50)] + [当前用户消息]
@@ -136,9 +141,9 @@ Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 插件通过 `hooks.use.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。`hooks` 描述符来自 `@aalis/api-hooks`，默认提供者是 `@aalis/plugin-hooks`。
 
 ```typescript
-// 拦截消息（不调用 next = 中断整个管道）
+// 拦截消息（不调用 next = 丢掉这条输入，不进一轮）
 hooks.use.middleware('agent:input:before', async (data, next) => {
-  if (shouldBlock(data.message)) return; // 中断
+  if (shouldBlock(data.message)) return; // 丢掉
   data.message.content += ' [已审核]';   // 修改
   await next();                           // 继续
 });
@@ -333,8 +338,9 @@ defaultAction()        ← 所有 handler 通过后执行
 | 钩子名 | 数据 | 用途 |
 |---|---|---|
 | `outbound:dispatch` | `{ message, metadata }` | 出站主管道；默认动作是 `emit('outbound:message')`，handler 可脱敏 / 限速 / 审计。 |
-| `agent:input:before` | `{ message, turnId, metadata }` | 修改/拦截收到的消息（图像识别、文件提取）；`turnId` 是 agent 在回合开始时生成的回合 id |
-| `agent:turn:after` | `{ message, reply, outcome, error?, sessionId, turnId, metadata }` | agent 回复周期完成后（摘要触发、子任务完成检测、会话记下这一轮的结局） |
+| `agent:input:before` | `{ message }` | 每条输入一次，修改/丢掉收到的消息（图像识别、文件提取） |
+| `agent:turn:before` | `{ turnId, sessionId, inputs }` | 一轮开始，`next` 之后是这一轮的全部（会话状态、检查点、人设身份）；`turnId` 是 agent 在回合开始时生成的回合 id |
+| `agent:turn:after` | `{ inputs, reply, outcome, error?, sessionId, turnId }` | agent 回复周期完成后（摘要触发、子任务完成检测、会话记下这一轮的结局） |
 | `agent:llm:before` | `{ messages, tools, sessionId }` | 修改发给 LLM 的消息列表和工具（记忆注入、技能注入、工具搜索替换） |
 | `agent:llm:after` | `{ response, messages }` | 处理 LLM 返回的响应 |
 | `agent:tool:before` | `{ name, args, toolCallContext }` | 修改工具调用参数 |
