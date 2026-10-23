@@ -323,6 +323,13 @@
 - 她回复里存储地址的媒体标记：受众只有 owner 的会话里不过判据；其余会话不带授权身份过同一份判据，同平台别的群（在会话表里）的转成附件，别人私聊里的、经另一个机器人账号的与本机文件的不转。
 - api-media 导出这份判据：`mediaScopeOf(call, services)` 交出一次调用的判定，两个工具与回复里的标记都用它，按路径取存储媒体的第三方工具也用它；底下是 `mediaInScope(target, call, deps)`（别的会话的取用判定 `take` 与本机文件判定 `local` 由调用方给）与本机文件判法 `localFileInScope(call, deps)`。api-media 新加 api-authority 的依赖（只用它的类型）。
 
+### 审批推回 owner 的 IM 私聊，改动照给，在场一条规则（@aalis/api-approval、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/plugin-cli、@aalis/plugin-webui-client）
+
+- 审批卡的改动一律照给：api-approval 的 `ApprovalFacts.diff.patch` 与 api-session-protocol 审批对象的 `facts.diff.patch` 改为必有，审批服务不再按路径（`.env`、私钥、凭据文件等）或内容（令牌前缀、「密钥名 = 值」等）猜密钥、整段不给。改 `.env`、内容像密钥的改动，WebUI、终端与 IM 私聊的卡上都逐字显示，审计里也有；替换审批服务实现的要给出 `patch`。
+- api-approval 的 `ApprovalSurface.attend` 与 `SurfaceBinding.attend` 加可选的第三个参数 `scope`（类型 `AttendScope`，`{ selfId? }`）：给了的接入只覆盖这一轮的参与者里有它的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）就是 `selfId` 的审批，只因它们算在场、只收和只能应答它们；不给的覆盖全部。替换审批服务实现的要按它判推给谁、算谁在场、认谁的应答。
+- 推给审批面客户端、还没结的审批让它一直算在场：终端推出卡之后不再按键，卡照样等到结算或满 300 秒（此前到最近一次按键满 10 分钟就进 30 秒宽限，按没人在场结算）。客户端上报离开时，推给它、还没结的对它算没收到，再报在场时同一张再推一次：WebUI 页面转到后台再回来时会再收到同一张（按 id 收，不重复），自己实现审批面的要按审批 id 去重。
+- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入，她经这个账号第一次亲手说话时建，会话管理里有她与这个账号的私聊才建，没有就等她私聊这个账号之后。她经这个账号发起的审批，在私聊里、在群里都推到这个私聊，群聊窗口里不出卡；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场。只认在这个私聊里引用审批消息的回复，她在群里说「同意」当普通消息。卡没送达时 WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。插件新加 `events` 的必需依赖。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

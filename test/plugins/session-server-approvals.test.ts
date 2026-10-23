@@ -44,9 +44,13 @@ const OWNER = { platform: 'webui', userId: 'console' };
 /** owner 在 QQ 上的账号：配置里的 owner */
 const OWNER_QQ = { platform: 'onebot', userId: '99999' };
 const MEMBER = { platform: 'onebot', userId: '30001' };
-const ROOM = 'onebot:10000:group:20001';
+/** 机器人账号 */
+const SELF = '10000';
+const ROOM = `onebot:${SELF}:group:20001`;
+/** 同一个群，经另一个机器人账号 */
+const ROOM_OTHER_BOT = 'onebot:10001:group:20001';
 /** owner 与机器人的 QQ 私聊：会话列表里归在房间 */
-const OWNER_DM = 'onebot:10000:private:99999';
+const OWNER_DM = `onebot:${SELF}:private:99999`;
 
 const WAIT_MS = 300_000;
 const PRESENCE_MS = 10 * 60_000;
@@ -112,7 +116,12 @@ async function setup() {
   await app.plugin(toolsPlugin, {});
   await app.plugins.idle();
   declareToolSystemDisplays(host.tools.use);
-  await app.plugin(adapterPlugin('onebot-a', { platform: 'onebot', canHandle: id => id.startsWith('onebot:10000:') }));
+  await app.plugin(
+    adapterPlugin('onebot-a', {
+      platform: 'onebot',
+      canHandle: id => id.startsWith(`onebot:${SELF}:`) || id.startsWith('onebot:10001:'),
+    }),
+  );
   await app.plugin(sessionManagerPlugin, {});
   await app.plugin(sessionServerPlugin, {});
   const surfaces: Record<string, ApprovalSurface> = {};
@@ -325,15 +334,59 @@ describe('在场才问', () => {
     ]);
   });
 
-  it('等待中最近一次活动满 10 分钟：从那一刻起等完宽限再结算，不等到 300 秒', async () => {
+  it('推给它、还没结的卡让它一直算在场：推出之后不再上报活动（如终端不按键），最近一次活动满 10 分钟之后在场重算也不进宽限，卡等满 300 秒', async () => {
     const { mine, connect, request } = await setup();
     await connect();
     await vi.advanceTimersByTimeAsync(PRESENCE_MS - 60_000);
     const r = request(mine);
-    await vi.advanceTimersByTimeAsync(60_000 + GRACE_MS - 1);
+    await vi.advanceTimersByTimeAsync(61_000);
+    // 别的连接接入又断开：在场按此刻重算一次，此刻已过了最近一次活动起的 10 分钟（不压在边界上）
+    const other = await connect();
+    other.conn.close();
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(r.outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(WAIT_MS - 61_000 - GRACE_MS - 1);
     expect(r.outcome).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(r.outcome).toMatchObject({ approved: false, source: 'timeout' });
+  });
+
+  it('推着的卡让它在场时，别的会话发起的同样推给它；都结了回到最近一次活动起 10 分钟', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    request(mine);
+    await flush();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    const later = request(ROOM, { origin: originOf('hand', OWNER_QQ) });
+    await flush();
+    expect(later.outcome).toBeUndefined();
+    expect(pushed(c).map(a => a.sessionId)).toEqual([mine, ROOM]);
+    for (const approval of pushed(c)) await approve(c, approval);
+    await flush();
+    const after = request(mine);
+    await flush();
+    expect(after.outcome).toMatchObject({ approved: false, source: 'absent' });
+  });
+
+  it('上报离开后，推给它还没结的卡对它算没收到：不再因它算在场，变为在场时补推同一张，结算照旧通知它', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const r = request(mine);
+    await flush();
+    await c.call('presence/update', { active: false });
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    expect(r.outcome).toBeUndefined();
+    await c.call('presence/update', { active: true });
+    const [first, again] = pushed(c);
+    // 补推的是同一张：客户端按 id 收，不重复
+    expect(again).toEqual(first);
+    await approve(c, again);
+    await flush();
+    expect(r.outcome).toMatchObject({ approved: true });
+    expect(c.notifications('approval/settled')).toEqual([
+      { approvalId: first.id, state: 'approved', source: 'owner', at: Date.now() },
+    ]);
   });
 
   it('审批面的登记撤回（登记它的插件停用）：它的连接都不算在场，等待中的等完宽限后结算', async () => {
@@ -437,46 +490,36 @@ describe('重连宽限：在场的面全部消失之后再等 30 秒', () => {
   });
 });
 
-describe('限定会话的接入', () => {
-  it('只算那个会话的在场、只收那个会话的审批：别处的审批发起时按不在场拒，有别的面在场时也不推给它', async () => {
-    const { mine, surfaces, connect, request, flush } = await setup();
+describe('限定机器人账号的接入', () => {
+  it('只算、只收、只能应答参与者里有它、且经这个机器人账号的审批：WebUI 发起的、往群里插话的、经别的账号的都不归它', async () => {
+    const { host, mine, surfaces, connect, request, flush } = await setup();
+    await recordRoom(host.events.use, ROOM_OTHER_BOT, '读书会');
     const got: Approval[] = [];
-    const dm = surfaces.webui.attend(OWNER_QQ, { requested: a => void got.push(a), settled() {} }, OWNER_DM);
+    const dm = surfaces.webui.attend(OWNER_QQ, { requested: a => void got.push(a), settled() {} }, { selfId: SELF });
     dm.presence(true);
-    const alone = request(mine);
+    const fromWebui = request(mine);
+    const intoRoom = request(ROOM, { callId: 'from-webui' });
+    const otherBot = request(ROOM_OTHER_BOT, { origin: originOf('hand', OWNER_QQ) });
     await flush();
-    expect(alone.outcome).toMatchObject({ approved: false, source: 'absent' });
+    for (const r of [fromWebui, intoRoom, otherBot])
+      expect(r.outcome).toMatchObject({ approved: false, source: 'absent' });
 
-    const c = await connect();
-    request(mine);
+    // 她经这个账号发起的，群里与私聊里一样
+    request(ROOM, { origin: originOf('hand', OWNER_QQ) });
     request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
     await flush();
-    // 再报一次在场：补推也只补它的会话
-    dm.presence(true);
-    expect(pushed(c).map(a => a.sessionId)).toEqual([mine, OWNER_DM]);
-    expect(got.map(a => a.sessionId)).toEqual([OWNER_DM]);
-  });
+    expect(got.map(a => a.sessionId)).toEqual([ROOM, OWNER_DM]);
 
-  it('两个会话各有推出的审批，一个会话的接入先失效：从它失效起等完宽限，只结算没有接入覆盖的那张', async () => {
-    const { mine, surfaces, request, flush } = await setup();
-    const sink = { requested() {}, settled() {} };
-    surfaces.webui.attend(OWNER, sink, mine).presence(true);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM).presence(true);
-    await vi.advanceTimersByTimeAsync(60_000);
-    const uncovered = request(mine);
-    const covered = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
+    // 有别的面在场时，不归它的照常推给那边；它再报在场，补推也只补归它的
+    const c = await connect();
+    request(mine);
     await flush();
-    // mine 的接入在第 10 分钟失效，DM 的到第 15 分钟
-    await vi.advanceTimersByTimeAsync(4 * 60_000 + GRACE_MS - 1);
-    expect(uncovered.outcome).toBeUndefined();
-    // 宽限期间 mine 新发起的：DM 的接入还在场也不算，立即按不在场拒
-    const fresh = request(mine, { callId: 'call-fresh' });
-    await flush();
-    expect(fresh.outcome).toMatchObject({ approved: false, source: 'absent' });
-    await vi.advanceTimersByTimeAsync(1);
-    expect(uncovered.outcome).toMatchObject({ approved: false, source: 'absent' });
-    expect(covered.outcome).toBeUndefined();
+    dm.presence(true);
+    expect(pushed(c).map(a => a.sessionId)).toEqual([ROOM, OWNER_DM, mine]);
+    expect(got.map(a => a.sessionId)).toEqual([ROOM, OWNER_DM]);
+    const [web] = pushed(c).filter(a => a.sessionId === mine);
+    const answer = { approvalId: web.id, decision: 'approve' as const, contentHash: web.contentHash };
+    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'not-found' });
   });
 
   it('宽限按会话算：别的会话在宽限里，不让本会话没有覆盖的下一张推出，它当场按不在场结算', async () => {
@@ -485,12 +528,12 @@ describe('限定会话的接入', () => {
     const waiting = request(mine);
     await flush();
     await c.call('presence/update', { active: false });
-    // 私聊的接入在结算回调里上报离开（聊天审批收回推出带来的延续即如此）
+    // 私聊的接入在结算回调里上报离开
     const dm: { attendance?: ApprovalAttendance } = {};
     dm.attendance = surfaces.webui.attend(
       OWNER_QQ,
       { requested() {}, settled: () => dm.attendance?.presence(false) },
-      OWNER_DM,
+      { selfId: SELF },
     );
     dm.attendance.presence(true);
     const origin = originOf('hand', OWNER_QQ);
@@ -509,9 +552,9 @@ describe('限定会话的接入', () => {
   it('宽限按会话起算：两个会话先后没了覆盖，各自从没了覆盖那一刻等满 30 秒', async () => {
     const { mine, surfaces, request, flush } = await setup();
     const sink = { requested() {}, settled() {} };
-    const web = surfaces.webui.attend(OWNER, sink, mine);
+    const web = surfaces.webui.attend(OWNER, sink);
     web.presence(true);
-    const dm = surfaces.webui.attend(OWNER_QQ, sink, OWNER_DM);
+    const dm = surfaces.webui.attend(OWNER_QQ, sink, { selfId: SELF });
     dm.presence(true);
     const early = request(mine);
     const late = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
@@ -526,10 +569,10 @@ describe('限定会话的接入', () => {
     expect(late.outcome).toMatchObject({ approved: false, source: 'absent' });
   });
 
-  it('应答别的会话已经结了的审批：同样回 not-found，不回 approval-settled', async () => {
+  it('应答已经结了的审批回 approval-settled，不论接入覆盖不覆盖它', async () => {
     const { mine, surfaces, connect, request, flush } = await setup();
     const c = await connect();
-    const dm = surfaces.webui.attend(OWNER_QQ, { requested() {}, settled() {} }, OWNER_DM);
+    const dm = surfaces.webui.attend(OWNER_QQ, { requested() {}, settled() {} }, { selfId: SELF });
     dm.presence(true);
     const r = request(mine);
     await flush();
@@ -538,21 +581,7 @@ describe('限定会话的接入', () => {
     await flush();
     expect(r.outcome).toMatchObject({ approved: true });
     const answer = { approvalId: approval.id, decision: 'approve' as const, contentHash: approval.contentHash };
-    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'not-found' });
-  });
-
-  it('应答也只认那个会话的：别处的审批回 not-found，审批照旧等', async () => {
-    const { mine, surfaces, connect, request, flush } = await setup();
-    const c = await connect();
-    const dm = surfaces.webui.attend(OWNER_QQ, { requested() {}, settled() {} }, OWNER_DM);
-    dm.presence(true);
-    const r = request(mine);
-    await flush();
-    const [approval] = pushed(c);
-    const answer = { approvalId: approval.id, decision: 'approve' as const, contentHash: approval.contentHash };
-    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'not-found' });
-    await flush();
-    expect(r.outcome).toBeUndefined();
+    expect(dm.respond(answer)).toMatchObject({ ok: false, refusal: 'approval-settled' });
   });
 });
 
@@ -859,7 +888,7 @@ describe('事实与内容哈希', () => {
     expect(approval.facts).toEqual({ command, cwd: 'workspace:/proj', params: { timeout: 5000 } });
   });
 
-  it('声明了改文件的工具（file_edit、file_write、file_append）按声明的两侧生成 diff；路径或内容疑似含密钥时只给路径；没声明的不生成', async () => {
+  it('声明了改文件的工具（file_edit、file_write、file_append）按声明的两侧生成 diff，内容像密钥、改的是 .env 也照给；没声明的不生成', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
     const facts = async (tool: string, args: Record<string, unknown>) => {
@@ -880,23 +909,10 @@ describe('事实与内容哈希', () => {
       params: {},
     });
     expect(
-      await facts('file_append', { path: 'workspace:/log.md', content: 'token: ghp_abcdefghijklmnopqrstuvwxyz' }),
-    ).toEqual({
-      diff: { path: 'workspace:/log.md' },
-      params: {},
-    });
-    expect(
       await facts('file_write', { path: 'workspace:/c.ts', content: 'const key = "sk-abcdefghijklmnopqrstuvwx";' }),
-    ).toEqual({ diff: { path: 'workspace:/c.ts' }, params: {} });
-    expect(
-      await facts('file_edit', {
-        path: 'workspace:/d.txt',
-        oldText: 'x',
-        newText: '-----BEGIN OPENSSH PRIVATE KEY-----',
-      }),
-    ).toEqual({ diff: { path: 'workspace:/d.txt' }, params: {} });
-    expect(await facts('file_write', { path: 'workspace:/proj/.env.local', content: 'DEBUG=1' })).toEqual({
-      diff: { path: 'workspace:/proj/.env.local' },
+    ).toEqual({ diff: { path: 'workspace:/c.ts', patch: '+const key = "sk-abcdefghijklmnopqrstuvwx";' }, params: {} });
+    expect(await facts('file_append', { path: 'workspace:/proj/.env.local', content: 'DEBUG=1' })).toEqual({
+      diff: { path: 'workspace:/proj/.env.local', patch: '+DEBUG=1' },
       params: {},
     });
     expect(await facts('file_delete', { path: 'workspace:/e.md' })).toEqual({ params: { path: 'workspace:/e.md' } });

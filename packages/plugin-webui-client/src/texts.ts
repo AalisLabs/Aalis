@@ -438,7 +438,6 @@ const SOURCE = {
   approvalCommand: '要执行一条命令 · {tool}',
   approvalFileChange: '要改动文件 · {tool}',
   approvalCall: '要调用 {tool}',
-  approvalPatchHidden: '路径或内容疑似含密钥，只显示文件名',
   otherParams: '其他参数',
   denyReason: '拒绝的理由',
   denyWithReason: '拒绝并附理由',

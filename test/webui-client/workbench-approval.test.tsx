@@ -72,14 +72,13 @@ describe('审批卡', () => {
     expect(card().queryByText(/秒后/)).toBeNull();
   });
 
-  it('改文件的审批给出路径与 diff；疑似含密钥的只给路径；没声明展示的逐字列出全部参数，显示前经过清洗', async () => {
+  it('改文件的审批给出路径与 diff；没声明展示的逐字列出全部参数，显示前经过清洗', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot(
           [
             turn('t1'),
             toolCall('c1', 'file_write', { status: 'running', approvalId: 'ap1' }),
-            toolCall('c2', 'file_write', { status: 'running', approvalId: 'ap2' }),
             toolCall('c3', 'web_fetch', { status: 'running', approvalId: 'ap3' }),
           ],
           {
@@ -88,7 +87,6 @@ describe('审批卡', () => {
                 tool: 'file_write',
                 facts: { diff: { path: 'src/a.ts', patch: '-old\n+new' }, params: {} },
               }),
-              approval('ap2', { tool: 'file_write', callId: 'c2', facts: { diff: { path: '.env' }, params: {} } }),
               approval('ap3', {
                 tool: 'web_fetch',
                 callId: 'c3',
@@ -99,13 +97,11 @@ describe('审批卡', () => {
         ),
     });
     await timeline();
-    const [diff, secret, generic] = screen.getAllByRole('region', { name: '审批' }).map(node => within(node));
+    const [diff, generic] = screen.getAllByRole('region', { name: '审批' }).map(node => within(node));
     expect(diff.getByText('要改动文件 · file_write')).toBeTruthy();
     expect(diff.getByText('src/a.ts')).toBeTruthy();
     expect(diff.getByText('-old')).toBeTruthy();
     expect(diff.getByText('+new')).toBeTruthy();
-    expect(secret.getByText('.env')).toBeTruthy();
-    expect(secret.getByText(/疑似含密钥/)).toBeTruthy();
     expect(generic.getByText('要调用 web_fetch')).toBeTruthy();
     const params = generic.getByText(/"depth": 2/).textContent ?? '';
     expect(params).toContain('⟨U+202E⟩');

@@ -250,7 +250,7 @@ describe('卡片显示', () => {
     expect(s.rawFrame()).not.toContain('\x1b[?25h');
   });
 
-  it('diff 逐行显示；疑似密钥的只给路径', async () => {
+  it('diff 逐行显示', async () => {
     const s = await setup();
     await s.type('a');
     s.request({
@@ -264,12 +264,6 @@ describe('卡片显示', () => {
     // 制表符按空格显示，不原样写到终端
     expect(s.frame()).toContain('+    return 2;');
     expect(s.rawFrame()).not.toContain('\t');
-    await s.press('y', { ctrl: true });
-
-    s.request({ tool: 'file_write', args: { path: '.env', content: 'API_KEY=abcdefgh12345678' } });
-    await settle();
-    expect(s.frame()).toContain('.env');
-    expect(s.frame()).not.toContain('abcdefgh12345678');
   });
 
   it.each([

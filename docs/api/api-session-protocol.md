@@ -321,10 +321,10 @@ interface BackgroundTask {
 | `approval/settled`（通知） | `{ approvalId, state, source, at }`：结局（`approved`、`denied`、`expired`、`cancelled`）、从哪里来与结算的时刻，同工具卡上的 `settlement` | — |
 | `approval/respond` | `{ approvalId, decision: 'approve' \| 'deny', contentHash, note? }` | `{}` |
 
-- **在场**：`active` 为真表示页面可见且刚有键盘或指针活动，为假表示页面转到后台，即刻不在场。最近一次为真的上报在 10 分钟内即算在场，所以客户端在有活动时按需重报（例如节流到每分钟一次），页面转到后台时报一次假。从没上报过的连接不算在场。
-- **推送**：审批推出时，`approval/requested` 推给在场、身份是 owner 的连接，不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId`、`settlement` 看到它。
+- **在场**：`active` 为真表示页面可见且刚有键盘或指针活动，为假表示页面转到后台，即刻不在场。最近一次为真的上报在 10 分钟内即算在场，推给这条连接、还没结的审批也让它一直算在场，所以客户端在有活动时按需重报（例如节流到每分钟一次），页面转到后台、或最近一次活动满 10 分钟时报一次假。从没上报过的连接不算在场。
+- **推送**：审批推出时，`approval/requested` 推给在场、身份是 owner 的连接，不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。报过假之后再报真，推给过它、还没结的同一张会再推一次，客户端按 `approval.id` 收即不重复。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId`、`settlement` 看到它。
 - **重连宽限**：等待中在场的连接全部断开或转为不在场时，审批不立即结算：30 秒内有连接恢复在场（重连后重报在场），卡片照常等着并推给它；满 30 秒没有恢复，按没人在场（`absent`）结算。宽限不延长 300 秒的总等待。发起时就没人在场的仍立即拒绝。
-- **应答**：先答先得。服务端核两项：应答人（这条连接的身份）是 owner，否则 `forbidden`；`approvalId` 是本服务签发的、还没结算（不认识回 `not-found`，已结算回 `approval-settled`），并且 `contentHash` 与审批对象的一致（否则 `hash-mismatch`）。审批服务不在时回 `unsupported`。`note` 是说明，拒绝时回给模型。
+- **应答**：先答先得。服务端核两项：应答人（这条连接的身份）是 owner，否则 `forbidden`；`approvalId` 是本服务签发的、还没结算（不认识回 `not-found`，已结算的一律回 `approval-settled`），并且 `contentHash` 与审批对象的一致（否则 `hash-mismatch`）。审批服务不在时回 `unsupported`。`note` 是说明，拒绝时回给模型。
 - **显示**：`facts` 是逐字的参数，可能带控制符、双向控制符与零宽字符。卡片显示之前一律经 api-approval 的 `sanitizeForCard` 清洗。
 
 ```ts
@@ -336,7 +336,7 @@ interface Approval {
   origin: { kind: 'hand' | 'subtask' | 'autonomous'; participants: { platform: string; userId: string }[] };
   target: 'tool';
   tool: string;
-  facts: { command?: string; cwd?: string; diff?: { path: string; patch?: string }; params: Record<string, unknown> };
+  facts: { command?: string; cwd?: string; diff?: { path: string; patch: string }; params: Record<string, unknown> };
   options: Array<'approve' | 'deny'>;
   contentHash: string;        // 应答时原样带回
   expiresAt: number;          // 到期的时刻（毫秒时间戳）

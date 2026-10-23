@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "聊天审批：受众只有 owner 的 IM 私聊作审批面，审批推回发起它的私聊，owner 引用审批消息回复同意或拒绝",
+  "description": "聊天审批：owner 与她的 IM 私聊作审批面，她经同一个机器人账号发起的审批推到这里，引用审批消息回复同意或拒绝",
   "type": "module",
   "keywords": [
     "aalis",
@@ -55,6 +55,7 @@
       ],
       "required": [
         "approvals",
+        "events",
         "gateway",
         "hooks",
         "lifecycle",
