@@ -4,13 +4,18 @@ import { join } from 'node:path';
 import type { Logger, ServiceView } from '@aalis/core';
 import { App, events, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthorityService } from '../../packages/api-authority/src/index.js';
+import type { AuthorityService, OriginTurn } from '../../packages/api-authority/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import type { SessionInfo, SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import {
+  type SessionInfo,
+  type SessionManagerService,
+  TAKE_UNKNOWN,
+} from '../../packages/api-session-manager/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
@@ -284,7 +289,7 @@ const MP3 = Uint8Array.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0, 0, 0]);
 const GROUP = 'onebot:10000:group:20001';
 const GROUP_DIR = 'onebot_10000_group_20001';
 
-describe('analyze_image：存储里的图按受众判、读一次、核文件头', () => {
+describe('analyze_image：存储里的图先过媒体判据、读一次、核文件头', () => {
   async function analyze(
     files: Record<string, Uint8Array>,
     image: string,
@@ -311,12 +316,21 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
     } as unknown as StorageService;
     // 读存储取自媒体运行时
     setMediaRuntime({ proc: {} as never, storage: storageStub });
+    // 会话管理的取用规则是一律不放行的替身：取用规则本身由 session-take-rule 钉住
     const sessions = new Map((opts.sessions ?? []).map(info => [info.id, info]));
+    const isOwner = () => opts.owner === true;
     registerMediaTools(
       {
         ...host,
-        sessionManager: fixedRef({ getSession: (id: string) => sessions.get(id) } as unknown as SessionManagerService),
-        authority: fixedRef({ isOwner: () => opts.owner === true } as unknown as AuthorityService),
+        sessionManager: fixedRef({
+          getSession: (id: string) => sessions.get(id),
+          listSessions: () => [...sessions.values()],
+          canTake: () => ({ ok: false, reason: TAKE_UNKNOWN }),
+        } as unknown as SessionManagerService),
+        authority: fixedRef({
+          isOwner,
+          principalOf: (turn: OriginTurn) => principalKind(turn, isOwner),
+        } as unknown as AuthorityService),
       },
       svc,
     );
@@ -362,7 +376,7 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
     expect(calls).toHaveLength(0);
   });
 
-  /** owner 在只有自己的会话里调用：判据不限，读不读、读哪个只看来源怎么规整 */
+  /** owner 在只有自己的会话里调用：本机文件能取，读不读、读哪个只看来源怎么规整 */
   const ownCall: ToolCallContext = { sessionId: 's', platform: 'test', userId: 'u1', acceptsImages: true };
 
   it.each([
@@ -410,17 +424,19 @@ describe('analyze_image：存储里的图按受众判、读一次、核文件头
     expect(reads).toEqual([]);
   });
 
-  it('房间里看别的会话的图：拒，不读文件', async () => {
+  it('房间里看别的会话的图，取用规则不放行：拒，不读文件', async () => {
     const { result, calls, reads } = await analyze(
       { 'data:/images/onebot_10000_group_20002/x.png': PNG, [`data:/images/${GROUP_DIR}/y.png`]: PNG },
       'data:/images/onebot_10000_group_20002/x.png',
       {
         delivery: 'describe',
         call: { sessionId: GROUP, platform: 'onebot', userId: '90002' },
-        sessions: [storedRoom(GROUP) as unknown as SessionInfo],
+        sessions: [GROUP, 'onebot:10000:group:20002'].map(id => storedRoom(id) as unknown as SessionInfo),
       },
     );
-    expect(JSON.parse(result.content).error).toBe('这个会话里只能看本会话收到或产生的图片');
+    expect(JSON.parse(result.content).error).toBe(
+      '这张图不在这一轮能看的范围里：别的会话的媒体按这个会话的取用范围与开关；本机文件要这一轮里有 owner 的话、有别人时经她批准，或是 owner 授权的自动运行且会话里没有别人',
+    );
     expect(calls).toHaveLength(0);
     expect(reads).toEqual([]);
   });

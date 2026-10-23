@@ -445,11 +445,14 @@ importers:
 
   packages/api-media:
     dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-llm':
         specifier: workspace:>=0.14.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-session-manager':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
@@ -1741,7 +1744,7 @@ importers:
   packages/plugin-image-sender:
     dependencies:
       '@aalis/api-authority':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-gateway':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -1756,7 +1759,7 @@ importers:
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-session-manager':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0

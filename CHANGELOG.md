@@ -46,14 +46,14 @@
 - 带 `markup` 的正文里媒体标记的网址（以 `http:`、`https:` 开头，不分大小写）由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、解析不了、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
 - 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出（create-aalis 的 minimal 与 standard 档不装它）。有标记语法的第三方适配器同样要去掉这些标记、报投递失败，不得自己读取：留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
 
-### 媒体按受众（plugin-image-sender、plugin-media）
+### 发媒体、看图的取用（plugin-image-sender、plugin-media）
 
-- 有别人在场的会话里，以及授权身份不是 owner 的回合里，`send_attachment` 的 `storage_uri`、`history_ref` 与 `analyze_image` 的存储地址只认本会话树的媒体目录（`data:/{images,audios,videos,files}/<会话目录>/`、`tmp:/browser/<会话目录>/`）与调用所在会话历史里系统记下的引用，别处的拒绝。
+- `send_attachment` 的 `storage_uri` 与 `analyze_image` 的存储地址先判后读，能取哪些见「取别的会话的媒体按同一规则，本机文件按主体」一节。
 - `storage_uri` 只收存储地址：只写文件名或带 `./` 前缀的不再补成存储地址，按「要写存储地址」拒绝（相对路径 `data/images/…` 同样拒绝，见「附件归写入方，引用写成存储地址」一节）。
 - `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
 - `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
-- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转上面所说范围内的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（别处的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
+- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转过得了判据的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（过不了判据的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
 
 ### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-scheduler）
 
@@ -311,6 +311,17 @@
 
 - api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 随派它的那一轮。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
 - plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。触及接线之后，owner 在群里亲手发起的一轮有本地效果，主目录是这个群所在场所的白纸。
+
+### 取别的会话的媒体按同一规则，本机文件按主体（@aalis/api-media、@aalis/plugin-image-sender、@aalis/plugin-media）
+
+- `send_attachment` 的 `storage_uri` 与 `analyze_image` 的存储地址按目标分三类判能不能取，过不了的不读文件，存在与否都回同一句：
+  - 目录名只对应本会话树里的会话的媒体目录（`data:/{images,audios,videos,files}/<会话目录>/`、`tmp:/browser/<会话目录>/`）里的，与调用所在会话历史里系统记下的引用：能取。
+  - 别的会话的媒体：按目录名反查出会话，带这次调用的授权身份过会话管理的取用规则（与读历史的工具同一条，见「取别的会话的东西一条规则」一节）。目录名撞车时（只差大小写的会话 id 也算）本会话树以外的每个会话都要过，与本会话树的目录撞上的也一样；反查不到会话（会话已删）与会话管理不在时取不到。
+  - 不属于任何会话的本机文件（工作区、白纸成品、下载等）：只在这一轮的主体是 owner 时能取（owner 亲手那一轮，含它的续做与她那一轮派的子任务，在群里也一样），或授权身份是 owner、所在会话里没有别人（她自己会话里的定时任务、按她跑的编排、mcp-server 的调用）。
+
+  过不了时回给模型的话是「这个文件不在这一轮能取的范围里：…」（`analyze_image` 是「这张图不在这一轮能看的范围里：…」），说明两类规则。
+- 她回复里存储地址的媒体标记：受众只有 owner 的会话里不过判据；其余会话不带授权身份过同一份判据，同平台别的群（在会话表里）的转成附件，别人私聊里的、经另一个机器人账号的与本机文件的不转。
+- api-media 导出这份判据：`mediaScopeOf(call, services)` 交出一次调用的判定，两个工具与回复里的标记都用它，按路径取存储媒体的第三方工具也用它；底下是 `mediaInScope(target, call, deps)`（别的会话的取用判定 `take` 与本机文件判定 `local` 由调用方给）与本机文件判法 `localFileInScope(call, deps)`。api-media 新加 api-authority 的依赖（只用它的类型）。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

@@ -6,11 +6,11 @@
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
 // 音频后端（如 whisper.cpp / 云 ASR）走 asr 服务（@aalis/api-asr），由 plugin-media 包成音频 processor；
 // registerProcessor 只用于非音频、非 LLM 的 backend。
-// 另导出会话媒体的目录约定（session-media.ts：写入方写在哪、怎么清）与媒体按受众的判据（scope.ts，发媒体、看图的
-// 工具与出站转换共用）。
+// 另导出会话媒体的目录约定（session-media.ts：写入方写在哪、怎么清）与媒体判据（scope.ts：一次调用能取哪些存储里的
+// 媒体，发媒体、看图的工具与回复里的媒体标记共用）。
 //
 // 依赖：@aalis/core、@aalis/schema-message、@aalis/api-llm（仅 ModelRef 类型）、
-// @aalis/api-session-manager 与 @aalis/api-storage（目录约定与判据用的纯函数）。
+// @aalis/api-authority（仅入站回合与权限服务的类型）、@aalis/api-session-manager 与 @aalis/api-storage（目录约定与判据用的纯函数）。
 // ============================================================
 
 import type { ModelRef } from '@aalis/api-llm';

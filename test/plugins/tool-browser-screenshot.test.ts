@@ -145,8 +145,8 @@ describe('browser_screenshot 的交付形态', () => {
     expect(out).toMatchObject({ ok: true });
     // 接得住图也照样落盘给 URI：看不到图的下游（送去看图工具 / 发出去）有路可走
     expect(out.storage_uri).toMatch(/^tmp:\/browser\/onebot_t_group_1\/shot-[0-9a-f]{16}\.png$/);
-    // 媒体按受众的判据认这个目录：群里照样能把本会话的截图交给看图工具或发出去
-    const scope = { isOwner: () => false, history: async () => [] };
+    // 媒体判据认这个目录是本会话的：群里照样能把本会话的截图交给看图工具或发出去，不问别的会话与本机文件的判定
+    const scope = { take: async () => false, local: async () => false, history: async () => [] };
     expect(await mediaInScope(out.storage_uri, { sessionId: 'onebot:t:group:1' }, scope)).toBe(true);
     expect(out.note).toBe('图已随结果附上；若你看不到图，可把 storage_uri 交给看图工具（如有）或 send_attachment');
     expect(result.content.length).toBeLessThan(400);

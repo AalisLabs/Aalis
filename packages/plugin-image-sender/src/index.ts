@@ -8,11 +8,12 @@
 //                          让"AI 之前发过的图/视频"能被 memory_recall 召回
 //
 // 出站中间件：带 markup 的正文（她的回复）里存储地址的媒体标记（<image|video|record url>）转成附件，受众只有 owner 的会话
-// 不过判据，其余会话按 send_attachment 的判据，转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给适配器。
+// 不过判据，其余会话按 send_attachment 的判据、不带授权身份，转之前同样核文件头；只摘掉转成了附件的标记，别的留在正文里交给
+// 适配器。
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
-// 存储库里的文件先按受众判能不能取（@aalis/api-media 的 mediaInScope），再读文件头核对格式
-// （见 @aalis/util-media-signature）。
+// 存储库里的文件先过媒体判据（@aalis/api-media 的 mediaScopeOf：别的会话的媒体按会话管理的取用规则，本机文件按这一轮的
+// 主体），再读文件头核对格式（见 @aalis/util-media-signature）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -20,7 +21,7 @@
 import { authority } from '@aalis/api-authority';
 import type {} from '@aalis/api-gateway'; // declaration merging 锚点（outbound:dispatch 钩子）
 import { hooks } from '@aalis/api-hooks';
-import { historyMediaRefs, type MediaScopeDeps, media, mediaInScope, mediaRef } from '@aalis/api-media';
+import { historyMediaRefs, media, mediaRef, mediaScopeOf } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
@@ -35,8 +36,9 @@ import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-me
 const PREVIEW_TIMEOUT_MS = 25_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
-/** 按受众判出来不能取时回给模型的话：先判后读，不存在与不是媒体也回这一句，拿它探测不出存储根里有什么 */
-const OUT_OF_SCOPE = '这个会话里只能发本会话收到或产生的媒体';
+/** 过不了媒体判据时回给模型的话：先判后读，不存在与不是媒体也回这一句，拿它探测不出存储根里有什么 */
+const OUT_OF_SCOPE =
+  '这个文件不在这一轮能取的范围里：别的会话的媒体按这个会话的取用范围与开关；本机文件要这一轮里有 owner 的话、有别人时经她批准，或是 owner 授权的自动运行且会话里没有别人';
 /** 判媒体归属与找 history_ref 回看的历史条数 */
 const HISTORY_LIMIT = 200;
 /** 回复正文里的媒体标记：与 onebot 适配器解析的写法相同 */
@@ -44,7 +46,7 @@ const MEDIA_MARKUP = /<(image|video|record)\s+url=["']([^"']*)["']\s*\/>/g;
 const MARKUP_KIND: Record<string, MediaKind> = { image: 'image', video: 'video', record: 'audio' };
 
 // tools 与 hooks 不入激活闸：工具与中间件登记走归属表，提供者上线后自动补挂。
-// 会话管理、权限与记忆给媒体按受众的判据用，缺席时判据按它的约定取值（只认本会话、没人是 owner、历史为空）。
+// 会话管理、权限与记忆给媒体判据用，缺席时判据按它的约定取值（不取别的会话的、主体是 other、没人是 owner、历史为空）。
 const uses = {
   tools: optional(tools),
   hooks: optional(hooks),
@@ -79,14 +81,11 @@ function registerImageSender(caps: Caps): void {
       : service.getHistory(sessionId, HISTORY_LIMIT);
   }
 
-  /** 判据的依赖：每次现取，服务随时可能上下线 */
-  function scopeDeps(): MediaScopeDeps {
-    return {
-      getSession: sessionManager.present ? id => sessionManager.use.getSession(id) : undefined,
-      isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
-      history: recentHistory,
-    };
-  }
+  /** owner 判定：权限服务不在时恒为否 */
+  const isOwner = (platform: string, userId: string) => authority.present && authority.use.isOwner(platform, userId);
+
+  /** 媒体判据要的服务：每次判时按一次调用交给 mediaScopeOf（没有授权身份的不带，如回复里的标记） */
+  const scopeServices = { sessionManager, authority, history: recentHistory };
 
   // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
   // 记忆库等非媒体文件）。放行的交出 storage URI，送达形态由平台适配器决定：onebot 读回内容内联，超过内联上限
@@ -193,7 +192,9 @@ function registerImageSender(caps: Caps): void {
           '  - storage_uri：存储库内的资源 URI（如 data:/images/xxx）。\n' +
           '  - history_ref：本会话历史消息中的引用（[图片/音频/视频: ... | ref:xxx] 中完整的 xxx），\n' +
           '    用于"把之前那条媒体重发/转发回去"。\n' +
-          '有别人在场的会话里，storage_uri 与 history_ref 只能指向本会话收到或产生的媒体。\n' +
+          'storage_uri 能指向本会话收到或产生的媒体；别的会话的媒体按 owner 给这个会话设的取用范围与开关；' +
+          '不属于任何会话的本机文件要这一轮里有 owner 的话（有别人的话一起进来时要她批），' +
+          '或这一轮是按 owner 的授权自动运行的（如她建的定时任务）而所在会话里没有别人。history_ref 只在本会话历史里找。\n' +
           '建议流程（图片）：search_images 拿候选 URL →（有 preview_image 时可先看清内容）→ send_attachment 选其一发出。\n' +
           '只有返回 ok:true 才能说已发送；返回 error 时没有成功确认，下载失败可改选另一张图片，不要反复重发同一失效地址。\n' +
           '若想重发自己之前在本会话发过的媒体，先用 memory_recall 按描述检索历史，从命中消息里找到 ref 再传 history_ref。\n' +
@@ -244,7 +245,7 @@ function registerImageSender(caps: Caps): void {
           if (!uri || !isStorageUri(uri)) {
             return JSON.stringify({ error: 'storage_uri 要写存储地址（如 data:/images/…），不能写本机路径' });
           }
-          if (!(await mediaInScope(uri, callCtx, scopeDeps()))) return JSON.stringify({ error: OUT_OF_SCOPE });
+          if (!(await mediaScopeOf(callCtx, scopeServices)(uri))) return JSON.stringify({ error: OUT_OF_SCOPE });
           const loaded = await loadStorageMedia(uri, kind);
           if (!loaded.ok) return JSON.stringify({ error: loaded.error });
           data = loaded.data;
@@ -252,7 +253,7 @@ function registerImageSender(caps: Caps): void {
           via = 'storage_uri';
         } else if (historyRef) {
           refTag = historyRef.replace(/^ref:/, '').trim();
-          // 网址照旧当 url 用；其余只在调用所在会话历史里系统记下的引用中按全等找。找到的就是判据第 2 条的历史引用，
+          // 网址照旧当 url 用；其余只在调用所在会话历史里系统记下的引用中按全等找。找到的就是判据第 1 类里的历史引用，
           // 不再另判
           const ref = mediaRef(refTag);
           if (ref && !isStorageUri(ref)) {
@@ -302,11 +303,11 @@ function registerImageSender(caps: Caps): void {
 
   // ── 带 markup 的正文里的媒体标记：存储地址的转成附件 ─────────────────────────────────
   // 适配器只解析带 markup 的正文（她的回复）；onebot 只把网址的标记经受保护下载与文件头核对后内联，其余地址的去掉并报投递失败，
-  // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据（出站
-  // 不带授权身份，按非 owner）；会话管理不在时判不出受众，按不是只有 owner。转之前与 send_attachment 一样核文件头。这里只摘掉
-  // 转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、本机路径、data URI 等）都留在正文里，去不去掉
-  // 由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上判。转出的附件与别的附件一样，送达之后记进
-  // 会话历史。网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
+  // 存储里的媒体要靠这里转成附件才发得出。存储地址在受众只有 owner 的会话里不过判据：发给 owner 看不越权；其余会话过判据，出站
+  // 不带授权身份：别的会话的按不带授权身份的取用规则判，本机文件不能取；会话管理不在时判不出受众，按不是只有 owner。转之前与
+  // send_attachment 一样核文件头。这里只摘掉转成了附件的标记：不过判据、读不出、不是对应媒体的与别的写法（网址、file://、
+  // 本机路径、data URI 等）都留在正文里，去不去掉由适配器定；摘掉标记后两边的文字拼出的新标记同样留给它，它在解析出的消息段上
+  // 判。转出的附件与别的附件一样，送达之后记进会话历史。网关缺席时出站不经这条链，存储地址的标记由适配器去掉、发不出
   hooks.use.middleware('outbound:dispatch', async ({ message }, next) => {
     if (message.markup) await markupToAttachments(message);
     await next();
@@ -319,16 +320,15 @@ function registerImageSender(caps: Caps): void {
       return { kind: MARKUP_KIND[tag], ref: ref && isStorageUri(ref) ? ref : undefined };
     });
     if (!tags.some(({ ref }) => ref)) return;
-    const deps = scopeDeps();
-    const { getSession, isOwner } = deps;
-    const ownerOnly = !!getSession && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';
+    const inScope = mediaScopeOf({ sessionId: message.sessionId }, scopeServices);
+    const getSession = (id: string) => sessionManager.use.getSession(id);
+    const ownerOnly =
+      sessionManager.present && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';
     // 各标记转成的附件：没转成的为 undefined，标记留在正文里
     const converted: Array<MessageAttachment | undefined> = [];
     for (const { kind, ref } of tags) {
       converted.push(
-        ref && (await markupMediaAllowed(ref, kind, message.sessionId, ownerOnly, deps))
-          ? { kind, data: ref }
-          : undefined,
+        ref && (await markupMediaAllowed(ref, kind, ownerOnly, inScope)) ? { kind, data: ref } : undefined,
       );
     }
     let i = 0;
@@ -337,18 +337,17 @@ function registerImageSender(caps: Caps): void {
   }
 
   /**
-   * 回复里存储地址的标记能不能转成附件：受众只有 owner 的会话不过判据，其余按非 owner 判；再按 kind 核文件头。判不出、读不出
+   * 回复里存储地址的标记能不能转成附件：受众只有 owner 的会话不过判据，其余不带授权身份判；再按 kind 核文件头。判不出、读不出
    * （如读历史出错、根不存在）的按不能，标记留在正文里
    */
   async function markupMediaAllowed(
     uri: string,
     kind: MediaKind,
-    sessionId: string,
     ownerOnly: boolean,
-    deps: MediaScopeDeps,
+    inScope: (uri: string) => Promise<boolean>,
   ): Promise<boolean> {
     try {
-      if (!ownerOnly && !(await mediaInScope(uri, { sessionId }, deps))) return false;
+      if (!ownerOnly && !(await inScope(uri))) return false;
       return (await loadStorageMedia(uri, kind)).ok;
     } catch (err) {
       logger.use.warn(

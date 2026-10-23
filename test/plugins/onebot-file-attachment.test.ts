@@ -3,16 +3,17 @@ import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { authority } from '../../packages/api-authority/src/index.js';
+import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
-import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -35,8 +36,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
 // 带 markup 的正文（她的回复）里存储地址的媒体标记经网关派发时由 image-sender 转成附件：受众只有 owner 的私聊里不过判据，
-// 别的会话按受众判，都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载内联，其余由适配器
-// 去掉、投递报失败（会话表与 owner 判定是替身：私聊的对端是 owner）。
+// 别的会话不带授权身份过媒体判据，都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
+// 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端是 owner，取用规则一律不放行）。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -284,9 +285,14 @@ async function boot(
   if (opts.gateway) {
     if (opts.sessions !== false) {
       const rooms = new Map([GROUP, PRIVATE].map(id => [id, storedRoom(id) as unknown as SessionInfo]));
-      host.provide.use(sessionManager, { getSession: (id: string) => rooms.get(id) } as never);
+      host.provide.use(sessionManager, {
+        getSession: (id: string) => rooms.get(id),
+        listSessions: () => [...rooms.values()],
+        canTake: () => ({ ok: false, reason: TAKE_UNKNOWN }),
+      } as never);
     }
-    host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'onebot' && u === '30001' } as never);
+    const isOwner = (p: string, u?: string) => p === 'onebot' && u === '30001';
+    host.provide.use(authority, { isOwner, principalOf: (turn: OriginTurn) => principalKind(turn, isOwner) } as never);
     await app.plugins.register(gatewayPlugin);
     await app.plugins.idle();
   }
