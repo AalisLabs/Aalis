@@ -36,17 +36,15 @@ export const PROJECT = {
   gitDirs: ['/u/code/proj/.git'],
 } satisfies Partial<ReachInput>;
 
-/** owner 在受众只有 owner 的会话里、默认工作区、工作区档、干净；overrides 改其中几项 */
+/** 主体 owner、默认工作区、工作区档；overrides 改其中几项 */
 export function reachOf(overrides: Partial<ReachInput> = {}): Reach {
   return resolveReach({
     principal: 'owner',
-    roomClass: 'owner-only',
     tier: 'workspace',
     onBoundary: 'ask',
     place: DEFAULT_PLACE,
     gitDirs: [],
     sessionTmp: SESSION_TMP,
-    othersContent: [],
     localPorts: [],
     lists: LISTS,
     paths: PATHS,

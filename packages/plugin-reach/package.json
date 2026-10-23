@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "触及：按一次工具调用签发触及凭据（主体、房间类别、档位、污点与场所定下本机能读写执行什么），管本会话临时区、子进程环境、会话的污点与白纸的来源记录",
+  "description": "触及：按一次工具调用签发触及凭据（这一轮的主体、档位与场所定下本机能读写执行什么），管本会话临时区与子进程环境",
   "type": "module",
   "keywords": [
     "aalis",
@@ -32,8 +32,7 @@
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-reach": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0"
+    "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -58,8 +57,7 @@
         "lifecycle",
         "logger",
         "provide",
-        "session-manager",
-        "storage"
+        "session-manager"
       ]
     }
   }
