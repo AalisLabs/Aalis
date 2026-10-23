@@ -8,7 +8,7 @@ import { getPlatformAdapters, platform, sessionTypesOf } from '@aalis/api-platfo
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
+import { arrivalTag, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { t } from './texts.js';
 
 // ----- 入口 -----
@@ -63,6 +63,9 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
     return chatScopeOf(message, sessionTypesOf(adapter));
   }
 
+  /** 到达序号：每条入站在所有相位之前加一（只给日志关联，重载后从头计） */
+  let arrivals = 0;
+
   /** 调用 agent 处理消息；agent 不可用时给出兜底回复。 */
   async function defaultDispatch(message: IncomingMessage, agentService: AgentService | undefined): Promise<void> {
     if (agentService) {
@@ -92,9 +95,11 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
    * 前三相位任一被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    * 房间类别为 owner-only 的会话跳过 trigger 与 flow（结构性放行），这两个相位不运行、不发 gateway:phase:done。
    * 会话管理在场时先等它收录（recordInbound）：新房间的第一条消息进入相位时会话已建档、带聊天窗口，各读取方按记下的字段取。
-   * 没有 source 的入站带上聊天窗口（data.chat），回复策略据它判生效范围
+   * 没有 source 的入站带上聊天窗口（data.chat），回复策略据它判生效范围。所有相位之前先打到达序号（这次运行内递增），
+   * 判定、吞噬、开轮与回合结束各行据它串起这一条
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
+    message.arrival = ++arrivals;
     // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上
     const data: InboundPhaseData = {
       message,
@@ -126,7 +131,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
         });
         if (!reachedEnd) {
           logger.use.debug(
-            `[${phase}] 消息被 swallow，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
+            `[${phase}] 消息被 swallow${arrivalTag(message)}，未触达 agent: session=${message.sessionId} platform=${message.platform} source=${message.source ?? 'platform'}`,
           );
           return;
         }
@@ -184,7 +189,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
 
   const service: GatewayService = {
     async ingressMessage(message) {
-      // 直接走内部处理路径，避免事件总线递归带来的歧义。
+      // 直接走内部处理路径，避免事件总线递归带来的歧义；这条输入落定（所在的一轮结束、被放掉或在相位里被挡下）时返回
       await processInbound(message);
     },
     async dispatchOutbound(message) {

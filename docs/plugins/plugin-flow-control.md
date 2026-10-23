@@ -64,7 +64,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 ## 禁言
 
-- `setMuted(sessionId, sec, platform)`：`sec > 0` 禁言到 `now + sec`，`sec <= 0` 解除。会话尚无状态时须给出 `platform` 才会建立状态。
+- `setMuted(sessionId, sec, platform)`：`sec > 0` 禁言到 `now + sec`，同时经 agent 的 `abort(sessionId, { queued: true })` 停下这个会话在跑的一轮（不外发、不落库回复），排着的不再开轮（在那一轮落定之后归档）；`sec <= 0` 解除，不停什么。会话尚无状态时须给出 `platform` 才会建立状态。agent 不在时禁言只挡之后的消息。
 - 调用方：触发插件命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。
 - 禁言状态落盘到 `data:/flow-control-mutes.json`，重启后恢复未过期的禁言。冷却与限速是秒级短期状态，不落盘。
 
@@ -88,6 +88,6 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 本相位吞掉消息时不通知发起方，由此有以下局限：
 
 - 定时任务的消息被禁言或限速吞掉时，plugin-scheduler 仍把这次运行记为成功（`lastResult`），WebUI 上看不出提醒没有发出；被吞的消息只做影子归档，不重试。
-- plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或在生效范围内且限速窗口已满时，指令被吞掉，节点等到 `timeoutSeconds` 超时才失败；等待期间同一会话若有其它回合结束（例如有人 @ bot，immediate 穿透限速），节点会把那次回复当作自己的结果（按 sessionId 捕获回合结束，是 workflow 引擎原有的做法）。
+- plugin-workflow 的 agent 节点经网关把指令送进目标会话。目标会话处于禁言期，或在生效范围内且限速窗口已满时，指令被吞掉，节点立即失败（送达返回时还没认到它开的那一轮）；节点按自己的异步上下文只认它开的那一轮，同一会话里别的回合的回复不会被当成它的结果。
 - trigger-policy 的 session 档闲置触发到点时只查禁言与自己是否生效（禁言期或不生效时跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。
-- 禁言只在入站把关，挡的是禁言之后才开始的回合。命中禁言关键词时 agent 若正在为同一会话生成回复（例如有人刚 @ 过 bot），这条回复照常发出：命中关键词的那条在触发相位就被吞掉，不会中止在途回合，出站方向也不查禁言。平台禁言下适配器本来发不出去，不受影响。
+- 禁言在入站挡之后的消息，也停下这个会话在跑的一轮、放掉排着的：命中禁言关键词时 agent 若正在为同一会话生成回复（例如有人刚 @ 过 bot），这一轮被停下，回复不外发、不落库。出站方向不查禁言：提交点之后已在外发的那一条照常发出。

@@ -154,6 +154,7 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
     await host.gateway.use.dispatchOutbound({ content: '好的', sessionId, platform, source: 'agent' });
   };
   host.provide.use(agent, {
+    abort: () => false,
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
       await opts.hold?.(msg);

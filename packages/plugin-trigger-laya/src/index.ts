@@ -38,6 +38,7 @@ import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional
 import { parseConfig } from '@aalis/schema-config';
 import { type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import {
+  arrivalTag,
   buildIncomingContent,
   getMessageName,
   type IncomingMessage,
@@ -513,13 +514,13 @@ function run(caps: Caps): void {
       logger.use.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
       verdict = { speak: addressed, fallback: '判定异常' };
     }
-    // 判定日志：不含正文与昵称
+    // 判定日志：不含正文与昵称，带到达序号
     const detail =
       'fallback' in verdict
         ? `兜底=${verdict.fallback}`
         : `logit=${verdict.logit.toFixed(3)} | 阈值=${verdict.threshold} | 版本=${verdict.version}`;
     logger.use.debug(
-      `[laya] 判定 | session=${sid} | speak=${verdict.speak} | addressed=${addressed} | ${detail} | ` +
+      `[laya] 判定${arrivalTag(message)} | session=${sid} | speak=${verdict.speak} | addressed=${addressed} | ${detail} | ` +
         `耗时=${Date.now() - started}ms`,
     );
 

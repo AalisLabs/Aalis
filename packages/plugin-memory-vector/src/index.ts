@@ -1237,7 +1237,7 @@ async function run(caps: Caps): Promise<void> {
           results,
         });
       } catch (err) {
-        // 回合中止（用户停止、latest-wins 腰斩）不是检索故障，与被动注入同样不告警
+        // 回合被停下（停止键、禁言、停机等）不是检索故障，与被动注入同样不告警
         if (callCtx.signal?.aborted) return JSON.stringify({ error: '回合已中止' });
         const msg = err instanceof Error ? err.message : String(err);
         logger.use.warn(`memory_recall 失败: ${msg}`);

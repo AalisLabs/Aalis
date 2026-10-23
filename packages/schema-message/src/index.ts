@@ -210,9 +210,14 @@ export interface IncomingMessage {
    * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'）。
    * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
    * 不过回复后冷却（禁言与限速照常生效），也不过指令解析（声明了 {@link IncomingMessage.ownerApproved} 的除外）。
-   * 同时用于并发隔离：同一 session 不同来源互不打断。
+   * 带来源的输入各自成一轮，不与别的输入叠加；注入方的来源应当标识发送方。
    */
   source?: string;
+  /**
+   * 到达序号：网关在入站相位之前给每条入站消息打的，这次运行内递增（网关重载后从头计）。只用于日志关联（见
+   * {@link arrivalTag}），不落库、不进模型；没经网关进来的没有
+   */
+  arrival?: number;
   /**
    * 注入方的声明：这段文字在建立时经 owner 过目过原文（owner 自己写下，或每次由 owner 审批），算作 owner 亲手写的。
    * 注入方必须同时设 source；只给经 owner 过目原文的文字设，第一方的设置方在仓内守卫里登记
@@ -357,6 +362,14 @@ export function oneSpeaker(inputs: readonly Pick<IncomingMessage, 'platform' | '
   return inputs.every(m => m.platform === inputs[0].platform && m.userId === inputs[0].userId);
 }
 
+/**
+ * 这条输入点名了她：触发类型为 direct 或 immediate，没有触发类型的（没经触发判定）按 direct 算。焦点指引、排着开的一轮的说明、
+ * 档案与关系子图都按它判
+ */
+export function wasAddressed({ triggerType = 'direct' }: Pick<IncomingMessage, 'triggerType'>): boolean {
+  return triggerType === 'direct' || triggerType === 'immediate';
+}
+
 // ----- 出站消息 -----
 
 /**
@@ -379,7 +392,15 @@ export type OutboundDeliveryResult =
 export const DELIVERY_WAIT_MS = 90_000;
 
 /**
- * 等 {@link OutgoingMessage.delivery} 结算；signal 中止（回合 latest-wins、手动 abort、插件停机）或到 timeoutMs
+ * 日志行里一条输入的到达序号，接在动作之后：` #<序号>`（带前导空格），没经网关进来的为空串。日志行据此串起同一条输入，
+ * 不记正文与昵称
+ */
+export function arrivalTag({ arrival }: Pick<IncomingMessage, 'arrival'>): string {
+  return arrival === undefined ? '' : ` #${arrival}`;
+}
+
+/**
+ * 等 {@link OutgoingMessage.delivery} 结算；signal 中止（回合被停下、插件停机）或到 timeoutMs
  * （缺省 {@link DELIVERY_WAIT_MS}）时不再等，返回 undefined。适配器的发送不随之取消，所以 undefined 只能当
  * 「未确认」，不能当「未发送」。
  */

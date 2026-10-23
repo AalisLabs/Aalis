@@ -685,7 +685,7 @@ export const SessionResyncParamsSchema = z.object(pushBase);
 // 回合控制
 // ════════════════════════════════════════════════════════════
 
-/** 发一条消息：沿用现有语义，同一会话的新消息中止在途回合。只有附件、没写文字的照常发出 */
+/** 发一条消息：叠进这个会话在跑的一轮或排在它之后，不打断它。只有附件、没写文字的照常发出 */
 export const TurnSendParamsSchema = z
   .object({
     sessionId: z.string(),

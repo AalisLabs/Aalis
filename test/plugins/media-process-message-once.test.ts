@@ -145,6 +145,7 @@ async function fileReaderPreprocessor() {
   host.provide.use(agent, {
     async handleMessage() {},
     async assignModel() {},
+    abort: () => false,
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {};

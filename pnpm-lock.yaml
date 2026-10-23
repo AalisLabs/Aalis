@@ -1604,6 +1604,9 @@ importers:
 
   packages/plugin-flow-control:
     dependencies:
+      '@aalis/api-agent':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../api-agent
       '@aalis/api-flow-control':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-flow-control
@@ -1634,13 +1637,13 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/schema-message':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1674,13 +1677,13 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/schema-message':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1901,7 +1904,7 @@ importers:
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-memory
       '@aalis/api-session-manager':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
       '@aalis/api-tools':
         specifier: workspace:>=0.11.0 <1.0.0
@@ -2965,6 +2968,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
@@ -3406,7 +3412,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
     devDependencies:
       '@aalis/core':
@@ -3483,7 +3489,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-json-repair':
         specifier: workspace:>=0.5.4 <1.0.0
@@ -3553,7 +3559,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-json-repair':
         specifier: workspace:>=0.5.4 <1.0.0
@@ -3853,6 +3859,9 @@ importers:
       '@aalis/api-cron-engine':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-cron-engine
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.10.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
@@ -3866,7 +3875,7 @@ importers:
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-webui
       '@aalis/api-workflow':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-workflow
       '@aalis/schema-config':
         specifier: workspace:>=0.16.0 <1.0.0

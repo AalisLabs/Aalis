@@ -312,7 +312,7 @@ describe('让出', () => {
     expect(w.tasks.list()).toHaveLength(1);
   });
 
-  it('前台时回合中止一并中止它；转后台之后回合中止、新消息打断都不动它', async () => {
+  it('前台时回合中止一并中止它；转后台之后回合中止不动它', async () => {
     const w = world();
     w.slow();
     const foreground = turn();

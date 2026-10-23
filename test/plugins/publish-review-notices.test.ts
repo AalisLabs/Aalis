@@ -53,6 +53,7 @@ async function boot() {
       });
     },
     async assignModel() {},
+    abort: () => false,
   });
   await app.plugin(gatewayPlugin);
   await app.plugins.idle();

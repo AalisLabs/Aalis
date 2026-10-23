@@ -2,8 +2,8 @@
 // 完成通知与待交付提示
 //
 // - 完成通知：任务到终态（完成、失败、超时取消、被 owner 取消）后，向发起房间注入一条宿主通知
-//   （IncomingMessage.hostNotice）。一件一条，source 为 paper:<白纸 id>:<任务 id>，各占 agent 的一条 lane，
-//   互不中止；不做串行与积压合并。宿主撰写的行全在 content 里，给人看的那句（任务的结果、用时与花费）另作文字对象
+//   （IncomingMessage.hostNotice）。一件一条，source 为 paper:<白纸 id>:<任务 id>，各自成一轮（排在这个房间在跑的一轮
+//   之后），不做积压合并。宿主撰写的行全在 content 里，给人看的那句（任务的结果、用时与花费）另作文字对象
 //   放进 hostNotice.text；远端说明截断后经 wrapUntrustedContent 放进
 //   hostNotice.untrusted，只在通知那一轮出现、不归档，所以远端说明伪造不出宿主行，也进不了之后的历史。
 //   经 paper_cancel 取消的任务不通知（工具结果已告知）。注入之前先把通知标识与时刻记进账本并落盘，每件至多

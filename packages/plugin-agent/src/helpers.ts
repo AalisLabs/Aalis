@@ -55,41 +55,46 @@ export const INPUT_CONVENTIONS = [
 ].join('\n');
 
 /**
- * 群聊焦点指引 —— 仅在多方窗口被显式触发（@ / 直接对话）时注入。
+ * 群聊焦点指引 —— 多方房间里这一轮有被点名的输入时注入，紧贴在这一轮的输入之前，按时间与发送者账号逐条列出被点名的那几条；
+ * 插进被点名的输入时在它们之前另加一块，不改前面那块。
  *
  * 背景痛点：群里多人陈述某事件 E，A 突然 @bot「你怎么看 E」。bot 看到的 messages 是
  * 「B 长篇陈述 → C 长篇陈述 → D 长篇陈述 → A 简短@」，注意力容易被最显眼的陈述吸走，
  * 把陈述者本人当成评价主体，而不是被陈述的事件 E 本身。
  *
- * 解决：在触发场景下插一条焦点指引，明确"本轮最后一条带发送者标注的消息即焦点"，并指引 LLM 区分
+ * 解决：插一条焦点指引，明确哪几条是焦点（按时间与发送者标注认，正文里不另加标记：之后它们进历史时正文不变），并指引 LLM 区分
  *   - 评价对象（被引用 / 被讨论的事件 E）
  *   - 引用者（发言者本人）
  *
- * 仅多方窗口（multiParty：调用方与网关同一算法按这个平台的类型声明算出，不认类型名）且 triggerType ∈ {direct, immediate}
- * 时返回，其他场景返回 null（interval/idle/proactive/witness 没有清晰诉求主体，强加焦点反而会误导）。
+ * focus 是被点名的各条的「(时间) 发送者账号」；没有被点名的（interval/idle/proactive 没有清晰诉求主体，强加焦点反而会误导）
+ * 返回 null
  */
-export function buildFocusGuidance(
-  incoming: Pick<IncomingMessage, 'triggerType'>,
-  multiParty: boolean,
-): Message | null {
-  if (!multiParty) return null;
-  const t = incoming.triggerType;
-  if (t !== 'direct' && t !== 'immediate') return null;
-
+export function buildFocusGuidance(focus: readonly string[]): Message | null {
+  if (focus.length === 0) return null;
   return {
     role: 'system',
     content: [
       '【当前焦点】',
-      // 位置无关表述：本块与焦点消息之间可能隔着其它注入块（平台提示等），
-      // 「紧随其后」会错误指向注入块；「最后一条」在极端裁剪补提示时也会指错，
-      // 故按特征描述（时间+发送者标注为用户消息独有）
-      '本轮最后一条带时间与发送者标注的消息，是触发你本轮回应的"焦点消息"。',
-      '回应前请先识别它的核心诉求类型：评价某事 / 回答提问 / 吐槽附和 / 闲聊回应。',
+      '触发你本轮回应的"焦点消息"是下面这几条（按时间与发送者标注认）：',
+      ...focus.map(line => `- ${line}`),
+      '回应前请先识别它们的核心诉求类型：评价某事 / 回答提问 / 吐槽附和 / 闲聊回应。',
       '若焦点消息中通过引用、转发、@他人提及、或文字指向了一个被讨论的对象（事件、作品、',
       '行为、观点），你的回应应当针对"被指向的对象"，而不是把"陈述者本人"当成评价主体。',
       '群里前面其他成员的长篇陈述只是背景上下文，不是焦点。',
     ].join('\n'),
     metadata: { injector: 'focus-guidance' },
+  };
+}
+
+/**
+ * 由排着的真人消息开的一轮的说明：它们是上一轮进行期间到的。quiet 为真时（多方房间里这一批全是没点名她的插话）另说没有
+ * 需要接的可以不说话；私聊、工作会话与批里有点名的照常回
+ */
+export function queuedNote(quiet: boolean): Message {
+  return {
+    role: 'system',
+    content: `下面几条是你上一轮进行期间到的。${quiet ? '没有需要接的可以不说话。' : ''}`,
+    metadata: { injector: 'system-other' },
   };
 }
 

@@ -59,7 +59,7 @@ export interface MessageArchiveService {
 
 **典型消费点**（全部先看 `messageArchive.present` 再经 `messageArchive.use` 调用，且都列为 `uses optional`）：
 
-- `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物。
+- `plugin-agent`：主链路。输入在进入一轮时经 `archiveIncoming` 归档（带回合 id 与进入方式），被放掉的在那一轮落定之后归档（不带回合 id），并用 `saveMessage` 回档 assistant 产物（`packages/plugin-agent/src/index.ts`）。
 - `plugin-adapter-onebot`：`archiveNotice` 入档群事件；`findByMessageId` 反查引用原文；`saveMessage` 入档投递失败提示（一处）。
 - `plugin-flow-control` / 触发插件（`plugin-trigger-policy` 等）：把被流控/触发判定「吞掉」的入站消息做 **shadow 归档**（`plugin-flow-control/src/index.ts`；触发插件经 `api-trigger/src/index.ts` 的 `archiveSwallowed`）。
 - `plugin-webui-server`：发往 WebUI 自己会话的出站消息经 `recordOutbound` 记进历史，记成了回执才算送达（WebUI 的收件箱就是会话历史）。
@@ -189,34 +189,19 @@ await messageArchive.use.archiveIncoming(message);
 
 详见 `docs/concepts/lazy-service-access.md`。
 
-## 6. 串行归档契约（重点 / 审计项）
+## 6. 归档的次序（重点 / 审计项）
 
 `archiveIncoming` **不是天然有序的**。`memory.saveMessage` 是异步写，多条入站消息若并发 `await archiveIncoming(...)`，落库顺序取决于各自 await 的完成时机——会出现**乱序归档**：后到的消息先落库，下一轮拉历史时漏看前一条输入，或时间线错乱。
 
-主链路用一条 **per-lane 串行队列**解决（`plugin-agent` 权威实现，`packages/plugin-agent/src/index.ts`）：
+主链路的次序由 `plugin-agent` 的通道层保证（`packages/plugin-agent/src/index.ts`）：每个会话同一时刻最多一轮，输入在进入一轮时归档——开轮的在 `agent:turn:before` 的默认动作开头按入队先后逐条归档，插进来的在插入点逐条归档，被放掉的在这个会话在跑的一轮落定之后按先后归档。agent 在一个会话里的写入（输入、工具调用组、回复）都在这一轮的流程里依次发生，不交错；存档次序因此与当时发给模型的次序一致，排着、还没进一轮的输入不在历史里。
 
-```ts
-private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMessage, turnId: string) {
-  const previous = this.archiveQueues.get(lane) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(() => this.archiveIncomingMessage(incoming, turnId));
-  const tail = current.then(() => undefined, () => undefined);
-  this.archiveQueues.set(lane, tail);                  // 把队尾接上，强制同 lane 顺序执行
-  try { return await current; } finally {
-    if (this.archiveQueues.get(lane) === tail) this.archiveQueues.delete(lane);
-  }
-}
-```
-
-- **lane key**：`${sessionId}::${source ?? 'user'}`——同会话同来源共用一条 lane，串行；不同来源（如用户输入 vs proactive 注入）互不阻塞。
-- 设计意图见 `MEMORY` 注释「同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入」。
-
-> ⚠️ **审计 caveat——绕过串行队列的 shadow 归档会乱序。**
-> `plugin-flow-control` 与触发插件直接 `await` message-archive 的 `archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
+> ⚠️ **审计 caveat——旁路的 shadow 归档不在这条顺序里。**
+> `plugin-flow-control` 与触发插件直接 `await` message-archive 的 `archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），与 agent 在同一会话里的写入彼此无序：被吞掉的消息若在工具调用组写入期间影子归档，可能落进组中间，读历史时整组被当成不完整而丢掉。
 >
-> 现状：服务契约本身**不提供**跨调用方的串行保证——有序性是 `plugin-agent` 在消费侧自建的，且队列状态私有，shadow 路径触达不到。
+> 现状：服务契约本身**不提供**跨调用方的串行保证。
 > 规避：
-> 1. **provider 侧**（推荐根治）：在实现内部用 per-`sessionId` 队列对 `saveMessage`/`archiveIncoming` 的落库做串行化，让有序性变成服务的硬保证，所有调用方（含 shadow）自动受益。
-> 2. **consumer 侧**：任何旁路归档都应复用主链路的 lane 串行机制，而不是裸 `await archiveIncoming`。
+> 1. **provider 侧**：在实现内部用 per-`sessionId` 队列对 `saveMessage`/`archiveIncoming` 的落库做串行化，让有序性变成服务的硬保证，所有调用方（含 shadow）自动受益。
+> 2. **读历史侧**：把夹在工具调用组中间的消息挪到组后再清洗。
 > 3. `Message.timestamp` 都取 `Date.now()`（`plugin-message-archive/src/index.ts`），毫秒级近邻消息可能撞同值——下游排序不要只靠 timestamp，需保留落库顺序。
 
 ## 7. 能力 / 风险 → 影响

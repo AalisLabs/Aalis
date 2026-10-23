@@ -6,7 +6,7 @@ import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
-// memory_recall 把回合的中止信号传给 embedding。用户停止或 latest-wins 腰斩时模型恰好在调它，
+// memory_recall 把回合的中止信号传给 embedding。回合被停下（停止键、禁言等）时模型恰好在调它，
 // 中止不是检索故障：不记「memory_recall 失败」的 warn（被动注入路径同样静默），其它失败照旧告警。
 
 type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;

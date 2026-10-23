@@ -8,6 +8,7 @@
 
 import { authority, type UserIdentity } from '@aalis/api-authority';
 import { cronEngine } from '@aalis/api-cron-engine';
+import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { isStorageUri, storage } from '@aalis/api-storage';
 import { actingIdentity, type BoundTools, tools } from '@aalis/api-tools';
@@ -342,6 +343,8 @@ const uses = {
   events,
   /** agent 节点经 'agent:turn:after' 捕获本轮回复 */
   hooks,
+  /** agent 节点经它送达指令；缺席时 agent 节点失败 */
+  gateway: optional(gateway),
   lifecycle,
   logger,
   config,
@@ -440,7 +443,7 @@ async function run(caps: Caps): Promise<void> {
     workflowId: string,
     extraVars: Record<string, unknown>,
     triggerSource: string,
-    caller?: { platform?: string; userId?: string },
+    caller?: { platform?: string; userId?: string; sessionId?: string },
   ): Promise<WorkflowRun> {
     const def = loader.get(workflowId);
     if (!def) throw new Error(`workflow "${workflowId}" 不存在`);
@@ -471,6 +474,7 @@ async function run(caps: Caps): Promise<void> {
         tools,
         events: events.use,
         hooks: hooks.use,
+        gateway: caps.gateway,
         logger,
         def,
         runId,
@@ -483,6 +487,7 @@ async function run(caps: Caps): Promise<void> {
           platform: 'workflow',
           participants: [actor ?? { platform: 'workflow', userId: '' }],
         },
+        callerSessionId: caller?.sessionId,
         signal: abort.signal,
         onNodeDone: (info: NodeRunInfo) => {
           const idx = run.nodes.findIndex(n => n.id === info.id);
@@ -705,12 +710,13 @@ function registerTools(
     },
     handler: async (args, callCtx) => {
       try {
-        // 透传调用者的授权身份（几个人的一轮没有单一的调用者，按匿名）；运行身份按它与定义者定（见 execute）
+        // 透传调用者的授权身份（几个人的一轮没有单一的调用者，按匿名）；运行身份按它与定义者定（见 execute）。调起这次运行的
+        // 会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败
         const run = await service.runWorkflow(
           String(args.id),
           (args.vars as Record<string, unknown>) ?? {},
           'manual:tool',
-          actingIdentity(callCtx),
+          { ...actingIdentity(callCtx), sessionId: callCtx.sessionId },
         );
         return JSON.stringify({
           ok: true,

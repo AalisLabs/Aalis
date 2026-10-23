@@ -13,7 +13,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
 - **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted`、回合进出、审批的推出与结算、后台任务的开始、结束与删除各推一条 `sessions/changed`，带变了的会话连同各级父会话的摘要与最新的分组。
 - **按会话树算的字段**：摘要的 `background` 是本会话在跑的后台任务数，加各级子会话里有回合在跑或有后台任务在跑的会话数（运行中看下文的回合登记，后台任务看 `backgroundTasks`，一批摘要只遍历一次登记表）；`tokens` 把本会话与各级子会话的 `SessionInfo.tokens` 相加；`lastTurn` 取 `SessionInfo.lastTurn` 的结局与结束时间，状态为 error 时 `reason` 取它的原因；子会话另带 `ancestors`（各级父会话的 id 与标题，根在前）；`chat` 取根会话聊天窗口的类型名与多方标记，`place` 取 session-manager 的 `placeOf` 与场所记录的显示名（窗口还没有记录时是场所键），根会话是空记录（`isUnfiled`）时不给：这类会话没有场所层。子会话的回合进出、任务进出、token 记账（session-manager 据 `llm:usage` 累加、发 `session:updated`）都会改父会话的摘要，所以每次推送都连同各级父会话。`sessions/list` 带 `background` 时只列 `background` 大于 0 的，不看归档。
-- **运行中**：在 `agent:turn:before` 中间件里登记回合，回合的 `next` 返回（含被下游拦下、出错）即撤销。同一会话按 lane 可以并行多轮，有一轮在跑就算运行中。房间只在她真的开始一轮时显示运行中。
+- **运行中**：在 `agent:turn:before` 中间件里登记回合，回合的 `next` 返回（含被下游拦下、出错）即撤销。有一轮在跑就算运行中。房间只在她真的开始一轮时显示运行中。
 - **会话的增删改**：`session/create`、`rename`、`archive`、`unarchive`、`delete`、`batch` 转给 session-manager。
   - 新建根会话不复制各层，设置经各层实时生效；带 `parentId` 新建子会话时，建之前取会话设置管理面的 `childMetadata`（父会话此刻每一项适用于子会话的生效值）并进 metadata 一次写下，入口平台按根会话取；会话设置不在时回 `unsupported`、不建。
   - 归档连同子会话，单个与批量一致；恢复同样连同子会话，状态改回 `completed`（最后一轮收尾后的状态），没归档的不动。
@@ -23,8 +23,8 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 - **订阅与条目**：`session/subscribe` 回快照，之后把 agent、工具与存档的事件拼成条目推给订阅的连接，见下文「条目从哪里来」。
 - **文件句柄**：条目里存储里的文件不给存储地址，给本插件签发的句柄（网址的文件直接给网址）；传输层下发文件之前经 `resolveFile` 核验，见下文「文件句柄」。
 - **历史**：`session/history` 从存档归并条目、分页，见下文「历史归并」。
-- **回合控制**：`turn/send`、`turn/continue` 以连接的身份发入站消息；`turn/abort` 转给 agent；`session/compress` 调压缩服务（api-memory 的 `compression`），压完才回，没压成回错误；`turn/rewind` 转给检查点；`plan/clear` 转给待办服务。
-- **后台任务**：可选使用后台任务登记（api-tools 的 `backgroundTasks`），投影成协议的形状（去掉模型给的参数与工具的结果，`display` 按工具声明从参数解析，同工具卡；退出码照登记的 `exitCode` 下发）。`background/list` 列全部会话的；`background/watch` 之后按 `background:changed` 推 `background/changed`：状态与上次推出的不同（开始、结束、停止）立即推，删掉的立即推 `removes`，只有最后一行与最后输出时间变了的攒起来每秒推一次（常量 1 秒），状态变了时攒着的那次并进去。`background/output`、`background/stop` 转给登记表。`background/stopAll` 先经 agent 的 `abort` 停各级子会话在跑的回合，再经登记表的 `stop` 停本会话与各级子会话在跑的任务、等它们落定；本会话自己的回合不停。没有登记表时 list、output、stop 回 `unsupported`，watch 照常，stopAll 照样停子会话的回合。
+- **回合控制**：`turn/send`、`turn/continue` 以连接的身份发入站消息；`turn/abort` 转给 agent（`abort(sessionId, { turnId, reason: '停止键' })`，只停在跑的一轮，排着的随即开下一轮）；`session/compress` 调压缩服务（api-memory 的 `compression`），压完才回，没压成回错误；`turn/rewind` 转给检查点；`plan/clear` 转给待办服务。
+- **后台任务**：可选使用后台任务登记（api-tools 的 `backgroundTasks`），投影成协议的形状（去掉模型给的参数与工具的结果，`display` 按工具声明从参数解析，同工具卡；退出码照登记的 `exitCode` 下发）。`background/list` 列全部会话的；`background/watch` 之后按 `background:changed` 推 `background/changed`：状态与上次推出的不同（开始、结束、停止）立即推，删掉的立即推 `removes`，只有最后一行与最后输出时间变了的攒起来每秒推一次（常量 1 秒），状态变了时攒着的那次并进去。`background/output`、`background/stop` 转给登记表。`background/stopAll` 先经 agent 的 `abort(id, { queued: true })` 停各级子会话在跑的回合、放掉它们排着的输入（只有排着的追问、没有在跑一轮的子会话同样放掉），再经登记表的 `stop` 停本会话与各级子会话在跑的任务、等它们落定；本会话自己的回合不停。没有登记表时 list、output、stop 回 `unsupported`，watch 照常，stopAll 照样停子会话的回合。
 - **工具卡的展示**：工具卡与审批卡上的事实按工具定义上声明的展示种类（api-tools 的 `display`，经 tools 服务的 `getAll()` 取）从参数里逐字取出，工具返回时按声明从结果里取命令的退出码（取在 agent 截断过长的结果之前），实时条目、历史与审批共用一份解析。
 - **审批**：提供 `approvals` 服务。审批推给在场的审批面，同一会话排队、限频，应答先答先得并核应答人与内容哈希，请求与决定成对记进审计，见下文「审批」。每条连接接入对端带来的审批面，`presence/update` 与 `approval/respond` 经它。
 

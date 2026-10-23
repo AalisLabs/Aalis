@@ -106,6 +106,8 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
   }
   const host = app.bind({ agent: agentService, tools, events, services, sessionManager });
   let executed = 0;
+  /** 探针执行时停住，直到放行 */
+  let probeHold: { entered: () => void; release: Promise<void> } | undefined;
   host.tools.use.register({
     definition: {
       type: 'function',
@@ -113,6 +115,12 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
     },
     handler: async () => {
       executed++;
+      const hold = probeHold;
+      probeHold = undefined;
+      if (hold) {
+        hold.entered();
+        await hold.release;
+      }
       return 'ok';
     },
   });
@@ -135,6 +143,14 @@ async function boot({ settings = true, doc = {} }: { settings?: boolean; doc?: P
     admin,
     set,
     executed: () => executed,
+    /** 下一次探针执行停住：entered 在它进来时落定，release 放行 */
+    holdProbe() {
+      let entered!: () => void;
+      let release!: () => void;
+      const reached = new Promise<void>(resolve => (entered = resolve));
+      probeHold = { entered, release: new Promise<void>(resolve => (release = resolve)) };
+      return { entered: reached, release };
+    },
     toolTurns(on: boolean) {
       toolTurns = on;
       executed = 0;
@@ -183,6 +199,26 @@ describe('字段声明', () => {
 });
 
 describe('每一轮按会话读', () => {
+  it('设置在开轮时读一次：一轮进行中改了这个会话的模型，插进来的输入之后的调用仍用开轮时的，下一轮才换', async () => {
+    const s = await boot();
+    s.toolTurns(true);
+    const probe = s.holdProbe();
+    const first = s.ask('s1');
+    await probe.entered;
+    s.toolTurns(false);
+    await s.set('s1', 'llm', ref('b'));
+    const joined = s.ask('s1');
+    await new Promise(resolve => setImmediate(resolve));
+    probe.release();
+    await Promise.all([first, joined]);
+    expect(
+      s.sent.map(r => r.model),
+      '同一轮的两次调用都用开轮时的模型',
+    ).toEqual(['a', 'a']);
+    await s.ask('s1');
+    expect(s.sent.at(-1)?.model).toBe('b');
+  });
+
   it('本会话层设的模型、深度思考、工具迭代上限与历史条数线下一轮起生效，别的会话不受影响', async () => {
     const s = await boot();
     await s.ask('s1');

@@ -39,7 +39,7 @@ export interface FlowControlService {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide.use(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。
+**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide.use(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。禁言（`setMuted` 时长大于 0）时经 agent（optional）的 `abort(sessionId, { queued: true, reason: '禁言' })` 停下这个会话在跑的一轮、放掉排着的；解禁不停。
 
 **消费点**（全部 `optional`，缺席即不设闸）：
 
@@ -132,8 +132,8 @@ for (const [sid, s] of this.states) {
 **影子归档顺序竞态（现状未收口）**。被吞掉的入站消息会做影子归档，下次触发时作为上下文：
 
 - `flow-control` 的 `shadowArchive`（`packages/plugin-flow-control/src/index.ts`）与触发插件共用的 `archiveSwallowed`（`packages/api-trigger/src/index.ts`）都直接 `await` message-archive 的 `archiveIncoming(message)`。
-- 真正触发回合的消息走 agent 的串行归档车道 `archiveIncomingMessageInOrder`（`packages/plugin-agent/src/index.ts`）。
-- 两条路径不共享车道，`archiveIncoming` 以 `Date.now()` 作时间戳（`packages/plugin-message-archive/src/index.ts`）。吞掉与触发在毫秒级交错时，归档可能乱序或时间戳并列。
+- 真正进了一轮的消息由 agent 在它进入那一轮时归档（`packages/plugin-agent/src/index.ts`），agent 在一个会话里的写入依次发生。
+- 两条路径不共享顺序，`archiveIncoming` 以 `Date.now()` 作时间戳（`packages/plugin-message-archive/src/index.ts`）。吞掉与 agent 的写入在毫秒级交错时，归档可能乱序或时间戳并列。
 
 消息都会进档、都会发 `inbound:message:archived`，但会话内严格时序不保证。依赖严格时序的下游应以单调序列号而非 `Date.now()` 排序。闲置触发的合成提示不做影子归档（与 agent 的归档规则一致）。
 

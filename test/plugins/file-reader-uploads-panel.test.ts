@@ -56,6 +56,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
   host.provide.use(agent, {
     async handleMessage() {},
     async assignModel() {},
+    abort: () => false,
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {

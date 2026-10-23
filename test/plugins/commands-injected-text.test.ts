@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
-import type {} from '../../packages/api-gateway/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
@@ -41,7 +41,7 @@ async function setup(schedulerConfig: Record<string, unknown> = {}) {
   const { app } = hostedApp();
   apps.push(app);
   await registerHubs(app);
-  const host = app.bind({ events, hooks, services, commands, provide, tools });
+  const host = app.bind({ events, hooks, services, commands, provide, tools, gateway });
   host.provide.use(storage, memoryStorage().service as never);
   host.provide.use(sessionManager, {
     getSession: (id: string) => (id === CHILD ? { id, parentId: PARENT, status: 'active' } : undefined),
@@ -142,6 +142,7 @@ describe('其余带 source 的注入：不过指令解析，当普通消息交�
       tools: s.host.tools,
       events: s.host.events.use,
       hooks: s.host.hooks.use,
+      gateway: s.host.gateway,
       logger: silentLogger(),
       def: {
         id: 'wf',

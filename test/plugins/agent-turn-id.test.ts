@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
-import type { ChatResponse } from '../../packages/api-llm/src/index.js';
+import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type BoundStorage, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, type ToolExecuteMessage, tools } from '../../packages/api-tools/src/index.js';
@@ -20,7 +20,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -52,7 +52,7 @@ afterEach(async () => {
  * `before` 在 agent 之前装别的插件（如存储与检查点）。
  */
 async function startAgent(
-  responses: ChatResponse[],
+  responses: MockLLMOptions['responses'],
   handler: (ctx: ToolCallContext) => Promise<string>,
   before?: (app: App) => Promise<void>,
 ) {
@@ -147,7 +147,7 @@ describe('回合 id 贯穿一轮的各个事件', () => {
     expect(seen.turnEnds).toEqual([]);
   });
 
-  it('并发两轮：模型给的 tool call id 相同，callId 仍各不相同，开始与结束按 callId 配对且归属各自的回合', async () => {
+  it('两个会话各一轮并发：模型给的 tool call id 相同，callId 仍各不相同，开始与结束按 callId 配对且归属各自的回合', async () => {
     const bothInTool = deferred();
     const ctxs: ToolCallContext[] = [];
     const { agent, seen } = await startAgent([callProbe, callProbe, { content: '好了' }], async c => {
@@ -230,7 +230,7 @@ describe('abort 按回合 id 停止', () => {
   it('turnId 对不上：返回 false，当前回合不受影响、照常完成', async () => {
     const sessionId = 'test:abort-mismatch';
     const { agent, seen, turn, turnId, release } = await turnInTool(sessionId);
-    expect(agent.abort?.(sessionId, 'not-this-turn')).toBe(false);
+    expect(agent.abort(sessionId, { turnId: 'not-this-turn' })).toBe(false);
     release();
     await turn;
     expect(seen.turnEnds).toEqual([{ sessionId, turnId, outcome: 'replied' }]);
@@ -239,40 +239,37 @@ describe('abort 按回合 id 停止', () => {
   it('turnId 对得上：只停这一轮，返回 true，回合以 aborted 收尾', async () => {
     const sessionId = 'test:abort-match';
     const { agent, seen, turn, turnId, release } = await turnInTool(sessionId);
-    expect(agent.abort?.(sessionId, turnId)).toBe(true);
+    expect(agent.abort(sessionId, { turnId })).toBe(true);
     release();
     await turn;
     expect(seen.turnEnds).toEqual([{ sessionId, turnId, outcome: 'aborted' }]);
   });
 
-  it('同一会话两条 lane 并发：带 turnId 只停其中一轮，另一轮照常完成；不带 turnId 时返回是否停了回合', async () => {
-    const sessionId = 'test:abort-lanes';
+  it('排队之后按 turnId 停：旧的 turnId 停不了排着开的下一轮', async () => {
+    const sessionId = 'test:abort-queued';
     const entered = deferred();
     const release = deferred();
-    let inTool = 0;
-    const { agent, seen } = await startAgent([callProbe, callProbe, { content: '完成' }], async () => {
-      inTool++;
-      if (inTool === 2) entered.resolve();
+    // 带工具结果的请求回答，否则调探针：被停的那一轮在工具之后的那次调用里收尾，排着的那一轮看得到它留下的工具调用组，直接回答
+    const responses = (request: ChatModelRequest): ChatResponse =>
+      request.messages.some(m => m.role === 'tool') ? { content: '完成' } : callProbe;
+    const { agent, seen } = await startAgent(responses, async () => {
+      entered.resolve();
       await release.promise;
       return 'ok';
     });
     const userTurn = agent.handleMessage(message(sessionId));
-    const scheduledTurn = agent.handleMessage(message(sessionId, { source: 'scheduler', userId: undefined }));
     await entered.promise;
-    expect(seen.inputs).toHaveLength(2);
-    const [userTurnId, scheduledTurnId] = seen.inputs.map(i => i.turnId);
-
-    expect(agent.abort?.(sessionId, scheduledTurnId)).toBe(true);
+    const scheduledTurn = agent.handleMessage(message(sessionId, { source: 'scheduler', userId: undefined }));
+    const userTurnId = seen.inputs[0]?.turnId;
+    expect(agent.abort(sessionId, { turnId: userTurnId })).toBe(true);
     release.resolve();
-    await Promise.all([userTurn, scheduledTurn]);
-    expect(seen.turnEnds).toHaveLength(2);
-    expect(seen.turnEnds).toEqual(
-      expect.arrayContaining([
-        { sessionId, turnId: userTurnId, outcome: 'replied' },
-        { sessionId, turnId: scheduledTurnId, outcome: 'aborted' },
-      ]),
-    );
-    expect(agent.abort?.(sessionId), '没有在飞的回合').toBe(false);
+    await userTurn;
+    expect(agent.abort(sessionId, { turnId: userTurnId }), '旧的 turnId 停不了排着开的下一轮').toBe(false);
+    await scheduledTurn;
+    expect(seen.turnEnds).toEqual([
+      { sessionId, turnId: userTurnId, outcome: 'aborted' },
+      { sessionId, turnId: seen.inputs[1]?.turnId, outcome: 'replied' },
+    ]);
   });
 });
 

@@ -200,6 +200,7 @@ describe('message-archive：宿主通知归档', () => {
     const host = app.bind({ provide, gateway, flowControl, memory });
     const reached: IncomingMessage[] = [];
     host.provide.use(agent, {
+      abort: () => false,
       async handleMessage(msg: IncomingMessage) {
         reached.push(msg);
       },

@@ -76,7 +76,7 @@ export default definePlugin({
 
 两个工具都声明可转后台（`background`，让出时限用执行器的默认 30 秒）：在前台等满让出时限还没结束，[plugin-tools](./plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，脚本照常跑，正常结束时通知起它的会话。参数里没有超时，配置里也没有，等多久由执行器的让出时限管（模型可用 `waitSeconds` 改，`runInBackground` 立即转后台）。
 
-停只认执行器给这次调用的中止信号（工具调用上下文的 `signal`）：在前台时随回合中止（WebUI 的停止键、同一会话的新消息打断在途回合），转到后台之后随停止、工具撤回登记与执行器停用中止。它交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`，两条路径都不带超时。中止时脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL。
+停只认执行器给这次调用的中止信号（工具调用上下文的 `signal`）：在前台时随回合中止（WebUI 的停止键、禁言、停机等停下这一轮），转到后台之后随停止、工具撤回登记与执行器停用中止。它交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`，两条路径都不带超时。中止时脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL。
 
 结果只在脚本确实是被信号结束时标为中止，免得下一轮模型把已经生效的脚本再跑一遍：
 

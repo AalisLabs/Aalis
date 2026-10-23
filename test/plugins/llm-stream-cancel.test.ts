@@ -67,7 +67,7 @@ describe('chatStream 提前退出释放响应体', () => {
     let got = 0;
     for await (const chunk of model.chatStream!({ messages: [{ role: 'user', content: 'hi' }] })) {
       if (chunk.contentDelta) got++;
-      if (got >= 3) break; // 模拟 lane 中止/提前收工
+      if (got >= 3) break; // 模拟回合被停下、提前收工
     }
     expect(got).toBe(3);
     expect(probe.cancelled(), 'break 后必须 cancel 响应体，否则半读的套接字挂到 300s 超时').toBe(true);

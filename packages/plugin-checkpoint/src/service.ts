@@ -95,7 +95,7 @@ interface ServiceConfig {
  */
 export class CheckpointServiceImpl implements CheckpointService {
   /**
-   * 进行中的回合，按 turnId 记。同一会话可以同时有几轮在跑（agent 按会话加来源分 lane），
+   * 进行中的回合，按 turnId 记。几轮可以同时在跑（不同会话的回合并发），
    * 改动按写入时所在的异步上下文归属到其中一轮，见 {@link scope}。
    */
   private readonly turns = new Map<string, ActiveTurn>();

@@ -251,6 +251,18 @@ export function rootSessionOf(
 }
 
 /**
+ * 会话所在的聊天窗口：根会话建档时记下的（子会话取根会话的）。会话管理缺席、会话不在表里或根会话没有聊天窗口时没有
+ */
+export function originChatOf(
+  sessionId: string,
+  sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>,
+): OriginChat | undefined {
+  if (!sessionManager.present) return undefined;
+  const sm = sessionManager.use;
+  return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat;
+}
+
+/**
  * 根会话是不是按 id 兜底建档留下的空记录：没有出生平台、创建来源与绑定（不在表里的父会话上开子会话、在会话管理收录不了的会话上
  * 写设置时建出）。对根会话问；IM 房间收到原生入站后补记出生平台，之后不再是
  */

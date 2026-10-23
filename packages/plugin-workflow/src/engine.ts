@@ -2,8 +2,10 @@
 // engine.ts — DAG 执行引擎
 // ============================================================
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 // 副作用引入：激活 api-agent 对 @aalis/api-hooks 的 HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type { GatewayService } from '@aalis/api-gateway';
 import type { Hooks } from '@aalis/api-hooks';
 import { actingIdentity, type ToolCallRequest, type ToolService } from '@aalis/api-tools';
 import type {
@@ -27,13 +29,15 @@ const ERROR_MAX = 200;
 const CANCELLED = '运行已取消';
 
 /**
- * 执行一次 DAG 用到的能力：tool 节点调工具、send-message / agent 节点派发消息、
- * agent 节点经钩子捕获本轮回复。引擎不持有插件激活本身，只收这几样。
+ * 执行一次 DAG 用到的能力：tool 节点调工具、send-message 节点经事件派发消息、agent 节点经网关送达指令并经钩子捕获它那一轮的
+ * 回复。引擎不持有插件激活本身，只收这几样。
  */
 export interface EngineCaps {
   tools: Pick<ServiceSelection<ToolService>, 'present' | 'use'>;
   events: Events;
   hooks: Hooks;
+  /** agent 节点的送达入口：不在时 agent 节点失败 */
+  gateway: Pick<ServiceSelection<GatewayService>, 'present' | 'use'>;
   logger: Logger;
 }
 
@@ -154,6 +158,8 @@ interface ExecCtx extends EngineCaps {
   vars: Record<string, unknown>;
   outputs: Record<string, unknown>;
   toolCallContext: ToolCallRequest;
+  /** 调起这次运行的会话（经 workflow_run 调起时有）：它所在的一轮在等这次运行 */
+  callerSessionId?: string;
   signal: AbortSignal;
 }
 
@@ -201,48 +207,31 @@ function execWait(node: WaitNodeSpec, signal: AbortSignal): Promise<string> {
 const DEFAULT_AGENT_TIMEOUT_SEC = 120;
 
 /**
- * agent 节点：派发指令给 agent 并等待本轮回复。
- * 在 emit 前注册 `agent:turn:after` 监听，按目标 sessionId 捕获首条回复；超时或
- * outcome=error/aborted 抛错（=> 节点失败）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
+ * agent 节点：经网关把指令送进目标会话，等它开的那一轮的回复。指令带来源 `workflow:<编排>:<节点>`，在目标会话里单独成一轮，
+ * 排在那里在跑的一轮之后；送达在节点自己的异步上下文里调用，agent 让那一轮跑在送达它的调用的上下文里，节点据此只认自己那一轮的
+ * agent:turn:after（同一会话里别的回合、同一编排别的运行的同名节点都不认）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
  *
- * 注意事项（见 AgentNodeSpec 文档）：
- * - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane——否则同一会话上的
- *   两个 agent 回合会因 lane 相同而互相 abort。但**显式指定相同 sessionId 的并行 agent 节点**仍会
- *   因 `agent:turn:after` 按 sessionId 匹配而串扰捕获——省略 sessionId（默认一次性子会话）可彻底避免。
- * - run 取消时立即停止等待、节点失败；已派发的回合不随之中止，照常跑完，回复不再被捕获。
- * - 目标会话处于禁言期时（禁言不看生效范围），或在 flow-control 的生效范围内且限速窗口已满时，消息会被 flow 相位
- *   吞掉而永不回本节点的 `agent:turn:after`，节点会等到超时才失败。带 source 的消息不经触发策略、不受回复后冷却；限速只在目标会话在 flow-control 的生效范围内时生效。
+ * 失败：outcome 为 error/aborted；指向调起这次运行的会话（那一轮在等这次运行，节点开不了轮）立即失败、不送达；网关不在时失败；
+ * 送达返回（这条输入落定）时还没认到结局，就是在网关相位被吞（禁言、限速等）或被放掉，立即失败；超时；run 取消时立即停止等待
+ * （已送达的回合不随之中止，照常跑完，回复不再被捕获）。
  */
 async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
-  // 省略 sessionId 时为本节点生成一次性隔离子会话，确保并行 agent 节点互不串扰、join 不混淆。
-  // 这类会话没有出生平台：平台档按入口平台选，场所为默认工作区。
+  // 省略 sessionId 时为本节点生成一次性隔离子会话。这类会话没有出生平台：平台档按入口平台选，场所为默认工作区。
   const sessionId = node.sessionId
     ? interpolateString(node.sessionId, ec.vars, ec.outputs)
     : `workflow::${ec.runId}::${node.id}`;
   const platform = interpolateString(node.platform ?? 'workflow', ec.vars, ec.outputs);
   const timeoutSec = node.timeoutSeconds && node.timeoutSeconds > 0 ? node.timeoutSeconds : DEFAULT_AGENT_TIMEOUT_SEC;
-  const timeoutMs = Math.floor(timeoutSec * 1000);
-
-  let captured: { reply: string; outcome: string } | undefined;
-  let resolveWait: (() => void) | undefined;
-  const waitPromise = new Promise<void>(resolve => {
-    resolveWait = resolve;
-  });
-  // 注册必须在 emit 之前，避免目标 agent 同步回复时错过监听窗口。
-  const dispose = ec.hooks.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    if (captured) return;
-    if (data.sessionId !== sessionId) return;
-    captured = { reply: data.reply ?? '', outcome: data.outcome };
-    resolveWait?.();
-  });
+  if (sessionId === ec.callerSessionId) {
+    throw new Error(`agent 节点指向调起这次运行的会话，那一轮在等这次运行，节点开不了轮（会话=${sessionId}）`);
+  }
+  if (!ec.gateway.present) throw new Error(`'gateway' 服务不可用，agent 节点的指令送不到（会话=${sessionId}）`);
+  const gateway = ec.gateway.use;
 
   const incoming: IncomingMessage = {
     content: instruction,
     sessionId,
-    // source 含 nodeId：隔离 agent 的并发 lane（laneKey=sessionId::source），
-    // 避免同会话上的两个 agent 节点回合互相 abort。
     source: `workflow:${ec.workflowId}:${node.id}`,
     platform,
     triggerType: 'proactive',
@@ -252,26 +241,42 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const runner = actingIdentity(ec.toolCallContext);
   if (runner.userId) incoming.actor = runner;
 
-  const stopWaiting = () => resolveWait?.();
-  const timeoutHandle = setTimeout(stopWaiting, timeoutMs);
-  ec.signal.addEventListener('abort', stopWaiting, { once: true });
+  // 节点自己的异步上下文：agent 在送达这条指令的调用里跑它开的那一轮
+  const scope = new AsyncLocalStorage<true>();
+  let captured: { reply: string; outcome: string } | undefined;
+  const dispose = ec.hooks.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    if (!captured && scope.getStore() && data.sessionId === sessionId) {
+      captured = { reply: data.reply ?? '', outcome: data.outcome };
+    }
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stop = () => {};
+  const waiting = new Promise<'timeout' | 'cancelled'>(resolve => {
+    timer = setTimeout(() => resolve('timeout'), Math.floor(timeoutSec * 1000));
+    stop = () => resolve('cancelled');
+    ec.signal.addEventListener('abort', stop, { once: true });
+  });
+  let end: 'delivered' | 'timeout' | 'cancelled';
   try {
-    await ec.events.emit('inbound:message', incoming);
-    await waitPromise;
+    const delivered = scope.run(true, () => gateway.ingressMessage(incoming)).then(() => 'delivered' as const);
+    end = await Promise.race([delivered, waiting]);
   } finally {
-    clearTimeout(timeoutHandle);
-    ec.signal.removeEventListener('abort', stopWaiting);
+    clearTimeout(timer);
+    ec.signal.removeEventListener('abort', stop);
     dispose();
   }
 
-  if (!captured) {
-    if (ec.signal.aborted) throw new Error(CANCELLED);
+  if (captured) {
+    if (captured.outcome === 'error' || captured.outcome === 'aborted') {
+      throw new Error(`agent 节点未正常完成（outcome=${captured.outcome}，会话=${sessionId}）`);
+    }
+    return captured.reply;
+  }
+  if (end === 'cancelled') throw new Error(CANCELLED);
+  if (end === 'timeout')
     throw new Error(`agent 节点超时（${timeoutSec}s 内未收到 agent:turn:after，会话=${sessionId}）`);
-  }
-  if (captured.outcome === 'error' || captured.outcome === 'aborted') {
-    throw new Error(`agent 节点未正常完成（outcome=${captured.outcome}，会话=${sessionId}）`);
-  }
-  return captured.reply;
+  throw new Error(`agent 节点的指令没开轮：在网关相位被挡下或被放掉（会话=${sessionId}）`);
 }
 
 async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
@@ -304,6 +309,8 @@ interface RunOptions extends EngineCaps {
   runId: string;
   vars: Record<string, unknown>;
   toolCallContext: ToolCallRequest;
+  /** 调起这次运行的会话（经 workflow_run 调起时有）：指向它的 agent 节点立即失败 */
+  callerSessionId?: string;
   /**
    * 取消信号：中止后不再调度新节点，阻塞中的 wait / agent 节点立即失败；tool 节点经 toolCallContext.signal 收到，
    * 是否提前返回由工具决定
@@ -323,7 +330,7 @@ export async function runDag(opts: RunOptions): Promise<{
   outputs: Record<string, unknown>;
   error?: string | TextRef;
 }> {
-  const { def, vars, tools, events, hooks, logger, runId, signal, onNodeDone } = opts;
+  const { def, vars, tools, events, hooks, gateway, logger, runId, callerSessionId, signal, onNodeDone } = opts;
   const outputs: Record<string, unknown> = {};
   // tool 节点经 toolCallContext.signal 收到取消
   const toolCallContext = { ...opts.toolCallContext, signal };
@@ -331,12 +338,14 @@ export async function runDag(opts: RunOptions): Promise<{
     tools,
     events,
     hooks,
+    gateway,
     logger,
     workflowId: def.id,
     runId,
     vars,
     outputs,
     toolCallContext,
+    callerSessionId,
     signal,
   };
 

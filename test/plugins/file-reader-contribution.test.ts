@@ -157,6 +157,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       /* 测试不驱动完整对话 */
     },
     async assignModel() {},
+    abort: () => false,
     registerPreprocessor(_name: string, handler: PreprocessorFn) {
       preprocessor = handler;
       return () => {

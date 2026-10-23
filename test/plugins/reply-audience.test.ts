@@ -75,6 +75,7 @@ function recordingAgent(received: IncomingMessage[]) {
     uses: { provide },
     apply: ({ provide }) => {
       provide.use(agent, {
+        abort: () => false,
         handleMessage: async (message: IncomingMessage) => void received.push(message),
       } as never);
     },

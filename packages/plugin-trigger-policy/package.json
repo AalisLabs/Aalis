@@ -33,7 +33,7 @@
     "@aalis/api-gateway": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-trigger": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",

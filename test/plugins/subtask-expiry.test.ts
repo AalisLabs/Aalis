@@ -3,10 +3,13 @@ import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
 import type { App } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import { type SubtaskHub, startSubtaskHub } from '../fixtures/subtask.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 子会话的到期销毁：子会话的一轮结束（回复、出错、被停止都算）满 idleDeleteHours 就删掉，追问在下一轮结束时重新计时，从没跑过
-// 一轮的不计时；在飞的一轮与发出还没开跑的追问由子任务插件自己记，不看会话状态。删除只在定时器里做，延时截到 24 小时、到点重判；
+// 一轮的不计时；在飞的一轮与发出还没落定的追问由子任务插件自己记，不看会话状态。追问经网关送达、不等，在它落定时（所在的一轮
+// 结束、被放掉、在网关相位被挡下）去掉记下的；子任务那一轮结束时还有没落定的追问，这一轮的回复不交回、不完成，等追问那一轮。
+// 删除只在定时器里做，延时截到 24 小时、到点重判；
 // 插件重载之后按会话记录上的 lastTurn.endedAt 补删或重排。销毁之前把回报（名字、状态、原因、结果、任务）写进父会话记录，
 // check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮结束后删；父会话清空时一并清掉。已删的子会话收到还没开跑的
 // 派发与追问不跑。时钟用假时钟。
@@ -66,7 +69,7 @@ describe('到期销毁', () => {
     await hub.turn(child.id, 'replied');
     await advance(50 * MINUTE);
     await call('send_to_subtask', { subtask_id: child.id, message: '<追问>' });
-    await hub.turn(child.id, 'replied');
+    await hub.followUp('replied');
     await advance(30 * MINUTE);
     expect(exists(hub, child.id)).toBe(true);
     await advance(31 * MINUTE);
@@ -81,14 +84,14 @@ describe('到期销毁', () => {
     expect(exists(hub, child.id)).toBe(false);
   });
 
-  it('被追问打断的一轮先收口、追问那一轮还没开始：不删；追问那一轮结束后照常销毁', async () => {
+  it('追问排在在跑的一轮之后：那一轮先收口、追问还没落定时不删；追问那一轮结束后照常销毁', async () => {
     const { hub, child, call } = await setup(0);
-    await hub.turn(child.id, 'aborted', {
+    await hub.turn(child.id, 'replied', {
       during: () => call('send_to_subtask', { subtask_id: child.id, message: '<追问>' }),
     });
     await advance(HOUR);
     expect(exists(hub, child.id)).toBe(true);
-    await hub.turn(child.id, 'replied');
+    await hub.followUp('replied');
     await advance(0);
     expect(exists(hub, child.id)).toBe(false);
   });
@@ -110,7 +113,7 @@ describe('到期销毁', () => {
     expect(reminded).not.toContain('已销毁');
     expect(exists(hub, child.id)).toBe(true);
     expect(reports(hub, parent.id)).toEqual([]);
-    await hub.turn(child.id, 'replied');
+    await hub.followUp('replied');
     await advance(0);
     expect(exists(hub, child.id)).toBe(false);
   });
@@ -197,6 +200,66 @@ describe('到期销毁', () => {
   });
 });
 
+describe('追问经网关送达', () => {
+  it('子任务那一轮结束时还有没落定的追问：这一轮的回复不交回、不完成，等着它的 wait_subtasks 不返回；追问那一轮的回复交回', async () => {
+    const { hub, child, call } = await setup(24);
+    vi.useRealTimers();
+    let waited: { subtasks: Array<{ status: string; result: string | null }> } | undefined;
+    await hub.turn(child.id, 'replied', {
+      during: async () => {
+        await call('send_to_subtask', { subtask_id: child.id, message: '<追问>' });
+        void call('wait_subtasks', { subtask_ids: [child.id], timeout_seconds: 30 }).then(r => (waited = r));
+      },
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(hub.sm.getSession(child.id)?.result, '旧的一轮的回复不交回').toBeUndefined();
+    expect(waited, '追问还没落定，wait_subtasks 不返回').toBeUndefined();
+    expect(await call('check_subtask', { subtask_ids: [child.id] })).toMatchObject({
+      subtasks: [{ status: 'active' }],
+    });
+    await hub.followUp('replied');
+    await vi.waitFor(() => expect(waited).toBeDefined());
+    expect(waited?.subtasks[0]).toMatchObject({ status: 'completed', result: '<结果>' });
+  });
+
+  it('追问那一轮里起的异步工作之后开的一轮不算追问开的：那时还有没落定的追问，它的回复不交回、不完成', async () => {
+    const { hub, child, call } = await setup(24);
+    await hub.turn(child.id, 'replied');
+    await call('send_to_subtask', { subtask_id: child.id, message: '<追问一>' });
+    const later = deferred();
+    let notice: Promise<boolean> | undefined;
+    await hub.followUp('replied', {
+      // 追问一那一轮里排下的工作（如转后台的工具）继承它的异步上下文，追问一落定之后才开一轮（结束通知），这一轮里又来了追问二
+      during: async () => {
+        notice = later.promise.then(() =>
+          hub.turn(child.id, 'replied', {
+            source: 'bg:1',
+            reply: '<通知那一轮的回复>',
+            during: () => call('send_to_subtask', { subtask_id: child.id, message: '<追问二>' }),
+          }),
+        );
+      },
+    });
+    later.resolve();
+    await notice;
+    expect(hub.sm.getSession(child.id)?.result, '追问二还没落定，通知那一轮的回复不交回').toBe('<结果>');
+    expect(await call('check_subtask', { subtask_ids: [child.id] })).toMatchObject({
+      subtasks: [{ status: 'active' }],
+    });
+  });
+
+  it('追问在网关相位被挡下（没开轮就落定）同样去掉记下的：到期照常销毁', async () => {
+    const { hub, child, call } = await setup(0);
+    await hub.turn(child.id, 'replied');
+    await call('send_to_subtask', { subtask_id: child.id, message: '<追问>' });
+    await advance(HOUR);
+    expect(exists(hub, child.id), '追问还没落定').toBe(true);
+    await hub.dropFollowUp();
+    await advance(0);
+    expect(exists(hub, child.id)).toBe(false);
+  });
+});
+
 describe('回报', () => {
   it('到期销毁之前写进父会话记录；check_subtask 读到即删', async () => {
     const { hub, parent, child, call } = await setup(0);
@@ -233,7 +296,7 @@ describe('回报', () => {
       await hub.turn(again.id, 'replied');
       await call(tool, { subtask_ids: [again.id] });
       await call('send_to_subtask', { subtask_id: again.id, message: '<追问>' });
-      await hub.turn(again.id, 'error', { error: '<原因>' });
+      await hub.followUp('error', { error: '<原因>' });
       await advance(61 * MINUTE);
       expect(exists(hub, again.id), tool).toBe(false);
       expect(reports(hub, parent.id), tool).toEqual([expect.objectContaining({ id: again.id, status: 'error' })]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { originTurnOf } from '../../packages/api-authority/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
@@ -52,11 +53,14 @@ async function setup(): Promise<{
     childMetadata: () => ({}),
   } as never);
 
-  // 派发走的是 inbound:message 通道：只订阅这一个事件，收到即证明通道正确
+  // 派发走 inbound:message 事件，追问经网关送达：两个出口收到的都记下
   const inbound: IncomingMessage[] = [];
   host.events.use.on('inbound:message', message => {
     inbound.push(message);
   });
+  host.provide.use(gateway, {
+    ingressMessage: async (message: IncomingMessage) => void inbound.push(message),
+  } as never);
 
   await app.plugins.register(subtask, {});
   await app.plugins.idle();

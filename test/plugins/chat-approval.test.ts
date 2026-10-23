@@ -35,8 +35,8 @@ import { seedRooms } from '../fixtures/rooms.js';
 // 即结，回复不交给 agent。真实的网关、会话管理、权限与会话服务，一个记录出站的假平台适配器（每条出站回一个平台消息 id，
 // 可选声明会话类型、改写投递结果），agent 是记录收到什么的假件，另有一个覆盖全部会话的审批面代表 WebUI 与终端。房间预置进
 // 会话表（来源字段与 OneBot 的声明相同）。工具调用按 agent 工具循环的填法构造，探针工具人人可用、声明需要确认。
-// 假 agent 不按 latest-wins 中止在跑的回合：「交给 agent，审批照旧等」只说明本插件不截下、不结算它；今天的 agent 收到
-// 这样的消息会中止在等审批的那一轮，审批随之撤销（见插件文档「应答」一节）。
+// 假 agent 只记下收到什么：「交给 agent，审批照旧等」只说明本插件不截下、不结算它；真的 agent 把这样的消息叠进在等审批的那一轮
+// （这批工具之后插进去）或排在它之后，在等的审批不撤销（见插件文档「应答」一节）。
 // ════════════════════════════════════════════════════════════
 
 /** 机器人账号甲与乙 */
@@ -156,6 +156,7 @@ async function setup({
     uses: { provide },
     apply: ({ provide }) => {
       provide.use(agent, {
+        abort: () => false,
         handleMessage: async (message: IncomingMessage) => {
           received.push(message);
         },

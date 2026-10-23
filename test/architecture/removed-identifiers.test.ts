@@ -226,6 +226,8 @@ const REMOVED: Array<[string, string]> = [
   ['URL_WITH_PASSWORD', '沙箱环境按值里带密码的网址猜凭据：沙箱里的命令拿到完整的登录环境'],
   ['SECRET_NAMES', '沙箱环境按变量名认凭据的名单：本实例的变量改按命名空间去掉，别的照样带上'],
   ['GIT_CONFIG_ENV', '沙箱环境整组去掉登录环境里的 git 命令行配置：原有的照留，注入的接在后面编号'],
+  ['laneKey', 'agent 按会话加来源分道、同一道的新消息中止旧回合：每个会话同一时刻最多一轮，新消息不打断（通道层）'],
+  ['archiveIncomingMessageInOrder', 'agent 按道串行的入站归档队列：输入改在进入一轮时归档'],
 ];
 
 /**

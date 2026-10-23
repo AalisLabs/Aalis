@@ -14,12 +14,12 @@
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage` 与 `assignModel` 必须实现，`abort` 与 `registerPreprocessor` 可选：
+`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage`、`abort` 与 `assignModel` 必须实现，`registerPreprocessor` 可选：
 
 ```ts
 export interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
-  abort?(sessionId: string, turnId?: string): boolean;
+  abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
 }
@@ -31,8 +31,9 @@ export interface BoundAgent extends AgentService {
 
 - `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`，挂在 `agent:input:before` 上，每条输入一次、在它进入一轮之前；**不调 `next()` 即丢掉这条输入**（不进一轮、不归档）。
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
-- 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它没进一轮就被丢掉）。
-- `abort(sessionId, turnId?)`：不带 `turnId` 停这个会话所有在飞的回合，带 `turnId` 只停那一轮；返回有没有停下回合，`turnId` 对不上（那一轮已结束或换成了新一轮）时返回 `false`、什么也不停。
+- 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）。
+- `abort(sessionId, { turnId?, queued?, reason? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志。返回有没有停下在跑的一轮。
+- 事件 `agent:queue`：`{ sessionId, waiting }`，这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
 - **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:turn:before`、`agent:turn:after`、输入的归档（`archiveIncoming` 的回合参数，存档记成 `TurnId` 与进入方式 `TurnEntry`）、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
@@ -42,7 +43,7 @@ export interface BoundAgent extends AgentService {
 | 钩子 | 触发时机 | data 关键字段 |
 |---|---|---|
 | `agent:input:before` | 每条输入一次，在它进入一轮之前（预处理） | `{ message }`。不调 `next()` → 丢掉这条，agent 照发流结束标记；`next()` 返回时这条已落定 |
-| `agent:turn:before` | 一轮开始 | `{ turnId, sessionId, inputs }`。`inputs` 是这一轮的输入（`TurnInput`：`message`，归档后带 `archived`）；`next()` 之后是这一轮的全部（从归档这些输入开始）；不调 `next()` → 这一轮不跑、输入不归档 |
+| `agent:turn:before` | 一轮开始 | `{ turnId, sessionId, inputs }`。`inputs` 是这一轮的输入（`TurnInput`：`message`，归档后带 `archived`），是活的：插进来的输入在送进模型之前追加到末尾；`next()` 之后是这一轮的全部（从归档这些输入开始）；不调 `next()` → 这一轮不跑、输入不归档 |
 | `agent:llm:before` | 每次调 LLM 前（首轮 + 每次工具迭代） | `{ messages, tools, sessionId?, … }`。可改 `messages`/`tools` |
 | `agent:llm:after` | 每次 LLM 返回后 | `{ response, messages }` |
 | `agent:tool:before` | 每个工具执行前 | `{ name, args, toolCallContext }` |
@@ -61,7 +62,8 @@ export interface BoundAgent extends AgentService {
 **消费方**：
 
 - `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.use.handleMessage(message)`（每条消息先看 `agent.present`）——**这是 agent 被驱动的主入口**。
-- `plugin-session-server`：收到 `turn/abort` 请求时先看 `agent.present`，再调 `agent.use.abort(sessionId, turnId)`。
+- `plugin-session-server`：停止键（`turn/abort`）调 `agent.use.abort(sessionId, { turnId, reason: '停止键' })`，只停在跑的一轮；后台页「全部停止」对每个下级会话调 `abort(id, { queued: true, reason: '全部停止' })`。agent 不在时回 `unsupported`。
+- `plugin-flow-control`：禁言（`setMuted` 时长大于 0）调 `abort(sessionId, { queued: true, reason: '禁言' })`。
 - `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/api-agent/src/index.ts`）。
 
 **钩子订阅方**：`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
@@ -70,7 +72,7 @@ export interface BoundAgent extends AgentService {
 
 99% 的需求用**钩子**就够了，无需替换整个服务。只有当你要彻底接管编排逻辑时才自己 provide `agent`。
 
-**最小必须**：`handleMessage` 与 `assignModel`。省略 `abort` 则前端「停止生成」失效，省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
+**最小必须**：`handleMessage`、`abort` 与 `assignModel`。省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
 
 ```ts
 import { agent, type AgentService } from '@aalis/api-agent';
@@ -82,7 +84,7 @@ class MyAgent implements AgentService {
   async handleMessage(_message: IncomingMessage): Promise<void> {
     // 跑 input:before → turn:before（默认动作开头归档输入）→ llm:before → 工具循环 → reply:before → turn:after
   }
-  abort(_sessionId: string, _turnId?: string): boolean {
+  abort(_sessionId: string, _options?: { turnId?: string; queued?: boolean; reason?: string }): boolean {
     return false;
   }
   async assignModel(_sessionId: string, _model: ModelRef): Promise<void> {
@@ -107,7 +109,7 @@ default agent 用整个 service 注册（不是 per-entry）。自定义 `handle
 业务句柄 `agent.use` 是活的，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 
 ```ts
-if (agent.present) agent.use.abort?.(sessionId);
+if (agent.present) agent.use.abort(sessionId);
 ```
 
 登记预处理器：
@@ -131,13 +133,13 @@ export default definePlugin({
 
 **服务缺失**：`agent` 全 optional 依赖。`llm` 缺失会回一条 `[系统]` 前缀诊断消息；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `events.use.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**）。
 
-**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.use.onDrain` 里先 `abortInflightAndSettle()`（与 WebUI「停止生成」同语义），再等在飞回合 Promise——收尾段 memory / 钩子还在，中止后的交接写得进去；`onDispose` 再 `abortAll()` 一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独 unload / disable / bounce 某个提供者时，本插件若正在用它也会先收尾再关。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
+**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.use.onDrain` 里停下全部在跑的一轮、放掉排着的（与停止键同一条收尾路径），等它们落定——收尾段 memory / 钩子还在，中止后的交接与放掉的输入写得进去；之后到的输入一律放掉、不开轮；`onDispose` 再停一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独 unload / disable / bounce 某个提供者时，本插件若正在用它也会先收尾再关。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
 
 ## 6. 能力 / 风险 → 影响
 
 **ToolCallContext 的参与者**：agent 构造工具上下文时用 api-authority 的 `originTurnOf(这一轮的输入, isOwner)` 拼会话、`platform`、`userId`、`participants` 与 `inbound`：各条输入的 `actor`（没有时是发言者）作授权身份，按身份去重、owner 的各个身份合成一个，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留参与者语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取起它的那一轮的发言者、参与者取那一轮的，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。子任务插件在入站回合里派出的任务消息同样不带 `actor`，参与者取派它的那次调用的，`userId` 是消息本身的 `parent:<父会话 id>`。
 
-**lane 与打断**：同一会话按 `source` 分 lane，同一 lane 的新消息中止旧回合，不同 lane 互不打断，没有例外：真人消息不打断续做开的一轮（起它的人说话也一样），宿主通知也从不打断别的回合。
+**新消息怎么处理（通道层）**：新消息从不打断在跑的一轮：真人消息叠进由真人消息开的那一轮或排在它之后，带来源的注入各自成一轮。规则见 [plugin-agent](../plugins/plugin-agent.md) 的「新消息怎么处理」。
 
 **reply:before 重试协议**：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries`；用尽后若仍 `retryRequested` 强制把 `content` 置空。上游吐空流时同样按此重试，只是没有失败输出可回放，只追加反馈消息。
 
@@ -148,8 +150,6 @@ export default definePlugin({
 **出站走 gateway**：回复经 `gateway.use.dispatchOutbound`。provider 务必经 gateway，不要直接 emit。
 
 ## 7. 边界情形与注意事项（审计标注）
-
-**`abort(sessionId)` 用 `startsWith` 匹配 lane**：lane key = `${sessionId}::${source}`。`abort('S')` 会一次性中止 `S` 的**所有** lane；带 `turnId` 时只中止 `turnId` 相同的那条 lane。若存在 sessionId 互为前缀的命名，`startsWith` 可能误伤——调用方需保证 sessionId 不互为前缀。
 
 **`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.use.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
 

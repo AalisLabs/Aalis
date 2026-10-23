@@ -15,7 +15,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // 拆卸（bounce / unload / stop）必须中止在飞回合，走已有 AbortError 收尾
 // （outbound:stream done + turn:after outcome=aborted，不把半截回复当完成投递）。
 // 关停收尾放 onDrain：此刻监听与 memory 仍在，且 drain 会等回合 Promise 落定；
-// onDispose 再 abortAll 作兜底。只卸 agent 时，根激活还活着，用来收出站事件。
+// onDispose 再停一次作兜底。只卸 agent 时，根激活还活着，用来收出站事件。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -133,8 +133,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
       sessionType: 'private',
     });
     await entered;
-    expect(agent.abort).toBeDefined();
-    agent.abort!(sessionId);
+    agent.abort(sessionId);
     await turn;
 
     expect(contributionAborted).toBe(true);
@@ -236,7 +235,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 提交点：流已结束、尚未落库 / 外发时被中止的回合（手动停止、latest-wins）
+// 提交点：流已结束、尚未落库 / 外发时被停下的回合（停止键、禁言、停机等）
 // 同样走 AbortError 收尾——只发 stream done、不落库、不外发、outcome=aborted。
 // 用 agent:reply:before 上的闸把回合卡在这段窗口里。
 // ════════════════════════════════════════════════════════════
@@ -311,38 +310,13 @@ describe('plugin-agent 提交点前被中止的回合不落库、不外发', () 
       sessionType: 'private',
     });
     await entered; // 流已消费完，卡在 reply:before
-    agent.abort!(sessionId);
+    agent.abort(sessionId);
     release();
     await turn;
 
     expect(seen).toEqual(['stream:done']);
     expect(await assistantHistory(sessionId)).toEqual([]);
     expect(outcomes).toEqual(['aborted']);
-    await app.stop();
-  });
-
-  it('latest-wins：旧回合在收尾段被新消息掐掉，只投递并落库新回合的回复', async () => {
-    const { app, host, entered, release, seen, assistantHistory } = await bootWithReplyGate([
-      { content: '回复A' },
-      { content: '回复B' },
-    ]);
-    const sessionId = 'test:latest-wins-post-stream';
-    const agent = host.agent.use;
-    const msg = (content: string) => ({
-      content,
-      sessionId,
-      platform: 'test',
-      userId: 'u1',
-      sessionType: 'private' as const,
-    });
-    const turnA = agent.handleMessage(msg('A'));
-    await entered; // A 的流已结束
-    const turnB = agent.handleMessage(msg('B'));
-    release();
-    await Promise.all([turnA, turnB]);
-
-    expect(seen.filter(s => s.startsWith('message('))).toEqual(['message(回复B)']);
-    expect(await assistantHistory(sessionId)).toEqual(['回复B']);
     await app.stop();
   });
 });

@@ -38,13 +38,14 @@ export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void
  * - 输入在进入一轮时经 message-archive 归档（archiveIncoming 带这一轮的回合 id 与进入方式，记成登记的键 TurnId、TurnEntry）。
  */
 export interface AgentService {
-  /** 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它没进一轮就被丢掉） */
+  /** 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉） */
   handleMessage(message: IncomingMessage): Promise<void>;
   /**
-   * 中止指定会话的在飞回合（可选实现）。不带 turnId 时停这个会话所有在飞的回合；带 turnId 时只停那一轮，
-   * 它已经结束或换成了新一轮时什么也不停。返回是否停下了回合，调用方据此分辨「turnId 对不上」。
+   * 停下这个会话在跑的一轮。turnId 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；queued 为真时连同排队与待插入、
+   * 还没进一轮的输入一起放掉（不开轮，在这个会话在跑的一轮落定之后归档，不带回合 id），否则它们照常开下一轮；reason 只写进
+   * 回合结束那一行日志，不进界面与回合结局。返回是否停下了在跑的一轮，调用方据此分辨「turnId 对不上」
    */
-  abort?(sessionId: string, turnId?: string): boolean;
+  abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
 
   /**
    * 注册消息预处理器
@@ -76,14 +77,14 @@ declare module '@aalis/api-hooks' {
   interface HookContextMap {
     /**
      * 每条输入一次，在它进入一轮之前（预处理器挂在这里）：next 之前可以改写这条，不调 next 即丢弃这条，不进一轮、不归档，
-     * agent 照发流结束标记。默认动作把它交给 agent 并等它落定，next 返回时这条已落定（所在的一轮结束）
+     * agent 照发流结束标记。默认动作把它交给 agent 并等它落定，next 返回时这条已落定（所在的一轮结束，或它被放掉）
      */
     'agent:input:before': { message: IncomingMessage };
     /**
      * 一轮开始。turnId 是 agent 在回合开始时生成的回合 id，这一轮的流式片段、工具调用、用量与回合结束都带同一个；inputs 是这一轮的
-     * 输入，同一轮的输入会话与来源相同（来源取 inputs[0].message.source）。默认动作从按先后归档这些输入开始，是这一轮的全部：
-     * 中间件里还没有 archived，读历史也还没有它们。不调 next 即这一轮不跑、输入不归档、不发 agent:turn:after，agent 照发流结束
-     * 标记（前端据此收起加载）
+     * 输入，同一轮的输入会话与来源相同（来源取 inputs[0].message.source）。inputs 是活的：插进来的输入在送进模型之前追加到末尾。
+     * 默认动作从按先后归档这些输入开始，是这一轮的全部：中间件里还没有 archived，读历史也还没有它们。不调 next 即这一轮不跑、
+     * 输入不归档、不发 agent:turn:after，agent 照发流结束标记（前端据此收起加载）
      */
     'agent:turn:before': { turnId: string; sessionId: string; inputs: readonly TurnInput[] };
     /**
@@ -343,6 +344,10 @@ declare module '@aalis/core' {
      * IM 房间按会话管理记下的出生平台（子会话取根会话的）、其余按 'webui' 兜底。
      */
     'token:request': [req: { sessionId: string; platform?: string }];
+    /**
+     * 这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后）：入队、进了一轮、被放掉时发。发射方：plugin-agent
+     */
+    'agent:queue': [state: { sessionId: string; waiting: readonly IncomingMessage[] }];
   }
 }
 

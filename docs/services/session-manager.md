@@ -517,7 +517,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-这是唯一的收口。子会话以回复完成时，plugin-subtask 在 `agent:turn:after` 里先以回复为结果调 `completeSession()`，这里见它已不是 `active` 就不再改；出错、被停止或静默的子会话由这里收口，父会话的 `wait_subtasks` 随即返回，不等到超时。同一会话按 lane 可以并行多轮（后台任务结束通知、白纸通知与真人回合各占一条），中间件按回合 id 登记在飞的回合，会话里最后一轮结束才收口，按的是最后结束那一轮的结局；先结束的一轮不会把还在跑的会话显示成已完成。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+这是唯一的收口。子会话以回复完成时，plugin-subtask 在 `agent:turn:after` 里先以回复为结果调 `completeSession()`，这里见它已不是 `active` 就不再改；出错、被停止或静默的子会话由这里收口，父会话的 `wait_subtasks` 随即返回，不等到超时。同一会话一轮接一轮（排着的输入在上一轮结束后开下一轮），中间件按回合 id 登记在飞的回合，会话里没有别的在飞回合时这一轮结束才收口，按的是这一轮的结局。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
 
 结局为 `replied` 的一轮结束时写入 `lastReplyAt`（她最近开口的时间），别的回合还在跑也照写，随 `session:updated` 推出并落盘；`silent`、`aborted`、`error` 不改它。
 

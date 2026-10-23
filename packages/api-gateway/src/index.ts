@@ -94,7 +94,8 @@ declare module '@aalis/core' {
 export interface GatewayService {
   /**
    * 主动注入一条入站消息（用于 idle-trigger、webui 直发、内部自检等）。
-   * 与直接 `emit('inbound:message')` 等价 —— 都会走 gateway 入站相位链。
+   * 与直接 `emit('inbound:message')` 一样走 gateway 入站相位链，返回时这条输入已落定：在相位里被挡下，或交给 agent 之后它所在的
+   * 一轮结束、它被放掉。注入方据此知道它没开轮（返回时还没认到这一轮的结局）
    */
   ingressMessage(message: IncomingMessage): Promise<void>;
 
@@ -121,7 +122,7 @@ export interface GatewayService {
  * 跨相位则由 plugin-gateway 顺序调度，无需任何优先级数字。
  *
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）。指令的意图确认也在这里：发出者对确认提示的回复
- *              命中即吞掉、不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**
+ *              命中即吞掉、不进入后续相位，不会被当成插进在跑的一轮的输入
  *   TRIGGER  → 要不要开口：禁言关键词、点名识别与判定，结果写入 message.triggerType（由生效的触发插件
  *              占据，即 trigger 服务胜者，如 plugin-trigger-policy 的计数与评分）
  *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发，其中带 source 的

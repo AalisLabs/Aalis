@@ -12,7 +12,7 @@ import { type BoundOf, config, definePlugin, events, logger, optional } from '@a
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
-import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownMetadataKeys, wasAddressed } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import { t } from './texts.js';
 
@@ -1120,9 +1120,7 @@ function registerUserProfile({
 
       const mem = memory.present ? memory.use : undefined;
       const blocksToInsert: string[] = [];
-      const addressed = data.inputs
-        .map(({ message }) => message)
-        .filter(({ triggerType = 'direct' }) => triggerType === 'direct' || triggerType === 'immediate');
+      const addressed = data.inputs.map(({ message }) => message).filter(wasAddressed);
       const hasPrimarySpeaker = addressed.length > 0;
       /** 主发言者：点名的输入里有账号的发言者，按 userKey 去重、按输入先后 */
       const primaries = new Map<string, string>();

@@ -93,14 +93,15 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   const host = app.bind({ provide, events, hooks, tools, backgroundTasks, sessionManager, sessionProtocol });
   host.provide.use(storage, memoryStorage(new Map()));
 
-  const aborted: string[] = [];
+  /** agent.abort 收到的会话与选项 */
+  const aborted: Array<[string, Parameters<AgentService['abort']>[1]]> = [];
   /** 各会话挂着的回合：agent.abort 以 aborted 结束它们 */
   const hanging = new Map<string, Array<() => void>>();
   const agentDouble: AgentService = {
     handleMessage: async () => {},
     assignModel: async () => {},
-    abort(sessionId) {
-      aborted.push(sessionId);
+    abort(sessionId, options) {
+      aborted.push([sessionId, options]);
       const ends = hanging.get(sessionId) ?? [];
       hanging.delete(sessionId);
       for (const end of ends) end();
@@ -359,13 +360,28 @@ describe('background/stopAll', () => {
 
     await c.call('background/stopAll', { sessionId: P });
     await child.done;
-    expect(w.aborted).toContain(C);
-    expect(w.aborted, '本会话自己的回合留给输入框的停止键').not.toContain(P);
+    const stopped = w.aborted.map(([sessionId]) => sessionId);
+    expect(stopped).toContain(C);
+    expect(stopped, '本会话自己的回合留给输入框的停止键').not.toContain(P);
     const status = (id: string) => w.host.backgroundTasks.use.list().find(task => task.id === id)?.status;
     expect([status(inP), status(inG), status(inO)]).toEqual(['stopped', 'stopped', 'running']);
     expect(await Promise.race([own.done.then(() => 'ended'), tick().then(() => 'running')])).toBe('running');
     await own.finish('replied');
     expect((await c.fail('background/stopAll', { sessionId: 'zz-none' })).data?.code).toBe('not-found');
+  });
+
+  it('对每个下级会话连同排队项停：只有排着的追问、没有在跑一轮的子会话同样放掉', async () => {
+    const w = await setup();
+    const { P, C, G } = await w.tree();
+    const c = await connect(w.server());
+    const child = w.openTurn(C);
+    await tick();
+    await c.call('background/stopAll', { sessionId: P });
+    await child.done;
+    expect(w.aborted).toEqual([
+      [C, { queued: true, reason: '全部停止' }],
+      [G, { queued: true, reason: '全部停止' }],
+    ]);
   });
 });
 
@@ -474,7 +490,7 @@ describe('没有后台任务登记', () => {
     expect((await c.summary(P)).background).toBe(1);
     await c.call('background/stopAll', { sessionId: P });
     await child.done;
-    expect(w.aborted).toEqual([C]);
+    expect(w.aborted.map(([sessionId]) => sessionId)).toContain(C);
   });
 });
 

@@ -30,7 +30,7 @@ import { once, PNG, ScriptedRemote } from '../fixtures/paper-remote.js';
 
 // ════════════════════════════════════════════════════════════
 // 完成通知与待交付提示（U10c）：任务到终态后，枢纽以宿主通知（hostNotice）向发起房间注入一条入站消息，
-// 一件一条、source 带任务 id（各占一条 lane）；宿主撰写的行全在 content 里，远端说明只经不可信框放进
+// 一件一条、source 带任务 id（各自成一轮）；宿主撰写的行全在 content 里，远端说明只经不可信框放进
 // untrusted。经 paper_cancel 取消的不通知；重启后已到终态而还没注入的补注一次。
 // 待交付提示是 agent:llm:before 上的一条独立 system 消息，每次请求前重摘重插，只列宿主知道的字段。
 // 真实 App 装载插件，远端用 ScriptedRemote，真实时钟。
