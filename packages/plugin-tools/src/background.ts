@@ -177,6 +177,8 @@ interface NoticeTarget {
 interface TaskRecord {
   task: BackgroundTask;
   output: OutputTail;
+  /** 起它的人（{@link RunSpec.startedBy}）：只在本次运行里有，不落盘；读回的任务都已结束，用不到 */
+  startedBy?: readonly UserIdentity[];
   /** 没有的不通知：由结束通知开的回合里转后台的，链只延续一层 */
   notice?: NoticeTarget;
   /** 在跑的才有 */
@@ -193,6 +195,8 @@ interface RunSpec {
   /** 模型给的参数（含执行器取出的两项），记进任务的 call */
   args: Record<string, unknown>;
   ctx: ToolCallRequest;
+  /** 起它的人：起它那次调用审批之前的参与者，经审批放行的加上批的人（ctx 的参与者此时已换成批的人） */
+  startedBy: readonly UserIdentity[];
   /** 结局按它取退出码 */
   display?: ToolDisplay;
   /** 取用判定（ToolCallContext.approveFor），按交来的上下文判；asks 为假时只按参与者都过判、不出审批 */
@@ -206,6 +210,8 @@ interface BackgroundTasksDeps {
   /** 发 tool:output、background:changed 与结束通知 */
   events: Pick<Events, 'emit'>;
   limits: BackgroundLimits;
+  /** 判一个身份是不是 owner（停任务用）：插件按权限服务判，它不在时没有人是 */
+  isOwner: (platform: string, userId: string) => boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -303,6 +309,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   readonly limits: BackgroundLimits;
   private readonly logger: Logger;
   private readonly events: Pick<Events, 'emit'>;
+  private readonly isOwner: BackgroundTasksDeps['isOwner'];
   private readonly records = new Map<string, TaskRecord>();
   /** 占着位置的可转后台调用：从过守卫之前到落定 */
   private readonly calls = new Set<Call>();
@@ -321,6 +328,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     this.logger = deps.logger;
     this.events = deps.events;
     this.limits = deps.limits;
+    this.isOwner = deps.isOwner;
   }
 
   // ---- 服务 ----
@@ -348,6 +356,20 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   // ---- 后台任务工具 ----
+
+  /**
+   * 调用方这一轮能不能停这个任务，与 /stop 停一轮同一条规则：这一轮的参与者里（不算无主体）有起它的人，或有 owner。不看物理
+   * 发言者：子任务会话里它是父会话的标记，不是人
+   */
+  mayStop(id: string, ctx: Pick<ToolCallRequest, 'participants'>): boolean {
+    const startedBy = this.records.get(id)?.startedBy ?? [];
+    return ctx.participants.some(
+      who =>
+        who.userId !== '' &&
+        (this.isOwner(who.platform, who.userId) ||
+          startedBy.some(starter => starter.platform === who.platform && starter.userId === who.userId)),
+    );
+  }
 
   /** 等这些任务都落定，最多等 ms，中止信号到达即返回 */
   wait(ids: string[], ms: number, signal?: AbortSignal): Promise<void> {
@@ -564,6 +586,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(lastAt !== undefined ? { lastOutputAt: lastAt } : {}),
       },
       output: call.output,
+      startedBy: spec.startedBy,
       // 起它的那一轮就是这次调用所在那一轮：平台、发言者、这次调用的参与者（批过的是批的人）、来源，以及那一轮自己的 fromTurn
       ...(chained
         ? {}

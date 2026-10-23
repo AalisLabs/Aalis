@@ -1,7 +1,9 @@
 // ════════════════════════════════════════════════════════════
-// 四个后台任务工具（执行器提供）：列出、取输出、等待、停止本会话里的后台任务。按会话放行：本会话里的后台任务谁都能查、
-// 能停，不论是谁起的；别的会话里的回「不存在」。不设 restricted 与 risk，取输出也不另设等级闸：任务的输出与结果本来就在
-// 这个会话里，与前台调用的结果一样谁在场谁看得到。结束通知开的那一轮仍按起它的人的身份运行。
+// 四个后台任务工具（执行器提供）：列出、取输出、等待、停止本会话里的后台任务。按会话放行：本会话里的后台任务谁都能查，不论
+// 是谁起的；别的会话里的回「不存在」。停与 /stop 停一轮同一条规则，不看等级：调它的这一轮的参与者里有起这个任务的人，或有
+// owner（规则在 BackgroundTasks.mayStop）。
+// 不设 restricted 与 risk，取输出也不另设等级闸：任务的输出与结果本来就在这个会话里，与前台调用的结果一样谁在场谁看得到。
+// 结束通知开的那一轮仍按起它的人的身份运行。
 // ════════════════════════════════════════════════════════════
 
 import type { BackgroundTask, RegisteredTool, ToolCallContext, ToolExecutionResult } from '@aalis/api-tools';
@@ -117,6 +119,7 @@ export function backgroundTaskTools(tasks: BackgroundTasks): Tool[] {
         const task = find(ctx, args.taskId);
         if (!task) return missing(args.taskId);
         if (task.status !== 'running') return JSON.stringify({ ...viewOf(task), message: '任务已结束' });
+        if (!tasks.mayStop(task.id, ctx)) return error('只有起这个任务的人或 owner 在的一轮能停它');
         const after = await tasks.stop(task.id);
         if (!after) return missing(args.taskId);
         return JSON.stringify({

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ExecutionGuardContext } from '../../packages/api-authority/src/index.js';
+import type { ExecutionGuardContext, UserIdentity } from '../../packages/api-authority/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import {
   BACKGROUND_TASK_NOTICE,
@@ -22,10 +22,15 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // 工具执行器一层的转后台（plugin-tools）：声明了 background 的工具多两项参数（runInBackground、waitSeconds），
 // 过了守卫之后先等让出时限，到时没结束就登记成后台任务、先回给模型；登记表（backgroundTasks）可查、可取输出、可停，
 // 停用与撤回时落成 aborted，会话删除时停掉并删掉，状态变了写进插件数据。正常结束（含失败）时向起它的会话注入结束通知，
-// 身份取起它的那次调用。四个后台任务工具只在有可转后台的工具时下发。全程假计时器与替身工具，不起真实进程。
+// 身份取起它的那次调用。四个后台任务工具只在有可转后台的工具时下发；停任务要这一轮里有起它的人或 owner（owner 是 WebUI 的
+// console）。全程假计时器与替身工具，不起真实进程。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-6b-session';
+/** background_stop 不过时回的原因 */
+const STOP_DENIED = '只有起这个任务的人或 owner 在的一轮能停它';
+/** 权限服务替身：owner 只有 WebUI 的 console */
+const isOwner = (platform: string, userId: string) => platform === 'webui' && userId === 'console';
 const OTHER = 'zz-6b-other';
 const GROUP = 'onebot:10000:group:20001';
 
@@ -65,6 +70,8 @@ interface WorldOptions {
   maxPerSession?: number;
   /** 守卫：回原因即拒绝，回 null 放行 */
   guard?: (ctx: ExecutionGuardContext) => Promise<string | null>;
+  /** 守卫放行这次调用时带回的批的人：回了即这次算经审批放行 */
+  approver?: (ctx: ExecutionGuardContext) => UserIdentity | undefined;
 }
 
 function world(opts: WorldOptions = {}) {
@@ -86,13 +93,16 @@ function world(opts: WorldOptions = {}) {
     logger,
     events: events as never,
     limits: { maxWaitSeconds: opts.maxWaitSeconds ?? 600, maxPerSession: opts.maxPerSession ?? 4 },
+    isOwner,
   });
   const registry = new ToolRegistry(logger, tasks, () => []);
   const guarded: ExecutionGuardContext[] = [];
   registry.setExecutionGuard(async ctx => {
     guarded.push(ctx);
     const reason = await opts.guard?.(ctx);
-    return reason ? { ok: false, reason } : { ok: true };
+    if (reason) return { ok: false, reason };
+    const by = opts.approver?.(ctx);
+    return by ? { ok: true, by } : { ok: true };
   });
   const runs: Run[] = [];
   const of = <T>(event: string) => emitted.filter(e => e.event === event).map(e => e.payload as T);
@@ -1000,15 +1010,41 @@ describe('四个后台任务工具', () => {
     expect(w.warnings.some(m => m.includes('background_list'))).toBe(true);
   });
 
-  describe('按会话放行：本会话里谁起的都看得到、停得了，别的会话里的回「不存在」', () => {
+  describe('本会话里谁起的都看得到，别的会话里的回「不存在」；停它要这一轮里有起它的人或 owner', () => {
     const starter = { sessionId: GROUP, platform: 'onebot', userId: '30001' };
-    const callers: Array<{ name: string; ctx: Partial<ToolCallRequest>; sees: boolean }> = [
-      { name: '同一房间的另一个人', ctx: { ...starter, userId: '30002' }, sees: true },
-      { name: '没有主体的调用', ctx: { sessionId: GROUP, platform: 'onebot', userId: undefined }, sees: true },
-      { name: '同一个人在别的会话', ctx: { ...starter, sessionId: OTHER }, sees: false },
+    const callers: Array<{ name: string; ctx: Partial<ToolCallRequest>; sees: boolean; stops: boolean }> = [
+      { name: '同一房间的另一个人', ctx: { ...starter, userId: '30002' }, sees: true, stops: false },
+      {
+        name: '没有主体的调用',
+        ctx: { sessionId: GROUP, platform: 'onebot', userId: undefined },
+        sees: true,
+        stops: false,
+      },
+      {
+        name: '起它的人与另一个人同在的一轮（没有唯一的发言者）',
+        ctx: {
+          sessionId: GROUP,
+          platform: 'onebot',
+          userId: undefined,
+          participants: [
+            { platform: 'onebot', userId: '30002' },
+            { platform: 'onebot', userId: '30001' },
+          ],
+        },
+        sees: true,
+        stops: true,
+      },
+      {
+        name: '有 owner 的一轮（owner 从 WebUI 往群里说话）',
+        ctx: { sessionId: GROUP, platform: 'webui', userId: 'console' },
+        sees: true,
+        stops: true,
+      },
+      { name: '同一个人在别的会话', ctx: { ...starter, sessionId: OTHER }, sees: false, stops: false },
     ];
     for (const caller of callers) {
-      it(`${caller.name}：${caller.sees ? '看得到、停得了' : '不存在'}`, async () => {
+      const verdict = caller.sees ? `看得到，${caller.stops ? '停得了' : '停不了'}` : '不存在';
+      it(`${caller.name}：${verdict}`, async () => {
         const w = world();
         w.slow();
         const { taskId } = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn(starter).ctx));
@@ -1023,12 +1059,88 @@ describe('四个后台任务工具', () => {
           const pending = w.registry.execute(tool, args as Record<string, unknown>, ctx);
           await flush();
           const result = parse(await pending);
-          if (caller.sees) expect(result.error, tool).toBeUndefined();
-          else expect(String(result.error), tool).toContain('不存在');
+          if (!caller.sees) expect(String(result.error), tool).toContain('不存在');
+          else if (tool === 'background_stop' && !caller.stops) expect(result.error).toBe(STOP_DENIED);
+          else expect(result.error, tool).toBeUndefined();
         }
-        expect(w.runs[0].ctx.signal?.aborted).toBe(caller.sees);
+        expect(w.runs[0].ctx.signal?.aborted).toBe(caller.stops);
       });
     }
+  });
+
+  it.each([
+    ['一个人的一轮里批过的', { userId: '30001' }, '30002', ['30001', '30002'], ['30003']],
+    [
+      '两个人的一轮里批过的（没有唯一的发言者）',
+      {
+        userId: undefined,
+        participants: [
+          { platform: 'onebot', userId: '30001' },
+          { platform: 'onebot', userId: '30004' },
+        ],
+      },
+      '30002',
+      ['30001', '30004', '30002'],
+      ['30003'],
+    ],
+    [
+      '由结束通知开的回合里转后台的（不再通知）',
+      { userId: '30001', inbound: { source: 'bg:bg_x_1' } },
+      undefined,
+      ['30001'],
+      ['30002'],
+    ],
+  ] as const)('起它的人是起它那次调用审批之前的参与者，加上批的人：%s', async (_name, start, approver, allowed, denied) => {
+    // 只有起它的那次调用经审批放行
+    const w = world({
+      approver: ctx => (approver && ctx.name === 'zz_slow' ? { platform: 'onebot', userId: approver } : undefined),
+    });
+    w.slow();
+    const from = (userId: string) => turn({ sessionId: GROUP, platform: 'onebot', userId }).ctx;
+    const ids: unknown[] = [];
+    for (const _ of allowed) {
+      const ctx = turn({ sessionId: GROUP, platform: 'onebot', ...start }).ctx;
+      ids.push(parse(await w.registry.execute('zz_slow', { runInBackground: true }, ctx)).taskId);
+    }
+    for (const userId of denied) {
+      const result = parse(await w.registry.execute('background_stop', { taskId: ids[0] }, from(userId)));
+      expect(result.error).toBe(STOP_DENIED);
+    }
+    for (const [i, userId] of allowed.entries()) {
+      const pending = w.registry.execute('background_stop', { taskId: ids[i] }, from(userId));
+      await flush();
+      expect(parse(await pending)).toMatchObject({ taskId: ids[i], status: 'stopped' });
+    }
+  });
+
+  it('没有主体的一轮起的任务：另一个没有主体的一轮停不了，有 owner 的一轮能停', async () => {
+    const w = world();
+    w.slow();
+    const anonymous = () => turn({ sessionId: GROUP, platform: 'onebot', userId: undefined }).ctx;
+    const { taskId } = parse(await w.registry.execute('zz_slow', { runInBackground: true }, anonymous()));
+    expect(parse(await w.registry.execute('background_stop', { taskId }, anonymous())).error).toBe(STOP_DENIED);
+    const owner = turn({ sessionId: GROUP, platform: 'webui', userId: 'console' }).ctx;
+    const pending = w.registry.execute('background_stop', { taskId }, owner);
+    await flush();
+    expect(parse(await pending)).toMatchObject({ taskId, status: 'stopped' });
+  });
+
+  it('子任务会话里每一轮的发言者都是 parent:<父会话> 这个标记，不算人：B 那一轮派来的追问停不了 A 那一轮起的任务，A 的能停', async () => {
+    const w = world();
+    w.slow();
+    // 子任务那一轮的参与者是派它（或追问它）的那一轮的参与者
+    const from = (userId: string) =>
+      turn({
+        sessionId: 'zz-6b-subtask',
+        platform: 'onebot',
+        userId: `parent:${GROUP}`,
+        participants: [{ platform: 'onebot', userId }],
+      }).ctx;
+    const { taskId } = parse(await w.registry.execute('zz_slow', { runInBackground: true }, from('30001')));
+    expect(parse(await w.registry.execute('background_stop', { taskId }, from('30002'))).error).toBe(STOP_DENIED);
+    const pending = w.registry.execute('background_stop', { taskId }, from('30001'));
+    await flush();
+    expect(parse(await pending)).toMatchObject({ taskId, status: 'stopped' });
   });
 
   it('background_output 取输出与最后输出时间，带 after 只取新增；结束的带工具的结果与图', async () => {

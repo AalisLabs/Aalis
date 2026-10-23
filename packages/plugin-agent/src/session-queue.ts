@@ -170,10 +170,9 @@ export class SessionQueues {
     { turnId, queued, reason, archive }: { turnId?: string; queued?: boolean; reason?: string; archive: boolean },
   ): boolean {
     const channel = this.#channels.get(sessionId);
-    const running = channel?.running;
-    if (turnId !== undefined && running?.turn.turnId !== turnId) return false;
-    const stopped = running !== undefined && !running.ended && !running.turn.controller.signal.aborted;
-    if (stopped) {
+    if (turnId !== undefined && channel?.running?.turn.turnId !== turnId) return false;
+    const running = this.#stoppable(sessionId);
+    if (running) {
       running.turn.reason = reason;
       running.turn.controller.abort();
       this.close(running.turn);
@@ -183,7 +182,12 @@ export class SessionQueues {
       channel.dropped.push(...waiting.map(entry => ({ entry, archive })));
       this.#report(sessionId, channel);
     }
-    return stopped;
+    return running !== undefined;
+  }
+
+  /** 这个会话在跑、还停得下的那一轮里的输入（开轮的与插进来的，按进入先后；排队与待插入的不算）；没有这样的一轮时没有 */
+  inputs(sessionId: string): IncomingMessage[] | undefined {
+    return this.#stoppable(sessionId)?.members.map(entry => entry.message);
   }
 
   /**
@@ -250,6 +254,12 @@ export class SessionQueues {
   /** 有在跑的一轮的会话（排着输入的会话一定有在跑的一轮：一轮落定时当场交出下一批） */
   sessions(): string[] {
     return [...this.#channels.keys()];
+  }
+
+  /** 这个会话在跑、还没收尾也没被停下的那一轮 */
+  #stoppable(sessionId: string): Running | undefined {
+    const running = this.#channels.get(sessionId)?.running;
+    return running && !running.ended && !running.turn.controller.signal.aborted ? running : undefined;
   }
 
   #channelOf(sessionId: string): Channel {

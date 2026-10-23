@@ -52,7 +52,7 @@ export default definePlugin({
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
 
-`/model` 由 plugin-agent 注册，`/tools` 由 plugin-tool-system 注册，`/authority`、`/level`、`/perm` 由 plugin-authority 注册，详见各自页面。
+`/model`、`/stop` 由 plugin-agent 注册，`/tools` 由 plugin-tool-system 注册，`/authority`、`/level`、`/perm` 由 plugin-authority 注册，详见各自页面。
 
 单条指令的等级与确认可在 plugin-authority 配置中按能力键 `command:<点路径>`（如 `command:clear.all`）覆盖，见 plugin-authority 文档。
 

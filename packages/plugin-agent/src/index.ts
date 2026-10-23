@@ -102,7 +102,7 @@ const uses = {
   persona: optional(personaService),
   messageArchive: optional(messageArchiveService),
   sessionManager: optional(sessionManagerService),
-  /** 存档不在时当轮正文的发送者前缀判谁是 owner（与存档同一规则，speakerOf） */
+  /** 判谁是 owner：参与者里合一 owner 的各个身份、存档不在时当轮正文的发送者前缀（与存档同一规则，speakerOf）、/stop */
   authority: optional(authorityService),
   /** 按会话读本插件的四项（模型、深度思考、最大工具迭代、历史条数上限）；缺席时只取插件配置里的值 */
   sessionFields: optional(sessionFieldsService),
@@ -210,6 +210,10 @@ class DefaultAgent implements AgentService {
   /** 本插件的按会话字段：每一轮按会话现读；模型没设时的 actual 是服务此刻为本插件挑的那一个 */
   readonly fields: SessionFieldReader<typeof configSchema>;
 
+  /** 判一个身份是不是 owner：工具调用上下文里合一 owner 的各个身份、/stop 都用它；权限服务不在时没有人是 owner */
+  readonly isOwner = (platform: string, userId?: string): boolean =>
+    this.caps.authority.present && this.caps.authority.use.isOwner(platform, userId);
+
   constructor(
     caps: AgentCaps,
     cfg: ConfigOf<typeof configSchema>,
@@ -287,7 +291,7 @@ class DefaultAgent implements AgentService {
 
   /**
    * 停下这个会话在跑的一轮；queued 为真时连同排队与待插入的一起放掉，放掉的在那一轮落定之后归档（不带回合 id）。
-   * 禁言、全部停止与停止键经这里
+   * 禁言、全部停止、停止键与 /stop 经这里
    */
   abort(sessionId: string, options: { turnId?: string; queued?: boolean; reason?: string } = {}): boolean {
     return this.queues.stop(sessionId, { ...options, archive: true });
@@ -712,8 +716,6 @@ class DefaultAgent implements AgentService {
       this.logger.debug(`工具分组: platform=${platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
       const tools =
         reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
-      const isOwner = (owner: string, userId: string) =>
-        this.caps.authority.present && this.caps.authority.use.isOwner(owner, userId);
       /**
        * 一批工具调用的上下文，按这批开始那一刻已送进模型的输入构造：会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义
        * 见它与 ToolCallContext，owner 的各个身份按权限服务合成一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与
@@ -721,7 +723,7 @@ class DefaultAgent implements AgentService {
        * userId
        */
       const toolContext = (): ToolCallRequest => ({
-        ...originTurnOf(inputs.map(input => input.message) as [IncomingMessage, ...IncomingMessage[]], isOwner),
+        ...originTurnOf(inputs.map(input => input.message) as [IncomingMessage, ...IncomingMessage[]], this.isOwner),
         // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
         enabledGroups,
         // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
@@ -2270,6 +2272,20 @@ function run(caps: Caps): void {
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
+
+  // /stop 同停止键：只停本会话在跑的一轮，排着的照常开下一轮。不看等级，与停后台任务同一条规则：发出者是这一轮的参与者（进了
+  // 这一轮的各条输入按 originTurnOf 算：真人的话是发言者，续做与子任务是起它的那一轮的参与者，定时任务与编排是它的授权身份），
+  // 或是 owner；排队与待插入的不算，没有账号的不算任何人
+  caps.commands.use.command('stop', t('stopDescription'), { risk: 'safe' }).action(({ session }) => {
+    const { sessionId, platform, userId } = session;
+    const inputs = agentImpl.queues.inputs(sessionId);
+    if (!inputs) return t('stopIdle');
+    const { participants } = originTurnOf(inputs as [IncomingMessage, ...IncomingMessage[]], agentImpl.isOwner);
+    const inTurn = Boolean(userId) && participants.some(who => who.platform === platform && who.userId === userId);
+    if (!inTurn && !agentImpl.isOwner(platform, userId)) return t('stopDenied');
+    agentImpl.abort(sessionId, { reason: '/stop' });
+    return t('stopped');
+  });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
   caps.events.use.on('token:request', async data => {
