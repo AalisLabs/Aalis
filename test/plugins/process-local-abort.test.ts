@@ -106,11 +106,15 @@ describe('process-local 中止信号（POSIX，真实进程）', () => {
       // 孙进程（后台子 shell）收到 SIGTERM 就写标记：只打直接子进程的话，孙进程要等宽限后的 SIGKILL，
       // 同样在 3 秒内消失，只看组空分不出来
       const marker = join(dir, 'zz-slice1-term');
+      const ready = join(dir, 'zz-slice1-ready');
       const ac = new AbortController();
-      const run = start('sh', ['-c', '(trap \'touch "$0"; exit 0\' TERM; sleep 30 & wait) & sleep 30', marker], {
-        signal: ac.signal,
-      });
-      await sleep(150);
+      const run = start(
+        'sh',
+        ['-c', '(trap \'touch "$0"; exit 0\' TERM; touch "$1"; sleep 30 & wait) & sleep 30', marker, ready],
+        { signal: ac.signal },
+      );
+      // 等陷阱装好再中止：只等固定时长的话，负载高时 SIGTERM 先于 trap 到达，孙进程不写标记就退出
+      expect(await waitFor(() => existsSync(ready), 3000)).toBe(true);
       expect(probe(-run.pid)).toBeUndefined(); // 防空跑：进程组确实起来了
       ac.abort();
       expect(await waitFor(() => probe(-run.pid) === 'ESRCH', 3000)).toBe(true);
@@ -122,17 +126,24 @@ describe('process-local 中止信号（POSIX，真实进程）', () => {
   });
 
   it.skipIf(!posix)('忽略 SIGTERM 的进程组：宽限后整组 SIGKILL，wait 从中止到落定小于 4 秒', async () => {
-    const ac = new AbortController();
-    const run = start('sh', ['-c', 'trap "" TERM; sleep 30'], { signal: ac.signal });
-    await sleep(150);
-    const abortedAt = Date.now();
-    const settledAt = run.done.then(() => Date.now());
-    ac.abort();
-    await sleep(500);
-    expect(probe(-run.pid)).toBeUndefined(); // SIGTERM 被忽略，组还在
-    expect(await waitFor(() => probe(-run.pid) === 'ESRCH', ABORT_KILL_GRACE_MS + 2000 - 500)).toBe(true);
-    // 中止宽限加 close 收尾宽限须明显小于 core 默认停机宽限 5000ms，否则随 lifecycle.signal 中止的停用仍会超时
-    expect((await within(settledAt, 4000)) - abortedAt).toBeLessThan(4000);
+    const dir = mkdtempSync(join(tmpdir(), 'zz-slice1-abort-'));
+    try {
+      const ready = join(dir, 'zz-slice1-ready');
+      const ac = new AbortController();
+      const run = start('sh', ['-c', 'trap "" TERM; touch "$0"; sleep 30', ready], { signal: ac.signal });
+      // 同上一例：等忽略 SIGTERM 的陷阱装好再中止
+      expect(await waitFor(() => existsSync(ready), 3000)).toBe(true);
+      const abortedAt = Date.now();
+      const settledAt = run.done.then(() => Date.now());
+      ac.abort();
+      await sleep(500);
+      expect(probe(-run.pid)).toBeUndefined(); // SIGTERM 被忽略，组还在
+      expect(await waitFor(() => probe(-run.pid) === 'ESRCH', ABORT_KILL_GRACE_MS + 2000 - 500)).toBe(true);
+      // 中止宽限加 close 收尾宽限须明显小于 core 默认停机宽限 5000ms，否则随 lifecycle.signal 中止的停用仍会超时
+      expect((await within(settledAt, 4000)) - abortedAt).toBeLessThan(4000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(!posix)('已中止时 spawn 同步抛出 signal.reason，命令没有执行', async () => {
