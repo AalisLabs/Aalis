@@ -220,7 +220,7 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
     await s.answer(await s.card(), 'deny', '先别删，备份一下');
     const out = (await result).content;
     expect(s.runs()).toBe(0);
-    expect(out).toContain('被拒绝了，说明：先别删，备份一下');
+    expect(out).toContain('被拒绝了，说明：「先别删，备份一下」。');
     expect(out).not.toContain('owner');
   });
 

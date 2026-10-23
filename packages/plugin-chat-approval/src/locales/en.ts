@@ -14,7 +14,6 @@ export default defineLocale<Source>()({
   clipped: '{head}…({count, plural, one {# character} other {# characters}} omitted)…{tail}',
   howToAnswer:
     'Quote this message and reply "approve", or "deny" followed by a reason. It expires if there is no answer within {minutes, plural, one {# minute} other {# minutes}}.',
-  quoteToAnswer: 'To approve or deny, quote the approval message in your reply.',
   answerElsewhere: 'This approval cannot be answered here; handle it in the WebUI or the terminal.',
   alreadySettled: 'This approval has already been handled.',
   answerRefused: 'The answer did not take effect: {reason}',

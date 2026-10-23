@@ -158,7 +158,7 @@ const OUTCOMES: Record<SettledState, string> = { approved: '批准', denied: '�
 function denialFor(source: ApprovalSource, note: string | undefined): string {
   const [reason, again] =
     source === 'owner'
-      ? [`被拒绝了${note ? `，说明：${note}` : ''}`, '不要原样再申请，按拒绝的意思调整']
+      ? [`被拒绝了${note ? `，说明：「${note}」` : ''}`, '不要原样再申请，按拒绝的意思调整']
       : REASONS[source];
   return `需要批准的操作没有执行。原因：${reason}。能否再申请：${again}。`;
 }
