@@ -23,6 +23,7 @@ import { archivedItem } from '../../packages/plugin-session-server/src/history.j
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { type IncomingMessage, type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-file-reader 的 agent:prompt 贡献（局部 id = file-reader-history，
@@ -710,11 +711,11 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
       const toolService = fx.app.bind({ tools }).tools.use;
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
 
-      const other = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-B' });
+      const other = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-B' }));
       expect(other.content).toContain('找不到文件');
       expect(other.content).not.toContain('TOP-SECRET-BODY');
 
-      const own = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-A' });
+      const own = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-A' }));
       expect(own.content).toContain('TOP-SECRET-BODY');
     } finally {
       await fx.dispose();
@@ -729,15 +730,23 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
       if (!fx.app.bind({ tools }).tools.present) throw new Error('tools 服务未注册');
       const toolService = fx.app.bind({ tools }).tools.use;
       // 删除工具是 restricted：没有 authority 时执行闸拒绝一切，这里放行以便走到 handler 自身的归属校验
-      toolService.setExecutionGuard(async () => null);
+      toolService.setExecutionGuard(async () => ({ ok: true }));
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
 
-      const other = await toolService.execute('delete_uploaded_file', { fileId: id }, { sessionId: 's-B' });
+      const other = await toolService.execute(
+        'delete_uploaded_file',
+        { fileId: id },
+        toolRequest({ sessionId: 's-B' }),
+      );
       expect(other.content).toContain('文件不存在或已被删除');
-      const stillThere = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-A' });
+      const stillThere = await toolService.execute(
+        'read_uploaded_file',
+        { fileId: id },
+        toolRequest({ sessionId: 's-A' }),
+      );
       expect(stillThere.content).toContain('TOP-SECRET-BODY');
 
-      const own = await toolService.execute('delete_uploaded_file', { fileId: id }, { sessionId: 's-A' });
+      const own = await toolService.execute('delete_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-A' }));
       expect(own.content).toContain('已删除文件');
     } finally {
       await fx.dispose();

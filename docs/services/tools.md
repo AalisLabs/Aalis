@@ -52,7 +52,7 @@ export interface ToolCallContext {
   sessionId: string;
   userId?: string;
   platform?: string;
-  actor?: { platform: string; userId: string };
+  participants: readonly UserIdentity[]; // 这一轮的参与者（授权身份），必填
   enabledGroups?: string[];
   acceptsImages?: boolean;
   signal?: AbortSignal;
@@ -60,10 +60,13 @@ export interface ToolCallContext {
   turnId?: string;
   callId?: string;
   output?: (text: string) => void;
+  approveFor(check: (who: UserIdentity) => Verdict): Promise<Verdict>; // 取用判定，执行器给每次调用一份
 }
+
+type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>; // 调用方交给执行器的
 ```
 
-`inbound`、`turnId`、`callId` 只由 agent 工具循环填写：所在入站回合的来源、回合 id，以及 agent 为这次调用生成的全局唯一 id（字段说明见 [api-tools](../api/api-tools.md#toolcallcontext)）。`output` 由执行器给每次调用一份：工具执行中的输出写进它，agent 回合里转成 `tool:output`。
+`participants` 是这一轮的参与者（授权身份），执行守卫对每个参与者各裁决一次；要记一个人的取 `actingIdentity(ctx)`（只有一位时是他，几位时是无主体），取别的会话的东西与本机文件经 `approveFor` 逐个参与者判（见 [api-tools](../api/api-tools.md#toolcallcontext)）。`inbound`、`turnId`、`callId` 只由 agent 工具循环填写：所在入站回合的来源、回合 id，以及 agent 为这次调用生成的全局唯一 id（字段说明见 [api-tools](../api/api-tools.md#toolcallcontext)）。`output` 由执行器给每次调用一份：工具执行中的输出写进它，agent 回合里转成 `tool:output`。
 
 `background` 声明工具可以转后台（响应 `signal`、晚些拿到结果仍有意义）：执行器给它的参数表补 `runInBackground` 与 `waitSeconds`，在前台等满让出时限还没结束就登记成后台任务、先回给模型，结束时通知起它的会话（见 [api-tools](../api/api-tools.md#可转后台)、[plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)）。
 
@@ -76,7 +79,7 @@ register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => voi
 getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
 getSummaries(filter?: { groups?: string[] }): ToolSummary[];
 getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;
-execute(toolName, args, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
+execute(toolName, args, callCtx: ToolCallRequest): Promise<ToolExecutionResult>;
 setExecutionGuard(guard: ExecutionGuard | undefined): void; // 传 undefined 摘掉，退回 fail-closed
 registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
 getGroups(): ToolGroupInfo[];
@@ -163,7 +166,7 @@ export default definePlugin({
 ```ts
 const defs = tools.present ? tools.use.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) : [];
 const result = tools.present
-  ? await tools.use.execute(call.name, call.args, { sessionId, userId, platform, enabledGroups })
+  ? await tools.use.execute(call.name, call.args, { sessionId, userId, platform, participants, enabledGroups })
   : { content: JSON.stringify({ error: 'tools 服务不可用' }) };
 ```
 

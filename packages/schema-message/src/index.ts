@@ -166,7 +166,7 @@ export interface FromTurn {
   platform: string;
   /** 物理发言者（同 {@link IncomingMessage.userId}，没有时不设，如定时任务那一轮） */
   userId?: string;
-  /** 参与者：这一轮的授权身份 `actor ?? 发言者`，现在一轮只有一个 */
+  /** 参与者：那次调用的参与者（按 api-authority 的 originTurnOf 算，批过的是批的人） */
   participants: readonly { platform: string; userId: string }[];
   /** 那一轮的来源（同 {@link IncomingMessage.source}，人亲手发来的没有） */
   source?: string;
@@ -272,7 +272,7 @@ export interface IncomingMessage {
    *
    * 与 platform/userId 的区别：
    * - platform/userId 表示消息的物理来源（路由+发言者标识），写归档、做用户档案/关系；
-   * - actor 表示授权身份，agent 构造 ToolCallContext 时优先使用 actor，
+   * - actor 表示授权身份，agent 算这一轮的参与者时优先使用 actor（api-authority 的 originTurnOf），
    *   从而让 authority 守卫按 actor 的 (platform, userId) 查权限等级。
    *
    * 触发器（如 scheduler）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
@@ -288,7 +288,7 @@ export interface IncomingMessage {
   };
   /**
    * 起它的那一轮：续做（如后台任务的结束通知）与子任务（任务消息与追问）的消息带着起它的那次调用所在那一轮的事实，权限服务
-   * 按那一轮判续做这一轮的类别与子任务这一轮的主体，这一轮的授权身份取它的参与者（agent 经 api-authority 的 originTurnOf
+   * 按那一轮判续做这一轮的类别与子任务这一轮的主体，这一轮的参与者取它的参与者（agent 经 api-authority 的 originTurnOf
    * 拼工具调用上下文）。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`），只在那次调用在入站回合里时填，
    * 不由模型给；不进归档与提示词钩子
    */

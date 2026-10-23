@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 被压到后台的页面上的操作（真 Chromium + 本机 http 服务）：
@@ -92,7 +93,7 @@ async function call(tool: string, args: Record<string, unknown>): Promise<Record
     timer = setTimeout(() => reject(new Error(`${tool} 超过 ${CALL_LIMIT_MS}ms 未返回`)), CALL_LIMIT_MS);
   });
   try {
-    const out = await Promise.race([handlers[tool](args, { sessionId: 's', acceptsImages: true }), limit]);
+    const out = await Promise.race([handlers[tool](args, toolContext({ sessionId: 's', acceptsImages: true })), limit]);
     return JSON.parse(typeof out === 'string' ? out : out.content);
   } finally {
     clearTimeout(timer);

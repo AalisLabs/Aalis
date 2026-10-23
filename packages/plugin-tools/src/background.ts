@@ -4,6 +4,7 @@
 // 状态变了写进插件数据。正常结束（含失败）时向起它的会话注入一条宿主通知，身份取起它的那次调用。
 // ════════════════════════════════════════════════════════════
 
+import type { UserIdentity, Verdict } from '@aalis/api-authority';
 import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import {
   BACKGROUND_TASK_NOTICE,
@@ -14,6 +15,7 @@ import {
   type BackgroundTaskStatus,
   integerIn,
   type ToolCallContext,
+  type ToolCallRequest,
   type ToolDisplay,
   type ToolExecutionResult,
   toolFailed,
@@ -60,22 +62,11 @@ const STATUSES: ReadonlySet<unknown> = new Set<BackgroundTaskStatus>([
   'aborted',
 ]);
 
-/** 授权身份（同 ToolCallContext.actor） */
-interface Identity {
-  platform: string;
-  userId: string;
-}
-
-/** 调用的有效授权身份，与 authority 守卫同一口径。没有 actor 也没有 userId 时 userId 为空串，即无主体 */
-function identityOf(ctx: ToolCallContext): Identity {
-  return ctx.actor ?? { platform: ctx.platform ?? '', userId: ctx.userId ?? '' };
-}
-
 /**
  * 对话回合里的调用：在入站回合里（inbound 在）、有 turnId 与 callId，转到后台后有可以通知的对话。结束通知带着起它的那一轮，
  * 只有入站回合里的调用给得出它
  */
-export function inTurn(ctx: ToolCallContext): ctx is ToolCallContext & { turnId: string; callId: string } {
+export function inTurn<C extends ToolCallRequest>(ctx: C): ctx is C & { turnId: string; callId: string } {
   return ctx.inbound !== undefined && ctx.turnId !== undefined && ctx.callId !== undefined;
 }
 
@@ -167,6 +158,8 @@ interface Call {
   readonly plan: Plan;
   readonly controller: AbortController;
   readonly output: OutputTail;
+  /** 处理函数里在等的取用判定（approveFor）：有就不转后台 */
+  readonly approving: Set<Promise<unknown>>;
   record?: TaskRecord;
   /** 被停止（stop）：落定时记为 stopped，不通知 */
   stopRequested?: boolean;
@@ -199,10 +192,12 @@ interface RunSpec {
   tool: string;
   /** 模型给的参数（含执行器取出的两项），记进任务的 call */
   args: Record<string, unknown>;
-  ctx: ToolCallContext;
+  ctx: ToolCallRequest;
   /** 结局按它取退出码 */
   display?: ToolDisplay;
-  /** 带上这次调用的中止信号与输出口跑工具；不拒绝 */
+  /** 取用判定（ToolCallContext.approveFor），按交来的上下文判；asks 为假时只按参与者都过判、不出审批 */
+  approve(ctx: ToolCallRequest, check: (who: UserIdentity) => Verdict, asks: boolean): Promise<Verdict>;
+  /** 带上这次调用的中止信号、输出口与取用判定跑工具；不拒绝 */
   invoke(ctx: ToolCallContext): Promise<ToolExecutionResult>;
 }
 
@@ -291,6 +286,7 @@ function settleWithin<T>(promise: Promise<T>, ms: number, signal: AbortSignal): 
       resolve(undefined);
     }, ms);
     signal.addEventListener('abort', stopTimer, { once: true });
+    if (signal.aborted) stopTimer();
     void promise.then(value => {
       stopTimer();
       signal.removeEventListener('abort', stopTimer);
@@ -361,7 +357,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   // ---- 执行器 ----
 
   /** 不可转后台的调用的输出口：对话回合里的转成 tool:output */
-  outputFor(ctx: ToolCallContext): (text: string) => void {
+  outputFor(ctx: ToolCallRequest): (text: string) => void {
     let sent = 0;
     return text => {
       this.stream(ctx, text, sent);
@@ -373,7 +369,7 @@ export class BackgroundTasks implements BackgroundTaskService {
    * 占一个位置。同一会话里对话回合中在跑的可转后台调用（前台与后台一起数，等审批的也算）满了时，回拒绝的结果（JSON），
    * 列出这个会话在跑的后台任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡
    */
-  admit(ctx: ToolCallContext, owner: object, plan: Plan): Call | string {
+  admit(ctx: ToolCallRequest, owner: object, plan: Plan): Call | string {
     const counted = inTurn(ctx);
     const inSession = [...this.calls].filter(call => call.inTurn && call.sessionId === ctx.sessionId);
     if (counted && inSession.length >= this.limits.maxPerSession) {
@@ -393,6 +389,7 @@ export class BackgroundTasks implements BackgroundTaskService {
       plan,
       controller: new AbortController(),
       output: new OutputTail(),
+      approving: new Set(),
     };
     this.calls.add(call);
     return call;
@@ -406,7 +403,8 @@ export class BackgroundTasks implements BackgroundTaskService {
   /**
    * 跑一次占到位置、过了守卫的可转后台调用。让出时限从这里算起，前台时回合中止一并中止它。到时没结束或要求立即转后台：
    * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有可通知的对话）
-   * 中止并回报已有输出
+   * 中止并回报已有输出。处理函数里的取用判定在前台时可能等一道审批，等着时不让出，到了让出时限还在等的，等审批都结了重新计一个
+   * 让出时限；转到后台之后（要求立即转的从一开始）只按参与者都过判、不出审批：回合结束时没结的审批会被撤掉。审批随这次调用中止撤销
    */
   async run(call: Call, spec: RunSpec): Promise<ToolExecutionResult> {
     const { ctx } = spec;
@@ -415,11 +413,20 @@ export class BackgroundTasks implements BackgroundTaskService {
     ctx.signal?.addEventListener('abort', onTurnAbort, { once: true });
     const unlink = () => ctx.signal?.removeEventListener('abort', onTurnAbort);
     const startedAt = Date.now();
-    const settled = spec.invoke({ ...ctx, signal, output: text => this.write(call, ctx, text) });
-    void settled.then(() => this.calls.delete(call));
     const { waitSeconds, immediate } = call.plan;
+    const own = { ...ctx, signal };
+    const settled = spec.invoke({
+      ...own,
+      output: text => this.write(call, ctx, text),
+      approveFor: check => this.approving(call, spec.approve(own, check, !immediate && !call.record)),
+    });
+    void settled.then(() => this.calls.delete(call));
     if (!immediate) {
-      const finished = await settleWithin(settled, waitSeconds * 1000, signal);
+      let finished = await settleWithin(settled, waitSeconds * 1000, signal);
+      while (!finished && call.approving.size > 0) {
+        await Promise.race([settled, Promise.allSettled(call.approving)]);
+        finished = await settleWithin(settled, waitSeconds * 1000, signal);
+      }
       if (finished) {
         unlink();
         return finished.value;
@@ -495,11 +502,19 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ---- 内部 ----
 
+  /** 处理函数里在等的一次取用判定：等着时这次调用不转后台 */
+  private approving(call: Call, verdict: Promise<Verdict>): Promise<Verdict> {
+    call.approving.add(verdict);
+    const done = () => call.approving.delete(verdict);
+    void verdict.then(done, done);
+    return verdict;
+  }
+
   /**
    * 推给界面：对话回合里的调用转成 tool:output。sent 是这次调用此前写过的字数，推出的总量不超过 OUTPUT_LIMIT：
    * 界面按条目累加输出，前台最多要等 maxWaitSeconds，持续大量输出的命令不能把它撑满
    */
-  private stream(ctx: ToolCallContext, text: string, sent: number): void {
+  private stream(ctx: ToolCallRequest, text: string, sent: number): void {
     const room = OUTPUT_LIMIT - sent;
     if (room <= 0 || !inTurn(ctx)) return;
     const chunk = truncateChars(text, room);
@@ -508,7 +523,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /** 可转后台的调用写输出：进缓冲；在前台时转成 tool:output，转后台之后更新任务的最后一行 */
-  private write(call: Call, ctx: ToolCallContext, text: string): void {
+  private write(call: Call, ctx: ToolCallRequest, text: string): void {
     if (!text) return;
     const sent = call.output.end;
     call.output.append(text, Date.now());
@@ -549,7 +564,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(lastAt !== undefined ? { lastOutputAt: lastAt } : {}),
       },
       output: call.output,
-      // 起它的那一轮就是这次调用所在那一轮：平台、发言者、参与者（授权身份）、来源，以及那一轮自己的 fromTurn
+      // 起它的那一轮就是这次调用所在那一轮：平台、发言者、这次调用的参与者（批过的是批的人）、来源，以及那一轮自己的 fromTurn
       ...(chained
         ? {}
         : {
@@ -557,7 +572,7 @@ export class BackgroundTasks implements BackgroundTaskService {
               fromTurn: {
                 platform: ctx.platform ?? 'unknown',
                 userId: ctx.userId,
-                participants: [identityOf(ctx)],
+                participants: ctx.participants,
                 source: ctx.inbound?.source,
                 fromTurn: ctx.inbound?.fromTurn,
               },

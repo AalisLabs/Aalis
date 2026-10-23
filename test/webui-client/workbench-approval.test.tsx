@@ -268,13 +268,23 @@ describe('审批卡', () => {
           toolCall('c1', 'exec', {
             display: { kind: 'command', command: 'make' },
             approvalId: 'ap1',
-            settlement: { state: 'approved', source: 'owner', at },
+            settlement: {
+              state: 'approved',
+              source: 'answer',
+              at,
+              by: { platform: 'webui', userId: 'console', owner: true },
+            },
           }),
           toolCall('c2', 'exec', {
             status: 'denied',
             display: { kind: 'command', command: 'rm -rf build' },
             approvalId: 'ap2',
-            settlement: { state: 'denied', source: 'owner', at },
+            settlement: {
+              state: 'denied',
+              source: 'answer',
+              at,
+              by: { platform: 'webui', userId: 'console', owner: true },
+            },
           }),
           toolCall('c3', 'exec', {
             status: 'denied',
@@ -291,6 +301,30 @@ describe('审批卡', () => {
     expect(log.getByRole('button', { name: /执行 rm -rf build/ }).textContent).toContain('已拒绝 · 09:05');
     expect(log.getByRole('button', { name: /执行 sleep 9/ }).textContent).toContain('已撤销 · 回合已结束 · 09:05');
     expect(screen.queryByRole('region', { name: '审批' })).toBeNull();
+  });
+
+  it('不是 owner 批的、拒的：结算句写出是谁', async () => {
+    const at = new Date(2026, 9, 3, 9, 5).getTime();
+    const member = { platform: 'onebot', userId: '30001', nickname: '<群友>', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          toolCall('c1', 'exec', {
+            display: { kind: 'command', command: 'make' },
+            approvalId: 'ap1',
+            settlement: { state: 'approved', source: 'answer', at, by: member },
+          }),
+          toolCall('c2', 'exec', {
+            status: 'denied',
+            display: { kind: 'command', command: 'rm -rf build' },
+            approvalId: 'ap2',
+            settlement: { state: 'denied', source: 'answer', at, by: { ...member, nickname: undefined } },
+          }),
+        ]),
+    });
+    const log = within(await timeline());
+    expect(log.getByRole('button', { name: /执行 make/ }).textContent).toContain('已批准 · <群友> · 09:05');
+    expect(log.getByRole('button', { name: /执行 rm -rf build/ }).textContent).toContain('已拒绝 · 30001 · 09:05');
   });
 
   it('英文界面：卡的标题与按钮、工具行的「等你批准」与结算句', async () => {

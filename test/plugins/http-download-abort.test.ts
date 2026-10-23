@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // http_download 声明可转后台，只认执行器给这次调用的中止信号，不另设超时：本地测试服务器先回响应头与一段正文、
@@ -61,7 +62,7 @@ describe('http_download 可转后台', () => {
     const ac = new AbortController();
     const pending = download.handler(
       { url: `${base}/zz-slow.bin`, savePath: 'workspace:/zz-slow.bin' },
-      { sessionId: 's', signal: ac.signal },
+      toolContext({ sessionId: 's', signal: ac.signal }),
     );
     await vi.waitFor(() => expect(hanging.length).toBeGreaterThan(0));
     ac.abort();

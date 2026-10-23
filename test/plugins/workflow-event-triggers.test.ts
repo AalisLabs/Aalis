@@ -16,6 +16,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { ref } from '../fixtures/service-ref.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // event 触发器不订阅不可作触发源的事件：注册时记一条 warn，不碰事件总线；别的事件照常订阅。哪些事件不可作触发源由
@@ -117,7 +118,7 @@ describe('订阅不可作触发源的事件的定义', () => {
     const registry = app.bind({ services }).services.use;
     const toolSvc = registry.get(toolsService);
     if (!toolSvc) throw new Error('tools 服务未注册');
-    toolSvc.setExecutionGuard(async () => null); // workflow_define 是 sensitive，放行权限闸：这里只看定义口
+    toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 是 sensitive，放行权限闸：这里只看定义口
     return { svc: registry.get(workflow) as WorkflowService, toolSvc };
   }
 
@@ -143,7 +144,7 @@ describe('订阅不可作触发源的事件的定义', () => {
       const res = await toolSvc.execute(
         'workflow_define',
         { yaml: BLOCKED_YAML },
-        { sessionId: 'internal', platform: 'internal' },
+        toolRequest({ sessionId: 'internal', platform: 'internal' }),
       );
       expect(JSON.parse(res.content)).toEqual({ error: REFUSED });
     } else if (via === '新建或覆盖') {

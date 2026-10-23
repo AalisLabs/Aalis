@@ -42,7 +42,12 @@ export const sessionTmpIn = (home: string, sessionId: string) =>
   join(home, 'tmp', 'sessions', Buffer.from(sessionId).toString('hex'));
 
 /** 一轮 owner 在会话里亲手发来的回合 */
-export const ownerTurn = (sessionId: string): OriginTurn => ({ sessionId, ...OWNER_TURN, inbound: {} });
+export const ownerTurn = (sessionId: string): OriginTurn => ({
+  sessionId,
+  ...OWNER_TURN,
+  participants: [OWNER_TURN],
+  inbound: {},
+});
 
 export interface ReachDirs {
   /** 临时目录本身（真实路径） */

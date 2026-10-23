@@ -443,7 +443,7 @@ export class CommandRegistry implements CommandService {
     if (typeof parsed === 'string' || isTextRef(parsed)) return parsed;
 
     if (this._guard) {
-      const rejection = await this._guard({
+      const verdict = await this._guard({
         name: cmd.name,
         type: 'command',
         visibility: cmd.visibility,
@@ -452,10 +452,12 @@ export class CommandRegistry implements CommandService {
         sessionId: input.sessionId,
         platform: input.platform,
         userId: input.userId,
+        // 参与者只有发出者：聊天入站已把授权身份并进 platform 与 userId，没有账号的是无主体
+        participants: [{ platform: input.platform, userId: input.userId ?? '' }],
         skipConfirm: input.skipConfirm,
         confirmIntent: input.confirmIntent,
       });
-      if (rejection) return rejection;
+      if (!verdict.ok) return verdict.reason;
     } else if (needsAuthority(cmd)) {
       return t('needsAuthority', { command: `${this.prefix}${cmd.name}` });
     }

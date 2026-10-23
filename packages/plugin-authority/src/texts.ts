@@ -8,7 +8,8 @@ const SOURCE = {
   ownerOnlyCapability: '权限不足: "{capability}" 只限 owner',
   intentUnreachable: '操作已取消：{capability} 需要发出者本人确认，这条指令不是人亲手输入的，无从确认',
   intentDeclined: '操作已取消：{capability} 没有得到发出者确认',
-  approvalsAbsent: '操作已取消：{capability} 需要 owner 批准，但审批服务不在（由 @aalis/plugin-session-server 提供）',
+  nobodyCan: '这一轮的参与者里没有人能做这件事',
+  approvalsAbsent: '操作已取消：{capability} 需要批准，但审批服务不在（由 @aalis/plugin-session-server 提供）',
   operationsDescription:
     '每个指令、工具与设置项有一个最低等级：指令与工具默认按风险派生（安全 0、敏感 1、危险 2），设置项默认按声明；多数不用动。写在哪一层另有固定的门槛，不在这里调。',
   operationsEmpty: '没有登记的指令、工具或设置项',
@@ -17,9 +18,9 @@ const SOURCE = {
   confirmSession: '每次（白名单可免）',
   confirmAlways: '每次（只有确认覆盖设为 off 能免）',
   rulesDescription:
-    '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效：owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排；别人发起的照旧要 owner 批准，不能产生审批的直接拒绝；不放宽等级。都可以写通配，如 tool:*。',
+    '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效：owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排；别人发起的、有别人的话一起进来的照旧要 owner 批准，不能产生审批的直接拒绝；不放宽等级。都可以写通配，如 tool:*。',
   waivePattern:
-    '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的照旧要 owner 批准',
+    '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的、有别人的话一起进来的照旧要 owner 批准',
   ownerOnly: '只有 owner 可管理权限',
   targetFormat: '目标格式: <platform:userId>',
   badGroupName: '组名只收字母、数字、连字符、下划线与中文，不以连字符开头：{name}',

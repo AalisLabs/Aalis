@@ -1,6 +1,6 @@
 import { approvals } from '@aalis/api-approval';
-import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
-import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
+import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity, Verdict } from '@aalis/api-authority';
+import { authority as authorityService, capabilityMinLevel, sameParticipant } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions as contributionsService } from '@aalis/api-contributions';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
@@ -108,57 +108,79 @@ async function run(caps: Caps): Promise<void> {
   setNetworkPolicy(config.get('network') ?? {});
 
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
-  const guard = async (g: ExecutionGuardContext): Promise<string | TextRef | null> => {
+  // 多人的一轮按动作判，对每个参与者各裁决一次：都过照常执行；有人过、有人不过，这一个调用要一道参与者审批，凡自己就能做的人
+  // 都能批；都不过照旧拒，没有人能为它担保。一轮里能做的因此不超过参与者里最高的那位，也不用把权限排出高低（权限组让两个人
+  // 各能做对方做不了的事时照样判得出）。工具执行中经 approveFor 交来的取用判定按同一条三分，判据换成它
+  const isOwner = (who: UserIdentity) => manager.isOwner(who.platform, who.userId);
+  const guard = async (g: ExecutionGuardContext): Promise<Verdict> => {
     const capability = `${g.type}:${g.name}`;
-    // 授权身份（actor 缺省即会话身份，没有发言者时账号为空串，即无主体）：等级裁决、免确认与审批的参与者都按它，不看物理发言者
-    const identity = g.actor ?? { platform: g.platform, userId: g.userId ?? '' };
-    const ownerActs = manager.isOwner(identity.platform, identity.userId);
-    // 确认覆盖：覆盖值优先，回退插件声明；'off' 只对授权身份是 owner 的回合关掉确认，别人的回落到插件声明
+    // ── 轴 A · 授权：等级与权限组裁决——系统源也评估，防绕过提权。不看物理发言者
+    const judge =
+      g.check ??
+      ((who: UserIdentity): Verdict => {
+        const denied = manager.authorize(who, {
+          capability,
+          visibility: g.visibility,
+          risk: g.risk,
+          toolGroups: g.toolGroups,
+        });
+        return denied ? { ok: false, reason: denied } : { ok: true };
+      });
+    const verdicts = g.participants.map(judge);
+    if (!verdicts.some(verdict => verdict.ok)) {
+      // 一位参与者时用它的原因；几位时取用判定取第一位的，等级裁决不转述别人的拒绝语
+      const [first] = verdicts;
+      return first && (verdicts.length === 1 || g.check) ? first : { ok: false, reason: t('nobodyCan') };
+    }
+    const someCannot = verdicts.some(verdict => !verdict.ok);
+
+    // ── 轴 B · 确认：操作声明了 confirm 仍要 owner 确认（owner 也吃，防注入借权）。免确认（确认覆盖 'off'、没人可问的受信来源
+    // skipConfirm、owner 配的 restrictedPolicy 白名单）只在参与者都是 owner 时生效；always 只有确认覆盖 'off' 能免。
+    // 取用判定不再判：确认在这次调用开始时已经判过
+    const ownerActs = g.participants.length > 0 && g.participants.every(isOwner);
     const confOv = (config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
     const cOv = confOv[capability];
-    const confirm = cOv === 'off' ? (ownerActs ? undefined : g.confirm) : (cOv ?? g.confirm);
+    // 确认覆盖 'off' 有别人时回落到声明的
+    const override = cOv === 'off' && !ownerActs ? undefined : cOv;
+    const confirm = g.check || override === 'off' ? undefined : (override ?? g.confirm);
+    const waived = confirm !== 'always' && ownerActs && (g.skipConfirm || manager.waivesConfirm(capability));
+    const ownerOnly = confirm !== undefined && !waived;
+    if (!someCannot && !ownerOnly) return { ok: true };
 
-    // ── 轴 A · 授权：等级与权限组裁决——系统源也评估，防绕过提权。
-    // 等级不够、所属组也不覆盖即拒；发起者本人不能靠确认给自己提权，白名单也不放宽授权。
-    const denied = manager.authorize(identity, {
-      capability,
-      visibility: g.visibility,
-      risk: g.risk,
-      toolGroups: g.toolGroups,
-    });
-    if (denied) return denied;
-
-    // ── 轴 B · 确认：授权已过，但操作声明了 confirm 仍要有人确认（owner 也吃，防注入借权）。
-    // 非 always 的确认可免，只对授权身份是 owner 的回合：没人可问的受信来源（skipConfirm）、owner 配的 restrictedPolicy
-    // 白名单。always 只有确认覆盖设为 off 能免（见上）
-    if (!confirm) return null;
-    if (confirm !== 'always' && ownerActs && (g.skipConfirm || manager.waivesConfirm(capability))) return null;
-
-    // 指令由人亲手输入：确认的是发出者本人的意图，由指令服务当面问；问不到（注入的指令）就拒
+    // 指令由人亲手输入，参与者只有发出者，走到这里的只有确认：确认的是发出者本人的意图，由指令服务当面问；问不到（注入的指令）就拒
     if (g.type === 'command') {
-      if (!g.confirmIntent) return t('intentUnreachable', { capability });
-      return (await g.confirmIntent()) ? null : t('intentDeclined', { capability });
+      if (!g.confirmIntent) return { ok: false, reason: t('intentUnreachable', { capability }) };
+      return (await g.confirmIntent()) ? { ok: true } : { ok: false, reason: t('intentDeclined', { capability }) };
     }
 
-    // 工具由模型调用：确认是 owner 审批。哪些回合能产生审批由审批服务按发起类别与参与者裁决，不能的立即拒绝、不推给任何面
-    if (!caps.approvals.present) return t('approvalsAbsent', { capability });
-    const service = caps.approvals.use;
-    const outcome = await service.request(
+    // 工具由模型调用：要确认的与参与者审批合成一张，只有 owner 能批；其余是参与者审批，自己就能做的人能批。哪些回合能产生审批
+    // 由审批服务按发起类别与参与者裁决，不能的立即拒绝、不推给任何面
+    if (!caps.approvals.present) return { ok: false, reason: t('approvalsAbsent', { capability }) };
+    const outcome = await caps.approvals.use.request(
       {
         sessionId: g.sessionId,
         turnId: g.turnId,
         callId: g.callId,
-        // 参与者是这一轮的授权身份（现在一轮只有一个），不是物理发言者
-        origin: { kind: manager.originOf(g), participants: [identity] },
+        origin: { kind: manager.originOf(g), participants: [...g.participants] },
         tool: g.name,
         args: g.args ?? {},
-        // 覆盖生效时记覆盖；'off' 没生效（授权身份不是 owner）时记插件的声明
-        rule:
-          cOv === confirm ? `confirmOverrides 把 ${capability} 设为 ${cOv}` : `${capability} 声明 confirm=${confirm}`,
+        rule: ownerOnly
+          ? cOv === confirm
+            ? `confirmOverrides 把 ${capability} 设为 ${cOv}`
+            : `${capability} 声明 confirm=${confirm}`
+          : `这一轮的参与者里有人自己做不了这次 ${capability}`,
+        canAnswer: ownerOnly ? isOwner : who => judge(who).ok,
+        ownerOnly,
       },
       g.signal,
     );
-    return outcome.approved ? null : outcome.message;
+    if (!outcome.approved) return { ok: false, reason: outcome.message };
+    // 批的人替这个动作担保：他就是参与者之一时取那个参与者的身份（owner 的各个身份算一个）
+    const by =
+      g.participants.find(who =>
+        sameParticipant(who, outcome.by, (platform, userId) => manager.isOwner(platform, userId)),
+      ) ?? outcome.by;
+    return { ok: true, by };
   };
 
   // 注入到 commands / tools（follow 在 provider 上线/重启时各调一次）。本插件停用时摘掉：守卫闭包里是这次激活的等级表与

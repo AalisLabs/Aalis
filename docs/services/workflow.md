@@ -304,7 +304,7 @@ await events.use.emit('trigger:fired', {
 - **定义者**：只由实现自己认证过调用者的入口记下（参考实现是 `workflow_define` 工具与工作流页），经服务的 `defineWorkflow` 定义或覆盖的没有定义者：服务认不出调用方是谁，契约也不收调用方报上来的定义者。定义者不写进定义文件，也不从定义文件读（工作区能被别的工具写，文件里的定义者伪造得出来）；记下定义者时连同写进文件的文本的哈希，载入时哈希对得上才认。
 - **运行身份**：调用者是 owner 时取定义者（没有即匿名），否则取调用者。
 - **触发**：定时与事件触发以定义者作调用者。事件参数与 `trigger:fired` 的 `payload` 作为 `vars` 进入这次运行，插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 的正文时就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信：`event` 触发器不订阅负载带会话内容的事件（参考实现的列表见 [plugin-workflow](../plugins/plugin-workflow.md#触发器)）。
-- **传递**：运行身份放进 `toolCallContext.actor`（`platform` 保持 `'workflow'`），`tool` 节点按它过 authority 闸，`send-message` 与 `agent` 节点投递的消息带同一个 `actor`；匿名只能跑 `public`（risk safe、minLevel 0）工具。
+- **传递**：运行身份是 `toolCallContext` 的唯一参与者（`participants`，匿名时是无主体；`platform` 保持 `'workflow'`），`tool` 节点按它过 authority 闸，`send-message` 与 `agent` 节点投递的消息以它为 `actor`（匿名的不带）；匿名只能跑 `public`（risk safe、minLevel 0）工具。
 
 漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 调起成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
 

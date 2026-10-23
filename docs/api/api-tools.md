@@ -9,7 +9,7 @@
 定义 AI 工具系统的全部"非实现"契约：
 
 - 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`），可转后台的执行器参数名判据 `takenBackgroundParams`
-- 工具调用上下文（`ToolCallContext`）—— 平台/会话语义
+- 工具调用上下文（`ToolCallContext`，调用方交的是 `ToolCallRequest`）—— 平台/会话语义与这一轮的参与者，`actingIdentity`
 - 工具执行通知（`ToolExecuteMessage`）与执行中的流式输出（`ToolOutputMessage`）
 - 工具结果的结局：`toolFailed`、`integerIn`
 - 服务接口 `ToolService`、描述符 `tools`、绑定接口 `BoundTools`、`withToolGroups`
@@ -26,7 +26,7 @@ interface ToolService {
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups?; display? }>;
-  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard | undefined): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   getGroups(): ToolGroupInfo[];
@@ -35,7 +35,7 @@ interface ToolService {
 
 插件侧不要直接调 `ToolService.register(..., contextId)`。`contextId` 由绑定门面填本次激活 id。
 
-`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的工具退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
+`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的工具退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。守卫经审批放行时带回批的人，执行器把这次调用的参与者换成他：交给处理函数的与转后台登记的都是换过的上下文，它派生的（结束通知、子任务、定时任务的创建者）随之按批的人。
 
 ## RegisteredTool 结构
 
@@ -60,7 +60,7 @@ interface RegisteredTool {
 `background` 声明这个工具可以转到后台：它响应中止信号（`ToolCallContext.signal`），晚些拿到结果仍有意义。执行器（[plugin-tools](../plugins/plugin-tools.md)）对声明了的工具统一处理：
 
 - 发给模型的参数表多两项：`runInBackground`（布尔，立即转后台）与 `waitSeconds`（前台最多等多少秒）。执行时这两项先取出，再做参数校验、过守卫、交给工具；审批事实与工具拿到的参数里都没有它们。参数表里已有同名项的工具当作没声明，执行器记一条警告，工具照常登记。`takenBackgroundParams(parameters)` 回参数表里已有的这两项的名字，执行器按它判断；桥接远端工具的插件据此不声明，等多久照远端调用自己的超时。
-- 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合中止（停止键、新消息打断）一并中止它。
+- 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合中止（停止键、新消息打断）一并中止它。处理函数经 `approveFor` 等审批时不转后台：到了让出时限还在等的，等审批结了再重新计一个让出时限。
 - 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（不在入站回合里，或没有 `turnId`、`callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
 - 同一会话里对话回合中在跑的可转后台调用有上限（前台与后台一起数），满了时新的调用在过守卫之前就被拒绝。不在对话回合里的调用不会转后台，不占名额。
 
@@ -85,9 +85,9 @@ type ToolDisplay =
 ```ts
 interface ToolCallContext {
   sessionId: string;
-  userId?: string;                                  // 消息物理来源的发言者（会话语义）
+  userId?: string;                                  // 物理发言者（会话语义）：这一轮各条输入的发言者相同时是他
   platform?: string;                                // 会话所属平台
-  actor?: { platform: string; userId: string };    // 授权身份；缺省即 (platform, userId)
+  participants: readonly UserIdentity[];            // 这一轮的参与者（授权身份），必填
   enabledGroups?: string[];                         // 当前会话启用的工具分组
   acceptsImages?: boolean;                          // 这次调用的主模型能亲眼看图
   signal?: AbortSignal;                             // 调用方回合的中止信号
@@ -95,8 +95,21 @@ interface ToolCallContext {
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
   output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
+  approveFor(check: (who: UserIdentity) => Verdict): Promise<Verdict>; // 取用判定，执行器给每次调用一份
 }
+
+/** 调用方交给执行器的上下文（ToolService.execute、agent 的工具钩子）：approveFor 由执行器给 */
+type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>;
+
+/** 要记一个人时这次调用的授权身份：参与者只有一个时是他，有几个时是无主体（账号为空串） */
+function actingIdentity(ctx: { platform?: string; participants: readonly UserIdentity[] }): UserIdentity;
 ```
+
+`participants` 是这一轮的参与者，即授权身份，与 `platform`、`userId` 解耦。agent 按 api-authority 的 `originTurnOf` 算：各条输入的 `actor`，没有时是发言者，带起它的那一轮的取那一轮的参与者，owner 的各个身份算一个；执行守卫对每个参与者各裁决一次（见 [api-authority](./api-authority.md#守卫流程-授权与确认)）。不在入站回合里的调用方填它自己的身份：编排填运行身份，mcp-server 填 `mcp:mcp-client`，没有身份的填一个无主体（`{ platform, userId: '' }`）。`userId` 只在这一轮各条输入的发言者相同时有；续做的一轮没有发言者时取起它的那一轮的，工具眼里是起它的人在调。
+
+要记一个人的（定时任务的创建者、编排的定义者与调用者、白纸的发起人）取 `actingIdentity(ctx)`：参与者只有一个时是他；批过的调用参与者已换成批的人，记的就是批的人；几个人都能做、没经审批的按无主体记。按条过滤的取用（`recent_messages`）同样取它，几个人的一轮不带谁自己的私聊。
+
+`approveFor(check)` 给取用类工具判「这一次取别的会话的东西或不属于任何会话的本机文件」：`check(who)` 判只有这一位参与者时能不能取，回 `{ ok: true }` 或 `{ ok: false, reason }`，要同步、不抛错。执行器按这次调用的参与者交给执行守卫，与等级裁决同一条三分：参与者都过放行、不出审批；有人过不了时发一道参与者审批，能批的是过得了的人，事实是这次调用的工具与参数；都过不了回原因（一位参与者时是它的，几位时是第一位的）。守卫不在、调用不在回合里或已转到后台（带 `runInBackground` 的从一开始）时只按参与者都过判、不出审批：回合结束时没结的审批会被撤掉。审批随 `signal` 撤销。批过只放行这一次取用，不换这次调用的参与者。第一方的取用类工具（`send_attachment`、`analyze_image`、读历史的两个工具经会话历史服务的 `getHistory`、`onebot_get_msg`）都经它；直接调处理函数的调用方要给一份。
 
 `signal` 由调用方传回合的中止信号。可转后台的工具拿到的是执行器给这次调用的信号：在前台时随回合一并中止，转到后台之后只随停止、工具撤回登记与执行器停用中止。
 
@@ -106,9 +119,9 @@ interface ToolCallContext {
 
 - 只有 plugin-agent 的工具循环填写它，`source` 取那条入站消息的 `IncomingMessage.source`：真人消息为 `undefined`，定时任务、闲置触发、宿主通知等内部注入为注入方标识。
 - workflow 的 tool 节点、mcp-server 等自己构造上下文的调用方不填，`inbound` 缺省。
-- 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看 `actor` 分不出来：定时任务注入的回合带着创建者的 `actor`。
+- 需要「真人当面发起」判据的工具，应把 `inbound` 缺省当作不满足，并拒绝 `inbound.source` 非空的调用。只看参与者分不出来：定时任务注入的回合的参与者是创建者。
 
-`inbound.messageId` 是那条入站消息的平台消息 id（`IncomingMessage.messageId`，平台适配器填写，没有的不带）。转到后台的调用结束时，执行器把它写进结束通知的 `hostNotice.replyTo`，她回复通知时引用这条消息。
+`inbound.messageId` 是这一轮最近一条输入的平台消息 id（`IncomingMessage.messageId`，平台适配器填写，没有的不带）。转到后台的调用结束时，执行器把它写进结束通知的 `hostNotice.replyTo`，她回复通知时引用这条消息。
 
 `turnId` 与 `callId` 同样只由 agent 工具循环填写，与 `inbound` 同时出现。`turnId` 是所在回合的 id（见 [api-agent](./api-agent.md#回合-id)）；`callId` 由 agent 为每次调用生成、全局唯一（模型生成参数时报过进度的，用那时随进度推出的那一个），不取模型给的 tool call id——模型给的 id 不保证唯一，例如有的 provider 用毫秒时间戳加序号拼出来，并发的两轮会撞上。
 

@@ -12,7 +12,7 @@
 import type { GatewayService } from '@aalis/api-gateway';
 import type { RemoteAgentProvider } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import { type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
+import { actingIdentity, type BoundTools, type ToolCallContext, wrapUntrustedContent } from '@aalis/api-tools';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { canStart, dayKey, daySpend, release, reserveFor } from './budget.js';
@@ -25,7 +25,6 @@ import {
   actorKey,
   checkEligibility,
   checkRemote,
-  effectiveActor,
   type Isolation,
   type PaperFields,
   type RoomPaper,
@@ -156,7 +155,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     const result = await ledger.exclusive(async () => {
       const now = deps.now();
       const day = dayKey(now, cfg.budgetTimeZone);
-      const initiator = effectiveActor(ctx);
+      const initiator = actingIdentity(ctx);
       const user = actorKey(initiator);
       const reserve = reserveFor(ledger.data, paper.paperId, cfg.reserveDefaultCents);
       const budget = canStart(
@@ -321,7 +320,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
     const ours = (task: TaskRecord | undefined) =>
       task !== undefined && task.paperId === entered.paper.paperId && task.room === ctx.sessionId;
     if (!ours(Object.hasOwn(ledger.data.tasks, taskId) ? ledger.data.tasks[taskId] : undefined)) return fail(missing);
-    const user = actorKey(effectiveActor(ctx));
+    const user = actorKey(actingIdentity(ctx));
     const result = await deps.cancel(taskId, 'tool', task => {
       if (!ours(task)) return missing;
       return actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务';

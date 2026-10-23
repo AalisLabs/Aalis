@@ -18,6 +18,7 @@ import { registerFromDoc } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 启用的技能是技能插件自己的按会话字段 enabledSkills：作者默认 ['*']（全部技能），空列表一个都不启用，能按平台档、平台类型档、
@@ -79,7 +80,7 @@ async function setup(enabledSkills?: string[], options: { settings?: boolean } =
   const call = async (name: string, args: Record<string, unknown>, sessionId: string, platform: string) => {
     const handler = handlers.get(name);
     if (!handler) throw new Error(`${name} 没有登记`);
-    return JSON.parse(String(await handler(args, { sessionId, platform })));
+    return JSON.parse(String(await handler(args, toolContext({ sessionId, platform }))));
   };
   /** 这个会话里 list_skills 列出的技能名 */
   const listed = async (sessionId: string, platform: string) =>

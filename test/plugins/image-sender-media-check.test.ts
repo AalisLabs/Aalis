@@ -20,6 +20,7 @@ import {
 import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 发送存储库内的文件前按文件头核对格式。
@@ -141,8 +142,8 @@ type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Prom
 /** owner 在 WebUI 的会话（受众只有 owner）与一个群（预置收录过的房间） */
 const OWNER_SESSION = 'webui-owner-1';
 const ROOM = 'onebot:x:group:1';
-const OWNER_CALL: ToolCallContext = { sessionId: OWNER_SESSION, platform: 'webui', userId: 'console' };
-const ROOM_CALL: ToolCallContext = { sessionId: ROOM, platform: 'onebot', userId: '90002' };
+const OWNER_CALL = toolContext({ sessionId: OWNER_SESSION, platform: 'webui', userId: 'console' });
+const ROOM_CALL = toolContext({ sessionId: ROOM, platform: 'onebot', userId: '90002' });
 
 /**
  * 起一个 App：宿主侧 tools 替身收集 handler，memory 替身按会话交出给定历史，会话表里有 OWNER_SESSION 与 ROOM，

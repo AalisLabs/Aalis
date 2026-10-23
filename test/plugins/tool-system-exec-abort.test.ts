@@ -9,6 +9,7 @@ import { LocalProcessService } from '../../packages/plugin-process-local/src/ind
 import { registerShellTools } from '../../packages/plugin-tool-system/src/tools/shell.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // exec 声明可转后台，只认执行器给这次调用的中止信号（前台时随回合中止，转后台之后随停止、撤回与停用中止），不另设超时。
@@ -108,7 +109,7 @@ function recordingProcess(): ProcessService {
 }
 
 async function call(handler: Handler, args: Record<string, unknown>, signal?: AbortSignal) {
-  const out = await handler(args, { sessionId: SESSION, signal });
+  const out = await handler(args, toolContext({ sessionId: SESSION, signal }));
   return JSON.parse(typeof out === 'string' ? out : out.content) as Record<string, unknown>;
 }
 

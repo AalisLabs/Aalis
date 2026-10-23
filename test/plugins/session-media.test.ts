@@ -29,6 +29,7 @@ import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话媒体的目录约定（api-media 的 session-media）：写入方各用自己的子目录 `data:/<种类目录>/<会话目录>/<写入方>/`，
@@ -338,9 +339,9 @@ describe('绘图：会话 id 为空', () => {
     });
     const out = await registered.draw_image.handler(
       { source: '<svg viewBox="0 0 2 2" xmlns="http://www.w3.org/2000/svg"/>' },
-      {
+      toolContext({
         sessionId: '',
-      },
+      }),
     );
     expect(JSON.parse(typeof out === 'string' ? out : out.content)).toHaveProperty('error');
     expect(written).toEqual([]);

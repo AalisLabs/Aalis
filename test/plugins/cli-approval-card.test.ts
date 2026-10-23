@@ -134,6 +134,8 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
         tool: 'exec',
         args: { command: 'ls' },
         rule: 'tool:exec 声明需确认',
+        canAnswer: who => owner(who.platform, who.userId),
+        ownerOnly: true,
         ...over,
       },
       signal,
@@ -329,7 +331,7 @@ describe('模态应答', () => {
     const [, decision] = await s.audit(2);
     expect(decision).toMatchObject({
       state: 'approved',
-      source: 'owner',
+      source: 'answer',
       responder: CONSOLE,
       surface: { name: 'cli', plugin: '@aalis/plugin-cli' },
     });
@@ -337,7 +339,7 @@ describe('模态应答', () => {
 
   it.each([
     ['Ctrl+Y 批准', 'y', { approved: true }],
-    ['Ctrl+N 拒绝', 'n', { approved: false, source: 'owner' }],
+    ['Ctrl+N 拒绝', 'n', { approved: false, source: 'answer' }],
   ])('专用快捷键：%s', async (_case, key, outcome) => {
     const s = await setup();
     await s.type('a');
@@ -368,7 +370,7 @@ describe('模态应答', () => {
     expect(s.frame()).not.toContain('You aby');
   });
 
-  it('应答被拒（卡片推出之后权限服务不再认终端身份是 owner）：卡片关掉，写明原因，审批照旧等别的面', async () => {
+  it('应答被拒（卡片推出之后终端身份不再能批这一张）：卡片关掉，写明原因，审批照旧等别的面', async () => {
     let terminalIsOwner = true;
     const s = await setup({ owner: (p, u) => (p === 'webui' || (p === 'cli' && terminalIsOwner)) && u === 'console' });
     s.webuiPresent();
@@ -381,7 +383,7 @@ describe('模态应答', () => {
     terminalIsOwner = false;
     await s.press('y', { ctrl: true });
     expect(s.frame()).not.toContain('需要批准');
-    expect(s.frame()).toContain('审批 exec：应答没有生效：应答人不是 owner');
+    expect(s.frame()).toContain('审批 exec：应答没有生效：应答人不能批这一张');
     expect(r.outcome).toBeUndefined();
     expect(s.pending()).toHaveLength(1);
   });

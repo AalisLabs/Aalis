@@ -100,3 +100,9 @@ export function compactNumber(n: number): string {
 
 /** 比例写成百分数，取整 */
 export const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
+
+/** 说话人：owner 写「你」，房间成员写昵称，没有昵称写账号 */
+export function speakerName(speaker: { platform: string; userId?: string; nickname?: string; owner: boolean }): string {
+  if (speaker.owner) return tr('speakerYou');
+  return speaker.nickname || speaker.userId || speaker.platform;
+}

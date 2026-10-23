@@ -11,6 +11,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { isTextRef, resolveText } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // /maimai 的帮助由指令系统生成：裸敲 /maimai 回的就是 /help maimai，查询目标与条数是带说明的位置参数，
@@ -217,7 +218,7 @@ describe('/maimai 与工具共用处理函数：指令交出文字对象，工�
     const registry = host.commands.use as unknown as CommandRegistry;
     return {
       tool: async (name: string, args: Record<string, unknown>) =>
-        (await host.tools.use.execute(name, args, session)).content,
+        (await host.tools.use.execute(name, args, toolRequest(session))).content,
       command: async (name: string, args: string[], languages: string[]) => {
         const reply = await registry.run(name, { ...session, args, raw: `/${name} ${args.join(' ')}` });
         return isTextRef(reply) && resolveText(reply, languages);

@@ -103,11 +103,11 @@ await entry?.use.chat({ messages });
 | `api-storage` | — | `storage` | — | `StorageService`；业务层 `BoundStorage` 恒定义 `resolveLocalPath` / `readFileRange` / `watch`，另带本插件私有目录的视图 `own`；导出 URI 文法 helper（`isStorageUri` / `toStorageUri` / `resolveAgainstCwd` 等） |
 | `api-embedding` | — | `embedding` | — | `EmbeddingService` |
 | `api-vectorstore` | — | `vectorstore` | — | `VectorStoreService` |
-| `api-tools` | — | `tools` | — | `ToolService`；工具定义的展示种类 `ToolDisplay`；业务层带 `register` / `registerGroup`，另导出 `withToolGroups` |
+| `api-tools` | — | `tools` | — | `ToolService`；工具调用上下文 `ToolCallContext`（这一轮的参与者与取用判定 `approveFor`）、调用方交的 `ToolCallRequest`、要记一个人时的 `actingIdentity`；工具定义的展示种类 `ToolDisplay`；业务层带 `register` / `registerGroup`，另导出 `withToolGroups` |
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:command` / `inbound:trigger` / `inbound:flow` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`、`PageDefinition`、`Notice`、管理面事件、管理面 REST 的路由表与请求和回应类型、主题格式等；业务层带 `definePage` / `notify`；向 `PluginMeta` 注入 `extends` |
-| `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf` 与主体的 `principalOf`）, `ExecutionGuard`, `ExecutionGuardContext`, `InboundTurn`, `OriginTurn`, 拼一轮的 `originTurnOf`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
+| `api-authority` | — | `authority` | — | `AuthorityService`（含按回合定发起类别的 `originOf` 与主体的 `principalOf`）, `ExecutionGuard`（回 `Verdict`）, `ExecutionGuardContext`（带这一轮的参与者）, `InboundTurn`, `OriginTurn`, 拼一轮的 `originTurnOf`, `sameParticipant`, `Verdict`, `CapabilityVisibility` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn` |
 | `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |
 | `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |

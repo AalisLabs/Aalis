@@ -23,6 +23,7 @@ import {
   stopPaperHubs,
 } from '../fixtures/paper.js';
 import { ScriptedRemote } from '../fixtures/paper-remote.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 const mock = vi.hoisted(() => ({
   debounceMs: undefined as number | undefined,
@@ -426,7 +427,7 @@ describe('用户从白纸提名到作品站上线与撤下', () => {
     await hub.app.plugins.disable('@aalis/plugin-paper');
     expect(hub.tools.has('works_takedown')).toBe(false);
     if (!oldTakedown) throw new Error('撤下工具未登记');
-    const stale = await oldTakedown.handler({ work: workId }, human());
+    const stale = await oldTakedown.handler({ work: workId }, toolContext(human()));
     expect(JSON.parse(typeof stale === 'string' ? stale : stale.content)).toMatchObject({ ok: false });
   });
 });

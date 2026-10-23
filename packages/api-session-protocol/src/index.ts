@@ -444,13 +444,14 @@ const ApprovalStateSchema = z.enum(['pending', 'approved', 'denied', 'expired', 
 const SettledStateSchema = ApprovalStateSchema.exclude(['pending']);
 
 /**
- * 审批的结算，与 @aalis/api-approval 的 ApprovalSettlement 同形：结局、从哪里来（owner 应答、没人在场、超时、发起者不能产生审批、
- * 子任务、频率上限、回合结束、服务停止）与结算的时刻
+ * 审批的结算，与 @aalis/api-approval 的 ApprovalSettlement 对应：结局、从哪里来（有人应答、没人在场、超时、发起者不能产生审批、
+ * 子任务、频率上限、回合结束、服务停止）、结算的时刻，有人应答的带上应答人（说话人的写法，客户端据 owner 判是不是 owner 批的）
  */
 export const ApprovalSettlementSchema = z.object({
   state: SettledStateSchema,
-  source: z.enum(['owner', 'absent', 'timeout', 'ineligible', 'subtask', 'rate-limit', 'turn-ended', 'shutdown']),
+  source: z.enum(['answer', 'absent', 'timeout', 'ineligible', 'subtask', 'rate-limit', 'turn-ended', 'shutdown']),
   at: z.number(),
+  by: SpeakerSchema.optional(),
 });
 
 /**

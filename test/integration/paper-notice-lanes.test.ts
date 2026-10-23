@@ -36,6 +36,7 @@ import type { IncomingMessage, Message, OutgoingMessage } from '../../packages/s
 import { registerHubs } from '../fixtures/hubs.js';
 import { LEDGER_URI, memoryStorage, type PaperFiles, sessionInfoOf } from '../fixtures/paper.js';
 import { PNG, ScriptedRemote } from '../fixtures/paper-remote.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸完成通知进入真实的 agent（U10c 集成）：真实 plugin-gateway、plugin-agent、plugin-tools、
@@ -230,7 +231,7 @@ async function boot(
       const res = await host.tools.use.execute(
         'paper_task',
         { text: `${name}的原文`, name, publish: false },
-        { sessionId: ROOM, platform: 'onebot', userId: '30001', inbound: {}, enabledGroups: ['paper'] },
+        toolRequest({ sessionId: ROOM, platform: 'onebot', userId: '30001', inbound: {}, enabledGroups: ['paper'] }),
       );
       const parsed = JSON.parse(res.content) as { ok: boolean; taskId?: string; error?: string };
       if (!parsed.ok) throw new Error(`paper_task 未受理：${parsed.error}`);

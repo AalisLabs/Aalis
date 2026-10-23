@@ -112,7 +112,7 @@ interface CommandService {
 
 `execute` 的回复按 `ctx` 的 `{ sessionId, platform }`（plugin-i18n 的会话设置 `language`；owner 会话与它的子会话按全局层）的语言渲染成字符串交出。
 
-`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的指令退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。
+`setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的指令退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。守卫上下文的参与者只有发出者（`ExecutionInput` 的 `platform` 与 `userId`，没有账号的是无主体），守卫拦截时回 `{ ok: false, reason }`，原因作为回复交给发出者。
 
 `unregister` 的 `contextId`：**插件自己的清理必须传它**（绑定门面的退订已代传）；缺省会摘掉全部层（管理面用）。注销键是点路径（inline DSL 在注册时被切掉），传 `'memory.clear <key:string>'` 会键不匹配、静默 no-op。
 

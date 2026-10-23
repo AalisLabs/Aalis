@@ -499,7 +499,12 @@ const items: SessionItem[] = [
     durationMs: 12,
     display: { kind: 'command', command: 'ls', cwd: 'workspace:/', exitCode: 0 },
     approvalId: 'ap-1',
-    settlement: { state: 'approved', source: 'owner', at: 5 },
+    settlement: {
+      state: 'approved',
+      source: 'answer',
+      at: 5,
+      by: { platform: 'onebot', userId: '30001', owner: false },
+    },
   },
   {
     kind: 'tool-call',
@@ -652,8 +657,9 @@ const notificationSamples: NotificationSamples = {
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 /** 协议里的审批对象与 api-approval 的 Approval 是同一个形状（类型检查守） */
 const approvalInSync: Same<ReturnType<(typeof ApprovalSchema)['parse']>, Approval> = true;
-/** 结算推送与工具卡上的结算与 api-approval 的 ApprovalSettlement 同形（类型检查守） */
-const settledInSync: Same<ReturnType<(typeof ApprovalSettlementSchema)['parse']>, ApprovalSettlement> = true;
+/** 结算推送与工具卡上的结算与 api-approval 的 ApprovalSettlement 对应：应答人写成说话人（带 owner），其余同形（类型检查守） */
+type ProtocolSettlement = ReturnType<(typeof ApprovalSettlementSchema)['parse']>;
+const settledInSync: Same<Omit<ProtocolSettlement, 'by'>, Omit<ApprovalSettlement, 'by'>> = true;
 type ProtocolTask = ReturnType<(typeof BackgroundTaskSchema)['parse']>;
 /** 后台任务的种类与状态取 api-tools 登记表的同一组值（类型检查守） */
 const taskKindInSync: Same<ProtocolTask['kind'], RegisteredTask['kind']> = true;

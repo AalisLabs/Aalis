@@ -25,6 +25,7 @@ import {
 } from '../fixtures/paper.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { fieldsPlugin, ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的资格判定（U10a）：paper_task 只受理真人在房间会话本身里当面发起的任务，房间要开了白纸、
@@ -65,7 +66,7 @@ describe('发起者：真人、房间会话本身、入站回合', () => {
 
   it('安全：ctx.inbound 缺省（workflow 节点、mcp-server 自造的上下文）被拒', async () => {
     const hub = await startPaperHub();
-    await expectRefused(hub, /消息驱动/, { sessionId: ROOM, platform: 'onebot', userId: '30001' });
+    await expectRefused(hub, /消息驱动/, toolContext({ sessionId: ROOM, platform: 'onebot', userId: '30001' }));
   });
 
   it.each([
@@ -77,19 +78,36 @@ describe('发起者：真人、房间会话本身、入站回合', () => {
     await expectRefused(hub, /真人/, {
       sessionId: ROOM,
       platform: 'onebot',
-      actor: { platform: 'onebot', userId: '30001' },
+      participants: [{ platform: 'onebot', userId: '30001' }],
       inbound: { source },
     });
   });
 
-  it('安全：actor 为 selfInitiatedActor（没有人的注入）被拒', async () => {
+  it('安全：参与者为 selfInitiatedActor（没有人的注入）被拒', async () => {
     const hub = await startPaperHub();
     await expectRefused(hub, /发起人/, {
       sessionId: ROOM,
       platform: 'onebot',
-      actor: selfInitiatedActor('onebot'),
+      participants: [selfInitiatedActor('onebot')],
       inbound: {},
     });
+  });
+
+  it('几个人都能做、没经审批的一轮：没有单一的发起人，被拒', async () => {
+    const hub = await startPaperHub();
+    await expectRefused(
+      hub,
+      /^这一轮没有单一的发起人，不能交任务或取消任务$/,
+      toolContext({
+        sessionId: ROOM,
+        platform: 'onebot',
+        participants: [
+          { platform: 'onebot', userId: '30001' },
+          { platform: 'onebot', userId: '30002' },
+        ],
+        inbound: {},
+      }),
+    );
   });
 });
 
@@ -435,7 +453,7 @@ describe('取不到账号标识的原因（真实的 Cursor 提供者对本机�
 });
 
 describe('paper_cancel 的资格同 paper_task', () => {
-  it('安全：scheduler 回合（actor 为创建者）取消创建者的任务被拒；创建者本人当面取消可以', async () => {
+  it('安全：scheduler 回合（参与者为创建者）取消创建者的任务被拒；创建者本人当面取消可以', async () => {
     const hub = await startPaperHub({ config: { ...PILOT_CONFIG } });
     const accepted = await hub.call('paper_task', TASK, human('30001'));
     expect(accepted.ok).toBe(true);
@@ -447,7 +465,7 @@ describe('paper_cancel 的资格同 paper_task', () => {
       {
         sessionId: ROOM,
         platform: 'onebot',
-        actor: { platform: 'onebot', userId: '30001' },
+        participants: [{ platform: 'onebot', userId: '30001' }],
         inbound: { source: 'scheduler' },
       },
     );

@@ -1323,12 +1323,11 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
         })) as Record<string, unknown> | null;
         // 取到的消息按所在的窗口拼出会话 id 过规则：拼不出（她自己发的私聊消息、实现端不给字段）的按判不出拒绝
         const target = sessionOfMessage(selfId, data);
-        const { userId } = callCtx;
-        const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
+        // 逐个参与者过会话管理的规则：有人过不了（某个参与者自己私聊里的）时发一道参与者审批，由过得了的人批
         const verdict =
           target === undefined
             ? { ok: false as const, reason: TAKE_UNKNOWN }
-            : takeFrom(sessionManager, callCtx.sessionId, target, principal);
+            : await callCtx.approveFor(who => takeFrom(sessionManager, callCtx.sessionId, target, who));
         return verdict.ok ? JSON.stringify(data) : toSource(verdict.reason);
       } catch (err) {
         return `获取消息失败：${err instanceof Error ? err.message : String(err)}。该消息可能已过期或不在当前 OneBot 实现的作用域内。`;

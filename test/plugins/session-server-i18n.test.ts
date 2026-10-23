@@ -358,6 +358,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
       () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
       { ...silent, warn },
       { present: true, use: flaky },
+      () => false,
     );
     const conns = await Promise.all(
       [0, 1].map(async () => {
@@ -469,6 +470,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
       () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
       silent,
       app.bind({ i18n }).i18n,
+      () => false,
     );
     const c = client({ connect: server.connect, resolveFile: () => undefined });
     await c.init();
@@ -490,6 +492,8 @@ describe('会话协议按全局默认层的语言渲染', () => {
       tool: 'exec',
       args: { x: FORGED },
       rule: 'test',
+      canAnswer: () => true,
+      ownerOnly: true,
     });
     const late = await connect();
     let snapshot: Awaited<ReturnType<Client['subscribe']>>['snapshot'] | undefined;

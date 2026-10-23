@@ -3,6 +3,7 @@ import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { safeEval } from '../../packages/plugin-tool-math/src/lib/expression.js';
 import { registerNumberTheoryTools } from '../../packages/plugin-tool-math/src/tools/number-theory.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // math_eval comb/perm 迭代上界：防不受信任访客传超大 n/k 阻塞事件循环。
@@ -34,7 +35,7 @@ describe('math_number_theory 沿用共享数论函数的规整与校验', () => 
       }),
     );
     if (!tool) throw new Error('math_number_theory 未注册');
-    return JSON.parse((await tool.handler(args, { sessionId: 's', enabledGroups: undefined })) as string);
+    return JSON.parse((await tool.handler(args, toolContext({ sessionId: 's', enabledGroups: undefined }))) as string);
   }
 
   it('非整数与负数照常规整；阶乘越界给出共享实现的报错', async () => {

@@ -2,6 +2,7 @@ import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 守卫（authority 的人工确认）可能等很久：期间回合被 latest-wins / 手动 abort 掐掉后，
@@ -39,10 +40,10 @@ describe('工具执行与回合中止信号', () => {
       tools.setExecutionGuard(async g => {
         seenSignal = g.signal; // 守卫拿得到信号（等 owner 审批时据它撤销）
         await gate;
-        return null; // 放行（相当于审批迟到了）
+        return { ok: true }; // 放行（相当于审批迟到了）
       });
       const ac = new AbortController();
-      const pending = tools.execute('probe', {}, { sessionId: 's', platform: 'cli', signal: ac.signal });
+      const pending = tools.execute('probe', {}, toolRequest({ sessionId: 's', platform: 'cli', signal: ac.signal }));
       await new Promise(r => setTimeout(r, 0));
       ac.abort();
       release();
@@ -58,9 +59,13 @@ describe('工具执行与回合中止信号', () => {
   it('未中止：守卫放行后照常执行', async () => {
     const { app, tools, executed } = await setup();
     try {
-      tools.setExecutionGuard(async () => null);
+      tools.setExecutionGuard(async () => ({ ok: true }));
       const ac = new AbortController();
-      const result = await tools.execute('probe', {}, { sessionId: 's', platform: 'cli', signal: ac.signal });
+      const result = await tools.execute(
+        'probe',
+        {},
+        toolRequest({ sessionId: 's', platform: 'cli', signal: ac.signal }),
+      );
       expect(result.content).toBe('done');
       expect(executed()).toBe(1);
     } finally {

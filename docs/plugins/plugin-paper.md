@@ -145,7 +145,7 @@ plugins:
 
 资格：
 
-- **发起**（`paper_task`、`paper_cancel`）：只受理真人在房间会话本身里当面发起的回合。子会话被拒；工具调用上下文没有 `inbound`（workflow 节点、mcp-server 等）被拒；`inbound.source` 非空（定时任务、闲置触发、宿主通知等内部注入）被拒；有效授权身份的 `userId` 为空（没有人的注入）被拒。群里没点名、被频率触发挑中的话有发起人（说话的人），能交任务。
+- **发起**（`paper_task`、`paper_cancel`）：只受理真人在房间会话本身里当面发起的回合。子会话被拒；工具调用上下文没有 `inbound`（workflow 节点、mcp-server 等）被拒；`inbound.source` 非空（定时任务、闲置触发、宿主通知等内部注入）被拒；没有单一的发起人（api-tools 的 `actingIdentity` 的 `userId` 为空：没有人的注入，或几个人都能做、没经审批的一轮）被拒，回「这一轮没有单一的发起人，不能交任务或取消任务」。群里没点名、被频率触发挑中的话有发起人（说话的人），能交任务。发起人与按人的额度取 `actingIdentity`。
 - **使用**（`paper_status`、`paper_send`）：只要求房间会话本身与入站回合，完成通知的回合里也能用。
 
 ### 受理

@@ -9,7 +9,7 @@
 // 的取值与字段的默认值）不渲染：那里形如文字对象的值可能是伪造的，取值也要原样读回再写。
 // ════════════════════════════════════════════════════════════
 
-import type { ApprovalAttendance } from '@aalis/api-approval';
+import type { ApprovalAttendance, ApprovalSettlement } from '@aalis/api-approval';
 import { type I18nService, localizeFor } from '@aalis/api-i18n';
 import {
   type ErrorCode,
@@ -27,6 +27,7 @@ import {
 } from '@aalis/api-session-protocol';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { type LocalizeSkip, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import type { IsOwner } from './history.js';
 
 /**
  * 处理函数抛出它，连接层把它写成错误帧；数值码见 RPC_ERROR_CODES，业务错误另带 reason（error.data.code）。
@@ -40,6 +41,14 @@ export class ProtocolError extends Error {
   ) {
     super(toSource(text));
   }
+}
+
+/** 会话协议里的结算（工具卡与 approval/settled）：应答人写成说话人，客户端据 owner 判是不是 owner 批的 */
+export function settlementItem(
+  { by, ...settlement }: ApprovalSettlement,
+  isOwner: IsOwner,
+): Omit<SessionNotificationParams<'approval/settled'>, 'approvalId'> {
+  return by ? { ...settlement, by: { ...by, owner: isOwner(by.platform, by.userId) } } : settlement;
 }
 
 /** 业务错误 */
@@ -127,6 +136,7 @@ export function createSessionServer(
   state: ServerState,
   logger: Logger,
   i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
+  isOwner: IsOwner,
 ) {
   const connections = new Set<LiveConnection>();
   let warned = false;
@@ -153,7 +163,10 @@ export function createSessionServer(
         conn.send({ method: 'approval/requested', params });
       },
       settled: (approvalId, settlement) => {
-        const params: SessionNotificationParams<'approval/settled'> = { approvalId, ...settlement };
+        const params: SessionNotificationParams<'approval/settled'> = {
+          approvalId,
+          ...settlementItem(settlement, isOwner),
+        };
         conn.send({ method: 'approval/settled', params });
       },
     });

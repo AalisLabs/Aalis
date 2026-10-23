@@ -15,7 +15,7 @@ export default defineLocale<Source>()({
   notAccepted: 'Not sent: the platform did not accept it ({error})',
   noAdapter: 'Not sent: no platform adapter took this message',
   sendFailed: 'Not sent: sending failed ({error})',
-  responderNotOwner: 'The responder is not the owner',
+  responderCannotAnswer: 'The responder cannot answer this approval',
   approvalSettled: 'This approval has already been settled',
   noSuchApproval: 'No such approval: {id}',
   contentHashMismatch: 'The content hash does not match',

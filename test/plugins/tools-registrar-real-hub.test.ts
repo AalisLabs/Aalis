@@ -3,6 +3,7 @@ import { type ProcessService, processService } from '../../packages/api-process/
 import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
 import { type App, createApp, definePlugin, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -33,7 +34,7 @@ function toolDef(name: string) {
 }
 
 async function execTool(reg: ToolRegistry, name: string) {
-  return (await reg.execute(name, {}, { sessionId: 's', platform: 'test' })).content;
+  return (await reg.execute(name, {}, toolRequest({ sessionId: 's', platform: 'test' }))).content;
 }
 
 describe('registrar 接真实 tools 枢纽', () => {
@@ -157,7 +158,9 @@ describe('registrar 接真实 tools 枢纽', () => {
     };
     bound.register({ definition, handler: async () => 'outer' });
     await app.plugins.unload('tool-consumer');
-    expect((await provider.execute('same', {}, { sessionId: 'test', platform: 'test' })).content).toContain('未找到');
+    expect(
+      (await provider.execute('same', {}, toolRequest({ sessionId: 'test', platform: 'test' }))).content,
+    ).toContain('未找到');
   });
 
   it('真实注册型能力 tools 与真实调用型服务 process 走同一声明', async () => {
@@ -189,7 +192,7 @@ describe('registrar 接真实 tools 枢纽', () => {
     );
     await app.plugins.idle();
     expect(registry.getAll().map(t => t.name)).toEqual(['run']);
-    await registry.execute('run', {}, { sessionId: 's', platform: 't' });
+    await registry.execute('run', {}, toolRequest({ sessionId: 's', platform: 't' }));
     expect(out).toBe('v1');
     await app.plugins.unload('runner');
     expect(registry.getAll()).toEqual([]);

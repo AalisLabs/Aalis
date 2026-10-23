@@ -5,7 +5,7 @@
 // 副作用引入：激活 api-agent 对 @aalis/api-hooks 的 HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { Hooks } from '@aalis/api-hooks';
-import type { ToolCallContext, ToolService } from '@aalis/api-tools';
+import { actingIdentity, type ToolCallRequest, type ToolService } from '@aalis/api-tools';
 import type {
   AgentNodeSpec,
   NodeRunInfo,
@@ -153,7 +153,7 @@ interface ExecCtx extends EngineCaps {
   runId: string;
   vars: Record<string, unknown>;
   outputs: Record<string, unknown>;
-  toolCallContext: ToolCallContext;
+  toolCallContext: ToolCallRequest;
   signal: AbortSignal;
 }
 
@@ -175,9 +175,10 @@ async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<
     platform,
     source: `workflow:${ec.workflowId}`,
   };
-  // 授权身份透传：与 tool 节点同源（run 级的运行身份，见 index.ts 的 execute），目标会话按它的等级执行；
-  // 匿名的不带。
-  if (ec.toolCallContext.actor) message.actor = ec.toolCallContext.actor;
+  // 授权身份透传：与 tool 节点同源（run 级的运行身份，即工具调用上下文的唯一参与者，见 index.ts 的 execute），目标会话按它的
+  // 等级执行；匿名的不带。
+  const runner = actingIdentity(ec.toolCallContext);
+  if (runner.userId) message.actor = runner;
   await ec.events.emit('inbound:message', message);
   return `sent to ${sessionId}@${platform} (${content.length} chars)`;
 }
@@ -248,7 +249,8 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   };
   // 授权身份透传：同一次 run 里 tool 节点带运行身份而 agent 节点匿名是自相矛盾
   // （2026-08-24 审计），与 execSendMessage 同源补齐；匿名的不带。
-  if (ec.toolCallContext.actor) incoming.actor = ec.toolCallContext.actor;
+  const runner = actingIdentity(ec.toolCallContext);
+  if (runner.userId) incoming.actor = runner;
 
   const stopWaiting = () => resolveWait?.();
   const timeoutHandle = setTimeout(stopWaiting, timeoutMs);
@@ -301,7 +303,7 @@ interface RunOptions extends EngineCaps {
   def: WorkflowDef;
   runId: string;
   vars: Record<string, unknown>;
-  toolCallContext: ToolCallContext;
+  toolCallContext: ToolCallRequest;
   /**
    * 取消信号：中止后不再调度新节点，阻塞中的 wait / agent 节点立即失败；tool 节点经 toolCallContext.signal 收到，
    * 是否提前返回由工具决定

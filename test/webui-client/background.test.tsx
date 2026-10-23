@@ -591,7 +591,12 @@ describe('时间线里转了后台的工具卡', () => {
   });
 
   it('状态区放不下时句末省略，悬停提示是此刻的全文：结算句接后台任务的状态（在跑的耗时跟着走），没有结算句的只有任务的状态', async () => {
-    const settlement = { state: 'approved' as const, source: 'owner' as const, at: AT };
+    const settlement = {
+      state: 'approved' as const,
+      source: 'answer' as const,
+      at: AT,
+      by: { platform: 'webui', userId: 'console', owner: true },
+    };
     const items = [
       toolCall('call-t-dev', 'exec', { taskId: 't-dev', display: command, approvalId: 'ap1', settlement }),
       toolCall('call-t-make', 'exec', { taskId: 't-make', display: { kind: 'command', command: 'make' } }),

@@ -6,6 +6,7 @@ import {
   type BackgroundTaskChange,
   type RegisteredTool,
   type ToolCallContext,
+  type ToolCallRequest,
   type ToolExecutionResult,
   type ToolOutputMessage,
 } from '../../packages/api-tools/src/index.js';
@@ -15,6 +16,7 @@ import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { ownView } from '../fixtures/own-storage.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 工具执行器一层的转后台（plugin-tools）：声明了 background 的工具多两项参数（runInBackground、waitSeconds），
@@ -61,6 +63,7 @@ function slowTool(runs: Run[], name: string, spec: Spec = {}): Omit<RegisteredTo
 interface WorldOptions {
   maxWaitSeconds?: number;
   maxPerSession?: number;
+  /** 守卫：回原因即拒绝，回 null 放行 */
   guard?: (ctx: ExecutionGuardContext) => Promise<string | null>;
 }
 
@@ -88,7 +91,8 @@ function world(opts: WorldOptions = {}) {
   const guarded: ExecutionGuardContext[] = [];
   registry.setExecutionGuard(async ctx => {
     guarded.push(ctx);
-    return (await opts.guard?.(ctx)) ?? null;
+    const reason = await opts.guard?.(ctx);
+    return reason ? { ok: false, reason } : { ok: true };
   });
   const runs: Run[] = [];
   const of = <T>(event: string) => emitted.filter(e => e.event === event).map(e => e.payload as T);
@@ -118,10 +122,10 @@ function world(opts: WorldOptions = {}) {
 
 let seq = 0;
 /** agent 回合里的调用：owner 的 WebUI 会话，带回合的中止信号 */
-function turn(over: Partial<ToolCallContext> = {}) {
+function turn(over: Partial<ToolCallRequest> = {}) {
   const controller = new AbortController();
   seq++;
-  const ctx: ToolCallContext = {
+  const ctx = toolRequest({
     sessionId: SESSION,
     platform: 'webui',
     userId: 'console',
@@ -132,7 +136,7 @@ function turn(over: Partial<ToolCallContext> = {}) {
     turnId: `zz-turn-${seq}`,
     callId: `zz-call-${seq}`,
     ...over,
-  };
+  });
   return { ctx, abort: () => controller.abort() };
 }
 
@@ -390,7 +394,7 @@ describe('上限', () => {
   it('不在对话回合里的调用不占名额，也不受上限挡：它们不会转后台', async () => {
     const w = world({ maxPerSession: 1 });
     w.slow();
-    const outside: ToolCallContext = { sessionId: SESSION, platform: 'mcp', userId: 'zz-client' };
+    const outside = toolRequest({ sessionId: SESSION, platform: 'mcp', userId: 'zz-client' });
     void w.registry.execute('zz_slow', {}, outside);
     void w.registry.execute('zz_slow', {}, outside);
     await flush();
@@ -405,7 +409,7 @@ describe('上限', () => {
 });
 
 describe('不在对话回合里的调用（不在入站回合里，或没有 turnId、callId）', () => {
-  const outside: ToolCallContext = { sessionId: 'zz-mcp', platform: 'mcp', userId: 'zz-client' };
+  const outside = toolRequest({ sessionId: 'zz-mcp', platform: 'mcp', userId: 'zz-client' });
 
   it('runInBackground 直接回错，不执行', async () => {
     const w = world();
@@ -456,7 +460,7 @@ describe('输出口', () => {
     w.runs[0].ctx.output?.('zz-slow-out');
     w.runs[0].finish();
     await pending;
-    await w.registry.execute('zz_plain', {}, { sessionId: 'zz-mcp', platform: 'mcp' });
+    await w.registry.execute('zz_plain', {}, toolRequest({ sessionId: 'zz-mcp', platform: 'mcp' }));
     expect(w.outputs()).toEqual([
       { sessionId: SESSION, turnId: t.ctx.turnId, callId: t.ctx.callId, text: 'zz-plain-out' },
       { sessionId: SESSION, turnId: slow.ctx.turnId, callId: slow.ctx.callId, text: 'zz-slow-out' },
@@ -803,20 +807,20 @@ describe('落盘', () => {
 describe('结束通知', () => {
   const owner = { platform: 'webui', userId: 'console' };
   const ownerHand = { platform: 'webui', userId: 'console', participants: [owner] };
-  const cases: Array<{ name: string; ctx: Partial<ToolCallContext>; fromTurn: FromTurn }> = [
-    { name: 'owner 的 WebUI 回合（没有 actor）', ctx: {}, fromTurn: ownerHand },
+  const cases: Array<{ name: string; ctx: Partial<ToolCallRequest>; fromTurn: FromTurn }> = [
+    { name: 'owner 的 WebUI 回合（参与者是发言者）', ctx: {}, fromTurn: ownerHand },
     {
-      name: '子任务回合（actor 为创建者，userId 为 parent:<id>）',
-      ctx: { userId: `parent:${OTHER}`, actor: owner, inbound: { source: 'subtask' } },
+      name: '子任务回合（参与者是派它的那一轮的，userId 为 parent:<id>）',
+      ctx: { userId: `parent:${OTHER}`, participants: [owner], inbound: { source: 'subtask' } },
       fromTurn: { platform: 'webui', userId: `parent:${OTHER}`, participants: [owner], source: 'subtask' },
     },
     {
-      name: '定时任务回合（actor 为创建者，没有 userId）',
-      ctx: { userId: undefined, actor: owner, inbound: { source: 'scheduler' } },
+      name: '定时任务回合（参与者是创建者，没有 userId）',
+      ctx: { userId: undefined, participants: [owner], inbound: { source: 'scheduler' } },
       fromTurn: { platform: 'webui', participants: [owner], source: 'scheduler' },
     },
     {
-      name: '群里被频率触发挑中的插话（没有 actor，授权身份是发言者）',
+      name: '群里被频率触发挑中的插话（参与者是发言者）',
       ctx: { sessionId: GROUP, platform: 'onebot', userId: '30001' },
       fromTurn: { platform: 'onebot', userId: '30001', participants: [{ platform: 'onebot', userId: '30001' }] },
     },
@@ -998,7 +1002,7 @@ describe('四个后台任务工具', () => {
 
   describe('按会话放行：本会话里谁起的都看得到、停得了，别的会话里的回「不存在」', () => {
     const starter = { sessionId: GROUP, platform: 'onebot', userId: '30001' };
-    const callers: Array<{ name: string; ctx: Partial<ToolCallContext>; sees: boolean }> = [
+    const callers: Array<{ name: string; ctx: Partial<ToolCallRequest>; sees: boolean }> = [
       { name: '同一房间的另一个人', ctx: { ...starter, userId: '30002' }, sees: true },
       { name: '没有主体的调用', ctx: { sessionId: GROUP, platform: 'onebot', userId: undefined }, sees: true },
       { name: '同一个人在别的会话', ctx: { ...starter, sessionId: OTHER }, sees: false },

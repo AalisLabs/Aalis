@@ -17,12 +17,14 @@ import { silentLogger } from '../fixtures/authority.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { emptyMediaCaps } from '../fixtures/service-ref.js';
 import { ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 发媒体、看图的工具与回复里的媒体标记接上会话管理的取用规则（真的会话管理，默认的范围与开关：同平台、读别的群、不读
 // 别人的私聊）：
 // - send_attachment 与 analyze_image 按这次调用过 api-media 的 mediaScopeOf：取用判定经契约的包装函数、带这次调用的授权
-//   身份，本机文件交给本机文件判法（主体用权限插件的 principalKind）。逐行的表跑 send_attachment，analyze_image 只核接线；
+//   身份（这里一轮只有一位参与者；几个人的一轮经 approveFor 逐个判，见 participant-take），本机文件交给本机文件判法（主体用
+//   权限插件的 principalKind）。逐行的表跑 send_attachment，analyze_image 只核接线；
 // - 她回复里存储地址的标记不带授权身份过同一份判据，受众只有 owner 的会话照旧不过判据。
 // 存储、权限与工具服务是替身。
 // ════════════════════════════════════════════════════════════
@@ -137,13 +139,8 @@ async function setup() {
 }
 
 /** 在 G1 里亲手发来的一轮的工具调用 */
-const inG1 = (who: { platform: string; userId: string }): ToolCallContext => ({
-  sessionId: G1,
-  platform: who.platform,
-  userId: who.userId,
-  inbound: {},
-  acceptsImages: true,
-});
+const inG1 = (who: { platform: string; userId: string }): ToolCallContext =>
+  toolContext({ sessionId: G1, platform: who.platform, userId: who.userId, inbound: {}, acceptsImages: true });
 
 const ROWS: Array<[label: string, ctx: ToolCallContext, target: string, allowed: boolean]> = [
   ['群成员取同平台别的群的', inG1(A), imageOf(G2), true],

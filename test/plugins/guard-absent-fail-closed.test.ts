@@ -13,6 +13,7 @@ import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { ref } from '../fixtures/service-ref.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -86,7 +87,7 @@ describe('tools：没有守卫时 fail-closed', () => {
   it('需要更高等级或需要确认的工具被拒，提示缺权限插件；handler 不执行', async () => {
     const { registry, ran } = toolRegistry();
     for (const name of Object.keys(DENIED)) {
-      const out = await registry.execute(name, {}, { sessionId: 's' });
+      const out = await registry.execute(name, {}, toolRequest({ sessionId: 's' }));
       expect(JSON.parse(out.content).error, name).toContain('@aalis/plugin-authority');
     }
     expect(ran).toEqual([]);
@@ -95,7 +96,7 @@ describe('tools：没有守卫时 fail-closed', () => {
   it('默认等级可用且无需确认的工具照常执行', async () => {
     const { registry, ran } = toolRegistry();
     for (const name of Object.keys(ALLOWED)) {
-      expect((await registry.execute(name, {}, { sessionId: 's' })).content, name).toBe('ok');
+      expect((await registry.execute(name, {}, toolRequest({ sessionId: 's' }))).content, name).toBe('ok');
     }
     expect(ran).toEqual(Object.keys(ALLOWED));
   });
@@ -105,10 +106,10 @@ describe('tools：没有守卫时 fail-closed', () => {
     const seen: ExecutionGuardContext[] = [];
     registry.setExecutionGuard(async ctx => {
       seen.push(ctx);
-      return null;
+      return { ok: true };
     });
     for (const name of Object.keys(DENIED)) {
-      expect((await registry.execute(name, {}, { sessionId: 's' })).content, name).toBe('ok');
+      expect((await registry.execute(name, {}, toolRequest({ sessionId: 's' }))).content, name).toBe('ok');
     }
     expect(ran).toEqual(Object.keys(DENIED));
     expect(seen.map(c => c.name)).toEqual(Object.keys(DENIED));
@@ -116,11 +117,37 @@ describe('tools：没有守卫时 fail-closed', () => {
 
   it('摘掉守卫后退回 fail-closed', async () => {
     const { registry, ran } = toolRegistry();
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     registry.setExecutionGuard(undefined);
-    const out = await registry.execute('restricted', {}, { sessionId: 's' });
+    const out = await registry.execute('restricted', {}, toolRequest({ sessionId: 's' }));
     expect(JSON.parse(out.content).error).toContain('@aalis/plugin-authority');
     expect(ran).toEqual([]);
+  });
+
+  it('取用判定（approveFor）在没有守卫时只按参与者都过判、不出审批，回合里的调用也一样', async () => {
+    const registry = makeToolRegistry(silent);
+    registry.register(
+      {
+        definition: {
+          type: 'function',
+          function: { name: 'take', description: 'take', parameters: { type: 'object', properties: {} } },
+        },
+        handler: async (_args, ctx) => {
+          const verdict = await ctx.approveFor(who =>
+            who.userId === 'a' ? { ok: true } : { ok: false, reason: `${who.userId} 取不到` },
+          );
+          return verdict.ok ? 'taken' : String(verdict.reason);
+        },
+      },
+      'test',
+    );
+    const inTurn = { sessionId: 's', inbound: {}, turnId: 't1', callId: 'c1' };
+    const a = { platform: 'test', userId: 'a' };
+    const b = { platform: 'test', userId: 'b' };
+    expect((await registry.execute('take', {}, toolRequest({ ...inTurn, participants: [a] }))).content).toBe('taken');
+    expect((await registry.execute('take', {}, toolRequest({ ...inTurn, participants: [a, b] }))).content).toBe(
+      'b 取不到',
+    );
   });
 });
 
@@ -155,7 +182,7 @@ describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () =
 
   it('注入守卫后由守卫裁决：放行即执行', async () => {
     const { registry, ran } = commandRegistry();
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     for (const name of Object.keys(DENIED)) {
       expect(await registry.execute(name, cmdInput), name).toBe('ok');
     }
@@ -164,7 +191,7 @@ describe('commands：没有守卫时 fail-closed（与 tools 同口径）', () =
 
   it('摘掉守卫后退回 fail-closed', async () => {
     const { registry, ran } = commandRegistry();
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     registry.setExecutionGuard(undefined);
     expect(await registry.execute('restricted', cmdInput)).toContain('@aalis/plugin-authority');
     expect(ran).toEqual([]);
@@ -194,7 +221,7 @@ describe('停用权限插件：它注入 tools 与 commands 的守卫随之摘�
     });
     host.commands.use.command('restricted', '受限', { visibility: 'restricted' }).action(async () => 'ok');
     const owner = { sessionId: 'webui:s1', platform: 'webui', userId: 'console' };
-    const callTool = async () => (await host.tools.use.execute('restricted', {}, owner)).content;
+    const callTool = async () => (await host.tools.use.execute('restricted', {}, toolRequest(owner))).content;
     const runCommand = () => host.commands.use.execute('restricted', { ...owner, args: [], raw: '' });
     expect(await callTool()).toBe('ok');
     expect(await runCommand()).toBe('ok');

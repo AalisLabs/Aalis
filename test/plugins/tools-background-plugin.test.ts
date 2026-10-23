@@ -12,6 +12,7 @@ import { type App, events, provide } from '../../packages/core/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除与 app:stopping 两个事件、
@@ -84,15 +85,19 @@ async function start(config: Record<string, unknown> = {}, opts: { storage?: Sto
   let seq = 0;
   const run = async (args: Record<string, unknown>) => {
     seq++;
-    const result: ToolExecutionResult = await host.tools.use.execute('zz_slow', args, {
-      sessionId: SESSION,
-      platform: 'webui',
-      userId: 'console',
-      enabledGroups: [],
-      inbound: {},
-      turnId: `zz-turn-${seq}`,
-      callId: `zz-call-${seq}`,
-    });
+    const result: ToolExecutionResult = await host.tools.use.execute(
+      'zz_slow',
+      args,
+      toolRequest({
+        sessionId: SESSION,
+        platform: 'webui',
+        userId: 'console',
+        enabledGroups: [],
+        inbound: {},
+        turnId: `zz-turn-${seq}`,
+        callId: `zz-call-${seq}`,
+      }),
+    );
     return JSON.parse(result.content) as Record<string, unknown>;
   };
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));

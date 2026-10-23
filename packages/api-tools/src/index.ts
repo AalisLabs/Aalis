@@ -3,7 +3,7 @@
 // 本包提供工具系统的全部"非实现"契约：
 // - LLM 函数声明协议类型（ToolDefinition / ToolFunction）
 // - 工具/分组数据结构（RegisteredTool / ToolGroupInfo / ToolSummary），可转后台的执行器参数名（takenBackgroundParams）
-// - 工具调用上下文（ToolCallContext）—— 平台/会话语义
+// - 工具调用上下文（ToolCallContext，调用方交的是 ToolCallRequest）—— 平台/会话语义与这一轮的参与者，actingIdentity
 // - 工具执行通知（ToolExecuteMessage）与执行中的流式输出（ToolOutputMessage）
 // - 工具结果的结局（toolFailed、integerIn）
 // - 服务接口（ToolService）
@@ -22,6 +22,8 @@ import type {
   CapabilityVisibility,
   ExecutionGuard,
   InboundTurn,
+  UserIdentity,
+  Verdict,
 } from '@aalis/api-authority';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -50,20 +52,19 @@ export interface ToolDefinition {
 
 export interface ToolCallContext {
   sessionId: string;
-  /** 消息物理来源的发言者标识（会话语义；授权身份见 actor） */
+  /**
+   * 物理发言者（会话语义）：这一轮各条输入的发言者相同时是他，不同时没有；续做的一轮没有发言者时取起它的那一轮的（工具眼里
+   * 是起它的人在调）。授权身份见 participants
+   */
   userId?: string;
-  /** 会话所属平台（路由/分流语义；授权身份见 actor） */
+  /** 会话所属平台（路由/分流语义；授权身份见 participants） */
   platform?: string;
   /**
-   * 授权身份（与 platform/userId 解耦，语义同 schema-message 的 IncomingMessage.actor）：
-   * scheduler/workflow/subtask 等触发器代人执行时，authority 按 actor 的
-   * (platform, userId) 实时查等级；platform/userId 保持**会话**语义不被覆盖——
-   * 否则 actor 与会话不在同一平台时（如以 webui 身份发往 QQ 群的定时任务、WebUI 会话里
-   * 经 workflow_run 调起、节点投向 onebot 会话的 workflow）会把定时任务归属、平台档继承、
-   * 记忆平台域全部路由到发起者平台。
-   * 缺省 = 授权身份就是 (platform, userId) 本身。
+   * 这一轮的参与者（授权身份，与 platform/userId 解耦）：agent 按 api-authority 的 originTurnOf 算，权限守卫对每个参与者各
+   * 裁决一次。不在入站回合里的调用方填它自己的身份（编排的运行身份、mcp-server 的客户端），没有身份的填一个无主体
+   * （账号为空串）。经审批放行的调用，交给处理函数的上下文里参与者换成批的人。要记一个人的取 {@link actingIdentity}
    */
-  actor?: { platform: string; userId: string };
+  participants: readonly UserIdentity[];
   /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
   enabledGroups?: string[];
   /**
@@ -72,7 +73,7 @@ export interface ToolCallContext {
    */
   acceptsImages?: boolean;
   /**
-   * 中止信号。调用方传回合的（agent 工具循环传入）：守卫等 owner 审批期间回合被中止（latest-wins / 手动 abort）时，
+   * 中止信号。调用方传回合的（agent 工具循环传入）：守卫等审批期间回合被中止（latest-wins / 手动 abort）时，
    * 审批撤销、工具服务据此放弃执行。缺省 = 不可中止。
    * 可转后台的工具（{@link RegisteredTool.background}）拿到的是执行器给这次调用的信号：在前台时随回合一并中止，
    * 转到后台之后只随停止、工具撤回登记与执行器停用中止。
@@ -96,6 +97,26 @@ export interface ToolCallContext {
    * 取输出都取它。工具结果照旧在调用结束时一次给出
    */
   output?: (text: string) => void;
+  /**
+   * 取用判定，执行器给每次调用一份。取别的会话的东西、不属于任何会话的本机文件时用：check 判「只有这一位参与者时能不能取」，
+   * 执行器按这次调用的参与者交给权限守卫，与等级裁决同一条三分：都过放行；有人过不了时发一道参与者审批，能批的是过得了的人，
+   * 事实是这次调用的工具与参数；都过不了回原因（一位参与者时是它的，几位时是第一位的）。守卫不在、调用不在回合里或已转到后台
+   * （要求立即转后台的从一开始）时只按参与者都过判、不出审批：可转后台的工具等审批时不转后台。审批随 signal 撤销。批过只放行
+   * 这一次取用，不换这次调用的参与者。check 要同步、不抛错
+   */
+  approveFor(check: (who: UserIdentity) => Verdict): Promise<Verdict>;
+}
+
+/** 调用方交给执行器的上下文（{@link ToolService.execute}、agent 的工具钩子）：取用判定 approveFor 由执行器给每次调用一份 */
+export type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>;
+
+/**
+ * 要记一个人时这次调用的授权身份（定时任务的创建者、编排的调用者、白纸的发起人，以及不挂审批的取别的会话的东西）：参与者
+ * 只有一个时是他，有几个（或没有）时是无主体，账号为空串，与 schema-message 的 selfInitiatedActor 同形（本包不依赖
+ * schema-message，照写一份）。批过的调用参与者已换成批的人，记的就是批的人
+ */
+export function actingIdentity(ctx: { platform?: string; participants: readonly UserIdentity[] }): UserIdentity {
+  return ctx.participants.length === 1 ? ctx.participants[0] : { platform: ctx.platform ?? '', userId: '' };
 }
 
 /** 工具调用状态通知（WebUI 等前端订阅展示用）。只由 agent 工具循环发出，开始与结束按 callId 配对 */
@@ -250,7 +271,7 @@ export interface ToolService {
     display?: ToolDisplay;
   }>;
 
-  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<ToolExecutionResult>;
 
   /**
    * 这个会话启用的工具分组（会话设置「工具分组」的生效值，`'*'` 为全部分组）；platform 是入口平台，只对没有出生平台的会话

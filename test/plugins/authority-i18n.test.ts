@@ -23,6 +23,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { seedRooms } from '../fixtures/rooms.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 执行守卫的拒绝语是 plugin-authority 字典里的文字对象：指令一路由 plugin-commands 作为回复交出，网关按房间的语言渲染
@@ -112,7 +113,11 @@ describe('执行守卫的拒绝语', () => {
 
   it('工具一路：交给模型的是原文', async () => {
     const s = await setup();
-    const result = await s.host.tools.use.execute('zz_admin', {}, { sessionId: 'zz-s', platform: CHAT, userId: USER });
+    const result = await s.host.tools.use.execute(
+      'zz_admin',
+      {},
+      toolRequest({ sessionId: 'zz-s', platform: CHAT, userId: USER }),
+    );
     expect(result.content).toBe(JSON.stringify({ error: DENIED.replace('command:zz-admin', 'tool:zz_admin') }));
   });
 });

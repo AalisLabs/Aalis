@@ -14,6 +14,7 @@ import {
   startPaperHub,
   stopPaperHubs,
 } from '../fixtures/paper.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // paper_send（U10c）：把本房间发起的任务的成品发回本群。
@@ -102,11 +103,11 @@ describe('paper_send：发出', () => {
     const refused = await h.call(
       'paper_send',
       { artifact_id: 'a-00000001' },
-      {
+      toolContext({
         sessionId: ROOM,
         platform: 'onebot',
         inbound: { source },
-      },
+      }),
     );
     expect(refused.ok).toBe(false);
     expect(h.outbound).toHaveLength(0);
@@ -444,7 +445,7 @@ describe('paper_send：拒绝', () => {
     const ctx = {
       sessionId: ROOM,
       platform: 'onebot',
-      actor: { platform: 'onebot', userId: '' },
+      participants: [{ platform: 'onebot', userId: '' }],
       inbound: { source: `paper:${PAPER_ID}:t-00000001` },
     };
     expect(await h.call('paper_send', { artifact_id: 'a-00000001' }, ctx)).toMatchObject({ ok: true });

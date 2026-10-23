@@ -1,15 +1,15 @@
 /**
  * @aalis/api-approval — 审批契约
  *
- * 模型发起、需要 owner 批准的操作以审批对象的形式出现：发起方发起并等结算，审批对象推给在场的审批面，
- * owner 应答，结果回给发起方。本包只有类型、服务描述符 `approvals` 与卡片清洗函数 `sanitizeForCard`、`clipForCard`；
- * 实现见 @aalis/plugin-session-server。
+ * 模型发起、需要批准的操作以审批对象的形式出现：发起方发起并等结算，审批对象推给在场的审批面，能批的人应答，结果回给
+ * 发起方。审批只有一种，发起方给出这一张谁能批（canAnswer），另标出只有 owner 能批的那种（要 owner 确认的）。本包只有
+ * 类型、服务描述符 `approvals` 与卡片清洗函数 `sanitizeForCard`、`clipForCard`；实现见 @aalis/plugin-session-server。
  *
  * 三类使用方：
  * - 发起方（执行守卫）：`request(req, signal)` 发起一个审批并等它结算，拒绝时结果里带着回给模型的话；
- * - 审批面（WebUI、终端、IM 私聊）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端 `attend` 一次，
- *   在场上报与应答都经它，审计里的审批面取登记身份，不取调用方自报。推给谁、算谁在场、认谁的应答是一条规则：
- *   客户端的身份能批（是 owner），且它覆盖这张审批；
+ * - 审批面（WebUI、终端、IM 私聊与群窗口）：经绑定门面 `registerSurface(name)` 登记，随激活撤回。每个客户端 `attend`
+ *   一次，在场上报与应答都经它，审计里的审批面取登记身份，不取调用方自报。推给谁、算谁在场、认谁的应答是一条规则：
+ *   客户端的身份能批这一张（canAnswer），且它的接入覆盖这张审批（{@link AttendScope}）；
  * - 展示方：`list()` 与 `approval:created`、`approval:settled` 事件。
  */
 
@@ -35,11 +35,14 @@ export type OriginKind = 'hand' | 'subtask' | 'autonomous';
 /** 发起回合的类别与参与者 */
 export interface ApprovalOrigin {
   kind: OriginKind;
-  /** 这一轮的参与者（授权身份）：现在一轮只有一个 */
+  /** 这一轮的参与者（授权身份） */
   participants: { platform: string; userId: string }[];
 }
 
-/** 发起一个审批：要执行的工具与它的参数（目前只有工具这一种目标） */
+/**
+ * 发起一个审批：要执行的工具与它的参数（目前只有工具这一种目标）。canAnswer 与 ownerOnly 只在进程内交给提供者，不进推给
+ * 审批面的审批对象
+ */
 export interface ApprovalRequest {
   sessionId: string;
   /** 发起它的回合；回合结束或中止时没结的审批按 cancelled 结算 */
@@ -51,13 +54,17 @@ export interface ApprovalRequest {
   args: Record<string, unknown>;
   /** 命中的规则（如能力声明的确认要求、owner 的确认覆盖），记进审计 */
   rule: string;
+  /** 这个人能不能批这一张：参与者审批是他自己就能做这个动作，要 owner 确认的是 owner */
+  canAnswer: (who: ApprovalIdentity) => boolean;
+  /** 只有 owner 能批的那种（要 owner 确认的，含与参与者审批合成的）：只给接入的覆盖用 */
+  ownerOnly: boolean;
 }
 
 // ════════════════════════════════════════════════════════════
 // 审批对象
 // ════════════════════════════════════════════════════════════
 
-/** pending 之后结算为其余四种之一：owner 批准、owner 拒绝或发起不被允许、没人应答（不在场、等满时限）、撤销 */
+/** pending 之后结算为其余四种之一：批准、拒绝或发起不被允许、没人应答（不在场、等满时限）、撤销 */
 export type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled';
 
 /** 结算之后的四种结局 */
@@ -99,17 +106,17 @@ export interface Approval {
 
 /**
  * 结算从哪里来：
- * - `owner`：owner 应答（批准或拒绝）；
+ * - `answer`：能批的人应答（批准或拒绝）；
  * - `absent`：没人在场（发起时，或等待中在场的审批面都断开、变为不在场，且宽限内没有恢复）；
  * - `timeout`：等满时限；
- * - `ineligible`：发起回合的类别不能产生审批；
- * - `subtask`：子任务回合的审批不上浮给 owner；
+ * - `ineligible`：发起回合的类别或参与者不能产生审批（不是人亲手发起的，或参与者里没有人能批）；
+ * - `subtask`：子任务回合的审批不上浮；
  * - `rate-limit`：同一会话的审批超过频率上限；
  * - `turn-ended`：发起它的回合结束或中止；
  * - `shutdown`：审批服务停止。
  */
 export type ApprovalSource =
-  | 'owner'
+  | 'answer'
   | 'absent'
   | 'timeout'
   | 'ineligible'
@@ -118,16 +125,17 @@ export type ApprovalSource =
   | 'turn-ended'
   | 'shutdown';
 
-/** 一个审批怎样结算的：结局、从哪里来与结算的时刻（毫秒时间戳） */
+/** 一个审批怎样结算的：结局、从哪里来、结算的时刻（毫秒时间戳），有人应答的带上应答人 */
 export interface ApprovalSettlement {
   state: SettledState;
   source: ApprovalSource;
   at: number;
+  by?: ApprovalIdentity;
 }
 
-/** 审批的结局。拒绝时 message 是回给模型的话：写明被什么拦下、能不能再申请 */
+/** 审批的结局。批准时 by 是批的人；拒绝时 message 是回给模型的话：写明被什么拦下、能不能再申请 */
 export type ApprovalOutcome =
-  | { approvalId: string; approved: true }
+  | { approvalId: string; approved: true; by: ApprovalIdentity }
   | { approvalId: string; approved: false; source: ApprovalSource; message: string };
 
 // ════════════════════════════════════════════════════════════
@@ -151,7 +159,7 @@ export interface ApprovalAnswer {
 }
 
 /**
- * 应答被拒的原因：`forbidden` 应答人不是 owner；`not-found` 不是本服务签发的 id，或还在等的审批不归这个接入覆盖；
+ * 应答被拒的原因：`forbidden` 应答人不能批这一张；`not-found` 不是本服务签发的 id，或还在等的审批不归这个接入覆盖；
  * `approval-settled` 已经结算（先答先得，后到的都是它，不论接入覆盖不覆盖它）；`hash-mismatch` 内容哈希对不上；
  * `unavailable` 审批服务不在
  */
@@ -161,8 +169,8 @@ export type ApprovalRefusal = 'forbidden' | 'not-found' | 'approval-settled' | '
 export type ApprovalResponse = { ok: true } | { ok: false; refusal: ApprovalRefusal; message: string | TextRef };
 
 /**
- * 审批面的一个客户端（WebUI 的一条连接、终端、owner 的一个 IM 身份经一个机器人账号）：在场上报与应答都记在它接入的审批面的
- * 登记身份名下
+ * 审批面的一个客户端（WebUI 的一条连接、终端、owner 的一个 IM 身份经一个机器人账号、群窗口里的一个人）：在场上报与应答都记在
+ * 它接入的审批面的登记身份名下
  */
 export interface ApprovalAttendance {
   /**
@@ -182,11 +190,15 @@ export interface ApprovalIdentity {
 }
 
 /**
- * 接入的限定（IM 私聊）：只覆盖这一轮的参与者里有接入的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）等于
- * `selfId` 的审批，两边都没有账号算相同
+ * 接入的限定，两种：
+ * - 群窗口（给 `window`，群窗口的根会话 id；根会话已经定了机器人账号，不再给 selfId）：只覆盖这个窗口发起的、不是只有 owner
+ *   能批的审批。群窗口是公开的面，不发只有 owner 能批的；
+ * - IM 私聊（不给 `window`）：只覆盖只有 owner 能批的、这一轮的参与者里有接入的身份、且所在会话的根会话的机器人账号
+ *   （`originChat.selfId`）等于 `selfId` 的审批，两边都没有账号算相同
  */
 export interface AttendScope {
   selfId?: string;
+  window?: string;
 }
 
 /** 登记过的审批面 */
@@ -194,8 +206,9 @@ export interface ApprovalSurface {
   /** 登记名（webui、cli、chat） */
   readonly name: string;
   /**
-   * 接入一个客户端。给了限定的只覆盖限定的那些审批（{@link AttendScope}，IM 私聊每个身份与机器人账号一份）：只因它们算在场、
-   * 只收和只能应答它们；不给的覆盖全部（WebUI 的连接、终端）
+   * 接入一个客户端。给了限定的只覆盖限定的那些审批（{@link AttendScope}：IM 私聊每个身份与机器人账号一份，群窗口每个窗口与
+   * 发言者一份）：只因它们算在场、只收和只能应答它们；不给的覆盖全部，只给 owner 的面（WebUI 的连接、终端）：别的身份不限定地
+   * 接入会收到各会话里它能批的审批，别人的接入一律限定群窗口。推给它、算它在场、认它的应答另要接入的身份能批这一张
    */
   attend(who: ApprovalIdentity, sink: ApprovalSink, scope?: AttendScope): ApprovalAttendance;
 }

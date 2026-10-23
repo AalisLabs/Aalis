@@ -4,6 +4,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerPdfTools } from '../../packages/plugin-office/src/tools/pdf.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // pdf_convert（文档转 PDF）声明可转后台：LibreOffice 的转换只认执行器给这次调用的中止信号，不另设超时；
@@ -59,7 +60,9 @@ describe('pdf_convert 可转后台', () => {
     const convert = register(proc);
     expect(convert.background).toEqual({});
     const ac = new AbortController();
-    const out = parse(await convert.handler({ inputPath: 'workspace:/a.docx' }, { sessionId: 's', signal: ac.signal }));
+    const out = parse(
+      await convert.handler({ inputPath: 'workspace:/a.docx' }, toolContext({ sessionId: 's', signal: ac.signal })),
+    );
     expect(out).toMatchObject({ success: true, path: 'workspace:/a.pdf' });
     expect(calls.map(c => c.opts)).toEqual([{ signal: ac.signal }]);
   });
@@ -67,7 +70,10 @@ describe('pdf_convert 可转后台', () => {
   it('转换中中止：停住，回「PDF 转换已中止」', async () => {
     const { proc, calls } = fakeProcess('hang');
     const ac = new AbortController();
-    const pending = register(proc).handler({ inputPath: 'workspace:/a.docx' }, { sessionId: 's', signal: ac.signal });
+    const pending = register(proc).handler(
+      { inputPath: 'workspace:/a.docx' },
+      toolContext({ sessionId: 's', signal: ac.signal }),
+    );
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     ac.abort();
     await expect(pending).rejects.toThrow('PDF 转换已中止');
@@ -75,10 +81,10 @@ describe('pdf_convert 可转后台', () => {
 
   it('失败以错误报出：转换失败、没有进程服务', async () => {
     await expect(
-      register(fakeProcess('fail').proc).handler({ inputPath: 'workspace:/a.docx' }, { sessionId: 's' }),
+      register(fakeProcess('fail').proc).handler({ inputPath: 'workspace:/a.docx' }, toolContext({ sessionId: 's' })),
     ).rejects.toThrow('PDF 转换失败');
-    await expect(register().handler({ inputPath: 'workspace:/a.docx' }, { sessionId: 's' })).rejects.toThrow(
-      'process 服务',
-    );
+    await expect(
+      register().handler({ inputPath: 'workspace:/a.docx' }, toolContext({ sessionId: 's' })),
+    ).rejects.toThrow('process 服务');
   });
 });

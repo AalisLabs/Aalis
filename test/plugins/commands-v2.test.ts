@@ -122,7 +122,7 @@ describe('commands v2 — 链式 builder', () => {
   it('dot-path 子命令最长前缀解析 + 自动分组', async () => {
     const r = new CommandRegistry(makeLogger(), ref(), ref());
     // 测的是解析而非鉴权：放行守卫代替 plugin-authority（没有守卫时 restricted 指令一律被拒）
-    r.setExecutionGuard(async () => null);
+    r.setExecutionGuard(async () => ({ ok: true }));
     r.command('profile.clear', '清除自己档案').action(async () => 'cleared');
     r.command('profile.clear.nuke', '清空所有', { visibility: 'restricted' }).action(async () => 'nuked');
     // profile 自动成为分组节点
@@ -180,7 +180,7 @@ describe('commands v2 — 链式 builder', () => {
     let seen: unknown = 'unset';
     r.setExecutionGuard(async ctx => {
       seen = ctx.risk;
-      return null;
+      return { ok: true };
     });
     await r.execute('sys', input(['exec']));
     expect(seen).toBe('dangerous');
@@ -189,7 +189,7 @@ describe('commands v2 — 链式 builder', () => {
   it('guard 拒绝 → execute 返回拒绝原因', async () => {
     const r = new CommandRegistry(makeLogger(), ref(), ref());
     r.command('shutdown', '关机', { visibility: 'restricted' }).action(async () => 'bye');
-    r.setExecutionGuard(async () => '权限不足');
+    r.setExecutionGuard(async () => ({ ok: false, reason: '权限不足' }));
     expect(await r.execute('shutdown', input([]))).toBe('权限不足');
   });
 

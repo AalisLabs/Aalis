@@ -71,7 +71,7 @@ async function world(opts: { probes?: ReturnType<typeof probe>[]; noContribution
   const guardCalls: string[] = [];
   registry.setExecutionGuard(async ctx => {
     guardCalls.push(ctx.name);
-    return null;
+    return { ok: true };
   });
   /** 按用户输入执行（经解析与守卫），私聊会话 */
   const exec = async (line: string): Promise<string> => {

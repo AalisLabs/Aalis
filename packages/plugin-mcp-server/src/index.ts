@@ -13,7 +13,7 @@
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
+import { type ToolCallRequest, type ToolService, tools as toolsService } from '@aalis/api-tools';
 import {
   type BoundOf,
   config as configService,
@@ -217,11 +217,9 @@ export function buildMcpServer(tools: ToolService, config: Config): McpServer {
       };
     }
 
-    const callCtx: ToolCallContext = {
-      sessionId: 'mcp-server',
-      userId: 'mcp-client',
-      platform: 'mcp',
-    };
+    // 参与者是 MCP 客户端自己：等级按 mcp:mcp-client 这个身份裁决
+    const client = { platform: 'mcp', userId: 'mcp-client' };
+    const callCtx: ToolCallRequest = { sessionId: 'mcp-server', ...client, participants: [client] };
 
     try {
       const result = await tools.execute(toolName, args, callCtx);

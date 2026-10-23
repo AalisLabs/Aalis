@@ -4,6 +4,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, services } from '../../packages/core/src/index.js';
 import promptBudget from '../../packages/plugin-prompt-budget/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // prompt_budget_info 的 top3 与 advice：
@@ -63,7 +64,7 @@ describe('prompt_budget_info 的 top3 与 advice', () => {
       const result = await registry.execute(
         'prompt_budget_info',
         { sessionId: 'zz-budget' },
-        { sessionId: 'zz-budget', platform: 'test' },
+        toolRequest({ sessionId: 'zz-budget', platform: 'test' }),
       );
       return JSON.parse(result.content) as {
         tag: string;

@@ -9,7 +9,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
 import { type App, definePlugin, events, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import chatApprovalPlugin from '../../packages/plugin-chat-approval/src/index.js';
@@ -240,9 +240,10 @@ async function setup({
   /** 这一轮调探针：who 在 sessionId 里亲手发起（缺省是 owner 在私聊里）；box 在调用结束时拿到结果 */
   const call = (args: Record<string, unknown> = { command: 'rm -rf build' }, who = OWNER_QQ, sessionId = OWNER_DM) => {
     seq++;
-    const ctx: ToolCallContext = {
+    const ctx: ToolCallRequest = {
       sessionId,
       ...who,
+      participants: [who],
       inbound: {},
       turnId: `turn-${seq}`,
       callId: `call-${seq}`,

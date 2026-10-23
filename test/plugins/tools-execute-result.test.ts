@@ -2,6 +2,7 @@ import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { type ToolService, tools as toolsService } from '../../packages/api-tools/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ToolService.execute 的结果形态：handler 返回字符串或 {content, images}，execute 一律归一为
 // ToolExecutionResult；错误路径（未找到 / 参数校验 / 抛错）同样是 {content: JSON 错误}，
@@ -37,7 +38,7 @@ async function withTools(fn: (svc: ToolService) => Promise<void>): Promise<void>
   }
 }
 
-const callCtx = { sessionId: 's', platform: 'test', userId: 'u' };
+const callCtx = toolRequest({ sessionId: 's', platform: 'test', userId: 'u' });
 
 describe('ToolService.execute 结果归一', () => {
   it('字符串 handler → {content}，不带 images 键', async () => {

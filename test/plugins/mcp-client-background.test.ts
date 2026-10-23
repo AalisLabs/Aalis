@@ -7,6 +7,7 @@ import type { RegisteredTool, ToolExecutionResult } from '../../packages/api-too
 import { bridgeClientToTools } from '../../packages/plugin-mcp-client/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 桥进来的 MCP 工具声明可转后台：调用带上执行器给这次调用的中止信号（中止时 SDK 向服务端发
@@ -83,7 +84,7 @@ describe('mcp-client 桥进来的工具可转后台', () => {
   it('中止时服务端收到 notifications/cancelled，调用回错', async () => {
     const { held, registered } = await setup();
     const ac = new AbortController();
-    const pending = registered.mcp_remote_slow.handler({}, { sessionId: 's', signal: ac.signal });
+    const pending = registered.mcp_remote_slow.handler({}, toolContext({ sessionId: 's', signal: ac.signal }));
     await vi.waitFor(() => expect(held).toHaveLength(1));
     ac.abort();
     await vi.waitFor(() => expect(held[0].signal.aborted).toBe(true));
@@ -94,7 +95,10 @@ describe('mcp-client 桥进来的工具可转后台', () => {
     const { held, registered } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let settled = false;
-    const pending = registered.mcp_remote_slow.handler({}, { sessionId: 's', signal: new AbortController().signal });
+    const pending = registered.mcp_remote_slow.handler(
+      {},
+      toolContext({ sessionId: 's', signal: new AbortController().signal }),
+    );
     void pending.then(() => {
       settled = true;
     });
@@ -113,7 +117,7 @@ describe('mcp-client 桥进来的工具可转后台', () => {
     let settled = false;
     const pending = registered.mcp_remote_waiter.handler(
       { waitSeconds: 5 },
-      { sessionId: 's', signal: new AbortController().signal },
+      toolContext({ sessionId: 's', signal: new AbortController().signal }),
     );
     void pending.then(() => {
       settled = true;
@@ -128,7 +132,7 @@ describe('mcp-client 桥进来的工具可转后台', () => {
 
   it('远端报错以 error 报出', async () => {
     const { registered } = await setup();
-    expect(parse(await registered.mcp_remote_broken.handler({}, { sessionId: 's' })).error).toContain(
+    expect(parse(await registered.mcp_remote_broken.handler({}, toolContext({ sessionId: 's' }))).error).toContain(
       'zz-remote-error',
     );
   });

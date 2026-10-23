@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerCalculusTools } from '../../packages/plugin-tool-math/src/tools/calculus.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // math_calculus 与 math_eval 共用 lib/expression.ts 的求值器：
@@ -18,7 +19,7 @@ async function calculus(args: Record<string, unknown>): Promise<Record<string, u
     }),
   );
   if (!tool) throw new Error('math_calculus 未注册');
-  const out = await tool.handler(args, { sessionId: 's', enabledGroups: undefined });
+  const out = await tool.handler(args, toolContext({ sessionId: 's', enabledGroups: undefined }));
   return JSON.parse(out as string);
 }
 

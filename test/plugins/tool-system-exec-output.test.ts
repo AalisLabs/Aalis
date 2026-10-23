@@ -8,6 +8,7 @@ import { LocalProcessService } from '../../packages/plugin-process-local/src/ind
 import { registerShellTools } from '../../packages/plugin-tool-system/src/tools/shell.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // exec 的输出边跑边写：stdout 与 stderr 按到达顺序写进执行器给这次调用的输出口（ToolCallContext.output），
@@ -43,7 +44,10 @@ function register() {
   if (!exec) throw new Error('exec 没有登记');
   const written: string[] = [];
   const run = async (command: string) => {
-    const out = await exec?.({ command }, { sessionId: 's-exec', output: text => void written.push(text) });
+    const out = await exec?.(
+      { command },
+      toolContext({ sessionId: 's-exec', output: text => void written.push(text) }),
+    );
     return JSON.parse(typeof out === 'string' ? out : String(out?.content)) as Record<string, unknown>;
   };
   return { run, written };

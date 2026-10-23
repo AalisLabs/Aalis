@@ -8,8 +8,9 @@ export default defineLocale<Source>()({
   intentUnreachable:
     'Operation cancelled: {capability} needs confirmation from the sender in person, but this command was not typed by a person, so it cannot be confirmed',
   intentDeclined: 'Operation cancelled: {capability} was not confirmed by the sender',
+  nobodyCan: "Nobody among this turn's participants can do this",
   approvalsAbsent:
-    'Operation cancelled: {capability} needs owner approval, but the approval service is absent (provided by @aalis/plugin-session-server)',
+    'Operation cancelled: {capability} needs approval, but the approval service is absent (provided by @aalis/plugin-session-server)',
   operationsDescription:
     'Each command, tool and setting has a minimum level: commands and tools default to one derived from their risk (safe 0, sensitive 1, dangerous 2), settings to the level they declare; most need no change. Which layer a setting is written to has its own fixed threshold, not adjusted here.',
   operationsEmpty: 'No commands, tools or settings are registered',
@@ -18,9 +19,9 @@ export default defineLocale<Source>()({
   confirmSession: 'Every time (the waiver list can waive it)',
   confirmAlways: 'Every time (only a confirmation override set to off waives it)',
   rulesDescription:
-    'Disabling overrides everything, owners included. Waiving confirmation only applies to what is done as an owner: the owner in person, subtasks the owner dispatched, scheduled tasks the owner created, and workflows whose definer and caller are both owners; anything started by others still needs owner approval, and is refused where no approval can be raised. Neither lowers levels. Both accept wildcards, such as tool:*.',
+    'Disabling overrides everything, owners included. Waiving confirmation only applies to what is done as an owner: the owner in person, subtasks the owner dispatched, scheduled tasks the owner created, and workflows whose definer and caller are both owners; anything started by others, or joined by messages from others, still needs owner approval, and is refused where no approval can be raised. Neither lowers levels. Both accept wildcards, such as tool:*.',
   waivePattern:
-    'A capability key or wildcard, such as tool:shell_exec, command:level, tool:*. Only waives confirmation for what is done as an owner; anything started by others still needs owner approval',
+    'A capability key or wildcard, such as tool:shell_exec, command:level, tool:*. Only waives confirmation for what is done as an owner; anything started by others, or joined by messages from others, still needs owner approval',
   ownerOnly: 'Only an owner can manage permissions',
   targetFormat: 'Target format: <platform:userId>',
   badGroupName:

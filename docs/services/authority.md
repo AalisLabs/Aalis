@@ -80,7 +80,7 @@ export interface AuthorityService {
 interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; toolGroups?: readonly string[]; }
 interface UserIdentity { platform: string; userId: string; }
 interface AuthorityUserEntry { platform; userId; isOwner: boolean; level: number; note?: string; }
-type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'participants' | 'inbound'>;
 ```
 
 `CapabilityId` 是 `string`，按惯例为 `<type>:<name>`，如 `tool:exec`、`command:shutdown`（守卫处由 `${g.type}:${g.name}` 拼装，见 `packages/plugin-authority/src/index.ts`）。
@@ -96,16 +96,18 @@ interface ExecutionGuardContext {
   visibility: CapabilityVisibility;  // 注册时已由 resolveCapabilityPolicy 展开
   risk?: CapabilityRisk;             // 透传，供派生 minLevel；缺省回退 visibility
   confirm?: CapabilityConfirm;       // 轴 B，owner 也生效
-  sessionId; platform; userId?; actor?; args?;
+  sessionId; platform; userId?; args?;
+  participants: readonly UserIdentity[]; // 这一轮的参与者（授权身份）：对每个参与者各裁决一次；指令一路是发出者
   toolGroups?: readonly string[];    // 工具所属的工具分组（工具一路由执行器填）：原样转给 authorize，权限组的 tool-group: 条目按它覆盖
-  skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
+  skipConfirm?: boolean;             // 受信来源（scheduler 触发的指令、runtime 子命令）：仍走 authorize；已授权且参与者都是 owner 时跳过非 always 的确认
   turnId?; callId?;                  // 工具调用所在回合与这次调用的 id（agent 工具循环填写）
   inbound?: InboundTurn;             // { source?, fromTurn?, messageId? }：调用所在的入站回合，判发起类别用
   confirmIntent?: () => Promise<boolean>; // 指令用：向发出者本人核对意图
-  signal?: AbortSignal;              // 回合中止信号：等 owner 审批期间中止即撤销
+  signal?: AbortSignal;              // 回合中止信号：等审批期间中止即撤销
+  check?: (who: UserIdentity) => Verdict; // 取用判定（工具调用上下文的 approveFor 交来）：代替等级裁决，不再判确认
 }
-// 返回 null 放行；返回 string 拦截（值即拒绝原因/提示）
-type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
+// 放行 { ok: true, by? }（by 是批的人，经审批放行才有）；拦截 { ok: false, reason }
+type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 ```
 
 没有注入守卫时，参考实现 plugin-tools / plugin-commands 按 fail-closed 处理：等同所有人都是默认等级（`DEFAULT_AUTHORITY`）、没人能确认。`capabilityMinLevel` 高于默认等级或声明了 `confirm` 的操作一律拒绝，其余照常执行。
@@ -153,7 +155,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 - **必须**：`isOwner`、`ownerOn`、`originOf`、`principalOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
-- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按 `actor` 判，这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批。
+- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；对每个参与者各裁决一次，有人做不了时只产生审批、由自己就能做的人批，谁都做不了照旧拒；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按授权身份判，人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有人能批才能产生审批。
 
 ### 4.2 注册（provide）
 
@@ -191,6 +193,7 @@ import type {
   ExecutionGuardContext,
   OriginTurn,
   UserIdentity,
+  Verdict,
 } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import { tools } from '@aalis/api-tools';
@@ -204,7 +207,7 @@ class MyAuthority implements AuthorityService {
     return 'autonomous';
   }
   principalOf(turn: OriginTurn): 'owner' | 'other' {
-    // hand 且参与者是 owner 为 owner，子任务随派它的那一轮（判据见 plugin-authority）
+    // hand 且参与者都是 owner 为 owner，子任务随派它的那一轮（判据见 plugin-authority）
     return 'other';
   }
   authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
@@ -224,14 +227,21 @@ export default definePlugin({
   apply({ provide, commands, tools }) {
     const impl = new MyAuthority();
     provide.use(authority, impl);
-    const guard = async (g: ExecutionGuardContext): Promise<string | null> => {
+    const guard = async (g: ExecutionGuardContext): Promise<Verdict> => {
       const capability = `${g.type}:${g.name}`;
-      const denied = impl.authorize(g.actor ?? { platform: g.platform, userId: g.userId }, {
-        capability, visibility: g.visibility, risk: g.risk,
-      });
-      if (denied || !g.confirm) return denied;
+      // 每个参与者都要过：给了取用判定（g.check）时按它判、不再判确认，否则按等级裁决；有人过不了时第一方发参与者审批，
+      // 这里简单起见直接拒，不能当作放行
+      const judge =
+        g.check ??
+        ((who: UserIdentity): Verdict => {
+          const denied = impl.authorize(who, { capability, visibility: g.visibility, risk: g.risk });
+          return denied ? { ok: false, reason: denied } : { ok: true };
+        });
+      const refused = g.participants.map(judge).find(verdict => !verdict.ok);
+      if (refused) return refused;
+      if (g.check || !g.confirm) return { ok: true };
       // 声明了 confirm：指令调 g.confirmIntent，工具请 owner 审批（approvals.request）；做不到就拒，不能当作放行
-      return `操作已取消：${capability} 需要确认`;
+      return { ok: false, reason: `操作已取消：${capability} 需要确认` };
     };
     // 停用时摘掉：守卫闭包里是这次激活的状态，摘掉后 commands / tools 退回 fail-closed
     commands.follow(svc => {
@@ -305,11 +315,11 @@ auth.save();
 confirm 与等级**正交**，**只对已授权操作做意图确认**（不是提权入口）。守卫顺序：先 `authorize`（轴 A），过了再看 `confirm`（轴 B），见 `packages/plugin-authority/src/index.ts`。
 
 确认怎么做（`packages/plugin-authority/src/index.ts` 的守卫）：
-- 免确认只对**授权身份是 owner** 的回合（守卫上下文的 `actor`，缺省即会话身份）：`confirmOverrides` 的 `'off'` 对别人的回合回落到插件的声明，`skipConfirm` 与白名单对别人的回合不生效。
+- 免确认只对**参与者都是 owner** 的回合（守卫上下文的 `participants`，不看物理发言者）：`confirmOverrides` 的 `'off'` 对有别人的回合回落到插件的声明，`skipConfirm` 与白名单对有别人的回合不生效。
 - `confirm:'always'` → 只有 `'off'` 能免（cron 等无人可问即拒）。
 - `confirm:'session'` → `skipConfirm`（scheduler 触发的指令、runtime 一次性子命令）或 `restrictedPolicy` 白名单命中时免确认；两者都**不绕 `authorize`**（仍评估等级，防提权）。
 - 指令：调 `confirmIntent` 向发出者本人核对意图（plugin-commands 只给人亲手输入的指令带上）；没有就拒。
-- 工具：带上发起回合的类别（`authority-model.ts` 的 `originKind`）与这一轮的参与者（授权身份）调 `approvals.request`；这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，定时任务、编排、子任务与别人亲手发起的回合由审批服务立即拒绝、不推给任何面。审批服务不在时立即拒。
+- 工具：要一道只有 owner 能批的审批，与参与者审批（有参与者自己做不了这个动作时）合成一张。带上发起回合的类别（`authority-model.ts` 的 `originKind`）与这一轮的参与者（授权身份）调 `approvals.request`；人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有 owner 才能产生，定时任务、编排、子任务与没有 owner 参与的回合由审批服务立即拒绝、不推给任何面。批过的调用按批的人执行。审批服务不在时立即拒。
 
 `restrictedPolicy` 白名单的 `duration` 用运行时态 `policyEnabledAt`（不持久化，重启失效，`authority-manager.ts`）。
 

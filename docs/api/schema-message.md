@@ -65,13 +65,13 @@ interface IncomingMessage {
 interface FromTurn {
   platform: string;
   userId?: string;                                         // 那一轮的物理发言者
-  participants: readonly { platform: string; userId: string }[]; // 那一轮的参与者（授权身份 actor ?? 发言者），现在一轮只有一个
+  participants: readonly { platform: string; userId: string }[]; // 那次调用的参与者（授权身份，originTurnOf 算；批过的是批的人）
   source?: string;                                         // 那一轮的来源，人亲手发来的没有
   fromTurn?: FromTurn;                                     // 那一轮自己的起它的那一轮
 }
 ```
 
-权限服务按那一轮判这一轮的类别（续做与它延续的那一轮同一类别）与主体（子任务随派它的那一轮）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与授权身份填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在是后台任务结束通知与子任务的任务消息），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
+权限服务按那一轮判这一轮的类别（续做与它延续的那一轮同一类别）与主体（子任务随派它的那一轮）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与参与者填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在是后台任务结束通知与子任务的任务消息），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
 
 ### 经 owner 过目的注入（ownerApproved）
 

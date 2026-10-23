@@ -8,6 +8,7 @@ import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef } from '../fixtures/service-ref.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 const noopLogger = (): Logger =>
   ({
@@ -160,6 +161,9 @@ describe('workflow validateGraph', () => {
   });
 });
 
+/** 匿名运行的工具调用上下文：唯一的参与者是无主体 */
+const ANONYMOUS_RUN = toolRequest({ sessionId: 'workflow::zz', platform: 'workflow' });
+
 describe('workflow runDag', () => {
   it('按 deps 顺序执行 tool 节点 + 模板插值', async () => {
     const calls: Array<{ name: string; args: unknown }> = [];
@@ -188,7 +192,7 @@ describe('workflow runDag', () => {
       def,
       runId: 'r1',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
@@ -217,7 +221,7 @@ describe('workflow runDag', () => {
       def,
       runId: 'r2',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
@@ -250,7 +254,7 @@ describe('workflow runDag', () => {
       def,
       runId: 'r3',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
@@ -279,7 +283,7 @@ describe('workflow agent 节点', () => {
       def,
       runId: 'rA',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
@@ -313,7 +317,7 @@ describe('workflow agent 节点', () => {
       def,
       runId: 'rS',
       vars: { who: '群A' },
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');
@@ -334,7 +338,7 @@ describe('workflow agent 节点', () => {
       def,
       runId: 'rT',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
@@ -353,7 +357,7 @@ describe('workflow agent 节点', () => {
       def,
       runId: 'rE',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('failed');
@@ -372,7 +376,7 @@ describe('workflow agent 节点', () => {
       def,
       runId: 'rSilent',
       vars: {},
-      toolCallContext: {} as never,
+      toolCallContext: ANONYMOUS_RUN,
       signal: new AbortController().signal,
     });
     expect(res.status).toBe('success');

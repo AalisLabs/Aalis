@@ -31,9 +31,9 @@ export type CapabilityVisibility = 'public' | 'restricted';
  * - 缺省/undefined：无需确认（不提醒）。
  * - 'session'：执行前需人确认；系统源（ExecutionGuardContext.skipConfirm）与 restrictedPolicy 白名单可免。
  * - 'always'：每次都需确认（最危险操作），只有确认覆盖设为 'off' 能免。
- * 免确认只对授权身份是 owner 的回合生效，别人发起的照旧要确认。
+ * 免确认只对参与者都是 owner 的回合生效，有别人的照旧要确认。
  *
- * 怎么确认看操作是谁发起的：工具由模型调用，确认是 owner 审批（@aalis/api-approval）；指令由人亲手输入，
+ * 怎么确认看操作是谁发起的：工具由模型调用，确认是只有 owner 能批的审批（@aalis/api-approval）；指令由人亲手输入，
  * 确认是向发出者本人核对意图（ExecutionGuardContext.confirmIntent）。
  *
  * 与 visibility 正交：visibility 管「授权（能不能）」，confirm 管「意图确认（是不是你本人此刻要）/防注入减速带」。
@@ -125,14 +125,14 @@ export function resolveCapabilityPolicy(
 
 /**
  * 调用所在的入站回合（只由 agent 工具循环填写，指令与其他调用方没有）。守卫据它判发起回合的类别，
- * 类别决定需要确认的工具调用能不能产生 owner 审批。
+ * 类别决定这次工具调用能不能产生审批。
  */
 export interface InboundTurn {
   /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
   source?: string;
   /** 同 IncomingMessage.fromTurn：续做带着起它的那一轮，这一轮与它同一类别；子任务带着派它的那一轮，主体随它 */
   fromTurn?: FromTurn;
-  /** 同 IncomingMessage.messageId：入站消息的平台消息 id。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
+  /** 这一轮最近一条输入的平台消息 id（IncomingMessage.messageId）。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
   messageId?: string;
 }
 
@@ -150,19 +150,22 @@ export interface ExecutionGuardContext {
   confirm?: CapabilityConfirm;
   /** 会话 ID */
   sessionId: string;
-  /** 来源平台（会话语义；等级判定见 actor） */
+  /** 来源平台（会话语义；等级判定见 participants） */
   platform: string;
-  /** 用户 ID（物理发言者；等级判定见 actor） */
+  /** 用户 ID（物理发言者；等级判定见 participants） */
   userId?: string;
-  /** 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）按它评估 */
-  actor?: { platform: string; userId: string };
+  /**
+   * 这一轮的参与者（授权身份，入站回合里由 {@link originTurnOf} 算出；指令一路是发出者，不在入站回合里的调用方填它自己的
+   * 身份，没有身份的是一个无主体）：等级裁决（authorize）、免确认与审批都按它们，对每个参与者各裁决一次
+   */
+  participants: readonly UserIdentity[];
   /** 工具所属的工具分组（工具一路由执行器填，指令没有）：原样转给 authorize，权限组的 `tool-group:` 条目按它覆盖 */
   toolGroups?: readonly string[];
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**
    * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
-   * 已授权时跳过非 always 的确认，always 照常确认；只对授权身份是 owner 的回合生效。
+   * 已授权时跳过非 always 的确认，always 照常确认；只对参与者都是 owner 的回合生效。
    */
   skipConfirm?: boolean;
   /** 调用所在回合的 id（工具调用由 agent 工具循环填写）；审批随回合结束撤销 */
@@ -176,35 +179,72 @@ export interface ExecutionGuardContext {
    * 需要确认的指令没有它（定时任务、编排注入的指令）就无从确认，按拒绝处理
    */
   confirmIntent?: () => Promise<boolean>;
-  /** 调用方回合的中止信号：守卫等 owner 审批期间回合中止，审批即撤销 */
+  /** 调用方回合的中止信号：守卫等审批期间回合中止，审批即撤销 */
   signal?: AbortSignal;
+  /**
+   * 取用判定（工具执行中经工具调用上下文的 approveFor 交来）：给了即按它对每个参与者判、代替等级裁决，三分同等级裁决；
+   * 确认在这次调用开始时已经判过，不再判
+   */
+  check?: (who: UserIdentity) => Verdict;
 }
 
+/**
+ * 一次判定：放行，或带一句原因拒绝（原因可以是文字对象，指令一路作为回复交给发出者、由出口按读者语言渲染，工具一路交给模型、
+ * 取 toSource）。执行守卫经审批放行的带回批的人 by
+ */
+export type Verdict = { ok: true; by?: UserIdentity } | { ok: false; reason: string | TextRef };
+
 /** 判发起回合的类别与主体要的信息：执行守卫上下文的这几项，调用方按同样的口径填（由入站消息拼时用 {@link originTurnOf}） */
-export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+export type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'participants' | 'inbound'>;
+
+/** 是不是同一个参与者：身份相同，或两边都是 owner（owner 的各个身份算一个参与者；isOwner 不给时只按字面身份） */
+export function sameParticipant(
+  a: UserIdentity,
+  b: UserIdentity,
+  isOwner?: (platform: string, userId: string) => boolean,
+): boolean {
+  if (a.platform === b.platform && a.userId === b.userId) return true;
+  return Boolean(isOwner?.(a.platform, a.userId) && isOwner(b.platform, b.userId));
+}
 
 /**
- * 由一轮的输入拼这一轮，拼一轮的唯一函数：agent 据它填工具调用上下文，调用方不各自拼。现在一轮只有一条输入。
- * 发言者缺省时取起它的那一轮的（续做的通知不带发言者，工具眼里是起它的人在调），授权身份缺省时取起它的那一轮的参与者
+ * 由一轮的输入拼这一轮，拼一轮的唯一函数：agent 据它填工具调用上下文，调用方不各自拼。
+ * - 参与者：各条输入的授权身份（actor，没有时是发言者，没有发言者的是无主体；插话不带 actor，就是发言者），带起它的那一轮的
+ *   注入取那一轮的参与者；按进入先后排、按身份去重，owner 的各个身份算一个参与者、取最先进来的那一个（isOwner 不给时按字面
+ *   身份）。历史里别人的话、引用与转发进某条输入的内容都不另算
+ * - 发言者：各条输入的物理发言者相同时是他，不同时没有；缺省时取起它的那一轮的（续做的通知不带发言者，工具眼里是起它的人在调）
+ * - 入站回合：来源与起它的那一轮取第一条（同一轮的输入来源相同，带来源的注入各自成一轮），平台消息 id 取最近一条
  */
-export function originTurnOf(inputs: readonly [IncomingMessage, ...IncomingMessage[]]): OriginTurn {
-  const [message] = inputs;
-  const { sessionId, platform, source, fromTurn, messageId } = message;
+export function originTurnOf(
+  inputs: readonly [IncomingMessage, ...IncomingMessage[]],
+  isOwner?: (platform: string, userId: string) => boolean,
+): OriginTurn {
+  const [first] = inputs;
+  const { sessionId, platform, source, fromTurn } = first;
+  const participants: UserIdentity[] = [];
+  for (const message of inputs) {
+    const identities = message.fromTurn?.participants ?? [
+      message.actor ?? { platform: message.platform, userId: message.userId ?? '' },
+    ];
+    for (const who of identities) {
+      if (!participants.some(seen => sameParticipant(seen, who, isOwner))) participants.push(who);
+    }
+  }
+  const oneSpeaker = inputs.every(m => m.platform === platform && m.userId === first.userId);
   return {
     sessionId,
     platform,
-    userId: message.userId ?? fromTurn?.userId,
-    actor: message.actor ?? fromTurn?.participants[0],
-    inbound: { source, fromTurn, messageId },
+    userId: oneSpeaker ? (first.userId ?? fromTurn?.userId) : undefined,
+    participants,
+    inbound: { source, fromTurn, messageId: inputs[inputs.length - 1].messageId },
   };
 }
 
 /**
- * 执行守卫函数。返回 null 放行；返回原因拦截：可以是文字对象（@aalis/schema-i18n），指令一路作为回复交给发出者、由出口按
- * 读者语言渲染，工具一路交给模型、取 toSource。
+ * 执行守卫函数。经审批放行的带回批的人 by：工具一路这次调用按他执行（指令一路的参与者只有发出者，不会有）。
  * 由 plugin-authority 通过 setExecutionGuard() 注入，停用时摘掉。
  */
-export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | TextRef | null>;
+export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 
 // ============================================================
 // 能力统一闸（裁决序：deniedCapabilities 硬禁 > owner(∞) > 封禁 > 用户 level >= 操作 minLevel > 所属权限组覆盖）
@@ -274,8 +314,9 @@ export interface AuthorityService {
   originOf(turn: OriginTurn): OriginKind;
 
   /**
-   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）是 owner 的为 owner，含它的续做；子任务随派它的那一轮
-   * （inbound.fromTurn，没有时为 other），不按子任务回合自己的授权身份；其余为 other。消费方不自己读受众
+   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner，含它的续做；子任务随派它的那一轮
+   * （inbound.fromTurn，没有时为 other），不按子任务回合自己的参与者；其余为 other（owner 与别人同在的一轮也是）。消费方
+   * 不自己读受众
    */
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
@@ -329,13 +370,13 @@ declare module '@aalis/api-host-config' {
     authorityOverrides?: Record<string, number>;
     /**
      * 管理员对单条操作的确认要求覆盖（能力键 `type:name` → session/always/off）。
-     * 'off' 关闭确认（即便插件声明了 confirm，便于自动化），只对授权身份是 owner 的回合生效，别人的回落到插件声明；
+     * 'off' 关闭确认（即便插件声明了 confirm，便于自动化），只对参与者都是 owner 的回合生效，有别人的回落到插件声明；
      * 与等级正交。
      */
     confirmOverrides?: Record<string, CapabilityConfirm | 'off'>;
     /**
      * 免确认白名单：allow 列出不必确认的能力 glob（['*'] 全放）；duration 生效时长（秒，0=永久）。
-     * 只免 confirm 为 session 的确认，always 照常确认；只对授权身份是 owner 的回合生效；不放宽授权，等级不够、所属组也不覆盖的照样拒。
+     * 只免 confirm 为 session 的确认，always 照常确认；只对参与者都是 owner 的回合生效；不放宽授权，等级不够、所属组也不覆盖的照样拒。
      * 运行时启用时点（enabledAt）不持久化，是 plugin-authority 运行时状态。
      */
     restrictedPolicy?: {

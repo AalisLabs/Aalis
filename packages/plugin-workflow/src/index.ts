@@ -10,7 +10,7 @@ import { authority, type UserIdentity } from '@aalis/api-authority';
 import { cronEngine } from '@aalis/api-cron-engine';
 import { hooks } from '@aalis/api-hooks';
 import { isStorageUri, storage } from '@aalis/api-storage';
-import { type BoundTools, tools } from '@aalis/api-tools';
+import { actingIdentity, type BoundTools, tools } from '@aalis/api-tools';
 import { type BoundWebui, markdownCode, webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
@@ -475,9 +475,14 @@ async function run(caps: Caps): Promise<void> {
         def,
         runId,
         vars,
-        // 运行身份以 actor 交给工作流内部工具与 agent/send_message 节点，按它的等级过 authority 闸；匿名只能跑 public 工具。
-        // platform 保持 'workflow' 会话语义（不借调用者平台——那会污染定时任务归属/审批的发起类别等分流）。
-        toolCallContext: { sessionId: `workflow::${workflowId}`, platform: 'workflow', actor },
+        // 运行身份是工具调用上下文的唯一参与者，交给工作流内部工具与 agent/send_message 节点，按它的等级过 authority 闸；
+        // 匿名的是无主体，只能跑 public 工具。platform 保持 'workflow' 会话语义（不借调用者平台——那会污染定时任务归属/审批的
+        // 发起类别等分流）。
+        toolCallContext: {
+          sessionId: `workflow::${workflowId}`,
+          platform: 'workflow',
+          participants: [actor ?? { platform: 'workflow', userId: '' }],
+        },
         signal: abort.signal,
         onNodeDone: (info: NodeRunInfo) => {
           const idx = run.nodes.findIndex(n => n.id === info.id);
@@ -640,8 +645,8 @@ function registerTools(
       if (!def) return JSON.stringify({ error: '定义不合法：缺少 trigger 或 nodes' });
       const persist = args.persist !== false;
       try {
-        // 定义者取调用者的授权身份，匿名的不记
-        const definedBy = identityOf(callCtx.actor ?? { platform: callCtx.platform, userId: callCtx.userId });
+        // 定义者取调用者的授权身份（几个人的一轮没有单一的定义者），匿名的不记
+        const definedBy = identityOf(actingIdentity(callCtx));
         await definitions.define(def, persist, definedBy);
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
@@ -700,13 +705,12 @@ function registerTools(
     },
     handler: async (args, callCtx) => {
       try {
-        // 透传调用者的授权身份：优先 callCtx.actor（本回合已在代人执行时链式传递），否则物理身份。
-        // 运行身份按它与定义者定（见 execute）
+        // 透传调用者的授权身份（几个人的一轮没有单一的调用者，按匿名）；运行身份按它与定义者定（见 execute）
         const run = await service.runWorkflow(
           String(args.id),
           (args.vars as Record<string, unknown>) ?? {},
           'manual:tool',
-          callCtx.actor ?? { platform: callCtx.platform, userId: callCtx.userId },
+          actingIdentity(callCtx),
         );
         return JSON.stringify({
           ok: true,

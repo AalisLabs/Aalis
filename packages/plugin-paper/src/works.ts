@@ -12,14 +12,14 @@ import {
 } from '@aalis/api-publish';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
-import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
+import { actingIdentity, type BoundTools, type ToolCallContext } from '@aalis/api-tools';
 import type { ServiceSelection } from '@aalis/core';
 import { type TextRef, toSource } from '@aalis/schema-i18n';
 import { artifactUri, EXTENSIONS } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
-import { actorKey, checkEligibility, effectiveActor, type PaperFields, paperLabel } from './rooms.js';
+import { actorKey, checkEligibility, type PaperFields, paperLabel } from './rooms.js';
 import { enterPaperRoom } from './tools.js';
 
 interface WorksDeps {
@@ -190,7 +190,7 @@ export function registerWorksTools(deps: WorksDeps): void {
     if (!task || task.paperId !== entered.paper.paperId || task.room !== ctx.sessionId) {
       return fail('本房间的白纸上没有这件任务');
     }
-    if (actorKey(effectiveActor(ctx)) !== actorKey(task.initiator)) return fail('只能提名自己发起的任务');
+    if (actorKey(actingIdentity(ctx)) !== actorKey(task.initiator)) return fail('只能提名自己发起的任务');
     if (task.state !== 'done') return fail('这件任务还没有完成');
     if (task.artifactsCleared) return fail('这件任务的成品已随白纸清空删除');
     if (task.publication?.workId) {
@@ -392,7 +392,7 @@ export function registerWorksTools(deps: WorksDeps): void {
       if (!item || item.origin.notify?.sessionId !== ctx.sessionId) return fail('本房间没有这件作品');
       const result = await service.withdraw(
         id,
-        { kind: 'origin', actorKey: actorKey(effectiveActor(ctx)) },
+        { kind: 'origin', actorKey: actorKey(actingIdentity(ctx)) },
         '来源房间撤下',
       );
       if ('refused' in result) return fail(toSource(result.refused));

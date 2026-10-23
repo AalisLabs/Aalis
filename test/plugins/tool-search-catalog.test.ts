@@ -7,6 +7,7 @@ import toolSearch from '../../packages/plugin-tool-search/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 const t = defineTexts({
   ns: '@zz/tool-search-catalog',
@@ -80,7 +81,7 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
     const response = await service.execute(
       'search_tools',
       { query, ...options },
-      { sessionId: 'room-1', enabledGroups: groups },
+      toolRequest({ sessionId: 'room-1', enabledGroups: groups }),
     );
     return JSON.parse(response.content) as {
       tools: Array<{ name: string }>;

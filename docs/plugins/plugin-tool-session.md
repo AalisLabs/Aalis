@@ -7,7 +7,7 @@
 
 注册 `session-history` 服务与 `session_get_history` 工具，按 Aalis sessionId 读取指定会话的消息，支持按条数读取最近消息，或按时间区间（`within_minutes` 或 `since`/`until`）检索。不要把它当作全局搜索工具（语义检索请用 `memory_recall`）。读出的消息不含事件标记（schema-message 的 `CONTROL_KINDS`，如压缩分隔线、指令的回复）：它们不是对话内容，不交给模型；按条数读时多读一倍再去掉它们，取最后 `limit` 条；还是凑不满 `limit` 条时，结果带 `omittedNonConversation`，写明略去了几条非对话记录（没略去的不带）。
 
-能读哪些会话按会话管理的取别的会话的规则（[plugin-session-manager](./plugin-session-manager.md)），本插件不另设范围：每次读都调契约的 `takeFrom`，当前会话取调用所在的会话，授权身份取这次调用的。
+能读哪些会话按会话管理的取别的会话的规则（[plugin-session-manager](./plugin-session-manager.md)），本插件不另设范围：每次读都调契约的 `takeFrom`，当前会话取调用所在的会话，经工具调用上下文的 `approveFor` 逐个参与者判：都过照常读，某个参与者自己私聊里的、别人过不了的发一道参与者审批由他本人批，都过不了回原因。
 
 ## 插件声明
 

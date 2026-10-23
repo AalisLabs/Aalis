@@ -3,7 +3,12 @@ import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
-import { type RegisteredTool, type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import {
+  type RegisteredTool,
+  type ToolCallContext,
+  type ToolCallRequest,
+  tools,
+} from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
@@ -15,6 +20,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { seedRooms, storedRoom } from '../fixtures/rooms.js';
 import { ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 取别的会话的东西，消费方只调会话管理的规则（契约的包装函数）：
@@ -96,7 +102,7 @@ describe('读历史的工具与 onebot_get_msg 过规则', () => {
     apps.push(started.app);
     await started.app.start();
     await started.app.plugins.idle();
-    const ctx: ToolCallContext = { sessionId: G1, platform: 'onebot', userId: A.userId };
+    const ctx = toolContext({ sessionId: G1, platform: 'onebot', userId: A.userId });
     return { call: (name: string, args: Record<string, unknown>) => recorder.call(name, args, ctx) };
   }
 
@@ -166,8 +172,8 @@ describe('跨会话历史过规则', () => {
       const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
       return typeof block?.content === 'string' ? block.content : '';
     };
-    const recent = (ctx: Partial<ToolCallContext> = {}) =>
-      recorder.call('recent_messages', {}, { sessionId: G1, platform: 'onebot', ...ctx });
+    const recent = (ctx: Partial<ToolCallRequest> = {}) =>
+      recorder.call('recent_messages', {}, toolContext({ sessionId: G1, platform: 'onebot', ...ctx }));
     return { save, passive, recent };
   }
 
@@ -184,6 +190,13 @@ describe('跨会话历史过规则', () => {
     expect(out).toContain('<群二原文>');
     expect(out).toContain('<owner 私聊原文>');
     expect(out).not.toContain('<B 私聊原文>');
+  });
+
+  it('几个人的一轮：recent_messages 不传授权身份，owner 与她私聊里的不在；只有她一个人时在', async () => {
+    const { save, recent } = await setup();
+    await save(PO, '<owner 私聊原文>');
+    expect(await recent({ participants: [OWNER, A] })).not.toContain('<owner 私聊原文>');
+    expect(await recent({ participants: [OWNER] })).toContain('<owner 私聊原文>');
   });
 
   it('逐条过：同平台别的群的在，别人私聊的与别的平台的不在；每会话上限为 0、别人的私聊刷屏时照样取满上限条群消息', async () => {

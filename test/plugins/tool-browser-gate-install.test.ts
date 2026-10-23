@@ -6,6 +6,7 @@ import { type ToolCallContext, type ToolExecutionResult, tools } from '../../pac
 import { App, type AppOptions, LogHub, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器的启动：
@@ -111,7 +112,7 @@ async function startBrowserTools(
 
 async function navigate(handlers: Record<string, Handler>): Promise<{ error?: string; pageId?: string }> {
   return JSON.parse(
-    (await handlers.browser_navigate({ url: 'http://example.zz-test/' }, { sessionId: 's' })) as string,
+    (await handlers.browser_navigate({ url: 'http://example.zz-test/' }, toolContext({ sessionId: 's' }))) as string,
   );
 }
 

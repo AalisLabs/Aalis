@@ -21,6 +21,7 @@ import {
   startPaperHub,
   stopPaperHubs,
 } from '../fixtures/paper.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 afterEach(stopPaperHubs);
 
@@ -201,7 +202,7 @@ describe('白纸作品工具', () => {
     expect(hub.tools.has('works_takedown')).toBe(false);
     expect(hub.tools.has('works_targets')).toBe(false);
     nominate.mockClear();
-    expect(JSON.parse((await old.handler(args, human())) as string)).toMatchObject({ ok: false });
+    expect(JSON.parse((await old.handler(args, toolContext(human()))) as string)).toMatchObject({ ok: false });
     expect(nominate).not.toHaveBeenCalled();
   });
 

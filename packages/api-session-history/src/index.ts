@@ -3,7 +3,7 @@
  *
  * `SessionHistoryService.getHistory` 是读会话历史的统一入口：通用工具 `session_get_history` 与平台专属工具（如
  * `onebot_get_session_history`）都经它读，每次按会话管理的规则判能不能读（api-session-manager 的 `takeFrom`），
- * 带这次调用的授权身份。
+ * 经工具调用上下文的 approveFor 逐个参与者判。
  */
 
 import type { ToolCallContext } from '@aalis/api-tools';
@@ -37,8 +37,8 @@ export type SessionHistoryReadResult =
  */
 export interface SessionHistoryService {
   /**
-   * 读 options.sessionId 的历史。callCtx 的会话是取的一方，授权身份取 callCtx 的 actor（没有时取 platform 与 userId）；
-   * 会话管理的规则不放行时回 `{ error: 原因 }`
+   * 读 options.sessionId 的历史。callCtx 的会话是取的一方，经 callCtx 的 approveFor 逐个参与者过会话管理的规则（有人过不了
+   * 时发一道参与者审批，由过得了的人批）；不放行时回 `{ error: 原因 }`
    */
   getHistory(
     options: {

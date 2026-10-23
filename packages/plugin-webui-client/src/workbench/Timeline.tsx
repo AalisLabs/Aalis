@@ -10,7 +10,7 @@ import { Menu } from '../components/Menu';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
 import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
-import { clockTime, compactNumber } from '../format';
+import { clockTime, compactNumber, speakerName } from '../format';
 import { text, tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
@@ -386,12 +386,6 @@ function Entry({ item, last, ...props }: EntryProps) {
       );
     }
   }
-}
-
-/** 说话人：owner 写「你」，房间成员写昵称，没有昵称写账号 */
-function speakerName(speaker: Item<'user-message'>['speaker']): string {
-  if (speaker.owner) return tr('speakerYou');
-  return speaker.nickname || speaker.userId || speaker.platform;
 }
 
 function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; room: boolean; sessionId: string }) {

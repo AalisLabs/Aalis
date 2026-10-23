@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // http_request / http_download 流式读取响应体并设上限：服务端不报 Content-Length 时，
@@ -53,7 +54,7 @@ describe('http 工具：响应体流式限额', () => {
     ['http_request', { url: 'https://example.invalid/big' }],
     ['http_download', { url: 'https://example.invalid/big', savePath: 'workspace:/big.bin' }],
   ])('%s：无 Content-Length 时超限即中止，流被取消，不写盘', async (name, args) => {
-    const out = JSON.parse((await handlers[name](args, { sessionId: 's' })) as string);
+    const out = JSON.parse((await handlers[name](args, toolContext({ sessionId: 's' }))) as string);
     expect(out.error).toContain('响应体过大');
     expect(stream.cancelled).toBe(true);
     expect(stream.pulled).toBeLessThanOrEqual(MAX / CHUNK + 2);

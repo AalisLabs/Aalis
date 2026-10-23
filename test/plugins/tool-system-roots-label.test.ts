@@ -5,6 +5,7 @@ import type { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-s
 import { registerSystemTools } from '../../packages/plugin-tool-system/src/tools/system.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // cwd 工具交给模型的存储根清单：根的展示名可以是文字对象（存储根的登记方给的），交给模型的取原文
@@ -40,7 +41,7 @@ describe('cwd 工具的存储根清单', () => {
     );
     const cwd = handlers.get('cwd');
     if (!cwd) throw new Error('cwd 工具未登记');
-    const out = JSON.parse(String(await cwd({}, { sessionId: 'zz', platform: 'webui' })));
+    const out = JSON.parse(String(await cwd({}, toolContext({ sessionId: 'zz', platform: 'webui' }))));
     expect(out.availableRoots).toEqual([
       {
         name: 'workspace',

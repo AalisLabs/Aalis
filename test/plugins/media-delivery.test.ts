@@ -14,7 +14,7 @@ import {
   TAKE_UNKNOWN,
 } from '../../packages/api-session-manager/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
 import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
@@ -24,6 +24,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
@@ -172,7 +173,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     const result = await registry.execute(
       'analyze_image',
       { image: uri, ...extraArgs },
-      { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },
+      toolRequest({ sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) }),
     );
     await app.stop();
     return { result, calls };
@@ -293,7 +294,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
   async function analyze(
     files: Record<string, Uint8Array>,
     image: string,
-    opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallContext; sessions?: SessionInfo[]; owner?: boolean },
+    opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallRequest; sessions?: SessionInfo[]; owner?: boolean },
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ services, tools, memory, events });
@@ -339,7 +340,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
     const result = await registry.execute(
       'analyze_image',
       { image },
-      opts.call ?? { sessionId: 's', platform: 'test', acceptsImages: true },
+      opts.call ?? toolRequest({ sessionId: 's', platform: 'test', acceptsImages: true }),
     );
     await app.stop();
     return { result, calls, reads };
@@ -377,7 +378,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
   });
 
   /** owner 在只有自己的会话里调用：本机文件能取，读不读、读哪个只看来源怎么规整 */
-  const ownCall: ToolCallContext = { sessionId: 's', platform: 'test', userId: 'u1', acceptsImages: true };
+  const ownCall = toolRequest({ sessionId: 's', platform: 'test', userId: 'u1', acceptsImages: true });
 
   it.each([
     ['out.png', 'workspace:/out.png'],
@@ -409,7 +410,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
     const image = `data/images/${GROUP_DIR}/onebot/0123456789abcdef.png`;
     const { result, reads } = await analyze({ [`data:/images/${GROUP_DIR}/onebot/0123456789abcdef.png`]: PNG }, image, {
       delivery: 'describe',
-      call: { sessionId: GROUP, platform: 'onebot', userId: '90002' },
+      call: toolRequest({ sessionId: GROUP, platform: 'onebot', userId: '90002' }),
       sessions: [storedRoom(GROUP) as unknown as SessionInfo],
     });
     expect(JSON.parse(result.content).error).toBe(
@@ -430,7 +431,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
       'data:/images/onebot_10000_group_20002/x.png',
       {
         delivery: 'describe',
-        call: { sessionId: GROUP, platform: 'onebot', userId: '90002' },
+        call: toolRequest({ sessionId: GROUP, platform: 'onebot', userId: '90002' }),
         sessions: [GROUP, 'onebot:10000:group:20002'].map(id => storedRoom(id) as unknown as SessionInfo),
       },
     );
@@ -461,7 +462,7 @@ describe('update_image_description：只改调用所在会话', () => {
     registerMediaTools({ ...host, memory: fixedRef(memoryStub), sessionManager: ref(), authority: ref() }, svc);
     const registry = host.services.use.get(tools);
     if (!registry) throw new Error('tools 服务未注册');
-    const call = { sessionId: 's', platform: 'test' };
+    const call = toolRequest({ sessionId: 's', platform: 'test' });
     const refused = await registry.execute(
       'update_image_description',
       { image_ref: 'data:/images/s/a.png', description: '一只猫', session_id: 'other' },

@@ -17,6 +17,7 @@ import { hostedApp } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -139,7 +140,7 @@ describe('工作流运行的错误原因', () => {
       logger: silent,
       runId: 'zz-run',
       vars: {},
-      toolCallContext: { sessionId: 'zz', platform: 'workflow' },
+      toolCallContext: { sessionId: 'zz', platform: 'workflow', participants: [{ platform: 'workflow', userId: '' }] },
       signal: new AbortController().signal,
     });
     expect(result.error).toMatchObject({ i18n: '@aalis/plugin-workflow', key: 'nodeFailed' });
@@ -155,7 +156,11 @@ describe('工作流运行的错误原因', () => {
     expect(await runs()).toEqual([{ runId: 'zz-text', status: { text: '失败', state: 'error' }, error: '额度用完了' }]);
     const forModel = await app
       .bind({ tools })
-      .tools.use.execute('workflow_get_runs', {}, { sessionId: 'zz', platform: 'webui', userId: 'console' });
+      .tools.use.execute(
+        'workflow_get_runs',
+        {},
+        toolRequest({ sessionId: 'zz', platform: 'webui', userId: 'console' }),
+      );
     const listed = JSON.parse(forModel.content).runs as Array<{ runId: string; error?: unknown }>;
     expect(listed.filter(r => r.runId.startsWith('zz-'))).toMatchObject([{ runId: 'zz-text', error: '额度用完了' }]);
   });

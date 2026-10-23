@@ -6,6 +6,7 @@ import { type ToolCallContext, type ToolExecutionResult, tools } from '../../pac
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的 SSRF 闸（真 Chromium + 测试自己在本机起的 http / udp 服务）：
@@ -200,7 +201,7 @@ async function startBrowserTools(
 }
 
 async function navigate(handlers: Record<string, Handler>, url: string): Promise<{ error?: string; text?: string }> {
-  return JSON.parse((await handlers.browser_navigate({ url }, { sessionId: 's' })) as string);
+  return JSON.parse((await handlers.browser_navigate({ url }, toolContext({ sessionId: 's' }))) as string);
 }
 
 /** 等页面（或它开的窗口、它起的 worker）把探测结果回报到 /zz-done/<tag> */

@@ -21,6 +21,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 一个 OneBot 插件装成两个实例、各带自己的机器人账号时，按会话 id 里的账号找到所属实例：
@@ -159,7 +160,8 @@ async function world(accounts: { a: Account[]; b: Account[] }) {
   const tool = (name: string) => {
     const handler = handlers.get(name);
     if (!handler) throw new Error(`工具 ${name} 未注册`);
-    return (args: Record<string, unknown>, sessionId: string) => handler(args, { sessionId, platform: 'onebot' });
+    return (args: Record<string, unknown>, sessionId: string) =>
+      handler(args, toolContext({ sessionId, platform: 'onebot' }));
   };
   return { host, server, actionsOf, tool, sm: () => host.sessionManager.use };
 }

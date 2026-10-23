@@ -4,7 +4,7 @@ import type { GatewayService } from '../../packages/api-gateway/src/index.js';
 import type { RemoteAgentProvider } from '../../packages/api-remote-agent/src/index.js';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
 import { resolveFields, type SessionChain } from '../../packages/api-session-settings/src/index.js';
-import type { RegisteredTool, ToolCallContext } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
 import { configSchema, paperAuditSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { registerPaperDoctor } from '../../packages/plugin-paper/src/doctor.js';
@@ -20,6 +20,7 @@ import { ownView } from './own-storage.js';
 import { human, LEDGER_URI, memoryStorage, type PaperFiles, sessionInfoOf } from './paper.js';
 import { ScriptedRemote } from './paper-remote.js';
 import { fixedRef, ref } from './service-ref.js';
+import { type RequestDraft, toolContext } from './tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸运行驱动的测试台：照 plugin-paper 的 apply 把账本、隔离、工具与驱动接在一起（不经 App），
@@ -95,7 +96,7 @@ export interface DriverHub {
   disk(): PaperLedger;
   /** 内存里的一件任务 */
   task(id: string): TaskRecord;
-  call(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<Record<string, unknown>>;
+  call(name: string, args: Record<string, unknown>, ctx?: RequestDraft): Promise<Record<string, unknown>>;
   /** 跑一次诊断项 paper.config */
   doctor(): Promise<CheckResult>;
   /** 真人在房间里交一件任务，返回任务 id（受理失败就抛） */
@@ -221,10 +222,10 @@ export async function startDriverHub(opts: DriverHubOptions = {}): Promise<Drive
   });
   driver.start();
 
-  const call = async (name: string, args: Record<string, unknown>, ctx: ToolCallContext = human('30001', ROOM_A)) => {
+  const call = async (name: string, args: Record<string, unknown>, ctx: RequestDraft = human('30001', ROOM_A)) => {
     const handler = handlers.get(name);
     if (!handler) throw new Error(`工具 ${name} 未登记`);
-    const out = await handler(args, ctx);
+    const out = await handler(args, toolContext(ctx));
     return JSON.parse(typeof out === 'string' ? out : out.content) as Record<string, unknown>;
   };
   let stopped = false;

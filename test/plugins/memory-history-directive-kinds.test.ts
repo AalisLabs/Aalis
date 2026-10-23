@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
@@ -10,6 +10,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { seedRooms } from '../fixtures/rooms.js';
+import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 跨会话注入不带指令类消息（安全）。
@@ -29,7 +30,8 @@ const HOST_NOTICE = '白纸任务占位已完成，宿主通知正文占位';
 const DELEGATION = '代发任务指令占位';
 const PLAIN_NOTICE = '群友占位戳了戳你';
 
-type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;
+/** 记下的处理函数：上下文没写参与者的按一条消息的口径补上（toolContext） */
+type ToolHandler = (args: Record<string, unknown>, ctx: RequestDraft) => Promise<string>;
 
 const apps: App[] = [];
 
@@ -72,8 +74,10 @@ async function setup() {
 
   const toolHandlers = new Map<string, ToolHandler>();
   host.provide.use(tools, {
-    register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
-      toolHandlers.set(tool.definition.function.name, tool.handler);
+    register: (tool: { definition: { function: { name: string } }; handler: RegisteredTool['handler'] }) => {
+      toolHandlers.set(tool.definition.function.name, async (args, ctx) =>
+        String(await tool.handler(args, toolContext(ctx))),
+      );
       return () => {};
     },
     registerGroup: () => () => {},

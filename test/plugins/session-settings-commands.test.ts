@@ -98,7 +98,7 @@ async function setup({
     host.authority.use.setUserLevel(L2, 2);
   } else {
     // 指令本身照常执行：这里测的是缺了权限服务时会话设置怎么答
-    host.commands.use.setExecutionGuard(async () => null);
+    host.commands.use.setExecutionGuard(async () => ({ ok: true }));
   }
   await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001', userId: L1.userId });
   await inbound({ sessionId: PRIVATE, platform: 'onebot', sessionType: 'private', userId: L1.userId });

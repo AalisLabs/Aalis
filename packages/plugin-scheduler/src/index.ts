@@ -1,7 +1,7 @@
 import { cronEngine } from '@aalis/api-cron-engine';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
-import { tools } from '@aalis/api-tools';
+import { actingIdentity, tools } from '@aalis/api-tools';
 import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
@@ -1042,6 +1042,11 @@ async function run(caps: Caps): Promise<void> {
           error: `在子任务里建定时任务必须写明目标会话 sessionId：子任务的会话删掉后，发往它的任务会静默丢失${candidate}`,
         });
       }
+      // 安全关键：创建者强制取这次调用的授权身份（api-tools 的 actingIdentity），不从 args 读取：即使 LLM 在 prompt 中尝试
+      // 伪造身份也会被忽略。只有一位参与者时是他（代人执行的回合，如子任务链、workflow 或定时任务驱动的，就是被代的人）；
+      // 这一项声明了确认，多人的一轮里经 owner 批过，参与者已换成她；没有单一身份的是无主体，任务按匿名（defaultAuthority）
+      // 运行，实现权限的自然传递与不可提升
+      const creator = actingIdentity(callCtx);
       const job: SchedulerJobConfig = {
         name: args.name as string,
         cron: hasCron ? (args.cron as string).trim() : undefined,
@@ -1049,12 +1054,8 @@ async function run(caps: Caps): Promise<void> {
         runAt,
         sessionId: target || callCtx.sessionId,
         platform: (args.platform as string) || callCtx.platform || 'internal',
-        // 安全关键：actor 强制从 callCtx snapshot，不从 args 读取。
-        // 这样即使 LLM 在 prompt 中尝试伪造身份，也会被忽略——它只能以当前调用者的身份创建任务。
-        // 优先 callCtx.actor（本回合本就在代人执行，如子任务链、workflow 或定时任务驱动的回合），否则用物理身份；
-        // 两者皆空则子任务匿名（defaultAuthority），实现权限的自然传递与不可提升。
-        actorPlatform: callCtx.actor?.platform ?? callCtx.platform,
-        actorUserId: callCtx.actor?.userId ?? callCtx.userId,
+        actorPlatform: creator.platform,
+        actorUserId: creator.userId || undefined,
         content: args.content as string,
         enabled: true,
       };

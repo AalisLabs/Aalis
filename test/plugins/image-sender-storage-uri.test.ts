@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
 import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
@@ -12,6 +12,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { storedRoom } from '../fixtures/rooms.js';
+import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 的 storage_uri 只收存储地址。
@@ -32,7 +33,8 @@ describe('send_attachment 的 storage_uri', () => {
   let base: string;
   let app: App;
   let hostEvents: Events;
-  let handlers: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>>;
+  /** 记下的处理函数：上下文没写参与者的按一条消息的口径补上（toolContext） */
+  let handlers: Record<string, (a: Record<string, unknown>, c: RequestDraft) => Promise<string>>;
   let confirmDelivery: boolean;
 
   beforeEach(async () => {
@@ -59,8 +61,8 @@ describe('send_attachment 的 storage_uri', () => {
       if (confirmDelivery) msg.delivery = Promise.resolve({ ok: true });
     });
     host.provide.use(tools, {
-      register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
-        handlers[t.definition.function.name] = t.handler;
+      register: (t: { definition: { function: { name: string } }; handler: RegisteredTool['handler'] }) => {
+        handlers[t.definition.function.name] = async (a, c) => String(await t.handler(a, toolContext(c)));
         return () => {};
       },
       registerGroup: () => () => {},
@@ -110,10 +112,7 @@ describe('send_attachment 的 storage_uri', () => {
     });
     await handlers.send_attachment(
       { kind: 'image', storage_uri: 'data:/images/onebot_x_group_1/onebot/abcd1234.jpg' },
-      {
-        sessionId: 'onebot:x:group:1',
-        callId: 'call-7',
-      } as { sessionId: string },
+      { sessionId: 'onebot:x:group:1', callId: 'call-7' },
     );
     expect(outbound.map(m => m.callId)).toEqual(['call-7']);
   });
@@ -149,12 +148,15 @@ describe('send_attachment 的 storage_uri', () => {
       outbound.push(m);
     });
     const out = JSON.parse(
-      await handlers.send_attachment({ kind: 'image', storage_uri: 'data:/images/onebot_x_group_2/other.jpg' }, {
-        sessionId: 'onebot:x:group:1',
-        platform: 'onebot',
-        userId: OWNER_QQ,
-        inbound: {},
-      } as { sessionId: string }),
+      await handlers.send_attachment(
+        { kind: 'image', storage_uri: 'data:/images/onebot_x_group_2/other.jpg' },
+        {
+          sessionId: 'onebot:x:group:1',
+          platform: 'onebot',
+          userId: OWNER_QQ,
+          inbound: {},
+        },
+      ),
     );
     expect(out.error).toBe(OUT_OF_SCOPE);
     expect(outbound).toHaveLength(0);

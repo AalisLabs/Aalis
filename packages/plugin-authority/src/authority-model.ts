@@ -115,11 +115,11 @@ export function resolveAccess(input: AccessInput): boolean {
 }
 
 /** 判类别与主体要的那几项：起它的那一轮还原成的一轮没有会话 */
-type Turn = Pick<OriginTurn, 'platform' | 'userId' | 'actor' | 'inbound'>;
+type Turn = Pick<OriginTurn, 'platform' | 'userId' | 'participants' | 'inbound'>;
 
-/** 起它的那一轮还原成一轮：授权身份取它的参与者 */
+/** 起它的那一轮还原成一轮 */
 function turnOf({ platform, userId, participants, source, fromTurn }: NonNullable<InboundTurn['fromTurn']>): Turn {
-  return { platform, userId, actor: participants[0], inbound: { source, fromTurn } };
+  return { platform, userId, participants, inbound: { source, fromTurn } };
 }
 
 /**
@@ -129,8 +129,8 @@ function turnOf({ platform, userId, participants, source, fromTurn }: NonNullabl
  * - 子任务回合是 subtask；
  * - 续做（带起它的那一轮）与起它的那一轮同一类别，不按通知上的身份推；
  * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件）是 autonomous；
- * - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）是 hand；授权身份没有账号的（没有人的消息）是她自己开口，
- *   失败关闭为 autonomous。
+ * - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）的一轮是 hand，几条一起进来的也是；参与者都没有账号的
+ *   （没有人的消息）是她自己开口，失败关闭为 autonomous。
  */
 export function originKind(turn: Turn): OriginKind {
   const { inbound } = turn;
@@ -138,20 +138,21 @@ export function originKind(turn: Turn): OriginKind {
   if (inbound.source === 'subtask') return 'subtask';
   if (inbound.fromTurn) return originKind(turnOf(inbound.fromTurn));
   if (inbound.source !== undefined) return 'autonomous';
-  return (turn.actor ?? turn).userId ? 'hand' : 'autonomous';
+  return turn.participants.some(who => who.userId) ? 'hand' : 'autonomous';
 }
 
 /**
  * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：
- * - hand（含它的续做，续做的授权身份就是起它的那一轮的参与者）：参与者是 owner 为 owner；
+ * - hand（含它的续做，续做的参与者就是起它的那一轮的参与者）：参与者都是 owner 为 owner，owner 与别人同在的为 other；
  * - 子任务随派它的那一轮（inbound.fromTurn），没带的为 other；子任务里的续做经起它的子任务那一轮递归到派它的那一轮；
  * - 其余为 other。
  */
 export function principalKind(turn: Turn, isOwner: (platform: string, userId?: string) => boolean): 'owner' | 'other' {
   switch (originKind(turn)) {
     case 'hand': {
-      const { platform, userId } = turn.actor ?? turn;
-      return isOwner(platform, userId) ? 'owner' : 'other';
+      const { participants } = turn;
+      const owners = participants.length > 0 && participants.every(who => isOwner(who.platform, who.userId));
+      return owners ? 'owner' : 'other';
     }
     case 'subtask': {
       const from = turn.inbound?.fromTurn;

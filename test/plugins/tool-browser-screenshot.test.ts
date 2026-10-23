@@ -13,6 +13,7 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的两条实证缺陷（真 Chromium + 真本机 http 服务 + 真 fs）：
@@ -125,7 +126,7 @@ afterAll(async () => {
 /** 打开页面：页面归打开它的会话，截图要在同一个会话里取 */
 async function navigate(sessionId = 's'): Promise<string> {
   const out = JSON.parse(
-    (await handlers.browser_navigate({ url: `http://127.0.0.1:${port}/` }, { sessionId })) as string,
+    (await handlers.browser_navigate({ url: `http://127.0.0.1:${port}/` }, toolContext({ sessionId }))) as string,
   );
   if (out.error) throw new Error(`导航失败: ${out.error}`);
   return out.pageId as string;
@@ -136,7 +137,7 @@ describe('browser_screenshot 的交付形态', () => {
     const pageId = await navigate('onebot:t:group:1');
     const result = (await handlers.browser_screenshot(
       { pageId },
-      { sessionId: 'onebot:t:group:1', acceptsImages: true },
+      toolContext({ sessionId: 'onebot:t:group:1', acceptsImages: true }),
     )) as ToolExecutionResult;
     expect(result.images).toHaveLength(1);
     expect(result.images?.[0].startsWith('data:image/png;base64,')).toBe(true);
@@ -154,7 +155,7 @@ describe('browser_screenshot 的交付形态', () => {
 
   it('调用方只读 content（mcp-server / workflow）：落盘 tmp 根返回 storage_uri，仍不含 base64', async () => {
     const pageId = await navigate();
-    const raw = (await handlers.browser_screenshot({ pageId }, { sessionId: 's' })) as string;
+    const raw = (await handlers.browser_screenshot({ pageId }, toolContext({ sessionId: 's' }))) as string;
     const out = JSON.parse(raw);
     expect(out.error).toBeUndefined();
     expect(raw).not.toContain('base64');
@@ -171,7 +172,8 @@ describe('browser_screenshot 的交付形态', () => {
     const pageId = await navigate('zzz-dedup');
     const dir = join(base, 'tmp', 'browser', 'zzz-dedup');
     const shoot = async (): Promise<string> =>
-      JSON.parse((await handlers.browser_screenshot({ pageId }, { sessionId: 'zzz-dedup' })) as string).storage_uri;
+      JSON.parse((await handlers.browser_screenshot({ pageId }, toolContext({ sessionId: 'zzz-dedup' }))) as string)
+        .storage_uri;
     const first = await shoot();
     const second = await shoot();
     expect(second).toBe(first);
@@ -189,11 +191,13 @@ describe('browser_screenshot 的交付形态', () => {
     try {
       const withImg = (await handlers.browser_screenshot(
         { pageId },
-        { sessionId: 'zzz-fail', acceptsImages: true },
+        toolContext({ sessionId: 'zzz-fail', acceptsImages: true }),
       )) as ToolExecutionResult;
       expect(withImg.images).toHaveLength(1);
       expect(JSON.parse(withImg.content).storage_uri).toBeUndefined();
-      const textOnly = JSON.parse((await handlers.browser_screenshot({ pageId }, { sessionId: 'zzz-fail' })) as string);
+      const textOnly = JSON.parse(
+        (await handlers.browser_screenshot({ pageId }, toolContext({ sessionId: 'zzz-fail' }))) as string,
+      );
       expect(textOnly.error).toContain('截图落盘失败');
       expect(JSON.stringify(textOnly)).not.toContain('base64');
     } finally {
@@ -215,7 +219,9 @@ describe('ensureBrowser 对断连的浏览器', () => {
     // 死页面不留在表里（webui 的页面列表也不该列它）
     const listed = await pages.data<Array<{ id: string }>>('browser', 'pages');
     expect(listed.map(p => p.id)).toEqual([freshPageId]);
-    const stale = JSON.parse((await handlers.browser_get_text({ pageId: deadPageId }, { sessionId: 's' })) as string);
+    const stale = JSON.parse(
+      (await handlers.browser_get_text({ pageId: deadPageId }, toolContext({ sessionId: 's' }))) as string,
+    );
     expect(stale.error).toBe('页面不存在');
   }, 90_000);
 });
@@ -245,7 +251,7 @@ describe('浏览器页', () => {
   it('导航失败时开出的页面留在表里，开页那一刻已推 invalidate', async () => {
     const before = pages.invalidations.length;
     const out = JSON.parse(
-      (await handlers.browser_navigate({ url: 'http://127.0.0.1:1/' }, { sessionId: 's' })) as string,
+      (await handlers.browser_navigate({ url: 'http://127.0.0.1:1/' }, toolContext({ sessionId: 's' }))) as string,
     );
     expect(out.error, '用例前提：本机 1 号端口连不上，导航失败').toBeTruthy();
     expect(pages.invalidations.slice(before)).toEqual([{ instance: '@aalis/plugin-tool-browser', pageKey: 'browser' }]);

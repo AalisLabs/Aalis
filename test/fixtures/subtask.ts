@@ -1,12 +1,13 @@
 import { agent } from '../../packages/api-agent/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
-import type { RegisteredTool, ToolCallContext } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 import { fieldsPlugin, SCHEMA, startSettings } from './session-settings.js';
+import { type RequestDraft, toolContext } from './tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 子任务插件的测试台：真的会话管理与会话设置（startSettings）装上子任务插件；工具服务的替身记下登记的工具（含风险与确认的
@@ -85,13 +86,13 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
   });
 
   /** 在 ctx 里调一个工具，回原样的结果文本 */
-  const raw = async (name: string, args: Record<string, unknown>, ctx: Partial<ToolCallContext>) => {
+  const raw = async (name: string, args: Record<string, unknown>, ctx: RequestDraft) => {
     const tool = registered.get(name);
     if (!tool) throw new Error(`工具 ${name} 未登记`);
-    const out = await (tool.handler as Handler)(args, ctx as ToolCallContext);
+    const out = await (tool.handler as Handler)(args, toolContext(ctx));
     return typeof out === 'string' ? out : out.content;
   };
-  const call = async (name: string, args: Record<string, unknown>, ctx: Partial<ToolCallContext>) =>
+  const call = async (name: string, args: Record<string, unknown>, ctx: RequestDraft) =>
     JSON.parse(await raw(name, args, ctx));
 
   let turns = 0;

@@ -30,7 +30,7 @@ export interface SessionHistoryService {
 }
 ```
 
-`callCtx` 的会话是取的一方，授权身份取 `callCtx.actor`（没有时取 `platform` 与 `userId`）；规则不放行时回 `{ error: 原因 }`。
+`callCtx` 的会话是取的一方，经 `callCtx.approveFor` 逐个参与者过规则（有人过不了时发一道参与者审批，由过得了的人批）；不放行时回 `{ error: 原因 }`。
 
 返回类型 `SessionHistoryReadResult`（`index.ts`）是判别联合：成功为 `{ ok: true; sessionId; count; limit; includeArchived; range?; truncated?; omittedNonConversation?; messages }`（`omittedNonConversation`：条数模式返回不满 `limit` 条时，读到的记录里略去的事件标记条数），失败为 `{ error: string }`——**没有 `ok: false` 形态，错误分支只有 `error` 字段**，消费方用 `'error' in result` 判别。
 
@@ -73,10 +73,8 @@ export default definePlugin({
       async getHistory(options, callCtx) {
         const target = String(options.sessionId ?? '').trim();
         if (!target) return { error: 'sessionId 不能为空' };
-        // 能不能读按会话管理的规则判，带这次调用的授权身份；会话管理不在时只放行当前会话
-        const { userId } = callCtx;
-        const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
-        const verdict = takeFrom(sessionManager, callCtx.sessionId, target, principal);
+        // 能不能读按会话管理的规则判，逐个参与者经 approveFor；会话管理不在时只放行当前会话
+        const verdict = await callCtx.approveFor(who => takeFrom(sessionManager, callCtx.sessionId, target, who));
         if (!verdict.ok) return { error: toSource(verdict.reason) };
         return {
           ok: true,
