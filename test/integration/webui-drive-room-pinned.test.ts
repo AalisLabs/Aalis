@@ -121,7 +121,7 @@ async function loadStack() {
   host.events.use.on('outbound:message', message => void outbound.push(message));
   const commands = host.commands.use;
   // /session 声明了 risk:'sensitive'，没有守卫时会被拒：放行守卫代替 plugin-authority（本文件测的不是鉴权）
-  commands.setExecutionGuard(async () => null);
+  commands.setExecutionGuard(async () => ({ ok: true }));
   return {
     recorder,
     exec,

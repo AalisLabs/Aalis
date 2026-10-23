@@ -1138,6 +1138,8 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       tool: DEPLOY,
       args: { command: COMMAND },
       rule: 'e2e',
+      canAnswer: () => true,
+      ownerOnly: true,
     });
     const settled = `main ${aria('日志', 'list')} ${text(`审批结算：会话 ${sessionId}，工具 ${DEPLOY}，拒绝`)}`;
     await page.waitForSelector(settled);

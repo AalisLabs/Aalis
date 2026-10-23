@@ -27,6 +27,7 @@ import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 媒体判据（api-media 的 mediaInScope）按目标分三类：会话媒体目录里的按目录名反查会话（按大小写折叠比，候选取并集），
@@ -273,15 +274,23 @@ describe('本机文件判法（localFileInScope）', () => {
       turn({ sessionId: OWNER_PRIVATE, platform: 'onebot', source: 'scheduler', actor: owner }),
       true,
     ],
-    ['owner 会话里的白纸通知（selfInitiatedActor）', { sessionId: WEBUI, actor: selfInitiatedActor('webui') }, false],
-    ['MCP 客户端', { sessionId: 'mcp-server', platform: 'mcp', userId: 'mcp-client' }, false],
-    ['匿名编排', { sessionId: 'workflow::wf-2' }, false],
+    [
+      'owner 会话里的白纸通知（selfInitiatedActor）',
+      { sessionId: WEBUI, participants: [selfInitiatedActor('webui')] },
+      false,
+    ],
+    [
+      'MCP 客户端',
+      { sessionId: 'mcp-server', platform: 'mcp', participants: [{ platform: 'mcp', userId: 'mcp-client' }] },
+      false,
+    ],
+    ['匿名编排', { sessionId: 'workflow::wf-2', participants: [selfInitiatedActor('workflow')] }, false],
   ] satisfies [string, MediaScopeCall, boolean][])('%s', (_label, call, expected) => {
     expect(localFileInScope(call, fileDeps())).toBe(expected);
   });
 
   it('会话管理不在：非人回合的条款判不出受众，不放行；主体是 owner 的照旧能取', () => {
-    const scheduled = { sessionId: WEBUI, platform: 'webui', actor: webuiConsole };
+    const scheduled = { sessionId: WEBUI, platform: 'webui', participants: [webuiConsole] };
     expect(localFileInScope(scheduled, fileDeps())).toBe(true);
     expect(localFileInScope(scheduled, fileDeps(false))).toBe(false);
     expect(localFileInScope(ownerInGroup, fileDeps(false))).toBe(true);
@@ -453,7 +462,7 @@ describe('真实写入方产出的路径判据都接受', () => {
     });
     const out = await registered.draw_image.handler(
       { source: '<svg viewBox="0 0 2 2" xmlns="http://www.w3.org/2000/svg"/>' },
-      { sessionId },
+      toolContext({ sessionId }),
     );
     const { uri } = JSON.parse(typeof out === 'string' ? out : out.content) as { uri: string };
     expect([...files.keys()]).toEqual([uri]);

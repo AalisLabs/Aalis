@@ -160,9 +160,10 @@ function createSessionHistoryService(
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
 
-      const { userId } = callCtx;
-      const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
-      const verdict = takeFrom(sessionManager, callCtx.sessionId, targetSessionId, principal);
+      // 逐个参与者过会话管理的规则：有人过不了（某个参与者自己私聊里的）时发一道参与者审批，由过得了的人批
+      const verdict = await callCtx.approveFor(who =>
+        takeFrom(sessionManager, callCtx.sessionId, targetSessionId, who),
+      );
       if (!verdict.ok) return { error: toSource(verdict.reason) };
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(options.limit) || cfg.defaultLimit)));

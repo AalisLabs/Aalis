@@ -17,6 +17,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { sessionTableManager } from '../fixtures/session-table.js';
+import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 召回按出生平台：IM 房间不论从哪个入口驱动，跨会话料的「当前平台」都是会话管理记下的出生平台（子会话取根会话的），
@@ -54,7 +55,8 @@ const WITH_OWNER_FACES: Record<string, Record<string, unknown>> = Object.fromEnt
 /** WebUI 入口往群房间发消息时的调用上下文：授权身份是 owner 的控制台身份 */
 const WEBUI_INTO_GROUP = { sessionId: GROUP, platform: 'webui', userId: 'console' };
 
-type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;
+/** 记下的处理函数：上下文没写参与者的按一条消息的口径补上（toolContext） */
+type ToolHandler = (args: Record<string, unknown>, ctx: RequestDraft) => Promise<string>;
 
 const apps: App[] = [];
 
@@ -65,8 +67,10 @@ afterEach(async () => {
 function toolRecorder() {
   const handlers = new Map<string, ToolHandler>();
   const stub = {
-    register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
-      handlers.set(tool.definition.function.name, tool.handler);
+    register: (tool: { definition: { function: { name: string } }; handler: RegisteredTool['handler'] }) => {
+      handlers.set(tool.definition.function.name, async (args, ctx) =>
+        String(await tool.handler(args, toolContext(ctx))),
+      );
       return () => {};
     },
     registerGroup: () => () => {},
@@ -266,7 +270,7 @@ describe('session-history：按出生平台判', () => {
     requireActive(app, sessionManagerPlugin.name);
     requireActive(app, sessionTools.name);
     return async (ctx: { sessionId: string; platform: string }, target: string) =>
-      JSON.parse((await handlers.get('session_get_history')!({ session_id: target }, ctx)) as string);
+      JSON.parse((await handlers.get('session_get_history')!({ session_id: target }, toolContext(ctx))) as string);
   }
 
   it('安全：WebUI 入口往群房间发消息，同平台别的群照常可读，WebUI 的会话被拒', async () => {

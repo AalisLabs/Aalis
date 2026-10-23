@@ -9,6 +9,7 @@ import type { RenderRequest } from '../../packages/util-offline-render/src/index
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // draw_image、draw_animation 声明可转后台，只认执行器给这次调用的中止信号：渲染请求带上它，动图的两遍 ffmpeg 编码
@@ -67,7 +68,7 @@ describe('绘图可转后台', () => {
     renders.requests.length = 0;
     const tool = (await apply())[name];
     const ac = new AbortController();
-    const pending = tool.handler({ source: SVG }, { sessionId: 's', signal: ac.signal });
+    const pending = tool.handler({ source: SVG }, toolContext({ sessionId: 's', signal: ac.signal }));
     await vi.waitFor(() => expect(renders.requests).toHaveLength(1));
     expect(renders.requests[0].signal).toBe(ac.signal);
     ac.abort();

@@ -3,6 +3,7 @@ import { type SessionInfo, sessionManager } from '../../packages/api-session-man
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 页面与登录态都归打开它的根会话（子会话归它的根会话）：
@@ -135,7 +136,7 @@ async function start() {
   await app.plugins.idle();
   // 接得住图：没有存储服务时截图只随结果交出
   const call = async (name: string, args: Record<string, unknown>, sessionId: string) => {
-    const out = await handlers[name](args, { sessionId, acceptsImages: true });
+    const out = await handlers[name](args, toolContext({ sessionId, acceptsImages: true }));
     return JSON.parse(typeof out === 'string' ? out : out.content) as Record<string, unknown>;
   };
   const open = async (sessionId: string) =>

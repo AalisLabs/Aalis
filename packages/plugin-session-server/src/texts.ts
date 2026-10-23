@@ -16,7 +16,7 @@ const SOURCE = {
   notAccepted: '没有发出：平台没收下（{error}）',
   noAdapter: '没有发出：没有平台适配器接手这条消息',
   sendFailed: '没有发出：发送出错（{error}）',
-  responderNotOwner: '应答人不是 owner',
+  responderCannotAnswer: '应答人不能批这一张',
   approvalSettled: '这个审批已经结算',
   noSuchApproval: '没有这个审批：{id}',
   contentHashMismatch: '内容哈希对不上',

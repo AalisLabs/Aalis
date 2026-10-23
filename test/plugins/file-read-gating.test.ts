@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // file 读类能力闸回归：
@@ -88,14 +89,17 @@ describe('file_move / file_mkdir 的 allowedRoots 闸', () => {
     const tools = capture(['workspace']);
     const out = await tools.file_move.handler(
       { from: 'data:/users.json', to: 'data:/x' },
-      { sessionId: 's', enabledGroups: undefined },
+      toolContext({ sessionId: 's', enabledGroups: undefined }),
     );
     expect(String(out)).toContain('不允许访问 data:/');
   });
 
   it('file_mkdir：allowedRoots 外的根被拒，storage.mkdir 零触达', async () => {
     const tools = capture(['workspace']);
-    const out = await tools.file_mkdir.handler({ path: 'data:/evil' }, { sessionId: 's', enabledGroups: undefined });
+    const out = await tools.file_mkdir.handler(
+      { path: 'data:/evil' },
+      toolContext({ sessionId: 's', enabledGroups: undefined }),
+    );
     expect(String(out)).toContain('不允许访问 data:/');
   });
 });

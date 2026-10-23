@@ -115,7 +115,7 @@ describe('真人入站与经 owner 审批的注入：照常执行', () => {
 });
 
 describe('其余带 source 的注入：不过指令解析，当普通消息交给她', () => {
-  const ownerCall = { sessionId: PARENT, platform: OWNER.platform, userId: OWNER.userId };
+  const ownerCall = { sessionId: PARENT, ...OWNER, participants: [OWNER] };
 
   it('子任务的任务正文', async () => {
     const s = await setup();
@@ -153,7 +153,7 @@ describe('其余带 source 的注入：不过指令解析，当普通消息交�
       },
       runId: 'r1',
       vars: {},
-      toolCallContext: { sessionId: 'webui:s1', actor: OWNER },
+      toolCallContext: { sessionId: 'webui:s1', participants: [OWNER] },
       signal: new AbortController().signal,
     });
     await done;

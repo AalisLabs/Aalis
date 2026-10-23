@@ -617,7 +617,9 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
 
   it('守卫返回拒绝文案（不抛错）：本来就只影响该工具', async () => {
     const r = await runBatch('test:batch-guard-deny', host => {
-      host.tools.use.setExecutionGuard(async req => (req.name === 'guarded' ? '权限不足' : null));
+      host.tools.use.setExecutionGuard(async req =>
+        req.name === 'guarded' ? { ok: false, reason: '权限不足' } : { ok: true },
+      );
     });
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('权限不足');

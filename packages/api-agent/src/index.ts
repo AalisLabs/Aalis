@@ -9,7 +9,7 @@
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type { ChatResponse, ModelRef } from '@aalis/api-llm';
-import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
+import type { ToolCallRequest, ToolDefinition } from '@aalis/api-tools';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
@@ -87,7 +87,7 @@ declare module '@aalis/api-hooks' {
       turnId: string;
       metadata: Record<string, unknown>;
     };
-    'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallContext };
+    'agent:tool:before': { name: string; args: Record<string, unknown>; toolCallContext: ToolCallRequest };
     /**
      * 一次工具调用执行完：result 可以改写（回给模型、落库的都是改写后的）。metadata 是这次工具结果落库时 tool 消息的元数据，
      * 中间件写进去的键随结果落库，供回看历史的一方还原这次调用的结局（如会话服务记下的审批结算、发进房间的消息已被收下）；
@@ -96,7 +96,7 @@ declare module '@aalis/api-hooks' {
     'agent:tool:after': {
       name: string;
       result: string;
-      toolCallContext: ToolCallContext;
+      toolCallContext: ToolCallRequest;
       metadata: Record<string, unknown>;
     };
     'agent:reply:before': {

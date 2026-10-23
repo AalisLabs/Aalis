@@ -1,8 +1,17 @@
-import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
+import type {
+  CapabilityConfirm,
+  CapabilityRisk,
+  CapabilityVisibility,
+  ExecutionGuard,
+  ExecutionGuardContext,
+  UserIdentity,
+  Verdict,
+} from '@aalis/api-authority';
 import { capabilityMinLevel, DEFAULT_AUTHORITY, resolveCapabilityPolicy } from '@aalis/api-authority';
 import {
   type RegisteredTool,
   type ToolCallContext,
+  type ToolCallRequest,
   type ToolDefinition,
   type ToolDisplay,
   type ToolExecutionResult,
@@ -32,7 +41,7 @@ interface Entry {
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
  * - 一张登记表，name 全局唯一（重名警告并覆盖），另加四个自带的后台任务工具：它们的名字保留，同名登记被拒并告警
  * - register() 返回退订，退订按条目身份，由绑定门面在激活撤回时调用
- * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
+ * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子；经审批放行的调用按批的人执行，取用判定（approveFor）也经守卫
  *
  * 声明了 background 的工具由执行器转后台（见 background.ts）；四个后台任务工具只在可见的工具里有可转后台的时才可见。
  */
@@ -228,7 +237,7 @@ export class ToolRegistry implements ToolService {
   async execute(
     toolName: string,
     args: Record<string, unknown>,
-    callCtx: ToolCallContext,
+    callCtx: ToolCallRequest,
   ): Promise<ToolExecutionResult> {
     const entry = this.tools.get(toolName) ?? this.taskTool(toolName, callCtx.enabledGroups);
     if (!entry) {
@@ -280,24 +289,32 @@ export class ToolRegistry implements ToolService {
     // 占到的位置没交给 run 的（守卫拒绝或抛错、已中止）一律让出
     let handedOver = false;
     try {
+      const verdict = await this.guard(tool, toolArgs, callCtx);
+      if (!verdict.ok) return failure(toSource(verdict.reason));
       // 等审批期间这次调用可能已被中止（工具撤回登记、会话删除、执行器停用）
-      const refused =
-        (await this.guard(tool, toolArgs, callCtx)) ??
-        (call?.controller.signal.aborted ? '调用已中止，未执行' : undefined);
-      if (refused !== undefined) return failure(refused);
+      if (call?.controller.signal.aborted) return failure('调用已中止，未执行');
 
       if (resolveCapabilityPolicy(tool).visibility === 'restricted') {
         this.logger.info(
           `受限工具执行: ${toolName} session=${callCtx.sessionId} platform=${callCtx.platform ?? 'unknown'} args=${JSON.stringify(toolArgs)}`,
         );
       }
-      if (!call) return this.invoke(tool, toolArgs, { ...callCtx, output: this.tasks.outputFor(callCtx) });
+      // 批过的调用按批的人执行：交给处理函数与转后台登记的都是参与者换成他的这一份，它派生的（子任务、结束通知、定时任务）随之
+      const request: ToolCallRequest = verdict.by ? { ...callCtx, participants: [verdict.by] } : callCtx;
+      if (!call) {
+        return this.invoke(tool, toolArgs, {
+          ...request,
+          output: this.tasks.outputFor(request),
+          approveFor: check => this.approveFor(tool, toolArgs, request, check, true),
+        });
+      }
       handedOver = true;
       return this.tasks.run(call, {
         tool: toolName,
         args,
-        ctx: callCtx,
+        ctx: request,
         display: tool.display,
+        approve: (ctx, check, asks) => this.approveFor(tool, toolArgs, ctx, check, asks),
         invoke: ctx => this.invoke(tool, toolArgs, ctx),
       });
     } finally {
@@ -305,46 +322,73 @@ export class ToolRegistry implements ToolService {
     }
   }
 
-  /** 过执行守卫；拒绝时回原因。守卫可能等过一轮 owner 审批：期间回合若已中止（latest-wins / 手动 abort），不替死回合执行 */
-  private async guard(
+  /** 这次调用交给执行守卫的上下文 */
+  private guardContext(
     tool: RegisteredTool,
     args: Record<string, unknown>,
-    callCtx: ToolCallContext,
-  ): Promise<string | undefined> {
-    const toolName = tool.definition.function.name;
+    callCtx: ToolCallRequest,
+  ): ExecutionGuardContext {
     const { visibility, confirm } = resolveCapabilityPolicy(tool);
-    if (this._guard) {
-      const denied = await this._guard({
-        name: toolName,
-        type: 'tool',
-        visibility,
-        confirm,
-        risk: tool.risk,
-        sessionId: callCtx.sessionId,
-        platform: callCtx.platform ?? 'unknown',
-        userId: callCtx.userId,
-        actor: callCtx.actor,
-        toolGroups: tool.groups,
-        args,
-        turnId: callCtx.turnId,
-        callId: callCtx.callId,
-        inbound: callCtx.inbound,
-        signal: callCtx.signal,
-      });
-      if (denied) {
-        // 拒绝语交给模型：取原文
-        const reason = toSource(denied);
-        this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${reason}`);
-        return reason;
+    return {
+      name: tool.definition.function.name,
+      type: 'tool',
+      visibility,
+      confirm,
+      risk: tool.risk,
+      sessionId: callCtx.sessionId,
+      platform: callCtx.platform ?? 'unknown',
+      userId: callCtx.userId,
+      participants: callCtx.participants,
+      toolGroups: tool.groups,
+      args,
+      turnId: callCtx.turnId,
+      callId: callCtx.callId,
+      inbound: callCtx.inbound,
+      signal: callCtx.signal,
+    };
+  }
+
+  /**
+   * 过执行守卫；拒绝时回原因（交给模型，取原文），经审批放行的带回批的人。守卫可能等过一轮审批：期间回合若已中止
+   * （latest-wins / 手动 abort），不替死回合执行
+   */
+  private async guard(tool: RegisteredTool, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<Verdict> {
+    const toolName = tool.definition.function.name;
+    const aborted: Verdict = { ok: false, reason: '回合已中止，未执行' };
+    if (!this._guard) {
+      const { visibility, confirm } = resolveCapabilityPolicy(tool);
+      if (confirm || capabilityMinLevel({ risk: tool.risk, visibility }) > DEFAULT_AUTHORITY) {
+        // 没有守卫（未装权限插件）时 fail-closed：等同人人都是默认等级、没人能确认。
+        // 需要更高等级或需要确认的工具一律拒绝，默认等级可用且无需确认的照常执行。
+        const reason = `工具 "${toolName}" 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
+        this.logger.warn(reason);
+        return { ok: false, reason };
       }
-    } else if (confirm || capabilityMinLevel({ risk: tool.risk, visibility }) > DEFAULT_AUTHORITY) {
-      // 没有守卫（未装权限插件）时 fail-closed：等同人人都是默认等级、没人能确认。
-      // 需要更高等级或需要确认的工具一律拒绝，默认等级可用且无需确认的照常执行。
-      const reason = `工具 "${toolName}" 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
-      this.logger.warn(reason);
-      return reason;
+      return callCtx.signal?.aborted ? aborted : { ok: true };
     }
-    return callCtx.signal?.aborted ? '回合已中止，未执行' : undefined;
+    const verdict = await this._guard(this.guardContext(tool, args, callCtx));
+    if (!verdict.ok) {
+      this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${toSource(verdict.reason)}`);
+      return verdict;
+    }
+    return callCtx.signal?.aborted ? aborted : verdict;
+  }
+
+  /**
+   * 处理函数里的取用判定（ToolCallContext.approveFor）：按这次调用的参与者经执行守卫三分，可能等一道参与者审批，审批随 callCtx
+   * 的中止信号撤销。asks 为假（调用已转到后台）、守卫不在或调用不在回合里时只按参与者都过判、不出审批，过不了的回第一位的原因
+   */
+  private async approveFor(
+    tool: RegisteredTool,
+    args: Record<string, unknown>,
+    callCtx: ToolCallRequest,
+    check: (who: UserIdentity) => Verdict,
+    asks: boolean,
+  ): Promise<Verdict> {
+    if (!asks || !this._guard || !inTurn(callCtx)) {
+      return callCtx.participants.map(check).find(verdict => !verdict.ok) ?? { ok: true };
+    }
+    return this._guard({ ...this.guardContext(tool, args, callCtx), check });
   }
 
   /** 跑工具：字符串结果归一为统一形态，带图结果只保留非空 images（空数组等于没图）；抛错转成 { error }，不冒泡 */

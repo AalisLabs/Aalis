@@ -14,6 +14,7 @@ import codeRunner from '../../packages/plugin-tool-code-runner/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { absentDoctor, fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 代码执行声明可转后台，只认执行器给这次调用的中止信号，不另设超时：run_python、run_javascript 在沙箱与无沙箱
@@ -208,7 +209,7 @@ async function applySandbox(proc: ProcessService): Promise<CodeSandboxService> {
 }
 
 async function call(handler: Handler, args: Record<string, unknown>, signal?: AbortSignal) {
-  const out = await handler(args, { sessionId: SESSION, signal });
+  const out = await handler(args, toolContext({ sessionId: SESSION, signal }));
   return JSON.parse(typeof out === 'string' ? out : out.content) as Record<string, unknown>;
 }
 

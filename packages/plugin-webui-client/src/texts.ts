@@ -425,6 +425,8 @@ const SOURCE = {
   settledByShutdown: '审批服务已停止',
   settledApproved: '已批准 · {time}',
   settledDenied: '已拒绝 · {time}',
+  settledApprovedBy: '已批准 · {who} · {time}',
+  settledDeniedBy: '已拒绝 · {who} · {time}',
   settledCancelled: '已撤销 · {reason} · {time}',
   settledAsDenied: '已按拒绝 · {reason} · {time}',
   toolRun: '执行 {command}',

@@ -22,6 +22,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { client } from '../fixtures/session-client.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话服务的后台任务：登记表投影成协议的形状（background/list），background/watch 之后的推送（开始、结束、停止与删除
@@ -126,7 +127,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
     const result = await host.tools.use.execute(
       BG,
       { command, runInBackground: true },
-      {
+      toolRequest({
         sessionId,
         platform: 'webui',
         userId: 'console',
@@ -134,7 +135,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
         inbound: {},
         turnId: `zz-turn-${calls}`,
         callId: `zz-call-${calls}`,
-      },
+      }),
     );
     const { taskId } = JSON.parse(result.content) as { taskId: string };
     return taskId;

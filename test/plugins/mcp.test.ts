@@ -9,7 +9,7 @@
 
 import type {
   RegisteredTool,
-  ToolCallContext,
+  ToolCallRequest,
   ToolDefinition,
   ToolExecutionResult,
   ToolGroupInfo,
@@ -25,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { bridgeClientToTools } from '../../packages/plugin-mcp-client/src/index.js';
 import { buildMcpServer } from '../../packages/plugin-mcp-server/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext, toolRequest } from '../fixtures/tool-call.js';
 
 // ===== helpers =====
 
@@ -44,6 +45,8 @@ function makeLogger(): Logger {
 class FakeToolService implements ToolService {
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly groups = new Map<string, ToolGroupInfo>();
+  /** 每次执行交来的调用上下文 */
+  readonly requests: ToolCallRequest[] = [];
 
   register(spec: Omit<RegisteredTool, 'pluginName'>, pluginName = 'test'): () => void {
     const entry: RegisteredTool = { ...spec, pluginName } as RegisteredTool;
@@ -87,10 +90,11 @@ class FakeToolService implements ToolService {
       groups: t.groups,
     }));
   }
-  async execute(name: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult> {
+  async execute(name: string, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<ToolExecutionResult> {
     const t = this.tools.get(name);
     if (!t) throw new Error(`tool not found: ${name}`);
-    const r = await t.handler(args, callCtx);
+    this.requests.push(callCtx);
+    const r = await t.handler(args, toolContext(callCtx));
     return typeof r === 'string' ? { content: r } : r;
   }
   setExecutionGuard(): void {
@@ -170,13 +174,14 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
     await server.close();
   });
 
-  it('callTool echo 走通，并返回 text 内容', async () => {
-    const { client, server } = await setup();
+  it('callTool echo 走通，并返回 text 内容；调用的参与者是 MCP 客户端自己', async () => {
+    const { client, server, tools } = await setup();
     const res = await client.callTool({ name: 'echo', arguments: { text: 'hi' } });
     expect(res.isError ?? false).toBe(false);
     const content = res.content as Array<{ type: string; text?: string }>;
     expect(content[0].type).toBe('text');
     expect(content[0].text).toBe('hi!');
+    expect(tools.requests.map(ctx => ctx.participants)).toEqual([[{ platform: 'mcp', userId: 'mcp-client' }]]);
     await client.close();
     await server.close();
   });
@@ -377,11 +382,11 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
     const tools = new FakeToolService();
     await bridgeClientToTools(makeBridgeCaps(tools), client, { id: 'remote', command: '<irrelevant>' });
 
-    const result = await tools.execute('mcp_remote_greet', { who: 'aalis' }, {
-      sessionId: 's',
-      userId: 'u',
-      platform: 'test',
-    } as ToolCallContext);
+    const result = await tools.execute(
+      'mcp_remote_greet',
+      { who: 'aalis' },
+      toolRequest({ sessionId: 's', userId: 'u', platform: 'test' }),
+    );
 
     // 远端返回的文本被套不可信边界（server 可信不等于其回传内容可信）
     expect(result.content).toContain('hello aalis');

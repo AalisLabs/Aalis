@@ -74,6 +74,7 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     sessionId,
     platform: 'onebot',
     userId,
+    participants: [{ platform: 'onebot', userId }],
     inbound: {},
   });
 
@@ -90,14 +91,21 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     expect(await exec(handTurn(GROUP, MEMBER)), '群成员').toBe('none');
     expect(await exec(handTurn(MEMBER_DM, MEMBER)), '别人私聊里的对方').toBe('none');
     expect(
-      await exec({ sessionId: webui, platform: 'webui', actor: OWNER_TURN, inbound: { source: 'scheduler' } }),
+      await exec({ sessionId: webui, platform: 'webui', participants: [OWNER_TURN], inbound: { source: 'scheduler' } }),
       'owner 建的定时任务',
     ).toBe('none');
     expect(
-      await exec({ sessionId: GROUP, platform: 'onebot', inbound: { source: 'idle-trigger' } }),
+      await exec({
+        sessionId: GROUP,
+        platform: 'onebot',
+        participants: [{ platform: 'onebot', userId: '' }],
+        inbound: { source: 'idle-trigger' },
+      }),
       '空闲开话题',
     ).toBe('none');
-    expect(await exec({ sessionId: webui, platform: 'mcp', actor: OWNER_TURN }), '没有回合的调用').toBe('none');
+    expect(await exec({ sessionId: webui, platform: 'mcp', participants: [OWNER_TURN] }), '没有回合的调用').toBe(
+      'none',
+    );
   });
 
   it('owner 在群里亲手发起：主目录与白纸是这个群所在场所的白纸', async () => {
@@ -162,7 +170,13 @@ describe('场所、绑定与档位', () => {
     const { host, svc, webui } = await start();
     await recordRoom(host.events.use, OWNER_DM);
     const fromWeb = await svc.forCall(ownerTurn(webui));
-    const fromDm = await svc.forCall({ sessionId: OWNER_DM, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    const fromDm = await svc.forCall({
+      sessionId: OWNER_DM,
+      platform: 'onebot',
+      userId: OWNER_QQ,
+      participants: [{ platform: 'onebot', userId: OWNER_QQ }],
+      inbound: {},
+    });
     const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
     const requests: ReachRequest[] = [
       write(join(paper, 'a.md')),
@@ -312,7 +326,7 @@ describe('子任务随派它的那一轮', () => {
       sessionId: child,
       platform: 'webui',
       userId: `parent:${webui}`,
-      actor: OWNER_TURN,
+      participants: [OWNER_TURN],
       inbound: {
         source: 'bg:bg_1',
         fromTurn: {
@@ -342,7 +356,13 @@ describe('子任务随派它的那一轮', () => {
   it('群里 owner 那一轮签发过凭据，之后群成员那一轮派的子任务没有本地效果', async () => {
     const { host, sm, svc } = await start();
     await recordRoom(host.events.use, GROUP);
-    const owner = await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    const owner = await svc.forCall({
+      sessionId: GROUP,
+      platform: 'onebot',
+      userId: OWNER_QQ,
+      participants: [{ platform: 'onebot', userId: OWNER_QQ }],
+      inbound: {},
+    });
     expect(owner.exec, 'owner 那一轮自己有').toBe('sandbox');
     const child = (await sm.createChildSession(GROUP, {})).id;
     const member = { platform: 'onebot', userId: MEMBER };
@@ -500,7 +520,13 @@ describe('本会话临时区', () => {
   it('有本地效果时建好（0700），没有本地效果不建；删会话时删', async () => {
     const { host, sm, svc, webui } = await start();
     await recordRoom(host.events.use, GROUP);
-    await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: MEMBER, inbound: {} });
+    await svc.forCall({
+      sessionId: GROUP,
+      platform: 'onebot',
+      userId: MEMBER,
+      participants: [{ platform: 'onebot', userId: MEMBER }],
+      inbound: {},
+    });
     expect(existsSync(tmpOf(GROUP))).toBe(false);
 
     await svc.forCall(ownerTurn(webui));

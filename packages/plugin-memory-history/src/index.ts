@@ -10,7 +10,7 @@
  * 注入策略：
  *   - 向 `agent:prompt` 贡献点交一块（turn-context 锚位：随其它会话滚动、准每轮变，落历史后护前缀缓存）。
  *   - 能取哪些会话的消息按会话管理的跨会话规则逐条判（takeFrom）：被动注入不是谁要的，不带授权身份；recent_messages
- *     带这次调用的授权身份。
+ *     带这次调用的授权身份（api-tools 的 actingIdentity，几个人的一轮是无主体）。
  *   - 排重由组装器统一按全局键做，贡献方无需自查。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
@@ -24,7 +24,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { memory, type RecentMessageRecord } from '@aalis/api-memory';
 import { sessionManager, takeFrom } from '@aalis/api-session-manager';
-import { tools } from '@aalis/api-tools';
+import { actingIdentity, tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -282,9 +282,8 @@ export default definePlugin({
         // 读的是别的会话（默认排除当前会话），与 session_get_history 同属跨会话读取：等级 1 起可用，挡住 0 级；不弹确认
         risk: 'sensitive',
         handler: async (args, callCtx) => {
-          const { userId } = callCtx;
-          const principal = callCtx.actor ?? (userId ? { platform: callCtx.platform ?? '', userId } : undefined);
-          const records = await queryRecent(callCtx.sessionId, principal, {
+          // 按条过滤的没有可单独批的动作，不出审批：授权身份取 actingIdentity，几个人的一轮是无主体，取不到谁自己的私聊
+          const records = await queryRecent(callCtx.sessionId, actingIdentity(callCtx), {
             limit: typeof args.limit === 'number' ? args.limit : undefined,
             maxAgeMinutes: typeof args.maxAgeMinutes === 'number' ? args.maxAgeMinutes : undefined,
             perSessionLimit: typeof args.perSessionLimit === 'number' ? args.perSessionLimit : undefined,

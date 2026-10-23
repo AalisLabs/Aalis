@@ -128,7 +128,7 @@ definePlugin({
 
 ## 工具调用上下文
 
-工具循环构造 `ToolCallContext` 时，会话、`platform`、`userId`、`actor` 与 `inbound` 取 api-authority 的 `originTurnOf([incoming])`：`inbound` 为 `{ source, fromTurn, messageId }`，真人消息的 `source` 为 `undefined`，内部注入为注入方标识；续做带着起它的那一轮（`fromTurn`）；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份仍按 `actor` 裁决。`userId` 取入站消息的 `userId`；续做的通知不带它，取起它的那一轮的发言者，`actor` 同样取那一轮的参与者。起它的那一轮不进归档，也不作为提示词钩子的 `userId`。
+工具循环构造 `ToolCallContext` 时，会话、`platform`、`userId`、`participants` 与 `inbound` 取 api-authority 的 `originTurnOf`（这一轮的输入，owner 的各个身份按权限服务的 `isOwner` 合成一个参与者，权限服务不在时按字面身份）：`inbound` 为 `{ source, fromTurn, messageId }`，真人消息的 `source` 为 `undefined`，内部注入为注入方标识；续做带着起它的那一轮（`fromTurn`）；`messageId` 是入站消息的平台消息 id，转到后台的调用结束时，结束通知据它引用这条消息。全仓只有这里填写它，工具据此正向判断「这次调用来自由入站消息驱动的回合」，执行守卫据此判发起回合的类别（见 [api-tools](../api/api-tools.md) 与 [plugin-authority](./plugin-authority.md)）。授权身份按参与者裁决（各条输入的 `actor`，没有时是发言者）。`userId` 取入站消息的 `userId`；续做的通知不带它，取起它的那一轮的发言者，参与者同样取那一轮的。起它的那一轮不进归档，也不作为提示词钩子的 `userId`。
 
 ## 上下文裁剪算法
 

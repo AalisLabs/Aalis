@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 页面卡住时的时限（真 Chromium + 本机 http 服务）：
@@ -96,7 +97,7 @@ async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; ca
   return {
     app,
     call: async (tool, args) => {
-      const out = await handlers[tool](args, { sessionId: 's', acceptsImages: true });
+      const out = await handlers[tool](args, toolContext({ sessionId: 's', acceptsImages: true }));
       return JSON.parse(typeof out === 'string' ? out : out.content);
     },
   };

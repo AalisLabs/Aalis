@@ -3,6 +3,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
 import { validateConfig } from '../../packages/schema-config/src/index.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -125,7 +126,7 @@ describe('plugin-mcp-client args / env', () => {
     ]);
     expect(spawned).toEqual([{ command: 'npx', args: [], env: {} }]);
     expect(warns.filter(w => w.includes('已忽略'))).toHaveLength(2);
-    const out = await registry.execute('mcp_list_servers', {}, { sessionId: 't' });
+    const out = await registry.execute('mcp_list_servers', {}, toolRequest({ sessionId: 't' }));
     expect(JSON.parse(out.content).map((s: { id: string }) => s.id)).toEqual(['off', 'good']);
   });
 
@@ -150,7 +151,7 @@ describe('plugin-mcp-client mcp_list_servers', () => {
       { id: ' x ', command: ' npx ', enabled: false },
       { id: 7, command: 'node' },
     ]);
-    const out = await registry.execute('mcp_list_servers', {}, { sessionId: 't' });
+    const out = await registry.execute('mcp_list_servers', {}, toolRequest({ sessionId: 't' }));
     expect(JSON.parse(out.content)).toEqual([
       { index: 0, id: 'x', command: 'npx', enabled: false, visibility: 'auto' },
       { index: 1, id: '7', command: 'node', enabled: true, visibility: 'auto' },

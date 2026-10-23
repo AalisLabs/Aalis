@@ -5,6 +5,7 @@ import { type SessionInfo, sessionManager } from '../../packages/api-session-man
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 登录态归打开它的根会话（真 Chromium + 本机 http 服务）：一个会话登录后（站点种下 cookie、页面写 localStorage），
@@ -98,7 +99,7 @@ afterAll(async () => {
 
 /** 在这个会话里打开站点上的一页，返回 pageId 与正文 */
 async function visit(path: string, sessionId: string): Promise<{ pageId: string; text: string }> {
-  const out = await handlers.browser_navigate({ url: `${origin}${path}` }, { sessionId });
+  const out = await handlers.browser_navigate({ url: `${origin}${path}` }, toolContext({ sessionId }));
   const result = JSON.parse(typeof out === 'string' ? out : out.content);
   if (result.error) throw new Error(`打开页面失败: ${result.error}`);
   return { pageId: result.pageId, text: result.text };
@@ -118,7 +119,7 @@ describe('登录态归打开它的根会话', () => {
     expect((await visit('/me', 'other')).text).toContain(LOGGED_IN);
     await emit('session:deleted', 'other');
 
-    const stale = await handlers.browser_get_text({ pageId }, { sessionId: 'other' });
+    const stale = await handlers.browser_get_text({ pageId }, toolContext({ sessionId: 'other' }));
     expect(JSON.parse(stale as string)).toEqual({ error: '页面不存在' });
     expect((await visit('/me', 'other')).text).toContain(LOGGED_OUT);
   }, 60_000);

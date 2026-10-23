@@ -7,6 +7,7 @@ import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugi
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住。
@@ -73,7 +74,7 @@ describe('analyze_image 可转后台', () => {
     const ac = new AbortController();
     const pending = analyze.handler(
       { image: 'https://zz.invalid/a.png', task: '看看是什么' },
-      { sessionId: 's', signal: ac.signal },
+      toolContext({ sessionId: 's', signal: ac.signal }),
     );
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0].signal).toBe(ac.signal);

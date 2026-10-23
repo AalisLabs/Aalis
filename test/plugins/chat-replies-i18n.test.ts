@@ -101,7 +101,7 @@ async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: Plugi
     if (state !== 'active') throw new Error(`${definition.name} 未激活（state=${state}）`);
   }
   // 权限插件的执行守卫：一律放行（/doctor 与 /session 是受限指令，没有守卫时拒绝执行）
-  host.commands.use.setExecutionGuard(async () => null);
+  host.commands.use.setExecutionGuard(async () => ({ ok: true }));
 
   const sent: OutgoingMessage[] = [];
   host.events.use.on('outbound:message', message => {

@@ -5,6 +5,7 @@ import { App, provide } from '../../packages/core/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 读会话历史给模型（session-history 服务，session_get_history 与 onebot_get_session_history 都经它）：事件标记
@@ -54,7 +55,10 @@ async function readHistory(args: Record<string, unknown>, stored = STORED) {
   const handler = handlers.get('session_get_history');
   if (!handler) throw new Error('session_get_history 未注册');
   return JSON.parse(
-    (await handler({ session_id: SESSION, ...args }, { sessionId: SESSION, platform: 'onebot' })) as string,
+    (await handler(
+      { session_id: SESSION, ...args },
+      toolContext({ sessionId: SESSION, platform: 'onebot' }),
+    )) as string,
   );
 }
 

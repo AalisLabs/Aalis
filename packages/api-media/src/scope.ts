@@ -4,14 +4,14 @@
 // 按目标分三类：会话媒体目录里的按目录名反查会话，本会话树的放行，别的会话（含与本会话树撞名的）交给调用方给的取用判定；
 // 调用所在会话历史里系统记下的引用放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定。第一方的两样判定由 mediaScopeOf 按
 // 一次调用给（会话管理的取用规则，经 api-session-manager 的 takeFrom；本机文件判法 localFileInScope），发媒体、看图的工具与
-// 回复里的媒体标记都用它，标记不带授权身份。
+// 回复里的媒体标记都用它，经调用方给的取用判定判：工具交工具调用上下文的 approveFor，逐个参与者判。
 //
 // 判据按写入方的目录约定判归属，不是隔离：同一个根里的符号链接，或能往本会话目录写文件的工具，都能把别处的媒体伪装成
 // 本会话的。会话目录名取自 session-media 的 sessionDirName，换法有损（见它的说明）：种类目录与反查会话的目录名按大小写折叠比
 // （大小写不敏感的卷上读到的是同一个目录），几个会话落进同一个目录时，本会话树以外的每个都要过取用判定，与本会话树撞名也一样。
 // ============================================================
 
-import type { AuthorityService, InboundTurn } from '@aalis/api-authority';
+import type { AuthorityService, InboundTurn, UserIdentity, Verdict } from '@aalis/api-authority';
 import { roomClass, rootSessionOf, type SessionManagerService, takeFrom } from '@aalis/api-session-manager';
 import { isHostAbsolutePath, isStorageUri, parseStorageUri } from '@aalis/api-storage';
 import type { ServiceSelection } from '@aalis/core';
@@ -19,14 +19,13 @@ import { type ArchivedAttachment, type Message, WellKnownMetadataKeys } from '@a
 import { MEDIA_KIND_DIRS, sessionDirName } from './session-media.js';
 
 /**
- * 一次调用：所在的会话、发言者、授权身份与入站回合，字段同工具调用上下文（actor 缺省即 platform、userId；没有 userId 即
- * 匿名）。本机文件判法拿它取这一轮的主体
+ * 一次调用：所在的会话、平台、这一轮的参与者（授权身份）与入站回合，字段同工具调用上下文；没有授权身份的参与者为空。本机文件
+ * 判法拿它取这一轮的主体
  */
 export interface MediaScopeCall {
   sessionId: string;
   platform?: string;
-  userId?: string;
-  actor?: { platform: string; userId: string };
+  participants: readonly UserIdentity[];
   inbound?: InboundTurn;
 }
 
@@ -51,6 +50,9 @@ export interface LocalFileDeps {
   /** 会话表：会话管理在场才给；不给时判不出受众，非人回合的条款不放行 */
   sessions?: Pick<SessionManagerService, 'getSession'>;
 }
+
+/** 本机文件判法不放行时交给取用判定的：判据只回能或不能（工具过不了的一律回同一句，先判后读），这里的原因没有读者 */
+const NOT_LOCAL: Verdict = { ok: false, reason: '' };
 
 /** 会话媒体的目录，会话目录在它们下面：各种类的目录（{@link MEDIA_KIND_DIRS}）与浏览器截图的 `tmp:/browser` */
 const SESSION_MEDIA_DIRS: ReadonlySet<string> = new Set([...Object.values(MEDIA_KIND_DIRS), 'tmp:/browser']);
@@ -126,12 +128,14 @@ export async function mediaInScope(
 }
 
 /**
- * 第一方的判据：交出这次调用判 target 的函数（{@link mediaInScope}）。别的会话的媒体每个候选都过会话管理的取用规则
- * （takeFrom，当前会话是调用所在会话，授权身份取 actor，没有时取 platform 与 userId，没有 userId 不传），本机文件按
- * {@link localFileInScope}（主体取权限服务的 principalOf）。权限服务不在时主体是 other、没人是 owner
+ * 第一方的判据：交出这次调用判 target 的函数（{@link mediaInScope}）。两样判定都交给调用方给的取用判定 approveFor（同工具调用
+ * 上下文的），check 按一个授权身份判：别的会话的媒体每个候选都过会话管理的取用规则（takeFrom，当前会话是调用所在会话），本机
+ * 文件按只有这一位参与者时的 {@link localFileInScope}（主体取权限服务的 principalOf）。工具交它的工具调用上下文，逐个参与者判、
+ * 有人过不了时发一道参与者审批；没有可挂审批的调用的（回复里的标记）交只按一个授权身份判的。权限服务不在时主体是 other、没人
+ * 是 owner
  */
 export function mediaScopeOf(
-  call: MediaScopeCall,
+  call: MediaScopeCall & { approveFor(check: (who: UserIdentity) => Verdict): Promise<Verdict> },
   services: {
     sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>;
     authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
@@ -140,18 +144,22 @@ export function mediaScopeOf(
 ): (target: string) => Promise<boolean> {
   const { sessionManager, authority, history } = services;
   const sessions = sessionManager.present ? sessionManager.use : undefined;
-  const { userId } = call;
-  const principal = call.actor ?? (userId ? { platform: call.platform ?? '', userId } : undefined);
+  const localDeps: LocalFileDeps = {
+    principalOf: turn =>
+      authority.present ? authority.use.principalOf({ ...turn, platform: turn.platform ?? '' }) : 'other',
+    isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
+    sessions,
+  };
+  const judge = async (check: (who: UserIdentity) => Verdict) => (await call.approveFor(check)).ok;
   const deps: MediaScopeDeps = {
     sessions,
-    take: async ids => ids.every(id => takeFrom(sessionManager, call.sessionId, id, principal).ok),
-    local: async () =>
-      localFileInScope(call, {
-        principalOf: turn =>
-          authority.present ? authority.use.principalOf({ ...turn, platform: turn.platform ?? '' }) : 'other',
-        isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
-        sessions,
-      }),
+    take: ids =>
+      judge(
+        who =>
+          ids.map(id => takeFrom(sessionManager, call.sessionId, id, who)).find(verdict => !verdict.ok) ?? { ok: true },
+      ),
+    local: () =>
+      judge(who => (localFileInScope({ ...call, participants: [who] }, localDeps) ? { ok: true } : NOT_LOCAL)),
     history,
   };
   return target => mediaInScope(target, call, deps);
@@ -159,14 +167,14 @@ export function mediaScopeOf(
 
 /**
  * 不属于任何会话的本机文件（存储里不在会话媒体目录下的文件）这次调用能不能取：这一轮的主体是 owner（owner 亲手那一轮，
- * 含它的续做与它派的子任务）；或授权身份是 owner、所在会话的房间类别不是 room（非人回合的条款，如 owner 自己会话里的定时任务、
- * 按 owner 跑的编排、mcp-server 的调用）
+ * 参与者都是 owner，含它的续做与它派的子任务）；或只有一位参与者、他是 owner、所在会话的房间类别不是 room（非人回合的条款，
+ * 如 owner 自己会话里的定时任务、按 owner 跑的编排、mcp-server 的调用）
  */
 export function localFileInScope(call: MediaScopeCall, deps: LocalFileDeps): boolean {
   if (deps.principalOf(call) === 'owner') return true;
   const { sessions, isOwner } = deps;
-  const { platform, userId } = call.actor ?? call;
-  if (!sessions || platform === undefined || !userId || !isOwner(platform, userId)) return false;
+  const [only, ...more] = call.participants;
+  if (!sessions || !only?.userId || more.length > 0 || !isOwner(only.platform, only.userId)) return false;
   const lookup = (id: string) => sessions.getSession(id);
   return roomClass(lookup(call.sessionId), lookup, isOwner) !== 'room';
 }

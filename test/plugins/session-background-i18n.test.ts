@@ -18,6 +18,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { client } from '../fixtures/session-client.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 后台任务的中断原因是宿主写的文字对象（plugin-tools 的字典），经会话协议的后台任务推送按全局默认层的语言渲染：en 拿英文，
@@ -76,7 +77,7 @@ async function setup({ withI18n = true, language }: { withI18n?: boolean; langua
   await host.tools.use.execute(
     BG,
     { runInBackground: true },
-    { sessionId, platform: 'webui', userId: 'console', inbound: {}, turnId: 'zz-turn', callId: 'zz-call' },
+    toolRequest({ sessionId, platform: 'webui', userId: 'console', inbound: {}, turnId: 'zz-turn', callId: 'zz-call' }),
   );
   // 工具撤回登记：后台的任务落成 aborted，原因是宿主写的「已撤回登记」
   withdraw();

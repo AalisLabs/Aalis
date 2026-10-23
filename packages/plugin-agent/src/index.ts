@@ -30,7 +30,7 @@ import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/a
 import { type SessionFieldReader, sessionFields as sessionFieldsService } from '@aalis/api-session-settings';
 import { isStorageUri, storage as storageService } from '@aalis/api-storage';
 import {
-  type ToolCallContext,
+  type ToolCallRequest,
   type ToolDefinition,
   type ToolExecutionResult,
   tools as toolsService,
@@ -706,10 +706,14 @@ class DefaultAgent implements AgentService {
         this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
         const tools =
           reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
-        const toolCtx: ToolCallContext = {
-          // 会话、发言者、授权身份与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext）；入站回合只有这里填，工具据此
-          // 正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，归档与提示词钩子仍按消息本身的 userId
-          ...originTurnOf([incoming]),
+        const toolCtx: ToolCallRequest = {
+          // 会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext，owner 的各个身份按权限服务合成
+          // 一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，
+          // 归档与提示词钩子仍按消息本身的 userId
+          ...originTurnOf(
+            [incoming],
+            (platform, userId) => this.caps.authority.present && this.caps.authority.use.isOwner(platform, userId),
+          ),
           // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
           enabledGroups,
           // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
@@ -941,7 +945,7 @@ class DefaultAgent implements AgentService {
                 };
               }
 
-              const callCtx: ToolCallContext = { ...toolCtx, callId };
+              const callCtx: ToolCallRequest = { ...toolCtx, callId };
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args: parsed.args, toolCallContext: callCtx };
               // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：

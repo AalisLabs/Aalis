@@ -279,7 +279,7 @@ describe('内置指令的说明与回复按会话的语言', () => {
 
   it('en 会话里 /clear -t 给了不认识的类型：报错是英文', async () => {
     const s = await setup();
-    s.host.commands.use.setExecutionGuard(async () => null);
+    s.host.commands.use.setExecutionGuard(async () => ({ ok: true }));
     expect((await s.ask(await s.session(['en']), '/clear -t bogus')).content).toBe(
       'Unknown clear type: bogus. Available types: all, context. See /help clear',
     );
@@ -298,7 +298,7 @@ describe('内置指令的说明与回复按会话的语言', () => {
 
   it('en 会话里 /clear 的结果是英文：消息历史的结果行与没有处理者的说明', async () => {
     const s = await setup();
-    s.host.commands.use.setExecutionGuard(async () => null);
+    s.host.commands.use.setExecutionGuard(async () => ({ ok: true }));
     s.host.contributions.use.contribute('memory:clear-type', { id: 'zz-kind', label: t('kindLabel') });
     expect((await s.ask(await s.session(['en']), '/clear -t context,zz-kind')).content).toBe(
       [
@@ -311,7 +311,7 @@ describe('内置指令的说明与回复按会话的语言', () => {
   it('en 会话里意图确认的问句是英文', async () => {
     const s = await setup();
     s.host.commands.use.setExecutionGuard(async ({ confirmIntent }) =>
-      confirmIntent && !(await confirmIntent()) ? 'cancelled' : null,
+      confirmIntent && !(await confirmIntent()) ? { ok: false, reason: 'cancelled' } : { ok: true },
     );
     s.host.commands.use.command('zz-probe', '探针', { confirm: 'session' }).action(() => 'ran');
     const sessionId = await s.session(['en']);

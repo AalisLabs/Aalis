@@ -7,6 +7,7 @@ import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— tools 侧端到端
@@ -20,8 +21,8 @@ import { hostedApp } from '../fixtures/app.js';
 //   1. restricted 工具对匿名/低等级用户执行不到
 //   2. owner 能执行
 //   3. public 工具不受影响（守卫没误伤）
-// 另加一条：工具的身份取自 `ToolCallContext`，而 scheduler 触发的 AI 正是靠它把
-// **创建者**的等级带过来的（plugin-agent 的 `incoming.actor?.userId ?? incoming.userId`）。
+// 另加一条：工具的身份取自 `ToolCallContext` 的参与者，而 scheduler 触发的 AI 正是靠它把
+// **创建者**的等级带过来的（plugin-agent 经 originTurnOf 按 `incoming.actor ?? 发言者` 算）。
 // 那条链在 commands 侧已被钉住，这里钉 tools 侧的入参形状。
 // ════════════════════════════════════════════════════════════
 
@@ -37,7 +38,7 @@ async function makeApp(appConfig: Record<string, unknown> = {}) {
 /** 注册一个探针工具并执行，返回是否真跑到了 handler、以及返回串。 */
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
-  caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
+  caller: { platform: string; userId?: string; participants?: Array<{ platform: string; userId: string }> },
   opts: { appConfig?: Record<string, unknown>; confirm?: 'always'; memberOf?: string[] } = {},
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp(opts.appConfig);
@@ -66,7 +67,7 @@ async function runTool(
 
   if (!host.tools.present) throw new Error('tools 服务未注册');
   const svc = host.tools.use;
-  const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
+  const out = await svc.execute('probe_tool', {}, toolRequest({ sessionId: 's1', ...caller }));
   await app.stop();
   return { ran, out: out.content };
 }
@@ -111,18 +112,18 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     expect([anon.ran, owner.ran], '两种身份得到同一结论 —— 守卫没在读 callCtx').toEqual([false, true]);
   });
 
-  it('无主体 actor（没有人的注入）：物理发言者是 owner 也不放行 sensitive——等级按默认、owner 判定不命中空串', async () => {
-    // 没有人的注入回填 selfInitiatedActor：授权轴按它，不回退到物理发言者字段
+  it('无主体参与者（没有人的注入）：物理发言者是 owner 也不放行 sensitive——等级按默认、owner 判定不命中空串', async () => {
+    // 没有人的注入回填 selfInitiatedActor，它就是参与者：授权轴按它，不回退到物理发言者字段
     const { ran, out } = await runTool('sensitive', {
       platform: 'webui',
       userId: 'console',
-      actor: selfInitiatedActor('webui'),
+      participants: [selfInitiatedActor('webui')],
     });
     expect(ran, '无主体 actor 被当成 owner 放行了 —— 空 userId 命中了 owner/等级查表').toBe(false);
     expect(out).toContain('error');
   });
 
-  it('restrictedPolicy 白名单只免确认、不放宽授权：等级不够、无主体 actor 照样拒', async () => {
+  it('restrictedPolicy 白名单只免确认、不放宽授权：等级不够、无主体参与者照样拒', async () => {
     // 白名单是 owner 给自动化开的免确认口。授权轴先裁决，等级不够就拒，白名单救不回来——
     // 否则 owner 配 allow:['tool:*'] 之后任何人（含被封禁到负等级的）都能调 dangerous 工具。
     const appConfig = { restrictedPolicy: { allow: ['tool:*'] } };
@@ -130,7 +131,7 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     expect(anon.ran, '白名单替等级不够的用户放行了').toBe(false);
     const selfInitiated = await runTool(
       'dangerous',
-      { platform: 'webui', userId: 'console', actor: selfInitiatedActor('webui') },
+      { platform: 'webui', userId: 'console', participants: [selfInitiatedActor('webui')] },
       { appConfig },
     );
     expect(selfInitiated.ran, '白名单借物理发言者（owner）身份替无主体回合放行了').toBe(false);

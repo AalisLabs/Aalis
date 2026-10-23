@@ -117,7 +117,7 @@ function oneToOneWith(
 ): boolean;
 ```
 
-`canTake(currentId, targetId, principal?)` 同步给出、不抛错，`principal` 是这次动作的授权身份（工具传这次调用的 `actor`，没有时取 `platform` 与 `userId`，没有 `userId` 不传；跨会话历史的被动注入不传）。依次：
+`canTake(currentId, targetId, principal?)` 同步给出、不抛错，`principal` 是这次动作的一个授权身份（取用类工具经工具调用上下文的 `approveFor` 逐个参与者传，按条过滤的与回复里的标记传 api-tools 的 `actingIdentity`，几个人时是无主体，账号为空的与不传一样；跨会话历史的被动注入不传）。依次：
 
 1. 同一会话 id，或两边的根会话都判得出且是同一个：放行。
 2. 任一边的根会话判不出（不在会话表里、父会话链断了、`isUnfiled` 的空记录、有出生平台却没有聊天窗口）：拒绝，原因 `TAKE_UNKNOWN`。

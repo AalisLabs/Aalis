@@ -1,12 +1,14 @@
 // ════════════════════════════════════════════════════════════
 // 审批（契约见 @aalis/api-approval）：发起、在场、排队、频率上限、应答核验、结算、回给模型的话与审计。
 //
-// 这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余直接拒绝，不推给任何审批面。
-// 推给谁、算谁在场、认谁的应答是一条规则：客户端的身份是 owner（能批），且它覆盖这张审批（接入时没限定，或限定了机器人账号、
-// 这一轮的参与者里有它、审批所在会话的根会话经这个账号）。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时
-// 推给它、还没结的卡对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出
-// 那一刻算起；等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
-// 应答先答先得，核两项：应答人是 owner；id 由本服务签发、未结算、归这个接入覆盖，内容哈希一致；已结算的一律回已结算。
+// 审批只有一种，发起方给出这一张谁能批（canAnswer）并标出只有 owner 能批的。人亲手发起的一轮（含它的续做，不论在哪个会话）、
+// 参与者里有人能批才能产生审批，子任务的不上浮，其余直接拒绝，不推给任何审批面。
+// 推给谁、算谁在场、认谁的应答是一条规则：客户端的身份能批这一张，且它的接入覆盖这张审批：没限定的（WebUI、终端）全部覆盖；
+// 限定了群窗口的覆盖这个窗口发起的、不是只有 owner 能批的；IM 私聊只覆盖只有 owner 能批的、这一轮的参与者里有它、审批所在
+// 会话的根会话经这个机器人账号的。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时推给它、还没结的卡对它
+// 算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出那一刻算起；等满 300 秒、
+// 覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 应答先答先得：已结算的一律回已结算；还在等的，id 由本服务签发、归这个接入覆盖（否则不认识），应答人能批这一张，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
 
@@ -37,7 +39,6 @@ import type { TextRef } from '@aalis/schema-i18n';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { failure, type MethodHandlers } from './connection.js';
 import { resolveDisplay } from './display.js';
-import type { IsOwner } from './history.js';
 import { t } from './texts.js';
 
 /** 推出之后等应答的时限 */
@@ -77,8 +78,8 @@ interface Attendee {
 interface Pending {
   id: string;
   req: ApprovalRequest;
-  /** 所在会话的根会话的机器人账号：限定了机器人账号的接入按它认 */
-  bot?: string;
+  /** 所在会话的根会话：限定了群窗口的接入按它的 id 认，限定了机器人账号的按它的机器人账号认 */
+  root?: { id: string; bot?: string };
   signal?: AbortSignal;
   /** 发起的时刻，等待时长从这里算 */
   at: number;
@@ -97,15 +98,14 @@ interface Pending {
 type ApprovalRef = Pick<Approval, 'id' | 'sessionId' | 'turnId' | 'callId'>;
 
 interface ApprovalDeps {
-  isOwner: IsOwner;
   events: Events;
   logger: Logger;
   /** 审计文件的绝对路径 */
   auditFile: string;
   /** 工具定义上声明的展示种类：卡片上的事实按它取 */
   displaySpec(tool: string): ToolDisplay | undefined;
-  /** 会话的根会话的机器人账号（`originChat.selfId`）；不在会话表里或没有时为 undefined */
-  botOf(sessionId: string): string | undefined;
+  /** 会话的根会话：id 与机器人账号（`originChat.selfId`）；不在会话表里时为 undefined */
+  rootOf(sessionId: string): { id: string; bot?: string } | undefined;
   /** 一个审批推出或结算了（结算时带上怎样结算的，发起时就结算的也算）：会话列表与工具卡跟着变 */
   changed(approval: ApprovalRef, settlement?: ApprovalSettlement): void;
 }
@@ -139,7 +139,7 @@ function hashOf(req: ApprovalRequest): string {
 // ───────── 回给模型的话 ─────────
 
 /** 各结算来源：被什么拦下、能不能再申请（拒绝另附说明）。不指名应答人，点到 owner 的只有不能产生审批的那句 */
-const REASONS: Record<Exclude<ApprovalSource, 'owner'>, [reason: string, again: string]> = {
+const REASONS: Record<Exclude<ApprovalSource, 'answer'>, [reason: string, again: string]> = {
   absent: ['没人在场，没有人能批准', '有能批的人在场时可以再申请；不要换别的办法绕过，先说明需要批准什么'],
   timeout: [`等了 ${APPROVAL_WAIT_MS / 1000} 秒没有人应答`, '可以再申请；不要换别的办法绕过'],
   ineligible: ['这一轮里没有 owner 的话，要 owner 确认的操作不能执行', '不能；不要换别的办法绕过'],
@@ -157,7 +157,7 @@ const OUTCOMES: Record<SettledState, string> = { approved: '批准', denied: '�
 
 function denialFor(source: ApprovalSource, note: string | undefined): string {
   const [reason, again] =
-    source === 'owner'
+    source === 'answer'
       ? [`被拒绝了${note ? `，说明：「${note}」` : ''}`, '不要原样再申请，按拒绝的意思调整']
       : REASONS[source];
   return `需要批准的操作没有执行。原因：${reason}。能否再申请：${again}。`;
@@ -201,14 +201,23 @@ export function createApprovals(deps: ApprovalDeps) {
   }
 
   /**
-   * 推给谁、算谁在场、认谁的应答都看这一条：客户端的身份能批（是 owner；别人答不了，推给它、算它在场都只会让审批白等），
-   * 且它覆盖这张（接入时没限定；或限定了机器人账号，这一轮的参与者里有它，所在会话的根会话经这个账号）
+   * 接入覆盖这张：没限定的全部覆盖；限定了群窗口的覆盖这个窗口发起的、不是只有 owner 能批的（群窗口是公开的面）；IM 私聊只覆盖
+   * 只有 owner 能批的、这一轮的参与者里有它、所在会话的根会话经这个机器人账号的
    */
-  const attends = ({ who, scope }: Attendee, pending: Pending) =>
-    deps.isOwner(who.platform, who.userId) &&
-    (scope === undefined ||
-      (pending.req.origin.participants.some(p => p.platform === who.platform && p.userId === who.userId) &&
-        pending.bot === scope.selfId));
+  const covers = ({ who, scope }: Attendee, { req, root }: Pending) => {
+    if (scope === undefined) return true;
+    if (scope.window !== undefined) return !req.ownerOnly && root?.id === scope.window;
+    return (
+      req.ownerOnly &&
+      req.origin.participants.some(p => p.platform === who.platform && p.userId === who.userId) &&
+      root?.bot === scope.selfId
+    );
+  };
+  /**
+   * 推给谁、算谁在场、认谁的应答都看这一条：接入覆盖这张，且客户端的身份能批（不能批的，推给它、算它在场都只会让审批白等）
+   */
+  const attends = (attendee: Attendee, pending: Pending) =>
+    covers(attendee, pending) && pending.req.canAnswer(attendee.who);
   /** 此刻在场、覆盖这张的客户端：最近一次活动在时限内，或推给它的卡还没结 */
   const present = (now: number, pending: Pending) =>
     [...surfaces].flatMap(surface =>
@@ -278,7 +287,7 @@ export function createApprovals(deps: ApprovalDeps) {
     if (index >= 0) queue.splice(index, 1);
     if (queue.length === 0) queues.delete(sessionId);
     const now = Date.now();
-    const settlement: ApprovalSettlement = { state, source, at: now };
+    const settlement: ApprovalSettlement = { state, source, at: now, ...(by && { by: by.attendee.who }) };
     const approval = pending.approval;
     if (approval) {
       approval.state = state;
@@ -299,7 +308,7 @@ export function createApprovals(deps: ApprovalDeps) {
     const { turnId, callId, tool } = pending.req;
     tell('结算', () => deps.changed({ id: pending.id, sessionId, turnId, callId }, settlement));
     // 每个结算一行 info，被拒的自主回合、超出频率上限的请求都在里面，运行状况的日志按提供审批服务的实例筛出它们
-    const reason = source === 'owner' ? 'owner 应答' : REASONS[source][0];
+    const reason = source === 'answer' ? '有人应答' : REASONS[source][0];
     deps.logger.info(`审批结算：会话 ${sessionId}，工具 ${tool}，${OUTCOMES[state]}（${reason}）`);
     audit({
       type: 'decision',
@@ -315,8 +324,8 @@ export function createApprovals(deps: ApprovalDeps) {
       waitedMs: now - pending.at,
     });
     pending.resolve(
-      state === 'approved'
-        ? { approvalId: pending.id, approved: true }
+      state === 'approved' && by
+        ? { approvalId: pending.id, approved: true, by: by.attendee.who }
         : {
             approvalId: pending.id,
             approved: false,
@@ -373,8 +382,7 @@ export function createApprovals(deps: ApprovalDeps) {
     if (closed) return ['cancelled', 'shutdown'];
     if (signal?.aborted) return ['cancelled', 'turn-ended'];
     if (origin.kind === 'subtask') return ['denied', 'subtask'];
-    if (origin.kind !== 'hand' || !origin.participants.some(({ platform, userId }) => deps.isOwner(platform, userId)))
-      return ['denied', 'ineligible'];
+    if (origin.kind !== 'hand' || !origin.participants.some(who => req.canAnswer(who))) return ['denied', 'ineligible'];
     if (present(at, pending).length === 0) return ['expired', 'absent'];
     if (recentCards(req.sessionId, at).length >= RATE_LIMIT) return ['denied', 'rate-limit'];
     return undefined;
@@ -386,7 +394,7 @@ export function createApprovals(deps: ApprovalDeps) {
       const pending: Pending = {
         id: crypto.randomUUID(),
         req,
-        bot: deps.botOf(req.sessionId),
+        root: deps.rootOf(req.sessionId),
         signal,
         at,
         facts: factsOf(deps.displaySpec(req.tool), req.args),
@@ -438,18 +446,17 @@ export function createApprovals(deps: ApprovalDeps) {
         recheck();
       },
       respond(answer) {
-        if (!deps.isOwner(attendee.who.platform, attendee.who.userId))
-          return refuse('forbidden', t('responderNotOwner'));
-        const pending = shown().find(p => p.id === answer.approvalId && attends(attendee, p));
+        const pending = shown().find(p => p.id === answer.approvalId && covers(attendee, p));
         if (!pending?.approval) {
-          // 已经结了的一律回已结算：id 是本服务签发的随机串，接入只拿得到推给它的，回已结算不泄露什么
+          // 已经结了的一律回已结算，不看覆盖：id 是本服务签发的随机串，接入只拿得到推给它的，回已结算不泄露什么
           return settledIds.get(answer.approvalId)
             ? refuse('approval-settled', t('approvalSettled'))
             : refuse('not-found', t('noSuchApproval', { id: answer.approvalId }));
         }
+        if (!pending.req.canAnswer(attendee.who)) return refuse('forbidden', t('responderCannotAnswer'));
         if (answer.contentHash !== pending.approval.contentHash)
           return refuse('hash-mismatch', t('contentHashMismatch'));
-        settle(pending, answer.decision === 'approve' ? 'approved' : 'denied', 'owner', {
+        settle(pending, answer.decision === 'approve' ? 'approved' : 'denied', 'answer', {
           attendee,
           note: answer.note,
         });

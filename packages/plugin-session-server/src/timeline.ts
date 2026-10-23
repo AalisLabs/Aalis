@@ -47,7 +47,7 @@ import {
   type StreamChunkMessage,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
-import type { MethodHandlers, ServerConnection } from './connection.js';
+import { type MethodHandlers, type ServerConnection, settlementItem } from './connection.js';
 import type { DisplayOf } from './display.js';
 import {
   archivedItem,
@@ -473,7 +473,7 @@ export function createTimeline(deps: TimelineDeps) {
     if (!turn || item?.kind !== 'tool-call') return;
     item.approvalId = card.id;
     if (settlement) {
-      item.settlement = settlement;
+      item.settlement = settlementItem(settlement, deps.isOwner);
       if (settlement.state !== 'approved') item.status = 'denied';
     }
     emit(turn.sessionId, 'item/started', item);

@@ -18,12 +18,7 @@ import {
   sessionSettings,
 } from '../../packages/api-session-settings/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import {
-  type RegisteredTool,
-  type ToolCallContext,
-  type ToolGroupInfo,
-  tools,
-} from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, type ToolGroupInfo, tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, events, LogHub, provide, services } from '../../packages/core/src/index.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
@@ -36,6 +31,7 @@ import type {
 import { registerHubs } from './hubs.js';
 import { type PageHost, pageHost } from './page-host.js';
 import { storedRoom } from './rooms.js';
+import { type RequestDraft, toolContext } from './tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 白纸枢纽的测试台：真实 App 装载 plugin-paper，周边一律替身——
@@ -58,8 +54,8 @@ export const ROOM2 = 'onebot:10000:group:20002';
 export const PAPER = 'zz-paper';
 export const REMOTE = 'zz-remote-a';
 
-/** 真人当面发起的回合：inbound 存在、source 缺省 */
-export function human(userId = '30001', sessionId = ROOM): ToolCallContext {
+/** 真人当面发起的回合：inbound 存在、source 缺省，参与者是这位发言者 */
+export function human(userId = '30001', sessionId = ROOM): RequestDraft {
   return { sessionId, platform: 'onebot', userId, inbound: {} };
 }
 
@@ -338,9 +334,9 @@ export interface PaperHub {
   /** 白纸页与会话面板所在的页面登记表 */
   pages: PageHost;
   /** 调工具，返回原样的结果文本 */
-  raw(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<string>;
+  raw(name: string, args: Record<string, unknown>, ctx?: RequestDraft): Promise<string>;
   /** 调结果为 JSON 的工具 */
-  call(name: string, args: Record<string, unknown>, ctx?: ToolCallContext): Promise<Record<string, unknown>>;
+  call(name: string, args: Record<string, unknown>, ctx?: RequestDraft): Promise<Record<string, unknown>>;
   /** 运行枢纽登记的诊断项 */
   doctor(): Promise<CheckResult[]>;
   ledger(): PaperLedger;
@@ -434,10 +430,10 @@ export async function startPaperHub(opts: PaperHubOptions = {}): Promise<PaperHu
   if (state !== 'active') throw new Error(`plugin-paper 未激活（state=${state}）`);
   await app.start();
 
-  const raw = async (name: string, args: Record<string, unknown>, ctx: ToolCallContext = human()) => {
+  const raw = async (name: string, args: Record<string, unknown>, ctx: RequestDraft = human()) => {
     const tool = registered.get(name);
     if (!tool) throw new Error(`工具 ${name} 未登记`);
-    const out = await tool.handler(args, ctx);
+    const out = await tool.handler(args, toolContext(ctx));
     return typeof out === 'string' ? out : out.content;
   };
   return {

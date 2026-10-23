@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
 import { App, logger, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
@@ -13,6 +13,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 /** 这些会话在会话表里都是群（平台各给各的）：跨会话历史按取别的会话的规则逐条过，会话表里没有的取不到 */
 const GROUPS: Record<string, string> = {
@@ -305,13 +306,8 @@ async function bootGuarded() {
 }
 
 /** 群会话里开了 session-history 组：被拒只能来自权限档，不是分组闸 */
-function groupCall(userId: string): ToolCallContext {
-  return {
-    sessionId: GUARDED_GROUP,
-    platform: 'onebot',
-    userId,
-    enabledGroups: ['session-history'],
-  };
+function groupCall(userId: string): ToolCallRequest {
+  return toolRequest({ sessionId: GUARDED_GROUP, platform: 'onebot', userId, enabledGroups: ['session-history'] });
 }
 
 describe('recent_messages 权限档（sensitive）', () => {

@@ -41,6 +41,8 @@ import { deferred } from '../helpers/deferred.js';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
 const OWNER = { platform: 'webui', userId: 'console' };
+/** 会话协议里写成说话人的 owner：结算的应答人 */
+const OWNER_SPEAKER = { ...OWNER, owner: true };
 /** owner 在 QQ 上的账号：配置里的 owner */
 const OWNER_QQ = { platform: 'onebot', userId: '99999' };
 const MEMBER = { platform: 'onebot', userId: '30001' };
@@ -155,6 +157,8 @@ async function setup() {
         tool: 'exec',
         args: { command: 'ls' },
         rule: 'tool:exec 声明需确认',
+        canAnswer: who => isOwner(who.platform, who.userId),
+        ownerOnly: true,
         ...over,
       },
       signal,
@@ -385,7 +389,7 @@ describe('在场才问', () => {
     await flush();
     expect(r.outcome).toMatchObject({ approved: true });
     expect(c.notifications('approval/settled')).toEqual([
-      { approvalId: first.id, state: 'approved', source: 'owner', at: Date.now() },
+      { approvalId: first.id, state: 'approved', source: 'answer', at: Date.now(), by: OWNER_SPEAKER },
     ]);
   });
 
@@ -596,7 +600,7 @@ describe('应答', () => {
     expect(pushed(b)).toEqual([approval]);
     await approve(a, approval);
     await flush();
-    expect(r.outcome).toEqual({ approvalId: approval.id, approved: true });
+    expect(r.outcome).toEqual({ approvalId: approval.id, approved: true, by: OWNER });
     const late = await b.fail('approval/respond', {
       approvalId: approval.id,
       decision: 'deny',
@@ -605,12 +609,12 @@ describe('应答', () => {
     expect(late.data?.code).toBe('approval-settled');
     for (const c of [a, b]) {
       expect(c.notifications('approval/settled')).toEqual([
-        { approvalId: approval.id, state: 'approved', source: 'owner', at: Date.now() },
+        { approvalId: approval.id, state: 'approved', source: 'answer', at: Date.now(), by: OWNER_SPEAKER },
       ]);
     }
   });
 
-  it('核验：哈希不符、id 不是本服务签发的、应答人不是 owner，都被拒且审批照旧等待', async () => {
+  it('核验：哈希不符、id 不是本服务签发的、应答人不能批这一张，都被拒且审批照旧等待', async () => {
     const { host, mine, connect, request, flush } = await setup();
     const owner = await connect();
     const stranger = await connect({ identity: MEMBER, active: false });
@@ -649,11 +653,11 @@ describe('应答', () => {
       note: '先备份再删',
     });
     await flush();
-    expect(r.outcome).toMatchObject({ approved: false, source: 'owner' });
+    expect(r.outcome).toMatchObject({ approved: false, source: 'answer' });
     const message = r.outcome?.approved === false ? r.outcome.message : '';
     expect(message).toContain('被拒绝了，说明：「先备份再删」。');
     expect(c.notifications('approval/settled')).toEqual([
-      { approvalId: approval.id, state: 'denied', source: 'owner', at: Date.now() },
+      { approvalId: approval.id, state: 'denied', source: 'answer', at: Date.now(), by: OWNER_SPEAKER },
     ]);
   });
 });
@@ -978,7 +982,7 @@ describe('审计', () => {
     expect(decision1).toMatchObject({
       type: 'decision',
       state: 'approved',
-      source: 'owner',
+      source: 'answer',
       responder: OWNER,
       surface: { name: 'webui', plugin: '@test/webui-surface' },
       waitedMs: 1_234,
@@ -1022,7 +1026,7 @@ describe('日志', () => {
     await vi.advanceTimersByTimeAsync(WAIT_MS);
     expect(infos.filter(message => message.startsWith('审批'))).toEqual([
       `审批结算：会话 ${mine}，工具 file_write，拒绝（这一轮里没有 owner 的话，要 owner 确认的操作不能执行）`,
-      `审批结算：会话 ${mine}，工具 exec，批准（owner 应答）`,
+      `审批结算：会话 ${mine}，工具 exec，批准（有人应答）`,
       `审批结算：会话 ${mine}，工具 exec，过期（等了 300 秒没有人应答）`,
     ]);
   });
@@ -1122,7 +1126,7 @@ describe('会话协议上的审批', () => {
 
     await c.call('approval/respond', { approvalId: approval.id, decision: 'deny', contentHash: approval.contentHash });
     await flush();
-    const settlement = { state: 'denied', source: 'owner', at: Date.now() };
+    const settlement = { state: 'denied', source: 'answer', at: Date.now(), by: OWNER_SPEAKER };
     expect(card(watcher.timeline(mine, sub)), '结算时工具卡带上结算再推一次').toMatchObject({
       status: 'denied',
       approvalId: approval.id,
@@ -1132,7 +1136,7 @@ describe('会话协议上的审批', () => {
     const after = {
       name: 'exec',
       result: '{"error":"需要批准的操作没有执行"}',
-      toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
+      toolCallContext: { sessionId: mine, participants: [OWNER], turnId: turn.turnId, callId: 'call-1' },
       metadata: {} as Record<string, unknown>,
     };
     await host.hooks.use.run('agent:tool:after', after);
@@ -1178,7 +1182,7 @@ describe('会话协议上的审批', () => {
     const after = {
       name: 'exec',
       result: denial,
-      toolCallContext: { sessionId: mine, turnId: turn.turnId, callId: 'call-1' },
+      toolCallContext: { sessionId: mine, participants: [OWNER], turnId: turn.turnId, callId: 'call-1' },
       metadata: {} as Record<string, unknown>,
     };
     await host.hooks.use.run('agent:tool:after', after);
@@ -1203,7 +1207,7 @@ describe('会话协议上的审批', () => {
     await turn.tool('end', 'call-1', { command: 'ls' }, 'a.txt');
     expect(c.timeline(mine, sub).find(item => item.itemId === 'call-1')).toMatchObject({
       status: 'completed',
-      settlement: { state: 'approved', source: 'owner', at: Date.now() },
+      settlement: { state: 'approved', source: 'answer', at: Date.now(), by: OWNER_SPEAKER },
     });
     await turn.end();
   });

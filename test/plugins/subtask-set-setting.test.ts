@@ -9,6 +9,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { fieldsPlugin, SCHEMA, startSettings } from '../fixtures/session-settings.js';
 import { startSubtaskHub } from '../fixtures/subtask.js';
+import { type RequestDraft, toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // set_subtask_setting：父会话改直接子会话（不含孙会话）本会话层的一项，写法与门槛同在那个子会话里用 /session.set（会话设置
@@ -67,7 +68,12 @@ describe('set_subtask_setting 的处理器', () => {
       ? await hub.sm.createChildSession(ROOM, { name: '<子任务>' })
       : await hub.sm.getSession((await hub.call('create_subtask', { task: '<任务>' }, { sessionId: ROOM })).subtaskId)!;
     const set = (args: Record<string, unknown>, actor = OWNER) =>
-      hub.raw('set_subtask_setting', args, { sessionId: ROOM, platform: 'onebot', userId: actor.userId, actor });
+      hub.raw('set_subtask_setting', args, {
+        sessionId: ROOM,
+        platform: 'onebot',
+        userId: actor.userId,
+        participants: [actor],
+      });
     return { hub, child, set };
   }
 
@@ -152,12 +158,13 @@ describe('set_subtask_setting 经工具注册表与权限守卫', () => {
     await started.sm.ensureSession(MINE, { name: '<我的>' }, { createdFrom: 'webui' });
     const mineChild = await started.sm.createChildSession(MINE, { name: '<子任务>' });
     const roomChild = await started.sm.createChildSession(ROOM, { name: '<子任务>' });
-    const run = async (ctx: Record<string, unknown>, child: string) =>
+    const run = async (ctx: RequestDraft, child: string) =>
       (
-        await host.tools.use.execute('set_subtask_setting', { subtask_id: child, key: 'persona', value: '<人设>' }, {
-          enabledGroups: ['subtask'],
-          ...ctx,
-        } as never)
+        await host.tools.use.execute(
+          'set_subtask_setting',
+          { subtask_id: child, key: 'persona', value: '<人设>' },
+          toolRequest({ enabledGroups: ['subtask'], ...ctx }),
+        )
       ).content;
     const persona = (child: string) => agentFields.reader().get(child).persona;
     return { mineChild, roomChild, run, persona };
@@ -168,7 +175,7 @@ describe('set_subtask_setting 经工具注册表与权限守卫', () => {
   it('owner 在自己会话里发起：要审批（这里没有审批服务，被拒、不写）', async () => {
     const { mineChild, run, persona } = await setup();
     const out = await run({ sessionId: MINE, platform: 'onebot', userId: OWNER.userId, inbound: {} }, mineChild.id);
-    expect(out).toContain('需要 owner 批准');
+    expect(out).toContain('需要批准');
     expect(persona(mineChild.id)).toBe('default');
   });
 
@@ -181,7 +188,7 @@ describe('set_subtask_setting 经工具注册表与权限守卫', () => {
 
   it('群友发起的回合：配了免确认也被拒（免确认只对 owner）', async () => {
     const { roomChild, run, persona } = await setup(OFF);
-    const out = await run({ sessionId: ROOM, ...L1, actor: L1, inbound: {} }, roomChild.id);
+    const out = await run({ sessionId: ROOM, ...L1, inbound: {} }, roomChild.id);
     expect(out).not.toContain('已改');
     expect(persona(roomChild.id)).toBe('default');
   });

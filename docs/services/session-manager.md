@@ -173,7 +173,7 @@ interface SessionInfo {
 
 ### 2.8 取别的会话的东西
 
-`canTake(currentId, targetId, principal?)` 是取别的会话的东西（历史、媒体）的唯一规则，回 `{ ok: true }` 或 `{ ok: false, reason }`（`reason` 是文字对象，交给模型的取它的 `source`）。`principal` 是这次动作的授权身份：工具传这次调用的（`actor`，没有时取 `platform` 与 `userId`，没有 `userId` 不传），不是谁要的取用（跨会话历史的被动注入）不传。依次：
+`canTake(currentId, targetId, principal?)` 是取别的会话的东西（历史、媒体）的唯一规则，回 `{ ok: true }` 或 `{ ok: false, reason }`（`reason` 是文字对象，交给模型的取它的 `source`）。`principal` 是这次动作的一个授权身份：取用类工具经工具调用上下文的 `approveFor` 逐个参与者传，按条过滤的（`recent_messages`）与回复里的标记传 api-tools 的 `actingIdentity`（几个人时是无主体，账号为空的与不传一样），不是谁要的取用（跨会话历史的被动注入）不传。依次：
 
 1. 同一会话 id 放行；两边的根会话都判得出且是同一个（同一棵会话树）放行。两个判不出的根会话不算相同。
 2. 任一边的根会话判不出：拒绝，原因是契约导出的 `TAKE_UNKNOWN`。判不出的有：不在会话表里、父会话链断了、按 id 兜底建档的空记录（§2.5）、有出生平台却没有聊天窗口（升级前的旧记录，等下一条原生入站补记）。过了这一步，根会话只有两种：IM 房间（出生平台加聊天窗口）与 owner 的面（有创建来源：WebUI、终端与项目会话）。

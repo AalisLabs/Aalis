@@ -6,7 +6,7 @@ import { historyCleared } from '@aalis/api-memory'; // 也是 declaration mergin
 import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
-import { type ToolCallContext, tools } from '@aalis/api-tools';
+import { actingIdentity, type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
@@ -43,14 +43,14 @@ const SUBTASK_SOURCE = 'subtask';
 
 /**
  * 发给子会话的任务消息（派发与追问同一个写法）。userId 是归档用的物理来源标记（authority 查不到，等价匿名），身份：
- * - 调用在入站回合里：带着这次调用所在那一轮（fromTurn：平台、发言者、参与者即授权身份、来源与那一轮自己的 fromTurn），
- *   不填 actor；子任务那一轮的授权身份取它的参与者，权限服务按它判子任务这一轮的主体，不按父会话里别的哪一轮；
- * - 不在入站回合里（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor（callCtx.actor，没有时取物理身份；
- *   匿名则子任务同样匿名）。
+ * - 调用在入站回合里：带着这次调用所在那一轮（fromTurn：平台、发言者、这次调用的参与者（批过的是批的人）、来源与那一轮
+ *   自己的 fromTurn），不填 actor；子任务那一轮的参与者取它的，权限服务按它判子任务这一轮的主体，不按父会话里别的哪一轮；
+ * - 不在入站回合里（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor（这次调用的唯一参与者；匿名或几个
+ *   参与者时不填，子任务同样匿名）。
  * 追问与派发同源，同一子任务会话的权限不在轮次间跳变。
  */
 function taskMessage(callCtx: ToolCallContext, sessionId: string, content: string): IncomingMessage {
-  const { platform, userId, actor, inbound } = callCtx;
+  const { platform, userId, participants, inbound } = callCtx;
   const message: IncomingMessage = {
     content,
     sessionId,
@@ -62,14 +62,14 @@ function taskMessage(callCtx: ToolCallContext, sessionId: string, content: strin
     message.fromTurn = {
       platform: message.platform,
       userId,
-      participants: [actor ?? { platform: platform ?? '', userId: userId ?? '' }],
+      participants,
       source: inbound.source,
       fromTurn: inbound.fromTurn,
     };
     return message;
   }
-  const identity = actor ?? (platform && userId ? { platform, userId } : undefined);
-  if (identity) message.actor = identity;
+  const identity = actingIdentity(callCtx);
+  if (identity.userId) message.actor = identity;
   return message;
 }
 
@@ -574,9 +574,13 @@ function registerSubtask(
       const session = directChild(sm, subtaskId, callCtx.sessionId);
       if (!session) return JSON.stringify({ error: `${NOT_FOUND}: ${subtaskId}` });
 
-      // 门槛按这一轮发起的人：授权身份，没有时取物理身份（与派发时透传给子任务的取法相同）
-      const identity = callCtx.actor ?? { platform: callCtx.platform ?? '', userId: callCtx.userId ?? '' };
-      const receipt = await sessionSettings.use.setAs(identity, subtaskId, key, String(args.value ?? ''));
+      // 门槛按这次调用的授权身份：几个人的一轮是无主体，这一项声明了确认，多人的一轮里经 owner 批过，参与者已换成她
+      const receipt = await sessionSettings.use.setAs(
+        actingIdentity(callCtx),
+        subtaskId,
+        key,
+        String(args.value ?? ''),
+      );
       // 给模型的一律原文
       return toSource(receipt.text);
     },

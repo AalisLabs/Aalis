@@ -248,8 +248,9 @@ type ToolDisplay =
 ```ts
 interface ApprovalSettlement {
   state: 'approved' | 'denied' | 'expired' | 'cancelled';
-  source: 'owner' | 'absent' | 'timeout' | 'ineligible' | 'subtask' | 'rate-limit' | 'turn-ended' | 'shutdown';
+  source: 'answer' | 'absent' | 'timeout' | 'ineligible' | 'subtask' | 'rate-limit' | 'turn-ended' | 'shutdown';
   at: number;   // 结算的时刻
+  by?: { platform: string; userId?: string; nickname?: string; owner: boolean }; // 应答人（source 为 answer 时有），同 user-message 的说话人：客户端据 owner 判是不是 owner 批的
 }
 ```
 
@@ -318,13 +319,13 @@ interface BackgroundTask {
 |---|---|---|
 | `presence/update` | `{ active }` | `{}` |
 | `approval/requested`（通知） | `{ approval: Approval }` | — |
-| `approval/settled`（通知） | `{ approvalId, state, source, at }`：结局（`approved`、`denied`、`expired`、`cancelled`）、从哪里来与结算的时刻，同工具卡上的 `settlement` | — |
+| `approval/settled`（通知） | `{ approvalId, state, source, at, by? }`：结局（`approved`、`denied`、`expired`、`cancelled`）、从哪里来、结算的时刻与应答人，同工具卡上的 `settlement` | — |
 | `approval/respond` | `{ approvalId, decision: 'approve' \| 'deny', contentHash, note? }` | `{}` |
 
 - **在场**：`active` 为真表示页面可见且刚有键盘或指针活动，为假表示页面转到后台，即刻不在场。最近一次为真的上报在 10 分钟内即算在场，推给这条连接、还没结的审批也让它一直算在场，所以客户端在有活动时按需重报（例如节流到每分钟一次），页面转到后台、或最近一次活动满 10 分钟时报一次假。从没上报过的连接不算在场。
-- **推送**：审批推出时，`approval/requested` 推给在场、身份是 owner 的连接，不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。报过假之后再报真，推给过它、还没结的同一张会再推一次，客户端按 `approval.id` 收即不重复。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId`、`settlement` 看到它。
+- **推送**：审批推出时，`approval/requested` 推给在场、身份能批这一张的连接（WebUI 的连接只有 owner 的控制台身份），不要求这条连接订阅了那个会话；不在场的连接变为在场时补推还没结的。报过假之后再报真，推给过它、还没结的同一张会再推一次，客户端按 `approval.id` 收即不重复。结算时 `approval/settled` 推给拿到过这条请求的连接。订阅了会话的连接另从快照的 `approvals` 与工具卡的 `approvalId`、`settlement` 看到它。
 - **重连宽限**：等待中在场的连接全部断开或转为不在场时，审批不立即结算：30 秒内有连接恢复在场（重连后重报在场），卡片照常等着并推给它；满 30 秒没有恢复，按没人在场（`absent`）结算。宽限不延长 300 秒的总等待。发起时就没人在场的仍立即拒绝。
-- **应答**：先答先得。服务端核两项：应答人（这条连接的身份）是 owner，否则 `forbidden`；`approvalId` 是本服务签发的、还没结算（不认识回 `not-found`，已结算的一律回 `approval-settled`），并且 `contentHash` 与审批对象的一致（否则 `hash-mismatch`）。审批服务不在时回 `unsupported`。`note` 是说明，拒绝时回给模型。
+- **应答**：先答先得。已结算的一律回 `approval-settled`；还在等的，`approvalId` 要是本服务签发的（不认识回 `not-found`），应答人（这条连接的身份）要能批这一张（否则 `forbidden`），`contentHash` 要与审批对象的一致（否则 `hash-mismatch`）。审批服务不在时回 `unsupported`。`note` 是说明，拒绝时回给模型。
 - **显示**：`facts` 是逐字的参数，可能带控制符、双向控制符与零宽字符。卡片显示之前一律经 api-approval 的 `sanitizeForCard` 清洗。
 
 ```ts

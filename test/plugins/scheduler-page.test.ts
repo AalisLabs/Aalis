@@ -11,6 +11,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 计划任务页：新建与编辑是带输入的动作（编辑是行动作，按这一行预填），暂停与恢复按行状态显示。
@@ -83,11 +84,15 @@ async function withScheduler(
       async createByTool(args) {
         const toolSvc = host.services.use.get(tools);
         if (!toolSvc) throw new Error('tools 服务未注册');
-        toolSvc.setExecutionGuard(async () => null);
-        const res = await toolSvc.execute('scheduler_create_job', args, {
-          sessionId: 'internal',
-          platform: 'internal',
-        });
+        toolSvc.setExecutionGuard(async () => ({ ok: true }));
+        const res = await toolSvc.execute(
+          'scheduler_create_job',
+          args,
+          toolRequest({
+            sessionId: 'internal',
+            platform: 'internal',
+          }),
+        );
         return JSON.parse(res.content) as Record<string, unknown>;
       },
       jobs: () => svc()?.getJobs() ?? [],

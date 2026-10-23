@@ -14,7 +14,7 @@
 import { type EgressReport, egressWithin, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import { placePaperId, type SessionInfo, type SessionManagerService } from '@aalis/api-session-manager';
 import { describeLayer, type SessionFieldReader, type SessionSettingsLayer } from '@aalis/api-session-settings';
-import type { ToolCallContext } from '@aalis/api-tools';
+import { actingIdentity, type ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import type { SessionFieldsOf } from '@aalis/schema-config';
 import type { configSchema, PaperConfig, PaperSpec } from './config.js';
@@ -136,18 +136,13 @@ export function pausedReason(ledger: PaperLedger, paperId: string, type: string)
   return undefined;
 }
 
-/** 有效授权身份：actor 缺省时就是会话语义的 (platform, userId) */
-export function effectiveActor(ctx: ToolCallContext): { platform: string; userId: string } {
-  return ctx.actor ?? { platform: ctx.platform ?? '', userId: ctx.userId ?? '' };
-}
-
 /** 记录、预留与按人计数里的发起者键 */
 export function actorKey(actor: { platform: string; userId: string }): string {
   return `${actor.platform}:${actor.userId}`;
 }
 
 /**
- * 资格。initiate（交任务、取消）：房间会话本身、入站回合、真人消息、发起人非空；
+ * 资格。initiate（交任务、取消）：房间会话本身、入站回合、真人消息、有单一的发起人（这次调用只有一位有账号的参与者）；
  * use（查状态、发成品）：房间会话本身、入站回合。不满足时返回原因。
  */
 export function checkEligibility(
@@ -161,7 +156,7 @@ export function checkEligibility(
   if (ctx.inbound.source !== undefined) {
     return `只有真人当面发起的回合能交任务或取消任务，这一回合来自「${ctx.inbound.source}」`;
   }
-  if (!effectiveActor(ctx).userId) return '这一回合没有发起人，不能交任务或取消任务';
+  if (!actingIdentity(ctx).userId) return '这一轮没有单一的发起人，不能交任务或取消任务';
   return undefined;
 }
 

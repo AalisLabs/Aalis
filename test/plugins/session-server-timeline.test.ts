@@ -248,7 +248,13 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
         const data = {
           name,
           result,
-          toolCallContext: { sessionId, turnId, callId, signal },
+          toolCallContext: {
+            sessionId,
+            participants: [{ platform: 'webui', userId: 'console' }],
+            turnId,
+            callId,
+            signal,
+          },
           metadata: {} as Record<string, unknown>,
         };
         await inside(() => host.hooks.use.run('agent:tool:after', data));
@@ -844,7 +850,12 @@ describe('条目', () => {
       const after = {
         name: 'send_attachment',
         result: '{"ok":true}',
-        toolCallContext: { sessionId: ROOM, turnId: t.turnId, callId },
+        toolCallContext: {
+          sessionId: ROOM,
+          participants: [{ platform: 'onebot', userId: '30001' }],
+          turnId: t.turnId,
+          callId,
+        },
         metadata: {} as Record<string, unknown>,
       };
       await t.inside(() => host.hooks.use.run('agent:tool:after', after));

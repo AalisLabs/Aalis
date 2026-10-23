@@ -15,6 +15,7 @@ import {
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -109,7 +110,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   }
   const names = (reg: ToolRegistry) => reg.getAll().map(t => t.name);
   const handlerOf = async (reg: ToolRegistry, name: string) =>
-    (await reg.execute(name, {}, { sessionId: 's', platform: 'test' })).content;
+    (await reg.execute(name, {}, toolRequest({ sessionId: 's', platform: 'test' }))).content;
 
   it('同名重注册是替换：旧退订 no-op；退订当前登记后换提供者，被替换的旧登记不复活', async () => {
     const { app, host, reg, offProvide, tools: bound } = await world();

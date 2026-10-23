@@ -238,6 +238,8 @@ describe('/session 接上真的会话服务', () => {
       tool: 'exec',
       args: { command: 'ls' },
       rule: 'tool:exec 声明需确认',
+      canAnswer: () => true,
+      ownerOnly: true,
     });
     const { approval } = await vi.waitFor(() => {
       const frame = c.frames().find(f => f.method === 'approval/requested');
@@ -249,7 +251,11 @@ describe('/session 接上真的会话服务', () => {
       decision: 'approve',
       contentHash: approval.contentHash,
     });
-    expect(await outcome).toEqual({ approvalId: approval.id, approved: true });
+    expect(await outcome).toEqual({
+      approvalId: approval.id,
+      approved: true,
+      by: { platform: 'webui', userId: 'console' },
+    });
 
     const audit = join(paths.state, 'audit', 'approvals.jsonl');
     const lines = await vi.waitFor(() => {

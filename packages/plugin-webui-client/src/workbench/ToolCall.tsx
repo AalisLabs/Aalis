@@ -7,7 +7,7 @@ import { useBackground } from '../background/tasks';
 import { Button } from '../components/Button';
 import { StatusText } from '../components/StatusText';
 import { type Approval, useSessionClient } from '../connection';
-import { clockTime, duration } from '../format';
+import { clockTime, duration, speakerName } from '../format';
 import { tr } from '../language';
 import { type BackgroundTask, RequestError, type SessionItem } from '../protocol/session-client';
 import { t } from '../texts';
@@ -28,7 +28,7 @@ type Display = NonNullable<ToolCallItem['display']>;
 /** 一行里命令最多显示这么多个字，完整的在细节里 */
 const SUMMARY_LIMIT = 60;
 
-const SETTLED_BY: Record<Exclude<Settlement['source'], 'owner'>, TextRef> = {
+const SETTLED_BY: Record<Exclude<Settlement['source'], 'answer'>, TextRef> = {
   absent: t('settledByAbsent'),
   timeout: t('settledByTimeout'),
   ineligible: t('settledByIneligible'),
@@ -38,11 +38,14 @@ const SETTLED_BY: Record<Exclude<Settlement['source'], 'owner'>, TextRef> = {
   shutdown: t('settledByShutdown'),
 };
 
-/** 结算写成一句：结果、原因与时间 */
-function settlementText({ state, source, at }: Settlement): string {
+/** 结算写成一句：结果、原因与时间；不是 owner 批的、拒的写出是谁 */
+function settlementText({ state, source, at, by }: Settlement): string {
   const time = clockTime(at);
-  if (state === 'approved') return tr('settledApproved', { time });
-  if (source === 'owner') return tr('settledDenied', { time });
+  if (source === 'answer') {
+    const approved = state === 'approved';
+    if (!by || by.owner) return tr(approved ? 'settledApproved' : 'settledDenied', { time });
+    return tr(approved ? 'settledApprovedBy' : 'settledDeniedBy', { who: speakerName(by), time });
+  }
   const reason = SETTLED_BY[source];
   return state === 'cancelled' ? tr('settledCancelled', { reason, time }) : tr('settledAsDenied', { reason, time });
 }

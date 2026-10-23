@@ -32,7 +32,7 @@ function world() {
   };
   const owner = { authorize: () => null } as unknown as AuthorityService;
   const registry = new CommandRegistry(silent, fixedRef(owner), ref());
-  registry.setExecutionGuard(async () => null);
+  registry.setExecutionGuard(async () => ({ ok: true }));
   const commands = {
     command: (name: string, description?: string, meta?: object) =>
       registry.command(name, description, { ...meta, pluginName: 'relation' }),

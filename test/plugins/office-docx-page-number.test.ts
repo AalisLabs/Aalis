@@ -4,6 +4,7 @@ import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { DocSessionManager } from '../../packages/plugin-office/src/session.js';
 import { registerDocxTools } from '../../packages/plugin-office/src/tools/docx.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // doc_set_header_footer 的 showPageNumber：页脚写入 PAGE 域；
@@ -52,7 +53,7 @@ async function saveWithFooter(meta: Record<string, unknown>): Promise<string> {
     storage as never,
     'workspace:/',
   );
-  const ctx = { sessionId: 's', enabledGroups: undefined };
+  const ctx = toolContext({ sessionId: 's', enabledGroups: undefined });
   const { docId } = JSON.parse((await tools.doc_create.handler({ filename: 'a.docx' }, ctx)) as string);
   await tools.doc_add_paragraph.handler({ docId, text: '正文' }, ctx);
   await tools.doc_set_header_footer.handler({ docId, ...meta }, ctx);

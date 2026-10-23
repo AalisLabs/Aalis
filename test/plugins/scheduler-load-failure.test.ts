@@ -9,6 +9,7 @@ import schedulerPlugin, { type SchedulerService, scheduler } from '../../package
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（storage 不在场时访问即抛错、
@@ -137,11 +138,11 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     const create = async (name: string): Promise<string> => {
       const toolSvc = app.bind({ services }).services.use.get(tools);
       if (!toolSvc) throw new Error('tools 服务未注册');
-      toolSvc.setExecutionGuard(async () => null); // 放行确认：这里只看回执
+      toolSvc.setExecutionGuard(async () => ({ ok: true })); // 放行确认：这里只看回执
       const res = await toolSvc.execute(
         'scheduler_create_job',
         { name, interval: 3600, content: 'x' },
-        { sessionId: 'internal', platform: 'internal' },
+        toolRequest({ sessionId: 'internal', platform: 'internal' }),
       );
       return String(JSON.parse(res.content).message);
     };

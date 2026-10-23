@@ -147,12 +147,14 @@ async function run(caps: Caps): Promise<void> {
     logger: logger.use,
   });
   const approval = createApprovals({
-    isOwner,
     events: events.use,
     logger: logger.use,
     auditFile: join(caps.paths.use.state, 'audit', 'approvals.jsonl'),
     displaySpec,
-    botOf: sessionId => rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.selfId,
+    rootOf: sessionId => {
+      const root = rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id));
+      return root && { id: root.id, bot: root.originChat?.selfId };
+    },
     changed: (card, settlement) => {
       timeline.approval(card, settlement);
       push([card.sessionId], []);
@@ -191,6 +193,7 @@ async function run(caps: Caps): Promise<void> {
     }),
     logger.use,
     caps.i18n,
+    isOwner,
   );
   // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
   let features = currentFeatures();

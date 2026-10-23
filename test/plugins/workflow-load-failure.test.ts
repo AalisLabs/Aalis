@@ -17,6 +17,7 @@ import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // workflow 的运行历史（含 once 记录与定义者记录）是整份快照：读不懂时必须拒写，once 也不能据空记录安排。
@@ -241,11 +242,11 @@ describe('workflow：once 记录读不出时不安排 once', () => {
     const define = async (persist: boolean): Promise<{ ok?: boolean; note?: string }> => {
       const toolSvc = app.bind({ services }).services.use.get(toolsService);
       if (!toolSvc) throw new Error('tools 服务未注册');
-      toolSvc.setExecutionGuard(async () => null); // workflow_define 是 sensitive，放行权限闸：这里只看回执
+      toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 是 sensitive，放行权限闸：这里只看回执
       const res = await toolSvc.execute(
         'workflow_define',
         { yaml: ONCE_YAML, persist },
-        { sessionId: 'internal', platform: 'internal' },
+        toolRequest({ sessionId: 'internal', platform: 'internal' }),
       );
       return JSON.parse(res.content);
     };

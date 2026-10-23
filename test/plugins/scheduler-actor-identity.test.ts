@@ -1,4 +1,5 @@
 import { storage } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
 import { App, events, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
@@ -133,5 +134,55 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
     });
     expect(emitted, '持久化任务没被载入，本用例没测到东西').toBe(true);
     expect(actor, `创建者未知的持久化任务被补成 ${JSON.stringify(actor)}；未知不等于 owner`).toBeUndefined();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 建任务的创建者取这次调用的参与者（api-tools 的 actingIdentity）：只有一位时是他；批过的调用参与者已换成批的人；
+// 几个人都能做、没经审批的按无主体记（匿名）。
+// ════════════════════════════════════════════════════════════
+
+describe('scheduler_create_job 的创建者取这次调用的参与者', () => {
+  const OWNER = { platform: 'onebot', userId: '99999' };
+  const MEMBER = { platform: 'onebot', userId: '30001' };
+  const OTHER = { platform: 'onebot', userId: '30002' };
+
+  /** 以这几位参与者调 scheduler_create_job（守卫放行，by 是批的人），触发建好的任务，回它发出的消息上的 actor */
+  async function creatorOf(participants: Array<{ platform: string; userId: string }>, by?: typeof OWNER) {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    const host = app.bind({ provide, services, events });
+    host.provide.use(storage, memoryStorage().service as never);
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.register(cronEnginePlugin, {});
+    await app.plugins.register(schedulerPlugin, { jobs: [] });
+    await app.plugins.idle();
+    const toolSvc = host.services.use.get(tools);
+    if (!toolSvc) throw new Error('tools 服务未注册');
+    toolSvc.setExecutionGuard(async () => ({ ok: true, by }));
+    const res = await toolSvc.execute(
+      'scheduler_create_job',
+      { name: 'j', delaySeconds: 600, content: '<提醒内容>' },
+      { sessionId: 'internal', platform: 'onebot', participants },
+    );
+    expect(JSON.parse(res.content)).toMatchObject({ ok: true });
+    let actor: Actor;
+    host.events.use.on('inbound:message', msg => {
+      actor = msg.actor;
+    });
+    await host.services.use.get(scheduler)?.triggerJob('j');
+    await app.stop();
+    return actor;
+  }
+
+  it('只有一位参与者：创建者是他', async () => {
+    expect(await creatorOf([MEMBER])).toEqual(MEMBER);
+  });
+
+  it('经 owner 批过的：创建者是 owner', async () => {
+    expect(await creatorOf([OWNER, MEMBER], OWNER)).toEqual(OWNER);
+  });
+
+  it('几个人都能做、没经审批的：按无主体记，触发时匿名', async () => {
+    expect(await creatorOf([MEMBER, OTHER])).toBeUndefined();
   });
 });

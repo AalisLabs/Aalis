@@ -109,7 +109,7 @@ async function loadStack(sent: Sent[]) {
   });
   const commands = host.commands.use;
   // /session 系列声明了 risk:'sensitive'，没有守卫时会被拒：放行守卫代替 plugin-authority 的执行守卫（本文件测的不是鉴权）
-  commands.setExecutionGuard(async () => null);
+  commands.setExecutionGuard(async () => ({ ok: true }));
   /** 在会话里敲一条指令，回执的文字 */
   const run = async (sessionId: string, name: string, args: string[]) =>
     String(await commands.execute(name, { sessionId, ...OWNER, args, raw: [name, ...args].join(' ') }));

@@ -9,6 +9,7 @@ import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 子会话没有窗口：取别的会话的规则按根会话判，群里建的子任务读私聊与在群里读一样被拒，读本群（同一棵会话树）放行。
@@ -43,7 +44,10 @@ async function setup() {
     async readFromChild(parent: string, target: string) {
       const child = await sm.createChildSession(parent, { name: '<子任务>' });
       if (!host.history.present) throw new Error('session-history 不在场');
-      return host.history.use.getHistory({ sessionId: target }, { sessionId: child.id, platform: 'onebot' });
+      return host.history.use.getHistory(
+        { sessionId: target },
+        toolContext({ sessionId: child.id, platform: 'onebot' }),
+      );
     },
   };
 }

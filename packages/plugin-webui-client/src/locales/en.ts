@@ -435,6 +435,8 @@ export default defineLocale<Source>()({
   settledByShutdown: 'Approval service stopped',
   settledApproved: 'Approved · {time}',
   settledDenied: 'Denied · {time}',
+  settledApprovedBy: 'Approved · {who} · {time}',
+  settledDeniedBy: 'Denied · {who} · {time}',
   settledCancelled: 'Cancelled · {reason} · {time}',
   settledAsDenied: 'Treated as denied · {reason} · {time}',
   toolRun: 'Run {command}',

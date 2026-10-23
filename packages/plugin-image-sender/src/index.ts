@@ -13,7 +13,7 @@
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先过媒体判据（@aalis/api-media 的 mediaScopeOf：别的会话的媒体按会话管理的取用规则，本机文件按这一轮的
-// 主体），再读文件头核对格式（见 @aalis/util-media-signature）。
+// 主体，多人的一轮逐个参与者判、有人过不了时发参与者审批），再读文件头核对格式（见 @aalis/util-media-signature）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -25,7 +25,7 @@ import { historyMediaRefs, media, mediaRef, mediaScopeOf } from '@aalis/api-medi
 import { memory } from '@aalis/api-memory';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
-import { tools } from '@aalis/api-tools';
+import { actingIdentity, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type Message, type MessageAttachment, type OutgoingMessage } from '@aalis/schema-message';
@@ -84,7 +84,7 @@ function registerImageSender(caps: Caps): void {
   /** owner 判定：权限服务不在时恒为否 */
   const isOwner = (platform: string, userId: string) => authority.present && authority.use.isOwner(platform, userId);
 
-  /** 媒体判据要的服务：每次判时按一次调用交给 mediaScopeOf（没有授权身份的不带，如回复里的标记） */
+  /** 媒体判据要的服务：每次判时按一次调用交给 mediaScopeOf（工具交这次调用，回复里的标记不带授权身份） */
   const scopeServices = { sessionManager, authority, history: recentHistory };
 
   // 核对存储库内的文件能否按 kind 发送：只读文件头，按 kind 核对格式，不符拒发（存储根里还有配置、令牌、
@@ -320,7 +320,8 @@ function registerImageSender(caps: Caps): void {
       return { kind: MARKUP_KIND[tag], ref: ref && isStorageUri(ref) ? ref : undefined };
     });
     if (!tags.some(({ ref }) => ref)) return;
-    const inScope = mediaScopeOf({ sessionId: message.sessionId }, scopeServices);
+    const call = { sessionId: message.sessionId, participants: [] };
+    const inScope = mediaScopeOf({ ...call, approveFor: async check => check(actingIdentity(call)) }, scopeServices);
     const getSession = (id: string) => sessionManager.use.getSession(id);
     const ownerOnly =
       sessionManager.present && roomClass(getSession(message.sessionId), getSession, isOwner) === 'owner-only';

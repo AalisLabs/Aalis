@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
@@ -10,6 +10,7 @@ import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 子会话与根会话同一套收口：最后一轮出错收口为 error，被停止收口为 completed、从 lastTurn 看出。
@@ -19,7 +20,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 
 type Outcome = HookContextMap['agent:turn:after']['outcome'];
-type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
+type Handler = (args: Record<string, unknown>, callCtx: ToolCallContext) => Promise<string>;
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -50,7 +51,7 @@ async function setup() {
   }
   const sm = host.sessionManager.use;
   const parent = await sm.createSession({ name: '<父会话>' });
-  const ctx = { sessionId: parent.id, platform: 'webui', userId: 'console' };
+  const ctx = toolContext({ sessionId: parent.id, platform: 'webui', userId: 'console' });
   const call = async (tool: string, args: Record<string, unknown>) => JSON.parse(await handlers.get(tool)!(args, ctx));
 
   let turns = 0;

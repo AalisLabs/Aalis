@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type ToolCallContext, tools as toolsService } from '../../packages/api-tools/src/index.js';
+import type { UserIdentity } from '../../packages/api-authority/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
 import { type App, events, provide, services } from '../../packages/core/src/index.js';
@@ -50,8 +51,8 @@ const ON_PING = yamlOf('  type: event\n  event: zz:ping');
 let base: string;
 let apps: App[];
 let hosts: PageHost[];
-/** 每次执行 zz_whoami 时的授权身份（undefined 即匿名） */
-let actors: Array<ToolCallContext['actor']>;
+/** 每次执行 zz_whoami 时的运行身份（工具调用上下文的唯一参与者，undefined 即匿名） */
+let actors: Array<UserIdentity | undefined>;
 /** zz_confirm 真正执行的次数 */
 let confirmed: number;
 
@@ -97,7 +98,9 @@ async function boot() {
   host.tools.use.register({
     definition: probe('zz_whoami'),
     handler: async (_args, ctx) => {
-      actors.push(ctx.actor);
+      const [runner, ...more] = ctx.participants;
+      if (more.length > 0) throw new Error('编排的工具调用只有一位参与者');
+      actors.push(runner.userId ? runner : undefined);
       return 'ok';
     },
   });
@@ -116,13 +119,13 @@ async function boot() {
     if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
   }
   const svc = host.services.use.get(workflow) as WorkflowService;
-  /** 以某人的身份调一个工具（actor 是授权身份，缺省即物理身份），结果按 JSON 读 */
+  /** 以某人的身份调一个工具（参与者缺省即物理发言者），结果按 JSON 读 */
   const tool = async (
     name: string,
     args: Record<string, unknown>,
-    who: { platform: string; userId: string },
-    actor?: ToolCallContext['actor'],
-  ) => JSON.parse((await host.tools.use.execute(name, args, { sessionId: 'internal', ...who, actor })).content);
+    who: UserIdentity,
+    participants: UserIdentity[] = [who],
+  ) => JSON.parse((await host.tools.use.execute(name, args, { sessionId: 'internal', ...who, participants })).content);
   /** 调工作流页的一个动作：不是 200 就失败 */
   const act = async (action: string, body: Record<string, unknown>) => {
     const reply = await pages.act('workflows', action, body);
@@ -170,6 +173,14 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed).toBe(0);
   });
 
+  it('几个人的一轮调起：没有单一的调用者，按匿名执行', async () => {
+    const s = await boot();
+    await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
+    await s.tool('workflow_run', { id: ID }, OWNER, [OWNER, MEMBER]);
+    expect(actors).toEqual([undefined]);
+    expect(confirmed).toBe(0);
+  });
+
   it('经服务的 defineWorkflow 覆盖：没有定义者，记录里原来的定义者也清掉，重启后照旧按匿名', async () => {
     const first = await boot();
     await first.tool('workflow_define', { yaml: MANUAL }, OWNER);
@@ -186,7 +197,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
 
   it('定义者取授权身份、不取物理发言者：物理发言者是 owner 的自发回合定义的，没有定义者', async () => {
     const s = await boot();
-    await s.tool('workflow_define', { yaml: MANUAL }, OWNER, selfInitiatedActor('onebot'));
+    await s.tool('workflow_define', { yaml: MANUAL }, OWNER, [selfInitiatedActor('onebot')]);
     await s.tool('workflow_run', { id: ID }, OWNER);
     expect(actors).toEqual([undefined]);
   });

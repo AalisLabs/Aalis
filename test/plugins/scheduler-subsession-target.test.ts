@@ -12,6 +12,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 在子会话里建定时任务要写明目标：子会话没有窗口，不传 sessionId 时默认的目标就是调用所在的子会话，子会话删掉后任务
@@ -41,7 +42,7 @@ async function boot() {
   await app.plugins.idle();
   const toolSvc = host.services.use.get(tools);
   if (!toolSvc) throw new Error('tools 服务未注册');
-  toolSvc.setExecutionGuard(async () => null);
+  toolSvc.setExecutionGuard(async () => ({ ok: true }));
   return {
     sm: host.sessionManager.use,
     jobs: () => host.services.use.get(scheduler)?.getJobs() ?? [],
@@ -50,7 +51,7 @@ async function boot() {
       const res = await toolSvc.execute(
         'scheduler_create_job',
         { delaySeconds: 600, content: '<提醒内容>', ...args },
-        { sessionId, platform: 'onebot', userId: `parent:${ROOM}` },
+        toolRequest({ sessionId, platform: 'onebot', userId: `parent:${ROOM}` }),
       );
       return JSON.parse(res.content) as Record<string, unknown>;
     },

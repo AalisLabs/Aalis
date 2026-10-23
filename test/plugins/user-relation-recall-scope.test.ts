@@ -10,6 +10,7 @@ import userRelationPlugin, { type RelationService } from '../../packages/plugin-
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionValuesPlugin } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 关系图范围（user-relation 的 recallScope，可按会话设）：为「仅本会话」时，关系图注入跳过全局热点与跨会话事件（别的会话里
@@ -186,7 +187,7 @@ async function relationTools(sessions: Record<string, Record<string, unknown>>) 
   const call = async (sessionId: string, name: string, args: Record<string, unknown> = {}) => {
     const handler = handlers.get(name);
     if (!handler) throw new Error(`工具未登记：${name}`);
-    const out = await handler(args, { sessionId, platform: 'onebot', userId: 'u1' });
+    const out = await handler(args, toolContext({ sessionId, platform: 'onebot', userId: 'u1' }));
     return typeof out === 'string' ? out : out.content;
   };
   return { call, ids };

@@ -3,6 +3,7 @@ import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { DocSessionManager } from '../../packages/plugin-office/src/session.js';
 import { registerPptTools } from '../../packages/plugin-office/src/tools/pptx.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // PPT 预设模板的母版文字必须与所在底色不同：
@@ -53,7 +54,7 @@ async function mastersOf(template: string): Promise<MasterProps[]> {
     {} as never,
     'workspace:/',
   );
-  const ctx = { sessionId: 's', enabledGroups: undefined };
+  const ctx = toolContext({ sessionId: 's', enabledGroups: undefined });
   // 先建一份不带模板的文稿拿到 pptxgenjs 原型，再在原型上记录母版定义
   const probe = JSON.parse((await tools.ppt_create.handler({ filename: 'probe.pptx' }, ctx)) as string);
   const proto = Object.getPrototypeOf((sessions.require(probe.docId).doc as { pptx: object }).pptx);

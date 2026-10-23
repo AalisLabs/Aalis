@@ -156,6 +156,8 @@ async function setup({
       tool: 'exec',
       args: { command: 'ls' },
       rule: 'tool:exec 声明需确认',
+      canAnswer: who => consoleIsOwner && who.platform === 'cli' && who.userId === 'console',
+      ownerOnly: true,
       ...over,
     });
     await settle();
@@ -267,14 +269,16 @@ describe('终端界面按全局层的语言', () => {
     expect(s.frame()).toContain('…(3,000 characters omitted)…');
   });
 
-  it('应答被拒的原因按读者语言：卡片推出之后终端身份不再是 owner', async () => {
+  it('应答被拒的原因按读者语言：卡片推出之后终端身份不再能批这一张', async () => {
     const s = await setup({ language: ['en'] });
     await s.touch();
     await s.request();
     expect(s.frame()).toContain(EN.heading);
     s.demote();
     await s.ctrl('y');
-    expect(s.frame()).toContain('Approval for exec: the answer did not take effect: The responder is not the owner');
+    expect(s.frame()).toContain(
+      'Approval for exec: the answer did not take effect: The responder cannot answer this approval',
+    );
   });
 
   it('审批卡上事实的标签补齐到同一宽度：各项的值从同一列开始', async () => {

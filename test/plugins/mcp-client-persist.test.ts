@@ -5,6 +5,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // mcp_set_server_enabled 改的是 mcp-client 自己的配置：updateConfig 只改运行态并 bounce 本插件，
@@ -48,13 +49,17 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const registry = makeToolRegistry(silent);
     // 测的是工具自身行为而非鉴权：放行守卫代替 plugin-authority（没有守卫时需要鉴权的工具一律被拒）
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
     expect(app.plugins.getPlugin(NAME)?.state).toBe('active');
 
-    const out = await registry.execute('mcp_set_server_enabled', { id: 'a', enabled: true }, { sessionId: 't' });
+    const out = await registry.execute(
+      'mcp_set_server_enabled',
+      { id: 'a', enabled: true },
+      toolRequest({ sessionId: 't' }),
+    );
     expect(out.content).toContain('已将 server "a" 设置为 enabled=true');
     await app.plugins.idle();
 
@@ -78,12 +83,16 @@ describe('mcp-client 自服务开关落盘', () => {
     const { app, store } = hostedApp({ plugins: { [NAME]: { servers: [server] } } }, { logger: silent });
     apps.push(app);
     const registry = makeToolRegistry(silent);
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
-    const out = await registry.execute('mcp_set_server_enabled', { id: '7', enabled: true }, { sessionId: 't' });
+    const out = await registry.execute(
+      'mcp_set_server_enabled',
+      { id: '7', enabled: true },
+      toolRequest({ sessionId: 't' }),
+    );
     expect(out.content).toContain('已将 server "7" 设置为 enabled=true');
     await app.plugins.idle();
     expect((store.getPluginConfig(NAME) as { servers: unknown[] }).servers[0]).toEqual({ ...server, enabled: true });
@@ -97,14 +106,18 @@ describe('mcp-client 自服务开关落盘', () => {
     );
     apps.push(app);
     const registry = makeToolRegistry(silent);
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
-    const listed = await registry.execute('mcp_list_servers', {}, { sessionId: 't' });
+    const listed = await registry.execute('mcp_list_servers', {}, toolRequest({ sessionId: 't' }));
     expect(JSON.parse(listed.content)[0].id).toBe('fs');
-    const out = await registry.execute('mcp_set_server_enabled', { id: 'fs', enabled: true }, { sessionId: 't' });
+    const out = await registry.execute(
+      'mcp_set_server_enabled',
+      { id: 'fs', enabled: true },
+      toolRequest({ sessionId: 't' }),
+    );
     expect(out.content).toContain('enabled=true');
     await app.plugins.idle();
     expect(store.getPluginConfig(NAME)).toEqual({ servers: [{ ...server, enabled: true }], extraTop: true });
@@ -125,12 +138,16 @@ describe('mcp-client 自服务开关落盘', () => {
     );
     apps.push(app);
     const registry = makeToolRegistry(silent);
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     app.bind({ provide }).provide.use(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
 
-    const out = await registry.execute('mcp_set_server_enabled', { id: 'a', enabled: true }, { sessionId: 't' });
+    const out = await registry.execute(
+      'mcp_set_server_enabled',
+      { id: 'a', enabled: true },
+      toolRequest({ sessionId: 't' }),
+    );
     await app.plugins.idle();
 
     // 运行态确已切换：只回一个错误的话，agent 会以为什么都没发生
@@ -146,7 +163,7 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const host = app.bind({ events, provide });
     const registry = makeToolRegistry(silent);
-    registry.setExecutionGuard(async () => null);
+    registry.setExecutionGuard(async () => ({ ok: true }));
     host.provide.use(tools, registry);
     const unloaded: string[] = [];
     host.events.use.on('plugin:unloaded', id => {
@@ -156,7 +173,11 @@ describe('mcp-client 自服务开关落盘', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin(NAME)?.state).toBe('active');
 
-    const out = await registry.execute('mcp_set_server_enabled', { id: 'a', enabled: true }, { sessionId: 't' });
+    const out = await registry.execute(
+      'mcp_set_server_enabled',
+      { id: 'a', enabled: true },
+      toolRequest({ sessionId: 't' }),
+    );
     expect(out.content).toMatch(/^失败：.*host-config/);
     await app.plugins.idle();
 

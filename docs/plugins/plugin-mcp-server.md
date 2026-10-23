@@ -76,10 +76,10 @@ plugins:
 MCP 协议不传 session / user 概念，server 每次调用注入合成 `ToolCallContext`：
 
 ```ts
-{ sessionId: 'mcp-server', userId: 'mcp-client', platform: 'mcp' }
+{ sessionId: 'mcp-server', userId: 'mcp-client', platform: 'mcp', participants: [{ platform: 'mcp', userId: 'mcp-client' }] }
 ```
 
-所有 MCP 调用共用上述固定的 sessionId/userId，工具无法区分不同的外部 client。
+所有 MCP 调用共用上述固定的 sessionId/userId，工具无法区分不同的外部 client。唯一的参与者是 `mcp:mcp-client`，权限守卫按这个身份裁决；调用不在入站回合里，取用判定（`approveFor`）只按它判、不出审批。
 
 ## 依赖
 

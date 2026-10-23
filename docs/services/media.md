@@ -106,7 +106,7 @@ function clearSessionMedia(storage, kind, writer: string, sessionId?: string): P
 
 ```ts
 function mediaScopeOf( // 第一方的判据：交出这次调用判 target 的函数
-  call: MediaScopeCall,
+  call: MediaScopeCall & { approveFor(check: (who: UserIdentity) => Verdict): Promise<Verdict> }, // 取用判定，工具交工具调用上下文的
   services: {
     sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>; // 照插件拿到的服务选择给
     authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
@@ -122,8 +122,7 @@ function historyMediaRefs(messages: readonly Message[]): string[]; // 历史里�
 interface MediaScopeCall {
   sessionId: string;
   platform?: string;
-  userId?: string;
-  actor?: { platform: string; userId: string };
+  participants: readonly UserIdentity[]; // 这一轮的参与者（授权身份）；没有授权身份的（回复里的标记）为空
   inbound?: InboundTurn; // api-authority 的入站回合，本机文件判法据它取这一轮的主体
 }
 /** 由调用方按这一次调用给 */
@@ -145,7 +144,7 @@ interface LocalFileDeps {
   1. 反查出的会话都在本会话树里，或等于调用所在会话历史里系统记下的引用：放行，不问 `take` 与 `local`。先比目录，不中再读历史。
   2. 反查出本会话树以外的会话（与本会话树的目录撞名的也算）：`take` 判这些会话都能取才放行，本会话树的不问。一个会话都反查不到（会话已删）时不能取。
   3. 不在任何会话媒体目录下的本机文件（工作区、白纸成品、下载等）：按 `local`。
-- **第一方的判据**：两个工具与出站转换按这一次调用调 `mediaScopeOf`，它给出的 `take` 是每个候选都过会话管理的取用规则（api-session-manager 的 `takeFrom`，当前会话是调用所在会话，授权身份取 `actor`，没有时取 `platform` 与 `userId`，没有 `userId` 不传；规则见 [session-manager 服务](./session-manager.md#_2-8-取别的会话的东西)），对所有人一样，owner 也不例外。`local` 是 `localFileInScope`：这一轮的主体是 owner（权限服务的 `principalOf`：owner 亲手那一轮，含它的续做与它派的子任务），或授权身份是 owner、所在会话的房间类别（api-session-manager 的 `roomClass`）不是 room（非人回合的条款，如 owner 自己会话里的定时任务、按 owner 跑的编排、mcp-server 的调用；会话管理不在时不放行）。自己写取存储媒体的工具也用 `mediaScopeOf`。
+- **第一方的判据**：两个工具与出站转换按这一次调用调 `mediaScopeOf`，两样判定都按一个授权身份：`take` 是每个候选都过会话管理的取用规则（api-session-manager 的 `takeFrom`，当前会话是调用所在会话；规则见 [session-manager 服务](./session-manager.md#_2-8-取别的会话的东西)），对所有人一样，owner 也不例外；`local` 是只有这一位参与者时的 `localFileInScope`：这一轮的主体是 owner（权限服务的 `principalOf`：owner 亲手、参与者都是 owner 的那一轮，含它的续做与它派的子任务），或唯一的参与者是 owner、所在会话的房间类别（api-session-manager 的 `roomClass`）不是 room（非人回合的条款，如 owner 自己会话里的定时任务、按 owner 跑的编排、mcp-server 的调用；会话管理不在时不放行）。两样判定都交给调用方给的取用判定 `approveFor`：工具交它的工具调用上下文，逐个参与者判：都过照常取，有人过不了时发一道参与者审批，能批的是过得了的人（某个参与者自己的私聊由他本人批，本机文件由 owner 批），都过不了取不到（见 [api-tools](../api/api-tools.md#toolcallcontext)）。没有可挂审批的调用的（回复里的标记）交只按一个授权身份判的，plugin-image-sender 取 api-tools 的 `actingIdentity`：几个人或没有授权身份时是无主体，取不到谁自己的私聊与本机文件。自己写取存储媒体的工具也用 `mediaScopeOf`，交它的工具调用上下文。
 - **历史引用**：`historyMediaRefs` 只读结构化字段，即入站附件清单（metadata 的 `Attachments` 各项的 `ref`）与发出的附件（`SentRef`），不读正文里的 `[图片 | ref:…]`：群友能打出伪造的占位符。目录按整棵会话树比，历史只取调用所在会话。
 - **规整**：`mediaRef` 消 `.`、`..`，带反斜杠的不收（有的系统按目录分隔解析它），盘符路径（`C:/…`）按本机路径不收，相对路径（`data/images/…`）不是存储地址、不收；网址只认协议名小写的 `http://`、`https://`，与适配器下载附件时认的一样。判据先规整 target，调用方读的也应是规整后的那个。
 - **出站转换**：plugin-image-sender 在 `outbound:dispatch` 上处理带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>`（`mediaRef` 规整出存储地址的，`base64://…` 也按根名 base64 的存储地址算）：受众只有 owner 的会话（房间类别 owner-only）里不过判据，其余会话不带授权身份过判据（别的会话的媒体按不带授权身份的取用规则，本机文件不能取），会话管理不在时判不出受众，一律按其余会话；再与 `send_attachment` 一样按文件头核对，都过了的摘出来转成同类附件，送达之后与别的附件一样由 message-archive 记进会话历史。只摘掉转成了附件的标记：不过判据的、读不出的（如 `base64://…`）与不是对应媒体的，和别的写法（网址、`file://`、本机路径、data URI、协议名大写的网址等）一样留在正文里交给适配器：onebot 只发网址的，下载、核对文件头后内联，其余去掉并报投递失败（见 [onebot 适配器的「出站正文」](../plugins/plugin-adapter-onebot.md#出站正文)）；WebUI 与终端不解析标记，按原文显示。摘掉标记后两边的文字拼成的新标记同样留给适配器，它在解析出的消息段上判。没装 plugin-image-sender 时她回复里的存储媒体发不出。

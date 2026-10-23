@@ -3,6 +3,7 @@ import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import okxTrading from '../../packages/plugin-okx-trading/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 分页查询条数统一走 defaultPageLimit / maxPageLimit：
@@ -77,7 +78,7 @@ async function sentLimit(name: string, args: Record<string, unknown>): Promise<s
   );
   const tool = registered.get(name);
   if (!tool) throw new Error(`${name} 未注册`);
-  await tool.handler({ ...REQUIRED_ARGS[name], ...args }, { sessionId: 's', enabledGroups: undefined });
+  await tool.handler({ ...REQUIRED_ARGS[name], ...args }, toolContext({ sessionId: 's', enabledGroups: undefined }));
   expect(urls, name).toHaveLength(1);
   return new URL(urls[0]).searchParams.get('limit');
 }
@@ -131,7 +132,10 @@ describe('OKX 分页查询返回给模型的条数跟随 limit', () => {
     );
     const tool = wide.get(name);
     if (!tool) throw new Error(`${name} 未注册`);
-    const out = await tool.handler({ ...REQUIRED[name], ...args }, { sessionId: 's', enabledGroups: undefined });
+    const out = await tool.handler(
+      { ...REQUIRED[name], ...args },
+      toolContext({ sessionId: 's', enabledGroups: undefined }),
+    );
     return JSON.parse(out as string) as unknown[];
   }
 

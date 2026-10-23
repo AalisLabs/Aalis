@@ -5,6 +5,7 @@ import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 「接连接但不回包」的端点必须有 AbortSignal 兜底。
@@ -104,7 +105,7 @@ describe('serper search_images 带超时（挂起时不占死限流槽）', () =
       registerGroup: () => () => {},
     } as never);
     await load(app, serper, { apiKey: 'k' });
-    const out = JSON.parse((await handlers.search_images({ query: '猫' }, { sessionId: 's' })) as string);
+    const out = JSON.parse((await handlers.search_images({ query: '猫' }, toolContext({ sessionId: 's' }))) as string);
     expect(out.error).toBeUndefined();
     expectLiveSignal(cap.signalFor('serper.dev/images'), 'serper /images');
     await app.stop();

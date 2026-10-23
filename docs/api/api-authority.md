@@ -40,26 +40,28 @@ interface ExecutionGuardContext {
   confirm?: CapabilityConfirm;       // 生效确认要求（轴 B；缺省=不确认）
   sessionId: string;
   platform: string;
-  userId?: string;
-  actor?: { platform: string; userId: string }; // 被裁决身份（缺省=会话身份 platform/userId）
+  userId?: string;                   // 物理发言者（会话语义），不参与裁决
+  participants: readonly UserIdentity[]; // 这一轮的参与者（授权身份）：对每个参与者各裁决一次；指令一路是发出者
   toolGroups?: readonly string[];    // 工具所属的工具分组（工具一路由执行器填，指令没有）：原样转给 authorize
   args?: Record<string, unknown>;
-  skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权且授权身份是 owner 时跳过非 always 的确认
+  skipConfirm?: boolean;             // 受信系统源（scheduler、runtime 子命令）：仍走 authorize；已授权且参与者都是 owner 时跳过非 always 的确认
   turnId?: string;                   // 调用所在回合（工具调用由 agent 工具循环填写）；审批随回合结束撤销
   callId?: string;                   // 这次工具调用的 id；审批卡据它挂到工具卡上
   inbound?: InboundTurn;             // 调用所在的入站回合；缺省 = 不在由入站消息驱动的回合里（编排节点、mcp-server 等）
   confirmIntent?: () => Promise<boolean>; // 向发出者本人核对意图（指令用），resolve true 为确认
-  signal?: AbortSignal;              // 调用方回合的中止信号：等 owner 审批期间中止，审批即撤销
+  signal?: AbortSignal;              // 调用方回合的中止信号：等审批期间中止，审批即撤销
+  check?: (who: UserIdentity) => Verdict; // 取用判定（工具执行中经 approveFor 交来）：代替等级裁决，不再判确认
 }
 
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
   fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做带着起它的那一轮，子任务带着派它的那一轮（类型见 schema-message）
-  messageId?: string;                // 同 IncomingMessage.messageId：入站消息的平台消息 id，后台任务的结束通知据它引用这条消息
+  messageId?: string;                // 这一轮最近一条输入的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
-type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
-// 返回 null 放行；返回字符串表示拦截原因（会回复给用户）
+type Verdict = { ok: true; by?: UserIdentity } | { ok: false; reason: string | TextRef };
+type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
+// 拦截的原因指令一路回复给发出者，工具一路交给模型；经审批放行时 by 是批的人，工具一路这次调用按他执行
 ```
 
 ### 风险糖展开
@@ -89,8 +91,8 @@ interface AuthorityService {
   // 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
   originOf(turn: OriginTurn): OriginKind;
 
-  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）是 owner 的为 owner，含它的续做；子任务随派它的那一轮
-  // （inbound.fromTurn，没有时为 other），不按子任务回合自己的授权身份；其余为 other
+  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner，含它的续做；子任务随派它的那一轮
+  // （inbound.fromTurn，没有时为 other），不按子任务回合自己的参与者；其余为 other（owner 与别人同在的一轮也是）
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
   // capability 统一闸：null 放行 | string 拒绝原因
@@ -120,24 +122,38 @@ interface AuthorityService {
 `OriginTurn` 是判发起类别与主体要的回合信息，取执行守卫上下文的五项。由入站消息拼一轮用 `originTurnOf`，调用方不各自拼：
 
 ```ts
-type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'actor' | 'inbound'>;
+type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'participants' | 'inbound'>;
 
-// 由一轮的输入拼这一轮（现在一轮只有一条输入）：发言者缺省时取起它的那一轮的（续做的通知不带发言者，
-// 工具眼里是起它的人在调），授权身份缺省时取起它的那一轮的参与者，inbound 取 { source, fromTurn, messageId }
-function originTurnOf(inputs: readonly [IncomingMessage, ...IncomingMessage[]]): OriginTurn;
+// 由一轮的输入拼这一轮。参与者：各条输入的授权身份（actor，没有时是发言者，没有发言者的是无主体；插话不带 actor，
+// 就是发言者），带起它的那一轮的取那一轮的参与者，按进入先后排、按身份去重，owner 的各个身份算一个（isOwner 不给时
+// 按字面身份）；发言者：各条输入的发言者相同时是他，缺省时取起它的那一轮的；inbound 取 { source, fromTurn }
+// 与最近一条输入的 messageId
+function originTurnOf(
+  inputs: readonly [IncomingMessage, ...IncomingMessage[]],
+  isOwner?: (platform: string, userId: string) => boolean,
+): OriginTurn;
+
+// 是不是同一个参与者：身份相同，或两边都是 owner（isOwner 不给时只按字面身份）
+function sameParticipant(a: UserIdentity, b: UserIdentity, isOwner?: (platform: string, userId: string) => boolean): boolean;
 ```
 
-agent 用 `originTurnOf([incoming])` 填工具调用上下文。判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)与[这一轮的主体](../plugins/plugin-authority.md#这一轮的主体)。
+agent 用 `originTurnOf(这一轮的输入, 权限服务的 isOwner)` 填工具调用上下文；不另导出取参与者的函数。历史里别人的话、工具读进来的内容都不算参与者，引用与转发进某条输入的内容算发这条输入的人的。判据见 [plugin-authority](../plugins/plugin-authority.md#发起回合的类别)与[这一轮的主体](../plugins/plugin-authority.md#这一轮的主体)。
 
 ## 守卫流程：授权与确认
 
-执行前 `ExecutionGuard` 先委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。命中硬禁、封禁，或等级不够、所属组也不覆盖即拒：发起者本人不能靠确认给自己提权，`restrictedPolicy` 白名单也不放宽授权。
+执行前 `ExecutionGuard` 对每个参与者各委托 `authorize` 裁决一次（轴 A），不看物理发言者。命中硬禁、封禁，或等级不够、所属组也不覆盖的参与者做不了：发起者本人不能靠确认给自己提权，`restrictedPolicy` 白名单也不放宽授权。按这个动作三分：
+
+- **都能做**：往下判确认。
+- **有人能做、有人做不了**：这一个调用要一道参与者审批，凡自己就能做这个动作的人都能批（`canAnswer` 是「他自己 authorize 过」），这一轮里别的动作照常各自判。一轮里能做的因此不超过参与者里最高的那位，低的人借不到高的人不经审批的权限；权限组让两个人各能做对方做不了的事时照样判得出。
+- **都做不了**：照旧拒，不产生审批。只有一位参与者时用 `authorize` 的拒绝语，几位时写「这一轮的参与者里没有人能做这件事」。
 
 已授权且声明了 `confirm`（经 `confirmOverrides` 覆盖后）的操作再走轴 B：
 
-- **可免的确认**：只对授权身份是 owner 的回合。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（带 `ownerApproved` 的注入即定时任务触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认；`always` 只有 `confirmOverrides` 设为 `'off'` 能免。授权身份不是 owner 的回合照旧确认，`'off'` 回落到插件的声明。
-- **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。
-- **工具**：确认是 owner 审批。守卫带上发起回合的类别（`originOf`）与这一轮的参与者（授权身份 `actor ?? 发言者`）调 `approvals.request`；这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批，其余由审批服务立即拒绝、不推给任何面。拒绝时把审批服务给的话回给模型；审批服务不在时立即拒并说明。
+- **可免的确认**：只对参与者都是 owner 的回合。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（带 `ownerApproved` 的注入即定时任务触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认；`always` 只有 `confirmOverrides` 设为 `'off'` 能免。有别人的回合照旧确认，`'off'` 回落到插件的声明。
+- **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。指令一路的参与者只有发出者，放行不带 `by`。
+- **工具**：要一道只有 owner 能批的审批（`canAnswer` 是 isOwner，`ownerOnly` 为真），与参与者审批合成一次。守卫带上发起回合的类别（`originOf`）与这一轮的参与者调 `approvals.request`；人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有人能批才能产生审批，其余由审批服务立即拒绝、不推给任何面：要 owner 确认的，参与者里没有 owner 时直接拒。批了回 `{ ok: true, by }`，`by` 是批的人，他就是参与者之一时取那个参与者的身份（owner 的各个身份算一个）；拒绝、过期与产生不了时把审批服务给的话回给模型，只拒这一个调用；审批服务不在时立即拒并说明。
+
+工具执行中的取用判定（工具调用上下文的 `approveFor`，见 [api-tools](./api-tools.md#toolcallcontext)）同样经守卫：上下文带 `check` 时按它对每个参与者判、代替等级裁决，三分同上，有人过不了时发一道参与者审批（`canAnswer` 是 `check(who).ok`，不是只有 owner 能批的那种），都过不了回第一位的原因；确认在这次调用开始时已经判过，不再判。
 
 ## 关键类型（请求）
 

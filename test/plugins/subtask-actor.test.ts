@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { originTurnOf } from '../../packages/api-authority/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 子任务消息（派发与追问）的身份。userId 是归档用的物理来源标记（`parent:<id>`，authority 查不到，等价匿名）。
@@ -16,7 +17,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 不变量：有身份透传 / 匿名不发明 / 只认 callCtx snapshot。
 // ════════════════════════════════════════════════════════════
 
-type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
+/** 工具的处理函数：上下文没写参与者的按一条消息的口径补上（toolContext） */
+type Handler = (args: Record<string, unknown>, callCtx: RequestDraft) => Promise<string>;
 
 async function setup(): Promise<{
   app: App;
@@ -28,8 +30,10 @@ async function setup(): Promise<{
   const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();
   host.provide.use(tools, {
-    register(tool: { definition: { function: { name: string } }; handler: Handler }) {
-      handlers.set(tool.definition.function.name, tool.handler);
+    register(tool: { definition: { function: { name: string } }; handler: RegisteredTool['handler'] }) {
+      handlers.set(tool.definition.function.name, async (args, ctx) =>
+        String(await tool.handler(args, toolContext(ctx))),
+      );
       return () => void handlers.delete(tool.definition.function.name);
     },
     registerGroup: () => () => {},
@@ -96,7 +100,7 @@ describe('入站回合里派出的：带着派它的那一轮', () => {
     expect(inbound[0].userId).toBe('parent:parent-1');
     expect(originTurnOf([inbound[0]])).toMatchObject({
       userId: 'parent:parent-1',
-      actor: { platform: 'onebot', userId: 'user-a' },
+      participants: [{ platform: 'onebot', userId: 'user-a' }],
       inbound: { source: 'subtask', fromTurn: inbound[0].fromTurn },
     });
     await app.stop();
@@ -110,7 +114,7 @@ describe('入站回合里派出的：带着派它的那一轮', () => {
         sessionId: 'parent-1',
         platform: 'webui',
         userId: 'console',
-        actor: OWNER,
+        participants: [OWNER],
         inbound: { source: 'bg:bg_x_1', fromTurn: HAND },
       },
     );
@@ -140,6 +144,18 @@ describe('入站回合里派出的：带着派它的那一轮', () => {
     await app.stop();
   });
 
+  it('几个人的一轮派的：fromTurn 带着这次调用的参与者（批过的是批的人）', async () => {
+    const { app, handlers, inbound } = await setup();
+    const MEMBER = { platform: 'onebot', userId: '30001' };
+    await handlers.get('create_subtask')!(
+      { task: '做一件事' },
+      { sessionId: 'parent-1', platform: 'onebot', participants: [OWNER, MEMBER], inbound: {} },
+    );
+    expect(inbound[0].fromTurn).toEqual({ platform: 'onebot', participants: [OWNER, MEMBER] });
+    expect(inbound[0].actor).toBeUndefined();
+    await app.stop();
+  });
+
   it('send_to_subtask 同样：追问带着发出它的那一轮', async () => {
     const { app, handlers, inbound } = await setup();
     await handlers.get('send_to_subtask')!(
@@ -158,7 +174,7 @@ describe('入站回合里派出的：带着派它的那一轮', () => {
   });
 });
 
-describe('不在入站回合里派出的（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor', () => {
+describe('不在入站回合里派出的（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor（唯一的参与者）', () => {
   it('有身份的创建者：actor 回填，userId 仍为 parent 标记（物理来源与授权身份分离）', async () => {
     const { app, handlers, inbound } = await setup();
     const handler = handlers.get('create_subtask');
@@ -185,15 +201,38 @@ describe('不在入站回合里派出的（编排的工具节点、mcp-server）
     await app.stop();
   });
 
-  it('链式：callCtx.actor 优先于物理身份', async () => {
+  it('链式：参与者（授权身份）优先于物理身份', async () => {
     const { app, handlers, inbound } = await setup();
     const handler = handlers.get('create_subtask')!;
 
     await handler(
       { task: '做一件事' },
-      { sessionId: 'parent-1', platform: 'onebot', userId: 'phys', actor: { platform: 'webui', userId: 'console' } },
+      {
+        sessionId: 'parent-1',
+        platform: 'onebot',
+        userId: 'phys',
+        participants: [{ platform: 'webui', userId: 'console' }],
+      },
     );
     expect(inbound[0].actor).toEqual({ platform: 'webui', userId: 'console' });
+    await app.stop();
+  });
+
+  it('几个参与者：没有单一的授权身份，actor 缺省', async () => {
+    const { app, handlers, inbound } = await setup();
+    await handlers.get('create_subtask')!(
+      { task: '做一件事' },
+      {
+        sessionId: 'parent-1',
+        platform: 'workflow',
+        participants: [
+          { platform: 'onebot', userId: '30001' },
+          { platform: 'onebot', userId: '30002' },
+        ],
+      },
+    );
+    expect(inbound[0].actor).toBeUndefined();
+    expect(inbound[0].fromTurn).toBeUndefined();
     await app.stop();
   });
 

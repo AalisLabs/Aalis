@@ -70,7 +70,7 @@ export default definePlugin({
 | `onebot_get_group_member_list` | 群成员列表，支持关键词、角色筛选与分页 |
 | `onebot_get_group_honor_info` | 群荣誉（龙王、群聊之火等） |
 | `onebot_get_forward_msg` | 解析合并转发消息，可调用 `media` 服务识别其中的图片 |
-| `onebot_get_msg` | 按 message_id 取原始消息；取到的消息所在的会话按会话管理的跨会话规则判，规则不放行时回原因，判不出对端的（她自己发的私聊消息、实现端不给群号或发送者）拒绝 |
+| `onebot_get_msg` | 按 message_id 取原始消息；取到的消息所在的会话按会话管理的跨会话规则判，经工具调用上下文的 `approveFor` 逐个参与者判（某个参与者自己私聊里的、别人过不了的发一道参与者审批由他本人批），规则不放行时回原因，判不出对端的（她自己发的私聊消息、实现端不给群号或发送者）拒绝 |
 | `onebot_get_self_mute_status` | 查询机器人在某群被禁言剩余时长 |
 | `onebot_list_self_mutes` | 列出所有"我在被禁言"的群 |
 

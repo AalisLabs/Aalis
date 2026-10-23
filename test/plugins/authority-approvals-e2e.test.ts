@@ -7,7 +7,7 @@ import { authority, originTurnOf } from '../../packages/api-authority/src/index.
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
 import { markTriggered } from '../../packages/api-trigger/src/index.js';
 import { type App, definePlugin, events, optional, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
@@ -129,12 +129,12 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   let seq = 0;
   /** 按 agent 工具循环的填法调一次探针：带回合与调用 id */
   const call = (
-    ctx: Omit<ToolCallContext, 'turnId' | 'callId'>,
+    ctx: Omit<ToolCallRequest, 'turnId' | 'callId'>,
     signal?: AbortSignal,
     args: Record<string, unknown> = { command: 'rm -rf build' },
   ) => {
     seq++;
-    const full: ToolCallContext = { ...ctx, turnId: `turn-${seq}`, callId: `call-${seq}`, signal };
+    const full: ToolCallRequest = { ...ctx, turnId: `turn-${seq}`, callId: `call-${seq}`, signal };
     return { ctx: full, result: host.tools.use.execute(PROBE, args, full) };
   };
   const pushed = (): Approval[] => conn?.notifications('approval/requested').map(p => p.approval) ?? [];
@@ -158,7 +158,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
   };
 }
 
-type Ctx = Omit<ToolCallContext, 'turnId' | 'callId'>;
+type Ctx = Omit<ToolCallRequest, 'turnId' | 'callId'>;
 
 /** 起它的那一轮：人亲手发来的 */
 const handTurn = (who: { platform: string; userId: string }): FromTurn => ({
@@ -172,16 +172,20 @@ const resumed = (sessionId: string, from: FromTurn): Ctx => ({
   sessionId,
   platform: from.platform,
   userId: from.userId,
-  actor: from.participants[0],
+  participants: from.participants,
   inbound: { source: 'bg:bg_x_1', fromTurn: from },
 });
 
 describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪个会话', () => {
   const rows: Array<[string, Ctx, { platform: string; userId: string }]> = [
-    ['owner 在 WebUI 亲手发起', { sessionId: MINE, ...OWNER, inbound: {} }, OWNER],
-    ['owner 在自己的 QQ 私聊亲手发起（推到 WebUI）', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }, OWNER_QQ],
-    ['owner 在群里亲手发起', { sessionId: ROOM, ...OWNER_QQ, inbound: {} }, OWNER_QQ],
-    ['owner 从 WebUI 往群里插话发起', { sessionId: ROOM, ...OWNER, inbound: {} }, OWNER],
+    ['owner 在 WebUI 亲手发起', { sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }, OWNER],
+    [
+      'owner 在自己的 QQ 私聊亲手发起（推到 WebUI）',
+      { sessionId: OWNER_DM, ...OWNER_QQ, participants: [OWNER_QQ], inbound: {} },
+      OWNER_QQ,
+    ],
+    ['owner 在群里亲手发起', { sessionId: ROOM, ...OWNER_QQ, participants: [OWNER_QQ], inbound: {} }, OWNER_QQ],
+    ['owner 从 WebUI 往群里插话发起', { sessionId: ROOM, ...OWNER, participants: [OWNER], inbound: {} }, OWNER],
     ['owner 会话里后台任务结束后的续做', resumed(MINE, handTurn(OWNER)), OWNER],
     ['owner 在群里转到后台的调用，结束后的续做', resumed(ROOM, handTurn(OWNER_QQ)), OWNER_QQ],
   ];
@@ -202,7 +206,9 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
   it('批准后执行的参数与卡上的事实逐字一致（含 ESC 与 U+202E），也与发起调用时的参数一致', async () => {
     const s = await setup();
     const args = { command: 'cat notes\u202Etxt.sh \u001b[2K; rm -rf ./build' };
-    const { result } = s.call({ sessionId: MINE, ...OWNER, inbound: {} }, undefined, { ...args });
+    const { result } = s.call({ sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }, undefined, {
+      ...args,
+    });
     const approval = await s.card();
     await s.answer(approval, 'approve');
     expect((await result).content).toBe('ran');
@@ -211,9 +217,9 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
   });
 
   it.each([
-    ['owner 的会话', { sessionId: MINE, ...OWNER, inbound: {} }],
-    ['owner 自己的 QQ 私聊', { sessionId: OWNER_DM, ...OWNER_QQ, inbound: {} }],
-    ['群里', { sessionId: ROOM, ...OWNER_QQ, inbound: {} }],
+    ['owner 的会话', { sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }],
+    ['owner 自己的 QQ 私聊', { sessionId: OWNER_DM, ...OWNER_QQ, participants: [OWNER_QQ], inbound: {} }],
+    ['群里', { sessionId: ROOM, ...OWNER_QQ, participants: [OWNER_QQ], inbound: {} }],
   ])('owner 拒绝（%s）：不执行，模型收到拒绝与说明，不指名应答人', async (_label, ctx) => {
     const s = await setup();
     const { result } = s.call(ctx);
@@ -227,7 +233,7 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
   it('等待中回合中止：审批撤销，不执行', async () => {
     const s = await setup();
     const turn = new AbortController();
-    const { result } = s.call({ sessionId: MINE, ...OWNER, inbound: {} }, turn.signal);
+    const { result } = s.call({ sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }, turn.signal);
     await s.card();
     turn.abort();
     expect((await result).content).toContain('发起它的回合已结束');
@@ -237,10 +243,10 @@ describe('能产生审批的回合：这一轮里有 owner 的话，不论在哪
 
 describe('不能产生审批的回合：不推给任何面，模型收到对应的话', () => {
   const rows: Array<[string, Ctx, string]> = [
-    ['群成员在群里发起', { sessionId: ROOM, ...MEMBER_QQ, inbound: {} }, INELIGIBLE],
+    ['群成员在群里发起', { sessionId: ROOM, ...MEMBER_QQ, participants: [MEMBER_QQ], inbound: {} }, INELIGIBLE],
     [
       'owner 建的定时任务（创建者回填成授权身份）',
-      { sessionId: MINE, platform: 'webui', actor: OWNER, inbound: { source: 'scheduler' } },
+      { sessionId: MINE, platform: 'webui', participants: [OWNER], inbound: { source: 'scheduler' } },
       INELIGIBLE,
     ],
     [
@@ -249,7 +255,7 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
         sessionId: `${MINE}::abcd1234`,
         platform: 'webui',
         userId: `parent:${MINE}`,
-        actor: OWNER,
+        participants: [OWNER],
         inbound: { source: 'subtask' },
       },
       SUBTASK,
@@ -266,7 +272,8 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
 
   it('自主回合被拒记进审计：请求与决定成对，类别为 autonomous', async () => {
     const s = await setup();
-    await s.call({ sessionId: MINE, platform: 'webui', actor: OWNER, inbound: { source: 'scheduler' } }).result;
+    await s.call({ sessionId: MINE, platform: 'webui', participants: [OWNER], inbound: { source: 'scheduler' } })
+      .result;
     await vi.waitFor(() => expect(readFileSync(s.auditFile, 'utf8').trim().split('\n')).toHaveLength(2));
     const [request, decision] = readFileSync(s.auditFile, 'utf8')
       .trim()
@@ -309,7 +316,7 @@ describe('群里没点名、被频率触发挑中的话按说话的人算', () =
 describe('确认的豁免与缺席', () => {
   it('审批服务不在：立即拒并说明原因', async () => {
     const s = await setup({ withoutApprovals: true });
-    const out = (await s.call({ sessionId: MINE, ...OWNER, inbound: {} }).result).content;
+    const out = (await s.call({ sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }).result).content;
     expect(s.runs()).toBe(0);
     expect(out).toContain('审批服务不在');
   });
@@ -319,7 +326,8 @@ describe('确认的豁免与缺席', () => {
 
   it('confirmOverrides 关掉确认只对 owner：群成员在群里照旧要审批，被拒、不执行，审计记插件的声明', async () => {
     const s = await setup({ appConfig: OFF });
-    const out = (await s.call({ sessionId: ROOM, ...MEMBER_QQ, inbound: {} }).result).content;
+    const out = (await s.call({ sessionId: ROOM, ...MEMBER_QQ, participants: [MEMBER_QQ], inbound: {} }).result)
+      .content;
     expect(s.runs()).toBe(0);
     expect(s.pushed()).toEqual([]);
     expect(out).toContain(INELIGIBLE);
@@ -337,7 +345,7 @@ describe('确认的豁免与缺席', () => {
       sessionId: `${MINE}::abcd1234`,
       platform: 'webui',
       userId: `parent:${MINE}`,
-      actor: OWNER,
+      participants: [OWNER],
       inbound: { source: 'subtask' },
     };
     expect((await s.call(subtask).result).content).toBe('ran');
@@ -345,8 +353,16 @@ describe('确认的豁免与缺席', () => {
   });
 
   const notOwner: Array<[string, Ctx, string]> = [
-    ['对端不是 owner 的私聊里对方发起的', { sessionId: MEMBER_DM, ...MEMBER_QQ, inbound: {} }, INELIGIBLE],
-    ['匿名编排的工具节点', { sessionId: 'workflow::daily', platform: 'workflow' }, INELIGIBLE],
+    [
+      '对端不是 owner 的私聊里对方发起的',
+      { sessionId: MEMBER_DM, ...MEMBER_QQ, participants: [MEMBER_QQ], inbound: {} },
+      INELIGIBLE,
+    ],
+    [
+      '匿名编排的工具节点',
+      { sessionId: 'workflow::daily', platform: 'workflow', participants: [selfInitiatedActor('workflow')] },
+      INELIGIBLE,
+    ],
   ];
   it.each(notOwner)('restrictedPolicy 白名单只对 owner：别人的回合照旧拒（%s）', async (_label, ctx, text) => {
     const s = await setup({ appConfig: WAIVE });
@@ -361,7 +377,7 @@ describe('确认的豁免与缺席', () => {
     ['restrictedPolicy 白名单', WAIVE],
   ])('物理发言者是 owner、授权身份没有账号的一轮（%s）：照旧不免，不执行', async (_label, appConfig) => {
     const s = await setup({ appConfig });
-    const ctx = { sessionId: MINE, ...OWNER, actor: selfInitiatedActor('webui'), inbound: {} };
+    const ctx = { sessionId: MINE, ...OWNER, participants: [selfInitiatedActor('webui')], inbound: {} };
     expect((await s.call(ctx).result).content).toContain(INELIGIBLE);
     expect(s.runs()).toBe(0);
     expect(s.pushed()).toEqual([]);
@@ -369,11 +385,13 @@ describe('确认的豁免与缺席', () => {
 
   it('restrictedPolicy 白名单免 owner 的 session 档确认；always 档照常出卡', async () => {
     const session = await setup({ appConfig: WAIVE });
-    expect((await session.call({ sessionId: MINE, ...OWNER, inbound: {} }).result).content).toBe('ran');
+    expect((await session.call({ sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} }).result).content).toBe(
+      'ran',
+    );
     expect(session.pushed()).toEqual([]);
 
     const always = await setup({ appConfig: WAIVE, confirm: 'always' });
-    const { result } = always.call({ sessionId: MINE, ...OWNER, inbound: {} });
+    const { result } = always.call({ sessionId: MINE, ...OWNER, participants: [OWNER], inbound: {} });
     await always.answer(await always.card(), 'approve');
     expect((await result).content).toBe('ran');
   });
