@@ -523,8 +523,8 @@ export interface ReachCredential {
    */
   sandboxPolicy(): SandboxPolicy;
   /**
-   * 子进程环境：取自 owner 的 login shell（在场所的主目录下取一次），沙箱内去掉凭据类变量并注入沙箱要的几项，宿主执行用完整的。
-   * 没有本地效果的凭据抛错
+   * 子进程环境：取自 owner 的 login shell（在场所的主目录下取一次），宿主执行用完整的；沙箱内是同一份，只去掉 AALIS_* 与
+   * SSH_AUTH_SOCK，再注入沙箱要的几项。没有本地效果的凭据抛错
    */
   processEnv(mode: 'sandbox' | 'host'): Promise<Record<string, string>>;
 }

@@ -23,37 +23,27 @@ import {
 
 // ════════════════════════════════════════════════════════════
 // 子进程环境只从凭据来：在场所的主目录下用 owner 的 login shell 取完整环境（同一个主目录取到一次就一直用），取不到时用守护
-// 进程的、1 分钟后再取；宿主执行用完整的，沙箱内去掉 AALIS_*、凭据类变量、带密码的网址、SSH_AUTH_SOCK 与 git 的命令行配置，
-// 注入沙箱要的几项。login shell 用一个假 shell：它记下每次被叫起的目录、模拟 rc 文件的输出与导出（全是占位值），再照常执行
-// 取环境的命令。
+// 进程的、1 分钟后再取；宿主执行用完整的，沙箱内同样是完整的登录环境，不按名字或值猜凭据，只去掉 AALIS_* 与 SSH_AUTH_SOCK，
+// 注入沙箱要的几项（git 的命令行配置接在原有的后面编号）。login shell 用一个假 shell：它记下每次被叫起的目录、模拟 rc 文件的
+// 输出与导出（全是占位值），再照常执行取环境的命令。
 // ════════════════════════════════════════════════════════════
 
-/** rc 文件导出的变量：前一半是凭据（占位值），后一半是普通变量 */
-const RC_SECRETS = {
-  GITHUB_TOKEN: 'zz-placeholder',
-  OPENAI_API_KEY: 'zz-placeholder',
-  AWS_SECRET_ACCESS_KEY: 'zz-placeholder',
-  AWS_ACCESS_KEY_ID: 'zz-placeholder',
-  PGPASSWORD: 'zz-placeholder',
-  GH_PAT: 'zz-placeholder',
-  NPM_CONFIG__AUTH: 'zz-placeholder',
-  SSHPASS: 'zz-placeholder',
-  BW_SESSION: 'zz-placeholder',
-  OP_SESSION_zz: 'zz-placeholder',
-  SLACK_WEBHOOK_URL: 'https://hooks.zz.invalid/services/zz-placeholder',
-  DATABASE_URL: 'postgres://zz-user:zz-placeholder@db.invalid/app',
-  REGISTRY_URL: 'https://:zz-placeholder@registry.zz.invalid/',
+/** rc 文件导出、沙箱里不带的变量：本实例自己的与 ssh-agent 的 socket（占位值） */
+const RC_DROPPED = {
   AALIS_HOME: '/zz/aalis-home',
   SSH_AUTH_SOCK: '/zz/agent.sock',
 };
-const RC_PLAIN = {
+/** rc 文件导出的其余变量，沙箱里照样带上：名字或值像凭据的也一样（占位值） */
+const RC_KEPT = {
   ZZ_FROM_RC: '1',
+  GITHUB_TOKEN: 'zz-placeholder',
+  DB_PASS: 'zz-placeholder',
+  MYSQL_PWD: 'zz-placeholder',
+  TOKENIZERS_PARALLELISM: 'false',
+  GOOGLE_APPLICATION_CREDENTIALS: '/zz/credentials.json',
+  DATABASE_URL: 'postgres://zz-user:zz-placeholder@db.invalid/app',
   GIT_AUTHOR_NAME: 'zz-author',
-  KEYTIMEOUT: '1',
-  PUBLIC_URL: 'https://example.invalid/app',
-  MIRROR_URL: 'https://zz-user@mirror.invalid/simple',
   TERM_SESSION_ID: 'zz-term',
-  XDG_SESSION_TYPE: 'tty',
 };
 
 let dirs: ReachDirs;
@@ -65,7 +55,7 @@ const apps: App[] = [];
 function fakeShell(opts: { failWhile?: string; extra?: Record<string, string> } = {}): string {
   const shell = join(dirs.base, 'bin', 'zz-shell');
   mkdirSync(join(dirs.base, 'bin'), { recursive: true });
-  const exports = Object.entries({ ...RC_SECRETS, ...RC_PLAIN, ...opts.extra })
+  const exports = Object.entries({ ...RC_DROPPED, ...RC_KEPT, ...opts.extra })
     .map(([k, v]) => `export ${k}='${v.replaceAll("'", "'\\''")}'`)
     .join('\n');
   writeFileSync(
@@ -142,7 +132,7 @@ describe('取 login shell 的环境', () => {
     const { sm, svc, webui } = await start();
     const cred = await svc.forCall(ownerTurn(webui));
     const host = await cred.processEnv('host');
-    expect(host).toMatchObject({ ...RC_SECRETS, ...RC_PLAIN, ZZ_DAEMON_ONLY: '1', HOME: dirs.user });
+    expect(host).toMatchObject({ ...RC_DROPPED, ...RC_KEPT, ZZ_DAEMON_ONLY: '1', HOME: dirs.user });
     await cred.processEnv('sandbox');
     await (await svc.forCall(ownerTurn(webui))).processEnv('host');
     expect(shellCalls(), '默认工作区的白纸首次写入时才建').toEqual([dirs.user]);
@@ -177,15 +167,15 @@ describe('取 login shell 的环境', () => {
 });
 
 describe('沙箱内的环境', () => {
-  it('去掉 AALIS_*、凭据类变量、带用户名与密码的网址与 SSH_AUTH_SOCK；HOME 与普通变量照旧', async () => {
+  it('只去掉 AALIS_* 与 SSH_AUTH_SOCK；其余登录环境照样带上，不按名字或值猜凭据，HOME 是 owner 的', async () => {
     process.env.SHELL = fakeShell();
     const { svc, webui } = await start();
     const env = await (await svc.forCall(ownerTurn(webui))).processEnv('sandbox');
-    expect(Object.keys(RC_SECRETS).filter(key => key in env)).toEqual([]);
-    expect(env).toMatchObject({ ...RC_PLAIN, HOME: dirs.user });
+    expect(Object.keys(RC_DROPPED).filter(key => key in env)).toEqual([]);
+    expect(env).toMatchObject({ ...RC_KEPT, HOME: dirs.user });
   });
 
-  it('注入 npm 的用户配置（去掉凭据行的副本）、本机 Node 的头文件、浏览器缓存目录、关掉 pnpm 的构建产物缓存，公开仓库拉取走 HTTPS', async () => {
+  it('注入 npm 的用户配置（去掉认证键的副本）、本机 Node 的头文件、浏览器缓存目录、关掉 pnpm 的构建产物缓存，SSH 地址的拉取走 HTTPS', async () => {
     process.env.SHELL = fakeShell();
     const { svc, webui } = await start();
     const cred = await svc.forCall(ownerTurn(webui));
@@ -216,28 +206,39 @@ describe('沙箱内的环境', () => {
     expect(Object.values(host)).not.toContain('url.https://github.com/.insteadOf');
   });
 
-  it('login 环境里原有的 git 命令行配置整组不进沙箱（值里可能是凭据），注入的从 0 起连续编号', async () => {
+  it('login 环境里原有的 git 命令行配置照样带上，沙箱注入的几项接在它们后面编号', async () => {
+    const extraheader = ['http.https://github.com/.extraheader', 'AUTHORIZATION: basic zz-placeholder'];
+    const parameters = "'http.extraheader'='AUTHORIZATION: basic zz-placeholder'";
     process.env.SHELL = fakeShell({
       extra: {
         GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-        GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic zz-placeholder',
-        GIT_CONFIG_PARAMETERS: "'http.extraheader'='AUTHORIZATION: basic zz-placeholder'",
+        GIT_CONFIG_KEY_0: extraheader[0],
+        GIT_CONFIG_VALUE_0: extraheader[1],
+        GIT_CONFIG_PARAMETERS: parameters,
       },
     });
     const { svc, webui } = await start();
     const env = await (await svc.forCall(ownerTurn(webui))).processEnv('sandbox');
-    const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [
-      `GIT_CONFIG_KEY_${i}`,
-      `GIT_CONFIG_VALUE_${i}`,
+    const [first, ...injected] = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [
+      env[`GIT_CONFIG_KEY_${i}`],
+      env[`GIT_CONFIG_VALUE_${i}`],
     ]);
-    expect(
-      Object.keys(env)
-        .filter(name => name.startsWith('GIT_CONFIG_'))
-        .sort(),
-    ).toEqual(['GIT_CONFIG_COUNT', ...pairs.flat()].sort());
-    expect(pairs.every(([key, value]) => env[key!]?.startsWith('url.') && env[value!])).toBe(true);
-    expect(Object.values(env).filter(value => value.includes('zz-placeholder'))).toEqual([]);
+    expect(first).toEqual(extraheader);
+    expect(injected).toContainEqual(['url.https://github.com/.insteadOf', 'git@github.com:']);
+    expect(injected.every(([key, value]) => key?.startsWith('url.') && value)).toBe(true);
+    expect(env.GIT_CONFIG_PARAMETERS).toBe(parameters);
+  });
+
+  it('login 环境里 git 命令行配置的计数不是数字时（git 读不了那组），注入的几项从 0 编号', async () => {
+    process.env.SHELL = fakeShell({ extra: { GIT_CONFIG_COUNT: 'zz' } });
+    const { svc, webui } = await start();
+    const env = await (await svc.forCall(ownerTurn(webui))).processEnv('sandbox');
+    const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [
+      env[`GIT_CONFIG_KEY_${i}`],
+      env[`GIT_CONFIG_VALUE_${i}`],
+    ]);
+    expect(pairs[0]).toEqual(['url.https://github.com/.insteadOf', 'git@github.com:']);
+    expect(pairs.every(([key, value]) => key?.startsWith('url.') && value)).toBe(true);
   });
 });
 

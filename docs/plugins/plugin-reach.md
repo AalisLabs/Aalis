@@ -98,11 +98,11 @@ definePlugin({
 - **来源**：在场所的主目录下用 owner 的 login shell（`SHELL`，没有时取操作系统账户登记的）取完整环境（交互式登录 shell，`-i -l -c`，限时 10 秒），缓存在内存、不落盘；同一个主目录取到一次就一直用，同时来的调用共用一次取。主目录还没建（白纸首次写入时才建）时在用户家目录下取。取不到（没有 shell、超时、失败、没有进程服务）时用守护进程的环境并记一条告警，1 分钟内沿用，之后的调用再取一次。
 - **宿主执行**（`host`）：完整的 login shell 环境。
 - **沙箱内**（`sandbox`）：
-  - 去掉 `AALIS_*`、`SSH_AUTH_SOCK`、密码管理器的会话令牌（`OP_SESSION_*`、`BW_SESSION`）、名字像凭据的变量（含 `TOKEN`、`SECRET`、`PASSWORD`、`PASSWD`、`PASSPHRASE`、`CREDENTIAL`、`APIKEY`、`SSHPASS`、`WEBHOOK`，或按 `_` 分段后有 `KEY`、`KEYS`、`PAT`、`PASS`、`AUTH`、`COOKIE` 一段的），以及值里带密码的网址（`://<用户>:<密码>@`，用户名可以为空；只有用户名的照留）；HOME 保持 owner 的。
-  - git 的命令行配置（`GIT_CONFIG_COUNT` 与各组 `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`、`GIT_CONFIG_PARAMETERS`）整组去掉：值里可能是凭据（如 `extraheader` 的认证头），只去掉其中一项又会让 git 读不出配置。
-  - 注入 `npm_config_userconfig`：本会话临时区里的 `npmrc`，是用户家目录 `.npmrc` 去掉凭据行（令牌、用户名与密码、客户端证书与私钥，文件或内联）的副本，镜像源与作用域注册表照留；没有 `.npmrc` 时是空文件。临时区在沙箱里可写，副本先以随机名独占创建、再改名盖过去，沙箱里的命令把 `npmrc` 换成符号链接也改写不到别处；临时区本身不是目录（被换成了链接）时拒绝。npm 的环境变量不分大小写，同名的旧值先去掉。
+  - 同样是完整的登录环境，不按名字或值猜凭据：沙箱里的命令能看到你登录环境里的所有变量，令牌、密码、带密码的网址都在内。能进沙箱的只有主体是 owner 的一轮，与密钥的其余处理同一个理由：密钥不靠在出口过滤，靠权限隔离。HOME 保持 owner 的。
+  - 只去掉两样：`AALIS_*` 是实例自己的命名空间，不交给沙箱里的命令；`SSH_AUTH_SOCK` 是 ssh-agent 的 socket，ssh-agent 不对沙箱开放。
+  - 注入 `npm_config_userconfig`：本会话临时区里的 `npmrc`，是用户家目录 `.npmrc` 去掉 npm 定义的认证键（令牌、用户名与密码、客户端证书与私钥，文件或内联）的副本，镜像源与作用域注册表照留（`~/.npmrc` 在拒读清单里，沙箱里的 npm 读这份副本）；没有 `.npmrc` 时是空文件。临时区在沙箱里可写，副本先以随机名独占创建、再改名盖过去，沙箱里的命令把 `npmrc` 换成符号链接也改写不到别处；临时区本身不是目录（被换成了链接）时拒绝。npm 的环境变量不分大小写，同名的旧值先去掉。
   - 注入 `npm_config_nodedir`：这份环境的 PATH 上第一个 `node` 所在的安装，带头文件（`include/node/node.h`）时才给。
   - 注入 `PUPPETEER_CACHE_DIR`（本会话临时区下的 `puppeteer`）与 `npm_config_side_effects_cache=false`（沙箱里构建出的产物不进 pnpm 的共享缓存）。
-  - 经 `GIT_CONFIG_COUNT` 与 `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` 注入（从 0 编号）：`github.com`、`gitlab.com` 的 SSH 地址拉取时改走匿名 HTTPS（`insteadOf`），推送仍是 SSH（`pushInsteadOf`）；沙箱里没有 SSH 凭据，推送与私有仓库拉取要宿主执行。
+  - 经 `GIT_CONFIG_COUNT` 与 `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` 注入，接在登录环境原有的那组后面编号（原有的与 `GIT_CONFIG_PARAMETERS` 照留）：`github.com`、`gitlab.com` 的 SSH 地址拉取时改走 HTTPS（`insteadOf`，沙箱里没有 SSH 凭据），推送仍是 SSH（`pushInsteadOf`），要宿主执行。
 
 没有本地效果的凭据调 `processEnv` 抛错。
