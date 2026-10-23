@@ -258,6 +258,17 @@ describe('追问经网关送达', () => {
     await advance(0);
     expect(exists(hub, child.id)).toBe(false);
   });
+
+  it('那一轮结束、追问还没落定时，父会话提醒与 check_subtask 一样按进行中列出（会话管理已把它收口成已完成）', async () => {
+    const { hub, parent, child, call } = await setup(24);
+    await hub.turn(child.id, 'replied', {
+      during: () => call('send_to_subtask', { subtask_id: child.id, message: '<追问>' }),
+    });
+    expect(hub.sm.getSession(child.id)?.status).toBe('completed');
+    const reminded = await hub.reminder(parent.id);
+    expect(reminded).toContain('[进行中] <子任务>');
+    expect(reminded).not.toContain('[已完成]');
+  });
 });
 
 describe('回报', () => {

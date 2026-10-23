@@ -363,11 +363,14 @@ export function oneSpeaker(inputs: readonly Pick<IncomingMessage, 'platform' | '
 }
 
 /**
- * 这条输入点名了她：触发类型为 direct 或 immediate，没有触发类型的（没经触发判定）按 direct 算。焦点指引、排着开的一轮的说明、
- * 档案与关系子图都按它判
+ * 这条输入点名了她：真人输入（不带 source）的触发类型为 direct 或 immediate，没有触发类型的（没经触发判定）按 direct 算。带来源的
+ * 注入（定时任务、编排、各种通知）不是谁在跟她说话，不算点名。焦点指引、排着开的一轮的说明、档案与关系子图都按它判
  */
-export function wasAddressed({ triggerType = 'direct' }: Pick<IncomingMessage, 'triggerType'>): boolean {
-  return triggerType === 'direct' || triggerType === 'immediate';
+export function wasAddressed({
+  source,
+  triggerType = 'direct',
+}: Pick<IncomingMessage, 'source' | 'triggerType'>): boolean {
+  return !source && (triggerType === 'direct' || triggerType === 'immediate');
 }
 
 // ----- 出站消息 -----

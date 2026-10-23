@@ -65,7 +65,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 ## 禁言
 
 - `setMuted(sessionId, sec, platform)`：`sec > 0` 禁言到 `now + sec`，同时经 agent 的 `abort(sessionId, { queued: true })` 停下这个会话在跑的一轮（不外发、不落库回复），排着的不再开轮（在那一轮落定之后归档）；`sec <= 0` 解除，不停什么。会话尚无状态时须给出 `platform` 才会建立状态。agent 不在时禁言只挡之后的消息。
-- 调用方：触发插件命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。
+- 调用方：触发插件命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。关键词禁言不看说话人的等级：群里任何人（0 级也算）说出禁言关键词，都会停下这个会话在跑的一轮（不论是谁开的，执行中的工具收到中止信号）并放掉排着的输入（记进历史，不再回）。
 - 禁言状态落盘到 `data:/flow-control-mutes.json`，重启后恢复未过期的禁言。冷却与限速是秒级短期状态，不落盘。
 
 ## 配置

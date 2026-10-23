@@ -100,10 +100,6 @@ const MAX_TIMER_MS = 24 * HOUR_MS;
 /** 子任务报给父会话的状态：会话状态之外，最后一轮被停止、收口为 completed 的报成 stopped，不算完成 */
 type SubtaskStatus = SessionInfo['status'] | 'stopped';
 
-function subtaskStatus(session: SessionInfo): SubtaskStatus {
-  return session.status === 'completed' && session.lastTurn?.outcome === 'aborted' ? 'stopped' : session.status;
-}
-
 /** 交给模型与日志的子任务名：没取名的是默认名的原文 */
 const nameOf = (session: SessionInfo): string => toSource(sessionLabel(session));
 
@@ -257,9 +253,16 @@ function registerSubtask(
     }
     for (const listener of onFollowUpSettled) listener();
   }
-  /** 子任务此刻的状态：还有没落定的追问时按进行中（会话管理在它前后两轮之间可能已把状态收口成已完成） */
+  /**
+   * 子任务此刻的状态：还有没落定的追问时按进行中（会话管理在它前后两轮之间可能已把状态收口成已完成）；最后一轮被停止、收口为
+   * completed 的报成 stopped
+   */
   const statusOf = (session: SessionInfo): SubtaskStatus =>
-    followUps.has(session.id) ? 'active' : subtaskStatus(session);
+    followUps.has(session.id)
+      ? 'active'
+      : session.status === 'completed' && session.lastTurn?.outcome === 'aborted'
+        ? 'stopped'
+        : session.status;
   /** 本插件记下的一轮结束时刻；重启或重载之后没有，取会话记录上的 lastTurn.endedAt */
   const endedAt = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -723,8 +726,10 @@ function registerSubtask(
         return !status || status === 'completed' || status === 'error' || status === 'stopped';
       };
 
-      if (!ids.every(isTerminal)) {
-        // 事件驱动 + 超时，替代轮询：会话完成、状态变了、被删（结果里按不存在回）或追问落定时重判
+      const { signal } = callCtx;
+      if (!ids.every(isTerminal) && !signal?.aborted) {
+        // 事件驱动 + 超时，替代轮询：会话完成、状态变了、被删（结果里按不存在回）或追问落定时重判；调用被中止（这一轮被停止键、
+        // 禁言、/clear 等停下）时不再等，这一轮才落定得了
         await new Promise<void>(resolve => {
           const pending = new Set(ids.filter(id => !isTerminal(id)));
           const disposers: Array<() => void> = [];
@@ -732,6 +737,7 @@ function registerSubtask(
             clearTimeout(timer);
             for (const dispose of disposers) dispose();
             onFollowUpSettled.delete(recheck);
+            signal?.removeEventListener('abort', finish);
             resolve();
           };
           const recheck = () => {
@@ -745,8 +751,10 @@ function registerSubtask(
             events.use.on('session:deleted', recheck),
           );
           onFollowUpSettled.add(recheck);
+          signal?.addEventListener('abort', finish, { once: true });
         });
       }
+      if (signal?.aborted) return JSON.stringify({ error: '回合已中止，不再等' });
 
       // 收集结果：等着时销毁了的取回报
       const results = [];
@@ -872,7 +880,7 @@ function registerSubtask(
         for (const childId of children) {
           const child = sm.getSession(childId);
           if (!child) continue;
-          const status = subtaskStatus(child);
+          const status = statusOf(child);
           if (status === 'active') {
             activeChildren.push(`  - [进行中] ${nameOf(child)} (ID: ${childId})`);
           } else if (status === 'completed') {

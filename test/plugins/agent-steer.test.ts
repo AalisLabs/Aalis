@@ -9,13 +9,17 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { workflow } from '../../packages/api-workflow/src/index.js';
 import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionInfoOf } from '../fixtures/paper.js';
@@ -26,8 +30,11 @@ import { deferred } from '../helpers/deferred.js';
 // 通道层：新消息从不打断在跑的一轮。每个会话同一时刻最多一轮；真人消息插进由真人消息开、还收输入的一轮（每次调用模型之前，
 // 贡献组装与 agent:llm:before 之后、调用之前），插不进的排队；一轮结束后队首是真人消息时，队里的真人消息一起开下一轮，
 // 前面说明是上一轮进行期间到的；带来源的注入各自成一轮。输入在进入一轮时归档。能停下一轮的只有停止（只停在跑的一轮）、
-// 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档）。
-// 模型是能挂住某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）。
+// 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档），清消息
+// 历史从停下到清完之间到的输入清完再处理；停在等着别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时
+// 夹进工具调用组的别的消息挪到组后。
+// 模型是能挂住某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
+// 看组内次序的用例换上按时间戳读历史的存储替身（同 Mongo 与 sqlite 的读法）。
 // ════════════════════════════════════════════════════════════
 
 const PROBE = 'zz_steer_probe';
@@ -77,6 +84,8 @@ async function boot(
     sessions?: boolean;
     /** 装在 agent 之后的插件 */
     after?: (app: App) => Promise<void>;
+    /** 各会话启用的工具分组（不在分组里的探针总能用） */
+    toolGroups?: string[];
   } = {},
 ) {
   const app = new App({ name: 'T', logLevel: 'error' });
@@ -91,7 +100,7 @@ async function boot(
     } as unknown as SessionManagerService);
   }
   await app.plugin(stepModelPlugin(model));
-  await app.plugin(toolsPlugin, {});
+  await app.plugin(toolsPlugin, { enabledToolGroups: opts.toolGroups ?? [] });
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
@@ -157,6 +166,51 @@ async function boot(
       }),
     history: (sessionId: string) => host.memory.use.getHistory(sessionId, 100),
   };
+}
+
+type Booted = Awaited<ReturnType<typeof boot>>;
+
+/**
+ * 换上包着内存后端的存储：onSave 在每次写入之前跑（可以挂住它），读历史按时间戳、同一毫秒按写入先后排（同 Mongo 与 sqlite 的
+ * 读法；内存后端本身按写入先后存，排序是稳定的）
+ */
+function tapMemory(s: Booted, onSave: (message: Message) => Promise<void>) {
+  const inner = s.host.services.use.get(memory) as MemoryService;
+  const tapped = new Proxy(inner, {
+    get(target, key) {
+      if (key === 'saveMessage') {
+        return async (sessionId: string, message: Message) => {
+          await onSave(message);
+          return target.saveMessage(sessionId, message);
+        };
+      }
+      if (key === 'getHistory') {
+        return async (sessionId: string, limit = 50) => {
+          const all = await target.getHistory(sessionId, Infinity);
+          all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+          return all.slice(Math.max(0, all.length - limit));
+        };
+      }
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  s.host.provide.use(memory, tapped, { priority: 1000 });
+}
+
+/** 按时间戳读历史的存储，挂住工具调用组的第二条写入（第一条结果），时钟停在组内：组的调用是 T0、结果是 T0+1，之后的写入都在 T0 */
+function holdGroupWrite(s: Booted) {
+  const entered = deferred();
+  const release = deferred();
+  let hang = true;
+  tapMemory(s, async message => {
+    if (!hang || message.role !== 'tool') return;
+    hang = false;
+    vi.useFakeTimers({ toFake: ['Date'], now: (message.timestamp ?? Date.now()) - 1 });
+    entered.resolve();
+    await release.promise;
+  });
+  return { entered: entered.promise, release: () => release.resolve() };
 }
 
 /** 停在工具里的探针：第 n 次调用进来时落定 entered，放行之后回 result */
@@ -287,40 +341,48 @@ describe.each([
 });
 
 describe('插入与排队', () => {
-  it('工具调用组落库期间（组的第二条写入挂起，时钟停在组内）到达的输入不插进组中间，之后读历史工具组完整', async () => {
+  it('工具调用组落库期间（组的第二条写入挂起，时钟停在组内）到达的输入：按时间戳读历史的存储把它排进组中间，下一轮读历史时挪到组后，组完整', async () => {
     const s = await boot({ decide: (_r, n) => (n === 1 ? callTool(PROBE) : { content: `回${n}` }) });
     s.tool(async () => '<工具结果>');
-    const inner = s.host.services.use.get(memory) as MemoryService;
-    const write = { entered: deferred(), release: deferred() };
-    let hang = true;
-    const tapped = new Proxy(inner, {
-      get(target, key) {
-        if (key === 'saveMessage') {
-          return async (sessionId: string, message: Message) => {
-            if (hang && message.role === 'tool') {
-              hang = false;
-              vi.useFakeTimers({ toFake: ['Date'], now: (message.timestamp ?? Date.now()) - 1 });
-              write.entered.resolve();
-              await write.release.promise;
-            }
-            return target.saveMessage(sessionId, message);
-          };
-        }
-        const value = Reflect.get(target, key, target);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-    });
-    s.host.provide.use(memory, tapped, { priority: 1000 });
-
+    const write = holdGroupWrite(s);
     const a = s.say(WEBUI, '<甲>');
-    await write.entered.promise;
+    await write.entered;
     const b = s.say(WEBUI, '<乙>');
     await settle();
-    write.release.resolve();
+    write.release();
     await Promise.all([a, b]);
     vi.useRealTimers();
 
-    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', 'call', 'result', '<乙>', '回2']);
+    // 组的结果按 T0+1 记时间戳，之后的写入停在 T0：按时间戳读，插进来的输入与回复都排在调用与结果之间
+    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', 'call', '<乙>', '回2', 'result']);
+    await s.say(WEBUI, '<丙>');
+    expect(s.model.requests[2].messages.filter(m => m.role !== 'system').map(shape)).toEqual([
+      '<甲>',
+      'call',
+      'result',
+      '<乙>',
+      '回2',
+      '<丙>',
+    ]);
+  });
+
+  it('时间标注取归档时刻：归档之后过了一分钟才组装，标注仍写归档那一分钟，下一轮历史里同一条的标注不变', async () => {
+    const s = await boot();
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 9, 24, 10, 0, 30) });
+    let archived = false;
+    tapMemory(s, async message => {
+      // 这一轮的输入带着归档时刻写下，之后的组装在下一分钟
+      if (archived || message.role !== 'user') return;
+      archived = true;
+      vi.setSystemTime(Date.now() + 61_000);
+    });
+    await s.say(WEBUI, '<甲>');
+    await s.say(WEBUI, '<乙>');
+    vi.useRealTimers();
+
+    const [first, second] = s.model.requests.map(request => request.messages.filter(m => m.role === 'user'));
+    expect(text(first[0])).toContain('(10/24 10:00) ');
+    expect(text(second[0]), '之后进历史时是同一个标注').toBe(text(first[0]));
   });
 
   it('注入各自成一轮：真人回合在跑时到的定时任务、宿主通知、编排节点各自在它之后单独一轮；注入回合在跑时到的真人消息排在它之后', async () => {
@@ -498,6 +560,14 @@ describe('插入与排队', () => {
     const focusOrShape = (m: Message) => (m.metadata?.injector === 'focus-guidance' ? 'focus' : shape(m));
     expect(second.slice(first.length).map(focusOrShape)).toEqual(['call', 'result', 'focus', '<乙>']);
   });
+
+  it('带来源的注入不算点名：群里定时任务开的一轮没有焦点指引', async () => {
+    const s = await boot({ sessions: true });
+    await s.agent.handleMessage({ content: '<定时>', sessionId: GROUP_ID, platform: 'onebot', source: 'scheduler' });
+
+    expect(s.outcomes()).toEqual([['<定时>', 'replied']]);
+    expect(s.model.requests[0].messages.some(m => m.metadata?.injector === 'focus-guidance')).toBe(false);
+  });
 });
 
 describe('能停下一轮的', () => {
@@ -550,6 +620,46 @@ describe('能停下一轮的', () => {
       ['<甲>', 'aborted'],
       ['<乙>+<丙>', 'replied'],
     ]);
+  });
+
+  it('停止：停在 wait_subtasks 里的一轮不再等子任务，工具回已中止，排着的消息马上开轮', async () => {
+    const child = 'zz-steer-child';
+    const s = await boot({
+      decide: (_r, n) => (n === 1 ? callTool('wait_subtasks', { subtask_ids: [child] }) : { content: `回${n}` }),
+      after: app => app.plugin(subtaskPlugin, {}).then(() => undefined),
+      toolGroups: ['subtask'],
+    });
+    // 会话管理的替身：子任务是这个会话的直接子会话、一直在跑
+    s.host.provide.use(
+      sessionManager,
+      {
+        getSession: (id: string) => sessionInfoOf(id, id === child ? WEBUI.sessionId : undefined),
+        listSessions: () => [],
+        recordInbound: async () => {},
+      } as unknown as SessionManagerService,
+      { priority: 1000 },
+    );
+    await stopInTool(s, 'wait_subtasks');
+  });
+
+  it('停止：停在 workflow_run 里的一轮不再等这次运行，工具回已中止，排着的消息马上开轮；运行不取消', async () => {
+    const s = await boot({
+      decide: (_r, n) => (n === 1 ? callTool('workflow_run', { id: 'zz-steer-wait' }) : { content: `回${n}` }),
+      after: async app => {
+        await app.plugin(cronEnginePlugin, {});
+        await app.plugin(workflowPlugin, {});
+      },
+      toolGroups: ['workflow'],
+    });
+    const service = s.app.bind({ workflow }).workflow.use;
+    await service.defineWorkflow(
+      { id: 'zz-steer-wait', trigger: { type: 'manual' }, nodes: [{ id: 'w', type: 'wait', seconds: 600 }] },
+      { persist: false },
+    );
+    // 没装权限插件：放行这一次调用（只看等待，不看权限）
+    s.host.tools.use.setExecutionGuard(async () => ({ ok: true }));
+    await stopInTool(s, 'workflow_run');
+    expect(service.listRuns(1).map(run => run.status)).toEqual(['running']);
   });
 
   it('连同排队项：abort(会话, { queued: true }) 停掉在跑的一轮，排队与待插入的不开轮、handleMessage 都返回，在那一轮落定之后归档、不带回合 id', async () => {
@@ -680,7 +790,71 @@ describe('能停下一轮的', () => {
     await c;
     expect(s.outcomes().at(-1)).toEqual(['<丙>', 'replied']);
   });
+
+  it.each([
+    'session',
+    'all',
+  ] as const)('/clear（范围 %s）停下在跑的一轮之后、清完之前到的输入等清完再处理：不开轮、不被清掉，清完照常开轮', async scope => {
+    const s = await boot();
+    const held = s.model.hold(1);
+    const a = s.say(WEBUI, '<甲>');
+    await held.entered;
+    // agent 之后的一家清理（如向量）挂住：这期间来一条
+    const entered = deferred();
+    const cleaned = deferred();
+    s.host.hooks.use.middleware('memory:clear', async (_data, next) => {
+      entered.resolve();
+      await cleaned.promise;
+      await next();
+    });
+    let opened: number | undefined;
+    const clear = s.host.hooks.use.run('memory:clear', { scope, sessionId: WEBUI.sessionId, results: [] }, async () => {
+      opened = s.turns.length;
+      const memory = s.host.memory.use;
+      await (scope === 'all' ? memory.clearAll?.() : memory.clearSession(WEBUI.sessionId));
+    });
+    await entered.promise;
+    const b = s.say(WEBUI, '<乙>');
+    await settle();
+    cleaned.resolve();
+    await clear;
+    await Promise.all([a, b]);
+
+    expect(opened, '清的那一刻只开过被停下的那一轮').toBe(1);
+    expect(s.outcomes()).toEqual([
+      ['<甲>', 'aborted'],
+      ['<乙>', 'replied'],
+    ]);
+    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<乙>', '回2']);
+  });
 });
+
+/**
+ * 开轮的那次调用里调 name 这个一直等着的工具：它开始之后真人消息排着，停止键停下这一轮，期望工具马上回已中止、这一轮随即落定，
+ * 排着的那条马上开轮（不等工具自己的时限）
+ */
+async function stopInTool(s: Booted, name: string) {
+  const started = deferred();
+  s.host.events.use.on('tool:execute', event => {
+    if (event.toolName === name && event.phase === 'start') started.resolve();
+  });
+  const a = s.say(WEBUI, '<甲>');
+  // 开始之后让它过守卫、进处理函数
+  await started.promise;
+  await settle();
+  const b = s.say(WEBUI, '<乙>');
+  await s.untilWaiting(WEBUI.sessionId, 1);
+  expect(s.agent.abort(WEBUI.sessionId)).toBe(true);
+  await vi.waitFor(() =>
+    expect(s.outcomes()).toEqual([
+      ['<甲>', 'aborted'],
+      ['<乙>', 'replied'],
+    ]),
+  );
+  await Promise.all([a, b]);
+  const result = (await s.history(WEBUI.sessionId)).find(m => m.role === 'tool');
+  expect(JSON.parse(text(result as Message))).toEqual({ error: '回合已中止，不再等' });
+}
 
 /** 不在流控生效范围里的会话：流控只管禁言 */
 const GROUP_FREE = { sessionId: 'zz-steer-muted', platform: 'test', userId: 'u1' };

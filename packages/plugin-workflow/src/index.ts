@@ -709,15 +709,25 @@ function registerTools(
       },
     },
     handler: async (args, callCtx) => {
+      const { signal } = callCtx;
+      const aborted = JSON.stringify({ error: '回合已中止，不再等' });
+      if (signal?.aborted) return aborted;
       try {
         // 透传调用者的授权身份（几个人的一轮没有单一的调用者，按匿名）；运行身份按它与定义者定（见 execute）。调起这次运行的
-        // 会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败
-        const run = await service.runWorkflow(
-          String(args.id),
-          (args.vars as Record<string, unknown>) ?? {},
-          'manual:tool',
-          { ...actingIdentity(callCtx), sessionId: callCtx.sessionId },
-        );
+        // 会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear 等停下）时不再
+        // 等这次运行，这一轮才落定得了；运行不取消
+        const run = await new Promise<WorkflowRun | undefined>((resolve, reject) => {
+          const stop = () => resolve(undefined);
+          signal?.addEventListener('abort', stop, { once: true });
+          service
+            .runWorkflow(String(args.id), (args.vars as Record<string, unknown>) ?? {}, 'manual:tool', {
+              ...actingIdentity(callCtx),
+              sessionId: callCtx.sessionId,
+            })
+            .then(resolve, reject)
+            .finally(() => signal?.removeEventListener('abort', stop));
+        });
+        if (!run) return aborted;
         return JSON.stringify({
           ok: true,
           runId: run.runId,

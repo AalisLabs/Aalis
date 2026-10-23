@@ -144,7 +144,7 @@ nodes:
 | 工具 | 说明 |
 |---|---|
 | `workflow_define` | 定义/覆盖工作流（完整 YAML） |
-| `workflow_run` | 手动触发一次运行 |
+| `workflow_run` | 手动触发一次运行，等它跑完回结果；调用被中止（所在的一轮被停止键、禁言、`/clear` 等停下）时不再等，回 `error`「回合已中止，不再等」，运行不取消 |
 | `workflow_list` | 列出全部定义 |
 | `workflow_get_runs` | 查询最近运行历史 |
 | `workflow_remove` | 删除定义（含磁盘文件） |
