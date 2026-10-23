@@ -275,6 +275,16 @@ describe('本机文件判法（localFileInScope）', () => {
       true,
     ],
     [
+      'owner 私聊里的非人回合、参与者不只 owner（非人回合的条款只认唯一的参与者）',
+      {
+        sessionId: OWNER_PRIVATE,
+        platform: 'onebot',
+        inbound: { source: 'scheduler' },
+        participants: [owner, { platform: 'onebot', userId: MEMBER_QQ }],
+      },
+      false,
+    ],
+    [
       'owner 会话里的白纸通知（selfInitiatedActor）',
       { sessionId: WEBUI, participants: [selfInitiatedActor('webui')] },
       false,

@@ -154,6 +154,9 @@ describe('执行守卫按每个参与者裁决', () => {
     expect(elsewhere.answer(card, 'approve')).toEqual({ ok: true });
     expect(await result).toBe('ran');
     expect(s.seen[0].participants, '批过的调用按批的人执行').toEqual([L1_ELSEWHERE]);
+    expect(s.conn?.notifications('approval/settled'), 'WebUI 的结算写明是谁批的、不是 owner').toEqual([
+      expect.objectContaining({ state: 'approved', source: 'answer', by: { ...L1_ELSEWHERE, owner: false } }),
+    ]);
   });
 
   it('批的人接着往下：转到后台的调用，结束通知带着的那一轮只有批的人', async () => {
