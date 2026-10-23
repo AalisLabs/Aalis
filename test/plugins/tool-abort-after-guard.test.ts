@@ -5,7 +5,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// 守卫（authority 的人工确认）可能等很久：期间回合被 latest-wins / 手动 abort 掐掉后，
+// 守卫（authority 的人工确认）可能等很久：期间回合被停下（停止键、禁言等）后，
 // 用户稍后按下的 y 不该替一个已死的回合执行写操作——工具服务在守卫放行后再看一眼 signal。
 // ════════════════════════════════════════════════════════════
 

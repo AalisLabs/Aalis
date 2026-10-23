@@ -23,7 +23,7 @@ import { ownHostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
-import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { originChatOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
@@ -512,11 +512,8 @@ function start(caps: Caps): void {
 
     if (cfg.agentInjection) {
       // 仅群聊按会话记下的多方标记判（子会话取根会话的）；会话管理不在、会话不在表里或没有聊天窗口时判不出，按否
-      const multiParty = (sessionId: string | undefined) => {
-        if (sessionId === undefined || !caps.sessionManager.present) return false;
-        const sm = caps.sessionManager.use;
-        return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.multiParty === true;
-      };
+      const multiParty = (sessionId: string | undefined) =>
+        sessionId !== undefined && originChatOf(sessionId, caps.sessionManager)?.multiParty === true;
       registerRelationContribution({ contributions: caps.contributions, sessionOnly, multiParty }, service, {
         maxDepth: cfg.injectionMaxDepth,
         maxBreadth: cfg.injectionMaxBreadth,

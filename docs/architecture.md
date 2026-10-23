@@ -94,7 +94,8 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   ├─ 1. hooks.use.run('agent:input:before', { message }, defaultAction)
   │     │
   │     ├─ [预处理中间件] 图像识别、文件提取等
-  │     └─ 全部通过 → defaultAction() 把这条输入交给一轮
+  │     └─ 全部通过 → defaultAction() 交给通道：会话空闲时开一轮，在跑的一轮由真人消息开且还收输入时
+  │        待插入（下一次调用模型之前插进去），否则排队；带来源的注入各自成一轮。新消息不打断在跑的一轮
   │
   ├─ 1a. hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, defaultAction)
   │     │
@@ -102,7 +103,7 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   │     └─ 全部通过 → defaultAction() 先归档这一轮的输入（带 turnId），再跑这一轮
   │
   ├─ 2. buildMessages()
-  │     └─ [系统提示词] + [历史消息(≤50)] + [当前用户消息]
+  │     └─ [系统提示词] + [历史消息(≤50)] + [这一轮的输入（可以有几条）]
   │
   ├─ 3. 组装 agent:prompt 贡献 → 物化为带归属标识的 system 块
   │     ├─ plugin-memory-vector / memory-summary: 语义记忆、摘要（context 槽）
@@ -111,6 +112,8 @@ plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 a
   │
   ├─ 4. hooks.use.run('agent:llm:before') ← 拦截者审已成型的 messages
   │     └─ plugin-tool-search: 替换工具列表为搜索层
+  │
+  ├─ 4a. 插入点：取走待插入的输入，归档、追加到末尾，再增量组装、重跑 agent:llm:before，取空为止
   │
   ├─ 5. trimMessages() ← 按 token 预算裁剪
   │

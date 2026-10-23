@@ -118,7 +118,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由生效的触发插件（如 `@aalis/plugin-trigger-policy`）与 `@aalis/plugin-flow-control` 在 `inbound:trigger` / `inbound:flow` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
 
-好友申请、入群邀请与加群申请（request 事件）合成为 `[系统通知] …` 消息发出，提示 agent 调用对应的 onebot 工具处理：好友申请与入群邀请发往申请人的私聊会话，加群申请发往该群的会话。这些消息带 `source: 'onebot-request'`，属于系统侧注入：不经触发判定，不受回复后冷却约束，禁言与限速照常；agent 按「会话 + 来源」分道，它们与同一会话的真人消息互不打断。
+好友申请、入群邀请与加群申请（request 事件）合成为 `[系统通知] …` 消息发出，提示 agent 调用对应的 onebot 工具处理：好友申请与入群邀请发往申请人的私聊会话，加群申请发往该群的会话。这些消息带 `source: 'onebot-request'`，属于系统侧注入：不经触发判定，不受回复后冷却约束，禁言与限速照常；在 agent 里各自成一轮，排在同一会话在跑的一轮之后，与真人消息互不打断。
 
 戳一戳（v11 的 `notify/poke`、v12 实现扩展的 `detail_type: 'poke'`）统一转为入站消息，正文保留谁戳了谁。群友戳机器人相当于 @ 机器人，`noticeTargetIsSelf: true`；群友互戳相当于未 @ 的普通互动，该字段为 `false`，仍进入同一条触发判断与流控链路。当前 Laya 模式下两者都由模型决定是否开口，互戳不享受点名消息穿透冷却与限速的待遇；规则触发模式下互戳照常累计入站计数。历史由原有触发/归档流程保存，适配器不另写一份。机器人自己发出的戳一戳属于动作回显，不再开启新回合。
 

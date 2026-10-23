@@ -226,7 +226,7 @@ plugins:
 
 仅文件交付任务的通知规则：
 
-- 一件一条，`source` 为 `paper:<白纸 id>:<任务 id>`，各占 agent 的一条会话来源通道，互不中止；不做串行与合并。
+- 一件一条，`source` 为 `paper:<白纸 id>:<任务 id>`，在 agent 里各自成一轮，排在这个会话在跑的一轮之后；不做合并。
 - `actor` 为 `selfInitiatedActor(platform)`，不带 `userId`、`nickname`、`sessionType`、`triggerType`。通知不是任何人的发言，不进向量记忆与关系、档案抽取。
 - `content` 只放宿主撰写的行：以 `[白纸]` 开头，写任务编号、任务名、结果、用时、花费与成品清单，有远端说明时写一句「远端说明见 paper_status <任务 id>」，有成品时提示用 `paper_send` 发回。失败原因只有宿主撰写的类别，压成一行并截到 200 字。
 - 远端说明截到 800 字，经 `wrapUntrustedContent` 包好放进 `hostNotice.untrusted`。它只在通知那一轮接在正文之后出现，不归档，之后的回合与会话历史里都看不到。

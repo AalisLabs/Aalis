@@ -80,15 +80,18 @@ export default definePlugin({
 
 ## `agent` 节点：确定性的多智能体编排
 
-`agent` 节点是 `send-message` 的「等回复」版：派发前注册 `agent:turn:after` 监听，按目标
-`sessionId` 捕获本轮回复，把回复经 `out` 存入
+`agent` 节点是 `send-message` 的「等回复」版：经网关把指令送进目标会话（来源 `workflow:<编排>:<节点>`），在目标会话里
+单独成一轮、排在那里在跑的一轮之后；送达在节点自己的异步上下文里调用，节点只认它开的那一轮的 `agent:turn:after`（同一会话里
+别的回合、同一编排别的运行的同名节点都不认），把回复经 `out` 存入
 `outputs`。配合 `deps` + 插值，单个 DAG 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」的确定性编排流程。
 
-- 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow::<runId>::<nodeId>`，
-  并行 agent 节点互不串扰，适合子任务场景。这个 id 只用 `::` 分段、不含单冒号，不会被当成 IM 房间，
-  按节点的 `platform` 选平台档；显式指向 IM 房间（`<平台>:...`）时按房间的出生平台选档，节点的 `platform` 不影响选档。
+- 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow::<runId>::<nodeId>`，适合子任务场景。这个 id 只用 `::` 分段、
+  不含单冒号，不会被当成 IM 房间，按节点的 `platform` 选平台档；显式指向 IM 房间（`<平台>:...`）时按房间的出生平台选档，
+  节点的 `platform` 不影响选档。
 - `timeoutSeconds`（默认 120）内未收到回复 → 节点失败；`outcome=error/aborted` → 节点失败；
   `outcome=silent`（agent 选择不回复）是合法结果，节点成功、输出空串。
+- 立即失败、不等满超时：网关不在；指向调起这次运行的会话（经 `workflow_run` 调起时，那一轮在等这次运行，节点开不了轮）；
+  指令在网关相位被吞（禁言、限速等）或排着时被放掉，没开轮。
 
 示例：两路 agent 并行调研 → 第三个 agent 聚合（管道传值）：
 

@@ -267,13 +267,14 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   };
 }
 
+/** 会话表里这是群：没点名她的插话，这一轮没有焦点指引，布局只看贡献块 */
 const incoming = (content: string): IncomingMessage => ({
   content,
   sessionId: SESSION,
   platform: 'test',
   userId: 'u1',
-  sessionType: 'private',
-  triggerType: 'direct',
+  sessionType: 'group',
+  triggerType: 'interval',
 });
 
 /** 把 messages 压成可逐位比对的布局标签：system 取 injector 末段，其余取 role */

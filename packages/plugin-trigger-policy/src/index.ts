@@ -18,7 +18,7 @@ import {
 } from '@aalis/api-trigger';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
-import type { OutgoingMessage } from '@aalis/schema-message';
+import { arrivalTag, type OutgoingMessage } from '@aalis/schema-message';
 import { configSchema, normalizeSettings, type TriggerPolicySettings } from './config.js';
 import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
@@ -208,9 +208,9 @@ function run(caps: Caps): void {
 
     const addressed = isAddressed(message, botNames(e.triggerNames, message), e);
     const decision = decide(s, e, addressed);
-    // 判定日志：不含消息正文
+    // 判定日志：不含消息正文，带到达序号
     logger.use.debug(
-      `[trigger] 判定 | session=${sessionId} | speak=${decision.speak} | addressed=${addressed} | reason=${decision.reason}`,
+      `[trigger] 判定${arrivalTag(message)} | session=${sessionId} | speak=${decision.speak} | addressed=${addressed} | reason=${decision.reason}`,
     );
     if (!decision.speak) {
       await archiveSwallowed(message, messageArchive, logger.use, '[trigger]');

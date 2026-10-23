@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { estimateMsgTokens } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import {
-  buildFocusGuidance,
   describeLLMFailure,
   estimateTokens,
   formatTimeLabel,
@@ -12,7 +11,7 @@ import {
   readHistory,
 } from '../../packages/plugin-agent/src/helpers.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
-import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
   it('同一天也用绝对日期（相对表述会在零点全体翻转，打穿前缀缓存）', () => {
@@ -150,38 +149,6 @@ describe('INPUT_CONVENTIONS', () => {
   it('包含输入约定标题', () => {
     expect(INPUT_CONVENTIONS).toContain('【输入约定】');
     expect(INPUT_CONVENTIONS).toContain('<forward');
-  });
-});
-
-describe('buildFocusGuidance', () => {
-  const base: IncomingMessage = {
-    content: '你怎么看这个事',
-    sessionId: 's1',
-    platform: 'onebot',
-    userId: 'u1',
-  };
-
-  it('多方窗口 + immediate（@触发）→ 返回 system 焦点指引', () => {
-    const msg = buildFocusGuidance({ ...base, triggerType: 'immediate' }, true);
-    expect(msg).not.toBeNull();
-    expect(msg?.role).toBe('system');
-    expect(msg?.content).toContain('【当前焦点】');
-    expect(msg?.content).toContain('焦点消息');
-    expect(msg?.metadata?.injector).toBe('focus-guidance');
-  });
-
-  it('多方窗口 + direct（直接对话）→ 返回 system 焦点指引', () => {
-    expect(buildFocusGuidance({ ...base, triggerType: 'direct' }, true)).not.toBeNull();
-  });
-
-  it('一对一 → 返回 null（本身就是 1v1，无需焦点指引）', () => {
-    expect(buildFocusGuidance({ ...base, triggerType: 'direct' }, false)).toBeNull();
-  });
-
-  it('多方窗口里没有明确焦点的触发（interval、idle、proactive、没有 triggerType）→ 返回 null', () => {
-    for (const triggerType of ['interval', 'idle', 'proactive', undefined] as const) {
-      expect(buildFocusGuidance({ ...base, triggerType }, true), String(triggerType)).toBeNull();
-    }
   });
 });
 

@@ -253,3 +253,123 @@ it('压成之后到下一次压缩之间：摘要块与保留的原文紧接在�
   expect(first.messages[5].content).toBe('回答 13');
   expect(String(first.messages[6].content)).toMatch(/问题 14$/);
 });
+
+it('插入与排队：同一轮插入之后，下一次请求以上一次请求为前缀；排队开的 T2（其中又有插入）与之后的 T3，各以上一轮最后一次请求（除去说明块）为前缀', async () => {
+  const { app } = hostedApp({ logLevel: 'warn' });
+  apps.push(app);
+  await registerHubs(app);
+  // 第 n 次对话请求：第 1、3 次调一次探针工具，其余回答；holds 里有的那一次停住，直到放行
+  const sent: ChatBody[] = [];
+  const holds = new Map<number, { entered: () => void; release: Promise<void> }>();
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as ChatBody;
+    const n = sent.push(body);
+    const hold = holds.get(n);
+    if (hold) {
+      hold.entered();
+      await hold.release;
+    }
+    if (n === 1 || n === 3) {
+      return sse({ tool_calls: [{ index: 0, id: `call-${n}`, function: { name: PROBE, arguments: '{}' } }] });
+    }
+    return sse({ content: `回答 ${n}` });
+  }) as typeof fetch;
+  /** 停住第 n 次对话请求 */
+  const hold = (n: number) => {
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>(resolve => (entered = resolve));
+    holds.set(n, { entered, release: new Promise<void>(resolve => (release = resolve)) });
+    return { entered: reached, release };
+  };
+  await app.plugin(openaiPlugin, {
+    apiKey: 'zz-key',
+    baseUrl: 'https://llm.invalid/v1',
+    customModels: 'gpt-4o',
+    discoverModels: false,
+  });
+  for (const plugin of [toolsPlugin, memoryInMemory]) await app.plugin(plugin, {});
+  await app.plugin(messageArchive, { debugLogs: false });
+  await app.plugin(agentPlugin, { systemPrompt: 'zz cache bot' });
+  await app.plugins.idle();
+  expect(app.plugins.getPlugin(agentPlugin.name)?.state).toBe('active');
+  const host = app.bind({ agent, tools });
+  /** 探针每次执行先等 gates 里排着的那一个 */
+  const gates: Array<{ entered: () => void; release: Promise<void> }> = [];
+  host.tools.use.register({
+    definition: {
+      type: 'function',
+      function: { name: PROBE, description: '探针', parameters: { type: 'object', properties: {} } },
+    },
+    handler: async () => {
+      const gate = gates.shift();
+      if (gate) {
+        gate.entered();
+        await gate.release;
+      }
+      return 'ok';
+    },
+  });
+  const inTool = () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>(resolve => (entered = resolve));
+    gates.push({ entered, release: new Promise<void>(resolve => (release = resolve)) });
+    return { entered: reached, release };
+  };
+  const say = (content: string) =>
+    host.agent.use.handleMessage({ content, sessionId: SESSION, platform: 'webui', userId: 'u1' });
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+
+  // T1：第 1 次请求调工具，工具里时问题 2 到达、插进第 2 次请求；第 2 次请求进行中问题 3 到达、排到 T2
+  const tool1 = inTool();
+  const reply1 = hold(2);
+  const t1 = say('问题 1');
+  await tool1.entered;
+  const q2 = say('问题 2');
+  await settle();
+  tool1.release();
+  await reply1.entered;
+  // T2：问题 3 开轮，第 3 次请求调工具，工具里时问题 4 到达、插进第 4 次请求
+  const tool2 = inTool();
+  const q3 = say('问题 3');
+  await settle();
+  reply1.release();
+  await tool2.entered;
+  const q4 = say('问题 4');
+  await settle();
+  tool2.release();
+  await Promise.all([t1, q2, q3, q4]);
+  // T3
+  await say('问题 5');
+
+  // 插进来的排在工具结果之后；排队开的 T2 前面是上一轮进行期间到的说明
+  expect(sent.map(body => body.messages.map(m => m.role).join(' '))).toEqual([
+    'system user',
+    'system user assistant tool user',
+    'system user assistant tool user assistant system user',
+    'system user assistant tool user assistant system user assistant tool user',
+    'system user assistant tool user assistant user assistant tool user assistant user',
+  ]);
+  const rests = sent.map(({ messages: _, ...rest }) => JSON.stringify(rest));
+  expect(new Set(rests).size).toBe(1);
+  // 同一轮里：插入之后的请求以上一次请求整个为前缀
+  for (const [before, after] of [
+    [0, 1],
+    [2, 3],
+  ]) {
+    expect(sharedPrefix(lines(sent[before]), lines(sent[after])), `第 ${after + 1} 次请求`).toBe(
+      sent[before].messages.length,
+    );
+  }
+  // 下一轮：上一轮最后一次请求去掉说明块（排着的消息开的一轮前面那句，不落库）整个是前缀，输入的时间标注取归档时刻，进历史后
+  // 不变
+  const note = (m: ApiMessage) => m.role === 'system' && String(m.content).includes('上一轮进行期间到的');
+  for (const [before, after] of [
+    [1, 2],
+    [3, 4],
+  ]) {
+    const kept = { ...sent[before], messages: sent[before].messages.filter(m => !note(m)) };
+    expect(sharedPrefix(lines(kept), lines(sent[after])), `第 ${after + 1} 次请求`).toBe(kept.messages.length);
+  }
+});

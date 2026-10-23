@@ -75,10 +75,8 @@ export interface AgentNodeSpec extends BaseNodeSpec {
   instruction: string;
   /**
    * 目标会话 id；支持插值。省略时为本节点生成一次性隔离子会话
-   * （`workflow::<runId>::<nodeId>`，不含单冒号，不会被当成房间会话），互不串扰，适合"子任务"语义（推荐）。
-   *
-   * ⚠️ 同一并行层内**不要**让多个 agent 节点指向**相同的显式 sessionId**：`agent:turn:after`
-   * 按 sessionId 匹配回复，会发生串扰捕获（A 可能拿到 B 的回复）。需要隔离子任务就省略本字段。
+   * （`workflow::<runId>::<nodeId>`，不含单冒号，不会被当成房间会话），适合"子任务"语义（推荐）。指令在目标会话里单独成一轮，
+   * 排在那里在跑的一轮之后；指向调起这次运行的会话时节点立即失败（那一轮在等这次运行，节点开不了轮）
    */
   sessionId?: string;
   /** 平台标识；默认 'workflow' */
@@ -167,9 +165,10 @@ export interface WorkflowService {
     triggerSource?: string,
     /**
      * 调用者身份（缺省=匿名）。内部工具与投递的消息按定义者与调用者里不是 owner 的一方裁决：调用者是 owner 时取定义者
-     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者
+     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者。sessionId 是调起这次运行的会话（经 workflow_run 调起时
+     * 有）：它所在的一轮在等这次运行，指向它的 agent 节点立即失败
      */
-    caller?: { platform?: string; userId?: string },
+    caller?: { platform?: string; userId?: string; sessionId?: string },
   ): Promise<WorkflowRun>;
   /** 取消一个运行中的实例（若执行引擎支持） */
   cancelRun(runId: string): boolean;

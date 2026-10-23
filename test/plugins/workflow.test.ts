@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { GatewayService } from '../../packages/api-gateway/src/index.js';
 import type { Hooks } from '../../packages/api-hooks/src/index.js';
 import type { BoundTools, ToolService } from '../../packages/api-tools/src/index.js';
 import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
@@ -6,6 +7,7 @@ import type { Events, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 import { toolRequest } from '../fixtures/tool-call.js';
@@ -35,11 +37,12 @@ const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | 
       : undefined,
   });
 
-/** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做 */
+/** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做，没有网关 */
 const toolCaps = (toolFn?: (name: string, args: unknown) => Promise<string> | string): EngineCaps => ({
   tools: fixedRef(boundTools(toolFn)),
   events: noopEvents(),
   hooks: noopHooks(),
+  gateway: fixedRef<GatewayService>(undefined),
   logger: noopLogger(),
 });
 
@@ -49,9 +52,9 @@ interface AgentReply {
 }
 
 /**
- * 模拟一个会响应 inbound:message 的环境：emit('inbound:message') 时按 replyFor 决定回复，
- * 若有回复则同步驱动已注册的 'agent:turn:after' 中间件（仿 agent 跑完一轮）。
- * replyFor 返回 null 表示"无 agent 应答"（用于触发超时路径）。
+ * 模拟网关与 agent：ingressMessage 按 replyFor 决定这条指令开的那一轮的回复，在送达它的调用里驱动已注册的
+ * 'agent:turn:after' 中间件（仿 agent 在送达它的调用的异步上下文里跑完一轮），这一轮结束才返回。replyFor 返回 null 表示
+ * 这一轮迟迟不结束（用于触发超时路径）
  */
 const agentCaps = (
   replyFor: (sessionId: string, content: string) => AgentReply | null,
@@ -69,24 +72,28 @@ const agentCaps = (
     },
     run: async () => true,
   } as unknown as Hooks;
-  const events = {
-    on: () => () => {},
-    async emit(event: string, msg: { sessionId: string; content: string; platform?: string }) {
-      if (event !== 'inbound:message') return;
+  const gateway = {
+    async ingressMessage(msg: IncomingMessage) {
       emitted.push({ sessionId: msg.sessionId, content: msg.content, platform: msg.platform });
       const r = replyFor(msg.sessionId, msg.content);
-      if (!r) return;
+      if (!r) return new Promise<void>(() => {});
       const data = {
-        message: msg,
+        inputs: [{ message: msg }],
         reply: r.reply,
         outcome: r.outcome ?? 'replied',
         sessionId: msg.sessionId,
-        metadata: {},
+        turnId: 't1',
       };
       for (const h of [...handlers]) await h(data, async () => {});
     },
-  } as unknown as Events;
-  return { tools: fixedRef(boundTools()), events, hooks, logger: noopLogger() };
+  } as unknown as GatewayService;
+  return {
+    tools: fixedRef(boundTools()),
+    events: noopEvents(),
+    hooks,
+    gateway: fixedRef(gateway),
+    logger: noopLogger(),
+  };
 };
 
 describe('workflow validateGraph', () => {
@@ -326,7 +333,7 @@ describe('workflow agent 节点', () => {
     expect(emitted[0].platform).toBe('onebot');
   });
 
-  it('超时（无 agent 应答）→ 节点失败', async () => {
+  it('超时（那一轮迟迟不结束）→ 节点失败', async () => {
     const caps = agentCaps(() => null);
     const def: WorkflowDef = {
       id: 'w',

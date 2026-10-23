@@ -1,4 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { agent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子）
+import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { MODEL_REF_TEXT, type ModelRef, modelRefOf } from '@aalis/api-llm';
@@ -37,7 +39,7 @@ import { t } from './texts.js';
  * 派发与追问消息的来源：它们是内部注入，不是真人当面发的话。指令的意图确认只认同一会话里不带 source 的下一条消息，
  * 不带 source 时父会话经 send_to_subtask 发来的 y 会被当成发出者本人的确认（userId 同为 `parent:<父会话>`），
  * 父会话里的模型就能替子任务里的指令确认；要求真人当面发起的工具（白纸交任务等）也会放行子任务回合。
- * 派发与追问同一个值，共用一条 lane，追问照旧打断子任务在跑的那一轮。
+ * 派发与追问同一个值，各自成一轮：追问排在子任务在跑的那一轮之后。
  */
 const SUBTASK_SOURCE = 'subtask';
 
@@ -144,8 +146,7 @@ function reportsOf(session: SessionInfo | undefined): SubtaskReport[] {
 }
 
 /** 子任务此刻的回报：不写没有的项 */
-function reportOf(session: SessionInfo): SubtaskReport {
-  const status = subtaskStatus(session);
+function reportOf(session: SessionInfo, status: SubtaskStatus): SubtaskReport {
   const reason = errorReason(session, status);
   return {
     id: session.id,
@@ -204,6 +205,8 @@ const uses = {
    * 子会话没法写下父会话此刻的设置
    */
   sessionSettings: optional(sessionSettings),
+  /** 追问经它送达（落定时知道）；不在时追问发不出 */
+  gateway: optional(gateway),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
   document: optional(ownHostConfig),
 };
@@ -227,15 +230,36 @@ export default definePlugin({
 });
 
 function registerSubtask(
-  { tools, events, hooks, logger, sessionManager, messageArchive, agent, sessionSettings }: Caps,
+  { tools, events, hooks, logger, sessionManager, messageArchive, agent, sessionSettings, gateway }: Caps,
   cfg: PluginConfig,
   fields: SubtaskFields,
 ): void {
   // ---- 到期销毁的记录（见文末「到期销毁」）----
   /** 在飞的回合数 */
   const inflight = new Map<string, number>();
-  /** 发出了追问、下一轮还没开始的子会话 */
-  const pendingStart = new Set<string>();
+  /** 发出了还没落定的追问（所在的一轮结束、被放掉、在网关相位被挡下都算落定）的条数 */
+  const followUps = new Map<string, number>();
+  /**
+   * 追问开的那一轮跑在送达它的调用的异步上下文里，回合结束时据此认出这一轮是不是追问开的。每条追问一个令牌，落定时从 live 里删：
+   * 那一轮里起的异步工作（转后台的工具、定时器）继承同一个上下文，之后它们开的一轮拿到的是已落定的令牌，不算追问开的
+   */
+  const followUpTurn = new AsyncLocalStorage<object>();
+  const live = new Set<object>();
+  /** 有追问落定时通知的：wait_subtasks 据此重判 */
+  const onFollowUpSettled = new Set<() => void>();
+  /** 一条追问落定：没有别的了就重排到期（到点时它还没落定的那次判定没有重排） */
+  function followUpSettled(childId: string): void {
+    const rest = (followUps.get(childId) ?? 1) - 1;
+    if (rest > 0) followUps.set(childId, rest);
+    else {
+      followUps.delete(childId);
+      if (!inflight.has(childId)) schedule(childId);
+    }
+    for (const listener of onFollowUpSettled) listener();
+  }
+  /** 子任务此刻的状态：还有没落定的追问时按进行中（会话管理在它前后两轮之间可能已把状态收口成已完成） */
+  const statusOf = (session: SessionInfo): SubtaskStatus =>
+    followUps.has(session.id) ? 'active' : subtaskStatus(session);
   /** 本插件记下的一轮结束时刻；重启或重载之后没有，取会话记录上的 lastTurn.endedAt */
   const endedAt = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -258,7 +282,7 @@ function registerSubtask(
   ): Promise<{ report: SubtaskReport; destroyed: boolean } | undefined> {
     const session = directChild(sm, id, sessionId);
     if (session) {
-      const report = reportOf(session);
+      const report = reportOf(session, statusOf(session));
       if (report.status !== 'active') {
         taken.set(id, JSON.stringify(report));
         await takeReport(sm, sessionId, id);
@@ -509,6 +533,7 @@ function registerSubtask(
       const subtaskId = String(args.subtask_id || '');
       const message = String(args.message || '');
       if (!subtaskId || !message) return JSON.stringify({ error: '缺少子任务 ID 或消息内容' });
+      if (!gateway.present) return JSON.stringify({ error: '消息网关不可用，追问发不出' });
 
       // 只向直接子任务发：防越权向任意会话注入消息、重激活已完成的会话
       const session = directChild(sm, subtaskId, callCtx.sessionId);
@@ -518,13 +543,17 @@ function registerSubtask(
       if (session.status === 'completed' || session.status === 'error') {
         await sm.updateSession(subtaskId, { status: 'active' });
       }
-      // 发出到开跑之间不判到期：被追问打断的那一轮先收口时，追问那一轮还没开始
-      pendingStart.add(subtaskId);
-
-      // 派发消息
-      events.use.emit('inbound:message', taskMessage(callCtx, subtaskId, message)).catch(err => {
-        logger.use.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
-      });
+      // 经网关送达、不等：发出到落定之间不判到期、这期间结束的一轮不交回，追问排在子任务在跑的那一轮之后另开一轮
+      followUps.set(subtaskId, (followUps.get(subtaskId) ?? 0) + 1);
+      const token = {};
+      live.add(token);
+      followUpTurn
+        .run(token, () => gateway.use.ingressMessage(taskMessage(callCtx, subtaskId, message)))
+        .catch(err => logger.use.warn(`向子任务发送消息失败 (${subtaskId}):`, err))
+        .finally(() => {
+          live.delete(token);
+          followUpSettled(subtaskId);
+        });
 
       return JSON.stringify({
         subtaskId,
@@ -687,58 +716,35 @@ function registerSubtask(
       const timeoutSec = Number(args.timeout_seconds) || cfg.maxWaitMs / 1000;
       const timeoutMs = Math.min(timeoutSec * 1000, cfg.maxWaitMs);
 
-      // 先检查是否已经全部完成（避免不必要的等待）；不是本会话直接子任务的不等
+      // 先检查是否已经全部结束（避免不必要的等待）；不是本会话直接子任务的不等
       const isTerminal = (id: string) => {
         const s = directChild(sm, id, callCtx.sessionId);
-        return !s || s.status === 'completed' || s.status === 'error';
+        const status = s && statusOf(s);
+        return !status || status === 'completed' || status === 'error' || status === 'stopped';
       };
 
       if (!ids.every(isTerminal)) {
-        // 使用事件驱动 + 超时，替代轮询
+        // 事件驱动 + 超时，替代轮询：会话完成、状态变了、被删（结果里按不存在回）或追问落定时重判
         await new Promise<void>(resolve => {
           const pending = new Set(ids.filter(id => !isTerminal(id)));
-
-          const cleanup = () => {
+          const disposers: Array<() => void> = [];
+          const finish = () => {
             clearTimeout(timer);
-            disposeCompleted();
-            disposeUpdated();
-            disposeDeleted();
-          };
-
-          // 监听 session:completed 事件
-          const disposeCompleted = events.use.on('session:completed', (session: SessionInfo) => {
-            pending.delete(session.id);
-            if (pending.size === 0) {
-              cleanup();
-              resolve();
-            }
-          });
-
-          // 兜底：也监听 session:updated 以防状态通过 updateSession 变更
-          const disposeUpdated = events.use.on('session:updated', (session: SessionInfo) => {
-            if ((session.status === 'completed' || session.status === 'error') && pending.has(session.id)) {
-              pending.delete(session.id);
-              if (pending.size === 0) {
-                cleanup();
-                resolve();
-              }
-            }
-          });
-
-          // 被删的子任务也算结束：结果里按不存在回
-          const disposeDeleted = events.use.on('session:deleted', (sessionId: string) => {
-            pending.delete(sessionId);
-            if (pending.size === 0) {
-              cleanup();
-              resolve();
-            }
-          });
-
-          // 超时保护
-          const timer = setTimeout(() => {
-            cleanup();
+            for (const dispose of disposers) dispose();
+            onFollowUpSettled.delete(recheck);
             resolve();
-          }, timeoutMs);
+          };
+          const recheck = () => {
+            for (const id of pending) if (isTerminal(id)) pending.delete(id);
+            if (pending.size === 0) finish();
+          };
+          const timer = setTimeout(finish, timeoutMs);
+          disposers.push(
+            events.use.on('session:completed', recheck),
+            events.use.on('session:updated', recheck),
+            events.use.on('session:deleted', recheck),
+          );
+          onFollowUpSettled.add(recheck);
         });
       }
 
@@ -969,6 +975,9 @@ function registerSubtask(
     const session = sm.getSession(data.sessionId);
     if (!session?.parentId) return; // 非子任务
     if (session.status === 'completed' || session.status === 'error') return; // 已完成
+    // 还有不在这一轮里的追问没落定（追问开的一轮只有它自己那一条）：这一轮的回复不交回、不完成，等追问那一轮
+    const own = followUpTurn.getStore();
+    if ((followUps.get(data.sessionId) ?? 0) > (own && live.has(own) ? 1 : 0)) return;
 
     const result = data.reply;
     if (!result || result.trim().length === 0) return;
@@ -1016,7 +1025,7 @@ function registerSubtask(
 
   // ---- 到期销毁 ----
   // 子会话的一轮结束（不论结局）满 idleDeleteHours 就删掉，追问让它在下一轮结束时重新计时，从没跑过一轮的不计时。在飞的一轮与
-  // 发出还没开跑的追问由本插件自己记，不看会话状态（归档的子会话跑一轮时状态不翻；被追问打断的那一轮可能先把状态收口）。
+  // 发出还没落定的追问由本插件自己记，不看会话状态（归档的子会话跑一轮时状态不翻；追问之前那一轮先把状态收口了）。
   // 删除只在定时器里做：删除要等这个会话的回合收尾，在回合里删就互相等。销毁之前把回报写进父会话记录
 
   /** 起点：一轮结束的时刻；从没跑过一轮的没有 */
@@ -1037,15 +1046,16 @@ function registerSubtask(
   }
 
   /**
-   * 到点重判：一轮在飞或追问还没开跑的等那一轮收尾时再排；没到期的再排；到期的写回报、删掉（父会话在它还在时已经取走过同一份
-   * 结果的不写回报）。写回报要等一拍：这一拍里发出的追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾时重新排
+   * 到点重判：一轮在飞或追问还没落定的等那一轮收尾、追问落定时再排；没到期的再排；到期的写回报、删掉（父会话在它还在时已经取走
+   * 过同一份结果的不写回报）。写回报要等一拍：这一拍里发出的追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾
+   * 或追问落定时重新排
    */
   async function expire(childId: string): Promise<void> {
     timers.delete(childId);
     const sm = tracked;
     const child = sm?.getSession(childId);
     if (!sm || child?.parentId === undefined) return;
-    const busy = () => inflight.has(childId) || pendingStart.has(childId);
+    const busy = () => inflight.has(childId) || followUps.has(childId);
     if (busy()) return;
     const start = startOf(child);
     if (start === undefined) return;
@@ -1056,7 +1066,7 @@ function registerSubtask(
     const parentId = child.parentId;
     /** 父会话记录上别的子任务的回报 */
     const others = () => reportsOf(sm.getSession(parentId)).filter(r => r.id !== childId);
-    const report = reportOf(child);
+    const report = reportOf(child, statusOf(child));
     // 父会话在它还在时已经取走过这一份结果：不再写回报
     const fresh = taken.get(childId) !== JSON.stringify(report);
     try {
@@ -1094,13 +1104,10 @@ function registerSubtask(
     const { source } = data.inputs[0].message;
     const sm = sessionManager.present ? sessionManager.use : undefined;
     const session = sm?.getSession(sessionId);
-    // 已删的子会话：发出、还没开跑的派发与追问不跑
+    // 已删的子会话：发出、还没开轮的派发与追问不跑（这一轮不归档）
     if (sm && source === SUBTASK_SOURCE && !session) return;
     const child = session?.parentId !== undefined;
-    if (child) {
-      pendingStart.delete(sessionId);
-      inflight.set(sessionId, (inflight.get(sessionId) ?? 0) + 1);
-    }
+    if (child) inflight.set(sessionId, (inflight.get(sessionId) ?? 0) + 1);
     try {
       await next();
     } finally {
@@ -1120,7 +1127,7 @@ function registerSubtask(
   events.use.on('session:deleted', sessionId => {
     clearTimeout(timers.get(sessionId));
     timers.delete(sessionId);
-    pendingStart.delete(sessionId);
+    followUps.delete(sessionId);
     endedAt.delete(sessionId);
     listed.delete(sessionId);
     taken.delete(sessionId);

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type RegisteredTool, tools as toolsService } from '../../packages/api-tools/src/index.js';
 import {
   type NodeSpec,
@@ -9,7 +10,7 @@ import {
   type WorkflowService,
   workflow,
 } from '../../packages/api-workflow/src/index.js';
-import { App, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
@@ -48,7 +49,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   let base: string;
   let app: App;
 
-  /** 装好 storage / tools / cron-engine / workflow；测试工具在 workflow 装载前由宿主登记（归属根激活） */
+  /** 装好 storage / tools / cron-engine / workflow 与网关的替身；测试工具在 workflow 装载前由宿主登记（归属根激活） */
   async function boot(testTools: TestTool[]): Promise<WorkflowService> {
     app = new App({ name: 'T', logLevel: 'error', disposeTimeoutMs: GRACE_MS });
     await registerHubs(app);
@@ -70,8 +71,10 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     });
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
-    const { tools } = app.bind({ tools: toolsService });
+    const { tools, provide: root } = app.bind({ tools: toolsService, provide });
     for (const t of testTools) tools.use.register(t);
+    // 网关的替身收下 agent 节点的指令，它开的那一轮迟迟不结束
+    root.use(gateway, { ingressMessage: () => new Promise<void>(() => {}) } as never);
     await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
     // 插件停在 pending（required 依赖缺席）时会让整条用例悄悄空转，装载后当场判死
@@ -142,7 +145,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
 
   const blocking: Array<[string, NodeSpec]> = [
     ['wait', { id: 'a', type: 'wait', seconds: 3600 }],
-    // 没装 agent：回复永远不来，只能等满 timeoutSeconds
+    // 指令开的那一轮迟迟不结束：只能等满 timeoutSeconds
     ['agent', { id: 'a', type: 'agent', instruction: '等一个不会来的回复', timeoutSeconds: 3600 }],
     // 工具只在中止信号断开时返回
     ['tool', { id: 'a', type: 'tool', tool: 'zz_until_abort' }],

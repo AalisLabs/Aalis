@@ -349,8 +349,8 @@ export class ToolRegistry implements ToolService {
   }
 
   /**
-   * 过执行守卫；拒绝时回原因（交给模型，取原文），经审批放行的带回批的人。守卫可能等过一轮审批：期间回合若已中止
-   * （latest-wins / 手动 abort），不替死回合执行
+   * 过执行守卫；拒绝时回原因（交给模型，取原文），经审批放行的带回批的人。守卫可能等过一轮审批：期间回合若已被停下
+   * （停止键、禁言、停机等），不替停下的回合执行
    */
   private async guard(tool: RegisteredTool, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<Verdict> {
     const toolName = tool.definition.function.name;

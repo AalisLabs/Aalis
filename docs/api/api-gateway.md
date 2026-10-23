@@ -82,7 +82,7 @@ function parseWindowKey(key: string): { platform: string; type: string; targetId
 
 ```ts
 interface GatewayService {
-  ingressMessage(message: IncomingMessage): Promise<void>;     // 主动注入入站
+  ingressMessage(message: IncomingMessage): Promise<void>;     // 主动注入入站，这条输入落定时返回
   dispatchOutbound(message: OutgoingMessage): Promise<void>;   // 出站派发
 }
 ```

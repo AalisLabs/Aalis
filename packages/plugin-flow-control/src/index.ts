@@ -1,3 +1,4 @@
+import { agent } from '@aalis/api-agent';
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
 import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
@@ -7,7 +8,7 @@ import { fromElsewhere, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
+import { arrivalTag, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { configSchema } from './config.js';
 import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';
 
@@ -30,6 +31,8 @@ const uses = {
   sessionManager: optional(sessionManager),
   /** 按会话读生效范围与参数；缺席时取插件配置里的值 */
   sessionFields: optional(sessionFields),
+  /** 禁言时停下这个会话在跑的一轮、放掉排着的；缺席时禁言只挡之后的消息 */
+  agent: optional(agent),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
   document: optional(ownHostConfig),
 };
@@ -252,6 +255,8 @@ async function run(caps: Caps): Promise<void> {
       s.mutedUntil = Date.now() + durationSec * 1000;
       saveMuteState();
       logger.use.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
+      // 禁言真的停下在跑的一轮（不外发、不落库回复），排着的不再开轮（在那一轮落定之后归档）
+      if (caps.agent.present) caps.agent.use.abort(sessionId, { queued: true, reason: '禁言' });
     },
   };
 
@@ -276,7 +281,7 @@ async function run(caps: Caps): Promise<void> {
     // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
     if (loading) await loading;
     if (service.isMuted(sessionId)) {
-      logger.use.debug(`[flow] 禁言中 → 吞噬 | session=${sessionId}`);
+      logger.use.debug(`[flow] 禁言中 → 吞噬${arrivalTag(message)} | session=${sessionId}`);
       await shadowArchive(message);
       return; // swallow
     }
@@ -294,12 +299,12 @@ async function run(caps: Caps): Promise<void> {
     // 不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
     if (message.triggerType !== 'immediate') {
       if (!message.source && service.isCoolingDown(sessionId)) {
-        logger.use.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
+        logger.use.debug(`[flow] 冷却中 → 吞噬${arrivalTag(message)} | session=${sessionId}`);
         await shadowArchive(message);
         return; // swallow
       }
       if (service.isRateLimited(sessionId)) {
-        logger.use.debug(`[flow] 限速 → 吞噬 | session=${sessionId}`);
+        logger.use.debug(`[flow] 限速 → 吞噬${arrivalTag(message)} | session=${sessionId}`);
         await shadowArchive(message);
         return; // swallow
       }

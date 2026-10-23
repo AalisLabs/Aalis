@@ -22,7 +22,8 @@ interface IncomingMessage {
   attachmentOrder?: Array<'image' | 'file'>;
   sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一，会话管理建档时按它记下聊天窗口；不带时平台声明了多方类型的按其中第一个、多方，只声明了一对一类型的按第一个，没声明的按 private、一对一
   selfId?: string;                     // 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id）
-  source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却、不过指令解析），并用于并发隔离
+  source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却、不过指令解析），各自成一轮、不与别的输入叠加
+  arrival?: number;                    // 到达序号：网关在入站相位之前打的，这次运行内递增，只用于日志关联，不落库、不进模型
   ownerApproved?: boolean;             // 注入方声明：文字建立时经 owner 过目过原文，带 source 的注入只有它过指令解析，见下文
   groupName?: string;
   groupId?: string;
@@ -168,9 +169,11 @@ outboundMediaMessage(
 ): Message & { content: string };
 outboundMarkerMessage(msg: OutgoingMessage): Message | undefined;
 oneSpeaker(inputs: readonly Pick<IncomingMessage, 'platform' | 'userId'>[]): boolean;
+wasAddressed(message: Pick<IncomingMessage, 'triggerType'>): boolean;
+arrivalTag(message: Pick<IncomingMessage, 'arrival'>): string;
 ```
 
-前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话与附件清单另记在元数据里（见下文）。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。`oneSpeaker` 判一轮的各条输入是不是同一位物理发言者（平台与账号都相同）说的：会话语义的发言者（工具调用上下文的 `userId`、人设的说话人事实）只在这时有，api-authority 的 `originTurnOf` 与人设插件都用它。
+前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话与附件清单另记在元数据里（见下文）。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。`oneSpeaker` 判一轮的各条输入是不是同一位物理发言者（平台与账号都相同）说的：会话语义的发言者（工具调用上下文的 `userId`、人设的说话人事实）只在这时有，api-authority 的 `originTurnOf` 与人设插件都用它。`wasAddressed` 判一条输入点没点名她：触发类型为 `direct` 或 `immediate`，没有触发类型的（没经触发判定）按 `direct` 算；agent 的焦点指引与排着开的一轮的说明、档案与关系子图的主发言者都按它判。`arrivalTag` 是日志行里一条输入的到达序号（` #<序号>`，带前导空格，接在动作之后；没经网关进来的为空串），网关、触发、流控与 agent 的日志据此串起同一条输入，不记正文与昵称。
 
 ## 存档元数据的键
 

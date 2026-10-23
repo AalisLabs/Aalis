@@ -45,7 +45,7 @@ export default definePlugin({
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |
 
-`inbound:command` 排在最前：指令意图确认的回复（发出者本人对确认提示的下一条消息）在这里命中后被吞掉，不进入后续相位，也就不会触发 agent 对在途生成的中止。
+`inbound:command` 排在最前：指令意图确认的回复（发出者本人对确认提示的下一条消息）在这里命中后被吞掉，不进入后续相位，也就不会被当成输入插进 agent 在跑的一轮。
 
 `InboundPhaseData = { message: IncomingMessage; metadata: Record<string, unknown>; agent: AgentService | undefined; chat?: ChatScope }`
 

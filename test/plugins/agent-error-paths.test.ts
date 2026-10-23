@@ -437,7 +437,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       sessionType: 'private',
     });
     await new Promise(r => setTimeout(r, 20));
-    agentService.abort?.(sessionId);
+    agentService.abort(sessionId);
     await turn;
     await app.stop();
 

@@ -9,7 +9,7 @@ import {
 import { authority as authorityService, originTurnOf } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
-import { chatScopeOf, gateway as gatewayService } from '@aalis/api-gateway';
+import { gateway as gatewayService } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import type { ChatModelRequest, ChatResponse, LLMModel, ModelRef } from '@aalis/api-llm';
@@ -26,13 +26,8 @@ import { media as mediaService } from '@aalis/api-media';
 import { memory as memoryService } from '@aalis/api-memory';
 import { messageArchive as messageArchiveService, speakerOf } from '@aalis/api-message-archive';
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
-import {
-  getPlatformAdapters,
-  getPlatformSelfIdentity,
-  platform as platformService,
-  sessionTypesOf,
-} from '@aalis/api-platform';
-import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
+import { originChatOf, rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionFields as sessionFieldsService } from '@aalis/api-session-settings';
 import { isStorageUri, storage as storageService } from '@aalis/api-storage';
 import {
@@ -59,11 +54,13 @@ import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import {
+  arrivalTag,
   buildIncomingContent,
   CONTROL_KINDS,
   getMessageName,
   WellKnownKinds,
   WellKnownMetadataKeys,
+  wasAddressed,
 } from '@aalis/schema-message';
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
@@ -77,9 +74,11 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
   parseToolArguments,
+  queuedNote,
   readHistory,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
+import { type Placement, SessionQueues, type Turn } from './session-queue.js';
 import { t } from './texts.js';
 
 // ===== 能力声明 =====
@@ -146,6 +145,9 @@ function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
 /** 条目固定的那个模型写成模型引用 */
 const refOf = (entry: ProviderEntry<LLMModel>): ModelRef => ({ provider: entry.use.providerId, model: entry.use.id });
 
+/** 一轮的结局 */
+type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
+
 /** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容） */
 interface TrimmedMessages {
   messages: Message[];
@@ -184,22 +186,8 @@ class DefaultAgent implements AgentService {
   /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
   private trimThresholdRatio: number;
 
-  /**
-   * 在飞回合表：lane → 这一轮的 AbortController 与 turnId
-   *
-   * lane = `${sessionId}::${source}` — 同一 session 不同来源（user / scheduler）
-   * 独立管理，互不打断；同来源新消息会中止旧的生成。
-   */
-  private activeControllers = new Map<string, { controller: AbortController; turnId: string }>();
-
-  /**
-   * 在飞回合 Promise → 所在会话。关停与删除会话时 abort 之后等它们以 AbortError（或正常完成）收尾，
-   * 而不是等 LLM 跑完——收尾里的钩子 / 出站事件还要用 memory。
-   */
-  private inflightTurns = new Map<Promise<void>, string>();
-
-  /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
-  private archiveQueues = new Map<string, Promise<void>>();
+  /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机、会话删除与 /clear 由 run() 直接经它停 */
+  readonly queues: SessionQueues;
 
   /** 每次激活只在实际写入缺少归档时告警一次，不因插件加载顺序误报。 */
   private archiveUnavailableWarned = false;
@@ -228,6 +216,9 @@ class DefaultAgent implements AgentService {
     private readonly instanceId: string,
   ) {
     this.caps = caps;
+    this.queues = new SessionQueues((sessionId, waiting) => {
+      void caps.events.use.emit('agent:queue', { sessionId, waiting });
+    });
     this.fields = caps.sessionFields.use.fields(configSchema, caps, {
       llm: () => {
         const entry = this.resolveLLM(undefined);
@@ -293,58 +284,12 @@ class DefaultAgent implements AgentService {
       .map(p => p.instanceId);
   }
 
-  /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(
-    sessionId: string,
-    source?: string,
-  ): string {
-    return `${sessionId}::${source ?? 'user'}`;
-  }
-
   /**
-   * 中止指定会话的在飞回合：不带 turnId 时停所有 lane，带 turnId 时只停那一轮。返回是否停下了回合。
+   * 停下这个会话在跑的一轮；queued 为真时连同排队与待插入的一起放掉，放掉的在那一轮落定之后归档（不带回合 id）。
+   * 禁言、全部停止与停止键经这里
    */
-  abort(sessionId: string, turnId?: string): boolean {
-    let aborted = false;
-    for (const [key, turn] of this.activeControllers) {
-      if (!key.startsWith(`${sessionId}::`) || (turnId !== undefined && turn.turnId !== turnId)) continue;
-      turn.controller.abort();
-      this.activeControllers.delete(key);
-      aborted = true;
-    }
-    if (aborted) this.logger.info(`生成已中止: session=${sessionId}${turnId ? ` turn=${turnId}` : ''}`);
-    return aborted;
-  }
-
-  /**
-   * 中止全部在飞回合（拆卸路径用）。
-   *
-   * activeControllers 是实例私有的，bounce 后新实例看不见旧实例的在飞回合。
-   * abort 走已有的 AbortError 收尾（outbound:stream done + turn:after outcome='aborted'），
-   * 与 WebUI「停止生成」同语义。关停在 onDrain 里先调本方法再等回合 Promise；
-   * onDispose 再调一次作兜底（已中止的 controller 不在表里，是空操作）。
-   */
-  abortAll(): void {
-    let n = 0;
-    for (const [key, turn] of this.activeControllers) {
-      turn.controller.abort();
-      this.activeControllers.delete(key);
-      n++;
-    }
-    if (n > 0) this.logger.info(`拆卸：已中止 ${n} 个在飞回合`);
-  }
-
-  /**
-   * 中止在飞回合并等它们以 AbortError（或正常完成）收尾落定：给 sessionId 时只停这个会话的（删除会话），不给时停全部（关停）。
-   * 关停的超时由 core 对 onDrain 回调的 disposeTimeoutMs 护栏负责，不另加配置键；删除会话时没有上限，不响应中止的工具会让它
-   * 一直等到工具返回
-   */
-  async abortInflightAndSettle(sessionId?: string): Promise<void> {
-    if (sessionId === undefined) this.abortAll();
-    else this.abort(sessionId);
-    const turns = [...this.inflightTurns].flatMap(([turn, owner]) =>
-      sessionId === undefined || owner === sessionId ? [turn] : [],
-    );
-    if (turns.length > 0) await Promise.allSettled(turns);
+  abort(sessionId: string, options: { turnId?: string; queued?: boolean; reason?: string } = {}): boolean {
+    return this.queues.stop(sessionId, { ...options, archive: true });
   }
 
   /** 会话删除时丢弃其节流日志状态（订阅见 run() 的 session:deleted）。 */
@@ -593,103 +538,130 @@ class DefaultAgent implements AgentService {
   }
 
   async handleMessage(incoming: IncomingMessage): Promise<void> {
-    const lane = this.laneKey(incoming.sessionId, incoming.source);
-
-    // 仅中止同一 lane（同 session + 同 source）的旧生成；不同来源互不打断
-    const prev = this.activeControllers.get(lane);
-    if (prev) prev.controller.abort();
-
-    const controller = new AbortController();
-    // 回合 id：这一轮的回合开始钩子、输入的归档、流式片段、工具调用、用量与回合结束都带它，停止键也能按它只停这一轮
-    const turnId = crypto.randomUUID();
-    this.activeControllers.set(lane, { controller, turnId });
-
-    const turn = (async () => {
-      try {
-        await this._handleMessageInner(incoming, controller.signal, lane, turnId);
-      } finally {
-        // 仅清理自己创建的 controller（避免清掉后续新请求的）
-        if (this.activeControllers.get(lane)?.controller === controller) {
-          this.activeControllers.delete(lane);
-        }
-      }
-    })();
-    this.inflightTurns.set(turn, incoming.sessionId);
-    try {
-      await turn;
-    } finally {
-      this.inflightTurns.delete(turn);
-    }
-  }
-
-  private async _handleMessageInner(
-    incoming: IncomingMessage,
-    signal: AbortSignal,
-    lane: string,
-    turnId: string,
-  ): Promise<void> {
-    // Hook: agent:input:before — 每条输入一次（预处理器挂在这里），中间件可以改写这条；不调 next() 即丢弃它，不进一轮
+    // 处理期间会话被删的，交给通道时放掉
+    const admission = this.queues.admit(incoming.sessionId);
+    // Hook: agent:input:before — 每条输入一次（预处理器挂在这里），中间件可以改写这条；不调 next() 即丢掉它，不进一轮
     const inputData: HookContextMap['agent:input:before'] = { message: incoming };
-    let started = false;
-    await this.caps.hooks.use.run('agent:input:before', inputData, async () => {
-      // 这一轮的输入：通道按 lane 分，一轮只有这一条
-      const inputs: TurnInput[] = [{ message: inputData.message }];
-      // Hook: agent:turn:before — 一轮开始；中间件不调用 next() 即拦下这一轮（不归档、不调模型、不发 agent:turn:after）
-      await this.caps.hooks.use.run(
-        'agent:turn:before',
-        { turnId, sessionId: inputData.message.sessionId, inputs },
-        async () => {
-          started = true;
-          await this.runTurn(inputs, signal, lane, turnId);
-        },
-      );
-    });
-    // 输入被丢掉（如流控缓冲）或这一轮被拦下（如已删子会话的消息），通知前端结束 loading
-    if (!started) {
+    let placed = false;
+    try {
+      await this.caps.hooks.use.run('agent:input:before', inputData, async () => {
+        placed = true;
+        await this.settleInput(inputData.message, this.queues.place(inputData.message, admission));
+      });
+    } finally {
+      this.queues.leave(admission);
+    }
+    // 输入被丢掉（如流控缓冲），通知前端结束 loading：它没进一轮，流结束标记的回合 id 只是占位
+    if (!placed) {
       await this.caps.events.use.emit('outbound:stream', {
-        sessionId: inputData.message.sessionId,
-        turnId,
-        platform: inputData.message.platform,
+        sessionId: incoming.sessionId,
+        turnId: crypto.randomUUID(),
+        platform: incoming.platform,
         done: true,
       });
     }
   }
 
-  /** agent:turn:before 的默认动作：先按先后归档这一轮的输入，再跑这一轮 */
-  private async runTurn(inputs: TurnInput[], signal: AbortSignal, lane: string, turnId: string): Promise<void> {
-    const [input] = inputs;
-    const incoming = input.message;
-    const reportOnly = incoming.hostNotice?.reportOnly === true;
-    const noticeLinks = reportOnly ? (incoming.content.match(NOTICE_URL) ?? []) : [];
+  /** 逐条输入的默认动作：交给通道之后等这条落定（它所在的一轮结束，或它被放掉）；轮到它开轮时由它跑这一轮 */
+  private async settleInput(message: IncomingMessage, placement: Placement): Promise<void> {
+    if (placement.route === 'drop') {
+      this.logRoute(message, '放掉');
+      // 停机放掉的在这个会话在跑的一轮落定之后归档；删除的不归档
+      if (placement.archive) {
+        await this.queues.settled(message.sessionId);
+        await this.archiveIncomingMessage(message);
+      }
+      return;
+    }
+    if (placement.route !== 'open') this.logRoute(message, placement.route === 'join' ? '待插入' : '排队');
+    const turn = placement.route === 'open' ? placement.turn : await placement.ready;
+    if (turn) await this.playTurn(turn);
+  }
 
-    input.archived = await this.archiveIncomingMessageInOrder(lane, incoming, turnId);
+  /** 每条输入一行 debug：去向、到达序号、会话与回合，不记正文与昵称 */
+  private logRoute(message: IncomingMessage, route: string, turnId?: string): void {
+    this.logger.debug(
+      `→ ${route}${arrivalTag(message)} session=${message.sessionId}${turnId ? ` turn=${turnId}` : ''}`,
+    );
+  }
 
-    // 这一轮按会话读本插件的四项（下一轮再读，改了不必重载）
-    const settings = this.fields.get(incoming.sessionId, { platform: incoming.platform });
+  /**
+   * 跑一轮：agent:turn:before 的默认动作是这一轮的全部，中间件不调 next() 即拦下这一轮（不归档、不调模型、不发
+   * agent:turn:after）。之后按先后归档这期间放掉、要归档的输入，再交出下一批：agent 在一个会话里的写入因此不交错
+   */
+  private async playTurn(turn: Turn): Promise<void> {
+    const { sessionId, turnId } = turn;
+    const inputs: TurnInput[] = turn.batch.map(message => ({ message }));
+    for (const message of turn.batch) this.logRoute(message, '开轮', turnId);
+    const startedAt = Date.now();
+    let outcome: TurnOutcome | undefined;
+    try {
+      await this.caps.hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, async () => {
+        outcome = await this.runTurn(turn, inputs);
+      });
+    } finally {
+      // 这一轮被拦下（如已删子会话的消息），通知前端结束 loading
+      if (outcome === undefined) {
+        await this.caps.events.use.emit('outbound:stream', {
+          sessionId,
+          turnId,
+          platform: inputs[0].message.platform,
+          done: true,
+        });
+      }
+      for (let dropped = this.queues.drain(turn); dropped.length > 0; dropped = this.queues.drain(turn)) {
+        for (const { message, archive, settle } of dropped) {
+          this.logRoute(message, '放掉');
+          if (archive) await this.archiveIncomingMessage(message);
+          settle();
+        }
+      }
+      const arrivals = inputs.map(({ message }) => arrivalTag(message)).join('');
+      this.logger.info(
+        `回合结束 turn=${turnId} session=${sessionId} 结局=${outcome ?? '拦下'}` +
+          `${turn.reason ? ` 原因=${turn.reason}` : ''} 用时=${Date.now() - startedAt}ms${arrivals && ` 输入${arrivals}`}`,
+      );
+      this.queues.release(turn);
+    }
+  }
+
+  /**
+   * agent:turn:before 的默认动作：先按先后归档开轮的输入，再跑这一轮，返回结局。真人消息开的一轮在每次调用模型之前（第一次与
+   * 每批工具之后；格式重试的那几次不算）取走待插入的输入，最后一次模型调用返回不带工具调用的回复之后不再收
+   */
+  private async runTurn(turn: Turn, inputs: TurnInput[]): Promise<TurnOutcome> {
+    const { sessionId, turnId } = turn;
+    const { signal } = turn.controller;
+    // 同一轮的输入会话与来源相同；带来源的注入（宿主通知、委派）各自成一轮，只有这一条
+    const first = inputs[0].message;
+    const { platform } = first;
+    const reportOnly = first.hostNotice?.reportOnly === true;
+    const noticeLinks = reportOnly ? (first.content.match(NOTICE_URL) ?? []) : [];
+
+    for (const input of inputs)
+      input.archived = await this.archiveIncomingMessage(input.message, { turnId, entry: 'opened' });
+
+    // 这一轮的设置在开轮时读一次（下一轮再读，改了不必重载）：插进来的输入不重读，同一轮里换模型或工具列表会改掉之后各次调用的
+    // 前缀。同一会话的输入会话相同，入口平台只对没有出生平台的会话起作用，取开轮那条的
+    const settings = this.fields.get(sessionId, { platform });
     const resolved = this.resolveLLM(settings.llm);
     if (!resolved) {
       const why = this.explainLLMFailure(settings.llm);
       this.logger.warn(`LLM 解析失败，无法处理消息：${toSource(why)}`);
       if (!reportOnly) {
         const text = t('systemNotice', { why });
-        await this.dispatchOutbound({
-          content: toSource(text),
-          text,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          source: 'system',
-          turnId,
-        });
+        await this.dispatchOutbound({ content: toSource(text), text, sessionId, platform, source: 'system', turnId });
       }
+      const outcome = signal.aborted ? 'aborted' : 'error';
       await this.caps.hooks.use.run('agent:turn:after', {
         inputs,
         reply: '',
-        outcome: signal.aborted ? 'aborted' : 'error',
+        outcome,
         ...(signal.aborted ? {} : { error: why }),
-        sessionId: incoming.sessionId,
+        sessionId,
         turnId,
       });
-      return;
+      return outcome;
     }
     const llm = resolved.use;
     // 这一轮的主模型能不能亲眼看图：按模型服务登记的能力（端点报告或单模型能力覆盖），
@@ -703,59 +675,50 @@ class DefaultAgent implements AgentService {
     const contextLength = llm.contextLength;
     const tokenBudget = this.computeTokenBudget(contextLength, maxTokens);
 
-    // 本回合经工具循环写入 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
-    // 只用于中止日志里的条数：中止时这些已完成的工具调用记录保留不回滚（见下方 catch 分支）。
-    const turnPersistedTimestamps: number[] = [];
-
     try {
       const { maxToolIterations, historyLimit } = settings;
       // 人设服务按这个会话自己读它的设置（人设、额外提示、结构化输出的两个开关）
-      const personaOpts: PersonaSessionOptions = { sessionId: incoming.sessionId, platform: incoming.platform };
+      const personaOpts: PersonaSessionOptions = { sessionId, platform };
 
       // 会话的深度思考档位：当前模型有这一档才带上；没设置、模型没有这一档或不能调时不带，由模型服务按它的默认档
       const level = settings.think;
       const thinking = llm.thinking?.levels.some(({ id }) => id === level) ? { think: level } : {};
 
-      const built = await this.buildMessages(incoming, historyLimit, acceptsImages, personaOpts, input.archived);
+      // 多方与否取根会话记下的聊天窗口，开轮时取一次：说明文字与焦点指引同一个出处
+      const multiParty = originChatOf(sessionId, this.caps.sessionManager)?.multiParty === true;
+      const built = await this.buildMessages(turn, inputs, historyLimit, acceptsImages, multiParty, personaOpts);
       const messages = built.messages;
-      /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用与结果 */
+      /** 会话历史的条数：这一轮开头的活跃条数（含没发给模型的），加本回合追加的工具调用、结果与插进来的输入 */
       let historyMessages = built.historyMessages;
       // 这个会话启用的工具分组：工具注册表按会话读它的设置，不在时没有工具
-      const enabledGroups = this.caps.tools.present
-        ? this.caps.tools.use.sessionGroups(incoming.sessionId, incoming.platform)
-        : [];
-      this.logger.debug(`工具分组: platform=${incoming.platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
+      const enabledGroups = this.caps.tools.present ? this.caps.tools.use.sessionGroups(sessionId, platform) : [];
+      this.logger.debug(`工具分组: platform=${platform}, enabledGroups=${JSON.stringify(enabledGroups)}`);
       const tools =
         reportOnly || !this.caps.tools.present ? [] : this.caps.tools.use.getDefinitions({ groups: enabledGroups });
-      const toolCtx: ToolCallRequest = {
-        // 会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义见它与 ToolCallContext，owner 的各个身份按权限服务合成
-        // 一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与内部注入。续做取起它的那一轮的发言者只用在这里，
-        // 归档与提示词贡献仍按输入本身的 userId
-        ...originTurnOf(
-          [incoming],
-          (platform, userId) => this.caps.authority.present && this.caps.authority.use.isOwner(platform, userId),
-        ),
+      const isOwner = (owner: string, userId: string) =>
+        this.caps.authority.present && this.caps.authority.use.isOwner(owner, userId);
+      /**
+       * 一批工具调用的上下文，按这批开始那一刻已送进模型的输入构造：会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义
+       * 见它与 ToolCallContext，owner 的各个身份按权限服务合成一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与
+       * 内部注入。叠进来的人从下一批起算，已执行的不追溯。续做取起它的那一轮的发言者只用在这里，归档与提示词贡献仍按输入本身的
+       * userId
+       */
+      const toolContext = (): ToolCallRequest => ({
+        ...originTurnOf(inputs.map(input => input.message) as [IncomingMessage, ...IncomingMessage[]], isOwner),
         // 恒为数组：没开分组时是 []（列举面本就等价于「只给无分组工具」），让执行面的分组闸总是生效
         enabledGroups,
         // 为 true 时本循环把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
         acceptsImages,
-        // 回合中止信号：等 owner 审批期间被 latest-wins / 手动 abort 掐掉的工具不再执行
+        // 回合中止信号：等审批期间这一轮被停下时，还没执行的工具不再执行
         signal,
         turnId,
-      };
+      });
 
       // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
       const originalTools = [...tools];
 
       // Hook: agent:llm:before — 插件可以修改消息或工具列表
-      const llmBeforeData = {
-        messages,
-        tools,
-        acceptsImages,
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
-        source: incoming.source,
-      };
+      const llmBeforeData = { messages, tools, acceptsImages, sessionId, platform, source: first.source };
       // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
       await assemblePromptContributions(this.caps, llmBeforeData, inputs, {
         buildTimeoutMs: this.promptBuildTimeoutMs,
@@ -775,12 +738,38 @@ class DefaultAgent implements AgentService {
         llmBeforeData.messages.push({
           role: 'system',
           content:
-            `[宿主通知]\n${incoming.content}${incoming.hostNotice?.untrusted ? `\n\n${incoming.hostNotice.untrusted}` : ''}\n\n` +
+            `[宿主通知]\n${first.content}${first.hostNotice?.untrusted ? `\n\n${first.hostNotice.untrusted}` : ''}\n\n` +
             '本轮只转述以上已确认的结果。沿用当前人设和回复格式，向当前会话自然地说明结果，保留通知中的链接；' +
             '不要调用工具、重新查询状态或继续执行，不把编号、内部流程当成回复正文，也不要编造通知里没有的细节。请给出非空回复。',
           metadata: { injector: WellKnownKinds.HostNotice },
         });
       }
+
+      /**
+       * 插入点（调用模型之前，组装与 agent:llm:before 之后、硬裁剪之前）：取这一轮待插入的输入，逐条归档、追加到消息末尾、挂上
+       * 各自的图，再增量组装、重跑 agent:llm:before（插进来的图要经它规范化），然后再取，取空为止
+       */
+      const insertJoined = async (data: typeof llmBeforeData) => {
+        for (let taken = this.queues.take(turn); taken.length > 0; taken = this.queues.take(turn)) {
+          const joined: TurnInput[] = [];
+          for (const message of taken) {
+            joined.push({ message, archived: await this.archiveIncomingMessage(message, { turnId, entry: 'joined' }) });
+            this.logRoute(message, '插入', turnId);
+          }
+          inputs.push(...joined);
+          // 多方房间里插进被点名的：在它们之前另加一块列出至今被点名的各条，不改前面那块（之后各次请求仍以之前的为前缀）
+          const focus = multiParty && joined.some(input => wasAddressed(input.message)) ? this.focusOf(inputs) : null;
+          if (focus) data.messages.push(focus);
+          for (const input of joined) data.messages.push(await this.inputMessage(input, acceptsImages));
+          historyMessages += joined.length;
+          await assemblePromptContributions(this.caps, data, inputs, {
+            buildTimeoutMs: this.promptBuildTimeoutMs,
+            signal,
+          });
+          await this.caps.hooks.use.run('agent:llm:before', data, undefined, { warnOnStall: true });
+        }
+      };
+      await insertJoined(llmBeforeData);
 
       /** 本回合到目前为止经过了硬裁剪：首次调用的裁剪结果写回底稿，之后各次调用都在它上面追加 */
       let turnTrimmed = false;
@@ -790,9 +779,7 @@ class DefaultAgent implements AgentService {
       const trimForCall = (list: Message[]) => {
         const sent = this.trimMessages(list, tokenBudget);
         if (sent.messages.length < list.length) {
-          this.logger.info(
-            `上下文硬裁剪: session=${incoming.sessionId}, ${list.length} → ${sent.messages.length} 条消息`,
-          );
+          this.logger.info(`上下文硬裁剪: session=${sessionId}, ${list.length} → ${sent.messages.length} 条消息`);
         }
         turnTrimmed ||= sent.trimmed;
         return { messages: sent.messages, untrimmedHistory: estimateHistoryTokens(list) + trimmedFromBase };
@@ -806,8 +793,8 @@ class DefaultAgent implements AgentService {
       // 每次模型调用之后发一次用量：拆分按这次发出的消息与工具定义估算，used 取模型服务返回的输入 token
       const reportUsage = (sent: ReturnType<typeof trimForCall>, sentTools: ToolDefinition[], response: ChatResponse) =>
         this.emitTokenUsage({
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
+          sessionId,
+          platform,
           turnId,
           contextWindow: contextLength,
           maxTokens,
@@ -853,8 +840,8 @@ class DefaultAgent implements AgentService {
           ...thinking,
         },
         turnId,
-        incoming.sessionId,
-        incoming.platform,
+        sessionId,
+        platform,
         !reportOnly,
       );
       await reportUsage(firstSent, llmBeforeData.tools, firstResult);
@@ -878,7 +865,7 @@ class DefaultAgent implements AgentService {
       // 收集工具调用摘要
       const toolCallSummaries: string[] = [];
 
-      const assistantMetadata = this.buildAssistantMetadata(incoming, turnId);
+      const assistantMetadata = this.buildAssistantMetadata(first, turnId);
 
       // 工具调用循环：上限没设即不限
       let iterations = 0;
@@ -912,6 +899,8 @@ class DefaultAgent implements AgentService {
 
         // 并行执行所有工具调用（互不依赖的工具无需串行等待）
         const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
+        // 这一批的参与者按此刻已送进模型的输入算
+        const toolCtx = toolContext();
 
         const parallelResults = await Promise.all(
           parsedCalls.map(async (parsed, position) => {
@@ -931,10 +920,10 @@ class DefaultAgent implements AgentService {
               result?: string,
             ) =>
               this.caps.events.use.emit('tool:execute', {
-                sessionId: incoming.sessionId,
+                sessionId,
                 turnId,
                 callId,
-                platform: incoming.platform,
+                platform,
                 toolName,
                 args: toolArgs,
                 phase,
@@ -1106,16 +1095,16 @@ class DefaultAgent implements AgentService {
         }
         historyMessages += 1 + toolMessages.length;
 
-        await this.saveToolCallGroup(incoming.sessionId, assistantToolMessage, toolMessages, turnPersistedTimestamps);
+        await this.saveToolCallGroup(sessionId, assistantToolMessage, toolMessages);
 
         // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
         const nextLlmData = {
           messages: llmBeforeData.messages,
           tools: [...originalTools],
           acceptsImages,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          source: incoming.source,
+          sessionId,
+          platform,
+          source: first.source,
         };
         // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
         await assemblePromptContributions(this.caps, nextLlmData, inputs, {
@@ -1123,6 +1112,7 @@ class DefaultAgent implements AgentService {
           signal,
         });
         await this.caps.hooks.use.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
+        await insertJoined(nextLlmData);
 
         // 裁剪消息以确保不超过上下文窗口
         const nextSent = trimForCall(nextLlmData.messages);
@@ -1139,8 +1129,8 @@ class DefaultAgent implements AgentService {
             ...thinking,
           },
           turnId,
-          incoming.sessionId,
-          incoming.platform,
+          sessionId,
+          platform,
         );
         await reportUsage(nextSent, nextLlmData.tools, nextResult);
         turnSegments.push(...nextResult.segments);
@@ -1155,10 +1145,13 @@ class DefaultAgent implements AgentService {
         response = nextLlmAfterData.response;
       }
 
+      // 最后一次模型调用返回了最后的回复：这一轮不再收输入，还没插进去的转为排队
+      this.queues.close(turn);
+
       // 检测是否因工具调用次数达到上限而退出循环
       const toolLimitReached = !withinLimit() && response.toolCalls != null && response.toolCalls.length > 0;
       if (toolLimitReached) {
-        this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${incoming.sessionId}`);
+        this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${sessionId}`);
       }
 
       // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
@@ -1169,8 +1162,8 @@ class DefaultAgent implements AgentService {
       // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
       const responseData: HookContextMap['agent:reply:before'] = {
         content: replyContent,
-        sessionId: incoming.sessionId,
-        platform: incoming.platform,
+        sessionId,
+        platform,
         attempt: 0,
       };
       const validateReply = async (): Promise<void> => {
@@ -1202,7 +1195,7 @@ class DefaultAgent implements AgentService {
       while (responseData.retryRequested && attempt < maxRetries) {
         attempt++;
         this.logger.debug(
-          `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
+          `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
         );
         if (rawLlmContent.length > 0) llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
         llmBeforeData.messages.push({
@@ -1220,8 +1213,8 @@ class DefaultAgent implements AgentService {
             ...thinking,
           },
           turnId,
-          incoming.sessionId,
-          incoming.platform,
+          sessionId,
+          platform,
           !reportOnly,
         );
         await reportUsage(retrySent, [], retryResult);
@@ -1244,7 +1237,7 @@ class DefaultAgent implements AgentService {
       // 强制把 content 置空，避免原始未校验内容被外发。
       if (responseData.retryRequested) {
         this.logger.warn(
-          `agent:reply:before 重试用尽但 retryRequested 仍为 true，强制丢弃回复内容 (session=${incoming.sessionId})`,
+          `agent:reply:before 重试用尽但 retryRequested 仍为 true，强制丢弃回复内容 (session=${sessionId})`,
         );
         responseData.content = '';
         responseData.retryRequested = false;
@@ -1259,26 +1252,26 @@ class DefaultAgent implements AgentService {
       // 拿解码后的纯文本去比永远不成立。
       const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
       if (archiveContent && lastAssistant?.content && archiveContent === lastAssistant.content) {
-        this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
+        this.logger.warn(`检测到重复回复，跳过发送 (session=${sessionId})`);
         replyContent = '';
       }
 
       // 提交点：此后的流结束标记、落库与外发成组执行。流结束后到这里之间（llm:after / 工具循环退出 /
-      // reply:before / 重试）被 latest-wins、手动停止或拆卸掐掉的回合，走下方 AbortError 收尾，不落库、不外发。
+      // reply:before / 重试）被停下的回合（停止键、禁言、停机等），走下方 AbortError 收尾，不落库、不外发。
       if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
 
       // 发出流结束标记
       await this.caps.events.use.emit('outbound:stream', {
-        sessionId: incoming.sessionId,
+        sessionId,
         turnId,
-        platform: incoming.platform,
+        platform,
         done: true,
         toolLimitReached,
       });
 
       // 空回复（outputFormat 中 reply 字段为空字符串或仅空白）时静默，不发送消息
       if (replyContent.trim().length === 0) {
-        this.logger.debug(`空回复，跳过发送 (session=${incoming.sessionId})`);
+        this.logger.debug(`空回复，跳过发送 (session=${sessionId})`);
       } else {
         const visibleSegments = !reportOnly && turnSegments.length > 0 ? turnSegments : undefined;
 
@@ -1301,7 +1294,7 @@ class DefaultAgent implements AgentService {
 
         // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
         // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
-        await this.saveToMemory(incoming.sessionId, {
+        await this.saveToMemory(sessionId, {
           role: 'assistant',
           content: archiveContent,
           reasoningContent: reportOnly ? undefined : response.reasoningContent,
@@ -1314,12 +1307,10 @@ class DefaultAgent implements AgentService {
         // 正文是她写的，其中的 @、媒体与引用标记交适配器解析
         await this.dispatchOutbound({
           content: replyContent,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          ...(incoming.hostNotice
-            ? { hostNotice: { kind: incoming.hostNotice.kind, id: incoming.hostNotice.id } }
-            : {}),
-          ...(incoming.hostNotice?.replyTo ? { replyTo: incoming.hostNotice.replyTo } : {}),
+          sessionId,
+          platform,
+          ...(first.hostNotice ? { hostNotice: { kind: first.hostNotice.kind, id: first.hostNotice.id } } : {}),
+          ...(first.hostNotice?.replyTo ? { replyTo: first.hostNotice.replyTo } : {}),
           markup: true,
           source: 'agent',
           turnId,
@@ -1333,48 +1324,24 @@ class DefaultAgent implements AgentService {
         inputs,
         reply: replyContent,
         outcome: turnOutcome,
-        sessionId: incoming.sessionId,
+        sessionId,
         turnId,
       });
+      return turnOutcome;
     } catch (err) {
       // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer。
       //
-      // 历史教训：早期版本会用 turnPersistedTimestamps 把"本轮已持久化的中间消息"全部删掉，
-      // 注释里写的是防"半截 assistant 内容 / 假回退"。但看 saveToolCallGroup（见下方）会发现：
-      //   1. saveToolCallGroup 只在并行工具全部落定后整组写入（assistant tool_call + 所有
-      //      tool result 一次性 push；单个工具的异常已在闭包内转成它自己的错误结果），不存在
-      //      写了一半的组；turnPersistedTimestamps 里只可能是"已落定、副作用已发生"的工具调用对。
-      //   2. 删除这些 = 让 agent 忘记自己刚刚做过的有副作用的事（戳一戳/发送消息/调度任务/…），
-      //      下一轮 LLM 看不到自己的行为，会重复调用，外部观察就是"agent 一直以为戳不了"。
-      //   3. 真正的 orphan 风险（assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory
-      //      在装载历史时兜底过滤，不需要 abort 路径主动删除。
-      // 所以这里不再回滚，让已完成的工具调用记录留在 memory，agent 下一轮能正确感知。
+      // 被停下的一轮里已完成的工具调用组留在历史里，不回滚：saveToolCallGroup 只在并行工具全部落定后整组写入（单个工具的
+      // 异常已在闭包内转成它自己的错误结果），不存在写了一半的组，留下的只可能是「已落定、副作用已发生」的工具调用对；删掉
+      // 它们等于让 agent 忘记自己刚做过的有副作用的事（戳一戳、发送消息、调度任务等），下一轮会重复调用。不完整的组
+      // （assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory 在装载历史时兜底过滤。
       if (err instanceof DOMException && err.name === 'AbortError') {
-        this.logger.info(
-          `生成已中止: session=${incoming.sessionId}` +
-            (turnPersistedTimestamps.length > 0
-              ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
-              : ''),
-        );
-        await this.caps.events.use.emit('outbound:stream', {
-          sessionId: incoming.sessionId,
-          turnId,
-          platform: incoming.platform,
-          done: true,
-        });
+        await this.caps.events.use.emit('outbound:stream', { sessionId, turnId, platform, done: true });
 
         // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
         // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
-        // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
-        await this.caps.hooks.use.run('agent:turn:after', {
-          inputs,
-          reply: '',
-          outcome: 'aborted',
-          sessionId: incoming.sessionId,
-          turnId,
-        });
-
-        return;
+        await this.caps.hooks.use.run('agent:turn:after', { inputs, reply: '', outcome: 'aborted', sessionId, turnId });
+        return 'aborted';
       }
 
       const error = textOf(err);
@@ -1382,22 +1349,10 @@ class DefaultAgent implements AgentService {
 
       // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
       // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
-      await this.caps.events.use.emit('outbound:stream', {
-        sessionId: incoming.sessionId,
-        turnId,
-        platform: incoming.platform,
-        done: true,
-      });
+      await this.caps.events.use.emit('outbound:stream', { sessionId, turnId, platform, done: true });
       if (!reportOnly) {
         const text = t('turnError', { error });
-        await this.dispatchOutbound({
-          content: toSource(text),
-          text,
-          sessionId: incoming.sessionId,
-          platform: incoming.platform,
-          source: 'system',
-          turnId,
-        });
+        await this.dispatchOutbound({ content: toSource(text), text, sessionId, platform, source: 'system', turnId });
       }
 
       // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
@@ -1406,26 +1361,30 @@ class DefaultAgent implements AgentService {
         reply: '',
         outcome: 'error',
         error,
-        sessionId: incoming.sessionId,
+        sessionId,
         turnId,
       });
+      return 'error';
     }
   }
 
   /**
-   * 构建发送给 LLM 的消息列表。历史按会话的条数线成段丢弃（见 readHistory）：historyLimit 为 0 或没设置时发全部活跃历史。
-   * historyMessages 是会话的活跃条数（含已归档的这一轮入站消息与没发给模型的部分），与之后的清洗、裁剪无关。
+   * 构建发送给 LLM 的消息列表。历史按会话的条数线成段丢弃（见 readHistory）：historyLimit 为 0 或没设置时发全部活跃历史，
+   * 跳过这一轮各条输入的归档。historyMessages 是会话的活跃条数（含已归档的这一轮的输入与没发给模型的部分），与之后的清洗、
+   * 裁剪无关。历史之后依次是易变块、由排着的真人消息开的一轮的说明、多方房间里有被点名的输入时的焦点指引、各条输入。
    * acceptsImages 是这一轮的主模型能不能看图，media 缺席时由它定当轮的图交不交
    */
   private async buildMessages(
-    incoming: IncomingMessage,
+    turn: Turn,
+    inputs: readonly TurnInput[],
     historyLimit: number | undefined,
     acceptsImages: boolean,
-    personaOpts?: PersonaSessionOptions,
-    archivedIncoming?: Message,
+    multiParty: boolean,
+    personaOpts: PersonaSessionOptions,
   ): Promise<{ messages: Message[]; historyMessages: number }> {
     const messages: Message[] = [];
     let historyMessages = 0;
+    const { sessionId } = turn;
 
     // 1. 系统提示
     const systemPrompt = this.buildSystemPrompt(personaOpts);
@@ -1435,12 +1394,13 @@ class DefaultAgent implements AgentService {
     const memory = this.caps.memory.present ? this.caps.memory.use : undefined;
     if (memory) {
       try {
-        const stored = await readHistory(memory, incoming.sessionId, historyLimit);
+        const stored = await readHistory(memory, sessionId, historyLimit);
         historyMessages = stored.count;
-        const history = this.sanitizeToolCallHistory(stored.messages, incoming.sessionId);
+        const history = this.sanitizeToolCallHistory(stored.messages, sessionId);
+        const archived = inputs.flatMap(input => (input.archived ? [input.archived] : []));
         const now = Date.now();
         for (const m of history) {
-          if (archivedIncoming && this.isSameMessage(m, archivedIncoming)) continue;
+          if (archived.some(input => this.isSameMessage(m, input))) continue;
           if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
           // 为用户消息注入时间标注，帮助 LLM 理解时间先后。标注加在副本上：记忆服务可能直接交出存着的消息对象
           if (m.role === 'user' && m.timestamp && m.content) {
@@ -1457,32 +1417,17 @@ class DefaultAgent implements AgentService {
       }
     }
 
-    // 3. 当前消息
-    //
-    // 内容主体由 message-archive 烘焙：sender 前缀 / 引用回复 / 图片描述 / 附件描述
-    // 都已经写进 archivedIncoming.content。这里只在外层加一个时间标注，
-    // 保证「LLM 看到的当前消息」与「历史消息」「向量库存档」三者一致。
-    // 存档不在时按同一份拼法与同一条说话人规则自己拼（schema-message 的 buildIncomingContent、api-message-archive 的 speakerOf）。
-    const nowLabel = formatTimeLabel(Date.now(), Date.now());
-    const body =
-      archivedIncoming?.content ??
-      buildIncomingContent(
-        incoming,
-        speakerOf(incoming, {
-          sessionManager: this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined,
-          authority: this.caps.authority.present ? this.caps.authority.use : undefined,
-        }),
-      );
-    const currentContent = `(${nowLabel}) ${body}`;
+    // 3. 这一轮的输入。带来源的注入各自成一轮，宿主通知与委派只有这一条
+    const first = inputs[0].message;
 
     // 宿主通知分支：宿主撰写的事件通知不是任何人的发言，与 proactive 一样以 system 呈现、
     // 不推当前 user 消息与易变块。不可信段只在当轮接在宿主正文之后（归档只留正文），
     // 之后的回合从历史里只看得到宿主正文。
-    if (incoming.hostNotice) {
-      const { untrusted } = incoming.hostNotice;
+    if (first.hostNotice) {
+      const { untrusted } = first.hostNotice;
       messages.push({
         role: 'system',
-        content: `[宿主通知]\n${incoming.content}${untrusted ? `\n\n${untrusted}` : ''}`,
+        content: `[宿主通知]\n${first.content}${untrusted ? `\n\n${untrusted}` : ''}`,
         metadata: { injector: WellKnownKinds.HostNotice },
       });
       return { messages, historyMessages };
@@ -1493,12 +1438,12 @@ class DefaultAgent implements AgentService {
     // 这条消息不是用户请求，必须作为 system 指令呈现给 LLM，否则 agent 会把它当成
     // 真实用户在指挥（典型 BUG：agent 看到 user 角色的任务指令，回复时使用「您」
     // 「您好」等措辞，把派发方当成了用户）。
-    if (incoming.triggerType === 'proactive') {
+    if (first.triggerType === 'proactive') {
       messages.push({
         role: 'system',
         content:
           `[跨会话委派 — 非用户消息]\n` +
-          `任务: ${incoming.content}\n\n` +
+          `任务: ${first.content}\n\n` +
           `说明: 这是你（作为同一 agent 在另一会话的实例）派发给本会话的任务指令，` +
           `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n`,
         metadata: { injector: WellKnownKinds.CrossSessionDelegation },
@@ -1508,7 +1453,7 @@ class DefaultAgent implements AgentService {
 
     // 3b. 普通用户消息分支
     // 本轮附件有描述正文（媒体识别的描述、文件说明）时，引导 LLM 综合作答而非逐项转述
-    if (hasAttachmentDescriptions(incoming)) {
+    if (inputs.some(input => hasAttachmentDescriptions(input.message))) {
       messages.push({
         role: 'system',
         content:
@@ -1519,15 +1464,46 @@ class DefaultAgent implements AgentService {
       });
     }
 
+    // 易变上下文（当前时间 / 会话环境 / 上一轮状态）落在历史**之后**：
+    // provider 的前缀缓存从第一个 token 起逐位比对，这几块原本混在人设卡开头，
+    // 秒级时间戳一变，人设 + 记忆 + 历史近 7 万 token 的前缀全部作废——实测每个
+    // 新回合命中率恒为 0，只有同回合内的工具迭代（prompt 不重建）才命中。
+    // 放到这里语义也更顺：它们本就是「此刻的事实」，紧挨当前消息说更自然。
+    const persona = this.caps.persona.present ? this.caps.persona.use : undefined;
+    const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
+    if (volatileCtx) {
+      messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
+    }
+
+    // 由排着的真人消息开的一轮：说明它们是上一轮进行期间到的；多方房间里全是没点名她的插话时，没有要接的可以不说话
+    if (turn.queued && turn.human) messages.push(queuedNote(multiParty && !turn.batch.some(wasAddressed)));
+
+    // 群聊焦点指引：多方房间里有被点名的输入时，紧贴在这一轮的输入之前，逐条列出被点名的那几条
+    const focus = multiParty ? this.focusOf(inputs) : null;
+    if (focus) messages.push(focus);
+
+    for (const input of inputs) messages.push(await this.inputMessage(input, acceptsImages));
+
+    return { messages, historyMessages };
+  }
+
+  /**
+   * 一条输入发给模型的写法：`(时间) <归档正文>`。正文由 message-archive 烘焙（发送者前缀、引用回复、附件描述）；存档不在时
+   * 按同一份拼法与同一条说话人规则自己拼（schema-message 的 buildIncomingContent、api-message-archive 的 speakerOf）。时间取
+   * 归档时间戳，即进入这一轮的时刻：之后进历史时是同一个标注，前缀不变。带图的挂上它自己的图
+   */
+  private async inputMessage({ message, archived }: TurnInput, acceptsImages: boolean): Promise<Message> {
+    const body = archived?.content ?? buildIncomingContent(message, this.speakerOf(message));
+    const at = archived?.timestamp ?? Date.now();
     const userMessage: Message = {
       role: 'user',
-      content: currentContent,
-      name: getMessageName(incoming.userId),
-      timestamp: Date.now(),
+      content: `(${formatTimeLabel(at, Date.now())}) ${body}`,
+      name: getMessageName(message.userId),
+      timestamp: at,
     };
 
     // 多模态：把 attachments 中的 image 项传递给 LLM（视觉模型多模态字段）
-    const imageAtts = incoming.attachments?.filter(a => a.kind === 'image') ?? [];
+    const imageAtts = message.attachments?.filter(a => a.kind === 'image') ?? [];
     if (imageAtts.length > 0) {
       if (this.caps.media.present) {
         // media 在场：原样透传。出口形态由 media 的 agent:llm:before 中间件规范化
@@ -1548,27 +1524,29 @@ class DefaultAgent implements AgentService {
         if (images.length > 0) userMessage.images = images;
       }
     }
+    return userMessage;
+  }
 
-    // 易变上下文（当前时间 / 会话环境 / 上一轮状态）落在历史**之后**：
-    // provider 的前缀缓存从第一个 token 起逐位比对，这几块原本混在人设卡开头，
-    // 秒级时间戳一变，人设 + 记忆 + 历史近 7 万 token 的前缀全部作废——实测每个
-    // 新回合命中率恒为 0，只有同回合内的工具迭代（prompt 不重建）才命中。
-    // 放到这里语义也更顺：它们本就是「此刻的事实」，紧挨当前消息说更自然。
-    const persona = this.caps.persona.present ? this.caps.persona.use : undefined;
-    const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
-    if (volatileCtx) {
-      messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
-    }
+  /** 一条输入的说话人：与存档的发送者前缀同一条规则（api-message-archive 的 speakerOf） */
+  private speakerOf(message: IncomingMessage): Pick<IncomingMessage, 'nickname' | 'userId'> | undefined {
+    return speakerOf(message, {
+      sessionManager: this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined,
+      authority: this.caps.authority.present ? this.caps.authority.use : undefined,
+    });
+  }
 
-    // 群聊焦点指引：多方窗口里 triggerType ∈ {direct, immediate} 时注入，紧贴在当前 user 消息前，告诉 LLM "下一条就是焦点"。
-    // 多方标记与网关算聊天范围同一个算法（这个平台适配器的类型声明），详细动机见 helpers.ts。
-    const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === incoming.platform);
-    const focusGuidance = buildFocusGuidance(incoming, chatScopeOf(incoming, sessionTypesOf(adapter)).multiParty);
-    if (focusGuidance) messages.push(focusGuidance);
-
-    messages.push(userMessage);
-
-    return { messages, historyMessages };
+  /**
+   * 这一轮被点名的输入的焦点指引：按时间与发送者账号逐条列出（名字由各条正文的发送者前缀给，群友自己设的名字不进系统消息）；
+   * 没有被点名的为 null
+   */
+  private focusOf(inputs: readonly TurnInput[]): Message | null {
+    return buildFocusGuidance(
+      inputs.flatMap(({ message, archived }) => {
+        if (!wasAddressed(message)) return [];
+        const time = formatTimeLabel(archived?.timestamp ?? Date.now(), Date.now());
+        return [message.userId ? `(${time}) ${message.userId}` : `(${time})`];
+      }),
+    );
   }
 
   /**
@@ -2068,17 +2046,13 @@ class DefaultAgent implements AgentService {
     sessionId: string,
     assistantMessage: Message,
     toolMessages: Message[],
-    persistedTimestamps?: number[],
   ): Promise<void> {
     const timestamp = Date.now();
     await this.saveToMemory(sessionId, { ...assistantMessage, timestamp });
-    persistedTimestamps?.push(timestamp);
     for (let i = 0; i < toolMessages.length; i++) {
-      const ts = timestamp + i + 1;
       // 工具交出的图只服务本回合的主模型（data URI 体积大、历史回看也不再需要它），不落库
       const { images: _transient, ...persisted } = toolMessages[i];
-      await this.saveToMemory(sessionId, { ...persisted, timestamp: ts });
-      persistedTimestamps?.push(ts);
+      await this.saveToMemory(sessionId, { ...persisted, timestamp: timestamp + i + 1 });
     }
   }
 
@@ -2131,36 +2105,19 @@ class DefaultAgent implements AgentService {
     return isSameMessage(a, b);
   }
 
-  private async archiveIncomingMessageInOrder(
-    lane: string,
-    incoming: IncomingMessage,
-    turnId: string,
+  /**
+   * 归档一条输入：进了一轮的带回合 id 与进入方式（开轮 opened，插进来 joined），放掉的不带。闲置主动触发是系统提示，不作为
+   * user 消息写入历史
+   */
+  private async archiveIncomingMessage(
+    message: IncomingMessage,
+    turn?: { turnId: string; entry: 'opened' | 'joined' },
   ): Promise<Message | undefined> {
-    const previous = this.archiveQueues.get(lane) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => this.archiveIncomingMessage(incoming, turnId));
-    const tail = current.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.archiveQueues.set(lane, tail);
-
-    try {
-      return await current;
-    } finally {
-      if (this.archiveQueues.get(lane) === tail) {
-        this.archiveQueues.delete(lane);
-      }
-    }
-  }
-
-  /** 归档开轮的输入，记下它进的这一轮 */
-  private async archiveIncomingMessage(incoming: IncomingMessage, turnId: string): Promise<Message | undefined> {
-    // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
-    if (incoming.source === 'idle-trigger') return undefined;
+    if (message.source === 'idle-trigger') return undefined;
     const archive = this.getArchiveForWrite();
     if (!archive) return undefined;
     try {
-      const result = await archive.archiveIncoming(incoming, { turnId, entry: 'opened' });
+      const result = await archive.archiveIncoming(message, turn);
       return result.message;
     } catch (err) {
       this.logger.warn('归档用户消息失败:', err);
@@ -2279,18 +2236,28 @@ function run(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const agentImpl = new DefaultAgent(caps, cfg, caps.lifecycle.use.id);
   caps.provide.use(agentService, agentImpl);
-  // 收尾段中止在飞回合并等 AbortError 落定。
-  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
+  // 收尾段停下全部在跑的一轮、放掉排着的（归档；按 core 的关停编排 agent 关完之前存档还在），等它们以 AbortError 收尾落定；
+  // 之后到的输入一律放掉。第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
   // session-manager 的 onDrain 兜的是未装 agent 或钩子未挂上的路径。
   // 超时沿用 core 对 onDrain 的 disposeTimeoutMs，不另加配置键。
-  caps.lifecycle.use.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
-  // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。
-  caps.lifecycle.use.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
-  // 会话删除：会话管理先发这个事件再清数据。停掉这个会话在跑的回合并等它们收尾（被停的一轮不落库、不外发），清数据因此在
-  // 回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
+  caps.lifecycle.use.onDrain(() => agentImpl.queues.shutdown(), '停下在跑的回合');
+  // 清理段再停一次：drain 超时或未走到收尾时的兜底，不再等落定；已停下的是空操作。
+  caps.lifecycle.use.onDispose(() => void agentImpl.queues.shutdown(), '停下在跑的回合（兜底）');
+  // 会话删除：会话管理先发这个事件再清数据。停掉这个会话在跑的一轮、放掉排着的（不归档）并等它收尾（被停的一轮不落库、
+  // 不外发），清数据因此在回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
   caps.events.use.on('session:deleted', async sessionId => {
-    await agentImpl.abortInflightAndSettle(sessionId);
+    await agentImpl.queues.delete(sessionId);
     agentImpl.dropTokenLogState(sessionId);
+  });
+  // 清消息历史（/clear 不指定类型或含 context）：先停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再清。被停的一轮
+  // 落定之前还会写工具调用组，先停后清，清空的历史里才不留它的写入
+  caps.hooks.use.middleware('memory:clear', async (data, next) => {
+    if (!data.types || data.types.includes('context')) {
+      const { queues } = agentImpl;
+      const targets = data.scope === 'all' ? queues.sessions() : data.sessionId ? [data.sessionId] : [];
+      await queues.stopAll(targets, { archive: false, reason: '/clear' });
+    }
+    await next();
   });
   const agent = agentImpl as unknown as InternalAgent;
 

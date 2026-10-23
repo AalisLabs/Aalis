@@ -50,6 +50,7 @@ async function setup(manualReview: boolean, hot = false, reviewEnabled = true) {
       });
     },
     async assignModel() {},
+    abort: () => false,
   });
   await app.plugin(gatewayPlugin);
   await app.plugins.idle();

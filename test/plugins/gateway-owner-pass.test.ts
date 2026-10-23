@@ -146,6 +146,7 @@ async function setup(opts: SetupOptions) {
     if (m.source === 'agent' && m.sessionId) replied.push(m.sessionId);
   });
   host.provide.use(agent, {
+    abort: () => false,
     async handleMessage(msg: IncomingMessage) {
       received.push(msg);
       await host.gateway.use.dispatchOutbound({
@@ -212,7 +213,7 @@ async function setup(opts: SetupOptions) {
     dispatched: (sid: string) => received.filter(m => m.sessionId === sid).map(m => m.content),
     replies: (sid: string) => replied.filter(id => id === sid).length,
     /** 触发插件对这个会话的判定日志（两个插件同一格式） */
-    judged: (sid: string) => logs.filter(e => e.message.includes(`判定 | session=${sid} |`)),
+    judged: (sid: string) => logs.filter(e => new RegExp(`判定 #\\d+ \\| session=${sid} \\|`).test(e.message)),
     idles: () => received.filter(m => m.source === 'idle-trigger').map(m => m.sessionId),
     sidecarRequests: () => sidecar?.requests() ?? 0,
   };

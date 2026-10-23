@@ -139,6 +139,35 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
     expect(h.outgoing[0]).toMatchObject({ source: 'agent', content: `做好啦：${URL}` });
   });
 
+  it('通知排在房间里在跑的真人回合之后，仍在自己的异步上下文里开轮，认出自己那一轮的结局', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    let held = 0;
+    const h = await boot(
+      [
+        { content: JSON.stringify({ message: '真人那一轮的回复', mood: '平静' }) },
+        { content: JSON.stringify({ message: `做好啦：${URL}`, mood: '高兴' }) },
+      ],
+      { hold: () => (held++ === 0 ? gate : undefined) },
+    );
+    const human = h.host.agent.use.handleMessage({
+      content: '在吗',
+      sessionId: ROOM,
+      platform: 'onebot',
+      userId: '30001',
+      sessionType: 'group',
+      groupId: '20001',
+    });
+    await vi.waitFor(() => expect(held).toBe(1));
+    const notice = h.send();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(h.outgoing, '通知那一轮排在真人回合之后').toEqual([]);
+    release();
+    await human;
+    await notice;
+    expect(h.outgoing.map(message => message.content)).toEqual(['真人那一轮的回复', `做好啦：${URL}`]);
+  });
+
   it('通知模型误调用状态工具后，给一次纠正机会，由她本人回复而不是立刻兜底', async () => {
     const h = await boot([
       {
@@ -430,7 +459,7 @@ describe('发布完成通知：真实 Gateway、Agent 与 persona', () => {
   it('中止回合不兜底；关闭后不再发通知', async () => {
     const h = await boot();
     h.host.hooks.use.middleware('agent:llm:before', async () => {
-      h.host.agent.use.abort?.(ROOM);
+      h.host.agent.use.abort(ROOM);
     });
     await expect(h.send()).rejects.toThrow();
     expect(h.outgoing).toHaveLength(0);

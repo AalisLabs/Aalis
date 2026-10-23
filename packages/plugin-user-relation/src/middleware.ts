@@ -16,6 +16,7 @@
 import type { PromptContributionView } from '@aalis/api-agent';
 import type { Contributions } from '@aalis/api-contributions';
 import type { ServiceSelection } from '@aalis/core';
+import { wasAddressed } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -86,10 +87,8 @@ async function buildBlock(
   // 主发言者：点名的输入里有账号的发言者，按人去重、按输入先后
   const personIds = [
     ...new Set(
-      data.inputs.flatMap(({ message: { triggerType = 'direct', platform, userId } }) =>
-        (triggerType === 'direct' || triggerType === 'immediate') && userId && platform
-          ? [`${platform}:${userId}`]
-          : [],
+      data.inputs.flatMap(({ message }) =>
+        wasAddressed(message) && message.userId && message.platform ? [`${message.platform}:${message.userId}`] : [],
       ),
     ),
   ];

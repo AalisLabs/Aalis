@@ -143,5 +143,5 @@ export async function participantsApp({
   };
 
   const webuiCards = (): Approval[] => conn?.notifications('approval/requested').map(p => p.approval) ?? [];
-  return { host, attend, execute, conn, webuiCards };
+  return { app, host, attend, execute, conn, webuiCards };
 }

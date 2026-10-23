@@ -1883,7 +1883,7 @@ function runAdapter(caps: Caps): void {
 
   // ===== 请求事件处理（加好友 / 加群 / 邀请入群）=====
   // 合成的系统通知带 source：属于系统侧注入，不经触发判定、不过回复后冷却（禁言与限速照常），
-  // agent 按「会话 + 来源」分道，与同一会话的真人消息互不打断
+  // 在 agent 里各自成一轮，排在同一会话在跑的一轮之后
 
   function handleRequestEvent(state: ConnectionState, raw: OneBotRawEvent): void {
     if (!state.protocol) return;

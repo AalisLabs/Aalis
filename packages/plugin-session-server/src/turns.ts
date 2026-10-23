@@ -59,9 +59,9 @@ export function createTurnControl(deps: TurnControlDeps) {
     },
     'turn/abort': ({ sessionId, turnId }) => {
       requireSession(sessionId);
-      const agent = deps.agent.present ? deps.agent.use : undefined;
-      if (!agent?.abort) throw failure('unsupported', '没有能停止回合的 agent 服务');
-      if (!agent.abort(sessionId, turnId) && turnId !== undefined) {
+      if (!deps.agent.present) throw failure('unsupported', '没有能停止回合的 agent 服务');
+      // 停止键只停在跑的一轮，排着的照常开下一轮
+      if (!deps.agent.use.abort(sessionId, { turnId, reason: '停止键' }) && turnId !== undefined) {
         throw failure('expected-turn-mismatch', `这一轮不在跑：${turnId}`);
       }
       return {};

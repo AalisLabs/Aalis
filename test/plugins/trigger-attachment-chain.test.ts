@@ -124,6 +124,7 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
   const preprocess = buildPreprocessor({ events: host.events, logger: fixedRef(silent) }, svc);
   const entered: IncomingMessage[] = [];
   host.provide.use(agent, {
+    abort: () => false,
     async handleMessage(msg: IncomingMessage) {
       entered.push(msg);
       await preprocess(msg, async () => {

@@ -137,6 +137,7 @@ describe('工作流运行的错误原因', () => {
       } as never,
       events: { emit: async () => {} } as never,
       hooks: {} as never,
+      gateway: { present: false } as never,
       logger: silent,
       runId: 'zz-run',
       vars: {},

@@ -42,8 +42,8 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // 白纸完成通知进入真实的 agent（集成）：真实 plugin-gateway、plugin-agent、plugin-tools、
 // message-archive（内存 memory）、plugin-paper；远端是 ScriptedRemote，LLM 是按请求内容作答的替身。
 //
-// - 每件任务的通知用各自的 source，各占一条 lane：第二条通知进来时，第一条通知那一轮（卡在 paper_send
-//   的发送上）不被中止，两轮都完成各自的 paper_send；
+// - 每件任务的通知各自成一轮：第二条通知进来时排在第一条通知那一轮（卡在 paper_send 的发送上）之后，第一轮不被中止，
+//   两轮都完成各自的 paper_send；
 // - 通知回合调 paper_task 被拒（source 非空）；远端说明只在通知那一轮出现，之后的真人回合看不到；
 // - 禁言吞掉通知之后，下一个真人回合仍看得到待交付提示，paper_send 之后提示消失；
 // - 通知不进向量库。
@@ -260,14 +260,16 @@ async function boot(
 const noticeTurns = (turns: Turn[]) => turns.filter(t => t.source?.startsWith('paper:'));
 
 describe('白纸通知进入 agent', () => {
-  it('每件任务的通知各占一条 lane：第二条通知进来时，第一轮（卡在 paper_send）不被中止，两轮都发出各自的成品', async () => {
+  it('每件任务的通知各自成一轮：第二条通知排在第一轮（卡在 paper_send）之后，第一轮不被中止，两轮都发出各自的成品', async () => {
+    // 两轮一前一后，回复要各不相同：与上一条 assistant 消息相同的回复按卡壳静默
     const h = await boot(request => {
-      if (request.messages.at(-1)?.role === 'tool') return { content: '发好了' };
+      const last = request.messages.at(-1);
+      if (last?.role === 'tool') return { content: `发好了（${last.toolCallId}）` };
       const artifact = artifactIn(currentNotice(request));
       if (artifact) return callTool('paper_send', { artifact_id: artifact }, `call-${artifact}`);
       return { content: '好' };
     });
-    // 带附件的出站卡住，直到两条都卡上再一起放行：第一轮的 paper_send 因此在第二条通知进来时仍未返回
+    // 带附件的出站卡住，第二条通知排上之后才放行：第一轮的 paper_send 因此在第二条通知进来时仍未返回
     let release!: () => void;
     const gate = new Promise<void>(resolve => {
       release = resolve;
@@ -287,8 +289,13 @@ describe('白纸通知进入 agent', () => {
     h.remote.outputs.set(t2, [{ rel: 'two.png', data: PNG }]);
     h.remote.finish(await h.running(t1));
     await waitFor(() => held === 1, '第一轮卡在 paper_send');
+    let waiting = 0;
+    h.host.events.use.on('agent:queue', state => {
+      if (state.sessionId === ROOM) waiting = state.waiting.length;
+    });
     h.remote.finish(await h.running(t2));
-    await waitFor(() => held === 2, '第二轮卡在 paper_send');
+    await waitFor(() => waiting === 1, '第二条通知排着');
+    expect(held, '第二条通知没开轮').toBe(1);
     release();
     await waitFor(() => noticeTurns(h.turns).length === 2, '两轮通知回合结束');
 

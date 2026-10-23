@@ -268,7 +268,7 @@ interface ApprovalSettlement {
 |---|---|---|
 | `turn/send` | `{ sessionId, content, attachments? }` | `{}`；以连接的身份发一条入站消息，网关收下就回，回合的进展经条目推送。文字去掉首尾空白；只有附件、没写文字的照常发出，两者都空（含只有空白）的不合参数 |
 | `turn/continue` | `{ sessionId }` | `{}`；工具调用达到上限后请她接着做 |
-| `turn/abort` | `{ sessionId, turnId? }` | `{}`；不带 `turnId` 停这个会话所有在跑的回合，带 `turnId` 时只停那一轮，对不上回 `expected-turn-mismatch` |
+| `turn/abort` | `{ sessionId, turnId? }` | `{}`；停下这个会话在跑的一轮（排着的随即开下一轮），带 `turnId` 时只在那一轮还在跑时停，对不上回 `expected-turn-mismatch` |
 | `session/compress` | `{ sessionId }` | `{}`；调压缩服务，压完才回，进度以 `compress` 通知推送，之后推最新用量。没压成（摘要模型不在或失败、期间会话被清空或历史被改动）回 `internalError`，错误信息写明原因，压缩通知同样写明失败；这个会话正在压缩时直接拒绝，同样回 `internalError`，时间线上没有新的通知 |
 | `turn/rewind` | `{ sessionId, turnId, scope: 'code' \| 'code-and-chat' }` | 回滚结果，字段同 [api-checkpoint](./api-checkpoint.md) 的 `RollbackResult`，连对话一起回滚时另有 `deletedMessages`、`chatDeleted`；回合 id 就是 agent 的 `turnId`。检查点只按已提交（收尾）的回合回滚，在跑的回合没有可回滚的清单；界面只在这个会话没有回合在跑时，给已收尾的回合出回滚入口 |
 | `plan/clear` | `{ sessionId }` | `{}` |
@@ -286,7 +286,7 @@ interface ApprovalSettlement {
 | `background/changed`（通知） | `{ upserts: BackgroundTask[], removes: string[] }` | — |
 | `background/output` | `{ taskId, after? }` | `{ text, end, truncated }`：`text` 是 `after` 之后的输出，`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾，`after` 早于缓冲的开头时 `truncated` 为真。Aalis 重启之前的任务没有留下输出 |
 | `background/stop` | `{ taskId }` | `{}`；中止它并等它落定（最多几秒）才回，状态经 `background/changed` 推出（`stopped`）。被停止的不给她发结束通知 |
-| `background/stopAll` | `{ sessionId }` | `{}`；停掉这个会话下面的全部后台工作：各级子会话在跑的回合，本会话与各级子会话在跑的后台任务，等任务落定才回。本会话自己的回合不停（那是 `turn/abort`） |
+| `background/stopAll` | `{ sessionId }` | `{}`；停掉这个会话下面的全部后台工作：各级子会话在跑的回合与排着的输入，本会话与各级子会话在跑的后台任务，等任务落定才回。本会话自己的回合不停（那是 `turn/abort`） |
 
 ```ts
 interface BackgroundTask {

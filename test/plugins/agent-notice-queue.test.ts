@@ -13,8 +13,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 续做与真人消息互不打断：同一会话不同来源的回合各走各的道，起它的人在同一会话说话也不中止续做那一轮，宿主通知也不打断
-// 真人的回合。新消息怎么对待在跑的一轮（并进、排队）归通道层。
+// 续做与真人消息互不打断：新消息从不中止在跑的一轮。起它的人在同一会话说话，她的话排在续做那一轮之后单独一轮；宿主通知
+// 到达时排在真人的回合之后（带来源的注入各自成一轮，不与别的输入叠加）。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-slice1-preempt';
@@ -41,12 +41,13 @@ async function waitFor(pred: () => boolean, label: string): Promise<void> {
   throw new Error(`等不到：${label}`);
 }
 
-/** 模型第一次调用卡住的工具，之后一律回文字；卡住的工具等到放行或本回合中止 */
+/** 模型第一次调用卡住的工具，之后各回一句不同的文字；卡住的工具等到放行或本回合中止 */
 async function boot() {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
-  await app.plugin(createMockLLMPlugin({ responses: [callHold, { content: '好' }] }));
+  let calls = 0;
+  await app.plugin(createMockLLMPlugin({ responses: () => (++calls === 1 ? callHold : { content: `好 ${calls}` }) }));
   await app.plugin(toolsPlugin, {});
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -95,26 +96,34 @@ const notice: IncomingMessage = {
 const human: IncomingMessage = { content: '停', sessionId: SESSION, ...OWNER };
 
 describe('续做与真人消息互不打断', () => {
-  it('起它的人在同一会话说话：续做那一轮不中止', async () => {
+  it('起它的人在同一会话说话：续做那一轮不中止，她的话排在它之后单独一轮', async () => {
     const h = await boot();
     const noticeTurn = h.agent.handleMessage(notice);
     await waitFor(() => h.held.length === 1, '续做那一轮卡在工具上');
-    await h.agent.handleMessage(human);
+    const humanTurn = h.agent.handleMessage(human);
+    await new Promise(resolve => setImmediate(resolve));
     expect(h.held[0].signal?.aborted).toBe(false);
+    expect(h.turns, '她的话排着').toEqual([]);
     h.release();
-    await noticeTurn;
-    expect(h.turns).toContainEqual({ source: 'bg:bg_0a1b2c_1', outcome: 'replied' });
-    expect(h.turns).toContainEqual({ source: undefined, outcome: 'replied' });
+    await Promise.all([noticeTurn, humanTurn]);
+    expect(h.turns).toEqual([
+      { source: 'bg:bg_0a1b2c_1', outcome: 'replied' },
+      { source: undefined, outcome: 'replied' },
+    ]);
   });
 
-  it('宿主通知到达不中止在飞的真人回合', async () => {
+  it('宿主通知到达不中止在飞的真人回合，排在它之后单独一轮', async () => {
     const h = await boot();
     const humanTurn = h.agent.handleMessage(human);
     await waitFor(() => h.held.length === 1, '真人回合卡在工具上');
-    await h.agent.handleMessage(notice);
+    const noticeTurn = h.agent.handleMessage(notice);
+    await new Promise(resolve => setImmediate(resolve));
     expect(h.held[0].signal?.aborted).toBe(false);
     h.release();
-    await humanTurn;
-    expect(h.turns).toContainEqual({ source: undefined, outcome: 'replied' });
+    await Promise.all([humanTurn, noticeTurn]);
+    expect(h.turns).toEqual([
+      { source: undefined, outcome: 'replied' },
+      { source: 'bg:bg_0a1b2c_1', outcome: 'replied' },
+    ]);
   });
 });

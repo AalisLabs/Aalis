@@ -73,7 +73,7 @@ export interface ToolCallContext {
    */
   acceptsImages?: boolean;
   /**
-   * 中止信号。调用方传回合的（agent 工具循环传入）：守卫等审批期间回合被中止（latest-wins / 手动 abort）时，
+   * 中止信号。调用方传回合的（agent 工具循环传入）：守卫等审批期间回合被停下（停止键、禁言、停机等）时，
    * 审批撤销、工具服务据此放弃执行。缺省 = 不可中止。
    * 可转后台的工具（{@link RegisteredTool.background}）拿到的是执行器给这次调用的信号：在前台时随回合一并中止，
    * 转到后台之后只随停止、工具撤回登记与执行器停用中止。

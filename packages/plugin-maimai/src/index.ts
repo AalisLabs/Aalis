@@ -1,6 +1,6 @@
 import { type CommandArgv, commands } from '@aalis/api-commands';
 import { type MemoryService, memory } from '@aalis/api-memory';
-import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { originChatOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
@@ -255,9 +255,7 @@ interface ResolveResult {
 
 /** 会话所在的聊天窗口是一对一的（会话管理记下的，子会话取根会话的）；没有会话管理或会话没有聊天窗口时为 false */
 function inOneToOneChat(sessions: Caps['sessionManager'], sessionId: string): boolean {
-  if (!sessions.present) return false;
-  const sm = sessions.use;
-  return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.originChat?.multiParty === false;
+  return originChatOf(sessionId, sessions)?.multiParty === false;
 }
 
 /**

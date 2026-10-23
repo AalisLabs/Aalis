@@ -35,9 +35,10 @@ export interface WorkflowService {
     triggerSource?: string,
     /**
      * 调用者身份（缺省=匿名）。内部工具与投递的消息按定义者与调用者里不是 owner 的一方裁决：调用者是 owner 时取定义者
-     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者
+     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者。sessionId 是调起这次运行的会话（经 workflow_run 调起时
+     * 有）：它所在的一轮在等这次运行，指向它的 agent 节点立即失败
      */
-    caller?: { platform?: string; userId?: string },
+    caller?: { platform?: string; userId?: string; sessionId?: string },
   ): Promise<WorkflowRun>;
   /** 取消一个运行中的实例（若执行引擎支持） */
   cancelRun(runId: string): boolean;
@@ -308,13 +309,12 @@ await events.use.emit('trigger:fired', {
 
 漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 调起成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
 
-### agent 节点：join 串扰与隔离
+### agent 节点：经网关送达，只认自己那一轮
 
-`agent` 节点在 emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts`）。约束：
-- **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow::<runId>::<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。这类会话没有出生平台，选层按入口平台，场所在默认工作区（见 [会话管理](session-manager.md)）。
-- `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts`）。
+`agent` 节点经 `gateway`（optional）的 `ingressMessage` 把指令（`triggerType: 'proactive'`，来源 `workflow:<wf>:<nodeId>`）送进目标会话，送达之前注册 `agent:turn:after` middleware（`engine.ts`）。约束：
+- 指令在目标会话里单独成一轮，排在那里在跑的一轮之后。送达在节点自己的异步上下文（`AsyncLocalStorage`）里调用，agent 让一轮跑在开它的那条输入的调用的上下文里，节点只认这个上下文里、目标会话的那一轮：同一会话里别的回合的回复不会被当成本节点的结果，同一编排两次运行的同名节点各认各的。省略 `sessionId` 时引擎自动生成一次性子会话 `workflow::<runId>::<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。这类会话没有出生平台，选层按入口平台，场所在默认工作区（见 [会话管理](session-manager.md)）。
 - 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。
-- 目标会话处于禁言期，或在 flow-control 的生效范围内且限速窗口已满时，消息会被 flow 相位吞掉，节点会等到超时才失败（等待期间同一会话若有其它回合结束，会被当作本节点的结果）。禁言期不看生效范围一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受回复后冷却；限速只在目标会话在 flow-control 的生效范围内时生效（`engine.ts`）。
+- 立即失败、不等满超时：网关不在；指向调起这次运行的会话（`runWorkflow` 的 `caller.sessionId`，经 `workflow_run` 调起时有：那一轮在等这次运行，节点开不了轮，必然互等到超时）；`ingressMessage` 返回（这条输入落定）时还没认到结局，即指令在网关相位被吞或排着时被放掉。目标会话处于禁言期，或在 flow-control 的生效范围内且限速窗口已满时，指令被 flow 相位吞掉。禁言期不看生效范围一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受回复后冷却；限速只在目标会话在 flow-control 的生效范围内时生效（`engine.ts`）。
 
 ### 触发器全部委托 cron-engine
 
@@ -336,6 +336,6 @@ await events.use.emit('trigger:fired', {
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经 `inbound:message` 接入主链路）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经网关的 `ingressMessage` 接入主链路）。
 - 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[core/events](../core/events.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)。
 - 相关服务：[services/tools](./tools.md)（`tool` 节点的执行面 + `workflow_*` 工具）、[services/agent](./agent.md)（`agent` 节点的回复 join）、[services/storage](./storage.md)（定义/历史落盘）。相关插件：`@aalis/plugin-scheduler`（`trigger:fired` 触发源）、`@aalis/plugin-cron-engine`（cron/interval 调度底座）。

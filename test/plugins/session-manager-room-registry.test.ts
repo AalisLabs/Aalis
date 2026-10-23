@@ -618,20 +618,17 @@ describe('状态在回合开始时翻 active', () => {
     expect(seen).toEqual(['active', 'active']);
   });
 
-  it('同一会话两轮并行（后台任务结束通知与真人回合各占一条 lane）：先结束的一轮不收口，最后一轮结束才收口', async () => {
+  it('同一会话一轮接一轮（排着的输入在上一轮结束后开轮）：每一轮结束收口，下一轮开始翻回 active，最后一轮结束才收口', async () => {
     const { sm, inbound, running } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
-    let release: () => void = () => {};
-    const gate = new Promise<void>(resolve => {
-      release = resolve;
-    });
-
-    const long = running(GROUP, () => gate);
     await running(GROUP, async () => {});
-    expect(sm.getSession(GROUP)?.status, '另一轮还在跑，不该显示已完成').toBe('active');
+    expect(sm.getSession(GROUP)?.status).toBe('completed');
 
-    release();
-    await long;
+    let during: string | undefined;
+    await running(GROUP, async () => {
+      during = sm.getSession(GROUP)?.status;
+    });
+    expect(during).toBe('active');
     expect(sm.getSession(GROUP)?.status).toBe('completed');
   });
 
@@ -710,30 +707,13 @@ describe('收口按这一轮的结局，replied 记下她最近开口的时间',
     expect(sm.getSession(GROUP)?.status).toBe('completed');
   });
 
-  it('同一会话两轮并行：最后结束的一轮决定收口', async () => {
+  it('同一会话一轮接一轮：最后结束的一轮决定收口', async () => {
     const { sm, inbound, turn } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
-    const hold = () => {
-      let release: () => void = () => {};
-      const gate = new Promise<void>(resolve => {
-        release = resolve;
-      });
-      return { gate, release };
-    };
-
-    const first = hold();
-    const failing = turn(GROUP, () => first.gate, 'error');
     await turn(GROUP, undefined, 'replied');
-    expect(sm.getSession(GROUP)?.status, '出错的一轮还在跑').toBe('active');
-    first.release();
-    await failing;
-    expect(sm.getSession(GROUP)?.status).toBe('error');
-
-    const second = hold();
-    const replying = turn(GROUP, () => second.gate, 'replied');
     await turn(GROUP, undefined, 'error');
-    second.release();
-    await replying;
+    expect(sm.getSession(GROUP)?.status).toBe('error');
+    await turn(GROUP, undefined, 'replied');
     expect(sm.getSession(GROUP)?.status).toBe('completed');
   });
 
