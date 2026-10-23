@@ -175,6 +175,8 @@ class SessionManager implements SessionManagerService {
   private readonly warned = new Set<string>();
   /** 正在收录或补记的会话：同一会话并发的原生入站共用这一次 */
   private readonly recording = new Map<string, Promise<void>>();
+  /** 正在删除的会话（发 session:deleted 到清完数据），删除做完时兑现：这期间到的同一会话的入站等它（见 recordInbound） */
+  private readonly removing = new Map<string, Promise<void>>();
   /**
    * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:turn:before 进出登记与注销，结局由
    * agent:turn:after 记下（被拦下的一轮不发它，没有结局）。第一方 agent 同一会话一轮接一轮，契约不限别的实现在同一会话并行几轮，
@@ -478,10 +480,13 @@ class SessionManager implements SessionManagerService {
    * 名字只采信出生平台自己的入站：多方取群名、一对一取对方昵称，缺省不取名（群的首条入站可能是不带群名的戳一戳，
    * 不回退到昵称）。没有名字时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，不补。
    * 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
-   * 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。不会拒绝：收录失败只告警
+   * 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。不会拒绝：收录失败只告警。
+   * 这个会话正在删除时（带 source 的也一样）先等删除做完：删除期间到的是新的一代，不被这次删除停下、清掉
    */
   recordInbound(msg: IncomingMessage): Promise<void> {
     const { sessionId } = msg;
+    const removing = this.removing.get(sessionId);
+    if (removing) return removing.then(() => this.recordInbound(msg));
     if (!sessionId || msg.source) return Promise.resolve();
     const known = this.sessions.get(sessionId);
     if (this.recorded(known, msg)) {
@@ -755,9 +760,17 @@ class SessionManager implements SessionManagerService {
     this.deleted[SESSIONS].set(id, Symbol(id));
     this.markDirty();
 
-    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西（如在飞的回合），清数据时就不会有回合中途写回来
-    await this.caps.events.use.emit('session:deleted', id);
-    await this.clearDeletedSessionData(id);
+    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西（如在飞的回合），清数据时就不会有回合中途写回来。这两步做完之前
+    // 到的同一会话的入站等着（见 recordInbound）
+    let done!: () => void;
+    this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
+    try {
+      await this.caps.events.use.emit('session:deleted', id);
+      await this.clearDeletedSessionData(id);
+    } finally {
+      this.removing.delete(id);
+      done();
+    }
     if (parent) await this.caps.events.use.emit('session:updated', parent);
     this.caps.logger.use.info(`会话删除: ${toSource(sessionLabel(session))} (${id})`);
     return removed;

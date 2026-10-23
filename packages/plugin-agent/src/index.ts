@@ -546,6 +546,8 @@ class DefaultAgent implements AgentService {
     try {
       await this.caps.hooks.use.run('agent:input:before', inputData, async () => {
         placed = true;
+        // 清消息历史期间按住的会话：清完再交给通道
+        await this.queues.held(inputData.message.sessionId);
         await this.settleInput(inputData.message, this.queues.place(inputData.message, admission));
       });
     } finally {
@@ -2056,6 +2058,11 @@ class DefaultAgent implements AgentService {
     }
   }
 
+  /**
+   * 装载历史时清洗工具调用组：调用之后要有它的每个结果，不齐的整组跳过。组的结果按 T0+1…T0+N 记时间戳，按时间戳读历史的存储
+   * （Mongo、sqlite）会把组写入期间归档的别的消息（插进来的输入、触发与流控的影子归档）排进调用与结果之间：把它们挪到这组之后，
+   * 保持各自先后
+   */
   private sanitizeToolCallHistory(history: Message[], sessionId: string): Message[] {
     const result: Message[] = [];
     let dropped = 0;
@@ -2072,23 +2079,31 @@ class DefaultAgent implements AgentService {
         const expectedIds = new Set(message.toolCalls.map(tc => tc.id));
         const seenIds = new Set<string>();
         const tools: Message[] = [];
+        const between: Message[] = [];
         let j = i + 1;
 
-        while (j < history.length && history[j].role === 'tool') {
-          const toolMessage = history[j];
-          const id = toolMessage.toolCallId;
-          if (!id || !expectedIds.has(id) || seenIds.has(id)) break;
-          tools.push(toolMessage);
-          seenIds.add(id);
+        while (j < history.length && seenIds.size < expectedIds.size) {
+          const next = history[j];
+          if (next.role === 'tool') {
+            const id = next.toolCallId;
+            if (!id || !expectedIds.has(id) || seenIds.has(id)) break;
+            tools.push(next);
+            seenIds.add(id);
+          } else if (next.toolCalls?.length) {
+            break;
+          } else {
+            between.push(next);
+          }
           j++;
         }
 
         if (seenIds.size === expectedIds.size) {
-          result.push(message, ...tools);
+          result.push(message, ...tools, ...between);
+          i = j - 1;
         } else {
-          dropped += 1 + tools.length;
+          // 不齐：只跳过这条调用，找到的结果随后按孤立的结果跳过，夹在中间的照常
+          dropped++;
         }
-        i = j - 1;
         continue;
       }
 
@@ -2250,14 +2265,19 @@ function run(caps: Caps): void {
     agentImpl.dropTokenLogState(sessionId);
   });
   // 清消息历史（/clear 不指定类型或含 context）：先停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再清。被停的一轮
-  // 落定之前还会写工具调用组，先停后清，清空的历史里才不留它的写入
+  // 落定之前还会写工具调用组，先停后清，清空的历史里才不留它的写入。从停下到清完按住这些会话：这期间到的输入清完再处理，
+  // 不开轮，也就不会回了话又被清掉
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
-    if (!data.types || data.types.includes('context')) {
-      const { queues } = agentImpl;
-      const targets = data.scope === 'all' ? queues.sessions() : data.sessionId ? [data.sessionId] : [];
-      await queues.stopAll(targets, { archive: false, reason: '/clear' });
+    if (data.types && !data.types.includes('context')) return next();
+    const { queues } = agentImpl;
+    const scope = data.scope === 'all' ? undefined : data.sessionId ? [data.sessionId] : [];
+    const release = queues.hold(scope);
+    try {
+      await queues.stopAll(scope ?? queues.sessions(), { archive: false, reason: '/clear' });
+      await next();
+    } finally {
+      release();
     }
-    await next();
   });
   const agent = agentImpl as unknown as InternalAgent;
 

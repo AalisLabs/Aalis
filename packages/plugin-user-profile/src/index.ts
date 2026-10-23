@@ -1107,7 +1107,7 @@ function registerUserProfile({
   }
 
   // ─── LLM 调用前注入（agent:prompt 贡献 / turn-context 槽——档案按当前发言者取材、换人即变，落历史后护前缀缓存）：按这一轮各条输入的 triggerType 区分主发言者语义 ───
-  //   direct/immediate/undefined → 点名的输入，它的发言者是主发言者：各注入完整档案，其余参与者给摘要
+  //   direct/immediate/undefined → 点名的输入（带来源的注入不算，见 wasAddressed），它的发言者是主发言者：各注入完整档案，其余参与者给摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
   // 没有一条点名的输入时没有主发言者。多块返回保序共键：各主发言者档案（按输入先后）→ 其他参与者。

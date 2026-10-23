@@ -390,7 +390,6 @@ describe('订阅与快照', () => {
   it('读历史期间发生的事：订阅回应之前不推这个会话的条目；之后补上，与历史重叠的按 itemId 合并', async () => {
     const { server, sm, openTurn, archive, releaseHistory } = await setup({ slowHistory: true });
     const s = await sm.createSession({ name: 'S' });
-    const other = await sm.createSession({ name: 'O' });
     const c = client(server());
     await c.init();
     // 订阅之前已经在跑的一轮（定时任务开的）
@@ -399,10 +398,13 @@ describe('订阅与快照', () => {
     // 订阅在这里拿到快照的 seq，读历史卡在闸口
     const subscribing = c.subscribe(s.id);
 
-    // 读历史卡住的时候：在跑的那轮接着说，一条消息落库，别的会话里另一轮从头跑完（同一会话的输入排在在跑的一轮之后）
+    // 读历史卡住的时候：在跑的那轮说完收尾，一条消息落库，排在它之后的一轮从头跑完（同一会话一轮接一轮）
     await running.text('，另一半');
     await archive.archiveIncoming({ content: '插话', sessionId: s.id, platform: 'webui', userId: 'console' });
-    const t = openTurn(other.id, { content: '提问' });
+    await running.replyCheck();
+    await running.reply('一半，另一半');
+    await running.finish('replied');
+    const t = openTurn(s.id, { content: '提问' });
     await t.ask();
     await t.text('回答');
     await t.replyCheck();
@@ -413,17 +415,15 @@ describe('订阅与快照', () => {
     releaseHistory();
     const sub = await subscribing;
     // 快照里在跑那轮的正文取在订阅那一刻，读历史期间的增量随后接上，不重复
-    const midway = c.timeline(s.id, sub).find(i => i.kind === 'agent-message' && i.turnId === running.turnId);
-    expect(midway).toMatchObject({ text: '一半，另一半' });
-    await running.replyCheck();
-    await running.reply('一半，另一半');
-    await running.finish('replied');
     const items = c.timeline(s.id, sub);
     expect(new Set(items.map(i => i.itemId)).size, 'itemId 不重复').toBe(items.length);
     expect(items.map(i => [i.kind, 'text' in i ? i.text : i.turnId])).toEqual([
       ['user-message', '插话'],
+      ['user-message', '提问'],
       ['turn', running.turnId],
       ['agent-message', '一半，另一半'],
+      ['turn', t.turnId],
+      ['agent-message', '回答'],
     ]);
   });
 

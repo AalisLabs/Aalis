@@ -5,8 +5,8 @@
 // 后取队首：队首是真人消息时队里的真人消息一起开下一轮，队首是带来源的注入时只开它。开下一轮的是这一批里入队最早那条的调用，
 // 回合跑在它的异步上下文里（注入方据此认出自己那一轮），其余各条等这一轮结束。停一轮可以连同排队与待插入的一起放掉；放掉的
 // 在这个会话在跑的一轮落定之后由 agent 按先后归档（要归档的才归档），agent 在一个会话里的写入因此不交错。一轮被停下即不再收
-// 输入。会话删除时，删除之前开始逐条处理、之后才入队的输入以放掉落定；关闭（停机）之后入队的同样。等候的集合（排队与待插入的）
-// 变了时报给 onWaiting。
+// 输入。会话删除时，删除之前开始逐条处理、之后才入队的输入以放掉落定；关闭（停机）之后入队的同样。按住的会话（清消息历史期间）
+// 要交给通道的输入等放开再交。等候的集合（排队与待插入的）变了时报给 onWaiting。
 // ============================================================
 
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -78,6 +78,8 @@ export class SessionQueues {
   readonly #channels = new Map<string, Channel>();
   /** 正在逐条处理的输入，按会话：只记在处理中的，处理完即删 */
   readonly #admitted = new Map<string, Set<Admission>>();
+  /** 按住的范围：sessions 不给即全部会话，放开时 released 落定 */
+  readonly #holds = new Set<{ readonly sessions?: ReadonlySet<string>; readonly released: Promise<void> }>();
   #seq = 0;
   #closed = false;
 
@@ -97,6 +99,26 @@ export class SessionQueues {
     const admitted = this.#admitted.get(admission.sessionId);
     admitted?.delete(admission);
     if (admitted?.size === 0) this.#admitted.delete(admission.sessionId);
+  }
+
+  /**
+   * 按住这些会话（不给即全部会话），直到调用返回的函数：这期间要交给通道的输入在 {@link held} 等着，放开之后再交。清消息历史
+   * 用它：停下在跑的一轮到清完之间到的输入不开轮、不被清掉，清完照常处理
+   */
+  hold(sessionIds?: readonly string[]): () => void {
+    let release!: () => void;
+    const hold = { sessions: sessionIds && new Set(sessionIds), released: new Promise<void>(r => (release = r)) };
+    this.#holds.add(hold);
+    return () => {
+      this.#holds.delete(hold);
+      release();
+    };
+  }
+
+  /** 这个会话被按住时等到放开（几处同时按住的等到都放开）；没按住的立即落定 */
+  async held(sessionId: string): Promise<void> {
+    const covering = () => [...this.#holds].find(({ sessions }) => !sessions || sessions.has(sessionId));
+    for (let hold = covering(); hold; hold = covering()) await hold.released;
   }
 
   /**
