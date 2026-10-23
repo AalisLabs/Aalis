@@ -40,6 +40,8 @@ async function runMiddleware(
     inputs: TurnInput[];
     initialMessages?: Message[];
     maxDepth?: number;
+    /** 全局热点的两条上限，缺省各 5；为 0 时不出全局热点 */
+    maxGlobalHot?: number;
   },
 ): Promise<Message[]> {
   registerRelationContribution(
@@ -53,8 +55,8 @@ async function runMiddleware(
       maxParticipantsPerEvent: 5,
       maxCooccurrencePartners: 5,
       // 曾漏传这两个必填项 —— 于是全局热点的两条限流在本测试里从未生效
-      maxGlobalHotEvents: 5,
-      maxGlobalHotEntities: 5,
+      maxGlobalHotEvents: opts.maxGlobalHot ?? 5,
+      maxGlobalHotEntities: opts.maxGlobalHot ?? 5,
       groupOnly: false,
     },
   );
@@ -129,7 +131,7 @@ describe('plugin-user-relation: middleware', () => {
     expect(content).toContain('initiator');
   });
 
-  it('一轮两条点名的输入：两位的子图合在一块里', async () => {
+  it('一轮两条点名的输入：两位的子图合在一块里，各人的小节标题注明是谁', async () => {
     const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     await service.observePerson('onebot', 'u2', 'Bob');
@@ -137,12 +139,16 @@ describe('plugin-user-relation: middleware', () => {
     const ev2 = await service.createEvent({ title: '组队开黑', evidence: [] });
     await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ev1.id, role: 'initiator' });
     await service.addPersonEventEdge({ fromPersonId: 'onebot:u2', toEventId: ev2.id, role: 'initiator' });
-    const messages = await runMiddleware(host, service, { inputs: [said('u1', 'direct'), said('u2', 'immediate')] });
+    // 关掉全局热点：两个事件都会出现在「最近热点（全局）」里，按事件标题断言就分不出各人的子图有没有生成
+    const messages = await runMiddleware(host, service, {
+      inputs: [said('u1', 'direct'), said('u2', 'immediate')],
+      maxGlobalHot: 0,
+    });
     const injected = messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     expect(injected).toHaveLength(1);
     const content = String(injected[0]?.content);
-    expect(content).toContain('讨论直播');
-    expect(content).toContain('组队开黑');
+    expect(content).toContain('## 近期参与的事件（Alice(u1)）\n- 讨论直播');
+    expect(content).toContain('## 近期参与的事件（Bob(u2)）\n- 组队开黑');
   });
 
   it('用户有人-人关系 → 注入关系列表', async () => {
