@@ -7,12 +7,11 @@ import {
   type ReachInput,
   type ReachRequest,
 } from '../../packages/api-reach/src/index.js';
-import type { RoomClass } from '../../packages/api-session-manager/src/index.js';
 import { codeOf, DEFAULT_PLACE, PAPERS, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
-// 触及：先按「主体 × 房间类别」定上限，再按档位收窄、按污点把送出会话的动作改成问，子任务再与父会话实时的触及取较小值。
-// 只有 owner 在受众只有 owner 的会话里有本地效果；读是全机减拒读清单，与档位无关；写、执行、联网按档位。
+// 触及：先按主体定上限，再按档位收窄。
+// 主体是 owner 的一轮有本地效果，不看会话；读是全机减拒读清单，与档位无关；写、执行、联网按档位。
 // 判定的短码见 fixtures/reach.ts 的 codeOf。四列依次是只读、修改确认、工作区、全权。
 // ════════════════════════════════════════════════════════════
 
@@ -23,7 +22,6 @@ const W = 'ask:write-path';
 const H = 'ask:host-exec';
 const N = 'ask:network';
 const L = 'ask:landing';
-const O = 'ask:outbound';
 const C = 'deny:control-plane';
 const R = 'deny:deny-read';
 const NONE = 'deny:no-local-effect';
@@ -39,8 +37,6 @@ const SANDBOX_EXEC: ReachRequest = { effect: 'exec', host: false };
 const HOST_EXEC: ReachRequest = { effect: 'exec', host: true };
 const WORKFLOW: ReachRequest = { effect: 'write', workflow: 'daily' };
 
-const TAINTED = ['群「<群名>」'];
-
 /** 每一行在四档下各判一次，与表里的四列逐列比对 */
 function expectRows(rows: Row[], input: Partial<ReachInput>) {
   const got = rows.map(([label, request]) => [
@@ -50,19 +46,15 @@ function expectRows(rows: Row[], input: Partial<ReachInput>) {
   expect(got).toEqual(rows.map(([label, , ...want]) => [label, ...want]));
 }
 
-describe('上限：主体 × 房间类别', () => {
-  const cases: Array<[ReachInput['principal'], RoomClass, boolean]> = [
-    ['owner', 'owner-only', true],
-    ['owner', 'room', false],
-    ['owner', 'internal', false],
-    ['other', 'owner-only', false],
-    ['other', 'room', false],
-    ['other', 'internal', false],
+describe('上限：只按主体', () => {
+  const cases: Array<[ReachInput['principal'], boolean]> = [
+    ['owner', true],
+    ['other', false],
   ];
 
-  it.each(cases)('%s × %s：有本地效果为 %s', (principal, roomClass, local) => {
+  it.each(cases)('%s：有本地效果为 %s', (principal, local) => {
     for (const tier of ACCESS_TIERS) {
-      const reach = reachOf({ principal, roomClass, tier });
+      const reach = reachOf({ principal, tier });
       expect(reach.exec !== 'none').toBe(local);
       if (local) continue;
       // 没有本地效果：读写执行一律拒；联网交给资格轴，这里放行
@@ -94,7 +86,7 @@ describe('读：全机减拒读清单，与档位无关', () => {
     `${PAPERS}/p-proj/out.md`,
     '/u/elsewhere/x',
     `${PAPERS}/p-other/x`, // owner 别的工作区的白纸
-    `${PAPERS}/p-window/x`, // 别人场所的白纸：文件工具读得到，计污点是别处的事
+    `${PAPERS}/p-window/x`, // 别人场所的白纸：文件工具读得到
     `${PATHS.stage.public}/x`,
     `${PATHS.self.skills}/s/SKILL.md`,
     `${PATHS.self.workflows}/daily.yaml`,
@@ -217,7 +209,7 @@ describe('写：按档位', () => {
 });
 
 describe('执行、联网与编排定义', () => {
-  it('干净的会话', () => {
+  it('项目工作区', () => {
     expectRows(
       [
         ['沙箱内执行', SANDBOX_EXEC, A, T, A, A],
@@ -232,32 +224,8 @@ describe('执行、联网与编排定义', () => {
   });
 });
 
-describe('受污染：全权以外的档位把送出会话的动作改成问，其余照常', () => {
-  it('送出会话的动作', () => {
-    expectRows(
-      [
-        ['任意网址', URL, O, O, O, A],
-        ['命令联网', COMMAND_NET, O, O, O, A],
-        ['写技能目录', write(`${PATHS.self.skills}/s/SKILL.md`), O, O, O, A],
-        ['写编排定义', WORKFLOW, O, O, O, A],
-        ['固定服务商', PROVIDER, N, A, A, A],
-        ['写白纸', write(`${PAPERS}/p-proj/out.md`), W, T, A, A],
-        ['写项目', write('/u/code/proj/src/a.ts'), W, T, A, A],
-        ['沙箱内执行', SANDBOX_EXEC, A, T, A, A],
-        ['读别人场所的白纸', read(`${PAPERS}/p-window/x`), A, A, A, A],
-      ],
-      { ...PROJECT, tainted: TAINTED },
-    );
-  });
-
-  it('带出读进过谁的内容；干净时不带', () => {
-    expect(reachOf({ tainted: TAINTED })).toMatchObject({ tainted: TAINTED });
-    expect(reachOf({ tainted: [] })).not.toHaveProperty('tainted');
-  });
-});
-
 describe('越界策略为拒：只读与工作区档要问的一律直接拒，修改确认档照常问', () => {
-  it('干净的会话', () => {
+  it('项目工作区', () => {
     expectRows(
       [
         ['范围外写', write('/u/elsewhere/x'), 'refuse:write-path', T, 'refuse:write-path', A],
@@ -267,49 +235,6 @@ describe('越界策略为拒：只读与工作区档要问的一律直接拒，�
       ],
       { ...PROJECT, onBoundary: 'deny' },
     );
-  });
-
-  it('受污染后的送出会话', () => {
-    expectRows([['任意网址', URL, 'refuse:outbound', O, 'refuse:outbound', A]], {
-      ...PROJECT,
-      onBoundary: 'deny',
-      tainted: TAINTED,
-    });
-  });
-});
-
-describe('子任务不超过父会话：随父会话实时的触及', () => {
-  const subtask = (parent: ReturnType<typeof reachOf>, input: Partial<ReachInput> = {}) =>
-    reachOf({ ...PROJECT, sessionTmp: `${PATHS.tmp}/sessions/Y2hpbGQ`, ...input, principal: { subtaskOf: parent } });
-
-  it('父会话是 owner 的干净会话：子任务与它一样，写自己的临时区', () => {
-    const child = subtask(reachOf(PROJECT));
-    expect(child).toMatchObject({ exec: 'sandbox', tier: 'workspace' });
-    expect(codeOf(judgeReach(child, write('/u/code/proj/src/a.ts')))).toBe(A);
-    expect(codeOf(judgeReach(child, write(`${PATHS.tmp}/sessions/Y2hpbGQ/x`)))).toBe(A);
-    expect(codeOf(judgeReach(child, URL))).toBe(A);
-  });
-
-  it('父会话受污染后子任务随之，来源合在一起', () => {
-    const child = subtask(reachOf({ ...PROJECT, tainted: TAINTED }), { tainted: ['工具 recent_messages'] });
-    expect(codeOf(judgeReach(child, URL))).toBe(O);
-    expect(child).toMatchObject({ tainted: ['工具 recent_messages', ...TAINTED] });
-  });
-
-  it('父会话降档后子任务随之', () => {
-    const child = subtask(reachOf({ ...PROJECT, tier: 'readonly' }));
-    expect(child).toMatchObject({ tier: 'readonly', exec: 'sandbox' });
-    expect(codeOf(judgeReach(child, write('/u/code/proj/src/a.ts')))).toBe(W);
-  });
-
-  it('父会话的越界策略为拒时子任务同样直接拒', () => {
-    const child = subtask(reachOf({ ...PROJECT, onBoundary: 'deny' }));
-    expect(codeOf(judgeReach(child, write('/u/elsewhere/x')))).toBe('refuse:write-path');
-  });
-
-  it('父会话没有本地效果（别人发起的那一轮），子任务也没有', () => {
-    expect(subtask(reachOf({ principal: 'other' }))).toEqual({ exec: 'none' });
-    expect(subtask(reachOf({ roomClass: 'room' }))).toEqual({ exec: 'none' });
   });
 });
 

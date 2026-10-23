@@ -149,7 +149,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 4.1 必须实现 vs 可选
 
-`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`ownerOn`（存档、触发判定与 agent 据它写发送者前缀）、`originOf` 与 `principalOf`（触及服务据它们定主体，主体是 owner 的子任务随父会话）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
+`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`ownerOn`（存档、触发判定与 agent 据它写发送者前缀）、`principalOf`（触及服务据它定主体）、`listUsers`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
 - **必须**：`isOwner`、`ownerOn`、`originOf`、`principalOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。

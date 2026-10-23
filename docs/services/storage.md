@@ -95,7 +95,7 @@ export interface BoundStorage extends StorageMethods {
 
 ### 典型消费点
 
-文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、paper、publish-review、reach、session-server、tools、webui-server、works-site）经 `caps.storage.use.own` 读写。
+文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、paper、publish-review、session-server、tools、webui-server、works-site）经 `caps.storage.use.own` 读写。
 
 ---
 

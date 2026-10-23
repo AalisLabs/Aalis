@@ -7,7 +7,6 @@ import { placePaperId, type SessionInfo } from '../../packages/api-session-manag
 import { storage } from '../../packages/api-storage/src/index.js';
 import type { App, Logger } from '../../packages/core/src/index.js';
 import { paperDirUri } from '../../packages/plugin-paper/src/artifacts.js';
-import reachPlugin from '../../packages/plugin-reach/src/index.js';
 import { sessionTmpOf, sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import {
@@ -19,20 +18,19 @@ import {
   type ReachDirs,
   reachDirs,
   removeDirs,
-  seedProvenance,
   sessionTmpIn,
   startReach,
 } from '../fixtures/reach-host.js';
 import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// 触及服务：按一次工具调用签发凭据。主体取权限服务的 principalOf，房间类别、绑定取会话管理里的记录，档位固定为工作区档、
-// 越界要问，清单按真实路径生成；子任务随派它的那一轮；本会话临时区按需建、随会话删、定期清扫；污点与白纸的来源账本
-// 落在插件数据里。
+// 触及服务：按一次工具调用签发凭据。主体取权限服务的 principalOf，场所与绑定取会话管理里的记录，档位固定为工作区档、
+// 越界要问，清单按真实路径生成；子任务随派它的那一轮；本会话临时区按需建、随会话删、定期清扫。
 // ════════════════════════════════════════════════════════════
 
+const MEMBER = '30001';
 const OWNER_DM = `onebot:10000:private:${OWNER_QQ}`;
-const MEMBER_DM = 'onebot:10000:private:30001';
+const MEMBER_DM = `onebot:10000:private:${MEMBER}`;
 const GROUP = 'onebot:10000:group:20001';
 const DEFAULT_WORKSPACE = 'workspace:default';
 
@@ -70,46 +68,78 @@ async function verdict(cred: ReachCredential, request: ReachRequest): Promise<st
   return v.allowed ? 'allow' : v.message;
 }
 
-describe('上限：只有 owner 在自己的会话里有本地效果', () => {
-  it('WebUI 会话与 owner 的 IM 私聊里 owner 发起的有；群、别人的私聊、内部会话、自主回合与没有回合的调用都没有', async () => {
+describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会话', () => {
+  /** onebot 上这个人在这个会话里亲手发来的一轮 */
+  const handTurn = (sessionId: string, userId: string): OriginTurn => ({
+    sessionId,
+    platform: 'onebot',
+    userId,
+    inbound: {},
+  });
+
+  it('owner 亲手发起的在 WebUI、她的 IM 私聊、群、往别人的私聊插话与内部会话里都有；群成员、别人私聊里的对方、自主回合与没有回合的调用没有', async () => {
     const { host, svc, sm, webui } = await start();
     for (const id of [OWNER_DM, MEMBER_DM, GROUP]) await recordRoom(host.events.use, id);
     await sm.ensureSession('workflow::daily');
     const exec = async (turn: OriginTurn) => (await svc.forCall(turn)).exec;
     expect(await exec(ownerTurn(webui))).toBe('sandbox');
-    expect(await exec({ sessionId: OWNER_DM, platform: 'onebot', userId: OWNER_QQ, inbound: {} })).toBe('sandbox');
-    expect(
-      await exec({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} }),
-      '群里 owner 也一样',
-    ).toBe('none');
-    expect(await exec(ownerTurn(MEMBER_DM)), 'owner 从 WebUI 往别人的私聊插话').toBe('none');
-    expect(await exec(ownerTurn('workflow::daily')), '内部会话').toBe('none');
+    expect(await exec(handTurn(OWNER_DM, OWNER_QQ))).toBe('sandbox');
+    expect(await exec(handTurn(GROUP, OWNER_QQ)), '群里').toBe('sandbox');
+    expect(await exec(ownerTurn(MEMBER_DM)), 'owner 从 WebUI 往别人的私聊插话').toBe('sandbox');
+    expect(await exec(ownerTurn('workflow::daily')), '内部会话').toBe('sandbox');
+    expect(await exec(handTurn(GROUP, MEMBER)), '群成员').toBe('none');
+    expect(await exec(handTurn(MEMBER_DM, MEMBER)), '别人私聊里的对方').toBe('none');
     expect(
       await exec({ sessionId: webui, platform: 'webui', actor: OWNER_TURN, inbound: { source: 'scheduler' } }),
       'owner 建的定时任务',
     ).toBe('none');
+    expect(
+      await exec({ sessionId: GROUP, platform: 'onebot', inbound: { source: 'idle-trigger' } }),
+      '空闲开话题',
+    ).toBe('none');
     expect(await exec({ sessionId: webui, platform: 'mcp', actor: OWNER_TURN }), '没有回合的调用').toBe('none');
-    expect(await exec({ sessionId: webui, platform: 'onebot', userId: '30001', inbound: {} }), '非 owner').toBe('none');
   });
 
-  it('宿主通知回合按接收会话的房间类别算：owner 会话里的续做有，群里的续做没有', async () => {
-    const { host, svc, webui } = await start();
+  it('owner 在群里亲手发起：主目录与白纸是这个群所在场所的白纸', async () => {
+    const { host, sm, svc } = await start();
     await recordRoom(host.events.use, GROUP);
-    const resume = (sessionId: string, platform: string, userId: string): OriginTurn => ({
-      sessionId,
-      platform,
-      userId,
-      actor: { platform, userId },
-      inbound: { source: 'bg:bg_1', fromTurn: { platform, userId, participants: [{ platform, userId }] } },
-    });
-    expect((await svc.forCall(resume(webui, 'webui', 'console'))).exec).toBe('sandbox');
-    expect((await svc.forCall(resume(GROUP, 'onebot', OWNER_QQ))).exec).toBe('none');
+    const paper = paperOf(dirs.home, sm.placeOf(GROUP).key);
+    expect(paper).not.toBe(paperOf(dirs.home, DEFAULT_WORKSPACE));
+    expect(await svc.forCall(handTurn(GROUP, OWNER_QQ))).toMatchObject({ exec: 'sandbox', home: paper, paper });
+  });
+
+  it('群里没点名、被频率触发挑中的话按说话的人算：owner 的有，群成员的没有', async () => {
+    const { host, svc } = await start();
+    await recordRoom(host.events.use, GROUP);
+    const picked = (userId: string) =>
+      originTurnOf([{ content: '<闲聊>', sessionId: GROUP, platform: 'onebot', userId, triggerType: 'interval' }]);
+    expect((await svc.forCall(picked(OWNER_QQ))).exec).toBe('sandbox');
+    expect((await svc.forCall(picked(MEMBER))).exec).toBe('none');
+  });
+
+  it('续做随起它的那一轮：owner 那一轮的续做在群里也有，群成员那一轮的没有', async () => {
+    const { host, svc } = await start();
+    await recordRoom(host.events.use, GROUP);
+    const resume = (userId: string) => {
+      const identity = { platform: 'onebot', userId };
+      return originTurnOf([
+        {
+          content: '<结束通知>',
+          sessionId: GROUP,
+          platform: 'onebot',
+          source: 'bg:bg_1',
+          fromTurn: { platform: 'onebot', userId, participants: [identity] },
+        },
+      ]);
+    };
+    expect((await svc.forCall(resume(OWNER_QQ))).exec).toBe('sandbox');
+    expect((await svc.forCall(resume(MEMBER))).exec).toBe('none');
   });
 
   it('没有本地效果的凭据：读写执行一律拒，不带主目录与白纸，没有子进程环境与沙箱策略', async () => {
     const { host, svc } = await start();
     await recordRoom(host.events.use, GROUP);
-    const cred = await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    const cred = await svc.forCall(handTurn(GROUP, MEMBER));
     expect(isReachCredential(cred)).toBe(true);
     expect(Object.isFrozen(cred)).toBe(true);
     // 品牌不可枚举：展开或 Object.assign 复制出来、改了方法再转交的对象不是凭据
@@ -117,7 +147,9 @@ describe('上限：只有 owner 在自己的会话里有本地效果', () => {
     expect(isReachCredential(Object.assign({}, cred))).toBe(false);
     expect(cred).not.toHaveProperty('home');
     expect(cred).not.toHaveProperty('paper');
-    expect(await verdict(cred, read(join(dirs.user, 'notes.md')))).toContain('没有本地效果');
+    expect(await verdict(cred, read(join(dirs.user, 'notes.md')))).toBe(
+      `读 ${join(dirs.user, 'notes.md')}：这一轮不只有 owner 的话，没有本地效果`,
+    );
     expect(cred.allows('read', join(dirs.user, 'notes.md'))).toBe(false);
     expect((await cred.require({ effect: 'network', via: 'url' })).allowed, '联网交给资格轴').toBe(true);
     await expect(cred.processEnv('sandbox')).rejects.toThrow('没有本地效果');
@@ -236,19 +268,6 @@ describe('场所、绑定与档位', () => {
     expect(cred.exec).toBe('sandbox');
     expect(await verdict(cred, outside)).toContain('要 owner 批准');
   });
-
-  it('签发之后受污染，同一张凭据的 require、allows 与来源账本随之', async () => {
-    const { svc, webui } = await start();
-    const cred = await svc.forCall(ownerTurn(webui));
-    const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
-    expect(await verdict(cred, { effect: 'network', via: 'url' })).toBe('allow');
-    expect(cred.allows('write', note)).toBe(true);
-
-    svc.markTainted(webui, ['群「<群名>」']);
-    expect(await verdict(cred, { effect: 'network', via: 'url' })).toContain('读进过别人写的内容');
-    cred.noteWrite(note);
-    expect(svc.provenanceOf(note)).toMatchObject({ sources: ['群「<群名>」'] });
-  });
 });
 
 describe('子任务随派它的那一轮', () => {
@@ -278,7 +297,7 @@ describe('子任务随派它的那一轮', () => {
   /** owner 建的定时任务那一轮 */
   const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER_TURN], source: 'scheduler' };
 
-  it('owner 亲手那一轮派的（那一轮没签发过凭据）：子任务与父会话一样，写自己的临时区；子任务里转后台的调用的续做随之；父会话受污染后随之', async () => {
+  it('owner 亲手那一轮派的（那一轮没签发过凭据）：子任务与父会话一样，写自己的临时区；子任务里转后台的调用的续做随之', async () => {
     const { host, sm, svc, webui } = await start();
     const child = (await sm.createChildSession(webui, {})).id;
     const turn = await dispatch(host, child, webui, { fromTurn: OWNER_HAND });
@@ -306,12 +325,6 @@ describe('子任务随派它的那一轮', () => {
       },
     };
     expect((await svc.forCall(resumed)).exec).toBe('sandbox');
-
-    svc.markTainted(webui, ['群「<群名>」']);
-    expect((await svc.forCall(turn)).tainted).toEqual(['群「<群名>」']);
-    expect(await verdict(issued, { effect: 'network', via: 'url' }), '已签发的也随父会话受污染').toContain(
-      '读进过别人写的内容',
-    );
   });
 
   it('owner 的会话里 owner 那一轮签发过凭据，之后定时任务那一轮派的子任务没有本地效果；owner 那一轮再追问，那一轮的子任务回合随 owner', async () => {
@@ -329,11 +342,12 @@ describe('子任务随派它的那一轮', () => {
   it('群里 owner 那一轮签发过凭据，之后群成员那一轮派的子任务没有本地效果', async () => {
     const { host, sm, svc } = await start();
     await recordRoom(host.events.use, GROUP);
-    await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    const owner = await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    expect(owner.exec, 'owner 那一轮自己有').toBe('sandbox');
     const child = (await sm.createChildSession(GROUP, {})).id;
-    const member = { platform: 'onebot', userId: '30001' };
+    const member = { platform: 'onebot', userId: MEMBER };
     const turn = await dispatch(host, child, GROUP, {
-      fromTurn: { platform: 'onebot', userId: member.userId, participants: [member] },
+      fromTurn: { platform: 'onebot', userId: MEMBER, participants: [member] },
     });
     expect((await svc.forCall(turn)).exec).toBe('none');
   });
@@ -486,7 +500,7 @@ describe('本会话临时区', () => {
   it('有本地效果时建好（0700），没有本地效果不建；删会话时删', async () => {
     const { host, sm, svc, webui } = await start();
     await recordRoom(host.events.use, GROUP);
-    await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ, inbound: {} });
+    await svc.forCall({ sessionId: GROUP, platform: 'onebot', userId: MEMBER, inbound: {} });
     expect(existsSync(tmpOf(GROUP))).toBe(false);
 
     await svc.forCall(ownerTurn(webui));
@@ -602,68 +616,6 @@ describe('本会话临时区', () => {
       expect(warns[0]).toContain(tmpOf('session-locked'));
       expect(warns[0]).toContain('EACCES');
     });
-  });
-});
-
-describe('污点与来源账本', () => {
-  it('记下的来源粘在会话上，之后签发的凭据带着；来源称呼不能为空；重启后仍在', async () => {
-    const first = await start();
-    first.svc.markTainted(first.webui, ['群「<群名>」']);
-    first.svc.markTainted(first.webui, ['工具 recent_messages', '群「<群名>」']);
-    expect((await first.svc.forCall(ownerTurn(first.webui))).tainted).toEqual(['群「<群名>」', '工具 recent_messages']);
-    expect(() => first.svc.markTainted(first.webui, [])).toThrow('来源');
-    expect(() => first.svc.markTainted(first.webui, [' '])).toThrow('来源');
-    const other = (await first.sm.createSession({ name: 'o' }, { createdFrom: 'webui' })).id;
-    expect((await first.svc.forCall(ownerTurn(other))).tainted, '别的会话不受影响').toBeUndefined();
-    const stored = Object.fromEntries(
-      [first.webui, other].map(id => [id, first.sm.getSession(id) as unknown as Record<string, unknown>]),
-    );
-    await first.app.stop();
-    apps.splice(0);
-
-    const second = await start({ stored });
-    expect((await second.svc.forCall(ownerTurn(first.webui))).tainted).toEqual([
-      '群「<群名>」',
-      '工具 recent_messages',
-    ]);
-  });
-
-  it('受污染的会话经凭据写进白纸的文件记进账本；干净时、白纸以外不记；重启后仍在', async () => {
-    const first = await start();
-    const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
-    const clean = await first.svc.forCall(ownerTurn(first.webui));
-    clean.noteWrite(join(paper, 'clean.md'));
-    first.svc.markTainted(first.webui, ['群「<群名>」']);
-    const tainted = await first.svc.forCall(ownerTurn(first.webui));
-    tainted.noteWrite(join(paper, 'from-group.md'));
-    tainted.noteWrite(join(dirs.user, 'code', 'x.ts'));
-
-    expect(first.svc.provenanceOf(join(paper, 'clean.md'))).toBeUndefined();
-    expect(first.svc.provenanceOf(join(dirs.user, 'code', 'x.ts'))).toBeUndefined();
-    expect(first.svc.provenanceOf(join(paper, 'from-group.md'))).toMatchObject({
-      sessionId: first.webui,
-      sources: ['群「<群名>」'],
-    });
-    const stored = { [first.webui]: first.sm.getSession(first.webui) as unknown as Record<string, unknown> };
-    await first.app.stop();
-    apps.splice(0);
-
-    const second = await start({ stored });
-    expect(second.svc.provenanceOf(join(paper, 'from-group.md'))).toMatchObject({ sessionId: first.webui });
-  });
-
-  it('记录读不出时不激活：不能当作谁都没读进过别人的内容', async () => {
-    seedProvenance(dirs, '{ not json');
-    const { app } = await startReach(dirs);
-    apps.push(app);
-    expect(app.plugins.getPlugin(reachPlugin.name)?.state).toBe('error');
-  });
-
-  it('记录的形状不对时同样不激活', async () => {
-    seedProvenance(dirs, JSON.stringify({ taint: { s: '群' }, ledger: {} }));
-    const { app } = await startReach(dirs);
-    apps.push(app);
-    expect(app.plugins.getPlugin(reachPlugin.name)?.state).toBe('error');
   });
 });
 

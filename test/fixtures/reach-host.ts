@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OriginTurn } from '../../packages/api-authority/src/index.js';
@@ -65,13 +65,6 @@ export function reachDirs(): ReachDirs {
 
 export function removeDirs(dirs: ReachDirs): void {
   rmSync(dirs.base, { recursive: true, force: true });
-}
-
-/** 预置一份污点与来源记录（插件数据里的文件），要在起实例之前写 */
-export function seedProvenance(dirs: ReachDirs, content: string): void {
-  const dir = join(dirs.home, 'state', 'plugins', 'reach');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'provenance.json'), content);
 }
 
 /**

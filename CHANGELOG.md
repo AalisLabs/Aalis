@@ -307,6 +307,11 @@
 - api-authority 的 `AuthorityService` 加 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者是 owner 的为 owner（含它的续做），子任务随派它的那一轮，其余为 other。替换权限服务实现的要提供它。
 - plugin-subtask 在入站回合里派出的任务消息与 `send_to_subtask` 的追问带 `fromTurn`（派它的那一轮），不再带 `actor`；子任务那一轮的授权身份取它的参与者，与此前的 `actor` 相同，要从消息取授权身份的用 api-authority 的 `originTurnOf`。不在入站回合里派的（编排的工具节点、mcp-server）照旧带 `actor`、不带 `fromTurn`。
 
+### 触及只按这一轮的主体，删掉污点与来源账本（@aalis/api-reach、@aalis/plugin-reach）
+
+- api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 随派它的那一轮。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
+- plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。触及接线之后，owner 在群里亲手发起的一轮有本地效果，主目录是这个群所在场所的白纸。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
