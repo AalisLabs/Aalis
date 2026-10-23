@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type MediaScopeDeps, mediaInScope, mediaRef, sessionDirName } from '../../packages/api-media/src/index.js';
+import { originTurnOf } from '../../packages/api-authority/src/index.js';
+import {
+  localFileInScope,
+  type MediaScopeCall,
+  type MediaScopeDeps,
+  mediaInScope,
+  mediaRef,
+  sessionDirName,
+} from '../../packages/api-media/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import type { BoundStorage } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import type { LifecycleCap, Logger } from '../../packages/core/src/index.js';
 import { cacheOneAttachment } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
+import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
@@ -20,10 +29,13 @@ import { storedRoom } from '../fixtures/rooms.js';
 import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 媒体按受众的判据（api-media 的 mediaInScope）：受众里没有别人、且授权身份是 owner 的调用不限；其余只认本会话树
-// 媒体目录里的文件与调用所在会话历史里系统记下的引用。会话表、owner 判定与历史都是内存替身；真实写入方一节跑
-// onebot 附件缓存、绘图（离线渲染是替身）与媒体识别的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受
-// 它们产出的地址，是会话目录名的唯一守卫。浏览器截图的那条在 tool-browser-screenshot 里（要起真浏览器）。
+// 媒体判据（api-media 的 mediaInScope）按目标分三类：会话媒体目录里的按目录名反查会话（按大小写折叠比，候选取并集），
+// 都在本会话树里的与调用所在会话历史里系统记下的引用放行、不问别的，本会话树以外的候选（含与本会话树撞名的）都过调用方给的
+// 取用判定 take 才放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定 local。取用规则本身由会话管理的参数化表钉住
+// （session-take-rule），这里的 take 与 local 是替身，只看分流。本机文件判法（localFileInScope）直接测，主体用权限插件的
+// principalKind。会话表、owner 判定与历史都是内存替身；真实写入方一节跑 onebot 附件缓存、绘图（离线渲染是替身）与媒体识别
+// 的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受它们产出的地址，是会话目录名的唯一守卫。浏览器截图的
+// 那条在 tool-browser-screenshot 里（要起真浏览器）。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';
@@ -35,9 +47,12 @@ const CHILD = `${GROUP}::sub1`;
 const GRANDCHILD = `${CHILD}::sub2`;
 const OTHER_GROUP = 'onebot:10000:group:20002';
 const GROUP_DIR = 'onebot_10000_group_20001';
+const OTHER_DIR = 'onebot_10000_group_20002';
+/** 目录名撞车的两组会话：只在 `:` 与 `_` 上有区别的，与只差大小写的 */
+const SAME_DIR = ['zz:a_b', 'zz:a:b'];
+const CASE_ONLY = ['zz:s', 'ZZ:S'];
 
 const owner = { platform: 'onebot', userId: OWNER_QQ };
-const member = { platform: 'onebot', userId: MEMBER_QQ };
 const webuiConsole = { platform: 'webui', userId: 'console' };
 
 const renders = vi.hoisted(() => ({ png: new Uint8Array(0) }));
@@ -54,7 +69,7 @@ function session(id: string, fields: Partial<SessionInfo> = {}): SessionInfo {
   return { id, children: [], status: 'waiting', createdAt: 0, updatedAt: 0, kind: 'room', ...fields };
 }
 
-/** 会话表：群（带一个子会话与孙会话）、owner 的 IM 私聊、WebUI 会话、另一个群 */
+/** 会话表：群（带一个子会话与孙会话）、owner 的 IM 私聊、WebUI 会话、另一个群，与目录名撞车的两组 */
 const SESSIONS = new Map<string, SessionInfo>([
   [GROUP, { ...(storedRoom(GROUP) as unknown as SessionInfo), children: [CHILD] }],
   [CHILD, session(CHILD, { parentId: GROUP, children: [GRANDCHILD] })],
@@ -62,66 +77,214 @@ const SESSIONS = new Map<string, SessionInfo>([
   [OWNER_PRIVATE, storedRoom(OWNER_PRIVATE) as unknown as SessionInfo],
   [WEBUI, session(WEBUI, { createdFrom: 'webui' })],
   [OTHER_GROUP, storedRoom(OTHER_GROUP) as unknown as SessionInfo],
+  ...[...SAME_DIR, ...CASE_ONLY].map(id => [id, session(id, { createdFrom: 'webui' })] as const),
 ]);
 
-const isOwner = (platform: string, userId: string) =>
+const isOwner = (platform: string, userId?: string) =>
   (platform === 'onebot' && userId === OWNER_QQ) || (platform === 'webui' && userId === 'console');
 
-function deps(histories: Record<string, Message[]> = {}, withSessions = true): MediaScopeDeps {
-  return {
-    ...(withSessions ? { getSession: (id: string) => SESSIONS.get(id) } : {}),
-    isOwner,
-    history: async sessionId => histories[sessionId] ?? [],
+/**
+ * 判据的依赖：会话表（sessions 为 false 时不给，即会话管理不在）、按会话给的历史；take 与 local 是替身，记下被问到的，
+ * 回给定的结果（缺省都不放行）
+ */
+function deps(
+  opts: {
+    histories?: Record<string, Message[]>;
+    sessions?: boolean;
+    take?: (ids: readonly string[]) => boolean;
+    local?: boolean;
+  } = {},
+) {
+  const asked = { take: [] as string[][], local: 0 };
+  const scope: MediaScopeDeps = {
+    ...(opts.sessions === false
+      ? {}
+      : { sessions: { getSession: (id: string) => SESSIONS.get(id), listSessions: () => [...SESSIONS.values()] } }),
+    take: async ids => {
+      asked.take.push([...ids]);
+      return opts.take?.(ids) ?? false;
+    },
+    local: async () => {
+      asked.local += 1;
+      return opts.local ?? false;
+    },
+    history: async sessionId => opts.histories?.[sessionId] ?? [],
   };
+  return { ...scope, asked };
 }
 
-describe('受众里没有别人的会话', () => {
-  it.each([
-    ['owner 在 WebUI', WEBUI, webuiConsole],
-    ['owner 在与她的 IM 私聊里', OWNER_PRIVATE, owner],
-    ['owner 的编排节点（内部会话）', 'workflow::wf-1', owner],
-    ['owner 的定时任务（内部会话）', 'scheduler:job-1', webuiConsole],
-  ])('%s：授权身份是 owner，任何存储地址都不限', async (_label, sessionId, actor) => {
-    expect(await mediaInScope('workspace:/pics/a.png', { sessionId, actor }, deps())).toBe(true);
-    expect(await mediaInScope('data:/images/onebot_10000_group_20002/b.png', { sessionId, actor }, deps())).toBe(true);
+describe('三类目标的分流', () => {
+  const history: Message[] = [
+    {
+      role: 'user',
+      content: '',
+      timestamp: 1,
+      metadata: { [WellKnownMetadataKeys.Attachments]: [{ kind: 'image', ref: 'workspace:/pics/inbound.png' }] },
+    },
+    {
+      role: 'assistant',
+      content: '',
+      timestamp: 2,
+      metadata: { [WellKnownMetadataKeys.SentRef]: `data:/images/${OTHER_DIR}/onebot/sent.png` },
+    },
+  ];
+
+  it('本会话树的媒体目录与本会话历史里记下的引用：放行，不问 take 与 local', async () => {
+    const d = deps({ histories: { [GROUP]: history } });
+    for (const target of [
+      ...['images', 'audios', 'videos', 'files'].map(dir => `data:/${dir}/${GROUP_DIR}/x.bin`),
+      `tmp:/browser/${GROUP_DIR}/shot-1.png`,
+      `data:/images/${sessionDirName(CHILD)}/x.png`,
+      'workspace:/pics/inbound.png',
+      `data:/images/${OTHER_DIR}/onebot/sent.png`,
+    ]) {
+      expect(await mediaInScope(target, { sessionId: GROUP }, d), target).toBe(true);
+    }
+    expect(d.asked).toEqual({ take: [], local: 0 });
   });
 
   it.each([
-    ['成员借编排投进 owner 的会话', WEBUI, { actor: member }],
-    ['owner 会话里的空闲触发（没有 userId）', OWNER_PRIVATE, { platform: 'onebot' }],
-    ['白纸通知（selfInitiatedActor）', WEBUI, { actor: selfInitiatedActor('webui') }],
-    ['MCP 客户端', 'mcp-server', { platform: 'mcp', userId: 'mcp-client' }],
-    ['匿名编排', 'workflow::wf-2', {}],
-  ])('%s：授权身份不是 owner，只认本会话', async (_label, sessionId, identity) => {
-    const call = { sessionId, ...identity };
-    expect(await mediaInScope('workspace:/pics/a.png', call, deps())).toBe(false);
-    const ownDir = `data:/images/${sessionId.replace(/[:/\\]/g, '_')}/c.png`;
-    expect(await mediaInScope(ownDir, call, deps())).toBe(true);
-  });
-});
-
-describe('房间', () => {
-  it('本会话的媒体目录与截图目录可以，owner 在群里发言也不例外地只认本会话', async () => {
-    for (const actor of [member, owner]) {
-      const call = { sessionId: GROUP, actor };
-      for (const dir of ['images', 'audios', 'videos', 'files']) {
-        expect(await mediaInScope(`data:/${dir}/${GROUP_DIR}/x.bin`, call, deps()), dir).toBe(true);
-      }
-      expect(await mediaInScope(`tmp:/browser/${GROUP_DIR}/shot-1.png`, call, deps())).toBe(true);
-      expect(await mediaInScope('workspace:/pics/a.png', call, deps())).toBe(false);
+    ['图片目录', `data:/images/${OTHER_DIR}/x.png`],
+    ['文件目录', `data:/files/${OTHER_DIR}/x.pdf`],
+    ['浏览器截图目录', `tmp:/browser/${OTHER_DIR}/shot-1.png`],
+    ['带 .. 从本会话的目录绕过去', `data:/images/${GROUP_DIR}/../${OTHER_DIR}/x.png`],
+    // 大小写不敏感的卷上读到的是同一个目录，不能按本机文件交给 local
+    ['种类目录写成大写', `data:/Images/${OTHER_DIR}/x.png`],
+    ['种类目录里的 s 写成 ſ', `data:/imageſ/${OTHER_DIR}/x.png`],
+    ['截图目录写成大写', `tmp:/Browser/${OTHER_DIR}/shot-1.png`],
+  ])('别的会话的媒体（%s）：交给 take，按它的结果，不问 local', async (_label, target) => {
+    for (const verdict of [true, false]) {
+      const d = deps({ take: () => verdict });
+      expect(await mediaInScope(target, { sessionId: GROUP }, d)).toBe(verdict);
+      expect(d.asked).toEqual({ take: [[OTHER_GROUP]], local: 0 });
     }
   });
 
   it.each([
-    ['别的会话的目录', 'data:/images/onebot_10000_group_20002/x.png'],
-    ['带 .. 绕到别的会话', `data:/images/${GROUP_DIR}/../onebot_10000_group_20002/x.png`],
-    ['带 .. 绕出媒体目录', `data:/images/${GROUP_DIR}/../../users.json`],
-    ['反斜杠分隔（Windows 上按目录分隔解析）', `data:/images/${GROUP_DIR}/..\\..\\users.json`],
+    ['工作区的文件', 'workspace:/pics/a.png'],
     ['媒体目录本身（没有会话目录）', 'data:/images/x.png'],
+    ['带 .. 绕出媒体目录', `data:/images/${GROUP_DIR}/../../users.json`],
     ['别的根里同名的目录', `workspace:/images/${GROUP_DIR}/x.png`],
+  ])('不在任何会话媒体目录下的（%s）：交给 local，按它的结果，不问 take', async (_label, target) => {
+    for (const verdict of [true, false]) {
+      const d = deps({ local: verdict });
+      expect(await mediaInScope(target, { sessionId: GROUP }, d)).toBe(verdict);
+      expect(d.asked).toEqual({ take: [], local: 1 });
+    }
+  });
+
+  it.each([
+    ['反斜杠分隔（Windows 上按目录分隔解析）', `data:/images/${GROUP_DIR}/..\\..\\users.json`],
     ['不是存储地址', `file:///images/${GROUP_DIR}/x.png`],
-  ])('%s：拒', async (_label, target) => {
-    expect(await mediaInScope(target, { sessionId: GROUP, actor: member }, deps())).toBe(false);
+    ['网址', 'https://example.invalid/a.png'],
+  ])('%s：不能，不问 take 与 local', async (_label, target) => {
+    const d = deps({ take: () => true, local: true });
+    expect(await mediaInScope(target, { sessionId: GROUP }, d)).toBe(false);
+    expect(d.asked).toEqual({ take: [], local: 0 });
+  });
+});
+
+describe('目录名有损', () => {
+  it.each([
+    ['会话 id 只在 `:` 与 `_` 上有区别', SAME_DIR, sessionDirName(SAME_DIR[0])],
+    ['只差大小写（大小写不敏感的卷上同一个目录）', CASE_ONLY, sessionDirName(CASE_ONLY[1])],
+    ['目录名里的 s 写成 ſ（大小写不敏感的卷上同一个目录）', CASE_ONLY, 'zz_ſ'],
+  ])('%s：两个会话都算候选，都过 take 才能取', async (_label, ids, dir) => {
+    const target = `data:/images/${dir}/x.png`;
+    const both = deps({ take: () => true });
+    expect(await mediaInScope(target, { sessionId: GROUP }, both)).toBe(true);
+    expect(both.asked.take.map(asked => [...asked].sort())).toEqual([[...ids].sort()]);
+    for (const passing of ids) {
+      const one = deps({ take: asked => asked.every(id => id === passing) });
+      expect(await mediaInScope(target, { sessionId: GROUP }, one), passing).toBe(false);
+    }
+  });
+
+  it.each([
+    ['只在 `:` 与 `_` 上有区别', SAME_DIR[0], sessionDirName(SAME_DIR[0]), [SAME_DIR[1]]],
+    ['只差大小写', CASE_ONLY[0], sessionDirName(CASE_ONLY[0]), [CASE_ONLY[1]]],
+    ['只差大小写，写成撞上的那个会话的目录名', CASE_ONLY[0], sessionDirName(CASE_ONLY[1]), [CASE_ONLY[1]]],
+  ])('本会话的目录名与别的会话撞车（%s）：撞上的别的会话也要过 take，本会话树的不问', async (_label, sessionId, dir, others) => {
+    for (const verdict of [true, false]) {
+      const d = deps({ take: () => verdict });
+      expect(await mediaInScope(`data:/images/${dir}/x.png`, { sessionId }, d)).toBe(verdict);
+      expect(d.asked).toEqual({ take: [others], local: 0 });
+    }
+  });
+
+  it('本会话的目录名换了大小写、没有撞名：按折叠比认出是本会话，放行、不问 take', async () => {
+    const d = deps({ take: () => false });
+    expect(await mediaInScope(`data:/images/${GROUP_DIR.toUpperCase()}/x.png`, { sessionId: GROUP }, d)).toBe(true);
+    expect(d.asked).toEqual({ take: [], local: 0 });
+  });
+
+  it('目录名反查不到会话（会话已删）：不能，不问 take', async () => {
+    const d = deps({ take: () => true, local: true });
+    expect(await mediaInScope('data:/images/onebot_10000_group_29999/x.png', { sessionId: GROUP }, d)).toBe(false);
+    expect(d.asked).toEqual({ take: [], local: 0 });
+  });
+
+  it('会话管理不在：只认调用所在会话自己的目录，别的会话的媒体一律不能，本机文件照样交给 local', async () => {
+    const d = deps({ sessions: false, take: () => true, local: true });
+    expect(await mediaInScope(`data:/images/${GROUP_DIR}/x.png`, { sessionId: GROUP }, d)).toBe(true);
+    expect(await mediaInScope(`data:/images/${OTHER_DIR}/x.png`, { sessionId: GROUP }, d)).toBe(false);
+    // 子会话的父会话也取不到：只认它自己
+    expect(await mediaInScope(`data:/images/${GROUP_DIR}/x.png`, { sessionId: CHILD }, d)).toBe(false);
+    expect(d.asked.take).toEqual([]);
+    expect(await mediaInScope('workspace:/pics/a.png', { sessionId: GROUP }, d)).toBe(true);
+    expect(d.asked.local).toBe(1);
+  });
+});
+
+describe('本机文件判法（localFileInScope）', () => {
+  const lookup = { getSession: (id: string) => SESSIONS.get(id) };
+  const fileDeps = (sessions = true) => ({
+    principalOf: (call: MediaScopeCall) => principalKind({ ...call, platform: call.platform ?? '' }, isOwner),
+    isOwner,
+    ...(sessions ? { sessions: lookup } : {}),
+  });
+  /** 一轮的工具调用：由这一轮的输入拼出，与 agent 给工具调用上下文的一样 */
+  const turn = (message: Omit<IncomingMessage, 'content'>): MediaScopeCall =>
+    originTurnOf([{ content: '', ...message }]);
+  /** owner 在群里亲手那一轮 */
+  const ownerInGroup = turn({ sessionId: GROUP, platform: 'onebot', userId: OWNER_QQ });
+
+  it.each([
+    ['owner 在群里亲手那一轮', ownerInGroup, true],
+    [
+      'owner 在群里那一轮派的子任务',
+      turn({
+        sessionId: CHILD,
+        platform: 'onebot',
+        userId: `parent:${GROUP}`,
+        source: 'subtask',
+        fromTurn: { platform: 'onebot', userId: OWNER_QQ, participants: [owner] },
+      }),
+      true,
+    ],
+    ['群成员在群里亲手那一轮', turn({ sessionId: GROUP, platform: 'onebot', userId: MEMBER_QQ }), false],
+    [
+      '群里 owner 建的定时任务（授权身份是 owner）',
+      turn({ sessionId: GROUP, platform: 'onebot', source: 'scheduler', actor: owner }),
+      false,
+    ],
+    [
+      'owner 私聊里她建的定时任务（非人回合的条款）',
+      turn({ sessionId: OWNER_PRIVATE, platform: 'onebot', source: 'scheduler', actor: owner }),
+      true,
+    ],
+    ['owner 会话里的白纸通知（selfInitiatedActor）', { sessionId: WEBUI, actor: selfInitiatedActor('webui') }, false],
+    ['MCP 客户端', { sessionId: 'mcp-server', platform: 'mcp', userId: 'mcp-client' }, false],
+    ['匿名编排', { sessionId: 'workflow::wf-2' }, false],
+  ] satisfies [string, MediaScopeCall, boolean][])('%s', (_label, call, expected) => {
+    expect(localFileInScope(call, fileDeps())).toBe(expected);
+  });
+
+  it('会话管理不在：非人回合的条款判不出受众，不放行；主体是 owner 的照旧能取', () => {
+    const scheduled = { sessionId: WEBUI, platform: 'webui', actor: webuiConsole };
+    expect(localFileInScope(scheduled, fileDeps())).toBe(true);
+    expect(localFileInScope(scheduled, fileDeps(false))).toBe(false);
+    expect(localFileInScope(ownerInGroup, fileDeps(false))).toBe(true);
   });
 });
 
@@ -146,7 +309,6 @@ describe('地址规整（mediaRef）', () => {
 
 describe('会话树', () => {
   it('子会话与孙会话里能用根会话目录里的图，根会话里能用子会话与孙会话目录里的图', async () => {
-    const dirOf = (id: string) => id.replace(/[:/\\]/g, '_');
     for (const [from, to] of [
       [CHILD, GROUP],
       [GRANDCHILD, GROUP],
@@ -155,11 +317,11 @@ describe('会话树', () => {
       [CHILD, GRANDCHILD],
     ]) {
       expect(
-        await mediaInScope(`data:/images/${dirOf(to)}/x.png`, { sessionId: from }, deps()),
+        await mediaInScope(`data:/images/${sessionDirName(to)}/x.png`, { sessionId: from }, deps()),
         `${from} → ${to}`,
       ).toBe(true);
     }
-    expect(await mediaInScope(`data:/images/${dirOf(OTHER_GROUP)}/x.png`, { sessionId: CHILD }, deps())).toBe(false);
+    expect(await mediaInScope(`data:/images/${OTHER_DIR}/x.png`, { sessionId: CHILD }, deps())).toBe(false);
   });
 });
 
@@ -171,25 +333,18 @@ describe('调用所在会话历史里系统记下的引用', () => {
       timestamp: 1,
       metadata: { [WellKnownMetadataKeys.Attachments]: [{ kind: 'image', ref: 'workspace:/pics/inbound.png' }] },
     },
-    {
-      role: 'assistant',
-      content: '[图片 | ref:data:/images/onebot_10000_group_20002/onebot/sent.png]',
-      timestamp: 2,
-      metadata: { [WellKnownMetadataKeys.SentRef]: 'data:/images/onebot_10000_group_20002/onebot/sent.png' },
-    },
   ];
 
-  it('入站附件清单与发出的附件都算；正文里的占位符不算', async () => {
-    const call = { sessionId: GROUP, actor: member };
-    const d = deps({ [GROUP]: history });
-    expect(await mediaInScope('workspace:/pics/inbound.png', call, d)).toBe(true);
-    expect(await mediaInScope('data:/images/onebot_10000_group_20002/onebot/sent.png', call, d)).toBe(true);
-    expect(await mediaInScope('workspace:/pics/forged.png', call, d)).toBe(false);
+  it('正文里的占位符不算：按本机文件交给 local', async () => {
+    const d = deps({ histories: { [GROUP]: history } });
+    expect(await mediaInScope('workspace:/pics/forged.png', { sessionId: GROUP }, d)).toBe(false);
+    expect(d.asked.local).toBe(1);
   });
 
-  it('只看调用所在的会话：子会话里用根会话历史里的引用拒', async () => {
-    const d = deps({ [GROUP]: history });
+  it('只看调用所在的会话：子会话里用根会话历史里的引用，按本机文件交给 local', async () => {
+    const d = deps({ histories: { [GROUP]: history } });
     expect(await mediaInScope('workspace:/pics/inbound.png', { sessionId: CHILD }, d)).toBe(false);
+    expect(d.asked.local).toBe(1);
   });
 
   it('先比目录，目录里的不读历史', async () => {
@@ -203,30 +358,6 @@ describe('调用所在会话历史里系统记下的引用', () => {
     };
     expect(await mediaInScope(`data:/images/${GROUP_DIR}/x.png`, { sessionId: GROUP }, d)).toBe(true);
     expect(read).toEqual([]);
-  });
-});
-
-describe('会话管理不在', () => {
-  it('owner 也只认本会话：本会话的目录与历史可以，别处拒', async () => {
-    const d = deps(
-      {
-        [WEBUI]: [
-          {
-            role: 'user',
-            content: '',
-            timestamp: 1,
-            metadata: { [WellKnownMetadataKeys.SentRef]: 'workspace:/pics/sent.png' },
-          },
-        ],
-      },
-      false,
-    );
-    const call = { sessionId: WEBUI, actor: webuiConsole };
-    expect(await mediaInScope('workspace:/pics/a.png', call, d)).toBe(false);
-    expect(await mediaInScope(`data:/images/${WEBUI}/x.png`, call, d)).toBe(true);
-    expect(await mediaInScope('workspace:/pics/sent.png', call, d)).toBe(true);
-    // 子会话的父会话也取不到：只认它自己
-    expect(await mediaInScope(`data:/images/${GROUP_DIR}/x.png`, { sessionId: CHILD }, d)).toBe(false);
   });
 });
 

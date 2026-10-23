@@ -1,44 +1,67 @@
 // ============================================================
-// scope.ts — 媒体按受众：一次调用能取哪些存储里的媒体
+// scope.ts — 媒体判据：一次调用能取哪些存储里的媒体
 //
-// 受众里没有别人（房间类别 owner-only 或 internal）、且授权身份是 owner 的调用不限；其余只认本会话树的媒体目录里的文件，
-// 与调用所在会话历史里系统记下的引用。发媒体、看图的工具与出站转换共用这一份判据。
+// 按目标分三类：会话媒体目录里的按目录名反查会话，本会话树的放行，别的会话（含与本会话树撞名的）交给调用方给的取用判定；
+// 调用所在会话历史里系统记下的引用放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定。第一方的两样判定由 mediaScopeOf 按
+// 一次调用给（会话管理的取用规则，经 api-session-manager 的 takeFrom；本机文件判法 localFileInScope），发媒体、看图的工具与
+// 回复里的媒体标记都用它，标记不带授权身份。
 //
 // 判据按写入方的目录约定判归属，不是隔离：同一个根里的符号链接，或能往本会话目录写文件的工具，都能把别处的媒体伪装成
-// 本会话的。会话目录名取自 session-media 的 sessionDirName，换法有损（见它的说明）。不在会话表里的会话按 internal
-// （编排与定时任务的会话不进会话表），群会话要已收录才认得出是房间。
+// 本会话的。会话目录名取自 session-media 的 sessionDirName，换法有损（见它的说明）：种类目录与反查会话的目录名按大小写折叠比
+// （大小写不敏感的卷上读到的是同一个目录），几个会话落进同一个目录时，本会话树以外的每个都要过取用判定，与本会话树撞名也一样。
 // ============================================================
 
-import { roomClass, rootSessionOf, type SessionInfo } from '@aalis/api-session-manager';
+import type { AuthorityService, InboundTurn } from '@aalis/api-authority';
+import { roomClass, rootSessionOf, type SessionManagerService, takeFrom } from '@aalis/api-session-manager';
 import { isHostAbsolutePath, isStorageUri, parseStorageUri } from '@aalis/api-storage';
+import type { ServiceSelection } from '@aalis/core';
 import { type ArchivedAttachment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { MEDIA_KIND_DIRS, sessionDirName } from './session-media.js';
 
-/** 一次调用：所在的会话与授权身份，字段同工具调用上下文（actor 缺省即 platform、userId；没有 userId 即匿名） */
+/**
+ * 一次调用：所在的会话、发言者、授权身份与入站回合，字段同工具调用上下文（actor 缺省即 platform、userId；没有 userId 即
+ * 匿名）。本机文件判法拿它取这一轮的主体
+ */
 export interface MediaScopeCall {
   sessionId: string;
   platform?: string;
   userId?: string;
   actor?: { platform: string; userId: string };
+  inbound?: InboundTurn;
 }
 
-/** 判据要的三样，由调用方按自己的服务注入 */
+/** 判据要的几样，由调用方按这一次调用给 */
 export interface MediaScopeDeps {
-  /** 按 id 取会话记录：会话管理在场才给；不给时一律只认本会话（房间类别与会话树都判不出） */
-  getSession?: (id: string) => SessionInfo | undefined;
-  /** owner 判定：权限服务不在时恒为否 */
-  isOwner: (platform: string, userId: string) => boolean;
+  /** 会话表：会话管理在场才给，判会话树与按目录名反查会话；不给时只认调用所在会话，别的会话的媒体一律不能取 */
+  sessions?: Pick<SessionManagerService, 'getSession' | 'listSessions'>;
+  /** 别的会话的媒体：目录名反查出的、本会话树以外的这几个会话（至少一个）都能不能取，第一方见 {@link mediaScopeOf} */
+  take: (sessionIds: readonly string[]) => Promise<boolean>;
+  /** 不在任何会话媒体目录下的本机文件能不能取，第一方见 {@link mediaScopeOf} */
+  local: () => Promise<boolean>;
   /** 某会话最近的历史（第一方取 200 条）：记忆不在时为空 */
   history: (sessionId: string) => Promise<readonly Message[]>;
+}
+
+/** 本机文件判法要的几样 */
+export interface LocalFileDeps {
+  /** 这一轮的主体（api-authority 的 principalOf）：权限服务不在时恒为 other */
+  principalOf: (call: MediaScopeCall) => 'owner' | 'other';
+  /** owner 判定：权限服务不在时恒为否 */
+  isOwner: (platform: string, userId: string) => boolean;
+  /** 会话表：会话管理在场才给；不给时判不出受众，非人回合的条款不放行 */
+  sessions?: Pick<SessionManagerService, 'getSession'>;
 }
 
 /** 会话媒体的目录，会话目录在它们下面：各种类的目录（{@link MEDIA_KIND_DIRS}）与浏览器截图的 `tmp:/browser` */
 const SESSION_MEDIA_DIRS: ReadonlySet<string> = new Set([...Object.values(MEDIA_KIND_DIRS), 'tmp:/browser']);
 
+/** 目录名的大小写折叠：只差大小写、或折叠后相同（如 `ſ` 与 `s`）的写法在大小写不敏感的卷上是同一个目录 */
+const fold = (name: string) => name.toUpperCase().toLowerCase();
+
 /**
  * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载附件时认的一样）原样；存储地址规整（消 `.`、
  * `..`）；其余不是网址也不是存储地址的（相对路径、本机路径含盘符路径、`file://`、data URI，以及带反斜杠的：有的系统按
- * 目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，过不了判据
+ * 目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，算本机文件，没有这个根，读不出
  */
 export function mediaRef(input: string): string | undefined {
   const s = input.trim();
@@ -69,37 +92,95 @@ export function historyMediaRefs(messages: readonly Message[]): string[] {
 }
 
 /**
- * 这次调用能不能取 target（存储地址，判据先按 {@link mediaRef} 规整，调用方读规整后的那个）：
- * 1. 会话管理在场、调用所在会话的房间类别不是 room，且授权身份是 owner：不限；
- * 2. 其余：target 落在本会话树（根会话加它的全部子会话）任一会话的媒体目录里（`data:/{images,audios,videos,files}/<目录>/`、
- *    `tmp:/browser/<目录>/`），或等于调用所在会话历史里系统记下的引用（{@link historyMediaRefs}）。先比目录，不中再读历史。
+ * 这次调用能不能取 target（存储地址，判据先按 {@link mediaRef} 规整，调用方读规整后的那个），按目标分三类。会话媒体目录
+ * （`data:/{images,audios,videos,files}/<目录>/`、`tmp:/browser/<目录>/`）里的按目录名在本会话树（根会话加它的全部子会话）与
+ * 会话表里反查会话（按大小写折叠比，几个会话撞同一个目录时取并集）：
+ * 1. 反查出的会话都在本会话树里，或等于调用所在会话历史里系统记下的引用（{@link historyMediaRefs}）：放行。先比目录，不中再读历史；
+ * 2. 反查出本会话树以外的会话（与本会话树撞名的也算）：take 判这些会话都能取才放行，本会话树的不问；一个会话都反查不到时不能；
+ * 3. 不在任何会话媒体目录下的：按 local。
  *
  * 媒体目录按整棵会话树（子任务里能用发起它的群里的图），历史只取调用所在会话
  */
-export async function mediaInScope(target: string, call: MediaScopeCall, deps: MediaScopeDeps): Promise<boolean> {
-  const { getSession, isOwner } = deps;
-  const { platform, userId } = call.actor ?? call;
-  const ownerActs = platform !== undefined && !!userId && isOwner(platform, userId);
-  if (getSession && ownerActs && roomClass(getSession(call.sessionId), getSession, isOwner) !== 'room') return true;
+export async function mediaInScope(
+  target: string,
+  call: Pick<MediaScopeCall, 'sessionId'>,
+  deps: MediaScopeDeps,
+): Promise<boolean> {
   const uri = mediaRef(target);
   if (!uri || !isStorageUri(uri)) return false;
+  const { sessions } = deps;
   const { root, segments } = parseStorageUri(uri);
-  if (segments.length >= 3 && SESSION_MEDIA_DIRS.has(`${root}:/${segments[0]}`)) {
-    const dirs = [...sessionTree(call.sessionId, getSession)].map(sessionDirName);
-    if (dirs.includes(segments[1])) return true;
-  }
-  return historyMediaRefs(await deps.history(call.sessionId)).includes(uri);
+  const dir =
+    segments.length >= 3 && SESSION_MEDIA_DIRS.has(`${root}:/${fold(segments[0])}`) ? fold(segments[1]) : undefined;
+  const tree = sessionTree(call.sessionId, sessions);
+  const named = (id: string) => fold(sessionDirName(id)) === dir;
+  const mine = dir !== undefined && [...tree].some(named);
+  const others =
+    dir === undefined
+      ? []
+      : (sessions?.listSessions() ?? []).map(({ id }) => id).filter(id => !tree.has(id) && named(id));
+  if (mine && others.length === 0) return true;
+  if (historyMediaRefs(await deps.history(call.sessionId)).includes(uri)) return true;
+  if (dir === undefined) return deps.local();
+  return others.length > 0 && deps.take(others);
+}
+
+/**
+ * 第一方的判据：交出这次调用判 target 的函数（{@link mediaInScope}）。别的会话的媒体每个候选都过会话管理的取用规则
+ * （takeFrom，当前会话是调用所在会话，授权身份取 actor，没有时取 platform 与 userId，没有 userId 不传），本机文件按
+ * {@link localFileInScope}（主体取权限服务的 principalOf）。权限服务不在时主体是 other、没人是 owner
+ */
+export function mediaScopeOf(
+  call: MediaScopeCall,
+  services: {
+    sessionManager: Pick<ServiceSelection<SessionManagerService>, 'present' | 'use'>;
+    authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
+    history: MediaScopeDeps['history'];
+  },
+): (target: string) => Promise<boolean> {
+  const { sessionManager, authority, history } = services;
+  const sessions = sessionManager.present ? sessionManager.use : undefined;
+  const { userId } = call;
+  const principal = call.actor ?? (userId ? { platform: call.platform ?? '', userId } : undefined);
+  const deps: MediaScopeDeps = {
+    sessions,
+    take: async ids => ids.every(id => takeFrom(sessionManager, call.sessionId, id, principal).ok),
+    local: async () =>
+      localFileInScope(call, {
+        principalOf: turn =>
+          authority.present ? authority.use.principalOf({ ...turn, platform: turn.platform ?? '' }) : 'other',
+        isOwner: (platform, userId) => authority.present && authority.use.isOwner(platform, userId),
+        sessions,
+      }),
+    history,
+  };
+  return target => mediaInScope(target, call, deps);
+}
+
+/**
+ * 不属于任何会话的本机文件（存储里不在会话媒体目录下的文件）这次调用能不能取：这一轮的主体是 owner（owner 亲手那一轮，
+ * 含它的续做与它派的子任务）；或授权身份是 owner、所在会话的房间类别不是 room（非人回合的条款，如 owner 自己会话里的定时任务、
+ * 按 owner 跑的编排、mcp-server 的调用）
+ */
+export function localFileInScope(call: MediaScopeCall, deps: LocalFileDeps): boolean {
+  if (deps.principalOf(call) === 'owner') return true;
+  const { sessions, isOwner } = deps;
+  const { platform, userId } = call.actor ?? call;
+  if (!sessions || platform === undefined || !userId || !isOwner(platform, userId)) return false;
+  const lookup = (id: string) => sessions.getSession(id);
+  return roomClass(lookup(call.sessionId), lookup, isOwner) !== 'room';
 }
 
 /** 会话树的全部会话 id：根会话与它的全部子会话，连同调用所在的会话；会话管理不在时只有它自己 */
-function sessionTree(sessionId: string, getSession: MediaScopeDeps['getSession']): Set<string> {
+function sessionTree(sessionId: string, sessions: MediaScopeDeps['sessions']): Set<string> {
   const tree = new Set<string>();
-  const root = getSession ? rootSessionOf(getSession(sessionId), getSession) : undefined;
+  const lookup = (id: string) => sessions?.getSession(id);
+  const root = rootSessionOf(lookup(sessionId), lookup);
   const pending = root ? [root.id] : [];
   for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
     if (tree.has(id)) continue;
     tree.add(id);
-    pending.push(...(getSession?.(id)?.children ?? []));
+    pending.push(...(lookup(id)?.children ?? []));
   }
   return tree.add(sessionId);
 }

@@ -142,7 +142,7 @@ interface SessionInfo {
 
 这几项在 `createSession`、`createChildSession`、`ensureSession` 的会话字段参数里带上一律丢弃。读表时类型不对的（来源字段、创建来源、所属工作区、绑定、当前目录）去掉这一项照常载入，并告警。
 
-**房间类别**：纯函数 `roomClass(info, lookup, isOwner)` 按这些字段判这个会话的受众里有谁，子会话取根会话的。它不定这一轮谁能做什么（那按这一轮的触发者，见 [authority](./authority.md)），只用在按受众定的行为上，如网关的结构性放行、摘要模板、检查点的默认范围与发送者前缀：
+**房间类别**：纯函数 `roomClass(info, lookup, isOwner)` 按这些字段判这个会话的受众里有谁，子会话取根会话的。它用在按受众定的行为上，如网关的结构性放行、摘要模板、检查点的默认范围与发送者前缀；另有两处按它定能不能取：[media 判据](./media.md#媒体判据)里本机文件的非人回合条款（授权身份是 owner、类别不是 `room` 的能取），与 plugin-image-sender 把她回复里存储地址的媒体标记转成附件时，`owner-only` 的会话不过媒体判据：
 
 | 会话 | 房间类别 |
 |---|---|
@@ -184,7 +184,7 @@ interface SessionInfo {
 
 范围（`takeScope`）与三个开关（`takeOtherGroups`、`takeOthersPrivate`、`takeCrossBot`）是参考实现 configSchema 里的按会话字段（[plugin-session-manager](../plugins/plugin-session-manager.md#配置)），按当前会话取生效值，对所有人一样，owner 也不例外；只看目标，不看当前会话的种类与有没有聊天窗口。
 
-消费方一律调契约的包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`，不直接调方法、不各写退路：会话管理在时转调 `canTake`，不在时只放行同一会话 id，其余回 `TAKE_UNKNOWN`。第一方消费方：session-history 服务的 `getHistory`（`session_get_history`、`onebot_get_session_history` 都经它）、plugin-tool-onebot 的 `onebot_get_msg`、plugin-memory-history 的被动注入与 `recent_messages`。向量记忆的召回与关系图不经这条规则，各有自己的范围（[安全模型](../concepts/security-model.md)）。
+消费方一律调契约的包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`，不直接调方法、不各写退路：会话管理在时转调 `canTake`，不在时只放行同一会话 id，其余回 `TAKE_UNKNOWN`。第一方消费方：session-history 服务的 `getHistory`（`session_get_history`、`onebot_get_session_history` 都经它）、plugin-tool-onebot 的 `onebot_get_msg`、plugin-memory-history 的被动注入与 `recent_messages`，以及 plugin-image-sender 与 plugin-media 取别的会话的媒体（`send_attachment`、`analyze_image` 与她回复里存储地址的媒体标记，经 api-media 的 `mediaScopeOf` 按媒体所在的会话目录反查会话，见 [media 服务](./media.md#媒体判据)）。向量记忆的召回与关系图不经这条规则，各有自己的范围（[安全模型](../concepts/security-model.md)）。
 
 ## 3. 谁提供 / 谁消费
 
@@ -202,6 +202,7 @@ interface SessionInfo {
 | `plugin-memory-summary` | 选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时用工作模板） | `plugin-memory-summary/src/index.ts` |
 | `plugin-trigger-policy`、`plugin-trigger-laya`、`plugin-flow-control` | 按 `fromElsewhere` 认出从别的平台往房间里插话，直接放行 | 各自的 `src/index.ts` |
 | `plugin-tool-session`、`plugin-tool-onebot`、`plugin-memory-history` | 取别的会话的历史与消息前调 `takeFrom`（§2.8） | 各自的 `src/index.ts` |
+| `plugin-image-sender`、`plugin-media` | 经 api-media 的 `mediaScopeOf` 取别的会话的媒体：先调 `takeFrom`（§2.8），按目录名反查媒体所属的会话用 `getSession` 与 `listSessions` | `api-media/src/scope.ts` |
 | `plugin-i18n` | 读者按根会话取语言；诊断写场所的显示名（`getPlace`） | `plugin-i18n/src/index.ts` |
 | `plugin-cli` | 终端配置的会话在发出入站之前 `ensureSession` 建档并写创建来源 `cli` | `plugin-cli/src/index.ts` |
 
@@ -209,7 +210,7 @@ interface SessionInfo {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期、场所与会话树。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史与按 id 取消息都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史、按 id 取消息与取别的会话的媒体都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **必须复刻的语义**：
 

@@ -63,7 +63,10 @@ async function setup(opts: SetupOptions = {}) {
   else await app.plugin(memoryInMemoryPlugin);
   if (opts.sessions) {
     const table = new Map(opts.sessions.map(s => [s.id as string, s as unknown as SessionInfo]));
-    host.provide.use(sessionManager, { getSession: (id: string) => table.get(id) } as never);
+    host.provide.use(sessionManager, {
+      getSession: (id: string) => table.get(id),
+      listSessions: () => [...table.values()],
+    } as never);
   }
   const described: string[] = [];
   if (opts.describe) {

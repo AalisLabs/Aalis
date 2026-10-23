@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { authority } from '../../packages/api-authority/src/index.js';
+import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
+import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
@@ -26,7 +27,7 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 此前 storage_uri / history_ref 只 stat 就转成本地路径发出，onebot 把文件按 base64
 // 内联当图片发送、不看内容：群里任何人都能让模型把存储根里的配置、令牌、记忆库、
 // 日志当图片外发。现在读文件头，按 kind 的白名单认格式，不符拒发。文件头的用例以 owner 在自己的会话里调用
-// （地址不限，只看文件头）；history_ref 按真实落库的形状、只在调用所在会话的历史里按全等找。
+// （不属于任何会话的本机文件能取，只看文件头）；history_ref 按真实落库的形状、只在调用所在会话的历史里按全等找。
 // 全部用本地假文件（内容为占位符），不碰真实配置、不连 NapCat、不发网络请求。
 // ════════════════════════════════════════════════════════════
 
@@ -172,8 +173,12 @@ function startApp(histories: Record<string, Message[]>) {
     [OWNER_SESSION, ownerSession],
     [ROOM, storedRoom(ROOM) as unknown as SessionInfo],
   ]);
-  host.provide.use(sessionManager, { getSession: (id: string) => sessions.get(id) } as never);
-  host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'webui' && u === 'console' } as never);
+  host.provide.use(sessionManager, {
+    getSession: (id: string) => sessions.get(id),
+    listSessions: () => [...sessions.values()],
+  } as never);
+  const isOwner = (p: string, u?: string) => p === 'webui' && u === 'console';
+  host.provide.use(authority, { isOwner, principalOf: (turn: OriginTurn) => principalKind(turn, isOwner) } as never);
   return { app, host, handlers };
 }
 
@@ -184,7 +189,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   let outbound: Array<{ attachments?: Array<{ kind: string; data: string }> }>;
   let deliveryResult: OutboundDeliveryResult | null;
 
-  /** 默认以 owner 在自己的会话里调用：不限地址，只看文件头 */
+  /** 默认以 owner 在自己的会话里调用：本机文件能取，只看文件头 */
   const send = async (args: Record<string, unknown>, call = OWNER_CALL) =>
     JSON.parse(await handlers.send_attachment(args, call));
 

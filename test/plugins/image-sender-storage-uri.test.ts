@@ -2,10 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { authority } from '../../packages/api-authority/src/index.js';
-import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
+import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
+import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
@@ -19,10 +20,13 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 照旧写成相对路径（`data/images/…`，没有冒号）的回「要写存储地址」，不再替它补成存储地址。发出的附件引用
 // 记规整后的存储地址。
 //
-// 会话是群（会话表里预置收录过的房间）：只能发本会话收到或产生的媒体，先判后读。
+// 会话是群（会话表里预置收录过的房间）：别的会话的媒体按会话管理的取用规则（这里是一律不放行的替身），不属于任何会话的
+// 本机文件按本机文件判法，都先判后读。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';
+const OUT_OF_SCOPE =
+  '这个文件不在这一轮能取的范围里：别的会话的媒体按这个会话的取用范围与开关；本机文件要这一轮里有 owner 的话、有别人时经她批准，或是 owner 授权的自动运行且会话里没有别人';
 
 describe('send_attachment 的 storage_uri', () => {
   let base: string;
@@ -64,8 +68,13 @@ describe('send_attachment 的 storage_uri', () => {
     const rooms = new Map(
       ['onebot:x:group:1', 'onebot:x:group:2'].map(id => [id, storedRoom(id) as unknown as SessionInfo]),
     );
-    host.provide.use(sessionManager, { getSession: (id: string) => rooms.get(id) } as never);
-    host.provide.use(authority, { isOwner: (p: string, u?: string) => p === 'onebot' && u === OWNER_QQ } as never);
+    host.provide.use(sessionManager, {
+      getSession: (id: string) => rooms.get(id),
+      listSessions: () => [...rooms.values()],
+      canTake: () => ({ ok: false, reason: TAKE_UNKNOWN }),
+    } as never);
+    const isOwner = (p: string, u?: string) => p === 'onebot' && u === OWNER_QQ;
+    host.provide.use(authority, { isOwner, principalOf: (turn: OriginTurn) => principalKind(turn, isOwner) } as never);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {});
     await app.plugins.register(imageSenderPlugin, {});
@@ -134,10 +143,7 @@ describe('send_attachment 的 storage_uri', () => {
     expect(out.error).toMatch(/存储资源不存在/);
   });
 
-  it.each([
-    ['群友', '90002'],
-    ['owner 在群里', OWNER_QQ],
-  ])('%s：发别的群的 data:/images/… → 拒，不出站', async (_label, userId) => {
+  it('发别的群的 data:/images/…，会话管理的取用规则不放行 → 拒，不出站', async () => {
     const outbound: unknown[] = [];
     hostEvents.on('outbound:message', m => {
       outbound.push(m);
@@ -146,10 +152,11 @@ describe('send_attachment 的 storage_uri', () => {
       await handlers.send_attachment({ kind: 'image', storage_uri: 'data:/images/onebot_x_group_2/other.jpg' }, {
         sessionId: 'onebot:x:group:1',
         platform: 'onebot',
-        userId,
+        userId: OWNER_QQ,
+        inbound: {},
       } as { sessionId: string }),
     );
-    expect(out.error).toBe('这个会话里只能发本会话收到或产生的媒体');
+    expect(out.error).toBe(OUT_OF_SCOPE);
     expect(outbound).toHaveLength(0);
   });
 
@@ -160,7 +167,7 @@ describe('send_attachment 的 storage_uri', () => {
       );
     const missing = await send('data:/secret/nonexistent.png');
     const notMedia = await send('data:/secret/config.yaml');
-    expect(missing.error).toBe('这个会话里只能发本会话收到或产生的媒体');
+    expect(missing.error).toBe(OUT_OF_SCOPE);
     expect(notMedia).toEqual(missing);
   });
 
