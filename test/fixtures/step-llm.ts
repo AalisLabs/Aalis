@@ -12,7 +12,8 @@ import { deferred } from '../helpers/deferred.js';
 // ════════════════════════════════════════════════════════════
 // 能挂住某一次调用的模型替身：decide 按请求与这是第几次调用（从 1 数）作答；hold(n) 让第 n 次调用进来之后停住，直到放行，
 // 这一次的中止信号触发时以 AbortError 结束（与真的服务商一样）。记下的是请求那一刻的快照：agent 在同一个消息数组上接着改。
-// 用例借它把一轮停在「正在调用模型」上，看这期间到的输入怎么处理。
+// 用例借它把一轮停在「正在调用模型」上，看这期间到的输入怎么处理。上下文长度可以调小，让请求超出 agent 的裁剪预算；回复带的
+// 推理内容照流式交出。
 // ════════════════════════════════════════════════════════════
 
 type Gate = ReturnType<typeof deferred<void>>;
@@ -20,14 +21,16 @@ type Gate = ReturnType<typeof deferred<void>>;
 export class StepModel implements LLMModel {
   readonly id = 'step-model';
   readonly providerId = '@aalis/test-fixture-step-llm';
-  readonly contextLength = 32_768;
   readonly maxOutputTokens = 1024;
   readonly requests: ChatModelRequest[] = [];
   readonly #holds = new Map<number, { entered: Gate; release: Gate }>();
 
   readonly capabilities = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming];
 
-  constructor(private readonly decide: (request: ChatModelRequest, n: number) => ChatResponse) {}
+  constructor(
+    private readonly decide: (request: ChatModelRequest, n: number) => ChatResponse,
+    readonly contextLength = 32_768,
+  ) {}
 
   /** 挂住第 n 次调用：entered 在它进来时落定，release 之后才作答 */
   hold(n: number): { entered: Promise<void>; release: () => void } {
@@ -54,6 +57,7 @@ export class StepModel implements LLMModel {
     }
     if (request.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     const response = this.decide(snapshot, n);
+    if (response.reasoningContent) yield { reasoningDelta: response.reasoningContent };
     if (response.content) yield { contentDelta: response.content };
     yield { done: true, ...(response.toolCalls ? { toolCalls: response.toolCalls } : {}) };
   }

@@ -57,6 +57,7 @@ import {
   arrivalTag,
   buildIncomingContent,
   CONTROL_KINDS,
+  DIRECTIVE_KINDS,
   getMessageName,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -148,7 +149,7 @@ const refOf = (entry: ProviderEntry<LLMModel>): ModelRef => ({ provider: entry.u
 /** 一轮的结局 */
 type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
 
-/** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容） */
+/** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容）；没改动的消息是原来的对象 */
 interface TrimmedMessages {
   messages: Message[];
   trimmed: boolean;
@@ -791,9 +792,12 @@ class DefaultAgent implements AgentService {
       let turnTrimmed = false;
       /** 首次调用的硬裁剪从底稿里去掉的历史与工具结果：之后各次调用按底稿估算没裁剪的量时补回 */
       let trimmedFromBase = 0;
-      /** 硬裁剪这次要发出的列表，删了消息时记一行日志；untrimmedHistory 按没经过硬裁剪的列表估算 */
+      /**
+       * 硬裁剪这次要发出的列表（按 buildMessages 交出的消息对象认出历史），删了消息时记一行日志；untrimmedHistory 按没经过
+       * 硬裁剪的列表估算
+       */
       const trimForCall = (list: Message[]) => {
-        const sent = this.trimMessages(list, tokenBudget);
+        const sent = this.trimMessages(list, tokenBudget, built.history);
         if (sent.messages.length < list.length) {
           this.logger.info(`上下文硬裁剪: session=${sessionId}, ${list.length} → ${sent.messages.length} 条消息`);
         }
@@ -1387,8 +1391,8 @@ class DefaultAgent implements AgentService {
   /**
    * 构建发送给 LLM 的消息列表。历史按会话的条数线成段丢弃（见 readHistory）：historyLimit 为 0 或没设置时发全部活跃历史，
    * 跳过这一轮各条输入的归档。historyMessages 是会话的活跃条数（含已归档的这一轮的输入与没发给模型的部分），与之后的清洗、
-   * 裁剪无关。历史之后依次是易变块、由排着的真人消息开的一轮的说明、多方房间里有被点名的输入时的焦点指引、各条输入。
-   * acceptsImages 是这一轮的主模型能不能看图，media 缺席时由它定当轮的图交不交
+   * 裁剪无关；history 是发出的历史那一段的消息对象，硬裁剪按它认出历史。历史之后依次是易变块、由排着的真人消息开的一轮的说明、
+   * 多方房间里有被点名的输入时的焦点指引、各条输入。acceptsImages 是这一轮的主模型能不能看图，media 缺席时由它定当轮的图交不交
    */
   private async buildMessages(
     turn: Turn,
@@ -1397,7 +1401,7 @@ class DefaultAgent implements AgentService {
     acceptsImages: boolean,
     multiParty: boolean,
     personaOpts: PersonaSessionOptions,
-  ): Promise<{ messages: Message[]; historyMessages: number }> {
+  ): Promise<{ messages: Message[]; historyMessages: number; history: ReadonlySet<Message> }> {
     const messages: Message[] = [];
     let historyMessages = 0;
     const { sessionId } = turn;
@@ -1412,10 +1416,9 @@ class DefaultAgent implements AgentService {
       try {
         const stored = await readHistory(memory, sessionId, historyLimit);
         historyMessages = stored.count;
-        const history = this.sanitizeToolCallHistory(stored.messages, sessionId);
         const archived = inputs.flatMap(input => (input.archived ? [input.archived] : []));
         const now = Date.now();
-        for (const m of history) {
+        for (const m of this.sanitizeToolCallHistory(stored.messages, sessionId)) {
           if (archived.some(input => this.isSameMessage(m, input))) continue;
           if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
           // 为用户消息注入时间标注，帮助 LLM 理解时间先后。标注加在副本上：记忆服务可能直接交出存着的消息对象
@@ -1432,6 +1435,7 @@ class DefaultAgent implements AgentService {
         this.logger.warn('获取历史消息失败:', err);
       }
     }
+    const history = new Set(messages.slice(1));
 
     // 3. 这一轮的输入。带来源的注入各自成一轮，宿主通知与委派只有这一条
     const first = inputs[0].message;
@@ -1446,7 +1450,7 @@ class DefaultAgent implements AgentService {
         content: `[宿主通知]\n${first.content}${untrusted ? `\n\n${untrusted}` : ''}`,
         metadata: { injector: WellKnownKinds.HostNotice },
       });
-      return { messages, historyMessages };
+      return { messages, historyMessages, history };
     }
 
     // 3a. proactive 分支：系统代发给本会话的任务指令（如 workflow 的 agent 节点）
@@ -1464,7 +1468,7 @@ class DefaultAgent implements AgentService {
           `不是用户请求。处理时不要使用「您」「请问」等面向用户的措辞，按指令直接执行并简明回报结果。\n`,
         metadata: { injector: WellKnownKinds.CrossSessionDelegation },
       });
-      return { messages, historyMessages };
+      return { messages, historyMessages, history };
     }
 
     // 3b. 普通用户消息分支
@@ -1500,7 +1504,7 @@ class DefaultAgent implements AgentService {
 
     for (const input of inputs) messages.push(await this.inputMessage(input, acceptsImages));
 
-    return { messages, historyMessages };
+    return { messages, historyMessages, history };
   }
 
   /**
@@ -1783,216 +1787,159 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 裁剪消息列表，使总 token 数不超过预算；trimmed 报告入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容）。
-   * 不记日志：token:request 的快照同样走这里，删了消息的日志由真实回合的调用点记
+   * 硬裁剪这次要发出的列表，使估算回到预算内；trimmed 报告进入了硬裁剪：入口估算超过了预算（不一定真裁掉了内容），或历史超过
+   * 它的可用量、丢了一段。不记日志：token:request 的快照同样走这里，删了消息的日志由真实回合的调用点记。没改动的消息原样交出
+   * （同一个对象：首次调用的结果写回底稿之后，history 照样认得出历史），改动的换成副本。
    *
-   * 渐进式压缩策略（保证 agent 在长工具链中无限运行）：
-   *  1. 首条 system（主提示词）和末条消息永不删除
-   *  2. 缩减超出预留额度的 system 消息（长期记忆）
-   *  3. 截断过长的 tool 输出内容（保留头部关键信息）
-   *  4. 将最旧的 assistant+tool 组压缩为紧凑摘要（保留决策上下文）
-   *  5. 删除最旧的非 system 消息
-   *  6. 最后手段：删除 hook 注入的 system 消息
+   * 列表分三段：头部（第一条非 system 之前：人设、技能、摘要等；属于历史的 system 消息不算）、历史（history 里的消息对象，即
+   * 读出、清洗后发出的那段）、本轮（其余：易变块、本轮材料与提示、本轮的输入、本轮追加的工具调用与结果）。依次裁，第 1 步总做，
+   * 之后任一步回到预算内即停：
+   *  1. 历史按 token 成段丢：单位 U = ⌈预算 / 4⌉，历史可用 H = 预算 − 头部 − U（本轮固定留一个单位）；历史超过 H 时（不看本轮
+   *     多大）从第一条起丢到累计第一次达到 ⌈(历史 − H) / U⌉·U 的那一条，切点落在工具调用组中间时组里剩下的结果一起丢（对齐同
+   *     readHistory）。切点只由头部与历史定：头部两次压缩之间不变、历史只追加，切点只在历史跨过一个单位时前移，两次丢弃之间
+   *     发出的开头逐字不变，前缀缓存才命中
+   *  2. 只动本轮追加的：截短过长的工具结果、缩推理内容、把较早的工具调用组压成摘要。历史里的不动（会改开头），超了按第 1 步
+   *     整段丢
+   *  3. 本轮超过一个单位时仍超：历史接着按同一套单位往后丢，丢到累计第一次达到下一个单位整数倍的那一条（本轮在同一个单位内
+   *     变大时切点不动）或丢完；会改开头
+   *  4. 会改开头：注入的 system 块合计超过 memoryTokenBudget 时按比例缩，仍超时从最靠前的删起
+   *  5. 最后手段：最后一组工具调用也截短过长的结果、缩推理内容，请求不超窗发出
+   * 始终不动：首条 system、本轮的输入（user 消息，与宿主通知、委派那一轮的指令块）、末条消息（格式重试的反馈）；最后一组工具
+   * 调用不删、不压成摘要
    */
-  private trimMessages(messages: Message[], budget: number): TrimmedMessages {
-    const result = messages.map(m => ({ ...m }));
+  private trimMessages(messages: Message[], budget: number, history: ReadonlySet<Message>): TrimmedMessages {
+    let result = [...messages];
     let estimated = this.estimateTokens(result);
-    if (estimated <= budget) return { messages: result, trimmed: false };
+    const over = estimated > budget;
+    const directive = (m: Message) => DIRECTIVE_KINDS.includes(String(m.metadata?.injector));
 
-    /** 重新扫描 system 消息索引（首条和末条之间） */
-    const findSystemIndices = (): number[] => {
-      const indices: number[] = [];
-      for (let i = 1; i < result.length - 1; i++) {
-        if (result[i].role === 'system') indices.push(i);
+    // === 1. 历史按 token 成段丢 ===
+    const unit = Math.ceil(budget / 4);
+    /** 丢到不少于 tokens 的下一个单位整数倍 */
+    const onGrid = (tokens: number) => Math.ceil(tokens / unit) * unit;
+    let head = 0;
+    for (const m of result) {
+      if (m.role !== 'system') break;
+      if (!history.has(m)) head += estimateMsgTokens(m);
+    }
+    const past = result.filter(m => history.has(m));
+    let cut = 0;
+    let dropped = 0;
+    /** 从历史开头起丢到累计估算达到 tokens 的那一条（含）；切点落在工具调用组中间时，组里剩下的结果一起丢 */
+    const dropPast = (tokens: number) => {
+      const from = cut;
+      const before = dropped;
+      while (cut < past.length && dropped < tokens) dropped += estimateMsgTokens(past[cut++]);
+      while (cut < past.length && past[cut].role === 'tool') dropped += estimateMsgTokens(past[cut++]);
+      const gone = new Set(past.slice(from, cut));
+      result = result.filter(m => !gone.has(m));
+      estimated -= dropped - before;
+    };
+    const room = budget - head - unit;
+    const pastTokens = past.reduce((sum, m) => sum + estimateMsgTokens(m), 0);
+    if (pastTokens > room) dropPast(onGrid(pastTokens - room));
+    if (estimated <= budget) return { messages: result, trimmed: over || cut > 0 };
+
+    // === 2. 只动本轮追加的，最后一组工具调用（本轮最后一条带调用的 assistant 与紧跟的结果）不动 ===
+    const last = new Set<Message>();
+    for (let i = result.length - 1; i >= 0; i--) {
+      if (history.has(result[i]) || !result[i].toolCalls?.length) continue;
+      for (let j = i; j < result.length && (j === i || result[j].role === 'tool'); j++) last.add(result[j]);
+      break;
+    }
+    const appended = (m: Message) => !history.has(m) && !last.has(m);
+    /** 截短 pick 选中的过长工具结果（1500 字以上的留 500） */
+    const shortenResults = (pick: (m: Message) => boolean) => {
+      for (let i = 0; i < result.length && estimated > budget; i++) {
+        const m = result[i];
+        if (m.role !== 'tool' || !pick(m) || !m.content || m.content.length <= 1500) continue;
+        const shorter = { ...m, content: truncateChars(m.content, 500, '\n... [工具输出已截断]') };
+        estimated -= estimateMsgTokens(m) - estimateMsgTokens(shorter);
+        result[i] = shorter;
       }
-      return indices;
+    };
+    /**
+     * 缩 pick 选中的推理内容：从旧到新，旧的留 200 字，最新一条留 400。DeepSeek 思考模式要求历史中凡有 reasoning_content 的消息
+     * 原样带回这个字段，设成 undefined 会被拒（400），所以只截断、不删除
+     */
+    const shrinkReasoning = (pick: (m: Message) => boolean) => {
+      const reasoned = result.flatMap((m, i) =>
+        m.role === 'assistant' && pick(m) && (m.reasoningContent?.length ?? 0) > 200 ? [i] : [],
+      );
+      for (let k = 0; k < reasoned.length && estimated > budget; k++) {
+        const m = result[reasoned[k]];
+        const keep = k < reasoned.length - 1 ? 200 : 400;
+        const shorter = {
+          ...m,
+          reasoningContent: truncateChars(m.reasoningContent ?? '', keep, '\n... [推理内容已缩减]'),
+        };
+        estimated -= estimateMsgTokens(m) - estimateMsgTokens(shorter);
+        result[reasoned[k]] = shorter;
+      }
     };
 
-    // === Phase 1: 缩减超出预留额度的 system 消息 ===
-    {
-      const sysIdx = findSystemIndices();
-      const sysTokens = sysIdx.reduce((s, i) => s + estimateMsgTokens(result[i]), 0);
-      if (sysTokens > this.memoryTokenBudget && sysIdx.length > 0) {
-        const ratio = this.memoryTokenBudget / sysTokens;
-        for (const idx of sysIdx) {
-          const msg = result[idx];
-          if (msg.content && msg.content.length > 200) {
-            const oldTokens = estimateMsgTokens(msg);
-            const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
-            msg.content = truncateChars(msg.content, targetLen, '\n... [记忆内容已缩减]');
-            estimated -= oldTokens - estimateMsgTokens(msg);
-          }
-        }
+    shortenResults(appended);
+    shrinkReasoning(appended);
+    // 较早的工具调用组从最旧的起压成一条摘要（确实省 token 时）
+    for (let i = 0; i < result.length && estimated > budget; i++) {
+      const call = result[i];
+      if (call.role !== 'assistant' || !call.toolCalls?.length || !appended(call)) continue;
+      let end = i + 1;
+      while (end < result.length && result[end].role === 'tool') end++;
+      const outputs = result.slice(i + 1, end);
+      const before = [call, ...outputs].reduce((sum, m) => sum + estimateMsgTokens(m), 0);
+      const previews = outputs.map(({ content }) => {
+        const output = content ?? '';
+        return output.length > 100 ? `${output.slice(0, 100)}...` : output;
+      });
+      const parts = call.toolCalls.map((tc, idx) => `${tc.function.name} → ${previews[idx] ?? '(无结果)'}`);
+      const text = `[历史工具调用] ${parts.join(' | ')}`;
+      const summary: Message = { role: 'assistant', content: call.content ? `${call.content}\n${text}` : text };
+      const after = estimateMsgTokens(summary);
+      if (after < before) {
+        result.splice(i, end - i, summary);
+        estimated -= before - after;
       }
     }
     if (estimated <= budget) return { messages: result, trimmed: true };
 
-    // === Phase 2: 截断过长的 tool 输出 ===
-    for (let i = 1; i < result.length - 1; i++) {
+    // === 3. 本轮超过一个单位：历史接着按单位丢 ===
+    dropPast(onGrid(dropped + estimated - budget));
+    if (estimated <= budget) return { messages: result, trimmed: true };
+
+    // === 4. 注入的 system 块：首条与末条之间、不是本轮指令块的 ===
+    const injected = () =>
+      result.flatMap((m, i) => (i > 0 && i < result.length - 1 && m.role === 'system' && !directive(m) ? [i] : []));
+    const total = injected().reduce((sum, i) => sum + estimateMsgTokens(result[i]), 0);
+    if (total > this.memoryTokenBudget) {
+      const ratio = this.memoryTokenBudget / total;
+      for (const i of injected()) {
+        const m = result[i];
+        if (!m.content || m.content.length <= 200) continue;
+        const targetLen = Math.max(200, Math.floor(m.content.length * ratio));
+        const shorter = { ...m, content: truncateChars(m.content, targetLen, '\n... [记忆内容已缩减]') };
+        estimated -= estimateMsgTokens(m) - estimateMsgTokens(shorter);
+        result[i] = shorter;
+      }
+    }
+    // 仍超时从最靠前的块删起。turn-context 迁移后头部只剩技能正文/会话摘要、档案/记忆类材料都在尾部——正序扫描意味着极端
+    // 裁剪时**先牺牲头部稳定块**、可再生的尾部材料反而最后动，与理想优先级相反。维持正序是刻意取舍：这是罕见的最后手段，且
+    // 反转方向会先删掉紧邻当前消息的当轮提示（focus/平台事件说明），代价更直观；按 injector 分级则是为极端路径引入一张需要
+    // 长期维护的优先级表。真在生产观察到它高频触发时再议。
+    let removed = 0;
+    for (const i of injected()) {
       if (estimated <= budget) break;
-      if (result[i].role === 'tool' && result[i].content && result[i].content!.length > 1500) {
-        const oldTokens = estimateMsgTokens(result[i]);
-        result[i].content = truncateChars(result[i].content!, 500, '\n... [工具输出已截断]');
-        estimated -= oldTokens - estimateMsgTokens(result[i]);
-      }
-    }
-    if (estimated <= budget) return { messages: result, trimmed: true };
-
-    // === Phase 2.5: 缩减 assistant 消息的 reasoningContent ===
-    // 深度思考模型的推理内容可能非常长（数万 token），优先缩减旧迭代的推理，
-    // 仍超预算时缩减最新一条（保留头尾摘要以保持上下文连贯性）
-    {
-      // 收集带 reasoningContent 的 assistant 消息索引（从旧到新）
-      const rcIndices: number[] = [];
-      for (let i = 1; i < result.length; i++) {
-        if (result[i].role === 'assistant' && result[i].reasoningContent && result[i].reasoningContent!.length > 200) {
-          rcIndices.push(i);
-        }
-      }
-      // 从最旧开始，先截断非最后一条的推理，仍不够时截断最后一条
-      // 注意：DeepSeek 思考模式要求历史中凡有 reasoning_content 的消息必须原样带回，
-      // 不能将字段设为 undefined，否则 API 返回 400。因此只截断，不删除。
-      for (let k = 0; k < rcIndices.length && estimated > budget; k++) {
-        const idx = rcIndices[k];
-        const msg = result[idx];
-        const oldTokens = estimateMsgTokens(msg);
-        // 所有条目统一保留头部 200 字符（最新条保留稍多以保持上下文连贯性）
-        const keepLen = k < rcIndices.length - 1 ? 200 : 400;
-        msg.reasoningContent = truncateChars(msg.reasoningContent!, keepLen, '\n... [推理内容已缩减]');
-        estimated -= oldTokens - estimateMsgTokens(msg);
-      }
-    }
-    if (estimated <= budget) return { messages: result, trimmed: true };
-
-    // === Phase 3: 将旧的 assistant+tool 组压缩为摘要 ===
-    // 识别所有工具调用组 (assistant(toolCalls) + 紧跟的 tool 消息)
-    {
-      const groups: Array<{ start: number; end: number }> = [];
-      for (let j = 1; j < result.length; j++) {
-        if (result[j].role === 'assistant' && result[j].toolCalls?.length) {
-          let end = j + 1;
-          while (end < result.length && result[end].role === 'tool') end++;
-          groups.push({ start: j, end });
-          j = end - 1;
-        }
-      }
-
-      // 从最旧开始压缩，保护最后一组（当前工具链需要完整结果）
-      let offset = 0;
-      for (let g = 0; g < groups.length - 1 && estimated > budget; g++) {
-        const start = groups[g].start - offset;
-        const end = groups[g].end - offset;
-        const groupLen = end - start;
-
-        // 计算当前组的 token
-        let groupTokens = 0;
-        const toolPreviews: string[] = [];
-        for (let j = start; j < end; j++) {
-          groupTokens += estimateMsgTokens(result[j]);
-          if (result[j].role === 'tool') {
-            const c = result[j].content ?? '';
-            toolPreviews.push(c.length > 100 ? `${c.slice(0, 100)}...` : c);
-          }
-        }
-
-        // 构建紧凑摘要
-        const aMsg = result[start];
-        const names = aMsg.toolCalls!.map(tc => tc.function.name);
-        const parts = names.map((n, idx) => `${n} → ${toolPreviews[idx] ?? '(无结果)'}`);
-        let text = `[历史工具调用] ${parts.join(' | ')}`;
-        if (aMsg.content) text = `${aMsg.content}\n${text}`;
-
-        const summaryMsg: Message = { role: 'assistant', content: text };
-        const summaryTokens = estimateMsgTokens(summaryMsg);
-
-        // 仅在确实能节省 token 时压缩
-        if (summaryTokens < groupTokens) {
-          result.splice(start, groupLen, summaryMsg);
-          estimated -= groupTokens - summaryTokens;
-          offset += groupLen - 1;
-        }
-      }
-    }
-    if (estimated <= budget) return { messages: result, trimmed: true };
-
-    // === Phase 4: 删除最旧的非 system 消息（保护最后一组工具调用 + 最新用户消息） ===
-    {
-      // 识别最后一组工具调用的索引范围，确保不被删除
-      const lastGroupIndices = new Set<number>();
-      for (let j = result.length - 1; j >= 1; j--) {
-        if (result[j].role === 'assistant' && result[j].toolCalls?.length) {
-          lastGroupIndices.add(j);
-          let k = j + 1;
-          while (k < result.length && result[k].role === 'tool') {
-            lastGroupIndices.add(k);
-            k++;
-          }
-          break;
-        }
-      }
-
-      // 保护最新的 user 消息（用户发起任务的请求，删掉会导致模型丢失任务上下文）
-      let lastUserIdx = -1;
-      for (let j = result.length - 1; j >= 1; j--) {
-        if (result[j].role === 'user') {
-          lastUserIdx = j;
-          break;
-        }
-      }
-
-      const adjustAfterSplice = (splicedAt: number): void => {
-        const updated = new Set<number>();
-        for (const idx of lastGroupIndices) updated.add(idx > splicedAt ? idx - 1 : idx);
-        lastGroupIndices.clear();
-        for (const idx of updated) lastGroupIndices.add(idx);
-        if (lastUserIdx > splicedAt) lastUserIdx--;
-      };
-
-      let i = 1;
-      while (estimated > budget && i < result.length - 1) {
-        if (result[i].role === 'system' || lastGroupIndices.has(i) || i === lastUserIdx) {
-          i++;
-          continue;
-        }
-        // assistant(含toolCalls) + 紧跟的 tool 消息成组删除
-        if (result[i].role === 'assistant' && result[i].toolCalls?.length) {
-          estimated -= estimateMsgTokens(result[i]);
-          result.splice(i, 1);
-          adjustAfterSplice(i);
-          while (i < result.length - 1 && result[i].role === 'tool') {
-            if (lastGroupIndices.has(i)) break;
-            estimated -= estimateMsgTokens(result[i]);
-            result.splice(i, 1);
-            adjustAfterSplice(i);
-          }
-          continue;
-        }
-        estimated -= estimateMsgTokens(result[i]);
-        result.splice(i, 1);
-        adjustAfterSplice(i);
-      }
-    }
-    if (estimated <= budget) return { messages: result, trimmed: true };
-
-    // === Phase 5: 极端情况 — 删除 hook 注入的 system 消息 ===
-    // 从最靠前的块开始删。turn-context 迁移后头部只剩技能正文/会话摘要、
-    // 档案/记忆类材料都在尾部——正序扫描意味着极端裁剪时**先牺牲头部稳定块**、
-    // 可再生的尾部材料反而最后动，与理想优先级相反。维持正序是刻意取舍：
-    // 本相位是罕见的最后手段，且反转方向会先删掉紧邻当前消息的当轮提示
-    // （focus/平台事件说明），代价更直观；按 injector 分级则是为极端路径
-    // 引入一张需要长期维护的优先级表。真在生产观察到本相位高频触发时再议。
-    {
-      const sysIdx = findSystemIndices();
-      let removed = 0;
-      for (let j = 0; j < sysIdx.length && estimated > budget; j++) {
-        const idx = sysIdx[j] - removed;
-        estimated -= estimateMsgTokens(result[idx]);
-        result.splice(idx, 1);
-        removed++;
-      }
+      estimated -= estimateMsgTokens(result[i - removed]);
+      result.splice(i - removed, 1);
+      removed++;
     }
 
-    // 大幅裁剪后注入继续执行提示，防止模型因上下文缺失而中止任务
+    // === 5. 最后一组也截短过长的结果、缩推理内容 ===
+    const inLast = (m: Message) => last.has(m);
+    shortenResults(inLast);
+    shrinkReasoning(inLast);
+
+    // 大幅裁剪后注入继续执行提示，防止模型因上下文缺失而中止任务：放在本轮最后一条输入之后，没有输入（快照）时放在末尾
     if (messages.length - result.length >= 6) {
       const hint: Message = {
         role: 'system',
@@ -2000,10 +1947,9 @@ class DefaultAgent implements AgentService {
           '[系统提示] 由于上下文长度限制，部分历史消息已被压缩或移除。请基于当前可见的上下文和最新用户请求继续完成任务，不要因为看不到之前的细节而停止工作。如果你之前有正在执行的多步骤任务或计划，请查看对话摘要和 todo-list 工具确认当前进度，然后继续未完成的步骤。',
         metadata: { injector: 'system-other' },
       };
-      // 插入到最后一条 user 消息之后（如果有），否则插到末尾前
-      let insertIdx = result.length - 1;
-      for (let j = result.length - 1; j >= 1; j--) {
-        if (result[j].role === 'user') {
+      let insertIdx = result.length;
+      for (let j = result.length - 1; j >= 0; j--) {
+        if (!history.has(result[j]) && (result[j].role === 'user' || directive(result[j]))) {
           insertIdx = j + 1;
           break;
         }
@@ -2191,7 +2137,8 @@ const configSchema = defineConfig({
     label: '长期记忆预留 Token',
     default: 4096,
     secret: false,
-    description: '为注入的 system 消息预留的 token 额度：超出时先按比例缩减，极端情况下（最后阶段）仍会删除',
+    description:
+      '注入的 system 消息（技能、摘要、记忆等）的 token 额度，只在硬裁剪丢完历史仍超预算时起作用：它们合计超过额度就按比例缩减，仍超时删除',
   },
   promptBuildTimeoutMs: {
     type: 'number',
@@ -2257,7 +2204,7 @@ type InternalAgent = {
   resolveLLM(ref: ModelRef | undefined): ProviderEntry<LLMModel> | undefined;
   computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
-  trimMessages(messages: Message[], budget: number): TrimmedMessages;
+  trimMessages(messages: Message[], budget: number, history: ReadonlySet<Message>): TrimmedMessages;
   emitTokenUsage(usage: UsageReport): Promise<void>;
 };
 
@@ -2357,7 +2304,8 @@ function run(caps: Caps): void {
       const history = memory
         ? await readHistory(memory, data.sessionId, settings.historyLimit)
         : { messages: [], count: 0 };
-      messages.push(...history.messages.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
+      const past = history.messages.filter(m => !CONTROL_KINDS.includes(m.kind ?? ''));
+      messages.push(...past);
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
@@ -2378,7 +2326,7 @@ function run(caps: Caps): void {
       await caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       // 与真实回合同样过硬裁剪，拆分按裁剪之后的消息算
-      const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget);
+      const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget, new Set(past));
       await agent.emitTokenUsage({
         sessionId: data.sessionId,
         platform,

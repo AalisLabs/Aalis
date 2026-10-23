@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { agent } from '../../packages/api-agent/src/index.js';
+import { agent, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -16,8 +16,9 @@ import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 发给模型的开头在两次变动之间逐字不变：压缩没压成期间，条数线超出时一次丢掉最早的半条线；压成之后到下一次压缩之间，摘要块
-// 与摘要模型挑出、原样保留的原文排在历史开头。其间各轮请求的系统提示与历史都是下一轮请求的前缀，服务商的前缀缓存因此命中。
+// 发给模型的开头在两次变动之间逐字不变：压缩没压成期间，条数线超出时一次丢掉最早的半条线，历史按 token 超出裁剪预算时一次
+// 丢掉不少于预算四分之一的一段；压成之后到下一次压缩之间，摘要块与摘要模型挑出、原样保留的原文排在历史开头。其间各轮请求的
+// 系统提示与历史都是下一轮请求的前缀，服务商的前缀缓存因此命中。
 // 在发往服务商的那一层比对：真的 OpenAI 插件，桩 fetch 记下每次 /chat/completions 的请求体，逐条比 messages 的 JSON
 // （线上发出去的字节），请求体其余部分（模型、工具、输出上限、流式开关）逐字相同。不装人设与注入本轮材料的插件，请求里的
 // 本轮块只有当前消息。摘要请求按系统提示的开头认，缺省回 500，可切换成回一份摘要；该压缩的轮次按退避预先算好，等那一轮的
@@ -252,6 +253,71 @@ it('压成之后到下一次压缩之间：摘要块与保留的原文紧接在�
   expect(String(first.messages[4].content)).toMatch(/问题 13$/);
   expect(first.messages[5].content).toBe('回答 13');
   expect(String(first.messages[6].content)).toMatch(/问题 14$/);
+});
+
+it('历史按 token 超出裁剪预算、压缩一直没压成：按单位（预算的四分之一）成段丢，两次丢弃之间开头逐字不变，系统提示不变', async () => {
+  const { app } = hostedApp({ logLevel: 'warn' });
+  apps.push(app);
+  await registerHubs(app);
+  // 摘要请求一律回 500：没压成的压缩不改历史，不用等它落定
+  const conversation: Sent[] = [];
+  let summaries = 0;
+  let turn = 0;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as ChatBody;
+    if (String(body.messages[0]?.content).startsWith('你是对话摘要助手')) {
+      summaries++;
+      return new Response(JSON.stringify({ error: { message: 'zz-summary-down' } }), { status: 500 });
+    }
+    conversation.push({ turn, body });
+    return sse({ content: `回答 ${turn} ${'y'.repeat(200)}` });
+  }) as typeof fetch;
+  // 窗口 4096、输出上限 1024：裁剪预算 2560，单位 640；每轮一问一答约 140，系统提示约 300，第 17 轮起超预算
+  await app.plugin(openaiPlugin, {
+    apiKey: 'zz-key',
+    baseUrl: 'https://llm.invalid/v1',
+    customModels: 'gpt-4o',
+    discoverModels: false,
+    contextLength: 4096,
+    maxTokens: 1024,
+  });
+  await app.plugin(memoryInMemory);
+  await app.plugin(messageArchive, { debugLogs: false });
+  await app.plugin(agentPlugin, { systemPrompt: 'zz cache bot' });
+  await app.plugin(memorySummary, {});
+  await app.plugins.idle();
+  for (const plugin of [openaiPlugin, agentPlugin, memorySummary]) {
+    expect(app.plugins.getPlugin(plugin.name)?.state, `${plugin.name} 未激活`).toBe('active');
+  }
+  const host = app.bind({ agent, events });
+  const usages: Array<{ turn: number; event: TokenUsageEvent }> = [];
+  host.events.use.on('token:usage', event => void usages.push({ turn, event }));
+  for (let k = 1; k <= 30; k++) {
+    turn = k;
+    await host.agent.use.handleMessage({
+      content: `问题 ${k} ${'x'.repeat(200)}`,
+      sessionId: SESSION,
+      platform: 'webui',
+      userId: 'u1',
+    });
+  }
+
+  // 每轮丢掉的历史：没裁剪的历史减去发出的历史（同一份估算）。只在丢弃的那一轮涨，每次涨过下一个单位的整数倍（丢到累计第一次
+  // 达到 k 个单位的那一条）：一次一大段，不是逐条
+  const unit = Math.ceil(usages[0].event.tokenBudget / 4);
+  const cut = usages.map(({ event }) => event.untrimmedHistory - event.breakdown.history - event.breakdown.toolResults);
+  const drops = usages.flatMap(({ turn }, i) => (cut[i] !== (cut[i - 1] ?? 0) ? [turn] : []));
+  for (let i = 1; i < cut.length; i++) {
+    const crossed = Math.floor(cut[i] / unit) > Math.floor(cut[i - 1] / unit);
+    const why = `第 ${usages[i].turn} 轮累计丢掉 ${cut[i]}，此前 ${cut[i - 1]}`;
+    expect(cut[i] === cut[i - 1] || crossed, why).toBe(true);
+  }
+  expect(drops.length).toBeGreaterThanOrEqual(3);
+  expect(drops.length, '两次丢弃之间隔着几轮').toBeLessThan(30 - drops[0]);
+  // 发出的开头只在丢弃的那几轮变（只共享系统提示），其余各轮以上一轮的系统提示与历史为前缀；系统提示一直不变
+  expect(droppedTurns(conversation)).toEqual(drops);
+  expect(new Set(conversation.map(({ body }) => JSON.stringify(body.messages[0]))).size).toBe(1);
+  expect(summaries, '压缩试过、都没压成').toBeGreaterThan(0);
 });
 
 it('插入与排队：同一轮插入之后，下一次请求以上一次请求为前缀；排队开的 T2（其中又有插入）与之后的 T3，各以上一轮最后一次请求（除去说明块）为前缀', async () => {
