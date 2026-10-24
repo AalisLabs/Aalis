@@ -16,7 +16,7 @@ import { config, definePlugin, events, lifecycle, logger, optional, provide } fr
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
-import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { groupToolCalls, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 
@@ -97,16 +97,12 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
 }
 
 /**
- * 切分点：快照末尾的工具调用组没写全时（快照恰好读在 agent 写这一组的几次写入之间）退到这组的 assistant 之前，
- * 它与随后写入的结果都留在活跃历史里；否则为快照末尾
+ * 切分点：快照的最后一条是没写全的工具调用组（按 groupToolCalls 归组；快照恰好读在 agent 写这一组的几次写入之间）的调用或结果时
+ * 退到这组的 assistant 之前，它、夹在组里的别的消息与随后写入的结果都留在活跃历史里；否则为快照末尾
  */
 function cutPoint(snapshot: Message[]): number {
-  let start = snapshot.length;
-  while (start > 0 && snapshot[start - 1].role === 'tool') start--;
-  const head = snapshot[start - 1];
-  if (head?.role !== 'assistant' || !head.toolCalls?.length) return snapshot.length;
-  const results = new Set(snapshot.slice(start).map(m => m.toolCallId));
-  return head.toolCalls.every(call => results.has(call.id)) ? snapshot.length : start - 1;
+  const last = groupToolCalls(snapshot).find(({ at }) => at.includes(snapshot.length - 1));
+  return last?.shape === 'partial' ? last.at[0] : snapshot.length;
 }
 
 const toolCallIds = (m: Message) => m.toolCalls?.map(call => call.id).join() ?? '';
@@ -126,47 +122,39 @@ function samePrefix(span: Message[], current: Message[]): boolean {
   });
 }
 
-/** 摘要输入里能整体留下或整体不留的一块：一条不带工具调用的消息，或带工具调用的 assistant 连同紧随其后的全部工具结果 */
+/**
+ * 摘要输入里能整体留下或整体不留的一块：一条不带工具调用的消息，或一组工具调用（按 groupToolCalls 归组，与 agent 装载历史的
+ * 清洗同一个归组）
+ */
 interface Unit {
-  /** 在归档段里的下标（工具组是连续的几条；待办那一段没有） */
-  at: number[];
+  /**
+   * 各条在归档段里的下标，即存储次序（归档按它）：工具组是调用与它的各条结果，夹在其间的别的消息另成单位、排在组后；待办那一段
+   * 没有
+   */
+  at: readonly number[];
   /** 进摘要输入的文字：各行同 formatMsgForSummary，以换行相接；有编号时开头加标注 */
   text: string;
   /** 原样留在上下文里要占的 token：各条消息的 estimateMsgTokens 之和，按落库的消息算，不按截断后的行 */
   cost: number;
-  /** 形状完整：不带工具调用的消息，或工具组里的结果恰好对上调用的 id、每个一条（清洗会整组收下、一条不跳的形状） */
+  /** 形状完整：不带工具调用的消息，或结果找齐了的工具组（清洗会整组收下、一条不跳的形状）；单独的工具结果不算 */
   whole: boolean;
-  /** 能保留时的编号，这次压缩里从 1 起按时间先后连续编 */
+  /** 能保留时的编号，这次压缩里从 1 起按挪过之后的次序连续编 */
   id?: number;
 }
 
-/** 形状完整（见 Unit.whole）：结果与组首调用的 id 一一对上，对上一个划掉一个，重复的、多余的都对不上；单独的工具结果不算 */
-function isWhole([head, ...results]: Message[]): boolean {
-  if (head.role === 'tool') return false;
-  const ids = new Set(head.toolCalls?.map(call => call.id));
-  return results.length === ids.size && results.every(m => m.toolCallId !== undefined && ids.delete(m.toolCallId));
-}
-
-/** 把归档段分成单位：不进摘要的（system）跳过，照常归档 */
+/** 把归档段分成单位，次序同 groupToolCalls：不进摘要的（system）跳过，照常归档 */
 function buildUnits(span: Message[]): Unit[] {
   const names = buildToolNameMap(span);
-  const units: Unit[] = [];
-  for (let i = 0; i < span.length; i++) {
-    if (!entersSummary(span[i])) continue;
-    let end = i + 1;
-    if (span[i].role === 'assistant' && span[i].toolCalls?.length) {
-      while (span[end]?.role === 'tool') end++;
-    }
-    const messages = span.slice(i, end);
-    units.push({
-      at: messages.map((_, k) => i + k),
+  return groupToolCalls(span).flatMap(({ at, shape }) => {
+    const messages = at.map(i => span[i]);
+    if (!entersSummary(messages[0])) return [];
+    return {
+      at,
       text: messages.map(m => formatMsgForSummary(m, names)).join('\n'),
       cost: messages.reduce((sum, m) => sum + estimateMsgTokens(m), 0),
-      whole: isWhole(messages),
-    });
-    i = end - 1;
-  }
-  return units;
+      whole: shape === 'complete' || shape === 'single',
+    };
+  });
 }
 
 /**
@@ -801,7 +789,7 @@ async function run(caps: Caps): Promise<void> {
   // 只认这一轮最后一次调用的用量：token:request 的快照不带 turnId，上一轮留下的属于别的回合；这一轮开始之后压成过或清空过的，
   // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
   // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的：
-  // 结局为 replied 时最终回复在最后一次调用之后落库，加上这一条
+  // 最后一次调用之后还落库一条，加上它：结局为 replied 时是最终回复，为 silent 时是回合记录的事件标记
   hooks.use.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
@@ -819,7 +807,7 @@ async function run(caps: Caps): Promise<void> {
       tokenBudget: usage.tokenBudget,
       compressible: usage.untrimmedHistory,
       trimmed: usage.trimmed,
-      historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
+      historyMessages: usage.historyMessages + 1,
     };
     if (!compressionDue(amounts, linesOf(usage))) return;
     logger.use.info(

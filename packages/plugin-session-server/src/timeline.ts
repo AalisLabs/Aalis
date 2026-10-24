@@ -1,16 +1,17 @@
 // ════════════════════════════════════════════════════════════
 // 会话的时间线：订阅与快照、条目推送、历史。
 //
-// 在途回合的条目由 agent 的事件实时拼出：回合开始与结束、流式的思考与正文、工具调用与它的输出、她的回复。
+// 在途回合的条目由 agent 的事件实时拼出：回合开始（带这一轮的来源）与结束、流式的思考与正文、工具调用与它的输出、她的回复。
 // 工具卡在模型生成参数时就出现（流式的生成进度带着这次调用的 callId），开始执行时转为 running；生成了却没有执行的
 // 在回合结束时收尾。回合被停止时还没结束的调用（工具返回时回合的中止信号已触发）落成 aborted，之后工具返回什么都不改。
-// 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId；带这个会话的回合 id 的（回合里发出的附件）
-// 在这一轮还没收尾时并进这一轮，快照的历史跳过它、由在途条目给出，别的会话的回合 id 不算。不是她发的外发消息（指令回复、
+// 落了库才有的条目（提问、通知、她发出的附件）按存档推送，与历史归并出同一个 itemId；带这个会话的回合 id 的（进了这一轮的提问与
+// 通知、回合里发出的附件）在这一轮还没收尾时并进这一轮，快照的历史跳过它、由在途条目给出，别的会话的回合 id 不算。不是她发的外发消息（指令回复、
 // 宿主提示、插件发的附件）推成通知：文字一条、每个附件各一条，与送达之后记进存档的几条在历史里还原的相同，带文字对象（text）
 // 时给出它而不是 content，由连接按读者渲染；时间线自己的固定句（压缩、工具调用上限、没发出的原因）取本插件的字典，平台给的
 // 送达原因原样作参数。
-// 快照 = 已收尾回合的历史 + 还没收尾的回合已产出的条目 + 会话当前的计划与用量 + 未结的审批。推送带 epoch（每次启动换一个）
-// 与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
+// 排着、还没进一轮的输入按 agent:queue 记下每个会话最近的一份，整份推成 queue 条目（排队的这段时间它们不在存档里）。
+// 快照 = 已收尾回合的历史，按时间并上还没收尾的回合已产出的条目 + 会话当前的计划、用量与排着的输入 + 未结的审批。推送带 epoch
+// （每次启动换一个）与 seq（这次启动内递增），客户端丢掉 seq 不大于快照的推送。审批本身经连接级推送送达，工具卡上只挂它的 id。
 //
 // 回合结束之后还在等平台送达结果的，也算没收尾：迟到的结果按实时条目的 itemId 推出，这段时间里订阅的快照
 // 照样给出实时条目，两边对得上。存档里另有记录：回复没收下的由适配器记投递失败，经工具发出、收下了的、审批的结算、
@@ -69,6 +70,20 @@ type Outcome = HookContextMap['agent:turn:after']['outcome'];
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 type Streamed = Item<'agent-message'> | Item<'reasoning'>;
 
+/**
+ * 历史与还没收尾的回合的条目按时间并成一段，两边各自的先后不变，同一时刻历史在前：这一轮的输入由在途条目给出，这一轮进行期间
+ * 别人说的话在历史里，并起来才与这一轮收尾之后的历史同序
+ */
+function byTime(history: readonly SessionItem[], ongoing: readonly SessionItem[]): SessionItem[] {
+  const merged: SessionItem[] = [];
+  let next = 0;
+  for (const item of history) {
+    while (next < ongoing.length && ongoing[next].at < item.at) merged.push(ongoing[next++]);
+    merged.push(item);
+  }
+  return [...merged, ...ongoing.slice(next)];
+}
+
 /** 房间里她没回复就收尾的一轮，说过的话按怎么收的尾写原因 */
 const UNSENT: Record<Exclude<Outcome, 'replied'>, TextRef> = {
   silent: t('unsentSilent'),
@@ -85,9 +100,9 @@ interface Turn {
   end?: number;
   /** 还在等的送达结果数：不为 0 时这一轮结束了也不算收尾 */
   receipts: number;
-  /** 回合条目：开始时带发起方，收尾时带结局 */
+  /** 回合条目：开始时带这一轮的来源，收尾时带结局 */
   item: Item<'turn'>;
-  /** 这一轮已推出的条目，按出现的顺序 */
+  /** 这一轮已推出的条目（回合条目在最前），按出现的顺序 */
   items: Map<string, SessionItem>;
   next: number;
   /** 正在流式输出的思考或正文 */
@@ -113,6 +128,8 @@ interface TimelineDeps {
   summarize(info: SessionInfo): SessionSummary;
   /** 她的话发进房间的会话：房间本身。房间的子会话没有窗口，她在里面说的话不交给平台 */
   isRoom(sessionId: string): boolean;
+  /** 会话所在的聊天窗口是多方的（根会话记下的 originChat.multiParty）：输入里的插话按它标出 */
+  multiParty(sessionId: string): boolean;
   /** 推一条通知给订阅了这个会话的连接 */
   notify<N extends SessionNotification>(sessionId: string, method: N, params: SessionNotificationParams<N>): void;
   /** 请 agent 重发某会话的用量 */
@@ -137,6 +154,8 @@ export function createTimeline(deps: TimelineDeps) {
   const usages = new Map<string, { item: Item<'usage'>; platform: string }>();
   /** 每个会话进行中的压缩 */
   const compressions = new Map<string, Item<'notice'>>();
+  /** 每个会话排着的输入（agent:queue 最近一次报的），空了就不留 */
+  const queues = new Map<string, Item<'queue'>>();
   /** 回合的异步上下文：她的回复与定稿校验经它认出属于哪一轮 */
   const scope = new AsyncLocalStorage<Turn>();
 
@@ -152,6 +171,7 @@ export function createTimeline(deps: TimelineDeps) {
   const mergeContext = (sessionId: string): MergeContext => ({
     isOwner: deps.isOwner,
     room: deps.isRoom(sessionId),
+    multiParty: deps.multiParty(sessionId),
     signFile: signerOf(sessionId),
     display: deps.displayOf,
   });
@@ -170,18 +190,7 @@ export function createTimeline(deps: TimelineDeps) {
     return { platform, userId, nickname, source, owner: deps.isOwner(platform, userId) };
   }
 
-  /**
-   * 这一轮的回合条目在她第一次有动静时才推出：提问在回合开头落库，这样实时推送与快照里提问都排在回合条目前面。
-   * 一直没动静的一轮在收尾时推出
-   */
-  function show(turn: Turn): void {
-    if (turn.items.size > 0) return;
-    turn.items.set(turn.turnId, turn.item);
-    emit(turn.sessionId, 'item/started', turn.item);
-  }
-
   function add<T extends SessionItem>(turn: Turn, item: T): T {
-    show(turn);
     turn.items.set(item.itemId, item);
     return item;
   }
@@ -323,24 +332,25 @@ export function createTimeline(deps: TimelineDeps) {
   // ───────── 回合 ─────────
 
   /**
-   * agent:turn:before：回合开始，回合条目的说话人取开轮那条输入的。回的 run 在这一轮的异步上下文里跑回合（其中的回复与定稿
-   * 校验归到这一轮），end 收尾
+   * agent:turn:before：回合开始，推出回合条目，带这一轮的来源（开轮那条输入的 source，真人消息开的没有）。回的 run 在这一轮的
+   * 异步上下文里跑回合（其中的回复与定稿校验归到这一轮），end 收尾
    */
-  function begin(turnId: string, incoming: IncomingMessage) {
-    const { sessionId } = incoming;
+  function begin(turnId: string, sessionId: string, source: string | undefined) {
+    const item: Item<'turn'> = { kind: 'turn', itemId: turnId, turnId, at: Date.now(), source };
     const turn: Turn = {
       turnId,
       sessionId,
       room: deps.isRoom(sessionId),
       receipts: 0,
-      item: { kind: 'turn', itemId: turnId, turnId, at: Date.now(), by: speaker(incoming) },
-      items: new Map(),
+      item,
+      items: new Map([[turnId, item]]),
       next: 0,
       candidates: [],
       replies: [],
       sent: new Map(),
     };
     turns.set(turnId, turn);
+    emit(sessionId, 'item/started', item);
     return {
       run: <T>(fn: () => Promise<T>) => scope.run(turn, fn),
       end: () => end(turn),
@@ -361,7 +371,6 @@ export function createTimeline(deps: TimelineDeps) {
       item.notExecuted = true;
       complete(turn, item);
     }
-    if (turn.items.size === 0) turn.items.set(turn.turnId, turn.item);
     turn.item.outcome = outcome;
     complete(turn, turn.item);
     turn.end = seq;
@@ -569,7 +578,7 @@ export function createTimeline(deps: TimelineDeps) {
 
   /** 落了库的提问、通知与她发出的附件；带这个会话的回合 id、这一轮还没收尾的并进这一轮 */
   function archived(sessionId: string, stored: Message): void {
-    const item = archivedItem(stored, deps.isOwner, signerOf(sessionId));
+    const item = archivedItem(stored, mergeContext(sessionId));
     if (!item) return;
     const turn = item.turnId === undefined ? undefined : turns.get(item.turnId);
     if (turn?.sessionId === sessionId && (turn.end === undefined || turn.receipts > 0)) add(turn, item);
@@ -578,6 +587,22 @@ export function createTimeline(deps: TimelineDeps) {
 
   function plan(sessionId: string, entries: TodoItem[]): void {
     emit(sessionId, 'item/completed', planItem(entries));
+  }
+
+  /**
+   * agent:queue：这个会话排着与待插入、还没进一轮的输入，整份替换。各条写说话人、给人看的那句（宿主通知与平台事件合成的入站取
+   * 它们的文字对象，同时间线上的通知）与附件个数
+   */
+  function queue(sessionId: string, waiting: readonly IncomingMessage[]): void {
+    const entries = waiting.map(message => ({
+      speaker: speaker(message),
+      text: message.hostNotice?.text ?? message.text ?? message.content,
+      attachments: message.attachments?.length ?? 0,
+    }));
+    const item: Item<'queue'> = { kind: 'queue', itemId: 'queue', at: Date.now(), entries };
+    if (entries.length > 0) queues.set(sessionId, item);
+    else queues.delete(sessionId);
+    emit(sessionId, 'item/completed', item);
   }
 
   function usage(event: TokenUsageEvent): void {
@@ -626,6 +651,7 @@ export function createTimeline(deps: TimelineDeps) {
   function forget(sessionId: string): void {
     usages.delete(sessionId);
     compressions.delete(sessionId);
+    queues.delete(sessionId);
   }
 
   const isRunning = (sessionId: string) =>
@@ -643,10 +669,12 @@ export function createTimeline(deps: TimelineDeps) {
     const at = seq;
     const usage = usages.get(sessionId);
     const open = unsettledOf(sessionId);
-    const ongoing = structuredClone([
-      ...open.flatMap(turn => [...turn.items.values()]),
-      ...[compressions.get(sessionId), usage && withCompressAt(sessionId, usage)].filter(item => item !== undefined),
-    ]);
+    const ongoing = structuredClone(open.flatMap(turn => [...turn.items.values()]));
+    const extras = structuredClone(
+      [compressions.get(sessionId), usage && withCompressAt(sessionId, usage), queues.get(sessionId)].filter(
+        item => item !== undefined,
+      ),
+    );
     const approvals = structuredClone(deps.approvalsOf(sessionId));
     // 读历史期间这些回合可能收尾、被清掉，按此刻抄下的回合排除它们的存档
     const shown = new Set(open.map(turn => turn.turnId));
@@ -669,7 +697,7 @@ export function createTimeline(deps: TimelineDeps) {
         epoch,
         seq: at,
         session: deps.summarize(info),
-        items: [...history.items, ...ongoing, ...(entries.length > 0 ? [planItem(entries)] : [])],
+        items: [...byTime(history.items, ongoing), ...extras, ...(entries.length > 0 ? [planItem(entries)] : [])],
         approvals,
         before: history.before,
       };
@@ -719,6 +747,7 @@ export function createTimeline(deps: TimelineDeps) {
     outbound,
     archived,
     plan,
+    queue,
     usage,
     compressing,
     resync,

@@ -9,7 +9,7 @@ const SOURCE = {
   compacted: '对话已压缩',
   compactionFailed: '压缩失败',
   unsentSilent: '没有发出：这一轮静默结束',
-  unsentAborted: '没有发出：回合已中止',
+  unsentAborted: '没有发出：这一轮已停止',
   unsentError: '没有发出：回合出错',
   beforeToolUnsent: '没有发出：调用工具之前说的话不发到房间里',
   retried: '没有发出：格式校验没通过，已重试',

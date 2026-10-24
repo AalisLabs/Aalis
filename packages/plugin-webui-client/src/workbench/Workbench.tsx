@@ -26,7 +26,7 @@ import { useSettingRows } from '../settings/setting-rows';
 import { SessionGate } from '../shell/SessionGate';
 import { Main, usePhone, useShell } from '../shell/Shell';
 import { t } from '../texts';
-import { Composer, type ComposerHandle, ComposerSettings, type OutgoingAttachment } from './Composer';
+import { Composer, type ComposerHandle, ComposerSettings, type OutgoingAttachment, Queued } from './Composer';
 import { clearSent, NEW_SESSION } from './drafts';
 import { useLiveSession } from './live-session';
 import { useSessionTabs } from './panel-tabs';
@@ -36,7 +36,7 @@ import { UsageMeter, UsageTable } from './Usage';
 import './Workbench.css';
 
 // 会话工作台：头部（标题、场所与平台、回合进行中的运行指示、后台工作数、用量、全部折叠、会话面板、更多）、时间线、
-// 输入框与右侧面板。子会话的标题前写各级父会话，可以逐层退回。后台任务的日志桌面上在「后台」标签里，手机上从底部全屏弹出。
+// 排着的消息、输入框与右侧面板。子会话的标题前写各级父会话，可以逐层退回。后台任务的日志桌面上在「后台」标签里，手机上从底部全屏弹出。
 // 首页与 /new 是空白的新会话：发出第一条消息时先建会话，再打开它；桌面的首页上方是「开始使用」（没有能对话的模型时）与
 // 「需要处理」的摘要（手机上它们在第一层）
 
@@ -253,25 +253,28 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
             </>
           }
           footer={
-            <Composer
-              ref={composer}
-              sessionId={sessionId}
-              send={send}
-              onStop={running ? stop : undefined}
-              switches={
-                settings.rows && (
-                  <ComposerSettings
-                    rows={settings.rows}
-                    update={settings.update}
-                    settingsPath={paths.session(sessionId, 'settings')}
-                    openSettings={() => {
-                      tabs.show({ host: 'settings' });
-                      shell.reveal('right');
-                    }}
-                  />
-                )
-              }
-            />
+            <>
+              <Queued queue={live.queue} />
+              <Composer
+                ref={composer}
+                sessionId={sessionId}
+                send={send}
+                onStop={running ? stop : undefined}
+                switches={
+                  settings.rows && (
+                    <ComposerSettings
+                      rows={settings.rows}
+                      update={settings.update}
+                      settingsPath={paths.session(sessionId, 'settings')}
+                      openSettings={() => {
+                        tabs.show({ host: 'settings' });
+                        shell.reveal('right');
+                      }}
+                    />
+                  )
+                }
+              />
+            </>
           }
         >
           <SessionGate>

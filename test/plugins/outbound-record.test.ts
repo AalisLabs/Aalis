@@ -126,6 +126,7 @@ const recordOf = ({ role, kind, content, metadata }: Message) => ({ role, kind, 
 const mergeContext: MergeContext = {
   isOwner: () => false,
   room: true,
+  multiParty: true,
   signFile: uri => (uri.startsWith('data:/') ? `handle:${uri}` : undefined),
   display: () => undefined,
 };

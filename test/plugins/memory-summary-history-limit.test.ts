@@ -15,7 +15,8 @@ import { conversationOf, endTurn, fakeSummaryLLM, usageEvent } from '../fixtures
 
 // ════════════════════════════════════════════════════════════
 // 条数线是 agent 按会话解析好、记在这一轮用量事件里的 historyLimit：回合结束时的会话条数（这一轮最后一次调用的用量里会话
-// 历史的条数，结局为 replied 时加上之后落库的最终回复）到了它，摘要插件就在后台全量压缩，与用量到线同一条流程、同一套按轮数
+// 历史的条数，加上之后落库的那一条：结局为 replied 时是最终回复，为 silent 时是回合记录的事件标记）到了它，摘要插件就在后台
+// 全量压缩，与用量到线同一条流程、同一套按轮数
 // 的失败退避。为 0 时不按条数压缩。设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的消息与分隔标记）
 // 不超过条数线的一半（向下取整）为止，条数线取这个会话最近一次用量里的。下面的用量都远不到压缩线（窗口与裁剪预算 1000，
 // 用量 10）。
@@ -55,17 +56,19 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
 }
 
 describe('plugin-memory-summary: 条数线', () => {
-  it('回合结束时的会话条数含落库的最终回复：结局为 replied 时最后一次调用的条数加一，静默的一轮不加', async () => {
+  it('回合结束时的会话条数含之后落库的那一条：结局为 replied（最终回复）与 silent（回合记录）时最后一次调用的条数加一', async () => {
     const { host, sm, statuses, say } = await setup();
-    const owner = await sm.createSession({ name: '本机会话' });
-    await say(owner.id);
+    for (const outcome of ['silent', 'replied'] as const) {
+      const session = await sm.createSession({ name: outcome });
+      await say(session.id);
+      await endTurn(host, session.id, counted(3, 5), { outcome });
+      await settle();
+      expect(statuses, `${outcome}：加一之后不到线`).toEqual([]);
 
-    await endTurn(host, owner.id, counted(4, 5), { outcome: 'silent' });
-    await settle();
-    expect(statuses).toEqual([]);
-
-    await endTurn(host, owner.id, counted(4, 5), { outcome: 'replied' });
-    await expect.poll(() => statuses).toEqual([`${owner.id}:start`, `${owner.id}:done`]);
+      await endTurn(host, session.id, counted(4, 5), { outcome });
+      await expect.poll(() => statuses, { message: outcome }).toEqual([`${session.id}:start`, `${session.id}:done`]);
+      statuses.length = 0;
+    }
   });
 
   it('条数线为 0：会话条数再多也不按条数压缩', async () => {

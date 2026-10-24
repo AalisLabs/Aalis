@@ -10,7 +10,7 @@ import { estimateMsgTokens } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
-import { formatAttachmentRef, parseAttachmentRefs } from '@aalis/schema-message';
+import { formatAttachmentRef, groupToolCalls, parseAttachmentRefs } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 /**
@@ -159,10 +159,13 @@ export async function readHistory(
     start = historyStart(count, limit);
     messages = all.slice(start);
   }
-  // 起点落在工具调用组中间：组首在起点之前已经丢掉，开头连续的工具结果随它一起丢
-  let first = 0;
-  while (start > 0 && messages[first]?.role === 'tool') first++;
-  return { messages: messages.slice(first), count };
+  // 起点落在工具调用组中间：组首在起点之前已经丢掉，这一组留下的结果（第一组之前组外的结果）随它一起丢，夹在其间的别的消息照留
+  const leftover = new Set<number>();
+  for (const { at, shape } of start > 0 ? groupToolCalls(messages) : []) {
+    if (shape === 'complete' || shape === 'partial') break;
+    if (shape === 'loose') leftover.add(at[0]);
+  }
+  return { messages: messages.filter((_, i) => !leftover.has(i)), count };
 }
 
 /** 比较两条消息是否在 role/timestamp/name/content 维度上等价（不比较 toolCalls / id） */

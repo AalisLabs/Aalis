@@ -131,4 +131,37 @@ describe('连对话回滚只删这一轮的消息', () => {
     expect(result.chatDeleted).toBe(true);
     expect(await contents()).toEqual([expect.stringContaining('<B>')]);
   });
+
+  it('没有回复的一轮的回合记录（只带记录的事件标记）随这一轮一起删', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
+    dirs.push(base);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    provideHostPaths(app, base);
+    await app.plugin(storageLocalPlugin, {});
+    await app.plugin(checkpointPlugin, { rootDir: 'data:/checkpoints', coverage: 'all', keepSessions: 0 });
+    await app.plugin(createMockLLMPlugin({ responses: [{ content: '' }] }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(agentPlugin, { systemPrompt: 'test' });
+    await app.plugins.idle();
+    const host = app.bind({ agent: agentService, hooks, memory, checkpoint });
+    let turnId: string | undefined;
+    host.hooks.use.middleware('agent:turn:before', async (data, next) => {
+      turnId = data.turnId;
+      await next();
+    });
+
+    await host.agent.use.handleMessage({ content: '<不用回>', sessionId: SESSION, platform: 'test', userId: 'u1' });
+    const records = async () =>
+      (await host.memory.use.getHistory(SESSION, 50)).flatMap(m => {
+        const record = m.metadata?.turnRecord;
+        return record === undefined ? [] : [[m.kind, m.metadata?.[WellKnownMetadataKeys.TurnId], record]];
+      });
+    expect(await records()).toEqual([[WellKnownKinds.EventMarker, turnId, { outcome: 'silent' }]]);
+
+    await host.checkpoint.use.rollbackWithChat(SESSION, turnId as string);
+    expect(await host.memory.use.getHistory(SESSION, 50)).toEqual([]);
+  });
 });

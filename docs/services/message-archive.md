@@ -196,18 +196,18 @@ await messageArchive.use.archiveIncoming(message);
 主链路的次序由 `plugin-agent` 的通道层保证（`packages/plugin-agent/src/index.ts`）：每个会话同一时刻最多一轮，输入在进入一轮时归档——开轮的在 `agent:turn:before` 的默认动作开头按入队先后逐条归档，插进来的在插入点逐条归档，被放掉的在这个会话在跑的一轮落定之后按先后归档。agent 在一个会话里的写入（输入、工具调用组、回复）都在这一轮的流程里依次发生，不交错；存档次序因此与当时发给模型的次序一致，排着、还没进一轮的输入不在历史里。
 
 > ⚠️ **注意：旁路的 shadow 归档不在这条顺序里。**
-> `plugin-flow-control` 与触发插件直接 `await` message-archive 的 `archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），与 agent 在同一会话里的写入彼此无序：被吞掉的消息若在工具调用组写入期间影子归档，可能落进组中间，读历史时整组被当成不完整而丢掉。
+> `plugin-flow-control` 与触发插件直接 `await` message-archive 的 `archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`api-trigger/src/index.ts` 的 `archiveSwallowed`），与 agent 在同一会话里的写入彼此无序：被吞掉的消息若在工具调用组写入期间影子归档，可能落进组中间。
 >
 > 现状：服务契约本身**不提供**跨调用方的串行保证。
 > 规避：
 > 1. **provider 侧**：在实现内部用 per-`sessionId` 队列对 `saveMessage`/`archiveIncoming` 的落库做串行化，让有序性变成服务的硬保证，所有调用方（含 shadow）自动受益。
-> 2. **读历史侧**：把夹在工具调用组中间的消息挪到组后再清洗。
+> 2. **读历史侧**（第一方已这样做）：读历史的各方（agent 装载历史、会话服务的时间线、记忆摘要）按 schema-message 的 `groupToolCalls` 归组，夹在工具调用组中间的消息挪到组后。
 > 3. `Message.timestamp` 都取 `Date.now()`（`plugin-message-archive/src/index.ts`），毫秒级近邻消息可能撞同值——下游排序不要只靠 timestamp，需保留落库顺序。
 
 ## 7. 能力 / 风险 → 影响
 
 - **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。`triggerType: 'proactive'` 的代发任务（如 workflow 的 agent 节点）被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免目标会话回看历史时把派发任务误读为「曾有用户说过」。宿主通知（带 `hostNotice`）同理标成 `role:'notice'` + `kind:'host-notice'`，且只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息与 metadata，provider 也不得把它落库。
-- **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`，用于区分真实用户消息 vs 系统注入，是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
+- **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`（schema-message 登记的键 `TriggerType`、`Source`），用于区分真实用户消息 vs 系统注入，会话服务据前者标出被点名与插话，也是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
 - **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），拉远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
 - **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口，归档文本给模型看。发言人自己写的话与附件清单另记在 `metadata` 里（schema-message 登记的键 `SpokenContent`、`Attachments`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）：发言人写的话只在与归档文本不同时记；附件清单记种类、名字与地址，地址怎么取见 [plugin-message-archive](../plugins/plugin-message-archive.md)。会话服务回看历史与实时推送的提问取这两样，附件描述（含文件读取插件内联的全文）不进气泡。
 

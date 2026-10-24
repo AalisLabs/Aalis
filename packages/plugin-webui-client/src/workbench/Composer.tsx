@@ -16,6 +16,7 @@ import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { useConnectionState, useFeatures, useSessionClient } from '../connection';
+import { speakerName } from '../format';
 import { composing } from '../keys';
 import { tr } from '../language';
 import { SESSION_PROTOCOL, useProvider } from '../plugins/list';
@@ -32,11 +33,13 @@ import {
 } from '../settings/field';
 import { useFieldOptions } from '../settings/options';
 import { useDraft } from './drafts';
+import type { QueueItem } from './live-session';
 import './Composer.css';
 
 // 输入框：Enter 发送、Shift+Enter 换行，输入法组字时的回车只上屏；触屏上回车换行，用按钮发送。附件一律接收，
 // 只有附件也能发，读成 data URL 随消息发出；附件按钮、粘贴与把文件拖到这一栏里是同一条路。回合在跑、又没有要发的内容时，
-// 发送键换成停止。没有对话服务时不能用。打的字按会话存成草稿，状态留在输入框里，打字不牵动会话的其余部分
+// 发送键换成停止。没有对话服务时不能用。打的字按会话存成草稿，状态留在输入框里，打字不牵动会话的其余部分。输入框上方列出
+// 排着、还没进一轮的消息，进了一轮就移进时间线
 
 export type OutgoingAttachment = NonNullable<SessionMethodParams<'turn/send'>['attachments']>[number];
 
@@ -279,6 +282,27 @@ export function Composer({ sessionId, send, onStop, switches, ref }: ComposerPro
         </p>
       )}
     </form>
+  );
+}
+
+/** 排着、还没进一轮的消息：一行一条，写说话人（内部注入写来源，同时间线上的消息）、写的话与附件个数；没有时不占位置 */
+export function Queued({ queue }: { queue?: QueueItem }) {
+  if (!queue?.entries.length) return null;
+  return (
+    <ul className="queued" aria-label={tr('queuedMessages')}>
+      {queue.entries.map(({ speaker, text, attachments }, index) => (
+        // 排着的消息随条目整份替换，没有各自的 id
+        <li key={index}>
+          <span className="queued-speaker">
+            {speaker.source ? tr('messageFrom', { source: speaker.source }) : speakerName(speaker)}
+          </span>
+          <span className="queued-text">{text}</span>
+          {attachments > 0 && (
+            <span className="queued-attachments">{tr('queuedAttachments', { count: attachments })}</span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

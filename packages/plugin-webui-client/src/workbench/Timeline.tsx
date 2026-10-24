@@ -23,11 +23,14 @@ import { RewindDialog, type RewindTarget } from './Rewind';
 import { awaitingApproval, displayOf, TOOL_ICONS, ToolCall } from './ToolCall';
 import './Timeline.css';
 
-// 时间线：条目按回合成段，同一回合的条目挨在一起，回合的结局（停止、出错、没有回复）写在段尾，回滚在段的右上角。
-// 相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
+// 时间线：条目按回合成段，同一回合的条目挨在一起（被别的消息隔开时一轮分成几段），回合的结局（停止、出错、没有回复）写在这一轮
+// 最后一段的末尾，回滚在段的右上角。进了一轮的输入下面写它怎么进的（开了这一轮，被点名或插话；并入这一轮），没有输入的一轮
+// （如空闲开话题）在第一段开头写来源。相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
-// 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮末尾那一组，不收，免得藏掉要看的东西；写给用户的正文不收。
-// 什么都没做就没有回复的一轮只写一行「没有回复」，中间只隔着提问的几轮合成一行「N 轮没有回复」，房间不刷屏靠合并。
+// 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮最后一段末尾那一组，不收，免得藏掉要看的东西；写给用户的
+// 正文不收。
+// 没有回复、最后一段只有输入的一轮在输入下面只写一行「没有回复」，中间只隔着不在回合里的提问的几轮合成一行「N 轮没有回复」写在
+// 最后一轮，被并掉的几轮照常显示输入，房间不刷屏靠合并。
 // 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示；指令的回复是一张卡，只认段落与列表，其余通知是一行
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
@@ -39,44 +42,80 @@ const OUTCOMES = { aborted: t('stopped'), error: t('turnError') };
 /** 连续这么多个工具调用收成一行 */
 const COLLAPSE_FROM = 3;
 
-/** 一段：一个回合的条目（turnId 相同、挨在一起），或一条不在回合里的条目 */
+/** 一段：一个回合挨在一起的条目（turnId 相同），或一条不在回合里的条目 */
 interface Block {
   key: string;
   turnId?: string;
-  /** 回合条目：开始时带发起方，收尾时带结局；历史里没有 */
+  /** 这一轮的回合条目（推在哪一段都一样）：带来源，收尾时带结局；历史里没有回合记录的没有 */
   turn?: Item<'turn'>;
+  /** 是这一轮的最后一段：结局写在它的末尾 */
+  ending: boolean;
+  /** 这一轮没有回复、只有输入（按整轮判，各段相同）：没有可回滚的 */
+  idle: boolean;
+  /** 这一轮没有输入时，第一段开头写的来源 */
+  source?: string;
   items: Exclude<TimelineItem, Item<'turn'>>[];
 }
 
+/** 进了一轮的输入：提问与通知带进入方式 */
+const isInput = (item: TimelineItem) =>
+  (item.kind === 'user-message' || item.kind === 'notice') && item.entry !== undefined;
+
+/**
+ * 同一 turnId 相邻的条目成一段。回合条目不占段：实时推送里它随这一轮的第一条推出，历史里排在最后落库的那条之后，与这一轮的
+ * 条目之间夹着别的消息时它单独那一段不要；这一轮没有别的条目时它自成一段
+ */
 function toBlocks(items: readonly TimelineItem[]): Block[] {
-  const blocks: Block[] = [];
+  const runs: Array<Pick<Block, 'key' | 'turnId' | 'items'>> = [];
+  const turns = new Map<string, Item<'turn'>>();
   for (const item of items) {
-    const last = blocks.at(-1);
-    const block =
+    if (item.kind === 'turn') turns.set(item.turnId, item);
+    const last = runs.at(-1);
+    const run =
       item.turnId !== undefined && last?.turnId === item.turnId
         ? last
         : { key: item.itemId, turnId: item.turnId, items: [] };
-    if (block !== last) blocks.push(block);
-    if (item.kind === 'turn') block.turn = item;
-    else block.items.push(item);
+    if (run !== last) runs.push(run);
+    if (item.kind !== 'turn') run.items.push(item);
   }
-  return blocks;
+  const filled = new Set(runs.flatMap(run => (run.items.length > 0 ? [run.turnId] : [])));
+  const kept = runs.filter(run => run.items.length > 0 || !filled.has(run.turnId));
+  const lastOf = new Map(kept.map((run, index) => [run.turnId, index]));
+  const withInputs = new Set(items.filter(isInput).map(item => item.turnId));
+  /** 有输入以外条目的回合 */
+  const busy = new Set(items.filter(item => item.kind !== 'turn' && !isInput(item)).map(item => item.turnId));
+  const opened = new Set<string>();
+  return kept.map((run, index) => {
+    if (run.turnId === undefined) return { ...run, ending: false, idle: false };
+    const turn = turns.get(run.turnId);
+    const first = !opened.has(run.turnId);
+    opened.add(run.turnId);
+    return {
+      ...run,
+      turn,
+      ending: lastOf.get(run.turnId) === index,
+      idle: turn?.outcome === 'silent' && !busy.has(run.turnId),
+      source: first && !withInputs.has(run.turnId) ? turn?.source : undefined,
+    };
+  });
 }
 
 const startOf = (block: Block) => (block.items[0] ?? block.turn)?.at ?? 0;
 const endOf = (block: Block) => (block.items.at(-1) ?? block.turn)?.at ?? 0;
 
-/** 什么都没做就没有回复的一轮 */
-const quiet = (block: Block) => block.turn?.outcome === 'silent' && block.items.length === 0;
-/** 只有提问的一段 */
+/** 这一段末尾写的结局：只写在这一轮的最后一段 */
+const outcomeOf = (block: Block) => (block.ending ? block.turn?.outcome : undefined);
+/** 没有回复、这一段只有输入的一轮 */
+const quiet = (block: Block) => outcomeOf(block) === 'silent' && block.items.every(isInput);
+/** 只有不在回合里的提问的一段 */
 const asking = (block: Block) => block.turnId === undefined && block.items.every(item => item.kind === 'user-message');
 
 /**
- * 每段写几轮没有回复：没有回复的一轮写 1；什么都没做的几轮中间只隔着提问时并到最后一轮，前面的写 0（不显示）。
- * 不是没有回复的段为 undefined
+ * 每段写几轮没有回复：没有回复的一轮写 1；只有输入的几轮中间只隔着不在回合里的提问时并到最后一轮，前面的写 0（不写结局，输入
+ * 照常显示）。不是没有回复的段为 undefined
  */
 function silentCounts(blocks: readonly Block[]): Array<number | undefined> {
-  const counts: Array<number | undefined> = blocks.map(block => (block.turn?.outcome === 'silent' ? 1 : undefined));
+  const counts: Array<number | undefined> = blocks.map(block => (outcomeOf(block) === 'silent' ? 1 : undefined));
   let previous: number | undefined;
   blocks.forEach((block, index) => {
     if (quiet(block)) {
@@ -89,6 +128,18 @@ function silentCounts(blocks: readonly Block[]): Array<number | undefined> {
   });
   return counts;
 }
+
+/** 段尾写的结局：停止、出错，或没有回复（合并了几轮的写轮数，被并掉的不写） */
+function outcomeLine(block: Block, silent: number | undefined): string | undefined {
+  const outcome = outcomeOf(block);
+  if (outcome === 'aborted' || outcome === 'error') return text(OUTCOMES[outcome]);
+  if (!silent) return undefined;
+  return silent > 1 ? tr('silentTurns', { count: silent }) : tr('noReply');
+}
+
+/** 段里写得出东西：有条目、要写来源或结局（刚推出回合条目、还没有条目的一轮，与被并掉的、只有回合条目的一轮写不出） */
+const drawn = (block: Block, silent: number | undefined) =>
+  block.items.length > 0 || block.source !== undefined || outcomeLine(block, silent) !== undefined;
 
 type ToolCallItem = Item<'tool-call'>;
 type Process = ToolCallItem | Item<'reasoning'>;
@@ -180,25 +231,27 @@ interface TimelineProps {
   openLog(taskId: string): void;
 }
 
-/** 一轮之前 owner 发的那条提问的文字：往前找到上一轮为止，中间隔着的通知不算 */
-function promptOf(blocks: readonly Block[], index: number): string | undefined {
-  for (let at = index - 1; at >= 0 && blocks[at].turnId === undefined; at--) {
-    const [item] = blocks[at].items;
-    if (item?.kind === 'user-message' && item.speaker.owner) return item.text || undefined;
-  }
-  return undefined;
+/** 这一轮 owner 的各条输入（开轮的与插进来的）的文字，空行连起来 */
+function promptOf(items: readonly TimelineItem[], turnId: string): string | undefined {
+  const asked = items.flatMap(item =>
+    item.kind === 'user-message' && item.turnId === turnId && item.speaker.owner && item.text ? [item.text] : [],
+  );
+  return asked.join('\n\n') || undefined;
 }
 
 export function Timeline(props: TimelineProps) {
   const { items, before, loadEarlier } = props;
-  const blocks = useMemo(() => toBlocks(items), [items]);
-  const silent = useMemo(() => silentCounts(blocks), [blocks]);
+  const { blocks, silent } = useMemo(() => {
+    const all = toBlocks(items);
+    const counts = silentCounts(all);
+    const shown = all.flatMap((block, index) => (drawn(block, counts[index]) ? [index] : []));
+    return { blocks: shown.map(index => all[index] as Block), silent: shown.map(index => counts[index]) };
+  }, [items]);
   const [rewinding, setRewinding] = useState<RewindTarget>();
   return (
     <section className="timeline" aria-label={tr('conversation')}>
       {before !== undefined && <Earlier load={loadEarlier} />}
       {blocks.map((block, index) => {
-        if (silent[index] === 0) return null;
         const previous = blocks[index - 1];
         const gap = !previous || startOf(block) - endOf(previous) > TIME_GAP_MS;
         return (
@@ -217,7 +270,7 @@ export function Timeline(props: TimelineProps) {
                 setRewinding({
                   turnId: block.turnId as string,
                   scope,
-                  prompt: promptOf(blocks, index),
+                  prompt: promptOf(items, block.turnId as string),
                   // 按整轮判：一轮在跑时插进来的消息把它隔成几段，回滚撤销的是整轮
                   backgrounded: items.some(
                     item => item.turnId === block.turnId && item.kind === 'tool-call' && item.taskId !== undefined,
@@ -261,7 +314,7 @@ function Earlier({ load }: { load(): Promise<void> }) {
 interface TurnBlockProps extends TimelineProps {
   block: Block;
   last: boolean;
-  /** 没有回复的轮数（合并了前面什么都没做的几轮） */
+  /** 没有回复的轮数（合并了前面只有输入的几轮）；被并掉的为 0 */
   silent?: number;
   onRewind(scope: RewindTarget['scope']): void;
 }
@@ -269,20 +322,13 @@ interface TurnBlockProps extends TimelineProps {
 function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) {
   const features = useFeatures();
   const { tasks } = useBackground();
-  const outcome = block.turn?.outcome;
-  const settled = block.turn === undefined || outcome !== undefined;
-  const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running && !quiet(block);
-  const outcomeText =
-    outcome === 'aborted' || outcome === 'error'
-      ? text(OUTCOMES[outcome])
-      : silent === undefined
-        ? undefined
-        : silent > 1
-          ? tr('silentTurns', { count: silent })
-          : tr('noReply');
+  const settled = block.turn === undefined || block.turn.outcome !== undefined;
+  const rewindable = features.rewind && block.turnId !== undefined && settled && !props.running && !block.idle;
+  const outcomeText = outcomeLine(block, silent);
   return (
     <div className="turn">
-      {rowsOf(block.items, !settled, taskId => tasks?.get(taskId)?.status === 'running').map(row =>
+      {block.source !== undefined && <p className="message-meta">{tr('messageFrom', { source: block.source })}</p>}
+      {rowsOf(block.items, !settled && block.ending, taskId => tasks?.get(taskId)?.status === 'running').map(row =>
         'group' in row ? (
           <CallGroup key={row.group[0].itemId} group={row.group} last={last} {...props} />
         ) : (
@@ -290,7 +336,7 @@ function TurnBlock({ block, last, silent, onRewind, ...props }: TurnBlockProps) 
         ),
       )}
       {outcomeText && (
-        <p className="turn-outcome" data-outcome={outcome}>
+        <p className="turn-outcome" data-outcome={outcomeOf(block)}>
           {outcomeText}
         </p>
       )}
@@ -388,7 +434,15 @@ function Entry({ item, last, ...props }: EntryProps) {
   }
 }
 
+/** 输入怎么进的这一轮：开了这一轮（另写被点名或插话，没经触发判定的只写这一半），或并入这一轮；不在回合里的没有 */
+function entryLine({ entry, addressed }: Item<'user-message'>): string | undefined {
+  if (entry === 'joined') return tr('entryJoined');
+  if (entry !== 'opened') return undefined;
+  return tr(addressed === undefined ? 'entryOpened' : addressed ? 'entryOpenedAddressed' : 'entryOpenedInterjection');
+}
+
 function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; room: boolean; sessionId: string }) {
+  const entry = entryLine(item);
   return (
     <div className="message" data-from="user" data-room={room || undefined} title={clockTime(item.at)}>
       {room && (
@@ -400,6 +454,7 @@ function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; ro
       {item.speaker.source && <p className="message-meta">{tr('messageFrom', { source: item.speaker.source })}</p>}
       {item.text && <p className="message-text">{item.text}</p>}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
+      {entry && <p className="message-meta">{entry}</p>}
     </div>
   );
 }

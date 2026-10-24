@@ -43,6 +43,7 @@ interface AgentService {
 - **元数据的键**：落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在元数据里记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的元数据与时间线的 `tool_call` 段记下这次调用的 `callId`；最终回复另记这一轮的模型与 token、这一轮的平台与她在那里的身份、这一轮的群与会话类型，回复是结构化输出的信封时另记解码后的可见正文。键一律用 schema-message 登记的 `WellKnownMetadataKeys`，各键见 [schema-message 的「存档元数据的键」](./schema-message.md#存档元数据的键)表里写方为 agent 的各项。`agent:tool:after` 里别的插件写进 `metadata` 的键随 tool 结果原样落库。
 - **房间里一轮只把最后一条回复交给平台**：房间（会话种类为 `room` 的 IM 群与私聊）里，一轮里工具调用之前说的话、格式校验没通过而重试丢掉的几版都不发出（不经 `outbound:message`），只有最后一条回复发出。会话服务回看历史时据此把那几段标「未发出」；实时推送按平台的送达结果标，不受影响。
 - **输入在进入一轮时归档**：开轮的输入在 `agent:turn:before` 的默认动作开头、插进来的在插入时经 message-archive 归档，`archiveIncoming` 带这一轮的回合 id 与进入方式（开轮的为 `opened`，插进来的为 `joined`），存档记成登记的键 `TurnId`、`TurnEntry`；排着、还没进一轮的不在历史里，被放掉的归档时不带回合 id。连对话回滚按回合 id 只删这一轮的消息，不写的话这一轮的输入回滚时删不掉。
+- **每一轮写一条回合记录**：在 `agent:turn:after` 之前，把这一轮的结局与来源（schema-message 的 `TurnRecord`，登记的键 `TurnRecord`）记在最后落库的那条回复的元数据上；没有落库回复的一轮（静默、中止、出错）另落一条只带回合 id 与它的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空）。在 `agent:turn:before` 被拦下的一轮不写。会话服务按进入方式与回合记录还原时间线；不写的话，历史里只少这一轮的结局（「没有回复」「已停止」等）与回合的来源。
 
 ## 用量（token:usage）
 

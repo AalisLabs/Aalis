@@ -153,6 +153,32 @@ describe('plugin-memory-summary: 切分点', () => {
     expect(llm.text()).toContain('第 2 条消息');
     expect(llm.text()).not.toContain('probe_a');
   });
+
+  it('没写全的组里夹着别的消息（按时间戳读历史的存储，组写入期间到的排在调用与结果之间）：切分点照样退到组首之前，夹进来的与随后写入的结果都留在活跃历史里', async () => {
+    const llm = gatedLLM();
+    const { memory, compression } = await setup({}, llm.model);
+    await seed(memory, 's', 3);
+    await memory.saveMessage('s', { role: 'assistant', content: '', toolCalls: [call('a'), call('b')] });
+    await memory.saveMessage('s', { role: 'user', content: '<夹进来>' });
+    await memory.saveMessage('s', { role: 'tool', toolCallId: 'a', content: '结果 a' });
+
+    const done = compression.compress('s', { reason: 'manual' });
+    await expect.poll(() => llm.requests.length).toBe(1);
+    await memory.saveMessage('s', { role: 'tool', toolCallId: 'b', content: '结果 b' });
+    llm.release();
+    await done;
+
+    expect(
+      (await active(memory, 's')).map(m => [m.role, m.toolCallId ?? m.toolCalls?.map(c => c.id).join() ?? m.content]),
+    ).toEqual([
+      ['assistant', 'a,b'],
+      ['user', '<夹进来>'],
+      ['tool', 'a'],
+      ['tool', 'b'],
+      ['system', '对话已压缩'],
+    ]);
+    expect(llm.text()).not.toContain('<夹进来>');
+  });
 });
 
 describe('plugin-memory-summary: 落笔前核对', () => {

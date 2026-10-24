@@ -104,7 +104,7 @@ export default definePlugin({
 });
 ```
 
-default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，归档输入时把回合交给 `archiveIncoming`（不交的话连对话回滚删不掉这一轮的输入），必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
+default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，归档输入时把回合交给 `archiveIncoming`（不交的话连对话回滚删不掉这一轮的输入），在 `agent:turn:after` 之前写这一轮的回合记录（`TurnRecord`，见 [api-agent](../api/api-agent.md#落库与外发的约定)；不写的话会话服务的历史里没有这一轮的结局），必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
 
 ## 5. 标准消费方式
 

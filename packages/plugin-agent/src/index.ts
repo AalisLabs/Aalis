@@ -52,13 +52,21 @@ import {
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
-import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
+import type {
+  ContentSegment,
+  IncomingMessage,
+  Message,
+  OutgoingMessage,
+  ToolCall,
+  TurnRecord,
+} from '@aalis/schema-message';
 import {
   arrivalTag,
   buildIncomingContent,
   CONTROL_KINDS,
   DIRECTIVE_KINDS,
   getMessageName,
+  groupToolCalls,
   WellKnownKinds,
   WellKnownMetadataKeys,
   wasAddressed,
@@ -665,6 +673,37 @@ class DefaultAgent implements AgentService {
     const { platform } = first;
     const reportOnly = first.hostNotice?.reportOnly === true;
     const noticeLinks = reportOnly ? (first.content.match(NOTICE_URL) ?? []) : [];
+    const recordOf = (outcome: TurnOutcome): TurnRecord => ({ outcome, ...(first.source && { source: first.source }) });
+    // 回合记录一轮只写一次：回复了的随回复落库时写下，之后外发或 agent:turn:after 的中间件出错不再另记一条
+    let recorded = false;
+    /**
+     * 收尾：还没写回合记录的（静默、中止、出错）落一条只带回合 id 与记录的事件标记，不进模型、不进摘要，会话服务据此在历史里还原
+     * 这一轮的结局；再发 agent:turn:after
+     */
+    const end = async (
+      outcome: TurnOutcome,
+      { reply = '', error }: { reply?: string; error?: string | TextRef } = {},
+    ): Promise<TurnOutcome> => {
+      if (!recorded) {
+        recorded = true;
+        await this.saveToMemory(sessionId, {
+          role: 'system',
+          kind: WellKnownKinds.EventMarker,
+          content: '',
+          timestamp: Date.now(),
+          metadata: { [WellKnownMetadataKeys.TurnId]: turnId, [WellKnownMetadataKeys.TurnRecord]: recordOf(outcome) },
+        });
+      }
+      await this.caps.hooks.use.run('agent:turn:after', {
+        inputs,
+        reply,
+        outcome,
+        ...(error === undefined ? {} : { error }),
+        sessionId,
+        turnId,
+      });
+      return outcome;
+    };
 
     for (const input of inputs)
       input.archived = await this.archiveIncomingMessage(input.message, { turnId, entry: 'opened' });
@@ -680,16 +719,7 @@ class DefaultAgent implements AgentService {
         const text = t('systemNotice', { why });
         await this.dispatchOutbound({ content: toSource(text), text, sessionId, platform, source: 'system', turnId });
       }
-      const outcome = signal.aborted ? 'aborted' : 'error';
-      await this.caps.hooks.use.run('agent:turn:after', {
-        inputs,
-        reply: '',
-        outcome,
-        ...(signal.aborted ? {} : { error: why }),
-        sessionId,
-        turnId,
-      });
-      return outcome;
+      return signal.aborted ? end('aborted') : end('error', { error: why });
     }
     const llm = resolved.use;
     // 这一轮的主模型能不能亲眼看图：按模型服务登记的能力（端点报告或单模型能力覆盖），
@@ -1315,6 +1345,7 @@ class DefaultAgent implements AgentService {
         const finalAssistantMetadata: Record<string, unknown> = {
           ...(assistantMetadata ?? {}),
           [WellKnownMetadataKeys.ModelInfo]: turnModelInfo,
+          [WellKnownMetadataKeys.TurnRecord]: recordOf('replied'),
         };
         // 落库的是信封（如 outputFormat 的整串 JSON）时，另带解码后的可见正文，供检索、摘要等按语义读历史的一方用
         if (visibleContent !== archiveContent) {
@@ -1331,6 +1362,7 @@ class DefaultAgent implements AgentService {
           metadata: finalAssistantMetadata,
           segments: visibleSegments,
         });
+        recorded = true;
 
         // 外发给平台：只带正文与这条回复的模型和 token，思考与时间线只在上面落库的消息上；
         // 正文是她写的，其中的 @、媒体与引用标记交适配器解析
@@ -1347,16 +1379,8 @@ class DefaultAgent implements AgentService {
         });
       }
 
-      // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
-      const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
-      await this.caps.hooks.use.run('agent:turn:after', {
-        inputs,
-        reply: replyContent,
-        outcome: turnOutcome,
-        sessionId,
-        turnId,
-      });
-      return turnOutcome;
+      // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理；在 try 里等它，它的中间件出错同样按出错收尾
+      return await end(replyContent.trim().length === 0 ? 'silent' : 'replied', { reply: replyContent });
     } catch (err) {
       // 中止错误 — 静默退出，前端通过 outbound:stream done 清理 buffer。
       //
@@ -1369,8 +1393,7 @@ class DefaultAgent implements AgentService {
 
         // 中止同样是回合终态：发 agent:turn:after(outcome=aborted) 让生命周期订阅方收尾——
         // 编排的 agent 节点在等这一轮的结果，不发它就要等到超时才失败。
-        await this.caps.hooks.use.run('agent:turn:after', { inputs, reply: '', outcome: 'aborted', sessionId, turnId });
-        return 'aborted';
+        return end('aborted');
       }
 
       const error = textOf(err);
@@ -1385,15 +1408,7 @@ class DefaultAgent implements AgentService {
       }
 
       // 异常也是回合终态：同样发 turn:after(outcome=error)，等这一轮结果的订阅方才收得了尾。
-      await this.caps.hooks.use.run('agent:turn:after', {
-        inputs,
-        reply: '',
-        outcome: 'error',
-        error,
-        sessionId,
-        turnId,
-      });
-      return 'error';
+      return end('error', { error });
     }
   }
 
@@ -2028,55 +2043,15 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 装载历史时清洗工具调用组：调用之后要有它的每个结果，不齐的整组跳过。组的结果按 T0+1…T0+N 记时间戳，按时间戳读历史的存储
-   * （Mongo、sqlite）会把组写入期间归档的别的消息（插进来的输入、触发与流控的影子归档）排进调用与结果之间：把它们挪到这组之后，
-   * 保持各自先后
+   * 装载历史时清洗工具调用组：按 schema-message 的 groupToolCalls 归组（夹进调用与结果之间的别的消息挪到组后），结果不齐的组
+   * 连同找到的结果跳过，不在任何组里的结果跳过
    */
   private sanitizeToolCallHistory(history: Message[], sessionId: string): Message[] {
     const result: Message[] = [];
     let dropped = 0;
-
-    for (let i = 0; i < history.length; i++) {
-      const message = history[i];
-
-      if (message.role === 'tool') {
-        dropped++;
-        continue;
-      }
-
-      if (message.role === 'assistant' && message.toolCalls?.length) {
-        const expectedIds = new Set(message.toolCalls.map(tc => tc.id));
-        const seenIds = new Set<string>();
-        const tools: Message[] = [];
-        const between: Message[] = [];
-        let j = i + 1;
-
-        while (j < history.length && seenIds.size < expectedIds.size) {
-          const next = history[j];
-          if (next.role === 'tool') {
-            const id = next.toolCallId;
-            if (!id || !expectedIds.has(id) || seenIds.has(id)) break;
-            tools.push(next);
-            seenIds.add(id);
-          } else if (next.toolCalls?.length) {
-            break;
-          } else {
-            between.push(next);
-          }
-          j++;
-        }
-
-        if (seenIds.size === expectedIds.size) {
-          result.push(message, ...tools, ...between);
-          i = j - 1;
-        } else {
-          // 不齐：只跳过这条调用，找到的结果随后按孤立的结果跳过，夹在中间的照常
-          dropped++;
-        }
-        continue;
-      }
-
-      result.push(message);
+    for (const { at, shape } of groupToolCalls(history)) {
+      if (shape === 'partial' || shape === 'loose') dropped += at.length;
+      else result.push(...at.map(i => history[i]));
     }
 
     if (dropped > 0) {

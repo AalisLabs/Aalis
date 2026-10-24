@@ -657,6 +657,10 @@ export interface ArchivedAttachment {
  *   结果上，平台适配器写在一轮回复的投递失败记录上，出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；会话服务据此
  *   把存档归回回合、标出哪一轮的回复没发出，连对话回滚据此只删这一轮的消息。
  * - `TurnEntry`：输入怎么进的这一轮（字符串）：`opened` 是开轮的，`joined` 是插进在跑的一轮的。与 `TurnId` 一起由存档记下。
+ * - `TriggerType`：入站消息的触发类型（字符串，即 {@link IncomingMessage}.triggerType），存档写；会话服务据此标出被点名与插话。
+ * - `TurnRecord`：一轮的结局与来源（{@link TurnRecord}）。agent 记在这一轮最后落库的那条回复上，没有落库回复的一轮另落一条只带
+ *   `TurnId` 与它的事件标记（role system、kind EventMarker、正文为空，属于 {@link CONTROL_KINDS}）；会话服务据此在历史里还原
+ *   这一轮的结局。
  * - `CallId`：工具调用的 id（字符串，即 `ToolCallContext.callId`）。agent 写在工具结果上，平台适配器写在经工具发出的
  *   消息的投递失败记录上，出站记进历史的各条由写方按出站消息的 callId 记下（有才记）；会话服务据此把历史里的工具卡对回实时推送。
  * - `ModelInfo`：一轮回复的模型与这一轮的 token，与 {@link OutgoingMessage}.modelInfo 同形；agent 写在这一轮最后的回复上，
@@ -688,6 +692,8 @@ export const WellKnownMetadataKeys = {
   HostNoticeFacts: 'hostNoticeFacts',
   TurnId: 'turnId',
   TurnEntry: 'turnEntry',
+  TriggerType: 'triggerType',
+  TurnRecord: 'turnRecord',
   CallId: 'callId',
   ModelInfo: 'modelInfo',
   SentRef: 'ref',
@@ -695,6 +701,12 @@ export const WellKnownMetadataKeys = {
   DeliveryError: 'error',
   Text: 'text',
 } as const;
+
+/** 一轮的回合记录（{@link WellKnownMetadataKeys} 的 `TurnRecord`）：结局，与这一轮的来源（输入的 source，真人消息开的没有） */
+export interface TurnRecord {
+  outcome: 'replied' | 'silent' | 'aborted' | 'error';
+  source?: string;
+}
 
 /**
  * 平台无关的 well-known `noticeType` 值。
@@ -837,3 +849,5 @@ export {
 export { getMessageName, getSenderLabel, prefixSender } from './identity.js';
 // ----- 入站消息的归档文本（归档与触发判定共用） -----
 export { buildIncomingContent } from './incoming-content.js';
+// ----- 历史里的工具调用组（读历史的各方共用） -----
+export { groupToolCalls, type MessageUnit } from './tool-call-groups.js';

@@ -216,9 +216,10 @@ describe('/session 接上真的会话服务', () => {
             ? [{ kind: i.kind, outcome: i.outcome }]
             : [],
     );
+    // 回合条目在这一轮开始时推出，提问随后归档、并进这一轮
     expect(content).toEqual([
-      { kind: 'user-message', text: '你好' },
       { kind: 'turn', outcome: 'replied' },
+      { kind: 'user-message', text: '你好' },
       { kind: 'agent-message', text: '你好呀' },
     ]);
   });

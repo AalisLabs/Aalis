@@ -8,7 +8,7 @@ export default defineLocale<Source>()({
   compacted: 'Conversation compacted',
   compactionFailed: 'Compaction failed',
   unsentSilent: 'Not sent: this turn ended silently',
-  unsentAborted: 'Not sent: the turn was aborted',
+  unsentAborted: 'Not sent: the turn was stopped',
   unsentError: 'Not sent: the turn failed',
   beforeToolUnsent: 'Not sent: what is said before calling a tool is not sent to the room',
   retried: 'Not sent: the format check failed, so the reply was retried',

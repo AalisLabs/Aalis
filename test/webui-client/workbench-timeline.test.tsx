@@ -17,10 +17,22 @@ import {
   server,
   summary,
 } from './harness.js';
-import { agentMessage, notice, push, pushDelta, reasoning, snapshot, toolCall, turn, userMessage } from './items.js';
+import {
+  agentMessage,
+  notice,
+  push,
+  pushDelta,
+  queue,
+  reasoning,
+  snapshot,
+  toolCall,
+  turn,
+  userMessage,
+} from './items.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局），
+// 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局写在这一轮最后一段、
+// 输入怎么进的这一轮、没有输入的一轮的来源），排着的消息在输入框上方，
 // 流式拼接，工具卡按 display 渲染（生成参数期间写「正在生成」），全部折叠，回合上的回滚按功能位出现、打开即可确认，
 // 驱动房间的提示条，更早的历史，
 // 完成未读的清除，会话被删掉时回首页，Esc 停止，订阅失败的错误态，附件
@@ -411,6 +423,22 @@ describe('时间线', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '回滚文件改动' }));
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('这一轮有转到后台的调用，它们在这一轮结束之后写的文件不会撤回。')).toBeTruthy();
+  });
+
+  it('没有回复、只有输入的一轮按整轮判没有回滚：被别人的话隔成两段时哪一段都不出', async () => {
+    const other = { platform: 'onebot', userId: '20001', nickname: '小林', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '<先说>', { turnId: 't1', entry: 'opened' }),
+          userMessage('x1', '<别人的话>', { speaker: other }),
+          userMessage('u2', '<又说>', { turnId: 't1', entry: 'joined' }),
+          turn('t1', { outcome: 'silent' }),
+        ]),
+    });
+    const log = within(await timeline());
+    expect(log.getByText('没有回复')).toBeTruthy();
+    expect(log.queryAllByRole('button', { name: '回滚这一轮' })).toHaveLength(0);
   });
 
   it('驱动别人的房间时顶部有提示条；房间里逐条写说话人（她的回复写握手给的应用名），没发出的回复写明原因', async () => {
@@ -865,18 +893,47 @@ describe('收起、没有回复与运行指示', () => {
     expect(log.queryByRole('button', { name: /执行 d1/ })).toBeNull();
   });
 
-  it('没有回复的一轮写一行「没有回复」，连续几轮（中间只隔着提问）合成「N 轮没有回复」；房间与 owner 的会话一样', async () => {
+  it('还在跑的一轮被别人的话隔成两段：前一段末尾连着的 3 个调用照收，只有最后一段末尾那一组等这一轮收尾', async () => {
+    const other = { platform: 'onebot', userId: '20001', nickname: '小林', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot(
+          [
+            turn('t1'),
+            userMessage('u1', '<开轮>', { turnId: 't1', entry: 'opened' }),
+            command('c1', 'ls', { turnId: 't1' }),
+            command('c2', 'pwd', { turnId: 't1' }),
+            command('c3', 'whoami', { turnId: 't1' }),
+            userMessage('x1', '<别人的话>', { speaker: other }),
+            userMessage('u2', '<插进来>', { turnId: 't1', entry: 'joined' }),
+            command('c4', 'date', { turnId: 't1' }),
+            command('c5', 'id', { turnId: 't1' }),
+            command('c6', 'uname', { turnId: 't1' }),
+          ],
+          { session: { running: true } },
+        ),
+    });
+    const log = within(await timeline());
+    expect(log.getByRole('button', { name: '执行了 3 条命令' })).toBeTruthy();
+    expect(log.queryByRole('button', { name: /执行 ls/ }), '前一段收起').toBeNull();
+    expect(log.getByRole('button', { name: /执行 date/ }), '最后一段末尾那一组等收尾').toBeTruthy();
+  });
+
+  it('没有回复的一轮写一行「没有回复」，只有输入的几轮（中间只隔着不在回合里的消息）合成「N 轮没有回复」写在最后一轮，被并掉的几轮的输入照常显示；房间与 owner 的会话一样', async () => {
+    const asked = (itemId: string, text: string, turnId: string) =>
+      userMessage(itemId, text, { turnId, entry: 'opened' });
     const items = [
-      userMessage('u1', '第一句'),
+      asked('u1', '第一句', 't1'),
       turn('t1', { outcome: 'silent' }),
-      userMessage('u2', '第二句'),
+      asked('u2', '第二句', 't2'),
       turn('t2', { outcome: 'silent' }),
-      userMessage('u3', '第三句'),
+      userMessage('x1', '被吞掉的一句'),
+      asked('u3', '第三句', 't3'),
       turn('t3', { outcome: 'silent' }),
-      userMessage('u4', '第四句'),
+      asked('u4', '第四句', 't4'),
       turn('t4', { outcome: 'replied' }),
       agentMessage('a4', '回一句', { turnId: 't4' }),
-      userMessage('u5', '第五句'),
+      asked('u5', '第五句', 't5'),
       turn('t5', { outcome: 'silent' }),
     ];
     for (const session of [{}, room('s1', 'im-a')]) {
@@ -886,6 +943,7 @@ describe('收起、没有回复与运行指示', () => {
       expect(lines, JSON.stringify(session)).toEqual([
         '第一句',
         '第二句',
+        '被吞掉的一句',
         '第三句',
         '3 轮没有回复',
         '第四句',
@@ -896,6 +954,138 @@ describe('收起、没有回复与运行指示', () => {
       app.close();
       app = undefined;
     }
+  });
+
+  it('结局写在这一轮最后一段的末尾：什么都没做就停下的一轮，「已停止」紧跟在它的消息下面，不落在之后别人的消息后面；被别人的消息隔成两段时写在第二段末尾', async () => {
+    const other = { platform: 'onebot', userId: '20001', nickname: '小林', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot(
+          [
+            // 历史的次序：回合条目由回合记录还原，排在这一轮最后落库的那条之后
+            userMessage('u1', '<停下的那一轮>', { turnId: 't1', entry: 'opened' }),
+            userMessage('x1', '<之后别人的话>', { speaker: other }),
+            turn('t1', { outcome: 'aborted' }),
+            // 实时的次序：回合条目随这一轮的第一条推出
+            turn('t2', { outcome: 'error' }),
+            userMessage('u2', '<开轮>', { turnId: 't2', entry: 'opened' }),
+            userMessage('x2', '<中间别人的话>', { speaker: other }),
+            userMessage('u3', '<插进来>', { turnId: 't2', entry: 'joined' }),
+          ],
+          { session: room('s1', 'im-a') },
+        ),
+    });
+    const log = await timeline();
+    expect([...log.querySelectorAll('.message-text, .turn-outcome')].map(node => node.textContent)).toEqual([
+      '<停下的那一轮>',
+      '已停止',
+      '<之后别人的话>',
+      '<开轮>',
+      '<中间别人的话>',
+      '<插进来>',
+      '这一轮出错了',
+    ]);
+  });
+
+  it('写不出东西的段不画：只有回合条目、被并进「N 轮没有回复」的一轮（如被下游拦下的），与刚推出回合条目、还没有条目的一轮', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([turn('t1', { outcome: 'silent' }), turn('t2', { outcome: 'silent' }), turn('t3')], {
+          session: { running: true },
+        }),
+    });
+    const log = await timeline();
+    expect([...log.querySelectorAll('.turn')].map(node => node.textContent)).toEqual(['2 轮没有回复']);
+    expect(log.querySelectorAll('.timeline-time')).toHaveLength(1);
+  });
+
+  it('输入下面写它怎么进的这一轮：开了这一轮 · 被点名、开了这一轮 · 插话、开了这一轮（没经触发判定）、并入这一轮；不在回合里的不写', async () => {
+    const member = { platform: 'onebot', userId: '20001', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot(
+          [
+            userMessage('u1', '<点名>', { turnId: 't1', entry: 'opened', addressed: true, speaker: member }),
+            turn('t1', { outcome: 'silent' }),
+            userMessage('u2', '<插话>', { turnId: 't2', entry: 'opened', addressed: false, speaker: member }),
+            turn('t2', { outcome: 'silent' }),
+            userMessage('u3', '<没经判定>', { turnId: 't3', entry: 'opened' }),
+            userMessage('u4', '<并进来>', { turnId: 't3', entry: 'joined', addressed: true, speaker: member }),
+            turn('t3', { outcome: 'replied' }),
+            agentMessage('a3', '<答>', { turnId: 't3' }),
+            userMessage('x1', '<被吞掉>', { speaker: member }),
+          ],
+          { session: room('s1', 'im-a') },
+        ),
+    });
+    const log = within(await timeline());
+    const metaOf = (text: string) =>
+      [...(log.getByText(text).closest('.message')?.querySelectorAll('.message-meta') ?? [])].map(p => p.textContent);
+    expect(metaOf('<点名>')).toEqual(['开了这一轮 · 被点名']);
+    expect(metaOf('<插话>')).toEqual(['开了这一轮 · 插话']);
+    expect(metaOf('<没经判定>')).toEqual(['开了这一轮']);
+    expect(metaOf('<并进来>')).toEqual(['并入这一轮']);
+    expect(metaOf('<被吞掉>')).toEqual([]);
+  });
+
+  it('没有输入条目的一轮（空闲开话题）在段首写来源，刷新之后（回合条目排在回复之后）同样；有输入的一轮不写', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          agentMessage('a1', '<开个话题>', { turnId: 't1' }),
+          turn('t1', { outcome: 'replied', source: 'idle-trigger' }),
+          userMessage('u2', '<定时提醒>', {
+            turnId: 't2',
+            entry: 'opened',
+            speaker: { platform: 'webui', source: 'scheduler', owner: false },
+          }),
+          turn('t2', { outcome: 'replied', source: 'scheduler' }),
+          agentMessage('a2', '<提醒你>', { turnId: 't2' }),
+        ]),
+    });
+    const log = await timeline();
+    const lines = [...log.querySelectorAll('.message-meta, .message-text, .markdown')].map(node => node.textContent);
+    expect(lines).toEqual([
+      '来自 idle-trigger',
+      '<开个话题>',
+      '来自 scheduler',
+      '<定时提醒>',
+      '开了这一轮',
+      '<提醒你>',
+    ]);
+  });
+
+  it('排着的消息列在输入框上方：说话人、写的话、附件个数；进了一轮从列表移进时间线，列表空了不占位置', async () => {
+    const member = { platform: 'onebot', userId: '20001', nickname: '小林', owner: false };
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot(
+          [
+            userMessage('u1', '<先说的>', { turnId: 't1', entry: 'opened' }),
+            turn('t1'),
+            queue([
+              {
+                speaker: { platform: 'webui', userId: 'console', owner: true },
+                text: '<排着的>',
+                attachments: 0,
+              },
+              { speaker: member, text: '<带图的>', attachments: 2 },
+              { speaker: { platform: 'webui', source: 'scheduler', owner: false }, text: '<定时>', attachments: 0 },
+            ]),
+          ],
+          { session: { running: true } },
+        ),
+    });
+    await timeline();
+    const list = () => main().queryByRole('list', { name: '排着的消息' });
+    const rows = [...(list()?.querySelectorAll('li') ?? [])].map(li => li.textContent);
+    expect(rows).toEqual(['你<排着的>', '小林<带图的>2 个附件', '来自 scheduler<定时>']);
+    expect(within(await timeline()).queryByText('<排着的>'), '排着的还不在时间线上').toBeNull();
+
+    act(() => push('completed', queue([])));
+    act(() => push('completed', userMessage('u2', '<排着的>', { turnId: 't1', entry: 'joined' })));
+    expect(list()).toBeNull();
+    expect(within(await timeline()).getByText('<排着的>')).toBeTruthy();
   });
 
   it('会话头部在回合进行中有转动的运行指示，回合结束时消失', async () => {
@@ -926,12 +1116,25 @@ describe('回滚放回输入框', () => {
     ...(scope === 'code-and-chat' ? { deletedMessages: 2, chatDeleted: true } : {}),
   });
 
-  it('连对话一起回滚：那一轮 owner 发的文字放回输入框，附件不放回、不自动发；只回滚文件时输入框不动', async () => {
+  it('连对话一起回滚：那一轮 owner 的各条输入（开轮的与插进来的）空行连起来放回输入框，别人的不放，附件不放回、不自动发；只回滚文件时输入框不动', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot([
-          userMessage('u1', '把配置改成生产的', { attachments: [{ kind: 'file', name: '配置.yaml' }] }),
+          userMessage('u0', '上一轮的', { turnId: 't0', entry: 'opened' }),
+          turn('t0', { outcome: 'replied' }),
+          agentMessage('a0', '好', { turnId: 't0' }),
+          userMessage('u1', '把配置改成生产的', {
+            turnId: 't1',
+            entry: 'opened',
+            attachments: [{ kind: 'file', name: '配置.yaml' }],
+          }),
           turn('t1', { outcome: 'replied' }),
+          userMessage('u2', '别人插的话', {
+            turnId: 't1',
+            entry: 'joined',
+            speaker: { platform: 'onebot', userId: '20001', owner: false },
+          }),
+          userMessage('u3', '顺便把日志级别也调低', { turnId: 't1', entry: 'joined' }),
           agentMessage('a1', '改好了', { turnId: 't1' }),
         ]),
       'turn/rewind': ({ scope }) => rewound(scope),
@@ -940,7 +1143,7 @@ describe('回滚放回输入框', () => {
     const log = within(await timeline());
     const box = main().getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement;
     const rewind = async (item: string) => {
-      fireEvent.click(log.getByRole('button', { name: '回滚这一轮' }));
+      fireEvent.click(log.getAllByRole('button', { name: '回滚这一轮' }).at(-1) as HTMLElement);
       fireEvent.click(screen.getByRole('menuitem', { name: item }));
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '回滚' }));
       await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -948,7 +1151,7 @@ describe('回滚放回输入框', () => {
     await rewind('回滚文件改动');
     expect(box.value).toBe('');
     await rewind('回滚文件改动与这一轮对话');
-    expect(box.value).toBe('把配置改成生产的');
+    expect(box.value).toBe('把配置改成生产的\n\n顺便把日志级别也调低');
     expect(main().queryByRole('list', { name: '附件' })).toBeNull();
     expect(requests('turn/send')).toEqual([]);
   });
