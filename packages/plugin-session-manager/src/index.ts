@@ -750,17 +750,30 @@ class SessionManager implements SessionManagerService {
   }
 
   async deleteSession(id: string): Promise<void> {
-    await this.remove(id);
+    await this.removeAll([id]);
   }
 
-  /** 删掉一个会话连同下面各级子会话，返回删掉的会话数（不在表里的算 0） */
-  private async remove(id: string): Promise<number> {
+  /**
+   * 逐个删掉这些会话（各连同下面各级子会话），返回删掉的会话数。哪一处抛错都不拦住其余的，全部做完再交出：一处原样交出，几处
+   * 合成一个 AggregateError（各级的摊平成一层）
+   */
+  private async removeAll(ids: readonly string[]): Promise<number> {
+    const failures: unknown[] = [];
+    let removed = 0;
+    for (const id of ids) removed += await this.remove(id, failures);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, `删除会话时 ${failures.length} 处出错`);
+    return removed;
+  }
+
+  /** 删掉一个会话连同下面各级子会话，返回删掉的会话数（不在表里的算 0）；抛错带会话 id 告警、收进 failures，自己不抛 */
+  private async remove(id: string, failures: unknown[]): Promise<number> {
     const session = this.sessions.get(id);
     if (!session) return 0;
 
     // 开始删除，同一步：从表里摘掉（父会话的子会话列表变了，删除之后再给它发一次 session:updated）、换代号。这之后到的同一会话的
-    // 入站等删除做完（见 recordInbound），是新的一代；这之前已收录、还在半路上的是旧的一代，网关与 agent 交出去之前比代号放掉、
-    // 不归档
+    // 入站等删除做完（见 recordInbound），是新的一代；这之前已收录、还在半路上的是旧的一代，网关交给 agent 之前、agent 交给通道
+    // 之前比代号放掉、不归档
     const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
     if (parent) {
       parent.children = parent.children.filter(c => c !== id);
@@ -774,15 +787,20 @@ class SessionManager implements SessionManagerService {
     this.generations.set(id, this.generationOf(id) + 1);
 
     // 整个删除交给 agent 的 clearing：它先按住这个会话、停下在跑的一轮并等它收尾，按住到清完，删子会话期间这个会话也不开轮。先删
-    // 各级子会话（含活跃子会话），再发事件、清数据：监听方在事件里停掉这个会话在跑的东西，清数据时就不会有中途写回来的
+    // 各级子会话（含活跃子会话），再发事件、清数据：监听方在事件里停掉这个会话在跑的东西，清数据时就不会有中途写回来的。子会话的
+    // 抛错收进 failures，不拦住余下的子会话与这个会话自己的发事件、清数据、给上一级发 session:updated：这个会话已摘掉，停在半路
+    // 的话它的数据不清，余下子会话的 parentId 悬空，也没法再删一次
     let removed = 1;
+    const finish = async () => {
+      for (const childId of [...session.children]) removed += await this.remove(childId, failures);
+      await this.caps.events.use.emit('session:deleted', id);
+      await this.clearDeletedSessionData(id);
+    };
     try {
-      const finish = async () => {
-        for (const childId of [...session.children]) removed += await this.remove(childId);
-        await this.caps.events.use.emit('session:deleted', id);
-        await this.clearDeletedSessionData(id);
-      };
       await (this.caps.agent.present ? this.caps.agent.use.clearing([id], finish, '会话删除') : finish());
+    } catch (err) {
+      this.caps.logger.use.warn(`会话删除出错 [${id}]:`, err);
+      failures.push(err);
     } finally {
       this.removing.delete(id);
       done();
@@ -826,9 +844,7 @@ class SessionManager implements SessionManagerService {
     const targets = [...this.sessions.values()].filter(s =>
       parentId === undefined ? s.parentId !== undefined : s.parentId === parentId,
     );
-    let removed = 0;
-    for (const { id } of targets) removed += await this.remove(id);
-    return removed;
+    return this.removeAll(targets.map(s => s.id));
   }
 
   // ---- 树形操作 ----

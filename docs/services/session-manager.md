@@ -129,7 +129,7 @@ interface SessionInfo {
 
 - **收录**：`recordInbound(message)` 是原生入站的收录与补记（§6.6），可等待。网关在入站相位之前、会话管理在场时等它，所以指令、回复策略、agent、记忆、人设、工具等读取方看到的都是已收录、带聊天窗口的会话；新房间的第一条消息因此多等一次认领查询，已收录的房间不等。这个会话正在删除时先等删除做完。
 - **空记录**：`isUnfiled(root)` 判根会话是不是按 id 兜底建档留下的空记录（没有出生平台、创建来源与绑定）。会话设置对空记录不取场所层；会话协议的会话摘要对它不给场所；`placeOf` 对它照旧回默认工作区。参考实现、plugin-cli 与会话设置都用这一个判定。
-- **删除**：`deleteSession(id)` 连同下面各级子会话删除，先从表里摘掉，再发 `session:deleted`、经 `memory:clear`（范围 `session`）清它的消息历史与各插件按会话存的数据。`session:deleted` 的监听方在这里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清，回合中途落库的几条不会留在已删会话的归档里。摘掉之后整个删除（先删各级子会话，再发事件、清数据）经 agent 的 `clearing` 包住：删子会话之前就停下这个会话的回合并等它收尾（没有时限：不响应中止的工具会让删除一直等到它返回），按住到清完；别的监听方（临时区、上传文件、时间线）按激活顺序跑，这时回合已经停下。摘掉的同一步换这个会话的代号（`generationOf`），网关与 agent 交出去之前比它放掉删除之前的一代；删除期间到的同一会话的消息怎么处理（新的一代与旧的一代）见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`。
+- **删除**：`deleteSession(id)` 连同下面各级子会话删除，先从表里摘掉，再发 `session:deleted`、经 `memory:clear`（范围 `session`）清它的消息历史与各插件按会话存的数据。`session:deleted` 的监听方在这里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清，回合中途落库的几条不会留在已删会话的归档里。摘掉之后整个删除（先删各级子会话，再发事件、清数据）经 agent 的 `clearing` 包住：删子会话之前就停下这个会话的回合并等它收尾（没有时限：不响应中止的工具会让删除一直等到它返回），按住到清完；别的监听方（临时区、上传文件、时间线）按激活顺序跑，这时回合已经停下。摘掉的同一步换这个会话的代号（`generationOf`），网关交给 agent 之前、agent 交给通道之前比它放掉删除之前的一代；删除期间到的同一会话的消息怎么处理（新的一代与旧的一代）见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`。
 - **清空连带删除子会话**：一个会话的消息历史被清空（`memory:clear` 没指定类型或类型含 `context`，且消息历史那一行清成功，按 api-memory 的 `historyCleared` 判）时，参考实现在 `next()` 之后删除它的子会话：范围为 `session` 删这个会话的，为 `all` 删全部子会话。只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。plugin-commands 的 `/clear` 回执据此多一行「已删除 N 个子会话」。
 
 ### 2.6 来源字段、创建来源、所属工作区、绑定与房间类别
@@ -316,7 +316,10 @@ class MySessionManager implements SessionManagerService {
     await this.events.emit('session:created', s);
     return s;
   }
-  /** 先摘掉、换代号、让新来的入站等着，再删子会话、发事件（监听方停掉在跑的回合），最后清数据 */
+  /**
+   * 先摘掉、换代号、让新来的入站等着，再删子会话、发事件（监听方停掉在跑的回合），最后清数据。删子会话、清数据的抛错不拦住其余
+   * 几步，做完再交出：这个会话已摘掉，停在半路的话它的数据不清，余下子会话的 parentId 悬空，也没法再删一次
+   */
   async deleteSession(id: string) {
     const s = this.sessions.get(id);
     if (!s) return;
@@ -324,14 +327,13 @@ class MySessionManager implements SessionManagerService {
     this.generations.set(id, this.generationOf(id) + 1);
     let done!: () => void;
     this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
-    try {
-      for (const child of [...s.children]) await this.deleteSession(child);
-      await this.events.emit('session:deleted', id);
-      await this.clear(id);
-    } finally {
-      this.removing.delete(id);
-      done();
-    }
+    const failures: unknown[] = [];
+    for (const child of [...s.children]) await this.deleteSession(child).catch(err => void failures.push(err));
+    await this.events.emit('session:deleted', id); // emit 逐个接住监听方的抛错，本身不抛
+    await this.clear(id).catch(err => void failures.push(err));
+    this.removing.delete(id);
+    done();
+    if (failures.length > 0) throw new AggregateError(failures, `删除会话时出错: ${id}`);
   }
   /** 这个骨架不收录 IM 房间（会话都由 createSession、ensureSession 建），只在这个会话删除期间等删除做完 */
   async recordInbound({ sessionId }: IncomingMessage) {

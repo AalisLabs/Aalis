@@ -410,7 +410,8 @@ export interface SessionManagerService {
   /**
    * 这个会话此刻的代号，分删除前后的两代：开始删除这个会话时（与让它新来的入站在 recordInbound 里等着同一步，同步地，带子会话的
    * 先于删子会话）换成这个会话没给过的值；其余时候不变，删过的 id 之后再建档也不变，所以删过的 id 的代号要一直留着。只按相等比。
-   * 网关与 agent 据它放掉删除开始之前已收录的旧一代（见 api-agent 的 handleMessage）；会话管理不在时没有删除，两边都不比
+   * 网关交给 agent 之前、agent 交给通道之前据它放掉删除开始之前已收录的旧一代（见 api-agent 的 handleMessage），只比这两处。
+   * 会话管理不在时没有删除，两边都不比
    */
   generationOf(sessionId: string): number;
 

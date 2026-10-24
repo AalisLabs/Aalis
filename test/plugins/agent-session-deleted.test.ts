@@ -4,6 +4,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { App, definePlugin, events, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -20,10 +21,11 @@ import { deferred } from '../helpers/deferred.js';
 // 删除会话时停掉这个会话在跑的回合：会话管理把整个删除（删子会话、发 session:deleted、清数据）交给 agent 的 clearing，它先停下
 // 这个会话在跑的一轮、放掉排着的，等它收尾，并从这时起按住这个会话到清完，所以清数据一定在回合停下之后。被停的一轮不落库、
 // 不外发；别的会话的回合照常跑完。新旧两代按会话管理给的代号分：开始删除的同一步换代号，网关在收录之后记下、交给 agent 之前比，
-// agent 在 handleMessage 入口记下、交给通道之前（按住期间等着的放开之后）比。删除开始之前已过会话管理收录、删完时还在网关的
-// 入站相位里或在 agent 里等着的是旧的一代，放掉、不归档，房间按下一条重新建档后也不在新的历史里；删除期间（带子会话的从删子
-// 会话起）经网关到的同一会话的消息在收录里等删除做完，是新的一代：照常处理，存档不被这次删除清掉。/clear 清的期间到的照旧清完
-// 再处理，清的当中删掉它的子会话也一样。
+// agent 在 handleMessage 入口记下、交给通道之前（按住期间等着的放开之后）比，只比这两处。删除开始之前已过会话管理收录、删除
+// 开始之后才到这两处的是旧的一代，放掉、不归档，房间按下一条重新建档后也不在新的历史里；在触发判定或流控相位里挂过删完时刻、
+// 随后被吞掉的不经这两处，照旧影子归档，进了重新建档的房间的历史。删除期间（带子会话的从删子会话起）经网关到的同一会话的消息
+// 在收录里等删除做完，是新的一代：照常处理，存档不被这次删除清掉。/clear 清的期间到的照旧清完再处理，清的当中删掉它的子会话
+// 也一样。
 // ════════════════════════════════════════════════════════════
 
 /** 流出第一块后停住，直到 release 或请求被中止（与真实服务商一样响应中止信号） */
@@ -119,7 +121,7 @@ async function bootGateway({ after }: { after?: After } = {}) {
   for (const name of [sessionManagerPlugin.name, gatewayPlugin.name, agentPlugin.name]) {
     expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
   }
-  const host = app.bind({ agent: agentService, events, hooks, gateway, memory, sessionManager });
+  const host = app.bind({ archive: messageArchive, events, hooks, gateway, memory, sessionManager });
   const outcomes: string[][] = [];
   host.hooks.use.middleware('agent:turn:after', async (data, next) => {
     outcomes.push([data.inputs.map(input => input.message.content).join('+'), data.outcome]);
@@ -300,6 +302,35 @@ describe('删除会话时停掉它在跑的回合', () => {
     expect(model.requests, '慢的那条不开轮').toHaveLength(1);
     expect(sm.getSession(GROUP), '下一条把这个群重新建了档').toBeDefined();
     expect(await historyOf()).toEqual([
+      ['user', expect.stringContaining('<丙>')],
+      ['assistant', '回1'],
+    ]);
+  });
+
+  it('删除开始之前已过会话管理、在触发判定相位里挂过删完时刻、随后被吞掉的一条：不经代号比对，照旧影子归档，进了按下一条重新建档的房间的历史', async () => {
+    const { host, sm, outcomes, ingress, historyOf } = await bootGateway();
+    const entered = deferred();
+    const gate = deferred();
+    host.hooks.use.middleware('inbound:trigger', async (data, next) => {
+      if (data.message.content !== '<慢>') {
+        await next();
+        return;
+      }
+      entered.resolve();
+      await gate.promise;
+      // 像触发判定与流控吞掉时那样：影子归档，不调 next
+      await host.archive.use.archiveIncoming(data.message);
+    });
+    const late = ingress('<慢>');
+    await entered.promise;
+    await sm.deleteSession(GROUP);
+    gate.resolve();
+    await late;
+    await ingress('<丙>');
+
+    expect(outcomes).toEqual([['<丙>', 'replied']]);
+    expect(await historyOf()).toEqual([
+      ['user', expect.stringContaining('<慢>')],
       ['user', expect.stringContaining('<丙>')],
       ['assistant', '回1'],
     ]);
