@@ -15,7 +15,10 @@ const PACKAGES = join(__dirname, '../../packages');
 const ALLOWED = new Map<string, string>([
   ['schema-message/index.ts', '契约：IncomingMessage.fromTurn 与它的类型 FromTurn'],
   ['api-authority/index.ts', '契约与拼装：入站回合（InboundTurn）带着它，originTurnOf 由它给发言者与授权身份'],
-  ['plugin-authority/authority-model.ts', '判定：续做与它延续的那一轮同一类别，子任务的主体随派它的那一轮'],
+  [
+    'plugin-authority/authority-model.ts',
+    '判定：续做与子任务的类别随起它的那一轮，主体按这次调用的参与者，批过的按批的人',
+  ],
   ['plugin-tools/background.ts', '注入方：后台任务的结束通知带着起它的那次调用所在那一轮'],
   ['plugin-subtask/index.ts', '注入方：入站回合里派出的任务消息与追问带着派它的那一轮'],
 ]);

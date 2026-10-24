@@ -90,8 +90,8 @@ export default definePlugin({
    - `recallRoles` 配置控制 AI 自身回复是否参与召回（`all` 默认 / `others-only`）；
      角色标注不随该开关关闭。存量未打 role 的旧向量按对方对待
 3. **主动召回**: 注册 `memory_recall` 工具，按任意 query 检索，与被动注入共用同一检索排序
-   （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
-   `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
+   （候选放大、模型过滤、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；同用户加权的
+   用户是调用的物理发言者（`ToolCallContext.userId`），这一轮几个人说话时没有它、不加权；`scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
 可见范围为同平台时（这个会话的 `crossSessionMode` 为 `platform`，或 `memory_recall` 传 `scope: 'platform'`），被动注入与 `memory_recall` 按同一个当前平台取：IM 房间（群与私聊，含其子任务）取会话管理记下的出生平台（`originPlatform`，子会话取根会话的；见 [api-session-manager](../api/api-session-manager.md)），不论这一轮从哪个入口驱动，owner 从 WebUI 往群里插话时不会召回 owner 自己 WebUI 会话的记忆；没有出生平台的会话（WebUI、CLI 等）取入口平台。向量入库时记下的平台（`metadata.platform`）是那一轮的入口平台，user 与 assistant 两侧同一口径：owner 从 WebUI 往房间里插的话和那一轮的回复记为 `webui`。候选向量记下的平台等于当前平台，或它所在会话记下的出生平台等于当前平台，即算同平台；平台都不从会话 ID 推。
 

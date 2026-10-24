@@ -1,8 +1,8 @@
 /**
  * @aalis/api-reach — 触及契约
  *
- * 一次工具调用最多能触及本机的什么：先按这一轮的主体定上限，主体是 owner 的一轮（这一轮只有 owner 的话，含续做与随它的子任务）
- * 有本地效果，不看会话；再按档位收窄。本包只有类型与纯函数：
+ * 一次工具调用最多能触及本机的什么：先按这一轮的主体定上限，主体是 owner 的有本地效果，不看会话（主体见权限服务的
+ * principalOf）；再按档位收窄。本包只有类型与纯函数：
  * - 档位与越界策略；
  * - `resolveReach` 解析出一份触及，`judgeReach` 判一个目标放行、问或拒；
  * - `protectedLists` 生成宿主控制面、持久化与自动执行落点、拒读清单三张清单，`withRealRoots` 按真实路径补上链接出去的根，
@@ -297,7 +297,9 @@ export interface ReachInput {
   readonly paths: HostPaths;
 }
 
-/** 有本地效果的触及：只有主体是 owner 的一轮（这一轮只有 owner 的话，含续做与随它的子任务）才有 */
+/**
+ * 有本地效果的触及：只有主体是 owner 的调用才有（续做与子任务的类别随起它的那一轮，主体按这次调用的参与者，批过的按批的人）
+ */
 export interface LocalReach {
   /** 命令在哪执行：只读与工作区档在沙箱里，修改确认与全权在宿主上 */
   readonly exec: 'sandbox' | 'host';

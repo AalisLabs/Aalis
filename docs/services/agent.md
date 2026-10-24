@@ -66,6 +66,8 @@ export interface BoundAgent extends AgentService {
 - `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.use.handleMessage(message)`（每条消息先看 `agent.present`）——**这是 agent 被驱动的主入口**。
 - `plugin-session-server`：停止键（`turn/abort`）调 `agent.use.abort(sessionId, { turnId, reason: '停止键' })`，只停在跑的一轮；后台页「全部停止」对每个下级会话调 `abort(id, { queued: true, reason: '全部停止' })`。agent 不在时回 `unsupported`。
 - `plugin-flow-control`：禁言（`setMuted` 时长大于 0）调 `abort(sessionId, { queued: true, reason: '禁言' })`。
+- `plugin-commands`：清消息历史的 `/clear` 把整条 `memory:clear` 链交给 `clearing`（`/clear all` 不给会话 id）。
+- `plugin-session-manager`：删会话时把发 `session:deleted` 与清数据两步交给 `clearing([id], …)`。
 - `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/api-agent/src/index.ts`）。
 
 **钩子订阅方**：`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
@@ -74,7 +76,7 @@ export interface BoundAgent extends AgentService {
 
 99% 的需求用**钩子**就够了，无需替换整个服务。只有当你要彻底接管编排逻辑时才自己 provide `agent`。
 
-**最小必须**：`handleMessage`、`abort` 与 `assignModel`。省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
+**最小必须**：`handleMessage`、`abort`、`clearing` 与 `assignModel`。省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
 
 ```ts
 import { agent, type AgentService } from '@aalis/api-agent';
@@ -88,6 +90,10 @@ class MyAgent implements AgentService {
   }
   abort(_sessionId: string, _options?: { turnId?: string; queued?: boolean; reason?: string }): boolean {
     return false;
+  }
+  async clearing(_sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void> {
+    // 先停下这些会话在跑的一轮、放掉排着的并按住它们，等落定再清，清完才放开
+    await clear();
   }
   async assignModel(_sessionId: string, _model: ModelRef): Promise<void> {
     throw new Error('不支持给会话指定模型');
@@ -104,7 +110,7 @@ export default definePlugin({
 });
 ```
 
-default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，归档输入时把回合交给 `archiveIncoming`（不交的话连对话回滚删不掉这一轮的输入），在 `agent:turn:after` 之前写这一轮的回合记录（`TurnRecord`，见 [api-agent](../api/api-agent.md#落库与外发的约定)；不写的话会话服务的历史里没有这一轮的结局），必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点要等到超时才失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
+default agent 用整个 service 注册（不是 per-entry）。自定义 `handleMessage` 必须在一轮开始时生成 `turnId` 并在上述钩子与事件里带上，归档输入时把回合交给 `archiveIncoming`（不交的话连对话回滚删不掉这一轮的输入），在 `agent:turn:after` 之前写这一轮的回合记录（`TurnRecord`，见 [api-agent](../api/api-agent.md#落库与外发的约定)；不写的话会话服务的历史里没有这一轮的结局），必须在四条终态路径都发 `agent:turn:after`，结局为 `error` 时在 `error` 里给一句原因。漏发的话，workflow 的 agent 节点认不到结局、在指令落定时按没开轮失败，子任务不会回报父会话，出错的一轮收口为 completed 而不是 error，`lastReplyAt` 不更新，`lastTurn` 记为 silent，会话服务按 silent 收尾；不给原因的话，会话的 `lastTurn` 没有原因，界面上出错的会话写不出原因。
 
 ## 5. 标准消费方式
 
