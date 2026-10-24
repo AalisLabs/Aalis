@@ -182,6 +182,30 @@ describe('recordInbound', () => {
     await expect.poll(() => sm.getSession(GROUP)?.name).toBe('<群名>');
   });
 
+  it('问认领者的期间开始删除这个会话：等删除做完再从头收录，删除当中不按这条重新建档', async () => {
+    const slow = slowAdapter();
+    const { host, sm } = await setup(slow.adapter);
+    // 按 id 兜底建档的空记录：要由这条原生入站补记
+    await sm.ensureSession(GROUP);
+    const order: string[] = [];
+    const gate = deferred();
+    host.events.use.on('session:created', () => void order.push('created'));
+    host.events.use.on('session:deleted', async () => {
+      order.push('deleted');
+      await gate.promise;
+    });
+    const recording = sm.recordInbound(fromGroup());
+    const deleting = sm.deleteSession(GROUP);
+    slow.release();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(order, '删除当中不按这条重新建档').toEqual(['deleted']);
+    expect(sm.getSession(GROUP)).toBeUndefined();
+    gate.resolve();
+    await Promise.all([deleting, recording]);
+    expect(order, '删完之后才建档').toEqual(['deleted', 'created']);
+    expect(sm.getSession(GROUP)?.originChat?.type).toBe('group');
+  });
+
   it('WebUI 与终端的会话走快路径：不写聊天窗口，不问认领者', async () => {
     const slow = slowAdapter();
     const { sm } = await setup(slow.adapter);

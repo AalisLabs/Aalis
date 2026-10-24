@@ -145,10 +145,11 @@ async function boot(
   const model = new ScriptedLLM(decide);
   const host = app.bind({ provide, events, hooks, agent, memory, gateway, flowControl, tools });
 
-  // 会话管理的替身：会话记录按 id 现造（房间都算已收录），网关在入站相位之前等的收录直接落定
+  // 会话管理的替身：会话记录按 id 现造（房间都算已收录），网关在入站相位之前等的收录直接落定；不删会话，代号一直是 0
   host.provide.use(sessionManager, {
     getSession: (id: string): SessionInfo => sessionInfoOf(id),
     recordInbound: async () => {},
+    generationOf: () => 0,
   } as unknown as SessionManagerService);
   host.provide.use(storage, memoryStorage(files));
   const indexed: Array<Record<string, unknown>> = [];

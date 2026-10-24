@@ -28,6 +28,7 @@ async function boot(withSessions: boolean) {
   if (withSessions) {
     app.bind({ provide }).provide.use(sessionManager, {
       getSession: (id: string) => sessionInfoOf(id),
+      generationOf: () => 0,
     } as unknown as SessionManagerService);
   }
   let replies = 0;

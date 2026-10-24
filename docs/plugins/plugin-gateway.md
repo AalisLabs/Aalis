@@ -34,7 +34,7 @@ export default definePlugin({
 
 ## 入站生命周期相位
 
-进入相位之前：会话管理在场时先等它收录这条入站（`recordInbound`），新房间的第一条消息因此多等一次认领查询，已收录的房间不等；入站管道里的读取方看到的都是已收录、带聊天窗口的会话，第一条消息就按这个房间取平台类型档与场所的设置。再对没有 `source` 的入站按这个平台适配器的类型声明算一次聊天窗口，写进 `InboundPhaseData.chat`（平台服务缺席时按没声明类型算：`private` 与不带类型名的按一对一，其余按多方），回复策略三个插件按它的多方标记判生效范围；带 `source` 的内部注入不给。
+进入相位之前：会话管理在场时先等它收录这条入站（`recordInbound`），新房间的第一条消息因此多等一次认领查询，已收录的房间不等；入站管道里的读取方看到的都是已收录、带聊天窗口的会话，第一条消息就按这个房间取平台类型档与场所的设置。收录之后记下这个会话的代号（api-session-manager 的 `generationOf`），`inbound:dispatch` 的默认动作交给 agent 之前再取一次：变了的是会话删除开始之前已收录的旧一代（删完时还在入站相位里），放掉，不交给 agent、不回兜底的那句。再对没有 `source` 的入站按这个平台适配器的类型声明算一次聊天窗口，写进 `InboundPhaseData.chat`（平台服务缺席时按没声明类型算：`private` 与不带类型名的按一对一，其余按多方），回复策略三个插件按它的多方标记判生效范围；带 `source` 的内部注入不给。
 
 入站消息按下表顺序执行；任一相位中某个 handler 不调用 `next()` 即视为"已处理"，整个管道立即停止（不再进入后续相位）。
 
@@ -43,7 +43,7 @@ export default definePlugin({
 | `inbound:command` | `InboundPhaseData` | plugin-commands；plugin-chat-approval（回审批的消息） | （无）|
 | `inbound:trigger` | `InboundPhaseData` | 生效的触发插件（如 plugin-trigger-policy） | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
-| `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |
+| `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复；会话删除之前的一代放掉 |
 
 `inbound:command` 排在最前：指令意图确认的回复（发出者本人对确认提示的下一条消息）在这里命中后被吞掉，不进入后续相位，也就不会被当成输入插进 agent 在跑的一轮。
 

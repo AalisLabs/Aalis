@@ -9,10 +9,11 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话树：删除会话先从表里摘掉并发 session:deleted，再清它的数据（监听方在事件里还看得到数据没清）。会话的消息历史被清空
-// （memory:clear 没指定类型或类型含 context，且消息历史那一行清成功）时它的子会话一并删除：范围为 session 删这个会话的，为 all
-// 删全部子会话，结果里加一行「已删除 N 个子会话」；只清别的类型、消息历史没清成、删除会话自己触发的清理都不删。场所记录带
-// 插件的 metadata，经 updatePlace 合并式改；listPlaces 默认工作区在前。建会话时 metadata 里的 title、inputContext 不当成同名字段。
+// 会话树：删除会话先从表里摘掉并发 session:deleted，再清它的数据（监听方在事件里还看得到数据没清）；开始删除的同一步换这个
+// 会话的代号，删过的 id 之后再建档也不换回去。会话的消息历史被清空（memory:clear 没指定类型或类型含 context，且消息历史那一行
+// 清成功）时它的子会话一并删除：范围为 session 删这个会话的，为 all 删全部子会话，结果里加一行「已删除 N 个子会话」；只清别的
+// 类型、消息历史没清成、删除会话自己触发的清理都不删。场所记录带插件的 metadata，经 updatePlace 合并式改；listPlaces 默认工作区
+// 在前。建会话时 metadata 里的 title、inputContext 不当成同名字段。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -55,6 +56,23 @@ describe('删除会话', () => {
     });
     await sm.deleteSession(id);
     expect(order).toEqual([`deleted:${id}`, 'clear']);
+  });
+
+  it('代号：开始删除的同一步换（带子会话的不等删完子会话），删完同一 id 再建档也不换回去；连带删掉的子会话各自换，别的会话不变', async () => {
+    const { sm } = await setup();
+    const parent = await sm.createSession({ name: '<父会话>' });
+    const child = await sm.createSession({ parentId: parent.id });
+    const other = await sm.createSession({ name: '<另一个会话>' });
+    const before = new Map([parent, child, other].map(({ id }) => [id, sm.generationOf(id)]));
+    const deleting = sm.deleteSession(parent.id);
+    expect(sm.generationOf(parent.id), '开始删除的同一步就换了').not.toBe(before.get(parent.id));
+    expect(sm.generationOf(child.id), '子会话在开始删它的同一步换').not.toBe(before.get(child.id));
+    await deleting;
+    expect(sm.generationOf(parent.id), '删完之后不换回去').not.toBe(before.get(parent.id));
+    expect(sm.generationOf(other.id), '别的会话不变').toBe(before.get(other.id));
+    const deleted = sm.generationOf(parent.id);
+    await sm.ensureSession(parent.id);
+    expect(sm.generationOf(parent.id), '同一 id 再建档不换').toBe(deleted);
   });
 });
 

@@ -14,8 +14,9 @@ import { t } from './texts.js';
 // ----- 入口 -----
 
 // gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
-// 会话管理在场时入站相位之前先等它收录这条消息的会话；会话管理与 authority 还用来判房间类别（结构性放行），authority 缺席时
-// 没有人是 owner。没有 source 的入站按这个平台适配器的类型声明算聊天窗口（data.chat），平台服务缺席时按没声明类型算。
+// 会话管理在场时入站相位之前先等它收录这条消息的会话，交给 agent 之前按它给的代号认出删除之前的一代；会话管理与 authority
+// 还用来判房间类别（结构性放行），authority 缺席时没有人是 owner。没有 source 的入站按这个平台适配器的类型声明算聊天窗口
+// （data.chat），平台服务缺席时按没声明类型算。
 // 出站消息带文字对象时按会话的语言渲染进 content；i18n 缺席或渲染抛错时按原文
 const uses = {
   events,
@@ -63,6 +64,11 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
     return chatScopeOf(message, sessionTypesOf(adapter));
   }
 
+  /** 会话管理给这个会话的代号（api-session-manager 的 generationOf）；会话管理缺席时没有 */
+  function generationOf(sessionId: string): number | undefined {
+    return sessionManager.present ? sessionManager.use.generationOf(sessionId) : undefined;
+  }
+
   /** 到达序号：每条入站在所有相位之前加一（只给日志关联，重载后从头计） */
   let arrivals = 0;
 
@@ -95,8 +101,9 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
    * 前三相位任一被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    * 房间类别为 owner-only 的会话跳过 trigger 与 flow（结构性放行），这两个相位不运行、不发 gateway:phase:done。
    * 会话管理在场时先等它收录（recordInbound）：新房间的第一条消息进入相位时会话已建档、带聊天窗口，各读取方按记下的字段取。
-   * 没有 source 的入站带上聊天窗口（data.chat），回复策略据它判生效范围。所有相位之前先打到达序号（这次运行内递增），
-   * 判定、吞噬、开轮与回合结束各行据它串起这一条
+   * 收录之后记下这个会话的代号，dispatch 的默认动作交给 agent 之前再取一次：变了的是删除开始之前已收录的旧一代，放掉，不交给
+   * agent、不回兜底的那句。没有 source 的入站带上聊天窗口（data.chat），回复策略据它判生效范围。所有相位之前先打到达序号
+   * （这次运行内递增），判定、吞噬、开轮与回合结束各行据它串起这一条
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
     message.arrival = ++arrivals;
@@ -110,6 +117,7 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
 
     try {
       if (sessionManager.present) await sessionManager.use.recordInbound(message);
+      const generation = generationOf(message.sessionId);
       // 前置相位 = INBOUND_PHASE_ORDER 中除终相 DISPATCH 外的全部（单一真相：新增相位只改 gateway-api）。
       // 任一相位被 swallow 即停止后续调度。
       const preDispatch = INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH);
@@ -140,6 +148,12 @@ function runGateway({ events, hooks, logger, provide, agent, sessionManager, aut
       // 终相：dispatch —— 默认动作为调用 agent
       const t0 = performance.now();
       const reachedEnd = await hooks.use.run(INBOUND_PHASE.DISPATCH, data, async () => {
+        if (generationOf(message.sessionId) !== generation) {
+          logger.use.debug(
+            `[${INBOUND_PHASE.DISPATCH}] 会话删除之前的一代${arrivalTag(message)}，放掉、未触达 agent: session=${message.sessionId} platform=${message.platform}`,
+          );
+          return;
+        }
         await defaultDispatch(data.message, data.agent);
       });
       events.use.emit('gateway:phase:done', {

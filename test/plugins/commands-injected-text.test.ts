@@ -47,6 +47,7 @@ async function setup(schedulerConfig: Record<string, unknown> = {}) {
     getSession: (id: string) => (id === CHILD ? { id, parentId: PARENT, status: 'active' } : undefined),
     listSessions: () => [],
     recordInbound: async () => {},
+    generationOf: () => 0,
     createChildSession: async () => ({ id: CHILD }),
     updateSession: async () => {},
   } as never);
