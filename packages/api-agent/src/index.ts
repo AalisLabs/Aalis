@@ -52,8 +52,10 @@ export interface AgentService {
   /**
    * 清这些会话（不给即全部会话）的消息历史时由发起清理的一方调，clear 是整条清理（memory:clear 链连同默认动作；会话管理删会话时
    * 交来的先发 session:deleted 再跑这条链）：先停下在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 clear；从停下到
-   * clear 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。停下与按住都在各家清理之外，不看它们的
-   * 登记先后。实现者自己的 session:deleted 监听在这次按住之内被调起，不能等按住放开。reason 同 abort 的，只写进回合结束那一行日志
+   * clear 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。clear 之内删掉的会话不同：删除到 clear
+   * 结束才做完，这之前进来的输入是删除之前的一代，放掉、不归档，不看 session:deleted 各监听方的先后。停下与按住都在各家清理
+   * 之外，不看它们的登记先后。实现者自己的 session:deleted 监听在这次按住之内被调起，不能等按住放开。reason 同 abort 的，只写进
+   * 回合结束那一行日志
    */
   clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>, reason?: string): Promise<void>;
 

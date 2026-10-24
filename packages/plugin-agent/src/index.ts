@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Buffer } from 'node:buffer';
 import {
   type AgentService,
@@ -198,8 +199,11 @@ class DefaultAgent implements AgentService {
   /** 裁剪触发比例 (0~1)：裁剪预算按上下文长度乘它再扣输出预留，见 computeTokenBudget */
   private trimThresholdRatio: number;
 
-  /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机与会话删除由 run() 直接经它停，清消息历史经 clearing */
+  /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机由 run() 直接经它停，清消息历史经 clearing */
   readonly queues: SessionQueues;
+
+  /** 交给 clearing 的清理在跑时的异步上下文：记下在这次清理之内删的会话，它们到清理结束才删完（见 sessionDeleted） */
+  private readonly deletedWithin = new AsyncLocalStorage<Set<string>>();
 
   /** 每次激活只在实际写入缺少归档时告警一次，不因插件加载顺序误报。 */
   private archiveUnavailableWarned = false;
@@ -310,7 +314,8 @@ class DefaultAgent implements AgentService {
 
   /**
    * 清消息历史：先按住这些会话，再停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再跑 clear。被停的一轮落定之前还会写
-   * 工具调用组，先停后清，清空的历史里才不留它的写入
+   * 工具调用组，先停后清，清空的历史里才不留它的写入。clear 之内删的会话（会话管理删会话时交来的 clear 先发 session:deleted）到
+   * clear 结束才删完，放开之前把这时还没交给通道的输入放掉（见 sessionDeleted）
    */
   async clearing(
     sessionIds: readonly string[] | undefined,
@@ -318,16 +323,27 @@ class DefaultAgent implements AgentService {
     reason = '清消息历史',
   ): Promise<void> {
     const release = this.queues.hold(sessionIds);
+    const deleted = new Set<string>();
     try {
       await this.queues.stopAll(sessionIds ?? this.queues.sessions(), { archive: false, reason });
-      await clear();
+      await this.deletedWithin.run(deleted, clear);
     } finally {
+      for (const sessionId of deleted) this.queues.retire(sessionId);
       release();
     }
   }
 
-  /** 会话删除时丢弃其节流日志状态（订阅见 run() 的 session:deleted）。 */
-  dropTokenLogState(sessionId: string): void {
+  /**
+   * 会话删除（session:deleted）：收到时还在逐条处理、没交给通道的输入是旧的一代，交给通道时放掉（不归档）。在交给 clearing 的
+   * 清理之内收到的（第一方会话管理把发事件与清数据一起交给 clearing），删除到那次清理结束才做完，这之前进来的同样是旧的一代，
+   * 清理结束时再放掉一次；新的一代从删完之后进来的算起，不看 session:deleted 各监听方的先后。再停掉这个会话在跑的一轮、放掉
+   * 排着的（不归档）并等它收尾（在清理之内时 clearing 已经停过）：没有上限，不响应中止的工具会让它一直等到工具返回。最后丢弃
+   * 它的 token 日志节流状态
+   */
+  async sessionDeleted(sessionId: string): Promise<void> {
+    this.queues.retire(sessionId);
+    this.deletedWithin.getStore()?.add(sessionId);
+    await this.queues.stopAll([sessionId], { archive: false, reason: '会话删除' });
     this.tokenLogState.delete(sessionId);
   }
 
@@ -2203,13 +2219,8 @@ function run(caps: Caps): void {
   caps.lifecycle.use.onDrain(() => agentImpl.queues.shutdown(), '停下在跑的回合');
   // 清理段再停一次：drain 超时或未走到收尾时的兜底，不再等落定；已停下的是空操作。
   caps.lifecycle.use.onDispose(() => void agentImpl.queues.shutdown(), '停下在跑的回合（兜底）');
-  // 会话删除：会话管理先发这个事件再清数据（第一方会话管理把两步一起交给 clearing，到这里时在跑的一轮已经停下、会话已按住）。
-  // 还在逐条处理、没交给通道的输入是旧的一代，交给通道时放掉；停掉这个会话在跑的一轮、放掉排着的（不归档）并等它收尾（被停的
-  // 一轮不落库、不外发），清数据因此在回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
-  caps.events.use.on('session:deleted', async sessionId => {
-    await agentImpl.queues.delete(sessionId);
-    agentImpl.dropTokenLogState(sessionId);
-  });
+  // 会话删除：停下这个会话、旧的一代与新的一代的分界都见 sessionDeleted
+  caps.events.use.on('session:deleted', sessionId => agentImpl.sessionDeleted(sessionId));
   const agent = agentImpl as unknown as InternalAgent;
 
   // /model 列可用模型、/persona 列可用人设；会话设置的查看与修改是会话设置插件的 /session 系列

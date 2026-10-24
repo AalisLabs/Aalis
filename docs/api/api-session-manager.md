@@ -92,7 +92,7 @@ interface SessionInfo {
 
 删除与清空：
 
-- `deleteSession(id)` 连同下面各级子会话删除：先从表里摘掉，再发 `session:deleted`、经 `memory:clear` 清它的消息历史与各插件按会话存的数据。监听方在 `session:deleted` 里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清。参考实现有 agent 时把这两步一起交给它的 `clearing`（[api-agent](./api-agent.md)），发事件之前就停下这个会话的回合并按住它，到清完。删除期间到的同一会话的消息：还没过 `recordInbound` 的（带 `source` 的也一样）在那里等着，是新的一代，删除做完再往下走，不被这次删除停下，存档也不被它清掉；删除开始之前已过 `recordInbound`、删除期间才到 agent 的，参考实现的 agent 收到 `session:deleted` 时还没交给通道的放掉（旧的一代，不归档），之后才到的等清完再作为新的一代处理。
+- `deleteSession(id)` 连同下面各级子会话删除：先从表里摘掉，再发 `session:deleted`、经 `memory:clear` 清它的消息历史与各插件按会话存的数据。监听方在 `session:deleted` 里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清。参考实现有 agent 时把这两步一起交给它的 `clearing`（[api-agent](./api-agent.md)），发事件之前就停下这个会话的回合并按住它，到清完。删除期间到的同一会话的消息：还没过 `recordInbound` 的（带 `source` 的也一样）在那里等着，是新的一代，删除做完再往下走，不被这次删除停下，存档也不被它清掉。所以删除期间能到 agent 的，都是删除开始之前已过 `recordInbound` 的旧一代；agent 怎样分这两代见 [api-agent](./api-agent.md) 的 `clearing`。
 - 一个会话的消息历史被清空（`memory:clear` 没指定类型或类型含 `context`，且消息历史那一行清成功，判法是 [api-memory](./api-memory.md) 的 `historyCleared`）时，它的子会话一并删除：范围为 `session` 删这个会话的子会话，为 `all` 删全部子会话。只清别的类型、或消息历史没清成时不删。
 
 ## 取别的会话的东西
