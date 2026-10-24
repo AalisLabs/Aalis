@@ -12,7 +12,7 @@ import type { ChatResponse, ModelRef } from '@aalis/api-llm';
 import type { ToolCallRequest, ToolDefinition } from '@aalis/api-tools';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message, TurnRecord } from '@aalis/schema-message';
 
 /**
  * 消息预处理器函数
@@ -35,7 +35,10 @@ export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void
  * - 落库的回复与工具结果在元数据里按 schema-message 登记的键（WellKnownMetadataKeys）记下回合与调用的 id、
  *   这一轮的模型与 token、她在这个平台上的身份；
  * - 房间里一轮只把最后一条回复交给平台，工具调用之前说的话与格式校验没通过而重试丢掉的几版不发出；
- * - 输入在进入一轮时经 message-archive 归档（archiveIncoming 带这一轮的回合 id 与进入方式，记成登记的键 TurnId、TurnEntry）。
+ * - 输入在进入一轮时经 message-archive 归档（archiveIncoming 带这一轮的回合 id 与进入方式，记成登记的键 TurnId、TurnEntry）；
+ *   每一轮在 agent:turn:after 之前写一条回合记录（登记的键 TurnRecord：结局与来源），记在最后落库的那条回复上，没有落库回复的
+ *   一轮另落一条只带回合 id 与它的事件标记。会话服务按这两样还原时间线：不交回合时，输入不归进这一轮，连对话回滚也删不掉它们；
+ *   不写回合记录时，历史里没有这一轮的结局与来源。
  */
 export interface AgentService {
   /** 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉） */
@@ -103,7 +106,7 @@ declare module '@aalis/api-hooks' {
       /** 这一轮的输入，与 agent:turn:before 的同一份 */
       inputs: readonly TurnInput[];
       reply: string;
-      outcome: 'replied' | 'silent' | 'aborted' | 'error';
+      outcome: TurnRecord['outcome'];
       /**
        * 结局为 error 时的一句原因（会话记下它，界面上出错的会话据此写原因）；其余结局不带。可以是文字对象
        * （@aalis/schema-i18n），给人看的经出口渲染，给模型或写日志的取 toSource

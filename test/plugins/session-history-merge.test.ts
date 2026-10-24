@@ -59,6 +59,7 @@ const isOwner = (platform: string, userId?: string) => platform === 'webui' && u
 const context = (room = false): MergeContext => ({
   isOwner,
   room,
+  multiParty: room,
   signFile: () => undefined,
   display: () => undefined,
 });

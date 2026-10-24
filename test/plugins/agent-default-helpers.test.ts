@@ -100,6 +100,19 @@ describe('readHistory', () => {
     }
   });
 
+  it('按时间戳读历史的存储把别的消息排进了工具调用组：起点落在组里时，这一组留下的结果随组首一起丢，夹进来的照留', async () => {
+    // 存储的次序就是按时间戳读回的次序：第 9 条是调用，第 10 条是组写入期间到的、排在调用与结果之间，第 11 条是结果
+    const list = users(25);
+    const call = { id: 'call-9', type: 'function' as const, function: { name: 'zz_probe', arguments: '{}' } };
+    list[9] = { role: 'assistant', content: null, toolCalls: [call], timestamp: 1009 };
+    list[11] = { role: 'tool', content: 'ok', toolCallId: call.id, timestamp: 1010 };
+    for (const counts of [true, false]) {
+      const { memory } = store(list, counts);
+      const { messages } = await readHistory(memory, 's', 20);
+      expect(contents(messages)).toEqual([10, ...Array.from({ length: 13 }, (_, i) => i + 12)].map(i => `m${i}`));
+    }
+  });
+
   it('没有成段丢弃时开头原样交给清洗；条数线为 0 时读全部，不数条数', async () => {
     const orphan: Message[] = [{ role: 'tool', content: 'ok', toolCallId: 'call-0', timestamp: 999 }, user(0), user(1)];
     const { memory, limits } = store(orphan, true);

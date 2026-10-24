@@ -307,9 +307,9 @@ function createArchiveService(
       const roots = new Set(storage.present ? storage.use.listRoots().map(root => root.name) : []);
       const attachments = attachmentList(working, roots);
       if (attachments.length > 0) meta[WellKnownMetadataKeys.Attachments] = attachments;
-      // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，
+      // 触发与来源溯源：用于区分真实用户消息 vs proactive 代发任务/调度等系统注入，会话服务据此标出被点名与插话，
       // 也方便事后审计"agent 在 X 群做过什么"
-      if (working.triggerType) meta.triggerType = working.triggerType;
+      if (working.triggerType) meta[WellKnownMetadataKeys.TriggerType] = working.triggerType;
       if (working.source) meta[WellKnownMetadataKeys.Source] = working.source;
       // 进了哪一轮、怎么进的：会话服务据此把它归回回合，连对话回滚据此只删这一轮的
       if (turn) {

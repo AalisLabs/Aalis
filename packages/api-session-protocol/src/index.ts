@@ -430,7 +430,7 @@ export const OutgoingAttachmentSchema = z.object({
   durationSec: z.number().optional(),
 });
 
-/** 说话的人或发起回合的一方；source 是内部注入的来源（定时任务、子任务等），真人发言没有 */
+/** 说话的人；source 是内部注入的来源（定时任务、子任务等），真人发言没有 */
 export const SpeakerSchema = z.object({
   platform: z.string(),
   userId: z.string().optional(),
@@ -477,10 +477,19 @@ export const ToolDisplaySchema = z.discriminatedUnion('kind', [
 /** 指令回复的 notice 的 topic（见 {@link SessionItemSchema}） */
 export const COMMAND_REPLY_TOPIC = 'command-reply';
 
+/**
+ * 进了一轮的输入（提问与通知）怎么进的，两项都只有带 turnId 的有：entry 是开轮的（opened）还是插进在跑的一轮的（joined）；
+ * addressed 是被点名（true）、多方房间里的插话（false），没经触发判定的、一对一房间里过了频率闸的没有
+ */
+const inputBase = {
+  entry: z.enum(['opened', 'joined']).optional(),
+  addressed: z.boolean().optional(),
+};
+
 const itemBase = {
   /** 会话里唯一；tool-call 的 itemId 就是工具调用的 callId（存档里没记 callId 的旧数据与没有执行的调用除外） */
   itemId: z.string(),
-  /** 所在回合的 id；入站消息、回合外的宿主事件没有 */
+  /** 所在回合的 id：进了某一轮的输入（提问与通知）带它；被吞掉的、被放掉的输入与回合外的宿主事件没有 */
   turnId: z.string().optional(),
   at: z.number(),
 };
@@ -489,7 +498,7 @@ const itemBase = {
  * 时间线上的一个条目。推送分 item/started、item/delta、item/completed，completed 里的全文是唯一正本；
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
  * - user-message：说话人自己写的话与附件（给模型看的发送者前缀、引用与附件描述不在文字里；存档没记发言人写的话的旧提问，文字是
- *   存档正文原样）；
+ *   存档正文原样）；进了一轮的带 turnId、entry 与 addressed（见 inputBase），与通知一样；
  * - agent-message：她的文字与附件（可以只有附件）、模型与这一轮的 token；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
@@ -518,12 +527,17 @@ const itemBase = {
  * - usage：最近一次的 token 用量与分项；每个会话一条，itemId 固定为 usage。它不是时间线上的一条，界面画在会话头部；
  *   parts 是产出方给的拆分表，显示名与次序照它，界面不认分项；compressAt 是实际压缩的使用率（会话服务取压缩服务给的
  *   自动压缩线与裁剪预算占窗口比例中较小的那个），没有压缩服务或不自动压缩时没有；
- * - turn：回合开始（by 是发起方）与结束（outcome）。
+ * - turn：回合开始与结束（outcome）。source 是这一轮的来源（开轮那条输入的 source），真人消息开的没有；历史里由 agent 写的回合
+ *   记录还原，排在这一轮最后落库的那条之后，带 outcome；没写回合记录的（旧存档、第三方 agent）历史里没有；
+ * - queue：这个会话排着、还没进一轮的输入（已过逐条处理，按入队先后），整份替换；每个会话一条，itemId 固定为 queue。它不是
+ *   时间线上的一条，界面画在输入框上方；各条写说话人、给人看的那句（宿主通知与平台事件合成的入站是它们的文字对象，同通知）与
+ *   附件个数。会话服务重启之后，到下一次排队变化之前没有。
  */
 export const SessionItemSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('user-message'),
     ...itemBase,
+    ...inputBase,
     text: z.string(),
     attachments: z.array(ItemAttachmentSchema),
     speaker: SpeakerSchema,
@@ -567,6 +581,7 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('notice'),
     ...itemBase,
+    ...inputBase,
     topic: z.string(),
     text: TextSchema,
     attachments: z.array(ItemAttachmentSchema),
@@ -601,8 +616,19 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     kind: z.literal('turn'),
     ...itemBase,
     turnId: z.string(),
-    by: SpeakerSchema,
+    source: z.string().optional(),
     outcome: TurnOutcomeSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal('queue'),
+    ...itemBase,
+    entries: z.array(
+      z.object({
+        speaker: SpeakerSchema,
+        text: TextSchema,
+        attachments: z.number().int().nonnegative(),
+      }),
+    ),
   }),
 ]);
 export type SessionItem = z.infer<typeof SessionItemSchema>;

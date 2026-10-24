@@ -57,14 +57,11 @@ export const notice = (itemId: string, text: string, fields: Partial<Item<'notic
   ({ kind: 'notice', itemId, at: AT, topic: 'note', text, attachments: [], ...fields }) satisfies Item<'notice'>;
 
 export const turn = (turnId: string, fields: Partial<Item<'turn'>> = {}) =>
-  ({
-    kind: 'turn',
-    itemId: turnId,
-    turnId,
-    at: AT,
-    by: { platform: 'webui', userId: 'console', owner: true },
-    ...fields,
-  }) satisfies Item<'turn'>;
+  ({ kind: 'turn', itemId: turnId, turnId, at: AT, ...fields }) satisfies Item<'turn'>;
+
+/** 排着、还没进一轮的输入（每个会话一条，整份替换） */
+export const queue = (entries: Item<'queue'>['entries']) =>
+  ({ kind: 'queue', itemId: 'queue', at: AT, entries }) satisfies Item<'queue'>;
 
 export const usage = (fields: Partial<Item<'usage'>> = {}) =>
   ({

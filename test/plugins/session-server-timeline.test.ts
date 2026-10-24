@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
@@ -339,12 +340,12 @@ describe('订阅与快照', () => {
     const sub = await c.subscribe(s.id);
     expect(sub.snapshot.epoch).toEqual(expect.any(String));
     expect(sub.snapshot.session.id).toBe(s.id);
-    // 在途回合落了库的工具调用组不进历史，由在途条目给出；带着回合 id 的提问照旧由历史给出，排在回合条目之前
+    // 在途回合落了库的提问与工具调用组不进历史，由在途条目给出，回合条目在最前
     expect(sub.snapshot.items.map(shape)).toEqual([
       expect.objectContaining({ kind: 'user-message', text: '第一问' }),
       { kind: 'agent-message', text: '第一答', attachments: [] },
-      expect.objectContaining({ kind: 'user-message', text: '第二问' }),
-      { kind: 'turn', by: expect.objectContaining({ platform: 'webui', userId: 'console', owner: true }) },
+      { kind: 'turn' },
+      expect.objectContaining({ kind: 'user-message', text: '第二问', entry: 'opened' }),
       { kind: 'reasoning', text: '想一想' },
       { kind: 'agent-message', text: '我来查', attachments: [] },
       { kind: 'tool-call', name: 'exec', args: { command: 'ls' }, status: 'running', output: 'a.txt\n' },
@@ -368,8 +369,9 @@ describe('订阅与快照', () => {
 
     const items = c.timeline(s.id, sub);
     expect(new Set(items.map(i => i.itemId)).size, 'itemId 不重复').toBe(items.length);
-    expect(items.slice(3).map(shape)).toEqual([
+    expect(items.slice(2).map(shape)).toEqual([
       expect.objectContaining({ kind: 'turn', outcome: 'replied' }),
+      expect.objectContaining({ kind: 'user-message', text: '第二问' }),
       { kind: 'reasoning', text: '想一想' },
       { kind: 'agent-message', text: '我来查', attachments: [] },
       {
@@ -384,7 +386,7 @@ describe('订阅与快照', () => {
       { kind: 'agent-message', text: '查好了', attachments: [], model: { provider: 'p', model: 'm' } },
     ]);
     expect(items.find(i => i.kind === 'tool-call')?.itemId, 'tool-call 的 itemId 就是 callId').toBe('call-1');
-    expect(items.slice(3).every(i => i.turnId === t.turnId)).toBe(true);
+    expect(items.slice(2).every(i => i.turnId === t.turnId)).toBe(true);
   });
 
   it('读历史期间发生的事：订阅回应之前不推这个会话的条目；之后补上，与历史重叠的按 itemId 合并', async () => {
@@ -400,6 +402,8 @@ describe('订阅与快照', () => {
 
     // 读历史卡住的时候：在跑的那轮说完收尾，一条消息落库，排在它之后的一轮从头跑完（同一会话一轮接一轮）
     await running.text('，另一半');
+    // 与在跑那轮已产出的条目错开一毫秒以上：在途条目按时间并进历史
+    await new Promise(resolve => setTimeout(resolve, 5));
     await archive.archiveIncoming({ content: '插话', sessionId: s.id, platform: 'webui', userId: 'console' });
     await running.replyCheck();
     await running.reply('一半，另一半');
@@ -417,12 +421,14 @@ describe('订阅与快照', () => {
     // 快照里在跑那轮的正文取在订阅那一刻，读历史期间的增量随后接上，不重复
     const items = c.timeline(s.id, sub);
     expect(new Set(items.map(i => i.itemId)).size, 'itemId 不重复').toBe(items.length);
+    // 在跑那轮已产出的条目按时间并进历史，排在之后落库的插话之前；后开的那一轮在订阅那一刻之后才开始：它的提问不进这份快照的
+    // 历史，随它的回合条目推出
     expect(items.map(i => [i.kind, 'text' in i ? i.text : i.turnId])).toEqual([
-      ['user-message', '插话'],
-      ['user-message', '提问'],
       ['turn', running.turnId],
       ['agent-message', '一半，另一半'],
+      ['user-message', '插话'],
       ['turn', t.turnId],
+      ['user-message', '提问'],
       ['agent-message', '回答'],
     ]);
   });
@@ -571,20 +577,20 @@ describe('订阅与快照', () => {
 });
 
 describe('条目', () => {
-  it('turn：开始带发起方，结束带结局；被下游拦下、没有结局的一轮按 silent 收尾', async () => {
+  it('turn：开始时推出，带这一轮的来源（真人消息开的没有），结束带结局；被下游拦下、没有结局的一轮按 silent 收尾', async () => {
     const { server, host, openTurn } = await setup();
     await recordRoom(host.events.use, ROOM, '群');
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(ROOM);
-    const t = openTurn(ROOM, { nickname: '小明' });
-    await t.finish('blocked');
+    const human = openTurn(ROOM, { nickname: '小明' });
+    await vi.waitFor(() => expect(c.timeline(ROOM, sub).map(shape)).toEqual([{ kind: 'turn' }]));
+    await human.finish('blocked');
+    const scheduled = openTurn(ROOM, { source: 'scheduler', userId: undefined });
+    await scheduled.finish('silent');
     expect(c.timeline(ROOM, sub).map(shape)).toEqual([
-      {
-        kind: 'turn',
-        by: { platform: 'onebot', userId: '424242', nickname: '小明', owner: false },
-        outcome: 'silent',
-      },
+      { kind: 'turn', outcome: 'silent' },
+      { kind: 'turn', source: 'scheduler', outcome: 'silent' },
     ]);
   });
 
@@ -1497,7 +1503,241 @@ describe('条目', () => {
   });
 });
 
+describe('输入与回合', () => {
+  const inputsOf = (items: SessionItem[]) =>
+    items.flatMap(i => (i.kind === 'user-message' ? [[i.text, i.turnId, i.entry, i.addressed]] : []));
+
+  it('进了一轮的输入带回合 id 与进入方式（开轮的 opened、插进来的 joined）；被点名的 addressed 为 true，多方房间里的插话为 false，没经触发判定的与一对一房间里的插话没有；实时推送与刷新后的历史一致', async () => {
+    const { server, host, archive, openTurn } = await setup();
+    const PRIVATE = 'onebot:10000:private:30001';
+    await recordRoom(host.events.use, ROOM, '群');
+    await recordRoom(host.events.use, PRIVATE, '小林');
+    const c = client(server());
+    await c.init();
+    const subs = { [ROOM]: await c.subscribe(ROOM), [PRIVATE]: await c.subscribe(PRIVATE) };
+    const join = (t: ReturnType<typeof openTurn>, content: string, extra: Partial<IncomingMessage>) =>
+      t.inside(() =>
+        archive.archiveIncoming({ ...t.message, content, ...extra }, { turnId: t.turnId, entry: 'joined' }),
+      );
+
+    const group = openTurn(ROOM, { content: '<点名>', triggerType: 'immediate' });
+    await group.ask();
+    await join(group, '<插话>', { userId: '424243', triggerType: 'interval' });
+    await join(group, '<没经判定>', { userId: '424244', triggerType: undefined });
+    await group.finish('silent');
+    const pm = openTurn(PRIVATE, { content: '<私聊里过了频率闸>', userId: '30001', triggerType: 'interval' });
+    await pm.ask();
+    await pm.finish('silent');
+
+    const expected = {
+      [ROOM]: [
+        ['<点名>', group.turnId, 'opened', true],
+        ['<插话>', group.turnId, 'joined', false],
+        ['<没经判定>', group.turnId, 'joined', undefined],
+      ],
+      [PRIVATE]: [['<私聊里过了频率闸>', pm.turnId, 'opened', undefined]],
+    };
+    for (const id of [ROOM, PRIVATE] as const) {
+      expect(inputsOf(c.timeline(id, subs[id])), id).toEqual(expected[id]);
+      expect(inputsOf((await c.call('session/history', { sessionId: id })).items), id).toEqual(expected[id]);
+    }
+  });
+
+  it('不在回合里的输入（被触发判定或流控吞掉、影子归档的）不带回合 id，也不带进入方式与是否被点名：点名她的也一样', async () => {
+    const { server, host, archive, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(ROOM);
+    const t = openTurn(ROOM, { content: '<进了这一轮>', triggerType: 'immediate' });
+    await t.ask();
+    // 这一轮进行期间群里别人点名她的一句过了触发判定、被流控吞掉：影子归档带着触发类型，不带回合
+    await archive.archiveIncoming({ ...t.message, userId: '424243', content: '<被吞掉>', triggerType: 'immediate' });
+    await t.finish('silent');
+    const expected = [
+      ['<进了这一轮>', t.turnId, 'opened', true],
+      ['<被吞掉>', undefined, undefined, undefined],
+    ];
+    expect(inputsOf(c.timeline(ROOM, sub))).toEqual(expected);
+    expect(inputsOf((await c.call('session/history', { sessionId: ROOM })).items)).toEqual(expected);
+  });
+
+  it('回合在跑时重连：这一轮的输入从在途条目给出、只出现一次，次序与之后的历史一致', async () => {
+    const { server, sm, archive, openTurn } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const t = openTurn(s.id, { content: '<开轮>' });
+    await t.ask();
+    await t.toolStart('call-1', 'probe');
+    await t.save({
+      role: 'assistant',
+      content: null,
+      toolCalls: [{ id: 'm1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
+    });
+    await t.toolEnd('call-1', 'probe', 'ok');
+    await t.save({ role: 'tool', content: 'ok', toolCallId: 'm1', metadata: { callId: 'call-1' } });
+    // 工具之后插进来的一句
+    await t.inside(() =>
+      archive.archiveIncoming({ ...t.message, content: '<插进来>' }, { turnId: t.turnId, entry: 'joined' }),
+    );
+
+    const visible = (items: SessionItem[]) =>
+      items.flatMap(i => (i.kind === 'user-message' ? [i.text] : i.kind === 'tool-call' ? [i.kind] : []));
+    const c = client(server());
+    await c.init();
+    const { snapshot } = await c.subscribe(s.id);
+    expect(visible(snapshot.items)).toEqual(['<开轮>', 'tool-call', '<插进来>']);
+    expect(snapshot.items.filter(i => i.kind === 'user-message').map(i => i.turnId)).toEqual([t.turnId, t.turnId]);
+
+    await t.finish('silent');
+    const fresh = client(server());
+    await fresh.init();
+    expect(visible((await fresh.subscribe(s.id)).snapshot.items)).toEqual(['<开轮>', 'tool-call', '<插进来>']);
+  });
+
+  it('房间里回合在跑时重连：这一轮进行期间别人说的话夹在它的条目中间，快照与这一轮收尾之后的历史同序', async () => {
+    const { server, host, archive, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    // 时间线按时间排，前后两条错开一毫秒以上
+    const later = () => new Promise(resolve => setTimeout(resolve, 5));
+    const t = openTurn(ROOM, { content: '<开轮>' });
+    await t.ask();
+    await later();
+    // 这一轮进行期间群里别人的一句被吞掉、影子归档（不带回合）
+    await archive.archiveIncoming({ ...t.message, userId: '424243', content: '<之后别人的话>' });
+    await later();
+    await t.toolStart('call-1', 'probe');
+    await t.save({
+      role: 'assistant',
+      content: null,
+      toolCalls: [{ id: 'm1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
+    });
+    await t.toolEnd('call-1', 'probe', 'ok');
+    await t.save({ role: 'tool', content: 'ok', toolCallId: 'm1', metadata: { callId: 'call-1' } });
+
+    const visible = (items: SessionItem[]) =>
+      items.flatMap(i => (i.kind === 'user-message' ? [i.text] : i.kind === 'tool-call' ? [i.kind] : []));
+    const c = client(server());
+    await c.init();
+    const { snapshot } = await c.subscribe(ROOM);
+    await t.finish('silent');
+    const fresh = client(server());
+    await fresh.init();
+    const settled = visible((await fresh.subscribe(ROOM)).snapshot.items);
+    expect(settled).toEqual(['<开轮>', '<之后别人的话>', 'tool-call']);
+    expect(visible(snapshot.items)).toEqual(settled);
+  });
+
+  it('房间里被停下的一轮说过的话写「没有发出：这一轮已停止」', async () => {
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    const c = client(server());
+    await c.init();
+    const sub = await c.subscribe(ROOM);
+    const t = openTurn(ROOM);
+    await t.text('说到一半');
+    await t.finish('aborted');
+    expect(c.timeline(ROOM, sub).flatMap(i => (i.kind === 'agent-message' ? [i.undelivered?.reason] : []))).toEqual([
+      '没有发出：这一轮已停止',
+    ]);
+  });
+
+  it('历史按回合记录给出回合条目（结局与来源）：记在回复上的排在回复之后；只带记录的事件标记不出别的条目，记得不对的不认', async () => {
+    const { server, sm, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const save = (m: Message) => archive.saveMessage(s.id, m);
+    await save({
+      role: 'user',
+      content: '<问>',
+      timestamp: 1,
+      metadata: { platform: 'webui', userId: 'console', turnId: 't1', turnEntry: 'opened' },
+    });
+    await save({
+      role: 'assistant',
+      content: '<答>',
+      timestamp: 2,
+      metadata: { turnId: 't1', turnRecord: { outcome: 'replied' } },
+    });
+    const marker = (turnId: string, timestamp: number, turnRecord: unknown): Message => ({
+      role: 'system',
+      kind: WellKnownKinds.EventMarker,
+      content: '',
+      timestamp,
+      metadata: { turnId, turnRecord },
+    });
+    await save(marker('t2', 3, { outcome: 'silent', source: 'idle-trigger' }));
+    await save(marker('t3', 4, { outcome: 'zz-unknown' }));
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: s.id });
+    expect(items.map(shape)).toEqual([
+      expect.objectContaining({ kind: 'user-message', text: '<问>' }),
+      { kind: 'agent-message', text: '<答>', attachments: [] },
+      { kind: 'turn', outcome: 'replied' },
+      { kind: 'turn', outcome: 'silent', source: 'idle-trigger' },
+    ]);
+    expect(items.filter(i => i.kind === 'turn').map(i => [i.itemId, i.turnId])).toEqual([
+      ['t1', 't1'],
+      ['t2', 't2'],
+    ]);
+  });
+});
+
 describe('历史', () => {
+  it('按时间戳读历史的存储把插进来的输入排进了工具调用组（调用与结果之间）：归并时挪到组后，工具卡带着结果；各种页长翻页都不拆开这一组，拼起来与整读相同', async () => {
+    const { server, sm, archive } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const save = (m: Message) => archive.saveMessage(s.id, m);
+    const asked = (content: string, timestamp: number, turn: Record<string, string> = {}): Message => ({
+      role: 'user',
+      content,
+      timestamp,
+      metadata: { platform: 'webui', userId: 'console', ...turn },
+    });
+    // 存储的次序就是按时间戳读回的次序：组的结果按 T0+1 记时间戳，组写完之后插进来的输入时间戳更早，排在调用与结果之间
+    await save(asked('<更早一>', 1));
+    await save(asked('<更早二>', 2));
+    await save(asked('<问>', 3, { turnId: 't1', turnEntry: 'opened' }));
+    await save({
+      role: 'assistant',
+      content: null,
+      timestamp: 4,
+      metadata: { turnId: 't1' },
+      toolCalls: [{ id: 'm1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
+    });
+    await save(asked('<插进来>', 4, { turnId: 't1', turnEntry: 'joined' }));
+    await save({
+      role: 'tool',
+      content: 'ok',
+      toolCallId: 'm1',
+      timestamp: 5,
+      metadata: { turnId: 't1', callId: 'c1' },
+    });
+    await save({ role: 'assistant', content: '<答>', timestamp: 6, metadata: { turnId: 't1' } });
+    const c = client(server());
+    await c.init();
+    const whole = (await c.call('session/history', { sessionId: s.id })).items;
+    expect(whole.map(i => [i.kind, 'text' in i ? i.text : i.kind === 'tool-call' ? [i.status, i.result] : ''])).toEqual(
+      [
+        ['user-message', '<更早一>'],
+        ['user-message', '<更早二>'],
+        ['user-message', '<问>'],
+        ['tool-call', ['completed', 'ok']],
+        ['user-message', '<插进来>'],
+        ['agent-message', '<答>'],
+      ],
+    );
+    for (const limit of [1, 2, 3]) {
+      const pages: SessionItem[][] = [];
+      let before: string | undefined;
+      do {
+        const page = await c.call('session/history', { sessionId: s.id, limit, before });
+        pages.unshift(page.items);
+        before = page.before;
+      } while (before !== undefined);
+      expect(pages.flat(), `页长 ${limit}`).toEqual(whole);
+    }
+  });
+
   it('session/history 由存档归并：before 往前翻页，一轮的工具调用组不拆在两页；会话不存在回 not-found', async () => {
     const { server, sm, archive } = await setup();
     const s = await sm.createSession({ name: 'S' });
@@ -1893,7 +2133,7 @@ async function startAgent(
   await app.plugin(gatewayPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugins.idle();
-  const host = app.bind({ provide, tools, sessionManager, sessionProtocol, hooks });
+  const host = app.bind({ provide, tools, sessionManager, sessionProtocol, hooks, agent: agentService });
   host.provide.use(storage, memoryStorage(new Map()));
   host.tools.use.register({
     definition: {
@@ -2086,5 +2326,88 @@ describe('接 agent 与网关', () => {
     const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     expect(card((await fresh.subscribe(s.id)).snapshot.items)).toMatchObject({ status: 'aborted' });
+  });
+
+  /** 时间线上看得到的：输入、她的话与回合条目（结局与来源） */
+  const visible = (items: SessionItem[]) =>
+    items.flatMap(i =>
+      i.kind === 'turn'
+        ? [['turn', i.outcome, i.source]]
+        : i.kind === 'user-message' || i.kind === 'agent-message'
+          ? [[i.kind, i.text]]
+          : [],
+    );
+
+  it('没有回复的一轮：刷新之后历史里照样有回合条目，结局 silent，排在这一轮的输入之后', async () => {
+    const { host, s, c, sub, turnItems } = await startAgent([{ content: '' }], async () => 'ok');
+    await c.call('turn/send', { sessionId: s.id, content: '<不用回>' });
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'silent' }));
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    const history = (await fresh.subscribe(s.id)).snapshot.items;
+    expect(visible(history)).toEqual([
+      ['user-message', '<不用回>'],
+      ['turn', 'silent', undefined],
+    ]);
+    expect(visible(history).toSorted()).toEqual(visible(c.timeline(s.id, sub)).toSorted());
+  });
+
+  it('空闲开话题开的一轮（输入不归档）：回合条目带来源，刷新之后历史里同样', async () => {
+    const { host, s, c, sub, turnItems } = await startAgent([{ content: '<开个话题>' }], async () => 'ok');
+    await host.agent.use.handleMessage({
+      content: '<空闲提示>',
+      sessionId: s.id,
+      platform: 'webui',
+      source: 'idle-trigger',
+      triggerType: 'idle',
+    });
+    expect(turnItems().map(i => [i.outcome, i.source])).toEqual([['replied', 'idle-trigger']]);
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    const history = (await fresh.subscribe(s.id)).snapshot.items;
+    expect(visible(history)).toEqual([
+      ['agent-message', '<开个话题>'],
+      ['turn', 'replied', 'idle-trigger'],
+    ]);
+    expect(visible(history).toSorted()).toEqual(visible(c.timeline(s.id, sub)).toSorted());
+  });
+
+  it('排着的消息：排队与待插入时推 queue 条目（说话人、写的话、附件个数），进了一轮从列表移走、出现在时间线上；重连的快照带着这份列表', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { host, s, c, sub } = await startAgent([callProbe, { content: '完成' }], async () => {
+      entered.resolve();
+      await release.promise;
+      return 'ok';
+    });
+    await c.call('turn/send', { sessionId: s.id, content: '<先跑一个慢的>' });
+    await entered.promise;
+    const image = { kind: 'image' as const, data: 'data:image/png;base64,AAAA', name: 'a.png' };
+    await c.call('turn/send', { sessionId: s.id, content: '<排着的>', attachments: [image] });
+    const queued = (items: SessionItem[]) =>
+      items.find((i): i is Extract<SessionItem, { kind: 'queue' }> => i.kind === 'queue');
+    const entry = {
+      // 这套装配没有权限服务：没有人是 owner
+      speaker: { platform: 'webui', userId: 'console', owner: false },
+      text: '<排着的>',
+      attachments: 1,
+    };
+    await vi.waitFor(() => expect(queued(c.timeline(s.id, sub))?.entries).toEqual([entry]));
+    const again = client(host.sessionProtocol.use);
+    await again.init();
+    const reconnected = queued((await again.subscribe(s.id)).snapshot.items);
+    expect(reconnected?.entries).toEqual([entry]);
+
+    release.resolve();
+    await vi.waitFor(() => expect(queued(c.timeline(s.id, sub))).toMatchObject({ entries: [] }));
+    expect(
+      c
+        .timeline(s.id, sub)
+        .filter(i => i.kind === 'user-message')
+        .map(i => i.text),
+    ).toEqual(['<先跑一个慢的>', '<排着的>']);
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    expect(queued((await fresh.subscribe(s.id)).snapshot.items), '列表空了，快照不带').toBeUndefined();
   });
 });

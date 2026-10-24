@@ -738,7 +738,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.reload();
     await page.waitForSelector(text('部署好了。'));
     expect(await toolLine(page)).toMatch(/已批准 · \d{2}:\d{2}/);
-    const said = await page.$$eval('.message[data-from="user"]', elements =>
+    const said = await page.$$eval('.message[data-from="user"] .message-text', elements =>
       elements.map(element => element.textContent),
     );
     expect(said).toEqual(['你好', '部署一下']);

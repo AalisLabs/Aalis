@@ -685,11 +685,13 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
       expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('[文件: report (1).txt');
       expect(message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([{ kind: 'file', name: 'report (1).txt' }]);
       expect(
-        archivedItem(
-          message,
-          () => false,
-          () => undefined,
-        ),
+        archivedItem(message, {
+          isOwner: () => false,
+          room: false,
+          multiParty: false,
+          signFile: () => undefined,
+          display: () => undefined,
+        }),
       ).toMatchObject({ kind: 'user-message', text: '看看这个' });
     } finally {
       await fx.dispose();

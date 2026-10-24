@@ -24,7 +24,14 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
-import type { IncomingMessage, Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import {
+  type IncomingMessage,
+  type Message,
+  type OutgoingMessage,
+  type TurnRecord,
+  WellKnownKinds,
+  WellKnownMetadataKeys,
+} from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionInfoOf } from '../fixtures/paper.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
@@ -55,7 +62,7 @@ type Where = Pick<IncomingMessage, 'sessionId' | 'platform' | 'userId' | 'sessio
 const text = (m: Message) => (typeof m.content === 'string' ? m.content : '');
 /** 用例里每条输入的正文是一个尖括号记号，取出它（前面是时间与发送者标注） */
 const token = (s: string) => s.match(/<[^<>\s]+>/)?.[0] ?? s;
-/** 历史与请求里的一条：输入取记号，工具调用组写 call / result，回复与说明取正文 */
+/** 历史与请求里的一条：输入取记号，工具调用组写 call / result，没有落库回复的一轮的回合记录写结局，回复与说明取正文 */
 const shape = (m: Message) =>
   m.role === 'user' || m.role === 'notice'
     ? token(text(m))
@@ -63,7 +70,9 @@ const shape = (m: Message) =>
       ? 'result'
       : m.toolCalls?.length
         ? 'call'
-        : text(m);
+        : m.kind === WellKnownKinds.EventMarker && m.metadata?.[WellKnownMetadataKeys.TurnRecord]
+          ? `结局 ${(m.metadata[WellKnownMetadataKeys.TurnRecord] as TurnRecord).outcome}`
+          : text(m);
 const label = (inputs: readonly TurnInput[]) => inputs.map(i => i.message.content).join('+');
 /** 让排着的微任务与 I/O 回调跑完：逐条处理之后的入队在这之前落定 */
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -596,7 +605,15 @@ describe('能停下一轮的', () => {
       ['<通知>', 'replied'],
     ]);
     expect(s.outbound.map(m => m.content)).toEqual(['回2', '回3']);
-    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '<乙>', '回2', '<通知>', '回3']);
+    // 停下的一轮没有落库回复，落一条回合记录
+    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual([
+      '<甲>',
+      '结局 aborted',
+      '<乙>',
+      '回2',
+      '<通知>',
+      '回3',
+    ]);
     expect(s.agent.abort(WEBUI.sessionId), '没有在跑的一轮').toBe(false);
   });
 
@@ -687,6 +704,7 @@ describe('能停下一轮的', () => {
     const turnId = s.turns[0].turnId;
     expect((await s.history(WEBUI.sessionId)).map(m => [shape(m), m.metadata?.turnId])).toEqual([
       ['<甲>', turnId],
+      ['结局 aborted', turnId],
       ['<乙>', undefined],
       ['<通知>', undefined],
     ]);
@@ -705,7 +723,7 @@ describe('能停下一轮的', () => {
     await Promise.all([a, b, x]);
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
     expect(s.outbound).toEqual([]);
-    expect((await s.history(GROUP_FREE.sessionId)).map(shape)).toEqual(['<甲>', '<乙>', '<通知>']);
+    expect((await s.history(GROUP_FREE.sessionId)).map(shape)).toEqual(['<甲>', '结局 aborted', '<乙>', '<通知>']);
 
     flow.setMuted(GROUP_FREE.sessionId, 0);
     const next = s.model.hold(2);
@@ -739,7 +757,7 @@ describe('能停下一轮的', () => {
 
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
     const archived = (await inner.getHistory(WEBUI.sessionId, 100)).map(shape);
-    expect(archived.slice(0, 3)).toEqual(['<甲>', '<乙>', '<通知>']);
+    expect(archived.slice(0, 4)).toEqual(['<甲>', '结局 aborted', '<乙>', '<通知>']);
   });
 
   it('会话删除：在跑的一轮停下、排队项放掉不归档，删除等它落定；删除之前进来、之后才完成逐条处理的那条不开轮、不归档；之后同一 id 再来的消息照常开轮', async () => {
@@ -762,7 +780,7 @@ describe('能停下一轮的', () => {
       ['<甲>', 'aborted'],
       ['<戊>', 'replied'],
     ]);
-    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '<戊>', '回2']);
+    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '结局 aborted', '<戊>', '回2']);
   });
 
   it.each([
@@ -904,6 +922,25 @@ async function stopInTool(s: Booted, name: string) {
   const result = (await s.history(WEBUI.sessionId)).find(m => m.role === 'tool');
   expect(JSON.parse(text(result as Message))).toEqual({ error: '回合已中止，不再等' });
 }
+
+describe('回合记录', () => {
+  it('一轮只写一条：回复带着记录落库之后 agent:turn:after 的中间件抛错，不再补一条出错的记录', async () => {
+    const s = await boot();
+    let thrown = false;
+    s.host.hooks.use.middleware('agent:turn:after', async (_data, next) => {
+      await next();
+      if (thrown) return;
+      thrown = true;
+      throw new Error('<下游出错>');
+    });
+    await s.say(WEBUI, '<甲>');
+    const records = (await s.history(WEBUI.sessionId)).flatMap(m => {
+      const record = m.metadata?.[WellKnownMetadataKeys.TurnRecord] as TurnRecord | undefined;
+      return record ? [[shape(m), record.outcome]] : [];
+    });
+    expect(records).toEqual([['回1', 'replied']]);
+  });
+});
 
 /** 不在流控生效范围里的会话：流控只管禁言 */
 const GROUP_FREE = { sessionId: 'zz-steer-muted', platform: 'test', userId: 'u1' };

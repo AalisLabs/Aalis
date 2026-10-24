@@ -9,7 +9,7 @@ import { hostPaths } from '@aalis/api-host-paths';
 import { i18n } from '@aalis/api-i18n';
 import { compression, memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
-import { rootSessionOf, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
+import { originChatOf, rootSessionOf, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type Features, sessionProtocol } from '@aalis/api-session-protocol';
 import { sessionSettings } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
@@ -41,7 +41,7 @@ import { createTurnControl } from './turns.js';
 // ════════════════════════════════════════════════════════════
 
 const uses = {
-  /** 会话表与增删改都经它；审批按根会话的机器人账号认限定了账号的接入 */
+  /** 会话表与增删改都经它；审批按根会话的机器人账号认限定了账号的接入；输入里的插话按根会话记下的聊天窗口标出 */
   sessionManager,
   /** 已读时间落在本插件的插件数据里；签发文件句柄时按存储根的种类挡掉插件状态 */
   storage,
@@ -54,7 +54,7 @@ const uses = {
    * （agent:tool:after）写上历史要还原的结局；memory:clear 之后重新取快照
    */
   hooks,
-  /** session:* 事件推列表增量，agent、工具与存档的事件推条目 */
+  /** session:* 事件推列表增量，agent、工具与存档的事件推条目（含 agent:queue 报的排着的输入） */
   events,
   lifecycle,
   logger,
@@ -138,6 +138,7 @@ async function run(caps: Caps): Promise<void> {
     requireSession: sessions.requireSession,
     summarize: sessions.summarize,
     isRoom: sessionId => sm.getSession(sessionId)?.kind === 'room',
+    multiParty: sessionId => originChatOf(sessionId, caps.sessionManager)?.multiParty === true,
     notify: (sessionId, method, params) => server.notifySession(sessionId, method, params),
     requestUsage,
     compressAt: (sessionId, platform) =>
@@ -265,7 +266,7 @@ async function run(caps: Caps): Promise<void> {
   // 回合真正开始（agent:turn:before）到它的 next 返回之间算运行中；被下游拦下、出错的一轮同样在 finally 里结束
   hooks.use.middleware('agent:turn:before', async (data, next) => {
     const { sessionId } = data;
-    const turn = timeline.begin(data.turnId, data.inputs[0].message);
+    const turn = timeline.begin(data.turnId, sessionId, data.inputs[0].message.source);
     push([sessionId], []);
     try {
       await turn.run(next);
@@ -312,6 +313,7 @@ async function run(caps: Caps): Promise<void> {
   );
   events.use.on('assistant:message:archived', ({ sessionId, message }) => timeline.archived(sessionId, message));
   events.use.on('todo:updated', timeline.plan);
+  events.use.on('agent:queue', ({ sessionId, waiting }) => timeline.queue(sessionId, waiting));
   events.use.on('token:usage', timeline.usage);
   events.use.on('session:compressing', ({ sessionId, status }) => timeline.compressing(sessionId, status));
   events.use.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));

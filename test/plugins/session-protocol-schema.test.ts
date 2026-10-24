@@ -466,6 +466,8 @@ const items: SessionItem[] = [
     kind: 'user-message',
     itemId: 'u1',
     turnId: 't1',
+    entry: 'opened',
+    addressed: true,
     at: 1,
     text: '帮我看看',
     attachments: [
@@ -561,13 +563,12 @@ const items: SessionItem[] = [
     ],
     compressAt: 0.7,
   },
+  { kind: 'turn', itemId: 'turn:t1', turnId: 't1', at: 8, source: 'scheduler', outcome: 'replied' },
   {
-    kind: 'turn',
-    itemId: 'turn:t1',
-    turnId: 't1',
-    at: 8,
-    by: { platform: 'webui', userId: 'console', owner: true },
-    outcome: 'replied',
+    kind: 'queue',
+    itemId: 'queue',
+    at: 9,
+    entries: [{ speaker: { platform: 'webui', userId: 'console', owner: true }, text: '再看看', attachments: 1 }],
   },
 ];
 
@@ -607,7 +608,22 @@ const invalidItems: unknown[] = [
   { kind: 'notice', itemId: 'n1', at: 5, text: 'x', attachments: [] },
   { kind: 'plan', itemId: 'p1', at: 6, entries: [{ id: 1, title: 'x', status: 'done' }] },
   { kind: 'usage', itemId: 'g1', at: 7, used: 1 },
-  { kind: 'turn', itemId: 'turn:t1', at: 8, by: { platform: 'webui', owner: true }, outcome: 'replied' },
+  { kind: 'turn', itemId: 'turn:t1', at: 8, outcome: 'replied' },
+  {
+    kind: 'user-message',
+    itemId: 'u2',
+    at: 1,
+    text: 'x',
+    attachments: [],
+    speaker: { platform: 'webui', owner: true },
+    entry: 'inserted',
+  },
+  {
+    kind: 'queue',
+    itemId: 'queue',
+    at: 9,
+    entries: [{ speaker: { platform: 'webui', owner: true }, text: 'x', attachments: -1 }],
+  },
   { kind: 'diff', itemId: 'd1', at: 9 },
 ];
 
@@ -849,7 +865,7 @@ describe('会话协议 schema 往返', () => {
       expect(roundTrip(schema, params)).toEqual(params);
     }
     expect(new Set(items.map(item => item.kind))).toEqual(
-      new Set(['user-message', 'agent-message', 'reasoning', 'tool-call', 'notice', 'plan', 'usage', 'turn']),
+      new Set(['user-message', 'agent-message', 'reasoning', 'tool-call', 'notice', 'plan', 'usage', 'turn', 'queue']),
     );
     for (const item of invalidItems) {
       expect(

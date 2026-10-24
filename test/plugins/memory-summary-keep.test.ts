@@ -108,7 +108,7 @@ function gated(reply: string) {
 }
 
 describe('plugin-memory-summary: 单位与编号', () => {
-  it('有编号的单位开头标「#编号〔约 N token〕」，从 1 起连续；工具组只有组首一行带编号；不齐的组、带落单结果的组、单独的工具结果、原样留下超过保留上限的单位没有编号', async () => {
+  it('有编号的单位开头标「#编号〔约 N token〕」，从 1 起连续；工具组只有组首一行带编号；不齐的组、单独的工具结果（组后落单的也是）、原样留下超过保留上限的单位没有编号', async () => {
     const { memory, compression, llm } = await setup(() => '【保留原文】无\n【目标】SUMMARY-BODY');
     const huge = result('d', '长'.repeat(3000));
     const messages = [
@@ -140,16 +140,37 @@ describe('plugin-memory-summary: 单位与编号', () => {
         '助手: 调用 probe_b({})、probe_c({})',
         '工具结果(probe_b): 结果 b',
         labeled(3, '用户: 第二问', messages[5]),
-        '助手: 调用 probe_e({})',
+        labeled(4, '助手: 调用 probe_e({})', messages[6], messages[7]),
         '工具结果(probe_e): 结果 e',
         '工具结果: 结果 x',
-        labeled(4, '用户: 第三问', messages[9]),
+        labeled(5, '用户: 第三问', messages[9]),
         '工具结果: 结果 y',
         '助手: 调用 probe_d({})',
         `工具结果(probe_d): ${'长'.repeat(200)}…`,
-        labeled(5, '助手: 回答', messages[13]),
+        labeled(6, '助手: 回答', messages[13]),
       ].join('\n'),
     );
+  });
+
+  it('按时间戳读历史的存储把别的消息排进了工具调用组：组首连同它的结果是一个单位、编得上号，夹进来的另成一个排在组后；留下这一组时夹进来的照常归档', async () => {
+    const { memory, compression, llm } = await setup(() => '【保留原文】#2\n【目标】S');
+    // 存储的次序就是按时间戳读回的次序：夹进来的排在调用与结果之间
+    const messages = [user('第一问'), calling('a'), user('<夹进来>'), result('a'), assistant('回答'), assistant(TAIL)];
+    await seed(memory, messages);
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(conversationOf(llm.requests[0])).toBe(
+      [
+        labeled(1, '用户: 第一问', messages[0]),
+        labeled(2, '助手: 调用 probe_a({})', messages[1], messages[3]),
+        '工具结果(probe_a): 结果 a',
+        labeled(3, '用户: <夹进来>', messages[2]),
+        labeled(4, '助手: 回答', messages[4]),
+        `助手: ${TAIL}`,
+      ].join('\n'),
+    );
+    expect(await shapes(memory)).toEqual(['assistant:a', 'tool:a', MARKER]);
   });
 
   const SUMMARY = '【目标】S';

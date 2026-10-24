@@ -1,11 +1,13 @@
 // ════════════════════════════════════════════════════════════
 // 历史：存档里的消息归并成会话条目，以及分页。
 //
-// 她一轮的输出在存档里有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；
-// 旧格式是分条的 assistant（带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成
-// 按时间顺序的思考、正文与工具调用条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与发出的附件
-// 各自单独成条（她发的附件是只有附件的她的消息，插件发的是带附件的通知）；提问的正文与附件取存档另记的发言人写的话与附件
-// 清单，宿主通知另带它的 id 与给界面的事实，通知与事件标记的文字先取存档另记的文字对象（没记的旧记录取正文）。
+// 读回的存档先按 schema-message 的 groupToolCalls 归组（夹在工具调用与结果之间的别的消息挪到这组之后）。她一轮的输出在存档里
+// 有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；旧格式是分条的 assistant
+// （带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成按时间顺序的思考、正文与工具调用
+// 条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与发出的附件各自单独成条（她发的附件是只有附件的她的
+// 消息，插件发的是带附件的通知）；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实，
+// 通知与事件标记的文字先取存档另记的文字对象（没记的旧记录取正文）。进了一轮的输入（提问与通知）带回合 id、进入方式与是否被
+// 点名；agent 写的回合记录在它之后还原成回合条目（结局与来源），只带记录的事件标记不另成条。
 // 存档元数据只按 schema-message 登记的键读（WellKnownMetadataKeys），会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、「已发出」、回合停止时还没结束、命令的退出码与转到后台的
 // 任务 id 取自工具结果的元数据（会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
 // 房间里她只把最后的回复发进房间（api-agent 的约定）：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复
@@ -14,13 +16,19 @@
 
 import type { MemoryService } from '@aalis/api-memory';
 import { outboundAddress, unaddressedText } from '@aalis/api-message-archive';
-import { ApprovalSettlementSchema, COMMAND_REPLY_TOPIC, type SessionItem } from '@aalis/api-session-protocol';
+import {
+  ApprovalSettlementSchema,
+  COMMAND_REPLY_TOPIC,
+  type SessionItem,
+  TurnOutcomeSchema,
+} from '@aalis/api-session-protocol';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import { isTextRef, type TextRef } from '@aalis/schema-i18n';
 import {
   type ArchivedAttachment,
   type ContentSegment,
+  groupToolCalls,
   type Message,
   type MessageAttachment,
   type OutgoingMessage,
@@ -60,10 +68,14 @@ export interface MergeContext {
   isOwner: IsOwner;
   /** 是房间的存档 */
   room: boolean;
+  /** 会话所在的聊天窗口是多方的（根会话记下的 originChat.multiParty）：插话按它标出 */
+  multiParty: boolean;
   signFile: SignFile;
   /** 工具卡的展示 */
   display: DisplayOf;
 }
+
+type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 
 type Attachment = { kind: ArchivedAttachment['kind']; src?: string; name?: string };
 
@@ -204,46 +216,86 @@ function speakerOf(message: Message, isOwner: IsOwner) {
   };
 }
 
+/** 存档消息归进的回合：元数据记下的回合 id（进了一轮的输入、她这一轮的产出与回合里发出的记录都带） */
+export const turnOf = (message: Message) => text(message.metadata?.[WellKnownMetadataKeys.TurnId]);
+
 /**
- * 存档消息归进的回合：元数据记下的回合 id。进了一轮的输入（存档另记了进入方式）不归进，照旧单独成条、在历史里给出：时间线
- * 把输入画在回合之前
+ * 进了一轮的输入怎么进的，与是否被点名：进入方式取存档记的 TurnEntry；触发类型为 immediate 或 direct 的被点名，interval 的
+ * 在多方的聊天窗口里是插话（false），其余（没经触发判定的、一对一窗口里过了频率闸的）没有。没进一轮的（存档没记进入方式）两样
+ * 都没有
  */
-export const turnOf = (message: Message) =>
-  message.metadata?.[WellKnownMetadataKeys.TurnEntry] === undefined
-    ? text(message.metadata?.[WellKnownMetadataKeys.TurnId])
-    : undefined;
+function entryOf(message: Message, multiParty: boolean) {
+  const meta = message.metadata;
+  const recorded = meta?.[WellKnownMetadataKeys.TurnEntry];
+  const entry = (['opened', 'joined'] as const).find(each => each === recorded);
+  if (!entry) return {};
+  const trigger = meta?.[WellKnownMetadataKeys.TriggerType];
+  return {
+    entry,
+    addressed:
+      trigger === 'immediate' || trigger === 'direct' ? true : trigger === 'interval' && multiParty ? false : undefined,
+  };
+}
+
+/**
+ * 回合记录（agent 记在一轮最后落库的那条上，见 schema-message 的 TurnRecord）还原成的回合条目，与实时推送的同一个 itemId；
+ * 没记、记得不对或没记回合 id 的没有
+ */
+function recordedTurn(message: Message): Item<'turn'> | undefined {
+  const turnId = turnOf(message);
+  const record = message.metadata?.[WellKnownMetadataKeys.TurnRecord];
+  if (!turnId || !isRecord(record)) return undefined;
+  const outcome = TurnOutcomeSchema.safeParse(record.outcome);
+  if (!outcome.success) return undefined;
+  return {
+    kind: 'turn',
+    itemId: turnId,
+    turnId,
+    at: message.timestamp ?? 0,
+    outcome: outcome.data,
+    source: text(record.source),
+  };
+}
 
 /**
  * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、发出的附件（她发的是只有附件的她的消息，
- * 插件发的是带附件的通知，topic 同事件标记按来源取）。附件与通知带归进的回合 id（{@link turnOf}），与实时推送一样并进回合。
- * 她的回复与工具调用要成组归并，其余系统消息与组外的工具结果不显示，都回 undefined
+ * 插件发的是带附件的通知，topic 同事件标记按来源取）。都带归进的回合 id（{@link turnOf}），与实时推送一样并进回合；进了一轮的
+ * 提问与通知另带进入方式与是否被点名。她的回复与工具调用要成组归并，带回合记录的（只带记录的事件标记）、其余系统消息与组外的
+ * 工具结果不显示，都回 undefined
  */
-export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignFile): SessionItem | undefined {
+export function archivedItem(
+  message: Message,
+  { isOwner, multiParty, signFile }: MergeContext,
+): SessionItem | undefined {
+  const meta = message.metadata;
+  if (meta?.[WellKnownMetadataKeys.TurnRecord] !== undefined) return undefined;
   const itemId = archivedItemId(message);
+  const turnId = turnOf(message);
   const at = message.timestamp ?? 0;
-  const recorded = message.metadata?.[WellKnownMetadataKeys.Text];
+  const recorded = meta?.[WellKnownMetadataKeys.Text];
   // 记了给人看的那句的入站是平台事件合成或转成的（如好友申请、戳一戳），不是谁的发言：画成通知，种类取存档记的子类或来源
   if (message.role === 'user' && !isTextRef(recorded)) {
-    const spoken = message.metadata?.[WellKnownMetadataKeys.SpokenContent];
+    const spoken = meta?.[WellKnownMetadataKeys.SpokenContent];
     return {
       kind: 'user-message',
       itemId,
+      turnId,
+      ...entryOf(message, multiParty),
       at,
       text: typeof spoken === 'string' ? spoken : (message.content ?? ''),
-      attachments: askedAttachments(message.metadata?.[WellKnownMetadataKeys.Attachments], signFile),
+      attachments: askedAttachments(meta?.[WellKnownMetadataKeys.Attachments], signFile),
       speaker: speakerOf(message, isOwner),
     };
   }
   const sent = sentAttachments(message, signFile);
   if (sent) {
-    const turnId = turnOf(message);
     return message.role === 'notice'
       ? {
           kind: 'notice',
           itemId,
           turnId,
           at,
-          topic: markerTopic(message.metadata?.[WellKnownMetadataKeys.Source]),
+          topic: markerTopic(meta?.[WellKnownMetadataKeys.Source]),
           text: '',
           attachments: sent,
         }
@@ -254,12 +306,11 @@ export function archivedItem(message: Message, isOwner: IsOwner, signFile: SignF
     message.role === 'notice' ||
     (message.role === 'system' && message.kind === WellKnownKinds.EventMarker)
   ) {
-    const meta = message.metadata;
     return {
       kind: 'notice',
       itemId,
-      // 回合里发出的提示（如 [错误]）记成事件标记时带着这一轮的 id，与实时推送一样并进回合
-      turnId: turnOf(message),
+      turnId,
+      ...entryOf(message, multiParty),
       at,
       topic:
         text(meta?.[WellKnownMetadataKeys.HostNoticeKind]) ??
@@ -449,7 +500,10 @@ function replyFailures(raw: readonly Message[]): Map<string, TextRef> {
   return failures;
 }
 
-/** 一段存档消息归并成条目，顺序同存档；failures 见 replyFailures */
+/**
+ * 一段存档消息（按 groupToolCalls 挪过的次序）归并成条目，顺序同它；记着回合记录的那条之后接这一轮的回合条目。failures 见
+ * replyFailures
+ */
 export function mergeArchive(
   raw: readonly Message[],
   context: MergeContext,
@@ -458,16 +512,16 @@ export function mergeArchive(
   const items: SessionItem[] = [];
   for (let i = 0; i < raw.length; ) {
     const message = raw[i] as Message;
+    let end = i + 1;
     if (message.role === 'assistant' && inGroup(message)) {
-      let end = i + 1;
       while (end < raw.length && sameGroup(raw[end - 1] as Message, raw[end] as Message)) end++;
       items.push(...mergeGroup(raw.slice(i, end), context, failures));
-      i = end;
-      continue;
+    } else {
+      const item = archivedItem(message, context);
+      if (item) items.push(item);
     }
-    const item = archivedItem(message, context.isOwner, context.signFile);
-    if (item) items.push(item);
-    i++;
+    items.push(...raw.slice(i, end).flatMap(m => recordedTurn(m) ?? []));
+    i = end;
   }
   return items;
 }
@@ -518,10 +572,10 @@ function wellFormed(message: Message): boolean {
 }
 
 /**
- * 读一页历史：before 是上一页第一条存档消息的 id，缺省从最新的读起；取 limit 条归并。页的开头落在一组回复与工具调用
- * 中间时往前扩到这一组的开头，免得一组拆在两页。skip 挑出不进历史的消息（在途回合落了库的那些），它们照样占位置，
- * 分页不受影响；字段不对的消息（{@link wellFormed}）不进历史，也不占位置，读到了就记一条 warn。before 指向的消息
- * 已不在存档里（被回滚删掉）时回 not-found。
+ * 读一页历史：before 是上一页第一条存档消息的 id，缺省从最新的读起；读回的一段按 groupToolCalls 挪过次序之后取 limit 条归并。
+ * 页的开头落在一组回复与工具调用中间，或落在组外的工具结果上（读的这一段把它的组切开了，调用在更早的存档里）时往前扩，免得一组
+ * 拆在两页。skip 挑出不进历史的消息（在途回合落了库的那些），它们照样占位置，分页不受影响；字段不对的消息（{@link wellFormed}）
+ * 不进历史，也不占位置，读到了就记一条 warn。before 指向的消息已不在存档里（被回滚删掉）时回 not-found。
  */
 export async function readHistory(
   memory: MemoryService,
@@ -535,14 +589,17 @@ export async function readHistory(
   for (let want = page.limit + 1; ; want *= 2) {
     const stored = await read(want);
     const exhausted = stored.length < want;
-    const raw = stored.filter(wellFormed);
+    const kept = stored.filter(wellFormed);
+    const units = groupToolCalls(kept);
+    const raw = units.flatMap(({ at }) => at.map(i => kept[i] as Message));
+    const loose = new Set(units.flatMap(({ at, shape }) => (shape === 'loose' ? at.map(i => kept[i]) : [])));
     const end = page.before === undefined ? raw.length : raw.findIndex(m => archivedItemId(m) === page.before);
     if (end < 0) {
       if (exhausted) throw failure('not-found', `历史游标已失效：${page.before}`);
       continue;
     }
     let start = Math.max(0, end - page.limit);
-    while (start > 0 && sameGroup(raw[start - 1] as Message, raw[start] as Message)) start--;
+    while (start > 0 && (loose.has(raw[start]) || sameGroup(raw[start - 1] as Message, raw[start] as Message))) start--;
     if (start === 0 && !exhausted) continue;
     const dropped = stored.length - raw.length;
     if (dropped > 0) logger.warn(`会话 ${sessionId} 的存档里读到 ${dropped} 条字段不对的消息，没进历史`);

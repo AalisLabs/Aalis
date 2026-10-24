@@ -1,11 +1,17 @@
+/* 输入框与它上方排着的消息同宽、居中 */
+.composer,
+.queued {
+  width: calc(100% - 2 * var(--space-4));
+  max-width: var(--measure-chat);
+  margin-inline: auto;
+}
+
 .composer {
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
   gap: var(--space-2);
-  width: calc(100% - 2 * var(--space-4));
-  max-width: var(--measure-chat);
-  margin: 0 auto var(--space-4);
+  margin-block: 0 var(--space-4);
   padding: var(--space-3);
   border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
@@ -67,6 +73,44 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 排着的消息：一行一条，写的话放不下时句末省略；排得多时在自己的框里滚动，不挤掉时间线 */
+.queued {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 25vh;
+  overflow-y: auto;
+  margin-block: 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-2);
+}
+
+.queued li {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.queued-speaker {
+  flex-shrink: 0;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-attachments {
+  color: var(--color-text-3);
 }
 
 .composer-note {
