@@ -16,6 +16,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -187,6 +188,36 @@ describe('按会话的条数线读历史', () => {
     expect(oldIn(recorder[0])).toEqual(['zz-old 7', 'zz-old 8']);
     expect(historyIn(recorder[0]).some(m => m.role === 'tool' || m.toolCalls)).toBe(false);
     expect(logs.filter(message => message.includes('不完整工具调用组'))).toEqual([]);
+  });
+
+  it('起点对齐只丢切开的那一组留下的结果：之后不在任何组里的结果与起点无关，照旧由清洗跳过并告警', async () => {
+    const { host, recorder, logs, ask, historyIn, limit } = await boot();
+    const SESSION = 'zz-ctx-tool-loose';
+    const call = (id: string) => ({ id, type: 'function' as const, function: { name: PROBE, arguments: '{}' } });
+    const stored = Array.from(
+      { length: 12 },
+      (_, i): Message => ({
+        role: i % 2 ? 'assistant' : 'user',
+        content: `zz-old ${i}`,
+        timestamp: 1000 + i,
+      }),
+    );
+    stored[5] = { role: 'assistant', content: null, toolCalls: [call('call-5')], timestamp: 1005 };
+    stored[6] = { role: 'tool', content: 'zz-result 6', toolCallId: 'call-5', timestamp: 1006 };
+    stored[8] = { role: 'assistant', content: null, toolCalls: [call('call-8')], timestamp: 1008 };
+    stored[9] = { role: 'tool', content: 'zz-result 9', toolCallId: 'call-8', timestamp: 1009 };
+    stored[10] = { role: 'tool', content: 'zz-result 10', toolCallId: 'call-gone', timestamp: 1010 };
+    for (const message of stored) await host.memory.use.saveMessage(SESSION, message);
+    await limit(SESSION, 12);
+    await ask(SESSION);
+
+    // 加上这一轮的入站共 13 条，条数线 12、半条线 6：起点 6 是第 5 条调用的结果，第 10 条是组外的结果
+    expect(
+      historyIn(recorder[0]).map(m => (m.toolCalls ? 'call' : String(m.content).match(/zz-\w+ \d+/)?.[0])),
+    ).toEqual(['zz-old 7', 'call', 'zz-result 9', 'zz-old 11']);
+    expect(logs.filter(message => message.includes('不完整工具调用组'))).toEqual([
+      expect.stringContaining('已跳过 1 条'),
+    ]);
   });
 
   it('没设或设为 0 时读全部活跃历史：600 条全进上下文，快照同样', async () => {

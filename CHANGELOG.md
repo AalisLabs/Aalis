@@ -354,7 +354,7 @@
 - onebot 的事件提示（戳一戳、群文件上传）按这一轮各条输入自带的事件种类（`noticeType`）给，不再按正文开头认：发起者昵称里带「]」时也给，群友打出的像事件的文字不再给。
 - plugin-file-reader 的「本轮新上传」按这一轮各条输入附件里本插件写下的文件引用认，不再按正文里的「[文件:」与 ID 认：正文里手写的文件描述不算新上传；这一轮的文件处理失败、没有引用时注入的是历史清单（此前不注入）。
 
-### 通道层：新消息不打断在跑的一轮（@aalis/api-agent、@aalis/schema-message、@aalis/api-gateway、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-gateway、@aalis/plugin-flow-control、@aalis/plugin-session-server、@aalis/plugin-workflow、@aalis/plugin-subtask、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-persona、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-session-manager）
+### 通道层：新消息不打断在跑的一轮（@aalis/api-agent、@aalis/schema-message、@aalis/api-gateway、@aalis/api-workflow、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-gateway、@aalis/plugin-flow-control、@aalis/plugin-session-server、@aalis/plugin-workflow、@aalis/plugin-subtask、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-persona、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-session-manager）
 
 - 新消息不再中止在跑的一轮。每个会话同一时刻最多一轮：真人消息叠进由真人消息开的、在跑的一轮（每次调用模型之前，第一次与每批工具之后都算），她已经在写最后的回复时才到的排到下一轮另回一条；带来源的注入（定时任务、宿主通知、编排节点、白纸与作品通知、好友申请、空闲开话题、子任务的派发与追问）各自成一轮，排在在跑的一轮之后，注入那一轮在跑时来的真人消息排在它之后。一轮结束后队首是真人消息时，排着的真人消息一起开下一轮，前面告诉她「下面几条是你上一轮进行期间到的」，多方房间里这几条全是没点名她的插话时另说「没有需要接的可以不说话」。排着开的那一轮不再过冷却与限速（这些消息到达时已过闸）。叠进来的人从下一批工具起算参与者。
 - 输入在进入一轮时归档，消息的时间标注是进入这一轮的时刻；排着、还没进一轮的不在历史里。这一轮的模型、深度思考、工具迭代上限、条数线、工具分组与人设选项在开轮时读一次，一轮进行中改了的下一轮才生效。焦点指引的多方判定改取根会话记下的聊天窗口（owner 从 WebUI 往群里发的话照样按群算），按时间与发送者账号逐条列出这一轮被点名的输入（没经触发判定的真人输入也算点名），插进被点名的输入时在它们之前另加一块，前面那块不改。
@@ -364,6 +364,7 @@
 - api-agent：`AgentService.abort` 改为必须实现，参数改为 `abort(sessionId, { turnId?, queued?, reason? })`：只停在跑的一轮，`queued` 为真时连同排队与待插入的一起放掉（不开轮，在那一轮落定之后归档、不带回合 id），`reason` 只进日志。`handleMessage` 返回时这条输入已落定，被放掉也算。`agent:turn:before` 的 `inputs` 是活的，插进来的输入追加在末尾、归档的进入方式为 `joined`。`AgentService` 加必须实现的 `clearing(sessionIds, clear, reason?)`：清消息历史的一方（第一方是 `/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先发 `session:deleted`）交给它，先停下这些会话在跑的一轮、放掉排着的（不归档），按住到清完，实现者自己的 `session:deleted` 监听在这次按住之内被调起、不能等它放开，`reason` 同 `abort` 的只进日志；第一方 agent 不再挂 `memory:clear` 中间件。自己实现 AgentService 的照新形状改。
 - schema-message：`IncomingMessage.source` 不再表示并发隔离（带来源的输入各自成一轮）。
 - api-gateway：`ingressMessage` 在这条输入落定时返回（在相位里被挡下，或它所在的一轮结束、它被放掉）。网关在所有入站相位之前给每条入站打到达序号；规则版与 Laya 的判定行、流控与网关的吞噬行、agent 每条输入的去向与回合结束行带 `#序号`，不记正文与昵称。
+- api-workflow：`runWorkflow` 的 `caller` 加 `sessionId`（调起这次运行的会话，经 `workflow_run` 调起时有）。替换编排服务实现的，据它让指向这个会话的 agent 节点立即失败：调起它的那一轮在等这次运行，节点的指令要等那一轮结束才能开轮，不这样就互等到节点超时。
 - 停下一轮：停止键只停在跑的一轮，它随即不再收输入，待插入的、排着的与之后到的照常开下一轮；禁言（`setMuted` 时长大于 0；关键词禁言不看说话人的等级）真的停下在跑的一轮，不外发、不落库回复，排着的不再开轮；后台页「全部停止」对每个下级会话连同排队项停，只有排着的追问、没有在跑一轮的子会话同样放掉；停机时排着的不再开轮；`/clear` 与 `/clear all`（全部会话）清消息历史时经 agent 先停下在跑的一轮、放掉排着的（不记进历史）再跑整条清理，停下到清完之间到的消息等清完再处理，与各插件清理中间件的登记先后无关（plugin-commands 新加 `agent` 的可选依赖），`-t vector` 这类不清消息历史的不停。
 - plugin-workflow：agent 节点经网关送达指令（没有网关时节点失败），按自己的异步上下文只认它开的那一轮，同一会话里别的回合的回复不再被当成它的结果；指向调起这次运行的会话、指令在网关相位被吞（禁言、限速）或被放掉时立即失败，不再等满节点超时。`workflow_run` 所在的一轮被停下时不再等这次运行，回已中止，这一轮随即落定；运行不取消。
 - plugin-subtask：追问经网关送达（没有网关时 `send_to_subtask` 回错误），排在子任务在跑的一轮之后，不再打断它；那一轮结束时还有没落定的追问，它的回复不交回、不完成，等追问那一轮；还有没落定的追问的子任务，`check_subtask` 与父会话的子任务提醒按进行中报，`wait_subtasks` 不返回。`wait_subtasks` 所在的一轮被停下（停止键、禁言、`/clear` 等）时不再等，回已中止，这一轮随即落定。
@@ -397,9 +398,9 @@
 ### 通道层：时间线（@aalis/schema-message、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-memory-summary）
 
 - api-session-protocol：`turn` 条目的 `by` 换成 `source`（这一轮的来源，真人消息开的没有）；回合条目在这一轮开始时推出，这一轮的输入随后带着同一个 `turnId` 并进来。历史里也有 `turn` 条目，由回合记录还原，带结局与来源。提问与通知加 `entry`（开轮的 `opened`、插进来的 `joined`）与 `addressed`（被点名为 true，多方房间里的插话为 false）；进了一轮的提问与通知带这一轮的 `turnId`。新增 `queue` 条目：这个会话排着、还没进一轮的输入，每个会话一条、整份替换。读 `turn.by` 的客户端照新形状改。
-- api-agent：实现者的约定多一项：每一轮在 `agent:turn:after` 之前写一条回合记录（结局与来源，登记的键 `TurnRecord`），记在最后落库的那条回复上，没有落库回复的一轮另落一条只带回合 id 与它的事件标记。不写的 agent，历史里没有这一轮的结局。
+- api-agent：实现者的约定多两项：每一轮在 `agent:turn:after` 之前写一条回合记录（结局与来源，登记的键 `TurnRecord`），记在最后落库的那条回复上，没有落库回复的一轮另落一条只带回合 id 与它的事件标记，不写的 agent，历史里没有这一轮的结局；输入入队、进了一轮、被放掉时发新增的事件 `agent:queue`（这个会话排着与待插入、还没进一轮的全部输入，按入队先后），不发的 agent，输入框上方列不出排着的消息。
 - plugin-agent：没有落库回复的一轮（静默、中止、出错）在存档里多一条只带回合记录的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空，不进模型、不进摘要），连对话回滚随这一轮删；自己读存档的插件会读到它。
-- WebUI 时间线：进了一轮的提问在这一轮的段里，下面写「开了这一轮 · 被点名」「开了这一轮 · 插话」「开了这一轮」或「并入这一轮」；没有输入的一轮（空闲开话题）段首写「来自 idle-trigger」。结局写在这一轮最后一段的末尾，什么都没做就停下或没回的一轮，结局紧跟在它的消息下面；刷新之后「没有回复」「已停止」「这一轮出错了」照样在（此前刷新就不见了）。「N 轮没有回复」合并时被并掉的几轮的输入照常显示。连对话回滚放回输入框的是这一轮 owner 的各条输入（空行连起来），此前是这一轮之前的那一条。排着、还没进一轮的消息列在输入框上方，进了一轮移进时间线。回合在跑时重连，这一轮插进来的输入排在它之前那组工具调用之后，这一轮进行期间别人说的话照样排在它的条目中间，与之后的历史一致（此前插进来的输入排在这一轮的全部条目之前）。房间里被停下的一轮说过的话写「没有发出：这一轮已停止」（此前「没有发出：回合已中止」）。
+- WebUI 时间线：进了一轮的提问在这一轮的段里，下面写「开了这一轮 · 被点名」「开了这一轮 · 插话」「开了这一轮」或「并入这一轮」；没有输入的一轮（空闲开话题）段首写「来自 idle-trigger」。结局写在这一轮最后一段的末尾，什么都没做就停下或没回的一轮，结局紧跟在它的消息下面；刷新之后「没有回复」「已停止」「这一轮出错了」照样在（此前刷新就不见了）。「N 轮没有回复」合并时被并掉的几轮的输入照常显示。连对话回滚放回输入框的是这一轮 owner 的各条输入（空行连起来），此前是这一轮之前的那一条。排着、还没进一轮的消息列在输入框上方，进了一轮移进时间线。回合在跑时重连，这一轮的条目（插进来的输入也在其中）与这期间别人说的话按出现的先后排，与当时实时看到的一样（此前这一轮的条目一律排在最后）。房间里被停下的一轮说过的话写「没有发出：这一轮已停止」（此前「没有发出：回合已中止」）。
 - 工具调用组里夹进别的消息时（按时间戳读历史的存储，见上一节「读历史时」一条）：会话页的工具卡照常带着结果（此前显示为已停止、没有结果），翻页不拆开这一组；记忆摘要把这一组当一个完整的单位，能原样保留，夹进来的另成一个。
 - plugin-memory-summary：回合结束判条数线时，结局为 silent 的一轮同样加上之后落库的那一条（回合记录），此前只有 replied 加；条数线可能早一轮到。
 
