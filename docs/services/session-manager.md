@@ -226,6 +226,7 @@ interface SessionInfo {
 
 ```ts
 import { windowKey } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import {
   type NewSessionFields,
@@ -241,7 +242,7 @@ import {
   TAKE_UNKNOWN,
   type TakeVerdict,
 } from '@aalis/api-session-manager';
-import { type Events, definePlugin, events, hooks, logger, provide } from '@aalis/core';
+import { type Events, definePlugin, events, logger, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const DEFAULT_PLACE: PlaceInfo = { kind: 'workspace', key: 'workspace:default' };

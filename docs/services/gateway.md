@@ -110,7 +110,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 **最小必须实现**：`ingressMessage` 与 `dispatchOutbound` 两个方法 + 监听 `inbound:message` 把消息送入 `ingressMessage`。**可选但强烈建议**：保留相位调度与 `gateway:phase:done` 遥测，否则现有 `plugin-commands` / `plugin-flow-control` 等相位插件会失效；保留结构性放行，否则 owner 自己的会话会被触发判定与流控挡住。
 
-会话管理在场时还要做两件事。进入相位之前先等它收录这条入站（[api-session-manager](../api/api-session-manager.md) 的 `recordInbound`），否则新房间的第一条消息在相位里读不到会话记录。收录之后按 `generationOf` 记下这个会话的代号，交给 agent 之前再取一次比对，不一致的是删除开始之前已收录的旧一代（新旧两代见同一页的 `deleteSession`），放掉，不交给 agent，也不回兜底的系统提示；代号记在收录之前的话，删除期间到、在收录里等删除做完的新一代会被当成旧一代放掉。
+会话管理在场时还要做两件事。进入相位之前先等它收录这条入站（[api-session-manager](../api/api-session-manager.md) 的 `recordInbound`），否则新房间的第一条消息在相位里读不到会话记录。收录之后按 `generationOf` 记下这个会话的代号，交给 agent 之前再取一次比对，不一致的是删除开始之前已收录的旧一代（新旧两代见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`），放掉，不交给 agent，也不回兜底的系统提示；代号记在收录之前的话，删除期间到、在收录里等删除做完的新一代会被当成旧一代放掉。
 
 `package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `required: ['events', 'hooks', 'logger', 'provide']` + `optional: ['agent', 'authority', 'session-manager']`）：
 

@@ -123,8 +123,8 @@ describe('删除会话', () => {
     ).toEqual([]);
   });
 
-  it('子会话的子会话清数据抛错：这个会话照样删完，它的上一级照样收到 session:updated', async () => {
-    const { host, sm, ids, errors } = await treeFailing(['grandchild']);
+  it('这个会话自己清数据抛错：照样删完，它的上一级照样收到 session:updated', async () => {
+    const { host, sm, ids, errors } = await treeFailing(['first']);
     const updated: Array<[string, string[]]> = [];
     host.events.use.on('session:updated', session => void updated.push([session.id, [...session.children]]));
     await expect(sm.deleteSession(ids.first)).rejects.toBe(errors[0]);
