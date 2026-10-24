@@ -21,13 +21,13 @@
 ### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
 
 - **摘要预算**（plugin-memory-summary）：摘要长度跟着压掉的量走。预算是这次重写的输入（上一份摘要加这次新压的对话）乘 `summaryBudgetRatio`（默认 0.1），不少于 1000 token，越旧的内容越浓缩；不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，也不超过这个会话压缩线（按最近一次用量算）的四分之一，两个封顶都压过这个下限。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占压掉内容的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。
-- **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过这次新压的对话乘 `summaryBudgetRatio`（不算上一份摘要，也不套 1000 的下限）；设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的消息与分隔标记）不超过条数线的一半（向下取整）为止，超出的从最早的保留单位起去掉。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
-- **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory` 时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
+- **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过这次新压的对话乘 `summaryBudgetRatio`（不算上一份摘要，也不套 1000 的下限）；设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文与切分点之后的对话消息，分隔标记等事件标记不算）不超过条数线的一半（向下取整）为止，超出的从最早的保留单位起去掉。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
+- **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间；条数只数对话消息，回合记录、压缩分隔线这类事件标记不发给模型，也不占条数。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory`（活跃对话消息的条数）时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
 - **写满输出上限算没压成**（plugin-memory-summary）：摘要模型报的输出 token 不小于请求的 `maxTokens` 时，这次压缩没压成，日志写明「摘要模型写满了输出上限，输出可能不完整」，可能被截断的摘要不存下；后台压缩照常计入退避。服务商不报用量时查不出。
 - **破坏性**：
-  - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档），第三方记忆后端须实现它，`getFullHistory` 也要按时间交错返回留下的与归档的消息。
+  - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档；按位置数，事件标记也占位置），第三方记忆后端须实现它，`getFullHistory` 也要按时间交错返回留下的与归档的消息。
   - api-memory：带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）条数为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。plugin-user-relation 的 `readWindowSize`、`allNewMaxMessages` 配成 0 时，关系提取读不到消息。
-  - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史条数（含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史条数。类型不变。
+  - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史里对话消息的条数（事件标记不算，与 api-memory 的 `countHistory` 同一口径；含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史里对话消息的条数。类型不变。
   - plugin-memory-summary：插件配置 `summaryTokenRatio` 删除，换成 `summaryBudgetRatio`（见上文「摘要预算」）。配置里留着 `summaryTokenRatio` 时，runtime 在启动与热重载时按 schema 裁掉并写回配置文件，记一条 warn。
 
 ### 注入的文字不再执行指令（@aalis/schema-message、@aalis/plugin-commands、@aalis/plugin-scheduler）
@@ -402,7 +402,12 @@
 - plugin-agent：没有落库回复的一轮（静默、中止、出错）在存档里多一条只带回合记录的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空，不进模型、不进摘要），连对话回滚随这一轮删；自己读存档的插件会读到它。
 - WebUI 时间线：进了一轮的提问在这一轮的段里，下面写「开了这一轮 · 被点名」「开了这一轮 · 插话」「开了这一轮」或「并入这一轮」；没有输入的一轮（空闲开话题）段首写「来自 idle-trigger」。结局写在这一轮最后一段的末尾，什么都没做就停下或没回的一轮，结局紧跟在它的消息下面；刷新之后「没有回复」「已停止」「这一轮出错了」照样在（此前刷新就不见了）。「N 轮没有回复」合并时被并掉的几轮的输入照常显示。连对话回滚放回输入框的是这一轮 owner 的各条输入（空行连起来），此前是这一轮之前的那一条。排着、还没进一轮的消息列在输入框上方，进了一轮移进时间线。回合在跑时重连，这一轮的条目（插进来的输入也在其中）与这期间别人说的话按出现的先后排，与当时实时看到的一样（此前这一轮的条目一律排在最后）。房间里被停下的一轮说过的话写「没有发出：这一轮已停止」（此前「没有发出：回合已中止」）。
 - 工具调用组里夹进别的消息时（按时间戳读历史的存储，见上一节「读历史时」一条）：会话页的工具卡照常带着结果（此前显示为已停止、没有结果），翻页不拆开这一组；记忆摘要把这一组当一个完整的单位，能原样保留，夹进来的另成一个。
-- plugin-memory-summary：回合结束判条数线时，结局为 silent 的一轮同样加上之后落库的那一条（回合记录），此前只有 replied 加；条数线可能早一轮到。
+
+### 通道层：条数线只数对话消息（@aalis/api-memory、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-vector）
+
+- api-memory（给记忆后端的实现者）：按条数的 `getHistory(sessionId, limit)` 只数对话消息，schema-message 的 `CONTROL_KINDS`（回合记录、压缩分隔线、指令的回复这类事件标记）不占条数：读出第 `limit + 1` 新的那条对话消息之后的全部活跃消息，夹在其间的标记一并带回，对话消息不超过 `limit` 条时是全部活跃消息，`limit` 为 0 时为空。自己实现记忆后端的照改；不改时 agent 的条数线、按条数的压缩与按条数读历史的插件都被标记占去名额。
+- 按条数读历史的插件（用户档案与关系图的提取窗口、识图时带的前文、会话标题等）随之只数对话消息，压缩分隔线这类事件标记不再占名额，多带真实消息。
+- plugin-memory-vector：命中点前后 N 条的扩窗不算事件标记，标记不再占名额。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

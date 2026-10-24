@@ -41,9 +41,10 @@ interface MemoryService {
 ```
 
 - **带条数的读法**（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）一个规则：条数是非负整数或 `Infinity`（调用方保证），为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。
-- **`getHistory`**：最近 `limit` 条活跃（未归档）消息。
-- **`countHistory`**：活跃消息的条数，与 `getHistory(sessionId, Infinity)` 的长度相同。可选：缺了它，plugin-agent 读全部活跃历史再数。
-- **`archiveSpan`**：把最早的 `count` 条活跃消息（顺序与 `getHistory` 相同：时间，同毫秒按写入序；inmemory 只按写入序，假定时间戳随写入递增）标为归档，其中 `keep` 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里；返回归档条数。必填：压缩靠它落定，缺了没有降级可走。
+- **`getHistory`**：最近 `limit` 条活跃（未归档）对话消息，按时间升序（同毫秒按写入序）。条数只数对话消息：schema-message 的 `CONTROL_KINDS`（回合记录、压缩分隔线这类事件标记）不发给模型，不占条数。读出的是第 `limit + 1` 新的那条对话消息之后的全部活跃消息，夹在其间的标记一并带回；对话消息不超过 `limit` 条时是全部活跃消息。
+- **`countHistory`**：活跃对话消息的条数，与 `getHistory` 按条数读同一口径（`getHistory(sessionId, Infinity)` 里不属于 `CONTROL_KINDS` 的条数）。可选：缺了它，plugin-agent 读全部活跃历史再数。
+- **`getFullHistory`**：含已归档的完整历史，给界面画：最近 `limit` 条，事件标记也占条数。
+- **`archiveSpan`**：把最早的 `count` 条活跃消息（顺序与 `getHistory` 相同：时间，同毫秒按写入序；inmemory 只按写入序，假定时间戳随写入递增）标为归档，其中 `keep` 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里；返回归档条数。`count` 与 `keep` 按位置数，事件标记也占位置（与按条数读不同），即 `getHistory(sessionId, Infinity)` 里的位置。必填：压缩靠它落定，缺了没有降级可走。
   - `count` 与 `keep` 的元素都是非负整数（调用方保证），`count` 为 0 时什么都不归档；大于活跃条数时这一段就是全部活跃消息。`keep` 里落在这一段之外的下标不起作用，重复的下标与一个相同。
   - 位置按调用这一刻的活跃历史算。调用方读快照之后若有写入插进这一段（时间戳早于段尾的晚到消息、按时间戳删除），归档的会错位：调用方要在调用之前核对快照。之后追加的新消息在这一段之外，不受影响。
   - 原子性按后端分档（与 `commitMetadata` 同一口径）：sqlite 与 inmemory 全成或全不成；mongodb 是一次 `updateMany`，不是事务，中途出错时可能只归档了一部分。
@@ -105,7 +106,7 @@ interface CompressionUsage {
   tokenBudget: number;     // 硬裁剪的上限（token）
   compressible: number;    // 历史与工具结果占的 token，按硬裁剪之前的列表算：全量压缩能压掉的部分
   trimmed: boolean;        // 经过了硬裁剪：到了丢内容的地步
-  historyMessages: number; // 会话历史的条数
+  historyMessages: number; // 会话历史的条数，只数对话消息（同 countHistory）
 }
 interface CompressionLines {
   compressAt?: number;     // 自动压缩线，占窗口比例；缺省或 0 不按用量判
@@ -124,7 +125,7 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
 `compressionDue` 是判定是否该压缩的纯函数，两维任一到线即该压缩。
 
 - **用量一维**：`compressAt` 为正时，用量到 `compressionLine` 或经过了硬裁剪（`trimmed`：到了丢内容的地步），且 `compressible` 至少是线的一半时该压缩。后一个条件就是回差：压完 `compressible` 只剩挑中的原文（token 默认不超过这次新压的对话的一成）与切分点之后的几条，一般到不了线的一半，不会接着再触发（留下得多、很快又到线时，下一次压缩的输入大半就是它们，留下的随之变少）；人设、工具定义这些压不掉的部分再大也不会让它空转。`compressAt` 缺省或为 0 时这一维不判，经过了硬裁剪也一样。
-- **条数一维**：`historyMessages` 到 `historyLimit` 时该压缩。全量压缩之后只剩挑中的原文、切分点之后的几条与分隔标记，挑中的原文只留到三者合计不超过条数线的一半（向下取整）为止，一般要再积累条数线的一半左右才会再到线。
+- **条数一维**：`historyMessages`（只数对话消息）到 `historyLimit` 时该压缩。全量压缩之后只剩挑中的原文、切分点之后的几条与分隔标记，挑中的原文只留到它与切分点之后的对话消息合计不超过条数线的一半（向下取整）为止，一般要再积累条数线的一半左右才会再到线。
 
 没压成之后多久再试由调用方决定，不在这个函数里。
 

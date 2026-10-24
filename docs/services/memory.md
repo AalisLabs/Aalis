@@ -22,12 +22,12 @@ agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖�
 
 ```ts
 saveMessage(sessionId: string, message: Message): Promise<void>;
-getHistory(sessionId: string, limit?: number): Promise<Message[]>;   // 仅未归档，按 timestamp 升序
+getHistory(sessionId: string, limit?: number): Promise<Message[]>;   // 仅未归档，按 timestamp 升序；条数只数对话消息
 clearSession(sessionId: string): Promise<void>;
 archiveSpan(sessionId: string, span: { count: number; keep: readonly number[] }): Promise<number>; // 归档最早的 count 条活跃消息，keep 列出的位置不归档，返回归档条数
 ```
 
-`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息；内部先 `ORDER BY timestamp DESC, id DESC LIMIT ?` 取最近 N 条，再升序输出；默认 `limit=50`。
+`getHistory` 的语义由参考实现确立：只返回 `archived=0` 的消息，按 `timestamp, id` 升序输出；默认 `limit=50`。条数只数对话消息：schema-message 的 `CONTROL_KINDS`（回合记录、压缩分隔线这类事件标记）不占条数，读出的是第 `limit + 1` 新的那条对话消息之后的全部活跃消息，夹在其间的标记一并带回，对话消息不超过 `limit` 条时是全部活跃消息。`countHistory` 同一口径。
 
 带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）一个规则：条数是非负整数或 `Infinity`（调用方保证），为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到 `crossSessionMaxLimit`）。MongoDB 的 `limit(0)` 表示不限条数、SQLite 的 `LIMIT` 绑不了 `Infinity`，自写后端透传条数之前要先处理这两个值。
 
@@ -37,8 +37,8 @@ archiveSpan(sessionId: string, span: { count: number; keep: readonly number[] })
 
 ```ts
 clearAll?(): Promise<void>;                                          // 清空所有会话 + 归档（不含元数据）
-getFullHistory?(sessionId, limit?): Promise<Message[]>;             // 含已归档，供 UI 展示
-countHistory?(sessionId): Promise<number>;                          // 活跃消息的条数，与 getHistory(sessionId, Infinity) 的长度相同
+getFullHistory?(sessionId, limit?): Promise<Message[]>;             // 含已归档，供 UI 展示；事件标记也占条数
+countHistory?(sessionId): Promise<number>;                          // 活跃对话消息的条数（不含 CONTROL_KINDS），与 getHistory 按条数读同一口径
 
 // 范围查询（向量召回时扩展上下文窗口用）
 getMessagesBySessionRange?(
@@ -100,7 +100,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 ### 消费方（典型读写点）
 
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
-- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃条数，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
+- **`plugin-agent`**（构建 LLM 上下文）：按会话设置 `historyLimit` 定发给模型的那一段（活跃历史超过它时成段丢弃最早的，见 [plugin-agent](../plugins/plugin-agent.md#会话设置项)）：后端实现了 `countHistory` 时先数活跃历史里的对话消息，再用 `getHistory` 只读起点之后的那一段；没实现、或 `historyLimit` 为 0 与没设置时用 `getHistory(sessionId, Infinity)` 读全部活跃历史。拼进 messages。
 - **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 `memory` 的选择层，先看 `present` 再经 `use` 调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息（摘要模型挑出、原样保留的不归档），摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，监听 `memory:messages-rewritten` 按改写后的正文重收录，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
@@ -138,7 +138,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 import { memory } from '@aalis/api-memory';
 import type { MemoryService, MetadataEntry, MetadataOp } from '@aalis/api-memory';
 import { definePlugin, provide } from '@aalis/core';
-import type { Message } from '@aalis/schema-message';
+import { CONTROL_KINDS, type Message } from '@aalis/schema-message';
 
 class MyMemoryService implements MemoryService {
   // 每个会话一个按写入序的数组，归档只打标记：留下的原文早于之后归档的消息，活跃、归档分两个列表就排不对
@@ -154,9 +154,13 @@ class MyMemoryService implements MemoryService {
     this.store.set(sessionId, arr);
   }
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    // 条数为 0 时为空，不带最后一条对话消息之后的标记
+    if (limit === 0) return [];
     const active = this.active(sessionId);
-    // slice(-0) 是全部：条数为 0 时要返回空
-    return active.slice(Math.max(0, active.length - limit)).map(e => e.message);
+    // 只数对话消息：第 limit+1 新的那条之后的全部，夹在其间的事件标记一并带回
+    const said = active.flatMap((e, i) => (CONTROL_KINDS.includes(e.message.kind ?? '') ? [] : [i]));
+    const before = said[said.length - limit - 1];
+    return active.slice(before === undefined ? 0 : before + 1).map(e => e.message);
   }
   async clearSession(sessionId: string): Promise<void> {
     this.store.delete(sessionId);

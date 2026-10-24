@@ -10,7 +10,7 @@ import { estimateMsgTokens } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
-import { formatAttachmentRef, groupToolCalls, parseAttachmentRefs } from '@aalis/schema-message';
+import { CONTROL_KINDS, formatAttachmentRef, groupToolCalls, parseAttachmentRefs } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 /**
@@ -127,8 +127,8 @@ export function estimateHistoryTokens(messages: Message[]): number {
 // ----- 发给模型的会话历史 -----
 
 /**
- * 发给模型的会话历史从活跃历史的第几条开始：条数线为 0、或活跃条数不超过它时为 0；超过时按半条线成段前移。
- * 只由活跃条数与条数线决定，两次前移之间不变：发出的开头逐字不变，服务商的前缀缓存才命中
+ * 发给模型的会话历史丢掉活跃历史里最早的几条对话消息：条数线为 0、或对话消息不超过它时为 0；超过时按半条线成段前移。
+ * 只由对话消息的条数与条数线决定，两次前移之间不变：发出的开头逐字不变，服务商的前缀缓存才命中
  */
 export function historyStart(count: number, limit: number): number {
   if (!limit || count <= limit) return 0;
@@ -137,9 +137,9 @@ export function historyStart(count: number, limit: number): number {
 }
 
 /**
- * 读发给模型的会话历史：活跃历史从 historyStart 起到末尾，count 是活跃历史的条数（真实回合与 token:request 的快照共用）。
- * 后端有 countHistory 时先数再只读起点之后的那一段（没超线时读最近条数线那么多条：数完到读之间进来的消息不会挤掉最早那条），
- * 没有时读全部再切
+ * 读发给模型的会话历史：活跃历史丢掉最早的 historyStart 条对话消息，余下的到末尾；count 是活跃历史里对话消息的条数（条数只数
+ * 对话消息，与 api-memory 的 countHistory 同一口径；真实回合与 token:request 的快照共用）。后端有 countHistory 时先数再按条数
+ * 只读起点之后的那一段（没超线时读最近条数线那么多条：数完到读之间进来的消息不会挤掉最早那条），没有时读全部再切，两条路是同一段
  */
 export async function readHistory(
   memory: Pick<MemoryService, 'getHistory' | 'countHistory'>,
@@ -155,9 +155,11 @@ export async function readHistory(
     messages = await memory.getHistory(sessionId, start ? count - start : limit);
   } else {
     const all = await memory.getHistory(sessionId, Infinity);
-    count = all.length;
+    const said = all.flatMap((m, i) => (CONTROL_KINDS.includes(m.kind ?? '') ? [] : [i]));
+    count = said.length;
     start = historyStart(count, limit);
-    messages = all.slice(start);
+    // 同按条数读：从丢掉的最后一条对话消息之后切，夹在它与下一条对话消息之间的标记留下
+    messages = start ? all.slice(said[start - 1] + 1) : all;
   }
   // 起点落在工具调用组中间：组首在起点之前已经丢掉，这一组留下的结果（第一组之前组外的结果）随它一起丢，夹在其间的别的消息照留。
   // 之后组外的结果不是起点切出来的，与起点在不在 0 无关，照旧交给读的一方（真实回合的清洗跳过并告警）

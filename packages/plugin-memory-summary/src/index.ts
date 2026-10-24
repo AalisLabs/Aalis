@@ -16,7 +16,7 @@ import { config, definePlugin, events, lifecycle, logger, optional, provide } fr
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
-import { groupToolCalls, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { CONTROL_KINDS, groupToolCalls, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 
@@ -634,15 +634,15 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 条数规则：设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的 after 条与要写的分隔标记，与 agent 数的
-   * 活跃条数同一口径）不超过条数线的一半（向下取整）为止：超出的从最早的保留单位起整个去掉，直到不超或一个不剩（去掉的在这次
-   * 的输入里，摘要覆盖了它们）。保留上限按 token 算，一条很长的正文能把它撑大、留下很多短消息，没有这一条时压完的条数可能仍到线、
-   * 每轮都压。条数线取这个会话最近一次用量里的
+   * 条数规则：设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文与切分点之后的 after 条对话消息；与 agent 数的活跃条数
+   * 同一口径，分隔标记等事件标记不算）不超过条数线的一半（向下取整）为止：超出的从最早的保留单位起整个去掉，直到不超或一个不剩
+   * （去掉的在这次的输入里，摘要覆盖了它们）。保留上限按 token 算，一条很长的正文能把它撑大、留下很多短消息，没有这一条时压完的
+   * 条数可能仍到线、每轮都压。条数线取这个会话最近一次用量里的
    */
   function withinHalfLine(kept: Unit[], after: number, sessionId: string): Unit[] {
     const historyLimit = lastUsages.get(sessionId)?.historyLimit;
     if (!historyLimit) return kept;
-    const room = Math.floor(historyLimit / 2) - after - (messageArchive.present ? 1 : 0);
+    const room = Math.floor(historyLimit / 2) - after;
     let rest = kept;
     while (rest.length > 0 && countOf(rest) > room) rest = rest.slice(1);
     return rest;
@@ -670,7 +670,8 @@ async function run(caps: Caps): Promise<void> {
     try {
       const current = await provider.getHistory(sessionId, Infinity);
       if (!samePrefix(span, current)) throw new Error('压缩期间历史被改动');
-      keep = withinHalfLine(kept, current.length - span.length, sessionId).flatMap(unit => unit.at);
+      const after = current.slice(span.length).filter(m => !CONTROL_KINDS.includes(m.kind ?? '')).length;
+      keep = withinHalfLine(kept, after, sessionId).flatMap(unit => unit.at);
       archived = await provider.archiveSpan(sessionId, { count: span.length, keep });
     } catch (err) {
       // 摘要已写、历史没归档：下一次压缩会把同一段历史再并进这份新摘要，故回滚到写入前
@@ -788,8 +789,8 @@ async function run(caps: Caps): Promise<void> {
   // === 回合结束时判一次是否该压缩（中止与出错的回合不判）===
   // 只认这一轮最后一次调用的用量：token:request 的快照不带 turnId，上一轮留下的属于别的回合；这一轮开始之后压成过或清空过的，
   // 它的用量是按那之前的历史算的，也不认。回合进行中不在后台改持久化的历史：长工具循环中途改历史，会与 agent 手里的
-  // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的：
-  // 最后一次调用之后还落库一条，加上它：结局为 replied 时是最终回复，为 silent 时是回合记录的事件标记
+  // 消息列表对不上。可压缩部分按硬裁剪之前的历史算：裁掉的仍在会话里，全量压缩一并压掉。会话条数是回合结束时的、只数对话
+  // 消息：结局为 replied 时最后一次调用之后还落库最终回复，加上它；silent 落库的回合记录是事件标记，不算
   hooks.use.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
@@ -807,7 +808,7 @@ async function run(caps: Caps): Promise<void> {
       tokenBudget: usage.tokenBudget,
       compressible: usage.untrimmedHistory,
       trimmed: usage.trimmed,
-      historyMessages: usage.historyMessages + 1,
+      historyMessages: usage.historyMessages + (data.outcome === 'replied' ? 1 : 0),
     };
     if (!compressionDue(amounts, linesOf(usage))) return;
     logger.use.info(

@@ -112,10 +112,10 @@ it('条数线：回合结束时会话条数（含落库的最终回复）到线�
   const summarized = textsOf(recorder.find(r => r.purpose === '摘要')).join('\n');
   for (const text of ['第一问', '回答1', '第二问', '回答2']) expect(summarized).toContain(text);
 
-  // 第三轮读进分隔标记与这一问，最早的消息都在摘要里；压完不再触发
+  // 第三轮读进分隔标记与这一问，最早的消息都在摘要里，分隔标记不算条数；压完不再触发
   await ask(SESSION, '第三问');
   await new Promise<void>(r => setTimeout(r, 20));
-  expect(usages.at(-1)?.historyMessages).toBe(2);
+  expect(usages.at(-1)?.historyMessages).toBe(1);
   expect(summaries()).toBe(1);
   const texts = textsOf(recorder.at(-1));
   expect(texts.some(text => text.includes('SUMMARY-OF-OLD'))).toBe(true);

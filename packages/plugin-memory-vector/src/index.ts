@@ -23,7 +23,13 @@ import {
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { DIRECTIVE_KINDS, prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import {
+  CONTROL_KINDS,
+  DIRECTIVE_KINDS,
+  prefixSender,
+  WellKnownKinds,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 
@@ -597,7 +603,10 @@ async function run(caps: Caps): Promise<void> {
       const minTs = Math.min(...pivots);
       const maxTs = Math.max(...pivots);
       try {
-        const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
+        // 事件标记（CONTROL_KINDS）不是对话内容：不带出，也不占前后 N 条的名额
+        const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs, undefined, [
+          ...CONTROL_KINDS,
+        ]);
         signal?.throwIfAborted();
         const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
         const idxByPivot = new Map<number, number>();
@@ -995,7 +1004,6 @@ async function run(caps: Caps): Promise<void> {
               for (let i = start; i < end; i++) {
                 const m = sorted[i];
                 if (!m.content) continue;
-                if (m.kind === WellKnownKinds.EventMarker) continue;
                 // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出。命中点本身不在此列：
                 // 在这里跳过，下面的兜底会按向量元数据把它补成 user 行
                 if (i !== idx && DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
@@ -1192,7 +1200,6 @@ async function run(caps: Caps): Promise<void> {
                 if (i === idx) continue; // 命中本身不重复
                 const m = sorted[i];
                 if (!m.content) continue;
-                if (m.kind === WellKnownKinds.EventMarker) continue;
                 // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出
                 if (DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
                 ctxArr.push({

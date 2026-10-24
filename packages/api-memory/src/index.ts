@@ -66,12 +66,17 @@ export type MetadataOp =
  */
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
-  /** 最近 limit 条活跃（未归档）消息 */
+  /**
+   * 最近 limit 条活跃（未归档）对话消息，按时间升序（同毫秒按写入序）。条数只数对话消息：schema-message 的 CONTROL_KINDS
+   * （回合记录、压缩分隔线这类事件标记）不发给模型，不占条数。读出的是第 limit+1 新的那条对话消息之后的全部活跃消息，夹在
+   * 其间的标记一并带回；对话消息不超过 limit 条时是全部活跃消息
+   */
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
   /**
    * 归档一段：把最早的 count 条活跃消息（顺序与 getHistory 相同：时间，同毫秒按写入序；inmemory 只按写入序，假定时间戳
    * 随写入递增）标为归档，其中 keep 列出的位置（这一段里从 0 数的下标）不归档、原样留在活跃历史里；返回归档条数。
+   * count 与 keep 按位置数，事件标记也占位置（与按条数读不同），即 getHistory(sessionId, Infinity) 里的位置。
    *
    * - count 与 keep 的元素都是非负整数（调用方保证），count 为 0 时什么都不归档；大于活跃条数时这一段就是全部活跃消息。
    *   keep 里落在这一段之外的下标不起作用，重复的下标与一个相同。
@@ -101,9 +106,9 @@ export interface MemoryService {
    * 中间件自行清理（后端不知道哪个命名空间属于哪一层，一并删掉会连带清掉用户没选的类型）。
    */
   clearAll?(): Promise<void>;
-  /** 获取完整历史（含已归档消息），用于 UI 展示 */
+  /** 获取完整历史（含已归档消息），用于 UI 展示：最近 limit 条，事件标记也占条数（界面要画它们） */
   getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
-  /** 活跃（未归档）消息的条数，与 getHistory(sessionId, Infinity) 的长度相同 */
+  /** 活跃（未归档）对话消息的条数，与 getHistory 按条数读同一口径：getHistory(sessionId, Infinity) 里不属于 CONTROL_KINDS 的条数 */
   countHistory?(sessionId: string): Promise<number>;
 
   // ----- 范围查询（供向量检索的上下文窗口扩展使用） -----
@@ -369,7 +374,7 @@ export interface CompressionUsage {
   compressible: number;
   /** 经过了硬裁剪：到了丢内容的地步 */
   trimmed: boolean;
-  /** 会话历史的条数 */
+  /** 会话历史的条数，只数对话消息（同 countHistory） */
   historyMessages: number;
 }
 
@@ -401,8 +406,8 @@ export function compressionLine(
  * 再大也不会让它空转。
  * compressAt 缺省或为 0 时这一维不判，被硬裁剪过也一样。
  *
- * 条数一维：会话历史的条数到条数线时该压缩；压完只剩挑中的原文、切分点之后的几条与分隔标记，挑中的原文只留到三者合计不超过
- * 条数线的一半（向下取整）为止，一般要再积累条数线的一半左右才会再到线
+ * 条数一维：会话历史的条数（只数对话消息）到条数线时该压缩；压完只剩挑中的原文、切分点之后的几条与分隔标记，挑中的原文只留到
+ * 它与切分点之后的对话消息合计不超过条数线的一半（向下取整）为止，一般要再积累条数线的一半左右才会再到线
  */
 export function compressionDue(usage: CompressionUsage, lines: CompressionLines): boolean {
   if (lines.historyLimit && usage.historyMessages >= lines.historyLimit) return true;

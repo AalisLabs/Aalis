@@ -11,7 +11,7 @@ import {
   readHistory,
 } from '../../packages/plugin-agent/src/helpers.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import { CONTROL_KINDS, type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
   it('同一天也用绝对日期（相对表述会在零点全体翻转，打穿前缀缓存）', () => {
@@ -67,15 +67,19 @@ describe('readHistory', () => {
     list[10] = { role: 'tool', content: 'ok', toolCallId: call.id, timestamp: 1010 };
     return list;
   };
-  /** 记下 getHistory 收到的条数；counts 为假时后端不带 countHistory */
+  /**
+   * 照契约按条数读的后端：只数对话消息，读出第 limit+1 新的那条对话消息之后的全部。记下 getHistory 收到的条数；counts 为假时
+   * 不带 countHistory
+   */
   function store(messages: Message[], counts: boolean) {
     const limits: number[] = [];
+    const said = messages.flatMap((m, i) => (CONTROL_KINDS.includes(m.kind ?? '') ? [] : [i]));
     const memory: Pick<MemoryService, 'getHistory' | 'countHistory'> = {
       getHistory: async (_sessionId, limit = 50) => {
         limits.push(limit);
-        return messages.slice(-limit);
+        return messages.slice((said[said.length - limit - 1] ?? -1) + 1);
       },
-      ...(counts ? { countHistory: async () => messages.length } : {}),
+      ...(counts ? { countHistory: async () => said.length } : {}),
     };
     return { memory, limits };
   }
@@ -89,6 +93,21 @@ describe('readHistory', () => {
     expect(await readHistory(counted.memory, 's', 20)).toEqual(expected);
     expect(await readHistory(plain.memory, 's', 20)).toEqual(expected);
     expect([counted.limits, plain.limits]).toEqual([[15], [Infinity]]);
+  });
+
+  it('只数对话消息：没有 countHistory 时读全部再从起点那条对话消息之后切，与按条数读的同一段', async () => {
+    // 25 条用户消息，m0、m3、m6……之后各跟一条事件标记
+    const list = users(25).flatMap((m, i): Message[] =>
+      i % 3 === 0
+        ? [m, { role: 'system', kind: WellKnownKinds.EventMarker, content: '', timestamp: m.timestamp }]
+        : [m],
+    );
+    // 对话消息 25 条，条数线 20、半条线 10：丢掉最早的 10 条对话消息（到 m9 为止），m9 之前的标记随之丢掉，m9 之后那条留下
+    const expected = { count: 25, messages: list.slice(list.findIndex(m => m.content === 'm9') + 1) };
+    expect(expected.messages[0].kind).toBe(WellKnownKinds.EventMarker);
+
+    expect(await readHistory(store(list, true).memory, 's', 20)).toEqual(expected);
+    expect(await readHistory(store(list, false).memory, 's', 20)).toEqual(expected);
   });
 
   it('起点落在工具调用组中间时去掉开头连续的工具结果（组首在起点之前，已一起丢掉）', async () => {

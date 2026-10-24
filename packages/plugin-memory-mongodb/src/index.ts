@@ -20,7 +20,7 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { CONTROL_KINDS, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { type Collection, type Db, type FindCursor, MongoClient } from 'mongodb';
 
 const configSchema = defineConfig({
@@ -121,6 +121,9 @@ async function limited<T>(cursor: FindCursor<T>, limit: number): Promise<T[]> {
   return (limit === Infinity ? cursor : cursor.limit(limit)).toArray();
 }
 
+/** 对话消息：kind 不属于 CONTROL_KINDS（没有 kind 的也算，$nin 不排除缺这个字段的文档） */
+const SAID = { kind: { $nin: [...CONTROL_KINDS] } };
+
 /** @internal 只为测试导出：以替身集合直接构造（经 apply 会连真实的 mongod），不是公开 API */
 export class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
@@ -175,19 +178,42 @@ export class MongoMemoryService implements MemoryService {
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    // 条数为 0 时为空，不带最后一条对话消息之后的标记
+    if (limit === 0) return [];
+    const active = { sessionId, archived: { $ne: true } };
+    // 只数对话消息：读出第 limit+1 新的那条对话消息之后的全部，夹在其间的标记一并带回；没有这一条（不超过 limit 条）时是全部
+    const [before] =
+      limit === Infinity
+        ? []
+        : await this.collection
+            .find({ ...active, ...SAID })
+            .sort({ timestamp: -1, _id: -1 })
+            .skip(limit)
+            .limit(1)
+            .toArray();
     // sort 必须带 _id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
     // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
     // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。_id 单调递增即插入序。
-    const docs = await limited(
-      this.collection.find({ sessionId, archived: { $ne: true } }).sort({ timestamp: -1, _id: -1 }),
-      limit,
-    );
+    const docs = await this.collection
+      .find(
+        before
+          ? {
+              ...active,
+              $or: [
+                { timestamp: { $gt: before.timestamp } },
+                { timestamp: before.timestamp, _id: { $gt: before._id } },
+              ],
+            }
+          : active,
+      )
+      .sort({ timestamp: -1, _id: -1 })
+      .toArray();
     docs.reverse();
     return docs.map(doc => this.docToMessage(doc));
   }
 
   async countHistory(sessionId: string): Promise<number> {
-    return this.collection.countDocuments({ sessionId, archived: { $ne: true } });
+    return this.collection.countDocuments({ sessionId, archived: { $ne: true }, ...SAID });
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {

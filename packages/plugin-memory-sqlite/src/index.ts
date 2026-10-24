@@ -21,7 +21,7 @@ import {
   provide,
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type ContentSegment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { CONTROL_KINDS, type ContentSegment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 /** 配置的 path 归一为 storage URI；留空按实例派生：主实例 data:/aalis.db，`name:b` 实例 data:/aalis-b.db */
 function toUri(input: string, instanceId: string): string {
@@ -56,6 +56,12 @@ function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
 
 /** LIMIT 绑不了 Infinity，取负数即不限条数 */
 const sqlLimit = (limit: number) => (limit === Infinity ? -1 : limit);
+
+/** kind 不在 kinds 里（kind 为 NULL 不被排除，与 MongoDB $nin 一致的保守语义）；占位符按 kinds 依次绑定 */
+const kindNotIn = (kinds: readonly string[]) => `(kind IS NULL OR kind NOT IN (${kinds.map(() => '?').join(',')}))`;
+
+/** 对话消息：kind 不属于 CONTROL_KINDS；占位符按 CONTROL_KINDS 依次绑定 */
+const SAID = kindNotIn(CONTROL_KINDS);
 
 const configSchema = defineConfig({
   path: {
@@ -201,26 +207,36 @@ export class SQLiteMemoryService implements MemoryService {
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    // 条数为 0 时为空，不带最后一条对话消息之后的标记
+    if (limit === 0) return [];
+    // 只数对话消息：读出第 limit+1 新的那条对话消息之后的全部，夹在其间的标记一并带回；没有这一条（不超过 limit 条）时是全部。
     // ORDER BY 必须带 id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
     // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
     // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。id 自增即插入序。
+    const before =
+      limit === Infinity
+        ? undefined
+        : (this.db
+            .prepare(
+              `SELECT timestamp, id FROM messages WHERE sessionId = ? AND archived = 0 AND ${SAID}
+               ORDER BY timestamp DESC, id DESC LIMIT 1 OFFSET ?`,
+            )
+            .get(sessionId, ...CONTROL_KINDS, limit) as { timestamp: number; id: number } | undefined);
     const stmt = this.db.prepare(`
       SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
-      FROM (
-        SELECT id, role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
-        FROM messages
-        WHERE sessionId = ? AND archived = 0
-        ORDER BY timestamp DESC, id DESC
-        LIMIT ?
-      ) sub ORDER BY timestamp ASC, id ASC
+      FROM messages
+      WHERE sessionId = ? AND archived = 0${before ? ' AND (timestamp, id) > (?, ?)' : ''}
+      ORDER BY timestamp ASC, id ASC
     `);
-    const rows = stmt.all(sessionId, sqlLimit(limit)) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
+    const rows = stmt.all(sessionId, ...(before ? [before.timestamp, before.id] : [])) as Array<
+      Parameters<typeof SQLiteMemoryService.rowToMessage>[0]
+    >;
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
   async countHistory(sessionId: string): Promise<number> {
-    const stmt = this.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE sessionId = ? AND archived = 0');
-    return (stmt.get(sessionId) as { n: number }).n;
+    const stmt = this.db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE sessionId = ? AND archived = 0 AND ${SAID}`);
+    return (stmt.get(sessionId, ...CONTROL_KINDS) as { n: number }).n;
   }
 
   async clearSession(sessionId: string): Promise<void> {
@@ -244,8 +260,7 @@ export class SQLiteMemoryService implements MemoryService {
       params.push(...roles);
     }
     if (excludeKinds && excludeKinds.length > 0) {
-      // kind 为 NULL 不被排除（与 MongoDB $nin 一致的保守语义）
-      sql += ` AND (kind IS NULL OR kind NOT IN (${excludeKinds.map(() => '?').join(',')}))`;
+      sql += ` AND ${kindNotIn(excludeKinds)}`;
       params.push(...excludeKinds);
     }
     sql += ' ORDER BY timestamp ASC LIMIT ?';
@@ -274,7 +289,7 @@ export class SQLiteMemoryService implements MemoryService {
       params.push(...query.kinds);
     }
     if (query.excludeKinds && query.excludeKinds.length > 0) {
-      sql += ` AND (kind IS NULL OR kind NOT IN (${query.excludeKinds.map(() => '?').join(',')}))`;
+      sql += ` AND ${kindNotIn(query.excludeKinds)}`;
       params.push(...query.excludeKinds);
     }
     if (typeof query.sinceTs === 'number') {
