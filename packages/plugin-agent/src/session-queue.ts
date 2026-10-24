@@ -5,9 +5,8 @@
 // 后取队首：队首是真人消息时队里的真人消息一起开下一轮，队首是带来源的注入时只开它。开下一轮的是这一批里入队最早那条的调用，
 // 回合跑在它的异步上下文里（注入方据此认出自己那一轮），其余各条等这一轮结束。停一轮可以连同排队与待插入的一起放掉；放掉的
 // 在这个会话在跑的一轮落定之后由 agent 按先后归档（要归档的才归档），agent 在一个会话里的写入因此不交错。一轮被停下即不再收
-// 输入。retire 时还在逐条处理的输入，之后交给通道时以放掉落定（什么时候 retire 由 agent 定，见它的 sessionDeleted）；关闭（停机）
-// 之后入队的同样以放掉落定。按住的会话（清消息历史期间）要交给通道的输入等放开再交。等候的集合（排队与待插入的）变了时报给
-// onWaiting。
+// 输入。关闭（停机）之后入队的以放掉落定（要归档）。按住的会话（清消息历史期间）要交给通道的输入等放开再交。等候的集合（排队
+// 与待插入的）变了时报给 onWaiting。
 // ============================================================
 
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -36,12 +35,6 @@ export interface Turn {
   reason?: string;
 }
 
-/** 一条正在逐条处理、还没交给通道的输入：这期间它的会话被删，交给通道时放掉 */
-interface Admission {
-  readonly sessionId: string;
-  deleted: boolean;
-}
-
 /** 通道里一轮的状态 */
 interface Running {
   readonly turn: Turn;
@@ -67,40 +60,22 @@ interface Channel {
   dropped: Array<{ entry: Entry; archive: boolean }>;
 }
 
-/** 一条输入交给通道之后去哪：开轮、待插入、排队，或放掉（archive 为要不要归档） */
+/** 一条输入交给通道之后去哪：开轮、待插入、排队，或放掉（已关闭时，要归档） */
 export type Placement =
   | { route: 'open'; turn: Turn }
   | { route: 'join' | 'queue'; ready: Promise<Turn | undefined> }
-  | { route: 'drop'; archive: boolean };
+  | { route: 'drop' };
 
 const bySeq = (a: Entry, b: Entry) => a.seq - b.seq;
 
 export class SessionQueues {
   readonly #channels = new Map<string, Channel>();
-  /** 正在逐条处理的输入，按会话：只记在处理中的，处理完即删 */
-  readonly #admitted = new Map<string, Set<Admission>>();
   /** 按住的范围：sessions 不给即全部会话，放开时 released 落定 */
   readonly #holds = new Set<{ readonly sessions?: ReadonlySet<string>; readonly released: Promise<void> }>();
   #seq = 0;
   #closed = false;
 
   constructor(private readonly onWaiting: (sessionId: string, waiting: readonly IncomingMessage[]) => void) {}
-
-  /** 一条输入开始逐条处理：处理完（交给通道或被丢掉）时 {@link leave} */
-  admit(sessionId: string): Admission {
-    const admission: Admission = { sessionId, deleted: false };
-    const admitted = this.#admitted.get(sessionId);
-    if (admitted) admitted.add(admission);
-    else this.#admitted.set(sessionId, new Set([admission]));
-    return admission;
-  }
-
-  /** 这条输入处理完了 */
-  leave(admission: Admission): void {
-    const admitted = this.#admitted.get(admission.sessionId);
-    admitted?.delete(admission);
-    if (admitted?.size === 0) this.#admitted.delete(admission.sessionId);
-  }
 
   /**
    * 按住这些会话（不给即全部会话），直到调用返回的函数：这期间要交给通道的输入在 {@link held} 等着，放开之后再交。清消息历史
@@ -123,13 +98,11 @@ export class SessionQueues {
   }
 
   /**
-   * 交一条已过逐条处理的输入。已关闭或处理期间会话被删时放掉（关闭的要归档，删除的不归档）；会话空闲时由这次调用开轮；在跑的
-   * 一轮由真人消息开、还收输入，这条也是真人消息时待插入；其余排队。待插入与排队的 ready 在它所在的一轮结束、或被放掉时
-   * 交出 undefined，轮到它开轮时交出那一轮
+   * 交一条已过逐条处理的输入。已关闭时放掉（要归档）；会话空闲时由这次调用开轮；在跑的一轮由真人消息开、还收输入，这条也是
+   * 真人消息时待插入；其余排队。待插入与排队的 ready 在它所在的一轮结束、或被放掉时交出 undefined，轮到它开轮时交出那一轮
    */
-  place(message: IncomingMessage, admission: Admission): Placement {
-    if (this.#closed) return { route: 'drop', archive: true };
-    if (admission.deleted) return { route: 'drop', archive: false };
+  place(message: IncomingMessage): Placement {
+    if (this.#closed) return { route: 'drop' };
     const channel = this.#channelOf(message.sessionId);
     let wake!: Entry['wake'];
     const ready = new Promise<Turn | undefined>(resolve => (wake = resolve));
@@ -235,11 +208,6 @@ export class SessionQueues {
   stopAll(sessionIds: readonly string[], options: { archive: boolean; reason: string }): Promise<void> {
     for (const sessionId of sessionIds) this.stop(sessionId, { ...options, queued: true });
     return Promise.all(sessionIds.map(sessionId => this.settled(sessionId))).then(() => undefined);
-  }
-
-  /** 会话删除：此刻正在逐条处理的输入之后交给通道时放掉（不归档） */
-  retire(sessionId: string): void {
-    for (const admission of this.#admitted.get(sessionId) ?? []) admission.deleted = true;
   }
 
   /** 关闭（停机）：之后入队的一律放掉；停下全部在跑的一轮、放掉全部排队项（都归档），返回它们都落定的 Promise */

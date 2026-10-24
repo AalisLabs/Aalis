@@ -91,7 +91,7 @@ interface Turn {
 async function boot(
   opts: {
     decide?: (request: ChatModelRequest, n: number) => ChatResponse;
-    /** 会话管理的替身：会话记录按 id 现造 */
+    /** 会话管理的替身：会话记录按 id 现造，代号由 deleteSession 换 */
     sessions?: boolean;
     /** 装在 agent 之前的插件 */
     before?: (app: App) => Promise<void>;
@@ -106,10 +106,12 @@ async function boot(
   await registerHubs(app);
   const model = new StepModel(opts.decide ?? ((_request, n) => ({ content: `回${n}` })));
   const host = app.bind({ provide, events, hooks, agent: agentService, memory, tools, services });
+  const generations = new Map<string, number>();
   if (opts.sessions) {
     host.provide.use(sessionManager, {
       getSession: (id: string) => sessionInfoOf(id),
       recordInbound: async () => {},
+      generationOf: (id: string) => generations.get(id) ?? 0,
     } as unknown as SessionManagerService);
   }
   await app.plugin(stepModelPlugin(model));
@@ -178,6 +180,11 @@ async function boot(
         source: `bg:${id}`,
         hostNotice: { kind: 'background', id },
       }),
+    /** 会话管理的替身删会话（不经 clearing）：开始删除时换这个会话的代号，再发 session:deleted */
+    async deleteSession(sessionId: string) {
+      generations.set(sessionId, (generations.get(sessionId) ?? 0) + 1);
+      await host.events.use.emit('session:deleted', sessionId);
+    },
     history: (sessionId: string) => host.memory.use.getHistory(sessionId, 100),
   };
 }
@@ -674,6 +681,7 @@ describe('能停下一轮的', () => {
         getSession: (id: string) => sessionInfoOf(id, id === child ? WEBUI.sessionId : undefined),
         listSessions: () => [],
         recordInbound: async () => {},
+        generationOf: () => 0,
       } as unknown as SessionManagerService,
       { priority: 1000 },
     );
@@ -774,9 +782,12 @@ describe('能停下一轮的', () => {
     expect(archived.slice(0, 4)).toEqual(['<甲>', '结局 aborted', '<乙>', '<通知>']);
   });
 
-  it('会话删除：在跑的一轮停下、排队项放掉不归档，删除等它落定；删除之前进来、之后才完成逐条处理的那条不开轮、不归档；之后同一 id 再来的消息照常开轮', async () => {
+  it('会话删除（会话管理换代号再发 session:deleted，不经 clearing）：在跑的一轮停下、排队项放掉不归档，删除等它落定；删除之前进来、之后才完成逐条处理的那条不开轮、不归档；之后同一 id 再来的消息照常开轮', async () => {
     const late = deferred();
-    const s = await boot({ after: app => app.plugin(slowPreprocessor('<丁>', late.promise)).then(() => undefined) });
+    const s = await boot({
+      sessions: true,
+      after: app => app.plugin(slowPreprocessor('<丁>', late.promise)).then(() => undefined),
+    });
     const held = s.model.hold(1);
     const a = s.say(WEBUI, '<甲>');
     await held.entered;
@@ -784,7 +795,7 @@ describe('能停下一轮的', () => {
     const x = s.notice(WEBUI.sessionId, '<通知>');
     const d = s.say(WEBUI, '<丁>');
     await settle();
-    await s.host.events.use.emit('session:deleted', WEBUI.sessionId);
+    await s.deleteSession(WEBUI.sessionId);
     expect(s.outcomes(), '删除等在跑的一轮落定').toEqual([['<甲>', 'aborted']]);
     late.resolve();
     await Promise.all([a, b, x, d]);

@@ -33,14 +33,13 @@ export async function command(app: App, sessionId: string, line: string): Promis
 }
 
 /**
- * 删除或清理的一段里挂住一家：只听 session:deleted 的一家（收到就挂住），或先清再调 next 的一家清理（如人设、检查点）。when 按
- * 会话 id 判这一次挂不挂（清全部会话时没有 id），缺省都挂。entered 在它挂住时落定，release 之后放行
+ * 删除或清理的一段里挂住一家：只听 session:deleted 的一家（收到就挂住），或先清再调 next 的一家清理（如人设、检查点）。entered
+ * 在它第一次挂住时落定，release 之后放行（之后的不再挂）
  */
-export function hanging(on: 'session:deleted' | 'memory:clear', when: (sessionId?: string) => boolean = () => true) {
+export function hanging(on: 'session:deleted' | 'memory:clear') {
   const entered = deferred();
   const gate = deferred();
-  const hang = async (sessionId?: string) => {
-    if (!when(sessionId)) return;
+  const hang = async () => {
     entered.resolve();
     await gate.promise;
   };
@@ -50,8 +49,8 @@ export function hanging(on: 'session:deleted' | 'memory:clear', when: (sessionId
     apply: caps => {
       if (on === 'session:deleted') caps.events.use.on('session:deleted', hang);
       else
-        caps.hooks.use.middleware('memory:clear', async (data, next) => {
-          await hang(data.sessionId);
+        caps.hooks.use.middleware('memory:clear', async (_data, next) => {
+          await hang();
           await next();
         });
     },

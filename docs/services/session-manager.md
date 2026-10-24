@@ -35,6 +35,8 @@ ensureSession(id: string, patch?: SessionUpdates, creation?: { createdFrom: stri
 deleteSession(id: string): Promise<void>;            // 连同各级子会话：先发 session:deleted，再清数据（§2.5）
 // 原生入站的收录与补记，可等待（§6.6）
 recordInbound(message: IncomingMessage): Promise<void>;
+// 这个会话此刻的代号：开始删除时换，删过的 id 不换回去；网关与 agent 按它认出删除之前的一代（§2.5）
+generationOf(sessionId: string): number;
 
 // 取别的会话的东西（§2.8）：同步，不抛错。消费方经契约的 takeFrom 调
 canTake(currentId: string, targetId: string, principal?: { platform: string; userId: string }): TakeVerdict;
@@ -127,7 +129,7 @@ interface SessionInfo {
 
 - **收录**：`recordInbound(message)` 是原生入站的收录与补记（§6.6），可等待。网关在入站相位之前、会话管理在场时等它，所以指令、回复策略、agent、记忆、人设、工具等读取方看到的都是已收录、带聊天窗口的会话；新房间的第一条消息因此多等一次认领查询，已收录的房间不等。这个会话正在删除时先等删除做完。
 - **空记录**：`isUnfiled(root)` 判根会话是不是按 id 兜底建档留下的空记录（没有出生平台、创建来源与绑定）。会话设置对空记录不取场所层；会话协议的会话摘要对它不给场所；`placeOf` 对它照旧回默认工作区。参考实现、plugin-cli 与会话设置都用这一个判定。
-- **删除**：`deleteSession(id)` 连同下面各级子会话删除，先从表里摘掉，再发 `session:deleted`、经 `memory:clear`（范围 `session`）清它的消息历史与各插件按会话存的数据。`session:deleted` 的监听方在这里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清，回合中途落库的几条不会留在已删会话的归档里。发事件与清数据一起经 agent 的 `clearing` 包住：发事件之前就停下这个会话的回合并等它收尾（没有时限：不响应中止的工具会让删除一直等到它返回），按住到清完；别的监听方（临时区、上传文件、时间线）按激活顺序跑，这时回合已经停下。删除期间到的同一会话的消息怎么处理（新的一代与旧的一代）见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`。
+- **删除**：`deleteSession(id)` 连同下面各级子会话删除，先从表里摘掉，再发 `session:deleted`、经 `memory:clear`（范围 `session`）清它的消息历史与各插件按会话存的数据。`session:deleted` 的监听方在这里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清，回合中途落库的几条不会留在已删会话的归档里。摘掉之后整个删除（先删各级子会话，再发事件、清数据）经 agent 的 `clearing` 包住：删子会话之前就停下这个会话的回合并等它收尾（没有时限：不响应中止的工具会让删除一直等到它返回），按住到清完；别的监听方（临时区、上传文件、时间线）按激活顺序跑，这时回合已经停下。摘掉的同一步换这个会话的代号（`generationOf`），网关与 agent 交出去之前比它放掉删除之前的一代；删除期间到的同一会话的消息怎么处理（新的一代与旧的一代）见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`。
 - **清空连带删除子会话**：一个会话的消息历史被清空（`memory:clear` 没指定类型或类型含 `context`，且消息历史那一行清成功，按 api-memory 的 `historyCleared` 判）时，参考实现在 `next()` 之后删除它的子会话：范围为 `session` 删这个会话的，为 `all` 删全部子会话。只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。plugin-commands 的 `/clear` 回执据此多一行「已删除 N 个子会话」。
 
 ### 2.6 来源字段、创建来源、所属工作区、绑定与房间类别
@@ -195,8 +197,8 @@ interface SessionInfo {
 | 消费方 | 用法 | file:line |
 | --- | --- | --- |
 | `plugin-session-settings` | 场所层与本会话层的值存在场所与会话记录的 `metadata` 里（`listPlaces`、`updatePlace`、`updateSession`），按 `placeOf` 与 `isUnfiled` 定一个会话取哪几层；在会话管理收录不了的会话上写本会话层时先 `ensureSession` 建档；听 `session:created`、`session:deleted` 推设置变化 | `plugin-session-settings/src/provider.ts` |
-| `plugin-gateway` | 入站相位之前等 `recordInbound`；按 `getSession` 与 `roomClass` 判目标会话的房间类别，`owner-only` 的跳过触发与流控两个相位（结构性放行；可选依赖，缺席时全部照常走） | `plugin-gateway/src/index.ts` |
-| `plugin-agent` | 按 `getSession` 判会话与它的根会话；`session:deleted` 时中止这个会话的回合并等它收尾（§2.5） | `plugin-agent/src/index.ts` |
+| `plugin-gateway` | 入站相位之前等 `recordInbound`，之后记下 `generationOf`、交给 agent 之前再比（§2.5）；按 `getSession` 与 `roomClass` 判目标会话的房间类别，`owner-only` 的跳过触发与流控两个相位（结构性放行；可选依赖，缺席时全部照常走） | `plugin-gateway/src/index.ts` |
+| `plugin-agent` | 按 `getSession` 判会话与它的根会话；`session:deleted` 时中止这个会话的回合并等它收尾；`handleMessage` 入口记下 `generationOf`、交给通道之前再比（§2.5） | `plugin-agent/src/index.ts` |
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, metadata })` 派发子任务（metadata 里是会话设置的 `childMetadata`）；`agent:turn:after` 里 `completeSession()` 回报父会话；按 `status` 与 `lastTurn` 报子任务的状态，交回结果后闲置到期 `deleteSession()` | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表与增删改：`listSessions`、`createSession`、`updateSession`、`deleteSession`，摘要的场所取 `placeOf`、`getPlace`（空记录不给，§2.5），分区按 `kind`（§2.2） | `plugin-session-server/src/sessions.ts` |
 | `plugin-memory-summary` | 选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时用工作模板） | `plugin-memory-summary/src/index.ts` |
@@ -210,16 +212,17 @@ interface SessionInfo {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期、场所与会话树。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史、按 id 取消息与取别的会话的媒体都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `generationOf` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史、按 id 取消息与取别的会话的媒体都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **必须复刻的语义**：
 
 - `metadata` 合并式改（顶层键整键替换），会话与场所两种记录都随记录落盘：会话设置的场所层与本会话层存在这里，丢了就丢了设置。
 - `deleteSession` 先发 `session:deleted` 再清数据，agent 才能在清之前停掉在跑的回合（§2.5）。
 - `recordInbound` 在建档或补记落定之后才兑现：网关等它，入站管道里的读取方按已收录的会话取设置。
+- `generationOf` 在开始删除的同一步换值，删过的 ID 一直不换回去（§2.5）：不换的话，删除之前已收录、还在半路上的消息在删完之后照常回复，记进已删的会话（IM 房间重新建档后带进新房间）。同一步起到删完，`recordInbound` 让同一会话的入站等删除做完（带子会话的从删子会话之前起）：不等的话，删除期间到的消息按新的一代开轮，随后被这次删除停下、清掉。
 - `canTake` 判不出时拒绝（§2.8）：会话表里没有的、空记录与判不出窗口的根会话之间不跨会话取用。
 
-下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化；取别的会话只放行同一棵会话树：
+下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化，删除也不交给 agent 的 `clearing`（删子会话期间这个会话的回合照常跑，到它自己的 `session:deleted` 才停）；取别的会话只放行同一棵会话树：
 
 ```ts
 import { windowKey } from '@aalis/api-gateway';
@@ -239,12 +242,17 @@ import {
   type TakeVerdict,
 } from '@aalis/api-session-manager';
 import { type Events, definePlugin, events, hooks, logger, provide } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 const DEFAULT_PLACE: PlaceInfo = { kind: 'workspace', key: 'workspace:default' };
 
 class MySessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private places = new Map<string, PlaceInfo>([[DEFAULT_PLACE.key, { ...DEFAULT_PLACE }]]);
+  /** 各会话开始删除的次数（代号）：只记删过的 id，一直留着 */
+  private generations = new Map<string, number>();
+  /** 正在删除的会话：删完时兑现，这期间到的入站在 recordInbound 里等它 */
+  private removing = new Map<string, Promise<void>>();
   constructor(
     private events: Events,
     private clear: (sessionId: string) => Promise<void>,
@@ -308,17 +316,30 @@ class MySessionManager implements SessionManagerService {
     await this.events.emit('session:created', s);
     return s;
   }
-  /** 先摘掉、发事件（监听方停掉在跑的回合），再清数据；子会话一并删 */
+  /** 先摘掉、换代号、让新来的入站等着，再删子会话、发事件（监听方停掉在跑的回合），最后清数据 */
   async deleteSession(id: string) {
     const s = this.sessions.get(id);
     if (!s) return;
-    for (const child of [...s.children]) await this.deleteSession(child);
     this.sessions.delete(id);
-    await this.events.emit('session:deleted', id);
-    await this.clear(id);
+    this.generations.set(id, this.generationOf(id) + 1);
+    let done!: () => void;
+    this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
+    try {
+      for (const child of [...s.children]) await this.deleteSession(child);
+      await this.events.emit('session:deleted', id);
+      await this.clear(id);
+    } finally {
+      this.removing.delete(id);
+      done();
+    }
   }
-  /** 这个骨架不收录 IM 房间：会话都由 createSession、ensureSession 建 */
-  async recordInbound() {}
+  /** 这个骨架不收录 IM 房间（会话都由 createSession、ensureSession 建），只在这个会话删除期间等删除做完 */
+  async recordInbound({ sessionId }: IncomingMessage) {
+    await this.removing.get(sessionId);
+  }
+  generationOf(id: string) {
+    return this.generations.get(id) ?? 0;
+  }
   /** 只放行同一棵会话树，别的一律判不出（比 §2.8 窄） */
   canTake(currentId: string, targetId: string): TakeVerdict {
     const lookup = (id: string) => this.sessions.get(id);

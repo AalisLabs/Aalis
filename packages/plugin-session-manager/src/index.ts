@@ -175,8 +175,13 @@ class SessionManager implements SessionManagerService {
   private readonly warned = new Set<string>();
   /** 正在收录或补记的会话：同一会话并发的原生入站共用这一次 */
   private readonly recording = new Map<string, Promise<void>>();
-  /** 正在删除的会话（发 session:deleted 到清完数据），删除做完时兑现：这期间到的同一会话的入站等它（见 recordInbound） */
+  /** 正在删除的会话（从摘掉、删子会话之前起，到清完数据），删除做完时兑现：这期间到的同一会话的入站等它（见 recordInbound） */
   private readonly removing = new Map<string, Promise<void>>();
+  /**
+   * 各会话的代号（generationOf）：开始删除的次数，在 remove 里加一，没删过的为 0。只记删过的 id，一直留着（之后同一 id 再建档
+   * 也不换回去，半路上删除之前的一代才认得出来），每个删过的 id 占一项；随这次激活，会话管理重新激活时清空
+   */
+  private readonly generations = new Map<string, number>();
   /**
    * 在飞的回合：turnId → 所在会话与这一轮的结局（出错时带原因）。agent:turn:before 进出登记与注销，结局由
    * agent:turn:after 记下（被拦下的一轮不发它，没有结局）。第一方 agent 同一会话一轮接一轮，契约不限别的实现在同一会话并行几轮，
@@ -481,7 +486,8 @@ class SessionManager implements SessionManagerService {
    * 不回退到昵称）。没有名字时由后到的原生入站补上，起过的名字不动；补记不成、仍没有聊天窗口的记录判不出该取哪个，不补。
    * 场所是窗口的同时建窗口的场所记录，它的显示名随出生平台的入站更新（owner 的 IM 私聊在默认工作区，不建）。
    * 已登记、还没记下所属实例的房间，每条真人入站都再解析一次，认领到就补记。不会拒绝：收录失败只告警。
-   * 这个会话正在删除时（带 source 的也一样）先等删除做完：删除期间到的是新的一代，不被这次删除停下、清掉
+   * 这个会话正在删除时（带 source 的也一样）先等删除做完，问认领者的期间开始删除的同样等删完再从头问：删除期间到的是新的
+   * 一代，不被这次删除停下、清掉
    */
   recordInbound(msg: IncomingMessage): Promise<void> {
     const { sessionId } = msg;
@@ -500,6 +506,10 @@ class SessionManager implements SessionManagerService {
       .finally(() => this.recording.delete(sessionId));
     this.recording.set(sessionId, recording);
     return recording;
+  }
+
+  generationOf(sessionId: string): number {
+    return this.generations.get(sessionId) ?? 0;
   }
 
   /** 不经这条入站收录或补记的会话：子会话（没有窗口），有聊天窗口、创建来源或绑定的，与出生平台不是消息平台的 */
@@ -527,6 +537,9 @@ class SessionManager implements SessionManagerService {
   private async record(msg: IncomingMessage): Promise<void> {
     const { sessionId } = msg;
     const claimants = await claimantsOf(this.caps.platform, sessionId, this.caps.logger.use);
+    // 问的期间开始删除这个会话的，与入口同一条规则：等删除做完再从头问
+    const removing = this.removing.get(sessionId);
+    if (removing) return removing.then(() => this.record(msg));
     const session = this.sessions.get(sessionId);
     if (this.recorded(session, msg)) {
       this.noteRecorded(session, msg);
@@ -745,29 +758,27 @@ class SessionManager implements SessionManagerService {
     const session = this.sessions.get(id);
     if (!session) return 0;
 
-    // 递归删除所有子会话（含活跃子会话）
-    let removed = 1;
-    for (const childId of [...session.children]) removed += await this.remove(childId);
-
-    // 从父会话的 children 中移除：父会话的子会话列表变了，删除之后再给它发一次 session:updated
+    // 开始删除，同一步：从表里摘掉（父会话的子会话列表变了，删除之后再给它发一次 session:updated）、换代号。这之后到的同一会话的
+    // 入站等删除做完（见 recordInbound），是新的一代；这之前已收录、还在半路上的是旧的一代，网关与 agent 交出去之前比代号放掉、
+    // 不归档
     const parent = session.parentId ? this.sessions.get(session.parentId) : undefined;
     if (parent) {
       parent.children = parent.children.filter(c => c !== id);
       parent.updatedAt = Date.now();
     }
-
     this.sessions.delete(id);
     this.deleted[SESSIONS].set(id, Symbol(id));
     this.markDirty();
-
-    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西，清数据时就不会有中途写回来的。两步一起交给 agent 的 clearing：它先
-    // 按住这个会话、停下在跑的一轮并等它收尾，再跑这两步，按住到清完：删除期间才到 agent 的输入不开轮，不会回了话又被清掉。这两步
-    // 做完之前到的同一会话的入站等着（见 recordInbound），所以删除期间能到 agent 的都是删除开始之前已收录的旧一代，agent 放掉、
-    // 不归档
     let done!: () => void;
     this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
+    this.generations.set(id, this.generationOf(id) + 1);
+
+    // 整个删除交给 agent 的 clearing：它先按住这个会话、停下在跑的一轮并等它收尾，按住到清完，删子会话期间这个会话也不开轮。先删
+    // 各级子会话（含活跃子会话），再发事件、清数据：监听方在事件里停掉这个会话在跑的东西，清数据时就不会有中途写回来的
+    let removed = 1;
     try {
       const finish = async () => {
+        for (const childId of [...session.children]) removed += await this.remove(childId);
         await this.caps.events.use.emit('session:deleted', id);
         await this.clearDeletedSessionData(id);
       };

@@ -41,7 +41,11 @@ export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void
  *   不写回合记录时，历史里没有这一轮的结局与来源。
  */
 export interface AgentService {
-  /** 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉） */
+  /**
+   * 交一条入站消息；返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）。入口记下这个会话的代号
+   * （api-session-manager 的 generationOf），交给自己的通道之前（按住期间等着的放开之后）再取一次，变了的是会话删除之前的一代：
+   * 放掉、不归档
+   */
   handleMessage(message: IncomingMessage): Promise<void>;
   /**
    * 停下这个会话在跑的一轮。turnId 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；queued 为真时连同排队与待插入、
@@ -51,9 +55,8 @@ export interface AgentService {
   abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
   /**
    * 清这些会话（不给即全部会话）的消息历史时由发起清理的一方调，clear 是整条清理（memory:clear 链连同默认动作；会话管理删会话时
-   * 交来的先发 session:deleted 再跑这条链）：先停下在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 clear；从停下到
-   * clear 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。clear 之内删掉的会话不同：删除到 clear
-   * 结束才做完，这之前进来的输入是删除之前的一代，放掉、不归档，不看 session:deleted 各监听方的先后。停下与按住都在各家清理
+   * 交来的先删各级子会话、发 session:deleted，再跑这条链）：先停下在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑
+   * clear；从停下到 clear 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。停下与按住都在各家清理
    * 之外，不看它们的登记先后。实现者自己的 session:deleted 监听在这次按住之内被调起，不能等按住放开。reason 同 abort 的，只写进
    * 回合结束那一行日志
    */
