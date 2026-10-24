@@ -27,6 +27,7 @@ import type { Logger } from '@aalis/core';
 import { isTextRef, type TextRef } from '@aalis/schema-i18n';
 import {
   type ArchivedAttachment,
+  CONTROL_KINDS,
   type ContentSegment,
   groupToolCalls,
   type Message,
@@ -586,9 +587,12 @@ export async function readHistory(
 ): Promise<{ items: SessionItem[]; before?: string }> {
   const read = (n: number) =>
     memory.getFullHistory ? memory.getFullHistory(sessionId, n) : memory.getHistory(sessionId, n);
+  // 读回的条数按读法的口径数：getFullHistory 事件标记也占条数，兜底的 getHistory 只数对话消息（夹在其间的标记一并带回）
+  const counted = (stored: Message[]) =>
+    memory.getFullHistory ? stored.length : stored.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')).length;
   for (let want = page.limit + 1; ; want *= 2) {
     const stored = await read(want);
-    const exhausted = stored.length < want;
+    const exhausted = counted(stored) < want;
     const kept = stored.filter(wellFormed);
     const units = groupToolCalls(kept);
     const raw = units.flatMap(({ at }) => at.map(i => kept[i] as Message));
