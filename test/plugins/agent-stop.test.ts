@@ -30,7 +30,7 @@ import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 
 const STOPPED = '已停下这一轮';
 const IDLE = '没有在跑的一轮';
-const DENIED = '只有这一轮里说过话的人和 owner 能停';
+const DENIED = '只有参与这一轮的人和 owner 能停';
 const PROBE = 'zz_stop_probe';
 
 const OWNER_QQ = { platform: 'onebot', userId: '99999' };

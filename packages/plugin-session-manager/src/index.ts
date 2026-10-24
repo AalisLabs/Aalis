@@ -760,15 +760,18 @@ class SessionManager implements SessionManagerService {
     this.deleted[SESSIONS].set(id, Symbol(id));
     this.markDirty();
 
-    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西（如在飞的回合），清数据时就不会有回合中途写回来。这两步做完之前
-    // 到的同一会话的入站等着（见 recordInbound）；删除开始之前已过收录、清数据期间才到 agent 的，经 agent 的 clearing 按住到
-    // 清完，再作为新的一代开轮
+    // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西，清数据时就不会有中途写回来的。两步一起交给 agent 的 clearing：它先
+    // 按住这个会话、停下在跑的一轮并等它收尾，再跑这两步，按住到清完：删除期间才到 agent 的输入不开轮，不会回了话又被清掉（agent
+    // 收到事件时还没交给通道的是旧的一代，放掉；之后才到的清完再作为新的一代开轮）。这两步做完之前到的同一会话的入站等着（见
+    // recordInbound）
     let done!: () => void;
     this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
     try {
-      await this.caps.events.use.emit('session:deleted', id);
-      const clear = () => this.clearDeletedSessionData(id);
-      await (this.caps.agent.present ? this.caps.agent.use.clearing([id], clear) : clear());
+      const finish = async () => {
+        await this.caps.events.use.emit('session:deleted', id);
+        await this.clearDeletedSessionData(id);
+      };
+      await (this.caps.agent.present ? this.caps.agent.use.clearing([id], finish, '会话删除') : finish());
     } finally {
       this.removing.delete(id);
       done();

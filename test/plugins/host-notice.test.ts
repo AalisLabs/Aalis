@@ -403,16 +403,24 @@ describe('user-relation extractor：宿主通知不计数、不进抽取窗口',
   it('安全：连续收到宿主通知不触发抽取；真人消息照常计数（对照）', async () => {
     const { app, calls, extractor } = await setupRelation();
     const emit = looseEmit(app);
-    const archivedEvent = (archivedMessage: Message) => ({
+    const archivedEvent = (incoming: IncomingMessage, archivedMessage: Message) => ({
       sessionId: ROOM,
-      incoming: { sessionId: ROOM, platform: 'onebot' },
+      incoming,
       archivedMessage,
     });
-    for (let i = 0; i < 3; i++) await emit('inbound:message:archived', archivedEvent(archivedNotice()));
+    for (let i = 0; i < 3; i++) {
+      await emit('inbound:message:archived', archivedEvent(hostNoticeIncoming(), archivedNotice()));
+    }
     await new Promise(r => setTimeout(r, 30));
     expect(calls).toHaveLength(0);
     for (let i = 0; i < 3; i++) {
-      await emit('inbound:message:archived', archivedEvent({ role: 'user', content: '真人', name: '30001' }));
+      await emit(
+        'inbound:message:archived',
+        archivedEvent(
+          { content: '真人', sessionId: ROOM, platform: 'onebot', userId: '30001' },
+          { role: 'user', content: '真人', name: '30001' },
+        ),
+      );
     }
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     extractor.stop();

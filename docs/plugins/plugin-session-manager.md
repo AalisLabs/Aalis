@@ -48,7 +48,7 @@ export default definePlugin({
 
 ## 功能
 
-- **会话 CRUD**: 创建、查询、更新、归档、删除会话。删除会递归删除子会话：先从表里摘掉并发 `session:deleted`（agent 在这里停掉这个会话在跑的回合并等它收尾），再经 `memory:clear` 钩子以会话级、不带类型清理，该会话的消息历史、摘要、待办与向量随之清空；这两步做完之前到的同一会话的入站等删除做完再往下走（新的一代，不被这次删除停下、清掉）；清数据包在 agent 的 `clearing` 里，删除开始之前已过收录、清数据期间才到 agent 的同样等清完再处理
+- **会话 CRUD**: 创建、查询、更新、归档、删除会话。删除会递归删除子会话：先从表里摘掉，再发 `session:deleted`、经 `memory:clear` 钩子以会话级、不带类型清理，该会话的消息历史、摘要、待办与向量随之清空。发事件与清数据一起包在 agent 的 `clearing` 里：它先停下这个会话在跑的回合并等它收尾，从这时起按住这个会话到清完。删除期间到的同一会话的消息怎么处理见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`
 - **清空连带删除子会话**: `memory:clear` 清了一个会话的消息历史（没指定类型或类型含 `context`，消息历史那一行清成功）之后，删掉它的子会话；范围为 `all` 时删掉全部子会话。只清别的类型或消息历史没清成时不删（见 [session-manager 服务](../services/session-manager.md) §2.5）
 - **插件数据**: 会话与场所记录各有一份 `metadata`，`updateSession`、`updatePlace` 合并式改（顶层键整键替换），随记录落盘、随记录删除；建会话时给的 `metadata` 原样存下，里面的 `title`、`inputContext` 不当成同名字段读
 - **会话树**: 支持父子会话关系（用于子任务系统）
