@@ -22,7 +22,7 @@ import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
-import { DIRECTIVE_KINDS, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
 import type {
@@ -171,14 +171,14 @@ export const EXTRACTOR_CONFIG_DEFAULTS = {
   debug: false,
 } as const satisfies ExtractorConfig;
 
-interface ArchivedEventData {
-  sessionId: string;
-  incoming: {
-    sessionId: string;
-    platform?: string;
-    sessionType?: string;
-  };
-  archivedMessage: Message;
+/**
+ * 提取窗口里算数的消息：去掉委派与宿主通知这类指令块，与带来源的输入（子任务的任务消息、定时任务、好友与入群申请通知等，
+ * 注入方不是谁在会话里说话；同计数的判据）。存档把入站的 source 记在元数据的 Source 上，出站记录（她发的附件、指令的回复）
+ * 也记，所以只认 user 那一条
+ */
+function inWindow(m: Message): boolean {
+  if (DIRECTIVE_KINDS.includes(m.kind ?? '')) return false;
+  return !(m.role === 'user' && metaString(m, WellKnownMetadataKeys.Source) !== undefined);
 }
 
 /** 单个候选人 1 跳邻居子图视图（已按 weight 降序截断）。 */
@@ -351,30 +351,28 @@ export class RelationExtractor {
   ) {}
 
   start(): void {
-    const handler = (...args: unknown[]) => {
-      const data = args[0] as ArchivedEventData | undefined;
-      if (!data?.sessionId) return;
-      // 宿主通知不是任何人的发言，不算作会话里的新消息
-      if (data.archivedMessage?.kind === WellKnownKinds.HostNotice) return;
-      const n = (this.counts.get(data.sessionId) ?? 0) + 1;
-      this.counts.set(data.sessionId, n);
+    this.off = this.caps.events.use.on('inbound:message:archived', ({ sessionId, incoming }) => {
+      // 只算真人的话，与用户档案同一判据（有账号且不带来源）：宿主通知与别的带来源的注入不是谁在会话里说话，不计数，
+      // 子任务会话就不会凭任务消息提取、建出 parent:<父会话> 这个「人」
+      if (!incoming.userId || incoming.source) return;
+      const n = (this.counts.get(sessionId) ?? 0) + 1;
+      this.counts.set(sessionId, n);
       if (this.cfg.triggerEveryNMessages <= 0) return;
       if (n % this.cfg.triggerEveryNMessages !== 0) return;
-      const backoff = this.backoff.get(data.sessionId);
+      const backoff = this.backoff.get(sessionId);
       if (backoff && backoff.skip > 0) {
         backoff.skip -= 1;
         return;
       }
-      void this.extractSession(data.sessionId).catch(err => {
-        const penalty = Math.min((this.backoff.get(data.sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
-        this.backoff.set(data.sessionId, { penalty, skip: penalty - 1 });
+      void this.extractSession(sessionId).catch(err => {
+        const penalty = Math.min((this.backoff.get(sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
+        this.backoff.set(sessionId, { penalty, skip: penalty - 1 });
         // warn 频率随重试几何变疏，自带节流不会刷屏
         this.caps.logger.use.warn(
-          `[user-relation] 提取失败 session=${data.sessionId}，退避约 ${penalty * this.cfg.triggerEveryNMessages} 条消息后重试: ${stringifyErr(err)}`,
+          `[user-relation] 提取失败 session=${sessionId}，退避约 ${penalty * this.cfg.triggerEveryNMessages} 条消息后重试: ${stringifyErr(err)}`,
         );
       });
-    };
-    this.off = this.caps.events.use.on('inbound:message:archived', handler);
+    });
   }
 
   stop(): void {
@@ -403,7 +401,7 @@ export class RelationExtractor {
       let messageIdToSessionId: Map<string, string>;
       const crossSession = readScope !== 'same-session';
       if (!crossSession) {
-        const raw = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
+        const raw = (await memory.getHistory(sessionId, limit)).filter(inWindow);
         history = raw;
         messageIdToSessionId = new Map();
         for (const m of raw) {
@@ -416,7 +414,7 @@ export class RelationExtractor {
             this.caps.logger.use.debug(
               `[user-relation] readScope=${readScope} 但 memory 后端不支持 getRecentMessagesAcrossSessions，降级到 same-session`,
             );
-          history = (await memory.getHistory(sessionId, limit)).filter(m => !DIRECTIVE_KINDS.includes(m.kind ?? ''));
+          history = (await memory.getHistory(sessionId, limit)).filter(inWindow);
           messageIdToSessionId = new Map();
           for (const m of history) {
             const messageId = metaString(m, WellKnownMetadataKeys.MessageId);
@@ -437,14 +435,16 @@ export class RelationExtractor {
           });
           messageIdToSessionId = new Map();
           // 把 sessionId 注入到 message.metadata.__extractorSessionId（运行时临时字段，仅用于渲染/反查）
-          history = records.map(r => {
-            const messageId = metaString(r.message, WellKnownMetadataKeys.MessageId);
-            if (messageId) messageIdToSessionId.set(messageId, r.sessionId);
-            return {
-              ...r.message,
-              metadata: { ...r.message.metadata, __extractorSessionId: r.sessionId },
-            };
-          });
+          history = records
+            .filter(r => inWindow(r.message))
+            .map(r => {
+              const messageId = metaString(r.message, WellKnownMetadataKeys.MessageId);
+              if (messageId) messageIdToSessionId.set(messageId, r.sessionId);
+              return {
+                ...r.message,
+                metadata: { ...r.message.metadata, __extractorSessionId: r.sessionId },
+              };
+            });
         }
       }
       const userMsgs = history.filter(m => m.role === 'user' && hasMessageId(m));

@@ -54,7 +54,11 @@ async function extractWith(extractionModel: Record<string, unknown>): Promise<st
     content: '<原文>',
     metadata: { messageId: 'm1', userId: 'u1', platform: 'onebot' },
   });
-  await host.events.use.emit('inbound:message:archived', { sessionId: SESSION } as never);
+  await host.events.use.emit('inbound:message:archived', {
+    sessionId: SESSION,
+    incoming: { content: '<原文>', sessionId: SESSION, platform: 'onebot', userId: 'u1' },
+    archivedMessage: { role: 'user', content: '<原文>' },
+  });
   await vi.waitFor(() => expect(called).toHaveLength(1));
   return called;
 }

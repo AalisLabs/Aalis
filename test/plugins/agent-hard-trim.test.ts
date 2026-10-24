@@ -5,6 +5,7 @@ import {
   type TokenUsageEvent,
 } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type ChatModelRequest, type ChatResponse, estimateMsgTokens } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -92,7 +93,7 @@ async function boot(
   await app.plugin(agentPlugin, { systemPrompt: 'test', memoryTokenBudget: 1024 });
   await app.plugins.idle();
   expect(app.plugins.getPlugin(agentPlugin.name)?.state).toBe('active');
-  const host = app.bind({ agent: agentService, tools, memory, contributions, events });
+  const host = app.bind({ agent: agentService, tools, memory, contributions, events, hooks });
   return {
     host,
     model,
@@ -338,6 +339,24 @@ describe('缩推理、压成摘要与继续提示只看本轮', () => {
     const at = request.messages.findIndex(m => m.metadata?.injector === 'host-notice');
     expect(at).toBeGreaterThan(0);
     expect(request.messages[at + 1]?.content).toMatch(/^\[系统提示\] 由于上下文长度限制/);
+  });
+
+  it('宿主通知那一轮，通知块后面还有别的 system 块（待交付提示一类）：继续提示仍紧跟在通知块之后', async () => {
+    const s = await boot();
+    s.headBlock('摘'.repeat(1600));
+    await s.seed(TEN);
+    // 请求前追加在末尾的一块，同待交付提示在末条不是 user 消息时的放法
+    s.host.hooks.use.middleware('agent:llm:before', async (data, next) => {
+      data.messages.push({ role: 'system', content: '<待交付>', metadata: { injector: 'zz-tail' } });
+      await next();
+    });
+    await s.notice('<通知>');
+
+    const [request] = s.model.requests;
+    const at = request.messages.findIndex(m => m.metadata?.injector === 'host-notice');
+    expect(at).toBeGreaterThan(0);
+    expect(request.messages[at + 1]?.content).toMatch(/^\[系统提示\] 由于上下文长度限制/);
+    expect(request.messages[at + 2]?.content).toBe('<待交付>');
   });
 });
 

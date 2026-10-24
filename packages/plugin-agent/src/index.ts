@@ -149,7 +149,10 @@ const refOf = (entry: ProviderEntry<LLMModel>): ModelRef => ({ provider: entry.u
 /** 一轮的结局 */
 type TurnOutcome = HookContextMap['agent:turn:after']['outcome'];
 
-/** 硬裁剪的结果：trimmed 为入口估算超过了预算、进入了硬裁剪（不一定真裁掉了内容）；没改动的消息是原来的对象 */
+/**
+ * 硬裁剪的结果：trimmed 为进入了硬裁剪：入口估算超过了预算（不一定真裁掉了内容），或历史超过它的可用量、丢了一段；没改动的消息
+ * 是原来的对象
+ */
 interface TrimmedMessages {
   messages: Message[];
   trimmed: boolean;
@@ -301,10 +304,14 @@ class DefaultAgent implements AgentService {
    * 清消息历史：先按住这些会话，再停下在跑的一轮、放掉排着与待插入的（不归档），等它落定再跑 clear。被停的一轮落定之前还会写
    * 工具调用组，先停后清，清空的历史里才不留它的写入
    */
-  async clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void> {
+  async clearing(
+    sessionIds: readonly string[] | undefined,
+    clear: () => Promise<unknown>,
+    reason = '清消息历史',
+  ): Promise<void> {
     const release = this.queues.hold(sessionIds);
     try {
-      await this.queues.stopAll(sessionIds ?? this.queues.sessions(), { archive: false, reason: '清消息历史' });
+      await this.queues.stopAll(sessionIds ?? this.queues.sessions(), { archive: false, reason });
       await clear();
     } finally {
       release();
@@ -1806,8 +1813,8 @@ class DefaultAgent implements AgentService {
    *     变大时切点不动）或丢完；会改开头
    *  4. 会改开头：注入的 system 块合计超过 memoryTokenBudget 时按比例缩，仍超时从最靠前的删起
    *  5. 最后手段：最后一组工具调用也截短过长的结果、缩推理内容，请求不超窗发出
-   * 始终不动：首条 system、本轮的输入（user 消息，与宿主通知、委派那一轮的指令块）、末条消息（格式重试的反馈）；最后一组工具
-   * 调用不删、不压成摘要
+   * 始终不动：首条 system、本轮的输入（user 消息，与宿主通知、委派那一轮的指令块）。不删不压、只在第 5 步截短：最后一组工具调用、
+   * 末条消息（格式重试的反馈）
    */
   private trimMessages(messages: Message[], budget: number, history: ReadonlySet<Message>): TrimmedMessages {
     let result = [...messages];
@@ -2221,8 +2228,9 @@ function run(caps: Caps): void {
   caps.lifecycle.use.onDrain(() => agentImpl.queues.shutdown(), '停下在跑的回合');
   // 清理段再停一次：drain 超时或未走到收尾时的兜底，不再等落定；已停下的是空操作。
   caps.lifecycle.use.onDispose(() => void agentImpl.queues.shutdown(), '停下在跑的回合（兜底）');
-  // 会话删除：会话管理先发这个事件再清数据。停掉这个会话在跑的一轮、放掉排着的（不归档）并等它收尾（被停的一轮不落库、
-  // 不外发），清数据因此在回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
+  // 会话删除：会话管理先发这个事件再清数据（第一方会话管理把两步一起交给 clearing，到这里时在跑的一轮已经停下、会话已按住）。
+  // 还在逐条处理、没交给通道的输入是旧的一代，交给通道时放掉；停掉这个会话在跑的一轮、放掉排着的（不归档）并等它收尾（被停的
+  // 一轮不落库、不外发），清数据因此在回合停下之后；再丢弃它的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
   caps.events.use.on('session:deleted', async sessionId => {
     await agentImpl.queues.delete(sessionId);
     agentImpl.dropTokenLogState(sessionId);

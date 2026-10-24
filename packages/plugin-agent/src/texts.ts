@@ -37,10 +37,10 @@ const SOURCE = {
   historyLimitLabel: '历史条数上限',
   historyLimitDescription:
     '发给模型的会话历史不超过这么多条：超过时一次丢掉最早的一半，之后照常累积到这个条数再丢一段；丢掉的只是这一轮发给模型的，会话历史本身保留，压缩时照样进摘要。装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：发全部活跃历史，只按自动压缩线压缩',
-  stopDescription: '停下本会话在跑的一轮；排着的消息照常开下一轮。这一轮里说过话的人和 owner 能停',
+  stopDescription: '停下本会话在跑的一轮；排着的消息照常开下一轮。参与这一轮的人和 owner 能停',
   stopped: '已停下这一轮',
   stopIdle: '没有在跑的一轮',
-  stopDenied: '只有这一轮里说过话的人和 owner 能停',
+  stopDenied: '只有参与这一轮的人和 owner 能停',
 } as const;
 export type Source = typeof SOURCE;
 

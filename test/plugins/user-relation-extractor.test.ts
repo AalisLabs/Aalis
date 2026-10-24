@@ -2,13 +2,15 @@ import { App, events, logger, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
 import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 /**
  * ExtractorConfig 中测试用例普遍不关心的字段，统一从 extractor.ts 导出的单一真源
@@ -64,7 +66,7 @@ function extractNow(extractor: RelationExtractor, sessionId: string): Promise<vo
   return (extractor as unknown as { extractSession(sid: string): Promise<void> }).extractSession(sessionId);
 }
 
-async function setup(llmContent: string) {
+async function setup(llmContent: string, cfg: Partial<ExtractorConfig> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
@@ -101,6 +103,7 @@ async function setup(llmContent: string) {
     disableThinking: true,
     strictSelfAssertion: false,
     debug: false,
+    ...cfg,
   });
   extractor.start();
   return { app, host, mem, service, extractor, calls, fail };
@@ -110,6 +113,13 @@ const mkUserMsg = (messageId: string, userId: string, content: string, nickname?
   role: 'user',
   content,
   metadata: { messageId, userId, nickname, platform: 'onebot' },
+});
+
+/** 一条真人入站落库之后的事件（计数只看入站本身） */
+const archivedEvent = (sessionId: string, userId = 'a') => ({
+  sessionId,
+  incoming: { content: '在吗', sessionId, platform: 'onebot', userId },
+  archivedMessage: { role: 'user' as const, content: '在吗' },
 });
 
 describe('plugin-user-relation: extractor', () => {
@@ -323,11 +333,11 @@ describe('plugin-user-relation: extractor', () => {
     const { host, mem, service, calls } = await setup(llmJson);
     await mem.saveMessage('sess2', mkUserMsg('m1', 'c', '消息1'));
     // 阈值 3：emit 两次不触发
-    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
-    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.use.emit('inbound:message:archived', archivedEvent('sess2'));
+    host.events.use.emit('inbound:message:archived', archivedEvent('sess2'));
     expect(calls).toHaveLength(0);
     // 第三次触发
-    host.events.use.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.use.emit('inbound:message:archived', archivedEvent('sess2'));
     // 提取是异步的，等一拍
     await new Promise(r => setTimeout(r, 20));
     expect(calls.length).toBeGreaterThanOrEqual(1);
@@ -354,7 +364,7 @@ describe('plugin-user-relation: extractor', () => {
     // 逐个触发点推进（阈值 3 → 每点 3 条消息），点间等提取落定，保证时序确定
     const advance = async (points: number) => {
       for (let p = 0; p < points; p++) {
-        for (let i = 0; i < 3; i++) host.events.use.emit('inbound:message:archived', { sessionId: 'sb' } as never);
+        for (let i = 0; i < 3; i++) host.events.use.emit('inbound:message:archived', archivedEvent('sb'));
         await new Promise(r => setTimeout(r, 15));
       }
     };
@@ -625,5 +635,67 @@ describe('plugin-user-relation: extractor', () => {
     // 3. 消息行带 [sid:] 前缀（两个 session 都拉到了）
     expect(userContent).toContain('[sid:sessA]');
     expect(userContent).toContain('[sid:sessB]');
+  });
+});
+
+describe('plugin-user-relation: extractor 只算真人的话（有账号且不带来源，与用户档案同一判据）', () => {
+  const PARENT = 'onebot:10000:group:20001';
+  const SUB = 'subtask-1';
+
+  /** 再挂上消息归档：输入经它落库，与生产同一形态（入站的 source 记进元数据，落库之后发 inbound:message:archived） */
+  async function withArchive(app: App) {
+    await app.plugins.register(messageArchivePlugin, { debugLogs: false });
+    await app.plugins.idle();
+    return app.bind({ messageArchive }).messageArchive.use;
+  }
+
+  it('子任务会话里累计到阈值条任务消息：不计数、不提取，不建出 parent:<父会话> 这个「人」', async () => {
+    // 跨会话读的窗口里有群里带消息 id 的真人发言，任务消息随之进了窗口；模型的输出里有发任务的这个「人」
+    const parent = `parent:${PARENT}`;
+    const llmJson = JSON.stringify({
+      persons: [{ platform: 'onebot', userId: parent }],
+      entities: [{ refKey: 'w', name: '天气', entityKind: 'topic' }],
+      personEntityEdges: [{ personPlatform: 'onebot', personUserId: parent, entityRefKey: 'w', role: 'mentioned' }],
+    });
+    const { app, mem, service, calls } = await setup(llmJson, {
+      readScope: 'same-platform',
+      crossSessionMaxAgeMinutes: 0,
+    });
+    const archive = await withArchive(app);
+    await mem.saveMessage(PARENT, mkUserMsg('m1', '30001', '明天去爬山'));
+    for (const content of ['查一下明天的天气', '再查一下后天的', '列个出行清单']) {
+      const task: IncomingMessage = { content, sessionId: SUB, platform: 'onebot', userId: parent, source: 'subtask' };
+      await archive.archiveIncoming(task);
+    }
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(calls).toHaveLength(0);
+    expect((await service.loadAll()).persons.map(p => `${p.platform}:${p.userId}`)).not.toContain(`onebot:${parent}`);
+  });
+
+  it.each([
+    ['同会话读', 'same-session', true],
+    ['跨会话读', 'same-platform', true],
+    ['跨会话读降级到同会话', 'same-platform', false],
+  ] as const)('%s：提取窗口不含带来源的输入（入群申请通知），真人的话照常在', async (_name, readScope, acrossSessions) => {
+    const { app, mem, extractor, calls } = await setup('{}', { readScope, crossSessionMaxAgeMinutes: 0 });
+    if (!acrossSessions)
+      (mem as { getRecentMessagesAcrossSessions?: unknown }).getRecentMessagesAcrossSessions = undefined;
+    const archive = await withArchive(app);
+    await mem.saveMessage(PARENT, mkUserMsg('m1', '30001', '<真人的话>'));
+    const notice: IncomingMessage = {
+      content: '<入群申请>',
+      sessionId: PARENT,
+      platform: 'onebot',
+      userId: '30009',
+      source: 'onebot-request',
+    };
+    await archive.archiveIncoming(notice);
+    await extractNow(extractor, PARENT);
+
+    expect(calls).toHaveLength(1);
+    const prompt = JSON.stringify(calls[0].messages);
+    expect(prompt).toContain('<真人的话>');
+    expect(prompt).not.toContain('<入群申请>');
   });
 });

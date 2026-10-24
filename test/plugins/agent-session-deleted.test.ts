@@ -5,7 +5,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, events, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -16,9 +16,10 @@ import { StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// 删除会话时停掉这个会话在跑的回合：会话管理先发 session:deleted、再清数据，agent 在这个事件里停下这个会话在跑的一轮、放掉
-// 排着的，并等它收尾，所以清数据一定在回合停下之后。被停的一轮不落库、不外发；别的会话的回合照常跑完。删除期间经网关到的
-// 同一会话的消息等删除做完再往下走，是新的一代：照常处理，存档不被这次删除清掉。
+// 删除会话时停掉这个会话在跑的回合：会话管理把发 session:deleted 与清数据一起交给 agent 的 clearing，它先停下这个会话在跑的
+// 一轮、放掉排着的，等它收尾，并从这时起按住这个会话到清完，所以清数据一定在回合停下之后。被停的一轮不落库、不外发；别的会话的
+// 回合照常跑完。删除期间经网关到的同一会话的消息等删除做完再往下走，是新的一代：照常处理，存档不被这次删除清掉。删除开始之前
+// 已过会话管理、删除期间才到 agent 的：agent 收到 session:deleted 时还没交给通道的是旧的一代，放掉；之后才到的等清完作为新的一代。
 // ════════════════════════════════════════════════════════════
 
 /** 流出第一块后停住，直到 release 或请求被中止（与真实服务商一样响应中止信号） */
@@ -61,6 +62,35 @@ const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
+
+/** 只有会话管理与 agent 的一套：模型立即作答，记下各轮的输入与结局；给了 logger 时日志交给它 */
+async function bootDirect(logger?: Logger) {
+  const model = new StepModel((_request, n) => ({ content: `回${n}` }));
+  const app = new App({ name: 'T', logLevel: logger ? 'info' : 'error', logger });
+  apps.push(app);
+  await registerHubs(app);
+  await app.plugin(stepModelPlugin(model));
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(sessionManagerPlugin);
+  await app.plugin(agentPlugin, { systemPrompt: 'test' });
+  await app.plugins.idle();
+  for (const name of [sessionManagerPlugin.name, agentPlugin.name]) {
+    expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
+  }
+  const host = app.bind({ agent: agentService, events, hooks, memory, sessionManager });
+  const outcomes: string[][] = [];
+  host.hooks.use.middleware('agent:turn:after', async (data, next) => {
+    outcomes.push([data.inputs.map(input => input.message.content).join('+'), data.outcome]);
+    await next();
+  });
+  const doomed = await host.sessionManager.use.createSession({ name: '要删的' });
+  // 直接交给 agent、不经会话管理收录：迟到的那条即删除开始之前已过收录、还在入站相位里的消息
+  const say = (content: string) =>
+    host.agent.use.handleMessage({ content, sessionId: doomed.id, platform: 'webui', userId: 'u1' });
+  const historyOf = async () => (await host.memory.use.getHistory(doomed.id, Infinity)).map(m => [m.role, m.content]);
+  return { model, host, outcomes, doomed, say, historyOf };
+}
 
 describe('删除会话时停掉它在跑的回合', () => {
   it('删除等这个会话的回合停下再清数据；被停的一轮不落库、不外发，别的会话的回合照常跑完', async () => {
@@ -186,48 +216,85 @@ describe('删除会话时停掉它在跑的回合', () => {
     ]);
   });
 
-  it('删除开始之前已过会话管理、在清数据期间才到 agent 的消息：等清完再作为新的一代开轮，回复不被这次删除清掉', async () => {
-    const model = new StepModel((_request, n) => ({ content: `回${n}` }));
-    const app = new App({ name: 'T', logLevel: 'error' });
-    apps.push(app);
-    await registerHubs(app);
-    await app.plugin(stepModelPlugin(model));
-    await app.plugin(memoryInMemoryPlugin);
-    await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(sessionManagerPlugin);
-    await app.plugin(agentPlugin, { systemPrompt: 'test' });
-    await app.plugins.idle();
-    for (const name of [sessionManagerPlugin.name, agentPlugin.name]) {
-      expect(app.plugins.getPlugin(name)?.state, `${name} 未激活`).toBe('active');
-    }
-    const host = app.bind({ agent: agentService, hooks, memory, sessionManager });
-    const sm = host.sessionManager.use;
-    const doomed = await sm.createSession({ name: '要删的' });
-    // 清数据的链上挂住一家：这期间那条消息到达 agent（它在删除开始之前已过会话管理收录，还在入站相位里）
-    const clearing = deferred();
-    const gate = deferred();
-    host.hooks.use.middleware('memory:clear', async (_data, next) => {
-      clearing.resolve();
-      await gate.promise;
-      await next();
-    });
-    const deleting = sm.deleteSession(doomed.id);
-    await clearing.promise;
-    const late = host.agent.use.handleMessage({
-      content: '<迟到>',
-      sessionId: doomed.id,
-      platform: 'webui',
-      userId: 'u1',
-    });
-    await new Promise(resolve => setImmediate(resolve));
-    expect(model.requests, '清数据期间不开轮').toHaveLength(0);
-    gate.resolve();
-    await Promise.all([late, deleting]);
+  it('删正在跑的会话：回合结束那一行日志的停止原因写「会话删除」，不写成清消息历史', async () => {
+    const lines: string[] = [];
+    const capture: Logger = {
+      debug() {},
+      info: message => void lines.push(message),
+      warn() {},
+      error() {},
+      child: () => capture,
+    };
+    const { model, host, doomed, say } = await bootDirect(capture);
+    const held = model.hold(1);
+    const first = say('<甲>');
+    await held.entered;
+    await host.sessionManager.use.deleteSession(doomed.id);
+    await first;
+    expect(lines.filter(line => line.startsWith('回合结束 ')).map(line => /原因=(\S+)/.exec(line)?.[1])).toEqual([
+      '会话删除',
+    ]);
+  });
 
-    const history = await host.memory.use.getHistory(doomed.id, Infinity);
-    expect(history.map(m => [m.role, m.content])).toEqual([
+  it.each([
+    '在 session:deleted 的别的监听方还在跑时',
+    '在清数据期间',
+  ] as const)('删除开始之前已过会话管理、%s才到 agent 的消息：等清完再作为新的一代开轮，回复不被这次删除清掉', async phase => {
+    const { model, host, outcomes, doomed, say, historyOf } = await bootDirect();
+    // 删除的这一段挂住一家：这期间那条消息到达 agent
+    const entered = deferred();
+    const gate = deferred();
+    if (phase === '在清数据期间') {
+      host.hooks.use.middleware('memory:clear', async (_data, next) => {
+        entered.resolve();
+        await gate.promise;
+        await next();
+      });
+    } else {
+      host.events.use.on('session:deleted', async () => {
+        entered.resolve();
+        await gate.promise;
+      });
+    }
+    const deleting = host.sessionManager.use.deleteSession(doomed.id);
+    await entered.promise;
+    const message = say('<迟到>');
+    await new Promise(resolve => setImmediate(resolve));
+    expect(model.requests, '删除期间不开轮').toHaveLength(0);
+    gate.resolve();
+    await Promise.all([message, deleting]);
+
+    expect(outcomes).toEqual([['<迟到>', 'replied']]);
+    expect(await historyOf()).toEqual([
       ['user', expect.stringContaining('<迟到>')],
       ['assistant', '回1'],
     ]);
+  });
+
+  it('删除开始之前已过会话管理、停下旧的一轮期间才到 agent 的消息是旧的一代：agent 收到 session:deleted 时它还没交给通道，放掉、不归档', async () => {
+    const { model, host, outcomes, doomed, say, historyOf } = await bootDirect();
+    // 删除停下旧的一轮之后、它落定之前挂住：这期间那条消息到达 agent
+    const stopped = deferred();
+    const gate = deferred();
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
+      if (data.outcome === 'aborted') {
+        stopped.resolve();
+        await gate.promise;
+      }
+      await next();
+    });
+    const held = model.hold(1);
+    const first = say('<甲>');
+    await held.entered;
+    const deleting = host.sessionManager.use.deleteSession(doomed.id);
+    await stopped.promise;
+    const message = say('<迟到>');
+    await new Promise(resolve => setImmediate(resolve));
+    gate.resolve();
+    await Promise.all([first, message, deleting]);
+
+    expect(outcomes).toEqual([['<甲>', 'aborted']]);
+    expect(model.requests, '迟到的那条不开轮').toHaveLength(1);
+    expect(await historyOf()).toEqual([]);
   });
 });
