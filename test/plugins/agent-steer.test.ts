@@ -43,7 +43,8 @@ import { deferred } from '../helpers/deferred.js';
 // 前面说明是上一轮进行期间到的；带来源的注入各自成一轮。输入在进入一轮时归档。能停下一轮的只有停止（只停在跑的一轮）、
 // 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档）；/clear
 // 经 agent 先停下并按住会话再跑整条清理，清的期间到的输入清完再处理，不看各家清理中间件登记在 agent 之前还是之后；停在等着
-// 别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时夹进工具调用组的别的消息挪到组后。
+// 别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时夹进工具调用组的别的消息挪到组后，结果没找齐的组与
+// 不在任何组里的结果不发给模型。
 // 模型是能挂住某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
 // 看组内次序的用例换上按时间戳读历史的存储替身（同 Mongo 与 sqlite 的读法）。
 // ════════════════════════════════════════════════════════════
@@ -380,6 +381,22 @@ describe('插入与排队', () => {
       '回2',
       '<丙>',
     ]);
+  });
+
+  it('读历史：结果没找齐的工具调用组连同找到的结果、不在任何组里的结果都不发给模型，别的照发', async () => {
+    const s = await boot();
+    const call = (id: string) => ({ id, type: 'function' as const, function: { name: PROBE, arguments: '{}' } });
+    const stored: Message[] = [
+      { role: 'user', content: '<甲>', timestamp: 1 },
+      { role: 'assistant', content: null, toolCalls: [call('call-1'), call('call-2')], timestamp: 2 },
+      { role: 'tool', content: '<找到的结果>', toolCallId: 'call-1', timestamp: 3 },
+      { role: 'tool', content: '<组外的结果>', toolCallId: 'call-gone', timestamp: 4 },
+      { role: 'assistant', content: '<答>', timestamp: 5 },
+    ];
+    for (const message of stored) await s.host.memory.use.saveMessage(WEBUI.sessionId, message);
+    await s.say(WEBUI, '<乙>');
+
+    expect(s.model.requests[0].messages.filter(m => m.role !== 'system').map(shape)).toEqual(['<甲>', '<答>', '<乙>']);
   });
 
   it('时间标注取归档时刻：归档之后过了一分钟才组装，标注仍写归档那一分钟，下一轮历史里同一条的标注不变', async () => {

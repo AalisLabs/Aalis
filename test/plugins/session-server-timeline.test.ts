@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
@@ -17,12 +18,14 @@ import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.
 import { type ToolCallContext, type ToolDisplay, tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import {
   type IncomingMessage,
   type Message,
@@ -1562,6 +1565,71 @@ describe('输入与回合', () => {
     expect(inputsOf((await c.call('session/history', { sessionId: ROOM })).items)).toEqual(expected);
   });
 
+  it('经网关真被触发判定吞掉的一条（这一轮在跑时群里别人没点名她的话）：规则版的影子归档不带回合 id，实时与刷新后都在这一轮之外', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { app, c } = await startAgent([callProbe, { content: '完成' }], async () => {
+      entered.resolve();
+      await release.promise;
+      return 'ok';
+    });
+    // 固定间隔 100 条：没点名的话不会被频率挑中
+    await app.plugin(triggerPolicyPlugin, { intervalMode: 'fixed', fixedInterval: 100 });
+    await app.plugins.idle();
+    const gw = app.bind({ gateway }).gateway.use;
+    const group = { sessionId: ROOM, platform: 'onebot', selfId: '10000', sessionType: 'group', groupId: '1' };
+    const say = (content: string, userId: string) => gw.ingressMessage({ ...group, content, userId });
+    const opened = say('<at self id="10000">Aalis</at> <点名>', '424242');
+    await entered.promise;
+    const sub = await c.subscribe(ROOM);
+    await say('<没点名>', '424243');
+    release.resolve();
+    await opened;
+
+    const turnId = c.timeline(ROOM, sub).find(i => i.kind === 'turn')?.turnId;
+    expect(turnId).toEqual(expect.any(String));
+    const expected = [
+      [expect.stringContaining('<点名>'), turnId, 'opened', true],
+      ['<没点名>', undefined, undefined, undefined],
+    ];
+    expect(inputsOf(c.timeline(ROOM, sub))).toEqual(expected);
+    expect(inputsOf((await c.call('session/history', { sessionId: ROOM })).items)).toEqual(expected);
+  });
+
+  it('经网关真被流控吞掉的一条（冷却中、这一轮在跑时群里过了频率闸的话）：流控的影子归档不带回合 id，实时与刷新后都在这一轮之外', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { app, c } = await startAgent([{ content: '<回一句>' }, callProbe, { content: '完成' }], async () => {
+      entered.resolve();
+      await release.promise;
+      return 'ok';
+    });
+    // 固定间隔 1 条：每句都被频率挑中；回过一句之后冷却，只有点名她的穿透
+    await app.plugin(triggerPolicyPlugin, { intervalMode: 'fixed', fixedInterval: 1 });
+    await app.plugin(flowControlPlugin, { cooldownSeconds: 600 });
+    await app.plugins.idle();
+    const gw = app.bind({ gateway }).gateway.use;
+    const group = { sessionId: ROOM, platform: 'onebot', selfId: '10000', sessionType: 'group', groupId: '1' };
+    const say = (content: string, userId: string) => gw.ingressMessage({ ...group, content, userId });
+    await say('<先说一句>', '424243');
+    const opened = say('<at self id="10000">Aalis</at> <点名>', '424242');
+    await entered.promise;
+    const sub = await c.subscribe(ROOM);
+    await say('<冷却中>', '424243');
+    release.resolve();
+    await opened;
+
+    const [first, second] = c.timeline(ROOM, sub).flatMap(i => (i.kind === 'turn' ? [i.turnId] : []));
+    expect(second).toEqual(expect.any(String));
+    const expected = [
+      ['<先说一句>', first, 'opened', false],
+      [expect.stringContaining('<点名>'), second, 'opened', true],
+      ['<冷却中>', undefined, undefined, undefined],
+    ];
+    expect(inputsOf(c.timeline(ROOM, sub))).toEqual(expected);
+    expect(inputsOf((await c.call('session/history', { sessionId: ROOM })).items)).toEqual(expected);
+  });
+
   it('回合在跑时重连：这一轮的输入从在途条目给出、只出现一次，次序与之后的历史一致', async () => {
     const { server, sm, archive, openTurn } = await setup();
     const s = await sm.createSession({ name: 'S' });
@@ -1594,7 +1662,7 @@ describe('输入与回合', () => {
     expect(visible((await fresh.subscribe(s.id)).snapshot.items)).toEqual(['<开轮>', 'tool-call', '<插进来>']);
   });
 
-  it('房间里回合在跑时重连：这一轮进行期间别人说的话夹在它的条目中间，快照与这一轮收尾之后的历史同序', async () => {
+  it('房间里回合在跑时重连：她这一轮还没有输出时别人说的话夹在它的条目中间，快照与这一轮收尾之后的历史同序', async () => {
     const { server, host, archive, openTurn } = await setup();
     await recordRoom(host.events.use, ROOM, '群');
     // 时间线按时间排，前后两条错开一毫秒以上
@@ -2162,7 +2230,7 @@ async function startAgent(
   expect((await c.init()).features.send, '有对话服务就能发送').toBe(true);
   const sub = await c.subscribe(s.id);
   const turnItems = () => c.timeline(s.id, sub).filter(i => i.kind === 'turn');
-  return { host, s, c, sub, inputs, turnItems };
+  return { app, host, s, c, sub, inputs, turnItems };
 }
 
 describe('接 agent 与网关', () => {
@@ -2372,6 +2440,10 @@ describe('接 agent 与网关', () => {
     expect(visible(history).toSorted()).toEqual(visible(c.timeline(s.id, sub)).toSorted());
   });
 
+  /** 排着的消息那一条 */
+  const queued = (items: SessionItem[]) =>
+    items.find((i): i is Extract<SessionItem, { kind: 'queue' }> => i.kind === 'queue');
+
   it('排着的消息：排队与待插入时推 queue 条目（说话人、写的话、附件个数），进了一轮从列表移走、出现在时间线上；重连的快照带着这份列表', async () => {
     const entered = deferred();
     const release = deferred();
@@ -2384,8 +2456,6 @@ describe('接 agent 与网关', () => {
     await entered.promise;
     const image = { kind: 'image' as const, data: 'data:image/png;base64,AAAA', name: 'a.png' };
     await c.call('turn/send', { sessionId: s.id, content: '<排着的>', attachments: [image] });
-    const queued = (items: SessionItem[]) =>
-      items.find((i): i is Extract<SessionItem, { kind: 'queue' }> => i.kind === 'queue');
     const entry = {
       // 这套装配没有权限服务：没有人是 owner
       speaker: { platform: 'webui', userId: 'console', owner: false },
@@ -2409,5 +2479,36 @@ describe('接 agent 与网关', () => {
     const fresh = client(host.sessionProtocol.use);
     await fresh.init();
     expect(queued((await fresh.subscribe(s.id)).snapshot.items), '列表空了，快照不带').toBeUndefined();
+  });
+
+  it('排着的宿主通知与平台事件合成的入站：列表里写给人看的那句，不写给模型的正文', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { host, s, c, sub } = await startAgent([callProbe, { content: '完成' }], async () => {
+      entered.resolve();
+      await release.promise;
+      return 'ok';
+    });
+    await c.call('turn/send', { sessionId: s.id, content: '<先跑一个慢的>' });
+    await entered.promise;
+    const notice = host.agent.use.handleMessage({
+      content: '<写给模型的>',
+      sessionId: s.id,
+      platform: 'webui',
+      source: 'bg:1',
+      hostNotice: { kind: 'background', id: '1', text: { i18n: '@zz/queue', key: 'done', source: '<给人看的那句>' } },
+    });
+    const event = host.agent.use.handleMessage({
+      content: '<写给模型的事件>',
+      sessionId: s.id,
+      platform: 'webui',
+      userId: 'console',
+      text: { i18n: '@zz/queue', key: 'poke', source: '<平台事件那句>' },
+    });
+    await vi.waitFor(() =>
+      expect(queued(c.timeline(s.id, sub))?.entries.map(e => e.text)).toEqual(['<给人看的那句>', '<平台事件那句>']),
+    );
+    release.resolve();
+    await Promise.all([notice, event]);
   });
 });

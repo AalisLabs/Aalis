@@ -159,7 +159,8 @@ export async function readHistory(
     start = historyStart(count, limit);
     messages = all.slice(start);
   }
-  // 起点落在工具调用组中间：组首在起点之前已经丢掉，这一组留下的结果（第一组之前组外的结果）随它一起丢，夹在其间的别的消息照留
+  // 起点落在工具调用组中间：组首在起点之前已经丢掉，这一组留下的结果（第一组之前组外的结果）随它一起丢，夹在其间的别的消息照留。
+  // 之后组外的结果不是起点切出来的，与起点在不在 0 无关，照旧交给读的一方（真实回合的清洗跳过并告警）
   const leftover = new Set<number>();
   for (const { at, shape } of start > 0 ? groupToolCalls(messages) : []) {
     if (shape === 'complete' || shape === 'partial') break;

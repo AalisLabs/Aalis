@@ -72,7 +72,9 @@ type Streamed = Item<'agent-message'> | Item<'reasoning'>;
 
 /**
  * 历史与还没收尾的回合的条目按时间并成一段，两边各自的先后不变，同一时刻历史在前：这一轮的输入由在途条目给出，这一轮进行期间
- * 别人说的话在历史里，并起来才与这一轮收尾之后的历史同序
+ * 别人说的话在历史里，并起来与实时看到的同序。收尾之后的历史按落库的时刻排，与这里不全同序：她某一步的输出（思考、正文、
+ * 工具卡，最后的回复也算）出现之后、这一步落库之前别人说的话，这里排在这一步之后，收尾之后排在它之前（工具调用组等工具跑完、
+ * 回复等写完才落库）
  */
 function byTime(history: readonly SessionItem[], ongoing: readonly SessionItem[]): SessionItem[] {
   const merged: SessionItem[] = [];
