@@ -8,7 +8,7 @@ import {
 } from '@aalis/api-memory';
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { CONTROL_KINDS, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 
 // ===== InMemoryFallbackService 实现 =====
 
@@ -68,11 +68,17 @@ class InMemoryFallbackService implements MemoryService {
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
-    return recent(this.active(sessionId), limit).map(e => e.message);
+    // 只数对话消息：第 limit+1 新的那条之后的全部，夹在其间的事件标记一并带回；没有这一条（不超过 limit 条）时是全部。
+    // 条数为 0 时为空，不带最后一条对话消息之后的标记
+    if (limit === 0) return [];
+    const active = this.active(sessionId);
+    const said = active.flatMap((e, i) => (CONTROL_KINDS.includes(e.message.kind ?? '') ? [] : [i]));
+    const before = said[said.length - limit - 1];
+    return active.slice(before === undefined ? 0 : before + 1).map(e => e.message);
   }
 
   async countHistory(sessionId: string): Promise<number> {
-    return this.active(sessionId).length;
+    return this.active(sessionId).filter(e => !CONTROL_KINDS.includes(e.message.kind ?? '')).length;
   }
 
   async clearSession(sessionId: string): Promise<void> {

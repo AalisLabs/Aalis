@@ -78,7 +78,8 @@ export default definePlugin({
    - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 embedding 模型（见下节）、minScore 与跨会话模式过滤后时间衰减加权重排；
      `crossSessionMode: user` 时，这一轮各条输入的发言者本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
-     扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；
+     扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；事件标记（`CONTROL_KINDS`，
+     如压缩分隔线、指令的回复）不在范围查询里，不带出，也不占 N 条的名额；
      否则只注入命中本身。结果与当前会话已有内容去重。指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务、
      宿主通知）不是任何人的发言，不作为邻居带出
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注

@@ -23,7 +23,8 @@ import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
 // 不是她回复的出站文字（指令的回复、宿主提示）在送达之后按 outboundMarkerMessage 记成事件标记。它不是对话内容：
-// agent 交给模型的历史、token:request 的提示快照、memory-vector 召回的扩窗都不带它。
+// agent 交给模型的历史、token:request 的提示快照、memory-vector 召回的扩窗都不带它；扩窗的前后 N 条也不算它，窗口 1 时
+// 带出的是隔着它的那条提问。
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:20001';
@@ -88,7 +89,7 @@ describe('agent：事件标记不进模型的上下文', () => {
   });
 });
 
-describe('memory-vector：召回的扩窗不带出事件标记', () => {
+describe('memory-vector：召回的扩窗不带出事件标记，标记也不占前后 N 条的名额', () => {
   const replyHit: VectorSearchResult = {
     score: 0.9,
     metadata: { sessionId: ROOM, timestamp: BASE_TS, content: '她说的话', role: 'assistant', platform: 'onebot' },
@@ -118,7 +119,7 @@ describe('memory-vector：召回的扩窗不带出事件标记', () => {
     } as never);
     await app.plugin(memoryVector, {
       search: { topK: 5, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
-      contextExpand: { window: 2, crossSession: true },
+      contextExpand: { window: 1, crossSession: true },
       indexing: { concurrency: 1, maxQueueSize: 10 },
       crossSessionMode: 'all',
       recallRoles: 'all',
@@ -129,7 +130,7 @@ describe('memory-vector：召回的扩窗不带出事件标记', () => {
     return { toolHandlers, assembly: app.bind({ contributions, logger }) };
   }
 
-  it('被动召回命中她的回复：扩窗带出提问，不带出指令回复', async () => {
+  it('被动召回命中她的回复，窗口 1：扩窗带出隔着指令回复的提问，不带出指令回复', async () => {
     const { assembly } = await boot();
     const messages: Message[] = [
       { role: 'system', content: '人设' },
@@ -147,12 +148,12 @@ describe('memory-vector：召回的扩窗不带出事件标记', () => {
     expect(block).not.toContain('ZZ-MARKER');
   });
 
-  it('memory_recall 命中她的回复：扩窗上下文带出提问，不带出指令回复', async () => {
+  it('memory_recall 命中她的回复，窗口 1：扩窗上下文带出隔着指令回复的提问，不带出指令回复', async () => {
     const { toolHandlers } = await boot();
     const recall = toolHandlers.get('memory_recall');
     if (!recall) throw new Error('memory_recall 未注册');
     const out = await recall(
-      { query: '说了什么', contextWindow: 2 },
+      { query: '说了什么', contextWindow: 1 },
       { sessionId: 'onebot:10000:private:30002', platform: 'onebot' },
     );
     expect(out).toContain('/help'); // 扩窗确实生效

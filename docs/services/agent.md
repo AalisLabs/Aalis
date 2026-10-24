@@ -37,7 +37,7 @@ export interface BoundAgent extends AgentService {
 - `clearing(sessionIds, clear, reason?)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先发 `session:deleted`）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理；`clear` 之内删掉的会话到 `clear` 结束才删完，这之前进来的输入是删除之前的一代，放掉、不归档，不看 `session:deleted` 各监听方的先后。停下与按住在各家清理之外，不看中间件的登记先后。实现者自己的 `session:deleted` 监听在这次按住之内被调起，不能等按住放开。`reason` 同 `abort` 的，只写进回合结束那一行日志。
 - 事件 `agent:queue`：`{ sessionId, waiting }`，这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
-- `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
+- `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，只数对话消息，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
 - **回合 id**：实现者在一轮开始时生成 `turnId`，这一轮的 `agent:turn:before`、`agent:turn:after`、输入的归档（`archiveIncoming` 的回合参数，存档记成 `TurnId` 与进入方式 `TurnEntry`）、`outbound:stream`、`ToolCallContext` 与 `tool:execute`、`token:usage` 都带同一个。每次工具调用另生成全局唯一的 `callId`（不取模型给的 tool call id，模型给的不保证唯一），工具开始与结束事件按它配对。
 
 `agent:*` 钩子（declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`）——这是 agent 服务最重要的扩展面：

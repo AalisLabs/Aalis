@@ -4,7 +4,7 @@ import { App, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { MongoMemoryService } from '../../packages/plugin-memory-mongodb/src/index.js';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import { type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 三家后端同一组用例：
@@ -12,13 +12,14 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 //   keep 列出的位置（这一段里从 0 数）不归档，返回归档条数。count 为 0 时什么都不归档，大于活跃条数时这一段就是全部活跃
 //   消息；段外的下标不起作用，重复的与一个相同。留下的照原顺序在活跃历史最前面，完整历史里留下的与归档的照原顺序交错；
 //   之后追加的消息在段外，别的会话不动。
-// - 带条数的读法：条数为 0 时返回空，为 Infinity 时返回全部（跨会话查询收窄到后端配置的上限）；countHistory 是
-//   getHistory(…, Infinity) 的条数。
+// - 带条数的读法：条数为 0 时返回空，为 Infinity 时返回全部（跨会话查询收窄到后端配置的上限）。
+// - countHistory 与按条数的 getHistory 只数对话消息：事件标记（CONTROL_KINDS）不占条数，getHistory(…, limit) 读出第
+//   limit+1 新的对话消息之后的全部活跃消息，夹在其间的标记一并带回；archiveSpan 按位置数，标记也占位置。
 // - updateMessageContent 改最近 recentLimit 条含 oldText（按字面，区分大小写）的消息，归档的也算。
 //
 // mongodb 的集合用内存替身，不经 apply（apply 会直连真实的 mongod）。替身照服务端的规矩：limit(0) 表示不限条数、
-// limit 不是整数时报错；排序键全部平票时按写入的逆序排——这是对抗方向：归档的排序去掉 _id 次键，同毫秒的几条就会
-// 倒着数进这一段。
+// limit 不是整数时报错、没有这个字段的文档不落在 $nin 的列表里；排序键全部平票时按写入的逆序排——这是对抗方向：归档的
+// 排序去掉 _id 次键，同毫秒的几条就会倒着数进这一段。
 // ════════════════════════════════════════════════════════════
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -27,14 +28,17 @@ type Doc = Record<string, unknown> & { _id: number };
 
 type Filter = Record<string, unknown>;
 
-/** 替身认得的条件只有本文件用例走到的：相等、$ne、$in、$regex */
+/** 替身认得的条件只有本文件用例走到的：相等、$or、$ne、$in、$nin、$gt、$regex */
 function matches(doc: Doc, filter: Filter): boolean {
   return Object.entries(filter).every(([key, cond]) => {
+    if (key === '$or') return (cond as Filter[]).some(branch => matches(doc, branch));
     const value = doc[key];
     if (cond === null || typeof cond !== 'object') return value === cond;
     return Object.entries(cond).every(([op, arg]) => {
       if (op === '$ne') return value !== arg;
       if (op === '$in') return (arg as unknown[]).includes(value);
+      if (op === '$nin') return !(arg as unknown[]).includes(value);
+      if (op === '$gt') return (value as number) > (arg as number);
       if (op === '$regex') return typeof value === 'string' && new RegExp(arg as string).test(value);
       throw new Error(`替身不认 ${op}`);
     });
@@ -69,6 +73,11 @@ function fakeCollection() {
         limit: (n: number) => {
           if (!Number.isInteger(n)) throw new Error(`limit 须为整数，收到 ${n}`);
           if (n !== 0) rows = rows.slice(0, n);
+          return cursor;
+        },
+        skip: (n: number) => {
+          if (!Number.isInteger(n) || n < 0) throw new Error(`skip 须为非负整数，收到 ${n}`);
+          rows = rows.slice(n);
           return cursor;
         },
         project: () => cursor,
@@ -195,7 +204,7 @@ describe.each(BACKENDS)('%s：archiveSpan', (_name, open) => {
     expect(contents(await mem.getHistory('s'))).toEqual(['m1', '追加']);
   });
 
-  it('countHistory 与 getHistory(…, Infinity) 的长度相同：只数活跃的，归档后随之变，别的会话不算', async () => {
+  it('countHistory 只数活跃的，归档后随之变，别的会话不算；没有事件标记时与 getHistory(…, Infinity) 的长度相同', async () => {
     const mem = await seeded(numbered(3));
 
     expect(await mem.countHistory?.('s')).toBe(3);
@@ -203,6 +212,74 @@ describe.each(BACKENDS)('%s：archiveSpan', (_name, open) => {
     expect(await mem.countHistory?.('s')).toBe(1);
     expect((await mem.getHistory('s', Infinity)).length).toBe(1);
     expect([await mem.countHistory?.('other'), await mem.countHistory?.('none')]).toEqual([1, 0]);
+  });
+});
+
+describe.each(BACKENDS)('%s：条数只数对话消息，事件标记不占条数', (_name, open) => {
+  let stop: () => Promise<void> = async () => {};
+  afterEach(() => stop());
+
+  /** 事件标记：回合记录、压缩分隔线这一类（CONTROL_KINDS） */
+  const mark = (content: string, timestamp: number): Message => ({
+    role: 'system',
+    kind: WellKnownKinds.EventMarker,
+    content,
+    timestamp,
+  });
+
+  /**
+   * 对话消息 m0…m3，标记 k* 夹在开头、中间与末尾；k1、k1b 与 m1 同一毫秒，分别写在它之前与之后，k2、k3 同一毫秒。
+   * 另一个会话一条
+   */
+  async function seeded(): Promise<MemoryService> {
+    const opened = await open();
+    stop = opened.stop;
+    const messages = [
+      mark('k0', 500),
+      msg('m0', 1000),
+      mark('k1', 2000),
+      msg('m1', 2000),
+      mark('k1b', 2000),
+      msg('m2', 3000),
+      mark('k2', 3500),
+      mark('k3', 3500),
+      msg('m3', 4000),
+      mark('k4', 5000),
+    ];
+    for (const m of messages) await opened.mem.saveMessage('s', m);
+    await opened.mem.saveMessage('other', msg('别的会话', 1500));
+    return opened.mem;
+  }
+
+  it('countHistory 只数对话消息', async () => {
+    const mem = await seeded();
+
+    expect([await mem.countHistory?.('s'), await mem.countHistory?.('other')]).toEqual([4, 1]);
+  });
+
+  it('getHistory(…, limit)：第 limit+1 新的对话消息之后的全部活跃消息，夹在其间与之后的标记一并带回；同毫秒按写入序', async () => {
+    const mem = await seeded();
+
+    expect(contents(await mem.getHistory('s', 1))).toEqual(['k2', 'k3', 'm3', 'k4']);
+    expect(contents(await mem.getHistory('s', 2))).toEqual(['k1b', 'm2', 'k2', 'k3', 'm3', 'k4']);
+    expect(contents(await mem.getHistory('s', 3))).toEqual(['k1', 'm1', 'k1b', 'm2', 'k2', 'k3', 'm3', 'k4']);
+  });
+
+  it('对话消息不超过 limit 条时是全部活跃消息；limit 为 0 时为空', async () => {
+    const mem = await seeded();
+    const all = ['k0', 'm0', 'k1', 'm1', 'k1b', 'm2', 'k2', 'k3', 'm3', 'k4'];
+
+    expect(contents(await mem.getHistory('s', 4))).toEqual(all);
+    expect(contents(await mem.getHistory('s', Infinity))).toEqual(all);
+    expect(await mem.getHistory('s', 0)).toEqual([]);
+  });
+
+  it('archiveSpan 按位置数，标记也占位置；归档之后两种读法只看活跃的', async () => {
+    const mem = await seeded();
+
+    expect(await mem.archiveSpan('s', { count: 3, keep: [] })).toBe(3);
+    expect(await mem.countHistory?.('s')).toBe(3);
+    expect(contents(await mem.getHistory('s', 3))).toEqual(['m1', 'k1b', 'm2', 'k2', 'k3', 'm3', 'k4']);
   });
 });
 

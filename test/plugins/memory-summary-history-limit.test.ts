@@ -8,18 +8,17 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import { CONTROL_KINDS, type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { conversationOf, endTurn, fakeSummaryLLM, usageEvent } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 条数线是 agent 按会话解析好、记在这一轮用量事件里的 historyLimit：回合结束时的会话条数（这一轮最后一次调用的用量里会话
-// 历史的条数，加上之后落库的那一条：结局为 replied 时是最终回复，为 silent 时是回合记录的事件标记）到了它，摘要插件就在后台
-// 全量压缩，与用量到线同一条流程、同一套按轮数
-// 的失败退避。为 0 时不按条数压缩。设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文、切分点之后的消息与分隔标记）
-// 不超过条数线的一半（向下取整）为止，条数线取这个会话最近一次用量里的。下面的用量都远不到压缩线（窗口与裁剪预算 1000，
-// 用量 10）。
+// 历史的条数，结局为 replied 时加上之后落库的最终回复）到了它，摘要插件就在后台全量压缩，与用量到线同一条流程、同一套按轮数
+// 的失败退避。条数只数对话消息：回合记录、分隔标记这类事件标记不算。为 0 时不按条数压缩。设了条数线时，挑中的原文只留到
+// 压完的活跃条数（保留的原文与切分点之后的对话消息）不超过条数线的一半（向下取整）为止，条数线取这个会话最近一次用量里的。
+// 下面的用量都远不到压缩线（窗口与裁剪预算 1000，用量 10）。
 // ════════════════════════════════════════════════════════════
 
 const settle = () => new Promise<void>(r => setTimeout(r, 20));
@@ -56,16 +55,19 @@ async function setup(summaryLLM = fakeSummaryLLM()) {
 }
 
 describe('plugin-memory-summary: 条数线', () => {
-  it('回合结束时的会话条数含之后落库的那一条：结局为 replied（最终回复）与 silent（回合记录）时最后一次调用的条数加一', async () => {
+  it('回合结束时的会话条数：结局为 replied 时最后一次调用的条数加上落库的最终回复；silent 的回合记录是事件标记，不加', async () => {
     const { host, sm, statuses, say } = await setup();
-    for (const outcome of ['silent', 'replied'] as const) {
+    for (const [outcome, below] of [
+      ['replied', 3],
+      ['silent', 4],
+    ] as const) {
       const session = await sm.createSession({ name: outcome });
       await say(session.id);
-      await endTurn(host, session.id, counted(3, 5), { outcome });
+      await endTurn(host, session.id, counted(below, 5), { outcome });
       await settle();
-      expect(statuses, `${outcome}：加一之后不到线`).toEqual([]);
+      expect(statuses, `${outcome}：差一条不到线`).toEqual([]);
 
-      await endTurn(host, session.id, counted(4, 5), { outcome });
+      await endTurn(host, session.id, counted(below + 1, 5), { outcome });
       await expect.poll(() => statuses, { message: outcome }).toEqual([`${session.id}:start`, `${session.id}:done`]);
       statuses.length = 0;
     }
@@ -160,6 +162,8 @@ describe('plugin-memory-summary: 压完的条数', () => {
       for (const m of messages) await store.saveMessage(id, m);
     };
     const history = () => store.getHistory(id, Infinity);
+    /** 活跃历史里对话消息的条数：与 agent 报的会话条数同一口径，事件标记不算 */
+    const said = async () => (await history()).filter(m => !CONTROL_KINDS.includes(m.kind ?? '')).length;
     /** 活跃历史的形状：角色加正文，工具组首写调用的 id，工具结果写对应的 id */
     const shapes = async () =>
       (await history()).map(m =>
@@ -167,24 +171,24 @@ describe('plugin-memory-summary: 压完的条数', () => {
           ? `${m.role}:${m.toolCalls.map(c => c.id).join()}`
           : `${m.role}:${m.toolCallId ?? m.content}`,
       );
-    return { ...env, id, save, history, shapes };
+    return { ...env, id, save, said, shapes };
   }
 
-  it('比例 0.1、条数线 10，每轮一问一条很长的回答、摘要模型编得上号的全留：压完的活跃条数（含分隔标记）不超过条数线的一半，超出的从最早的保留单位起整组去掉，压完 compressionDue 为假', async () => {
-    const { host, id, save, history, shapes, statuses } = await session(10);
+  it('比例 0.1、条数线 10，每轮一问一条很长的回答、摘要模型编得上号的全留：压完的活跃条数（分隔标记不算）不超过条数线的一半，超出的从最早的保留单位起整组去掉，压完 compressionDue 为假', async () => {
+    const { host, id, save, said, shapes, statuses } = await session(10);
     await save(...seed);
     const round = async (k: number) => {
       await save(user(`问${k}`), answer);
-      const ended = (await history()).length;
+      const ended = await said();
       const reported = statuses.length;
       await endTurn(host, id, counted(ended, 10), { outcome: 'silent' });
       if (due(ended)) await expect.poll(() => statuses.length).toBe(reported + 2);
-      expect(due((await history()).length), `第 ${k} 轮之后`).toBe(false);
+      expect(due(await said()), `第 ${k} 轮之后`).toBe(false);
     };
 
     await round(1);
-    // 编得上号的是六条短问、工具组与问1，共九条：连同分隔标记留到五条，去掉最早的五条短问，工具组两条整组留下
-    expect(await shapes()).toEqual([...seedShapes.slice(5), 'user:问1', MARKER]);
+    // 编得上号的是六条短问、工具组与问1，共九条：留到五条，去掉最早的四条短问，工具组两条整组留下
+    expect(await shapes()).toEqual([...seedShapes.slice(4), 'user:问1', MARKER]);
     for (const k of [2, 3, 4]) await round(k);
     expect(statuses).toEqual([`${id}:start`, `${id}:done`, `${id}:start`, `${id}:done`]);
   });
@@ -198,8 +202,11 @@ describe('plugin-memory-summary: 压完的条数', () => {
     expect(await shapes()).toEqual([...seedShapes, 'user:问1', MARKER]);
   });
 
-  /** 手动压缩，摘要模型回话之前到了 count 条新消息（落定时在切分点之后）；返回压完的形状与这几条的形状 */
-  async function compressWithLate(historyLimit: number, count: number) {
+  /**
+   * 手动压缩，摘要模型回话之前到了 count 条新消息与 markers 条回合记录（落定时在切分点之后）；返回压完的形状与这几条新消息的
+   * 形状
+   */
+  async function compressWithLate(historyLimit: number, count: number, markers = 0) {
     let release!: () => void;
     const gate = new Promise<void>(r => (release = r));
     const { host, id, save, shapes, summaryLLM } = await session(historyLimit, async request => {
@@ -211,15 +218,16 @@ describe('plugin-memory-summary: 压完的条数', () => {
     await expect.poll(() => summaryLLM.requests.length).toBe(1);
     const late = Array.from({ length: count }, (_, i) => `压缩期间第${i}条`);
     await save(...late.map(user));
+    for (let i = 0; i < markers; i++) await save({ role: 'system', kind: WellKnownKinds.EventMarker, content: '' });
     release();
     await done;
     return { shapes: await shapes(), late: late.map(content => `user:${content}`) };
   }
 
-  it('条数线 11（一半向下取整为 5）、压缩期间到了一条：挑中的原文只留到连同这一条与分隔标记合计五条为止', async () => {
-    const { shapes, late } = await compressWithLate(11, 1);
+  it('条数线 11（一半向下取整为 5）、压缩期间到了一条与一轮的回合记录：挑中的原文只留到连同这一条合计五条为止，标记不算', async () => {
+    const { shapes, late } = await compressWithLate(11, 1, 1);
 
-    expect(shapes).toEqual(['assistant:a', 'tool:a', 'user:问1', ...late, MARKER]);
+    expect(shapes).toEqual(['user:第5问', 'assistant:a', 'tool:a', 'user:问1', ...late, 'system:', MARKER]);
   });
 
   it('切分点之后的消息本身就超过条数线的一半（条数线 10、压缩期间到了六条）：一条原文都不留', async () => {

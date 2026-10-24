@@ -16,7 +16,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import { type Message, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -24,6 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 // 条数线 historyLimit 是 agent 的按会话字段：发给模型的会话历史不超过这么多条，超过时一次丢掉最早的半条线，之后照常
 // 累积到线再丢一段（起点只由活跃条数与条数线算出），也是摘要插件按条数压缩的线；0 或哪一层都没设时发全部活跃历史。
+// 条数只数对话消息：事件标记（回合记录、压缩分隔线等 CONTROL_KINDS）不发给模型，也不占条数。
 // 真实回合与 token:request 的快照都按会话取、按同一个起点切。用量事件的 historyMessages 是这一轮开头会话的活跃条数
 // （含当前这条消息与没发给模型的部分）加本回合追加的工具调用与结果，快照只有活跃条数。
 // ════════════════════════════════════════════════════════════
@@ -144,6 +145,37 @@ describe('按会话的条数线读历史', () => {
     // 活跃 31 条，条数线 5、半条线 3：从第 27 条发起
     expect(oldIn(recorder[0])).toEqual([27, 28, 29].map(i => `zz-old ${i}`));
     expect(usages.map(u => u.historyMessages)).toEqual([31, 33]);
+  });
+
+  it('只数对话消息：条数线 50、活跃历史里夹着 20 条回合记录，发给模型的仍是 50 条对话消息，快照同一口径', async () => {
+    const { host, recorder, usages, ask, oldIn, historyIn, limit } = await boot();
+    const SESSION = 'zz-ctx-markers';
+    // 49 条旧消息，前 40 条每两条之后跟一条没有回复的一轮留下的回合记录
+    for (let i = 0; i < 49; i++) {
+      await host.memory.use.saveMessage(SESSION, {
+        role: i % 2 ? 'assistant' : 'user',
+        content: `zz-old ${i}`,
+        timestamp: 1000 + 2 * i,
+      });
+      if (i < 40 && i % 2) {
+        await host.memory.use.saveMessage(SESSION, {
+          role: 'system',
+          kind: WellKnownKinds.EventMarker,
+          content: '',
+          timestamp: 1001 + 2 * i,
+        });
+      }
+    }
+    await limit(SESSION, 50);
+
+    await host.events.use.emit('token:request', { sessionId: SESSION });
+    expect(usages.at(-1)?.historyMessages).toBe(49);
+
+    // 加上这一轮的输入共 50 条对话消息，到线不超线：一条不丢
+    await ask(SESSION);
+    expect(oldIn(recorder[0])).toHaveLength(49);
+    expect(historyIn(recorder[0])).toHaveLength(49);
+    expect(usages.at(-1)?.historyMessages).toBe(50);
   });
 
   it('全局层、平台档与会话自己的设置按层生效；没有出生平台的会话按入口平台选平台档', async () => {

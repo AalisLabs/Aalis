@@ -337,7 +337,8 @@ export interface TokenUsageEvent {
   untrimmedHistory: number;
   /**
    * 会话历史的条数：这一轮开头会话的活跃历史条数（含这一轮开轮的输入，也含条数线之外、没发给模型的部分），加本回合到这次
-   * 调用为止追加的工具调用与结果（插进来的输入与它们一样按追加计）。与硬裁剪无关；快照只有活跃历史条数
+   * 调用为止追加的工具调用与结果（插进来的输入与它们一样按追加计）。只数对话消息，事件标记（schema-message 的 CONTROL_KINDS）
+   * 不算，与 api-memory 的 countHistory 同一口径。与硬裁剪无关；快照只有活跃历史条数
    */
   historyMessages: number;
   /** 这一轮的历史条数上限（会话设置「历史条数上限」，0 为不按条数）：摘要插件按它判定按条数压缩 */
