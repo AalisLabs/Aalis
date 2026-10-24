@@ -93,7 +93,7 @@ interface SessionInfo {
 删除与清空：
 
 - `deleteSession(id)` 连同下面各级子会话删除：先从表里摘掉，再发 `session:deleted`、经 `memory:clear` 清它的消息历史与各插件按会话存的数据。监听方在 `session:deleted` 里停掉这个会话在跑的东西，所以消息历史在它们停下之后才清。参考实现有 agent 时摘掉之后就把整个删除（先删各级子会话，再发事件、清数据）交给它的 `clearing`（[api-agent](./api-agent.md)），先停下这个会话的回合并按住它，到清完。新旧两代按代号分（`generationOf`）：开始删除之后到的同一会话的消息（带 `source` 的也一样）在 `recordInbound` 里等删除做完，是新的一代，不被这次删除停下，存档也不被它清掉；这之前已过 `recordInbound` 的是旧的一代，网关交给 agent 之前、agent 交给通道之前比代号放掉、不归档。
-- `generationOf(sessionId)` 是这个会话此刻的代号：开始删除时（与让新来的入站在 `recordInbound` 里等着同一步，同步地，带子会话的先于删子会话）换成这个会话没给过的值；其余时候不变，删过的 ID 之后再建档也不变，所以要一直留着。只按相等比。网关与 agent 据它放掉删除开始之前已收录的旧一代（[api-agent](./api-agent.md) 的 `handleMessage`、[plugin-gateway](../plugins/plugin-gateway.md)）；会话管理不在时没有删除，两边都不比。参考实现按 ID 记开始删除的次数，没删过的为 0，删过的 ID 每个占一项；这张表随会话管理的这次激活，重新激活（重启、改它的配置、重载）时清空，这期间在途的消息可能被误放掉，删除之前的一代也可能被放过。
+- `generationOf(sessionId)` 是这个会话此刻的代号：开始删除时（与让新来的入站在 `recordInbound` 里等着同一步，同步地，带子会话的先于删子会话）换成这个会话没给过的值；其余时候不变，删过的 ID 之后再建档也不变，所以要一直留着。只按相等比。据它比对的只有上一条说的两处（[api-agent](./api-agent.md) 的 `handleMessage`、[plugin-gateway](../plugins/plugin-gateway.md)）：入站相位里挂过删完时刻的旧一代，指令照样执行，被触发判定或流控吞掉的照旧影子归档（IM 房间按下一条重新建档后在新的历史里）。会话管理不在时没有删除，两边都不比。参考实现按 ID 记开始删除的次数，没删过的为 0，删过的 ID 每个占一项；这张表随会话管理的这次激活，重新激活（重启、改它的配置、重载）时清空，这期间在途的消息可能被误放掉，删除之前的一代也可能被放过。
 - 一个会话的消息历史被清空（`memory:clear` 没指定类型或类型含 `context`，且消息历史那一行清成功，判法是 [api-memory](./api-memory.md) 的 `historyCleared`）时，它的子会话一并删除：范围为 `session` 删这个会话的子会话，为 `all` 删全部子会话。只清别的类型、或消息历史没清成时不删。
 
 ## 取别的会话的东西

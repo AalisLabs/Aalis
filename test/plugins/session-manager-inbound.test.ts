@@ -8,8 +8,9 @@ import { fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/s
 
 // ════════════════════════════════════════════════════════════
 // 入站收录先于入站相位：会话管理的 recordInbound 可等待，网关在跑入站相位之前等它。新群的第一条消息进入指令相位时会话已经
-// 建档、带聊天窗口，各层按记下的类型取。同一会话并发的入站只收录一次；带 source 的、没有会话 id 的、子会话与已收录的会话
-// 不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端的会话不写聊天窗口。
+// 建档、带聊天窗口，各层按记下的类型取；网关在收录之后才记代号，问认领者的期间开始删除的那条按新的一代派发。同一会话并发的
+// 入站只收录一次；带 source 的、没有会话 id 的、子会话与已收录的会话不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端
+// 的会话不写聊天窗口。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -113,6 +114,27 @@ describe('网关等收录', () => {
       targetId: '20001',
     });
     expect(probe.seen[0].read).toEqual([]);
+  });
+
+  it('问认领者的期间开始删除这个会话：代号在收录之后才记，按新的一代照常派发', async () => {
+    const slow = slowAdapter();
+    const { app, host, sm, inbound } = await startSettings({ first: [gatewayPlugin], adapters: [slow.adapter] });
+    apps.push(app);
+    // 按 id 兜底建档的空记录：要由这条原生入站补记
+    await sm.ensureSession(GROUP);
+    const sent: string[] = [];
+    host.events.use.on('outbound:message', message => void sent.push(message.sessionId));
+    const dispatched = new Promise<void>(resolve =>
+      host.events.use.on('gateway:phase:done', ({ phase }) => {
+        if (phase === 'inbound:dispatch') resolve();
+      }),
+    );
+    const emitting = inbound(fromGroup());
+    await new Promise(resolve => setImmediate(resolve));
+    const deleting = sm.deleteSession(GROUP);
+    slow.release();
+    await Promise.all([emitting, deleting, dispatched]);
+    expect(sent, '按新的一代派发：没有 agent 时回兜底的那句').toEqual([GROUP]);
   });
 });
 
