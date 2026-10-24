@@ -273,8 +273,7 @@ export function isUnfiled(session: Pick<SessionInfo, 'originPlatform' | 'created
 /**
  * 房间类别：这个会话的受众里有谁。owner-only 是受众只有 owner 的会话，room 是受众里有别人的，internal 是没有受众的内部会话
  * 与判不出的。用在按受众定的行为上，如网关对受众只有 owner 的会话跳过触发与流控、摘要模板、检查点的默认范围、发送者前缀；
- * 另有两处按它定能不能取：api-media 本机文件判法里非人回合的条款（授权身份是 owner、类别不是 room 的能取），与
- * plugin-image-sender 把她回复里存储地址的媒体标记转成附件时，owner-only 的会话不过媒体判据
+ * 另有一处按它定能不能取：api-media 本机文件判法里非人回合的条款（只有一位参与者、他是 owner、类别不是 room 的能取）
  */
 export type RoomClass = 'owner-only' | 'room' | 'internal';
 

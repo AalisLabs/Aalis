@@ -121,14 +121,14 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 | `owners?: UserIdentity[]` | owner 列表，owner = `*`，拥有一切 |
 | `deniedCapabilities?: string[]` | 全局能力硬禁（glob），命中即拒，**连 owner 都压过** |
 | `authorityOverrides?: Record<string, number>` | owner 逐条覆盖某操作最低等级（键 `type:name`），优先于 risk/visibility 派生 |
-| `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 关闭确认，只对授权身份是 owner 的回合生效，别人的回落到插件的声明 |
-| `restrictedPolicy?: { allow?: string[]; duration?: number }` | 免确认白名单（给自动化）；`['*']` 全放。只免 `session` 档，只对授权身份是 owner 的回合生效，不放宽授权 |
+| `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 关闭确认，只对参与者都是 owner 的回合生效，有别人的回落到插件的声明 |
+| `restrictedPolicy?: { allow?: string[]; duration?: number }` | 免确认白名单（给自动化）；`['*']` 全放。只免 `session` 档，只对参与者都是 owner 的回合生效，不放宽授权 |
 | `authorityGroups?: Record<string, string[]>` | 权限组：组名 → 放行条目（`tool:…`、`command:…` 可带通配，`tool-group:<分组名>`）；只加放行，硬禁与封禁照旧先拒。成员记在参考实现的 users.json 里 |
 | `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级网络策略，`safeFetch` 与 tool-browser 的浏览器网络闸都按它判定（见第 6 节） |
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（参考实现）**：`@aalis/plugin-authority`。工具的确认经 `approvals`（`@aalis/api-approval`，由 plugin-session-server 提供）请 owner 审批，它缺席时需要确认的工具调用一律拒绝。
+**提供方（参考实现）**：`@aalis/plugin-authority`。工具的确认与参与者审批经 `approvals`（`@aalis/api-approval`，由 plugin-session-server 提供）请能批的人审批（要确认的只有 owner 能批），它缺席时要审批的工具调用一律拒绝。
 - 注册：`caps.provide.use(authority, manager)`，`packages/plugin-authority/src/index.ts`（`new AuthorityManager(...)`）。
 - 裁决纯函数：`packages/plugin-authority/src/authority-model.ts`（`resolveAccess` / `resolveMinLevel` / `matchAnyCap` / 发起回合类别 `originKind`）；risk→等级的映射本身在 `@aalis/api-authority` 的 `capabilityMinLevel`。
 - 策略层 / 状态：`packages/plugin-authority/src/authority-manager.ts`（`AuthorityManager implements AuthorityService`）。
@@ -155,7 +155,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 
 - **必须**：`isOwner`、`ownerOn`、`originOf`、`principalOf`、`authorize`（轴 A）、`save`、`listUsers`，以及注入 commands / tools 的执行守卫（轴 B 在守卫里完成）。
 - **管理面用**：`setUserLevel`、`removeUser`（权限页的等级动作与 `/level` 调）。权限组的成员（`setUserGroups`）只在参考实现上，替换实现要自己提供管理入口。
-- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；对每个参与者各裁决一次，有人做不了时只产生审批、由自己就能做的人批，谁都做不了照旧拒；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按授权身份判，人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有人能批才能产生审批。
+- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；封禁先于等级与组，所属组只加放行；等级不够、所属组也不覆盖即拒，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过；对每个参与者各裁决一次，有人做不了时只产生审批、由自己就能做的人批，谁都做不了照旧拒；工具的确认只经 owner 审批，发起类别按这一轮从哪里来判、不按授权身份判，人亲手发起的一轮（含它的续做与子任务，不论在哪个会话）、参与者里有人能批才能产生审批。
 
 ### 4.2 注册（provide）
 

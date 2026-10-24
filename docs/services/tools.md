@@ -178,7 +178,7 @@ const result = tools.present
 
 **提供者必须遵守**：写/删/越权读/外发类工具都要声明 `risk` 或显式 `visibility/confirm`。外发网络走 `safeFetch`。访问文件系统只走 storage URI。
 
-**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则把调用上下文（身份、回合与调用 id、`inbound`、中止信号）交给它。需要确认的工具调用由守卫请 owner 审批，这一轮里有 owner 的话（人亲手发起，含它的续做，不论在哪个会话）才能产生审批。owner 视为等级 ∞。
+**执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 guard 则把调用上下文（参与者、回合与调用 id、`inbound`、中止信号）交给它。需要确认的工具调用由守卫请 owner 审批，这一轮里有 owner 的话（人亲手发起，含它的续做与子任务，不论在哪个会话）才能产生审批；参与者里有人自己做不了的，由守卫发一道参与者审批，自己就能做的人能批，批过的按批的人执行。owner 视为等级 ∞。
 
 ## 7. 注意事项
 

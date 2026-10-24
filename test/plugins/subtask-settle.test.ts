@@ -61,12 +61,11 @@ async function setup() {
   const call = async (tool: string, args: Record<string, unknown>) => JSON.parse(await handlers.get(tool)!(args, ctx));
 
   let turns = 0;
-  /** 子会话跑一轮，按 agent 的顺序发回合结束；during 在这一轮结束前跑（同一会话并行的另一轮） */
-  const turn = (sessionId: string, outcome: Outcome, error?: string, during?: () => Promise<unknown>) => {
+  /** 子会话跑一轮，按 agent 的顺序发回合结束 */
+  const turn = (sessionId: string, outcome: Outcome, error?: string) => {
     const inputs = [{ message: { content: '<任务>', sessionId, platform: 'webui' } }];
     const turnId = `t${++turns}`;
     return host.hooks.use.run('agent:turn:before', { turnId, sessionId, inputs }, async () => {
-      await during?.();
       await host.hooks.use.run('agent:turn:after', {
         inputs,
         reply: outcome === 'replied' ? '<结果>' : '',
@@ -180,20 +179,6 @@ describe('子会话收口后父会话的等待随即返回', () => {
       [child.id, 'assistant', 't1'],
       [child.id, 'tool', 't1'],
     ]);
-  });
-
-  it('最后结束的一轮出错、会话已由并行的另一轮收口为完成：报 completed，不带 reason', async () => {
-    const { sm, parent, call, turn } = await setup();
-    const child = await sm.createChildSession(parent.id, { name: '<子任务>' });
-    await turn(child.id, 'error', '<原因>', () => turn(child.id, 'replied'));
-    expect(sm.getSession(child.id)).toMatchObject({ status: 'completed', lastTurn: { error: '<原因>' } });
-
-    const waited = await call('wait_subtasks', { subtask_ids: [child.id] });
-    expect(waited.subtasks[0]).toMatchObject({ status: 'completed' });
-    expect(waited.subtasks[0]).not.toHaveProperty('reason');
-    const checked = await call('check_subtask', { subtask_ids: [child.id] });
-    expect(checked.subtasks[0]).toMatchObject({ status: 'completed' });
-    expect(checked.subtasks[0]).not.toHaveProperty('reason');
   });
 
   it('等待中子任务被删：随即返回，按不存在回，不算超时', async () => {

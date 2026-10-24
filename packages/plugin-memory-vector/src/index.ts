@@ -1157,7 +1157,8 @@ async function run(caps: Caps): Promise<void> {
         const provider = pinned(embedding);
         const { modelId } = provider;
         const queryVec = await provider.embed(query, { signal: callCtx.signal });
-        // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
+        // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）。调用者是物理发言者，这一轮几个人说话时
+        // 没有，不加权（被动注入按各条输入的发言者加权）
         const ranked = await rankCandidates(
           queryVec,
           modelId,

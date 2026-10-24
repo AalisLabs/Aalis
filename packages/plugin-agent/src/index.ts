@@ -195,7 +195,7 @@ class DefaultAgent implements AgentService {
   readonly promptBuildTimeoutMs: number;
   /** 单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断 */
   private toolResultMaxRatio: number;
-  /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
+  /** 裁剪触发比例 (0~1)：裁剪预算按上下文长度乘它再扣输出预留，见 computeTokenBudget */
   private trimThresholdRatio: number;
 
   /** 各会话的通道：在跑的一轮、待插入与排队的输入（见 session-queue.ts）。停机与会话删除由 run() 直接经它停，清消息历史经 clearing */
@@ -2142,7 +2142,7 @@ const configSchema = defineConfig({
     label: '裁剪触发比例',
     default: 1.0,
     description:
-      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
+      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。硬裁剪按它裁要发出的消息列表（只裁内存里的，不影响 DB）：历史超过可用量（预算减去头部与四分之一预算）就成段丢，其余几步在估算超过预算时才做。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
   },
   // ----- 按会话字段：各层可覆盖，每一轮按会话读 -----
   llm: {

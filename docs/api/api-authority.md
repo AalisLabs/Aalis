@@ -95,13 +95,13 @@ interface AuthorityService {
   // 那一轮，参与者是那一轮交来的（批过的调用是批的人）；其余为 other（owner 与别人同在的一轮也是）
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
-  // capability 统一闸：null 放行 | string 拒绝原因
+  // capability 统一闸：null 放行；否则是拒绝原因（字符串或文字对象，读法同 ExecutionGuard 的拒绝原因）
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > 用户 level >= 操作 minLevel > 所属权限组覆盖；
   // minLevel 取 config.authorityOverrides，没有时取 request.minLevel，再没有时由 request.risk/visibility 派生；组的放行条目取自 config.authorityGroups。
   authorize(
     identity: UserIdentity | { platform: string; userId?: string },
     request: AuthorizeRequest, // { capability, visibility, risk?, minLevel?, toolGroups? }
-  ): string | null;
+  ): string | TextRef | null;
 
   // 这个身份的等级够不够 minLevel：owner 恒过，封禁（等级为负数）恒不过，其余登记等级不低于 minLevel 才过；
   // minLevel 为 Infinity 即只有 owner。不看能力、权限组与硬禁（那些归 authorize），给会话设置按层固定的门槛用。提供者要实现它
@@ -151,7 +151,7 @@ agent 用 `originTurnOf(这一轮的输入, 权限服务的 isOwner)` 填工具�
 
 - **可免的确认**：只对参与者都是 owner 的回合。`confirm` 为 `session` 时，`skipConfirm` 的受信来源（带 `ownerApproved` 的注入即定时任务触发的指令、runtime 一次性子命令）与 `restrictedPolicy` 白名单命中的能力免确认；`always` 只有 `confirmOverrides` 设为 `'off'` 能免。有别人的回合照旧确认，`'off'` 回落到插件的声明。
 - **指令**：确认的是发出者本人的意图。调用方给了 `confirmIntent` 就调它，发出者确认才执行；没给（例如适配器没给发出者的消息）就无从确认，直接拒。指令一路的参与者只有发出者，放行不带 `by`。
-- **工具**：要一道只有 owner 能批的审批（`canAnswer` 是 isOwner，`ownerOnly` 为真），与参与者审批合成一次。守卫带上发起回合的类别（`originOf`）与这一轮的参与者调 `approvals.request`；人亲手发起的一轮（含它的续做，不论在哪个会话）、参与者里有人能批才能产生审批，其余由审批服务立即拒绝、不推给任何面：要 owner 确认的，参与者里没有 owner 时直接拒。批了回 `{ ok: true, by }`，`by` 是批的人，他就是参与者之一时取那个参与者的身份（owner 的各个身份算一个）；拒绝、过期与产生不了时把审批服务给的话回给模型，只拒这一个调用；审批服务不在时立即拒并说明。
+- **工具**：要一道只有 owner 能批的审批（`canAnswer` 是 isOwner，`ownerOnly` 为真），与参与者审批合成一次。守卫带上发起回合的类别（`originOf`）与这一轮的参与者调 `approvals.request`；人亲手发起的一轮（含它的续做与子任务，不论在哪个会话）、参与者里有人能批才能产生审批，其余由审批服务立即拒绝、不推给任何面：要 owner 确认的，参与者里没有 owner 时直接拒。批了回 `{ ok: true, by }`，`by` 是批的人，他就是参与者之一时取那个参与者的身份（owner 的各个身份算一个）；拒绝、过期与产生不了时把审批服务给的话回给模型，只拒这一个调用；审批服务不在时立即拒并说明。
 
 工具执行中的取用判定（工具调用上下文的 `approveFor`，见 [api-tools](./api-tools.md#toolcallcontext)）同样经守卫：上下文带 `check` 时按它对每个参与者判、代替等级裁决，三分同上，有人过不了时发一道参与者审批（`canAnswer` 是 `check(who).ok`，不是只有 owner 能批的那种），都过不了回第一位的原因；确认在这次调用开始时已经判过，不再判。
 
@@ -180,9 +180,9 @@ interface AuthorizeRequest {
 - `owners?: UserIdentity[]` —— owner 列表（owner = ∞，拥有一切）
 - `deniedCapabilities?: string[]` —— 全局硬禁用（glob；命中即拒，连 owner 都压过）
 - `authorityOverrides?: Record<string, number>` —— 单条操作的最低等级覆盖（能力键 `type:name` → 任意整数），优先于 risk/visibility 派生
-- `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 关闭确认（便于自动化），只对授权身份是 owner 的回合生效，别人的回落到插件的声明；与等级正交
+- `confirmOverrides?: Record<string, CapabilityConfirm | 'off'>` —— 单条操作的确认要求覆盖；`'off'` 关闭确认（便于自动化），只对参与者都是 owner 的回合生效，有别人的回落到插件的声明；与等级正交
 - `authorityGroups?: Record<string, string[]>` —— 权限组：组名 → 放行条目。条目写成 `tool:<名或通配>`、`command:<名或通配>`（通配同 `deniedCapabilities`）或 `tool-group:<工具分组名>`；裸 `*` 与别的前缀不命中任何操作。只加放行，硬禁与封禁照旧先拒，确认照旧。成员关系不在契约里，参考实现记在 users.json
-- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；只对授权身份是 owner 的回合生效；不放宽授权
+- `restrictedPolicy?: { allow?: string[]; duration?: number }` —— 免确认白名单（`allow` glob，`['*']` 全放；`duration` 生效时长秒，0=永久）。只免 `session` 档的确认，`always` 照常确认；只对参与者都是 owner 的回合生效；不放宽授权
 - `network?: { blockPrivate?: boolean; denyCidrs?: string[]; allowedPorts?: number[] }` —— 网络出口闸（SSRF 防护）：限制由 LLM/用户 URL 触发的出口能连到哪，即 `safeFetch`，以及 tool-browser 开启 `blockPrivate` 时的浏览器网络闸（三项都遵循）
 
 ## 管理入口

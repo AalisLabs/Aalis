@@ -36,7 +36,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 | `internalError` | -32603 | 服务端处理出错（如落盘失败） |
 | `applicationError` | -32000 | 业务错误，原因看 `error.data.code` |
 
-业务错误码 `error.data.code`：`not-found`（会话、审批等对象不存在）、`forbidden`（这条连接的身份不能做这件事，如不是 owner 的应答）、`conflict`、`approval-settled`（审批已经结算）、`hash-mismatch`（应答带的内容哈希对不上）、`expected-turn-mismatch`（`turn/abort` 带的回合 id 不是正在跑的那一轮）、`unsupported`（协议版本不兼容，或所需的服务不在）。
+业务错误码 `error.data.code`：`not-found`（会话、审批等对象不存在）、`forbidden`（这条连接的身份不能做这件事，如应答人不能批这一张审批）、`conflict`、`approval-settled`（审批已经结算）、`hash-mismatch`（应答带的内容哈希对不上）、`expected-turn-mismatch`（`turn/abort` 带的回合 id 不是正在跑的那一轮）、`unsupported`（协议版本不兼容，或所需的服务不在）。
 
 ## 握手
 
@@ -315,7 +315,7 @@ interface BackgroundTask {
 
 ## 在场与审批
 
-需要 owner 批准的工具调用以审批对象的形式出现，对象与规则见 [api-approval](./api-approval.md)。每条连接都在它所在的审批面上（传输层登记的那一个，握手回它的登记名）；在场上报与应答都记在这个审批面的登记身份名下，连接自己报不了别的面。
+需要批准的工具调用（要 owner 确认的，或这一轮的参与者里有人自己做不了的）以审批对象的形式出现，对象与规则见 [api-approval](./api-approval.md)。每条连接都在它所在的审批面上（传输层登记的那一个，握手回它的登记名）；在场上报与应答都记在这个审批面的登记身份名下，连接自己报不了别的面。
 
 | 方法或通知 | 参数 | 结果 |
 |---|---|---|
