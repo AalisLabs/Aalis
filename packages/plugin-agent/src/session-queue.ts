@@ -5,8 +5,9 @@
 // 后取队首：队首是真人消息时队里的真人消息一起开下一轮，队首是带来源的注入时只开它。开下一轮的是这一批里入队最早那条的调用，
 // 回合跑在它的异步上下文里（注入方据此认出自己那一轮），其余各条等这一轮结束。停一轮可以连同排队与待插入的一起放掉；放掉的
 // 在这个会话在跑的一轮落定之后由 agent 按先后归档（要归档的才归档），agent 在一个会话里的写入因此不交错。一轮被停下即不再收
-// 输入。会话删除时，删除之前开始逐条处理、之后才入队的输入以放掉落定；关闭（停机）之后入队的同样。按住的会话（清消息历史期间）
-// 要交给通道的输入等放开再交。等候的集合（排队与待插入的）变了时报给 onWaiting。
+// 输入。retire 时还在逐条处理的输入，之后交给通道时以放掉落定（什么时候 retire 由 agent 定，见它的 sessionDeleted）；关闭（停机）
+// 之后入队的同样以放掉落定。按住的会话（清消息历史期间）要交给通道的输入等放开再交。等候的集合（排队与待插入的）变了时报给
+// onWaiting。
 // ============================================================
 
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -236,13 +237,9 @@ export class SessionQueues {
     return Promise.all(sessionIds.map(sessionId => this.settled(sessionId))).then(() => undefined);
   }
 
-  /**
-   * 会话删除：正在逐条处理的输入之后放掉；停下在跑的一轮、放掉排队项（不归档），返回那一轮落定的 Promise。没有上限：不响应中止
-   * 的工具会让它一直等到工具返回
-   */
-  delete(sessionId: string): Promise<void> {
+  /** 会话删除：此刻正在逐条处理的输入之后交给通道时放掉（不归档） */
+  retire(sessionId: string): void {
     for (const admission of this.#admitted.get(sessionId) ?? []) admission.deleted = true;
-    return this.stopAll([sessionId], { archive: false, reason: '会话删除' });
   }
 
   /** 关闭（停机）：之后入队的一律放掉；停下全部在跑的一轮、放掉全部排队项（都归档），返回它们都落定的 Promise */

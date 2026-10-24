@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent as agentService, type TokenUsageEvent, type TurnInput } from '../../packages/api-agent/src/index.js';
-import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
-import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -14,8 +12,6 @@ import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.
 import { workflow } from '../../packages/api-workflow/src/index.js';
 import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
-import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
-import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
@@ -32,6 +28,7 @@ import {
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
+import { command, hanging, withCommands } from '../fixtures/clearing.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { sessionInfoOf } from '../fixtures/paper.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
@@ -831,7 +828,7 @@ describe('能停下一轮的', () => {
     const b = s.say(where, '<乙>');
     const x = s.notice(where.sessionId, '<通知>');
     await settle();
-    await command(s, line);
+    await command(s.app, WEBUI.sessionId, line);
     expect(seen, '清理链跑之前这一轮已经停下并落定').toEqual(['aborted']);
     await Promise.all([a, b, x]);
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
@@ -840,7 +837,7 @@ describe('能停下一轮的', () => {
     const next = s.model.hold(2);
     const c = s.say(where, '<丙>');
     await next.entered;
-    await command(s, `${line} -t vector`);
+    await command(s.app, WEBUI.sessionId, `${line} -t vector`);
     expect(seen, '不清消息历史的不停').toEqual(['aborted', undefined]);
     next.release();
     await c;
@@ -851,10 +848,10 @@ describe('能停下一轮的', () => {
     '/clear',
     '/clear all',
   ])('%s，先清再调 next 的一家清理登记在 agent 之前：清的期间到的输入等清完再处理，不开轮、不被清掉，清完照常开轮', async line => {
-    const cleaner = slowCleaner();
-    const s = await boot({ before: app => app.plugin(cleaner.plugin).then(() => undefined), after: withCommands });
+    const cleaner = hanging('memory:clear');
+    const s = await boot({ before: cleaner.install, after: withCommands });
     await s.say(WEBUI, '<甲>');
-    const clear = command(s, line);
+    const clear = command(s.app, WEBUI.sessionId, line);
     await cleaner.entered;
     const b = s.say(WEBUI, '<乙>');
     await settle();
@@ -871,47 +868,12 @@ describe('能停下一轮的', () => {
   });
 });
 
-/** 装上 plugin-commands（网关是替身），清消息历史由它的 /clear 发起 */
-async function withCommands(app: App): Promise<void> {
-  app.bind({ provide }).provide.use(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
-  await app.plugin(commandsPlugin, {});
-}
-
 /** 登记一个不清消息历史的清理类型 vector（/clear -t vector 才认得） */
 const vectorType = definePlugin({
   name: 'zz-vector-type',
   uses: { contributions },
   apply: ({ contributions }) => void contributions.use.contribute('memory:clear-type', { id: 'vector', label: '向量' }),
 });
-
-/**
- * 清理链上先清再调 next 的一家（如人设、检查点），清的时候挂住：entered 在它开始清时落定，release 之后才调 next
- */
-function slowCleaner() {
-  const entered = deferred();
-  const cleaned = deferred();
-  const plugin = definePlugin({
-    name: 'zz-slow-cleaner',
-    uses: { hooks },
-    apply: ({ hooks }) => {
-      hooks.use.middleware('memory:clear', async (_data, next) => {
-        entered.resolve();
-        await cleaned.promise;
-        await next();
-      });
-    },
-  });
-  return { plugin, entered: entered.promise, release: () => cleaned.resolve() };
-}
-
-/** owner 在 WebUI 会话里敲一条指令（指令守卫放行），交回回执 */
-async function command(s: Booted, line: string): Promise<string | undefined> {
-  const registry = s.app.bind({ commands: commandsService }).commands.use as unknown as CommandRegistry;
-  registry.setExecutionGuard(async () => ({ ok: true }));
-  const parsed = registry.parseCommand(line);
-  if (!parsed) throw new Error(`不是指令: ${line}`);
-  return registry.execute(parsed.name, { ...WEBUI, sessionType: 'private', args: parsed.args, raw: parsed.raw });
-}
 
 /**
  * 开轮的那次调用里调 name 这个一直等着的工具：它开始之后真人消息排着，停止键停下这一轮，期望工具马上回已中止、这一轮随即落定，

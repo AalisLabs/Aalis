@@ -396,7 +396,8 @@ export interface SessionManagerService {
   ): Promise<SessionInfo>;
   /**
    * 删除会话，连同下面各级子会话：先从表里摘掉并发 `session:deleted`（监听方在这里停掉这个会话在跑的东西），再经 memory:clear
-   * 清它的消息历史与各插件按会话存的数据。这两步做完之前到的同一会话的入站在 recordInbound 里等着
+   * 清它的消息历史与各插件按会话存的数据。这两步做完之前到的同一会话的入站在 recordInbound 里等着，所以这期间能到 agent 的都是
+   * 删除开始之前已收录的旧一代
    */
   deleteSession(id: string): Promise<void>;
 

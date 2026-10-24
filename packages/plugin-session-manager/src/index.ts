@@ -761,9 +761,9 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
 
     // 先发事件再清数据：监听方在这里停掉这个会话在跑的东西，清数据时就不会有中途写回来的。两步一起交给 agent 的 clearing：它先
-    // 按住这个会话、停下在跑的一轮并等它收尾，再跑这两步，按住到清完：删除期间才到 agent 的输入不开轮，不会回了话又被清掉（agent
-    // 收到事件时还没交给通道的是旧的一代，放掉；之后才到的清完再作为新的一代开轮）。这两步做完之前到的同一会话的入站等着（见
-    // recordInbound）
+    // 按住这个会话、停下在跑的一轮并等它收尾，再跑这两步，按住到清完：删除期间才到 agent 的输入不开轮，不会回了话又被清掉。这两步
+    // 做完之前到的同一会话的入站等着（见 recordInbound），所以删除期间能到 agent 的都是删除开始之前已收录的旧一代，agent 放掉、
+    // 不归档
     let done!: () => void;
     this.removing.set(id, new Promise<void>(resolve => (done = resolve)));
     try {
