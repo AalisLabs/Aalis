@@ -9,6 +9,7 @@ import {
 } from '../../packages/plugin-session-server/src/history.js';
 import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
+  CONTROL_KINDS,
   type Message,
   outboundMarkerMessage,
   outboundMediaMessage,
@@ -193,6 +194,68 @@ describe('历史归并', () => {
     });
     expect(items[5]).toMatchObject({ topic: 'paper-task', text: '白纸完成' });
     for (const item of items) expect(SessionItemSchema.safeParse(item).success, item.itemId).toBe(true);
+  });
+
+  it('翻页时读完与否按后端数条数的口径判：getFullHistory 按位置数，事件标记也占条数；没有它时兜底的 getHistory 只数对话消息（kind 不属于 CONTROL_KINDS 的），读回的对话消息少于要的条数就是读完了；字段不对、不进历史的那条两种都数', async () => {
+    const K = WellKnownMetadataKeys;
+    const asked = (content: string, timestamp: number): Message => ({ role: 'user', content, timestamp });
+    const silent = (turnId: string, timestamp: number): Message => ({
+      role: 'system',
+      kind: WellKnownKinds.EventMarker,
+      content: '',
+      timestamp,
+      metadata: { [K.TurnId]: turnId, [K.TurnRecord]: { outcome: 'silent' } },
+    });
+    // 没回话的两轮，每条提问之后跟一条只带回合记录的事件标记；第二轮之后她发了一张图（带 kind 的对话消息），平台记下一条经工具
+    // 发出的消息没送达（role 为 system 的对话消息，不成条目），还有一条字段不对的（不进历史）
+    const stored: Message[] = [
+      asked('<甲>', 1),
+      silent('t1', 2),
+      asked('<乙>', 3),
+      { ...outboundMediaMessage('image', 'data:/images/cat.png', { source: 'agent' }), timestamp: 4 },
+      {
+        role: 'system',
+        kind: WellKnownKinds.OutboundDeliveryFailed,
+        content: '<没送达>',
+        timestamp: 5,
+        metadata: { [K.CallId]: 'c1' },
+      },
+      { role: 'user', content: 42, timestamp: 6 } as unknown as Message,
+      silent('t2', 7),
+    ];
+    const said = stored.flatMap((m, i) => (CONTROL_KINDS.includes(m.kind ?? '') ? [] : [i]));
+    const shape = (items: SessionItem[]) =>
+      items.map(i => (i.kind === 'turn' ? i.turnId : 'text' in i && i.text !== '' ? i.text : i.kind));
+    /** 每页 2 条，从最新的翻到头 */
+    async function pages(memory: Partial<MemoryService>) {
+      const shapes: unknown[][] = [];
+      let before: string | undefined;
+      do {
+        const page = await readHistory(
+          memory as MemoryService,
+          'zz',
+          { before, limit: 2, skip: () => false },
+          context(true),
+          { warn: () => {} },
+        );
+        shapes.push(shape(page.items));
+        before = page.before;
+      } while (before !== undefined);
+      return shapes;
+    }
+    const expected = [['t2'], ['<乙>', 'agent-message'], ['<甲>', 't1']];
+
+    const getFullHistory = async (_sessionId: string, limit: number) => stored.slice(-limit);
+    expect(await pages({ getFullHistory })).toEqual(expected);
+    // 只有 getHistory 的后端照契约只数对话消息，读出第 limit+1 新的那条对话消息之后的全部：后两页要 6 条时读回 5 条对话
+    // 消息（连标记 7 条）就是读完了，不再要 12 条
+    const reads: number[] = [];
+    const getHistory = async (_sessionId: string, limit: number) => {
+      reads.push(limit);
+      return stored.slice((said[said.length - limit - 1] ?? -1) + 1);
+    };
+    expect(await pages({ getHistory })).toEqual(expected);
+    expect(reads).toEqual([3, 3, 6, 3, 6]);
   });
 
   it('存档里的附件清单与发言人写的话按类型取：不是数组、种类不认识、名字与地址不是字符串的项不认，空串的发言照样是发言', () => {
