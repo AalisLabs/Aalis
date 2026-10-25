@@ -8,7 +8,8 @@ import asrWhisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 两个 asr 插件的插件配置里没有优先级：登记时的优先级是插件里的常量（只作插件作者内部排序：本地的 whisper.cpp 在云端接口
-// 之前），配置里留着旧的 priority 也不起作用。process 与 storage 是替身，只为让 whisper.cpp 激活
+// 之前），配置里留着旧的 priority 也不起作用。process 与 storage 是替身，只为让 whisper.cpp 激活。云端接口在 baseUrl 后面拼
+// 路径，带查询串或片段的 baseUrl 读配置时就报错
 // ════════════════════════════════════════════════════════════
 
 const OPENAI = '@aalis/plugin-asr-openai';
@@ -39,5 +40,27 @@ describe('asr 提供者的优先级', () => {
       [asrWhisper, { modelPath: '/models/ggml.bin' }],
     ]);
     expect(winners).toEqual([WHISPER, OPENAI]);
+  });
+});
+
+describe('asr-openai 的 baseUrl', () => {
+  // 按原文判：末尾单个问号与片段解析后查询串为空，拼出来的地址照样是坏的
+  it.each([
+    ['带查询串', 'https://example.test/v1?key=zz-placeholder-secret'],
+    ['末尾单个问号', 'https://example.test/v1?'],
+    ['带片段', 'https://example.test/v1#frag'],
+  ])('%s：读配置时报错，不注册服务', async (_form, baseUrl) => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    const host = app.bind({ provide, services });
+    host.provide.use(processService, {} as never);
+    host.provide.use(storage, {} as never);
+    await app.plugins.register(asrOpenai, { apiKey: '<密钥>', baseUrl });
+    await app.plugins.idle();
+
+    const instance = app.plugins.getPlugin(OPENAI);
+    expect(instance?.state).toBe('error');
+    expect(instance?.error).toContain('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    expect(host.services.use.inspect(asr)).toEqual([]);
   });
 });

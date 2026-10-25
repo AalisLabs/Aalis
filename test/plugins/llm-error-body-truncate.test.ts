@@ -10,8 +10,8 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 // 非 2xx 响应体进错误信息或日志前要截断：网关或反向代理的 HTML 错误页可达数十 KB。模型发现失败的原因带响应体摘录，
 // 会进日志与 WebUI 的报错；对话出错时错误信息会作为「[错误] …」发回会话，只带状态码与提示（见
 // llm-chat-error-message），响应体摘录只进 warn。响应体里的换行与缩进折叠成一个空格，错误信息与日志保持一行；
-// 模型发现失败时，可操作的提示写在响应体之前。判断仍看完整响应体：内容审查关键词、Ollama 音频路径的 unknown
-// format 诊断。
+// 模型发现失败时，可操作的提示写在响应体之前。错误信息里的说明照上游原话，不按关键词改写（400 不改成内容审查，
+// Ollama 音频路径不另加诊断）。
 // fetch 用替身，不发真实请求。
 // ════════════════════════════════════════════════════════════
 
@@ -168,10 +168,10 @@ describe('对话遇到非 2xx：错误信息不带响应体，响应体截断成
     expect(failed[0], 'warn 带着响应体里的换行').not.toMatch(LINE_BREAK);
   });
 
-  it('llm-ollama / 音频路径的 unknown format 诊断按完整响应体判断', async () => {
+  it('llm-ollama / 音频路径的报错照上游原话，不另加诊断', async () => {
     const state = stubFetch();
     state.chatStatus = 500;
-    state.chatBody = `${HTML_PAGE} image: unknown format`;
+    state.chatBody = '{"error":"image: unknown format"}';
     const { model } = await start(llmOllama, OLLAMA);
     const handle = model();
     if (!handle) throw new Error('ollama 未登记模型');
@@ -179,21 +179,29 @@ describe('对话遇到非 2xx：错误信息不带响应体，响应体截断成
     const message = await errorOf(() =>
       handle.chat({ messages: [{ role: 'user', content: '听听', audios: ['data:audio/wav;base64,AAAA'] }] }),
     );
-    expect(message, '关键字在截断位置之后，诊断丢了').toContain('[诊断]');
-    expect(message.length).toBeLessThan(1_000);
+    expect(message).toBe('Ollama API 错误 (500)：上游服务故障；上游说明：image: unknown format');
   });
 });
 
-describe('内容审查关键词按完整响应体判断', () => {
-  it.each(cases.filter(c => c.name !== 'llm-ollama'))('$name', async ({ plugin, config }) => {
+describe('400 照上游原话报，不按关键词改成内容审查', () => {
+  const bodies = [
+    { form: '内容审查', body: '{"error":{"message":"Content Exists Risk"}}', shown: 'Content Exists Risk' },
+    {
+      form: '参数名里带关键词',
+      body: '{"error":{"message":"unknown parameter: content_filter_level"}}',
+      shown: 'unknown parameter: content_filter_level',
+    },
+  ];
+  it.each(
+    cases.filter(c => c.name !== 'llm-ollama').flatMap(c => bodies.map(b => ({ ...c, ...b }))),
+  )('$name / $form', async ({ plugin, config, provider, body, shown }) => {
     const state = stubFetch();
     state.chatStatus = 400;
-    // 关键词落在截断位置之后
-    state.chatBody = `${'x'.repeat(2_000)} content_filter`;
+    state.chatBody = body;
     const { model } = await start(plugin, config);
     const handle = model();
     if (!handle) throw new Error(`${plugin.name} 未登记模型`);
 
-    expect(await errorOf(() => handle.chat(REQUEST))).toContain('拒绝了此次请求（内容安全策略）');
+    expect(await errorOf(() => handle.chat(REQUEST))).toBe(`${provider} API 错误 (400)；上游说明：${shown}`);
   });
 });

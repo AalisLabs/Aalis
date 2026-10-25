@@ -16,18 +16,8 @@ import type { Message, ToolCall } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import { Agent, errors } from 'undici';
-import { parseDsmlToolCalls } from './dsml-parser.js';
 
 // ===== 错误解析 =====
-
-/** 已知的内容审查错误关键词 */
-const CONTENT_FILTER_PATTERNS = [
-  'content exists risk',
-  'content_filter',
-  'content_policy',
-  'sensitive content',
-  'risk control',
-];
 
 /** 错误信息与日志里附带的摘录上限（字符）。网关的 HTML 错误页可达数十 KB；截断按代理对安全，不留孤代理 */
 const ERROR_BODY_MAX_CHARS = 500;
@@ -38,28 +28,22 @@ function bodyExcerpt(body: string): string {
 }
 
 /**
- * 读配置时校验 baseUrl，解析不了的与带用户名或密码的抛配置错误。带凭据的 URL fetch 拒发，凭据还会随报错与
- * 条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不出去。消息不带 URL
+ * 读配置时校验 baseUrl，解析不了的、带查询串或片段的与带用户名或密码的抛配置错误。插件在 baseUrl 后面拼路径，带查询串或
+ * 片段时路径落进查询串或片段，请求地址是坏的；末尾只有一个 ? 时解析后查询串为空，拼出来照样是坏的，所以按原文判。带凭据
+ * 的 URL fetch 拒发，凭据还会随报错与条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不
+ * 出去。消息不带 URL
  */
 function checkBaseUrl(baseUrl: string): void {
   if (!URL.canParse(baseUrl)) {
     throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 https://api.deepseek.com');
   }
+  if (/[?#]/.test(baseUrl)) {
+    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+  }
   const { username, password } = new URL(baseUrl);
   if (username || password) {
     throw configError('baseUrl 不能带用户名或密码（user:pass@），密钥请填在 apiKey');
   }
-}
-
-/**
- * 错误信息与日志里显示的 URL：去掉查询串（有的网关把密钥写在查询串里）。没有查询串时原样返回，保留配置里的写法。
- * 带用户名或密码的 baseUrl 读配置时已拒绝（见 checkBaseUrl）
- */
-function redactUrl(url: string): string {
-  const parsed = new URL(url);
-  if (!parsed.search) return url;
-  parsed.search = '';
-  return parsed.href;
 }
 
 /**
@@ -108,15 +92,6 @@ function httpErrorMessage(provider: string, status: number, body: string): strin
   const hint = statusHint(status);
   const message = upstreamMessage(body);
   return `${provider} API 错误 (${status})${hint ? `：${hint}` : ''}；${message ? `上游说明：${message}` : '详情见日志'}`;
-}
-
-/** 解析 API 错误：内容审查类错误按完整响应体识别，给固定提示；其余见 httpErrorMessage */
-function parseApiError(provider: string, status: number, body: string): string {
-  const lower = body.toLowerCase();
-  if (status === 400 && CONTENT_FILTER_PATTERNS.some(p => lower.includes(p))) {
-    return `${provider} 拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文`;
-  }
-  return httpErrorMessage(provider, status, body);
 }
 
 // ===== 深度思考的档位 =====
@@ -286,27 +261,22 @@ interface APIChatResponse {
 // ===== 消息角色归一化（前缀缓存关键） =====
 
 /**
- * 把「首个非 system 消息之后」出现的所有 system 消息转为 user 角色；
- * 内容不以 `[` 开头的补一个 `[系统提示] ` 标记（已带 [系统通知]/[跨会话委派] 等
- * 方括号标记的不重复加）。头部连续 system 区（人设/技能/摘要）原样保留。
+ * 把「首个非 system 消息之后」出现的所有 system 消息转为 user 角色，内容一律补一个 `[系统提示]` 标记，让模型知道这不是
+ * 用户在说话。头部连续 system 区（人设/技能/摘要）原样保留。
  *
- * 原因（2026-08-09 受控 API 实验实证）：DeepSeek 渲染时把 messages 里**所有**
- * system 消息提升合并到上下文最前部，与数组位置无关。于是刻意排在历史之后的
- * 每轮易变块（当前状态/焦点/检索材料等），渲染后实际落在 append-only 历史
- * **之前**——内容每轮一变，历史整段前缀缓存作废，跨回合命中恒等于头部大小
- * （实测 ~30%）；历史中段的通知（notice→system）同理，每来一条打断一次。
- * 转为 user 后按数组位置顺序渲染：头部稳定区+历史可跨回合命中，每轮材料
- * 真正落在决策点旁（实验对照：同历史换尾块，system 形态命中 10112/62330，
- * user 形态命中 61184/61623）。
+ * 原因：DeepSeek 渲染时把 messages 里**所有** system 消息提升合并到上下文最前部，与数组位置无关。于是刻意排在历史之后的
+ * 每轮易变块（当前状态/焦点/检索材料等），渲染后实际落在 append-only 历史**之前**——内容每轮一变，历史整段前缀缓存作废，
+ * 跨回合命中恒等于头部大小（实测 ~30%）；历史中段的通知（notice→system）同理，每来一条打断一次。转为 user 后按数组位置
+ * 顺序渲染：头部稳定区+历史可跨回合命中，每轮材料真正落在决策点旁（实测同历史换尾块，system 形态命中 10112/62330，user
+ * 形态命中 61184/61623）。
  */
 export function normalizeSystemPlacement(messages: Message[]): Message[] {
   let leadingEnd = 0;
   while (leadingEnd < messages.length && messages[leadingEnd].role === 'system') leadingEnd++;
   return messages.map((m, i) => {
     if (i < leadingEnd || m.role !== 'system') return m;
-    // 本轮指令块（proactive 代发任务、宿主通知、空闲开话题的提示）豁免：它必须以 system 呈现，转 user
-    // 会复发「把代发任务当真实用户在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。
-    // 代价是 DeepSeek 渲染时把它提到上下文最前部、离决策点远；这类回合低频，牺牲该轮缓存可接受。
+    // 本轮指令块（proactive 代发任务、宿主通知、空闲开话题的提示）豁免：它必须以 system 呈现，转 user 模型会把它当成
+    // 真实用户在指挥。代价是 DeepSeek 渲染时把它提到上下文最前部、离决策点远；这类回合低频，牺牲该轮缓存可接受。
     // injector 只存在于请求期构造的消息上，不会命中历史记录。
     const injector = m.metadata?.injector;
     if (typeof injector === 'string' && DIRECTIVE_KINDS.includes(injector)) return m;
@@ -314,7 +284,7 @@ export function normalizeSystemPlacement(messages: Message[]): Message[] {
     // 空内容块保持原样，不产出「[系统提示] 」空壳 user 消息
     if (!content.trim()) return m;
     // 标记用换行拼接：块首若是 markdown 标题（# 开头），空格拼接会让 # 脱离行首失去语义
-    return { ...m, role: 'user', content: content.startsWith('[') ? content : `[系统提示]\n${content}` };
+    return { ...m, role: 'user', content: `[系统提示]\n${content}` };
   });
 }
 
@@ -352,10 +322,10 @@ class DeepSeekClient {
     void this.dispatcher.close();
   }
 
-  /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 parseApiError */
+  /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 httpErrorMessage */
   private apiError(status: number, body: string): Error {
     this.logger.warn(`DeepSeek API 错误 (${status}): ${bodyExcerpt(body)}`);
-    return new Error(parseApiError('DeepSeek', status, body));
+    return new Error(httpErrorMessage('DeepSeek', status, body));
   }
 
   /**
@@ -420,7 +390,7 @@ class DeepSeekClient {
       return list.map(m => m.id);
     } catch (err) {
       signal?.throwIfAborted();
-      throw new Error(`模型发现失败 ${redactUrl(url)}: ${describeError(err)}`, { cause: err });
+      throw new Error(`模型发现失败 ${url}: ${describeError(err)}`, { cause: err });
     }
   }
 
@@ -497,33 +467,16 @@ class DeepSeekClient {
       throw new Error('DeepSeek 返回了空的 choices');
     }
 
-    // DSML 泄漏处理（与流式分支对齐）：
-    // 1) 用统一的 stripLeakedSpecialTokens 检测+剥离 DSML 文本（覆盖单/双竖线变体）
-    // 2) 若服务端 tool_calls 为空但 content 含 DSML，调 parseDsmlToolCalls 本地恢复
-    //    避免非流式路径下工具调用信息无声丢失
+    // 服务端没解析出工具调用时，模型的工具调用标记（DSML）会漏进正文：只剥离、不当调用执行（与流式分支对齐），
+    // 工具调用只取服务端给的
     let cleanContent: string | null = choice.message.content;
-    let recoveredToolCalls: ToolCall[] | undefined;
     if (cleanContent) {
       const { sanitized, hadLeak } = stripLeakedSpecialTokens(cleanContent);
       if (hadLeak) {
-        const hasServerToolCalls = !!(choice.message.tool_calls && choice.message.tool_calls.length > 0);
-        if (!hasServerToolCalls) {
-          const dsmlCalls = parseDsmlToolCalls(cleanContent);
-          if (dsmlCalls.length > 0) {
-            this.logger.info(
-              `DeepSeek DSML 本地解析成功（非流式），恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
-            );
-            recoveredToolCalls = dsmlCalls;
-          } else {
-            this.logger.warn(
-              `DeepSeek DSML 本地解析未识别出完整 invoke 块（非流式），content 长度=${cleanContent.length}`,
-            );
-          }
-        } else {
-          this.logger.warn(
-            `DeepSeek content 检测到 DSML 泄漏但服务端已返回 tool_calls，仅剥离文本（原长=${cleanContent.length} 净化后=${sanitized.length}）`,
-          );
-        }
+        this.logger.warn(
+          `DeepSeek 正文里漏出了 DSML 工具调用标记，已剥离（原长=${cleanContent.length} 净化后=${sanitized.length}）` +
+            (choice.message.tool_calls?.length ? '' : '；服务端没给 tool_calls，这次的工具调用丢了'),
+        );
       }
       cleanContent = sanitized;
     }
@@ -542,8 +495,6 @@ class DeepSeekClient {
           arguments: tc.function.arguments,
         },
       }));
-    } else if (recoveredToolCalls) {
-      result.toolCalls = recoveredToolCalls;
     }
 
     if (data.usage) {
@@ -616,8 +567,6 @@ class DeepSeekClient {
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
-    /** 流式累积内容，用于检测 DSML 泄漏 */
-    let accContent = '';
     let dsmlDetected = false;
     /**
      * 跨 chunk 尾缓冲：当当前 delta 末尾形如未闭合的 special token 起始片段
@@ -626,28 +575,11 @@ class DeepSeekClient {
      */
     let pendingTail = '';
 
-    /**
-     * 收尾组装 toolCalls，[DONE] 与流意外结束两处共用。DSML 泄漏 best-effort 恢复：服务端
-     * 未返回 tool_calls（解析失败）但 accContent 里有 DSML 文本时本地解析补上，让 agent 走正常
-     * 工具调用流程；解析不出完整 invoke 块时告警。branch 标明是哪条收尾路径。
-     */
-    const finalizeToolCalls = (branch: string): ToolCall[] | undefined => {
+    /** 收尾组装 toolCalls，[DONE] 与流意外结束两处共用。只取服务端给的：漏进正文的工具调用标记只剥离、不当调用执行 */
+    const finalizeToolCalls = (): ToolCall[] | undefined => {
       const toolCalls: ToolCall[] = [];
       for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
         toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
-      }
-      if (dsmlDetected && toolCalls.length === 0) {
-        const dsmlCalls = parseDsmlToolCalls(accContent);
-        if (dsmlCalls.length > 0) {
-          this.logger.info(
-            `DeepSeek DSML 本地解析成功${branch}，恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
-          );
-          toolCalls.push(...dsmlCalls);
-        } else {
-          this.logger.warn(
-            `DeepSeek DSML 本地解析未识别出完整 invoke 块${branch}，accContent 长度=${accContent.length}，上游将收到空回复`,
-          );
-        }
       }
       return toolCalls.length > 0 ? toolCalls : undefined;
     };
@@ -692,7 +624,7 @@ class DeepSeekClient {
               yield { contentDelta: pendingTail };
               pendingTail = '';
             }
-            yield { done: true, toolCalls: finalizeToolCalls('') };
+            yield { done: true, toolCalls: finalizeToolCalls() };
             return;
           }
 
@@ -720,49 +652,40 @@ class DeepSeekClient {
 
             // 带生成内容的增量重新计时：留在尾缓冲里、DSML 泄漏后不交出的正文也算
             if (delta.content || delta.reasoning_content) timer.touch();
-            if (delta.content) {
-              // 无论是否检测到 DSML，都要累积原始 content：
-              // - 未检测时：用于 DSML 起始位置定位
-              // - 已检测后：DSML 主体 + 闭合标记累积完成，[DONE] 时用于 best-effort 解析为 tool_calls
-              accContent += delta.content;
-              if (!dsmlDetected) {
-                // 合并尾缓冲 + 本次 delta 作为本帧候选 emit 内容
-                const candidate = pendingTail + delta.content;
-                // 检测 DSML 起始标记。已知变体：
-                //   - 单竖线（标准）：<｜DSML｜tool_calls>
-                //   - 双竖线（畸形泄漏）：<｜｜DSML｜｜tool_calls>
-                //   - 半角变体：<|DSML|...>
-                // 使用 [｜|]+ 兼容任意数量的竖线
-                const dsmlIdx = accContent.search(/<[｜|]+\s*DSML/);
-                if (dsmlIdx !== -1) {
-                  dsmlDetected = true;
-                  this.logger.warn(
-                    `DeepSeek 检测到 DSML 标记泄漏，模型 ${model} 输出原生 tool_call 标记到 content（服务端解析失败），将在流结束后尝试本地解析`,
-                  );
-                  // 输出 DSML 之前的部分（如果有）
-                  const cleanPart = accContent.slice(0, dsmlIdx);
-                  // 已发字节数 = accContent.length - candidate.length（candidate 即"本帧合并后待 emit"）
-                  const prevEmitted = accContent.length - candidate.length;
-                  const cleanDelta = cleanPart.slice(prevEmitted);
-                  if (cleanDelta) chunk.contentDelta = cleanDelta;
-                  pendingTail = '';
+            // 检测到 DSML 泄漏之后的正文不再交出
+            if (delta.content && !dsmlDetected) {
+              // 合并尾缓冲 + 本次 delta 作为本帧候选 emit 内容。可能是标记开头的尾巴都留在尾缓冲里，只在候选上找起始就够
+              const candidate = pendingTail + delta.content;
+              // 检测 DSML 起始标记。已知变体：
+              //   - 单竖线（标准）：<｜DSML｜tool_calls>
+              //   - 双竖线（畸形泄漏）：<｜｜DSML｜｜tool_calls>
+              //   - 半角变体：<|DSML|...>
+              // 使用 [｜|]+ 兼容任意数量的竖线
+              const dsmlIdx = candidate.search(/<[｜|]+\s*DSML/);
+              if (dsmlIdx !== -1) {
+                dsmlDetected = true;
+                this.logger.warn(
+                  `DeepSeek 检测到 DSML 泄漏：模型 ${model} 把工具调用标记写进了正文，已剥离，之后的正文不交出`,
+                );
+                // 输出 DSML 之前的部分（如果有）
+                const cleanDelta = candidate.slice(0, dsmlIdx);
+                if (cleanDelta) chunk.contentDelta = cleanDelta;
+                pendingTail = '';
+              } else {
+                // 未检测到完整 DSML：识别 candidate 尾部是否是"可能的 special token 起始"
+                // - 形如 `<` 单独
+                // - 形如 `<｜...` 或 `<|...`（即 special token 前缀，还未闭合 `>`）
+                // 命中则把这段尾部留到下一帧再判，避免漏出半截 `<｜｜DS` 这种碎片
+                const tailMatch = candidate.match(/<$|<[｜|]+[^<>]{0,20}$/);
+                if (tailMatch) {
+                  pendingTail = tailMatch[0];
+                  const emitPart = candidate.slice(0, candidate.length - pendingTail.length);
+                  if (emitPart) chunk.contentDelta = emitPart;
                 } else {
-                  // 未检测到完整 DSML：识别 candidate 尾部是否是"可能的 special token 起始"
-                  // - 形如 `<` 单独
-                  // - 形如 `<｜...` 或 `<|...`（即 special token 前缀，还未闭合 `>`）
-                  // 命中则把这段尾部留到下一帧再判，避免漏出半截 `<｜｜DS` 这种碎片
-                  const tailMatch = candidate.match(/<$|<[｜|]+[^<>]{0,20}$/);
-                  if (tailMatch) {
-                    pendingTail = tailMatch[0];
-                    const emitPart = candidate.slice(0, candidate.length - pendingTail.length);
-                    if (emitPart) chunk.contentDelta = emitPart;
-                  } else {
-                    pendingTail = '';
-                    chunk.contentDelta = candidate;
-                  }
+                  pendingTail = '';
+                  chunk.contentDelta = candidate;
                 }
               }
-              // dsmlDetected = true 时不再 emit content，但 accContent 继续累积供后续解析
             }
             if (delta.reasoning_content) chunk.reasoningDelta = delta.reasoning_content;
 
@@ -810,7 +733,7 @@ class DeepSeekClient {
       yield { contentDelta: pendingTail };
       pendingTail = '';
     }
-    yield { done: true, toolCalls: finalizeToolCalls('（流意外结束分支）') };
+    yield { done: true, toolCalls: finalizeToolCalls() };
   }
 
   /**
@@ -1015,7 +938,6 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
 
   const client = new DeepSeekClient(cfg, logger.use);
   lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
-  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 探测远端 + 合并自定义模型。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels
   // 照常注册；关闭模型发现时只注册 customModels。发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），
@@ -1042,7 +964,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
     throw configError(
       discoveryError
         ? `取不到模型列表，没有可注册的模型：检查 apiKey、baseUrl 与网络后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
-        : `已连接 ${shownBaseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
+        : `已连接 ${cfg.baseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
     );
   }
   if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
@@ -1069,9 +991,9 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
 
   logger.use.info(
     !cfg.discoverModels
-      ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
+      ? `未开启模型发现: ${cfg.baseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
       : discoveryError
-        ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
-        : `已连接: ${shownBaseUrl}，注册 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`,
+        ? `模型发现失败: ${cfg.baseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`
+        : `已连接: ${cfg.baseUrl}，注册 ${allModelIds.length} 个 model entry (默认思考档位 ${cfg.thinking})`,
   );
 }

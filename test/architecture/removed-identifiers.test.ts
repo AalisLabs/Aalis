@@ -231,6 +231,11 @@ const REMOVED: Array<[string, string]> = [
   ['settledBySubtask', 'WebUI 工具卡上子任务的审批不转交的结算原因：子任务里的审批与主会话同一规则'],
   ['不上浮', '子任务里的审批一律拒：子任务与续做一样随起它的那一轮，推送按根会话'],
   ['normalizeAssistantContent', 'agent 剥标记连同修表格分隔行：agent 不改写表格分隔行，WebUI 渲染时修'],
+  ['CONTENT_FILTER_PATTERNS', '模型插件按响应体里的关键词把 400 改说成内容审查：报错照上游原话'],
+  ['parseApiError', '模型插件按响应体里的关键词把 400 改说成内容审查：报错照上游原话'],
+  ['redactUrl', '模型插件在日志与报错里去掉 baseUrl 的查询串：带查询串或片段的 baseUrl 读配置时就拒绝'],
+  ['parseDsmlToolCalls', 'deepseek 插件把正文里漏出的工具调用标记解析成调用去执行：只剥离，工具调用只取服务端给的'],
+  ['stripAudioDataPrefix', 'Ollama 插件把没写明类型的音频当 wav 发：认不出的音频格式在发请求前报错'],
 ];
 
 /**

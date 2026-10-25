@@ -232,16 +232,8 @@ function fmtToMime(fmt: string): string {
 }
 
 /**
- * 把 audio attachment.data 解析为 **带 mime 前缀的 data URL**，供 LLM provider 直接使用。
- *
- * 历史 bug（修复 2026-05）：以前返回纯 base64，下游 ollama 的
- * `decodeAudioForOpenAI` 因为拿不到 mime 信息只能 fallback 到 `format=wav`；
- * 而 `extractAudioTrack` 输出的实际是 mp3 → ollama runner 把 mp3 字节当 wav
- * 解析失败，报 "image: unknown format"。
- *
- * 现在统一返回 `data:audio/{mime};base64,...`：
- * - `decodeAudioForOpenAI` 能精确推断 format
- * - 兼容性：Message.audios 字段就是 string[]，data URL 仍然合法
+ * 把 audio attachment.data 解析为 **带 mime 前缀的 data URL**，供 LLM provider 直接使用：Ollama 兼容接口按写明的类型给
+ * input_audio.format，没写明的拒收。Message.audios 是 string[]，data URL 照样合法
  */
 async function audioToBase64(data: string): Promise<string> {
   const mat = await materializeAttachment(data);

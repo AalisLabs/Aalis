@@ -433,6 +433,15 @@
 - plugin-agent：空闲开话题的提示以 system 指令块交给模型（`metadata.injector` 为 `idle-prompt`），照常带时间与会话环境，不再当成有人这样对她说话。
 - plugin-adapter-onebot：撤回通知的摘录与引用反查按存档记下的标签去掉发送者前缀：正文本身以「[xx]: 」开头的不再被剥；owner 从 WebUI 往群里插的话被引用时，引用正文不再带「[<owner 账号>]: 」。此前归档的消息没有这个标签，摘录与引用照原样带前缀。
 
+### 模型插件出口（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-embedding-openai、@aalis/plugin-embedding-ollama、@aalis/plugin-asr-openai、@aalis/plugin-okx-trading、@aalis/plugin-remote-agent-cursor、@aalis/plugin-maimai、@aalis/plugin-trigger-laya）
+
+- plugin-llm-openai、plugin-llm-deepseek：400 照上游原话报（状态码加上游的说明），不再按响应体里的关键词（`content_filter` 等）改说成「拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文」，参数错误也不再被说成内容审查。上游说明多半是英文，如 DeepSeek 的内容审查显示为 `Content Exists Risk`。
+- plugin-llm-ollama：带音频的请求失败时只报上游原话，不再另起一行附「[诊断] …请改用明确支持音频的模型」。音频只收 data URL 写明是 wav 或 mp3 的（含 `x-wav`、`wave`、`mpeg` 这类别名，类型后可带参数），Ollama 的兼容接口只认这两种；别的类型（如 ogg、m4a、flac）与不是 data URL 的音频（本地路径、链接、不带前缀的 base64）在发请求前报错、写明是哪种，不再照发或当 wav 发。
+- plugin-llm-ollama：发了 `think` 的请求（报告了思考能力的模型，档位开或关）正文照原样交出，正文里字面写出的 `<think>` 与之后的内容不再被挪进思考；没发 `think` 的照旧按标签解析；带音频的请求走兼容接口时同一条规则，没有思考档位的模型正文里的 `<think>` 也按标签分进思考（此前这条路径一律不解析）。
+- 对话、向量化与转写插件（plugin-llm-openai、plugin-llm-deepseek、plugin-llm-ollama、plugin-embedding-openai、plugin-embedding-ollama、plugin-asr-openai）与 plugin-okx-trading、plugin-remote-agent-cursor、plugin-maimai 的 `baseUrl`，plugin-trigger-laya 的侧车地址 `endpoint`：带查询串或片段（`?` 或 `#`）时读配置就报错，实例转为出错。插件在这些地址后面拼路径，这种配置拼出来的请求地址是坏的；plugin-maimai 此前把查询串与片段静默丢掉，plugin-trigger-laya 此前拒绝带查询串或片段的（报「endpoint 须为 HTTP 地址」）、放过末尾单个 `?` 或 `#`。
+- plugin-llm-deepseek：服务端没给 `tool_calls` 时，不再把正文里漏出的工具调用标记（DSML）解析成调用去执行：流式只交出标记之前的文字（可能为空），非流式去掉标记块、其余正文照留，都记一条 warn。
+- plugin-llm-deepseek：排在历史之后、转成 `user` 的 system 块一律以「[系统提示]」开头；以「[」开头的（JSON 数组、Markdown 链接、自带「[系统通知]」这类标记的）也补。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

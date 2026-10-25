@@ -83,7 +83,13 @@ export function normalizeConfig(cfg: ParsedConfig): LayaConfig {
   } catch {
     throw new Error('plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址');
   }
-  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.search || url.hash) {
+  // 插件在 endpoint 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
+  if (/[?#]/.test(endpoint)) {
+    throw new Error(
+      'plugin-trigger-laya 配置错误: endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
+    );
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
     throw new Error('plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址');
   }
   return {

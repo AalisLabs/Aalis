@@ -18,15 +18,6 @@ import { Agent, errors } from 'undici';
 
 // ===== 插件元数据 =====
 
-/** 已知的内容审查错误关键词 */
-const CONTENT_FILTER_PATTERNS = [
-  'content exists risk',
-  'content_filter',
-  'content_policy',
-  'sensitive content',
-  'risk control',
-];
-
 /** 错误信息与日志里附带的摘录上限（字符）。网关的 HTML 错误页可达数十 KB；截断按代理对安全，不留孤代理 */
 const ERROR_BODY_MAX_CHARS = 500;
 
@@ -36,28 +27,22 @@ function bodyExcerpt(body: string): string {
 }
 
 /**
- * 读配置时校验 baseUrl，解析不了的与带用户名或密码的抛配置错误。带凭据的 URL fetch 拒发，凭据还会随报错与
- * 条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不出去。消息不带 URL
+ * 读配置时校验 baseUrl，解析不了的、带查询串或片段的与带用户名或密码的抛配置错误。插件在 baseUrl 后面拼路径，带查询串或
+ * 片段时路径落进查询串或片段，请求地址是坏的；末尾只有一个 ? 时解析后查询串为空，拼出来照样是坏的，所以按原文判。带凭据
+ * 的 URL fetch 拒发，凭据还会随报错与条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不
+ * 出去。消息不带 URL
  */
 function checkBaseUrl(baseUrl: string): void {
   if (!URL.canParse(baseUrl)) {
     throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 https://api.openai.com/v1');
   }
+  if (/[?#]/.test(baseUrl)) {
+    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+  }
   const { username, password } = new URL(baseUrl);
   if (username || password) {
     throw configError('baseUrl 不能带用户名或密码（user:pass@），密钥请填在 apiKey');
   }
-}
-
-/**
- * 错误信息与日志里显示的 URL：去掉查询串（有的网关把密钥写在查询串里）。没有查询串时原样返回，保留配置里的写法。
- * 带用户名或密码的 baseUrl 读配置时已拒绝（见 checkBaseUrl）
- */
-function redactUrl(url: string): string {
-  const parsed = new URL(url);
-  if (!parsed.search) return url;
-  parsed.search = '';
-  return parsed.href;
 }
 
 /**
@@ -106,15 +91,6 @@ function httpErrorMessage(provider: string, status: number, body: string): strin
   const hint = statusHint(status);
   const message = upstreamMessage(body);
   return `${provider} API 错误 (${status})${hint ? `：${hint}` : ''}；${message ? `上游说明：${message}` : '详情见日志'}`;
-}
-
-/** 解析 API 错误：内容审查类错误按完整响应体识别，给固定提示；其余见 httpErrorMessage */
-function parseApiError(provider: string, status: number, body: string): string {
-  const lower = body.toLowerCase();
-  if (status === 400 && CONTENT_FILTER_PATTERNS.some(p => lower.includes(p))) {
-    return `${provider} 拒绝了此次请求（内容安全策略），请尝试换一个话题或缩短上下文`;
-  }
-  return httpErrorMessage(provider, status, body);
 }
 
 const LOW_TO_HIGH = [
@@ -345,10 +321,10 @@ class OpenAIClient {
     return h;
   }
 
-  /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 parseApiError */
+  /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 httpErrorMessage */
   private apiError(status: number, body: string): Error {
     this.logger.warn(`LLM API 错误 (${status}): ${bodyExcerpt(body)}`);
-    return new Error(parseApiError('LLM', status, body));
+    return new Error(httpErrorMessage('LLM', status, body));
   }
 
   /**
@@ -413,7 +389,7 @@ class OpenAIClient {
       return list.map(m => m.id);
     } catch (err) {
       signal?.throwIfAborted();
-      throw new Error(`模型发现失败 ${redactUrl(url)}: ${describeError(err)}`, { cause: err });
+      throw new Error(`模型发现失败 ${url}: ${describeError(err)}`, { cause: err });
     }
   }
 
@@ -895,7 +871,8 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   const providerCapabilities = parseProviderCapabilities(cfg.providerCapabilities);
 
   checkBaseUrl(cfg.baseUrl);
-  // 官方端点判定按 URL host（前缀字符串匹配会误伤 api.openai.com.cn 等镜像域名）
+  // 官方端点不收不带 key 的请求：留空时激活就报缺 apiKey，不等第一次调用才回 401；兼容端点（本地服务等）可以不要 key，
+  // 所以只按 host 认官方（按前缀匹配会误伤 api.openai.com.cn 这类镜像域名）
   const isOfficialOpenAI = new URL(cfg.baseUrl).hostname === 'api.openai.com';
   if (!cfg.apiKey && isOfficialOpenAI) {
     throw missingConfigError('apiKey', '使用 OpenAI 官方 API 时必填');
@@ -907,7 +884,6 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   const client = new OpenAIClient(cfg, logger.use);
   lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
   const baseLabel = `OpenAI (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
-  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 已注册 model entry 的句柄表：modelId → dispose（来自 provide 返回值）
   const registered = new Map<string, () => void>();
@@ -975,17 +951,17 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
     throw configError(
       discoveryError
         ? `取不到模型列表，没有可注册的模型：检查 apiKey、baseUrl 与网络后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
-        : `已连接 ${shownBaseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
+        : `已连接 ${cfg.baseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
     );
   }
   if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
   for (const modelId of initialIds) registerOne(modelId);
   logger.use.info(
     !cfg.discoverModels
-      ? `未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
+      ? `未开启模型发现: ${cfg.baseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
       : discoveryError
-        ? `模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
-        : `已连接: ${shownBaseUrl}，注册 ${initialIds.length} 个 model entry`,
+        ? `模型发现失败: ${cfg.baseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`
+        : `已连接: ${cfg.baseUrl}，注册 ${initialIds.length} 个 model entry`,
   );
 
   /**
