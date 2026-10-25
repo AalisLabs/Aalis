@@ -7,7 +7,7 @@ import {
   platform as platformService,
   resolvePlatformBySession,
 } from '@aalis/api-platform';
-import { sessionHistory } from '@aalis/api-session-history';
+import { type SessionHistoryReadResult, sessionHistory } from '@aalis/api-session-history';
 import { sessionManager, TAKE_UNKNOWN, takeFrom } from '@aalis/api-session-manager';
 import { type StorageService, storage } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
@@ -127,28 +127,31 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
   };
 }
 
-/** OneBot 各实例的全部连接里找出任意一个 selfId：先在所有实例里找在线的，都不在线才取任意一个 */
-function getAnyOneBotSelfId(platform: PlatformRef): string | undefined {
-  const known = getPlatformAdapters(platform)
-    .filter(a => a.platform === 'onebot')
-    .flatMap(a => a.getConnections())
-    .filter(c => c.selfId);
-  return (known.find(c => c.status === 'online') ?? known[0])?.selfId;
-}
+/** 每个用到机器人账号的工具都带的 self_id 参数 */
+const SELF_ID_PARAM = {
+  type: 'string',
+  description: '机器人账号（QQ 号）。在 OneBot 会话里可以省，用这个会话的账号；不在 OneBot 会话里且有多个账号时必填',
+};
 
 /**
- * 解析出本次工具调用应使用的 selfId（机器人账号）。
- * 优先级：args.self_id → 当前 callCtx 是 OneBot 会话时取它的 selfId → 任意可用 adapter 的第一个 selfId。
- * 找不到则抛错（无可用 OneBot 连接）。
+ * 本次调用用哪个机器人账号：写明的 self_id；否则当前 OneBot 会话的账号；都没有时汇总各 OneBot 实例的已知账号（不论在不在线），
+ * 恰好一个才用它，多个时报错列出账号、要求写明。子任务会话不算 OneBot 会话，账号不从根会话推
  */
 function resolveSelfId(platform: PlatformRef, callCtx: ToolCallContext, args: Record<string, unknown>): string {
   const fromArgs = args.self_id != null && String(args.self_id).trim() ? String(args.self_id).trim() : '';
   if (fromArgs) return fromArgs;
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (parsed?.selfId) return parsed.selfId;
-  const fallback = getAnyOneBotSelfId(platform);
-  if (fallback) return fallback;
-  throw new Error('未找到可用的 OneBot 连接');
+  const known = new Map(
+    getPlatformAdapters(platform)
+      .filter(a => a.platform === 'onebot')
+      .flatMap(a => a.getConnections())
+      .flatMap(c => (c.selfId ? [[c.selfId, c.status] as const] : [])),
+  );
+  if (known.size === 1) return [...known.keys()][0];
+  if (known.size === 0) throw new Error('未找到 OneBot 账号');
+  const listed = [...known].map(([selfId, status]) => `${selfId}(${status})`).join('、');
+  throw new Error(`有 ${known.size} 个 OneBot 账号：${listed}，请用 self_id 写明用哪个`);
 }
 
 /**
@@ -165,7 +168,7 @@ function resolveGroupTarget(
   if (argGroupId) return { selfId, groupId: argGroupId };
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (parsed?.detailType === 'group' && parsed.targetId) {
-    return { selfId: parsed.selfId, groupId: parsed.targetId };
+    return { selfId, groupId: parsed.targetId };
   }
   throw new Error('未提供 group_id，且当前不在 OneBot 群会话中。请在参数中显式传入 group_id。');
 }
@@ -205,6 +208,29 @@ async function callAction(
   params: Record<string, unknown>,
 ): Promise<unknown> {
   return callPlatformAction(platform, selfSessionId(selfId), action, params);
+}
+
+/** 适配器的动作失败：实现端回「不支持该动作」时带 unsupported（OneBot 适配器按协议的返回码标） */
+type OneBotActionFailure = Error & { unsupported?: boolean };
+
+/**
+ * 按顺序调候选动作名，只有实现端回不支持该动作时才换下一个；其余错误（超时、没权限、对方不在群）原样抛出，不换个动作再做
+ * 一次。戳一戳的动作名各实现端不同：NapCat 是 group_poke、friend_poke 与 send_poke，没有 send_group_poke，群里在 NapCat 上
+ * 只有 group_poke 一个，后面的候选留给别的实现端
+ */
+async function callFirstSupported(
+  platform: PlatformRef,
+  selfId: string,
+  actions: readonly string[],
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const [action, ...rest] = actions;
+  try {
+    return await callAction(platform, selfId, action, params);
+  } catch (err) {
+    if (rest.length === 0 || (err as OneBotActionFailure).unsupported !== true) throw err;
+    return callFirstSupported(platform, selfId, rest, params);
+  }
 }
 
 function imageMimeFromPath(path: string): string {
@@ -291,7 +317,8 @@ function extractImageRefsFromContent(content: unknown): ForwardImageRef[] {
   return refs;
 }
 
-function getForwardMessages(data: unknown): unknown[] {
+/** 合并转发的节点：data 本身、data.messages 或 data.message 是数组；都不是时返回格式认不出，为 undefined */
+function getForwardMessages(data: unknown): unknown[] | undefined {
   const root = data as Record<string, unknown> | unknown[] | null;
   if (Array.isArray(root)) return root;
   if (Array.isArray((root as Record<string, unknown> | null)?.messages)) {
@@ -300,7 +327,7 @@ function getForwardMessages(data: unknown): unknown[] {
   if (Array.isArray((root as Record<string, unknown> | null)?.message)) {
     return (root as Record<string, unknown>).message as unknown[];
   }
-  return [];
+  return undefined;
 }
 
 function getForwardNodeData(item: unknown): Record<string, unknown> {
@@ -318,7 +345,7 @@ function getForwardNodeContent(item: unknown): unknown {
 }
 
 function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[] {
-  return getForwardMessages(data)
+  return (getForwardMessages(data) ?? [])
     .slice(0, limit)
     .flatMap(item => extractImageRefsFromContent(getForwardNodeContent(item)));
 }
@@ -442,6 +469,8 @@ function formatCqMessageContent(content: string, context?: ForwardFormatContext)
 
 function formatForwardMessage(data: unknown, limit: number, context?: ForwardFormatContext): string {
   const rawMessages = getForwardMessages(data);
+  if (!rawMessages) throw new Error('合并转发的返回格式认不出');
+  if (!rawMessages.length) return '合并转发内容为空';
 
   const messages = rawMessages.slice(0, limit);
   const lines = messages.map((item, index) => {
@@ -468,7 +497,7 @@ function formatForwardMessage(data: unknown, limit: number, context?: ForwardFor
   });
 
   const header = `合并转发共 ${rawMessages.length} 条${rawMessages.length > messages.length ? `，以下显示前 ${messages.length} 条` : ''}:`;
-  return lines.length > 0 ? `${header}\n${lines.join('\n')}` : '合并转发内容为空或当前 OneBot 实现返回格式无法识别';
+  return `${header}\n${lines.join('\n')}`;
 }
 
 // ===== 权限检查辅助 =====
@@ -479,57 +508,57 @@ function roleLevel(role: string): number {
   return ROLE_LEVEL[role] ?? 0;
 }
 
-/** 查询群成员信息（失败返回 null） */
+/** 查询群成员信息，失败时抛出适配器的原话 */
 async function getGroupMemberInfo(
   platform: PlatformRef,
   selfId: string,
   groupId: string,
   userId: string,
 ): Promise<Record<string, unknown> | null> {
-  try {
-    return (await callAction(platform, selfId, 'get_group_member_info', {
-      group_id: Number(groupId),
-      user_id: Number(userId),
-      no_cache: true,
-    })) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  return (await callAction(platform, selfId, 'get_group_member_info', {
+    group_id: Number(groupId),
+    user_id: Number(userId),
+    no_cache: true,
+  })) as Record<string, unknown> | null;
 }
 
-/** 检查管理操作权限，返回错误消息（null 表示通过或无法验证） */
-async function checkAdminPermission(
+/**
+ * 机器人在群里的角色够不够做这个管理操作，不够时抛错。取不到机器人自身信息或其中没有角色时放过检查：真不够权限时实现端的
+ * 返回码会报出来。目标成员的信息或角色取不到（查询失败，或实现端回成功却没给）时报错，不当成普通成员
+ */
+async function assertAdminPermission(
   platform: PlatformRef,
   selfId: string,
   groupId: string,
   targetUserId?: string,
   requireOwner?: boolean,
-): Promise<string | null> {
-  const selfInfo = await getGroupMemberInfo(platform, selfId, groupId, selfId);
-  if (!selfInfo) return null; // 无法获取自身信息，跳过权限检查
+): Promise<void> {
+  const selfInfo = await getGroupMemberInfo(platform, selfId, groupId, selfId).catch(() => null);
+  if (!selfInfo?.role) return;
 
-  const selfRole = String(selfInfo.role ?? 'member');
+  const selfRole = String(selfInfo.role);
 
   if (requireOwner && selfRole !== 'owner') {
-    return `操作失败：此操作仅群主可执行（当前角色：${selfRole}）`;
+    throw new Error(`操作失败：此操作仅群主可执行（当前角色：${selfRole}）`);
   }
   if (selfRole === 'member') {
-    return `操作失败：机器人不是管理员（当前角色：${selfRole}），无法执行管理操作`;
+    throw new Error(`操作失败：机器人不是管理员（当前角色：${selfRole}），无法执行管理操作`);
   }
 
   if (targetUserId) {
-    const targetInfo = await getGroupMemberInfo(platform, selfId, groupId, targetUserId);
-    if (!targetInfo) {
-      return `操作失败：无法获取用户 ${targetUserId} 的信息，该用户可能不在群中`;
-    }
-    const targetRole = String(targetInfo.role ?? 'member');
+    const targetInfo = await getGroupMemberInfo(platform, selfId, groupId, targetUserId).catch((err: unknown) => {
+      throw new Error(
+        `操作失败：无法获取用户 ${targetUserId} 的信息：${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    if (!targetInfo) throw new Error(`操作失败：无法获取用户 ${targetUserId} 的信息：实现端没给成员信息`);
+    if (!targetInfo.role) throw new Error(`操作失败：无法获取用户 ${targetUserId} 的信息：实现端没给成员角色`);
+    const targetRole = String(targetInfo.role);
     if (roleLevel(targetRole) >= roleLevel(selfRole)) {
       const targetLabel = targetRole === 'owner' ? '群主' : '管理员';
-      return `操作失败：无法对${targetLabel}执行此操作（机器人角色：${selfRole}，目标角色：${targetRole}）`;
+      throw new Error(`操作失败：无法对${targetLabel}执行此操作（机器人角色：${selfRole}，目标角色：${targetRole}）`);
     }
   }
-
-  return null;
 }
 
 // ===== 插件入口 =====
@@ -629,6 +658,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             user_id: { type: 'string', description: '要禁言的用户QQ号' },
             duration: { type: 'number', description: '禁言时长（秒），0 = 解除禁言，默认 60' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id'],
         },
@@ -638,8 +668,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
       const duration = typeof args.duration === 'number' ? args.duration : 60;
 
-      const permError = await checkAdminPermission(platform, selfId, groupId, String(args.user_id));
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId, String(args.user_id));
 
       await callAction(platform, selfId, 'set_group_ban', {
         group_id: Number(groupId),
@@ -647,18 +676,17 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
         duration,
       });
 
-      // 验证禁言是否生效
-      const info = await getGroupMemberInfo(platform, selfId, groupId, String(args.user_id));
+      // 验证禁言是否生效：查不到成员信息时照报已发出指令、写明无法验证
+      const info = await getGroupMemberInfo(platform, selfId, groupId, String(args.user_id)).catch(() => null);
       if (info && 'shut_up_timestamp' in info) {
         const shutUp = Number(info.shut_up_timestamp);
         const now = Math.floor(Date.now() / 1000);
         if (duration === 0) {
-          return shutUp <= now ? `已解除 ${args.user_id} 的禁言` : `解除禁言指令已发送，但用户仍在禁言中`;
-        } else {
-          return shutUp > now
-            ? `已禁言 ${args.user_id}，时长 ${duration} 秒`
-            : `禁言操作未生效（API 返回成功但禁言状态未变化），请检查机器人实际权限`;
+          if (shutUp > now) throw new Error('解除禁言指令已发送，但用户仍在禁言中');
+          return `已解除 ${args.user_id} 的禁言`;
         }
+        if (shutUp <= now) throw new Error('禁言操作未生效（API 返回成功但禁言状态未变化），请检查机器人实际权限');
+        return `已禁言 ${args.user_id}，时长 ${duration} 秒`;
       }
 
       return duration === 0
@@ -679,6 +707,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           properties: {
             enable: { type: 'boolean', description: 'true = 开启全群禁言，false = 关闭' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['enable'],
         },
@@ -687,8 +716,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId);
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId);
 
       await callAction(platform, selfId, 'set_group_whole_ban', {
         group_id: Number(groupId),
@@ -711,6 +739,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             user_id: { type: 'string', description: '要踢出的用户QQ号' },
             reject_add_request: { type: 'boolean', description: '是否拒绝此人再次加群，默认 false' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id'],
         },
@@ -719,8 +748,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId, String(args.user_id));
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId, String(args.user_id));
 
       await callAction(platform, selfId, 'set_group_kick', {
         group_id: Number(groupId),
@@ -742,6 +770,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           type: 'object',
           properties: {
             group_id: { type: 'string', description: '要退出的群号；在群聊中可省略，默认当前群' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -752,7 +781,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
       const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       const groupId = argGroupId || (parsed?.detailType === 'group' ? parsed.targetId : '');
-      if (!groupId) return '请提供 group_id，或在要退出的群聊中调用此工具';
+      if (!groupId) throw new Error('请提供 group_id，或在要退出的群聊中调用此工具');
 
       await callAction(platform, selfId, 'set_group_leave', {
         group_id: Number(groupId),
@@ -775,6 +804,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             user_id: { type: 'string', description: '用户QQ号' },
             card: { type: 'string', description: '新的群名片，空字符串表示取消' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'card'],
         },
@@ -783,8 +813,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId);
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId);
 
       await callAction(platform, selfId, 'set_group_card', {
         group_id: Number(groupId),
@@ -807,6 +836,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           properties: {
             group_name: { type: 'string', description: '新的群名称' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['group_name'],
         },
@@ -815,8 +845,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId);
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId);
 
       await callAction(platform, selfId, 'set_group_name', {
         group_id: Number(groupId),
@@ -839,6 +868,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             user_id: { type: 'string', description: '用户QQ号' },
             special_title: { type: 'string', description: '专属头衔，空字符串表示取消' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'special_title'],
         },
@@ -847,8 +877,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId, undefined, true);
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId, undefined, true);
 
       await callAction(platform, selfId, 'set_group_special_title', {
         group_id: Number(groupId),
@@ -873,6 +902,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             user_id: { type: 'string', description: '用户QQ号' },
             enable: { type: 'boolean', description: 'true = 设为管理员，false = 取消管理员' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'enable'],
         },
@@ -881,8 +911,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
     handler: async (args, callCtx) => {
       const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(platform, selfId, groupId, undefined, true);
-      if (permError) return permError;
+      await assertAdminPermission(platform, selfId, groupId, undefined, true);
 
       await callAction(platform, selfId, 'set_group_admin', {
         group_id: Number(groupId),
@@ -905,6 +934,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           type: 'object',
           properties: {
             message_id: { type: 'string', description: '要撤回的消息 ID' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['message_id'],
         },
@@ -937,6 +967,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
             count: { type: 'number', description: '撤回最近多少条机器人消息（默认 1，上限 10）' },
             group_id: { type: 'string', description: '可选：目标群号。不传则用当前会话。' },
             user_id: { type: 'string', description: '可选：目标私聊 QQ 号。不传则用当前会话。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -951,7 +982,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
       else if (argUserId) targetSessionId = buildOneBotSessionId(selfId, 'private', argUserId);
       else {
         const parsed = parseOneBotSession(callCtx.sessionId);
-        if (!parsed) return '当前不在 OneBot 会话中，请用 group_id 或 user_id 指定要撤回的目标会话。';
+        if (!parsed) throw new Error('当前不在 OneBot 会话中，请用 group_id 或 user_id 指定要撤回的目标会话。');
         targetSessionId = callCtx.sessionId;
       }
 
@@ -966,13 +997,15 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           })
         | undefined;
       if (!adapter?.getSentMessages) {
-        return '未找到支持记录自身发出消息的 OneBot 适配器（getSentMessages 不在平台契约内，第三方适配器可不提供）。如已知 message_id 可改用 onebot_delete_msg。';
+        throw new Error(
+          '未找到支持记录自身发出消息的 OneBot 适配器（getSentMessages 不在平台契约内，第三方适配器可不提供）。如已知 message_id 可改用 onebot_delete_msg。',
+        );
       }
 
       const count = Math.max(1, Math.min(10, Math.floor(Number(args.count) || 1)));
       const recent = adapter.getSentMessages(targetSessionId, 10); // 新→旧
       if (recent.length === 0) {
-        return '没有可撤回的记录：机器人近期未在该会话发送消息，或已超出记录时窗（约 30 分钟）。';
+        throw new Error('没有可撤回的记录：机器人近期未在该会话发送消息，或已超出记录时窗（约 30 分钟）。');
       }
       const targets = recent.slice(0, count);
       const recalled: string[] = [];
@@ -989,7 +1022,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
         }
       }
       if (recalled.length === 0) {
-        return `撤回失败（可能已超过可撤回时间，QQ 通常限 2 分钟）：${failed.join('；')}`;
+        throw new Error(`撤回失败：${failed.join('；')}`);
       }
       let msg = `已撤回机器人发送的 ${recalled.length} 条消息：${recalled.join('、')}`;
       if (failed.length > 0) msg += `；另有 ${failed.length} 条撤回失败：${failed.join('；')}`;
@@ -1012,7 +1045,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
       function: {
         name: 'onebot_get_forward_msg',
         description:
-          '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，必须把尖括号里的 id 字符串作为参数 id 传入；不要使用 message_id、forward_id、res_id 或 m_resid。',
+          '读取合并转发消息内容（OneBot v11 标准 get_forward_msg）。收到 <forward id="...">[合并转发消息]</forward> 时，把尖括号里的 id 字符串作为参数 id 传入。',
         parameters: {
           type: 'object',
           properties: {
@@ -1021,6 +1054,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
               description: '合并转发 ID（forward 消息段的 data.id），与 OneBot v11 标准参数名一致',
             },
             limit: { type: 'number', description: '最多返回多少条节点，默认 30' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['id'],
         },
@@ -1028,25 +1062,33 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
     },
     handler: async (args, callCtx) => {
       const selfId = resolveSelfId(platform, callCtx, args);
-      if (!args.id)
-        return '参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串，不要使用 message_id。';
+      if (!args.id) throw new Error('参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串。');
       const forwardId = String(args.id);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
-      // 适配器的 callAction 已对 get_forward_msg 做了多参数键回退（id/message_id/res_id/m_resid）
-      // 并维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存。
+      // 适配器的 callAction 维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存。
       let data: unknown;
       try {
         data = await callAction(platform, selfId, 'get_forward_msg', { id: forwardId });
       } catch (err) {
-        return `合并转发读取失败：${err instanceof Error ? err.message : String(err)}。该转发可能已在协议端过期，或当前 OneBot 实现不支持跨会话读取。`;
+        throw new Error(`合并转发读取失败：${err instanceof Error ? err.message : String(err)}`);
       }
 
-      // 适配器在缓存命中时返回 ForwardEntry 形状（含 fullText / summary / 元信息）。
+      // 适配器在缓存命中时返回 ForwardEntry 形状（含 fullText / summary / 元信息与截断标志）。
       // 此时直接返回原文给 LLM，无需再做协议端结构解析。
       if (data && typeof data === 'object' && (data as Record<string, unknown>).__aalisForwardEntry) {
-        const entry = data as { fullText: string; summary: string | null; count: number; participants: string[] };
-        const header = `合并转发共 ${entry.count} 条，参与人：${entry.participants.join(', ') || '未知'}`;
+        const entry = data as {
+          fullText: string;
+          summary: string | null;
+          count: number;
+          participants: string[];
+          truncatedDepth?: boolean;
+          truncatedNodes?: boolean;
+        };
+        const cut = [entry.truncatedDepth && '嵌套超深', entry.truncatedNodes && '节点超限'].filter(Boolean);
+        const header =
+          `合并转发共 ${entry.count} 条，参与人：${entry.participants.join(', ') || '未知'}` +
+          (cut.length ? `，已截断（${cut.join('、')}）` : '');
         const summaryLine = entry.summary ? `\n摘要：${entry.summary}\n` : '\n';
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
@@ -1067,6 +1109,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
           type: 'object',
           properties: {
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1094,6 +1137,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
           properties: {
             user_id: { type: 'string', description: '可选：要查询的用户 QQ 号。缺省查询机器人自身。' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1127,6 +1171,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
             limit: { type: 'number', description: '本页最多返回条数，默认 30' },
             offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1194,6 +1239,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
               type: 'string',
               description: '可选。指定群号。缺省时查当前会话所在群（私聊时缺省会报错，请显式传入）。',
             },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1205,9 +1251,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
       const parsed = parseOneBotSession(callCtx.sessionId);
       let groupId = argGroupId;
       if (!groupId) {
-        if (parsed?.detailType !== 'group') {
-          return JSON.stringify({ available: false, reason: '当前不在群聊中，请显式传入 group_id' });
-        }
+        if (parsed?.detailType !== 'group') throw new Error('当前不在群聊中，请显式传入 group_id');
         groupId = parsed.targetId;
       }
       let info: Record<string, unknown> | null = null;
@@ -1218,17 +1262,13 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
           no_cache: true,
         })) as Record<string, unknown>;
       } catch (err) {
-        return JSON.stringify({
-          available: false,
-          reason: `查询失败: ${err instanceof Error ? err.message : String(err)}`,
-        });
+        throw new Error(`查询失败: ${err instanceof Error ? err.message : String(err)}`);
       }
-      if (!info) return JSON.stringify({ available: false, reason: '无法获取群成员信息' });
+      if (!info) throw new Error('无法获取群成员信息');
       const ts = Number(info.shut_up_timestamp ?? 0);
       const nowSec = Math.floor(Date.now() / 1000);
       const muted = ts > nowSec;
       return JSON.stringify({
-        available: true,
         muted,
         shutUpTimestamp: ts,
         untilIso: muted ? new Date(ts * 1000).toISOString() : null,
@@ -1270,10 +1310,9 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
           a.platform === 'onebot' && typeof (a as Partial<SelfMuteAdapter>).getSelfMutes === 'function',
       );
       if (supporting.length === 0) {
-        return JSON.stringify({
-          supported: false,
-          reason: '未找到支持记录自身禁言状态的 OneBot 适配器（getSelfMutes 不在平台契约内，第三方适配器可不提供）',
-        });
+        throw new Error(
+          '未找到支持记录自身禁言状态的 OneBot 适配器（getSelfMutes 不在平台契约内，第三方适配器可不提供）',
+        );
       }
       const limit = Math.max(1, Math.min(200, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
@@ -1281,7 +1320,6 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
       const total = mutes.length;
       const sliced = mutes.slice(offset, offset + limit);
       return JSON.stringify({
-        supported: true,
         total,
         offset,
         limit,
@@ -1309,6 +1347,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
           type: 'object',
           properties: {
             message_id: { type: 'string', description: '消息 ID' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['message_id'],
         },
@@ -1316,22 +1355,24 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
     },
     handler: async (args, callCtx) => {
       const selfId = resolveSelfId(platform, callCtx, args);
-      if (!args.message_id) return '参数错误：缺少 message_id';
+      if (!args.message_id) throw new Error('参数错误：缺少 message_id');
+      let data: Record<string, unknown> | null;
       try {
-        const data = (await callAction(platform, selfId, 'get_msg', {
+        data = (await callAction(platform, selfId, 'get_msg', {
           message_id: Number(args.message_id),
         })) as Record<string, unknown> | null;
-        // 取到的消息按所在的窗口拼出会话 id 过规则：拼不出（她自己发的私聊消息、实现端不给字段）的按判不出拒绝
-        const target = sessionOfMessage(selfId, data);
-        // 逐个参与者过会话管理的规则：有人过不了（某个参与者自己私聊里的）时发一道参与者审批，由过得了的人批
-        const verdict =
-          target === undefined
-            ? { ok: false as const, reason: TAKE_UNKNOWN }
-            : await callCtx.approveFor(who => takeFrom(sessionManager, callCtx.sessionId, target, who));
-        return verdict.ok ? JSON.stringify(data) : toSource(verdict.reason);
       } catch (err) {
-        return `获取消息失败：${err instanceof Error ? err.message : String(err)}。该消息可能已过期或不在当前 OneBot 实现的作用域内。`;
+        throw new Error(`获取消息失败：${err instanceof Error ? err.message : String(err)}`);
       }
+      // 取到的消息按所在的窗口拼出会话 id 过规则：拼不出（她自己发的私聊消息、实现端不给字段）的按判不出拒绝
+      const target = sessionOfMessage(selfId, data);
+      // 逐个参与者过会话管理的规则：有人过不了（某个参与者自己私聊里的）时发一道参与者审批，由过得了的人批
+      const verdict =
+        target === undefined
+          ? { ok: false as const, reason: TAKE_UNKNOWN }
+          : await callCtx.approveFor(who => takeFrom(sessionManager, callCtx.sessionId, target, who));
+      if (!verdict.ok) throw new Error(toSource(verdict.reason));
+      return JSON.stringify(data);
     },
   });
 
@@ -1352,6 +1393,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
                 '荣誉类型：talkative=龙王, performer=群聊之火, legend=群聊炽焰, strong_newbie=冒尖小春笋, emotion=快乐之源, all=全部。默认 all。',
             },
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1393,6 +1435,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
             keyword: { type: 'string', description: '可选：按群名或群号子串模糊匹配（不区分大小写）' },
             limit: { type: 'number', description: '本页最多返回条数，默认 30' },
             offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1448,6 +1491,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
             keyword: { type: 'string', description: '可选：按昵称、备注或 QQ 号子串模糊匹配（不区分大小写）' },
             limit: { type: 'number', description: '本页最多返回条数，默认 30' },
             offset: { type: 'number', description: '跳过前 N 条用于翻页，默认 0' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1502,6 +1546,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
           properties: {
             user_id: { type: 'string', description: '要查询的 QQ 号' },
             no_cache: { type: 'boolean', description: '是否跳过缓存强制刷新，默认 false' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id'],
         },
@@ -1525,11 +1570,11 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
         name: 'onebot_get_login_info',
         description:
           '显式查询当前 OneBot 连接的登录账号信息（QQ 号、昵称）。仅在用户要求核实账号、诊断连接或需要最新平台返回值时使用。',
-        parameters: { type: 'object', properties: {}, required: [] },
+        parameters: { type: 'object', properties: { self_id: SELF_ID_PARAM }, required: [] },
       },
     },
-    handler: async (_args, callCtx) => {
-      const selfId = resolveSelfId(platform, callCtx, _args);
+    handler: async (args, callCtx) => {
+      const selfId = resolveSelfId(platform, callCtx, args);
       const data = await callAction(platform, selfId, 'get_login_info', {});
       return JSON.stringify(data);
     },
@@ -1547,6 +1592,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
           type: 'object',
           properties: {
             user_id: { type: 'string', description: '要删除的好友 QQ 号；在私聊中可省略，默认当前对话用户' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1557,7 +1603,7 @@ function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
       const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       const userId = argUserId || (parsed?.detailType === 'private' ? parsed.targetId : '');
-      if (!userId) return '请提供 user_id，或在要删除的好友私聊中调用此工具';
+      if (!userId) throw new Error('请提供 user_id，或在要删除的好友私聊中调用此工具');
 
       await callAction(platform, selfId, 'delete_friend', {
         user_id: Number(userId),
@@ -1592,6 +1638,7 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
               type: 'string',
               description: '可选：目标群号。群聊省略则使用当前群；如显式传值则跨群操作。',
             },
+            self_id: SELF_ID_PARAM,
           },
         },
       },
@@ -1608,17 +1655,10 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
         if (!argUserId) {
           throw new Error('群聊戳一戳必须显式提供 user_id（要戳的对象）。');
         }
-        try {
-          await callAction(platform, selfId, 'group_poke', {
-            group_id: Number(groupId),
-            user_id: Number(argUserId),
-          });
-        } catch {
-          await callAction(platform, selfId, 'send_group_poke', {
-            group_id: Number(groupId),
-            user_id: Number(argUserId),
-          });
-        }
+        await callFirstSupported(platform, selfId, ['group_poke', 'send_group_poke'], {
+          group_id: Number(groupId),
+          user_id: Number(argUserId),
+        });
         return `已在群 ${groupId} 戳了 ${argUserId} 一下`;
       }
 
@@ -1627,12 +1667,7 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
       if (!userId) {
         throw new Error('无法判断戳一戳目标：当前不在 OneBot 会话内，请显式传入 group_id+user_id 或 user_id。');
       }
-      // NapCat: friend_poke { user_id }；其他实现可能用 send_poke
-      try {
-        await callAction(platform, selfId, 'friend_poke', { user_id: Number(userId) });
-      } catch {
-        await callAction(platform, selfId, 'send_poke', { user_id: Number(userId) });
-      }
+      await callFirstSupported(platform, selfId, ['friend_poke', 'send_poke'], { user_id: Number(userId) });
       return `已戳了 ${userId} 一下`;
     },
   });
@@ -1650,6 +1685,7 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
           properties: {
             user_id: { type: 'string', description: '要赞的用户 QQ 号' },
             times: { type: 'number', description: '赞的次数，默认 1，每天每个好友最多 10 次' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id'],
         },
@@ -1677,6 +1713,7 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
           type: 'object',
           properties: {
             group_id: { type: 'string', description: '可选：目标群号。不传则使用当前群会话的群号。' },
+            self_id: SELF_ID_PARAM,
           },
           required: [],
         },
@@ -1724,7 +1761,7 @@ function registerSessionHistoryTools(
               description: 'group = 群聊，private = 私聊',
             },
             target_id: { type: 'string', description: '群号或 QQ 号' },
-            self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['target_type', 'target_id'],
           additionalProperties: false,
@@ -1732,16 +1769,13 @@ function registerSessionHistoryTools(
       },
     },
     handler: async (args, callCtx) => {
-      const current = parseOneBotSession(callCtx.sessionId);
       const targetType = String(args.target_type ?? '').toLowerCase();
       const targetId = String(args.target_id ?? '').trim();
       if (targetType !== 'group' && targetType !== 'private') {
-        return JSON.stringify({ error: `target_type 必须为 group 或 private，收到 ${args.target_type}` });
+        throw new Error(`target_type 必须为 group 或 private，收到 ${args.target_type}`);
       }
-      if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
-      const argSelfId = args.self_id ? String(args.self_id).trim() : '';
-      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
-      if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
+      if (!targetId) throw new Error('target_id 不能为空');
+      const selfId = resolveSelfId(platform, callCtx, args);
       return JSON.stringify({
         ok: true,
         sessionId: buildOneBotSessionId(selfId, targetType, targetId),
@@ -1775,7 +1809,7 @@ function registerSessionHistoryTools(
               type: 'number',
               description: `读取最近多少条，默认 ${cfg.defaultLimit}，最多 ${cfg.maxLimit}`,
             },
-            self_id: { type: 'string', description: '机器人账号。可选，默认使用当前 OneBot 会话的 selfId' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['target_type', 'target_id'],
           additionalProperties: false,
@@ -1783,44 +1817,40 @@ function registerSessionHistoryTools(
       },
     },
     handler: async (args, callCtx) => {
-      const current = parseOneBotSession(callCtx.sessionId);
       const targetType = String(args.target_type ?? '').toLowerCase();
       const targetId = String(args.target_id ?? '').trim();
       if (targetType !== 'group' && targetType !== 'private') {
-        return JSON.stringify({ error: `target_type 必须为 group 或 private，收到 ${args.target_type}` });
+        throw new Error(`target_type 必须为 group 或 private，收到 ${args.target_type}`);
       }
-      if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
+      if (!targetId) throw new Error('target_id 不能为空');
 
-      const argSelfId = args.self_id ? String(args.self_id).trim() : '';
-      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
-      if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
+      const selfId = resolveSelfId(platform, callCtx, args);
 
-      if (!sessionHistory.present)
-        return JSON.stringify({
-          error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session',
-        });
+      if (!sessionHistory.present) throw new Error('session-history 服务不可用，请启用 @aalis/plugin-tool-session');
       const history = sessionHistory.use;
 
       const limit = Math.max(1, Math.min(cfg.maxLimit, Math.floor(Number(args.limit) || cfg.defaultLimit)));
       const sessionId = buildOneBotSessionId(selfId, targetType, targetId);
 
+      let result: SessionHistoryReadResult;
       try {
         // 能不能读由 session-history 服务按会话管理的规则判（带这次调用的授权身份）。
         // includeArchived 故意不暴露：archived 是 memory 内部细节，被 summary 替代的老消息
         // 默认就不该再翻原文（会与 summary 内容双重计费）。如需考古应另起独立工具。
-        const result = await history.getHistory({ sessionId, limit }, callCtx);
-        return JSON.stringify({
-          ...result,
-          sessionId,
-          selfId,
-          targetType,
-          targetId,
-        });
+        result = await history.getHistory({ sessionId, limit }, callCtx);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.use.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
-        return JSON.stringify({ error: `读取 OneBot 会话历史失败: ${message}` });
+        throw new Error(`读取 OneBot 会话历史失败: ${message}`);
       }
+      if ('error' in result) throw new Error(result.error);
+      return JSON.stringify({
+        ...result,
+        sessionId,
+        selfId,
+        targetType,
+        targetId,
+      });
     },
   });
 
@@ -1829,27 +1859,51 @@ function registerSessionHistoryTools(
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
 
-/** 能处理好友申请与群请求的 OneBot 适配器（非标准扩展，不在平台契约内） */
+/** 能处理好友申请与群请求的 OneBot 适配器（非标准扩展，不在平台契约内）：申请按收到它的账号与申请类型认 */
 type RequestAdapter = PlatformAdapter & {
-  handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
-  handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+  handleFriendRequest(selfId: string, userId: string, approve: boolean, remark?: string): Promise<string>;
+  handleGroupRequest(
+    selfId: string,
+    subType: 'add' | 'invite',
+    userId: string,
+    groupId: string,
+    approve: boolean,
+    reason?: string,
+  ): Promise<string>;
 };
 
 function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
   const { platform, logger } = caps;
   const { group, personal } = bundle;
   /**
-   * 处理申请的 OneBot 适配器：申请挂在收到它的实例上，按当前会话（或 self_id）的账号路由。
-   * 申请的通知注入在收到它的账号的会话里，在那里调用即落到对的实例
+   * 处理申请的账号与 OneBot 适配器：申请挂在收到它的实例上，按当前会话（或 self_id）的账号路由。
+   * 申请的通知注入在收到它的账号的会话里，在那里调用即落到对的实例与账号
    */
-  async function findRequestAdapter(
+  async function requestHandler(
     callCtx: ToolCallContext,
     args: Record<string, unknown>,
-  ): Promise<RequestAdapter | undefined> {
-    const entry = await resolvePlatformBySession(platform, selfSessionId(resolveSelfId(platform, callCtx, args)));
-    const adapter = entry?.use as Partial<RequestAdapter> | undefined;
-    return typeof adapter?.handleFriendRequest === 'function' ? (adapter as RequestAdapter) : undefined;
+  ): Promise<{ selfId: string; adapter: RequestAdapter }> {
+    const selfId = resolveSelfId(platform, callCtx, args);
+    const adapter = (await resolvePlatformBySession(platform, selfSessionId(selfId)))?.use as
+      | Partial<RequestAdapter>
+      | undefined;
+    if (typeof adapter?.handleFriendRequest !== 'function') throw new Error('未找到支持请求处理的 OneBot 适配器');
+    return { selfId, adapter: adapter as RequestAdapter };
   }
+
+  /** 两个群请求工具各认自己的申请类型：用审批加群申请的工具批不了入群邀请，反之亦然 */
+  const handleGroupRequest =
+    (subType: 'add' | 'invite') => async (args: Record<string, unknown>, callCtx: ToolCallContext) => {
+      const { selfId, adapter } = await requestHandler(callCtx, args);
+      return adapter.handleGroupRequest(
+        selfId,
+        subType,
+        String(args.user_id),
+        String(args.group_id),
+        !!args.approve,
+        args.reason ? String(args.reason) : undefined,
+      );
+    };
 
   personal.register({
     definition: {
@@ -1863,15 +1917,16 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
             user_id: { type: 'string', description: '发起好友申请的用户 QQ 号' },
             approve: { type: 'boolean', description: 'true = 同意，false = 拒绝' },
             remark: { type: 'string', description: '同意后添加的备注（可选）' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'approve'],
         },
       },
     },
     handler: async (args, callCtx) => {
-      const adapter = await findRequestAdapter(callCtx, args);
-      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
+      const { selfId, adapter } = await requestHandler(callCtx, args);
       return adapter.handleFriendRequest(
+        selfId,
         String(args.user_id),
         !!args.approve,
         args.remark ? String(args.remark) : undefined,
@@ -1882,7 +1937,7 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
   // 群相关请求拆成两个工具，对应 OneBot v11 set_group_add_request 的两种 sub_type：
   // - approve_join_request: sub_type=add 「别人申请加入 bot 管理的群」 → 群务
   // - handle_group_invite:  sub_type=invite 「别人邀请 bot 加入群」 → 个人/私聊
-  // 底层共用同一个适配器方法（pendingGroupRequests 内部已记录 subType），区别在于语义与权限归属。
+  // 底层共用同一个适配器方法，各自把要处理的申请类型交给它，类型不符就报错。
   group.register({
     definition: {
       type: 'function',
@@ -1897,21 +1952,13 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
             group_id: { type: 'string', description: '相关群号' },
             approve: { type: 'boolean', description: 'true = 同意加群，false = 拒绝' },
             reason: { type: 'string', description: '拒绝理由（拒绝时有效，可选）' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'group_id', 'approve'],
         },
       },
     },
-    handler: async (args, callCtx) => {
-      const adapter = await findRequestAdapter(callCtx, args);
-      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
-      return adapter.handleGroupRequest(
-        String(args.user_id),
-        String(args.group_id),
-        !!args.approve,
-        args.reason ? String(args.reason) : undefined,
-      );
-    },
+    handler: handleGroupRequest('add'),
   });
 
   personal.register({
@@ -1928,21 +1975,13 @@ function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
             group_id: { type: 'string', description: '被邀请加入的群号' },
             approve: { type: 'boolean', description: 'true = 接受邀请并加入群，false = 拒绝' },
             reason: { type: 'string', description: '拒绝理由（拒绝时有效，可选）' },
+            self_id: SELF_ID_PARAM,
           },
           required: ['user_id', 'group_id', 'approve'],
         },
       },
     },
-    handler: async (args, callCtx) => {
-      const adapter = await findRequestAdapter(callCtx, args);
-      if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
-      return adapter.handleGroupRequest(
-        String(args.user_id),
-        String(args.group_id),
-        !!args.approve,
-        args.reason ? String(args.reason) : undefined,
-      );
-    },
+    handler: handleGroupRequest('invite'),
   });
 
   logger.use.info('OneBot 请求处理工具已注册');

@@ -9,6 +9,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { callPlatformAction, platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -19,12 +20,15 @@ import { principalKind } from '../../packages/plugin-authority/src/authority-mod
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import { type MergeContext, notAccepted, readHistory } from '../../packages/plugin-session-server/src/history.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   type IncomingMessage,
   type Message,
   type MessageAttachment,
   type OutgoingMessage,
   WellKnownKinds,
+  WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -42,6 +46,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 判据（不是回合里的不带授权身份），都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
 // 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端与 WebUI 的 console 是 owner，取用规则
 // 一律不放行）。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
+// 发送不重试：没等到回执（超时、回执前断线）的记结果未知；逐条发出时一条没发成就停，投递结果与回报写明前几条已发出。实现端回
+// 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -192,7 +198,9 @@ type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Prom
  * imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment；gateway 为真时另装网关，经 dispatch
  * 派发出站，会话表里有 GROUP 与 PRIVATE、PRIVATE 的对端与 WebUI 的 console 是 owner，owner 在 onebot 登记的账号是 PRIVATE 的
  * 对端（sessions 为假时不装会话管理）；post 从实现端推一个 v11 事件，inbound 是适配器发出的入站。replyToSend 是实现端怎么回
- * 发送与上传：failText 只让发消息失败、上传照常成功。media 是 media 服务的替身，只给出站会调到的那个方法
+ * 发送与上传：failText 只让发消息失败、上传照常成功。failSendAt 让第 N 次 send_* 回失败，failActions 让这些动作回给定的返回码
+ * 与原话。config 并进适配器的配置。media 是 media 服务的替身，只给出站会调到的那个方法。callAction 经平台路由调 GROUP 所在
+ * 实例的动作，drop 断开实现端的连接
  */
 async function boot(
   opts: {
@@ -202,6 +210,9 @@ async function boot(
     gateway?: boolean;
     sessions?: boolean;
     replyToSend?: 'ok' | 'fail' | 'failText' | 'hold';
+    failSendAt?: number;
+    failActions?: Record<string, { retcode: number; message: string }>;
+    config?: Record<string, unknown>;
     media?: { rememberDescriptionAlias(source: string, landedRef: string): void };
   } = {},
 ) {
@@ -218,26 +229,31 @@ async function boot(
   const actions: Action[] = [];
   const heldReplies: Array<() => void> = [];
   let socket: WsSocket | undefined;
+  let sends = 0;
   server.on('connection', ws => {
     socket = ws;
     ws.on('message', raw => {
       const req = JSON.parse(raw.toString()) as Action & { echo?: string };
       actions.push({ action: req.action, params: req.params });
       if (req.echo) {
-        const reply = (status: 'ok' | 'failed') =>
+        const reply = (status: 'ok' | 'failed', failure = { retcode: 100, message: 'fake send failure' }) =>
           ws.send(
             JSON.stringify({
               status,
-              retcode: status === 'ok' ? 0 : 100,
-              message: status === 'ok' ? undefined : 'fake send failure',
+              retcode: status === 'ok' ? 0 : failure.retcode,
+              message: status === 'ok' ? undefined : failure.message,
               data: { user_id: SELF },
               echo: req.echo,
             }),
           );
+        const failure = opts.failActions?.[req.action];
+        if (/^send_/.test(req.action)) sends++;
         const fails =
           (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'fail') ||
-          (/^send_/.test(req.action) && opts.replyToSend === 'failText');
-        if (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'hold') heldReplies.push(() => reply('ok'));
+          (/^send_/.test(req.action) && (opts.replyToSend === 'failText' || sends === opts.failSendAt));
+        if (failure) reply('failed', failure);
+        else if (/^(send_|upload_)/.test(req.action) && opts.replyToSend === 'hold')
+          heldReplies.push(() => reply('ok'));
         else reply(fails ? 'failed' : 'ok');
       }
     });
@@ -254,7 +270,7 @@ async function boot(
   const app = new App({ name: 'T', logLevel: 'error', logger });
   cleanups.push(() => app.stop());
   await registerHubs(app);
-  const host = app.bind({ provide, events });
+  const host = app.bind({ provide, events, platform });
   const files = new Map<string, Buffer>(Object.entries(opts.files ?? {}));
   host.provide.use(storage, memStorage(files) as never);
   if (opts.media) host.provide.use(media, opts.media as never);
@@ -288,6 +304,7 @@ async function boot(
   await app.plugins.register(messageArchivePlugin, { debugLogs: false });
   await app.plugins.register(onebotPlugin, {
     connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
+    ...opts.config,
   });
   await app.plugins.idle();
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
@@ -367,12 +384,19 @@ async function boot(
   /** 从实现端推一个 v11 事件 */
   const post = (event: Record<string, unknown>) =>
     socket?.send(JSON.stringify({ self_id: Number(SELF), time: 0, ...event }));
+  const callAction = (action: string, params: Record<string, unknown>) =>
+    callPlatformAction(host.platform, GROUP, action, params);
+  const drop = () => {
+    for (const c of server.clients) c.terminate();
+  };
   return {
     actions,
     files,
     sent,
     send,
     post,
+    callAction,
+    drop,
     inbound,
     archive: () => app.bind({ messageArchive }).messageArchive.use,
     dispatch,
@@ -582,7 +606,7 @@ describe('onebot 出站：文件附件', () => {
     expect(t.warns.some(w => w.includes('v12'))).toBe(true);
   });
 
-  it('上传超时：报结果未知、请勿重发，不说未能送达', async () => {
+  it('上传超时：报结果未知、不要重发，不说未能送达', async () => {
     const t = await boot({ replyToSend: 'hold', files: { 'data:/paper-out/a.html': HTML } });
     // 只伪造计时器、且随真实时间推进：until() 的轮询照常，再一次性跳过 action 的 30 秒上限
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
@@ -598,7 +622,9 @@ describe('onebot 出站：文件附件', () => {
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await msg.delivery;
       expect(result, '只有上传超时：结构化地标为结果未知').toMatchObject({ ok: false, unconfirmed: true });
-      expect(result?.ok === false && result.error).toContain('请勿重发');
+      expect(result?.ok === false && result.error).toBe(
+        '已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html',
+      );
       await until(() => t.failureNotes().length > 0);
       const note = String(t.failureNotes()[0].message.content);
       expect(note).toContain('可能已经送达');
@@ -609,7 +635,7 @@ describe('onebot 出站：文件附件', () => {
     }
   });
 
-  it('上传超时夹着确定没发出的附件：整条按失败报，不标结果未知', async () => {
+  it('上传超时夹着确定没发出的附件：照样标结果未知，原因里写着结果未知的那个', async () => {
     const t = await boot({
       replyToSend: 'hold',
       files: { 'data:/paper-out/a.html': HTML, 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) },
@@ -629,12 +655,308 @@ describe('onebot 出站：文件附件', () => {
       await until(() => t.sent().some(a => a.action === 'upload_group_file'));
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await msg.delivery;
-      expect(result).toMatchObject({ ok: false });
-      expect(result && 'unconfirmed' in result).toBe(false);
-      expect(result?.ok === false && result.error).toContain('上传超时');
+      expect(result).toMatchObject({ ok: false, unconfirmed: true });
+      expect(result?.ok === false && result.error).toContain(
+        '已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html',
+      );
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('onebot 出站：发送不重试，停在没发成的那一条', () => {
+  const textSends = (t: Awaited<ReturnType<typeof boot>>) => t.sent().filter(a => a.action === 'send_group_msg');
+  const THREE_PIECES = '第一句足够长的一段话。第二句也足够长的一段话。第三句同样足够长的一段话。';
+
+  /**
+   * 她这条回复在 WebUI 里标的未发出原因：实时按投递结果（会话服务的 notAccepted），刷新后按存档里的投递失败记录（readHistory；
+   * 她的回复由 agent 先落库，记录随后由适配器经存档写下）
+   */
+  async function undeliveredReasons(t: Awaited<ReturnType<typeof boot>>, msg: OutgoingMessage) {
+    const result = await msg.delivery;
+    if (result?.ok !== false) throw new Error('应当投递失败');
+    await until(() => t.failureNotes().length > 0);
+    const archived: Message[] = [
+      { role: 'assistant', content: msg.content, timestamp: 1, metadata: { turnId: msg.turnId } },
+      ...t.failureNotes().map(n => n.message),
+    ];
+    const room: MergeContext = {
+      isOwner: () => false,
+      room: true,
+      multiParty: true,
+      signFile: () => undefined,
+      display: () => undefined,
+    };
+    const { items } = await readHistory(
+      { getHistory: async () => archived } as unknown as MemoryService,
+      GROUP,
+      { limit: 100, skip: () => false },
+      room,
+      { warn() {} },
+    );
+    return {
+      live: toSource(notAccepted(result.error, result)),
+      history: items.flatMap(i =>
+        i.kind === 'agent-message' && i.undelivered ? [toSource(i.undelivered.reason)] : [],
+      ),
+    };
+  }
+
+  it('发消息超时：只发一次，报结果未知、不劝重发', async () => {
+    const t = await boot({ replyToSend: 'hold' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = { sessionId: GROUP, content: '<占位文字>', source: 'agent' };
+      await t.send(msg);
+      await until(() => textSends(t).length > 0);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(textSends(t), '超时不重发').toHaveLength(1);
+      expect(await msg.delivery).toMatchObject({ ok: false, unconfirmed: true });
+      await until(() => t.failureNotes().length > 0);
+      const note = String(t.failureNotes()[0].message.content);
+      expect(note).toContain('可能已经送达');
+      expect(note).not.toContain('未能送达');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('发消息回失败：只发一次，按确定失败报，不带结果未知', async () => {
+    const t = await boot({ replyToSend: 'fail' });
+    const msg: OutgoingMessage = { sessionId: GROUP, content: '<占位文字>', source: 'agent' };
+    await t.send(msg);
+    const result = await msg.delivery;
+    expect(textSends(t)).toHaveLength(1);
+    expect(result).toMatchObject({ ok: false });
+    expect(result && 'unconfirmed' in result).toBe(false);
+  });
+
+  it('回执前连接断开：报结果未知，不重发', async () => {
+    const t = await boot({ replyToSend: 'hold' });
+    const msg: OutgoingMessage = { sessionId: GROUP, content: '<占位文字>', source: 'agent' };
+    await t.send(msg);
+    await until(() => textSends(t).length > 0);
+    t.drop();
+    expect(await msg.delivery).toMatchObject({ ok: false, unconfirmed: true });
+    expect(textSends(t)).toHaveLength(1);
+  });
+
+  it('正文分三条、第二条回失败：停在第二条，投递结果与回报写明前 1 条已发出，只补没发出的部分', async () => {
+    const t = await boot({
+      failSendAt: 2,
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    const msg: OutgoingMessage = { sessionId: GROUP, content: THREE_PIECES, source: 'agent', markup: true };
+    await t.send(msg);
+    const result = await msg.delivery;
+    expect(textSends(t), '第三条不再发').toHaveLength(2);
+    expect(result).toMatchObject({ ok: false, sentPieces: 1 });
+    const error = result?.ok === false ? String(result.error) : '';
+    expect(error).toContain('fake send failure');
+    await until(() => t.failureNotes().length > 0);
+    const [note] = t.failureNotes();
+    expect(note.message.content).toContain('前 1 条已经发出，从第 2 条起没有送达');
+    expect(note.message.content).not.toContain('未能送达对方');
+    expect(note.message.content).not.toContain('稍后重发');
+    expect(note.message.metadata).toMatchObject({ [WellKnownMetadataKeys.SentPieces]: 1, error });
+  });
+
+  it('正文分两条、第一条没等到回执：第二条不发，投递结果标结果未知，时间线与刷新后的历史都写「可能已经发出」', async () => {
+    const t = await boot({
+      replyToSend: 'hold',
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = {
+        sessionId: GROUP,
+        content: '第一句足够长的一段话。第二句也足够长的一段话。',
+        source: 'agent',
+        markup: true,
+        turnId: 'turn-1',
+      };
+      await t.send(msg);
+      await until(() => textSends(t).length === 1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const { live, history } = await undeliveredReasons(t, msg);
+      expect(live).toMatch(/^可能已经发出，没等到平台确认：/);
+      expect(history).toEqual([live]);
+      expect(textSends(t), '第二条不再发').toHaveLength(1);
+      expect(await msg.delivery).toMatchObject({ ok: false, unconfirmed: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('正文分三条、第二条没等到回执：第 2 条记结果未知，从第 3 条起没发出；时间线与刷新后的历史按已发出的条数写「只发出了前 1 条」', async () => {
+    const t = await boot({
+      replyToSend: 'hold',
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = {
+        sessionId: GROUP,
+        content: THREE_PIECES,
+        source: 'agent',
+        markup: true,
+        turnId: 'turn-1',
+      };
+      await t.send(msg);
+      await until(() => textSends(t).length === 1);
+      for (const ack of t.heldReplies.splice(0)) ack();
+      await until(() => textSends(t).length === 2);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await msg.delivery;
+      expect(textSends(t), '第三条不再发').toHaveLength(2);
+      expect(result).toMatchObject({ ok: false, sentPieces: 1, unconfirmed: true });
+      expect(result?.ok === false && result.error).toBe(
+        '从第 3 条起没发出；已发出但没等到确认，结果未知，可能已经送达，不要重发：消息（第 2 条）',
+      );
+      const { live, history } = await undeliveredReasons(t, msg);
+      expect(live).toMatch(/^只发出了前 1 条：/);
+      expect(history).toEqual([live]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('停在最后一条、这一条没等到回执，另有文件没传上去：回报照样写明前 1 条已发出、不要整条重发，另说有文件没送达', async () => {
+    const t = await boot({
+      replyToSend: 'hold',
+      failActions: { upload_group_file: { retcode: 100, message: '<占位原话>' } },
+      files: { 'data:/paper-out/a.html': HTML },
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const msg: OutgoingMessage = {
+        sessionId: GROUP,
+        content: '第一句足够长的一段话。第二句也足够长的一段话。',
+        source: 'agent',
+        markup: true,
+        attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      };
+      await t.send(msg);
+      await until(() => textSends(t).length === 1);
+      for (const ack of t.heldReplies.splice(0)) ack();
+      await until(() => textSends(t).length === 2);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await msg.delivery).toMatchObject({ ok: false, sentPieces: 1 });
+      await until(() => t.failureNotes().length > 0);
+      const note = String(t.failureNotes()[0].message.content);
+      expect(note).toContain('前 1 条已经发出');
+      expect(note).toContain('不要整条重发');
+      expect(note).toContain('另有图片、媒体或文件未能送达对方');
+      expect(note).toContain('结果未知，可能已经送达；不要重发，以免出现两份：消息（第 2 条）');
+      expect(note).not.toContain('稍后重发');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('WebUI 时间线与刷新后的历史里只写一次「前 1 条」：投递结果的原因只交原话，已发出的条数随 sentPieces', async () => {
+    const t = await boot({
+      failSendAt: 2,
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    const msg: OutgoingMessage = {
+      sessionId: GROUP,
+      content: THREE_PIECES,
+      source: 'agent',
+      markup: true,
+      turnId: 'turn-1',
+    };
+    await t.send(msg);
+    const { live, history } = await undeliveredReasons(t, msg);
+    expect(history).toEqual([live]);
+    expect(live.match(/前 1 条/g), live).toHaveLength(1);
+    expect(live).toContain('fake send failure');
+  });
+
+  it('停在中途、另有文件没传上去：回报写明前 1 条已发出，另说有文件没送达', async () => {
+    const t = await boot({
+      failSendAt: 2,
+      failActions: { upload_group_file: { retcode: 100, message: '<占位原话>' } },
+      files: { 'data:/paper-out/a.html': HTML },
+      config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
+    });
+    const msg: OutgoingMessage = {
+      sessionId: GROUP,
+      content: THREE_PIECES,
+      source: 'agent',
+      markup: true,
+      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+    };
+    await t.send(msg);
+    expect(await msg.delivery).toMatchObject({ ok: false, sentPieces: 1 });
+    await until(() => t.failureNotes().length > 0);
+    const note = String(t.failureNotes()[0].message.content);
+    expect(note).toContain('前 1 条已经发出，从第 2 条起没有送达');
+    expect(note).toContain('另有图片、媒体或文件未能送达对方');
+  });
+
+  it('两个内联附件、第二个回失败：送达快照只带第一个，投递结果带已发出条数', async () => {
+    const t = await boot({ failSendAt: 2, files: { 'data:/m/a.png': PNG, 'data:/m/b.jpg': JPEG } });
+    const msg: OutgoingMessage = {
+      sessionId: GROUP,
+      content: '',
+      source: 'agent',
+      attachments: [
+        { kind: 'image', data: 'data:/m/a.png' },
+        { kind: 'image', data: 'data:/m/b.jpg' },
+      ],
+    };
+    await t.send(msg);
+    expect(await msg.delivery).toMatchObject({ ok: false, sentPieces: 1 });
+    await until(() => t.delivered.length > 0);
+    expect(t.delivered.flatMap(m => m.attachments ?? []).map(a => a.ref)).toEqual(['data:/m/a.png']);
+  });
+});
+
+describe('onebot 动作：失败带返回码，合并转发只按 id 拉', () => {
+  it('实现端回不支持该动作（v11 为 1404）时拒绝带 unsupported；别的返回码不带', async () => {
+    const t = await boot({
+      failActions: {
+        zz_unknown: { retcode: 1404, message: '不支持的API zz_unknown' },
+        set_group_ban: { retcode: 200, message: '<占位原话>' },
+      },
+    });
+    const unsupported = await t.callAction('zz_unknown', {}).catch((err: unknown) => err);
+    expect(unsupported).toMatchObject({ unsupported: true, retcode: 1404 });
+    expect(String((unsupported as Error).message)).toContain('retcode=1404');
+    const refused = await t.callAction('set_group_ban', {}).catch((err: unknown) => err);
+    expect(refused).toMatchObject({ unsupported: false, retcode: 200 });
+    expect(String((refused as Error).message)).toContain('<占位原话>');
+  });
+
+  it('get_forward_msg 拉不到：只按 id 拉一次，抛出实现端原话', async () => {
+    const t = await boot({ failActions: { get_forward_msg: { retcode: 100, message: '<占位原话>' } } });
+    const err = await t.callAction('get_forward_msg', { id: 'zz-forward' }).catch((e: unknown) => e);
+    expect(String((err as Error).message)).toContain('<占位原话>');
+    expect(t.actions.filter(a => a.action === 'get_forward_msg').map(a => a.params)).toEqual([{ id: 'zz-forward' }]);
+  });
+
+  it('入站展开过的转发：get_forward_msg 命中缓存时带截断标志', async () => {
+    const t = await boot({ config: { forward: { maxNodesPerLevel: 2, summarize: false } } });
+    const node = (text: string) => ({ type: 'node', data: { nickname: '甲', user_id: 30002, content: text } });
+    t.post({
+      post_type: 'message',
+      message_type: 'group',
+      sub_type: 'normal',
+      message_id: 802,
+      group_id: 20001,
+      user_id: 30002,
+      sender: { user_id: 30002, nickname: '甲' },
+      message: [{ type: 'forward', data: { id: 'zz-forward', content: [node('一'), node('二'), node('三')] } }],
+    });
+    await until(() => t.inbound.length > 0);
+    expect(await t.callAction('get_forward_msg', { id: 'zz-forward' })).toMatchObject({
+      truncatedNodes: true,
+      truncatedDepth: false,
+    });
   });
 });
 
@@ -1091,7 +1413,7 @@ describe('onebot 出站：send_attachment 投递结果', () => {
     expect(t.imageNotes(), '中止后平台照常确认的附件仍归档').toHaveLength(1);
   });
 
-  it('没有回合信号的调用方：确认迟迟不来时到等待上限返回未确认', async () => {
+  it('图片消息段迟迟没有回执：适配器到回执时限报结果未知，send_attachment 不报告成功、不劝重发，也不重发', async () => {
     const t = await boot({ imageSender: true, replyToSend: 'hold' });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
@@ -1101,12 +1423,14 @@ describe('onebot 出站：send_attachment 投递结果', () => {
         return result;
       });
       await until(() => imageOnWire(t.sent()).length > 0);
-      await vi.advanceTimersByTimeAsync(80_000);
-      expect(settled, '上限之前照常等待').toBe(false);
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(settled, '回执时限之前照常等待').toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
       const result = await resultPromise;
       expect(result).not.toHaveProperty('ok');
-      expect(String(result.error)).toContain('未确认');
+      expect(String(result.error)).toContain('可能已经送达');
+      expect(String(result.error)).toContain('请勿重发');
+      expect(imageOnWire(t.sent()), '不重发').toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }

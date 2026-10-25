@@ -6,7 +6,7 @@ import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { cacheOneAttachment } from './attachment-cache.js';
-import type { ForwardMediaTask } from './forward.js';
+import type { ExpandedForward, ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
 import { rememberLandedAlias } from './media-alias.js';
 import type { OneBotMessageSegment } from './types.js';
@@ -30,15 +30,9 @@ export const defaultForwardSummaryPrompt = (language: string): string =>
   '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
 
 /**
- * 合并转发原文缓存条目：完整原文 + 摘要 + 元信息。
+ * 合并转发原文缓存条目：展开结果（完整原文、元信息与两个截断标志）+ 摘要。
  */
-export interface ForwardEntry {
-  fullText: string;
-  summary: string | null;
-  count: number;
-  participants: string[];
-  expandedAt: number;
-}
+export type ForwardEntry = Omit<ExpandedForward, 'id'> & { summary: string | null; expandedAt: number };
 
 export interface ForwardConfig {
   enabled: boolean;
@@ -90,7 +84,8 @@ export interface ForwardExpanderDeps<TState> {
 export interface ForwardExpander<TState> {
   /** 取已展开的转发条目：先查内存缓存，落空再读持久化层并回填缓存 */
   getOrLoadForward(id: string): Promise<ForwardEntry | undefined>;
-  fetchForwardOnce(state: TState, id: string): Promise<unknown | null>;
+  /** 按 OneBot v11 标准的参数名 id 调 get_forward_msg（NapCat 也收它），失败原样抛出 */
+  fetchForward(state: TState, id: string): Promise<unknown>;
   expandForwardsInText(
     state: TState,
     text: string,
@@ -273,23 +268,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return persisted;
   }
 
-  /**
-   * 拉取一条合并转发的内容，依次尝试多种参数键。
-   * 不同 OneBot 实现接受的字段不同：标准为 id，NapCat/Lagrange 部分版本接受
-   * message_id / res_id / m_resid。
-   */
-  async function fetchForwardOnce(state: TState, id: string): Promise<unknown | null> {
-    const attempts: Array<Record<string, unknown>> = [{ id }, { message_id: id }, { res_id: id }, { m_resid: id }];
-    let lastErr: unknown;
-    for (const params of attempts) {
-      try {
-        return await sendAction(state, 'get_forward_msg', params);
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    logger.debug(`get_forward_msg 全部参数尝试失败 id=${id}: ${lastErr}`);
-    return null;
+  function fetchForward(state: TState, id: string): Promise<unknown> {
+    return sendAction(state, 'get_forward_msg', { id });
   }
 
   const pickChatModel = chatModelPicker(llm, () => logger.warn('没有可用的对话模型，转发摘要跳过'));
@@ -466,37 +446,29 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       expandIds.map(async id => {
         const entry = await getOrLoadForward(id);
         if (entry) {
-          envelopeMap.set(
-            id,
-            buildEnvelope(
-              {
-                id,
-                count: entry.count,
-                participants: entry.participants,
-                fullText: entry.fullText,
-                truncatedDepth: false,
-                truncatedNodes: false,
-              },
-              entry.summary,
-            ),
-          );
+          envelopeMap.set(id, buildEnvelope({ id, ...entry }, entry.summary));
           return;
         }
 
+        // 顶层拉不到时信封写拉取失败与实现端原话、不进缓存，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志
+        let fetchFailure: unknown;
         try {
           const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
-            fetchForward: (childId: string) => fetchForwardOnce(state, childId),
+            fetchForward: (childId: string) =>
+              fetchForward(state, childId).catch((err: unknown) => {
+                logger.warn(`get_forward_msg 失败 id=${childId}: ${err}`);
+                if (childId === id) fetchFailure = err;
+                return null;
+              }),
             resolveMedia,
             maxDepth: forwardCfg.maxDepth,
             maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
             imageRecognitionEnabled: forwardCfg.imageRecognition,
           });
 
-          if (!expanded.fullText.trim()) {
-            envelopeMap.set(
-              id,
-              `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
-            );
+          if (fetchFailure !== undefined) {
+            const reason = fetchFailure instanceof Error ? fetchFailure.message : String(fetchFailure);
+            envelopeMap.set(id, `<forward id="${id}">[合并转发消息：拉取失败：${reason}]</forward>`);
             return;
           }
 
@@ -505,14 +477,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
             participants: expanded.participants,
           });
 
-          const stored: ForwardEntry = {
-            fullText: expanded.fullText,
-            summary,
-            count: expanded.count,
-            participants: expanded.participants,
-            expandedAt: Date.now(),
-          };
-          setCachedForward(id, stored);
+          const { id: _id, ...forward } = expanded;
+          setCachedForward(id, { ...forward, summary, expandedAt: Date.now() });
 
           const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
           // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；
@@ -537,7 +503,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   return {
     getOrLoadForward,
-    fetchForwardOnce,
+    fetchForward,
     expandForwardsInText,
     clearAll,
   };

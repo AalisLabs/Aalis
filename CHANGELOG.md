@@ -60,7 +60,7 @@
 - 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`，按 id 前缀找子会话或父会话的改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。
 - 会话服务的时间线上，房间的子会话里她说的话不再标「没有发出」（工具调用之前说的、没有适配器接手的回复）。
 - 会话管理的房间收录按会话记录跳过子会话，不再看 id 里有没有 `::`：适配器的窗口 id 里带 `::` 的照常收录。
-- 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；不带 `self_id` 时用先上线的账号。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
+- 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；多个账号时要写 `self_id`（见「onebot 动作与工具结局」一节）。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
 - plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，报错里给出根会话的 id 作候选，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
 
 ### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
@@ -441,6 +441,20 @@
 - 对话、向量化与转写插件（plugin-llm-openai、plugin-llm-deepseek、plugin-llm-ollama、plugin-embedding-openai、plugin-embedding-ollama、plugin-asr-openai）与 plugin-okx-trading、plugin-remote-agent-cursor、plugin-maimai 的 `baseUrl`，plugin-trigger-laya 的侧车地址 `endpoint`：带查询串或片段（`?` 或 `#`）时读配置就报错，实例转为出错。插件在这些地址后面拼路径，这种配置拼出来的请求地址是坏的；plugin-maimai 此前把查询串与片段静默丢掉，plugin-trigger-laya 此前拒绝带查询串或片段的（报「endpoint 须为 HTTP 地址」）、放过末尾单个 `?` 或 `#`。
 - plugin-llm-deepseek：服务端没给 `tool_calls` 时，不再把正文里漏出的工具调用标记（DSML）解析成调用去执行：流式只交出标记之前的文字（可能为空），非流式去掉标记块、其余正文照留，都记一条 warn。
 - plugin-llm-deepseek：排在历史之后、转成 `user` 的 system 块一律以「[系统提示]」开头；以「[」开头的（JSON 数组、Markdown 链接、自带「[系统通知]」这类标记的）也补。
+
+### onebot 动作与工具结局（@aalis/schema-message、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-tools、@aalis/plugin-session-server）
+
+- plugin-adapter-onebot：发送失败不再自动重发。超时或回执前断线的报「结果未知，可能已经执行」，投递结果带 `unconfirmed`（同一条里另有确定没发出的部分时也带，此前只在失败全部是上传超时时带；发起方据此按结果未知处理、不整条重发），上传超时与发消息超时同一句说法：「已发出但没等到确认，结果未知，可能已经送达，不要重发：<消息（第 K 条）或文件 名>」，群里不再因超时出现同一句两三遍。实现端回失败的按确定失败报，报错带动作名、返回码与实现端原话（「OneBot action <名> 失败（retcode=<码>）：<原话>」），返回码是协议的「不支持该动作」时（v11 取 NapCat 的 1404，v12 是 10002）另带 `unsupported: true`。
+- plugin-adapter-onebot：正文各条与附件的消息段逐条发，一条没发成就停，后面的（含附件的消息段）不再发。正文没发出时，后面的图片等附件消息段也不发；上传的文件照常各自上传。前面已经发出的，投递结果带 `sentPieces`（schema-message 的 `OutboundDeliveryResult` 失败分支新加的可选字段，存档元数据登记同一个数 `SentPieces`），原因只写停下那一条的原话，给她的投递回报写明前几条已经发出、不要整条重发（停在最后一条、这一条结果未知时同样），另有附件或文件没送达的另说一句；plugin-session-server 据此在时间线与历史里写「只发出了前 K 条：<原因>」，不再写「没有发出：平台没收下」。送达快照只带已发出的附件，存档据此只记这几张。投递结果的原因不再以「附件或消息未获完整发送确认：」开头。
+- plugin-session-server：结果未知的回复（投递结果带 `unconfirmed`；历史里按投递失败记录上结果未知的名单，存档元数据登记 `Unconfirmed`）在时间线与历史里写「可能已经发出，没等到平台确认：<原因>」，不再写「没有发出：平台没收下」。
+- plugin-adapter-onebot：合并转发只按 v11 标准的参数名 `id` 调 `get_forward_msg`，不再依次换 `message_id`、`res_id`、`m_resid` 重试：读不出时最多等 30 秒（此前最坏 2 分钟），工具报实现端原话。入站展开时拉不到的不进缓存，信封写「拉取失败」与实现端原话，之后 `onebot_get_forward_msg` 照常重新拉（此前拉取失败的结果缓存 7 天，工具回成功文字）。缓存命中时重建的信封与工具结果带上截断标志，`onebot_get_forward_msg` 的头一行注明已截断。
+- plugin-adapter-onebot：`getSelfIdentity()` 不给会话时，本实例恰好一个已知账号才回它，不再取第一个在线账号；给了认不出的会话时不回。
+- plugin-adapter-onebot：非契约扩展 `handleFriendRequest(selfId, userId, approve, remark?)`、`handleGroupRequest(selfId, subType, userId, groupId, approve, reason?)` 多了账号与申请类型参数，没有这条申请（可能已处理）、类型对不上或连接不可用时抛错。待处理的申请按账号（群请求另按类型）登记，同一实例多个账号的申请不再互相覆盖。
+- plugin-tool-onebot：工具失败一律报错，执行层按失败记，日志与 WebUI 的工具卡显示失败，模型拿到的是 `{"error": "…"}`，不再是一句「操作失败：…」或 `{ available: false }`、`{ supported: false }` 一类的成功结果；`onebot_get_self_mute_status` 与 `onebot_list_self_mutes` 成功时的结果去掉 `available`、`supported` 两项。群管工具查不到目标成员、`onebot_recall_self` 全部撤回失败时，报错只带适配器的原话，不再猜「该用户可能不在群中」「可能已超过可撤回时间」；实现端回成功却没给目标成员信息或没给角色时同样报错，不再当成普通成员放行；机器人自身的成员信息没给角色时与取不到时一样跳过检查，不再当成普通成员拦下。
+- plugin-tool-onebot：用到机器人账号的工具都有可选参数 `self_id`。不在 OneBot 会话里（WebUI、子任务、定时任务等）又不写 `self_id` 时，只有一个已知账号才用它，多个账号时报错并列出账号与连接状态，不再取先上线的账号；单账号部署不变。
+- plugin-tool-onebot：戳一戳只在实现端回不支持该动作时才改用 `send_group_poke`、`send_poke`，超时、没权限等别的失败照报，不再换个动作再戳一次。
+- plugin-tool-onebot：`onebot_approve_join_request` 只处理加群申请，`onebot_handle_group_invite` 只处理入群邀请，个人组的入群邀请工具不能再批加群申请。
+- plugin-tools：执行层按结果记结局：工具返回带 `error` 的结果（或命令的退出码不为 0）与抛错一样记「工具 <名> 执行失败: <原因>」，成功才记「执行成功」；调用已中止的（停掉的后台命令、回合中止）记「执行中止」，不算失败。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

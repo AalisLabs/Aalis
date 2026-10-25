@@ -33,6 +33,7 @@ import {
   type OutgoingMessage,
   type StreamChunkMessage,
   WellKnownKinds,
+  WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -639,6 +640,52 @@ describe('条目', () => {
     const ownMessages = c.timeline(mine.id, own).filter(i => i.kind === 'agent-message');
     expect(ownMessages).toHaveLength(1);
     expect(ownMessages[0]).not.toHaveProperty('undelivered');
+  });
+
+  it('房间里分条只发出了一部分的回复标「只发出了前 K 条」，不套「没有发出」', async () => {
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    host.events.use.on('outbound:message', msg => {
+      if (msg.sessionId === ROOM && !msg.delivery)
+        msg.delivery = Promise.resolve({ ok: false, error: '<占位原因>', sentPieces: 1 });
+    });
+    const c = client(server());
+    await c.init();
+    const room = await c.subscribe(ROOM);
+    const turn = openTurn(ROOM);
+    await turn.text('第一条。第二条。');
+    await turn.replyCheck();
+    await turn.reply('第一条。第二条。');
+    await turn.finish('replied');
+    await vi.waitFor(() => {
+      const messages = c.timeline(ROOM, room).filter(i => i.kind === 'agent-message');
+      expect(messages.map(m => m.kind === 'agent-message' && m.undelivered?.reason)).toEqual([
+        '只发出了前 1 条：<占位原因>',
+      ]);
+    });
+  });
+
+  it('房间里结果未知的回复标「可能已经发出，没等到平台确认」，不套「没有发出」', async () => {
+    const { server, host, openTurn } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    host.events.use.on('outbound:message', msg => {
+      if (msg.sessionId === ROOM && !msg.delivery)
+        msg.delivery = Promise.resolve({ ok: false, error: '<占位原因>', unconfirmed: true });
+    });
+    const c = client(server());
+    await c.init();
+    const room = await c.subscribe(ROOM);
+    const turn = openTurn(ROOM);
+    await turn.text('回复');
+    await turn.replyCheck();
+    await turn.reply('回复');
+    await turn.finish('replied');
+    await vi.waitFor(() => {
+      const messages = c.timeline(ROOM, room).filter(i => i.kind === 'agent-message');
+      expect(messages.map(m => m.kind === 'agent-message' && m.undelivered?.reason)).toEqual([
+        '可能已经发出，没等到平台确认：<占位原因>',
+      ]);
+    });
   });
 
   it('房间里工具调用之前说的话没有发进群，标「未发出」；之后的回复照常；重新订阅后历史里同样标出', async () => {
@@ -1991,6 +2038,59 @@ describe('历史', () => {
         text: '发好了',
         attachments: [],
         undelivered: { reason: '没有发出：平台没收下（群已解散）' },
+      },
+    ]);
+  });
+
+  it('刷新后仍在：投递失败记录带已发出条数时，回复标「只发出了前 K 条」', async () => {
+    const { server, host, archive } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    await archive.saveMessage(ROOM, {
+      role: 'assistant',
+      content: '第一条。第二条。',
+      timestamp: 1,
+      metadata: { turnId: 't1' },
+    });
+    await archive.saveMessage(ROOM, {
+      role: 'system',
+      kind: WellKnownKinds.OutboundDeliveryFailed,
+      content: '[投递回报] 前 1 条已经发出',
+      timestamp: 2,
+      metadata: { turnId: 't1', error: '<占位原因>', [WellKnownMetadataKeys.SentPieces]: 1 },
+    });
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: ROOM });
+    expect(items.map(shape)).toEqual([
+      {
+        kind: 'agent-message',
+        text: '第一条。第二条。',
+        attachments: [],
+        undelivered: { reason: '只发出了前 1 条：<占位原因>' },
+      },
+    ]);
+  });
+
+  it('刷新后仍在：投递失败记录列着结果未知的项时，回复标「可能已经发出，没等到平台确认」', async () => {
+    const { server, host, archive } = await setup();
+    await recordRoom(host.events.use, ROOM, '群');
+    await archive.saveMessage(ROOM, { role: 'assistant', content: '回复', timestamp: 1, metadata: { turnId: 't1' } });
+    await archive.saveMessage(ROOM, {
+      role: 'system',
+      kind: WellKnownKinds.OutboundDeliveryFailed,
+      content: '[投递回报] 这些已发出但没等到确认',
+      timestamp: 2,
+      metadata: { turnId: 't1', error: '<占位原因>', [WellKnownMetadataKeys.Unconfirmed]: ['消息（第 1 条）'] },
+    });
+    const c = client(server());
+    await c.init();
+    const { items } = await c.call('session/history', { sessionId: ROOM });
+    expect(items.map(shape)).toEqual([
+      {
+        kind: 'agent-message',
+        text: '回复',
+        attachments: [],
+        undelivered: { reason: '可能已经发出，没等到平台确认：<占位原因>' },
       },
     ]);
   });

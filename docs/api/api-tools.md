@@ -196,7 +196,7 @@ function integerIn(result: string, key: string): number | undefined;
 function toolFailed(result: string, exitCode?: number): boolean;
 ```
 
-`toolFailed`：结果是带 `error` 的 JSON 对象（工具与执行器报失败的约定），或退出码不为 0，即为失败。退出码按展示种类取：`command` 种类写明了取自结果的哪个键时，用 `integerIn(result, display.result.exitCode)` 取。执行器判后台任务的结局与会话服务判工具卡的状态共用这一份，模型与界面看到同一个结局。
+`toolFailed`：结果是带 `error` 的 JSON 对象（工具与执行器报失败的约定），或退出码不为 0，即为失败。退出码按展示种类取：`command` 种类写明了取自结果的哪个键时，用 `integerIn(result, display.result.exitCode)` 取。执行器判后台任务的结局、记每次调用的执行日志（失败记「执行失败」与原因，成功才记「执行成功」；调用已中止的，如停掉的后台命令，记「执行中止」，与后台任务落成 `stopped` 同一口径）与会话服务判工具卡的状态共用这一份，模型、日志与界面看到同一个结局。
 
 ## 后台任务登记
 

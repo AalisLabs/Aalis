@@ -262,6 +262,7 @@ interface ConnectionState {
   pendingActions: Map<
     string,
     {
+      action: string;
       resolve: (data: unknown) => void;
       reject: (err: Error) => void;
       timer: ReturnType<typeof setTimeout>;
@@ -270,19 +271,45 @@ interface ConnectionState {
 }
 
 /**
+ * action 的三种结局之一：已经发给实现端、没等到回执（超时，或在飞时连接关闭、适配器停止）。实现端可能已经执行，结果未知，
+ * 不能当作没发出，也不能重发
+ */
+class ActionUnconfirmedError extends Error {
+  constructor(action: string, why: string) {
+    super(`OneBot action ${action} 没等到回执（${why}），结果未知，可能已经执行`);
+  }
+}
+
+/**
+ * action 的三种结局之一：实现端回了失败，确定没执行。retcode 是实现端的返回码；unsupported 表示实现端不支持这个动作（返回码
+ * 由协议对象的 unsupportedRetcode 给），调用方只在这时才可以改用别的动作名
+ */
+class OneBotActionError extends Error {
+  readonly action: string;
+  readonly retcode: number;
+  readonly unsupported: boolean;
+  constructor(action: string, retcode: number, unsupported: boolean, detail: string | undefined) {
+    super(`OneBot action ${action} 失败（retcode=${retcode}）${detail ? `：${detail}` : ''}`);
+    this.action = action;
+    this.retcode = retcode;
+    this.unsupported = unsupported;
+  }
+}
+
+/**
  * 结清全部在飞 action：清定时器、reject 唤醒等待方、清掉记录。返回结清条数。
  * ws 断开与插件拆卸两条清理路共用——只清定时器不 reject 会让等待方的 promise
- * 永久悬空（bounce 瞬间在飞的 get_forward_msg/get_msg 静默丢失、闭包泄漏）。
+ * 永久悬空（bounce 瞬间在飞的 get_forward_msg/get_msg 静默丢失、闭包泄漏）。在飞的都已发给实现端，按结果未知结清。
  * @internal 导出仅为让对称性可被直接断言。
  */
 export function settlePendingActions(
-  pendingActions: Map<string, { reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>,
+  pendingActions: Map<string, { action: string; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>,
   reason: string,
 ): number {
   const n = pendingActions.size;
   for (const [, pending] of pendingActions) {
     clearTimeout(pending.timer);
-    pending.reject(new Error(reason));
+    pending.reject(new ActionUnconfirmedError(pending.action, reason));
   }
   pendingActions.clear();
   return n;
@@ -462,8 +489,6 @@ const protocolV12 = new OneBotV12();
 // ===== 重连配置 =====
 const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
-/** action 在 ACTION_TIMEOUT 内没有回执：实现端可能已经执行，结果未知，不能当作没发出。 */
-class ActionTimeoutError extends Error {}
 const INVITE_CARD_SUPPRESS_WINDOW = 2 * 60 * 1000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
@@ -674,9 +699,12 @@ function runAdapter(caps: Caps): void {
   const nicknameCache = new Map<string, string>();
 
   // ===== 待处理请求（好友/入群）=====
-  // key: userId（好友请求）或 `${userId}:${groupId}`（群请求）
-  const pendingFriendRequests = new Map<string, { flag: string; selfId: string }>();
-  const pendingGroupRequests = new Map<string, { flag: string; subType: string; selfId: string }>();
+  // 键 → 实现端给的 flag。键带收到它的账号（同一实例多个账号的申请互不覆盖），群请求另带申请类型与群号；处理成功才删
+  const pendingFriendRequests = new Map<string, string>();
+  const pendingGroupRequests = new Map<string, string>();
+  const friendRequestKey = (selfId: string, userId: string) => `${selfId}:${userId}`;
+  const groupRequestKey = (selfId: string, subType: 'add' | 'invite', userId: string, groupId: string) =>
+    `${selfId}:${subType}:${userId}:${groupId}`;
   const pendingInviteCardSuppressions = new Map<string, number>();
 
   function inviteCardSuppressionKey(selfId: string, userId: string): string {
@@ -1074,7 +1102,7 @@ function runAdapter(caps: Caps): void {
     attachmentMaxBytes,
     sendAction,
   });
-  const { getOrLoadForward, fetchForwardOnce, expandForwardsInText } = forwardExpander;
+  const { getOrLoadForward, fetchForward, expandForwardsInText } = forwardExpander;
 
   // 参与 memory:clear。转发原文是聊天内容，归入 context：条目没有会话维度，只在全局清理时清，会话级清理不动它（靠持久化层的
   // 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。多实例共用同一
@@ -1127,42 +1155,14 @@ function runAdapter(caps: Caps): void {
       const echo = nextEcho();
       const timer = setTimeout(() => {
         state.pendingActions.delete(echo);
-        reject(new ActionTimeoutError(`Action ${action} 超时`));
+        reject(new ActionUnconfirmedError(action, `${ACTION_TIMEOUT / 1000} 秒超时`));
       }, ACTION_TIMEOUT);
 
-      state.pendingActions.set(echo, { resolve, reject, timer });
+      state.pendingActions.set(echo, { action, resolve, reject, timer });
 
       const payload = JSON.stringify({ action, params, echo });
       state.ws.send(payload);
     });
-  }
-
-  // 发送类 action 的瞬时失败重试(超时 / NapCat 内核未确认多为瞬时)。
-  // 重试在传输层、不经过 agent —— 故不会触发对同一条内容的重新评论。
-  // 注意:NapCat sendMsg 超时偶有「已发出但未确认」的情况,重试可能导致重复消息;
-  // 这里权衡后选择「至少送达一次」(宁可偶发重复,也不要静默丢失)。
-  const SEND_MAX_RETRIES = 2;
-  const SEND_RETRY_DELAY_MS = 1000;
-  async function sendActionWithRetry(
-    state: ConnectionState,
-    action: string,
-    params: Record<string, unknown>,
-  ): Promise<unknown> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt <= SEND_MAX_RETRIES; attempt++) {
-      try {
-        return await sendAction(state, action, params);
-      } catch (err) {
-        lastErr = err;
-        if (attempt < SEND_MAX_RETRIES) {
-          logger.use.warn(
-            `OneBot ${action} 发送失败(第 ${attempt + 1}/${SEND_MAX_RETRIES + 1} 次),${SEND_RETRY_DELAY_MS}ms 后重试: ${err}`,
-          );
-          await new Promise(r => setTimeout(r, SEND_RETRY_DELAY_MS));
-        }
-      }
-    }
-    throw lastErr;
   }
 
   /**
@@ -1180,8 +1180,16 @@ function runAdapter(caps: Caps): void {
       .map(text => ({ text, segments: markup ? parseContentToSegments(text) : [{ type: 'text', data: { text } }] }));
   }
 
-  /** 逐条发出，交回实现端给出的各条消息 id（按发送顺序，没给的不算）。replyTo：引用回复的平台消息 id，只加在第一条前 */
-  async function sendPieces(sessionId: string, pieces: OutgoingPiece[], replyTo?: string): Promise<string[]> {
+  /**
+   * 逐条发出，一条没发成就停，后面的不发：交回实现端给出的各条消息 id（按发送顺序，没给的不算）、已发出的条数与停下那一条的
+   * 错误。不重试：没等到回执的那条实现端可能已经发出，重发会在群里出现两遍。连接不可用时在发第一条之前抛错。replyTo：引用
+   * 回复的平台消息 id，只加在第一条前
+   */
+  async function sendPieces(
+    sessionId: string,
+    pieces: OutgoingPiece[],
+    replyTo?: string,
+  ): Promise<{ messageIds: string[]; sent: number; failure?: unknown }> {
     const parsed = parseSessionId(sessionId);
     if (!parsed) {
       throw new Error(`无法解析 sessionId: ${sessionId}`);
@@ -1200,7 +1208,7 @@ function runAdapter(caps: Caps): void {
       throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
     }
 
-    const sentIds: string[] = [];
+    const messageIds: string[] = [];
     for (let i = 0; i < pieces.length; i++) {
       const { text, segments } = pieces[i];
       const { action, params } = state.protocol.buildSendMessage({
@@ -1209,12 +1217,17 @@ function runAdapter(caps: Caps): void {
         segments: withReply(segments, i === 0 ? replyTo : undefined),
       });
 
-      const sendResult = await sendActionWithRetry(state, action, params);
+      let sendResult: unknown;
+      try {
+        sendResult = await sendAction(state, action, params);
+      } catch (failure) {
+        return { messageIds, sent: i, failure };
+      }
       // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
       const sentId = extractSentMessageId(sendResult);
       if (sentId) {
         sentTracker.record(sessionId, sentId, text, Date.now());
-        sentIds.push(sentId);
+        messageIds.push(sentId);
       }
 
       // 按下一条消息的字数计算延迟
@@ -1226,7 +1239,7 @@ function runAdapter(caps: Caps): void {
         }
       }
     }
-    return sentIds;
+    return { messageIds, sent: pieces.length };
   }
 
   // ----- 版本自动检测 -----
@@ -1291,12 +1304,16 @@ function runAdapter(caps: Caps): void {
      */
     canHandle: ownsAccount,
 
+    /** 给了会话只回那个会话的账号；不给会话时本实例恰好一个已知账号才回它，多个账号时说不出是哪个，不回 */
     getSelfIdentity(sessionId?: string) {
-      const parsed = sessionId ? parseSessionId(sessionId) : null;
-      const state = parsed
-        ? findStateBySelfId(parsed.selfId)
-        : states.find(s => s.status === 'online' && (s.selfId || s.selfNickname));
-      if (!state || (!state.selfId && !state.selfNickname)) return undefined;
+      const known = states.filter(s => s.selfId);
+      const state =
+        sessionId === undefined
+          ? known.length === 1
+            ? known[0]
+            : undefined
+          : findStateBySelfId(parseSessionId(sessionId)?.selfId);
+      if (!state) return undefined;
       return {
         platform: 'onebot',
         selfId: state.selfId,
@@ -1306,7 +1323,8 @@ function runAdapter(caps: Caps): void {
 
     /** 契约的直发：纯文字，不解析标记、不分条。她的回复经 outbound:message 带 markup 发出 */
     async sendMessage(sessionId: string, content: string): Promise<void> {
-      await sendPieces(sessionId, toPieces(content));
+      const { failure } = await sendPieces(sessionId, toPieces(content));
+      if (failure !== undefined) throw failure;
     },
 
     async callAction(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown> {
@@ -1318,25 +1336,15 @@ function runAdapter(caps: Caps): void {
         throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
       }
 
-      // 合并转发：优先走缓存（消息到达时已抓过一次），失败再依次尝试多种参数键。
+      // 合并转发：优先走缓存（消息到达时已抓过一次），没命中再按 id 拉
       if (action === 'get_forward_msg') {
-        const id = String(params.id ?? params.message_id ?? params.res_id ?? params.m_resid ?? '');
+        const id = String(params.id ?? '');
         if (id) {
           // 内存缓存，落空再读持久化层（重启后场景）
           const entry = await getOrLoadForward(id);
-          if (entry) {
-            // 返回完整原文 + 摘要（如果有）。工具层会优先使用 fullText 渲染。
-            return {
-              __aalisForwardEntry: true,
-              fullText: entry.fullText,
-              summary: entry.summary,
-              count: entry.count,
-              participants: entry.participants,
-            };
-          }
-          const data = await fetchForwardOnce(state, id);
-          if (data) return data;
-          throw new Error('get_forward_msg 失败：所有参数键（id/message_id/res_id/m_resid）均无法取得内容');
+          // 返回完整原文 + 摘要（如果有）与截断标志。工具层会优先使用 fullText 渲染。
+          if (entry) return { __aalisForwardEntry: true, ...entry };
+          return fetchForward(state, id);
         }
       }
 
@@ -1398,38 +1406,40 @@ function runAdapter(caps: Caps): void {
       }
     },
 
-    /** 处理好友请求：approve=true 同意，remark 为备注（同意时有效） */
-    async handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string> {
-      const pending = pendingFriendRequests.get(userId);
-      if (!pending) return `未找到来自 ${userId} 的好友申请（可能已过期或已处理）`;
-      const state = findStateBySelfId(pending.selfId);
-      if (!state || state.status !== 'online') return '连接不可用，无法处理请求';
-      await sendAction(state, 'set_friend_add_request', {
-        flag: pending.flag,
-        approve,
-        remark: remark ?? '',
-      });
-      pendingFriendRequests.delete(userId);
+    /** 处理账号 selfId 收到的好友请求：approve=true 同意，remark 为备注（同意时有效）。没有这条申请、连接不可用时抛错 */
+    async handleFriendRequest(selfId: string, userId: string, approve: boolean, remark?: string): Promise<string> {
+      const key = friendRequestKey(selfId, userId);
+      const flag = pendingFriendRequests.get(key);
+      if (!flag) throw new Error(`未找到来自 ${userId} 的好友申请（可能已处理）`);
+      const state = findStateBySelfId(selfId);
+      if (!state || state.status !== 'online') throw new Error('连接不可用，无法处理请求');
+      await sendAction(state, 'set_friend_add_request', { flag, approve, remark: remark ?? '' });
+      pendingFriendRequests.delete(key);
       return approve
         ? `已同意 ${userId} 的好友申请${remark ? `，备注: ${remark}` : ''}`
         : `已拒绝 ${userId} 的好友申请`;
     },
 
-    /** 处理群请求（加群申请或入群邀请）：approve=true 同意，reason 为拒绝理由 */
-    async handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string> {
-      const key = `${userId}:${groupId}`;
-      const pending = pendingGroupRequests.get(key);
-      if (!pending) return `未找到来自 ${userId} 关于群 ${groupId} 的请求（可能已过期或已处理）`;
-      const state = findStateBySelfId(pending.selfId);
-      if (!state || state.status !== 'online') return '连接不可用，无法处理请求';
-      await sendAction(state, 'set_group_add_request', {
-        flag: pending.flag,
-        sub_type: pending.subType,
-        approve,
-        reason: reason ?? '',
-      });
+    /**
+     * 处理账号 selfId 收到的群请求：subType 是调用方要处理的申请类型（add 加群申请、invite 入群邀请），类型对不上的按没有这条
+     * 申请报错；approve=true 同意，reason 为拒绝理由。没有这条申请、连接不可用时抛错
+     */
+    async handleGroupRequest(
+      selfId: string,
+      subType: 'add' | 'invite',
+      userId: string,
+      groupId: string,
+      approve: boolean,
+      reason?: string,
+    ): Promise<string> {
+      const key = groupRequestKey(selfId, subType, userId, groupId);
+      const flag = pendingGroupRequests.get(key);
+      const typeLabel = subType === 'invite' ? '入群邀请' : '加群申请';
+      if (!flag) throw new Error(`未找到来自 ${userId} 关于群 ${groupId} 的${typeLabel}（可能已处理）`);
+      const state = findStateBySelfId(selfId);
+      if (!state || state.status !== 'online') throw new Error('连接不可用，无法处理请求');
+      await sendAction(state, 'set_group_add_request', { flag, sub_type: subType, approve, reason: reason ?? '' });
       pendingGroupRequests.delete(key);
-      const typeLabel = pending.subType === 'invite' ? '入群邀请' : '加群申请';
       return approve
         ? `已同意 ${userId} 的${typeLabel}（群 ${groupId}）`
         : `已拒绝 ${userId} 的${typeLabel}（群 ${groupId}）${reason ? `，理由: ${reason}` : ''}`;
@@ -1439,8 +1449,15 @@ function runAdapter(caps: Caps): void {
     getSentMessages(sessionId: string, limit?: number): Array<{ messageId: string; ts: number; preview: string }>;
     forgetSentMessage(sessionId: string, messageId: string): void;
     uploadFile(sessionId: string, file: string, name: string): Promise<void>;
-    handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
-    handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
+    handleFriendRequest(selfId: string, userId: string, approve: boolean, remark?: string): Promise<string>;
+    handleGroupRequest(
+      selfId: string,
+      subType: 'add' | 'invite',
+      userId: string,
+      groupId: string,
+      approve: boolean,
+      reason?: string,
+    ): Promise<string>;
   };
 
   caps.provide.use(platform, adapter);
@@ -1557,7 +1574,8 @@ function runAdapter(caps: Caps): void {
             if (resp.status === 'ok') {
               pending.resolve(resp.data);
             } else {
-              pending.reject(new Error(`OneBot action 失败: ${resp.message ?? resp.retcode}`));
+              const unsupported = resp.retcode === state.protocol?.unsupportedRetcode;
+              pending.reject(new OneBotActionError(pending.action, resp.retcode, unsupported, resp.message));
             }
           }
           return;
@@ -1900,7 +1918,7 @@ function runAdapter(caps: Caps): void {
 
     if (req.requestType === 'friend') {
       // 存储待处理的好友请求 flag
-      pendingFriendRequests.set(req.userId, { flag: req.flag, selfId: req.selfId });
+      pendingFriendRequests.set(friendRequestKey(req.selfId, req.userId), req.flag);
 
       // 将请求包装为合成消息，交由 agent 决策（以私聊会话形式发送）
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
@@ -1923,8 +1941,7 @@ function runAdapter(caps: Caps): void {
         })
         .catch((err: unknown) => logger.use.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
-      const key = `${req.userId}:${req.groupId}`;
-      pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
+      pendingGroupRequests.set(groupRequestKey(req.selfId, req.subType, req.userId, req.groupId), req.flag);
       rememberInviteCardSuppression(req);
 
       // 被邀请入群：以私聊形式通知（bot 还没在群里，无法发群消息）
@@ -2352,20 +2369,34 @@ function runAdapter(caps: Caps): void {
   // ----- 监听消息回复事件 -----
 
   /**
-   * 投递失败回报给 agent：写一条系统提示进会话记忆，让它下一轮知晓「刚才那条没送达」，
-   * 而不是误以为已发成功。被动记录，不立即触发回复；每条出站消息至多一条。
-   * 记录带投递结果的原因与这条消息的回合或调用 id，回看历史时据此标出哪条没发出
+   * 投递失败回报给 agent：写一条系统提示进会话记忆，让它下一轮知晓刚才那条没送达或结果未知，而不是误以为已发成功。被动记录，
+   * 不立即触发回复；每条出站消息至多一条。逐条发出停在中途（前面有已发出的，或后面还有没发的）时写明前几条已经发出、不要整条
+   * 重发，整条重发会让它们在群里出现两遍；resendFrom 是后面还有没发的时从哪条补起。failed 是另有确定没发出的（停在中途时不算
+   * 停下的那几条）。记录带投递结果的原因、已发出的条数、结果未知的名单与这条消息的回合或调用 id，回看历史时据此标出哪条没发出
    */
-  function reportUndelivered(msg: OutgoingMessage, error: string, errors: unknown[], unconfirmed: string[]): void {
+  function reportUndelivered(
+    msg: OutgoingMessage,
+    result: { error: string; sentPieces?: number },
+    failed: boolean,
+    resendFrom: number | undefined,
+    unconfirmed: string[],
+  ): void {
     if (msg.source !== 'agent') return;
     let content = '[投递回报] ';
-    if (errors.length) {
+    const partial = result.sentPieces !== undefined || resendFrom !== undefined;
+    if (partial) {
       content +=
-        '你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
-        '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。';
+        `${result.sentPieces ? `前 ${result.sentPieces} 条已经发出，` : ''}` +
+        `${resendFrom === undefined ? '' : `从第 ${resendFrom} 条起没有送达；要补就只补没发出的部分，`}不要整条重发。`;
+    }
+    if (failed) {
+      content += partial
+        ? '另有图片、媒体或文件未能送达对方，如确有必要可补发或改用文字说明。'
+        : '你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
+          '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。';
     }
     if (unconfirmed.length) {
-      content += `文件 ${unconfirmed.join('、')} 上传超时,结果未知,可能已经送达;不要重发,以免出现两份。`;
+      content += `这些已发出但没等到确认，结果未知，可能已经送达；不要重发，以免出现两份：${unconfirmed.join('、')}。`;
     }
     const note: Message = {
       role: 'system',
@@ -2374,8 +2405,9 @@ function runAdapter(caps: Caps): void {
       timestamp: Date.now(),
       metadata: {
         [WellKnownMetadataKeys.Source]: 'adapter-onebot',
-        [WellKnownMetadataKeys.DeliveryError]: error,
-        unconfirmed,
+        [WellKnownMetadataKeys.DeliveryError]: result.error,
+        ...(result.sentPieces ? { [WellKnownMetadataKeys.SentPieces]: result.sentPieces } : {}),
+        [WellKnownMetadataKeys.Unconfirmed]: unconfirmed,
         ...(msg.turnId ? { [WellKnownMetadataKeys.TurnId]: msg.turnId } : {}),
         ...(msg.callId ? { [WellKnownMetadataKeys.CallId]: msg.callId } : {}),
       },
@@ -2394,12 +2426,16 @@ function runAdapter(caps: Caps): void {
 
   async function deliverOutbound(msg: OutgoingMessage): Promise<OutboundDeliveryResult> {
     const errors: unknown[] = [];
-    /** 上传超时的文件名：实现端可能已经收下，只能报「结果未知」，不能劝重发。 */
+    /** 已经发出、没等到确认的各项（消息按条、文件按名）：实现端可能已经收下，只能报「结果未知」，不能劝重发 */
     const unconfirmed: string[] = [];
     const delivered: MessageAttachment[] = [];
     let textSent = false;
     /** 正文各条的平台消息 id */
     let messageIds: string[] = [];
+    /** 正文各条与附件的消息段逐条发：共几条、已发出几条、停下那一条的错误 */
+    let total = 0;
+    let sentPieces = 0;
+    let stopped: unknown;
     try {
       let pieces = toPieces(msg.content ?? '', msg.markup);
       let attachmentPieces: OutgoingPiece[] = [];
@@ -2443,25 +2479,27 @@ function runAdapter(caps: Caps): void {
         errors.push(...inlined.errors);
       }
 
-      // 正文按 markup 发；附件物化出的消息段在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤
+      // 正文按 markup 发；附件物化出的消息段接在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤。逐条发，一条没发成
+      // 就停，后面的（含附件的消息段）不再发
+      total = pieces.length + attachmentPieces.length;
+      const attempt = (list: OutgoingPiece[], replyTo?: string) =>
+        sendPieces(msg.sessionId, list, replyTo).catch((failure: unknown) => ({ messageIds: [], sent: 0, failure }));
       if (pieces.length) {
         logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
-        try {
-          messageIds = await sendPieces(msg.sessionId, pieces, msg.replyTo);
-          textSent = true;
-        } catch (err) {
-          logger.use.warn(`OneBot 发送消息失败(已重试): ${err}`);
-          errors.push(err);
-        }
+        const body = await attempt(pieces, msg.replyTo);
+        messageIds = body.messageIds;
+        sentPieces = body.sent;
+        stopped = body.failure;
+        textSent = stopped === undefined;
       }
-      if (attachmentPieces.length) {
-        try {
-          await sendPieces(msg.sessionId, attachmentPieces, pieces.length ? undefined : msg.replyTo);
-          delivered.push(...inlineAttachments);
-        } catch (err) {
-          logger.use.warn(`OneBot 发送附件消息段失败(已重试): ${err}`);
-          errors.push(err);
-        }
+      if (attachmentPieces.length && stopped === undefined) {
+        const media = await attempt(attachmentPieces, pieces.length ? undefined : msg.replyTo);
+        delivered.push(...inlineAttachments.slice(0, media.sent));
+        sentPieces += media.sent;
+        stopped = media.failure;
+      }
+      if (stopped !== undefined) {
+        logger.use.warn(`OneBot 发送消息失败（共 ${total} 条，已发出 ${sentPieces} 条）: ${stopped}`);
       }
       for (const { file, name, attachment } of uploads) {
         try {
@@ -2469,7 +2507,7 @@ function runAdapter(caps: Caps): void {
           delivered.push(attachment);
         } catch (err) {
           logger.use.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
-          if (err instanceof ActionTimeoutError) unconfirmed.push(name);
+          if (err instanceof ActionUnconfirmedError) unconfirmed.push(`文件 ${name}`);
           else errors.push(err);
         }
       }
@@ -2477,6 +2515,22 @@ function runAdapter(caps: Caps): void {
       // 交出回执后的所有异常都转为结果，防止后台 Promise 拒绝或调用方永远等不到。
       errors.push(err);
     }
+
+    // 停在中途：停下那一条没等到回执的记结果未知。一条都没发出的照原因报；前面有发出或结果未知、后面还有没发的，写明从第几条起
+    // 没发出，她补发时只补后面的
+    const unknown = stopped instanceof ActionUnconfirmedError;
+    let resendFrom: number | undefined;
+    if (stopped !== undefined) {
+      const from = sentPieces + (unknown ? 2 : 1);
+      if (unknown) unconfirmed.unshift(`消息（第 ${sentPieces + 1} 条）`);
+      if (!sentPieces && !unknown) errors.push(stopped);
+      else if (from <= total) resendFrom = from;
+    }
+    // 回报另说的确定失败：停在中途时只算停下那几条之外的（附件、正文里的媒体、上传的文件）
+    const failed = errors.length > 0;
+    // 停下那一条之后的没发出：已发出的条数随 sentPieces 交出，原因只写停下那一条的原话；那一条结果未知时它在名单里，这里写从
+    // 第几条起没发出
+    if (resendFrom !== undefined) errors.push(unknown ? `从第 ${resendFrom} 条起没发出` : stopped);
 
     if (textSent || delivered.length) {
       // 存档据此把送达的部分记进会话历史：只交成功附件的快照，失败的图片不能写成“已发送”历史。
@@ -2489,14 +2543,19 @@ function runAdapter(caps: Caps): void {
     }
     if (errors.length || unconfirmed.length) {
       const problems: string[] = [];
-      if (errors.length) problems.push(`附件或消息未获完整发送确认：${errors.map(String).join('; ')}`);
+      if (errors.length) problems.push(errors.map(String).join('; '));
       if (unconfirmed.length) {
-        problems.push(`文件 ${unconfirmed.join('、')} 上传超时，结果未知，可能已经送达，请勿重发`);
+        problems.push(`已发出但没等到确认，结果未知，可能已经送达，不要重发：${unconfirmed.join('、')}`);
       }
-      const error = problems.join('；');
-      reportUndelivered(msg, error, errors, unconfirmed);
-      // 只有上传超时、没有别的失败时才整条算结果未知；夹着确定没发出的部分，发起方仍按失败处理
-      return errors.length ? { ok: false, error } : { ok: false, error, unconfirmed: true };
+      const result = {
+        ok: false as const,
+        error: problems.join('；'),
+        ...(stopped !== undefined && sentPieces ? { sentPieces } : {}),
+        // 有结果未知的部分就带，不论另有没有确定没发出的：那几项可能已经送达，发起方不得整条重发
+        ...(unconfirmed.length ? { unconfirmed: true as const } : {}),
+      };
+      reportUndelivered(msg, result, failed, resendFrom, unconfirmed);
+      return result;
     }
     if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
     return messageIds.length ? { ok: true, messageIds } : { ok: true };

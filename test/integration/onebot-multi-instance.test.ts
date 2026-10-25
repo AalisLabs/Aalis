@@ -19,6 +19,7 @@ import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { toolContext } from '../fixtures/tool-call.js';
@@ -26,7 +27,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 一个 OneBot 插件装成两个实例、各带自己的机器人账号时，按会话 id 里的账号找到所属实例：
 // 平台动作与消息发到那个实例的连接，会话管理按它给房间记下所属实例（会话列表据此分组），
-// tool-onebot 的动作（含合成会话 id、显式 self_id 与兜底账号）也发到账号所在的实例。
+// tool-onebot 的动作（含合成会话 id 与显式 self_id）也发到账号所在的实例；不在 OneBot 会话里又不写 self_id 时，只有一个已知
+// 账号才用它，多个账号时报错列出账号。
 // 每个在线账号对应一个进程内起在 127.0.0.1 的假 OneBot 实现端；「配置里写明、还没连上」的账号
 // 连向一个已关闭的端口。不连任何外部服务。
 // ════════════════════════════════════════════════════════════
@@ -215,6 +217,19 @@ describe('OneBot 多实例：会话按账号路由到所属实例', () => {
     expect(getPlatformSelfIdentity(host.platform, 'onebot', 'onebot:222:group:5')?.selfId).toBe('222');
     expect(getPlatformSelfIdentity(host.platform, 'onebot', 'onebot:111:group:5')?.selfId).toBe('111');
   });
+
+  it('不给会话时，只有恰好一个账号的实例回答身份：带两个账号的 b 不回；给了认不出的会话时都不回', async () => {
+    const { host } = await world(TWO_INSTANCES);
+    const identity = (id: string, sessionId?: string) =>
+      host.platform
+        .list()
+        .find(entry => entry.id === id)
+        ?.use.getSelfIdentity?.(sessionId);
+
+    expect(identity(A)?.selfId).toBe('111');
+    expect(identity(B)).toBeUndefined();
+    expect(identity(A, 'webui:console')).toBeUndefined();
+  });
 });
 
 describe('会话管理按原生入站收录房间：所属实例与来源字段', () => {
@@ -284,15 +299,29 @@ describe('tool-onebot：动作发到账号所在的实例', () => {
     expect(actionsOf('111')).not.toContain('get_group_list');
   });
 
-  it('兜底账号优先取在线的，不被排在前面的实例里没连上的账号挡住', async () => {
+  it('不在 OneBot 会话里、不写 self_id、有两个已知账号（一个离线）：报错列出两个账号，哪个实例都不发', async () => {
     const { actionsOf, tool } = await world({
       a: [{ self: '333', online: false }],
       b: [{ self: '222', online: true }],
     });
 
+    const error = await Promise.resolve(tool('onebot_get_group_list')({}, 'session-abcd1234')).then(
+      () => undefined,
+      (err: Error) => err.message,
+    );
+
+    expect(error).toContain('self_id');
+    expect(error).toContain('333(');
+    expect(error).toContain('222(online)');
+    expect(actionsOf('222')).not.toContain('get_group_list');
+  });
+
+  it('不在 OneBot 会话里、不写 self_id、只有一个已知账号：发给它', async () => {
+    const { actionsOf, tool } = await world({ a: [{ self: '111', online: true }], b: [] });
+
     await tool('onebot_get_group_list')({}, 'session-abcd1234');
 
-    expect(actionsOf('222')).toContain('get_group_list');
+    expect(actionsOf('111')).toContain('get_group_list');
   });
 
   it('撤回自己发的消息：找的是发出这条消息的实例', async () => {
@@ -335,16 +364,54 @@ describe('tool-onebot：动作发到账号所在的实例', () => {
     expect(mutes.sort()).toEqual(['111/6', '222/5']);
   });
 
+  it('同一实例的两个账号各收到同一人的好友申请与入群邀请：各按收到它的账号处理，互不覆盖', async () => {
+    const { host, server, tool } = await world({
+      a: [
+        { self: '111', online: true },
+        { self: '222', online: true },
+      ],
+      b: [],
+    });
+    const requests: IncomingMessage[] = [];
+    host.events.use.on('inbound:message', msg => void (msg.source === 'onebot-request' && requests.push(msg)));
+    for (const self of ['111', '222']) {
+      server(self).push({ post_type: 'request', request_type: 'friend', user_id: 30001, flag: `friend-${self}` });
+      server(self).push({
+        post_type: 'request',
+        request_type: 'group',
+        sub_type: 'invite',
+        user_id: 30001,
+        group_id: 5,
+        flag: `invite-${self}`,
+      });
+    }
+    await until(() => requests.length === 4, '四条申请到达');
+
+    const flagOf = (self: string, action: string) =>
+      server(self).actions.find(a => a.action === action && a.params.flag !== undefined)?.params.flag;
+    for (const self of ['111', '222']) {
+      const sessionId = `onebot:${self}:private:30001`;
+      await tool('onebot_handle_friend_request')({ user_id: '30001', approve: true }, sessionId);
+      await tool('onebot_handle_group_invite')({ user_id: '30001', group_id: '5', approve: true }, sessionId);
+      expect(flagOf(self, 'set_friend_add_request')).toBe(`friend-${self}`);
+      expect(flagOf(self, 'set_group_add_request')).toBe(`invite-${self}`);
+    }
+  });
+
   it('好友申请交给收到它的实例处理', async () => {
     const { server, actionsOf, tool } = await world(TWO_INSTANCES);
     server('222').push({ post_type: 'request', request_type: 'friend', user_id: 30001, flag: 'f1', comment: '' });
 
     let result = '';
     await until(async () => {
-      result = String(
-        await tool('onebot_handle_friend_request')({ user_id: '30001', approve: true }, 'onebot:222:private:30001'),
-      );
-      return !result.startsWith('未找到来自');
+      try {
+        result = String(
+          await tool('onebot_handle_friend_request')({ user_id: '30001', approve: true }, 'onebot:222:private:30001'),
+        );
+        return true;
+      } catch {
+        return false; // 申请还没到达：报「未找到」
+      }
     }, '申请到达后处理');
 
     expect(result).toContain('已同意');

@@ -13,6 +13,8 @@ export default defineLocale<Source>()({
   beforeToolUnsent: 'Not sent: what is said before calling a tool is not sent to the room',
   retried: 'Not sent: the format check failed, so the reply was retried',
   notAccepted: 'Not sent: the platform did not accept it ({error})',
+  partlySent: 'Only the first {sent, plural, one {# message was} other {# messages were}} sent: {error}',
+  unconfirmed: 'May have been sent; the platform did not confirm it: {error}',
   noAdapter: 'Not sent: no platform adapter took this message',
   sendFailed: 'Not sent: sending failed ({error})',
   responderCannotAnswer: 'The responder cannot answer this approval',

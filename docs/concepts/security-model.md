@@ -253,7 +253,7 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
   的能力：见到刷屏/辱骂/违法内容自动禁言、踢人，这本就是群管该有的判断，不该锁在 owner 一人手里。
 - 群管类工具（`group_ban` / `kick` / `set_group_admin` 等）**作用于其他群成员是本意**，
   不是「只影响自己账号」——那正是 Aalis 作为群管的价值。滥用防线不在能力声明层，而在
-  `checkAdminPermission`（bot 需具备对应群角色、目标不高于 bot）+ Aalis 自身的判断
+  `assertAdminPermission`（bot 需具备对应群角色、目标不高于 bot）+ Aalis 自身的判断
   （见人设卡：不随便听人指令撤/禁/踢，自行评判是否属实、必要时反坐提议者）。
 - 给每次群操作上 `confirm` 会让「见到不好的事自动处置」这条核心能力失效——处置的即时性正是它的意义。
 

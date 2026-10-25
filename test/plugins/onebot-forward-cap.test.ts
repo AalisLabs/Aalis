@@ -28,8 +28,10 @@ function absentRef<P>(): ServiceSelection<P> {
   return ref();
 }
 
-function setup() {
+/** fetch 是实现端对 get_forward_msg 的回应（缺省回 null，即拉不到内容），cfg 并进展开配置 */
+function setup(fetch: (params: Record<string, unknown>) => Promise<unknown> = async () => null, cfg = {}) {
   const asked: string[] = [];
+  const params: Array<Record<string, unknown>> = [];
   const logs: string[] = [];
   const logger: Logger = {
     info: (m: string) => logs.push(m),
@@ -46,14 +48,15 @@ function setup() {
     i18n: absentRef(),
     storage: absentRef<StorageService>().use,
     processService: absentRef(),
-    forwardCfg: CFG,
+    forwardCfg: { ...CFG, ...cfg },
     attachmentMaxBytes: 1024 * 1024,
-    sendAction: async (_state, _action, params) => {
-      asked.push(String((params as { id?: unknown }).id ?? ''));
-      return null; // 拉取失败：伪造的 id 本来就取不到内容
+    sendAction: async (_state, _action, sent) => {
+      asked.push(String((sent as { id?: unknown }).id ?? ''));
+      params.push(sent);
+      return fetch(sent);
     },
   });
-  return { expander, asked, logs };
+  return { expander, asked, params, logs };
 }
 
 const marker = (id: string) => `<forward id="${id}">[合并转发消息]</forward>`;
@@ -79,5 +82,28 @@ describe('合并转发展开的数量上限', () => {
 
     await expander.expandForwardsInText(null, text, undefined, 'onebot:1:group:2');
     expect(new Set(asked).size, '真实消息里的少量转发不能被误伤').toBe(2);
+  });
+});
+
+describe('合并转发的拉取与缓存', () => {
+  it('拉取失败时只按标准参数名 id 拉一次，不换参数键重试', async () => {
+    const { expander, params } = setup(async () => {
+      throw new Error('<占位原话>');
+    });
+    const out = await expander.expandForwardsInText(null, marker('f1'), undefined, 'onebot:1:group:2');
+    expect(params).toEqual([{ id: 'f1' }]);
+    expect(out).toContain('拉取失败');
+  });
+
+  it('节点超限的转发：内存缓存命中时重建的信封照样带截断标志', async () => {
+    const node = (text: string) => ({ type: 'node', data: { nickname: '甲', user_id: 1, content: text } });
+    const { expander, params } = setup(async () => ({ messages: [node('一'), node('二'), node('三')] }), {
+      maxNodesPerLevel: 2,
+    });
+    const first = await expander.expandForwardsInText(null, marker('f1'), undefined, 'onebot:1:group:2');
+    const second = await expander.expandForwardsInText(null, marker('f1'), undefined, 'onebot:1:group:2');
+    expect(params, '第二次走内存缓存').toHaveLength(1);
+    expect(first).toContain('truncatedNodes');
+    expect(second).toContain('truncatedNodes');
   });
 });

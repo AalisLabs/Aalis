@@ -51,8 +51,19 @@ export const HISTORY_PAGE = 100;
 export const BEFORE_TOOL_UNSENT = t('beforeToolUnsent');
 /** 房间里重试丢掉的几版：最后一版才是回复 */
 export const RETRIED = t('retried');
-/** 平台没收下她发出的消息，error 是投递结果给的原因 */
-export const notAccepted = (error: string | TextRef) => t('notAccepted', { error });
+/**
+ * 平台没收下她发出的消息，error 是投递结果给的原因原话：逐条发出停在中途的（sentPieces 是已发出的条数）写只发出了前几条，
+ * 其余结果未知的（unconfirmed，可能已经送达）写可能已经发出，剩下的写没有发出
+ */
+export const notAccepted = (
+  error: string | TextRef,
+  { sentPieces, unconfirmed }: { sentPieces?: number; unconfirmed?: boolean } = {},
+) =>
+  sentPieces
+    ? t('partlySent', { sent: sentPieces, error })
+    : unconfirmed
+      ? t('unconfirmed', { error })
+      : t('notAccepted', { error });
 
 /**
  * 事件标记还原成的通知的 topic：来源（出站消息的 source，存档记在 Source 键上）是 command 的是指令的回复，
@@ -485,8 +496,9 @@ function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyM
 }
 
 /**
- * 适配器记下的投递失败里，一轮回复没发出的：回合 id → 未发出的原因。适配器记的原因是字符串或文字对象（按形状认）；
- * 经工具发出的（带 callId）不算，那次调用的结果已写明；没记回合或原因的旧记录不认
+ * 适配器记下的投递失败里，一轮回复没发出的：回合 id → 未发出的原因。适配器记的原因是字符串或文字对象（按形状认），逐条发出
+ * 停在中途的另记已发出的条数，结果未知的另列名单；经工具发出的（带 callId）不算，那次调用的结果已写明；没记回合或原因的旧记录
+ * 不认
  */
 function replyFailures(raw: readonly Message[]): Map<string, TextRef> {
   const failures = new Map<string, TextRef>();
@@ -496,7 +508,14 @@ function replyFailures(raw: readonly Message[]): Map<string, TextRef> {
     const turnId = turnOf(message);
     const recorded = message.metadata?.[WellKnownMetadataKeys.DeliveryError];
     const error = isTextRef(recorded) ? recorded : text(recorded);
-    if (turnId && error) failures.set(turnId, notAccepted(error));
+    const sentPieces = finite(message.metadata?.[WellKnownMetadataKeys.SentPieces]);
+    const unconfirmed = message.metadata?.[WellKnownMetadataKeys.Unconfirmed];
+    if (turnId && error) {
+      failures.set(
+        turnId,
+        notAccepted(error, { sentPieces, unconfirmed: Array.isArray(unconfirmed) && unconfirmed.length > 0 }),
+      );
+    }
   }
   return failures;
 }

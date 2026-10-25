@@ -397,15 +397,17 @@ export function extractMentions(text: string): string[] {
  * 成功分支的 messageIds 是正文送达时平台给出的消息 id（分条发出的各一个，按发送顺序；与入站 replyTo.messageId 同一写法，
  * 引用回复据此认出被引用的是哪一条），平台不给时没有。
  * 失败分支的 error 是给人看的原因，可以是文字对象（@aalis/schema-i18n 的 TextRef，按读者语言显示）；交给模型与写日志的
- * 一方取 toSource。unconfirmed 表示请求已经发出、只是没等到平台确认（如 OneBot 文件上传超时），消息可能已经送达：
- * 发起方不得自动重发，也不得劝模型重发。没有这个标记的失败才是确定没送达。
+ * 一方取 toSource。unconfirmed 表示有请求已经发出、只是没等到平台确认（如 OneBot 发消息或上传文件超时、等回执时断线），那部分
+ * 可能已经送达：发起方不得自动重发，也不得劝模型重发。没有这个标记的失败才是确定没送达。
+ * sentPieces 是逐条发出（分条的正文与各自成一条的附件）停在中途时已经发出的条数：前 sentPieces 条平台已经收下，之后的没收下
+ * 或结果未知，补发只补后面的；一条都没发出时没有。
  */
 export type OutboundDeliveryResult =
   | { ok: true; messageIds?: string[] }
-  | { ok: false; error: string | TextRef; unconfirmed?: true };
+  | { ok: false; error: string | TextRef; unconfirmed?: true; sentPieces?: number };
 
 /**
- * 发起方等待传输确认的上限。适配器自身的重试窗口可能更长（如 OneBot 单个附件最坏约 150 秒），
+ * 发起方等待传输确认的上限。适配器自身的发送可能更久（如 OneBot 先下载附件落盘、再逐条发出，下载与每条的回执各等 30 秒），
  * 超过上限时发起方应报「未确认、请勿重发」而不是失败；上限只为不带回合中止信号的调用方
  * （mcp-server、workflow）不至于一等两三分钟。
  */
@@ -579,7 +581,7 @@ declare module '@aalis/core' {
  *   归档消息。
  * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
  *   让她知道刚才那条没送达。metadata 带 {@link WellKnownMetadataKeys} 的 `DeliveryError`（与投递结果同一句原因），以及那条
- *   消息的 `TurnId`（一轮的回复）或 `CallId`（经工具发出的）。
+ *   消息的 `TurnId`（一轮的回复）或 `CallId`（经工具发出的）；逐条发出停在中途时另带 `SentPieces`。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
@@ -695,6 +697,10 @@ export interface ArchivedAttachment {
  *   还原附件。
  * - `DeliveryError`：投递失败记录（{@link WellKnownKinds}.OutboundDeliveryFailed）里与投递结果同一句的原因（字符串或文字对象），
  *   平台适配器写；会话服务据此按读者语言写出回复为什么没发出。
+ * - `SentPieces`：投递失败记录里与投递结果同一个已发出条数（数字，{@link OutboundDeliveryResult} 的 sentPieces），平台适配器在
+ *   逐条发出停在中途时写；会话服务据此写出回复只发出了前几条。
+ * - `Unconfirmed`：投递失败记录里已经发出、没等到平台确认的各项（字符串数组，如「消息（第 2 条）」「文件 a.html」），平台适配器写；
+ *   会话服务据此写出回复可能已经发出。
  * - `Text`：通知与事件标记给人看的文字（@aalis/schema-i18n 的文字对象），`content` 是写给模型的话或它按原文渲染的整句。
  *   宿主通知的 `hostNotice.text`、平台通知的文字、平台事件合成的入站的 {@link IncomingMessage}.text、不是她回复的出站按
  *   {@link outboundMarkerMessage} 记成事件标记时的 {@link OutgoingMessage}.text 由写方记下，没有地址的出站附件记成的事件标记、
@@ -726,6 +732,8 @@ export const WellKnownMetadataKeys = {
   SentRef: 'ref',
   SentName: 'name',
   DeliveryError: 'error',
+  SentPieces: 'sentPieces',
+  Unconfirmed: 'unconfirmed',
   Text: 'text',
 } as const;
 

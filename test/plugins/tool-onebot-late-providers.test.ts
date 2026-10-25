@@ -80,8 +80,8 @@ describe('tool-onebot 平台闸可重入', () => {
   });
 });
 
-describe('tool-onebot 在适配器缺非契约扩展时的回退文案', () => {
-  it('缺 getSentMessages / getSelfMutes：不发 delete_msg，文案不归因于「版本」', async () => {
+describe('tool-onebot 在适配器缺非契约扩展时报错', () => {
+  it('缺 getSentMessages / getSelfMutes：报错、不发 delete_msg，原因不归因于「版本」', async () => {
     const { app, host, handlers } = await setup();
     const actions: string[] = [];
     host.provide.use(platform, {
@@ -99,14 +99,19 @@ describe('tool-onebot 在适配器缺非契约扩展时的回退文案', () => {
     const listSelfMutes = handlers.get('onebot_list_self_mutes');
     if (!recallSelf || !listSelfMutes) throw new Error('OneBot 工具未注册');
 
-    const recalled = String(await recallSelf({}, { sessionId: GROUP } as never));
+    const failure = (run: Promise<unknown>) =>
+      run.then(
+        () => '',
+        (err: Error) => err.message,
+      );
+    const recalled = await failure(recallSelf({}, { sessionId: GROUP } as never));
     expect(actions).toEqual([]);
     expect(recalled).toContain('onebot_delete_msg');
     expect(recalled).not.toContain('版本');
 
-    const mutes = JSON.parse(String(await listSelfMutes({}, { sessionId: GROUP } as never)));
-    expect(mutes.supported).toBe(false);
-    expect(mutes.reason).not.toContain('版本');
+    const mutes = await failure(listSelfMutes({}, { sessionId: GROUP } as never));
+    expect(mutes).toContain('getSelfMutes');
+    expect(mutes).not.toContain('版本');
   });
 });
 

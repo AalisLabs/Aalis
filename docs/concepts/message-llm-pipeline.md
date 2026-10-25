@@ -49,7 +49,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `OutboundFile` | `'outbound-file'` | assistant 已发出的文件占位（描述位是文件名） | assistant |
 | `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
 | `IdlePrompt` | `'idle-prompt'` | 空闲开话题的提示（`triggerType: 'idle'`）交给模型时那条指令块的 `metadata.injector`；它不落档，没有这个 kind 的归档消息 | 请求期为 system |
-| `OutboundDeliveryFailed` | `'outbound-delivery-failed'` | 平台适配器记下的投递失败：她发出的消息平台没收下或结果未知，进下一轮的上下文。`metadata` 带 `error`（与投递结果同一句原因）与那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里标出没发出的回复 | system |
+| `OutboundDeliveryFailed` | `'outbound-delivery-failed'` | 平台适配器记下的投递失败：她发出的消息平台没收下或结果未知，进下一轮的上下文。`metadata` 带 `error`（与投递结果同一句原因）与那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），逐条发出停在中途的另带 `sentPieces`（已发出的条数），会话服务据此在历史里标出没发出的回复 | system |
 
 第三方插件可以定义自己的 kind 字符串，但应避开上表已占用的语义。
 

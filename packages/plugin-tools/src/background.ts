@@ -257,15 +257,20 @@ function parseStored(value: unknown): BackgroundTask | undefined {
   };
 }
 
-/** 结果里的 error 写成一句原因；结果不是 JSON 对象或没有 error 时没有 */
-function errorOf(content: string): string | undefined {
+/** 结果里的 error 原文（不是字符串的写成 JSON）；结果不是 JSON 对象或没有 error 时没有 */
+export function errorIn(content: string): string | undefined {
   try {
     const error: unknown = Reflect.get(JSON.parse(content) as object, 'error');
     if (error === undefined) return undefined;
-    return truncateChars(typeof error === 'string' ? error : JSON.stringify(error), REASON_MAX, '…');
+    return typeof error === 'string' ? error : JSON.stringify(error);
   } catch {
     return undefined;
   }
+}
+
+/** 命令类工具的退出码：按展示种类写明的键从结果里取，别的种类没有 */
+export function exitCodeOf(display: ToolDisplay | undefined, content: string): number | undefined {
+  return display?.kind === 'command' && display.result ? integerIn(content, display.result.exitCode) : undefined;
 }
 
 /** 等 promise 落定，最多等 ms，中止信号到达即返回 */
@@ -622,15 +627,15 @@ export class BackgroundTasks implements BackgroundTaskService {
     const call = record.call;
     // 已经落成 aborted（撤回、停用）或随会话删掉的不再改
     if (!call || this.records.get(record.task.id) !== record) return;
-    const exitCode =
-      display?.kind === 'command' && display.result ? integerIn(result.content, display.result.exitCode) : undefined;
+    const exitCode = exitCodeOf(display, result.content);
     const ending = { result, ...(exitCode !== undefined ? { exitCode } : {}) };
     if (call.stopRequested) {
       this.land(record, 'stopped', ending);
       return;
     }
     const status = toolFailed(result.content, exitCode) ? 'failed' : 'completed';
-    const reason = status === 'failed' ? errorOf(result.content) : undefined;
+    const error = status === 'failed' ? errorIn(result.content) : undefined;
+    const reason = error === undefined ? undefined : truncateChars(error, REASON_MAX, '…');
     this.land(record, status, { ...ending, ...(reason !== undefined ? { reason } : {}) });
     if (record.notice && !this.shuttingDown) this.notify(record, status, record.notice);
   }
