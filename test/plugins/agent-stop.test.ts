@@ -5,6 +5,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events } from '../../packages/core/src/index.js';
+import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
@@ -24,7 +25,8 @@ import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 // ════════════════════════════════════════════════════════════
 // /stop（plugin-agent 登记）：停下本会话在跑的一轮，做法同停止键，排着的照常开下一轮。这一轮的参与者（进了这一轮的各条输入
 // 按 originTurnOf 算：真人的话是发言者，续做是起它的那一轮的参与者，定时任务是建它的人）与 owner 能停，不看等级；排队中、
-// 待插入的不算，没有账号的不算任何人。同一份实现，终端、QQ 私聊与群里一样。
+// 待插入的不算，没有账号的不算任何人。同一份实现，终端、QQ 私聊与群里一样。@ 她或引用她的消息发的 /stop（QQ 客户端在开头插一个
+// 对她的 @，正文经 OneBot 适配器的解析函数造出）照样是指令，开头 @ 的是别人时不是。
 // 经真实的网关、指令与权限插件（owner 是配置里的 QQ 号与本机的 console），模型是能挂住某一次调用的替身。
 // ════════════════════════════════════════════════════════════
 
@@ -33,13 +35,15 @@ const IDLE = '没有在跑的一轮';
 const DENIED = '只有参与这一轮的人和 owner 能停';
 const PROBE = 'zz_stop_probe';
 
+/** 机器人账号 */
+const SELF = '10000';
 const OWNER_QQ = { platform: 'onebot', userId: '99999' };
 const A = { platform: 'onebot', userId: '30001' };
 const B = { platform: 'onebot', userId: '30002' };
 const C = { platform: 'onebot', userId: '30003' };
-const GROUP = { sessionId: 'onebot:10000:group:20001', sessionType: 'group', groupId: '20001' };
+const GROUP = { sessionId: `onebot:${SELF}:group:20001`, sessionType: 'group', groupId: '20001' };
 const CLI = { sessionId: 'cli-default', platform: 'cli', userId: 'console' };
-const DM = { sessionId: `onebot:10000:private:${A.userId}`, sessionType: 'private', ...A };
+const DM = { sessionId: `onebot:${SELF}:private:${A.userId}`, sessionType: 'private', ...A };
 
 type Where = Pick<IncomingMessage, 'sessionId' | 'platform' | 'userId' | 'sessionType' | 'groupId'>;
 
@@ -214,5 +218,52 @@ describe('/stop 的判据：注入开的一轮', () => {
     held.release();
     await turn;
     expect(s.outcomes()).toEqual([['<定时>', 'replied']]);
+  });
+});
+
+describe('/stop：开头对她的 @ 不算正文', () => {
+  type Segment = { type: string; data: Record<string, string> };
+  /** 这些消息段经 OneBot 适配器解析出的正文 */
+  const parsed = (messageType: 'group' | 'private', message: Segment[]) =>
+    new OneBotV11().parseMessageEvent(
+      { time: 0, post_type: 'message', message_type: messageType, self_id: Number(SELF), message },
+      SELF,
+    )?.text ?? '';
+  const at = (qq: string): Segment => ({ type: 'at', data: { qq } });
+  const stop: Segment = { type: 'text', data: { text: ' /stop' } };
+  const IN_GROUP = { ...GROUP, ...A };
+
+  it.each([
+    // 引用一条消息回复时，QQ 客户端在正文开头自动插一个对被引用者的 @；引用段不进正文，与 @ 她发的正文相同
+    ['群里 @ 她或引用她的消息', IN_GROUP, parsed('group', [at(SELF), stop])],
+    ['私聊里引用她的消息', DM, parsed('private', [at(SELF), stop])],
+  ] as const)('%s发 /stop：停下在跑的一轮', async (_kind, where, content) => {
+    const s = await boot();
+    const held = s.model.hold(1);
+    const turn = s.say(where, '<甲>');
+    await held.entered;
+    const command = s.say(where, content);
+    await vi.waitFor(() => expect(s.replies(where.sessionId)).toEqual([STOPPED]));
+    await Promise.all([turn, command]);
+    expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
+  });
+
+  it.each([
+    ['群里', IN_GROUP, parsed('group', [at(B.userId), stop])],
+    ['私聊', DM, parsed('private', [at(B.userId), stop])],
+  ] as const)('%s开头 @ 的是别人：不是指令，当普通消息排在这一轮之后', async (_kind, where, content) => {
+    const s = await boot();
+    const held = s.model.hold(1);
+    const turn = s.say(where, '<甲>');
+    await held.entered;
+    const other = s.say(where, content);
+    await s.untilWaiting(where.sessionId, 1);
+    held.release();
+    await Promise.all([turn, other]);
+    expect(s.replies(where.sessionId)).toEqual([]);
+    expect(s.outcomes()).toEqual([
+      ['<甲>', 'replied'],
+      [content, 'replied'],
+    ]);
   });
 });

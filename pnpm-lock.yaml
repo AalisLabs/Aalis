@@ -787,7 +787,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
     devDependencies:
       '@aalis/core':
@@ -1188,7 +1188,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
@@ -1383,6 +1383,9 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/schema-message':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-message
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
