@@ -19,10 +19,11 @@ import {
   type ToolService,
   type ToolSummary,
   takenBackgroundParams,
+  toolFailed,
 } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
-import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, inTurn, type Plan } from './background.js';
+import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, errorIn, exitCodeOf, inTurn, type Plan } from './background.js';
 import { backgroundTaskTools } from './background-tools.js';
 
 /** 登记项：工具、发给模型的声明（可转后台的补上两项参数）与让出时限（秒，可转后台的才有） */
@@ -392,23 +393,35 @@ export class ToolRegistry implements ToolService {
     return this._guard({ ...this.guardContext(tool, args, callCtx), check });
   }
 
-  /** 跑工具：字符串结果归一为统一形态，带图结果只保留非空 images（空数组等于没图）；抛错转成 { error }，不冒泡 */
+  /**
+   * 跑工具：字符串结果归一为统一形态，带图结果只保留非空 images（空数组等于没图）；抛错转成 { error }，不冒泡。结局按 toolFailed
+   * 记日志（命令类的退出码按展示种类取），与后台任务的结局、会话服务的工具卡同一个判据：返回带 error 的结果与抛错一样记失败。
+   * 调用的信号已中止的（停掉的后台命令、回合中止、会话删除）记中止，与后台任务把停掉的落成 stopped 同一口径：被杀的命令退出码
+   * 不为 0，不是执行失败
+   */
   private async invoke(
     tool: RegisteredTool,
     args: Record<string, unknown>,
     ctx: ToolCallContext,
   ): Promise<ToolExecutionResult> {
     const toolName = tool.definition.function.name;
+    let result: ToolExecutionResult;
     try {
-      const result = await tool.handler(args, ctx);
-      this.logger.debug(`工具 ${toolName} 执行成功`);
-      if (typeof result === 'string') return { content: result };
-      return result.images && result.images.length > 0 ? result : { content: result.content };
+      const returned = await tool.handler(args, ctx);
+      if (typeof returned === 'string') result = { content: returned };
+      else result = returned.images && returned.images.length > 0 ? returned : { content: returned.content };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`工具 ${toolName} 执行失败: ${message}`);
-      return failure(message);
+      result = failure(err instanceof Error ? err.message : String(err));
     }
+    const exitCode = exitCodeOf(tool.display, result.content);
+    if (ctx.signal?.aborted) {
+      this.logger.debug(`工具 ${toolName} 执行中止`);
+    } else if (toolFailed(result.content, exitCode)) {
+      this.logger.error(`工具 ${toolName} 执行失败: ${errorIn(result.content) ?? `退出码 ${exitCode}`}`);
+    } else {
+      this.logger.debug(`工具 ${toolName} 执行成功`);
+    }
+    return result;
   }
 }
 

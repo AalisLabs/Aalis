@@ -14,6 +14,8 @@ const SOURCE = {
   beforeToolUnsent: '没有发出：调用工具之前说的话不发到房间里',
   retried: '没有发出：格式校验没通过，已重试',
   notAccepted: '没有发出：平台没收下（{error}）',
+  partlySent: '只发出了前 {sent, number} 条：{error}',
+  unconfirmed: '可能已经发出，没等到平台确认：{error}',
   noAdapter: '没有发出：没有平台适配器接手这条消息',
   sendFailed: '没有发出：发送出错（{error}）',
   responderCannotAnswer: '应答人不能批这一张',

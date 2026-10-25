@@ -103,13 +103,13 @@ onebot:{selfId}:{detailType}:{targetId}
 
 插件可以装多个实例（`reusable`），每个实例的 `connections` 可以带多个机器人账号。适配器实现了平台契约的 `canHandle(sessionId)`：只认会话 ID 里的 `selfId` 属于本实例连接的会话，包括配置里写明 `selfId`、连接还没上来的账号；离线的已知账号照样认领，由发送处报出连接不可用。`@aalis/api-platform` 的 `resolvePlatformBySession`、`sendPlatformMessage`、`callPlatformAction` 因此按账号路由到所属实例，`plugin-tool-onebot` 的合成会话 ID（`onebot:<selfId>:internal:0`）同样按账号路由；session-manager 收录房间时据此记下房间所属的实例（`SessionInfo.originInstance`）。没有实例认得的账号由路由处报错，报错列出各实例已知的账号与连接状态。
 
-出站消息（`outbound:message`）也只由账号所属的实例认领；`getSelfIdentity(sessionId)` 只回答本实例账号的会话，`api-platform` 的 `getPlatformSelfIdentity` 取第一个认得这个会话的实例。
+出站消息（`outbound:message`）也只由账号所属的实例认领；`getSelfIdentity(sessionId)` 只回答本实例账号的会话，不给会话时只有本实例恰好一个已知账号才回答，`api-platform` 的 `getPlatformSelfIdentity` 取第一个认得这个会话的实例。
 
 ## 连接管理
 
 - 支持多连接同时在线
-- 自动重连：连接断开后固定 5 秒重试；握手超过 15 秒未完成视为超时并重连；断开时所有未完成的 action 以失败结束
-- Action 请求-响应：每个请求带唯一 echo ID，30 秒超时；发送消息失败时间隔 1 秒最多重试 2 次（至少送达一次，偶有重复）
+- 自动重连：连接断开后固定 5 秒重试；握手超过 15 秒未完成视为超时并重连
+- Action 请求-响应：每个请求带唯一 echo ID，30 秒超时。结局分三种：实现端回成功；实现端回失败，确定没执行，报错带动作名、返回码与实现端原话，返回码是「不支持该动作」（v11 取 NapCat 的 1404，v12 是规范的 10002）时另标 `unsupported`，调用方只在这时改用别的动作名；超时或回执前断线，结果未知，实现端可能已经执行。发消息与上传文件都不重试：没等到回执的那条可能已经发出，重发会在群里出现两遍、在群文件里留两份
 - 客户端心跳：每 30 秒发送一次 WebSocket ping，检查时若距上次收到 pong 或任何消息已超过 40 秒，则主动断开并重连（OneBot 的 heartbeat 元事件不单独处理，只作为普通流量计入）
 
 ## 消息入站
@@ -118,7 +118,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由生效的触发插件（如 `@aalis/plugin-trigger-policy`）与 `@aalis/plugin-flow-control` 在 `inbound:trigger` / `inbound:flow` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
 
-好友申请、入群邀请与加群申请（request 事件）合成为 `[系统通知] …` 消息发出，提示 agent 调用对应的 onebot 工具处理：好友申请与入群邀请发往申请人的私聊会话，加群申请发往该群的会话。这些消息带 `source: 'onebot-request'`，属于系统侧注入：不经触发判定，不受回复后冷却约束，禁言与限速照常；在 agent 里各自成一轮，排在同一会话在跑的一轮之后，与真人消息互不打断。
+好友申请、入群邀请与加群申请（request 事件）合成为 `[系统通知] …` 消息发出，提示 agent 调用对应的 onebot 工具处理：好友申请与入群邀请发往申请人的私聊会话，加群申请发往该群的会话。这些消息带 `source: 'onebot-request'`，属于系统侧注入：不经触发判定，不受回复后冷却约束，禁言与限速照常；在 agent 里各自成一轮，排在同一会话在跑的一轮之后，与真人消息互不打断。待处理的申请按收到它的账号登记（群请求另按申请类型与群号），处理成功才删；工具交来的账号或申请类型对不上、没有这条申请时报错（可能已处理）。
 
 戳一戳（v11 的 `notify/poke`、v12 实现扩展的 `detail_type: 'poke'`）统一转为入站消息，正文保留谁戳了谁。群友戳机器人相当于 @ 机器人，`noticeTargetIsSelf: true`；群友互戳相当于未 @ 的普通互动，该字段为 `false`，仍进入同一条触发判断与流控链路。当前 Laya 模式下两者都由模型决定是否开口，互戳不享受点名消息穿透冷却与限速的待遇；规则触发模式下互戳照常累计入站计数。历史由原有触发/归档流程保存，适配器不另写一份。机器人自己发出的戳一戳属于动作回显，不再开启新回合。
 
@@ -143,13 +143,13 @@ onebot:{selfId}:{detailType}:{targetId}
 出站附件的内容读出后以 `base64://` 交给实现端，走 WebSocket 隧道：实现端在容器里（如 Docker 里的 NapCat）时读不到宿主路径，这是最稳的形态。storage URI 先量大小再读，超过 10 MiB 的不整份读进内存。
 
 - **图片、语音、视频**：先按文件头认格式（格式签名在 [`@aalis/util-media-signature`](../utils/README.md)，与 `send_attachment` 的白名单是同一份），再分三路。实现端能内联的格式（图片 PNG、JPEG、GIF、WebP；语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频 MP4、MOV、WebM）内联为消息段；认得出、但不能内联的媒体（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经文件上传，规则同下面的文件附件，没有名字时群文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn。主体是 owner 的一轮里 `send_attachment` 能取不属于任何会话的任意可读 storage URI（见[媒体判据](../services/media.md#媒体判据)），不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。能内联、但超过 10 MiB 的退回宿主的 `file://` 路径或原 http 链接，实现端读不到时发不出，日志里会说明：实现端在容器里（如 Docker 里的 NapCat）读不到宿主路径，超过 10 MiB 的本机文件因此发不出去，这是送达方式的限制，要发更大的文件得让实现端与 Aalis 共享文件系统。storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头 4 KiB，不整份读进内存），超过 10 MiB 又不能内联的不发。`send_attachment` 交来的是 storage URI，大文件照样经这道核对；附件本来就是 `file://` 或本机绝对路径（只有插件代码直接发出的附件是这种形态）、又没能落盘的，原样交给实现端，不经核对。
-- **文件**（`kind: 'file'`）与改走上传的媒体：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接、原样透传的 `file://` 这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，文件附件没有名字时用 `file`。上传不重试：上传超时多半是文件还在传，重试会在群文件里留两份。v12 连接不支持文件上传，按失败处理。
-- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、正文媒体标记（下载失败或地址不是网址而去掉）、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed`（`WellKnownKinds.OutboundDeliveryFailed`）系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。记录的 `metadata` 带 `error`（与投递结果同一句原因）与这条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里给那一轮的回复标「未发出」。文件上传超时单独说明：实现端可能已经收下，记录写明结果未知、不要重发，投递结果同样返回失败但附带这句提示。失败全部是上传超时、没有别的失败时，投递结果另带 `unconfirmed: true`（见 [schema-message](../api/schema-message.md)），发起方据此不重发、也不劝模型重发；夹着确定没发出的部分时不带。
+- **文件**（`kind: 'file'`）与改走上传的媒体：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的 storage 文件、超限的 http 链接、原样透传的 `file://` 这类物化结果不是 `base64://` 的，一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，文件附件没有名字时用 `file`。v12 连接不支持文件上传，按失败处理。
+- **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、正文媒体标记（下载失败或地址不是网址而去掉）、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed`（`WellKnownKinds.OutboundDeliveryFailed`）系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。记录的 `metadata` 带 `error`（与投递结果同一句原因）与这条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里给那一轮的回复标「未发出」。发消息与上传文件没等到回执的（超时或回执前断线）单独说明：实现端可能已经收下，记录写明结果未知、不要重发，`metadata` 的 `unconfirmed` 列出这几项（如「消息（第 2 条）」「文件 a.html」），投递结果同样返回失败但附带这句提示。有这种项时投递结果就另带 `unconfirmed: true`（见 [schema-message](../api/schema-message.md)），发起方据此不重发、也不劝模型重发。正文各条与附件的消息段当一串逐条发出，一条没发成就停、后面的不发：正文没发出时，后面的图片等附件消息段也不发，上传的文件照常各自上传。前面已经发出的，投递结果另带 `sentPieces`（已发出的条数），原因只写停下那一条的原话（那一条没等到回执时它记进结果未知的名单，后面还有没发的写从第几条起没发出），记录带同一个条数（`metadata` 的 `sentPieces`），写明前几条已经发出、不要整条重发（后面还有没发的时写明从第几条起补），停在最后一条、这一条结果未知时同样，同一条消息里另有确定没发出的附件或文件时另说一句，会话服务据此标「只发出了前 K 条：<原因>」；送达快照（`outbound:delivered`）只带已发出的附件。
 
 文件上传经适配器的非标准扩展方法 `uploadFile(sessionId, file, name)` 完成，它不在 `@aalis/api-platform` 契约里。
 
 ## 合并转发原文
 
-合并转发展开后，完整原文在内存里缓存 1 小时，有 memory 服务时同时写入记忆元数据（namespace `onebot:forward`，key 为转发 id），`get_forward_msg` 先查内存、再查持久化层。持久化条目保留 7 天，由后续写入惰性回收，每小时至多扫描一次。
+合并转发展开后，完整原文在内存里缓存 1 小时，有 memory 服务时同时写入记忆元数据（namespace `onebot:forward`，key 为转发 id），`get_forward_msg` 先查内存、再查持久化层，都没有时按 v11 标准的参数名 `id` 向实现端拉（NapCat 也收它），拉不到时报实现端原话；展开时顶层拉不到的，信封写「拉取失败」与实现端原话，不进缓存，之后的 `get_forward_msg` 照常重新拉；嵌套的拉不到写「拉取失败」一行，原话记 warn。缓存条目带两个截断标志（嵌套超过深度上限、节点超过单层上限），缓存命中时重建的信封与 `onebot_get_forward_msg` 的结果照样注明截断。持久化条目保留 7 天，由后续写入惰性回收，每小时至多扫描一次。
 
 原文是聊天内容，以 `context` 类型参与 `memory:clear`：全局清理（`/clear all` 不带类型或含 `context`）时清空持久化条目与内存缓存。条目没有会话归属，会话级 `/clear` 不动它，靠 7 天回收。多个适配器实例共用同一 namespace、各有一份内存缓存，清理时每个实例都清自己的缓存，回显合并为一条。

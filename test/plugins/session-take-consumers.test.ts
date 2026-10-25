@@ -24,8 +24,9 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 取别的会话的东西，消费方只调会话管理的规则（契约的包装函数）：
-// - 读历史的两个工具都经会话历史服务的 getHistory，带这次调用的授权身份；拒绝时回 { error: 原因 }
-// - onebot_get_msg 取到的消息按它所在的窗口拼出会话 id 过规则；判不出对端的（她自己发的私聊消息）按判不出拒绝
+// - 读历史的两个工具都经会话历史服务的 getHistory，带这次调用的授权身份；拒绝时服务回 { error: 原因 }，session_get_history
+//   照交，onebot_get_session_history 报错
+// - onebot_get_msg 取到的消息按它所在的窗口拼出会话 id 过规则；判不出对端的（她自己发的私聊消息）按判不出拒绝，不放行时报错
 // - 跨会话历史：被动注入不是谁要的，不传授权身份；recent_messages 带这次调用的授权身份。查询超取后逐条过规则，
 //   被拒的再多也不占名额
 // ════════════════════════════════════════════════════════════
@@ -113,9 +114,9 @@ describe('读历史的工具与 onebot_get_msg 过规则', () => {
       error: expect.stringContaining('别人的私聊'),
     });
     const onebot = (targetId: string) =>
-      call('onebot_get_session_history', { target_type: 'private', target_id: targetId }).then(JSON.parse);
-    expect(await onebot('30001')).toMatchObject({ ok: true, sessionId: PA });
-    expect(await onebot('30002')).toMatchObject({ error: expect.stringContaining('别人的私聊') });
+      call('onebot_get_session_history', { target_type: 'private', target_id: targetId });
+    expect(JSON.parse(await onebot('30001'))).toMatchObject({ ok: true, sessionId: PA });
+    await expect(onebot('30002')).rejects.toThrow('别人的私聊');
   });
 
   it('onebot_get_msg：本群与 A 自己私聊里的照常，B 私聊里的回原因，她自己发的私聊消息判不出', async () => {
@@ -123,10 +124,15 @@ describe('读历史的工具与 onebot_get_msg 过规则', () => {
     const get = (id: number) => call('onebot_get_msg', { message_id: String(id) });
     expect(JSON.parse(await get(101))).toMatchObject({ message: '<群里的>' });
     expect(JSON.parse(await get(103))).toMatchObject({ message: '<A 的私聊里的>' });
-    const others = await get(102);
+    const refused = (id: number) =>
+      get(id).then(
+        () => '',
+        (err: Error) => err.message,
+      );
+    const others = await refused(102);
     expect(others).toContain('别人的私聊');
     expect(others).not.toContain('<B 的私聊里的>');
-    const own = await get(104);
+    const own = await refused(104);
     expect(own).toContain('判不出');
     expect(own).not.toContain('<她发的私聊消息>');
   });

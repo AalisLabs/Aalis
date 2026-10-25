@@ -236,6 +236,15 @@ const REMOVED: Array<[string, string]> = [
   ['redactUrl', '模型插件在日志与报错里去掉 baseUrl 的查询串：带查询串或片段的 baseUrl 读配置时就拒绝'],
   ['parseDsmlToolCalls', 'deepseek 插件把正文里漏出的工具调用标记解析成调用去执行：只剥离，工具调用只取服务端给的'],
   ['stripAudioDataPrefix', 'Ollama 插件把没写明类型的音频当 wav 发：认不出的音频格式在发请求前报错'],
+  ['sendActionWithRetry', 'onebot 发消息失败（含超时）自动重发：发送不重试，超时或回执前断线记结果未知'],
+  ['SEND_MAX_RETRIES', 'onebot 发消息失败（含超时）自动重发：发送不重试，超时或回执前断线记结果未知'],
+  ['SEND_RETRY_DELAY_MS', 'onebot 发消息失败（含超时）自动重发：发送不重试，超时或回执前断线记结果未知'],
+  ['ActionTimeoutError', 'onebot 只把超时当结果未知：没等到回执（超时、在飞时断线或停止）一律 ActionUnconfirmedError'],
+  ['getAnyOneBotSelfId', 'tool-onebot 不在 OneBot 会话里时取第一个账号：只有一个已知账号才用它，多个时要写 self_id'],
+  ['fetchForwardOnce', 'onebot 合并转发出错就换参数键重试：只按 v11 标准的 id 拉，错误原样抛出'],
+  ['m_resid', 'onebot 合并转发出错就换参数键重试：只按 v11 标准的 id 拉'],
+  ['res_id', 'onebot 合并转发出错就换参数键重试：只按 v11 标准的 id 拉'],
+  ['checkAdminPermission', 'tool-onebot 的权限预检把不够权限写成返回文字：改为抛错，执行层按失败记'],
 ];
 
 /**

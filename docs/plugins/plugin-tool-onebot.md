@@ -34,13 +34,13 @@ export default definePlugin({
 
 ## 跨会话调用
 
-多数群/私聊相关工具接受可选的 `group_id`（目标群号）或 `user_id`（目标 QQ 号，私聊场景）；不传时回退到当前 OneBot 会话。机器人账号 `self_id` 只在两个会话历史工具里是公开参数，其余工具按下述优先级自动确定。
+多数群/私聊相关工具接受可选的 `group_id`（目标群号）或 `user_id`（目标 QQ 号，私聊场景）；不传时回退到当前 OneBot 会话。用到机器人账号的工具都有可选参数 `self_id`（`onebot_list_self_mutes` 汇总全部账号，没有它）：在 OneBot 会话里可以省，不在 OneBot 会话里且有多个账号时必填。
 
 解析优先级：
 
 1. 显式传入的 `group_id` / `user_id` / `self_id`
-2. 回退到当前会话的 OneBot 上下文（如果当前会话恰好是 onebot 群/私聊）
-3. `self_id` 还有一层兜底：先在所有 OneBot 实例里找在线连接的 selfId，都不在线时取任一已知连接的 selfId；都没有则报错。
+2. 回退到当前会话的 OneBot 上下文（如果当前会话恰好是 onebot 群/私聊）。子任务会话不算 OneBot 会话，账号不从根会话推
+3. 都没有时，`self_id` 取各 OneBot 实例的已知账号（不论在不在线）：恰好一个就用它；没有则报错；多于一个时报错，列出各账号与连接状态，要求用 `self_id` 写明。
 
 这意味着 LLM 不需要切到目标群的会话再调工具——一次性把目标 ID 传进来即可。
 
@@ -94,7 +94,7 @@ export default definePlugin({
 
 ### 会话历史（`sessionHistory.enabled`）
 
-`onebot_get_session_history` 需要 [`plugin-tool-session`](plugin-tool-session.md) 提供的 `session-history` 服务（可选依赖，缺失时该工具返回错误）。
+`onebot_get_session_history` 需要 [`plugin-tool-session`](plugin-tool-session.md) 提供的 `session-history` 服务（可选依赖，缺失时该工具报错）。
 
 | 工具 | 说明 |
 |---|---|
@@ -130,11 +130,14 @@ export default definePlugin({
 
 工具启用开关若显式给出非布尔值（如 YAML 的 `no`、带引号的 `'false'`），按表中默认值处理并告警，插件照常激活。历史条数仍按既有上下限收口。
 
-> 群管理等工具不要求在目标群的会话内调用；除 `checkAdminPermission` 检查机器人在群内的角色外，插件本身不对调用者做访问控制。
+> 群管理等工具不要求在目标群的会话内调用；除 `assertAdminPermission` 检查机器人在群内的角色外，插件本身不对调用者做访问控制。
 
 ## 行为说明
 
 - **adapter 调用**：内部以合成 sessionId `onebot:<selfId>:internal:0` 经 `@aalis/api-platform` 的 `callPlatformAction` 发出，按 selfId 路由到账号所属的 OneBot 实例（适配器的 `canHandle`），适配器再按 selfId 定位连接，因此与目标会话类型无关。装了多个 OneBot 实例时，动作总是发到账号所在的实例。
+- **结局**：失败一律报错（执行层按失败记，日志与 WebUI 的工具卡显示失败，模型拿到的是带 `error` 的结果），成功才返回结果。`onebot_recall_self` 全部撤回失败时报错，部分失败仍返回成功并列出失败项。报错只带适配器的原话，不猜原因。
 - **扩展方法按实例取**：撤回自己发的消息（`onebot_recall_self`）按目标会话找到发出消息的实例；处理好友申请、加群申请与入群邀请按当前会话（或 `self_id`）的账号找到收到申请的实例，申请通知注入在收到它的账号的会话里，在那里调用即落到对的实例；`onebot_list_self_mutes` 汇总所有实例记下的自身禁言。
-- **图像识别联动**：适配器缓存未命中时，`onebot_get_forward_msg` 会把转发消息中的图片交给 `media` 服务的 `describeImage`（若可用），识别结果以 `[图片: 描述]` 的形式嵌入返回文本；缓存命中时直接返回适配器缓存的原文与摘要。
-- **权限预检**：禁言、全员禁言、踢人、设置群名片、改群名、设置专属头衔、设管理员这些工具会先调用 `checkAdminPermission`，检查机器人在目标群的角色（专属头衔与设管理员要求群主，禁言与踢人还会比较目标成员的角色），不满足时返回「操作失败：……」文本；取不到机器人自身成员信息时跳过检查。
+- **群请求认申请类型**：`onebot_approve_join_request` 只处理加群申请，`onebot_handle_group_invite` 只处理入群邀请，账号与类型一起交给适配器，对不上或没有这条申请时报错（可能已处理）。
+- **换动作名只看不支持**：戳一戳的动作名各实现端不同，只在实现端回不支持该动作时才改用另一个动作名（群里 `group_poke` 之后 `send_group_poke`，私聊 `friend_poke` 之后 `send_poke`）；超时、没权限等别的错误原样报出，不换个动作再戳一次。
+- **图像识别联动**：适配器缓存未命中时，`onebot_get_forward_msg` 会把转发消息中的图片交给 `media` 服务的 `describeImage`（若可用），识别结果以 `[图片: 描述]` 的形式嵌入返回文本；缓存命中时直接返回适配器缓存的原文与摘要，展开时截断过的在头一行注明「已截断（嵌套超深、节点超限）」中的对应项。
+- **权限预检**：禁言、全员禁言、踢人、设置群名片、改群名、设置专属头衔、设管理员这些工具会先调用 `assertAdminPermission`，检查机器人在目标群的角色（专属头衔与设管理员要求群主，禁言与踢人还会比较目标成员的角色），不满足时报错，执行层按失败记；取不到机器人自身成员信息或其中没有角色时跳过检查（真不够权限时实现端的返回码会报出来），查不到目标成员时报错带适配器的原话，实现端回成功却没给成员信息或没给角色时同样报错（写明没给的是哪样），不当成普通成员。

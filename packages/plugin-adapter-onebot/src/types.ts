@@ -132,6 +132,9 @@ export interface SendMessageParams {
 export interface OneBotProtocol {
   readonly version: 'v11' | 'v12';
 
+  /** 实现端回「不支持该动作」时的返回码：只有这个码算不支持，适配器据此给失败标 unsupported，别处不认数字 */
+  readonly unsupportedRetcode: number;
+
   /** 构造发送消息的 action 名称和 params */
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> };
 

@@ -111,7 +111,10 @@ interface OutgoingMessage {
   callId?: string;                    // 由工具调用发出时，那次调用的 id
   turnId?: string;                    // agent 这一轮发出的消息：这一轮的 id
   modelInfo?: { provider?: string; model?: string; promptTokens?: number; completionTokens?: number };
-  delivery?: Promise<{ ok: true; messageIds?: string[] } | { ok: false; error: string | TextRef; unconfirmed?: true }>;
+  delivery?: Promise<
+    | { ok: true; messageIds?: string[] }
+    | { ok: false; error: string | TextRef; unconfirmed?: true; sentPieces?: number }
+  >;
 }
 ```
 
@@ -127,13 +130,13 @@ interface OutgoingMessage {
 
 `callId` 是发出这条消息的那次工具调用的 id（`ToolCallContext.callId`），如 `send_attachment` 发的附件。会话的客户端据此把消息挂到对应的工具卡上；平台收下后，房间里的工具卡标「已发出」。
 
-`turnId` 是 agent 这一轮发出的消息（回复与 `[错误]` 等提示）所在回合的 id。平台适配器记回复的投递失败（`WellKnownKinds.OutboundDeliveryFailed`）时把 `turnId` 或 `callId` 连同原因写进记录的元数据（登记的键 `TurnId`、`CallId`、`DeliveryError`），会话服务回看历史时据此标出哪条没发出；出站记进会话历史的各条（不是回复的文字记成的事件标记、发出的附件）由存档同样记下 `TurnId`（api-message-archive 的 `recordOutbound`），会话服务据此认出在途回合里的那一条，取快照时不与实时条目重复。
+`turnId` 是 agent 这一轮发出的消息（回复与 `[错误]` 等提示）所在回合的 id。平台适配器记回复的投递失败（`WellKnownKinds.OutboundDeliveryFailed`）时把 `turnId` 或 `callId` 连同原因写进记录的元数据（登记的键 `TurnId`、`CallId`、`DeliveryError`，停在中途的另记 `SentPieces`），会话服务回看历史时据此标出哪条没发出；出站记进会话历史的各条（不是回复的文字记成的事件标记、发出的附件）由存档同样记下 `TurnId`（api-message-archive 的 `recordOutbound`），会话服务据此认出在途回合里的那一条，取快照时不与实时条目重复。
 
 `delivery` 是进程内的投递回执，不序列化、不持久化。目标适配器在出站监听器中同步填写；发起方等 `outbound:message` 广播结束后再等它。没有回执表示未确认，不能声称发送成功。Promise 始终 resolve；OneBot 成功表示平台接口确认接受；WebUI 自己的会话以会话历史为收件箱，成功表示已经由存档写进会话历史（打开着的页面经会话服务推送，没打开的打开时从历史看到），存档服务不在场或写入失败都算失败；没有窗口的子会话由存档认领，成功同样表示已经写进它自己的历史；CLI 成功表示已在终端写出（附件写一行说明）。均不表示人已阅读。WebUI 镜像查看其他平台会话时不得认领或覆盖目标平台的回执。
 
 成功回执的 `messageIds` 是正文送达时平台给出的消息 id：分条发出的各一个，按发送顺序，与入站 `replyTo.messageId` 同一写法，引用回复据它认出被引用的是哪一条（如 [plugin-chat-approval](../plugins/plugin-chat-approval.md) 认审批消息）。平台不给 id、或只发出了附件时没有。
 
-失败回执的 `error` 是给人看的原因，可以是文字对象（`TextRef`，按读者语言显示）；交给模型、写日志的一方取 `toSource`。失败回执带 `unconfirmed: true` 时表示请求已经发出、只是没等到平台确认，消息可能已经送达（如 OneBot 文件上传超时）；发起方不得自动重发，也不得劝模型重发。适配器只在失败全部属于这种情况时才带它，夹着确定没发出的部分时按普通失败报。没有这个标记的失败才是确定没送达。
+失败回执的 `error` 是给人看的原因，可以是文字对象（`TextRef`，按读者语言显示）；交给模型、写日志的一方取 `toSource`。失败回执带 `unconfirmed: true` 时表示有请求已经发出、只是没等到平台确认，那部分可能已经送达（如 OneBot 发消息或上传文件超时、等回执时断线）；发起方不得自动重发，也不得劝模型重发。只要有一部分属于这种情况适配器就带它。没有这个标记的失败才是确定没送达。失败回执带 `sentPieces` 时表示逐条发出（分条的正文与各自成一条的附件）停在了中途：前 `sentPieces` 条平台已经收下，之后的没收下或结果未知，补发只补后面的；一条都没发出时不带。
 
 发起方用 `awaitDelivery(delivery, signal)` 等回执：回合中止或等满 `DELIVERY_WAIT_MS`（90 秒）时返回 `undefined`，只表示未确认，不表示没发出（适配器的发送不随之取消），应告诉模型「结果未确认，请勿重发」。
 
@@ -209,6 +212,8 @@ interface MessageUnit {
 | `ModelInfo` | `modelInfo` | agent 写在这一轮最后的回复上 | 同 `OutgoingMessage.modelInfo` | 会话服务标在回复条目上 |
 | `SentRef`、`SentName` | `ref`、`name` | 存档记发出的附件时（`outboundMediaMessage` 记的那条，见 api-message-archive 的 `recordOutbound`）：原样的地址与文件名 | 字符串 | 会话服务还原发出的附件：占位符里的地址遇到「]」会截断、描述位的「]」「\|」换成了全角，优先取这两个键 |
 | `DeliveryError` | `error` | 平台适配器写在投递失败记录（`OutboundDeliveryFailed`）上：与投递结果同一句的原因 | 字符串或文字对象 | 会话服务按读者语言写出回复为什么没发出 |
+| `SentPieces` | `sentPieces` | 平台适配器写在投递失败记录上：逐条发出停在中途时与投递结果同一个已发出条数，一条都没发出时不写 | 数字 | 会话服务写出回复只发出了前几条 |
+| `Unconfirmed` | `unconfirmed` | 平台适配器写在投递失败记录上：已经发出、没等到平台确认的各项（如「消息（第 2 条）」「文件 a.html」） | 字符串数组 | 会话服务写出回复可能已经发出 |
 | `Text` | `text` | 写通知与事件标记的一方：宿主通知的 `hostNotice.text`、平台通知的文字、平台事件合成的入站的 `IncomingMessage.text`、不是她回复的出站按 `outboundMarkerMessage` 记成事件标记时的 `OutgoingMessage.text`，没有地址的出站附件记成的事件标记、压缩分隔线同样 | 文字对象（@aalis/schema-i18n），`content` 是写给模型的话或它按原文渲染的整句 | 会话服务按读者语言显示（合成的入站画成通知），没有时显示 `content` |
 
 ```ts

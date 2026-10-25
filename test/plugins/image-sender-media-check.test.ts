@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -188,7 +188,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
   let app: App;
   let handlers: Record<string, ToolHandler>;
   let outbound: Array<{ attachments?: Array<{ kind: string; data: string }> }>;
-  let deliveryResult: OutboundDeliveryResult | null;
+  /** 平台的投递结果：pending 是一直不给结果，null 是没有适配器认领 */
+  let deliveryResult: OutboundDeliveryResult | 'pending' | null;
 
   /** 默认以 owner 在自己的会话里调用：本机文件能取，只看文件头 */
   const send = async (args: Record<string, unknown>, call = OWNER_CALL) =>
@@ -238,7 +239,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     // 本组只验证文件头与来源选择，平台发送由显式模拟确认。
     started.host.events.use.on('outbound:message', m => {
       outbound.push(m as (typeof outbound)[number]);
-      if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
+      if (deliveryResult === 'pending') m.delivery = new Promise(() => {});
+      else if (deliveryResult) m.delivery = Promise.resolve(deliveryResult);
     });
     provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {});
@@ -366,6 +368,27 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     expect(out.ok).toBeUndefined();
     expect(out.error).toBe('模拟平台拒绝');
     expect(outbound).toHaveLength(1);
+  });
+
+  it('平台一直不给结果、调用方没有回合信号：等到上限返回未确认，不报告成功', async () => {
+    deliveryResult = 'pending';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      let settled = false;
+      const pending = send({ kind: 'image', storage_uri: 'data:/images/s/cat.png' }).then(out => {
+        settled = true;
+        return out;
+      });
+      while (outbound.length === 0) await new Promise(r => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(80_000);
+      expect(settled, '上限之前照常等待').toBe(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const out = await pending;
+      expect(out.ok).toBeUndefined();
+      expect(out.error).toContain('未确认');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('平台报结果未知（可能已经送达）：不报告成功，也不劝重发——不靠适配器的措辞', async () => {

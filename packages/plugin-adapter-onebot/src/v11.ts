@@ -22,6 +22,8 @@ import { normalizeOneBotMessage, segmentsToText, toV11Segments } from './types.j
  */
 export class OneBotV11 implements OneBotProtocol {
   readonly version = 'v11' as const;
+  /** v11 规范没定义「不支持该动作」的返回码；NapCat 对未知动作回 1404「不支持的API」，取它。别的实现端用别的码时补在这里 */
+  readonly unsupportedRetcode = 1404;
 
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> } {
     const actionParams: Record<string, unknown> = {

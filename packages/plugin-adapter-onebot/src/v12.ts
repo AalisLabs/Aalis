@@ -22,6 +22,8 @@ import { segmentsToText, toV12Segments } from './types.js';
  */
 export class OneBotV12 implements OneBotProtocol {
   readonly version = 'v12' as const;
+  /** v12 规范的 10002 UnsupportedAction */
+  readonly unsupportedRetcode = 10002;
 
   buildSendMessage(params: SendMessageParams): { action: string; params: Record<string, unknown> } {
     const actionParams: Record<string, unknown> = {

@@ -273,7 +273,7 @@ export function createTimeline(deps: TimelineDeps) {
       return t('sendFailed', { error: textOf(err) });
     }
     if (!result) return undefined;
-    return result.ok || notAccepted(result.error);
+    return result.ok || notAccepted(result.error, result);
   }
 
   /** 等这条消息的送达结果，交给 settle。等着的时候这一轮不算收尾 */
