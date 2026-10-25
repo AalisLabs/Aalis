@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
-import { App, provide, services } from '../../packages/core/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
@@ -17,7 +17,8 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 工作流页：新建或覆盖是带输入的动作（粘贴完整 YAML），「查看 YAML」是定义表格的详情，启用与停用按行状态显示。定义表列出
-// 定义者，没有定义者的（如手写进定义目录的）写「匿名」。
+// 定义者，没有定义者的（如手写进定义目录的）写「匿名」。运行表里在跑的运行能取消（要确认），取消之后照常收尾、留在表里；在跑的
+// 不在最近 50 次里也列出，运行已经记下终态之后点取消回已经结束。
 // 运行、定义与删除都推 invalidate；删除不存在的、运行失败的回错误。真 storage-local + 真 tools + webui-server 的真实登记表。
 // ════════════════════════════════════════════════════════════
 
@@ -30,6 +31,17 @@ nodes:
   - id: a
     type: tool
     tool: zz_count
+`;
+
+/** 停在一小时的等待里：运行一直在跑，直到被取消 */
+const SLOW_YAML = `id: zz-slow
+name: 慢的
+trigger:
+  type: manual
+nodes:
+  - id: w
+    type: wait
+    seconds: 3600
 `;
 
 let base: string;
@@ -203,5 +215,75 @@ describe('工作流页', () => {
       status: 500,
       body: { error: '工作流 zz-manual 不存在' },
     });
+  });
+
+  it('取消：在跑的运行行上有「取消」（要确认），点了之后照常收尾，记录留在运行表里、状态为已取消；结束之后再点回一句已经结束', async () => {
+    writeFileSync(join(base, 'workspace', 'workflows', 'zz-slow.yaml'), SLOW_YAML);
+    const svc = await boot();
+    const { content, actions } = pages.view('workflows');
+    expect(toSource(content)).toContainEqual(
+      expect.objectContaining({ id: 'runs', rowActions: [{ action: 'cancelRun', visibleWhen: 'running' }] }),
+    );
+    expect(toSource(actions?.cancelRun)).toMatchObject({
+      effect: 'destructive',
+      confirm: expect.stringContaining('记录留在运行历史里'),
+    });
+    const slow = svc.runWorkflow('zz-slow', {}, 'manual');
+    const [{ runId }] = svc.listRuns(1, 'zz-slow');
+    /** 运行表里这次运行的那一行 */
+    const row = async () =>
+      toSource(await pages.data<Array<Record<string, unknown>>>('workflows', 'runs')).find(r => r.runId === runId);
+    expect(await row()).toMatchObject({ status: { text: '运行中' }, running: true });
+
+    const before = pages.invalidations.length;
+    expect(toSource(await pages.act('workflows', 'cancelRun', { rowKey: runId }))).toEqual({
+      status: 200,
+      body: { message: `已取消 ${runId}` },
+    });
+    expect((await slow).status).toBe('cancelled');
+    expect(invalidated(before), '收尾时让运行表重取').toContainEqual(WHOLE_PAGE);
+    expect(await row()).toMatchObject({ status: { text: '已取消' }, running: false });
+    expect(toSource(await pages.act('workflows', 'cancelRun', { rowKey: runId }))).toEqual({
+      status: 500,
+      body: { error: '这次运行已经结束' },
+    });
+  });
+
+  it('在跑的运行被之后的 50 次挤出最近 50 次时照样列在运行表里，排在最后、带取消', async () => {
+    writeFileSync(join(base, 'workspace', 'workflows', 'zz-slow.yaml'), SLOW_YAML);
+    const svc = await boot();
+    const slow = svc.runWorkflow('zz-slow', {}, 'manual');
+    const [{ runId }] = svc.listRuns(1, 'zz-slow');
+    // 之后的 50 次都比它晚开始
+    await new Promise(resolve => setTimeout(resolve, 5));
+    for (let i = 0; i < 50; i++) await svc.runWorkflow('zz-manual', {}, 'manual');
+    const rows = toSource(await pages.data<Array<Record<string, unknown>>>('workflows', 'runs'));
+    expect(rows).toHaveLength(51);
+    expect(rows.at(-1)).toMatchObject({ runId, running: true });
+    svc.cancelRun(runId);
+    expect((await slow).status).toBe('cancelled');
+  });
+
+  it('运行已经记下终态、收尾的监听还没跑完时点取消：回这次运行已经结束，运行照旧成功', async () => {
+    const svc = await boot();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const entered = new Promise<void>(resolve => {
+      app.bind({ events }).events.use.on('workflow:run:done', async () => {
+        resolve();
+        await held;
+      });
+    });
+    const run = svc.runWorkflow('zz-manual', {}, 'manual');
+    await entered;
+    const [{ runId }] = svc.listRuns(1, 'zz-manual');
+    expect(toSource(await pages.act('workflows', 'cancelRun', { rowKey: runId }))).toEqual({
+      status: 500,
+      body: { error: '这次运行已经结束' },
+    });
+    release();
+    expect((await run).status).toBe('success');
   });
 });

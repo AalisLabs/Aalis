@@ -10,6 +10,11 @@ export default defineLocale<Source>()({
   statusCancelled: 'Cancelled',
   runNotSucceeded: 'Run did not succeed ({status})',
   runNotSucceededBecause: 'Run did not succeed ({status}): {error}',
+  cancelRun: 'Cancel',
+  cancelRunConfirm:
+    'Cancel this run? Finished nodes are not undone, and a turn already dispatched by an agent node runs to completion; the record stays in the run history.',
+  runCancelled: 'Cancelled {id}',
+  runEnded: 'This run has already ended',
   saved: 'Saved workflow {id}',
   enabled: 'Enabled {id}',
   disabled: 'Disabled {id}',
