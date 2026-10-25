@@ -79,12 +79,12 @@ outputFormat:
 
 ## 结构化输出
 
-插件始终注册 `agent:reply:before` 中间件。没有 `outputFormat` 时，若回复以 `{` 开头且能解析为 JSON 对象，则依次取 `response` / `reply` / `content` / `answer` / `text` / `msg` / `message` 中第一个字符串字段作为回复。
+角色卡没有 `outputFormat` 时回复照原样交出。
 
 当角色卡定义了 `outputFormat` 时：
 
 1. 在 system prompt 中追加 JSON 格式要求，指示 LLM 以特定 JSON 结构回复
-2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或这个会话的「客户端渲染 JSON」设成开）时不提取回复字段，保留原始 JSON 由客户端渲染。历史里存的是规范化后的整串 JSON，解码出的回复另作为可见正文随 assistant 消息的 metadata 落库
+2. 按 `replyField`（标记 `reply: true` 的字段）提取回复。角色卡设置 `clientSideJsonRendering: true`（或这个会话的「客户端渲染 JSON」设成开）时不提取回复字段，保留原始 JSON 由客户端渲染。历史里存的是规范化后的整串 JSON，解码出的回复另作为可见正文随 assistant 消息的 metadata 落库
 3. 所有声明字段都必须出现且类型正确，否则要求模型重试（次数由 `outputFormatRetries` 定，缺省 1 次，`0` 表示不重试）；重试用尽则丢弃本次回复
 4. 启用 `statePersistence` 时，非回复字段作为会话状态保存，下一轮注入提示
 5. 当回复字段为空字符串时跳过发送

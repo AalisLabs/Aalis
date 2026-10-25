@@ -145,15 +145,13 @@ export default definePlugin({
 
 **状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：scope 为 all 时清全部会话的，否则清当前会话的；只在未指定 type、或 type 含 `context` 或 `persona` 时参与（`persona` 类型由参考实现登记）。状态只存内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
-**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自角色卡的 `outputFormatRetries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
+**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自角色卡的 `outputFormatRetries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`），agent 交给模型的历史取可见正文。
 
 ## 7. 边界与常见错误
 
 **「单例 PersonaService 跨平台」是真实约束。** 触发插件共用的点名识别（`@aalis/api-trigger`）的注释明确指出：mute 关键词不从 persona 读，以避免单例 PersonaService 跨平台泄漏。persona 是进程级单例，会话差异全部依靠 `PersonaSessionOptions` 与 `AsyncLocalStorage` 身份来承载；任何「当前会话状态」都不能写进裸字段。
 
 **结构化输出的逻辑在 reply 钩子里，不在契约方法里。** 角色卡的格式声明与会话的两个结构化输出开关只在参考实现内部读；解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。
-
-**reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会按同一张表加上 `message` 尝试解包。这是容错行为，不是契约保证。
 
 **角色卡加载是 cache-only + 跟随 storage 预扫 + watch。** `loadCard` 只查缓存。`app:ready` 起插件跟随 storage 提供者（`storage.follow`）：提供者在场即挂监听并用 `scanAll` 全量预填，提供者重启、改配置或晚于启动上线时先关旧监听再重挂、重扫；之后由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；目录所在根不支持 `watch` 时（调用抛错，记一条 warn），只有 storage 换代或重启才会刷新。目录列不出（不是不存在）时本次扫描失败并记 warn，已载入的卡不剔除。
 

@@ -16,7 +16,7 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 ```
 ┌──────────────────────────────────────────────────┐
 │  plugin-agent                                    │
-│  finalContent = normalizeAssistantContent(...)   │  ← 渲染层修复 + 通用兜底
+│  stripLeakedSpecialTokens(content)               │  ← 剥协议标记（经 OpenAI 兼容接口时唯一的一道）
 └────────────────────┬─────────────────────────────┘
                      │ ChatResponse { content, toolCalls }
 ┌────────────────────▼─────────────────────────────┐
@@ -30,7 +30,7 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 
 ┌──────────────────────────────────────────────────┐
 │  plugin-webui-client                             │
-│  preprocessLaTeX → fixGfmTables(...)             │  ← 也在前端跑一遍渲染修复
+│  preprocessLaTeX → fixGfmTables(...)             │  ← 渲染层修复（只改显示）
 └──────────────────────────────────────────────────┘
 ```
 
@@ -54,21 +54,18 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 |---|---|---|
 | `stripLeakedSpecialTokens` | 剥离 DSML 等泄漏的特殊 token 标记（`[｜\|]+ ... DSML ...` 等） | 不返回 ToolCall[]；不 import 业务类型 |
 | `fixGfmTables` | 修复 GFM 表格分隔行与表头列数不一致 | 跳过代码块，仅修正明确错误 |
-| `normalizeAssistantContent` | 两者的组合应用 | 顺序：先剥标记，再修表格 |
 
 **设计约束**：该包不能依赖 `@aalis/schema-message` 等业务包，以便在 webui 客户端（browser bundle）中也能使用。返回类型只能是 `string` 或 `{ string, boolean }`。
 
 ### 层 3：`plugin-agent`
 
-**职责**：在拿到 `ChatResponse` 后，统一调 `normalizeAssistantContent` 做最终渲染修复。这是对**所有** LLM provider 通用的兜底层。
+**职责**：每次模型调用拿到完整的 `ChatResponse` 后调 `stripLeakedSpecialTokens`，剥掉漏进正文的协议标记：只剥不执行，落库的正文与时间线都过它。经 OpenAI 兼容接口时这是唯一的一道。
 
-- 适配器层已处理过协议泄漏的情况下，`stripLeakedSpecialTokens` 是 no-op
-- 对未实现内部修复的适配器（如某个简单的第三方兼容层），这里仍能剥除已知格式的标记残渣
-- `fixGfmTables` 在这里统一修复 Markdown 渲染问题
+- 不修表格：外发与落库的是模型的原文，表格只在渲染端修（层 4）
 
 ### 层 4：`plugin-webui-client`（前端）
 
-**职责**：在客户端渲染前再跑一次 `fixGfmTables`，处理流式增量拼接过程中可能产生的中间状态碎片（agent 层在完整响应上修过一次，但 WebSocket 推流的每个增量 chunk 不一定完整）。
+**职责**：在客户端渲染前跑 `fixGfmTables`：模型常多打或少打一根竖线，渲染器遇到列数不等会把整张表退成纯文字。只改显示，存下的原文不动；流式输出时每次渲染同样修。
 
 ---
 
@@ -110,7 +107,7 @@ agent 收到：
   content  = DSML 之前的文本（干净）
   toolCalls = 恢复的工具调用
 
-normalizeAssistantContent(content) → stripLeakedSpecialTokens = no-op，fixGfmTables 生效
+agent 的 stripLeakedSpecialTokens(content) = no-op
 ```
 
 **跨帧缓冲（`pendingTail`）**：检测到 `<` 或 `<｜...`（可能是 DSML 起始的前缀）时，暂存到下一帧再判，避免半截特殊 token 已被 emit 后无法收回。
@@ -138,7 +135,7 @@ agent 收到：
   content  = sanitized（DSML 已剥离）
   toolCalls = 恢复的工具调用
 
-normalizeAssistantContent(content) → stripLeakedSpecialTokens = no-op，fixGfmTables 生效
+agent 的 stripLeakedSpecialTokens(content) = no-op
 ```
 
 ### 关键：两条路径传给 agent 的是什么版本？
@@ -148,7 +145,7 @@ normalizeAssistantContent(content) → stripLeakedSpecialTokens = no-op，fixGfm
 | `content` | **修复后**（DSML 已剥离） | 不应把含 DSML 的脏文本暴露给上层 |
 | `toolCalls` | 从**修复前**的原始泄漏内容解析恢复 | 需要完整的 DSML 结构才能提取 invoke/parameter |
 
-因此 agent 层的 `stripLeakedSpecialTokens` 对 deepseek 在正常处理后是 **no-op**，仅作为对其他 provider 或异常 fallthrough 的通用兜底。
+因此 agent 层的 `stripLeakedSpecialTokens` 对 deepseek 插件在正常处理后是 **no-op**；经 OpenAI 兼容接口接入时它是唯一的一道（层 3）。
 
 ---
 
@@ -156,7 +153,7 @@ normalizeAssistantContent(content) → stripLeakedSpecialTokens = no-op，fixGfm
 
 ```
 plugin-agent
-  └── @aalis/util-text-normalize  (normalizeAssistantContent, stripLeakedSpecialTokens)
+  └── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
 
 plugin-llm-deepseek
   ├── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
@@ -179,7 +176,7 @@ util-text-normalize
 
 1. **能否恢复结构化数据**（解析为 ToolCall[]）：在对应的 `plugin-xxx` 适配器内实现，不放 util
 2. **剥离文本**：扩展 `util-text-normalize` 的 `stripLeakedSpecialTokens` 中的 regex，不要新建 `stripQwenTokens` 等并列函数，避免调用方认知碎片化
-3. **GFM / 渲染修复**：直接加进 `normalizeAssistantContent` 的处理链
+3. **GFM / 渲染修复**：只加进渲染端的预处理（webui-client 的 `preprocessLaTeX`），不改存下的原文
 
 **扩展 util-text-normalize 时的约束**：
 - 只接受/返回 `string`，不引入业务包类型

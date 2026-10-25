@@ -415,6 +415,15 @@
 - 按条数读历史的插件（用户档案与关系图的提取窗口、识图时带的前文、会话标题等）随之只数对话消息，压缩分隔线这类事件标记不再占名额，多带真实消息。
 - plugin-memory-vector：命中点前后 N 条的扩窗不算事件标记，标记不再占名额。
 
+### 回复定稿与历史（@aalis/plugin-persona、@aalis/plugin-agent、@aalis/util-text-normalize）
+
+- plugin-persona：人设卡没有 `outputFormat` 时回复照原样发出，以 `{` 开头的不再解包：她写出来的 JSON（比如别人要一个接口返回示例）不再只剩其中一个字段。
+- plugin-persona：结构化输出只认卡上声明的回复字段。模型把回复字段写错名或漏写时，不再拿 `response`、`reply` 等别名或唯一的字符串字段（如心情）顶上当回复发出，改为按格式重试（次数照 `outputFormatRetries`），仍不对就不发。
+- plugin-agent：交给模型的历史里她的回复一律取可见正文（元数据的 `VisibleContent`），不再是结构化输出的整串信封：关掉结构化输出或换成纯文本人设之后，她不再照着历史里的信封回 JSON；开着结构化输出的会话里，格式只靠系统提示里的格式说明与校验重试。落库照旧存信封原文。`token:request` 的用量快照与真实回合同一个读法：不完整的工具调用组不交，用户消息带时间标注。
+- plugin-agent：回复不再改写表格分隔行：「带竖线的一行、下一行是 `---`」在 QQ 等平台照原样发出，历史里也是原文；WebUI 渲染时照旧修，显示不变。
+- plugin-agent：落库的时间线与正文同一份净化，刷新后的 WebUI 历史里不再出现漏进正文的工具调用标记；回复还在输出时的实时显示照旧。
+- util-text-normalize：`normalizeAssistantContent` 删除。剥漏出的协议标记用 `stripLeakedSpecialTokens`，渲染端修表格用 `fixGfmTables`。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

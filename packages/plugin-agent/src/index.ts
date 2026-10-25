@@ -71,7 +71,7 @@ import {
   WellKnownMetadataKeys,
   wasAddressed,
 } from '@aalis/schema-message';
-import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
+import { stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
   describeLLMFailure,
@@ -80,6 +80,7 @@ import {
   formatTimeLabel,
   formatToolArgsForLog,
   hasAttachmentDescriptions,
+  historyForModel,
   INPUT_CONVENTIONS,
   isSameMessage,
   parseToolArguments,
@@ -442,23 +443,24 @@ class DefaultAgent implements AgentService {
       }
     }
 
-    let finalContent = content;
-    if (content) {
-      // 兜底剥离 LLM 端漏出的特殊 token 残渣（DSML 等），同时修复 GFM 表格
-      const { sanitized, hadLeak } = stripLeakedSpecialTokens(content);
-      if (hadLeak) {
-        this.caps.logger.use.warn(
-          `agent: 检测到 LLM 内容残留 DSML 标记，已剥离（session=${sessionId} platform=${platform} 原长=${content.length} 净化后=${sanitized.length}）`,
-        );
-      }
-      finalContent = normalizeAssistantContent(content);
+    // 经 OpenAI 兼容接口接入时，服务端漏进正文的工具调用标记只有这一层会剥：只剥不执行，落库的正文与时间线都过它。
+    // 时间线的正文段是 content 的切片，剥空的段不留
+    const { sanitized, hadLeak } = stripLeakedSpecialTokens(content);
+    if (hadLeak) {
+      this.caps.logger.use.warn(
+        `agent: 检测到 LLM 内容残留 DSML 标记，已剥离（session=${sessionId} platform=${platform} 原长=${content.length} 净化后=${sanitized.length}）`,
+      );
     }
     return {
-      content: finalContent,
+      content: sanitized,
       reasoningContent: reasoningContent || undefined,
       toolCalls,
       usage,
-      segments,
+      segments: segments.flatMap((segment): ContentSegment[] => {
+        if (segment.type !== 'text') return [segment];
+        const text = stripLeakedSpecialTokens(segment.content).sanitized;
+        return text ? [{ ...segment, content: text }] : [];
+      }),
       generating,
     };
   }
@@ -926,9 +928,6 @@ class DefaultAgent implements AgentService {
       await this.caps.hooks.use.run('agent:llm:after', llmAfterData);
       response = llmAfterData.response;
 
-      // 收集工具调用摘要
-      const toolCallSummaries: string[] = [];
-
       const assistantMetadata = this.buildAssistantMetadata(first, turnId);
 
       // 工具调用循环：上限没设即不限
@@ -1128,9 +1127,6 @@ class DefaultAgent implements AgentService {
           startTime,
           endTime,
         } of parallelResults) {
-          const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
-          toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
-
           // callId 随工具结果与时间线落库：没回复就收尾的一轮只落工具调用组，历史里的工具卡靠它对回这次调用
           const toolMessage: Message = {
             role: 'tool',
@@ -1218,7 +1214,7 @@ class DefaultAgent implements AgentService {
         this.logger.warn(`工具调用达到上限 (${maxToolIterations})，session=${sessionId}`);
       }
 
-      // 保留原始 LLM 输出，用于存入 memory（避免纯文本历史污染 few-shot 示例）
+      // 保留原始 LLM 输出：没有中间件改写落库内容时，落库的就是它
       let rawLlmContent = response.content ?? '';
       let replyContent = rawLlmContent;
 
@@ -1348,8 +1344,7 @@ class DefaultAgent implements AgentService {
           finalAssistantMetadata[WellKnownMetadataKeys.VisibleContent] = visibleContent;
         }
 
-        // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
-        // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
+        // 保存最终 assistant 回复：落库存信封原文，交给模型的历史取可见正文（historyForModel）
         await this.saveToMemory(sessionId, {
           role: 'assistant',
           content: archiveContent,
@@ -1431,30 +1426,17 @@ class DefaultAgent implements AgentService {
     const systemPrompt = this.buildSystemPrompt(personaOpts);
     messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
-    // 2. 历史消息
-    const memory = this.caps.memory.present ? this.caps.memory.use : undefined;
-    if (memory) {
-      try {
-        const stored = await readHistory(memory, sessionId, historyLimit);
-        historyMessages = stored.count;
-        const archived = inputs.flatMap(input => (input.archived ? [input.archived] : []));
-        const now = Date.now();
-        for (const m of this.sanitizeToolCallHistory(stored.messages, sessionId)) {
-          if (archived.some(input => this.isSameMessage(m, input))) continue;
-          if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
-          // 为用户消息注入时间标注，帮助 LLM 理解时间先后。标注加在副本上：记忆服务可能直接交出存着的消息对象
-          if (m.role === 'user' && m.timestamp && m.content) {
-            const timeLabel = formatTimeLabel(m.timestamp, now);
-            if (timeLabel && !m.content.startsWith(`(${timeLabel})`)) {
-              messages.push({ ...m, content: `(${timeLabel}) ${m.content}` });
-              continue;
-            }
-          }
-          messages.push(m);
-        }
-      } catch (err) {
-        this.logger.warn('获取历史消息失败:', err);
+    // 2. 历史消息：跳过这一轮已归档的输入
+    try {
+      const archived = inputs.flatMap(input => (input.archived ? [input.archived] : []));
+      const past = await this.modelHistory(sessionId, historyLimit, archived);
+      historyMessages = past.count;
+      if (past.dropped > 0) {
+        this.logger.warn(`历史消息中发现不完整工具调用组，已跳过 ${past.dropped} 条 (session=${sessionId})`);
       }
+      messages.push(...past.messages);
+    } catch (err) {
+      this.logger.warn('获取历史消息失败:', err);
     }
     const history = new Set(messages.slice(1));
 
@@ -2040,25 +2022,49 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 装载历史时清洗工具调用组：按 schema-message 的 groupToolCalls 归组（夹进调用与结果之间的别的消息挪到组后），结果不齐的组
-   * 连同找到的结果跳过，不在任何组里的结果跳过
+   * 交给模型的会话历史，真实回合与 token:request 的快照共用：按条数线读出的那一段（见 readHistory）清洗工具调用组，跳过控制类
+   * 与 skip 里的各条，用户消息加时间标注，她的回复取可见正文（historyForModel）。改动都在副本上：记忆服务可能直接交出存着的
+   * 消息对象。count 同 readHistory，dropped 是清洗跳过的条数；没有记忆服务时为空。不记日志：快照同样走这里，跳过的条数由真实
+   * 回合的调用点记
    */
-  private sanitizeToolCallHistory(history: Message[], sessionId: string): Message[] {
-    const result: Message[] = [];
+  private async modelHistory(
+    sessionId: string,
+    historyLimit: number | undefined,
+    skip: readonly Message[] = [],
+  ): Promise<{ messages: Message[]; count: number; dropped: number }> {
+    if (!this.caps.memory.present) return { messages: [], count: 0, dropped: 0 };
+    const stored = await readHistory(this.caps.memory.use, sessionId, historyLimit);
+    const { kept, dropped } = this.sanitizeToolCallHistory(stored.messages);
+    const now = Date.now();
+    const messages: Message[] = [];
+    for (const m of kept) {
+      if (skip.some(input => isSameMessage(m, input))) continue;
+      if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
+      // 为用户消息注入时间标注，帮助 LLM 理解时间先后
+      if (m.role === 'user' && m.timestamp && m.content) {
+        const timeLabel = formatTimeLabel(m.timestamp, now);
+        if (timeLabel && !m.content.startsWith(`(${timeLabel})`)) {
+          messages.push({ ...m, content: `(${timeLabel}) ${m.content}` });
+          continue;
+        }
+      }
+      messages.push(historyForModel(m));
+    }
+    return { messages, count: stored.count, dropped };
+  }
+
+  /**
+   * 装载历史时清洗工具调用组：按 schema-message 的 groupToolCalls 归组（夹进调用与结果之间的别的消息挪到组后），结果不齐的组
+   * 连同找到的结果跳过，不在任何组里的结果跳过。dropped 是跳过的条数
+   */
+  private sanitizeToolCallHistory(history: Message[]): { kept: Message[]; dropped: number } {
+    const kept: Message[] = [];
     let dropped = 0;
     for (const { at, shape } of groupToolCalls(history)) {
       if (shape === 'partial' || shape === 'loose') dropped += at.length;
-      else result.push(...at.map(i => history[i]));
+      else kept.push(...at.map(i => history[i]));
     }
-
-    if (dropped > 0) {
-      this.logger.warn(`历史消息中发现不完整工具调用组，已跳过 ${dropped} 条 (session=${sessionId})`);
-    }
-    return result;
-  }
-
-  private isSameMessage(a: Message, b: Message): boolean {
-    return isSameMessage(a, b);
+    return { kept, dropped };
   }
 
   /**
@@ -2185,6 +2191,7 @@ type InternalAgent = {
   resolveLLM(ref: ModelRef | undefined): ProviderEntry<LLMModel> | undefined;
   computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
+  modelHistory(sessionId: string, historyLimit: number | undefined): Promise<{ messages: Message[]; count: number }>;
   trimMessages(messages: Message[], budget: number, history: ReadonlySet<Message>): TrimmedMessages;
   emitTokenUsage(usage: UsageReport): Promise<void>;
 };
@@ -2283,8 +2290,7 @@ function run(caps: Caps): void {
       const maxTokens = getModelMaxOutput(llm);
       const tokenBudget = agent.computeTokenBudget(contextLength, maxTokens);
 
-      // 获取历史消息并构建基础消息列表
-      const memory = caps.memory.present ? caps.memory.use : undefined;
+      // 构建基础消息列表
       const messages: Message[] = [];
 
       // 系统提示
@@ -2292,11 +2298,8 @@ function run(caps: Caps): void {
       messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
       // 历史消息：与真实回合同一个读法
-      const history = memory
-        ? await readHistory(memory, data.sessionId, settings.historyLimit)
-        : { messages: [], count: 0 };
-      const past = history.messages.filter(m => !CONTROL_KINDS.includes(m.kind ?? ''));
-      messages.push(...past);
+      const history = await agent.modelHistory(data.sessionId, settings.historyLimit);
+      messages.push(...history.messages);
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
@@ -2317,7 +2320,7 @@ function run(caps: Caps): void {
       await caps.hooks.use.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       // 与真实回合同样过硬裁剪，拆分按裁剪之后的消息算
-      const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget, new Set(past));
+      const sent = agent.trimMessages(llmBeforeData.messages, tokenBudget, new Set(history.messages));
       await agent.emitTokenUsage({
         sessionId: data.sessionId,
         platform,

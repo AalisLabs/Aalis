@@ -781,9 +781,7 @@ async function run(caps: Caps): Promise<void> {
     await service.runWithIdentity(identity, () => next());
   });
 
-  // agent:reply:before 钩子：统一处理 JSON 解析
-  // 1. 有 outputFormat 时：结构化解析 + 状态持久化
-  // 2. 无 outputFormat 时：回退提取（模型意外用 JSON 包裹回复时自动解包）
+  // agent:reply:before 钩子：会话的卡有 outputFormat 时做结构化解析、校验重试与状态持久化
   const baseFormat = service.getOutputFormat();
 
   if (baseFormat) {
@@ -797,26 +795,7 @@ async function run(caps: Caps): Promise<void> {
     const personaOpts: PersonaSessionOptions = { sessionId: data.sessionId, platform: data.platform };
     const outputFormat = service.getOutputFormat(personaOpts);
 
-    // ===== 无 outputFormat：回退 JSON 提取 =====
-    // 当角色卡未定义 outputFormat 时，模型偶尔仍会用 JSON 包裹回复
-    // 此处自动解包，提取回复字段
-    if (!outputFormat) {
-      const trimmed = data.content.trim();
-      if (!trimmed.startsWith('{')) return;
-      const { parsed: obj } = tryParseJsonObject(trimmed);
-      if (!obj) return;
-      const replyKeys = ['response', 'reply', 'content', 'answer', 'text', 'msg', 'message'];
-      for (const key of replyKeys) {
-        if (typeof obj[key] === 'string') {
-          data.content = obj[key] as string;
-          logger.use.debug(`JSON 回退提取: 使用字段 "${key}"`);
-          return;
-        }
-      }
-      return;
-    }
-
-    // ===== 有 outputFormat：结构化解析 =====
+    if (!outputFormat) return;
 
     const clientRendered = service.isClientSideJsonRendering(personaOpts);
 
@@ -851,100 +830,71 @@ async function run(caps: Caps): Promise<void> {
     }
     try {
       if (!parsed) throw new Error('JSON 解析失败');
-      let reply = parsed[outputFormat.replyField];
-
-      // 回退：模型可能使用了错误的字段名（如 response 代替 message）
+      // 只认声明的回复字段。主动不回话的合法写法是回复字段为空字符串（如 {"message":"","state":"..."}）
+      const reply = parsed[outputFormat.replyField];
       if (typeof reply !== 'string') {
-        const aliases = ['response', 'reply', 'content', 'answer', 'text', 'msg'];
-        for (const alias of aliases) {
-          if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
-            reply = parsed[alias];
-            logger.use.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
-            break;
-          }
-        }
-      }
-
-      // 仍未找到：若 JSON 中只有一个字符串字段，使用它
-      if (typeof reply !== 'string') {
-        const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
-        if (stringEntries.length === 1) {
-          reply = stringEntries[0][1] as string;
-          logger.use.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
-        }
-      }
-
-      if (typeof reply === 'string') {
-        if (parsed[outputFormat.replyField] !== reply) {
-          parsed[outputFormat.replyField] = reply;
-        }
-
-        // 严格字段校验：声明的所有字段都必须出现且类型正确，缺一不可 → 否则 retry。
-        // 这样可以避免模型养成省略 state/mood 等状态字段的坏习惯，让上下文信号始终完整。
-        const missing: string[] = [];
-        const typeMismatch: string[] = [];
-        for (const [key, def] of Object.entries(outputFormat.fields)) {
-          const val = parsed[key];
-          if (val === undefined || val === null) {
-            missing.push(key);
-            continue;
-          }
-          const expectedType = def.type ?? 'string';
-          const actualType = typeof val;
-          if (expectedType === 'number') {
-            if (actualType !== 'number' && !(actualType === 'string' && !Number.isNaN(Number(val)))) {
-              typeMismatch.push(`${key}(期望 number, 实际 ${actualType})`);
-            }
-          } else if (expectedType === 'boolean') {
-            if (actualType !== 'boolean' && !(actualType === 'string' && (val === 'true' || val === 'false'))) {
-              typeMismatch.push(`${key}(期望 boolean, 实际 ${actualType})`);
-            }
-          } else if (actualType !== 'string') {
-            typeMismatch.push(`${key}(期望 string, 实际 ${actualType})`);
-          }
-        }
-        if (missing.length > 0 || typeMismatch.length > 0) {
-          const parts: string[] = [];
-          if (missing.length > 0) parts.push(`缺失字段: ${missing.join(',')}`);
-          if (typeMismatch.length > 0) parts.push(`类型错误: ${typeMismatch.join(',')}`);
-          throw new Error(parts.join('; '));
-        }
-
-        data.archiveContent = JSON.stringify(parsed);
-        // 可见正文单独交给 agent 落库：客户端渲染模式下 content 仍是整串 JSON
-        data.visibleContent = reply;
-
-        // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
-        if (!clientRendered) {
-          data.content = reply;
-        }
-        // 输出所有字段概要
-        const fieldSummary = Object.entries(parsed)
-          .filter(([k]) => k !== outputFormat.replyField)
-          .map(([k, v]) => {
-            const s = typeof v === 'string' ? v : JSON.stringify(v);
-            return `${k}=${s.length > 60 ? `${s.slice(0, 60)}...` : s}`;
-          })
-          .join(', ');
-        if (reply.length > 0) {
-          logger.use.debug(
-            `outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`,
-          );
-        } else {
-          logger.use.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
-        }
-        // 状态持久化：保存非回复字段（按 field type 强制类型）
-        if (statePersistence) {
-          persistStateFromParsed(parsed, outputFormat);
-        }
-      } else {
-        // JSON 合法但找不到回复字段（无 replyField、无 alias、也不是单字符串字段）
-        // 视为模型违约 → 抛错让 catch 触发 retry，要求重新输出符合 outputFormat 的 JSON。
-        // 注意：agent 主动静默的合法表达是 reply 字段=空字符串（如 {"message":"","state":"..."}），
-        // 那种情况会走上面的 typeof reply === 'string' 分支并被识别为"(空，静默)"。
         throw new Error(
           `JSON 合法但找不到回复字段 "${outputFormat.replyField}"（实际字段: ${Object.keys(parsed).join(',')}）`,
         );
+      }
+
+      // 严格字段校验：声明的所有字段都必须出现且类型正确，缺一不可 → 否则 retry。
+      // 这样可以避免模型养成省略 state/mood 等状态字段的坏习惯，让上下文信号始终完整。
+      const missing: string[] = [];
+      const typeMismatch: string[] = [];
+      for (const [key, def] of Object.entries(outputFormat.fields)) {
+        const val = parsed[key];
+        if (val === undefined || val === null) {
+          missing.push(key);
+          continue;
+        }
+        const expectedType = def.type ?? 'string';
+        const actualType = typeof val;
+        if (expectedType === 'number') {
+          if (actualType !== 'number' && !(actualType === 'string' && !Number.isNaN(Number(val)))) {
+            typeMismatch.push(`${key}(期望 number, 实际 ${actualType})`);
+          }
+        } else if (expectedType === 'boolean') {
+          if (actualType !== 'boolean' && !(actualType === 'string' && (val === 'true' || val === 'false'))) {
+            typeMismatch.push(`${key}(期望 boolean, 实际 ${actualType})`);
+          }
+        } else if (actualType !== 'string') {
+          typeMismatch.push(`${key}(期望 string, 实际 ${actualType})`);
+        }
+      }
+      if (missing.length > 0 || typeMismatch.length > 0) {
+        const parts: string[] = [];
+        if (missing.length > 0) parts.push(`缺失字段: ${missing.join(',')}`);
+        if (typeMismatch.length > 0) parts.push(`类型错误: ${typeMismatch.join(',')}`);
+        throw new Error(parts.join('; '));
+      }
+
+      data.archiveContent = JSON.stringify(parsed);
+      // 可见正文单独交给 agent 落库：客户端渲染模式下 content 仍是整串 JSON
+      data.visibleContent = reply;
+
+      // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
+      if (!clientRendered) {
+        data.content = reply;
+      }
+      // 输出所有字段概要
+      const fieldSummary = Object.entries(parsed)
+        .filter(([k]) => k !== outputFormat.replyField)
+        .map(([k, v]) => {
+          const s = typeof v === 'string' ? v : JSON.stringify(v);
+          return `${k}=${s.length > 60 ? `${s.slice(0, 60)}...` : s}`;
+        })
+        .join(', ');
+      if (reply.length > 0) {
+        logger.use.debug(
+          `outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`,
+        );
+      } else {
+        logger.use.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
+      }
+      // 状态持久化：保存非回复字段（按 field type 强制类型）
+      if (statePersistence) {
+        persistStateFromParsed(parsed, outputFormat);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -976,14 +926,12 @@ async function run(caps: Caps): Promise<void> {
           '\n请只修正格式，保留本来需要传达的正文，并写入回复字段；确实不需对外回复时，才将回复字段留空（空字符串）。';
       } else {
         // 重试用尽：静默丢弃（避免原始 JSON 被当成回复发出）
-        // 同时通过 archiveContent 写入一条"系统提醒"，让下一轮 LLM 看到自己上次因格式不符被丢弃
         logger.use.warn(
           `outputFormat 解码连续 ${attempt + 1} 次失败（已用尽 ${maxRetries} 次重试），静默丢弃回复：${message}; json=${preview}`,
         );
         data.retryRequested = false;
         data.retryFeedback = undefined;
         data.content = '';
-        data.archiveContent = `（系统提示：上一条回复因不符合 outputFormat 规定被丢弃，原因：${message}。下次回复请严格按照 system prompt 中规定的 JSON 格式输出，所有声明的字段都必须出现。）`;
       }
     }
   });

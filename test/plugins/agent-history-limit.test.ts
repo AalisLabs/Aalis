@@ -10,6 +10,7 @@ import {
 } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, LogHub } from '../../packages/core/src/index.js';
+import { formatTimeLabel } from '../../packages/plugin-agent/src/helpers.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -214,7 +215,7 @@ describe('按会话的条数线读历史', () => {
     expect(logs.filter(message => message.includes('不完整工具调用组'))).toEqual([]);
   });
 
-  it('起点对齐只丢切开的那一组留下的结果：之后不在任何组里的结果与起点无关，照旧由清洗跳过并告警', async () => {
+  it('起点对齐只丢切开的那一组留下的结果：之后不在任何组里的结果与起点无关，照旧由清洗跳过，只在真实回合告警', async () => {
     const { host, recorder, logs, ask, historyIn, limit } = await boot();
     const SESSION = 'zz-ctx-tool-loose';
     const call = (id: string) => ({ id, type: 'function' as const, function: { name: PROBE, arguments: '{}' } });
@@ -233,6 +234,8 @@ describe('按会话的条数线读历史', () => {
     stored[10] = { role: 'tool', content: 'zz-result 10', toolCallId: 'call-gone', timestamp: 1010 };
     for (const message of stored) await host.memory.use.saveMessage(SESSION, message);
     await limit(SESSION, 12);
+    // 快照同一个读法、同样跳过，但不记日志：WebUI 订阅、重连、压缩完成都会要一份快照
+    await host.events.use.emit('token:request', { sessionId: SESSION });
     await ask(SESSION);
 
     // 加上这一轮的入站共 13 条，条数线 12、半条线 6：起点 6 是第 5 条调用的结果，第 10 条是组外的结果
@@ -266,8 +269,12 @@ describe('按会话的条数线读历史', () => {
     await limit('zz-ctx-snapshot', 5);
     await host.events.use.emit('token:request', { sessionId: 'zz-ctx-snapshot' });
 
-    // 活跃 30 条，条数线 5、半条线 3：从第 27 条发起
-    const sent = (await host.memory.use.getHistory('zz-ctx-snapshot', Infinity)).slice(27);
+    // 活跃 30 条，条数线 5、半条线 3：从第 27 条发起；与真实回合同一个读法，用户消息带时间标注
+    const sent = (await host.memory.use.getHistory('zz-ctx-snapshot', Infinity))
+      .slice(27)
+      .map(m =>
+        m.role === 'user' ? { ...m, content: `(${formatTimeLabel(m.timestamp ?? 0, Date.now())}) ${m.content}` } : m,
+      );
     expect(usages).toHaveLength(1);
     expect(usages[0]).toMatchObject({
       historyMessages: 30,

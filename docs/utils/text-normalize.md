@@ -1,7 +1,7 @@
 # text-normalize
 
 > 受众：写 LLM provider 插件、写「会把 assistant 回复渲染/转发出去」插件、或写自定义前端渲染器的第三方作者。
-> 本文讲清如何在「LLM 返回的自然语言 content 落到用户眼前之前」做最后一道净化：修复 LLM 常写错的 GFM 表格、剥离泄漏到正文的特殊 token 残渣。
+> 本文讲清两样净化：渲染端修复 LLM 常写错的 GFM 表格（只改显示），拿到完整回复的一方剥离泄漏到正文的特殊 token 残渣。
 >
 > 全部断言以代码为准并标注 `file:line`。源码：`packages/util-text-normalize/src/index.ts`。
 
@@ -9,7 +9,7 @@
 
 ## 1. 定位
 
-`@aalis/util-text-normalize` 是一个**纯函数、零服务**的文本净化库：把 LLM 输出的 assistant `content` 在**展示/发送前**统一过一遍，修复下游 Markdown 渲染器（remark-gfm / KaTeX 等）会卡住的明确错误，并剥离漏到正文里的内部协议 token（如 DeepSeek 的 DSML 标记）。
+`@aalis/util-text-normalize` 是一个**纯函数、零服务**的文本净化库：渲染端用它修复下游 Markdown 渲染器（remark-gfm / KaTeX 等）会卡住的明确错误，只改显示、不动存下的原文；拿到完整回复的一方用它剥离漏到正文里的内部协议 token（如 DeepSeek 的 DSML 标记）。
 
 它带 `aalis-util` 关键词（`package.json` keywords），是 **util 库**——不经服务容器、不参与 DI、不注册服务。第三方插件的用法是：在 `package.json` 里依赖它，然后直接 `import` 函数调用（见 §3）。
 
@@ -19,13 +19,13 @@
 - 只修复**明确错误**的格式问题，不做风格改写。
 - 自动跳过代码块（```` ``` ```` 与 inline `` ` ``）以避免误改示例代码。
 
-与同生态的 `@aalis/util-json-repair` 的边界（`index.ts`）：json-repair 处理「被 prompt 要求输出 JSON 的结构化数据通道」的解析问题；本库处理「自然语言对话 `content`」的渲染层问题，约定在 agent 拿到完整响应后**统一调用一次**。
+与同生态的 `@aalis/util-json-repair` 的边界（`index.ts`）：json-repair 处理「被 prompt 要求输出 JSON 的结构化数据通道」的解析问题；本库处理「自然语言对话 `content`」的渲染与协议残渣问题。
 
 ---
 
 ## 2. 导出 API
 
-模块共导出五个函数。本文覆盖其中三个面向**展示/发送前净化**的函数——`fixGfmTables` / `stripLeakedSpecialTokens` / `normalizeAssistantContent`。另两个 `truncateChars` / `toWellFormedText` 处理的是「LLM 请求边界的孤代理（lone surrogate）安全」，属另一议题，本文不展开——参见各自 JSDoc 与 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。`countGfmCols` / `normalizeSepRow` / `isSeparatorRow` 为内部 helper，**未导出**。
+模块共导出四个函数。本文覆盖其中两个净化函数——`fixGfmTables` / `stripLeakedSpecialTokens`。另两个 `truncateChars` / `toWellFormedText` 处理的是「LLM 请求边界的孤代理（lone surrogate）安全」，属另一议题，本文不展开——参见各自 JSDoc 与 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。`countGfmCols` / `normalizeSepRow` / `isSeparatorRow` 为内部 helper，**未导出**。
 
 ### 2.1 `fixGfmTables(content: string): string`
 
@@ -72,14 +72,6 @@
 - 仅当确实发生剥离时才对结果 `trim()`（`index.ts`）；无泄漏时 `sanitized === content` 原样。
 - 命名刻意**不带厂商前缀**（`index.ts`）：未来 Qwen 漏 `<|im_xxx|>`、Llama 漏 `<|python_tag|>` 等同类问题，应**扩展本函数的 regex**，而非新开 `stripQwenTokens` 等并列函数。注意：当前三条 regex 都靠 `DSML` 字面量驱动，扩展其它 token 时这些断言需要相应放宽。
 
-### 2.3 `normalizeAssistantContent(content: string): string`
-
-签名：`packages/util-text-normalize/src/index.ts`
-
-**一次性应用所有净化规则**的便捷入口。顺序固定（`index.ts`）：**先 `stripLeakedSpecialTokens` 剥离结构性泄漏，再 `fixGfmTables` 修表格**。
-
-顺序很重要：先剥掉 DSML 块再修表格，避免 DSML 标记里的竖线被表格逻辑误判为列分隔。本函数丢弃 `hadLeak`（`index.ts` 解构后只取 `sanitized`）——**需要遥测 `hadLeak` 的调用方应自己单独调 `stripLeakedSpecialTokens`**（见 §4 agent 的做法）。空串直接返回（`index.ts`）。
-
 ---
 
 ## 3. 用法示例
@@ -87,20 +79,13 @@
 最小可运行片段（在你的插件里）：
 
 ```ts
-import {
-  normalizeAssistantContent,
-  stripLeakedSpecialTokens,
-  fixGfmTables,
-} from '@aalis/util-text-normalize';
+import { stripLeakedSpecialTokens, fixGfmTables } from '@aalis/util-text-normalize';
 
-// A. 最常见：一次净化 assistant 完整响应
-const display = normalizeAssistantContent(llmResponse.content);
-
-// B. 需要告警/遥测时：拆开调，拿到 hadLeak
+// A. 拿到完整回复的一方：剥离泄漏的特殊 token，hadLeak 供告警/遥测
 const { sanitized, hadLeak } = stripLeakedSpecialTokens(llmResponse.content);
 if (hadLeak) logger.use.warn('LLM content 残留特殊 token，已剥离');
 
-// C. 纯前端渲染器：只想修表格，不碰 token
+// B. 渲染端：显示前修表格，存下的原文不动
 const md = fixGfmTables(rawMarkdown);
 ```
 
@@ -118,11 +103,9 @@ const md = fixGfmTables(rawMarkdown);
 
 ## 4. 谁在用（codebase 内真实消费点）
 
-### `plugin-agent`：回合收尾统一净化 + 遥测
+### `plugin-agent`：回合收尾剥离协议标记 + 遥测
 
-`packages/plugin-agent/src/index.ts` 导入；在组装最终回复时（`index.ts`）：先 `stripLeakedSpecialTokens` 拿 `hadLeak` 打 warn 日志（记录 session / platform / 原长 / 净化后长度），再用 `normalizeAssistantContent(content)` 产出 `finalContent`。这是「agent 拿到完整响应后统一调用一次」约定的权威落点——所有走 agent 通道的回复都已净化。
-
-> 注意 `index.ts` 是**拆开调**的范例：因为既要 `hadLeak` 做遥测，又要全套净化。`normalizeAssistantContent` 内部会再调一次 `stripLeakedSpecialTokens`（幂等、无泄漏时是 no-op），所以这里调两次只是为了取 `hadLeak`，结果正确但有一次冗余扫描——属可接受取舍。
+`packages/plugin-agent/src/index.ts` 导入；每次模型调用拿到完整回复时（`index.ts`）用 `stripLeakedSpecialTokens` 剥离，`hadLeak` 时打 warn 日志（记录 session / platform / 原长 / 净化后长度）；时间线的正文段过同一个函数，落库的正文与时间线是同一份净化。经 OpenAI 兼容接口接入时，服务端漏进正文的工具调用标记只有这一层会剥：只剥不执行。agent 不修表格，外发与落库的是模型的原文。
 
 ### `plugin-llm-deepseek`：泄漏检测 + 本地恢复 tool_calls
 
@@ -132,7 +115,7 @@ const md = fixGfmTables(rawMarkdown);
 
 ### `plugin-webui-client`：前端渲染预处理复用
 
-`packages/plugin-webui-client/src/markdown/latex.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先跑一次表格归一。注释说明：agent 侧若已修复则此处等价 no-op，保留是为**兼容历史会话与未走 agent 通道的内容**。这说明同一份纯函数逻辑被「后端 provider/agent」和「前端渲染器」两端复用——正是 util 库存在的意义。
+`packages/plugin-webui-client/src/markdown/latex.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先跑一次表格归一：模型常多打或少打一根竖线，渲染器遇到列数不等会把整张表退成纯文字。只改显示，存下的原文不动；表格只在这里修。
 
 ---
 
@@ -141,15 +124,14 @@ const md = fixGfmTables(rawMarkdown);
 - **它不是 sanitizer / 不防 XSS**：只修 Markdown 格式 + 剥协议 token，不转义 HTML、不做安全过滤。输出仍是不可信文本，渲染端该做的转义/隔离照做。
 - **`fixGfmTables` 只管「表头 vs 分隔行列数」这一种错**：表头列数不会被改，数据行列数也不碰；表格因别的原因（缺空行、嵌套等）渲染失败它管不了。
 - **`stripLeakedSpecialTokens` 当前强绑 `DSML` 字面量**：`index.ts` 的早出和三条 regex 的 lookahead 都要求出现 `DSML`；要支持其它模型的 token 必须改源码放宽断言，而非配置。它**不解析、不恢复** tool_call（§2.2）——恢复是调用方责任。
-- **`hadLeak` 是唯一的可观测信号**：`normalizeAssistantContent` 把它丢了。需要审计/告警「LLM 漏了内部协议 token」就别用便捷入口，拆开调 `stripLeakedSpecialTokens`（agent 的做法，§4）。`hadLeak` 适合接日志/遥测，提示上游 prompt 或 provider parser 可能有问题。
-- **顺序不可换**：先剥 token 再修表格（`index.ts`）；自己手动组合时务必保持此序，否则 DSML 里的全角/半角竖线可能干扰表格列数判断。
+- **`hadLeak` 是唯一的可观测信号**：需要审计/告警「LLM 漏了内部协议 token」时接它（agent 的做法，§4），提示上游 prompt 或 provider parser 可能有问题。
 - **应在「完整响应」上调，而非每个流式 chunk**：DSML block 是跨 chunk 的成对结构，半截 chunk 上调只能命中「单 token / 未闭合片段」兜底，无法正确剥整段。约定是**拿到完整 content 后调一次**。
 
 ---
 
 ## 6. 交叉链接
 
-- [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 一条消息从平台流到 LLM 再返回的完整管线；本库是 assistant `content` 出口前的最后一道净化。
-- [services/agent](../services/agent.md) — 回合编排引擎，`normalizeAssistantContent` 的权威调用点（回合收尾）。
+- [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 一条消息从平台流到 LLM 再返回的完整管线；本库在 assistant `content` 的出口剥协议标记、在渲染端修表格。
+- [services/agent](../services/agent.md) — 回合编排引擎，在完整回复上调 `stripLeakedSpecialTokens`（回合收尾）。
 - [services/llm](../services/llm.md) — LLM provider 契约；provider 插件（如 deepseek）在出口处用本库剥离泄漏 token。
-- [services/webui](../services/webui.md) — WebUI 前端渲染层，复用 `fixGfmTables` 做渲染预处理。
+- [services/webui](../services/webui.md) — WebUI 前端渲染层，用 `fixGfmTables` 做渲染预处理。
