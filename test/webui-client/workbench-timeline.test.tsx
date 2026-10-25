@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BACKGROUND_TASK_NOTICE } from '../../packages/api-tools/src/index.js';
 import { SESSION_PROTOCOL } from '../../packages/plugin-webui-client/src/plugins/list.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
 import { FakeWebSocket } from '../helpers/fake-websocket.js';
@@ -999,8 +1000,15 @@ describe('收起、没有回复与运行指示', () => {
     expect(log.querySelectorAll('.timeline-time')).toHaveLength(1);
   });
 
-  it('输入下面写它怎么进的这一轮：开了这一轮 · 被点名、开了这一轮 · 插话、开了这一轮（没经触发判定）、并入这一轮；不在回合里的不写', async () => {
+  it('输入下面写它怎么进的这一轮：开了这一轮 · 被点名、开了这一轮 · 插话、并入这一轮，通知与后台任务的结束通知同样；别的开轮与不在回合里的不写', async () => {
     const member = { platform: 'onebot', userId: '20001', owner: false };
+    const ended = (itemId: string, fields: Parameters<typeof notice>[2]) =>
+      notice(itemId, '<写给模型的那句>', {
+        topic: BACKGROUND_TASK_NOTICE,
+        noticeId: itemId,
+        facts: { tool: 'exec', status: 'completed', durationMs: 3_000 },
+        ...fields,
+      });
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot(
@@ -1011,8 +1019,16 @@ describe('收起、没有回复与运行指示', () => {
             turn('t2', { outcome: 'silent' }),
             userMessage('u3', '<没经判定>', { turnId: 't3', entry: 'opened' }),
             userMessage('u4', '<并进来>', { turnId: 't3', entry: 'joined', addressed: true, speaker: member }),
+            ended('n3', { turnId: 't3', entry: 'joined' }),
             turn('t3', { outcome: 'replied' }),
             agentMessage('a3', '<答>', { turnId: 't3' }),
+            notice('n4', '<戳她开的>', { turnId: 't4', entry: 'opened', addressed: true, topic: 'poke' }),
+            notice('n5', '<戳她并进来的>', { turnId: 't4', entry: 'joined', addressed: true, topic: 'poke' }),
+            turn('t4', { outcome: 'silent' }),
+            notice('n6', '<开轮的通知>', { turnId: 't5', entry: 'opened' }),
+            turn('t5', { outcome: 'silent' }),
+            ended('n7', { turnId: 't6', entry: 'opened' }),
+            turn('t6', { outcome: 'silent' }),
             userMessage('x1', '<被吞掉>', { speaker: member }),
           ],
           { session: room('s1', 'im-a') },
@@ -1020,12 +1036,23 @@ describe('收起、没有回复与运行指示', () => {
     });
     const log = within(await timeline());
     const metaOf = (text: string) =>
-      [...(log.getByText(text).closest('.message')?.querySelectorAll('.message-meta') ?? [])].map(p => p.textContent);
+      [...(log.getByText(text).closest('.message, .notice')?.querySelectorAll('.message-meta') ?? [])].map(
+        p => p.textContent,
+      );
     expect(metaOf('<点名>')).toEqual(['开了这一轮 · 被点名']);
     expect(metaOf('<插话>')).toEqual(['开了这一轮 · 插话']);
-    expect(metaOf('<没经判定>')).toEqual(['开了这一轮']);
+    expect(metaOf('<没经判定>')).toEqual([]);
     expect(metaOf('<并进来>')).toEqual(['并入这一轮']);
+    expect(metaOf('<戳她开的>')).toEqual(['开了这一轮 · 被点名']);
+    expect(metaOf('<戳她并进来的>')).toEqual(['并入这一轮']);
+    expect(metaOf('<开轮的通知>')).toEqual([]);
     expect(metaOf('<被吞掉>')).toEqual([]);
+    const ends = log.getAllByRole('button', { name: /^后台任务 exec/ });
+    expect(
+      ends.map(line =>
+        [...(line.closest('.task-notice')?.querySelectorAll('.message-meta') ?? [])].map(p => p.textContent),
+      ),
+    ).toEqual([['并入这一轮'], []]);
   });
 
   it('没有输入条目的一轮（空闲开话题）在段首写来源，刷新之后（回合条目排在回复之后）同样；有输入的一轮不写', async () => {
@@ -1045,14 +1072,7 @@ describe('收起、没有回复与运行指示', () => {
     });
     const log = await timeline();
     const lines = [...log.querySelectorAll('.message-meta, .message-text, .markdown')].map(node => node.textContent);
-    expect(lines).toEqual([
-      '来自 idle-trigger',
-      '<开个话题>',
-      '来自 scheduler',
-      '<定时提醒>',
-      '开了这一轮',
-      '<提醒你>',
-    ]);
+    expect(lines).toEqual(['来自 idle-trigger', '<开个话题>', '来自 scheduler', '<定时提醒>', '<提醒你>']);
   });
 
   it('排着的消息列在输入框上方：说话人、写的话、附件个数；进了一轮从列表移进时间线，列表空了不占位置', async () => {
