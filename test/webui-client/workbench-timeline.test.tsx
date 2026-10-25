@@ -667,7 +667,7 @@ describe('时间线', () => {
     expect(log.queryByRole('button', { name: '继续' })).toBeNull();
   });
 
-  it('附件：图片走媒体地址，外站图片经代理，取不到时显示替代；文件一行写名字与类型，按句柄下载，网址的文件链到网址，没有句柄的只写名字', async () => {
+  it('附件：图片走媒体地址，外站图片经代理，取不到时显示替代；文件一行写名字与类型，有句柄的是按钮，网址的文件链到网址，没有句柄的只写名字', async () => {
     app = await renderApp('/s/s1', {
       'session/subscribe': () =>
         snapshot([
@@ -691,30 +691,69 @@ describe('时间线', () => {
     ]);
     fireEvent.error(images[0]);
     expect(log.getByRole('img', { name: 'x.png（取不到）' }).textContent).toBe('图片取不到');
-    const file = log.getByRole('link', { name: /报告\.pdf/ });
-    expect(file.getAttribute('href')).toBe('/api/session-file?sessionId=s1&handle=handle-1');
-    expect(file.hasAttribute('download')).toBe(true);
-    expect(file.textContent).toBe('报告.pdfPDF');
+    expect(log.getByRole('button', { name: /报告\.pdf/ }).textContent).toBe('报告.pdfPDF');
     expect(log.getByText('只有名字.txt').closest('a, button')).toBeNull();
     expect(log.getByText('只有名字.txt').parentElement?.textContent).toBe('只有名字.txtTXT');
-    expect(log.getByRole('link', { name: /Makefile/ }).textContent).toBe('Makefile文件');
+    expect(log.getByRole('button', { name: /Makefile/ }).textContent).toBe('Makefile文件');
     expect(log.getByRole('link', { name: /手册\.pdf/ }).getAttribute('href')).toBe(
       'https://example.invalid/manual.pdf',
     );
   });
 
-  it('文本类的文件与通知里的成品点开预览（Markdown 照常渲染），预览里也能下载；太大的、取不到的写明原因，只给下载', async () => {
+  /** 点开后交给浏览器的下载：按句柄的记地址，用读到的字节的记字节 */
+  function captureDownloads() {
+    const saved: Array<{ name: string; href?: string; bytes?: Uint8Array }> = [];
+    const made = new Map<string, Blob>();
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL(blob: Blob) {
+          const url = `blob:zz-${made.size}`;
+          made.set(url, blob);
+          return url;
+        }
+        static revokeObjectURL(url: string) {
+          made.delete(url);
+        }
+      },
+    );
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      const href = this.getAttribute('href') ?? '';
+      const blob = made.get(href);
+      const name = this.download;
+      if (!blob) {
+        saved.push({ name, href });
+        return;
+      }
+      // jsdom 的 Blob 没有 arrayBuffer()：经 FileReader 读
+      const reader = new FileReader();
+      reader.onload = () => saved.push({ name, bytes: new Uint8Array(reader.result as ArrayBuffer) });
+      reader.readAsArrayBuffer(blob);
+    });
+    return saved;
+  }
+
+  it('有句柄的文件点开时取来按内容判：文本在对话框里预览（Markdown 按名字渲染、别的原样），预览里也能下载；不是文本的用读到的字节直接下载，超过 512 KB 的不读完、按句柄下载；取不到的写明原因', async () => {
     const href = (handle: string) => `/api/session-file?sessionId=s1&handle=${handle}`;
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+    let bigCancelled = false;
     app = await renderApp(
       '/s/s1',
       {
         'session/subscribe': () =>
           snapshot([
-            agentMessage('a1', '', { attachments: [{ kind: 'file', src: 'h-md', name: '周报.md' }] }),
+            agentMessage('a1', '', {
+              attachments: [
+                { kind: 'file', src: 'h-md', name: '周报.md' },
+                { kind: 'file', src: 'h-readme', name: 'README' },
+              ],
+            }),
             notice('n1', '作品已完成', {
               topic: 'works',
               attachments: [
                 { kind: 'file', src: 'h-log', name: 'build.log' },
+                { kind: 'file', src: 'h-cfg', name: 'notes.cfg' },
+                { kind: 'file', src: 'h-png', name: 'a.txt' },
                 { kind: 'file', src: 'h-big', name: 'big.txt' },
                 { kind: 'file', src: 'h-gone', name: 'gone.txt' },
               ],
@@ -723,32 +762,142 @@ describe('时间线', () => {
       },
       {
         [href('h-md')]: () => new Response('# 本周\n\n做完了三件事', { headers: { 'Content-Length': '30' } }),
+        [href('h-readme')]: () => new Response('先读我', { headers: { 'Content-Length': '9' } }),
         [href('h-log')]: () => new Response('<b>原样</b>\nok', { headers: { 'Content-Length': '16' } }),
-        [href('h-big')]: () => new Response('x', { headers: { 'Content-Length': String(2 * 1024 * 1024) } }),
+        [href('h-cfg')]: () => new Response('key = value', { headers: { 'Content-Length': '11' } }),
+        [href('h-png')]: () => new Response(png, { headers: { 'Content-Length': String(png.length) } }),
+        [href('h-big')]: () =>
+          new Response(
+            new ReadableStream({
+              cancel() {
+                bigCancelled = true;
+              },
+            }),
+            { headers: { 'Content-Length': String(2 * 1024 * 1024) } },
+          ),
         [href('h-gone')]: () => Response.json({ error: '文件已不在' }, { status: 404 }),
       },
     );
+    const downloads = captureDownloads();
     const log = within(await timeline());
     fireEvent.click(log.getByRole('button', { name: /周报\.md/ }));
-    let dialog = within(screen.getByRole('dialog', { name: '周报.md' }));
+    let dialog = within(await screen.findByRole('dialog', { name: '周报.md' }));
     expect((await dialog.findByRole('heading', { name: '本周' })).tagName).toBe('H1');
     const download = dialog.getByRole('link', { name: '下载' });
     expect([download.getAttribute('href'), download.getAttribute('download')]).toEqual([href('h-md'), '周报.md']);
     fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
 
-    fireEvent.click(log.getByRole('button', { name: /build\.log/ }));
-    dialog = within(screen.getByRole('dialog', { name: 'build.log' }));
-    expect((await dialog.findByText(/原样/)).textContent).toBe('<b>原样</b>\nok');
-    fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+    for (const [name, text] of [
+      ['README', '先读我'],
+      ['build.log', '<b>原样</b>\nok'],
+      ['notes.cfg', 'key = value'],
+    ]) {
+      fireEvent.click(log.getByRole('button', { name: new RegExp(name.replace('.', '\\.')) }));
+      dialog = within(await screen.findByRole('dialog', { name }));
+      expect(await dialog.findByText((_, node) => node?.tagName === 'PRE' && node.textContent === text)).toBeTruthy();
+      fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+    }
 
+    fireEvent.click(log.getByRole('button', { name: /a\.txt/ }));
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    expect(downloads[0]).toEqual({ name: 'a.txt', bytes: png });
     fireEvent.click(log.getByRole('button', { name: /big\.txt/ }));
-    dialog = within(screen.getByRole('dialog', { name: 'big.txt' }));
-    expect((await dialog.findByRole('alert')).textContent).toBe('文件超过 512 KB，下载后查看');
-    fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+    await vi.waitFor(() => expect(downloads).toHaveLength(2));
+    expect(downloads[1]).toEqual({ name: 'big.txt', href: href('h-big') });
+    expect(bigCancelled).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     fireEvent.click(log.getByRole('button', { name: /gone\.txt/ }));
-    dialog = within(screen.getByRole('dialog', { name: 'gone.txt' }));
+    dialog = within(await screen.findByRole('dialog', { name: 'gone.txt' }));
     expect((await dialog.findByRole('alert')).textContent).toBe('文件已不在');
+  });
+
+  it('点开的文件取完之前，对话框写着正在读取，取完显示正文', async () => {
+    const href = '/api/session-file?sessionId=s1&handle=h-slow';
+    let release = () => {};
+    const ready = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () =>
+          snapshot([agentMessage('a1', '', { attachments: [{ kind: 'file', src: 'h-slow', name: 'slow.log' }] })]),
+      },
+      {
+        [href]: async () => {
+          await ready;
+          return new Response('ok', { headers: { 'Content-Length': '2' } });
+        },
+      },
+    );
+    fireEvent.click(within(await timeline()).getByRole('button', { name: /slow\.log/ }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'slow.log' }));
+    expect(dialog.getByText('正在读取…')).toBeTruthy();
+    release();
+    await dialog.findByText((_, node) => node?.tagName === 'PRE' && node.textContent === 'ok');
+  });
+
+  it('读取挂住时关掉对话框：这次读取收到中止', async () => {
+    const href = '/api/session-file?sessionId=s1&handle=h-hang';
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () =>
+          snapshot([agentMessage('a1', '', { attachments: [{ kind: 'file', src: 'h-hang', name: 'hang.log' }] })]),
+      },
+      { [href]: () => new Promise<never>(() => {}) },
+    );
+    const button = within(await timeline()).getByRole('button', { name: /hang\.log/ });
+    fireEvent.click(button);
+    const dialog = within(await screen.findByRole('dialog', { name: 'hang.log' }));
+    expect(dialog.getByText('正在读取…')).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+    const reading = vi.mocked(fetch).mock.calls.find(([input]) => input === href);
+    expect((reading?.[1] as RequestInit | undefined)?.signal?.aborted).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('正文读完、还没交出时关掉对话框：读到的文本不再显示，不是文本的也不下载', async () => {
+    const href = (handle: string) => `/api/session-file?sessionId=s1&handle=${handle}`;
+    // 正文什么时候读完由用例放行，读取不随中止失败：关掉对话框之后照样读完、交给读完之后的那一步
+    const finish: Array<() => void> = [];
+    const late = (bytes: Uint8Array) => () =>
+      Object.assign(new Response(null, { headers: { 'Content-Length': String(bytes.length) } }), {
+        arrayBuffer: () =>
+          new Promise<ArrayBuffer>(resolve => finish.push(() => resolve(new Uint8Array(bytes).buffer))),
+      });
+    app = await renderApp(
+      '/s/s1',
+      {
+        'session/subscribe': () =>
+          snapshot([
+            agentMessage('a1', '', {
+              attachments: [
+                { kind: 'file', src: 'h-text', name: 'late.log' },
+                { kind: 'file', src: 'h-bin', name: 'late.bin' },
+              ],
+            }),
+          ]),
+      },
+      {
+        [href('h-text')]: late(new TextEncoder().encode('读到了')),
+        [href('h-bin')]: late(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0])),
+      },
+    );
+    captureDownloads();
+    const log = within(await timeline());
+    for (const name of ['late.log', 'late.bin']) {
+      fireEvent.click(log.getByRole('button', { name: new RegExp(name.replace('.', '\\.')) }));
+      const dialog = within(await screen.findByRole('dialog', { name }));
+      await vi.waitFor(() => expect(finish).toHaveLength(1));
+      fireEvent.click(dialog.getByRole('button', { name: '关闭' }));
+      finish.shift()?.();
+      await act(() => new Promise(resolve => setTimeout(resolve, 0)));
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+    // 下载经临时链接的 click 交给浏览器（captureDownloads 接住了它）：一次都没点
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
   });
 });
 

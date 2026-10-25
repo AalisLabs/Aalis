@@ -1,6 +1,10 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { type MediaService, media } from '../../packages/api-media/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import {
   type StorageEntry,
@@ -10,7 +14,7 @@ import {
   type StorageStat,
   storage,
 } from '../../packages/api-storage/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type ToolService, toolFailed, tools } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
@@ -21,7 +25,14 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { archivedItem } from '../../packages/plugin-session-server/src/history.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { type IncomingMessage, type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
+import {
+  type IncomingMessage,
+  type Message,
+  type MessageAttachment,
+  WellKnownMetadataKeys,
+} from '../../packages/schema-message/src/index.js';
+import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { png, storedZip } from '../fixtures/file-heads.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
@@ -46,10 +57,13 @@ const PLUGIN_DATA_ROOT: StorageRootInfo = {
   writable: true,
   deletable: true,
 };
+/** 适配器落盘入站附件的根（QQ 发来的文件在这里） */
+const DATA_ROOT: StorageRootInfo = { ...PLUGIN_DATA_ROOT, name: 'data', label: '数据', kind: 'data' };
 
-/** 最小内存 storage：只实现 file-reader 实际调用的 list/stat/readFile/writeFile/delete。 */
-function createMemoryStorage(): StorageService {
+/** 最小内存 storage：只实现 file-reader 实际调用的 list/stat/readFile/writeFile/delete；reads 记下读过的地址。 */
+function createMemoryStorage(): StorageService & { reads: string[] } {
   const files = new Map<string, Buffer>();
+  const reads: string[] = [];
 
   const relPath = (uri: string): string => uri.slice(uri.indexOf(':/') + 1);
   const extOf = (name: string): string => {
@@ -74,7 +88,8 @@ function createMemoryStorage(): StorageService {
   };
 
   return {
-    listRoots: () => [PLUGIN_DATA_ROOT],
+    reads,
+    listRoots: () => [PLUGIN_DATA_ROOT, DATA_ROOT],
     async list(uri: string): Promise<StorageListResult> {
       const prefix = `${uri}/`;
       const seen = new Map<string, StorageEntry>();
@@ -95,6 +110,7 @@ function createMemoryStorage(): StorageService {
       return { ...entry, birthtime: FIXED_TIME };
     },
     async readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer> {
+      reads.push(uri);
       const buf = files.get(uri);
       if (!buf) throw new Error(`文件不存在: ${uri}`);
       return encoding ? buf.toString(encoding) : buf;
@@ -124,7 +140,7 @@ function createMemoryStorage(): StorageService {
 interface Fixture {
   app: App;
   /** 宿主侧的内存 storage 桩（插件装卸期间不换） */
-  store: StorageService;
+  store: StorageService & { reads: string[] };
   /** 组装器要的两样能力：收集贡献 + 记日志 */
   promptCaps: PromptAssemblyCaps;
   /** 当前有提供者的全部服务名 */
@@ -137,17 +153,25 @@ interface Fixture {
     content: string | Buffer,
     mimeType?: string,
   ): Promise<{ id: string; desc: string; message: IncomingMessage }>;
+  /** 经 preprocessor 处理一个任意来源的文件附件，返回附件描述与处理过的入站消息 */
+  attach(sessionId: string, attachment: MessageAttachment): Promise<{ desc: string; message: IncomingMessage }>;
+  /** 装上真工具服务（上线晚于 file-reader，登记在上线后补挂），放行执行闸 */
+  tools(): Promise<ToolService>;
   /** 重新装载插件（用于「重启后按磁盘恢复索引」这类用例） */
   load(config?: Record<string, unknown>): Promise<void>;
   dispose(): Promise<void>;
 }
 
-async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
+async function setup(
+  config: Record<string, unknown> = {},
+  opts: { media?: Partial<MediaService> } = {},
+): Promise<Fixture> {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services, events, contributions, logger });
   const store = createMemoryStorage();
   host.provide.use(storage, store);
+  if (opts.media) host.provide.use(media, opts.media as MediaService);
 
   // agent 桩：只负责把插件的 preprocessor 交到测试手上（file-reader 走
   // registerPreprocessor 分支，因为桩实现了这个可选方法）
@@ -201,6 +225,21 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       await preprocessor(msg, async () => undefined);
       const desc = msg._attachmentDescriptions?.[0] ?? '';
       return { id: await computeFileId(sessionId, buffer), desc, message: msg };
+    },
+    async attach(sessionId: string, attachment: MessageAttachment) {
+      if (!preprocessor) throw new Error('插件未注册 preprocessor');
+      const msg: IncomingMessage = { content: '看看这个', sessionId, platform: 'test', attachments: [attachment] };
+      await preprocessor(msg, async () => undefined);
+      return { desc: msg._attachmentDescriptions?.[0] ?? '', message: msg };
+    },
+    async tools() {
+      await app.plugin(toolsPlugin, {});
+      await app.plugins.idle();
+      const bound = app.bind({ tools }).tools;
+      if (!bound.present) throw new Error('tools 服务未注册');
+      // 删除工具是 restricted：没有 authority 时执行闸拒绝一切，这里放行以便走到 handler 自身的校验
+      bound.use.setExecutionGuard(async () => ({ ok: true }));
+      return bound.use;
     },
     load,
     dispose: async () => {
@@ -583,11 +622,456 @@ describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
     }
   });
 
-  it('字节不是 PDF → 解析失败占位，不抛出', async () => {
+  it('文件头是 PDF、解析不出：描述写读不出内容与原因，没有内容块；读工具按失败报出原因', async () => {
     const fx = await setup();
     try {
-      const { desc } = await fx.upload('s-pdf', 'bad.pdf', Buffer.from('not a pdf'), 'application/pdf');
-      expect(desc).toContain('[PDF 解析失败]');
+      const toolService = await fx.tools();
+      const { id, desc } = await fx.upload('s-pdf', 'bad.pdf', Buffer.from('%PDF-1.4\n坏掉的正文'), 'application/pdf');
+      expect(desc).toMatch(/^\[文件: bad\.pdf \(ID: [0-9a-f]{16}\) — 读不出内容：PDF 解析失败/);
+      expect(desc).not.toContain('--- 文件内容 ---');
+      const meta = JSON.parse(
+        String(await fx.store.readFile(`pluginData:/file-reader/s-pdf/${id}.meta.json`, 'utf-8')),
+      );
+      expect(meta, '解析失败可能是一时的：不缓存，下次重试').not.toHaveProperty('extraction');
+      const read = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-pdf' }));
+      expect(toolFailed(read.content)).toBe(true);
+      expect(read.content).toContain('PDF 解析失败');
+    } finally {
+      await fx.dispose();
+    }
+  });
+});
+
+const DOCX_NS = [
+  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
+  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+  'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"',
+  'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"',
+  'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"',
+].join(' ');
+
+/**
+ * 最小的 DOCX：段落（空串是空段落）之后按顺序内嵌 images 里的文件（word/media/ 下的文件名对内容）；
+ * [Content_Types].xml 按扩展名登记 png 与 emf，mammoth 报的类型取自这里
+ */
+function minimalDocx(paragraphs: string[], images: Record<string, Uint8Array> = {}): Buffer {
+  const names = Object.keys(images);
+  const body = paragraphs.map(text => (text ? `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>` : '<w:p/>')).join('');
+  const drawings = names
+    .map(
+      (_, i) =>
+        `<w:p><w:r><w:drawing><wp:inline><wp:docPr id="${i + 1}" name="p${i + 1}"/><a:graphic>` +
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill>' +
+        `<a:blip r:embed="rId${i + 1}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+    )
+    .join('');
+  const rels = names
+    .map(
+      (name, i) =>
+        `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${name}"/>`,
+    )
+    .join('');
+  return storedZip({
+    '[Content_Types].xml':
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="png" ContentType="image/png"/><Default Extension="emf" ContentType="image/x-emf"/></Types>',
+    'word/document.xml': `<w:document ${DOCX_NS}><w:body>${body}${drawings}</w:body></w:document>`,
+    'word/_rels/document.xml.rels': `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`,
+    ...Object.fromEntries(names.map(name => [`word/media/${name}`, images[name]])),
+  });
+}
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PNG_HEAD = Buffer.from(png());
+const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+// ════════════════════════════════════════════════════════════
+// 能不能当文本读、是哪种文档，都按内容判：附件报的 MIME 与扩展名是别人写的标签（浏览器把 .ts 报成 video/mp2t，没扩展名
+// 的 README 报成二进制流）。PDF、DOCX 认文件头，合法的 UTF-8 是正文，其余如实写读不出的原因，不按 UTF-8 硬解出乱码。
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: 按内容判文本与文档', () => {
+  it('浏览器报成 video/mp2t 的 .ts 源码：内联正文', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-t', 'a.ts', 'const x = 1;', 'video/mp2t');
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('const x = 1;');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('没有扩展名、报成二进制流的 README：内联正文', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-t', 'README', 'hello', 'application/octet-stream');
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('hello');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('名字与类型都写成文本、内容是 PNG：不内联乱码，写明是 PNG 图片', async () => {
+    const fx = await setup();
+    try {
+      const { id, desc } = await fx.upload('s-t', 'x.txt', PNG_HEAD, 'text/plain');
+      expect(desc).toMatch(/^\[文件: x\.txt \(ID: [0-9a-f]{16}\) — 读不出内容：这是 PNG 图片/);
+      expect(desc).not.toContain('--- 文件内容 ---');
+      const meta = JSON.parse(String(await fx.store.readFile(`pluginData:/file-reader/s-t/${id}.meta.json`, 'utf-8')));
+      expect(meta, '读不出是对内容的结论，与正文一样缓存').toMatchObject({
+        format: 'PNG',
+        extraction: { unreadable: expect.stringContaining('PNG 图片') },
+      });
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('GBK 编码的文本：写不是 UTF-8 文本，不硬解出乱码', async () => {
+    const fx = await setup();
+    try {
+      // 「中文」的 GBK 编码
+      const { desc } = await fx.upload('s-t', 'gbk.txt', Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), 'text/plain');
+      expect(desc).toMatch(/^\[文件: gbk\.txt \(ID: [0-9a-f]{16}\) — 读不出内容：不是 UTF-8 文本/);
+      expect(desc).not.toContain('--- 文件内容 ---');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('旧版 Office 文档（复合文档魔数）：写请另存为新格式后重传', async () => {
+    const fx = await setup();
+    try {
+      const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]);
+      const { desc } = await fx.upload('s-t', 'old.doc', ole, 'application/msword');
+      expect(desc).toContain('读不出内容：旧版 Office 文档（.doc/.xls/.ppt），请另存为新格式后重传');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('上传的 data URL 超过大小上限：写超过大小限制，不存不读', async () => {
+    const fx = await setup({ maxFileSizeMB: 0.001 });
+    try {
+      const { desc } = await fx.upload('s-t', 'big.txt', 'x'.repeat(2000));
+      expect(desc).toContain('[文件: big.txt - 超过大小限制');
+      expect(desc).not.toContain('--- 文件内容 ---');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('正文本身以「[不支持」开头的文本照常内联', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-t', 'notes.txt', '[不支持的写法] 列在这里');
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('[不支持的写法] 列在这里');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('只有空段落的 DOCX：写读不出内容，不内联空白', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-t', 'blank.docx', minimalDocx(['', '']), DOCX_MIME);
+      expect(desc).toMatch(/^\[文件: blank\.docx \(ID: [0-9a-f]{16}\) — 读不出内容：/);
+      expect(desc).not.toContain('--- 文件内容 ---');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('DOCX 内嵌图片按文件头认类型：扩展名写成 png 的 JPEG 按 image/jpeg 交给识别，认不出的（如 EMF）跳过', async () => {
+    const seen: string[] = [];
+    const fx = await setup(
+      {},
+      {
+        media: {
+          async describeImage(uri: string) {
+            seen.push(uri);
+            return '一张照片';
+          },
+        },
+      },
+    );
+    try {
+      const docx = minimalDocx(['正文'], {
+        'image1.png': JPEG_HEAD,
+        'image2.emf': Buffer.from([0x01, 0x00, 0x00, 0x00, 0x6c, 0x00, 0x00, 0x00]),
+      });
+      const { desc } = await fx.upload('s-t', 'pics.docx', docx, DOCX_MIME);
+      expect(seen).toEqual([`data:image/jpeg;base64,${JPEG_HEAD.toString('base64')}`]);
+      expect(desc).toContain('[图片1: 一张照片]');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('只有内嵌图片、没有文字的 DOCX：图片描述照算正文，内联', async () => {
+    const fx = await setup({}, { media: { describeImage: async () => '一张照片' } });
+    try {
+      const { desc } = await fx.upload('s-t', 'pic-only.docx', minimalDocx([], { 'image1.png': JPEG_HEAD }), DOCX_MIME);
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('[图片1: 一张照片]');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('DOCX 里内嵌的不是图片（扩展名写成 png 的 MP3）：不送去识别', async () => {
+    const seen: string[] = [];
+    const fx = await setup(
+      {},
+      {
+        media: {
+          async describeImage(uri: string) {
+            seen.push(uri);
+            return '一张照片';
+          },
+        },
+      },
+    );
+    try {
+      const mp3 = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]);
+      await fx.upload('s-t', 'audio.docx', minimalDocx(['正文'], { 'image1.png': mp3 }), DOCX_MIME);
+      expect(seen).toEqual([]);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('会话面板与工具输出里的类型是判定出的格式名', async () => {
+    const fx = await setup();
+    try {
+      const toolService = await fx.tools();
+      await fx.upload('s-t', 'a.ts', 'const x = 1;', 'video/mp2t');
+      await fx.upload('s-t', 'hello.pdf', minimalPdf('Hello'), 'application/pdf');
+      const listed = await toolService.execute('list_uploaded_files', {}, toolRequest({ sessionId: 's-t' }));
+      expect(listed.content).toMatch(/- a\.ts \(ID: [0-9a-f]{16}, 类型: 文本,/);
+      expect(listed.content).toMatch(/- hello\.pdf \(ID: [0-9a-f]{16}, 类型: PDF,/);
+    } finally {
+      await fx.dispose();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 附件的来源：QQ 发来的文件落盘成存储地址（落盘失败时是原网址），WebUI 发来的是 data URL。存储地址先看大小再读，网址经
+// 受保护的下载，超过上限的不读；别的来源（file://、本机路径）不读本机文件，写明读不出。
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: 存储地址与网址的文件附件', () => {
+  it('存储地址：经存储读出内容，内联正文', async () => {
+    const fx = await setup();
+    try {
+      const uri = 'data:/files/s/onebot/0123456789abcdef.bin';
+      await fx.store.writeFile(uri, 'hello');
+      const { desc } = await fx.attach('s-q', { kind: 'file', data: uri, name: 'notes.txt' });
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('hello');
+      expect(desc).not.toContain('处理失败');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('存储地址：描述带上原来的地址，归档的附件清单记它，会话历史里照样能点开', async () => {
+    const fx = await setup();
+    try {
+      await fx.app.plugin(memoryInMemoryPlugin);
+      await fx.app.plugin(messageArchivePlugin, { debugLogs: false });
+      await fx.app.plugins.idle();
+      const uri = 'data:/files/s/onebot/00112233445566aa.bin';
+      await fx.store.writeFile(uri, 'hello');
+      const { desc, message } = await fx.attach('s-q', { kind: 'file', data: uri, name: 'notes.txt' });
+      expect(desc).toMatch(
+        /^\[文件: notes\.txt \(ID: [0-9a-f]{16}\) \| ref:data:\/files\/s\/onebot\/00112233445566aa\.bin\]\n/,
+      );
+      const archived = await fx.app.bind({ messageArchive }).messageArchive.use.archiveIncoming(message);
+      expect(archived?.message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([
+        { kind: 'file', name: 'notes.txt', ref: uri },
+      ]);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('网址：经受保护的下载取，内联正文；下载失败写明原因', async () => {
+    const server = createServer((req, res) => {
+      if (req.url === '/gone.txt') res.statusCode = 404;
+      res.end('hi');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；结束时复原
+    const fx = await setup();
+    try {
+      const { port } = server.address() as AddressInfo;
+      const { desc } = await fx.attach('s-q', {
+        kind: 'file',
+        data: `http://127.0.0.1:${port}/notes.txt`,
+        name: 'notes.txt',
+      });
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('hi');
+      expect(desc, '网址同样是地址，描述带上它').toContain(`| ref:http://127.0.0.1:${port}/notes.txt]`);
+      const { desc: gone } = await fx.attach('s-q', {
+        kind: 'file',
+        data: `http://127.0.0.1:${port}/gone.txt`,
+        name: 'gone.txt',
+      });
+      expect(gone).toBe('[文件: gone.txt - 处理失败：下载失败：HTTP 404]');
+    } finally {
+      await fx.dispose();
+      setNetworkPolicy({ blockPrivate: true });
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('网址的文件超过上限：声明的长度超限的不读响应体，没声明长度的读到超限就停', async () => {
+    // 两条路由都只发一部分就一直不回：没按上限停下的话，要等满下载时限才报出处理失败
+    const server = createServer((req, res) => {
+      if (req.url === '/declared.txt') {
+        res.writeHead(200, { 'content-length': '5000' });
+        res.write('x'.repeat(100));
+        return;
+      }
+      res.writeHead(200);
+      res.write('x'.repeat(600));
+      res.write('x'.repeat(600));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；结束时复原
+    const fx = await setup({ maxFileSizeMB: 0.001 });
+    try {
+      const { port } = server.address() as AddressInfo;
+      for (const path of ['/declared.txt', '/chunked.txt']) {
+        const { desc } = await fx.attach('s-q', {
+          kind: 'file',
+          data: `http://127.0.0.1:${port}${path}`,
+          name: 'big.txt',
+        });
+        expect(desc, path).toContain('[文件: big.txt - 超过大小限制');
+      }
+    } finally {
+      await fx.dispose();
+      setNetworkPolicy({ blockPrivate: true });
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('存储地址的文件超过上限：写超过大小限制，不读文件', async () => {
+    const fx = await setup({ maxFileSizeMB: 0.001 });
+    try {
+      const uri = 'data:/files/s/onebot/fedcba9876543210.bin';
+      await fx.store.writeFile(uri, 'x'.repeat(2000));
+      const { desc } = await fx.attach('s-q', { kind: 'file', data: uri, name: 'big.txt' });
+      expect(desc).toContain('[文件: big.txt - 超过大小限制');
+      expect(fx.store.reads).not.toContain(uri);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('file:// 来源：写读不出，不读本机文件', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.attach('s-q', {
+        kind: 'file',
+        data: 'file:///<占位路径>/notes.txt',
+        name: 'notes.txt',
+      });
+      expect(desc).toBe('[文件: notes.txt — 读不出内容：附件来源不是存储地址、网址或 base64 的 data URL]');
+    } finally {
+      await fx.dispose();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// read_uploaded_file：文件不在索引里（按保留天数与总量清掉了）就如实说找不到、请用户重新上传，不从会话历史里找旧的工具
+// 结果冒充文件内容；maxLength 给了就要是正整数，截断不切开代理对。不传时按 toolDefaultMaxLength 截，它为 0 表示不截断，
+// 负数与小数读配置时报配置错误。
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: read_uploaded_file', () => {
+  it('文件已清理：按失败报找不到、提示重新上传，不拿历史里的旧结果冒充', async () => {
+    const fx = await setup();
+    try {
+      await fx.app.plugin(memoryInMemoryPlugin);
+      await fx.app.plugins.idle();
+      const toolService = await fx.tools();
+      const fileId = 'deadbeefdeadbeef';
+      await fx.app.bind({ memory }).memory.use.saveMessage('s-r', {
+        role: 'tool',
+        content: `文件: old.txt\n类型: text/plain\n大小: 0.1 KB\n\n--- 内容 ---\n旧的正文 ${fileId}`,
+      });
+      const read = await toolService.execute('read_uploaded_file', { fileId }, toolRequest({ sessionId: 's-r' }));
+      expect(toolFailed(read.content)).toBe(true);
+      expect(read.content).toContain(`找不到文件 (ID: ${fileId})`);
+      expect(read.content).toContain('重新上传');
+      expect(read.content).not.toContain('旧的正文');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it.each([-5, 0, 2.5])('maxLength 为 %s：按失败报「要是正整数」', async maxLength => {
+    const fx = await setup();
+    try {
+      const toolService = await fx.tools();
+      const { id } = await fx.upload('s-r', 'notes.txt', '一二三四五六七八九十');
+      const read = await toolService.execute(
+        'read_uploaded_file',
+        { fileId: id, maxLength },
+        toolRequest({ sessionId: 's-r' }),
+      );
+      expect(toolFailed(read.content)).toBe(true);
+      expect(read.content).toContain('maxLength 要是正整数');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('toolDefaultMaxLength 为 0：不截断，不传 maxLength 时整份返回', async () => {
+    const fx = await setup({ toolDefaultMaxLength: 0 });
+    try {
+      const toolService = await fx.tools();
+      const { id } = await fx.upload('s-r', 'notes.txt', '一二三四五六七八九十');
+      const read = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-r' }));
+      expect(toolFailed(read.content)).toBe(false);
+      expect(read.content.endsWith('--- 内容 ---\n一二三四五六七八九十')).toBe(true);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it.each([-1, 2.5])('toolDefaultMaxLength 为 %s：读配置时报配置错误，实例转为出错', async toolDefaultMaxLength => {
+    const fx = await setup({ toolDefaultMaxLength });
+    try {
+      const entry = fx.app.plugins.getPlugin(fileReaderPlugin.name);
+      expect(entry?.state).toBe('error');
+      expect(String(entry?.error)).toContain('toolDefaultMaxLength');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('截断不切开代理对', async () => {
+    const fx = await setup();
+    try {
+      const toolService = await fx.tools();
+      const { id } = await fx.upload('s-r', 'emoji.txt', '\u{1F600}\u{1F600}\u{1F600}');
+      const read = await toolService.execute(
+        'read_uploaded_file',
+        { fileId: id, maxLength: 3 },
+        toolRequest({ sessionId: 's-r' }),
+      );
+      expect(toolFailed(read.content)).toBe(false);
+      const body = read.content.slice(read.content.indexOf('--- 内容 ---\n') + '--- 内容 ---\n'.length);
+      expect(body.startsWith('\u{1F600}\n')).toBe(true);
+      expect(read.content).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
     } finally {
       await fx.dispose();
     }
@@ -733,7 +1217,7 @@ describe('plugin-file-reader: 文件名净化', () => {
     try {
       await fx.dispose();
       const id = 'abcdefabcdefabcd';
-      const meta = { id, name: RAW, mimeType: 'text/plain', size: 4, sessionId: 's-old', uploadedAt: Date.now() };
+      const meta = { id, name: RAW, format: '文本', size: 4, sessionId: 's-old', uploadedAt: Date.now() };
       await fx.store.writeFile(`pluginData:/file-reader/s-old/${id}.meta.json`, JSON.stringify(meta));
       await fx.load();
 
@@ -772,14 +1256,12 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
   it('别的会话拿到文件 ID 也读不到正文；本会话照常读', async () => {
     const fx = await setup();
     try {
-      await fx.app.plugin(toolsPlugin, {});
-      await fx.app.plugins.idle();
-      if (!fx.app.bind({ tools }).tools.present) throw new Error('tools 服务未注册');
-      const toolService = fx.app.bind({ tools }).tools.use;
+      const toolService = await fx.tools();
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
 
       const other = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-B' }));
-      expect(other.content).toContain('找不到文件');
+      expect(toolFailed(other.content)).toBe(true);
+      expect(other.content, '与不存在的文件同一句，不泄露是否存在').toContain(`找不到文件 (ID: ${id})`);
       expect(other.content).not.toContain('TOP-SECRET-BODY');
 
       const own = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-A' }));
@@ -792,12 +1274,7 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
   it('delete_uploaded_file：别的会话拿到文件 ID 也删不掉；本会话照常删', async () => {
     const fx = await setup();
     try {
-      await fx.app.plugin(toolsPlugin, {});
-      await fx.app.plugins.idle();
-      if (!fx.app.bind({ tools }).tools.present) throw new Error('tools 服务未注册');
-      const toolService = fx.app.bind({ tools }).tools.use;
-      // 删除工具是 restricted：没有 authority 时执行闸拒绝一切，这里放行以便走到 handler 自身的归属校验
-      toolService.setExecutionGuard(async () => ({ ok: true }));
+      const toolService = await fx.tools();
       const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
 
       const other = await toolService.execute(
@@ -805,6 +1282,7 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
         { fileId: id },
         toolRequest({ sessionId: 's-B' }),
       );
+      expect(toolFailed(other.content)).toBe(true);
       expect(other.content).toContain('文件不存在或已被删除');
       const stillThere = await toolService.execute(
         'read_uploaded_file',

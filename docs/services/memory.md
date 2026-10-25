@@ -105,7 +105,7 @@ DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, Infinity)` 读全部活跃历史，压成摘要后用 `archiveSpan` 归档切分点之前的消息（摘要模型挑出、原样保留的不归档），摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，监听 `memory:messages-rewritten` 按改写后的正文重收录，用 `getMessagesBySessionRange` 扩窗，并用 `getMetadata` / `saveMetadata` 存取 embedding 模型的存量标记（namespace `memory-vector`）。
 - **`plugin-message-archive`** 与 **`plugin-media`**（改写已落库的消息）：经可选的 `updateMessageContent` 改写，改到了发 `memory:messages-rewritten`；后端没有实现它时不改写。
-- 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
+- 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`maimai`、`adapter-onebot`、`image-sender` 等。
 
 ## 4. 写一个 provider
 

@@ -297,6 +297,19 @@ const REMOVED: Array<[string, string]> = [
   ['MEDIA_TYPES[', 'WebUI 服务端 /api/media 的格式到 MIME 表：只留放行的格式集合，MIME 取判定结果'],
   ['imageMimeFromPath', 'tool-onebot 按扩展名定本地图的 MIME：读出来按文件头认'],
   ['TYPE_EXTENSIONS', '白纸成品发出前核对远端给的原扩展名：类型按内容判定，发出名由宿主按判定类型重写'],
+  ['findCachedToolResult', 'file-reader 在会话历史里找旧的工具结果冒充已清理的文件：如实说找不到、请用户重新上传'],
+  ['dataUrlToBuffer', 'file-reader 只认 base64 data URL 取附件字节：按来源取（data URL、存储地址、网址）'],
+  ['inferMimeType', 'file-reader 先信附件报的 MIME、再按扩展名查表：按内容判'],
+  ['TEXT_MIME_TYPES', 'file-reader 按 MIME 认文本的表：按内容判'],
+  ['EXT_MIME_MAP', 'file-reader 按扩展名推 MIME 的表：按内容判'],
+  ['extractTextFromBuffer', 'file-reader 按 MIME 分流、读不出时写方括号占位：按内容分流，交结构化的提取结果'],
+  ['isTransientExtractionFailure', 'file-reader 按占位文字认能不能缓存：提取结果自带能不能重试'],
+  ['textCache', 'file-reader 元信息里缓存的提取文字：缓存结构化的提取结果'],
+  ['TEXT_TYPES', 'WebUI 附件按扩展名表决定能不能预览：点开时按内容判'],
+  ['previewTooLarge', 'WebUI 附件预览太大时弹框写原因：超过上限的直接下载'],
+  ['previewNotText', 'WebUI 附件预览不是文本时弹框写原因：用读到的字节直接下载'],
+  // 别处另有同名的 readText 在用，按名字登记会误撞，登记删掉的那一份的写法
+  ['readText(href', 'WebUI 附件预览按文字读、只看有没有 NUL：读字节后按内容判'],
 ];
 
 /**

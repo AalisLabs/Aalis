@@ -30,18 +30,20 @@
   "dependencies": {
     "@aalis/api-agent": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-media": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-memory": "workspace:>=0.8.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/util-file-signature": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/util-network-guard": "workspace:>=0.6.3 <1.0.0",
+    "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "mammoth": "^1.8.0",
     "unpdf": "^1.8.1",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/schema-message": "workspace:*",
     "@aalis/api-session-manager": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -62,7 +64,6 @@
       "optional": [
         "tools",
         "agent",
-        "memory",
         "media",
         "webui-server"
       ]

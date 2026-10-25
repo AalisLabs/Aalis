@@ -488,6 +488,18 @@
 - plugin-webui-client：条目附件与 Markdown 里的地址按 api-storage 的同一文法认存储地址，`file:` 开头的不再拼成 `/api/media` 去取（服务端回 400）：图片只写替代文字，附件写成一行名字。
 - plugin-webui-server：图片代理（`/api/proxy/image`）按文件头认图，放行与 `/api/media` 同一份图片格式（PNG、JPEG、GIF、WebP），类型取判定结果、不看上游的 Content-Type：外链 SVG 不再经代理显示，类型头写错的真图照常显示；不是图片的回 415，说明改为「上游返回的不是能显示的图片」。`/api/media` 按 api-storage 的同一文法认存储地址，`file:/` 开头的回 400。
 
+### 文件读取、WebUI 附件与 http 工具（@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-file-reader、@aalis/plugin-tool-system、@aalis/plugin-skills）
+
+- api-session-protocol：`turn/send` 的附件（`OutgoingAttachmentSchema`）只收 `data` 与 `name`，删掉 `kind`、`mimeType`、`byteSize`、`durationSec`；`data` 要是 base64 的 data URL，不是的（如存储地址）回不合参数（破坏性）。
+- plugin-session-server：`turn/send` 的附件种类按文件头判定，data URL 的类型头换成判定格式的 MIME，不是媒体的写 `application/octet-stream`，下游看不到浏览器报的类型。浏览器报错类型的文本文件（`.ts` 报成 `video/mp2t`、`.svg` 报成 `image/svg+xml`）改交文件读取当文本读，SVG 不再当图片送去识别；类型头写错的图片照样按图片处理。plugin-webui-client 的输入框发附件只带内容与名字，data URL 的类型一律写 `application/octet-stream`，空文件照常发出。
+- plugin-webui-client：有句柄的文件一律可以点开，点开时取来按内容判：UTF-8 文本（含没有扩展名的 README、扩展名不在原清单里的源码与配置）在对话框里预览，不是文本的用读到的字节直接下载，超过 512 KB 的不读完、直接下载，不再弹框写原因（这两种取的时候同样先弹出写着正在读取的对话框，取完关掉）；名字是 `md`、`markdown` 的照常渲染，名字只决定怎么渲染、不决定能不能预览。
+- plugin-file-reader：QQ 发来的文件在文件段带网址时（附件是落盘的存储地址，落盘失败时是网址）能读了，不再一律「处理失败」：存储地址先看大小再读，网址经受保护的下载（15 秒超时，响应体流式限在 `maxFileSizeMB` 以内），`file://` 与本机路径不读、写明读不出；没给文件地址的写「来源没有给出文件地址」；别的处理失败带上原因。
+- plugin-file-reader：能不能当文本读、是哪种文档按内容判，不看附件报的 MIME 与扩展名：没有扩展名或扩展名不在原清单里的文本（源码、配置、README）能直接读；只认 UTF-8，GBK 等编码的文本与扩展名写成文本的二进制如实写读不出，不再硬解出乱码。读不出的描述写「读不出内容：<原因>」，不再把「[PDF 解析失败]」「[DOCX 无文本内容]」这类占位当文件内容内联；正文以方括号开头的普通文本照常内联。DOCX 内嵌图片按文件头认类型，认不出的（EMF、WMF 等）不送去识别。
+- plugin-file-reader：会话面板与工具输出里的「类型」是判定出的格式名（`文本`、`PDF`、`DOCX`、`PNG`…），不再是 MIME；元信息里的 `mimeType` 换成 `format`，`textCache` 换成结构化的 `extraction`，旧的文字缓存不再读，下次用到时重新解析。
+- plugin-file-reader：`read_uploaded_file` 遇到已清理的文件如实报找不到、请用户重新上传，不再从会话历史里找旧的工具结果冒充文件内容，插件不再用 memory 服务；`maxLength` 要是正整数（负数、0 与小数报错，此前负数切掉尾部、0 不截断），截断不切开代理对；配置的 `toolDefaultMaxLength` 要是非负整数，0 表示不截断（与同组的 `retentionDays`、`lruMaxTotalMB` 一样 0 表示不限），负数与小数读配置时报配置错误，实例转为出错。三个工具的失败一律抛错，WebUI 工具卡上显示为失败。
+- plugin-tool-system：`http_request` 的字符串正文（`body`）原样发出，不再补 `Content-Type: application/json`；要发 JSON 用新参数 `json`（请求头没写 `Content-Type` 时补 `application/json`；给的不是对象的报错，字符串正文用 `body`），两个都给的报错。响应是不是文本按内容判：声明类型不常见的文本（如 `application/vnd.api+json`）能看到正文，声明成文本的二进制只给「不是 <编码> 文本」与字节数、声明的类型，不再返回乱码；编码按服务端声明的 charset，声明成 GBK 等编码的正文照常读出，没声明或认不出的按 UTF-8。`Content-Length` 超限时取消响应体，`http_download` 上游回错误状态时也取消，不再占着连接。
+- plugin-skills：`createSkill` 探目标目录时，存储报的不是「不存在」（没有权限、存储不可用）就报错，不再当作目录不存在去创建。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

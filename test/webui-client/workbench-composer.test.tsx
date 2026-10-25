@@ -88,7 +88,7 @@ describe('输入框', () => {
     );
   });
 
-  it('附件一律接收：只有附件也能发，随 turn/send 以 data URL 发出；可以移除', async () => {
+  it('附件一律接收：只有附件也能发，随 turn/send 以 data URL 发出，只带内容与名字，不带浏览器报的类型（种类由服务端按内容定）；可以移除', async () => {
     stubViewport(1440);
     app = await renderApp('/s/s1', session);
     await main().findByRole('region', { name: '对话' });
@@ -110,9 +110,38 @@ describe('输入框', () => {
     expect(requests('turn/send')[0]).toEqual({
       sessionId: 's1',
       content: '',
-      attachments: [
-        { kind: 'image', name: 'pic.png', mimeType: 'image/png', byteSize: 4, data: 'data:image/png;base64,iVBORw==' },
-      ],
+      attachments: [{ name: 'pic.png', data: 'data:application/octet-stream;base64,iVBORw==' }],
+    });
+  });
+
+  it('空文件照常发出：Chromium 读空文件给的是不带内容段的「data:」', async () => {
+    // 照 Chromium 的读法：空文件的结果是裸「data:」，别的照常
+    class ChromiumReader extends FileReader {
+      private empty = false;
+      override get result() {
+        return this.empty ? 'data:' : super.result;
+      }
+      override readAsDataURL(blob: Blob) {
+        if (blob.size > 0) return super.readAsDataURL(blob);
+        this.empty = true;
+        queueMicrotask(() => this.onload?.call(this, new ProgressEvent('load') as ProgressEvent<FileReader>));
+      }
+    }
+    vi.stubGlobal('FileReader', ChromiumReader);
+    stubViewport(1440);
+    app = await renderApp('/s/s1', session);
+    await main().findByRole('region', { name: '对话' });
+    type('看看');
+    const picker = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [new File([], 'empty.txt', { type: 'text/plain' })] } });
+    const send = main().getByRole('button', { name: '发送' }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    await vi.waitFor(() => expect(requests('turn/send')).toHaveLength(1));
+    expect(requests('turn/send')[0]).toEqual({
+      sessionId: 's1',
+      content: '看看',
+      attachments: [{ name: 'empty.txt', data: 'data:application/octet-stream;base64,' }],
     });
   });
 
@@ -439,7 +468,7 @@ describe('输入框', () => {
     fireEvent.click(main().getByRole('button', { name: '发送' }));
     await vi.waitFor(() => expect(requests('turn/send')).toHaveLength(1));
     expect((requests('turn/send')[0] as { attachments: unknown[] }).attachments).toEqual([
-      expect.objectContaining({ kind: 'file', name: 'note.txt', mimeType: 'text/plain' }),
+      { name: 'note.txt', data: 'data:application/octet-stream;base64,aGVsbG8=' },
     ]);
 
     // 拖的不是文件（选中的文字）：不拦

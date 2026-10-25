@@ -2150,6 +2150,10 @@ describe('历史', () => {
   });
 });
 
+/** PNG 的文件头（签名加 IHDR 块头）：会话服务按内容判定附件种类 */
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+const PNG_DATA_URL = `data:image/png;base64,${PNG_HEAD.toString('base64')}`;
+
 describe('回合控制', () => {
   it('turn/send 以连接的身份发入站消息；只有附件、没写文字的照常发出；会话不存在回 not-found', async () => {
     const { server, sm, host } = await setup();
@@ -2159,7 +2163,7 @@ describe('回合控制', () => {
     const c = client(server());
     await c.init();
     await c.call('turn/send', { sessionId: s.id, content: '  你好  ' });
-    const image = { kind: 'image' as const, data: 'data:image/png;base64,AAAA', name: 'a.png' };
+    const image = { data: PNG_DATA_URL, name: 'a.png' };
     await c.call('turn/send', { sessionId: s.id, content: '', attachments: [image] });
     await c.call('turn/continue', { sessionId: s.id });
     await vi.waitFor(() => expect(inbound).toHaveLength(3));
@@ -2169,12 +2173,42 @@ describe('回合控制', () => {
       sessionId: s.id,
       platform: 'webui',
       userId: 'console',
-      attachments: [image],
+      attachments: [{ kind: 'image', ...image }],
     });
     expect(inbound[2]).toMatchObject({ sessionId: s.id, platform: 'webui', userId: 'console' });
     expect(inbound[2]?.content).toContain('继续');
     expect((await c.fail('turn/send', { sessionId: 'session-nope', content: 'x' })).data?.code).toBe('not-found');
     expect((await c.fail('turn/send', { sessionId: s.id, content: '' })).code).toBe(-32602);
+  });
+
+  it('turn/send 的附件按内容定种类与类型，不信浏览器报的类型；data 不是 base64 的 data URL 回不合参数', async () => {
+    const { server, sm, host } = await setup();
+    const s = await sm.createSession({ name: 'S' });
+    const inbound: IncomingMessage[] = [];
+    host.events.use.on('inbound:message', msg => void inbound.push(msg));
+    const c = client(server());
+    await c.init();
+    const source = Buffer.from('const a: number = 1;\n').toString('base64');
+    await c.call('turn/send', {
+      sessionId: s.id,
+      content: '',
+      attachments: [
+        { data: `data:video/mp2t;base64,${source}`, name: 'a.ts' },
+        { data: `data:application/octet-stream;base64,${PNG_HEAD.toString('base64')}`, name: 'shot' },
+      ],
+    });
+    await vi.waitFor(() => expect(inbound).toHaveLength(1));
+    expect(inbound[0]?.attachments).toEqual([
+      { kind: 'file', data: `data:application/octet-stream;base64,${source}`, name: 'a.ts' },
+      { kind: 'image', data: PNG_DATA_URL, name: 'shot' },
+    ]);
+    const stored = await c.fail('turn/send', {
+      sessionId: s.id,
+      content: '看看',
+      attachments: [{ data: 'data:/x.txt' }],
+    });
+    expect(stored.code).toBe(-32602);
+    expect(inbound).toHaveLength(1);
   });
 
   it('turn/rewind 接住两种回滚并原样回结果；没有检查点服务回 unsupported', async () => {
@@ -2422,7 +2456,7 @@ describe('接 agent 与网关', () => {
 
   it('只有附件、没写文字的消息照常进 agent', async () => {
     const { s, c, inputs, turnItems } = await startAgent([{ content: '看到了' }], async () => 'ok');
-    const image = { kind: 'image' as const, data: 'data:image/png;base64,AAAA', name: 'a.png' };
+    const image = { data: PNG_DATA_URL, name: 'a.png' };
     await c.call('turn/send', { sessionId: s.id, content: '', attachments: [image] });
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'replied' }));
     expect(inputs).toHaveLength(1);
@@ -2556,7 +2590,7 @@ describe('接 agent 与网关', () => {
     });
     await c.call('turn/send', { sessionId: s.id, content: '<先跑一个慢的>' });
     await entered.promise;
-    const image = { kind: 'image' as const, data: 'data:image/png;base64,AAAA', name: 'a.png' };
+    const image = { data: PNG_DATA_URL, name: 'a.png' };
     await c.call('turn/send', { sessionId: s.id, content: '<排着的>', attachments: [image] });
     const entry = {
       // 这套装配没有权限服务：没有人是 owner

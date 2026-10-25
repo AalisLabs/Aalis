@@ -9,6 +9,7 @@
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
 import { type BoundTools, wrapUntrustedContent } from '@aalis/api-tools';
+import { decodeUtf8Text } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
@@ -38,6 +39,31 @@ async function readBodyCapped(response: Response, maxBytes: number): Promise<Buf
   return Buffer.concat(chunks);
 }
 
+/** 这种编码的严格解码器（解不开就抛错）；TextDecoder 不认的编码名为 undefined */
+function strictDecoder(label: string) {
+  try {
+    return new TextDecoder(label, { fatal: true });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 按服务端声明的 charset（Content-Type 的 charset 参数）解成文本，没声明的与 TextDecoder 不认的按 UTF-8；解不开与含 NUL
+ * 字节（二进制的特征）的 text 为 null。encoding 是用的编码名，解不开时写进「不是 … 文本」
+ */
+function decodeBody(bytes: Uint8Array, contentType: string): { text: string | null; encoding: string } {
+  const declared = /;\s*charset\s*=\s*"?([^";\s]+)/i.exec(contentType)?.[1] ?? '';
+  const decoder = declared ? strictDecoder(declared) : undefined;
+  if (!decoder) return { text: decodeUtf8Text(bytes), encoding: 'UTF-8' };
+  try {
+    const text = decoder.decode(bytes);
+    return { text: text.includes('\0') ? null : text, encoding: declared };
+  } catch {
+    return { text: null, encoding: declared };
+  }
+}
+
 export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
   // ==================== http_request ====================
   tools.register({
@@ -65,7 +91,12 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
             },
             body: {
               type: 'string',
-              description: '请求正文（POST/PUT/PATCH 时使用）',
+              description: '请求正文（POST/PUT/PATCH 时使用），原样发出，不补请求头；要发 JSON 用 json',
+            },
+            json: {
+              type: 'object',
+              description:
+                '按 JSON 发出的请求正文（POST/PUT/PATCH 时使用）；请求头里没写 Content-Type 时补 application/json。与 body 只给一个',
             },
             timeout: {
               type: 'number',
@@ -82,7 +113,13 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
       const method = ((args.method as string) || 'GET').toUpperCase();
       const headers = (args.headers as Record<string, string>) || {};
       const body = args.body as string | undefined;
+      const json = args.json;
       const timeout = (args.timeout as number) || config.defaultTimeout;
+      if (body !== undefined && json !== undefined) return JSON.stringify({ error: 'body 与 json 只能给一个' });
+      // 执行层不核参数类型：模型常把 JSON 写成字符串交给 json，照发会再编一层、发成字符串字面量
+      if (json !== undefined && (typeof json !== 'object' || json === null || Array.isArray(json))) {
+        return JSON.stringify({ error: 'json 要是对象；字符串正文用 body' });
+      }
 
       try {
         const fetchOptions: RequestInit = {
@@ -91,10 +128,12 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
           signal: AbortSignal.timeout(timeout),
         };
 
-        if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
-          fetchOptions.body = body;
-          if (!headers['content-type'] && !headers['Content-Type']) {
-            (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        // 字符串正文原样发出（fetch 给 text/plain;charset=UTF-8），不猜它是不是 JSON
+        const payload = json !== undefined ? JSON.stringify(json) : body;
+        if (payload && ['POST', 'PUT', 'PATCH'].includes(method)) {
+          fetchOptions.body = payload;
+          if (json !== undefined && !new Headers(headers).has('content-type')) {
+            fetchOptions.headers = { ...headers, 'Content-Type': 'application/json' };
           }
         }
 
@@ -102,8 +141,9 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
         const contentType = response.headers.get('content-type') || '';
         const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
 
-        // 检查响应大小
+        // 检查响应大小：超限的不读，取消响应体，不占着连接
         if (contentLength > config.maxResponseSize) {
+          await response.body?.cancel();
           return JSON.stringify({
             status: response.status,
             statusText: response.statusText,
@@ -114,18 +154,20 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
 
         // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存
         const bodyBuf = await readBodyCapped(response, config.maxResponseSize);
+        // 是不是文本按内容判（服务端声明的类型是标签）：按声明的编码解不开的（二进制，或编码与声明的不符）只返回元信息；
+        // 声明是 JSON 的美化
+        const { text, encoding } = decodeBody(bodyBuf, contentType);
         let responseBody: string;
-        if (contentType.includes('application/json')) {
+        if (text === null) {
+          responseBody = `[不是 ${encoding} 文本, ${bodyBuf.byteLength} 字节, Content-Type: ${contentType}]`;
+        } else if (contentType.includes('application/json')) {
           try {
-            responseBody = JSON.stringify(JSON.parse(bodyBuf.toString('utf-8')), null, 2);
+            responseBody = JSON.stringify(JSON.parse(text), null, 2);
           } catch {
-            responseBody = bodyBuf.toString('utf-8');
+            responseBody = text;
           }
-        } else if (contentType.includes('text/') || contentType.includes('xml') || contentType.includes('javascript')) {
-          responseBody = bodyBuf.toString('utf-8');
         } else {
-          // 二进制内容只返回元信息
-          responseBody = `[二进制内容, ${bodyBuf.byteLength} 字节, Content-Type: ${contentType}]`;
+          responseBody = text;
         }
 
         // 截断过长的响应
@@ -190,7 +232,9 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
       try {
         const response = await safeFetch(url, { signal: callCtx.signal });
 
+        // 不下的响应体一律取消，不占着连接
         if (!response.ok) {
+          await response.body?.cancel();
           return JSON.stringify({
             error: `下载失败: HTTP ${response.status} ${response.statusText}`,
           });
@@ -198,6 +242,7 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
 
         const contentLength = Number(response.headers.get('content-length') || 0);
         if (contentLength > config.maxResponseSize) {
+          await response.body?.cancel();
           return JSON.stringify({
             error: `下载内容过大 (${contentLength} 字节)，超过限制 ${config.maxResponseSize} 字节`,
           });

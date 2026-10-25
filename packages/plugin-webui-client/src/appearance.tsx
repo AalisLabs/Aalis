@@ -29,6 +29,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { useConnection } from './connection';
+import { download } from './download';
 import { text, tr } from './language';
 import { isRecord, useJson } from './rest';
 import { readStored, writeStored } from './storage';
@@ -158,17 +159,10 @@ function applyTheme({ id, theme, origin }: ThemeEntry): void {
 
 /** 把主题导出成主题文件，经下载链接交给浏览器 */
 export function downloadTheme(theme: Theme): void {
-  const url = URL.createObjectURL(
+  download(
     new Blob([`${JSON.stringify(fileOf(theme), null, 2)}\n`], { type: 'application/json' }),
+    `${theme.name.replace(/[\\/:*?"<>|]/g, '-')}.json`,
   );
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${theme.name.replace(/[\\/:*?"<>|]/g, '-')}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  // 立即撤销时有的浏览器（WebKit）来不及开始下载：留一分钟
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 interface Appearance {

@@ -381,7 +381,7 @@ const methodSamples: MethodSamples = {
       valid: {
         sessionId: 'session-1',
         content: '',
-        attachments: [{ kind: 'image', data: 'data:image/png;base64,AAAA', mimeType: 'image/png', name: 'a.png' }],
+        attachments: [{ data: 'data:image/png;base64,AAAA', name: 'a.png' }],
       },
       invalid: { sessionId: 'session-1', content: '' },
     },

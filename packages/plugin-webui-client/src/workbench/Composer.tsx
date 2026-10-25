@@ -37,9 +37,9 @@ import type { QueueItem } from './live-session';
 import './Composer.css';
 
 // 输入框：Enter 发送、Shift+Enter 换行，输入法组字时的回车只上屏；触屏上回车换行，用按钮发送。附件一律接收，
-// 只有附件也能发，读成 data URL 随消息发出；附件按钮、粘贴与把文件拖到这一栏里是同一条路。回合在跑、又没有要发的内容时，
-// 发送键换成停止。没有对话服务时不能用。打的字按会话存成草稿，状态留在输入框里，打字不牵动会话的其余部分。输入框上方列出
-// 排着、还没进一轮的消息，进了一轮就移进时间线
+// 只有附件也能发，读成 data URL 随消息发出（种类由服务端按内容判定）；附件按钮、粘贴与把文件拖到这一栏里是同一条路。
+// 回合在跑、又没有要发的内容时，发送键换成停止。没有对话服务时不能用。打的字按会话存成草稿，状态留在输入框里，打字不牵动
+// 会话的其余部分。输入框上方列出排着、还没进一轮的消息，进了一轮就移进时间线
 
 export type OutgoingAttachment = NonNullable<SessionMethodParams<'turn/send'>['attachments']>[number];
 
@@ -54,26 +54,17 @@ interface PendingFile {
   attachment?: OutgoingAttachment;
 }
 
-const kindOf = (type: string): OutgoingAttachment['kind'] =>
-  type.startsWith('image/')
-    ? 'image'
-    : type.startsWith('audio/')
-      ? 'audio'
-      : type.startsWith('video/')
-        ? 'video'
-        : 'file';
-
+/**
+ * 读成 base64 的 data URL：只带内容，类型一律写 application/octet-stream，浏览器报的类型不发（种类由服务端按内容判）。逗号后
+ * 是内容；空文件 Chromium 给的是没有逗号的「data:」，内容为空
+ */
 function read(file: File): Promise<OutgoingAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        kind: kindOf(file.type),
-        data: String(reader.result),
-        name: file.name,
-        byteSize: file.size,
-        ...(file.type ? { mimeType: file.type } : {}),
-      });
+    reader.onload = () => {
+      const [, base64 = ''] = String(reader.result).split(',');
+      resolve({ data: `data:application/octet-stream;base64,${base64}`, name: file.name });
+    };
     reader.onerror = () => reject(reader.error ?? new Error(tr('fileUnreadable', { name: file.name })));
     reader.readAsDataURL(file);
   });

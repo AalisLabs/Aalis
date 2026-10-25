@@ -13,7 +13,7 @@
 
 import { basename } from 'node:path';
 import type { StorageService } from '@aalis/api-storage';
-import { isStorageNotFound, parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
+import { isHostAbsolutePath, isStorageNotFound, parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import type { CwdState } from './cwd-state.js';
 
@@ -48,27 +48,23 @@ function allowedRootsText(config: FileConfig): string {
 }
 
 /**
- * 把用户输入解析为完整 storage URI。
- *
- * 仅是 resolveAgainstCwd 的薄包装：从 cwdState 读取当前 session 的 cwd 作为基准。
- * 宿主机绝对路径的拒绝提示被加强为附带当前可用根信息，避免反复试错。
+ * 把用户输入解析为完整 storage URI：resolveAgainstCwd，以 cwdState 里当前 session 的 cwd 为基准。
+ * 宿主机绝对路径按同一判定（isHostAbsolutePath）先拒掉，提示里带当前 cwd 与可用的根，避免反复试错。
  */
 function toStorageUri(input: string | undefined, config: FileConfig, sessionId: string | undefined): string {
   const cwd = config.cwdState.get(sessionId);
-  try {
-    return resolveAgainstCwd(input, cwd);
-  } catch (err) {
-    // 只在宿主绝对路径分支补充可读根提示。其余错误原样抛出。
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('宿主机绝对路径')) {
-      const known =
-        getKnownRoots(config)
-          .map(r => r.name)
-          .join(', ') || '(无)';
-      throw new Error(`${message} 当前 cwd: ${cwd}。已注册根: ${known}。本工具允许根: ${allowedRootsText(config)}。`);
-    }
-    throw err;
+  const raw = (input ?? '').trim();
+  if (isHostAbsolutePath(raw)) {
+    const known =
+      getKnownRoots(config)
+        .map(r => r.name)
+        .join(', ') || '(无)';
+    throw new Error(
+      `不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 aalis:/packages/core）或相对当前 cwd 的路径。` +
+        `当前 cwd: ${cwd}。已注册根: ${known}。本工具允许根: ${allowedRootsText(config)}。`,
+    );
   }
+  return resolveAgainstCwd(raw, cwd);
 }
 
 function ensureRootAllowed(uri: string, config: FileConfig): void {

@@ -664,14 +664,12 @@ function run(caps: Caps): void {
       }
       const folderName = sanitizeFolderName(input.name);
       const dirUri = joinUri(skillsUri, folderName);
-      // 检查目标目录是否已存在（通过 stat 探测）
-      try {
-        await storage.stat(dirUri);
-        throw new Error(`目标目录已存在: ${dirUri}`);
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith('目标目录已存在')) throw err;
-        // ENOENT / not found → 可以创建
-      }
+      // 目标目录不能已存在：stat 报不存在才创建，别的错误（没有权限、存储不可用）照样抛出
+      const found = await storage.stat(dirUri).catch((err: unknown) => {
+        if (isStorageNotFound(err)) return undefined;
+        throw err;
+      });
+      if (found) throw new Error(`目标目录已存在: ${dirUri}`);
       const fm: SkillFrontmatter = {
         ...(input.frontmatter ?? {}),
         name: input.name,

@@ -8,14 +8,34 @@ import type { AgentService } from '@aalis/api-agent';
 import type { CheckpointService } from '@aalis/api-checkpoint';
 import type { CompressionService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
-import type { SessionPeer } from '@aalis/api-session-protocol';
+import type { SessionMethodParams, SessionPeer } from '@aalis/api-session-protocol';
 import type { TodoListService } from '@aalis/api-todo-list';
 import type { Events, ServiceSelection } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
+import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { failure, type MethodHandlers } from './connection.js';
 
 /** 工具调用达到上限后请她接着做 */
 const CONTINUE_PROMPT = '[请继续执行未完成的工具调用]';
+
+type OutgoingAttachment = NonNullable<SessionMethodParams<'turn/send'>['attachments']>[number];
+
+/** base64 每 4 个字符是 3 个字节：解出文件头要的前这么多个字符 */
+const HEAD_BASE64_CHARS = Math.ceil(FILE_HEAD_BYTES / 3) * 4;
+
+/**
+ * 客户端发来的附件进入站消息：种类按文件头判定，data URL 的类型头换成判定格式的 MIME，不是媒体的写
+ * application/octet-stream，下游看不到浏览器报的类型。协议已核过 data 是 base64 的 data URL
+ */
+function inboundAttachment({ data, name }: OutgoingAttachment): MessageAttachment {
+  const base64 = data.slice(data.indexOf(',') + 1);
+  const format = detectMediaFormat(Buffer.from(base64.slice(0, HEAD_BASE64_CHARS), 'base64'));
+  return {
+    kind: format?.kind ?? 'file',
+    data: `data:${format?.mime ?? 'application/octet-stream'};base64,${base64}`,
+    ...(name !== undefined ? { name } : {}),
+  };
+}
 
 interface TurnControlDeps {
   events: Events;
@@ -49,7 +69,7 @@ export function createTurnControl(deps: TurnControlDeps) {
   > = {
     'turn/send': async ({ sessionId, content, attachments }, conn) => {
       requireSession(sessionId);
-      await send(conn.peer, sessionId, content.trim(), attachments);
+      await send(conn.peer, sessionId, content.trim(), attachments?.map(inboundAttachment));
       return {};
     },
     'turn/continue': async ({ sessionId }, conn) => {

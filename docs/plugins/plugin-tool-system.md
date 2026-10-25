@@ -95,7 +95,9 @@ shell 工具只有 `exec`。`exec` 声明命令类展示（命令在 `command`�
 
 `exec` 在命令运行期间把 stdout 与 stderr 按到达顺序写进执行器给这次调用的输出口（`ToolCallContext.output`，见 [api-tools](../api/api-tools.md#toolcallcontext)）。两路各自流式解码，多字节字符被拆在两次读取之间也不出乱码。推给会话客户端的工具卡、转到后台之后留进任务的输出缓冲，都由执行器做（见 [plugin-tools](plugin-tools.md)）。工具结果照旧在命令结束时一次给出、落库、交给模型，stdout 与 stderr 各自不超过 `shell.maxOutputSize` 字节。
 
-## http 工具：下载可转后台
+## http 工具：请求正文、响应与下载
+
+`http_request` 的请求正文有两个参数，只给一个：`body` 是字符串，原样发出，不补任何请求头（fetch 按字符串给 `text/plain;charset=UTF-8`）；`json` 是对象，按 `JSON.stringify` 发出，请求头里没写 `Content-Type`（不分大小写）时补 `application/json`；给的不是对象（字符串、数组、`null`）报错，字符串正文用 `body`。两个都给的报错。响应正文是不是文本按内容判：按服务端声明的 charset（`Content-Type` 的 `charset` 参数，没声明的与认不出的按 UTF-8）解得开、不含 NUL 字节的给出正文（服务端声明的类型不常见也照样给），否则（二进制，或编码与声明的不符）只给「不是 <编码> 文本」与字节数、声明的 `Content-Type`；声明是 `application/json` 的正文美化后给出。`Content-Length` 超过 `http.maxResponseSize` 的不读，取消响应体，不占着连接；`http_download` 上游回错误状态时同样取消。
 
 `http_download` 声明可转后台：下载只认执行器给这次调用的中止信号，参数里没有超时，等多久同样由执行器的让出时限管；中止时下载停住、不写盘。`http.defaultTimeout` 只给 `http_request`。
 

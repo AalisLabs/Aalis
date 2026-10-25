@@ -475,8 +475,6 @@ export default defineLocale<Source>()({
   settingValue: '{label}: {value}',
   settingNotChanged: '{label} wasn’t changed: {error}',
   fileStatus: 'Unavailable ({status})',
-  previewTooLarge: 'The file is larger than {kb, number} KB; download it to view',
-  previewNotText: 'Not a text file; download it to view',
   reading: 'Reading…',
   rewindCodeTitle: 'Rewind this turn’s file changes?',
   rewindCodeBody:

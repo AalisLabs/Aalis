@@ -436,3 +436,26 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(skills.getLoadedSkills('s-1')).toEqual([]);
   });
 });
+
+describe('plugin-skills: createSkill 探目标目录', () => {
+  it('stat 报的不是「不存在」（如没有权限）：抛出，不当作目录不存在去创建', async () => {
+    const { store, skills } = await setup();
+    const stat = store.stat.bind(store);
+    store.stat = async uri => {
+      if (uri.endsWith('/gamma'))
+        throw Object.assign(new Error(`EACCES: permission denied, stat '${uri}'`), { code: 'EACCES' });
+      return stat(uri);
+    };
+    await expect(skills.createSkill({ name: 'gamma', description: '丙', body: 'GAMMA-BODY' })).rejects.toThrow(
+      'EACCES',
+    );
+    expect(skills.getSkill('gamma')).toBeUndefined();
+    await expect(store.readFile('skills:/gamma/SKILL.md')).rejects.toThrow('ENOENT');
+  });
+
+  it('目标目录已存在：抛「目标目录已存在」', async () => {
+    const { store, skills } = await setup();
+    store.seed('skills:/gamma/notes.md', '别处放进来的');
+    await expect(skills.createSkill({ name: 'gamma', description: '丙' })).rejects.toThrow('目标目录已存在');
+  });
+});
