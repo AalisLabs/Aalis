@@ -330,7 +330,7 @@ await events.use.emit('trigger:fired', {
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
 - **取消打断阻塞中的节点**：`cancelRun` 与插件拆卸（停机、卸载、bounce）都中止这次运行的信号：不再调度新节点；阻塞中的 `wait` / `agent` 节点立即失败（「运行已取消」），已派发的 agent 回合不随之中止，照常跑完；`tool` 节点经 `ToolCallContext.signal` 收到中止，是否提前返回由工具决定（`engine.ts`）。拆卸等在飞 run 收尾、终态写进 `runsFile` 才结束，不响应中止的工具至多让它等到 `disposeTimeoutMs`（`index.ts`）。
-- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧的已结束的运行，在跑的不裁（收尾时照常更新它），每次变更整体重写文件、写入串行化（`persistence.ts`）。载入时还在 `running` 的是进程没有正常退出时留下的，收口成 `cancelled`（与拆卸时被打断的同一状态），`error` 写进程退出时中断，不写 `finishedAt`。历史不是无限审计日志。同文件还存 once 的 `firedAt` 与定义者账本（`{ runs, onceFired, definers }`）。
+- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧的已结束的运行，在跑的不裁（收尾时照常更新它），每次变更整体重写文件、写入串行化（`persistence.ts`）。载入时还在 `running` 的是进程没有正常退出时留下的，收口成 `cancelled`（与拆卸时被打断的同一状态），`error` 写进程退出时中断，不写 `finishedAt`；节点与引擎取消时同样收：`running` 的记 `failed`（`error` 同一句），`pending` 的记 `skipped`。历史不是无限审计日志。同文件还存 once 的 `firedAt` 与定义者账本（`{ runs, onceFired, definers }`）。
 - **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。
 
