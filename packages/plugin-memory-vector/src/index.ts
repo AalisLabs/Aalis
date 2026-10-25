@@ -26,7 +26,9 @@ import type { IncomingMessage, Message } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
   DIRECTIVE_KINDS,
+  extractMentions,
   prefixSender,
+  stripSenderPrefix,
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
@@ -207,20 +209,6 @@ function truncate(text: string | undefined | null, max: number): string {
   return `${s.slice(0, max)}…[已截断，还剩 ${remaining} 个字符未展示]`;
 }
 
-/** 从消息文本中抽取 @提及的用户 ID（各 adapter 输出统一 <at id="X"> 标签） */
-function extractMentions(text: string): string[] {
-  if (!text) return [];
-  const ids = new Set<string>();
-  const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
-  let m: RegExpExecArray | null = re.exec(text);
-  while (m !== null) {
-    const id = m[1];
-    if (id && id !== 'all') ids.add(id);
-    m = re.exec(text);
-  }
-  return [...ids];
-}
-
 /**
  * 消息的可见正文。回复经结构化输出（persona 的 outputFormat）时，content 存整串 JSON 信封，
  * agent 把解码后的回复另写进 metadata 的 VisibleContent 键；键缺省即 content 本身。
@@ -270,9 +258,10 @@ function renderMessage(m: Message, max: number, typeLabel: (platform: string, ty
     who = 'Tool·工具结果';
   } else {
     who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : userId;
-    // 剥掉 archive 给入站 user 消息加的 [昵称(ID)]: 前缀（tag 已表达身份，避免双重前缀）。
-    // 只对 user 剥：assistant/tool 内容若以 [xxx]: 开头那是正文自身的一部分，剥了会吞标记。
-    cleanContent = cleanContent.replace(/^\[[^\]]{1,80}\]:\s+/, '');
+    // 去掉存档给入站 user 消息烘进的发送者前缀（tag 已表达身份，避免双重前缀）：按存档记下的标签去，
+    // 正文自己以 [..]: 开头的不动
+    const label = meta[WellKnownMetadataKeys.SenderLabel];
+    cleanContent = stripSenderPrefix(cleanContent, typeof label === 'string' ? label : undefined);
   }
   const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
 
@@ -684,19 +673,8 @@ async function run(caps: Caps): Promise<void> {
   }
 
   async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
-    // 宿主通知不是任何人的发言，不进长期记忆
-    if (msg.hostNotice) return;
-    // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
-    //（triggerType 判据；全仓生产者=workflow agent 节点，内容是 AI 撰写的任务文本），
-    // 不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」形态回流。
-    if (msg.source === 'idle-trigger') return;
-    if (msg.triggerType === 'proactive') return;
-    // 现在三条一并堵上：以下伪 incoming 同为 AI/系统撰写文本，不带
-    // triggerType（改它们的 triggerType 会连带 message-archive 的 role 判定，故在本侧按
-    // source/userId 判据堵）——scheduler 定时内容、workflow send_message 节点、subtask 派发。
-    if (msg.source === 'scheduler') return;
-    if (msg.source?.startsWith('workflow:')) return;
-    if (msg.userId?.startsWith('parent:')) return;
+    // 带来源的是内部注入，不是谁在跟她说话，不进长期记忆（与档案插件同一判据；宿主通知按契约必带来源）
+    if (msg.source) return;
     await indexEntry(() => userEntry(msg.sessionId, archived), '向量索引失败:');
   }
 
@@ -729,6 +707,7 @@ async function run(caps: Caps): Promise<void> {
     if (!rawText) return undefined;
     const meta = archived.metadata ?? {};
     const fact = (key: string) => (typeof meta[key] === 'string' ? (meta[key] as string) : '');
+    const mentioned = meta[WellKnownMetadataKeys.Mentions];
     // 向量空间标识与向量出自同一实例，在发起计算时一并读下：那一家中途撤回后钉住的句柄就不可用了
     const provider = pinned(embedding);
     const { modelId } = provider;
@@ -745,11 +724,14 @@ async function run(caps: Caps): Promise<void> {
       sessionType: fact(WellKnownMetadataKeys.SessionType),
       // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
       timestamp: archived.timestamp ?? Date.now(),
-      // 兜底内容：归档文本（消息表老化后供渲染兜底；user 角色的发送者前缀由渲染侧剥除）
+      // 兜底内容：归档文本（消息表老化后供渲染兜底；user 角色的发送者前缀由渲染侧按 senderLabel 去掉）
       content: rawText,
-      // @提及到的用户 ID 列表，用于检索时同用户加权
-      mentions: extractMentions(rawText),
+      // 发言人自己写的话里 @ 到的用户 ID，用于检索时同用户加权
+      mentions: Array.isArray(mentioned) ? mentioned : [],
     };
+    // 发送者前缀的标签：存档只在加了前缀时记，没有就不写
+    const senderLabel = fact(WellKnownMetadataKeys.SenderLabel);
+    if (senderLabel) metadata[WellKnownMetadataKeys.SenderLabel] = senderLabel;
     // 检索时只与同模型的查询向量比较
     if (modelId) metadata.modelId = modelId;
     return { vec, metadata };

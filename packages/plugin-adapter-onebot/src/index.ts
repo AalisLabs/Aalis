@@ -16,11 +16,11 @@ import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
-  getSenderLabel,
   type Message,
   type MessageAttachment,
   type OutboundDeliveryResult,
   type OutgoingMessage,
+  stripSenderPrefix,
   WellKnownKinds,
   WellKnownMetadataKeys,
   WellKnownNoticeTypes,
@@ -311,7 +311,7 @@ function who(nick: string | undefined, id: string | undefined, fallback: TextRef
  * 而不是只看到一个对它毫无意义的平台 msg id（历史消息呈现给 LLM 时不带 messageId，
  * 只给 id 它对应不上）。查不到原文时退回旧文案（msg id 便于人工排查）。
  *
- * 摘录规则：去掉与通知重复的发送者前缀（归档正文已烘焙 `[昵称(ID)]:`）、压平空白、
+ * 摘录规则：按存档记下的标签（senderLabel，存档元数据的 SenderLabel）去掉与通知重复的发送者前缀、压平空白、
  * truncateChars 截断（不切碎代理对——见 llm-lone-surrogate 教训）。
  */
 export function buildRecallNoticeContent(opts: {
@@ -319,16 +319,13 @@ export function buildRecallNoticeContent(opts: {
   userLabel: string;
   opLabel?: string;
   messageId?: string;
-  original?: { content: string; timestamp?: number };
+  original?: { content: string; timestamp?: number; senderLabel?: string };
   now?: number;
 }): string {
   const { isGroup, userLabel, opLabel, messageId, original } = opts;
   let detail = messageId ? `（msg=${messageId}）` : '';
   if (original?.content) {
-    const bare = original.content
-      .replace(/^\[[^\]\n]{1,40}\]:\s*/, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const bare = stripSenderPrefix(original.content, original.senderLabel).replace(/\s+/g, ' ').trim();
     if (bare) {
       const excerpt = truncateChars(bare, 60, '…');
       const clock = original.timestamp ? formatRecallClock(original.timestamp, opts.now ?? Date.now()) : '';
@@ -982,17 +979,15 @@ function runAdapter(caps: Caps): void {
         try {
           const archived = await archive.findByMessageId(sessionId, messageId);
           if (archived) {
-            const { [WellKnownMetadataKeys.UserId]: rawUserId, [WellKnownMetadataKeys.Nickname]: rawNickname } =
-              archived.metadata ?? {};
+            const {
+              [WellKnownMetadataKeys.UserId]: rawUserId,
+              [WellKnownMetadataKeys.Nickname]: rawNickname,
+              [WellKnownMetadataKeys.SenderLabel]: label,
+            } = archived.metadata ?? {};
             const userId = rawUserId != null ? String(rawUserId) : undefined;
             const nickname = rawNickname != null ? String(rawNickname) : undefined;
-            // 归档正文带 `[nick(id)]: ` 前缀（prefixSender 的产物），引用渲染层会再加发送者标签，
-            // 这里剥掉首行前缀避免重复。
-            let body = archived.content ?? '';
-            const label = getSenderLabel(nickname, userId);
-            if (label && body.startsWith(`[${label}]: `)) {
-              body = body.slice(`[${label}]: `.length);
-            }
+            // 归档正文带发送者前缀，引用渲染层会再加发送者标签：按存档记下的标签去掉这一层，避免重复
+            const body = stripSenderPrefix(archived.content ?? '', typeof label === 'string' ? label : undefined);
             return { content: body || undefined, userId, nickname };
           }
         } catch (err) {
@@ -2114,14 +2109,19 @@ function runAdapter(caps: Caps): void {
         // 反查被撤回的归档原文：入站消息归档时带 metadata.messageId（archive:meta.messageId）。
         // 显式传 500 条扫描窗（活跃群百条几分钟即滚过，撤回常发生在更久之后）。
         // 查不到（未归档/超窗）或反查抛错都退回旧文案，不阻塞通知入档。
-        let original: { content: string; timestamp?: number } | undefined;
+        let original: { content: string; timestamp?: number; senderLabel?: string } | undefined;
         if (messageId) {
           try {
             const found = await (messageArchive.present
               ? messageArchive.use.findByMessageId?.(sessionId, messageId, 500)
               : undefined);
             if (found && typeof found.content === 'string' && found.content) {
-              original = { content: found.content, timestamp: found.timestamp };
+              const label = found.metadata?.[WellKnownMetadataKeys.SenderLabel];
+              original = {
+                content: found.content,
+                timestamp: found.timestamp,
+                senderLabel: typeof label === 'string' ? label : undefined,
+              };
             }
           } catch {
             /* 反查失败不阻塞 */

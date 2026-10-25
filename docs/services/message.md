@@ -39,12 +39,12 @@
 
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
-| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice` |
+| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice`/`IdlePrompt` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
-| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与读方都引用它：可见正文、发言人写的话与附件清单、说话人、说话所在的群与会话类型、平台侧的消息 id、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
+| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与读方都引用它：可见正文、发言人写的话与附件清单、发送者前缀的标签与被 @ 的人、说话人、说话所在的群与会话类型、平台侧的消息 id、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
 | `ArchivedAttachment` | interface | `index.ts` | 存档里提问带的一个附件（`WellKnownMetadataKeys.Attachments` 的一项）：`kind`/`name`/`ref`（存储地址或网址） |
 | `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼装历史时须自行过滤**（并非 `prepareLLMMessages` 的职责） |
-| `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
+| `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`、`IdlePrompt`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
 | `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口必调**：归一 role + 加前缀；不改原对象，返回浅拷贝；幂等 |
 | `outboundMediaMessage(kind, ref, { desc, source }?)` | function | `index.ts` | 发出的图片、音频、视频与文件在会话历史里的记法：`kind` 为 `OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`，正文是附件引用占位符（文件的描述位记文件名）；`source` 是 agent 的是她发的（role `assistant`），其余是插件发的（role `notice`，进模型时是系统通知）；时间戳与 `metadata` 由调用方补上。出站附件的归档一律用它，`memory_recall` 与会话服务回看历史才能按同一格式命中、还原 |
@@ -70,6 +70,7 @@
 | --- | --- | --- |
 | `getSenderLabel(nickname?, userId?)` | `identity.ts` | 两者都有 → `昵称(ID)`；否则取其一；都无 → `undefined` |
 | `prefixSender(content, nickname?, userId?)` | `identity.ts` | 有标签 → `[label]: content`，否则原样 |
+| `stripSenderPrefix(content, label)` | `identity.ts` | `content` 以 `[label]: ` 开头 → 去掉这一段，否则原样；`label` 取存档记下的 `SenderLabel`，没有时原样 |
 | `getMessageName(userId?)` | `identity.ts` | 给 `Message.name` / OpenAI `name` 字段用的稳定标识符（用 userId 不用 nickname） |
 
 ### 入站消息的归档文本 — `src/incoming-content.ts`（经 `index.ts` 转出）

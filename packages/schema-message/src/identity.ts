@@ -31,6 +31,15 @@ export function prefixSender(content: string, nickname?: string, userId?: string
 }
 
 /**
+ * 归档正文由 prefixSender 烘进了发送者前缀；重排给模型或界面看时身份另有标注，按归档时记下的同一个标签（元数据的
+ * SenderLabel 键）去掉这一层，正文自己以 [..]: 开头的不动。content 以 `[label]: ` 开头时去掉这一段，没有标签时原样返回
+ */
+export function stripSenderPrefix(content: string, label: string | undefined): string {
+  const prefix = `[${label}]: `;
+  return label && content.startsWith(prefix) ? content.slice(prefix.length) : content;
+}
+
+/**
  * 获取适用于 Message.name / OpenAI API name 字段的安全标识符。
  * 使用 userId（稳定不变）而非 nickname（可变）。
  * 返回 undefined 表示不设置 name 字段。

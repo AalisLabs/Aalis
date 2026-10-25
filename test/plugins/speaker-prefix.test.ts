@@ -9,7 +9,7 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { type IncomingMessage, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -80,12 +80,18 @@ async function active(app: App, ...defs: { name: string }[]) {
   }
 }
 
-/** 真存档：回 archiveIncoming 落库的正文 */
-async function archiver(opts: { sessions?: boolean } = {}) {
+/** 真存档：回 archiveIncoming 落库的消息 */
+async function archivedBy(opts: { sessions?: boolean } = {}) {
   const { app, bound } = await host(opts);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   await active(app, memoryInMemory, authorityPlugin, messageArchivePlugin);
-  return async (message: IncomingMessage) => (await bound.messageArchive.use.archiveIncoming(message)).content;
+  return async (message: IncomingMessage) => (await bound.messageArchive.use.archiveIncoming(message))?.message;
+}
+
+/** 真存档：回落库的正文 */
+async function archiver(opts: { sessions?: boolean } = {}) {
+  const archive = await archivedBy(opts);
+  return async (message: IncomingMessage) => (await archive(message))?.content;
 }
 
 const said = (sessionId: string, extra: Partial<IncomingMessage> = {}): IncomingMessage => ({
@@ -170,6 +176,32 @@ describe('存档正文的发送者前缀', () => {
     const archive = await archiver({ sessions: false });
     expect(await archive(fromWebui(WEBUI))).toBe('[console]: 你好');
     expect(await archive(fromWebui(GROUP))).toBe('[console]: 你好');
+  });
+});
+
+describe('存档元数据：前缀用的标签与被 @ 的人', () => {
+  it('加了前缀时把这次用的标签记成 SenderLabel，没加前缀的不记', async () => {
+    const archive = await archivedBy();
+    const label = async (message: IncomingMessage) =>
+      (await archive(message))?.metadata?.[WellKnownMetadataKeys.SenderLabel];
+    expect(await label(fromWebui(GROUP))).toBe('40001');
+    expect(await label(said(GROUP, { userId: '30001', nickname: '甲' }))).toBe('甲(30001)');
+    expect(await label(said(OWNER_DM, { sessionType: 'private', userId: '40001' }))).toBeUndefined();
+    expect(await label(said(GROUP, { source: 'workflow:wf' }))).toBeUndefined();
+  });
+
+  it('Mentions 只取发言人自己写的 @：引用里别人 @ 的人不算', async () => {
+    const archive = await archivedBy();
+    const message = await archive(
+      said(GROUP, {
+        content: '<at id="30002">乙</at> 你看',
+        userId: '30001',
+        nickname: '甲',
+        replyTo: { messageId: 'zz-1', content: '<at id="30003">丙</at> 在吗', userId: '30004' },
+      }),
+    );
+    expect(message?.content).toContain('30003');
+    expect(message?.metadata?.[WellKnownMetadataKeys.Mentions]).toEqual(['30002']);
   });
 });
 

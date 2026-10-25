@@ -209,7 +209,8 @@ export interface IncomingMessage {
   /**
    * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'）。
    * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
-   * 不过回复后冷却（禁言与限速照常生效），也不过指令解析（声明了 {@link IncomingMessage.ownerApproved} 的除外）。
+   * 不过回复后冷却（禁言与限速照常生效），也不过指令解析（声明了 {@link IncomingMessage.ownerApproved} 的除外），
+   * 不进长期记忆（向量记忆，档案的旁观计数与事实提取）。
    * 带来源的输入各自成一轮，不与别的输入叠加；注入方的来源应当标识发送方。
    */
   source?: string;
@@ -266,7 +267,7 @@ export interface IncomingMessage {
    * - 'direct'    私聊或单一用户直连（默认语义：userId 是主发言者）
    * - 'immediate' 群聊中被 @/名字主动触发（userId 是主发言者）
    * - 'interval'  群聊中没点名、因消息频率/活跃度被挑中（提示词按无明确主发言者写；授权身份照旧是发言者）
-   * - 'idle'      空闲自动触发（无 userId / 无主发言者）
+   * - 'idle'      空闲自动触发（无 userId / 无主发言者）；存档不落档，agent 以 system 指令块交给模型
    * - 'proactive' 系统代发给 agent 的任务指令，如 workflow 的 agent 节点（content 是任务描述而非用户消息）
    * 未设置时下游插件按 'direct' 兼容处理。
    */
@@ -378,6 +379,16 @@ export function wasAddressed({
  * docs/concepts/message-llm-pipeline.md
  */
 export const AT_SELF_PATTERN = /<at self[\s>][\s\S]*?<\/at>/;
+
+/**
+ * 一段文字 @ 了哪些账号：适配器写下的 `<at id="…">` 与 `<at self id="…">` 标记里的账号，按出现先后去重；@全体不是账号，
+ * 不算：入站写作 `<at>all</at>`（不带 id），她的回复里写作 `<at id="all">`（出站按这个发成 @全体）。文法见
+ * {@link AT_SELF_PATTERN}。存档按它从发言人自己写的话里抽，记成元数据的 {@link WellKnownMetadataKeys}.Mentions
+ */
+export function extractMentions(text: string): string[] {
+  const ids = Array.from(text.matchAll(/<at(?:\s+self)?\s+id="([^"]+)">/g), match => match[1]);
+  return [...new Set(ids.filter(id => id !== 'all'))];
+}
 
 // ----- 出站消息 -----
 
@@ -564,6 +575,8 @@ declare module '@aalis/core' {
  * - `OutboundVideo`：发出的视频占位。
  * - `OutboundFile`：发出的文件占位（描述位是文件名）。
  * - `HostNotice`：宿主撰写的事件通知——带 `hostNotice` 的入站消息归档时标的 kind（role 为 notice）。
+ * - `IdlePrompt`：空闲开话题的提示——triggerType 为 idle 的入站交给模型时那条指令块的 injector。它不落档，没有这个 kind 的
+ *   归档消息。
  * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
  *   让她知道刚才那条没送达。metadata 带 {@link WellKnownMetadataKeys} 的 `DeliveryError`（与投递结果同一句原因），以及那条
  *   消息的 `TurnId`（一轮的回复）或 `CallId`（经工具发出的）。
@@ -576,6 +589,7 @@ export const WellKnownKinds = {
   OutboundVideo: 'outbound-video',
   OutboundFile: 'outbound-file',
   HostNotice: 'host-notice',
+  IdlePrompt: 'idle-prompt',
   OutboundDeliveryFailed: 'outbound-delivery-failed',
 } as const;
 
@@ -647,6 +661,11 @@ export interface ArchivedAttachment {
  *   会话服务据此给出提问条目的正文。
  * - `Attachments`：提问带的附件清单（{@link ArchivedAttachment} 的数组，按入站顺序），存档写；会话服务据此把文件还原成卡片、
  *   图片等按地址显示。没有附件时不写。
+ * - `SenderLabel`：归档文本发送者前缀里的标签（字符串，{@link getSenderLabel} 的写法），存档只在加了前缀时写。把归档文本重排给
+ *   模型或界面看的一方（向量记忆的召回片段、撤回通知的摘录、引用反查）按它用 {@link stripSenderPrefix} 去掉这一层，没有这个键
+ *   的不去。
+ * - `Mentions`：提问里发言人自己写的话 @ 了哪些账号（字符串数组，{@link extractMentions} 从入站消息的 `content` 抽，引用与
+ *   附件描述里的不算），存档在有时写；向量记忆据此给被 @ 的人加权。
  * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
  *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
  * - `GroupId`、`GroupName`、`SessionType`：说话所在的群号、群名与会话类型（字符串，即入站消息的 `groupId`、`groupName`、
@@ -685,6 +704,8 @@ export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',
   SpokenContent: 'spokenContent',
   Attachments: 'attachments',
+  SenderLabel: 'senderLabel',
+  Mentions: 'mentions',
   Platform: 'platform',
   UserId: 'userId',
   Nickname: 'nickname',
@@ -740,11 +761,13 @@ export const CONTROL_KINDS: ReadonlyArray<string> = [WellKnownKinds.EventMarker]
 /**
  * 宿主或系统撰写、不是任何人发言的指令类 kind。
  * - 归档消息的 kind 属于它：抽取（用户事实、指令、关系）与记忆扩窗一律跳过；
- * - 请求期消息的 metadata.injector 属于它：是本轮的指令块（turn-context、turn-hint 落在它之前；DeepSeek 不把它改成 user）。
+ * - 请求期消息的 metadata.injector 属于它：是本轮的指令块（turn-context、turn-hint 落在它之前；agent 裁剪时不缩不删；DeepSeek
+ *   不把它改成 user）。
  */
 export const DIRECTIVE_KINDS: ReadonlyArray<string> = [
   WellKnownKinds.CrossSessionDelegation,
   WellKnownKinds.HostNotice,
+  WellKnownKinds.IdlePrompt,
 ];
 
 /** 自定义 role 转译为 LLM 接受的 WellKnownRole 的默认映射。 */
@@ -852,7 +875,7 @@ export {
   parseAttachmentRefs,
 } from './attachment-ref.js';
 // ----- 身份标识工具（cleanup-9 从 core 迁入） -----
-export { getMessageName, getSenderLabel, prefixSender } from './identity.js';
+export { getMessageName, getSenderLabel, prefixSender, stripSenderPrefix } from './identity.js';
 // ----- 入站消息的归档文本（归档与触发判定共用） -----
 export { buildIncomingContent } from './incoming-content.js';
 // ----- 历史里的工具调用组（读历史的各方共用） -----

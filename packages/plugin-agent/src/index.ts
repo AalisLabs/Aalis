@@ -1513,14 +1513,19 @@ class DefaultAgent implements AgentService {
   /**
    * 一条输入发给模型的写法：`(时间) <归档正文>`。正文由 message-archive 烘焙（发送者前缀、引用回复、附件描述）；存档不在时
    * 按同一份拼法与同一条说话人规则自己拼（schema-message 的 buildIncomingContent、api-message-archive 的 speakerOf）。时间取
-   * 归档时间戳，即进入这一轮的时刻：之后进历史时是同一个标注，前缀不变。带图的挂上它自己的图
+   * 归档时间戳，即进入这一轮的时刻：之后进历史时是同一个标注，前缀不变。带图的挂上它自己的图。空闲开话题的提示以 system 交出
    */
   private async inputMessage({ message, archived }: TurnInput, acceptsImages: boolean): Promise<Message> {
     const body = archived?.content ?? buildIncomingContent(message, this.speakerOf(message));
     const at = archived?.timestamp ?? Date.now();
+    const content = `(${formatTimeLabel(at, Date.now())}) ${body}`;
+    // 空闲提示是宿主写给模型的指令，不是谁的发言：标成本轮的指令块，锚位、裁剪与 DeepSeek 的 system 归位都按它认
+    if (message.triggerType === 'idle') {
+      return { role: 'system', content, metadata: { injector: WellKnownKinds.IdlePrompt } };
+    }
     const userMessage: Message = {
       role: 'user',
-      content: `(${formatTimeLabel(at, Date.now())}) ${body}`,
+      content,
       name: getMessageName(message.userId),
       timestamp: at,
     };
@@ -1807,8 +1812,8 @@ class DefaultAgent implements AgentService {
    *     变大时切点不动）或丢完；会改开头
    *  4. 会改开头：注入的 system 块合计超过 memoryTokenBudget 时按比例缩，仍超时从最靠前的删起
    *  5. 最后手段：最后一组工具调用也截短过长的结果、缩推理内容，请求不超窗发出
-   * 始终不动：首条 system、本轮的输入（user 消息，与宿主通知、委派那一轮的指令块）。不删不压、只在第 5 步截短：最后一组工具调用、
-   * 末条消息（格式重试的反馈）
+   * 始终不动：首条 system、本轮的输入（user 消息，与宿主通知、委派、空闲开话题那一轮的指令块）。不删不压、只在第 5 步截短：
+   * 最后一组工具调用、末条消息（格式重试的反馈）
    */
   private trimMessages(messages: Message[], budget: number, history: ReadonlySet<Message>): TrimmedMessages {
     let result = [...messages];
@@ -2067,20 +2072,15 @@ class DefaultAgent implements AgentService {
     return { kept, dropped };
   }
 
-  /**
-   * 归档一条输入：进了一轮的带回合 id 与进入方式（开轮 opened，插进来 joined），放掉的不带。闲置主动触发是系统提示，不作为
-   * user 消息写入历史
-   */
+  /** 归档一条输入：进了一轮的带回合 id 与进入方式（开轮 opened，插进来 joined），放掉的不带 */
   private async archiveIncomingMessage(
     message: IncomingMessage,
     turn?: { turnId: string; entry: 'opened' | 'joined' },
   ): Promise<Message | undefined> {
-    if (message.source === 'idle-trigger') return undefined;
     const archive = this.getArchiveForWrite();
     if (!archive) return undefined;
     try {
-      const result = await archive.archiveIncoming(message, turn);
-      return result.message;
+      return (await archive.archiveIncoming(message, turn))?.message;
     } catch (err) {
       this.logger.warn('归档用户消息失败:', err);
       return undefined;

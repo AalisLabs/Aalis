@@ -11,7 +11,7 @@ import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
-import type { Message } from '@aalis/schema-message';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys, wasAddressed } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import { t } from './texts.js';
@@ -798,19 +798,16 @@ function registerUserProfile({
     return Math.min(100, Math.max(0, Math.round(score * factor) / factor));
   }
 
-  function relationIncrementFor(
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
-  ): number {
+  function relationIncrementFor(triggerType: IncomingMessage['triggerType'] | 'witness'): number {
     if (triggerType === 'immediate') return cfg.relationIncrementImmediate;
     if (triggerType === 'interval') return cfg.relationIncrementInterval;
-    if (triggerType === 'idle') return 0;
     if (triggerType === 'witness') return cfg.relationIncrementWitness;
     return cfg.relationIncrementDirect;
   }
 
   function applyRelationUpdate(
     profile: UserProfile,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
+    triggerType: IncomingMessage['triggerType'] | 'witness',
     options: { countInteraction?: boolean } = {},
   ): UserProfile {
     // countInteraction：是否计入互动计数与更新 lastInteractionAt。
@@ -823,12 +820,11 @@ function registerUserProfile({
     const daysSinceLast = last ? Math.max(0, (now - last) / 86_400_000) : 0;
     const decayed = clampRelationScore((profile.relationScore ?? 0) - daysSinceLast * cfg.relationScoreDecayPerDay);
     const nextScore = clampRelationScore(decayed + relationIncrementFor(triggerType));
-    const shouldCount = countInteraction && triggerType !== 'idle';
     return {
       ...profile,
       relationScore: nextScore,
-      interactionCount: (profile.interactionCount ?? 0) + (shouldCount ? 1 : 0),
-      lastInteractionAt: shouldCount ? now : profile.lastInteractionAt,
+      interactionCount: (profile.interactionCount ?? 0) + (countInteraction ? 1 : 0),
+      lastInteractionAt: countInteraction ? now : profile.lastInteractionAt,
       updatedAt: now,
     };
   }
@@ -975,7 +971,7 @@ function registerUserProfile({
 
   async function updateRelationForUser(
     userKey: string,
-    triggerType: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive' | 'witness' | undefined,
+    triggerType: IncomingMessage['triggerType'] | 'witness',
     options?: { countInteraction?: boolean },
   ): Promise<void> {
     const mem = memory.list().find(p => p.selected)?.use;

@@ -92,8 +92,8 @@ function looseEmit(app: App) {
 }
 
 describe('schema-message：宿主通知的 kind 与出口前缀', () => {
-  it('DIRECTIVE_KINDS 含跨会话委派与宿主通知', () => {
-    expect([...DIRECTIVE_KINDS].sort()).toEqual(['cross-session-delegation', 'host-notice']);
+  it('DIRECTIVE_KINDS 含跨会话委派、宿主通知与空闲开话题的提示', () => {
+    expect([...DIRECTIVE_KINDS].sort()).toEqual(['cross-session-delegation', 'host-notice', 'idle-prompt']);
   });
 
   it('prepareLLMMessages 把 notice/host-notice 转为 system 并加 [宿主通知] 前缀，二次调用不重复加', () => {
@@ -118,7 +118,9 @@ describe('message-archive：宿主通知归档', () => {
       seen.push(d as { archivedMessage: Message });
     });
 
-    const { message } = await host.messageArchive.use.archiveIncoming(hostNoticeIncoming());
+    const archived = await host.messageArchive.use.archiveIncoming(hostNoticeIncoming());
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     expect(message).toMatchObject({ role: 'notice', kind: 'host-notice', content: HOST_BODY });
     expect(message.name).toBeUndefined();
     expect(message.metadata).toMatchObject({ hostNoticeKind: 'paper-task', source: 'paper' });
@@ -133,6 +135,31 @@ describe('message-archive：宿主通知归档', () => {
     expect(seen[0].archivedMessage).toBe(message);
   });
 
+  it('空闲开话题的提示（triggerType 为 idle）不落档，不论来源叫什么；不发归档事件', async () => {
+    const app = newApp();
+    await registerHubs(app);
+    await app.plugin(memoryInMemory);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugins.idle();
+    const host = app.bind({ messageArchive, memory, events });
+    const seen: unknown[] = [];
+    (host.events.use.on as (e: string, h: (d: unknown) => void) => void)('inbound:message:archived', d => {
+      seen.push(d);
+    });
+
+    const result = await host.messageArchive.use.archiveIncoming({
+      content: '开个话题',
+      sessionId: 's',
+      platform: 'test',
+      source: 'other-idle',
+      triggerType: 'idle',
+    });
+    expect(result).toBeUndefined();
+    expect(await host.memory.use.getHistory('s', 10)).toEqual([]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(seen).toEqual([]);
+  });
+
   it('通知的 id 与带给界面的事实按登记的键记下；起它的那一轮与回复引用不记', async () => {
     const app = newApp();
     await registerHubs(app);
@@ -141,7 +168,7 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugins.idle();
     const host = app.bind({ messageArchive });
     const facts = { tool: 'zz_tool', status: 'failed', exitCode: 2, durationMs: 1500 };
-    const { message } = await host.messageArchive.use.archiveIncoming(
+    const archived = await host.messageArchive.use.archiveIncoming(
       hostNoticeIncoming({
         source: 'bg:bg_1',
         actor: undefined,
@@ -149,6 +176,8 @@ describe('message-archive：宿主通知归档', () => {
         hostNotice: { kind: 'background-task', id: 'bg_1', replyTo: 'zz-msg-1', facts },
       }),
     );
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     const K = WellKnownMetadataKeys;
     expect(message.metadata).toEqual({
       [K.Platform]: 'onebot',
@@ -166,7 +195,7 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugins.idle();
     const host = app.bind({ messageArchive });
-    const { message: request } = await host.messageArchive.use.archiveIncoming({
+    const request = await host.messageArchive.use.archiveIncoming({
       content: '[系统通知] 用户 30001 向我发出了好友申请',
       sessionId: 'onebot:10000:private:30001',
       platform: 'onebot',
@@ -174,7 +203,7 @@ describe('message-archive：宿主通知归档', () => {
       source: 'onebot-request',
       text: onebotText('friendRequestWithComment', { user: '30001', comment: '长'.repeat(300) }),
     });
-    const text = request.metadata?.[WellKnownMetadataKeys.Text] as TextRef | undefined;
+    const text = request?.message.metadata?.[WellKnownMetadataKeys.Text] as TextRef | undefined;
     expect(text?.params?.comment).toBe('长'.repeat(200));
     const platformNotice = await host.messageArchive.use.archiveNotice?.({
       sessionId: 'onebot:10000:group:20001',
@@ -185,11 +214,11 @@ describe('message-archive：宿主通知归档', () => {
     const noticeText = platformNotice?.metadata?.[WellKnownMetadataKeys.Text] as TextRef | undefined;
     expect(noticeText?.params?.user).toBe('长'.repeat(200));
     const long = textLines(Array.from({ length: 20 }, () => 'x'.repeat(200)));
-    const { message: notice } = await host.messageArchive.use.archiveIncoming(
+    const notice = await host.messageArchive.use.archiveIncoming(
       hostNoticeIncoming({ hostNotice: { kind: 'paper-task', id: 'n-2', text: long } }),
     );
-    expect(notice.metadata?.[WellKnownMetadataKeys.HostNoticeKind]).toBe('paper-task');
-    expect(notice.metadata?.[WellKnownMetadataKeys.Text]).toBeUndefined();
+    expect(notice?.message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]).toBe('paper-task');
+    expect(notice?.message.metadata?.[WellKnownMetadataKeys.Text]).toBeUndefined();
   });
 
   it('flow-control 禁言期吞掉宿主通知：影子归档写成 notice，不含不可信段', async () => {
@@ -261,7 +290,7 @@ async function setupVector(hits: VectorSearchResult[] = []) {
 }
 
 describe('memory-vector：宿主通知不进向量记忆与扩窗', () => {
-  it('安全：带 hostNotice 的归档事件不写向量库；同样内容去掉 hostNotice 时写入（对照）', async () => {
+  it('安全：宿主通知（必带 source）的归档事件不写向量库；同样内容作为真人发言（不带 hostNotice 与 source）时写入（对照）', async () => {
     const { app, added } = await setupVector();
     const emit = looseEmit(app);
     const notice = hostNoticeIncoming();
@@ -271,7 +300,7 @@ describe('memory-vector：宿主通知不进向量记忆与扩窗', () => {
       incoming: notice,
       archivedMessage: { ...archivedNotice(BASE_TS), content: HOST_BODY },
     });
-    const { hostNotice: _dropped, ...control } = notice;
+    const { hostNotice: _dropped, source: _source, ...control } = notice;
     await emit('inbound:message:archived', {
       sessionId: ROOM,
       incoming: control,

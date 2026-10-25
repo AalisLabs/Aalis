@@ -34,6 +34,10 @@ const NOT_ARCHIVE_READS = new Map([
     'packages/plugin-memory-vector/src/index.ts userId',
     '向量条目的元数据：本插件写入向量库时自己定的字段，按发言人加权与渲染',
   ],
+  [
+    'packages/plugin-memory-vector/src/index.ts mentions',
+    '向量条目的元数据：本插件写入向量库时自己定的字段，按被 @ 的人加权',
+  ],
 ]);
 
 function visitAll(node: ts.Node, visit: (node: ts.Node) => void): void {

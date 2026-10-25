@@ -154,9 +154,11 @@ describe('没有能看图的模型', () => {
     host.provide.use(storage, { listRoots: () => [dataRoot] } as unknown as StorageService);
     host.provide.use(media, new MediaServiceImpl(emptyMediaCaps(logger), cfg(true)));
 
-    const { message } = await host.messageArchive.use.archiveIncoming(
+    const archived = await host.messageArchive.use.archiveIncoming(
       webui([{ kind: 'image', data: png('c1') }], '看看这个'),
     );
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     expect(message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([{ kind: 'image', ref: written[0] }]);
     // 没有会话管理：判不出房间类别，正文写这条消息自己的说话人
     expect(message.content?.split('\n')).toEqual(['[console]: 看看这个', expect.stringMatching(LANDED), UNVIEWABLE(1)]);

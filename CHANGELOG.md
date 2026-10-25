@@ -424,6 +424,15 @@
 - plugin-agent：落库的时间线与正文同一份净化，刷新后的 WebUI 历史里不再出现漏进正文的工具调用标记；回复还在输出时的实时显示照旧。
 - util-text-normalize：`normalizeAssistantContent` 删除。剥漏出的协议标记用 `stripLeakedSpecialTokens`，渲染端修表格用 `fixGfmTables`。
 
+### 内部注入与存档（@aalis/schema-message、@aalis/api-message-archive、@aalis/plugin-message-archive、@aalis/plugin-memory-vector、@aalis/plugin-agent、@aalis/plugin-flow-control、@aalis/plugin-adapter-onebot）
+
+- api-message-archive：`archiveIncoming` 对空闲开话题的提示（`triggerType: 'idle'`）回 `undefined`，不落档、不发 `inbound:message:archived`，返回类型改为 `Promise<ArchiveIncomingResult | undefined>`。第三方存档要照做：agent 与 flow-control 不再按来源名字 `idle-trigger` 自己挡，换了来源名的空闲注入同样不落档。
+- schema-message：存档元数据登记 `SenderLabel`（归档文本发送者前缀里的标签，只在加了前缀时写）与 `Mentions`（发言人自己写的话 @ 的账号，键名照旧是 `mentions`）；新增 `stripSenderPrefix(content, label)` 与 `extractMentions(text)`。`WellKnownKinds` 加 `IdlePrompt`（`'idle-prompt'`，空闲开话题的提示交给模型时那条指令块的 `injector`），`DIRECTIVE_KINDS` 随之多这一项。
+- plugin-message-archive：归档的 `Mentions` 只记发言人自己写的 @：引用的消息里别人 @ 的人不再算成这条消息 @ 了谁。
+- plugin-memory-vector：带 `source` 的入站一律不收录，好友申请、入群申请这类合成的系统通知不再作为申请人的发言进向量记忆、之后被检索回来。入站条目的被 @ 的人取存档的 `Mentions`。召回片段只按存档记下的 `SenderLabel` 去掉发送者前缀，正文本身以「[xx]: 」开头的消息不再被吞掉开头；此前归档的消息没有这个标签，召回片段里照原样带着「[昵称(账号)]: 」。
+- plugin-agent：空闲开话题的提示以 system 指令块交给模型（`metadata.injector` 为 `idle-prompt`），照常带时间与会话环境，不再当成有人这样对她说话。
+- plugin-adapter-onebot：撤回通知的摘录与引用反查按存档记下的标签去掉发送者前缀：正文本身以「[xx]: 」开头的不再被剥；owner 从 WebUI 往群里插的话被引用时，引用正文不再带「[<owner 账号>]: 」。此前归档的消息没有这个标签，摘录与引用照原样带前缀。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

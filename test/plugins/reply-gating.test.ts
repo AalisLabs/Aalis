@@ -1026,7 +1026,7 @@ describe('内部注入（带 source）', () => {
     expect(h.received[0]?.sessionType).toBeUndefined();
   });
 
-  it('闲置注入与 agent 节点消息发往限速已满的群同样被吞（按会话记下的聊天窗口判为多方房间）；闲置提示不做影子归档', async () => {
+  it('闲置注入与 agent 节点消息发往限速已满的群同样被吞（按会话记下的聊天窗口判为多方房间）；被吞的都交给存档，落不落档由存档定', async () => {
     const archived: IncomingMessage[] = [];
     const h = await setup({
       flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 },
@@ -1046,7 +1046,7 @@ describe('内部注入（带 source）', () => {
     });
     await h.send(agentNode(sid(G), '限速中的 agent 节点任务'));
     expect(h.contents()).toEqual(['提醒']);
-    expect(archived.map(m => m.content)).toEqual(['限速中的 agent 节点任务']);
+    expect(archived.map(m => m.content)).toEqual(['idle', '限速中的 agent 节点任务']);
   });
 
   it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {

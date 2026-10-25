@@ -8,6 +8,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -39,7 +40,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
 // 带 markup 的正文（她的回复）里存储地址的媒体标记经网关派发时由 image-sender 转成附件：按回复所在那一轮的授权身份过媒体
 // 判据（不是回合里的不带授权身份），都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
-// 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端是 owner，取用规则一律不放行）。
+// 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端与 WebUI 的 console 是 owner，取用规则
+// 一律不放行）。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -188,7 +190,8 @@ type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Prom
 
 /**
  * imageSender 为真时另装 plugin-image-sender，经 sendAttachment 调它的 send_attachment；gateway 为真时另装网关，经 dispatch
- * 派发出站，会话表里有 GROUP 与 PRIVATE、PRIVATE 的对端是 owner（sessions 为假时不装会话管理）。replyToSend 是实现端怎么回
+ * 派发出站，会话表里有 GROUP 与 PRIVATE、PRIVATE 的对端与 WebUI 的 console 是 owner，owner 在 onebot 登记的账号是 PRIVATE 的
+ * 对端（sessions 为假时不装会话管理）；post 从实现端推一个 v11 事件，inbound 是适配器发出的入站。replyToSend 是实现端怎么回
  * 发送与上传：failText 只让发消息失败、上传照常成功。media 是 media 服务的替身，只给出站会调到的那个方法
  */
 async function boot(
@@ -214,7 +217,9 @@ async function boot(
   );
   const actions: Action[] = [];
   const heldReplies: Array<() => void> = [];
+  let socket: WsSocket | undefined;
   server.on('connection', ws => {
+    socket = ws;
     ws.on('message', raw => {
       const req = JSON.parse(raw.toString()) as Action & { echo?: string };
       actions.push({ action: req.action, params: req.params });
@@ -269,6 +274,8 @@ async function boot(
   } as never);
   const delivered: OutgoingMessage[] = [];
   host.events.use.on('outbound:delivered', msg => void delivered.push(msg));
+  const inbound: IncomingMessage[] = [];
+  host.events.use.on('inbound:message', msg => void inbound.push(msg));
   // 存档用真的：送达之后的快照由它记进会话历史，记忆是只记写入的替身
   const notes: Array<{ sessionId: string; message: Message }> = [];
   host.provide.use(memory, {
@@ -293,8 +300,12 @@ async function boot(
         canTake: () => ({ ok: false, reason: TAKE_UNKNOWN }),
       } as never);
     }
-    const isOwner = (p: string, u?: string) => p === 'onebot' && u === '30001';
-    host.provide.use(authority, { isOwner, principalOf: (turn: OriginTurn) => principalKind(turn, isOwner) } as never);
+    const isOwner = (p: string, u?: string) => (p === 'onebot' && u === '30001') || (p === 'webui' && u === 'console');
+    host.provide.use(authority, {
+      isOwner,
+      ownerOn: (p: string) => (p === 'onebot' ? { userId: '30001' } : undefined),
+      principalOf: (turn: OriginTurn) => principalKind(turn, isOwner),
+    } as never);
     await app.plugins.register(gatewayPlugin);
     await app.plugins.idle();
   }
@@ -353,11 +364,17 @@ async function boot(
       unknown
     >;
   };
+  /** 从实现端推一个 v11 事件 */
+  const post = (event: Record<string, unknown>) =>
+    socket?.send(JSON.stringify({ self_id: Number(SELF), time: 0, ...event }));
   return {
     actions,
     files,
     sent,
     send,
+    post,
+    inbound,
+    archive: () => app.bind({ messageArchive }).messageArchive.use,
     dispatch,
     dispatchInTurn,
     flush,
@@ -1237,5 +1254,45 @@ describe('onebot 出站：安全', () => {
     expect(wire).not.toContain('big.log');
     expect(wire).toContain('file:///host/data/images/big.png');
     expect(t.warns.filter(w => w.includes('文件头')).length).toBe(2);
+  });
+});
+
+describe('onebot 入站：引用与撤回反查归档原文', () => {
+  it('owner 从 WebUI 往群里插的话被引用、被撤回：按归档时记下的标签去掉「[<owner 账号>]: 」，不按这条消息自己的身份拼', async () => {
+    const t = await boot({ gateway: true });
+    const archived = await t.archive().archiveIncoming({
+      content: '周五停课',
+      sessionId: GROUP,
+      platform: 'webui',
+      userId: 'console',
+      messageId: 'zz-quoted',
+    });
+    expect(archived?.content).toBe('[30001]: 周五停课');
+
+    t.post({
+      post_type: 'message',
+      message_type: 'group',
+      sub_type: 'normal',
+      message_id: 801,
+      group_id: 20001,
+      user_id: 30002,
+      sender: { user_id: 30002, nickname: '乙' },
+      message: [
+        { type: 'reply', data: { id: 'zz-quoted' } },
+        { type: 'text', data: { text: '收到' } },
+      ],
+    });
+    await until(() => t.inbound.length > 0);
+    expect(t.inbound[0].replyTo).toMatchObject({ messageId: 'zz-quoted', content: '周五停课' });
+
+    t.post({
+      post_type: 'notice',
+      notice_type: 'group_recall',
+      group_id: 20001,
+      user_id: 30001,
+      message_id: 'zz-quoted',
+    });
+    await until(() => t.notes.some(n => n.message.kind === 'group_recall'));
+    expect(t.notes.find(n => n.message.kind === 'group_recall')?.message.content).toContain('发送：「周五停课」）');
   });
 });
