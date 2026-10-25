@@ -71,7 +71,7 @@ export interface MediaProcessor {
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
 - **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 让网址来源的下载随之停下，并经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）
@@ -297,7 +297,7 @@ export default definePlugin({
 
 - **先看 `present`**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是先取 `media.present ? media.use : undefined`，再加 `if (!svc?.xxx)` 守卫，对照见 [§2](#2-谁提供-谁消费)。
 - **只复用缓存、不触发识别**：对引用消息里的图，OneBot 适配器只调 `lookupDescription(url)`，未命中就保持 `[图片]` 占位，不会主动消耗 vision token。
-- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可。`describeImage` 不同：没有可用的 vision processor、识别结果为空，或动图取不到、抽不出帧时返回空串；识别过程出错（识别模型调用失败、静态图取不到等）时直接抛出，调用方需自行 try/catch。
+- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可。`describeImage` 不同：没有可用的 vision processor 或识别结果为空时返回空串，动图抽不出帧时按整图识别；识别过程出错（识别模型调用失败、图取不到等）时直接抛出，调用方需自行 try/catch。
 - **顺序识别更稳**：本地视觉模型多为单实例串行，`plugin-image-sender` 显式逐张识别而非并发，避免它们互相排队又同时超时。
 
 ---
@@ -327,7 +327,7 @@ export default definePlugin({
 
 **来源 → 落盘 ref 别名**：网址与 data URI 本身不是存储地址，落盘后才有存储地址。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data:/images/<会话目录>/onebot/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘地址的那条键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照不收原始来源串做键，见上段）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。带会话语境的描述按原始来源查不到（键是落盘的存储地址，只在本会话命中）。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到落盘地址的键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
 
-`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
+`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串不写入；视频取不到、抽不出帧时写进描述位的失败说明也不写入，下次照样重试。`lookupDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
 ### storage URI 用法（provider 与调度器都要懂）
 
@@ -374,7 +374,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按 agent 交来的 `acceptsImages`（`agent:llm:before` 与工具上下文的，agent 按这一轮的模型在模型服务登记的能力填）——能看图则直通原图，不能看则由识别模型转文字，media 自己不查模型能力。端点没报告视觉能力的模型（如经中转站接入的）要直接看图，在模型服务的「单模型能力覆盖」（`modelCapabilities`）里给它写上 `vision`。也可显式钉死 `passthrough`/`describe`：钉死 `passthrough` 时当轮附件照样交给不能看图的模型，`analyze_image` 在不能看图的会话里仍走识别模型（结果里的图交不到模型）。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接吃（需主模型 audio 能力）。
 - **没有能看图的模型时图照样存下**：到达识别找不到能描述图片的识图处理器时，每张图只落盘写成不带描述的引用，这条消息另加一行 `[附了 N 张图，当前无法查看]`，不留空气泡、原图不丢；识别失败或返回空串的，引用照留、描述写「获取或识别失败，内容未知」。plugin-media 同时向 doctor 报 `service/media.vision` 警告。
 - **describe 交付不向主模型交图**：识别是识别模型的职责，结果已作为文字拼进消息正文，出口会把这一轮各条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。`analyze_image` 在这条交付下返回文字描述。
-- **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。变换作用于这一轮各条带图的 user 消息（agent 只给这一轮的输入挂图，历史消息不带图），每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。
+- **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态。是不是动图按来源的字节判：视频容器，或多帧的 GIF、APNG、动态 WebP；单帧 GIF 按静图。网址来源的先下载下来判；静图按读到的字节转成 data URL 交出，类型取判定结果，读不到字节的照原样规范化。变换作用于这一轮各条带图的 user 消息（agent 只给这一轮的输入挂图，历史消息不带图），每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。
 - **直通必须过形态规范化**：适配器给 `attachment.data` 的是落盘的存储地址（`data:/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。存储地址原样交出会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
 - **描述缓存跨会话共享是有条件的**：缓存键取落盘文件名里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory` 开启、描述里掺进了本会话的对话语境（`senderContext` 开启时还有发送者画像）时，键退回含会话目录的存储地址，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
 - **视频只有「抽帧 → vision」一条路**：media 不再为声明 Video 能力的 LLM 注册 `video.passthrough` processor（service 从不按该 cap 选 processor），抽帧描述用的是 `vision.maxTokens`。`MediaCapability` 里保留该 cap 只为第三方 processor 契约兼容。

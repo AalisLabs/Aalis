@@ -58,7 +58,7 @@ function makeSvc(visionPromptOverride = ''): { svc: MediaServiceImpl; calls: Des
 describe('describeImage 档位路由（分类推理已取消）', () => {
   it('auto：恰好一次 describe，用自路由 prompt——分类调用回归即红', async () => {
     const { svc, calls } = makeSvc();
-    await svc.describeImage('http://x/auto-1.jpg', { noCache: true });
+    await svc.describeImage('data:/images/s/zz/auto-1.jpg', { noCache: true });
     expect(calls).toHaveLength(1);
     expect(calls[0].basePrompt).toBe(DEFAULT_VISION_AUTO_PROMPT);
     // 旧分类调用的特征是 maxTokens=32——任何请求都不允许再带这个形状
@@ -67,9 +67,9 @@ describe('describeImage 档位路由（分类推理已取消）', () => {
 
   it('显式档位直接选模板：casual / detailed / professional', async () => {
     const { svc, calls } = makeSvc();
-    await svc.describeImage('http://x/c.jpg', { noCache: true, detailLevel: 'casual' });
-    await svc.describeImage('http://x/d.jpg', { noCache: true, detailLevel: 'detailed' });
-    await svc.describeImage('http://x/p.jpg', { noCache: true, detailLevel: 'professional' });
+    await svc.describeImage('data:/images/s/zz/c.jpg', { noCache: true, detailLevel: 'casual' });
+    await svc.describeImage('data:/images/s/zz/d.jpg', { noCache: true, detailLevel: 'detailed' });
+    await svc.describeImage('data:/images/s/zz/p.jpg', { noCache: true, detailLevel: 'professional' });
     expect(calls.map(c => c.basePrompt)).toEqual([
       DEFAULT_VISION_PROMPT,
       DEFAULT_VISION_DETAILED_PROMPT,
@@ -80,9 +80,9 @@ describe('describeImage 档位路由（分类推理已取消）', () => {
 
   it('cfg.vision.prompt 覆盖 auto 与 casual，不覆盖 detailed/professional', async () => {
     const { svc, calls } = makeSvc('用户自定义视觉提示词');
-    await svc.describeImage('http://x/o1.jpg', { noCache: true });
-    await svc.describeImage('http://x/o2.jpg', { noCache: true, detailLevel: 'casual' });
-    await svc.describeImage('http://x/o3.jpg', { noCache: true, detailLevel: 'detailed' });
+    await svc.describeImage('data:/images/s/zz/o1.jpg', { noCache: true });
+    await svc.describeImage('data:/images/s/zz/o2.jpg', { noCache: true, detailLevel: 'casual' });
+    await svc.describeImage('data:/images/s/zz/o3.jpg', { noCache: true, detailLevel: 'detailed' });
     expect(calls.map(c => c.basePrompt)).toEqual([
       '用户自定义视觉提示词',
       '用户自定义视觉提示词',

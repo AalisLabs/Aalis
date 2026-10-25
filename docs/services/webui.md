@@ -149,7 +149,7 @@ export default definePlugin({
 
 ### SSRF：图片代理走 safeFetch
 
-`/api/proxy/image` 用 `@aalis/util-network-guard` 的 `safeFetch`（`packages/plugin-webui-server/src/routes/proxy.ts`）。该函数**逐跳 `redirect:'manual'` + 每跳重新校验协议与 host**，并强制 `content-type: image/*`、20MB 上限、15s 超时、`x-content-type-options: nosniff` + `content-security-policy: sandbox`。任何 egress 都应走 `safeFetch`，别直接 `fetch` 用户给的 URL。
+`/api/proxy/image` 用 `@aalis/util-network-guard` 的 `safeFetch`（`packages/plugin-webui-server/src/routes/proxy.ts`）。该函数**逐跳 `redirect:'manual'` + 每跳重新校验协议与 host**，只转发按文件头认出的图片（PNG、JPEG、GIF、WebP，与 `/api/media` 同一份格式），`content-type` 取判定结果、不看上游写的，另有 20MB 上限、15s 超时、`x-content-type-options: nosniff` + `content-security-policy: sandbox`。任何 egress 都应走 `safeFetch`，别直接 `fetch` 用户给的 URL。
 
 ### 跨会话隔离
 

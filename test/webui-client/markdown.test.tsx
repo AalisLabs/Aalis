@@ -25,12 +25,14 @@ afterEach(() => {
 const show = (text: string, plain?: boolean) => render(<Markdown text={text} plain={plain} />).container;
 
 describe('Markdown', () => {
-  it('外站图片不发请求、显示成链接；媒体地址与存储地址的图片照常显示', () => {
+  it('外站图片不发请求、显示成链接；媒体地址与存储地址的图片照常显示；file: 地址不是存储地址，只写替代文字', () => {
     const view = show(
-      '![追踪](https://tracker.example/p.png)\n\n![本地](/api/media?uri=data%3A%2Fa.png)\n\n![存储](workspace:/b.png)',
+      '![追踪](https://tracker.example/p.png)\n\n![本地](/api/media?uri=data%3A%2Fa.png)\n\n![存储](workspace:/b.png)' +
+        '\n\n![本机](file:///zz-placeholder/c.png)',
     );
     const images = [...view.querySelectorAll('img')].map(img => img.getAttribute('src'));
     expect(images).toEqual(['/api/media?uri=data%3A%2Fa.png', '/api/media?uri=workspace%3A%2Fb.png']);
+    expect(screen.getByText('本机').tagName).toBe('SPAN');
     const link = screen.getByRole('link', { name: '追踪' });
     expect(link.getAttribute('href')).toBe('https://tracker.example/p.png');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');

@@ -1,5 +1,6 @@
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
+import type { MediaFormatName } from '@aalis/util-file-signature';
 import {
   AlignmentType,
   BorderStyle,
@@ -23,6 +24,14 @@ import {
 } from 'docx';
 import type { DocSessionManager } from '../session.js';
 import { joinUri, loadImage } from '../utils.js';
+
+/** Word 文档能嵌入的图片格式（文件头判定的格式名）→ docx 的图片类型；别的（WebP、AVIF、HEIC）嵌进去打不开，报错 */
+const DOCX_IMAGE_TYPES: Partial<Record<MediaFormatName, 'png' | 'jpg' | 'gif' | 'bmp'>> = {
+  PNG: 'png',
+  JPEG: 'jpg',
+  GIF: 'gif',
+  BMP: 'bmp',
+};
 
 interface DocState {
   sections: SectionChildren[];
@@ -423,12 +432,12 @@ export function registerDocxTools(
       type: 'function',
       function: {
         name: 'doc_add_image',
-        description: '向 Word 文档添加图片。支持 URL 或本地文件路径。',
+        description: '向 Word 文档添加图片（PNG、JPEG、GIF、BMP）。支持网址、存储地址或相对输出目录的路径。',
         parameters: {
           type: 'object',
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
-            source: { type: 'string', description: '图片 URL 或本地路径' },
+            source: { type: 'string', description: '图片网址、存储地址或相对输出目录的路径' },
             width: { type: 'number', description: '宽度（像素），默认 400' },
             height: { type: 'number', description: '高度（像素），默认按比例' },
             alignment: { type: 'string', enum: ['left', 'center', 'right'] },
@@ -439,18 +448,11 @@ export function registerDocxTools(
     },
     async handler(args) {
       const { state } = sessions.require(String(args.docId), 'docx').doc as { state: DocState };
-      const { buffer, mime } = await loadImage(storage, String(args.source), outputUri);
+      const { buffer, format } = await loadImage(storage, String(args.source), outputUri);
+      const imgType = DOCX_IMAGE_TYPES[format.format];
+      if (!imgType) throw new Error(`Word 文档不支持 ${format.format} 图片`);
       const width = Number(args.width || 400);
       const height = Number(args.height || 300);
-      // 按真实 mime 选图片类型，避免对 JPEG/GIF 硬编码 png 产出损坏 docx（对齐 pptx.ts 的处理）。
-      const imgType: 'jpg' | 'gif' | 'bmp' | 'png' =
-        mime.includes('jpeg') || mime.includes('jpg')
-          ? 'jpg'
-          : mime.includes('gif')
-            ? 'gif'
-            : mime.includes('bmp')
-              ? 'bmp'
-              : 'png';
 
       const para = new Paragraph({
         alignment: args.alignment ? alignMap[String(args.alignment)] : AlignmentType.CENTER,

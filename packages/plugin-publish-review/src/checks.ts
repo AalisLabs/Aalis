@@ -1,66 +1,33 @@
 import { type NominateInput, PUBLIC_CONTENT_TYPES, publicPathProblem, type WorkKind } from '@aalis/api-publish';
 import type { TextRef } from '@aalis/schema-i18n';
-import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
+import { decodeUtf8Text, detectMediaFormat, FILE_HEAD_BYTES, isAnimatedImage } from '@aalis/util-file-signature';
 import type { ReviewConfig } from './config.js';
 
 const MIB = 1024 * 1024;
 const SURFACE_RETRY_MS = 30_000;
 const media = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4']);
 const text = new Set(['html', 'css', 'js', 'mjs', 'json', 'svg']);
-const decoder = new TextDecoder('utf-8', { fatal: true });
 const ascii = (bytes: Uint8Array, start: number, length: number) =>
   String.fromCharCode(...bytes.slice(start, start + length));
 const extension = (path: string) => path.slice(path.lastIndexOf('.') + 1).toLowerCase();
 
+/** 内容与扩展名相符：网站按扩展名给 Content-Type，媒体的判定格式要正是那一种 */
 function signature(ext: string, bytes: Uint8Array): boolean {
-  const expected: Record<string, string> = {
-    png: 'PNG',
-    jpg: 'JPEG',
-    jpeg: 'JPEG',
-    gif: 'GIF',
-    webp: 'WebP',
-    mp4: 'MP4',
-  };
-  if (expected[ext]) return detectMediaFormat(bytes.subarray(0, MEDIA_HEAD_BYTES))?.format === expected[ext];
+  if (media.has(ext)) return detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES))?.mime === PUBLIC_CONTENT_TYPES[ext];
   if (ext === 'woff2') return ascii(bytes, 0, 4) === 'wOF2';
   if (!text.has(ext)) return true;
-  try {
-    const decoded = decoder.decode(bytes);
-    if (decoded.includes('\0')) return false;
-    if (ext === 'html') return /^(?:<!doctype html\b|<html\b)/i.test(decoded.replace(/^\uFEFF/, '').trimStart());
-    if (ext === 'svg') return /<svg\b/i.test(decoded);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function animatedPng(bytes: Uint8Array): boolean {
-  for (let i = 8; i + 8 <= bytes.length; ) {
-    const size = ((bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3]) >>> 0;
-    if (ascii(bytes, i + 4, 4) === 'acTL') return true;
-    if (size > bytes.length - i - 12) break;
-    i += size + 12;
-  }
-  return false;
-}
-
-function animatedWebp(bytes: Uint8Array): boolean {
-  if (ascii(bytes, 12, 4) === 'VP8X' && bytes.length > 20 && (bytes[20] & 0x02) !== 0) return true;
-  for (let i = 12; i + 8 <= bytes.length; ) {
-    const size = (bytes[i + 4] | (bytes[i + 5] << 8) | (bytes[i + 6] << 16) | (bytes[i + 7] << 24)) >>> 0;
-    if (['ANIM', 'ANMF'].includes(ascii(bytes, i, 4))) return true;
-    if (size > bytes.length - i - 8) break;
-    i += 8 + size + (size & 1);
-  }
-  return false;
+  const decoded = decodeUtf8Text(bytes);
+  if (decoded === null) return false;
+  if (ext === 'html') return /^(?:<!doctype html\b|<html\b)/i.test(decoded.trimStart());
+  if (ext === 'svg') return /<svg\b/i.test(decoded);
+  return true;
 }
 
 function fileProblem(path: string, bytes: Uint8Array): string | undefined {
   const ext = extension(path);
   if (!signature(ext, bytes)) return '文件内容与扩展名不符';
-  if (ext === 'png' && animatedPng(bytes)) return '动态 PNG 暂不接收';
-  if (ext === 'webp' && animatedWebp(bytes)) return '动态 WebP 暂不接收';
+  if (ext === 'png' && isAnimatedImage(bytes)) return '动态 PNG 暂不接收';
+  if (ext === 'webp' && isAnimatedImage(bytes)) return '动态 WebP 暂不接收';
   return undefined;
 }
 

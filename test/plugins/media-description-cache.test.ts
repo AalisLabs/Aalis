@@ -4,6 +4,7 @@ import type { Logger } from '@aalis/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import {
   lookupCachedDescription,
   rememberDescription,
@@ -12,8 +13,10 @@ import {
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
+import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { emptyMediaCaps, ref } from '../fixtures/service-ref.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 描述缓存的键空间一致性——「缓存只存裸描述，包装在消费点重建」。
@@ -29,7 +32,7 @@ const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as
 /** 无提供者的能力桩：识别走外部注册的 processor，其余能力一律缺席 */
 const caps = emptyMediaCaps(logger);
 
-function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
+function makeSvc(description = '猫在沙发上'): { svc: MediaServiceImpl; describeCount: () => number } {
   let n = 0;
   const cfg = {
     vision: { recognizeOnArrival: true, delivery: 'describe', maxTokens: 300, think: false, prompt: '' },
@@ -45,7 +48,7 @@ function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
     priority: 10,
     describe: async () => {
       n++;
-      return { descriptions: ['猫在沙发上'] };
+      return { descriptions: [description] };
     },
   };
   svc.registerProcessor(proc);
@@ -93,19 +96,56 @@ describe('描述缓存键空间一致性（裸描述入库、消费点包装）'
     expect(viaTool).not.toContain('ref:');
   });
 
-  it('失败占位不入缓存：processVideo 的失败文案与图片占位一样被挡（否则同一动图 30 天内永不重试）', () => {
-    const key = 'data:/images/onebot_t_group_1/onebot/broken.gif';
-    rememberDescription(key, VIDEO_FAILURE_TEXTS.noFrames);
-    rememberDescription(`${key}#2`, VIDEO_FAILURE_TEXTS.unreadable);
-    rememberDescription(`${key}#3`, VIDEO_FAILURE_TEXTS.noUrl);
-    expect(lookupCachedDescription(key)).toBeNull();
-    expect(lookupCachedDescription(`${key}#2`)).toBeNull();
-    expect(lookupCachedDescription(`${key}#3`)).toBeNull();
-    // 判定是对失败文案的精确匹配而非 `[视频]` 前缀猜测：用户把 framePrefix 配成 `[视频] ` 时真描述照常缓存
-    rememberDescription(`${key}#4`, '[视频] 一只猫在跳');
-    expect(lookupCachedDescription(`${key}#4`)).toBe('[视频] 一只猫在跳');
-    rememberDescription(`${key}#5`, '[画面] 一只猫在跳');
-    expect(lookupCachedDescription(`${key}#5`)).toBe('[画面] 一只猫在跳');
+  it('识别模型给出的描述以「[图片: 」开头也照常进缓存：第二次命中，不再调模型', async () => {
+    const { svc, describeCount } = makeSvc('[图片: 一只猫]');
+    const key = 'data:/images/onebot_t_group_1/onebot/bracket-desc.jpg';
+    expect(await svc.describeImage(key)).toBe('[图片: 一只猫]');
+    expect(await svc.describeImage(key)).toBe('[图片: 一只猫]');
+    expect(describeCount()).toBe(1);
+  });
+});
+
+// 视频取不到或抽不出帧时 describeVideo 回失败说明：失败不进缓存，下次照样重试，否则同一个视频 30 天内永不重试
+describe('视频失败不进缓存', () => {
+  it('抽不出帧：回失败说明，再调一次重新抽', async () => {
+    let probes = 0;
+    setMediaRuntime({
+      proc: {
+        execFile: async () => {
+          probes++;
+          return { code: 0, signal: null, stdout: '0', stderr: '' };
+        },
+      } as never,
+      storage: { resolveLocalPath: async () => '/zz-host/v.mp4' } as never,
+    });
+    const { svc } = makeSvc();
+    const video = 'data:/videos/onebot_t_group_1/onebot/0123456789abcdef.mp4';
+    expect(await svc.describeVideo(video)).toBe(VIDEO_FAILURE_TEXTS.noFrames);
+    expect(await svc.describeVideo(video)).toBe(VIDEO_FAILURE_TEXTS.noFrames);
+    expect(probes, '第二次照样去抽帧').toBe(2);
+  });
+});
+
+// 失败说明与工具说明写给模型看，不点名某个平台：媒体也可能来自别的适配器或工具
+describe('说明不点名平台', () => {
+  it('视频失败说明与 analyze_image、update_image_description 的说明都不含 OneBot', () => {
+    const definitions: unknown[] = [];
+    registerMediaTools(
+      {
+        tools: fixedRef(
+          stubBoundTools({ onRegister: (t: Omit<RegisteredTool, 'pluginName'>) => definitions.push(t.definition) }),
+        ),
+        memory: ref(),
+        events: ref(),
+        sessionManager: ref(),
+        authority: ref(),
+      },
+      makeSvc().svc,
+    );
+    expect(definitions).toHaveLength(2);
+    for (const text of [...Object.values(VIDEO_FAILURE_TEXTS), ...definitions.map(d => JSON.stringify(d))]) {
+      expect(text).not.toMatch(/onebot/i);
+    }
   });
 });
 
@@ -171,7 +211,7 @@ describe('来源 → 落盘 ref 别名', () => {
 describe('描述缓存按详略档分键', () => {
   it('detailed 不命中 auto 条目、自己一条可复用；auto 条目不被覆盖；显式 auto 等于默认', async () => {
     const { svc, describeCount } = makeSvc();
-    const key = 'http://example.invalid/img/detail-level.jpg';
+    const key = 'data:/images/onebot_t_group_1/onebot/detail-level.jpg';
     expect(await svc.describeImage(key)).toBe('猫在沙发上');
     await svc.describeImage(key);
     expect(describeCount(), 'auto 命中缓存').toBe(1);
@@ -220,7 +260,8 @@ describe('截断的描述原样进缓存', () => {
       { ...caps, llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]) },
       cfg,
     );
-    const key = 'http://example.invalid/img/cut-off.jpg';
+    // data URL 原样交给识图模型，不经存储；内容是一张 PNG 的文件头
+    const key = `data:image/png;base64,${Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')}`;
     expect(await svc.describeImage(key)).toBe('一只猫在（已在长度上限处截断）');
     expect(await svc.describeImage(key)).toBe('一只猫在（已在长度上限处截断）');
     expect(calls).toBe(1);

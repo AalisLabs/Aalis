@@ -4,22 +4,27 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { registerMediaRoutes } from '../../packages/plugin-webui-server/src/routes/media.js';
+import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // GET /api/media?uri=<存储地址>：聊天里的图片、视频、音频按存储地址取。只有 owner（cookie）能取；按文件头判定
 // 类型，只放行图片、视频与浏览器能播的音频，HTML、SVG、JSON 等一律 415；响应带 nosniff 与 sandbox CSP。
-// 真 storage-local，真 HTTP。
+// GET /api/proxy/image?url=<外站图片>：同样按文件头认图、放行同一份图片格式，类型取判定结果，不看上游的 Content-Type。
+// 真 storage-local，真 HTTP；外站是本机的上游桩。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-media-route-token-placeholder-0';
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+/** MP4 的 ftyp 盒与 ID3v2 标签头：浏览器能播，但不是图片 */
+const MP4 = Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0]);
+const MP3 = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]);
 
 describe('WebUI 媒体路由', () => {
   let base: string;
@@ -86,10 +91,69 @@ describe('WebUI 媒体路由', () => {
     expect(await json.text()).not.toContain('zz-not-media');
   });
 
-  it('安全：没有登录拒绝；网址与不存在的文件不提供', async () => {
+  it('安全：没有登录拒绝；网址、file:/ 与不存在的文件不提供', async () => {
     expect((await get('data:/images/cat.png', false)).status).toBeGreaterThanOrEqual(401);
     expect((await get('https://example.invalid/cat.png')).status).toBe(400);
+    expect((await get('file:/etc/hosts')).status, '存储地址按 api-storage 的同一文法认').toBe(400);
     expect((await get('data:/images/missing.png')).status).toBe(404);
+  });
+
+  describe('图片代理', () => {
+    let upstream: Server;
+    let origin: string;
+
+    beforeAll(async () => {
+      setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；afterAll 复原
+      upstream = createServer((req, res) => {
+        if (req.url === '/labeled-png.svg') {
+          res.writeHead(200, { 'content-type': 'image/png' });
+          res.end('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+          return;
+        }
+        if (req.url === '/octet.png') {
+          res.writeHead(200, { 'content-type': 'application/octet-stream' });
+          res.end(PNG);
+          return;
+        }
+        if (req.url === '/labeled-png.mp4' || req.url === '/labeled-png.mp3') {
+          res.writeHead(200, { 'content-type': 'image/png' });
+          res.end(req.url.endsWith('mp4') ? MP4 : MP3);
+          return;
+        }
+        res.writeHead(404).end();
+      });
+      await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+      origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+    });
+
+    afterAll(async () => {
+      setNetworkPolicy({ blockPrivate: true });
+      await new Promise(resolve => upstream.close(resolve));
+    });
+
+    const proxied = (path: string) =>
+      fetch(`http://127.0.0.1:${port}/api/proxy/image?url=${encodeURIComponent(`${origin}${path}`)}`, {
+        headers: { cookie: `aalis_webui_token=${TOKEN}` },
+      });
+
+    it('安全：上游类型头写着 image/png、内容是 SVG：415，不转发', async () => {
+      const res = await proxied('/labeled-png.svg');
+      expect(res.status).toBe(415);
+      expect(await res.text()).not.toContain('<script>');
+    });
+
+    it('上游回的是视频或音频（类型头写着 image/png）：415，图片代理只放行图片', async () => {
+      for (const path of ['/labeled-png.mp4', '/labeled-png.mp3']) {
+        expect((await proxied(path)).status, path).toBe(415);
+      }
+    });
+
+    it('上游类型头写成 application/octet-stream 的 PNG：照常提供，类型取判定结果', async () => {
+      const res = await proxied('/octet.png');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/png');
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(PNG);
+    });
   });
 
   it('安全：用 .. 指向存储根外的图片取不到（存储拒绝读取，按读不出回 500，不是「不存在」）', async () => {

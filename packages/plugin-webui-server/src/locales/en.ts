@@ -156,7 +156,7 @@ export default defineLocale<Source>()({
     'No running plugin provides the package-manager service, so the market cannot update: enable it in the plugin area',
   urlRequired: 'The url parameter is missing',
   upstreamStatus: 'Upstream returned {status}',
-  notImage: 'Not an image Content-Type: {type}',
+  notImage: 'Upstream did not return a displayable image',
   imageTooLarge: 'Image too large ({size} > {max})',
   noUpstreamBody: 'Upstream sent no response body',
   proxyFailed: 'Proxy failed: {error}',

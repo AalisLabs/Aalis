@@ -1,18 +1,18 @@
 {
-  "name": "@aalis/util-media-signature",
+  "name": "@aalis/util-file-signature",
   "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/util-media-signature"
+    "directory": "packages/util-file-signature"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "媒体文件头签名：按文件开头的字节认定图片、音频、视频格式，纯函数无依赖",
+  "description": "文件类型判定：按文件内容认定图片、音频、视频、文档格式与 UTF-8 文本，判断动图，纯函数无依赖",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

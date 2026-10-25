@@ -954,9 +954,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
-      '@aalis/util-media-signature':
+      '@aalis/util-file-signature':
         specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-media-signature
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -1073,6 +1073,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -1785,9 +1788,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
-      '@aalis/util-media-signature':
+      '@aalis/util-file-signature':
         specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-media-signature
+        version: link:../util-file-signature
     devDependencies:
       '@aalis/api-agent':
         specifier: workspace:*
@@ -2035,9 +2038,9 @@ importers:
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
         version: link:../util-bounded-map
-      '@aalis/util-media-signature':
+      '@aalis/util-file-signature':
         specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-media-signature
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -2334,6 +2337,9 @@ importers:
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
         version: link:../util-bounded-map
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -2460,6 +2466,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
     devDependencies:
       '@aalis/api-agent':
         specifier: workspace:*
@@ -2614,12 +2623,12 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../schema-message
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
       '@aalis/util-json-repair':
         specifier: workspace:>=0.5.4 <1.0.0
         version: link:../util-json-repair
-      '@aalis/util-media-signature':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-media-signature
       '@aalis/util-offline-render':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-offline-render
@@ -3153,9 +3162,6 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
-      '@aalis/api-storage':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-tools
@@ -3667,6 +3673,9 @@ importers:
       '@aalis/api-session-protocol':
         specifier: workspace:*
         version: link:../api-session-protocol
+      '@aalis/api-storage':
+        specifier: workspace:*
+        version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
@@ -3828,9 +3837,9 @@ importers:
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.1 <1.0.0
         version: link:../util-dep-spec
-      '@aalis/util-media-signature':
+      '@aalis/util-file-signature':
         specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-media-signature
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -4055,13 +4064,13 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/util-json-repair:
+  packages/util-file-signature:
     devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/util-media-signature:
+  packages/util-json-repair:
     devDependencies:
       typescript:
         specifier: ^5.7.0

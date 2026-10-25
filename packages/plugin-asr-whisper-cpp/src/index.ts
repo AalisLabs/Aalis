@@ -9,7 +9,6 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { extname } from 'node:path';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import type { ProcessService } from '@aalis/api-process';
 import { processService } from '@aalis/api-process';
@@ -58,34 +57,6 @@ type Cfg = ConfigOf<typeof configSchema>;
  */
 const PRIORITY = 80;
 
-/**
- * 猜音频文件扩展名（只用来拼临时文件名，ffmpeg 按内容探测格式）。
- * `url.split('.').pop()` 在无扩展名的来源上会把整条路径当扩展名（实测
- * `audio.com/download` → 带斜杠的写路径，在 storage 下造嵌套垃圾目录），
- * 故一律走 extname + 白名单，取不到时按 Content-Type 兜底，最后落 'bin'。
- */
-function guessAudioExt(source: string, contentType?: string | null): string {
-  const fromPath = extname(source.split('?')[0].split('#')[0]).replace(/^\./, '').toLowerCase();
-  if (/^[a-z0-9]{1,5}$/.test(fromPath)) return fromPath;
-  const sub = (contentType ?? '').split(';')[0].trim().toLowerCase().split('/')[1] ?? '';
-  const byMime: Record<string, string> = {
-    mpeg: 'mp3',
-    mp3: 'mp3',
-    wav: 'wav',
-    'x-wav': 'wav',
-    wave: 'wav',
-    ogg: 'ogg',
-    opus: 'ogg',
-    oga: 'ogg',
-    mp4: 'm4a',
-    'x-m4a': 'm4a',
-    m4a: 'm4a',
-    webm: 'webm',
-    flac: 'flac',
-  };
-  return byMime[sub] ?? 'bin';
-}
-
 /** 远程音频下载与 plugin-media 同口径：20 MiB 上限，连接加读完响应体共 15 秒。 */
 const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -95,7 +66,7 @@ const DOWNLOAD_TIMEOUT_MS = 15_000;
  * 对端不应答会挂住整轮语音回合，超大响应会整个读进内存。超时信号覆盖连接与读取响应体；
  * 体积按流式累计判定——不用 arrayBuffer()，无 Content-Length 的响应要全部读完才看得到大小。
  */
-async function downloadAudio(url: string): Promise<{ bytes: Buffer; contentType: string | null }> {
+async function downloadAudio(url: string): Promise<Buffer> {
   const resp = await safeFetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
   const declared = Number(resp.headers.get('content-length'));
@@ -117,7 +88,18 @@ async function downloadAudio(url: string): Promise<{ bytes: Buffer; contentType:
     }
     chunks.push(Buffer.from(value));
   }
-  return { bytes: Buffer.concat(chunks), contentType: resp.headers.get('content-type') };
+  return Buffer.concat(chunks);
+}
+
+/** 解码或下载到的音频写进临时目录：一律叫 audio.bin，转码时 ffmpeg 按内容探测格式，扩展名不参与 */
+async function writeTempAudio(
+  proc: ProcessService,
+  storage: StorageService,
+  bytes: Buffer,
+): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const tmp = await proc.makeTempDir('whisper-in');
+  await storage.writeFile(`${tmp.uri}/audio.bin`, bytes);
+  return { path: `${tmp.path}/audio.bin`, cleanup: tmp.cleanup };
 }
 
 /**
@@ -131,22 +113,13 @@ async function materializeAudio(
   data: string,
 ): Promise<{ path: string; cleanup: () => Promise<void> }> {
   // base64 data URL（必须带 ;base64,，借此与 storage URI `data:/...` 区分）
-  const dataUri = data.match(/^data:([^;]+);base64,(.+)$/);
-  if (dataUri) {
-    const tmp = await proc.makeTempDir('whisper-in');
-    const ext = dataUri[1].split('/')[1]?.split(';')[0] ?? 'bin';
-    await storage.writeFile(`${tmp.uri}/audio.${ext}`, Buffer.from(dataUri[2], 'base64'));
-    return { path: `${tmp.path}/audio.${ext}`, cleanup: tmp.cleanup };
-  }
+  const dataUri = data.match(/^data:[^;]+;base64,(.+)$/);
+  if (dataUri) return writeTempAudio(proc, storage, Buffer.from(dataUri[1], 'base64'));
   if (data.startsWith('file://')) {
     return { path: data.slice('file://'.length), cleanup: async () => {} };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
-    const { bytes, contentType } = await downloadAudio(data);
-    const tmp = await proc.makeTempDir('whisper-in');
-    const ext = guessAudioExt(data, contentType);
-    await storage.writeFile(`${tmp.uri}/audio.${ext}`, bytes);
-    return { path: `${tmp.path}/audio.${ext}`, cleanup: tmp.cleanup };
+    return writeTempAudio(proc, storage, await downloadAudio(data));
   }
   // storage URI（scheme:/...）解析到本地路径
   if (isStorageUri(data)) {

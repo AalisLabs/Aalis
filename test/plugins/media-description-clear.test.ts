@@ -267,7 +267,7 @@ describe('按类型对称（视频描述归 video）', () => {
     const { files, clear, media: svc } = await boot({});
     let processed = 0;
     // 真抽帧要 ffmpeg；这里只关心描述进出缓存，处理本体换成计数桩
-    Object.assign(svc, { processVideo: async () => `视频描述 ${++processed}` });
+    Object.assign(svc, { processVideo: async () => ({ text: `视频描述 ${++processed}` }) });
     const video = 'data:/videos/onebot_t_group_A/onebot/5555bbbb6666cccc.mp4';
     const image = 'data:/images/onebot_t_group_A/onebot/7777dddd8888eeee.jpg';
     const remoteVideo = 'https://example.invalid/v.mp4';

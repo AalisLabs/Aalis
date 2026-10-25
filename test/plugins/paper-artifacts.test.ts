@@ -15,7 +15,7 @@ import { GIF, JPEG, MP4, PNG, ScriptedRemote, text, WEBP } from '../fixtures/pap
 
 // ════════════════════════════════════════════════════════════
 // 成品的写入口（U10b）：提供者交来的相对路径再净化一次（不只信提供者），单文件、单轮总量、文件数与
-// 白纸目录总占用都有上限；类型按文件头判定；落盘文件名由宿主生成（<产物 id>.<判定类型的扩展名>），
+// 白纸目录总占用都有上限；类型按内容判定、不看扩展名；落盘文件名由宿主生成（<产物 id>.<判定类型的扩展名>），
 // 远端给的文件名只记在账本里供 WebUI 显示。
 // ════════════════════════════════════════════════════════════
 
@@ -33,6 +33,8 @@ const bytes = (n: number, head: Uint8Array = PNG) => {
   out.set(head.subarray(0, Math.min(n, head.byteLength)));
   return out;
 };
+/** ISO 基础媒体文件的 ftyp 盒，主品牌后接次版本 0 */
+const ftyp = (major: string) => new Uint8Array([0, 0, 0, 16, ...text('ftyp'), ...text(major), 0, 0, 0, 0]);
 
 async function collect(hub: DriverHub, a: ScriptedRemote, files: Array<{ rel: string; data: Uint8Array }>) {
   const id = await hub.accept();
@@ -63,6 +65,8 @@ describe('写入口', () => {
       { rel: 'sub/page.htm', data: text('﻿ \n <HTML lang="zh"></HTML>') },
       { rel: 'notes.html', data: text('hello') },
       { rel: 'clip.mp4', data: MP4 },
+      { rel: 'clip.mov', data: ftyp('qt  ') },
+      { rel: 'page.txt', data: text('<!doctype html><p>') },
       { rel: '../escape.png', data: PNG },
       { rel: 'a/../../escape2.png', data: PNG },
       { rel: '/abs.png', data: PNG },
@@ -79,8 +83,10 @@ describe('写入口', () => {
       ['sub/page.htm', 'html'],
       ['notes.html', 'other'],
       ['clip.mp4', 'mp4'],
+      ['clip.mov', 'mov'],
+      ['page.txt', 'html'],
     ]);
-    const ext = { png: 'png', html: 'html', other: 'bin', mp4: 'mp4' } as Record<string, string>;
+    const ext = { png: 'png', html: 'html', other: 'bin', mp4: 'mp4', mov: 'mov' } as Record<string, string>;
     const stored = [...files.keys()].filter(k => k.startsWith('paper:'));
     expect(stored.sort()).toEqual(artifacts.map(x => `${PAPER_A_DIR}/tasks/${id}/out/${x.id}.${ext[x.type]}`).sort());
     for (const x of artifacts) expect(x.id).toMatch(/^a-[0-9a-f]{8}$/);
@@ -159,22 +165,27 @@ describe('写入口', () => {
   });
 });
 
-describe('按文件头判定类型', () => {
-  it('位图与 MP4 看魔数，不看扩展名', () => {
-    expect(sniffType('x.bin', PNG)).toBe('png');
-    expect(sniffType('x.png', JPEG)).toBe('jpeg');
-    expect(sniffType('x.jpg', GIF)).toBe('gif');
-    expect(sniffType('x.gif', WEBP)).toBe('webp');
-    expect(sniffType('x.txt', MP4)).toBe('mp4');
-    expect(sniffType('x.png', text('not a png'))).toBe('other');
-    expect(sniffType('x.png', new Uint8Array())).toBe('other');
+describe('按内容判定类型', () => {
+  it('位图与视频按文件头，不看扩展名', () => {
+    expect(sniffType(PNG)).toBe('png');
+    expect(sniffType(JPEG)).toBe('jpeg');
+    expect(sniffType(GIF)).toBe('gif');
+    expect(sniffType(WEBP)).toBe('webp');
+    expect(sniffType(MP4)).toBe('mp4');
+    expect(sniffType(ftyp('qt  '))).toBe('mov');
+    expect(sniffType(text('not a png'))).toBe('other');
+    expect(sniffType(new Uint8Array())).toBe('other');
   });
 
-  it('HTML 须扩展名为 .html 或 .htm、能按 UTF-8 解码、去掉 BOM 与空白后以 <!doctype html 或 <html 开头', () => {
-    expect(sniffType('index.html', text('<!doctype html><p>'))).toBe('html');
-    expect(sniffType('INDEX.HTM', text('﻿\n\t <Html>'))).toBe('html');
-    expect(sniffType('index.txt', text('<!doctype html>'))).toBe('other');
-    expect(sniffType('index.html', text('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe('other');
-    expect(sniffType('index.html', new Uint8Array([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0xff, 0xfe]))).toBe('other');
+  it('认得出、但不能发的媒体（M4A 等同为 ftyp 容器的）归 other，不冒充 MP4', () => {
+    expect(sniffType(ftyp('M4A '))).toBe('other');
+    expect(sniffType(ftyp('heic'))).toBe('other');
+  });
+
+  it('HTML 只按内容：能按 UTF-8 解码、去掉 BOM 与空白后以 <!doctype html 或 <html 开头（不分大小写）', () => {
+    expect(sniffType(text('<!doctype html><p>'))).toBe('html');
+    expect(sniffType(text('\uFEFF\n\t <Html>'))).toBe('html');
+    expect(sniffType(text('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe('other');
+    expect(sniffType(new Uint8Array([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0xff, 0xfe]))).toBe('other');
   });
 });

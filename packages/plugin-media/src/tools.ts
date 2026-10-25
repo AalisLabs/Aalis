@@ -15,9 +15,9 @@ import { isHostAbsolutePath, isStorageNotFound, isStorageUri } from '@aalis/api-
 import type { BoundTools } from '@aalis/api-tools';
 import type { Events, ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
-import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
+import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
+import { readSourceBytes } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
-import { safeDownloadToTemp } from './safe-fetch.js';
 import type { MediaServiceImpl } from './service.js';
 
 /** 过不了媒体判据时回给模型的话：先判后读，存储里有没有、是不是图片都回这一句 */
@@ -25,16 +25,6 @@ const OUT_OF_SCOPE =
   '这张图不在这一轮能看的范围里：别的会话的媒体按这个会话的取用范围与开关；本机文件要这一轮里有 owner 的话、有别人时经她批准，或是 owner 授权的自动运行且会话里没有别人';
 /** 判媒体归属与回写图片描述回看的历史条数 */
 const HISTORY_LIMIT = 200;
-/** 文件头认出的图片格式（@aalis/util-media-signature 的格式名）→ mime */
-const IMAGE_MIME: Record<string, string> = {
-  PNG: 'image/png',
-  JPEG: 'image/jpeg',
-  GIF: 'image/gif',
-  WebP: 'image/webp',
-  BMP: 'image/bmp',
-  AVIF: 'image/avif',
-  HEIC: 'image/heic',
-};
 
 /**
  * 存储里没有这个文件时回给模型的话，相对路径过不了判据时也回它（不透露文件在不在）：相对路径归到了工作区，写成
@@ -122,7 +112,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
             image: {
               type: 'string',
               description:
-                '图片来源：历史里的 `[图片 | ref:…]` 引用、存储地址（如 data:/images/onebot_xxx/onebot/xxx.jpg、' +
+                '图片来源：历史里的 `[图片 | ref:…]` 引用、存储地址（如 data:/images/<会话目录>/<写入方>/<文件>、' +
                 'tmp:/browser/...）或网络 URL。相对路径按工作区（workspace:/）找，别处的图要写带根名的存储地址。',
             },
             prompt: { type: 'string', description: '分析提示词（可选）。数学/代码/表格类务必写明具体要求。' },
@@ -190,34 +180,30 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
             if (!isStorageNotFound(err)) throw err;
             return JSON.stringify({ error: notFound(uri) });
           }
-          const format = detectMediaFormat(buf.subarray(0, MEDIA_HEAD_BYTES));
-          const mime = format && IMAGE_MIME[format.format];
-          if (!mime) return JSON.stringify({ error: '目标不是图片（文件内容不是受支持的图片格式）' });
-          imageUrl = `data:${mime};base64,${Buffer.from(buf).toString('base64')}`;
+          const format = detectMediaFormat(buf.subarray(0, FILE_HEAD_BYTES));
+          if (format?.kind !== 'image')
+            return JSON.stringify({ error: '目标不是图片（文件内容不是受支持的图片格式）' });
+          imageUrl = `data:${format.mime};base64,${Buffer.from(buf).toString('base64')}`;
         }
 
         // 这次调用的主模型能看图（acceptsImages，agent 按模型登记的能力填）且交付不是转文字：图片随工具结果交出
         // （规范化 + 动图抽帧与当轮附件同一出口），不经识别模型。不能看图的会话与只读 content 的
         // mcp-server / workflow 照常走识别模型出文字，配置强制直通也一样：结果里的图交不到模型。
         if (callCtx.acceptsImages && svc.resolveDelivery(true) === 'passthrough') {
-          // 远端 URL 先在工具层下载并校验是图片：原样交给主请求的话，链接失效 / 不是图片会变成整轮 400，
-          // 模型没有机会纠正；下载失败留在工具层返回错误，模型可换路。
-          let source = imageUrl;
-          let cleanup: (() => Promise<void>) | undefined;
-          if (/^https?:\/\//i.test(source)) {
-            const dl = await safeDownloadToTemp(source, { imageOnly: true });
-            if (!dl) return JSON.stringify({ error: '图片无法下载，或目标不是图片' });
-            source = `file://${dl.path}`; // 物化链认 file:// / data: / storage URI，不认裸绝对路径
-            cleanup = dl.cleanup;
-          } else if (source.startsWith('data:') && !/^data:image\//i.test(source)) {
-            return JSON.stringify({ error: '目标不是图片（data URI 不是 image/*）' });
+          // 先在工具层读到字节、按文件头认是图片（data URI 写的类型不看）：原样交给主请求的话，链接失效 / 不是图片会变成
+          // 整轮 400，模型没有机会纠正；读不到或不是图片留在工具层返回错误，模型可换路。网址经受保护的下载读进内存，不落临时文件
+          const web = /^https?:\/\//i.test(imageUrl);
+          const bytes = await readSourceBytes(imageUrl, callCtx.signal);
+          const format = bytes && detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES));
+          if (!bytes || format?.kind !== 'image') {
+            return JSON.stringify({
+              error: web ? '图片无法下载，或目标不是图片' : '目标不是图片（文件内容不是受支持的图片格式）',
+            });
           }
-          let images: string[];
-          try {
-            images = await svc.transformModelImages([source], 'passthrough');
-          } finally {
-            await cleanup?.();
-          }
+          const images = await svc.transformModelImages(
+            [`data:${format.mime};base64,${Buffer.from(bytes).toString('base64')}`],
+            'passthrough',
+          );
           if (images.length === 0) return JSON.stringify({ error: '图片无法读取或转换为可发送形态' });
           // content 会落库、也会在后续回合被回看：措辞对未来也成立，并带上来源便于重新查看
           return {
@@ -256,7 +242,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           properties: {
             image_ref: {
               type: 'string',
-              description: '图片引用（ref: 后面的部分），如 data:/images/onebot_xxx/onebot/abc123.jpg',
+              description: '图片引用（ref: 后面的部分），如 data:/images/<会话目录>/<写入方>/<文件>',
             },
             description: { type: 'string', description: '图片描述文字' },
           },

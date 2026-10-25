@@ -259,6 +259,44 @@ const REMOVED: Array<[string, string]> = [
   ],
   ['XML 属性引号转义', 'json-repair 专为 QQ 表情标签加的一步：字符串里的属性引号由裸引号转义处理'],
   ["补全缺失的 '}' 与 ']'", 'json-repair 补齐被截断的括号：截断由模型插件报的结束原因认'],
+  ['util-media-signature', '只认媒体的文件头签名包：改名 util-file-signature，另认文档、文本与动图'],
+  ['MEDIA_HEAD_BYTES', '只认媒体的文件头长度：改名 FILE_HEAD_BYTES'],
+  ['guessAudioExt', '语音识别按路径、Content-Type 与 data URL 写的类型猜上传文件名：按内容判定的格式取'],
+  ['WHISPER_EXTS', '语音识别接口收的扩展名表，按它挑路径后缀：接口收的是判定出的格式集合'],
+  ['guessExtFromMime', 'media 下载件按网址扩展名与 Content-Type 猜后缀：取判定出的格式'],
+  ['SafeFetchResult', 'media 下载带回上游的 Content-Type：只交字节，类型按文件头判'],
+  ['fmtToMime', 'media 按另一份文件头表的结论配音频 MIME：取判定出的 MIME'],
+  ['ANIMATED_EXTS', 'media 按扩展名认动图：按读到的字节判'],
+  ['animatedHints', 'media 按适配器报的 mimeType 登记动图线索：按读到的字节判'],
+  ['rememberAnimated', 'media 按适配器报的 mimeType 登记动图线索：按读到的字节判'],
+  ['VIDEO_FAILURE_SET', 'media 描述缓存按失败文案认识别失败：失败作为结果交出，调用方不写进缓存'],
+  ['animatedPng', '作品审核自带的 APNG 判定：并进 util-file-signature 的 isAnimatedImage'],
+  ['animatedWebp', '作品审核自带的动态 WebP 判定：并进 util-file-signature 的 isAnimatedImage'],
+  ['isAnimatedFormat', 'media 按 data URL 前缀与扩展名判动图：按读到的字节判'],
+  ['isFailurePlaceholder', 'media 描述缓存按文字前缀认识别失败：失败作为结果交出，调用方不写进缓存'],
+  ['detectExtensionFromBuffer', 'onebot 落盘的简化文件头表与按种类兜底的扩展名：取共用判定的格式，认不出的落 .bin'],
+  ['detectAudioFormat', 'media 交给模型的音频另写的一份文件头表（ftyp 一律当 m4a）：用共用判定'],
+  [
+    'safeDownloadToTemp',
+    'media 下载网址写成临时文件的另一份帮手：下载后与已读到的字节同经 materializeBytes 落临时文件',
+  ],
+  [
+    'imageOnly',
+    'media 安全下载的「只收图片」选项：analyze_image 与别的来源同经 readSourceBytes 读，按文件头判在调用处',
+  ],
+  ['localImageToDataUri', 'tool-onebot 自己读 get_image 给的存储地址转 data URI：交原地址，由 media 按文件头认'],
+  // 下面几个名字别处另有同名的在用（plugin-media 的 guessMime、几个插件的 toUri、api-storage 的 STORAGE_URI_RE、白纸的
+  // MEDIA_TYPES），按名字登记会误撞，登记删掉的那一份的写法
+  ['guessMime(path', 'office 按路径扩展名猜插图的 MIME：按文件头判定的格式取'],
+  ['toUri(String(args.', 'office 的 pdf_convert 按「:/」认存储地址：走 api-storage 的 resolveAgainstCwd'],
+  ['STORAGE_URI.test(uri)', 'WebUI 服务端 /api/media 自带的存储地址正则：按 api-storage 的 isStorageUri 认'],
+  [
+    'STORAGE_URI.test(src)',
+    'WebUI 客户端认媒体地址自带的存储地址正则（file: 也算）：按 api-storage 的 isStorageUri 认',
+  ],
+  ['MEDIA_TYPES[', 'WebUI 服务端 /api/media 的格式到 MIME 表：只留放行的格式集合，MIME 取判定结果'],
+  ['imageMimeFromPath', 'tool-onebot 按扩展名定本地图的 MIME：读出来按文件头认'],
+  ['TYPE_EXTENSIONS', '白纸成品发出前核对远端给的原扩展名：类型按内容判定，发出名由宿主按判定类型重写'],
 ];
 
 /**
@@ -318,6 +356,8 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ]),
   ['plugin-agent', 'this.historyLimit', '对话代理按插件配置读历史条数，改为按会话设置项 historyLimit 读'],
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
+  // 落盘扩展名表 EXTENSIONS 与留下的 REFUSED_EXTENSIONS 同名，只登记 MIME 表
+  ['plugin-paper', 'MIME_TYPES', '白纸按成品类型各写一份的媒体扩展名与 MIME 表：收成成品类型 → 判定格式的一张表'],
   [
     'plugin-tools',
     "'background-task'",

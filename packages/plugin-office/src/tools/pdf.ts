@@ -1,5 +1,5 @@
 import type { ProcessService } from '@aalis/api-process';
-import type { StorageService } from '@aalis/api-storage';
+import { resolveAgainstCwd, type StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
@@ -31,10 +31,6 @@ export function registerPdfTools(
   function baseName(uri: string): string {
     const i = uri.lastIndexOf('/');
     return i >= 0 ? uri.slice(i + 1) : uri;
-  }
-  function toUri(input: string): string {
-    if (input.includes(':/')) return input;
-    return joinUri(outputUri, input);
   }
   // 辅助：获取或新建页面
   function ensurePage(state: PdfState): ReturnType<PDFDocument['addPage']> {
@@ -225,8 +221,8 @@ export function registerPdfTools(
         parameters: {
           type: 'object',
           properties: {
-            inputPath: { type: 'string', description: '输入文件路径（可以是 workspace 下的相对路径或绝对路径）' },
-            outputDir: { type: 'string', description: '输出目录，默认与输入文件同目录' },
+            inputPath: { type: 'string', description: '输入文件：存储地址，或相对输出目录的路径' },
+            outputDir: { type: 'string', description: '输出目录（存储地址或相对路径），默认与输入文件同目录' },
           },
           required: ['inputPath'],
         },
@@ -235,8 +231,9 @@ export function registerPdfTools(
     // 转换大文档可能很久：等多久由执行器的让出时限管，停只认执行器给这次调用的中止信号。失败一律抛出，执行器转成 error
     background: {},
     async handler(args, ctx) {
-      const inputUri = toUri(String(args.inputPath));
-      const outUri = args.outputDir ? toUri(String(args.outputDir)) : parentUri(inputUri);
+      // 与文件工具同一判定：存储地址原样，相对路径落在输出目录下，宿主机绝对路径拒绝
+      const inputUri = resolveAgainstCwd(String(args.inputPath), outputUri);
+      const outUri = args.outputDir ? resolveAgainstCwd(String(args.outputDir), outputUri) : parentUri(inputUri);
       const resolveLocal = storage.resolveLocalPath?.bind(storage);
       if (!resolveLocal) throw new Error('PDF 转换需要存储提供本地路径能力（resolveLocalPath）。');
       if (!proc) throw new Error('PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。');

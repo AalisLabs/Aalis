@@ -1,8 +1,12 @@
 import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
+import type { MediaFormatName } from '@aalis/util-file-signature';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
 import { joinUri, loadImage } from '../utils.js';
+
+/** PPT 能嵌入的图片格式（文件头判定的格式名）；别的嵌进去打不开，报错 */
+const PPTX_IMAGE_FORMATS: ReadonlySet<MediaFormatName> = new Set(['PNG', 'JPEG', 'GIF']);
 
 interface PptState {
   pptx: PptxGenJS;
@@ -537,7 +541,7 @@ export function registerPptTools(
           properties: {
             docId: { type: 'string', description: '文档会话 ID' },
             slideNumber: { type: 'number', description: '幻灯片编号' },
-            source: { type: 'string', description: '图片来源：URL 或本地路径' },
+            source: { type: 'string', description: '图片来源（PNG、JPEG、GIF）：网址、存储地址或相对输出目录的路径' },
             x: { type: 'number', description: 'X 位置（英寸），默认 0.5' },
             y: { type: 'number', description: 'Y 位置（英寸），默认 0.5' },
             w: { type: 'number', description: '宽度（英寸），默认 5' },
@@ -550,9 +554,8 @@ export function registerPptTools(
     async handler(args) {
       const state = requireState(String(args.docId));
       const slide = getSlide(state, args.slideNumber as number | undefined);
-      const { buffer, mime } = await loadImage(storage, String(args.source), outputUri);
-      const base64 = buffer.toString('base64');
-      const ext = mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : 'jpeg';
+      const { buffer, format } = await loadImage(storage, String(args.source), outputUri);
+      if (!PPTX_IMAGE_FORMATS.has(format.format)) throw new Error(`PPT 不支持 ${format.format} 图片`);
 
       const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {
         x: 0.5,
@@ -562,7 +565,7 @@ export function registerPptTools(
       });
 
       slide.addImage({
-        data: `image/${ext};base64,${base64}`,
+        data: `${format.mime};base64,${buffer.toString('base64')}`,
         ...bounds,
       });
 

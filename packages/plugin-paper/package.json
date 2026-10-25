@@ -41,7 +41,8 @@
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
-    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/util-file-signature": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/api-agent": "workspace:*",

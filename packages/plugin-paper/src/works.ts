@@ -15,7 +15,7 @@ import type { StorageService } from '@aalis/api-storage';
 import { actingIdentity, type BoundTools, type ToolCallContext } from '@aalis/api-tools';
 import type { ServiceSelection } from '@aalis/core';
 import { type TextRef, toSource } from '@aalis/schema-i18n';
-import { artifactUri, EXTENSIONS } from './artifacts.js';
+import { artifactExtension, artifactUri } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
@@ -48,7 +48,7 @@ function publishedPaths(artifacts: readonly Artifact[]): string[] {
   if (artifacts.length === 1) {
     const [only] = artifacts;
     if (only.type === 'html') return ['index.html'];
-    if (MEDIA_TYPES.has(only.type)) return [`work.${EXTENSIONS[only.type]}`];
+    if (MEDIA_TYPES.has(only.type)) return [`work.${artifactExtension(only.type)}`];
   }
   const paths = artifacts.map(a => a.rel.split('/'));
   let common = 0;

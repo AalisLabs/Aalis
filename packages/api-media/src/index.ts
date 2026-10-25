@@ -147,8 +147,8 @@ export interface MediaService {
   // ===== 单图、单视频识别与描述缓存（image-rec 合并而来）=====
 
   /**
-   * 主动描述单张图片（含动图自动多帧）。没有可用的 vision processor、识别结果为空，或动图取不到、
-   * 抽不出帧时返回空串；识别过程出错（识别模型调用失败、静态图取不到等）时抛出，调用方需自行 try/catch。
+   * 主动描述单张图片（含动图自动多帧，抽不出帧的按整图识别）。没有可用的 vision processor 或识别结果为空时返回空串；
+   * 识别过程出错（识别模型调用失败、图取不到等）时抛出，调用方需自行 try/catch。
    * 与 describe([att]) 不同：本方法专为 `analyze_image` 等单图工具优化，
    * 内部走描述缓存（30 天滑动 TTL；文件名按内容寻址的存储地址取文件名里的内容哈希做键，见 session-media 的命名
    * 约定，网址与 data URI 经落盘时登记的别名收敛到落盘地址的键上）；可传 hint 注入用户意图（带 hint 不读写缓存）。
@@ -198,7 +198,7 @@ export interface DescribeImageOptions {
   detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
   /** 图片所在的会话：识别的模型调用按它记账（同 {@link DescribeInput.sessionId}）；不在会话里识别时不填 */
   sessionId?: string;
-  /** 中止信号，经 {@link DescribeInput.signal} 交给识别的模型调用（如 analyze_image 传执行器给这次调用的信号） */
+  /** 中止信号：网址来源的下载随之停下，并经 {@link DescribeInput.signal} 交给识别的模型调用（如 analyze_image 传执行器给这次调用的信号） */
   signal?: AbortSignal;
 }
 

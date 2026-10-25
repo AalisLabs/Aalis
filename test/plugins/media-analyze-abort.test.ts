@@ -1,3 +1,5 @@
+import { createServer, type IncomingMessage as HttpRequest } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
@@ -5,16 +7,22 @@ import type { Logger } from '../../packages/core/src/index.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
+import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { gif } from '../fixtures/file-heads.js';
 import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住。
-// 识图模型是替身：一直不回，中止后以中止原因拒绝；不连任何模型服务。
+// 识图模型是替身：一直不回，中止后以中止原因拒绝；不连任何模型服务。网址来源的下载也随这个信号停下（上游是本机桩）。
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} } as unknown as Logger;
+
+/** PNG 文件头与两帧的 GIF，都以 data URL 交给识图，不经存储与网络 */
+const PNG = `data:image/png;base64,${Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')}`;
+const ANIMATED_GIF = `data:image/gif;base64,${Buffer.from(gif(2)).toString('base64')}`;
 
 function setup() {
   const requests: ChatModelRequest[] = [];
@@ -25,6 +33,7 @@ function setup() {
     capabilities: ['vision'],
     chat: request => {
       requests.push(request);
+      if (request.signal?.aborted) return Promise.reject(request.signal.reason);
       return new Promise((_, reject) => {
         request.signal?.addEventListener('abort', () => reject(request.signal?.reason), { once: true });
       });
@@ -73,7 +82,7 @@ describe('analyze_image 可转后台', () => {
     const { analyze, requests } = setup();
     const ac = new AbortController();
     const pending = analyze.handler(
-      { image: 'https://zz.invalid/a.png', task: '看看是什么' },
+      { image: PNG, task: '看看是什么' },
       toolContext({ sessionId: 's', signal: ac.signal }),
     );
     await vi.waitFor(() => expect(requests).toHaveLength(1));
@@ -85,18 +94,40 @@ describe('analyze_image 可转后台', () => {
 
   it('动图走抽帧合并识别时，同样把中止信号交给识图的模型调用', async () => {
     const { requests, svc } = setup();
-    vi.spyOn(svc as unknown as { framesFromLocal(): Promise<string[]> }, 'framesFromLocal').mockResolvedValue([
+    vi.spyOn(svc as unknown as { framesOf(): Promise<string[]> }, 'framesOf').mockResolvedValue([
       'data:image/png;base64,AAAA',
     ]);
     const ac = new AbortController();
-    const pending = svc.describeImage('https://zz.invalid/a.gif', {
-      localPath: '/zz-host/a.gif',
-      noCache: true,
-      signal: ac.signal,
-    });
+    const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0].signal).toBe(ac.signal);
     ac.abort();
     await expect(pending).rejects.toBeDefined();
+  });
+
+  it('网址来源：下载来源字节也随中止信号停下，不等满下载时限', async () => {
+    const { svc } = setup();
+    const held: HttpRequest[] = [];
+    const closed: string[] = [];
+    // 上游一直不回：只记下请求与它何时被断开
+    const server = createServer(req => {
+      held.push(req);
+      req.socket.on('close', () => closed.push(req.url ?? ''));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；结束时复原
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/slow.png`;
+      const ac = new AbortController();
+      const rejected = expect(svc.describeImage(url, { noCache: true, signal: ac.signal })).rejects.toBeDefined();
+      await vi.waitFor(() => expect(held).toHaveLength(1));
+      ac.abort();
+      await vi.waitFor(() => expect(closed).toEqual(['/slow.png']), { timeout: 2000 });
+      await rejected;
+    } finally {
+      setNetworkPolicy({ blockPrivate: true });
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
   });
 });

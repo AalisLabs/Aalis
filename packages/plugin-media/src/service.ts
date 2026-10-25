@@ -26,6 +26,7 @@ import {
   formatAttachmentRef,
   parseAttachmentRefs,
 } from '@aalis/schema-message';
+import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 
 /** 本插件在会话媒体目录里的子目录名（写入方）：上传的图片落在这里 */
 export const MEDIA_WRITER = 'media';
@@ -42,8 +43,10 @@ import {
   extractAudioTrack,
   extractFrames,
   getFrameCount,
-  isAnimatedFormat,
   materializeAttachment,
+  materializeBytes,
+  needsFrames,
+  readSourceBytes,
   selectFrameIndices,
 } from './ffmpeg.js';
 import {
@@ -63,6 +66,27 @@ const UNRECOGNIZED = '获取或识别失败，内容未知';
 
 /** 能描述图片的识图处理器 */
 type ImageDescriber = MediaProcessor & Required<Pick<MediaProcessor, 'describe'>>;
+
+/** processVideo 的结果：识别出的文字，或写进描述位的失败说明（失败不进描述缓存，下次照样重试） */
+type VideoResult = { text: string } | { failure: string };
+
+/**
+ * 图片附件写进描述位的形态：带落盘的引用，没有引用的（落盘失败、正文里已有这个引用）加「[图片描述]」。抽帧识别的动图与
+ * 静图同一形态，缓存命中时照样包装，不必为判动图再读一次来源
+ */
+function imageDescription(desc: string, ref: string | null): string {
+  return ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc, ref }) : `[图片描述] ${desc}`;
+}
+
+/**
+ * 静图交出的形态：读到了字节、按文件头判定是图片的，一律按这些字节转成 data URL，类型取判定结果：网址不让识别模型的提供方
+ * 再下一次，存储地址与 data URL 也不按扩展名或写着的类型猜；读不到与不是图片的照原样，由识别与直通的规范化去读
+ */
+function staticImageSource(data: string, bytes: Uint8Array | null): string {
+  if (!bytes) return data;
+  const format = detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES));
+  return format?.kind === 'image' ? `data:${format.mime};base64,${Buffer.from(bytes).toString('base64')}` : data;
+}
 
 /**
  * 调度器用到的能力。llm / asr 是 processor 池的两个来源；memory 供识别上下文取历史与发送者画像。三者都可缺席（各自路径降级）。
@@ -390,9 +414,6 @@ export class MediaServiceImpl implements MediaService {
       };
       try {
         if (att.kind === 'image') {
-          // 动图线索先登记：直通出口的抽帧（agent:llm:before 中间件，见 index.ts）拿到的
-          // images[] 只剩 data 串，而 QQ 图 URL 常无扩展名，mimeType 只有归档期（现在）看得到。
-          if (!isAnimatedFormat(att.data) && att.mimeType === 'image/gif') this.rememberAnimated(att.data);
           if (!this.cfg.vision.recognizeOnArrival || !vision) {
             // 只留指针：不识别（关了到达即识别，或没有模型看得到图）。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
             // base64 上传没有落盘 ref，这里落一份并写指针，否则档案里图片零痕迹、按需看无从下手。
@@ -400,62 +421,50 @@ export class MediaServiceImpl implements MediaService {
             item.description = ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref }) : undefined;
             descriptions[i] = item.description;
           } else {
-            // 动图（gif/webm/...）走视频帧流程获得综合描述
-            const animated = isAnimatedFormat(att.data) || att.mimeType === 'image/gif';
-            // 缓存查询（hint/上下文为空时）。缓存里是裸描述，按本路径的形态重新包装：
-            // 静态图带 ref 标记（与新鲜识别同构），动图沿用裸文本（与动图新鲜路径同构）。
+            item.cap = 'vision';
+            // 缓存里是裸描述（hint/上下文为空时），按新鲜识别的形态重新包装
             const cached = lookupCachedDescription(att.data, shareable);
             if (cached) {
-              item.cap = 'vision';
-              if (animated) {
-                item.description = cached;
-              } else {
-                const ref = await landImage(att).catch(unstored);
-                item.description = ref
-                  ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: cached, ref })
-                  : `[图片描述] ${cached}`;
-              }
-              descriptions[i] = item.description;
-            } else if (animated) {
-              const text = await this.processVideo(att, ctxText, 'animated', msg.sessionId);
-              if (text) {
-                item.description = text;
-                item.cap = 'vision';
-                descriptions[i] = text;
-                rememberDescription(att.data, text, shareable);
-              }
+              item.description = imageDescription(cached, await landImage(att).catch(unstored));
             } else {
-              item.cap = 'vision';
-              item.processor = vision.name;
               // 先落盘：识别失败或返回空串时引用照留，原图不丢
               imageRef = await landImage(att).catch(unstored);
-              // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
-              // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
-              // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
-              // 避免两段 prompt 同时存在产生指令冲突。
-              const basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
-              this.logger.info(
-                `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
-              );
-              const r = await vision.describe({
-                attachments: [att],
-                mode: 'single',
-                maxTokens: this.cfg.vision.maxTokens,
-                basePrompt,
-                context: ctxText,
-                sessionId: msg.sessionId,
-              });
-              const raw = r.descriptions[0];
-              if (!raw) throw new Error('识别模型没有返回内容');
-              item.description = imageRef
-                ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref: imageRef })
-                : `[图片描述] ${raw}`;
-              descriptions[i] = item.description;
+              // 动图（多帧的 GIF、APNG、动态 WebP 与视频容器）走视频帧流程获得综合描述，按读到的字节判；抽不出帧的退回
+              // 整图识别，与直通同一条规则
+              const bytes = await readSourceBytes(att.data);
+              const frames =
+                bytes && needsFrames(bytes)
+                  ? await this.processVideo(att, ctxText, 'animated', msg.sessionId, bytes)
+                  : undefined;
+              let raw = frames && 'text' in frames ? frames.text : undefined;
+              if (raw === undefined) {
+                item.processor = vision.name;
+                // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
+                // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
+                // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
+                // 避免两段 prompt 同时存在产生指令冲突。
+                const basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
+                this.logger.info(
+                  `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
+                );
+                const r = await vision.describe({
+                  attachments: [{ ...att, data: staticImageSource(att.data, bytes) }],
+                  mode: 'single',
+                  maxTokens: this.cfg.vision.maxTokens,
+                  basePrompt,
+                  context: ctxText,
+                  sessionId: msg.sessionId,
+                });
+                raw = r.descriptions[0];
+                if (!raw) throw new Error('识别模型没有返回内容');
+              }
+              item.description = imageDescription(raw, imageRef);
               // 缓存只存裸描述：无上下文时键空间与 describeImage（转发/工具路径）
               // 共用同一内容哈希；带上下文时退回会话内私有键（见 rememberDescription）。
               // 存格式化文本会让另一侧拿到嵌套包装，存裸描述则各消费点按自己的形态包装。
               rememberDescription(att.data, raw, shareable);
             }
+            descriptions[i] = item.description;
           }
         } else if (att.kind === 'audio') {
           // 统一音频识别：LLM-as-audio 返回转写或描述，Whisper 仅返回转写。
@@ -472,7 +481,8 @@ export class MediaServiceImpl implements MediaService {
           }
         } else if (att.kind === 'video') {
           if (this.cfg.video.mode !== 'disabled') {
-            item.description = await this.processVideo(att, ctxText, 'video', msg.sessionId);
+            const result = await this.processVideo(att, ctxText, 'video', msg.sessionId);
+            item.description = 'text' in result ? result.text : result.failure;
             descriptions[i] = item.description;
             item.cap = 'vision';
           }
@@ -516,21 +526,6 @@ export class MediaServiceImpl implements MediaService {
     return report;
   }
 
-  /**
-   * 直通模式的动图线索：data 串 → 已知为动图。归档期看得到 mimeType，出口期只剩 data 串。
-   * 只登记出口自身判不出的那类（data 无动图特征、仅 mimeType 表明）——WebUI 的完整 base64
-   * data URI 自带 `data:image/gif` 前缀无需登记，登记它们会让 200 条上限的集合囤积 GB 级串。
-   */
-  private readonly animatedHints = new Set<string>();
-
-  private rememberAnimated(data: string): void {
-    this.animatedHints.add(data);
-    if (this.animatedHints.size > 200) {
-      const oldest = this.animatedHints.values().next().value;
-      if (oldest !== undefined) this.animatedHints.delete(oldest);
-    }
-  }
-
   /** 抽帧内核：本地动图/视频文件 → 均匀采样的关键帧 data URI（describe/describeImage/直通三处共用）。抽不出返回 []。 */
   private async framesFromLocal(path: string, maxFrames: number): Promise<string[]> {
     const totalFrames = await getFrameCount(path);
@@ -541,6 +536,23 @@ export class MediaServiceImpl implements MediaService {
     const frames = await extractFrames(path, selectFrameIndices(totalFrames, maxFrames));
     this.logger.debug(`[frames] total=${totalFrames} → 采样 ${frames.length}/${maxFrames}`);
     return frames;
+  }
+
+  /** 已读到的动图或视频字节 → 关键帧：写进临时文件再抽；写不出、抽不出或抽帧出错时为 [] */
+  private async framesOf(bytes: Uint8Array, maxFrames: number): Promise<string[]> {
+    const local = await materializeBytes(bytes);
+    if (!local) {
+      this.logger.debug('[frames] 动图写不进临时文件，不抽帧');
+      return [];
+    }
+    try {
+      return await this.framesFromLocal(local.path, maxFrames);
+    } catch (err) {
+      this.logger.warn(`[frames] 抽帧失败: ${(err as Error).message}`);
+      return [];
+    } finally {
+      await local.cleanup();
+    }
   }
 
   /**
@@ -558,7 +570,8 @@ export class MediaServiceImpl implements MediaService {
    *
    * - describe：识别由识别模型负责，结果已作为文字拼进消息正文（或由 analyze_image 返回），
    *   主模型不看图。实测一张 57KB 的图挂上去要多花 1,090 token、4.7 秒预填充——同一张图识别两遍。
-   * - passthrough：主模型亲自看图 → 动图抽帧为多张静图，静图规范化后交出。
+   * - passthrough：主模型亲自看图 → 动图抽帧为多张静图，静图规范化后交出。要不要抽帧按来源的字节判（见 needsFrames），
+   *   网址先下载下来判，静图按读到的字节转成 data URL 交出。
    *
    * 直通必须过**形态规范化**：适配器给 attachment.data 的是落盘的存储地址
    * （`data:/images/…`），而 provider 只认 data URI / http / file:// / 绝对路径，原样交出
@@ -579,37 +592,14 @@ export class MediaServiceImpl implements MediaService {
     };
 
     for (const data of images) {
-      const animated = isAnimatedFormat(data) || this.animatedHints.has(data);
-      if (!animated) {
-        await normalized(data);
-        continue;
-      }
-      try {
-        const local = await materializeAttachment(data);
-        if (!local) {
-          // 退回整图规范化——**不能**因为这里物化失败就短路丢图：data URI / http 在
-          // imageToBase64DataUrl 里是直接短路返回的，压根不走物化，短路会把这些合法
-          // 形态一起丢掉（回归用例 media-passthrough-frames「物化失败 / 抽不出帧」守着）。
-          // 只有裸 ref 才会在那边二次失败并被丢弃。
-          // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"。
-          this.logger.debug('[passthrough] 动图无法物化为本地文件，退回整图规范化');
-          await normalized(data);
-          continue;
-        }
-        try {
-          const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
-          if (frames.length > 0) {
-            this.logger.info(`[passthrough] 动图抽帧 ${frames.length} 帧直通主模型`);
-            out.push(...frames); // 抽帧产物已是 data URI
-          } else {
-            await normalized(data);
-          }
-        } finally {
-          await local.cleanup();
-        }
-      } catch (err) {
-        this.logger.warn(`[passthrough] 动图抽帧失败，退回整图规范化: ${(err as Error).message}`);
-        await normalized(data);
+      const bytes = await readSourceBytes(data);
+      // 抽不出帧的动图退回整图规范化，不丢图：已是 data URI 的原样交出，只有裸 ref 才会在规范化里失败被丢弃
+      const frames = bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames) : [];
+      if (frames.length > 0) {
+        this.logger.info(`[passthrough] 动图抽帧 ${frames.length} 帧直通主模型`);
+        out.push(...frames); // 抽帧产物已是 data URI
+      } else {
+        await normalized(staticImageSource(data, bytes));
       }
     }
     return out;
@@ -625,13 +615,15 @@ export class MediaServiceImpl implements MediaService {
     contextText?: string,
     sourceKind: 'video' | 'animated' = 'video',
     sessionId?: string,
-  ): Promise<string | undefined> {
-    const local = await materializeAttachment(att.data);
+    /** 调用方已读到的字节（判动图时读的），有就不再按 att.data 取一次 */
+    bytes?: Uint8Array,
+  ): Promise<VideoResult> {
+    const local = bytes ? await materializeBytes(bytes) : await materializeAttachment(att.data);
     if (!local) {
       this.logger.debug('视频无法物化为本地文件，跳过');
       // 显式占位，避免 LLM 看不到"视频曾到达但无法读取内容"这一事实
       const hasRef = typeof att.data === 'string' && att.data.length > 0;
-      return hasRef ? VIDEO_FAILURE_TEXTS.unreadable : VIDEO_FAILURE_TEXTS.noUrl;
+      return { failure: hasRef ? VIDEO_FAILURE_TEXTS.unreadable : VIDEO_FAILURE_TEXTS.noUrl };
     }
     const t0 = Date.now();
     this.logger.info(`[video] 开始处理 sourceKind=${sourceKind} mode=${this.cfg.video.mode} path=${local.path}`);
@@ -685,8 +677,8 @@ export class MediaServiceImpl implements MediaService {
       }
 
       this.logger.info(`[video] 完成 ${Date.now() - t0}ms：产出 ${frameTexts.length} 段（帧综合 + 音轨转写）`);
-      if (frameTexts.length === 0) return VIDEO_FAILURE_TEXTS.noFrames;
-      return frameTexts.join('\n');
+      if (frameTexts.length === 0) return { failure: VIDEO_FAILURE_TEXTS.noFrames };
+      return { text: frameTexts.join('\n') };
     } finally {
       await local.cleanup();
     }
@@ -751,39 +743,28 @@ export class MediaServiceImpl implements MediaService {
       return '';
     }
 
-    const animated = isAnimatedFormat(opts.localPath ?? imageUrl);
+    // 有本地缓存路径时从它读，不再下载；按读到的字节判动图，抽不出帧的退回整图识别，与直通同一条规则
+    const bytes = await readSourceBytes(opts.localPath ? `file://${opts.localPath}` : imageUrl, opts.signal);
+    const frames = bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames) : [];
     let result = '';
 
-    if (animated) {
+    if (frames.length > 0) {
       // 动图/视频：抽帧后 combined 描述
-      const local = opts.localPath
-        ? { path: opts.localPath, cleanup: async () => {} }
-        : await materializeAttachment(imageUrl);
-      if (local) {
-        try {
-          const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
-          if (frames.length > 0) {
-            const frameAtts: MessageAttachment[] = frames.map(d => ({
-              kind: 'image' as const,
-              data: d,
-              mimeType: 'image/png',
-            }));
-            const r = await proc.describe({
-              attachments: frameAtts,
-              mode: 'combined',
-              maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-              basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
-              hint: opts.hint,
-              sessionId: opts.sessionId,
-              signal: opts.signal,
-            });
-            result = r.descriptions[0] ?? '';
-          }
-        } finally {
-          // 清理本地化产物：materializeAttachment 的结果（opts.localPath 那个是 noop）。
-          await local.cleanup();
-        }
-      }
+      const frameAtts: MessageAttachment[] = frames.map(d => ({
+        kind: 'image' as const,
+        data: d,
+        mimeType: 'image/png',
+      }));
+      const r = await proc.describe({
+        attachments: frameAtts,
+        mode: 'combined',
+        maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
+        basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
+        hint: opts.hint,
+        sessionId: opts.sessionId,
+        signal: opts.signal,
+      });
+      result = r.descriptions[0] ?? '';
     } else {
       // detailLevel 决策：casual/detailed/professional 直接选定模板；
       // auto 用自路由 prompt 单次推理（模型看图自判类型、按类型给相应详略）。
@@ -799,7 +780,7 @@ export class MediaServiceImpl implements MediaService {
       }
       this.logger.info(`[vision.describe] source=tool detailLevel=${detailLevel} promptChars=${basePrompt.length}`);
       const r = await proc.describe({
-        attachments: [{ kind: 'image', data: imageUrl }],
+        attachments: [{ kind: 'image', data: staticImageSource(imageUrl, bytes) }],
         mode: 'single',
         maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
         basePrompt,
@@ -824,9 +805,10 @@ export class MediaServiceImpl implements MediaService {
     if (cached) return cached;
     const att: MessageAttachment = { kind: 'video', data: opts.localPath ?? videoUrl };
     try {
-      const text = await this.processVideo(att, opts.hint);
-      if (text) rememberDescription(videoUrl, text, true, VIDEO_VARIANT);
-      return text ?? '';
+      const result = await this.processVideo(att, opts.hint);
+      if (!('text' in result)) return result.failure;
+      rememberDescription(videoUrl, result.text, true, VIDEO_VARIANT);
+      return result.text;
     } catch (err) {
       this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
       return '';

@@ -15,6 +15,7 @@ import type {
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
+import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormatName } from '@aalis/util-file-signature';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
 import { t } from './texts.js';
@@ -157,30 +158,8 @@ interface LlmProcessorOptions {
   think?: boolean;
 }
 
-/**
- * 通过 magic header 探测音频格式，仅用于诊断 / 拒绝不支持的格式。
- * 返回简短格式名（mp3/wav/ogg/m4a/amr/silk/unknown）。
- */
-function detectAudioFormat(buf: Buffer): string {
-  if (buf.length < 12) return 'unknown';
-  // SILK V3：QQ 语音原生格式，前 1 字节可能为 0x02（"flags" 前缀），随后 "#!SILK_V3"
-  const silkHead = buf[0] === 0x02 ? buf.subarray(1, 10) : buf.subarray(0, 9);
-  if (silkHead.toString('ascii') === '#!SILK_V3') return 'silk';
-  // AMR：'#!AMR\n' 或 '#!AMR-WB\n'
-  if (buf.subarray(0, 5).toString('ascii') === '#!AMR') return 'amr';
-  // mp3：'ID3' 或 MPEG 同步帧 0xFFEx / 0xFFFx
-  if (buf.subarray(0, 3).toString('ascii') === 'ID3') return 'mp3';
-  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'mp3';
-  // WAV：'RIFF....WAVE'
-  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WAVE') return 'wav';
-  // OGG：'OggS'
-  if (buf.subarray(0, 4).toString('ascii') === 'OggS') return 'ogg';
-  // M4A / MP4：offset 4 'ftyp'
-  if (buf.subarray(4, 8).toString('ascii') === 'ftyp') return 'm4a';
-  // FLAC：'fLaC'
-  if (buf.subarray(0, 4).toString('ascii') === 'fLaC') return 'flac';
-  return 'unknown';
-}
+/** 原样交给模型的音频格式（文件头判定的格式名）；别的（AMR、SILK、视频容器、认不出的）先经 ffmpeg 转成 WAV */
+const DIRECT_AUDIO: ReadonlySet<MediaFormatName> = new Set(['MP3', 'WAV', 'OGG', 'M4A', 'FLAC']);
 
 /**
  * 把 image attachment.data 规范化为 `data:image/...;base64,...` 形式，
@@ -220,19 +199,6 @@ export async function imageToBase64DataUrl(data: string, mimeType?: string): Pro
 }
 
 /**
- * 将 fmt（detectAudioFormat 输出）映射为 audio/* mime 子类型。
- * 注意 mp3 → audio/mpeg（IANA 标准），其余直接同名。
- */
-function fmtToMime(fmt: string): string {
-  if (fmt === 'mp3') return 'audio/mpeg';
-  if (fmt === 'wav') return 'audio/wav';
-  if (fmt === 'ogg') return 'audio/ogg';
-  if (fmt === 'm4a') return 'audio/mp4';
-  if (fmt === 'flac') return 'audio/flac';
-  return 'audio/wav'; // 转码兜底永远是 WAV
-}
-
-/**
  * 把 audio attachment.data 解析为 **带 mime 前缀的 data URL**，供 LLM provider 直接使用：Ollama 兼容接口按写明的类型给
  * input_audio.format，没写明的拒收。Message.audios 是 string[]，data URL 照样合法
  */
@@ -245,20 +211,14 @@ async function audioToBase64(data: string): Promise<string> {
     const { storage, proc } = getMediaRuntime();
     const raw = mat.uri ? ((await storage.readFile(mat.uri)) as Uint8Array) : await proc.readExternalFile(mat.path);
     const buf = Buffer.from(raw);
-    const fmt = detectAudioFormat(buf);
+    const format = detectMediaFormat(buf.subarray(0, FILE_HEAD_BYTES));
 
-    // 主流格式：多模态 LLM 与 Whisper 都能直接解码，无需转码
-    if (fmt === 'mp3' || fmt === 'wav' || fmt === 'ogg' || fmt === 'm4a' || fmt === 'flac') {
-      return `data:${fmtToMime(fmt)};base64,${buf.toString('base64')}`;
-    }
+    // 这几种原样交出、写明判定出的类型，不转码；模型插件不收的类型由它自己报错（Ollama 的兼容接口只收 wav 与 mp3）
+    if (format && DIRECT_AUDIO.has(format.format)) return `data:${format.mime};base64,${buf.toString('base64')}`;
 
-    // 其它格式（amr / silk / unknown / 裸 PCM 等）一律走 ffmpeg 转 WAV
     const wav = await transcodeAudioToWav(mat.path);
     if (!wav) {
-      throw new Error(
-        `音频格式为 ${fmt}，ffmpeg 无法转码为 WAV（可能是 SILK 或加密格式）；` +
-          '请检查 OneBot 实现端 get_record 是否真正执行了 silk→mp3 转码',
-      );
+      throw new Error(`音频格式为 ${format?.format ?? '未知'}，ffmpeg 无法转码为 WAV（可能是 SILK 或加密格式）`);
     }
     return `data:audio/wav;base64,${wav}`;
   } finally {

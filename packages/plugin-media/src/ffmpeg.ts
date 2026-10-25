@@ -6,21 +6,31 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { extname } from 'node:path';
 import { isStorageUri } from '@aalis/api-storage';
+import { detectMediaFormat, FILE_HEAD_BYTES, isAnimatedImage } from '@aalis/util-file-signature';
 import { getMediaRuntime } from './runtime.js';
-import { safeDownloadToTemp } from './safe-fetch.js';
+import { safeFetchBuffer } from './safe-fetch.js';
 
-/** 动图/视频扩展名集合（GIF 也按动图处理）。 */
-const ANIMATED_EXTS = new Set(['.gif', '.mp4', '.webm', '.avi', '.mov', '.mkv', '.flv', '.m4v']);
+/** 要抽帧的媒体：视频容器，或多帧的 GIF、APNG 与动态 WebP；单帧的 GIF 与别的图片按静图。扩展名与写着的类型都不看 */
+export function needsFrames(bytes: Uint8Array): boolean {
+  return detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES))?.kind === 'video' || isAnimatedImage(bytes);
+}
 
-/** 判断给定 URL/路径/data URI 是否动图或视频。 */
-export function isAnimatedFormat(pathOrUrl: string): boolean {
-  if (pathOrUrl.startsWith('data:image/gif')) return true;
-  if (pathOrUrl.startsWith('data:video/')) return true;
-  const clean = pathOrUrl.split('?')[0].split('#')[0];
-  const ext = extname(clean).toLowerCase();
-  return ANIMATED_EXTS.has(ext);
+/**
+ * 来源的字节：base64 data URL 解码，file:// 经 process 读，网址经 safeFetchBuffer 下载（20 MiB 上限，随 signal 停下），
+ * 存储地址经 storage 读。别的形态与读不出的为 null：调用方按静图交给识别或规范化，取不到由它们报出
+ */
+export async function readSourceBytes(data: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+  try {
+    const dataUri = data.match(/^data:[^;]+;base64,(.+)$/);
+    if (dataUri) return Buffer.from(dataUri[1], 'base64');
+    if (data.startsWith('file://')) return await getMediaRuntime().proc.readExternalFile(data);
+    if (/^https?:\/\//i.test(data)) return await safeFetchBuffer(data, { signal });
+    if (isStorageUri(data)) return (await getMediaRuntime().storage.readFile(data)) as Uint8Array;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
@@ -157,6 +167,27 @@ export async function transcodeAudioToWav(filePath: string): Promise<string | nu
   }
 }
 
+/**
+ * 已读到的字节写到临时文件，交给 ffprobe 与 ffmpeg，返回本地路径、存储地址与清理函数；写不出返回 null。文件一律叫
+ * source.bin：ffmpeg 按内容探测格式，扩展名不参与。存储地址一并交回：下游（materializeAttachment → audioToBase64）按它
+ * 判是否落入 storage 根，丢掉它会让音频退回 readExternalFile 直读本地路径、绕开 storage
+ */
+export async function materializeBytes(
+  bytes: Uint8Array,
+): Promise<{ path: string; uri: string; cleanup: () => Promise<void> } | null> {
+  let tmp: { path: string; uri: string; cleanup: () => Promise<void> } | undefined;
+  try {
+    const { proc, storage } = getMediaRuntime();
+    tmp = await proc.makeTempDir('media-src');
+    const uri = `${tmp.uri}/source.bin`;
+    await storage.writeFile(uri, Buffer.from(bytes));
+    return { path: `${tmp.path}/source.bin`, uri, cleanup: tmp.cleanup };
+  } catch {
+    await tmp?.cleanup();
+    return null;
+  }
+}
+
 /** 把 base64 data URL / file:/ 路径写到临时文件，返回本地路径与清理函数。 */
 export async function materializeAttachment(
   data: string,
@@ -175,8 +206,9 @@ export async function materializeAttachment(
     if (data.startsWith('file://')) {
       return { path: data.slice('file://'.length), cleanup: async () => {} };
     }
+    // 网址：受保护的下载（SSRF 防护、20 MiB 上限、15 秒超时）读进内存再落临时文件
     if (data.startsWith('http://') || data.startsWith('https://')) {
-      return await safeDownloadToTemp(data);
+      return await materializeBytes(await safeFetchBuffer(data));
     }
     // storage URI（如 data:/images/...）→ 解析到本地路径。
     if (isStorageUri(data)) {

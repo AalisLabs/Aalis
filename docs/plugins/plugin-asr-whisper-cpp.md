@@ -5,7 +5,7 @@
 
 ## 概述
 
-语音识别（ASR）的本地 whisper.cpp 提供者：调用 whisper.cpp 提供的 `whisper-cli` 二进制完成转写，以 `asr` 服务注册。使用前需安装 whisper.cpp（如 `brew install whisper-cpp`）并下载模型文件（如 `ggml-base.bin`）。输入音频先经 ffmpeg 转为 16kHz 单声道 WAV，再交给 `whisper-cli`。
+语音识别（ASR）的本地 whisper.cpp 提供者：调用 whisper.cpp 提供的 `whisper-cli` 二进制完成转写，以 `asr` 服务注册。使用前需安装 whisper.cpp（如 `brew install whisper-cpp`）并下载模型文件（如 `ggml-base.bin`）。输入音频先经 ffmpeg 转为 16kHz 单声道 WAV，再交给 `whisper-cli`；ffmpeg 按内容探测输入格式，下载与解码出的临时文件一律叫 `audio.bin`。
 
 ## 插件声明
 

@@ -6,20 +6,19 @@ import { dirname, join } from 'node:path';
 import type { Logger } from '@aalis/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/index.js';
+import { materializeBytes } from '../../packages/plugin-media/src/ffmpeg.js';
 import type { AdapterCaps } from '../../packages/plugin-media/src/llm-adapter.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import { safeDownloadToTemp } from '../../packages/plugin-media/src/safe-fetch.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 音频附件物化：http 下载件与 file:// 件都必须能喂给 LLM 转写。
 //
-// 两个实证缺陷：safeDownloadToTemp 丢掉刚写好的 tmp uri（下游按 uri 判「是否落入
-// storage 根」，丢了就必抛），以及 audioToBase64 对没有 uri 的物化结果直接放弃，
-// 而不是像 imageToBase64DataUrl 那样退回 proc.readExternalFile。两者叠加让
-// http 音频这条路 100% 抛错，被上层吞成「[音频] 识别失败」。
+// 两件事都要成立：网址下载件写成临时文件时交回它的 tmp uri（下游按 uri 判「是否落入
+// storage 根」，丢了就必抛），audioToBase64 对没有 uri 的物化结果退回 proc.readExternalFile
+// （与 imageToBase64DataUrl 一样）。缺一样，http 或 file:// 音频这条路就会抛错，被上层吞成「[音频] 识别失败」。
 //
 // 真 http 服务 + 真 fs：blockPrivate 临时关掉，才能连本机测试服务。
 // ════════════════════════════════════════════════════════════
@@ -27,8 +26,8 @@ import { ref } from '../fixtures/service-ref.js';
 /** 识别处理器的输出上限（配置给的） */
 const LIMITS = { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } };
 
-/** 'ID3' magic → detectAudioFormat 判 mp3（主流格式直接透传，不进 ffmpeg） */
-const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(16)]);
+/** ID3v2 标签头：文件头判定为 MP3（主流格式直接透传，不进 ffmpeg） */
+const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(16)]);
 
 let base: string;
 let server: Server;
@@ -100,15 +99,16 @@ afterAll(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-describe('safeDownloadToTemp', () => {
-  it('返回落盘的 storage uri（下游按 uri 判是否落入 storage 根）', async () => {
-    const dl = await safeDownloadToTemp(`http://127.0.0.1:${port}/download`);
-    if (!dl) throw new Error('下载失败');
+describe('交给 ffmpeg 的临时文件：一律 .bin，ffmpeg 按内容探测格式', () => {
+  it('materializeBytes 写下的文件叫 source.bin，交回它的 storage uri（下游按 uri 判是否落入 storage 根）', async () => {
+    const local = await materializeBytes(MP3);
+    if (!local) throw new Error('写不出临时文件');
     try {
-      expect(dl.uri).toMatch(/^tmp:\/media-dl-\d+\/download\.bin$/);
-      expect(await readFile(join(base, dl.uri.replace(/^tmp:\//, '')))).toEqual(MP3);
+      expect(local.path).toMatch(/\/media-src-\d+\/source\.bin$/);
+      expect(local.uri).toMatch(/^tmp:\/media-src-\d+\/source\.bin$/);
+      expect(await readFile(join(base, local.uri.replace(/^tmp:\//, '')))).toEqual(MP3);
     } finally {
-      await dl.cleanup();
+      await local.cleanup();
     }
   });
 });
@@ -142,5 +142,20 @@ describe('audio 附件 → LLM 转写', () => {
     const r = await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
     expect(r.text).toBe('转写文本');
     expect(audios()[0]).toBe(`data:audio/mpeg;base64,${MP3.toString('base64')}`);
+  });
+  it('ftyp 容器按品牌分：MP4 视频不当 M4A 音频原样交出，先转 WAV；转不出时报格式，不点名平台', async () => {
+    const local = join(base, 'clip.m4a');
+    await writeFile(local, Buffer.from([0, 0, 0, 16, ...Buffer.from('ftypisom'), 0, 0, 2, 0]));
+    const { caps, audios } = audioLLMCaps();
+    const proc = scanLLMProcessors(caps, LIMITS).find(p => p.transcribe);
+    if (!proc?.transcribe) throw new Error('未包出 audio processor');
+    // 替身进程服务没有 ffmpeg：转码失败
+    const failure = await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } }).then(
+      () => '未报错',
+      (err: Error) => err.message,
+    );
+    expect(failure).toMatch(/^音频格式为 MP4，ffmpeg 无法转码为 WAV/);
+    expect(failure).not.toMatch(/onebot/i);
+    expect(audios()).toEqual([]);
   });
 });

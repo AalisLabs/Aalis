@@ -13,16 +13,17 @@ import asrWhisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 无扩展名的音频 URL（实测形态 audio.com/download）不能用 split('.').pop() 猜后缀：
-// 那会把整条路径当扩展名，于是
-//   - asr-openai 交给 Whisper API 的 filename 带斜杠 → 400
-//   - whisper-cpp 拿它当 storage 写路径 → 造嵌套垃圾目录
-// 正解同仓已有（safe-fetch.ts 的 extname + Content-Type 兜底）。
+// 音频的文件名与临时文件：
+//   - asr-openai 交给 Whisper 接口的文件名后缀取按内容判定的格式（接口按后缀认格式），不按来源的路径、Content-Type 或
+//     data URL 里写的类型猜；接口不接受的格式（如 AMR）明确报错，不改名硬传
+//   - whisper-cpp 下载与解码出的临时文件一律叫 audio.bin：转码时 ffmpeg 按内容探测格式，扩展名不参与；无扩展名的网址
+//     也不会把整条路径拼进写路径、造出嵌套目录
 //
 // 真 http 服务 + 真 fs；两个插件 provide 出来的 ASRService 经宿主绑定捞出来直接调。
 // ════════════════════════════════════════════════════════════
 
-const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(16)]);
+const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(16)]);
+const AMR = Buffer.concat([Buffer.from('#!AMR\n'), Buffer.alloc(16)]);
 
 let base: string;
 let server: Server;
@@ -83,7 +84,8 @@ beforeAll(async () => {
   base = await mkdtemp(join(tmpdir(), 'aalis-asr-ext-'));
   server = createServer((req, res) => {
     if (req.url?.startsWith('/download')) {
-      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      // 类型头写错：内容是 MP3
+      res.writeHead(200, { 'content-type': 'audio/ogg' });
       res.end(MP3);
       return;
     }
@@ -99,89 +101,64 @@ afterAll(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
-  /** 只截 /audio/transcriptions（真下载仍走真 fetch），记下 multipart 里的 filename */
-  function captureUpload(): { filename: () => string | undefined } {
-    let filename: string | undefined;
+describe('plugin-asr-openai：交给 Whisper 接口的文件', () => {
+  /** 只截 /audio/transcriptions（真下载仍走真 fetch），记下 multipart 里的文件名与类型 */
+  function captureUpload(): { file: () => { name: string; type: string } | undefined } {
+    let file: { name: string; type: string } | undefined;
     const realFetch = globalThis.fetch;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL, init?: { body?: FormData }) => {
         if (!String(url).includes('/audio/transcriptions')) return realFetch(url as string, init as RequestInit);
-        const file = init?.body?.get('file');
-        filename = file instanceof File ? file.name : undefined;
+        const part = init?.body?.get('file');
+        file = part instanceof File ? { name: part.name, type: part.type } : undefined;
         return { ok: true, status: 200, json: async () => ({ text: '转写文本' }) } as unknown as Response;
       }),
     );
-    return { filename: () => filename };
+    return { file: () => file };
   }
 
-  /** 本套用例的被测插件与桩：每条独立装一次 */
-  const bootOpenai = () =>
-    bootAsr(asrOpenai, { apiKey: 'k' }, { process: procService(base), storage: storageService([]) });
+  /** 本套用例的被测插件与桩：每条独立装一次；storage 读出的是 stored */
+  const bootOpenai = (stored: Buffer = MP3) =>
+    bootAsr(
+      asrOpenai,
+      { apiKey: 'k' },
+      { process: procService(base), storage: { ...storageService([]), readFile: async () => stored } },
+    );
 
-  it('无扩展名的 URL：按 Content-Type 兜底成 audio.mp3，文件名里没有斜杠', async () => {
-    const cap = captureUpload();
-    const asr = await bootOpenai();
-    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } });
-    expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.mp3');
-    expect(cap.filename()).not.toContain('/');
+  afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('后缀不在 Whisper 支持集内（.opus）时按 Content-Type 换成集内后缀，不原样上传', async () => {
+  it.each([
+    ['无扩展名、类型头写错的网址', () => `http://127.0.0.1:${port}/download`],
+    ['后缀写成 .opus 的网址', () => `http://127.0.0.1:${port}/download.opus`],
+    ['data URL 写的类型是 audio/opus', () => `data:audio/opus;base64,${MP3.toString('base64')}`],
+    ['存储地址的后缀是 .wav', () => 'data:/audios/s/onebot/0123456789abcdef.wav'],
+  ])('%s、内容是 MP3：上传 audio.mp3，类型 audio/mpeg', async (_label, source) => {
     const cap = captureUpload();
     const asr = await bootOpenai();
-    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download.opus` } });
+    const r = await asr.transcribe({ attachment: { kind: 'audio', data: source() } });
     expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.mp3'); // .opus 被 API 判 400，故按 audio/mpeg 映射
-    vi.unstubAllGlobals();
+    expect(cap.file()).toEqual({ name: 'audio.mp3', type: 'audio/mpeg' });
   });
 
-  it('base64 data URI：mime 子类型不在 Whisper 支持集内（audio/opus）时按白名单换成 audio.ogg', async () => {
-    const cap = captureUpload();
-    const asr = await bootOpenai();
-    const r = await asr.transcribe({
-      attachment: { kind: 'audio', data: `data:audio/opus;base64,${MP3.toString('base64')}` },
-    });
-    expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.ogg'); // 直取 mime 子类型会上传 audio.opus，被 API 判 400
-    vi.unstubAllGlobals();
-  });
-
-  it('本地 .opus 无 Content-Type 可依：按同一张映射表落 audio.ogg，而不是兜底成 wav', async () => {
-    const local = join(base, 'voicenote.opus');
+  it.each([['voicenote.opus'], ['voicenote']])('本地文件 %s、内容是 MP3：上传 audio.mp3', async name => {
+    const local = join(base, name);
     await writeFile(local, MP3);
     const cap = captureUpload();
     const asr = await bootOpenai();
-    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
-    expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.ogg'); // 兜底成 wav 会让 Whisper 按错容器解
-    vi.unstubAllGlobals();
+    await asr.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
+    expect(cap.file()?.name).toBe('audio.mp3');
   });
 
-  it('存储地址经 storage 读出上传', async () => {
+  it('接口不接受的格式（AMR）：报错写明格式，不改名硬传', async () => {
     const cap = captureUpload();
-    const asr = await bootOpenai();
-    const r = await asr.transcribe({
-      attachment: { kind: 'audio', data: 'data:/audios/s/onebot/0123456789abcdef.wav' },
-    });
-    expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.wav');
-    vi.unstubAllGlobals();
-  });
-
-  it('无扩展名的本地路径同样不把整条路径当后缀', async () => {
-    const local = join(base, 'voicenote'); // 刻意无后缀
-    await writeFile(local, MP3);
-    const cap = captureUpload();
-    const asr = await bootOpenai();
-    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
-    expect(r.text).toBe('转写文本');
-    expect(cap.filename()).toBe('audio.wav'); // 无 mime 可依时的白名单兜底
-    expect(cap.filename()).not.toContain('/');
-    vi.unstubAllGlobals();
+    const asr = await bootOpenai(AMR);
+    await expect(
+      asr.transcribe({ attachment: { kind: 'audio', data: 'data:/audios/s/onebot/0123456789abcdef.amr' } }),
+    ).rejects.toThrow('Whisper 接口不接受 AMR 音频');
+    expect(cap.file()).toBeUndefined();
   });
 });
 
@@ -207,8 +184,8 @@ describe('plugin-asr-whisper-cpp：音频来源', () => {
   });
 });
 
-describe('plugin-asr-whisper-cpp：下载件的 storage 写路径', () => {
-  it('无扩展名的 URL 不造嵌套垃圾目录（写在临时目录下的单个文件里）', async () => {
+describe('plugin-asr-whisper-cpp：下载与解码出的临时文件', () => {
+  it('无扩展名的 URL 不造嵌套垃圾目录：写在临时目录下的 audio.bin 里', async () => {
     const written: string[] = [];
     const asr = await bootAsr(
       asrWhisper,
@@ -220,8 +197,21 @@ describe('plugin-asr-whisper-cpp：下载件的 storage 写路径', () => {
       .transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } })
       .catch(() => undefined);
     expect(written).toHaveLength(1);
-    expect(written[0]).toBe('tmp:/whisper-in/audio.mp3');
+    expect(written[0]).toBe('tmp:/whisper-in/audio.bin');
     // 真目录下不该出现以 host 或整条路径拼出来的嵌套壳
     expect(await readdir(base)).not.toContain('127.0.0.1');
+  });
+
+  it('data URL 写的类型不进文件名：解码到 audio.bin', async () => {
+    const written: string[] = [];
+    const asr = await bootAsr(
+      asrWhisper,
+      { modelPath: join(base, 'ggml-base.bin') },
+      { process: procService(join(base, 'whisper-in')), storage: storageService(written) },
+    );
+    await asr
+      .transcribe({ attachment: { kind: 'audio', data: `data:audio/x-wav;base64,${MP3.toString('base64')}` } })
+      .catch(() => undefined);
+    expect(written).toEqual(['tmp:/whisper-in/audio.bin']);
   });
 });

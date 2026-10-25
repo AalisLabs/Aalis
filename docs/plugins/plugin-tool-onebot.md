@@ -17,7 +17,6 @@ export default definePlugin({
   uses: {
     tools: optional(tools),
     platform: optional(platform),
-    storage: optional(storage),
     media: optional(media),
     sessionHistory: optional(sessionHistory),
     sessionManager: optional(sessionManager),
@@ -139,6 +138,6 @@ export default definePlugin({
 - **扩展方法按实例取**：撤回自己发的消息（`onebot_recall_self`）按目标会话找到发出消息的实例；处理好友申请、加群申请与入群邀请按当前会话（或 `self_id`）的账号找到收到申请的实例，申请通知注入在收到它的账号的会话里，在那里调用即落到对的实例；`onebot_list_self_mutes` 汇总所有实例记下的自身禁言。
 - **群请求认申请类型**：`onebot_approve_join_request` 只处理加群申请，`onebot_handle_group_invite` 只处理入群邀请，账号与类型一起交给适配器，对不上或没有这条申请时报错（可能已处理）。
 - **换动作名只看不支持**：戳一戳的动作名各实现端不同，只在实现端回不支持该动作时才改用另一个动作名（群里 `group_poke` 之后 `send_group_poke`，私聊 `friend_poke` 之后 `send_poke`）；超时、没权限等别的错误原样报出，不换个动作再戳一次。
-- **图像识别联动**：适配器缓存未命中时，`onebot_get_forward_msg` 会把转发消息中的图片交给 `media` 服务的 `describeImage`（若可用），识别结果以 `[图片: 描述]` 的形式嵌入返回文本；缓存命中时直接返回适配器缓存的原文与摘要，展开时截断过的在头一行注明「已截断（嵌套超深、节点超限）」中的对应项。
+- **图像识别联动**：适配器缓存未命中时，`onebot_get_forward_msg` 会把转发消息中的图片交给 `media` 服务的 `describeImage`（若可用；`get_image` 给的地址原样交过去，由 media 读出来按文件头认），识别结果以 `[图片: 描述]` 的形式嵌入返回文本；缓存命中时直接返回适配器缓存的原文与摘要，展开时截断过的在头一行注明「已截断（嵌套超深、节点超限）」中的对应项。
 - **转发里的图从哪读**：图片段里写的只有网址与 base64 的 data URL 直接交给识图；别的（文件名、本机路径、像存储地址的串）只当 `get_image` 的 `file` 参数，读的是实现端交回的地址，换不出地址的不识别、写 `[图片]`。
 - **权限预检**：禁言、全员禁言、踢人、设置群名片、改群名、设置专属头衔、设管理员这些工具会先调用 `assertAdminPermission`，检查机器人在目标群的角色（专属头衔与设管理员要求群主，禁言与踢人还会比较目标成员的角色），不满足时报错，执行层按失败记；取不到机器人自身成员信息或其中没有角色时跳过检查（真不够权限时实现端的返回码会报出来），查不到目标成员时报错带适配器的原话，实现端回成功却没给成员信息或没给角色时同样报错（写明没给的是哪样），不当成普通成员。

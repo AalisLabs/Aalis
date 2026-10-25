@@ -42,7 +42,7 @@
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.4 <1.0.0",
-    "@aalis/util-media-signature": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/util-file-signature": "workspace:>=0.1.0 <1.0.0",
     "@aalis/util-offline-render": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {

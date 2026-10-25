@@ -148,7 +148,7 @@ const SOURCE = {
   noPackageManagerUpdate: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它',
   urlRequired: '缺少 url 参数',
   upstreamStatus: '上游返回 {status}',
-  notImage: '非图片 Content-Type: {type}',
+  notImage: '上游返回的不是能显示的图片',
   imageTooLarge: '图片过大 ({size} > {max})',
   noUpstreamBody: '上游无响应体',
   proxyFailed: '代理失败: {error}',

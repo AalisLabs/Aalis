@@ -167,7 +167,7 @@ await assertSafeHost(parsedUrl.hostname);
 |---|---|
 | OneBot 附件下载 | 入站 `http(s)://` 附件下载后 base64 内联 |
 | OneBot 附件缓存 | 带 30s 超时的附件缓存拉取 |
-| media 安全下载 | vision 输入下载，叠加体积上限/超时/imageOnly |
+| media 安全下载 | vision 输入下载，叠加体积上限/超时 |
 | WebUI 图片代理 | 浏览器侧代理第三方图片（带凭证规避范例，见 §5） |
 | http 工具 | LLM 可调的 `http_request` / `http_download` 工具 |
 | ASR（openai / whisper-cpp） | 拉远程音频转写 |
