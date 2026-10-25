@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { media } from '../../packages/api-media/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -22,6 +23,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   报错只带适配器的原话，不猜原因。入站展开时拉取失败的不进缓存，工具照常重新拉。
 // - 群会话里写明 self_id 时动作发给写明的账号，不被会话的账号盖掉。
 // - 两个群请求工具各认自己的申请类型：入群邀请不能用审批加群申请的工具批；没有这条申请时报错。
+// - 合并转发里的图：图片段里写的只有网址与 base64 的 data URL 当来源，别的只交给 get_image 换地址，换不出就不识别。
 // 群请求与转发缓存两组起真适配器加本地的假 OneBot 实现端（记忆用内存实现，转发缓存的持久化层落在里面），其余各组的平台是
 // 宿主桩（tools 同样是只记处理函数的桩）。
 // ════════════════════════════════════════════════════════════
@@ -62,16 +64,20 @@ function toolRecorder(app: App) {
 
 /**
  * 宿主桩：一个在线账号的 OneBot 平台，动作交给 respond，记下动作名与动作发往的会话 id（工具用账号的合成会话 id）；extra 是
- * 适配器另给的扩展方法
+ * 适配器另给的扩展方法，host 是宿主另给的存储与媒体服务
  */
 async function withStub(
   respond: (action: string, params: Record<string, unknown>) => Promise<unknown>,
   extra: Record<string, unknown> = {},
+  host: { storage?: unknown; media?: unknown } = {},
 ) {
   const app = new App({ name: 'T', logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const call = toolRecorder(app);
+  const { provide: services } = app.bind({ provide });
+  if (host.storage) services.use(storage, host.storage as never);
+  if (host.media) services.use(media, host.media as never);
   const actions: string[] = [];
   const targets: string[] = [];
   const adapter: PlatformAdapter = {
@@ -224,6 +230,48 @@ describe('失败抛错', () => {
       /^合并转发读取失败：<占位原话>$/,
     );
     await expect(call('onebot_get_msg', { message_id: '1' })).rejects.toThrow(/^获取消息失败：<占位原话>$/);
+  });
+});
+
+describe('合并转发里的图：消息段里写的只有网址与 base64 的 data URL 当来源', () => {
+  it.each([
+    '/zz-placeholder/a.png',
+    'file:///zz-placeholder/a.png',
+    'data:/zz-placeholder/a.png',
+    'data:/zz-placeholder/;base64,x/../a.png',
+  ])('图片段只有 file（%s）、get_image 换不出地址：不读存储，不交给识图', async file => {
+    const reads: string[] = [];
+    const sources: string[] = [];
+    const { call, actions } = await withStub(
+      async action => {
+        if (action === 'get_image') throw new Error('<占位原话>');
+        if (action === 'get_forward_msg') {
+          return {
+            messages: [{ type: 'node', data: { nickname: '甲', content: [{ type: 'image', data: { file } }] } }],
+          };
+        }
+        return {};
+      },
+      {},
+      {
+        storage: {
+          readFile: async (uri: string) => {
+            reads.push(uri);
+            return Buffer.from('ffd8ffe000104a464946', 'hex');
+          },
+        },
+        media: {
+          describeImage: async (source: string) => {
+            sources.push(source);
+            return '占位描述';
+          },
+        },
+      },
+    );
+    expect(String(await call('onebot_get_forward_msg', { id: 'zz-forward' }))).toContain('甲: [图片]');
+    expect(actions).toContain('get_image');
+    expect(reads).toEqual([]);
+    expect(sources).toEqual([]);
   });
 });
 

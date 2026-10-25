@@ -57,6 +57,7 @@
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
 | `AttachmentRefKind` | const 对象 + type | `attachment-ref.ts` | 中文显示名：`图片`/`音频`/`视频`/`文件` |
+| `ATTACHMENT_REF_KINDS` | const 对象 | `attachment-ref.ts` | 附件种类（`MessageAttachment['kind']`）→ `AttachmentRefKind`，写引用与按种类认引用的各方共用这一份 |
 | `AttachmentRef` | interface | `attachment-ref.ts` | `{ kind, desc?, ref }` |
 | `formatAttachmentRef(r)` | function | `attachment-ref.ts` | `→ '[图片: desc \| ref:xxx]'`（desc 空则省冒号段；desc 自动单行化，`\|` → `丨`、`]` → `］`） |
 | `parseAttachmentRefs(text)` | function | `attachment-ref.ts` | 扫描全部 `[<kind>(: <desc>)? \| ref:<ref>]` 占位符 |

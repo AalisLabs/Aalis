@@ -557,7 +557,7 @@ symlink realpath 校验。但这层校验的目的是**防止上层代码出 bug
 `ProcessService.readExternalFile(path)` 会**直接读取 OS 上的任意本地路径**（绝对路径或 `file://`），
 **完全绕过 storage 的 root 沙箱**。它本质上就是 `fs.readFile` 再加一层 `file://` 剥壳。
 
-它存在的理由是确实有合法场景需要读取「外部推来的本地路径」，例如 OneBot daemon 推送的附件路径、
+它存在的理由是确实有合法场景需要读取「外部推来的本地路径」，例如 OneBot 实现端动作的应答里交回的本机路径（`get_record` 的 `file`）、
 ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、asr-openai、media 等插件。
 
 **这是一个 confused-deputy（混淆代理）面**：daemon 进程是受信的，但「要读哪个 path」这个参数
@@ -568,7 +568,7 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 插件作者的对策：
 
 - **绝不**把用户 / LLM 给的字符串原样传给 `readExternalFile`。
-- 只在「路径由你信任的 daemon / 协议带来」时使用它（例如 onebot 上报里的 `file` 字段）。
+- 只在「路径由你信任的 daemon / 协议带来」时使用它（例如 OneBot 实现端动作的应答里交回的路径）。上报的消息段里的 `file` 字段不算：那是文件名，群友能写，onebot 适配器只把它当名字。
 - 用户给的内容路径，优先走 storage（受 root 约束）；确需读取外部文件时，先做白名单校验目录前缀。
 
 ---

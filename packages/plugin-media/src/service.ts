@@ -20,18 +20,15 @@ import type { MemoryService } from '@aalis/api-memory';
 import { isStorageUri } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
-import { AttachmentRefKind, formatAttachmentRef, parseAttachmentRefs } from '@aalis/schema-message';
+import {
+  ATTACHMENT_REF_KINDS,
+  AttachmentRefKind,
+  formatAttachmentRef,
+  parseAttachmentRefs,
+} from '@aalis/schema-message';
 
 /** 本插件在会话媒体目录里的子目录名（写入方）：上传的图片落在这里 */
 export const MEDIA_WRITER = 'media';
-
-/** 附件 kind → 中文显示名。复用 schema-message 的单一来源，避免 `[audio：…]` 这种中英混排。 */
-const ATTACHMENT_KIND_LABEL: Record<string, string> = {
-  image: AttachmentRefKind.Image,
-  audio: AttachmentRefKind.Audio,
-  video: AttachmentRefKind.Video,
-  file: AttachmentRefKind.File,
-};
 
 import {
   lookupCachedDescription,
@@ -370,7 +367,7 @@ export class MediaServiceImpl implements MediaService {
     // 只在本会话内复用（键退回含会话目录的落盘路径），否则会把 A 群语境搬进 B 群。
     const shareable = !ctxText;
 
-    // 落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后把占位符改写成了引用）不再重复写
+    // 落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后按消息段写下了引用）不再重复写
     const contentRefs = new Set(parseAttachmentRefs(msg.content).map(r => r.ref));
     const landImage = async (att: MessageAttachment): Promise<string | null> => {
       const ref = await this.cacheImageRef(att, msg.sessionId);
@@ -493,7 +490,7 @@ export class MediaServiceImpl implements MediaService {
         // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实喂进上下文。已落盘的图带上引用，按需看还找得到它
         descriptions[i] = imageRef
           ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: UNRECOGNIZED, ref: imageRef })
-          : `[${ATTACHMENT_KIND_LABEL[att.kind]}：${UNRECOGNIZED}]`;
+          : `[${ATTACHMENT_REF_KINDS[att.kind]}：${UNRECOGNIZED}]`;
       }
       report.items.push(item);
     }

@@ -16,8 +16,15 @@
  */
 
 import { truncateChars } from '@aalis/util-text-normalize';
-import type { OneBotMessageSegment } from './types.js';
-import { getForwardNodes, parseCqMessageToSegments } from './types.js';
+import type { OneBotMessageSegment, RenderedPart } from './types.js';
+import {
+  collectForwardSegments,
+  escapeMarkup,
+  getForwardNodes,
+  joinRendered,
+  parseCqMessageToSegments,
+  segmentSource,
+} from './types.js';
 
 /** 单个转发节点的扁平表示 */
 export interface ForwardLine {
@@ -50,7 +57,7 @@ export interface ForwardMediaTask {
   /** 行文本中的占位 token（NUL 包裹，聊天文本不可能撞上），解析完成后被替换 */
   token: string;
   kind: 'image' | 'audio' | 'video';
-  /** 原始来源（URL / file / base64） */
+  /** 来源：媒体段 url 里的网址或 base64 的 data URL（见 segmentSource） */
   src: string;
 }
 
@@ -92,26 +99,20 @@ function stripNul(s: string): string {
 }
 
 /** 媒体任务收集器：登记任务返回 token；该类未启用或无源时直接返回占位符。 */
-type MediaCollector = (kind: ForwardMediaTask['kind'], src: string | undefined) => string;
+type MediaCollector = (kind: ForwardMediaTask['kind'], src: string) => string;
 
 /**
- * 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本。
- * 媒体段（图片/语音/视频）经收集器登记为待识别任务并放 token——本函数是纯结构渲染，
+ * 渲染一个节点的消息段为纯文本。用户写的字（文字段、分享标题）与入站正文一样转义（相邻的文字段连成串再转义），手打的标记
+ * 不算标记。媒体段（图片/语音/视频）经收集器登记为待识别任务并放 token——本函数是纯结构渲染，
  * 不发生任何网络/模型等待，保证 walk 快速完成、媒体源被尽早收集。
  */
-function renderNodeContent(content: unknown, collect: MediaCollector): string {
-  // CQ 码字符串先规范化成段（文本段已做 CQ 反转义），与段数组走同一条渲染路径
-  const segments = typeof content === 'string' ? parseCqMessageToSegments(stripNul(content)) : content;
-  if (!Array.isArray(segments)) return '';
-
-  const parts: string[] = [];
+function renderNodeContent(segments: OneBotMessageSegment[], collect: MediaCollector): string {
+  const parts: RenderedPart[] = [];
   for (const seg of segments) {
-    if (!seg || typeof seg !== 'object') continue;
-    const s = seg as { type?: string; data?: Record<string, unknown> };
-    const data = s.data ?? {};
-    switch (s.type) {
+    const data = seg.data ?? {};
+    switch (seg.type) {
       case 'text':
-        parts.push(stripNul(String(data.text ?? '')));
+        parts.push({ user: stripNul(String(data.text ?? '')) });
         break;
       case 'at': {
         const qq = stripNul(String(data.qq ?? ''));
@@ -122,24 +123,22 @@ function renderNodeContent(content: unknown, collect: MediaCollector): string {
         parts.push(`[表情:${stripNul(String(data.id ?? ''))}]`);
         break;
       case 'image':
-        parts.push(collect('image', (data.url || data.file) as string | undefined));
+        parts.push(collect('image', segmentSource(data.url)));
         break;
       case 'reply':
         break;
-      case 'forward': {
-        // 嵌套占位符，递归展开会在外层处理；这里先放标记，外层 expand 用 inline content 优先
-        const fid = data.id ? stripNul(String(data.id)) : '';
-        parts.push(fid ? `<<<NESTED_FORWARD:${fid}>>>` : '[合并转发]');
+      case 'forward':
+        // 带 id 的嵌套转发由 walk 按这一段在本节点之后展开（取法同 collectForwardSegments）
+        parts.push(data.id != null && String(data.id) ? '[展开见下]' : '[合并转发]');
         break;
-      }
       case 'record':
-        parts.push(collect('audio', (data.url || data.file) as string | undefined));
+        parts.push(collect('audio', segmentSource(data.url)));
         break;
       case 'video':
-        parts.push(collect('video', (data.url || data.file) as string | undefined));
+        parts.push(collect('video', segmentSource(data.url)));
         break;
       case 'share':
-        parts.push(`[分享:${stripNul(String(data.title ?? ''))}]`);
+        parts.push(`[分享:${escapeMarkup(stripNul(String(data.title ?? '')))}]`);
         break;
       case 'json':
         parts.push('[JSON卡片]');
@@ -148,25 +147,17 @@ function renderNodeContent(content: unknown, collect: MediaCollector): string {
         parts.push('[XML卡片]');
         break;
       default:
-        if (s.type) parts.push(`[${stripNul(s.type)}]`);
+        if (seg.type) parts.push(`[${stripNul(seg.type)}]`);
     }
   }
-  return parts.join('');
-}
-
-/** 从 forward 节点 item 中提取 inline content（部分 OneBot 实现自带） */
-function getInlineNodes(seg: OneBotMessageSegment): unknown[] | null {
-  if (seg.type !== 'forward') return null;
-  const nodes = getForwardNodes(seg.data ?? {});
-  return nodes.length > 0 ? nodes : null;
+  return joinRendered(parts);
 }
 
 interface NodeMeta {
   nickname: string;
   userId?: string;
-  content: unknown;
-  /** 节点自带的内嵌 forward inline content（按 forward id 索引），优先于网络抓取 */
-  inlineNested: Map<string, unknown[]>;
+  /** 节点内容的消息段：CQ 码字符串先规范化成段（文本段已做 CQ 反转义），与段数组走同一条渲染路径 */
+  segments: OneBotMessageSegment[];
 }
 
 function extractNodeMeta(item: unknown): NodeMeta {
@@ -179,28 +170,20 @@ function extractNodeMeta(item: unknown): NodeMeta {
     | Record<string, unknown>
     | undefined;
 
-  const nickname = stripNul(
-    String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名'),
+  const nickname = escapeMarkup(
+    stripNul(String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名')),
   );
   const userIdRaw = data.user_id ?? data.uin ?? sender?.user_id;
   const userId = userIdRaw != null ? stripNul(String(userIdRaw)) : undefined;
   const content = data.content ?? node.content ?? data.message ?? node.message;
+  const segments =
+    typeof content === 'string'
+      ? parseCqMessageToSegments(stripNul(content))
+      : Array.isArray(content)
+        ? content.filter((seg): seg is OneBotMessageSegment => !!seg && typeof seg === 'object')
+        : [];
 
-  // 收集本节点内 forward 段自带的 inline content
-  const inlineNested = new Map<string, unknown[]>();
-  if (Array.isArray(content)) {
-    for (const seg of content) {
-      if (!seg || typeof seg !== 'object') continue;
-      const s = seg as OneBotMessageSegment;
-      const nested = getInlineNodes(s);
-      if (nested) {
-        const fid = s.data?.id != null ? stripNul(String(s.data.id)) : '';
-        if (fid) inlineNested.set(fid, nested);
-      }
-    }
-  }
-
-  return { nickname, userId, content, inlineNested };
+  return { nickname, userId, segments };
 }
 
 /**
@@ -274,7 +257,7 @@ export async function expandForward(
         participants.set(meta.nickname, meta.nickname);
       }
 
-      const rendered = renderNodeContent(meta.content, collect);
+      const rendered = renderNodeContent(meta.segments, collect);
       lines.push({
         depth,
         index: i + 1,
@@ -283,18 +266,15 @@ export async function expandForward(
         text: rendered,
       });
 
-      // 处理本节点中可能的嵌套 forward 占位符
-      const placeholderRe = /<<<NESTED_FORWARD:([^>]+)>>>/g;
-      const matches = [...rendered.matchAll(placeholderRe)];
-      for (const m of matches) {
-        const childId = m[1];
+      // 嵌套转发只认本节点内容里的 forward 段（节点自带的 inline content 优先于网络抓取），节点文字不扫
+      for (const child of collectForwardSegments(meta.segments)) {
+        const childId = stripNul(child.id);
         if (visited.has(childId)) {
           // 防环
           continue;
         }
         visited.add(childId);
-        const inline = meta.inlineNested.get(childId);
-        await walk(childId, inline ?? null, depth + 1);
+        await walk(childId, child.inlineNodes ?? null, depth + 1);
       }
     }
   }
@@ -322,9 +302,10 @@ export async function expandForward(
       ln.text = ln.text.replace(tokenRe, tok => {
         const task = byToken.get(tok);
         if (!task) return '';
+        // 描述是识别模型写的字（图上写着什么就可能写出什么），与用户写的字同样转义
         const desc = resolved.get(tok)?.trim();
         const label = MEDIA_LABEL[task.kind];
-        return desc ? `${label.prefix}${desc}${label.suffix}` : label.placeholder;
+        return desc ? `${label.prefix}${escapeMarkup(desc)}${label.suffix}` : label.placeholder;
       });
     }
   }
@@ -333,7 +314,7 @@ export async function expandForward(
   const indent = (d: number) => '  '.repeat(Math.max(0, d - 1));
   const fullLines = lines.map(ln => {
     const prefix = ln.userId ? `${ln.nickname}(${ln.userId})` : ln.nickname;
-    const text = ln.text.replace(/<<<NESTED_FORWARD:[^>]+>>>/g, '[展开见下]').trim() || '[空消息]';
+    const text = ln.text.trim() || '[空消息]';
     return `${indent(ln.depth)}${ln.index}. ${prefix}: ${text}`;
   });
 
@@ -355,12 +336,12 @@ export async function expandForward(
   };
 }
 
-/** 把展开结果包装成最终注入到 event.text 的"信封文本"。 */
+/** 把展开结果包装成最终注入到 event.text 的"信封文本"。摘要是模型写的字，与用户写的字同样转义 */
 export function buildEnvelope(expanded: ExpandedForward, summary: string | null, truncatedFallbackChars = 600): string {
   const meta = `count=${expanded.count} participants="${expanded.participants.join(', ')}"${expanded.truncatedDepth ? ' truncatedDepth' : ''}${expanded.truncatedNodes ? ' truncatedNodes' : ''}`;
 
   if (summary?.trim()) {
-    return `<forward id="${expanded.id}" ${meta}>\n摘要：${summary.trim()}\n</forward>`;
+    return `<forward id="${expanded.id}" ${meta}>\n摘要：${escapeMarkup(summary.trim())}\n</forward>`;
   }
 
   // 摘要不可用：信封内退化到截断的原文。代理安全截断：信封随消息归档、进 agent 与 Laya 的请求，

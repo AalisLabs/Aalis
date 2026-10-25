@@ -245,6 +245,18 @@ const REMOVED: Array<[string, string]> = [
   ['m_resid', 'onebot 合并转发出错就换参数键重试：只按 v11 标准的 id 拉'],
   ['res_id', 'onebot 合并转发出错就换参数键重试：只按 v11 标准的 id 拉'],
   ['checkAdminPermission', 'tool-onebot 的权限预检把不够权限写成返回文字：改为抛错，执行层按失败记'],
+  ['rewritePlaceholdersWithRefs', 'onebot 入站按「[图片]」字样对位挂附件引用：按消息段渲染，引用写在段的位置'],
+  ['KIND_PLACEHOLDER', 'onebot 入站按「[图片]」字样对位挂附件引用：按消息段渲染，引用写在段的位置'],
+  ['INVITE_CARD_SUPPRESS_WINDOW', 'onebot 收到入群邀请后 2 分钟内丢同一人的卡片：私聊里按应用名认入群邀请卡片'],
+  ['shouldSuppressInviteCardMessage', 'onebot 收到入群邀请后 2 分钟内丢同一人的卡片：私聊里按应用名认入群邀请卡片'],
+  ['rememberInviteCardSuppression', 'onebot 收到入群邀请后 2 分钟内丢同一人的卡片：私聊里按应用名认入群邀请卡片'],
+  ['inviteCardSuppressionKey', 'onebot 收到入群邀请后 2 分钟内丢同一人的卡片：私聊里按应用名认入群邀请卡片'],
+  ['MAX_FORWARD_IDS_PER_MESSAGE', 'onebot 按正文扫转发标记取 id、每条封顶 8 个：转发 id 只取 forward 段，不封顶'],
+  ['getInlineNodes', 'onebot 嵌套转发按节点渲染出的文字取 id：只取节点内容里的 forward 段'],
+  [
+    'ATTACHMENT_KIND_LABEL',
+    'plugin-media 本地的附件种类到引用种类的映射：由 schema-message 导出的 ATTACHMENT_REF_KINDS 取代',
+  ],
 ];
 
 /**

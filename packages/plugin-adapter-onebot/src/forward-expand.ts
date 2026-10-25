@@ -10,7 +10,7 @@ import type { ExpandedForward, ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
 import { rememberLandedAlias } from './media-alias.js';
 import type { OneBotMessageSegment } from './types.js';
-import { collectForwardSegments } from './types.js';
+import { collectForwardSegments, escapeMarkup } from './types.js';
 
 /**
  * 合并转发摘要默认 system prompt，language 是输出语言（outputLanguageFor 给的语言名）。
@@ -89,7 +89,7 @@ export interface ForwardExpander<TState> {
   expandForwardsInText(
     state: TState,
     text: string,
-    rawSegments: OneBotMessageSegment[] | undefined,
+    segments: OneBotMessageSegment[],
     sessionId: string,
   ): Promise<string>;
   /**
@@ -114,14 +114,6 @@ const FORWARD_PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
-/**
- * 单条消息最多展开几个 `<forward id=...>`。
- *
- * 这不是性能调优而是放大闸：id 来自对**正文**的正则扫描，而 text 段在 segmentsToText 里
- * 是原样透传的，群内任何人发一条纯文本就能伪造任意多个标记，且无需 @ 机器人（展开发生在
- * 触发策略之前）。真实合并转发一条消息里不会带这么多，超出的保留占位符不展开。
- */
-const MAX_FORWARD_IDS_PER_MESSAGE = 8;
 
 /**
  * 把一个异步函数包成"同时最多 N 路"的并发受限版本。
@@ -323,8 +315,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   }
 
   /**
-   * 把 event.text 中所有 <forward id="X">[合并转发消息]</forward> 占位符
-   * 替换为"信封文本"（含摘要）；完整原文写入 forwardCache + memory metadata。
+   * 把 text 中 forward 段渲染出的 <forward id="X">[合并转发消息]</forward> 占位符替换为"信封文本"（含摘要）；
+   * 完整原文写入 forwardCache + memory metadata。转发 id 只取 segments 里的 forward 段，正文不扫。
    *
    * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
    * 这种情况下顶层无需走网络。
@@ -405,34 +397,18 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   async function expandForwardsInText(
     state: TState,
     text: string,
-    rawSegments: OneBotMessageSegment[] | undefined,
+    segments: OneBotMessageSegment[],
     sessionId: string,
   ): Promise<string> {
     if (!forwardCfg.enabled) return text;
-    if (!text.includes('<forward id=')) return text;
+    const forwards = collectForwardSegments(segments);
+    if (forwards.length === 0) return text;
 
     const inlineMap = new Map<string, unknown[]>();
-    if (rawSegments && Array.isArray(rawSegments)) {
-      for (const f of collectForwardSegments(rawSegments)) {
-        if (f.inlineNodes && f.inlineNodes.length > 0) inlineMap.set(f.id, f.inlineNodes);
-      }
+    for (const f of forwards) {
+      if (f.inlineNodes) inlineMap.set(f.id, f.inlineNodes);
     }
-
-    const idRe = /<forward id="([^"]+)">\[合并转发消息\]<\/forward>/g;
-    const ids = new Set<string>();
-    let m: RegExpExecArray | null = idRe.exec(text);
-    while (m !== null) {
-      ids.add(m[1]);
-      m = idRe.exec(text);
-    }
-    if (ids.size === 0) return text;
-    let expandIds = [...ids];
-    if (expandIds.length > MAX_FORWARD_IDS_PER_MESSAGE) {
-      logger.info(
-        `合并转发标记 ${expandIds.length} 个，超上限 ${MAX_FORWARD_IDS_PER_MESSAGE}，仅展开前 ${MAX_FORWARD_IDS_PER_MESSAGE} 个（其余保留占位符）`,
-      );
-      expandIds = expandIds.slice(0, MAX_FORWARD_IDS_PER_MESSAGE);
-    }
+    const expandIds = [...new Set(forwards.map(f => f.id))];
 
     const mediaSvc = media.present ? media.use : undefined;
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
@@ -467,7 +443,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           });
 
           if (fetchFailure !== undefined) {
-            const reason = fetchFailure instanceof Error ? fetchFailure.message : String(fetchFailure);
+            const reason = escapeMarkup(fetchFailure instanceof Error ? fetchFailure.message : String(fetchFailure));
             envelopeMap.set(id, `<forward id="${id}">[合并转发消息：拉取失败：${reason}]</forward>`);
             return;
           }
@@ -498,7 +474,10 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       }),
     );
 
-    return text.replace(idRe, (raw, id: string) => envelopeMap.get(id) ?? raw);
+    return text.replace(
+      /<forward id="([^"]+)">\[合并转发消息\]<\/forward>/g,
+      (raw, id: string) => envelopeMap.get(id) ?? raw,
+    );
   }
 
   return {

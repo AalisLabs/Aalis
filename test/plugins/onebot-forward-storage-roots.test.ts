@@ -114,7 +114,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
     const out = await expander.expandForwardsInText(
       null,
       '<forward id="F1">[合并转发消息]</forward>',
-      undefined,
+      [{ type: 'forward', data: { id: 'F1' } }],
       'onebot:t:group:1',
     );
 

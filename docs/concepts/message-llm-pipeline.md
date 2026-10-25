@@ -135,7 +135,7 @@ private toAPIMessage(msg: Message): APIMessage {
 
 ## 4. 附件占位符：`[图片 | ref:…]` 文法
 
-Aalis 在多处需要把附件（图 / 音 / 视 / 文件）以可读、可解析的形式塞回 LLM 文本上下文。历史上有四个调用点各自硬编码这套格式：onebot 入站占位、image-sender 出站归档、media 重写历史描述、image-recognition 解析历史引用。任何一处格式漂移都会让其它三处解析悄悄断链。因此这套格式由单一模块统一提供，是唯一的格式来源。
+Aalis 在多处需要把附件（图 / 音 / 视 / 文件）以可读、可解析的形式塞回 LLM 文本上下文。历史上有四个调用点各自硬编码这套格式：onebot 入站引用、image-sender 出站归档、media 重写历史描述、image-recognition 解析历史引用。任何一处格式漂移都会让其它三处解析悄悄断链。因此这套格式由单一模块统一提供，是唯一的格式来源。
 
 ### 4.1 格式
 
@@ -146,7 +146,7 @@ formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: 'data/x.png' })
 //  → '[图片 | ref:data/x.png]'    // desc 为空/空串则省略冒号段
 ```
 
-kind 显示名是中文，取自 `AttachmentRefKind`：`图片` / `音频` / `视频` / `文件`。新增 kind 时在该常量表加一项即可。
+kind 显示名是中文，取自 `AttachmentRefKind`：`图片` / `音频` / `视频` / `文件`；附件种类（`image` 等）对到它的表是 `ATTACHMENT_REF_KINDS`。新增 kind 时在这两张表各加一项即可。
 
 `ref` 是引用标识，可以是本地路径、`file://` 或 `http(s)` URL，由调用方决定如何解析。
 
@@ -193,11 +193,13 @@ OneBot 适配器把平台消息段渲染为含 XML 标记的富文本喂给 LLM�
 case 'at': {
   const qq = String(seg.data.qq ?? '');
   if (qq === 'all') return '<at>all</at>';
-  const nick = nicknameMap?.get(qq) ?? qq;
+  const nick = escapeMarkup(nicknameMap?.get(qq) ?? qq);
   const selfAttr = selfId && qq === selfId ? ' self' : '';
   return `<at${selfAttr} id="${qq}">${nick}</at>`;
 }
 ```
+
+用户写的字（文字段、昵称、分享标题，相邻的文字段连成一串）与模型写的字（识别出的图片描述、合并转发的摘要）写进正文前过 `escapeMarkup`：`<at`、`<forward` 开头的 `<` 换成全角 `＜`，`| ref:` 里的 `|` 换成 `丨`。群友手打的 `<at self>`、`<at id="…">`、`<forward id="…">` 与 `[图片 | ref:…]` 因此不算标记，读的一方见到的标记都是适配器按消息段写下的。
 
 字符串消息格式（`message` 为含 `[CQ:…]` 码的字符串）在 OneBot v11 入站时先被 `parseCqMessageToSegments()` 规范化成消息段，再走上面这条同一路径——CQ 码不会流进下游文本。合并转发内的节点 content 若为 CQ 串，同样归一到这套文法：
 
@@ -234,7 +236,7 @@ export const AT_SELF_PATTERN = /<at self[\s>][\s\S]*?<\/at>/;
 ```
 
 ::: warning 写新平台适配器时必须遵循这套文法
-要让 @提及在归档、向量记忆、触发判定里都生效，你产出的入站文本必须遵循：@提及用 `<at id="X">显示名</at>`、机器人自身用 `<at self id="X">`、@全体用 `<at>all</at>`。这是事实标准而非编译期契约，没有类型会替你兜底，写错只会静默断链。
+要让 @提及在归档、向量记忆、触发判定里都生效，你产出的入站文本必须遵循：@提及用 `<at id="X">显示名</at>`、机器人自身用 `<at self id="X">`、@全体用 `<at>all</at>`。用户打的字里能拼成这些标记的起始字符要换掉（OneBot 换成全角，见上），否则手打的标记会被当成真的。这是事实标准而非编译期契约，没有类型会替你兜底，写错只会静默断链。
 :::
 
 ---

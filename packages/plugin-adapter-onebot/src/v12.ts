@@ -7,7 +7,7 @@ import type {
   OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { segmentsToText, toV12Segments } from './types.js';
+import { escapeMarkup, segmentSource, segmentsToText, toV12Segments } from './types.js';
 
 /**
  * OneBot v12 协议处理器
@@ -79,29 +79,32 @@ export class OneBotV12 implements OneBotProtocol {
     const selfId = raw.self?.user_id ? String(raw.self.user_id) : fallbackSelfId;
     const detailType = (raw.detail_type ?? 'private') as string;
     const message = Array.isArray(raw.message) ? raw.message : [];
-    // 优先使用消息段生成富文本，回退到 alt_message
+    // 优先使用消息段生成富文本，回退到 alt_message（它是用户的字，与文字段同样转义）
     const text =
-      message.length > 0 ? segmentsToText(message, selfId, nicknameMap) : ((raw.alt_message as string) ?? '');
+      message.length > 0
+        ? segmentsToText(message, selfId, nicknameMap)
+        : escapeMarkup((raw.alt_message as string) ?? '');
 
     if (!text.trim()) return null;
 
-    // 提取统一附件列表
+    // 提取统一附件列表：带 url 或 file_id 的段记成附件，来源见 segmentSource
     const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
       const data = seg.data as Record<string, unknown>;
-      const url = (data.url ?? data.file_id) as string | undefined;
+      const given = data.url ?? data.file_id;
+      const url = segmentSource(data.url);
       if (seg.type === 'image') {
-        if (!url) continue;
-        attachments.push({ kind: 'image', url: String(url) });
+        if (!given) continue;
+        attachments.push({ kind: 'image', url, segment: seg });
       } else if (seg.type === 'voice' || seg.type === 'audio') {
-        if (!url) continue;
-        attachments.push({ kind: 'audio', url: String(url) });
+        if (!given) continue;
+        attachments.push({ kind: 'audio', url, segment: seg });
       } else if (seg.type === 'video') {
         // 放宽 URL 约束：保留 attachment 避免静默丢失
-        attachments.push({ kind: 'video', url: url ? String(url) : '' });
+        attachments.push({ kind: 'video', url, segment: seg });
       } else if (seg.type === 'file') {
-        if (!url) continue;
-        attachments.push({ kind: 'file', url: String(url) });
+        if (!given) continue;
+        attachments.push({ kind: 'file', url, segment: seg });
       }
     }
 

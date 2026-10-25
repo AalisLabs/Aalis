@@ -188,7 +188,12 @@ describe('QQ 转发摘要', () => {
       sendAction: async () => ({ messages: [node('hello')] }),
     });
     const expand = (id: string) =>
-      expander.expandForwardsInText(null, `<forward id="${id}">[合并转发消息]</forward>`, undefined, 's');
+      expander.expandForwardsInText(
+        null,
+        `<forward id="${id}">[合并转发消息]</forward>`,
+        [{ type: 'forward', data: { id } }],
+        's',
+      );
 
     await expand('F1');
     await expand('F2');

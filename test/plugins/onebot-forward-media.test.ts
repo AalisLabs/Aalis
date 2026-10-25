@@ -73,6 +73,26 @@ describe('expandForward 两阶段媒体解析（纯逻辑）', () => {
     expect(r.fullText).not.toContain('\u0000'); // token 不外泄
   });
 
+  it('媒体段只认网址与 base64 的 data URL 当来源：只有 file 的（本机路径、file://、存储地址）与 url 写成存储地址的不进任务，写占位', async () => {
+    const seen: ForwardMediaTask[] = [];
+    const resolveMedia = async (tasks: ForwardMediaTask[]) => {
+      seen.push(...tasks);
+      return new Map(tasks.map(t => [t.token, 'D']));
+    };
+    const nodes = [
+      node('甲', '1', [
+        { type: 'image', data: { file: '/zz-placeholder/a.png' } },
+        { type: 'record', data: { file: 'file:///zz-placeholder/a.amr' } },
+        { type: 'video', data: { file: 'data:/zz-placeholder/a.mp4' } },
+        img('data:/zz-placeholder/b.png'),
+        img('http://a/1.jpg'),
+      ]),
+    ];
+    const r = await expandForward('F1', nodes, { ...baseOpts, resolveMedia });
+    expect(seen.map(t => t.src)).toEqual(['http://a/1.jpg']);
+    expect(r.fullText).toBe('1. 甲(1): [图片][语音][视频][图片][图片: D]');
+  });
+
   it('CQ 字符串节点的媒体段同样进任务收集', async () => {
     const resolveMedia = async (tasks: ForwardMediaTask[]) => new Map(tasks.map(t => [t.token, `D${t.kind}`]));
     const nodes = [node('甲', '1', undefined as unknown as unknown[])];
@@ -321,11 +341,12 @@ const HARNESS_NODES = Array.from({ length: 5 }, (_, i) =>
   node(`人${i}`, String(i), [txt(`第${i}条`), img(`data:image/png;base64,${PNG_B64}${'A'.repeat(i * 4)}`)]),
 );
 const FORWARD_TEXT = '<forward id="F1">[合并转发消息]</forward>';
+const FORWARD_SEGMENTS = [{ type: 'forward', data: { id: 'F1' } }];
 
 describe('forward-expand 两阶段解析器（下载先行、识别受限并发）', () => {
   it('全部图片在任何识别完成之前就已落盘——下载不排在识别队列后面', async () => {
     const h = makeHarness();
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, undefined, 'onebot:test:group:1');
+    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
 
     // 识别被闸门卡住（0 完成、至多 concurrency=2 在飞）时，5 张图应全部完成落盘。
     // 旧结构（节点串行+内联识别）下这里最多落 2 张——本断言是结构差异的判别锚。
@@ -342,7 +363,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
 
   it('识别收到的是落盘后的存储地址，而非原始 URL（rkey 过期从此无关）', async () => {
     const h = makeHarness();
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, undefined, 'onebot:test:group:1');
+    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length > 0);
     h.releaseDescribe();
     await pending;
@@ -356,7 +377,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
 
   it('recognitionMaxItems 截断：超出项不识别、占位符保留、日志点名', async () => {
     const h = makeHarness({ recognitionMaxItems: 2 });
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, undefined, 'onebot:test:group:1');
+    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length === 2);
     h.releaseDescribe();
     const out = await pending;
@@ -369,7 +390,8 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
   it('审计闭环：同一条消息多个 forward id 并行展开——第二条的落盘不等第一条的识别', async () => {
     const h = makeHarness();
     const TWO = '<forward id="F1">[合并转发消息]</forward><forward id="F2">[合并转发消息]</forward>';
-    const pending = h.expander.expandForwardsInText({}, TWO, undefined, 'onebot:test:group:1');
+    const segments = ['F1', 'F2'].map(id => ({ type: 'forward', data: { id } }));
+    const pending = h.expander.expandForwardsInText({}, TWO, segments, 'onebot:test:group:1');
 
     // 识别闸门卡死（0 完成、至多 2 在飞）时，两条转发共 10 次落盘应全部完成。
     // 串行 for 变异下 F2 的 5 张一个都不会落——审计探针实测形状。
@@ -385,7 +407,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
 
   it('落盘不可用（storage/process 缺席）→ 回退原始 src 识别，不阻塞展开', async () => {
     const h = makeHarness({}, { brokenDownload: true });
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, undefined, 'onebot:test:group:1');
+    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length > 0);
     h.releaseDescribe();
     const out = await pending;
@@ -423,7 +445,7 @@ describe('CQ 字符串节点与段数组同一渲染', () => {
   });
 });
 
-describe('CQ 字符串节点：NUL 剥除与空 url 回落', () => {
+describe('CQ 字符串节点：NUL 剥除', () => {
   const opts = {
     fetchForward: async () => null,
     maxDepth: 3,
@@ -445,17 +467,5 @@ describe('CQ 字符串节点：NUL 剥除与空 url 回落', () => {
     expect(ids).toEqual(['M0']);
     expect(r.fullText).not.toContain('\u0000');
     expect(r.fullText).toContain('ab ');
-  });
-
-  it('url 为空串时回落到 file（与旧字符串分支一致）', async () => {
-    const seen: string[] = [];
-    await expandForward('F-url', strNode('[CQ:image,url=,file=fallback.jpg]'), {
-      ...opts,
-      resolveMedia: async (tasks: ForwardMediaTask[]) => {
-        for (const t of tasks) seen.push(t.src);
-        return new Map();
-      },
-    });
-    expect(seen).toEqual(['fallback.jpg']);
   });
 });

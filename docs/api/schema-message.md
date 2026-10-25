@@ -224,14 +224,13 @@ interface ArchivedAttachment {
 }
 ```
 
-附件的 `data` 不是地址时（内联数据、本机路径），存档取预处理器给这个附件写的描述里用 `formatAttachmentRef` 写的同种附件的引用作地址：预处理器把附件落盘后，在描述里这样写出落盘的位置，读历史的一方就能显示它。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
+附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应只有一份，`ATTACHMENT_REF_KINDS`：写引用与按种类认引用的各方（存档、媒体、OneBot 适配器，以及 `outboundMediaMessage` 自己）都查它，`AttachmentRefKind` 加种类时只改这一处。附件的 `data` 不是地址时（内联数据、本机路径），存档取预处理器给这个附件写的描述里用 `formatAttachmentRef` 写的同种附件的引用作地址：预处理器把附件落盘后，在描述里这样写出落盘的位置，读历史的一方就能显示它。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
 
 会话服务读历史只认登记的键，会话服务自己经 `agent:tool:after` 写进工具结果元数据的几个（审批结算、已发出、停止时还没结束、退出码、后台任务 id）除外：api-agent 约定 agent 把这份元数据原样落库。没有 `SpokenContent`、`Attachments` 的旧提问按存档正文原样显示。
 
 **局限：**
 
 - 适配器把附件的占位写进入站消息的 `content` 时（OneBot 把图片写成 `[图片 | ref:…]`），`SpokenContent` 照样带着它：契约里发言人写的话与附件的占位分不开，界面上提问正文里多一段占位文字，下面再出这张图。要分开得由适配器另给不含占位的发言文字，契约现在没有这一项。
-- 附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应没有公开导出：用到它的插件（存档、媒体、终端、OneBot 适配器）各写一份，`AttachmentRefKind` 加种类时这几处要一起改。
 
 ## kind 常量
 
