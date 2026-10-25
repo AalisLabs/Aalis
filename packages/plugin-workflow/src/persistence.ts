@@ -11,6 +11,7 @@ import type { UserIdentity } from '@aalis/api-authority';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { WorkflowRun } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
+import { t } from './texts.js';
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const filled = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
@@ -62,6 +63,13 @@ export class RunStore {
       if (!isObject(onceFired)) throw new Error('onceFired 不是对象');
       if (!isObject(definers)) throw new Error('definers 不是对象');
       if (data.runs) this.runs = data.runs as WorkflowRun[];
+      // 还在「运行中」的是进程没有正常退出时留下的（停机会中止在跑的、等它们收尾）：收口成已取消，与停机打断的同一状态；
+      // 不知道停在何时，不写结束时刻
+      for (const run of this.runs) {
+        if (run.status !== 'running') continue;
+        run.status = 'cancelled';
+        run.error = t('interruptedByExit');
+      }
       for (const [id, at] of Object.entries(onceFired)) {
         if (typeof at === 'number') this.onceFired[id] = at;
       }
@@ -99,20 +107,18 @@ export class RunStore {
       );
   }
 
-  /** 加入一条新 run（push）；超过 maxRuns 则裁剪最旧的 */
+  /** 加入一条新 run（push）；超过 maxRuns 则裁剪最旧的已结束的：在跑的留着，收尾时照常更新，工作流页上也还取消得了 */
   add(run: WorkflowRun): void {
     this.runs.push(run);
-    if (this.runs.length > this.maxRuns) {
-      this.runs = this.runs.slice(-this.maxRuns);
-    }
+    let excess = this.runs.length - this.maxRuns;
+    if (excess > 0) this.runs = this.runs.filter(r => r.status === 'running' || excess-- <= 0);
     this.flush();
   }
 
-  /** 替换已存在的 run（按 runId）；用于运行结束时整体更新状态 */
+  /** 替换已存在的 run（按 runId），运行结束时整体更新状态：在跑的不会被裁，收尾时总找得到 */
   update(run: WorkflowRun): void {
     const i = this.runs.findIndex(r => r.runId === run.runId);
     if (i >= 0) this.runs[i] = run;
-    else this.runs.push(run);
     this.flush();
   }
 

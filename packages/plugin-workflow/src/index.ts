@@ -47,7 +47,7 @@ const configSchema = defineConfig({
     type: 'number',
     label: '保留最近运行条数',
     default: 200,
-    description: '超过则按时间裁剪最旧的；最小 10。',
+    description: '超过则裁剪最旧的已结束的运行，在跑的不裁；最小 10。',
   },
   enableTools: {
     type: 'boolean',
@@ -85,13 +85,19 @@ function identityOf(who: { platform?: string; userId?: string } | undefined): Us
 /** 定义表里的定义者：平台:用户 ID，没有的写「匿名」 */
 const identityText = (who: UserIdentity | undefined) => (who ? `${who.platform}:${who.userId}` : t('anonymous'));
 
-function fmtDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return '—';
+function fmtDuration(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '—';
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   const m = Math.floor(ms / 60_000);
   const s = Math.floor((ms % 60_000) / 1000);
   return `${m}m${s}s`;
+}
+
+/** 运行的用时（ms）：在跑的算到现在；进程退出时中断的不知道停在何时，没有用时 */
+function elapsed(run: WorkflowRun): number | undefined {
+  const end = run.status === 'running' ? Date.now() : run.finishedAt;
+  return end === undefined ? undefined : end - run.startedAt;
 }
 
 /**
@@ -171,7 +177,7 @@ function defineWorkflowPage(
               run.error ? t('runNotSucceededBecause', { status, error: run.error }) : t('runNotSucceeded', { status }),
             );
           }
-          return `已运行 ${rowKey}，用时 ${fmtDuration((run.finishedAt ?? Date.now()) - run.startedAt)}`;
+          return `已运行 ${rowKey}，用时 ${fmtDuration(elapsed(run))}`;
         },
       },
       enableWorkflow: { label: '启用', effect: 'write', row: true, handler: ({ rowKey }) => setEnabled(rowKey, true) },
@@ -250,7 +256,7 @@ function defineWorkflowPage(
             { label: '24 小时运行', value: recent.length },
             {
               label: '24 小时失败',
-              value: recent.filter(r => r.status === 'failed' || r.status === 'cancelled').length,
+              value: recent.filter(r => r.status === 'failed').length,
             },
           ];
         },
@@ -324,7 +330,7 @@ function defineWorkflowPage(
               status: STATUS[r.status],
               triggerSource: r.triggerSource,
               startedAt: r.startedAt,
-              duration: fmtDuration((r.finishedAt ?? Date.now()) - r.startedAt),
+              duration: fmtDuration(elapsed(r)),
               error: r.error ?? '',
               running: r.status === 'running',
             })),
@@ -749,7 +755,7 @@ function registerTools(
           ok: true,
           runId: run.runId,
           status: run.status,
-          durationMs: (run.finishedAt ?? Date.now()) - run.startedAt,
+          durationMs: elapsed(run),
           nodes: run.nodes.map(n => ({ id: n.id, status: n.status, error: toSource(n.error) })),
           error: toSource(run.error),
         });
@@ -788,7 +794,7 @@ function registerTools(
           status: r.status,
           triggerSource: r.triggerSource,
           startedAt: new Date(r.startedAt).toISOString(),
-          durationMs: (r.finishedAt ?? Date.now()) - r.startedAt,
+          durationMs: elapsed(r),
           error: toSource(r.error),
         })),
       });
