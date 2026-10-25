@@ -12,7 +12,9 @@ import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } fr
 import {
   AttachmentRefKind,
   buildIncomingContent,
+  extractMentions,
   getMessageName,
+  getSenderLabel,
   outboundMarkerMessage,
   outboundMediaMessage,
   parseAttachmentRefs,
@@ -28,20 +30,6 @@ const configSchema = defineConfig({
     description: '记录图片解释完成和消息写入记忆等调试日志。',
   },
 });
-
-/** 从消息文本中抽取 @提及的用户 ID 列表（平台无关：依赖各 adapter 输出统一的 <at id="X"> 标签） */
-function extractMentions(text: string): string[] {
-  if (!text) return [];
-  const ids = new Set<string>();
-  const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
-  let m: RegExpExecArray | null = re.exec(text);
-  while (m !== null) {
-    const id = m[1];
-    if (id && id !== 'all') ids.add(id);
-    m = re.exec(text);
-  }
-  return [...ids];
-}
 
 /** 附件引用里的种类名 */
 const REF_KINDS: Readonly<Record<ArchivedAttachment['kind'], string>> = {
@@ -262,6 +250,9 @@ function createArchiveService(
     },
 
     async archiveIncoming(incoming: IncomingMessage, turn?: { turnId: string; entry: 'opened' | 'joined' }) {
+      // 空闲开话题的提示是写给模型的话，不是谁的发言，也不是要留档的事件：不落档、不发 inbound:message:archived
+      if (incoming.triggerType === 'idle') return undefined;
+
       // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
       // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
       // 对传入的消息对象调用（识别结果随之写回入参）：processMessage 按消息对象只处理一次，
@@ -284,13 +275,11 @@ function createArchiveService(
           : incoming._attachmentDescriptions,
       };
 
-      const content = buildIncomingContent(
-        working,
-        speakerOf(working, {
-          sessionManager: sessionManager.present ? sessionManager.use : undefined,
-          authority: authority.present ? authority.use : undefined,
-        }),
-      );
+      const speaker = speakerOf(working, {
+        sessionManager: sessionManager.present ? sessionManager.use : undefined,
+        authority: authority.present ? authority.use : undefined,
+      });
+      const content = buildIncomingContent(working, speaker);
 
       // 把会话身份信息存入 metadata，供向量检索/上下文渲染等场景使用
       const meta: Record<string, unknown> = {};
@@ -304,6 +293,9 @@ function createArchiveService(
       if (working.messageId) meta[WellKnownMetadataKeys.MessageId] = working.messageId;
       // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
       if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
+      // 加了发送者前缀时记下用的标签：把归档正文重排给模型或界面看的一方按它去掉这一层
+      const label = speaker && getSenderLabel(speaker.nickname, speaker.userId);
+      if (label) meta[WellKnownMetadataKeys.SenderLabel] = label;
       const roots = new Set(storage.present ? storage.use.listRoots().map(root => root.name) : []);
       const attachments = attachmentList(working, roots);
       if (attachments.length > 0) meta[WellKnownMetadataKeys.Attachments] = attachments;
@@ -318,8 +310,9 @@ function createArchiveService(
       }
       // 平台事件合成的入站给人看的那句：读历史的一方据此把它画成通知
       recordText(meta, working.text);
-      const mentions = extractMentions(content);
-      if (mentions.length > 0) meta.mentions = mentions;
+      // 被 @ 的人只从发言人自己写的话里取：引用与附件描述里别人 @ 的不算
+      const mentions = extractMentions(working.content);
+      if (mentions.length > 0) meta[WellKnownMetadataKeys.Mentions] = mentions;
 
       // proactive 代发任务（如 workflow agent 节点）：作为 notice 角色 + kind='cross-session-delegation' 落盘，
       // 与 plugin-agent 的 buildMessages 保持一致，避免目标会话下次回看历史时
@@ -360,7 +353,7 @@ function createArchiveService(
       }
 
       // 通知监听者：入站消息已落库（用于触发用户档案事实提取等后台任务）
-      // 与 agent 是否回复无关，所有走 archiveIncoming 的消息都会发出
+      // 与 agent 是否回复无关，落了档的入站都会发出
       events.use
         .emit('inbound:message:archived', {
           sessionId: working.sessionId,

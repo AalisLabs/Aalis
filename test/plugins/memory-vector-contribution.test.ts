@@ -14,7 +14,7 @@ import { assemblePromptContributions } from '../../packages/plugin-agent/src/pro
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
-import { type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
+import { extractMentions, type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { sessionTableManager } from '../fixtures/session-table.js';
@@ -472,10 +472,15 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
 
     const mem = host.services.use.get(memory);
     if (!mem) throw new Error('no memory');
-    // 存入归档真形态（含 [昵称(ID)]: 前缀）；向量 metadata.content 仍是裸文本——
+    // 存入归档真形态（含 [昵称(ID)]: 前缀与记下的标签）；向量 metadata.content 仍是裸文本——
     // 两条路径的文本从此可区分，若 messageKey 退化为含 content 的 key，双入将被抓到
     await mem.saveMessage('s-old', { role: 'assistant', content: 'PREV-A', timestamp: BASE_TS - 60_000 });
-    await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', {
+      role: 'user',
+      content: '[Alice(u1)]: PIVOT-Q',
+      timestamp: BASE_TS,
+      metadata: { [WellKnownMetadataKeys.SenderLabel]: 'Alice(u1)' },
+    });
     await mem.saveMessage('s-old', { role: 'assistant', content: 'NEXT-A', timestamp: BASE_TS + 60_000 });
     await mem.saveMessage('s-old', { role: 'user', content: 'FAR-Q', timestamp: BASE_TS + 120_000 });
 
@@ -488,7 +493,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(block).not.toContain('FAR-Q');
     // 命中点本身只出现一次（扩展路径与 metadata 兜底共用同一 messageKey 去重）
     expect((block.match(/PIVOT-Q/g) ?? []).length).toBe(1);
-    // 渲染层剥掉归档 sender 前缀（来源标签已表达身份，不双重前缀）
+    // 渲染层按存档记下的标签剥掉归档 sender 前缀（来源标签已表达身份，不双重前缀）
     expect(block).not.toContain('[Alice(u1)]:');
     // 角色标注（2026-08-27）：assistant 邻居必须标成「你自己的回复」，不得渲染成
     // 与真人发言同构的形态——那是「戳戳月卡」自我强化事故的入口。同时补角色说明句。
@@ -496,6 +501,40 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(block).toContain('标注 Assistant·你自己 的条目是你自己当时的回复');
     // user 命中本身不受影响（只标注不过滤：邻居集合与命中集合都不变）
     expect(block).toContain('PIVOT-Q');
+  });
+
+  it('发送者前缀只按存档记下的标签去掉：没记标签的（owner-only 房间不加前缀）正文以「[x]: 」开头时原样保留', async () => {
+    const { host, assembly } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [
+        hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' }),
+        // 消息表里没有的命中走向量元数据兜底：标签同样取元数据里记下的
+        {
+          score: 0.8,
+          metadata: {
+            sessionId: 's-aged',
+            timestamp: BASE_TS,
+            content: '[Alice(u1)]: 兜底的话',
+            userId: 'u1',
+            [WellKnownMetadataKeys.SenderLabel]: 'Alice(u1)',
+          },
+        },
+        hit(0.7, { sessionId: 's-aged', timestamp: BASE_TS + 1, content: '[通知]: 兜底的原文' }),
+      ],
+    });
+    const mem = host.services.use.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'user', content: '[公告]: 周五停课', timestamp: BASE_TS - 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
+
+    const messages = baseMessages();
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('[公告]: 周五停课');
+    expect(block).toContain('[通知]: 兜底的原文');
+    expect(block).toContain(' 兜底的话');
+    expect(block).not.toContain('[Alice(u1)]:');
   });
 
   it('角色标注只在片段含非 user 角色时出现；纯 user 片段渲染不变', async () => {
@@ -539,7 +578,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(block).toContain('标注 Assistant·你自己');
   });
 
-  it('索引侧：triggerType=proactive 的伪 incoming（第三方 proactive 代发的 AI 文本）不入向量库', async () => {
+  it('索引侧：带 source 的内部注入（代发任务、定时任务、编排、子任务、平台事件合成的通知）不入向量库', async () => {
     const { host, store } = await setup({});
     // 事件键经 declaration merging 声明，测试从源码路径导入拿不到增广——
     // 以宽签名断言 emit（同文件 POINT 常量的 never 技法对双参 emit 会把实参也打成 never）
@@ -551,8 +590,8 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
         archivedMessage: { role: 'user', content: incoming.content, timestamp: BASE_TS },
       });
 
-    // 顺序关键：proactive 先入队。索引队列 concurrency=1 FIFO——若守卫失效，
-    // 代发文本会先于真人发言落库，下方全等断言即红。此前「先真人后代发文本 + 轮询
+    // 顺序关键：注入全部先于真人入队。索引队列 concurrency=1 FIFO——任何一条漏挡，
+    // 它都会先于真人发言落库，下方全等断言即红。此前「先真人后代发文本 + 轮询
     // length===0 即退出」的写法对守卫零敏感（2026-08-27 审计变异实测存活）。
     await emitArchived({
       content: 'AI 撰写的任务文本',
@@ -561,12 +600,23 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       source: 'third-party:x',
       triggerType: 'proactive',
     });
-    // 三漏路径（2026-08-28 用户裁定全堵）：scheduler / workflow send_message / subtask 派发
-    // 同为 AI/系统撰写文本，不带 triggerType，按 source/userId 判据堵。全部先于真人入队，
-    // FIFO 下任何一条漏堵都会先于真人落库、被下方全等断言抓红。
+    // 各注入方的真实形态：只认 source 有无，不认来源名字；子任务与好友申请还带着账号，同样不收
     await emitArchived({ content: '定时任务内容', sessionId: 's3', platform: 'onebot', source: 'scheduler' });
     await emitArchived({ content: 'workflow 派发文本', sessionId: 's4', platform: 'onebot', source: 'workflow:wf1' });
-    await emitArchived({ content: '子任务追问', sessionId: 's5', platform: 'internal', userId: 'parent:p1' });
+    await emitArchived({
+      content: '子任务追问',
+      sessionId: 's5',
+      platform: 'internal',
+      userId: 'parent:p1',
+      source: 'subtask',
+    });
+    await emitArchived({
+      content: '[系统通知] 用户 <占位账号> 请求添加好友',
+      sessionId: 's6',
+      platform: 'onebot',
+      userId: '<占位账号>',
+      source: 'onebot-request',
+    });
     await emitArchived({ content: '真人发言', sessionId: 's1', platform: 'onebot', userId: 'u1' });
     // 索引走异步队列，轮询等待首条落库（FIFO 保证此时前面全部伪 incoming 已被处理过）
     for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
@@ -690,6 +740,53 @@ describe('索引文本 = 归档文本', () => {
     expect(store.added[0].content).toBe(archivedText);
     // 时间戳以归档为准（按时间戳精确删除的对齐前提）
     expect(store.added[0].timestamp).toBe(BASE_TS + 7);
+  });
+});
+
+describe('索引侧取存档记下的说话事实', () => {
+  it('被 @ 的人取存档的 Mentions（只算发言人自己写的），不从归档正文抽；发送者前缀的标签随条目记下', async () => {
+    const { host, store } = await setup({});
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: '<at id="u2">乙</at> 你看', sessionId: 's1', platform: 'onebot', userId: 'u1' },
+      archivedMessage: {
+        role: 'user',
+        content: '[甲(u1)]: <at id="u2">乙</at> 你看\n[引用 丙(u3) 的消息: <at id="u4">丁</at> 在吗]',
+        timestamp: BASE_TS,
+        metadata: { [WellKnownMetadataKeys.SenderLabel]: '甲(u1)', [WellKnownMetadataKeys.Mentions]: ['u2'] },
+      },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added).toHaveLength(1);
+    expect(store.added[0].mentions).toEqual(['u2']);
+    expect(store.added[0][WellKnownMetadataKeys.SenderLabel]).toBe('甲(u1)');
+  });
+
+  it('存档没记标签（没加发送者前缀）的入站条目不写标签键', async () => {
+    const { host, store } = await setup({});
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: '你好', sessionId: 's1', platform: 'webui', userId: 'u1' },
+      archivedMessage: { role: 'user', content: '你好', timestamp: BASE_TS },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added).toHaveLength(1);
+    expect(store.added[0]).not.toHaveProperty(WellKnownMetadataKeys.SenderLabel);
+  });
+
+  it('她的回复里 @全体（<at id="all">）不是账号：assistant 条目与 extractMentions 都不算它', async () => {
+    const reply = '<at id="u2">乙</at> <at id="all">全体成员</at> 开会了';
+    const { host, store } = await setup({});
+    const emitLoose = host.events.use.emit.bind(host.events.use) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('assistant:message:archived', {
+      sessionId: 's1',
+      message: { role: 'assistant', content: reply, timestamp: BASE_TS, metadata: { userId: 'bot1' } },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added.map(m => m.mentions)).toEqual([['u2']]);
+    expect(extractMentions(reply)).toEqual(['u2']);
   });
 });
 

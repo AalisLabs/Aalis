@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, events } from '../../packages/core/src/index.js';
+import { App, definePlugin, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -29,6 +30,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //      （客户端经会话协议拿思考，IM 适配器只发正文）。
 //   4. 同一会话连着两轮回同一句话，两句都外发、都落库。
 //   5. 回复的正文只剥漏出的协议标记：表格分隔行不改写，落库的时间线与正文同一份净化。
+//   6. 空闲开话题的提示是宿主写给模型的指令：以 system 指令块交出，照常带易变块；提示词贡献的落点同普通轮，
+//      历史为空时也不落到提示之后。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -279,5 +282,73 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
 
     expect(archived[0].content).toBe('前文');
     expect(archived[0].segments).toEqual([{ type: 'text', content: '前文' }]);
+  });
+
+  /** 四个锚位各挂一个探针贡献（正文是「ZZ-<锚位>」），存好历史后发一条空闲开话题的提示，交出发给模型的消息 */
+  const idleTurn = async (history: Message[]): Promise<Message[]> => {
+    const { host, recorder } = await boot('zz-plain', [{ content: '好' }]);
+    await app.plugin(
+      definePlugin({
+        name: 'zz-anchors',
+        uses: { contributions },
+        apply(caps) {
+          for (const anchor of ['knowledge', 'context', 'turn-context', 'turn-hint']) {
+            caps.contributions.use.contribute(
+              'agent:prompt' as never,
+              { id: anchor, anchor, build: () => `ZZ-${anchor}` } as never,
+            );
+          }
+        },
+      }),
+    );
+    await app.plugins.idle();
+    for (const m of history) await host.memory.use.saveMessage(SESSION, m);
+    await host.agent.use.handleMessage({
+      content: '开个话题',
+      sessionId: SESSION,
+      platform: 'test',
+      source: 'other-idle',
+      triggerType: 'idle',
+    });
+    return recorder[0].messages;
+  };
+  /** 每条消息的样子：探针取正文，其余取 injector，没有 injector 的取角色 */
+  const layout = (messages: readonly Message[]) =>
+    messages.map(m => (String(m.content).startsWith('ZZ-') ? m.content : (m.metadata?.injector ?? m.role)));
+
+  it('空闲开话题：提示以 system 指令块交给模型，前面照常有易变块；材料与提示的落点同普通轮，不插进历史', async () => {
+    const messages = await idleTurn([
+      { role: 'user', content: '早', timestamp: 1000 },
+      { role: 'assistant', content: '早呀', timestamp: 1001 },
+    ]);
+
+    expect(layout(messages)).toEqual([
+      'persona',
+      'ZZ-knowledge',
+      'ZZ-context',
+      'user',
+      'assistant',
+      'ZZ-turn-context',
+      'persona-volatile',
+      'ZZ-turn-hint',
+      'idle-prompt',
+    ]);
+    const prompt = messages[messages.length - 1];
+    expect(prompt.role).toBe('system');
+    expect(String(prompt.content)).toContain('开个话题');
+  });
+
+  it('空闲开话题、历史为空：头部的材料仍在本轮诸块之前，不落到提示之后', async () => {
+    const messages = await idleTurn([]);
+
+    expect(layout(messages)).toEqual([
+      'persona',
+      'ZZ-knowledge',
+      'ZZ-context',
+      'ZZ-turn-context',
+      'persona-volatile',
+      'ZZ-turn-hint',
+      'idle-prompt',
+    ]);
   });
 });

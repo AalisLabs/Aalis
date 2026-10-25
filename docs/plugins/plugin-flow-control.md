@@ -52,7 +52,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 5. `triggerType !== 'immediate'` 时，冷却期内或限速窗口已满 → 吞掉。被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速。带 `source` 的内部注入（闲置触发、定时任务、workflow）不过冷却，定时提醒等不会被回复后冷却静默吞掉，但仍受限速约束；真人消息由平台适配器投递，不设 `source`。
 6. `next()` 进入 dispatch。
 
-被吞掉的消息在加载了 `message-archive` 时做影子归档（shadow archive），下次触发时作为上下文；闲置触发的合成提示不归档。
+被吞掉的消息在加载了 `message-archive` 时做影子归档（shadow archive），下次触发时作为上下文；闲置触发的合成提示按存档的规则不落档（见 [services/message-archive.md](../services/message-archive.md)）。
 
 ## 出站联动
 

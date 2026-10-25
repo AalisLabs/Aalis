@@ -15,12 +15,12 @@ const SAME_DAY = new Date(2026, 0, 15, 14, 32, 0).getTime();
 const PREV_DAY = new Date(2026, 0, 14, 23, 50, 0).getTime();
 
 describe('buildRecallNoticeContent', () => {
-  it('群聊 + 反查到原文：附时间与摘录，剥掉与通知重复的发送者前缀，压平换行', () => {
+  it('群聊 + 反查到原文：附时间与摘录，按存档记下的标签剥掉与通知重复的发送者前缀，压平换行', () => {
     const out = buildRecallNoticeContent({
       isGroup: true,
       userLabel: '张三(10001)',
       messageId: '456',
-      original: { content: '[张三(10001)]: 今晚八点\n一起打游戏？', timestamp: SAME_DAY },
+      original: { content: '[张三(10001)]: 今晚八点\n一起打游戏？', timestamp: SAME_DAY, senderLabel: '张三(10001)' },
       now: NOW,
     });
     expect(out).toBe('[notice/group_recall] 张三(10001) 撤回了一条消息（14:32 发送：「今晚八点 一起打游戏？」）');
@@ -55,10 +55,21 @@ describe('buildRecallNoticeContent', () => {
       isGroup: true,
       userLabel: '张三(10001)',
       messageId: '456',
-      original: { content: '[张三(10001)]: ', timestamp: SAME_DAY },
+      original: { content: '[张三(10001)]: ', timestamp: SAME_DAY, senderLabel: '张三(10001)' },
       now: NOW,
     });
     expect(out).toBe('[notice/group_recall] 张三(10001) 撤回了一条消息（msg=456）');
+  });
+
+  it('存档没记标签（没加前缀）：正文自己以「[公告]: 」开头时原样摘录', () => {
+    const out = buildRecallNoticeContent({
+      isGroup: true,
+      userLabel: '张三(10001)',
+      messageId: '456',
+      original: { content: '[公告]: 周五停课', timestamp: SAME_DAY },
+      now: NOW,
+    });
+    expect(out).toBe('[notice/group_recall] 张三(10001) 撤回了一条消息（14:32 发送：「[公告]: 周五停课」）');
   });
 
   it('私聊变体', () => {

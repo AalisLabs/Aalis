@@ -103,7 +103,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。禁言期内的真人消息与命中禁言关键词的那条同样算真人活动，只是不计数（判定流程第 3、4 步）：session 档从这条消息起重排、退避复位为 1，platform 档的静默计时与挑选候选看的最近活动也随之更新。
 
-注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话在 flow-control 的生效范围内时限速也照常生效（内部注入没有网关算的聊天窗口，flow-control 按会话管理或流控状态记下的窗口判，默认的多方房间下发往群的闲置提示在限速窗口已满时被吞，闲置提示不做影子归档）。
+注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话在 flow-control 的生效范围内时限速也照常生效（内部注入没有网关算的聊天窗口，flow-control 按会话管理或流控状态记下的窗口判，默认的多方房间下发往群的闲置提示在限速窗口已满时被吞；闲置提示按存档的规则不落档，见 [services/message-archive.md](../services/message-archive.md)）。
 
 ## 出站联动
 

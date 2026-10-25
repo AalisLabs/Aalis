@@ -304,9 +304,10 @@ export function normalizeSystemPlacement(messages: Message[]): Message[] {
   while (leadingEnd < messages.length && messages[leadingEnd].role === 'system') leadingEnd++;
   return messages.map((m, i) => {
     if (i < leadingEnd || m.role !== 'system') return m;
-    // 本轮指令块（proactive 代发任务、宿主通知）豁免：它必须以 system 呈现，转 user
+    // 本轮指令块（proactive 代发任务、宿主通知、空闲开话题的提示）豁免：它必须以 system 呈现，转 user
     // 会复发「把代发任务当真实用户在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。
-    // 这类回合低频，牺牲该轮缓存可接受。injector 只存在于请求期构造的消息上，不会命中历史记录。
+    // 代价是 DeepSeek 渲染时把它提到上下文最前部、离决策点远；这类回合低频，牺牲该轮缓存可接受。
+    // injector 只存在于请求期构造的消息上，不会命中历史记录。
     const injector = m.metadata?.injector;
     if (typeof injector === 'string' && DIRECTIVE_KINDS.includes(injector)) return m;
     const content = m.content ?? '';

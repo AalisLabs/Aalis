@@ -1313,7 +1313,7 @@ describe('条目', () => {
     const c = client(server());
     await c.init();
     const sub = await c.subscribe(s.id);
-    const { message } = await archive.archiveIncoming({
+    const archived = await archive.archiveIncoming({
       content: '看看这两个',
       sessionId: s.id,
       platform: 'webui',
@@ -1328,6 +1328,8 @@ describe('条目', () => {
         '[图片: 一只橘猫 | ref:data:/images/s/media/cat.png]',
       ],
     });
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('〔附件 报告.txt');
     const asked = c.timeline(s.id, sub).map(shape);
     expect(asked).toEqual([

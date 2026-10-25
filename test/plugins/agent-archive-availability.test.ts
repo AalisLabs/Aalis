@@ -91,11 +91,21 @@ describe('agent 可选归档服务', () => {
     expect(await h.host.memory.use.getHistory('missing-again', 20)).toEqual([]);
   });
 
-  it('跳过用户入档的主动回合，在保存助手回复时同样提示缺少归档', async () => {
+  it('空闲开话题的一轮缺归档时同样只告警一次，回复照发', async () => {
     const h = await boot();
-    await h.send('proactive', { source: 'idle-trigger' });
+    await h.send('idle', { userId: undefined, source: 'idle-trigger', triggerType: 'idle' });
     expect(h.replies).toEqual(['已回复']);
     expect(h.warnings).toHaveLength(1);
-    expect(await h.host.memory.use.getHistory('proactive', 20)).toEqual([]);
+    expect(await h.host.memory.use.getHistory('idle', 20)).toEqual([]);
+  });
+
+  it('空闲开话题的提示不落档，不认来源的名字：回复照发，历史里只有回复', async () => {
+    const h = await boot();
+    await h.app.plugin(archivePlugin, { debugLogs: false });
+    await h.app.plugins.idle();
+    await h.send('idle', { userId: undefined, content: '开个话题', source: 'other-idle', triggerType: 'idle' });
+    expect(h.replies).toEqual(['已回复']);
+    const history = await h.host.memory.use.getHistory('idle', 20);
+    expect(history.map(message => [message.role, message.content])).toEqual([['assistant', '已回复']]);
   });
 });

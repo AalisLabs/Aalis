@@ -62,10 +62,9 @@ export default definePlugin({
    已烘入引用与附件描述，发送者前缀按 api-message-archive 的 `speakerOf`），说话人、平台与群取存档记在元数据里的；assistant 侧 embed 可见正文
    （落库内容是结构化输出信封时取 metadata 的 `visibleContent`，缺省为 `content`），在取得自身身份时
    embed 前经 `prefixSender` 加自身发送者前缀；
-   AI/系统撰写的伪 incoming 不入库（带 `hostNotice` 的宿主通知 / `source: idle-trigger` /
-   `triggerType: proactive` / `source: scheduler` / `source: workflow:*` / `userId: parent:*`，
-   即宿主通知、闲聊主动触发、workflow agent 节点与定时/工作流/子任务派发）；插件发出的媒体记成通知（role
-   `notice`），不进向量库
+   带 `source` 的内部注入不入库（宿主通知、定时任务、编排、子任务派发、好友与入群申请等平台事件合成的通知，
+   与用户档案同一判据：不是谁在跟她说话）；插件发出的媒体记成通知（role `notice`），不进向量库。入站条目的被 @ 的人
+   取存档记下的 `Mentions`（只算发言人自己写的），另记存档的 `SenderLabel`（存档记了才记，消息表老化后兜底渲染用）
    - 已落库的消息被改写（`memory:messages-rewritten`，如她发出的网址图片补上了识图描述）：排进同一个索引队列，
      同一条（会话与时间戳）的收录或前一次改写还在做时先等它落定，同一条的几次改写按到达的先后落定。只管她与对方的发言：先按改写后的正文算出条目（assistant 按她的
      发言，user 按存档消息的元数据，与入站收录同一份事实），算成了才按会话与时间戳删掉旧条目、写进新的；删不到的
@@ -80,14 +79,15 @@ export default definePlugin({
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；事件标记（`CONTROL_KINDS`，
      如压缩分隔线、指令的回复）不在范围查询里，不带出，也不占 N 条的名额；
-     否则只注入命中本身。结果与当前会话已有内容去重。指令类消息（`DIRECTIVE_KINDS`：workflow 代发的任务、
-     宿主通知）不是任何人的发言，不作为邻居带出
+     否则只注入命中本身。结果与当前会话已有内容去重。指令类消息
+     （`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)）不是任何人的发言，不作为邻居带出
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注
      （`Assistant·你自己` 等），AI 自己的历史回复不会以他人发言形态回流；正文优先取 metadata 的
      `visibleContent`，缺省按 `content` 呈现（升级前落库的消息没有该键）
    - 每条片段带来源标签 `[平台/位置/说话人 @ 时间]`：平台取向量记下的平台（终端会话也写）；位置有群名写 `群「名」`，
      否则写说话所在类型的显示名（平台声明的 `label` 取原文，如 OneBot 的私聊、频道；平台不在或没声明显示名时写类型名），
-     都没有时不写
+     都没有时不写。身份已在标签里，对方发言的正文按存档记下的 `SenderLabel` 去掉归档文本的发送者前缀，没记的不去，
+     正文自己以 `[..]: ` 开头的照原样
    - `recallRoles` 配置控制 AI 自身回复是否参与召回（`all` 默认 / `others-only`）；
      角色标注不随该开关关闭。存量未打 role 的旧向量按对方对待
 3. **主动召回**: 注册 `memory_recall` 工具，按任意 query 检索，与被动注入共用同一检索排序

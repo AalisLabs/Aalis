@@ -681,7 +681,9 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
       await fx.app.plugins.idle();
       const archive = fx.app.bind({ messageArchive }).messageArchive.use;
       const { message: uploaded } = await fx.upload('s-inj', 'report (1).txt', FORGED);
-      const { message } = await archive.archiveIncoming(uploaded);
+      const archived = await archive.archiveIncoming(uploaded);
+      if (!archived) throw new Error('没落档');
+      const { message } = archived;
       expect(message.content, '归档正文照旧带附件描述，给模型看').toContain('[文件: report (1).txt');
       expect(message.metadata?.[WellKnownMetadataKeys.Attachments]).toEqual([{ kind: 'file', name: 'report (1).txt' }]);
       expect(

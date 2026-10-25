@@ -119,12 +119,13 @@ definePlugin({
 
 ## 指令类回合
 
-两类入站消息不是任何人的发言，以 system 指令块呈现，不推当前 user 消息，也不推易变上下文与群聊焦点指引：
+三类入站消息不是任何人的发言，以 system 指令块呈现，不推当前 user 消息；前两类也不推易变上下文与群聊焦点指引：
 
 - **代发任务**（`triggerType: 'proactive'`，如 workflow 的 agent 节点）：以 `[跨会话委派]` 任务块呈现，`metadata.injector` 为 `cross-session-delegation`。
 - **宿主通知**（带 `hostNotice`，见 [schema-message](../api/schema-message.md)）：内容为 `[宿主通知]`、宿主正文，再接注入方包好的不可信段（`hostNotice.untrusted`），`metadata.injector` 为 `host-notice`。不可信段只在这一轮出现；归档只留宿主正文，之后的回合从历史里看不到它。
+- **空闲开话题**（`triggerType: 'idle'`）：以 system 交出宿主写的提示（`(时间) <提示>`），`metadata.injector` 为 `idle-prompt`；照常带易变上下文，开话题要看当前时间与会话环境。存档不落档，之后的回合从历史里看不到它。
 
-这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-context` 与 `turn-hint` 两个锚位的材料落在指令块之前、全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
+这类回合里历史中有旧的 user 消息，却没有当前 user 消息。`turn-hint` 锚位的材料落在指令块之前；`turn-context` 的落在易变上下文之前，没有易变上下文时（代发任务、宿主通知）落在指令块之前。两者都在全部历史之后，不会插进历史内部（按「最后一条 user 之前」定位会割裂转录，并在只增不改的历史区制造新的缓存断点）；没有指令块时，`turn-hint` 仍落在最后一条 user 之前。
 
 ## 新消息怎么处理
 

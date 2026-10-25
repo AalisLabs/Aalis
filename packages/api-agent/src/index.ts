@@ -199,18 +199,21 @@ declare module '@aalis/api-hooks' {
  *
  * - `identity`：紧贴首条 system（persona）之后。你是谁 / 对话者是谁
  *   （行为准则等低频变动的身份材料）。
- * - `knowledge`：头部 system 区末尾，先于 context。可用能力与操作知识
+ * - `knowledge`：头部 system 区末尾（第一条非 system 或第一条本轮块之前，历史
+ *   为空时同样在本轮诸块之前），先于 context。可用能力与操作知识
  *   （技能清单、已激活技能正文）。
  * - `context`：头部 system 区末尾，居 knowledge 之后。**会话级稳定**的对话
  *   上下文（会话摘要）。
  * - `turn-context`：历史结束处——**按当前轮取材**的背景材料（向量检索记忆、
- *   跨会话片段、发言者档案/关系、文件清单）。落点三级取首个命中：proactive
- *   任务块之前（proactive 轮，历史里有旧 user 消息，不能按 user 定位）>
- *   易变块（persona-volatile）之前 > 最后一条 user 之前；全列表无 user 时
- *   落尾（材料不依附于用户消息——这点与 turn-hint 的弃置不同）。
- * - `turn-hint`：最后一条 user 消息之前（居 turn-context 之后，贴用户消息
- *   最近）。仅与当前这一轮相关的即时提示（群聊时间线提醒、特殊事件说明）。
- *   messages 中无 user 消息时该槽弃置。
+ *   跨会话片段、发言者档案/关系、文件清单）。落点三级取首个命中：易变块
+ *   （persona-volatile）之前 > 本轮指令块（委派任务、宿主通知、空闲开话题的提示，
+ *   即 injector 属于 schema-message 的 DIRECTIVE_KINDS 的块）之前（委派与宿主通知
+ *   那一轮没有易变块，历史里有旧 user 消息，不能按 user 定位）> 最后一条 user
+ *   之前；全列表无 user 时落尾（材料不依附于用户消息——这点与 turn-hint 的弃置
+ *   不同）。
+ * - `turn-hint`：本轮指令块之前，没有时最后一条 user 消息之前（居 turn-context
+ *   之后，贴本轮的输入最近）。仅与当前这一轮相关的即时提示（群聊时间线提醒、
+ *   特殊事件说明）。两者都没有时该槽弃置。
  *
  * ## context 与 turn-context 的分界：内容每轮变不变
  *

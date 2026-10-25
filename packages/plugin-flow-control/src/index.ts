@@ -207,10 +207,8 @@ async function run(caps: Caps): Promise<void> {
     s.replyTimestamps = e.rateLimitWindow > 0 ? s.replyTimestamps.filter(t => t > now - e.rateLimitWindow * 1000) : [];
   }
 
-  /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文 */
+  /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文；哪些不落档（空闲开话题的提示）由存档定 */
   async function shadowArchive(message: IncomingMessage): Promise<void> {
-    // 闲置触发是合成的系统提示，不作为用户消息入档（与 agent 的归档规则一致）
-    if (message.source === 'idle-trigger') return;
     if (!messageArchive.present) return;
     const archive = messageArchive.use;
     try {

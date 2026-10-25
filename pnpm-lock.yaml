@@ -952,7 +952,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-media-signature':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -1626,7 +1626,7 @@ importers:
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
       '@aalis/api-message-archive':
-        specifier: workspace:>=0.8.0 <1.0.0
+        specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-message-archive
       '@aalis/api-session-manager':
         specifier: workspace:>=0.12.0 <1.0.0
@@ -1811,7 +1811,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0
@@ -2258,7 +2258,7 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
       '@aalis/schema-message':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-text-normalize':
         specifier: workspace:>=0.5.2 <1.0.0

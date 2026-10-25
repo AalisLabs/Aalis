@@ -102,7 +102,9 @@ describe('归档', () => {
       replyTo: { messageId: 'm1', content: '原话', nickname: '乙', userId: '30002' },
       _attachmentDescriptions: ['[图片: 一只猫 | ref:data/a.png]'],
     });
-    const { content, message } = await (await archiveService()).archiveIncoming(msg);
+    const archived = await (await archiveService()).archiveIncoming(msg);
+    if (!archived) throw new Error('没落档');
+    const { content, message } = archived;
     // 会话管理不在：说话人是这条消息自己的
     expect(content).toBe(buildIncomingContent(msg, SPEAKER));
     expect(message.content).toBe('[甲(30001)]: 看这个\n[引用 乙(30002) 的消息: 原话]\n[图片: 一只猫 | ref:data/a.png]');
@@ -110,7 +112,7 @@ describe('归档', () => {
 
   it('另记发言人写的话与附件清单：附件的地址取 data（网址与存储地址，相对路径不算），data 是内联数据的取预处理器给它写的描述里同种附件的引用，都没有的只记种类与名字；存储地址只认存储服务根表里的根', async () => {
     const K = WellKnownMetadataKeys;
-    const { message } = await (await archiveService()).archiveIncoming(
+    const archived = await (await archiveService()).archiveIncoming(
       group({
         attachments: [
           { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA' },
@@ -134,6 +136,8 @@ describe('归档', () => {
         ],
       }),
     );
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     expect(message.metadata?.[K.SpokenContent]).toBe('看这个');
     expect(message.metadata?.[K.Attachments]).toEqual([
       { kind: 'image', name: 'cat.png', ref: 'data:/images/g/media/cat.png' },
@@ -148,11 +152,13 @@ describe('归档', () => {
   });
 
   it('发言人写的话与归档正文相同时不记，没有附件时不记附件清单', async () => {
-    const { message } = await (await archiveService()).archiveIncoming({
+    const archived = await (await archiveService()).archiveIncoming({
       content: '你好',
       sessionId: 'webui-default',
       platform: 'webui',
     });
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
     expect(Object.keys(message.metadata ?? {})).toEqual([WellKnownMetadataKeys.Platform]);
   });
 });

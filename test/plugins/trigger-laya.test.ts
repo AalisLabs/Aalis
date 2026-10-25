@@ -445,7 +445,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
     const message = privateMsg('在吗');
     await send(message);
     expect(sidecar.requests.map(r => r.body.cur)).toEqual(['在吗']);
-    expect((await host.messageArchive.use.archiveIncoming(message)).content).toBe('在吗');
+    expect((await host.messageArchive.use.archiveIncoming(message))?.content).toBe('在吗');
   });
 
   it('判定日志：每次判定一行 debug（会话、开口、点名、logit、阈值、版本、耗时），不含正文与昵称', async () => {
