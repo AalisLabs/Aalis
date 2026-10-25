@@ -3,7 +3,7 @@ import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
-import type { LLMModel } from '@aalis/api-llm';
+import type { ChatResponse, LLMModel } from '@aalis/api-llm';
 import { chatModelPicker, estimateMsgTokens, estimateTextTokens, lightestThinking, llm } from '@aalis/api-llm';
 import type { CompressionLines, MemoryService } from '@aalis/api-memory';
 import { clearMetadataNamespaces, compression, compressionDue, compressionLine, memory } from '@aalis/api-memory';
@@ -487,7 +487,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 调一次摘要模型，拆出摘要与保留段（parseSummary）：模型失败、流式中途断开、写满了输出上限或摘要为空都以原因抛出。
+   * 调一次摘要模型，拆出摘要与保留段（parseSummary）：模型失败、流式中途断开、在输出上限处停下或摘要为空都以原因抛出。
    * 有已有摘要时要求在它的同名小节上合并
    */
   async function askSummaryModel(
@@ -513,27 +513,25 @@ async function run(caps: Caps): Promise<void> {
       purpose: '摘要',
     };
     let text = '';
-    let completionTokens: number | undefined;
+    let finishReason: ChatResponse['finishReason'];
     try {
       const stream = model.chatStream?.(request);
       if (stream) {
         for await (const chunk of stream) {
           text += chunk.contentDelta ?? '';
-          if (chunk.usage) completionTokens = chunk.usage.completionTokens;
+          if (chunk.done) finishReason = chunk.finishReason;
         }
       } else {
         const response = await model.chat(request);
         text = response.content ?? '';
-        completionTokens = response.usage?.completionTokens;
+        finishReason = response.finishReason;
       }
     } catch (err) {
       // 半截流式输出一并丢弃：provider 超时或断流可能发生在吐出部分内容之后，截断的文本入库会成为之后所有增量摘要的基底
       throw new Error(`摘要模型调用失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
-    // 写满了输出上限的可能是被截断的，同样丢弃；服务商不报用量时查不出来
-    if (completionTokens !== undefined && completionTokens >= maxTokens) {
-      throw new Error('摘要模型写满了输出上限，输出可能不完整');
-    }
+    // 在输出上限处停下的摘要不完整，同样丢弃
+    if (finishReason === 'length') throw new Error('摘要模型在输出上限处停下，输出不完整');
     const reply = parseSummary(text);
     if (!reply.summary) throw new Error('摘要模型返回了空内容');
     return reply;

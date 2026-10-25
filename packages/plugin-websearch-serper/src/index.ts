@@ -224,7 +224,8 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   const pickChatModel = chatModelPicker(llm, () => logger.use.warn('没有可用的对话模型，搜索结果压缩跳过'));
 
   /**
-   * 使用 LLM 压缩搜索结果；没有能对话的模型时返回原始结果。模型取 llm 服务给本插件挑的能对话的那一个（见 chatModelPicker）
+   * 使用 LLM 压缩搜索结果；没有能对话的模型时返回原始结果。模型取 llm 服务给本插件挑的能对话的那一个（见 chatModelPicker）。
+   * 输出上限只防失控；模型在上限处停下时末尾标出截断
    */
   async function compressResults(query: string, rawResults: string): Promise<string> {
     const entry = pickChatModel();
@@ -238,9 +239,11 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
     try {
       const response = await entry.use.chat({
         messages,
-        maxTokens: 1024,
+        maxTokens: 2048,
       });
-      return response.content?.trim() || rawResults;
+      const text = response.content?.trim();
+      if (!text) return rawResults;
+      return response.finishReason === 'length' ? `${text}（已在长度上限处截断）` : text;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.use.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);

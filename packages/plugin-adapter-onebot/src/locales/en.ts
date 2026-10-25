@@ -46,4 +46,5 @@ export default defineLocale<Source>()({
   clearTypeFile: 'File cache',
   mediaCleared: 'Cleared {kind} sent and received over OneBot ({count, plural, one {# file} other {# files}})',
   mediaFailed: 'Failed to clear {kind} sent and received over OneBot: {error}',
+  summaryCutOff: '{summary} (cut off at the length limit)',
 });

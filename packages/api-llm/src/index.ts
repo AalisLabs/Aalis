@@ -27,6 +27,11 @@ export interface ChatResponse {
      */
     cachedPromptTokens?: number;
   };
+  /**
+   * 服务商报的结束原因：length 是在输出上限处停下（正文可能不完整），不在前四种里的原样值记 other（用 {@link finishReasonOf}
+   * 翻译）。服务商没报时没有这个字段——`undefined` 表示不可知，消费方认截断只看 `'length'`，不按用量或内容去猜
+   */
+  finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'other';
 }
 
 /**
@@ -57,6 +62,19 @@ export interface ChatStreamChunk {
     /** 见 {@link ChatResponse.usage.cachedPromptTokens} */
     cachedPromptTokens?: number;
   };
+  /** 结束原因，随 done 那一段给出，见 {@link ChatResponse.finishReason} */
+  finishReason?: ChatResponse['finishReason'];
+}
+
+const FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter'] as const;
+
+/**
+ * 服务商报的结束原因翻成 {@link ChatResponse.finishReason}，给服务商用：前四种照原样，别的值记 other，没报（undefined 或 null）
+ * 时为 undefined
+ */
+export function finishReasonOf(raw: unknown): ChatResponse['finishReason'] {
+  if (raw === undefined || raw === null) return undefined;
+  return FINISH_REASONS.find(reason => reason === raw) ?? 'other';
 }
 
 // ----- per-model service entry（feat/service-granularity） -----

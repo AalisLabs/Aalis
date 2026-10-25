@@ -27,6 +27,7 @@ export interface ChatStreamChunk {
   toolCallProgress?: ToolCallProgress; // 增量进度：UI 提示用
   done?: boolean;
   usage?: { ... };
+  finishReason?: ChatResponse['finishReason']; // 随 done 那一段给出
 }
 ```
 

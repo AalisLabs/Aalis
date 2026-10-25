@@ -37,10 +37,10 @@ function setup() {
     animatedImage: { maxFrames: 4 },
   } as unknown as MediaConfigResolved;
   const svc = new MediaServiceImpl(emptyMediaCaps(logger), cfg);
-  for (const processor of scanLLMProcessors({
-    llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]),
-    logger,
-  })) {
+  for (const processor of scanLLMProcessors(
+    { llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]), logger },
+    { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
+  )) {
     svc.registerProcessor(processor);
   }
   let analyze: Omit<RegisteredTool, 'pluginName'> | undefined;

@@ -23,7 +23,7 @@
 - **摘要预算**（plugin-memory-summary）：摘要长度跟着压掉的量走。预算是这次重写的输入（上一份摘要加这次新压的对话）乘 `summaryBudgetRatio`（默认 0.1），不少于 1000 token，越旧的内容越浓缩；不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，也不超过这个会话压缩线（按最近一次用量算）的四分之一，两个封顶都压过这个下限。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占压掉内容的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。
 - **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过这次新压的对话乘 `summaryBudgetRatio`（不算上一份摘要，也不套 1000 的下限）；设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文与切分点之后的对话消息，分隔标记等事件标记不算）不超过条数线的一半（向下取整）为止，超出的从最早的保留单位起去掉。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
 - **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间；条数只数对话消息，回合记录、压缩分隔线这类事件标记不发给模型，也不占条数。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory`（活跃对话消息的条数）时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
-- **写满输出上限算没压成**（plugin-memory-summary）：摘要模型报的输出 token 不小于请求的 `maxTokens` 时，这次压缩没压成，日志写明「摘要模型写满了输出上限，输出可能不完整」，可能被截断的摘要不存下；后台压缩照常计入退避。服务商不报用量时查不出。
+- **在输出上限处停下算没压成**（plugin-memory-summary）：模型插件报的结束原因 `finishReason` 是 `length` 时，这次压缩没压成，报错「摘要模型在输出上限处停下，输出不完整」，被截断的摘要不存下；后台压缩照常计入退避。服务商不报结束原因时查不出。
 - **破坏性**：
   - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档；按位置数，事件标记也占位置），第三方记忆后端须实现它，`getFullHistory` 也要按时间交错返回留下的与归档的消息。
   - api-memory：带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）条数为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。plugin-user-relation 的 `readWindowSize`、`allNewMaxMessages` 配成 0 时，关系提取读不到消息。
@@ -463,6 +463,16 @@
 - plugin-adapter-onebot：私聊里应用名为 `com.tencent.qun.invite` 的卡片（入群邀请卡片，与入群邀请事件重复）一律不入站，记一条 debug；收到入群邀请之后，同一人 2 分钟内发来的别的卡片（小程序分享等）不再被丢。
 - plugin-adapter-onebot：文字段里能拼成 at、转发与附件引用标记的起始字符换成全角：`<at`、`<forward` 开头的 `<` 换成 `＜`，`| ref:` 里的 `|` 换成 `丨`，相邻的文字段连成一串再换；昵称、分享标题、v12 的 `alt_message`、合并转发节点里的文字与昵称，以及群文件上传通知的文件名、戳一戳通知里的昵称与好友申请、加群申请、入群邀请里的验证信息同样处理。识别模型写的图片描述（引用消息里查到的、合并转发里识别出的）、合并转发的摘要与顶层拉取失败时实现端的原话写进正文与信封前同样处理：图上写着的 `<at self>` 不再算点名。群友手打的 `<at …>`、`<forward …>`、`[图片 | ref:…]` 不再算点名、不再记进 @ 了谁、不当附件引用，她看到的正文与 WebUI 里这些字的开头显示成全角。
 - plugin-adapter-onebot：合并转发只按实现端给的 forward 段展开，嵌套只取转发节点内容里的 forward 段；正文与节点文字里手打的转发标记不再触发 `get_forward_msg`。一条消息里有几个 forward 段就展开几个，不再只展开前 8 个。
+
+### 结束原因与截断（@aalis/api-llm、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/util-json-repair、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-publish-review、@aalis/plugin-media、@aalis/plugin-adapter-onebot、@aalis/plugin-websearch-serper）
+
+- api-llm：`ChatResponse` 加 `finishReason`（`'stop' | 'length' | 'tool_calls' | 'content_filter' | 'other'`），服务商报了才有，没报时没有这个字段（不可知）；`ChatStreamChunk` 在 `done` 那一段带同名字段。新增 `finishReasonOf(raw)` 给服务商翻译线上的值：前四种照原样，别的值记 `'other'`。三个第一方模型插件都填它。
+- util-json-repair：不再补被截断的结尾括号，少了 `}` 或 `]` 的对象解析失败（`parsed` 为 `null`）；删掉「XML 属性引号转义」一步，字符串里 `<face id="14"/>` 这类标签的属性引号照旧由裸引号转义处理。`repairsApplied` 不再出现 `XML 属性引号转义` 与 `补全缺失的 '}' 与 ']'`。plugin-persona 的结构化回复少了结尾括号时（截在最后一个值之后，或模型漏写）按格式不合格重试，重试用尽不发；服务商不报结束原因时，画像与关系图的抽取同样按解析失败重试，仍失败跳过这一批。
+- plugin-user-profile、plugin-user-relation：事实与关系图的抽取被输出上限截断（`finishReason` 为 `length`）时不再收下前半截，按解析失败重试一次，仍失败就跳过这一批；画像抽取回空的（不论报没报截断）与关系图一样按解析失败重试，此前当作没有可写的事实。重试的提示按实际原因写「在长度上限处被截断」或「不是合法的 JSON 对象」，不再猜「包了代码块、夹杂解释或被截断」。重试用同样的输出上限。
+- plugin-publish-review：分类回复被截断时按分类不可用，作品转人工。
+- plugin-media：`vision.maxTokens` 默认从 300 改为 2048，`audio.maxTokens` 默认从 1024 改为 2048，只防失控；识图描述不再在约 300 token 处断成半句。配置里显式写了这两项的照旧用写的值。识图与转写在上限处停下时，末尾带「（已在长度上限处截断）」，写进正文与描述缓存的都是带标记的版本，不重试。空响应的告警报结束原因，不再按用量占比猜「maxTokens 不足导致被截空」。
+- plugin-adapter-onebot：合并转发摘要的输出上限改为 `forward.summaryMaxChars` 的 3 倍、不少于 2048 token（默认 600 字时为 2048，此前为 900）；在上限处停下时摘要末尾标出「（已在长度上限处截断）」，按全局层的语言，带标记的摘要进转发缓存。
+- plugin-websearch-serper：搜索结果压缩的输出上限从 1024 改为 2048 token，只防失控；在上限处停下时，交给 agent 的结果末尾标出「（已在长度上限处截断）」，不重试。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

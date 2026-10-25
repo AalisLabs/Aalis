@@ -97,7 +97,8 @@ async function call(
       model.chat({ messages: [message], requireImages, signal: combined }),
       aborted,
     ]);
-    return response.content ? parseClassification(response.content) : undefined;
+    if (!response.content || response.finishReason === 'length') return undefined;
+    return parseClassification(response.content);
   } catch {
     return undefined;
   } finally {

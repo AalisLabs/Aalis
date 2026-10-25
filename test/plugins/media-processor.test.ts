@@ -1,11 +1,16 @@
+import { Buffer } from 'node:buffer';
 import type { Logger } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { ASRService } from '../../packages/api-asr/src/index.js';
-import { type LLMModel, llm, type ModelRef } from '../../packages/api-llm/src/index.js';
+import { type ChatResponse, type LLMModel, llm, type ModelRef } from '../../packages/api-llm/src/index.js';
 import type { MediaProcessor, TranscribeInput } from '../../packages/api-media/src/index.js';
 import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
+import mediaPlugin from '../../packages/plugin-media/src/index.js';
+import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
+import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
+import { type ConfigSchema, parseConfig } from '../../packages/schema-config/src/index.js';
 import type { IncomingMessage, MessageAttachment } from '../../packages/schema-message/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
@@ -235,5 +240,89 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
     } finally {
       await app.stop();
     }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 识图与转写的输出上限只防失控：默认 2048，明显高于提示词要的长度。模型因上限停下（finishReason 'length'）时，描述与转写
+// 末尾标出「已在长度上限处截断」，不重试、不按字数再截；正常结束的不带。识别模型是替身，不连模型服务；转写的音频经内存里的
+// 存储与临时目录物化
+// ════════════════════════════════════════════════════════════
+
+describe('LLM 识别在长度上限处停下', () => {
+  const CUT_OFF = '半截描述（已在长度上限处截断）';
+  const OPTS = { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } };
+
+  function processor(
+    cap: 'vision' | 'audio',
+    finishReason: ChatResponse['finishReason'],
+    content = ' 半截描述 ',
+  ): MediaProcessor {
+    const model = {
+      id: 'zz-model',
+      capabilities: [cap],
+      chat: async () => ({ content, finishReason }),
+    } as unknown as LLMModel;
+    const found = scanLLMProcessors(
+      { llm: ref([{ instance: model, contextId: 'zz-provider/zz-model', priority: 0 }]), logger },
+      OPTS,
+    )[0];
+    if (!found) throw new Error('没有包出识别处理器');
+    return found;
+  }
+
+  beforeAll(() => {
+    const files = new Map<string, Uint8Array>();
+    setMediaRuntime({
+      proc: { makeTempDir: async () => ({ path: '/zz-tmp', uri: 'tmp:/zz', cleanup: async () => {} }) } as never,
+      storage: {
+        writeFile: async (uri: string, data: Uint8Array) => void files.set(uri, data),
+        readFile: async (uri: string) => files.get(uri),
+      } as never,
+    });
+  });
+
+  it.each([
+    ['length', CUT_OFF],
+    ['stop', '半截描述'],
+    [undefined, '半截描述'],
+  ] as const)('识图：结束原因 %s → %s', async (finishReason, expected) => {
+    const r = await processor('vision', finishReason).describe?.({
+      attachments: [{ kind: 'image', data: 'https://zz.invalid/a.png' }],
+      mode: 'single',
+    });
+    expect(r?.descriptions[0]).toBe(expected);
+  });
+
+  it.each([
+    ['length', CUT_OFF],
+    ['stop', '半截描述'],
+  ] as const)('转写：结束原因 %s → %s', async (finishReason, expected) => {
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(8)]);
+    const r = await processor('audio', finishReason).transcribe?.({
+      attachment: { kind: 'audio', data: `data:audio/wav;base64,${wav.toString('base64')}` },
+    });
+    expect(r?.text).toBe(expected);
+  });
+
+  it('在上限处停下、正文为空：不加标记，仍是空的识别结果', async () => {
+    const described = await processor('vision', 'length', '  ').describe?.({
+      attachments: [{ kind: 'image', data: 'https://zz.invalid/a.png' }],
+      mode: 'single',
+    });
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(8)]);
+    const transcribed = await processor('audio', 'length', '').transcribe?.({
+      attachment: { kind: 'audio', data: `data:audio/wav;base64,${wav.toString('base64')}` },
+    });
+    expect(described?.descriptions[0]).toBe('');
+    expect(transcribed?.text).toBe('');
+  });
+
+  it('配置默认：vision.maxTokens 与 audio.maxTokens 都是 2048', () => {
+    const parsed = parseConfig(mediaPlugin.configSchema as ConfigSchema, {}) as {
+      vision: { maxTokens: number };
+      audio: { maxTokens: number };
+    };
+    expect([parsed.vision.maxTokens, parsed.audio.maxTokens]).toEqual([2048, 2048]);
   });
 });

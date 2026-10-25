@@ -7,7 +7,15 @@ import type {
   ThinkingLevel,
   ThinkingLevels,
 } from '@aalis/api-llm';
-import { IDLE_TIMEOUT_MAX_MS, idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import {
+  finishReasonOf,
+  IDLE_TIMEOUT_MAX_MS,
+  idleTimeout,
+  LLMCapabilities,
+  llm,
+  metered,
+  requestedThinking,
+} from '@aalis/api-llm';
 import { type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
 import {
@@ -253,6 +261,8 @@ interface OllamaChatResponse {
     tool_calls?: OllamaToolCall[];
   };
   done: boolean;
+  /** 结束原因（stop、length、load 等），只在 done 那一帧上 */
+  done_reason?: string;
   total_duration?: number;
   prompt_eval_count?: number;
   eval_count?: number;
@@ -528,6 +538,7 @@ class OllamaClient {
     const result: ChatResponse = {
       content: cleanContent || null,
       reasoningContent: allReasoning || null,
+      finishReason: finishReasonOf(data.done_reason),
     };
 
     const toolCalls = finalizeToolCalls(data.message.tool_calls);
@@ -559,6 +570,7 @@ class OllamaClient {
         reasoningDelta: r.reasoningContent ?? '',
         usage: r.usage,
         done: true,
+        finishReason: r.finishReason,
       };
       return;
     }
@@ -682,7 +694,7 @@ class OllamaClient {
               }
 
               // 最后一个 chunk
-              const chunk: ChatStreamChunk = { done: true };
+              const chunk: ChatStreamChunk = { done: true, finishReason: finishReasonOf(data.done_reason) };
               const toolCalls = finalizeToolCalls(toolCallBuffers);
               if (toolCalls) chunk.toolCalls = toolCalls;
 
@@ -995,20 +1007,24 @@ class OllamaClient {
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     const rawContent = data.choices?.[0]?.message?.content ?? '';
-    const finishReason = data.choices?.[0]?.finish_reason ?? '?';
+    const finishReason = data.choices?.[0]?.finish_reason;
     // 与 /api/chat 同一条规则：这次没管思考（level 为 undefined）时才把正文里 <think> 标签之间的内容当思考
     const { reasoning, content } =
       level === undefined ? extractThinkTags(rawContent) : { reasoning: '', content: rawContent };
     const text = content.trim();
     if (audioCount > 0) {
       this.logger.info(
-        `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason}, ` +
+        `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason ?? '?'}, ` +
           `raw=${rawContent.length}字 trim=${text.length}字, ` +
           `tokens prompt=${data.usage?.prompt_tokens ?? '?'} completion=${data.usage?.completion_tokens ?? '?'}` +
           (rawContent.length > 0 ? `, 原文="${rawContent.replace(/\n/g, ' ')}"` : ' [模型返回空字符串]'),
       );
     }
-    const result: ChatResponse = { content: text || null, reasoningContent: reasoning || null };
+    const result: ChatResponse = {
+      content: text || null,
+      reasoningContent: reasoning || null,
+      finishReason: finishReasonOf(finishReason),
+    };
     if (data.usage) {
       result.usage = {
         promptTokens: data.usage.prompt_tokens ?? 0,

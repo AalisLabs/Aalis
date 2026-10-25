@@ -17,7 +17,14 @@
  * cfg.extractionModel 为空时退化到 llm 服务的当前胜者。
  */
 
-import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import {
+  type ChatResponse,
+  LLMCapabilities,
+  type LLMModel,
+  lightestThinking,
+  type ModelRef,
+  resolveLLMModel,
+} from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
@@ -474,34 +481,33 @@ export class RelationExtractor {
         { crossSession, currentSessionId: sessionId },
       );
 
-      const raw = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking);
+      const first = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking);
       // LLM 往返成功即视为下游恢复，清除退避——解析失败走下面的带内重试，不计入惩罚
       this.backoff.delete(sessionId);
-      let result = parseExtraction(raw);
+      let result = readExtraction(first);
       if (result.kind === 'parse-error') {
-        // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 多半是
-        // 模型彻底跑题（写了纯文本/markdown 段落）。给模型一次明确反馈再来一次，
+        // 截断，或 util-json-repair 剥过围栏、修过裸引号仍不是合法 JSON（空回复也算）：给模型一次明确反馈再来一次，
         // 避免一窗对话因为一次输出失败而完全丢失关系信号。
         this.caps.logger.use.warn(
-          `[user-relation] LLM 输出无法解析为 JSON（model=${modelEntry.id}），尝试重试一次。原文前 200 字：${raw.slice(0, 200)}`,
+          `[user-relation] LLM 输出${result.why}（model=${modelEntry.id}），尝试重试一次。原文前 200 字：${first.text.slice(0, 200)}`,
         );
         const retryMessages: Message[] = [
           ...promptMessages,
-          { role: 'assistant', content: raw } as Message,
+          { role: 'assistant', content: first.text } as Message,
           {
             role: 'user',
             content:
-              '你上一条输出无法被 JSON.parse（很可能是包了 markdown 代码块、夹杂解释文字、或被截断）。' +
+              `你上一条输出${result.why}。` +
               '请只输出**一个**合法的 JSON 对象，第一个字符必须是 `{`、最后一个字符必须是 `}`，' +
               '禁止 ```json 围栏、禁止任何解释、禁止 markdown。如果实在没有可提取的内容，' +
               '就输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',
           } as Message,
         ];
-        const rawRetry = await callLLM(modelEntry.use, retryMessages, this.cfg.disableThinking);
-        result = parseExtraction(rawRetry);
+        const retry = await callLLM(modelEntry.use, retryMessages, this.cfg.disableThinking);
+        result = readExtraction(retry);
         if (result.kind === 'parse-error') {
           this.caps.logger.use.warn(
-            `[user-relation] LLM 重试后仍无法解析 JSON（model=${modelEntry.id}），放弃本批次。重试原文前 200 字：${rawRetry.slice(0, 200)}`,
+            `[user-relation] LLM 重试后输出仍${result.why}（model=${modelEntry.id}），放弃本批次。重试原文前 200 字：${retry.text.slice(0, 200)}`,
           );
           return;
         }
@@ -1588,19 +1594,36 @@ function renderSenderNeighbors(neighbors: SenderNeighborhood[]): string {
   return blocks.join('\n');
 }
 
-async function callLLM(model: LLMModel, messages: Message[], disableThinking: boolean): Promise<string> {
+async function callLLM(
+  model: LLMModel,
+  messages: Message[],
+  disableThinking: boolean,
+): Promise<{ text: string; finishReason: ChatResponse['finishReason'] }> {
   const resp = await model.chat({
     messages,
     temperature: 0,
     think: disableThinking ? lightestThinking(model) : undefined,
   });
-  return typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
+  const text = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
+  return { text, finishReason: resp.finishReason };
 }
 
 export type ParseResult =
   | { kind: 'ok'; value: LLMExtraction }
   | { kind: 'empty' } // LLM 明确表达"无可提取"（null / 空对象 / 所有数组为空）
   | { kind: 'parse-error' };
+
+/**
+ * 读一次提取的回复：在输出上限处停下的不完整，看着是合法 JSON 也按解析失败处理。解析失败时带上原因，写进日志与重试提示
+ */
+function readExtraction(reply: {
+  text: string;
+  finishReason: ChatResponse['finishReason'];
+}): Exclude<ParseResult, { kind: 'parse-error' }> | { kind: 'parse-error'; why: string } {
+  if (reply.finishReason === 'length') return { kind: 'parse-error', why: '在长度上限处被截断，不完整' };
+  const result = parseExtraction(reply.text);
+  return result.kind === 'parse-error' ? { kind: 'parse-error', why: '不是合法的 JSON 对象' } : result;
+}
 
 /**
  * 从 LLM 文本中解析提取结果。区分三种情况：
@@ -1613,7 +1636,7 @@ export function parseExtraction(text: string): ParseResult {
   const trimmed = text.trim();
   if (!trimmed) return { kind: 'parse-error' };
 
-  // 走共享 util：剥 ```json fence、配平 {}、修字符串内裸引号、补尾部 } / ] 等。
+  // 走共享 util：剥 ```json fence、配平 {}、修字符串内裸引号、去尾逗号。
   const { parsed } = parseLLMJsonObject(trimmed);
   if (!parsed) return { kind: 'parse-error' };
 

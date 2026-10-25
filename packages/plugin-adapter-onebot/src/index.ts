@@ -210,7 +210,8 @@ const configSchema = defineConfig({
         type: 'number',
         label: '摘要最大字数',
         default: 600,
-        description: '提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。',
+        description:
+          '提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。输出上限只防失控，取本值的 3 倍、不少于 2048 token；模型在上限处停下时摘要末尾标出截断。',
       },
       summaryInputLimit: {
         type: 'number',

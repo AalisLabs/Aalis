@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
+import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import {
   classifyText,
   combineVerdicts,
@@ -32,6 +32,20 @@ describe('publish review classification boundaries', () => {
     expect(result.text).toContain('review me');
     expect(result.text).toContain('assets/a.png');
     expect(reviewText('x'.repeat(20_001), '', [], '').truncated).toBe(true);
+  });
+
+  it('a classification the model stopped at its output limit counts as unavailable', async () => {
+    const answer = '{"verdict":"allow","categories":[],"note":""}';
+    const signal = new AbortController().signal;
+    const model = (finishReason: ChatResponse['finishReason']) => ({
+      chat: async () => ({ content: answer, finishReason }),
+    });
+    expect(await classifyText(model('stop') as never, 'text', signal)).toEqual({
+      verdict: 'allow',
+      categories: [],
+      note: '',
+    });
+    expect(await classifyText(model('length') as never, 'text', signal)).toBeUndefined();
   });
 
   it('cancels one hung classification after 180 seconds without retrying', async () => {

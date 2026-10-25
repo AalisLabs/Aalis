@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { LLMModel } from '@aalis/api-llm';
+import type { ChatResponse, LLMModel } from '@aalis/api-llm';
 import { LLMCapabilities, lightestThinking } from '@aalis/api-llm';
 import type {
   DescribeInput,
@@ -13,9 +13,11 @@ import type {
   TranscribeResult,
 } from '@aalis/api-media';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
+import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
+import { t } from './texts.js';
 
 /** 包装 LLM 为 processor 用到的能力：枚举 LLM entry 的 llm，以及识别过程的 logger */
 export interface AdapterCaps {
@@ -129,9 +131,8 @@ export const DEFAULT_VISION_BATCH_PROMPT =
   '画面中若有数字（分数、价格、计数、天数等）务必按实际像素逐位读准，不受上下文旧数字影响。' +
   '控制在 250 字以内，不要 markdown，不要按 1)2)3) 列点，写成连贯文字。';
 
-// 全能音频 prompt：语音转写为原文 + 音乐/环境音描述。
-// 注意：e4b 这类小模型在 thinking enabled 时此类开放式 prompt 会消耗
-// ~600-900 completion token；要求 maxTokens 至少 1024，否则会被截断为空。
+// 全能音频 prompt：语音转写为原文 + 音乐/环境音描述。不限长度；思考默认开，与正文共用 audio.maxTokens 这份预算
+// （e4b 这类小模型在开放式 prompt 下思考约 600–900 token）。
 export const DEFAULT_AUDIO_PROMPT =
   '请用中文描述这段音频的内容：' +
   '若含语音/对话则转写为原文（中文用中文写，英文保留英文）；' +
@@ -144,8 +145,8 @@ interface LlmProcessorOptions {
   prompt?: string;
   /** 多图批量描述专用 prompt，仅 vision 生效。留空使用 prompt（若也为空则用内置默认） */
   batchPrompt?: string;
-  /** 最大输出 tokens */
-  maxTokens?: number;
+  /** 最大输出 tokens：只防失控，由配置给 */
+  maxTokens: number;
   /**
    * 是否启用 thinking（思考链）。
    * - true：按模型的默认思考档，模型先内部推理后输出，质量更好但 token 消耗 ~5-8 倍
@@ -265,12 +266,21 @@ async function audioToBase64(data: string): Promise<string> {
   }
 }
 
+/**
+ * 识别结果：正文去掉首尾空白；模型在输出上限处停下（finishReason 为 length）时末尾标出截断，不重试、不按字数再截，写进正文
+ * 与描述缓存的都是带标记的这一句。标记先按原文语言，提示词改按读者语言时跟上
+ */
+function recognizedText(resp: ChatResponse): string {
+  const text = resp.content?.trim() ?? '';
+  return text && resp.finishReason === 'length' ? toSource(t('cutOff', { text })) : text;
+}
+
 /** 把 llm 的一个提供者条目包装成 MediaProcessor。 */
 function wrapLLMAsProcessor(
   entry: ProviderEntry<LLMModel>,
   cap: 'vision' | 'audio',
   logger: Logger,
-  opts: LlmProcessorOptions = {},
+  opts: LlmProcessorOptions,
 ): MediaProcessor {
   const llm: LLMModel = entry.use;
   const name = `llm:${entry.id}#${cap}`;
@@ -303,7 +313,7 @@ function wrapLLMAsProcessor(
         : '';
       const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
       const prompt = `${base}${ctxBlock}${hintBlock}`;
-      const maxTokens = input.maxTokens ?? opts.maxTokens ?? 300;
+      const maxTokens = input.maxTokens ?? opts.maxTokens;
       const think = opts.think ?? false;
 
       // 图片走 images[] 字段；视频帧已被预处理拆为图片再调用本方法。
@@ -328,23 +338,18 @@ function wrapLLMAsProcessor(
         signal: input.signal,
       });
       const rawLen = resp.content?.length ?? 0;
-      const text = resp.content?.trim() ?? '';
+      const text = recognizedText(resp);
       const usedTokens = resp.usage?.totalTokens;
       if (rawLen === 0) {
-        const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
         logger.warn(
           `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, 图源=[${sizes.join('/')}], ` +
-            `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
-            (usedPct >= 80
-              ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空）`
-              : usedPct >= 0
-                ? `（占用 ${usedPct}%）`
-                : '') +
-            `, think=${think}`,
+            `prompt=${prompt.length}字, completionTokens=${resp.usage?.completionTokens ?? '?'}/${maxTokens}, ` +
+            `finish=${resp.finishReason ?? '?'}, think=${think}`,
         );
       } else {
         logger.info(
-          `[${cap}.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}`,
+          `[${cap}.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${(resp.content ?? '').trim().length}字, ` +
+            `tokens=${usedTokens ?? '?'}, finish=${resp.finishReason ?? '?'}`,
         );
       }
       return {
@@ -363,7 +368,7 @@ function wrapLLMAsProcessor(
       const sizeKB = Math.round((b64.length * 3) / 4 / 1024);
       const audios = [b64];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
-      const maxTokens = opts.maxTokens ?? 1024;
+      const maxTokens = opts.maxTokens;
       const think = opts.think ?? true;
       const t0 = Date.now();
       logger.info(
@@ -377,26 +382,18 @@ function wrapLLMAsProcessor(
         purpose: '转写',
       });
       const rawLen = resp.content?.length ?? 0;
-      const text = (resp.content ?? '').trim();
+      const text = recognizedText(resp);
       const usedTokens = resp.usage?.totalTokens;
       if (rawLen === 0) {
-        // 空响应通常不是“非语音”——而是 maxTokens 不足 / prompt+音频 token 占用过高 / 模型超时。
-        // 把可能原因都打出来，便于排查 nemotron/gemma 等模型的资源不足情况。
-        const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
+        // 空响应通常不是“非语音”：结束原因与用量一并打出来，便于排查
         logger.warn(
           `[audio.transcribe] ${llm.id} 空响应：${Date.now() - t0}ms, sizeKB=${sizeKB}, prompt=${prompt.length}字, ` +
-            `tokens=${usedTokens ?? '?'}/${maxTokens}` +
-            (usedPct >= 80
-              ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空，建议调高 audio.maxTokens 到 2048+）`
-              : usedPct >= 0
-                ? `（占用 ${usedPct}%）`
-                : '') +
-            `, think=${think}`,
+            `completionTokens=${resp.usage?.completionTokens ?? '?'}/${maxTokens}, finish=${resp.finishReason ?? '?'}, think=${think}`,
         );
       } else {
         logger.info(
-          `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}, ` +
-            `内容="${(resp.content ?? '').replace(/\n/g, ' ')}"`,
+          `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${(resp.content ?? '').trim().length}字, ` +
+            `tokens=${usedTokens ?? '?'}, finish=${resp.finishReason ?? '?'}, 内容="${(resp.content ?? '').replace(/\n/g, ' ')}"`,
         );
       }
       return {
@@ -419,17 +416,17 @@ function wrapLLMAsProcessor(
  */
 export function scanLLMProcessors(
   caps: AdapterCaps,
-  opts: { vision?: LlmProcessorOptions; audio?: LlmProcessorOptions } = {},
+  opts: { vision: LlmProcessorOptions; audio: LlmProcessorOptions },
 ): MediaProcessor[] {
   const processors: MediaProcessor[] = [];
   for (const entry of caps.llm.list()) {
     const modelCaps = entry.use.capabilities;
     if (modelCaps.includes(LLMCapabilities.Vision)) {
-      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision ?? {}));
+      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision));
     }
     if (modelCaps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
-      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, opts.audio ?? {}));
+      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, opts.audio));
     }
   }
   return processors;

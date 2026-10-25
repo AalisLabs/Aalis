@@ -104,7 +104,11 @@ describe('模型调用的用途与会话', () => {
       { logger: fixedRef(quiet), llm: host.llm, asr: ref(), memory: ref() },
       MEDIA_CONFIG,
     );
-    for (const processor of scanLLMProcessors({ llm: host.llm, logger: quiet })) media.registerProcessor(processor);
+    for (const processor of scanLLMProcessors(
+      { llm: host.llm, logger: quiet },
+      { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
+    ))
+      media.registerProcessor(processor);
     await media.processMessage({ ...message(owner.id), attachments: [{ kind: 'image', data: PNG_1PX }] });
     await app.stop();
 

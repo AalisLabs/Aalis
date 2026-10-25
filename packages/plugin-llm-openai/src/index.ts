@@ -7,7 +7,15 @@ import type {
   ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { IDLE_TIMEOUT_MAX_MS, idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import {
+  finishReasonOf,
+  IDLE_TIMEOUT_MAX_MS,
+  idleTimeout,
+  LLMCapabilities,
+  llm,
+  metered,
+  requestedThinking,
+} from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -442,6 +450,7 @@ class OpenAIClient {
 
     const result: ChatResponse = {
       content: choice.message.content,
+      finishReason: finishReasonOf(choice.finish_reason),
     };
 
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
@@ -538,6 +547,7 @@ class OpenAIClient {
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    let finishReason: ChatStreamChunk['finishReason'];
 
     if (!response.body) {
       throw new Error('LLM API 返回了空的响应体，无法进行流式读取');
@@ -577,7 +587,7 @@ class OpenAIClient {
             for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
               toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
             }
-            yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+            yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined, finishReason };
             return;
           }
 
@@ -585,8 +595,10 @@ class OpenAIClient {
             const data = JSON.parse(payload);
             const chunk: ChatStreamChunk = {};
 
-            // usage 必须在 delta 守卫**之前**取：OpenAI 的 include_usage 形态把
-            // usage 挂在 `choices: []` 的收尾帧上，等到守卫之后再取整帧已被跳过。
+            // usage 与结束原因必须在 delta 守卫**之前**取：OpenAI 的 include_usage 形态把 usage 挂在 `choices: []` 的
+            // 收尾帧上，兼容端点的结束原因可能在不带 delta 的末帧上，等到守卫之后再取整帧已被跳过。
+            const reason = finishReasonOf(data.choices?.[0]?.finish_reason);
+            if (reason) finishReason = reason;
             if (data.usage) {
               chunk.usage = {
                 promptTokens: data.usage.prompt_tokens,
@@ -650,7 +662,7 @@ class OpenAIClient {
     for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
       toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
     }
-    yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+    yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined, finishReason };
   }
 
   private toAPIMessage(msg: Message): APIMessage {

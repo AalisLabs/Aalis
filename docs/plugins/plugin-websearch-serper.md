@@ -34,8 +34,9 @@ export default definePlugin({
 | `maxConcurrent` | number | `3` | 最大并发：同时进行的搜索请求数上限 |
 | `defaultNumResults` | number | `5` | 默认结果数：每次搜索返回的结果条数 |
 | `enableCompression` | boolean | `false` | 启用搜索结果压缩：启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。 |
-| `compressionLLM` | llm-ref | — | 压缩模型：选择用于压缩搜索结果的模型。留空则使用默认 LLM 提供者。 |
 | `compressionPrompt` | textarea | `''` | 压缩提示词：自定义压缩搜索结果的提示词。留空使用默认提示。提示词中可使用 {query} 代表搜索关键词。 |
+
+压缩模型没有配置项：取 llm 服务给本插件挑的能对话的那一个，在插件详情的「服务偏好」里给本插件设。
 
 ## 注册的工具
 
@@ -47,7 +48,7 @@ export default definePlugin({
 
 结果按以下顺序拼成文本：直接回答（answerBox）、知识图谱（仅在有 description 时输出）、自然搜索结果（序号、标题、链接、摘要），整体标注为不可信内容；没有任何结果时返回「未找到搜索结果。」。
 
-启用 `enableCompression` 后，这段文本会先交给 LLM 压缩成摘要再返回；压缩失败或没有可用模型时返回原文。请求失败或被限流时返回 JSON 字符串 `{ error }`，被限流时另附当前限流状态 `status`。
+启用 `enableCompression` 后，这段文本会先交给 LLM 压缩成摘要再返回；压缩的输出上限只防失控（2048 token），模型在上限处停下（模型插件报的结束原因 `finishReason` 是 `length`）时，摘要末尾标出「（已在长度上限处截断）」，不重试；压缩失败、回空或没有可用模型时返回原文。请求失败或被限流时返回 JSON 字符串 `{ error }`，被限流时另附当前限流状态 `status`。
 
 ### `search_images`
 
@@ -68,4 +69,4 @@ export default definePlugin({
 
 ## 配置校验
 
-`apiKey` 缺失或显式无效时实例进入错误态，搜索请求不会发出。数字字符串按数值解析；其余错误类型回落默认值并告警。不完整的 `compressionLLM` 引用仍沿用默认模型。
+`apiKey` 缺失或显式无效时实例进入错误态，搜索请求不会发出。数字字符串按数值解析；其余错误类型回落默认值并告警。

@@ -257,6 +257,8 @@ const REMOVED: Array<[string, string]> = [
     'ATTACHMENT_KIND_LABEL',
     'plugin-media 本地的附件种类到引用种类的映射：由 schema-message 导出的 ATTACHMENT_REF_KINDS 取代',
   ],
+  ['XML 属性引号转义', 'json-repair 专为 QQ 表情标签加的一步：字符串里的属性引号由裸引号转义处理'],
+  ["补全缺失的 '}' 与 ']'", 'json-repair 补齐被截断的括号：截断由模型插件报的结束原因认'],
 ];
 
 /**

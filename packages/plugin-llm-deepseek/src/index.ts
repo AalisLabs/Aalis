@@ -8,7 +8,15 @@ import type {
   ThinkingLevels,
   ToolCallProgress,
 } from '@aalis/api-llm';
-import { IDLE_TIMEOUT_MAX_MS, idleTimeout, LLMCapabilities, llm, metered, requestedThinking } from '@aalis/api-llm';
+import {
+  finishReasonOf,
+  IDLE_TIMEOUT_MAX_MS,
+  idleTimeout,
+  LLMCapabilities,
+  llm,
+  metered,
+  requestedThinking,
+} from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
@@ -484,6 +492,7 @@ class DeepSeekClient {
     const result: ChatResponse = {
       content: cleanContent,
       reasoningContent: choice.message.reasoning_content ?? undefined,
+      finishReason: finishReasonOf(choice.finish_reason),
     };
 
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
@@ -567,6 +576,7 @@ class DeepSeekClient {
     }
 
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    let finishReason: ChatStreamChunk['finishReason'];
     let dsmlDetected = false;
     /**
      * 跨 chunk 尾缓冲：当当前 delta 末尾形如未闭合的 special token 起始片段
@@ -624,7 +634,7 @@ class DeepSeekClient {
               yield { contentDelta: pendingTail };
               pendingTail = '';
             }
-            yield { done: true, toolCalls: finalizeToolCalls() };
+            yield { done: true, toolCalls: finalizeToolCalls(), finishReason };
             return;
           }
 
@@ -632,9 +642,11 @@ class DeepSeekClient {
             const data = JSON.parse(payload);
             const chunk: ChatStreamChunk = {};
 
-            // usage 必须在 delta 守卫**之前**取：兼容端点可能把 usage 挂在
-            // `choices: []` 的收尾帧上，等到守卫之后再取整帧已被跳过。
+            // usage 与结束原因必须在 delta 守卫**之前**取：兼容端点可能把 usage 挂在 `choices: []` 的收尾帧上、把结束
+            // 原因放在不带 delta 的末帧上，等到守卫之后再取整帧已被跳过。
             // （DeepSeek 自身把 usage 挂在带 delta 的帧上，本重排对它是无害冗余。）
+            const reason = finishReasonOf(data.choices?.[0]?.finish_reason);
+            if (reason) finishReason = reason;
             if (data.usage) {
               chunk.usage = {
                 promptTokens: data.usage.prompt_tokens,
@@ -733,7 +745,7 @@ class DeepSeekClient {
       yield { contentDelta: pendingTail };
       pendingTail = '';
     }
-    yield { done: true, toolCalls: finalizeToolCalls() };
+    yield { done: true, toolCalls: finalizeToolCalls(), finishReason };
   }
 
   /**

@@ -3,7 +3,7 @@ import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
-import { chatModelPicker, lightestThinking, llm } from '@aalis/api-llm';
+import { type ChatResponse, chatModelPicker, lightestThinking, llm } from '@aalis/api-llm';
 import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
@@ -272,6 +272,13 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
     })
     .filter(Boolean)
     .join('\n');
+}
+
+/** 解析一次提取的回复：在输出上限处停下的不完整，看着是合法 JSON 也不收。不能用时交回原因，写进日志与重试提示 */
+function readExtractReply(resp: ChatResponse): { parsed: Record<string, unknown> } | { why: string } {
+  if (resp.finishReason === 'length') return { why: '在长度上限处被截断，不完整' };
+  const { parsed } = parseLLMJsonObject((resp.content ?? '').trim());
+  return parsed ? { parsed } : { why: '不是合法的 JSON 对象' };
 }
 
 const uses = {
@@ -717,13 +724,12 @@ function registerUserProfile({
         maxTokens: 800,
         think: lightestThinking(extractLlm),
       });
-      let text = (resp.content ?? '').trim();
-      if (!text) return empty;
-      let { parsed } = parseLLMJsonObject(text);
-      if (!parsed) {
-        // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 模型多半
-        // 写成了纯文本/markdown。给一次显式反馈再来一次，避免一次失败丢失整批事实。
-        logger.use.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
+      const text = (resp.content ?? '').trim();
+      let reply = readExtractReply(resp);
+      if ('why' in reply) {
+        // 截断，或 util-json-repair 剥过围栏、修过裸引号仍不是合法 JSON（空回复也算：提示词要求没有事实也回三个空数组）：给一次
+        // 显式反馈再来一次，避免一次失败丢失整批事实
+        logger.use.warn(`[user-profile] LLM 输出${reply.why}，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
         const retryResp = await extractLlm.chat({
           messages: [
             ...baseMessages,
@@ -731,7 +737,7 @@ function registerUserProfile({
             {
               role: 'user',
               content:
-                '你上一条输出无法被 JSON.parse（很可能是包了 markdown 代码块、夹杂解释文字、或被截断）。' +
+                `你上一条输出${reply.why}。` +
                 '请只输出**一个**合法的 JSON 对象，第一个字符必须是 `{`、最后一个字符必须是 `}`，' +
                 '禁止 ```json 围栏、禁止任何解释、禁止 markdown。如果实在没有可写入的事实，' +
                 '就输出 `{"add":[],"update":[],"remove":[]}`。',
@@ -741,17 +747,16 @@ function registerUserProfile({
           maxTokens: 800,
           think: lightestThinking(extractLlm),
         });
-        text = (retryResp.content ?? '').trim();
-        ({ parsed } = parseLLMJsonObject(text));
-        if (!parsed) {
+        reply = readExtractReply(retryResp);
+        if ('why' in reply) {
           logger.use.warn(
-            `[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`,
+            `[user-profile] LLM 重试后输出仍${reply.why}，放弃本批次。重试原文前 200 字：${(retryResp.content ?? '').trim().slice(0, 200)}`,
           );
           return empty;
         }
         logger.use.debug('[user-profile] LLM 重试后解析成功');
       }
-      const { add, update, remove } = parseFactOps(parsed);
+      const { add, update, remove } = parseFactOps(reply.parsed);
 
       // sourceQuote 校验：quote 可能跨多条消息（LLM 用 \n 拼接），
       // 因此按行拆分，每行（非空）都必须能在「目标用户」语料中找到 normalize 后的子串。

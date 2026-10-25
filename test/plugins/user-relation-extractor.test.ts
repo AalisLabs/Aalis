@@ -31,9 +31,9 @@ const EXTRACTOR_DEFAULTS = {
   consolidateLowScoreThreshold: 0,
 } satisfies ExtractorConfig;
 
-/** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录每次请求供断言。
+/** 构造可注入的 fake LLM model。chat() 返回 cannedResponse（给的是回复列表时按次序回，用完了回最后一条）；记录每次请求供断言。
  *  fail.remaining > 0 时调用 reject（模拟超时/网络故障，供退避用例；Infinity=持续故障）。 */
-function makeFakeLLM(cannedResponse: string): {
+function makeFakeLLM(cannedResponse: string | ChatResponse[]): {
   model: LLMModel;
   calls: ChatModelRequest[];
   fail: { remaining: number };
@@ -50,7 +50,8 @@ function makeFakeLLM(cannedResponse: string): {
         fail.remaining -= 1;
         return Promise.reject(new Error('fake LLM timeout'));
       }
-      return Promise.resolve({ content: cannedResponse });
+      if (typeof cannedResponse === 'string') return Promise.resolve({ content: cannedResponse });
+      return Promise.resolve(cannedResponse[Math.min(calls.length, cannedResponse.length) - 1]);
     },
   } as unknown as LLMModel;
   return { model, calls, fail };
@@ -66,7 +67,7 @@ function extractNow(extractor: RelationExtractor, sessionId: string): Promise<vo
   return (extractor as unknown as { extractSession(sid: string): Promise<void> }).extractSession(sessionId);
 }
 
-async function setup(llmContent: string, cfg: Partial<ExtractorConfig> = {}) {
+async function setup(llmContent: string | ChatResponse[], cfg: Partial<ExtractorConfig> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
@@ -315,10 +316,30 @@ describe('plugin-user-relation: extractor', () => {
     expect(snap.persons).toHaveLength(0);
   });
 
-  it('LLM 返回非 JSON → 静默跳过', async () => {
-    const { mem, service, extractor } = await setup('我不会输出 JSON');
+  it('LLM 报了 length（被输出上限截断）：JSON 完整也不收，重试一次、提示写明被截断；重试仍截断就跳过这一批', async () => {
+    const llmJson = JSON.stringify({
+      persons: [{ platform: 'onebot', userId: 'a', displayName: 'Alice' }],
+      events: [{ refKey: 'e1', title: '讨论直播计划', summary: 'A 在群里说要直播', category: 'discussion' }],
+      personEventEdges: [{ personPlatform: 'onebot', personUserId: 'a', eventRefKey: 'e1', role: 'initiator' }],
+    });
+    const truncated: ChatResponse = { content: llmJson, finishReason: 'length' };
+    const { mem, service, extractor, calls } = await setup([truncated, truncated]);
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '我们安排一下本周直播', 'Alice'));
+    await extractNow(extractor, 'sess1');
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1].messages.at(-1)?.content)).toContain('在长度上限处被截断');
+    const snap = await service.loadAll();
+    expect(snap.events).toHaveLength(0);
+    expect(snap.edges).toHaveLength(0);
+  });
+
+  it('LLM 返回非 JSON → 重试提示写明不是合法的 JSON 对象、不猜原因，重试仍不是就静默跳过', async () => {
+    const { mem, service, extractor, calls } = await setup('我不会输出 JSON');
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hi'));
     await extractNow(extractor, 'sess1');
+    const retry = String(calls[1].messages.at(-1)?.content);
+    expect(retry).toContain('不是合法的 JSON 对象');
+    expect(retry).not.toContain('很可能');
     const snap = await service.loadAll();
     expect(snap.persons).toHaveLength(0);
   });

@@ -58,13 +58,14 @@ interface ChatModelRequest {
 
 每次调用结束、服务商报了用量时发 `llm:usage`（服务商、模型、调用方、会话、用途、输入、缓存命中、输出），由服务商登记时套的 `metered` 发出，见 [api-llm 的记账](../api/api-llm.md#记账)。
 
-`ChatResponse`：`{ content: string | null; toolCalls?: ToolCall[]; reasoningContent?: string | null; usage?: { promptTokens, completionTokens, totalTokens, cachedPromptTokens? } }`。`cachedPromptTokens` 是 `promptTokens` 中命中 provider 前缀缓存的部分（≤ `promptTokens`），provider 不支持或本次无命中时省略；`undefined`（不可知）与 `0`（明确无命中）语义不同，消费方不要用 `?? 0` 抹平。
+`ChatResponse`：`{ content: string | null; toolCalls?: ToolCall[]; reasoningContent?: string | null; usage?: { promptTokens, completionTokens, totalTokens, cachedPromptTokens? }; finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'other' }`。`cachedPromptTokens` 是 `promptTokens` 中命中 provider 前缀缓存的部分（≤ `promptTokens`），provider 不支持或本次无命中时省略；`undefined`（不可知）与 `0`（明确无命中）语义不同，消费方不要用 `?? 0` 抹平。`finishReason` 是服务商报的结束原因，没报时没有（不可知）；`'length'` 是在输出上限处停下，消费方认截断只看它。provider 用 `finishReasonOf` 翻译线上的值，规则见 [api-llm 的结束原因](../api/api-llm.md#关键类型)。
 
 `ChatStreamChunk`：流式增量。字段互斥语义要点——
 - `contentDelta` / `reasoningDelta`：正文 / 思考增量。
 - `toolCallProgress`（`{ index, name, charsAccumulated }`）：工具调用**生成进度**，仅供 UI 渲染「正在生成工具调用」，与最终的 `toolCalls` 互斥。
 - `toolCalls`：**最终**组装好的工具调用，应随 `done: true` 一起 yield。
 - `usage`：可在末帧给出。
+- `finishReason`：随 `done: true` 那一段给出，语义同 `ChatResponse.finishReason`。
 
 ### 能力枚举 `LLMCapability`
 
@@ -174,19 +175,18 @@ export default definePlugin({
 `llm.use` 是活的业务句柄，条目的 `use` 钉在那一条登记上，两者的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。按配置里的 `ModelRef` 选模型时用 `resolveLLMModel`，它顺带做 ref 解析与能力过滤；调用经条目的 `use`，`llm` 的绑定给请求盖上 `caller`：
 
 ```ts
-import { resolveLLMModel } from '@aalis/api-llm';
+import { LLMCapabilities, resolveLLMModel } from '@aalis/api-llm';
 
-const entry = resolveLLMModel(llm, cfg.compressionLLM /* ModelRef */, ['chat']);
-if (!entry) return rawResults;                 // 服务缺失/无满足能力者 → 优雅降级
+const entry = resolveLLMModel(llm, cfg.extractionModel /* ModelRef */, [LLMCapabilities.Chat]);
+if (!entry) return;                            // 服务缺失/无满足能力者 → 优雅降级，这次不提取
 try {
-  const resp = await entry.use.chat({ messages, maxTokens: 1024 });
-  return resp.content?.trim() || rawResults;
+  const resp = await entry.use.chat({ messages, temperature: 0 });
+  return parseExtraction(resp);
 } catch (err) {
-  logger.use.warn(`LLM 调用失败，降级：${err}`);
-  return rawResults;                            // 错误边界：provider 抛错要兜住
+  logger.use.warn(`LLM 调用失败，跳过：${err}`); // 错误边界：provider 抛错要兜住
 }
 ```
-（实证：`packages/plugin-websearch-serper/src/index.ts`，并配 `uses optional: ['llm']`。）
+（实证：`packages/plugin-user-relation/src/extractor.ts` 按配置的 `extractionModel` 选提取模型，并配 `uses: { llm: optional(llm) }`。）
 
 ### 可选依赖处理
 
