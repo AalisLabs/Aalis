@@ -41,13 +41,12 @@ async function waitFor(pred: () => boolean, label: string): Promise<void> {
   throw new Error(`等不到：${label}`);
 }
 
-/** 模型第一次调用卡住的工具，之后各回一句不同的文字；卡住的工具等到放行或本回合中止 */
+/** 模型第一次调用卡住的工具，之后一律回文字；卡住的工具等到放行或本回合中止 */
 async function boot() {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
-  let calls = 0;
-  await app.plugin(createMockLLMPlugin({ responses: () => (++calls === 1 ? callHold : { content: `好 ${calls}` }) }));
+  await app.plugin(createMockLLMPlugin({ responses: [callHold, { content: '好' }] }));
   await app.plugin(toolsPlugin, {});
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });

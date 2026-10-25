@@ -24,6 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //      可见正文照样是回复字段。没有信封时不写这个键。
 //   3. 外发与落库的分工：外发的回复只带正文与这条回复的模型和 token，思考与时间线只落库
 //      （客户端经会话协议拿思考，IM 适配器只发正文）。
+//   4. 同一会话连着两轮回同一句话，两句都外发、都落库。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -151,6 +152,15 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     expect(archived.length).toBe(1);
     expect(archived[0].content).toBe('普通回复');
     expect(archived[0].metadata && WellKnownMetadataKeys.VisibleContent in archived[0].metadata).toBe(false);
+  });
+
+  it('同一会话连着两轮回同一句话：两句都外发、都落库', async () => {
+    const { sent, archived, say } = await boot('zz-plain', [{ content: '好' }]);
+    await say();
+    await say();
+
+    expect(sent.map(m => m.content)).toEqual(['好', '好']);
+    expect(archived.map(m => m.content)).toEqual(['好', '好']);
   });
 
   it('外发的回复只带正文与这条回复的模型和 token；思考与时间线留在存档里', async () => {

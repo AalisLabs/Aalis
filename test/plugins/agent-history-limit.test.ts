@@ -42,8 +42,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** responses 缺省时每次回复各不相同：与上一条回复相同的回复不落库 */
-async function boot(responses?: ChatResponse[]) {
+async function boot(responses: ChatResponse[] = [{ content: '好' }]) {
   const logs: string[] = [];
   const logHub = new LogHub();
   logHub.onEntry(entry => void logs.push(entry.message));
@@ -51,14 +50,7 @@ async function boot(responses?: ChatResponse[]) {
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];
-  let replies = 0;
-  await app.plugin(
-    createMockLLMPlugin({
-      contextLength: 1_000_000,
-      responses: responses ?? (() => ({ content: `好 ${++replies}` })),
-      recorder,
-    }),
-  );
+  await app.plugin(createMockLLMPlugin({ contextLength: 1_000_000, responses, recorder }));
   await app.plugin(toolsPlugin, {});
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
