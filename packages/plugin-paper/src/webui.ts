@@ -409,7 +409,7 @@ export function registerPaperPage(deps: {
         handler: onPaper(paperId => driver.freshStart(paperId), '下一件任务不再等旧工程包'),
       },
       cancelTask: {
-        label: '取消',
+        label: '取消任务',
         effect: 'destructive',
         confirm: CANCEL_CONFIRM,
         row: true,
@@ -624,7 +624,7 @@ export function registerPaperPage(deps: {
     applies: ({ sessionId, kind }) => kind === 'room' && deps.fields.get(sessionId).paperEnabled === true,
     actions: {
       cancelTask: {
-        label: '取消',
+        label: '取消任务',
         effect: 'destructive',
         confirm: CANCEL_CONFIRM,
         row: true,

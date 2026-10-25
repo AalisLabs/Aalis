@@ -1,6 +1,6 @@
 // 本插件自己的原文字典：运行的错误原因（节点失败）、运行的状态、「立即运行」没有成功的报错，保存与启停的回执和
 // once 记账读不出时的附注（附注与 workflow_define 共用，工具取原文），定义的 event 触发器订阅不可作触发源的事件时的报错，
-// 定义表的定义者一列，以及运行表的「取消」、它的确认与回执
+// 定义表的定义者一列，运行表的「取消运行」、它的确认与回执，以及进程退出时中断的运行的错误原因
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -13,10 +13,11 @@ const SOURCE = {
   statusCancelled: '已取消',
   runNotSucceeded: '运行没有成功（{status}）',
   runNotSucceededBecause: '运行没有成功（{status}）：{error}',
-  cancelRun: '取消',
+  cancelRun: '取消运行',
   cancelRunConfirm: '取消这次运行？已做完的节点不撤回，agent 节点已派发的那一轮照常跑完；记录留在运行历史里。',
   runCancelled: '已取消 {id}',
   runEnded: '这次运行已经结束',
+  interruptedByExit: '进程退出时中断',
   saved: '已保存工作流 {id}',
   enabled: '已启用 {id}',
   disabled: '已停用 {id}',

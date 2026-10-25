@@ -186,6 +186,10 @@ describe('页面登记', () => {
       { action: 'abandonTask', visibleWhen: 'abandonable' },
       { action: 'writeOffReserve', visibleWhen: 'writeOffable' },
     ]);
+    // 动作名写明取消什么：确认框里关掉框的按钮写「取消」，确认的按钮写动作名，两个不同名；会话面板里的同一个动作也是
+    const cancelTask = { label: '取消任务', effect: 'destructive' };
+    expect(actions.cancelTask).toMatchObject(cancelTask);
+    expect(hub.pages.view('paper-room').actions?.cancelTask).toMatchObject(cancelTask);
     expect(rowActionsOf(hub, 'alerts')).toEqual([{ action: 'acknowledgeAlert', visibleWhen: 'unread' }]);
   });
 
