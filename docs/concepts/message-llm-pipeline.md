@@ -224,7 +224,7 @@ case 'at': {
 const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
 ```
 
-触发插件用 `self` 属性判定「机器人是否被 @」（`@aalis/api-trigger` 的 `isAddressed`，点名的一种，正文里任一处都算）；聊天审批判应答词之前、指令相位判前缀之前，去掉开头的这个标记（在群里 @ 她或引用她的消息回复时 QQ 客户端会在开头插一个），只认开头，开头 @ 的是别人时不算。三处读的是 `@aalis/schema-message` 导出的同一个 `AT_SELF_PATTERN`，只认 `<at self>` 这一种文法——CQ 码已由 adapter 入站规范化掉：
+触发插件用 `self` 属性判定「机器人是否被 @」（`@aalis/api-trigger` 的 `isAddressed`，点名的一种，正文里任一处都算）；聊天审批判应答词之前、指令相位判前缀与意图确认的 `y` 之前，去掉开头的这个标记（在群里 @ 她或引用她的消息回复时 QQ 客户端会在开头插一个），只认开头，开头 @ 的是别人时不算。三处读的是 `@aalis/schema-message` 导出的同一个 `AT_SELF_PATTERN`，只认 `<at self>` 这一种文法——CQ 码已由 adapter 入站规范化掉：
 
 ```ts
 export const AT_SELF_PATTERN = /<at self[\s>][\s\S]*?<\/at>/;

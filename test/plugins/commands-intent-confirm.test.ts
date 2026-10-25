@@ -3,6 +3,7 @@ import { commands } from '../../packages/api-commands/src/index.js';
 import type {} from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type App, events, services } from '../../packages/core/src/index.js';
+import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -17,6 +18,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 只认这个人在这个会话里的下一条消息（带 source 的注入不认），超时取消；不走 owner 审批。
 // 创建者是 owner 的定时任务触发的指令与 runtime 一次性子命令不问（skipConfirm），always 档照常要确认、无从确认即拒；
 // skipConfirm 与确认覆盖的 off 只对授权身份是 owner 的生效，别人的照常确认。
+// 群里 @ 她回的 y（QQ 客户端在开头插一个对她的 @，正文经 OneBot 适配器的解析函数造出）照样是确认，对她的 @ 不在开头时不是。
 // 真实的网关、指令与权限插件；结果与提示经出站消息看，放行到后续相位的消息在 dispatch 相位记下。
 // ════════════════════════════════════════════════════════════
 
@@ -174,6 +176,40 @@ describe('人亲手输入的指令：向发出者本人确认意图', () => {
     expect(s.runs(), '确认之前不得执行').toBe(0);
     await s.say({ content: 'y' });
     await vi.waitFor(() => expect(s.to(DM)).toEqual([expect.any(String), 'ran']));
+  });
+});
+
+describe('群里开头对她的 @：回复与指令一样不算正文', () => {
+  type Segment = { type: string; data: Record<string, string> };
+  const SELF = '10000';
+  /** 这些消息段经 OneBot 适配器解析出的群消息正文 */
+  const parsed = (...message: Segment[]) =>
+    new OneBotV11().parseMessageEvent(
+      { time: 0, post_type: 'message', message_type: 'group', self_id: Number(SELF), message },
+      SELF,
+    )?.text ?? '';
+  const at = (qq: string): Segment => ({ type: 'at', data: { qq } });
+  const text = (body: string): Segment => ({ type: 'text', data: { text: body } });
+  const IN_GROUP = { sessionId: GROUP, sessionType: 'group' as const };
+
+  /** owner 在群里 @ 她发 /clear，等到问确认的那句，再回 reply；交出回复之后的那句 */
+  async function clearThenReply(reply: string) {
+    const s = await setup({ appConfig: { owners: [MEMBER] } });
+    await s.say({ content: parsed(at(SELF), text(' /clear')), ...IN_GROUP });
+    await vi.waitFor(() => expect(s.to(GROUP)).toHaveLength(1));
+    expect(s.to(GROUP)[0]).toContain('/clear');
+    await s.say({ content: reply, ...IN_GROUP });
+    await vi.waitFor(() => expect(s.to(GROUP)).toHaveLength(2));
+    expect(s.passed, '回复被吞掉，不往下走').toEqual([]);
+    return s.to(GROUP)[1];
+  }
+
+  it('@ 她回 y：确认，清掉这个群的消息历史', async () => {
+    expect(await clearThenReply(parsed(at(SELF), text(' y')))).toContain('当前会话消息历史已清空');
+  });
+
+  it('对她的 @ 不在开头、回 y：照样是正文，不算确认，取消', async () => {
+    expect(await clearThenReply(parsed(text('y '), at(SELF)))).toContain('没有得到发出者确认');
   });
 });
 

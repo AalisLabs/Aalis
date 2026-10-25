@@ -196,18 +196,20 @@ function registerCommands({
   hooks.use.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
     const injected = message.source !== undefined;
+    // 开头对她的 @（AT_SELF_PATTERN，只认开头）不算正文，意图确认的回复与指令同用这一份：在群里 @ 她或引用她的消息发指令、
+    // 回 y 时，QQ 客户端会在开头插一个。开头 @ 的是别人时照旧不算
+    const content = message.content ?? '';
+    const at = AT_SELF_PATTERN.exec(content);
+    const text = at?.index === 0 ? content.slice(at[0].length) : content;
     const settle = injected ? undefined : intents.get(intentKey(message));
     if (settle) {
-      settle(YES.test(message.content ?? ''));
+      settle(YES.test(text));
       return;
     }
     // 带 source 又没声明 ownerApproved 的注入不是人亲手写的，与没有文字的消息一样不参与命令解析
-    if (!message.content || (injected && !message.ownerApproved)) return next();
+    if (!content || (injected && !message.ownerApproved)) return next();
 
-    // 开头对她的 @（AT_SELF_PATTERN，只认开头）不算指令正文：在群里 @ 她或引用她的消息发指令时，QQ 客户端会在开头插一个。
-    // 开头 @ 的是别人时照旧不是指令
-    const at = AT_SELF_PATTERN.exec(message.content);
-    const parsed = registry.parseCommand(at?.index === 0 ? message.content.slice(at[0].length) : message.content);
+    const parsed = registry.parseCommand(text);
     if (!parsed) return next();
 
     // 解析到 "<prefix>foo" 但没有任何插件注册过该指令 → 当作普通消息处理
