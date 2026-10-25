@@ -262,10 +262,8 @@ const noticeTurns = (turns: Turn[]) => turns.filter(t => t.source?.startsWith('p
 
 describe('白纸通知进入 agent', () => {
   it('每件任务的通知各自成一轮：第二条通知排在第一轮（卡在 paper_send）之后，第一轮不被中止，两轮都发出各自的成品', async () => {
-    // 两轮一前一后，回复要各不相同：与上一条 assistant 消息相同的回复按卡壳静默
     const h = await boot(request => {
-      const last = request.messages.at(-1);
-      if (last?.role === 'tool') return { content: `发好了（${last.toolCallId}）` };
+      if (request.messages.at(-1)?.role === 'tool') return { content: '发好了' };
       const artifact = artifactIn(currentNotice(request));
       if (artifact) return callTool('paper_send', { artifact_id: artifact }, `call-${artifact}`);
       return { content: '好' };

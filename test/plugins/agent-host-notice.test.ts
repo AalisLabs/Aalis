@@ -66,14 +66,12 @@ function promptProbe(name: string, id: string, anchor: string, out: string) {
   });
 }
 
-/** replies：模型依次的回复，用完重复最后一条（同一句连着两次会被当作卡壳不发出） */
-async function boot(opts: { probes?: boolean; replies?: string[] } = {}) {
+async function boot(opts: { probes?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];
-  const responses = (opts.replies ?? ['收到']).map(content => ({ content }));
-  await app.plugin(createMockLLMPlugin({ responses, recorder }));
+  await app.plugin(createMockLLMPlugin({ responses: [{ content: '收到' }], recorder }));
   await app.plugin(memoryInMemory);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
   if (opts.probes) {
@@ -154,7 +152,7 @@ describe('plugin-agent：宿主通知回合', () => {
   });
 
   it('回复宿主通知时照转发 hostNotice 的写法带上它的 replyTo；不带 replyTo 的通知与真人消息的回复都不带', async () => {
-    const h = await boot({ replies: ['好了', '收到', '在'] });
+    const h = await boot();
     await h.send(hostNotice({ hostNotice: { kind: 'background-task', id: 'bg_x_1', replyTo: 'zz-msg-1' } }));
     await h.send(hostNotice());
     await h.send(humanMessage);

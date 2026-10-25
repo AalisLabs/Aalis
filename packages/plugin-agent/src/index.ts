@@ -1311,15 +1311,6 @@ class DefaultAgent implements AgentService {
       const archiveContent = responseData.archiveContent ?? rawLlmContent;
       const visibleContent = responseData.visibleContent ?? replyContent;
 
-      // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过。
-      // 比的是 archiveContent（与落库同源口径）——启用 outputFormat 时历史里存的是整串 JSON，
-      // 拿解码后的纯文本去比永远不成立。
-      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-      if (archiveContent && lastAssistant?.content && archiveContent === lastAssistant.content) {
-        this.logger.warn(`检测到重复回复，跳过发送 (session=${sessionId})`);
-        replyContent = '';
-      }
-
       // 提交点：此后的流结束标记、落库与外发成组执行。流结束后到这里之间（llm:after / 工具循环退出 /
       // reply:before / 重试）被停下的回合（停止键、禁言、停机等），走下方 AbortError 收尾，不落库、不外发。
       if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
