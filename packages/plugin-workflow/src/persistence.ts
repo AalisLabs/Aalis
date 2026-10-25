@@ -64,11 +64,17 @@ export class RunStore {
       if (!isObject(definers)) throw new Error('definers 不是对象');
       if (data.runs) this.runs = data.runs as WorkflowRun[];
       // 还在「运行中」的是进程没有正常退出时留下的（停机会中止在跑的、等它们收尾）：收口成已取消，与停机打断的同一状态；
-      // 不知道停在何时，不写结束时刻
+      // 不知道停在何时，不写结束时刻。节点与引擎取消时同样收：在跑的记失败、等着的记跳过
       for (const run of this.runs) {
         if (run.status !== 'running') continue;
         run.status = 'cancelled';
         run.error = t('interruptedByExit');
+        for (const node of run.nodes) {
+          if (node.status === 'pending') node.status = 'skipped';
+          if (node.status !== 'running') continue;
+          node.status = 'failed';
+          node.error = t('interruptedByExit');
+        }
       }
       for (const [id, at] of Object.entries(onceFired)) {
         if (typeof at === 'number') this.onceFired[id] = at;

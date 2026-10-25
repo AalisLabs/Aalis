@@ -233,8 +233,8 @@ function registerCommands({
       });
       if (result) {
         if (injected) {
-          const text = toSource(result);
-          const preview = text.length > 500 ? `${text.slice(0, 500)}…` : text;
+          const output = toSource(result);
+          const preview = output.length > 500 ? `${output.slice(0, 500)}…` : output;
           logger.use.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
           await reply(message, result);

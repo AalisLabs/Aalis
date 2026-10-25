@@ -260,6 +260,7 @@ describe('工作流页', () => {
     const row = async () =>
       toSource(await pages.data<Array<Record<string, unknown>>>('workflows', 'runs')).find(r => r.runId === runId);
     expect(await row()).toMatchObject({ status: { text: '运行中' }, running: true });
+    expect((await row())?.duration, '在跑的用时算到现在').not.toBe('—');
 
     const before = pages.invalidations.length;
     expect(toSource(await pages.act('workflows', 'cancelRun', { rowKey: runId }))).toEqual({
@@ -304,11 +305,26 @@ describe('工作流页', () => {
     expect(svc.listRuns()).toHaveLength(10);
   });
 
-  it('进程没有正常退出时留下的「运行中」：载入时收口成已取消，错误写进程退出时中断、没有用时，行上不带取消运行', async () => {
-    storedRuns(storedRun('zz-crashed', 'running'));
+  it('进程没有正常退出时留下的「运行中」：载入时收口成已取消，错误写进程退出时中断、没有用时，行上不带取消运行；节点与引擎取消时同样收：在跑的记失败、等着的记跳过', async () => {
+    const startedAt = Date.now() - 60_000;
+    storedRuns({
+      ...storedRun('zz-crashed', 'running'),
+      nodes: [
+        { id: 'zz-done', type: 'tool', status: 'success', startedAt, finishedAt: startedAt + 1000 },
+        { id: 'zz-busy', type: 'tool', status: 'running', startedAt: startedAt + 1000 },
+        { id: 'zz-next', type: 'tool', status: 'pending' },
+      ],
+    });
     const svc = await boot();
     expect(svc.getRun('zz-crashed')).toMatchObject({ status: 'cancelled' });
     expect(resolveText(svc.getRun('zz-crashed')?.error as TextRef, ['en'])).toBe('Interrupted when the process exited');
+    const nodes = svc.getRun('zz-crashed')?.nodes ?? [];
+    expect(nodes.map(({ id, status }) => [id, status])).toEqual([
+      ['zz-done', 'success'],
+      ['zz-busy', 'failed'],
+      ['zz-next', 'skipped'],
+    ]);
+    expect(toSource(nodes[1].error)).toBe('进程退出时中断');
     expect(toSource(await pages.data('workflows', 'runs'))).toEqual([
       expect.objectContaining({
         runId: 'zz-crashed',
