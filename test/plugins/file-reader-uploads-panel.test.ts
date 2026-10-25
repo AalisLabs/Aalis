@@ -107,7 +107,7 @@ describe('会话面板「上传的文件」', () => {
     const id = await upload(ROOM, 'notes.txt', '正文');
     await upload(OTHER, 'other.txt', '别处');
     expect(await pages.data('uploads', 'files', { sessionId: ROOM })).toEqual([
-      { id, name: 'notes.txt', size: 6, mimeType: 'text/plain', uploadedAt: expect.any(Number) },
+      { id, name: 'notes.txt', size: 6, format: '文本', uploadedAt: expect.any(Number) },
     ]);
   });
 
@@ -186,7 +186,7 @@ describe('会话面板「上传的文件」', () => {
       seed[`${dir}/${id}.meta.json`] = JSON.stringify({
         id,
         name: `${id}.txt`,
-        mimeType: 'text/plain',
+        format: '文本',
         size: 1,
         sessionId: ROOM,
         uploadedAt,

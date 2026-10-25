@@ -465,8 +465,6 @@ const SOURCE = {
   settingValue: '{label}：{value}',
   settingNotChanged: '{label}没改成：{error}',
   fileStatus: '取不到（{status}）',
-  previewTooLarge: '文件超过 {kb, number} KB，下载后查看',
-  previewNotText: '不是文本文件，下载后查看',
   reading: '正在读取…',
   rewindCodeTitle: '回滚这一轮的文件改动？',
   rewindCodeBody: '这一轮改过的文件恢复成改动之前的样子。之后的回合也改过的文件，那些改动会一并撤掉。',

@@ -1573,9 +1573,6 @@ importers:
       '@aalis/api-media':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-media
-      '@aalis/api-memory':
-        specifier: workspace:>=0.8.0 <1.0.0
-        version: link:../api-memory
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
@@ -1588,6 +1585,18 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-message':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-message
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
+      '@aalis/util-network-guard':
+        specifier: workspace:>=0.6.3 <1.0.0
+        version: link:../util-network-guard
+      '@aalis/util-text-normalize':
+        specifier: workspace:>=0.5.2 <1.0.0
+        version: link:../util-text-normalize
       mammoth:
         specifier: ^1.8.0
         version: 1.12.0
@@ -1601,9 +1610,6 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2853,6 +2859,9 @@ importers:
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
         version: link:../util-bounded-map
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -3267,6 +3276,9 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/util-file-signature':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-file-signature
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard
@@ -3688,6 +3700,9 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:*
         version: link:../schema-i18n
+      '@aalis/util-file-signature':
+        specifier: workspace:*
+        version: link:../util-file-signature
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize

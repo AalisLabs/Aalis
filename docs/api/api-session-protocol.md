@@ -275,7 +275,7 @@ interface ApprovalSettlement {
 | `turn/rewind` | `{ sessionId, turnId, scope: 'code' \| 'code-and-chat' }` | 回滚结果，字段同 [api-checkpoint](./api-checkpoint.md) 的 `RollbackResult`，连对话一起回滚时另有 `deletedMessages`、`chatDeleted`；回合 id 就是 agent 的 `turnId`。检查点只按已提交（收尾）的回合回滚，在跑的回合没有可回滚的清单；界面只在这个会话没有回合在跑时，给已收尾的回合出回滚入口 |
 | `plan/clear` | `{ sessionId }` | `{}` |
 
-发给 agent 的附件（`OutgoingAttachmentSchema`）的 `data` 是 data URL。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
+发给 agent 的附件（`OutgoingAttachmentSchema`）只有 `data` 与 `name`，`data` 要是 base64 的 data URL，不是的（如存储地址）不合参数。种类由会话服务按文件头判定，data URL 的类型头换成判定格式的 MIME，不是媒体的写 `application/octet-stream`：浏览器报的类型靠扩展名猜（`.ts` 报成 `video/mp2t`），不随附件发，下游也看不到。所需的服务（agent、检查点、压缩、待办）不在时，`turn/abort`、`turn/rewind`、`session/compress`、`plan/clear` 回 `unsupported`。
 
 ## 后台任务
 

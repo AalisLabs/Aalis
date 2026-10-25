@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -11,6 +12,7 @@ import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import { segmentsToText } from '../../packages/plugin-adapter-onebot/src/types.js';
 import { OneBotV12 } from '../../packages/plugin-adapter-onebot/src/v12.js';
+import fileReaderPlugin from '../../packages/plugin-file-reader/src/index.js';
 import {
   AT_SELF_PATTERN,
   extractMentions,
@@ -69,10 +71,10 @@ async function until(cond: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
-/** 内存 storage：只有 data 根，可写；reads 记下读过与量过的地址 */
+/** 内存 storage：data 根与插件私有数据的根，可写；reads 记下读过与量过的地址 */
 function memStorage(files: Map<string, Buffer>, reads: string[]) {
   const get = (uri: string) => {
-    if (!uri.startsWith('data:/')) throw new Error(`未知存储根: ${uri}`);
+    if (!/^(data|pluginData):\//.test(uri)) throw new Error(`未知存储根: ${uri}`);
     const f = files.get(uri);
     if (!f) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
     return f;
@@ -97,9 +99,14 @@ function memStorage(files: Map<string, Buffer>, reads: string[]) {
 
 /**
  * 假实现端 + onebot 适配器。replies 是各动作回的 data（缺省回机器人账号）；语音转码由 processService 替身给出一段 WAV。
- * post 推一个原始事件，inbound 是适配器发出的入站；storageReads 与 externalReads 是读过的存储地址与本机路径
+ * post 推一个原始事件，inbound 是适配器发出的入站；storageReads 与 externalReads 是读过的存储地址与本机路径。
+ * fileReader 时另装文件读取，readFiles 把一条入站交给它的预处理器、返回第一个附件的描述
  */
-async function boot(protocol: 'v11' | 'v12', replies: Record<string, unknown> = {}) {
+async function boot(
+  protocol: 'v11' | 'v12',
+  replies: Record<string, unknown> = {},
+  opts: { fileReader?: boolean } = {},
+) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(r => server.once('listening', r));
   cleanups.push(
@@ -142,6 +149,16 @@ async function boot(protocol: 'v11' | 'v12', replies: Record<string, unknown> = 
       return Buffer.from('LOCAL-PLACEHOLDER');
     },
   } as never);
+  let preprocessor: PreprocessorFn | undefined;
+  if (opts.fileReader) {
+    host.provide.use(agent, {
+      registerPreprocessor(_name: string, handler: PreprocessorFn) {
+        preprocessor = handler;
+        return () => {};
+      },
+    } as never);
+    await app.plugins.register(fileReaderPlugin, {});
+  }
   host.provide.use(media, {
     lookupDescription: (url: string) => DESCRIPTIONS.get(url) ?? null,
     rememberDescriptionAlias() {},
@@ -153,6 +170,9 @@ async function boot(protocol: 'v11' | 'v12', replies: Record<string, unknown> = 
   });
   await app.plugins.idle();
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
+  if (opts.fileReader && app.plugins.getPlugin(fileReaderPlugin.name)?.state !== 'active') {
+    throw new Error('文件读取未激活');
+  }
   await app.start();
   await until(() => actions.includes(protocol === 'v11' ? 'get_login_info' : 'get_self_info'));
   return {
@@ -162,6 +182,11 @@ async function boot(protocol: 'v11' | 'v12', replies: Record<string, unknown> = 
     storageReads,
     externalReads,
     post: (event: Record<string, unknown>) => socket?.send(JSON.stringify({ time: 0, ...event })),
+    async readFiles(msg: IncomingMessage): Promise<string> {
+      if (!preprocessor) throw new Error('文件读取没装上');
+      await preprocessor(msg, async () => undefined);
+      return msg._attachmentDescriptions?.[0] ?? '';
+    },
   };
 }
 
@@ -261,16 +286,20 @@ describe('onebot 入站：消息段里能当来源读的只有网址与 base64 �
   /** 群友写的文件名写成本机路径、file:// 与存储地址（占位）；本机与存储里各放着一份内容，读了就会出现在描述里 */
   const FORGED = ['/zz-placeholder/secret.txt', 'file:///zz-placeholder/secret.txt', 'data:/zz-placeholder/secret.txt'];
 
-  it.each(FORGED)('文件段只有 file（%s）：不读本机文件与存储，附件照留、没有来源', async file => {
-    const t = await boot('v11');
+  it.each(FORGED)('文件段只有 file（%s）：不读本机文件与存储，附件照留、没有来源，文件读取写读不出', async file => {
+    const t = await boot('v11', {}, { fileReader: true });
     t.files.set('data:/zz-placeholder/secret.txt', Buffer.from('STORED-PLACEHOLDER'));
     const msg = await groupMessage(t, [{ type: 'file', data: { file } }]);
     expect(msg.attachments).toEqual([{ kind: 'file', data: '', name: file }]);
+    const desc = await t.readFiles(msg);
+    expect(desc).toContain('读不出内容：来源没有给出文件地址');
+    expect(desc).not.toContain('STORED-PLACEHOLDER');
+    expect(desc).not.toContain('LOCAL-PLACEHOLDER');
     expect(t.externalReads).toEqual([]);
     expect(t.storageReads).toEqual([]);
   });
 
-  it('文件段带网址：照常下载落盘', async () => {
+  it('文件段带网址：照常下载落盘，文件读取读到内容', async () => {
     const server = createServer((_req, res) => res.end('hello'));
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；用完复原
@@ -278,12 +307,11 @@ describe('onebot 入站：消息段里能当来源读的只有网址与 base64 �
       setNetworkPolicy({ blockPrivate: true });
       await new Promise(resolve => server.close(resolve));
     });
-    const t = await boot('v11');
+    const t = await boot('v11', {}, { fileReader: true });
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/notes.txt`;
     const msg = await groupMessage(t, [{ type: 'file', data: { file: 'notes.txt', url } }]);
-    const landed = msg.attachments?.[0].data ?? '';
-    expect(landed).toMatch(/^data:\/files\/[^/]+\/onebot\/[0-9a-f]{16}\.bin$/);
-    expect(t.files.get(landed)?.toString()).toBe('hello');
+    expect(msg.attachments?.[0].data).toMatch(/^data:\/files\/[^/]+\/onebot\/[0-9a-f]{16}\.bin$/);
+    expect(await t.readFiles(msg)).toContain('\nhello\n');
   });
 
   it.each([

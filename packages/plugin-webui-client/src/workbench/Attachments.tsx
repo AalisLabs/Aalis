@@ -1,8 +1,10 @@
+import { decodeUtf8Text } from '@aalis/util-file-signature';
 import { FileText } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Picture } from '../components/Picture';
+import { download } from '../download';
 import { tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
 import { isWebUrl, mediaUrl } from '../media';
@@ -11,40 +13,14 @@ import { isRecord } from '../rest';
 import './Attachments.css';
 
 // 条目里的附件（提问、回复与通知带的成品同一种画法）：图片、音频、视频按媒体地址取，外站图片经图片代理；
-// 其余是一行图标、名字与类型，有句柄的点开：文本类的在对话框里预览（Markdown 照常渲染、别的原样），其余直接下载；
+// 其余是一行图标、名字与类型，有句柄的点开时弹框、取来按内容判：文本在对话框里预览，不是文本的与太大的关掉对话框、直接下载；
 // 网址的链到网址，没有句柄的只写名字
 
 type Attachment = Extract<SessionItem, { kind: 'user-message' }>['attachments'][number];
 
-/** 能在对话框里预览的文本类扩展名；Markdown 渲染出来，其余原样显示 */
-const TEXT_TYPES = new Set([
-  'txt',
-  'md',
-  'markdown',
-  'json',
-  'jsonl',
-  'csv',
-  'tsv',
-  'log',
-  'yaml',
-  'yml',
-  'toml',
-  'ini',
-  'xml',
-  'html',
-  'css',
-  'js',
-  'ts',
-  'tsx',
-  'jsx',
-  'py',
-  'sh',
-  'sql',
-  'diff',
-  'patch',
-]);
+/** 内容判不出是不是 Markdown：名字只决定预览怎么渲染（这两种渲染出来、别的原样），不决定能不能预览 */
 const MARKDOWN_TYPES = new Set(['md', 'markdown']);
-/** 预览最多读这么大，再大的只给下载 */
+/** 预览最多读这么大，再大的不读完、直接下载 */
 const PREVIEW_LIMIT_KB = 512;
 
 const extensionOf = (name: string) => {
@@ -109,27 +85,14 @@ function FileLine({ name }: { name: string }) {
   );
 }
 
-function FileAttachment({ name, href }: { name: string; href: string }) {
-  const [previewing, setPreviewing] = useState(false);
-  if (!TEXT_TYPES.has(extensionOf(name))) {
-    return (
-      <a className="attachment-file" href={href} download={name}>
-        <FileLine name={name} />
-      </a>
-    );
-  }
-  return (
-    <>
-      <button type="button" className="attachment-file" onClick={() => setPreviewing(true)}>
-        <FileLine name={name} />
-      </button>
-      {previewing && <FilePreview name={name} href={href} onClose={() => setPreviewing(false)} />}
-    </>
-  );
-}
+/** 点开时取到的：文本，或该直接下载的（不是文本的带着读到的字节，太大的没读完、按句柄下载） */
+type Opened = { text: string } | { download: Blob | undefined };
 
-/** 读出文本：取不到的写服务端给的原因；超过上限或不是文本的不读完 */
-async function readText(href: string, signal: AbortSignal): Promise<string> {
+/**
+ * 取来按内容判：取不到的写服务端给的原因；超过上限的不读完；读到的字节按 UTF-8 解得开、不含 NUL 的是文本，与文件读取
+ * 同一个判定
+ */
+async function openFile(href: string, signal: AbortSignal): Promise<Opened> {
   const response = await fetch(href, { signal });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined);
@@ -139,25 +102,47 @@ async function readText(href: string, signal: AbortSignal): Promise<string> {
   }
   if (!(Number(response.headers.get('Content-Length')) <= PREVIEW_LIMIT_KB * 1024)) {
     await response.body?.cancel();
-    throw new Error(tr('previewTooLarge', { kb: PREVIEW_LIMIT_KB }));
+    return { download: undefined };
   }
-  const text = await response.text();
-  if (text.includes('\u0000')) throw new Error(tr('previewNotText'));
-  return text;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const text = decodeUtf8Text(bytes);
+  return text === null ? { download: new Blob([bytes]) } : { text };
 }
 
+function FileAttachment({ name, href }: { name: string; href: string }) {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  return (
+    <>
+      <button type="button" className="attachment-file" onClick={() => setOpen(true)}>
+        <FileLine name={name} />
+      </button>
+      {open && <FilePreview name={name} href={href} onClose={close} />}
+    </>
+  );
+}
+
+/** 开着就在取：读到文本就显示，不是文本的与太大的关掉自己、直接下载，取不到写原因；关掉或卸下（如切走会话）时停下这次读取 */
 function FilePreview({ name, href, onClose }: { name: string; href: string; onClose(): void }) {
   const [shown, setShown] = useState<{ text: string } | { error: string }>();
   useEffect(() => {
     const controller = new AbortController();
-    readText(href, controller.signal).then(
-      text => setShown({ text }),
+    openFile(href, controller.signal).then(
+      opened => {
+        if (controller.signal.aborted) return;
+        if ('text' in opened) {
+          setShown(opened);
+          return;
+        }
+        onClose();
+        download(opened.download ?? href, name);
+      },
       (err: Error) => {
         if (!controller.signal.aborted) setShown({ error: err.message });
       },
     );
     return () => controller.abort();
-  }, [href]);
+  }, [href, name, onClose]);
   let body: ReactNode = <p>{tr('reading')}</p>;
   if (shown && 'error' in shown) body = <p role="alert">{shown.error}</p>;
   else if (shown && MARKDOWN_TYPES.has(extensionOf(name))) body = <Markdown text={shown.text} />;

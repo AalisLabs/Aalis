@@ -376,3 +376,13 @@ describe('file_search 目录模式：截断后按 nextStartFile + nextStartLine 
     expect(r.matches).toBeUndefined();
   });
 });
+
+describe('宿主机绝对路径：报错里带当前 cwd 与可用的根', () => {
+  it.each(['/etc/hosts', 'C:\\x'])('file_read(%s)：拒绝，写明已注册根与本工具允许的根', async path => {
+    const out = await call('file_read', { path });
+    expect(out.error).toContain('宿主机绝对路径');
+    expect(out.error).toContain('当前 cwd: workspace:/');
+    expect(out.error).toContain('已注册根: workspace');
+    expect(out.error).toContain('本工具允许根: workspace');
+  });
+});

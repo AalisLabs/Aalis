@@ -420,14 +420,13 @@ export const ItemAttachmentSchema = z.object({
   name: z.string().optional(),
 });
 
-/** 客户端随消息发出的附件，data 是 data URL */
+/**
+ * 客户端随消息发出的附件：data 是 base64 的 data URL。种类与类型由服务端按内容判定，浏览器报的类型靠扩展名猜（.ts 报成
+ * video/mp2t），不随附件发
+ */
 export const OutgoingAttachmentSchema = z.object({
-  kind: AttachmentKindSchema,
-  data: z.string(),
+  data: z.string().regex(/^data:[^,]*;base64,/, '不是 base64 的 data URL'),
   name: z.string().optional(),
-  mimeType: z.string().optional(),
-  byteSize: z.number().optional(),
-  durationSec: z.number().optional(),
 });
 
 /** 说话的人；source 是内部注入的来源（定时任务、子任务等），真人发言没有 */
