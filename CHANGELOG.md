@@ -396,7 +396,7 @@
 
 - plugin-agent 新加指令 `/stop`：停下本会话在跑的一轮，同停止键，排着的照常开下一轮。不看等级：这一轮的参与者（进了这一轮的各条输入算出的那几位：真人的话是说话的人，后台任务结束通知与子任务开的一轮是起它的那一轮的参与者，定时任务开的一轮是建它的人；排队与待插入的不算）和 owner 能停，别人回「只有参与这一轮的人和 owner 能停」，没有在跑的一轮回「没有在跑的一轮」。WebUI、终端与各 IM 平台同一条指令，终端此前没有停下一轮的入口。
 - plugin-tools：`background_stop` 与 `/stop` 同一条规则，只在调它的这一轮的参与者里有起这个任务的人（起它那次调用审批之前的参与者，经审批放行的再加上批的人）或有 owner 时停，否则回「只有起这个任务的人或 owner 在的一轮能停它」；此前本会话里谁的一轮都能停。列出、取输出与等待照旧谁都能用。plugin-tools 加 `authority` 的可选依赖，它不在时没有人是 owner。
-- plugin-commands：群里 @ 她或引用她的消息发指令时，开头那个对她的 @（QQ 客户端自动插的，适配器写下的 `<at self>` 标记）不算指令正文，指令照常执行，私聊同样；此前这条当普通消息交给她，`/stop`、`/clear` 等都没执行。
+- plugin-commands：群里 @ 她或引用她的消息发指令、回意图确认时，开头那个对她的 @（QQ 客户端自动插的，适配器写下的 `<at self>` 标记）不算正文：指令照常执行，回的 `y` 照常算确认，私聊同样；此前指令当普通消息交给她，`/stop`、`/clear` 等都没执行，引用她「确认执行 /clear 吗？」那条回的 `y` 按取消。
 - plugin-workflow：工作流页「最近运行」表里在跑的运行多一个「取消」（确认框）：点了之后这次运行停下、照常收尾，记录留在表里，状态为「已取消」，agent 节点已派发的那一轮在它的会话里照常跑完；已结束的运行没有这个按钮，运行已经结束时点了回「这次运行已经结束」。表里列最近 50 次，更早而还在跑的接在后面（此前只列最近 50 次）。此前编排运行没有停止的入口。
 
 ### 通道层：时间线（@aalis/schema-message、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-memory-summary）

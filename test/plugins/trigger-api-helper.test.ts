@@ -44,6 +44,9 @@ describe('isAddressed：@ 自己', () => {
     expect(isAddressed(text('<at self>123</at> hi'), NO_NAMES, opts())).toBe(true);
     expect(isAddressed(text('<at self qq="1">x</at>'), NO_NAMES, opts())).toBe(true);
   });
+  it('正文里任一处的 <at self> 都算，不只开头', () => {
+    expect(isAddressed(text('你好 <at self id="1">x</at>'), NO_NAMES, opts())).toBe(true);
+  });
   it('裸 CQ 码不命中（adapter 入站已规范化成 <at self>，CQ 码到不了这里）', () => {
     expect(isAddressed(text('[CQ:at,qq=12345] 你好'), NO_NAMES, opts())).toBe(false);
   });
