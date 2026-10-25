@@ -21,6 +21,7 @@ import {
 } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, TextError, type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
+import { AT_SELF_PATTERN } from '@aalis/schema-message';
 import { CommandRegistry } from './commands.js';
 import { t } from './texts.js';
 
@@ -203,7 +204,10 @@ function registerCommands({
     // 带 source 又没声明 ownerApproved 的注入不是人亲手写的，与没有文字的消息一样不参与命令解析
     if (!message.content || (injected && !message.ownerApproved)) return next();
 
-    const parsed = registry.parseCommand(message.content);
+    // 开头对她的 @（AT_SELF_PATTERN，只认开头）不算指令正文：在群里 @ 她或引用她的消息发指令时，QQ 客户端会在开头插一个。
+    // 开头 @ 的是别人时照旧不是指令
+    const at = AT_SELF_PATTERN.exec(message.content);
+    const parsed = registry.parseCommand(at?.index === 0 ? message.content.slice(at[0].length) : message.content);
     if (!parsed) return next();
 
     // 解析到 "<prefix>foo" 但没有任何插件注册过该指令 → 当作普通消息处理

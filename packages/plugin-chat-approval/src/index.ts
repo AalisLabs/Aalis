@@ -25,7 +25,7 @@ import { getPlatformAdapters, platform } from '@aalis/api-platform';
 import { oneToOneWith, rootSessionOf, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { type TextRef, textLines, toSource } from '@aalis/schema-i18n';
-import { awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
+import { AT_SELF_PATTERN, awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { t } from './texts.js';
 
@@ -56,11 +56,6 @@ const EDGE = /[\s。！!.~，,？?：:]/;
  */
 const APPROVE = /^(?:同意|approve)$/i;
 const DENY = /^(?:拒绝|deny\b)/i;
-/**
- * 开头对她的 @：适配器按机器人账号写下的 `<at self …>` 标记（与 api-trigger 的 mentionsSelf 认 @ 的同一种文法，改那边要一起改）。
- * 在群里引用她的消息回复时，QQ 客户端会自动在开头插一个，不算应答的正文
- */
-const LEADING_AT_SELF = /^<at self[\s>][\s\S]*?<\/at>/;
 
 type Answer = { decision: 'approve' } | { decision: 'deny'; note?: string };
 
@@ -72,11 +67,12 @@ function trimStartEdges(text: string): string {
 }
 
 /**
- * 应答词交出应答，不是的交出 undefined。开头对她的 @ 不算正文；拒绝的原因照原样转交，只去掉它与「拒绝」之间的空白、标点与末尾的
- * 空白
+ * 应答词交出应答，不是的交出 undefined。开头对她的 @（AT_SELF_PATTERN，只认开头：在群里引用她的消息回复时，QQ 客户端会自动在
+ * 开头插一个）不算正文；拒绝的原因照原样转交，只去掉它与「拒绝」之间的空白、标点与末尾的空白
  */
 function answerOf(content: string): Answer | undefined {
-  const text = trimStartEdges(content.replace(LEADING_AT_SELF, ''));
+  const at = AT_SELF_PATTERN.exec(content);
+  const text = trimStartEdges(at?.index === 0 ? content.slice(at[0].length) : content);
   let end = text.length;
   while (end > 0 && EDGE.test(text[end - 1])) end--;
   if (APPROVE.test(text.slice(0, end))) return { decision: 'approve' };

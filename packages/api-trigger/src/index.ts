@@ -17,7 +17,7 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService } from '@aalis/api-persona';
 import { defineService, type Logger, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
-import { type IncomingMessage, WellKnownNoticeTypes } from '@aalis/schema-message';
+import { AT_SELF_PATTERN, type IncomingMessage, WellKnownNoticeTypes } from '@aalis/schema-message';
 
 /**
  * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿选中那一条的 id 与自己的实例 id 比，
@@ -81,18 +81,6 @@ export interface AddressOptions {
 }
 
 /**
- * @ 检测：只认 `<at self>` 标记。
- *
- * OneBot 的字符串消息格式（含 `[CQ:at,…]`）由 adapter 入站规范化成消息段，再经
- * segmentsToText 渲染成 `<at self id="…">`，CQ 码不会流到这里。其它平台适配器若要支持
- * @ 判定，须同样把提及渲染成 `<at self …>`——这里只认这一种文法。聊天审批判应答词之前去掉开头的
- * 这个标记（plugin-chat-approval 的 LEADING_AT_SELF），认的是同一种文法，改这里要一起改。
- */
-function mentionsSelf(content: string): boolean {
-  return /<at self[\s>][\s\S]*?<\/at>/.test(content);
-}
-
-/**
  * 建一个名字表：每次调用按这条消息的会话现取，返回别名（triggerNames）与这个会话在用的人设的名字、昵称的并集，
  * 去重、去空，别名在前。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames 用同一份。
  *
@@ -139,8 +127,8 @@ export function createBotNames(
 /**
  * 是否被点名。戳一戳按适配器标记的目标与 triggerOnPoke 判定，**不做** @ 与名字检测：它的正文是合成文案，内嵌戳者昵称，昵称含
  * bot 名会被名字检测误判成提及——关掉 triggerOnPoke 后用户改个名就能让开关对自己失效（对抗审计
- * 实测）。其余消息看 triggerOnAt 的 @ 自己，以及名字检测（names 里任一个出现在正文里即命中，
- * names 通常取自 createBotNames）。
+ * 实测）。其余消息看 triggerOnAt 的 @ 自己（正文里任一处的 AT_SELF_PATTERN 标记：OneBot 的 CQ 码已由适配器入站规范化成它，
+ * 别的平台适配器要支持 @ 判定，同样写这个标记），以及名字检测（names 里任一个出现在正文里即命中，names 通常取自 createBotNames）。
  */
 export function isAddressed(
   message: Pick<IncomingMessage, 'content' | 'noticeType' | 'noticeTargetIsSelf'>,
@@ -149,7 +137,7 @@ export function isAddressed(
 ): boolean {
   if (message.noticeType === WellKnownNoticeTypes.Poke)
     return opts.triggerOnPoke && message.noticeTargetIsSelf !== false;
-  if (opts.triggerOnAt && mentionsSelf(message.content)) return true;
+  if (opts.triggerOnAt && AT_SELF_PATTERN.test(message.content)) return true;
   return names.some(name => name && message.content.includes(name));
 }
 

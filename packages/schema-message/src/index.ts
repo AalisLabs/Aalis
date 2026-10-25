@@ -373,6 +373,12 @@ export function wasAddressed({
   return !source && (triggerType === 'direct' || triggerType === 'immediate');
 }
 
+/**
+ * 对她的 @：适配器按机器人账号写下的 `<at self …>…</at>` 标记，读的一方只认这个结构化标记，不按文字猜。文法与读它的几处见
+ * docs/concepts/message-llm-pipeline.md
+ */
+export const AT_SELF_PATTERN = /<at self[\s>][\s\S]*?<\/at>/;
+
 // ----- 出站消息 -----
 
 /**
