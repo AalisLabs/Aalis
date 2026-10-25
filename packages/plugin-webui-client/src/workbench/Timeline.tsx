@@ -24,8 +24,9 @@ import { awaitingApproval, displayOf, TOOL_ICONS, ToolCall } from './ToolCall';
 import './Timeline.css';
 
 // 时间线：条目按回合成段，同一回合的条目挨在一起（被别的消息隔开时一轮分成几段），回合的结局（停止、出错、没有回复）写在这一轮
-// 最后一段的末尾，回滚在段的右上角。进了一轮的输入下面写它怎么进的（开了这一轮，被点名或插话；并入这一轮），没有输入的一轮
-// （如空闲开话题）在第一段开头写来源。相隔超过 10 分钟的两段之间插一行时间；房间是多人对话，逐条写说话人与时间。
+// 最后一段的末尾，回滚在段的右上角。进了一轮的输入（提问与通知）下面写它怎么进的（被点名或插话开了这一轮；并入这一轮），
+// addressed 为空的开轮不写；没有输入的一轮（如空闲开话题）在第一段开头写来源。相隔超过 10 分钟的两段之间插一行时间；房间是
+// 多人对话，逐条写说话人与时间。
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
 // 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮最后一段末尾那一组，不收，免得藏掉要看的东西；写给用户的
 // 正文不收。
@@ -421,7 +422,9 @@ function Entry({ item, last, ...props }: EntryProps) {
         );
       }
       const facts = taskNoticeFacts(item);
-      if (facts) return <TaskNotice facts={facts} taskId={item.noticeId} openLog={props.openLog} />;
+      if (facts) {
+        return <TaskNotice facts={facts} taskId={item.noticeId} entry={entryLine(item)} openLog={props.openLog} />;
+      }
       return (
         <Notice
           item={item}
@@ -434,11 +437,14 @@ function Entry({ item, last, ...props }: EntryProps) {
   }
 }
 
-/** 输入怎么进的这一轮：开了这一轮（另写被点名或插话，没经触发判定的只写这一半），或并入这一轮；不在回合里的没有 */
-function entryLine({ entry, addressed }: Item<'user-message'>): string | undefined {
+/**
+ * 输入（提问与通知）怎么进的这一轮：被点名或插话开了这一轮（addressed 为真或假），或并入这一轮；addressed 为空的开轮（如
+ * WebUI 会话里的提问）与不在回合里的没有
+ */
+function entryLine({ entry, addressed }: Item<'user-message' | 'notice'>): string | undefined {
   if (entry === 'joined') return tr('entryJoined');
-  if (entry !== 'opened') return undefined;
-  return tr(addressed === undefined ? 'entryOpened' : addressed ? 'entryOpenedAddressed' : 'entryOpenedInterjection');
+  if (entry !== 'opened' || addressed === undefined) return undefined;
+  return tr(addressed ? 'entryOpenedAddressed' : 'entryOpenedInterjection');
 }
 
 function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; room: boolean; sessionId: string }) {
@@ -534,27 +540,32 @@ function taskNoticeFacts({ topic, facts }: Item<'notice'>): BackgroundTaskNotice
   return { tool, status, durationMs, ...(typeof exitCode === 'number' ? { exitCode } : {}) };
 }
 
-/** 结束通知：一行写工具名、结局与用时；登记表里还有这个任务时点开它的日志 */
+/** 结束通知：一行写工具名、结局与用时，下面写它怎么进的这一轮；登记表里还有这个任务时点开它的日志 */
 function TaskNotice({
   facts,
   taskId,
+  entry,
   openLog,
 }: {
   facts: BackgroundTaskNoticeFacts;
   taskId?: string;
+  entry?: string;
   openLog(taskId: string): void;
 }) {
   const { tasks } = useBackground();
   const task = taskId === undefined ? undefined : tasks?.get(taskId);
   const ending = endingText(facts, facts.durationMs);
   return (
-    <button type="button" className="tool-line" disabled={!task} onClick={task && (() => openLog(task.id))}>
-      <TOOL_ICONS.generic aria-hidden />
-      <span className="tool-line-text">{tr('backgroundTaskNamed', { tool: sanitizeForCard(facts.tool) })}</span>
-      <span className="tool-line-status" title={ending}>
-        <StatusText state={ENDING_TONES[facts.status]}>{ending}</StatusText>
-      </span>
-    </button>
+    <div className="task-notice">
+      <button type="button" className="tool-line" disabled={!task} onClick={task && (() => openLog(task.id))}>
+        <TOOL_ICONS.generic aria-hidden />
+        <span className="tool-line-text">{tr('backgroundTaskNamed', { tool: sanitizeForCard(facts.tool) })}</span>
+        <span className="tool-line-status" title={ending}>
+          <StatusText state={ENDING_TONES[facts.status]}>{ending}</StatusText>
+        </span>
+      </button>
+      {entry && <p className="message-meta">{entry}</p>}
+    </div>
   );
 }
 
@@ -573,12 +584,14 @@ function Notice({ item, sessionId, streaming, continuable }: NoticeProps) {
   const sessions = useProvider(SESSION_PROTOCOL);
   const [busy, setBusy] = useState(false);
   const Icon = streaming ? LoaderCircle : Info;
+  const entry = entryLine(item);
   return (
     <div className="notice">
       <Icon aria-hidden className={streaming ? 'spin' : undefined} />
       <div className="notice-body">
         <p>{item.text}</p>
         <Attachments attachments={item.attachments} sessionId={sessionId} />
+        {entry && <p className="message-meta">{entry}</p>}
       </div>
       {continuable && features.send && (
         <Button

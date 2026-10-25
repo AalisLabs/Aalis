@@ -1821,7 +1821,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await page.$$(`main ${aria('更多', 'button')}[data-dot]`)).toHaveLength(0);
 
     // 结束通知：一行写工具名、结局与用时，写给模型的那句话不显示；点开是这个任务的日志；刷新后一样
-    const ended = 'main .turn > button.tool-line';
+    const ended = 'main .turn > .task-notice > button.tool-line';
     const endedLine = await page.$eval(ended, element => element.textContent);
     expect(endedLine).toMatch(new RegExp(`^后台任务 ${JOB}完成 · \\d+\\.\\d 秒$`));
     expect(await page.$$(text('background_output'))).toHaveLength(0);

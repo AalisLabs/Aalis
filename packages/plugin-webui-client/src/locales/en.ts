@@ -418,7 +418,6 @@ export default defineLocale<Source>()({
   rewindCodeAndChat: 'Rewind file changes and this turn’s conversation',
   speakerYou: 'You',
   messageFrom: 'From {source}',
-  entryOpened: 'Started this turn',
   entryOpenedAddressed: 'Started this turn · addressed',
   entryOpenedInterjection: 'Started this turn · interjection',
   entryJoined: 'Joined this turn',

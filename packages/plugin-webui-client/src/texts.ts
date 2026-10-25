@@ -408,7 +408,6 @@ const SOURCE = {
   rewindCodeAndChat: '回滚文件改动与这一轮对话',
   speakerYou: '你',
   messageFrom: '来自 {source}',
-  entryOpened: '开了这一轮',
   entryOpenedAddressed: '开了这一轮 · 被点名',
   entryOpenedInterjection: '开了这一轮 · 插话',
   entryJoined: '并入这一轮',
