@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import type { Logger } from '@aalis/core';
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
   lookupCachedDescription,
@@ -12,7 +13,7 @@ import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { emptyMediaCaps } from '../fixtures/service-ref.js';
+import { emptyMediaCaps, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 描述缓存的键空间一致性——「缓存只存裸描述，包装在消费点重建」。
@@ -193,5 +194,35 @@ describe('描述缓存按详略档分键', () => {
       '详细版',
     );
     expect(lookupCachedDescription('data:/images/onebot_t_group_2/onebot/0123456789abcdef.jpg')).toBeNull();
+  });
+});
+
+// 识别模型在长度上限处停下的描述带着截断标记进缓存：同一张图再识别不调模型，取回的就是带标记的那一句，不重试
+describe('截断的描述原样进缓存', () => {
+  it('describeImage：第一次识别被截断，第二次命中缓存、不调模型，两次都带标记', async () => {
+    let calls = 0;
+    const vision = {
+      id: 'zz-vision',
+      capabilities: ['vision'],
+      chat: async () => {
+        calls++;
+        return { content: '一只猫在', finishReason: 'length' };
+      },
+    } as unknown as LLMModel;
+    const cfg = {
+      vision: { recognizeOnArrival: true, delivery: 'describe', maxTokens: 2048, think: false, prompt: '' },
+      audio: { mode: 'disabled', maxTokens: 2048, think: true },
+      video: { mode: 'disabled' },
+      animatedImage: { maxFrames: 4 },
+      contextHistory: { enabled: false, maxMessages: 0 },
+    } as unknown as MediaConfigResolved;
+    const svc = new MediaServiceImpl(
+      { ...caps, llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]) },
+      cfg,
+    );
+    const key = 'http://example.invalid/img/cut-off.jpg';
+    expect(await svc.describeImage(key)).toBe('一只猫在（已在长度上限处截断）');
+    expect(await svc.describeImage(key)).toBe('一只猫在（已在长度上限处截断）');
+    expect(calls).toBe(1);
   });
 });

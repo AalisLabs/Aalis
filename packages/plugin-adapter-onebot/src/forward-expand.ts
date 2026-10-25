@@ -1,4 +1,4 @@
-import { type I18nService, outputLanguageFor } from '@aalis/api-i18n';
+import { type I18nService, localizeFor, outputLanguageFor } from '@aalis/api-i18n';
 import { chatModelPicker, type LLMModel, lightestThinking } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
 import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
@@ -9,6 +9,7 @@ import { cacheOneAttachment } from './attachment-cache.js';
 import type { ExpandedForward, ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
 import { rememberLandedAlias } from './media-alias.js';
+import { t } from './texts.js';
 import type { OneBotMessageSegment } from './types.js';
 import { collectForwardSegments, escapeMarkup } from './types.js';
 
@@ -268,7 +269,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   /**
    * 用 LLM 给一段 forward 原文生成摘要；失败/没有能对话的模型则返回 null。模型取 llm 服务给本插件挑的能对话的那一个
-   * （见 chatModelPicker）
+   * （见 chatModelPicker）。输出上限只防失控；模型在上限处停下时末尾标出截断，标记与摘要的输出语言按同一读者（host），
+   * 带标记的摘要照常进缓存
    */
   async function summarizeForward(
     text: string,
@@ -300,14 +302,22 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         ],
         temperature: 0.3,
         think: lightestThinking(model),
-        maxTokens: Math.max(800, Math.ceil(forwardCfg.summaryMaxChars * 1.5)),
+        maxTokens: Math.max(2048, forwardCfg.summaryMaxChars * 3),
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
         logger.debug(`forward 摘要返回空内容: model=${entry.id}, chars=${forwardCfg.summaryMaxChars}`);
         return null;
       }
-      return out;
+      if (resp.finishReason !== 'length') return out;
+      return localizeFor(
+        i18n,
+        t('summaryCutOff', { summary: out }),
+        { host: true },
+        {
+          onError: err => logger.warn(`按全局默认层的语言渲染摘要的截断标记出错，按原文写: ${err}`),
+        },
+      );
     } catch (err) {
       logger.warn(`forward 摘要生成失败: ${err}`);
       return null;

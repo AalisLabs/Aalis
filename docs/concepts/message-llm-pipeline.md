@@ -290,7 +290,7 @@ await handle?.chat({ messages });   // 条目已固定是哪个 model
 ## 8. 流式与时间线分段
 
 - **`ContentSegment`** 是 assistant 输出的有序时间线，有三种：`text`、`reasoning_text`（DeepSeek-R1、Ollama thinking 等产出的思考文本）、`tool_call`（带 `startTime` / `endTime` 供时长展示，`callId` 是这次调用的 id，同 `ToolCallContext.callId`）。当它存在时，它是渲染顺序的真相；`content` 与 `reasoningContent` 是供 LLM API、历史压缩等纯文本消费者使用的派生镜像，生产方累积时需要同步写。
-- **`ChatStreamChunk`** 是流式增量，包含 `contentDelta` / `reasoningDelta` / `toolCalls`（最终结果）/ `toolCallProgress`（增量进度提示，与 `toolCalls` 互斥）/ `done` / `usage`。
+- **`ChatStreamChunk`** 是流式增量，包含 `contentDelta` / `reasoningDelta` / `toolCalls`（最终结果）/ `toolCallProgress`（增量进度提示，与 `toolCalls` 互斥）/ `done` / `usage` / `finishReason`（结束原因，随 `done` 那一段给出，见 [api-llm](../api/api-llm.md#关键类型)）。
 - **`StreamChunkMessage`** 是平台层的流式片段，经 `'outbound:stream'` 事件广播：会话服务把正文与思考的增量拼进时间线推给客户端，终端客户端直接显示正文。其中的 `toolCallProgress`（「正在生成工具调用」的进度）目前没有读者，会话服务不把它推给客户端；它不影响最终 tool_call segment 的下发。
 
 ---

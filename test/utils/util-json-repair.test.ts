@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { extractJsonCandidate, tryParseJsonObject } from '../../packages/util-json-repair/src/index.js';
+import {
+  extractJsonCandidate,
+  parseLLMJsonObject,
+  tryParseJsonObject,
+} from '../../packages/util-json-repair/src/index.js';
 
 describe('extractJsonCandidate', () => {
   it('直接 JSON 对象，无前缀文本', () => {
@@ -61,9 +65,8 @@ describe('extractJsonCandidate', () => {
     expect(result).toBe('{"mood":"happy","nested":{"key":"val"},"message":"ok"}');
   });
 
-  it('外层对象被截断但含配平内层 — 返回截断的外层（供修复）而非内层，避免丢弃外层字段', () => {
-    // 模型输出触达 token 上限，外层 {"a",...,"c"} 未闭合，但嵌套的 {"b":1} 是配平的。
-    // 旧行为会 descend 进内层、返回 {"b":1}，静默丢弃 "a"/"c"。修复后应返回截断的外层整段。
+  it('外层对象配不平但含配平内层 — 返回外层整段而非内层，不把内层当成整个结果', () => {
+    // 外层 {"a",...,"c"} 未闭合，嵌套的 {"b":1} 是配平的：取了内层就静默丢掉 "a"/"c"
     const raw = '{"a":{"b":1},"c":"trunc';
     const result = extractJsonCandidate(raw);
     expect(result).toBe(raw);
@@ -72,7 +75,7 @@ describe('extractJsonCandidate', () => {
     expect(result).toContain('"c"');
   });
 
-  it('推理文本 + 被截断的 JSON payload — 返回截断 payload 整段供修复', () => {
+  it('推理文本 + 配不平的 JSON payload — 返回 payload 整段', () => {
     const raw = '思考中...\n{"result":{"nested":true},"status":"incompl';
     const result = extractJsonCandidate(raw);
     expect(result).toBe('{"result":{"nested":true},"status":"incompl');
@@ -82,40 +85,29 @@ describe('extractJsonCandidate', () => {
     const raw = '{"done":1} 追加 {"more":"trunc';
     expect(extractJsonCandidate(raw)).toBe('{"done":1}');
   });
+
+  it('字符串里只有一个裸引号、配平失败 — 从第一个 { 起整段交给裸引号转义', () => {
+    expect(parseLLMJsonObject('说明：{"m":"他说"好"}').parsed).toEqual({ m: '他说"好' });
+  });
 });
 
-describe('tryParseJsonObject —— 括号补全按栈逆序', () => {
-  it('数组套对象截断（主流形态）— 补成合法 JSON、不丢数据', () => {
-    // 开括号栈 { [ {，正确闭合是 }]}（内层对象先闭），而非计数式的 ]}}
-    const raw = '{"persons":[{"platform":"x","userId":"y"';
-    const { parsed } = tryParseJsonObject(raw);
-    expect(parsed).not.toBeNull();
-    const persons = (parsed as { persons: Array<Record<string, unknown>> }).persons;
-    expect(persons[0]).toEqual({ platform: 'x', userId: 'y' });
-  });
-
-  it('数组在对象内截断 — 按 ]} 顺序补齐', () => {
-    const { parsed } = tryParseJsonObject('{"nums":[1,2,3');
-    expect((parsed as { nums: number[] }).nums).toEqual([1, 2, 3]);
-  });
-
-  it('多层嵌套截断 — 逆序补齐', () => {
-    const { parsed } = tryParseJsonObject('{"a":{"b":[{"c":1');
-    expect((parsed as { a: { b: Array<{ c: number }> } }).a.b[0].c).toBe(1);
-  });
-
-  it('字符串内的括号不参与栈计数', () => {
-    const { parsed } = tryParseJsonObject('{"msg":"用了 [ 和 { 符号","n":1');
-    expect(parsed).not.toBeNull();
-    const obj = parsed as { msg: string; n: number };
-    expect(obj.msg).toContain('[');
-    expect(obj.n).toBe(1);
+describe('tryParseJsonObject —— 不补被截断的结尾', () => {
+  it('少了结尾括号的对象解析失败，不补成完整对象：截断由模型插件报的结束原因认', () => {
+    expect(tryParseJsonObject('{"a":[{"b":1').parsed).toBeNull();
   });
 
   it('已完整 JSON 不被改动', () => {
     const { parsed, repairsApplied } = tryParseJsonObject('{"ok":true,"list":[1,2]}');
     expect(parsed).toEqual({ ok: true, list: [1, 2] });
     expect(repairsApplied).toEqual([]);
+  });
+});
+
+describe('tryParseJsonObject —— 字符串内部裸引号转义', () => {
+  it('字符串里的 XML 标签带属性引号：裸引号转义一步就够', () => {
+    const { parsed, repairsApplied } = tryParseJsonObject('{"mood":"开心","message":"好的<face id="14"/>"}');
+    expect(parsed?.message).toBe('好的<face id="14"/>');
+    expect(repairsApplied).toEqual(['字符串内部裸引号转义']);
   });
 });
 

@@ -29,10 +29,16 @@ interface ChatResponse {
   toolCalls?: ToolCall[];
   reasoningContent?: string | null;
   usage?: { promptTokens; completionTokens; totalTokens; cachedPromptTokens? };
+  finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'other';
 }
+// ChatStreamChunk 在 done 那一段带同名的 finishReason
+
+export function finishReasonOf(raw: unknown): ChatResponse['finishReason'];
 ```
 
 `Message` / `ToolCall` 来自 `@aalis/schema-message`；`ToolDefinition` 来自 `@aalis/api-tools`。
+
+**结束原因**：`finishReason` 是服务商报的结束原因，报了才有；没报时没有这个字段，`undefined` 表示不可知。`'length'` 是在输出上限处停下，正文可能不完整：消费方认截断只看它，不按用量（输出 token 是否用满 `maxTokens`，推理模型的思考也算在里面）或内容（JSON 少了括号）去猜。服务商用 `finishReasonOf` 翻译线上的值：`stop`、`length`、`tool_calls`、`content_filter` 照原样，别的值（如 DeepSeek 的 `insufficient_system_resource`、Ollama 的 `load`）记 `'other'`，`undefined` 与 `null` 记没报。
 
 ## 服务接口
 

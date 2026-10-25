@@ -13,4 +13,5 @@ export default defineLocale<Source>()({
   descriptionsClearedSession:
     "This session's {kind} description cache cleared ({count, plural, one {# entry} other {# entries}})",
   descriptionsFailed: 'Failed to clear the {kind} description cache: {error}',
+  cutOff: '{text} (cut off at the length limit)',
 });

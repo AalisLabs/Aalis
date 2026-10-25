@@ -9,7 +9,9 @@
 
 ## 1. 定位
 
-LLM 被要求输出 JSON 时，实际输出常有格式问题：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、被 `max_tokens` 截断少了结尾的 `}`、尾部多了逗号。直接 `JSON.parse` 会抛出异常。
+LLM 被要求输出 JSON 时，实际输出常有格式问题：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、尾部多了逗号。直接 `JSON.parse` 会抛出异常。
+
+被输出上限截断的 JSON 本库不补结尾，照样解析失败；截断处恰好落在一个完整对象之后时又解析得出前半截。截断要看模型插件报的结束原因（[api-llm](../api/api-llm.md) 的 `finishReason` 为 `'length'`），消费方见到它就按解析失败处理。
 
 `@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`package.json` 的 `keywords` 含 `aalis-util`，不经服务容器、不参与 DI）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
 
@@ -43,7 +45,7 @@ export interface RepairResult {
    - 取最后一个：模型常先输出推理/自由文本、最后才吐 JSON payload。
    - 必须含 `:`：排除数学集合写法 `{1,2,3}` 这类无 `key:value` 的伪对象（`index.ts`）。
    - 只扫顶层：找到配平对象后跳到其末尾之后，不把嵌套的内层 `{}` 当候选（`index.ts`）。
-3. 无合格候选时**降级**：从第一个 `{` 取配平片段，配不平则直接截到末尾（留给后续修复步骤补 `}`，见 `index.ts`）。
+3. 无合格候选时**降级**：从第一个 `{` 取配平片段，配不平则直接截到末尾（`index.ts`）：字符串里只有一个裸引号时配平会失败，这一段要交给裸引号转义；被截断的对象照样解析失败。
 
 返回的是字符串（可能仍不是合法 JSON），交给 `tryParseJsonObject` 收尾。
 
@@ -53,10 +55,8 @@ export interface RepairResult {
 
 1. 先按原文 `JSON.parse`；成功且是对象则直接返回，`repairsApplied: []`（`index.ts`）。
 2. 失败则依次叠加修复策略（`index.ts`），每命中一个就重试一次解析：
-   - **字符串内部裸引号转义**（`index.ts`）：状态机识别字符串里没转义的 `"`，例如 `"message": "他说"你好"然后走了"`。
-   - **XML 属性引号转义**（`index.ts`）：把 `<face id="14"/>` 这类标签属性里的引号转义。
-   - **移除尾部多余逗号**（`index.ts`）：`{...,}` → `{...}`。
-   - **补全缺失的 `}` 与 `]`**（`index.ts`）：截断少括号时，用开括号栈记录字符串外未闭合的 `{` 与 `[`，在末尾按栈逆序（内层先闭）补齐。
+   - **字符串内部裸引号转义**（`index.ts`）：模型会在字符串里直接写英文引号，严格 JSON 要转义。状态机识别字符串里没转义的 `"`，例如 `"message": "他说"你好"然后走了"`；字符串里的 `<face id="14"/>` 这类标签属性引号也由这一步转义。
+   - **移除尾部多余逗号**（`index.ts`）：模型照 JS 习惯在最后一项后面留逗号，严格 JSON 不收：`{...,}` → `{...}`，只删字符串外的。
 3. 全部用尽仍失败 → `parsed: null`（`index.ts`）。
 
 关键约束：`tryParse` 内部显式拒绝数组与原始值——只有 `typeof obj === 'object' && !Array.isArray(obj)` 才算成功（`index.ts`）。
@@ -93,12 +93,13 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 ## 4. 谁在用（真实消费点）
 
-依赖声明：`plugin-persona` / `plugin-user-profile` / `plugin-user-relation` 三个插件的 `package.json` 都依赖本包。
+依赖声明：`plugin-persona` / `plugin-user-profile` / `plugin-user-relation` / `plugin-publish-review` 四个插件的 `package.json` 都依赖本包。
 
 - **`@aalis/plugin-persona`** —— `src/index.ts` 直接 import 本包：
   - `src/index.ts` 有 `outputFormat` 时，`extractJsonCandidate` + `tryParseJsonObject` 结构化解析，并把 `repairsApplied` 写进 debug 日志。
-- **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject` 解析事实提取结果，是范本：首解析失败后**带显式反馈重试一次**（提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。
-- **`@aalis/plugin-user-relation`** —— `src/extractor.ts` import，`src/extractor.ts` 的 `parseExtraction` 用 `parseLLMJsonObject` 解析图谱抽取结果。注意它把所有 `persons`/`events`/`edges` 等**数组都包在一个顶层对象里**（`extractor.ts`），所以能用本库——这正是「对象内可以有数组、但顶层不能是数组」的正面示范。
+- **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject` 解析事实提取结果，是范本：首解析失败或回复报了 `finishReason: 'length'`（看着完整也不收）后**带显式反馈重试一次**（写明是截断还是不合法，提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。
+- **`@aalis/plugin-user-relation`** —— `src/extractor.ts` import，`src/extractor.ts` 的 `parseExtraction` 用 `parseLLMJsonObject` 解析图谱抽取结果，截断的回复同 user-profile 按解析失败重试。注意它把所有 `persons`/`events`/`edges` 等**数组都包在一个顶层对象里**（`extractor.ts`），所以能用本库——这正是「对象内可以有数组、但顶层不能是数组」的正面示范。
+- **`@aalis/plugin-publish-review`** —— `src/classify.ts` 的 `parseClassification` 用 `parseLLMJsonObject` 解析作品审核的分类结果；回复报了 `finishReason: 'length'` 时不解析，按分类不可用转人工。
 
 ---
 

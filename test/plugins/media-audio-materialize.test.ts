@@ -24,6 +24,9 @@ import { ref } from '../fixtures/service-ref.js';
 // 真 http 服务 + 真 fs：blockPrivate 临时关掉，才能连本机测试服务。
 // ════════════════════════════════════════════════════════════
 
+/** 识别处理器的输出上限（配置给的） */
+const LIMITS = { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } };
+
 /** 'ID3' magic → detectAudioFormat 判 mp3（主流格式直接透传，不进 ffmpeg） */
 const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(16)]);
 
@@ -113,7 +116,7 @@ describe('safeDownloadToTemp', () => {
 describe('audio 附件 → LLM 转写', () => {
   it('http 音频（无扩展名 URL）能转写：uri 随下载结果一起回来，不再必抛', async () => {
     const { caps, audios } = audioLLMCaps();
-    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
+    const proc = scanLLMProcessors(caps, LIMITS).find(p => p.transcribe);
     if (!proc?.transcribe) throw new Error('未包出 audio processor');
     const r = await proc.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } });
     expect(r.text).toBe('转写文本');
@@ -124,7 +127,7 @@ describe('audio 附件 → LLM 转写', () => {
     const local = join(base, 'session-voice.mp3');
     await writeFile(local, MP3);
     const { caps, request } = audioLLMCaps();
-    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
+    const proc = scanLLMProcessors(caps, LIMITS).find(p => p.transcribe);
     if (!proc?.transcribe) throw new Error('未包出 audio processor');
     await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` }, sessionId: 's1' });
     expect(request()).toMatchObject({ purpose: '转写', sessionId: 's1' });
@@ -134,7 +137,7 @@ describe('audio 附件 → LLM 转写', () => {
     const local = join(base, 'local-voice.mp3');
     await writeFile(local, MP3);
     const { caps, audios } = audioLLMCaps();
-    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
+    const proc = scanLLMProcessors(caps, LIMITS).find(p => p.transcribe);
     if (!proc?.transcribe) throw new Error('未包出 audio processor');
     const r = await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
     expect(r.text).toBe('转写文本');

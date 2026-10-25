@@ -17,7 +17,8 @@ import { budgetOf, endTurn, fakeSummaryLLM, setupSummary, systemOf, usageEvent }
 // ════════════════════════════════════════════════════════════
 // 摘要预算：这次重写的输入（上一份摘要加这次新压的对话，按格式化后的各行估算）× summaryBudgetRatio（默认 0.1），不少于
 // 1000；不超过物理上限（摘要模型的输出上限、没声明时 4096，与它窗口的四分之一，取小）的三分之二，与这个会话最近一次用量的
-// 压缩线的四分之一（压过下限）。预算写进提示词，请求的输出上限是它的 1.5 倍；摘要模型写满了输出上限的，这次压缩算没压成。
+// 压缩线的四分之一（压过下限）。预算写进提示词，请求的输出上限是它的 1.5 倍；摘要模型报在输出上限处停下（结束原因 length）
+// 的，这次压缩算没压成，不按报的用量猜。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -205,7 +206,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
   });
 });
 
-describe('plugin-memory-summary: 写满输出上限', () => {
+describe('plugin-memory-summary: 在输出上限处停下', () => {
   it('摘要模型照提示词的英文字符数写：输出上限比预算宽，写得完、末节完整', async () => {
     // 路径与代码为主的回复按每 3 个字符 1 token 计（比提示词按每 token 4 个字符的换算更密），写到输出上限就截断
     const tail = '【未完成的事】END';
@@ -228,21 +229,28 @@ describe('plugin-memory-summary: 写满输出上限', () => {
   it.each([
     ['一次性回复', false],
     ['流式回复', true],
-  ])('报的输出 token 不小于输出上限（%s）：这次压缩以「写满了输出上限」没压成，什么都不写', async (_label, stream) => {
-    const llm = fakeSummaryLLM({ stream, completionTokens: request => request.maxTokens ?? 0 });
+  ])('报的结束原因是 length（%s）：这次压缩以「在输出上限处停下」没压成，什么都不写', async (_label, stream) => {
+    const llm = fakeSummaryLLM({ stream, finishReason: () => 'length' });
     const { memory, compression, statuses } = await setup({}, llm.model);
     await memory.saveMetadata('summary', 's', { summary: 'OLD-SUMMARY' });
     await seed(memory, 's', 4);
 
-    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('写满了输出上限');
+    await expect(compression.compress('s', { reason: 'manual' })).rejects.toThrow('在输出上限处停下');
 
     expect((await memory.getMetadata('summary', 's'))?.summary).toBe('OLD-SUMMARY');
     expect(await memory.getHistory('s', Infinity)).toHaveLength(4);
     expect(statuses).toEqual(['start', 'error']);
   });
 
-  it('报的输出 token 比输出上限少：照常压成', async () => {
-    const llm = fakeSummaryLLM({ stream: true, completionTokens: request => (request.maxTokens ?? 0) - 1 });
+  it.each([
+    ['一次性回复', false],
+    ['流式回复', true],
+  ])('报的输出 token 恰等于输出上限、结束原因是 stop（%s）：照常压成，不按用量猜截断', async (_label, stream) => {
+    const llm = fakeSummaryLLM({
+      stream,
+      completionTokens: request => request.maxTokens ?? 0,
+      finishReason: () => 'stop',
+    });
     const { memory, compression } = await setup({}, llm.model);
     await seed(memory, 's', 4);
 
@@ -251,9 +259,9 @@ describe('plugin-memory-summary: 写满输出上限', () => {
     expect((await memory.getMetadata('summary', 's'))?.summary).toBe('SUMMARY-TEXT');
   });
 
-  it('后台压缩写满了输出上限：计入退避，隔一轮再试', async () => {
+  it('后台压缩在输出上限处停下：计入退避，隔一轮再试', async () => {
     let full = true;
-    const llm = fakeSummaryLLM({ completionTokens: request => (full ? (request.maxTokens ?? 0) : 1) });
+    const llm = fakeSummaryLLM({ finishReason: () => (full ? 'length' : 'stop') });
     const { host, memory, statuses } = await setup({}, llm.model);
     await seed(memory, 's', 6);
     const due = { used: 900, compressible: 500 };

@@ -17,8 +17,8 @@ import { registerHubs } from './hubs.js';
 
 /**
  * 假摘要模型：记下每次请求，按 reply 回（缺省回 `SUMMARY-TEXT`，reply 抛错即这次调用失败）。
- * 不声明 maxOutputTokens 时物理上限按 4096 算。给了 completionTokens 时回复带用量，报它算出的输出 token；
- * stream 时经 chatStream 回，正文一段、用量另一段
+ * 不声明 maxOutputTokens 时物理上限按 4096 算。给了 completionTokens 时回复带用量，报它算出的输出 token；给了 finishReason
+ * 时回复带它算出的结束原因；stream 时经 chatStream 回，正文一段，用量与结束原因在 done 那一段
  */
 export function fakeSummaryLLM(
   options: {
@@ -26,6 +26,7 @@ export function fakeSummaryLLM(
     maxOutputTokens?: number;
     reply?: (request: ChatModelRequest, index: number) => string | Promise<string>;
     completionTokens?: (request: ChatModelRequest, content: string) => number;
+    finishReason?: (request: ChatModelRequest) => ChatResponse['finishReason'];
     stream?: boolean;
   } = {},
 ) {
@@ -34,13 +35,14 @@ export function fakeSummaryLLM(
     requests.push(request);
     const content = await (options.reply?.(request, requests.length - 1) ?? 'SUMMARY-TEXT');
     const completionTokens = options.completionTokens?.(request, content);
-    if (completionTokens === undefined) return { content };
-    return { content, usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens } };
+    const finishReason = options.finishReason?.(request);
+    if (completionTokens === undefined) return { content, finishReason };
+    return { content, finishReason, usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens } };
   };
   async function* chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> {
-    const { content, usage } = await respond(request);
+    const { content, usage, finishReason } = await respond(request);
     yield { contentDelta: content ?? '' };
-    yield { done: true, usage };
+    yield { done: true, usage, finishReason };
   }
   const model: LLMModel = {
     id: 'fake',

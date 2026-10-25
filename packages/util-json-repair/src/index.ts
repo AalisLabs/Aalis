@@ -1,12 +1,8 @@
-// 通用 LLM JSON 输出的容错解析与提取。
-//
-// LLM 输出的 JSON 经常带各种小毛病：包了 markdown 代码块、前后多了文本、
-// XML 属性里的双引号没转义、尾部多余逗号、被截断少了 '}' 等。
-// 这里把所有修复策略集中到一处，按"由轻到重"依次尝试，直到 JSON.parse 成功。
-//
-// 历史：本文件抽自 @aalis/plugin-persona/src/json-repair.ts，
-// 供 persona / user-profile / user-relation 等所有需要解析 LLM JSON
-// 的插件共享，避免重复实现修复策略。
+// 通用 LLM JSON 输出的容错解析与提取，做三样修复：
+// - 去掉代码围栏和前后文字：模型常把 JSON 包进 ```json 围栏，或在前后写推理与解释；
+// - 转义字符串里的裸引号：模型会在字符串里直接写英文引号，严格 JSON 要转义；
+// - 去掉尾逗号：模型照 JS 习惯在最后一项后面留逗号，严格 JSON 不收。
+// 被输出上限截断的 JSON 不补结尾、照样解析失败：截断由模型插件报的结束原因（api-llm 的 finishReason）认。
 
 /** 修复策略，依次尝试。每个策略接收当前文本，返回修复后的文本（不变可返回原值）。 */
 type RepairStep = { name: string; apply: (s: string) => string };
@@ -21,53 +17,9 @@ const repairSteps: RepairStep[] = [
     apply: escapeBareQuotesInStrings,
   },
   {
-    // 模型偶尔会在 message 里写 <face id="14"/> 之类的 XML 标签，
-    // 但属性引号没转义，导致 JSON 解析在字符串中提前断开。
-    name: 'XML 属性引号转义',
-    apply: s => s.replace(/<(\w+)\s+(\w+)="([^"]*?)"\s*\/>/g, '<$1 $2=\\"$3\\" />'),
-  },
-  {
+    // 模型照 JS 习惯在最后一项后面留逗号，严格 JSON 不收
     name: '移除尾部多余逗号',
     apply: stripTrailingCommasOutsideStrings,
-  },
-  {
-    // 模型截断（max_tokens 触发、推理块被中途切断等）常常少一个或多个 '}'。
-    name: "补全缺失的 '}' 与 ']'",
-    apply: s => {
-      const trimmed = s.trimEnd();
-      // 按开括号栈逆序补全：仅靠计数会把 ] 补在内层对象 } 之前（`{"a":[{...` 补成 `]}}` 而非 `}]}`），
-      // 对「数组套对象」这类主流截断产出非法 JSON。用栈记未闭合开括号，末尾逆序（内层先闭）补齐。
-      const stack: string[] = [];
-      let inString = false;
-      let escaped = false;
-      for (let i = 0; i < trimmed.length; i++) {
-        const c = trimmed[i];
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (c === '\\') {
-          escaped = true;
-          continue;
-        }
-        if (c === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (inString) continue;
-        if (c === '{' || c === '[') stack.push(c);
-        else if (c === '}' || c === ']') {
-          const top = stack[stack.length - 1];
-          if ((c === '}' && top === '{') || (c === ']' && top === '[')) stack.pop();
-        }
-      }
-      if (stack.length === 0) return s;
-      let completed = trimmed;
-      for (let i = stack.length - 1; i >= 0; i--) {
-        completed += stack[i] === '{' ? '}' : ']';
-      }
-      return completed;
-    },
   },
 ];
 
@@ -219,7 +171,7 @@ function findBalancedJsonObjectEnd(s: string, start: number): number {
  * - 扫描所有顶层 '{' 候选，取**最后一个**包含 ':' 的配平对象
  *   （有 ':' 才是真正的 key:value JSON 对象，数学集合符号如 {1,2,3} 不含 ':' 会被跳过）
  * - 模型通常先输出推理/自由文本，最后才输出 JSON payload，因此优先取最后一个候选
- * - 若无合格候选则退化为原行为：从第一个 '{' 取配平或截断片段
+ * - 若无合格候选则从第一个 '{' 取配平片段，配不平时取到末尾
  */
 export function extractJsonCandidate(raw: string): string {
   const trimmed = raw.trim();
@@ -251,11 +203,10 @@ export function extractJsonCandidate(raw: string): string {
       // 跳过整个对象（含其内部的所有嵌套 '{'），只扫顶层
       searchFrom = end + 1;
     } else {
-      // 顶层 '{' 未配平通常说明该对象被截断（常见于模型输出触达 token 上限），此时其后所有内容都在
-      // 这个未闭合对象内部；若它只是正文里的孤立 '{'（如推理中写了半截代码），其后真正的 JSON 会
-      // 随之被放弃（这是取舍）。此时必须停止扫描：若继续 brace+1 前进会
-      // descend 进内层嵌套对象、把配平的内层误当候选，从而丢弃外层已输出的全部字段。停止后交由
-      // 下方降级分支从第一个 '{' 返回截断片段，供 tryParseJsonObject 补全修复。
+      // 顶层 '{' 配不平时其后所有内容都算在这个未闭合对象内部（字符串里只有一个裸引号、或对象被截断）；若它只是正文里
+      // 的孤立 '{'（如推理中写了半截代码），其后真正的 JSON 会随之被放弃（这是取舍）。此时必须停止扫描：若继续 brace+1
+      // 前进会 descend 进内层嵌套对象、把配平的内层误当候选，从而丢弃外层已输出的全部字段。停止后交由下方降级分支
+      // 从第一个 '{' 返回整段
       break;
     }
   }
@@ -264,7 +215,8 @@ export function extractJsonCandidate(raw: string): string {
     return unfenced.slice(lastObjectStart, lastObjectEnd + 1);
   }
 
-  // 降级回原行为：从第一个 '{' 开始，配平或截断
+  // 没有合格候选：从第一个 '{' 开始，配平的取那一段，配不平的取到末尾——字符串里只有一个裸引号时配平会失败，
+  // 这一段要交给裸引号转义；被截断的照样解析失败
   const firstBrace = unfenced.indexOf('{');
   if (firstBrace < 0) return unfenced;
   const endFb = findBalancedJsonObjectEnd(unfenced, firstBrace);

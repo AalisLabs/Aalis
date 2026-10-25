@@ -1,4 +1,5 @@
-// 本插件自己的原文字典：诊断项「识图」可用时的说明（识别模型的显示名作参数），/clear 的类型显示名与清理上传的图片、描述缓存的回执
+// 本插件自己的原文字典：诊断项「识图」可用时的说明（识别模型的显示名作参数），/clear 的类型显示名与清理上传的图片、描述缓存的回执，
+// 识别模型在长度上限处停下时描述与转写末尾的标记
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -13,6 +14,7 @@ const SOURCE = {
   descriptionsClearedAll: '所有{kind}描述缓存已清空（{count, number} 条）',
   descriptionsClearedSession: '当前会话{kind}描述缓存已清空（{count, number} 条）',
   descriptionsFailed: '{kind}描述缓存清空失败: {error}',
+  cutOff: '{text}（已在长度上限处截断）',
 } as const;
 export type Source = typeof SOURCE;
 

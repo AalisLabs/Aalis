@@ -1,5 +1,6 @@
 // 本插件自己的原文字典：平台通知、请求事件合成的入站与戳一戳、群文件上传转成的入站给人看的那句（写给模型的正文另带
-// [notice/…]、处理办法与工具用法），三个平台类型的显示名，与 /clear 的附件类型显示名、清理收发附件的回执
+// [notice/…]、处理办法与工具用法），三个平台类型的显示名，/clear 的附件类型显示名、清理收发附件的回执，与摘要模型在长度
+// 上限处停下时合并转发摘要末尾的标记
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -49,6 +50,7 @@ const SOURCE = {
   clearTypeFile: '文件缓存',
   mediaCleared: 'OneBot 收发的{kind}已清空（{count, number} 个）',
   mediaFailed: 'OneBot 收发的{kind}清空失败: {error}',
+  summaryCutOff: '{summary}（已在长度上限处截断）',
 } as const;
 export type Source = typeof SOURCE;
 

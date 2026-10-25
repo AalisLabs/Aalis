@@ -149,9 +149,10 @@ describe('media 视觉识别的接线', () => {
         return { content: '一只猫' };
       },
     } as never);
-    const vision = scanLLMProcessors({ llm: host.llm, logger: host.logger.use }).find(p =>
-      p.capabilities.includes('vision' as never),
-    );
+    const vision = scanLLMProcessors(
+      { llm: host.llm, logger: host.logger.use },
+      { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
+    ).find(p => p.capabilities.includes('vision' as never));
     if (!vision?.describe) throw new Error('未扫描出带 describe 的 vision processor');
     // data URL 直接内联，不触网
     await vision.describe({ attachments: [{ data: PNG_1PX, mimeType: 'image/png' }] } as never);

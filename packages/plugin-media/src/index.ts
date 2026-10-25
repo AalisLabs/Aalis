@@ -72,11 +72,11 @@ const configSchema = defineConfig({
       maxTokens: {
         type: 'number',
         label: '描述最大 token',
-        default: 300,
+        default: 2048,
         min: 1,
         integer: true,
         onInvalid: 'error',
-        description: '须为正整数，否则实例转为出错',
+        description: '只防失控，模型因上限停下时在描述末尾标出。须为正整数，否则实例转为出错',
       },
       think: {
         type: 'boolean',
@@ -136,12 +136,12 @@ const configSchema = defineConfig({
       maxTokens: {
         type: 'number',
         label: '最大输出 token',
-        default: 1024,
+        default: 2048,
         min: 1,
         integer: true,
         onInvalid: 'error',
         description:
-          'LLM-as-audio 专用，须为正整数，否则实例转为出错。e4b 等小模型在 thinking enabled 下需 ≥1024，否则空响应。',
+          'LLM-as-audio 专用，只防失控，思考与正文共用这份预算，模型因上限停下时在转写末尾标出。须为正整数，否则实例转为出错。',
       },
       think: {
         type: 'boolean',

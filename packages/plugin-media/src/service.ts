@@ -103,7 +103,7 @@ export interface MediaConfigResolved {
     /** 优先音频处理器（processor.name，统一池含 whisper/asr 与 audio LLM）。留空=按优先级自动选。 */
     prefer?: string;
     language?: string;
-    /** 默认最大 output tokens。e4b thinking enabled 时全能 prompt 需要 ≥1024 */
+    /** 最大输出 tokens：只防失控，思考与正文共用这份预算 */
     maxTokens: number;
     /** 开启时按模型的默认思考档（识别质量 ↑，但 token 成本 ×5-8），关闭时用最浅的一档。默认 true */
     think: boolean;
@@ -466,8 +466,7 @@ export class MediaServiceImpl implements MediaService {
           } else if (this.cfg.audio.mode === 'enabled') {
             const text = await this.transcribe(att, { context: ctxText, sessionId: msg.sessionId });
             item.cap = 'audio';
-            // 空响应不应该被歸因为“非语音”——模型可能是 maxTokens 不足 / 上下文超限 / 超时，
-            // 详细原因看 llm-adapter 里的 warn 日志（含 raw 长度、tokens 资源占用比）。
+            // 空响应不等于“非语音”：为什么空看 llm-adapter 的 warn 日志里的结束原因与输出用量。
             item.description = text ? `[音频] ${text}` : '[音频] 识别失败（模型未返回内容，详见日志）';
             descriptions[i] = item.description;
           }

@@ -1805,7 +1805,7 @@ importers:
   packages/plugin-llm-deepseek:
     dependencies:
       '@aalis/api-llm':
-        specifier: workspace:>=0.14.0 <1.0.0
+        specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
@@ -1836,7 +1836,7 @@ importers:
   packages/plugin-llm-ollama:
     dependencies:
       '@aalis/api-llm':
-        specifier: workspace:>=0.14.0 <1.0.0
+        specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-process':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -1873,7 +1873,7 @@ importers:
   packages/plugin-llm-openai:
     dependencies:
       '@aalis/api-llm':
-        specifier: workspace:>=0.14.0 <1.0.0
+        specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
@@ -2591,7 +2591,7 @@ importers:
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-hooks
       '@aalis/api-llm':
-        specifier: workspace:>=0.14.0 <1.0.0
+        specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-publish':
         specifier: workspace:>=0.1.0 <1.0.0

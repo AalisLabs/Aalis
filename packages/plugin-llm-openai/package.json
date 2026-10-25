@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
-    "@aalis/api-llm": "workspace:>=0.14.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.15.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "undici": "^6.0.0"
