@@ -14,7 +14,7 @@ import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import {
-  AttachmentRefKind,
+  ATTACHMENT_REF_KINDS,
   formatAttachmentRef,
   type Message,
   type MessageAttachment,
@@ -37,11 +37,19 @@ import type {
   NormalizedRequestEvent,
   OneBotActionResponse,
   OneBotConnectionConfig,
+  OneBotMessageSegment,
   OneBotProtocol,
   OneBotRawEvent,
   OutgoingPiece,
 } from './types.js';
-import { normalizeOneBotMessage, parseContentToSegments, segmentsToText, withReply } from './types.js';
+import {
+  escapeMarkup,
+  isGroupInviteCard,
+  normalizeOneBotMessage,
+  parseContentToSegments,
+  segmentsToText,
+  withReply,
+} from './types.js';
 import { OneBotV11 } from './v11.js';
 
 /**
@@ -435,53 +443,6 @@ const MEDIA_KINDS = [
   ['file', 'mediaFile', 'clearTypeFile'],
 ] as const;
 
-/** 占位符 → AttachmentRefKind 映射（与 v11/v12 segmentsToText 的输出对齐） */
-const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placeholder: string; ref: AttachmentRefKind }> =
-  {
-    image: { placeholder: '[图片]', ref: AttachmentRefKind.Image },
-    audio: { placeholder: '[语音]', ref: AttachmentRefKind.Audio },
-    video: { placeholder: '[视频]', ref: AttachmentRefKind.Video },
-    file: { placeholder: '[文件]', ref: AttachmentRefKind.File },
-  };
-
-/**
- * 把 text 中所有 [图片]/[语音]/[视频]/[文件] 占位按 attachments 顺序替换为
- * `[xxx | ref:data:/...]`。落盘失败的占位保持原样。
- */
-function rewritePlaceholdersWithRefs(
-  text: string,
-  attachments: ReadonlyArray<{ kind: 'image' | 'audio' | 'video' | 'file' }>,
-  localPaths: ReadonlyArray<string | null>,
-): string {
-  // 按 kind 分桶维护游标
-  const cursors: Record<'image' | 'audio' | 'video' | 'file', number> = { image: 0, audio: 0, video: 0, file: 0 };
-  const slotsByKind: Record<'image' | 'audio' | 'video' | 'file', (string | null)[]> = {
-    image: [],
-    audio: [],
-    video: [],
-    file: [],
-  };
-  attachments.forEach((a, i) => {
-    slotsByKind[a.kind].push(localPaths[i]);
-  });
-
-  let out = text;
-  for (const kind of ['image', 'audio', 'video', 'file'] as const) {
-    const { placeholder, ref } = KIND_PLACEHOLDER[kind];
-    const pattern = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    out = out.replace(new RegExp(pattern, 'g'), () => {
-      const slot = slotsByKind[kind][cursors[kind]++];
-      return slot ? formatAttachmentRef({ kind: ref, ref: slot }) : placeholder;
-    });
-    // 占位符比 attachments 少时：把多出的 ref 追加到末尾，确保不丢
-    const remaining = slotsByKind[kind].slice(cursors[kind]);
-    for (const slot of remaining) {
-      if (slot) out += formatAttachmentRef({ kind: ref, ref: slot });
-    }
-  }
-  return out;
-}
-
 // ===== 协议版本实例 =====
 const protocolV11 = new OneBotV11();
 const protocolV12 = new OneBotV12();
@@ -489,7 +450,6 @@ const protocolV12 = new OneBotV12();
 // ===== 重连配置 =====
 const RECONNECT_INTERVAL = 5000;
 const ACTION_TIMEOUT = 30000;
-const INVITE_CARD_SUPPRESS_WINDOW = 2 * 60 * 1000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const CONNECT_TIMEOUT = 15000;
@@ -705,40 +665,6 @@ function runAdapter(caps: Caps): void {
   const friendRequestKey = (selfId: string, userId: string) => `${selfId}:${userId}`;
   const groupRequestKey = (selfId: string, subType: 'add' | 'invite', userId: string, groupId: string) =>
     `${selfId}:${subType}:${userId}:${groupId}`;
-  const pendingInviteCardSuppressions = new Map<string, number>();
-
-  function inviteCardSuppressionKey(selfId: string, userId: string): string {
-    return `${selfId}:${userId}`;
-  }
-
-  function rememberInviteCardSuppression(req: NormalizedRequestEvent): void {
-    if (req.requestType !== 'group' || req.subType !== 'invite') return;
-    pendingInviteCardSuppressions.set(
-      inviteCardSuppressionKey(req.selfId, req.userId),
-      Date.now() + INVITE_CARD_SUPPRESS_WINDOW,
-    );
-  }
-
-  function shouldSuppressInviteCardMessage(event: {
-    selfId: string;
-    detailType: string;
-    userId?: string;
-    text: string;
-  }): boolean {
-    if (event.detailType !== 'private' || !event.userId || event.text.trim() !== '[JSON卡片]') return false;
-
-    const key = inviteCardSuppressionKey(event.selfId, event.userId);
-    const pending = pendingInviteCardSuppressions.get(key);
-    if (!pending) return false;
-
-    if (pending < Date.now()) {
-      pendingInviteCardSuppressions.delete(key);
-      return false;
-    }
-
-    pendingInviteCardSuppressions.delete(key);
-    return true;
-  }
 
   // ===== 桥接：平台 notice 入档 + 自禁言桥接 =====
   //
@@ -972,10 +898,10 @@ function runAdapter(caps: Caps): void {
    * 与主消息流程对称：
    * - 复用 segmentsToText 完整渲染所有段（at / 图片 / forward 占位 / face / record / video …）
    * - 嵌套 forward：调用 expandForwardsInText 展开为信封+摘要
-   * - 图片：仅在描述缓存命中时注入识别结果，未命中保留 `[图片]` 占位符
+   * - 图片：按段查描述缓存，命中时写成 `[图片: 描述]`，未命中保留 `[图片]` 占位符
    *   （主消息流的图片识别会自动写缓存，因此先发图、后被引用的常见路径能复用）
    */
-  function findReplySegmentId(segments: import('./types.js').OneBotMessageSegment[]): string | undefined {
+  function findReplySegmentId(segments: OneBotMessageSegment[]): string | undefined {
     for (const seg of segments) {
       if (seg.type !== 'reply') continue;
       const data = seg.data as Record<string, unknown> | undefined;
@@ -1034,8 +960,22 @@ function runAdapter(caps: Caps): void {
       const sender = data.sender as Record<string, unknown> | undefined;
       const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
 
-      // 1. 用与主流程同款渲染器把所有段转成可读文本
-      let content = segmentsToText(segments, state.selfId);
+      // 1. 用与主流程同款渲染器把所有段转成可读文本；图片只查描述缓存复用，不主动触发视觉模型。描述是识别模型写的字，与用户
+      // 写的字同样转义
+      const mediaSvc = media.present ? media.use : undefined;
+      const describe = (seg: OneBotMessageSegment) => {
+        if (seg.type !== 'image' || !mediaSvc || typeof seg.data.url !== 'string') return undefined;
+        const desc = lookupDescriptionByUrl(mediaSvc, seg.data.url);
+        return desc ? `[图片: ${escapeMarkup(desc)}]` : undefined;
+      };
+      let content = segmentsToText(segments, state.selfId, undefined, describe);
+
+      // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
+      try {
+        content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
+      } catch (err) {
+        logger.use.debug(`引用消息中的合并转发展开失败: ${err}`);
+      }
 
       const nestedReplyId = findReplySegmentId(segments);
       if (nestedReplyId) {
@@ -1043,39 +983,6 @@ function runAdapter(caps: Caps): void {
         if (nested?.content) {
           const nestedLabel = nested.nickname || nested.userId || '?';
           content += `\n[该引用消息又引用 ${nestedLabel} 的消息: ${nested.content}]`;
-        }
-      }
-
-      // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
-      if (content.includes('<forward id=')) {
-        try {
-          content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
-        } catch (err) {
-          logger.use.debug(`引用消息中的合并转发展开失败: ${err}`);
-        }
-      }
-
-      // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
-      if (content.includes('[图片]')) {
-        const mediaSvc = media.present ? media.use : undefined;
-        if (mediaSvc) {
-          const imageUrls: string[] = [];
-          for (const seg of segments) {
-            const s = seg as unknown as Record<string, unknown>;
-            if (s.type === 'image') {
-              const url = (s.data as Record<string, unknown>)?.url;
-              if (typeof url === 'string') imageUrls.push(url);
-            }
-          }
-          if (imageUrls.length > 0) {
-            let urlIdx = 0;
-            content = content.replace(/\[图片\]/g, () => {
-              const url = imageUrls[urlIdx++];
-              if (!url) return '[图片]';
-              const desc = lookupDescriptionByUrl(mediaSvc, url);
-              return desc ? `[图片: ${desc}]` : '[图片]';
-            });
-          }
         }
       }
 
@@ -1679,6 +1586,30 @@ function runAdapter(caps: Caps): void {
 
   // ----- 事件处理 -----
 
+  /**
+   * 语音附件的来源：v11 的语音段把 file（附件的 name）交给 get_record，用它换出的地址（base64、网址或本机路径任一），换不出时用段里的
+   * 来源；v12 标准没有这个动作，它的附件不带 name，直接用段里的来源
+   */
+  async function recordSource(state: ConnectionState, att: { url: string; name?: string }): Promise<string> {
+    const fileRef = att.name;
+    if (!fileRef) return att.url;
+    try {
+      const data = (await sendAction(state, 'get_record', { file: fileRef, out_format: 'mp3' })) as
+        | { file?: string; url?: string; base64?: string }
+        | undefined;
+      logger.use.debug(
+        `OneBot get_record 完成 (file=${fileRef}, ` +
+          `kind=${data?.base64 ? 'base64' : data?.url ? 'url' : data?.file ? 'file' : 'empty'})`,
+      );
+      if (data?.base64) return `data:audio/mpeg;base64,${data.base64}`;
+      if (data?.url) return String(data.url);
+      if (data?.file) return `file://${data.file}`;
+    } catch (err) {
+      logger.use.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+    }
+    return att.url;
+  }
+
   function handleMessageEvent(state: ConnectionState, raw: OneBotRawEvent): void {
     if (!state.protocol) return;
 
@@ -1716,8 +1647,10 @@ function runAdapter(caps: Caps): void {
       state.selfId = event.selfId;
     }
 
-    if (shouldSuppressInviteCardMessage(event)) {
-      logger.use.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
+    if (event.detailType === 'private' && isGroupInviteCard(event.message)) {
+      logger.use.debug(
+        `OneBot[${state.protocol.version}] 私聊里的入群邀请卡片不入站（与入群邀请事件重复）: userId=${event.userId}`,
+      );
       return;
     }
 
@@ -1753,53 +1686,26 @@ function runAdapter(caps: Caps): void {
       //  - audio：先调 OneBot get_record 把 QQ silk 转成可解码格式（NapCat 等
       //    实现常忽略 out_format 参数，返回 amr 原文），随后本地 ffmpeg
       //    强制转 16kHz mono WAV 再落盘，下游 LLM 直接消费。
-      //  - 落盘失败的项保留原 URL，文本占位也维持 [图片]/[语音]/... 原样。
+      //  - 落盘失败的项保留原 URL，正文里写占位 [图片]/[语音]/...。
+      //  - 来源见 segmentSource，语音另经 get_record 换（recordSource）；没有来源的不落盘，附件照留、data 为空。
       const atts = event.attachments ?? [];
       const localPaths: (string | null)[] = await Promise.all(
         atts.map(async att => {
           try {
-            if (att.kind === 'audio' && state) {
-              // get_record 把 silk → mp3/amr，返回 base64 / url / file 任一
-              const fileRef = att.name ?? att.url;
-              let source = att.url;
-              if (fileRef) {
-                try {
-                  const data = (await sendAction(state, 'get_record', {
-                    file: fileRef,
-                    out_format: 'mp3',
-                  })) as { file?: string; url?: string; base64?: string } | undefined;
-                  if (data?.base64) source = `data:audio/mpeg;base64,${data.base64}`;
-                  else if (data?.url) source = String(data.url);
-                  else if (data?.file) source = `file://${data.file}`;
-                  logger.use.debug(
-                    `OneBot get_record 完成 (file=${fileRef}, ` +
-                      `kind=${data?.base64 ? 'base64' : data?.url ? 'url' : data?.file ? 'file' : 'empty'})`,
-                  );
-                } catch (err) {
-                  logger.use.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
-                }
-              }
-              const landed = await cacheOneAttachment(
-                storage,
-                proc,
-                'audio',
-                source,
-                sessionId,
-                attachmentMaxBytes,
-                logger.use,
-              );
-              return landed;
-            }
+            const source = att.kind === 'audio' ? await recordSource(state, att) : att.url;
+            if (!source) return null;
             const landed = await cacheOneAttachment(
               storage,
               proc,
               att.kind,
-              att.url,
+              source,
               sessionId,
               attachmentMaxBytes,
               logger.use,
             );
-            if (landed) rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.url, landed);
+            if (landed && att.kind !== 'audio') {
+              rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.url, landed);
+            }
             return landed;
           } catch (err) {
             logger.use.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
@@ -1808,17 +1714,20 @@ function runAdapter(caps: Caps): void {
         }),
       );
 
-      // 把 [图片]/[语音]/[视频]/[文件] 占位重写为 [xxx | ref:data:/...]
-      if (atts.length > 0) event.text = rewritePlaceholdersWithRefs(event.text, atts, localPaths);
+      // 落盘了的按段写成 [xxx | ref:data:/...]，重新渲染正文
+      const refs = new Map<OneBotMessageSegment, string>();
+      atts.forEach((att, i) => {
+        const local = localPaths[i];
+        if (local) refs.set(att.segment, formatAttachmentRef({ kind: ATTACHMENT_REF_KINDS[att.kind], ref: local }));
+      });
+      if (refs.size > 0) event.text = segmentsToText(event.message, event.selfId, nicknameCache, seg => refs.get(seg));
 
-      // 主动展开合并转发：把 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
+      // 主动展开合并转发：把 forward 段渲染出的 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
       // 这样 LLM 不必再调用工具，且展开后的内容会随 inbound:message 进入历史归档。
-      if (event.text.includes('<forward id=')) {
-        try {
-          event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
-        } catch (err) {
-          logger.use.debug(`合并转发自动展开失败: ${err}`);
-        }
+      try {
+        event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
+      } catch (err) {
+        logger.use.debug(`合并转发自动展开失败: ${err}`);
       }
 
       // 获取群名
@@ -1922,7 +1831,7 @@ function runAdapter(caps: Caps): void {
 
       // 将请求包装为合成消息，交由 agent 决策（以私聊会话形式发送）
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
-      const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
+      const commentPart = req.comment ? `，验证信息："${escapeMarkup(req.comment)}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
       const text = req.comment
         ? t('friendRequestWithComment', { user: req.userId, comment: req.comment })
@@ -1942,12 +1851,11 @@ function runAdapter(caps: Caps): void {
         .catch((err: unknown) => logger.use.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
       pendingGroupRequests.set(groupRequestKey(req.selfId, req.subType, req.userId, req.groupId), req.flag);
-      rememberInviteCardSuppression(req);
 
       // 被邀请入群：以私聊形式通知（bot 还没在群里，无法发群消息）
       const sessionId = makeSessionId(req.selfId, 'private', req.userId);
       const groupPart = `群 ${req.groupId}`;
-      const commentPart = req.comment ? `，备注："${req.comment}"` : '';
+      const commentPart = req.comment ? `，备注："${escapeMarkup(req.comment)}"` : '';
       const said = { user: req.userId, group: req.groupId };
 
       let content: string;
@@ -2024,7 +1932,7 @@ function runAdapter(caps: Caps): void {
         const user = who(nick, notice.userId, t('someoneSubject'));
         const target = targetIsBot ? '你' : (notice.targetId ?? '某人');
         await events.use.emit('inbound:message', {
-          content: `[戳一戳: ${toSource(user)} 戳了${target}]`,
+          content: `[戳一戳: ${escapeMarkup(toSource(user))} 戳了${target}]`,
           text: targetIsBot
             ? t('poked', { user })
             : t('pokedOther', { user, target: who(targetNick, notice.targetId, t('someone')) }),
@@ -2259,7 +2167,7 @@ function runAdapter(caps: Caps): void {
       const selfId = notice.selfId;
       const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
       const fileName = notice.data?.fileName;
-      const content = `[文件上传: ${notice.userId} 上传了 ${fileName ?? '未知文件'}]`;
+      const content = `[文件上传: ${notice.userId} 上传了 ${fileName == null ? '未知文件' : escapeMarkup(String(fileName))}]`;
 
       (async () => {
         const nick = await resolveNickname(state, notice.userId, notice.groupId);

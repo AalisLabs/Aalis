@@ -24,6 +24,8 @@
 //     调用方无需自己处理。
 // ============================================================
 
+import type { MessageAttachment } from './index.js';
+
 /** 附件 kind 显示名（中文，用作占位符前缀）。新增 kind 在此处加常量即可。 */
 export const AttachmentRefKind = {
   Image: '图片',
@@ -33,6 +35,14 @@ export const AttachmentRefKind = {
 } as const;
 
 export type AttachmentRefKind = (typeof AttachmentRefKind)[keyof typeof AttachmentRefKind];
+
+/** 附件的种类（{@link MessageAttachment} 的 kind）→ 引用里写的种类。写引用与按种类认引用的各方都查这一份 */
+export const ATTACHMENT_REF_KINDS: Readonly<Record<MessageAttachment['kind'], AttachmentRefKind>> = {
+  image: AttachmentRefKind.Image,
+  audio: AttachmentRefKind.Audio,
+  video: AttachmentRefKind.Video,
+  file: AttachmentRefKind.File,
+};
 
 /** 所有 kind 显示名的联合，供正则构造时迭代。 */
 const ALL_KINDS: readonly AttachmentRefKind[] = Object.values(AttachmentRefKind);

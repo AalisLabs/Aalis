@@ -10,7 +10,7 @@ import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } from '@aalis/schema-message';
 import {
-  AttachmentRefKind,
+  ATTACHMENT_REF_KINDS,
   buildIncomingContent,
   extractMentions,
   getMessageName,
@@ -31,14 +31,6 @@ const configSchema = defineConfig({
   },
 });
 
-/** 附件引用里的种类名 */
-const REF_KINDS: Readonly<Record<ArchivedAttachment['kind'], string>> = {
-  image: AttachmentRefKind.Image,
-  audio: AttachmentRefKind.Audio,
-  video: AttachmentRefKind.Video,
-  file: AttachmentRefKind.File,
-};
-
 const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
 
 /**
@@ -58,7 +50,7 @@ function addressOf(value: string | undefined, roots: ReadonlySet<string>): strin
 function attachmentList(incoming: IncomingMessage, roots: ReadonlySet<string>): ArchivedAttachment[] {
   return (incoming.attachments ?? []).map(({ kind, name, data }, i) => {
     const described = parseAttachmentRefs(incoming._attachmentDescriptions?.[i] ?? '').find(
-      found => found.kind === REF_KINDS[kind],
+      found => found.kind === ATTACHMENT_REF_KINDS[kind],
     );
     const ref = addressOf(data, roots) ?? addressOf(described?.ref, roots);
     return { kind, ...(name ? { name } : {}), ...(ref ? { ref } : {}) };

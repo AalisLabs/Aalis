@@ -59,7 +59,7 @@
 | node 模块 | 业务插件建议做法 | 当前直接持有者 | 持有原因 |
 |---|---|---|---|
 | `node:fs` / `node:fs/promises` | 走 `@aalis/api-storage` | `plugin-storage-local` | StorageService 的当前实现 |
-|  |  | `plugin-process-local` | `readExternalFile()`：用于 OneBot 直推的 `/tmp/...` 等不在任何 storage 根内的绝对路径 |
+|  |  | `plugin-process-local` | `readExternalFile()`：用于 OneBot 实现端动作应答里交回的 `/tmp/...` 等不在任何 storage 根内的绝对路径 |
 |  |  | `plugin-webui-server` | `existsSync` 探测前端 dist 目录（位于工作区外、由 webui-client 提供） |
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
 |  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
@@ -92,7 +92,7 @@
   本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `caps.storage.use` 即可，无需绕过它。`randomBytes` 为原子写的临时文件名生成随机段，避免同进程同一毫秒并发写同一路径时临时文件重名。
 
 - **`plugin-process-local`** — `node:child_process`（`spawn`）+ `node:fs/promises`（`readFile`）
-  `ProcessService` 的当前实现：负责 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`。`readExternalFile` 用于 OneBot 等推流场景，源端给的是 OS 直读路径（如 `/tmp/xxx.jpg`），不属于任何 storage 根，所以刻意绕过 storage 沙箱直接 `fs.readFile`；该方法不受沙箱约束，调用方自行保证路径安全。
+  `ProcessService` 的当前实现：负责 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`。`readExternalFile` 用于 OneBot 实现端动作的应答这类场景，源端给的是 OS 直读路径（如 `/tmp/xxx.jpg`），不属于任何 storage 根，所以刻意绕过 storage 沙箱直接 `fs.readFile`；该方法不受沙箱约束，调用方自行保证路径安全。
 
 ### 入站网络服务
 

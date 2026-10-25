@@ -68,7 +68,12 @@ describe('合并转发摘要的提示词', () => {
       sendAction: async () => ({ messages: [node('甲', 'hello'), node('乙', 'hi')] }),
     });
 
-    const out = await expander.expandForwardsInText(null, '<forward id="F1">[合并转发消息]</forward>', undefined, 's');
+    const out = await expander.expandForwardsInText(
+      null,
+      '<forward id="F1">[合并转发消息]</forward>',
+      [{ type: 'forward', data: { id: 'F1' } }],
+      's',
+    );
 
     expect(out).toContain('<摘要>');
     const [system, user] = asked[0];

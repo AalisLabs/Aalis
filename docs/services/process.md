@@ -10,7 +10,7 @@
 
 > 注意：**process 不是沙箱**。`spawn` 产生的子进程拥有宿主进程的完整 OS 权限（默认继承宿主全量 `process.env`），`readExternalFile` 可读任意 OS 路径。需要隔离的不可信代码执行请看 [code-sandbox 服务](./code-sandbox.md) 与第 6 节。
 
-> 路径来自外部时请传 `maxBytes`。典型场景是 OneBot daemon 推来的附件路径——不传上限就意味着把对方指定的任意大小文件整份读进堆。`readExternalFile` 在给了 `maxBytes` 时会先 `stat` 再决定读不读。
+> 路径来自外部时请传 `maxBytes`。典型场景是 OneBot 实现端动作应答里交回的附件路径——不传上限就意味着把对方指定的任意大小文件整份读进堆。`readExternalFile` 在给了 `maxBytes` 时会先 `stat` 再决定读不读。
 
 ---
 

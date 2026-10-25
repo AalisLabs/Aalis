@@ -95,7 +95,9 @@ describe('OneBot v11 字符串消息格式入站规范化', () => {
       { type: 'text', data: { text: '看这个' } },
       { type: 'image', data: { file: 'a.jpg', url: 'http://example.invalid/a.jpg' } },
     ]);
-    expect(fromString?.attachments).toEqual([{ kind: 'image', url: 'http://example.invalid/a.jpg', name: 'a.jpg' }]);
+    expect(fromString?.attachments).toMatchObject([
+      { kind: 'image', url: 'http://example.invalid/a.jpg', name: 'a.jpg' },
+    ]);
     expect(fromString?.attachments).toEqual(fromArray?.attachments);
     expect(fromString?.text).toBe(fromArray?.text);
   });
@@ -115,7 +117,7 @@ describe('OneBot v11 字符串消息格式入站规范化', () => {
   it('语音 CQ + CQ 转义还原（&#91; &#93; &amp;）', () => {
     const ev = parseString('&#91;不是段&#93; a&amp;b[CQ:record,url=http://example.invalid/v.amr]');
     expect(ev?.text).toBe('[不是段] a&b[语音]');
-    expect(ev?.attachments).toEqual([{ kind: 'audio', url: 'http://example.invalid/v.amr' }]);
+    expect(ev?.attachments).toMatchObject([{ kind: 'audio', url: 'http://example.invalid/v.amr' }]);
   });
 
   it('反转义顺序：&amp; 最后还原，字面量 &amp;#91; 不被二次还原成方括号', () => {
@@ -143,7 +145,7 @@ describe('OneBot v11 raw_message 回退路径', () => {
     const fromMessage = parseString(raw);
     expect(fromRaw?.text).toBe(fromMessage?.text);
     expect(fromRaw?.replyToMessageId).toBe('888');
-    expect(fromRaw?.attachments).toEqual([{ kind: 'image', url: 'http://example.invalid/a.jpg', name: 'a.jpg' }]);
+    expect(fromRaw?.attachments).toMatchObject([{ kind: 'image', url: 'http://example.invalid/a.jpg', name: 'a.jpg' }]);
   });
 });
 

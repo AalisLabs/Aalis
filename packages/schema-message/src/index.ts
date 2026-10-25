@@ -29,7 +29,7 @@
 import type {} from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import { toWellFormedText } from '@aalis/util-text-normalize';
-import { AttachmentRefKind, formatAttachmentRef } from './attachment-ref.js';
+import { ATTACHMENT_REF_KINDS, formatAttachmentRef } from './attachment-ref.js';
 
 // ----- LLM 协议层消息类型 -----
 
@@ -597,12 +597,12 @@ export const WellKnownKinds = {
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
 
-/** 出站附件归档时的消息 kind 与占位符 kind */
+/** 出站附件归档时的消息 kind（占位符的 kind 取 {@link ATTACHMENT_REF_KINDS}） */
 const OUTBOUND_MEDIA = {
-  image: { kind: WellKnownKinds.OutboundImage, ref: AttachmentRefKind.Image },
-  audio: { kind: WellKnownKinds.OutboundAudio, ref: AttachmentRefKind.Audio },
-  video: { kind: WellKnownKinds.OutboundVideo, ref: AttachmentRefKind.Video },
-  file: { kind: WellKnownKinds.OutboundFile, ref: AttachmentRefKind.File },
+  image: WellKnownKinds.OutboundImage,
+  audio: WellKnownKinds.OutboundAudio,
+  video: WellKnownKinds.OutboundVideo,
+  file: WellKnownKinds.OutboundFile,
 } as const;
 
 /**
@@ -616,11 +616,10 @@ export function outboundMediaMessage(
   ref: string,
   { desc, source }: { desc?: string; source?: OutgoingMessage['source'] } = {},
 ): Message & { content: string } {
-  const media = OUTBOUND_MEDIA[kind];
   return {
     role: source === 'agent' ? 'assistant' : 'notice',
-    kind: media.kind,
-    content: formatAttachmentRef({ kind: media.ref, desc, ref }),
+    kind: OUTBOUND_MEDIA[kind],
+    content: formatAttachmentRef({ kind: ATTACHMENT_REF_KINDS[kind], desc, ref }),
   };
 }
 
@@ -876,6 +875,7 @@ function normalizeForLLM<T extends Pick<Message, 'role' | 'content' | 'kind'>>(m
 }
 
 export {
+  ATTACHMENT_REF_KINDS,
   type AttachmentRef,
   AttachmentRefKind,
   buildAttachmentRefMatcher,

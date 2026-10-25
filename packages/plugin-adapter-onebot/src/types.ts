@@ -45,9 +45,12 @@ export interface NormalizedMessageEvent {
   /** 统一附件列表（image/record/video/file 等） */
   attachments?: Array<{
     kind: 'image' | 'audio' | 'video' | 'file';
+    /** 来源（见 {@link segmentSource}），没有可用来源的为空串 */
     url: string;
     mimeType?: string;
     name?: string;
+    /** 来源的消息段：落盘后按段把引用写回正文的这个位置 */
+    segment: OneBotMessageSegment;
   }>;
   /** 引用回复的原消息 ID */
   replyToMessageId?: string;
@@ -165,31 +168,70 @@ export interface OneBotProtocol {
 }
 
 /**
+ * 能拼成标记的起始字符与它的全角替身：at 与转发标记开头的 `<`，附件引用里 `| ref:` 的 `|`（与 formatAttachmentRef
+ * 净化描述同一个换法）
+ */
+const MARKUP_STARTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/<(?=(?:at|forward)[\s>])/g, '＜'],
+  [/\|(?= ref:)/g, '丨'],
+];
+
+/**
+ * 用户写的字（文字段、昵称、分享标题，通知里的文件名与验证信息）写进正文前过这张表：读的一方（@ 判定、存档的 Mentions、附件
+ * 引用、转发信封的替换）只认适配器按消息段写下的标记，手打的因此不算标记。只换起始字符，其余照原样
+ */
+export function escapeMarkup(text: string): string {
+  return MARKUP_STARTS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), text);
+}
+
+/** 逐段渲染出的一段：适配器写下的照原样，文字段里用户写的字记成 { user }，由 {@link joinRendered} 连成串再转义 */
+export type RenderedPart = string | { user: string };
+
+/**
+ * 拼出正文：相邻的用户文字（中间只隔着渲染成空串的段时也算相邻）先连成一串再过 escapeMarkup。按单段转义的话，分在两个文字段里
+ * 的半个标记各自看不出来，拼起来就是真标记
+ */
+export function joinRendered(parts: RenderedPart[]): string {
+  let out = '';
+  let run = '';
+  for (const part of parts) {
+    if (typeof part !== 'string') run += part.user;
+    else if (part) {
+      out += escapeMarkup(run) + part;
+      run = '';
+    }
+  }
+  return out + escapeMarkup(run);
+}
+
+/**
  * 将 OneBot 消息段数组转换为富文本（含 XML 标记），供 LLM 消费。
  * @param segments 消息段数组
  * @param selfId 机器人自身 ID，用于标记 <at self>
  * @param nicknameMap 可选的 userId→昵称 映射，用于丰富 <at> 标签
+ * @param media 图片、语音、视频与文件段写什么：给了就写给的（如落盘后带存储地址的引用），没给写占位
  */
 export function segmentsToText(
   segments: OneBotMessageSegment[],
   selfId?: string,
   nicknameMap?: Map<string, string>,
+  media?: (seg: OneBotMessageSegment) => string | undefined,
 ): string {
-  return segments
-    .map(seg => {
+  return joinRendered(
+    segments.map((seg): RenderedPart => {
       switch (seg.type) {
         case 'text':
-          return String(seg.data.text ?? '');
+          return { user: String(seg.data.text ?? '') };
         case 'at': {
           const qq = String(seg.data.qq ?? '');
           if (qq === 'all') return '<at>all</at>';
-          const nick = nicknameMap?.get(qq) ?? qq;
+          const nick = escapeMarkup(nicknameMap?.get(qq) ?? qq);
           const selfAttr = selfId && qq === selfId ? ' self' : '';
           return `<at${selfAttr} id="${qq}">${nick}</at>`;
         }
         case 'mention': {
           const uid = String(seg.data.user_id ?? '');
-          const nick = nicknameMap?.get(uid) ?? uid;
+          const nick = escapeMarkup(nicknameMap?.get(uid) ?? uid);
           const selfAttr = selfId && uid === selfId ? ' self' : '';
           return `<at${selfAttr} id="${uid}">${nick}</at>`;
         }
@@ -198,7 +240,7 @@ export function segmentsToText(
         case 'face':
           return `[表情:${seg.data.id ?? ''}]`;
         case 'image':
-          return '[图片]';
+          return media?.(seg) ?? '[图片]';
         case 'reply':
           return ''; // 回复引用是元数据，不作为内联内容
         case 'forward': {
@@ -206,11 +248,15 @@ export function segmentsToText(
           return id ? `<forward id="${id}">[合并转发消息]</forward>` : '[合并转发消息]';
         }
         case 'record':
-          return '[语音]';
+        case 'voice':
+        case 'audio':
+          return media?.(seg) ?? '[语音]';
         case 'video':
-          return '[视频]';
+          return media?.(seg) ?? '[视频]';
+        case 'file':
+          return media?.(seg) ?? '[文件]';
         case 'share':
-          return `[分享: ${seg.data.title ?? ''}]`;
+          return `[分享: ${escapeMarkup(String(seg.data.title ?? ''))}]`;
         case 'json':
           return '[JSON卡片]';
         case 'xml':
@@ -221,8 +267,38 @@ export function segmentsToText(
           // 未识别段类型：保留类型名避免整条消息文本为空被静默丢弃
           return seg.type ? `[未知段:${seg.type}]` : '';
       }
-    })
-    .join('');
+    }),
+  );
+}
+
+/** 网址，或 base64 的 data URL：`data:` 后面紧跟 MIME 类型（`data:/` 开头的是存储地址，带着「;base64,」也不算） */
+const SEGMENT_SOURCE = /^(?:https?:\/\/|data:[\w.+-]+\/[\w.+-]+(?:;[^;,]*)*;base64,)/i;
+
+/**
+ * 消息段里能当来源读的地址：网址与 base64 的 data URL（{@link SEGMENT_SOURCE}），别的（本机路径、file://、存储地址）一律为空串。
+ * file 字段是文件名或实现端的文件 id，只当名字、只交给 get_record 这类动作换地址：群友能给文件起名，按它读就是让她读本机的
+ * 文件或 Aalis 的存储。没有可用来源的附件照留，由下游写取不到
+ */
+export function segmentSource(value: unknown): string {
+  return typeof value === 'string' && SEGMENT_SOURCE.test(value) ? value : '';
+}
+
+/** 入群邀请卡片的应用名（群分享卡片是 com.tencent.troopsharecard，不算） */
+const GROUP_INVITE_CARD_APP = 'com.tencent.qun.invite';
+
+/**
+ * 消息是不是一张入群邀请卡片：只有一个 json 段，卡片的 app 是 {@link GROUP_INVITE_CARD_APP}。邀请人在私聊里发来的这张卡片与
+ * 入群邀请事件（request/group/invite）是同一件事，交给模型的是事件合成的系统通知；json 段只渲染成「[JSON卡片]」，丢掉它不丢内容
+ */
+export function isGroupInviteCard(segments: OneBotMessageSegment[]): boolean {
+  if (segments.length !== 1 || segments[0].type !== 'json') return false;
+  const card = segments[0].data.data;
+  if (typeof card !== 'string') return false;
+  try {
+    return (JSON.parse(card) as { app?: unknown } | null)?.app === GROUP_INVITE_CARD_APP;
+  } catch {
+    return false;
+  }
 }
 
 /**

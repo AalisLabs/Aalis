@@ -8,7 +8,7 @@ import type {
   OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { normalizeOneBotMessage, segmentsToText, toV11Segments } from './types.js';
+import { normalizeOneBotMessage, segmentSource, segmentsToText, toV11Segments } from './types.js';
 
 /**
  * OneBot v11 协议处理器
@@ -94,28 +94,22 @@ export class OneBotV11 implements OneBotProtocol {
 
     if (!text.trim()) return null;
 
-    // 提取统一附件列表（image/record/video/file）
+    // 提取统一附件列表（image/record/video/file），来源见 segmentSource
     const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
+      const url = segmentSource(seg.data.url);
+      const name = seg.data.file ? String(seg.data.file) : undefined;
       if (seg.type === 'image' && seg.data.url) {
-        const url = String(seg.data.url);
-        attachments.push({ kind: 'image', url, name: seg.data.file ? String(seg.data.file) : undefined });
+        attachments.push({ kind: 'image', url, name, segment: seg });
       } else if (seg.type === 'record' && (seg.data.url || seg.data.file)) {
         // OneBot v11: 'record' = 语音段
-        const url = String(seg.data.url ?? seg.data.file);
-        attachments.push({ kind: 'audio', url, name: seg.data.file ? String(seg.data.file) : undefined });
+        attachments.push({ kind: 'audio', url, name, segment: seg });
       } else if (seg.type === 'video') {
         // 放宽 URL/file 约束：部分 OneBot 实现（如 NapCat 在 某些场景）不会同步返回 URL，
         // 此时仍保留 attachment 让下游 media 能输出「无法获取」描述，避免静默丢失
-        const url = seg.data.url ?? seg.data.file;
-        attachments.push({
-          kind: 'video',
-          url: url != null ? String(url) : '',
-          name: seg.data.file ? String(seg.data.file) : undefined,
-        });
+        attachments.push({ kind: 'video', url, name, segment: seg });
       } else if (seg.type === 'file' && (seg.data.url || seg.data.file)) {
-        const url = String(seg.data.url ?? seg.data.file);
-        attachments.push({ kind: 'file', url, name: seg.data.file ? String(seg.data.file) : undefined });
+        attachments.push({ kind: 'file', url, name, segment: seg });
       }
     }
 

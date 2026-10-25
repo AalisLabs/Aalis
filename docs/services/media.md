@@ -337,7 +337,7 @@ export default definePlugin({
 2. `isStorageUri(data)` 命中（即 storage 路径，含 `data:/...`，适配器已落盘）→ 原样保留。
 3. 否则若是 base64 data-URI，解码后经 `storage.writeFile` 落盘到本插件的子目录 `data:/images/<会话目录>/media/<hash>.<ext>`，并登记上节的「来源 → 落盘 ref」描述缓存别名。
 
-落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后把占位符改写成了引用）不再重复写。
+落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后按消息段写下了引用）不再重复写。
 
 ::: warning 先问 isStorageUri，再问 startsWith('data:')
 `data:/images/x.jpg`（storage 根 `data`）与 `data:image/png;base64,...`（浏览器 data-URI）只靠冒号后是否紧跟 `/` 区分。判定顺序反了，会把 data-URI 误判成 storage 路径。完整文法见 [docs/concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)（§3 `data:/` 与 data-URI），它直接以本服务为示例。

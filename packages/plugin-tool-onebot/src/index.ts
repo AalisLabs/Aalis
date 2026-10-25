@@ -350,13 +350,21 @@ function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[
     .flatMap(item => extractImageRefsFromContent(getForwardNodeContent(item)));
 }
 
+/** 消息段里能当来源读的：网址，或 `data:` 后面紧跟 MIME 类型的 base64 data URL（与 onebot 适配器的 segmentSource 同一条规则） */
+const SEGMENT_SOURCE = /^(?:https?:\/\/|data:[\w.+-]+\/[\w.+-]+(?:;[^;,]*)*;base64,)/i;
+
+/**
+ * 转发里一张图交给识图的来源。图片段里写的只认网址与 base64 的 data URL；别的（文件名、本机路径、像存储地址的串）只当
+ * get_image 的 file 参数，读的是实现端交回的地址（自己发起的请求的应答），段里写的不读：群友能给文件起名。换不出地址的
+ * 为 undefined，这张图不识别
+ */
 async function resolveForwardImageSource(
   caps: ForwardCaps,
   storage: StorageService,
   selfId: string,
   ref: ForwardImageRef,
-): Promise<string> {
-  if (/^(https?:|data:)/i.test(ref.source)) return ref.source;
+): Promise<string | undefined> {
+  if (SEGMENT_SOURCE.test(ref.source)) return ref.source;
   const { platform, logger } = caps;
 
   try {
@@ -364,19 +372,14 @@ async function resolveForwardImageSource(
       string,
       unknown
     >;
-    const resolvedSource = imageData.url ?? imageData.file ?? ref.source;
-    if (typeof resolvedSource === 'string') {
-      if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
-      const dataUri = await localImageToDataUri(storage, resolvedSource);
-      if (dataUri) return dataUri;
-      return resolvedSource;
-    }
+    const resolvedSource = imageData.url ?? imageData.file;
+    if (typeof resolvedSource !== 'string') return undefined;
+    if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
+    return (await localImageToDataUri(storage, resolvedSource)) ?? resolvedSource;
   } catch (err) {
     logger.use.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
+    return undefined;
   }
-
-  const dataUri = await localImageToDataUri(storage, ref.source);
-  return dataUri ?? ref.source;
 }
 
 async function recognizeForwardImages(
@@ -404,6 +407,7 @@ async function recognizeForwardImages(
     seen.add(key);
     try {
       const imageSource = await resolveForwardImageSource(caps, storage, selfId, ref);
+      if (!imageSource) continue;
       const description = await mediaService.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
     } catch (err) {

@@ -10,11 +10,7 @@
 // - 单文件 size cap 由调用方传入，超限直接返回 null
 // - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重（api-media 的命名约定）
 // - 返回落盘的存储地址，写进附件引用
-//
-// loadAttachmentBuffer 遇到 file:// / OS 绝对路径时改走 ProcessService.readExternalFile，
-// 避免 adapter 直接依赖 node:fs。原因：OneBot daemon 推来的路径可能不在任何 storage
-// root 下（典型：NapCat 容器挂载的 /tmp）。“读外部任意路径”是 process 能力、
-// 不应污染 storage 沙箱语义。
+// - loadAttachmentBuffer 各分支的来源写在分支上；入站消息段的来源解析时已滤过（见 types.ts 的 segmentSource）
 // ============================================================
 
 import { Buffer } from 'node:buffer';
@@ -86,7 +82,8 @@ async function loadAttachmentBuffer(
   maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Buffer<ArrayBuffer> | null> {
   try {
-    // storage URI 优先：data:/ 也是 storage（根名 data），不能被下面的 data: 分支误当 data-URI。
+    // 存储地址只来自出站附件（本机插件发出的，如 send_attachment 与白纸成品）。storage URI 优先：data:/ 也是 storage
+    // （根名 data），不能被下面的 data: 分支误当 data-URI。
     if (isStorageUri(source)) {
       // 读前先量：http 分支有 readBodyCapped 限额，这条此前整份读进内存再由
       // cacheAttachmentBuffer 事后判超限——白吃一次峰值，大文件足以压垮进程。
@@ -107,7 +104,9 @@ async function loadAttachmentBuffer(
       if (!res.ok) return null;
       return readBodyCapped(res, maxBytes);
     }
-    // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 process.readExternalFile
+    // file:// 或绝对路径：get_record 交回的本机路径（适配器自己发起的请求的应答）与插件代码直接发出的出站附件。走
+    // process.readExternalFile，不直接依赖 node:fs：这些路径可能不在任何 storage root 下（典型：NapCat 容器挂载的 /tmp），
+    // 读外部任意路径是 process 能力，不污染 storage 沙箱语义
     const raw = await proc.readExternalFile(source, Number.isFinite(maxBytes) ? maxBytes : undefined);
     return Buffer.from(raw);
   } catch {
