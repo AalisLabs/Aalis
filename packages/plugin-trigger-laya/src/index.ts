@@ -122,9 +122,8 @@ const POINTER_ONLY_WARN = 10;
 /**
  * 判定时这条消息的图片是否都只有指针、没有内容描述。只有指针：描述位为空（识别跑完了但没有描述，如没有可用的
  * 识别模型），或只有不带描述的附件引用 `[图片 | ref:…]`（media 关了图片到达即识别时写的）。识别失败的占位不算
- * （media 每次失败另记 warn）；动图走视频的抽帧识别，没有识别模型时写的是抽帧失败的说明，也不算，所以只覆盖
- * 静态图。多张图时每张都只有指针才算。附件识别还没写回（超过 mediaWaitMs、识别抛错、media 缺席）或没有图片
- * 附件时返回 undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
+ * （media 每次失败另记 warn）。多张图时每张都只有指针才算。附件识别还没写回（超过 mediaWaitMs、识别抛错、media
+ * 缺席）或没有图片附件时返回 undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
  */
 function imagesPointerOnly(message: IncomingMessage): boolean | undefined {
   const descs = message._attachmentDescriptions;

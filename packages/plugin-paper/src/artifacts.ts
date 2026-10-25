@@ -1,5 +1,5 @@
 // ============================================================
-// 成品：白纸根里的目录布局、提供者交来文件的写入口、按文件头判定类型
+// 成品：白纸根里的目录布局、提供者交来文件的写入口、按内容判定类型
 //
 // 白纸文件：paper:/<目录>/tasks/<任务 id>/out/<产物 id>.<判定类型的扩展名>，工程包 paper:/<目录>/workspace.tar.gz，
 // 目录名取 api-session-manager 的 paperDirName（n-<名> 或 p-<场所键的十六进制>）。远端给的相对路径（rel）只写进记录
@@ -12,32 +12,46 @@
 import { type ArtifactSink, artifactRelProblem } from '@aalis/api-remote-agent';
 import { paperDirName } from '@aalis/api-session-manager';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import {
+  decodeUtf8Text,
+  detectMediaFormat,
+  FILE_HEAD_BYTES,
+  MEDIA_FORMATS,
+  type MediaFormat,
+} from '@aalis/util-file-signature';
 import type { ArtifactCaps } from './config.js';
 import { randomHex, type TaskRecord } from './ledger.js';
 
 type Artifact = TaskRecord['artifacts'][number];
 type ArtifactType = Artifact['type'];
 
-/** 各判定类型落盘用的扩展名（paper_send 重写的文件名也用它） */
-export const EXTENSIONS: Record<ArtifactType, string> = {
-  png: 'png',
-  jpeg: 'jpg',
-  gif: 'gif',
-  webp: 'webp',
-  mp4: 'mp4',
-  html: 'html',
-  other: 'bin',
-};
+/**
+ * 能发出的位图与视频：成品类型 → 文件头判定的格式，扩展名、MIME 与是不是视频都取判定表；认得出、但不在这里的媒体
+ * （M4A、HEIC、MKV…）归 other
+ */
+const MEDIA_ARTIFACTS = {
+  png: MEDIA_FORMATS.PNG,
+  jpeg: MEDIA_FORMATS.JPEG,
+  gif: MEDIA_FORMATS.GIF,
+  webp: MEDIA_FORMATS.WebP,
+  mp4: MEDIA_FORMATS.MP4,
+  mov: MEDIA_FORMATS.MOV,
+} satisfies Record<Exclude<ArtifactType, 'html' | 'other'>, MediaFormat>;
 
-/** 能发出的判定类型的 MIME（paper_send 发出时用；WebUI 只把其中的位图显示在页面里） */
-export const MIME_TYPES: Record<Exclude<ArtifactType, 'other'>, string> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  html: 'text/html',
-};
+/** 判定类型落盘用的扩展名（paper_send 重写的文件名也用它） */
+export function artifactExtension(type: ArtifactType): string {
+  return type === 'html' ? 'html' : type === 'other' ? 'bin' : MEDIA_ARTIFACTS[type].ext;
+}
+
+/** 能发出的判定类型的 MIME（paper_send 发出时用） */
+export function artifactMime(type: Exclude<ArtifactType, 'other'>): string {
+  return type === 'html' ? 'text/html' : MEDIA_ARTIFACTS[type].mime;
+}
+
+/** 视频成品：按视频发、超限时说「视频」 */
+export function isVideo(type: ArtifactType): boolean {
+  return type !== 'html' && type !== 'other' && MEDIA_ARTIFACTS[type].kind === 'video';
+}
 
 /** 白纸在白纸根里的目录 */
 export function paperDirUri(paperId: string): string {
@@ -51,7 +65,7 @@ function taskOutUri(paperId: string, taskId: string): string {
 
 /** 一件成品在白纸根里的位置：文件名是宿主生成的产物 id 加判定类型的扩展名 */
 export function artifactUri(paperId: string, taskId: string, artifact: Pick<Artifact, 'id' | 'type'>): string {
-  return `${taskOutUri(paperId, taskId)}/${artifact.id}.${EXTENSIONS[artifact.type]}`;
+  return `${taskOutUri(paperId, taskId)}/${artifact.id}.${artifactExtension(artifact.type)}`;
 }
 
 /** 白纸的工程包 */
@@ -59,33 +73,18 @@ export function bundleUri(paperId: string): string {
   return `${paperDirUri(paperId)}/workspace.tar.gz`;
 }
 
-function startsWith(data: Uint8Array, offset: number, magic: readonly number[]): boolean {
-  return data.byteLength >= offset + magic.length && magic.every((b, i) => data[offset + i] === b);
-}
-
-const ascii = (s: string) => [...s].map(c => c.charCodeAt(0));
-
 /**
- * 按文件头判定类型：PNG、JPEG、GIF、WebP、MP4 看魔数；HTML 须扩展名为 .html 或 .htm、能按 UTF-8 解码、
- * 去掉 BOM 与空白后以 `<!doctype html` 或 `<html` 开头（不分大小写）；其余为 other。
+ * 按内容判定类型，不看扩展名：PNG、JPEG、GIF、WebP、MP4、MOV 按文件头（@aalis/util-file-signature）；HTML 能按 UTF-8
+ * 解码、去掉 BOM 与空白后以 `<!doctype html` 或 `<html` 开头（不分大小写）；其余为 other。
  */
-export function sniffType(rel: string, data: Uint8Array): ArtifactType {
-  if (startsWith(data, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'png';
-  if (startsWith(data, 0, [0xff, 0xd8, 0xff])) return 'jpeg';
-  if (startsWith(data, 0, ascii('GIF87a')) || startsWith(data, 0, ascii('GIF89a'))) return 'gif';
-  if (startsWith(data, 0, ascii('RIFF')) && startsWith(data, 8, ascii('WEBP'))) return 'webp';
-  if (startsWith(data, 4, ascii('ftyp'))) return 'mp4';
-  if (/\.html?$/i.test(rel)) {
-    let body: string;
-    try {
-      body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
-    } catch {
-      return 'other';
-    }
-    const head = body.replace(/^﻿/, '').trimStart().slice(0, 16).toLowerCase();
-    if (head.startsWith('<!doctype html') || head.startsWith('<html')) return 'html';
+export function sniffType(data: Uint8Array): ArtifactType {
+  const format = detectMediaFormat(data.subarray(0, FILE_HEAD_BYTES));
+  if (format) {
+    const sendable = Object.entries(MEDIA_ARTIFACTS).find(([, media]) => media.format === format.format);
+    return sendable ? (sendable[0] as ArtifactType) : 'other';
   }
-  return 'other';
+  const head = decodeUtf8Text(data)?.trimStart().slice(0, 16).toLowerCase() ?? '';
+  return head.startsWith('<!doctype html') || head.startsWith('<html') ? 'html' : 'other';
 }
 
 /** 目录（或文件）的实际占用：列目录逐层求和；不存在按 0 */
@@ -170,7 +169,7 @@ export class RunCollector implements ArtifactSink {
     if (this.#runBytes + size > this.caps.maxRunBytes)
       throw new Error(`超过本轮合计上限 ${this.caps.maxRunBytes} 字节`);
     this.#fits(size);
-    const type = sniffType(rel, data);
+    const type = sniffType(data);
     let id: string;
     do id = `a-${randomHex(4)}`;
     while (this.takenIds.has(id));

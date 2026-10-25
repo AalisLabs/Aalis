@@ -87,4 +87,17 @@ describe('pdf_convert 可转后台', () => {
       register().handler({ inputPath: 'workspace:/a.docx' }, toolContext({ sessionId: 's' })),
     ).rejects.toThrow('process 服务');
   });
+
+  it('路径与文件工具同一判定：相对路径落在输出目录下，宿主机绝对路径（含 C:/）报错，不转换', async () => {
+    const { proc, calls } = fakeProcess('ok');
+    const convert = register(proc);
+    const ctx = toolContext({ sessionId: 's' });
+    expect(parse(await convert.handler({ inputPath: 'sub/a.docx' }, ctx))).toMatchObject({
+      path: 'workspace:/office/sub/a.pdf',
+    });
+    for (const inputPath of ['/abs/a.docx', 'C:/x/a.docx']) {
+      await expect(convert.handler({ inputPath }, ctx)).rejects.toThrow('宿主机绝对路径');
+    }
+    expect(calls).toHaveLength(1);
+  });
 });

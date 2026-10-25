@@ -19,7 +19,11 @@ function hangingFetch(): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
-const AUDIO = { kind: 'audio', data: 'data:audio/wav;base64,AAAA' } as const;
+/** 内容是 WAV 文件头：上传的格式按内容认 */
+const AUDIO = {
+  kind: 'audio',
+  data: `data:audio/wav;base64,${Buffer.from('RIFF\0\0\0\0WAVEfmt ').toString('base64')}`,
+} as const;
 
 describe('plugin-asr-openai: 请求必须带超时', () => {
   const apps: App[] = [];

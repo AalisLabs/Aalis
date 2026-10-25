@@ -474,6 +474,20 @@
 - plugin-adapter-onebot：合并转发摘要的输出上限改为 `forward.summaryMaxChars` 的 3 倍、不少于 2048 token（默认 600 字时为 2048，此前为 900）；在上限处停下时摘要末尾标出「（已在长度上限处截断）」，按全局层的语言，带标记的摘要进转发缓存。
 - plugin-websearch-serper：搜索结果压缩的输出上限从 1024 改为 2048 token，只防失控；在上限处停下时，交给 agent 的结果末尾标出「（已在长度上限处截断）」，不重试。
 
+### 文件类型判定与媒体（新包 @aalis/util-file-signature；@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-media、@aalis/plugin-image-sender、@aalis/plugin-publish-review、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-asr-openai、@aalis/plugin-office、@aalis/plugin-paper）
+
+- `@aalis/util-media-signature` 改名 `@aalis/util-file-signature`（新包 0.1.0，旧包不再更新），另认文档、文本与动图：`MEDIA_HEAD_BYTES` 改名 `FILE_HEAD_BYTES`；`MediaFormat` 加 `ext` 与 `mime`，`format` 的类型收成格式名的联合 `MediaFormatName`；新增 `MEDIA_FORMATS`（按格式名查扩展名与 MIME）、`MEDIA_KIND_LABEL`（媒体种类的中文名）、`detectDocumentFormat`、`decodeUtf8Text`、`isAnimatedImage`。plugin-adapter-onebot、plugin-image-sender、plugin-media、plugin-publish-review、plugin-webui-server 改依赖新包，plugin-asr-openai、plugin-office、plugin-paper 新加这个依赖（破坏性）。
+- plugin-asr-openai：上传给接口的文件名与类型取按内容判定的格式，路径后缀、Content-Type 或 data URL 写的类型与内容对不上的（如内容是 MP3、名字是 `.opus`）不再被接口拒；接口不接受的格式（AMR、SILK 与认不出的）读出来就报「Whisper 接口不接受 <格式> 音频」，不再改名成 `audio.wav` 硬传。
+- plugin-office：插图的格式按文件头认，扩展名或 Content-Type 写错的图按真实格式插入；Word 只收 PNG、JPEG、GIF、BMP，PPT 只收 PNG、JPEG、GIF，别的格式（WebP、SVG、AVIF 等）与不是图片的内容报错，不再产出打不开的文档。插图来源与 `pdf_convert` 的路径按文件工具的同一判定求值：宿主机绝对路径（含 `C:/`）报错，不再当成根名为 `C` 的存储地址读，也不再悄悄拼到输出目录下。
+- plugin-paper：成品类型按内容判定。MOV 视频记作 `mov`（记录的成品类型加这一项），`paper_send` 以视频发出、文件名 `<任务名>.mov`；M4A、HEIC、AVIF、MKV 等认得出但不能发的媒体记作 `other`，不再冒充 MP4；HTML 只看内容，扩展名不是 `.html` 的网页也按网页处理（开了 `sendHtml` 才发）。`paper_send` 不再核对远端给的原扩展名，发出的文件名照旧按判定类型重写。MOV 成品不进作品的自动挑选与提名（作品站按扩展名给类型，只收 MP4）。
+- plugin-adapter-onebot：入站落盘的扩展名取文件头判定的格式：MOV 落成 `.mov`、MKV 落成 `.mkv`（此前一律 `.mp4`、`.webm`），认不出的落 `.bin`（此前图片落 `.jpg`、视频落 `.mp4`）。
+- plugin-tool-onebot：合并转发里 `get_image` 给的地址原样交给 media 识图，由 media 读出来按文件头认（此前插件自己读存储地址、按扩展名定 data URI 的类型，认不出当 PNG）。
+- plugin-media：要不要抽帧按读到的字节判：单帧 GIF 按静图识别，少一次 ffprobe 与多帧调用；APNG、动态 WebP 与没有扩展名的动图按动图抽帧；不再看 data URL 写的类型、扩展名与适配器报的 mimeType。网址来源的图先下载下来判（20 MiB 上限）；静图按读到的字节转成 data URL（类型取判定结果）交给识别模型或主模型，网址不再交给提供方去下，存储地址的静图不再按扩展名猜类型（认不出当 PNG）。抽不出帧的动图（缺 ffmpeg、解码不了）退回整图识别，不再写成视频的失败说明，`describeImage` 也不再回空串。到达识别时动图的描述位与静图同一形态（带落盘的引用，WebUI 上传的动图也落盘）；描述缓存命中时不再读来源，网址来源不重下。`describeImage` 的中止信号也让网址来源的下载停下。
+- plugin-media：描述缓存不再按「[图片:」「[动图:」开头认识别失败，识别模型给出的以这几个字开头的描述照常缓存；视频取不到、抽不出帧的失败说明不进缓存，下次照样重试。失败说明不点名 OneBot：视频没有地址时写「[视频] 来源没有给出视频文件地址，无法获取内容」，音频转不出 WAV 时不再附「请检查 OneBot 实现端 get_record…」。
+- plugin-media：交给模型的音频格式按文件头认，MP4、MOV 等视频容器先转 WAV，不再一律当 M4A 原样交出。`analyze_image` 直通交付把网址读进内存、按文件头认图，不再看 Content-Type，也不落临时文件；data URI 同样按文件头认，写着的类型不看：类型写成 `image/png` 的非图片被拒，写成 `application/octet-stream` 的真图照常交出。
+- plugin-webui-client：条目附件与 Markdown 里的地址按 api-storage 的同一文法认存储地址，`file:` 开头的不再拼成 `/api/media` 去取（服务端回 400）：图片只写替代文字，附件写成一行名字。
+- plugin-webui-server：图片代理（`/api/proxy/image`）按文件头认图，放行与 `/api/media` 同一份图片格式（PNG、JPEG、GIF、WebP），类型取判定结果、不看上游的 Content-Type：外链 SVG 不再经代理显示，类型头写错的真图照常显示；不是图片的回 415，说明改为「上游返回的不是能显示的图片」。`/api/media` 按 api-storage 的同一文法认存储地址，`file:/` 开头的回 400。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

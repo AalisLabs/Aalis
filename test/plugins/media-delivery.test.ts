@@ -1,6 +1,3 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { Logger, ServiceView } from '@aalis/core';
 import { App, events, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
@@ -26,16 +23,17 @@ import { storedRoom } from '../fixtures/rooms.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
-/** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
+/** analyze_image 直通分支的远端下载桩：只替换 safeFetchBuffer，其余走原实现；seen 记下下载的网址，next 为空时按下载失败抛错 */
 const download = vi.hoisted(() => ({
-  next: null as { path: string; uri: string; cleanup: () => Promise<void> } | null,
-  seen: [] as Array<{ url: string; imageOnly: boolean | undefined }>,
+  next: null as Uint8Array | null,
+  seen: [] as string[],
 }));
 vi.mock(import('../../packages/plugin-media/src/safe-fetch.js'), async importOriginal => ({
   ...(await importOriginal()),
-  safeDownloadToTemp: async (url: string, opts?: { imageOnly?: boolean }) => {
-    download.seen.push({ url, imageOnly: opts?.imageOnly });
-    return download.next;
+  safeFetchBuffer: async (url: string) => {
+    download.seen.push(url);
+    if (!download.next) throw new Error('上游返回 404');
+    return Buffer.from(download.next);
   },
 }));
 
@@ -48,8 +46,10 @@ vi.mock(import('../../packages/plugin-media/src/safe-fetch.js'), async importOri
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 const DATA_URI = 'data:image/png;base64,iVBORw0KGgo=';
+/** PNG 的签名与 IHDR 块头：按文件头判是 PNG */
+const PNG_HEAD = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 /** 每个工具用例一张不同的图：描述缓存是模块级的，同一 data URI 会命中缓存而不再调识别模型 */
-const toolUri = (n: number) => `data:image/png;base64,iVBORw0KGgoAAAANSUhEUg${'A'.repeat(n)}==`;
+const toolUri = (n: number) => `data:image/png;base64,${Buffer.concat([PNG_HEAD, Buffer.alloc(n)]).toString('base64')}`;
 
 function cfgWith(vision: Partial<MediaConfigResolved['vision']>): MediaConfigResolved {
   return {
@@ -179,47 +179,49 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     return { result, calls };
   }
 
-  it('passthrough + 非图片的 data URI：在工具层返回错误，不交给主请求（否则整轮 400）', async () => {
+  it.each([
+    ['类型写成 text/plain', 'text/plain'],
+    ['类型写成 image/png', 'image/png'],
+  ])('passthrough + 内容不是图片的 data URI（%s）：按文件头判，在工具层返回错误，不交给主请求（否则整轮 400）', async (_label, mime) => {
     const { result, calls } = await withTool(
       { delivery: 'passthrough' },
       true,
-      `data:text/plain;base64,${Buffer.from('not an image').toString('base64')}`,
+      `data:${mime};base64,${Buffer.from('not an image').toString('base64')}`,
     );
     expect(JSON.parse(result.content).error).toMatch(/不是图片/);
     expect(result.images).toBeUndefined();
     expect(calls).toHaveLength(0);
   });
 
-  it('passthrough + 远端 http 图片：工具层先下载并校验是图片，再以 file:// 交给物化链，图片随结果交出', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'aalis-analyze-'));
-    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ', 'base64');
-    const path = join(dir, 'download.png');
-    await writeFile(path, png);
-    let cleaned = false;
-    download.next = {
-      path,
-      uri: 'tmp:/media-dl/download.png',
-      cleanup: async () => {
-        cleaned = true;
-      },
-    };
-    // 物化链对 file:// 走 proc.readExternalFile 读盘
-    setMediaRuntime({ proc: { readExternalFile: (p: string) => readFile(p) } as never, storage: {} as never });
-    try {
-      const url = 'https://example.invalid/pic';
-      const { result, calls } = await withTool({ delivery: 'passthrough' }, true, url);
-      expect(download.seen.at(-1)).toEqual({ url, imageOnly: true });
-      expect(calls).toHaveLength(0);
-      expect(result.images).toEqual([`data:image/png;base64,${png.toString('base64')}`]);
-      expect(JSON.parse(result.content)).toMatchObject({ ok: true, image: url });
-      expect(cleaned, '临时下载文件在交付后清理').toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+  it('passthrough + 类型写成 octet-stream 的真图：按文件头认，图片随结果交出、类型取判定结果', async () => {
+    const png = Buffer.concat([PNG_HEAD, Buffer.alloc(8)]).toString('base64');
+    const { result, calls } = await withTool(
+      { delivery: 'passthrough' },
+      true,
+      `data:application/octet-stream;base64,${png}`,
+    );
+    expect(calls).toHaveLength(0);
+    expect(result.images).toEqual([`data:image/png;base64,${png}`]);
   });
 
-  it('passthrough + 远端下载失败或不是图片：工具层返回错误，不交给主请求', async () => {
-    download.next = null;
+  it('passthrough + 远端 http 图片：工具层先下载并按文件头认是图片，转成 data URL 随结果交出，不落临时文件', async () => {
+    const png = Buffer.concat([PNG_HEAD, Buffer.alloc(8)]);
+    download.next = png;
+    // 不落临时文件：物化链与存储一样都碰不到
+    setMediaRuntime({ proc: {} as never, storage: {} as never });
+    const url = 'https://example.invalid/pic';
+    const { result, calls } = await withTool({ delivery: 'passthrough' }, true, url);
+    expect(download.seen.at(-1)).toBe(url);
+    expect(calls).toHaveLength(0);
+    expect(result.images).toEqual([`data:image/png;base64,${png.toString('base64')}`]);
+    expect(JSON.parse(result.content)).toMatchObject({ ok: true, image: url });
+  });
+
+  it.each([
+    ['下载失败', null],
+    ['下到的不是图片', Buffer.from('<!doctype html><p>placeholder</p>')],
+  ])('passthrough + 远端%s：工具层返回错误，不交给主请求', async (_label, next) => {
+    download.next = next;
     const { result, calls } = await withTool({ delivery: 'passthrough' }, true, 'https://example.invalid/404');
     expect(JSON.parse(result.content).error).toMatch(/无法下载/);
     expect(result.images).toBeUndefined();
@@ -230,7 +232,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     download.next = null;
     const url = 'https://example.invalid/cat.png';
     const { result } = await withTool({ delivery: 'passthrough' }, true, `[图片 | ref:${url}]`);
-    expect(download.seen.at(-1)).toEqual({ url, imageOnly: true });
+    expect(download.seen.at(-1)).toBe(url);
     expect(JSON.parse(result.content).error).toMatch(/无法下载/);
   });
 

@@ -1780,8 +1780,7 @@ class DefaultAgent implements AgentService {
     const storage = this.caps.storage.use;
     try {
       const raw = (await storage.readFile(t)) as Uint8Array;
-      // mime 优先取附件自带的 mimeType；缺省按 basename 扩展名推断（适配器落盘只产
-      // png/jpg/gif/webp 四种，见 attachment-cache 的 detectExtensionFromBuffer）
+      // mime 优先取附件自带的 mimeType；缺省按 basename 扩展名推断（适配器落盘的扩展名取文件头判定的格式）
       const base = t.slice(t.lastIndexOf('/') + 1);
       const dot = base.lastIndexOf('.');
       const ext = dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';

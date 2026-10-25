@@ -81,25 +81,14 @@ export function descriptionKey(source: string): string {
 }
 
 /**
- * processVideo 在无法物化 / 抽不出帧时返回给 LLM 的失败文案。集中在此定义，让「是不是
- * 失败文案」成为对常量的精确匹配，而不是对前缀的猜测——`[画面] ` 这类前缀是用户可配的
- * （video.framePrefix），按前缀判会把用户恰好配成同名前缀的真描述一并拒缓存。
+ * processVideo 取不到视频或抽不出关键帧时写进描述位的说明（给模型看）。它作为失败结果交出，调用方不写进缓存：写进 30 天
+ * 缓存的话，同一个视频或动图此后每次命中都直接回这句、永不重试。
  */
 export const VIDEO_FAILURE_TEXTS = {
   unreadable: '[视频] 无法下载或读取视频文件内容（URL 不可访问或解码失败）',
-  noUrl: '[视频] OneBot 服务端未提供视频文件 URL，无法获取内容',
+  noUrl: '[视频] 来源没有给出视频文件地址，无法获取内容',
   noFrames: '[视频] 已收到视频文件但未能抽取关键帧或音轨（可能缺少 ffmpeg/ffprobe，或视频解码失败）',
 } as const;
-const VIDEO_FAILURE_SET: ReadonlySet<string> = new Set(Object.values(VIDEO_FAILURE_TEXTS));
-
-/**
- * 失败占位判定：`[图片: …]` / `[动图: …]` 形态占位（formatAttachmentRef 契约前缀，非用户可配）
- * 与 processVideo 的失败文案。写入时拒缓存：失败文案若被当成描述写进 30 天缓存，
- * 同一动图此后每次命中都直接返回失败文案、永不重试。
- */
-function isFailurePlaceholder(raw: string): boolean {
-  return raw.startsWith('[图片:') || raw.startsWith('[动图:') || VIDEO_FAILURE_SET.has(raw);
-}
 
 /**
  * 登记「来源 → 落盘 ref」别名。**落盘时调一次**（本插件 cacheImageRef 落盘成功处；
@@ -124,7 +113,7 @@ function resolveAlias(source: string): string {
 }
 
 /**
- * 写入缓存（空串与失败占位不缓存，见 isFailurePlaceholder）。
+ * 写入缓存（空串不缓存）。只交识别出的描述：识别失败的说明由调用方挡在外面（见 {@link VIDEO_FAILURE_TEXTS}）。
  *
  * `shareable=false` 时不跨会话共享——描述若掺进了**当前会话的对话上下文**
  * （contextHistory 开启时 vision prompt 里带着近期聊天，senderContext 也开时还有发送者画像），
@@ -132,7 +121,7 @@ function resolveAlias(source: string): string {
  * 这类描述退回按存储地址（含会话目录）做键，只在本会话内复用。
  */
 export function rememberDescription(key: string, raw: string, shareable = true, variant?: string): void {
-  if (!raw || isFailurePlaceholder(raw)) return;
+  if (!raw) return;
   cache.set(cacheKey(key, shareable, variant), raw);
   schedulePersist();
 }
@@ -177,7 +166,7 @@ export function loadDescriptionCache(logger: CacheLogger): Promise<number> {
       const msg = err instanceof Error ? err.message : String(err);
       // 首次运行读不到文件是正常的；其余错因（存储根未就绪、权限、JSON 损坏）要能被看见，
       // 否则表现只是「重启后缓存莫名从头开始」。两种情况都不开落盘，宁可不复用也不覆盖。
-      if (/ENOENT|不存在|no such file/i.test(msg)) {
+      if (isStorageNotFound(err)) {
         persistLogger = logger;
         logger.debug(`图片描述缓存快照不存在，按首次运行处理: ${msg}`);
       } else {

@@ -1,4 +1,5 @@
 import '@aalis/api-approval';
+import '@aalis/api-storage';
 import { BUILTIN_THEMES, CLIENT_TEXTS_FILE, parseTheme } from '@aalis/api-webui';
 import '@aalis/schema-config';
 import { catalogEntries, toSource } from '@aalis/schema-i18n';
@@ -29,8 +30,8 @@ function builtinThemes(): Plugin {
 
 /**
  * 随前端打包的字典写进 dist 下的 CLIENT_TEXTS_FILE，webui-server 挂载这个前端时登记进服务进程的目录。上面的导入登记了它们：
- * 外壳的（src/texts）与打进包里的库的（api-webui 连同它用的 schema-i18n、api-approval、schema-config）。打进包里的库多了
- * 带字典的，在上面补一行导入（test/plugins/webui-client-texts.test.ts 核文件与产物一致）
+ * 外壳的（src/texts）与打进包里的库的（api-webui 连同它用的 schema-i18n、api-approval、schema-config，认媒体地址用的
+ * api-storage）。打进包里的库多了带字典的，在上面补一行导入（test/plugins/webui-client-texts.test.ts 核文件与产物一致）
  */
 function bundledTexts(): Plugin {
   return {

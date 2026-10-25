@@ -454,7 +454,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         name: 'paper_send',
         description:
           '把白纸成品发回本群：artifact_id 用完成通知、待交付提示或 paper_status 里的成品编号。' +
-          '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页；等平台确认收下才返回成功，结果未确认时不要重发。',
+          '只发 PNG、JPEG、GIF、WebP 图片、MP4、MOV 视频与单个 HTML 网页；等平台确认收下才返回成功，结果未确认时不要重发。',
         parameters: {
           type: 'object',
           properties: { artifact_id: { type: 'string', description: '成品编号（a-开头）' } },

@@ -7,7 +7,7 @@
 
 语音识别（ASR）的 OpenAI Whisper API 提供者。插件向核心注册 `asr` 服务，实现只有一个 `transcribe` 方法：把音频附件封装为 multipart 表单，POST 到 `baseUrl` 下的 `/audio/transcriptions`，返回文本与可选的时间戳分段。凡实现 OpenAI 风格 `/audio/transcriptions` 协议的服务端（如 Groq、本地 ollama-asr 网关）均可经 `baseUrl` 接入。音频附件支持以下来源：base64 data URL、`file://` 或绝对路径（经 process 服务读取）、http(s) URL（经 `safeFetch` 下载，超时 15 秒、体积上限 20 MiB，超时或超限直接抛错）、storage URI（经 storage 服务读取）。其它格式（含相对路径 `data/...`）直接抛错。
 
-上传的文件名后缀按 Whisper API 实际接受的集合（`flac` / `m4a` / `mp3` / `mp4` / `mpeg` / `mpga` / `oga` / `ogg` / `wav` / `webm`）判定：来源路径的后缀在集内就沿用，否则（无后缀、或 `opus`、`amr` 这类 API 判 400 的后缀）按 Content-Type 映射到集内后缀，都取不到落 `wav`。后缀只决定上传文件名，插件不做转码。
+上传的文件名与类型取按内容判定的格式（[util-file-signature](../utils/README.md)，如 `audio.mp3`、`audio/mpeg`），不看来源的路径后缀、Content-Type 或 data URL 里写的类型：Whisper 接口按文件名的后缀认格式。接口接受 MP3、WAV、OGG、FLAC、M4A、MP4、WebM；别的格式（AMR、SILK 等）与认不出的，读出来就报「Whisper 接口不接受 <格式> 音频」，插件不做转码。
 
 ## 插件声明
 

@@ -1,19 +1,19 @@
 // ============================================================
 // 把白纸成品发回发起房间：paper_send 与「自动发布在提交前失败」时的直接发送共用
 //
-// 类型按白名单：位图与 MP4 按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，位图走 image、MP4 走 video、
-// HTML 走 file，远端给的原扩展名须与按文件头判定的类型一致。文件名由宿主按任务名重写，附件指向白纸根里宿主命名的
-// 文件。等平台适配器确认收下（awaitDelivery）才记已交付：没有适配器接手、发送失败都不记；平台报结果未知（可能已经
-// 送达）时把这次发出的成品记为结果未知，报「请勿重发」；等不到确认（等满或回合中止）时同样当场记下、报「未确认，
-// 请勿重发」，迟到的结果到了再结算：成功补记已交付，确定失败撤掉这几件的结果未知。结果未知按成品记，同一任务的其他
-// 成品照常可发。插件停了（如被重载）就不再写记录，免得旧实例整份写盘盖掉新实例的记录。
+// 类型按白名单：位图与 MP4、MOV 视频按 sendMediaMaxMB、单个 HTML 按 sendHtml 与大小上限，位图走 image、视频走
+// video、HTML 走 file。类型按内容判定，远端给的原扩展名不核对：文件名由宿主按任务名与判定类型重写，附件指向白纸根里
+// 宿主命名的文件。等平台适配器确认收下（awaitDelivery）才记已交付：没有适配器接手、发送失败都不记；平台报结果未知
+// （可能已经送达）时把这次发出的成品记为结果未知，报「请勿重发」；等不到确认（等满或回合中止）时同样当场记下、报
+// 「未确认，请勿重发」，迟到的结果到了再结算：成功补记已交付，确定失败撤掉这几件的结果未知。结果未知按成品记，同一任务
+// 的其他成品照常可发。插件停了（如被重载）就不再写记录，免得旧实例整份写盘盖掉新实例的记录。
 // ============================================================
 
 import type { GatewayService } from '@aalis/api-gateway';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type OutgoingMessage } from '@aalis/schema-message';
-import { artifactUri, EXTENSIONS, MIME_TYPES } from './artifacts.js';
+import { artifactExtension, artifactMime, artifactUri, isVideo } from './artifacts.js';
 import type { PaperConfig } from './config.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { describe, formatSize } from './util.js';
@@ -22,16 +22,6 @@ const MAX_NAME = 40;
 
 export type Artifact = TaskRecord['artifacts'][number];
 type SendableType = Exclude<Artifact['type'], 'other'>;
-
-/** 各类型认的原扩展名：远端给的文件名与按文件头判定的类型不一致时不发 */
-const TYPE_EXTENSIONS: Record<SendableType, readonly string[]> = {
-  png: ['png'],
-  jpeg: ['jpg', 'jpeg'],
-  gif: ['gif'],
-  webp: ['webp'],
-  mp4: ['mp4'],
-  html: ['html', 'htm'],
-};
 
 /** 不发的成品按原扩展名说明原因 */
 const REFUSED_EXTENSIONS: ReadonlyArray<{ exts: readonly string[]; reason: string }> = [
@@ -62,7 +52,7 @@ export function sendRefusal(artifact: Artifact, cfg: PaperConfig): string | unde
   const ext = extensionOf(artifact.rel);
   if (artifact.type === 'other') {
     const refused = REFUSED_EXTENSIONS.find(r => r.exts.includes(ext));
-    return refused?.reason ?? '只发 PNG、JPEG、GIF、WebP 图片、MP4 视频与单个 HTML 网页，这件成品不是这几种';
+    return refused?.reason ?? '只发 PNG、JPEG、GIF、WebP 图片、MP4、MOV 视频与单个 HTML 网页，这件成品不是这几种';
   }
   if (artifact.type === 'html') {
     if (!cfg.sendHtml) return 'owner 没有开启发送网页（sendHtml），这件成品不发';
@@ -70,11 +60,8 @@ export function sendRefusal(artifact: Artifact, cfg: PaperConfig): string | unde
       return `网页 ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendHtmlMaxBytes)}`;
     }
   } else if (artifact.sizeBytes > cfg.sendMediaMaxBytes) {
-    const what = artifact.type === 'mp4' ? '视频' : '图片';
+    const what = isVideo(artifact.type) ? '视频' : '图片';
     return `${what} ${formatSize(artifact.sizeBytes)}，超过发送上限 ${formatSize(cfg.sendMediaMaxBytes)}（聊天平台只内联发得出这么大的媒体）`;
-  }
-  if (!TYPE_EXTENSIONS[artifact.type].includes(ext)) {
-    return `原文件的扩展名（${ext ? `.${ext}` : '无'}）与文件内容（${artifact.type}）不一致，不发`;
   }
   return undefined;
 }
@@ -148,10 +135,10 @@ export async function deliverArtifacts(
     attachments: artifacts.map(artifact => {
       const type = artifact.type as SendableType;
       return {
-        kind: type === 'mp4' ? ('video' as const) : type === 'html' ? ('file' as const) : ('image' as const),
+        kind: isVideo(type) ? ('video' as const) : type === 'html' ? ('file' as const) : ('image' as const),
         data: artifactUri(task.paperId, task.id, artifact),
-        name: `${fileBaseName(task.name)}.${EXTENSIONS[type]}`,
-        mimeType: MIME_TYPES[type],
+        name: `${fileBaseName(task.name)}.${artifactExtension(type)}`,
+        mimeType: artifactMime(type),
       };
     }),
     source: 'agent',

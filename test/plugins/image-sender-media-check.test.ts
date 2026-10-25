@@ -17,7 +17,7 @@ import {
   type OutboundDeliveryResult,
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
-import { checkMediaHead, detectMediaFormat, type MediaKind } from '../../packages/util-media-signature/src/index.js';
+import { bytes, FAKE_SQLITE, FAKE_TOKEN, FAKE_YAML, png } from '../fixtures/file-heads.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { toolContext } from '../fixtures/tool-call.js';
@@ -32,110 +32,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 // 全部用本地假文件（内容为占位符），不碰真实配置、不连 NapCat、不发网络请求。
 // ════════════════════════════════════════════════════════════
 
-const ascii = (s: string) => [...s].map(c => c.charCodeAt(0));
-const le32 = (n: number) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
-const be32 = (n: number) => [n >>> 24, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
-const bytes = (...parts: Array<number[] | string>) =>
-  Uint8Array.from(parts.flatMap(p => (typeof p === 'string' ? ascii(p) : p)));
-/** ISO 基础媒体文件的 ftyp 盒：主品牌、次版本 0、兼容品牌表。 */
-const ftyp = (major: string, ...compatible: string[]) =>
-  bytes(be32(16 + 4 * compatible.length), 'ftyp', major, [0, 0, 0, 0], ...compatible);
-/** EBML 头：版本字段后接 DocType（0x4282 + 一字节长度 + 名字）。 */
-const ebml = (docType: string) =>
-  bytes(
-    [0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01],
-    [0x42, 0x82, 0x80 | docType.length],
-    docType,
-  );
-
-/** 各格式的最小合法文件头。 */
-const HEADS: Array<[format: string, kind: MediaKind, head: Uint8Array]> = [
-  ['PNG', 'image', bytes([0x89], 'PNG\r\n', [0x1a, 0x0a], be32(13), 'IHDR')],
-  ['JPEG', 'image', bytes([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10], 'JFIF', [0])],
-  ['GIF', 'image', bytes('GIF89a', [1, 0, 1, 0, 0])],
-  ['GIF', 'image', bytes('GIF87a', [1, 0, 1, 0, 0])],
-  ['WebP', 'image', bytes('RIFF', le32(26), 'WEBP', 'VP8 ')],
-  ['BMP', 'image', bytes('BM', le32(58), [0, 0, 0, 0], le32(54), le32(40))],
-  ['AVIF', 'image', ftyp('avif', 'avif', 'mif1', 'miaf', 'MA1B')],
-  ['AVIF', 'image', ftyp('mif1', 'mif1', 'avif', 'miaf')],
-  ['HEIC', 'image', ftyp('heic', 'mif1', 'heic')],
-  ['MP3', 'audio', bytes('ID3', [4, 0, 0, 0, 0, 0, 0])],
-  ['MP3', 'audio', bytes([0xff, 0xfb, 0x90, 0x64])],
-  ['MP3', 'audio', bytes([0xff, 0xf3, 0x48, 0xc4])],
-  ['WAV', 'audio', bytes('RIFF', le32(36), 'WAVE', 'fmt ')],
-  ['OGG', 'audio', bytes('OggS', [0, 2], [0, 0, 0, 0, 0, 0, 0, 0])],
-  ['FLAC', 'audio', bytes('fLaC', [0, 0, 0, 0x22])],
-  ['AMR', 'audio', bytes('#!AMR\n', [0x3c])],
-  ['AMR', 'audio', bytes('#!AMR-WB\n', [0x04])],
-  ['SILK', 'audio', bytes([0x02], '#!SILK_V3', [0x14, 0x00])],
-  ['SILK', 'audio', bytes('#!SILK_V3', [0x14, 0x00])],
-  ['M4A', 'audio', ftyp('M4A ', 'M4A ', 'mp42', 'isom')],
-  ['MP4', 'video', ftyp('isom', 'isom', 'iso2', 'avc1', 'mp41')],
-  ['MP4', 'video', ftyp('mp42', 'mp42', 'isom')],
-  // iTunes 的 M4V 把 'M4A ' 列进兼容品牌：只看主品牌，仍是视频
-  ['MP4', 'video', ftyp('M4V ', 'M4V ', 'M4A ', 'mp42', 'isom')],
-  ['MOV', 'video', ftyp('qt  ', 'qt  ')],
-  ['WebM', 'video', ebml('webm')],
-  ['MKV', 'video', ebml('matroska')],
-  ['AVI', 'video', bytes('RIFF', le32(4096), 'AVI ', 'LIST')],
-];
-
-const OTHER_KIND: Record<MediaKind, MediaKind> = { image: 'audio', audio: 'video', video: 'image' };
-
-/** 存储根里常见的非媒体文件（内容均为占位符）。 */
-const FAKE_YAML = 'server:\n  token: PLACEHOLDER-TOKEN\n  port: 0\n';
-const FAKE_TOKEN = 'sk-PLACEHOLDER-0000000000000000\n';
-const FAKE_SQLITE = bytes('SQLite format 3', [0], [0x10, 0x00, 0x01, 0x01]);
-
-describe('checkMediaHead：按 kind 的白名单认格式', () => {
-  it.each(HEADS)('%s 按 %s 放行', (_format, kind, head) => {
-    expect(checkMediaHead(head, kind)).toBeNull();
-  });
-
-  it.each(HEADS)('detectMediaFormat 认出 %s（%s）', (format, kind, head) => {
-    expect(detectMediaFormat(head)).toEqual({ kind, format });
-  });
-
-  it.each(HEADS)('%s 按别的 kind 发送：说出检测到的格式并指向正确的 kind', (format, kind, head) => {
-    const message = checkMediaHead(head, OTHER_KIND[kind]);
-    expect(message).toContain(`文件是 ${format} `);
-    expect(message).toContain(`kind=${kind}`);
-  });
-
-  it.each([
-    ['YAML 配置', bytes(FAKE_YAML)],
-    ['令牌文本', bytes(FAKE_TOKEN)],
-    ['SQLite 库', FAKE_SQLITE],
-    ['JSON', bytes('{"users":[]}')],
-    ['空文件', new Uint8Array(0)],
-    ['以 BM 开头的文本', bytes('BMW owners, placeholder list\n')],
-    ['以 ID3 开头的文本', bytes('ID3 tag notes\n')],
-    ['以 #!AMR 开头但魔数不全的文本', bytes('#!AMRS notes\n')],
-    ['AAC ADTS 帧（Layer 位为 00，不是 MP3）', bytes([0xff, 0xf1, 0x50, 0x80])],
-    ['MPEG 帧同步但版本位为保留值', bytes([0xff, 0xeb, 0x90, 0x64])],
-    ['MPEG Layer II 帧（不是 MP3）', bytes([0xff, 0xfd, 0x90, 0x64])],
-    ['MPEG 帧但码率索引为保留值 1111', bytes([0xff, 0xfb, 0xf0, 0x64])],
-    ['MPEG 帧但采样率索引为保留值 11', bytes([0xff, 0xfb, 0x9c, 0x64])],
-    ['OggS 但结构版本不为 0', bytes('OggS', [1, 2], [0, 0, 0, 0, 0, 0, 0, 0])],
-    ['FFD8 后不是标记', bytes([0xff, 0xd8, 0x00, 0x10])],
-    ['PNG 签名不全', bytes([0x89], 'PNG', [0, 0, 0, 0])],
-    ['GIF 版本不认识', bytes('GIF88a', [1, 0, 1, 0, 0])],
-    ['以 fL 开头的文本', bytes('fLoat notes\n')],
-    ['EBML 头但 DocType 不认识', ebml('other')],
-    ['RIFF 但形式类型不认识', bytes('RIFF', le32(4), 'XXXX')],
-  ])('%s：不是受支持的媒体，三种 kind 都拒', (_label, head) => {
-    expect(checkMediaHead(head, 'image')).toBe(
-      '文件不是受支持的图片格式（PNG、JPEG、GIF、WebP、BMP、AVIF、HEIC），不能按 image 发送',
-    );
-    expect(checkMediaHead(head, 'audio')).toBe(
-      '文件不是受支持的音频格式（MP3、WAV、OGG、FLAC、AMR、SILK、M4A），不能按 audio 发送',
-    );
-    expect(checkMediaHead(head, 'video')).toBe(
-      '文件不是受支持的视频格式（MP4、MOV、WebM、MKV、AVI），不能按 video 发送',
-    );
-    expect(detectMediaFormat(head)).toBeNull();
-  });
-});
+/** 最小合法的 PNG。各格式的签名与判定见 test/utils/util-file-signature.test.ts */
+const PNG = png();
 
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
 
@@ -201,8 +99,8 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     const dataDir = join(base, 'state');
     mkdirSync(join(dataDir, 'images', 's'), { recursive: true });
     mkdirSync(join(dataDir, 'secret'), { recursive: true });
-    writeFileSync(join(dataDir, 'images', 's', 'cat.png'), HEADS[0][2]);
-    writeFileSync(join(dataDir, 'images', 's', 'other.png'), HEADS[0][2]);
+    writeFileSync(join(dataDir, 'images', 's', 'cat.png'), PNG);
+    writeFileSync(join(dataDir, 'images', 's', 'other.png'), PNG);
     writeFileSync(join(dataDir, 'images', 's', 'song.mp3'), bytes('ID3', [4, 0, 0, 0, 0, 0, 0]));
     writeFileSync(join(dataDir, 'secret', 'config.yaml'), FAKE_YAML);
     writeFileSync(join(dataDir, 'secret', 'token.txt'), FAKE_TOKEN);
@@ -413,7 +311,7 @@ describe('send_attachment 只读文件头，不整份载入', () => {
     app = started.app;
     const reads: Array<[string, number, number]> = [];
     const big = new Uint8Array(8 * 1024 * 1024);
-    big.set(HEADS[0][2]);
+    big.set(PNG);
     const fake: Partial<StorageService> = {
       listRoots: () => [
         { name: 'data', kind: 'data', browsable: false, readable: true, writable: false, deletable: false },

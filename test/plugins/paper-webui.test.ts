@@ -130,7 +130,16 @@ function seeded(
   for (const { task, bytes } of seeds) {
     ledger.tasks[task.id] = task;
     for (const a of task.artifacts) {
-      const ext = { png: 'png', jpeg: 'jpg', gif: 'gif', webp: 'webp', mp4: 'mp4', html: 'html', other: 'bin' }[a.type];
+      const ext = {
+        png: 'png',
+        jpeg: 'jpg',
+        gif: 'gif',
+        webp: 'webp',
+        mp4: 'mp4',
+        mov: 'mov',
+        html: 'html',
+        other: 'bin',
+      }[a.type];
       files.set(`${DIR}/tasks/${task.id}/out/${a.id}.${ext}`, bytes[a.id]);
     }
   }

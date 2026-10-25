@@ -8,31 +8,34 @@
 // 回 500 并记告警。
 // ============================================================
 
-import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import { detectMediaFormat, MEDIA_HEAD_BYTES } from '@aalis/util-media-signature';
+import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormat, type MediaFormatName } from '@aalis/util-file-signature';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 import { route } from '../route.js';
 import { t } from '../texts.js';
 import { pipeToResponse } from './pipe-to-response.js';
 
-/** 判定出的格式 → 响应类型；不在表里的不提供 */
-const MEDIA_TYPES: Readonly<Record<string, string>> = {
-  PNG: 'image/png',
-  JPEG: 'image/jpeg',
-  GIF: 'image/gif',
-  WebP: 'image/webp',
-  MP4: 'video/mp4',
-  WebM: 'video/webm',
-  MP3: 'audio/mpeg',
-  WAV: 'audio/wav',
-  OGG: 'audio/ogg',
-  M4A: 'audio/mp4',
-};
+/** 浏览器能直接显示或播放的格式：这条路由与图片代理（只取其中的图片）都只提供这几种，响应类型取判定结果 */
+const BROWSER_MEDIA: ReadonlySet<MediaFormatName> = new Set([
+  'PNG',
+  'JPEG',
+  'GIF',
+  'WebP',
+  'MP4',
+  'WebM',
+  'MP3',
+  'WAV',
+  'OGG',
+  'M4A',
+]);
 
-/** 存储地址：<根名>:/<路径> */
-const STORAGE_URI = /^[A-Za-z][\w-]*:\/[^\0]*$/;
+/** 按文件头判定出浏览器能直接显示或播放的格式，判不出或不在 {@link BROWSER_MEDIA} 里的为 undefined */
+export function browserMediaOf(head: Uint8Array): MediaFormat | undefined {
+  const format = detectMediaFormat(head.subarray(0, FILE_HEAD_BYTES));
+  return format && BROWSER_MEDIA.has(format.format) ? format : undefined;
+}
 
 /** 传入的是 storage 的业务句柄：区间读恒有定义，提供者不支持时调用即抛错 */
 export function registerMediaRoutes(
@@ -43,19 +46,18 @@ export function registerMediaRoutes(
 ): void {
   route(expressApp, 'GET /api/media', gate(), async (req, res) => {
     const uri = String(req.query.uri ?? '');
-    if (!STORAGE_URI.test(uri) || /^https?:/i.test(uri)) {
+    if (!isStorageUri(uri)) {
       res.status(400).json({ error: t('notStorageUri') });
       return;
     }
     try {
-      const head = await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES);
-      const type = MEDIA_TYPES[detectMediaFormat(new Uint8Array(head))?.format ?? ''];
-      if (!type) {
+      const format = browserMediaOf(await storage.readFileRange(uri, 0, FILE_HEAD_BYTES));
+      if (!format) {
         res.status(415).json({ error: t('notMedia') });
         return;
       }
       const { stream, stat } = await storage.createReadStream(uri);
-      res.setHeader('Content-Type', type);
+      res.setHeader('Content-Type', format.mime);
       res.setHeader('Content-Length', stat.size);
       res.setHeader('Content-Disposition', 'inline');
       res.setHeader('X-Content-Type-Options', 'nosniff');

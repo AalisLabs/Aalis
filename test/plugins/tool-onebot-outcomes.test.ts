@@ -23,7 +23,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   报错只带适配器的原话，不猜原因。入站展开时拉取失败的不进缓存，工具照常重新拉。
 // - 群会话里写明 self_id 时动作发给写明的账号，不被会话的账号盖掉。
 // - 两个群请求工具各认自己的申请类型：入群邀请不能用审批加群申请的工具批；没有这条申请时报错。
-// - 合并转发里的图：图片段里写的只有网址与 base64 的 data URL 当来源，别的只交给 get_image 换地址，换不出就不识别。
+// - 合并转发里的图经 get_image 换成存储地址时，读出来按文件头认：是图片才转成 data URI（类型取判定结果），不是的交原地址。
+//   图片段里写的只有网址与 base64 的 data URL 当来源，别的只交给 get_image 换地址，换不出就不识别。
 // 群请求与转发缓存两组起真适配器加本地的假 OneBot 实现端（记忆用内存实现，转发缓存的持久化层落在里面），其余各组的平台是
 // 宿主桩（tools 同样是只记处理函数的桩）。
 // ════════════════════════════════════════════════════════════
@@ -230,6 +231,44 @@ describe('失败抛错', () => {
       /^合并转发读取失败：<占位原话>$/,
     );
     await expect(call('onebot_get_msg', { message_id: '1' })).rejects.toThrow(/^获取消息失败：<占位原话>$/);
+  });
+});
+
+describe('合并转发里的图：get_image 给的地址原样交给识图', () => {
+  it('get_image 给的是存储地址：不读存储，原地址交给 media（由它按文件头认）', async () => {
+    const reads: string[] = [];
+    const sources: string[] = [];
+    const { call } = await withStub(
+      async action => {
+        if (action === 'get_image') return { file: 'zz:/x.png' };
+        if (action === 'get_forward_msg') {
+          return {
+            messages: [
+              { type: 'node', data: { nickname: '甲', content: [{ type: 'image', data: { file: 'zz-image-id' } }] } },
+            ],
+          };
+        }
+        return {};
+      },
+      {},
+      {
+        storage: {
+          readFile: async (uri: string) => {
+            reads.push(uri);
+            return Buffer.from('ffd8ffe000104a464946', 'hex');
+          },
+        },
+        media: {
+          describeImage: async (source: string) => {
+            sources.push(source);
+            return '占位描述';
+          },
+        },
+      },
+    );
+    await call('onebot_get_forward_msg', { id: 'zz-forward' });
+    expect(sources).toEqual(['zz:/x.png']);
+    expect(reads).toEqual([]);
   });
 });
 

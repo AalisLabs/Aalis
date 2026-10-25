@@ -7,6 +7,7 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { gif } from '../fixtures/file-heads.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -16,8 +17,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 
 const FRAMES = 3;
-/** 带 ID3 头、够 256 字节：抽出的音轨按 mp3 直接交给模型，不再转码 */
-const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(300)]);
+/** 带 ID3v2 标签头、够 256 字节：抽出的音轨按 MP3 直接交给模型，不再转码 */
+const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(300)]);
+/** 两帧的 GIF：按字节判为动图 */
+const ANIMATED_GIF = Buffer.from(gif(2));
 const PNG = Buffer.from('frame');
 
 /** 内存里的 tmp 与 data 两个根；进程替身写的文件也落在这里 */
@@ -118,7 +121,7 @@ async function boot() {
 describe('识别与转写按消息所在的会话记账', () => {
   it('动图走 describeImage：抽出的帧交给识别模型，记账带上调用给的会话', async () => {
     const { service, usages, calls } = await boot();
-    const text = await service.describeImage('data:image/gif;base64,R0lGODlhAQABAAAAACw=', {
+    const text = await service.describeImage(`data:image/gif;base64,${ANIMATED_GIF.toString('base64')}`, {
       sessionId: 'onebot:t:group:1',
       noCache: true,
     });

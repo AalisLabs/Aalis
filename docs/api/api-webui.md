@@ -845,7 +845,7 @@ interface DependencyNode {
 | `GET /api/session-file` | 查询参数 `sessionId`、`handle`（会话服务签发的句柄，条目附件的 `src`） | 当附件下发：`application/octet-stream`、`Content-Disposition: attachment`、`Content-Length`、`nosniff` |
 | `GET /api/page-file` | 查询参数 `handle`（`FileCell.handle`） | 同上 |
 | `GET /api/media` | 查询参数 `uri`：存储地址 | 按文件头判定的图片、视频或音频类型，`Content-Disposition: inline`、`Content-Length`、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cache-Control: private, max-age=3600` |
-| `GET /api/proxy/image` | 查询参数 `url`：外站图片 | `image/*`、`nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: private, max-age=86400` |
+| `GET /api/proxy/image` | 查询参数 `url`：外站图片，按文件头认图（PNG、JPEG、GIF、WebP），判不出或不是图片的回 415 | `image/*`（取判定结果，不看上游的 Content-Type）、`nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: private, max-age=86400` |
 
 ### 插件前端的文件
 

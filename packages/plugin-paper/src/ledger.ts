@@ -95,7 +95,7 @@ export interface TaskRecord {
     /** a-<8 位十六进制> */
     id: string;
     rel: string;
-    type: 'png' | 'jpeg' | 'gif' | 'webp' | 'mp4' | 'html' | 'other';
+    type: 'png' | 'jpeg' | 'gif' | 'webp' | 'mp4' | 'mov' | 'html' | 'other';
     sizeBytes: number;
   }>;
   /** 白纸被清空时成品文件已删（记录保留） */

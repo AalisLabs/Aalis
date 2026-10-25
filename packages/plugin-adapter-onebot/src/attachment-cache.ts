@@ -17,6 +17,7 @@ import { Buffer } from 'node:buffer';
 import { sessionMediaUri } from '@aalis/api-media';
 import type { ProcessService } from '@aalis/api-process';
 import { isStorageUri, type StorageService } from '@aalis/api-storage';
+import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
@@ -118,7 +119,7 @@ async function loadAttachmentBuffer(
  * 把单个附件下载（必要时转码）后落盘，返回落盘的存储地址。失败返回 null。
  * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
  *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
- * - 其他 kind：原样落盘，扩展名按 magic header 推断。
+ * - 其他 kind：原样落盘，扩展名取文件头判定的格式（@aalis/util-file-signature），认不出的落 .bin，不按 kind 猜。
  */
 export async function cacheOneAttachment(
   storage: StorageService,
@@ -131,66 +132,41 @@ export async function cacheOneAttachment(
 ): Promise<string | null> {
   const buf = await loadAttachmentBuffer(storage, proc, source, maxBytes);
   if (!buf) return null;
+  const format = detectMediaFormat(buf.subarray(0, FILE_HEAD_BYTES));
+  const ext = format?.ext ?? 'bin';
   if (kind === 'audio') {
-    const inExt = detectExtensionFromBuffer(buf, 'bin');
     // SILK（QQ 语音原生格式）ffmpeg 无解码器，转码必败——就地短路，省一次注定失败的
     // 子进程+临时目录。入站路径正常经 get_record 先转 mp3 不会走到这；走到这的是
     // get_record 失败或转发内语音（后者的 get_record 前置尚未实现）。
-    if (inExt === 'silk') {
+    if (format?.format === 'SILK') {
       logger.warn(`OneBot 音频为 SILK 格式（ffmpeg 不支持），跳过转码保留原 URL (size=${buf.byteLength}B)`);
       return null;
     }
-    const wav = await transcodeAudioBufferToWav(proc, storage, buf, inExt);
+    const wav = await transcodeAudioBufferToWav(proc, storage, buf);
     if (!wav) {
-      logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);
+      logger.warn(`OneBot 音频转 WAV 失败 (in=${ext}, size=${buf.byteLength}B)，保留原 URL`);
       return null;
     }
     return await cacheAttachmentBuffer(storage, wav, 'audio', sessionId, 'wav', maxBytes);
   }
-  const ext = detectExtensionFromBuffer(buf, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin');
   return await cacheAttachmentBuffer(storage, buf, kind, sessionId, ext, maxBytes);
-}
-
-/** 简易 magic-header 探测：落盘扩展名选择。出站内联前的格式核对按 @aalis/util-media-signature（见 attachments.ts）。 */
-function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
-  if (buf.length < 12) return fallback;
-  // image
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
-  if (buf.subarray(0, 6).toString('ascii').startsWith('GIF8')) return 'gif';
-  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP')
-    return 'webp';
-  // audio
-  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WAVE') return 'wav';
-  if (buf.subarray(0, 3).toString('ascii') === 'ID3') return 'mp3';
-  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'mp3';
-  if (buf.subarray(0, 4).toString('ascii') === 'OggS') return 'ogg';
-  if (buf.subarray(0, 4).toString('ascii') === 'fLaC') return 'flac';
-  if (buf.subarray(0, 5).toString('ascii') === '#!AMR') return 'amr';
-  const silkHead = buf[0] === 0x02 ? buf.subarray(1, 10) : buf.subarray(0, 9);
-  if (silkHead.toString('ascii') === '#!SILK_V3') return 'silk';
-  // video / container
-  if (buf.subarray(4, 8).toString('ascii') === 'ftyp') return 'mp4';
-  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return 'webm';
-  return fallback;
 }
 
 /**
  * 用 ffmpeg 把任意可解码音频 Buffer 转为 16kHz mono PCM WAV。
  * 失败（典型：SILK，ffmpeg 不含 silk 解码器）返回 null。
+ * 输入的临时文件一律叫 in.bin：ffmpeg 按内容探测格式，扩展名不参与。
  */
 async function transcodeAudioBufferToWav(
   proc: ProcessService,
   storage: StorageService,
   input: Buffer<ArrayBuffer>,
-  inputExt: string,
 ): Promise<Buffer<ArrayBuffer> | null> {
   const tmp = await proc.makeTempDir('onebot-audio');
   try {
-    const ext = inputExt.replace(/^\.+/, '') || 'bin';
-    const inUri = `${tmp.uri}/in.${ext}`;
+    const inUri = `${tmp.uri}/in.bin`;
     const outUri = `${tmp.uri}/out.wav`;
-    const inPath = `${tmp.path}/in.${ext}`;
+    const inPath = `${tmp.path}/in.bin`;
     const outPath = `${tmp.path}/out.wav`;
     await storage.writeFile(inUri, input);
     await proc.execFile(

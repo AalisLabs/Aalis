@@ -28,7 +28,7 @@ beforeAll(async () => {
   server = createServer((req, res) => {
     if (req.url === '/ok') {
       res.writeHead(200, { 'content-type': 'audio/mpeg' });
-      res.end(Buffer.from('ID3'));
+      res.end(Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0])); // ID3v2 标签头：内容按 MP3 认
       return;
     }
     if (req.url === '/big') {

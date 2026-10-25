@@ -46,7 +46,7 @@ export default definePlugin({
 
 四类全部启用时共注册 38 个工具（Word 11、Excel 10、PowerPoint 12、PDF 5），均归入 `office` 工具组。
 
-Word 与 PowerPoint 插入图片时，来源为 http(s) 链接的图片限时 15 秒下载、最大 20 MiB，超出时工具返回失败。
+Word 与 PowerPoint 插入图片时，来源为 http(s) 链接的图片限时 15 秒下载、最大 20 MiB，超出时工具返回失败。图片按文件内容认格式（[util-file-signature](../utils/README.md)），不看扩展名与 Content-Type：Word 收 PNG、JPEG、GIF、BMP，PowerPoint 收 PNG、JPEG、GIF，别的格式（如 WebP、SVG、AVIF）与不是图片的内容报错，不产出打不开的文档。插图来源与 `pdf_convert` 的路径按文件工具的同一判定求值：存储地址原样，相对路径落在输出目录下，宿主机绝对路径（含 `C:/`）报错。
 
 ### Word (docx)
 

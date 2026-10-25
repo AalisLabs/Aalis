@@ -9,7 +9,6 @@ import {
 } from '@aalis/api-platform';
 import { type SessionHistoryReadResult, sessionHistory } from '@aalis/api-session-history';
 import { sessionManager, TAKE_UNKNOWN, takeFrom } from '@aalis/api-session-manager';
-import { type StorageService, storage } from '@aalis/api-storage';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
@@ -94,7 +93,6 @@ const configSchema = defineConfig({
 const uses = {
   tools: optional(tools),
   platform: optional(platformService),
-  storage: optional(storage),
   media: optional(media),
   sessionHistory: optional(sessionHistory),
   /** onebot_get_msg 取到的消息所在的会话按它的规则判（takeFrom）；不在时只能取当前会话里的 */
@@ -233,33 +231,6 @@ async function callFirstSupported(
   }
 }
 
-function imageMimeFromPath(path: string): string {
-  const cleaned = path.split('?')[0];
-  const dot = cleaned.lastIndexOf('.');
-  const ext = dot >= 0 ? cleaned.slice(dot).toLowerCase() : '';
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.gif') return 'image/gif';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.bmp') return 'image/bmp';
-  return 'image/png';
-}
-
-/**
- * 尝试将 OneBot get_image 返回的文件路径转为 data URI。
- * 仅支持 storage URI 形式（含 ':/'）。裸本地 fs 路径不再处理，
- * 交由上游 vision 退路使用原始 source（该 fallback 本身在实践中极少命中）。
- */
-async function localImageToDataUri(storage: StorageService, path: string): Promise<string | null> {
-  if (!path.includes(':/')) return null;
-  try {
-    const buf = (await storage.readFile(path)) as Uint8Array;
-    const b64 = Buffer.from(buf).toString('base64');
-    return `data:${imageMimeFromPath(path)};base64,${b64}`;
-  } catch {
-    return null;
-  }
-}
-
 interface ForwardImageRef {
   source: string;
   segment: Record<string, unknown>;
@@ -355,12 +326,11 @@ const SEGMENT_SOURCE = /^(?:https?:\/\/|data:[\w.+-]+\/[\w.+-]+(?:;[^;,]*)*;base
 
 /**
  * 转发里一张图交给识图的来源。图片段里写的只认网址与 base64 的 data URL；别的（文件名、本机路径、像存储地址的串）只当
- * get_image 的 file 参数，读的是实现端交回的地址（自己发起的请求的应答），段里写的不读：群友能给文件起名。换不出地址的
- * 为 undefined，这张图不识别
+ * get_image 的 file 参数，读的是实现端交回的地址（自己发起的请求的应答），段里写的不读：群友能给文件起名。交回的地址原样
+ * 交给识图，由 media 按文件头认；换不出地址的为 undefined，这张图不识别
  */
 async function resolveForwardImageSource(
   caps: ForwardCaps,
-  storage: StorageService,
   selfId: string,
   ref: ForwardImageRef,
 ): Promise<string | undefined> {
@@ -373,9 +343,7 @@ async function resolveForwardImageSource(
       unknown
     >;
     const resolvedSource = imageData.url ?? imageData.file;
-    if (typeof resolvedSource !== 'string') return undefined;
-    if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
-    return (await localImageToDataUri(storage, resolvedSource)) ?? resolvedSource;
+    return typeof resolvedSource === 'string' ? resolvedSource : undefined;
   } catch (err) {
     logger.use.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
     return undefined;
@@ -384,7 +352,6 @@ async function resolveForwardImageSource(
 
 async function recognizeForwardImages(
   caps: ForwardCaps,
-  storage: StorageService,
   selfId: string,
   data: unknown,
   limit: number,
@@ -406,7 +373,7 @@ async function recognizeForwardImages(
     if (seen.has(key)) continue;
     seen.add(key);
     try {
-      const imageSource = await resolveForwardImageSource(caps, storage, selfId, ref);
+      const imageSource = await resolveForwardImageSource(caps, selfId, ref);
       if (!imageSource) continue;
       const description = await mediaService.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
@@ -588,7 +555,6 @@ export default definePlugin({
   apply(caps) {
     const { tools, events, logger, platform } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
-    const storage = caps.storage.use;
     const bundle: OneBotToolBundle = {
       daily: withToolGroups(tools.use, ['onebot-daily']),
       group: withToolGroups(tools.use, ['onebot-group']),
@@ -628,7 +594,7 @@ export default definePlugin({
       });
 
       if (cfg.groupManagement.enabled) registerGroupManagementTools(caps, bundle);
-      if (cfg.groupInfo.enabled) registerGroupInfoTools(caps, storage, bundle);
+      if (cfg.groupInfo.enabled) registerGroupInfoTools(caps, bundle);
       if (cfg.account.enabled) registerAccountTools(caps, bundle);
       if (cfg.interaction.enabled) registerInteractionTools(caps, bundle);
       if (cfg.sessionHistory.enabled) registerSessionHistoryTools(caps, bundle, historyCfg);
@@ -1039,7 +1005,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
 
 // ===== 群信息查询工具 =====
 
-function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bundle: OneBotToolBundle): void {
+function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): void {
   const { platform, logger, sessionManager } = caps;
   const { daily } = bundle;
   // ---- 查看合并转发 ----
@@ -1097,7 +1063,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, storage: StorageService, bu
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
 
-      const formatContext = await recognizeForwardImages(caps, storage, selfId, data, limit);
+      const formatContext = await recognizeForwardImages(caps, selfId, data, limit);
       return formatForwardMessage(data, limit, formatContext);
     },
   });

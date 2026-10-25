@@ -184,12 +184,10 @@ describe('落盘续命', () => {
     expect(dumped.some(([k]) => k.startsWith('https://'))).toBe(false);
   });
 
-  it('占位符与空串不入快照（失败的识别不该被当成结果长期复用）', async () => {
-    rememberDescription('data:/images/onebot_t_group_X/onebot/9999888877776666.gif', '[图片: 识别失败]');
+  it('空串不入快照（识别失败的说明由调用方挡在外面，见 media-description-cache）', async () => {
     rememberDescription('data:/images/onebot_t_group_X/onebot/6666777788889999.gif', '');
     await flushDescriptionCache();
     const dumped = JSON.parse(files.get(SNAPSHOT_URI) as string) as Array<[string, string]>;
-    expect(dumped.some(([k]) => k === '9999888877776666')).toBe(false);
     expect(dumped.some(([k]) => k === '6666777788889999')).toBe(false);
   });
 

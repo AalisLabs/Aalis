@@ -10,7 +10,7 @@
 // 默认策略：把 storage URI / data:/http 都转成 base64:// 让数据走 WS 隧道，
 // 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
 //
-// image、audio、video 按文件头分流（格式签名见 @aalis/util-media-signature）：NapCat 能内联的格式走消息段；
+// image、audio、video 按文件头分流（格式签名见 @aalis/util-file-signature）：NapCat 能内联的格式走消息段；
 // 认得出、但不能内联的媒体（如 BMP、HEIC 图片，MKV、AVI 视频）改经文件上传；不是媒体的拒发——发送工具在 owner
 // 自己的会话里能取任意可读的 storage URI，不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。超过内联上限的
 // storage 文件退回 file://<宿主路径> 之前同样核对（daemon 与 Aalis 共享文件系统时它读得到）。原样透传的 file://
@@ -28,7 +28,7 @@ import { Buffer } from 'node:buffer';
 import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
-import { detectMediaFormat, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
+import { detectMediaFormat, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
 import type { OutgoingPiece, ParsedSegment } from './types.js';
@@ -37,7 +37,7 @@ import type { OutgoingPiece, ParsedSegment } from './types.js';
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
 
 /**
- * NapCat 能以消息段内联的格式（格式名取自 @aalis/util-media-signature）；语音的 M4A 与视频的 MP4、MOV 同为
+ * NapCat 能以消息段内联的格式（格式名取自 @aalis/util-file-signature）；语音的 M4A 与视频的 MP4、MOV 同为
  * ftyp 容器。认得出、但不在这里的媒体，以及与附件 kind 不符的媒体，改经文件上传。
  */
 const INLINE_FORMATS: Record<MediaKind, ReadonlySet<string>> = {
@@ -62,7 +62,7 @@ function routeByHead(kind: MediaKind, head: Uint8Array): string | undefined {
  * 本机存储都支持区间读取
  */
 async function readHead(storage: StorageService, uri: string): Promise<Buffer> {
-  const head = await storage.readFileRange?.(uri, 0, MEDIA_HEAD_BYTES);
+  const head = await storage.readFileRange?.(uri, 0, FILE_HEAD_BYTES);
   if (!head) throw new Error('读不出文件头，已拒发');
   return head;
 }

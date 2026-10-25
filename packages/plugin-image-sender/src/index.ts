@@ -12,7 +12,7 @@
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）；
 // 存储库里的文件先过媒体判据（@aalis/api-media 的 mediaScopeOf：别的会话的媒体按会话管理的取用规则，本机文件按这一轮的
-// 主体，多人的一轮逐个参与者判、有人过不了时发参与者审批），再读文件头核对格式（见 @aalis/util-media-signature）。
+// 主体，多人的一轮逐个参与者判、有人过不了时发参与者审批），再读文件头核对格式（见 @aalis/util-file-signature）。
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
@@ -29,7 +29,7 @@ import { actingIdentity, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type Message, type MessageAttachment, type OutgoingMessage } from '@aalis/schema-message';
-import { checkMediaHead, MEDIA_HEAD_BYTES, type MediaKind } from '@aalis/util-media-signature';
+import { checkMediaHead, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';
 
 /** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
  *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */
@@ -110,7 +110,7 @@ function registerImageSender(caps: Caps): void {
   ): Promise<{ ok: true; data: string } | { ok: false; error: string }> {
     let head: Uint8Array;
     try {
-      head = await storage.readFileRange(uri, 0, MEDIA_HEAD_BYTES);
+      head = await storage.readFileRange(uri, 0, FILE_HEAD_BYTES);
     } catch (err) {
       if (isStorageNotFound(err)) return { ok: false, error: `存储资源不存在: ${uri}` };
       throw err;

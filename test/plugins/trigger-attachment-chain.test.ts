@@ -47,7 +47,9 @@ const groupMsg = (content: string, extra: Partial<IncomingMessage> = {}): Incomi
 });
 
 const imageMsg = (name: string): IncomingMessage =>
-  groupMsg('看图', { attachments: [{ kind: 'image', data: `https://example.invalid/pic/${name}.jpg` }] });
+  groupMsg('看图', {
+    attachments: [{ kind: 'image', data: `data:/images/onebot_10000_group_20001/onebot/${name}.jpg` }],
+  });
 
 const silent = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 

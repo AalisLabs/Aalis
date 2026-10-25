@@ -71,7 +71,7 @@ describe('processMessage 按消息对象只处理一次', () => {
   it('同一消息并发与先后调用共享一次处理：图片与语音各只识别一次，返回同一份报告', async () => {
     const { svc, calls } = makeSvc();
     const msg = message([
-      { kind: 'image', data: 'https://example.invalid/pic/once-1.jpg' },
+      { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/once-1.jpg' },
       { kind: 'audio', data: 'https://example.invalid/voice/once-1.amr' },
     ]);
 
@@ -90,7 +90,7 @@ describe('processMessage 按消息对象只处理一次', () => {
     const msg = message(
       [
         { kind: 'file', name: 'a.txt', data: 'aalis-file://f1' },
-        { kind: 'image', data: 'https://example.invalid/pic/once-2.jpg' },
+        { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/once-2.jpg' },
       ],
       [fileDesc, undefined],
     );
@@ -173,7 +173,10 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
     const vision = deferred();
     const { svc } = makeSvc(vision.promise);
     const fileReader = await fileReaderPreprocessor();
-    const msg = message([textFile(), { kind: 'image', data: 'https://example.invalid/pic/race-1.jpg' }]);
+    const msg = message([
+      textFile(),
+      { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/race-1.jpg' },
+    ]);
 
     const recognition = svc.processMessage(msg); // 识别卡在途中
     await fileReader.run(msg);
@@ -191,7 +194,10 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
     const vision = deferred();
     const { svc } = makeSvc(vision.promise);
     const fileReader = await fileReaderPreprocessor();
-    const msg = message([textFile(), { kind: 'image', data: 'https://example.invalid/pic/race-2.jpg' }]);
+    const msg = message([
+      textFile(),
+      { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/race-2.jpg' },
+    ]);
 
     const recognition = svc.processMessage(msg);
     const writeGate = deferred();

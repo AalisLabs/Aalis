@@ -18,8 +18,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // paper_send：把本房间发起的任务的成品发回本群。
-// 类型白名单（位图走 image、MP4 走 video、单个 HTML 按开关与大小走 file），原扩展名须与按文件头判定的
-// 类型一致；具名白纸被几个房间共用时，别的房间发起的任务的成品按「找不到」回；文件名由宿主按任务名重写。
+// 类型白名单（位图走 image、MP4 与 MOV 走 video、单个 HTML 按开关与大小走 file），类型按内容判定、不核对远端给的
+// 原扩展名；具名白纸被几个房间共用时，别的房间发起的任务的成品按「找不到」回；文件名由宿主按任务名重写。
 // 平台适配器确认收下才标为已交付；发送失败、没有适配器接手时不标；平台报结果未知时记下结果未知、报请勿重发；
 // 等不到确认时报「未确认、请勿重发」，同样当场记下结果未知，迟到的结果到了再结算。结果未知按成品记：那件成品不再发，
 // 同一任务的其他成品照常可发。
@@ -78,6 +78,8 @@ const MINE = done('t-00000001', [
   art('a-00000010', 'preview.mp4', 'mp4', 15 * 1024 * 1024),
   art('a-00000011', 'anim.gif', 'gif', 12 * 1024 * 1024),
   art('a-00000012', 'small.mp4', 'mp4', 10 * 1024 * 1024),
+  art('a-00000013', 'clip.mov', 'mov'),
+  art('a-00000014', 'big.mov', 'mov', 15 * 1024 * 1024),
 ]);
 const OTHER_ROOM = done('t-00000002', [art('a-00000021', 'x.png', 'png')], { room: ROOM2 });
 const OTHER_PAPER = done('t-00000003', [art('a-00000031', 'x.png', 'png')], { paperId: 'n:zz-other' });
@@ -149,15 +151,24 @@ describe('paper_send：发出', () => {
     expect(h.ledger().tasks['t-00000001'].delivered).toBe(true);
   });
 
-  it('JPEG、WebP 走 image，MP4 走 video', async () => {
+  it('JPEG、WebP 走 image，MP4 与 MOV 走 video', async () => {
     const h = await hub();
-    for (const id of ['a-00000002', 'a-0000000f', 'a-00000003']) {
+    for (const id of ['a-00000002', 'a-0000000f', 'a-00000003', 'a-00000013']) {
       expect(await h.call('paper_send', { artifact_id: id })).toMatchObject({ ok: true });
     }
     expect(h.outbound.map(m => m.attachments?.[0])).toEqual([
       { kind: 'image', data: `${OUT}/t-00000001/out/a-00000002.jpg`, name: '像素猫.jpg', mimeType: 'image/jpeg' },
       { kind: 'image', data: `${OUT}/t-00000001/out/a-0000000f.webp`, name: '像素猫.webp', mimeType: 'image/webp' },
       { kind: 'video', data: `${OUT}/t-00000001/out/a-00000003.mp4`, name: '像素猫.mp4', mimeType: 'video/mp4' },
+      { kind: 'video', data: `${OUT}/t-00000001/out/a-00000013.mov`, name: '像素猫.mov', mimeType: 'video/quicktime' },
+    ]);
+  });
+
+  it('原扩展名与判定类型不一致时照判定类型发出：PNG 内容配 .gif 以图片、<任务名>.png 发出', async () => {
+    const h = await hub();
+    expect(await h.call('paper_send', { artifact_id: 'a-0000000a' })).toMatchObject({ ok: true });
+    expect(h.outbound.map(m => m.attachments?.[0])).toEqual([
+      { kind: 'image', data: `${OUT}/t-00000001/out/a-0000000a.png`, name: '像素猫.png', mimeType: 'image/png' },
     ]);
   });
 
@@ -390,14 +401,6 @@ describe('paper_send：拒绝', () => {
     expect(h.outbound).toEqual([]);
   });
 
-  it('安全：原扩展名与按文件头判定的类型不一致时被拒（PNG 内容配 .gif）', async () => {
-    const h = await hub();
-    const res = await h.call('paper_send', { artifact_id: 'a-0000000a' });
-    expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain('.gif');
-    expect(h.outbound).toEqual([]);
-  });
-
   it('安全：别的白纸的成品按找不到回', async () => {
     const h = await hub();
     const res = await h.call('paper_send', { artifact_id: 'a-00000031' });
@@ -483,6 +486,13 @@ describe('paper_send：媒体大小', () => {
     expect(h.outbound).toEqual([]);
     expect(h.ledger().tasks['t-00000001'].delivered).toBe(false);
     expect(await h.call('paper_send', { artifact_id: 'a-00000012' }), '正好 10 MiB 照发').toMatchObject({ ok: true });
+  });
+
+  it('超限的 MOV 按视频说明', async () => {
+    const h = await hub();
+    const res = await h.call('paper_send', { artifact_id: 'a-00000014' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toMatch(/^视频 15\.0 MB，超过发送上限/);
   });
 
   it('上限取插件配置 sendMediaMaxMB', async () => {

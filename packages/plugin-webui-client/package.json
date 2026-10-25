@@ -29,6 +29,7 @@
     "@aalis/api-approval": "workspace:*",
     "@aalis/api-doctor": "workspace:*",
     "@aalis/api-session-protocol": "workspace:*",
+    "@aalis/api-storage": "workspace:*",
     "@aalis/api-tools": "workspace:*",
     "@aalis/api-webui": "workspace:*",
     "@aalis/schema-config": "workspace:*",
