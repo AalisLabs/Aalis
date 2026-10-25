@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   fixGfmTables,
-  normalizeAssistantContent,
   stripLeakedSpecialTokens,
   toWellFormedText,
   truncateChars,
@@ -188,26 +187,5 @@ describe('stripLeakedSpecialTokens', () => {
     const { hadLeak } = stripLeakedSpecialTokens(evil);
     expect(performance.now() - t0).toBeLessThan(500);
     expect(hadLeak).toBe(true); // partial 兜底命中
-  });
-});
-
-describe('normalizeAssistantContent', () => {
-  const FW = '｜';
-
-  it('combines DSML stripping and GFM table fix', () => {
-    const input = [
-      '| A | B |',
-      '|:--|:--|:--|',
-      '| 1 | 2 |',
-      `<${FW}${FW}DSML${FW}${FW}tool_calls>leak</${FW}${FW}DSML${FW}${FW}tool_calls>`,
-    ].join('\n');
-    const out = normalizeAssistantContent(input);
-    expect(out).not.toContain('DSML');
-    expect(out).toContain('|:--|:--|');
-    expect(out).not.toContain('|:--|:--|:--|');
-  });
-
-  it('returns empty input as-is', () => {
-    expect(normalizeAssistantContent('')).toBe('');
   });
 });

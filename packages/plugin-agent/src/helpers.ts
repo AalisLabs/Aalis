@@ -10,7 +10,13 @@ import { estimateMsgTokens } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, ToolCall } from '@aalis/schema-message';
-import { CONTROL_KINDS, formatAttachmentRef, groupToolCalls, parseAttachmentRefs } from '@aalis/schema-message';
+import {
+  CONTROL_KINDS,
+  formatAttachmentRef,
+  groupToolCalls,
+  parseAttachmentRefs,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
 /**
@@ -169,6 +175,15 @@ export async function readHistory(
     if (shape === 'loose') leftover.add(at[0]);
   }
   return { messages: messages.filter((_, i) => !leftover.has(i)), count };
+}
+
+/**
+ * 交给模型的一条历史：她的回复带可见正文（schema-message 的 VisibleContent，落库的是结构化输出的信封时才有）时换成可见正文的
+ * 副本，免得模型照抄信封；其余原样
+ */
+export function historyForModel(m: Message): Message {
+  const visible = m.metadata?.[WellKnownMetadataKeys.VisibleContent];
+  return m.role === 'assistant' && typeof visible === 'string' ? { ...m, content: visible } : m;
 }
 
 /** 比较两条消息是否在 role/timestamp/name/content 维度上等价（不比较 toolCalls / id） */

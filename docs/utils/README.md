@@ -10,7 +10,7 @@
 | `util-media-signature`（无单独页面） | 按文件开头的字节认定媒体格式：`detectMediaFormat`（返回类型与格式名）/`checkMediaHead`（按所请求类型核对，给出拒发说明）/`MEDIA_HEAD_BYTES`（要读的文件头长度，4 KiB）。图片 PNG、JPEG、GIF、WebP、BMP、AVIF、HEIC，音频 MP3、WAV、OGG、FLAC、AMR、SILK、M4A，视频 MP4、MOV、WebM、MKV、AVI。消费者：image-sender 的 `send_attachment`、media 的 `analyze_image`、onebot 适配器的出站分流。 |
 | [util-offline-render](util-offline-render.md) | 浏览器离线渲染与图片重编码；调用方拥有 renderer，并在退出时等待 `dispose()`。 |
 | [network-guard](network-guard.md) | SSRF 防护出口：`safeFetch`（逐跳重定向复核）/`assertSafeUrl`/`assertSafeHost`/`isPrivateAddress`/`setNetworkPolicy`。**任何用户/LLM 可影响的 URL 都应经它**。威胁模型见[概念层 security-model](../concepts/security-model.md)。 |
-| [text-normalize](text-normalize.md) | 归一 LLM 助手输出：`fixGfmTables`/`stripLeakedSpecialTokens`/`normalizeAssistantContent`（修 GFM 表格、剥泄漏的特殊 token）。 |
+| [text-normalize](text-normalize.md) | 净化 LLM 助手输出：`fixGfmTables`（渲染端修 GFM 表格，只改显示）/`stripLeakedSpecialTokens`（拿到完整回复的一方剥泄漏的特殊 token）。 |
 | `util-cron`（无单独页面） | Cron 表达式解析与匹配（POSIX 5 字段 + `@` 别名 + `@every` 间隔）：`validateCronExpr`/`matchesCron`/`parseEverySeconds` 等。消费者：cron-engine、scheduler；`api-cron-engine` 只转发其类型。 |
 | `util-dep-spec`（无单独页面） | npm 依赖声明的来源分档与 semver 版本序比较：`classifyDepSpec`/`isRegistryDep`/`compareVersions`/`isUpgrade`。消费者：package-manager、webui-server 的市场路由。 |
 

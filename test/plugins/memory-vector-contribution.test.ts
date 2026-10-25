@@ -1047,6 +1047,33 @@ describe('结构化输出信封：索引与渲染取可见正文', () => {
     expect(block).toContain('另一段旧记忆');
     expect(block).not.toContain('信封里的回复');
   });
+
+  it('去重：扩窗带出的邻居存的是信封、当轮历史里这条回复是可见正文（agent 交出的形态）→ 不重复注入', async () => {
+    const { host, assembly } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
+    });
+    const mem = host.services.use.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', {
+      role: 'assistant',
+      content: ENVELOPE,
+      timestamp: BASE_TS + 60_000,
+      metadata: { nickname: 'Aalis', ...VISIBLE },
+    });
+
+    const messages: Message[] = [
+      { role: 'system', content: '人设' },
+      { role: 'assistant', content: '信封里的回复', metadata: VISIBLE },
+      { role: 'user', content: '还记得吗' },
+    ];
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, inputFromLastUser(messages));
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('PIVOT-Q');
+    expect(block).not.toContain('信封里的回复');
+  });
 });
 
 describe('plugin-memory-vector：召回片段写出说话的位置', () => {

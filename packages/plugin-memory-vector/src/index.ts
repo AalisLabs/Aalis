@@ -969,11 +969,9 @@ async function run(caps: Caps): Promise<void> {
         const collectedSidTs = new Set<string>();
         const markSidTs = (sid: string, ts: number | undefined) => collectedSidTs.add(`${sid}|${ts ?? 0}`);
 
-        // 当前对话已有的内容用于去重（只比较纯文本）。可见正文一并收入：命中的 assistant 向量存的是
-        // 可见正文，而历史里同一条回复的 content 可能是结构化输出信封。
-        const currentContents = new Set(
-          data.messages.flatMap(m => [(m.content ?? '').trim(), visibleText(m).trim()]).filter(Boolean),
-        );
+        // 当前对话已有的内容用于去重，按可见正文比：命中的 assistant 向量存的是可见正文，扩窗带出的邻居与
+        // 历史里的同一条回复都取 visibleText，落库的是结构化输出信封时也对得上。
+        const currentContents = new Set(data.messages.map(m => visibleText(m).trim()).filter(Boolean));
 
         if (W > 0) {
           const windows = await loadPivotWindows(topResults, cfg.contextExpand.crossSession, curSessionId, data.signal);
@@ -1007,7 +1005,7 @@ async function run(caps: Caps): Promise<void> {
                 // 指令类（代发任务、宿主通知）不是任何人的发言，不随邻居带出。命中点本身不在此列：
                 // 在这里跳过，下面的兜底会按向量元数据把它补成 user 行
                 if (i !== idx && DIRECTIVE_KINDS.includes(m.kind ?? '')) continue;
-                if (currentContents.has((m.content ?? '').trim())) continue;
+                if (currentContents.has(visibleText(m).trim())) continue;
                 const key = messageKey(sid, m);
                 if (!collected.has(key)) {
                   collected.set(key, { sessionId: sid, msg: m });

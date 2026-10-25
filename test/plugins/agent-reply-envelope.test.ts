@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { App, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -19,12 +21,14 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // agent 定稿、外发与落库（真 fs 角色卡 + mock LLM + 真 persona 钩子）：
 //   1. 上游吐空流：persona 判不合格请求重试，agent 曾因「原始输出为空」直接不进重试循环，
 //      回合静默、被 @ 也不回。现在空输出同样重试，只是不回放空的 assistant 消息。
-//   2. 落库口径：content 存整串 JSON 信封（保持 few-shot 格式），解码后的可见正文另写进
+//   2. 落库口径：content 存整串 JSON 信封（存档原文），解码后的可见正文另写进
 //      assistant 消息 metadata 的 VisibleContent 键；客户端渲染模式下外发的是整串 JSON，
-//      可见正文照样是回复字段。没有信封时不写这个键。
+//      可见正文照样是回复字段。没有信封时不写这个键。交给模型的历史里她的回复取可见正文，
+//      不论这一轮的人设有没有结构化输出；token:request 的快照与真实回合同一个读法。
 //   3. 外发与落库的分工：外发的回复只带正文与这条回复的模型和 token，思考与时间线只落库
 //      （客户端经会话协议拿思考，IM 适配器只发正文）。
 //   4. 同一会话连着两轮回同一句话，两句都外发、都落库。
+//   5. 回复的正文只剥漏出的协议标记：表格分隔行不改写，落库的时间线与正文同一份净化。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -36,6 +40,18 @@ const AGENT_CONFIG = {
 };
 
 const RAW_JSON = '{\n  "mood": "平静",\n  "message": "你好呀"\n}';
+const SESSION = 'test:envelope';
+/** 一条历史回复：落库的是信封，可见正文另记在元数据里 */
+const ENVELOPE_REPLY: Message = {
+  role: 'assistant',
+  content: JSON.stringify({ mood: '平静', message: '你好呀' }),
+  timestamp: 1000,
+  metadata: { [WellKnownMetadataKeys.VisibleContent]: '你好呀' },
+};
+/** 去掉系统消息之后的角色与正文 */
+const dialogue = (messages: readonly Message[]) =>
+  messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
+const FW = '｜';
 
 const fmtCard = (clientSide: boolean): string =>
   [
@@ -83,7 +99,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
       const state = app.plugins.getPlugin(id)?.state;
       if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
     }
-    const host = app.bind({ events, agent: agentService });
+    const host = app.bind({ events, agent: agentService, memory, hooks });
     const sent: OutgoingMessage[] = [];
     const archived: Message[] = [];
     host.events.use.on('outbound:message', msg => {
@@ -95,12 +111,23 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     const say = () =>
       host.agent.use.handleMessage({
         content: '你好',
-        sessionId: 'test:envelope',
+        sessionId: SESSION,
         platform: 'test',
         userId: 'u1',
         sessionType: 'private',
       });
-    return { recorder, sent, archived, say };
+    /** token:request 的快照交给 agent:llm:before 的消息 */
+    const snapshot = async (): Promise<Message[]> => {
+      let seen: Message[] = [];
+      const off = host.hooks.use.middleware('agent:llm:before', async (data, next) => {
+        if (data.dryRun) seen = [...data.messages];
+        await next();
+      });
+      await host.events.use.emit('token:request', { sessionId: SESSION });
+      off();
+      return seen;
+    };
+    return { host, recorder, sent, archived, say, snapshot };
   };
 
   beforeEach(() => {
@@ -195,5 +222,62 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
       { type: 'text', content: '普通回复' },
     ]);
     expect(archived[0].metadata?.modelInfo).toStrictEqual(modelInfo);
+  });
+
+  it.each(['zz-plain', 'zz-fmt'])('%s：交给模型的历史里她的回复是可见正文，快照里同样；存着的消息不动', async card => {
+    const { host, recorder, say, snapshot } = await boot(card, [{ content: RAW_JSON }]);
+    // 每例存新对象：内存记忆交出的就是存着的对象，交给模型时改在原对象上会改坏存档
+    await host.memory.use.saveMessage(SESSION, { role: 'user', content: '早', timestamp: 999 });
+    await host.memory.use.saveMessage(SESSION, { ...ENVELOPE_REPLY });
+
+    const snapped = await snapshot();
+    await say();
+
+    const pastReply = (messages: readonly Message[]) => messages.find(m => m.timestamp === ENVELOPE_REPLY.timestamp);
+    expect(pastReply(recorder[0].messages)?.content).toBe('你好呀');
+    expect(pastReply(snapped)?.content).toBe('你好呀');
+    const stored = await host.memory.use.getHistory(SESSION, Infinity);
+    expect(
+      stored.slice(0, 2).map(m => m.content),
+      '时间标注与可见正文应换在副本上',
+    ).toEqual(['早', ENVELOPE_REPLY.content]);
+  });
+
+  it('快照与真实回合同一个读法：用户历史带时间标注，断掉的工具调用不交', async () => {
+    const { host, recorder, say, snapshot } = await boot('zz-plain', [{ content: '好' }]);
+    // 同年的标注是「月/日 时:分」
+    const at = new Date(new Date().getFullYear(), 0, 2, 3, 4).getTime();
+    await host.memory.use.saveMessage(SESSION, { role: 'user', content: '早', timestamp: at });
+    await host.memory.use.saveMessage(SESSION, {
+      role: 'assistant',
+      content: '',
+      timestamp: at + 1,
+      toolCalls: [{ id: 'zz-broken', type: 'function', function: { name: 'zz_probe', arguments: '{}' } }],
+    });
+
+    const snapped = await snapshot();
+    await say();
+
+    const past = [{ role: 'user', content: '(1/2 03:04) 早' }];
+    expect(dialogue(snapped)).toEqual(past);
+    expect(dialogue(recorder[0].messages).slice(0, -1)).toEqual(past);
+  });
+
+  it('表格分隔行不改写：外发与落库都是模型的原文', async () => {
+    const raw = 'A | B\n---\n正文';
+    const { sent, archived, say } = await boot('zz-plain', [{ content: raw }]);
+    await say();
+
+    expect(sent[0].content).toBe(raw);
+    expect(archived[0].content).toBe(raw);
+  });
+
+  it('流里漏出的协议标记：落库的正文与时间线都剥掉', async () => {
+    const leak = `<${FW}${FW}DSML${FW}${FW}tool_calls><${FW}${FW}DSML${FW}${FW}invoke name="zz">x</${FW}${FW}DSML${FW}${FW}invoke></${FW}${FW}DSML${FW}${FW}tool_calls>`;
+    const { archived, say } = await boot('zz-plain', [{ content: `前文${leak}` }]);
+    await say();
+
+    expect(archived[0].content).toBe('前文');
+    expect(archived[0].segments).toEqual([{ type: 'text', content: '前文' }]);
   });
 });

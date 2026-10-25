@@ -9,11 +9,12 @@
  * - 只修复**明确错误**的格式问题；不做风格改写
  * - 跳过代码块（``` 与 inline `）以避免误改示例代码
  *
+ * 谁用：fixGfmTables 给渲染端用（只改显示，存下的原文不动）；stripLeakedSpecialTokens 给拿到完整回复的一方用。
+ *
  * 与 `@aalis/util-json-repair` 的边界：
  * - util-json-repair：处理"被 prompt 要求输出 JSON 的 LLM 响应"的解析问题
  *   （结构化数据通道，调用者主动调用）
- * - util-text-normalize：处理"自然语言对话 content"的渲染层问题
- *   （在 agent 拿到完整响应后统一调用一次）
+ * - util-text-normalize：处理"自然语言对话 content"的渲染与协议残渣问题
  */
 
 /**
@@ -179,16 +180,6 @@ export function stripLeakedSpecialTokens(content: string): {
     sanitized = sanitized.replace(partialRe, '');
   }
   return { sanitized: hadLeak ? sanitized.trim() : sanitized, hadLeak };
-}
-
-/**
- * 一次性应用所有对话内容净化规则。
- * 顺序：先剥离结构性泄漏（DSML 等特殊 token），再修复 GFM 表格渲染问题。
- */
-export function normalizeAssistantContent(content: string): string {
-  if (!content) return content;
-  const { sanitized } = stripLeakedSpecialTokens(content);
-  return fixGfmTables(sanitized);
 }
 
 /**

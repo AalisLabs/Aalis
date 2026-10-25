@@ -230,6 +230,7 @@ const REMOVED: Array<[string, string]> = [
   ['archiveIncomingMessageInOrder', 'agent 按道串行的入站归档队列：输入改在进入一轮时归档'],
   ['settledBySubtask', 'WebUI 工具卡上子任务的审批不转交的结算原因：子任务里的审批与主会话同一规则'],
   ['不上浮', '子任务里的审批一律拒：子任务与续做一样随起它的那一轮，推送按根会话'],
+  ['normalizeAssistantContent', 'agent 剥标记连同修表格分隔行：agent 不改写表格分隔行，WebUI 渲染时修'],
 ];
 
 /**

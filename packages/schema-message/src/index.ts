@@ -639,7 +639,7 @@ export interface ArchivedAttachment {
  * 说话人、群、文件、回复的模型与 token、工具卡的归组。
  *
  * - `VisibleContent`：assistant 消息的可见正文（字符串）。回复经结构化输出（persona 的 outputFormat）
- *   时，`content` 存整串 JSON 信封（保持历史 few-shot 的格式），用户实际看到的是其中的回复字段。
+ *   时，`content` 存整串 JSON 信封（存档原文），用户实际看到的是其中的回复字段；agent 交给模型的历史取这个键。
  *   agent 落库时把解码后的正文写进这个键，只在它与 `content` 不同时写入；缺省即 `content` 本身就是
  *   可见正文。检索、摘要等按语义消费历史的一方应优先读它，读不到再退回 `content`。
  * - `SpokenContent`：提问里发言人自己写的话（字符串，可以是空串），即入站消息的 `content`。存档的 `content` 是给模型看的

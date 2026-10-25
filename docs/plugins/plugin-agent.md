@@ -94,14 +94,14 @@ definePlugin({
 
 1. **`agent:input:before` → `agent:turn:before`**: 前者每条输入一次，做预处理，中间件不调用 `next()` 则这条输入不进一轮；后者是一轮开始，带回合 id、会话与这一轮的输入，中间件不调用 `next()` 则这一轮不跑（不归档、不调模型、不发 `agent:turn:after`），照发流结束标记。它的默认动作开头按先后归档这一轮的输入（`archiveIncoming` 带回合 id 与进入方式 `opened`），以下步骤都在它里面
 2. **构建系统提示词**: persona 提示词 + 配置的 `systemPrompt`（无人设时仅 `systemPrompt`），末尾固定追加输入约定块
-3. **加载历史**: 按会话设置 `historyLimit` 从 memory 服务读发给模型的那一段（活跃历史超过 N 条时成段丢弃最早的，见「会话设置项」；0 或没设置时读全部活跃历史），跳过不完整的工具调用组与控制类消息。工具调用组按 [schema-message](../api/schema-message.md) 的 `groupToolCalls` 归组，夹在调用与结果之间的别的消息挪到这组之后；起点落在一组中间时，这一组留下的结果随组首一起丢，夹在其间的照留
+3. **加载历史**: 按会话设置 `historyLimit` 从 memory 服务读发给模型的那一段（活跃历史超过 N 条时成段丢弃最早的，见「会话设置项」；0 或没设置时读全部活跃历史），跳过不完整的工具调用组与控制类消息。工具调用组按 [schema-message](../api/schema-message.md) 的 `groupToolCalls` 归组，夹在调用与结果之间的别的消息挪到这组之后；起点落在一组中间时，这一组留下的结果随组首一起丢，夹在其间的照留。用户消息加时间标注；她的回复取可见正文（落库的是结构化输出的信封时另记在元数据里，见第 6 步），不论这一轮的人设有没有结构化输出
 4. **收集工具**: 从 `tools` 服务获取工具定义：无分组的通用工具恒在，带分组的只取这个会话生效的工具分组（plugin-tools 的会话设置 `enabledToolGroups`，经 `sessionGroups` 取；`'*'` 为全部，空列表一个都不取）
 5. **执行 Hook 管道**:
    - 组装 `agent:prompt` 贡献 — 记忆 / 摘要 / 技能 / 档案等提示词块按锚位物化进消息列表，单个贡献 build 超过 `promptBuildTimeoutMs` 时本轮缺席
    - `agent:llm:before` — 拦截、修改消息列表或工具列表（如工具搜索过滤、媒体规范化）
    - 插入点：真人消息开的一轮在这里取走待插入的输入（见「新消息怎么处理」），逐条归档（进入方式 `joined`）、追加到消息末尾、挂上各自的图，再增量组装、重跑 `agent:llm:before`，取空为止；格式重试的那几次调用不插
    - `trimMessages()` — 按 token 预算裁剪上下文
-   - `chatStream()` — 流式调用 LLM；模型生成工具调用的参数时，每个调用配一个 `callId` 随流式片段的工具调用进度推出（`outbound:stream` 的 `toolCallProgress`），执行它时用同一个
+   - `chatStream()` — 流式调用 LLM；模型生成工具调用的参数时，每个调用配一个 `callId` 随流式片段的工具调用进度推出（`outbound:stream` 的 `toolCallProgress`），执行它时用同一个。拿到完整回复后剥掉服务端漏进正文的工具调用标记（util-text-normalize 的 `stripLeakedSpecialTokens`）：经 OpenAI 兼容接口接入时只有这一层会剥，只剥不执行，落库的正文与时间线都过它；正文不另改写，表格分隔行照原样（WebUI 渲染时修）
    - 调用返回之后发 `token:usage`（见下文「Token 预算追踪与日志」）；调用抛错时不发
    - `agent:llm:after` — 处理 LLM 响应
    - 工具调用循环（最多会话设置 `maxToolIterations` 次，没设时不限）:
@@ -110,7 +110,7 @@ definePlugin({
      - 每次调用都发一对 `tool:execute`（开始与结束）：没有执行就失败的（参数不合法、`agent:tool:before` 出错）同样发，结束带回给模型的错误，会话里的工具卡据此收尾
    - `agent:reply:before` — 后处理回复内容
    - `agent:turn:after` — 消息处理完成通知
-6. **保存**: 输入在 `agent:turn:before` 的默认动作开头经 message-archive 归档，元数据记这一轮的回合 id 与进入方式（`TurnId`、`TurnEntry`）；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入，`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存。每一轮在 `agent:turn:after` 之前写一条回合记录（结局与这一轮的来源，登记的键 `TurnRecord`）：回复了的记在最后那条回复的元数据上（之后外发或 `agent:turn:after` 的中间件出错不再另记），没有落库回复的（静默、中止、出错）另落一条只带回合 id 与记录的事件标记，不进模型、不进摘要；会话服务据此在历史里还原这一轮的结局
+6. **保存**: 输入在 `agent:turn:before` 的默认动作开头经 message-archive 归档，元数据记这一轮的回合 id 与进入方式（`TurnId`、`TurnEntry`）；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入（结构化输出的回复落库存信封原文，解码后的可见正文另记在元数据的 `VisibleContent`），`metadata.turnId` 是这一轮的回合 id（会话服务据此把存档归回所在的回合，在途回合落了库的消息不重复进历史）；每次工具调用另记这次调用的 `callId`（tool 结果的 `metadata.callId` 与时间线的 `tool_call` 段，没有执行就失败的调用同样记），历史里的工具卡据此与实时推送对上；`agent:tool:after` 中间件写进 `metadata` 的键（如会话服务记下的审批结算）并进 tool 结果的元数据；空回复不保存。每一轮在 `agent:turn:after` 之前写一条回合记录（结局与这一轮的来源，登记的键 `TurnRecord`）：回复了的记在最后那条回复的元数据上（之后外发或 `agent:turn:after` 的中间件出错不再另记），没有落库回复的（静默、中止、出错）另落一条只带回合 id 与记录的事件标记，不进模型、不进摘要；会话服务据此在历史里还原这一轮的结局
 7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件。回复与回合里发出的 `[错误]`、`[系统]` 提示带这一轮的 `turnId`：平台适配器记回复的投递失败时带上它，提示记成事件标记时同样记下；回复宿主通知时带上通知的 `hostNotice`（只有 `kind`、`id`），通知带 `replyTo` 的另带出站的 `replyTo`，支持引用的平台据此引用起那次工具调用的消息
 
 **会话删除**：收到 `session:deleted` 时停下这个会话在跑的一轮、放掉排着的（不归档），并等它收尾，之后会话管理才清它的数据（第一方会话管理把整个删除交给 `clearing`，删子会话、发事件之前就已停下并按住这个会话）：删除一个正在跑的会话（WebUI 里删除、删除子任务、清空或删除父会话连带的子会话）时，这一轮当场停下，不再写进记录、不再发出。每条输入在进 agent 时记下这个会话的代号，交给通道之前（按住期间等着的放开之后）再比，会话管理开始删除时换了代号的是删除之前的一代，放掉、不归档；删除期间到的输入怎么处理见 [api-session-manager](../api/api-session-manager.md) 的 `deleteSession`。等收尾没有时限：不响应中止的工具会让删除一直等到它返回。
@@ -189,7 +189,7 @@ definePlugin({
 
 每次模型调用之后（首次调用、工具循环里的每次调用、格式重试），Agent 发出一条 `token:usage`，调用抛错的那次不发。`used` 取模型服务返回的这次调用的输入 token，没有返回或不是正的有限数时取按发出的消息与工具定义的估算；各项拆分按发出的（裁剪之后的）消息估算。`trimmed` 标出本回合到这次调用为止经过了硬裁剪（某次调用组装后的估算超过裁剪预算，或历史超过可用量、丢了一段；首次调用裁剪过的列表是之后各次调用的底稿，有过一次本回合之后各次都算）；`untrimmedHistory` 是按没经过硬裁剪的列表估算的历史与工具结果；`historyMessages` 是这一轮开头会话的活跃历史条数（含条数线之外、没发给模型的部分）加本回合到这次调用为止追加的工具调用与结果，只数对话消息（与条数线同一口径），与硬裁剪无关。硬裁剪删了消息时记一行 info 日志，带会话 id 与前后条数。
 
-收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，按当前会话组一份快照：历史与真实回合同一个读法，过同样的硬裁剪（不记日志），`used` 为估算，`historyMessages` 是活跃历史条数，不带 `turnId`。快照与真实回合用同一个预算公式，系统提示也按同一份会话设置（人设覆盖、结构化输出开关、额外提示）构建。
+收到 `token:request`（plugin-session-server 在客户端订阅会话、或手动压缩完成后发出）时，按当前会话组一份快照：历史与真实回合同一个读法，过同样的硬裁剪，清洗历史与硬裁剪都不记日志，`used` 为估算，`historyMessages` 是活跃历史条数，不带 `turnId`。快照与真实回合用同一个预算公式，系统提示也按同一份会话设置（人设覆盖、结构化输出开关、额外提示）构建。
 
 `token:request` 的 `platform` 是调用方的入口平台，可以不填（plugin-session-server 对房间不填，其余会话填连接的平台）。快照用的平台按以下顺序取：请求显式带的 `platform`；会话管理记下的出生平台（`originPlatform`，子会话取根会话的，不从会话 id 推）；`webui`。这个平台除了给没有出生平台的会话选平台档，还是提示词贡献方的「当前平台」（按平台取跨会话内容），所以 IM 房间的快照按房间的平台算，不按 webui 算。
 
