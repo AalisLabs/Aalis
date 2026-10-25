@@ -8,7 +8,7 @@
 
 import { remoteAgent } from '@aalis/api-remote-agent';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import { type ConfigOf, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { CursorProvider, type CursorProviderOptions } from './provider.js';
 
 /** 事件流断开后重连的退避起点 */
@@ -93,9 +93,14 @@ type ParsedCursorConfig = ConfigOf<typeof configSchema>;
 function readOptions(raw: ParsedCursorConfig): CursorProviderOptions {
   const apiKey = raw.apiKey.trim();
   if (!apiKey) throw missingConfigError('apiKey', '在 Cursor 后台生成');
+  const baseUrl = raw.baseUrl || configSchema.baseUrl.default;
+  // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
+  if (/[?#]/.test(baseUrl)) {
+    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+  }
   return {
     apiKey,
-    baseUrl: raw.baseUrl || configSchema.baseUrl.default,
+    baseUrl,
     model: {
       id: raw.model.id || configSchema.model.fields.id.default,
       params: raw.model.params,

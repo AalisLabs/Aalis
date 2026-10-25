@@ -158,6 +158,10 @@ export default definePlugin({
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
+    // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
+    if (/[?#]/.test(cfg.baseUrl)) {
+      throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    }
 
     const proc = caps.proc.use;
     const storage = caps.storage.use;

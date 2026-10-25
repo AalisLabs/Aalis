@@ -103,7 +103,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `muteKeywords` | string | `''` | 禁言关键词（逗号或换行分隔） |
 | `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
 | `mediaWaitMs` | number | `8000` | 带附件的消息等识别写好描述的上限（毫秒），超时照常判定 |
-| `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车 HTTP 地址；显式无效值在激活时拒绝，不连接侧车 |
+| `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车 HTTP 地址；显式无效值与带查询串或片段（`?` 或 `#` 之后的部分：插件在它后面拼路径）的地址在激活时拒绝，不连接侧车 |
 | `sidecarDir` | string | `''` | 侧车目录的绝对路径。填了则由本插件托管侧车，端口取 `endpoint` 的（见「托管侧车」）；留空 = 侧车由外部运行 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
 | `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |

@@ -42,28 +42,22 @@ function bodyExcerpt(body: string): string {
 }
 
 /**
- * 读配置时校验 baseUrl，解析不了的与带用户名或密码的抛配置错误。带凭据的 URL fetch 拒发，凭据还会随报错与
- * 条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不出去。消息不带 URL
+ * 读配置时校验 baseUrl，解析不了的、带查询串或片段的与带用户名或密码的抛配置错误。插件在 baseUrl 后面拼路径，带查询串或
+ * 片段时路径落进查询串或片段，请求地址是坏的；末尾只有一个 ? 时解析后查询串为空，拼出来照样是坏的，所以按原文判。带凭据
+ * 的 URL fetch 拒发，凭据还会随报错与条目名称（WebUI 的模型下拉）显示出来；解析不了的无从判断有没有凭据，请求同样发不
+ * 出去。消息不带 URL
  */
 function checkBaseUrl(baseUrl: string): void {
   if (!URL.canParse(baseUrl)) {
     throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 http://localhost:11434');
   }
+  if (/[?#]/.test(baseUrl)) {
+    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+  }
   const { username, password } = new URL(baseUrl);
   if (username || password) {
     throw configError('baseUrl 不能带用户名或密码（user:pass@），本插件不支持带凭据访问 Ollama');
   }
-}
-
-/**
- * 错误信息与日志里显示的 URL：去掉查询串。没有查询串时原样返回，保留配置里的写法。带用户名或密码的 baseUrl
- * 读配置时已拒绝（见 checkBaseUrl）
- */
-function redactUrl(url: string): string {
-  const parsed = new URL(url);
-  if (!parsed.search) return url;
-  parsed.search = '';
-  return parsed.href;
 }
 
 /**
@@ -431,7 +425,7 @@ class OllamaClient {
       return list.map(m => m.name);
     } catch (err) {
       signal?.throwIfAborted();
-      throw new Error(`模型发现失败 ${redactUrl(url)}: ${describeError(err)}`, { cause: err });
+      throw new Error(`模型发现失败 ${url}: ${describeError(err)}`, { cause: err });
     }
   }
 
@@ -524,10 +518,11 @@ class OllamaClient {
 
     const data = this.parseJsonBody(response.status, text) as OllamaChatResponse;
 
-    // 优先使用原生 thinking 字段（Ollama think API），回退到 <think> 标签解析
+    // 发了 think 时思考由 Ollama 管、走原生 thinking 字段，正文照原样；没发时才把正文里 <think> 标签之间的内容当思考
     const nativeThinking = data.message.thinking || '';
     const rawContent = data.message.content || '';
-    const { reasoning: tagReasoning, content: cleanContent } = extractThinkTags(rawContent);
+    const { reasoning: tagReasoning, content: cleanContent } =
+      level === undefined ? extractThinkTags(rawContent) : { reasoning: '', content: rawContent };
     const allReasoning = [nativeThinking, tagReasoning].filter(Boolean).join('');
 
     const result: ChatResponse = {
@@ -573,18 +568,22 @@ class OllamaClient {
 
     // 交出一段期间不计时：调用方处理一段的时间不算停顿
     const timer = idleTimeout(this.timeout, request.signal);
-    for await (const chunk of this.readStream(body, request, timer)) {
+    for await (const chunk of this.readStream(body, request, timer, level === undefined)) {
       timer.pause();
       yield chunk;
       timer.resume();
     }
   }
 
-  /** 发出流式请求并逐段解析，timer 管这次请求的停顿超时 */
+  /**
+   * 发出流式请求并逐段解析，timer 管这次请求的停顿超时。parseThinkTags 为真（这次没发 think）时把正文里 <think> 标签之间的
+   * 内容当思考交出，为假时正文照原样交出
+   */
   private async *readStream(
     body: Record<string, unknown>,
     request: ChatModelRequest,
     timer: ReturnType<typeof idleTimeout>,
+    parseThinkTags: boolean,
   ): AsyncIterable<ChatStreamChunk> {
     const reqStart = Date.now();
     const slowConnectTimer = setTimeout(() => {
@@ -654,7 +653,7 @@ class OllamaClient {
 
           try {
             const data = JSON.parse(trimmed) as OllamaChatResponse;
-            // 带生成内容的帧重新计时：正文（含 <think> 标签里的）、原生思考、工具调用
+            // 带生成内容的帧重新计时：正文（含按标签解析出的思考）、原生思考、工具调用
             if (data.message?.content || data.message?.thinking || data.message?.tool_calls?.length) timer.touch();
 
             // 累积工具调用
@@ -701,12 +700,15 @@ class OllamaClient {
               return;
             }
 
-            // 原生 thinking 字段（Ollama think API）—— 优先级高于 <think> 标签解析
+            // 原生 thinking 字段（Ollama think API）
             if (data.message?.thinking) {
               yield { reasoningDelta: data.message.thinking };
             }
 
-            if (data.message?.content) {
+            // 发了 think：思考由 Ollama 管，正文照原样交出
+            if (data.message?.content && !parseThinkTags) {
+              yield { contentDelta: data.message.content };
+            } else if (data.message?.content) {
               // 解析 <think> / </think> 标签，将内部内容路由为 reasoningDelta
               let text = tagBuffer + data.message.content;
               tagBuffer = '';
@@ -986,20 +988,7 @@ class OllamaClient {
     }
     if (!resp.ok) {
       this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${bodyExcerpt(respText)}`);
-      const message = httpErrorMessage('Ollama', resp.status, respText);
-      // 诊断提示：ollama runner 把 input_audio 当 image 解码失败时报 "image: unknown format"，
-      // 99% 是模型本身不支持 audio modality（如 Nemotron-3 是纯文本/纯推理，
-      // 多模态版 Nemotron-Nano-VL 也只有 vision）。提示用户换 gemma3n / qwen2.5-omni
-      // 等明确支持 audio 的多模态模型。
-      const lowerErr = respText.toLowerCase();
-      if (lowerErr.includes('image: unknown format') || lowerErr.includes('unknown format')) {
-        throw new Error(
-          `${message}\n` +
-            `[诊断] 模型 "${model}" 很可能不支持 audio modality（ollama runner 把 input_audio 当 image 解码失败）。` +
-            `请改用明确支持音频的模型（如 gemma3n、qwen2.5-omni）。`,
-        );
-      }
-      throw new Error(message);
+      throw new Error(httpErrorMessage('Ollama', resp.status, respText));
     }
     const data = this.parseJsonBody(resp.status, respText) as {
       choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
@@ -1007,7 +996,10 @@ class OllamaClient {
     };
     const rawContent = data.choices?.[0]?.message?.content ?? '';
     const finishReason = data.choices?.[0]?.finish_reason ?? '?';
-    const text = rawContent.trim();
+    // 与 /api/chat 同一条规则：这次没管思考（level 为 undefined）时才把正文里 <think> 标签之间的内容当思考
+    const { reasoning, content } =
+      level === undefined ? extractThinkTags(rawContent) : { reasoning: '', content: rawContent };
+    const text = content.trim();
     if (audioCount > 0) {
       this.logger.info(
         `[ollama-audio] ${model} HTTP ${Date.now() - httpT0}ms, finish=${finishReason}, ` +
@@ -1016,7 +1008,7 @@ class OllamaClient {
           (rawContent.length > 0 ? `, 原文="${rawContent.replace(/\n/g, ' ')}"` : ' [模型返回空字符串]'),
       );
     }
-    const result: ChatResponse = { content: text || null, reasoningContent: null };
+    const result: ChatResponse = { content: text || null, reasoningContent: reasoning || null };
     if (data.usage) {
       result.usage = {
         promptTokens: data.usage.prompt_tokens ?? 0,
@@ -1028,34 +1020,29 @@ class OllamaClient {
   }
 }
 
-/** 去掉 base64 音频的 data: 前缀，返回纯 payload。 */
-function stripAudioDataPrefix(s: string): string {
-  const m = s.match(/^data:[^;]+;base64,(.+)$/);
-  return m ? m[1] : s;
-}
+/**
+ * data URL 的音频类型（audio/ 之后的部分）→ OpenAI 兼容接口 input_audio 的 format。只收 wav 与 mp3：Ollama 的兼容接口不看
+ * format、只把 data 按 base64 解码（ollama 仓的 openai/openai.go），之后按文件头认音频，只认 wav 与 mp3（llm/media.go 的
+ * AudioFormat；mlxrunner/model/audio/audio.go 的 Decode 只认 wav）
+ */
+const AUDIO_FORMATS = new Map([
+  ['mpeg', 'mp3'],
+  ['mp3', 'mp3'],
+  ['wav', 'wav'],
+  ['x-wav', 'wav'],
+  ['wave', 'wav'],
+]);
 
 /**
- * 将 Aalis 传过来的 audio payload（可能带 data: 前缀也可能不带）解析为
- * OpenAI input_audio 需要的 `{ data, format }`。format 推断优先级：
- * data URL 的 mime 后缀 → 默认 wav。
+ * 把 `data:audio/<类型>[;参数];base64,…` 解析为 OpenAI input_audio 需要的 `{ data, format }`。format 只按写明的类型映射；
+ * 认不出的类型与不是 data URL 的（本地路径、链接、裸 base64）在发请求前报错：猜成 wav 时上游只回一句解码失败，看不出是格式的事
  */
 function decodeAudioForOpenAI(payload: string): { data: string; format: string } {
-  const m = payload.match(/^data:audio\/([^;]+);base64,(.+)$/);
-  if (m) {
-    const fmt = m[1].toLowerCase();
-    const norm =
-      fmt === 'mpeg' || fmt === 'mp3'
-        ? 'mp3'
-        : fmt === 'x-wav' || fmt === 'wave' || fmt === 'wav'
-          ? 'wav'
-          : fmt === 'ogg' || fmt === 'oga' || fmt === 'opus'
-            ? 'ogg'
-            : fmt === 'm4a' || fmt === 'mp4' || fmt === 'aac'
-              ? 'm4a'
-              : 'wav';
-    return { data: m[2], format: norm };
-  }
-  return { data: stripAudioDataPrefix(payload), format: 'wav' };
+  const m = payload.match(/^data:audio\/([^;,]+)(?:;[^;,]+)*;base64,(.+)$/);
+  if (!m) throw new Error('Ollama 兼容接口的音频只收 data:audio/<格式>;base64, 形式（插件不读本地路径与链接）');
+  const format = AUDIO_FORMATS.get(m[1].toLowerCase());
+  if (!format) throw new Error(`Ollama 兼容接口不接受 ${m[1]} 音频`);
+  return { data: m[2], format };
 }
 
 function safeParseJSON(str: string): Record<string, unknown> {
@@ -1279,7 +1266,6 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   const client = new OllamaClient(cfg, logger.use, proc.use);
   lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
   const baseLabel = `Ollama (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
-  const shownBaseUrl = redactUrl(cfg.baseUrl);
 
   // 已注册 model entry 的句柄表：modelId → 该 entry 的退订
   const registered = new Map<string, () => void>();
@@ -1353,7 +1339,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     throw configError(
       discoveryError
         ? `取不到 Ollama 的模型列表，没有可注册的模型：确认 Ollama 在运行、baseUrl 写对后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
-        : `Ollama 已连接 ${shownBaseUrl}，但未发现任何可用模型；先用 ollama pull 下载模型，或在 customModels 里写明要用的模型`,
+        : `Ollama 已连接 ${cfg.baseUrl}，但未发现任何可用模型；先用 ollama pull 下载模型，或在 customModels 里写明要用的模型`,
     );
   }
   if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
@@ -1364,15 +1350,15 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   // 模型都被当作非对话模型跳过（如只装了嵌入模型）时同样抛配置错误。只有 /api/show 答复过才会跳过，所以是已连接
   if (registered.size === 0) {
     throw configError(
-      `Ollama 已连接 ${shownBaseUrl}，但没有可用的对话模型：${initialIds.join(', ')} 都没有报告对话能力（如嵌入模型）；先用 ollama pull 下载对话模型`,
+      `Ollama 已连接 ${cfg.baseUrl}，但没有可用的对话模型：${initialIds.join(', ')} 都没有报告对话能力（如嵌入模型）；先用 ollama pull 下载对话模型`,
     );
   }
   logger.use.info(
     !cfg.discoverModels
-      ? `Ollama 未开启模型发现: ${shownBaseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
+      ? `Ollama 未开启模型发现: ${cfg.baseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
       : discoveryError
-        ? `Ollama 模型发现失败: ${shownBaseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
-        : `Ollama 已连接: ${shownBaseUrl}，注册 ${registered.size} 个 model entry`,
+        ? `Ollama 模型发现失败: ${cfg.baseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`
+        : `Ollama 已连接: ${cfg.baseUrl}，注册 ${registered.size} 个 model entry`,
   );
 
   /**

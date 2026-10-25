@@ -12,6 +12,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import maimai from '../../packages/plugin-maimai/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import okx from '../../packages/plugin-okx-trading/src/index.js';
+import cursor from '../../packages/plugin-remote-agent-cursor/src/index.js';
 import browser from '../../packages/plugin-tool-browser/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
 import { parseConfig, validateConfig } from '../../packages/schema-config/src/index.js';
@@ -130,6 +131,31 @@ describe('关键配置在副作用前拒绝', () => {
     const { app, requests } = await activate(embeddingOpenai, { apiKey: 'key' });
     expect(app.plugins.getPlugin(embeddingOpenai.name)?.state).toBe('active');
     expect(requests).toEqual(['https://api.openai.com/v1/embeddings']);
+  });
+});
+
+describe('请求基址带查询串或片段：读配置时报错，不发请求', () => {
+  const plugins = [
+    { plugin: okx, extra: { apiKey: 'k', secretKey: 's', passphrase: 'p' } },
+    { plugin: maimai, extra: { developerToken: 'zz-placeholder-token' } },
+    { plugin: cursor, extra: { apiKey: 'zz-placeholder-key' } },
+  ];
+  // 按原文判：末尾单个问号与片段解析后查询串为空，拼出来的地址照样是坏的
+  const forms = [
+    { form: '带查询串', baseUrl: 'https://example.test/api?key=zz-placeholder-secret' },
+    { form: '末尾单个问号', baseUrl: 'https://example.test/api?' },
+    { form: '带片段', baseUrl: 'https://example.test/api#frag' },
+  ];
+  it.each(plugins.flatMap(p => forms.map(f => ({ ...p, ...f }))))('$plugin.name / $form', async ({
+    plugin,
+    extra,
+    baseUrl,
+  }) => {
+    const { app, requests } = await activate(plugin, { ...extra, baseUrl });
+    const instance = app.plugins.getPlugin(plugin.name);
+    expect(instance?.state).toBe('error');
+    expect(instance?.error).toContain('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    expect(requests).toEqual([]);
   });
 });
 

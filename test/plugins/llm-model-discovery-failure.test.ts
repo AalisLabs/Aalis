@@ -18,9 +18,8 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 //   Ollama 照常经 /api/show 探测能力。
 // - 响应是 200 但不是模型列表时写明「响应不是模型列表」并带上响应摘录（网关可能用 200 回错误说明），不是 JS 内部报错；
 //   不是 JSON（如网关的门户页）时写明「响应不是 JSON」，摘录折成一行，不是 JSON.parse 带着换行的 SyntaxError。
-// - 发现失败的原因会进实例的错误信息、日志与 WebUI：原因里的 URL 去掉查询串（有的网关把密钥写在查询串里），注册
-//   结果那行日志与「已连接 …」的错误信息里的 URL 同样去掉。baseUrl 带用户名或密码、或解析不了时，读配置就抛配置
-//   错误，不发请求：带凭据的 URL fetch 拒发，凭据还会出现在报错与条目名称（WebUI 的模型下拉）里。
+// - baseUrl 带用户名或密码、带查询串或片段、或解析不了时，读配置就抛配置错误，不发请求：带凭据的 URL fetch 拒发，凭据
+//   还会出现在报错与条目名称（WebUI 的模型下拉）里；插件在 baseUrl 后面拼路径，带查询串或片段时拼出来的地址是坏的。
 //
 // fetch 用替身，不发真实请求。
 // ════════════════════════════════════════════════════════════
@@ -336,104 +335,9 @@ describe('响应是 200 但不是模型列表：写明原因并带上响应摘�
 });
 
 const SECRET = 'PLACEHOLDER-SECRET';
-const QUERY = 'PLACEHOLDER-QUERY';
+const QUERY_ERROR = 'ConfigError: baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径';
 
-describe('错误信息与日志不带 URL 里的查询串', () => {
-  // plain 是 URL 规范化会改写的写法：没有路径的地址补上「/」，默认端口被去掉
-  const plugins = [
-    {
-      name: 'llm-ollama',
-      plugin: llmOllama,
-      extra: {},
-      scheme: 'http',
-      host: '127.0.0.1:11434',
-      plain: 'http://127.0.0.1:11434',
-    },
-    {
-      name: 'llm-openai',
-      plugin: llmOpenai,
-      extra: { apiKey: 'k' },
-      scheme: 'https',
-      host: 'gw.invalid/v1',
-      plain: 'https://gw.invalid:443/v1',
-    },
-    {
-      name: 'llm-deepseek',
-      plugin: deepseek,
-      extra: { apiKey: 'k' },
-      scheme: 'https',
-      host: 'gw.invalid/v1',
-      plain: 'https://gw.invalid:443/v1',
-    },
-  ];
-  it.each(
-    plugins.flatMap(p => [false, true].map(custom => ({ ...p, custom }))),
-  )('$name / 发现失败 / customModels=$custom', async ({ plugin, extra, scheme, host, custom }) => {
-    stubFetch('refused');
-    const { app, logs } = world();
-    await app.plugin(plugin, {
-      ...extra,
-      baseUrl: `${scheme}://${host}?key=${QUERY}`,
-      ...(custom ? { customModels: 'mine' } : {}),
-    });
-    await app.plugins.idle();
-
-    const instance = app.plugins.getPlugin(plugin.name);
-    expect(instance?.state).toBe(custom ? 'active' : 'error');
-    const reported = custom ? logs.filter(m => m.includes('启动时只注册')) : [instance?.error ?? ''];
-    expect(reported, '前置：发现失败的原因没有报出来').toHaveLength(1);
-    expect(reported[0]).toContain('ECONNREFUSED');
-    expect(reported[0], '原因里没有 URL 的主机').toContain(host.split('/')[0]);
-    for (const text of [...reported, ...logs]) expect(text).not.toContain(QUERY);
-  });
-
-  // 注册结果那行 info 与「已连接 …」的配置错误里同样写着地址
-  it.each(
-    plugins.flatMap(p => {
-      const withQuery = `${p.scheme}://${p.host}?key=${QUERY}`;
-      const noDiscovery = { discoverModels: false, customModels: 'mine' };
-      return [
-        { ...p, branch: '未开启模型发现', url: withQuery, config: noDiscovery, mode: 'ok' as const, chat: true },
-        { ...p, branch: '已连接:', url: withQuery, config: {}, mode: 'ok' as const, chat: true },
-        { ...p, branch: '未发现任何可用模型', url: withQuery, config: {}, mode: 'empty' as const, chat: true },
-        ...(p.plugin === llmOllama
-          ? [{ ...p, branch: '没有可用的对话模型', url: withQuery, config: {}, mode: 'ok' as const, chat: false }]
-          : []),
-      ];
-    }),
-  )('$name / $branch', async ({ plugin, extra, host, branch, url, config, mode, chat }) => {
-    stubFetch(mode, chat ? ['completion'] : ['embedding']);
-    const { app, logs } = world();
-    await app.plugin(plugin, { ...extra, baseUrl: url, ...config });
-    await app.plugins.idle();
-
-    // 前两条分支是注册结果那行 info，后两条是实例的错误信息
-    const instance = app.plugins.getPlugin(plugin.name);
-    const reported = instance?.state === 'active' ? logs.filter(m => m.includes(branch)) : [instance?.error ?? ''];
-    expect(reported, '前置：没有走到这条分支').toHaveLength(1);
-    expect(reported[0]).toContain(branch);
-    expect(reported[0], '没有写出 URL 的主机').toContain(host.split('/')[0]);
-    for (const text of [...reported, ...logs]) expect(text).not.toContain(QUERY);
-  });
-
-  it.each(plugins)('$name / 没有要去掉的部分时 URL 照配置原样显示', async ({ plugin, extra, plain }) => {
-    stubFetch('refused');
-    const { app, logs } = world();
-    await app.plugin(plugin, { ...extra, baseUrl: plain, customModels: 'mine' });
-    await app.plugins.idle();
-
-    expect(
-      logs.filter(m => m.includes(`${plain}，注册`)),
-      `注册结果那行没有照原样写出 ${plain}`,
-    ).toHaveLength(1);
-    expect(
-      logs.filter(m => m.includes(`模型发现失败 ${plain}/`)),
-      `发现失败的原因没有照原样写出 ${plain}`,
-    ).toHaveLength(1);
-  });
-});
-
-describe('baseUrl 带用户名或密码、或解析不了：读配置时抛配置错误，不发请求', () => {
+describe('baseUrl 带用户名或密码、查询串或片段，或解析不了：读配置时抛配置错误，不发请求', () => {
   const plugins = [
     {
       name: 'llm-ollama',
@@ -477,6 +381,11 @@ describe('baseUrl 带用户名或密码、或解析不了：读配置时抛配�
         error: 'ConfigError: baseUrl 不是有效的 URL',
       },
       { ...p, form: '没写协议', url: 'gw.invalid/v1', error: 'ConfigError: baseUrl 不是有效的 URL' },
+      // 插件在 baseUrl 后面拼路径：带查询串或片段时路径落进查询串或片段，请求地址是坏的
+      { ...p, form: '带查询串', url: `${p.scheme}://${p.host}?key=${SECRET}`, error: QUERY_ERROR },
+      // 解析后查询串为空，拼出来的地址照样是坏的
+      { ...p, form: '末尾单个问号', url: `${p.scheme}://${p.host}?`, error: QUERY_ERROR },
+      { ...p, form: '带片段', url: `${p.scheme}://${p.host}#frag`, error: QUERY_ERROR },
     ]),
   )('$name / $form', async ({ plugin, extra, url, error }) => {
     const state = stubFetch('ok');

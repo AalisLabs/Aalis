@@ -431,6 +431,10 @@ export default definePlugin({
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError('baseUrl 需为不带用户名或密码的完整 URL');
     }
+    // 请求路径按 baseUrl 解析（new URL），查询串与片段会被静默丢掉；末尾单个 ? 解析后查询串为空，所以按原文判
+    if (/[?#]/.test(cfg.baseUrl)) {
+      throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    }
 
     const client = new MaimaiClient(cfg, logger.use);
     const songCache: { ref: SongIndex | null } = { ref: null };

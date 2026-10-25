@@ -67,7 +67,7 @@
 
 关键约束：
 
-- **不反解为 tool_calls**（`index.ts`）：本函数只剥离文本，绝不尝试把 DSML 解析回 tool_call——避免触发未授权副作用，且畸形变体解析风险大。需要恢复 tool_call 是**调用方的责任**（DeepSeek 插件的做法见 §4）。
+- **不反解为 tool_calls**（`index.ts`）：本函数只剥离文本，绝不尝试把 DSML 解析回 tool_call——避免触发未授权副作用，且畸形变体解析风险大。
 - **廉价早出 + 防 ReDoS**（`index.ts`）：先 `content.includes('DSML')`，无该字面量直接原样返回。这同时把「无 DSML 的病理输入（如海量竖线）」挡在正则外，杜绝灾难性回溯——旧实现 5000 个竖线即冻进程。正则本身改成线性（每标签内单个 `[^<>]*` + 零宽 lookahead，`index.ts`），消除回溯爆炸。
 - 仅当确实发生剥离时才对结果 `trim()`（`index.ts`）；无泄漏时 `sanitized === content` 原样。
 - 命名刻意**不带厂商前缀**（`index.ts`）：未来 Qwen 漏 `<|im_xxx|>`、Llama 漏 `<|python_tag|>` 等同类问题，应**扩展本函数的 regex**，而非新开 `stripQwenTokens` 等并列函数。注意：当前三条 regex 都靠 `DSML` 字面量驱动，扩展其它 token 时这些断言需要相应放宽。
@@ -107,11 +107,9 @@ const md = fixGfmTables(rawMarkdown);
 
 `packages/plugin-agent/src/index.ts` 导入；每次模型调用拿到完整回复时（`index.ts`）用 `stripLeakedSpecialTokens` 剥离，`hadLeak` 时打 warn 日志（记录 session / platform / 原长 / 净化后长度）；时间线的正文段过同一个函数，落库的正文与时间线是同一份净化。经 OpenAI 兼容接口接入时，服务端漏进正文的工具调用标记只有这一层会剥：只剥不执行。agent 不修表格，外发与落库的是模型的原文。
 
-### `plugin-llm-deepseek`：泄漏检测 + 本地恢复 tool_calls
+### `plugin-llm-deepseek`：泄漏检测 + 剥离
 
-`packages/plugin-llm-deepseek/src/index.ts` 导入。非流式分支（`index.ts`）用 `stripLeakedSpecialTokens` 检测+剥离 DSML 文本（覆盖单/双竖线变体）；若 `hadLeak` 且服务端 `tool_calls` 为空，则调 provider 自己的 `parseDsmlToolCalls(cleanContent)` 本地恢复工具调用（`index.ts`），避免非流式路径下 tool_call 无声丢失。
-
-> 这正是 §2.2「本函数不反解 tool_call」边界的体现：**剥离归库、恢复归调用方**。`stripLeakedSpecialTokens` 只负责告诉你「漏了」并清掉文本，要不要救 tool_call 由 provider 自己定。
+`packages/plugin-llm-deepseek/src/index.ts` 导入。非流式分支（`index.ts`）用 `stripLeakedSpecialTokens` 检测+剥离 DSML 文本（覆盖单/双竖线变体），`hadLeak` 时打 warn 日志（服务端没给 `tool_calls` 时写明这次的工具调用丢了）；工具调用只取服务端给的，漏进正文的标记不当调用执行。
 
 ### `plugin-webui-client`：前端渲染预处理复用
 
@@ -123,8 +121,7 @@ const md = fixGfmTables(rawMarkdown);
 
 - **它不是 sanitizer / 不防 XSS**：只修 Markdown 格式 + 剥协议 token，不转义 HTML、不做安全过滤。输出仍是不可信文本，渲染端该做的转义/隔离照做。
 - **`fixGfmTables` 只管「表头 vs 分隔行列数」这一种错**：表头列数不会被改，数据行列数也不碰；表格因别的原因（缺空行、嵌套等）渲染失败它管不了。
-- **`stripLeakedSpecialTokens` 当前强绑 `DSML` 字面量**：`index.ts` 的早出和三条 regex 的 lookahead 都要求出现 `DSML`；要支持其它模型的 token 必须改源码放宽断言，而非配置。它**不解析、不恢复** tool_call（§2.2）——恢复是调用方责任。
-- **`hadLeak` 是唯一的可观测信号**：需要审计/告警「LLM 漏了内部协议 token」时接它（agent 的做法，§4），提示上游 prompt 或 provider parser 可能有问题。
+- **`stripLeakedSpecialTokens` 当前强绑 `DSML` 字面量**：`index.ts` 的早出和三条 regex 的 lookahead 都要求出现 `DSML`；要支持其它模型的 token 必须改源码放宽断言，而非配置。
 - **应在「完整响应」上调，而非每个流式 chunk**：DSML block 是跨 chunk 的成对结构，半截 chunk 上调只能命中「单 token / 未闭合片段」兜底，无法正确剥整段。约定是**拿到完整 content 后调一次**。
 
 ---

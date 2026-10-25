@@ -10,7 +10,7 @@ import openai from '../../packages/plugin-llm-openai/src/index.js';
 //
 // - ollama：EOF 兜底此前造的 id 是 `call_${i}`，与终帧、非流式的 `call_ollama_<时间戳>_<i>`
 //   不同格式，跨回合必撞；下游按 id 配对调用与结果（tool-search、memory-summary）。
-// - deepseek：DSML 泄漏本地解析失败时，[DONE] 分支告警、EOF 分支静默。
+// - deepseek：服务端没给 tool_calls、正文里漏出工具调用标记时，两条收尾路径（与非流式）都只剥离标记、不当调用执行。
 // - openai 与 deepseek：一帧里带几个工具调用时每个都报生成进度（只报最后一个时，界面按序号配的工具卡会串位）。
 // ════════════════════════════════════════════════════════════
 
@@ -87,25 +87,92 @@ describe('ollama：工具调用 id 在各收尾路径同一格式', () => {
   });
 });
 
-describe('deepseek：DSML 泄漏本地解析失败时两条收尾路径都告警', () => {
-  // 只有 DSML 起始标记、没有完整 invoke 块：本地解析不出任何调用
-  const leak = `data: ${JSON.stringify({ choices: [{ delta: { content: '<｜DSML｜tool_calls>\n<｜DSML｜invoke name="x">' } }] })}\n`;
+describe('deepseek：服务端没给 tool_calls 时，正文里漏出的工具调用标记只剥离、不当调用执行', () => {
+  const BLOCK =
+    '<｜DSML｜tool_calls><｜DSML｜invoke name="get_time"><｜DSML｜parameter name="tz" string="true">UTC</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>';
+  const DEEPSEEK = { apiKey: 'k', baseUrl: 'https://gw.invalid' };
 
-  it.each([
-    ['收到 [DONE]', `${leak}data: [DONE]\n`],
-    ['流意外结束（无 [DONE]）', leak],
-  ])('%s', async (_label, body) => {
+  function warnHub(): { hub: LogHub; warns: string[] } {
     const hub = new LogHub();
     const warns: string[] = [];
     hub.onEntry((e: LogEntry) => {
       if (e.level === 'warn') warns.push(e.message);
     });
+    return { hub, warns };
+  }
+
+  const leak = `data: ${JSON.stringify({ choices: [{ delta: { content: `先查一下${BLOCK}` } }] })}\n`;
+  it.each([
+    ['收到 [DONE]', `${leak}data: [DONE]\n`],
+    ['流意外结束（无 [DONE]）', leak],
+  ])('流式 / %s：标记之前的正文照交，标记不交出，收尾没有工具调用', async (_label, body) => {
+    const { hub, warns } = warnHub();
     stubProvider(body);
-    const model = await loadModel(deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' }, hub);
-    const last = await lastChunk(model);
+    const model = await loadModel(deepseek, DEEPSEEK, hub);
+    const deltas: string[] = [];
+    let last: ChatStreamChunk | undefined;
+    for await (const chunk of model.chatStream!({ messages: [{ role: 'user', content: 'hi' }] })) {
+      if (chunk.contentDelta) deltas.push(chunk.contentDelta);
+      last = chunk;
+    }
     expect(last?.done).toBe(true);
-    expect(last?.toolCalls).toBeUndefined();
-    expect(warns.some(m => m.includes('DSML 本地解析未识别出完整 invoke 块'))).toBe(true);
+    expect(last?.toolCalls, '正文里的标记被当成调用').toBeUndefined();
+    expect(deltas.join('')).toBe('先查一下');
+    expect(
+      warns.some(m => m.includes('DSML')),
+      `没有记 warn: ${JSON.stringify(warns)}`,
+    ).toBe(true);
+  });
+
+  /** 按 parts 逐帧交出正文、以 [DONE] 收尾的流，交出模型给出的全部正文增量 */
+  const streamed = async (parts: string[]): Promise<string> => {
+    const frame = (content: string) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n`;
+    stubProvider(`${parts.map(frame).join('')}data: [DONE]\n`);
+    const model = await loadModel(deepseek, DEEPSEEK);
+    let text = '';
+    for await (const chunk of model.chatStream!({ messages: [{ role: 'user', content: 'hi' }] })) {
+      text += chunk.contentDelta ?? '';
+    }
+    return text;
+  };
+  const LEAKED = `先查一下${BLOCK}`;
+  const START = LEAKED.indexOf('<');
+
+  // 可能是标记开头的尾巴留到下一帧再判：标记从哪里断开都不漏出半截
+  it.each([0, 1, 2, 4])('流式 / 标记跨帧（在起始标记的第 %i 个字处断开）：只交出标记之前的正文', async offset => {
+    const cut = START + offset;
+    expect(await streamed([LEAKED.slice(0, cut), LEAKED.slice(cut)])).toBe('先查一下');
+  });
+
+  it('流式 / 不是标记的「<」跨帧：留到下一帧再判，正文照原样交出', async () => {
+    expect(await streamed(['a <', '｜不是标记', ' 好'])).toBe('a <｜不是标记 好');
+  });
+
+  it('非流式：去掉标记块，其余正文照留，没有工具调用', async () => {
+    const { hub, warns } = warnHub();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) =>
+        String(url).endsWith('/chat/completions')
+          ? Response.json({
+              choices: [
+                {
+                  message: { role: 'assistant', content: `先查一下\n${BLOCK}`, tool_calls: [] },
+                  finish_reason: 'stop',
+                },
+              ],
+            })
+          : Response.json({ data: [{ id: 'm' }] }),
+      ),
+    );
+    const model = await loadModel(deepseek, DEEPSEEK, hub);
+    const result = await model.chat({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(result.toolCalls, '正文里的标记被当成调用').toBeUndefined();
+    expect(result.content).toBe('先查一下');
+    expect(
+      warns.some(m => m.includes('DSML')),
+      `没有记 warn: ${JSON.stringify(warns)}`,
+    ).toBe(true);
   });
 });
 

@@ -38,11 +38,11 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 
 **职责**：处理本厂商专有协议的"协议层泄漏"。
 
-- 检测泄漏 → 尝试将泄漏内容恢复为有效 `ToolCall[]`（best-effort）
-- 将 `content` 中的标记残渣剥离干净
-- 对外暴露的 `ChatResponse` 中，`content` 已是干净文本，`toolCalls` 已是恢复后的结构化数据
+- 检测泄漏，将 `content` 中的标记残渣剥离干净，记一条 warn
+- 对外暴露的 `ChatResponse` 中，`content` 已是干净文本，`toolCalls` 只取服务端给的
 
 **不做的事**：
+- 不把漏出的标记解析成工具调用去执行：服务端没认出的调用，正文里那段只是文字，照它执行等于把文字当动作
 - 不做 GFM 修复（与厂商无关，不是适配器关心的事）
 - 不发明自己的剥离 regex（直接复用 `@aalis/util-text-normalize` 的 `stripLeakedSpecialTokens`）
 
@@ -92,20 +92,18 @@ DeepSeek V3.2/V4 使用 DSML (DeepSeek Markup Language) 表达 tool_calls：
 ```
 chunk 到来
   │
-  ├─ accContent += delta.content
+  ├─ [还没检测到] 尾缓冲 + delta.content 作为本帧候选
+  │   └─ [｜|]+ 检测到 DSML 起始 → dsmlDetected = true，记 warn
+  │       └─ 输出候选里 DSML 之前的部分（如有）
   │
-  ├─ [｜|]+ 检测到 DSML 起始 → dsmlDetected = true
-  │   ├─ 输出 DSML 之前的 cleanPart（如有）
-  │   └─ 后续 chunk 只累积 accContent，不 emit
+  ├─ [已检测到] 之后的正文不再 emit
   │
   └─ [DONE 或流意外结束]
-      ├─ dsmlDetected && toolCalls.length === 0
-      │   └─ parseDsmlToolCalls(accContent) → ToolCall[]   ← 从原始泄漏文本恢复
-      └─ yield { done: true, toolCalls: [...] }
+      └─ yield { done: true, toolCalls: 服务端给的工具调用 }
 
 agent 收到：
-  content  = DSML 之前的文本（干净）
-  toolCalls = 恢复的工具调用
+  content  = DSML 之前的文本（干净，可能为空）
+  toolCalls = 服务端给的（服务端没解析出来时这次的工具调用丢了）
 
 agent 的 stripLeakedSpecialTokens(content) = no-op
 ```
@@ -121,31 +119,18 @@ API 响应 JSON
 
   │
   ├─ stripLeakedSpecialTokens(content)
-  │   ├─ hadLeak = true
+  │   ├─ hadLeak = true → 记 warn（写明服务端没给 tool_calls，这次的工具调用丢了）
   │   └─ sanitized = "前缀文本"                ← 剥离后的干净文本
   │
-  ├─ [!hasServerToolCalls]
-  │   └─ parseDsmlToolCalls(原始 content)      ← 注意：在 content = sanitized 赋值前调用
-  │       └─ recoveredToolCalls = ToolCall[]   ← 从原始泄漏文本恢复
-  │
   └─ result.content  = sanitized              ← 干净文本
-     result.toolCalls = recoveredToolCalls    ← 恢复的工具调用
+     result.toolCalls = 服务端给的（这里没有）
 
 agent 收到：
   content  = sanitized（DSML 已剥离）
-  toolCalls = 恢复的工具调用
+  toolCalls = undefined
 
 agent 的 stripLeakedSpecialTokens(content) = no-op
 ```
-
-### 关键：两条路径传给 agent 的是什么版本？
-
-| 字段 | 传的版本 | 原因 |
-|---|---|---|
-| `content` | **修复后**（DSML 已剥离） | 不应把含 DSML 的脏文本暴露给上层 |
-| `toolCalls` | 从**修复前**的原始泄漏内容解析恢复 | 需要完整的 DSML 结构才能提取 invoke/parameter |
-
-因此 agent 层的 `stripLeakedSpecialTokens` 对 deepseek 插件在正常处理后是 **no-op**；经 OpenAI 兼容接口接入时它是唯一的一道（层 3）。
 
 ---
 
@@ -156,8 +141,7 @@ plugin-agent
   └── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
 
 plugin-llm-deepseek
-  ├── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
-  └── ./dsml-parser               (parseDsmlToolCalls → ToolCall[])
+  └── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
 
 plugin-webui-client
   └── @aalis/util-text-normalize  (fixGfmTables)
@@ -166,15 +150,13 @@ util-text-normalize
   └── （无业务依赖）
 ```
 
-`dsml-parser` 依赖 `@aalis/schema-message`（`ToolCall` 类型），**不能**放入 `util-text-normalize`，这是唯一的隔离边界。
-
 ---
 
 ## 未来扩展指南
 
 **新增 LLM provider 有类似的特殊 token 泄漏**（如 Qwen `<|im_tool_call|>`、Llama `<|python_tag|>`）：
 
-1. **能否恢复结构化数据**（解析为 ToolCall[]）：在对应的 `plugin-xxx` 适配器内实现，不放 util
+1. **不恢复成工具调用**：漏进正文的标记只剥离，工具调用只取服务端给的，适配器不自己解析标记去执行
 2. **剥离文本**：扩展 `util-text-normalize` 的 `stripLeakedSpecialTokens` 中的 regex，不要新建 `stripQwenTokens` 等并列函数，避免调用方认知碎片化
 3. **GFM / 渲染修复**：只加进渲染端的预处理（webui-client 的 `preprocessLaTeX`），不改存下的原文
 

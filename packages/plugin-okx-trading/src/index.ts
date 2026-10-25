@@ -171,6 +171,10 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   if (!URL.canParse(parsed.baseUrl) || new URL(parsed.baseUrl).username || new URL(parsed.baseUrl).password) {
     throw configError('baseUrl 需为不带用户名或密码的完整 URL');
   }
+  // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
+  if (/[?#]/.test(parsed.baseUrl)) {
+    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+  }
   const maxPageLimit = Math.max(1, Math.min(1000, parsed.maxPageLimit || 100));
   const cfg = {
     ...parsed,

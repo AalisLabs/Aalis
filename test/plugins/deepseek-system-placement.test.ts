@@ -6,11 +6,11 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 import { WellKnownKinds } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// DeepSeek 角色归一化：受控实验证实 DeepSeek 把 messages 里所有 system
-// 消息提升合并到渲染流最前部——历史后的每轮易变块与历史中段的通知因此
-// 落在 append-only 历史之前，每轮打穿前缀缓存。归一化规则：首个非 system
-// 之后的 system 一律转 user（无方括号标记者补 [系统提示] 换行前缀）；
-// proactive 代发任务指令豁免（必须保持 system，否则复发「把代发任务当用户指挥」）。
+// DeepSeek 角色归一化：DeepSeek 把 messages 里所有 system 消息提升合并到
+// 渲染流最前部——历史后的每轮易变块与历史中段的通知因此落在 append-only
+// 历史之前，每轮打穿前缀缓存。归一化规则：首个非 system
+// 之后的 system 一律转 user（一律补 [系统提示] 换行前缀）；
+// proactive 代发任务指令豁免（必须保持 system，转 user 会被当成用户在指挥）。
 // ════════════════════════════════════════════════════════════
 
 /** 典型 agent 请求形状：头部稳定区 + 历史（混通知）+ 尾部每轮材料 + 当前消息 */
@@ -47,14 +47,14 @@ describe('normalizeSystemPlacement', () => {
     expect(out).toHaveLength(10);
   });
 
-  it('已带方括号标记的不重复加前缀；无标记的补 [系统提示] 换行前缀（markdown 标题保持行首）', () => {
+  it('转成 user 的一律补 [系统提示] 换行前缀，自带方括号标记的也补（markdown 标题保持行首）', () => {
     const out = normalizeSystemPlacement(agentShape());
-    expect(out[5].content).toBe('[系统通知] 李四(10002) 撤回了一条消息（10:01 发送：「打错了」）');
+    expect(out[5].content).toBe('[系统提示]\n[系统通知] 李四(10002) 撤回了一条消息（10:01 发送：「打错了」）');
     expect(out[7].content).toBe('[系统提示]\n📜 以下是从其他会话检索到的消息片段……');
     expect(out[8].content).toBe('[系统提示]\n# 当前状态\n时间：今天 10:03；上一轮：平静');
   });
 
-  it('proactive 代发任务指令豁免：保持 system 角色（历史 BUG——转 user 会被当成用户在指挥）', () => {
+  it('proactive 代发任务指令豁免：保持 system 角色（转 user 会被当成用户在指挥）', () => {
     const out = normalizeSystemPlacement([
       { role: 'system', content: '人设' },
       { role: 'user', content: '(今天 09:00) [张三(10001)]: 旧消息', name: '10001' },

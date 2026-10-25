@@ -85,7 +85,7 @@ interface ChatModelRequest {
 
 **参考实现（provider）**：
 - `@aalis/plugin-llm-openai`（`packages/plugin-llm-openai/src/index.ts`）——OpenAI 兼容 `chat/completions`（`baseUrl` 为完整前缀，含版本段），远端动态发现 + 实现 `refresh`。
-- `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含思考档位（翻成 thinking.type 与 reasoning_effort）/ DSML 泄漏恢复。
+- `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含思考档位（翻成 thinking.type 与 reasoning_effort）/ 剥离漏进正文的 DSML 标记。
 - `@aalis/plugin-llm-ollama`（`packages/plugin-llm-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
 
 **典型消费方**：
@@ -224,7 +224,7 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 2. **OpenAI 推理模型**：o 系列（o1/o3/o4 等）与 gpt-5 系列（`gpt-5`、`gpt-5-mini`、`gpt-5-nano`、`gpt-5-chat` 等）**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-llm-openai/src/index.ts`）。
 
-3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复；流式分支同理。
+3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`：插件只剥离、不当调用执行，工具调用只取服务端给的；流式分支同理。
 
 4. **Ollama 非流式路径也必须 `prepareLLMMessages`**：曾有 bug 仅在流式分支调用，导致非流式丢 `[系统通知]`/`[跨会话委派]` 前缀。现已对齐（`packages/plugin-llm-ollama/src/index.ts`）。音频请求会自动改路到 OpenAI 兼容 `/v1/chat/completions`（`/api/chat` 不支持 audios），该路径也先 `prepareLLMMessages`。
 
