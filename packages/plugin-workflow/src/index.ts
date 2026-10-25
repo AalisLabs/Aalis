@@ -191,6 +191,17 @@ function defineWorkflowPage(
           return `已删除 ${rowKey}`;
         },
       },
+      cancelRun: {
+        label: t('cancelRun'),
+        effect: 'destructive',
+        confirm: t('cancelRunConfirm'),
+        row: true,
+        // 只发出取消：运行照常收尾，记录留在运行历史里、状态为已取消，收尾时页面重取
+        handler({ rowKey }) {
+          if (!service.cancelRun(rowKey)) throw new TextError(t('runEnded'));
+          return t('runCancelled', { id: rowKey });
+        },
+      },
       defineWorkflow: {
         label: '新建或覆盖',
         effect: 'write',
@@ -301,16 +312,22 @@ function defineWorkflowPage(
           { key: 'error', label: '错误', kind: 'long-text' },
           { key: 'runId', label: '运行 ID', kind: 'code' },
         ],
+        rowActions: [{ action: 'cancelRun', visibleWhen: 'running' }],
+        // 最近 50 次，更早而还在跑的接在后面（按开始时间倒序，它们本就排在后面）：取消的入口不随新的运行挤掉
         data: () =>
-          service.listRuns(50).map(r => ({
-            runId: r.runId,
-            workflowId: r.workflowId,
-            status: STATUS[r.status],
-            triggerSource: r.triggerSource,
-            startedAt: r.startedAt,
-            duration: fmtDuration((r.finishedAt ?? Date.now()) - r.startedAt),
-            error: r.error ?? '',
-          })),
+          service
+            .listRuns()
+            .filter((r, i) => i < 50 || r.status === 'running')
+            .map(r => ({
+              runId: r.runId,
+              workflowId: r.workflowId,
+              status: STATUS[r.status],
+              triggerSource: r.triggerSource,
+              startedAt: r.startedAt,
+              duration: fmtDuration((r.finishedAt ?? Date.now()) - r.startedAt),
+              error: r.error ?? '',
+              running: r.status === 'running',
+            })),
       },
       { type: 'actions', actions: ['defineWorkflow'] },
     ],
@@ -470,6 +487,7 @@ async function run(caps: Caps): Promise<void> {
     logger.info(`run=${runId} 启动 (trigger=${triggerSource})`);
 
     try {
+      // 跑完就摘掉中止句柄，再记终态、发收尾事件：之后的 cancelRun 回 false，不对已经落定的运行回「已取消」
       const result = await runDag({
         tools,
         events: events.use,
@@ -494,7 +512,7 @@ async function run(caps: Caps): Promise<void> {
           if (idx >= 0) run.nodes[idx] = info;
           events.use.emit('workflow:node:done', { runId, node: info }).catch(() => {});
         },
-      });
+      }).finally(() => aborts.delete(runId));
       run.status = result.status;
       run.nodes = result.nodes;
       run.error = result.error;
@@ -515,7 +533,6 @@ async function run(caps: Caps): Promise<void> {
       await events.use.emit('workflow:run:error', run);
       logger.error(`run=${runId} 异常: ${toSource(run.error)}`);
     } finally {
-      aborts.delete(runId);
       page.invalidate();
     }
     return run;
