@@ -7,7 +7,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
-import { platform } from '../../packages/api-platform/src/index.js';
+import { persona } from '../../packages/api-persona/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, events, logger, provide } from '../../packages/core/src/index.js';
@@ -388,16 +388,11 @@ const RELATION_CFG = {
 
 async function setupRelation(cfg: Partial<ExtractorConfig> = {}) {
   const app = newApp();
-  const host = app.bind({ provide, events, logger, memory, llm, platform });
+  const host = app.bind({ provide, events, logger, memory, llm, persona });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
   const mem = host.memory.use;
   const calls: ChatModelRequest[] = [];
-  host.provide.use(
-    platform,
-    { adapterName: 'mock-onebot', platform: 'onebot', getConnections: () => [], sendMessage: async () => {} } as never,
-    { entryId: 'mock/onebot' },
-  );
   host.provide.use(
     llm,
     {

@@ -500,6 +500,17 @@
 - plugin-tool-system：`http_request` 的字符串正文（`body`）原样发出，不再补 `Content-Type: application/json`；要发 JSON 用新参数 `json`（请求头没写 `Content-Type` 时补 `application/json`；给的不是对象的报错，字符串正文用 `body`），两个都给的报错。响应是不是文本按内容判：声明类型不常见的文本（如 `application/vnd.api+json`）能看到正文，声明成文本的二进制只给「不是 <编码> 文本」与字节数、声明的类型，不再返回乱码；编码按服务端声明的 charset，声明成 GBK 等编码的正文照常读出，没声明或认不出的按 UTF-8。`Content-Length` 超限时取消响应体，`http_download` 上游回错误状态时也取消，不再占着连接。
 - plugin-skills：`createSkill` 探目标目录时，存储报的不是「不存在」（没有权限、存储不可用）就报错，不再当作目录不存在去创建。
 
+### 关系图与档案提取（@aalis/plugin-user-relation、@aalis/plugin-user-profile）
+
+- plugin-user-relation：人对人关系词只做大小写与空白规整，模型写的原词照存：`student`、`partner` 不再被改成 `admirer`、`cp`，`best_friend`、`buddy` 等不再并成 `friend`，同一对人之间可能出现近义的两条边。已经归一过的存量边不改回。
+- plugin-user-relation：提取写入时人物只认窗口里说话的人、存档记下的被 @ 的账号（`Mentions`）与图里已有的人，模型输出的其余人物与引用他们的边不落库，不再按 self、me、bot 这类名单与此刻登记了哪些平台认「占位人物」；被 @ 但还没说过话的人可以记进关系。
+- plugin-user-relation：整理（consolidate）开头不再按登记的平台删人：某个适配器没登记或停用时，那个平台的人与关系边不再被级联删掉。`RelationService.consolidate` 删掉选项 `platform` 与返回的 `fakePersonsDeleted`、`fakePersonEdgesDeleted`，`/relation cleanup fake-self` 指令删除（破坏性）。
+- plugin-user-relation：没配整理模型（`consolidationModel`）时整理只统计候选、不改图：开着 `consolidationAutoLink` 也不再按名字前缀把实体连成「属于」（`part-of`），不再把名字归一后相同的实体（含类别不同的）直接合并。配了模型时照旧经模型核验。事件同名也要经模型核验：会话里的事件与全局事件标题规整后相同时，模型判是同一件事才并进全局事件，判否的与事件重复合并一样记进否决缓存（此前不问模型直接合并）。
+- plugin-user-relation：别名合并照调用方给的方向：模型说 A 是 B 的小号（`alt-account-of`、`is-alias-of`）时 A 并进 B，不再因为 A 的名字更长、别名或证据更多反过来把 B 并掉；整理里名字相同、没有方向依据的一对按合并分挑留下的一方。任一端已不在图里时什么都不改。`RelationService.mergeAlias` 删掉选项 `noCanonicalCorrection` 与返回的 `swapped`、`effectiveCanonicalId`、`effectiveAliasId`（破坏性）。
+- plugin-user-relation：整理的别名核验只认提示词要的 `verdict`，模型按 `{"isSame": …}` 回时按 verdict 非法处理、不合并。
+- plugin-user-relation、plugin-user-profile：提取提示里对她的称呼取人设名（新加可选依赖 `persona`，每次提取按触发它的会话取一次 `getPersonaName`），人设服务缺席或卡没取名时用「机器人」，不再写死 Aalis。
+- plugin-user-relation、plugin-user-profile：`/relation` 与 `/profile` 的回复不再带表情与勾叉，警告写「注意：」，事件重复候选的判定写「通过」「否决」。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

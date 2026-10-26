@@ -5,6 +5,7 @@ import { hooks } from '@aalis/api-hooks';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 import { type ChatResponse, chatModelPicker, lightestThinking, llm } from '@aalis/api-llm';
 import { clearMetadataNamespaces, type MemoryService, memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
@@ -41,6 +42,9 @@ import { t } from './texts.js';
 // ════════════════════════════════════════════════════════════
 
 const PROFILE_NS = 'user:profile';
+
+/** 人设服务不在、或卡没取名时，提取提示里对机器人的称呼 */
+const BOT_FALLBACK_NAME = '机器人';
 
 const configSchema = defineConfig({
   extractEveryNMessages: {
@@ -244,10 +248,10 @@ function buildTargetUserCorpus(history: Message[], userId: string, platform: str
 
 /**
  * 渲染完整会话历史供提取 LLM 作为消歧上下文：
- * 每行带身份标签区分「目标用户」与「其他用户」，
- * 不做 strip（引用原话不会在目标用户语料中出现，sourceQuote 校验能拦住）。
+ * 每行带身份标签区分「目标用户」「其他用户」与她自己（botName），
+ * 不做 strip：校验语料是归档正文，他引用的别人的话也在里面，sourceQuote 校验挡不住这一种。
  */
-function renderHistoryForExtract(history: Message[], userId: string, platform: string): string {
+function renderHistoryForExtract(history: Message[], userId: string, platform: string, botName: string): string {
   return history
     .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'notice') && m.content)
     .map(m => {
@@ -255,8 +259,8 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
       const content = (m.content ?? '').trim();
       if (!content) return '';
       if (m.role === 'assistant') {
-        // Aalis 的回复：加标签让 LLM 知道用户是在跟谁互动，用于判断「对 Aalis 的行为」
-        return `[${time}] [Aalis]: ${content}`;
+        // 她的回复：加标签让 LLM 知道用户是在跟谁互动，用于判断用户对她的行为
+        return `[${time}] [${botName}]: ${content}`;
       }
       if (m.role === 'notice') {
         // 平台事件（群禁言 / 撤回 / 成员进出 / poke 等），供提取判断「用户被谁怎么了」之类上下文
@@ -292,6 +296,8 @@ const uses = {
   tools: optional(tools),
   commands: optional(commands),
   userRelation: optional(userRelation),
+  /** 提取提示里机器人的称呼取人设名；缺席时用中性称呼 */
+  persona: optional(persona),
   /** 事实的语言：取全局默认层的语言列表（读者是 owner），缺席时按中文 */
   i18n: optional(i18n),
   /** 档案页；不在时照常记档案 */
@@ -319,6 +325,7 @@ function registerUserProfile({
   tools,
   commands,
   userRelation,
+  persona,
   i18n,
   webui,
 }: Caps): void {
@@ -657,6 +664,7 @@ function registerUserProfile({
     nickname: string | undefined,
     userId: string,
     platform: string,
+    sessionId: string,
   ): Promise<ExtractResult> {
     const empty: ExtractResult = {
       add: [],
@@ -664,10 +672,12 @@ function registerUserProfile({
       remove: [],
     };
 
+    // 她在提示里的称呼取这个会话的人设名，标签、规则与例句同一个名字
+    const botName = (persona.present ? persona.use.getPersonaName({ sessionId, platform }) : '') || BOT_FALLBACK_NAME;
     const sys =
       '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
-      '`[目标用户 X(uid)]`、`[其他用户 Y(uid)]` 或 `[Aalis]`。上下文仅供消歧，' +
-      '**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、Aalis 的猜测或提问写入事实。' +
+      `\`[目标用户 X(uid)]\`、\`[其他用户 Y(uid)]\` 或 \`[${botName}]\`。上下文仅供消歧，` +
+      `**只允许根据「目标用户」自己的发言写入事实**，不能根据其他用户、${botName} 的猜测或提问写入事实。` +
       '\n\n你可以执行三种操作（在一次输出里组合）：' +
       '\n- add: 添加新事实，需指定 text、category、sourceQuote' +
       '\n- update: 用 id 精确替换某条已知事实，同样需 sourceQuote（优先使用 update 而非 add 来避免重复）' +
@@ -679,12 +689,12 @@ function registerUserProfile({
       '\n   - 是认真陈述，还是反讽/否定/假设/角色扮演？（"我可不喜欢爵士" → 否定，不写；跑团扮演 NPC 的台词 → 不写）' +
       '\n   - 如果原始依据来自「其他用户」的发言，即使在说目标用户，也不允许写入（他人可能记错、说反话）' +
       '\n   **拿不准就不写。profile 漏几条没关系，写错才麻烦。**' +
-      '\n   ⚠️ 例外——`人际关系` 类：除上述通用规则外，该类还允许记录目标用户**与 Aalis 之间长期可观察的关系模式**，' +
+      `\n   ⚠️ 例外——\`人际关系\` 类：除上述通用规则外，该类还允许记录目标用户**与 ${botName} 之间长期可观察的关系模式**，` +
       '包含两种情况：' +
-      '\n   (a) 行为身份类：用户在 Aalis 项目中扮演的角色或长期重复的行为' +
-      '（示例 text：「是 Aalis 的开发维护者」「经常向 Aalis 提交功能建议」「常帮助测试和排查 Aalis 的故障」）' +
-      '\n   (b) 长期情感模式类：用户对 Aalis 表现出的**反复出现的态度倾向**（不是单次情绪）' +
-      '（示例 text：「常对 Aalis 表达依赖与喜爱」「习惯把日常烦恼向 Aalis 倾诉」「喜欢调侃 Aalis」）' +
+      `\n   (a) 行为身份类：用户围绕 ${botName} 扮演的角色或长期重复的行为` +
+      `（示例 text：「是 ${botName} 的开发维护者」「经常向 ${botName} 提交功能建议」「常帮助测试和排查 ${botName} 的故障」）` +
+      `\n   (b) 长期情感模式类：用户对 ${botName} 表现出的**反复出现的态度倾向**（不是单次情绪）` +
+      `（示例 text：「常对 ${botName} 表达依赖与喜爱」「习惯把日常烦恼向 ${botName} 倾诉」「喜欢调侃 ${botName}」）` +
       '\n   ❌ 严禁仅凭单次发言推断情感事实：一次抱怨/一次感谢/一次撒娇都不算"模式"，不写。' +
       '必须是已有事实佐证 + 本轮再次出现的同类行为才允许 update 强化，或会话历史多处反复出现才允许 add。' +
       '依据必须是「目标用户」发言中可直接推断的内容，sourceQuote 取目标用户发言原话。' +
@@ -704,7 +714,7 @@ function registerUserProfile({
         ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
         : '（暂无）';
     const who = nickname ? `${nickname}（${userId}）` : userId;
-    const renderedHistory = renderHistoryForExtract(history, userId, platform);
+    const renderedHistory = renderHistoryForExtract(history, userId, platform, botName);
     const user =
       `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}` +
       `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
@@ -758,9 +768,9 @@ function registerUserProfile({
       }
       const { add, update, remove } = parseFactOps(reply.parsed);
 
-      // sourceQuote 校验：quote 可能跨多条消息（LLM 用 \n 拼接），
-      // 因此按行拆分，每行（非空）都必须能在「目标用户」语料中找到 normalize 后的子串。
-      // 这样即使行与行之间夹着其他用户的消息也不会被错误拒收。
+      // 新增与改写的事实要附原话：按行拆开（quote 可能跨多条消息，LLM 用 \n 拼接），每行去掉空白与常见标点后要能在目标用户的
+      // 归档正文里找到，找不到整条丢弃并 warn；规整后为空的行不核对，删除事实不要原话。模型会凭空编事实，核对原话挡的是这一种；
+      // 归档正文里带着他引用的别人的话与附件描述，这两样挡不住
       const targetCorpus = normalizeForQuoteMatch(buildTargetUserCorpus(history, userId, platform));
       const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
         const q = item.sourceQuote?.trim() ?? '';
@@ -946,7 +956,7 @@ function registerUserProfile({
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const snapshotFacts = (await loadProfile(mem, userKey))?.facts ?? [];
-      const ops = await llmExtractFacts(history, snapshotFacts, nickname, userId, platform);
+      const ops = await llmExtractFacts(history, snapshotFacts, nickname, userId, platform, sessionId);
       const hasFactOps = ops.add.length > 0 || ops.update.length > 0 || ops.remove.length > 0;
       if (!hasFactOps) return;
       // 以 LLM 返回后重读的档案为合并基底：调用期间档案可能被清空或删了事实，以调用前的快照
@@ -1298,7 +1308,7 @@ function registerUserProfile({
   tools.use.registerGroup({
     name: 'user-profile',
     label: '用户档案',
-    description: '查询 Aalis 已经积累的某人事实档案。',
+    description: '查询已经积累的某人事实档案。',
   });
   tools.use.register({
     definition: {
@@ -1306,7 +1316,7 @@ function registerUserProfile({
       function: {
         name: 'user_profile_lookup',
         description:
-          '查询 Aalis 已积累的某个用户的事实档案。当对话中提到某人、或你想回忆已知信息时使用。' +
+          '查询你已积累的某个用户的事实档案。当对话中提到某人、或你想回忆已知信息时使用。' +
           '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合。',
         parameters: {
           type: 'object',
@@ -1377,7 +1387,7 @@ function registerUserProfile({
     const userKey = userKeyOf(argv.session.platform, userId);
     const profile = await loadProfileLenient(memory.present ? memory.use : undefined, userKey);
     if (!profile || profile.facts.length === 0) {
-      return `📭 暂无档案数据 (${userKey})`;
+      return `暂无档案数据 (${userKey})`;
     }
     return profileText(profile, userKey);
   });
@@ -1389,13 +1399,13 @@ function registerUserProfile({
     const mem = pinnedMemory();
     try {
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
-      if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
+      if (!existed) return `你当前没有档案数据 (${userKey})`;
       await mem.deleteMetadata(PROFILE_NS, userKey);
       page.invalidate();
-      return `✅ 已清除你的档案 (${userKey})`;
+      return `已清除你的档案 (${userKey})`;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      return `❌ 清除失败：${m}`;
+      return `清除失败：${m}`;
     }
   });
 
@@ -1414,7 +1424,7 @@ function registerUserProfile({
       const mem = memory.list().find(p => p.selected)?.use;
       try {
         const profile = await loadProfile(mem, userKey);
-        if (!profile || profile.facts.length === 0) return `📭 无档案数据 (${userKey})`;
+        if (!profile || profile.facts.length === 0) return `无档案数据 (${userKey})`;
         const hit = profile.facts.find(f => f.id === factId);
         if (!hit) {
           const listing = profile.facts
@@ -1429,9 +1439,9 @@ function registerUserProfile({
           updatedAt: Date.now(),
         });
         page.invalidate();
-        return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
+        return `已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
       } catch (err) {
-        return `❌ 删除失败：${err instanceof Error ? err.message : String(err)}`;
+        return `删除失败：${err instanceof Error ? err.message : String(err)}`;
       }
     });
 
@@ -1440,10 +1450,10 @@ function registerUserProfile({
     try {
       const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger.use);
       page.invalidate();
-      return `✅ 已清空全部用户档案（${keys.length} 条）`;
+      return `已清空全部用户档案（${keys.length} 条）`;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      return `❌ 清空失败：${m}`;
+      return `清空失败：${m}`;
     }
   });
 

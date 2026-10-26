@@ -11,7 +11,7 @@ export default defineLocale<Source>()({
   categoryPreferences: 'Preferences',
   categoryTaboos: 'Taboos',
   categoryOther: 'Other',
-  profileHead: '📇 Your profile ({key})',
+  profileHead: 'Your profile ({key})',
   profileMeta: 'Relationship strength: {score}/100, interactions: {count}',
   section: '## {name}',
   factLine: '- {text} ({meta})',

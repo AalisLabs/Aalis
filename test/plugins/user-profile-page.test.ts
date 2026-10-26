@@ -180,7 +180,7 @@ describe('用户档案页', () => {
     const reply = (await command('profile')) as TextRef;
     expect(toSource(reply)).toBe(
       [
-        '📇 你的档案 (onebot:alice)',
+        '你的档案 (onebot:alice)',
         '关系强度：12.0/100，互动次数：3',
         '',
         '## 近期处境',
@@ -195,7 +195,7 @@ describe('用户档案页', () => {
     );
     expect(isTextRef(reply) && resolveText(reply, ['en'])).toBe(
       [
-        '📇 Your profile (onebot:alice)',
+        'Your profile (onebot:alice)',
         'Relationship strength: 12.0/100, interactions: 3',
         '',
         '## Current situation',

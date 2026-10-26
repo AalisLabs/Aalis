@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
@@ -30,6 +31,7 @@ import {
   reinforceWeight,
   trimEvidence,
 } from '../../packages/plugin-user-relation/src/utils.js';
+import { ref } from '../fixtures/service-ref.js';
 
 const apps: App[] = [];
 
@@ -65,6 +67,16 @@ const ev = (overrides: Partial<EvidenceRef> = {}): EvidenceRef => ({
   extractedAt: overrides.extractedAt ?? Date.now(),
   ...overrides,
 });
+
+/** 整理用的模型替身：每次都回同一段文字 */
+const stubLLM = (content: string) =>
+  ref<LLMModel>([
+    {
+      instance: { id: 'stub', capabilities: ['chat'], chat: async () => ({ content }) } as unknown as LLMModel,
+      contextId: 'stub/consolidate',
+    },
+  ]);
+const SAME_VERDICT = '{"verdict": "same", "reason": "同一对象"}';
 
 describe('plugin-user-relation: key encoding', () => {
   it('encodes person/event/edge keys with type prefixes', () => {
@@ -258,16 +270,16 @@ describe('plugin-user-relation: person-person edges', () => {
     expect(b2a.id).not.toBe(a2b.id); // 有向：反方向是新边
   });
 
-  it('normalizes synonyms before storage', async () => {
+  it('关系词照模型写的原词落库，只规整格式：student 不改成 admirer', async () => {
     const { service } = await makeService();
     await service.observePerson('onebot', 'a');
     await service.observePerson('onebot', 'b');
     const edge = await service.addPersonPersonEdge({
       fromPersonId: 'onebot:a',
       toPersonId: 'onebot:b',
-      relationType: 'Best Friend',
+      relationType: ' Student ',
     });
-    expect((edge as PersonPersonEdge).relationType).toBe('friend');
+    expect((edge as PersonPersonEdge).relationType).toBe('student');
   });
 
   it('rejects edge when toPersonId does not exist as PersonNode (anti-orphan)', async () => {
@@ -447,10 +459,11 @@ describe('plugin-user-relation: helpers', () => {
     expect(trimmed[0].extractedAt).toBe(140);
   });
 
-  it('normalizeRelationType collapses synonyms', () => {
-    expect(normalizeRelationType('Best Friend')).toBe('friend');
-    expect(normalizeRelationType('TEACHER')).toBe('mentor');
-    expect(normalizeRelationType('senpai')).toBe('senpai'); // 未知词原样保留（lowercased）
+  it('normalizeRelationType 只做大小写与空白规整，不改词义', () => {
+    expect(normalizeRelationType('Best Friend')).toBe('best_friend');
+    expect(normalizeRelationType('student')).toBe('student');
+    expect(normalizeRelationType('partner')).toBe('partner');
+    expect(normalizeRelationType(' TEACHER ')).toBe('teacher');
   });
 
   it('trimEvidence dedup by sessionId + messageIds key (no quote / different quotes)', () => {
@@ -1097,27 +1110,51 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(msgIds).toContain('b2');
   });
 
-  it('(3d) entity 名称包含关系 → autoLink 无 LLM 建 entity-entity part-of 边', async () => {
+  it('(3d) 无模型时实体名称包含关系只统计候选，不按名字前缀建 part-of 边', async () => {
     const { service } = await makeService();
     const parent = await service.createEntity({ name: '三角洲行动', entityKind: 'work', evidence: [] });
     const child = await service.createEntity({ name: '三角洲行动刀皮', entityKind: 'thing', evidence: [] });
 
     const r = await service.consolidate({ autoLink: true });
     expect(r.entityHierarchyCandidates).toBeGreaterThanOrEqual(1);
-    expect(r.entityHierarchyEdgesCreated).toBeGreaterThanOrEqual(1);
+    expect(r.entityHierarchyEdgesCreated).toBe(0);
 
     const snap = await service.loadAll();
-    const edge = snap.edges.find(
+    const between = snap.edges.filter(
       e =>
         e.kind === 'entity-entity' &&
-        e.fromEntityId === child.id &&
-        e.toEntityId === parent.id &&
-        e.relationType === 'part-of',
+        e.relationType === 'part-of' &&
+        [e.fromEntityId, e.toEntityId].sort().join() === [child.id, parent.id].sort().join(),
     );
-    expect(edge).toBeDefined();
+    expect(between).toEqual([]);
   });
 
-  it('(3d-guard) 已存在 part-of 边的两实体 → 即便 name/alias 严格等价也不会被 alias-merge', async () => {
+  it('无模型时名字归一后相同的实体（类别不同）只记别名候选，不合并', async () => {
+    const { service } = await makeService();
+    const work = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
+    const topic = await service.createEntity({ name: '《绝航》', entityKind: 'topic', evidence: [] });
+
+    const r = await service.consolidate({ autoLink: true });
+    expect(r.aliasCandidates).toHaveLength(1);
+    expect(r.aliasEdgesCreated).toBe(0);
+
+    const snap = await service.loadAll();
+    expect(snap.entities.map(e => e.id).sort()).toEqual([work.id, topic.id].sort());
+    expect(snap.edges.filter(e => e.kind === 'entity-entity' && e.relationType === 'is-alias-of')).toEqual([]);
+  });
+
+  it('别名核验：模型按 {isSame} 回、没有 verdict 时按 verdict 非法处理，不合并', async () => {
+    const { service } = await makeService();
+    const work = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
+    const topic = await service.createEntity({ name: '绝航', entityKind: 'topic', evidence: [] });
+
+    const r = await service.consolidate({ autoLink: true, llm: { models: stubLLM('{"isSame": true}'), modelRef: {} } });
+    expect(r.llmVerified).toBe(0);
+    expect(r.llmRejected).toBe(1);
+    expect((await service.loadAll()).entities.map(e => e.id).sort()).toEqual([work.id, topic.id].sort());
+  });
+
+  it('(3d-guard) 已存在 part-of 边的两实体 → 即便 name/alias 严格等价、模型判同一也不会被 alias-merge', async () => {
     const { service, store } = await makeService();
     // 母概念
     const parent = await service.createEntity({
@@ -1141,7 +1178,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
       evidence: [ev({ messageIds: ['m-hier-1'], quote: '绝密航天 是 三角洲行动 的玩法' })],
     });
 
-    await service.consolidate({ autoLink: true });
+    await service.consolidate({ autoLink: true, llm: { models: stubLLM(SAME_VERDICT), modelRef: {} } });
 
     // 守门生效：两节点都还在，没有被 alias-merge
     expect(await store.getEntity(parent.id)).toBeDefined();
@@ -2024,6 +2061,46 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     expect(calls.length).toBe(0);
     expect(r.candidates.length).toBe(0);
     expect(r.merged).toBe(0);
+  });
+
+  it('会话事件与 global 事件标题规整后相同：模型判不是同一件事时不合并、记进否决缓存，下次命中缓存不再问', async () => {
+    const { service, store } = await makeService();
+    const hub = await service.createEvent({ title: '炎热天气', sessionScope: 'global', evidence: [ev({})] });
+    const local = await service.createEvent({
+      title: '炎热 天气',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' })],
+    });
+    const { model, calls } = mockLLM({ isSame: false, reason: '不是同一次' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r1 = await (service as any)._consolidateEventDuplicates({ llmModel: model, dryRun: false });
+    expect(calls).toHaveLength(1);
+    expect([r1.llmRejected, r1.merged]).toEqual([1, 0]);
+    expect((await store.loadAll()).events.map(e => e.id).sort()).toEqual([hub.id, local.id].sort());
+
+    const { model: again, calls: againCalls } = mockLLM({ isSame: true, reason: '不该问到' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r2 = await (service as any)._consolidateEventDuplicates({ llmModel: again, dryRun: false });
+    expect(againCalls).toEqual([]);
+    expect([r2.llmRejectCacheHits, r2.merged]).toEqual([1, 0]);
+  });
+
+  it('会话事件与 global 事件标题规整后相同：模型判是同一件事时会话事件并进 global 事件', async () => {
+    const { service, store } = await makeService();
+    const hub = await service.createEvent({ title: '炎热天气', sessionScope: 'global', evidence: [ev({})] });
+    await service.createEvent({
+      title: '炎热 天气',
+      sessionScope: 'S1',
+      evidence: [ev({ sessionId: 'S1' }), ev({ sessionId: 'S1' }), ev({ sessionId: 'S1' })],
+    });
+    const { model, calls } = mockLLM({ isSame: true, reason: '同一件事' });
+    // biome-ignore lint/suspicious/noExplicitAny: private
+    const r = await (service as any)._consolidateEventDuplicates({ llmModel: model, dryRun: false });
+    expect(calls).toHaveLength(1);
+    expect([r.llmVerified, r.merged]).toEqual([1, 1]);
+    const remaining = (await store.loadAll()).events;
+    expect(remaining.map(e => [e.id, e.sessionScope])).toEqual([[hub.id, 'global']]);
+    expect(remaining[0].aliases).toContain('炎热 天气');
   });
 
   it('dryRun=true：候选可见但不真合并', async () => {

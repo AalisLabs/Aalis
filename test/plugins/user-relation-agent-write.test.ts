@@ -88,6 +88,37 @@ describe('user-relation: event sessionScope 隔离', () => {
   });
 });
 
+describe('user-relation: mergeAlias 照调用方给的方向', () => {
+  it('被合并的一方名字更长、别名更多，也并进调用方指定留下的那一方', async () => {
+    const { store, service } = await makeService();
+    const alias = await service.createEntity({
+      name: '绝密航天模式（三角洲行动）',
+      entityKind: 'work',
+      aliases: ['绝密航天', '航天'],
+      evidence: [ev()],
+    });
+    const canonical = await service.createEntity({ name: '航天模式', entityKind: 'work', evidence: [ev()] });
+
+    await service.mergeAlias({ aliasId: alias.id, canonicalId: canonical.id, kind: 'entity' });
+
+    expect(await store.getEntity(alias.id)).toBeUndefined();
+    const kept = await store.getEntity(canonical.id);
+    expect(kept?.name).toBe('航天模式');
+    expect(kept?.aliases).toEqual(expect.arrayContaining(['绝密航天模式（三角洲行动）', '绝密航天', '航天']));
+  });
+
+  it('人物同样照方向：小号并进大号，不因小号的昵称更长把大号删掉', async () => {
+    const { store, service } = await makeService();
+    await service.observePerson('onebot', 'alt', '一个很长很长的小号昵称');
+    await service.observePerson('onebot', 'main', '大号');
+
+    await service.mergeAlias({ aliasId: 'onebot:alt', canonicalId: 'onebot:main', kind: 'person' });
+
+    const ids = (await store.loadAll()).persons.map(p => p.id);
+    expect(ids).toEqual(['onebot:main']);
+  });
+});
+
 describe('user-relation: event-event is-alias-of 跨 sessionScope 防护', () => {
   it('两个属于不同 session 的同名事件被 LLM 标 is-alias-of → 降级为 related，不合并', async () => {
     const { service, store } = await makeService();
@@ -586,13 +617,10 @@ describe('user-relation: 全图读次数', () => {
       // 已被它自己删掉，于是兜底的 cascade 作用在不存在的节点上，断言分辨不出来（假绿，
       // 变异后仍全绿）。这里整个替掉它，正是该分支存在的前提。
       const orig2 = service.mergeAlias.bind(service);
-      service.mergeAlias = async (o: Parameters<typeof orig2>[0]) => ({
-        effectiveCanonicalId: o.canonicalId,
-        effectiveAliasId: o.aliasId,
+      service.mergeAlias = async () => ({
         edgesRewritten: 0,
         edgesMerged: 0,
         edgesDeleted: 0,
-        swapped: false,
         aliasDeleted: false, // 没删成 —— mergeNodes 必须自己补这一刀
       });
       const e3 = await service.createEntity({ name: '丙', entityKind: 'work', evidence: [ev()] });

@@ -71,7 +71,7 @@ function mergeRejectKey(aId: string, bId: string): string {
 }
 
 /** consolidate LLM 否决合并的缓存记录。 */
-interface MergeRejectRecord {
+export interface MergeRejectRecord {
   /** 排序后的较小 id */
   aId: string;
   /** 排序后的较大 id */

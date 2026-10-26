@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 import type { EntityNode, EvidenceRef } from '../../packages/plugin-user-relation/src/types.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // consolidate「落笔核实况」不变量——僵尸节点复活 + 重复铸边回归。
@@ -40,6 +42,21 @@ const ev = (overrides: Partial<EvidenceRef> = {}): EvidenceRef => ({
   ...overrides,
 });
 
+/** 整理的模型替身：别名核验一律判同一，严格等价段才会真合并 */
+const AGREEING_LLM = {
+  models: ref<LLMModel>([
+    {
+      instance: {
+        id: 'stub',
+        capabilities: ['chat'],
+        chat: async () => ({ content: '{"verdict": "same", "reason": "同一对象"}' }),
+      } as unknown as LLMModel,
+      contextId: 'stub/consolidate',
+    },
+  ]),
+  modelRef: {},
+};
+
 /** 访问被测私有方法（行为回归的锚点即这两个写口本身） */
 type ServicePrivates = {
   writeBackEntityIfLive(node: EntityNode, patch: Partial<EntityNode>): Promise<boolean>;
@@ -58,12 +75,7 @@ describe('user-relation consolidate 落笔核实况（僵尸复活回归）', ()
     const b = await service.createEntity({ name: '表情包', entityKind: 'thing', evidence: [ev()] });
     const staleCopy: EntityNode = structuredClone(a); // 模拟 pass 快照里的旧拷贝
 
-    const r = await service.mergeAlias({
-      aliasId: a.id,
-      canonicalId: b.id,
-      kind: 'entity',
-      noCanonicalCorrection: true,
-    });
+    const r = await service.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
     expect(r.aliasDeleted).toBe(true);
     expect(await store.getEntity(a.id)).toBeUndefined();
 
@@ -128,7 +140,7 @@ describe('user-relation _ensureHierarchyEdge（重复铸边回归）', () => {
     const c = await service.createEntity({ name: '好女孩表情包', entityKind: 'thing', evidence: [ev()] });
     const p = await service.createEntity({ name: '表情包', entityKind: 'thing', evidence: [ev()] });
     const x = await service.createEntity({ name: '吸收者', entityKind: 'thing', evidence: [ev()] });
-    await service.mergeAlias({ aliasId: c.id, canonicalId: x.id, kind: 'entity', noCanonicalCorrection: true });
+    await service.mergeAlias({ aliasId: c.id, canonicalId: x.id, kind: 'entity' });
 
     const priv = service as unknown as ServicePrivates;
     expect(await priv._ensureHierarchyEdge(c.id, p.id, 'LLM 判定')).toBe('skipped-dead');
@@ -152,9 +164,20 @@ describe('user-relation _ensureHierarchyEdge（重复铸边回归）', () => {
       evidence: [ev()],
     });
     const x = mkEntity([]);
-    const y = mkEntity(['DeltaForce', '三角洲']); // aliases 多 → 倾向被选为 canonical
+    const y = mkEntity(['DeltaForce', '三角洲']);
     await store.upsertEntity(x);
     await store.upsertEntity(y);
+    // Y 挂的边多、权重高，整理按合并分挑它留下：X 被真合并删掉，事件对 X 的边改指 Y
+    for (const userId of ['10001', '10002', '10003']) {
+      const p = await service.observePerson('qq', userId);
+      await service.addPersonEntityEdge({
+        fromPersonId: p.id,
+        toEntityId: y.id,
+        role: 'enthusiast',
+        weight: 0.9,
+        evidence: [ev({ messageIds: [`y-${userId}`] })],
+      });
+    }
     // 事件对 X 同时挂 part-of 与 about——(3c) 存在的理由，正是事故触发形态
     // 两条边证据必须**不同**：(3c) 的写回分支仅在"证据合并后有增量"时触发——
     // 同证据时 stale 写回不会发生，测试会漏掉事故形态（变异验证曾因此没红）。
@@ -172,13 +195,14 @@ describe('user-relation _ensureHierarchyEdge（重复铸边回归）', () => {
       evidence: [ev({ messageIds: ['a1'] })],
     });
 
-    await service.consolidate({ autoLink: true }); // 无 LLM：strict-equiv 同名直通真合并
+    await service.consolidate({ autoLink: true, llm: AGREEING_LLM });
 
     const after = await service.loadAll();
     // 同名实体只剩一份 canonical
     const remaining = after.entities.filter(n => n.name === '三角洲行动');
     expect(remaining).toHaveLength(1);
     const canonicalId = remaining[0].id;
+    expect(canonicalId, '名字相同没有方向依据时按合并分挑留下的一方').toBe(y.id);
     // 全图零悬空：所有边的实体端点都活着（事故形态：(3c) 把死端点 X 写回活边）
     const entityIds = new Set(after.entities.map(n => n.id));
     for (const edge of after.edges) {
@@ -240,7 +264,7 @@ describe('user-relation consolidate 严格等价段：本 pass 已被真合并�
       });
     }
 
-    await service.consolidate({ autoLink: true }); // 无 LLM：严格等价直通真合并
+    await service.consolidate({ autoLink: true, llm: AGREEING_LLM });
 
     const after = await service.loadAll();
     expect(after.entities).toHaveLength(1);
@@ -271,13 +295,13 @@ describe('user-relation consolidate 严格等价段：本 pass 已被真合并�
       weight: 0.5,
       evidence: [ev()],
     });
-    // 写入顺序决定分组顺序：先处理「甲」组 (X, Y)，Y 并入 aliases 更多的 X 后被删；
+    // 写入顺序决定分组顺序：先处理「甲」组 (X, Y)，合并分相同时按 id 挑 X 留下，Y 并入 X 后被删；
     // 随后「乙」组 (Z, Y) 的 b 端 Y 已死
     await store.upsertEntity(mk('e-1', '甲', ['x1', 'x2'])); // X
     await store.upsertEntity(mk('e-2', '乙', [])); // Z
     await store.upsertEntity(mk('e-3', '乙', ['甲'])); // Y
 
-    await service.consolidate({ autoLink: true }); // 无 LLM：严格等价直通真合并
+    await service.consolidate({ autoLink: true, llm: AGREEING_LLM });
 
     const after = await service.loadAll();
     expect(after.entities.map(n => n.id).sort()).toEqual(['e-1', 'e-2']);

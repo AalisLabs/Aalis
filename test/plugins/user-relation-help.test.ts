@@ -53,7 +53,7 @@ describe('/help relation', () => {
 
   it('owner 看到全部；清理分组带自己的描述', () => {
     const registry = relationRegistry(Number.POSITIVE_INFINITY);
-    expect(registry.detail(['relation'], caller)).toContain('- /relation cleanup — 清理关系图里的节点 · 6 个子指令');
+    expect(registry.detail(['relation'], caller)).toContain('- /relation cleanup — 清理关系图里的节点 · 5 个子指令');
     expect(registry.detail(['relation', 'cleanup'], caller).split('\n')[0]).toBe(
       '/relation cleanup — 清理关系图里的节点',
     );

@@ -26,7 +26,7 @@ import {
   resolveLLMModel,
 } from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
-import { getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
+import type { PersonaService } from '@aalis/api-persona';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -120,7 +120,7 @@ export interface ExtractorConfig {
    * 超配额（isOverQuota）触发淘汰前先运行一次 consolidate（去重/整理/层级推断）。默认 true。
    */
   consolidateAfterEviction: boolean;
-  /** consolidation 使用的 LLM 模型（可选；为空则退化为纯算法模式） */
+  /** consolidation 使用的 LLM 模型（可选；为空时整理只统计别名与层级候选、不改图） */
   consolidateLLMModelRef?: ModelRef;
   /** consolidation LLM 是否禁用思考模式 */
   consolidateLLMDisableThinking: boolean;
@@ -281,51 +281,8 @@ const VALID_SENTIMENTS: Sentiment[] = ['positive', 'negative', 'neutral', 'mixed
 const VALID_CATEGORIES: EventCategory[] = ['discussion', 'conflict', 'collaboration', 'incident', 'milestone', 'other'];
 const VALID_ENTITY_KINDS: EntityKind[] = ['topic', 'place', 'thing', 'work'];
 
-/**
- * 占位/伪 person 守卫：用于过滤 LLM 抽出的「不真实」person id（典型如
- * `aalis:aalis` / `mia:mia` / `discord:xxx`——历史 prompt/渲染遗留下来的自指占位）。
- *
- * 设计原则（**persona-agnostic**）：
- *   - 「真实平台」 = `getPlatformNames(platform)` 返回的、当前运行时实际注册了 adapter
- *     的平台集合。persona 改名、配置改名都不影响判定。
- *   - 通用 placeholder userId（self/me/bot/assistant）作为兜底，捕获
- *     `onebot:self` 这类「平台合法、id 是自指占位」的情形。**不再硬编码 persona
- *     专属词**（aalis / 本机器人 / 机器人 / Mia / ...）。
- *
- * 判定规则（任一命中即视为占位）：
- *   1) platform / userId 为空；
- *   2) 当调用方传入的 `knownPlatforms` 非空时，`platform` 小写不在白名单中；
- *      （为空时跳过该检查——保护「无 adapter 已注册」的测试 / 空环境场景，避免
- *       误删旧数据）
- *   3) `userId` 小写命中通用占位词 `{self, me, bot, assistant}`。
- *
- * 一致性：extractor.applyExtraction、`/relation cleanup fake-self` 命令、
- * `RelationService.consolidate` 都共用本函数，保证三处口径完全一致。
- */
-const GENERIC_PLACEHOLDER_USERIDS = new Set(['self', 'me', 'bot', 'assistant']);
-
-/** 取当前运行时已注册的平台名集合（小写）。无 adapter 时返回空集——调用方应
- *  在传入 isPlaceholderSelfPersonId 时把「空集」视为 permissive。 */
-export function getKnownPlatformsLower(platform: ServiceSelection<PlatformAdapter>): Set<string> {
-  try {
-    return new Set(getPlatformNames(platform).map(p => p.toLowerCase()));
-  } catch {
-    return new Set();
-  }
-}
-
-export function isPlaceholderSelfPersonId(
-  platform: string | undefined,
-  userId: string | undefined,
-  knownPlatforms?: Set<string>,
-): boolean {
-  if (!platform || !userId) return true;
-  if (knownPlatforms && knownPlatforms.size > 0 && !knownPlatforms.has(platform.toLowerCase())) {
-    return true;
-  }
-  if (GENERIC_PLACEHOLDER_USERIDS.has(userId.toLowerCase())) return true;
-  return false;
-}
+/** 人设服务不在、或卡没取名时，提取提示里对机器人的称呼 */
+const BOT_FALLBACK_NAME = '机器人';
 
 /** 连续失败退避的步长乘数封顶：故障期最大重试间隔 = triggerEveryNMessages × 8 条消息 */
 const MAX_BACKOFF_PENALTY = 8;
@@ -336,7 +293,8 @@ export interface ExtractorCaps {
   logger: ServiceSelection<Logger>;
   memory: ServiceSelection<MemoryService>;
   llm: ServiceSelection<LLMModel>;
-  platform: ServiceSelection<PlatformAdapter>;
+  /** 提取提示里机器人的称呼取人设名；缺席时用中性称呼 */
+  persona: ServiceSelection<PersonaService>;
 }
 
 export class RelationExtractor {
@@ -467,18 +425,22 @@ export class RelationExtractor {
       }
 
       const platform = inferPlatform(userMsgs);
-      // 一次全图读喂两个消费者。它俩之间只有纯函数调用、零写操作，共享同一份快照行为等价；
+      // 一次全图读喂候选、邻居与写入守卫的「图里已有的人」。它们之间只有纯函数调用、零写操作，共享同一份快照行为等价；
       // 而单次 listMetadata 在生产图上中位 177ms（3352 文档 / 38.7MB），省一次就是省这么多。
       const snapshot = await this.service.loadAll();
       const { candidateEvents, candidateEntities } = this.pickCandidates(snapshot, userMsgs);
       const senderNeighbors = this.pickSenderNeighbors(snapshot, userMsgs);
+      // 一次提取的系统提示只写一个名字：跨会话窗口也按触发提取的这个会话取
+      const botName =
+        (this.caps.persona.present ? this.caps.persona.use.getPersonaName({ sessionId, platform }) : '') ||
+        BOT_FALLBACK_NAME;
       const promptMessages = buildExtractionPrompt(
         history,
         userMsgs,
         candidateEvents,
         candidateEntities,
         senderNeighbors,
-        { crossSession, currentSessionId: sessionId },
+        { crossSession, currentSessionId: sessionId, botName },
       );
 
       const first = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking);
@@ -520,7 +482,14 @@ export class RelationExtractor {
         return;
       }
 
-      await this.applyExtraction(result.value, { sessionId, platform, history, messageIdToSessionId, crossSession });
+      await this.applyExtraction(result.value, {
+        sessionId,
+        platform,
+        history,
+        messageIdToSessionId,
+        crossSession,
+        graphPersonIds: new Set(snapshot.persons.map(p => p.id)),
+      });
     } finally {
       this.inFlight.delete(sessionId);
     }
@@ -533,7 +502,7 @@ export class RelationExtractor {
    *
    * **实体**：在事件策略基础上再叠加一层"名字命中"召回，解决"窗口里又提了某个老实体（已过 7 天活跃窗口）
    * 而 LLM 看不到候选 → 重新建一份同名 entity 导致重复"的问题：
-   * 1. 近 N 天活跃 entity（与原行为一致，按 lastReinforcedAt desc，取 `candidateEventLimit * 2`）
+   * 1. 近 N 天活跃 entity（按 lastReinforcedAt desc，取 `candidateEventLimit * 2`）
    * 2. 在当前消息窗口文本里以子串方式出现 normalize 后 name 或 aliases 的全库 entity（O(n) 扫描，
    *    n ≤ maxEntities ≈ 250，可忽略）。只对 normalize 长度 ≥2 的名字/别名做匹配，避免单字撞名。
    * 两路按 id 去重后总长度截断到 `candidateEventLimit * 4`，避免 token 爆掉。
@@ -637,6 +606,8 @@ export class RelationExtractor {
       /** 本轮提取是否跨会话窗口（readScope !== 'same-session'）。
        *  scope=global 防御要用：单会话提取不允许出现 global 标记。 */
       crossSession?: boolean;
+      /** 本轮快照里图中已有的人物 id（写入守卫认的第三种人） */
+      graphPersonIds: ReadonlySet<string>;
     },
   ): Promise<void> {
     const validMessageIds = new Set<string>();
@@ -664,16 +635,24 @@ export class RelationExtractor {
       if (this.cfg.debug) this.caps.logger.use.debug(`[user-relation] 严格自证丢弃 ${label}: ${reason}`);
     };
     const now = Date.now();
-    // ── 伪 person 守卫：persona-agnostic 平台白名单 + 通用占位 userId 兜底。
-    //    详细规则见 `isPlaceholderSelfPersonId` 的 jsdoc。这里在每次 applyExtraction
-    //    入口快照一次 `knownPlatforms`，避免内层多次枚举 platform 提供者。
-    const knownPlatforms = getKnownPlatformsLower(this.caps.platform);
-    const isPlaceholderSelfId = (platform?: string, userId?: string): boolean =>
-      isPlaceholderSelfPersonId(platform, userId, knownPlatforms);
-    // 聚合 dropself：LLM 一次输出常含 N 个占位 person + N 条占位边，逐条 debug 会刷屏。
-    // 改为按类型计数 + 最多 2 个样本，整体一行 warn（首次提醒用户改 prompt/换模型）+ debug 列详情。
+    // ── 写入守卫：人物只认确定的事实——窗口里说话的人（真人，与带账号的她自己）、存档记下的被 @ 的账号（按那条消息的平台）、
+    //    本轮快照里图中已有的人。模型凭空写出的人（自指的占位、编的账号、只在别人话里提到名字的人）连同他的边一起丢掉，
+    //    不看名字，也不看此刻登记了哪些平台
+    const allowedPersons = new Set(ctxInfo.graphPersonIds);
+    for (const m of ctxInfo.history) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const { platform, userId } = senderOf(m);
+      const msgPlatform = platform ?? ctxInfo.platform;
+      if (userId) allowedPersons.add(`${msgPlatform}:${userId}`);
+      for (const mentioned of metaStrings(m, WellKnownMetadataKeys.Mentions)) {
+        allowedPersons.add(`${msgPlatform}:${mentioned}`);
+      }
+    }
+    const isOutsider = (platform?: string, userId?: string): boolean =>
+      !platform || !userId || !allowedPersons.has(`${platform}:${userId}`);
+    // 聚合计数：模型一次输出常含好几个这样的人物与边，逐条记会刷屏，按类型计数、最多 2 个样本记一行 debug
     const dropCounts: Record<string, { count: number; samples: string[] }> = {};
-    const dropSelf = (label: string, pid: string): void => {
+    const dropOutsider = (label: string, pid: string): void => {
       let bucket = dropCounts[label];
       if (!bucket) {
         bucket = { count: 0, samples: [] };
@@ -684,8 +663,8 @@ export class RelationExtractor {
     };
     if (parsed.persons?.length) {
       parsed.persons = parsed.persons.filter(p => {
-        if (isPlaceholderSelfId(p.platform, p.userId)) {
-          dropSelf('person', `${p.platform}:${p.userId}`);
+        if (isOutsider(p.platform, p.userId)) {
+          dropOutsider('person', `${p.platform}:${p.userId}`);
           return false;
         }
         return true;
@@ -693,8 +672,8 @@ export class RelationExtractor {
     }
     if (parsed.personEventEdges?.length) {
       parsed.personEventEdges = parsed.personEventEdges.filter(pe => {
-        if (isPlaceholderSelfId(pe.personPlatform, pe.personUserId)) {
-          dropSelf('person-event', `${pe.personPlatform}:${pe.personUserId}`);
+        if (isOutsider(pe.personPlatform, pe.personUserId)) {
+          dropOutsider('person-event', `${pe.personPlatform}:${pe.personUserId}`);
           return false;
         }
         return true;
@@ -702,8 +681,8 @@ export class RelationExtractor {
     }
     if (parsed.personEntityEdges?.length) {
       parsed.personEntityEdges = parsed.personEntityEdges.filter(pe => {
-        if (isPlaceholderSelfId(pe.personPlatform, pe.personUserId)) {
-          dropSelf('person-entity', `${pe.personPlatform}:${pe.personUserId}`);
+        if (isOutsider(pe.personPlatform, pe.personUserId)) {
+          dropOutsider('person-entity', `${pe.personPlatform}:${pe.personUserId}`);
           return false;
         }
         return true;
@@ -711,8 +690,8 @@ export class RelationExtractor {
     }
     if (parsed.personPersonEdges?.length) {
       parsed.personPersonEdges = parsed.personPersonEdges.filter(pp => {
-        if (isPlaceholderSelfId(pp.fromPlatform, pp.fromUserId) || isPlaceholderSelfId(pp.toPlatform, pp.toUserId)) {
-          dropSelf('person-person', `${pp.fromPlatform}:${pp.fromUserId} ↔ ${pp.toPlatform}:${pp.toUserId}`);
+        if (isOutsider(pp.fromPlatform, pp.fromUserId) || isOutsider(pp.toPlatform, pp.toUserId)) {
+          dropOutsider('person-person', `${pp.fromPlatform}:${pp.fromUserId} ↔ ${pp.toPlatform}:${pp.toUserId}`);
           return false;
         }
         return true;
@@ -723,18 +702,19 @@ export class RelationExtractor {
       const total = dropEntries.reduce((s, [, v]) => s + v.count, 0);
       const summary = dropEntries.map(([k, v]) => `${k}×${v.count}`).join(' + ');
       this.caps.logger.use.debug(
-        `[user-relation] LLM 输出含 ${total} 个 self/占位字段，已丢弃 (${summary})。` +
+        `[user-relation] LLM 输出含 ${total} 个不在窗口与图里的人物，已丢弃 (${summary})。` +
           `典型示例: ${dropEntries
             .flatMap(([k, v]) => v.samples.map(s => `${k}=${s}`))
             .slice(0, 3)
             .join(', ')}`,
       );
     }
+    // 证据核对：消息 id 要在这次窗口里，给了 quote 的要是这些消息之一的子串（去掉空白比），否则这条证据作废（模型会编消息 id
+    // 和引文）。作废只丢证据：人际关系边（strictSelfAssertion）因此不建，其余节点和边照建，只是不带证据
     const mkEvidence = (raw?: { messageIds?: string[]; quote?: string }): EvidenceRef | null => {
       if (!raw) return null;
       const ids = (raw.messageIds ?? []).filter(id => validMessageIds.has(id));
       if (ids.length === 0) return null;
-      // quote 必须能在至少一条窗口消息里找到子串（去空白对齐），否则视为幻觉
       const quote = raw.quote?.trim();
       if (quote) {
         const normalizedQuote = quote.replace(/\s+/g, '');
@@ -1109,7 +1089,6 @@ export class RelationExtractor {
             const cr = await this.service.consolidate({
               autoLink: this.cfg.consolidateAutoLink,
               triggerSource: 'eviction',
-              platform: this.caps.platform,
               skipLowScorePairs: this.cfg.consolidateSkipLowScorePairs,
               lowScoreThreshold: this.cfg.consolidateLowScoreThreshold,
               ...(this.cfg.consolidateLLMModelRef
@@ -1172,6 +1151,12 @@ function metaString(m: Message, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/** 存档元数据里一个键的字符串数组值；不是数组的没有，数组里不是字符串的跳过 */
+function metaStrings(m: Message, key: string): string[] {
+  const value = m.metadata?.[key];
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
 /** 说话人：存档元数据里登记的平台、用户 id 与昵称 */
 function senderOf(m: Message): { platform?: string; userId?: string; nickname?: string } {
   return {
@@ -1197,15 +1182,15 @@ function stringifyErr(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** 渲染窗口内每条消息为 LLM 可读行：`[mid] (sender) content` */
-function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean }): string {
+/** 渲染窗口内每条消息为 LLM 可读行：`[mid] (sender) content`；她的消息没有昵称时写 botName，没有账号时只写名字 */
+function renderHistoryForLLM(history: Message[], opts: { crossSession?: boolean; botName: string }): string {
   const lines: string[] = [];
   for (const m of history) {
     if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'notice') continue;
     const { userId, nickname } = senderOf(m);
     let sender: string;
     if (m.role === 'assistant') {
-      sender = userId ? `${nickname ?? 'Aalis'}(${userId})` : 'Aalis（本机器人）';
+      sender = userId ? `${nickname ?? opts.botName}(${userId})` : opts.botName;
     } else if (m.role === 'notice') {
       sender = '系统通知';
     } else {
@@ -1215,7 +1200,7 @@ function renderHistoryForLLM(history: Message[], opts?: { crossSession?: boolean
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
     // 跨会话模式下，[sid] 前缀帮 LLM 区分同名事件来自哪个群/会话
     const extractorSessionId = metaString(m, '__extractorSessionId');
-    const sidPrefix = opts?.crossSession && extractorSessionId ? `[sid:${extractorSessionId}] ` : '';
+    const sidPrefix = opts.crossSession && extractorSessionId ? `[sid:${extractorSessionId}] ` : '';
     lines.push(`${sidPrefix}[${mid}] (${sender}) ${content.replace(/\n+/g, ' ').slice(0, 400)}`);
   }
   return lines.join('\n');
@@ -1274,10 +1259,11 @@ function buildExtractionPrompt(
   candidateEvents: EventNode[],
   candidateEntities: EntityNode[],
   senderNeighbors: SenderNeighborhood[],
-  opts?: { crossSession?: boolean; currentSessionId?: string },
+  opts: { crossSession?: boolean; currentSessionId?: string; botName: string },
 ): Message[] {
+  const { botName } = opts;
   const rendered = renderHistoryForLLM(history, opts);
-  const ownSid = opts?.currentSessionId;
+  const ownSid = opts.currentSessionId;
   // candidate event 暴露 sessionScope 标签，便于 LLM 决策"reinforce 本会话 / 复用 global hub / 新建 hub"：
   // - scope=global → 显式跨会话 hub event，可被任何 session 复用强化
   // - scope=other:<sid 简写> → 其他 session 的 current 事件，**禁止**直接 reinforce（不同 sessionScope 不能合并），
@@ -1299,15 +1285,15 @@ function buildExtractionPrompt(
   const system: Message = {
     role: 'system',
     content: [
-      '你是 Aalis 的「社会关系神经」。你的任务是把对话窗口里的事实层信号，沉淀成可被 Aalis 长期回忆、可被遍历串联的关系图。',
+      `你是 ${botName} 的「社会关系神经」。你的任务是把对话窗口里的事实层信号，沉淀成可被 ${botName} 长期回忆、可被遍历串联的关系图。`,
       '',
       '## 你与 plugin-user-profile 的分工（务必内化）',
       '- **plugin-user-profile（内在画像）**：单人的内在属性 —— 喜好 / 性格 / 技能 / 状态 / 经历 / 单点偏好声明（「我喜欢猫」「我会日语」「我讨厌排队」）。这类信息**不属于关系图**。',
       '- **plugin-user-relation（你自己 / 社会图谱）**：**多个主体之间的可观察连接** —— 谁参与了什么、谁与什么对象有结构性关联、谁与谁互称什么、哪些事件围绕同一对象展开。',
-      '- 一句判断：**「这条信息能帮 Aalis 把人或事件串起来吗？」** 能 → 写图；只描述某个人 → 留给 user-profile。',
+      `- 一句判断：**「这条信息能帮 ${botName} 把人或事件串起来吗？」** 能 → 写图；只描述某个人 → 留给 user-profile。`,
       '',
       '## ⭐ Hub-first 抽取流程（核心方法论，按顺序执行）',
-      '关系图的价值在于「实体作为枢纽（hub）让多个事件、多个人围绕它形成可遍历的网络」。一个孤立的事件 + 一个没挂任何边的实体 = Aalis 失忆。请按以下顺序思考：',
+      `关系图的价值在于「实体作为枢纽（hub）让多个事件、多个人围绕它形成可遍历的网络」。一个孤立的事件 + 一个没挂任何边的实体 = ${botName} 失忆。请按以下顺序思考：`,
       '',
       '**第 1 步：扫描所有具名对象 → 抽成 Entity**',
       '  在整个窗口里找出所有反复出现 / 多人提及 / 可被长期关联的具名对象：',
@@ -1346,12 +1332,12 @@ function buildExtractionPrompt(
       '  **familiar 的反面清单**（任一命中就不要建）：',
       '  · 仅旁观式同框（都在群里但没对话） → 不建；',
       '  · 单方喊话无回应 → 不建；',
-      '  · 与机器人 / Aalis 自己的互动 → 不建；',
+      `  · 与 ${botName} 自己的互动 → 不建；`,
       '  · 已经有更强的关系边（friend / cp / colleague / mentor…）→ 不再加 familiar，避免冗余。',
       '',
-      '## 关于「Aalis 自己」（机器人本体）',
-      '- 窗口里 assistant 消息会被渲染为 `(nickname(userId))` 同用户消息一样的格式，其中 userId 是 **Aalis 在该平台上真实的 selfId**（如 `(Aalis(10000))`）。这时你**可以**把它当成一个普通 person 抽出来（用真实 personPlatform / personUserId），让 Aalis 与人的互动也能进入关系图。',
-      '- **绝不要凭空生成占位符**：当 assistant 行渲染成 `Aalis（本机器人）`（CJK 全角括号 = 元数据缺失）时，**禁止**给它任何 person 字段；也**禁止**自己编 `platform="aalis"` 或 `userId ∈ {aalis, self, me, bot, assistant, 本机器人}` 这种伪 id —— 后端会一律剔除。这一轮就当 Aalis 没出现，跳过。',
+      '## 哪些人能写进图（后端按这条核对）',
+      '- person 只能是窗口里发言的人（含下面说的带 userId 的 assistant）、窗口消息里被 @ 的人（`<at id="账号">` 里的账号，platform 与那条消息相同），或候选邻居子图里已有的人。其余的人后端一律丢弃，引用他的边也一起丢掉。',
+      `- 窗口里 assistant 消息（${botName} 自己）与用户消息同一格式，渲染为 \`(昵称(userId))\`，其中 userId 是 ${botName} 在该平台上真实的账号。这时你**可以**把它当成一个普通 person 抽出来（用真实 personPlatform / personUserId），让 ${botName} 与人的互动也能进入关系图；渲染成 \`(${botName})\`、不带 userId 的行没有账号，**禁止**给它任何 person 字段，也不要自己编 platform 或 userId，这一轮就当 ${botName} 没出现。`,
       '- **绝对禁止使用 `undefined` / `unknown` / `null` / `none` / `n/a` / 空字符串作为 platform 或 userId 的值**（无论是字符串字面量还是 JSON null）。如果你不知道某个 person 的确切 platform/userId，**就不要把这个人写进 persons 数组、也不要在任何边里引用 ta**。宁可漏抽一个人，也不要造伪 id（造了也会被后端丢弃，纯粹浪费 token）。',
       '- 这条规则比 hub-first 优先：宁可少抽，也不要造假 id。',
       '',
@@ -1445,10 +1431,10 @@ function buildExtractionPrompt(
       '✅ 同理：A: "我跟 Bob 闹翻了" → personPersonEdges: [{ A→Bob relationType="hostile" directed=true }]，允许负向且不对等。',
       '',
       '### ⭐ 示例 4：Hub-first（同一实体的不同事件必须共享同一 entity refKey）',
-      '场景：一段窗口里 A、B 在「打绝航」；同窗口 C、D 在「讨论绝航的剧情」。这是 Aalis 最容易失忆的地方。',
+      `场景：一段窗口里 A、B 在「打绝航」；同窗口 C、D 在「讨论绝航的剧情」。这是 ${botName} 最容易失忆的地方。`,
       '❌ **致命错误**（把绝航溶解在事件标题里、不抽 entity / 不挂 part-of）：',
       '  events: [{ refKey: "ev1", title: "打绝航" }, { refKey: "ev2", title: "讨论绝航" }]',
-      '  entities: []  ← 错！绝航被切碎，A/B/C/D 无法通过它相互发现，Aalis 看图只能看到两个孤岛。',
+      `  entities: []  ← 错！绝航被切碎，A/B/C/D 无法通过它相互发现，${botName} 看图只能看到两个孤岛。`,
       '✅ 正确：先抽 entity，再让事件挂上去：',
       '  entities: [{ refKey: "e1", name: "绝航", entityKind: "work" }]',
       '  events: [{ refKey: "ev1", title: "开黑《绝航》", category: "collaboration" }, { refKey: "ev2", title: "《绝航》剧情讨论", category: "discussion" }]',
@@ -1497,7 +1483,7 @@ function buildExtractionPrompt(
       '  · 若 A、B 都是实体 → entityEntityEdges 输出 relationType="is-alias-of"，directed=true。',
       '  · **eventEventEdges 严禁使用 `is-alias-of`**：事件天然带 sessionScope，不同会话/群里同名事件（"群A 聊三角洲" vs "群B 聊三角洲"）是**不同事件**而非别名。若想表达"同一主题在多个群发生"，请按上文"跨会话共享主题"规则建 `scope=global` hub event 并用 `part-of` 挂接。后端会拒绝跨 scope 的 event is-alias-of。',
       '  · 不要直接合并两个 entity / person 节点，让用户决定是否合并。',
-      '- **part-of 强制挂载（hub-first 落地）**：若事件标题中含有任何具名对象（作品 / 游戏 / 地点 / 物品 / 话题 / 关卡 / mod / 比赛名…），**必须**：(1) 把它单独抽成 entity；(2) 同时输出一条 eventEntityEdges relationType="part-of" 把事件挂在该 entity 下。即便该 entity 在本窗口里只出现一次也要抽，因为它可能被未来的其他窗口复用，从而把"打X / 讨论X / 安利X / 吐槽X" 等围绕同一对象的事件串成一张可遍历的网。**漏挂 part-of = 制造孤岛 = Aalis 失忆的最大单一原因**。',
+      `- **part-of 强制挂载（hub-first 落地）**：若事件标题中含有任何具名对象（作品 / 游戏 / 地点 / 物品 / 话题 / 关卡 / mod / 比赛名…），**必须**：(1) 把它单独抽成 entity；(2) 同时输出一条 eventEntityEdges relationType="part-of" 把事件挂在该 entity 下。即便该 entity 在本窗口里只出现一次也要抽，因为它可能被未来的其他窗口复用，从而把"打X / 讨论X / 安利X / 吐槽X" 等围绕同一对象的事件串成一张可遍历的网。**漏挂 part-of = 制造孤岛 = ${botName} 失忆的最大单一原因**。`,
       '  · 挂载对象必须是**具名专有对象**。裸类目词（「书籍」「图片」「音乐」「游戏」这类无所指的通用名）不建实体也不挂边——「收到书籍」挂在「书籍」下不产生任何可遍历价值，只造 hub 噪音。',
       '- **消息载体不是话题（媒介停用词）**：「表情包 / 梗图 / 截图 / 图片 / 语音 / 视频 / 文件」是消息的**载体**——人人都在发，共同指向它们的连接信息量为零。裸类目词一律不建实体、不建任何边。仅当某个**具体形象**在群里反复出现、被成员指名讨论（如某只被起了名的玩偶/角色）时才按其具体名建实体，且**不要**与「表情包」等类目词建 part-of/层级——具体形象直接作为独立实体存在即可。',
       '- **歧义实体必须带限定词（重要）**：后端按 (entityKind, name) 强制合并同名实体。对于跨作品/跨场景容易撞名的「通用词」——例如「月卡 / 年卡 / 会员 / 公会 / 副本 / 装备 / 皮肤 / boss / npc / 主线 / 支线」等——**name 字段必须带上限定的母实体名**，形如「洛克王国月卡」「原神月卡」「《三角洲》公会」，而不是裸的「月卡」。若上下文无法确定母实体，则宁可不建该实体（建 event 描述即可），避免错误合并到无关游戏。',
@@ -1528,7 +1514,7 @@ function buildExtractionPrompt(
       neighborBlock,
       '',
       '== 消息窗口（按时间升序，[mid] = 平台消息 ID）==',
-      opts?.crossSession
+      opts.crossSession
         ? '【跨会话模式】下方消息聚合了多个会话（群聊/私聊/平台），每行行首 `[sid:xxx]` 标注来源会话 id。请把不同 sid 之间**默认视为彼此独立的语境**，除非证据明确表明同一对象/事件被跨会话讨论才把 event.scope 标为 `global`；person / entity 节点天然全局共享，可正常跨 sid 累计证据。\n' +
           '【跨会话 hub 建模规则】当本窗口出现 ≥2 个不同 sid 都在围绕同一抽象主题（如"工会战""周末聚餐计划""某游戏开黑"）展开各自的讨论/约局/吐槽时：\n' +
           '- 为该共同主题建一个 `scope=global` 的 **hub event**（title 取主题本身，如"工会战"），并为每个 sid 各自建一个**缺省 scope**（即不写 scope 字段）的**子事件**（title 带 sid 语境，如"A群工会战集结(2025-05-20)"）。\n' +

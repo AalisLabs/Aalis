@@ -462,33 +462,9 @@ export function isEvidenceFullyCovered(incoming: EvidenceRef[], existing: Eviden
   });
 }
 
-/**
- * 归一化关系类型：把同义词收敛到推荐词表里的标准形式。
- * 未匹配的自创词保持原样（允许 LLM 自由扩展，但应用层尝试合并显然同义的）。
- */
-const RELATION_SYNONYMS: Record<string, string> = {
-  best_friend: 'friend',
-  buddy: 'friend',
-  bestie: 'friend',
-  lovers: 'cp',
-  couple: 'cp',
-  partner: 'cp',
-  enemy: 'antagonist',
-  hater: 'antagonist',
-  opponent: 'rival',
-  competitor: 'rival',
-  coworker: 'colleague',
-  teammate: 'colleague',
-  teacher: 'mentor',
-  master: 'mentor',
-  student: 'admirer', // 单向：student → mentor 反过来就是 admirer 也行；UI 上可视化区分由 directed 控制
-  fan: 'admirer',
-  acquaintance: 'familiar',
-};
-
+/** 关系类型只做格式规整（去首尾空白、小写、空白转下划线），不改词义：模型写的自创词原样保存 */
 export function normalizeRelationType(input: string): string {
-  const trimmed = input.trim().toLowerCase().replace(/\s+/g, '_');
-  return RELATION_SYNONYMS[trimmed] ?? trimmed;
+  return input.trim().toLowerCase().replace(/\s+/g, '_');
 }
 
 /** event-event 边的方向性默认：有向的常见关系 */
@@ -749,42 +725,6 @@ export function mergeTwoEdges<T extends RelationEdge>(keeper: T, incoming: T): T
   const firstSeenAt = Math.min(keeper.firstSeenAt, incoming.firstSeenAt);
   const description = keeper.description ?? incoming.description;
   return { ...keeper, weight, lastReinforcedAt, firstSeenAt, description, evidence: allEvidence } as T;
-}
-
-/** 启发式：决定真正的 (alias, canonical) 方向。返回 null 表示无需翻转。 */
-export function chooseCanonicalDirection(
-  snapshot: RelationGraphSnapshot,
-  aId: string,
-  bId: string,
-  kind: 'person' | 'entity' | 'event',
-): { alias: string; canonical: string } | null {
-  const score = (id: string): { name: number; aliases: number; evidence: number } => {
-    let name = 0;
-    let aliases = 0;
-    let evidence = 0;
-    if (kind === 'entity') {
-      const node = snapshot.entities.find(n => n.id === id);
-      name = node?.name.length ?? 0;
-      aliases = node?.aliases?.length ?? 0;
-    } else if (kind === 'event') {
-      const node = snapshot.events.find(n => n.id === id);
-      name = node?.title.length ?? 0;
-    } else {
-      const node = snapshot.persons.find(n => n.id === id);
-      name = node?.displayName?.length ?? 0;
-    }
-    for (const e of snapshot.edges) {
-      if (edgeReferences(e, id)) evidence += e.evidence.length;
-    }
-    return { name, aliases, evidence };
-  };
-  const sa = score(aId);
-  const sb = score(bId);
-  // a 得分越高 → a 更应是 canonical
-  const cmp = sa.aliases - sb.aliases || sa.name - sb.name || sa.evidence - sb.evidence;
-  // 当前调用方传入 alias=aId, canonical=bId；若 a 评分更高 → 翻转
-  if (cmp > 0) return { alias: bId, canonical: aId };
-  return null;
 }
 
 /**

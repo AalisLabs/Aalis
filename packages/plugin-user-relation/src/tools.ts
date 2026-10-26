@@ -21,7 +21,7 @@
  *   shared             —— 两节点共同邻居（共同兴趣/事件/朋友）
  * 社群：
  *   community_peers / community_bridge / community_overview —— 同社群成员 / 两人是否同社群 / 全局社群概览
- * 带保护门的写工具（risk: 'sensitive'，reason 必填）：
+ * 带保护门的写工具（risk: 'sensitive'，1 级起能用，不逐次确认；reason 必填）：
  *   rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias
  *
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。session_scope 不超过调用所在会话的关系图范围：
@@ -1198,8 +1198,8 @@ export function registerRelationTools(
 
   // ───────────────────────────── delete_node ──────────────────────────────
   tools.register({
-    // 图写工具（删/合/改）：与 commands.ts 的等价 restricted 命令对齐，挡住不受信任访客经 LLM
-    // 篡改/删除全局关系图。用 sensitive(L1)，不加逐次 confirm。只读检索工具保持 public。
+    // 图写工具（删、合、改）：与 commands.ts 的等价 restricted 指令对齐，挡住 0 级访客经模型改关系图。改的是她自己的记忆，
+    // 不碰本机文件也不对外，所以不逐次确认；一轮里混进做不了的人时，执行守卫照逐动作判定单独审批这一个调用。只读检索工具保持 public
     risk: 'sensitive',
     definition: {
       type: 'function',

@@ -28,7 +28,7 @@ export interface PairNeighborProfile {
 }
 
 /** 候选对相似度分数（各项独立可选；缺失字段不渲染） */
-interface PairScores {
+export interface PairScores {
   /** 余弦相似（embedding 向量内积）0..1 */
   cosineScore?: number;
   /** 文本/集合 Jaccard 相似 0..1（事件用 title+aliases token；实体用 name+aliases） */
@@ -99,8 +99,7 @@ interface AliasPairResult {
 
 /**
  * (A) 判断两个实体的关系。LLM 输出 JSON 三态 verdict：
- *   {"verdict": "same" | "different", "reason": string} 或 {"verdict": "hierarchy", "parent": "A" | "B", "reason": string}；
- *   兼容 LLM 偏离提示词、按 {"isSame": boolean, "reason": string} 返回的情况。
+ *   {"verdict": "same" | "different", "reason": string} 或 {"verdict": "hierarchy", "parent": "A" | "B", "reason": string}。
  * 解析失败、verdict 非法或 hierarchy 缺 parent → isSame=false。
  *
  * F2 / 统一改造：给 LLM 喂"对称且丰富"的上下文，便于科学判断是否合并：
@@ -181,11 +180,6 @@ export async function verifyAliasPair(
     const parsed = tryParseJson(raw) as { verdict?: unknown; reason?: unknown; parent?: unknown } | undefined;
     if (!parsed) return { isSame: false, reason: 'LLM 输出无法解析' };
     const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
-    // 向后兼容：若 LLM 仍按老格式返回 {isSame}，做一次映射
-    const legacy = parsed as { isSame?: unknown };
-    if (typeof legacy.isSame === 'boolean' && typeof parsed.verdict !== 'string') {
-      return { isSame: legacy.isSame, reason };
-    }
     if (parsed.verdict === 'same') return { isSame: true, reason };
     if (parsed.verdict === 'hierarchy') {
       const parent = parsed.parent === 'A' || parsed.parent === 'B' ? parsed.parent : null;

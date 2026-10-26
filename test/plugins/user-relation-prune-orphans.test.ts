@@ -183,7 +183,9 @@ describe('plugin-user-relation: /relation orphans 与 pruneOrphans 同口径', (
 
   it('relation.cleanup.orphans 只删真孤儿，不误删挂 event-entity / entity-entity 边的节点', async () => {
     const { app, service, cmd, kept, orphan } = await makeGraph();
-    await cmd.run('relation.cleanup.orphans');
+    expect(await cmd.run('relation.cleanup.orphans')).toBe(
+      '已清理 1 个孤立点（人物 0 / 事件 0 / 实体 1），悬空边 0 条',
+    );
     const snap = await service.loadAll();
     const alive = new Set([...snap.events.map(e => e.id), ...snap.entities.map(e => e.id)]);
     for (const id of kept) expect(alive.has(id), `${id} 被误删`).toBe(true);

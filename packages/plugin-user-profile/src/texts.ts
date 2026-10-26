@@ -12,7 +12,7 @@ const SOURCE = {
   categoryPreferences: '偏好',
   categoryTaboos: '忌讳',
   categoryOther: '其他',
-  profileHead: '📇 你的档案 ({key})',
+  profileHead: '你的档案 ({key})',
   profileMeta: '关系强度：{score}/100，互动次数：{count}',
   section: '## {name}',
   factLine: '- {text}（{meta}）',

@@ -62,6 +62,7 @@ export const persona = defineService<PersonaService>('persona');
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取在用的人设（触发插件按自己的服务偏好选出的提供者）的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合起各提供者的 `listModels()`。
 - `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ sessionId, platform: 'cli' })`（终端会话的生效人设），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
+- `@aalis/plugin-user-relation`、`@aalis/plugin-user-profile` — 关系图与档案的提取提示里对她的称呼：每次提取按触发它的会话取一次 `getPersonaName({ sessionId, platform })`，系统提示与历史里她那几行用同一个名字；缺席或回空串时用「机器人」。
 
 消费者都把描述符 `persona` 写进 `uses`（以 `optional` 声明），类型随描述符走。只有按字符串名动态查询时（如 webui-server 的 `services.use.all('persona')`）不带类型，由消费侧窄化。
 

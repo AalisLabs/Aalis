@@ -13,20 +13,19 @@
 
 import type { EmbeddingService } from '@aalis/api-embedding';
 import type { LLMModel, ModelRef } from '@aalis/api-llm';
-import type { PlatformAdapter } from '@aalis/api-platform';
 import type { Logger, ServiceSelection } from '@aalis/core';
 
 import {
   inferEntityHierarchy,
   inferMissingParent,
   type PairNeighborProfile,
+  type PairScores,
   resolveConsolidateModel,
   rewriteEntitySummary,
   verifyAliasPair,
   verifyEventPair,
 } from './consolidate-llm.js';
-import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
-import type { RelationStore } from './store.js';
+import type { MergeRejectRecord, RelationStore } from './store.js';
 import type {
   CommunityMembership,
   EdgeWeightAudit,
@@ -49,7 +48,6 @@ import type {
 
 import {
   buildAdjacency,
-  chooseCanonicalDirection,
   clamp01,
   clusterEntitiesByPairs,
   commonPrefix,
@@ -2243,7 +2241,7 @@ export class RelationService {
   }
 
   // 1) 别名候选发现：实体之间 name/aliases 的等价或高相似对，给出候选
-  //    （不自动合并，只输出报告供用户决定；若 confidence 极高且开启 autoLink，则建 is-alias-of 边）
+  //    （开启 autoLink 且配了整理模型时，经模型核验后建 is-alias-of 边并真合并；没有模型时只报候选、不改图）
   // 2) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
   // 3) 报告：返回结构化结果，调用方按需展示
   //
@@ -2268,16 +2266,6 @@ export class RelationService {
        */
       skipLowScorePairs?: boolean;
       lowScoreThreshold?: number;
-      /**
-       * 可选的 platform 引用。传入后 consolidate 会顺带做一次「伪 person 自动清理」：
-       * platform 不在 `getPlatformNames(platform)` 运行时白名单内（或 userId 命中
-       * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
-       * 与写入守卫 `isPlaceholderSelfPersonId` 共用同一谓词，口径一致。
-       *
-       * 警告：临时禁用了某个 adapter 时（白名单收缩），这里会把对应平台的
-       * **真实历史 person** 误判为 fake。白名单为空时本步骤自动跳过以保护历史数据。
-       */
-      platform?: ServiceSelection<PlatformAdapter>;
     } = {},
   ): Promise<{
     aliasCandidates: Array<{
@@ -2297,37 +2285,11 @@ export class RelationService {
     lateralParentCandidates: number;
     lateralParentsCreated: number;
     lateralEdgesCreated: number;
-    /** 自动清理删掉的伪 person 数（platform 不在白名单或 userId 为通用占位）。 */
-    fakePersonsDeleted: number;
-    /** 自动清理时级联删的 person-* 边总数。 */
-    fakePersonEdgesDeleted: number;
     /** event 重复合并：召回候选数（pair 数，dry-run 报告用） */
     eventDuplicateCandidates: number;
     /** event 重复合并：实际合并的 event 数（被合并到 canonical 的别名 event 数） */
     eventDuplicatesMerged: number;
   }> {
-    // ─── (0) 伪 person 自动清理：与 extractor 落库守卫共用同一谓词。
-    //   仅在 opts.platform 传入且白名单非空时启用 platform-whitelist
-    //   分支；否则只兜底过滤 userId 通用占位（self/me/bot/assistant）。
-    //   先做此步，再 loadAll，避免后续 alias / 层级推断把 fake person 牵连进去。
-    let fakePersonsDeleted = 0;
-    let fakePersonEdgesDeleted = 0;
-    {
-      const preSnap = await this.store.loadAll();
-      const knownPlatforms = opts.platform ? getKnownPlatformsLower(opts.platform) : new Set<string>();
-      const fakes = preSnap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
-      for (const p of fakes) {
-        const r = await this.store.deletePersonCascade(p.platform, p.userId);
-        fakePersonsDeleted++;
-        fakePersonEdgesDeleted += r.deletedEdges;
-      }
-      if (fakes.length > 0) {
-        this.logger?.info(
-          `[user-relation] consolidate 清理伪 person ${fakes.length} 个 / 级联边 ${fakePersonEdgesDeleted} 条`,
-        );
-      }
-    }
-
     const snapshot = await this.store.loadAll();
     // a、b 之间是否已有 evidence≥1 的 entity-entity part-of/contains 边（任一方向）：
     // 严格等价段与宽召回段共用的 hierarchy 守门，只信任有证据的层级边。
@@ -2359,7 +2321,7 @@ export class RelationService {
     // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
     const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, opts.llm.modelRef) : undefined;
     const llmDisableThinking = opts.llm?.disableThinking ?? true;
-    /** 待合并实体 id → 经过 LLM 确认（或未启用 LLM 时直接 true）的列表 */
+    /** 经模型确认、真合并后留下的实体 id（合并后摘要重写用） */
     const mergedCanonicals = new Set<string>();
 
     // ─── (1) 别名候选：实体之间 name/aliases 完全相同（不同 id）→ 高置信
@@ -2372,6 +2334,9 @@ export class RelationService {
       }
     }
     const reportedEntityPairs = new Set<string>();
+    // 合并分（pickCanonicalByMergeScore）的输入：严格等价段与宽召回段挑留下的一方共用，按 pass 开头快照算一次
+    const snapshotEntityById = new Map(snapshot.entities.map(e => [e.id, e] as const));
+    const snapshotEntityEdgeStats = computeEntityEdgeStats(snapshot.edges);
     for (const [norm, list] of entitiesByNormName.entries()) {
       if (list.length < 2) continue;
       // 同 norm 多个实体 → 两两为候选
@@ -2390,115 +2355,113 @@ export class RelationService {
             bKind: 'entity',
             reason: `name/aliases 完全等价于 "${norm}"`,
           });
-          if (opts.autoLink) {
-            // 落笔核实况：本 pass 前面的对可能已把 a 或 b 真合并删掉（同 norm 组 ≥3 成员，或成员已在另一同名组被吸收）；
-            // 快照旧拷贝不能再拿去核验、铸 is-alias-of 边（端点已死即成悬空边），这一对直接跳过。
-            // 死者的 name/aliases 已随真合并并入其 canonical，组内存活成员之间的对照常合并。
-            if (!(await this.store.getEntity(a.id)) || !(await this.store.getEntity(b.id))) continue;
-            // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
-            let shouldMerge = true;
-            // hierarchy 守门：若 a/b 之间已存在**有证据**的 part-of/contains 边
-            // → 视为已知层级，禁止 alias 合并。
-            // 注意：必须卡 evidence≥1——LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
-            // 无视 evidence 数会让这道安全网被污染（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
-            // 只信任 evidence≥1 的层级边：幻觉边不阻塞合并，真实层级仍守门。
-            if (hasEvidencedHierarchy(a.id, b.id)) {
-              shouldMerge = false;
-              this.logger?.info(
-                `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
-              );
-            }
-            if (shouldMerge && llmModel && opts.llm) {
-              // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
-              // （evidence.length 在新关系/新提及时才增长，与衰减回写解耦，是稳定的"无新关系"信号）
-              const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
-              const sCount = smaller.evidence?.length ?? 0;
-              const lCount = larger.evidence?.length ?? 0;
-              const cached = await this.store.getMergeReject(a.id, b.id);
-              if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
-                llmRejectCacheHits++;
-                shouldMerge = false;
-                this.logger?.debug(
-                  `[user-relation] consolidate 命中 mergeReject 缓存 ${a.id} ↔ ${b.id}（${cached.decidedBy}）：${cached.reason}`,
-                );
-              } else {
-                const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking);
-                if (v.isSame) {
-                  llmVerified++;
-                  this.logger?.info(`[user-relation] consolidate LLM 同意合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
-                  // 之前否决但本次同意 → 清掉缓存（节点已演化）
-                  if (cached) await this.store.deleteMergeReject(a.id, b.id);
-                } else {
-                  llmRejected++;
-                  shouldMerge = false;
-                  if (v.hierarchy) {
-                    const { parentId, childId } = v.hierarchy;
-                    const partOfOutcome = await this._ensureHierarchyEdge(
-                      childId,
-                      parentId,
-                      `consolidate LLM 判定 hierarchy：${v.reason}`,
-                    );
-                    const outcomeText =
-                      partOfOutcome === 'built'
-                        ? '（已新建 part-of 边）'
-                        : partOfOutcome === 'exists'
-                          ? '（part-of 边已存在）'
-                          : '（端点已被合并，跳过落边）';
-                    this.logger?.info(
-                      `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
-                    );
-                  } else {
-                    this.logger?.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
-                  }
-                  // 落 negativeCache，避免下次 maintain 重复送 LLM（hierarchy 与 different 都阻断合并）
-                  await this.store.saveMergeReject({
-                    aId: smaller.id,
-                    bId: larger.id,
-                    aEvidenceCount: sCount,
-                    bEvidenceCount: lCount,
-                    reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
-                    decidedAt: Date.now(),
-                    decidedBy: 'strict-equiv',
-                    kind: 'entity',
-                  });
-                }
-              }
-            }
-            if (!shouldMerge) continue;
-            const exists = snapshot.edges.some(
-              e =>
-                e.kind === 'entity-entity' &&
-                e.relationType === 'is-alias-of' &&
-                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
-                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
+          // 没有整理模型时只记候选、不改图：名字相同不等于同一对象，要经模型核验才合并
+          if (!opts.autoLink || !llmModel) continue;
+          // 落笔核实况：本 pass 前面的对可能已把 a 或 b 真合并删掉（同 norm 组 ≥3 成员，或成员已在另一同名组被吸收）；
+          // 快照旧拷贝不能再拿去核验、铸 is-alias-of 边（端点已死即成悬空边），这一对直接跳过。
+          // 死者的 name/aliases 已随真合并并入其 canonical，组内存活成员之间的对照常合并。
+          if (!(await this.store.getEntity(a.id)) || !(await this.store.getEntity(b.id))) continue;
+          // hierarchy 守门：若 a/b 之间已存在**有证据**的 part-of/contains 边
+          // → 视为已知层级，禁止 alias 合并。
+          // 注意：必须卡 evidence≥1——LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
+          // 无视 evidence 数会让这道安全网被污染（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
+          // 只信任 evidence≥1 的层级边：幻觉边不阻塞合并，真实层级仍守门。
+          if (hasEvidencedHierarchy(a.id, b.id)) {
+            this.logger?.info(
+              `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
             );
-            if (!exists) {
-              const now = Date.now();
-              await this.store.upsertEdge({
-                id: globalThis.crypto.randomUUID(),
-                kind: 'entity-entity',
-                fromEntityId: a.id,
-                toEntityId: b.id,
-                relationType: 'is-alias-of',
-                directed: true,
-                weight: 0.8,
-                description: 'consolidate 自动识别：名称/别名等价',
-                firstSeenAt: now,
-                lastReinforcedAt: now,
-                evidence: [],
-              });
-              aliasEdgesCreated++;
-            }
-            // 无条件触发真合并：即便 alias 边已存在（"路由+壳子"式的
-            // 半合并状态），也要把 alias 节点真正合并掉，确保收敛。mergeAlias 幂等：
-            // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
-            const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
-            mergedCanonicals.add(mergeResult.effectiveCanonicalId);
-            if (mergeResult.aliasDeleted) {
-              this.logger?.info(
-                `[user-relation] consolidate strict-equiv 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
+            continue;
+          }
+          // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
+          // （evidence.length 在新关系/新提及时才增长，与衰减回写解耦，是稳定的"无新关系"信号）
+          const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+          const sCount = smaller.evidence?.length ?? 0;
+          const lCount = larger.evidence?.length ?? 0;
+          const cached = await this.store.getMergeReject(a.id, b.id);
+          if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
+            llmRejectCacheHits++;
+            this.logger?.debug(
+              `[user-relation] consolidate 命中 mergeReject 缓存 ${a.id} ↔ ${b.id}（${cached.decidedBy}）：${cached.reason}`,
+            );
+            continue;
+          }
+          const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking);
+          if (!v.isSame) {
+            llmRejected++;
+            if (v.hierarchy) {
+              const { parentId, childId } = v.hierarchy;
+              const partOfOutcome = await this._ensureHierarchyEdge(
+                childId,
+                parentId,
+                `consolidate LLM 判定 hierarchy：${v.reason}`,
               );
+              const outcomeText =
+                partOfOutcome === 'built'
+                  ? '（已新建 part-of 边）'
+                  : partOfOutcome === 'exists'
+                    ? '（part-of 边已存在）'
+                    : '（端点已被合并，跳过落边）';
+              this.logger?.info(
+                `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
+              );
+            } else {
+              this.logger?.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
             }
+            // 落 negativeCache，避免下次 maintain 重复送 LLM（hierarchy 与 different 都阻断合并）
+            await this.store.saveMergeReject({
+              aId: smaller.id,
+              bId: larger.id,
+              aEvidenceCount: sCount,
+              bEvidenceCount: lCount,
+              reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
+              decidedAt: Date.now(),
+              decidedBy: 'strict-equiv',
+              kind: 'entity',
+            });
+            continue;
+          }
+          llmVerified++;
+          this.logger?.info(`[user-relation] consolidate LLM 同意合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+          // 之前否决但本次同意 → 清掉缓存（节点已演化）
+          if (cached) await this.store.deleteMergeReject(a.id, b.id);
+          // 名字相同给不出谁并进谁：与宽召回同一个合并分挑留下的一方
+          const canonicalId = pickCanonicalByMergeScore(
+            new Set([a.id, b.id]),
+            snapshotEntityById,
+            snapshotEntityEdgeStats,
+          );
+          const aliasId = canonicalId === a.id ? b.id : a.id;
+          const exists = snapshot.edges.some(
+            e =>
+              e.kind === 'entity-entity' &&
+              e.relationType === 'is-alias-of' &&
+              ((e.fromEntityId === aliasId && e.toEntityId === canonicalId) ||
+                (e.fromEntityId === canonicalId && e.toEntityId === aliasId)),
+          );
+          if (!exists) {
+            const now = Date.now();
+            await this.store.upsertEdge({
+              id: globalThis.crypto.randomUUID(),
+              kind: 'entity-entity',
+              fromEntityId: aliasId,
+              toEntityId: canonicalId,
+              relationType: 'is-alias-of',
+              directed: true,
+              weight: 0.8,
+              description: 'consolidate 自动识别：名称/别名等价',
+              firstSeenAt: now,
+              lastReinforcedAt: now,
+              evidence: [],
+            });
+            aliasEdgesCreated++;
+          }
+          // 无条件触发真合并：即便 alias 边已存在（"路由+壳子"式的
+          // 半合并状态），也要把 alias 节点真正合并掉，确保收敛。mergeAlias 幂等：
+          // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
+          const mergeResult = await this.mergeAlias({ aliasId, canonicalId, kind: 'entity' });
+          mergedCanonicals.add(canonicalId);
+          if (mergeResult.aliasDeleted) {
+            this.logger?.info(`[user-relation] consolidate strict-equiv 真合并：${aliasId} → ${canonicalId}`);
           }
         }
       }
@@ -2522,8 +2485,8 @@ export class RelationService {
     //        把其它成员逐个 mergeAlias 到 canonical
     //   动机："判一对合一对"时 snapshot 不刷新会出现悬空合并 / 漏传递闭包。
     //         本范式让决策与应用分离，所有 LLM 判定基于同一份 snapshot，行为可预测。
-    //   未启用 LLM 时跳过本段（不引入宽召回的额外误合并；注意严格等价段本身不分 entityKind，
-    //   同名不同类仍会被合并）。
+    //   未启用 LLM 时跳过本段（与严格等价段同一条：没有模型只统计候选；严格等价段不分 entityKind，
+    //   经模型判同一的同名不同类会被合并）。
     if (opts.autoLink && llmModel && opts.llm) {
       const entitiesByKind = new Map<string, EntityNode[]>();
       for (const e of snapshot.entities) {
@@ -2875,10 +2838,6 @@ export class RelationService {
 
       // ─── 并查集分簇 + 簇内挑 canonical + 统一合并 ───
       if (yesPairs.length > 0) {
-        // 节点边/权聚合：供 mergeScore 使用。一次性扫边表，避免 O(N·E)。
-        const entityEdgeStats = computeEntityEdgeStats(snapshot.edges);
-        const entityById = new Map(snapshot.entities.map(e => [e.id, e] as const));
-
         // 并查集分簇：自然处理传递闭包 (A↔B yes & B↔C yes ⇒ {A,B,C} 一簇)
         const clusters = clusterEntitiesByPairs(yesPairs);
 
@@ -2895,7 +2854,7 @@ export class RelationService {
         for (const [, members] of clusters) {
           if (members.size < 2) continue;
           // 簇内 mergeScore 最高者当 canonical
-          const canonicalId = pickCanonicalByMergeScore(members, entityById, entityEdgeStats);
+          const canonicalId = pickCanonicalByMergeScore(members, snapshotEntityById, snapshotEntityEdgeStats);
           if (!canonicalId) continue;
 
           // 把其他成员逐个合并到 canonical
@@ -2906,7 +2865,7 @@ export class RelationService {
             if (!stillExists) break;
             const reason =
               reasonLookup.get(`${memberId}|${canonicalId}`) ??
-              `consolidate 簇内传递闭包：${entityById.get(memberId)?.name ?? memberId} ↔ ${entityById.get(canonicalId)?.name ?? canonicalId}`;
+              `consolidate 簇内传递闭包：${snapshotEntityById.get(memberId)?.name ?? memberId} ↔ ${snapshotEntityById.get(canonicalId)?.name ?? canonicalId}`;
             // is-alias-of 边可能已存在（之前轮已建过），先查
             const exists = snapshot.edges.some(
               e =>
@@ -2937,11 +2896,9 @@ export class RelationService {
               canonicalId,
               kind: 'entity',
             });
-            mergedCanonicals.add(mergeResult.effectiveCanonicalId);
+            mergedCanonicals.add(canonicalId);
             if (mergeResult.aliasDeleted) {
-              this.logger?.info(
-                `[user-relation] consolidate wide-recall 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
-              );
+              this.logger?.info(`[user-relation] consolidate wide-recall 真合并：${memberId} → ${canonicalId}`);
             }
           }
         }
@@ -3145,9 +3102,7 @@ export class RelationService {
 
     // ─── (3d) 实体层级推断：名称包含关系 → 候选 entity-entity[part-of] 边
     //   规则：normName(A) 是 normName(B) 的真子串，A.length >= 3，B > A → A 是 B 的父实体候选。
-    //   无 LLM 时（autoLink=true）：仅当 B.name 以 A.name 精确开头，直接建边（高置信启发式）。
-    //   有 LLM 时：批量发给 inferEntityHierarchy 核验后建边。
-    //   autoLink=false：收集候选但不建边。
+    //   有 LLM 时：批量发给 inferEntityHierarchy 核验后建边；没有时只统计候选、不建边（名字包含不等于从属）。
     {
       const afterSnapshot = await this.store.loadAll();
       const hierarchyCandidates: Array<{ parent: EntityNode; child: EntityNode }> = [];
@@ -3174,28 +3129,14 @@ export class RelationService {
       }
       entityHierarchyCandidates = hierarchyCandidates.length;
 
-      if (hierarchyCandidates.length > 0) {
-        const toCreate: Array<{ parentId: string; childId: string }> = [];
-
-        if (llmModel && opts.llm) {
-          // LLM 核验：批量确认
-          const results = await inferEntityHierarchy(this.logger, llmModel, hierarchyCandidates, llmDisableThinking);
-          for (const r of results) {
-            if (r.confirmed) toCreate.push({ parentId: r.parentId, childId: r.childId });
-          }
-        } else if (opts.autoLink) {
-          // 无 LLM + autoLink：保守启发式 — child.name 精确以 parent.name 开头（字符串级别）
-          for (const c of hierarchyCandidates) {
-            const normP = normalizeName(c.parent.name);
-            const normC = normalizeName(c.child.name);
-            if (normC.startsWith(normP)) toCreate.push({ parentId: c.parent.id, childId: c.child.id });
-          }
-        }
-
-        for (const { parentId, childId } of toCreate) {
+      if (hierarchyCandidates.length > 0 && llmModel) {
+        // LLM 核验：批量确认
+        const results = await inferEntityHierarchy(this.logger, llmModel, hierarchyCandidates, llmDisableThinking);
+        for (const r of results) {
+          if (!r.confirmed) continue;
           await this.addEntityEntityEdge({
-            fromEntityId: childId,
-            toEntityId: parentId,
+            fromEntityId: r.childId,
+            toEntityId: r.parentId,
             relationType: 'part-of',
             directed: true,
             weight: 0.7,
@@ -3345,8 +3286,6 @@ export class RelationService {
       lateralParentCandidates,
       lateralParentsCreated,
       lateralEdgesCreated,
-      fakePersonsDeleted,
-      fakePersonEdgesDeleted,
       eventDuplicateCandidates,
       eventDuplicatesMerged,
       ...(opts.llm ? { llmVerified, llmRejected, llmRejectCacheHits, summariesRewritten } : {}),
@@ -3357,7 +3296,6 @@ export class RelationService {
       `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，` +
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
-      (fakePersonsDeleted > 0 ? `，伪 person 清理 ${fakePersonsDeleted}（级联边 ${fakePersonEdgesDeleted}）` : '') +
       (eventDuplicateCandidates > 0
         ? `，event 重复候选 ${eventDuplicateCandidates}（合并 ${eventDuplicatesMerged}）`
         : '') +
@@ -3387,8 +3325,8 @@ export class RelationService {
    *
    * sessionScope 隔离：
    *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」）；
-   *  - 跨 scope 不进相似度/LLM 比对；唯一的跨 scope 合并路径是非 dryRun 时先做的同名预合并：
-   *    与某 global 事件 normalizeName 相同的会话级事件不经 LLM 直接并入该 global hub
+   *  - 跨 scope 不进相似度比对；唯一的跨 scope 合并路径是非 dryRun 且有模型时先做的同名预合并：
+   *    与某 global 事件 normalizeName 相同的会话级事件，与池内一样经 verifyEventPair 判是才并入该 global hub
    *
    * Lazy embed：当 EventNode.embeddingHash !== embeddingHashFor(computeEventEmbeddingHash(title, summary), modelId) 时，
    *  实时调 embedding.embed() 并写回（持久化），下次 consolidate 复用。
@@ -3431,46 +3369,100 @@ export class RelationService {
     const snapshot = await this.store.loadAll();
     const events = snapshot.events;
 
-    // 跨 scope 同名预合并（不需 LLM）：global hub event 与其他 pool 中 normalizeName 完全相同的
-    // session-scoped event 直接合并（保留 global 为 canonical）。修复两个问题：
-    //   (1) LLM 在会话内外重复创建同名事件（会话版 + global hub 版并存）
-    //   (2) reinforceEvent 不支持 sessionScope 升级，造成"老存量"无法被后期 LLM 拼接为 hub
-    // 仅在 非 dryRun 且 events 可能出现 cross-scope 同名时走这条路径。
+    let llmVerified = 0;
+    let llmRejected = 0;
+    let llmRejectCacheHits = 0;
+    /**
+     * 一对事件交模型判是不是同一件事：双方 evidence 数都没变、上次判过否的沿用那次否决，不再问模型；判否的记进 mergeReject
+     * 缓存，判是的清掉旧的否决
+     */
+    const judge = async (
+      llmModel: LLMModel,
+      a: EventNode,
+      b: EventNode,
+      graph: RelationGraphSnapshot,
+      decidedBy: MergeRejectRecord['decidedBy'],
+      scores?: PairScores,
+    ): Promise<{ verdict: { isSame: boolean; reason: string }; cacheHit: boolean }> => {
+      const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
+      const sCount = smaller.evidence?.length ?? 0;
+      const lCount = larger.evidence?.length ?? 0;
+      const cached = await this.store.getMergeReject(a.id, b.id);
+      if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
+        llmRejectCacheHits++;
+        logger?.debug(
+          `[user-relation] consolidate event 命中 mergeReject 缓存 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)})：${cached.reason}`,
+        );
+        return { verdict: { isSame: false, reason: `mergeReject 缓存：${cached.reason}` }, cacheHit: true };
+      }
+
+      const verdict = await verifyEventPair(llmModel, a, b, opts.disableThinking ?? true, {
+        aEvidenceQuotes: (a.evidence ?? [])
+          .slice(-3)
+          .map(ev => (ev.quote ?? '').trim())
+          .filter(Boolean),
+        bEvidenceQuotes: (b.evidence ?? [])
+          .slice(-3)
+          .map(ev => (ev.quote ?? '').trim())
+          .filter(Boolean),
+        aNeighbors: this._computeNeighborProfile(a.id, graph, 5),
+        bNeighbors: this._computeNeighborProfile(b.id, graph, 5),
+        scores,
+      });
+      if (!verdict.isSame) {
+        llmRejected++;
+        await this.store.saveMergeReject({
+          aId: smaller.id,
+          bId: larger.id,
+          aEvidenceCount: sCount,
+          bEvidenceCount: lCount,
+          reason: verdict.reason,
+          decidedAt: Date.now(),
+          decidedBy,
+          kind: 'event',
+        });
+        logger?.info(
+          `[user-relation] consolidate event LLM 否决 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
+        );
+        return { verdict, cacheHit: false };
+      }
+      llmVerified++;
+      if (cached) await this.store.deleteMergeReject(a.id, b.id);
+      logger?.info(
+        `[user-relation] consolidate event LLM 同意合并 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
+      );
+      return { verdict, cacheHit: false };
+    };
+
+    // 跨 scope 同名预合并：池按 sessionScope 分，比不到会话级事件与同名的 global 事件这一对；LLM 会在会话内外各建一个同名
+    // 事件，reinforceEvent 也不会把会话事件升成 global。判是的并进 global（global 留下）。只在非 dryRun 且有模型时走。
     let crossScopeMerged = 0;
-    if (!opts.dryRun) {
-      const globalEvents = events.filter(e => e.sessionScope === 'global');
-      if (globalEvents.length > 0) {
-        const globalByTitle = new Map<string, EventNode>();
-        for (const g of globalEvents) {
-          const norm = normalizeName(g.title);
-          if (norm) globalByTitle.set(norm, g);
-        }
-        if (globalByTitle.size > 0) {
-          for (const ev of events) {
-            if (ev.sessionScope === 'global') continue;
-            const norm = normalizeName(ev.title);
-            if (!norm) continue;
-            const hub = globalByTitle.get(norm);
-            if (!hub || hub.id === ev.id) continue;
-            try {
-              const r = await this.mergeAlias({
-                aliasId: ev.id,
-                canonicalId: hub.id,
-                kind: 'event',
-                noCanonicalCorrection: true, // 强制 global hub 为 canonical
-              });
-              if (r.aliasDeleted) {
-                crossScopeMerged++;
-                logger?.info(
-                  `[user-relation] consolidate cross-scope 同名合并：${ev.id}(scope=${ev.sessionScope}) → ${hub.id}(global) "${hub.title}"`,
-                );
-              }
-            } catch (err) {
-              logger?.warn(
-                `[user-relation] consolidate cross-scope 合并失败 ${ev.id} → ${hub.id}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
+    if (!opts.dryRun && opts.llmModel) {
+      const globalByTitle = new Map<string, EventNode>();
+      for (const g of events.filter(e => e.sessionScope === 'global')) {
+        const norm = normalizeName(g.title);
+        if (norm) globalByTitle.set(norm, g);
+      }
+      for (const ev of events) {
+        if (ev.sessionScope === 'global') continue;
+        const norm = normalizeName(ev.title);
+        if (!norm) continue;
+        const hub = globalByTitle.get(norm);
+        if (!hub || hub.id === ev.id) continue;
+        const { verdict } = await judge(opts.llmModel, ev, hub, snapshot, 'strict-equiv');
+        if (!verdict.isSame) continue;
+        try {
+          const r = await this.mergeAlias({ aliasId: ev.id, canonicalId: hub.id, kind: 'event' });
+          if (r.aliasDeleted) {
+            crossScopeMerged++;
+            logger?.info(
+              `[user-relation] consolidate cross-scope 同名合并：${ev.id}(scope=${ev.sessionScope}) → ${hub.id}(global) "${hub.title}"`,
+            );
           }
+        } catch (err) {
+          logger?.warn(
+            `[user-relation] consolidate cross-scope 合并失败 ${ev.id} → ${hub.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -3643,9 +3635,6 @@ export class RelationService {
       cacheHit?: boolean;
     }> = [];
 
-    let llmVerified = 0;
-    let llmRejected = 0;
-    let llmRejectCacheHits = 0;
     const yesPairs: Array<{ aId: string; bId: string; reason: string }> = [];
 
     for (const cand of candidates) {
@@ -3668,69 +3657,21 @@ export class RelationService {
         continue;
       }
 
-      const [smaller, larger] = a.id < b.id ? [a, b] : [b, a];
-      const sCount = smaller.evidence?.length ?? 0;
-      const lCount = larger.evidence?.length ?? 0;
-      const cached = await this.store.getMergeReject(a.id, b.id);
-      if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
-        llmRejectCacheHits++;
-        reportEntry.cacheHit = true;
-        reportEntry.llmVerdict = { isSame: false, reason: `mergeReject 缓存：${cached.reason}` };
-        logger?.debug(
-          `[user-relation] consolidate event 命中 mergeReject 缓存 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)})：${cached.reason}`,
-        );
-        report.push(reportEntry);
-        continue;
-      }
-
-      const verdict = await verifyEventPair(opts.llmModel, a, b, opts.disableThinking ?? true, {
-        aEvidenceQuotes: (a.evidence ?? [])
-          .slice(-3)
-          .map(ev => (ev.quote ?? '').trim())
-          .filter(Boolean),
-        bEvidenceQuotes: (b.evidence ?? [])
-          .slice(-3)
-          .map(ev => (ev.quote ?? '').trim())
-          .filter(Boolean),
-        aNeighbors: this._computeNeighborProfile(a.id, workingSnapshot, 5),
-        bNeighbors: this._computeNeighborProfile(b.id, workingSnapshot, 5),
-        scores: {
-          ...(cand.cosineScore !== null ? { cosineScore: cand.cosineScore } : {}),
-          jaccardScore: cand.jaccardScore,
-          structuralScore: cand.structuralScore,
-          ...(cand.fusedScore !== null ? { fusedScore: cand.fusedScore } : {}),
-        },
+      const { verdict, cacheHit } = await judge(opts.llmModel, a, b, workingSnapshot, 'wide-recall', {
+        ...(cand.cosineScore !== null ? { cosineScore: cand.cosineScore } : {}),
+        jaccardScore: cand.jaccardScore,
+        structuralScore: cand.structuralScore,
+        ...(cand.fusedScore !== null ? { fusedScore: cand.fusedScore } : {}),
       });
+      if (cacheHit) reportEntry.cacheHit = true;
       reportEntry.llmVerdict = verdict;
       report.push(reportEntry);
-
-      if (!verdict.isSame) {
-        llmRejected++;
-        await this.store.saveMergeReject({
-          aId: smaller.id,
-          bId: larger.id,
-          aEvidenceCount: sCount,
-          bEvidenceCount: lCount,
-          reason: verdict.reason,
-          decidedAt: Date.now(),
-          decidedBy: 'wide-recall',
-          kind: 'event',
-        });
-        logger?.info(
-          `[user-relation] consolidate event LLM 否决 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
-        );
-        continue;
-      }
-      llmVerified++;
-      if (cached) await this.store.deleteMergeReject(a.id, b.id);
+      if (!verdict.isSame) continue;
       const reason =
         cand.fusedScore !== null
           ? `fused ${cand.fusedScore.toFixed(2)} (cos ${cand.cosineScore?.toFixed(2)}, struct ${cand.structuralScore.toFixed(2)})`
           : `jaccard ${cand.jaccardScore.toFixed(2)} / struct ${cand.structuralScore.toFixed(2)}`;
       yesPairs.push({ aId: a.id, bId: b.id, reason });
-      logger?.info(
-        `[user-relation] consolidate event LLM 同意合并 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
-      );
     }
 
     // dryRun 不合并
@@ -3749,9 +3690,7 @@ export class RelationService {
             const r = await this.mergeAlias({ aliasId: memberId, canonicalId, kind: 'event' });
             if (r.aliasDeleted) {
               merged++;
-              logger?.info(
-                `[user-relation] consolidate event 真合并：${r.effectiveAliasId} → ${r.effectiveCanonicalId}`,
-              );
+              logger?.info(`[user-relation] consolidate event 真合并：${memberId} → ${canonicalId}`);
             }
           } catch (err) {
             logger?.warn(
@@ -3963,7 +3902,7 @@ export class RelationService {
   // ============================================================
   //  Alias merging（真合并：rewire 边 + 合并 aliases + 删 alias 节点）
   //  is-alias-of / alt-account-of 边写入后立即触发：
-  //    - 按启发式校正 canonical 方向（name 较长 / aliases 较多 / 总 evidence 较多）
+  //    - 照调用方给的方向：aliasId 并进 canonicalId（提取按模型给的边方向，整理在没有方向时先按合并分挑）
   //    - 将所有引用 aliasId 的其它边重写为指向 canonicalId
   //    - 同 dedup key 冲突时合并 evidence/weight 并删除冗余
   //    - 合并 alias 的 name + aliases 到 canonical.aliases（仅 entity/event；
@@ -3972,48 +3911,23 @@ export class RelationService {
   //      由 cascade 自动清掉）
   //  设计对齐：docs/plugins/user-relation.md §3 合并语义
   // ============================================================
-  async mergeAlias(opts: {
-    aliasId: string;
-    canonicalId: string;
-    kind: 'person' | 'entity' | 'event';
-    /** 若为 true，不做启发式校正，强制按传入方向 */
-    noCanonicalCorrection?: boolean;
-  }): Promise<{
-    effectiveCanonicalId: string;
-    effectiveAliasId: string;
+  async mergeAlias(opts: { aliasId: string; canonicalId: string; kind: 'person' | 'entity' | 'event' }): Promise<{
     edgesRewritten: number;
     edgesMerged: number;
     edgesDeleted: number;
-    swapped: boolean;
     /** alias 节点是否被物理删除（即"真合并"是否完成）。person 当前总为 true（无 aliases 字段需合并） */
     aliasDeleted: boolean;
   }> {
-    let aliasId = opts.aliasId;
-    let canonicalId = opts.canonicalId;
-    let swapped = false;
+    const { aliasId, canonicalId } = opts;
 
-    if (aliasId === canonicalId) {
-      return {
-        effectiveCanonicalId: canonicalId,
-        effectiveAliasId: aliasId,
-        edgesRewritten: 0,
-        edgesMerged: 0,
-        edgesDeleted: 0,
-        swapped,
-        aliasDeleted: false,
-      };
-    }
+    const noop = { edgesRewritten: 0, edgesMerged: 0, edgesDeleted: 0, aliasDeleted: false };
+    if (aliasId === canonicalId) return noop;
 
     const snapshot = await this.store.loadAll();
-
-    if (!opts.noCanonicalCorrection) {
-      const corrected = chooseCanonicalDirection(snapshot, aliasId, canonicalId, opts.kind);
-      if (corrected) {
-        swapped = true;
-        aliasId = corrected.alias;
-        canonicalId = corrected.canonical;
-      }
-    }
+    // 两端都要是活节点：一端已被删（本 pass 前面的合并删掉的、调用方拿着旧 id 的）时什么都不改，免得把活节点的边改指到死 id 上
+    const nodes: ReadonlyArray<{ id: string }> =
+      opts.kind === 'entity' ? snapshot.entities : opts.kind === 'event' ? snapshot.events : snapshot.persons;
+    if (!nodes.some(n => n.id === aliasId) || !nodes.some(n => n.id === canonicalId)) return noop;
 
     // 索引：未被 alias 引用的现有边按 dedupKey 入索引，用于冲突检测
     const byKey = new Map<string, RelationEdge>();
@@ -4121,15 +4035,7 @@ export class RelationService {
       );
     }
 
-    return {
-      effectiveCanonicalId: canonicalId,
-      effectiveAliasId: aliasId,
-      edgesRewritten,
-      edgesMerged,
-      edgesDeleted,
-      swapped,
-      aliasDeleted,
-    };
+    return { edgesRewritten, edgesMerged, edgesDeleted, aliasDeleted };
   }
 
   // ============================================================
@@ -4301,12 +4207,7 @@ export class RelationService {
         continue;
       }
       // 不做删除保护（合并是「保留语义」而非「丢失」），但仍记审计
-      const r = await this.mergeAlias({
-        aliasId,
-        canonicalId: opts.canonicalId,
-        kind: opts.kind,
-        noCanonicalCorrection: true,
-      });
+      const r = await this.mergeAlias({ aliasId, canonicalId: opts.canonicalId, kind: opts.kind });
       totalEdgesRewritten += r.edgesRewritten;
       totalEdgesMerged += r.edgesMerged;
       totalEdgesDeleted += r.edgesDeleted;
