@@ -302,7 +302,7 @@ describe('/clear 按层清理', () => {
     const { run, snapshot } = await world({ memory: new SQLiteMemoryService(db, { logger: { warn() {} } }), logHub });
     db.prepare("INSERT INTO metadata (namespace, key, data) VALUES ('user:profile', 'bad', '{not json')").run();
 
-    expect(await run('profile.clear.nuke')).toBe('✅ 已清空全部用户档案（2 条）');
+    expect(await run('profile.clear.nuke')).toBe('已清空全部用户档案（2 条）');
 
     const left = db.prepare("SELECT key FROM metadata WHERE namespace = 'user:profile'").all();
     expect(left).toEqual([]);

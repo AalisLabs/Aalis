@@ -197,7 +197,7 @@ interface MessageUnit {
 | `SpokenContent` | `spokenContent` | 存档：提问里发言人自己写的话（入站消息的 `content`） | 字符串，可以是空串；只在与归档文本不同时写 | 会话服务给出提问条目的正文 |
 | `Attachments` | `attachments` | 存档：提问带的附件 | `ArchivedAttachment[]`，按入站顺序；没有附件时不写 | 会话服务把文件还原成卡片、图片等按地址显示 |
 | `SenderLabel` | `senderLabel` | 存档：归档文本发送者前缀里的标签（`getSenderLabel` 的写法），只在加了前缀时写 | 字符串 | 把归档文本重排给模型或界面看的一方按它用 `stripSenderPrefix` 去掉这一层：向量记忆的召回片段、OneBot 的撤回摘录与引用反查；没有这个键的不去 |
-| `Mentions` | `mentions` | 存档：发言人自己写的话 @ 了哪些账号（`extractMentions` 从入站消息的 `content` 抽，引用与附件描述里的不算），有才写 | 字符串数组 | 向量记忆给被 @ 的人加权 |
+| `Mentions` | `mentions` | 存档：发言人自己写的话 @ 了哪些账号（`extractMentions` 从入站消息的 `content` 抽，引用与附件描述里的不算），有才写 | 字符串数组 | 向量记忆给被 @ 的人加权；关系图的提取据此认被 @ 的人（没发过言、图里也没有的人，被 @ 了也能记进关系） |
 | `Platform`、`UserId`、`Nickname` | `platform`、`userId`、`nickname` | 存档写入站消息的说话人；agent 给她自己的回复写这一轮的平台与她在那里的账号、昵称 | 字符串 | 会话服务标说话人与是不是 owner；记忆后端按平台筛最近消息；向量记忆、用户档案与关系等 |
 | `GroupId`、`GroupName`、`SessionType` | `groupId`、`groupName`、`sessionType` | 存档写入站消息的群号、群名与会话类型；agent 给她自己的回复写这一轮的 | 字符串，即入站消息的同名字段 | 向量记忆与最近消息写出说话的位置，只用于显示；判是不是多方读会话记录的 `originChat.multiParty`（子会话取根会话的） |
 | `MessageId` | `messageId` | 存档：平台侧的消息 id（入站消息的 `messageId`） | 字符串 | 存档按它反查被引用的原文（`findByMessageId`）；关系插件把引用与回复对回消息 |

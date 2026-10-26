@@ -266,8 +266,7 @@ export interface PersonEventEdge {
 /**
  * 人 → 人 关系类型 —— **半开放词表**。
  *
- * LLM 提取时会被推荐优先使用下列高频词，必要时可自创新词；
- * 应用层 normalize 阶段会把同义词归一（best_friend → friend）。
+ * LLM 提取时会被推荐优先使用下列高频词，必要时可自创新词；落库前只做大小写与空白规整，自创词原样保存。
  */
 export const RecommendedPersonRelationTypes = [
   'friend',

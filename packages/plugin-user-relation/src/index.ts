@@ -22,6 +22,7 @@ import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
 import { platform } from '@aalis/api-platform';
 import { originChatOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
@@ -135,7 +136,7 @@ const configSchema = defineConfig({
     type: 'llm-ref',
     label: 'Consolidate 使用的 LLM',
     description:
-      '可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。',
+      '可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus）。留空时整理只做遗留边整理，别名与层级只统计候选、不改图。',
   },
   consolidationDisableThinking: {
     type: 'boolean',
@@ -148,7 +149,7 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     label: 'Consolidate autoLink',
     description:
-      '为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。',
+      '为 true 且配置了 consolidationModel 时，经模型核验后自动合并别名实体、建层级边；未配置整理模型时与 false 一样只统计候选、不动数据。',
     default: false,
   },
   consolidationSkipLowScorePairs: {
@@ -459,7 +460,7 @@ function start(caps: Caps): void {
   const triggerEveryN = cfg.triggerEveryNMessages;
   if (extractionEnabled && triggerEveryN > 0) {
     const extractor = new RelationExtractor(
-      { events: caps.events, logger: caps.logger, memory: caps.memory, llm: caps.llm, platform: caps.platform },
+      { events: caps.events, logger: caps.logger, memory: caps.memory, llm: caps.llm, persona: caps.persona },
       service,
       {
         triggerEveryNMessages: triggerEveryN,
@@ -629,6 +630,8 @@ const uses = {
   contributions,
   provide,
   llm: optional(llm),
+  /** 提取提示里机器人的称呼取人设名；缺席时用中性称呼 */
+  persona: optional(persona),
   platform: optional(platform),
   tools: optional(tools),
   commands: optional(commands),

@@ -66,6 +66,8 @@
 | `is-alias-of`    | A 是 B 的别名 / 小号 |
 | `alt-account-of` | A 是 B 的小号 |
 
+`relation` 只做大小写与空白规整（去首尾空白、转小写、空白换成下划线），模型自创的词原样保存，不归并成上表的词。
+
 ### `sentiment` 字段（可附加在任意角色边上）
 
 `positive` 积极 · `negative` 消极 · `neutral` 中性 · `mixed` 复杂。

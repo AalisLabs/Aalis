@@ -666,7 +666,7 @@ export interface ArchivedAttachment {
  *   模型或界面看的一方（向量记忆的召回片段、撤回通知的摘录、引用反查）按它用 {@link stripSenderPrefix} 去掉这一层，没有这个键
  *   的不去。
  * - `Mentions`：提问里发言人自己写的话 @ 了哪些账号（字符串数组，{@link extractMentions} 从入站消息的 `content` 抽，引用与
- *   附件描述里的不算），存档在有时写；向量记忆据此给被 @ 的人加权。
+ *   附件描述里的不算），存档在有时写；向量记忆据此给被 @ 的人加权，关系图的提取据此认被 @ 的人。
  * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
  *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
  * - `GroupId`、`GroupName`、`SessionType`：说话所在的群号、群名与会话类型（字符串，即入站消息的 `groupId`、`groupName`、

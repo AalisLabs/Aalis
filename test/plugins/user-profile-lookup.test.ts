@@ -19,12 +19,16 @@ async function setup() {
   const host = app.bind({ provide, memory });
   host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();
+  const groupDescriptions: string[] = [];
   host.provide.use(tools, {
     register: (tool: Omit<RegisteredTool, 'pluginName'>) => {
       registered.set(tool.definition.function.name, tool);
       return () => {};
     },
-    registerGroup: () => () => {},
+    registerGroup: (group: { description: string }) => {
+      groupDescriptions.push(group.description);
+      return () => {};
+    },
   } as never);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
@@ -43,10 +47,16 @@ async function setup() {
   const lookup = registered.get('user_profile_lookup');
   if (!lookup) throw new Error('user_profile_lookup 未登记');
   const call = async (args: Record<string, unknown>) => JSON.parse(String(await lookup.handler(args, {} as never)));
-  return { lookup, call };
+  return { lookup, call, groupDescriptions };
 }
 
 describe('plugin-user-profile: user_profile_lookup', () => {
+  it('工具与分组的说明不写死机器人的名字（人设改名后模型读到的称呼照样一致）', async () => {
+    const { lookup, groupDescriptions } = await setup();
+    expect(groupDescriptions).toHaveLength(1);
+    expect([lookup.definition.function.description, ...groupDescriptions].join('\n')).not.toContain('Aalis');
+  });
+
   it('参数只有 user_key、platform、user_id 三个', async () => {
     const { lookup } = await setup();
     const parameters = lookup.definition.function.parameters as { properties: Record<string, unknown> };

@@ -310,6 +310,20 @@ const REMOVED: Array<[string, string]> = [
   ['previewNotText', 'WebUI 附件预览不是文本时弹框写原因：用读到的字节直接下载'],
   // 别处另有同名的 readText 在用，按名字登记会误撞，登记删掉的那一份的写法
   ['readText(href', 'WebUI 附件预览按文字读、只看有没有 NUL：读字节后按内容判'],
+  ['RELATION_SYNONYMS', '关系图按同义词表改写关系词（student 记成 admirer）：只做大小写与空白规整，自创词原样保存'],
+  [
+    'isPlaceholderSelfPersonId',
+    '关系图按 self、me、bot 名单与此刻登记的平台认占位人物：人物只认窗口发言者、被 @ 的人与图里已有的人',
+  ],
+  ['getKnownPlatformsLower', '关系图按此刻登记的平台认占位人物：人物只认窗口发言者、被 @ 的人与图里已有的人'],
+  ['GENERIC_PLACEHOLDER_USERIDS', '关系图按 self、me、bot 名单认占位人物：人物只认窗口发言者、被 @ 的人与图里已有的人'],
+  ['fake-self', '/relation cleanup fake-self：按占位人物判据级联删人的指令'],
+  ['fakePersonsDeleted', '关系图整理开头按占位人物判据级联删人的计数：整理不按名单与登记的平台删人'],
+  ['fakePersonEdgesDeleted', '关系图整理开头按占位人物判据级联删人的计数：整理不按名单与登记的平台删人'],
+  ['chooseCanonicalDirection', '别名合并按别名数、名字长度与证据数翻转调用方给的方向：照调用方给的方向'],
+  ['noCanonicalCorrection', '关掉别名合并方向翻转的选项：合并一律照调用方给的方向'],
+  ['effectiveCanonicalId', 'mergeAlias 交回翻转后的方向：合并照调用方给的方向，不再翻转'],
+  ['effectiveAliasId', 'mergeAlias 交回翻转后的方向：合并照调用方给的方向，不再翻转'],
 ];
 
 /**
@@ -355,7 +369,6 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ['plugin-session-server', 'sessionDefaults', '写路径不带子会话默认值：新界面没有编辑它的地方'],
   ['plugin-user-profile', "'instruct", 'user-profile 查看与增删第三方行为指令的 /instruct 指令族'],
   ['plugin-user-profile', 'api-authority', 'user-profile 只为判第三方行为指令的发言人等级而用的权限服务'],
-  ['plugin-user-profile', 'api-persona', 'user-profile 只为按人设名给第三方行为指令分堆而用的人设服务'],
   // 常见的词，只在压缩的契约与实现里查
   ['api-memory', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],
   ['plugin-memory-summary', 'keepRecent', '压缩保留最近若干条原文，由全量压缩取代'],

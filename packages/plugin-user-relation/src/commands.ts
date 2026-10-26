@@ -8,7 +8,6 @@
  * - `relation consolidation-status`：查看最近一次 consolidate 的运行时间、触发源与结果
  * - `relation cleanup person|event|entity <id>`：删该节点 + 级联边（restricted）
  * - `relation cleanup orphans`：一键清理所有孤立点（restricted）
- * - `relation cleanup fake-self [--dry-run]`：清理 LLM 误抽的伪 person（restricted）
  * - `relation cleanup all --yes`：清空整个关系图，不带 --yes 只返回提示（restricted）
  * - `relation consolidate [--auto-link] [--no-llm]`：整理关系图（restricted）
  * - `relation rewrite-weights`：把 weight 物理回写为当前 effectiveWeight（restricted）
@@ -21,7 +20,6 @@ import type { BoundCommands } from '@aalis/api-commands';
 import type { LLMModel } from '@aalis/api-llm';
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import type { Logger, ServiceSelection } from '@aalis/core';
-import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 import { findOrphans } from './utils.js';
@@ -112,7 +110,7 @@ export function registerRelationCommands(
   cmds.command('relation.orphans', '列出图中所有孤立点（不被任何边引用）').action(async () => {
     const { persons, events, entities } = findOrphans(await service.loadAll());
     if (persons.length + events.length + entities.length === 0) {
-      return '✓ 无孤立点。';
+      return '无孤立点。';
     }
     const lines: string[] = ['# 孤立点'];
     if (persons.length) {
@@ -139,7 +137,7 @@ export function registerRelationCommands(
       if (!id.includes(':')) return 'person id 应为 platform:userId';
       const [platform, userId] = id.split(':', 2);
       const r = await service.deletePerson(platform!, userId!);
-      return `✓ 已删除 person ${id}（级联 ${r.deletedEdges} 条边）`;
+      return `已删除 person ${id}（级联 ${r.deletedEdges} 条边）`;
     });
 
   // ---- forget-me：用户自助清理自己的节点 ----
@@ -154,9 +152,9 @@ export function registerRelationCommands(
       const id = `${platform}:${userId}`;
       const snap = await service.loadAll();
       const exists = snap.persons.some(p => p.id === id);
-      if (!exists) return `✓ 关系图中没有你的节点（${id}），无需清理。`;
+      if (!exists) return `关系图中没有你的节点（${id}），无需清理。`;
       const r = await service.deletePerson(platform, userId);
-      return `✓ 已删除你的节点 ${id}（级联 ${r.deletedEdges} 条边）。注意：别人在事件文本中提到你的字符串不会被清理。`;
+      return `已删除你的节点 ${id}（级联 ${r.deletedEdges} 条边）。注意：别人在事件文本中提到你的字符串不会被清理。`;
     });
 
   cmds
@@ -165,7 +163,7 @@ export function registerRelationCommands(
       const id = String(idArg ?? '').trim();
       if (!id) return '请提供 event id';
       const r = await service.deleteEvent(id);
-      return `✓ 已删除 event ${id}（级联 ${r.deletedEdges} 条边）`;
+      return `已删除 event ${id}（级联 ${r.deletedEdges} 条边）`;
     });
 
   cmds
@@ -174,61 +172,14 @@ export function registerRelationCommands(
       const id = String(idArg ?? '').trim();
       if (!id) return '请提供 entity id';
       const r = await service.deleteEntity(id);
-      return `✓ 已删除 entity ${id}（级联 ${r.deletedEdges} 条边）`;
+      return `已删除 entity ${id}（级联 ${r.deletedEdges} 条边）`;
     });
 
   cmds.command('relation.cleanup.orphans', '一键清理所有孤立点', { visibility: 'restricted' }).action(async () => {
     const r = await service.pruneOrphans();
     const deleted = r.deletedPersons + r.deletedEvents + r.deletedEntities;
-    return `✓ 已清理 ${deleted} 个孤立点（人物 ${r.deletedPersons} / 事件 ${r.deletedEvents} / 实体 ${r.deletedEntities}），悬空边 ${r.deletedDanglingEdges} 条`;
+    return `已清理 ${deleted} 个孤立点（人物 ${r.deletedPersons} / 事件 ${r.deletedEvents} / 实体 ${r.deletedEntities}），悬空边 ${r.deletedDanglingEdges} 条`;
   });
-
-  // ---- cleanup fake-self ----
-  // 专门清理 LLM 误抽出的「伪 person」占位：platform 不在运行时白名单
-  // (`getPlatformNames(platform)`) 中，或者 userId 命中通用占位词 `{self, me, bot, assistant}`。
-  // 以往的「aalis:aalis / aalis:self / onebot:aalis」都被该规则覆盖，且同时 persona-agnostic
-  // （改 persona 名为 Mia / 任意名字都不需要改代码）。依赖 extractor.isPlaceholderSelfPersonId
-  // 保证与写入守卫、consolidate 三处口径一致。
-  cmds
-    .command(
-      'relation.cleanup.fake-self',
-      '清理 LLM 误抽的伪 person。伪 person 指 platform 不在运行时白名单、或 userId 为 self/me/bot/assistant 的人物',
-      {
-        visibility: 'restricted',
-      },
-    )
-    .option('dry-run', '--dry-run', { description: '只列出会被删的节点，不实际删除' })
-    .action(async argv => {
-      const snap = await service.loadAll();
-      const knownPlatforms = getKnownPlatformsLower(platform);
-      const fakes = snap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
-      if (fakes.length === 0) return '✓ 未发现伪 person。';
-      const dry = argv.options['dry-run'] === true;
-      const lines: string[] = [
-        dry ? `[dry-run] 将删除 ${fakes.length} 个伪 person：` : `已删除 ${fakes.length} 个伪 person：`,
-      ];
-      let edgesTotal = 0;
-      for (const p of fakes) {
-        if (dry) {
-          const incident = snap.edges.filter(
-            ed =>
-              (ed.kind === 'person-event' && ed.fromPersonId === p.id) ||
-              (ed.kind === 'person-entity' && ed.fromPersonId === p.id) ||
-              (ed.kind === 'person-person' && (ed.fromPersonId === p.id || ed.toPersonId === p.id)),
-          );
-          lines.push(`- ${p.id}  ${p.displayName ?? ''}  (级联 ${incident.length} 边)`);
-          edgesTotal += incident.length;
-        } else {
-          const r = await service.deletePerson(p.platform, p.userId);
-          lines.push(`- ${p.id}  ${p.displayName ?? ''}  (级联删 ${r.deletedEdges} 边)`);
-          edgesTotal += r.deletedEdges;
-        }
-      }
-      lines.push(
-        dry ? `[dry-run] 合计会级联删 ${edgesTotal} 边。去掉 --dry-run 实际执行。` : `合计级联删 ${edgesTotal} 边。`,
-      );
-      return lines.join('\n');
-    });
 
   cmds
     .command('relation.cleanup.all', '【危险】清空整个关系图。要加 --yes 才执行', {
@@ -237,13 +188,13 @@ export function registerRelationCommands(
     .option('yes', '--yes', { description: '确认执行' })
     .action(async argv => {
       if (argv.options.yes !== true) {
-        return '⚠ 该操作将删除所有人物 / 事件 / 实体 / 边。如确实需要，请追加 --yes。';
+        return '注意：该操作将删除所有人物 / 事件 / 实体 / 边。如确实需要，请追加 --yes。';
       }
       // 一次批量提交（sqlite/inmemory 原子，mongodb 仅按序遇错即停、可幂等重清），
       // 不逐节点级联：后者每删一个节点付 2 次全图读，
       // 生产图规模下要跑数分钟且中途失败会留下半张图（见 service.clearAll 的注释）。
       const cleared = await service.clearAll(logger);
-      return `✓ 已清空关系图（删除 ${cleared} 条记录：人物 / 事件 / 实体 / 边 / 合并否决缓存）`;
+      return `已清空关系图（删除 ${cleared} 条记录：人物 / 事件 / 实体 / 边 / 合并否决缓存）`;
     });
 
   /**
@@ -285,7 +236,6 @@ export function registerRelationCommands(
     return {
       autoLink,
       triggerSource: 'manual',
-      platform,
       skipLowScorePairs: options.consolidateSkipLowScorePairs,
       lowScoreThreshold: options.consolidateLowScoreThreshold,
       ...(useLlm && options.consolidateLLM
@@ -325,17 +275,19 @@ export function registerRelationCommands(
     .command('relation.consolidate', '整理关系图。扫描别名候选、规范化 PersonEventEdge', {
       visibility: 'restricted',
     })
-    .option('auto-link', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
+    .option('auto-link', '--auto-link', {
+      description: '经整理模型核验后合并别名候选、建层级边；没有整理模型时只统计候选',
+    })
     .option('no-llm', '--no-llm', { description: '跳过 consolidationModel 配置的 LLM 增强（A 核验 + B 摘要重写）' })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.consolidate');
-      if (!gate.ok) return `⏳ 上一次 /relation consolidate 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return `上一次 /relation consolidate 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
         const autoLink = argv.options['auto-link'] === true;
         const useLlm = argv.options['no-llm'] !== true && !!options.consolidateLLM;
         ackBackground(
           argv.session.sessionId,
-          `⏳ 正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+          `正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
         );
         const r = await service.consolidate(buildConsolidateOpts(autoLink, useLlm));
         const lines = [
@@ -371,7 +323,7 @@ export function registerRelationCommands(
     )
     .action(async argv => {
       const gate = tryAcquireCommand('relation.rewrite-weights');
-      if (!gate.ok) return `⏳ 上一次 /relation rewrite-weights 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return `上一次 /relation rewrite-weights 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
         const { weightDecayHalfLifeDays: halfLifeDays, weightDecayFloor: floor } = options.eviction;
         if (halfLifeDays <= 0) {
@@ -379,14 +331,14 @@ export function registerRelationCommands(
         }
         ackBackground(
           argv.session.sessionId,
-          `⏳ 正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
+          `正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
         );
         const r = await service.rewriteWeights({ halfLifeDays, floor });
         if (r.skipped) {
           return 'weight 衰减未启用，已跳过。';
         }
         return [
-          '✓ weight 时间衰减回写完成：',
+          'weight 时间衰减回写完成：',
           `- 事件：写回 ${r.events} 条`,
           `- 实体：写回 ${r.entities} 条`,
           `- 边：  写回 ${r.edges} 条`,
@@ -406,9 +358,9 @@ export function registerRelationCommands(
     )
     .action(async argv => {
       const gate = tryAcquireCommand('relation.event-duplicates');
-      if (!gate.ok) return `⏳ 上一次 /relation event-duplicates 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return `上一次 /relation event-duplicates 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
-        ackBackground(argv.session.sessionId, '⏳ 正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…');
+        ackBackground(argv.session.sessionId, '正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…');
         const r = await service.findEventDuplicates({
           ...(options.consolidateLLM
             ? {
@@ -421,7 +373,7 @@ export function registerRelationCommands(
             : {}),
         });
         const lines: string[] = [];
-        lines.push(`✓ event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
+        lines.push(`event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
         lines.push(
           `候选 ${r.candidates.length} 对，LLM 通过 ${r.llmVerified}，LLM 否决 ${r.llmRejected}，缓存命中 ${r.llmRejectCacheHits}`,
         );
@@ -433,7 +385,7 @@ export function registerRelationCommands(
                 ? `fused=${c.fusedScore.toFixed(2)} (cos=${c.cosineScore?.toFixed(2)}, struct=${c.structuralScore.toFixed(2)})`
                 : `jac=${c.jaccardScore.toFixed(2)}, struct=${c.structuralScore.toFixed(2)}`;
             const verdict = c.llmVerdict
-              ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '✓' : '✗'}] ${c.llmVerdict.reason}`
+              ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '通过' : '否决'}] ${c.llmVerdict.reason}`
               : '[未判]';
             lines.push(
               `  · [${c.sessionScope}] ${c.aTitle.slice(0, 18)} ↔ ${c.bTitle.slice(0, 18)}  ${sims}  ${verdict}`,
@@ -456,10 +408,10 @@ export function registerRelationCommands(
     })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.compress');
-      if (!gate.ok) return `⏳ 上一次 /relation compress 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return `上一次 /relation compress 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
         const ev = options.eviction;
-        ackBackground(argv.session.sessionId, '⏳ 正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
+        ackBackground(argv.session.sessionId, '正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
         const before = await service.loadAll();
         let deletedPersons = 0;
         let deletedEvents = 0;
@@ -480,7 +432,7 @@ export function registerRelationCommands(
           deletedEntities = orphans.deletedEntities;
         }
         return [
-          '✓ 关系图压缩完成：',
+          '关系图压缩完成：',
           `- 人物：${before.persons.length} → ${before.persons.length - deletedPersons}（删 ${deletedPersons} 个孤儿）`,
           `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${ev.maxEvents}）`,
           `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${ev.maxEntities}）`,
@@ -502,14 +454,14 @@ export function registerRelationCommands(
     .option('no-auto-link', '--no-auto-link', { description: '取消 consolidate 阶段的 autoLink' })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.maintain');
-      if (!gate.ok) return `⏳ 上一次 /relation maintain 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return `上一次 /relation maintain 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
       try {
         const ev = options.eviction;
         const useLlm = argv.options['no-llm'] !== true && !!options.consolidateLLM;
         const autoLink = argv.options['no-auto-link'] !== true && options.consolidateAutoLink;
         ackBackground(
           argv.session.sessionId,
-          `⏳ 正在体检关系图：先整理再压缩（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+          `正在体检关系图：先整理再压缩（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
         );
 
         // 顺序：先 consolidate（在原图上合并别名/层级/事件去重）→ 再 evict（在去重后的图上
@@ -547,7 +499,7 @@ export function registerRelationCommands(
           evictionMode === 'quota'
             ? `[2/2] 压缩：人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`
             : `[2/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`;
-        return ['✓ 关系图体检完成：', consolidateLine, compressLine].join('\n');
+        return ['关系图体检完成：', consolidateLine, compressLine].join('\n');
       } finally {
         releaseCommand('relation.maintain');
       }
@@ -560,13 +512,13 @@ export function registerRelationCommands(
       const info = service.getLastConsolidateInfo();
       if (!info.lastRunAt) {
         return (
-          '⚠ 本次运行以来尚未执行过 consolidation。\n' +
+          '注意：本次运行以来尚未执行过 consolidation。\n' +
           '触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。'
         );
       }
       const time = new Date(info.lastRunAt).toLocaleString('zh-CN', { hour12: false });
       const triggerLabel = info.trigger === 'manual' ? '手动' : info.trigger === 'eviction' ? '淘汰前自动' : 'API 调用';
-      return `✓ 最近一次 consolidation：${time}（触发方式：${triggerLabel}）\n${info.summary ?? '（无详情）'}`;
+      return `最近一次 consolidation：${time}（触发方式：${triggerLabel}）\n${info.summary ?? '（无详情）'}`;
     });
 }
 

@@ -9,6 +9,8 @@
 
 不带 `userId` 的入站消息（如宿主通知）与带来源的注入（子任务的任务消息、好友申请与入群申请通知、定时任务等，它们不是这个账号说的话）不计数，也不写档案、不改关系分。用户事实提取读取历史时，滤掉指令类消息（`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)），它们不是任何人的发言，不作为抽取语料。本插件没有按会话收窄的范围字段：发言者与其他参与者的事实照常跨会话注入，这些事实可能抽自别的会话（包括私聊）。
 
+提取时新增与改写的事实要附原话（`sourceQuote`）：按行拆开，每行去掉空白与常见标点后要能在目标用户的归档正文里找到，找不到整条丢弃并记 warn；规整后为空的行不核对，删除事实不要原话。模型会凭空编事实，核对原话挡的是这一种；归档正文里带着他引用的别人的话与附件描述，这两样挡不住。提取提示里对她的称呼取人设名（按触发提取的会话取一次 `getPersonaName`），人设服务缺席或卡没取名时用「机器人」。
+
 ## 插件声明
 
 ```typescript
@@ -27,6 +29,7 @@ export default definePlugin({
     tools: optional(tools),
     commands: optional(commands),
     userRelation: optional(userRelation),
+    persona: optional(persona),
     i18n: optional(i18n),
     webui: optional(webuiServer),
   },

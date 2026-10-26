@@ -24,6 +24,7 @@ export default definePlugin({
     contributions,
     provide,
     llm: optional(llm),
+    persona: optional(persona),
     platform: optional(platform),
     tools: optional(tools),
     commands: optional(commands),
@@ -38,6 +39,12 @@ export default definePlugin({
 ```
 
 提取计数只算真人的话，与用户档案同一判据（有账号且不带来源，按入站消息的 `source` 认）：不带 `userId` 的入站（如宿主通知）与带来源的注入（子任务的任务消息、定时任务、好友与入群申请通知等）不计入每个会话的提取计数。提取读取历史时（同会话读取、跨会话读取与跨会话降级三条路径）滤掉指令类消息（`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)）与带来源的输入，它们不是谁在会话里说话，不交给模型抽关系：子任务会话不会凭任务消息建出 `<平台>:parent:<父会话>` 这个人。
+
+提取写入时人物只认确定的事实：窗口里说话的人（真人，与带账号的她自己）、存档记下的被 @ 的账号（元数据的 `Mentions`，按那条消息的平台拼成 `<平台>:<账号>`）、这一轮读到的图里已有的人。模型输出的其余人物不落库，引用他们的边一起丢掉，不按名字或此刻登记了哪些平台认。提取提示里对她的称呼取人设名（按触发提取的会话取一次 `getPersonaName`），人设服务缺席或卡没取名时用「机器人」。
+
+证据核对：每条证据的消息 id 要在这次窗口里，给了 quote 的要是这些消息之一的子串（去掉空白比），否则这条证据作废（模型会编消息 id 和引文）。作废只丢证据：人际关系边（`strictSelfAssertion`）因此不建，其余节点和边照建，只是不带证据。
+
+候选召回：交给模型的候选事件是 `candidateEventDays` 天内活跃的前 `candidateEventLimit` 个。实体候选另按名字召回：窗口里真人消息的文字（规整后）含某个实体的名字或别名（两个字以上）时，这个实体也进候选，免得超过活跃天数的老实体被重建一份。活跃的取 `candidateEventLimit`×2，两路合计不超过 ×4。
 
 `/relation` 的长任务（consolidate、rewrite-weights、event-duplicates、compress、maintain）开跑时先往当前会话推一句「正在跑」，只推给有平台适配器认领的会话，定时任务发进群里的也照推；没有认领者的会话（如编排的内部会话）不推。
 
@@ -130,12 +137,10 @@ $$
 
 **没有定时调度**。无 setInterval / cron / scheduler 注册。
 
-开始前先删除伪 person：platform 不在当前平台白名单内（白名单为空时不按此判据），或 userId 为通用占位（如 `self` / `bot`）的人物节点，连同其边一并删除。
-
 主要工作：
 1. **遗留边整理**（计入 `eventEdgesNormalized`）：同一 (person, event) 按吸收规则折叠；同一 (person, entity) 只保留最强 role；同一 (event, entity) 只保留强度最高的关系（part-of > related > about），其余边的 evidence 并入保留边后删除
-2. **实体层级推断**（`entityHierarchyCandidates` / `entityHierarchyEdgesCreated`）：实体 A 的规范名是 B 的真子串（A 至少 3 个字符，且两者之间尚无 entity-entity 边）时，A 记为 B 的父实体候选。配置了 `consolidationModel` 时经 `inferEntityHierarchy` 核验后建 `part-of` 边（不受 `autoLink` 限制）；未配置时，`autoLink` 开启则只在 B 的名称以 A 开头时建边，关闭则只统计候选
-3. **别名合并**：name/aliases 归一后完全相同的实体记为别名候选；仅在 `autoLink` 开启时建 `is-alias-of` 边并 `mergeAlias`。配置了 `consolidationModel` 时，合并前先经 `verifyAliasPair` 核验：否决则不合并并记入否决缓存；判定为上下位则改建 `part-of` 边。`autoLink` 与 LLM 同时启用时，还会做宽召回别名核验、事件重复合并、兄弟实体共同父实体推断和合并后摘要重写
+2. **实体层级推断**（`entityHierarchyCandidates` / `entityHierarchyEdgesCreated`）：实体 A 的规范名是 B 的真子串（A 至少 3 个字符，且两者之间尚无 entity-entity 边）时，A 记为 B 的父实体候选。配置了 `consolidationModel` 时经 `inferEntityHierarchy` 核验后建 `part-of` 边（不受 `autoLink` 限制）；未配置时只统计候选
+3. **别名合并**：name/aliases 归一后完全相同的实体记为别名候选；`autoLink` 开启且配置了 `consolidationModel` 时，先经 `verifyAliasPair` 核验，同意才建 `is-alias-of` 边并 `mergeAlias`（留下的一方按合并分挑），否决则不合并并记入否决缓存，判定为上下位则改建 `part-of` 边；未配置整理模型时只统计候选、不改图。`autoLink` 与 LLM 同时启用时，还会做宽召回别名核验、事件重复合并、兄弟实体共同父实体推断和合并后摘要重写
 
 ---
 
@@ -150,7 +155,7 @@ $$
 
 ### 合并语义 (`mergeAlias`)
 
-1. 方向校正：依次比较 aliases 数量（仅 entity 计入）、名称长度（entity 取 `name`，event 取 `title`，person 取 `displayName`）、引用该节点的边上 evidence 总数，得分高者为 canonical，持平时保持调用方指定的方向（见 `utils.ts` 的 `chooseCanonicalDirection`）；`user_relation_merge_nodes` 工具关闭方向校正（`noCanonicalCorrection`），按调用方指定的 canonical 合并
+1. 方向：留下的一方由调用方定。提取按模型给的边方向（`A is-alias-of B` 即 A 并进 B），整理在没有方向时（严格等价、宽召回与事件重复合并）按合并分（`pickCanonicalByMergeScore`）挑，会话里与全局事件同名的事件并进全局事件，`user_relation_merge_nodes` 工具按调用方指定的 canonical；任一端已不在图里时什么都不改
 2. 仅 entity / event：`canonical.aliases ← uniq(canonical.aliases ∪ {alias.name 或 alias.title} ∪ alias.aliases) \ {canonical 名称}`；PersonNode 没有 `aliases` 字段，person 合并不保留被合并方的昵称
 3. 所有引用 `alias.id` 的边 ⇒ rewire 到 `canonical.id`
 4. 删除 `alias` 节点
@@ -161,7 +166,7 @@ $$
 `alt-account-of` 走的是合并通道，不是层级通道。
 
 - LLM extractor 输出 `personPersonEdges: { relationType: 'alt-account-of', directed: true }`（A 是 B 的小号）
-- service 在新建该边时立即调用 `mergeAlias({kind: 'person'})`：先按启发式校正方向（displayName 较长者为 canonical，等长时比较相关边的 evidence 总数），再把被合并账号的边 rewire 到 canonical，并删除被合并的 PersonNode
+- service 在新建该边时立即调用 `mergeAlias({kind: 'person'})`：照边的方向把小号 A 并进大号 B，被合并账号的边 rewire 到 B，并删除 A 的 PersonNode
 - PersonNode 没有 `aliases` 字段，被合并方的昵称不保留
 - **结果：图里只剩一个 PersonNode，不会出现"主-从"两个节点**
 
@@ -255,9 +260,9 @@ $$
 | `senderNeighborhoodEdgeLimit` | number | `8` | 候选人 1 跳邻居展示上限：提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0 = 关闭 |
 | `extractionModel` | llm-ref | — | 提取使用的 LLM：建议挑一个具备 chat 能力的便宜模型；留空则使用默认 llm 服务 |
 | `extractionDisableThinking` | boolean | `true` | 提取：禁用思考模式：提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。开启时用模型最浅的思考档（能关闭思考的模型即关闭），模型不能调思考时不起作用。默认开启 |
-| `consolidationModel` | llm-ref | — | Consolidate 使用的 LLM：可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus），留空则保持纯算法行为。 |
+| `consolidationModel` | llm-ref | — | Consolidate 使用的 LLM：可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus）。留空时整理只做遗留边整理，别名与层级只统计候选、不改图。 |
 | `consolidationDisableThinking` | boolean | `true` | Consolidate LLM：禁用思考模式：同 extractionDisableThinking。默认开启 |
-| `consolidationAutoLink` | boolean | `false` | Consolidate autoLink：为 true 时自动合并别名实体、建层级边（结合 consolidationModel 可由 LLM 核验）；false 仅打印候选不动数据。 |
+| `consolidationAutoLink` | boolean | `false` | Consolidate autoLink：为 true 且配置了 consolidationModel 时，经模型核验后自动合并别名实体、建层级边；未配置整理模型时与 false 一样只统计候选、不动数据。 |
 | `consolidationSkipLowScorePairs` | boolean | `true` | Consolidate：跳过低权候选 pair：启用后，宽召回阶段双方 compositeScore 均低于阈值的候选不送 LLM 核验（两端都是 edge tier，合并价值低）。默认启用以节省 LLM 调用。 |
 | `consolidationLowScoreThreshold` | number | `0.2` | Consolidate：低权阈值：compositeScore 阈值（0~1，与 scoreToTier 的 edge 边界一致，默认 0.2）。设 0 等同关闭跳过；仅在 consolidationSkipLowScorePairs=true 时生效。 |
 | `consolidateAfterEviction` | boolean | `true` | 淘汰时自动 consolidate：每次触发容量淘汰时，先自动运行一次 consolidate（去重 / 整理 / 层级推断），再执行淘汰。与 /relation maintain 顺序一致，使 PageRank 入出度更完整。 |
@@ -284,7 +289,7 @@ $$
 | `maxGlobalHotEvents` | number | `5` | 注入：全局热点事件数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭 |
 | `maxGlobalHotEntities` | number | `5` | 注入：全局热点实体数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭 |
 | `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文。按会话管理记下的聊天窗口判，根会话（子会话取根会话的）的窗口是多方才注入：OneBot 的群与频道、第三方平台声明的多方类型都算，owner 从 WebUI 往群里插话的一轮也算；WebUI、终端会话不算，不看消息带不带群号。会话管理不在时判不出，不注入 |
-| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等） |
+| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等）。写工具 1 级起能用，不逐次确认：改的是她自己的记忆，不碰本机文件也不对外；一轮里混进做不了的人时，执行守卫照逐动作判定单独审批这一个调用 |
 | `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予） |
 | `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。 |
 | `digToolDefaultMaxDepth` | number | `2` | dig 工具：默认深度 |

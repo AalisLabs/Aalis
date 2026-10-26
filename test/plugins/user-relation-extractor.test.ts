@@ -1,9 +1,9 @@
 import { App, events, logger, provide, services } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
-import { platform } from '../../packages/api-platform/src/index.js';
+import { persona } from '../../packages/api-persona/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
@@ -59,7 +59,7 @@ function makeFakeLLM(cannedResponse: string | ChatResponse[]): {
 
 /** 宿主侧能力：provide 种桩服务，其余五样正是 RelationExtractor 声明要用的 */
 function bindHost(app: App) {
-  return app.bind({ provide, events, logger, memory, llm, platform });
+  return app.bind({ provide, events, logger, memory, llm, persona });
 }
 
 /** 直驱一轮提取（私有方法；插件不提供手动触发入口，生产上只由消息计数触发） */
@@ -76,17 +76,6 @@ async function setup(llmContent: string | ChatResponse[], cfg: Partial<Extractor
   const mem = app.bind({ services }).services.use.get(memory)!;
   const store = new RelationStore(mem);
   const service = new RelationService(store);
-  // 注册若干 mock platform adapter，让 `getPlatformNames(platform)` 在测试里也有
-  // 真实集合（{onebot, test}），从而触发 extractor 的 persona-agnostic 平台白名单
-  // 守卫。否则空集会落入 permissive 模式，绕过守卫。
-  const mkMockAdapter = (name: string): unknown => ({
-    adapterName: `mock-${name}`,
-    platform: name,
-    getConnections: () => [],
-    sendMessage: () => Promise.resolve(),
-  });
-  host.provide.use(platform, mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
-  host.provide.use(platform, mkMockAdapter('test') as never, { entryId: 'mock/test' });
   const { model, calls, fail } = makeFakeLLM(llmContent);
   host.provide.use(llm, model, {
     label: 'fake-llm',
@@ -239,7 +228,7 @@ describe('plugin-user-relation: extractor', () => {
         },
       ],
       // 给一条边让 event 通过反孤儿守卫
-      personEventEdges: [{ personPlatform: 'test', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
+      personEventEdges: [{ personPlatform: 'onebot', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hello'));
@@ -258,7 +247,7 @@ describe('plugin-user-relation: extractor', () => {
           evidence: { messageIds: ['m1'], quote: '幻觉文本' },
         },
       ],
-      personEventEdges: [{ personPlatform: 'test', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
+      personEventEdges: [{ personPlatform: 'onebot', personUserId: 'a', eventRefKey: 'e1', role: 'participant' }],
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '完全无关的内容'));
@@ -483,81 +472,47 @@ describe('plugin-user-relation: extractor', () => {
     expect(userMsg?.content).toMatch(/role=enthusiast/);
   });
 
-  it('self-placeholder 守卫：LLM 误抽出的 aalis:aalis 占位 person + 边一律丢弃', async () => {
-    // 模拟 LLM 把 assistant 自身误抽成占位 person，并尝试给它建 person-entity 边
+  it('人物只认窗口发言者、被 @ 的人与图里已有的人：模型凭空写出的人（自指的 aalis:aalis、mia:mia、编的账号）连同他的边一起丢，图里已有的人照常连边', async () => {
+    const outsiders = ['aalis:aalis', 'mia:mia', 'onebot:stranger'];
+    const people = ['onebot:a', 'onebot:old', ...outsiders].map(id => ({
+      platform: id.split(':')[0],
+      userId: id.split(':')[1],
+    }));
     const llmJson = JSON.stringify({
-      persons: [
-        { platform: 'aalis', userId: 'aalis', displayName: 'Aalis' },
-        { platform: 'onebot', userId: 'a', displayName: 'Alice' },
-      ],
-      entities: [
-        { refKey: 'e1', name: '三角洲', entityKind: 'work', evidence: { messageIds: ['m1'], quote: '三角洲' } },
-      ],
-      personEntityEdges: [
-        // 占位 self → 应被丢弃
-        {
-          personPlatform: 'aalis',
-          personUserId: 'aalis',
-          entityRefKey: 'e1',
-          role: 'mentioned',
-          evidence: { messageIds: ['m1'], quote: '三角洲' },
-        },
-        // 真实用户 → 应保留
-        {
-          personPlatform: 'onebot',
-          personUserId: 'a',
-          entityRefKey: 'e1',
-          role: 'enthusiast',
-          evidence: { messageIds: ['m1'], quote: '三角洲' },
-        },
-      ],
-      personPersonEdges: [
-        // 占位 self 任一端 → 整条丢弃
-        {
-          fromPlatform: 'onebot',
-          fromUserId: 'a',
-          toPlatform: 'aalis',
-          toUserId: 'aalis',
-          relationType: 'friend',
-          evidence: { messageIds: ['m1'], quote: '三角洲' },
-        },
-      ],
+      persons: people,
+      entities: [{ refKey: 'e1', name: '绝航', entityKind: 'work', evidence: { messageIds: ['m1'], quote: '绝航' } }],
+      personEntityEdges: people.map(p => ({
+        personPlatform: p.platform,
+        personUserId: p.userId,
+        entityRefKey: 'e1',
+        role: 'participant',
+        evidence: { messageIds: ['m1'], quote: '绝航' },
+      })),
+      personPersonEdges: people.slice(1).map(p => ({
+        fromPlatform: 'onebot',
+        fromUserId: 'a',
+        toPlatform: p.platform,
+        toUserId: p.userId,
+        relationType: 'friend',
+        evidence: { messageIds: ['m1'], quote: '绝航' },
+      })),
     });
     const { mem, service, extractor } = await setup(llmJson);
-    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '我玩三角洲', 'Alice'));
+    await service.observePerson('onebot', 'old', '老朋友');
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '今晚玩绝航', 'Alice'));
     await extractNow(extractor, 'sess1');
 
     const snap = await service.loadAll();
-    // aalis:aalis 不应入库
-    expect(snap.persons.find(p => p.id === 'aalis:aalis')).toBeUndefined();
-    // alice 入库，其对实体 e1 的 enthusiast 边保留
-    expect(snap.persons.find(p => p.id === 'onebot:a')).toBeDefined();
-    const peEnt = snap.edges.filter(e => e.kind === 'person-entity');
-    expect(peEnt).toHaveLength(1);
-    expect(peEnt[0].kind === 'person-entity' && peEnt[0].fromPersonId).toBe('onebot:a');
-    // person-person 边因含 self 占位 → 不应有
-    expect(snap.edges.filter(e => e.kind === 'person-person')).toHaveLength(0);
+    expect(snap.persons.map(p => p.id).sort()).toEqual(['onebot:a', 'onebot:old']);
+    const linked = snap.edges.flatMap(e => (e.kind === 'person-entity' ? [e.fromPersonId] : []));
+    expect(linked.sort()).toEqual(['onebot:a', 'onebot:old']);
+    const friends = snap.edges.flatMap(e => (e.kind === 'person-person' ? [e.toPersonId] : []));
+    expect(friends).toEqual(['onebot:old']);
   });
 
-  it('self-placeholder 守卫扩展：platform 不在白名单 + userId 通用占位 全部拦截（persona-agnostic）', async () => {
-    // 新规则（persona-agnostic）：
-    //   - platform 不在 `getPlatformNames(platform)` 运行时白名单 → 一律视为伪 id 丢弃；
-    //   - userId 命中通用占位 {self, me, bot, assistant} → 一律丢弃。
-    //   - **不**再硬编码 persona 专属词（aalis / 本机器人 / Mia 等）；那种「平台真实但
-    //     userId 是 persona 名」的脏数据（如 `onebot:aalis`）交给
-    //     `/relation cleanup fake-self` 命令手动清理，而不是 extractor 自动拦截
-    //     ——避免 persona 改名时漏 / 误判。
-    // setup() 中已注册 mock `onebot` + `test` adapter，下列其他平台名都不在白名单。
+  it('不按名单认人：账号恰好是 self 的发言者照常是人，他与他的边保留', async () => {
     const llmJson = JSON.stringify({
-      persons: [
-        { platform: 'aalis', userId: 'self', displayName: 'Aalis' },
-        { platform: 'aalis', userId: 'me', displayName: 'Aalis' },
-        { platform: 'onebot', userId: 'self', displayName: 'Aalis' },
-        { platform: 'telegram', userId: 'bot', displayName: 'Aalis' },
-        { platform: 'discord', userId: 'assistant', displayName: 'Aalis' },
-        { platform: 'mia', userId: 'mia', displayName: 'Mia' }, // 改名 persona 的伪平台
-        { platform: 'onebot', userId: 'a', displayName: 'Alice' }, // 真实用户，应保留
-      ],
+      persons: [{ platform: 'onebot', userId: 'self', displayName: '群友' }],
       entities: [{ refKey: 'e1', name: '测试', entityKind: 'topic', evidence: { messageIds: ['m1'], quote: '测试' } }],
       personEntityEdges: [
         {
@@ -567,47 +522,173 @@ describe('plugin-user-relation: extractor', () => {
           role: 'mentioned',
           evidence: { messageIds: ['m1'], quote: '测试' },
         },
+      ],
+    });
+    const { mem, service, extractor } = await setup(llmJson);
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'self', '测试', '群友'));
+    await extractNow(extractor, 'sess1');
+
+    const snap = await service.loadAll();
+    expect(snap.persons.map(p => p.id)).toEqual(['onebot:self']);
+    expect(snap.edges.filter(e => e.kind === 'person-entity')).toHaveLength(1);
+  });
+
+  it('带账号的她自己是窗口发言者：图里还没有她，她与发言者的边照常落库', async () => {
+    const llmJson = JSON.stringify({
+      persons: [
+        { platform: 'onebot', userId: 'a', displayName: 'Alice' },
+        { platform: 'onebot', userId: '10000', displayName: '<人设名占位>' },
+      ],
+      personPersonEdges: [
         {
-          personPlatform: 'aalis',
-          personUserId: 'self',
-          entityRefKey: 'e1',
-          role: 'mentioned',
-          evidence: { messageIds: ['m1'], quote: '测试' },
-        },
-        {
-          personPlatform: 'mia',
-          personUserId: 'mia',
-          entityRefKey: 'e1',
-          role: 'mentioned',
-          evidence: { messageIds: ['m1'], quote: '测试' },
-        },
-        {
-          personPlatform: 'onebot',
-          personUserId: 'a',
-          entityRefKey: 'e1',
-          role: 'enthusiast',
-          evidence: { messageIds: ['m1'], quote: '测试' },
+          fromPlatform: 'onebot',
+          fromUserId: 'a',
+          toPlatform: 'onebot',
+          toUserId: '10000',
+          relationType: 'friend',
+          evidence: { messageIds: ['m1'], quote: '谢谢你' },
         },
       ],
     });
     const { mem, service, extractor } = await setup(llmJson);
-    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '测试', 'Alice'));
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '谢谢你', 'Alice'));
+    await mem.saveMessage('sess1', {
+      role: 'assistant',
+      content: '不客气',
+      metadata: { messageId: 'm2', platform: 'onebot', userId: '10000' },
+    });
     await extractNow(extractor, 'sess1');
 
     const snap = await service.loadAll();
-    const personIds = snap.persons.map(p => p.id).sort();
-    // platform 不在白名单 → 全部丢弃（persona 名无关）
-    expect(personIds).not.toContain('aalis:self');
-    expect(personIds).not.toContain('aalis:me');
-    expect(personIds).not.toContain('telegram:bot');
-    expect(personIds).not.toContain('discord:assistant');
-    expect(personIds).not.toContain('mia:mia');
-    // userId 通用占位 → 即便 platform 合法（onebot 在白名单）也丢弃
-    expect(personIds).not.toContain('onebot:self');
-    // 真实用户应保留
-    expect(personIds).toContain('onebot:a');
-    // 只剩 alice 的那条 person-entity 边
+    expect(snap.persons.map(p => p.id).sort()).toEqual(['onebot:10000', 'onebot:a']);
+    const edge = snap.edges.find(e => e.kind === 'person-person');
+    expect(edge?.kind === 'person-person' && [edge.fromPersonId, edge.toPersonId]).toEqual([
+      'onebot:a',
+      'onebot:10000',
+    ]);
+  });
+
+  it('被 @ 但没发言、图里也没有的人按存档记下的 Mentions 收下：A→B 边与 B 节点落库', async () => {
+    const llmJson = JSON.stringify({
+      persons: [
+        { platform: 'onebot', userId: 'a', displayName: 'Alice' },
+        { platform: 'onebot', userId: '<占位账号B>', displayName: 'B' },
+      ],
+      personPersonEdges: [
+        {
+          fromPlatform: 'onebot',
+          fromUserId: 'a',
+          toPlatform: 'onebot',
+          toUserId: '<占位账号B>',
+          relationType: 'friend',
+          evidence: { messageIds: ['m1'], quote: '是我兄弟' },
+        },
+      ],
+    });
+    const { mem, service, extractor } = await setup(llmJson);
+    const said = mkUserMsg('m1', 'a', '<at id="<占位账号B>">B</at> 是我兄弟', 'Alice');
+    await mem.saveMessage('sess1', { ...said, metadata: { ...said.metadata, mentions: ['<占位账号B>'] } });
+    await extractNow(extractor, 'sess1');
+
+    const snap = await service.loadAll();
+    expect(snap.persons.map(p => p.id).sort()).toEqual(['onebot:<占位账号B>', 'onebot:a']);
+    const edge = snap.edges.find(e => e.kind === 'person-person');
+    expect(edge?.kind === 'person-person' && [edge.fromPersonId, edge.toPersonId]).toEqual([
+      'onebot:a',
+      'onebot:<占位账号B>',
+    ]);
+  });
+
+  it('跨会话的窗口里被 @ 的账号按各自那条消息的平台收下', async () => {
+    const llmJson = JSON.stringify({
+      persons: [
+        { platform: 'onebot', userId: 'a' },
+        { platform: 'onebot', userId: '<占位账号B>' },
+        { platform: 'zz-chat', userId: 'c' },
+        { platform: 'zz-chat', userId: '<占位账号D>' },
+      ],
+      personPersonEdges: [
+        ['onebot', 'a', '<占位账号B>', 'm1'],
+        ['zz-chat', 'c', '<占位账号D>', 'm2'],
+      ].map(([platform, from, to, mid]) => ({
+        fromPlatform: platform,
+        fromUserId: from,
+        toPlatform: platform,
+        toUserId: to,
+        relationType: 'friend',
+        evidence: { messageIds: [mid], quote: '是我兄弟' },
+      })),
+    });
+    const { mem, service, extractor } = await setup(llmJson, {
+      readScope: 'cross-platform',
+      crossSessionMaxAgeMinutes: 0,
+    });
+    await mem.saveMessage('sessA', {
+      role: 'user',
+      content: '<at id="<占位账号B>">B</at> 是我兄弟',
+      metadata: { messageId: 'm1', userId: 'a', platform: 'onebot', mentions: ['<占位账号B>'] },
+    });
+    await mem.saveMessage('sessB', {
+      role: 'user',
+      content: '<at id="<占位账号D>">D</at> 是我兄弟',
+      metadata: { messageId: 'm2', userId: 'c', platform: 'zz-chat', mentions: ['<占位账号D>'] },
+    });
+    await extractNow(extractor, 'sessA');
+
+    const snap = await service.loadAll();
+    expect(snap.persons.map(p => p.id).sort()).toEqual([
+      'onebot:<占位账号B>',
+      'onebot:a',
+      'zz-chat:<占位账号D>',
+      'zz-chat:c',
+    ]);
+    expect(snap.edges.filter(e => e.kind === 'person-person')).toHaveLength(2);
+  });
+
+  it('整理不按登记的平台删人：人与边都还在', async () => {
+    const { service } = await setup('{}');
+    await service.observePerson('onebot', '<占位账号>', '群友');
+    const entity = await service.createEntity({ name: '绝航', entityKind: 'work', evidence: [] });
+    await service.addPersonEntityEdge({ fromPersonId: 'onebot:<占位账号>', toEntityId: entity.id, role: 'enthusiast' });
+    await service.consolidate({ autoLink: false });
+
+    const snap = await service.loadAll();
+    expect(snap.persons.map(p => p.id)).toEqual(['onebot:<占位账号>']);
     expect(snap.edges.filter(e => e.kind === 'person-entity')).toHaveLength(1);
+  });
+
+  it('提取提示里机器人的称呼取人设名：缺账号的 assistant 行与系统提示同一个名字，一次提取只取一次', async () => {
+    const { host, mem, extractor, calls } = await setup('{}');
+    const getPersonaName = vi.fn(() => '<人设名占位>');
+    host.provide.use(persona, { getSystemPrompt: () => '', getPersonaName }, { entryId: 'stub/persona' });
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '在吗'));
+    await mem.saveMessage('sess1', {
+      role: 'assistant',
+      content: '在的',
+      metadata: { messageId: 'm2', platform: 'onebot' },
+    });
+    await extractNow(extractor, 'sess1');
+
+    const prompt = calls[0].messages.map(m => String(m.content)).join('\n');
+    expect(prompt).toContain('[m2] (<人设名占位>) 在的');
+    expect(prompt).toContain('你是 <人设名占位> 的「社会关系神经」');
+    expect(prompt).not.toContain('Aalis');
+    expect(getPersonaName.mock.calls).toEqual([[{ sessionId: 'sess1', platform: 'onebot' }]]);
+  });
+
+  it('没有人设服务时机器人的称呼用中性的「机器人」', async () => {
+    const { mem, extractor, calls } = await setup('{}');
+    await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '在吗'));
+    await mem.saveMessage('sess1', {
+      role: 'assistant',
+      content: '在的',
+      metadata: { messageId: 'm2', platform: 'onebot' },
+    });
+    await extractNow(extractor, 'sess1');
+
+    const prompt = calls[0].messages.map(m => String(m.content)).join('\n');
+    expect(prompt).toContain('[m2] (机器人) 在的');
+    expect(prompt).not.toContain('Aalis');
   });
 
   it('跨会话 hub 建模：readScope=same-platform 时，prompt 含 hub 规则段 + candidate 含 scope 标签 + 消息行带 [sid:] 前缀', async () => {

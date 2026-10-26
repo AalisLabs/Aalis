@@ -70,7 +70,7 @@ describe('/relation 长任务的立即反馈', () => {
     const { sendMessage, run } = world();
     expect(await run(GROUP, platform)).toBe('weight 衰减未启用，已跳过。');
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(GROUP, expect.stringContaining('回写 weight'));
+    expect(sendMessage).toHaveBeenCalledWith(GROUP, '正在按 halfLifeDays=30、floor=0.1 回写 weight，请稍候…');
   });
 
   it('没有适配器认领的会话：不推，不留推送失败的日志', async () => {
