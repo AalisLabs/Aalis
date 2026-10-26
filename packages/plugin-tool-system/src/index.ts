@@ -125,7 +125,8 @@ function registerSystemToolset(caps: Caps): void {
   // 业务句柄每次调用打到当时选中的那一家，四个工具组共用一份即可
   const storage = caps.storage.present ? caps.storage.use : undefined;
 
-  // 注册各工具组
+  // 注册各工具组；/tools 列这里真正注册了的组（开关开着、缺服务而跳过的不算）
+  const registered: string[] = [];
   if (cfg.shell.enabled) {
     if (storage && caps.process.present) {
       registerShellTools(systemTools, {
@@ -135,6 +136,7 @@ function registerSystemToolset(caps: Caps): void {
         proc: caps.process.use,
         maxOutputSize: cfg.shell.maxOutputSize,
       });
+      registered.push('shell');
       logger.use.info('Shell 工具已启用');
     } else {
       logger.use.warn('Shell 工具需要 storage 与 process 服务，已跳过注册');
@@ -144,6 +146,7 @@ function registerSystemToolset(caps: Caps): void {
   if (cfg.file.enabled) {
     if (storage) {
       registerFileTools(systemTools, { ...cfg.file, storage, cwdState });
+      registered.push('file');
       logger.use.info('文件工具已启用');
     } else {
       logger.use.warn('文件工具需要 storage 服务，已跳过注册');
@@ -152,20 +155,20 @@ function registerSystemToolset(caps: Caps): void {
 
   if (cfg.system.enabled) {
     registerSystemTools(systemTools, { cwdState, storage });
+    registered.push('system');
     logger.use.info('系统工具已启用');
   }
 
   if (cfg.http.enabled) {
     registerHttpTools(systemTools, { ...cfg.http, storage });
+    registered.push('http');
     logger.use.info('HTTP 工具已启用');
   }
 
   // 注册 /tools 指令以查看可用工具
-  caps.commands.use.command('tools', '列出所有已注册的机器交互工具').action(async () => {
-    const groups = (['shell', 'file', 'system', 'http'] as const).filter(g => cfg[g].enabled);
-    const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
-    return lines.join('\n');
-  });
+  caps.commands.use
+    .command('tools', '列出所有已注册的机器交互工具')
+    .action(async () => ['机器交互工具:', ...registered.map(g => `  ${g}`)].join('\n'));
 
   logger.use.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
 }

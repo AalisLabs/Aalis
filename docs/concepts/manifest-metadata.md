@@ -145,7 +145,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 
 市场按类型词分类（`classifyPackage`），五类各发一条 npm 检索再合并。功能插件必须有 `keywords: ["aalis-plugin"]`，否则两个加载器都不会发现它——这是比 `aalis.service` 更硬的门。脚手架默认就带上了它。
 
-漏写关键词且 peer/dependencies 含 `@aalis/core`、又没有任何 `aalis-*` 类型词时，加载器会 warn「疑似插件缺关键词」。
+漏写关键词且 peer/dependencies 含 `@aalis/core`、又没有任何 `aalis-*` 类型词时，加载器会 warn「依赖 "<包名>" 疑似 Aalis 插件但 keywords 缺 "aalis-plugin"，不会被加载——若确为插件请补关键词」。
 
 ### `aalis.client: true`：前端发现门（会被读取）
 

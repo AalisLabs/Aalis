@@ -88,8 +88,11 @@ export function contentType(path: string): string {
   return PUBLIC_CONTENT_TYPES[extension(path)];
 }
 
-/** 保守提示，不替代内容分类；返回固定标签，不能把文件中的指令写进宿主通知。 */
-export function markContent(title: string, sources: readonly string[]): { flags: string[]; reasons: string[] } {
+/**
+ * 按结构的保守提示，不替代内容分类：密码框记进原因（自动审核因此转人工），活动内容、外链、表单只作标记在审核页显示。
+ * 返回固定标签，不能把文件中的指令写进宿主通知。
+ */
+export function markContent(sources: readonly string[]): { flags: string[]; reasons: string[] } {
   const raw = sources
     .join('\n')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -116,18 +119,6 @@ export function markContent(title: string, sources: readonly string[]): { flags:
   if (/<input\b[^>]*\btype\s*=\s*["']?password\b/i.test(compact)) {
     flags.push('密码框');
     reasons.push('包含密码框');
-  }
-  if (/\d{7,}/.test(title)) {
-    flags.push('疑似个人信息');
-    reasons.push('疑似个人信息');
-  }
-  if (
-    /-----begin\s+(?:rsa\s+|ec\s+|openssh\s+)?private key|\bsk-[a-z0-9_-]{16,}|\b(?:api[_-]?key|access[_-]?token|secret)\s*[:=]\s*["']?[a-z0-9_/-]{16,}/i.test(
-      decoded,
-    )
-  ) {
-    flags.push('疑似密钥');
-    reasons.push('疑似密钥');
   }
   return { flags, reasons };
 }

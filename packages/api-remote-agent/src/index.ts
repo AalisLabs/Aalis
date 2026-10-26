@@ -16,8 +16,6 @@
 
 import { defineService, type ProviderEntry, type ServiceSelection } from '@aalis/core';
 
-export { sanitizeRunLog } from './log.js';
-
 // ----- 出网 -----
 
 /** 远端代理的出网方式：不出网、只到白名单、不限；unknown = 提供者说不清 */
@@ -71,7 +69,7 @@ export interface RunState {
   /** 代理这一轮最后的文字说明 */
   resultText?: string;
 }
-/** 管理端用的单行、限长、已脱敏的动作摘要。 */
+/** 管理端用的单行、限长的动作摘要；提供者按值去掉自己持有的凭据。 */
 export type RunActivity = {
   action: 'planning' | 'responding' | 'reading' | 'writing' | 'command' | 'tool';
   status: 'running' | 'completed' | 'failed';
@@ -80,7 +78,7 @@ export type RunActivity = {
   summary?: string;
   exitCode?: number;
 };
-/** 公开执行日志。input/output 保留完整结构，仅对敏感值脱敏。 */
+/** 公开执行日志。input/output 保留完整结构与原文，提供者只按值去掉自己持有的凭据。 */
 export type RunLogEntry = {
   type: 'assistant' | 'tool' | 'connection';
   text?: string;
@@ -170,7 +168,7 @@ export type RemoteAgentErrorCode =
 
 /**
  * 提供者方法按错误码抛它；消费方用 {@link isRemoteAgentError} 认，不用 instanceof。
- * message 与 cause 里不得带凭据或预签名链接的查询串。
+ * message 与 cause 里，提供者按值去掉自己持有的凭据；自己取的预签名链接出现在报错里时按值去掉查询串；远端回显的内容照原文。
  */
 export class RemoteAgentError extends Error {
   override name = 'RemoteAgentError';

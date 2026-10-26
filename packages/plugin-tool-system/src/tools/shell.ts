@@ -101,8 +101,8 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
       // 不自起无上限累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
       // 自起 `stdout += chunk` 无上限——「超限只停累积不杀进程」语义下会无界增长 → OOM。
       try {
-        // exec 继承宿主完整环境（含代理与密钥类变量）——owner 工具的既定取舍（
-        // 曾有的 env 白名单从未生效、已删）。需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
+        // exec 不传 env，继承守护进程的完整环境（含代理与密钥类变量）——owner 工具的既定取舍。
+        // 需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
         // 中止（前台时随回合，转后台之后随停止、撤回与停用）经 signal 由 process 服务按进程组停掉命令；已中止时 spawn 同步抛出。
         const child = proc.spawn(shellCmd, [shellFlag, command], { cwd: cwd.localPath, signal: callCtx.signal });
         // wait() 与输出转写在同一拍挂上监听，开头的输出两边都收得到

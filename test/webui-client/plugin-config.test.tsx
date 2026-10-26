@@ -410,27 +410,27 @@ describe('宿主没有密钥存储：文档里是明文，页面照旧遮蔽', (
       label: '连接',
       items: { passphrase: { type: 'string', label: '口令', secret: true } },
     },
-    // 名字像凭据：没写 secret 时按名字遮蔽，写了 false 表示插件作者判断过不是凭据
+    // 名字像凭据、没声明 secret: true 的照常显示：遮不遮只看声明
     sessionToken: { type: 'string', label: '会话标记' },
+    token_limit: { type: 'string', label: '标记上限' },
+    password_hint: { type: 'string', label: '口令提示' },
     pageToken: { type: 'string', label: '分页标记', secret: false },
   };
 
-  it('密钥字段与名字像凭据的字段是密码框，secret: false 的照常显示', async () => {
+  it('只有声明了 secret: true 的字段是密码框，名字像凭据的照常显示', async () => {
     await boot('vault', SCHEMA, {
       signingKey: 'k9x2',
       auth: { credential: 'q7' },
       connections: [{ passphrase: 'z' }],
       sessionToken: 'session-PLACEHOLDER',
+      token_limit: '100',
+      password_hint: 'hint-PLACEHOLDER',
       pageToken: 'page-PLACEHOLDER',
     });
-    expect(['签名密钥', '凭据', '口令', '会话标记', '分页标记'].map(label => control(label).type)).toEqual([
-      'password',
-      'password',
-      'password',
-      'password',
-      'text',
-    ]);
-    expect(control('分页标记').value).toBe('page-PLACEHOLDER');
+    expect(
+      ['签名密钥', '凭据', '口令', '会话标记', '标记上限', '口令提示', '分页标记'].map(label => control(label).type),
+    ).toEqual(['password', 'password', 'password', 'text', 'text', 'text', 'text']);
+    expect(control('会话标记').value).toBe('session-PLACEHOLDER');
   });
 });
 

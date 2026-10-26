@@ -147,7 +147,7 @@ async function main(): Promise<void> {
       const ans = (await rl.question(`${q} (${def}): `)).trim() || def;
       const r = validate(ans);
       if (r.ok) return ans;
-      console.log(`  ⚠ ${r.error}`);
+      console.log(`  注意：${r.error}`);
     }
   };
   const askYesNo = async (q: string, def = true): Promise<boolean> => {
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
       const ans = await rl.question(`${q} (${def ? 'Y/n' : 'y/N'}): `);
       const r = parseYesNo(ans, def);
       if (r !== null) return r;
-      console.log('  ⚠ 请输入 y 或 n。');
+      console.log('  注意：请输入 y 或 n。');
     }
   };
 
@@ -209,7 +209,7 @@ async function main(): Promise<void> {
 
     await generate(targetDir, answers, versions);
 
-    console.log(`\n✓ 已生成插件骨架: ${targetDir}\n`);
+    console.log(`\n已生成插件骨架: ${targetDir}\n`);
     console.log('下一步：');
     console.log(`  cd ${dir}`);
     console.log('  npm install');
@@ -555,7 +555,7 @@ export function renderReadme(a: Answers): string {
   const caps = selectedCapabilityUses(a.features);
   const usesLine = `uses: ${usesObjectLiteral(a.features)}`;
   const bullets = caps
-    .map(c => `- ✓ ${c.what}（\`uses: { ${c.usesKey}: optional(${c.descriptor}) }\`，从 \`${c.pkg}\` 导入描述符）`)
+    .map(c => `- ${c.what}（\`uses: { ${c.usesKey}: optional(${c.descriptor}) }\`，从 \`${c.pkg}\` 导入描述符）`)
     .join('\n');
   return `# ${a.packageName}
 

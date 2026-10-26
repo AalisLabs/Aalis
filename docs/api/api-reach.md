@@ -137,7 +137,7 @@ function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): b
 - 家目录下除舞台（`stage/`）与 `self/` 两个目录整个、日志与主配置以外的全部，包括别的会话的临时区；本会话临时区由触及按会话放回；
 - 同一用户下其他实例的家目录（`~/.aalis` 与 `~/.aalis-*` 中本实例以外的；用 `--home` 放在别处的实例覆盖不到）；
 - 凭据文件：`~/.ssh`、`~/.aws`、`~/.config/gh`、`~/.gnupg`、`~/.npmrc`、`~/.netrc`、`~/.git-credentials`、`~/.docker/config.json`、`~/.kube/config`，macOS 的 `~/Library/Keychains`；
-- 任何目录下的 `.env*`，豁免 `.env.example`、`.env.sample`、`.env.template`；舞台等放行的地方里的 `.env*` 照样拒读；
+- 任何目录下的 `.env*`（名为 `.env*` 的目录整棵都算），豁免 `.env.example`、`.env.sample`、`.env.template`；舞台等放行的地方里的 `.env*` 照样拒读；
 - macOS 与 Linux 常见浏览器的配置与数据目录（macOS 上 Edge 的 Beta、Dev、Canary 各有独立目录，Linux 含 Snap 与 Flatpak 装的）。
 
 用户家目录是根目录（容器里没有 passwd 条目的用户，HOME 常是 `/`）时照样生成 `/.ssh` 这类路径。

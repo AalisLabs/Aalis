@@ -18,7 +18,8 @@
 //   列代理、列轮次都取完所有页，取不全时抛错，不把已取到的当完整列表（核对与开轮认领都依赖列表完整）。
 //   产物列表不分页（文档与实测都只有 items）。
 //
-// key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误与日志一律先去掉 key 的片段与链接的查询串。
+// key 只放在发往 baseUrl 的请求头里；预签名下载不带它。错误、日志与结果说明一律按值去掉 key 的片段，下载报错另按值去掉
+// 这次链接的查询串（签名在那里），其余照远端原文。
 // ============================================================
 
 import {
@@ -41,7 +42,6 @@ import {
   type RunProgress,
   type RunState,
   type RunStatus,
-  sanitizeRunLog,
   type WorkspaceLayout,
 } from '@aalis/api-remote-agent';
 import type { Logger } from '@aalis/core';
@@ -96,8 +96,6 @@ const MAX_DETAIL_CHARS = 300;
 /** 错误与日志里出现 key 的这么长的片段就去掉 */
 const MIN_SECRET_FRAGMENT = 8;
 const ACTIVITY_CHARS = 180;
-/** URL 的查询串（预签名链接的签名在这里） */
-const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
 /** 列表每页的条数（接口上限） */
 const PAGE_LIMIT = 100;
 /** 列表最多取这么多页，超过按取不完处理 */
@@ -453,7 +451,7 @@ export class CursorProvider implements RemoteAgentProvider {
       const wait = outcome.waitMs ?? backoff;
       yield {
         kind: 'log',
-        record: { type: 'connection', text: this.#logText(`事件流断开（${outcome.reason}），${wait} 毫秒后重连`) },
+        record: { type: 'connection', text: this.#scrub(`事件流断开（${outcome.reason}），${wait} 毫秒后重连`) },
       };
       this.#note('debug', `轮次 ${runId} 的事件流断开（${outcome.reason}），${wait} 毫秒后重连`);
       await sleep(wait, AbortSignal.any([signal, this.#life]));
@@ -571,7 +569,7 @@ export class CursorProvider implements RemoteAgentProvider {
             kind: 'progress',
             eventId: msg.id,
             activity: { action: 'responding', status: 'running' },
-            ...(reply === undefined ? {} : { record: { type: 'assistant' as const, text: this.#logText(reply) } }),
+            ...(reply === undefined ? {} : { record: { type: 'assistant' as const, text: this.#scrub(reply) } }),
           };
         }
         const data = asRecord(parseJson(msg.data));
@@ -607,8 +605,8 @@ export class CursorProvider implements RemoteAgentProvider {
         if (detail) activity.summary = this.#summary(detail);
         if (exitCode !== undefined) activity.exitCode = exitCode;
         const record: RunLogEntry = { type: 'tool', status };
-        if (data.callId !== undefined) record.callId = this.#logText(String(data.callId));
-        if (name !== undefined) record.tool = this.#logText(name);
+        if (data.callId !== undefined) record.callId = this.#scrub(String(data.callId));
+        if (name !== undefined) record.tool = this.#scrub(name);
         if (data.args !== undefined) record.input = this.#sanitize(data.args);
         if (data.result !== undefined) record.output = this.#sanitize(data.result);
         return { kind: 'progress', eventId: msg.id, activity, record };
@@ -620,7 +618,7 @@ export class CursorProvider implements RemoteAgentProvider {
         if (!status || !isTerminalRun(status)) return undefined;
         return {
           kind: 'terminal',
-          state: runState(runId, status, typeof data.text === 'string' ? this.#logText(data.text) : undefined),
+          state: runState(runId, status, typeof data.text === 'string' ? this.#scrub(data.text) : undefined),
         };
       }
       case 'done':
@@ -657,7 +655,7 @@ export class CursorProvider implements RemoteAgentProvider {
     return runState(
       id,
       this.#status(data.status, id),
-      typeof data.result === 'string' ? this.#logText(data.result) : undefined,
+      typeof data.result === 'string' ? this.#scrub(data.result) : undefined,
     );
   }
 
@@ -862,7 +860,9 @@ export class CursorProvider implements RemoteAgentProvider {
         res = await safeFetch(url, { signal: AbortSignal.any([signal, this.#life, conn.signal]) });
       } catch (err) {
         this.#throwIfStopped(signal);
-        throw new ArtifactRejected(conn.signal.aborted ? '下载超时' : `下载失败：${errorText(err)}`);
+        // 下载报错可能带着链接原文（如解析不了时的「非法 URL: <原文>」）：按值换成「?」之前的部分，不解析，解析不了的也换得掉
+        const reason = errorText(err).split(url).join(url.split('?')[0]);
+        throw new ArtifactRejected(conn.signal.aborted ? '下载超时' : `下载失败：${reason}`);
       }
       if (!res.ok || !res.body) {
         await res.body?.cancel().catch(() => {});
@@ -900,7 +900,7 @@ export class CursorProvider implements RemoteAgentProvider {
     path: string,
     opts: { signal: AbortSignal; body?: unknown; timeoutMs?: number },
   ): Promise<CallResult> {
-    // 报错用的路径去掉查询串：查询串里可能有远端可控的内容（如成品路径、翻页标记）
+    // 报错用的路径去掉查询串：路径是本插件自己拼的，去掉的是自己加的查询串，里面有远端可控的内容（如成品路径、翻页标记）
     const what = `${method} ${path.replace(/\?.*$/, '')}`;
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? this.#opt.requestTimeoutMs);
     const headers: Record<string, string> = {
@@ -960,23 +960,24 @@ export class CursorProvider implements RemoteAgentProvider {
     this.#life.throwIfAborted();
   }
 
+  /** 按值去掉 key 的片段，其余照原文 */
   #scrub(text: string): string {
-    return redactFragments(text.replace(URL_QUERY, '$1?<查询串已去除>'), this.#opt.apiKey);
-  }
-
-  #logText(text: string): string {
-    return sanitizeRunLog(text, value => this.#scrub(value)) as string;
+    return redactFragments(text, this.#opt.apiKey);
   }
 
   #summary(text: string): string {
-    return Array.from(this.#logText(text), c => (c.charCodeAt(0) <= 31 || c.charCodeAt(0) === 127 ? ' ' : c))
+    return Array.from(this.#scrub(text), c => (c.charCodeAt(0) <= 31 || c.charCodeAt(0) === 127 ? ' ' : c))
       .join('')
       .trim()
       .slice(0, ACTIVITY_CHARS);
   }
 
+  /** 工具的输入与输出（来自 JSON 解析，没有环）：结构照旧，字符串逐个过 {@link #scrub} */
   #sanitize(value: unknown): unknown {
-    return sanitizeRunLog(value, text => this.#scrub(text));
+    if (typeof value === 'string') return this.#scrub(value);
+    if (Array.isArray(value)) return value.map(item => this.#sanitize(item));
+    if (value === null || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.#sanitize(item)]));
   }
 
   #note(level: 'debug' | 'warn', message: string): void {

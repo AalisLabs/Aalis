@@ -25,7 +25,7 @@ import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
 import { OfflineRenderer } from '@aalis/util-offline-render';
 import { framesToGif } from './gif.js';
-import { type DrawCaps, lintAnimationSource, renderRequest, resolveCanvas } from './plan.js';
+import { type DrawCaps, renderRequest, resolveCanvas } from './plan.js';
 import { t } from './texts.js';
 
 const configSchema = defineConfig({
@@ -297,9 +297,7 @@ function registerDraw(caps: Caps): void {
         description:
           '把你编写的带动画的 SVG/HTML 标记渲染成 GIF 动图，落盘后返回 storage_uri（用 send_attachment 发送）。\n' +
           '**动画只能用声明式**：SVG 用 SMIL（<animate>/<animateTransform>/<animateMotion>）或 CSS ' +
-          '@keyframes；脚本驱动的动画不会生效（渲染页禁用 JS）。建议动画时长 2-5 秒并做无缝循环' +
-          '（首尾状态一致），GIF 默认无限循环播放。\n' +
-          '**避坑**：同一元素不要同时挂 animateMotion 与位移类 animateTransform（位移复合会漂移）。\n' +
+          '@keyframes；脚本驱动的动画不会生效（渲染页禁用 JS）。建议动画时长 2-5 秒，GIF 默认无限循环播放。\n' +
           '渲染成功即可**直接 send_attachment 发送**，不需要额外核对。结果里的 check_frames（首帧/中帧）' +
           '仅在你对形态没把握、且有看图工具可用时可选地看一眼——但视觉识别较慢，通常无必要，别默认核对；' +
           '即便核对，核对失败或超时也**不影响发送，直接发 GIF**，不要因核对不成而放弃发送。\n' +
@@ -367,17 +365,14 @@ function registerDraw(caps: Caps): void {
           await storage.writeFile(fUri, frames[idx]);
           checkFrames.push(fUri);
         }
-        const lintWarnings = lintAnimationSource(source);
         logger.info(
           `draw_animation 渲染完成 mode=${plan.mode} ${width}x${height} ${frames.length}帧@${fps}fps ` +
             `${(gif.byteLength / 1024).toFixed(0)}KB anims=${r.animationCount} → ${uri}`,
         );
-        const warnings = [
-          ...(r.animationCount === 0
+        const warnings =
+          r.animationCount === 0
             ? ['未检测到任何声明式动画——产物是静态画面的重复帧。动画请用 SMIL 或 CSS @keyframes。']
-            : []),
-          ...lintWarnings,
-        ];
+            : [];
         return JSON.stringify({
           uri,
           width,

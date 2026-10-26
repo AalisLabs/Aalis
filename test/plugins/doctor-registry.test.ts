@@ -179,10 +179,10 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const text = toSource(formatReport(report));
 
     // 至少出现汇总行
-    expect(text).toMatch(/汇总: ✓ \d+/);
+    expect(text).toMatch(/汇总: 通过 \d+/);
     // ok 与 warn 分组都出现（数据保证两类都存在）
-    expect(text).toMatch(/✓ 通过/);
-    expect(text).toMatch(/! 警告/);
+    expect(text).toMatch(/__通过__/);
+    expect(text).toMatch(/__警告__/);
     // 多行（聊天栏不是一坨）
     expect(text.split('\n').length).toBeGreaterThan(5);
     await app.stop();

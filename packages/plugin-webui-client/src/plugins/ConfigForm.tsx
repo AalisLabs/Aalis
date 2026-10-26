@@ -108,9 +108,6 @@ function countChanges(schema: ConfigSchema, base: Record<string, unknown>, draft
   return count;
 }
 
-/** 字段名像凭据（没写 secret 时据此用密码框）；关键词后不接字母，tokenBudget 这类合成词不算 */
-const SECRET_NAME = /(apiKey|password|secret|token)(?![a-zA-Z])/i;
-
 /** 路径类字段的提示（与 schema-config 的 format 对应） */
 function formatPlaceholder(format: SchemaField['format']): string | undefined {
   if (format === 'absolute-path') return tr('formatAbsolutePath');
@@ -454,7 +451,7 @@ function ArrayBlock({ name, entry, items, changed, issues, onChange, onRevert }:
 }
 
 interface ConfigRowProps {
-  /** 字段的键：没写 secret 时按它判断要不要用密码框；可按会话设置的项按它找写过的各处 */
+  /** 字段的键：可按会话设置的项按它找写过的各处 */
   name: string;
   field: SchemaField;
   value: unknown;
@@ -544,7 +541,6 @@ function ConfigRow({
             value={value}
             onChange={onChange}
             common={common}
-            masked={field.secret === undefined && SECRET_NAME.test(name)}
             placeholder={formatPlaceholder(field.format)}
             dependency={dependency}
           />

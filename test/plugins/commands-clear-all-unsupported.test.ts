@@ -66,7 +66,7 @@ describe('/clear all：记忆后端不支持 clearAll', () => {
     const { run, clearSession, middlewareRuns } = await world();
     for (const type of [['context'], ['context', 'vector'], undefined]) {
       expect(await run('clear.all', type), JSON.stringify(type)).toBe(
-        '⚠ 记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。',
+        '记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。',
       );
     }
     expect(clearSession).not.toHaveBeenCalled();
@@ -81,7 +81,7 @@ describe('/clear all：记忆后端不支持 clearAll', () => {
 
   it('会话级 /clear 照常清当前会话', async () => {
     const { run, clearSession, middlewareRuns } = await world();
-    expect(await run('clear', ['context'])).toBe('✅ 当前会话消息历史已清空');
+    expect(await run('clear', ['context'])).toBe('当前会话消息历史已清空');
     expect(clearSession).toHaveBeenCalledWith('s-cur');
     expect(middlewareRuns).toEqual(['session']);
   });
@@ -96,7 +96,7 @@ describe('/clear：记忆服务缺席', () => {
       ['clear.all', undefined],
     ] as const) {
       expect(await run(name, type ? [...type] : undefined)).toBe(
-        '⚠ 没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
+        '没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
           '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。',
       );
     }

@@ -51,7 +51,7 @@ export default definePlugin({
 `auto` 模式下取 `code-sandbox` 服务执行：每次运行按本次工作目录与临时目录构造隔离策略
 （目录写白名单 + 网络开关），连同环境变量白名单一起交给该服务，由 OS 沙箱后端强制执行。需安装一个 `code-sandbox` 实现
 （默认 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md)：macOS sandbox-exec / Linux bubblewrap）；
-`npm create aalis` 选了本插件会自动带上它。**边界**：v1 防「写出工作区 / 联网外泄 / 篡改系统」，
+`npm create aalis` 选了本插件会自动带上它。两种模式下脚本都只拿到白名单里的环境变量（见插件的 `safeEnv`）：`none` 模式走 process 服务，它的 `env` 是替换语义。**边界**：v1 防「写出工作区 / 联网外泄 / 篡改系统」，
 **不防读取本机其它文件**（读放开，因解释器需系统库）；要防读取需更强的 WASM/microVM 实现。
 
 ## 注册工具

@@ -1,6 +1,5 @@
 // biome-ignore lint/style/noRestrictedImports: 高频短事件键同步哈希，避免每次落盘前额外的线程池往返。
 import { createHash } from 'node:crypto';
-import { sanitizeRunLog } from '@aalis/api-remote-agent';
 import { isStorageNotFound, type OwnStorage, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
@@ -68,7 +67,7 @@ export class TaskJournal {
       throw new TypeError('Journal entry must be an object');
     }
     // Snapshot before queuing so a caller cannot mutate an event while it awaits storage.
-    const snapshot = JSON.parse(JSON.stringify(sanitizeRunLog(entry))) as unknown;
+    const snapshot = JSON.parse(JSON.stringify(entry)) as unknown;
     if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
       throw new TypeError('Journal entry must serialize to an object');
     }

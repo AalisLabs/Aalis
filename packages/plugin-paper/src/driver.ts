@@ -121,6 +121,12 @@ interface Waits {
 /** next：接着看这块白纸的下一件；pause：白纸停下等 owner 或告警处理；idle：没有可做的 */
 type Outcome = 'next' | 'pause' | 'idle';
 
+/** 交给远端的前言；带了旧代理的工程包链接时一并交回链接，记创作日志时按值换掉 */
+interface Prompt {
+  text: string;
+  bundleUrl?: string;
+}
+
 interface DriverDeps {
   journal: TaskJournal;
   remote: ServiceSelection<RemoteAgentProvider>;
@@ -661,7 +667,7 @@ export class PaperDriver {
     task: TaskRecord,
     entry: ProviderEntry<RemoteAgentProvider>,
     waits: Waits,
-    preparedPrompt?: string,
+    preparedPrompt?: Prompt,
   ): Promise<Outcome | undefined> {
     const agentId = task.agentId ?? '';
     const agent = this.#d.ledger.data.agents[agentId];
@@ -669,13 +675,9 @@ export class PaperDriver {
     try {
       const prompt = preparedPrompt ?? (await this.#prompt(task, entry, agent.replaces, waits));
       if (prompt === undefined) return this.#fail(task, MISSING_PREVIOUS_WORKSPACE);
-      await this.journal.record(task.id, `prompt:${task.start?.requestedAt}`, {
-        type: 'prompt',
-        agentId,
-        text: prompt,
-      });
+      await this.#logPrompt(task, agentId, prompt);
       const { runId, startedAt } = await this.#retrying(waits, () =>
-        entry.use.createAgent({ agentId, name: agent.name, prompt }, this.#d.signal),
+        entry.use.createAgent({ agentId, name: agent.name, prompt: prompt.text }, this.#d.signal),
       );
       // 用时与单轮时长从远端这一轮开跑时算：建代理的响应要几十秒才回，建出之前又可能有取工程包链接与退避的等待，
       // 重启接回时远端可能刚建出。提供者给的时刻限在请求时刻与现在之间（两边时钟可能有偏差），没给时按请求时刻
@@ -807,12 +809,8 @@ export class PaperDriver {
         const prompt = await this.#prompt(task, entry, replaces, waits);
         if (task.state !== 'starting') return 'next';
         if (prompt === undefined) return this.#fail(task, MISSING_PREVIOUS_WORKSPACE);
-        await this.journal.record(task.id, `prompt:${task.start?.requestedAt}`, {
-          type: 'prompt',
-          agentId,
-          text: prompt,
-        });
-        const { runId } = await entry.use.startRun(agentId, prompt, this.#d.signal);
+        await this.#logPrompt(task, agentId, prompt);
+        const { runId } = await entry.use.startRun(agentId, prompt.text, this.#d.signal);
         await this.#started(task, runId, this.#d.now());
         return undefined;
       } catch (err) {
@@ -899,10 +897,10 @@ export class PaperDriver {
     entry: ProviderEntry<RemoteAgentProvider>,
     replaces: string | undefined,
     waits: Waits,
-  ) {
+  ): Promise<Prompt | undefined> {
     const bundleUrl = replaces ? await this.#bundleUrl(replaces, waits) : undefined;
     if (replaces && !bundleUrl) return undefined;
-    return buildPrompt({
+    const text = buildPrompt({
       layout: entry.use.layout,
       taskId: task.id,
       text: task.text,
@@ -910,6 +908,13 @@ export class PaperDriver {
       bundleUrl,
       publication: task.publication !== undefined,
     });
+    return { text, bundleUrl };
+  }
+
+  /** 实际发出的前言记进创作日志：工程包链接是带签名的预签名链接，按值换成占位，其余照原文 */
+  async #logPrompt(task: TaskRecord, agentId: string, prompt: Prompt): Promise<void> {
+    const text = prompt.bundleUrl ? prompt.text.split(prompt.bundleUrl).join('<工程包链接>') : prompt.text;
+    await this.journal.record(task.id, `prompt:${task.start?.requestedAt}`, { type: 'prompt', agentId, text });
   }
 
   async #bundleUrl(agentId: string, waits: Waits): Promise<string | undefined> {

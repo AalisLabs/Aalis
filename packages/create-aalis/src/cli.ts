@@ -538,7 +538,7 @@ export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.Writ
       if (raw === '') return defaults;
       const r = parseIndexSelection(raw, options.length, mode);
       if (r.ok) return r.indices.map(i => options[i - 1]);
-      say(`  ⚠ ${r.error}`);
+      say(`  注意：${r.error}`);
     }
   }
 
@@ -548,7 +548,7 @@ export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.Writ
         const value = (await ask(`${question} (${def}): `)) || def;
         const r = validate(value);
         if (r.ok) return value;
-        say(`  ⚠ ${r.error}`);
+        say(`  注意：${r.error}`);
       }
     },
     choose: async (title, options, def) => (await select(title, options, 'exclusive', [def]))[0],
@@ -557,7 +557,7 @@ export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.Writ
       while (true) {
         const r = parseYesNo(await ask(`${question} (${def ? 'Y/n' : 'y/N'}): `), def);
         if (r !== null) return r;
-        say('  ⚠ 请输入 y 或 n。');
+        say('  注意：请输入 y 或 n。');
       }
     },
     async secret(question) {
@@ -1104,7 +1104,7 @@ async function main(): Promise<void> {
   });
   writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
   writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
-  console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${countPlugins(enabled)} 个插件）`);
+  console.log(`\n已生成项目: ${targetDir}（启用 ${countPlugins(enabled)} 个插件）`);
 
   const install = !args.includes('--no-install');
   if (install) {

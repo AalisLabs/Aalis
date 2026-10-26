@@ -138,8 +138,8 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
   }, 60_000);
 });
 
-describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧落盘）', () => {
-  it('复合位移动画：结果带漂移 warning、check_frames 两张已落盘、GIF 可 stat', async () => {
+describe('draw_animation 工具全流（真运行时：检查帧落盘）', () => {
+  it('自转加沿路径、来回播放的动画：结果不带 warnings，check_frames 两张已落盘、GIF 可 stat', async () => {
     const base2 = mkdtempSync(join(tmpdir(), 'aalis-draw-tool-'));
     mkdirSync(join(base2, 'ws'), { recursive: true });
     mkdirSync(join(base2, 'tmp'), { recursive: true });
@@ -154,26 +154,28 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
       await app2.plugin(drawPlugin, { idleShutdownSec: 0 });
       await app2.plugins.idle();
 
-      // 首秀实犯的复合位移错误形态
-      const buggy =
+      const spinAlongPath =
         '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="120" fill="#111"/>' +
-        '<g transform="translate(60,60)"><circle r="8" fill="#f59e0b">' +
+        '<g transform="translate(60,60)"><rect x="-6" y="-6" width="12" height="12" fill="#f59e0b">' +
         '<animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="2s" repeatCount="indefinite"/>' +
-        '<animateMotion dur="2s" repeatCount="indefinite" path="M 30 0 A 30 30 0 1 1 29.99 0"/></circle></g></svg>';
-      const out = JSON.parse(
-        await captured.draw_animation(
-          { source: buggy, fps: 8, duration_seconds: 1 },
-          { sessionId: 'onebot:t:group:9' },
-        ),
-      );
-      expect(out.error).toBeUndefined();
-      expect(out.uri).toMatch(/^data:\/images\/onebot_t_group_9\/draw\/draw-[0-9a-f]{16}\.gif$/);
-      expect(out.check_frames).toHaveLength(2);
-      expect((out.warnings ?? []).some((w: string) => w.includes('漂移'))).toBe(true);
-      // 产物真的在（storage.stat 走真文件系统）
-      await expect(storage2.stat(out.uri)).resolves.toMatchObject({ size: expect.any(Number) });
-      for (const f of out.check_frames) {
-        await expect(storage2.stat(f)).resolves.toMatchObject({ size: expect.any(Number) });
+        '<animateMotion dur="2s" repeatCount="indefinite" path="M 30 0 A 30 30 0 1 1 29.99 0"/></rect></g></svg>';
+      const alternate =
+        '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">' +
+        '<style>@keyframes pulse{0%{opacity:1}100%{opacity:0.2}}.p{animation: pulse 1s infinite alternate}</style>' +
+        '<rect width="120" height="120" fill="#111"/><circle class="p" cx="60" cy="60" r="20" fill="#0af"/></svg>';
+      for (const source of [spinAlongPath, alternate]) {
+        const out = JSON.parse(
+          await captured.draw_animation({ source, fps: 8, duration_seconds: 1 }, { sessionId: 'onebot:t:group:9' }),
+        );
+        expect(out.error).toBeUndefined();
+        expect(out.uri).toMatch(/^data:\/images\/onebot_t_group_9\/draw\/draw-[0-9a-f]{16}\.gif$/);
+        expect(out.check_frames).toHaveLength(2);
+        expect(out.warnings).toBeUndefined();
+        // 产物真的在（storage.stat 走真文件系统）
+        await expect(storage2.stat(out.uri)).resolves.toMatchObject({ size: expect.any(Number) });
+        for (const f of out.check_frames) {
+          await expect(storage2.stat(f)).resolves.toMatchObject({ size: expect.any(Number) });
+        }
       }
     } finally {
       await app2.stop();

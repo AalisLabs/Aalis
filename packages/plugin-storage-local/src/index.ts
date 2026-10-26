@@ -860,7 +860,7 @@ async function openRoot(home: string, item: RootEntryConfig, logger: Logger): Pr
     log(
       `root ${name}:/ -> ${root.realPath}` +
         ` (browsable=${root.browsable} read=${root.readable} write=${root.writable} delete=${root.deletable})` +
-        (isHostScope ? '  ⚠ 该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
+        (isHostScope ? '  注意：该根接近/等于文件系统根，agent 通过此根可访问宿主机大量文件' : ''),
     );
     return root;
   } catch {

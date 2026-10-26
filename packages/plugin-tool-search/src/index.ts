@@ -111,7 +111,9 @@ function buildSearchToolDef(catalog?: string): ToolDefinition {
 }
 
 /**
- * 在工具摘要列表中按关键词搜索
+ * 在工具摘要列表中按关键词搜索。每个关键词取命中的最具体一档：名字全等 6、前缀 5、包含 4、工具自己的说明 2、所在分组的
+ * 名字与说明 1（分组说明是同组工具共用的，不如工具自己的说明具体）；整条的得分是各关键词得分之和，多命中一个关键词的排前面，
+ * 同分按登记顺序
  */
 function searchTools(summaries: ToolSummary[], query: string, groups: readonly ToolGroupInfo[]): ToolSummary[] {
   // 排除 search_tools 自身
@@ -130,16 +132,14 @@ function searchTools(summaries: ToolSummary[], query: string, groups: readonly T
         .filter((group): group is ToolGroupInfo => !!group)
         .map(group => `${group.name} ${toSource(group.label)} ${group.description ?? ''}`.toLowerCase())
         .join(' ');
-      const score = Math.max(
-        ...keywords.map(keyword => {
-          if (name === keyword) return 6;
-          if (name.startsWith(keyword)) return 5;
-          if (name.includes(keyword)) return 4;
-          if (groupText.includes(keyword)) return 3;
-          if (description.includes(keyword)) return 1;
-          return 0;
-        }),
-      );
+      let score = 0;
+      for (const keyword of keywords) {
+        if (name === keyword) score += 6;
+        else if (name.startsWith(keyword)) score += 5;
+        else if (name.includes(keyword)) score += 4;
+        else if (description.includes(keyword)) score += 2;
+        else if (groupText.includes(keyword)) score += 1;
+      }
       return { tool, index, score };
     })
     .filter(entry => entry.score > 0)
@@ -417,26 +417,15 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
         }
       }
 
-      // 可用工具总数（排除 search_tools 自身）
-      const totalAvailable = summaries.filter(s => s.name !== SEARCH_TOOL_NAME).length;
-      const hasMore = offset + paged.length < allResults.length;
+      const next = offset + paged.length;
+      const hasMore = next < allResults.length;
 
       logger.use.debug(
-        `搜索工具 "${query}" → ${paged.length}/${totalAvailable} 条结果 (offset=${offset}, total=${allResults.length})`,
+        `搜索工具 "${query}" → 匹配 ${allResults.length} 条，给出 ${paged.length} 条 (offset=${offset})`,
       );
 
       return JSON.stringify({
-        found: `${paged.length}/${totalAvailable}`,
-        ...(allResults.length > paged.length
-          ? {
-              pagination: {
-                total: allResults.length,
-                offset,
-                returned: paged.length,
-                ...(hasMore ? { nextOffset: offset + paged.length } : {}),
-              },
-            }
-          : {}),
+        found: allResults.length,
         tools: toolDetails,
         ...(relatedNames.size > 0
           ? {
@@ -445,9 +434,11 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
           : {}),
         hint:
           paged.length > 0
-            ? '你搜索到的工具已激活。搜索结果已包含完整参数定义（parameters），你现在可以直接调用，无需再次搜索。这并不代表同组工具都已激活，也不代表相关或类似的工具都已激活，对于其他工具你仍然需要使用 search_tools 激活。' +
-              (hasMore ? ` 还有更多结果，使用 offset=${offset + paged.length} 查看下一页。` : '')
-            : '未找到匹配的工具，请尝试其他关键词。',
+            ? (hasMore ? `还有 ${allResults.length - next} 个没给：用 offset=${next} 查看下一页。` : '') +
+              '给出的工具已激活，参数定义在结果里，调用它们不必再为拿参数搜索。这并不代表同组工具都已激活，也不代表相关或类似的工具都已激活，对于其他工具你仍然需要使用 search_tools 激活。'
+            : allResults.length > 0
+              ? `offset 超出匹配数 ${allResults.length}。`
+              : '未找到匹配的工具，请尝试其他关键词。',
       });
     },
   });

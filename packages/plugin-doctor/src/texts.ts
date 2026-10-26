@@ -5,10 +5,10 @@ import en from './locales/en.js';
 const SOURCE = {
   pluginLine: '{instance}: {reason}',
   reportTitle: '**系统诊断 — {at, datetime, medium}**',
-  reportSummary: '汇总: ✓ {ok, number}　! {warn, number}　✗ {error, number}',
-  reportErrors: '__✗ 错误__',
-  reportWarnings: '__! 警告__',
-  reportPassed: '__✓ 通过__',
+  reportSummary: '汇总: 通过 {ok, number}　警告 {warn, number}　错误 {error, number}',
+  reportErrors: '__错误__',
+  reportWarnings: '__警告__',
+  reportPassed: '__通过__',
   reportCheck: '- {check, code} — {message}',
   reportDetail: '    {detail}',
 } as const;

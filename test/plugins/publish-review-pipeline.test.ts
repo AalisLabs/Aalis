@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
 import { createReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
+import { decideReview } from '../../packages/plugin-publish-review/src/policy.js';
 import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { ref } from '../fixtures/service-ref.js';
@@ -69,6 +70,13 @@ describe('publish review pipeline', () => {
     expect(chat.mock.calls[0][0].messages[0].content).toContain('隐含文字');
     expect(chat.mock.calls[1][0].requireImages).toBe(true);
     expect(renderer.renderPng.mock.calls[0][0].entry).toBe('https://render.invalid/abcdefghijklmnop/');
+  });
+
+  it('a long digit run in the title is left to the classifier: allow stays allow', async () => {
+    const { pipeline } = make({ provider: 'provider', model: 'model' });
+    const result = await pipeline.run({ ...input, title: '作品 20261023' });
+    expect(result.verdict).toEqual({ verdict: 'allow', reasons: [] });
+    expect(decideReview({ manualReview: false }, result.verdict)).toEqual({ state: 'approved' });
   });
 
   it('does not fall back from an incomplete or unavailable model reference', async () => {

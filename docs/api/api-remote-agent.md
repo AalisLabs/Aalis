@@ -101,7 +101,7 @@ interface RemoteAgentSummary { agentId: string; name: string }
 interface RemoteRunSummary { runId: string; status: RunStatus }
 ```
 
-`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`RunLogEntry` 的工具 `input` / `output` 保留结构与细节，仅清洗已知密钥和常见凭据；`sanitizeRunLog` 不能识别任意秘密。`log` 事件没有 SSE id，不推进续传位置。
+`ArtifactSink` 由消费方提供。写入口不只信提供者：它按同一个 `artifactRelProblem` 对 `rel` 再判一次，并做上限检查，不合格就抛错，提供者把这个文件记进 `rejected`。`resultText` 是远端代理这一轮最后的文字说明，属于远端控制的内容，消费方应按不可信数据处理。`RunLogEntry` 与 `resultText` 照远端原文，提供者只按值去掉自己持有的凭据。`log` 事件没有 SSE id，不推进续传位置。
 
 ### 出网
 
@@ -130,7 +130,7 @@ class RemoteAgentError extends Error {
 | `rejected` | 远端拒绝这次请求，原样重试没有用 |
 | `transient` | 断线、超时、远端临时故障，可以重试 |
 
-`message` 与 `cause` 里不得带凭据或预签名链接的查询串。
+`message` 与 `cause` 里，提供者按值去掉自己持有的凭据；自己取的预签名链接出现在报错里时按值去掉查询串；远端回显的内容照原文。
 
 ## 函数
 

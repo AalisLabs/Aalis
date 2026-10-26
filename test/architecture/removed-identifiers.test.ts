@@ -324,6 +324,11 @@ const REMOVED: Array<[string, string]> = [
   ['noCanonicalCorrection', '关掉别名合并方向翻转的选项：合并一律照调用方给的方向'],
   ['effectiveCanonicalId', 'mergeAlias 交回翻转后的方向：合并照调用方给的方向，不再翻转'],
   ['effectiveAliasId', 'mergeAlias 交回翻转后的方向：合并照调用方给的方向，不再翻转'],
+  ['sanitizeRunLog', '远端代理日志按正则抹像密钥的值与网址查询串：只按值去掉提供者自己的 key 与这次链接的查询串'],
+  ['URL_QUERY', '远端代理与作品站按正则抹所有网址的查询串：只按值去掉这次预签名链接的查询串'],
+  ['JWT_LIKE', '作品站报错按 eyJ 前缀抹像 JWT 的串：按值去掉本次签发的上传 JWT'],
+  ['SECRET_NAME', 'WebUI 配置表单按字段名猜密钥、画成密码框：只认 schema 的 secret: true'],
+  ['lintAnimationSource', '绘图动画按正则查漂移与跳变：已知错误类靠检查帧与视觉自检'],
 ];
 
 /**

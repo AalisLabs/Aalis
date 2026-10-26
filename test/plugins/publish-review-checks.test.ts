@@ -106,24 +106,22 @@ describe('静态审核标记', () => {
     '<img src="data:text/html,x">',
     '<meta http-equiv=refresh>',
   ])('活动内容 %s', source => {
-    expect(markContent('', [source]).flags).toContain('活动内容');
+    expect(markContent([source]).flags).toContain('活动内容');
   });
   it('外链与注释/xmlns区分，静态内联样式没有活动标记', () => {
     for (const source of ['HTTPS://example.test/x', '//example.test/x', '\\\\example.test/x'])
-      expect(markContent('', [source]).flags).toContain('外链');
-    expect(
-      markContent('', ['<!-- https://example.test --><svg xmlns="http://www.w3.org/2000/svg"></svg>']).flags,
-    ).toEqual([]);
-    expect(
-      markContent('', ['<!doctype html><html><style>body{color:red}</style><body>hello</body></html>']).flags,
-    ).toEqual([]);
+      expect(markContent([source]).flags).toContain('外链');
+    expect(markContent(['<!-- https://example.test --><svg xmlns="http://www.w3.org/2000/svg"></svg>']).flags).toEqual(
+      [],
+    );
+    expect(markContent(['<!doctype html><html><style>body{color:red}</style><body>hello</body></html>']).flags).toEqual(
+      [],
+    );
   });
-  it('密码、个人信息、疑似密钥转成固定原因，不回显内容', () => {
-    const found = markContent('电话 12345678901', [
-      '<form><input type=password></form> API_KEY="abcdefghijklmnop123456"',
-    ]);
-    expect(found.flags).toEqual(expect.arrayContaining(['表单', '密码框', '疑似个人信息', '疑似密钥']));
-    expect(found.reasons).toHaveLength(3);
-    expect(JSON.stringify(found)).not.toContain('abcdefghijklmnop');
+  it('密码框转成固定原因；正文像密钥的不标记，不回显内容', () => {
+    const found = markContent(['<form><input type=password></form> API_KEY="zz-placeholder-0000000000"']);
+    expect(found.flags).toEqual(['表单', '密码框']);
+    expect(found.reasons).toEqual(['包含密码框']);
+    expect(JSON.stringify(found)).not.toContain('zz-placeholder');
   });
 });

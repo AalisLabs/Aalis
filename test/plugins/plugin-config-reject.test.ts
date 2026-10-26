@@ -159,6 +159,29 @@ describe('请求基址带查询串或片段：读配置时报错，不发请求'
   });
 });
 
+describe('请求基址解析不了或带用户名、密码：读配置时报错，不发请求', () => {
+  const plugins = [
+    { plugin: okx, extra: { apiKey: 'k', secretKey: 's', passphrase: 'p' } },
+    { plugin: maimai, extra: { developerToken: 'zz-placeholder-token' } },
+    { plugin: cursor, extra: { apiKey: 'zz-placeholder-key' } },
+  ];
+  const forms = [
+    { form: '解析不了', baseUrl: 'not-a-url' },
+    { form: '带用户名或密码', baseUrl: 'https://user:pass@example.test/api' },
+  ];
+  it.each(plugins.flatMap(p => forms.map(f => ({ ...p, ...f }))))('$plugin.name / $form', async ({
+    plugin,
+    extra,
+    baseUrl,
+  }) => {
+    const { app, requests } = await activate(plugin, { ...extra, baseUrl });
+    const instance = app.plugins.getPlugin(plugin.name);
+    expect(instance?.state).toBe('error');
+    expect(instance?.error).toContain('baseUrl 需为不带用户名或密码的完整 URL');
+    expect(requests).toEqual([]);
+  });
+});
+
 // 缺了就整体用不了的配置项在 schema 里标必填、不带默认值：parseConfig 抛出点名缺项的配置错误，插件激活失败而不是
 // 起来了却什么都不做；validateConfig 报 missing，WebUI 据此把插件标成「待配置」并列出没填的键
 describe('缺必填配置：激活失败并点名缺的键，WebUI 标「待配置」', () => {

@@ -539,11 +539,22 @@ describe('构造与凭据', () => {
     fake.tokens.set(TOKEN, { kind: 'account' });
     // 资产端点：假服务在 401 里回显 JWT 的前 24 个字符
     fake.jwtTtlMs = -1;
+    const sent = fake.requests.length;
     const e2 = await expectKind(
       client.deploy({ branch: 'p-echojwtx', files: [textFile('/a.css', 'echo')], assetSalt: SALT }),
       'auth',
     );
-    expect(e2.message).not.toMatch(/eyJ[A-Za-z0-9_-]{8}/);
+    const issued = new Set(
+      fake.requests
+        .slice(sent)
+        .filter(r => r.path.startsWith('/client/v4/pages/assets/'))
+        .map(r => String(r.headers.authorization ?? '').replace(/^Bearer /, ''))
+        .filter(Boolean),
+    );
+    expect(issued.size).toBeGreaterThan(0);
+    for (const jwt of issued) {
+      for (let i = 0; i + 16 <= jwt.length; i++) expect(e2.message).not.toContain(jwt.slice(i, i + 16));
+    }
     fake.jwtTtlMs = 30 * 60_000;
     // 资产键：错误体里带着这次要上传的键
     const key = await assetKey(SALT, 'css', new TextEncoder().encode('echo-key'));
@@ -562,6 +573,20 @@ describe('构造与凭据', () => {
     fake.intercept('GET', /\/pages\/projects\/aalis$/, { status: 400, body: `<html>${'x'.repeat(3000)}</html>` });
     const e4 = await expectKind(client.getProject(), 'rejected');
     expect(e4.message.length).toBeLessThan(700);
+  });
+
+  it('错误体里文档链接的查询串、以 eyJ 开头的普通字串照原文', async () => {
+    const client = makeClient();
+    fake.intercept('GET', /\/pages\/projects\/aalis$/, {
+      status: 400,
+      body: {
+        success: false,
+        errors: [{ code: 8000000, message: 'see https://docs.example.test/x?topic=y and eyJplaceholderNotIssued' }],
+      },
+    });
+    const err = await expectKind(client.getProject(), 'rejected');
+    expect(err.message).toContain('https://docs.example.test/x?topic=y');
+    expect(err.message).toContain('eyJplaceholderNotIssued');
   });
 });
 
