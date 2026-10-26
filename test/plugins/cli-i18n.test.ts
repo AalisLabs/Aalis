@@ -21,6 +21,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { defineTexts, TextError } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { attachSessionServer } from '../fixtures/cli-session.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -164,8 +165,9 @@ async function setup({
   };
   const send = (message: Omit<OutgoingMessage, 'sessionId' | 'platform'>) =>
     host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', ...message });
-  /** 告警里带着 i18n 抛出的那个错的 */
-  const renderWarnings = () => warn.mock.calls.filter(call => call.includes(BROKEN));
+  /** 带着 i18n 抛出的那个错的告警，取告警的那句话 */
+  const renderWarnings = () =>
+    warn.mock.calls.filter(call => call.includes(BROKEN)).map(([message]) => String(message));
   /** 改全局层的语言：宿主配置里 plugin-i18n 的配置段 */
   const setLanguage = (language: string[]) => host.hostConfig.use.setPluginConfig(i18nPlugin.name, { language });
   const demote = () => {
@@ -305,7 +307,7 @@ describe('终端界面按全局层的语言', () => {
     for (const line of continued) expect(line.indexOf('x')).toBe(valueColumn('Command'));
   });
 
-  it('i18n 的 render 抛错：界面照常按原文显示，只告警一次', async () => {
+  it('i18n 的 render 抛错：界面照常按原文显示，每个出口只告警一次', async () => {
     const s = await setup({ language: ['en'], i18nMode: 'broken' });
     await s.send({
       content: '',
@@ -319,15 +321,21 @@ describe('终端界面按全局层的语言', () => {
     expect(s.frame()).toContain(ZH.heading);
     await s.ctrl('g');
     expect(s.frame()).toContain(ZH.help);
-    expect(s.renderWarnings()).toHaveLength(1);
+    // 终端界面与会话服务（终端经会话协议接着它，出帧同样按全局层的语言渲染）是两个出口
+    const warnings = s.renderWarnings();
+    expect(warnings.filter(message => message.includes('界面文字'))).toHaveLength(1);
+    expect(warnings).toHaveLength(new Set(warnings).size);
   });
 });
 
 describe('送达失败的原因', () => {
   const failure = t('failure');
 
-  /** 起终端界面，返回「发一条出站、等它的回执」。写进聊天区时要取人设的名字：只让发出后的第一次取不到，抛出挂着文字对象的报错 */
-  async function failingTerminal() {
+  /**
+   * 起终端界面，返回「发一条出站、等它的回执」。写进聊天区时要取人设的名字：只让发出后的第一次取不到，抛出挂着文字对象的报错。
+   * subscribed 时另接上会话服务、等终端订上它的会话：她回复的正文由条目画，出站只写附件那一行
+   */
+  async function failingTerminal(subscribed = false) {
     cleanups.push(fakeTty(20, 100).restore);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const app = new App({ name: 'T', logLevel: 'error' });
@@ -341,8 +349,15 @@ describe('送达失败的原因', () => {
         throw new TextError(failure);
       },
     } as never);
+    let session: { subscribed: Promise<void> } | undefined;
+    if (subscribed) {
+      const home = mkdtempSync(join(tmpdir(), 'aalis-cli-i18n-'));
+      cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+      session = await attachSessionServer(app, home);
+    }
     await app.plugin(cliPlugin, {});
     await app.start();
+    await session?.subscribed;
     await settle();
     return async (message: Omit<OutgoingMessage, 'sessionId' | 'platform'>) => {
       const outgoing: OutgoingMessage = { sessionId: 'cli-default', platform: 'cli', ...message };
@@ -358,14 +373,15 @@ describe('送达失败的原因', () => {
   });
 
   it.each([
-    ['只带附件的出站', ''],
-    ['带正文与附件的出站（正文先写，写不出）', '<正文>'],
-  ])('%s写不出：回执交出那个文字对象，没有未处理的拒绝', async (_case, content) => {
+    ['只带附件的出站写不出', '', false],
+    ['带正文与附件的出站（正文先写，写不出）', '<正文>', false],
+    ['订着终端的会话时带正文与附件的出站（正文由条目画，附件那一行写不出）', '<正文>', true],
+  ])('%s：回执交出那个文字对象，没有未处理的拒绝', async (_case, content, subscribed) => {
     const rejections: unknown[] = [];
     const onRejection = (reason: unknown) => void rejections.push(reason);
     process.on('unhandledRejection', onRejection);
     cleanups.push(() => void process.off('unhandledRejection', onRejection));
-    const send = await failingTerminal();
+    const send = await failingTerminal(subscribed);
     const delivery = await send({
       content,
       source: 'agent',

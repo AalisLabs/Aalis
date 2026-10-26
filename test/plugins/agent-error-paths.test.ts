@@ -16,9 +16,8 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
 // agent 两条错误路径的出口纪律：
-//   1. 普通异常（非 AbortError）同样要发 outbound:stream done——否则 CLI 流式块不收尾、
-//      WebUI 的工具进度不复位，下一轮 delta 会抹掉 [错误] 行；且 done 必须排在 [错误] 消息之前，
-//      与正常收尾同序；
+//   1. 普通异常（非 AbortError）同样要发 outbound:stream done——否则会话里流式输出的条目不结束、
+//      WebUI 的工具进度不复位；且 done 必须排在 [错误] 消息之前，与正常收尾同序；
 //   2. 工具参数不是合法 JSON 时跳过执行（旧行为空参真跑），把错误当 tool 结果回给模型，
 //      并带对 tool_call_id（否则下一轮 tool_calls 与 tool 消息不配对，provider 直接 400）；
 //   3. 并行工具批次里单个工具的链路异常（钩子 / 守卫抛错）只算该工具失败，不连坐整组：

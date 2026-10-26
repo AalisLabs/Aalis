@@ -18,9 +18,10 @@ import type { SessionItem } from '../protocol/session-client';
 import { SessionsFetchError } from '../shell/SessionGate';
 import { t } from '../texts';
 import { Attachments } from './Attachments';
+import { groupSummary, kindOf, type Process, rowsOf } from './fold';
 import type { TimelineItem } from './live-session';
 import { RewindDialog, type RewindTarget } from './Rewind';
-import { awaitingApproval, displayOf, TOOL_ICONS, ToolCall } from './ToolCall';
+import { TOOL_ICONS, ToolCall } from './ToolCall';
 import './Timeline.css';
 
 // 时间线：条目按回合成段，同一回合的条目挨在一起（被别的消息隔开时一轮分成几段），回合的结局（停止、出错、没有回复）写在这一轮
@@ -29,7 +30,7 @@ import './Timeline.css';
 // 多人对话，逐条写说话人与时间。
 // 连续到 COLLAPSE_FROM 个的工具调用（夹着的思考一起）收成一行，按展示种类计数，点开才渲染里面的条目；其中有等审批、失败
 // 或还在跑的（含转到后台、后台任务还在跑的），或者是还在跑的这一轮最后一段末尾那一组，不收，免得藏掉要看的东西；写给用户的
-// 正文不收。
+// 正文不收。终端照同一条规则，见 test/architecture/tool-call-fold-parity.test.ts。
 // 没有回复、最后一段只有输入的一轮在输入下面只写一行「没有回复」，中间只隔着不在回合里的提问的几轮合成一行「N 轮没有回复」写在
 // 最后一轮，被并掉的几轮照常显示输入，房间不刷屏靠合并。
 // 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示；指令的回复是一张卡，只认段落与列表，其余通知是一行
@@ -40,8 +41,6 @@ type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 const COMMAND_REPLY = 'command-reply';
 const TIME_GAP_MS = 10 * 60_000;
 const OUTCOMES = { aborted: t('stopped'), error: t('turnError') };
-/** 连续这么多个工具调用收成一行 */
-const COLLAPSE_FROM = 3;
 
 /** 一段：一个回合挨在一起的条目（turnId 相同），或一条不在回合里的条目 */
 interface Block {
@@ -141,61 +140,6 @@ function outcomeLine(block: Block, silent: number | undefined): string | undefin
 /** 段里写得出东西：有条目、要写来源或结局（刚推出回合条目、还没有条目的一轮，与被并掉的、只有回合条目的一轮写不出） */
 const drawn = (block: Block, silent: number | undefined) =>
   block.items.length > 0 || block.source !== undefined || outcomeLine(block, silent) !== undefined;
-
-type ToolCallItem = Item<'tool-call'>;
-type Process = ToolCallItem | Item<'reasoning'>;
-
-/** 一段里的一项：一个条目，或收成一行的一组工具调用与夹着的思考 */
-type Row = { item: Exclude<TimelineItem, Item<'turn'>> } | { group: Process[] };
-
-/** 收起会藏掉要看的东西；taskRunning 是转到后台的调用的任务还在跑 */
-const holding = (call: ToolCallItem, taskRunning: (taskId: string) => boolean) =>
-  awaitingApproval(call) ||
-  call.status === 'failed' ||
-  call.status === 'generating' ||
-  call.status === 'running' ||
-  (call.taskId !== undefined && taskRunning(call.taskId));
-
-function rowsOf(items: Block['items'], live: boolean, taskRunning: (taskId: string) => boolean): Row[] {
-  const rows: Row[] = [];
-  let run: Process[] = [];
-  const flush = (atEnd: boolean) => {
-    const calls = run.filter(item => item.kind === 'tool-call');
-    const held = calls.some(call => holding(call, taskRunning));
-    if (calls.length >= COLLAPSE_FROM && !held && !(live && atEnd)) rows.push({ group: run });
-    else rows.push(...run.map(item => ({ item })));
-    run = [];
-  };
-  for (const item of items) {
-    if (item.kind === 'tool-call' || item.kind === 'reasoning') run.push(item);
-    else {
-      flush(false);
-      rows.push({ item });
-    }
-  }
-  flush(true);
-  return rows;
-}
-
-const KIND_COUNTS = {
-  command: 'callKindCommand',
-  'file-change': 'callKindFileChange',
-  generic: 'callKindOther',
-} as const;
-const kindOf = (call: ToolCallItem) => displayOf(call)?.kind ?? 'generic';
-
-function groupSummary(calls: readonly ToolCallItem[]): string {
-  const counts = new Map<keyof typeof KIND_COUNTS, number>();
-  for (const call of calls) counts.set(kindOf(call), (counts.get(kindOf(call)) ?? 0) + 1);
-  const count = calls.length;
-  if (counts.size > 1) {
-    return tr('callsMixed', { count, kinds: [...counts].map(([kind, n]) => t(KIND_COUNTS[kind], { count: n })) });
-  }
-  const [kind] = counts.keys();
-  if (kind === 'command') return tr('callsCommands', { count });
-  if (kind === 'file-change') return tr('callsFileChanges', { count });
-  return tr('callsTools', { count });
-}
 
 /** 工具卡与思考的折叠：默认收起，「全部展开」「全部折叠」改默认并清掉逐张的设置 */
 export function useFold() {

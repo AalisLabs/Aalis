@@ -329,6 +329,11 @@ const REMOVED: Array<[string, string]> = [
   ['JWT_LIKE', '作品站报错按 eyJ 前缀抹像 JWT 的串：按值去掉本次签发的上传 JWT'],
   ['SECRET_NAME', 'WebUI 配置表单按字段名猜密钥、画成密码框：只认 schema 的 secret: true'],
   ['lintAnimationSource', '绘图动画按正则查漂移与跳变：已知错误类靠检查帧与视觉自检'],
+  ['ChatBuffer', '终端聊天区的扁平行缓冲与流式块下标：聊天区改成条目表，她的输出按会话协议的条目画'],
+  ['consumeStreamedSend', '终端按「这一轮流式写过」跳过整条回复：订着会话时正文由条目画'],
+  ['applyStreamChunk', '终端把一轮各次模型调用的流式增量接成一段：她的输出按会话协议的条目画'],
+  ['streamedAlready', '终端按「这一轮流式写过」跳过整条回复：订着会话时正文由条目画'],
+  ['replaceStreamingBlock', '终端聊天区按下标重建流式块：聊天区改成条目表'],
 ];
 
 /**

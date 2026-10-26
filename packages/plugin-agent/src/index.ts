@@ -1403,8 +1403,7 @@ class DefaultAgent implements AgentService {
       const error = textOf(err);
       this.logger.error(`处理消息失败: ${toSource(error)}`);
 
-      // 异常同样要结束流：不发 done，CLI 的流式块不收尾、会话里流式输出的条目不结束，
-      // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
+      // 异常同样要结束流：不发 done，会话里流式输出的条目不结束。顺序与正常收尾一致——先 done 再发消息。
       await this.caps.events.use.emit('outbound:stream', { sessionId, turnId, platform, done: true });
       if (!reportOnly) {
         const text = t('turnError', { error });
