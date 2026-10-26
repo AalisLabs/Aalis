@@ -105,6 +105,13 @@ describe('TaskJournal', () => {
     expect(parse(await journal.read(OTHER))[0].entry).toEqual({ value: 2 });
   });
 
+  it('records entries verbatim: text that merely looks like a credential or carries a query string is kept', async () => {
+    const { journal } = setup();
+    const entry = { text: 'token: demo', url: 'https://example.test/?q=1' };
+    await journal.record(TASK, 'verbatim', entry);
+    expect(parse(await journal.read(TASK))[0].entry).toEqual(entry);
+  });
+
   it('marks an oversized recent preview without truncating the full JSONL', async () => {
     const { journal } = setup();
     await journal.record(TASK, 'large', { text: 'x'.repeat(9000) });

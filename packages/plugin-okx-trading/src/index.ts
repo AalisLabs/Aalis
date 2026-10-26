@@ -220,7 +220,7 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   if (!cfg.demo) {
     logger.use.warn(
       cfg.confirmRealMoney
-        ? '⚠️ OKX 实盘模式：LLM 可用真实资金下单/撤单/划转/提币，且无逐单人工确认，请确认这是本意。'
+        ? '注意：OKX 处于实盘模式，LLM 可用真实资金下单/撤单/划转/提币，且无逐单人工确认，请确认这是本意。'
         : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',
     );
   }

@@ -321,7 +321,7 @@ export function registerPptTools(
           '创建一个新的 PowerPoint 演示文稿，返回 docId。',
           '可通过 template 参数选择预设模板（如 clean/dark/corporate/minimal/nature/warm），模板会自动注册母版页。',
           '使用模板后，添加幻灯片时用 masterName 引用母版：title（封面）、content（内容）、section（分节）、end（结束）。',
-          '该 docId 全局共享，可传递给子任务并行协作。',
+          '该 docId 全局共享，子任务直接用任务指令里给的 docId，不另建。',
         ].join('\n'),
         parameters: {
           type: 'object',
@@ -950,8 +950,7 @@ export function registerPptTools(
       type: 'function',
       function: {
         name: 'ppt_save',
-        description:
-          '保存 PPT 演示文稿到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
+        description: '保存 PPT 演示文稿到文件并释放文档会话。在子任务里不调用，由派发方在全部子任务完成后保存。',
         parameters: {
           type: 'object',
           properties: {

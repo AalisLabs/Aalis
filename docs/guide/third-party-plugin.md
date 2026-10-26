@@ -41,7 +41,7 @@ export default definePlugin({
 `webui/` 托管它，没随包发布就找不到入口、页面不登记。写法见 [api-webui 的「插件前端」](../api/api-webui.md#插件前端)。
 
 > `keywords` 里的 `"aalis-plugin"` 是**加载硬门**而非检索装饰：加载器只认它，漏写则插件
-> 装上后永远不会被发现（启动日志会有「疑似插件缺关键词」提示，但不会加载）；`files` 须含
+> 装上后永远不会被发现（启动日志会有一条 warn「依赖 "<包名>" 疑似 Aalis 插件但 keywords 缺 "aalis-plugin"，不会被加载——若确为插件请补关键词」，但不会加载）；`files` 须含
 > 构建产物，否则入口解析失败同样不加载。入口与 `import()` 包名得到的是同一个文件：写了 `exports` 时取
 > `"."` 按 import 条件（`node` / `import` / `default`，Node 启用 require(esm) 时另有 `module-sync`；`require` 不参与）
 > 取到的目标，没写时取 `main`。
@@ -173,7 +173,7 @@ export default definePlugin({
 > `secret: true` 表示字段的值是凭据，由 `@aalis/schema-config` 声明，不需要引入 `@aalis/api-webui`。
 > 宿主把它的值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只留引用 `{ $secret: '<键>' }`，
 > WebUI 不回显原值；插件经 `parseConfig` 读到的仍是原值。引用的键不在密钥存储里时 `parseConfig` 拒绝激活，
-> 不回落默认值；这一行为在本批新版 schema-config 里，对它的依赖写成范围、下限抬到这个版本。值不是凭据、名字却像凭据的字段（如 `maxTokens`）可以写 `secret: false` 表明已判断过。
+> 不回落默认值；这一行为在本批新版 schema-config 里，对它的依赖写成范围、下限抬到这个版本。
 > 要把配置写回配置文件，用 `host-config` 的 `applyPluginConfig`，不要把 `parseConfig` 的结果或 `config.use`
 > 原样交给 `setPluginConfig`：其中密钥字段是原值，宿主会拒收（见 [运行态与配置文档](../core/config.md#跨重启保留)）。
 > 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，

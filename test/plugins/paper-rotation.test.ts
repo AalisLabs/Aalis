@@ -40,6 +40,16 @@ async function runOne(hub: DriverHub, a: ScriptedRemote, status: 'finished' | 'e
   return { id, agentId };
 }
 
+/** 这件任务的创作日志里记下的前言 */
+async function loggedPrompts(hub: DriverHub, taskId: string): Promise<string[]> {
+  return (await hub.driver.journal.read(taskId))
+    .split('\n')
+    .filter(Boolean)
+    .map(line => (JSON.parse(line) as { entry: { type?: string; text?: string } }).entry)
+    .filter(entry => entry.type === 'prompt')
+    .map(entry => entry.text ?? '');
+}
+
 function withPaper(fields: Record<string, unknown>) {
   return { ...DRIVER_CONFIG, papers: [{ name: PAPER_A, remoteAgentType: REMOTE_A, ...fields }] };
 }
@@ -55,6 +65,10 @@ describe('换新', () => {
     const second = await runOne(hub, a);
     expect(second.agentId).not.toBe(first.agentId);
     expect(a.agents.get(second.agentId)?.prompts[0]).toContain(bundleUrl(first.agentId));
+    const logged = await loggedPrompts(hub, second.id);
+    expect(logged).toHaveLength(1);
+    expect(logged[0], '创作日志里的前言按值换掉工程包链接').toContain('<工程包链接>');
+    expect(logged[0]).not.toContain('BUNDLE-SIG');
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '旧代理被删除');
     expect(a.callsOn('archiveAgent', first.agentId)).toEqual([]);
     expect(hub.store.data.agents[first.agentId], '确认删除后从账本移除').toBeUndefined();
@@ -77,6 +91,10 @@ describe('换新', () => {
     const third = await runOne(hub, a);
     expect(third.agentId, '仍在新代理上').toBe(second.agentId);
     expect(a.callsOn('startRun', second.agentId)[0]?.args[1]).toContain(bundleUrl(first.agentId));
+    const logged = await loggedPrompts(hub, third.id);
+    expect(logged).toHaveLength(1);
+    expect(logged[0], '创作日志里的前言按值换掉工程包链接').toContain('<工程包链接>');
+    expect(logged[0]).not.toContain('BUNDLE-SIG');
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '成功后删旧代理');
   });
 

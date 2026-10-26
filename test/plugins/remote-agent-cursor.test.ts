@@ -22,7 +22,7 @@ import { type FakeCursor, type StreamSegment, startFakeCursor } from '../fixture
 // 一律对本机假服务（test/fixtures/fake-cursor.ts），不连真实账号。
 //
 // 全文件用同一个哨兵 key：各用例的日志与抛出的错误都收进 captured，最后一组断言里面找不到
-// key 的任何 8 字以上片段，也找不到预签名链接的查询串（签名）。
+// key 的任何 8 字以上片段，也找不到预签名链接的查询串（签名）：下载报错里按值去掉这次链接的查询串，别的文本照原文。
 // ════════════════════════════════════════════════════════════
 
 const KEY = 'sk-sentinel-Q7w3Zr9Lx2Vb8Nt5Kp1Hd6Fj4Gs0Ym';
@@ -406,12 +406,17 @@ describe('5 followRun', () => {
     });
   });
 
-  it('公开回复与工具完整日志递归脱敏，结果失败覆盖 completed，thinking 不泄漏', async () => {
+  it('公开回复、工具日志与结果说明照原文，只按值去掉 key 的片段；远端交来的 __proto__ 键照原样作为自有键留下；结果失败覆盖 completed，thinking 不泄漏', async () => {
     const p = makeProvider();
     const agent = fake.seedAgent({ runs: [{ status: 'FINISHED' }] });
     const run = agent.runs[0];
     const secret = 'SENSITIVE_PROMPT_OR_COMMAND';
-    const url = 'https://example.test/file?signature=private-value';
+    const args = {
+      command: 'const token = getToken()',
+      description: 'Run command',
+      headers: { Authorization: 'Bearer <占位>' },
+      url: 'https://example.test/doc?page=2',
+    };
     fake.streams.set(run.id, [
       {
         events: [
@@ -420,7 +425,12 @@ describe('5 followRun', () => {
           {
             id: '3-0',
             event: 'tool_call',
-            data: { callId: 'c1', name: 'read_file', status: 'running', args: { path: '/agent/a.txt' } },
+            data: {
+              callId: 'c1',
+              name: 'read_file',
+              status: 'running',
+              args: JSON.parse('{"path":"/agent/a.txt","__proto__":{"polluted":true}}'),
+            },
           },
           {
             id: '4-0',
@@ -451,14 +461,7 @@ describe('5 followRun', () => {
               callId: 'c4',
               name: 'run_terminal_cmd',
               status: 'completed',
-              args: {
-                command: 'echo hi\necho bye',
-                description: 'Run command',
-                headers: { Authorization: 'Bearer private-token' },
-                apiKey: 'private-api-key',
-                url,
-                nested: [{ password: 'private-password', value: `Bearer ${secret}` }],
-              },
+              args: { ...args, echoed: [`远端回显 ${KEY.slice(4, 16)}`] },
               result: { success: { stdout: 'full output', exitCode: 2 } },
             },
           },
@@ -466,6 +469,11 @@ describe('5 followRun', () => {
           { id: '8-0', event: 'tool_call', data: { name: '__proto__', status: 'UNKNOWN', text: secret } },
           { id: '9-0', event: 'tool_call', data: '{invalid-json' },
           { id: '10-0', event: 'tool_call', data: null },
+          {
+            id: '11-0',
+            event: 'result',
+            data: { runId: run.id, status: 'FINISHED', text: '见 https://example.test/a?b=1' },
+          },
         ],
       },
     ]);
@@ -479,6 +487,9 @@ describe('5 followRun', () => {
       activity: { action: 'reading', status: 'running', tool: 'read_file', target: '/agent/a.txt' },
       record: { type: 'tool', callId: 'c1', tool: 'read_file', status: 'running', input: { path: '/agent/a.txt' } },
     });
+    const input = (progress[2].record as { input?: object } | undefined)?.input;
+    expect(input && Object.getOwnPropertyDescriptor(input, '__proto__')?.value).toEqual({ polluted: true });
+    expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false);
     expect(progress[3]).toMatchObject({
       activity: { action: 'writing', status: 'completed', summary: 'Edit a' },
       record: {
@@ -495,20 +506,16 @@ describe('5 followRun', () => {
       activity: { action: 'command', status: 'failed', exitCode: 2, summary: 'Run command' },
       record: {
         status: 'failed',
-        input: { command: 'echo hi\necho bye' },
+        input: { ...args, echoed: ['远端回显 <已去除>'] },
         output: { success: { stdout: 'full output', exitCode: 2 } },
       },
     });
     const exposed = JSON.stringify(progress[5]);
-    for (const value of [
-      'private-token',
-      'private-api-key',
-      'private-password',
-      'signature=private-value',
-      `Bearer ${secret}`,
-    ])
-      expect(exposed).not.toContain(value);
-    expect(items.at(-1)).toMatchObject({ kind: 'terminal', state: { status: 'finished' } });
+    for (let i = 0; i + 8 <= KEY.length; i++) expect(exposed).not.toContain(KEY.slice(i, i + 8));
+    expect(items.at(-1)).toEqual({
+      kind: 'terminal',
+      state: { runId: run.id, status: 'finished', resultText: '见 https://example.test/a?b=1' },
+    });
   });
 
   it('嵌套 error 与 spawnError 标失败；摘要限长而执行日志保留全文', async () => {

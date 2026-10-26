@@ -102,7 +102,7 @@ describe('/clear 的类型由各插件登记', () => {
       '  - context：消息历史与会话上下文（含摘要与待办）',
       '  - foo：探针数据',
     ]);
-    expect(await exec('/clear -t foo')).toBe('✅ foo 已清');
+    expect(await exec('/clear -t foo')).toBe('foo 已清');
   });
 
   it('不认识的类型（含删掉的别名 history）：回不认识并列出现有类型，不清理', async () => {
@@ -118,7 +118,7 @@ describe('/clear 的类型由各插件登记', () => {
       probes: ['c', 'a', 'b'].map(n => probe(`zz-${n}`, [{ id: 'shared', label: `${n.toUpperCase()} 的说法` }])),
     });
     expect((await typeLines()).filter(line => line.startsWith('  - shared'))).toEqual(['  - shared：A 的说法']);
-    expect(await exec('/clear -t shared')).toBe(`⚠ A 的说法：${NO_HANDLER}，未清理`);
+    expect(await exec('/clear -t shared')).toBe(`A 的说法：${NO_HANDLER}，未清理`);
   });
 
   it('贡献点插件不在：-t 只认 all，/clear -t context 回不认识；/clear 照常清', async () => {
@@ -126,7 +126,7 @@ describe('/clear 的类型由各插件登记', () => {
     expect(await typeLines()).toEqual(['  - all：全部类型']);
     expect(await exec('/clear -t context')).toBe('未知清理类型: context。可用类型: all。说明见 /help clear');
     expect(clearSession).not.toHaveBeenCalled();
-    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
+    expect(await exec('/clear')).toBe('当前会话消息历史已清空');
     expect(clearSession).toHaveBeenCalledWith('s-cur');
   });
 });
@@ -152,20 +152,20 @@ describe('/clear 显式指定的类型没有处理者', () => {
 
   it('登记了却没有一行标注它：与消息历史一起指定时照常清消息历史，另说明它未清理（会话级与全局）', async () => {
     const { exec } = await world({ probes: [unhandled()] });
-    const note = `⚠ 探针类型：${NO_HANDLER}，未清理`;
-    expect(await exec('/clear -t zz-kind -t context')).toBe(['✅ 当前会话消息历史已清空', note].join('\n'));
-    expect(await exec('/clear all -t zz-kind -t context')).toBe(['✅ 所有消息历史和归档已清空', note].join('\n'));
+    const note = `探针类型：${NO_HANDLER}，未清理`;
+    expect(await exec('/clear -t zz-kind -t context')).toBe(['当前会话消息历史已清空', note].join('\n'));
+    expect(await exec('/clear all -t zz-kind -t context')).toBe(['所有消息历史和归档已清空', note].join('\n'));
   });
 
   it('存储不在：附件的写入方（绘图）不出失败行，/clear 只清消息历史，-t image 照实说明未清理', async () => {
     const { exec } = await world({ draw: true });
-    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
-    expect(await exec('/clear -t image')).toBe(`⚠ 图片缓存：${NO_HANDLER}，未清理`);
+    expect(await exec('/clear')).toBe('当前会话消息历史已清空');
+    expect(await exec('/clear -t image')).toBe(`图片缓存：${NO_HANDLER}，未清理`);
   });
 
   it('不指定类型的 /clear 与 /clear all 不追加任何说明', async () => {
     const { exec } = await world({ probes: [unhandled()] });
-    expect(await exec('/clear')).toBe('✅ 当前会话消息历史已清空');
-    expect(await exec('/clear all')).toBe('✅ 所有消息历史和归档已清空');
+    expect(await exec('/clear')).toBe('当前会话消息历史已清空');
+    expect(await exec('/clear all')).toBe('所有消息历史和归档已清空');
   });
 });

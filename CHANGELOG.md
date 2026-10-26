@@ -511,6 +511,23 @@
 - plugin-user-relation、plugin-user-profile：提取提示里对她的称呼取人设名（新加可选依赖 `persona`，每次提取按触发它的会话取一次 `getPersonaName`），人设服务缺席或卡没取名时用「机器人」，不再写死 Aalis。
 - plugin-user-relation、plugin-user-profile：`/relation` 与 `/profile` 的回复不再带表情与勾叉，警告写「注意：」，事件重复候选的判定写「通过」「否决」。
 
+### 其余插件的单点清理（@aalis/api-remote-agent、@aalis/plugin-remote-agent-cursor、@aalis/plugin-paper、@aalis/plugin-works-site、@aalis/plugin-webui-client、@aalis/plugin-publish-review、@aalis/plugin-draw、@aalis/plugin-scheduler、@aalis/plugin-subtask、@aalis/plugin-office、@aalis/api-process、@aalis/plugin-process-local、@aalis/plugin-tool-code-runner、@aalis/plugin-tool-search、@aalis/plugin-tool-system、@aalis/plugin-webui-server、@aalis/api-memory、@aalis/plugin-commands、@aalis/plugin-maimai、@aalis/plugin-doctor、@aalis/create-aalis、@aalis/create-aalis-plugin、@aalis/plugin-okx-trading、@aalis/plugin-storage-local）
+
+- api-remote-agent：删掉 `sanitizeRunLog`（破坏性）。plugin-remote-agent-cursor 的工具日志、回复、结果说明与报错照远端原文，只按值去掉插件自己 key 的 8 字以上片段，下载成品的报错另按值去掉这次预签名链接的查询串：代码里的 token 变量、带查询串的网址、远端回显的 Authorization 头不再被改写。
+- plugin-remote-agent-cursor：`baseUrl` 解析不了或带用户名、密码时读配置报错，实例转为出错。
+- plugin-paper：创作日志照原文记录，不再按正则抹像凭据的文字与网址的查询串；前言里旧代理的工程包链接按值换成「<工程包链接>」。
+- plugin-works-site：部署报错里文档链接的查询串、以 eyJ 开头的普通字串照原文显示；只按值去掉 token、账号 ID、本次上传 JWT 的片段，以及 32 位以上的十六进制串（资产键）。
+- plugin-webui-client：配置表单只把声明了 `secret: true` 的字段画成密码框，没声明的字段（含第三方插件里名字像凭据的）一律明文显示，不再按字段名猜。`secret: false` 在运行时与不写相同。
+- plugin-publish-review：标题或简介带 7 位以上数字、正文像密钥（私钥头、`sk-` 长串、`api_key=…`）不再标记「疑似个人信息」「疑似密钥」、不再强制转人工：分类模型判 allow、没开 `manualReview` 时自动发布。密码框照旧转人工，活动内容、外链、表单照旧只作标记。
+- plugin-draw：`draw_animation` 不再按正则查轨迹漂移与循环跳变，结果的 `warnings` 只剩没有声明式动画那一条；工具说明删掉配套的两句提示。
+- plugin-scheduler：配置文件里的任务只写了 `actorPlatform`、`actorUserId` 之一时不再补成 owner 照跑：这条任务不载入，日志记一条错误，WebUI「需要处理」出一条错误提示去改配置文件；持久化里同名的动态任务不顶替它，`scheduler_create_job` 与服务的 `addJob` 用这个名字新建时报「来自配置文件」。
+- plugin-subtask：子任务上下文的「共享资源规则」改为不点名文档的「协作规则」（只操作自己负责的范围、汇报做了什么），不再写 docId 与「不要调用 save」；`create_subtask` 的说明不再点名 `manage_todo_list` 与 office 的文档。plugin-office：建文档的三个工具写子任务直接用任务指令里给的 docId，保存的三个工具写在子任务里不调用。
+- api-process：`SpawnOptions.env` 改为替换语义，给了就是子进程的完整环境，不给时继承宿主环境（破坏性，第三方实现照此）；plugin-process-local 照此实现。plugin-tool-code-runner 在 `sandbox.mode=none` 时脚本也只拿到白名单里的环境变量，白名单补上 Windows 的 `TEMP`、`TMP`、`USERPROFILE`。
+- plugin-tool-search：每个关键词取最具体的一档（工具自己的说明排在分组说明之前），各关键词的得分相加，多命中一个的排前面；`found` 改为匹配总数（数字），删掉 `pagination`；还有下一页时 `hint` 开头写还有几个没给、下一页的 `offset`，`offset` 超出匹配数时照实说。
+- plugin-tool-system：`/tools` 只列真正注册了的工具组，开关开着、因缺 storage 或 process 跳过注册的不列。
+- plugin-webui-server：WebSocket 连接建立时认不出身份的以 1008「认不出身份」关闭、记 warn，不再补成 `webui:console`（owner）。
+- 给人看的文字不带表情与勾叉：plugin-commands 的 `/clear` 回执每行就是各家的说明，不再按 `success` 加勾叉，`memory:clear` 结果行的 `message` 要自己写明成败（api-memory 的说明写明，第三方插件照此），警告不带符号（删掉字典键 `cleared`、`notCleared`）；plugin-tool-system 的 `/tools`、plugin-maimai 的查分文案（指令与工具共用）、plugin-doctor 的诊断报告（汇总与分组写「通过」「警告」「错误」）不带表情与符号；create-aalis 与 create-aalis-plugin 的终端提示与生成的插件 README，以及 okx-trading、code-runner、storage-local 的启动告警，警告写「注意：」。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

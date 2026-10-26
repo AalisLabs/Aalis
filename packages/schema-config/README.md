@@ -85,7 +85,7 @@ export default definePlugin({
 
 ## 密钥字段（`secret`）
 
-`secret: true` 表示字段的值是凭据（API key、token、可能带账号密码的连接串），由本包声明，各宿主都按它处理：值不放在配置文档里，存进宿主的密钥存储（Node 宿主 `@aalis/runtime` 用家目录的 `secrets.yaml`），文档里只写引用 `{ $secret: '<键>' }`（类型 `SecretRef`），宿主把配置交给插件之前解析回原值，展示与回传都不给原值。标在 `map`、`list` 等非标量字段上时整个值算一个密钥。名字像凭据却不是凭据的字段（如 `maxTokens`）写 `secret: false` 表明已判断过。本包只声明词汇，不读写密钥存储。
+`secret: true` 表示字段的值是凭据（API key、token、可能带账号密码的连接串），由本包声明，各宿主都按它处理：值不放在配置文档里，存进宿主的密钥存储（Node 宿主 `@aalis/runtime` 用家目录的 `secrets.yaml`），文档里只写引用 `{ $secret: '<键>' }`（类型 `SecretRef`），宿主把配置交给插件之前解析回原值，展示与回传都不给原值。标在 `map`、`list` 等非标量字段上时整个值算一个密钥。本包只声明词汇，不读写密钥存储。
 
 - **`isSecretRef(value)`**：是不是引用，即只有 `$secret` 一个自有键、值为非空字符串的纯对象。只在 `secret: true` 的字段上有这层含义。
 - **`mapSecretFields(schema, config, fn)`**：逐个处理配置里密钥字段上的值（顶层、分组内、数组元素内；值为 `undefined` 的跳过），`fn` 收到值与位置 `SecretPosition`（`path` 是点号路径，数组元素里的不带下标；`inArray` 表示在数组元素里），`fn` 返回 `undefined` 时删掉这个键。不改入参：有改动时返回浅拷贝（没动到的部分与入参共享），没有改动时返回入参本身，调用方要改写结果请先复制。宿主拆出、解析密钥与给呈现方去掉密钥都用它。

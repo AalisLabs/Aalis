@@ -82,7 +82,7 @@ interface Decl {
  *
  * 栈顶决定「跑谁的实现」，但不该决定「谁能跑」——否则后注册者只要压一层就能放宽权限。
  *
- * ⚠️ **必须整份取，不能逐轴取严**。visibility / confirm / risk 三轴各自独立取最严实测不单调：
+ * 注意：**必须整份取，不能逐轴取严**。visibility / confirm / risk 三轴各自独立取最严实测不单调：
  * 真正的裁决函数里 **risk 一旦存在就完全遮蔽 visibility**
  * （见 `capabilityMinLevel`），于是「未声明 risk」在合并时被当成最弱、在裁决时却代表更强的
  * visibility 兜底。给 `{visibility:'restricted'}` 的 /shutdown 压一层 `{risk:'safe'}`，

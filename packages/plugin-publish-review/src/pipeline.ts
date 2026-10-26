@@ -124,7 +124,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
       input.signal.throwIfAborted();
       if (!deps.config.reviewEnabled) return { verdict: { verdict: 'allow', reasons: [] }, files, evidence };
 
-      const marked = markContent(`${input.title}\n${input.summary}`, textsForReview);
+      const marked = markContent(textsForReview);
       evidence.flags.push(...marked.flags);
       reasons.push(...marked.reasons);
       if (audio) reasons.push('含音轨，审核不听声音');

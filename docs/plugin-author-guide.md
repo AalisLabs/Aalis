@@ -184,7 +184,7 @@ lifecycle.use.onDispose(() => {
 
 `configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config.use, logger.use)`，后续只使用解析结果。Core 不解释 schema。
 
-- `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。名字像凭据却不是凭据的字段（如 `maxTokens`）写 `secret: false`。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
+- `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
 - `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
 - `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档（密钥字段的默认值不写进文档），插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
 - 普通字段无效时回落默认值并告警；`onInvalid: 'error'` 的字段拒绝无效值，即使有默认值也不回落。地址、启动参数、访问边界等字段应显式声明这一策略；缺省规则不变

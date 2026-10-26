@@ -182,8 +182,8 @@ describe('/clear 按层清理', () => {
     const { run, snapshot } = await world();
     expect(await run('clear', ['user-profile', 'user-relation'])).toBe(
       [
-        '⚠ 用户档案是跨会话数据，只在清理全部会话时清，本次未清理',
-        '⚠ 关系图是跨会话数据，只在清理全部会话时清，本次未清理',
+        '用户档案是跨会话数据，只在清理全部会话时清，本次未清理',
+        '关系图是跨会话数据，只在清理全部会话时清，本次未清理',
       ].join('\n'),
     );
     expect((await snapshot()).namespaces).toEqual(SEED);
@@ -220,7 +220,7 @@ describe('/clear 按层清理', () => {
       throw new Error('后端故障');
     };
     const out = await run('clear', ['context']);
-    expect(out).toContain('⚠ 清空失败: 后端故障');
+    expect(out).toContain('清空失败: 后端故障');
     expect(out).not.toContain('没有已启用的插件处理');
   });
 
@@ -234,10 +234,10 @@ describe('/clear 按层清理', () => {
     store.clear = broken;
     const all = await run('clear.all', ['summary', 'vector', 'user-profile', 'user-relation']);
     for (const text of [
-      '⚠ 摘要清空失败: 后端故障',
-      '⚠ 向量清空失败: 后端故障',
-      '⚠ 用户档案清空失败: 后端故障',
-      '⚠ 关系图清空失败: 后端故障',
+      '摘要清空失败: 后端故障',
+      '向量清空失败: 后端故障',
+      '用户档案清空失败: 后端故障',
+      '关系图清空失败: 后端故障',
     ])
       expect(all).toContain(text);
     expect(all).not.toContain('没有已启用的插件处理');
@@ -245,7 +245,7 @@ describe('/clear 按层清理', () => {
     // 向量存储不支持按条件删除：会话级清理照实报未清除
     delete store.deleteByFilter;
     const session = await run('clear', ['vector']);
-    expect(session.startsWith('⚠ 当前向量存储不支持会话级清空')).toBe(true);
+    expect(session.startsWith('当前向量存储不支持会话级清空')).toBe(true);
     expect(session).not.toContain('没有已启用的插件处理');
   });
 

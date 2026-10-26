@@ -134,12 +134,12 @@ describe('/doctor 的报告按会话的语言', () => {
     const s = await setup();
     const english = await s.ask((await s.session(['en'])).id, '/doctor');
     expect(english[0]).toMatch(/^\*\*System diagnostics — .+\*\*$/);
-    expect(english[1]).toMatch(/^Summary: ✓ \d+ {2}! \d+ {2}✗ \d+$/);
-    expect(english).toContain('__✓ Passed__');
-    const chinese = /^汇总: ✓ \d+　! \d+　✗ \d+$/;
+    expect(english[1]).toMatch(/^Summary: passed \d+ {2}warnings \d+ {2}errors \d+$/);
+    expect(english).toContain('__Passed__');
+    const chinese = /^汇总: 通过 \d+　警告 \d+　错误 \d+$/;
     const zh = await s.ask((await s.session(['zh-CN'])).id, '/doctor');
     expect([zh[0].startsWith('**系统诊断 — '), zh[1]]).toEqual([true, expect.stringMatching(chinese)]);
-    expect(zh).toContain('__✓ 通过__');
+    expect(zh).toContain('__通过__');
 
     const absent = await setup({ withI18n: false });
     const source = await absent.ask((await absent.session()).id, '/doctor');

@@ -83,10 +83,10 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
       { query, ...options },
       toolRequest({ sessionId: 'room-1', enabledGroups: groups }),
     );
-    return JSON.parse(response.content) as {
+    return JSON.parse(response.content) as Record<string, unknown> & {
       tools: Array<{ name: string }>;
-      found: string;
-      pagination?: { total: number; offset: number; returned: number; nextOffset?: number };
+      found: number;
+      hint: string;
     };
   }
   return { visible, search, service };
@@ -131,6 +131,49 @@ describe('search_tools 可用能力目录', () => {
       'paper_status',
       'paper_task',
     ]);
+  });
+
+  it('各关键词的得分相加，工具自己的说明压过同组共用的分组说明', async () => {
+    const h = await world();
+    h.service.registerGroup({ name: 'onebot-admin', label: 'OneBot 群管', description: '禁言、踢人等群管理操作' });
+    h.service.registerGroup({
+      name: 'onebot-daily',
+      label: 'OneBot 只读与日常',
+      description: '查群信息、戳一戳、好友赞',
+    });
+    for (const [name, description, group] of [
+      ['onebot_group_ban', '禁言群成员', 'onebot-admin'],
+      ['onebot_group_kick', '把成员踢出群', 'onebot-admin'],
+      ['onebot_get_group_info', '查群信息', 'onebot-daily'],
+      ['onebot_get_member_info', '查群成员信息', 'onebot-daily'],
+      ['onebot_poke', '戳一戳群成员或好友', 'onebot-daily'],
+    ] as const) {
+      h.service.register({
+        groups: [group],
+        definition: {
+          type: 'function',
+          function: { name, description, parameters: { type: 'object', properties: {} } },
+        },
+        handler: async () => '{}',
+      });
+    }
+    const groups = ['onebot-admin', 'onebot-daily'];
+    expect((await h.search('onebot 戳一戳', groups)).tools[0]?.name).toBe('onebot_poke');
+    expect((await h.search('戳一戳', groups)).tools[0]?.name).toBe('onebot_poke');
+  });
+
+  it('found 是匹配总数；有下一页时 hint 先说还有几个、怎么翻，offset 超出匹配数时照实说', async () => {
+    const h = await world(true, 23, 10);
+    const first = await h.search('bulk_operation', ['bulk']);
+    expect(first.found).toBe(23);
+    expect(first).not.toHaveProperty('pagination');
+    expect(first.hint).toContain('offset=10');
+    expect(first.hint).not.toContain('无需再次搜索');
+    const beyond = await h.search('bulk_operation', ['bulk'], { offset: 40 });
+    expect(beyond.found).toBe(23);
+    expect(beyond.tools).toEqual([]);
+    expect(beyond.hint).not.toContain('未找到匹配的工具');
+    expect(beyond.hint).toContain('offset 超出匹配数 23');
   });
 
   it('showToolNames 关闭时不注入能力目录，搜索仍按分组可用', async () => {
@@ -178,7 +221,8 @@ describe('search_tools 可用能力目录', () => {
     const h = await world(true, 23, 10);
     const oversized = await h.search('bulk_operation', ['bulk'], { limit: 10000 });
     expect(oversized.tools).toHaveLength(10);
-    expect(oversized.pagination).toMatchObject({ total: 23, offset: 0, returned: 10, nextOffset: 10 });
+    expect(oversized.found).toBe(23);
+    expect(oversized.hint).toContain('还有 13 个没给：用 offset=10 查看下一页');
     const names: string[] = [];
     for (let offset = 0; offset < 23; offset += 4) {
       const page = await h.search('bulk_operation', ['bulk'], { limit: 4, offset });

@@ -89,8 +89,24 @@ function toRunnerCwdUri(input: string | undefined): string {
   return resolveAgainstCwd(input, 'workspace:/');
 }
 
+/**
+ * 交给脚本的环境变量白名单，两种模式下都只交这些（runner 另加 PYTHONIOENCODING）。SystemRoot 以下几项给 Windows：
+ * 它没有沙箱后端、只能 mode=none，系统组件要 SystemRoot 等，解释器的临时目录与用户目录取 TEMP、TMP、USERPROFILE
+ */
 function safeEnv(): NodeJS.ProcessEnv {
-  const keep = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'];
+  const keep = [
+    'PATH',
+    'LANG',
+    'LC_ALL',
+    'TERM',
+    'SystemRoot',
+    'WINDIR',
+    'COMSPEC',
+    'PATHEXT',
+    'TEMP',
+    'TMP',
+    'USERPROFILE',
+  ];
   const env: NodeJS.ProcessEnv = {};
   for (const key of keep) {
     if (process.env[key]) env[key] = process.env[key];
@@ -140,7 +156,7 @@ export default definePlugin({
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
     if (cfg.sandbox.mode === 'none') {
       logger.use.warn(
-        '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
+        '注意：code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
       );
     }
     const cwdUri = toRunnerCwdUri(cfg.workingDirectory);

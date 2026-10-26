@@ -280,7 +280,8 @@ async function resolveTarget(
   const bound = await getBoundFriendCode(refs.memory, callCtx.platform, callCtx.userId);
   if (bound) return { friend_code: bound, source: 'bound' };
 
-  // OneBot 私聊（一对一的聊天窗口）里尝试用调用者 QQ 查
+  // OneBot 私聊（一对一的聊天窗口）里尝试用调用者 QQ 查：查分器账号按 QQ 号登记；一对一窗口里这一轮只有他一个人，
+  // 按触发者的 QQ 号查的就是提问的人自己；群里一轮可能有几个人，按触发者查可能查成别人，所以只在一对一窗口里这样查
   if (
     cfg.defaultBindOnPrivateChat &&
     callCtx.platform === 'onebot' &&

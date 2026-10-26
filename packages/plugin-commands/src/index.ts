@@ -366,9 +366,8 @@ function registerCommands({
       ? agent.use.clearing(isGlobal ? undefined : [cmdCtx.sessionId], run)
       : run());
 
-    const lines: (string | TextRef)[] = clearData.results.map(r =>
-      t(r.success ? 'cleared' : 'notCleared', { message: r.message }),
-    );
+    // 每行就是各家的说明，成败已写在说明里
+    const lines: (string | TextRef)[] = clearData.results.map(r => r.message);
     // 显式要求的类型逐个核对：没有任何一行标注该类型，就是没有已启用的插件处理它，照实说明
     for (const { id, label } of known) {
       if (!types?.includes(id) || clearData.results.some(r => r.type === id)) continue;

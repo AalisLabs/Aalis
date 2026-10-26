@@ -145,7 +145,7 @@ export function registerDocxTools(
       function: {
         name: 'doc_create',
         description:
-          '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，可传递给子任务实现并行协作编辑。\n' +
+          '创建一个新的 Word 文档会话，返回 docId 用于后续操作。该 docId 全局共享，子任务直接用任务指令里给的 docId，不另建。\n' +
           '【排版建议】中文文档强烈建议传 preset="chinese-report"（自动应用：微软雅黑、12pt、1.5 倍行距、首行缩进 2 字符、段后 6pt）。' +
           '不设 preset 时 Word 会用 Times New Roman + Calibri 默认，中文混排显示不佳。',
         parameters: {
@@ -650,8 +650,7 @@ export function registerDocxTools(
       type: 'function',
       function: {
         name: 'doc_save',
-        description:
-          '保存 Word 文档到文件并释放文档会话。如果使用了子任务协作编辑，请确保所有子任务完成后再调用此工具保存。',
+        description: '保存 Word 文档到文件并释放文档会话。在子任务里不调用，由派发方在全部子任务完成后保存。',
         parameters: {
           type: 'object',
           properties: {

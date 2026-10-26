@@ -208,7 +208,7 @@ describe('终端提问', () => {
     expect((await first).name).toBe(DEEPSEEK);
     const second = t.prompter.choose('对话模型', CHAT_MODELS, DEEPSEEK);
     await t.type('1,2');
-    expect(t.shown()).toContain('这是单选');
+    expect(t.shown()).toContain('  注意：这是单选');
     await t.type('3');
     expect((await second).name).toBe(OLLAMA);
     t.prompter.close();
@@ -221,7 +221,7 @@ describe('终端提问', () => {
     expect(await platforms).toEqual(['@aalis/plugin-adapter-onebot', '@aalis/plugin-cli']);
     const yes = t.prompter.confirm('要长期语义记忆吗', false);
     await t.type('maybe');
-    expect(t.shown()).toContain('请输入 y 或 n');
+    expect(t.shown()).toContain('  注意：请输入 y 或 n。');
     await t.type('y');
     expect(await yes).toBe(true);
     t.prompter.close();

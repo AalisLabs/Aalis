@@ -122,7 +122,7 @@ export interface SchemaField {
    * （Node 宿主是家目录的 `secrets.yaml`），文档里只写引用 {@link SecretRef}，交给插件之前解析回原值；
    * 展示与回传都不给原值。标在 map、list 上时整个值算一个密钥。插件照常经 parseConfig 读到原值；
    * 引用没被宿主解析（键不在密钥存储里）时 parseConfig 拒绝激活，不回落默认值。
-   * 名字像凭据却不是凭据的字段（如 `maxTokens`）写 `false` 表明已判断过
+   * `false` 与不写在运行时相同；仓内第一方的声明守卫要名字像凭据的字段写 `false` 表明判断过
    */
   secret?: boolean;
   /**

@@ -95,7 +95,7 @@ describe('/clear：中间件链运行期间记忆后端更换', () => {
     const memB = makeBackend(true);
     const { app, runSwitching } = await world(memA);
     const out = await runSwitching('clear', () => app.plugin(memoryProvider('mem-b', memB, 10)));
-    expect(out).toBe('✅ 当前会话消息历史已清空');
+    expect(out).toBe('当前会话消息历史已清空');
     expect(memB.clearSession).toHaveBeenCalledWith('s-cur');
     expect(memA.clearSession).not.toHaveBeenCalled();
   });
@@ -104,7 +104,7 @@ describe('/clear：中间件链运行期间记忆后端更换', () => {
     const memA = makeBackend(true);
     const { app, runSwitching } = await world(memA);
     const out = await runSwitching('clear', () => app.plugins.unload('mem-a'));
-    expect(out).toBe('⚠ 清空失败: 记忆服务在清理期间下线');
+    expect(out).toBe('清空失败: 记忆服务在清理期间下线');
     expect(memA.clearSession).not.toHaveBeenCalled();
   });
 
@@ -113,7 +113,7 @@ describe('/clear：中间件链运行期间记忆后端更换', () => {
     const memB = makeBackend(false);
     const { app, runSwitching } = await world(memA);
     const out = await runSwitching('clear.all', () => app.plugin(memoryProvider('mem-b', memB, 10)));
-    expect(out).toBe('⚠ 清空失败: 清理期间换上的记忆后端不支持全局清空');
+    expect(out).toBe('清空失败: 清理期间换上的记忆后端不支持全局清空');
     expect(memA.clearAll).not.toHaveBeenCalled();
     expect(memB.clearSession).not.toHaveBeenCalled();
   });

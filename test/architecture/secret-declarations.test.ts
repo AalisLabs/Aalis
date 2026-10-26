@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 // 第一方插件的配置字段，名字像凭据的必须显式声明 `secret`
 //
 // `secret: true` 决定值存进 secrets.yaml、WebUI 不回显；漏标的凭据会以明文留在配置文件里、经 WebUI 读接口回到浏览器。
-// 名字像凭据却不是凭据的（如 memoryTokenBudget）写 `secret: false`，表明判断过。
+// `secret: false` 与不写在运行时相同；这道守卫要名字像凭据却不是凭据的（如 memoryTokenBudget）写 `secret: false`，表明判断过。
 // 判据：camelCase 拆词后含 key、token、secret、password、passphrase、credential(s)、apikey 之一，或字段名就是 uri
 // （连接串可能带账号密码）。字段形状按「对象字面量里同时有 type 与 label」认，工具参数的 JSON Schema 没有 label，不在其列。
 // 名字看不出来的凭据（如 mcp-client 的 env）靠逐个判断，不在这道闸里。

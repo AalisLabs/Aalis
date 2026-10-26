@@ -226,6 +226,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
 
     const toolOnly = renderReadme(answers({ tool: true, command: false, webui: false, sessionSetting: false }));
     expect(toolOnly).toContain('uses: { tools: optional(tools) }');
+    expect(toolOnly).toContain('\n- 注册 AI 工具（');
     expect(toolOnly).not.toContain('optional(commands)');
     expect(toolOnly).not.toContain('optional(webuiServer)');
 

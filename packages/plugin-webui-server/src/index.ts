@@ -876,12 +876,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws, req) => {
-    // 连接建立时解析一次调用者身份（cookie 在升级请求里；verifyClient 已保证已认证）
-    const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
-    logger.use.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
-    // 每条连接都过心跳：回收半开连接，track 同时挂上 'error' 兜底监听（见 ws-heartbeat.ts）
+    // 每条连接都过心跳，关掉的也一样：回收半开连接，track 同时挂上 'error' 兜底监听（见 ws-heartbeat.ts）
     heartbeat.track(ws);
     ws.on('close', () => heartbeat.untrack(ws));
+    // 连接建立时解析一次调用者身份（cookie 在升级请求里）。verifyClient 与这里同步相继判同一个 cookie；认不出时按未认证
+    // 关掉，不补身份
+    const wsIdentity = auth.identify(req);
+    if (!wsIdentity) {
+      logger.use.warn('WebUI 连接认不出身份，已关闭这条连接');
+      ws.close(1008, '认不出身份');
+      return;
+    }
+    logger.use.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
     if (wsPath(req) === ADMIN_PATH) {
       admin.accept(ws);
       return;

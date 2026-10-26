@@ -134,7 +134,7 @@ export class LocalProcessService implements ProcessService {
     const stdioMode = opts.stdio ?? 'pipe';
     const child = nodeSpawn(cmd, [...args], {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) } as NodeJS.ProcessEnv,
+      env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
       stdio: stdioMode === 'pipe' ? ['pipe', 'pipe', 'pipe'] : stdioMode,
       // POSIX 一律 detached：让子进程自成进程组组长，超时/停机才能对整组发信号（见 killGroup）。
       // opts.detached 的 fire-and-forget 语义仍由调用方的 stdio:'ignore' + unref() 兑现。

@@ -28,8 +28,8 @@
 // - 资产接口回 401：同一次部署里重取 JWT 一次；仍被拒按鉴权失败报。
 //
 // 凭据：token 只进发往 API 的 Authorization 头，上传 JWT 只进发往资产接口的 Authorization 头，账号 ID 只进请求
-// 路径。错误与日志里只写固定的端点称呼，不写网址、请求头、manifest 与资产键；Cloudflare 回的错误体先去掉
-// token、JWT、账号 ID 的片段与 32 位以上的十六进制串，再截到 500 字（写法照 Cursor 插件的 redactFragments）。
+// 路径。错误与日志里只写固定的端点称呼，不写网址、请求头、manifest 与资产键；Cloudflare 回的错误体先去掉 token、
+// 账号 ID、本次上传 JWT 的 8 字以上片段和 32 位以上的十六进制串（资产键），再截到 500 字。
 // 部署详情里的 files（路径 → 键）只把路径交给调用方。
 //
 // API 基址、别名与哈希网址的主机后缀与协议写死（`https://api.cloudflare.com/client/v4`、`.<项目名>.pages.dev`、
@@ -80,10 +80,11 @@ const PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 /** Pages 的特殊文件：不能作为资产出现在 manifest 里 */
 const RESERVED_PATHS = new Set(['/_headers', '/_redirects', '/_worker.js', '/_routes.json']);
 
-const JWT_LIKE = /eyJ[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]*){0,2}/g;
-/** 资产键、账号 ID 这类长十六进制串 */
+/**
+ * 资产键是带本机盐算出的 HMAC 前 32 位（见 hash.ts），别人拿到就能抢先用这个键上传别的内容；Cloudflare 的错误体会回显它，
+ * 所以按格式整串去掉
+ */
 const HEX_RUN = /[0-9a-fA-F]{32,}/g;
-const URL_QUERY = /(https?:\/\/[^\s?#"'<>]*)\?[^\s"'<>]*/gi;
 
 export type PagesErrorKind =
   /** 401、403，或凭据格式不对（没发请求） */
@@ -861,10 +862,7 @@ export class PagesClient {
   }
 
   #scrub(text: string): string {
-    let out = text
-      .replace(JWT_LIKE, '<凭据已去除>')
-      .replace(HEX_RUN, '<已去除>')
-      .replace(URL_QUERY, '$1?<查询串已去除>');
+    let out = text.replace(HEX_RUN, '<已去除>');
     for (const secret of [this.#token, this.#accountId, ...this.#jwts]) out = redactFragments(out, secret);
     return out;
   }

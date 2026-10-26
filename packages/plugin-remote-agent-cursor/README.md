@@ -15,7 +15,7 @@ pnpm add @aalis/plugin-remote-agent-cursor
 - provides：`remote-agent`
 - uses：`provide`、`lifecycle`、`logger`、`config`
 
-激活时不发任何请求；鉴权与模型参数校验在消费方第一次调 `ready()` 时做。模型参数须写全，并等于 `/v1/models` 列出的某个变体，否则提供者不可用。API key 只在宿主进程里用，错误与日志里不出现 key 与预签名链接的查询串。
+激活时不发任何请求；鉴权与模型参数校验在消费方第一次调 `ready()` 时做。模型参数须写全，并等于 `/v1/models` 列出的某个变体，否则提供者不可用。API key 只在宿主进程里用：错误、日志与结果说明按值去掉 key 的片段，下载报错按值去掉这次预签名链接的查询串，请求路径去掉插件自己拼的查询串，其余照原文。
 
 ## 文档
 

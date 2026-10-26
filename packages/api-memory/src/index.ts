@@ -288,7 +288,8 @@ declare module '@aalis/api-hooks' {
        * `type` 是这一行所属的清理类型。处理某个清理类型的插件经贡献点 `memory:clear-type` 登记它，并在各行标注它，成败都标：
        * `/clear` 只认登记了的类型，对显式要求的每个类型核对有没有标注它的行，没有就回报「没有已启用的插件处理这一类型」。
        * 只在清理全部会话时清的数据（跨会话的），由处理它的插件在会话级清理、types 显式含它时自己推一行未清理的结果。
-       * `message` 给人看，可以是文字对象（@aalis/schema-i18n），`/clear` 按会话的语言回给发指令的人；写日志的取 toSource。
+       * `message` 给人看，要自己写明成败（`/clear` 每行原样列出，不按 `success` 另加标记），可以是文字对象（@aalis/schema-i18n），
+       * `/clear` 按会话的语言回给发指令的人；写日志的取 toSource。
        */
       results: Array<{ source: string; type?: string; success: boolean; message: string | TextRef }>;
     };

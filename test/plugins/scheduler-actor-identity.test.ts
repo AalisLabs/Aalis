@@ -1,11 +1,13 @@
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
+import { webuiServer } from '@aalis/api-webui';
 import { App, events, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
+import { pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // scheduler 触发时的代理身份：owner 只能来自显式来源，绝不能由「字段缺失」推断
@@ -134,6 +136,78 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
     });
     expect(emitted, '持久化任务没被载入，本用例没测到东西').toBe(true);
     expect(actor, `创建者未知的持久化任务被补成 ${JSON.stringify(actor)}；未知不等于 owner`).toBeUndefined();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 静态任务的执行身份只写了一半（actorPlatform 与 actorUserId 缺一个）是配置错误：这条任务不载入，WebUI 出一条错误提示，
+// 不补成 owner（写执行身份通常是为了降权，补成 owner 与作者意图相反）。配置文件里写了的名字照旧归配置文件：
+// 持久化里同名的动态任务不顶上来，经服务与工具也建不了同名的任务。
+// ════════════════════════════════════════════════════════════
+
+describe('静态任务的执行身份只写一半：不载入，提示去改配置', () => {
+  async function start(storageSeed?: Record<string, string>) {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    const host = app.bind({ provide, services });
+    host.provide.use(storage, memoryStorage(storageSeed).service as never);
+    const pages = pageHost();
+    host.provide.use(webuiServer, pages.service);
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.register(cronEnginePlugin, {});
+    await app.plugins.register(schedulerPlugin, {
+      jobs: [
+        { name: 'half', interval: 3600, content: 'x', actorUserId: '<占位账号>' },
+        { name: 'halfp', interval: 3600, content: 'x', actorPlatform: 'onebot' },
+        { name: 'ok', interval: 3600, content: 'x' },
+      ],
+    });
+    await app.plugins.idle();
+    return { app, pages, svc: host.services.use.get(scheduler), toolSvc: host.services.use.get(tools) };
+  }
+
+  it('插件照常激活，只写一半的（只写了 actorUserId 或只写了 actorPlatform）不在任务表里，各出一条错误提示去改配置文件', async () => {
+    const { app, pages, svc } = await start();
+    try {
+      expect(app.plugins.getPlugin(schedulerPlugin.name)?.state).toBe('active');
+      expect(svc?.getJobs().map(job => job.name)).toEqual(['ok']);
+      expect(pages.notices()).toEqual([
+        expect.objectContaining({ id: 'unscheduled:half', level: 'error', open: 'config' }),
+        expect.objectContaining({ id: 'unscheduled:halfp', level: 'error', open: 'config' }),
+      ]);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('经服务与 scheduler_create_job 建同名的任务：报来自配置文件，不载入，提示还在', async () => {
+    const { app, pages, svc, toolSvc } = await start();
+    try {
+      if (!svc || !toolSvc) throw new Error('scheduler 或 tools 服务未注册');
+      expect(() => svc.addJob({ ...baseJob, name: 'half', content: 'z' })).toThrow('来自配置文件');
+      toolSvc.setExecutionGuard(async () => ({ ok: true }));
+      const res = await toolSvc.execute(
+        'scheduler_create_job',
+        { name: 'half', interval: 3600, content: 'z' },
+        { sessionId: 'internal', platform: 'onebot', participants: [{ platform: 'onebot', userId: '30001' }] },
+      );
+      expect(JSON.parse(res.content).error).toContain('来自配置文件');
+      expect(svc.getJobs().map(job => job.name)).toEqual(['ok']);
+      expect(pages.notices().map(notice => notice.id)).toEqual(['unscheduled:half', 'unscheduled:halfp']);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('持久化里同名的动态任务也不载入', async () => {
+    const persisted = JSON.stringify([
+      { name: 'half', interval: 3600, content: 'y', sessionId: 'internal', platform: 'internal', enabled: true },
+    ]);
+    const { app, svc } = await start({ 'data:/scheduler-jobs.json': persisted });
+    try {
+      expect(svc?.getJobs().map(job => job.name)).toEqual(['ok']);
+    } finally {
+      await app.stop();
+    }
   });
 });
 

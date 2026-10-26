@@ -49,7 +49,8 @@ interface SchedulerJobConfig {
    * 代理身份的 platform（authority 查表用），与 `platform` 解耦。
    * 由创建路径 snapshot 真实调用者身份；触发时回填到 IncomingMessage.actor.platform。
    * - WebUI/CLI/AI 调用工具创建：来自调用者 callCtx，**调用者匿名则留空**
-   * - 静态 yaml jobs 缺省：webui:console（owner 级，因为编辑配置文件本身就是 owner 行为）
+   * - 静态 yaml jobs：与 actorUserId 成对填写；都不写为 webui:console（owner 级，因为编辑配置文件本身就是 owner 行为）；
+   *   只写一项是配置错误，这条任务不载入
    * - 老 dynamic jobs 缺省：**留空 = 匿名**（带启动 warning，便于审计）
    *
    * 留空即匿名（defaultAuthority）。触发路径不会为空值发明身份——owner 只能来自显式来源。
@@ -129,9 +130,9 @@ export interface SchedulerService {
   pauseJob(name: string): boolean;
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
-  /** cron 无效时抛出原因，不收下 */
+  /** 名字是配置文件里写了的、cron 无效时抛出原因，不收下 */
   addJob(job: SchedulerJobConfig): void;
-  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。cron 无效时抛出原因，原任务不变 */
+  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。名字是配置文件里写了的、cron 无效时抛出原因，原任务不变 */
   setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
 }
@@ -182,13 +183,14 @@ export const configSchema = defineConfig({
         onInvalid: 'error',
         label: '执行身份-平台',
         description:
-          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。留空 = webui。',
+          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。与执行身份-用户 ID 成对填写；都不写以 owner 身份运行；只写一项是配置错误，这条任务不载入。',
       },
       actorUserId: {
         type: 'string',
         onInvalid: 'error',
         label: '执行身份-用户 ID',
-        description: '代理身份的 userId。留空 = console（与 actorPlatform=webui 组合即 owner，拥有一切能力）。',
+        description:
+          '代理身份的 userId。与执行身份-平台成对填写；都不写以 owner 身份运行；只写一项是配置错误，这条任务不载入。',
       },
       content: {
         type: 'string',
@@ -819,26 +821,38 @@ async function run(caps: Caps): Promise<void> {
     logger.use.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
   }
 
-  // 静态 YAML 任务的「创建者」是编辑配置文件的人——那本身就是 owner 行为，故缺省补 owner。
+  // 静态 YAML 任务的「创建者」是编辑配置文件的人——那本身就是 owner 行为，故两项都不写时补 owner。
   // **这是全插件唯一允许推断 owner 的地方**：来源是配置文件（只有能写盘的人才改得动），
   // 不是运行时输入。补在此处而非触发时，是为了让「谁是 actor」在任务入表那一刻就定死，
   // 触发路径只透传、不再有第二次机会发明身份。YAML 显式写 actor 则用其值（可降权）。
   for (const job of config.jobs) {
     const p = job.actorPlatform?.trim();
     const u = job.actorUserId?.trim();
-    if ((p && !u) || (!p && u)) {
-      // 半指定：只写了一半就当没写，会被整体替换成 owner —— 那与作者意图相反
-      // （写 actor 通常是为了**降权**）。不静默升权，也不因此拒绝启动。
-      logger.use.warn(
-        `任务 "${job.name}" 只写了 actorPlatform/actorUserId 其中一个，两者必须成对；已按未指定处理（owner）`,
+    if (!p !== !u) {
+      // 只写了一半：写执行身份通常是为了降权，补成 owner 与作者意图相反，另一半也无从知道，所以这条不载入
+      logger.use.error(
+        `任务 "${job.name}" 只写了 actorPlatform、actorUserId 其中一个，两者须成对填写；这条任务没有载入`,
       );
+      unscheduled.set(
+        job.name,
+        webui.use.notify({
+          id: `unscheduled:${job.name}`,
+          level: 'error',
+          title: `计划任务「${job.name}」没有载入：执行身份只写了一半`,
+          detail:
+            '在配置文件里把这个任务的 actorPlatform 与 actorUserId 写成一对，或两项都删掉（以 owner 身份运行），保存后生效。',
+          open: 'config',
+        }),
+      );
+      continue;
     }
     initJob(p && u ? job : { ...job, actorPlatform: 'webui', actorUserId: 'console' });
   }
 
-  // 持久化的动态任务（同名的配置文件任务优先）
+  // 持久化的动态任务：配置文件里写了的名字归配置文件，那一条没载入也不让同名的动态任务顶上来；
+  // 文件里重名的只认第一条
   for (const job of persisted) {
-    if (!runtimes.has(job.name)) {
+    if (!configJobNames.has(job.name) && !runtimes.has(job.name)) {
       dynamicJobs.set(job.name, job);
       initJob(job);
     }
@@ -848,6 +862,14 @@ async function run(caps: Caps): Promise<void> {
   }
 
   // ── 注册 scheduler 服务 ──
+
+  /**
+   * 配置文件里写了的名字归配置文件（那一条没载入也一样）：页面、工具与别的插件经服务新建与修改时都不能用它，免得顶替它、
+   * 撤掉它的错误提示，又因名字在配置里不落盘、重启就没了
+   */
+  function rejectConfigName(name: string): void {
+    if (configJobNames.has(name)) throw new Error(`任务 "${name}" 来自配置文件，要改去配置文件里改`);
+  }
 
   /** 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改 */
   function rejectInvalidCron(job: SchedulerJobConfig): void {
@@ -914,19 +936,15 @@ async function run(caps: Caps): Promise<void> {
       return true;
     },
     addJob(job) {
+      rejectConfigName(job.name);
       rejectInvalidCron(job);
       initJob(job);
-      // 非配置中定义的任务需要持久化
-      if (!configJobNames.has(job.name)) {
-        dynamicJobs.set(job.name, job);
-        saveDynamicJobs();
-      }
+      dynamicJobs.set(job.name, job);
+      saveDynamicJobs();
     },
     setJob(job) {
-      // upsert：先 remove 再 add；命中 config 静态任务时不允许覆盖
-      if (configJobNames.has(job.name)) {
-        throw new Error(`任务 "${job.name}" 来自配置文件，无法通过 setJob 覆盖`);
-      }
+      // upsert：先 remove 再 add
+      rejectConfigName(job.name);
       rejectInvalidCron(job);
       const existed = runtimes.get(job.name);
       if (existed) {
