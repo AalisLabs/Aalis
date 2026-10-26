@@ -1288,6 +1288,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
+      '@aalis/api-session-protocol':
+        specifier: workspace:>=0.2.0 <1.0.0
+        version: link:../api-session-protocol
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage

@@ -1,14 +1,19 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { App, definePlugin, events, LogHub, provide } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import type { OutgoingMessage } from '@aalis/schema-message';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { platform } from '../../packages/api-platform/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { attachSessionServer } from '../fixtures/cli-session.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // CLI 会话里的附件：终端显示不了图片本身，写一行说明（类型、名称、大小、本机路径；取不到路径时写存储地址），
 // 写出即算送达（填 delivery 并发 outbound:delivered，照常归档）。附件消息不往终端写空行。
-// 用非 TTY 模式：出站消息落成 `[cli] …` 日志，便于断言。流式去重那一支只在 TUI 里走到，那两条用例起真 TUI、看最后一帧。
+// 用非 TTY 模式：出站消息落成 `[cli] …` 日志，便于断言。订阅着终端的会话时她回复的正文由条目画、出站只写附件，这一支只在 TUI
+// 里走到，那两条用例起真 TUI、看最后一帧。
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
@@ -213,27 +218,29 @@ describe('plugin-cli 附件', () => {
       );
     }));
 
-  /** 起真 TUI，流式写出 streamed 后交出 message，回执照样认领为送达；交回最后一帧去掉 ANSI 控制码的画面 */
-  async function afterStreamed(streamed: string, message: OutgoingMessage): Promise<string> {
+  /**
+   * 起真 TUI 交出 message，回执照样认领为送达；交回最后一帧去掉 ANSI 控制码的画面。subscribed 时另接上会话服务、等终端订上它的
+   * 会话：她回复的正文由会话服务推来的条目画
+   */
+  async function tuiFrame(message: OutgoingMessage, subscribed: boolean): Promise<string> {
     const tty = fakeTty(20, 100);
     const writes: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
       writes.push(String(chunk));
       return true;
     });
+    const home = mkdtempSync(join(tmpdir(), 'aalis-cli-attachments-'));
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ events });
     const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
     try {
+      const session = subscribed ? await attachSessionServer(app, home) : undefined;
       await app.plugin(cliPlugin, {});
       await app.start();
+      await session?.subscribed;
       await settle();
-      const stream = (chunk: Record<string, unknown>) =>
-        host.events.use.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
-      await stream({ contentDelta: streamed });
-      await stream({ done: true });
       await host.events.use.emit('outbound:message', message);
-      expect(message.delivery, '流式去重那一支同样认领回执').toBeDefined();
+      expect(message.delivery, '终端认领回执').toBeDefined();
       expect(await message.delivery).toEqual({ ok: true });
       await settle();
       const all = writes.join('');
@@ -241,28 +248,25 @@ describe('plugin-cli 附件', () => {
     } finally {
       await app.stop().catch(() => {});
       tty.restore();
+      rmSync(home, { recursive: true, force: true });
     }
   }
 
-  it('TUI 里已流式写出的回复：去重跳过整条回复时，回执照样认领为送达', async () => {
-    const frame = await afterStreamed('画好了', {
-      sessionId: 'cli-default',
-      platform: 'cli',
-      content: '画好了',
-      source: 'agent',
-    });
-    expect(frame.split('画好了').length - 1, '正文只有流式写出的那一份').toBe(1);
-  });
-
-  it('TUI 里已流式写出的回复带附件：正文不再写一遍，只补附件那一行', async () => {
-    const frame = await afterStreamed('画好了一只猫', {
-      sessionId: 'cli-default',
-      platform: 'cli',
-      content: '画好了一只猫',
-      source: 'agent',
-      attachments: [{ kind: 'image', data: 'data:/images/cat.png', name: '猫.png' }],
-    });
-    expect(frame.split('画好了一只猫').length - 1, '正文只有流式写出的那一份').toBe(1);
+  it.each([
+    ['订阅着终端的会话：正文只按条目写一次，出站只补附件那一行', true],
+    ['没有会话服务：整条写出，附件照写', false],
+  ])('TUI 里她带附件的回复（%s），回执照样认领为送达', async (_case, subscribed) => {
+    const frame = await tuiFrame(
+      {
+        sessionId: 'cli-default',
+        platform: 'cli',
+        content: '画好了一只猫',
+        source: 'agent',
+        attachments: [{ kind: 'image', data: 'data:/images/cat.png', name: '猫.png' }],
+      },
+      subscribed,
+    );
+    expect(frame.split('画好了一只猫').length - 1, '正文只有一份').toBe(1);
     expect(frame).toContain('[图片] 猫.png · data:/images/cat.png');
   });
 });

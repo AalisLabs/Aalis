@@ -6,7 +6,7 @@ import { fakeTty } from '../helpers/tty.js';
 // ════════════════════════════════════════════════════════════
 // 非 chat 视图期间进入聊天区的消息（意图确认提示走的就是 outbound:message）此前没有任何可见
 // 提示：用户停在 logs 页，确认问题在 chat 页静静等 60 秒后取消。契约：header 的 CHAT 页签带
-// 计数高亮，切回 chat 即清。起真 TUI（mock isTTY + 收集 stdout 帧）看 header。
+// 计数高亮，切回 chat 即清。没有会话服务时不画流式增量，她的回复整条写出时计一次。起真 TUI（mock isTTY + 收集 stdout 帧）看 header。
 // ════════════════════════════════════════════════════════════
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
@@ -61,28 +61,29 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       await settle();
       expect(lastFrame()).toContain('CHAT(2)');
 
-      // 流式回复：首块计一次，后续块与收尾不再计；随后整条 outbound:message 被流式去重吃掉，也不双计
+      // 没有会话服务时终端不画流式增量：她的回复在整条交出时写一次、计一次
       const stream = (chunk: Record<string, unknown>) =>
         host.events.use.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
-      await stream({ contentDelta: '流式' });
+      await stream({ contentDelta: '整条' });
       await stream({ contentDelta: '回复' });
       await stream({ done: true });
       await settle();
-      expect(lastFrame()).toContain('CHAT(3)');
+      expect(lastFrame(), '流式增量不画、不计').toContain('CHAT(2)');
       await host.events.use.emit('outbound:message', {
-        content: '流式回复',
+        content: '整条回复',
         sessionId: 'cli-default',
         platform: 'cli',
         source: 'agent',
       });
       await settle();
-      expect(lastFrame(), '流式后的整条回复不得再计一次').toContain('CHAT(3)');
+      expect(lastFrame()).toContain('CHAT(3)');
 
       process.stdin.emit('keypress', '', { name: 't', ctrl: true });
       await settle();
       const frame = lastFrame();
       expect(frame).toContain('[CHAT]');
       expect(frame, '切回 chat 后计数应清零').not.toMatch(/CHAT\(\d+\)/);
+      expect(frame.split('整条回复').length - 1, '整条回复只写一次').toBe(1);
     } finally {
       await app.stop().catch(() => {});
       tty.restore();

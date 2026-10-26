@@ -24,6 +24,7 @@ import {
   resolvePlatformBySession,
 } from '@aalis/api-platform';
 import { isUnfiled, sessionManager } from '@aalis/api-session-manager';
+import { sessionProtocol } from '@aalis/api-session-protocol';
 import type {} from '@aalis/api-session-settings'; // declaration merging 激活点（session-settings:changed 事件）
 import { storage } from '@aalis/api-storage';
 import {
@@ -42,11 +43,13 @@ import {
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type Localized, type TextRef, textOf } from '@aalis/schema-i18n';
 import type { LogEntry } from '@aalis/schema-log';
-import type { MessageAttachment, OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
+import type { MessageAttachment, OutgoingMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
-import { ChatBuffer } from './chat-buffer.js';
+import { ChatLog } from './chat-log.js';
+import { groupSummary, languageOf, type Row, type ToolCallItem, toolLine } from './fold.js';
+import { SessionView } from './session-view.js';
 import { t } from './texts.js';
 import type { CLIService } from './types.js';
 
@@ -116,6 +119,9 @@ type CLIView = 'chat' | 'logs' | 'status' | 'help';
 
 type CLIConfig = Omit<ConfigOf<typeof configSchema>, 'lastView'> & { lastView: CLIView };
 
+/** 本地终端身份：物理访问即运维者本人。接审批面、接会话协议都以它 */
+const CONSOLE = { platform: 'cli', userId: 'console' };
+
 // ===== 插件入口 =====
 
 // platform 既被本插件提供又被状态页枚举，只能是可选依赖：required 会让激活等一个由自己提供的服务。
@@ -141,6 +147,8 @@ const uses = {
   sessionManager: optional(sessionManager),
   /** 界面文字按全局默认层的语言显示；缺席时按原文 */
   i18n: optional(i18n),
+  /** 聊天区她的输出取会话协议里本会话的条目；缺席时只写整条回复 */
+  sessionProtocol: optional(sessionProtocol),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -157,6 +165,7 @@ type TuiCaps = Pick<
   | 'plugins'
   | 'commands'
   | 'sessionManager'
+  | 'sessionProtocol'
 >;
 
 /** 按全局默认层的语言渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
@@ -243,23 +252,22 @@ function startCli(caps: Caps): void {
     }
     return [`${label} ${att.name ?? path.split('/').pop() ?? ''}`, size, path].filter(Boolean).join(' · ');
   }
-  /** 同一轮已流式输出时，agent 的整条回复是重复、正文早已写出（消耗流式标记）；系统/指令消息不是流式正文 */
-  const streamedAlready = (msg: OutgoingMessage) => msg.source === 'agent' && tui?.consumeStreamedSend() === true;
-  /** 附件消息：文字先写（非空、且没有流式写出过时），再依次写各附件。只带附件的消息（发图工具交来的）不消耗流式标记 */
-  async function writeAttachments(msg: OutgoingMessage, attachments: MessageAttachment[]): Promise<void> {
-    if (msg.content.trim() && !streamedAlready(msg)) await adapter.sendMessage(msg.sessionId, msg.content);
+  /**
+   * 写到终端：她回复的正文由会话协议的条目画，终端订着这个会话时不再写一遍（订阅在途时等它落定再定）；没订上（会话服务不在、
+   * 会话还没建档）时整条写出。系统与指令消息照常写。附件消息的文字先写（非空时），再依次写各附件
+   */
+  async function write(msg: OutgoingMessage, attachments: MessageAttachment[]): Promise<void> {
+    const drawn = msg.source === 'agent' && (await tui?.drawsReplies()) === true;
+    if (!drawn && (attachments.length === 0 || msg.content.trim()))
+      await adapter.sendMessage(msg.sessionId, msg.content);
     for (const att of attachments) await adapter.sendMessage(msg.sessionId, await attachmentLine(att));
   }
 
   events.use.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
     const attachments = (msg.attachments ?? []).map(att => ({ ...att }));
-    // 已流式写出的正文不再写，其余照常显示。content 已由网关按会话的语言渲染（网关缺席时是原文）
-    const written = attachments.length
-      ? writeAttachments(msg, attachments)
-      : streamedAlready(msg)
-        ? Promise.resolve()
-        : adapter.sendMessage(msg.sessionId, msg.content);
+    // 由条目画的正文不再写，其余照常显示。content 已由网关按会话的语言渲染（网关缺席时是原文）
+    const written = write(msg, attachments);
     // 出站的平台另有在场的适配器（如 owner 从 WebUI 驱动这个会话）由那个平台认领并记进历史；回执已被别的入口认领的不覆盖。
     // 这两种照样写到终端，不认领、不发 outbound:delivered，免得再记一份。平台没有适配器的（如工作流注入的）由终端认领
     const handedOff =
@@ -277,11 +285,6 @@ function startCli(caps: Caps): void {
       },
       err => ({ ok: false as const, error: textOf(err) }),
     );
-  });
-
-  events.use.on('outbound:stream', chunk => {
-    if (chunk.sessionId !== sessionId) return;
-    tui?.applyStreamChunk(chunk);
   });
 
   // 日志从激活起订阅：先补发最近 2000 条，之后实时接着送，seq 连续。界面起来之前攒着，起来之后交给它
@@ -322,15 +325,17 @@ class CliTui {
   private delivering: Promise<void> = Promise.resolve();
   /** 已告警过配置的会话 id 由别的平台适配器认领 */
   private warnedForeign = false;
-  private readonly chat = new ChatBuffer();
+  private readonly log = new ChatLog();
+  /** 连续的工具调用全部展开（Ctrl+O）；不存配置，重启回到收起 */
+  private expanded = false;
+  /** 经会话协议订阅终端的会话，条目进聊天区 */
+  private readonly session: SessionView;
+  private unfollow?: () => void;
   private logLines: LogEntry[];
   private logScroll = 0;
   private logWrap = false;
   private statusScroll = 0;
   private helpScroll = 0;
-  // 流式状态：正在生成的 assistant 回复，其行由 ChatBuffer 维护为末尾一段
-  private streamingContent = '';
-  private streamedRecently = false;
   private renderQueued = false;
   private closing = false;
   private readonly restoreOnExit = () => restoreTerminalState();
@@ -352,15 +357,22 @@ class CliTui {
     // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
     // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按全局默认层的语言渲染，事实原样
-    this.attendance = this.approvalSurface.attend(
-      { platform: 'cli', userId: 'console' },
-      {
-        requested: approval => {
-          this.cards.push(approval);
-          this.queueRender();
-        },
-        settled: (approvalId, { state }) => this.closeCard(approvalId, tool => t(SETTLED_LINES[state], { tool })),
+    this.attendance = this.approvalSurface.attend(CONSOLE, {
+      requested: approval => {
+        this.cards.push(approval);
+        this.queueRender();
       },
+      settled: (approvalId, { state }) => this.closeCard(approvalId, tool => t(SETTLED_LINES[state], { tool })),
+    });
+    this.session = new SessionView(
+      sessionId,
+      { identity: CONSOLE, surface: approvalSurface },
+      {
+        item: item => this.timelineChanged(this.log.upsert(item)),
+        delta: (itemId, text) => this.timelineChanged(this.log.delta(itemId, text)),
+        tasks: this.queueRender,
+      },
+      caps.logger.use,
     );
   }
 
@@ -386,12 +398,15 @@ class CliTui {
     process.once('exit', this.restoreOnExit);
 
     const welcome = t('welcome', { name: this.personaName() ?? 'Aalis', key: chalk.cyan('Ctrl+G') });
-    this.chat.append([chalk.gray(this.formatCont()) + chalk.gray(this.localize(welcome))]);
+    this.log.append([chalk.gray(this.formatCont()) + chalk.gray(this.localize(welcome))]);
     void this.pointToUnready();
+    // 她的输出取会话协议里本会话的条目：会话服务在就接上，换提供者时断开旧的、接上新的
+    this.unfollow = this.caps.sessionProtocol.follow(service => this.session.attach(service));
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
-    // 设置变了（全局层的语言、终端会话的人设，在宿主配置文档或会话设置里）：界面立即按新的设置重绘，已写进聊天区的行不变
+    // 设置变了（全局层的语言、终端会话的人设，在宿主配置文档或会话设置里）：界面立即按新的设置重绘。聊天区的本地行写进时定住，
+    // 她的回复与工具行随当前设置重绘
     this.caps.events.use.on('session-settings:changed', this.queueRender);
     this.caps.events.use.on('host-config:changed', this.queueRender);
 
@@ -416,7 +431,7 @@ class CliTui {
     const hint = (this.caps.commands.present ? this.caps.commands.use.has('doctor') : undefined)
       ? t('unreadyDoctor', { count, command: chalk.cyan('/doctor') })
       : t('unreadyLogs', { count, key: chalk.cyan('Ctrl+L') });
-    this.chat.append([chalk.gray(this.formatCont()) + chalk.yellow(this.localize(hint))]);
+    this.log.append([chalk.gray(this.formatCont()) + chalk.yellow(this.localize(hint))]);
     this.queueRender();
   }
 
@@ -424,6 +439,7 @@ class CliTui {
     if (this.closing) return;
     this.closing = true;
     this.running = false;
+    this.unfollow?.();
     input.off('keypress', this.handleKeypress);
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
@@ -442,49 +458,23 @@ class CliTui {
     if (this.view === 'logs') this.queueRender();
   }
 
+  /** 写一段她名下的本地行（整条回复、指令回复与系统消息、附件说明） */
   pushAssistant(content: string): void {
     if (!content.trim()) return;
-    this.chat.append(this.formatAssistantBlock(content));
+    this.log.append(this.formatAssistantBlock(content));
     if (this.view !== 'chat') this.unreadChat++;
     this.queueRender();
   }
 
-  /**
-   * 上一轮 是否有流式内容。调用后会重置。转发文件时 outbound:message 看到流完整后重复发送，需要跳过。
-   */
-  consumeStreamedSend(): boolean {
-    if (this.streamedRecently) {
-      this.streamedRecently = false;
-      return true;
-    }
-    return false;
+  /** 她回复的正文由条目画：订着终端的会话（订阅在途时等它落定） */
+  drawsReplies(): Promise<boolean> {
+    return this.session.drawsReplies();
   }
 
-  applyStreamChunk(chunk: StreamChunkMessage): void {
-    if (chunk.done) {
-      // 完结本轮流式
-      if (this.chat.streaming) {
-        this.streamedRecently = true;
-        this.chat.endStreaming();
-        this.streamingContent = '';
-        if (this.view === 'chat') this.queueRender();
-      }
-      return;
-    }
-    if (!chunk.contentDelta) return;
-    // 首个块：开一个新的 assistant 条目；上一轮遗留的「已流式」标记一并作废
-    if (!this.chat.streaming) {
-      this.streamingContent = '';
-      this.streamedRecently = false;
-      if (this.view !== 'chat') {
-        this.unreadChat++;
-        this.queueRender();
-      }
-    }
-    this.streamingContent += chunk.contentDelta;
-    // 根据累积内容重建该消息占据的行
-    this.chat.replaceStreamingBlock(this.formatAssistantBlock(this.streamingContent));
-    if (this.view === 'chat') this.queueRender();
+  /** 条目来了：有字的回复刚出现、又不在聊天页时计一条未读 */
+  private timelineChanged(fresh: boolean): void {
+    if (fresh && this.view !== 'chat') this.unreadChat++;
+    this.queueRender();
   }
 
   /** 终端会话生效的人设的名字：人设服务按这个会话取卡，与回合同一口径；没有人设服务或卡没取名时为 undefined */
@@ -551,6 +541,11 @@ class CliTui {
     }
     if (key.ctrl && key.name === 'g') {
       this.switchView('help');
+      return;
+    }
+    if (key.ctrl && key.name === 'o') {
+      this.expanded = !this.expanded;
+      this.queueRender();
       return;
     }
     if (key.name === 'escape') {
@@ -673,9 +668,7 @@ class CliTui {
     if (index < 0) return;
     const [card] = this.cards.splice(index, 1);
     if (index === 0) this.choice = undefined;
-    this.chat.append([
-      `${this.formatHead(chalk.yellow('◆ System'))}${this.localize(line(sanitizeForCard(card.tool)))}`,
-    ]);
+    this.log.append([`${this.formatHead(chalk.yellow('◆ System'))}${this.localize(line(sanitizeForCard(card.tool)))}`]);
     if (this.view !== 'chat') this.unreadChat++;
     this.queueRender();
   }
@@ -720,7 +713,7 @@ class CliTui {
     if (this.history.length > 100) this.history.shift();
     const firstHead = this.formatHead(chalk.cyan(`❯ ${this.config.prompt}`));
     const contHead = this.formatCont();
-    this.chat.append(text.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line));
+    this.log.append(text.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line));
 
     // 指令解析已统一到全局 inbound:command 相位（plugin-commands）。
     // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
@@ -746,6 +739,8 @@ class CliTui {
     if (sm && unfiled && !(await this.claimedElsewhere())) {
       await sm.ensureSession(this.sessionId, {}, { createdFrom: this.approvalSurface.name });
     }
+    // 订上这个会话再发：这一轮的条目从头画进聊天区
+    await this.session.ensureSubscribed();
     await this.caps.events.use.emit('inbound:message', {
       content: text,
       sessionId: this.sessionId,
@@ -909,13 +904,36 @@ class CliTui {
   }
 
   private getChatViewLines(width: number): string[] {
-    const lines: string[] = [];
     const inner = width - 2; // 缩进 2 列
-    for (const raw of this.chat.lines) {
-      // 宽度感知截断为单行；超长内容直接尾部省略。
-      lines.push(`  ${clipAnsi(raw, inner)}`);
+    // 宽度感知截断为单行；超长内容直接尾部省略。
+    return this.log
+      .layout(this.session.taskRunning)
+      .flatMap(part => ('lines' in part ? part.lines : this.rowLines(part.row)))
+      .map(raw => `  ${clipAnsi(raw, inner)}`);
+  }
+
+  /**
+   * 条目的一行画成的行：她的正文另起一块、第一行带人设名的标签；工具调用一行，收起的一组一行（展开时这一组的工具调用各一行），
+   * 都用续行的空标签头。思考、提问、通知与回合条目不画：输入回显、指令回复与附件说明是本地行，思考不显示
+   */
+  private rowLines(row: Row): string[] {
+    if ('group' in row) {
+      const calls = row.group.filter((item): item is ToolCallItem => item.kind === 'tool-call');
+      if (this.expanded) return calls.map(call => this.callLine(call));
+      return [this.formatCont() + chalk.gray(this.localize(groupSummary(calls)))];
     }
-    return lines;
+    const { item } = row;
+    if (item.kind === 'agent-message') return item.text.trim() ? this.formatAssistantBlock(item.text) : [];
+    return item.kind === 'tool-call' ? [this.callLine(item)] : [];
+  }
+
+  /** 工具调用一行：做了什么与状态，等你批准写成黄色、失败写成红色 */
+  private callLine(call: ToolCallItem): string {
+    const { summary, status } = toolLine(call, this.session.taskRunning, languageOf(this.localize));
+    const head = this.formatCont() + chalk.gray(this.localize(summary));
+    if (!status) return head;
+    const paint = status.tone === 'attention' ? chalk.yellow : status.tone === 'danger' ? chalk.red : chalk.gray;
+    return `${head}${chalk.gray(' · ')}${paint(this.localize(status.text))}`;
   }
 
   /** 日志视图的增量格式化缓存。logLines 只追加、从不改写，因此已格式化的行
@@ -1181,6 +1199,7 @@ const HELP = {
       title: t('helpViews'),
       rows: [
         ['Ctrl+T', t('helpChat')],
+        ['Ctrl+O', t('helpExpand')],
         ['Ctrl+L', t('helpLogs')],
         ['Ctrl+S', t('helpStatus')],
         ['Ctrl+G', t('helpHelp')],

@@ -11,6 +11,7 @@ import { clockTime, duration, speakerName } from '../format';
 import { tr } from '../language';
 import { type BackgroundTask, RequestError, type SessionItem } from '../protocol/session-client';
 import { t } from '../texts';
+import { awaitingApproval, displayOf } from './fold';
 import './ToolCall.css';
 
 // 工具卡：一行写动作与对象、右侧写状态，点开看细节；模型还在生成参数时只有工具名与「正在生成」，没有细节可看。
@@ -23,7 +24,6 @@ import './ToolCall.css';
 
 type ToolCallItem = Extract<SessionItem, { kind: 'tool-call' }>;
 type Settlement = NonNullable<ToolCallItem['settlement']>;
-type Display = NonNullable<ToolCallItem['display']>;
 
 /** 一行里命令最多显示这么多个字，完整的在细节里 */
 const SUMMARY_LIMIT = 60;
@@ -48,14 +48,6 @@ function settlementText({ state, source, at, by }: Settlement): string {
   const reason = SETTLED_BY[source];
   return state === 'cancelled' ? tr('settledCancelled', { reason, time }) : tr('settledAsDenied', { reason, time });
 }
-
-/** 认得的展示：种类按加法扩展，服务端比客户端新时会发来认不出的种类，当没声明 */
-export function displayOf({ display }: ToolCallItem): Display | undefined {
-  return display?.kind === 'command' || display?.kind === 'file-change' ? display : undefined;
-}
-
-/** 等 owner 批准：收起会把审批卡藏起来 */
-export const awaitingApproval = (item: ToolCallItem) => item.approvalId !== undefined && item.settlement === undefined;
 
 function summaryOf(item: ToolCallItem): string {
   const display = displayOf(item);

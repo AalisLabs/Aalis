@@ -1,8 +1,10 @@
-// 本插件自己的原文字典：配置项、聊天区的提示与审批结算行、附件说明、审批卡、状态页与帮助页、输入框位置的视图说明
+// 本插件自己的原文字典：配置项、聊天区的提示与审批结算行、附件说明、工具调用的一行与收起的一行、审批卡、状态页与帮助页、输入框位置的
+// 视图说明
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  language: 'zh-CN',
   displayName: 'CLI 终端',
   sessionIdLabel: '默认会话 ID',
   sessionIdDescription: 'CLI 聊天所在的会话标识。',
@@ -29,6 +31,28 @@ const SOURCE = {
   answerRefused: '审批 {tool}：应答没有生效：{reason}',
   attachmentKind: '{kind, select, image {图片} audio {音频} video {视频} file {文件} other {附件}}',
   inlineData: '内联数据',
+  toolRun: '执行 {command}',
+  toolRunClipped: '执行 {head}…（省略 {count, number} 字）…{tail}',
+  toolWrite: '写入 {path}',
+  toolEdit: '修改 {path}',
+  toolCall: '调用 {tool}',
+  generating: '正在生成',
+  running: '运行中',
+  waitingApproval: '等你批准',
+  failed: '失败',
+  exitCode: '退出码 {code}',
+  stopped: '已停止',
+  denied: '没批准',
+  backgroundRunning: '转到后台 · 运行中',
+  durationSeconds: '{seconds} 秒',
+  durationMinutes: '{minutes, number} 分 {seconds, number} 秒',
+  callKindCommand: '执行命令 {count, number}',
+  callKindFileChange: '改动文件 {count, number}',
+  callKindOther: '其他 {count, number}',
+  callsMixed: '调用了 {count, number} 个工具：{kinds, list}',
+  callsCommands: '执行了 {count, number} 条命令',
+  callsFileChanges: '改动了 {count, number} 次文件',
+  callsTools: '调用了 {count, number} 个工具',
   cardHeading: '需要批准',
   cardSubject: '{tool} · 会话 {session}',
   cardSubjectWaiting: '{tool} · 会话 {session} · 还有 {count, number} 张',
@@ -53,6 +77,7 @@ const SOURCE = {
   helpLogs: 'Logs   ·  实时日志',
   helpStatus: 'Status ·  服务与平台状态',
   helpHelp: 'Help   ·  当前页',
+  helpExpand: '连续的工具调用：全部展开 / 全部收起',
   helpBack: '返回上一个视图',
   helpExit: '退出',
   helpScrolling: '滚动 (Logs / Status / Help)',
