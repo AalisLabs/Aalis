@@ -582,6 +582,9 @@ declare module '@aalis/core' {
  * - `OutboundDeliveryFailed`：平台适配器记下的投递失败（role 为 system）：她发出的消息平台没收下或结果未知，进下一轮的上下文，
  *   让她知道刚才那条没送达。metadata 带 {@link WellKnownMetadataKeys} 的 `DeliveryError`（与投递结果同一句原因），以及那条
  *   消息的 `TurnId`（一轮的回复）或 `CallId`（经工具发出的）；逐条发出停在中途时另带 `SentPieces`。
+ * - `TurnStopped`：agent 记下的停下标记（role 为 system）：一轮在回复之前被停下、会话历史里已有这一轮的输入或工具调用时写，
+ *   进下一轮的上下文，让她知道那一轮停下了、没说完的话没有留下；有停下的人时写是谁。metadata 带这一轮的 `TurnId`；回合记录
+ *   照旧另落事件标记，这一条不带 `TurnRecord`。
  */
 export const WellKnownKinds = {
   EventMarker: 'event-marker',
@@ -593,6 +596,7 @@ export const WellKnownKinds = {
   HostNotice: 'host-notice',
   IdlePrompt: 'idle-prompt',
   OutboundDeliveryFailed: 'outbound-delivery-failed',
+  TurnStopped: 'turn-stopped',
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
@@ -679,9 +683,9 @@ export interface ArchivedAttachment {
  *   会话服务据此标出提问是不是内部注入的、认出指令的回复。
  * - `HostNoticeKind`、`HostNoticeId`、`HostNoticeFacts`：宿主通知的子类（`hostNotice.kind`）、id（`hostNotice.id`）与给界面的
  *   事实（`hostNotice.facts`），存档写；会话服务据此给出通知条目的种类、id 与事实。
- * - `TurnId`：所在回合的 id（字符串）。进了一轮的输入由存档按 agent 归档时交来的回合记下，agent 写在这一轮落库的回复与工具
- *   结果上，平台适配器写在一轮回复的投递失败记录上，出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；会话服务据此
- *   把存档归回回合、标出哪一轮的回复没发出，连对话回滚据此只删这一轮的消息。
+ * - `TurnId`：所在回合的 id（字符串）。进了一轮的输入由存档按 agent 归档时交来的回合记下，agent 写在这一轮落库的回复、工具
+ *   结果与停下标记上，平台适配器写在一轮回复的投递失败记录上，出站记进历史的各条由写方按出站消息的 turnId 记下（有才记）；
+ *   会话服务据此把存档归回回合、标出哪一轮的回复没发出，连对话回滚据此只删这一轮的消息。
  * - `TurnEntry`：输入怎么进的这一轮（字符串）：`opened` 是开轮的，`joined` 是插进在跑的一轮的。与 `TurnId` 一起由存档记下。
  * - `TriggerType`：入站消息的触发类型（字符串，即 {@link IncomingMessage}.triggerType），存档写；会话服务据此标出被点名与插话。
  * - `TurnRecord`：一轮的结局与来源（{@link TurnRecord}）。agent 记在这一轮最后落库的那条回复上，没有落库回复的一轮另落一条只带

@@ -50,6 +50,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
 | `IdlePrompt` | `'idle-prompt'` | 空闲开话题的提示（`triggerType: 'idle'`）交给模型时那条指令块的 `metadata.injector`；它不落档，没有这个 kind 的归档消息 | 请求期为 system |
 | `OutboundDeliveryFailed` | `'outbound-delivery-failed'` | 平台适配器记下的投递失败：她发出的消息平台没收下或结果未知，进下一轮的上下文。`metadata` 带 `error`（与投递结果同一句原因）与那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），逐条发出停在中途的另带 `sentPieces`（已发出的条数），会话服务据此在历史里标出没发出的回复 | system |
+| `TurnStopped` | `'turn-stopped'` | agent 记下的停下标记：一轮在回复之前被停下、会话历史里已有这一轮的输入或工具调用时写，进下一轮的上下文，让她知道那一轮停下了、没说完的话没有留下；有停下的人时写是谁。`metadata` 带这一轮的 `turnId`，回合记录照旧另落事件标记 | system |
 
 第三方插件可以定义自己的 kind 字符串，但应避开上表已占用的语义。
 
@@ -72,7 +73,7 @@ if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
 
 对插件作者而言，这意味着：如果你自己拼一份 `Message[]` 喂给 `resolveLLMModel(...).chat()`，你有责任先过滤掉 `CONTROL_KINDS`。`prepareLLMMessages` 只做 role 转译与前缀拼接，不剔除 event-marker。
 
-`CrossSessionDelegation` 与 `HostNotice` 不在 `CONTROL_KINDS` 内，它们会进入上下文（分别带 `[跨会话委派]`、`[宿主通知]` 前缀，见 §3）。两者与 `IdlePrompt` 合称指令类 kind，由常量 `DIRECTIVE_KINDS` 列出：它们是宿主或系统撰写的，不是任何人的发言，用户关系、用户档案的抽取窗口与向量记忆的扩窗都按这个常量排除它们。自己拼历史做抽取的插件也应如此。
+`CrossSessionDelegation` 与 `HostNotice` 不在 `CONTROL_KINDS` 内，它们会进入上下文（分别带 `[跨会话委派]`、`[宿主通知]` 前缀，见 §3）。两者与 `IdlePrompt` 合称指令类 kind，由常量 `DIRECTIVE_KINDS` 列出：它们是宿主或系统撰写的，不是任何人的发言，用户关系、用户档案的抽取窗口与向量记忆的扩窗都按这个常量排除它们。自己拼历史做抽取的插件也应如此。`OutboundDeliveryFailed` 与 `TurnStopped` 同样进上下文，没有前缀，是写给下一轮模型的记录，界面不显示，也不进向量召回。
 
 ---
 

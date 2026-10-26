@@ -528,6 +528,13 @@
 - plugin-webui-server：WebSocket 连接建立时认不出身份的以 1008「认不出身份」关闭、记 warn，不再补成 `webui:console`（owner）。
 - 给人看的文字不带表情与勾叉：plugin-commands 的 `/clear` 回执每行就是各家的说明，不再按 `success` 加勾叉，`memory:clear` 结果行的 `message` 要自己写明成败（api-memory 的说明写明，第三方插件照此），警告不带符号（删掉字典键 `cleared`、`notCleared`）；plugin-tool-system 的 `/tools`、plugin-maimai 的查分文案（指令与工具共用）、plugin-doctor 的诊断报告（汇总与分组写「通过」「警告」「错误」）不带表情与符号；create-aalis 与 create-aalis-plugin 的终端提示与生成的插件 README，以及 okx-trading、code-runner、storage-local 的启动告警，警告写「注意：」。
 
+### 停下的一轮留标记（@aalis/schema-message、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-session-server、@aalis/plugin-memory-vector）
+
+- plugin-agent：一轮在回复之前被停下（停止键、`/stop`、禁言、停机、后台页的全部停止），会话历史里已有这一轮的输入或工具调用时，回合记录之前多一条只给模型看的停下标记（`role: 'system'`、`kind: 'turn-stopped'`，有停下的人时写是谁），下一轮的模型看得到这一轮没答完就停了；界面不显示，占一条历史条数。停止键、全部停止与 `/stop` 写停下的人（称呼与发送者前缀同一条规则，owner 自己的会话里不写），禁言与停机不写人。
+- schema-message：`WellKnownKinds` 加 `TurnStopped`（`'turn-stopped'`）。
+- api-agent：`abort` 的选项加 `by`（停下这一轮的人，与入站的 `actor` 同一形状）。
+- plugin-memory-vector：召回片段不再带出投递回报与停下标记（role 为 system 的记录），它们也不占扩窗前后 N 条的名额。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

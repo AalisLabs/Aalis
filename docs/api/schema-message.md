@@ -204,7 +204,7 @@ interface MessageUnit {
 | `Source` | `source` | 存档写入站消息的 `source`（内部注入的来源，真人发言没有）；出站消息记进历史的各条（文字的事件标记与发出的附件）写出站的 `source`（如指令回复的 `command`）；插件自己写的其余记录（投递失败）写插件的名字 | 字符串 | 会话服务标出提问是不是内部注入的、认出指令的回复，插件发的附件按它定通知的种类 |
 | `HostNoticeKind` | `hostNoticeKind` | 存档：宿主通知的子类（`hostNotice.kind`） | 字符串 | 会话服务给出通知条目的种类 |
 | `HostNoticeId`、`HostNoticeFacts` | `hostNoticeId`、`hostNoticeFacts` | 存档：宿主通知的 `id` 与给界面的事实（`hostNotice.id`、`hostNotice.facts`），有才写 | 字符串；扁平的键值（值是字符串或数） | 会话服务给出通知条目的 `noticeId` 与 `facts` |
-| `TurnId` | `turnId` | 存档按 agent 归档时交来的回合写在进了一轮的输入上；agent 写在这一轮落库的回复与工具结果上；平台适配器写在一轮回复的投递失败记录上；出站记进历史的各条由存档按出站消息的 `turnId` 记下（有才记） | 字符串 | 会话服务把存档归回回合、标出哪一轮的回复没发出；连对话回滚据此只删这一轮的消息 |
+| `TurnId` | `turnId` | 存档按 agent 归档时交来的回合写在进了一轮的输入上；agent 写在这一轮落库的回复、工具结果与停下标记（`TurnStopped`）上；平台适配器写在一轮回复的投递失败记录上；出站记进历史的各条由存档按出站消息的 `turnId` 记下（有才记） | 字符串 | 会话服务把存档归回回合、标出哪一轮的回复没发出；连对话回滚据此只删这一轮的消息 |
 | `TurnEntry` | `turnEntry` | 存档与 `TurnId` 一起写在进了一轮的输入上 | `'opened'`（开轮的）或 `'joined'`（插进在跑的一轮的） | 会话服务给出输入怎么进的这一轮 |
 | `TriggerType` | `triggerType` | 存档：入站消息的触发类型（`IncomingMessage.triggerType`），有才写 | 字符串 | 会话服务标出被点名与插话 |
 | `TurnRecord` | `turnRecord` | agent 写在这一轮最后落库的那条回复上；没有落库回复的一轮（静默、中止、出错）另落一条只带 `TurnId` 与它的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空，不进模型、不进摘要） | `TurnRecord`：`{ outcome: 'replied' \| 'silent' \| 'aborted' \| 'error'; source?: string }`，`source` 是这一轮的来源（输入的 `source`，真人消息开的没有） | 会话服务在历史里还原这一轮的结局与来源；连对话回滚随这一轮删 |

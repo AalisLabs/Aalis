@@ -6,7 +6,7 @@
 
 import type { AgentService } from '@aalis/api-agent';
 import type { SessionInfo } from '@aalis/api-session-manager';
-import type { BackgroundTask, SessionNotificationParams } from '@aalis/api-session-protocol';
+import type { BackgroundTask, Identity, SessionNotificationParams } from '@aalis/api-session-protocol';
 import type {
   BackgroundTaskChange,
   BackgroundTaskService,
@@ -104,17 +104,17 @@ export function createBackground(deps: BackgroundDeps) {
 
   /**
    * 全部停止：先停各级子会话在跑的回合并放掉它们排着的输入（经 agent 的 abort，只有排着的追问、没有在跑一轮的子会话同样
-   * 放掉），再停本会话与各级子会话在跑的后台任务、等它们落定。本会话自己的回合不停。子会话有回合在跑、agent 却不在时回
-   * unsupported，什么都不停
+   * 放掉；停下的人 by 是发起的连接身份），再停本会话与各级子会话在跑的后台任务、等它们落定。本会话自己的回合不停。子会话有
+   * 回合在跑、agent 却不在时回 unsupported，什么都不停
    */
-  async function stopAll(sessionId: string): Promise<void> {
+  async function stopAll(sessionId: string, by: Identity): Promise<void> {
     const session = deps.requireSession(sessionId);
     const below = deps.descendantsOf(session);
     if (!deps.agent.present && below.some(info => deps.isRunning(info.id))) {
       throw failure('unsupported', '没有能停止回合的 agent 服务，子会话的回合停不了');
     }
     if (deps.agent.present) {
-      for (const info of below) deps.agent.use.abort(info.id, { queued: true, reason: '全部停止' });
+      for (const info of below) deps.agent.use.abort(info.id, { queued: true, reason: '全部停止', by });
     }
     if (!deps.tasks.present) return;
     const service = deps.tasks.use;
@@ -145,8 +145,8 @@ export function createBackground(deps: BackgroundDeps) {
       if (!(await registry().stop(taskId))) throw failure('not-found', `后台任务不存在：${taskId}`);
       return {};
     },
-    'background/stopAll': async ({ sessionId }) => {
-      await stopAll(sessionId);
+    'background/stopAll': async ({ sessionId }, conn) => {
+      await stopAll(sessionId, conn.peer.identity);
       return {};
     },
   };

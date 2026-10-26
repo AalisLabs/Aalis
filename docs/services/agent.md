@@ -19,7 +19,10 @@
 ```ts
 export interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
-  abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  abort(
+    sessionId: string,
+    options?: { turnId?: string; queued?: boolean; reason?: string; by?: NonNullable<IncomingMessage['actor']> },
+  ): boolean;
   clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>, reason?: string): Promise<void>;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
@@ -33,7 +36,7 @@ export interface BoundAgent extends AgentService {
 - `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`，挂在 `agent:input:before` 上，每条输入一次、在它进入一轮之前；**不调 `next()` 即丢掉这条输入**（不进一轮、不归档）。
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）；入口记下这个会话的代号（api-session-manager 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的是会话删除之前的一代，放掉、不归档。
-- `abort(sessionId, { turnId?, queued?, reason? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志。返回有没有停下在跑的一轮。
+- `abort(sessionId, { turnId?, queued?, reason?, by? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志；`by` 是停下这一轮的人（与入站的 `actor` 同一形状），不给即没有具体的人，参考实现据此在历史里给下一轮的模型写停下标记（schema-message 的 `TurnStopped`）。返回有没有停下在跑的一轮。
 - `clearing(sessionIds, clear, reason?)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理。停下与按住在各家清理之外，不看中间件的登记先后。实现者自己的 `session:deleted` 监听在这次按住之内被调起，不能等按住放开。`reason` 同 `abort` 的，只写进回合结束那一行日志。
 - 事件 `agent:queue`：`{ sessionId, waiting }`，这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
@@ -64,8 +67,8 @@ export interface BoundAgent extends AgentService {
 **消费方**：
 
 - `plugin-gateway`：入站终相 `inbound:dispatch` 调 `agent.use.handleMessage(message)`（每条消息先看 `agent.present`）——**这是 agent 被驱动的主入口**。
-- `plugin-session-server`：停止键（`turn/abort`）调 `agent.use.abort(sessionId, { turnId, reason: '停止键' })`，只停在跑的一轮；后台页「全部停止」对每个下级会话调 `abort(id, { queued: true, reason: '全部停止' })`。agent 不在时回 `unsupported`。
-- `plugin-flow-control`：禁言（`setMuted` 时长大于 0）调 `abort(sessionId, { queued: true, reason: '禁言' })`。
+- `plugin-session-server`：停止键（`turn/abort`）调 `agent.use.abort(sessionId, { turnId, reason: '停止键', by: 连接身份 })`，只停在跑的一轮；后台页「全部停止」对每个下级会话调 `abort(id, { queued: true, reason: '全部停止', by: 连接身份 })`。agent 不在时回 `unsupported`。
+- `plugin-flow-control`：禁言（`setMuted` 时长大于 0）调 `abort(sessionId, { queued: true, reason: '禁言' })`，不交 `by`。
 - `plugin-commands`：清消息历史的 `/clear` 把整条 `memory:clear` 链交给 `clearing`（`/clear all` 不给会话 id）。
 - `plugin-session-manager`：删会话时把发 `session:deleted` 与清数据两步交给 `clearing([id], …)`。
 - `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/api-agent/src/index.ts`）。
@@ -89,7 +92,10 @@ class MyAgent implements AgentService {
     // 入口记下会话管理给这个会话的代号（generationOf），交给自己的通道之前再取一次，变了的放掉、不归档；
     // 跑 input:before → turn:before（默认动作开头归档输入）→ llm:before → 工具循环 → reply:before → turn:after
   }
-  abort(_sessionId: string, _options?: { turnId?: string; queued?: boolean; reason?: string }): boolean {
+  abort(
+    _sessionId: string,
+    _options?: { turnId?: string; queued?: boolean; reason?: string; by?: NonNullable<IncomingMessage['actor']> },
+  ): boolean {
     return false;
   }
   async clearing(_sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>): Promise<void> {

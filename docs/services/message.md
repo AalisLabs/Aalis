@@ -39,7 +39,7 @@
 
 | 符号 | 类别 | file:line | 说明 |
 | --- | --- | --- | --- |
-| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice`/`IdlePrompt` |
+| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice`/`IdlePrompt`/`OutboundDeliveryFailed`/`TurnStopped` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
 | `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与读方都引用它：可见正文、发言人写的话与附件清单、发送者前缀的标签与被 @ 的人、说话人、说话所在的群与会话类型、平台侧的消息 id、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
 | `ArchivedAttachment` | interface | `index.ts` | 存档里提问带的一个附件（`WellKnownMetadataKeys.Attachments` 的一项）：`kind`/`name`/`ref`（存储地址或网址） |

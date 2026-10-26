@@ -15,7 +15,7 @@ import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { type Message, outboundMarkerMessage } from '../../packages/schema-message/src/index.js';
+import { type Message, outboundMarkerMessage, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -24,7 +24,7 @@ import { inputFromLastUser } from '../fixtures/turn-input.js';
 // ════════════════════════════════════════════════════════════
 // 不是她回复的出站文字（指令的回复、宿主提示）在送达之后按 outboundMarkerMessage 记成事件标记。它不是对话内容：
 // agent 交给模型的历史、token:request 的提示快照、memory-vector 召回的扩窗都不带它；扩窗的前后 N 条也不算它，窗口 1 时
-// 带出的是隔着它的那条提问。
+// 带出的是隔着它的那条提问。只给所在会话下一轮的模型看的 system 记录（投递回报、停下标记）同样不进扩窗、不算名额。
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:20001';
@@ -32,12 +32,23 @@ const ROOM = 'onebot:10000:group:20001';
 const MARKER = 'ZZ-MARKER 指令列表：/clear /status';
 const BASE_TS = Date.UTC(2026, 0, 1, 12, 0, 0);
 
-/** 房间里一条提问、紧接着的指令回复（事件标记）、她的一句回复 */
+/**
+ * 房间里一条提问，之后是停下标记、指令回复（事件标记）与投递回报（停下标记与投递回报是只给下一轮的模型看的 system 记录），
+ * 再是她的一句回复
+ */
 async function seedRoom(store: { saveMessage(sessionId: string, message: Message): Promise<void> }) {
   const marker = outboundMarkerMessage({ sessionId: ROOM, platform: 'onebot', source: 'command', content: MARKER });
   if (!marker) throw new Error('outboundMarkerMessage 没给出事件标记');
+  const note = (kind: string, content: string, timestamp: number): Message => ({
+    role: 'system',
+    kind,
+    content,
+    timestamp,
+  });
   await store.saveMessage(ROOM, { role: 'user', content: '[群友(30001)]: /help', timestamp: BASE_TS - 60_000 });
+  await store.saveMessage(ROOM, note(WellKnownKinds.TurnStopped, 'ZZ-STOPPED 上面这一轮被停下了', BASE_TS - 45_000));
   await store.saveMessage(ROOM, { ...marker, timestamp: BASE_TS - 30_000 });
+  await store.saveMessage(ROOM, note(WellKnownKinds.OutboundDeliveryFailed, 'ZZ-UNDELIVERED 没送达', BASE_TS - 15_000));
   await store.saveMessage(ROOM, { role: 'assistant', content: '她说的话', timestamp: BASE_TS });
 }
 
@@ -89,7 +100,7 @@ describe('agent：事件标记不进模型的上下文', () => {
   });
 });
 
-describe('memory-vector：召回的扩窗不带出事件标记，标记也不占前后 N 条的名额', () => {
+describe('memory-vector：召回的扩窗不带出事件标记与只给模型看的 system 记录，它们也不占前后 N 条的名额', () => {
   const replyHit: VectorSearchResult = {
     score: 0.9,
     metadata: { sessionId: ROOM, timestamp: BASE_TS, content: '她说的话', role: 'assistant', platform: 'onebot' },
@@ -130,7 +141,7 @@ describe('memory-vector：召回的扩窗不带出事件标记，标记也不占
     return { toolHandlers, assembly: app.bind({ contributions, logger }) };
   }
 
-  it('被动召回命中她的回复，窗口 1：扩窗带出隔着指令回复的提问，不带出指令回复', async () => {
+  it('被动召回命中她的回复，窗口 1：扩窗带出隔着指令回复、停下标记与投递回报的提问，不带出它们', async () => {
     const { assembly } = await boot();
     const messages: Message[] = [
       { role: 'system', content: '人设' },
@@ -145,10 +156,10 @@ describe('memory-vector：召回的扩窗不带出事件标记，标记也不占
       messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))?.content ?? '',
     );
     expect(block).toContain('/help'); // 扩窗确实生效
-    expect(block).not.toContain('ZZ-MARKER');
+    expect(block).not.toMatch(/ZZ-MARKER|ZZ-STOPPED|ZZ-UNDELIVERED/);
   });
 
-  it('memory_recall 命中她的回复，窗口 1：扩窗上下文带出隔着指令回复的提问，不带出指令回复', async () => {
+  it('memory_recall 命中她的回复，窗口 1：扩窗上下文带出隔着指令回复、停下标记与投递回报的提问，不带出它们', async () => {
     const { toolHandlers } = await boot();
     const recall = toolHandlers.get('memory_recall');
     if (!recall) throw new Error('memory_recall 未注册');
@@ -157,6 +168,6 @@ describe('memory-vector：召回的扩窗不带出事件标记，标记也不占
       { sessionId: 'onebot:10000:private:30002', platform: 'onebot' },
     );
     expect(out).toContain('/help'); // 扩窗确实生效
-    expect(out).not.toContain('ZZ-MARKER');
+    expect(out).not.toMatch(/ZZ-MARKER|ZZ-STOPPED|ZZ-UNDELIVERED/);
   });
 });

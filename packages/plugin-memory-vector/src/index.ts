@@ -75,7 +75,7 @@ const configSchema = defineConfig({
   },
   contextExpand: {
     label: '上下文情景扩展',
-    description: '命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/system/tool）还原情景。0 = 关闭。',
+    description: '命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。0 = 关闭。',
     fields: {
       window: {
         type: 'number',
@@ -592,12 +592,13 @@ async function run(caps: Caps): Promise<void> {
       const minTs = Math.min(...pivots);
       const maxTs = Math.max(...pivots);
       try {
-        // 事件标记（CONTROL_KINDS）不是对话内容：不带出，也不占前后 N 条的名额
+        // 事件标记（CONTROL_KINDS）不是对话内容：不带出，也不占前后 N 条的名额。role system 的记录（投递回报、停下标记）只写给
+        // 所在会话下一轮的模型，同样不带出、不占名额
         const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs, undefined, [
           ...CONTROL_KINDS,
         ]);
         signal?.throwIfAborted();
-        const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        const sorted = all.filter(m => m.role !== 'system').sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
         const idxByPivot = new Map<number, number>();
         for (const pivotTs of pivots) {
           const userIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
@@ -1085,7 +1086,7 @@ async function run(caps: Caps): Promise<void> {
             contextWindow: {
               type: 'number',
               description:
-                `命中后是否再取该消息在原会话中前后 N 条相邻消息（含 user/assistant/system/tool）还原情景。` +
+                `命中后是否再取该消息在原会话中前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。` +
                 `0 = 仅命中本身。建议 2~5。负数会报错。` +
                 `默认沿用插件配置（当前=${cfg.contextExpand.window}），且最终值不会超过插件上限。`,
             },
