@@ -3,8 +3,10 @@ import type { TurnInput } from '../../packages/api-agent/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events } from '../../packages/core/src/index.js';
+import { type App, events, provide } from '../../packages/core/src/index.js';
 import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
@@ -15,11 +17,16 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import {
   type IncomingMessage,
+  type Message,
   type OutgoingMessage,
   selfInitiatedActor,
+  type TurnRecord,
+  WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -54,11 +61,21 @@ afterEach(async () => {
 
 const label = (inputs: readonly TurnInput[]) => inputs.map(i => i.message.content).join('+');
 
-/** decide 按这是第几次调用模型作答 */
-async function boot(decide: (n: number) => ChatResponse = n => ({ content: `回${n}` })) {
+/**
+ * decide 按这是第几次调用模型作答。给了 rooms 时另登记会话管理的桩，会话表里只有这几个已收录的房间：发送者前缀与停下标记的
+ * 称呼按房间类别判
+ */
+async function boot(
+  decide: (n: number) => ChatResponse = n => ({ content: `回${n}` }),
+  { rooms }: { rooms?: string[] } = {},
+) {
   const { app } = hostedApp({ owners: [OWNER_QQ] });
   apps.push(app);
   await registerHubs(app);
+  if (rooms) {
+    const table = sessionTableManager(rooms.map(id => storedRoom(id)));
+    app.bind({ provide }).provide.use(sessionManager, { ...table, recordInbound: async () => {} });
+  }
   const model = new StepModel((_request, n) => decide(n));
   await app.plugin(stepModelPlugin(model));
   await app.plugin(toolsPlugin, {});
@@ -72,7 +89,7 @@ async function boot(decide: (n: number) => ChatResponse = n => ({ content: `回$
   for (const p of [gatewayPlugin, commandsPlugin, authorityPlugin, agentPlugin]) {
     expect(app.plugins.getPlugin(p.name)?.state, `${p.name} 未激活`).toBe('active');
   }
-  const host = app.bind({ events, hooks, tools, gateway });
+  const host = app.bind({ events, hooks, tools, gateway, memory });
   host.tools.use.register({
     definition: {
       type: 'function',
@@ -105,6 +122,8 @@ async function boot(decide: (n: number) => ChatResponse = n => ({ content: `回$
     replies: (sessionId: string) =>
       outbound.filter(m => m.sessionId === sessionId && m.source === 'command').map(m => m.content),
     untilWaiting: (sessionId: string, count: number) => vi.waitFor(() => expect(waiting.get(sessionId)).toBe(count)),
+    history: (sessionId: string) => host.memory.use.getHistory(sessionId, 100),
+    turnIds: () => turns.map(t => t.turnId),
   };
 }
 
@@ -132,33 +151,33 @@ describe.each([
   });
 });
 
-describe('/stop 的判据：群里', () => {
-  /**
-   * A 的插话开一轮，第一次调用模型时 B 的话到了、还在待插入；这次调用回探针，B 的话插进第二次调用。两次调用都挂住，返回时停在
-   * 第一次（waiting）或第二次（joined）上
-   */
-  async function groupTurn(phase: 'waiting' | 'joined') {
-    const s = await boot(n => (n === 1 ? callTool(PROBE) : { content: `回${n}` }));
-    const first = s.model.hold(1);
-    const second = s.model.hold(2);
-    const a = s.say({ ...GROUP, ...A }, '<甲>', { triggerType: 'interval' });
-    await first.entered;
-    const b = s.say({ ...GROUP, ...B }, '<乙>', { triggerType: 'interval' });
-    await s.untilWaiting(GROUP.sessionId, 1);
-    if (phase === 'joined') {
-      first.release();
-      await second.entered;
-    }
-    return {
-      s,
-      done: async () => {
-        first.release();
-        second.release();
-        await Promise.all([a, b]);
-      },
-    };
+/**
+ * A 的插话开一轮，第一次调用模型时 B 的话到了、还在待插入；这次调用回探针，B 的话插进第二次调用。两次调用都挂住，返回时停在
+ * 第一次（waiting）或第二次（joined）上
+ */
+async function groupTurn(phase: 'waiting' | 'joined', options?: Parameters<typeof boot>[1]) {
+  const s = await boot(n => (n === 1 ? callTool(PROBE) : { content: `回${n}` }), options);
+  const first = s.model.hold(1);
+  const second = s.model.hold(2);
+  const a = s.say({ ...GROUP, ...A }, '<甲>', { triggerType: 'interval' });
+  await first.entered;
+  const b = s.say({ ...GROUP, ...B }, '<乙>', { triggerType: 'interval' });
+  await s.untilWaiting(GROUP.sessionId, 1);
+  if (phase === 'joined') {
+    first.release();
+    await second.entered;
   }
+  return {
+    s,
+    done: async () => {
+      first.release();
+      second.release();
+      await Promise.all([a, b]);
+    },
+  };
+}
 
+describe('/stop 的判据：群里', () => {
   it('不在这一轮里的群友被拒，话还在待插入、没进这一轮的同样被拒；这一轮照常跑完', async () => {
     const { s, done } = await groupTurn('waiting');
     await s.say({ ...GROUP, ...C }, '/stop');
@@ -264,6 +283,134 @@ describe('/stop：开头对她的 @ 不算正文', () => {
     expect(s.outcomes()).toEqual([
       ['<甲>', 'replied'],
       [content, 'replied'],
+    ]);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 停下的一轮给下一轮的模型留一句：这一轮在历史里有输入或工具调用组时，回合记录之前落一条停下标记（role system、kind
+// turn-stopped，正文写给模型、写是谁停的），下一轮的请求里它紧跟这一轮的条目；什么也没留下的一轮（空闲开话题还没调工具就被
+// 停下）不写。
+// ════════════════════════════════════════════════════════════
+
+const TURN_STOPPED = 'turn-stopped';
+const isStopped = (m: Message) => m.kind === TURN_STOPPED;
+/** 空闲开话题的输入：不落档 */
+const IDLE_INPUT = { source: 'idle-trigger', triggerType: 'idle' } as const;
+const IN_ROOM = { sessionId: GROUP.sessionId, platform: 'onebot' };
+
+/** 请求里含这个记号的输入之后的那一条 */
+function following(messages: readonly Message[], token: string): Message | undefined {
+  const at = messages.findIndex(m => m.role === 'user' && String(m.content).includes(token));
+  expect(at, `请求里有 ${token}`).toBeGreaterThanOrEqual(0);
+  return messages[at + 1];
+}
+
+/** 存档里这一轮的各条：输入取记号，工具调用组写 call / result，停下标记与回合记录各写一个词 */
+const turnShapes = (history: readonly Message[], turnId: string) =>
+  history
+    .filter(m => m.metadata?.[WellKnownMetadataKeys.TurnId] === turnId)
+    .map(m => {
+      const record = m.metadata?.[WellKnownMetadataKeys.TurnRecord] as TurnRecord | undefined;
+      if (m.role === 'tool') return 'result';
+      if (m.toolCalls?.length) return 'call';
+      if (isStopped(m)) return '停下标记';
+      if (record) return `结局 ${record.outcome}`;
+      return String(m.content).match(/<[^<>\s]+>/)?.[0] ?? String(m.content);
+    });
+
+describe('停下的一轮给下一轮的模型留一句', () => {
+  it('QQ 私聊里 /stop：下一轮的请求里紧跟这一轮的输入有停下标记，写是谁停的；存档里只有这一轮的一条，排在回合记录之前', async () => {
+    const s = await boot();
+    const held = s.model.hold(1);
+    const a = s.say(DM, '<甲>');
+    await held.entered;
+    await s.say(DM, '/stop');
+    await a;
+    await s.say(DM, '<乙>');
+    expect(s.outcomes()).toEqual([
+      ['<甲>', 'aborted'],
+      ['<乙>', 'replied'],
+    ]);
+
+    expect(following(s.model.requests[1].messages, '<甲>')).toMatchObject({
+      role: 'system',
+      kind: TURN_STOPPED,
+      content: expect.stringMatching(/^\[已停下\].*被 30001 叫停/),
+    });
+    const history = await s.history(DM.sessionId);
+    expect(history.filter(isStopped)).toHaveLength(1);
+    expect(turnShapes(history, s.turnIds()[0])).toEqual(['<甲>', '停下标记', '结局 aborted']);
+  });
+
+  it('群里插进这一轮的群友 /stop：停下标记写他的账号', async () => {
+    const { s, done } = await groupTurn('joined');
+    await s.say({ ...GROUP, ...B }, '/stop');
+    await done();
+    await s.say({ ...GROUP, ...A }, '<丙>', { triggerType: 'interval' });
+    expect(following(s.model.requests.at(-1)?.messages ?? [], '<乙>')).toMatchObject({
+      kind: TURN_STOPPED,
+      content: expect.stringContaining('被 30002 叫停'),
+    });
+  });
+
+  it('owner 从 WebUI 停群里的一轮：停下标记写他在群所在平台登记的账号', async () => {
+    const { s, done } = await groupTurn('joined', { rooms: [GROUP.sessionId] });
+    await s.say({ ...GROUP, platform: 'webui', userId: 'console' }, '/stop');
+    await done();
+    await s.say({ ...GROUP, ...A }, '<丙>', { triggerType: 'interval' });
+    expect(following(s.model.requests.at(-1)?.messages ?? [], '<乙>')).toMatchObject({
+      kind: TURN_STOPPED,
+      content: expect.stringContaining(`被 ${OWNER_QQ.userId} 叫停`),
+    });
+  });
+
+  it('静默收尾与出错收尾的一轮不写停下标记：输入都归了档，只有被停下的一轮才写', async () => {
+    const s = await boot(n => {
+      if (n === 2) throw new Error('<模型坏了>');
+      return { content: n === 1 ? '' : `回${n}` };
+    });
+    await s.say(DM, '<甲>');
+    await s.say(DM, '<乙>');
+    await s.say(DM, '<丙>');
+    expect(s.outcomes()).toEqual([
+      ['<甲>', 'silent'],
+      ['<乙>', 'error'],
+      ['<丙>', 'replied'],
+    ]);
+    expect((await s.history(DM.sessionId)).filter(isStopped)).toEqual([]);
+    expect(s.model.requests[2].messages.filter(isStopped)).toEqual([]);
+  });
+
+  it('空闲开话题的一轮还没调工具就被停下：这一轮在历史里什么也没留下，不写停下标记，下一轮的请求里也没有', async () => {
+    const s = await boot();
+    const held = s.model.hold(1);
+    const idle = s.say(IN_ROOM, '开个话题', IDLE_INPUT);
+    await held.entered;
+    await s.say({ ...GROUP, ...OWNER_QQ }, '/stop');
+    await idle;
+    await s.say({ ...GROUP, ...A }, '<乙>', { triggerType: 'interval' });
+    expect(s.outcomes()).toEqual([
+      ['开个话题', 'aborted'],
+      ['<乙>', 'replied'],
+    ]);
+    expect((await s.history(GROUP.sessionId)).filter(isStopped)).toEqual([]);
+    expect(s.model.requests[1].messages.filter(isStopped)).toEqual([]);
+  });
+
+  it('空闲开话题的一轮调过工具之后被停下：工具调用组之后有停下标记', async () => {
+    const s = await boot(n => (n === 1 ? callTool(PROBE) : { content: `回${n}` }));
+    const held = s.model.hold(2);
+    const idle = s.say(IN_ROOM, '开个话题', IDLE_INPUT);
+    await held.entered;
+    await s.say({ ...GROUP, ...OWNER_QQ }, '/stop');
+    await idle;
+    expect(s.outcomes()).toEqual([['开个话题', 'aborted']]);
+    expect(turnShapes(await s.history(GROUP.sessionId), s.turnIds()[0])).toEqual([
+      'call',
+      'result',
+      '停下标记',
+      '结局 aborted',
     ]);
   });
 });

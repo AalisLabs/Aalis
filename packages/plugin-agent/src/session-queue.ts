@@ -33,7 +33,12 @@ export interface Turn {
   readonly batch: readonly IncomingMessage[];
   /** 停下它的原因，只给日志 */
   reason?: string;
+  /** 停下它的人：有人停时才有 */
+  stoppedBy?: StoppedBy;
 }
+
+/** 停下一轮的人，与入站的授权身份同一形状 */
+export type StoppedBy = NonNullable<IncomingMessage['actor']>;
 
 /** 通道里一轮的状态 */
 interface Running {
@@ -137,17 +142,24 @@ export class SessionQueues {
 
   /**
    * 停下这个会话在跑的一轮（turnId 给了而对不上时什么也不停）：它不再收输入，待插入的转为排队、之后到的排队，开下一轮；queued
-   * 为真时连同排队与待插入的一起放掉，archive 定放掉的要不要归档。返回是否停下了在跑的一轮
+   * 为真时连同排队与待插入的一起放掉，archive 定放掉的要不要归档；by 是停下它的人。返回是否停下了在跑的一轮
    */
   stop(
     sessionId: string,
-    { turnId, queued, reason, archive }: { turnId?: string; queued?: boolean; reason?: string; archive: boolean },
+    {
+      turnId,
+      queued,
+      reason,
+      by,
+      archive,
+    }: { turnId?: string; queued?: boolean; reason?: string; by?: StoppedBy; archive: boolean },
   ): boolean {
     const channel = this.#channels.get(sessionId);
     if (turnId !== undefined && channel?.running?.turn.turnId !== turnId) return false;
     const running = this.#stoppable(sessionId);
     if (running) {
       running.turn.reason = reason;
+      running.turn.stoppedBy = by;
       running.turn.controller.abort();
       this.close(running.turn);
     }

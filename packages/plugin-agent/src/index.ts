@@ -66,6 +66,7 @@ import {
   CONTROL_KINDS,
   DIRECTIVE_KINDS,
   getMessageName,
+  getSenderLabel,
   groupToolCalls,
   WellKnownKinds,
   WellKnownMetadataKeys,
@@ -86,9 +87,10 @@ import {
   parseToolArguments,
   queuedNote,
   readHistory,
+  stoppedNote,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
-import { type Placement, SessionQueues, type Turn } from './session-queue.js';
+import { type Placement, SessionQueues, type StoppedBy, type Turn } from './session-queue.js';
 import { t } from './texts.js';
 
 // ===== 能力声明 =====
@@ -302,10 +304,13 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 停下这个会话在跑的一轮；queued 为真时连同排队与待插入的一起放掉，放掉的在那一轮落定之后归档（不带回合 id）。
-   * 禁言、全部停止、停止键与 /stop 经这里
+   * 停下这个会话在跑的一轮；queued 为真时连同排队与待插入的一起放掉，放掉的在那一轮落定之后归档（不带回合 id）；by 是停下它的
+   * 人，写进停下标记。禁言、全部停止、停止键与 /stop 经这里
    */
-  abort(sessionId: string, options: { turnId?: string; queued?: boolean; reason?: string } = {}): boolean {
+  abort(
+    sessionId: string,
+    options: { turnId?: string; queued?: boolean; reason?: string; by?: StoppedBy } = {},
+  ): boolean {
     return this.queues.stop(sessionId, { ...options, archive: true });
   }
 
@@ -683,9 +688,11 @@ class DefaultAgent implements AgentService {
     const recordOf = (outcome: TurnOutcome): TurnRecord => ({ outcome, ...(first.source && { source: first.source }) });
     // 回合记录一轮只写一次：回复了的随回复落库时写下，之后外发或 agent:turn:after 的中间件出错不再另记一条
     let recorded = false;
+    /** 这一轮落过工具调用组 */
+    let savedGroups = false;
     /**
      * 收尾：还没写回合记录的（静默、中止、出错）落一条只带回合 id 与记录的事件标记，不进模型、不进摘要，会话服务据此在历史里还原
-     * 这一轮的结局；再发 agent:turn:after
+     * 这一轮的结局；中止的先落一条给下一轮的模型看的停下标记。再发 agent:turn:after
      */
     const end = async (
       outcome: TurnOutcome,
@@ -693,6 +700,11 @@ class DefaultAgent implements AgentService {
     ): Promise<TurnOutcome> => {
       if (!recorded) {
         recorded = true;
+        // 只在这一轮在历史里留下了输入或工具调用组时写：什么也没留下时（空闲开话题还没调工具就被停下），下一轮模型看到的上文是
+        // 之前已经答完的一轮，写「上面这一轮被停下了」会被读成上一句回复没发出
+        if (outcome === 'aborted' && (savedGroups || inputs.some(input => input.archived))) {
+          await this.saveToMemory(sessionId, stoppedNote(this.stopperLabel(sessionId, turn.stoppedBy), turnId));
+        }
         await this.saveToMemory(sessionId, {
           role: 'system',
           kind: WellKnownKinds.EventMarker,
@@ -1156,6 +1168,7 @@ class DefaultAgent implements AgentService {
         historyMessages += 1 + toolMessages.length;
 
         await this.saveToolCallGroup(sessionId, assistantToolMessage, toolMessages);
+        savedGroups = true;
 
         // 继续请求 LLM (再次经过 hooks)，使用原始完整工具列表而非被上一轮 hooks 修改过的列表
         const nextLlmData = {
@@ -1561,6 +1574,12 @@ class DefaultAgent implements AgentService {
       sessionManager: this.caps.sessionManager.present ? this.caps.sessionManager.use : undefined,
       authority: this.caps.authority.present ? this.caps.authority.use : undefined,
     });
+  }
+
+  /** 停下标记里停下的人的称呼：与发送者前缀同一条规则，当他在这个会话里说了一句话；没有停下的人时没有 */
+  private stopperLabel(sessionId: string, by: StoppedBy | undefined): string | undefined {
+    const speaker = by && this.speakerOf({ content: '', sessionId, platform: by.platform, userId: by.userId });
+    return getSenderLabel(speaker?.nickname, speaker?.userId);
   }
 
   /**
@@ -1985,7 +2004,7 @@ class DefaultAgent implements AgentService {
       try {
         await archive.saveMessage(sessionId, message);
       } catch (err) {
-        this.logger.warn('保存消息到记忆失败:', err);
+        this.logger.warn(`保存消息到记忆失败 (session=${sessionId}):`, err);
       }
     }
   }
@@ -2264,7 +2283,7 @@ function run(caps: Caps): void {
     const { participants } = originTurnOf(inputs as [IncomingMessage, ...IncomingMessage[]], agentImpl.isOwner);
     const inTurn = Boolean(userId) && participants.some(who => who.platform === platform && who.userId === userId);
     if (!inTurn && !agentImpl.isOwner(platform, userId)) return t('stopDenied');
-    agentImpl.abort(sessionId, { reason: '/stop' });
+    agentImpl.abort(sessionId, { reason: '/stop', ...(userId ? { by: { platform, userId } } : {}) });
     return t('stopped');
   });
 

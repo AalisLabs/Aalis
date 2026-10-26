@@ -13,7 +13,10 @@
 ```ts
 interface AgentService {
   handleMessage(message: IncomingMessage): Promise<void>;
-  abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  abort(
+    sessionId: string,
+    options?: { turnId?: string; queued?: boolean; reason?: string; by?: NonNullable<IncomingMessage['actor']> },
+  ): boolean;
   clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>, reason?: string): Promise<void>;
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
@@ -26,7 +29,7 @@ interface AgentService {
 
 会话删除（`session:deleted`）时实现者停掉这个会话在跑的一轮、放掉排着的输入并等它收尾：会话管理在这个事件之后才清数据，不停的话删掉的会话里这一轮照样跑完、落库。还没交给通道的按代号分：`handleMessage` 入口记下这个会话的代号（[api-session-manager](./api-session-manager.md) 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的是删除开始之前已收录的旧一代，放掉、不归档。
 
-`abort` 停下这个会话在跑的一轮，实现者必须提供它（停止键、`/stop`、禁言、后台页的「全部停止」都经它）。`turnId` 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉：它们不开轮，在这个会话在跑的一轮落定之后归档（不带回合 id），否则照常开下一轮；`reason` 只写进回合结束那一行日志，不进界面与回合结局。返回值是有没有停下在跑的一轮，调用方据此分辨「turnId 对不上」。
+`abort` 停下这个会话在跑的一轮，实现者必须提供它（停止键、`/stop`、禁言、后台页的「全部停止」都经它）。`turnId` 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉：它们不开轮，在这个会话在跑的一轮落定之后归档（不带回合 id），否则照常开下一轮；`reason` 只写进回合结束那一行日志，不进界面与回合结局；`by` 是停下这一轮的人，与入站的授权身份（`IncomingMessage.actor`）同一形状，不给即没有具体的人（停机、清历史、删会话、禁言等）。返回值是有没有停下在跑的一轮，调用方据此分辨「turnId 对不上」。
 
 `clearing` 由清消息历史的一方调（第一方是 plugin-commands 的 `/clear` 与会话管理删会话），实现者必须提供它。`sessionIds` 不给即全部会话，`clear` 是整条清理：`memory:clear` 链连同默认动作，会话管理删会话时交来的先删各级子会话、发 `session:deleted`，再跑这条链。先停下这些会话在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`；从停下到 `clear` 结束按住这些会话，这期间到的输入等它结束再处理（不开轮，不会回了话又被清掉）。停下与按住都在各家清理之外，不看它们的中间件登记先后。实现者自己的 `session:deleted` 监听在这次按住之内被调起，不能等按住放开，否则删会话一直挂住。`reason` 同 `abort` 的，只写进回合结束那一行日志。
 
@@ -43,7 +46,7 @@ interface AgentService {
 - **元数据的键**：落库的工具调用组（带 `toolCalls` 的 assistant 与 tool 结果）与最终回复在元数据里记下这一轮的回合 id；每次工具调用（含没有执行就失败的）在 tool 结果的元数据与时间线的 `tool_call` 段记下这次调用的 `callId`；最终回复另记这一轮的模型与 token、这一轮的平台与她在那里的身份、这一轮的群与会话类型，回复是结构化输出的信封时另记解码后的可见正文。键一律用 schema-message 登记的 `WellKnownMetadataKeys`，各键见 [schema-message 的「存档元数据的键」](./schema-message.md#存档元数据的键)表里写方为 agent 的各项。`agent:tool:after` 里别的插件写进 `metadata` 的键随 tool 结果原样落库。
 - **房间里一轮只把最后一条回复交给平台**：房间（会话种类为 `room` 的 IM 群与私聊）里，一轮里工具调用之前说的话、格式校验没通过而重试丢掉的几版都不发出（不经 `outbound:message`），只有最后一条回复发出。会话服务回看历史时据此把那几段标「未发出」；实时推送按平台的送达结果标，不受影响。
 - **输入在进入一轮时归档**：开轮的输入在 `agent:turn:before` 的默认动作开头、插进来的在插入时经 message-archive 归档，`archiveIncoming` 带这一轮的回合 id 与进入方式（开轮的为 `opened`，插进来的为 `joined`），存档记成登记的键 `TurnId`、`TurnEntry`；排着、还没进一轮的不在历史里，被放掉的归档时不带回合 id。连对话回滚按回合 id 只删这一轮的消息，不写的话这一轮的输入回滚时删不掉。
-- **每一轮写一条回合记录**：在 `agent:turn:after` 之前，把这一轮的结局与来源（schema-message 的 `TurnRecord`，登记的键 `TurnRecord`）记在最后落库的那条回复的元数据上；没有落库回复的一轮（静默、中止、出错）另落一条只带回合 id 与它的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空）。在 `agent:turn:before` 被拦下的一轮不写。会话服务按进入方式与回合记录还原时间线；不写的话，历史里只少这一轮的结局（「没有回复」「已停止」等）与回合的来源。
+- **每一轮写一条回合记录**：在 `agent:turn:after` 之前，把这一轮的结局与来源（schema-message 的 `TurnRecord`，登记的键 `TurnRecord`）记在最后落库的那条回复的元数据上；没有落库回复的一轮（静默、中止、出错）另落一条只带回合 id 与它的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空）。在 `agent:turn:before` 被拦下的一轮不写。会话服务按进入方式与回合记录还原时间线；不写的话，历史里只少这一轮的结局（「没有回复」「已停止」等）与回合的来源。中止的一轮在历史里已有这一轮的输入或工具调用组时，参考实现在回合记录之前另落一条停下标记（`role: 'system'`、`kind: 'turn-stopped'`，正文写给下一轮的模型，有 `abort` 交来的 `by` 时写是谁），会话服务不画它；别的实现不写时，下一轮的模型只看得到一串没有回复的输入。
 
 ## 用量（token:usage）
 

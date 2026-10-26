@@ -44,7 +44,7 @@ export default definePlugin({
 | `search.userPriorityBoost` | number | `2` | 同用户加权系数：在 user 模式下对同一用户消息的命中分数乘以该系数（&gt;1 表示优先） |
 | `search.perItemMaxChars` | number | `0` | 单条截断字数：每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
 | `search.minScore` | number | `0` | 最低相似度阈值：0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤 |
-| `contextExpand` | object | — | 上下文情景扩展：命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/system/tool）还原情景。0 = 关闭。 |
+| `contextExpand` | object | — | 上下文情景扩展：命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。0 = 关闭。 |
 | `contextExpand.window` | number | `2` | 扩展窗口（前后各 N 条消息）：0 = 仅命中本身。建议 2~5 |
 | `contextExpand.crossSession` | boolean | `true` | 跨会话也扩展：若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文 |
 | `indexing` | object | — | 索引设置：控制后台向量索引的削峰与并发。搜索路径不受该队列影响。 |
@@ -78,7 +78,8 @@ export default definePlugin({
      `crossSessionMode: user` 时，这一轮各条输入的发言者本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；事件标记（`CONTROL_KINDS`，
-     如压缩分隔线、指令的回复）不在范围查询里，不带出，也不占 N 条的名额；
+     如压缩分隔线、指令的回复）不在范围查询里，role 为 system 的记录（投递回报、停下标记，只写给所在会话下一轮的模型）
+     取回后跳过，两者都不带出，也不占 N 条的名额；
      否则只注入命中本身。结果与当前会话已有内容去重。指令类消息
      （`DIRECTIVE_KINDS`，见 [schema-message](../api/schema-message.md#kind-常量)）不是任何人的发言，不作为邻居带出
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注

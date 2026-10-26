@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AgentService, agent } from '../../packages/api-agent/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionSummary, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -16,7 +17,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { type IncomingMessage, WellKnownKinds } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -381,9 +382,11 @@ describe('background/stopAll', () => {
     await tick();
     await c.call('background/stopAll', { sessionId: P });
     await child.done;
+    // 停下的人是这条连接的身份
+    const by = { platform: 'webui', userId: 'console' };
     expect(w.aborted).toEqual([
-      [C, { queued: true, reason: '全部停止' }],
-      [G, { queued: true, reason: '全部停止' }],
+      [C, { queued: true, reason: '全部停止', by }],
+      [G, { queued: true, reason: '全部停止', by }],
     ]);
   });
 });
@@ -498,18 +501,43 @@ describe('没有后台任务登记', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 接真的 agent：工具卡的 taskId 实时与刷新后一致
+// 接真的 agent：工具卡的 taskId 实时与刷新后一致；全部停止停下的子会话那一轮留下写着停下的人的停下标记
 // ════════════════════════════════════════════════════════════
+
+/**
+ * 接真的 agent：会话服务、会话管理、消息归档与内存记忆，模型照 responses 依次作答，可转后台的测试工具照常登记。一个会话 S（有标题，
+ * 不为起标题调模型）与一条握过手的连接
+ */
+async function setupWithAgent(responses: ChatResponse[]) {
+  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  apps.push(app);
+  const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-'));
+  homes.push(home);
+  provideHostPaths(app, home);
+  await registerHubs(app);
+  await app.plugin(createMockLLMPlugin({ responses }));
+  await app.plugin(toolsPlugin, {});
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(agentPlugin, { systemPrompt: 'test' });
+  await app.plugins.idle();
+  const host = app.bind({ provide, tools, backgroundTasks, agent, sessionManager, sessionProtocol, memory });
+  host.provide.use(storage, memoryStorage(new Map()));
+  const runs: Run[] = [];
+  registerBackgroundTool(host, runs);
+  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(sessionServerPlugin, {});
+  await app.plugins.idle();
+  const sm = host.sessionManager.use;
+  const s = await sm.createSession({ name: 'S' });
+  await sm.updateSessionTitle(s.id, 'S');
+  const c = await connect(host.sessionProtocol.use);
+  return { host, sm, s, c, runs };
+}
 
 describe('接真的 agent', () => {
   it('转到后台的那次调用，工具卡实时带 taskId，刷新后的历史里同一个，background/list 里找得到', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
-    apps.push(app);
-    const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-'));
-    homes.push(home);
-    provideHostPaths(app, home);
-    await registerHubs(app);
-    const responses: ChatResponse[] = [
+    const { host, s, c, runs } = await setupWithAgent([
       {
         content: null,
         toolCalls: [
@@ -521,24 +549,7 @@ describe('接真的 agent', () => {
         ],
       },
       { content: '已经放到后台了' },
-    ];
-    await app.plugin(createMockLLMPlugin({ responses }));
-    await app.plugin(toolsPlugin, {});
-    await app.plugin(memoryInMemoryPlugin);
-    await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(agentPlugin, { systemPrompt: 'test' });
-    await app.plugins.idle();
-    const host = app.bind({ provide, tools, backgroundTasks, agent, sessionManager, sessionProtocol });
-    host.provide.use(storage, memoryStorage(new Map()));
-    const runs: Run[] = [];
-    registerBackgroundTool(host, runs);
-    await app.plugin(sessionManagerPlugin, {});
-    await app.plugin(sessionServerPlugin, {});
-    await app.plugins.idle();
-    const sm = host.sessionManager.use;
-    const s = await sm.createSession({ name: 'S' });
-    await sm.updateSessionTitle(s.id, 'S');
-    const c = await connect(host.sessionProtocol.use);
+    ]);
     const sub = await c.subscribe(s.id);
 
     await host.agent.use.handleMessage({
@@ -555,5 +566,28 @@ describe('接真的 agent', () => {
     const refreshed = (await c.subscribe(s.id)).snapshot.items.find(item => item.kind === 'tool-call');
     expect(refreshed).toMatchObject({ itemId: live?.itemId, taskId: task.id });
     runs[0].finish('{}');
+  });
+
+  it('全部停止停下子会话在跑的一轮：子会话的存档里有写着连接账号的停下标记', async () => {
+    const { host, sm, s, c, runs } = await setupWithAgent([
+      {
+        content: null,
+        toolCalls: [{ id: 'model-id', type: 'function', function: { name: BG, arguments: '{"command":"npm test"}' } }],
+      },
+      { content: '跑完了' },
+    ]);
+    const child = await sm.createSession({ name: '子会话', parentId: s.id });
+    await sm.updateSessionTitle(child.id, '子会话');
+    const turn = host.agent.use.handleMessage({
+      content: '跑测试',
+      sessionId: child.id,
+      platform: 'webui',
+      userId: 'console',
+    });
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await c.call('background/stopAll', { sessionId: s.id });
+    await turn;
+    const notes = (await host.memory.use.getHistory(child.id, 100)).filter(m => m.kind === WellKnownKinds.TurnStopped);
+    expect(notes.map(m => m.content)).toEqual([expect.stringContaining('被 console 叫停')]);
   });
 });

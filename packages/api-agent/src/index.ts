@@ -38,7 +38,8 @@ export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void
  * - 输入在进入一轮时经 message-archive 归档（archiveIncoming 带这一轮的回合 id 与进入方式，记成登记的键 TurnId、TurnEntry）；
  *   每一轮在 agent:turn:after 之前写一条回合记录（登记的键 TurnRecord：结局与来源），记在最后落库的那条回复上，没有落库回复的
  *   一轮另落一条只带回合 id 与它的事件标记。会话服务按这两样还原时间线：不交回合时，输入不归进这一轮，连对话回滚也删不掉它们；
- *   不写回合记录时，历史里没有这一轮的结局与来源。
+ *   不写回合记录时，历史里没有这一轮的结局与来源。中止的一轮在历史里已有这一轮的输入或工具调用时，参考实现在回合记录之前另落
+ *   一条停下标记（schema-message 的 TurnStopped，有 abort 交来的 by 时写是谁），只给下一轮的模型看，会话服务不画它。
  */
 export interface AgentService {
   /**
@@ -50,9 +51,13 @@ export interface AgentService {
   /**
    * 停下这个会话在跑的一轮。turnId 给了而对不上（那一轮已经结束或换成了新一轮）时什么也不停；queued 为真时连同排队与待插入、
    * 还没进一轮的输入一起放掉（不开轮，在这个会话在跑的一轮落定之后归档，不带回合 id），否则它们照常开下一轮；reason 只写进
-   * 回合结束那一行日志，不进界面与回合结局。返回是否停下了在跑的一轮，调用方据此分辨「turnId 对不上」
+   * 回合结束那一行日志，不进界面与回合结局。by 是停下这一轮的人，与入站的授权身份同一形状；不给即没有具体的人（停机、清历史、
+   * 删会话、禁言等）。返回是否停下了在跑的一轮，调用方据此分辨「turnId 对不上」
    */
-  abort(sessionId: string, options?: { turnId?: string; queued?: boolean; reason?: string }): boolean;
+  abort(
+    sessionId: string,
+    options?: { turnId?: string; queued?: boolean; reason?: string; by?: NonNullable<IncomingMessage['actor']> },
+  ): boolean;
   /**
    * 清这些会话（不给即全部会话）的消息历史时由发起清理的一方调，clear 是整条清理（memory:clear 链连同默认动作；会话管理删会话时
    * 交来的先删各级子会话、发 session:deleted，再跑这条链）：先停下在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑

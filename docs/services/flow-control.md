@@ -39,7 +39,7 @@ export interface FlowControlService {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide.use(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。禁言（`setMuted` 时长大于 0）时经 agent（optional）的 `abort(sessionId, { queued: true, reason: '禁言' })` 停下这个会话在跑的一轮、放掉排着的；解禁不停。
+**提供方（参考实现）**：`@aalis/plugin-flow-control`，`provide.use(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据 `inbound:flow` 相位做硬闸，并监听 `outbound:message` 记冷却与限速。禁言（`setMuted` 时长大于 0）时经 agent（optional）的 `abort(sessionId, { queued: true, reason: '禁言' })` 停下这个会话在跑的一轮、放掉排着的，不交 `by`（停下的人）：是谁禁的，会话历史里挨着那条（关键词那句话或平台的禁言通知）本来就有；解禁不停。
 
 **消费点**（全部 `optional`，缺席即不设闸）：
 

@@ -11,7 +11,7 @@ import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { type SessionCreation, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
@@ -2325,6 +2325,8 @@ async function startAgent(
   responses: ChatResponse[],
   probe: (ctx: ToolCallContext) => Promise<string>,
   display?: ToolDisplay,
+  /** 会话 S 的创建来源：不给即没有（受众判为 internal） */
+  creation?: Pick<SessionCreation, 'createdFrom'>,
 ) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
   apps.push(app);
@@ -2337,7 +2339,7 @@ async function startAgent(
   await app.plugin(gatewayPlugin);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await app.plugins.idle();
-  const host = app.bind({ provide, tools, sessionManager, sessionProtocol, hooks, agent: agentService });
+  const host = app.bind({ provide, tools, sessionManager, sessionProtocol, hooks, agent: agentService, memory });
   host.provide.use(storage, memoryStorage(new Map()));
   host.tools.use.register({
     definition: {
@@ -2359,7 +2361,7 @@ async function startAgent(
     await next();
   });
   const sm = host.sessionManager.use;
-  const s = await sm.createSession({ name: 'S' });
+  const s = await sm.createSession({ name: 'S' }, creation);
   // 有标题就不在第一条消息时调模型起标题，预设的模型回复只给 agent 用
   await sm.updateSessionTitle(s.id, 'S');
   const c = client(host.sessionProtocol.use);
@@ -2466,10 +2468,18 @@ describe('接 agent 与网关', () => {
     });
   });
 
-  it('turn/abort：turnId 对不上回 expected-turn-mismatch，这一轮照常；对得上的停下这一轮', async () => {
+  /** 存档里的停下标记：回合 id 与正文 */
+  const stoppedNotes = async (host: Awaited<ReturnType<typeof startAgent>>['host'], sessionId: string) =>
+    (await host.memory.use.getHistory(sessionId, 100))
+      .filter(m => m.kind === WellKnownKinds.TurnStopped)
+      .map(m => [m.metadata?.[WellKnownMetadataKeys.TurnId], m.content]);
+  /** 条目的种类，去重排序 */
+  const kinds = (items: SessionItem[]) => [...new Set(items.map(i => i.kind))].sort();
+
+  it('turn/abort：turnId 对不上回 expected-turn-mismatch，这一轮照常；对得上的停下这一轮，存档里给下一轮的模型留一条写着连接账号的停下标记，时间线与快照不多出条目', async () => {
     const entered = deferred();
     const release = deferred();
-    const { s, c, sub, turnItems } = await startAgent([callProbe, { content: '完成' }], async () => {
+    const { host, s, c, sub, turnItems } = await startAgent([callProbe, { content: '完成' }], async () => {
       entered.resolve();
       await release.promise;
       return 'ok';
@@ -2481,11 +2491,41 @@ describe('接 agent 与网关', () => {
       'expected-turn-mismatch',
     );
     expect(turnItems().at(-1)).not.toHaveProperty('outcome');
+    const before = kinds(c.timeline(s.id, sub));
     await c.call('turn/abort', { sessionId: s.id, turnId });
     release.resolve();
     await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ turnId, outcome: 'aborted' }));
     expect(c.timeline(s.id, sub).filter(i => i.kind === 'turn')).toHaveLength(1);
+    // 会话没有创建来源（受众判为 internal）：写停下的人，即连接身份的账号
+    expect(await stoppedNotes(host, s.id)).toEqual([[turnId, expect.stringContaining('被 console 叫停')]]);
+    expect(kinds(c.timeline(s.id, sub)), '停下标记不成条').toEqual(before);
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    expect(kinds((await fresh.subscribe(s.id)).snapshot.items), '刷新后同样').toEqual(before);
     await c.call('turn/abort', { sessionId: s.id });
+  });
+
+  it('turn/abort 停下 WebUI 新建的会话（受众只有 owner）里的一轮：停下标记不写是谁', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const { host, s, c, turnItems } = await startAgent(
+      [callProbe, { content: '完成' }],
+      async () => {
+        entered.resolve();
+        await release.promise;
+        return 'ok';
+      },
+      undefined,
+      { createdFrom: 'webui' },
+    );
+    await c.call('turn/send', { sessionId: s.id, content: '跑一个慢的' });
+    await entered.promise;
+    await c.call('turn/abort', { sessionId: s.id });
+    release.resolve();
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'aborted' }));
+    expect((await stoppedNotes(host, s.id)).map(([, content]) => content)).toEqual([
+      expect.stringContaining('就被停下了'),
+    ]);
   });
 
   it('命令的结果过长被 agent 截断：退出码取自截断之前的结果，工具卡照样记为失败、带退出码；刷新后历史里同样', async () => {

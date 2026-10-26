@@ -50,6 +50,8 @@ const PROBE = 'zz_steer_probe';
 const QUEUED_NOTE = '下面几条是你上一轮进行期间到的';
 const QUIET_NOTE = '没有需要接的可以不说话';
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+/** 没有停下的人时停下标记的那一句 */
+const STOPPED_NOTE = '就被停下了';
 
 const WEBUI = { sessionId: 'zz-steer-webui', platform: 'webui', userId: 'console' };
 const GROUP_ID = 'onebot:10000:group:20001';
@@ -60,7 +62,10 @@ type Where = Pick<IncomingMessage, 'sessionId' | 'platform' | 'userId' | 'sessio
 const text = (m: Message) => (typeof m.content === 'string' ? m.content : '');
 /** 用例里每条输入的正文是一个尖括号记号，取出它（前面是时间与发送者标注） */
 const token = (s: string) => s.match(/<[^<>\s]+>/)?.[0] ?? s;
-/** 历史与请求里的一条：输入取记号，工具调用组写 call / result，没有落库回复的一轮的回合记录写结局，回复与说明取正文 */
+/**
+ * 历史与请求里的一条：输入取记号，工具调用组写 call / result，没有落库回复的一轮的回合记录写结局，停下标记写「停下标记」，回复与
+ * 说明取正文
+ */
 const shape = (m: Message) =>
   m.role === 'user' || m.role === 'notice'
     ? token(text(m))
@@ -70,7 +75,9 @@ const shape = (m: Message) =>
         ? 'call'
         : m.kind === WellKnownKinds.EventMarker && m.metadata?.[WellKnownMetadataKeys.TurnRecord]
           ? `结局 ${(m.metadata[WellKnownMetadataKeys.TurnRecord] as TurnRecord).outcome}`
-          : text(m);
+          : m.kind === WellKnownKinds.TurnStopped
+            ? '停下标记'
+            : text(m);
 const label = (inputs: readonly TurnInput[]) => inputs.map(i => i.message.content).join('+');
 /** 让排着的微任务与 I/O 回调跑完：逐条处理之后的入队在这之前落定 */
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -626,9 +633,14 @@ describe('能停下一轮的', () => {
       ['<通知>', 'replied'],
     ]);
     expect(s.outbound.map(m => m.content)).toEqual(['回2', '回3']);
-    // 停下的一轮没有落库回复，落一条回合记录
+    // 停下的一轮没有落库回复：先落给下一轮的模型看的停下标记，再落回合记录；没有停下的人，标记里不写是谁
+    const sent = s.model.requests[1].messages;
+    const at = sent.map(shape).indexOf('<甲>');
+    expect(sent.slice(at, at + 2).map(shape)).toEqual(['<甲>', '停下标记']);
+    expect(sent[at + 1].content).toContain(STOPPED_NOTE);
     expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual([
       '<甲>',
+      '停下标记',
       '结局 aborted',
       '<乙>',
       '回2',
@@ -726,6 +738,7 @@ describe('能停下一轮的', () => {
     const turnId = s.turns[0].turnId;
     expect((await s.history(WEBUI.sessionId)).map(m => [shape(m), m.metadata?.turnId])).toEqual([
       ['<甲>', turnId],
+      ['停下标记', turnId],
       ['结局 aborted', turnId],
       ['<乙>', undefined],
       ['<通知>', undefined],
@@ -745,7 +758,13 @@ describe('能停下一轮的', () => {
     await Promise.all([a, b, x]);
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
     expect(s.outbound).toEqual([]);
-    expect((await s.history(GROUP_FREE.sessionId)).map(shape)).toEqual(['<甲>', '结局 aborted', '<乙>', '<通知>']);
+    expect((await s.history(GROUP_FREE.sessionId)).map(shape)).toEqual([
+      '<甲>',
+      '停下标记',
+      '结局 aborted',
+      '<乙>',
+      '<通知>',
+    ]);
 
     flow.setMuted(GROUP_FREE.sessionId, 0);
     const next = s.model.hold(2);
@@ -755,6 +774,8 @@ describe('能停下一轮的', () => {
     next.release();
     await c;
     expect(s.outcomes().at(-1)).toEqual(['<丙>', 'replied']);
+    const stopped = s.model.requests[1].messages.find(m => m.kind === WellKnownKinds.TurnStopped);
+    expect(stopped?.content, '禁言停下的一轮不写是谁').toContain(STOPPED_NOTE);
   });
 
   it('停机：app.stop 时在跑的一轮以 aborted 收尾，排着的 handleMessage 都落定、不开轮、已归档；放掉之后才完成逐条处理的那条同样不开轮', async () => {
@@ -779,7 +800,7 @@ describe('能停下一轮的', () => {
 
     expect(s.outcomes()).toEqual([['<甲>', 'aborted']]);
     const archived = (await inner.getHistory(WEBUI.sessionId, 100)).map(shape);
-    expect(archived.slice(0, 4)).toEqual(['<甲>', '结局 aborted', '<乙>', '<通知>']);
+    expect(archived.slice(0, 5)).toEqual(['<甲>', '停下标记', '结局 aborted', '<乙>', '<通知>']);
   });
 
   it('会话删除（会话管理换代号再发 session:deleted，不经 clearing）：在跑的一轮停下、排队项放掉不归档，删除等它落定；删除之前进来、之后才完成逐条处理的那条不开轮、不归档；之后同一 id 再来的消息照常开轮', async () => {
@@ -805,7 +826,7 @@ describe('能停下一轮的', () => {
       ['<甲>', 'aborted'],
       ['<戊>', 'replied'],
     ]);
-    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '结局 aborted', '<戊>', '回2']);
+    expect((await s.history(WEBUI.sessionId)).map(shape)).toEqual(['<甲>', '停下标记', '结局 aborted', '<戊>', '回2']);
   });
 
   it.each([

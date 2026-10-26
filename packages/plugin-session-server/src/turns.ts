@@ -77,11 +77,14 @@ export function createTurnControl(deps: TurnControlDeps) {
       await send(conn.peer, sessionId, CONTINUE_PROMPT);
       return {};
     },
-    'turn/abort': ({ sessionId, turnId }) => {
+    'turn/abort': ({ sessionId, turnId }, conn) => {
       requireSession(sessionId);
       if (!deps.agent.present) throw failure('unsupported', '没有能停止回合的 agent 服务');
-      // 停止键只停在跑的一轮，排着的照常开下一轮
-      if (!deps.agent.use.abort(sessionId, { turnId, reason: '停止键' }) && turnId !== undefined) {
+      // 停止键只停在跑的一轮，排着的照常开下一轮；停下的人是这条连接的身份
+      if (
+        !deps.agent.use.abort(sessionId, { turnId, reason: '停止键', by: conn.peer.identity }) &&
+        turnId !== undefined
+      ) {
         throw failure('expected-turn-mismatch', `这一轮不在跑：${turnId}`);
       }
       return {};

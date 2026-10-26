@@ -15,6 +15,7 @@ import {
   formatAttachmentRef,
   groupToolCalls,
   parseAttachmentRefs,
+  WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -101,6 +102,21 @@ export function queuedNote(quiet: boolean): Message {
     role: 'system',
     content: `下面几条是你上一轮进行期间到的。${quiet ? '没有需要接的可以不说话。' : ''}`,
     metadata: { injector: 'system-other' },
+  };
+}
+
+/**
+ * 停下标记（schema-message 的 TurnStopped）：落进会话历史，让下一轮的模型知道上面这一轮没答完就停了。who 是停下的人的称呼，
+ * 没有具体的人时不给。末句不叫她接着做，接不接看之后的消息
+ */
+export function stoppedNote(who: string | undefined, turnId: string): Message {
+  const stopped = who ? `你还没答完，就被 ${who} 叫停了` : '你还没答完就被停下了';
+  return {
+    role: 'system',
+    kind: WellKnownKinds.TurnStopped,
+    content: `[已停下] 上面这一轮${stopped}：没说完的话没有留下，已经执行的工具调用以上面的记录为准。要不要接着做，看之后的消息再定。`,
+    timestamp: Date.now(),
+    metadata: { [WellKnownMetadataKeys.TurnId]: turnId },
   };
 }
 
