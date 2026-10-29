@@ -15,6 +15,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -183,6 +184,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     expect(svc.cancelRun(svc.listRuns(1, 'zz-wait')[0].runId)).toBe(true);
     const run = await runPromise;
     expect(run.status).toBe('cancelled');
-    expect(run.nodes[0]).toMatchObject({ status: 'failed', error: '运行已取消' });
+    expect(toSource(run.nodes[0])).toMatchObject({ status: 'failed', error: '运行已取消' });
+    expect(run.nodes[0].error).toMatchObject({ key: 'cancelled' });
   });
 });

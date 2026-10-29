@@ -6,7 +6,7 @@ import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
 import type { Events, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef } from '../fixtures/service-ref.js';
@@ -118,7 +118,7 @@ describe('workflow validateGraph', () => {
         { id: 'a', type: 'wait', seconds: 0 },
       ],
     };
-    expect(validateGraph(def)).toMatch(/重复/);
+    expect(toSource(validateGraph(def))).toMatch(/重复/);
   });
 
   it('拒绝未知 dep', () => {
@@ -127,7 +127,7 @@ describe('workflow validateGraph', () => {
       trigger: { type: 'manual' },
       nodes: [{ id: 'a', type: 'wait', seconds: 0, deps: ['x'] }],
     };
-    expect(validateGraph(def)).toMatch(/未知 dep/);
+    expect(toSource(validateGraph(def))).toMatch(/未知 dep/);
   });
 
   it('检测自引用', () => {
@@ -136,7 +136,7 @@ describe('workflow validateGraph', () => {
       trigger: { type: 'manual' },
       nodes: [{ id: 'a', type: 'wait', seconds: 0, deps: ['a'] }],
     };
-    expect(validateGraph(def)).toMatch(/自引用/);
+    expect(toSource(validateGraph(def))).toMatch(/自引用/);
   });
 
   it('检测环', () => {
@@ -148,7 +148,7 @@ describe('workflow validateGraph', () => {
         { id: 'b', type: 'wait', seconds: 0, deps: ['a'] },
       ],
     };
-    expect(validateGraph(def)).toMatch(/环/);
+    expect(toSource(validateGraph(def))).toMatch(/环/);
   });
 
   it('按类型校验必填字段（定义期就报清晰错，而非运行期 cryptic）', () => {
@@ -157,12 +157,16 @@ describe('workflow validateGraph', () => {
       trigger: { type: 'manual' },
       nodes: [node as WorkflowDef['nodes'][number]],
     });
-    expect(validateGraph(wrap({ id: 'a', type: 'agent' }))).toMatch(/instruction/);
-    expect(validateGraph(wrap({ id: 'a', type: 'tool' }))).toMatch(/tool/);
-    expect(validateGraph(wrap({ id: 'a', type: 'send-message', sessionId: 's' }))).toMatch(/content/);
-    expect(validateGraph(wrap({ id: 'a', type: 'send-message', content: 'x' }))).toMatch(/sessionId/);
-    expect(validateGraph(wrap({ id: 'a', type: 'wait' }))).toMatch(/seconds/);
-    expect(validateGraph(wrap({ id: 'a', type: 'mystery' }))).toMatch(/类型未知/);
+    expect(toSource(validateGraph(wrap({ id: 'a', type: 'agent' })))).toMatch(/instruction/);
+    expect(toSource(validateGraph(wrap({ id: 'a', type: 'tool' })))).toMatch(/tool/);
+    const missingContent = validateGraph(wrap({ id: 'a', type: 'send-message', sessionId: 's' }));
+    expect(toSource(missingContent)).toBe('节点 "a"(send-message) 缺少 content 字段');
+    expect(resolveText(missingContent!, ['en'])).toBe('Node "a" (send-message) is missing the content field');
+    expect(toSource(validateGraph(wrap({ id: 'a', type: 'send-message', content: 'x' })))).toMatch(/sessionId/);
+    expect(toSource(validateGraph(wrap({ id: 'a', type: 'wait' })))).toMatch(/seconds/);
+    const unknownType = validateGraph(wrap({ id: 'a', type: 'mystery' }));
+    expect(unknownType).toMatchObject({ i18n: '@aalis/plugin-workflow', key: 'unknownNodeType' });
+    expect(toSource(unknownType)).toBe('节点 "a" 类型未知: mystery');
     // 合法 agent 节点通过
     expect(validateGraph(wrap({ id: 'a', type: 'agent', instruction: '干活' }))).toBeNull();
   });
@@ -350,6 +354,8 @@ describe('workflow agent 节点', () => {
     });
     expect(res.status).toBe('failed');
     expect(toSource(res.error)).toMatch(/超时/);
+    expect(res.nodes[0].error).toMatchObject({ key: 'agentTimeout' });
+    expect(res.error).toMatchObject({ key: 'nodeFailed', params: { error: { key: 'agentTimeout' } } });
   });
 
   it('outcome=error → 节点失败', async () => {

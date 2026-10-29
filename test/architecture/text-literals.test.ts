@@ -33,15 +33,12 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 /** 包级名单：包目录名 → 理由 */
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '尚未迁移'],
-  ['plugin-cron-engine', '尚未迁移'],
   ['plugin-paper', '尚未迁移'],
   ['plugin-publish-review', '尚未迁移'],
   ['plugin-remote-agent-cursor', '尚未迁移'],
-  ['plugin-scheduler', '尚未迁移'],
   ['plugin-tool-onebot', '尚未迁移'],
   ['plugin-user-profile', '尚未迁移'],
   ['plugin-user-relation', '尚未迁移'],
-  ['plugin-workflow', '尚未迁移'],
   ['plugin-works-site', '尚未迁移'],
 ]);
 

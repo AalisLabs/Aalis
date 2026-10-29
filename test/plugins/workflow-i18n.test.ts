@@ -171,7 +171,7 @@ describe('工作流运行的错误原因', () => {
     // 工具服务不在：tool 节点失败，这一次运行以失败收尾
     await app.plugins.unload(toolsPlugin.name);
     expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({
-      error: 'Run did not succeed (Failed): Node "a" failed: \'tools\' 服务不可用',
+      error: 'Run did not succeed (Failed): Node "a" failed: The \'tools\' service is unavailable',
     });
     setLanguage(['zh-CN']);
     expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({

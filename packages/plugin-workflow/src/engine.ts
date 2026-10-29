@@ -18,15 +18,13 @@ import type {
   WorkflowDef,
 } from '@aalis/api-workflow';
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
-import { type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { t } from './texts.js';
 
 const MAX_OUTPUT_PREVIEW = 1000;
 /** 原因最多多少字：文字对象的参数截到它（上游的整段报错可能在参数里），随运行历史落盘 */
 const ERROR_MAX = 200;
-/** 运行被取消时，阻塞中的节点以此失败 */
-const CANCELLED = '运行已取消';
 
 /**
  * 执行一次 DAG 用到的能力：tool 节点调工具、send-message 节点经事件派发消息、agent 节点经网关送达指令并经钩子捕获它那一轮的
@@ -91,39 +89,41 @@ function interpolateValue(v: unknown, vars: Record<string, unknown>, outputs: Re
 
 // ─── 拓扑校验 ────────────────────────────────────────
 
-/** 按节点类型校验必填字段（运行期 raw 可能缺字段）；返回错误消息或 null */
-function nodeFieldError(node: NodeSpec): string | null {
+/** 按节点类型校验必填字段（运行期 raw 可能缺字段）；返回原因或 null */
+function nodeFieldError(node: NodeSpec): TextRef | null {
   const r = node as unknown as Record<string, unknown>;
   const id = String(r.id ?? '?');
   const filled = (v: unknown): boolean => typeof v === 'string' && v.trim().length > 0;
+  const missing = (field: string) => t('missingField', { id, type: node.type, field });
   switch (node.type) {
     case 'tool':
-      return filled(r.tool) ? null : `节点 "${id}"(tool) 缺少 tool 字段`;
+      return filled(r.tool) ? null : missing('tool');
     case 'send-message':
-      if (!filled(r.content)) return `节点 "${id}"(send-message) 缺少 content 字段`;
-      if (!filled(r.sessionId)) return `节点 "${id}"(send-message) 缺少 sessionId 字段`;
+      if (!filled(r.content)) return missing('content');
+      if (!filled(r.sessionId)) return missing('sessionId');
       return null;
     case 'wait':
-      return typeof r.seconds === 'number' && Number.isFinite(r.seconds)
-        ? null
-        : `节点 "${id}"(wait) 缺少数值字段 seconds`;
+      return typeof r.seconds === 'number' && Number.isFinite(r.seconds) ? null : t('missingSeconds', { id });
     case 'agent':
-      return filled(r.instruction) ? null : `节点 "${id}"(agent) 缺少 instruction 字段`;
+      return filled(r.instruction) ? null : missing('instruction');
     default:
-      return `节点 "${id}" 类型未知: ${String(r.type ?? '?')}`;
+      return t('unknownNodeType', { id, type: String(r.type ?? '?') });
   }
 }
 
-/** 校验定义的节点字段与 deps 合法（必填字段齐全；不引用未知节点；不形成环）；返回错误消息或 null */
-export function validateGraph(def: WorkflowDef): string | null {
+/**
+ * 校验定义的节点字段与 deps 合法（必填字段齐全；不引用未知节点；不形成环）；返回原因或 null。原因给人看（工作流页），
+ * 也经 workflow_define 交给模型（取原文）
+ */
+export function validateGraph(def: WorkflowDef): TextRef | null {
   const ids = new Set(def.nodes.map(n => n.id));
-  if (ids.size !== def.nodes.length) return '节点 id 重复';
+  if (ids.size !== def.nodes.length) return t('duplicateNodeId');
   for (const n of def.nodes) {
     const fieldErr = nodeFieldError(n);
     if (fieldErr) return fieldErr;
     for (const d of n.deps ?? []) {
-      if (!ids.has(d)) return `节点 "${n.id}" 引用未知 dep "${d}"`;
-      if (d === n.id) return `节点 "${n.id}" 自引用`;
+      if (!ids.has(d)) return t('unknownDep', { id: n.id, dep: d });
+      if (d === n.id) return t('selfDep', { id: n.id });
     }
   }
   // Kahn 检测环
@@ -146,7 +146,7 @@ export function validateGraph(def: WorkflowDef): string | null {
       if (indeg.get(c) === 0) q.push(c);
     }
   }
-  if (visited < def.nodes.length) return '节点存在依赖环';
+  if (visited < def.nodes.length) return t('dependencyCycle');
   return null;
 }
 
@@ -164,7 +164,7 @@ interface ExecCtx extends EngineCaps {
 }
 
 async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
-  if (!ec.tools.present) throw new Error("'tools' 服务不可用");
+  if (!ec.tools.present) throw new TextError(t('noTools'));
   const service = ec.tools.use;
   const args = (interpolateValue(node.args ?? {}, ec.vars, ec.outputs) ?? {}) as Record<string, unknown>;
   // 工作流节点产出是文本：工具交给主模型看的图（images）没有消费者，只取 content
@@ -198,7 +198,7 @@ function execWait(node: WaitNodeSpec, signal: AbortSignal): Promise<string> {
     }, ms);
     const stop = () => {
       clearTimeout(timer);
-      reject(new Error(CANCELLED));
+      reject(new TextError(t('cancelled')));
     };
     signal.addEventListener('abort', stop, { once: true });
   });
@@ -224,9 +224,9 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const platform = interpolateString(node.platform ?? 'workflow', ec.vars, ec.outputs);
   const timeoutSec = node.timeoutSeconds && node.timeoutSeconds > 0 ? node.timeoutSeconds : DEFAULT_AGENT_TIMEOUT_SEC;
   if (sessionId === ec.callerSessionId) {
-    throw new Error(`agent 节点指向调起这次运行的会话，那一轮在等这次运行，节点开不了轮（会话=${sessionId}）`);
+    throw new TextError(t('agentCallerSession', { session: sessionId }));
   }
-  if (!ec.gateway.present) throw new Error(`'gateway' 服务不可用，agent 节点的指令送不到（会话=${sessionId}）`);
+  if (!ec.gateway.present) throw new TextError(t('agentNoGateway', { session: sessionId }));
   const gateway = ec.gateway.use;
 
   const incoming: IncomingMessage = {
@@ -269,14 +269,13 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
 
   if (captured) {
     if (captured.outcome === 'error' || captured.outcome === 'aborted') {
-      throw new Error(`agent 节点未正常完成（outcome=${captured.outcome}，会话=${sessionId}）`);
+      throw new TextError(t('agentNotCompleted', { outcome: captured.outcome, session: sessionId }));
     }
     return captured.reply;
   }
-  if (end === 'cancelled') throw new Error(CANCELLED);
-  if (end === 'timeout')
-    throw new Error(`agent 节点超时（${timeoutSec}s 内未收到 agent:turn:after，会话=${sessionId}）`);
-  throw new Error(`agent 节点的指令没开轮：在网关相位被挡下或被放掉（会话=${sessionId}）`);
+  if (end === 'cancelled') throw new TextError(t('cancelled'));
+  if (end === 'timeout') throw new TextError(t('agentTimeout', { seconds: timeoutSec, session: sessionId }));
+  throw new TextError(t('agentNoTurn', { session: sessionId }));
 }
 
 async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
@@ -289,10 +288,6 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
       return await execWait(node, ec.signal);
     case 'agent':
       return await execAgent(node, ec);
-    default: {
-      const _exhaustive: never = node;
-      throw new Error(`未知节点类型: ${(_exhaustive as { type: string }).type}`);
-    }
   }
 }
 

@@ -129,14 +129,14 @@ describe('工作流页', () => {
   it('过登记门槛；概况、定义表与运行表，选中一行在详情里看 YAML', async () => {
     await boot();
     expect(pages.logs).toEqual([]);
-    expect(pages.view('workflows')).toMatchObject({ title: '工作流', placement: 'plugin', icon: 'workflow' });
+    expect(toSource(pages.view('workflows'))).toMatchObject({ title: '工作流', placement: 'plugin', icon: 'workflow' });
     expect(toSource(pages.view('workflows').content)).toContainEqual(
       expect.objectContaining({
         id: 'workflows',
         columns: expect.arrayContaining([{ key: 'definedBy', label: '定义者' }]),
       }),
     );
-    expect(await pages.data('workflows', 'summary')).toEqual([
+    expect(toSource(await pages.data('workflows', 'summary'))).toEqual([
       { label: '定义', value: 1 },
       { label: '启用', value: 1 },
       { label: '24 小时运行', value: 0 },
@@ -166,7 +166,7 @@ describe('工作流页', () => {
     const before = pages.invalidations.length;
     const reply = await pages.act('workflows', 'runWorkflow', { rowKey: 'zz-manual' });
     expect(reply.status).toBe(200);
-    expect((reply.body as { message: string }).message).toMatch(/^已运行 zz-manual，用时 /);
+    expect(toSource((reply.body as { message: string }).message)).toMatch(/^已运行 zz-manual，用时 /);
     expect(calls).toBe(1);
     expect(invalidated(before), '运行中与运行完都要让运行表重取').toEqual([WHOLE_PAGE, WHOLE_PAGE]);
     const runs = await pages.data<Array<Record<string, unknown>>>('workflows', 'runs');
@@ -190,7 +190,7 @@ describe('工作流页', () => {
       body: { message: expect.objectContaining({ source: '已停用 zz-manual' }) },
     });
     expect(svc.getWorkflow('zz-manual')?.enabled).toBe(false);
-    expect(await pages.data('workflows', 'workflows')).toMatchObject([
+    expect(toSource(await pages.data('workflows', 'workflows'))).toMatchObject([
       { status: { text: '停用', state: 'inactive' }, enabled: false, disabled: true },
     ]);
     expect(await pages.act('workflows', 'enableWorkflow', { rowKey: 'zz-manual' })).toEqual({
@@ -217,8 +217,8 @@ describe('工作流页', () => {
 
     const broken = await pages.act('workflows', 'defineWorkflow', { input: { yaml: 'id: [' } });
     expect(broken.status).toBe(500);
-    expect((broken.body as { error: string }).error).toMatch(/^YAML 解析失败/);
-    expect(await pages.act('workflows', 'defineWorkflow', { input: { yaml: 'id: x' } })).toEqual({
+    expect(toSource((broken.body as { error: string }).error)).toMatch(/^YAML 解析失败/);
+    expect(toSource(await pages.act('workflows', 'defineWorkflow', { input: { yaml: 'id: x' } }))).toEqual({
       status: 500,
       body: { error: '定义不合法：缺少 trigger 或 nodes' },
     });
@@ -227,14 +227,14 @@ describe('工作流页', () => {
   it('删除：定义与文件都不在了并推 invalidate；不存在的回错误，不当成功', async () => {
     const svc = await boot();
     const before = pages.invalidations.length;
-    expect(await pages.act('workflows', 'removeWorkflow', { rowKey: 'zz-manual' })).toEqual({
+    expect(toSource(await pages.act('workflows', 'removeWorkflow', { rowKey: 'zz-manual' }))).toEqual({
       status: 200,
       body: { message: '已删除 zz-manual' },
     });
     expect(svc.getWorkflow('zz-manual')).toBeUndefined();
     expect(existsSync(join(base, 'workspace', 'workflows', 'zz-manual.yaml'))).toBe(false);
     expect(invalidated(before)).toContainEqual(WHOLE_PAGE);
-    expect(await pages.act('workflows', 'removeWorkflow', { rowKey: 'zz-manual' })).toEqual({
+    expect(toSource(await pages.act('workflows', 'removeWorkflow', { rowKey: 'zz-manual' }))).toEqual({
       status: 500,
       body: { error: '工作流 zz-manual 不存在' },
     });
@@ -346,7 +346,7 @@ describe('工作流页', () => {
   it('概况的「24 小时失败」只数失败的，不算已取消的', async () => {
     storedRuns(storedRun('zz-failed', 'failed'), storedRun('zz-cancelled', 'cancelled'));
     await boot();
-    expect(await pages.data('workflows', 'summary')).toEqual(
+    expect(toSource(await pages.data('workflows', 'summary'))).toEqual(
       expect.arrayContaining([
         { label: '24 小时运行', value: 2 },
         { label: '24 小时失败', value: 1 },
