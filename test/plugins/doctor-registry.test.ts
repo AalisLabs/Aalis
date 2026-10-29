@@ -31,6 +31,7 @@ import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/ind
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
 import {
   defineTexts,
+  localize,
   resolveSource,
   resolveText,
   TextError,
@@ -355,7 +356,10 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.plugins.idle();
 
     const checks = (await doctor.runChecks()).checks;
-    expect(checks.find(c => c.id === 'plugins.pending')).toMatchObject({ level: 'ok', message: '无缺服务的插件' });
+    expect(toSource(checks.find(c => c.id === 'plugins.pending'))).toMatchObject({
+      level: 'ok',
+      message: '无缺服务的插件',
+    });
     expect(toSource(checks.find(c => c.id === 'plugins.waiting')?.detail)).toBe(
       'zz-doctor-patient: 等待 zz-doctor-slow-only-provider 启动',
     );
@@ -363,29 +367,43 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.stop();
   });
 
-  it('plugins.slow 点名激活超过阈值、仍在后台进行的插件；没有时为 ok', async () => {
+  it('plugins.slow 点名激活超过阈值、仍在后台进行的插件，英文按个数分单复数；没有时为 ok', async () => {
     const { app, doctor } = await boot({ slowThresholdMs: 20 });
     const quiet = await doctor.runChecks();
-    expect(quiet.checks.find(c => c.id === 'plugins.slow')).toMatchObject({ level: 'ok', message: '无激活超时的插件' });
+    expect(toSource(quiet.checks.find(c => c.id === 'plugins.slow'))).toMatchObject({
+      level: 'ok',
+      message: '无激活超时的插件',
+    });
 
     let release!: () => void;
     const gate = new Promise<void>(resolve => {
       release = resolve;
     });
+    const slowCheck = async () => (await doctor.runChecks()).checks.find(c => c.id === 'plugins.slow');
     await app.plugins.register(definePlugin({ name: 'zz-doctor-slow-probe', apply: () => gate }), {});
     await app.plugins.idle();
-    const report = await doctor.runChecks();
-    expect(report.checks.find(c => c.id === 'plugins.slow')).toMatchObject({
+    const one = await slowCheck();
+    expect(toSource(one)).toMatchObject({
       level: 'warn',
       message: '1 个插件激活超过阈值，仍在后台进行',
       detail:
         'zz-doctor-slow-probe\n等它完成即可；长时间不完成时看它的日志（多为在等网络或外部服务），停用再启用可重试',
     });
+    expect(localize(one, text => resolveText(text, ['en']))).toMatchObject({
+      message: '1 plugin has been activating past the threshold, still running in the background',
+      detail:
+        'zz-doctor-slow-probe\nJust wait for it to finish; if it takes long, check its logs (usually it is waiting on the network or an external service); disabling and re-enabling it retries',
+    });
+    await app.plugins.register(definePlugin({ name: 'zz-doctor-slow-probe-b', apply: () => gate }), {});
+    await app.plugins.idle();
+    expect(localize((await slowCheck())?.message, text => resolveText(text, ['en']))).toBe(
+      '2 plugins have been activating past the threshold, still running in the background',
+    );
     release();
     await app.stop();
   });
 
-  it('plugins.lingering 点名旧实例超过宽限仍未停下的插件，说法与依赖链的根一致；没有时不出这一项', async () => {
+  it('plugins.lingering 点名旧实例超过宽限仍未停下的插件，说法与依赖链的根一致（原文与英文）；没有时不出这一项', async () => {
     const { app, doctor } = await boot({ disposeTimeoutMs: 20 });
     expect((await doctor.runChecks()).checks.some(c => c.id === 'plugins.lingering')).toBe(false);
 
@@ -406,16 +424,22 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const report = await doctor.runChecks();
     // 新实例停在 pending、只在等旧实例停下：不缺服务，plugins.pending 不写「无未就绪插件」，原因只在 plugins.lingering 报一次
     expect(app.plugins.getPlugin('zz-doctor-slowstop')?.state).toBe('pending');
-    expect(report.checks.find(c => c.id === 'plugins.pending')).toMatchObject({
+    expect(toSource(report.checks.find(c => c.id === 'plugins.pending'))).toMatchObject({
       level: 'ok',
       message: '无缺服务的插件',
     });
     expect(report.checks.some(c => c.id === 'plugins.waiting')).toBe(false);
-    expect(report.checks.find(c => c.id === 'plugins.lingering')).toMatchObject({
+    const lingering = report.checks.find(c => c.id === 'plugins.lingering');
+    expect(toSource(lingering)).toMatchObject({
       level: 'warn',
       message: '1 个插件的旧实例超过宽限仍未停下',
       detail:
         '等待 zz-doctor-slowstop 的旧实例停下\n停下后按目标态继续；一直不停时看它的日志（多为清理在等网络或外部进程），重启进程可解决',
+    });
+    expect(localize(lingering, text => resolveText(text, ['en']))).toMatchObject({
+      message: '1 plugin has an old instance still not stopped after the grace period',
+      detail:
+        'Waiting for the old instance of zz-doctor-slowstop to stop\nOnce it stops, things continue toward the target state; if it never stops, check its logs (usually cleanup is waiting on the network or an external process); restarting the process resolves it',
     });
     release();
     await app.stop();
@@ -427,7 +451,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const checkAt = async (version: string) => {
       Object.defineProperty(process, 'version', { value: version });
       syncBuiltinESMExports();
-      return (await doctor.runChecks()).checks.find(c => c.id === 'env.node');
+      return toSource((await doctor.runChecks()).checks.find(c => c.id === 'env.node'));
     };
     try {
       expect(await checkAt('v24.14.9')).toMatchObject({
@@ -470,8 +494,8 @@ describe('plugin-doctor — 诊断页与提示', () => {
   it('诊断页过登记门槛；没运行过时写明尚未运行，结果表为空', async () => {
     const { app, pages } = await boot();
     expect(pages.logs).toEqual([]);
-    expect(pages.view('doctor')).toMatchObject({ title: '系统诊断', placement: 'plugin', icon: 'activity' });
-    expect(await pages.data('doctor', 'summary')).toEqual([{ label: '时间', value: '尚未运行' }]);
+    expect(toSource(pages.view('doctor'))).toMatchObject({ title: '系统诊断', placement: 'plugin', icon: 'activity' });
+    expect(toSource(await pages.data('doctor', 'summary'))).toEqual([{ label: '时间', value: '尚未运行' }]);
     expect(await pages.data('doctor', 'checks')).toEqual([]);
     await app.stop();
   });
@@ -485,8 +509,10 @@ describe('plugin-doctor — 诊断页与提示', () => {
     });
     const reply = await pages.act('doctor', 'runDiagnostics');
     expect(reply.status).toBe(200);
-    expect((reply.body as { message: string }).message).toMatch(/^诊断完成：\d+ 项通过、0 项警告、1 项错误$/);
-    const rows = await pages.data<Array<Record<string, unknown>>>('doctor', 'checks');
+    expect(toSource((reply.body as { message: unknown }).message)).toMatch(
+      /^诊断完成：\d+ 项通过、0 项警告、1 项错误$/,
+    );
+    const rows = toSource(await pages.data<Array<Record<string, unknown>>>('doctor', 'checks'));
     expect(rows.find(row => row.id === 'zz.broken')).toMatchObject({
       level: { text: '错误', state: 'error' },
       message: '坏了',
@@ -505,7 +531,7 @@ describe('plugin-doctor — 诊断页与提示', () => {
     });
     await doctor.runChecks();
     expect(pages.invalidations).toEqual([{ instance: '@aalis/plugin-doctor', pageKey: 'doctor' }]);
-    expect(pages.notices()).toEqual([
+    expect(toSource(pages.notices())).toEqual([
       {
         instance: '@aalis/plugin-doctor',
         id: 'checks',
@@ -529,14 +555,16 @@ describe('plugin-doctor — 诊断页与提示', () => {
       run: () => ({ id: 'zz.warn', category: 'other', level: 'warn', message: '小心' }),
     });
     await doctor.runChecks();
-    expect(pages.notices()).toMatchObject([{ id: 'checks', level: 'action', title: '诊断有 1 项警告' }]);
+    expect(toSource(pages.notices())).toMatchObject([{ id: 'checks', level: 'action', title: '诊断有 1 项警告' }]);
     doctor.registerCheck({
       id: 'zz.broken',
       category: 'other',
       run: () => ({ id: 'zz.broken', category: 'other', level: 'error', message: '坏了' }),
     });
     await doctor.runChecks();
-    expect(pages.notices()).toMatchObject([{ id: 'checks', level: 'error', title: '诊断有 1 项错误、1 项警告' }]);
+    expect(toSource(pages.notices())).toMatchObject([
+      { id: 'checks', level: 'error', title: '诊断有 1 项错误、1 项警告' },
+    ]);
     await app.stop();
   });
 

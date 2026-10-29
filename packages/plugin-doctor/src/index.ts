@@ -27,7 +27,7 @@ import {
   type Services,
   services,
 } from '@aalis/core';
-import { linesOf, type TextRef, textLines, textOf } from '@aalis/schema-i18n';
+import { asText, linesOf, type TextRef, textLines, textOf } from '@aalis/schema-i18n';
 import { t } from './texts.js';
 
 const PLUGIN_NAME = '@aalis/plugin-doctor';
@@ -88,7 +88,7 @@ class DoctorRegistry implements DoctorService {
           id: spec.id,
           category: spec.category,
           level: 'error',
-          message: `检查项 ${spec.id} 抛出异常`,
+          message: t('checkThrew', { id: spec.id }),
           detail: textOf(err),
         });
       }
@@ -118,17 +118,27 @@ class DoctorRegistry implements DoctorService {
 
 // ===== WebUI 页面 =====
 
-const LEVELS: Record<CheckLevel, { text: string; state?: 'attention' | 'error' }> = {
-  ok: { text: '通过' },
-  warn: { text: '警告', state: 'attention' },
-  error: { text: '错误', state: 'error' },
+const LEVELS: Record<CheckLevel, { text: TextRef; state?: 'attention' | 'error' }> = {
+  ok: { text: t('levelOk') },
+  warn: { text: t('levelWarn'), state: 'attention' },
+  error: { text: t('levelError'), state: 'error' },
+};
+
+/** 「类别」一列：值照旧作标识，显示名取字典 */
+const CATEGORIES: Record<CheckCategory, TextRef> = {
+  env: t('categoryEnv'),
+  filesystem: t('categoryFilesystem'),
+  plugins: t('categoryPlugins'),
+  config: t('categoryConfig'),
+  service: t('categoryService'),
+  other: t('categoryOther'),
 };
 
 // ===== 插件入口 =====
 
 export default definePlugin({
   name: PLUGIN_NAME,
-  displayName: '系统诊断',
+  displayName: t('displayName'),
   subsystem: 'platform',
   provides: [doctor],
   uses,
@@ -136,15 +146,15 @@ export default definePlugin({
     // 诊断页只读本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
     const page = webui.use.definePage({
       key: 'doctor',
-      title: '系统诊断',
+      title: t('displayName'),
       icon: 'activity',
       actions: {
         runDiagnostics: {
-          label: '立即运行',
+          label: t('runNow'),
           effect: 'read',
           async handler() {
             const { ok, warn, error } = (await registry.runChecks()).summary;
-            return `诊断完成：${ok} 项通过、${warn} 项警告、${error} 项错误`;
+            return t('ran', { ok, warn, error });
           },
         },
       },
@@ -153,37 +163,37 @@ export default definePlugin({
         {
           type: 'info',
           id: 'summary',
-          label: '上次运行',
+          label: t('lastRun'),
           data() {
             const last = registry.getLastReport();
-            if (!last) return [{ label: '时间', value: '尚未运行' }];
+            if (!last) return [{ label: t('time'), value: t('notRunYet') }];
             return [
-              { label: '时间', value: last.generatedAt, kind: 'time' },
-              { label: '通过', value: last.summary.ok },
-              { label: '警告', value: last.summary.warn },
-              { label: '错误', value: last.summary.error },
+              { label: t('time'), value: last.generatedAt, kind: 'time' },
+              { label: t('levelOk'), value: last.summary.ok },
+              { label: t('countWarn'), value: last.summary.warn },
+              { label: t('countError'), value: last.summary.error },
             ];
           },
         },
         {
           type: 'table',
           id: 'checks',
-          label: '诊断结果',
+          label: t('results'),
           rowKey: 'key',
-          empty: '还没有运行过诊断',
+          empty: t('noResults'),
           columns: [
-            { key: 'level', label: '级别', kind: 'status', primary: true },
-            { key: 'category', label: '类别' },
-            { key: 'id', label: '检查项', kind: 'code' },
-            { key: 'message', label: '说明', primary: true },
-            { key: 'detail', label: '详情', kind: 'long-text' },
+            { key: 'level', label: t('columnLevel'), kind: 'status', primary: true },
+            { key: 'category', label: t('columnCategory') },
+            { key: 'id', label: t('columnCheck'), kind: 'code' },
+            { key: 'message', label: t('columnMessage'), primary: true },
+            { key: 'detail', label: t('columnDetail'), kind: 'long-text' },
           ],
           // 检查项的 id 可能重复（一个检查项回多条结果），行按报告里的次序标识
           data: () =>
             (registry.getLastReport()?.checks ?? []).map((check, i) => ({
               key: String(i),
               level: LEVELS[check.level],
-              category: check.category,
+              category: CATEGORIES[check.category],
               id: check.id,
               message: check.message,
               detail: check.detail,
@@ -202,11 +212,15 @@ export default definePlugin({
         return;
       }
       // 「诊断有 2 项错误、1 项警告」：只写不为零的
-      const counts = [error && `${error} 项错误`, warn && `${warn} 项警告`].filter(Boolean);
       notice = webui.use.notify({
         id: 'checks',
         level: error > 0 ? 'error' : 'action',
-        title: `诊断有 ${counts.join('、')}`,
+        title:
+          error > 0 && warn > 0
+            ? t('noticeErrorsWarnings', { error, warn })
+            : error > 0
+              ? t('noticeErrors', { error })
+              : t('noticeWarnings', { warn }),
         open: { page: 'doctor' },
       });
     });
@@ -217,12 +231,10 @@ export default definePlugin({
 
     // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
     // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到
-    commands.use
-      .command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）', { visibility: 'restricted' })
-      .action(async () => {
-        const report = await registry.runChecks();
-        return formatReport(report);
-      });
+    commands.use.command('doctor', t('commandDescription'), { visibility: 'restricted' }).action(async () => {
+      const report = await registry.runChecks();
+      return formatReport(report);
+    });
   },
 });
 
@@ -251,9 +263,7 @@ function registerBuiltinChecks(
         category: 'env',
         level: supported ? 'ok' : 'error',
         message: `Node ${nodeVersion}`,
-        detail: supported
-          ? undefined
-          : '需要 Node 24.15.0 起；升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
+        detail: supported ? undefined : t('nodeTooOld'),
       };
     },
   });
@@ -263,7 +273,7 @@ function registerBuiltinChecks(
     category: 'env',
     pluginName: PLUGIN_NAME,
     run() {
-      return { id: 'env.platform', category: 'env', level: 'ok', message: `平台 ${platform}` };
+      return { id: 'env.platform', category: 'env', level: 'ok', message: t('platform', { platform }) };
     },
   });
 
@@ -277,7 +287,7 @@ function registerBuiltinChecks(
           id: 'plugins.service',
           category: 'plugins',
           level: 'warn',
-          message: 'PluginManagerService 不可用，跳过插件检查',
+          message: t('noPluginManager'),
         };
       }
       const pm = plugins.use;
@@ -301,14 +311,13 @@ function registerBuiltinChecks(
           id: 'plugins.active',
           category: 'plugins',
           level: 'ok',
-          message: `已激活插件 ${active.length} 个 / 共 ${status.length} 个`,
+          message: t('pluginsActive', { active: active.length, total: status.length }),
         },
         {
           id: 'plugins.errored',
           category: 'plugins',
           level: errored.length === 0 ? 'ok' : 'error',
-          message:
-            errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件处于 error（激活失败或自动重试用尽）`,
+          message: errored.length === 0 ? t('noErrored') : t('errored', { count: errored.length }),
           detail:
             errored.length > 0
               ? textLines(errored.map(p => t('pluginLine', { instance: p.instanceId, reason: failureText(p) ?? '' })))
@@ -318,7 +327,7 @@ function registerBuiltinChecks(
           id: 'plugins.pending',
           category: 'plugins',
           level: lacking.length === 0 ? 'ok' : 'warn',
-          message: lacking.length === 0 ? '无缺服务的插件' : `${lacking.length} 个插件缺服务，未就绪`,
+          message: lacking.length === 0 ? t('noLacking') : t('lacking', { count: lacking.length }),
           detail: lacking.length > 0 ? lines(lacking) : undefined,
         },
         ...(waiting.length > 0
@@ -327,7 +336,7 @@ function registerBuiltinChecks(
                 id: 'plugins.waiting',
                 category: 'plugins' as const,
                 level: 'ok' as const,
-                message: `${waiting.length} 个插件在等别的插件启动`,
+                message: t('waiting', { count: waiting.length }),
                 detail: lines(waiting),
               },
             ]
@@ -336,14 +345,8 @@ function registerBuiltinChecks(
           id: 'plugins.slow',
           category: 'plugins',
           level: slow.length === 0 ? 'ok' : 'warn',
-          message: slow.length === 0 ? '无激活超时的插件' : `${slow.length} 个插件激活超过阈值，仍在后台进行`,
-          detail:
-            slow.length > 0
-              ? [
-                  ...slow.map(p => p.instanceId),
-                  '等它完成即可；长时间不完成时看它的日志（多为在等网络或外部服务），停用再启用可重试',
-                ].join('\n')
-              : undefined,
+          message: slow.length === 0 ? t('noSlow') : t('slow', { count: slow.length }),
+          detail: slow.length > 0 ? textLines([...slow.map(p => p.instanceId), t('slowHint')]) : undefined,
         },
         ...(lingering.length > 0
           ? [
@@ -351,11 +354,11 @@ function registerBuiltinChecks(
                 id: 'plugins.lingering',
                 category: 'plugins' as const,
                 level: 'warn' as const,
-                message: `${lingering.length} 个插件的旧实例超过宽限仍未停下`,
-                detail: [
-                  ...lingering.map(p => `等待 ${p.instanceId} 的旧实例停下`),
-                  '停下后按目标态继续；一直不停时看它的日志（多为清理在等网络或外部进程），重启进程可解决',
-                ].join('\n'),
+                message: t('lingering', { count: lingering.length }),
+                detail: textLines([
+                  ...lingering.map(p => t('lingeringLine', { id: p.instanceId })),
+                  t('lingeringHint'),
+                ]),
               },
             ]
           : []),
@@ -378,30 +381,32 @@ function registerBuiltinChecks(
           const entries = services.inspect(name, { for: plugin });
           if (entries.some(entry => entry.contextId === preferred)) continue;
           const [inUse] = entries;
-          const fix =
-            plugin !== undefined
-              ? `改选偏好：WebUI 插件详情（${plugin}）的服务偏好，或配置文件的 pluginServicePreferences；要用原来的，启用提供 ${preferred} 的插件`
-              : `改选偏好：配置文件的 servicePreferences.${name}，或 WebUI 设置「系统」的服务偏好；要用原来的，启用提供 ${preferred} 的插件`;
+          // 在用的提供者的标签是 core 的展示值（unknown）：是字符串或文字对象才写出来，否则只写 id
+          const label = inUse && asText(inUse.label);
           results.push({
             id: plugin === undefined ? `services.preferences.${name}` : `services.preferences.${plugin}.${name}`,
             category: 'service',
             level: 'warn',
             message:
               plugin === undefined
-                ? `服务 ${name} 的偏好 ${preferred} 不在提供者里，没有生效`
-                : `插件 ${plugin} 的服务 ${name} 偏好 ${preferred} 不在提供者里，没有生效`,
-            detail: [
-              inUse
-                ? `实际在用：${inUse.label ? `${inUse.label}（${inUse.contextId}）` : inUse.contextId}`
-                : '这个服务现在没有提供者',
-              fix,
-            ].join('\n'),
+                ? t('preferenceMissed', { name, preferred })
+                : t('pluginPreferenceMissed', { plugin, name, preferred }),
+            detail: textLines([
+              !inUse
+                ? t('noProvider')
+                : label
+                  ? t('inUse', { label, id: inUse.contextId })
+                  : t('inUseId', { id: inUse.contextId }),
+              plugin === undefined
+                ? t('fixPreference', { name, preferred })
+                : t('fixPluginPreference', { plugin, preferred }),
+            ]),
           });
         }
       }
       return results.length > 0
         ? results
-        : { id: 'services.preferences', category: 'service', level: 'ok', message: '没有未生效的服务偏好' };
+        : { id: 'services.preferences', category: 'service', level: 'ok', message: t('preferencesInEffect') };
     },
   });
 }
