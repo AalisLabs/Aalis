@@ -415,17 +415,17 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 用于防御 SSRF：
 
 1. **协议白名单**：只允许 `http:` / `https:`，其余（`file:`、`gopher:` 等）直接拒绝。
-2. **私网 / 回环 / 链路本地 / 元数据段封锁**（`isPrivateAddress`）：
-   覆盖 `10.0.0.0/8`、`127.0.0.0/8`、`0.0.0.0/8`、`169.254.0.0/16`（含 AWS / 云元数据 `169.254.169.254`）、
-   `172.16–31`、`192.168`、组播 / 保留段，以及 IPv6 的 `::1`、`::`、`fe80:`、`fc`、`fd`、`::ffff:` 映射。
+2. **不是公网单播的地址**（`isPrivateAddress`）：
+   IPv4 的私网、回环、链路本地（含 AWS / 云元数据 `169.254.169.254`）、CGNAT、基准测试段、协议段与文档段、组播与保留段；
+   IPv6 在 `2000::/3` 之外的全部，以及其中的协议段、文档段与 6to4；IPv4 映射与 NAT64 写法按那个 IPv4 判。
    域名同样会被检查：`dns.lookup(all)` 解析出的每条 A/AAAA 记录只要命中私网即拒，
    以此堵住 DNS rebinding。`localhost`、`*.localhost`、`*.local` 主机名会被直接拦截。
 3. **逐跳重定向重校验**：30x 响应的 `Location` 解析成绝对 URL 后**再过一遍 `assertSafeUrl`**，
    杜绝「初始 host 受信，但 302 跳到 `http://169.254.169.254/` 内网」这类经典绕过。跳数上限为 5（`MAX_REDIRECTS`）。
    跟随时按 fetch 规范改写下一跳：跨源不带凭据头，301、302 的 POST 与 303 的非 GET、HEAD 改成不带正文的 GET。
 4. **进程级网络策略**（`setNetworkPolicy`）：owner 经 core 的 `network` 配置可以
-   关闭私网拦截（`blockPrivate:false`，用于本地自动化）、追加 `denyCidrs`、限定 `allowedPorts`。
-   这项策略在启动时由 `plugin-authority` 注入一次。
+   关闭私网拦截（`blockPrivate:false`，用于本地自动化）、追加 `denyCidrs`（IPv4 或 IPv6 网段）、限定 `allowedPorts`。
+   这项策略由 `plugin-authority` 注入，改了 `network` 段即时生效；写错时经出网闸的请求一律拒绝，直到改对。
 
 消费者侧用法很简单（一行替换 `fetch`），全仓已有十几处复用——onebot 附件下载、media、ASR、ollama、
 office、webui 图片代理、http 工具：

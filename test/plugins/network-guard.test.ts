@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertAddressesSafe,
   assertPortAllowed,
+  assertSafeHost,
   assertSafeUrl,
   isPrivateAddress,
   isPrivateHost,
@@ -61,6 +62,56 @@ describe('isPrivateAddress（含从 tools-api 并入的 CGNAT / benchmark 段）
     expect(isPrivateAddress('8.8.8.8')).toBe(false);
     expect(isPrivateAddress('1.1.1.1')).toBe(false);
     expect(isPrivateAddress('not-an-ip')).toBe(true);
+  });
+  it('不是公网单播的 IPv6 一律算私网（每个网段一个样本）', () => {
+    for (const ip of [
+      'febf::1', // 链路本地 fe80::/10 里不以 fe80: 开头的
+      'fec0::1', // 站点本地
+      'ff02::1', // 组播
+      '100::1', // 丢弃段
+      '4000::1', // 2000::/3 之外的 4000::/2
+      '2001:0:4136:e378::1', // Teredo
+      '2001:db8::1', // 文档段
+      '3fff::1', // 文档段
+      '64:ff9b:1::1', // 本地 NAT64 前缀
+      '::7f00:1', // IPv4 兼容写法
+      '2002:808:808::1', // 6to4（内嵌的是公网 8.8.8.8，整段照拒）
+    ]) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+  });
+  it('非规范写法和带 zone id 的照样判', () => {
+    // 后三个 % 之前超过 39 个字符：node:net 会把这一段截短，不能原样交给 BlockList
+    for (const ip of [
+      '0::1',
+      '0:0:0:0:0:0:0:1',
+      '::1%lo0',
+      'fe80::1%en0',
+      'fe80:0000:0000:0000:0000:0000:100.200.30.4%en0',
+      'fc00:0000:0000:0000:0000:0000:100.200.30.4%en0',
+      '0000:0000:0000:0000:0000:ffff:127.0.0.10%lo0',
+    ]) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+  });
+  it('IPv4 映射与 NAT64 写法按那个 IPv4 判', () => {
+    for (const ip of ['64:ff9b::a00:1', '64:ff9b::10.0.0.1', '::ffff:7f00:1', '0:0:0:0:0:ffff:127.0.0.1']) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+    for (const ip of ['64:ff9b::808:808', '::ffff:808:808', '::ffff:8.8.8.8']) {
+      expect(isPrivateAddress(ip), ip).toBe(false);
+    }
+  });
+  it('IPv4 的协议段和文档段 → true', () => {
+    for (const ip of ['192.0.0.9', '192.0.2.1', '198.51.100.1', '203.0.113.1']) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+  });
+  it('公网单播的 IPv6 照旧放行', () => {
+    // 2001:200::1 紧挨着 2001::/23 外面
+    for (const ip of ['2606:4700:4700::1111', '2001:200::1', '2400:cb00::1']) {
+      expect(isPrivateAddress(ip), ip).toBe(false);
+    }
   });
 });
 
@@ -127,6 +178,66 @@ describe('可配网络出口策略（setNetworkPolicy）', () => {
     // 但 denyCidrs 仍可单独点名拦截
     setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.0/8'] });
     await expect(assertSafeUrl('http://127.0.0.1/')).rejects.toThrow(/受限网段/);
+  });
+
+  it('denyCidrs 认 IPv6 网段，不写前缀长度的是单个地址；IPv6 网段不管 IPv4 地址', async () => {
+    setNetworkPolicy({ denyCidrs: ['2606:4700::/32', '2400:cb00::1'] });
+    await expect(assertSafeUrl('http://[2606:4700:4700::1111]/')).rejects.toThrow(/受限网段/);
+    await expect(assertSafeUrl('http://[2400:cb00::1]/')).rejects.toThrow(/受限网段/);
+    await expect(assertSafeUrl('http://[2400:cb00::2]/')).resolves.toBeInstanceOf(URL);
+    expect(() => assertAddressesSafe('x', ['2606:4700:0000:0000:0000:0000:100.200.30.4%en0'])).toThrow(/受限网段/);
+    setNetworkPolicy({ denyCidrs: ['::/0'] });
+    await expect(assertSafeUrl('http://8.8.8.8/')).resolves.toBeInstanceOf(URL);
+  });
+
+  it('IPv4 网段也管 IPv4 映射与 NAT64 写法', () => {
+    setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.0/8'] });
+    for (const addr of ['::ffff:7f00:1', '64:ff9b::7f00:1']) {
+      expect(() => assertAddressesSafe('x', [addr]), addr).toThrow(/受限网段/);
+    }
+  });
+
+  it('null 与没写一样：blockPrivate 照拦私网，denyCidrs、allowedPorts 不限', () => {
+    expect(setNetworkPolicy({ blockPrivate: null, denyCidrs: null, allowedPorts: null } as never)).toBeUndefined();
+    expect(() => assertAddressesSafe('x', ['1.1.1.1'])).not.toThrow();
+    expect(() => assertAddressesSafe('x', ['127.0.0.1'])).toThrow(/私网/);
+    expect(() => assertPortAllowed(6379)).not.toThrow();
+  });
+
+  it.each([
+    ['abc', 'network 的 "abc" 不是对象'],
+    [['10.0.0.0/8'], 'network 的 ["10.0.0.0/8"] 不是对象'],
+    [{ allowed_ports: [443] }, 'allowed_ports 的 [443] 不起作用'],
+    [{ blockPrivate: 'false' }, 'blockPrivate 的 "false" 不是布尔'],
+    [{ denyCidrs: ['10.0.0.0/33'] }, 'denyCidrs 的 "10.0.0.0/33"'],
+    [{ denyCidrs: ['fd00::/129'] }, 'denyCidrs 的 "fd00::/129"'],
+    [{ denyCidrs: ['10.0.0.0/'] }, 'denyCidrs 的 "10.0.0.0/"'],
+    [{ denyCidrs: ['10.0.0.0/8/1'] }, 'denyCidrs 的 "10.0.0.0/8/1"'],
+    [{ denyCidrs: ['not-a-cidr'] }, 'denyCidrs 的 "not-a-cidr"'],
+    [
+      { denyCidrs: ['fe80:0000:0000:0000:0000:0000:100.200.30.4%x/64'] },
+      'denyCidrs 的 "fe80:0000:0000:0000:0000:0000:100.200.30.4%x/64"',
+    ],
+    [{ denyCidrs: [8] }, 'denyCidrs 的 8'],
+    [{ denyCidrs: '10.0.0.0/8' }, 'denyCidrs 的 "10.0.0.0/8" 不是列表'],
+    [{ allowedPorts: ['443'] }, 'allowedPorts 的 "443"'],
+    [{ allowedPorts: [0] }, 'allowedPorts 的 0'],
+    [{ allowedPorts: [70000] }, 'allowedPorts 的 70000'],
+    [{ allowedPorts: [80.5] }, 'allowedPorts 的 80.5'],
+    [{ allowedPorts: [Infinity] }, 'allowedPorts 的 Infinity'],
+    [{ allowedPorts: 443 }, 'allowedPorts 的 443 不是列表'],
+  ])('网络策略写错一处，读策略的断言都抛点名原值的错：%j', async (cfg, named) => {
+    // 不抛错，交回读策略的断言抛的那一句：「网络策略配置有误：<字段> 的 <原值> …」
+    const problem = setNetworkPolicy(cfg as never);
+    expect(problem).toContain(`网络策略配置有误：${named}`);
+    expect(() => assertPortAllowed(443)).toThrow(problem);
+    expect(() => assertAddressesSafe('x', ['1.1.1.1'])).toThrow(problem);
+    await expect(assertSafeHost('1.1.1.1')).rejects.toThrow(problem);
+    await expect(assertSafeUrl('http://1.1.1.1/')).rejects.toThrow(problem);
+    // 注入一份写对的即恢复
+    setNetworkPolicy({ denyCidrs: ['1.1.1.0/24'] });
+    expect(() => assertAddressesSafe('x', ['1.1.1.1'])).toThrow(/受限网段/);
+    expect(() => assertAddressesSafe('x', ['8.8.8.8'])).not.toThrow();
   });
 });
 

@@ -1,9 +1,14 @@
-import { provide } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { events, type Logger, provide } from '@aalis/core';
+import { afterEach, describe, expect, it } from 'vitest';
 import { commands as commandsService, type ExecutionInput } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import {
+  assertAddressesSafe,
+  assertPortAllowed,
+  setNetworkPolicy,
+} from '../../packages/util-network-guard/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -96,5 +101,57 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
 
     expect(ran, 'public 指令被误拦').toBe(true);
     expect(out).toBe('ok');
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 网络出口闸的策略注入：权限插件把宿主配置的 network 注入进程级出网策略，宿主文档变了（change 带 document）再注入。
+// 写错时权限插件照常激活，出网一律报配置有误，每次注入写错都记一条 warn；改对即时恢复。
+// 策略是进程级单例，每例后复位；这里导入的出网闸与插件里的 @aalis/util-network-guard 经 vitest 的别名是同一份模块。
+// ════════════════════════════════════════════════════════════
+
+describe('权限插件注入网络出口策略', () => {
+  afterEach(() => setNetworkPolicy({}));
+
+  /** 宿主文档的 network 为 network 时起权限插件；changeNetwork 照热重载的路径先换文档、再发 host-config:changed */
+  async function startAuthority(network: unknown) {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const { app, store } = hostedApp({ network } as never, { logger });
+    await app.plugin(authorityPlugin, {});
+    await app.plugins.idle();
+    const changeNetwork = async (next: unknown): Promise<void> => {
+      store.set('network', next as never);
+      await app.bind({ events }).events.use.emit('host-config:changed', { document: true });
+    };
+    return { app, changeNetwork, policyWarns: () => warns.filter(w => w.includes('网络策略')) };
+  }
+
+  it('network 段写错时权限插件照常激活，出网一律报配置有误并记 warn；改对、再改都即时生效', async () => {
+    const { app, changeNetwork, policyWarns } = await startAuthority({
+      allowedPorts: [80, 443],
+      denyCidrs: ['1.1.1.0/24', 8],
+    });
+    try {
+      expect(app.plugins.getPlugin(authorityPlugin.name)?.state).toBe('active');
+      expect(() => assertPortAllowed(443)).toThrow(/^网络策略配置有误：denyCidrs 的 8 /);
+      expect(policyWarns()).toEqual([expect.stringContaining('网络策略配置有误：denyCidrs 的 8 ')]);
+
+      await changeNetwork({ allowedPorts: [80, 443], denyCidrs: ['1.1.1.0/24'] });
+      expect(() => assertPortAllowed(443)).not.toThrow();
+      expect(() => assertPortAllowed(6379)).toThrow('不在允许列表');
+      expect(() => assertAddressesSafe('x', ['1.1.1.1'])).toThrow(/受限网段/);
+      await changeNetwork({});
+      expect(() => assertAddressesSafe('x', ['1.1.1.1'])).not.toThrow();
+      expect(policyWarns()).toHaveLength(1); // 写对的注入不记
+    } finally {
+      await app.stop();
+    }
   });
 });

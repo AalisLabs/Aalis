@@ -16,6 +16,7 @@ export default definePlugin({
   uses: {
     provide,
     hostConfig: optional(hostConfig),
+    events,
     logger,
     lifecycle,
     webui: optional(webuiServer),

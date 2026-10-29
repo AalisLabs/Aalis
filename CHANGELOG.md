@@ -578,6 +578,17 @@
 
 - `safeFetch` 跟随重定向时，301、302 的 POST 和 303 的非 GET、HEAD 请求改成不带正文的 GET，并去掉 `Content-Type` 等描述正文的头；跳到别的源（协议、主机、端口任一不同）时不再带 `Authorization`、`Cookie` 和 `Proxy-Authorization`（`http_request` 工具因此改变）。此前每一跳都原样重发方法、正文和全部请求头。
 
+### 私网判定按「不是公网单播」，denyCidrs 认 IPv6（@aalis/util-network-guard）
+
+- `isPrivateAddress` 改成「不是公网单播就算私网」。IPv6 在 `2000::/3` 之外的地址，以及其中的 IETF 协议段（含 Teredo）、6to4 `2002::/16` 和文档段，都算私网；IPv4 映射与 NAT64 `64:ff9b::/96` 写法按内嵌的 IPv4 判；IPv4 补上 `192.0.0.0/24` 和三个文档段。地址按数值解析，非规范写法和带 zone id 的写法同样判得出，`%` 之前写得再长也按同一个地址判。此前链路本地只认 `fe80:` 开头，NAT64、6to4 和组播 `ff00::/8` 都放行，URL 里公网 IPv4 的映射写法（如 `[::ffff:8.8.8.8]`）反倒被拒。
+- `denyCidrs` 接受 IPv4 和 IPv6 网段，IPv4 网段同样管 IPv4 映射与 NAT64 写法。此前 IPv6 网段被静默丢掉，映射写法绕得过 IPv4 网段。
+- 新导出 `canonicalAddress(addr)`：IP 字面量的规范写法，zone id 照留。自管连接判过 IP 字面量之后按它连接：node:net 会截短 `%` 之前超过 39 个字符的写法，原样交给 `net.connect` 时连到的可能不是判定的那个地址。
+
+### 网络策略写错时出网一律拒绝，改了即时生效（@aalis/util-network-guard、@aalis/plugin-authority、@aalis/plugin-tool-browser）
+
+- 宿主配置的 `network` 段写错一处（不是对象，有 `blockPrivate`、`denyCidrs`、`allowedPorts` 之外的字段，`blockPrivate` 不是布尔，`denyCidrs`、`allowedPorts` 不是列表，或有一条不是网段、不是 1 到 65535 的整数），整份网络策略就处于「配置有误」，经出网闸的请求一律失败，直到改对：`safeFetch` 报「网络策略配置有误：<字段> 的 <原值>…」，浏览器导航以 `ERR_SOCKS_CONNECTION_FAILED` 失败、说明里点到这一原因，原因记在 debug 日志里；权限插件在激活与宿主文档每次变化时各记一条 warn，点名字段与原值。`setNetworkPolicy` 不再抛错，交回这句报错（写对时为 `undefined`），权限插件照常激活。此前写错的网段静默丢掉，`10.0.0.0/` 拒掉全部 IPv4，不是字符串的条目或不是列表的 `denyCidrs` 让权限插件激活失败、策略回到默认；`allowedPorts` 写成单个数字时不限端口，写成字符串时拒掉全部端口；`network` 不是对象、字段名写错或 `blockPrivate` 不是布尔时静默按默认处理。
+- 改 `network` 段即时生效：权限插件在宿主配置文档变了时重新注入。此前只在权限插件激活时注入一次，改了要重启。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

@@ -326,7 +326,7 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 
 ### 6.3 网络出口（SSRF）
 
-authority 在 `apply` 时把 `config.network` 注入进程级网络策略：`setNetworkPolicy(config.get('network') ?? {})`（`packages/plugin-authority/src/index.ts`）。SSRF 防护归属在权限域，但实际守卫在 `@aalis/util-network-guard` 的 `safeFetch`——**由 LLM/用户 URL 触发的出口必须走 `safeFetch`**，本地固定服务（ollama/onebot daemon）走裸 fetch 不受影响。tool-browser 开启 `blockPrivate` 时，浏览器网络闸对每个连接同样按这份策略判定（插件的 `allowedHosts` 只跳过地址判定，端口照判），见 docs/plugins/plugin-tool-browser.md。详见 docs/concepts/security-model.md。
+authority 在 `apply` 时把 `config.network` 注入进程级网络策略：`setNetworkPolicy(config.get('network') ?? {})`（`packages/plugin-authority/src/index.ts`）。宿主配置文档变了（`host-config:changed` 带 `document`）再注入一次，改了即时生效。写错时策略处于「配置有误」，经出网闸的请求一律失败，权限插件照常激活、裁决不受影响（见 docs/utils/network-guard.md）。SSRF 防护归属在权限域，但实际守卫在 `@aalis/util-network-guard` 的 `safeFetch`——**由 LLM/用户 URL 触发的出口必须走 `safeFetch`**，本地固定服务（ollama/onebot daemon）走裸 fetch 不受影响。tool-browser 开启 `blockPrivate` 时，浏览器网络闸对每个连接同样按这份策略判定（插件的 `allowedHosts` 只跳过地址判定，端口照判），见 docs/plugins/plugin-tool-browser.md。详见 docs/concepts/security-model.md。
 
 ## 7. 边界与注意事项
 

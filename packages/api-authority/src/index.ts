@@ -391,13 +391,17 @@ declare module '@aalis/api-host-config' {
      * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的出口能连到哪，即 safeFetch，
      * 以及 tool-browser 开启 blockPrivate 时的浏览器网络闸（三项都遵循）。
      * 不影响你自己配置的固定本地服务（ollama/onebot daemon 走裸 fetch，不过 safeFetch）。
+     * 改了即时生效；写错一处时经出网闸的请求一律拒绝，直到改对。
      */
     network?: {
       /** 拦私网/回环/链路本地/元数据段（默认 true）。 */
       blockPrivate?: boolean;
-      /** 额外拒绝的 IPv4 CIDR，如 ["100.64.0.0/10"]。 */
+      /**
+       * 额外拒绝的网段：IPv4 或 IPv6，写成「地址/前缀长度」或单个地址，如 ["100.64.0.0/10", "fd00::/8"]；
+       * IPv4 网段同样管 IPv4 映射与 NAT64 写法。
+       */
       denyCidrs?: string[];
-      /** 仅允许这些目标端口（非空生效），如 [80, 443]。 */
+      /** 仅允许这些目标端口（1 到 65535 的整数，非空生效），如 [80, 443]。 */
       allowedPorts?: number[];
     };
   }

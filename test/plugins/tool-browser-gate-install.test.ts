@@ -17,7 +17,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 只有起了闸（blockPrivate=true）时，browser_navigate 才给 ERR_SOCKS_CONNECTION_FAILED 附拦截说明。
 // - 浏览器先断开时，闸里还在解析或连接的上游随之销毁。
 // - 插件停用时，闸里已接通的连接随之断开，停用不等它们自己结束；闸的关闭不等浏览器关闭落定。
-// - 闸只收规范写法的 IPv6 字面量；问候与请求限时收齐；与请求同包到达的数据接通后交给上游。
+// - 闸里的 IP 字面量不论写法都按进程级网络策略判定，连的就是判的那个地址；问候与请求限时收齐；与请求同包到达的数据接通后交给上游。
 // - 闸按进程级网络策略的 allowedPorts 判定端口，allowedHosts 里的主机也不例外；回失败应答后随即关闭连接。
 // puppeteer 换成替身（根目录不直接依赖 puppeteer，按插件自己的依赖路径 mock），不启动真浏览器；
 // 闸是真的 SOCKS 服务，只监听 127.0.0.1，替身浏览器不经它发任何请求；直连闸的用例只连测试自己在 127.0.0.1 起的服务，
@@ -361,38 +361,59 @@ describe('网络闸：插件停用时', () => {
 });
 
 describe('网络闸：IP 字面量', () => {
-  it('只收规范写法：非规范写法与带 zone id 的 IPv6 字面量回失败应答、不连出去，规范写法照常接通', async () => {
+  it('不论怎么写都按策略判：放行私网时，非规范写法的 IPv6 字面量照常接通', async () => {
     let connections = 0;
     const target = createHttpServer();
     target.on('connection', () => connections++);
     await new Promise<void>(resolve => target.listen(0, '127.0.0.1', resolve));
     const port = (target.address() as { port: number }).port;
-    const hub = new LogHub();
-    const debugs: string[] = [];
-    hub.onEntry(entry => {
-      if (entry.level === 'debug') debugs.push(entry.message);
-    });
-    // 策略放行私网：被拒只可能出自规范写法这一关。下面三种非规范写法都能连到 127.0.0.1（IPv4 映射）
+    // 两种非规范写法都能连到 127.0.0.1（IPv4 映射）。带 zone id 的写法不放进来：zone 名随平台不同
     setNetworkPolicy({ blockPrivate: false });
-    const { app, handlers } = await startBrowserTools(true, { logLevel: 'debug', logHub: hub });
+    const { app, handlers } = await startBrowserTools(true);
     const sockets: Socket[] = [];
     try {
       expect((await navigate(handlers)).error).toBeUndefined();
-      for (const host of ['0:0:0:0:0:ffff:127.0.0.1', '0::ffff:7f00:1', '::ffff:7f00:1%lo0']) {
+      for (const host of ['0:0:0:0:0:ffff:127.0.0.1', '0::ffff:7f00:1']) {
         const { rep, socket } = await socksConnect(host, port);
         sockets.push(socket);
-        expect(rep, host).toBe(1);
-        expect(debugs, host).toContainEqual(expect.stringContaining(`IPv6 字面量不是规范写法: ${host}`));
+        expect(rep, host).toBe(0);
       }
-      expect(connections).toBe(0);
-
-      const { rep, socket } = await socksConnect('::ffff:7f00:1', port);
-      sockets.push(socket);
-      expect(rep).toBe(0);
-      await vi.waitFor(() => expect(connections).toBe(1));
+      await vi.waitFor(() => expect(connections).toBe(2));
     } finally {
       setNetworkPolicy({});
       for (const socket of sockets) socket.destroy();
+      await app.stop();
+      await new Promise<void>(resolve => target.close(() => resolve()));
+    }
+  });
+
+  it('连的就是判的那个地址：% 之前长到会被 node:net 截短的写法，不会判一个、连另一个', async () => {
+    let connections = 0;
+    const target = createHttpServer();
+    target.on('connection', () => connections++);
+    await new Promise<void>(resolve => target.listen(0, '127.0.0.1', resolve));
+    const port = (target.address() as { port: number }).port;
+    // 按数值是 127.0.0.10，不在 denyCidrs 里；原样交给 node:net 会被截成 39 个字符，连到被拒的 127.0.0.1
+    setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.1/32'] });
+    const { app, handlers } = await startBrowserTools(true);
+    let client: Socket | undefined;
+    try {
+      expect((await navigate(handlers)).error).toBeUndefined();
+      const socket = connect({ host: '127.0.0.1', port: gatePort() });
+      client = socket;
+      await new Promise<void>(resolve => socket.once('connect', resolve));
+      socket.write(Buffer.from([5, 1, 0]));
+      await new Promise<void>(resolve => socket.once('data', () => resolve()));
+      const replies: number[] = [];
+      socket.on('data', (reply: Buffer) => replies.push(reply[1]));
+      socket.write(connectRequest('0000:0000:0000:0000:0000:ffff:127.0.0.10%lo0', port));
+      // 连 127.0.0.10 有的系统当场被拒、回失败应答，有的要等到超时：只断言没有接通、没连到 127.0.0.1
+      await new Promise(r => setTimeout(r, 200));
+      expect(replies).not.toContain(0);
+      expect(connections).toBe(0);
+    } finally {
+      setNetworkPolicy({});
+      client?.destroy();
       await app.stop();
       await new Promise<void>(resolve => target.close(() => resolve()));
     }
