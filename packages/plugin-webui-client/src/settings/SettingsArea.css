@@ -179,8 +179,13 @@
   line-height: var(--leading-md);
 }
 
+/* 手机上第二屏顶上回到选层的链接：不是按钮样式，点按范围（--hit 见方）占排版的位置 */
 .session-defaults-back {
+  display: inline-flex;
   align-self: flex-start;
+  align-items: center;
+  min-width: var(--hit);
+  min-height: var(--hit);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
 }

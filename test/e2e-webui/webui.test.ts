@@ -2838,7 +2838,7 @@ describe('控件与文字的比例', () => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('触屏：会话页（审批等着）、会话设置（另开着带成员的多选）、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；多选里一项只有字那一段能点，末尾不属于任何一项的那一行与复选框左对齐；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
+  it('触屏：会话页（审批等着）、会话设置（另开着带成员的多选）、会话默认的一层（手机上的第二屏）、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；多选里一项只有字那一段能点，末尾不属于任何一项的那一行与复选框左对齐；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
     const stack = await startStack(
       {},
       [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin(), groupedTools],
@@ -2881,6 +2881,11 @@ describe('控件与文字的比例', () => {
     const left = (selector: string) => page.$eval(selector, element => element.getBoundingClientRect().left);
     const others = aria('不属于任何分组的工具', 'button');
     expect(Math.abs((await left(others)) - (await left(grouped))), '末尾那一行与复选框左对齐').toBeLessThanOrEqual(1);
+
+    // 手机上会话默认是两屏：第二屏是选中的一层，顶上「换一层」回到选层
+    await page.goto(`${stack.origin}/settings/session-defaults?layer=global`);
+    await page.waitForSelector(aria('换一层', 'link'));
+    await audit('会话默认的一层');
 
     await page.goto(`${stack.origin}/rooms?platform=onebot`);
     await page.waitForSelector(`td[data-column="name"] ${text('读书会')}`);
@@ -2936,6 +2941,7 @@ describe('控件与文字的比例', () => {
       会话页: [],
       会话设置: [],
       会话设置的多选: [],
+      会话默认的一层: [],
       房间表: [],
       计划任务: [],
       插件前端: [],
