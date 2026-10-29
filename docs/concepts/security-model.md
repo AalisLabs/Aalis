@@ -422,6 +422,7 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
    以此堵住 DNS rebinding。`localhost`、`*.localhost`、`*.local` 主机名会被直接拦截。
 3. **逐跳重定向重校验**：30x 响应的 `Location` 解析成绝对 URL 后**再过一遍 `assertSafeUrl`**，
    杜绝「初始 host 受信，但 302 跳到 `http://169.254.169.254/` 内网」这类经典绕过。跳数上限为 5（`MAX_REDIRECTS`）。
+   跟随时按 fetch 规范改写下一跳：跨源不带凭据头，301、302 的 POST 与 303 的非 GET、HEAD 改成不带正文的 GET。
 4. **进程级网络策略**（`setNetworkPolicy`）：owner 经 core 的 `network` 配置可以
    关闭私网拦截（`blockPrivate:false`，用于本地自动化）、追加 `denyCidrs`、限定 `allowedPorts`。
    这项策略在启动时由 `plugin-authority` 注入一次。
@@ -439,19 +440,15 @@ const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 > 若你还需要校验单个主机名（非 fetch 场景，例如流式代理自己管理连接），用 `assertSafeHost(hostname)`；
 > 只想校验 URL 并拿回 `URL` 对象，用 `assertSafeUrl(rawUrl)`。
 
-### 跨域重定向的凭证泄漏
+### 重定向与凭据
 
-`safeFetch` 的每一跳都会把**同一个 `init` 原样重发**。这意味着：如果你在 `init.headers` 里带了
-`Authorization` 或 cookie 等凭证，而上游返回 302 跳转到**另一个 origin**，
-**你的凭证会被原样发送到那个新 origin**。`safeFetch` 只保证跳转目标不是内网地址，
-并不保证跳转目标有资格看到你的 token。
+跨源跳转不带凭据头（规则见 [network-guard §1 的 `safeFetch`](../utils/network-guard.md)）；
+但同源跳转照样带，而且 URL 本身如果是用户或模型给的，凭据也会照样发到那个源。
 
 插件作者的对策（可参考图片代理的做法）：
 
 - 对**用户 / LLM 影响的 URL** 调用 `safeFetch` 时**不要带任何凭证 / cookie / 用户 referer**——
   图片代理就显式只给一个伪 UA、不带 cookie。
-- 若确实要带凭证访问你**自己已知的固定 API**，那个 URL 就不应来自用户输入；
-  或者自行禁用重定向、比对最终 origin。
 
 ---
 
@@ -686,7 +683,7 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 ## 8. 给插件作者的安全清单
 
-1. **任何用户 / LLM 影响的 URL → `safeFetch`**，绝不使用裸 `fetch`；带凭证时警惕跨域重定向（§3）。
+1. **任何用户 / LLM 影响的 URL → `safeFetch`**，绝不使用裸 `fetch`；带凭据的请求，URL 不能来自用户或模型（§3）。
 2. **危险操作正确声明 risk**：不可逆 / 外泄 / 改系统 → `risk:'dangerous'` 或 `visibility:'restricted'` 加 `confirm`；
    删库级 → `confirm:'always'`（§2）。漏标会让被注入的 LLM 直接放行。
 3. **执行不可信代码 → 取 code-sandbox 服务，`available` 为假就 fail-closed**，不要裸跑（§4）。
