@@ -173,7 +173,9 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
     expect(await waitUntil(() => calls >= 1)).toBe(true);
     expect(await waitLedger(id)).toBe(true);
 
-    await expect(first.svc.removeWorkflow(id)).rejects.toThrow(`删除 workflow 文件 ${id}.yaml 失败`);
+    const removing = first.svc.removeWorkflow(id);
+    await expect(removing).rejects.toThrow(`删除 workflow 文件 ${id}.yaml 失败`);
+    await expect(removing).rejects.toMatchObject({ text: { key: 'deleteFileFailed' } });
     expect(first.svc.getWorkflow(id), '文件还在，定义不得从列表消失').toBeDefined();
     // 只在内存里的定义没有文件会被重新载入：根不可删也照常删除
     await first.svc.defineWorkflow(

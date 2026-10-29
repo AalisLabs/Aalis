@@ -18,13 +18,16 @@
 - `PluginEntry` 与 `PluginStatusEntry` 加 `failure`：激活失败时抛出的原值；`error` 改为由它现算，取值不变。
 - core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
 
-### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-memory-summary、@aalis/plugin-skills）
+### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-memory-summary、@aalis/plugin-skills、@aalis/plugin-cron-engine、@aalis/plugin-scheduler、@aalis/plugin-workflow）
 
 - plugin-package-manager 导出的纯函数改交文字对象：`validatePackageSpec` 返回 `TextRef | undefined`，`buildUpdateSpecs` 的 `error` 是 `TextRef`，`describeNpmFailure` 返回 `TextRef`，`findUnmetPeers` 返回 `TextRef[]`。
 - plugin-storage-local 的存储操作抛出 `TextError`：message 不变，`name` 由 `Error` 变为 `TextError`，`String(err)` 的前缀随之变为 `TextError:`。
 - plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai 的对话请求（`chat`、`chatStream`）抛出的报错与 plugin-llm-ollama、plugin-llm-openai 刷新模型列表（`refresh`）的报错改为 `TextError`：message 不变，`name` 由 `Error` 变为 `TextError`，`String(err)` 的前缀随之变为 `TextError:`。
 - plugin-memory-summary 的压缩服务 `compress` 因本插件判定的原因没压成时以 `TextError` 拒绝（同上），记忆后端的报错原样交出。
 - plugin-skills 的 `SkillsService.deleteSkill` 删不掉技能目录时以 `TextError` 拒绝（同上）。
+- plugin-cron-engine 的 `subscribe` 因时区不合法拒收时抛出 `TextError`（同上）；表达式不合法的照旧。
+- plugin-scheduler 的 `SchedulerService.getJobs()` 返回的 `lastResult` 放宽为 `string | TextRef`；`addJob`、`setJob` 因任务名来自配置文件拒收时抛出 `TextError`（同上），cron 不合法的照旧。
+- plugin-workflow 的 `runWorkflow` 因工作流不存在或已停用拒绝、`defineWorkflow` 因节点字段或依赖不合法拒绝、`removeWorkflow` 因定义文件删不掉拒绝时以 `TextError` 拒绝（同上），event 触发器的拒收照旧。
 
 ### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
 

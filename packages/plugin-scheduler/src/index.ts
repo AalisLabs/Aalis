@@ -15,7 +15,7 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { TextError, type TextRef, textClauses, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
 import { t } from './texts.js';
@@ -101,8 +101,8 @@ interface JobRuntime {
   running: boolean;
   /** 累计执行次数 */
   runCount: number;
-  /** 最近执行结果 */
-  lastResult: string;
+  /** 最近执行结果：还没执行过时为空串 */
+  lastResult: string | TextRef;
   /** 是否暂停（运行时可临时暂停，不改配置） */
   paused: boolean;
 }
@@ -125,7 +125,8 @@ export interface SchedulerService {
     lastRun: number;
     nextRun: number;
     runCount: number;
-    lastResult: string;
+    /** 最近执行结果，给人看：可以是文字对象（@aalis/schema-i18n），还没执行过时为空串 */
+    lastResult: string | TextRef;
   }>;
   pauseJob(name: string): boolean;
   resumeJob(name: string): boolean;
@@ -146,63 +147,61 @@ export const configSchema = defineConfig({
   jobs: {
     type: 'array',
     onInvalid: 'error',
-    label: '计划任务列表',
-    description: '配置定时/周期性任务，让 AI 主动执行计划。',
+    label: t('jobsLabel'),
+    description: t('jobsDescription'),
     items: {
-      name: { type: 'string', label: '任务名称' },
+      name: { type: 'string', label: t('jobNameLabel') },
       cron: {
         type: 'string',
-        label: 'Cron 表达式',
-        description: '5 段格式: 分 时 日 月 周 (如 "0 9 * * *" = 每天 9:00)。与"固定间隔"二选一。',
+        label: t('cronLabel'),
+        description: t('cronDescription'),
       },
       interval: {
         type: 'number',
-        label: '固定间隔(秒)',
-        description: '每隔 N 秒执行一次。与"Cron 表达式"二选一。',
+        label: t('intervalLabel'),
+        description: t('intervalDescription'),
       },
       runAt: {
         type: 'string',
-        label: '一次性运行时间',
-        description: 'ISO 字符串；执行一次后自动禁用。',
+        label: t('runAtLabel'),
+        description: t('runAtDescription'),
       },
       sessionId: {
         type: 'string',
-        label: '目标会话 ID',
-        description: '任务消息发往的会话 ID。可以是真实群/用户会话，也可以自定义（如 scheduler::daily）。',
+        label: t('sessionIdLabel'),
+        description: t('sessionIdDescription'),
       },
       platform: {
         type: 'string',
         onInvalid: 'error',
-        label: '目标平台',
+        label: t('platformLabel'),
         required: true,
-        description: '任务消息的平台标识（如 internal、webui、onebot）。仅用于消息路由。',
+        description: t('platformDescription'),
         default: 'internal',
       },
       actorPlatform: {
         type: 'string',
         onInvalid: 'error',
-        label: '执行身份-平台',
-        description:
-          '代理身份的 platform（与目标平台解耦）。authority 按 (actorPlatform, actorUserId) 联合裁决能力。与执行身份-用户 ID 成对填写；都不写以 owner 身份运行；只写一项是配置错误，这条任务不载入。',
+        label: t('actorPlatformLabel'),
+        description: t('actorPlatformDescription'),
       },
       actorUserId: {
         type: 'string',
         onInvalid: 'error',
-        label: '执行身份-用户 ID',
-        description:
-          '代理身份的 userId。与执行身份-平台成对填写；都不写以 owner 身份运行；只写一项是配置错误，这条任务不载入。',
+        label: t('actorUserIdLabel'),
+        description: t('actorUserIdDescription'),
       },
       content: {
         type: 'string',
-        label: '消息内容',
+        label: t('contentLabel'),
         default: '',
-        description: '发送给 Agent 的指令/提示内容。',
+        description: t('contentDescription'),
       },
-      enabled: { type: 'boolean', label: '启用', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('enabledLabel'), default: true, onInvalid: 'error' },
       timeZone: {
         type: 'string',
-        label: '时区 (IANA)',
-        description: 'cron 求值所用时区，如 Asia/Shanghai、Europe/London。留空 = 进程本地时区。仅对 cron 类任务生效。',
+        label: t('timeZoneLabel'),
+        description: t('timeZoneDescription'),
       },
     },
     default: [],
@@ -210,9 +209,9 @@ export const configSchema = defineConfig({
   persistPath: {
     type: 'string',
     onInvalid: 'error',
-    label: '动态任务存储路径',
+    label: t('persistPathLabel'),
     default: 'data:/scheduler-jobs.json',
-    description: '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。',
+    description: t('persistPathDescription'),
   },
 });
 
@@ -222,29 +221,29 @@ export const configSchema = defineConfig({
 const JOB_FIELDS = defineConfig({
   cron: {
     type: 'string',
-    label: 'Cron 表达式',
-    description: '5 字段或别名：@hourly、@daily、@weekly、@every 30s；与固定间隔、一次性运行时间、X 秒后执行四选一',
+    label: t('cronLabel'),
+    description: t('fieldCronDescription'),
   },
-  interval: { type: 'number', label: '固定间隔（秒）', description: '不小于 5；与其余三种调度方式四选一' },
+  interval: { type: 'number', label: t('fieldIntervalLabel'), description: t('fieldIntervalDescription') },
   runAt: {
     type: 'string',
-    label: '一次性运行时间',
-    description: 'ISO 时间，如 2026-05-19T10:00:00；执行一次后自动删除',
+    label: t('runAtLabel'),
+    description: t('fieldRunAtDescription'),
   },
   delaySeconds: {
     type: 'number',
-    label: 'X 秒后执行一次',
-    description: '换算成一次性运行时间 = 现在 + N 秒，执行一次后自动删除',
+    label: t('delaySecondsLabel'),
+    description: t('delaySecondsDescription'),
   },
-  sessionId: { type: 'string', label: '目标会话 ID', required: true },
-  platform: { type: 'string', label: '目标平台', default: 'internal' },
-  content: { type: 'textarea', label: '消息内容', required: true, description: '届时发送给自己的指令或提示' },
-  enabled: { type: 'boolean', label: '启用', default: true },
+  sessionId: { type: 'string', label: t('sessionIdLabel'), required: true },
+  platform: { type: 'string', label: t('platformLabel'), default: 'internal' },
+  content: { type: 'textarea', label: t('contentLabel'), required: true, description: t('fieldContentDescription') },
+  enabled: { type: 'boolean', label: t('enabledLabel'), default: true },
   paused: {
     type: 'boolean',
-    label: '暂停',
+    label: t('paused'),
     default: false,
-    description: '勾选后不自动运行，要手动「恢复」；只对周期任务（cron、固定间隔）有效',
+    description: t('pausedDescription'),
   },
 });
 type JobInput = ConfigOf<typeof JOB_FIELDS>;
@@ -275,7 +274,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-scheduler',
-  displayName: '定时任务',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   extends: {
     events: ['scheduler:job:start', 'scheduler:job:done', 'scheduler:job:error'],
@@ -328,22 +327,22 @@ async function run(caps: Caps): Promise<void> {
       input.delaySeconds !== undefined && input.delaySeconds > 0 ? Math.floor(input.delaySeconds) : undefined;
     const rawRunAt = input.runAt?.trim() || undefined;
     const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
-    if (provided === 0) throw new Error('cron、固定间隔、一次性运行时间、X 秒后执行必须填写其中之一');
-    if (provided > 1) throw new Error('cron、固定间隔、一次性运行时间、X 秒后执行互斥，只能填一个');
+    if (provided === 0) throw new TextError(t('scheduleMissing'));
+    if (provided > 1) throw new TextError(t('scheduleConflict'));
     const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
     // 一次性任务被暂停时到点的定时器直接跳过，之后既不重排也不自删，任务就永久卡死在那里
-    if (input.paused && runAt) throw new Error('暂停对一次性任务（一次性运行时间、X 秒后执行）没有可用语义');
+    if (input.paused && runAt) throw new TextError(t('pauseOneShot'));
     // 防误填高频任务：挡住 interval:0.5 这类会占满调度的间隔
-    if (interval !== undefined && interval < 5) throw new Error('固定间隔不能小于 5 秒（防高频任务耗尽资源）');
+    if (interval !== undefined && interval < 5) throw new TextError(t('intervalTooShort'));
     const sessionId = input.sessionId.trim();
-    if (!sessionId) throw new Error('目标会话 ID 不能为空');
+    if (!sessionId) throw new TextError(t('sessionIdEmpty'));
     const content = input.content.trim();
-    if (!content) throw new Error('消息内容不能为空');
+    if (!content) throw new TextError(t('contentEmpty'));
     if (creating) {
       const all = service.getJobs();
-      if (all.some(j => j.name === name)) throw new Error(`已有同名任务 ${name}，改它用「编辑」`);
+      if (all.some(j => j.name === name)) throw new TextError(t('duplicateName', { name }));
       if (all.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION) {
-        throw new Error(`本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建`);
+        throw new TextError(t('tooManyJobs', { max: MAX_JOBS_PER_SESSION }));
       }
     }
     service.setJob({
@@ -365,71 +364,71 @@ async function run(caps: Caps): Promise<void> {
 
   const jobsPage = webui.use.definePage({
     key: 'scheduler',
-    title: '计划任务',
+    title: t('pageTitle'),
     icon: 'clock',
     actions: {
       createJob: {
-        label: '新建',
+        label: t('create'),
         effect: 'write',
         input: {
-          name: { type: 'string', label: '名称', required: true, description: '任务的唯一标识' },
+          name: { type: 'string', label: t('name'), required: true, description: t('nameDescription') },
           ...JOB_FIELDS,
         },
         handler({ input, ctx }) {
           const name = input.name.trim();
-          if (!name) throw new Error('名称不能为空');
+          if (!name) throw new TextError(t('nameEmpty'));
           return saveJob(name, input, ctx.caller, true);
         },
       },
       editJob: {
-        label: '编辑',
+        label: t('edit'),
         effect: 'write',
         row: true,
         input: JOB_FIELDS,
         handler({ rowKey, input, ctx }) {
-          if (!service.getJobs().some(j => j.name === rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
+          if (!service.getJobs().some(j => j.name === rowKey)) throw new TextError(t('jobMissing', { name: rowKey }));
           return saveJob(rowKey, input, ctx.caller, false);
         },
       },
       triggerJob: {
-        label: '立即执行',
+        label: t('triggerNow'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
           // 这一轮还没执行完时 triggerJob 直接跳过；与它置 running 在同一个同步段里判，没有竞态
           if (service.getJobs().find(j => j.name === rowKey)?.running) {
-            throw new Error(`任务 ${rowKey} 正在执行，这次没有再触发`);
+            throw new TextError(t('jobRunning', { name: rowKey }));
           }
-          if (!(await service.triggerJob(rowKey))) throw new Error(`任务 ${rowKey} 不存在`);
-          return `已执行 ${rowKey}`;
+          if (!(await service.triggerJob(rowKey))) throw new TextError(t('jobMissing', { name: rowKey }));
+          return t('triggered', { name: rowKey });
         },
       },
       pauseJob: {
-        label: '暂停',
+        label: t('pause'),
         effect: 'write',
         row: true,
         handler({ rowKey }) {
-          if (!service.pauseJob(rowKey)) throw new Error('任务不存在，或是一次性任务（不能暂停，只能删除重建）');
-          return `已暂停 ${rowKey}`;
+          if (!service.pauseJob(rowKey)) throw new TextError(t('cannotPause'));
+          return t('pausedReceipt', { name: rowKey });
         },
       },
       resumeJob: {
-        label: '恢复',
+        label: t('resume'),
         effect: 'write',
         row: true,
         handler({ rowKey }) {
-          if (!service.resumeJob(rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
-          return `已恢复 ${rowKey}`;
+          if (!service.resumeJob(rowKey)) throw new TextError(t('jobMissing', { name: rowKey }));
+          return t('resumed', { name: rowKey });
         },
       },
       removeJob: {
-        label: '删除',
+        label: t('delete'),
         effect: 'destructive',
-        confirm: '删除这个计划任务？',
+        confirm: t('deleteConfirm'),
         row: true,
         handler({ rowKey }) {
-          if (!service.removeJob(rowKey)) throw new Error(`任务 ${rowKey} 不存在`);
-          return `已删除 ${rowKey}`;
+          if (!service.removeJob(rowKey)) throw new TextError(t('jobMissing', { name: rowKey }));
+          return t('deleted', { name: rowKey });
         },
       },
     },
@@ -438,16 +437,16 @@ async function run(caps: Caps): Promise<void> {
         type: 'table',
         id: 'jobs',
         rowKey: 'name',
-        empty: '还没有计划任务',
+        empty: t('noJobs'),
         columns: [
-          { key: 'name', label: '名称', primary: true },
-          { key: 'schedule', label: '调度' },
-          { key: 'sessionId', label: '目标会话' },
-          { key: 'status', label: '状态', kind: 'status', primary: true },
-          { key: 'nextRun', label: '下次执行', kind: 'countdown' },
-          { key: 'lastRun', label: '上次执行', kind: 'time' },
-          { key: 'runCount', label: '执行次数' },
-          { key: 'lastResult', label: '最近结果', kind: 'long-text' },
+          { key: 'name', label: t('name'), primary: true },
+          { key: 'schedule', label: t('schedule') },
+          { key: 'sessionId', label: t('target') },
+          { key: 'status', label: t('status'), kind: 'status', primary: true },
+          { key: 'nextRun', label: t('nextRun'), kind: 'countdown' },
+          { key: 'lastRun', label: t('lastRun'), kind: 'time' },
+          { key: 'runCount', label: t('runCount') },
+          { key: 'lastResult', label: t('lastResult'), kind: 'long-text' },
         ],
         rowActions: [
           { action: 'triggerJob' },
@@ -469,14 +468,20 @@ async function run(caps: Caps): Promise<void> {
               content: j.content,
               enabled: j.enabled,
               paused: j.paused,
-              schedule: j.cron ?? (j.interval ? `每 ${j.interval} 秒` : j.runAt ? `一次性 ${j.runAt}` : '未设置'),
+              schedule:
+                j.cron ??
+                (j.interval
+                  ? t('everySeconds', { seconds: j.interval })
+                  : j.runAt
+                    ? t('oneShot', { at: j.runAt })
+                    : t('unset')),
               status: !j.enabled
-                ? { text: '禁用', state: 'inactive' as const }
+                ? { text: t('statusDisabled'), state: 'inactive' as const }
                 : j.paused
-                  ? { text: '暂停', state: 'inactive' as const }
+                  ? { text: t('paused'), state: 'inactive' as const }
                   : j.running
-                    ? { text: '执行中', state: 'running' as const }
-                    : { text: '就绪' },
+                    ? { text: t('statusRunning'), state: 'running' as const }
+                    : { text: t('statusReady') },
               nextRun: ready && j.nextRun > 0 ? j.nextRun : undefined,
               lastRun: j.lastRun || undefined,
               runCount: j.runCount,
@@ -505,7 +510,7 @@ async function run(caps: Caps): Promise<void> {
       reading = false;
       const data = JSON.parse(raw);
       if (!Array.isArray(data)) {
-        throw new Error(`持久化任务文件不是数组（得到 ${data === null ? 'null' : typeof data}）`);
+        throw new TextError(t('notArray', { got: data === null ? 'null' : typeof data }));
       }
       // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
       return data.map((j: any) => {
@@ -544,12 +549,8 @@ async function run(caps: Caps): Promise<void> {
       webui.use.notify({
         id: 'jobs-load',
         level: 'error',
-        title: `计划任务文件 ${persistUri} 读不出来，里面的任务没有加载`,
-        detail:
-          (reading
-            ? '确认本地存储插件在运行、配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。'
-            : '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。') +
-          `修好之前新建与改动的任务只在本次运行生效。原因：${err instanceof Error ? err.message : String(err)}`,
+        title: t('loadFailedTitle', { uri: persistUri }),
+        detail: t(reading ? 'loadFailedReading' : 'loadFailedContent', { error: textOf(err) }),
       });
       return [];
     }
@@ -633,11 +634,11 @@ async function run(caps: Caps): Promise<void> {
 
       rt.lastRun = Date.now();
       rt.runCount++;
-      rt.lastResult = '成功';
+      rt.lastResult = t('jobSucceeded');
       await events.use.emit('scheduler:job:done', jobName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      rt.lastResult = `失败: ${msg}`;
+      rt.lastResult = t('jobFailed', { error: textOf(err) });
       logger.use.error(`任务 "${jobName}" 执行失败: ${msg}`);
       await events.use.emit('scheduler:job:error', jobName, msg);
     } finally {
@@ -745,10 +746,8 @@ async function run(caps: Caps): Promise<void> {
           webui.use.notify({
             id: `unscheduled:${jobCfg.name}`,
             level: 'error',
-            title: `计划任务「${jobCfg.name}」没有排上，不会运行`,
-            detail: fromConfig
-              ? `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${reason}`
-              : `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${reason}`,
+            title: t('unscheduledTitle', { name: jobCfg.name }),
+            detail: t(fromConfig ? 'unscheduledInConfig' : 'unscheduledOnPage', { error: textOf(err) }),
             open: fromConfig ? 'config' : { page: 'scheduler' },
           }),
         );
@@ -838,9 +837,8 @@ async function run(caps: Caps): Promise<void> {
         webui.use.notify({
           id: `unscheduled:${job.name}`,
           level: 'error',
-          title: `计划任务「${job.name}」没有载入：执行身份只写了一半`,
-          detail:
-            '在配置文件里把这个任务的 actorPlatform 与 actorUserId 写成一对，或两项都删掉（以 owner 身份运行），保存后生效。',
+          title: t('halfActorTitle', { name: job.name }),
+          detail: t('halfActorDetail'),
           open: 'config',
         }),
       );
@@ -868,7 +866,7 @@ async function run(caps: Caps): Promise<void> {
    * 撤掉它的错误提示，又因名字在配置里不落盘、重启就没了
    */
   function rejectConfigName(name: string): void {
-    if (configJobNames.has(name)) throw new Error(`任务 "${name}" 来自配置文件，要改去配置文件里改`);
+    if (configJobNames.has(name)) throw new TextError(t('fromConfig', { name }));
   }
 
   /** 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改 */
@@ -979,7 +977,8 @@ async function run(caps: Caps): Promise<void> {
 
   tools.use.registerGroup({
     name: 'scheduler',
-    label: '定时任务',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: '创建、查看和取消定时/周期性自主行动计划',
   });
 
@@ -1269,9 +1268,7 @@ function resolvePersistPath(input: string): string {
   const s = input.trim();
   if (!s) return configSchema.persistPath.default;
   if (!isStorageUri(s)) {
-    throw configError(
-      `persistPath="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值`,
-    );
+    throw configError(t('badPersistPath', { value: s }));
   }
   return s;
 }

@@ -20,6 +20,7 @@ import { type CronEngine, type CronSubscribeOptions, cronEngine, type ValidateRe
 import { type BoundOf, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { TextError } from '@aalis/schema-i18n';
 import { matchesCron, validateCronExpr } from '@aalis/util-cron';
+import { t } from './texts.js';
 
 interface CronSubscription {
   id: number;
@@ -47,7 +48,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-cron-engine',
-  displayName: 'Cron 调度引擎',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   provides: [cronEngine],
   uses,
@@ -159,7 +160,7 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
         try {
           new Intl.DateTimeFormat('en-US', { timeZone: tz });
         } catch {
-          throw new Error(`非法时区: ${tz}`);
+          throw new TextError(t('badTimeZone', { timeZone: tz }));
         }
       }
       cronSubs.set(id, { id, normalized, handler, timeZone: tz });

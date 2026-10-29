@@ -8,9 +8,11 @@ import type { UserIdentity } from '@aalis/api-authority';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
+import { TextError, textOf, toSource } from '@aalis/schema-i18n';
 import { parse, stringify } from 'yaml';
 
 import { validateGraph } from './engine.js';
+import { t } from './texts.js';
 
 /** 把 raw YAML 对象规范化为 WorkflowDef；返回 null 表示非法 */
 export function normalizeDef(raw: unknown, fallbackId: string): WorkflowDef | null {
@@ -97,7 +99,7 @@ export class WorkflowLoader {
         }
         const err = validateGraph(def);
         if (err) {
-          this.logger.warn(`workflow "${def.id}" 校验失败: ${err}`);
+          this.logger.warn(`workflow "${def.id}" 校验失败: ${toSource(err)}`);
           continue;
         }
         this.putMemory(def, definerOf(def.id, await sha256(text)));
@@ -130,7 +132,7 @@ export class WorkflowLoader {
     } catch (err) {
       if (!isStorageNotFound(err)) {
         if (this.onDisk.has(id)) {
-          throw new Error(`删除 workflow 文件 ${id}.yaml 失败: ${err instanceof Error ? err.message : err}`);
+          throw new TextError(t('deleteFileFailed', { file: `${id}.yaml`, error: textOf(err) }));
         }
         this.logger.warn(`删除 workflow 文件 ${id}.yaml 失败: ${err}`);
       }

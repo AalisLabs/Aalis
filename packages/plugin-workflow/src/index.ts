@@ -17,7 +17,7 @@ import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aa
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { TextError, type TextRef, textClauses, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import { parse, stringify } from 'yaml';
 
 import { errorReason, runDag, validateGraph } from './engine.js';
@@ -31,49 +31,55 @@ import { BLOCKED_EVENT_TRIGGERS, TriggerManager } from './triggers.js';
 const configSchema = defineConfig({
   defsDir: {
     type: 'string',
-    label: '工作流定义目录',
+    label: t('defsDirLabel'),
     default: 'workspace:/workflows',
     onInvalid: 'error',
-    description: '加载存储下的 *.yaml 定义（storage URI）；AI 通过 workflow_define 创建的定义也写入此处。',
+    description: t('defsDirDescription'),
   },
   runsFile: {
     type: 'string',
-    label: '运行历史文件',
+    label: t('runsFileLabel'),
     default: 'data:/workflow-runs.json',
     onInvalid: 'error',
-    description: '保存最近 N 条运行实例（storage URI）。',
+    description: t('runsFileDescription'),
   },
   maxRuns: {
     type: 'number',
-    label: '保留最近运行条数',
+    label: t('maxRunsLabel'),
     default: 200,
-    description: '超过则裁剪最旧的已结束的运行，在跑的不裁；最小 10。',
+    description: t('maxRunsDescription'),
   },
   enableTools: {
     type: 'boolean',
-    label: '注册 AI 工具',
+    label: t('enableToolsLabel'),
     default: true,
     onInvalid: 'error',
-    description: '开启后向 LLM 暴露 workflow_define / workflow_run 等工具。',
+    description: t('enableToolsDescription'),
   },
 });
 
 // ─── 工具函数（与工作流页共享） ───
 
-function triggerSummary(t: { type: string; expr?: string; seconds?: number; runAt?: string; event?: string }): string {
-  switch (t.type) {
+function triggerSummary(trigger: {
+  type: string;
+  expr?: string;
+  seconds?: number;
+  runAt?: string;
+  event?: string;
+}): string | TextRef {
+  switch (trigger.type) {
     case 'cron':
-      return `cron ${t.expr ?? ''}`.trim();
+      return `cron ${trigger.expr ?? ''}`.trim();
     case 'interval':
-      return `每 ${t.seconds ?? '?'}s`;
+      return t('everySeconds', { seconds: trigger.seconds ?? '?' });
     case 'once':
-      return `一次性@${t.runAt ?? '?'}`;
+      return t('onceAt', { at: trigger.runAt ?? '?' });
     case 'event':
-      return `event:${t.event ?? '?'}`;
+      return `event:${trigger.event ?? '?'}`;
     case 'manual':
-      return '手动';
+      return t('manual');
     default:
-      return t.type;
+      return trigger.type;
   }
 }
 
@@ -148,7 +154,7 @@ function defineWorkflowPage(
 ) {
   const definitionOf = (id: string): WorkflowDef => {
     const def = service.getWorkflow(id);
-    if (!def) throw new Error(`工作流 ${id} 不存在`);
+    if (!def) throw new TextError(t('workflowMissing', { id }));
     return def;
   };
   /** 启用或停用：改的是写在磁盘上的定义，定义者沿用原来的 */
@@ -161,11 +167,11 @@ function defineWorkflowPage(
 
   return webui.definePage({
     key: 'workflows',
-    title: '工作流',
+    title: t('displayName'),
     icon: 'workflow',
     actions: {
       runWorkflow: {
-        label: '立即运行',
+        label: t('runWorkflow'),
         effect: 'write',
         row: true,
         async handler({ rowKey, ctx }) {
@@ -177,24 +183,29 @@ function defineWorkflowPage(
               run.error ? t('runNotSucceededBecause', { status, error: run.error }) : t('runNotSucceeded', { status }),
             );
           }
-          return `已运行 ${rowKey}，用时 ${fmtDuration(elapsed(run))}`;
+          return t('ran', { id: rowKey, duration: fmtDuration(elapsed(run)) });
         },
       },
-      enableWorkflow: { label: '启用', effect: 'write', row: true, handler: ({ rowKey }) => setEnabled(rowKey, true) },
+      enableWorkflow: {
+        label: t('enableAction'),
+        effect: 'write',
+        row: true,
+        handler: ({ rowKey }) => setEnabled(rowKey, true),
+      },
       disableWorkflow: {
-        label: '停用',
+        label: t('disableAction'),
         effect: 'write',
         row: true,
         handler: ({ rowKey }) => setEnabled(rowKey, false),
       },
       removeWorkflow: {
-        label: '删除',
+        label: t('delete'),
         effect: 'destructive',
-        confirm: '删除这个工作流，连同磁盘上的定义文件？',
+        confirm: t('deleteConfirm'),
         row: true,
         async handler({ rowKey }) {
-          if (!(await service.removeWorkflow(rowKey))) throw new Error(`工作流 ${rowKey} 不存在`);
-          return `已删除 ${rowKey}`;
+          if (!(await service.removeWorkflow(rowKey))) throw new TextError(t('workflowMissing', { id: rowKey }));
+          return t('deleted', { id: rowKey });
         },
       },
       cancelRun: {
@@ -209,23 +220,20 @@ function defineWorkflowPage(
         },
       },
       defineWorkflow: {
-        label: '新建或覆盖',
+        label: t('defineWorkflow'),
         effect: 'write',
         input: {
           yaml: {
             type: 'textarea',
-            label: 'YAML 定义',
+            label: t('yamlLabel'),
             required: true,
-            description:
-              '完整的定义：id、name、trigger、nodes。trigger 支持 cron、interval、once、event、manual；节点支持 tool、send-message、' +
-              'wait、agent（派发指令给 agent 并等回复，配合 deps 与 {{outputs.X}} 做多智能体编排）。同 id 的定义被覆盖，' +
-              '保存后立即注册触发器。现有定义的 YAML 在定义表格的详情里，可以照着改。',
+            description: t('yamlDescription'),
           },
           persist: {
             type: 'boolean',
-            label: '写入磁盘',
+            label: t('persistLabel'),
             default: true,
-            description: '关闭后只在内存里注册，重启后丢失',
+            description: t('persistDescription'),
           },
         },
         async handler({ input, ctx }) {
@@ -233,10 +241,10 @@ function defineWorkflowPage(
           try {
             raw = parse(input.yaml);
           } catch (err) {
-            throw new Error(`YAML 解析失败：${err instanceof Error ? err.message : String(err)}`);
+            throw new TextError(t('yamlFailed', { error: textOf(err) }));
           }
           const def = normalizeDef(raw, `wf-${Date.now()}`);
-          if (!def) throw new Error('定义不合法：缺少 trigger 或 nodes');
+          if (!def) throw new TextError(t('badDefinition'));
           await definitions.define(def, input.persist, ctx.caller);
           const note = onceSkippedNote(def, input.persist, onceLedgerReadable(), t('runNow'));
           return withNote(t('saved', { id: def.id }), note);
@@ -251,11 +259,11 @@ function defineWorkflowPage(
           const defs = service.listWorkflows();
           const recent = service.listRuns(200).filter(r => Date.now() - r.startedAt < 86_400_000);
           return [
-            { label: '定义', value: defs.length },
-            { label: '启用', value: defs.filter(d => d.enabled !== false).length },
-            { label: '24 小时运行', value: recent.length },
+            { label: t('definitions'), value: defs.length },
+            { label: t('stateEnabled'), value: defs.filter(d => d.enabled !== false).length },
+            { label: t('runs24h'), value: recent.length },
             {
-              label: '24 小时失败',
+              label: t('failures24h'),
               value: recent.filter(r => r.status === 'failed').length,
             },
           ];
@@ -264,17 +272,17 @@ function defineWorkflowPage(
       {
         type: 'table',
         id: 'workflows',
-        label: '定义',
+        label: t('definitions'),
         rowKey: 'id',
-        empty: '还没有工作流',
+        empty: t('noWorkflows'),
         columns: [
           { key: 'id', label: 'ID', kind: 'code' },
-          { key: 'name', label: '名称', primary: true },
-          { key: 'trigger', label: '触发' },
-          { key: 'nodes', label: '节点数' },
-          { key: 'status', label: '状态', kind: 'status', primary: true },
+          { key: 'name', label: t('name'), primary: true },
+          { key: 'trigger', label: t('trigger') },
+          { key: 'nodes', label: t('nodeCount') },
+          { key: 'status', label: t('status'), kind: 'status', primary: true },
           { key: 'definedBy', label: t('definedBy') },
-          { key: 'description', label: '描述', kind: 'long-text' },
+          { key: 'description', label: t('description'), kind: 'long-text' },
         ],
         rowActions: [
           { action: 'runWorkflow' },
@@ -288,7 +296,10 @@ function defineWorkflowPage(
             name: d.name ?? d.id,
             trigger: triggerSummary(d.trigger),
             nodes: d.nodes.length,
-            status: d.enabled === false ? { text: '停用', state: 'inactive' as const } : { text: '启用' },
+            status:
+              d.enabled === false
+                ? { text: t('stateDisabled'), state: 'inactive' as const }
+                : { text: t('stateEnabled') },
             enabled: d.enabled !== false,
             disabled: d.enabled === false,
             description: d.description ?? '',
@@ -306,17 +317,17 @@ function defineWorkflowPage(
       {
         type: 'table',
         id: 'runs',
-        label: '最近运行',
+        label: t('recentRuns'),
         rowKey: 'runId',
-        empty: '还没有运行过',
+        empty: t('noRuns'),
         columns: [
-          { key: 'workflowId', label: '工作流', primary: true },
-          { key: 'status', label: '状态', kind: 'status', primary: true },
-          { key: 'triggerSource', label: '触发来源' },
-          { key: 'startedAt', label: '开始时间', kind: 'time' },
-          { key: 'duration', label: '用时' },
-          { key: 'error', label: '错误', kind: 'long-text' },
-          { key: 'runId', label: '运行 ID', kind: 'code' },
+          { key: 'workflowId', label: t('workflowColumn'), primary: true },
+          { key: 'status', label: t('status'), kind: 'status', primary: true },
+          { key: 'triggerSource', label: t('triggerSource') },
+          { key: 'startedAt', label: t('startedAt'), kind: 'time' },
+          { key: 'duration', label: t('duration') },
+          { key: 'error', label: t('error'), kind: 'long-text' },
+          { key: 'runId', label: t('runId'), kind: 'code' },
         ],
         rowActions: [{ action: 'cancelRun', visibleWhen: 'running' }],
         // 最近 50 次，更早而还在跑的接在后面（按开始时间倒序，它们本就排在后面）：取消的入口不随新的运行挤掉
@@ -345,7 +356,7 @@ function resolveUri(key: 'defsDir' | 'runsFile', input: string, fallback: string
   const s = input.trim();
   if (!s) return fallback;
   if (!isStorageUri(s)) {
-    throw configError(`${key}="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 ${fallback}），或删掉该键使用默认值`);
+    throw configError(t('badUri', { key, value: s, fallback }));
   }
   return s;
 }
@@ -377,7 +388,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-workflow',
-  displayName: '工作流',
+  displayName: t('displayName'),
   subsystem: 'workflow',
   extends: {
     events: ['workflow:run:start', 'workflow:run:done', 'workflow:run:error', 'workflow:node:done', 'trigger:fired'],
@@ -469,8 +480,8 @@ async function run(caps: Caps): Promise<void> {
     caller?: { platform?: string; userId?: string; sessionId?: string },
   ): Promise<WorkflowRun> {
     const def = loader.get(workflowId);
-    if (!def) throw new Error(`workflow "${workflowId}" 不存在`);
-    if (def.enabled === false) throw new Error(`workflow "${workflowId}" 已禁用`);
+    if (!def) throw new TextError(t('runMissing', { id: workflowId }));
+    if (def.enabled === false) throw new TextError(t('runDisabled', { id: workflowId }));
     const actor = runIdentity(identityOf(caller), loader.definedBy(workflowId));
 
     const runId = `${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -550,7 +561,7 @@ async function run(caps: Caps): Promise<void> {
    */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
     const err = validateGraph(def);
-    if (err) throw new Error(err);
+    if (err) throw new TextError(err);
     const { trigger } = def;
     if (trigger.type === 'event' && BLOCKED_EVENT_TRIGGERS.has(trigger.event)) {
       throw new TextError(t('blockedEventTrigger', { event: trigger.event }));
@@ -634,7 +645,12 @@ function registerTools(
   definitions: Definitions,
   onceLedgerReadable: () => boolean,
 ): void {
-  tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
+  tools.registerGroup({
+    name: 'workflow',
+    label: t('displayName'),
+    summary: t('groupSummary'),
+    description: '定义、运行、查询自主工作流（DAG）',
+  });
 
   tools.register({
     // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经 LLM 驱动，三个都是 sensitive(L1)；

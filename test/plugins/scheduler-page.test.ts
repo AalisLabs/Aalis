@@ -9,6 +9,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { toolRequest } from '../fixtures/tool-call.js';
@@ -121,10 +122,14 @@ describe('计划任务页的登记', () => {
   it('过登记门槛；表格每行带显示列、预填编辑用的原值与按行状态显示动作的布尔字段', async () => {
     await withScheduler(async ({ pages, create }) => {
       expect(pages.logs).toEqual([]);
-      expect(pages.view('scheduler')).toMatchObject({ title: '计划任务', placement: 'plugin', icon: 'clock' });
+      expect(toSource(pages.view('scheduler'))).toMatchObject({
+        title: '计划任务',
+        placement: 'plugin',
+        icon: 'clock',
+      });
       expect(await create({ ...base, interval: 60 })).toEqual(saved());
       const [row] = await pages.data<Array<Record<string, unknown>>>('scheduler', 'jobs');
-      expect(row).toMatchObject({
+      expect(toSource(row)).toMatchObject({
         name: 'j',
         schedule: '每 60 秒',
         status: { text: '就绪' },
@@ -149,7 +154,7 @@ describe('计划任务页的登记', () => {
         await create({ ...base, name: 'once', runAt: new Date(Date.now() + 3_600_000).toISOString() });
         const rows = await pages.data<Array<Record<string, unknown>>>('scheduler', 'jobs');
         const byName = new Map(rows.map(row => [row.name, row]));
-        expect(byName.get('j')).toMatchObject({
+        expect(toSource(byName.get('j'))).toMatchObject({
           status: { text: '暂停', state: 'inactive' },
           paused: true,
           pausable: false,
@@ -195,17 +200,19 @@ describe('新建', () => {
   it('调度方式恰好填一个：同时填两个或一个都不填都报错，不落地任务', async () => {
     await withScheduler(async ({ create, jobs }) => {
       expect(
-        await create({ ...base, runAt: new Date(Date.now() + 3_600_000).toISOString(), delaySeconds: 600 }),
+        toSource(await create({ ...base, runAt: new Date(Date.now() + 3_600_000).toISOString(), delaySeconds: 600 })),
       ).toEqual(refused(500, /互斥/));
-      expect(await create({ ...base, cron: '@daily', interval: 60 })).toEqual(refused(500, /互斥/));
-      expect(await create(base)).toEqual(refused(500, /必须填写其中之一/));
+      expect(toSource(await create({ ...base, cron: '@daily', interval: 60 }))).toEqual(refused(500, /互斥/));
+      expect(toSource(await create(base))).toEqual(refused(500, /必须填写其中之一/));
       expect(jobs()).toHaveLength(0);
     });
   });
 
   it('暂停 + delaySeconds → 报错（一次性任务被暂停会永久卡住，无可用语义）', async () => {
     await withScheduler(async ({ create, jobs }) => {
-      expect(await create({ ...base, delaySeconds: 600, paused: true })).toEqual(refused(500, /没有可用语义/));
+      expect(toSource(await create({ ...base, delaySeconds: 600, paused: true }))).toEqual(
+        refused(500, /没有可用语义/),
+      );
       expect(jobs()).toHaveLength(0);
     });
   });
@@ -236,7 +243,7 @@ describe('新建', () => {
     };
     await withScheduler(
       async ({ create, createByTool, jobs }) => {
-        expect(await create({ ...base, cron: 'zz' })).toEqual(refused(500, '第三方引擎不认这个表达式'));
+        expect(toSource(await create({ ...base, cron: 'zz' }))).toEqual(refused(500, '第三方引擎不认这个表达式'));
         expect(await createByTool({ name: 'k', cron: 'zz', content: 'x' })).toEqual({
           error: '第三方引擎不认这个表达式',
         });
@@ -263,7 +270,9 @@ describe('新建', () => {
   it('同名任务已存在：新建被拒，改它要用「编辑」', async () => {
     await withScheduler(async ({ create, jobs }) => {
       await create({ ...base, interval: 60 });
-      expect(await create({ ...base, interval: 120 })).toEqual(refused(500, '已有同名任务 j，改它用「编辑」'));
+      expect(toSource(await create({ ...base, interval: 120 }))).toEqual(
+        refused(500, '已有同名任务 j，改它用「编辑」'),
+      );
       expect(jobs().find(j => j.name === 'j')?.interval).toBe(60);
     });
   });
@@ -277,7 +286,7 @@ describe('新建', () => {
         const { message } = reply.body as { message: never };
         expect(toSource(message)).toBe(`已保存任务 j；${note}`);
         expect(resolveText(message, ['en'])).toBe(
-          'Saved job j; only effective for this run, not written to data:/scheduler-jobs.json: ' +
+          'Saved task j; only effective for this run, not written to data:/scheduler-jobs.json: ' +
             'it could not be read; see Needs attention for how to fix it',
         );
         expect(await createByTool({ name: 'k', interval: 60, content: 'x' })).toEqual({
@@ -327,10 +336,12 @@ describe('编辑', () => {
   it('任务已不在（一次性任务到点执行完自删、或刚被删掉）：回错误，不借编辑把它重建出来', async () => {
     await withScheduler(async ({ pages, jobs }) => {
       expect(
-        await pages.act('scheduler', 'editJob', {
-          rowKey: 'ghost',
-          input: { interval: 60, sessionId: 'internal', platform: 'internal', content: 'y' },
-        }),
+        toSource(
+          await pages.act('scheduler', 'editJob', {
+            rowKey: 'ghost',
+            input: { interval: 60, sessionId: 'internal', platform: 'internal', content: 'y' },
+          }),
+        ),
       ).toEqual(refused(500, '任务 ghost 不存在'));
       expect(jobs()).toEqual([]);
     });
@@ -344,7 +355,7 @@ describe('编辑', () => {
           input: { interval: 120, sessionId: 'internal', content: 'y' },
         });
         expect(reply.status).toBe(500);
-        expect((reply.body as { error: string }).error).toContain('来自配置文件');
+        expect(toSource((reply.body as { error: string }).error)).toContain('来自配置文件');
         expect(jobs().find(j => j.name === 'static')?.interval).toBe(60);
       },
       {
@@ -357,10 +368,12 @@ describe('编辑', () => {
 describe('行上的动作', () => {
   it('立即执行：找不到任务回错误，不当成功；找得到就执行一次，开始与结束各推一次 invalidate', async () => {
     await withScheduler(async ({ pages, create, jobs }) => {
-      expect(await pages.act('scheduler', 'triggerJob', { rowKey: 'none' })).toEqual(refused(500, '任务 none 不存在'));
+      expect(toSource(await pages.act('scheduler', 'triggerJob', { rowKey: 'none' }))).toEqual(
+        refused(500, '任务 none 不存在'),
+      );
       await create({ ...base, interval: 3600 });
       const before = pages.invalidations.length;
-      expect(await pages.act('scheduler', 'triggerJob', { rowKey: 'j' })).toEqual({
+      expect(toSource(await pages.act('scheduler', 'triggerJob', { rowKey: 'j' }))).toEqual({
         status: 200,
         body: { message: '已执行 j' },
       });
@@ -380,11 +393,11 @@ describe('行上的动作', () => {
       await create({ ...base, interval: 3600 });
       const first = pages.act('scheduler', 'triggerJob', { rowKey: 'j' });
       await vi.waitFor(() => expect(jobs().find(j => j.name === 'j')?.running).toBe(true));
-      expect(await pages.act('scheduler', 'triggerJob', { rowKey: 'j' })).toEqual(
+      expect(toSource(await pages.act('scheduler', 'triggerJob', { rowKey: 'j' }))).toEqual(
         refused(500, '任务 j 正在执行，这次没有再触发'),
       );
       release();
-      expect(await first).toEqual({ status: 200, body: { message: '已执行 j' } });
+      expect(toSource(await first)).toEqual({ status: 200, body: { message: '已执行 j' } });
       expect(jobs().find(j => j.name === 'j')?.runCount).toBe(1);
     });
   });
@@ -392,17 +405,17 @@ describe('行上的动作', () => {
   it('暂停与恢复：一次性任务不能暂停，回错误；周期任务照常', async () => {
     await withScheduler(async ({ pages, create, jobs }) => {
       await create({ ...base, name: 'once', runAt: new Date(Date.now() + 3_600_000).toISOString() });
-      expect(await pages.act('scheduler', 'pauseJob', { rowKey: 'once' })).toEqual(
+      expect(toSource(await pages.act('scheduler', 'pauseJob', { rowKey: 'once' }))).toEqual(
         refused(500, '任务不存在，或是一次性任务（不能暂停，只能删除重建）'),
       );
       expect(jobs().find(j => j.name === 'once')?.paused).toBe(false);
       await create({ ...base, interval: 60 });
-      expect(await pages.act('scheduler', 'pauseJob', { rowKey: 'j' })).toEqual({
+      expect(toSource(await pages.act('scheduler', 'pauseJob', { rowKey: 'j' }))).toEqual({
         status: 200,
         body: { message: '已暂停 j' },
       });
       expect(jobs().find(j => j.name === 'j')?.paused).toBe(true);
-      expect(await pages.act('scheduler', 'resumeJob', { rowKey: 'j' })).toEqual({
+      expect(toSource(await pages.act('scheduler', 'resumeJob', { rowKey: 'j' }))).toEqual({
         status: 200,
         body: { message: '已恢复 j' },
       });
@@ -414,13 +427,15 @@ describe('行上的动作', () => {
     await withScheduler(async ({ pages, create, jobs }) => {
       await create({ ...base, interval: 60 });
       const before = pages.invalidations.length;
-      expect(await pages.act('scheduler', 'removeJob', { rowKey: 'j' })).toEqual({
+      expect(toSource(await pages.act('scheduler', 'removeJob', { rowKey: 'j' }))).toEqual({
         status: 200,
         body: { message: '已删除 j' },
       });
       expect(jobs()).toEqual([]);
       expect(pages.invalidations.length).toBeGreaterThan(before);
-      expect(await pages.act('scheduler', 'removeJob', { rowKey: 'j' })).toEqual(refused(500, '任务 j 不存在'));
+      expect(toSource(await pages.act('scheduler', 'removeJob', { rowKey: 'j' }))).toEqual(
+        refused(500, '任务 j 不存在'),
+      );
     });
   });
 });
@@ -582,7 +597,7 @@ describe('读不出来与没排上的提示', () => {
   it('持久化任务文件内容不对：发 error 提示，写明修好文件与原因', async () => {
     await withScheduler(
       async ({ pages }) => {
-        expect(pages.notices()).toEqual([
+        expect(toSource(pages.notices())).toEqual([
           {
             instance,
             id: 'jobs-load',
@@ -601,7 +616,7 @@ describe('读不出来与没排上的提示', () => {
   it('持久化任务文件读不到（根名写错、存储插件不在）：提示写去查 persistPath 与存储插件，不让修文件', async () => {
     await withScheduler(
       async ({ pages }) => {
-        expect(pages.notices()).toEqual([
+        expect(toSource(pages.notices())).toEqual([
           {
             instance,
             id: 'jobs-load',
@@ -620,7 +635,7 @@ describe('读不出来与没排上的提示', () => {
   it('存量文件里的任务 cron 无效：发提示去计划任务页改；改对后撤回，删掉也撤回', async () => {
     await withScheduler(
       async ({ pages }) => {
-        expect(pages.notices()).toEqual([
+        expect(toSource(pages.notices())).toEqual([
           {
             instance,
             id: 'unscheduled:bad',
@@ -647,7 +662,7 @@ describe('读不出来与没排上的提示', () => {
   it('配置文件里的任务 cron 无效：提示去配置里改', async () => {
     await withScheduler(
       async ({ pages }) => {
-        expect(pages.notices()).toEqual([
+        expect(toSource(pages.notices())).toEqual([
           {
             instance,
             id: 'unscheduled:static',
@@ -674,7 +689,7 @@ describe('读不出来与没排上的提示', () => {
     await withScheduler(
       async ({ app, pages, jobs }) => {
         expect(app.plugins.getStatus().find(p => p.name === instance)?.state).toBe('active');
-        expect(pages.notices()).toEqual([
+        expect(toSource(pages.notices())).toEqual([
           {
             instance,
             id: 'unscheduled:tz',
@@ -685,7 +700,7 @@ describe('读不出来与没排上的提示', () => {
           },
         ]);
         expect(jobs().map(j => j.name)).toEqual(['tz', 'tz-off', 'every']);
-        expect(await pages.act('scheduler', 'resumeJob', { rowKey: 'tz-off' })).toEqual({
+        expect(toSource(await pages.act('scheduler', 'resumeJob', { rowKey: 'tz-off' }))).toEqual({
           status: 200,
           body: { message: '已恢复 tz-off' },
         });
@@ -697,6 +712,58 @@ describe('读不出来与没排上的提示', () => {
           { name: 'every', interval: 60, sessionId: 'internal', platform: 'internal', content: 'x' },
         ],
       },
+    );
+  });
+});
+
+describe('计划任务给人看的出口按读者的语言', () => {
+  /** cron-engine 拒收时区的配置任务，与一个能立即执行的固定间隔任务 */
+  const jobs = [
+    {
+      name: 'tz',
+      cron: '0 9 * * *',
+      timeZone: 'Mars/Olympus',
+      sessionId: 'internal',
+      platform: 'internal',
+      content: 'x',
+    },
+    { name: 'every', interval: 60, sessionId: 'internal', platform: 'internal', content: 'x' },
+  ];
+  const CASES = {
+    en: [
+      'Scheduled task "tz" could not be scheduled and will not run',
+      "Fix this task's cron or timeZone in the configuration file; it takes effect once saved. Reason: Invalid time zone: Mars/Olympus",
+      'Ran every',
+      'Succeeded',
+      'One of cron, fixed interval, one-time run at and run once after X seconds must be filled in',
+    ],
+    'zh-CN': [
+      '计划任务「tz」没有排上，不会运行',
+      '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区: Mars/Olympus',
+      '已执行 every',
+      '成功',
+      'cron、固定间隔、一次性运行时间、X 秒后执行必须填写其中之一',
+    ],
+  };
+
+  it.each(
+    Object.entries(CASES),
+  )('%s：任务排不上的提示，立即执行的回执与「最近结果」，保存缺调度方式的报错', async (language, expected) => {
+    await withScheduler(
+      async ({ pages, create }) => {
+        const [notice] = pages.notices();
+        const ran = await pages.act('scheduler', 'triggerJob', { rowKey: 'every' });
+        const rows = await pages.data<Array<{ name: string; lastResult: string }>>('scheduler', 'jobs');
+        const missing = await create({ name: 'zz-none', sessionId: 'internal', content: 'x' });
+        expect([
+          renderIn(notice.title, language),
+          renderIn(notice.detail, language),
+          renderIn((ran.body as { message: string }).message, language),
+          renderIn(rows.find(row => row.name === 'every')?.lastResult, language),
+          renderIn((missing.body as { error: string }).error, language),
+        ]).toEqual(expected);
+      },
+      { jobs },
     );
   });
 });
