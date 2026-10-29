@@ -2,6 +2,34 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'Laya trigger judging',
+  triggerLabel: 'Laya model',
+  thresholdLabel: 'Reply threshold',
+  thresholdDescription:
+    'Reply when logit ≥ the threshold. Empty = use the model threshold returned by the sidecar (given with the model version).',
+  triggerOnAtLabel: 'Detect @ mentions',
+  triggerOnAtDescription:
+    'An @ to the assistant counts as a mention (as do pokes and its name). A mention does not force a reply, the model judges; a turn with a reply is recorded as immediate, and whoever mentioned is the authorizing principal. When judging is unavailable, it only replies to mentions.',
+  triggerOnPokeLabel: 'Pokes count as mentions',
+  triggerNamesLabel: 'Mention aliases (comma- or newline-separated)',
+  muteKeywordsLabel: 'Mute keywords (comma- or newline-separated)',
+  muteTimeSecondsLabel: 'Mute duration on keyword match (seconds)',
+  mediaWaitMsLabel: 'Attachment recognition wait limit (ms)',
+  mediaWaitMsDescription:
+    'Messages with images or other attachments wait for recognition to write their descriptions before going to the model; on timeout judging goes ahead and recognition continues in the background.',
+  endpointLabel: 'Sidecar address',
+  sidecarDirLabel: 'Sidecar directory (managed by this plugin)',
+  sidecarDirDescription:
+    'Absolute path of the directory containing the laya-listener sidecar. When set, this plugin launches the sidecar itself while in effect, restarts it after it exits, and stops it when no longer in effect or disabled; the port comes from the sidecar address (which must be http://127.0.0.1:<port>). Empty = the sidecar runs externally and is only reached at the sidecar address.',
+  timeoutMsLabel: 'Request timeout (ms)',
+  timeoutMsDescription:
+    'Includes reading the whole response body. A timeout counts as one failure, and this message falls back to replying only when mentioned.',
+  historyRowsLabel: 'History rows',
+  historyRowsDescription:
+    'Number of rows in the window, counting only user / assistant rows whose content is a string: twice as many are fetched from memory, and the last this many are kept after filtering.',
+  endpointNotHttp: 'plugin-trigger-laya config error: endpoint must be an HTTP address',
+  endpointQuery:
+    'plugin-trigger-laya config error: endpoint cannot contain a query string or fragment (anything after ? or #): the plugin appends paths to it',
   inactive:
     'Laya trigger judging is not in effect (the active trigger plugin is “{label}”), so the sidecar is not checked; to enable it, point trigger to @aalis/plugin-trigger-laya under servicePreferences in the configuration file',
   inactiveNone:

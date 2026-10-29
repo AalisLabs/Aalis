@@ -19,7 +19,7 @@ import {
   provide as provideCap,
 } from '@aalis/core';
 import { defineConfig, parseConfig, type SessionFieldsOf } from '@aalis/schema-config';
-import { toSource } from '@aalis/schema-i18n';
+import { textOf, toSource } from '@aalis/schema-i18n';
 import { oneSpeaker } from '@aalis/schema-message';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
@@ -57,28 +57,27 @@ const DEFAULT_PERSONA = 'default';
 const configSchema = defineConfig({
   personasDir: {
     type: 'string',
-    label: '人设目录',
-    description:
-      "人设文件所在目录的 storage URI（默认 personas:/，即家目录的 self/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
+    label: t('personasDirLabel'),
+    description: t('personasDirDescription'),
     default: 'personas:/',
     onInvalid: 'error',
   },
   statePersistence: {
     type: 'boolean',
-    label: '状态持久化',
-    description: '启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中',
+    label: t('statePersistenceLabel'),
+    description: t('statePersistenceDescription'),
     default: false,
   },
   timeInjection: {
     type: 'boolean',
-    label: '时间注入',
-    description: '启用后，当前时间会自动注入到系统提示中',
+    label: t('timeInjectionLabel'),
+    description: t('timeInjectionDescription'),
     default: true,
   },
   timeZone: {
     type: 'string',
-    label: '时区 (IANA)',
-    description: '例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。',
+    label: t('timeZoneLabel'),
+    description: t('timeZoneDescription'),
     default: '',
   },
   // ----- 按会话字段：人设服务按调用方给的会话读 -----
@@ -500,7 +499,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-persona',
-  displayName: '人设系统',
+  displayName: t('displayName'),
   subsystem: 'persona',
   configSchema,
   provides: [persona],
@@ -729,14 +728,18 @@ async function run(caps: Caps): Promise<void> {
     try {
       if (data.scope === 'all') {
         service.clearAllStates();
-        data.results.push({ source: 'persona', type: 'persona', success: true, message: '所有会话角色状态已清空' });
+        data.results.push({ source: 'persona', type: 'persona', success: true, message: t('clearedAll') });
       } else if (data.sessionId) {
         service.clearSessionState(data.sessionId);
-        data.results.push({ source: 'persona', type: 'persona', success: true, message: '当前会话角色状态已清空' });
+        data.results.push({ source: 'persona', type: 'persona', success: true, message: t('clearedSession') });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'persona', type: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
+      data.results.push({
+        source: 'persona',
+        type: 'persona',
+        success: false,
+        message: t('clearFailed', { error: textOf(err) }),
+      });
     }
     await next();
   });

@@ -291,7 +291,8 @@ async function setup(opts: SetupOptions = {}) {
     const state = app.plugins.getPlugin(def.name)?.state;
     if (state !== 'active') throw new Error(`${def.name} 未激活（state=${state}）`);
   }
-  if (host.services.use.all(trigger)[0]?.label !== LAYA_LABEL) throw new Error('Laya 不是 trigger 服务的胜者');
+  if (toSource(host.services.use.all(trigger)[0]?.label) !== LAYA_LABEL)
+    throw new Error('Laya 不是 trigger 服务的胜者');
   const check = checks.find(c => c.id === 'trigger.laya');
   if (!check) throw new Error('Laya 没有登记诊断项');
   return {
@@ -1070,7 +1071,7 @@ describe('plugin-trigger-laya：诊断项', () => {
     expect(sidecar.healthCalls, '未生效不探侧车').toBe(probes);
 
     // 切回后一次成功判定即确认恢复
-    const laya = host.services.use.all(trigger).find(v => v.label === LAYA_LABEL);
+    const laya = host.services.use.all(trigger).find(v => toSource(v.label) === LAYA_LABEL);
     host.services.use.prefer(trigger, laya?.contextId ?? '');
     expect((await send(groupMsg('恢复'))).reached).toBe(true);
     expect((await diagnose()).level).toBe('ok');
@@ -1116,7 +1117,7 @@ describe('plugin-trigger-laya：诊断项', () => {
       const inactive = await diagnose();
       expect(inactive.level).toBe('ok');
       expect(inactive.message).not.toContain('指针');
-      const laya = host.services.use.all(trigger).find(v => v.label === LAYA_LABEL);
+      const laya = host.services.use.all(trigger).find(v => toSource(v.label) === LAYA_LABEL);
       host.services.use.prefer(trigger, laya?.contextId ?? '');
 
       // 有描述的、识别失败的占位都不算只有指针：再来 10 条，窗口 20 条里只有指针的仍是 10 条
@@ -1278,7 +1279,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
   function preferLaya(host: Awaited<ReturnType<typeof setup>>['host']) {
     host.services.use.prefer(
       trigger,
-      host.services.use.all(trigger).find(v => v.label === LAYA_LABEL)?.contextId ?? '',
+      host.services.use.all(trigger).find(v => toSource(v.label) === LAYA_LABEL)?.contextId ?? '',
     );
   }
 

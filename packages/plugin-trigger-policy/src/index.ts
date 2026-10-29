@@ -29,6 +29,7 @@ import {
   sweepStaleStates,
   type TriggerSessionState,
 } from './state.js';
+import { t } from './texts.js';
 
 // ----- 元数据 -----
 
@@ -63,7 +64,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-trigger-policy',
-  displayName: '触发策略',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   configSchema,
   provides: [trigger],
@@ -84,7 +85,7 @@ function run(caps: Caps): void {
 
   // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行、
   // 闲置也不开口
-  const self: TriggerService = { label: '规则（计数/评分）' };
+  const self: TriggerService = { label: t('triggerLabel') };
   const selfId = lifecycle.use.id;
   provide.use(trigger, self, { label: self.label });
   const isActive = (): boolean => caps.trigger.list().find(p => p.selected)?.id === selfId;

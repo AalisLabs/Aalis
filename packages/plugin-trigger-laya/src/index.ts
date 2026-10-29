@@ -182,7 +182,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-trigger-laya',
-  displayName: 'Laya 触发判定',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   configSchema,
   provides: [trigger],
@@ -197,7 +197,7 @@ function run(caps: Caps): void {
   const url = `${cfg.endpoint}/v1/score`;
 
   // 本插件在 trigger 服务里的实例：服务选中的是它（条目 id 即本插件的实例 id）时本插件生效，否则对每条消息直接放行
-  const self: TriggerService = { label: 'Laya 模型' };
+  const self: TriggerService = { label: t('triggerLabel') };
   const selfId = caps.lifecycle.use.id;
   caps.provide.use(trigger, self, { priority: PRIORITY, label: self.label });
   const winner = () => caps.trigger.list().find(p => p.selected);

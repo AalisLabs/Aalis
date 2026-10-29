@@ -11,6 +11,7 @@ import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional
 import { arrivalTag, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { configSchema } from './config.js';
 import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';
+import { t } from './texts.js';
 
 // ----- 入口 -----
 
@@ -40,7 +41,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-flow-control',
-  displayName: '消息流控',
+  displayName: t('displayName'),
   subsystem: 'core',
   configSchema,
   provides: [flowControl],
