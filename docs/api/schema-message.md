@@ -223,7 +223,7 @@ interface MessageUnit {
 | 常量 | 键 | 谁写、写在哪 | 形状 | 谁读 |
 |---|---|---|---|---|
 | `VisibleContent` | `visibleContent` | agent：落库的回复是结构化输出的信封时，写解码后的可见正文 | 字符串，只在与 `content` 不同时写 | agent 交给模型的历史取它；检索、摘要等按语义读历史的一方，读不到退回 `content` |
-| `SpokenContent` | `spokenContent` | 存档：提问里发言人自己写的话（入站消息的 `content`；合并转发的展开不在里面，只有它的占位） | 字符串，可以是空串；只在与归档文本不同时写 | 会话服务给出提问条目的正文 |
+| `SpokenContent` | `spokenContent` | 存档：提问里发言人自己写的话（入站消息的 `content`；合并转发的展开不在里面，只有它的占位） | 字符串，可以是空串；只在与归档文本不同时写 | 会话服务给出提问条目的正文；用户档案核对原话 |
 | `Attachments` | `attachments` | 存档：提问带的附件 | `ArchivedAttachment[]`，按入站顺序；没有附件时不写 | 会话服务把文件还原成卡片、图片等按地址显示 |
 | `Forwards` | `forwards` | 存档：提问随附的转发（入站消息 `forwards` 的 id 与事实，不存展开），有才写 | `ArchivedForward[]` | 会话服务把转发画成单独的块，提问的文字里去掉它们的占位 |
 | `SenderLabel` | `senderLabel` | 存档：归档文本发送者前缀里的标签（`getSenderLabel` 的写法），只在加了前缀时写 | 字符串 | 把归档文本重排给模型或界面看的一方按它用 `stripSenderPrefix` 去掉这一层：向量记忆的召回片段、OneBot 的撤回摘录与引用反查；没有这个键的不去 |
