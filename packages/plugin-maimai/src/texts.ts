@@ -1,8 +1,37 @@
-// 本插件自己的原文字典：查询与绑定的回复（工具与指令共用，工具取原文交给模型）与查分器报错
+// 本插件自己的原文字典：显示名（同为工具分组名）与分组概述、配置项与配置报错、指令与参数说明，查询与绑定的回复（工具与指令
+// 共用，工具取原文交给模型）与查分器报错
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: '舞萌 DX 查分',
+  groupSummary: '查询舞萌 DX 玩家信息、Best 50、最近成绩、曲库等',
+  developerTokenLabel: '开发者 API Token',
+  developerTokenDescription: '在 https://maimai.lxns.net 申请的开发者 token',
+  baseUrlDescription: '查分器域名，一般无需修改',
+  enableToolsLabel: '注册 Agent 工具',
+  enableToolsDescription: '为 LLM Agent 注册结构化工具（推荐保持开启）',
+  enableCommandsLabel: '注册斜杠指令',
+  enableCommandsDescription: '为用户注册 /maimai 等斜杠指令',
+  defaultBindOnPrivateChatLabel: '私聊缺省绑定',
+  defaultBindOnPrivateChatDescription: '在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分',
+  timeoutMsLabel: '请求超时 (ms)',
+  timeoutMsDescription: '查分器 API 单次请求上限。工具执行面没有外层超时，对端不应答会把整轮对话挂住',
+  baseUrlNotPlain: 'baseUrl 需为不带用户名或密码的完整 URL',
+  baseUrlHasQuery: 'baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
+  maimaiDescription: '舞萌 DX 查分。绑定好友码后，info、b50、recent 可以不写查询目标',
+  target: '好友码，或 qq:QQ 号；不写时查你绑定的好友码',
+  targetOrQq: '好友码，或 qq:QQ 号；不写时查你绑定的好友码，OneBot 私聊里没绑定时按你的 QQ 号查',
+  infoDescription: '查询玩家信息',
+  b50Description: '查询 Best 50',
+  apOnly: '仅查询 AP 成绩',
+  recentDescription: '查询最近游玩',
+  recentCount: '显示几条，默认 10，最多 50',
+  songDescription: '搜索曲目',
+  songKeyword: '曲名、艺术家或别名',
+  bindDescription: '绑定你的好友码',
+  bindCode: '查分器上的好友码（数字）',
+  unbindDescription: '解绑你的好友码',
   unreachable: '查分器暂时连不上，稍后再试（{reason}）',
   badToken: '查分器不认开发者凭据：检查配置项 developerToken（HTTP {status}：{message}）',
   replied: '查分器回复：{message}',

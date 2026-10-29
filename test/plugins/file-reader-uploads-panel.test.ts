@@ -4,7 +4,10 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import fileReaderPlugin, { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { png } from '../fixtures/file-heads.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage, sessionInfoOf } from '../fixtures/paper.js';
@@ -69,7 +72,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
   } satisfies AgentService);
   await app.plugin(fileReaderPlugin, config);
   await app.plugins.idle();
-  const upload = async (sessionId: string, name: string, content: string) => {
+  const upload = async (sessionId: string, name: string, content: string | Buffer) => {
     if (!preprocessor) throw new Error('插件未注册 preprocessor');
     const data = Buffer.from(content);
     const message: IncomingMessage = {
@@ -90,7 +93,11 @@ describe('会话面板「上传的文件」', () => {
   it('过登记门槛，是会话面板；没上传过文件的会话不出现，上传后出现并推带会话 id 的 invalidate', async () => {
     const { pages, upload } = await boot();
     expect(pages.logs).toEqual([]);
-    expect(pages.view('uploads')).toMatchObject({ title: '上传的文件', placement: 'session', icon: 'paperclip' });
+    expect(toSource(pages.view('uploads'))).toMatchObject({
+      title: '上传的文件',
+      placement: 'session',
+      icon: 'paperclip',
+    });
     expect(await pages.panels(ROOM)).toEqual([]);
     await upload(ROOM, 'notes.txt', '正文');
     expect(pages.invalidations).toContainEqual({
@@ -106,7 +113,7 @@ describe('会话面板「上传的文件」', () => {
     const { pages, upload } = await boot();
     const id = await upload(ROOM, 'notes.txt', '正文');
     await upload(OTHER, 'other.txt', '别处');
-    expect(await pages.data('uploads', 'files', { sessionId: ROOM })).toEqual([
+    expect(toSource(await pages.data('uploads', 'files', { sessionId: ROOM }))).toEqual([
       { id, name: 'notes.txt', size: 6, format: '文本', uploadedAt: expect.any(Number) },
     ]);
   });
@@ -115,12 +122,12 @@ describe('会话面板「上传的文件」', () => {
     const { pages, upload } = await boot();
     const mine = await upload(ROOM, 'notes.txt', '正文');
     const theirs = await upload(OTHER, 'other.txt', '别处');
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: theirs, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: theirs, sessionId: ROOM }))).toEqual({
       status: 500,
       body: { error: '本会话没有这个文件' },
     });
     const before = pages.invalidations.length;
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: mine, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: mine, sessionId: ROOM }))).toEqual({
       status: 200,
       body: { message: '已删除 notes.txt' },
     });
@@ -132,7 +139,7 @@ describe('会话面板「上传的文件」', () => {
     expect(await pages.data('uploads', 'files', { sessionId: ROOM })).toEqual([]);
     expect(await pages.panels(ROOM)).toEqual([]);
     expect(await pages.panels(OTHER)).toEqual(['uploads']);
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: mine, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: mine, sessionId: ROOM }))).toEqual({
       status: 500,
       body: { error: '本会话没有这个文件' },
     });
@@ -142,13 +149,13 @@ describe('会话面板「上传的文件」', () => {
     let locked = true;
     const { pages, upload } = await boot({ refuse: uri => locked && !uri.endsWith('.meta.json') });
     const id = await upload(ROOM, 'notes.txt', '正文');
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM }))).toEqual({
       status: 500,
       body: { error: expect.stringMatching(/^删除 notes\.txt 失败：EPERM/) },
     });
     expect(await pages.data('uploads', 'files', { sessionId: ROOM })).toMatchObject([{ id, name: 'notes.txt' }]);
     locked = false;
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM }))).toEqual({
       status: 200,
       body: { message: '已删除 notes.txt' },
     });
@@ -159,7 +166,7 @@ describe('会话面板「上传的文件」', () => {
     const { pages, files, upload } = await boot();
     const id = await upload(ROOM, 'notes.txt', '正文');
     for (const uri of [...files.keys()]) if (uri.endsWith(`${id}.txt`)) files.delete(uri);
-    expect(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM })).toEqual({
+    expect(toSource(await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM }))).toEqual({
       status: 200,
       body: { message: '已删除 notes.txt' },
     });
@@ -195,5 +202,31 @@ describe('会话面板「上传的文件」', () => {
     const { pages } = await boot({ refuse: uri => uri.includes('/stuck'), seed, config: { retentionDays: 1 } });
     const left = await pages.data<Array<{ id: string }>>('uploads', 'files', { sessionId: ROOM });
     expect(left.map(row => row.id)).toEqual(['stuck']);
+  });
+});
+
+describe('会话面板「上传的文件」按读者的语言', () => {
+  const CASES = {
+    en: {
+      formats: { 'notes.txt': 'Text', 'blob.bin': 'Unknown', 'pic.png': 'PNG' },
+      deleteFailed: (uri: string) => `Failed to delete notes.txt: EPERM: operation not permitted, unlink '${uri}'`,
+    },
+    'zh-CN': {
+      formats: { 'notes.txt': '文本', 'blob.bin': '未知', 'pic.png': 'PNG' },
+      deleteFailed: (uri: string) => `删除 notes.txt 失败：EPERM: operation not permitted, unlink '${uri}'`,
+    },
+  };
+
+  it.each(Object.entries(CASES))('%s：类型一列，存储删不掉时的报错', async (language, expected) => {
+    const { pages, upload } = await boot({ refuse: uri => uri.endsWith('.txt') });
+    const id = await upload(ROOM, 'notes.txt', '正文');
+    await upload(ROOM, 'blob.bin', Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    await upload(ROOM, 'pic.png', Buffer.from(png()));
+    const rows = await pages.data<Array<{ name: string; format: string }>>('uploads', 'files', { sessionId: ROOM });
+    expect(Object.fromEntries(rows.map(row => [row.name, renderIn(row.format, language)]))).toEqual(expected.formats);
+    const failed = await pages.act('uploads', 'deleteUpload', { rowKey: id, sessionId: ROOM });
+    expect(renderIn((failed.body as { error: string }).error, language)).toBe(
+      expected.deleteFailed(`pluginData:/file-reader/${ROOM.replace(/:/g, '_')}/${id}.txt`),
+    );
   });
 });

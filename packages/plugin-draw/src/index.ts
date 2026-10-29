@@ -31,86 +31,84 @@ import { t } from './texts.js';
 const configSchema = defineConfig({
   defaultWidth: {
     type: 'number',
-    label: '默认画布宽 (px)',
+    label: t('defaultWidthLabel'),
     default: 800,
-    description: 'HTML 模式与未声明宽度的 SVG 使用的画布宽度',
+    description: t('defaultWidthDescription'),
   },
   maxWidth: {
     type: 'number',
-    label: '画布宽上限 (px)',
+    label: t('maxWidthLabel'),
     default: 1600,
-    description: '请求宽与标记声明宽都会被收口到该值',
+    description: t('maxWidthDescription'),
   },
   maxPixels: {
     type: 'number',
-    label: '画布 CSS 像素上限',
+    label: t('maxPixelsLabel'),
     default: 4000000,
-    description:
-      'width×height（CSS 像素）上限，默认 4MP。注意实际光栅内存 = 本值 × scale²（scale 默认 2 即 4 倍）；' +
-      '静态图按 scale 截图，故设备像素天花板是本值的 scale² 倍——调高前算好内存',
+    description: t('maxPixelsDescription'),
   },
   maxSourceKB: {
     type: 'number',
-    label: '输入标记上限 (KB)',
+    label: t('maxSourceKBLabel'),
     default: 256,
-    description: 'source 参数的大小上限',
+    description: t('maxSourceKBDescription'),
   },
   scale: {
     type: 'number',
-    label: '截图缩放倍率',
+    label: t('scaleLabel'),
     default: 2,
-    description: 'deviceScaleFactor：2 = 视网膜清晰度（像素翻倍，文件更大）',
+    description: t('scaleDescription'),
   },
   headless: {
     type: 'boolean',
-    label: '无头模式',
+    label: t('headlessLabel'),
     default: true,
     onInvalid: 'error',
-    description: '调试时可关闭以观察渲染页面',
+    description: t('headlessDescription'),
   },
   executablePath: {
     type: 'string',
-    label: 'Chrome 路径（留空自动探测）',
+    label: t('executablePathLabel'),
     default: '',
     format: 'absolute-path',
     onInvalid: 'error',
-    description: '留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）',
+    description: t('executablePathDescription'),
   },
   idleShutdownSec: {
     type: 'number',
-    label: '空闲关停 (秒)',
+    label: t('idleShutdownSecLabel'),
     default: 300,
-    description: '渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻',
+    description: t('idleShutdownSecDescription'),
   },
   maxConcurrency: {
     type: 'number',
-    label: '渲染并发上限',
+    label: t('maxConcurrencyLabel'),
     default: 2,
-    description: '同时进行的渲染任务数上限；群内多人并发画图时超出的排队，防无界 page + ffmpeg 拖垮机器',
+    description: t('maxConcurrencyDescription'),
   },
   animMaxDurationSec: {
     type: 'number',
-    label: '动图时长上限 (秒)',
+    label: t('animMaxDurationSecLabel'),
     default: 8,
-    description: 'draw_animation 的动画时长硬上限',
+    description: t('animMaxDurationSecDescription'),
   },
   animDefaultFps: {
     type: 'number',
-    label: '动图默认帧率',
+    label: t('animDefaultFpsLabel'),
     default: 15,
-    description: '未显式指定 fps 时使用；上限 25',
+    description: t('animDefaultFpsDescription'),
   },
   animMaxFrames: {
     type: 'number',
-    label: '动图帧数上限',
+    label: t('animMaxFramesLabel'),
     default: 160,
-    description: '时长×帧率超出时按帧数反推有效时长',
+    description: t('animMaxFramesDescription'),
   },
   animMaxOutputMB: {
     type: 'number',
-    label: 'GIF 体积上限 (MB)',
+    label: t('animMaxOutputMBLabel'),
     default: 9,
-    description: '超出即报错（OneBot 内联投递上限 10MB，留余量）',
+    description: t('animMaxOutputMBDescription'),
   },
 });
 
@@ -171,7 +169,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-draw',
-  displayName: '绘图',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -216,7 +214,8 @@ function registerDraw(caps: Caps): void {
 
   tools.use.registerGroup({
     name: 'draw',
-    label: '绘图',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: '把模型编写的 SVG/HTML 标记渲染为图片，配合 send_attachment 发进聊天',
   });
 

@@ -2,6 +2,38 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'maimai DX scores',
+  groupSummary: 'Look up maimai DX player info, Best 50, recent scores, the song library and more',
+  developerTokenLabel: 'Developer API token',
+  developerTokenDescription: 'The developer token applied for at https://maimai.lxns.net',
+  baseUrlDescription: 'Domain of the score service; usually no need to change it',
+  enableToolsLabel: 'Register agent tools',
+  enableToolsDescription: 'Register structured tools for the LLM agent (keeping it on is recommended)',
+  enableCommandsLabel: 'Register slash commands',
+  enableCommandsDescription: 'Register slash commands such as /maimai for users',
+  defaultBindOnPrivateChatLabel: 'Default binding in private chats',
+  defaultBindOnPrivateChatDescription:
+    'In OneBot private chats, if the caller has not bound a friend code but their QQ number is registered with the score service, query by their QQ number automatically',
+  timeoutMsLabel: 'Request timeout (ms)',
+  timeoutMsDescription:
+    'Limit for a single score service API request. Tool execution has no outer timeout, so an unresponsive service would hang the whole turn',
+  baseUrlNotPlain: 'baseUrl must be a complete URL without a user name or password',
+  baseUrlHasQuery:
+    'baseUrl must not contain a query string or fragment (anything after ? or #): the plugin appends paths to it',
+  maimaiDescription: 'maimai DX scores. Once your friend code is bound, info, b50 and recent need no target',
+  target: 'Friend code, or qq:QQ number; when left out, your bound friend code is queried',
+  targetOrQq:
+    'Friend code, or qq:QQ number; when left out, your bound friend code is queried, or your QQ number in a OneBot private chat without a binding',
+  infoDescription: 'Look up player info',
+  b50Description: 'Look up Best 50',
+  apOnly: 'AP scores only',
+  recentDescription: 'Look up recent plays',
+  recentCount: 'How many to show, 10 by default, at most 50',
+  songDescription: 'Search songs',
+  songKeyword: 'Song title, artist or alias',
+  bindDescription: 'Bind your friend code',
+  bindCode: 'Friend code on the score service (digits)',
+  unbindDescription: 'Unbind your friend code',
   unreachable: 'Cannot reach the score service right now, try again later ({reason})',
   badToken:
     'The score service rejected the developer credentials: check the developerToken setting (HTTP {status}: {message})',

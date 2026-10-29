@@ -2,6 +2,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { OkxClient } from './client.js';
+import { t } from './texts.js';
 import { registerAccountTools } from './tools/account.js';
 import { registerAlgoTools } from './tools/algo.js';
 import { registerMarketTools } from './tools/market.js';
@@ -16,7 +17,7 @@ const configSchema = defineConfig({
     label: 'API Key',
     required: true,
     secret: true,
-    description: '在 OKX 设置中创建的 API Key',
+    description: t('apiKeyDescription'),
     onInvalid: 'error',
   },
   secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, onInvalid: 'error' },
@@ -25,65 +26,63 @@ const configSchema = defineConfig({
     label: 'Passphrase',
     required: true,
     secret: true,
-    description: '创建 API 时设定的口令',
+    description: t('passphraseDescription'),
     onInvalid: 'error',
   },
   baseUrl: {
     type: 'string',
-    label: 'API 地址',
+    label: t('baseUrlLabel'),
     default: 'https://www.okx.com',
     onInvalid: 'error',
-    description: '默认实盘地址，可改为自定义域名',
+    description: t('baseUrlDescription'),
   },
   demo: {
     type: 'boolean',
-    label: '模拟盘',
+    label: t('demoLabel'),
     default: true,
     onInvalid: 'error',
-    description: '启用后将使用模拟交易环境，强烈建议先在模拟盘测试',
+    description: t('demoDescription'),
   },
   confirmRealMoney: {
     type: 'boolean',
-    label: '确认实盘风险',
+    label: t('confirmRealMoneyLabel'),
     default: false,
     onInvalid: 'error',
-    description:
-      '仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
+    description: t('confirmRealMoneyDescription'),
   },
-  timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 15000 },
+  timeoutMs: { type: 'number', label: t('timeoutMsLabel'), default: 15000 },
   enableTrading: {
     type: 'boolean',
-    label: '启用交易工具',
+    label: t('enableTradingLabel'),
     default: true,
     onInvalid: 'error',
-    description: '关闭后仅保留查询类工具，不暴露下单/撤单操作',
+    description: t('enableTradingDescription'),
   },
   enableAlgo: {
     type: 'boolean',
-    label: '启用策略委托',
+    label: t('enableAlgoLabel'),
     default: false,
     onInvalid: 'error',
-    description: '启用止盈止损 / 计划委托工具',
+    description: t('enableAlgoDescription'),
   },
   enableTransfer: {
     type: 'boolean',
-    label: '启用资金划转',
+    label: t('enableTransferLabel'),
     default: false,
     onInvalid: 'error',
-    description: '启用资金账户划转工具',
+    description: t('enableTransferDescription'),
   },
   defaultPageLimit: {
     type: 'number',
-    label: '分页查询默认条数',
+    label: t('defaultPageLimitLabel'),
     default: 20,
-    description: '查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。',
+    description: t('defaultPageLimitDescription'),
   },
   maxPageLimit: {
     type: 'number',
-    label: '分页查询最大条数',
+    label: t('maxPageLimitLabel'),
     default: 100,
-    description:
-      'LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。',
+    description: t('maxPageLimitDescription'),
   },
 });
 
@@ -159,7 +158,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-okx-trading',
-  displayName: 'OKX 交易',
+  displayName: t('displayName'),
   subsystem: 'external',
   configSchema,
   uses,
@@ -169,11 +168,11 @@ export default definePlugin({
 function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   const parsed = parseConfig(configSchema, config.use, logger.use);
   if (!URL.canParse(parsed.baseUrl) || new URL(parsed.baseUrl).username || new URL(parsed.baseUrl).password) {
-    throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+    throw configError(t('baseUrlNotPlain'));
   }
   // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
   if (/[?#]/.test(parsed.baseUrl)) {
-    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    throw configError(t('baseUrlHasQuery'));
   }
   const maxPageLimit = Math.max(1, Math.min(1000, parsed.maxPageLimit || 100));
   const cfg = {
@@ -194,7 +193,8 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
 
   baseTools.use.registerGroup({
     name: 'okx',
-    label: 'OKX 交易',
+    label: t('displayName'),
+    summary: cfg.demo ? t('groupSummaryDemo') : t('groupSummaryLive'),
     description: `OKX 虚拟币交易工具集 (${modeLabel})，提供行情查询、账户管理、下单交易等功能`,
   });
 

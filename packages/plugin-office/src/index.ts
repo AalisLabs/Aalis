@@ -4,6 +4,7 @@ import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DocSessionManager } from './session.js';
+import { t } from './texts.js';
 import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';
 import { registerPptTools } from './tools/pptx.js';
@@ -12,33 +13,33 @@ import { registerExcelTools } from './tools/xlsx.js';
 const configSchema = defineConfig({
   outputDir: {
     type: 'string',
-    label: '输出目录',
-    description: '文档保存目录（storage URI，如 workspace:/ 或 data:/docs）。',
+    label: t('outputDirLabel'),
+    description: t('outputDirDescription'),
     default: 'workspace:/',
     onInvalid: 'error',
   },
   docx: {
-    label: 'Word 文档',
+    label: t('docxLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 Word 工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('docxEnabledLabel'), default: true, onInvalid: 'error' },
     },
   },
   xlsx: {
-    label: 'Excel 工作簿',
+    label: t('xlsxLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 Excel 工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('xlsxEnabledLabel'), default: true, onInvalid: 'error' },
     },
   },
   pptx: {
-    label: 'PPT 演示文稿',
+    label: t('pptxLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 PPT 工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('pptxEnabledLabel'), default: true, onInvalid: 'error' },
     },
   },
   pdf: {
-    label: 'PDF 文档',
+    label: t('pdfLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 PDF 工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('pdfEnabledLabel'), default: true, onInvalid: 'error' },
     },
   },
 });
@@ -51,7 +52,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-office',
-  displayName: 'Office 文档工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -63,14 +64,15 @@ function registerOffice(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, logger.use);
   const outputUri = cfg.outputDir || configSchema.outputDir.default;
   if (!isStorageUri(outputUri)) {
-    throw configError(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${outputUri}"`);
+    throw configError(t('badOutputDir', { value: outputUri }));
   }
   const storage = caps.storage.use;
   const sessions = new DocSessionManager();
 
   caps.tools.use.registerGroup({
     name: 'office',
-    label: 'Office 文档工具',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: '创建和编辑 Word、Excel、PPT、PDF 文档',
   });
 
