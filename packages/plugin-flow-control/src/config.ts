@@ -1,7 +1,7 @@
 import { REPLY_AUDIENCE_FIELD } from '@aalis/api-gateway';
 import type {} from '@aalis/api-session-settings'; // 按会话字段的声明成员经 declaration merging 并入 SessionFieldSpec
 import { defineConfig, type SessionFieldsOf } from '@aalis/schema-config';
-import type {} from '@aalis/schema-i18n'; // 生效范围的称呼是文字对象：导出的 configSchema 的类型里有 TextRef
+import { t } from './texts.js';
 
 // ----- 流控配置 -----
 
@@ -12,9 +12,9 @@ const ROOM = { appliesTo: ['room'], prominence: 'advanced' } as const;
 // 生效范围与三个参数都可按会话设（平台档、平台类型档、场所、本会话），每次按会话现读
 export const configSchema = defineConfig({
   audience: { ...REPLY_AUDIENCE_FIELD, session: { appliesTo: ['room'], prominence: 'common' } },
-  cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: 10, session: ROOM },
-  rateLimitWindow: { type: 'number', label: '限速窗口（秒，0=关闭）', default: 0, session: ROOM },
-  rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数', default: 10, session: ROOM },
+  cooldownSeconds: { type: 'number', label: t('cooldownSecondsLabel'), default: 10, session: ROOM },
+  rateLimitWindow: { type: 'number', label: t('rateLimitWindowLabel'), default: 0, session: ROOM },
+  rateLimitMaxReplies: { type: 'number', label: t('rateLimitMaxRepliesLabel'), default: 10, session: ROOM },
 });
 
 /** 一个会话此刻的流控参数 */

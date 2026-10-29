@@ -1,8 +1,33 @@
-// 本插件自己的原文字典：诊断项的说明，判定不可用、侧车退出与不托管的原因（原因同时写进日志，日志取原文），与开口阈值没设时的说法
+// 本插件自己的原文字典：显示名、触发服务的标签、配置项与配置报错，诊断项的说明，判定不可用、侧车退出与不托管的原因（原因同时写进
+// 日志，日志取原文），与开口阈值没设时的说法
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: 'Laya 触发判定',
+  triggerLabel: 'Laya 模型',
+  thresholdLabel: '开口阈值',
+  thresholdDescription: 'logit ≥ 阈值即开口。留空 = 用侧车返回的模型阈值（随模型版本给出）。',
+  triggerOnAtLabel: '检测 @ 提及',
+  triggerOnAtDescription:
+    '@ 自己算"被点名"（戳一戳、名字同理）。点名不强制开口，由模型判定；开口的回合记为 immediate，点名者即授权主体。判定不可用时只回点名。',
+  triggerOnPokeLabel: '戳一戳算点名',
+  triggerNamesLabel: '点名别名（逗号或换行分隔）',
+  muteKeywordsLabel: '禁言关键词（逗号或换行分隔）',
+  muteTimeSecondsLabel: '禁言关键词命中时长（秒）',
+  mediaWaitMsLabel: '附件识别等待上限（毫秒）',
+  mediaWaitMsDescription: '带图片等附件的消息先等识别写好描述再交给模型；超时照常判定，识别在后台继续。',
+  endpointLabel: '侧车地址',
+  sidecarDirLabel: '侧车目录（由本插件托管）',
+  sidecarDirDescription:
+    '侧车 laya-listener 所在目录的绝对路径。填了则本插件生效时自己拉起侧车、退出后重启，不再生效或停用时关掉，端口取侧车地址的（地址须为 http://127.0.0.1:<端口>）；留空 = 侧车由外部运行，只按侧车地址连接。',
+  timeoutMsLabel: '请求超时（毫秒）',
+  timeoutMsDescription: '含读完响应体。超时计一次失败，本条按兜底只回点名。',
+  historyRowsLabel: '历史行数',
+  historyRowsDescription:
+    '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
+  endpointNotHttp: 'plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址',
+  endpointQuery: 'plugin-trigger-laya 配置错误: endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
   inactive:
     'Laya 触发判定未生效（生效的触发插件是「{label}」），不检查侧车；要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya',
   inactiveNone:

@@ -10,6 +10,7 @@ import { App, events, type LogEntry, LogHub, provide, services } from '../../pac
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { phaseData } from '../fixtures/inbound-phase.js';
@@ -129,7 +130,7 @@ async function setup(opts: SetupOptions = {}) {
     send: (message: IncomingMessage) => run(host.hooks.use, message),
     /** WebUI 服务偏好切换的等价操作 */
     prefer: (label: string) => {
-      const view = host.services.use.all(trigger).find(v => v.label === label);
+      const view = host.services.use.all(trigger).find(v => toSource(v.label) === label);
       if (!view) throw new Error(`trigger 服务里没有「${label}」`);
       host.services.use.prefer(trigger, view.contextId);
     },
@@ -153,7 +154,7 @@ describe('触发插件二选一', () => {
   it('都启用、没有偏好：规则生效（Laya 的优先级 -10 低于规则的 0），Laya 不请求侧车', async () => {
     // Laya 先登记，与从源码发现的次序一致（readdir 下 trigger-laya 排在 trigger-policy 前）：优先级相等时按登记次序决胜
     const h = await setup({ policy: EVERY_MESSAGE, layaFirst: true });
-    expect(h.host.services.use.all(trigger).map(v => v.label)).toEqual([RULE_LABEL, 'Laya 模型']);
+    expect(h.host.services.use.all(trigger).map(v => toSource(v.label))).toEqual([RULE_LABEL, 'Laya 模型']);
     const r = await h.send(groupMsg('随便聊聊'));
     expect(r.reached).toBe(true);
     expect(r.message.triggerType).toBe('interval');
@@ -163,7 +164,7 @@ describe('触发插件二选一', () => {
 
   it('都启用、配置文件的 servicePreferences 指向 Laya：Laya 生效，规则插件什么都不做（不判定、不计数）', async () => {
     const h = await setup({ policy: EVERY_TWO, hostConfig: PREFER_LAYA });
-    expect(h.host.services.use.all(trigger).map(v => v.label)).toEqual(['Laya 模型', RULE_LABEL]);
+    expect(h.host.services.use.all(trigger).map(v => toSource(v.label))).toEqual(['Laya 模型', RULE_LABEL]);
 
     // 模型判不回：吞掉。规则若也在判，fixedInterval=2 的第 2 条会被它放行
     expect((await h.send(groupMsg('第 1 条'))).reached).toBe(false);

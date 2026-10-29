@@ -1,8 +1,19 @@
-// 本插件自己的原文字典：按会话字段的称呼、说明与选项，/clear 的类型显示名
+// 本插件自己的原文字典：显示名、配置项，按会话字段的称呼、说明与选项，/clear 的类型显示名与结果行
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: '人设系统',
+  personasDirLabel: '人设目录',
+  personasDirDescription:
+    "人设文件所在目录的 storage URI（默认 personas:/，即家目录的 self/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
+  statePersistenceLabel: '状态持久化',
+  statePersistenceDescription:
+    '启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中',
+  timeInjectionLabel: '时间注入',
+  timeInjectionDescription: '启用后，当前时间会自动注入到系统提示中',
+  timeZoneLabel: '时区 (IANA)',
+  timeZoneDescription: '例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。',
   personaLabel: '人设',
   personaDescription: '角色卡名（不含后缀）；default 是人设目录里的 default 卡，没有时用内置的默认角色',
   extraLabel: '额外提示',
@@ -15,6 +26,9 @@ const SOURCE = {
   renderOn: '开',
   renderOff: '关',
   clearType: '会话角色状态',
+  clearedAll: '所有会话角色状态已清空',
+  clearedSession: '当前会话角色状态已清空',
+  clearFailed: '角色状态清空失败: {error}',
 } as const;
 export type Source = typeof SOURCE;
 
