@@ -3,6 +3,7 @@ import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
+import { t } from './texts.js';
 
 function toUri(input: string): string {
   const s = input.trim();
@@ -12,27 +13,29 @@ function toUri(input: string): string {
 const configSchema = defineConfig({
   path: {
     type: 'string',
-    label: '数据库目录',
+    label: t('pathLabel'),
     default: 'data:/lancedb',
     onInvalid: 'error',
-    description: 'LanceDB 数据存储 storage URI（也兼容裸名/相对路径）',
+    description: t('pathDescription'),
   },
-  tableName: { type: 'string', label: '表名', default: 'vectors', onInvalid: 'error', description: '向量表名称' },
+  tableName: {
+    type: 'string',
+    label: t('tableNameLabel'),
+    default: 'vectors',
+    onInvalid: 'error',
+    description: t('tableNameDescription'),
+  },
   optimizeEvery: {
     type: 'number',
-    label: '压实间隔',
+    label: t('optimizeEveryLabel'),
     default: 500,
-    description:
-      '每写入多少条向量后后台压实一次（合并碎片 + 回收作废数据文件）。LanceDB 每次 add 产生一个新碎片与版本，' +
-      '不压实会让 data/ 与 _versions/ 无界膨胀、写入越来越慢；设 0 关闭',
+    description: t('optimizeEveryDescription'),
   },
   cleanupRetentionMinutes: {
     type: 'number',
-    label: '数据文件保留窗（分钟）',
+    label: t('cleanupRetentionMinutesLabel'),
     default: 60,
-    description:
-      '压实时回收「此分钟数以前」的作废数据文件。比它更新的文件（含可能在途的写入）一律保留，故对单进程写入安全。' +
-      '默认 LanceDB 保留 7 天，高频压实下会让 data/ 累到数百 GB —— 收紧到分钟级即可把库压回真实大小。调大更保守、更占盘。',
+    description: t('cleanupRetentionMinutesDescription'),
   },
 });
 
@@ -310,14 +313,14 @@ const uses = { storage, provide, config, logger, lifecycle };
 
 export default definePlugin({
   name: '@aalis/plugin-vectorstore-lancedb',
-  displayName: 'LanceDB 向量库',
+  displayName: t('displayName'),
   subsystem: 'embedding',
   configSchema,
   provides: [vectorstore],
   uses,
   async apply({ storage, provide, config, logger, lifecycle }) {
     const cfg: LanceDBConfig = parseConfig(configSchema, config.use, logger.use);
-    if (!cfg.tableName.trim()) throw configError('tableName 不能为空');
+    if (!cfg.tableName.trim()) throw configError(t('tableNameEmpty'));
 
     const gateway = storage.use;
     const dbUri = toUri(cfg.path);

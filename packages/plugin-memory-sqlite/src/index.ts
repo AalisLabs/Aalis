@@ -21,7 +21,9 @@ import {
   provide,
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, textOf } from '@aalis/schema-i18n';
 import { CONTROL_KINDS, type ContentSegment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 /** 配置的 path 归一为 storage URI；留空按实例派生：主实例 data:/aalis.db，`name:b` 实例 data:/aalis-b.db */
 function toUri(input: string, instanceId: string): string {
@@ -66,25 +68,22 @@ const SAID = kindNotIn(CONTROL_KINDS);
 const configSchema = defineConfig({
   path: {
     type: 'string',
-    label: '数据库路径',
+    label: t('pathLabel'),
     default: '',
     onInvalid: 'error',
-    description:
-      "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）。" +
-      '留空按实例派生：主实例用 data:/aalis.db，带后缀的实例在文件名上加后缀（如 `:b` 实例用 data:/aalis-b.db）。' +
-      '两个实例不能用同一个库，后激活的那个会报配置错误',
+    description: t('pathDescription'),
   },
   rangeQueryLimit: {
     type: 'number',
-    label: '范围查询返回上限',
+    label: t('rangeQueryLimitLabel'),
     default: 500,
-    description: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
+    description: t('rangeQueryLimitDescription'),
   },
   crossSessionMaxLimit: {
     type: 'number',
-    label: '跨会话查询返回上限',
+    label: t('crossSessionMaxLimitLabel'),
     default: 1000,
-    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+    description: t('crossSessionMaxLimitDescription'),
   },
 });
 
@@ -476,7 +475,7 @@ export class SQLiteMemoryService implements MemoryService {
 
 export default definePlugin({
   name: '@aalis/plugin-memory-sqlite',
-  displayName: 'SQLite 记忆',
+  displayName: t('displayName'),
   subsystem: 'memory',
   reusable: true,
   configSchema,
@@ -498,43 +497,37 @@ export default definePlugin({
     try {
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`无法解析数据库路径 ${dbUri}（检查配置项 path）: ${msg}`, { cause: err });
+      throw new TextError(t('pathUnresolvable', { uri: dbUri, error: textOf(err) }), { cause: err });
     }
 
     caps.logger.use.info(`正在打开 SQLite 数据库: ${dbPath}`);
 
     // 经 process.getBuiltinModule 取 node:sqlite：插件源码也在 vitest 里加载，而 vitest 解析不了静态的 `import 'node:sqlite'`。
     // 取不到 process.getBuiltinModule 或 node:sqlite，或 node:sqlite 缺本插件要用的接口（22.16 之前、23.x）时，都按 Node 太旧报错
-    const tooOld =
-      `SQLite 打开失败: 当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
-      '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node';
+    const tooOld = t('nodeTooOld', { version: process.version });
     const sqlite = process.getBuiltinModule?.('node:sqlite');
-    if (!sqlite) throw new Error(tooOld);
+    if (!sqlite) throw new TextError(tooOld);
     let db: DatabaseSync;
     try {
       // 遇锁（别的进程正写这个库）最多等 5 秒再报 SQLITE_BUSY
       db = new sqlite.DatabaseSync(dbPath, { timeout: 5000 });
     } catch (err) {
-      throw new Error(
-        `SQLite 打开失败（检查目录 ${dirname(dbPath)} 存在且可写，或在配置项 path 换个位置）: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
+      throw new TextError(t('openFailedDir', { dir: dirname(dbPath), error: textOf(err) }), { cause: err });
     }
 
     // 开库之后任何一步失败（接口不全、取文件身份、撞库、设 WAL、建表、发布服务），都先关掉刚开的句柄再抛
     try {
       // 连接上没有 isTransaction 时也不认 timeout 选项：事务出错时回滚不了，遇锁也不等待
-      if (typeof db.isTransaction !== 'boolean') throw new Error(tooOld);
+      if (typeof db.isTransaction !== 'boolean') throw new TextError(tooOld);
       // 文件身份要等开库建出文件后才取得到。开库、取身份、查占用之间没有 await，两个并发激活不会交错；
       // 文件系统不提供 inode（ino 为 0）时退回按路径认
       const { dev, ino } = statSync(dbPath, { bigint: true });
       const fileKey = ino === 0n ? dbPath : `${dev}:${ino}`;
       const holder = openedBy.get(fileKey);
       if (holder && holder.lifecycle.id !== caps.lifecycle.use.id) {
-        const via = holder.path === dbPath ? '' : `（经路径 ${holder.path} 打开）`;
+        const clash = { path: dbPath, holder: holder.lifecycle.id, instance: caps.lifecycle.use.id };
         throw configError(
-          `数据库文件 ${dbPath} 已被实例 ${holder.lifecycle.id} 使用${via}，两个实例不能共用一个库：请给 ${caps.lifecycle.use.id} 另配 path`,
+          holder.path === dbPath ? t('sharedDb', clash) : t('sharedDbVia', { ...clash, via: holder.path }),
         );
       }
       openedBy.set(fileKey, { lifecycle: caps.lifecycle.use, path: dbPath });
@@ -564,7 +557,7 @@ export default definePlugin({
           caps.logger.use.info('SQLite 数据库已关闭');
         });
       } catch (err) {
-        throw new Error(`SQLite 打开失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+        throw new TextError(t('openFailed', { error: textOf(err) }), { cause: err });
       }
     } catch (err) {
       db.close();

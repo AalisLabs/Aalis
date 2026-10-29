@@ -3,6 +3,7 @@ import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '
 import type {} from '@aalis/api-webui'; // 贡献点 webui:options 的键类型经 declaration merging 并入，删掉会丢类型
 import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { t } from './texts.js';
 
 // ===== 配置 =====
 
@@ -13,27 +14,27 @@ const configSchema = defineConfig({
     required: true,
     secret: true,
     onInvalid: 'error',
-    description: 'OpenAI API 密钥',
+    description: t('apiKeyDescription'),
   },
   baseUrl: {
     type: 'string',
-    label: 'API 地址',
+    label: t('baseUrlLabel'),
     default: 'https://api.openai.com/v1',
     onInvalid: 'error',
-    description: 'API 端点完整前缀（含版本段）；插件只在其后拼 /embeddings 与 /models',
+    description: t('baseUrlDescription'),
   },
   model: {
     type: 'select',
-    label: 'Embedding 模型',
+    label: t('modelLabel'),
     default: 'text-embedding-3-small',
     dynamicOptions: 'embedding-openai',
-    description: '用于生成文本向量的模型',
+    description: t('modelDescription'),
   },
   timeoutMs: {
     type: 'number',
-    label: '请求超时 (ms)',
+    label: t('timeoutMsLabel'),
     default: 30000,
-    description: '单次 embedding 请求超时时间。不设上限时启动探测会把插件激活链整条钉住。',
+    description: t('timeoutMsDescription'),
   },
 });
 
@@ -106,11 +107,11 @@ export default definePlugin({
   async apply({ config, logger, lifecycle, provide, contributions }) {
     const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
-      throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+      throw configError(t('baseUrlInvalid'));
     }
     // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
     if (/[?#]/.test(cfg.baseUrl)) {
-      throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+      throw configError(t('baseUrlQuery'));
     }
     const service = new OpenAIEmbeddingService(cfg.baseUrl, cfg.model, cfg.apiKey, cfg.timeoutMs);
 

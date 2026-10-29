@@ -11,6 +11,7 @@ import {
 import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
 import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 「服务注册成功 != 模型可用」：连通性检查失败只 warn、服务照常注册（刻意，Ollama 可能
@@ -155,12 +156,12 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
 
     const r = (await spec!.run()) as CheckResult;
     expect(r.level).toBe('error');
-    expect(r.message).toContain('不可用');
-    expect(r.detail, '只报 404 会把人引向端点/网络方向；要带上「模型没 pull」这句原话').toContain(
+    expect(toSource(r.message)).toContain('不可用');
+    expect(toSource(r.detail), '只报 404 会把人引向端点/网络方向；要带上「模型没 pull」这句原话').toContain(
       'try pulling it first',
     );
     // 原话之后写怎么修
-    expect(r.detail).toMatch(
+    expect(toSource(r.detail)).toMatch(
       /try pulling it first[\s\S]*\n确认 Ollama 在运行，并已执行 ollama pull nomic-embed-text（或把配置项 model 改成本机已有的嵌入模型）$/,
     );
   });
@@ -219,7 +220,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       await waitFor(() => fake.abortedEmbeddingRequests > 0); // 等服务端真正观察到 close
 
       expect(r.level).toBe('error');
-      expect(r.detail, '必须由探测自己的上限掐断，而不是等服务超时').toContain('探测超时');
+      expect(toSource(r.detail), '必须由探测自己的上限掐断，而不是等服务超时').toContain('探测超时');
       expect(elapsed, `应在 5s 上限附近返回，实际 ${elapsed}ms`).toBeLessThan(15_000);
       expect(fake.embeddingRequests, '外部中止不得触发 provider retry').toBe(1);
       expect(fake.abortedEmbeddingRequests, '探测超时必须关闭实际 HTTP embedding 请求').toBeGreaterThan(0);

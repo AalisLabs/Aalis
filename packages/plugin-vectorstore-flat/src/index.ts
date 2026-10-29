@@ -2,14 +2,15 @@ import { isStorageNotFound, type StorageService, storage, toStorageUri } from '@
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   path: {
     type: 'string',
-    label: '存储目录',
+    label: t('pathLabel'),
     default: 'data:/vectorstore',
     onInvalid: 'error',
-    description: 'JSON 向量文件存储目录（storage URI）。也兼容旧格式 “data/vectorstore”。',
+    description: t('pathDescription'),
   },
 });
 
@@ -180,7 +181,7 @@ const uses = { storage, provide, config, logger, lifecycle };
 
 export default definePlugin({
   name: '@aalis/plugin-vectorstore-flat',
-  displayName: 'Flat 向量库',
+  displayName: t('displayName'),
   subsystem: 'embedding',
   configSchema,
   provides: [vectorstore],
