@@ -182,6 +182,14 @@
   padding: var(--space-2) 0 0;
 }
 
+/*
+ * 详情里的焦点环往里画：宽时详情是裁剪内容的滚动区（见下面的宽屏规则），往外画会被它的边裁掉。不放进宽屏规则：详情里的
+ * 组件在详情自己的 .page-screen 里，那里的容器查询按详情的宽度判
+ */
+.page-detail :focus-visible {
+  outline-offset: -2px;
+}
+
 .page-detail-title {
   flex: 1;
   min-width: 0;
@@ -202,9 +210,26 @@
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
 
+  /*
+   * 宽时详情贴住滚动区（插件页与设置页的 .panel-body）的顶边、留出与页边一样的距离，长了在详情里自己滚，滚到头不带动列表；
+   * 头部（标题与关闭）贴着详情的顶边。高度按视口减头部与上下页边算，贴住后不超过可见区域，左边的分隔线随列表拉长、最多一屏
+   * 高
+   */
   .page-detail {
+    position: sticky;
+    top: var(--space-4);
+    max-height: calc(100dvh - var(--header-h) - 2 * var(--space-4));
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding-left: var(--space-6);
     border-left: 1px solid var(--color-border);
+  }
+
+  .page-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    background: var(--surface);
   }
 }
 

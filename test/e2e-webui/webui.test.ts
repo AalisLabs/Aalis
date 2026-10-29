@@ -154,8 +154,11 @@ const LONG_FAILURE = '失败：远端代理返回 500 Internal Server Error，�
 /** 慢慢流出来的长回复：每块 4 个字，整段要十几秒才出完，够从面板里停掉它 */
 const SLOW_REPLY = '这是一段很长的回复，'.repeat(24);
 
-/** 看板的行与登记拿到的句柄：用例改了行、经句柄推 invalidate，看打开着的页面跟着变；每次激活重置 */
-const board: { rows: TableRow[]; page?: PageHandle } = { rows: [] };
+/**
+ * 看板的行与登记拿到的句柄：用例改了行、经句柄推 invalidate，看打开着的页面跟着变；detailLines 是详情的 info 多给的行数
+ * （测长详情，每行是能点开的长文本，即按钮）。每次激活重置
+ */
+const board: { rows: TableRow[]; page?: PageHandle; detailLines: number } = { rows: [], detailLines: 0 };
 
 /**
  * 页面探针：一个位置为插件详情的看板（带详情与行动作的表格）、一个键值加关系图的统计页，以及一个适用于全部会话的便签面板
@@ -170,6 +173,7 @@ const probePages = definePlugin({
       { id: 'b', name: '部署文档', owner: '小红', state: { text: '待办' }, note: '' },
       { id: 'c', name: LONG_NAME, owner: '小刚', state: { text: '待办' }, note: '' },
     ];
+    board.detailLines = 0;
     board.page = webui.use.definePage({
       key: 'board',
       title: '看板',
@@ -191,7 +195,20 @@ const probePages = definePlugin({
             { key: 'note', label: '备注' },
           ],
           rowActions: [{ action: 'mark' }, { action: 'drop' }],
-          detail: [{ type: 'info', id: 'item', data: ({ rowKey }) => [{ label: '编号', value: rowKey }] }],
+          detail: [
+            {
+              type: 'info',
+              id: 'item',
+              data: ({ rowKey }) => [
+                { label: '编号', value: rowKey },
+                ...Array.from({ length: board.detailLines }, (_, i) => ({
+                  label: `第 ${i + 1} 行`,
+                  value: '详情里很长的一行，'.repeat(20),
+                  kind: 'long-text' as const,
+                })),
+              ],
+            },
+          ],
           data: () => board.rows,
         },
       ],
@@ -1307,12 +1324,127 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
         elements.map(element => element.getBoundingClientRect().toJSON() as DOMRect),
       );
       expect(detail.left).toBeGreaterThanOrEqual(list.right);
+      expect(Math.abs(detail.height - list.height), '详情短时左边的分隔线照旧与列表一样高').toBeLessThanOrEqual(1);
       expect(await shownColumns(page, '.page-master-list')).toEqual(['name', 'state']);
       expect(await fits('.page-master-list')).toBe(true);
       await page.locator(aria('关闭详情', 'button')).click();
       await page.waitForSelector(aria('整理周报', 'region'), { hidden: true });
     }
     expect(new URL(page.url()).search).toBe('');
+    expect(problems).toEqual([]);
+  }, 60_000);
+
+  it('声明式页面：宽时详情贴住滚动区、自己滚，头部贴顶、画在详情内容之上，列表随页面滚，滚到头不带动页面，详情里的焦点环不被裁掉；窄时照旧代替列表', async () => {
+    const stack = await startStack({}, [probePages]);
+    const { page, problems } = await openPage(stack, viewport, pagePath(PAGES_PROBE, 'board'));
+    await page.waitForSelector(`td[data-column="name"] ${text('整理周报')}`);
+    board.rows = Array.from({ length: 60 }, (_, i) => ({
+      id: `r${i + 1}`,
+      name: `第 ${i + 1} 项`,
+      owner: '小明',
+      state: { text: '待办' },
+      note: '',
+    }));
+    board.detailLines = 80;
+    board.page?.invalidate('items');
+    // 表格一页 50 行：第一页的最后一行出来了就是换上了新的行
+    await page.waitForSelector(`td[data-column="name"] ${text('第 50 项')}`);
+    await page.locator(aria('第 1 项', 'link')).click();
+    await page.waitForSelector(`${aria('第 1 项', 'region')} ${text('第 80 行')}`);
+    if (phone) {
+      expect(await page.$eval('.page-detail', element => getComputedStyle(element).position)).toBe('static');
+      expect(await page.$eval('.page-master-list', element => getComputedStyle(element).display)).toBe('none');
+      expect(problems).toEqual([]);
+      return;
+    }
+    const CLOSE = '.page-detail [aria-label="关闭详情"]';
+    /** 滚动区、详情、列表与详情头部的位置，两个滚动区滚到了哪里；gap 是 var(--space-4)（1rem） */
+    const measure = () =>
+      page.evaluate(() => {
+        const of = (selector: string) => document.querySelector(selector) as HTMLElement;
+        const box = (selector: string) => {
+          const { top, bottom, left, right } = of(selector).getBoundingClientRect();
+          return { top, bottom, left, right };
+        };
+        const detail = of('.page-detail');
+        return {
+          body: box('main .panel-body'),
+          bodyScroll: of('main .panel-body').scrollTop,
+          detail: box('.page-detail'),
+          detailScroll: detail.scrollTop,
+          detailScrolls: detail.scrollHeight > detail.clientHeight,
+          list: box('.page-master-list'),
+          header: box('.page-detail-header'),
+          gap: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+        };
+      });
+    const scrollTo = (selector: string, top: number) =>
+      page.$eval(selector, (element, y) => element.scrollTo(0, y), top);
+    const settle = () => new Promise(resolve => setTimeout(resolve, 500));
+
+    const before = await measure();
+    await scrollTo('main .panel-body', 600);
+    const scrolled = await measure();
+    expect(scrolled.bodyScroll).toBe(600);
+    expect(
+      Math.abs(scrolled.detail.top - (scrolled.body.top + scrolled.gap)),
+      '详情贴住滚动区的顶边',
+    ).toBeLessThanOrEqual(1);
+    expect(scrolled.detail.bottom, '详情不超过可见区域').toBeLessThanOrEqual(scrolled.body.bottom);
+    expect(Math.abs(scrolled.list.top - (before.list.top - 600)), '列表随页面滚').toBeLessThanOrEqual(1);
+    expect(scrolled.detailScrolls, '长了在详情里自己滚').toBe(true);
+
+    await scrollTo('.page-detail', 1e6);
+    const bottom = await measure();
+    expect(bottom.detailScroll).toBeGreaterThan(0);
+    expect(Math.abs(bottom.header.top - bottom.detail.top), '头部贴着详情的顶边').toBeLessThanOrEqual(1);
+    await page.mouse.move(
+      (bottom.detail.left + bottom.detail.right) / 2,
+      (bottom.detail.top + bottom.detail.bottom) / 2,
+    );
+    await page.mouse.wheel({ deltaY: 400 });
+    await settle();
+    expect((await measure()).bodyScroll, '详情滚到头不带动页面').toBe(bottom.bodyScroll);
+
+    await scrollTo('.page-detail', 0);
+    await page.focus(CLOSE);
+    await page.keyboard.press('PageDown');
+    await settle();
+    expect((await measure()).detailScroll, '长详情区能用键盘滚动').toBeGreaterThan(0);
+
+    // 详情是裁剪内容的滚动区：焦点环往里画，关闭按钮与内容里的按钮都一样
+    const ring = () =>
+      page.evaluate(() => {
+        const focused = document.activeElement as Element;
+        return [focused.matches(':focus-visible'), getComputedStyle(focused).outlineOffset];
+      });
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => document.activeElement?.className)).toBe('page-long-text');
+    expect(await ring(), '内容里的按钮').toEqual([true, '-2px']);
+    await page.keyboard.down('Shift');
+    await page.keyboard.press('Tab');
+    await page.keyboard.up('Shift');
+    expect(await ring(), '关闭按钮').toEqual([true, '-2px']);
+
+    // 内容里的按钮（base.css 给按钮 position: relative）滚到头部下面：头部画在它上面，标题与关闭按钮的正中点到的是头部
+    const covered = await page.evaluate(close => {
+      const detail = document.querySelector('.page-detail') as HTMLElement;
+      const header = detail.querySelector('.page-detail-header') as Element;
+      const title = detail.querySelector('.page-detail-title') as Element;
+      const middle = (element: Element) => {
+        const { left, right, top, bottom } = element.getBoundingClientRect();
+        return [(left + right) / 2, (top + bottom) / 2];
+      };
+      detail.scrollTop = 0;
+      detail.scrollBy(0, middle(detail.querySelector('.page-long-text') as Element)[1] - middle(title)[1]);
+      return [title, document.querySelector(close) as Element].flatMap(element => {
+        const hit = document.elementFromPoint(...(middle(element) as [number, number]));
+        return hit && header.contains(hit)
+          ? []
+          : [`${element.textContent || element.getAttribute('aria-label')}被${hit?.className}压住`];
+      });
+    }, CLOSE);
+    expect(covered).toEqual([]);
     expect(problems).toEqual([]);
   }, 60_000);
 
