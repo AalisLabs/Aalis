@@ -12,6 +12,7 @@ import {
 import { App, events, LogHub, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { inputFromLastUser } from '../fixtures/turn-input.js';
@@ -420,7 +421,9 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 
     const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
     expect(completed).toBe(true);
-    expect(results).toEqual([{ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(toSource(results)).toEqual([
+      { source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' },
+    ]);
     expect(mem.meta.has(MARKER)).toBe(false);
 
     const after = await injected();
@@ -450,7 +453,9 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 
     const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
     expect(completed).toBe(true);
-    expect(results).toEqual([{ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(toSource(results)).toEqual([
+      { source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' },
+    ]);
     expect(mem.calls.del).toBe(1);
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain('删除存量向量的模型标记失败');

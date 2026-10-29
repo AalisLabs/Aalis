@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
 import { LLMCapabilities, type LLMModel } from '../../packages/api-llm/src/index.js';
 import type { App } from '../../packages/core/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { endTurn, setupSummary } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
@@ -32,7 +33,7 @@ describe('plugin-memory-summary: 摘要随 context 清理', () => {
     for (const types of [['context'], ['summary'], undefined]) {
       const { clear, has } = await world();
       const results = await clear('session', types);
-      expect(results, JSON.stringify(types)).toEqual([
+      expect(toSource(results), JSON.stringify(types)).toEqual([
         { source: 'summary', type: 'summary', success: true, message: '当前会话摘要已清空' },
       ]);
       expect(await has('s1'), JSON.stringify(types)).toBe(false);
@@ -42,7 +43,7 @@ describe('plugin-memory-summary: 摘要随 context 清理', () => {
 
   it('全局：context 删全部摘要', async () => {
     const { clear, has } = await world();
-    expect(await clear('all', ['context'])).toEqual([
+    expect(toSource(await clear('all', ['context']))).toEqual([
       { source: 'summary', type: 'summary', success: true, message: '所有会话摘要已清空' },
     ]);
     expect(await has('s1')).toBe(false);
