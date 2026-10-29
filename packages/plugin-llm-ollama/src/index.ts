@@ -30,11 +30,13 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
+import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { Agent, errors } from 'undici';
+import { t } from './texts.js';
 
 // ===== 插件元数据 =====
 
@@ -57,35 +59,35 @@ function bodyExcerpt(body: string): string {
  */
 function checkBaseUrl(baseUrl: string): void {
   if (!URL.canParse(baseUrl)) {
-    throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 http://localhost:11434');
+    throw configError(t('baseUrlInvalid'));
   }
   if (/[?#]/.test(baseUrl)) {
-    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    throw configError(t('baseUrlQuery'));
   }
   const { username, password } = new URL(baseUrl);
   if (username || password) {
-    throw configError('baseUrl 不能带用户名或密码（user:pass@），本插件不支持带凭据访问 Ollama');
+    throw configError(t('baseUrlCredentials'));
   }
 }
 
 /**
- * 错误消息连同底层原因，写成一行。fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）在
- * cause 上；连 localhost 时两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
+ * 错误连同底层原因，写成一行（日志取 toSource）。fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）
+ * 在 cause 上；连 localhost 时两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
  */
-function describeError(err: unknown): string {
+function describeError(err: unknown): string | TextRef {
   const cause = err instanceof Error ? err.cause : undefined;
   const reasons: unknown[] = cause instanceof AggregateError ? cause.errors : cause instanceof Error ? [cause] : [];
   const detail = reasons.map(e => (e instanceof Error ? e.message : String(e))).join('; ');
-  return `${err instanceof Error ? err.message : String(err)}${detail ? ` ← ${detail}` : ''}`;
+  return detail ? t('withCause', { error: textOf(err), detail }) : textOf(err);
 }
 
 /** 常见状态码的一句提示 */
-function statusHint(status: number): string | undefined {
-  if (status === 401 || status === 403) return '密钥无效或没有权限';
-  if (status === 402) return '余额不足或需要付费';
-  if (status === 404) return '模型或地址不对';
-  if (status === 429) return '请求过多或额度不足';
-  if (status >= 500) return '上游服务故障';
+function statusHint(status: number): TextRef | undefined {
+  if (status === 401 || status === 403) return t('hintAuth');
+  if (status === 402) return t('hintPayment');
+  if (status === 404) return t('hintNotFound');
+  if (status === 429) return t('hintRateLimit');
+  if (status >= 500) return t('hintUpstream');
   return undefined;
 }
 
@@ -110,10 +112,13 @@ function upstreamMessage(body: string): string {
  * 非 2xx 应答的错误信息（会经 agent 发回会话）：状态码、常见状态码的一句提示与上游 JSON 里的说明；没有说明时
  * （不是 JSON 或没有说明字段）写「详情见日志」。响应体本身只进日志，由调用方记
  */
-function httpErrorMessage(provider: string, status: number, body: string): string {
+function httpErrorMessage(provider: string, status: number, body: string): TextRef {
   const hint = statusHint(status);
   const message = upstreamMessage(body);
-  return `${provider} API 错误 (${status})${hint ? `：${hint}` : ''}；${message ? `上游说明：${message}` : '详情见日志'}`;
+  return textClauses([
+    hint ? t('apiErrorHint', { provider, status, hint }) : t('apiError', { provider, status }),
+    message ? t('upstreamMessage', { message }) : t('seeLogs'),
+  ]);
 }
 
 /**
@@ -146,79 +151,76 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
 
 /** 报告了思考能力的模型允许的档位：开关型，翻成 think 开关 */
 const THINKING_LEVELS: ThinkingLevel[] = [
-  { id: 'off', label: '关' },
-  { id: 'on', label: '开' },
+  { id: 'off', label: t('levelOff') },
+  { id: 'on', label: t('levelOn') },
 ];
 
 const configSchema = defineConfig({
   baseUrl: {
     type: 'string',
-    label: 'Ollama 地址',
+    label: t('baseUrlLabel'),
     default: 'http://localhost:11434',
     onInvalid: 'error',
-    description: '本地 Ollama 服务的 HTTP 地址',
+    description: t('baseUrlDescription'),
   },
   customModels: {
     type: 'textarea',
-    label: '自定义模型',
+    label: t('customModelsLabel'),
     default: '',
-    description:
-      '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+    description: t('customModelsDescription'),
   },
   discoverModels: {
     type: 'boolean',
-    label: '自动发现模型',
+    label: t('discoverModelsLabel'),
     default: true,
-    description:
-      '启动时请求 /api/tags 发现已安装的模型，WebUI 可刷新模型列表。服务不提供 /api/tags 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。',
+    description: t('discoverModelsDescription'),
   },
   modelCapabilities: {
     type: 'textarea',
-    label: '单模型能力覆盖',
+    label: t('modelCapabilitiesLabel'),
     default: '',
-    description:
-      '强制覆盖某模型的能力(优先级最高,高于 /api/show 自动探测与家族表),与 adapter 默认能力取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
+    description: t('modelCapabilitiesDescription'),
   },
   providerCapabilities: {
     type: 'string',
-    label: '适配器默认能力（逗号分隔）',
+    label: t('providerCapabilitiesLabel'),
     default: '',
-    description:
-      '兜底默认能力:仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测,通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming',
+    description: t('providerCapabilitiesDescription'),
   },
   timeout: {
     type: 'number',
-    label: '停顿超时 (秒)',
+    label: t('timeoutLabel'),
     default: 120,
-    description:
-      '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；' +
-      '不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。',
+    description: t('timeoutDescription'),
   },
-  temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
+  temperature: { type: 'number', label: t('temperatureLabel'), default: 0.7, description: t('temperatureDescription') },
   maxTokens: {
     type: 'number',
-    label: '最大 Token',
+    label: t('maxTokensLabel'),
     default: 4096,
     min: 1,
     integer: true,
     onInvalid: 'error',
-    description: '单次回复最大生成 token 数（num_predict），须为正整数，否则实例转为出错',
+    description: t('maxTokensDescription'),
   },
-  contextLength: { type: 'number', label: '上下文长度', default: 8192, description: '模型上下文窗口大小（num_ctx）' },
+  contextLength: {
+    type: 'number',
+    label: t('contextLengthLabel'),
+    default: 8192,
+    description: t('contextLengthDescription'),
+  },
   keepAlive: {
     type: 'string',
-    label: '模型保活时间',
+    label: t('keepAliveLabel'),
     default: '5m',
-    description: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）',
+    description: t('keepAliveDescription'),
   },
   thinking: {
     type: 'select',
-    label: '默认思考档位',
+    label: t('thinkingLabel'),
     default: 'on',
     options: THINKING_LEVELS.map(level => ({ label: level.label, value: level.id })),
-    description:
-      '报告了思考能力的模型（或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。' +
-      '没有思考能力的模型不发 think 参数。',
+    description: t('thinkingDescription'),
   },
 });
 
@@ -369,7 +371,7 @@ class OllamaClient {
   /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 httpErrorMessage */
   private apiError(status: number, body: string): Error {
     this.logger.warn(`Ollama API 错误 (${status}): ${bodyExcerpt(body)}`);
-    return new Error(httpErrorMessage('Ollama', status, body));
+    return new TextError(httpErrorMessage('Ollama', status, body));
   }
 
   /**
@@ -378,15 +380,15 @@ class OllamaClient {
    */
   private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
     if (request.signal?.aborted) return err;
-    this.logger.warn(`Ollama 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
+    this.logger.warn(`Ollama 请求失败 (耗时 ${Date.now() - startedAt}ms): ${toSource(describeError(err))}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
-      return new Error(`Ollama 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
+      return new TextError(t('requestTimeout', { seconds: this.timeout / 1000 }));
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
       if (err.cause instanceof errors.ClientClosedError || err.cause instanceof errors.ClientDestroyedError) {
-        return new Error('Ollama 插件已停用或重载，这次请求没有发出');
+        return new TextError(t('pluginClosed'));
       }
-      return new Error('Ollama 连不上服务：检查 baseUrl 与网络，详情见日志');
+      return new TextError(t('unreachable'));
     }
     return err;
   }
@@ -397,7 +399,7 @@ class OllamaClient {
       return JSON.parse(text);
     } catch {
       this.logger.warn(`Ollama 应答不是 JSON (${status}): ${bodyExcerpt(text)}`);
-      throw new Error(`Ollama 应答不是 JSON (${status})；详情见日志`);
+      throw new TextError(t('notJson', { status }));
     }
   }
 
@@ -424,18 +426,16 @@ class OllamaClient {
       try {
         data = JSON.parse(text);
       } catch {
-        throw new Error(`响应不是 JSON: ${bodyExcerpt(text)}`);
+        throw new TextError(t('discoveryNotJson', { excerpt: bodyExcerpt(text) }));
       }
       const list = data?.models;
       if (!Array.isArray(list) || !list.every(m => typeof m?.name === 'string')) {
-        throw new Error(
-          `响应不是模型列表（需要 models 数组，每项带字符串 name）: ${bodyExcerpt(JSON.stringify(data))}`,
-        );
+        throw new TextError(t('discoveryNotList', { excerpt: bodyExcerpt(JSON.stringify(data)) }));
       }
       return list.map(m => m.name);
     } catch (err) {
       signal?.throwIfAborted();
-      throw new Error(`模型发现失败 ${url}: ${describeError(err)}`, { cause: err });
+      throw new TextError(t('discoveryFailed', { url, error: describeError(err) }), { cause: err });
     }
   }
 
@@ -626,7 +626,7 @@ class OllamaClient {
     }
 
     if (!response.body) {
-      throw new Error('Ollama API 返回了空的响应体，无法进行流式读取');
+      throw new TextError(t('emptyBody'));
     }
 
     const reader = response.body.getReader();
@@ -861,7 +861,7 @@ class OllamaClient {
     const valid = resolved.filter((r): r is string => r !== null);
     if (valid.length === images.length) return valid;
     if (valid.length === 0 && requireImages) {
-      throw new Error(`图片全部获取失败（共 ${images.length} 张），拒绝降级为纯文本请求`);
+      throw new TextError(t('imagesUnavailable', { count: images.length }));
     }
     this.logger.warn(`图片获取失败 ${images.length - valid.length}/${images.length} 张，按剩余的继续`);
     return valid;
@@ -1000,7 +1000,7 @@ class OllamaClient {
     }
     if (!resp.ok) {
       this.logger.warn(`[ollama-audio] HTTP ${resp.status} 失败 ${Date.now() - httpT0}ms: ${bodyExcerpt(respText)}`);
-      throw new Error(httpErrorMessage('Ollama', resp.status, respText));
+      throw new TextError(httpErrorMessage('Ollama', resp.status, respText));
     }
     const data = this.parseJsonBody(resp.status, respText) as {
       choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
@@ -1055,9 +1055,9 @@ const AUDIO_FORMATS = new Map([
  */
 function decodeAudioForOpenAI(payload: string): { data: string; format: string } {
   const m = payload.match(/^data:audio\/([^;,]+)(?:;[^;,]+)*;base64,(.+)$/);
-  if (!m) throw new Error('Ollama 兼容接口的音频只收 data:audio/<格式>;base64, 形式（插件不读本地路径与链接）');
+  if (!m) throw new TextError(t('audioDataUrlOnly'));
   const format = AUDIO_FORMATS.get(m[1].toLowerCase());
-  if (!format) throw new Error(`Ollama 兼容接口不接受 ${m[1]} 音频`);
+  if (!format) throw new TextError(t('audioFormatUnsupported', { format: m[1] }));
   return { data: m[2], format };
 }
 
@@ -1276,7 +1276,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
 
   checkBaseUrl(cfg.baseUrl);
   if (!cfg.discoverModels && customModels.length === 0) {
-    throw missingConfigError('customModels', '关闭 discoverModels 时必填');
+    throw missingConfigError('customModels', t('customModelsRequired'));
   }
 
   const client = new OllamaClient(cfg, logger.use, proc.use);
@@ -1340,10 +1340,10 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   // 初次注册。停用或停机时中止探测：模型发现中止即抛出，能力探测把中止吞成空结果，所以每次 await 之后自己查。
   // 模型发现失败按未发现远端模型继续，customModels 照常注册；关闭模型发现时只注册 customModels。
   // 发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
-  let discoveryError: string | undefined;
+  let discoveryError: string | TextRef | undefined;
   const remoteIds = cfg.discoverModels
     ? await client.fetchRemoteModelIds(lifecycle.use.signal).catch((err: unknown) => {
-        discoveryError = err instanceof Error ? err.message : String(err);
+        discoveryError = textOf(err);
         return [];
       })
     : [];
@@ -1354,20 +1354,18 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
   if (initialIds.length === 0) {
     throw configError(
       discoveryError
-        ? `取不到 Ollama 的模型列表，没有可注册的模型：确认 Ollama 在运行、baseUrl 写对后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
-        : `Ollama 已连接 ${cfg.baseUrl}，但未发现任何可用模型；先用 ollama pull 下载模型，或在 customModels 里写明要用的模型`,
+        ? t('noModelsDiscoveryFailed', { error: discoveryError })
+        : t('noModels', { baseUrl: cfg.baseUrl }),
     );
   }
-  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
+  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${toSource(discoveryError)}`);
   // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
   const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id, lifecycle.use.signal)));
   lifecycle.use.signal.throwIfAborted();
   for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
   // 模型都被当作非对话模型跳过（如只装了嵌入模型）时同样抛配置错误。只有 /api/show 答复过才会跳过，所以是已连接
   if (registered.size === 0) {
-    throw configError(
-      `Ollama 已连接 ${cfg.baseUrl}，但没有可用的对话模型：${initialIds.join(', ')} 都没有报告对话能力（如嵌入模型）；先用 ollama pull 下载对话模型`,
-    );
+    throw configError(t('noChatModels', { baseUrl: cfg.baseUrl, models: initialIds.join(', ') }));
   }
   logger.use.info(
     !cfg.discoverModels

@@ -11,7 +11,7 @@ import { App, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
-import { isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
+import { isTextError, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
@@ -128,7 +128,7 @@ describe('DeepSeek', () => {
 
   it('能思考的模型声明关、高、自动、最高四档，默认档取实例配置（缺省为自动）；不能思考的模型不声明', async () => {
     const { model } = await start(deepseekPlugin, { apiKey: 'test-key' }, MODELS);
-    expect(model('deepseek-v4-pro').thinking).toEqual({ levels: LEVELS, default: 'auto' });
+    expect(toSource(model('deepseek-v4-pro').thinking)).toEqual({ levels: LEVELS, default: 'auto' });
     expect(model('deepseek-chat').thinking).toBeUndefined();
     const configured = await start(deepseekPlugin, { apiKey: 'test-key', thinking: 'max' }, MODELS);
     expect(configured.model('deepseek-v4-pro').thinking?.default).toBe('max');
@@ -194,7 +194,7 @@ describe('requestedThinking', () => {
 describe('OpenAI', () => {
   it('缺省写成 reasoning_effort：能思考的模型声明低、中、高三档（默认中），各档原样发；不带档位时不发字段', async () => {
     const { model, send } = await start(openaiPlugin, { apiKey: 'test-key' }, { o3: [], 'gpt-4o': [] });
-    expect(model('o3').thinking).toEqual({
+    expect(toSource(model('o3').thinking)).toEqual({
       levels: [
         { id: 'low', label: '低' },
         { id: 'medium', label: '中' },
@@ -237,7 +237,7 @@ describe('OpenAI', () => {
       { apiKey: 'test-key' },
       Object.fromEntries(families.map(([id]) => [id, []])),
     );
-    for (const [id, levels] of families) expect(model(id).thinking, id).toEqual(levels);
+    for (const [id, levels] of families) expect(toSource(model(id).thinking), id).toEqual(levels);
     expect(lightestThinking(model('gpt-5.1'))).toBe('none');
     expect(lightestThinking(model('gpt-5'))).toBe('minimal');
     expect(model('o1-mini').capabilities).toContain('thinking');
@@ -251,7 +251,7 @@ describe('OpenAI', () => {
       modelCapabilities: 'relay-v4: chat,tool_calling,streaming,thinking',
     };
     const { model, send } = await start(openaiPlugin, config, { 'relay-v4': [], 'relay-chat': [] });
-    expect(model('relay-v4').thinking).toEqual({
+    expect(toSource(model('relay-v4').thinking)).toEqual({
       levels: [
         { id: 'off', label: '关' },
         { id: 'on', label: '开' },
@@ -286,7 +286,7 @@ describe('Ollama', () => {
 
   it('报告了思考能力的模型声明关、开两档，默认档取实例配置（缺省为开）；没报告的不声明', async () => {
     const { model } = await start(ollamaPlugin, {}, MODELS);
-    expect(model('qwen3:8b').thinking).toEqual({ levels: LEVELS, default: 'on' });
+    expect(toSource(model('qwen3:8b').thinking)).toEqual({ levels: LEVELS, default: 'on' });
     expect(model('llama3.1:8b').thinking).toBeUndefined();
   });
 
@@ -322,7 +322,7 @@ describe('Ollama', () => {
       { 'qwen3:32b': null, 'deepseek-r1:14b': null, 'gemma4:e4b': null, 'qwen3-coder:30b': null },
     );
     for (const id of ['qwen3:32b', 'deepseek-r1:14b', 'gemma4:e4b']) {
-      expect(model(id).thinking, id).toEqual({ levels: LEVELS, default: 'on' });
+      expect(toSource(model(id).thinking), id).toEqual({ levels: LEVELS, default: 'on' });
     }
     expect(model('qwen3-coder:30b').thinking).toBeUndefined();
     const sent = await send('qwen3:32b', { think: lightestThinking(model('qwen3:32b')) });
