@@ -13,16 +13,17 @@ import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormatName } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, onInvalid: 'error' },
   baseUrl: { type: 'string', label: 'Base URL', default: 'https://api.openai.com/v1', onInvalid: 'error' },
-  model: { type: 'string', label: '模型', default: 'whisper-1' },
+  model: { type: 'string', label: t('modelLabel'), default: 'whisper-1' },
   timeoutMs: {
     type: 'number',
-    label: '请求超时 (ms)',
+    label: t('timeoutMsLabel'),
     default: 600000,
-    description: '整段上传+识别的上限。默认取宽（10 分钟）：闸的目的是掐断真正卡死的请求，不是给长音频限速',
+    description: t('timeoutMsDescription'),
   },
 });
 type Cfg = ConfigOf<typeof configSchema>;
@@ -118,11 +119,11 @@ export default definePlugin({
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
-      throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+      throw configError(t('baseUrlInvalid'));
     }
     // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
     if (/[?#]/.test(cfg.baseUrl)) {
-      throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+      throw configError(t('baseUrlQuery'));
     }
 
     const proc = caps.proc.use;

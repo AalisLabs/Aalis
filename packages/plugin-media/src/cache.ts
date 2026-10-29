@@ -21,8 +21,10 @@
 
 import { MEDIA_KIND_DIRS, sessionDirName } from '@aalis/api-media';
 import { isStorageNotFound, isStorageUri } from '@aalis/api-storage';
+import { TextError } from '@aalis/schema-i18n';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { getMediaRuntime } from './runtime.js';
+import { t } from './texts.js';
 
 /** 图片内容不会变，描述也就不会过期；长留才吃得到跨天的表情包复用。 */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d
@@ -233,7 +235,7 @@ export function clearDescriptionCache(
     const total = removed.image + removed.video;
     if (!persistLogger) {
       if (snapshotDeleted) return removed;
-      throw new Error(`内存中已删除 ${total} 条，但本次运行未能读取描述快照，磁盘上的快照未改写，重启后会恢复`);
+      throw new TextError(t('snapshotUnreadable', { count: total }));
     }
     if (total > 0) await writeSnapshot();
     return removed;

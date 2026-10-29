@@ -316,7 +316,7 @@ async function bootWithDoctor() {
 describe('doctor 的「识图」项', () => {
   it('没有能看图的识别模型时 warn，写明后果与修法；加了能看图的模型后转 ok', async () => {
     const { app, check } = await bootWithDoctor();
-    expect(await check()).toEqual({
+    expect(toSource(await check())).toEqual({
       id: 'media.vision',
       category: 'service',
       level: 'warn',
