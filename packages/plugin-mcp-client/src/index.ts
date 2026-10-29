@@ -28,8 +28,10 @@ import {
   type ServiceSelection,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { textOf } from '@aalis/schema-i18n';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { t } from './texts.js';
 
 const PLUGIN_NAME = '@aalis/plugin-mcp-client';
 /** setTimeout 能表示的最长延时（毫秒），工具调用的请求超时取它 */
@@ -53,60 +55,56 @@ interface Caps {
 const configSchema = defineConfig({
   servers: {
     type: 'array',
-    label: 'MCP 服务器列表',
-    description: '通过 stdio 连接的 MCP 服务器。每条目至少需要 id 与 command；安全级别按需调整。',
+    label: t('serversLabel'),
+    description: t('serversDescription'),
     items: {
       id: {
         type: 'string',
-        label: '唯一 ID',
-        description: '用于工具命名空间，最终工具名形如 mcp_<id>_<tool>。仅允许字母数字与下划线/中划线。',
+        label: t('idLabel'),
+        description: t('idDescription'),
         required: true,
       },
       command: {
         type: 'string',
-        label: '可执行命令',
-        description: '命令名（如 npx / node / python，按 PATH 查找）或绝对路径。',
+        label: t('commandLabel'),
+        description: t('commandDescription'),
         required: true,
         format: 'executable',
         onInvalid: 'error',
       },
       args: {
         type: 'list',
-        label: '命令参数',
-        description: '按顺序传给命令的参数列表，每项一个参数（可含空格）。参数里的文件路径请写绝对路径。',
+        label: t('argsLabel'),
+        description: t('argsDescription'),
         default: [],
         onInvalid: 'error',
       },
       env: {
         type: 'map',
-        label: '环境变量',
-        description:
-          '额外传给子进程的环境变量（KEY → VALUE）。整份作为一个密钥存进 secrets.yaml，WebUI 不回显，改时整份重填。' +
-          'token 等凭据放这里，不要放进命令参数（参数会写进日志）。',
+        label: t('envLabel'),
+        description: t('envDescription'),
         default: {},
         onInvalid: 'error',
         secret: true,
       },
       enabled: {
         type: 'boolean',
-        label: '启用',
-        description: '关闭可临时跳过该 server 而不删除整条配置。',
+        label: t('enabledLabel'),
+        description: t('enabledDescription'),
         default: true,
         onInvalid: 'error',
       },
       visibility: {
         type: 'select',
-        label: '工具档位',
-        description:
-          '该 server 全部工具的档位。auto=按工具注解分档：自称只读→sensitive（等级 1），' +
-          '有破坏提示或未声明→restricted（等级 2）。public 恢复等级 0 全开（0.x 旧默认）。',
+        label: t('visibilityLabel'),
+        description: t('visibilityDescription'),
         default: 'auto',
         onInvalid: 'error',
         options: [
-          { label: 'auto（按注解分档）', value: 'auto' },
-          { label: 'public（等级 0 全开）', value: 'public' },
-          { label: 'sensitive（等级 1）', value: 'sensitive' },
-          { label: 'restricted（等级 2）', value: 'restricted' },
+          { label: t('visibilityAuto'), value: 'auto' },
+          { label: t('visibilityPublic'), value: 'public' },
+          { label: t('visibilitySensitive'), value: 'sensitive' },
+          { label: t('visibilityRestricted'), value: 'restricted' },
         ],
       },
     },
@@ -172,6 +170,7 @@ async function run(caps: Caps): Promise<void> {
     caps.tools.use.registerGroup({
       name: `mcp:${spec.id}`,
       label: `MCP / ${spec.id}`,
+      summary: t('serverGroupSummary', { id: spec.id }),
       description: `通过 plugin-mcp-client 桥接的远端 MCP server "${spec.id}"`,
     });
   }
@@ -188,8 +187,8 @@ async function run(caps: Caps): Promise<void> {
           caps.webui.use.notify({
             id: `connect:${spec.id}`,
             level: 'error',
-            title: `MCP 服务器「${spec.id}」连不上`,
-            detail: `检查这台服务器的 command、args 与 env（它要的环境变量），改好后保存配置即重连。原因：${reason}`,
+            title: t('connectFailedTitle', { id: spec.id }),
+            detail: t('connectFailedDetail', { reason: textOf(err) }),
             open: 'config',
           });
         }),
@@ -211,7 +210,8 @@ function registerSelfServiceTools(caps: Caps, configured: readonly ServerSpec[])
   const { tools } = caps;
   tools.use.registerGroup({
     name: 'mcp:_meta',
-    label: 'MCP / 元数据',
+    label: t('metaGroup'),
+    summary: t('metaGroupSummary'),
     description: '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）。',
   });
 
@@ -470,7 +470,7 @@ function formatToolResult(result: unknown, source: string): string {
 
 export default definePlugin({
   name: PLUGIN_NAME,
-  displayName: 'MCP 客户端',
+  displayName: t('displayName'),
   subsystem: 'tools',
   uses: {
     tools: toolsService,
