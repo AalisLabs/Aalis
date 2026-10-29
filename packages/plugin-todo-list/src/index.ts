@@ -4,9 +4,11 @@ import { type TodoItem, type TodoListService, todoList } from '@aalis/api-todo-l
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { textOf } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
-  enabled: { type: 'boolean', label: '启用任务计划工具', default: true, onInvalid: 'error' },
+  enabled: { type: 'boolean', label: t('enabledLabel'), default: true, onInvalid: 'error' },
 });
 
 // ===== 内部存储 =====
@@ -30,7 +32,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-todo-list',
-  displayName: '任务计划',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   configSchema,
   provides: [todoList],
@@ -39,7 +41,7 @@ export default definePlugin({
     const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
     // 读与清空不随工具开关：工具关掉之后，之前留下的计划照样看得到、清得掉
     const service = createTodoList(caps);
-    caps.provide.use(todoList, service.api, { label: '任务计划' });
+    caps.provide.use(todoList, service.api, { label: t('displayName') });
     if (!cfg.enabled) return;
     registerTodoTool(caps, service);
   },
@@ -91,7 +93,8 @@ function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos:
   // 注册工具分组
   tools.use.registerGroup({
     name: 'todo',
-    label: '任务计划',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: '创建和管理任务计划列表，拆分复杂任务并追踪进度',
   });
 
@@ -209,16 +212,15 @@ function registerTodoTool({ tools, events, logger, memory, hooks }: Caps, todos:
         data.results.push({
           source: 'todo-list',
           success: true,
-          message: `所有会话待办已清空（${cleared.length} 个会话）`,
+          message: t('clearedAll', { count: cleared.length }),
         });
         for (const sessionId of cleared) await events.use.emit('todo:updated', sessionId, []);
       } else if (data.sessionId) {
         await todos.api.clear(data.sessionId);
-        data.results.push({ source: 'todo-list', success: true, message: '当前会话待办已清空' });
+        data.results.push({ source: 'todo-list', success: true, message: t('clearedSession') });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'todo-list', success: false, message: `待办清空失败: ${msg}` });
+      data.results.push({ source: 'todo-list', success: false, message: t('clearFailed', { error: textOf(err) }) });
     }
     await next();
   });

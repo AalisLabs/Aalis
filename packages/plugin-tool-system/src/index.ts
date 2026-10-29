@@ -4,6 +4,8 @@ import { storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { textLines } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
 import { registerHttpTools } from './tools/http.js';
@@ -13,64 +15,60 @@ import { registerSystemTools } from './tools/system.js';
 const configSchema = defineConfig({
   workingDirectory: {
     type: 'string',
-    label: '初始工作目录',
+    label: t('workingDirectoryLabel'),
     default: 'workspace:/',
     onInvalid: 'error',
-    description:
-      '进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。' +
-      'shell 以本项初始值为基准、不受 cd 影响；code-runner 使用它自己的 workingDirectory 配置。',
+    description: t('workingDirectoryDescription'),
   },
   shell: {
-    label: 'Shell 工具',
+    label: t('shellLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 Shell 工具', default: true, onInvalid: 'error' },
-      maxOutputSize: { type: 'number', label: '最大输出字节', default: 65536 },
+      enabled: { type: 'boolean', label: t('shellEnabledLabel'), default: true, onInvalid: 'error' },
+      maxOutputSize: { type: 'number', label: t('maxOutputSizeLabel'), default: 65536 },
     },
   },
   file: {
-    label: '文件工具',
+    label: t('fileLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用文件工具', default: true, onInvalid: 'error' },
-      maxReadSize: { type: 'number', label: '最大读取字节', default: 1048576 },
-      maxSearchBytes: { type: 'number', label: '单次搜索最大扫描字节', default: 1048576 },
-      maxWriteSize: { type: 'number', label: '最大写入字节', default: 10485760 },
+      enabled: { type: 'boolean', label: t('fileEnabledLabel'), default: true, onInvalid: 'error' },
+      maxReadSize: { type: 'number', label: t('maxReadSizeLabel'), default: 1048576 },
+      maxSearchBytes: { type: 'number', label: t('maxSearchBytesLabel'), default: 1048576 },
+      maxWriteSize: { type: 'number', label: t('maxWriteSizeLabel'), default: 10485760 },
       allowedRoots: {
         type: 'multiselect',
-        label: '允许访问的存储根',
+        label: t('allowedRootsLabel'),
         default: ['workspace', 'tmp'],
         onInvalid: 'error',
-        description:
-          '默认仅 agent 工作区（workspace/tmp），不含 data 等系统根（防裸读 data:/users.json 等）。' +
-          '设为 * 放开全部 readable 根；也可显式列出根名。写入/删除仍受各根自身权限限制。',
+        description: t('allowedRootsDescription'),
         options: [
-          { label: '全部可读根', value: '*' },
+          { label: t('rootAllReadable'), value: '*' },
           { label: 'Workspace', value: 'workspace' },
-          { label: '临时目录', value: 'tmp' },
+          { label: t('rootTmp'), value: 'tmp' },
           { label: 'Data', value: 'data' },
-          { label: '插件数据', value: 'pluginData' },
-          { label: '日志', value: 'logs' },
+          { label: t('rootPluginData'), value: 'pluginData' },
+          { label: t('rootLogs'), value: 'logs' },
         ],
         allowCustom: true,
       },
     },
   },
   system: {
-    label: '系统工具',
+    label: t('displayName'),
     fields: {
-      enabled: { type: 'boolean', label: '启用系统工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('systemEnabledLabel'), default: true, onInvalid: 'error' },
     },
   },
   http: {
-    label: 'HTTP 工具',
+    label: t('httpLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用 HTTP 工具', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('httpEnabledLabel'), default: true, onInvalid: 'error' },
       defaultTimeout: {
         type: 'number',
-        label: '默认超时 (ms)',
+        label: t('defaultTimeoutLabel'),
         default: 30000,
-        description: 'http_request 的默认超时；http_download 不另设超时，等多久由工具执行器的让出时限管',
+        description: t('defaultTimeoutDescription'),
       },
-      maxResponseSize: { type: 'number', label: '最大响应字节', default: 1048576 },
+      maxResponseSize: { type: 'number', label: t('maxResponseSizeLabel'), default: 1048576 },
     },
   },
 });
@@ -91,7 +89,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-tool-system',
-  displayName: '系统工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -118,7 +116,8 @@ function registerSystemToolset(caps: Caps): void {
   // 注册工具分组
   tools.use.registerGroup({
     name: 'system',
-    label: '系统工具',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
   });
 
@@ -167,8 +166,8 @@ function registerSystemToolset(caps: Caps): void {
 
   // 注册 /tools 指令以查看可用工具
   caps.commands.use
-    .command('tools', '列出所有已注册的机器交互工具')
-    .action(async () => ['机器交互工具:', ...registered.map(g => `  ${g}`)].join('\n'));
+    .command('tools', t('toolsDescription'))
+    .action(async () => textLines([t('toolsHeading'), ...registered.map(g => `  ${g}`)]));
 
   logger.use.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
 }

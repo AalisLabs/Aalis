@@ -17,6 +17,7 @@ import {
   optional,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError } from '@aalis/schema-i18n';
 import {
   assertAddressesSafe,
   assertPortAllowed,
@@ -24,6 +25,7 @@ import {
   isPrivateHost,
   pinnedLookup,
 } from '@aalis/util-network-guard';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tool-browser — 浏览器自动化工具
@@ -49,64 +51,64 @@ interface PageSlot {
 const configSchema = defineConfig({
   headless: {
     type: 'boolean',
-    label: '无头模式',
+    label: t('headlessLabel'),
     default: true,
-    description: '是否以无头模式运行浏览器（无 GUI 窗口）。',
+    description: t('headlessDescription'),
   },
   defaultTimeout: {
     type: 'number',
-    label: '默认超时(ms)',
+    label: t('defaultTimeoutLabel'),
     default: 30000,
-    description: '页面导航和操作的默认超时时间。',
+    description: t('defaultTimeoutDescription'),
   },
-  viewportWidth: { type: 'number', label: '视口宽度', default: 1280 },
-  viewportHeight: { type: 'number', label: '视口高度', default: 720 },
+  viewportWidth: { type: 'number', label: t('viewportWidthLabel'), default: 1280 },
+  viewportHeight: { type: 'number', label: t('viewportHeightLabel'), default: 720 },
   maxPages: {
     type: 'number',
-    label: '最大页面数',
+    label: t('maxPagesLabel'),
     default: 5,
-    description: '同时打开的最大页面数量。超出后关闭最早打开的页面。',
+    description: t('maxPagesDescription'),
   },
   executablePath: {
     type: 'string',
-    label: 'Chrome 路径',
-    description: '自定义 Chrome/Chromium 可执行文件的绝对路径。留空则使用 Puppeteer 内置 Chromium。',
+    label: t('executablePathLabel'),
+    description: t('executablePathDescription'),
     default: '',
     format: 'absolute-path',
     onInvalid: 'error',
   },
   maxContentLength: {
     type: 'number',
-    label: '最大内容长度',
+    label: t('maxContentLengthLabel'),
     default: 50000,
-    description: '返回给 Agent 的页面文本最大字符数。',
+    description: t('maxContentLengthDescription'),
   },
   blockPrivate: {
     type: 'boolean',
-    label: '封锁内网与本地',
+    label: t('blockPrivateLabel'),
     default: true,
     onInvalid: 'error',
-    description: '拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。',
+    description: t('blockPrivateDescription'),
   },
   allowedProtocols: {
     type: 'multiselect',
-    label: '允许的协议',
+    label: t('allowedProtocolsLabel'),
     default: ['http', 'https'],
     onInvalid: 'error',
     options: [
       { label: 'http', value: 'http' },
       { label: 'https', value: 'https' },
     ],
-    description: '浏览器只允许访问这些协议的 URL。',
+    description: t('allowedProtocolsDescription'),
   },
   allowedHosts: {
     type: 'multiselect',
-    label: '主机白名单',
+    label: t('allowedHostsLabel'),
     default: [],
     onInvalid: 'error',
     // 主机名由使用者填写，静态选项无法穷举。
     allowCustom: true,
-    description: '允许访问的主机（含内网时需在此显式列出）。留空 = 仅按 blockPrivate 判定。',
+    description: t('allowedHostsDescription'),
   },
 });
 type BrowserConfig = ConfigOf<typeof configSchema>;
@@ -131,7 +133,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-tool-browser',
-  displayName: '浏览器工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -203,25 +205,25 @@ function runBrowserTools(caps: Caps): void {
   // 浏览器页：打开着的页面。页面表增删、导航后标题与地址变了都让它重取
   const browserPage = webui.use.definePage({
     key: 'browser',
-    title: '浏览器',
+    title: t('browser'),
     icon: 'globe',
     actions: {
       closePage: {
-        label: '关闭',
+        label: t('close'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
-          if (!(await closePage(rowKey))) throw new Error(`页面 ${rowKey} 不存在`);
-          return `已关闭 ${rowKey}`;
+          if (!(await closePage(rowKey))) throw new TextError(t('pageMissing', { id: rowKey }));
+          return t('closed', { id: rowKey });
         },
       },
       closeAllPages: {
-        label: '关闭所有页面',
+        label: t('closeAll'),
         effect: 'destructive',
-        confirm: '关闭全部打开的页面？',
+        confirm: t('closeAllConfirm'),
         async handler() {
           for (const id of [...pages.keys()]) await closePage(id);
-          return '已关闭全部页面';
+          return t('closedAll');
         },
       },
     },
@@ -229,20 +231,20 @@ function runBrowserTools(caps: Caps): void {
       {
         type: 'table',
         id: 'pages',
-        label: '打开的页面',
+        label: t('openPages'),
         rowKey: 'id',
-        empty: '没有打开的页面',
+        empty: t('noOpenPages'),
         columns: [
           { key: 'id', label: 'ID' },
-          { key: 'title', label: '标题', primary: true },
-          { key: 'url', label: '地址' },
-          { key: 'lastAccess', label: '最后访问', kind: 'time' },
+          { key: 'title', label: t('title'), primary: true },
+          { key: 'url', label: t('url') },
+          { key: 'lastAccess', label: t('lastAccess'), kind: 'time' },
         ],
         rowActions: [{ action: 'closePage' }],
         data: () =>
           [...pages].map(([id, slot]) => ({
             id,
-            title: slot.title || '（无标题）',
+            title: slot.title || t('untitled'),
             url: slot.url,
             lastAccess: slot.lastAccess,
           })),
@@ -461,7 +463,8 @@ function runBrowserTools(caps: Caps): void {
 
   tools.use.registerGroup({
     name: 'browser',
-    label: '浏览器',
+    label: t('browser'),
+    summary: t('groupSummary'),
     description: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
   });
 

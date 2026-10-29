@@ -6,6 +6,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import todoList from '../../packages/plugin-todo-list/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -118,7 +119,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
   it('会话级（不带类型或含 context）：删本会话的待办，其它会话不动', async () => {
     for (const types of [undefined, ['context']]) {
       const { app, clear, stored, getTodos, updates } = await world();
-      expect(await clear('session', types)).toEqual([
+      expect(toSource(await clear('session', types))).toEqual([
         { source: 'todo-list', success: true, message: '当前会话待办已清空' },
       ]);
       expect(await stored('s-a'), JSON.stringify(types)).toBe(false);
@@ -131,7 +132,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
 
   it('全局：删全部会话的待办，每个会话发一次空列表', async () => {
     const { app, clear, stored, updates } = await world();
-    expect(await clear('all', ['context'])).toEqual([
+    expect(toSource(await clear('all', ['context']))).toEqual([
       { source: 'todo-list', success: true, message: '所有会话待办已清空（2 个会话）' },
     ]);
     expect(await stored('s-a')).toBe(false);
@@ -157,7 +158,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
     expect(await getTodos('s-c')).toHaveLength(1);
 
     // 本地缓存里还有 memory 在场时经工具写入的 s-b
-    expect(await clear('all')).toEqual([
+    expect(toSource(await clear('all'))).toEqual([
       { source: 'todo-list', success: true, message: '所有会话待办已清空（2 个会话）' },
     ]);
     expect(await getTodos('s-c')).toEqual([]);
@@ -172,7 +173,9 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
   it('memory 读写出错：回显一条失败，不发空列表', async () => {
     const { app, host, clear, updates } = await world();
     vi.spyOn(host.services.use.get(memory)!, 'listMetadata').mockRejectedValueOnce(new Error('后端故障'));
-    expect(await clear('all')).toEqual([{ source: 'todo-list', success: false, message: '待办清空失败: 后端故障' }]);
+    expect(toSource(await clear('all'))).toEqual([
+      { source: 'todo-list', success: false, message: '待办清空失败: 后端故障' },
+    ]);
     expect(updates).toEqual([]);
     await app.stop();
   });
