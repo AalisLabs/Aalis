@@ -26,11 +26,7 @@ SSRF 安全的 `fetch` 替代品。它逐跳使用 `redirect:'manual'`，每一�
 
 命中 30x（301/302/303/307/308）且带有 `Location` 时，它把 `Location` 解析成相对于当前 URL 的绝对地址，校验通过后再跟随后续跳转；非 30x 或没有 `Location` 时，直接返回该 `Response`。跳数超过 `maxRedirects` 时抛出 `重定向次数超过上限`。
 
-除了「手动重定向 + 每跳校验」，其余行为与原生 `fetch` 一致——`init` 原样透传。
-
-::: warning
-`init` 每一跳都会原样重发，存在凭证泄漏风险，详见 §5。
-:::
+除了手动重定向与每跳校验，跟随时像原生 `fetch` 一样按规范改写下一跳：301、302 的 POST 与 303 的非 GET、HEAD 改成不带正文的 GET；跨源时去掉 `Authorization`、`Cookie`、`Proxy-Authorization`。
 
 ### `assertSafeUrl(rawUrl)` — 只校验 URL，不发请求
 
@@ -134,7 +130,7 @@ import { safeFetch } from '@aalis/util-network-guard';
 // url 来自用户 / LLM / 入站消息——直接当 fetch 用
 const res = await safeFetch(url, {
   signal: AbortSignal.timeout(15_000),
-  // 跨域重定向凭证泄漏：用户影响的 URL 不要带 cookie/Authorization（见 §5）
+  // 用户影响的 URL 不要带 cookie/Authorization（见 §5）
   headers: { 'user-agent': 'Mozilla/5.0 (MyPlugin)' },
 });
 if (!res.ok) throw new Error(`上游返回 ${res.status}`);
@@ -172,7 +168,9 @@ await assertSafeHost(parsedUrl.hostname);
 | http 工具 | LLM 可调的 `http_request` / `http_download` 工具 |
 | ASR（openai / whisper-cpp） | 拉远程音频转写 |
 | office | 拉远程文档解析 |
-| ollama | 探测/拉取 ollama 端点（带 30s 超时） |
+| ollama | 下载消息里的图片网址（带 30s 超时） |
+| file-reader | 下载网址形式的附件 |
+| 远端代理 | 下载远端代理产出的成品（预签名链接） |
 | 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，启动时注入一次 |
 
 其中两处做法值得参考：图片代理显式不带 cookie、只给一个伪 UA；media 与 http 工具在 `safeFetch` 之外自行做体积上限与流式累计——util 只负责校验、不限制体积，详见 §5。
@@ -196,10 +194,7 @@ await assertSafeHost(parsedUrl.hostname);
 - 超时：`signal: AbortSignal.timeout(ms)`（参考 onebot、ollama 消费点）。
 - 体积上限：读 `content-length` 并做流式累计中断（可参考图片代理、http 工具的 `readBodyCapped`、media 安全下载的做法）。
 
-**跨域重定向的凭证泄漏。** `safeFetch` 每一跳都把同一个 `init` 原样重发（即 `fetch(current.href, { ...init, redirect:'manual' })`）。如果 `init.headers` 带了 `Authorization` 或 cookie，而上游 302 跳到另一个 origin，凭证会被原样发到新 origin。`safeFetch` 只保证「跳到的地方不是内网」，不保证「跳到的地方该不该看到你的 token」。对策：
-
-- 对用户或 LLM 影响的 URL 调用 `safeFetch` 时，不要带任何凭证、cookie 或用户 referer——图片代理就显式只给一个伪 UA。
-- 若确实需要带凭证，那个 URL 不应来自用户输入；或者自行禁用重定向（`maxRedirects = 0`）、比对最终 origin。
+**重定向与凭据。** 跨源跳转不带凭据头（规则见 §1 的 `safeFetch`）；但同源跳转照样带，而且 URL 本身如果是用户或模型给的，凭据也会照样发到那个源。所以对用户或 LLM 影响的 URL 调用 `safeFetch` 时，不要带任何凭证、cookie 或用户 referer——图片代理就显式只给一个伪 UA。
 
 **`isPrivateAddress` 失败即危险，且只接受字面 IP。** 传入域名、空串或非法字符串一律返回 `true`。它不是域名判定器，域名或混合输入请用 `assertSafeHost`（带 DNS 解析）。
 

@@ -188,6 +188,23 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
 
 /** 重定向跳数上限。 */
 const MAX_REDIRECTS = 5;
+const REQUEST_BODY_HEADERS = ['content-encoding', 'content-language', 'content-location', 'content-type'];
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
+
+/**
+ * 跟随一跳重定向时发往下一跳的请求，照 fetch 规范的 HTTP-redirect fetch：301、302 的 POST 与 303 的非 GET、HEAD
+ * 改成不带正文的 GET，去掉描述正文的头；跳到别的源（协议、主机、端口任一不同）时去掉凭据头。其余照原样
+ */
+function redirectInit(init: RequestInit, status: number, from: URL, to: URL): RequestInit {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers = new Headers(init.headers);
+  const toGet =
+    ((status === 301 || status === 302) && method === 'POST') ||
+    (status === 303 && method !== 'GET' && method !== 'HEAD');
+  if (toGet) for (const name of REQUEST_BODY_HEADERS) headers.delete(name);
+  if (from.origin !== to.origin) for (const name of CREDENTIAL_HEADERS) headers.delete(name);
+  return toGet ? { ...init, method: 'GET', body: null, headers } : { ...init, headers };
+}
 
 /**
  * pin 已校验 IP 的 DNS 查询：在同一次解析里校验并交回该结果，使「校验」与「连接」
@@ -226,14 +243,16 @@ const pinnedSafeDispatcher = new Agent({
 
 /**
  * SSRF 安全的 fetch：逐跳 `redirect:'manual'` + 每跳重新校验协议与 host（堵重定向绕过），
- * 并用 pin dispatcher 让校验与连接用同一次 DNS 解析（堵 rebinding）。其余行为同原生 fetch。
- * 任何由 LLM / 用户 / 入站消息触发的远程下载都应改走此函数。
+ * 并用 pin dispatcher 让校验与连接用同一次 DNS 解析（堵 rebinding）。跟随时按 fetch 规范改写下一跳（见 redirectInit），
+ * 其余行为同原生 fetch。init 的正文须可重放（字符串、ArrayBuffer、视图、Blob、URLSearchParams、FormData）：307、308
+ * 跟随时原样重发。任何由 LLM / 用户 / 入站消息触发的远程下载都应改走此函数。
  */
 export async function safeFetch(url: string, init: RequestInit = {}, maxRedirects = MAX_REDIRECTS): Promise<Response> {
   let current = await assertSafeUrl(url);
+  let request = init;
   for (let i = 0; i <= maxRedirects; i++) {
     const fetchInit: RequestInit & { dispatcher?: Agent } = {
-      ...init,
+      ...request,
       redirect: 'manual',
       dispatcher: pinnedSafeDispatcher,
     };
@@ -241,7 +260,10 @@ export async function safeFetch(url: string, init: RequestInit = {}, maxRedirect
     if (![301, 302, 303, 307, 308].includes(res.status)) return res;
     const location = res.headers.get('location');
     if (!location) return res;
-    current = await assertSafeUrl(new URL(location, current).href);
+    await res.body?.cancel(); // 跳转的正文不读：取消掉，不占着连接
+    const next = await assertSafeUrl(new URL(location, current).href);
+    request = redirectInit(request, res.status, current, next);
+    current = next;
   }
   throw new Error(`重定向次数超过上限 (${maxRedirects})`);
 }

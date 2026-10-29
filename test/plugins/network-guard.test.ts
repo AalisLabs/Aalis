@@ -1,6 +1,6 @@
 import { ADDRCONFIG, type LookupAddress } from 'node:dns';
-import { createServer } from 'node:http';
-import { type AddressInfo, getDefaultAutoSelectFamily, setDefaultAutoSelectFamily } from 'node:net';
+import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
+import { type AddressInfo, getDefaultAutoSelectFamily, type Socket, setDefaultAutoSelectFamily } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertAddressesSafe,
@@ -15,7 +15,7 @@ import {
 
 // ════════════════════════════════════════════════════════════
 // util-network-guard：SSRF 安全 fetch（统一原语）
-//   字面 IP 用例不触 DNS，确定性。重定向用 stub fetch 验证逐跳校验。
+//   字面 IP 用例不触 DNS，确定性。重定向用 stub fetch 验证逐跳校验，用本机服务验证跟随时怎么改写请求。
 // ════════════════════════════════════════════════════════════
 
 const mkRes = (status: number, location?: string): Response =>
@@ -150,6 +150,139 @@ describe('safeFetch 逐跳重定向校验', () => {
       'http://1.1.1.1/',
       expect.objectContaining({ redirect: 'manual', headers: { 'x-test': '1' }, dispatcher: expect.anything() }),
     );
+  });
+});
+
+describe('safeFetch 跟随重定向时按 fetch 规范改写请求', () => {
+  interface Landed {
+    method: string;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }
+  const landed: Landed[] = [];
+  const redirectSockets: Socket[] = [];
+  const servers: Server[] = [];
+
+  // 本机服务：`/<3xx>?to=<Location>` 回那个跳转（带 `big` 时附 2 MiB 正文），`/land` 记下落地请求的方法、请求头与正文
+  const start = async (): Promise<number> => {
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const url = new URL(req.url ?? '/', 'http://placeholder');
+        if (url.pathname === '/land') {
+          landed.push({ method: req.method ?? '', headers: req.headers, body: Buffer.concat(chunks).toString() });
+          res.end('ok');
+          return;
+        }
+        redirectSockets.push(req.socket);
+        res.writeHead(Number(url.pathname.slice(1)), { location: url.searchParams.get('to') ?? '' });
+        res.end(url.searchParams.has('big') ? Buffer.alloc(2 * 1024 * 1024) : undefined);
+      });
+    });
+    servers.push(server);
+    // 不绑定 host：理由同下面真连接的用例
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    return (server.address() as AddressInfo).port;
+  };
+
+  afterEach(async () => {
+    landed.length = 0;
+    redirectSockets.length = 0;
+    for (const server of servers.splice(0)) {
+      // 先断掉还开着的连接：没取消的跳转正文还在写，直接 close 会一直等它
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('跨源去掉 Authorization、Cookie、Proxy-Authorization，其余请求头照带', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const a = await start();
+    const b = await start();
+    const headers = {
+      authorization: 'Bearer zz-placeholder',
+      cookie: 'k=v',
+      'proxy-authorization': 'Basic zz-placeholder',
+      'x-keep': '1',
+    };
+    for (const [url, init] of [
+      [`http://localhost:${a}/307?to=http://localhost:${b}/land`, { method: 'POST', headers }], // 端口不同
+      [`http://localhost:${a}/301?to=http://127.0.0.1:${a}/land`, { headers }], // 端口相同、主机不同
+    ] as const) {
+      await (await safeFetch(url, init)).text();
+      const got = landed.at(-1)?.headers;
+      expect([got?.authorization, got?.cookie, got?.['proxy-authorization'], got?.['x-keep']]).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        '1',
+      ]);
+    }
+  });
+
+  it('301、302 的 POST 与 303 的非 GET、HEAD 改成不带正文的 GET，去掉描述正文的头；同源照带 Authorization', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const a = await start();
+    const bodyHeaders = ['content-encoding', 'content-language', 'content-location', 'content-type'];
+    const headers = {
+      authorization: 'Bearer zz-placeholder',
+      'content-encoding': 'identity',
+      'content-language': 'en',
+      'content-location': '/zz',
+      'content-type': 'application/json',
+    };
+    for (const [status, method] of [
+      [301, 'POST'],
+      [302, 'POST'],
+      [303, 'PUT'],
+    ] as const) {
+      await (await safeFetch(`http://localhost:${a}/${status}?to=/land`, { method, headers, body: '{"k":1}' })).text();
+      const got = landed.at(-1);
+      expect([got?.method, got?.body, got?.headers.authorization]).toEqual(['GET', '', 'Bearer zz-placeholder']);
+      expect(
+        bodyHeaders.filter(name => got?.headers[name] !== undefined),
+        `${status}`,
+      ).toEqual([]);
+    }
+    await safeFetch(`http://localhost:${a}/303?to=/land`, { method: 'HEAD', headers });
+    expect([landed.at(-1)?.method, landed.at(-1)?.headers.authorization]).toEqual(['HEAD', 'Bearer zz-placeholder']);
+  });
+
+  it('其余照原样：302 的 PUT、307 的 POST、308 的 PATCH 保留方法、正文与 Content-Type', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const a = await start();
+    for (const [status, method] of [
+      [302, 'PUT'],
+      [307, 'POST'],
+      [308, 'PATCH'],
+    ] as const) {
+      const init = { method, headers: { 'content-type': 'application/json' }, body: '{"k":1}' };
+      await (await safeFetch(`http://localhost:${a}/${status}?to=/land`, init)).text();
+      const got = landed.at(-1);
+      expect([got?.method, got?.body, got?.headers['content-type']]).toEqual([method, '{"k":1}', 'application/json']);
+    }
+  });
+
+  it('多跳时每一跳在上一跳改写过的请求上再改：跨源 302 之后的同源 307 照旧不带 Authorization、不带正文', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const a = await start();
+    const b = await start();
+    const next = encodeURIComponent(`http://127.0.0.1:${b}/307?to=/land`);
+    const init = { method: 'POST', headers: { authorization: 'Bearer zz-placeholder' }, body: '{"k":1}' };
+    await (await safeFetch(`http://localhost:${a}/302?to=${next}`, init)).text();
+    const got = landed.at(-1);
+    expect([got?.method, got?.body, got?.headers.authorization]).toEqual(['GET', '', undefined]);
+  });
+
+  it('跳转的正文不读，当场取消，不占着连接', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const a = await start();
+    // 正文要大：小的正文 undici 收完就把连接放回池里，套接字不会断
+    const res = await safeFetch(`http://localhost:${a}/302?to=/land&big`);
+    expect(await res.text()).toBe('ok');
+    const [socket] = redirectSockets;
+    await vi.waitFor(() => expect(socket.destroyed).toBe(true), { timeout: 5_000 });
   });
 });
 
