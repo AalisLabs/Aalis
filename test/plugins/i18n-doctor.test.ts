@@ -85,7 +85,7 @@ describe('诊断 i18n.languages', () => {
       '跟随系统当前是 日本語 (日本)，没有插件提供，实际用 中文（中国）',
     );
     expect(svc.render(auto.detail, { host: true })).toBe(
-      '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在会话设置的全局（插件配置）里调整「语言」列表',
+      '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在设置「会话默认」里调整全局（插件配置）层的「语言」一行',
     );
 
     await setGlobal(['ja', 'en']);
@@ -95,7 +95,7 @@ describe('诊断 i18n.languages', () => {
       '日本語 in the language list is not provided by any plugin; English is used instead',
     );
     expect(svc.render(named.detail, { host: true })).toBe(
-      'Install a language pack that provides it (search the plugin market or npm for the keyword aalis-lang-ja), or adjust the “Language” list in the session settings for Global (plugin config)',
+      'Install a language pack that provides it (search the plugin market or npm for the keyword aalis-lang-ja), or adjust the “Language” row of the Global (plugin config) layer under Settings “Session defaults”',
     );
   });
 

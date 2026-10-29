@@ -184,7 +184,10 @@ function checkLanguages(layers: readonly LayerSetting[], system: string, availab
         ...base,
         level: 'warn',
         message,
-        detail: t('installPack', { keywords: packKeywords(tag), layer: name }),
+        detail: t(layer.scope === 'global' ? 'installPackGlobal' : 'installPack', {
+          keywords: packKeywords(tag),
+          layer: name,
+        }),
       };
     });
   });

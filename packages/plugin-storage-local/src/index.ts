@@ -43,6 +43,8 @@ import {
   services,
 } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, textOf } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const PLUGIN_NAME = '@aalis/plugin-storage-local';
 
@@ -126,45 +128,42 @@ function internalRoots(paths: HostPaths): RootEntryConfig[] {
 const configSchema = defineConfig({
   roots: {
     type: 'array',
-    label: '存储根目录',
-    description:
-      '文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。' +
-      '直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。' +
-      'browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。',
+    label: t('rootsLabel'),
+    description: t('rootsDescription'),
     default: DEFAULT_ROOTS,
     onInvalid: 'error',
     items: {
       name: {
         type: 'string',
-        label: '根名 (URI scheme)',
+        label: t('nameLabel'),
         required: true,
         onInvalid: 'error',
-        description: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share',
+        description: t('nameDescription'),
       },
       path: {
         type: 'string',
-        label: '本机路径',
+        label: t('pathLabel'),
         required: true,
         onInvalid: 'error',
-        description: '可绝对，亦可相对家目录；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
+        description: t('pathDescription'),
       },
-      label: { type: 'string', label: '展示名称', default: '' },
+      label: { type: 'string', label: t('labelLabel'), default: '' },
       kind: {
         type: 'string',
-        label: '类型标签',
+        label: t('kindLabel'),
         default: 'custom',
-        description: '语义提示：workspace / data / tmp / pluginData / logs / custom / external / shared / host',
+        description: t('kindDescription'),
       },
       browsable: {
         type: 'boolean',
-        label: '文件浏览器可见 (hint)',
+        label: t('browsableLabel'),
         default: false,
         onInvalid: 'error',
-        description: 'hint：给文件浏览器类界面用，WebUI 不读它',
+        description: t('browsableDescription'),
       },
-      readable: { type: 'boolean', label: '允许读', default: true, onInvalid: 'error' },
-      writable: { type: 'boolean', label: '允许写', default: false, onInvalid: 'error' },
-      deletable: { type: 'boolean', label: '允许删除', default: false, onInvalid: 'error' },
+      readable: { type: 'boolean', label: t('readableLabel'), default: true, onInvalid: 'error' },
+      writable: { type: 'boolean', label: t('writableLabel'), default: false, onInvalid: 'error' },
+      deletable: { type: 'boolean', label: t('deletableLabel'), default: false, onInvalid: 'error' },
     },
   },
 });
@@ -200,7 +199,7 @@ function toUri(root: string, relPath: string): string {
 
 function parseUri(uri: string): { root: string; relPath: string } {
   const idx = uri.indexOf(':/');
-  if (idx <= 0) throw new Error(`存储 URI 不合法: ${uri}`);
+  if (idx <= 0) throw new TextError(t('badUri', { uri }));
   const root = uri.slice(0, idx);
   const relPath = normalizeRelPath(uri.slice(idx + 2));
   return { root, relPath };
@@ -237,10 +236,11 @@ class HostFileGuard {
       const containsControl =
         subtree && target.stat?.isDirectory() === true && (await ancestorIds(control.real)).has(idOf(target.stat));
       if (sameFile || underControl) {
-        const what = file === this.files.secrets ? '密钥文件（只经宿主读写）' : '主配置（只经宿主修改）';
-        throw new Error(`不能经存储${mode === 'read' ? '读取' : '修改'}宿主的${what}`);
+        // 读时只查密钥文件：主配置只在写时拦
+        if (file !== this.files.secrets) throw new TextError(t('writeConfig'));
+        throw new TextError(t(mode === 'read' ? 'readSecrets' : 'writeSecrets'));
       }
-      if (containsControl) throw new Error('目录里有宿主的密钥文件或主配置，不能经存储删除、移动或交出写权限');
+      if (containsControl) throw new TextError(t('containsControl'));
     }
   }
 }
@@ -368,7 +368,7 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('readable');
     const abs = await this.resolveExisting(relPath);
     const s = await stat(abs);
-    if (!s.isDirectory()) throw new Error('不是目录');
+    if (!s.isDirectory()) throw new TextError(t('notDirectory'));
     const dispUri = toUri(this.root.name, relPath);
     this.debugSampled(`list:${dispUri}`, `storage.list ${dispUri}`);
 
@@ -420,7 +420,7 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     await this.guard.check(abs, 'read');
     const s = await stat(abs);
-    if (s.isDirectory()) throw new Error('不能读取目录');
+    if (s.isDirectory()) throw new TextError(t('readDirectory'));
     const dispUri = toUri(this.root.name, relPath);
     this.debugSampled(`read:${dispUri}`, `storage.read ${dispUri} size=${s.size}`);
     return encoding ? readFile(abs, encoding) : readFile(abs);
@@ -433,7 +433,7 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     await this.guard.check(abs, 'read');
     const s = await stat(abs);
-    if (s.isDirectory()) throw new Error('不能读取目录');
+    if (s.isDirectory()) throw new TextError(t('readDirectory'));
     const from = Math.max(0, Math.floor(start));
     const to = Math.min(s.size, Math.floor(end));
     if (to <= from) return Buffer.alloc(0);
@@ -453,7 +453,7 @@ class ScopedStorageService implements StorageService {
     const abs = await this.resolveExisting(relPath);
     await this.guard.check(abs, 'read');
     const fileStat = await this.statFromAbs(abs, relPath);
-    if (fileStat.isDirectory) throw new Error('不能下载目录');
+    if (fileStat.isDirectory) throw new TextError(t('downloadDirectory'));
     this.logger.info(`storage.download ${toUri(this.root.name, relPath)} size=${fileStat.size}`);
     return { stream: createReadStream(abs), stat: fileStat };
   }
@@ -461,14 +461,14 @@ class ScopedStorageService implements StorageService {
   async writeFile(uri: string, data: string | Buffer, options?: StorageWriteOptions): Promise<void> {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('writable');
-    if (!relPath) throw new Error('不能覆盖根目录');
+    if (!relPath) throw new TextError(t('overwriteRoot'));
     const abs = await this.resolveForWrite(relPath);
     await this.guard.check(abs, 'write');
     // 目标是目录 → 在快照之前就拒。写目录反正必失败（rename 覆盖不了非空目录），
     // 但放它走到 snapshot 会让 checkpoint 记一条幽灵 write-new（loadOriginal 对目录返回 null），
     // 回滚时按 write-new 把整棵目录删掉。
     const existing = await stat(abs).catch(() => undefined);
-    if (existing?.isDirectory()) throw new Error('不能覆盖目录');
+    if (existing?.isDirectory()) throw new TextError(t('overwriteDirectory'));
     await this.snapshot(toUri(this.root.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
     // 原子写：先写临时文件再 rename（同分区原子覆盖），防崩溃/并发半写损坏关键持久化（users.json/scheduler-jobs 等）。
@@ -491,11 +491,11 @@ class ScopedStorageService implements StorageService {
 
   async rename(uri: string, newName: string): Promise<string> {
     if (!newName || newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
-      throw new Error('文件名不合法');
+      throw new TextError(t('badFileName'));
     }
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('writable');
-    if (!relPath) throw new Error('不能重命名根目录');
+    if (!relPath) throw new TextError(t('renameRoot'));
     const abs = await this.resolveExisting(relPath);
     const newRel = normalizeRelPath(`${dirname(relPath) === '.' ? '' : dirname(relPath)}/${newName}`);
     const target = await this.resolveForWrite(newRel);
@@ -503,7 +503,7 @@ class ScopedStorageService implements StorageService {
     await this.guard.check(target, 'write');
     try {
       await lstat(target);
-      throw new Error('目标名称已存在');
+      throw new TextError(t('nameExists'));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
@@ -522,15 +522,15 @@ class ScopedStorageService implements StorageService {
     const fromRel = this.parseSelfUri(fromUri);
     const toRel = this.parseSelfUri(targetUri); // 跨根 → root 不匹配抛错
     this.requirePermission('writable');
-    if (!fromRel) throw new Error('不能移动根目录');
-    if (!toRel) throw new Error('目标不能是根目录');
+    if (!fromRel) throw new TextError(t('moveRoot'));
+    if (!toRel) throw new TextError(t('targetRoot'));
     const absFrom = await this.resolveExisting(fromRel);
     const absTo = await this.resolveForWrite(toRel);
     await this.guard.check(absFrom, 'write', true);
     await this.guard.check(absTo, 'write');
     try {
       await lstat(absTo);
-      throw new Error('目标已存在');
+      throw new TextError(t('targetExists'));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
@@ -548,7 +548,7 @@ class ScopedStorageService implements StorageService {
   async mkdir(uri: string): Promise<string> {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('writable');
-    if (!relPath) throw new Error('根目录已存在，无需创建');
+    if (!relPath) throw new TextError(t('rootExists'));
     const abs = await this.resolveForWrite(relPath);
     await this.guard.check(abs, 'write');
     await mkdir(abs, { recursive: true }); // recursive：建全路径；已存在则 no-op（幂等）
@@ -559,11 +559,11 @@ class ScopedStorageService implements StorageService {
   async delete(uri: string): Promise<void> {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('deletable');
-    if (!relPath) throw new Error('不能删除根目录');
+    if (!relPath) throw new TextError(t('deleteRoot'));
     const abs = await this.resolveExisting(relPath);
     // `sub/..` 这类解析回根本身的路径同样是删根——上面的字面空路径守卫挡不住
     // （isInside 对 rel==='' 判内、normalizeRelPath 不中和 `..`）。
-    if (abs === (await realpath(this.root.realPath))) throw new Error('不能删除根目录');
+    if (abs === (await realpath(this.root.realPath))) throw new TextError(t('deleteRoot'));
     await this.guard.check(abs, 'write', true);
     await this.snapshot(toUri(this.root.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
@@ -594,7 +594,7 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('readable');
     const absBase = resolve(this.root.realPath, normalizeRelPath(relPath));
     if (!isInside(this.root.realPath, absBase)) {
-      throw new Error('路径不合法');
+      throw new TextError(t('badPath'));
     }
 
     const debounceMs = 50;
@@ -687,35 +687,35 @@ class ScopedStorageService implements StorageService {
   private parseSelfUri(uri: string): string {
     const { root, relPath } = parseUri(uri);
     if (root !== this.root.name) {
-      throw new Error(`URI 根 "${root}" 不是存储根 ${this.root.name}（不能跨根移动）`);
+      throw new TextError(t('otherRoot', { root, name: this.root.name }));
     }
     return relPath;
   }
 
   private requirePermission(permission: 'readable' | 'writable' | 'deletable'): void {
     if (!this.root[permission]) {
-      throw new Error(`存储根 ${this.root.name} 不允许该操作 (${permission})`);
+      throw new TextError(t('notAllowed', { name: this.root.name, permission }));
     }
   }
 
   private async resolveExisting(relPath: string): Promise<string> {
     const lexical = resolve(this.root.realPath, normalizeRelPath(relPath));
-    if (!isInside(this.root.realPath, lexical)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, lexical)) throw new TextError(t('badPath'));
     const resolved = await realpath(lexical);
-    if (!isInside(this.root.realPath, resolved)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, resolved)) throw new TextError(t('badPath'));
     return resolved;
   }
 
   private async resolveForWrite(relPath: string): Promise<string> {
     const normalized = normalizeRelPath(relPath);
     const lexical = resolve(this.root.realPath, normalized);
-    if (!isInside(this.root.realPath, lexical)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, lexical)) throw new TextError(t('badPath'));
     const existingParent = await this.findExistingParent(dirname(lexical));
     const parent = await realpath(existingParent);
-    if (!isInside(this.root.realPath, parent)) throw new Error('路径不合法');
+    if (!isInside(this.root.realPath, parent)) throw new TextError(t('badPath'));
     try {
       const target = await lstat(lexical);
-      if (target.isSymbolicLink()) throw new Error('不允许写入符号链接');
+      if (target.isSymbolicLink()) throw new TextError(t('symlink'));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
@@ -727,7 +727,7 @@ class ScopedStorageService implements StorageService {
     while (true) {
       try {
         const s = await lstat(current);
-        if (!s.isDirectory()) throw new Error('父路径不是目录');
+        if (!s.isDirectory()) throw new TextError(t('parentNotDirectory'));
         return current;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
@@ -769,7 +769,12 @@ class LocalStorage implements StorageService {
   private route(uri: string): ScopedStorageService {
     const { root } = parseUri(uri);
     const scoped = this.roots.get(root);
-    if (!scoped) throw new Error(`未知存储根: ${root}（已注册根: ${[...this.roots.keys()].join(', ') || '(无)'}）`);
+    if (!scoped) {
+      const names = [...this.roots.keys()];
+      throw new TextError(
+        names.length > 0 ? t('unknownRoot', { root, roots: names.join(', ') }) : t('unknownRootNone', { root }),
+      );
+    }
     return scoped;
   }
 
@@ -921,7 +926,7 @@ const uses = { provide, services, logger, lifecycle, config, paths: hostPaths, d
 
 export default definePlugin({
   name: PLUGIN_NAME,
-  displayName: '本地存储根（命名 + 路径解析）',
+  displayName: t('displayName'),
   subsystem: 'storage',
   configSchema,
   provides: [storage],
@@ -953,7 +958,7 @@ export default definePlugin({
         new ScopedStorageService(root, guard, logger, caps.services.use, caps.lifecycle.use.onDispose),
       );
     }
-    caps.provide.use(storage, new LocalStorage(scoped), { label: '本地存储' });
+    caps.provide.use(storage, new LocalStorage(scoped), { label: t('provideLabel') });
 
     // 诊断检查项：探测每个 writable root 是否真的可写。
     // 由 storage 插件按全部根（含内置根）上报，而非 doctor 硬编码 fs.data：
@@ -964,7 +969,7 @@ export default definePlugin({
       async run() {
         const targets = roots.filter(r => r.writable);
         if (targets.length === 0) {
-          return { id: 'storage.roots', category: 'filesystem', level: 'warn', message: '没有任何 writable 存储根' };
+          return { id: 'storage.roots', category: 'filesystem', level: 'warn', message: t('noWritableRoots') };
         }
         const results: CheckResult[] = [];
         for (const root of targets) {
@@ -985,14 +990,14 @@ async function probeRootWritable(rootName: string, dir: string): Promise<CheckRe
     await writeFile(probe, 'ok');
     await stat(probe);
     await unlink(probe);
-    return { id, category: 'filesystem', level: 'ok', message: `根 ${rootName} (${dir}) 可写` };
+    return { id, category: 'filesystem', level: 'ok', message: t('rootWritable', { name: rootName, dir }) };
   } catch (err) {
     return {
       id,
       category: 'filesystem',
       level: 'error',
-      message: `根 ${rootName} (${dir}) 不可写`,
-      detail: err instanceof Error ? err.message : String(err),
+      message: t('rootNotWritable', { name: rootName, dir }),
+      detail: textOf(err),
     };
   }
 }

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aalis 示例前端</title>
+    <title>Aalis · webui-client-example</title>
     <style>
       :root { color-scheme: light dark; }
       body {
@@ -37,24 +37,44 @@
       p { line-height: 1.7; margin: 0.6rem 0; }
       code { background: rgba(255, 255, 255, 0.1); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.9em; }
       ol { line-height: 1.8; padding-left: 1.2rem; }
+      /* 中英两段，按 webui-server 改写的 <html lang> 只显示一段 */
+      html:lang(zh) .en, html:not(:lang(zh)) .zh { display: none; }
     </style>
   </head>
   <body>
     <main>
-      <span class="tag">示例前端 · webui-client-example</span>
-      <h1>你正在看「第二前端」</h1>
-      <p>
-        这是一个最小的演示前端。能看到它，说明 Aalis 的「忒修斯之船——前端可热切换」整条链路是通的：
-      </p>
-      <ol>
-        <li>它的 <code>package.json</code> 标了 <code>aalis.client: true</code>，被 webui-server <strong>动态发现</strong>（没有任何硬编码包名）；</li>
-        <li>前端就是 <code>webui-client</code> 服务的多个 provider——你在<strong>默认前端设置「系统」的服务偏好</strong>里，把 <code>webui-client</code> 一行选成它；</li>
-        <li>webui-server 重挂静态目录并广播刷新（servicePreferences 持久化），页面平滑 reload 后由它接管。</li>
-      </ol>
-      <p>
-        切回默认前端：本页没有切换入口，打开 <code>/__clients</code> 恢复页选回 <code>@aalis/plugin-webui-client</code>；
-        回到默认前端后，也可以在设置「系统」的服务偏好里把 <code>webui-client</code> 一行恢复默认。
-      </p>
+      <div class="zh" lang="zh-CN">
+        <span class="tag">示例前端 · webui-client-example</span>
+        <h1>你正在看「第二前端」</h1>
+        <p>
+          这是一个最小的演示前端。能看到它，说明 Aalis 的「忒修斯之船——前端可热切换」整条链路是通的：
+        </p>
+        <ol>
+          <li>它的 <code>package.json</code> 标了 <code>aalis.client: true</code>，被 webui-server <strong>动态发现</strong>（没有任何硬编码包名）；</li>
+          <li>前端就是 <code>webui-client</code> 服务的多个 provider——你在<strong>默认前端设置「系统」的服务偏好</strong>里，把 <code>webui-client</code> 一行选成它；</li>
+          <li>webui-server 重挂静态目录并广播刷新（servicePreferences 持久化），页面平滑 reload 后由它接管。</li>
+        </ol>
+        <p>
+          切回默认前端：本页没有切换入口，打开 <code>/__clients</code> 恢复页选回 <code>@aalis/plugin-webui-client</code>；
+          回到默认前端后，也可以在设置「系统」的服务偏好里把 <code>webui-client</code> 一行恢复默认。
+        </p>
+      </div>
+      <div class="en" lang="en">
+        <span class="tag">Example frontend · webui-client-example</span>
+        <h1>You are looking at a “second frontend”</h1>
+        <p>
+          This is a minimal demo frontend. Seeing it means the whole “Ship of Theseus: hot-swappable frontends” chain in Aalis works:
+        </p>
+        <ol>
+          <li>Its <code>package.json</code> sets <code>aalis.client: true</code>, so webui-server <strong>discovers it dynamically</strong> (no package name is hard-coded);</li>
+          <li>frontends are providers of the <code>webui-client</code> service: in the <strong>default frontend’s service preferences under Settings “System”</strong>, set the <code>webui-client</code> row to this one;</li>
+          <li>webui-server remounts the static directory and broadcasts a refresh (servicePreferences is persisted); after a smooth reload, this page takes over.</li>
+        </ol>
+        <p>
+          To switch back to the default frontend: this page has no switcher, so open the <code>/__clients</code> recovery page and choose <code>@aalis/plugin-webui-client</code>;
+          once back on the default frontend, you can also restore the <code>webui-client</code> row to its default in the service preferences under Settings “System”.
+        </p>
+      </div>
     </main>
   </body>
 </html>

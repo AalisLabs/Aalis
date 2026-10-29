@@ -10,6 +10,7 @@ import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
+import { textOf } from '@aalis/schema-i18n';
 import { configSchema } from './config.js';
 import { CheckpointServiceImpl, normalizeConfig } from './service.js';
 import { t } from './texts.js';
@@ -50,7 +51,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-checkpoint',
-  displayName: '回滚检查点',
+  displayName: t('displayName'),
   subsystem: 'scheduler',
   configSchema,
   provides: [checkpoint],
@@ -121,7 +122,7 @@ function run(caps: Caps): void {
           source: 'checkpoint',
           type: 'checkpoint',
           success: true,
-          message: `所有 checkpoint 已清空（${n} 个 session）`,
+          message: t('clearedAll', { count: n }),
         });
       } else if (data.sessionId) {
         const n = await service.clearSession(data.sessionId);
@@ -129,16 +130,15 @@ function run(caps: Caps): void {
           source: 'checkpoint',
           type: 'checkpoint',
           success: true,
-          message: n > 0 ? `当前会话 checkpoint 已清空（${n} 个 turn）` : '当前会话无 checkpoint',
+          message: n > 0 ? t('clearedSession', { count: n }) : t('noneInSession'),
         });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
       data.results.push({
         source: 'checkpoint',
         type: 'checkpoint',
         success: false,
-        message: `checkpoint 清空失败: ${msg}`,
+        message: t('clearFailed', { error: textOf(err) }),
       });
     }
     await next();

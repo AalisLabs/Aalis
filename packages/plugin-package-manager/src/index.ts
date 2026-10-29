@@ -24,8 +24,8 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import type { TextRef } from '@aalis/schema-i18n';
-import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
+import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
+import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import { t } from './texts.js';
 
 // ===== 实现 =====
@@ -210,9 +210,9 @@ const PKG_SPEC_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9]
  * 两者挡的东西不同，不是同一份的拷贝，别再把它们合并成一条。
  * 纯函数，便于单测。
  */
-export function validatePackageSpec(spec: unknown): string | undefined {
-  if (typeof spec !== 'string' || spec.length === 0) return '包名必须是非空字符串';
-  if (!PKG_SPEC_RE.test(spec)) return `非法包名: ${JSON.stringify(spec)}`;
+export function validatePackageSpec(spec: unknown): TextRef | undefined {
+  if (typeof spec !== 'string' || spec.length === 0) return t('emptyName');
+  if (!PKG_SPEC_RE.test(spec)) return t('badName', { name: JSON.stringify(spec) });
   return undefined;
 }
 
@@ -236,7 +236,7 @@ function createService(caps: Caps): PackageManagerService {
   const proc = caps.proc.use;
 
   function getApp(): AppService {
-    if (!caps.app.present) throw new Error('app 服务不可用，无法执行包管理操作');
+    if (!caps.app.present) throw new TextError(t('noApp'));
     return caps.app.use;
   }
 
@@ -459,18 +459,20 @@ const SPEC_ARGV_BUDGET = 128 * 1024;
  * 拒绝而非净化：这些值最终作为独立 argv 交给 npm，任何一条可疑就整批停下，
  * 不猜用户意图。纯函数，便于单测。
  */
-export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: string[]; error?: string } {
-  if (!Array.isArray(targets) || targets.length === 0) return { error: '未指定更新目标' };
+export function buildUpdateSpecs(
+  targets: readonly UpdateTarget[],
+): { specs: string[]; error?: undefined } | { specs?: undefined; error: TextRef } {
+  if (!Array.isArray(targets) || targets.length === 0) return { error: t('noTargets') };
   const specs: string[] = [];
   const seen = new Set<string>();
   let bytes = 0;
   for (const target of targets) {
     const name = typeof target?.name === 'string' ? target.name : '';
     const version = typeof target?.version === 'string' ? target.version : '';
-    if (!PKG_NAME_ONLY_RE.test(name)) return { error: `非法包名: ${JSON.stringify(name)}` };
-    if (!VERSION_RE.test(version)) return { error: `非法版本号: ${name}@${JSON.stringify(version)}` };
+    if (!PKG_NAME_ONLY_RE.test(name)) return { error: t('badName', { name: JSON.stringify(name) }) };
+    if (!VERSION_RE.test(version)) return { error: t('badVersion', { name, version: JSON.stringify(version) }) };
     // 同名多版本会让 npm 取最后一个，静默丢弃前面的选择——宁可让用户重选。
-    if (seen.has(name)) return { error: `同一包被指定了多次: ${name}` };
+    if (seen.has(name)) return { error: t('duplicateTarget', { name }) };
     seen.add(name);
     const spec = `${name}@${version}`;
     // 按**字节**计而非按个数：这些 spec 逐条成为 argv，而 execve 的约束是参数块的总字节数，
@@ -478,7 +480,7 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
     // 超限即整批停下，与本函数其余校验同一策略：不猜、不截断。
     bytes += Buffer.byteLength(spec) + 1; // +1 = argv 之间的 NUL 分隔
     if (bytes > SPEC_ARGV_BUDGET) {
-      return { error: `更新目标过多：参数总长已超 ${SPEC_ARGV_BUDGET} 字节，请分批提交` };
+      return { error: t('tooManyTargets', { budget: SPEC_ARGV_BUDGET }) };
     }
     specs.push(spec);
   }
@@ -507,60 +509,46 @@ type NpmFailureKind = 'disk' | 'permission' | 'platform' | 'peer' | 'browser' | 
 const NPM_FAILURES: Array<{
   kind: NpmFailureKind;
   match: RegExp;
-  describe(output: string, found: RegExpExecArray): string;
+  describe(output: string, found: RegExpExecArray): TextRef;
 }> = [
-  { kind: 'disk', match: /\bENOSPC\b/, describe: () => '磁盘空间不够（ENOSPC）：腾出空间后重试' },
-  {
-    kind: 'permission',
-    match: /\bEACCES\b/,
-    describe: () =>
-      '没有写入权限（EACCES）：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回运行 Aalis 的用户所有后重试，不要用 sudo',
-  },
+  { kind: 'disk', match: /\bENOSPC\b/, describe: () => t('npmDisk') },
+  { kind: 'permission', match: /\bEACCES\b/, describe: () => t('npmPermission') },
   {
     kind: 'platform',
     match: /\bEBADPLATFORM\b/,
     describe: output => {
-      const pkg = /Unsupported platform for (\S+?)@\d/.exec(output)?.[1] ?? '某个依赖';
-      return `依赖 ${pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了`;
+      const pkg = /Unsupported platform for (\S+?)@\d/.exec(output)?.[1];
+      return pkg === undefined ? t('npmPlatformUnknown') : t('npmPlatform', { pkg });
     },
   },
   {
     kind: 'peer',
     match: /\bERESOLVE\b/,
-    describe: output =>
-      `peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：${extractPeerConflicts(output).join('；')}`,
+    describe: output => t('npmPeer', { conflicts: textClauses(extractPeerConflicts(output)) }),
   },
   {
     kind: 'browser',
     match: /Failed to set up (?:chrome|chrome-headless-shell|firefox)\b|node_modules[\\/]puppeteer\s*$/m,
-    describe: () =>
-      '下载浏览器失败：这个插件装的时候要下载 Chrome。给 Aalis 的进程设好镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）后重启再装',
+    describe: () => t('npmBrowser'),
   },
   {
     kind: 'native',
     match: /gyp ERR!|node-gyp|prebuild-install/,
     describe: output => {
-      const pkg =
-        /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(output)?.[1] ??
-        '某个依赖';
-      return (
-        `原生模块 ${pkg} 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；` +
-        'Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试'
-      );
+      const pkg = /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(output)?.[1];
+      return pkg === undefined ? t('npmNativeUnknown') : t('npmNative', { pkg });
     },
   },
   {
     kind: 'missing',
     match: /\b(E404|ETARGET)\b/,
     // 镜像源同步有延迟，刚发布的版本可能还没有
-    describe: (_output, [, code]) =>
-      `源上没有这个包或这个版本（${code}）：核对包名与版本；用的是镜像源时它可能还没同步，稍后重试`,
+    describe: (_output, [, code]) => t('npmMissing', { code }),
   },
   {
     kind: 'network',
     match: /\b(ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN)\b/,
-    describe: (_output, [, code]) =>
-      `连不上 npm 源（${code}）：检查网络与代理后重试；默认源不通时在终端执行 npm config set registry <源地址> 换一个源`,
+    describe: (_output, [, code]) => t('npmNetwork', { code }),
   },
 ];
 
@@ -582,7 +570,7 @@ export function npmFailureKind(output: string): NpmFailureKind | undefined {
  * 把 npm 的失败输出归成一句给用户看的话：认得出的写原因与修法，认不出的写 npm 的最后一条报错，并指向日志与排障页。
  * 整段输出由调用方记进日志，回执与提示里只放这一句。纯函数，便于单测。
  */
-export function describeNpmFailure(output: string): string {
+export function describeNpmFailure(output: string): TextRef {
   const known = recognizeNpmFailure(output);
   if (known) return known.failure.describe(output, known.found);
   const errors = output
@@ -590,7 +578,7 @@ export function describeNpmFailure(output: string): string {
     .map(line => /^npm (?:error|ERR!)\s*(.*)$/.exec(line.trim())?.[1]?.trim())
     .filter((line): line is string => !!line && !line.startsWith('A complete log of this run'));
   const last = errors.at(-1) ?? output.trim().split('\n').at(-1)?.trim();
-  return `npm 出错：${last}。完整输出在日志里，常见原因与修法见 https://aalis.acenyan.com/guide/troubleshooting`;
+  return t('npmOther', { error: String(last) });
 }
 
 /**
@@ -605,18 +593,18 @@ export function describeNpmFailure(output: string): string {
  * 而它确实会在 stderr 打出 `peer <name>@"<range>" from <dependent>`。只认**提到本次目标**
  * 的那些行：工程里原有的、与本次无关的未满足 peer 不该阻断更新。
  */
-export function findUnmetPeers(output: string, targetNames: readonly string[]): string[] {
+export function findUnmetPeers(output: string, targetNames: readonly string[]): TextRef[] {
   const names = new Set(targetNames);
   // npm 会把同一条 peer 冲突在不同上下文里重复打印，去重后再给用户。
-  const out = new Set<string>();
+  const out = new Map<string, TextRef>();
   for (const raw of output.split('\n')) {
     const line = raw.replace(/^npm (ERR!|error|warn)\s*/i, '').trim();
     const m = /^peer\s+(\S+?)@"([^"]+)"\s+from\s+(.+)$/.exec(line);
     if (!m) continue;
     if (!names.has(m[1])) continue;
-    out.add(`${m[3]} 需要 ${m[1]}@${m[2]}`);
+    out.set(`${m[3]}\0${m[1]}@${m[2]}`, t('needsPeer', { dependent: m[3], peer: `${m[1]}@${m[2]}` }));
   }
-  return [...out];
+  return [...out.values()];
 }
 
 /**
@@ -640,7 +628,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 锁必须在**服务层**：本服务对外公开，任何插件都能绕过 HTTP 路由直接调，
    * 加在路由或前端都不算数。
    */
-  let inflight: string | null = null;
+  let inflight: TextRef | null = null;
   /**
    * 进程即将重启（update 成功后置位），此后**永不释放**锁。
    *
@@ -656,11 +644,11 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束。
    */
   async function exclusive<T extends Pick<InstallResult, 'ok' | 'message'>>(
-    what: string,
+    what: TextRef,
     run: () => Promise<T>,
   ): Promise<T> {
     if (inflight) {
-      return { ok: false, message: `有包管理操作正在进行中（${inflight}），请稍候重试` } as T;
+      return { ok: false, message: t('busy', { operation: inflight }) } as T;
     }
     inflight = what;
     try {
@@ -682,7 +670,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     } catch (err) {
       const output = err instanceof Error ? err.message : String(err);
       log.error(`npm ${args.join(' ')} 失败: ${output}`);
-      throw new Error(describeNpmFailure(output));
+      throw new TextError(describeNpmFailure(output));
     }
   }
 
@@ -774,22 +762,20 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (deps.isPluginRegistered(defName)) {
       await deps.idle?.();
       const main = deps.pluginStatus?.().find(p => p.instanceId === defName);
-      const settled = (message: string): InstallResult => ({ ok: true, message, plugin: defName });
+      const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: defName });
       switch (main?.state) {
         case 'error':
-          return settled(`已安装 ${target}，但激活失败，已转为 error 态（${main.error ?? '详见日志'}）`);
+          return settled(t('installedErrored', { target, error: main.error ?? t('seeLogs') }));
         case 'activating':
-          return settled(`已安装 ${target}，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准`);
+          return settled(t('installedActivating', { target }));
         case 'pending':
-          return settled(`已安装 ${target}，尚未激活，正在等待 required 依赖满足`);
+          return settled(t('installedPending', { target }));
       }
-      return settled(`已安装并加载: ${target}`);
+      return settled(t('installedLoaded', { target }));
     }
     const meta = await readJson(installedPkgJsonPath);
-    if (declaresPlugin(meta)) {
-      return { ok: false, message: `已装到 ${where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出` };
-    }
-    return { ok: true, message: `已安装 ${target}（非插件包，不进入插件列表）` };
+    if (declaresPlugin(meta)) return { ok: false, message: t('installedNotLoaded', { where }) };
+    return { ok: true, message: t('installedNonPlugin', { target }) };
   }
 
   /**
@@ -807,10 +793,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const root = deps.projectRoot();
     const rootPkg = await readJson(`${root}/package.json`);
     if (hasWorkspaceProtocol(rootPkg)) {
-      return {
-        ok: false,
-        message: '根依赖含 workspace: 协议，拒绝在此运行 npm install（会写出 package-lock.json 并搅坏 pnpm 工作区）',
-      };
+      return { ok: false, message: t('workspaceInstall') };
     }
     const refused = await installKindRefusal(npmPkg, root);
     if (refused) return { ok: false, message: refused };
@@ -852,7 +835,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 视为用户意图，只 warn 就放行），`--strict-peer-deps` 在副本里同样不改变这一点，
    * 故不再传它——留着只会让人误以为有额外保障。
    */
-  async function preflightInSandbox(specs: string[], root: string): Promise<string[] | undefined> {
+  async function preflightInSandbox(specs: string[], root: string): Promise<Array<string | TextRef> | undefined> {
     const tmp = await proc.makeTempDir('preflight');
     try {
       // 直接 cp 现有文件，不重新写内容——与本插件其余文件操作同一路子（走 process 服务的
@@ -878,7 +861,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         const conflicts = extractPeerConflicts(raw);
         if (conflicts.length > 0) return conflicts;
         log.error(`更新预检失败: ${raw}`);
-        throw new Error(describeNpmFailure(raw));
+        throw new TextError(describeNpmFailure(raw));
       }
       const unmet = findUnmetPeers(`${output.stderr}\n${output.stdout}`, specs.map(stripVersion));
       return unmet.length > 0 ? unmet : undefined;
@@ -892,9 +875,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 重启次数恒为 1，与改了多少个包无关（语义见 {@link PackageManagerService.update}）。
    */
   async function updateAll(targets: UpdateTarget[]): Promise<UpdateResult> {
-    const { specs, error } = buildUpdateSpecs(targets);
-    if (!specs) return { ok: false, message: error ?? '参数非法' };
-    if (!deps.restartApp) return { ok: false, message: '当前宿主未提供重启能力，无法完成更新' };
+    const built = buildUpdateSpecs(targets);
+    if (built.error) return { ok: false, message: built.error };
+    const { specs } = built;
+    if (!deps.restartApp) return { ok: false, message: t('noRestart') };
 
     const root = deps.projectRoot();
     // 没有「项目形态」这一层判断了：能不能更新是**每个包自己的来源**说了算（下面的
@@ -902,22 +886,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 当整体开关，既挡掉了工作区项目里合法的 npm 依赖，也与真正生效的加载器无因果关系。
     const rootPkgPath = `${root}/package.json`;
     const rootPkgText = await deps.readText(rootPkgPath);
-    if (rootPkgText === undefined) return { ok: false, message: `读不到根 package.json: ${rootPkgPath}` };
+    if (rootPkgText === undefined) return { ok: false, message: t('noRootPackage', { path: rootPkgPath }) };
     const rootPkg = await readJson(rootPkgPath);
-    if (hasWorkspaceProtocol(rootPkg)) {
-      return { ok: false, message: '根依赖含 workspace: 协议，拒绝在此运行 npm install' };
-    }
+    if (hasWorkspaceProtocol(rootPkg)) return { ok: false, message: t('workspaceUpdate') };
     // 只允许更新「根依赖里以 semver 范围声明」的包。闸放在服务层而非 HTTP 路由——
     // 本服务对外公开，任何插件都能绕过路由直接调用（理由见 isRegistryDep）。
     const rootDependencies = (rootPkg?.dependencies ?? {}) as Record<string, string>;
     const notUpdatable = targets.filter(target => !isRegistryDep(rootDependencies[target.name]));
     if (notUpdatable.length > 0) {
-      return {
-        ok: false,
-        message:
-          '以下包不在根依赖中（由其它插件带入）或不是 registry 来源，单独更新只会装出第二份副本；' +
-          `请改为更新带入它们的插件：${notUpdatable.map(target => target.name).join('、')}`,
-      };
+      return { ok: false, message: t('notUpdatable', { names: notUpdatable.map(target => target.name) }) };
     }
 
     // ── 读取每个目标的当前实装版本 ──
@@ -942,32 +919,25 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 读不到已装版本同样拒——无从判断方向就不动，用户可显式卸载重装。
     const notUpgrade = targets.filter(target => !isUpgrade(installedVersions.get(target.name), target.version));
     if (notUpgrade.length > 0) {
-      return {
-        ok: false,
-        message:
-          '以下目标版本不高于本地已装版本（或本地版本号读不到），更新会变成降级，已拒绝：' +
-          notUpgrade
-            .map(
-              target =>
-                `${target.name}（本地 ${installedVersions.get(target.name) ?? '未知'} → 目标 ${target.version}）`,
-            )
-            .join('、'),
-      };
+      const items = notUpgrade.map(({ name, version }) =>
+        t('downgradeItem', { name, installed: installedVersions.get(name) ?? t('unknown'), version }),
+      );
+      return { ok: false, message: t('notUpgrade', { items }) };
     }
 
     // ── 预检：整组一次，不逐个 ──
     // 逐个预检发现不了「A@new 要 core>=0.10、B@new 要 core<0.10」这类只在合并时冲突的组合。
     log.info(`更新预检: ${specs.join(' ')}`);
-    const reject = (conflicts: string[]): UpdateResult => ({
+    const reject = (conflicts: Array<string | TextRef>): UpdateResult => ({
       ok: false,
-      message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
+      message: t('preflightRejected'),
       conflicts,
     });
-    let verdict: string[] | undefined;
+    let verdict: Array<string | TextRef> | undefined;
     try {
       verdict = await preflightInSandbox(specs, root);
     } catch (err) {
-      return { ok: false, message: `依赖预检没跑成：${err instanceof Error ? err.message : String(err)}` };
+      return { ok: false, message: t('preflightFailed', { error: textOf(err) }) };
     }
     if (verdict) return reject(verdict);
 
@@ -1004,7 +974,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     try {
       await npm(['install', ...specs, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
     } catch (err) {
-      return { ok: false, message: `安装失败（工程未重启，可重试）：${(err as Error).message}` };
+      return { ok: false, message: t('installFailedRetry', { error: textOf(err) }) };
     }
 
     // ── 重启接管 ──
@@ -1040,26 +1010,27 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       restore,
       postRestore: { cmd: 'npm', args: ['install', ...pinned, '--no-save', '--no-audit', '--no-fund'], cwd: root },
     });
-    return { ok: true, restarting: true, message: `已更新 ${specs.join('、')}，正在重启…` };
+    return { ok: true, restarting: true, message: t('updated', { specs }) };
   }
 
   return {
-    update: targets => exclusive(`更新 ${targets.map(x => x.name).join('、')}`, () => updateAll(targets)),
+    update: targets => exclusive(t('opUpdate', { names: targets.map(x => x.name) }), () => updateAll(targets)),
 
     install: npmPkg =>
-      exclusive(`安装 ${npmPkg}`, async () => {
+      exclusive(t('opInstall', { name: npmPkg }), async () => {
         const bad = validatePackageSpec(npmPkg);
         if (bad) return { ok: false, message: bad };
         try {
           return await installTo(npmPkg);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          log.error(`安装 "${npmPkg}" 失败: ${message}`);
+          const message = textOf(err);
+          log.error(`安装 "${npmPkg}" 失败: ${toSource(message)}`);
           return { ok: false, message };
         }
       }),
 
-    uninstall: (pluginName, options) => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName, options)),
+    uninstall: (pluginName, options) =>
+      exclusive(t('opUninstall', { name: pluginName }), () => uninstallOne(pluginName, options)),
 
     serviceDependents: name =>
       findServiceDependents(name, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []),
@@ -1084,10 +1055,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const root = deps.projectRoot();
     const meta = await readJson(`${root}/node_modules/${pluginName}/package.json`);
     if (!meta) {
-      return {
-        ok: false,
-        message: `读不到 ${pluginName} 的 package.json，无法确认它是什么，市场不卸；确认要卸就在项目目录执行 npm uninstall ${pluginName} 后重启`,
-      };
+      return { ok: false, message: t('noPackageJson', { name: pluginName }) };
     }
 
     // ── 闸一：类型 ──
@@ -1122,12 +1090,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 那时它已不是提供者，本闸自然放行。
     const lifeline = deps.recoveryChannelProviders?.() ?? [];
     if (lifeline.includes(pluginName)) {
-      return {
-        ok: false,
-        message:
-          `${pluginName} 正在承载市场/管理界面本身，卸掉它这个页面会立刻不可用，` +
-          '只能在终端里恢复。若确要更换实现，请先装上替代者并在设置「系统」的服务偏好里切换过去，再回来卸载它。',
-      };
+      return { ok: false, message: t('lifeline', { name: pluginName }) };
     }
 
     // ── 闸二：来源 ──
@@ -1135,16 +1098,16 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 且多半在 git 里）；file:/link: 指向本地目录；git/URL 是外部源；不在根依赖里的是传递依赖。
     const rootPkg = await readJson(`${root}/package.json`);
     const request = ((rootPkg?.dependencies ?? {}) as Record<string, string>)[pluginName];
-    if (!isRegistryDep(request)) {
-      const origin = classifyDepSpec(request);
-      const why: Record<string, string> = {
-        workspace: '它是工作区里的本地源码包，删除请走 git',
-        link: '它由 file:/link: 指向本地目录，删除请改那份源码与依赖声明',
-        git: '它由 git/URL/user-repo 简写安装，删除请改依赖声明',
-        alias: '它由 npm: 别名指向另一个包，删除请改依赖声明',
-        transitive: '它不在根依赖里（由其它插件带入），会随带入它的插件被 npm 自动剪枝',
+    const origin = classifyDepSpec(request);
+    if (origin !== 'registry') {
+      const why: Record<Exclude<DepOrigin, 'registry'>, TextRef> = {
+        workspace: t('originWorkspace'),
+        link: t('originLink'),
+        git: t('originGit'),
+        alias: t('originAlias'),
+        transitive: t('originTransitive'),
       };
-      return { ok: false, message: `${pluginName} 不是经市场安装的：${why[origin] ?? '来源不明'}。` };
+      return { ok: false, message: t('notFromMarket', { name: pluginName, why: why[origin] }) };
     }
 
     // 先解析定义 name 并枚举实例：npm uninstall 会拆掉 node_modules，之后就读不到入口了。
@@ -1156,10 +1119,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 与市场卸载前的预警同一份判定（serviceDependents），按加载器解析出的定义 name 查。
     const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []);
     if (dependents.length > 0) {
-      return {
-        ok: false,
-        message: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务，且没有别的插件正在提供。请先停用它们，或启用 / 安装替代提供者。`,
-      };
+      return { ok: false, message: t('breaksDependents', { dependents }) };
     }
 
     try {
@@ -1167,29 +1127,31 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       // 从运行时注册表彻底移除（dispose + delete），幂等
       for (const id of instanceIds) await deps.unloadPlugin(id);
     } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+      return { ok: false, message: textOf(err) };
     }
     log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
-    const removed = `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）`;
     // 包已经卸掉了，配置文件没写成不改变这一点：回执照样 ok，写明原因与残留
     try {
       await deps.cleanupConfig?.(instanceIds, removeConfig);
     } catch (err) {
       return {
         ok: true,
-        message: `${removed}，但配置文件没写成（${err instanceof Error ? err.message : String(err)}）：需要时手动删掉配置文件里它的${removeConfig ? '配置段与' : ''}停用标记。`,
+        message: t(removeConfig ? 'uninstalledConfigUnsaved' : 'uninstalledFlagUnsaved', {
+          name: pluginName,
+          error: textOf(err),
+        }),
       };
     }
     return {
       ok: true,
-      message: `${removed}。${removeConfig ? '它的配置已从配置文件删除，只有它用的密钥一并删除' : '它的配置留在配置文件里，重装后照原配置启动'}；写在家目录 state/ 等处的数据不会删除，需要时请手动清理。`,
+      message: t(removeConfig ? 'uninstalledConfigRemoved' : 'uninstalledConfigKept', { name: pluginName }),
     };
   }
 }
 
 export default definePlugin({
   name: '@aalis/plugin-package-manager',
-  displayName: '包管理器',
+  displayName: t('displayName'),
   subsystem: 'system',
   provides: [packageManager],
   uses,

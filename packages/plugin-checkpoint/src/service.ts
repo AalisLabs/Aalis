@@ -3,9 +3,11 @@ import type { CheckpointService, RollbackResult, RollbackWithChatResult } from '
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
-import type { TextRef } from '@aalis/schema-i18n';
+import { configError } from '@aalis/schema-config';
+import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import { WellKnownMetadataKeys } from '@aalis/schema-message';
 import { type CheckpointConfig, configSchema } from './config.js';
+import { t } from './texts.js';
 
 /**
  * 不记录的根类型：多会话/多平台共享写入区（data、pluginData、logs）、回合结束前就清掉的临时目录与缓存（tmp、cache），
@@ -236,7 +238,7 @@ export class CheckpointServiceImpl implements CheckpointService {
           uri,
           action: op,
           toUri,
-          skipped: loadFailed ? '未快照（原文件读取失败，不可回滚）' : '未快照（目录或读取失败）',
+          skipped: loadFailed ? t('notSnapshotUnreadable') : t('notSnapshotDirectory'),
         });
       }
       return;
@@ -248,7 +250,7 @@ export class CheckpointServiceImpl implements CheckpointService {
         action: op,
         toUri,
         originalSize: original.size,
-        skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
+        skipped: t('tooLarge', { size: original.size, max: this.cfg.maxFileSize }),
       });
       return;
     }
@@ -339,7 +341,7 @@ export class CheckpointServiceImpl implements CheckpointService {
         ok: false,
         restored: [],
         deleted: [],
-        errors: [{ uri: '', reason: 'checkpoint 不存在' }],
+        errors: [{ uri: '', reason: t('noCheckpoint') }],
         alsoChangedBy: [],
       };
     }
@@ -383,9 +385,9 @@ export class CheckpointServiceImpl implements CheckpointService {
               await this.storage.delete(file.toUri);
               result.deleted.push(file.toUri);
             } catch (delErr) {
-              const reason = (delErr as Error).message ?? String(delErr);
+              const reason = textOf(delErr);
               if (isStorageNotFound(delErr)) {
-                this.logger.debug(`回滚善后：目标 ${file.toUri} 已不在，跳过删除: ${reason}`);
+                this.logger.debug(`回滚善后：目标 ${file.toUri} 已不在，跳过删除: ${toSource(reason)}`);
               } else {
                 result.errors.push({ uri: file.toUri, reason });
               }
@@ -400,7 +402,7 @@ export class CheckpointServiceImpl implements CheckpointService {
           result.restored.push(file.uri);
         }
       } catch (err) {
-        result.errors.push({ uri: file.uri, reason: (err as Error).message });
+        result.errors.push({ uri: file.uri, reason: textOf(err) });
       }
     }
     if (result.errors.length > 0) result.ok = false;
@@ -447,7 +449,7 @@ export class CheckpointServiceImpl implements CheckpointService {
         ok: false,
         restored: [],
         deleted: [],
-        errors: [{ uri: '', reason: 'checkpoint 不存在' }],
+        errors: [{ uri: '', reason: t('noCheckpoint') }],
         alsoChangedBy: [],
         deletedMessages: 0,
         chatDeleted: false,
@@ -470,7 +472,7 @@ export class CheckpointServiceImpl implements CheckpointService {
 
     const memory = this._memory?.present ? this._memory.use : undefined;
     if (!memory || typeof memory.deleteMessagesByTimestamps !== 'function') {
-      result.errors.push({ uri: '', reason: '当前 memory 后端不支持 deleteMessagesByTimestamps' });
+      result.errors.push({ uri: '', reason: t('noDeleteByTimestamps') });
       result.ok = false;
       return result;
     }
@@ -479,7 +481,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       result.deletedMessages = await memory.deleteMessagesByTimestamps(sessionId, timestamps);
       result.chatDeleted = true;
     } catch (err) {
-      result.errors.push({ uri: '', reason: `删除消息失败: ${(err as Error).message}` });
+      result.errors.push({ uri: '', reason: t('deleteMessagesFailed', { error: textOf(err) }) });
       result.ok = false;
       return result;
     }
@@ -635,7 +637,7 @@ function resolveRootUri(input: string): string {
   const s = input.trim();
   if (!s) return configSchema.rootDir.default;
   if (!isStorageUri(s)) {
-    throw new Error('plugin-checkpoint 配置错误: rootDir 不是 storage URI，请写成 <根名>:/<路径>');
+    throw configError(t('rootDirNotUri'));
   }
   return s;
 }

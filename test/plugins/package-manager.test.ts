@@ -196,7 +196,7 @@ describe('纯函数判据', () => {
     const heavy = Array.from({ length: 2000 }, (_, i) => ({ name: `${longName}${i}`, version: '1.0.0' }));
     const r = buildUpdateSpecs(heavy);
     expect(r.specs).toBeUndefined();
-    expect(r.error).toContain('参数总长');
+    expect(toSource(r.error)).toContain('参数总长');
   });
 
   it('nonMarketKind：只有插件与前端界面归市场装卸，其余给出种类码', () => {
@@ -376,7 +376,7 @@ describe('install（只有一条路径：写根依赖）', () => {
       const h = makeHarness({ json: { [rootPkg]: { dependencies: {} } } });
       const r = await createPackageManager(h.deps).install(evil);
       expect(r.ok, evil).toBe(false);
-      expect(r.message, evil).toContain('包名');
+      expect(toSource(r.message), evil).toContain('包名');
       expect(
         h.execCalls.some(c => c.cmd === 'npm'),
         evil,
@@ -391,7 +391,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('workspace:');
+    expect(toSource(r.message)).toContain('workspace:');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次都不能发
   });
 
@@ -405,7 +405,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/foo@1.2.3');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('未被加载');
+    expect(toSource(r.message)).toContain('未被加载');
   });
 
   it('目标未进注册表、但本就不是插件（如 aalis-interface）→ 正常成功', async () => {
@@ -418,7 +418,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/ui');
     expect(r.ok).toBe(true);
-    expect(r.message).toContain('非插件包');
+    expect(toSource(r.message)).toContain('非插件包');
     expect(r.plugin, '不进插件列表的包没有插件可指').toBeUndefined();
   });
 
@@ -434,7 +434,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/foo@0.9.1');
     expect(r.ok).toBe(true);
-    expect(r.message).toContain('@scope/foo');
+    expect(toSource(r.message)).toContain('@scope/foo');
   });
 
   it('并发安装：不把别人的战果算作自己的（旧判据会谎报装了 B）', async () => {
@@ -445,15 +445,15 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(true);
-    expect(r.message).toContain('@scope/foo');
-    expect(r.message).not.toContain('@other/bar'); // 只报自己的
+    expect(toSource(r.message)).toContain('@scope/foo');
+    expect(toSource(r.message)).not.toContain('@other/bar'); // 只报自己的
   });
 
   it('npm install 失败 → 返回失败而非抛出', async () => {
     const h = makeHarness({ failOn: 'npm', json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('npm');
+    expect(toSource(r.message)).toContain('npm');
   });
 
   it('定义 name 与包名不同、但定义已登记 → 安装成功，回执指向按定义 name 登记的插件，并 warn', async () => {
@@ -469,7 +469,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('plugin-mismatch');
     expect(r.ok, toSource(r.message)).toBe(true);
-    expect(r.message).toContain('plugin-mismatch');
+    expect(toSource(r.message)).toContain('plugin-mismatch');
     expect(r.plugin).toBe('other-name');
     expect(
       warns.some(w => w.includes('plugin-mismatch') && w.includes('other-name') && w.includes('定义的 name')),
@@ -488,7 +488,7 @@ describe('install（只有一条路径：写根依赖）', () => {
   it('目标已进注册表、但主实例激活失败 → 仍回 ok（包已装上），message 按实际状态说明原因', async () => {
     const h = makeHarness({ registered: ['@scope/foo'], json: { [rootPkg]: {} } });
     h.deps.pluginStatus = () => [entry('@scope/foo', 'error', '缺少配置项 apiKey')];
-    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+    expect(toSource(await createPackageManager(h.deps).install('@scope/foo'))).toEqual({
       ok: true,
       message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
       plugin: '@scope/foo',
@@ -496,7 +496,7 @@ describe('install（只有一条路径：写根依赖）', () => {
 
     // 只看主实例：同名的后缀实例出错不算这次安装的结果
     h.deps.pluginStatus = () => [entry('@scope/foo:b', 'error', '坏配置'), entry('@scope/foo', 'active')];
-    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+    expect(toSource(await createPackageManager(h.deps).install('@scope/foo'))).toEqual({
       ok: true,
       message: '已安装并加载: @scope/foo',
       plugin: '@scope/foo',
@@ -513,7 +513,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     h.deps.pluginStatus = () => [
       settled ? entry('@scope/foo', 'error', '缺少配置项 apiKey') : entry('@scope/foo', 'pending'),
     ];
-    expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+    expect(toSource(await createPackageManager(h.deps).install('@scope/foo'))).toEqual({
       ok: true,
       message: '已安装 @scope/foo，但激活失败，已转为 error 态（缺少配置项 apiKey）',
       plugin: '@scope/foo',
@@ -524,7 +524,7 @@ describe('install（只有一条路径：写根依赖）', () => {
       ['pending', '已安装 @scope/foo，尚未激活，正在等待 required 依赖满足'],
     ] as const) {
       h.deps.pluginStatus = () => [entry('@scope/foo', state)];
-      expect(await createPackageManager(h.deps).install('@scope/foo')).toEqual({
+      expect(toSource(await createPackageManager(h.deps).install('@scope/foo'))).toEqual({
         ok: true,
         message,
         plugin: '@scope/foo',
@@ -584,7 +584,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     ['npm error code ETIMEDOUT\nnpm error errno ETIMEDOUT', NETWORK_REASON.replace('ENOTFOUND', 'ETIMEDOUT')],
     ['npm error code ECONNRESET', NETWORK_REASON.replace('ENOTFOUND', 'ECONNRESET')],
   ])('认出的类别 %#', (output, reason) => {
-    expect(describeNpmFailure(output)).toBe(reason);
+    expect(toSource(describeNpmFailure(output))).toBe(reason);
   });
 
   it('认不出的写 npm 最后一条报错，并指向日志与排障页', () => {
@@ -594,7 +594,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
       'npm error something odd happened',
       'npm error A complete log of this run can be found in: /home/u/.npm/_logs/x-debug-0.log',
     ].join('\n');
-    expect(describeNpmFailure(output)).toBe(
+    expect(toSource(describeNpmFailure(output))).toBe(
       'npm 出错：something odd happened。完整输出在日志里，常见原因与修法见 https://aalis.acenyan.com/guide/troubleshooting',
     );
   });
@@ -603,7 +603,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     const errors: string[] = [];
     const h = makeHarness({ failView: NETWORK_DOWN, errors, json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('@scope/foo');
-    expect(r).toEqual({ ok: false, message: NETWORK_REASON });
+    expect(toSource(r)).toEqual({ ok: false, message: NETWORK_REASON });
     expect(errors.join('\n')).toContain('npm error A complete log of this run');
     expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(false);
   });
@@ -612,7 +612,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     const errors: string[] = [];
     const h = makeHarness({ failOn: 'npm', failStderr: NETWORK_DOWN, errors, json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('@scope/foo');
-    expect(r).toEqual({ ok: false, message: NETWORK_REASON });
+    expect(toSource(r)).toEqual({ ok: false, message: NETWORK_REASON });
     expect(errors.join('\n')).toContain('npm error A complete log of this run');
   });
 
@@ -629,7 +629,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     });
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/^没有写入权限（EACCES）：/);
+    expect(toSource(r.message)).toMatch(/^没有写入权限（EACCES）：/);
     expect(errors.join('\n')).toContain('npm error syscall rename');
     expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
   });
@@ -642,7 +642,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
   it('update：预检遇到不是 peer 冲突的失败（连不上源）→ 写原因，不说「预检未通过」', async () => {
     const h = makeHarness({ failOn: 'npm', failStderr: NETWORK_DOWN, text: updateText });
     const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.1' }]);
-    expect(r).toEqual({ ok: false, message: `依赖预检没跑成：${NETWORK_REASON}` });
+    expect(toSource(r)).toEqual({ ok: false, message: `依赖预检没跑成：${NETWORK_REASON}` });
     expect(h.deps.restartApp).not.toHaveBeenCalled();
   });
 
@@ -660,7 +660,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
       return execFile(cmd, args, o);
     }) as never;
     const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.1' }]);
-    expect(r).toEqual({ ok: false, message: `安装失败（工程未重启，可重试）：${NETWORK_REASON}` });
+    expect(toSource(r)).toEqual({ ok: false, message: `安装失败（工程未重启，可重试）：${NETWORK_REASON}` });
     expect(h.deps.restartApp).not.toHaveBeenCalled();
   });
 });
@@ -675,25 +675,27 @@ describe('update — 参数校验（纯函数）', () => {
   });
 
   it('拒绝空批次', () => {
-    expect(buildUpdateSpecs([]).error).toContain('未指定');
+    expect(toSource(buildUpdateSpecs([]).error)).toContain('未指定');
   });
 
   it('拒绝会被 npm 当标志或目录 spec 的名字与版本', () => {
     // npm 把 `-` 开头当命令行标志，把 `.` / `..` 当本地目录 spec（能触发宿主 prepack 脚本）
     for (const bad of ['--force', '.', '..', './x', 'a b', 'a;rm -rf /', '', '@scope/']) {
-      expect(buildUpdateSpecs([{ name: bad, version: '1.0.0' }]).error, bad).toContain('非法包名');
+      expect(toSource(buildUpdateSpecs([{ name: bad, version: '1.0.0' }]).error), bad).toContain('非法包名');
     }
     for (const bad of ['-1.0.0', '.', '../x', '1.0.0 && x', '']) {
-      expect(buildUpdateSpecs([{ name: 'foo', version: bad }]).error, bad).toContain('非法版本号');
+      expect(toSource(buildUpdateSpecs([{ name: 'foo', version: bad }]).error), bad).toContain('非法版本号');
     }
   });
 
   it('拒绝同一包被指定多次（npm 会静默取最后一个）', () => {
     expect(
-      buildUpdateSpecs([
-        { name: 'foo', version: '1.0.0' },
-        { name: 'foo', version: '2.0.0' },
-      ]).error,
+      toSource(
+        buildUpdateSpecs([
+          { name: 'foo', version: '1.0.0' },
+          { name: 'foo', version: '2.0.0' },
+        ]).error,
+      ),
     ).toContain('多次');
   });
 
@@ -707,12 +709,12 @@ describe('update — 参数校验（纯函数）', () => {
       'npm warn node_modules/react-dom',
       'change react 18.3.1 => 17.0.2',
     ].join('\n');
-    expect(findUnmetPeers(out, ['react'])).toEqual(['react-dom@18.3.1 需要 react@^18.3.1']);
+    expect(toSource(findUnmetPeers(out, ['react']))).toEqual(['react-dom@18.3.1 需要 react@^18.3.1']);
   });
 
   it('findUnmetPeers 只认与本次目标相关的：工程里原有的无关未满足 peer 不该阻断更新', () => {
     const out = 'npm warn peer other-lib@"^1.0.0" from someone@2.0.0';
-    expect(findUnmetPeers(out, ['react'])).toEqual([]);
+    expect(toSource(findUnmetPeers(out, ['react']))).toEqual([]);
   });
 
   it('findUnmetPeers 去重（npm 会在不同上下文重复打印同一条）', () => {
@@ -720,12 +722,12 @@ describe('update — 参数校验（纯函数）', () => {
       'npm warn peer react@"^18.3.1" from react-dom@18.3.1',
       'npm warn peer react@"^18.3.1" from react-dom@18.3.1',
     ].join('\n');
-    expect(findUnmetPeers(out, ['react'])).toHaveLength(1);
+    expect(toSource(findUnmetPeers(out, ['react']))).toHaveLength(1);
   });
 
   it('findUnmetPeers 对无 peer 行的正常输出返回空', () => {
-    expect(findUnmetPeers('added 1 package in 200ms', ['react'])).toEqual([]);
-    expect(findUnmetPeers('', ['react'])).toEqual([]);
+    expect(toSource(findUnmetPeers('added 1 package in 200ms', ['react']))).toEqual([]);
+    expect(toSource(findUnmetPeers('', ['react']))).toEqual([]);
   });
 
   it('extractPeerConflicts 保留根项目的声明行与完整报告路径，看得出冲突由哪条根依赖引起', () => {
@@ -815,7 +817,7 @@ describe('update — 流程', () => {
     const h = okHarness();
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.8.0' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('降级');
+    expect(toSource(r.message)).toContain('降级');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次 npm 都不发
   });
 
@@ -823,7 +825,7 @@ describe('update — 流程', () => {
     const h = okHarness();
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.0' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('降级');
+    expect(toSource(r.message)).toContain('降级');
   });
 
   it('读不到本地已装版本 → 拒绝（无从判断方向就不动）', async () => {
@@ -832,7 +834,7 @@ describe('update — 流程', () => {
     });
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('未知');
+    expect(toSource(r.message)).toContain('未知');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
@@ -859,7 +861,7 @@ describe('update — 流程', () => {
     });
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/schema-message', version: '0.6.0' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('第二份副本');
+    expect(toSource(r.message)).toContain('第二份副本');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次 npm 都不发
   });
 
@@ -887,7 +889,7 @@ describe('update — 流程', () => {
     });
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('预检未通过');
+    expect(toSource(r.message)).toContain('预检未通过');
     expect(h.execCalls.filter(c => c.cmd === 'npm')).toHaveLength(1); // 止于预检，没跑真装
     expect(h.deps.restartApp).not.toHaveBeenCalled();
     expect(restarts).toHaveLength(0);
@@ -899,7 +901,7 @@ describe('update — 流程', () => {
     });
     const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('workspace:');
+    expect(toSource(r.message)).toContain('workspace:');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
@@ -908,7 +910,7 @@ describe('update — 流程', () => {
     h.deps.restartApp = undefined;
     const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('重启');
+    expect(toSource(r.message)).toContain('重启');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 });
@@ -951,7 +953,7 @@ describe('串行闸（一次只允许一个包管理操作）', () => {
     await new Promise(r => setTimeout(r, 0));
     const second = await pm.install('bar');
     expect(second.ok).toBe(false);
-    expect(second.message).toContain('正在进行中');
+    expect(toSource(second.message)).toContain('正在进行中');
     release();
     expect((await first).ok).toBe(true);
   });
@@ -961,8 +963,8 @@ describe('串行闸（一次只允许一个包管理操作）', () => {
     const pm = createPackageManager(h.deps);
     const first = pm.install('foo');
     await new Promise(r => setTimeout(r, 0));
-    expect((await pm.uninstall('bar')).message).toContain('正在进行中');
-    expect((await pm.update([{ name: 'foo', version: '1.0.1' }])).message).toContain('正在进行中');
+    expect(toSource((await pm.uninstall('bar')).message)).toContain('正在进行中');
+    expect(toSource((await pm.update([{ name: 'foo', version: '1.0.1' }])).message)).toContain('正在进行中');
     release();
     await first;
   });
@@ -986,7 +988,7 @@ describe('串行闸（一次只允许一个包管理操作）', () => {
     const pm = createPackageManager(h.deps);
     expect((await pm.install('foo')).ok).toBe(false);
     const again = await pm.install('foo');
-    expect(again.message).not.toContain('正在进行中'); // 闸已释放，是真的又跑了一次
+    expect(toSource(again.message)).not.toContain('正在进行中'); // 闸已释放，是真的又跑了一次
   });
 
   it('update 成功后**不释放**：重启是延迟发生的，此窗口内的新操作会被 process.exit 腰斩', async () => {
@@ -1002,7 +1004,7 @@ describe('串行闸（一次只允许一个包管理操作）', () => {
     expect(r.restarting).toBe(true);
     const after = await pm.install('bar');
     expect(after.ok).toBe(false);
-    expect(after.message).toContain('正在进行中');
+    expect(toSource(after.message)).toContain('正在进行中');
   });
 });
 
@@ -1030,7 +1032,7 @@ describe('uninstall', () => {
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo');
     // 与在终端里 npm uninstall 一致：配置段与密钥留着，只清停用标记
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['@scope/foo'], false);
-    expect(r.message).toBe(
+    expect(toSource(r.message)).toBe(
       '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除）。它的配置留在配置文件里，重装后照原配置启动；' +
         '写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
     );
@@ -1041,7 +1043,7 @@ describe('uninstall', () => {
     const r = await createPackageManager(h.deps).uninstall('@scope/foo', { removeConfig: true });
     expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['@scope/foo'], true);
-    expect(r.message).toBe(
+    expect(toSource(r.message)).toBe(
       '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；' +
         '写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
     );
@@ -1054,7 +1056,7 @@ describe('uninstall', () => {
         throw new Error('写盘失败');
       });
       const r = await createPackageManager(h.deps).uninstall('@scope/foo', { removeConfig });
-      expect(r).toEqual({
+      expect(toSource(r)).toEqual({
         ok: true,
         message:
           '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除），但配置文件没写成（写盘失败）：' +
@@ -1114,8 +1116,8 @@ describe('uninstall', () => {
     h.deps.recoveryChannelProviders = () => ['@scope/foo'];
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('承载市场');
-    expect(r.message, '要给出可操作的出路，而不是只说不行').toContain('切换');
+    expect(toSource(r.message)).toContain('承载市场');
+    expect(toSource(r.message), '要给出可操作的出路，而不是只说不行').toContain('切换');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
@@ -1142,8 +1144,10 @@ describe('uninstall', () => {
     expect(pm.serviceDependents('@scope/foo'), '预警查询与闸同一份判定').toEqual(['@scope/agent']);
     const r = await pm.uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('@scope/agent');
-    expect(r.message, '已禁用的依赖方不算，停用它们即可放行').toContain('请先停用它们，或启用 / 安装替代提供者');
+    expect(toSource(r.message)).toContain('@scope/agent');
+    expect(toSource(r.message), '已禁用的依赖方不算，停用它们即可放行').toContain(
+      '请先停用它们，或启用 / 安装替代提供者',
+    );
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
     expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
   });
@@ -1172,7 +1176,7 @@ describe('uninstall', () => {
     expect(pm.serviceDependents('@scope/foo'), '卸载前预警同一份判定').toEqual(['@scope/recall']);
     const r = await pm.uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('@scope/recall');
+    expect(toSource(r.message)).toContain('@scope/recall');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
@@ -1216,7 +1220,7 @@ describe('uninstall', () => {
     const h = harness(['aalis', 'aalis-plugin'], request);
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok, request).toBe(false);
-    expect(r.message, request).toContain(hint);
+    expect(toSource(r.message), request).toContain(hint);
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
@@ -1229,7 +1233,7 @@ describe('uninstall', () => {
     });
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('剪枝');
+    expect(toSource(r.message)).toContain('剪枝');
   });
 
   it('读不到目标 package.json → 拒绝（无从确认它是什么就不动）', async () => {
@@ -1237,7 +1241,7 @@ describe('uninstall', () => {
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
     // 市场卸不了时给出手动的路
-    expect(r.message).toBe(
+    expect(toSource(r.message)).toBe(
       '读不到 @scope/foo 的 package.json，无法确认它是什么，市场不卸；确认要卸就在项目目录执行 npm uninstall @scope/foo 后重启',
     );
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
@@ -1248,7 +1252,7 @@ describe('uninstall', () => {
       const h = harness(['aalis-plugin']);
       const r = await createPackageManager(h.deps).uninstall(evil);
       expect(r.ok, evil).toBe(false);
-      expect(r.message, evil).toContain('非法包名');
+      expect(toSource(r.message), evil).toContain('非法包名');
       expect(
         h.execCalls.some(c => c.cmd === 'npm'),
         evil,
@@ -1327,7 +1331,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       for (const pkg of ['@aalis/plugin-webui-client', '@aalis/plugin-webui-server', '@aalis/plugin-package-manager']) {
         const r = await svc.uninstall(pkg);
         expect(r.ok, `${pkg} 必须被自锁闸拦下`).toBe(false);
-        expect(r.message, `${pkg} 的拒绝理由应指向撤销通道`).toContain('正在承载市场/管理界面本身');
+        expect(toSource(r.message), `${pkg} 的拒绝理由应指向撤销通道`).toContain('正在承载市场/管理界面本身');
       }
     } finally {
       await app.stop();
@@ -1339,7 +1343,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
     try {
       const r = await svc.uninstall('@aalis/plugin-nonexistent-probe');
       // 会因别的原因失败（读不到 package.json / 不是插件），但**不能**是自锁闸那条理由
-      expect(r.message).not.toContain('正在承载市场/管理界面本身');
+      expect(toSource(r.message)).not.toContain('正在承载市场/管理界面本身');
     } finally {
       await app.stop();
     }
@@ -1477,14 +1481,14 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
   it('配置文档没有要改的（没有停用标记、不删配置）就不写配置文件，配置文件的状况不影响卸载', async () => {
     const { TARGET, svc } = await bootReuser({ failConfigSave: true, disabled: false });
     const r = await svc.uninstall(TARGET);
-    expect(r.message).toContain('它的配置留在配置文件里');
+    expect(toSource(r.message)).toContain('它的配置留在配置文件里');
   });
 
   it('配置文件没写成：包照样卸掉，回执写明没写成的原因，不吞掉', async () => {
     const { TARGET, svc, instances } = await bootReuser({ failConfigSave: true });
     const r = await svc.uninstall(TARGET);
     expect(instances()).toEqual([]);
-    expect(r).toEqual({
+    expect(toSource(r)).toEqual({
       ok: true,
       message: `插件 ${TARGET} 已卸载（已从根依赖与 node_modules 移除），但配置文件没写成（写盘失败）：需要时手动删掉配置文件里它的停用标记。`,
     });
@@ -1532,7 +1536,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     expect(svc.serviceDependents(PROVIDER)).toEqual([CONSUMER]);
     const r = await svc.uninstall(PROVIDER);
     expect(r.ok).toBe(false);
-    expect(r.message).toContain(CONSUMER);
+    expect(toSource(r.message)).toContain(CONSUMER);
     expect(app.plugins.getPlugin(PROVIDER)?.state).toBe('active');
   });
 
@@ -1592,7 +1596,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       expect(svc.serviceDependents(PROVIDER)).toEqual([CONSUMER]);
       const r = await svc.uninstall(PROVIDER);
       expect(r.ok).toBe(false);
-      expect(r.message).toContain(CONSUMER);
+      expect(toSource(r.message)).toContain(CONSUMER);
     } finally {
       gate.resolve();
     }
@@ -1646,7 +1650,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       const r = await svc.install(pkg);
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name')?.state, '定义 name 已登记').toBe('active');
-      expect(r.ok, `市场就位判据应对齐运行时身份，实际 message=${r.message}`).toBe(true);
+      expect(r.ok, `市场就位判据应对齐运行时身份，实际 message=${toSource(r.message)}`).toBe(true);
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }
@@ -1727,7 +1731,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         gate.resolve();
         await holding;
       }
-      expect(await installing).toEqual({
+      expect(toSource(await installing)).toEqual({
         ok: true,
         message: `已安装 ${pkg}，但激活失败，已转为 error 态（缺少配置项 apiKey）`,
         plugin: pkg,

@@ -38,6 +38,8 @@ const SOURCE = {
   layerPlace: '{layer}「{place}」',
   installPack:
     '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在会话设置的{layer}里调整「语言」列表',
+  installPackGlobal:
+    '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在设置「会话默认」里调整{layer}层的「语言」一行',
 } as const;
 export type Source = typeof SOURCE;
 

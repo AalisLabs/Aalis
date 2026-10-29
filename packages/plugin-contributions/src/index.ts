@@ -13,6 +13,7 @@ import {
   contributions,
 } from '@aalis/api-contributions';
 import { definePlugin, provide } from '@aalis/core';
+import { t } from './texts.js';
 
 interface Entry {
   readonly spec: ContributionSpec;
@@ -50,7 +51,7 @@ export class Registry implements ContributionRegistry {
 
 export default definePlugin({
   name: '@aalis/plugin-contributions',
-  displayName: '贡献点',
+  displayName: t('displayName'),
   subsystem: 'core',
   provides: [contributions],
   uses: { provide },
