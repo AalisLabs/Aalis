@@ -11,7 +11,9 @@
  * - 默认拒绝 visibility='restricted' 的工具暴露；config.allowRestricted 可改
  * - config.toolGroups 白名单：仅暴露指定分组（空数组=全部允许）
  * - config.bind 默认 127.0.0.1（仅本机访问）
+ * - 每个请求要带 Authorization: Bearer <token>（必填的密钥字段），不对回 401
  */
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type ToolCallRequest, type ToolService, tools as toolsService } from '@aalis/api-tools';
 import {
@@ -38,6 +40,18 @@ const configSchema = defineConfig({
     onInvalid: 'error',
   },
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1', onInvalid: 'error' },
+  token: {
+    type: 'string',
+    label: '访问令牌',
+    description:
+      '外部 MCP 客户端连 /sse 与 /messages 时要带请求头 Authorization: Bearer <令牌>。至少 32 个可见 ASCII 字符、不含空白，' +
+      '可用 openssl rand -hex 32 生成；存进密钥存储，WebUI 不回显',
+    required: true,
+    secret: true,
+    onInvalid: 'error',
+    // 持有令牌就能调暴露的工具，防猜靠令牌够长：32 个字符起，与 webui-server 的固定 token 同一下限；要放进请求头，只收可见 ASCII
+    validate: value => (/^[\x21-\x7E]{32,}$/.test(String(value)) ? undefined : '至少 32 个可见 ASCII 字符（不含空白）'),
+  },
   toolGroups: {
     type: 'multiselect',
     label: '允许的工具分组（空=全部，受受限开关约束）',
@@ -55,6 +69,21 @@ const configSchema = defineConfig({
   },
 });
 type Config = ConfigOf<typeof configSchema>;
+
+/** 带了 Bearer 令牌、令牌却不对 */
+const WRONG_TOKEN = '令牌不对';
+
+/**
+ * 请求带的令牌对不对：Authorization 要是「Bearer <令牌>」（方案名不分大小写，后面的空格可以不止一个）。不对时交回原因（写进
+ * debug 日志，不含令牌），对时为 undefined。两边先取 SHA-256 摘要再定时比较，耗时与令牌的内容和长度无关
+ */
+function rejectReason(header: string | undefined, token: string): string | undefined {
+  if (!header) return '没带 Authorization';
+  const given = /^bearer +(.+)$/i.exec(header)?.[1];
+  if (given === undefined) return '方案不是 Bearer';
+  const digest = (s: string) => createHash('sha256').update(s).digest();
+  return timingSafeEqual(digest(given), digest(token)) ? undefined : WRONG_TOKEN;
+}
 
 const uses = {
   tools: toolsService,
@@ -88,6 +117,16 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
   });
 
   async function handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const rejected = rejectReason(req.headers.authorization, config.token);
+    if (rejected) {
+      logger.use.debug(`MCP 请求未通过认证（${rejected}）：${req.method} ${url.pathname}`);
+      // RFC 6750 第 3.1 节：只有令牌不对时质询带错误码，没带认证信息、方案不支持时不带
+      const challenge = rejected === WRONG_TOKEN ? 'Bearer error="invalid_token"' : 'Bearer';
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': challenge });
+      res.end(JSON.stringify({ error: 'invalid_token', error_description: 'missing or invalid bearer token' }));
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/sse') {
       // 每条新连接按当前提供者构建：工具服务换人之后连上来的 client 直接用新实例。
       // 提供者短暂缺席（换人的空档）时不建会话，让 client 重连。
@@ -157,7 +196,11 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
         /* ignore */
       }
     }
-    await new Promise<void>(resolve => httpServer.close(() => resolve()));
+    await new Promise<void>(resolve => {
+      httpServer.close(() => resolve());
+      // close() 只关闲着的连接，客户端开着却还没发请求的连接要等对端自己断：一并断开，停用不等它们
+      httpServer.closeAllConnections();
+    });
     logger.use.info('MCP server 已停止');
   });
 }
@@ -167,7 +210,7 @@ async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promi
  * 不绑定 transport；调用方负责 `server.connect(transport)`。
  * 导出以便集成测试通过 InMemoryTransport 直连，避开 HTTP/SSE 层。
  */
-export function buildMcpServer(tools: ToolService, config: Config): McpServer {
+export function buildMcpServer(tools: ToolService, config: Pick<Config, 'allowRestricted' | 'toolGroups'>): McpServer {
   const server = new McpServer({ name: 'aalis-mcp-server', version: '0.1.0' }, { capabilities: { tools: {} } });
 
   // 暴露策略（allowRestricted + toolGroups 白名单）：ListTools 与 CallTool 必须共用同一谓词，

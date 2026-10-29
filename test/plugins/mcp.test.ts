@@ -151,8 +151,6 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
     });
 
     const server = buildMcpServer(tools, {
-      port: 0,
-      bind: '127.0.0.1',
       toolGroups: [],
       allowRestricted: opts.allowRestricted ?? false,
     });
@@ -241,8 +239,6 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
       handler: async () => 'b-ok',
     });
     const server = buildMcpServer(tools, {
-      port: 0,
-      bind: '127.0.0.1',
       toolGroups: ['a'], // 只暴露 a 组
       allowRestricted: true,
     });
@@ -280,8 +276,6 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
       handler: async () => 'x',
     });
     const server = buildMcpServer(tools, {
-      port: 0,
-      bind: '127.0.0.1',
       toolGroups: ['*'],
       allowRestricted: true,
     });

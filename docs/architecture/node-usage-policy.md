@@ -79,6 +79,7 @@
 |  |  | `runtime/src/providers.ts` | `randomBytes` 生成配置文件原子写临时文件名里的随机段 |
 |  |  | `plugin-session-server/src/approvals.ts` | `createHash` 同步算审批的内容哈希 |
 |  |  | `plugin-session-server/src/files.ts` | `createHmac` / `timingSafeEqual` 同步签发与核验文件句柄 |
+|  |  | `plugin-mcp-server` | `createHash` / `timingSafeEqual` 定时比较访问令牌 |
 | `node:buffer` / `node:path` | 直接使用 | 全部 | 纯函数 / Web 标准不覆盖，无 I/O |
 | `node:url` | `fileURLToPath` / `pathToFileURL` 推荐使用；`URL` 用全局 | 全部 | 仅用作路径互转时引入 |
 
@@ -99,8 +100,8 @@
 - **`plugin-webui-server`** — `node:http`（`createServer`）+ `node:fs`（`existsSync`）
   Express + ws 实现的 WebUI 后台。`existsSync` 用于探测 `webui-client` 的 dist 目录是否存在；服务启动后浏览器拉取的用户文件都走 `storage.createReadStream`，不直接 `fs.readFile` 工作区内容。`autoOpen` 打开浏览器走 `ProcessService.spawn`。
 
-- **`plugin-mcp-server`** — `node:http`（`createServer`）
-  HTTP/SSE 形式的 MCP 服务端，对外暴露工具/资源/提示词。
+- **`plugin-mcp-server`** — `node:http`（`createServer`）+ `node:crypto`（`createHash` / `timingSafeEqual`）
+  HTTP/SSE 形式的 MCP 服务端，对外暴露工具/资源/提示词。每个请求的访问令牌两边先取 SHA-256 摘要再定时比较：Web Crypto 没有定时比较。
 
 - **`plugin-publish-review/src/preview.ts`** — `node:http`（`createServer`）
   作品审核的隔离预览：只监听 `127.0.0.1:0`，随机令牌仅在内存，关闭时销毁连接。不放行整个审核包。

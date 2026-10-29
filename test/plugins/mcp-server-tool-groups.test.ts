@@ -1,4 +1,3 @@
-import { connect } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +5,9 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import mcpServer, { buildMcpServer } from '../../packages/plugin-mcp-server/src/index.js';
 import { parseConfig, validateConfig } from '../../packages/schema-config/src/index.js';
-import { freePort } from '../helpers/net.js';
+import { freePort, isListening } from '../helpers/net.js';
+
+const TOKEN = 'zz-placeholder-token-0123456789abcdef';
 
 // ════════════════════════════════════════════════════════════
 // toolGroups 是分组名的字符串数组（multiselect）。此前 schema 声明成对象数组 [{ name }]，
@@ -29,17 +30,6 @@ function captureLogger() {
   return { logger, errors, infos };
 }
 
-/** 端口上是否有人在监听 */
-function isListening(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const sock = connect(port, '127.0.0.1', () => {
-      sock.destroy();
-      resolve(true);
-    });
-    sock.on('error', () => resolve(false));
-  });
-}
-
 const apps: App[] = [];
 afterEach(async () => {
   for (const a of apps.splice(0)) await a.stop().catch(() => {});
@@ -56,7 +46,13 @@ async function start(toolGroups: unknown, port?: number) {
     getSummaries: () => [],
     execute: async () => ({ content: '' }),
   } as never);
-  await app.plugins.register(mcpServer, { port: listenPort, bind: '127.0.0.1', toolGroups, allowRestricted: false });
+  await app.plugins.register(mcpServer, {
+    port: listenPort,
+    bind: '127.0.0.1',
+    token: TOKEN,
+    toolGroups,
+    allowRestricted: false,
+  });
   await app.plugins.idle();
   const entry = app.plugins.getPlugin(mcpServer.name);
   return { port: listenPort, errors, infos, state: entry?.state, error: entry?.error };
@@ -67,6 +63,7 @@ describe('plugin-mcp-server toolGroups', () => {
     const issues = validateConfig(mcpServer.configSchema, {
       port: 7861,
       bind: '127.0.0.1',
+      token: TOKEN,
       toolGroups: ['search', '*'],
       allowRestricted: false,
     });
@@ -105,7 +102,7 @@ describe('plugin-mcp-server toolGroups', () => {
   });
 
   it('数字分组仅匹配同名字符串分组，不能打开其它分组', async () => {
-    const parsed = parseConfig(mcpServer.configSchema!, { toolGroups: ['search', 1] });
+    const parsed = parseConfig(mcpServer.configSchema!, { token: TOKEN, toolGroups: ['search', 1] });
     const execute = vi.fn(async () => ({ content: 'ok' }));
     const entries = [
       { name: 'search_tool', groups: ['search'] },

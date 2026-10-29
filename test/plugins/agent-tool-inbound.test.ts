@@ -192,8 +192,6 @@ describe('ToolCallContext.inbound：其他调用方不填写', () => {
       },
     };
     const server = buildMcpServer(stub as never, {
-      port: 0,
-      bind: '127.0.0.1',
       toolGroups: [],
       allowRestricted: false,
     });

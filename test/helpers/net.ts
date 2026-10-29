@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createServer, request } from 'node:http';
-import type { AddressInfo, Socket } from 'node:net';
+import { type AddressInfo, connect, type Socket } from 'node:net';
 import { vi } from 'vitest';
 
 /** 取一个空闲端口：先在 127.0.0.1:0 上开探针拿到系统分配的端口，关掉后交给被测服务 */
@@ -10,6 +10,17 @@ export async function freePort(): Promise<number> {
   const { port } = probe.address() as AddressInfo;
   await new Promise<void>(r => probe.close(() => r()));
   return port;
+}
+
+/** 端口上是否有人在监听 */
+export function isListening(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const sock = connect(port, '127.0.0.1', () => {
+      sock.destroy();
+      resolve(true);
+    });
+    sock.on('error', () => resolve(false));
+  });
 }
 
 /** webui-server 在 app:ready 时才监听：等登录状态接口答得上来 */
