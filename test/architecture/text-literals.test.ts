@@ -35,7 +35,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '单元 D'],
   ['plugin-paper', '单元 D'],
   ['plugin-publish-review', '单元 D'],
-  ['plugin-remote-agent-cursor', '单元 D'],
   ['plugin-tool-onebot', '单元 D'],
   ['plugin-user-profile', '单元 D'],
   ['plugin-user-relation', '单元 D'],

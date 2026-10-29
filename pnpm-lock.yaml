@@ -2754,6 +2754,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.2 <1.0.0
         version: link:../util-network-guard

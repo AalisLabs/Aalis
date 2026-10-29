@@ -10,6 +10,7 @@ import { remoteAgent } from '@aalis/api-remote-agent';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { CursorProvider, type CursorProviderOptions } from './provider.js';
+import { t } from './texts.js';
 
 /** 事件流断开后重连的退避起点 */
 const RETRY_BASE_MS = 1_000;
@@ -22,69 +23,67 @@ const configSchema = defineConfig({
     label: 'API Key',
     required: true,
     secret: true,
-    description: 'Cursor 后台生成的 API key。只在宿主进程里用，不传给远端代理',
+    description: t('apiKeyDescription'),
   },
   baseUrl: {
     type: 'string',
-    label: 'API 地址',
+    label: t('baseUrlLabel'),
     default: 'https://api.cursor.com',
     onInvalid: 'error',
-    description: 'Cloud Agents API 的根地址，插件在其后拼 /v1/…',
+    description: t('baseUrlDescription'),
   },
   model: {
-    label: '模型',
-    description:
-      '建代理用的模型。参数须写全，并等于 /v1/models 列出的某个变体，第一次使用时校验，不成立时提供者不可用；只写模型 id 会按默认变体（fast、500k）计费',
+    label: t('modelLabel'),
+    description: t('modelDescription'),
     fields: {
-      id: { type: 'string', label: '模型 id', default: 'grok-4.7' },
+      id: { type: 'string', label: t('modelIdLabel'), default: 'grok-4.7' },
       params: {
         type: 'map',
-        label: '模型参数',
+        label: t('modelParamsLabel'),
         default: { reasoning_effort: 'high', context: '256k', fast: 'false' },
         onInvalid: 'error',
-        description: '参数名到取值；布尔值须加引号写成字符串（如 fast: "false"），写错则不激活，避免改变费用档位',
+        description: t('modelParamsDescription'),
       },
     },
   },
   egressMode: {
     type: 'select',
-    label: '出网方式',
+    label: t('egressModeLabel'),
     default: 'unknown',
     options: [
-      { label: '不出网', value: 'none' },
-      { label: '白名单', value: 'allowlist' },
-      { label: '不限', value: 'open' },
-      { label: '未知', value: 'unknown' },
+      { label: t('egressNone'), value: 'none' },
+      { label: t('egressAllowlist'), value: 'allowlist' },
+      { label: t('egressOpen'), value: 'open' },
+      { label: t('egressUnknown'), value: 'unknown' },
     ],
-    description:
-      'owner 在 Cursor 后台给云端代理设的出网方式。接口读不到它，Aalis 无法核实，白纸页与诊断项标「未核实」；未知按不限计',
+    description: t('egressModeDescription'),
   },
   createTimeoutSeconds: {
     type: 'number',
-    label: '建代理超时（秒）',
+    label: t('createTimeoutSecondsLabel'),
     default: 30,
     min: 5,
-    description: '建代理的请求要约 60 秒才回；超时后用同一 agentId 取回，不会重复建',
+    description: t('createTimeoutSecondsDescription'),
   },
   requestTimeoutSeconds: {
     type: 'number',
-    label: '请求超时（秒）',
+    label: t('requestTimeoutSecondsLabel'),
     default: 30,
     min: 15,
-    description: '其余请求的超时；实测单次请求有时要 5 秒以上',
+    description: t('requestTimeoutSecondsDescription'),
   },
   streamIdleSeconds: {
     type: 'number',
-    label: '事件流空闲超时（秒）',
+    label: t('streamIdleSecondsLabel'),
     default: 60,
     min: 45,
-    description: '事件流连上后约 30 秒才有第一次心跳，之后每 15 到 30 秒一次；超过这么久没有任何数据就断开重连',
+    description: t('streamIdleSecondsDescription'),
   },
   reconcileIgnoreNames: {
     type: 'list',
-    label: 'owner 自管的代理名',
+    label: t('reconcileIgnoreNamesLabel'),
     default: [],
-    description: '列举账号下的代理时跳过这些名字，对账不把它们当作账本外的代理',
+    description: t('reconcileIgnoreNamesDescription'),
   },
 });
 
@@ -92,14 +91,14 @@ type ParsedCursorConfig = ConfigOf<typeof configSchema>;
 
 function readOptions(raw: ParsedCursorConfig): CursorProviderOptions {
   const apiKey = raw.apiKey.trim();
-  if (!apiKey) throw missingConfigError('apiKey', '在 Cursor 后台生成');
+  if (!apiKey) throw missingConfigError('apiKey', t('apiKeyNote'));
   const baseUrl = raw.baseUrl || configSchema.baseUrl.default;
   if (!URL.canParse(baseUrl) || new URL(baseUrl).username || new URL(baseUrl).password) {
-    throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+    throw configError(t('baseUrlNotPlain'));
   }
   // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
   if (/[?#]/.test(baseUrl)) {
-    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    throw configError(t('baseUrlHasQuery'));
   }
   return {
     apiKey,
@@ -122,7 +121,7 @@ const uses = { provide, lifecycle, logger, config };
 
 export default definePlugin({
   name: '@aalis/plugin-remote-agent-cursor',
-  displayName: 'Cursor 云端代理',
+  displayName: t('displayName'),
   subsystem: 'external',
   reusable: true,
   configSchema,
