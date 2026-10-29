@@ -55,6 +55,7 @@ describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
     await app.plugins.register(mcpServer, {
       port,
       bind: '127.0.0.1',
+      token: 'zz-placeholder-token-0123456789abcdef',
       toolGroups: [],
       allowRestricted: false,
     });

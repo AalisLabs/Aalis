@@ -28,7 +28,7 @@ HTTP + SSE。Aalis 是常驻进程，stdio 已被日志占用，因此不使用 
 - SSE endpoint: `http://<bind>:<port>/sse`
 - POST messages: `http://<bind>:<port>/messages`
 
-> 本插件同一时间只维护一个活跃 SSE 连接：新的 `GET /sse` 会关闭旧连接；没有活跃连接时 `POST /messages` 返回 409。
+> 本插件同一时间只维护一个活跃 SSE 连接：带对令牌的新 `GET /sse` 会关闭旧连接；没有活跃连接时 `POST /messages` 返回 409。
 
 ## 配置
 
@@ -37,6 +37,7 @@ plugins:
   "@aalis/plugin-mcp-server":
     port: 7861
     bind: 127.0.0.1
+    token: "<至少 32 个可见 ASCII 字符的随机串>"   # 密钥：启动时移进 secrets.yaml
     toolGroups:               # 白名单分组（空数组或 ['*'] = 全部允许）
       - search
       - system
@@ -47,6 +48,7 @@ plugins:
 |---|---|---|---|
 | `port` | number | `7861` | 监听端口：必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。 |
 | `bind` | string | `'127.0.0.1'` | 监听地址 |
+| `token` | string（密钥，必填） | 无 | 外部 MCP 客户端连 `/sse` 与 `/messages` 时要带请求头 `Authorization: Bearer <令牌>`。至少 32 个可见 ASCII 字符、不含空白，可用 `openssl rand -hex 32` 生成；存进密钥存储，WebUI 不回显。没填时插件标待配置、不监听。 |
 | `toolGroups` | multiselect | `[]` | 允许的工具分组（空=全部，受受限开关约束）：分组名的字符串数组；空列表或 `['*']` = 暴露所有分组的工具（仍受 allowRestricted 约束）。非数组或含对象、布尔成员时拒绝激活；数字成员转换为字符串分组名，仍按白名单匹配。`null` 按缺省空数组处理。 |
 | `allowRestricted` | boolean | `false` | 允许暴露 restricted（受限）工具 |
 
@@ -54,18 +56,19 @@ plugins:
 
 - **`ListTools` 与 `CallTool` 共用同一个暴露判定**（allowRestricted + toolGroups 白名单）：client 按工具名直接调用未暴露的工具时，返回错误 `工具不可用或未暴露: <工具名>`。toolGroups 非空时，未归入任何分组的工具不会暴露。
 - 工具执行仍经 `ToolService.execute`。若加载了 [plugin-authority](plugin-authority.md)，其注入的 ExecutionGuard（权限守卫）同样生效：MCP 调用以 platform `mcp`、userId `mcp-client` 身份参与等级裁决，因此即使开启 allowRestricted，restricted/sensitive 工具仍可能被拒；声明了 confirm 的工具调用不在由入站消息驱动的回合里，不能产生 owner 审批，直接被拒。
-- 没有外部 client 鉴权 —— 完全依赖网络层（`127.0.0.1` + 防火墙）做隔离。
+- 每个请求都要带 `Authorization: Bearer <token>`，否则回 401，带 `WWW-Authenticate: Bearer`（令牌不对时加 `error="invalid_token"`），不建会话，也不挤掉已经连上的客户端。这是静态 Bearer 令牌，不是 MCP 规范的 OAuth 授权：只会走 OAuth、配不了请求头的客户端连不上，会以 OAuth 发现或注册失败报错。不校验 Host 与 Origin：借 DNS 重绑连上来的网页拿不到令牌。
 
 ## 外部 client 配置示例
 
-以支持 HTTP+SSE 传输的 MCP client 为例（各 host 配置格式不同，以其文档为准）：
+以支持 HTTP+SSE 传输、能配请求头的 MCP client 为例（令牌是静态 Bearer 令牌，不走 OAuth；各 host 配置格式不同，以其文档为准；只认 URL 的客户端可以经能加请求头的本地桥接转发）：
 
 ```json
 {
   "mcpServers": {
     "aalis": {
       "type": "sse",
-      "url": "http://127.0.0.1:7861/sse"
+      "url": "http://127.0.0.1:7861/sse",
+      "headers": { "Authorization": "Bearer <令牌>" }
     }
   }
 }

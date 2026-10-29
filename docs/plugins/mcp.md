@@ -23,7 +23,7 @@ Aalis 内部的 `ToolService` 抽象与 MCP 协议是同构的：
 ## 安全边界
 
 - **plugin-mcp-client**：外部 server 是不受信任的第三方进程，工具档位默认 `auto`——按工具注解分档：自称只读（readOnlyHint）→ sensitive（等级 1），有破坏提示或未声明→ restricted（等级 2）。确认纯查询类 server 才显式放宽为 `public`
-- **plugin-mcp-server**：默认 `bind: 127.0.0.1` + `allowRestricted: false`，`ListTools` 与 `CallTool` 两端都过滤 restricted；工具执行仍走 Aalis 完整能力统一闸
+- **plugin-mcp-server**：每个请求要带令牌（Authorization: Bearer），默认 `bind: 127.0.0.1` + `allowRestricted: false`，`ListTools` 与 `CallTool` 两端都过滤 restricted；工具执行仍走 Aalis 完整能力统一闸
 
 ## 工具命名
 

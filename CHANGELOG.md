@@ -589,6 +589,10 @@
 - 宿主配置的 `network` 段写错一处（不是对象，有 `blockPrivate`、`denyCidrs`、`allowedPorts` 之外的字段，`blockPrivate` 不是布尔，`denyCidrs`、`allowedPorts` 不是列表，或有一条不是网段、不是 1 到 65535 的整数），整份网络策略就处于「配置有误」，经出网闸的请求一律失败，直到改对：`safeFetch` 报「网络策略配置有误：<字段> 的 <原值>…」，浏览器导航以 `ERR_SOCKS_CONNECTION_FAILED` 失败、说明里点到这一原因，原因记在 debug 日志里；权限插件在激活与宿主文档每次变化时各记一条 warn，点名字段与原值。`setNetworkPolicy` 不再抛错，交回这句报错（写对时为 `undefined`），权限插件照常激活。此前写错的网段静默丢掉，`10.0.0.0/` 拒掉全部 IPv4，不是字符串的条目或不是列表的 `denyCidrs` 让权限插件激活失败、策略回到默认；`allowedPorts` 写成单个数字时不限端口，写成字符串时拒掉全部端口；`network` 不是对象、字段名写错或 `blockPrivate` 不是布尔时静默按默认处理。
 - 改 `network` 段即时生效：权限插件在宿主配置文档变了时重新注入。此前只在权限插件激活时注入一次，改了要重启。
 
+### MCP 服务端要令牌（@aalis/plugin-mcp-server）
+
+- 新增必填的 `token`（密钥，至少 32 个可见 ASCII 字符、不含空白），没填时插件待配置、不监听。`/sse`、`/messages` 和其余路径只收带 `Authorization: Bearer <token>` 的请求，其余一律回 401，不建会话，也不挤掉已经连上的客户端。这是静态令牌，不是 MCP 规范的 OAuth 授权：只会走 OAuth、配不了请求头的客户端连不上。导出的 `buildMcpServer` 第二个参数只收 `allowRestricted` 与 `toolGroups`。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
