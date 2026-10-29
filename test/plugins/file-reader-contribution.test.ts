@@ -1,11 +1,13 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type MediaService, media } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   type StorageEntry,
   type StorageListResult,
@@ -34,6 +36,8 @@ import {
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { png, storedZip } from '../fixtures/file-heads.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { storedRoom } from '../fixtures/rooms.js';
+import { sessionTableManager } from '../fixtures/session-table.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -162,9 +166,17 @@ interface Fixture {
   dispose(): Promise<void>;
 }
 
+/**
+ * sessions 给了时登记会话表桩（房间记录用 storedRoom），owners 给了时登记只实现 isOwner 的权限桩；都不给时判不出受众，
+ * 按 internal 照旧内联
+ */
 async function setup(
   config: Record<string, unknown> = {},
-  opts: { media?: Partial<MediaService> } = {},
+  opts: {
+    media?: Partial<MediaService>;
+    sessions?: Record<string, unknown>[];
+    owners?: Array<{ platform: string; userId: string }>;
+  } = {},
 ): Promise<Fixture> {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
@@ -172,6 +184,13 @@ async function setup(
   const store = createMemoryStorage();
   host.provide.use(storage, store);
   if (opts.media) host.provide.use(media, opts.media as MediaService);
+  if (opts.sessions) host.provide.use(sessionManager, sessionTableManager(opts.sessions));
+  const { owners } = opts;
+  if (owners) {
+    const isOwner = (platform: string, userId: string) =>
+      owners.some(o => o.platform === platform && o.userId === userId);
+    host.provide.use(authority, { isOwner } as never);
+  }
 
   // agent 桩：只负责把插件的 preprocessor 交到测试手上（file-reader 走
   // registerPreprocessor 分支，因为桩实现了这个可选方法）
@@ -275,6 +294,20 @@ async function assemble(
 
 function contentOf(msg?: Message): string {
   return typeof msg?.content === 'string' ? msg.content : '';
+}
+
+/** 注入的文件清单列出的文件名，按列出的先后 */
+function listed(text: string): string[] {
+  return text
+    .split('\n')
+    .filter(l => l.startsWith('- '))
+    .map(l => l.slice(2, l.indexOf(' (ID:')));
+}
+
+/** 清单里最后一个文件那一行的下一行 */
+function afterList(text: string): string | undefined {
+  const lines = text.split('\n');
+  return lines[lines.findLastIndex(l => l.startsWith('- ')) + 1];
 }
 
 /** 对照探针：用真插件登记一条贡献，全局键前缀即插件名（码元序可控）。 */
@@ -585,6 +618,72 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       await fx.dispose();
     }
   });
+
+  it('文件多于 20 个：清单只列最近的 20 个，列表末尾写更早的几个没列出；本轮新上传的照列，历史补满 20 个', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (now += 1000));
+    const fx = await setup();
+    try {
+      const uploads = [];
+      for (let i = 1; i <= 25; i++) uploads.push(await fx.upload('s-many', `f${i}.txt`, `第 ${i} 个文件的正文`));
+      const recent = (n: number) => Array.from({ length: n }, (_, i) => `f${25 - i}.txt`);
+      const MORE = '更早的 5 个文件没有列出，用 list_uploaded_files 查看。';
+
+      const history = contentOf((await assemble(fx, { sessionId: 's-many', lastUser: '那些文件呢' })).injected);
+      expect(history).toContain('本会话历史上传文件 (25 个，当前轮次未新上传)');
+      expect(listed(history)).toEqual(recent(20));
+      expect(afterList(history)).toBe(MORE);
+
+      const turn = contentOf(
+        (await assemble(fx, { sessionId: 's-many', lastUser: '这个呢', inputs: [uploads[24].message] })).injected,
+      );
+      expect(turn).toContain('本轮用户新上传了 1 个文件');
+      expect(turn).toContain('历史还有 24 个文件可用');
+      expect(listed(turn), '本轮 1 个，历史 19 个').toEqual(recent(20));
+      expect(afterList(turn)).toBe(MORE);
+    } finally {
+      await fx.dispose();
+      clock.mockRestore();
+    }
+  });
+
+  it('恰好 20 个时没有「更早的」一句；第 21 个上传后，列表的下一行写更早的 1 个', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (now += 1000));
+    const fx = await setup();
+    try {
+      for (let i = 1; i <= 20; i++) await fx.upload('s-edge', `f${i}.txt`, `第 ${i} 个文件的正文`);
+      const history = async () =>
+        contentOf((await assemble(fx, { sessionId: 's-edge', lastUser: '那些文件呢' })).injected);
+      const twenty = await history();
+      expect(listed(twenty)).toHaveLength(20);
+      expect(twenty).not.toContain('更早的');
+      await fx.upload('s-edge', 'f21.txt', '第 21 个文件的正文');
+      expect(afterList(await history())).toBe('更早的 1 个文件没有列出，用 list_uploaded_files 查看。');
+    } finally {
+      await fx.dispose();
+      clock.mockRestore();
+    }
+  });
+
+  it('一轮新上传多于 20 个：抬头写本轮的全部个数，只列最近的 20 个、都是本轮的，没有历史那一段，更早的个数连历史一起算', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (now += 1000));
+    const fx = await setup();
+    try {
+      for (let i = 1; i <= 3; i++) await fx.upload('s-burst', `h${i}.txt`, `历史第 ${i} 个`);
+      const inputs = [];
+      for (let i = 1; i <= 22; i++) inputs.push((await fx.upload('s-burst', `t${i}.txt`, `本轮第 ${i} 个`)).message);
+      const turn = contentOf((await assemble(fx, { sessionId: 's-burst', lastUser: '看看', inputs })).injected);
+      expect(turn).toContain('本轮用户新上传了 22 个文件');
+      expect(turn).not.toContain('历史还有');
+      expect(listed(turn)).toEqual(Array.from({ length: 20 }, (_, i) => `t${22 - i}.txt`));
+      expect(afterList(turn)).toBe('更早的 5 个文件没有列出，用 list_uploaded_files 查看。');
+    } finally {
+      await fx.dispose();
+      clock.mockRestore();
+    }
+  });
 });
 
 /** 最小合法 PDF（未压缩、纯 ASCII，xref 偏移按实际字节算）：一页 Helvetica 写一行文字 */
@@ -611,12 +710,13 @@ function minimalPdf(text: string): Buffer {
 }
 
 describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
-  it('上传小 PDF → 正文抽出并 inline 到附件描述', async () => {
+  it('上传小 PDF → 正文抽出并 inline 到附件描述，按存的时候判出的格式提取，不从存储再读一遍', async () => {
     const fx = await setup();
     try {
-      const { desc } = await fx.upload('s-pdf', 'hello.pdf', minimalPdf('Hello unpdf'), 'application/pdf');
+      const { id, desc } = await fx.upload('s-pdf', 'hello.pdf', minimalPdf('Hello unpdf'), 'application/pdf');
       expect(desc).toContain('--- 文件内容 ---');
       expect(desc).toContain('Hello unpdf');
+      expect(fx.store.reads).not.toContain(`pluginData:/file-reader/s-pdf/${id}.pdf`);
     } finally {
       await fx.dispose();
     }
@@ -852,6 +952,167 @@ describe('plugin-file-reader: 按内容判文本与文档', () => {
       const listed = await toolService.execute('list_uploaded_files', {}, toolRequest({ sessionId: 's-t' }));
       expect(listed.content).toMatch(/- a\.ts \(ID: [0-9a-f]{16}, 类型: 文本,/);
       expect(listed.content).toMatch(/- hello\.pdf \(ID: [0-9a-f]{16}, 类型: PDF,/);
+    } finally {
+      await fx.dispose();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 受众里有别人的会话（房间类别 room：群、多人房间、对端不是 owner 的私聊，子会话取根会话的）里上传的文件不内联，描述只写
+// 名字、ID、大小与按需读取的说明，与超过内联上限同一句；上传时不解析，读的时候才解析文档、识别内嵌图片，读过缓存了正文的照样
+// 不内联。只看字节就知道读不出的（旧版 Office、媒体、认不出的格式）上传时就写明原因。受众只有 owner 的会话与判不出的
+// （internal）照旧按 autoInlineLimit 内联；权限服务不在时没有人是 owner。
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: 受众里有别人的会话不内联', () => {
+  const GROUP = 'onebot:<机器人账号>:group:<占位群号>';
+  const OWNER_DM = 'onebot:<机器人账号>:private:<占位账号O>';
+  const OWNERS = [{ platform: 'onebot', userId: '<占位账号O>' }];
+  const ROOMS = [storedRoom(GROUP), storedRoom(OWNER_DM)];
+  const TEXT = '群文件的正文'.repeat(5);
+
+  /** 不内联的描述：名字、ID、大小与按需读取的说明 */
+  const notInlined = (name: string, id: string, bytes: number) =>
+    `[文件: ${name} (ID: ${id}，${(bytes / 1024).toFixed(1)} KB)\n说明：正文没有放进上下文，需要时用 read_uploaded_file(fileId="${id}") 读取，可传 maxLength 控制返回长度。]`;
+
+  it('群里上传的文本：不内联，只写名字、ID、大小与按需读取的说明', async () => {
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS });
+    try {
+      const { id, desc } = await fx.upload(GROUP, 'notes.txt', TEXT);
+      expect(desc).toBe(notInlined('notes.txt', id, Buffer.byteLength(TEXT)));
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('群会话的子会话：取根会话的房间类别，不内联', async () => {
+    const CHILD = 'zz-child-of-group';
+    const child = {
+      id: CHILD,
+      parentId: GROUP,
+      children: [],
+      status: 'waiting',
+      config: {},
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const fx = await setup({}, { sessions: [...ROOMS, child], owners: OWNERS });
+    try {
+      const { id, desc } = await fx.upload(CHILD, 'notes.txt', TEXT);
+      expect(desc).toBe(notInlined('notes.txt', id, Buffer.byteLength(TEXT)));
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('群里经存储地址与网址来的文件（QQ 群文件的来路）：同样不内联，描述带上地址', async () => {
+    const server = createServer((_req, res) => res.end('hi'));
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；结束时复原
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS });
+    try {
+      /** 带地址的描述压成一行（见 formatAttachmentRef），地址写在末尾 */
+      const withRef = (id: string, ref: string) =>
+        `[文件: notes.txt (ID: ${id}，0.0 KB) 说明：正文没有放进上下文，需要时用 read_uploaded_file(fileId="${id}") 读取，可传 maxLength 控制返回长度。 | ref:${ref}]`;
+      const uri = 'data:/files/s/onebot/0123456789abcdef.bin';
+      await fx.store.writeFile(uri, 'hello');
+      const stored = await fx.attach(GROUP, { kind: 'file', data: uri, name: 'notes.txt' });
+      expect(stored.desc).toBe(withRef(await computeFileId(GROUP, Buffer.from('hello')), uri));
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/notes.txt`;
+      const fetched = await fx.attach(GROUP, { kind: 'file', data: url, name: 'notes.txt' });
+      expect(fetched.desc).toBe(withRef(await computeFileId(GROUP, Buffer.from('hi')), url));
+    } finally {
+      await fx.dispose();
+      setNetworkPolicy({ blockPrivate: true });
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('owner 的私聊：照旧内联', async () => {
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS });
+    try {
+      const { desc } = await fx.upload(OWNER_DM, 'notes.txt', TEXT);
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain(TEXT);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('权限服务不在：没有人是 owner，owner 的私聊也按受众里有别人不内联', async () => {
+    const fx = await setup({}, { sessions: ROOMS });
+    try {
+      const { id, desc } = await fx.upload(OWNER_DM, 'notes.txt', TEXT);
+      expect(desc).toBe(notInlined('notes.txt', id, Buffer.byteLength(TEXT)));
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('owner 的私聊里超过内联上限：与群里不内联同一句', async () => {
+    const fx = await setup({ autoInlineLimit: 10 }, { sessions: ROOMS, owners: OWNERS });
+    try {
+      const { id, desc } = await fx.upload(OWNER_DM, 'notes.txt', TEXT);
+      expect(desc).toBe(notInlined('notes.txt', id, Buffer.byteLength(TEXT)));
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('群里上传带内嵌图片的 DOCX：上传、重传与重写描述都不识图，读的时候才识别，识别过的缓存；缓存了正文以后重传与重写描述照样不内联', async () => {
+    let calls = 0;
+    const describeImage = async () => {
+      calls++;
+      return '一张照片';
+    };
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS, media: { describeImage } });
+    try {
+      const toolService = await fx.tools();
+      const docx = minimalDocx([], { 'image1.png': JPEG_HEAD });
+      const { id, desc, message } = await fx.upload(GROUP, 'pic.docx', docx, DOCX_MIME);
+      const shown = notInlined('pic.docx', id, docx.length);
+      expect(desc).toBe(shown);
+      await fx.upload(GROUP, 'pic.docx', docx, DOCX_MIME);
+      const attachment = message.attachments?.[0];
+      if (!attachment) throw new Error('没有附件');
+      expect((await fx.attach(GROUP, attachment)).desc, '已处理过的附件重写描述').toBe(shown);
+      expect(calls).toBe(0);
+      const read = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: GROUP }));
+      expect(read.content).toContain('[图片1: 一张照片]');
+      expect(calls).toBe(1);
+      await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: GROUP }));
+      expect(calls).toBe(1);
+      expect((await fx.upload(GROUP, 'pic.docx', docx, DOCX_MIME)).desc, '缓存了正文以后重传').toBe(shown);
+      expect((await fx.attach(GROUP, attachment)).desc, '缓存了正文以后重写描述').toBe(shown);
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('群里上传只看字节就知道读不出的（旧版 Office、认不出的格式）：描述写读不出与原因，格式照记；读的时候同样报出原因', async () => {
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS });
+    try {
+      const toolService = await fx.tools();
+      const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]);
+      const { id, desc } = await fx.upload(GROUP, 'old.doc', ole, 'application/msword');
+      expect(desc).toBe(
+        `[文件: old.doc (ID: ${id}) — 读不出内容：旧版 Office 文档（.doc/.xls/.ppt），请另存为新格式后重传]`,
+      );
+      // 「中文」的 GBK 编码
+      const gbk = await fx.upload(GROUP, 'gbk.txt', Buffer.from([0xd6, 0xd0, 0xce, 0xc4]));
+      expect(gbk.desc).toBe(`[文件: gbk.txt (ID: ${gbk.id}) — 读不出内容：不是 UTF-8 文本，也不是 PDF 或 DOCX]`);
+      const meta = JSON.parse(
+        String(
+          await fx.store.readFile(
+            `pluginData:/file-reader/onebot_<机器人账号>_group_<占位群号>/${id}.meta.json`,
+            'utf-8',
+          ),
+        ),
+      );
+      expect(meta.format).toBe('OLE');
+      const read = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: GROUP }));
+      expect(toolFailed(read.content)).toBe(true);
+      expect(read.content).toContain('旧版 Office 文档');
     } finally {
       await fx.dispose();
     }
@@ -1293,6 +1554,23 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
 
       const own = await toolService.execute('delete_uploaded_file', { fileId: id }, toolRequest({ sessionId: 's-A' }));
       expect(own.content).toContain('已删除文件');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('读与列的两个工具不分组、总是给；删除留在 file-reader 分组里，分组只说删除', async () => {
+    const fx = await setup();
+    try {
+      const toolService = await fx.tools();
+      const names = (filter?: { groups: string[] }) => toolService.getDefinitions(filter).map(d => d.function.name);
+      expect(names()).toEqual(expect.arrayContaining(['read_uploaded_file', 'list_uploaded_files']));
+      expect(names()).not.toContain('delete_uploaded_file');
+      expect(names({ groups: ['file-reader'] })).toContain('delete_uploaded_file');
+      expect(toolService.getGroups().find(g => g.name === 'file-reader')).toMatchObject({
+        label: '删除上传的文件',
+        description: '删除用户上传的文件',
+      });
     } finally {
       await fx.dispose();
     }

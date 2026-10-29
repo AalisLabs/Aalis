@@ -1570,12 +1570,18 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-authority':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-authority
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
       '@aalis/api-media':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-media
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.12.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-storage
@@ -1607,9 +1613,6 @@ importers:
         specifier: ^1.8.1
         version: 1.8.1
     devDependencies:
-      '@aalis/api-session-manager':
-        specifier: workspace:*
-        version: link:../api-session-manager
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
