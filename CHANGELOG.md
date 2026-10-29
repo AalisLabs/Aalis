@@ -541,6 +541,15 @@
 - plugin-cli：她的回复与工具行随当前语言与人设名重绘，本地行（输入回显、指令回复、附件说明等）写进时定住；聊天区最多留 300 项（一段本地行或一个条目），不再是 300 行。
 - plugin-cli：会话服务不在（或会话还没订上）时只写她的整条回复，不再流式，工具调用之前说的那几段也不显示。`uses` 加可选的 `sessionProtocol`，依赖加 `@aalis/api-session-protocol`。
 
+### 转发一栏（@aalis/schema-message、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-message-archive、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client）
+
+- schema-message：`IncomingMessage` 加 `forwards`（`ForwardedChat` 的数组：给模型的展开 `content` 与给界面的事实 `facts`），加 `ForwardFacts`、`ArchivedForward`、`forwardPlaceholder`、`withForwards` 与存档元数据键 `Forwards`；`buildIncomingContent` 把转发的展开换回正文里占位的位置。适配器必须在 `content` 里写占位（转发 id 不含双引号），漏写的展开不进归档文本。
+- plugin-adapter-onebot：合并转发的展开不再写进入站消息的 `content`，正文在转发处留 `<forward id="…">[合并转发消息]</forward>`，展开与事实放进 `forwards`；存档正文与模型看到的不变。转发里出现她的名字或禁言关键词不再算点名、不再触发禁言，转发里的字不再触发技能的自动激活，转发里的 @ 不再记进 `Mentions`（关系图认被 @ 的人、向量记忆按 @ 加权都不再算它们）；识图时交给视觉模型的当前消息不再带转发。`forward.summarize` 的说明改准。`get_forward_msg` 命中缓存时交回的条目里 `participants` 只有前 8 个，没列出的人数另在 `unlisted`。实现端对顶层转发回了成功却什么也没展开出来（数据为空或没有节点）的，与拉取失败一样不进缓存、不调摘要。
+- plugin-message-archive：发言人写的话（`SpokenContent`）不再带转发的展开，另记 `Forwards`（各段的 id 与事实）。
+- api-session-protocol：提问条目加 `forwards`（给界面的事实），文字里没有转发的占位；协议版本照旧 1.1。
+- plugin-session-server：提问条目的文字去掉转发的占位、另交 `forwards`；排队条目的文字同样去掉占位。
+- plugin-webui-client：时间线把提问随附的转发画成可展开的「转发的聊天记录」块，默认收起，按钮写条数与参与者，开合跟着「全部展开」「全部折叠」；没有展开内容的写一行。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

@@ -2657,7 +2657,7 @@ describe('接 agent 与网关', () => {
     expect(queued((await fresh.subscribe(s.id)).snapshot.items), '列表空了，快照不带').toBeUndefined();
   });
 
-  it('排着的宿主通知与平台事件合成的入站：列表里写给人看的那句，不写给模型的正文', async () => {
+  it('排着的宿主通知与平台事件合成的入站：列表里写给人看的那句，不写给模型的正文；随提问转发来的聊天记录不露出占位', async () => {
     const entered = deferred();
     const release = deferred();
     const { host, s, c, sub } = await startAgent([callProbe, { content: '完成' }], async () => {
@@ -2681,10 +2681,21 @@ describe('接 agent 与网关', () => {
       userId: 'console',
       text: { i18n: '@zz/queue', key: 'poke', source: '<平台事件那句>' },
     });
+    const forwarded = host.agent.use.handleMessage({
+      content: '看<forward id="F1">[合并转发消息]</forward>',
+      forwards: [{ id: 'F1', content: '<信封占位>' }],
+      sessionId: s.id,
+      platform: 'webui',
+      userId: 'console',
+    });
     await vi.waitFor(() =>
-      expect(queued(c.timeline(s.id, sub))?.entries.map(e => e.text)).toEqual(['<给人看的那句>', '<平台事件那句>']),
+      expect(queued(c.timeline(s.id, sub))?.entries.map(e => e.text)).toEqual([
+        '<给人看的那句>',
+        '<平台事件那句>',
+        '看',
+      ]),
     );
     release.resolve();
-    await Promise.all([notice, event]);
+    await Promise.all([notice, event, forwarded]);
   });
 });

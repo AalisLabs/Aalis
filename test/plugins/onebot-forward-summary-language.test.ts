@@ -8,6 +8,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
+import { withForwards } from '../../packages/schema-message/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
@@ -68,11 +69,9 @@ describe('合并转发摘要的提示词', () => {
       sendAction: async () => ({ messages: [node('甲', 'hello'), node('乙', 'hi')] }),
     });
 
-    const out = await expander.expandForwardsInText(
-      null,
+    const out = withForwards(
       '<forward id="F1">[合并转发消息]</forward>',
-      [{ type: 'forward', data: { id: 'F1' } }],
-      's',
+      await expander.expandForwards(null, [{ type: 'forward', data: { id: 'F1' } }], 's'),
     );
 
     expect(out).toContain('<摘要>');

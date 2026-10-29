@@ -428,6 +428,10 @@ export default defineLocale<Source>()({
   writing: 'Writing',
   reasoningStreaming: 'Thinking…',
   reasoning: 'Thinking',
+  forwardedChat:
+    'Forwarded chat: {count, plural, one {# message} other {# messages}} from {names, list}{more, plural, =0 {} one { and # other} other { and # others}}',
+  forwardedCutOff: '(Only the beginning is shown)',
+  forwardedNoContent: 'Forwarded chat (no expanded content)',
   backgroundTaskNamed: 'Background task {tool}',
   continueTurn: 'Continue',
   commandReply: 'Command reply',

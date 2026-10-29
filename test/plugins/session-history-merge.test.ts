@@ -289,6 +289,60 @@ describe('历史归并', () => {
     for (const item of items) expect(SessionItemSchema.safeParse(item).success).toBe(true);
   });
 
+  it('提问随附的转发：文字去掉转发的占位（同一段出现几次都去掉）与它留下的首尾空白，转发另成 forwards（只带事实）；Forwards 按类型取，条数、参与者与文字不合形状的当没有事实，没列出的人数与截断标志不合的只丢这一项；没有转发的文字原样', () => {
+    const K = WellKnownMetadataKeys;
+    const ENV = '<forward id="F1" count=1 participants="丙(3)">\n1. 丙(3): 你好\n</forward>';
+    const FACTS = { count: 1, participants: ['丙(3)'], text: '1. 丙(3): 你好' };
+    const items = mergeArchive(
+      [
+        {
+          role: 'user',
+          content: `[甲(7)]: 看看\n${ENV}<forward id="F2">[合并转发消息：展开过程出错]</forward>`,
+          timestamp: 1,
+          metadata: {
+            [K.SpokenContent]:
+              '看看\n<forward id="F1">[合并转发消息]</forward><forward id="F2">[合并转发消息]</forward>',
+            [K.Forwards]: [
+              { id: 'F1', facts: FACTS },
+              { id: 'F2' },
+              { id: 'F3', facts: { count: '2', participants: ['丙'], text: '在' } },
+              { id: 'F4', facts: { ...FACTS, participants: ['丙', 3] } },
+              { id: 'F5', facts: { ...FACTS, unlisted: null } },
+              { id: 'F6', facts: { ...FACTS, unlisted: '3' } },
+              { id: 'F7', facts: { ...FACTS, cutOff: 'yes' } },
+              { id: 3 },
+              'x',
+            ],
+          },
+        },
+        {
+          role: 'user',
+          content: `[甲(7)]: 看${ENV}再看${ENV}`,
+          timestamp: 2,
+          metadata: {
+            [K.SpokenContent]:
+              '看<forward id="F1">[合并转发消息]</forward>再看<forward id="F1">[合并转发消息]</forward>',
+            [K.Forwards]: [{ id: 'F1', facts: FACTS }],
+          },
+        },
+        {
+          role: 'user',
+          content: '[甲(7)]:  只有字 ',
+          timestamp: 3,
+          metadata: { [K.SpokenContent]: ' 只有字 ', [K.Forwards]: 'x' },
+        },
+      ],
+      context(),
+      new Map(),
+    );
+    expect(items.map(item => item.kind === 'user-message' && [item.text, item.forwards])).toEqual([
+      ['看看', [{ facts: FACTS }, {}, {}, {}, { facts: FACTS }, { facts: FACTS }, { facts: FACTS }]],
+      ['看再看', [{ facts: FACTS }]],
+      [' 只有字 ', undefined],
+    ]);
+    for (const item of items) expect(SessionItemSchema.parse(item)).toEqual(item);
+  });
+
   it('旧格式的工具调用组：思考前置、中间的话、工具结果回填到调用上，每条回复各成一条，最后一条是回复', () => {
     const entries = merged([
       { role: 'user', content: '查一下', timestamp: 1 },

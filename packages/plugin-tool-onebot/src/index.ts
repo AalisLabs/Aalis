@@ -1052,12 +1052,15 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
           summary: string | null;
           count: number;
           participants: string[];
+          unlisted?: number;
           truncatedDepth?: boolean;
           truncatedNodes?: boolean;
         };
         const cut = [entry.truncatedDepth && '嵌套超深', entry.truncatedNodes && '节点超限'].filter(Boolean);
+        // 参与人与入站信封同一写法：条目只列前 8 个，没列出的人数另记
+        const participants = [...entry.participants, ...(entry.unlisted ? [`...(+${entry.unlisted} 人未列出)`] : [])];
         const header =
-          `合并转发共 ${entry.count} 条，参与人：${entry.participants.join(', ') || '未知'}` +
+          `合并转发共 ${entry.count} 条，参与人：${participants.join(', ') || '未知'}` +
           (cut.length ? `，已截断（${cut.join('、')}）` : '');
         const summaryLine = entry.summary ? `\n摘要：${entry.summary}\n` : '\n';
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;

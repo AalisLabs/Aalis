@@ -15,6 +15,7 @@ import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/sc
 import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import {
   ATTACHMENT_REF_KINDS,
+  type ForwardedChat,
   formatAttachmentRef,
   type Message,
   type MessageAttachment,
@@ -24,6 +25,7 @@ import {
   WellKnownKinds,
   WellKnownMetadataKeys,
   WellKnownNoticeTypes,
+  withForwards,
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
@@ -204,7 +206,8 @@ const configSchema = defineConfig({
         type: 'boolean',
         label: '生成摘要',
         default: true,
-        description: '展开后调用 LLM 生成一段摘要，作为消息正文进入对话/记忆/向量库；原文保留在缓存。',
+        description:
+          '展开后调用 LLM 生成一段摘要，代替原文写进给模型的转发展开，随存档正文进入对话、记忆与向量库；原文保留在缓存。',
       },
       summaryMaxChars: {
         type: 'number',
@@ -898,7 +901,7 @@ function runAdapter(caps: Caps): void {
    *
    * 与主消息流程对称：
    * - 复用 segmentsToText 完整渲染所有段（at / 图片 / forward 占位 / face / record / video …）
-   * - 嵌套 forward：调用 expandForwardsInText 展开为信封+摘要
+   * - 嵌套 forward：调用 expandForwards 展开为信封+摘要，换回占位的位置
    * - 图片：按段查描述缓存，命中时写成 `[图片: 描述]`，未命中保留 `[图片]` 占位符
    *   （主消息流的图片识别会自动写缓存，因此先发图、后被引用的常见路径能复用）
    */
@@ -971,9 +974,9 @@ function runAdapter(caps: Caps): void {
       };
       let content = segmentsToText(segments, state.selfId, undefined, describe);
 
-      // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
+      // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销），换回占位的位置
       try {
-        content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
+        content = withForwards(content, await expandForwards(state, segments, sessionId ?? 'onebot:unknown'));
       } catch (err) {
         logger.use.debug(`引用消息中的合并转发展开失败: ${err}`);
       }
@@ -1010,7 +1013,7 @@ function runAdapter(caps: Caps): void {
     attachmentMaxBytes,
     sendAction,
   });
-  const { getOrLoadForward, fetchForward, expandForwardsInText } = forwardExpander;
+  const { getOrLoadForward, fetchForward, expandForwards } = forwardExpander;
 
   // 参与 memory:clear。转发原文是聊天内容，归入 context：条目没有会话维度，只在全局清理时清，会话级清理不动它（靠持久化层的
   // 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。多实例共用同一
@@ -1723,10 +1726,10 @@ function runAdapter(caps: Caps): void {
       });
       if (refs.size > 0) event.text = segmentsToText(event.message, event.selfId, nicknameCache, seg => refs.get(seg));
 
-      // 主动展开合并转发：把 forward 段渲染出的 <forward id="X">[合并转发消息]</forward> 替换为可读文本，
-      // 这样 LLM 不必再调用工具，且展开后的内容会随 inbound:message 进入历史归档。
+      // 主动展开合并转发，LLM 不必再调用工具。展开另放 forwards，正文里留占位：转发里别人的话不算发言人写的，存档拼回原位
+      let forwards: ForwardedChat[] = [];
       try {
-        event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
+        forwards = await expandForwards(state, event.message, sessionId);
       } catch (err) {
         logger.use.debug(`合并转发自动展开失败: ${err}`);
       }
@@ -1797,6 +1800,7 @@ function runAdapter(caps: Caps): void {
         selfRole,
         selfTitle,
         replyTo,
+        ...(forwards.length > 0 ? { forwards } : {}),
         // triggerType 由生效的触发插件在 inbound:trigger 相位中填充
       });
     })().catch(err => {

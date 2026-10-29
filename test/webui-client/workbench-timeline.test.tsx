@@ -32,7 +32,7 @@ import {
 } from './items.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话工作台的时间线：条目按种类渲染（提问、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局写在这一轮最后一段、
+// 会话工作台的时间线：条目按种类渲染（提问与随附的转发、回复与模型角标、未发出、思考、工具卡、通知与「继续」、回合的结局写在这一轮最后一段、
 // 输入怎么进的这一轮、没有输入的一轮的来源），排着的消息在输入框上方，
 // 流式拼接，工具卡按 display 渲染（生成参数期间写「正在生成」），全部折叠，回合上的回滚按功能位出现、打开即可确认，
 // 驱动房间的提示条，更早的历史，
@@ -316,6 +316,37 @@ describe('时间线', () => {
     expect(cards()).toHaveLength(3);
     fireEvent.click(main().getByRole('button', { name: '全部折叠' }));
     expect(cards()).toHaveLength(0);
+  });
+
+  it('提问里的转发画成可展开的块：默认收起，读屏名带条数与参与者，点开是转发的文字（换行照原样），开合跟着「全部展开」「全部折叠」；没有事实的画一行、不能展开', async () => {
+    const P8 = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛'];
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([
+          userMessage('u1', '', {
+            forwards: [
+              { facts: { count: 2, participants: ['丙', '丁'], text: '1. 丙: 你好\n2. 丁: 在', cutOff: true } },
+              { facts: { count: 12, participants: P8, unlisted: 3, text: '摘要' } },
+              {},
+            ],
+          }),
+        ]),
+    });
+    const log = within(await timeline());
+    const first = log.getByRole('button', { name: '转发的聊天记录：2 条，丙、丁' });
+    const second = log.getByRole('button', { name: `转发的聊天记录：12 条，${P8.join('、')}等 11 人` });
+    expect([first, second].map(button => button.getAttribute('aria-expanded'))).toEqual(['false', 'false']);
+    expect(log.queryByText(/1\. 丙: 你好/)).toBeNull();
+    fireEvent.click(first);
+    expect(log.getByText(/1\. 丙: 你好/).textContent).toBe('1. 丙: 你好\n2. 丁: 在\n（只显示了开头）');
+    expect(log.queryByText('摘要')).toBeNull();
+    fireEvent.click(main().getByRole('button', { name: '全部展开' }));
+    expect(log.getByText('摘要')).toBeTruthy();
+    fireEvent.click(main().getByRole('button', { name: '全部折叠' }));
+    expect(log.queryByText(/1\. 丙: 你好/)).toBeNull();
+    expect(log.queryByText('摘要')).toBeNull();
+    const empty = log.getByText('转发的聊天记录（没有展开内容）');
+    expect(empty.closest('button')).toBeNull();
   });
 
   it('回合：中止与出错写在回合末尾；回滚挂在收尾了的回合上、按功能位出现，两种范围，之后的回合也改过的文件如实提示', async () => {

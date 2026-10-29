@@ -7,7 +7,7 @@ import { agent, type PreprocessorFn } from '../../packages/api-agent/src/index.j
 import { media } from '../../packages/api-media/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { isAddressed } from '../../packages/api-trigger/src/index.js';
+import { hitsMuteKeyword, isAddressed } from '../../packages/api-trigger/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import { segmentsToText } from '../../packages/plugin-adapter-onebot/src/types.js';
@@ -15,6 +15,7 @@ import { OneBotV12 } from '../../packages/plugin-adapter-onebot/src/v12.js';
 import fileReaderPlugin from '../../packages/plugin-file-reader/src/index.js';
 import {
   AT_SELF_PATTERN,
+  buildIncomingContent,
   extractMentions,
   type IncomingMessage,
   parseAttachmentRefs,
@@ -26,7 +27,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 // onebot 入站按消息段渲染：落盘了的图片、语音、视频与文件，引用写在各自消息段的位置，落盘不了的写占位；引用消息里的图片按
 // 段查描述缓存。文字段（以及昵称、分享标题这些用户写的字）里能拼成 at、转发与附件引用标记的起始字符换成全角，手打的标记不算
 // 标记：不算点名、不算 @ 了谁、不算附件引用。消息段里能当来源读的只有网址与 base64 的 data URL：file 字段只当文件名，
-// 本机路径、file:// 与存储地址不读。
+// 本机路径、file:// 与存储地址不读。合并转发的展开不写进正文，另放 forwards（给模型的信封加给界面的事实），正文在转发处留占位：
+// 归档文本拼回原位、与展开写在正文里逐字相同，点名、禁言关键词与 @ 只看正文。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务），附件的地址是 data URI，落进内存 storage。
 // ════════════════════════════════════════════════════════════
 
@@ -100,12 +102,12 @@ function memStorage(files: Map<string, Buffer>, reads: string[]) {
 /**
  * 假实现端 + onebot 适配器。replies 是各动作回的 data（缺省回机器人账号）；语音转码由 processService 替身给出一段 WAV。
  * post 推一个原始事件，inbound 是适配器发出的入站；storageReads 与 externalReads 是读过的存储地址与本机路径。
- * fileReader 时另装文件读取，readFiles 把一条入站交给它的预处理器、返回第一个附件的描述
+ * fileReader 时另装文件读取，readFiles 把一条入站交给它的预处理器、返回第一个附件的描述；forward 原样并进适配器配置的 forward
  */
 async function boot(
   protocol: 'v11' | 'v12',
   replies: Record<string, unknown> = {},
-  opts: { fileReader?: boolean } = {},
+  opts: { fileReader?: boolean; forward?: Record<string, unknown> } = {},
 ) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(r => server.once('listening', r));
@@ -167,6 +169,7 @@ async function boot(
   host.events.use.on('inbound:message', (m: IncomingMessage) => void inbound.push(m));
   await app.plugins.register(onebotPlugin, {
     connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol, selfId: SELF }],
+    ...(opts.forward ? { forward: opts.forward } : {}),
   });
   await app.plugins.idle();
   if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
@@ -501,5 +504,85 @@ describe('onebot 通知与申请：合成正文里用户写的字同样转义', 
       expect(msg.content).toContain('x');
       expect(msg.content).not.toMatch(AT_SELF_PATTERN);
     }
+  });
+});
+
+describe('onebot 入站：合并转发另放一栏', () => {
+  const NAME = '<人设名占位>';
+  const node = (nickname: string, userId: number, message: unknown[]) => ({
+    type: 'node',
+    data: { nickname, user_id: userId, content: message },
+  });
+  /** 发言人写「看这个」、转发一段两人的聊天（一条里有她的名字与禁言词，一条 @ 了 30003），再自己 @ 30005；不装摘要模型 */
+  const MESSAGE = [
+    text('看这个'),
+    {
+      type: 'forward',
+      data: {
+        id: 'F1',
+        content: [
+          node('戊', 30011, [text(`${NAME} 你好，闭嘴吧`)]),
+          node('己', 30012, [{ type: 'at', data: { qq: '30003' } }, text('在吗')]),
+        ],
+      },
+    },
+    { type: 'at', data: { qq: '30005' } },
+  ];
+  /** 归档文本（模型读到的）：信封退成原文，接在「看这个」之后、发言人自己的 @ 之前 */
+  const GOLDEN =
+    '看这个<forward id="F1" count=2 participants="戊(30011), 己(30012)">\n' +
+    `1. 戊(30011): ${NAME} 你好，闭嘴吧\n` +
+    '2. 己(30012): <at id="30003">30003</at>在吗\n' +
+    '</forward><at id="30005">30005</at>';
+
+  it('归档正文逐字不变', async () => {
+    const t = await boot('v11');
+    expect(buildIncomingContent(await groupMessage(t, MESSAGE))).toBe(GOLDEN);
+  });
+
+  it('发言人的话只有占位：@ 只剩他自己写的，转发的信封与事实在 forwards', async () => {
+    const t = await boot('v11');
+    const msg = await groupMessage(t, MESSAGE);
+    expect(msg.content).toBe('看这个<forward id="F1">[合并转发消息]</forward><at id="30005">30005</at>');
+    expect(extractMentions(msg.content)).toEqual(['30005']);
+    expect(msg.forwards?.map(f => f.id)).toEqual(['F1']);
+    const lines = GOLDEN.slice(GOLDEN.indexOf('\n') + 1, GOLDEN.indexOf('\n</forward>'));
+    expect(msg.forwards?.[0].facts).toEqual({ count: 2, participants: ['戊(30011)', '己(30012)'], text: lines });
+  });
+
+  it('同一段转发出现两次：只交一项，归档正文两处都换成展开', async () => {
+    const t = await boot('v11');
+    const msg = await groupMessage(t, [MESSAGE[1], text('再看'), MESSAGE[1]]);
+    expect(msg.forwards?.map(f => f.id)).toEqual(['F1']);
+    const envelope = GOLDEN.slice('看这个'.length, GOLDEN.indexOf('<at id="30005">'));
+    expect(buildIncomingContent(msg)).toBe(`${envelope}再看${envelope}`);
+  });
+
+  it('转发里她的名字与禁言词不触发', async () => {
+    const t = await boot('v11');
+    const msg = await groupMessage(t, MESSAGE);
+    expect(isAddressed(msg, [NAME], { triggerOnAt: true, triggerOnPoke: true })).toBe(false);
+    expect(hitsMuteKeyword(msg, ['闭嘴'])).toBe(false);
+  });
+
+  it('关掉 forward.enabled：照样给一项，展开就是占位、没有事实，归档正文带占位', async () => {
+    const t = await boot('v11', {}, { forward: { enabled: false } });
+    const msg = await groupMessage(t, MESSAGE);
+    expect(buildIncomingContent(msg)).toBe('看这个<forward id="F1">[合并转发消息]</forward><at id="30005">30005</at>');
+    expect(msg.forwards).toEqual([{ id: 'F1', content: '<forward id="F1">[合并转发消息]</forward>' }]);
+  });
+
+  it('引用的消息是合并转发：引用里是展开的信封', async () => {
+    const t = await boot('v11', {
+      get_msg: {
+        message: [{ type: 'forward', data: { id: 'F2', content: [node('庚', 30013, [text('早上好')])] } }],
+        sender: { nickname: '乙' },
+        user_id: 30002,
+      },
+    });
+    const msg = await groupMessage(t, [{ type: 'reply', data: { id: 777 } }, text('这是啥')]);
+    expect(buildIncomingContent(msg)).toBe(
+      '这是啥\n[引用 乙(30002) 的消息: <forward id="F2" count=1 participants="庚(30013)">\n1. 庚(30013): 早上好\n</forward>]',
+    );
   });
 });

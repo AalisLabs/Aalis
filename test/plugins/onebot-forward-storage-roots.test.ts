@@ -12,6 +12,7 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { App, type Logger, type ServiceSelection } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { withForwards } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
@@ -111,11 +112,9 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       }),
     });
 
-    const out = await expander.expandForwardsInText(
-      null,
+    const out = withForwards(
       '<forward id="F1">[合并转发消息]</forward>',
-      [{ type: 'forward', data: { id: 'F1' } }],
-      'onebot:t:group:1',
+      await expander.expandForwards(null, [{ type: 'forward', data: { id: 'F1' } }], 'onebot:t:group:1'),
     );
 
     expect(described, '识别应拿到落盘后的 ref，而非原始 src').toHaveLength(1);

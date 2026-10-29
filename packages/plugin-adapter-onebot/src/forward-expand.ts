@@ -5,9 +5,10 @@ import { clearMetadataNamespaces, type MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { type ForwardedChat, forwardPlaceholder } from '@aalis/schema-message';
 import { cacheOneAttachment } from './attachment-cache.js';
 import type { ExpandedForward, ForwardMediaTask } from './forward.js';
-import { buildEnvelope, expandForward } from './forward.js';
+import { expandForward, forwardedChat, participantsForModel } from './forward.js';
 import { rememberLandedAlias } from './media-alias.js';
 import { t } from './texts.js';
 import type { OneBotMessageSegment } from './types.js';
@@ -87,12 +88,11 @@ export interface ForwardExpander<TState> {
   getOrLoadForward(id: string): Promise<ForwardEntry | undefined>;
   /** 按 OneBot v11 标准的参数名 id 调 get_forward_msg（NapCat 也收它），失败原样抛出 */
   fetchForward(state: TState, id: string): Promise<unknown>;
-  expandForwardsInText(
-    state: TState,
-    text: string,
-    segments: OneBotMessageSegment[],
-    sessionId: string,
-  ): Promise<string>;
+  /**
+   * 展开消息段里的各段转发，按出现先后交出（同一 id 只交一次），各项是给模型的信封加给界面的事实；正文里它们的占位由归档文本
+   * 换回展开。没有 forward 段时交空数组
+   */
+  expandForwards(state: TState, segments: OneBotMessageSegment[], sessionId: string): Promise<ForwardedChat[]>;
   /**
    * 清空转发原文：本展开器的内存缓存与持久化层（/clear all 用），返回持久化层删除的条数。
    * 条目没有会话维度，没有按会话清理的版本。
@@ -161,7 +161,7 @@ function createConcurrencyLimited<TArg, TRet>(
  * 这样：
  *   1) LLM 在对话上下文里看到的是"信封 + 摘要"，不被超长原文淹没；
  *   2) 想看细节时调 onebot_get_forward_msg 工具直接命中缓存/持久化层；
- *   3) 摘要会随 inbound:message 进入历史归档与向量库，被语义召回。
+ *   3) 展开随 inbound:message 的 forwards 交出，存档拼回正文里占位的位置，随历史归档进入向量库，被语义召回。
  *
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
@@ -274,7 +274,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
    */
   async function summarizeForward(
     text: string,
-    hint: { count: number; participants: string[] },
+    hint: Pick<ExpandedForward, 'count' | 'participants' | 'unlisted'>,
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
@@ -286,7 +286,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const trimmedInput =
       inputLimit > 0 && text.length > inputLimit ? `${text.slice(0, inputLimit)}\n…（原文已截断）` : text;
 
-    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 个字符（可超出 10% 以完整保留互动结构）。\n\n原文：\n${trimmedInput}`;
+    const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${participantsForModel(hint) || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 个字符（可超出 10% 以完整保留互动结构）。\n\n原文：\n${trimmedInput}`;
 
     try {
       // 摘要 prompt：用户可通过 forward.summaryPrompt 覆盖默认值，默认 prompt
@@ -324,13 +324,6 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     }
   }
 
-  /**
-   * 把 text 中 forward 段渲染出的 <forward id="X">[合并转发消息]</forward> 占位符替换为"信封文本"（含摘要）；
-   * 完整原文写入 forwardCache + memory metadata。转发 id 只取 segments 里的 forward 段，正文不扫。
-   *
-   * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
-   * 这种情况下顶层无需走网络。
-   */
   /** 转发媒体落盘的下载并发（纯网络 IO，与模型识别并发解耦） */
   const MEDIA_DOWNLOAD_CONCURRENCY = 4;
 
@@ -404,39 +397,42 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     };
   }
 
-  async function expandForwardsInText(
+  /**
+   * 完整原文写入 forwardCache 与 memory metadata。顶层拉取失败、什么也没展开出来与展开出错时不带事实、不进缓存，展开写明原因；
+   * 关掉展开时各项的展开就是占位本身（归档正文因此带占位）。
+   *
+   * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
+   * 这种情况下顶层无需走网络。
+   */
+  async function expandForwards(
     state: TState,
-    text: string,
     segments: OneBotMessageSegment[],
     sessionId: string,
-  ): Promise<string> {
-    if (!forwardCfg.enabled) return text;
+  ): Promise<ForwardedChat[]> {
     const forwards = collectForwardSegments(segments);
-    if (forwards.length === 0) return text;
+    const expandIds = [...new Set(forwards.map(f => f.id))];
+    if (!forwardCfg.enabled) return expandIds.map(id => ({ id, content: forwardPlaceholder(id) }));
+    if (expandIds.length === 0) return [];
 
     const inlineMap = new Map<string, unknown[]>();
     for (const f of forwards) {
       if (f.inlineNodes) inlineMap.set(f.id, f.inlineNodes);
     }
-    const expandIds = [...new Set(forwards.map(f => f.id))];
 
     const mediaSvc = media.present ? media.use : undefined;
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
     const resolveMedia = mediaSvc ? createMediaResolver(sessionId, mediaSvc, concurrency) : undefined;
 
-    const envelopeMap = new Map<string, string>();
     // 多 forward id 并行展开：串行 for 会让第二条转发的「取源+落盘」排在第一条的
     // 识别队列之后——正是两阶段化要消灭的事故形状（审计探针实证）。id 互相独立
-    // （envelopeMap 各写各键、缓存按 id、信号量在 resolver 闭包里共享），并行安全。
-    await Promise.all(
-      expandIds.map(async id => {
+    // （各自交回一项、缓存按 id、信号量在 resolver 闭包里共享），并行安全。
+    return Promise.all(
+      expandIds.map(async (id): Promise<ForwardedChat> => {
         const entry = await getOrLoadForward(id);
-        if (entry) {
-          envelopeMap.set(id, buildEnvelope({ id, ...entry }, entry.summary));
-          return;
-        }
+        if (entry) return forwardedChat({ id, ...entry }, entry.summary);
 
-        // 顶层拉不到时信封写拉取失败与实现端原话、不进缓存，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志
+        // 顶层拉不到时信封写拉取失败与实现端原话、不进缓存，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志。
+        // 实现端回了成功却什么也没展开出来（数据为空或没有节点）的同一条规则：不带事实、不进缓存、不拿那一行去调摘要，信封照常写出那一行
         let fetchFailure: unknown;
         try {
           const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
@@ -454,14 +450,11 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
           if (fetchFailure !== undefined) {
             const reason = escapeMarkup(fetchFailure instanceof Error ? fetchFailure.message : String(fetchFailure));
-            envelopeMap.set(id, `<forward id="${id}">[合并转发消息：拉取失败：${reason}]</forward>`);
-            return;
+            return { id, content: `<forward id="${id}">[合并转发消息：拉取失败：${reason}]</forward>` };
           }
+          if (expanded.count === 0) return { id, content: forwardedChat(expanded, null).content };
 
-          const summary = await summarizeForward(expanded.fullText, {
-            count: expanded.count,
-            participants: expanded.participants,
-          });
+          const summary = await summarizeForward(expanded.fullText, expanded);
 
           const { id: _id, ...forward } = expanded;
           setCachedForward(id, { ...forward, summary, expandedAt: Date.now() });
@@ -472,28 +465,23 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           // forwardCache + memory metadata，后续 onebot_get_forward_msg 可直接取回。
           const fullPreview = (summary ?? expanded.fullText).replace(/\n/g, ' ');
           logger.debug(
-            `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]` +
+            `forward 展开完成 id=${id} count=${expanded.count} participants=[${participantsForModel(expanded)}]` +
               ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} content="${fullPreview}"`,
           );
 
-          envelopeMap.set(id, buildEnvelope(expanded, summary));
+          return forwardedChat(expanded, summary);
         } catch (err) {
           logger.warn(`forward 展开失败 id=${id}: ${err}`);
-          envelopeMap.set(id, `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`);
+          return { id, content: `<forward id="${id}">[合并转发消息：展开过程出错]</forward>` };
         }
       }),
-    );
-
-    return text.replace(
-      /<forward id="([^"]+)">\[合并转发消息\]<\/forward>/g,
-      (raw, id: string) => envelopeMap.get(id) ?? raw,
     );
   }
 
   return {
     getOrLoadForward,
     fetchForward,
-    expandForwardsInText,
+    expandForwards,
     clearAll,
   };
 }

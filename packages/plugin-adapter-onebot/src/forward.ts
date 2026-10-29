@@ -1,5 +1,5 @@
 /**
- * 合并转发（forward）展开、图片识别与信封构造。
+ * 合并转发（forward）展开、图片识别，与信封、给界面的事实的构造。
  *
  * 设计目标：让 agent 处理合并转发更接近"人类阅读"的方式：
  * - 进入对话上下文 / 历史归档的是一份摘要（信封），而非整块原文，
@@ -15,6 +15,7 @@
  * fetchForward / resolveMedia 两个能力函数。
  */
 
+import type { ForwardedChat, ForwardFacts } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import type { OneBotMessageSegment, RenderedPart } from './types.js';
 import {
@@ -44,6 +45,8 @@ export interface ExpandedForward {
   count: number;
   /** 去重后的参与人列表（昵称(uid) 形式，最多前 8 个） */
   participants: string[];
+  /** 没列出的参与人数（多于 8 个时）；都列出了时没有 */
+  unlisted?: number;
   /** 完整渲染文本（用于缓存 / 工具回看 / 摘要输入） */
   fullText: string;
   /** 嵌套转发是否被截断（命中深度上限） */
@@ -319,33 +322,44 @@ export async function expandForward(
   });
 
   const allParticipants = [...participants.entries()];
-  const participantList = allParticipants.slice(0, 8).map(([uid, nick]) => {
-    return uid === nick ? nick : `${nick}(${uid})`;
-  });
-  if (allParticipants.length > 8) {
-    participantList.push(`...(+${allParticipants.length - 8} 人未列出)`);
-  }
+  const unlisted = allParticipants.length - 8;
 
   return {
     id: topId,
     count: topCount,
-    participants: participantList,
+    participants: allParticipants.slice(0, 8).map(([uid, nick]) => (uid === nick ? nick : `${nick}(${uid})`)),
+    ...(unlisted > 0 ? { unlisted } : {}),
     fullText: fullLines.join('\n'),
     truncatedDepth,
     truncatedNodes,
   };
 }
 
-/** 把展开结果包装成最终注入到 event.text 的"信封文本"。摘要是模型写的字，与用户写的字同样转义 */
-export function buildEnvelope(expanded: ExpandedForward, summary: string | null, truncatedFallbackChars = 600): string {
-  const meta = `count=${expanded.count} participants="${expanded.participants.join(', ')}"${expanded.truncatedDepth ? ' truncatedDepth' : ''}${expanded.truncatedNodes ? ' truncatedNodes' : ''}`;
+/** 参与人给模型看的写法：前 8 个用「, 」连起来，有没列出的人时末尾接人数 */
+export function participantsForModel({
+  participants,
+  unlisted,
+}: Pick<ExpandedForward, 'participants' | 'unlisted'>): string {
+  return [...participants, ...(unlisted ? [`...(+${unlisted} 人未列出)`] : [])].join(', ');
+}
 
-  if (summary?.trim()) {
-    return `<forward id="${expanded.id}" ${meta}>\n摘要：${escapeMarkup(summary.trim())}\n</forward>`;
-  }
-
-  // 摘要不可用：信封内退化到截断的原文。代理安全截断：信封随消息归档、进 agent 与 Laya 的请求，
-  // 截在 emoji 中间留下的孤代理会让严格的 JSON 解析器或分词器拒收
-  const text = truncateChars(expanded.fullText, truncatedFallbackChars, '\n…（已截断，原文保留在缓存中）');
-  return `<forward id="${expanded.id}" ${meta}>\n${text}\n</forward>`;
+/**
+ * 一段展开交出的转发：给界面的事实与给模型的信封出自同一份事实，信封的写法逐字不变（存档正文因此不变）。有摘要时文字是摘要，
+ * 摘要是模型写的字，与用户写的字同样转义；没有时是截到 600 字的原文。「摘要：」、没列出的人数与截断说明是给模型的字，只在信封里
+ */
+export function forwardedChat(expanded: ExpandedForward, summary: string | null): ForwardedChat {
+  const summarized = summary?.trim();
+  // 代理安全截断：信封随消息归档、进 agent 与 Laya 的请求，截在 emoji 中间留下的孤代理会让严格的 JSON 解析器或分词器拒收
+  const text = summarized ? escapeMarkup(summarized) : truncateChars(expanded.fullText, 600);
+  const cutOff = !summarized && text.length < expanded.fullText.length;
+  const facts: ForwardFacts = {
+    count: expanded.count,
+    participants: expanded.participants,
+    ...(expanded.unlisted ? { unlisted: expanded.unlisted } : {}),
+    text,
+    ...(cutOff ? { cutOff: true as const } : {}),
+  };
+  const meta = `count=${expanded.count} participants="${participantsForModel(expanded)}"${expanded.truncatedDepth ? ' truncatedDepth' : ''}${expanded.truncatedNodes ? ' truncatedNodes' : ''}`;
+  const body = summarized ? `摘要：${text}` : cutOff ? `${text}\n…（已截断，原文保留在缓存中）` : text;
+  return { id: expanded.id, content: `<forward id="${expanded.id}" ${meta}>\n${body}\n</forward>`, facts };
 }
