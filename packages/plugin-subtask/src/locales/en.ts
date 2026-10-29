@@ -2,6 +2,11 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'Subtasks',
+  groupLabel: 'Subtask management',
+  groupSummary: 'Create, manage and coordinate subtask sessions, with parallel execution',
+  enabledLabel: 'Enable subtask tools',
+  maxWaitMsLabel: 'Max wait per call (ms)',
   modelLabel: 'Subtask model',
   modelDescription:
     'The model a subtask’s session uses, taken from the session that dispatches it and settable per group; the model argument of create_subtask overrides it',

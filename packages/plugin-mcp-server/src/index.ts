@@ -27,35 +27,34 @@ import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/sc
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   port: {
     type: 'number',
-    label: '监听端口',
-    description: '必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。',
+    label: t('portLabel'),
+    description: t('portDescription'),
     default: 7861,
     min: 1,
     max: 65535,
     integer: true,
     onInvalid: 'error',
   },
-  bind: { type: 'string', label: '监听地址', default: '127.0.0.1', onInvalid: 'error' },
+  bind: { type: 'string', label: t('bindLabel'), default: '127.0.0.1', onInvalid: 'error' },
   token: {
     type: 'string',
-    label: '访问令牌',
-    description:
-      '外部 MCP 客户端连 /sse 与 /messages 时要带请求头 Authorization: Bearer <令牌>。至少 32 个可见 ASCII 字符、不含空白，' +
-      '可用 openssl rand -hex 32 生成；存进密钥存储，WebUI 不回显',
+    label: t('tokenLabel'),
+    description: t('tokenDescription'),
     required: true,
     secret: true,
     onInvalid: 'error',
     // 持有令牌就能调暴露的工具，防猜靠令牌够长：32 个字符起，与 webui-server 的固定 token 同一下限；要放进请求头，只收可见 ASCII
-    validate: value => (/^[\x21-\x7E]{32,}$/.test(String(value)) ? undefined : '至少 32 个可见 ASCII 字符（不含空白）'),
+    validate: value => (/^[\x21-\x7E]{32,}$/.test(String(value)) ? undefined : t('tokenInvalid')),
   },
   toolGroups: {
     type: 'multiselect',
-    label: '允许的工具分组（空=全部，受受限开关约束）',
-    description: "空列表或 ['*'] = 暴露所有分组的工具（仍受 allowRestricted 约束）。",
+    label: t('toolGroupsLabel'),
+    description: t('toolGroupsDescription'),
     dynamicOptions: 'toolGroups',
     allowCustom: true,
     default: [],
@@ -63,7 +62,7 @@ const configSchema = defineConfig({
   },
   allowRestricted: {
     type: 'boolean',
-    label: '允许暴露 restricted（受限）工具',
+    label: t('allowRestrictedLabel'),
     default: false,
     onInvalid: 'error',
   },
@@ -95,7 +94,7 @@ type Caps = BoundOf<typeof uses>;
 
 async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
   const config: Config = parseConfig(configSchema, rawConfig.use, logger.use);
-  if (!config.bind.trim()) throw configError('bind 不能为空');
+  if (!config.bind.trim()) throw configError(t('bindEmpty'));
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
   let currentTransport: SSEServerTransport | undefined;
@@ -279,7 +278,7 @@ export function buildMcpServer(tools: ToolService, config: Pick<Config, 'allowRe
 
 export default definePlugin({
   name: '@aalis/plugin-mcp-server',
-  displayName: 'MCP 服务端',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,

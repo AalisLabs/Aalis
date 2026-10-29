@@ -71,9 +71,9 @@ function taskMessage(callCtx: ToolCallContext, sessionId: string, content: strin
 }
 
 const configSchema = defineConfig({
-  enabled: { type: 'boolean', label: '启用子任务工具', default: true, onInvalid: 'error' },
+  enabled: { type: 'boolean', label: t('enabledLabel'), default: true, onInvalid: 'error' },
 
-  maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
+  maxWaitMs: { type: 'number', label: t('maxWaitMsLabel'), default: 300000 },
   // 按会话字段：按派子任务的会话解析，能按群设；1 级可改
   model: {
     type: 'llm-ref',
@@ -205,7 +205,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-subtask',
-  displayName: '子任务',
+  displayName: t('displayName'),
   subsystem: 'session',
   configSchema,
   uses,
@@ -297,7 +297,8 @@ function registerSubtask(
   // 注册工具分组
   tools.use.registerGroup({
     name: 'subtask',
-    label: '子任务管理',
+    label: t('groupLabel'),
+    summary: t('groupSummary'),
     description: '创建、管理和协调子任务会话，支持并行执行',
   });
 

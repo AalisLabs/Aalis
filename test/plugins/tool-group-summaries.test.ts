@@ -2,12 +2,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import fileReaderPlugin from '../../packages/plugin-file-reader/src/index.js';
 import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
+import mcpClientPlugin from '../../packages/plugin-mcp-client/src/index.js';
 import officePlugin from '../../packages/plugin-office/src/index.js';
 import okxPlugin from '../../packages/plugin-okx-trading/src/index.js';
+import skillsPlugin from '../../packages/plugin-skills/src/index.js';
+import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import todoListPlugin from '../../packages/plugin-todo-list/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import codeRunnerPlugin from '../../packages/plugin-tool-code-runner/src/index.js';
@@ -17,19 +21,22 @@ import toolSystemPlugin from '../../packages/plugin-tool-system/src/index.js';
 import websearchPlugin from '../../packages/plugin-websearch-serper/src/index.js';
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // 工具插件登记的每个分组都带给人看的一句概述（summary），是文字对象：WebUI 设置里分组选项按读者的语言显示它，description 照旧
-// 只给模型。每个插件单独起在一个 App 里，存储是内存替身、进程服务是空替身（只为让要它们的插件激活），要凭据的插件给占位凭据。
-// OKX 的概述按模拟盘与实盘分两句。
+// 只给模型。每个插件单独起在一个 App 里，存储是内存替身、进程服务是空替身（只为让要它们的插件激活），WebUI 是测试台，要凭据的
+// 插件给占位凭据。OKX 的概述按模拟盘与实盘分两句；mcp-client 按服务器桥接的分组也有，服务器是一启动就退出的 node 进程。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
+const hosts: PageHost[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
+  for (const host of hosts.splice(0)) host.dispose();
 });
 
 const OKX = { apiKey: 'zz-key', secretKey: 'zz-secret', passphrase: 'zz-pass' };
@@ -47,6 +54,14 @@ const CASES: [string, PluginDefinition, string[], Record<string, unknown>?][] = 
   ['websearch-serper', websearchPlugin, ['search'], { apiKey: 'zz-key' }],
   ['okx-trading', okxPlugin, ['okx'], OKX],
   ['maimai', maimaiPlugin, ['maimai'], { developerToken: 'zz-token' }],
+  [
+    'mcp-client',
+    mcpClientPlugin,
+    ['mcp:zz', 'mcp:_meta'],
+    { servers: [{ id: 'zz', command: process.execPath, args: ['-e', 'process.exit(3)'] }] },
+  ],
+  ['skills', skillsPlugin, ['skills']],
+  ['subtask', subtaskPlugin, ['subtask']],
 ];
 
 /** 只起这一个插件，交出它登记的分组 */
@@ -59,6 +74,9 @@ async function groupsOf(definition: PluginDefinition, config: Record<string, unk
   host.provide.use(tools, registry);
   host.provide.use(storage, memoryStorage(new Map()));
   host.provide.use(processService, {} as never);
+  const pages = pageHost();
+  hosts.push(pages);
+  host.provide.use(webuiServer, pages.service);
   await app.plugin(definition, config);
   await app.plugins.idle();
   expect(app.plugins.getPlugin(definition.name)?.state).toBe('active');

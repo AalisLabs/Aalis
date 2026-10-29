@@ -1991,6 +1991,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -2013,6 +2016,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

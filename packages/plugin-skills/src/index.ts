@@ -9,6 +9,7 @@ import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, type TextRef, textOf } from '@aalis/schema-i18n';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { t } from './texts.js';
 
@@ -119,36 +120,34 @@ export const skills = defineService<SkillsService>('skills');
 const configSchema = defineConfig({
   skillsUri: {
     type: 'string',
-    label: '技能存储 URI',
+    label: t('skillsUriLabel'),
     default: 'skills:/',
     onInvalid: 'error',
-    description:
-      '技能文件夹 storage URI（默认 skills:/，即家目录的 self/skills）。每个 skill 为一个子目录，含 SKILL.md。',
+    description: t('skillsUriDescription'),
   },
   maxSkillBytes: {
     type: 'number',
-    label: '单 skill 最大字节数',
+    label: t('maxSkillBytesLabel'),
     default: 200_000,
-    description: 'SKILL.md 单文件最大字节数，避免一次加载过大内容污染上下文。',
+    description: t('maxSkillBytesDescription'),
   },
   maxSkills: {
     type: 'number',
-    label: '技能数量上限',
+    label: t('maxSkillsLabel'),
     default: 200,
-    description: '扫描时最多加载的 skill 数量。',
+    description: t('maxSkillsDescription'),
   },
   discoveryEnabled: {
     type: 'boolean',
-    label: '启用 Discovery 注入',
+    label: t('discoveryEnabledLabel'),
     default: true,
-    description:
-      '往 system prompt 注入一行技能库路标，提示 agent 用 list_skills 检索、load_skill 加载技能；关闭时激活正文注入也一并停用。',
+    description: t('discoveryEnabledDescription'),
   },
   triggersEnabled: {
     type: 'boolean',
-    label: '启用 triggers 自动激活',
+    label: t('triggersEnabledLabel'),
     default: true,
-    description: '匹配 SKILL.md frontmatter 中的 triggers regex 时自动加载该 skill。',
+    description: t('triggersEnabledDescription'),
   },
   // 按会话字段：'*' 即全部技能（与工具分组同一写法），空列表一个都不启用；只有 owner 能改
   enabledSkills: {
@@ -293,7 +292,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-skills',
-  displayName: '技能系统 (Agent Skills)',
+  displayName: t('displayName'),
   subsystem: 'skills',
   configSchema,
   provides: [skills],
@@ -306,7 +305,7 @@ function run(caps: Caps): void {
   const logger = caps.logger.use.child('skills');
   const config: SkillsConfig = parseConfig(configSchema, caps.config.use, logger);
   const fields = caps.sessionFields.use.fields(configSchema, caps);
-  if (!isStorageUri(config.skillsUri)) throw configError('skillsUri 必须是 storage URI');
+  if (!isStorageUri(config.skillsUri)) throw configError(t('badSkillsUri'));
 
   // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
   const storage = caps.storage.use;
@@ -315,23 +314,23 @@ function run(caps: Caps): void {
   // 技能的设置页：直接读这次激活自己的服务实例，页面与服务同生共死
   const skillOf = (name: string): SkillDefinition => {
     const skill = service.getSkill(name);
-    if (!skill) throw new Error(`技能 ${name} 不存在`);
+    if (!skill) throw new TextError(t('skillMissing', { name }));
     return skill;
   };
   const page = webui.use.definePage({
     key: 'skills',
-    title: '技能',
+    title: t('skills'),
     icon: 'sparkles',
     placement: 'settings',
     actions: {
       deleteSkill: {
-        label: '删除',
+        label: t('delete'),
         effect: 'destructive',
-        confirm: '删除这个技能的整个目录（含脚本、引用与资源）？',
+        confirm: t('deleteConfirm'),
         row: true,
         async handler({ rowKey }) {
-          if (!(await service.deleteSkill(rowKey))) throw new Error(`技能 ${rowKey} 不存在`);
-          return `已删除技能 ${rowKey}`;
+          if (!(await service.deleteSkill(rowKey))) throw new TextError(t('skillMissing', { name: rowKey }));
+          return t('deleted', { name: rowKey });
         },
       },
     },
@@ -340,20 +339,24 @@ function run(caps: Caps): void {
         type: 'table',
         id: 'skills',
         rowKey: 'name',
-        empty: '还没有技能',
+        empty: t('noSkills'),
         columns: [
-          { key: 'name', label: '名称', primary: true },
-          { key: 'description', label: '描述', kind: 'long-text', primary: true },
-          { key: 'triggers', label: '自动触发' },
-          { key: 'files', label: '附属文件' },
+          { key: 'name', label: t('name'), primary: true },
+          { key: 'description', label: t('description'), kind: 'long-text', primary: true },
+          { key: 'triggers', label: t('triggers') },
+          { key: 'files', label: t('files') },
         ],
         rowActions: [{ action: 'deleteSkill' }],
         data: () =>
           service.listSkills().map(s => ({
             name: s.name,
             description: s.description,
-            triggers: s.triggers?.join('、') ?? '',
-            files: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
+            triggers: s.triggers ? t('list', { items: s.triggers }) : '',
+            files: t('fileCounts', {
+              scripts: s.scripts.length,
+              references: s.references.length,
+              assets: s.assets.length,
+            }),
           })),
         detail: [
           {
@@ -361,20 +364,22 @@ function run(caps: Caps): void {
             id: 'skill',
             data({ rowKey }) {
               const s = skillOf(rowKey);
-              const listed = (label: string, value: string | undefined) => (value ? [{ label, value }] : []);
+              /** 有内容才列：列表按读者语言连起，空的与没有的不列 */
+              const listed = (label: TextRef, items: readonly string[] | undefined) =>
+                items?.length ? [{ label, value: t('list', { items }) }] : [];
               return [
-                { label: '名称', value: s.name },
-                { label: '描述', value: s.description },
-                ...listed('自动触发', s.triggers?.join('、')),
-                ...listed('许可证', s.license),
-                { label: '位置', value: s.uri, kind: 'code' as const },
-                ...listed('脚本', s.scripts.join('、')),
-                ...listed('引用', s.references.join('、')),
-                ...listed('资源', s.assets.join('、')),
+                { label: t('name'), value: s.name },
+                { label: t('description'), value: s.description },
+                ...listed(t('triggers'), s.triggers),
+                ...(s.license ? [{ label: t('license'), value: s.license }] : []),
+                { label: t('location'), value: s.uri, kind: 'code' as const },
+                ...listed(t('scripts'), s.scripts),
+                ...listed(t('references'), s.references),
+                ...listed(t('assets'), s.assets),
               ];
             },
           },
-          { type: 'markdown', id: 'body', label: 'SKILL.md 正文', data: ({ rowKey }) => skillOf(rowKey).body },
+          { type: 'markdown', id: 'body', label: t('body'), data: ({ rowKey }) => skillOf(rowKey).body },
         ],
       },
     ],
@@ -739,7 +744,7 @@ function run(caps: Caps): void {
       } catch (err) {
         // 删不掉就报错、缓存不动：照常移除的话技能从列表消失，重扫或重启后又回来
         if (!isStorageNotFound(err)) {
-          throw new Error(`删除技能目录失败 ${existing.uri}: ${err instanceof Error ? err.message : err}`);
+          throw new TextError(t('deleteDirFailed', { uri: existing.uri, error: textOf(err) }));
         }
       }
       skillsCache.delete(skillName);
@@ -812,7 +817,8 @@ function run(caps: Caps): void {
   // ── 注册工具分组与工具 ──
   tools.use.registerGroup({
     name: 'skills',
-    label: '技能管理',
+    label: t('groupLabel'),
+    summary: t('groupSummary'),
     description: '查询、加载、创建、更新和删除可复用的 Agent Skills（兼容 Anthropic SKILL.md 标准）',
   });
 
