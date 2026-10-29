@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
 import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { todoList } from '../../packages/api-todo-list/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -15,10 +14,11 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { budgetOf, endTurn, fakeSummaryLLM, setupSummary, systemOf, usageEvent } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
-// 摘要预算：这次重写的输入（上一份摘要加这次新压的对话，按格式化后的各行估算）× summaryBudgetRatio（默认 0.1），不少于
-// 1000；不超过物理上限（摘要模型的输出上限、没声明时 4096，与它窗口的四分之一，取小）的三分之二，与这个会话最近一次用量的
-// 压缩线的四分之一（压过下限）。预算写进提示词，请求的输出上限是它的 1.5 倍；摘要模型报在输出上限处停下（结束原因 length）
-// 的，这次压缩算没压成，不按报的用量猜。
+// 摘要预算：这个会话最近一次用量的压缩线 × summaryBudgetRatio（默认 0.1），不超过这次要压的内容（上一份摘要加新压的对话，按
+// 格式化后的各行估算），这两项合起来不少于 1000；再不超过压缩线的四分之一与物理上限（摘要模型的输出上限、没声明时 4096，与它
+// 窗口的四分之一，取小）的三分之二，两者都压过下限。还没有用量、或用量里的数算不出有限的压缩线时，按要压的内容，同样不少于 1000、
+// 不超过物理上限的三分之二。保留上限是 min(预算, ⌊比例 × 这次新压的对话⌋)。预算写进提示词，请求的输出上限是它的 1.5 倍；摘要
+// 模型报在输出上限处停下（结束原因 length）的，这次压缩算没压成，不按报的用量猜。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -47,6 +47,9 @@ async function seed(memory: MemoryService, sessionId: string, count: number, pad
 }
 
 const tokensOf = (texts: string[]) => texts.reduce((sum, text) => sum + estimateTextTokens(text), 0);
+/** 有用量时的压缩线 min(0.8 × 200000, 190000) = 160000：比例项 16000，四分之一 40000 */
+const WIDE = { used: 1, compressible: 0, contextWindow: 200_000, tokenBudget: 190_000 };
+
 /** 没有触发的后台压缩不会有任何动静：等几拍再看 */
 const settle = () => new Promise<void>(r => setTimeout(r, 20));
 
@@ -58,60 +61,113 @@ describe('plugin-memory-summary: 摘要预算', () => {
       if (!isTextRef(text)) throw new Error('标签与说明应是文字对象');
       expect(resolveText(text, ['en'])).not.toBe(toSource(text));
     }
-    expect(toSource(field?.label)).toBe('摘要预算（占压掉内容的比例）');
+    expect(toSource(field?.label)).toBe('摘要预算（占自动压缩线的比例）');
   });
 
-  it('是这次重写的输入（上一份摘要加各行的估算）的一成，请求的输出上限是它的 1.5 倍（向上取整）', async () => {
+  it('要压的比压缩线的一成多时是这一成，不随压掉多少变；请求的输出上限是它的 1.5 倍', async () => {
     const llm = fakeSummaryLLM({ contextLength: 200_000, maxOutputTokens: 32_000 });
-    const { memory, compression } = await setup({}, llm.model);
-    const previous = `【目标】${'旧'.repeat(3000)}`;
+    const { host, memory, compression } = await setup({}, llm.model);
+    for (const id of ['a', 'b']) await host.events.use.emit('token:usage', usageEvent(id, WIDE));
+    expect(tokensOf(await seed(memory, 'a', 121, 100))).toBeGreaterThan(16_000);
+    await seed(memory, 'b', 201, 100);
+
+    await compression.compress('a', { reason: 'manual' });
+    await compression.compress('b', { reason: 'manual' });
+
+    expect(llm.requests.map(budgetOf)).toEqual([16_000, 16_000]);
+    expect(llm.requests.map(request => request.maxTokens)).toEqual([24_000, 24_000]);
+  });
+
+  it('要压的（上一份摘要加新压的对话）在 1000 与压缩线的一成之间时等于它；保留上限仍按比例乘新压的对话', async () => {
+    const llm = fakeSummaryLLM({ contextLength: 200_000, maxOutputTokens: 32_000 });
+    const { host, memory, compression } = await setup({}, llm.model);
+    await host.events.use.emit('token:usage', usageEvent('s', WIDE));
+    const previous = `【目标】${'旧'.repeat(1000)}`;
     await memory.saveMetadata('summary', 's', { summary: previous });
-    const lines = await seed(memory, 's', 121, 100);
+    const lines = await seed(memory, 's', 20, 100);
 
     await compression.compress('s', { reason: 'manual' });
 
-    const budget = Math.floor(0.1 * tokensOf([previous, ...lines]));
+    const budget = tokensOf([previous, ...lines]);
     expect(budget).toBeGreaterThan(1000);
-    expect(llm.requests).toHaveLength(1);
+    expect(budget).toBeLessThan(16_000);
     expect(budgetOf(llm.requests[0])).toBe(budget);
-    expect(llm.requests[0].maxTokens).toBe(Math.ceil(1.5 * budget));
+    expect(systemOf(llm.requests[0])).toContain(`其中保留的原文合计不超过 ${Math.floor(0.1 * tokensOf(lines))} tokens`);
   });
 
-  it('输入算上工作模板附的待办那一行', async () => {
+  it('要压的不到 1000 时不少于 1000', async () => {
     const llm = fakeSummaryLLM({ contextLength: 200_000, maxOutputTokens: 32_000 });
-    const { memory, compression, host } = await setup({}, llm.model);
-    host.provide.use(todoList, {
-      get: async () => [{ id: 1, title: '整理发布清单', status: 'not-started' }],
-      clear: async () => {},
-    });
-    const lines = await seed(memory, 's', 121, 100);
+    const { host, memory, compression } = await setup({}, llm.model);
+    await host.events.use.emit('token:usage', usageEvent('s', WIDE));
+    await seed(memory, 's', 2);
 
     await compression.compress('s', { reason: 'manual' });
 
-    const rows = [...lines, '当前任务列表状态：\n- [not-started] 整理发布清单'];
-    expect(budgetOf(llm.requests[0])).toBe(Math.floor(0.1 * tokensOf(rows)));
+    expect(budgetOf(llm.requests[0])).toBe(1000);
   });
 
   it.each([
-    [0.2, (input: number) => Math.floor(0.2 * input)],
-    [0, () => 1000],
-  ])('summaryBudgetRatio 设 %s：按它算，不少于 1000', async (summaryBudgetRatio, expected) => {
-    const llm = fakeSummaryLLM({ contextLength: 200_000, maxOutputTokens: 32_000 });
+    [0.2, 32_000],
+    [0, 1000],
+  ])('summaryBudgetRatio 设 %s：按它乘压缩线，不少于 1000', async (summaryBudgetRatio, budget) => {
+    const llm = fakeSummaryLLM({ contextLength: 400_000, maxOutputTokens: 64_000 });
+    const { host, memory, compression } = await setup({ summaryBudgetRatio }, llm.model);
+    await host.events.use.emit('token:usage', usageEvent('s', WIDE));
+    expect(tokensOf(await seed(memory, 's', 121, 200))).toBeGreaterThan(32_000);
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(budgetOf(llm.requests[0])).toBe(budget);
+  });
+
+  it.each([
+    0.1, 0,
+  ])('还没有用量时不看比例（设 %s）：按要压的，不少于 1000、不超过物理上限', async summaryBudgetRatio => {
+    const llm = fakeSummaryLLM({ contextLength: 64_000, maxOutputTokens: 8000 });
     const { memory, compression } = await setup({ summaryBudgetRatio }, llm.model);
-    const lines = await seed(memory, 's', 121, 100);
+    await seed(memory, 'short', 2);
+    const mid = tokensOf(await seed(memory, 'mid', 20, 100));
+    expect(tokensOf(await seed(memory, 'long', 40, 100))).toBeGreaterThan(5333);
 
-    await compression.compress('s', { reason: 'manual' });
+    for (const id of ['short', 'mid', 'long']) await compression.compress(id, { reason: 'manual' });
 
-    expect(budgetOf(llm.requests[0])).toBe(expected(tokensOf(lines)));
+    expect(llm.requests.map(budgetOf)).toEqual([1000, mid, 5333]);
   });
 
   it.each([
-    ['输入小时不少于 1000', { contextLength: 64_000, maxOutputTokens: 8000 }, 1000],
+    ['裁剪预算', { tokenBudget: Number.NaN }],
+    ['窗口', { contextWindow: Number.NaN }],
+  ])('用量里的%s不是有限数时按没有用量：预算不出 NaN', { timeout: 5000 }, async (_label, broken) => {
+    // 预算是 NaN 时切分不前进、一直请求：第二次请求就抛错，让改前的实现也停得下来
+    const llm = fakeSummaryLLM({
+      contextLength: 64_000,
+      maxOutputTokens: 3000,
+      reply: (_request, index) => {
+        if (index > 0) throw new Error('请求不止一次');
+        return 'SUMMARY-TEXT';
+      },
+    });
+    const { host, memory, compression } = await setup({}, llm.model);
+    await host.events.use.emit('token:usage', usageEvent('s', { ...WIDE, ...broken }));
+    expect(tokensOf(await seed(memory, 's', 20, 100))).toBeGreaterThan(2000);
+
+    await compression.compress('s', { reason: 'manual' });
+
+    expect(llm.requests.map(budgetOf)).toEqual([2000]);
+  });
+
+  it.each([
+    ['比例乘出来不到 1000 时不少于 1000', { contextLength: 64_000, maxOutputTokens: 8000 }, 1000],
     ['模型输出上限的三分之二压过下限', { contextLength: 64_000, maxOutputTokens: 900 }, 600],
     ['窗口四分之一的三分之二压过下限', { contextLength: 4000, maxOutputTokens: 8000 }, 666],
   ])('%s，输出上限不超过物理上限', async (_label, limits, budget) => {
     const llm = fakeSummaryLLM(limits);
-    const { memory, compression } = await setup({}, llm.model);
+    const { host, memory, compression } = await setup({}, llm.model);
+    // 压缩线 8000：比例项 800，四分之一 2000
+    await host.events.use.emit(
+      'token:usage',
+      usageEvent('s', { used: 1, compressible: 0, contextWindow: 10_000, tokenBudget: 10_000 }),
+    );
     await seed(memory, 's', 2);
 
     await compression.compress('s', { reason: 'manual' });
@@ -124,12 +180,12 @@ describe('plugin-memory-summary: 摘要预算', () => {
 
   it('摘要模型没声明输出上限时物理上限按 4096：预算至多 2730', async () => {
     const llm = fakeSummaryLLM({ contextLength: 200_000 });
-    const { memory, compression } = await setup({}, llm.model);
-    const lines = await seed(memory, 's', 201, 100);
+    const { host, memory, compression } = await setup({}, llm.model);
+    await host.events.use.emit('token:usage', usageEvent('s', WIDE));
+    expect(tokensOf(await seed(memory, 's', 20, 100))).toBeGreaterThan(2730);
 
     await compression.compress('s', { reason: 'manual' });
 
-    expect(Math.floor(0.1 * tokensOf(lines))).toBeGreaterThan(2730);
     expect(budgetOf(llm.requests[0])).toBe(2730);
     expect(llm.requests[0].maxTokens).toBe(4095);
   });
@@ -190,7 +246,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
   it.each([
     ['这个会话', { scope: 'session', sessionId: 's' }],
     ['全部会话', { scope: 'all' }],
-  ] as const)('清理%s之后不再按清理前那次用量的压缩线封顶', async (_label, target) => {
+  ] as const)('清理%s之后不再按清理前那次用量的压缩线算', async (_label, target) => {
     const llm = fakeSummaryLLM({ contextLength: 64_000, maxOutputTokens: 8000 });
     const { host, memory, compression } = await setup({}, llm.model);
     await host.events.use.emit(
@@ -202,6 +258,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
 
     await compression.compress('s', { reason: 'manual' });
 
+    // 按那次用量是压缩线 1600 的四分之一 400
     expect(budgetOf(llm.requests[0])).toBe(1000);
   });
 });
