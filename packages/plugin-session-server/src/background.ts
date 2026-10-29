@@ -16,6 +16,7 @@ import type {
 import type { ServiceSelection } from '@aalis/core';
 import { failure, type MethodHandlers } from './connection.js';
 import type { DisplayOf } from './display.js';
+import { t } from './texts.js';
 
 /** 只有最后一行与最后输出时间变了的，攒起来按这个节拍推 */
 const COALESCE_MS = 1000;
@@ -44,7 +45,7 @@ export function createBackground(deps: BackgroundDeps) {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const registry = (): BackgroundTaskService => {
-    if (!deps.tasks.present) throw failure('unsupported', '没有后台任务登记');
+    if (!deps.tasks.present) throw failure('unsupported', t('noTaskRegistry'));
     return deps.tasks.use;
   };
 
@@ -111,7 +112,7 @@ export function createBackground(deps: BackgroundDeps) {
     const session = deps.requireSession(sessionId);
     const below = deps.descendantsOf(session);
     if (!deps.agent.present && below.some(info => deps.isRunning(info.id))) {
-      throw failure('unsupported', '没有能停止回合的 agent 服务，子会话的回合停不了');
+      throw failure('unsupported', t('noAgentForSubsessions'));
     }
     if (deps.agent.present) {
       for (const info of below) deps.agent.use.abort(info.id, { queued: true, reason: '全部停止', by });
@@ -138,11 +139,11 @@ export function createBackground(deps: BackgroundDeps) {
     },
     'background/output': ({ taskId, after }) => {
       const output = registry().output(taskId, after);
-      if (!output) throw failure('not-found', `后台任务不存在：${taskId}`);
+      if (!output) throw failure('not-found', t('noTask', { id: taskId }));
       return output;
     },
     'background/stop': async ({ taskId }) => {
-      if (!(await registry().stop(taskId))) throw failure('not-found', `后台任务不存在：${taskId}`);
+      if (!(await registry().stop(taskId))) throw failure('not-found', t('noTask', { id: taskId }));
       return {};
     },
     'background/stopAll': async ({ sessionId }, conn) => {

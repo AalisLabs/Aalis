@@ -3,6 +3,21 @@ import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: '会话服务',
+  protocolLabel: '会话协议',
+  approvalsLabel: '审批',
+  majorMismatch: '协议主版本不同：客户端 {client}，服务端 {server}',
+  noSession: '会话不存在：{id}',
+  badCursor: 'cursor 无效：{cursor}',
+  historyCursorExpired: '历史游标已失效：{before}',
+  noTaskRegistry: '没有后台任务登记',
+  noTask: '后台任务不存在：{id}',
+  noAgentForSubsessions: '没有能停止回合的 agent 服务，子会话的回合停不了',
+  noAgent: '没有能停止回合的 agent 服务',
+  turnNotRunning: '这一轮不在跑：{turnId}',
+  noCompression: '没有压缩服务',
+  noCheckpoint: '没有检查点服务，不能回滚',
+  noTodoList: '没有待办服务',
   instanceLabel: '{name}（{instance}）',
   toolLimit: '工具调用达到这一轮的上限，可以让她继续',
   compacting: '正在压缩对话',

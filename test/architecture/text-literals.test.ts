@@ -74,8 +74,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-reach', '尚未迁移'],
   ['plugin-remote-agent-cursor', '尚未迁移'],
   ['plugin-scheduler', '尚未迁移'],
-  ['plugin-session-manager', '尚未迁移'],
-  ['plugin-session-server', '尚未迁移'],
   ['plugin-skills', '尚未迁移'],
   ['plugin-storage-local', '尚未迁移'],
   ['plugin-subtask', '尚未迁移'],

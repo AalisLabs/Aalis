@@ -664,7 +664,7 @@ export async function readHistory(
     const loose = new Set(units.flatMap(({ at, shape }) => (shape === 'loose' ? at.map(i => kept[i]) : [])));
     const end = page.before === undefined ? raw.length : raw.findIndex(m => archivedItemId(m) === page.before);
     if (end < 0) {
-      if (exhausted) throw failure('not-found', `历史游标已失效：${page.before}`);
+      if (exhausted) throw failure('not-found', t('historyCursorExpired', { before: String(page.before) }));
       continue;
     }
     let start = Math.max(0, end - page.limit);

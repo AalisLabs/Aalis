@@ -101,7 +101,7 @@ export function createSessions(deps: SessionDeps) {
 
   const requireSession = (id: string): SessionInfo => {
     const session = sm.getSession(id);
-    if (!session) throw failure('not-found', `会话不存在：${id}`);
+    if (!session) throw failure('not-found', t('noSession', { id }));
     return session;
   };
 
@@ -239,7 +239,7 @@ export function createSessions(deps: SessionDeps) {
    */
   function list(params: SessionMethodParams<'sessions/list'>): SessionMethodResult<'sessions/list'> {
     if (params.cursor !== undefined && !/^\d+$/.test(params.cursor)) {
-      throw new ProtocolError(RPC_ERROR_CODES.invalidParams, `cursor 无效：${params.cursor}`);
+      throw new ProtocolError(RPC_ERROR_CODES.invalidParams, t('badCursor', { cursor: params.cursor }));
     }
     const parent = params.parentId === undefined ? undefined : requireSession(params.parentId);
     const archived = params.archived ?? false;
@@ -389,7 +389,7 @@ export function createSessions(deps: SessionDeps) {
       const failed: SessionMethodResult<'session/batch'>['failed'] = [];
       // 只有开始前就不存在的算失败：删父会话时一并删掉的子会话不算
       const present = ids.filter(id => sm.getSession(id) !== undefined);
-      for (const id of ids) if (!present.includes(id)) failed.push({ sessionId: id, message: `会话不存在：${id}` });
+      for (const id of ids) if (!present.includes(id)) failed.push({ sessionId: id, message: t('noSession', { id }) });
       for (const id of present) {
         try {
           await (op === 'archive' ? archive(id) : sm.deleteSession(id));

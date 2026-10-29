@@ -2,6 +2,21 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'Session service',
+  protocolLabel: 'Session protocol',
+  approvalsLabel: 'Approvals',
+  majorMismatch: 'Protocol major versions differ: client {client}, server {server}',
+  noSession: 'Session {id} does not exist',
+  badCursor: 'Invalid cursor: {cursor}',
+  historyCursorExpired: 'The history cursor has expired: {before}',
+  noTaskRegistry: 'No background task registry',
+  noTask: 'Background task {id} does not exist',
+  noAgentForSubsessions: "No agent service to stop turns, so the subsessions' turns cannot be stopped",
+  noAgent: 'No agent service to stop the turn',
+  turnNotRunning: 'This turn is not running: {turnId}',
+  noCompression: 'No compaction service',
+  noCheckpoint: 'No checkpoint service, so the turn cannot be rewound',
+  noTodoList: 'No to-do service',
   instanceLabel: '{name} ({instance})',
   toolLimit: 'Tool calls reached the limit for this turn; you can let the assistant continue',
   compacting: 'Compacting the conversation',

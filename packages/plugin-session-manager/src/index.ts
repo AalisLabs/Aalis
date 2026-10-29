@@ -37,7 +37,7 @@ import {
 import { type SessionFieldReader, sessionFields } from '@aalis/api-session-settings';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig } from '@aalis/schema-config';
-import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
+import { asText, type TextRef, toSource, truncateParams, withText } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { t } from './texts.js';
@@ -48,40 +48,37 @@ import { t } from './texts.js';
 const configSchema = defineConfig({
   takeScope: {
     type: 'select',
-    label: '取别的会话的范围',
-    description:
-      '从别的会话取原文（读会话历史的工具、按消息 id 取消息、跨会话历史）时能取哪些会话：本会话只取本会话与它派出的子任务，' +
-      '同平台按两边的平台比（WebUI、终端各算一个平台），全部不比。写坏了按本会话',
+    label: t('takeScopeLabel'),
+    description: t('takeScopeDescription'),
     default: 'platform',
     onInvalid: 'error',
     options: [
-      { label: '本会话', value: 'session' },
-      { label: '同平台', value: 'platform' },
-      { label: '全部', value: 'all' },
+      { label: t('takeScopeSession'), value: 'session' },
+      { label: t('takeScopePlatform'), value: 'platform' },
+      { label: t('takeScopeAll'), value: 'all' },
     ],
     session: { prominence: 'advanced' },
   },
   takeOtherGroups: {
     type: 'boolean',
-    label: '读别的群',
-    description: '范围之内能不能取别的群里的内容。写坏了按否',
+    label: t('takeOtherGroupsLabel'),
+    description: t('takeOtherGroupsDescription'),
     default: true,
     onInvalid: 'error',
     session: { prominence: 'advanced' },
   },
   takeOthersPrivate: {
     type: 'boolean',
-    label: '读别人的私聊',
-    description:
-      '范围之内能不能取别人与她的私聊，owner 在 WebUI、终端里的会话也算；调用工具的人取他自己与她的私聊不用打开。写坏了按否',
+    label: t('takeOthersPrivateLabel'),
+    description: t('takeOthersPrivateDescription'),
     default: false,
     onInvalid: 'error',
     session: { prominence: 'advanced' },
   },
   takeCrossBot: {
     type: 'boolean',
-    label: '跨机器人账号',
-    description: '范围之内，同一平台上能不能取她另一个机器人账号下的会话。写坏了按否',
+    label: t('takeCrossBotLabel'),
+    description: t('takeCrossBotDescription'),
     default: false,
     onInvalid: 'error',
     session: { prominence: 'advanced' },
@@ -755,14 +752,17 @@ class SessionManager implements SessionManagerService {
 
   /**
    * 逐个删掉这些会话（各连同下面各级子会话），返回删掉的会话数。哪一处抛错都不拦住其余的，全部做完再交出：一处原样交出，几处
-   * 合成一个 AggregateError（各级的摊平成一层）
+   * 合成一个挂着给人看的文字的 AggregateError（各级的摊平成一层）
    */
   private async removeAll(ids: readonly string[]): Promise<number> {
     const failures: unknown[] = [];
     let removed = 0;
     for (const id of ids) removed += await this.remove(id, failures);
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw new AggregateError(failures, `删除会话时 ${failures.length} 处出错`);
+    if (failures.length > 1) {
+      const text = t('deleteFailed', { count: failures.length });
+      throw withText(new AggregateError(failures, text.source), text);
+    }
     return removed;
   }
 
@@ -1367,7 +1367,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-session-manager',
-  displayName: '会话管理',
+  displayName: t('displayName'),
   subsystem: 'session',
   configSchema,
   provides: [sessionManager],
@@ -1387,7 +1387,7 @@ async function run(caps: Caps): Promise<void> {
   lifecycle.use.signal.throwIfAborted();
 
   // 注册服务
-  provide.use(sessionManager, manager, { label: '会话管理' });
+  provide.use(sessionManager, manager, { label: t('displayName') });
 
   // ===== IM 房间收录 =====
   // 原生入站的收录与补记见 recordInbound；网关在入站相位之前也等它，同一会话共用同一次

@@ -14,6 +14,7 @@ import type { Events, ServiceSelection } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { failure, type MethodHandlers } from './connection.js';
+import { t } from './texts.js';
 
 /** 工具调用达到上限后请她接着做 */
 const CONTINUE_PROMPT = '[请继续执行未完成的工具调用]';
@@ -79,19 +80,19 @@ export function createTurnControl(deps: TurnControlDeps) {
     },
     'turn/abort': ({ sessionId, turnId }, conn) => {
       requireSession(sessionId);
-      if (!deps.agent.present) throw failure('unsupported', '没有能停止回合的 agent 服务');
+      if (!deps.agent.present) throw failure('unsupported', t('noAgent'));
       // 停止键只停在跑的一轮，排着的照常开下一轮；停下的人是这条连接的身份
       if (
         !deps.agent.use.abort(sessionId, { turnId, reason: '停止键', by: conn.peer.identity }) &&
         turnId !== undefined
       ) {
-        throw failure('expected-turn-mismatch', `这一轮不在跑：${turnId}`);
+        throw failure('expected-turn-mismatch', t('turnNotRunning', { turnId }));
       }
       return {};
     },
     'session/compress': async ({ sessionId }, conn) => {
       requireSession(sessionId);
-      if (!deps.compression.present) throw failure('unsupported', '没有压缩服务');
+      if (!deps.compression.present) throw failure('unsupported', t('noCompression'));
       const compression = deps.compression.use;
       await compression.compress(sessionId, { reason: 'manual' });
       deps.requestUsage(sessionId, conn.peer.identity.platform);
@@ -99,13 +100,13 @@ export function createTurnControl(deps: TurnControlDeps) {
     },
     'turn/rewind': ({ sessionId, turnId, scope }) => {
       requireSession(sessionId);
-      if (!deps.checkpoint.present) throw failure('unsupported', '没有检查点服务，不能回滚');
+      if (!deps.checkpoint.present) throw failure('unsupported', t('noCheckpoint'));
       const checkpoint = deps.checkpoint.use;
       return scope === 'code' ? checkpoint.rollback(sessionId, turnId) : checkpoint.rollbackWithChat(sessionId, turnId);
     },
     'plan/clear': async ({ sessionId }) => {
       requireSession(sessionId);
-      if (!deps.todoList.present) throw failure('unsupported', '没有待办服务');
+      if (!deps.todoList.present) throw failure('unsupported', t('noTodoList'));
       const todoList = deps.todoList.use;
       await todoList.clear(sessionId);
       return {};
