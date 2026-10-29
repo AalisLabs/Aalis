@@ -38,7 +38,8 @@ const configSchema = defineConfig({
     type: 'textarea',
     label: '压缩提示词',
     default: '',
-    description: '自定义压缩搜索结果的提示词。留空使用默认提示。提示词中可使用 {query} 代表搜索关键词。',
+    description:
+      '自定义压缩搜索结果的提示词。留空使用默认提示。提示词中用 {query} 代表搜索关键词、{results} 代表搜索结果（不写 {results} 模型就收不到结果）。',
   },
 });
 
@@ -225,14 +226,16 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
 
   /**
    * 使用 LLM 压缩搜索结果；没有能对话的模型时返回原始结果。模型取 llm 服务给本插件挑的能对话的那一个（见 chatModelPicker）。
-   * 输出上限只防失控；模型在上限处停下时末尾标出截断
+   * 输出上限只防失控；模型在上限处停下时末尾标出截断。压缩模型读的是网页原文，它的输出同样不可信：由这里包上标记，不靠提示词让
+   * 模型自己加；截断说明接在正文末尾，在标记之内（标记没有闭合）
    */
   async function compressResults(query: string, rawResults: string): Promise<string> {
     const entry = pickChatModel();
     if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
-    const prompt = promptTemplate.replace('{query}', query).replace('{results}', rawResults);
+    // 一次换完两个占位符：替换值里的 $ 不当替换模式，搜索词里写的 {results} 也不会再被换掉
+    const prompt = promptTemplate.replace(/\{(query|results)\}/g, (_, key) => (key === 'query' ? query : rawResults));
 
     const messages: Message[] = [{ role: 'user', content: prompt }];
 
@@ -243,7 +246,10 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       });
       const text = response.content?.trim();
       if (!text) return rawResults;
-      return response.finishReason === 'length' ? `${text}（已在长度上限处截断）` : text;
+      return wrapUntrustedContent(
+        response.finishReason === 'length' ? `${text}（已在长度上限处截断）` : text,
+        '网络搜索结果',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.use.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);

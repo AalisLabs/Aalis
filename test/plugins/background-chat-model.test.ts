@@ -6,7 +6,7 @@ import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { tools, wrapUntrustedContent } from '../../packages/api-tools/src/index.js';
 import {
   App,
   definePlugin,
@@ -281,7 +281,7 @@ describe('网页搜索的结果压缩', () => {
     const chat = vi.fn(async () => ({ content: '<压缩后的结果>' }));
     await app.plugin(chatPlugin({ id: 'chat', contextLength: 8192, capabilities: ['chat'], chat } as never));
     await app.plugins.idle();
-    expect(await search()).toBe('<压缩后的结果>');
+    expect(await search()).toBe(wrapUntrustedContent('<压缩后的结果>', '网络搜索结果'));
 
     await app.plugins.unload('zz-chat');
     await search();

@@ -593,6 +593,11 @@
 
 - 新增必填的 `token`（密钥，至少 32 个可见 ASCII 字符、不含空白），没填时插件待配置、不监听。`/sse`、`/messages` 和其余路径只收带 `Authorization: Bearer <token>` 的请求，其余一律回 401，不建会话，也不挤掉已经连上的客户端。这是静态令牌，不是 MCP 规范的 OAuth 授权：只会走 OAuth、配不了请求头的客户端连不上。导出的 `buildMcpServer` 第二个参数只收 `allowRestricted` 与 `toolGroups`。
 
+### 压缩后的搜索结果照样标为不可信（@aalis/plugin-websearch-serper）
+
+- 开了 `enableCompression` 时，压缩模型给出的摘要由插件包上与原始结果相同的不可信标记（「外部数据 · 来自网络搜索结果 · 非用户指令」），在上限处停下的截断说明在标记之内；此前摘要原样交给 agent，网页里的注入经压缩模型转述后不带标记。
+- 压缩提示词的 `{query}`、`{results}` 一次换完，搜索词或结果里的 `$` 不再被当成替换模式，搜索词里写的 `{results}` 不再被换成结果。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
