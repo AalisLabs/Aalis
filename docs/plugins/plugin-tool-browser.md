@@ -73,10 +73,10 @@ export default definePlugin({
 `blockPrivate=true` 时，插件在本进程的 `127.0.0.1` 随机端口起一道网络闸（只支持无认证 CONNECT 的 SOCKS5 服务），浏览器以 `--proxy-server` 把全部 TCP 连接交给它，并以 `--proxy-bypass-list=<-loopback>` 撤掉 Chrome 让 localhost、回环与链路本地地址默认绕过代理的规则。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的连接都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源、`fetch` 与 WebSocket。每个连接先按进程级网络策略的 `allowedPorts` 判定目标端口（`allowedHosts` 里的主机也不例外），再按目标主机判定：
 
 - `allowedHosts` 里的主机按名字直连，不做私网判定；
-- IP 字面量须是规范写法（Chrome 交出的都是），含 zone id 或不是规范写法的 IPv6 字面量直接拒绝，其余经 `assertAddressesSafe` 判定；
+- IP 字面量经 `assertAddressesSafe` 判定（按数值认，写法不限），按 `canonicalAddress` 给出的规范写法连接，连的就是判的那个地址；
 - 域名经 `pinnedLookup` 解析，全部地址通过判定后，连接只用这次解析得到的地址。判定与连接之间不再解析第二次，DNS 重绑定（判定时解析到公网地址、连接时解析到内网地址）因此无效。
 
-判定不过、解析失败或连接失败，浏览器侧的请求都以 `net::ERR_SOCKS_CONNECTION_FAILED` 失败；`browser_navigate` 遇到这个错误时在报错后附一句说明，指出目标可能被 `blockPrivate` 拦截。判定遵循进程级网络策略，即宿主配置文档 `network` 字段的 `blockPrivate`、`denyCidrs` 与 `allowedPorts` 三项。WebRTC 以 `--webrtc-ip-handling-policy=disable_non_proxied_udp` 启动，不发不经代理的 UDP（以随附的 Chrome 实测；`executablePath` 指向较旧的 Chrome 时未核实）。
+判定不过、解析失败或连接失败，浏览器侧的请求都以 `net::ERR_SOCKS_CONNECTION_FAILED` 失败；`browser_navigate` 遇到这个错误时在报错后附一句说明，指出目标可能被 `blockPrivate` 拦截，宿主配置的 `network` 段写错时也报此错。判定遵循进程级网络策略，即宿主配置文档 `network` 字段的 `blockPrivate`、`denyCidrs` 与 `allowedPorts` 三项。WebRTC 以 `--webrtc-ip-handling-policy=disable_non_proxied_udp` 启动，不发不经代理的 UDP（以随附的 Chrome 实测；`executablePath` 指向较旧的 Chrome 时未核实）。
 
 闸在首次启动浏览器之前起好，此后一直监听到插件停用；起不来时报错、不启动浏览器，下次调用重试，浏览器不会在没有闸的情况下运行。闸不做认证，本机进程都可以连到它，经它连接的目标同样按上述规则判定；问候与请求 10 秒内没有收齐的连接会被断开。插件停用时先关闭闸并断开全部在途连接，再关闭页面与浏览器，闸的关闭不等浏览器关闭落定。浏览器的全部流量经插件所在进程转发，打开重页面、视频时会多占该进程的 CPU，闸解析域名用的 `dns.lookup` 占用 libuv 线程池，域名多的页面可能与同进程的文件 I/O 争用线程；走代理后 Chrome 不使用 QUIC，也不再使用系统代理设置，出站连接由插件所在进程直连目标。`blockPrivate=false` 时不做私网判定，也不起闸，进程级网络策略不作用于浏览器。
 

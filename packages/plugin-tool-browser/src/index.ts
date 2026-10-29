@@ -17,7 +17,13 @@ import {
   optional,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { assertAddressesSafe, assertPortAllowed, isPrivateHost, pinnedLookup } from '@aalis/util-network-guard';
+import {
+  assertAddressesSafe,
+  assertPortAllowed,
+  canonicalAddress,
+  isPrivateHost,
+  pinnedLookup,
+} from '@aalis/util-network-guard';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tool-browser — 浏览器自动化工具
@@ -510,7 +516,7 @@ function runBrowserTools(caps: Caps): void {
         return JSON.stringify({
           error:
             config.blockPrivate && msg.includes('net::ERR_SOCKS_CONNECTION_FAILED')
-              ? `${msg}（浏览器网络闸未接通：目标是内网或本机地址时被 blockPrivate 拦截，目标无法解析或无法连接时也报此错）`
+              ? `${msg}（浏览器网络闸未接通：目标是内网或本机地址时被 blockPrivate 拦截，目标无法解析、无法连接，或宿主配置的 network 段写错时也报此错）`
               : msg,
         });
       }
@@ -882,12 +888,12 @@ const HANDSHAKE_TIMEOUT_MS = 10_000;
 /**
  * 在 127.0.0.1 的随机端口起浏览器网络闸：浏览器经 `--proxy-server` 把全部 TCP 连接交给它，页面、弹出窗口、
  * 各类 worker 的 http(s) 请求、重定向的每一跳与 WebSocket 都在内。只实现浏览器用到的那部分 SOCKS5：无认证 + CONNECT，
- * 目标只收域名形式（ATYP=3）——Chrome 一律以这种形式交出目标，IP 字面量也是（IPv6 不带方括号、已是规范写法）。
+ * 目标只收域名形式（ATYP=3）——Chrome 一律以这种形式交出目标，IP 字面量也是（IPv6 不带方括号）。
  *
  * 端口先经 assertPortAllowed 判定，allowedHosts 里的主机也不例外。主机判定沿用 validateUrl 的 blockPrivate + allowedHosts：
- * allowedHosts 里的主机按名字直连；IP 字面量须是规范写法，再经 assertAddressesSafe 判定；域名经 pinnedLookup 解析并判定
- * 全部地址，连接只用这次解析的结果，堵住 DNS 重绑定（判定时解析到公网、连接时再解析到内网）。判定遵循进程级网络策略
- * （blockPrivate、denyCidrs 与 allowedPorts）；判定不过、解析失败或连不上都回失败应答。
+ * allowedHosts 里的主机按名字直连；IP 字面量经 assertAddressesSafe 判定（按数值认，写法不限），按 canonicalAddress 连接；
+ * 域名经 pinnedLookup 解析并判定全部地址，连接只用这次解析的结果，堵住 DNS 重绑定（判定时解析到公网、连接时再解析到内网）。
+ * 判定遵循进程级网络策略（blockPrivate、denyCidrs 与 allowedPorts）；判定不过、解析失败或连不上都回失败应答。
  */
 async function openNetworkGate(allowedHosts: readonly string[], logger: Logger): Promise<NetworkGate> {
   const sockets = new Set<Socket>();
@@ -905,12 +911,8 @@ async function openNetworkGate(allowedHosts: readonly string[], logger: Logger):
     // allowedHosts 与 validateUrl 同一写法比较：IPv6 字面量带方括号
     if (allowedHosts.includes(family === 6 ? `[${host}]` : host)) return connect({ host, port });
     if (family) {
-      // 判定按规范写法认段：0::1、带 zone id 的 ::1%lo0 会被判成公网，连接却照样到 ::1。Chrome 交出的都是规范写法
-      if (family === 6 && (host.includes('%') || new URL(`http://[${host}]`).hostname !== `[${host}]`)) {
-        throw new Error(`IPv6 字面量不是规范写法: ${host}`);
-      }
       assertAddressesSafe(host, [host]);
-      return connect({ host, port });
+      return connect({ host: canonicalAddress(host), port });
     }
     return connect({ host, port, lookup: pinnedLookup });
   }

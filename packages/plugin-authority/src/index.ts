@@ -8,7 +8,7 @@ import { sessionFields } from '@aalis/api-session-settings';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { isUnsafeConfigKey } from '@aalis/schema-config';
 import { isTextError, TextError, type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
@@ -27,6 +27,7 @@ import { t } from './texts.js';
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
+  events,
   logger,
   lifecycle,
   webui: optional(webuiServer),
@@ -49,7 +50,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { commands, contributions, lifecycle, logger, storage, tools, webui } = caps;
+  const { commands, contributions, events, lifecycle, logger, storage, tools, webui } = caps;
   const config = caps.hostConfig.use;
 
   const manager = new AuthorityManager(config, logger.use, storage.use);
@@ -103,9 +104,17 @@ async function run(caps: Caps): Promise<void> {
   // 就开始裁决」的窗口（封禁用户在这段时间按默认 0 级通过）。storage 晚上线时无从等待，仍异步。
   if (loading) await loading;
 
-  // 网络出口闸（SSRF）：把宿主配置 network 注入进程级 safeFetch 策略（启动一次）。
+  // 网络出口闸（SSRF）：把宿主配置 network 注入进程级 safeFetch 策略。network 是宿主文档的顶层字段，文档变了（change 带 document）
+  // 就重新注入，改了即时生效；写错时经出网闸的请求一律失败、权限照常裁决，并记一条 warn，不等出网时才发现。
   // 安全归属在权限域；本地固定服务走裸 fetch、不过 safeFetch，故不受影响。
-  setNetworkPolicy(config.get('network') ?? {});
+  const injectNetwork = (): void => {
+    const problem = setNetworkPolicy(config.get('network') ?? {});
+    if (problem) logger.use.warn(problem);
+  };
+  injectNetwork();
+  events.use.on('host-config:changed', change => {
+    if ('document' in change) injectNetwork();
+  });
 
   // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
   // 多人的一轮按动作判，对每个参与者各裁决一次：都过照常执行；有人过、有人不过，这一个调用要一道参与者审批，凡自己就能做的人

@@ -69,7 +69,15 @@ export const pinnedLookup: LookupFunction // node:net 的 LookupFunction
 export function assertAddressesSafe(host: string, addresses: readonly string[]): void
 ```
 
-逐个校验地址：`blockPrivate` 开启时命中私网、回环或元数据段即抛错，命中 `denyCidrs` 即抛错。`host` 只用于错误信息。`assertSafeHost` 与 `pinnedLookup` 共用这一判定。自管连接的目标是 IP 字面量时传 `assertAddressesSafe(ip, [ip])`，传入前须是规范形式：判定按规范写法认段，`0::1`、带 zone id 的 `::1%lo0` 这类写法会被判成公网，连接却照样到达回环。浏览器网络闸的做法是：含 `%`、或与 URL 解析器规范化后的写法不同的 IPv6 字面量一律拒绝。
+逐个校验地址：`blockPrivate` 开启时命中私网、回环或元数据段即抛错，命中 `denyCidrs` 即抛错。`host` 只用于错误信息。`assertSafeHost` 与 `pinnedLookup` 共用这一判定。自管连接的目标是 IP 字面量时传 `assertAddressesSafe(ip, [ip])`，地址按数值认，非规范写法与带 zone id 的写法照样判得出；判过之后按 `canonicalAddress(ip)` 连接，见下。
+
+### `canonicalAddress(addr)` — 判过的 IP 字面量按它连接
+
+```typescript
+export function canonicalAddress(addr: string): string
+```
+
+交回 IP 字面量的规范写法：IPv6 拼回压缩写法（如 `0000:0000:0000:0000:0000:ffff:127.0.0.10%lo0` 得到 `::ffff:7f00:a%lo0`），zone id 原样接在后面；IPv4 与不是 IP 字面量的原样交回。node:net 会把 `%` 之前超过 39 个字符的写法截短，原样交给 `net.connect` 时，连到的可能不是判定的那个地址；判定查表用的是同一个规范写法（不带 zone id）。浏览器网络闸即按它连接。
 
 ### `assertPortAllowed(port)` — 校验目标端口
 
@@ -85,37 +93,41 @@ export function assertPortAllowed(port: number): void
 export function isPrivateAddress(addr: string): boolean
 ```
 
-判断一个**字面 IP** 是否落在私网、回环、链路本地、元数据、多播保留段。它不做 DNS 查询、无副作用、同步返回。命中的段如下：
+判断一个**字面 IP** 是不是公网单播之外的地址（私网、回环、链路本地、元数据、组播、保留与文档段）。它不做 DNS 查询、无副作用、同步返回。地址先按数值解析、换成规范写法再查表，非规范写法（如 `0::1`）与带 zone id 的写法（如 `::1%lo0`）和规范写法判法相同，`%` 之前写得多长都一样。命中的段如下：
 
 | 段 | 说明 |
 |---|---|
-| `10.0.0.0/8` · `172.16–31.x.x` · `192.168.0.0/16` | RFC1918 私网 |
-| `127.0.0.0/8` · IPv6 `::1` | 回环 |
+| `10.0.0.0/8` · `172.16.0.0/12` · `192.168.0.0/16` | RFC1918 私网 |
+| `127.0.0.0/8` | 回环 |
 | `0.0.0.0/8` | 「本网络」 |
 | `169.254.0.0/16` | 链路本地，**含 AWS/云元数据 `169.254.169.254`** |
-| `>= 224.0.0.0` | 组播/保留 |
-| IPv6 `::` · `fe80:` · `fc`/`fd`（ULA）· `::ffff:` 映射（剥壳后按 v4 再判） | IPv6 私网/链路本地 |
+| `100.64.0.0/10` · `198.18.0.0/15` | CGNAT、基准测试段 |
+| `192.0.0.0/24` · `192.0.2.0/24` · `198.51.100.0/24` · `203.0.113.0/24` | IETF 协议段、文档段 |
+| `224.0.0.0/3` | 组播/保留 |
+| IPv6 `2000::/3` 之外全部 | 回环 `::1`、未指定 `::`、ULA `fc00::/7`、链路本地 `fe80::/10`、组播 `ff00::/8` 等都在内 |
+| `2001::/23` · `2001:db8::/32` · `3fff::/20` · `2002::/16` | IETF 协议段（含 Teredo）、文档段、6to4 |
+| IPv4 映射 `::ffff:0:0/96` · NAT64 `64:ff9b::/96` | 按内嵌的 IPv4 判，不查上面的 IPv6 各段 |
 
 关键约定是**解析失败按危险处理**：当 `isIP(addr) === 0`（即传入的不是合法 IP 字面量）时，直接返回 `true`。因此传入非 IP 字符串（域名、空串）一律得到 `true`。不要拿它当域名判定器，域名请用 `assertSafeHost`。
 
-### `setNetworkPolicy(cfg)` — 进程级策略注入（启动时一次）
+### `setNetworkPolicy(cfg)` — 进程级策略注入
 
 ```typescript
-export function setNetworkPolicy(cfg: NetworkPolicyConfig): void
+export function setNetworkPolicy(cfg: NetworkPolicyConfig): string | undefined
 
 export interface NetworkPolicyConfig {
   blockPrivate?: boolean;   // 默认 true；本地自动化可显式 false 关私网拦截
-  denyCidrs?: string[];     // 额外拒绝的 IPv4 CIDR，如 ["100.64.0.0/10"]
-  allowedPorts?: number[];  // 非空时仅允许这些目标端口，如 [80, 443]；空/缺省=不限
+  denyCidrs?: string[];     // 额外拒绝的网段（IPv4 或 IPv6），如 ["100.64.0.0/10", "fd00::/8"]
+  allowedPorts?: number[];  // 非空时仅允许这些目标端口（1 到 65535 的整数），如 [80, 443]；空/缺省=不限
 }
 ```
 
-注入进程级出口策略。CIDR 在注入时会预解析成整数 base/mask，每次请求只做几条整数比对，不在热路径重复解析。
+注入进程级出口策略。网段在注入时会预先建成 node:net 的 BlockList（IPv4、IPv6 各一张），每次请求只查表，不在热路径重复解析。
 
-默认策略是 `{ blockPrivate: true, denyCidrs: [], allowedPorts: null }`——也就是说，即使未注入，也默认拦截私网。`blockPrivate` 只有在显式传 `false` 时才关闭（判定条件是 `cfg.blockPrivate !== false`），`allowedPorts` 为空数组等同于不限，无效的 CIDR 会被静默过滤掉。
+默认策略是 `{ blockPrivate: true, denyCidrs: [], allowedPorts: null }`——也就是说，即使未注入，也默认拦截私网。`blockPrivate` 只有写成 `false` 时才关闭，`allowedPorts` 为空数组等同于不限，各项写成 `null` 与没写一样。写错一处，策略就处于「配置有误」：`cfg` 不是对象，有这三项之外的字段，`blockPrivate` 不是布尔，`denyCidrs`、`allowedPorts` 不是列表，或有一条不是网段（网段不带 zone id）、不是 1 到 65535 的整数。这时 `setNetworkPolicy` 不抛错，交回一句「网络策略配置有误：<字段> 的 <原值>…」（多出的字段点名键名）；此后 `assertSafeUrl`、`assertSafeHost`、`assertAddressesSafe` 与 `assertPortAllowed` 一律抛这一句，经出网闸的请求全部失败，直到注入一份写对的。
 
 ::: warning 由谁调用
-策略来自宿主配置文档的 `network` 字段（由 `api-authority` 声明），由 `plugin-authority` 在启动时注入一次。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `api-authority`。
+策略来自宿主配置文档的 `network` 字段（由 `api-authority` 声明），由 `plugin-authority` 在激活时注入，宿主配置文档变了（热重载即如此）时再注入，改了即时生效。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `api-authority`。
 :::
 
 ---
@@ -171,7 +183,7 @@ await assertSafeHost(parsedUrl.hostname);
 | ollama | 下载消息里的图片网址（带 30s 超时） |
 | file-reader | 下载网址形式的附件 |
 | 远端代理 | 下载远端代理产出的成品（预签名链接） |
-| 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，启动时注入一次 |
+| 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，激活时注入，宿主文档变了再注入 |
 
 其中两处做法值得参考：图片代理显式不带 cookie、只给一个伪 UA；media 与 http 工具在 `safeFetch` 之外自行做体积上限与流式累计——util 只负责校验、不限制体积，详见 §5。
 
@@ -202,7 +214,7 @@ await assertSafeHost(parsedUrl.hostname);
 
 **`blockPrivate: false` 是 owner 的本地自动化逃生门，不是默认。** 关掉后，私网、回环、元数据全部放行——只在 owner 明确需要访问本机服务、且清楚风险时，在宿主配置文档（`aalis.config.yaml` 顶层 `network`，由 `api-authority` 声明）中开启。本地固定服务（ollama、onebot daemon）本就走裸 `fetch`、不过 `safeFetch`，不受策略影响。
 
-**`allowedPorts` 只对 IPv4/IPv6 默认端口推断生效：** URL 无显式端口时按协议推断（https → 443，http → 80），有显式端口时按显式值。`denyCidrs` 当前仅支持 IPv4（`inDenyCidrs` 在非 v4 时直接放行）。
+**`allowedPorts` 只对 IPv4/IPv6 默认端口推断生效：** URL 无显式端口时按协议推断（https → 443，http → 80），有显式端口时按显式值。`denyCidrs` 收 IPv4 与 IPv6；IPv4 网段同样管 IPv4 映射与 NAT64 写法，IPv6 网段不管 IPv4 地址。
 
 ---
 
