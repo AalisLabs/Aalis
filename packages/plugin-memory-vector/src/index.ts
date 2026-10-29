@@ -21,7 +21,7 @@ import {
   type ServiceSelection,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { toSource } from '@aalis/schema-i18n';
+import { textOf, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import {
   CONTROL_KINDS,
@@ -39,107 +39,102 @@ import { t } from './texts.js';
 
 const configSchema = defineConfig({
   search: {
-    label: '搜索设置',
+    label: t('searchLabel'),
     fields: {
       topK: {
         type: 'number',
-        label: '最大返回数',
+        label: t('topKLabel'),
         default: 5,
-        description: '语义搜索返回的命中条数（每条会再带上下文窗口）',
+        description: t('topKDescription'),
       },
       timeWeight: {
         type: 'number',
-        label: '时间权重',
+        label: t('timeWeightLabel'),
         default: 0.3,
-        description: '0=纯语义，1=纯时间近因',
+        description: t('timeWeightDescription'),
       },
       userPriorityBoost: {
         type: 'number',
-        label: '同用户加权系数',
+        label: t('userPriorityBoostLabel'),
         default: 2.0,
-        description: '在 user 模式下对同一用户消息的命中分数乘以该系数（>1 表示优先）',
+        description: t('userPriorityBoostDescription'),
       },
       perItemMaxChars: {
         type: 'number',
-        label: '单条截断字数',
+        label: t('perItemMaxCharsLabel'),
         default: 0,
-        description: '每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
+        description: t('perItemMaxCharsDescription'),
       },
       minScore: {
         type: 'number',
-        label: '最低相似度阈值',
+        label: t('minScoreLabel'),
         default: 0,
-        description: '0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤',
+        description: t('minScoreDescription'),
       },
     },
   },
   contextExpand: {
-    label: '上下文情景扩展',
-    description: '命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。0 = 关闭。',
+    label: t('contextExpandLabel'),
+    description: t('contextExpandDescription'),
     fields: {
       window: {
         type: 'number',
-        label: '扩展窗口（前后各 N 条消息）',
+        label: t('windowLabel'),
         default: 2,
         min: 0,
         integer: true,
         onInvalid: 'error',
-        description: '0 = 仅命中本身。建议 2~5',
+        description: t('windowDescription'),
       },
       crossSession: {
         type: 'boolean',
         onInvalid: 'error',
-        label: '跨会话也扩展',
+        label: t('crossSessionLabel'),
         default: true,
-        description: '若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文',
+        description: t('crossSessionDescription'),
       },
     },
   },
   indexing: {
-    label: '索引设置',
-    description: '控制后台向量索引的削峰与并发。搜索路径不受该队列影响。',
+    label: t('indexingLabel'),
+    description: t('indexingDescription'),
     fields: {
       concurrency: {
         type: 'number',
-        label: '最大并发索引数',
+        label: t('concurrencyLabel'),
         default: 10,
-        description:
-          '同时进行的后台 embedding + 向量写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地 embedding 服务。',
+        description: t('concurrencyDescription'),
       },
       maxQueueSize: {
         type: 'number',
-        label: '最大索引队列长度',
+        label: t('maxQueueSizeLabel'),
         default: 500,
-        description: '待索引消息队列上限。0 或负数表示不限制；超出后丢弃最旧待索引消息，避免内存无限增长。',
+        description: t('maxQueueSizeDescription'),
       },
     },
   },
   recallRoles: {
     type: 'select',
-    label: '召回角色范围',
+    label: t('recallRolesLabel'),
     default: 'all',
-    description:
-      'AI 自己的历史回复（role=assistant）是否作为语义命中参与召回。others-only 档过滤的是' +
-      '**命中点**（候选池自动放大一倍补偿）；命中点的上下文扩窗邻居不过滤、仍可能以' +
-      '「Assistant·你自己」标注出现（保留情景完整性）。无论何档，assistant 条目渲染必带' +
-      '角色标注（防自我强化地基，不随开关关闭）。存量未打 role 的旧向量按 user（对方）对待',
+    description: t('recallRolesDescription'),
     options: [
-      { label: '对方与 AI 自己都召回', value: 'all' },
-      { label: '只召回对方（过滤 AI 自己的回复）', value: 'others-only' },
+      { label: t('recallRolesAll'), value: 'all' },
+      { label: t('recallRolesOthers'), value: 'others-only' },
     ],
   },
   // 按会话字段：生效值是被动召回与 memory_recall 的上限；坏值原样交来，按不互通处理
   crossSessionMode: {
     type: 'select',
-    label: '跨会话检索模式',
+    label: t('crossSessionModeLabel'),
     default: 'all',
     onInvalid: 'error',
-    description: '控制向量记忆的跨会话可见范围',
+    description: t('crossSessionModeDescription'),
     options: [
-      { label: '不互通（仅当前会话）', value: 'isolated' },
-      { label: '同用户增强（跨会话，同用户加权）', value: 'user' },
-      { label: '同平台（仅相同平台的会话）', value: 'platform' },
-      { label: '全部打通（所有平台所有会话）', value: 'all' },
+      { label: t('modeIsolated'), value: 'isolated' },
+      { label: t('modeUser'), value: 'user' },
+      { label: t('modePlatform'), value: 'platform' },
+      { label: t('modeAll'), value: 'all' },
     ],
     session: { prominence: 'advanced' },
   },
@@ -310,7 +305,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-memory-vector',
-  displayName: '向量记忆',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   provides: [semanticMemory],
@@ -854,7 +849,7 @@ async function run(caps: Caps): Promise<void> {
 
   // === 统一记忆清除（登记 vector 类型，/clear -t 才选得中）===
 
-  contributions.use.contribute('memory:clear-type', { id: 'vector', label: t('clearType') });
+  contributions.use.contribute('memory:clear-type', { id: 'vector', label: t('displayName') });
   hooks.use.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('vector')) {
       await next();
@@ -867,7 +862,7 @@ async function run(caps: Caps): Promise<void> {
         await store.clear();
         await store.save();
         await dropLegacyModel();
-        data.results.push({ source: 'vector', type: 'vector', success: true, message: '所有向量记忆已清空' });
+        data.results.push({ source: 'vector', type: 'vector', success: true, message: t('clearedAll') });
         logger.use.info('向量记忆已全部清空');
       } else if (data.sessionId) {
         const currentStore = pinned(vectorstore);
@@ -878,7 +873,7 @@ async function run(caps: Caps): Promise<void> {
             source: 'vector',
             type: 'vector',
             success: true,
-            message: `向量记忆已清空 (${deleted} 条)`,
+            message: t('clearedSession', { count: deleted }),
           });
           logger.use.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
         } else {
@@ -888,13 +883,17 @@ async function run(caps: Caps): Promise<void> {
             source: 'vector',
             type: 'vector',
             success: false,
-            message: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
+            message: t('clearUnsupported'),
           });
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'vector', type: 'vector', success: false, message: `向量清空失败: ${msg}` });
+      data.results.push({
+        source: 'vector',
+        type: 'vector',
+        success: false,
+        message: t('clearFailed', { error: textOf(err) }),
+      });
       logger.use.warn('向量清空失败:', err);
     }
 

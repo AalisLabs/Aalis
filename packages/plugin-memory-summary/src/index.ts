@@ -14,7 +14,7 @@ import { todoList } from '@aalis/api-todo-list';
 import type { BoundOf, Logger } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
-import { toSource } from '@aalis/schema-i18n';
+import { TextError, textOf, toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { CONTROL_KINDS, groupToolCalls, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
@@ -240,9 +240,9 @@ const configSchema = defineConfig({
 });
 
 /** 挑不出能对话的模型：这个原因只打一条统一的 warn，不再逐次打「压缩没有压成」 */
-class NoChatModel extends Error {
+class NoChatModel extends TextError {
   constructor() {
-    super('没有可用的对话模型');
+    super(t('noChatModel'));
   }
 }
 
@@ -371,7 +371,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-memory-summary',
-  displayName: '记忆摘要',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   provides: [compression],
@@ -531,12 +531,12 @@ async function run(caps: Caps): Promise<void> {
       }
     } catch (err) {
       // 半截流式输出一并丢弃：provider 超时或断流可能发生在吐出部分内容之后，截断的文本入库会成为之后所有增量摘要的基底
-      throw new Error(`摘要模型调用失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });
+      throw new TextError(t('modelFailed', { error: textOf(err) }), { cause: err });
     }
     // 在输出上限处停下的摘要不完整，同样丢弃
-    if (finishReason === 'length') throw new Error('摘要模型在输出上限处停下，输出不完整');
+    if (finishReason === 'length') throw new TextError(t('outputTruncated'));
     const reply = parseSummary(text);
-    if (!reply.summary) throw new Error('摘要模型返回了空内容');
+    if (!reply.summary) throw new TextError(t('emptySummary'));
     return reply;
   }
 
@@ -608,9 +608,7 @@ async function run(caps: Caps): Promise<void> {
     const capacity = Math.floor((model.contextLength - physical - maxTokens) / 2) - prompt;
     // 大单位切成至多容量一半的段：一半至少两个码元，每段才至少有一个字符（代理对不拆开），切分才能前进
     if (capacity < 4) {
-      throw new Error(
-        `摘要模型的上下文窗口（${model.contextLength}）装不下提示词、已有摘要与摘要的输出上限（${maxTokens}）`,
-      );
+      throw new TextError(t('windowTooSmall', { contextLength: model.contextLength, maxTokens }));
     }
     const queue = numberUnits(units, keepCap, Math.floor(capacity / 2));
     let summary = previous;
@@ -627,7 +625,7 @@ async function run(caps: Caps): Promise<void> {
       }
       const conversation = offered.map(unit => unit.text).join('\n');
       const reply = await askSummaryModel(model, sessionId, system, maxTokens, summary, conversation);
-      if (cleared()) throw new Error('压缩期间会话被清空');
+      if (cleared()) throw new TextError(t('clearedDuring'));
       summary = reply.summary;
       kept = keptOf(reply.keep, offered, Math.min(keepCap, budget - estimateTextTokens(summary)), sessionId);
     } while (next < queue.length);
@@ -670,7 +668,7 @@ async function run(caps: Caps): Promise<void> {
     let archived: number;
     try {
       const current = await provider.getHistory(sessionId, Infinity);
-      if (!samePrefix(span, current)) throw new Error('压缩期间历史被改动');
+      if (!samePrefix(span, current)) throw new TextError(t('historyChanged'));
       const after = current.slice(span.length).filter(m => !CONTROL_KINDS.includes(m.kind ?? '')).length;
       keep = withinHalfLine(kept, after, sessionId).flatMap(unit => unit.at);
       archived = await provider.archiveSpan(sessionId, { count: span.length, keep });
@@ -705,7 +703,7 @@ async function run(caps: Caps): Promise<void> {
    * 回滚）；待摘要部分没有对话时什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
    */
   async function compressHistory(sessionId: string): Promise<void> {
-    if (summarizing.has(sessionId)) throw new Error('这个会话正在压缩，稍后再试');
+    if (summarizing.has(sessionId)) throw new TextError(t('busy'));
     summarizing.add(sessionId);
     const cleared = clearedSince(sessionId);
     const report = (status: 'start' | 'done' | 'error') =>
@@ -715,7 +713,7 @@ async function run(caps: Caps): Promise<void> {
     try {
       // 读快照、核对前缀到落定压缩固定同一家记忆后端：途中换了人也不会读一家、写另一家
       const provider = memory.list().find(p => p.selected)?.use;
-      if (!provider) throw new Error('memory 服务不可用');
+      if (!provider) throw new TextError(t('noMemory'));
       const snapshot = await provider.getHistory(sessionId, Infinity);
       const span = snapshot.slice(0, cutPoint(snapshot));
       if (!span.some(entersSummary)) return;
@@ -725,7 +723,7 @@ async function run(caps: Caps): Promise<void> {
       const store = new SummaryStore(provider);
       const previous = (await store.getSummary(sessionId))?.summary || undefined;
       const { summary, kept } = await summarize(model, sessionId, span, previous, cleared);
-      if (cleared()) throw new Error('压缩期间会话被清空');
+      if (cleared()) throw new TextError(t('clearedDuring'));
       const commit = commitCompression(provider, store, sessionId, span, kept, previous, summary);
       committing.set(sessionId, commit);
       try {
@@ -768,7 +766,7 @@ async function run(caps: Caps): Promise<void> {
       },
       compressAt: (sessionId, platform) => compressAtOf(sessionId, platform) || undefined,
     },
-    { label: '会话压缩' },
+    { label: t('compressionLabel') },
   );
 
   events.use.on('token:usage', usage => {
@@ -850,16 +848,20 @@ async function run(caps: Caps): Promise<void> {
       const store = new SummaryStore(memory.use);
       if (data.scope === 'all') {
         await store.clearAll(logger.use);
-        data.results.push({ source: 'summary', type: 'summary', success: true, message: '所有会话摘要已清空' });
+        data.results.push({ source: 'summary', type: 'summary', success: true, message: t('clearedAll') });
         logger.use.info('所有会话摘要已清空');
       } else if (data.sessionId) {
         await store.clearSession(data.sessionId);
-        data.results.push({ source: 'summary', type: 'summary', success: true, message: '当前会话摘要已清空' });
+        data.results.push({ source: 'summary', type: 'summary', success: true, message: t('clearedSession') });
         logger.use.info(`会话摘要已清空: session=${data.sessionId}`);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      data.results.push({ source: 'summary', type: 'summary', success: false, message: `摘要清空失败: ${msg}` });
+      data.results.push({
+        source: 'summary',
+        type: 'summary',
+        success: false,
+        message: t('clearFailed', { error: textOf(err) }),
+      });
       logger.use.warn('摘要清空失败:', err);
     }
 

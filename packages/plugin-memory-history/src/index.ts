@@ -28,6 +28,7 @@ import { actingIdentity, tools } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 // ===== 配置 schema =====
 
@@ -38,48 +39,47 @@ const configSchema = defineConfig({
   injectEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '被动注入 prompt',
+    label: t('injectEnabledLabel'),
     default: true,
-    description:
-      '是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。',
+    description: t('injectEnabledDescription'),
   },
   limit: {
     type: 'number',
-    label: '注入条数上限',
+    label: t('limitLabel'),
     default: 30,
-    description: '每次注入的最大消息条数；工具调用未指定 limit 时也用这个值。',
+    description: t('limitDescription'),
   },
   maxAgeMinutes: {
     type: 'number',
-    label: '时间窗口（分钟）',
+    label: t('maxAgeMinutesLabel'),
     default: 180,
-    description: '只取最近 N 分钟内的消息；0 表示不限时间。',
+    description: t('maxAgeMinutesDescription'),
   },
   perSessionLimit: {
     type: 'number',
-    label: '每会话最多条数',
+    label: t('perSessionLimitLabel'),
     default: 5,
-    description: '同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；为 0 = 不做 per-session cap。',
+    description: t('perSessionLimitDescription'),
   },
   excludeCurrentSession: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '排除当前会话',
+    label: t('excludeCurrentSessionLabel'),
     default: true,
-    description: '注入时排除当前 sessionId（避免与对话代理按会话设置 historyLimit 读的本会话历史重复）。',
+    description: t('excludeCurrentSessionDescription'),
   },
   headerText: {
     type: 'string',
-    label: '注入 header 文本',
+    label: t('headerTextLabel'),
     default: DEFAULT_HEADER_TEXT,
-    description: '注入到 messages[] 的 system 消息开头说明文字。',
+    description: t('headerTextDescription'),
   },
   toolEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '注册 recent_messages 工具',
+    label: t('toolEnabledLabel'),
     default: true,
-    description: '是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。',
+    description: t('toolEnabledDescription'),
   },
 });
 
@@ -155,7 +155,7 @@ const uses = {
 
 export default definePlugin({
   name: '@aalis/plugin-memory-history',
-  displayName: '跨会话历史上下文',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   uses,

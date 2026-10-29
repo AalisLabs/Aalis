@@ -1,4 +1,4 @@
-// 本插件自己的原文字典
+// 本插件自己的原文字典：显示名、服务标签、配置项、/clear 的类型与结果行、压缩没压成的原因
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -10,6 +10,20 @@ const SOURCE = {
     '压缩时，摘要连同原样保留的原文合计约为这个会话自动压缩线（按最近一次用量算）的这个比例，不论怎么触发，但不超过这次要压的内容（上一份摘要加这次新压的对话）；不少于 {min} token，也不超过压缩线的四分之一。其中保留的原文不超过这次新压的对话的这个比例（不算上一份摘要，也不按这个下限算）。最终长度不超过摘要模型输出上限（与它窗口的四分之一取小）的三分之二，要更长得换输出上限更大的摘要模型。还没有用量时按要压的内容，同样不少于这个下限、不超过这个封顶',
   compressAtLabel: '自动压缩线（占窗口比例）',
   compressAtDescription: '用量到上下文窗口的这个比例时压缩；0 表示不按用量压缩（条数线照样起作用）',
+  displayName: '记忆摘要',
+  compressionLabel: '会话压缩',
+  noChatModel: '没有可用的对话模型',
+  modelFailed: '摘要模型调用失败：{error}',
+  outputTruncated: '摘要模型在输出上限处停下，输出不完整',
+  emptySummary: '摘要模型返回了空内容',
+  windowTooSmall: '摘要模型的上下文窗口（{contextLength}）装不下提示词、已有摘要与摘要的输出上限（{maxTokens}）',
+  clearedDuring: '压缩期间会话被清空',
+  historyChanged: '压缩期间历史被改动',
+  busy: '这个会话正在压缩，稍后再试',
+  noMemory: 'memory 服务不可用',
+  clearedAll: '所有会话摘要已清空',
+  clearedSession: '当前会话摘要已清空',
+  clearFailed: '摘要清空失败: {error}',
 } as const;
 export type Source = typeof SOURCE;
 

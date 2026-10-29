@@ -1,7 +1,9 @@
-import { windowKey } from '../../packages/api-gateway/src/index.js';
+import { expect, vi } from 'vitest';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { gateway, windowKey } from '../../packages/api-gateway/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { Events } from '../../packages/core/src/index.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { type App, type Events, events } from '../../packages/core/src/index.js';
+import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // IM 房间的测试件。房间的来源字段（出生平台与聊天窗口）只在会话管理收到原生入站、按这条消息建档时记下，
@@ -74,4 +76,28 @@ export async function seedRooms(memory: Pick<MemoryService, 'commitMetadata'>, r
     })),
     ...[...windows].map(([key, data]) => ({ op: 'put' as const, namespace: 'places', key, data })),
   ]);
+}
+
+/**
+ * 在房间里发指令、拿回执：执行守卫一律放行（/clear 要确认，没有权限插件的守卫时拒绝执行），等 /clear 挂上（指令经归属表挂上，
+ * 比激活晚一拍，先发的会落到「Agent 服务不可用」），收这个平台的出站。返回的函数发一条指令，等到它的回执交出
+ */
+export async function roomCommands(
+  app: App,
+  room: string,
+  platform: string,
+): Promise<(content: string) => Promise<OutgoingMessage['content']>> {
+  const host = app.bind({ events, commands, gateway });
+  host.commands.use.setExecutionGuard(async () => ({ ok: true }));
+  await vi.waitFor(() => expect(host.commands.use.has('clear')).toBe(true));
+  const sent: OutgoingMessage[] = [];
+  host.events.use.on('outbound:message', message => {
+    if (message.platform === platform) sent.push(message);
+  });
+  return async content => {
+    const before = sent.length;
+    void host.gateway.use.ingressMessage({ content, sessionId: room, platform, userId: 'zz-user' });
+    await vi.waitFor(() => expect(sent.length).toBe(before + 1));
+    return sent[before].content;
+  };
 }
