@@ -271,9 +271,10 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
 >
 > 房间会话按出生平台与聊天窗口的类型选档（见 [plugin-session-settings](../plugins/plugin-session-settings.md)），
 > 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
-> 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`，`workflow_define`
-> 为 sensitive、不需确认），`tool` 节点又不过分组闸，所以房间的平台档不要开 `workflow` 组：
-> 开了之后，房间里等级 1 的成员就能借 workflow 用到分组之外的工具，包括以分组闸为前提维持 public 的 `http_request`。
+> 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`），`tool` 节点又不过分组闸。
+> `workflow_define` 每次要 owner 审批，批过的编排按批的 owner 运行，所以房间的平台档开了 `workflow` 组之后，
+> 房间里的成员能让她写编排、交 owner 审批，批了的编排就用得到分组之外的工具，包括以分组闸为前提维持 public 的 `http_request`。
+> 房间的平台档不要开 `workflow` 组；开了的话，审批时看清 YAML 里的 `tool` 节点。
 >
 > 这道闸此前**只在列举面生效**：`ToolRegistry.execute` 按名直调不校验分组，被提示注入的模型
 > 叫出一个本回合没下发给它的名字即可执行（已实测复现）。现已在执行面补齐同一判据——

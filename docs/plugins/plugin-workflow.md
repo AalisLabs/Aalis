@@ -118,7 +118,7 @@ nodes:
 
 ## 定义者与运行身份
 
-每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（api-tools 的 `actingIdentity`：几个人的一轮没有单一的定义者，与匿名的一样不记），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
+每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（api-tools 的 `actingIdentity`；它每次要 owner 审批，批过的是批的人，参与者都是 owner、免了这道确认时不问，取那位 owner，见下文「注册工具」），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
 
 - 经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）：服务认不出调用方是谁；
 - 手写进 `defsDir`、没经工作流页或 `workflow_define` 存过的定义；
@@ -143,11 +143,13 @@ nodes:
 
 | 工具 | 说明 |
 |---|---|
-| `workflow_define` | 定义/覆盖工作流（完整 YAML） |
+| `workflow_define` | 定义/覆盖工作流（完整 YAML）；每次要 owner 审批，审批卡上是 YAML 原文（免确认白名单不免，见下文） |
 | `workflow_run` | 手动触发一次运行，等它跑完回结果；所在的一轮被停下（停止键、`/stop`、禁言、`/clear`）时只是不再等，回 `error`「回合已中止，不再等」，运行照跑；要停这次运行，到工作流页「最近运行」里取消 |
 | `workflow_list` | 列出全部定义 |
 | `workflow_get_runs` | 查询最近运行历史 |
 | `workflow_remove` | 删除定义（含磁盘文件） |
+
+`workflow_define` 声明 `confirm: 'always'`，与 plugin-scheduler 的 `scheduler_create_job` 同一规则：定义出的编排此后按定义者的身份运行，原文每次经 owner 过目。免确认白名单（`restrictedPolicy`）不免。例外：参与者都是 owner 的回合里免了确认时（`confirmOverrides` 把 `tool:workflow_define` 设为 `off`；或设为 `session`，再被 `restrictedPolicy` 白名单免掉），定义不再逐次审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要审批的定义一律被拒。工作流页「新建或覆盖」是 owner 亲手保存，不问。
 
 ## 工作流页
 

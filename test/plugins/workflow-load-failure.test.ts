@@ -242,7 +242,7 @@ describe('workflow：once 记录读不出时不安排 once', () => {
     const define = async (persist: boolean): Promise<{ ok?: boolean; note?: string }> => {
       const toolSvc = app.bind({ services }).services.use.get(toolsService);
       if (!toolSvc) throw new Error('tools 服务未注册');
-      toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 是 sensitive，放行权限闸：这里只看回执
+      toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 要 owner 审批，放行权限闸：这里只看定义口（回执）
       const res = await toolSvc.execute(
         'workflow_define',
         { yaml: ONCE_YAML, persist },

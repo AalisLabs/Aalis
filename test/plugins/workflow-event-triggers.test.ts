@@ -118,7 +118,7 @@ describe('订阅不可作触发源的事件的定义', () => {
     const registry = app.bind({ services }).services.use;
     const toolSvc = registry.get(toolsService);
     if (!toolSvc) throw new Error('tools 服务未注册');
-    toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 是 sensitive，放行权限闸：这里只看定义口
+    toolSvc.setExecutionGuard(async () => ({ ok: true })); // workflow_define 要 owner 审批，放行权限闸：这里只看定义口（回执）
     return { svc: registry.get(workflow) as WorkflowService, toolSvc };
   }
 
