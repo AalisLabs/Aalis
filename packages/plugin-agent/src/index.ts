@@ -51,7 +51,7 @@ import {
   services,
 } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import { type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
 import type {
   ContentSegment,
   IncomingMessage,
@@ -2132,37 +2132,34 @@ class DefaultAgent implements AgentService {
 const configSchema = defineConfig({
   systemPrompt: {
     type: 'textarea',
-    label: '行为准则提示词',
-    description: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
+    label: t('systemPromptLabel'),
+    description: t('systemPromptDescription'),
     default: '',
   },
   memoryTokenBudget: {
     type: 'number',
-    label: '长期记忆预留 Token',
+    label: t('memoryTokenBudgetLabel'),
     default: 4096,
     secret: false,
-    description:
-      '注入的 system 消息（技能、摘要、记忆等）的 token 额度，只在硬裁剪丢完历史仍超预算时起作用：它们合计超过额度就按比例缩减，仍超时删除',
+    description: t('memoryTokenBudgetDescription'),
   },
   promptBuildTimeoutMs: {
     type: 'number',
-    label: '提示词贡献构建超时 (ms)',
+    label: t('promptBuildTimeoutMsLabel'),
     default: 10000,
-    description:
-      '单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。',
+    description: t('promptBuildTimeoutMsDescription'),
   },
   toolResultMaxRatio: {
     type: 'number',
-    label: '工具结果最大比例',
+    label: t('toolResultMaxRatioLabel'),
     default: 0.15,
-    description: '单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15%',
+    description: t('toolResultMaxRatioDescription'),
   },
   trimThresholdRatio: {
     type: 'number',
-    label: '裁剪触发比例',
+    label: t('trimThresholdRatioLabel'),
     default: 1.0,
-    description:
-      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。硬裁剪按它裁要发出的消息列表（只裁内存里的，不影响 DB）：历史超过可用量（预算减去头部与四分之一预算）就成段丢，其余几步在估算超过预算时才做。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
+    description: t('trimThresholdRatioDescription'),
   },
   // ----- 按会话字段：各层可覆盖，每一轮按会话读 -----
   llm: {
@@ -2232,24 +2229,25 @@ function run(caps: Caps): void {
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
   const PAGE_SIZE = 20;
-  function renderPaged(all: string[], keyword: string, page: number, label: string, cmd: string): string {
+  function renderPaged(all: string[], keyword: string, page: number, label: TextRef, command: string): TextRef {
     const kw = keyword.trim().toLowerCase();
     const list = kw ? all.filter(x => x.toLowerCase().includes(kw)) : all;
-    if (list.length === 0) return kw ? `无匹配 "${keyword}" 的${label}` : `(无可用${label})`;
+    if (list.length === 0) return kw ? t('pagedNoMatch', { keyword, label }) : t('pagedNone', { label });
     const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
     const p = Math.min(Math.max(1, Math.trunc(page) || 1), pages);
     const body = list.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE).map(x => `- ${x}`);
-    const lines = [`${label}（${kw ? `含"${keyword}" ` : ''}共 ${list.length} · 第 ${p}/${pages} 页）:`, ...body];
+    const counts = { label, count: list.length, page: p, pages };
+    const lines = [kw ? t('pagedHeaderMatching', { ...counts, keyword }) : t('pagedHeader', counts), ...body];
     if (pages > 1) {
       const next = p < pages ? p + 1 : 1;
-      lines.push(`—— 翻页: ${cmd}${kw ? ` ${keyword}` : ''} -p ${next}${kw ? '' : `　搜索: ${cmd} <关键词>`}`);
+      lines.push(kw ? t('pagedHintMatching', { command, keyword, next }) : t('pagedHint', { command, next }));
     }
-    return lines.join('\n');
+    return textLines(lines);
   }
 
   caps.commands.use
-    .command('model [keyword:string]', '列出/搜索可用对话模型。分页显示，-p 翻页；如 /model grok')
-    .option('page', '-p <n:number>', { description: '页码（默认 1）' })
+    .command('model [keyword:string]', t('modelDescription'))
+    .option('page', '-p <n:number>', { description: t('pageOptionDescription') })
     .action(async (argv, keyword) => {
       const seen = new Set<string>();
       const ids: string[] = [];
@@ -2259,17 +2257,17 @@ function run(caps: Caps): void {
         ids.push(e.id);
       }
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
-      return renderPaged(ids, String(keyword ?? ''), page, '可用模型', '/model');
+      return renderPaged(ids, String(keyword ?? ''), page, t('modelsLabel'), '/model');
     });
 
   caps.commands.use
-    .command('persona [keyword:string]', '列出/搜索可用人设（分页，-p 翻页）')
-    .option('page', '-p <n:number>', { description: '页码（默认 1）' })
+    .command('persona [keyword:string]', t('personaDescription'))
+    .option('page', '-p <n:number>', { description: t('pageOptionDescription') })
     .action(async (argv, keyword) => {
       const persona = caps.persona.present ? caps.persona.use : undefined;
       const names = persona?.listModels ? await persona.listModels() : [];
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
-      return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
+      return renderPaged(names, String(keyword ?? ''), page, t('personasLabel'), '/persona');
     });
 
   // /stop 同停止键：只停本会话在跑的一轮，排着的照常开下一轮。不看等级，与停后台任务同一条规则：发出者是这一轮的参与者（进了
@@ -2359,7 +2357,7 @@ function run(caps: Caps): void {
 
 export default definePlugin({
   name: '@aalis/plugin-agent',
-  displayName: '默认 Agent',
+  displayName: t('displayName'),
   subsystem: 'agent',
   configSchema,
   provides: [agentService],

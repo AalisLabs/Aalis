@@ -2577,6 +2577,9 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-tools
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/util-bounded-map':
         specifier: workspace:>=0.6.1 <1.0.0
         version: link:../util-bounded-map

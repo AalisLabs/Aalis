@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionLabel, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
@@ -23,13 +24,13 @@ import { defineTexts, localize, resolveText, TextError } from '../../packages/sc
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { createMockLLMPlugin, MockLLMService } from '../fixtures/mock-llm.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 第一方发到聊天里的固定文字按会话的语言：/doctor 的报告版式、/session 的版式（设置项的称呼、层名、默认会话名、默认工作区
-// 随读者），agent 发出的「[系统]」「[错误]」两句。它们交出文字对象，网关按消息所在房间（会话设置 language）的语言渲染；
+// 随读者），agent 发出的「[系统]」「[错误]」两句，/model 与 /persona 的分页回复。它们交出文字对象，网关按消息所在房间（会话设置 language）的语言渲染；
 // i18n 缺席时是原文。房间是 owner 在聊天平台上的私聊（场所是默认工作区）。真的 plugin-i18n、plugin-commands、plugin-gateway、
 // plugin-agent、plugin-doctor、会话管理与会话设置，记忆是内存实现，存储与 owner 判定是替身。
 // ════════════════════════════════════════════════════════════
@@ -198,5 +199,41 @@ describe('agent 发到会话里的「[系统]」「[错误]」按会话的语言
   it('模型调用抛出带文字对象的错：en 会话里整句是英文', async () => {
     const s = await setup({ llm: createMockLLMPlugin({ throwOnce: new TextError(t('boom')) }) });
     expect(await s.ask((await s.session(['en'])).id, '在吗')).toEqual(['[Error] The model blew up']);
+  });
+});
+
+describe('/model 与 /persona 的分页回复按会话的语言', () => {
+  /** 各个回复：首行、行数与末行 */
+  const brief = (lines: string[]) => [lines[0], lines.length, lines.at(-1)];
+  const REPLIES = {
+    en: [
+      ['Showing available models (21 in total · page 1/2):', 22, '—— Next page: /model -p 2  Search: /model <keyword>'],
+      ['Showing available models (21 in total · page 2/2):', 3, '—— Next page: /model -p 1  Search: /model <keyword>'],
+      ['Showing available models containing "zz" (21 in total · page 1/2):', 22, '—— Next page: /model zz -p 2'],
+      ['No available models match "zz-none"', 1, 'No available models match "zz-none"'],
+      ['(No available personas)', 1, '(No available personas)'],
+    ],
+    'zh-CN': [
+      ['可用模型（共 21 · 第 1/2 页）:', 22, '—— 翻页: /model -p 2　搜索: /model <关键词>'],
+      ['可用模型（共 21 · 第 2/2 页）:', 3, '—— 翻页: /model -p 1　搜索: /model <关键词>'],
+      ['可用模型（含"zz" 共 21 · 第 1/2 页）:', 22, '—— 翻页: /model zz -p 2'],
+      ['无匹配 "zz-none" 的可用模型', 1, '无匹配 "zz-none" 的可用模型'],
+      ['(无可用可用人设)', 1, '(无可用可用人设)'],
+    ],
+  };
+
+  it.each(
+    Object.entries(REPLIES),
+  )('%s 会话：21 个模型分两页，带关键词与没有匹配；没有人设服务', async (language, expected) => {
+    const s = await setup();
+    for (let i = 1; i <= 21; i++) {
+      s.host.provide.use(llm, new MockLLMService(), { entryId: `zz/m${String(i).padStart(2, '0')}` });
+    }
+    const room = (await s.session([language])).id;
+    const replies = [];
+    for (const command of ['/model', '/model -p 2', '/model zz', '/model zz-none', '/persona']) {
+      replies.push(brief(await s.ask(room, command)));
+    }
+    expect(replies).toEqual(expected);
   });
 });
