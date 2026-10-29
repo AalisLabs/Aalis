@@ -40,7 +40,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-code-sandbox-os', '尚未迁移'],
   ['plugin-contributions', '尚未迁移'],
   ['plugin-cron-engine', '尚未迁移'],
-  ['plugin-doctor', '尚未迁移'],
   ['plugin-draw', '尚未迁移'],
   ['plugin-embedding-ollama', '尚未迁移'],
   ['plugin-embedding-openai', '尚未迁移'],
