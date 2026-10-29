@@ -28,6 +28,7 @@ import {
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { type LocalizeSkip, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import type { IsOwner } from './history.js';
+import { t } from './texts.js';
 
 /**
  * 处理函数抛出它，连接层把它写成错误帧；数值码见 RPC_ERROR_CODES，业务错误另带 reason（error.data.code）。
@@ -153,8 +154,8 @@ export function createSessionServer(
   function connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection {
     let initialized = false;
     let closed = false;
-    /** 握手时主版本不合：回完错误帧再断开 */
-    let farewell: string | undefined;
+    /** 握手时主版本不合：回完错误帧再断开，断开的原因取它的原文 */
+    let farewell: TextRef | undefined;
     const subscriptions = new Map<string, string[] | null>();
     // 审批推送只发给上报过在场的连接，在场上报要先握手：握手之前不会有推送
     const attendance = peer.surface.attend(peer.identity, {
@@ -210,7 +211,7 @@ export function createSessionServer(
     const initialize = (params: SessionMethodParams<'initialize'>): SessionMethodResult<'initialize'> => {
       if (initialized) throw new ProtocolError(RPC_ERROR_CODES.invalidRequest, '这条连接已经握过手');
       if (majorOf(params.protocolVersion) !== majorOf(SESSION_PROTOCOL_VERSION)) {
-        farewell = `协议主版本不同：客户端 ${params.protocolVersion}，服务端 ${SESSION_PROTOCOL_VERSION}`;
+        farewell = t('majorMismatch', { client: params.protocolVersion, server: SESSION_PROTOCOL_VERSION });
         throw failure('unsupported', farewell);
       }
       initialized = true;
@@ -278,7 +279,7 @@ export function createSessionServer(
         }
         if (farewell !== undefined) {
           conn.drop();
-          peer.disconnect(farewell);
+          peer.disconnect(toSource(farewell));
         }
       },
       close: conn.drop,

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { type AgentService, agent, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type CheckpointService, checkpoint } from '../../packages/api-checkpoint/src/index.js';
@@ -17,6 +17,7 @@ import {
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
+import { type BackgroundTaskService, backgroundTasks } from '../../packages/api-tools/src/index.js';
 import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -39,7 +40,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { recordRoom } from '../fixtures/rooms.js';
-import { client, type Frame } from '../fixtures/session-client.js';
+import { CLIENT, client, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 import { ALL, fieldsPlugin } from '../fixtures/session-settings.js';
 
@@ -617,5 +618,90 @@ describe('会话设置与默认名按全局语言渲染', () => {
     const byId = await host.sessionManager.use.ensureSession('cli:zz');
     await app.stop();
     for (const id of [session.id, child.id, byId.id]) expect(mem.meta.get(id)?.name, id).toBeUndefined();
+  });
+});
+
+describe('会话服务自己的报错按全局默认层的语言', () => {
+  // 会话、cursor、历史游标不对，后台任务登记、agent、压缩与待办服务缺席或不认这个任务、这一轮
+  const ERRORS = {
+    en: [
+      'Session zz:none does not exist',
+      'Invalid cursor: x',
+      'The history cursor has expired: zz-item',
+      'No background task registry',
+      'No agent service to stop the turn',
+      'No compaction service',
+      'No to-do service',
+      'Background task zz-task does not exist',
+      'This turn is not running: zz-turn',
+    ],
+    'zh-CN': [
+      '会话不存在：zz:none',
+      'cursor 无效：x',
+      '历史游标已失效：zz-item',
+      '没有后台任务登记',
+      '没有能停止回合的 agent 服务',
+      '没有压缩服务',
+      '没有待办服务',
+      '后台任务不存在：zz-task',
+      '这一轮不在跑：zz-turn',
+    ],
+  };
+
+  it.each(Object.entries(ERRORS))('错误帧（全局默认层设为 %s）', async (language, expected) => {
+    const { host, connect } = await setup({ language: [language] });
+    const c = await connect();
+    const message = async (method: string, params: unknown) => (await c.fail(method, params)).message;
+    const absent = [
+      await message('session/rename', { sessionId: 'zz:none', title: 'x' }),
+      await message('sessions/list', { cursor: 'x' }),
+      await message('session/history', { sessionId: ROOM, before: 'zz-item' }),
+      await message('background/stop', { taskId: 'zz-task' }),
+      await message('turn/abort', { sessionId: ROOM }),
+      await message('session/compress', { sessionId: ROOM }),
+      await message('plan/clear', { sessionId: ROOM }),
+    ];
+    host.provide.use(backgroundTasks, { stop: async () => undefined } as Partial<BackgroundTaskService> as never);
+    host.provide.use(agent, { abort: () => false } as Partial<AgentService> as never);
+    const present = [
+      await message('background/stop', { taskId: 'zz-task' }),
+      await message('turn/abort', { sessionId: ROOM, turnId: 'zz-turn' }),
+    ];
+    expect([...absent, ...present]).toEqual(expected);
+  });
+
+  it('握手主版本不同：错误帧按全局默认层的语言，连接断开，disconnect 收到原文', async () => {
+    const { open } = await setup({ language: ['en'] });
+    const c = open();
+    const error = await c.fail('initialize', { protocolVersion: '99.0', client: CLIENT });
+    expect(error.message).toBe(`Protocol major versions differ: client 99.0, server ${SESSION_PROTOCOL_VERSION}`);
+    expect(c.disconnects).toEqual([`协议主版本不同：客户端 99.0，服务端 ${SESSION_PROTOCOL_VERSION}`]);
+  });
+
+  it('删一个带子会话的会话、父子两处清理都抛错：session/delete 的错误帧与 session/batch 的 failed 按全局默认层的语言，错误仍是带两条 errors 的 AggregateError', async () => {
+    const { host, connect } = await setup({ language: ['en'] });
+    host.hooks.use.middleware('memory:clear', async () => {
+      throw new Error('<清理坏了>');
+    });
+    const sm = host.sessionManager.use;
+    const tree = async () => {
+      const parent = await sm.createSession({ name: '<父>' });
+      await sm.createChildSession(parent.id);
+      return parent.id;
+    };
+    const c = await connect();
+    const deleted = await c.fail('session/delete', { sessionId: await tree() });
+    const batched = await tree();
+    const { failed } = await c.call('session/batch', { op: 'delete', ids: [batched, 'zz:none'] });
+    const direct: unknown = await sm.deleteSession(await tree()).catch((err: unknown) => err);
+
+    expect(deleted.message).toBe('2 errors while deleting sessions');
+    expect(failed).toEqual([
+      { sessionId: 'zz:none', message: 'Session zz:none does not exist' },
+      { sessionId: batched, message: '2 errors while deleting sessions' },
+    ]);
+    expect(direct).toBeInstanceOf(AggregateError);
+    expect(direct).toMatchObject({ name: 'AggregateError', message: '删除会话时 2 处出错' });
+    expect((direct as AggregateError).errors.map(err => (err as Error).message)).toEqual(['<清理坏了>', '<清理坏了>']);
   });
 });

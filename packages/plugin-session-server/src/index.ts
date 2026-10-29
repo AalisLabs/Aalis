@@ -24,6 +24,7 @@ import { createFileHandles } from './files.js';
 import type { IsOwner } from './history.js';
 import { openSeenStore } from './seen.js';
 import { createSessions } from './sessions.js';
+import { t } from './texts.js';
 import { createTimeline } from './timeline.js';
 import { createTurnControl } from './turns.js';
 
@@ -88,7 +89,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-session-server',
-  displayName: '会话服务',
+  displayName: t('displayName'),
   subsystem: 'session',
   provides: [sessionProtocol, approvals],
   uses,
@@ -318,8 +319,12 @@ async function run(caps: Caps): Promise<void> {
   events.use.on('session:compressing', ({ sessionId, status }) => timeline.compressing(sessionId, status));
   events.use.on('history:changed', ({ sessionId }) => timeline.resync(sessionId));
 
-  caps.provide.use(sessionProtocol, { connect: server.connect, resolveFile: files.resolve }, { label: '会话协议' });
-  caps.provide.use(approvals, approval.service, { label: '审批' });
+  caps.provide.use(
+    sessionProtocol,
+    { connect: server.connect, resolveFile: files.resolve },
+    { label: t('protocolLabel') },
+  );
+  caps.provide.use(approvals, approval.service, { label: t('approvalsLabel') });
   // 撤回登记之前结算没结的审批：审批面还接着，结算推得到；之后的请求直接拒绝
   lifecycle.use.onDrain(() => approval.close(), '结算未结的审批');
   // 对外登记撤回之后断开现有连接：客户端重连时接到新的提供者。停用完成之前把审计写完
