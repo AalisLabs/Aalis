@@ -26,7 +26,7 @@ const ENTRY_MAX_CHARS = 200;
 /** 摘要模型没声明输出上限时按这个数封顶，与对话代理对模型输出上限的缺省假设相同 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
-/** 摘要预算的下限：压掉的内容很少时也留够写全各小节的篇幅 */
+/** 摘要预算的下限：比例乘出来很少（小窗口、小比例）、要压的内容很少时也留够写全各小节的篇幅；压缩线的四分之一与物理上限仍压过它 */
 const MIN_BUDGET = 1000;
 
 /** 后台压缩连续没压成时，两次尝试之间至多隔这么多轮 */
@@ -423,7 +423,7 @@ async function run(caps: Caps): Promise<void> {
 
   /** 每个会话最近一条真实回合的用量（带 turnId）：回合结束时只认这一轮的那条做判定 */
   const turnUsages = new Map<string, TokenUsageEvent>();
-  /** 每个会话最近一次用量（真实回合与 token:request 的快照都记），供摘要预算算压缩线 */
+  /** 每个会话最近一次用量（真实回合与 token:request 的快照都记），供摘要预算算压缩线、条数规则取条数线（withinHalfLine） */
   const lastUsages = new Map<string, TokenUsageEvent>();
   /**
    * 后台压缩连续没压成的次数，与最后一次之后判过的轮数：第 count 次之后隔 2^count 轮（至多 MAX_RETRY_INTERVAL_TURNS 轮）
@@ -446,10 +446,12 @@ async function run(caps: Caps): Promise<void> {
     historyLimit: usage.historyLimit,
   });
 
-  /** 这个会话的压缩线（compressionLine），按最近一次用量算；还没有用量时为 Infinity（不封顶） */
-  function usageLine(sessionId: string): number {
+  /** 这个会话的压缩线（compressionLine），按最近一次用量算；还没有用量、或用量里的窗口与裁剪预算算不出有限的正数时没有 */
+  function usageLine(sessionId: string): number | undefined {
     const usage = lastUsages.get(sessionId);
-    return usage ? compressionLine(usage, compressAtOf(sessionId, usage.platform)) : Infinity;
+    if (!usage) return undefined;
+    const line = compressionLine(usage, compressAtOf(sessionId, usage.platform));
+    return Number.isFinite(line) && line > 0 ? line : undefined;
   }
 
   const pickChatModel = chatModelPicker(llm, () => logger.use.warn('没有可用的对话模型，记忆摘要跳过'));
@@ -461,16 +463,17 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 摘要预算（摘要与保留的原文合计）：这次重写的输入 × summaryBudgetRatio，越旧的内容每经一次压缩就再缩一次；不少于
-   * MIN_BUDGET。不超过物理上限的三分之二，与这个会话压缩线的四分之一（有用量时，压过下限：摘要是每轮重发的常驻块，小窗口的
-   * 会话里摘要一大，之后每轮都到线或被硬裁剪）
+   * 摘要预算（摘要与保留的原文合计）：这个会话的压缩线 × summaryBudgetRatio，不论怎么触发；不超过这次要压的内容 input（上一份摘要
+   * 加新压的对话：摘要不比原文长），这两项合起来不少于 MIN_BUDGET。再不超过压缩线的四分之一（压过下限：摘要是每轮重发的常驻块，
+   * 小窗口的会话里摘要一大，之后每轮都到线或被硬裁剪）与物理上限的三分之二。还没有用量时没有压缩线，按要压的内容，同样不少于
+   * MIN_BUDGET、不超过物理上限的三分之二
    */
   function summaryBudget(sessionId: string, physical: number, input: number): number {
-    return Math.min(
-      Math.floor(physical / 1.5),
-      Math.floor(usageLine(sessionId) / 4),
-      Math.max(MIN_BUDGET, Math.floor(cfg.summaryBudgetRatio * input)),
-    );
+    const cap = Math.floor(physical / 1.5);
+    const line = usageLine(sessionId);
+    if (line === undefined) return Math.min(cap, Math.max(MIN_BUDGET, input));
+    const share = Math.min(Math.floor(cfg.summaryBudgetRatio * line), input);
+    return Math.min(cap, Math.floor(line / 4), Math.max(MIN_BUDGET, share));
   }
 
   /**
@@ -565,9 +568,9 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 把归档段连同已有摘要交给摘要模型，得到新摘要与挑中、原样保留的单位。预算按这次重写的输入（已有摘要加各单位的文字，不计
-   * 编号标注）算，摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 这次新压的对话⌋)，不算已有摘要：下限只托住摘要，
-   * 已有摘要再长也撑不大它，新压的少时留得很少。它按 token 算，条数另由落定时的条数规则限住（见 withinHalfLine）。
+   * 把归档段连同已有摘要交给摘要模型，得到新摘要与挑中、原样保留的单位。预算按这个会话的压缩线算、不超过这次要压的内容（见
+   * summaryBudget），摘要与保留的原文合计约为它；保留上限是 min(预算, ⌊比例 × 这次新压的对话⌋)，不算已有摘要：新压的少时留得
+   * 很少。它按 token 算，条数另由落定时的条数规则限住（见 withinHalfLine）。
    * 请求的输出上限是预算的 1.5 倍：提示词按每 token 4 个英文字符换算，路径、代码这类文本的真实分词更密，推理模型的
    * 推理 token 也算在输出上限里。每次请求的输入加输出上限都要装进摘要模型的窗口：已有摘要按至多物理上限那么多 token 算（上一份
    * 可能是按更大的预算写的），系统提示、请求里的固定文字与对话按每字至多 2 token 保守折算，余下的折成每次放对话的字数（容量，

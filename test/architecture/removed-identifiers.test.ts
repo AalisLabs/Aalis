@@ -107,7 +107,10 @@ const REMOVED: Array<[string, string]> = [
   ['selectMessagesToSummarize', '摘要插件按保留条数选待摘要区间，由全量压缩的切分点取代'],
   ['getHistoryProbeLimit', '摘要插件按条数探测历史，由全量压缩读全部活跃历史取代'],
   ['DEFAULT_SUMMARY_PROMPT', '摘要插件的内置摘要提示词，由按房间类别选的两套结构化摘要模板取代'],
-  ['summaryTokenRatio', '摘要插件按会话窗口的比例定摘要的输出上限，由按压掉内容的比例定预算的 summaryBudgetRatio 取代'],
+  [
+    'summaryTokenRatio',
+    '摘要插件按会话窗口的比例定摘要的输出上限，由按自动压缩线的比例定预算的 summaryBudgetRatio 取代',
+  ],
   ['createdBy', '会话的创建者类型（没有读者），由只在建档时写的创建来源 createdFrom 取代'],
   ['inferSessionScope', '按会话 id 约定推断会话类型与目标，由会话记下的聊天窗口 originChat 取代'],
   ['OWNER_ENTRY_PLATFORMS', '会话管理按入口平台名单判自动标题，由会话的创建来源 createdFrom 取代'],
