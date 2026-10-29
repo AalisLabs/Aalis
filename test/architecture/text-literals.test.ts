@@ -34,13 +34,8 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '单元 D'],
   ['plugin-cron-engine', '单元 D'],
-  ['plugin-draw', '单元 D'],
-  ['plugin-file-reader', '单元 D'],
-  ['plugin-maimai', '单元 D'],
   ['plugin-mcp-client', '单元 D'],
   ['plugin-mcp-server', '单元 D'],
-  ['plugin-office', '单元 D'],
-  ['plugin-okx-trading', '单元 D'],
   ['plugin-paper', '单元 D'],
   ['plugin-publish-review', '单元 D'],
   ['plugin-remote-agent-cursor', '单元 D'],
@@ -50,7 +45,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-tool-onebot', '单元 D'],
   ['plugin-user-profile', '单元 D'],
   ['plugin-user-relation', '单元 D'],
-  ['plugin-websearch-serper', '单元 D'],
   ['plugin-workflow', '单元 D'],
   ['plugin-works-site', '单元 D'],
 ]);

@@ -9,6 +9,7 @@ import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, type TextRef, textOf } from '@aalis/schema-i18n';
 import { AttachmentRefKind, formatAttachmentRef, type IncomingMessage } from '@aalis/schema-message';
 import {
   decodeUtf8Text,
@@ -20,6 +21,7 @@ import {
 import { safeFetch } from '@aalis/util-network-guard';
 import { truncateChars } from '@aalis/util-text-normalize';
 import { formatImageSection, recognizeImages } from './doc-images.js';
+import { t } from './texts.js';
 
 // ===== 插件元数据 =====
 
@@ -29,54 +31,51 @@ const LISTED_FILES = 20;
 const configSchema = defineConfig({
   maxFileSizeMB: {
     type: 'number',
-    label: '最大文件大小 (MB)',
+    label: t('maxFileSizeMBLabel'),
     default: 20,
-    description: '允许上传的最大文件大小(MB)。超过此限制的文件将被拒绝。',
+    description: t('maxFileSizeMBDescription'),
   },
   autoInlineLimit: {
     type: 'number',
-    label: '自动 inline 阈值（字符）',
+    label: t('autoInlineLimitLabel'),
     default: 100000,
-    description:
-      '提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。受众里有别人的会话（群、多人房间、对端不是 owner 的私聊）里一律不内联，只给文件名、ID 与大小。',
+    description: t('autoInlineLimitDescription'),
   },
   toolDefaultMaxLength: {
     type: 'number',
-    label: 'read_uploaded_file 默认截断',
+    label: t('toolDefaultMaxLengthLabel'),
     default: 50000,
-    description:
-      'read_uploaded_file 工具未显式传 maxLength 时使用的默认截断字符数，避免把超大文档一次喂进 LLM 上下文导致爆 token。0 表示不截断；要是非负整数，负数与小数报配置错误。',
+    description: t('toolDefaultMaxLengthDescription'),
   },
   retentionDays: {
     type: 'number',
-    label: '保留天数',
+    label: t('retentionDaysLabel'),
     default: 30,
-    description: '上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。',
+    description: t('retentionDaysDescription'),
   },
   lruMaxTotalMB: {
     type: 'number',
-    label: '磁盘总量上限 (MB)',
+    label: t('lruMaxTotalMBLabel'),
     default: 500,
-    description: '上传文件总目录占用超过该上限时，按上传时间 uploadedAt 由旧到新淘汰直到回落到上限以下。0 表示不限。',
+    description: t('lruMaxTotalMBDescription'),
   },
   historyHintEnabled: {
     type: 'boolean',
-    label: '注入会话文件清单提示',
+    label: t('historyHintEnabledLabel'),
     default: true,
-    description: `开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。只列最近 ${LISTED_FILES} 个。`,
+    description: t('historyHintEnabledDescription', { count: LISTED_FILES }),
   },
   recognizeDocImages: {
     type: 'boolean',
-    label: '识别文档内嵌图片',
+    label: t('recognizeDocImagesLabel'),
     default: true,
-    description:
-      '读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。',
+    description: t('recognizeDocImagesDescription'),
   },
   maxDocImages: {
     type: 'number',
-    label: '单文档最多识别图片数',
+    label: t('maxDocImagesLabel'),
     default: 8,
-    description: '超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。',
+    description: t('maxDocImagesDescription'),
   },
 });
 
@@ -85,6 +84,11 @@ const configSchema = defineConfig({
 /** UTF-8 文本的格式名；别的取判定出的文档或媒体格式名，都认不出的记「未知」 */
 const TEXT_FORMAT = '文本';
 const UNKNOWN_FORMAT = '未知';
+/** 会话面板「类型」一列的显示名：上面两个中文的格式名按读者的语言显示，别的（PDF、PNG…）原样 */
+const FORMAT_NAMES: ReadonlyMap<string, TextRef> = new Map([
+  [TEXT_FORMAT, t('formatText')],
+  [UNKNOWN_FORMAT, t('formatUnknown')],
+]);
 
 /** 网址的文件：下载的总时限，与媒体、语音识别的下载一样 */
 const DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -184,7 +188,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-file-reader',
-  displayName: '文件读取',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -199,7 +203,7 @@ async function run(caps: Caps): Promise<void> {
   const autoInlineLimit = cfg.autoInlineLimit;
   const toolDefaultMaxLength = cfg.toolDefaultMaxLength;
   if (!Number.isInteger(toolDefaultMaxLength) || toolDefaultMaxLength < 0) {
-    throw configError('toolDefaultMaxLength 要是非负整数（0 表示不截断）');
+    throw configError(t('badToolDefaultMaxLength'));
   }
   const retentionDays = cfg.retentionDays;
   const lruMaxTotalBytes = cfg.lruMaxTotalMB * 1024 * 1024;
@@ -229,21 +233,21 @@ async function run(caps: Caps): Promise<void> {
   // 会话面板「上传的文件」：只在本会话有上传文件时出现；文件增删后让那个会话的面板重取
   const uploadsPage = webui.use.definePage({
     key: 'uploads',
-    title: '上传的文件',
+    title: t('uploads'),
     icon: 'paperclip',
     placement: 'session',
     applies: ({ sessionId }) => [...index.values()].some(entry => entry.sessionId === sessionId),
     actions: {
       deleteUpload: {
-        label: '删除',
+        label: t('delete'),
         effect: 'destructive',
-        confirm: '删除这个上传的文件？之后模型就读不到它了。',
+        confirm: t('deleteConfirm'),
         row: true,
         async handler({ rowKey, ctx }) {
           const entry = index.get(rowKey);
-          if (entry?.sessionId !== ctx.sessionId) throw new Error('本会话没有这个文件');
+          if (entry?.sessionId !== ctx.sessionId) throw new TextError(t('notInSession'));
           await deleteFile(rowKey);
-          return `已删除 ${entry.name}`;
+          return t('deleted', { name: entry.name });
         },
       },
     },
@@ -252,12 +256,12 @@ async function run(caps: Caps): Promise<void> {
         type: 'table',
         id: 'files',
         rowKey: 'id',
-        empty: '本会话没有上传的文件',
+        empty: t('noUploads'),
         columns: [
-          { key: 'name', label: '文件名', primary: true },
-          { key: 'size', label: '大小（字节）' },
-          { key: 'format', label: '类型' },
-          { key: 'uploadedAt', label: '上传时间', kind: 'time', primary: true },
+          { key: 'name', label: t('fileName'), primary: true },
+          { key: 'size', label: t('size') },
+          { key: 'format', label: t('format') },
+          { key: 'uploadedAt', label: t('uploadedAt'), kind: 'time', primary: true },
         ],
         rowActions: [{ action: 'deleteUpload' }],
         data: ({ ctx }) =>
@@ -268,7 +272,7 @@ async function run(caps: Caps): Promise<void> {
               id: entry.id,
               name: entry.name,
               size: entry.size,
-              format: entry.format,
+              format: FORMAT_NAMES.get(entry.format) ?? entry.format,
               uploadedAt: entry.uploadedAt,
             })),
       },
@@ -576,7 +580,7 @@ async function run(caps: Caps): Promise<void> {
         await storage.delete(uri);
       } catch (err) {
         if (isStorageNotFound(err)) continue;
-        throw new Error(`删除 ${entry.name} 失败：${errorText(err)}`, { cause: err });
+        throw new TextError(t('deleteFailed', { name: entry.name, error: textOf(err) }), { cause: err });
       }
     }
     index.delete(fileId);
@@ -659,7 +663,12 @@ async function run(caps: Caps): Promise<void> {
   // ===== 工具注册 =====
 
   // 读与列只作用于本会话收到的文件，不分组、总是给；删除是写操作，留在分组里由会话设置开（分组名是会话配置里存的，不改）
-  tools.use.registerGroup({ name: 'file-reader', label: '删除上传的文件', description: '删除用户上传的文件' });
+  tools.use.registerGroup({
+    name: 'file-reader',
+    label: t('groupLabel'),
+    summary: t('groupSummary'),
+    description: '删除用户上传的文件',
+  });
 
   tools.use.register({
     definition: {
@@ -737,7 +746,7 @@ async function run(caps: Caps): Promise<void> {
         .sort((a, b) => b.uploadedAt - a.uploadedAt)
         .map(
           f =>
-            `- ${f.name} (ID: ${f.id}, 类型: ${f.format}, 大小: ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+            `- ${f.name} (ID: ${f.id}, 类型: ${f.format}, 大小: ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString('zh-CN', { hour12: false })})`,
         );
       return `已上传的文件 (${files.length} 个):\n${lines.join('\n')}`;
     },
@@ -918,7 +927,7 @@ async function run(caps: Caps): Promise<void> {
           list
             .map(
               f =>
-                `- ${f.name} (ID: ${f.id}, ${f.format}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString()})`,
+                `- ${f.name} (ID: ${f.id}, ${f.format}, ${(f.size / 1024).toFixed(1)} KB, 上传于 ${new Date(f.uploadedAt).toLocaleString('zh-CN', { hour12: false })})`,
             )
             .join('\n');
         const omitted = files.length - listed.length;

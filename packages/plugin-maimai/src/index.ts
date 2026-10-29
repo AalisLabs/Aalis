@@ -10,9 +10,9 @@ import { t } from './texts.js';
 const configSchema = defineConfig({
   developerToken: {
     type: 'string',
-    label: '开发者 API Token',
+    label: t('developerTokenLabel'),
     required: true,
-    description: '在 https://maimai.lxns.net 申请的开发者 token',
+    description: t('developerTokenDescription'),
     secret: true,
     onInvalid: 'error',
   },
@@ -21,34 +21,34 @@ const configSchema = defineConfig({
     label: 'API Base URL',
     default: 'https://maimai.lxns.net',
     onInvalid: 'error',
-    description: '查分器域名，一般无需修改',
+    description: t('baseUrlDescription'),
   },
   enableTools: {
     type: 'boolean',
-    label: '注册 Agent 工具',
+    label: t('enableToolsLabel'),
     default: true,
     onInvalid: 'error',
-    description: '为 LLM Agent 注册结构化工具（推荐保持开启）',
+    description: t('enableToolsDescription'),
   },
   enableCommands: {
     type: 'boolean',
-    label: '注册斜杠指令',
+    label: t('enableCommandsLabel'),
     default: true,
     onInvalid: 'error',
-    description: '为用户注册 /maimai 等斜杠指令',
+    description: t('enableCommandsDescription'),
   },
   defaultBindOnPrivateChat: {
     type: 'boolean',
-    label: '私聊缺省绑定',
+    label: t('defaultBindOnPrivateChatLabel'),
     default: true,
     onInvalid: 'error',
-    description: '在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分',
+    description: t('defaultBindOnPrivateChatDescription'),
   },
   timeoutMs: {
     type: 'number',
-    label: '请求超时 (ms)',
+    label: t('timeoutMsLabel'),
     default: 30000,
-    description: '查分器 API 单次请求上限。工具执行面没有外层超时，对端不应答会把整轮对话挂住',
+    description: t('timeoutMsDescription'),
   },
 });
 
@@ -423,18 +423,18 @@ function formatSongMatch(song: MaiSong, idx: SongIndex): TextRef {
 
 export default definePlugin({
   name: '@aalis/plugin-maimai',
-  displayName: '舞萌 DX 查分',
+  displayName: t('displayName'),
   subsystem: 'skills',
   configSchema,
   uses,
   apply({ tools, commands, memory, sessionManager, logger, config }) {
     const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
-      throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+      throw configError(t('baseUrlNotPlain'));
     }
     // 请求路径按 baseUrl 解析（new URL），查询串与片段会被静默丢掉；末尾单个 ? 解析后查询串为空，所以按原文判
     if (/[?#]/.test(cfg.baseUrl)) {
-      throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+      throw configError(t('baseUrlHasQuery'));
     }
 
     const client = new MaimaiClient(cfg, logger.use);
@@ -445,7 +445,8 @@ export default definePlugin({
     if (cfg.enableTools) {
       tools.use.registerGroup({
         name: 'maimai',
-        label: '舞萌 DX 查分',
+        label: t('displayName'),
+        summary: t('groupSummary'),
         description: '查询舞萌 DX 玩家信息、Best 50、最近成绩、曲库等',
       });
 
@@ -587,14 +588,12 @@ export default definePlugin({
       });
 
       // 裸敲 /maimai 回指令系统生成的用法（列出子指令）
-      commands.use.command('maimai', '舞萌 DX 查分。绑定好友码后，info、b50、recent 可以不写查询目标');
+      commands.use.command('maimai', t('maimaiDescription'));
 
-      const TARGET = `好友码，或 qq:QQ 号；不写时查你绑定的好友码${
-        cfg.defaultBindOnPrivateChat ? '，OneBot 私聊里没绑定时按你的 QQ 号查' : ''
-      }`;
+      const TARGET = cfg.defaultBindOnPrivateChat ? t('targetOrQq') : t('target');
 
       commands.use
-        .command('maimai.info [target:string]', '查询玩家信息')
+        .command('maimai.info [target:string]', t('infoDescription'))
         .argument('target', TARGET)
         .action(async (argv, target) => {
           const args = parseTarget(target as string | undefined);
@@ -602,9 +601,9 @@ export default definePlugin({
         });
 
       commands.use
-        .command('maimai.b50 [target:string]', '查询 Best 50')
+        .command('maimai.b50 [target:string]', t('b50Description'))
         .argument('target', TARGET)
-        .option('ap', '--ap', { description: '仅查询 AP 成绩' })
+        .option('ap', '--ap', { description: t('apOnly') })
         .action(async (argv, target) => {
           const args = parseTarget(target as string | undefined);
           if (argv.options.ap === true) args.ap_only = true;
@@ -612,9 +611,9 @@ export default definePlugin({
         });
 
       commands.use
-        .command('maimai.recent [target:string] [count:number]', '查询最近游玩')
+        .command('maimai.recent [target:string] [count:number]', t('recentDescription'))
         .argument('target', TARGET)
-        .argument('count', '显示几条，默认 10，最多 50')
+        .argument('count', t('recentCount'))
         .action(async (argv, target, count) => {
           const args = parseTarget(target as string | undefined);
           if (count !== undefined) args.limit = count;
@@ -622,17 +621,17 @@ export default definePlugin({
         });
 
       commands.use
-        .command('maimai.song <keyword:text>', '搜索曲目')
-        .argument('keyword', '曲名、艺术家或别名')
+        .command('maimai.song <keyword:text>', t('songDescription'))
+        .argument('keyword', t('songKeyword'))
         .action(async (_argv, keyword) => handleSearchSong(client, songCache, { keyword, limit: 5 }));
 
       commands.use
-        .command('maimai.bind <code:string>', '绑定你的好友码')
-        .argument('code', '查分器上的好友码（数字）')
+        .command('maimai.bind <code:string>', t('bindDescription'))
+        .argument('code', t('bindCode'))
         .action(async (argv, code) => handleBind(memory, { friend_code: code }, callCtxOf(argv)));
 
       commands.use
-        .command('maimai.unbind', '解绑你的好友码')
+        .command('maimai.unbind', t('unbindDescription'))
         .action(async argv => handleUnbind(memory, callCtxOf(argv)));
 
       logger.use.info('[maimai] 斜杠指令已注册');

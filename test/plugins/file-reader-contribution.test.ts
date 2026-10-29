@@ -27,6 +27,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { archivedItem } from '../../packages/plugin-session-server/src/history.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   type IncomingMessage,
   type Message,
@@ -959,6 +960,39 @@ describe('plugin-file-reader: 按内容判文本与文档', () => {
 });
 
 // ════════════════════════════════════════════════════════════
+// 工具输出与注入清单里的上传时间按 zh-CN、24 小时制写，不随服务进程的语言：给模型的内容不因部署环境而变，其余逐字照旧（类型
+// 写格式名原文）。服务进程的语言换成 en-US（不带语言的 toLocaleString 照它写），期望的时刻按进程时区构造
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: 清单里的上传时间', () => {
+  it('服务进程的语言不是中文时，工具输出与注入清单仍按 zh-CN 写', async () => {
+    const format = Date.prototype.toLocaleString;
+    const locale = vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(function (
+      this: Date,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.DateTimeFormatOptions,
+    ) {
+      return format.call(this, locales ?? 'en-US', options);
+    });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 9, 29, 18, 5, 3).getTime());
+    const fx = await setup();
+    try {
+      const toolService = await fx.tools();
+      const { id } = await fx.upload('s-t', 'a.txt', 'x');
+      const listed = await toolService.execute('list_uploaded_files', {}, toolRequest({ sessionId: 's-t' }));
+      expect(listed.content).toBe(
+        `已上传的文件 (1 个):\n- a.txt (ID: ${id}, 类型: 文本, 大小: 0.0 KB, 上传于 2026/10/29 18:05:03)`,
+      );
+      const { injected } = await assemble(fx, { sessionId: 's-t', lastUser: '看看' });
+      expect(contentOf(injected)).toContain(`\n- a.txt (ID: ${id}, 文本, 0.0 KB, 上传于 2026/10/29 18:05:03)`);
+    } finally {
+      await fx.dispose();
+      locale.mockRestore();
+      now.mockRestore();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
 // 受众里有别人的会话（房间类别 room：群、多人房间、对端不是 owner 的私聊，子会话取根会话的）里上传的文件不内联，描述只写
 // 名字、ID、大小与按需读取的说明，与超过内联上限同一句；上传时不解析，读的时候才解析文档、识别内嵌图片，读过缓存了正文的照样
 // 不内联。只看字节就知道读不出的（旧版 Office、媒体、认不出的格式）上传时就写明原因。受众只有 owner 的会话与判不出的
@@ -1567,7 +1601,7 @@ describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
       expect(names()).toEqual(expect.arrayContaining(['read_uploaded_file', 'list_uploaded_files']));
       expect(names()).not.toContain('delete_uploaded_file');
       expect(names({ groups: ['file-reader'] })).toContain('delete_uploaded_file');
-      expect(toolService.getGroups().find(g => g.name === 'file-reader')).toMatchObject({
+      expect(toSource(toolService.getGroups().find(g => g.name === 'file-reader'))).toMatchObject({
         label: '删除上传的文件',
         description: '删除用户上传的文件',
       });

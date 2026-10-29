@@ -3,6 +3,7 @@ import { tools, wrapUntrustedContent } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
+import { t } from './texts.js';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
 
 export type {
@@ -22,24 +23,38 @@ const configSchema = defineConfig({
     required: true,
     secret: true,
     onInvalid: 'error',
-    description: 'Serper.dev API 密钥',
+    description: t('apiKeyDescription'),
   },
-  maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10, description: '频率限制：每分钟最多搜索次数' },
-  maxPerDay: { type: 'number', label: '每天最大次数', default: 100, description: '频率限制：每天最多搜索次数' },
-  maxConcurrent: { type: 'number', label: '最大并发', default: 3, description: '同时进行的搜索请求数上限' },
-  defaultNumResults: { type: 'number', label: '默认结果数', default: 5, description: '每次搜索返回的结果条数' },
+  maxPerMinute: {
+    type: 'number',
+    label: t('maxPerMinuteLabel'),
+    default: 10,
+    description: t('maxPerMinuteDescription'),
+  },
+  maxPerDay: { type: 'number', label: t('maxPerDayLabel'), default: 100, description: t('maxPerDayDescription') },
+  maxConcurrent: {
+    type: 'number',
+    label: t('maxConcurrentLabel'),
+    default: 3,
+    description: t('maxConcurrentDescription'),
+  },
+  defaultNumResults: {
+    type: 'number',
+    label: t('defaultNumResultsLabel'),
+    default: 5,
+    description: t('defaultNumResultsDescription'),
+  },
   enableCompression: {
     type: 'boolean',
-    label: '启用搜索结果压缩',
+    label: t('enableCompressionLabel'),
     default: false,
-    description: '启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
+    description: t('enableCompressionDescription'),
   },
   compressionPrompt: {
     type: 'textarea',
-    label: '压缩提示词',
+    label: t('compressionPromptLabel'),
     default: '',
-    description:
-      '自定义压缩搜索结果的提示词。留空使用默认提示。提示词中用 {query} 代表搜索关键词、{results} 代表搜索结果（不写 {results} 模型就收不到结果）。',
+    description: t('compressionPromptDescription'),
   },
 });
 
@@ -202,7 +217,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-websearch-serper',
-  displayName: 'Serper 网络搜索',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   provides: [webSearch],
@@ -285,7 +300,8 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   // 注册工具分组
   tools.use.registerGroup({
     name: 'search',
-    label: '网页搜索',
+    label: t('groupLabel'),
+    summary: t('groupSummary'),
     description: '通过 Serper API 搜索互联网获取最新信息',
   });
 
