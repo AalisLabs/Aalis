@@ -35,7 +35,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '尚未迁移'],
   ['plugin-asr-openai', '尚未迁移'],
   ['plugin-asr-whisper-cpp', '尚未迁移'],
-  ['plugin-authority', '尚未迁移'],
   ['plugin-checkpoint', '尚未迁移'],
   ['plugin-code-sandbox-os', '尚未迁移'],
   ['plugin-contributions', '尚未迁移'],

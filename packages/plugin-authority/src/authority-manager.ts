@@ -241,7 +241,7 @@ export class AuthorityManager implements AuthorityService {
   }
 
   /** users.json 上次加载失败的原因（实现层状态，不在契约里）：读不出来的提示据此写明原因 */
-  get lastLoadError(): string | undefined {
+  get lastLoadError(): string | TextRef | undefined {
     return this.store.lastLoadError;
   }
 
