@@ -699,7 +699,7 @@ export type ArchivedForward = Omit<ForwardedChat, 'content'>;
  *   可见正文。检索、摘要等按语义消费历史的一方应优先读它，读不到再退回 `content`。
  * - `SpokenContent`：提问里发言人自己写的话（字符串，可以是空串），即入站消息的 `content`。存档的 `content` 是给模型看的
  *   归档文本（{@link buildIncomingContent}：发送者前缀、转发的展开、引用与附件描述），存档只在两者不同时写这个键；缺省即
- *   `content`。合并转发的展开不在里面，只有它的占位。会话服务据此给出提问条目的正文。
+ *   `content`。合并转发的展开不在里面，只有它的占位。会话服务据此给出提问条目的正文，用户档案据此核对原话。
  * - `Attachments`：提问带的附件清单（{@link ArchivedAttachment} 的数组，按入站顺序），存档写；会话服务据此把文件还原成卡片、
  *   图片等按地址显示。没有附件时不写。
  * - `Forwards`：提问随附的转发（{@link ArchivedForward} 的数组：入站消息 forwards 的 id 与事实，不存展开），存档在有时写；

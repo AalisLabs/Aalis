@@ -225,31 +225,34 @@ function isTargetUserMessage(message: Message, userId: string, platform: string)
 }
 
 /**
- * 将文本标准化为可子串匹配的形式：去空白、去常见标点、toLowerCase。
- * 用于 sourceQuote 校验，容忍 LLM 轻微原词改写。
+ * 核对原话的规整，原话与语料用同一份：NFKC（全角与半角、兼容写法归成同一个字）、小写，去掉 Unicode 标点、空白与不显示的字符
+ * （表情里的变体选择符与连接符）；符号照留，「C++」不会只剩一个字母
  */
 function normalizeForQuoteMatch(s: string): string {
   return s
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\s\u3000]+/g, '')
-    .replace(/[。，、；：？！“”‘’（）《》【】.,;:?!"'()[\]<>\-_~`*]/g, '');
+    .replace(/[\p{P}\s\p{Default_Ignorable_Code_Point}]+/gu, '');
 }
 
 /**
- * 拼接目标用户自己发言作为 sourceQuote 校验语料。
- * 只包含目标用户 role==='user' 且 metadata.userId 匹配的消息。
+ * 目标用户各条发言规整后的语料，原话的片段要落在其中某一条里。只收发言人自己写的字（存档另记的 SpokenContent，没记就是归档
+ * 正文本身）：被引用的原文、识图、语音转写、视频描述、文件正文与合并转发都不在发言人的话里
  */
-function buildTargetUserCorpus(history: Message[], userId: string, platform: string): string {
+function buildTargetUserCorpus(history: Message[], userId: string, platform: string): string[] {
   return history
     .filter(m => isTargetUserMessage(m, userId, platform))
-    .map(m => m.content ?? '')
-    .join('\n');
+    .map(m => {
+      const spoken = m.metadata?.[WellKnownMetadataKeys.SpokenContent];
+      return normalizeForQuoteMatch(typeof spoken === 'string' ? spoken : (m.content ?? ''));
+    });
 }
 
 /**
  * 渲染完整会话历史供提取 LLM 作为消歧上下文：
  * 每行带身份标签区分「目标用户」「其他用户」与她自己（botName），
- * 不做 strip：校验语料是归档正文，他引用的别人的话也在里面，sourceQuote 校验挡不住这一种。
+ * 不做 strip：给模型看的是归档正文（引用、附件描述与转发都在，消歧要用）；
+ * 核对原话另取发言人自己写的话（buildTargetUserCorpus）。
  */
 function renderHistoryForExtract(history: Message[], userId: string, platform: string, botName: string): string {
   return history
@@ -585,7 +588,7 @@ function registerUserProfile({
     category?: FactCategory;
     temporality?: FactTemporality;
     timeHint?: string;
-    sourceQuote?: string;
+    sourceQuote: string;
   }
   interface ExtractUpdateItem {
     id: string;
@@ -593,12 +596,16 @@ function registerUserProfile({
     category?: FactCategory;
     temporality?: FactTemporality;
     timeHint?: string;
-    sourceQuote?: string;
+    sourceQuote: string;
+  }
+  interface ExtractRemoveItem {
+    id: string;
+    sourceQuote: string;
   }
   interface ExtractResult {
     add: ExtractAddItem[];
     update: ExtractUpdateItem[];
-    remove: string[];
+    remove: ExtractRemoveItem[];
   }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
@@ -649,10 +656,17 @@ function registerUserProfile({
           ];
         })
       : [];
-    const remove: string[] = Array.isArray(obj.remove)
-      ? (obj.remove as unknown[])
-          .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-          .map(s => s.trim())
+    // 只给 id 的字符串没有原话：当成只有 id 的一项，校验时按没给原话丢弃并 warn，不静默放过
+    const remove: ExtractRemoveItem[] = Array.isArray(obj.remove)
+      ? (obj.remove as unknown[]).flatMap(x => {
+          const item = typeof x === 'string' ? { id: x } : x;
+          if (!item || typeof item !== 'object') return [];
+          const o = item as Record<string, unknown>;
+          const id = typeof o.id === 'string' ? o.id.trim() : '';
+          if (!id) return [];
+          const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
+          return [{ id, sourceQuote }];
+        })
       : [];
     return { add, update, remove };
   }
@@ -681,7 +695,7 @@ function registerUserProfile({
       '\n\n你可以执行三种操作（在一次输出里组合）：' +
       '\n- add: 添加新事实，需指定 text、category、sourceQuote' +
       '\n- update: 用 id 精确替换某条已知事实，同样需 sourceQuote（优先使用 update 而非 add 来避免重复）' +
-      '\n- remove: 用 id 删除已被推翻、过时的事实（不需 sourceQuote）' +
+      '\n- remove: 用 id 删除已被目标用户推翻的事实，同样需 sourceQuote（目标用户推翻它的那句原话）' +
       '\n\n规则：' +
       '\n1. 事实的**主语必须是「目标用户」本人**，不能是 ta 转述、讨论、评价的第三方。' +
       '即使 sourceQuote 出自目标用户原话，也要先在脑中追问：' +
@@ -698,7 +712,8 @@ function registerUserProfile({
       '\n   ❌ 严禁仅凭单次发言推断情感事实：一次抱怨/一次感谢/一次撒娇都不算"模式"，不写。' +
       '必须是已有事实佐证 + 本轮再次出现的同类行为才允许 update 强化，或会话历史多处反复出现才允许 add。' +
       '依据必须是「目标用户」发言中可直接推断的内容，sourceQuote 取目标用户发言原话。' +
-      '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写' +
+      '\n2. **sourceQuote 必须是「目标用户」自己发言中的原话片段**，可以是某一句话的一部分，必须能一字不改在「目标用户」某行的原文中找到；不要采用「其他用户」的原话，不要自己总结改写；' +
+      '只算 ta 自己写的字：行首的发送者前缀、行里附带的「[引用 … 的消息: …]」、图片与语音视频的描述、文件内容、合并转发都不算' +
       '\n3. 在同一 category 下，如果新信息与已有事实在含义上重叠（例如已知"喜欢猫"，新信息"还喜欢狗"），应以 update 改写原 id 为更全面的版本，而不是 add 再加一条' +
       '\n4. 如果新对话明确推翻或修正了某条已知事实（如已知"在北京工作"，但用户说"我刚搬到上海"），用 update 替换或 remove 删除' +
       `\n5. 每条 text 用一句简洁的 ${outputLanguageFor(i18n, { host: true }, 'zh-CN')}，不超过 ${cfg.maxFactCharsPerItem} 个字符，不带「用户」「他」等代词，直接陈述事实` +
@@ -707,7 +722,7 @@ function registerUserProfile({
       '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary' +
       '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串' +
       '\n\n输出严格的 JSON（不要其他文本）：' +
-      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
+      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": [{"id": "已知事实的id", "sourceQuote": "目标用户发言中的原话片段"}]}';
 
     const factListText =
       existingFacts.length > 0
@@ -768,36 +783,34 @@ function registerUserProfile({
       }
       const { add, update, remove } = parseFactOps(reply.parsed);
 
-      // 新增与改写的事实要附原话：按行拆开（quote 可能跨多条消息，LLM 用 \n 拼接），每行去掉空白与常见标点后要能在目标用户的
-      // 归档正文里找到，找不到整条丢弃并 warn；规整后为空的行不核对，删除事实不要原话。模型会凭空编事实，核对原话挡的是这一种；
-      // 归档正文里带着他引用的别人的话与附件描述，这两样挡不住
-      const targetCorpus = normalizeForQuoteMatch(buildTargetUserCorpus(history, userId, platform));
-      const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
-        const q = item.sourceQuote?.trim() ?? '';
-        if (!q) {
-          logger.use.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
+      // 增改删都要附原话：按行拆开（quote 可能跨多条消息，LLM 用 \n 拼接），每行规整后（normalizeForQuoteMatch）要落在目标用户
+      // 自己写的某一条话里（见 buildTargetUserCorpus），任一片段找不到整条丢弃并 warn；规整后不含字母或数字的行不算片段，一个
+      // 片段都没有的按没给原话。模型会凭空编事实，也会把别人的话、图上的字记到他头上，核对原话挡的是这两种。不设字数下限：接在
+      // 问句后面的「是的」是合法的原话；也不核对事实能不能从原话推出来：每次提取要多一次调用
+      const targetCorpus = buildTargetUserCorpus(history, userId, platform);
+      const validateSourceQuote = (quote: string, kind: 'add' | 'update' | 'remove', what: string): boolean => {
+        const fragments = quote
+          .split(/\r?\n/)
+          .map(line => ({ line, normalized: normalizeForQuoteMatch(line) }))
+          .filter(({ normalized }) => /[\p{L}\p{N}]/u.test(normalized));
+        if (fragments.length === 0) {
+          logger.use.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${what}`);
           return false;
         }
-        const lines = q
-          .split(/\r?\n/)
-          .map(l => l.trim())
-          .filter(l => l.length > 0);
-        const fragments = lines.length > 0 ? lines : [q];
-        for (const frag of fragments) {
-          const normalized = normalizeForQuoteMatch(frag);
-          if (!normalized) continue;
-          if (!targetCorpus.includes(normalized)) {
+        for (const { line, normalized } of fragments) {
+          if (!targetCorpus.some(spoken => spoken.includes(normalized))) {
             logger.use.warn(
-              `[user-profile] 丢弃 ${kind} fact（sourceQuote 片段不在目标用户 ${userId} 发言中）: text="${item.text}" fragment="${frag}"`,
+              `[user-profile] 丢弃 ${kind} fact（sourceQuote 片段不在目标用户 ${userId} 发言中）: ${what} fragment="${line.trim()}"`,
             );
             return false;
           }
         }
         return true;
       };
-      const validatedAdd = add.filter(item => validateSourceQuote(item, 'add'));
-      const validatedUpdate = update.filter(item => validateSourceQuote(item, 'update'));
-      return { add: validatedAdd, update: validatedUpdate, remove };
+      const validatedAdd = add.filter(item => validateSourceQuote(item.sourceQuote, 'add', item.text));
+      const validatedUpdate = update.filter(item => validateSourceQuote(item.sourceQuote, 'update', item.text));
+      const validatedRemove = remove.filter(item => validateSourceQuote(item.sourceQuote, 'remove', `id=${item.id}`));
+      return { add: validatedAdd, update: validatedUpdate, remove: validatedRemove };
     } catch (err) {
       logger.use.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
@@ -966,7 +979,7 @@ function registerUserProfile({
         fresh.facts,
         ops.add,
         dropUpdatesOfDeletedFacts(ops.update, snapshotFacts, fresh.facts),
-        ops.remove,
+        ops.remove.map(r => r.id),
       );
       await saveProfile(mem, userKey, {
         ...fresh,
