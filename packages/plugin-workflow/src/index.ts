@@ -637,9 +637,12 @@ function registerTools(
   tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
 
   tools.register({
-    // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经
-    // LLM 驱动。sensitive(L1)，不加逐次 confirm。只读 list/get_runs 保持 public。
+    // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经 LLM 驱动，三个都是 sensitive(L1)；
+    // 只读 list/get_runs 保持 public。定义另加 always：定义出的编排此后按定义者的身份长期运行，与建定时任务同一规则，每次要 owner
+    // 审批原文；免确认白名单不免，只有参与者都是 owner、确认覆盖设为 off（或设为 session 再被白名单免掉）时免，批过的调用按批的人
+    // 执行、定义者随之是他
     risk: 'sensitive',
+    confirm: 'always',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -673,7 +676,7 @@ function registerTools(
       if (!def) return JSON.stringify({ error: '定义不合法：缺少 trigger 或 nodes' });
       const persist = args.persist !== false;
       try {
-        // 定义者取调用者的授权身份（几个人的一轮没有单一的定义者），匿名的不记
+        // 定义者取调用者的授权身份：经审批的是批的人，匿名的不记
         const definedBy = identityOf(actingIdentity(callCtx));
         await definitions.define(def, persist, definedBy);
       } catch (e) {

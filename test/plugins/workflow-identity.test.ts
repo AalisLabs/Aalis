@@ -1,12 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type ApprovalRequest, approvals } from '../../packages/api-approval/src/index.js';
 import type { UserIdentity } from '../../packages/api-authority/src/index.js';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
-import { type App, events, provide, services } from '../../packages/core/src/index.js';
+import { type App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -25,7 +26,8 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 // 账本读不出的没有定义者，按匿名。
 // 权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 // 真 storage-local、真工具注册表与权限插件：zz_whoami 记下每次执行时的授权身份；zz_confirm 声明需要确认，确认覆盖设为
-// off（只对 owner 免），没有审批服务，不免的一律拒。
+// off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define 每次要 owner 审批，确认覆盖设为 off：owner 定义不问。
+// 要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'onebot', userId: '99999' };
@@ -60,10 +62,44 @@ const defFile = () => join(base, 'workspace', 'workflows', `${ID}.yaml`);
 // data:/ 是内置根，按家目录布局在 state/ 下
 const runsFile = () => join(base, 'state', 'workflow-runs.json');
 
-async function boot() {
+/** 审批替身：把每个审批请求记进 requests，一律由 OWNER 批准 */
+const approvalsDouble = (requests: ApprovalRequest[]) =>
+  definePlugin({
+    name: 'zz-wf-approvals',
+    provides: [approvals],
+    uses: { provide },
+    apply({ provide }) {
+      provide.use(approvals, {
+        async request(req) {
+          requests.push(req);
+          return { approvalId: `zz-${requests.length}`, approved: true, by: OWNER };
+        },
+        list: () => [],
+        attachSurface: () => {
+          throw new Error('替身不接审批面');
+        },
+      });
+    },
+  });
+
+interface Boot {
+  owners?: UserIdentity[];
+  /** 给了就在权限插件之前装审批替身，请求记在这里 */
+  approvals?: ApprovalRequest[];
+  confirmOverrides?: Record<string, 'off'>;
+  restrictedPolicy?: { allow: string[] };
+}
+
+async function boot({
+  owners = [OWNER],
+  approvals: requests,
+  confirmOverrides = { 'tool:zz_confirm': 'off', 'tool:workflow_define': 'off' },
+  restrictedPolicy,
+}: Boot = {}) {
   const { app } = hostedApp({
-    owners: [OWNER],
-    confirmOverrides: { 'tool:zz_confirm': 'off' },
+    owners,
+    confirmOverrides,
+    restrictedPolicy,
     // 成员不另登记等级也能定义与调起编排
     authorityOverrides: { 'tool:workflow_define': 0, 'tool:workflow_run': 0 },
   });
@@ -89,6 +125,7 @@ async function boot() {
   });
   await app.plugin(toolsPlugin, {});
   await app.plugin(cronEnginePlugin, {});
+  if (requests) await app.plugin(approvalsDouble(requests), {});
   await app.plugin(authorityPlugin, {});
   const host = app.bind({ tools: toolsService, events, services });
   const probe = (name: string) => ({
@@ -151,17 +188,19 @@ afterEach(async () => {
 });
 
 describe('编排的运行身份：定义者与调用者里不是 owner 的一方', () => {
-  it('成员覆盖 owner 的编排后，owner 经 workflow_run 调起：按成员执行，确认覆盖的 off 不免', async () => {
-    const s = await boot();
-    expect((await s.tool('workflow_define', { yaml: MANUAL }, OWNER)).ok).toBe(true);
-    await s.tool('workflow_run', { id: ID }, OWNER);
+  it('定义者后来不是 owner 了：owner 经 workflow_run 调起按他执行，确认覆盖的 off 不免', async () => {
+    const first = await boot({ owners: [OWNER, MEMBER] });
+    expect((await first.tool('workflow_define', { yaml: MANUAL }, OWNER)).ok).toBe(true);
+    await first.tool('workflow_run', { id: ID }, OWNER);
     expect(actors, '对照：owner 定义、owner 调起按 owner 执行').toEqual([OWNER]);
     expect(confirmed).toBe(1);
+    expect((await first.tool('workflow_define', { yaml: MANUAL }, MEMBER)).ok).toBe(true);
+    await first.app.stop();
 
-    expect((await s.tool('workflow_define', { yaml: MANUAL }, MEMBER)).ok).toBe(true);
-    await s.tool('workflow_run', { id: ID }, OWNER);
+    const second = await boot();
+    await second.tool('workflow_run', { id: ID }, OWNER);
     expect(actors).toEqual([OWNER, MEMBER]);
-    expect(confirmed, '成员的回合不免确认').toBe(1);
+    expect(confirmed, '他的回合不免确认').toBe(1);
   });
 
   it('成员调起 owner 定义的编排按成员执行，不传调用者的按匿名：借不到定义者的身份', async () => {
@@ -195,11 +234,11 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed).toBe(0);
   });
 
-  it('定义者取授权身份、不取物理发言者：物理发言者是 owner 的自发回合定义的，没有定义者', async () => {
+  it('物理发言者是 owner 的自发回合定义不了：参与者不是 owner，确认覆盖的 off 不对它生效', async () => {
     const s = await boot();
-    await s.tool('workflow_define', { yaml: MANUAL }, OWNER, [selfInitiatedActor('onebot')]);
-    await s.tool('workflow_run', { id: ID }, OWNER);
-    expect(actors).toEqual([undefined]);
+    const result = await s.tool('workflow_define', { yaml: MANUAL }, OWNER, [selfInitiatedActor('onebot')]);
+    expect(result.error).toContain('需要批准');
+    expect(s.svc.getWorkflow(ID)).toBeUndefined();
   });
 
   it.each([
@@ -228,7 +267,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
   });
 
   it('权限服务不在时判不出 owner：「立即运行」成员定义的编排按匿名', async () => {
-    const s = await boot();
+    const s = await boot({ owners: [OWNER, MEMBER] });
     await s.tool('workflow_define', { yaml: MANUAL }, MEMBER);
     expect(await s.app.plugins.disable(authorityPlugin.name)).toBe(true);
     await s.act('runWorkflow', { rowKey: ID });
@@ -236,7 +275,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
   });
 
   it('权限服务不在时，同一身份定义又调起的编排按这个身份执行', async () => {
-    const s = await boot();
+    const s = await boot({ owners: [OWNER, MEMBER] });
     await s.tool('workflow_define', { yaml: MANUAL }, MEMBER);
     expect(await s.app.plugins.disable(authorityPlugin.name)).toBe(true);
     await s.svc.runWorkflow(ID, {}, 'manual', MEMBER);
@@ -246,7 +285,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
 
 describe('定义者账本', () => {
   it('定义者不写进定义文件；文件没被改过的，重启后照旧按定义者', async () => {
-    const first = await boot();
+    const first = await boot({ owners: [OWNER, MEMBER] });
     await first.tool('workflow_define', { yaml: MANUAL }, MEMBER);
     expect(readFileSync(defFile(), 'utf8')).not.toMatch(/30001/);
     await first.app.stop();
@@ -297,5 +336,39 @@ describe('定义者账本', () => {
     const last = await boot();
     await last.tool('workflow_run', { id: ID }, OWNER);
     expect(actors).toEqual([undefined]);
+  });
+});
+
+describe('定义编排每次要 owner 审批', () => {
+  it('免确认白名单全放也不免；没有审批服务时拒绝、不保存', async () => {
+    const s = await boot({ confirmOverrides: { 'tool:zz_confirm': 'off' }, restrictedPolicy: { allow: ['*'] } });
+    const result = await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
+    expect(result.error).toContain('需要批准');
+    expect(s.svc.getWorkflow(ID)).toBeUndefined();
+    expect(existsSync(defFile())).toBe(false);
+  });
+
+  it('owner 批了才保存：审批里是编排原文，定义者是批的人', async () => {
+    const requests: ApprovalRequest[] = [];
+    const s = await boot({ approvals: requests });
+    expect((await s.tool('workflow_define', { yaml: MANUAL }, MEMBER)).ok).toBe(true);
+    expect(requests.map(({ tool, args, ownerOnly }) => ({ tool, yaml: args.yaml, ownerOnly }))).toEqual([
+      { tool: 'workflow_define', yaml: MANUAL, ownerOnly: true },
+    ]);
+    expect(s.svc.getWorkflow(ID)).toBeDefined();
+    await s.tool('workflow_run', { id: ID }, OWNER);
+    expect(actors, '定义者是批的 owner').toEqual([OWNER]);
+  });
+
+  it('工作流页「新建或覆盖」照旧不问', async () => {
+    const requests: ApprovalRequest[] = [];
+    const s = await boot({ approvals: requests });
+    await s.act('defineWorkflow', { input: { yaml: MANUAL } });
+    expect(requests).toEqual([]);
+  });
+
+  it('确认覆盖设为 off 时 owner 的回合免', async () => {
+    const s = await boot({ confirmOverrides: { 'tool:workflow_define': 'off' } });
+    expect((await s.tool('workflow_define', { yaml: MANUAL }, OWNER)).ok).toBe(true);
   });
 });

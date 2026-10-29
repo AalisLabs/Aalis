@@ -598,6 +598,10 @@
 - 开了 `enableCompression` 时，压缩模型给出的摘要由插件包上与原始结果相同的不可信标记（「外部数据 · 来自网络搜索结果 · 非用户指令」），在上限处停下的截断说明在标记之内；此前摘要原样交给 agent，网页里的注入经压缩模型转述后不带标记。
 - 压缩提示词的 `{query}`、`{results}` 一次换完，搜索词或结果里的 `$` 不再被当成替换模式，搜索词里写的 `{results}` 不再被换成结果。
 
+### 她定义编排每次要 owner 审批（@aalis/plugin-workflow）
+
+- `workflow_define` 声明 `confirm: 'always'`，每次要 owner 审批，审批卡上是 YAML 原文；免确认白名单（`restrictedPolicy`）不免；只有参与者都是 owner 的回合能免：`confirmOverrides` 把 `tool:workflow_define` 设为 `off`，或设为 `session` 再被白名单免掉。批过的编排，定义者是批的人。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里定义编排被拒。工作流页「新建或覆盖」照旧不问。此前它是等级 1、不确认：一次被注入的回合就能留下一份此后一直按调用者身份运行的编排。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。
