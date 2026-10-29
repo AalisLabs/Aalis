@@ -4,6 +4,8 @@ import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '
 import type {} from '@aalis/api-webui'; // 贡献点 webui:options 的键类型经 declaration merging 并入，删掉会丢类型
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, textLines, textOf, withText } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // ===== 插件元数据 =====
 
@@ -12,26 +14,21 @@ const name = '@aalis/plugin-embedding-ollama';
 const configSchema = defineConfig({
   baseUrl: {
     type: 'string',
-    label: 'Ollama 地址',
+    label: t('baseUrlLabel'),
     default: 'http://localhost:11434',
     onInvalid: 'error',
-    description: '本地 Ollama 服务的 HTTP 地址',
+    description: t('baseUrlDescription'),
   },
   model: {
     type: 'select',
-    label: 'Embedding 模型',
+    label: t('modelLabel'),
     default: 'nomic-embed-text',
     dynamicOptions: 'embedding-ollama',
-    description: '用于生成文本向量的模型',
+    description: t('modelDescription'),
   },
-  timeoutMs: { type: 'number', label: '请求超时 (ms)', default: 30000, description: '单次 embedding 请求超时时间' },
-  retries: { type: 'number', label: '失败重试次数', default: 1, description: 'fetch 失败或 5xx 时的重试次数' },
+  timeoutMs: { type: 'number', label: t('timeoutMsLabel'), default: 30000, description: t('timeoutMsDescription') },
+  retries: { type: 'number', label: t('retriesLabel'), default: 1, description: t('retriesDescription') },
 });
-
-function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
 
 /**
  * 把响应体里的 error 一并带进错误消息。
@@ -50,11 +47,11 @@ function statusError(res: { status: number; statusText: string; text: string }, 
       detail = res.text;
     }
   }
-  const tail = detail ? ` —— ${detail.slice(0, 200)}` : '';
-  return new HttpStatusError(
-    res.status,
-    `Ollama embedding 请求失败 (${endpoint}): ${res.status} ${res.statusText}${tail}`,
-  );
+  const { status, statusText } = res;
+  const text = detail
+    ? t('statusFailedDetail', { endpoint, status, statusText, detail: detail.slice(0, 200) })
+    : t('statusFailed', { endpoint, status, statusText });
+  return withText(new HttpStatusError(status, text.source), text);
 }
 
 /** 带 HTTP 状态码的响应错误：新旧 API 探测据此区分「端点不存在」与瞬态故障 */
@@ -104,8 +101,7 @@ class OllamaEmbeddingService implements EmbeddingService {
     body: Record<string, unknown>,
     options?: EmbeddingRequestOptions,
   ): Promise<{ ok: boolean; status: number; statusText: string; text: string }> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt <= this.retries; attempt++) {
+    for (let attempt = 0; ; attempt++) {
       options?.signal?.throwIfAborted();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -121,16 +117,13 @@ class OllamaEmbeddingService implements EmbeddingService {
         }
         // 要重试：主动取消被丢弃的响应体，否则 undici 侧套接字被钉住到 GC
         await res.body?.cancel().catch(() => undefined);
-        lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
       } catch (err) {
         options?.signal?.throwIfAborted();
-        lastErr = err;
         if (attempt >= this.retries) throw err;
       } finally {
         clearTimeout(timer);
       }
     }
-    throw new Error(`Ollama embedding 请求失败: ${formatError(lastErr)}`);
   }
 
   async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
@@ -225,11 +218,11 @@ async function startOllamaEmbedding({
 }: Caps): Promise<void> {
   const cfg = parseConfig(configSchema, config.use, logger.use);
   if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
-    throw configError('baseUrl 需为不带用户名或密码的完整 URL');
+    throw configError(t('baseUrlInvalid'));
   }
   // 插件在 baseUrl 后面拼路径，带查询串或片段（含末尾单个 ?）时拼出来的地址是坏的，所以按原文判
   if (/[?#]/.test(cfg.baseUrl)) {
-    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    throw configError(t('baseUrlQuery'));
   }
   const { baseUrl, model, timeoutMs } = cfg;
   const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, cfg.retries);
@@ -279,7 +272,7 @@ async function startOllamaEmbedding({
           service.embed('ping', { signal: controller.signal }),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => {
-              const error = new Error(`探测超时（${probeTimeoutMs}ms）`);
+              const error = new TextError(t('probeTimeout', { ms: probeTimeoutMs }));
               controller.abort(error);
               reject(error);
             }, probeTimeoutMs);
@@ -290,15 +283,15 @@ async function startOllamaEmbedding({
           id: checkId,
           category: 'service',
           level: 'ok',
-          message: `Ollama Embedding 可用 (${model} @ ${baseUrl})`,
+          message: t('checkOk', { model, baseUrl }),
         };
       } catch (err) {
         return {
           id: checkId,
           category: 'service',
           level: 'error',
-          message: `Ollama Embedding 不可用 (${model} @ ${baseUrl})——向量记忆不工作`,
-          detail: `${formatError(err)}\n确认 Ollama 在运行，并已执行 ollama pull ${model}（或把配置项 model 改成本机已有的嵌入模型）`,
+          message: t('checkFailed', { model, baseUrl }),
+          detail: textLines([textOf(err), t('checkFix', { model })]),
         };
       } finally {
         if (timer) clearTimeout(timer);

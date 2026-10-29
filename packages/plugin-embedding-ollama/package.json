@@ -57,6 +57,7 @@
     "@aalis/api-embedding": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0"
+    "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   }
 }

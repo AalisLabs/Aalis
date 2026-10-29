@@ -20,8 +20,10 @@ import {
   provide,
 } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { TextError, textOf } from '@aalis/schema-i18n';
 import { CONTROL_KINDS, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { type Collection, type Db, type FindCursor, MongoClient } from 'mongodb';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   uri: {
@@ -31,46 +33,46 @@ const configSchema = defineConfig({
     default: 'mongodb://localhost:27017',
     onInvalid: 'error',
     secret: true,
-    description: 'MongoDB 连接字符串（可能带账号密码，存进 secrets.yaml，WebUI 不回显）',
+    description: t('uriDescription'),
   },
   database: {
     type: 'string',
-    label: '数据库名',
+    label: t('databaseLabel'),
     default: '',
     onInvalid: 'error',
-    description:
-      '存储消息历史与元数据（固定名为 metadata 的集合）的数据库。留空按家目录与实例派生：主家目录用 aalis，' +
-      'profile 家目录（~/.aalis-<profile>）用 aalis_<profile>；带后缀的实例再加后缀（如 `:b` 实例用 aalis-b、aalis_<profile>_b）。' +
-      '同一连接串下两个实例不能用同一个库，后激活的那个会报配置错误；库里记着它归哪个家目录，别的家目录连上来也会报错',
+    description: t('databaseDescription'),
   },
   claimFrom: {
     type: 'string',
-    label: '认领库的归属',
+    label: t('claimFromLabel'),
     default: '',
     onInvalid: 'error',
-    description:
-      '平时留空。库已归另一个家目录（例如家目录搬了位置）时，先停掉那个家目录的实例，再填它的路径；' +
-      '库里已有数据却还没有归属记录时填 unowned。启动一次就把归属改到这个家目录，认领后删掉这一项：' +
-      '留着的 unowned 会让以后指向的任何库都跳过「已有数据」的检查',
+    description: t('claimFromDescription'),
   },
-  collection: { type: 'string', label: '集合名', default: 'messages', onInvalid: 'error', description: '消息集合名称' },
+  collection: {
+    type: 'string',
+    label: t('collectionLabel'),
+    default: 'messages',
+    onInvalid: 'error',
+    description: t('collectionDescription'),
+  },
   connectTimeoutMs: {
     type: 'number',
-    label: '连接超时（毫秒）',
+    label: t('connectTimeoutMsLabel'),
     default: 5000,
-    description: '建立连接与服务器选择（serverSelection）的超时时间，两者共用此值',
+    description: t('connectTimeoutMsDescription'),
   },
   rangeQueryLimit: {
     type: 'number',
-    label: '范围查询返回上限',
+    label: t('rangeQueryLimitLabel'),
     default: 500,
-    description: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
+    description: t('rangeQueryLimitDescription'),
   },
   crossSessionMaxLimit: {
     type: 'number',
-    label: '跨会话查询返回上限',
+    label: t('crossSessionMaxLimitLabel'),
     default: 1000,
-    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+    description: t('crossSessionMaxLimitDescription'),
   },
 });
 
@@ -394,7 +396,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-memory-mongodb',
-  displayName: 'MongoDB 记忆',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   reusable: true,
@@ -443,14 +445,12 @@ export async function openAndProvide(
   const { suffix } = parseInstanceId(lifecycle.use.id);
   const database = mongoConfig.database || deriveDatabase(owner?.profile, suffix);
   if (Buffer.byteLength(database) > 63) {
-    throw configError(`MongoDB 库名 ${database} 超过 63 字节的上限：请给 ${lifecycle.use.id} 另配一个短些的 database`);
+    throw configError(t('databaseTooLong', { database, instance: lifecycle.use.id }));
   }
   const location = `${mongoConfig.uri}\n${database}`;
   const holder = openedBy.get(location);
   if (holder && holder.id !== lifecycle.use.id) {
-    throw configError(
-      `MongoDB 库 ${database} 已被实例 ${holder.id} 使用（同一连接串），两个实例不能共用一个库：请给 ${lifecycle.use.id} 另配 database`,
-    );
+    throw configError(t('databaseInUse', { database, holder: holder.id, instance: lifecycle.use.id }));
   }
   openedBy.set(location, lifecycle.use);
   lifecycle.use.onDispose(() => {
@@ -509,8 +509,7 @@ export async function openAndProvide(
     await client.close().catch(() => {});
     // 库的归属不对是配置问题，不是连接失败：原样抛出，宿主按配置错误报一行
     if ((err as { name?: unknown } | null)?.name === 'ConfigError') throw err;
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: ${message}`, { cause: err });
+    throw new TextError(t('connectFailed', { error: textOf(err) }), { cause: err });
   } finally {
     lifecycle.use.signal.removeEventListener('abort', onAbort);
   }
@@ -549,9 +548,7 @@ async function claimOwnership(
   const doc = await meta.findOne(filter);
   if (!doc) {
     if (claimFrom !== 'unowned' && (await hasData(db))) {
-      throw configError(
-        `MongoDB 库 ${database} 里已有数据，但没有记录它归哪个家目录。若这就是本家目录的数据，在 ${me.instance} 的配置里写 claimFrom: unowned 后重启认领；否则给它另配 database`,
-      );
+      throw configError(t('unownedData', { database, instance: me.instance }));
     }
     try {
       await meta.insertOne({ ...filter, data: mine, updatedAt: new Date() });
@@ -590,19 +587,16 @@ async function claimOwnership(
   }
   if (!owner) {
     throw configError(
-      `MongoDB 库 ${database} 的归属记录坏了（metadata 集合里命名空间 ${OWNER_NAMESPACE}、键 ${OWNER_KEY} 的那条缺家目录或实例）。` +
-        `确认这是本家目录的数据后，在 ${me.instance} 的配置里写 claimFrom: unowned 后重启认领；否则给它另配 database`,
+      t('ownerRecordBroken', { database, namespace: OWNER_NAMESPACE, key: OWNER_KEY, instance: me.instance }),
     );
   }
   if (owner.home === me.home) {
     throw configError(
-      `MongoDB 库 ${database} 归本家目录的实例 ${owner.instance}，两个实例不能共用一个库：请给 ${me.instance} 另配 database。` +
-        `若是实例改了名、要把库转给 ${me.instance}，先停掉 ${owner.instance}，再写 claimFrom: ${owner.home} 后重启认领`,
+      t('ownedBySibling', { database, owner: owner.instance, instance: me.instance, home: owner.home }),
     );
   }
   throw configError(
-    `MongoDB 库 ${database} 已归家目录 ${owner.home}（实例 ${owner.instance}）。` +
-      `若本家目录是从那里搬来的，先停掉那个家目录的实例，再在 ${me.instance} 的配置里写 claimFrom: ${owner.home} 后重启认领；否则给它另配 database`,
+    t('ownedByOtherHome', { database, home: owner.home, owner: owner.instance, instance: me.instance }),
   );
 }
 

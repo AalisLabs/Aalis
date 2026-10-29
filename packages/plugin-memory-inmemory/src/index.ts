@@ -9,6 +9,7 @@ import {
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { CONTROL_KINDS, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 // ===== InMemoryFallbackService 实现 =====
 
@@ -255,21 +256,21 @@ class InMemoryFallbackService implements MemoryService {
 const configSchema = defineConfig({
   rangeQueryLimit: {
     type: 'number',
-    label: '范围查询返回上限',
+    label: t('rangeQueryLimitLabel'),
     default: 500,
-    description: '区间消息查询单次返回的最大条数。命中上限会静默截断（与 sqlite/mongodb 后端对齐）',
+    description: t('rangeQueryLimitDescription'),
   },
   crossSessionMaxLimit: {
     type: 'number',
-    label: '跨会话查询返回上限',
+    label: t('crossSessionMaxLimitLabel'),
     default: 1000,
-    description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
+    description: t('crossSessionMaxLimitDescription'),
   },
 });
 
 export default definePlugin({
   name: '@aalis/plugin-memory-inmemory',
-  displayName: '内存记忆',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   provides: [memory],

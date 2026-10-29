@@ -30,7 +30,8 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.15.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-vectorstore": "workspace:>=0.8.0 <1.0.0"
+    "@aalis/api-vectorstore": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

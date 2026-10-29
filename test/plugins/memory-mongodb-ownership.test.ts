@@ -177,8 +177,10 @@ describe('plugin-memory-mongodb 库的归属', () => {
   it('同一家目录、别的实例（显式写了同一个库）：点名那个实例，不当成搬迁', async () => {
     const server = fakeServer({ metadata: [ownerDoc({ home: '/h', instance: NAME })] });
     const err = await failure(openAndProvide(server.client, config('', 'aalis'), caps(`${NAME}:c`), { home: '/h' }));
-    expect(err?.message).toContain(`归本家目录的实例 ${NAME}`);
-    expect(err?.message).not.toContain('搬来');
+    expect(err?.message).toBe(
+      `MongoDB 库 aalis 归本家目录的实例 ${NAME}，两个实例不能共用一个库：请给 ${NAME}:c 另配 database。` +
+        `若是实例改了名、要把库转给 ${NAME}:c，先停掉 ${NAME}，再写 claimFrom: /h 后重启认领`,
+    );
   });
 
   it('claimFrom 用完还留着：库已归本家目录时告警，提示删掉', async () => {
