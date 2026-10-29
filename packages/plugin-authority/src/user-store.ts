@@ -1,5 +1,7 @@
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // UserStore —— users.json v5 数据层（等级与权限组成员的存储）
@@ -40,7 +42,7 @@ export class UserStore {
   private saveFailed = false;
   private saveChain: Promise<void> = Promise.resolve();
   /** load 时「文件在但读不出/解析不了」的原因——有值时一律拒写，别让全量快照覆盖掉封禁/等级记录 */
-  private loadError: string | undefined;
+  private loadError: string | TextRef | undefined;
   /** 在飞的 load（首载或重读，含收尾补落盘）：期间 save 只保留 dirty、不写盘 */
   private loading: Promise<void> | undefined;
   /** 首次读取已落定（读成功、文件不存在或判为读不懂）：此前 save 与 load 在飞时一样只保留 dirty、不写盘 */
@@ -82,7 +84,7 @@ export class UserStore {
   }
 
   /** 上次加载失败的原因（读不出的报错、解析错误、版本不对）；没有失败时为 undefined */
-  get lastLoadError(): string | undefined {
+  get lastLoadError(): string | TextRef | undefined {
     return this.loadError;
   }
 
@@ -159,7 +161,7 @@ export class UserStore {
   load(): Promise<void> {
     // 重读即重判：storage 重新上线（follow 重挂）或重启后 load 成功即恢复落盘；
     // 同一进程内不会自动重读——没有新的 load，这一程就一直拒写。
-    const settle = (error: string | undefined): void => {
+    const settle = (error: string | TextRef | undefined): void => {
       // 判定要等读完、解析完才落到 loadError：重读在飞期间 persistBlocked 沿用上一次的判定
       this.loadError = error;
       this.firstLoadSettled = true;
@@ -172,7 +174,7 @@ export class UserStore {
       // readUsersFile 自己的兜底也抛了（storage 抛出转不成字符串的值、宿主注入的 logger 抛错等）：
       // 文件状态不明，按读不懂拒写；推迟照常解除，否则 save 与 flushed 会一直等这次 load。错误交还调用方
       // （它可能转不成字符串，原因不从它取）
-      settle('读取时出错，文件状态不明');
+      settle(t('loadUnknown'));
       throw err;
     });
     this.loading = run;
@@ -180,7 +182,7 @@ export class UserStore {
   }
 
   /** 读入并解析 users.json（以文件重建内存表，再叠加尚未落盘的改动）；文件在但读不出或解析不了时返回原因 */
-  private async readUsersFile(): Promise<string | undefined> {
+  private async readUsersFile(): Promise<string | TextRef | undefined> {
     // 开读时已标脏的键：读取期间在飞的写成功会清掉它们，读到的却可能是写入前的内容，
     // 只看读完时的脏键就会按旧文件重建、撤回刚写进去的改动
     const dirtyAtStart = [...this.dirtyKeys.keys()];
@@ -197,7 +199,7 @@ export class UserStore {
       }
       // 文件在但读不出（权限/storage 未就绪等）：标记失败并拒写，否则下一次等级改动即清空原表
       this.logger.error(`读取 users.json 失败，本次运行不再写入该文件: ${msg}`);
-      return msg;
+      return textOf(err);
     }
     try {
       const data = JSON.parse(raw) as { version?: number; users?: Record<string, UserRecord> };
@@ -228,13 +230,15 @@ export class UserStore {
       }
       // 版本不是 v5（旧的能力/密码/档位模型或更高版本）或 users 不是对象（截断/被外部工具写坏）：
       // 原表仍可能在文件里，等同解析失败按拒写处理，别让一次全量快照抹掉它。
-      const reason = `不是有效的 v5 结构（version: ${data.version ?? '未知'}）`;
-      this.logger.error(`users.json ${reason}，本次运行不再写入该文件；请人工修复，或删除/移走该文件后重启按全新开始`);
+      const reason = t('badVersion', { version: data.version == null ? t('unknown') : String(data.version) });
+      this.logger.error(
+        `users.json ${toSource(reason)}，本次运行不再写入该文件；请人工修复，或删除/移走该文件后重启按全新开始`,
+      );
       return reason;
     } catch (err) {
       // 解析失败同理：坏文件不能被一次全量快照覆盖掉
-      const reason = `JSON 解析失败：${err instanceof Error ? err.message : String(err)}`;
-      this.logger.error(`users.json ${reason}，本次运行不再写入该文件`);
+      const reason = t('badJson', { error: textOf(err) });
+      this.logger.error(`users.json ${toSource(reason)}，本次运行不再写入该文件`);
       return reason;
     }
   }

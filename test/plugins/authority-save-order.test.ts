@@ -5,6 +5,7 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type App, provide, services } from '../../packages/core/src/index.js';
 import type { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -59,7 +60,7 @@ describe('权限页的动作：内存态变更不依赖落盘成功', () => {
     const { manager, pages } = await boot();
     const marked = vi.spyOn(manager, 'markPolicyEnabled');
     const before = pages.invalidations.length;
-    expect(await pages.act('authority', 'waiveConfirm', { input: { pattern: 'tool:shell.exec' } })).toEqual({
+    expect(toSource(await pages.act('authority', 'waiveConfirm', { input: { pattern: 'tool:shell.exec' } }))).toEqual({
       status: 500,
       body: { error: '已在本次运行中生效，但没写进配置文件：disk full' },
     });

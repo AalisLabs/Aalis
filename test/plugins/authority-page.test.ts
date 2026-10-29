@@ -169,7 +169,7 @@ describe('权限页的登记', () => {
     const { pages } = await boot();
     expect(pages.logs).toEqual([]);
     const view = pages.view('authority');
-    expect(view).toMatchObject({ title: '权限', placement: 'settings', icon: 'shield' });
+    expect(toSource(view)).toMatchObject({ title: '权限', placement: 'settings', icon: 'shield' });
     expect('tabs' in view.content && toSource(view.content.tabs.map(tab => tab.title))).toEqual([
       '用户',
       '权限组',
@@ -453,7 +453,7 @@ describe('操作门槛', () => {
       ['tool:odd', 2, 2],
     ]);
     const zzA = await pages.data<Array<Record<string, unknown>>>('authority', 'operations', { rowKey: 'zz-a' });
-    expect(zzA.find(row => row.capability === 'tool:pub')).toMatchObject({
+    expect(toSource(zzA.find(row => row.capability === 'tool:pub'))).toMatchObject({
       display: 'pub',
       kind: '工具',
       defaultLevel: 0,
@@ -556,7 +556,7 @@ describe('禁用与免确认', () => {
     expect(toSource(view.actions?.waiveConfirm.input?.pattern.description)).toBe(
       '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的、有别人的话一起进来的照旧要 owner 批准',
     );
-    expect(await pages.data('authority', 'rules')).toEqual([
+    expect(toSource(await pages.data('authority', 'rules'))).toEqual([
       { key: 'deny:tool:shell.exec', rule: 'tool:shell.exec', kind: '禁用（连 owner 也拒）' },
       { key: 'waive:tool:a', rule: 'tool:a', kind: '免确认' },
     ]);
@@ -640,7 +640,7 @@ describe('users.json 读不出来时的提示', () => {
     const legacy = JSON.stringify({ version: 4, users: { 'onebot:777': { tier: 'blocked' } } });
     const { app, pages, runCommand } = await boot({ usersJson: legacy });
 
-    expect(pages.notices()).toEqual([NOTICE]);
+    expect(toSource(pages.notices())).toEqual([NOTICE]);
     expect(await runCommand('level', 'onebot:777', -1)).toBe(
       '已设 onebot:777 等级: -1；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
     );
@@ -660,6 +660,7 @@ describe('users.json 读不出来时的提示', () => {
 
   it.each([
     ['解析不了', { usersJson: '{"version":5,' }, /^JSON 解析失败：\S/],
+    ['version 为 null', { usersJson: '{"version":null,"users":{}}' }, /^不是有效的 v5 结构（version: 未知）$/],
     [
       '读不出来',
       { readFile: () => Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })) },

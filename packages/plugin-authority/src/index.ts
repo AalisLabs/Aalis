@@ -10,7 +10,7 @@ import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { isUnsafeConfigKey } from '@aalis/schema-config';
-import { isTextError, TextError, type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
+import { isTextError, TextError, type TextRef, textClauses, textLines, textOf } from '@aalis/schema-i18n';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { DEFAULT_AUTHORITY, isGrantEntry, isGroupName } from './authority-model.js';
@@ -42,7 +42,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-authority',
-  displayName: '权限管理',
+  displayName: t('displayName'),
   subsystem: 'authority',
   provides: [authorityService],
   uses,
@@ -80,10 +80,8 @@ async function run(caps: Caps): Promise<void> {
         : webui.use.notify({
             id: 'users-load',
             level: 'error',
-            title: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
-            detail:
-              '修好家目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。' +
-              `修好之前改的等级只在本次运行生效。原因：${reason}`,
+            title: t('loadFailedTitle'),
+            detail: t('loadFailedDetail', { reason }),
           });
   };
   // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
@@ -223,18 +221,18 @@ async function run(caps: Caps): Promise<void> {
   // /authority [target] — 查看自己或指定用户的权限等级
   // 读类敏感操作：会披露他人的权限等级 → risk:'sensitive'（等级 1，不强制确认）。
   commands.use
-    .command('authority [target:string]', '查看自己或指定用户的权限等级', { risk: 'sensitive' })
+    .command('authority [target:string]', t('authorityDescription'), { risk: 'sensitive' })
     .action(async (argv, target) => {
-      const describe = (platform: string, userId: string | undefined, self: boolean): string | TextRef => {
-        const isOwner = manager.isOwner(platform, userId);
-        const who = self ? '您' : `${platform}:${userId}`;
-        if (isOwner) return `${who}（owner，等级 ∞，拥有全部权限）`;
+      const describe = (platform: string, userId: string | undefined, self: boolean): TextRef => {
+        const who = `${platform}:${userId}`;
+        if (manager.isOwner(platform, userId)) return self ? t('ownerSelf') : t('ownerOther', { who });
         const entry = userId
           ? manager.listUsers().find(u => u.platform === platform && u.userId === userId)
           : undefined;
-        const level = `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
-        if (!entry?.groups.length) return level;
-        return textLines([level, t('memberOf', { groups: memberGroups(manager, entry.groups) })]);
+        const level = entry?.level ?? DEFAULT_AUTHORITY;
+        const line = self ? t('levelSelf', { level }) : t('levelOther', { who, level });
+        if (!entry?.groups.length) return line;
+        return textLines([line, t('memberOf', { groups: memberGroups(manager, entry.groups) })]);
       };
       if (target) {
         const identity = targetOf(String(target));
@@ -246,9 +244,7 @@ async function run(caps: Caps): Promise<void> {
 
   // /level <target> <整数> — owner 给外部身份设等级（越大越高，0=默认，负数=封禁）。权限管理仅 owner 可达（防自授）。
   commands.use
-    .command('level <target:string> <level:number>', '设置用户的权限等级。整数，越大越高；0 为默认，负数为封禁', {
-      visibility: 'restricted',
-    })
+    .command('level <target:string> <level:number>', t('levelDescription'), { visibility: 'restricted' })
     .example('/level onebot:12345 5')
     .action(async (argv, target, level) => {
       if (!manager.isOwner(argv.session.platform, argv.session.userId)) return t('ownerOnly');
@@ -256,11 +252,11 @@ async function run(caps: Caps): Promise<void> {
       const identity = targetOf(spec);
       if (!identity) return t('targetFormat');
       const lv = Number(level);
-      if (!Number.isInteger(lv)) return '等级必须是整数';
+      if (!Number.isInteger(lv)) return t('levelNotInteger');
       const message = await applyUserChange(
         manager,
         () => manager.setUserLevel(identity, lv),
-        `已设 ${spec} 等级: ${lv}`,
+        t('levelSet', { target: spec, level: lv }),
       );
       page.invalidate();
       return message;
@@ -312,23 +308,14 @@ function groupsReceipt(target: string, names: readonly string[]): TextRef {
  * 加载失败而拒写时只在本次运行生效、重启即失；首次读取尚未落定（storage 未上线）时改动留在内存，读完后写盘；
  * 写盘失败时改动留在内存，下次保存时重写。
  */
-async function applyUserChange(
-  manager: AuthorityManager,
-  change: () => void,
-  message: string | TextRef,
-): Promise<string | TextRef> {
+async function applyUserChange(manager: AuthorityManager, change: () => void, message: TextRef): Promise<TextRef> {
   await manager.whenLoaded();
   change();
   manager.save();
   await manager.flushed();
-  if (manager.persistBlocked) {
-    return textClauses([
-      message,
-      '仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
-    ]);
-  }
-  if (manager.awaitingFirstLoad) return textClauses([message, '未写入 users.json（等级表尚未载入），载入后写入']);
-  if (manager.lastSaveFailed) return textClauses([message, '未写入 users.json（写入失败，见日志），下次保存时重试']);
+  if (manager.persistBlocked) return textClauses([message, t('persistBlocked')]);
+  if (manager.awaitingFirstLoad) return textClauses([message, t('awaitingFirstLoad')]);
+  if (manager.lastSaveFailed) return textClauses([message, t('saveFailedRetry')]);
   return message;
 }
 
@@ -349,15 +336,15 @@ function targetOf(spec: string): UserIdentity | undefined {
 /** 表格里的身份写成「平台:用户 ID」，按第一个冒号拆回 */
 function identityOf(key: string): UserIdentity {
   const identity = targetOf(key);
-  if (!identity) throw new Error(`身份要写成「平台:用户 ID」，收到的是 ${key}`);
+  if (!identity) throw new TextError(t('badIdentity', { key }));
   return identity;
 }
 
 const CONFIRM_TEXT: Record<CapabilityConfirm, TextRef> = { session: t('confirmSession'), always: t('confirmAlways') };
 
-/** 「禁用与免确认」表的两种规则：禁用写进 deniedCapabilities，免确认写进 restrictedPolicy.allow */
-const RULE_KINDS = { deny: '禁用（连 owner 也拒）', waive: '免确认' } as const;
-type RuleKind = keyof typeof RULE_KINDS;
+/** 「禁用与免确认」表的两种规则：禁用写进 deniedCapabilities，免确认写进 restrictedPolicy.allow；显示名与回执按种类取 */
+const RULE_KINDS = ['deny', 'waive'] as const;
+type RuleKind = (typeof RULE_KINDS)[number];
 
 /**
  * 权限页放在设置里。改宿主配置的动作先改运行态（即刻生效）再等落盘：save 拒绝时从处理函数抛出，写明改动已在本次运行
@@ -380,14 +367,14 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
         risk: n.risk,
         confirm: n.confirm,
       })),
-      ...(tools.present ? tools.use.getAll() : []).map(t => ({
+      ...(tools.present ? tools.use.getAll() : []).map(tool => ({
         type: 'tool' as const,
-        name: t.name,
-        display: t.name,
-        pluginName: t.pluginName,
-        visibility: t.visibility,
-        risk: t.risk,
-        confirm: t.confirm,
+        name: tool.name,
+        display: tool.name,
+        pluginName: tool.pluginName,
+        visibility: tool.visibility,
+        risk: tool.risk,
+        confirm: tool.confirm,
       })),
     ];
     const settings = (sessionFields.present ? sessionFields.use.getAll() : []).map(entry => ({
@@ -409,7 +396,7 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
   };
   /** 门槛的显示：只有 owner 的不写 Infinity */
   const levelText = (level: number) => (level === Number.POSITIVE_INFINITY ? t('ownerOnlyLevel') : level);
-  const KIND_TEXT = { command: '指令', tool: '工具', setting: t('settingKind') };
+  const KIND_TEXT = { command: t('commandKind'), tool: t('toolKind'), setting: t('settingKind') };
   const overrides = (): Record<string, number> => ({ ...(config.get('authorityOverrides') ?? {}) });
   const rules = (kind: RuleKind): string[] =>
     kind === 'deny' ? (config.get('deniedCapabilities') ?? []) : (config.get('restrictedPolicy')?.allow ?? []);
@@ -438,25 +425,23 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
   });
 
   /** 写宿主配置并落盘，页面重取 */
-  async function saveConfig(write: () => void, message: string | TextRef): Promise<string | TextRef> {
+  async function saveConfig(write: () => void, message: TextRef): Promise<TextRef> {
     write();
     try {
       await config.save();
     } catch (err) {
-      throw new Error(`已在本次运行中生效，但没写进配置文件：${err instanceof Error ? err.message : String(err)}`, {
-        cause: err,
-      });
+      throw new TextError(t('configSaveFailed', { error: textOf(err) }), { cause: err });
     } finally {
       page.invalidate();
     }
     return message;
   }
-  async function saveUser(change: () => void, message: string | TextRef): Promise<string | TextRef> {
+  async function saveUser(change: () => void, message: TextRef): Promise<TextRef> {
     const receipt = await applyUserChange(manager, change, message);
     page.invalidate();
     return receipt;
   }
-  async function setRules(kind: RuleKind, next: string[], message: string): Promise<string | TextRef> {
+  async function setRules(kind: RuleKind, next: string[], message: TextRef): Promise<TextRef> {
     return saveConfig(() => {
       if (kind === 'deny') config.set('deniedCapabilities', next);
       else {
@@ -466,14 +451,14 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
       }
     }, message);
   }
-  async function addRule(kind: RuleKind, pattern: string): Promise<string | TextRef> {
+  async function addRule(kind: RuleKind, pattern: string): Promise<TextRef> {
     const rule = pattern.trim();
-    if (!rule) throw new Error('能力不能为空');
+    if (!rule) throw new TextError(t('emptyCapability'));
     const current = rules(kind);
-    if (current.includes(rule)) throw new Error(`${rule} 已经在${RULE_KINDS[kind]}清单里`);
-    return setRules(kind, [...current, rule], `已把 ${rule} 加进${RULE_KINDS[kind]}清单`);
+    if (current.includes(rule)) throw new TextError(t('ruleExists', { rule, kind }));
+    return setRules(kind, [...current, rule], t('ruleAdded', { rule, kind }));
   }
-  async function setOverrides(capabilities: string[], level: number | undefined, message: string) {
+  async function setOverrides(capabilities: string[], level: number | undefined, message: TextRef) {
     const next = overrides();
     for (const capability of capabilities) {
       if (level === undefined) delete next[capability];
@@ -482,7 +467,7 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
     return saveConfig(() => config.set('authorityOverrides', next), message);
   }
   /** 写一个组的放行条目：写法不对的当场报错；别的组原样写回 */
-  async function setGroup(name: string, entries: readonly string[], message: TextRef): Promise<string | TextRef> {
+  async function setGroup(name: string, entries: readonly string[], message: TextRef): Promise<TextRef> {
     const next = [...new Set(entries.map(entry => entry.trim()))];
     const bad = next.filter(entry => !isGrantEntry(entry));
     if (bad.length > 0) throw new TextError(t('badEntries', { entries: bad }));
@@ -490,16 +475,15 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
   }
 
   const RULE_INPUT = {
-    pattern: {
-      type: 'string',
-      label: '能力',
-      required: true,
-      description: '能力键或通配，如 tool:shell_exec、command:level、tool:*',
-    },
+    pattern: { type: 'string', label: t('capability'), required: true, description: t('patternHint') },
   } as const;
-  const LEVEL_DESCRIPTION = '整数，越大权限越高；0 是默认，负数是封禁';
+  const LEVEL_DESCRIPTION = t('levelHint');
   const THRESHOLD = {
-    level: { type: 'number', label: '最低等级', integer: true, description: '整数；留空恢复按风险派生的默认门槛' },
+    level: { type: 'number', label: t('minLevel'), integer: true, description: t('thresholdHint') },
+  } as const;
+  const IDENTITY_INPUT = {
+    platform: { type: 'string', label: t('platform'), required: true, description: t('platformHint') },
+    userId: { type: 'string', label: t('userId'), required: true },
   } as const;
   const GRANTS = {
     entries: {
@@ -514,35 +498,34 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
 
   const page = webui.use.definePage({
     key: 'authority',
-    title: '权限',
+    title: t('pageTitle'),
     icon: 'shield',
     placement: 'settings',
     actions: {
       setUserLevel: {
-        label: '设等级',
+        label: t('setLevel'),
         effect: 'write',
         row: true,
         input: {
-          level: { type: 'number', label: '等级', integer: true, required: true, description: LEVEL_DESCRIPTION },
+          level: { type: 'number', label: t('level'), integer: true, required: true, description: LEVEL_DESCRIPTION },
         },
         handler: ({ rowKey, input }) =>
           saveUser(
             () => manager.setUserLevel(identityOf(rowKey), input.level),
-            `${rowKey} 的等级已设为 ${input.level}`,
+            t('userLevelSet', { who: rowKey, level: input.level }),
           ),
       },
       addUser: {
-        label: '加用户',
+        label: t('addUser'),
         effect: 'write',
         input: {
-          platform: { type: 'string', label: '平台', required: true, description: '如 onebot' },
-          userId: { type: 'string', label: '用户 ID', required: true },
-          level: { type: 'number', label: '等级', integer: true, required: true, description: LEVEL_DESCRIPTION },
+          ...IDENTITY_INPUT,
+          level: { type: 'number', label: t('level'), integer: true, required: true, description: LEVEL_DESCRIPTION },
         },
         handler: ({ input }) =>
           saveUser(
             () => manager.setUserLevel({ platform: input.platform, userId: input.userId }, input.level),
-            `${input.platform}:${input.userId} 的等级已设为 ${input.level}`,
+            t('userLevelSet', { who: `${input.platform}:${input.userId}`, level: input.level }),
           ),
       },
       setUserGroups: {
@@ -564,13 +547,13 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
         },
       },
       deleteUser: {
-        label: '删除记录',
+        label: t('deleteUser'),
         effect: 'destructive',
         confirm: t('deleteUserConfirm'),
         row: true,
         handler({ rowKey }) {
           const { platform, userId } = identityOf(rowKey);
-          return saveUser(() => manager.removeUser(platform, userId), `${rowKey} 的记录已删除`);
+          return saveUser(() => manager.removeUser(platform, userId), t('userDeleted', { who: rowKey }));
         },
       },
       createGroup: {
@@ -614,97 +597,96 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
         },
       },
       addOwner: {
-        label: '加 owner',
+        label: t('addOwner'),
         effect: 'write',
-        input: {
-          platform: { type: 'string', label: '平台', required: true, description: '如 onebot' },
-          userId: { type: 'string', label: '用户 ID', required: true },
-        },
+        input: IDENTITY_INPUT,
         handler({ input }) {
           const owner = { platform: input.platform, userId: input.userId };
-          if (owners().some(o => sameIdentity(o, owner)))
-            throw new Error(`${input.platform}:${input.userId} 已经是 owner`);
-          return saveConfig(
-            () => config.set('owners', [...owners(), owner]),
-            `已把 ${input.platform}:${input.userId} 加为 owner`,
-          );
+          const who = `${input.platform}:${input.userId}`;
+          if (owners().some(o => sameIdentity(o, owner))) throw new TextError(t('alreadyOwner', { who }));
+          return saveConfig(() => config.set('owners', [...owners(), owner]), t('ownerAdded', { who }));
         },
       },
       removeOwner: {
-        label: '移除',
+        label: t('remove'),
         effect: 'destructive',
-        confirm: '移除这个 owner？它之后按登记的等级裁决。',
+        confirm: t('removeOwnerConfirm'),
         row: true,
         handler({ rowKey }) {
           const owner = identityOf(rowKey);
-          if (!owners().some(o => sameIdentity(o, owner))) throw new Error(`${rowKey} 不是 owner`);
+          if (!owners().some(o => sameIdentity(o, owner))) throw new TextError(t('notOwner', { who: rowKey }));
           return saveConfig(
             () =>
               config.set(
                 'owners',
                 owners().filter(o => !sameIdentity(o, owner)),
               ),
-            `已移除 owner ${rowKey}`,
+            t('ownerRemoved', { who: rowKey }),
           );
         },
       },
       setGroupLevel: {
-        label: '整组设门槛',
+        label: t('setGroupLevel'),
         effect: 'write',
         row: true,
         input: THRESHOLD,
         handler({ rowKey, input }) {
           const group = operations().filter(op => op.pluginName === rowKey);
-          if (group.length === 0) throw new Error(`${rowKey} 没有登记指令或工具`);
+          if (group.length === 0) throw new TextError(t('noOperations', { plugin: rowKey }));
+          const counts = { plugin: rowKey, count: group.length };
           return setOverrides(
             group.map(op => op.capability),
             input.level,
             input.level === undefined
-              ? `${rowKey} 的 ${group.length} 项操作已恢复默认门槛`
-              : `${rowKey} 的 ${group.length} 项操作门槛已设为 ${input.level}`,
+              ? t('groupLevelReset', counts)
+              : t('groupLevelSet', { ...counts, level: input.level }),
           );
         },
       },
       setOperationLevel: {
-        label: '设门槛',
+        label: t('setOperationLevel'),
         effect: 'write',
         row: true,
         input: THRESHOLD,
         handler({ rowKey, input }) {
-          if (!operations().some(op => op.capability === rowKey)) throw new Error(`没有操作 ${rowKey}`);
+          if (!operations().some(op => op.capability === rowKey)) {
+            throw new TextError(t('noOperation', { capability: rowKey }));
+          }
           return setOverrides(
             [rowKey],
             input.level,
-            input.level === undefined ? `${rowKey} 已恢复默认门槛` : `${rowKey} 的门槛已设为 ${input.level}`,
+            input.level === undefined
+              ? t('operationLevelReset', { capability: rowKey })
+              : t('operationLevelSet', { capability: rowKey, level: input.level }),
           );
         },
       },
       denyCapability: {
-        label: '禁用',
+        label: t('deny'),
         effect: 'write',
         input: RULE_INPUT,
         handler: ({ input }) => addRule('deny', input.pattern),
       },
       waiveConfirm: {
-        label: '免确认',
+        label: t('waive'),
         effect: 'write',
         input: { pattern: { ...RULE_INPUT.pattern, description: t('waivePattern') } },
         handler: ({ input }) => addRule('waive', input.pattern),
       },
       removeRule: {
-        label: '移除',
+        label: t('remove'),
         effect: 'write',
         row: true,
         handler({ rowKey }) {
           const sep = rowKey.indexOf(':');
           const kind = rowKey.slice(0, sep) as RuleKind;
           const rule = rowKey.slice(sep + 1);
-          const current = Object.hasOwn(RULE_KINDS, kind) ? rules(kind) : [];
-          if (!current.includes(rule)) throw new Error(`没有这条规则：${rowKey}`);
+          const current = RULE_KINDS.includes(kind) ? rules(kind) : [];
+          if (!current.includes(rule)) throw new TextError(t('noRule', { key: rowKey }));
           return setRules(
             kind,
             current.filter(r => r !== rule),
-            `已把 ${rule} 移出${RULE_KINDS[kind]}清单`,
+            t('ruleRemoved', { rule, kind }),
           );
         },
       },
@@ -713,19 +695,19 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
       tabs: [
         {
           key: 'users',
-          title: '用户',
+          title: t('usersTab'),
           content: [
             {
               type: 'table',
               id: 'users',
               rowKey: 'identity',
-              description: `给外部身份设一个整数等级：越大权限越高，默认 ${DEFAULT_AUTHORITY}，负数是封禁；owner 不看等级。`,
-              empty: `还没有登记的用户，所有人按默认等级 ${DEFAULT_AUTHORITY} 裁决`,
+              description: t('usersDescription', { level: DEFAULT_AUTHORITY }),
+              empty: t('usersEmpty', { level: DEFAULT_AUTHORITY }),
               columns: [
-                { key: 'identity', label: '身份', primary: true },
-                { key: 'level', label: '等级', primary: true },
+                { key: 'identity', label: t('identity'), primary: true },
+                { key: 'level', label: t('level'), primary: true },
                 { key: 'memberOf', label: t('userGroups') },
-                { key: 'note', label: '备注' },
+                { key: 'note', label: t('note') },
               ],
               rowActions: [{ action: 'setUserLevel' }, { action: 'setUserGroups' }, { action: 'deleteUser' }],
               data: () =>
@@ -781,9 +763,9 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
               type: 'table',
               id: 'owners',
               rowKey: 'identity',
-              description: 'owner 拥有全部权限；本机的控制台恒为 owner，不在这里列出。',
-              empty: '没有另外登记的 owner',
-              columns: [{ key: 'identity', label: '身份', primary: true }],
+              description: t('ownersDescription'),
+              empty: t('ownersEmpty'),
+              columns: [{ key: 'identity', label: t('identity'), primary: true }],
               rowActions: [{ action: 'removeOwner' }],
               data: () => owners().map(o => ({ identity: `${o.platform}:${o.userId}` })),
             },
@@ -792,7 +774,7 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
         },
         {
           key: 'operations',
-          title: '操作门槛',
+          title: t('operationsTab'),
           content: [
             {
               type: 'table',
@@ -801,9 +783,9 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
               description: t('operationsDescription'),
               empty: t('operationsEmpty'),
               columns: [
-                { key: 'plugin', label: '插件', primary: true },
-                { key: 'count', label: '操作数', primary: true },
-                { key: 'overridden', label: '已改门槛' },
+                { key: 'plugin', label: t('plugin'), primary: true },
+                { key: 'count', label: t('operationCount'), primary: true },
+                { key: 'overridden', label: t('overridden') },
               ],
               rowActions: [{ action: 'setGroupLevel' }],
               data() {
@@ -825,11 +807,11 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
                   id: 'operations',
                   rowKey: 'capability',
                   columns: [
-                    { key: 'display', label: '操作', primary: true },
-                    { key: 'kind', label: '种类' },
-                    { key: 'defaultLevel', label: '默认门槛' },
-                    { key: 'effectiveLevel', label: '生效门槛', primary: true },
-                    { key: 'confirm', label: '确认' },
+                    { key: 'display', label: t('operation'), primary: true },
+                    { key: 'kind', label: t('kind') },
+                    { key: 'defaultLevel', label: t('defaultLevel') },
+                    { key: 'effectiveLevel', label: t('effectiveLevel'), primary: true },
+                    { key: 'confirm', label: t('confirm') },
                   ],
                   rowActions: [{ action: 'setOperationLevel' }],
                   data({ rowKey }) {
@@ -854,22 +836,22 @@ function defineAuthorityPage({ webui, commands, tools, sessionFields, contributi
         },
         {
           key: 'rules',
-          title: '禁用与免确认',
+          title: t('rulesTab'),
           content: [
             {
               type: 'table',
               id: 'rules',
               rowKey: 'key',
               description: t('rulesDescription'),
-              empty: '没有禁用或免确认的规则',
+              empty: t('rulesEmpty'),
               columns: [
-                { key: 'rule', label: '能力', kind: 'code', primary: true },
-                { key: 'kind', label: '规则', primary: true },
+                { key: 'rule', label: t('capability'), kind: 'code', primary: true },
+                { key: 'kind', label: t('rule'), primary: true },
               ],
               rowActions: [{ action: 'removeRule' }],
               data: () =>
-                (Object.keys(RULE_KINDS) as RuleKind[]).flatMap(kind =>
-                  rules(kind).map(rule => ({ key: `${kind}:${rule}`, rule, kind: RULE_KINDS[kind] })),
+                RULE_KINDS.flatMap(kind =>
+                  rules(kind).map(rule => ({ key: `${kind}:${rule}`, rule, kind: t('ruleKind', { kind }) })),
                 ),
             },
             { type: 'actions', actions: ['denyCapability', 'waiveConfirm'] },
