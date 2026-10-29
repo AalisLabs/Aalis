@@ -33,17 +33,12 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 /** 包级名单：包目录名 → 理由 */
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '尚未迁移'],
-  ['plugin-asr-openai', '尚未迁移'],
-  ['plugin-asr-whisper-cpp', '尚未迁移'],
   ['plugin-cron-engine', '尚未迁移'],
   ['plugin-draw', '尚未迁移'],
   ['plugin-file-reader', '尚未迁移'],
-  ['plugin-image-sender', '尚未迁移'],
   ['plugin-maimai', '尚未迁移'],
   ['plugin-mcp-client', '尚未迁移'],
   ['plugin-mcp-server', '尚未迁移'],
-  ['plugin-media', '尚未迁移'],
-  ['plugin-message-archive', '尚未迁移'],
   ['plugin-office', '尚未迁移'],
   ['plugin-okx-trading', '尚未迁移'],
   ['plugin-paper', '尚未迁移'],

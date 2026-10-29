@@ -30,6 +30,7 @@ import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/cor
 import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type Message, type MessageAttachment, type OutgoingMessage } from '@aalis/schema-message';
 import { checkMediaHead, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';
+import { t } from './texts.js';
 
 /** preview_image 单张候选识别等待上限。preview 的目的就是"看清"图，
  *  本地视觉模型（如 33B）单图常需 15-25s，必须给足预算，否则必然超时使 preview 形同虚设。 */
@@ -62,7 +63,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-image-sender',
-  displayName: '图片发送',
+  displayName: t('displayName'),
   subsystem: 'tools',
   uses,
   apply: registerImageSender,

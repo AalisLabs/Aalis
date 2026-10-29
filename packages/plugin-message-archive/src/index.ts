@@ -21,13 +21,14 @@ import {
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   debugLogs: {
     type: 'boolean',
-    label: '归档调试日志',
+    label: t('debugLogsLabel'),
     default: true,
-    description: '记录图片解释完成和消息写入记忆等调试日志。',
+    description: t('debugLogsDescription'),
   },
 });
 
@@ -140,7 +141,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-message-archive',
-  displayName: '消息归档',
+  displayName: t('displayName'),
   subsystem: 'message',
   configSchema,
   provides: [messageArchive],
