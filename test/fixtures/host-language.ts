@@ -1,5 +1,6 @@
 import { type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type App, provide } from '../../packages/core/src/index.js';
+import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.js';
 
 const I18N = '@aalis/plugin-i18n';
 
@@ -31,3 +32,7 @@ export const i18nSection = (language: string[]) => ({ plugins: { [I18N]: { langu
 export function setHostLanguage(app: App, language: string[]): void {
   app.bind({ hostConfig }).hostConfig.use.setPluginConfig(I18N, { language });
 }
+
+/** 文字对象按 language 渲染，字符串与 undefined 原样 */
+export const renderIn = (text: string | TextRef | undefined, language: string) =>
+  typeof text === 'object' ? resolveText(text, [language]) : text;

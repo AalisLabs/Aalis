@@ -20,10 +20,12 @@ import {
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
+import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import { Agent, errors } from 'undici';
+import { t } from './texts.js';
 
 // ===== 错误解析 =====
 
@@ -43,35 +45,35 @@ function bodyExcerpt(body: string): string {
  */
 function checkBaseUrl(baseUrl: string): void {
   if (!URL.canParse(baseUrl)) {
-    throw configError('baseUrl 不是有效的 URL，需写成完整地址，如 https://api.deepseek.com');
+    throw configError(t('baseUrlInvalid'));
   }
   if (/[?#]/.test(baseUrl)) {
-    throw configError('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
+    throw configError(t('baseUrlQuery'));
   }
   const { username, password } = new URL(baseUrl);
   if (username || password) {
-    throw configError('baseUrl 不能带用户名或密码（user:pass@），密钥请填在 apiKey');
+    throw configError(t('baseUrlCredentials'));
   }
 }
 
 /**
- * 错误消息连同底层原因，写成一行。fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）在
- * cause 上；连 localhost 时两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
+ * 错误连同底层原因，写成一行（日志取 toSource）。fetch 网络失败的消息固定是「fetch failed」，真实原因（DNS、拒绝连接、TLS）
+ * 在 cause 上；连 localhost 时两个地址族都失败，cause 是消息为空的 AggregateError，原因在它的子错误上
  */
-function describeError(err: unknown): string {
+function describeError(err: unknown): string | TextRef {
   const cause = err instanceof Error ? err.cause : undefined;
   const reasons: unknown[] = cause instanceof AggregateError ? cause.errors : cause instanceof Error ? [cause] : [];
   const detail = reasons.map(e => (e instanceof Error ? e.message : String(e))).join('; ');
-  return `${err instanceof Error ? err.message : String(err)}${detail ? ` ← ${detail}` : ''}`;
+  return detail ? t('withCause', { error: textOf(err), detail }) : textOf(err);
 }
 
 /** 常见状态码的一句提示 */
-function statusHint(status: number): string | undefined {
-  if (status === 401 || status === 403) return '密钥无效或没有权限';
-  if (status === 402) return '余额不足或需要付费';
-  if (status === 404) return '模型或地址不对';
-  if (status === 429) return '请求过多或额度不足';
-  if (status >= 500) return '上游服务故障';
+function statusHint(status: number): TextRef | undefined {
+  if (status === 401 || status === 403) return t('hintAuth');
+  if (status === 402) return t('hintPayment');
+  if (status === 404) return t('hintNotFound');
+  if (status === 429) return t('hintRateLimit');
+  if (status >= 500) return t('hintUpstream');
   return undefined;
 }
 
@@ -96,10 +98,13 @@ function upstreamMessage(body: string): string {
  * 非 2xx 应答的错误信息（会经 agent 发回会话）：状态码、常见状态码的一句提示与上游 JSON 里的说明；没有说明时
  * （不是 JSON 或没有说明字段）写「详情见日志」。响应体本身只进日志，由调用方记
  */
-function httpErrorMessage(provider: string, status: number, body: string): string {
+function httpErrorMessage(provider: string, status: number, body: string): TextRef {
   const hint = statusHint(status);
   const message = upstreamMessage(body);
-  return `${provider} API 错误 (${status})${hint ? `：${hint}` : ''}；${message ? `上游说明：${message}` : '详情见日志'}`;
+  return textClauses([
+    hint ? t('apiErrorHint', { provider, status, hint }) : t('apiError', { provider, status }),
+    message ? t('upstreamMessage', { message }) : t('seeLogs'),
+  ]);
 }
 
 // ===== 深度思考的档位 =====
@@ -109,10 +114,10 @@ function httpErrorMessage(provider: string, status: number, body: string): strin
  * 在高与最高之间选。v4 系列不发 thinking 会保持开启，所以关也要明说
  */
 const LEVELS = {
-  off: { label: '关', fields: { thinking: { type: 'disabled' } } },
-  high: { label: '高', fields: { thinking: { type: 'enabled' }, reasoning_effort: 'high' } },
-  auto: { label: '自动', fields: { thinking: { type: 'enabled' } } },
-  max: { label: '最高', fields: { thinking: { type: 'enabled' }, reasoning_effort: 'max' } },
+  off: { label: t('levelOff'), fields: { thinking: { type: 'disabled' } } },
+  high: { label: t('levelHigh'), fields: { thinking: { type: 'enabled' }, reasoning_effort: 'high' } },
+  auto: { label: t('levelAuto'), fields: { thinking: { type: 'enabled' } } },
+  max: { label: t('levelMax'), fields: { thinking: { type: 'enabled' }, reasoning_effort: 'max' } },
 } as const;
 
 const THINKING_LEVELS: ThinkingLevel[] = Object.entries(LEVELS).map(([id, { label }]) => ({ id, label }));
@@ -126,82 +131,79 @@ const configSchema = defineConfig({
     required: true,
     secret: true,
     onInvalid: 'error',
-    description: 'DeepSeek API 密钥',
+    description: t('apiKeyDescription'),
   },
   baseUrl: {
     type: 'string',
-    label: 'API 地址',
+    label: t('baseUrlLabel'),
     default: 'https://api.deepseek.com',
     onInvalid: 'error',
-    description: 'API 端点完整前缀（官方无版本段）；插件只在其后拼 /chat/completions 与 /models',
+    description: t('baseUrlDescription'),
   },
   customModels: {
     type: 'textarea',
-    label: '自定义模型',
+    label: t('customModelsLabel'),
     default: '',
-    description:
-      '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
+    description: t('customModelsDescription'),
   },
   discoverModels: {
     type: 'boolean',
-    label: '自动发现模型',
+    label: t('discoverModelsLabel'),
     default: true,
-    description:
-      '启动时请求 /models 发现可用模型。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填）。',
+    description: t('discoverModelsDescription'),
   },
   modelCapabilities: {
     type: 'textarea',
-    label: '单模型能力覆盖',
+    label: t('modelCapabilitiesLabel'),
     default: '',
-    description:
-      '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming',
+    description: t('modelCapabilitiesDescription'),
   },
   providerCapabilities: {
     type: 'string',
-    label: '适配器默认能力（逗号分隔）',
+    label: t('providerCapabilitiesLabel'),
     default: '',
-    description:
-      '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
+    description: t('providerCapabilitiesDescription'),
   },
   timeout: {
     type: 'number',
-    label: '停顿超时 (秒)',
+    label: t('timeoutLabel'),
     default: 120,
-    description:
-      '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。',
+    description: t('timeoutDescription'),
   },
-  temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
+  temperature: { type: 'number', label: t('temperatureLabel'), default: 0.7, description: t('temperatureDescription') },
   maxTokens: {
     type: 'number',
-    label: '最大 Token',
+    label: t('maxTokensLabel'),
     default: 8192,
     min: 1,
     integer: true,
     onInvalid: 'error',
-    description: '单次回复最大生成 token 数，须为正整数，否则实例转为出错',
+    description: t('maxTokensDescription'),
   },
-  contextLength: { type: 'number', label: '上下文长度', default: 131072, description: '模型上下文窗口大小' },
+  contextLength: {
+    type: 'number',
+    label: t('contextLengthLabel'),
+    default: 131072,
+    description: t('contextLengthDescription'),
+  },
   strictToolCalls: {
     type: 'boolean',
-    label: 'Strict 工具调用',
+    label: t('strictToolCallsLabel'),
     default: false,
-    description: '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）',
+    description: t('strictToolCallsDescription'),
   },
   forceJsonOutput: {
     type: 'boolean',
-    label: '强制 JSON 输出',
+    label: t('forceJsonOutputLabel'),
     default: false,
-    description:
-      '启用后所有最终回复请求将携带 response_format: {type:"json_object"}，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。',
+    description: t('forceJsonOutputDescription'),
   },
   thinking: {
     type: 'select',
-    label: '默认思考档位',
+    label: t('thinkingLabel'),
     default: 'auto',
     options: THINKING_LEVELS.map(level => ({ label: level.label, value: level.id })),
-    description:
-      '能思考的模型（v4、reasoner 等，或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。' +
-      '自动：开启思考，强度由 DeepSeek 按场景在高与最高之间选。不能思考的模型一律按关发。',
+    description: t('thinkingDescription'),
   },
 });
 
@@ -333,7 +335,7 @@ class DeepSeekClient {
   /** 对话请求的非 2xx 应答：截断后的响应体记 warn，抛出的错误见 httpErrorMessage */
   private apiError(status: number, body: string): Error {
     this.logger.warn(`DeepSeek API 错误 (${status}): ${bodyExcerpt(body)}`);
-    return new Error(httpErrorMessage('DeepSeek', status, body));
+    return new TextError(httpErrorMessage('DeepSeek', status, body));
   }
 
   /**
@@ -342,15 +344,15 @@ class DeepSeekClient {
    */
   private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
     if (request.signal?.aborted) return err;
-    this.logger.warn(`DeepSeek 请求失败 (耗时 ${Date.now() - startedAt}ms): ${describeError(err)}`);
+    this.logger.warn(`DeepSeek 请求失败 (耗时 ${Date.now() - startedAt}ms): ${toSource(describeError(err))}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
-      return new Error(`DeepSeek 请求超时：${this.timeout / 1000} 秒内没有收到新的生成内容，可在配置里调大 timeout`);
+      return new TextError(t('requestTimeout', { seconds: this.timeout / 1000 }));
     }
     if (err instanceof TypeError && err.message === 'fetch failed') {
       if (err.cause instanceof errors.ClientClosedError || err.cause instanceof errors.ClientDestroyedError) {
-        return new Error('DeepSeek 插件已停用或重载，这次请求没有发出');
+        return new TextError(t('pluginClosed'));
       }
-      return new Error('DeepSeek 连不上服务：检查 baseUrl 与网络，详情见日志');
+      return new TextError(t('unreachable'));
     }
     return err;
   }
@@ -361,7 +363,7 @@ class DeepSeekClient {
       return JSON.parse(text);
     } catch {
       this.logger.warn(`DeepSeek 应答不是 JSON (${status}): ${bodyExcerpt(text)}`);
-      throw new Error(`DeepSeek 应答不是 JSON (${status})；详情见日志`);
+      throw new TextError(t('notJson', { status }));
     }
   }
 
@@ -389,16 +391,16 @@ class DeepSeekClient {
       try {
         data = JSON.parse(text);
       } catch {
-        throw new Error(`响应不是 JSON: ${bodyExcerpt(text)}`);
+        throw new TextError(t('discoveryNotJson', { excerpt: bodyExcerpt(text) }));
       }
       const list = data?.data;
       if (!Array.isArray(list) || !list.every(m => typeof m?.id === 'string')) {
-        throw new Error(`响应不是模型列表（需要 data 数组，每项带字符串 id）: ${bodyExcerpt(JSON.stringify(data))}`);
+        throw new TextError(t('discoveryNotList', { excerpt: bodyExcerpt(JSON.stringify(data)) }));
       }
       return list.map(m => m.id);
     } catch (err) {
       signal?.throwIfAborted();
-      throw new Error(`模型发现失败 ${url}: ${describeError(err)}`, { cause: err });
+      throw new TextError(t('discoveryFailed', { url, error: describeError(err) }), { cause: err });
     }
   }
 
@@ -472,7 +474,7 @@ class DeepSeekClient {
     const choice = data.choices[0];
 
     if (!choice) {
-      throw new Error('DeepSeek 返回了空的 choices');
+      throw new TextError(t('emptyChoices'));
     }
 
     // 服务端没解析出工具调用时，模型的工具调用标记（DSML）会漏进正文：只剥离、不当调用执行（与流式分支对齐），
@@ -595,7 +597,7 @@ class DeepSeekClient {
     };
 
     if (!response.body) {
-      throw new Error('DeepSeek API 返回了空的响应体，无法进行流式读取');
+      throw new TextError(t('emptyBody'));
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -945,7 +947,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
 
   checkBaseUrl(cfg.baseUrl);
   if (!cfg.discoverModels && customModels.length === 0) {
-    throw missingConfigError('customModels', '关闭 discoverModels 时必填');
+    throw missingConfigError('customModels', t('customModelsRequired'));
   }
 
   const client = new DeepSeekClient(cfg, logger.use);
@@ -954,10 +956,10 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   // 探测远端 + 合并自定义模型。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels
   // 照常注册；关闭模型发现时只注册 customModels。发现失败只留消息：消息里已带 URL 与原因（cause 也内联在内），
   // err 交给 logger 会按因果链把原因再记一遍
-  let discoveryError: string | undefined;
+  let discoveryError: string | TextRef | undefined;
   const remoteIds = cfg.discoverModels
     ? await client.fetchRemoteModelIds(lifecycle.use.signal).catch((err: unknown) => {
-        discoveryError = err instanceof Error ? err.message : String(err);
+        discoveryError = textOf(err);
         return [];
       })
     : [];
@@ -975,11 +977,11 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
   if (allModelIds.length === 0) {
     throw configError(
       discoveryError
-        ? `取不到模型列表，没有可注册的模型：检查 apiKey、baseUrl 与网络后重载本插件，或在 customModels 里写明要用的模型。原因：${discoveryError}`
-        : `已连接 ${cfg.baseUrl}，但未发现任何可用模型；可在 customModels 里写明要用的模型`,
+        ? t('noModelsDiscoveryFailed', { error: discoveryError })
+        : t('noModels', { baseUrl: cfg.baseUrl }),
     );
   }
-  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${discoveryError}`);
+  if (discoveryError) logger.use.warn(`启动时只注册 customModels 里的模型；${toSource(discoveryError)}`);
 
   const baseLabel = `DeepSeek (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
 
