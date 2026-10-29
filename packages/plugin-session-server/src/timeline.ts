@@ -62,6 +62,7 @@ import {
   readHistory,
   replyModel,
   type SignFile,
+  spokenText,
   turnOf,
 } from './history.js';
 import { t } from './texts.js';
@@ -593,12 +594,12 @@ export function createTimeline(deps: TimelineDeps) {
 
   /**
    * agent:queue：这个会话排着与待插入、还没进一轮的输入，整份替换。各条写说话人、给人看的那句（宿主通知与平台事件合成的入站取
-   * 它们的文字对象，同时间线上的通知）与附件个数
+   * 它们的文字对象，同时间线上的通知；提问取发言人的话，去掉随它转发来的聊天记录的占位）与附件个数
    */
   function queue(sessionId: string, waiting: readonly IncomingMessage[]): void {
     const entries = waiting.map(message => ({
       speaker: speaker(message),
-      text: message.hostNotice?.text ?? message.text ?? message.content,
+      text: message.hostNotice?.text ?? message.text ?? spokenText(message.content, message.forwards),
       attachments: message.attachments?.length ?? 0,
     }));
     const item: Item<'queue'> = { kind: 'queue', itemId: 'queue', at: Date.now(), entries };

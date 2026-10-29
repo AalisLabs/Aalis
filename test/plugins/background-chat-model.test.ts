@@ -22,6 +22,7 @@ import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { withForwards } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
 import { fixedRef } from '../fixtures/service-ref.js';
@@ -187,12 +188,10 @@ describe('QQ 转发摘要', () => {
       attachmentMaxBytes: 1024,
       sendAction: async () => ({ messages: [node('hello')] }),
     });
-    const expand = (id: string) =>
-      expander.expandForwardsInText(
-        null,
+    const expand = async (id: string) =>
+      withForwards(
         `<forward id="${id}">[合并转发消息]</forward>`,
-        [{ type: 'forward', data: { id } }],
-        's',
+        await expander.expandForwards(null, [{ type: 'forward', data: { id } }], 's'),
       );
 
     await expand('F1');

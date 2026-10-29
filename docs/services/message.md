@@ -41,8 +41,11 @@
 | --- | --- | --- | --- |
 | `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo`/`OutboundFile`/`HostNotice`/`IdlePrompt`/`OutboundDeliveryFailed`/`TurnStopped` |
 | `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
-| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与读方都引用它：可见正文、发言人写的话与附件清单、发送者前缀的标签与被 @ 的人、说话人、说话所在的群与会话类型、平台侧的消息 id、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
+| `WellKnownMetadataKeys` | const 对象 | `index.ts` | 跨插件约定的 `Message.metadata` 键，写方与读方都引用它：可见正文、发言人写的话、附件清单与随附的转发、发送者前缀的标签与被 @ 的人、说话人、说话所在的群与会话类型、平台侧的消息 id、来源、宿主通知的种类、id 与给界面的事实、回合与工具调用的 id、回复的模型与 token、发出附件原样的地址与名字、投递失败的原因；各键谁写谁读见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键) |
 | `ArchivedAttachment` | interface | `index.ts` | 存档里提问带的一个附件（`WellKnownMetadataKeys.Attachments` 的一项）：`kind`/`name`/`ref`（存储地址或网址） |
+| `ForwardedChat` | interface | `index.ts` | 随入站消息转发来的一段聊天记录（`IncomingMessage.forwards` 的一项）：`id`、给模型的展开 `content`、给界面的事实 `facts` |
+| `ForwardFacts` | interface | `index.ts` | 一段转发给界面的事实：`count`/`participants`（前 8 个）/`unlisted`/`text`（摘要或可能截断的原文）/`cutOff` |
+| `ArchivedForward` | type | `index.ts` | 存档记下的一段转发（`WellKnownMetadataKeys.Forwards` 的一项）：`ForwardedChat` 去掉 `content` |
 | `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼装历史时须自行过滤**（并非 `prepareLLMMessages` 的职责） |
 | `DIRECTIVE_KINDS` | const 数组 | `index.ts` | 指令类 kind（`CrossSessionDelegation`、`HostNotice`、`IdlePrompt`）：宿主或系统撰写、不是任何人发言。归档消息属于它时抽取与记忆扩窗跳过；请求期 `metadata.injector` 属于它时是本轮指令块（见 [schema-message](../api/schema-message.md)） |
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
@@ -78,7 +81,9 @@
 
 | 符号 | file:line | 说明 |
 | --- | --- | --- |
-| `buildIncomingContent(incoming, speaker?)` | `incoming-content.ts` | 入站消息 → 归档文本：发送者前缀（给了说话人才加，说话人按 api-message-archive 的 `speakerOf`）+ 引用回复 + `_attachmentDescriptions`。plugin-message-archive 落库与触发判定共用，保证判定时看到的当前消息与归档逐字一致；只拼接，不触发识别 |
+| `buildIncomingContent(incoming, speaker?)` | `incoming-content.ts` | 入站消息 → 归档文本：转发的展开换回正文里占位的位置，再加发送者前缀（给了说话人才加，说话人按 api-message-archive 的 `speakerOf`）+ 引用回复 + `_attachmentDescriptions`。plugin-message-archive 落库与触发判定共用，保证判定时看到的当前消息与归档逐字一致；只拼接，不触发识别 |
+| `forwardPlaceholder(id)` | `incoming-content.ts` | 正文里一段转发所在位置的占位（`<forward id="…">[合并转发消息]</forward>`），适配器写进 `content` |
+| `withForwards(content, forwards)` | `incoming-content.ts` | 正文里的转发占位换成对应的展开；没有对应展开的占位原样留着 |
 
 ### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts`
 

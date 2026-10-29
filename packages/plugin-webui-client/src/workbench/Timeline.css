@@ -94,7 +94,8 @@
   background: var(--color-fill-2);
 }
 
-.message-text {
+.message-text,
+.forwarded-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -123,17 +124,20 @@
   color: var(--color-text-2);
 }
 
-.reasoning {
+.reasoning,
+.forwarded {
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
   color: var(--color-text-3);
 }
 
-.reasoning .disclosure {
+.reasoning .disclosure,
+.forwarded .disclosure {
   padding: var(--space-0-5) var(--space-1);
 }
 
-.reasoning-text {
+.reasoning-text,
+.forwarded-text {
   margin-top: var(--space-1);
   padding-left: var(--space-3);
   border-left: 2px solid var(--color-border);

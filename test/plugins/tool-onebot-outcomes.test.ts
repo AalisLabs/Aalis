@@ -10,7 +10,7 @@ import { App, events, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { buildIncomingContent, type IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
@@ -19,7 +19,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 戳一戳只在实现端回「不支持该动作」时才换动作名，超时、没权限这类错误原样交出，不换个动作再戳一次。
 // - 群管工具在机器人不够权限时报错，不发出动作；查目标成员与撤回失败时报错只带适配器的原话，不猜原因；查目标成员时实现端
 //   没给成员信息或没给角色的同样报错，不当普通成员；机器人自身没给角色的与取不到自身信息一样跳过检查。
-// - 合并转发命中适配器缓存时，截断标志写在结果的头一行；没命中时节点为空回「内容为空」，返回格式认不出、拉取失败都报错，
+// - 合并转发命中适配器缓存时，截断标志与没列出的参与人数写在结果的头一行；没命中时节点为空回「内容为空」，返回格式认不出、拉取失败都报错，
 //   报错只带适配器的原话，不猜原因。入站展开时拉取失败的不进缓存，工具照常重新拉。
 // - 群会话里写明 self_id 时动作发给写明的账号，不被会话的账号盖掉。
 // - 两个群请求工具各认自己的申请类型：入群邀请不能用审批加群申请的工具批；没有这条申请时报错。
@@ -423,6 +423,34 @@ describe('群请求：各认自己的申请类型', () => {
   });
 });
 
+describe('合并转发：入站展开过的命中缓存', () => {
+  it('参与人多于 8 个：结果头一行列前 8 个，末尾写没列出的人数', async () => {
+    const { call, push, inbound } = await withAdapter();
+    const nodes = Array.from({ length: 10 }, (_, i) => ({
+      type: 'node',
+      data: { nickname: `p${i}`, user_id: 30100 + i, content: [{ type: 'text', data: { text: '在' } }] },
+    }));
+    push({
+      post_type: 'message',
+      message_type: 'group',
+      sub_type: 'normal',
+      message_id: 802,
+      group_id: 20002,
+      user_id: 30001,
+      sender: { user_id: 30001, nickname: '甲' },
+      message: [{ type: 'forward', data: { id: 'zz-forward', content: nodes } }],
+    });
+    await until(() => inbound.length > 0);
+    const [header] = String(await call('onebot_get_forward_msg', { id: 'zz-forward' })).split('\n');
+    expect(header).toBe(
+      `合并转发共 10 条，参与人：${nodes
+        .slice(0, 8)
+        .map((_, i) => `p${i}(${30100 + i})`)
+        .join(', ')}, ...(+2 人未列出)`,
+    );
+  });
+});
+
 describe('合并转发：入站展开时拉取失败的不进缓存', () => {
   it('工具照常重新拉，拉不到报实现端原话', async () => {
     const { call, actions, push, inbound } = await withAdapter({ get_forward_msg: '<占位原话>' });
@@ -437,7 +465,7 @@ describe('合并转发：入站展开时拉取失败的不进缓存', () => {
       message: [{ type: 'forward', data: { id: 'zz-forward' } }],
     });
     await until(() => inbound.length > 0);
-    expect(inbound[0].content).toContain('拉取失败');
+    expect(buildIncomingContent(inbound[0])).toContain('拉取失败');
     await expect(call('onebot_get_forward_msg', { id: 'zz-forward' })).rejects.toThrow('<占位原话>');
     expect(actions.filter(a => a.action === 'get_forward_msg')).toHaveLength(2);
   });

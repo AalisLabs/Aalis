@@ -11,6 +11,7 @@ import type { ForwardMediaTask } from '../../packages/plugin-adapter-onebot/src/
 import { expandForward } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import type { ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import { createForwardExpander } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
+import { withForwards } from '../../packages/schema-message/src/index.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -346,7 +347,7 @@ const FORWARD_SEGMENTS = [{ type: 'forward', data: { id: 'F1' } }];
 describe('forward-expand 两阶段解析器（下载先行、识别受限并发）', () => {
   it('全部图片在任何识别完成之前就已落盘——下载不排在识别队列后面', async () => {
     const h = makeHarness();
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
+    const pending = h.expander.expandForwards({}, FORWARD_SEGMENTS, 'onebot:test:group:1');
 
     // 识别被闸门卡住（0 完成、至多 concurrency=2 在飞）时，5 张图应全部完成落盘。
     // 旧结构（节点串行+内联识别）下这里最多落 2 张——本断言是结构差异的判别锚。
@@ -355,7 +356,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     expect(h.describeCalls.length).toBeLessThanOrEqual(2);
 
     h.releaseDescribe();
-    const out = await pending;
+    const out = withForwards(FORWARD_TEXT, await pending);
     expect(out).toContain('[图片: 图述<');
     expect(out).not.toContain('\u0000');
     expect(h.describeCalls).toHaveLength(5);
@@ -363,7 +364,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
 
   it('识别收到的是落盘后的存储地址，而非原始 URL（rkey 过期从此无关）', async () => {
     const h = makeHarness();
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
+    const pending = h.expander.expandForwards({}, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length > 0);
     h.releaseDescribe();
     await pending;
@@ -377,10 +378,10 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
 
   it('recognitionMaxItems 截断：超出项不识别、占位符保留、日志点名', async () => {
     const h = makeHarness({ recognitionMaxItems: 2 });
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
+    const pending = h.expander.expandForwards({}, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length === 2);
     h.releaseDescribe();
-    const out = await pending;
+    const out = withForwards(FORWARD_TEXT, await pending);
     expect(h.describeCalls).toHaveLength(2);
     expect((out.match(/\[图片: 图述</g) ?? []).length).toBe(2);
     expect((out.match(/\[图片\]/g) ?? []).length).toBe(3);
@@ -391,7 +392,7 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     const h = makeHarness();
     const TWO = '<forward id="F1">[合并转发消息]</forward><forward id="F2">[合并转发消息]</forward>';
     const segments = ['F1', 'F2'].map(id => ({ type: 'forward', data: { id } }));
-    const pending = h.expander.expandForwardsInText({}, TWO, segments, 'onebot:test:group:1');
+    const pending = h.expander.expandForwards({}, segments, 'onebot:test:group:1');
 
     // 识别闸门卡死（0 完成、至多 2 在飞）时，两条转发共 10 次落盘应全部完成。
     // 串行 for 变异下 F2 的 5 张一个都不会落——探针实测形状。
@@ -400,17 +401,17 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     expect(h.describeCalls.length).toBeLessThanOrEqual(2);
 
     h.releaseDescribe();
-    const out = await pending;
+    const out = withForwards(TWO, await pending);
     expect(out).toContain('[图片: 图述<');
     expect(h.describeCalls).toHaveLength(10);
   });
 
   it('落盘不可用（storage/process 缺席）→ 回退原始 src 识别，不阻塞展开', async () => {
     const h = makeHarness({}, { brokenDownload: true });
-    const pending = h.expander.expandForwardsInText({}, FORWARD_TEXT, FORWARD_SEGMENTS, 'onebot:test:group:1');
+    const pending = h.expander.expandForwards({}, FORWARD_SEGMENTS, 'onebot:test:group:1');
     await waitFor(() => h.describeCalls.length > 0);
     h.releaseDescribe();
-    const out = await pending;
+    const out = withForwards(FORWARD_TEXT, await pending);
     expect(out).toContain('[图片: 图述<');
     for (const src of h.describeCalls) {
       expect(src.startsWith('data:image/png;base64,')).toBe(true);

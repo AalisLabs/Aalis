@@ -1,3 +1,5 @@
+import { forwardPlaceholder } from '@aalis/schema-message';
+
 /** OneBot 连接配置 */
 export interface OneBotConnectionConfig {
   /** WebSocket 地址 (如 ws://127.0.0.1:8080) */
@@ -178,7 +180,7 @@ const MARKUP_STARTS: ReadonlyArray<readonly [RegExp, string]> = [
 
 /**
  * 用户写的字（文字段、昵称、分享标题，通知里的文件名与验证信息）写进正文前过这张表：读的一方（@ 判定、存档的 Mentions、附件
- * 引用、转发信封的替换）只认适配器按消息段写下的标记，手打的因此不算标记。只换起始字符，其余照原样
+ * 引用、归档文本把转发占位换回展开）只认适配器按消息段写下的标记，手打的因此不算标记。只换起始字符，其余照原样
  */
 export function escapeMarkup(text: string): string {
   return MARKUP_STARTS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), text);
@@ -245,7 +247,7 @@ export function segmentsToText(
           return ''; // 回复引用是元数据，不作为内联内容
         case 'forward': {
           const id = seg.data.id != null ? String(seg.data.id) : '';
-          return id ? `<forward id="${id}">[合并转发消息]</forward>` : '[合并转发消息]';
+          return id ? forwardPlaceholder(id) : '[合并转发消息]';
         }
         case 'record':
         case 'voice':

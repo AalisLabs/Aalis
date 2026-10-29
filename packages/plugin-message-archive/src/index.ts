@@ -283,8 +283,14 @@ function createArchiveService(
       if (working.sessionType) meta[WellKnownMetadataKeys.SessionType] = working.sessionType;
       // 平台侧消息 ID（如 OneBot message_id），用于"引用回复"反查归档原文
       if (working.messageId) meta[WellKnownMetadataKeys.MessageId] = working.messageId;
-      // 发言人写的话与附件清单：归档正文拼进了发送者前缀、引用与附件描述（给模型看），读历史给人看的一方取这两样
+      // 发言人写的话、附件清单与转发：归档正文拼进了发送者前缀、转发的展开、引用与附件描述（给模型看），读历史给人看的一方取
+      // 这三样；转发只记 id 与事实，展开已在归档正文里
       if (working.content !== content) meta[WellKnownMetadataKeys.SpokenContent] = working.content;
+      if (working.forwards?.length) {
+        meta[WellKnownMetadataKeys.Forwards] = working.forwards.map(({ id, facts }) =>
+          facts ? { id, facts } : { id },
+        );
+      }
       // 加了发送者前缀时记下用的标签：把归档正文重排给模型或界面看的一方按它去掉这一层
       const label = speaker && getSenderLabel(speaker.nickname, speaker.userId);
       if (label) meta[WellKnownMetadataKeys.SenderLabel] = label;
@@ -302,7 +308,7 @@ function createArchiveService(
       }
       // 平台事件合成的入站给人看的那句：读历史的一方据此把它画成通知
       recordText(meta, working.text);
-      // 被 @ 的人只从发言人自己写的话里取：引用与附件描述里别人 @ 的不算
+      // 被 @ 的人只从发言人自己写的话里取：引用、附件描述与转发里别人 @ 的不算
       const mentions = extractMentions(working.content);
       if (mentions.length > 0) meta[WellKnownMetadataKeys.Mentions] = mentions;
 

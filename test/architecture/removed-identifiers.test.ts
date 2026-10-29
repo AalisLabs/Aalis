@@ -334,6 +334,8 @@ const REMOVED: Array<[string, string]> = [
   ['applyStreamChunk', '终端把一轮各次模型调用的流式增量接成一段：她的输出按会话协议的条目画'],
   ['streamedAlready', '终端按「这一轮流式写过」跳过整条回复：订着会话时正文由条目画'],
   ['replaceStreamingBlock', '终端聊天区按下标重建流式块：聊天区改成条目表'],
+  ['expandForwardsInText', '合并转发的展开替换进入站正文：展开另放 forwards，见 expandForwards'],
+  ['buildEnvelope', '合并转发的信封单独拼：信封与给界面的事实由 forwardedChat 一起交出'],
 ];
 
 /**

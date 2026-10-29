@@ -6,18 +6,27 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import {
   buildIncomingContent,
+  forwardPlaceholder,
   type IncomingMessage,
   WellKnownMetadataKeys,
+  withForwards,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 入站消息的归档文本：schema-message 的 buildIncomingContent，归档与触发判定共用；说话人由调用方给（谁算说话人见
-// speaker-prefix.test.ts）。下面钉住逐字输出；归档用例确认归档写入的正文就是这个函数的结果，两边不会各拼一份，另核归档另记的
-// 发言人写的话与附件清单。
+// speaker-prefix.test.ts）。下面钉住逐字输出；随消息转发来的聊天记录在 forwards，正文里留占位，归档文本把展开换回占位的位置，
+// 与展开直接写在正文里逐字相同。归档用例确认归档写入的正文就是这个函数的结果，两边不会各拼一份，另核归档另记的发言人写的话、
+// 附件清单与转发。
 // ════════════════════════════════════════════════════════════
 
 const SPEAKER = { nickname: '甲', userId: '30001' };
+
+/** 转发的占位与展开（OneBot 信封的写法）、给界面的事实 */
+const PLACEHOLDER = '<forward id="F1">[合并转发消息]</forward>';
+const ENV =
+  '<forward id="F1" count=1 participants="丙(30003)">\n1. 丙(30003): <at id="30004">30004</at>你好\n</forward>';
+const FACTS = { count: 1, participants: ['丙(30003)'], text: '1. 丙(30003): <at id="30004">30004</at>你好' };
 
 const group = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
   content: '看这个',
@@ -67,6 +76,25 @@ describe('buildIncomingContent', () => {
         _attachmentDescriptions: ['[图片: 一只猫]'],
       }),
     ).toBe('[图片: 一只猫]');
+  });
+
+  it('转发的展开换回占位的位置，引用与附件描述照旧接在后面：与展开直接写在正文里逐字相同', () => {
+    const msg = group({
+      content: `看这个${PLACEHOLDER}`,
+      forwards: [{ id: 'F1', content: ENV }],
+      replyTo: { messageId: 'm1', content: '原话', nickname: '乙', userId: '30002' },
+      _attachmentDescriptions: ['[图片: 一只猫 | ref:data/a.png]'],
+    });
+    const expected = `[甲(30001)]: 看这个${ENV}\n[引用 乙(30002) 的消息: 原话]\n[图片: 一只猫 | ref:data/a.png]`;
+    expect(buildIncomingContent(msg, SPEAKER)).toBe(expected);
+    expect(buildIncomingContent({ ...msg, content: `看这个${ENV}`, forwards: undefined }, SPEAKER)).toBe(expected);
+  });
+
+  it('没有展开的占位原样留着', () => {
+    expect(forwardPlaceholder('F1')).toBe(PLACEHOLDER);
+    const content = `看${PLACEHOLDER}和${forwardPlaceholder('F3')}`;
+    expect(withForwards(content, [{ id: 'F1', content: ENV }])).toBe(`看${ENV}和${forwardPlaceholder('F3')}`);
+    expect(withForwards(content, undefined)).toBe(content);
   });
 });
 
@@ -149,6 +177,25 @@ describe('归档', () => {
       { kind: 'file', name: 'b.txt' },
       { kind: 'file', name: 'c.txt' },
     ]);
+  });
+
+  it('转发：归档正文拼回展开，发言人写的话只有占位，另记各段转发的 id 与事实（不存展开），转发里 @ 的人不算', async () => {
+    const K = WellKnownMetadataKeys;
+    const failed = '<forward id="F2">[合并转发消息：展开过程出错]</forward>';
+    const msg = group({
+      content: `看这个${PLACEHOLDER}${forwardPlaceholder('F2')}`,
+      forwards: [
+        { id: 'F1', content: ENV, facts: FACTS },
+        { id: 'F2', content: failed },
+      ],
+    });
+    const archived = await (await archiveService()).archiveIncoming(msg);
+    if (!archived) throw new Error('没落档');
+    const { message } = archived;
+    expect(message.content).toBe(buildIncomingContent(msg, SPEAKER));
+    expect(message.metadata?.[K.SpokenContent]).toBe(msg.content);
+    expect(message.metadata?.[K.Forwards]).toEqual([{ id: 'F1', facts: FACTS }, { id: 'F2' }]);
+    expect(message.metadata?.[K.Mentions]).toBeUndefined();
   });
 
   it('发言人写的话与归档正文相同时不记，没有附件时不记附件清单', async () => {

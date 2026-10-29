@@ -497,7 +497,9 @@ const itemBase = {
  * 时间线上的一个条目。推送分 item/started、item/delta、item/completed，completed 里的全文是唯一正本；
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
  * - user-message：说话人自己写的话与附件（给模型看的发送者前缀、引用与附件描述不在文字里；存档没记发言人写的话的旧提问，文字是
- *   存档正文原样）；进了一轮的带 turnId、entry 与 addressed（见 inputBase），与通知一样；
+ *   存档正文原样）；随这条提问转发来的聊天记录在 forwards，每项带给界面的事实（条数、参与者、转发的文字，界面画成单独的块；
+ *   拉不到、展开出错或适配器关掉了展开的没有事实），文字里没有它们的占位；进了一轮的带 turnId、entry 与 addressed（见
+ *   inputBase），与通知一样；
  * - agent-message：她的文字与附件（可以只有附件）、模型与这一轮的 token；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
  * - reasoning：思考文字；
@@ -539,6 +541,21 @@ export const SessionItemSchema = z.discriminatedUnion('kind', [
     ...inputBase,
     text: z.string(),
     attachments: z.array(ItemAttachmentSchema),
+    forwards: z
+      .array(
+        z.object({
+          facts: z
+            .object({
+              count: z.number(),
+              participants: z.array(z.string()),
+              unlisted: z.number().optional(),
+              text: z.string(),
+              cutOff: z.literal(true).optional(),
+            })
+            .optional(),
+        }),
+      )
+      .optional(),
     speaker: SpeakerSchema,
   }),
   z.object({

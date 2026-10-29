@@ -212,7 +212,7 @@ await messageArchive.use.archiveIncoming(message);
 - **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。`triggerType: 'proactive'` 的代发任务（如 workflow 的 agent 节点）被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免目标会话回看历史时把派发任务误读为「曾有用户说过」。宿主通知（带 `hostNotice`）同理标成 `role:'notice'` + `kind:'host-notice'`，且只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息与 metadata，provider 也不得把它落库。
 - **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`（schema-message 登记的键 `TriggerType`、`Source`），用于区分真实用户消息 vs 系统注入，会话服务据前者标出被点名与插话，也是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
 - **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），拉远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
-- **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口，归档文本给模型看。发言人自己写的话与附件清单另记在 `metadata` 里（schema-message 登记的键 `SpokenContent`、`Attachments`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）：发言人写的话只在与归档文本不同时记；附件清单记种类、名字与地址，地址怎么取见 [plugin-message-archive](../plugins/plugin-message-archive.md)。会话服务回看历史与实时推送的提问取这两样，附件描述（含文件读取插件内联的全文）不进气泡。
+- **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口，归档文本给模型看。发言人自己写的话、附件清单与随附的转发另记在 `metadata` 里（schema-message 登记的键 `SpokenContent`、`Attachments`、`Forwards`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）：发言人写的话只在与归档文本不同时记；附件清单记种类、名字与地址，地址怎么取、转发记什么见 [plugin-message-archive](../plugins/plugin-message-archive.md)。会话服务回看历史与实时推送的提问取这三样，附件描述（含文件读取插件内联的全文）不进气泡。
 
 ## 8. 交叉链接
 

@@ -249,6 +249,15 @@ export interface IncomingMessage {
     userId?: string;
     nickname?: string;
   };
+  /**
+   * 随这条消息转发来的聊天记录（如 OneBot 的合并转发），按在正文里出现的先后，不是发言人自己写的话。适配器在 content 里它所在的
+   * 位置写 {@link forwardPlaceholder}(id)（转发 id 不含双引号；用户手打的同样写法先转义，同 {@link AT_SELF_PATTERN}），给模型的
+   * 展开写在 content、给界面的事实写在 facts；适配器必须在 content 里写占位，漏写的展开不进归档文本。归档文本
+   * （{@link buildIncomingContent}）把占位换回展开，模型看到的与展开写在正文里一样；发言人的话（content、存档的 SpokenContent）、
+   * 点名、禁言关键词与 @ 的账号只看 content；存档另记成 {@link WellKnownMetadataKeys}.Forwards。别的平台有转发照这条接：渲染成
+   * 占位、展开放这里、转义手打的写法；存档、会话服务、WebUI、点名与画像都不认平台
+   */
+  forwards?: ForwardedChat[];
   /** 通知子类型（如 poke、group_upload 等非消息事件）；存档记成消息的 kind */
   noticeType?: string;
   /** 通知动作是否指向机器人；poke 为 false 时按未点名互动判断，省略沿用戳机器人的语义。 */
@@ -652,6 +661,33 @@ export interface ArchivedAttachment {
   ref?: string;
 }
 
+/** 一段转发给界面的事实（{@link ForwardedChat.facts}）：适配器展开成功时有 */
+export interface ForwardFacts {
+  /** 顶层的条数 */
+  count: number;
+  /** 参与的人，最多前 8 个（写法由适配器定，如 OneBot 的「昵称(账号)」） */
+  participants: string[];
+  /** 没列出的人数；都列出了时没有 */
+  unlisted?: number;
+  /** 转发的文字：有摘要时是摘要，没有时是原文（可能截断） */
+  text: string;
+  /** 原文被截断时为 true */
+  cutOff?: true;
+}
+
+/** 随入站消息转发来的一段聊天记录（{@link IncomingMessage.forwards} 的一项） */
+export interface ForwardedChat {
+  /** 平台给的转发 id：正文里它的占位（{@link forwardPlaceholder}）按它对位 */
+  id: string;
+  /** 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；拉不到时写原因；适配器关掉展开时就是占位本身） */
+  content: string;
+  /** 给界面的事实；拉不到内容、展开出错与关掉展开时没有 */
+  facts?: ForwardFacts;
+}
+
+/** 存档记下的一段转发（{@link WellKnownMetadataKeys}.Forwards 的一项）：展开已按原位置拼进归档正文，不另存 */
+export type ArchivedForward = Omit<ForwardedChat, 'content'>;
+
 /**
  * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表登记由一方写入、另一方读取的键：写方与读方都引用这里的
  * 常量，第三方的 agent、存档与适配器照着写，读历史与记忆的一方（会话服务回看历史、向量记忆、用户档案与关系等）才还原得出
@@ -662,15 +698,17 @@ export interface ArchivedAttachment {
  *   agent 落库时把解码后的正文写进这个键，只在它与 `content` 不同时写入；缺省即 `content` 本身就是
  *   可见正文。检索、摘要等按语义消费历史的一方应优先读它，读不到再退回 `content`。
  * - `SpokenContent`：提问里发言人自己写的话（字符串，可以是空串），即入站消息的 `content`。存档的 `content` 是给模型看的
- *   归档文本（{@link buildIncomingContent}：发送者前缀、引用与附件描述），存档只在两者不同时写这个键；缺省即 `content`。
- *   会话服务据此给出提问条目的正文。
+ *   归档文本（{@link buildIncomingContent}：发送者前缀、转发的展开、引用与附件描述），存档只在两者不同时写这个键；缺省即
+ *   `content`。合并转发的展开不在里面，只有它的占位。会话服务据此给出提问条目的正文。
  * - `Attachments`：提问带的附件清单（{@link ArchivedAttachment} 的数组，按入站顺序），存档写；会话服务据此把文件还原成卡片、
  *   图片等按地址显示。没有附件时不写。
+ * - `Forwards`：提问随附的转发（{@link ArchivedForward} 的数组：入站消息 forwards 的 id 与事实，不存展开），存档在有时写；
+ *   会话服务据此把转发画成单独的块。
  * - `SenderLabel`：归档文本发送者前缀里的标签（字符串，{@link getSenderLabel} 的写法），存档只在加了前缀时写。把归档文本重排给
  *   模型或界面看的一方（向量记忆的召回片段、撤回通知的摘录、引用反查）按它用 {@link stripSenderPrefix} 去掉这一层，没有这个键
  *   的不去。
- * - `Mentions`：提问里发言人自己写的话 @ 了哪些账号（字符串数组，{@link extractMentions} 从入站消息的 `content` 抽，引用与
- *   附件描述里的不算），存档在有时写；向量记忆据此给被 @ 的人加权，关系图的提取据此认被 @ 的人。
+ * - `Mentions`：提问里发言人自己写的话 @ 了哪些账号（字符串数组，{@link extractMentions} 从入站消息的 `content` 抽，引用、
+ *   附件描述与转发里的不算），存档在有时写；向量记忆据此给被 @ 的人加权，关系图的提取据此认被 @ 的人。
  * - `Platform`、`UserId`、`Nickname`：说话人的平台、用户 id 与昵称（字符串）。存档写入站消息的；agent 给她自己的回复写
  *   这一轮的平台与她在那里的账号、昵称。会话服务据此标出说话人与是不是 owner，向量记忆、用户档案与关系等也读。
  * - `GroupId`、`GroupName`、`SessionType`：说话所在的群号、群名与会话类型（字符串，即入站消息的 `groupId`、`groupName`、
@@ -713,6 +751,7 @@ export const WellKnownMetadataKeys = {
   VisibleContent: 'visibleContent',
   SpokenContent: 'spokenContent',
   Attachments: 'attachments',
+  Forwards: 'forwards',
   SenderLabel: 'senderLabel',
   Mentions: 'mentions',
   Platform: 'platform',
@@ -889,6 +928,6 @@ export {
 // ----- 身份标识工具（cleanup-9 从 core 迁入） -----
 export { getMessageName, getSenderLabel, prefixSender, stripSenderPrefix } from './identity.js';
 // ----- 入站消息的归档文本（归档与触发判定共用） -----
-export { buildIncomingContent } from './incoming-content.js';
+export { buildIncomingContent, forwardPlaceholder, withForwards } from './incoming-content.js';
 // ----- 历史里的工具调用组（读历史的各方共用） -----
 export { groupToolCalls, type MessageUnit } from './tool-call-groups.js';

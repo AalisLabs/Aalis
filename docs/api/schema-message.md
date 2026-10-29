@@ -12,39 +12,66 @@
 
 ```ts
 interface IncomingMessage {
-  content: string;
+  content: string;                     // 正文；随消息转发来的聊天记录在这里只留占位，展开在 forwards
   sessionId: string;
   platform: string;
   userId?: string;
   nickname?: string;
-  images?: string[];                   // base64 或 URL
-  files?: Array<{ name; data; mimeType? }>;
-  attachmentOrder?: Array<'image' | 'file'>;
+  messageId?: string;                  // 平台侧消息 id（如 OneBot 的 message_id），存档记成 MessageId，引用回复据此反查归档原文
+  attachments?: MessageAttachment[];   // 多模态附件的唯一入口，各平台适配器都只填它
+  _attachmentDescriptions?: Array<string | undefined>; // plugin-media 给各附件写的文本描述，按 attachments 下标对齐
   sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一，会话管理建档时按它记下聊天窗口；不带时平台声明了多方类型的按其中第一个、多方，只声明了一对一类型的按第一个，没声明的按 private、一对一
   selfId?: string;                     // 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id）
   source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却、不过指令解析，不进长期记忆），各自成一轮、不与别的输入叠加
   arrival?: number;                    // 到达序号：网关在入站相位之前打的，这次运行内递增，只用于日志关联，不落库、不进模型
   ownerApproved?: boolean;             // 注入方声明：文字建立时经 owner 过目过原文，带 source 的注入只有它过指令解析，见下文
   groupName?: string;
-  groupId?: string;
+  groupId?: string;                    // 多方聊天窗口的 id（如 OneBot 的群号，频道为 `<guild>:<channel>`）
+  senderRole?: 'owner' | 'admin' | 'member'; // 群聊中发送者在群内的角色
+  senderTitle?: string;                // 群聊中发送者的专属头衔
+  selfRole?: 'owner' | 'admin' | 'member';   // 群聊中机器人自己在群内的角色，适配器查询后填
+  selfTitle?: string;                  // 群聊中机器人自己的专属头衔
   replyTo?: { messageId; content?; userId?; nickname? };
+  forwards?: ForwardedChat[];          // 随这条消息转发来的聊天记录，按在正文里出现的先后，见下文
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
   noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
+  text?: TextRef;                      // 平台事件合成或转成的入站给人看的那句（如好友申请、戳一戳），不进模型，存档记成 Text
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
+  actor?: { platform: string; userId: string }; // 代理身份：系统侧触发器投递时记「AI 应代谁执行」，授权按它算
   fromTurn?: FromTurn;                 // 起它的那一轮：续做与子任务带着，见下文
   hostNotice?: {                       // 宿主撰写的事件通知，见下文
     kind: string;
     id?: string;
     untrusted?: string;
+    reportOnly?: boolean;
     replyTo?: string;
     facts?: Record<string, string | number>;
+    text?: TextRef;
   };
-  // 内部字段（preprocessor 写入）
-  _imageDescriptions?: string[];
-  _imageRecognitionInfo?: { imageCount; successCount; descriptions; transformedContent };
-  _fileDescriptions?: string[];
 }
 ```
+
+### 随消息转发来的聊天记录（forwards）
+
+```ts
+interface ForwardedChat {
+  id: string;            // 平台给的转发 id：正文里它的占位按它对位
+  content: string;       // 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；拉不到时写原因；适配器关掉展开时就是占位本身）
+  facts?: ForwardFacts;  // 给界面的事实；拉不到内容、展开出错与关掉展开时没有
+}
+
+interface ForwardFacts {
+  count: number;          // 顶层的条数
+  participants: string[]; // 参与的人，最多前 8 个（写法由适配器定，如 OneBot 的「昵称(账号)」）
+  unlisted?: number;      // 没列出的人数；都列出了时没有
+  text: string;           // 转发的文字：有摘要时是摘要，没有时是原文（可能截断）
+  cutOff?: true;          // 原文被截断时为 true
+}
+
+type ArchivedForward = Omit<ForwardedChat, 'content'>; // 存档记下的一段（元数据的 Forwards），展开已按原位置拼进归档正文
+```
+
+随消息转发来的聊天记录（如 OneBot 的合并转发）不是发言人自己写的话。适配器在 `content` 里它所在的位置写 `forwardPlaceholder(id)`（`<forward id="…">[合并转发消息]</forward>`，转发 id 不含双引号；用户手打的同样写法先转义，同 `AT_SELF_PATTERN`），给模型的展开写在 `forwards` 一项的 `content`、给界面的事实写在 `facts`；适配器必须写占位，漏写的展开不进归档文本。归档文本（`buildIncomingContent`）把占位换回展开，模型看到的与展开写在正文里一样；发言人的话（`content`、存档的 `SpokenContent`）、点名、禁言关键词与 @ 的账号只看 `content`；存档另记成 `Forwards`。别的平台有转发照这条接：渲染成占位、展开放 `forwards`、转义手打的写法；存档、会话服务、WebUI、点名与画像都不认平台。
 
 ### triggerType 语义
 
@@ -166,6 +193,8 @@ prefixSender(content: string, nickname?: string, userId?: string): string;
 stripSenderPrefix(content: string, label: string | undefined): string;
 getMessageName(userId?: string): string | undefined;
 buildIncomingContent(incoming: IncomingMessage, speaker?: Pick<IncomingMessage, 'nickname' | 'userId'>): string;
+forwardPlaceholder(id: string): string;
+withForwards(content: string, forwards: readonly ForwardedChat[] | undefined): string;
 outboundMediaMessage(
   kind: 'image' | 'audio' | 'video' | 'file',
   ref: string,
@@ -185,7 +214,7 @@ interface MessageUnit {
 }
 ```
 
-`getSenderLabel`、`prefixSender`、`getMessageName` 用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`stripSenderPrefix` 去掉归档文本里烘进的发送者前缀：只在 `content` 以 `[label]: ` 开头时去掉这一段，`label` 取存档记下的 `SenderLabel`，没有时原样返回，正文自己以 `[..]: ` 开头的不动；把归档文本重排给模型或界面看、身份另有标注的一方（向量记忆的召回片段、OneBot 的撤回摘录与引用反查）用它。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话与附件清单另记在元数据里（见下文）。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。`oneSpeaker` 判一轮的各条输入是不是同一位物理发言者（平台与账号都相同）说的：会话语义的发言者（工具调用上下文的 `userId`、人设的说话人事实）只在这时有，api-authority 的 `originTurnOf` 与人设插件都用它。`wasAddressed` 判一条输入点没点名她：真人输入（不带 `source`）的触发类型为 `direct` 或 `immediate`，没有触发类型的（没经触发判定）按 `direct` 算，带来源的注入（定时任务、编排、各种通知）不算；agent 的焦点指引与排着开的一轮的说明、档案与关系子图的主发言者都按它判。`AT_SELF_PATTERN` 是适配器按机器人账号写下的对她的 @（`<at self …>…</at>`），读的一方只认这个结构化标记、不按文字猜；文法与读它的几处见[消息到 LLM 的处理流水线](../concepts/message-llm-pipeline.md)。`extractMentions` 按同一套文法取一段文字 @ 了哪些账号（`<at id="…">` 与 `<at self id="…">` 里的账号，按出现先后去重；@全体不是账号、不算，入站写作 `<at>all</at>`，她的回复里写作 `<at id="all">`）；存档从发言人自己写的话里抽，记成 `Mentions`。`arrivalTag` 是日志行里一条输入的到达序号（` #<序号>`，带前导空格，接在动作之后；没经网关进来的为空串），网关、触发、流控与 agent 的日志据此串起同一条输入，不记正文与昵称。`groupToolCalls` 是读历史的各方共用的工具调用组归组：从带工具调用的 assistant 往后找 `toolCallId` 对得上的结果，结果找齐、遇到下一次工具调用或对不上、重复的结果就停，其间别的消息挪到这组之后、保持各自先后，回挪过之后的次序；各方只比单位的形状，组外的工具结果是 `loose`。组的结果按调用之后逐毫秒记时间戳，按时间戳读历史的存储（MongoDB、SQLite）会把组写入期间归档的别的消息（插进来的输入、被触发判定或流控吞掉的影子归档、随后的回复）排进调用与结果之间，按相邻认组会把组拆开。agent 装载历史（`partial` 与 `loose` 不发给模型）、会话服务归并时间线、记忆摘要切单位与定切分点都用它。
+`getSenderLabel`、`prefixSender`、`getMessageName` 用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`stripSenderPrefix` 去掉归档文本里烘进的发送者前缀：只在 `content` 以 `[label]: ` 开头时去掉这一段，`label` 取存档记下的 `SenderLabel`，没有时原样返回，正文自己以 `[..]: ` 开头的不动；把归档文本重排给模型或界面看、身份另有标注的一方（向量记忆的召回片段、OneBot 的撤回摘录与引用反查）用它。`buildIncomingContent` 把入站消息拼成归档文本（转发的展开换回正文里占位的位置，再加发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法；给了说话人（`speaker`）才加发送者前缀，不看平台，谁算说话人由调用方定（参考规则是 api-message-archive 的 `speakerOf`）；归档文本是给模型看的，发言人自己写的话、附件清单与转发另记在元数据里（见下文）。`forwardPlaceholder` 是正文里一段转发所在位置的占位，适配器写进 `content`；`withForwards` 把正文里的转发占位换成对应的展开，没有对应展开的占位原样留着。`outboundMediaMessage` 是发出的图片、音频、视频与文件归档进会话历史的写法：`kind` 为 `outbound-image` / `outbound-audio` / `outbound-video` / `outbound-file`，正文是附件引用占位符（如 `[音频: 描述 | ref:data:/audio/a.mp3]`；文件的描述位记文件名，如 `[文件: 主页.html | ref:paper:/…]`）。出站的 `source` 是 `agent` 的是她发的，`role: 'assistant'`；其余是插件发的，`role: 'notice'`，进模型时是一条系统通知，不算她的发言。时间戳与 `metadata` 由调用方补上。`outboundMarkerMessage` 是不是她回复的出站文字（`source` 不是 `agent`，如指令的回复、宿主提示）归档进会话历史的写法：一条事件标记（`role: 'system'`、`kind: 'event-marker'`，不进模型的上下文），正文是 `content`，元数据记文字对象（登记的键 `Text`，有才记）；她的回复与空文字回 `undefined`，时间戳与出站的 `Source`、`TurnId`、`CallId` 由调用方补上（与 `outboundMediaMessage` 记的附件同一条规则，见 api-message-archive 的 `recordOutbound`）。不是她回复的出站文字的归档一律用它，会话服务回看历史才能还原成同样的通知。`oneSpeaker` 判一轮的各条输入是不是同一位物理发言者（平台与账号都相同）说的：会话语义的发言者（工具调用上下文的 `userId`、人设的说话人事实）只在这时有，api-authority 的 `originTurnOf` 与人设插件都用它。`wasAddressed` 判一条输入点没点名她：真人输入（不带 `source`）的触发类型为 `direct` 或 `immediate`，没有触发类型的（没经触发判定）按 `direct` 算，带来源的注入（定时任务、编排、各种通知）不算；agent 的焦点指引与排着开的一轮的说明、档案与关系子图的主发言者都按它判。`AT_SELF_PATTERN` 是适配器按机器人账号写下的对她的 @（`<at self …>…</at>`），读的一方只认这个结构化标记、不按文字猜；文法与读它的几处见[消息到 LLM 的处理流水线](../concepts/message-llm-pipeline.md)。`extractMentions` 按同一套文法取一段文字 @ 了哪些账号（`<at id="…">` 与 `<at self id="…">` 里的账号，按出现先后去重；@全体不是账号、不算，入站写作 `<at>all</at>`，她的回复里写作 `<at id="all">`）；存档从发言人自己写的话里抽，记成 `Mentions`。`arrivalTag` 是日志行里一条输入的到达序号（` #<序号>`，带前导空格，接在动作之后；没经网关进来的为空串），网关、触发、流控与 agent 的日志据此串起同一条输入，不记正文与昵称。`groupToolCalls` 是读历史的各方共用的工具调用组归组：从带工具调用的 assistant 往后找 `toolCallId` 对得上的结果，结果找齐、遇到下一次工具调用或对不上、重复的结果就停，其间别的消息挪到这组之后、保持各自先后，回挪过之后的次序；各方只比单位的形状，组外的工具结果是 `loose`。组的结果按调用之后逐毫秒记时间戳，按时间戳读历史的存储（MongoDB、SQLite）会把组写入期间归档的别的消息（插进来的输入、被触发判定或流控吞掉的影子归档、随后的回复）排进调用与结果之间，按相邻认组会把组拆开。agent 装载历史（`partial` 与 `loose` 不发给模型）、会话服务归并时间线、记忆摘要切单位与定切分点都用它。
 
 ## 存档元数据的键
 
@@ -194,10 +223,11 @@ interface MessageUnit {
 | 常量 | 键 | 谁写、写在哪 | 形状 | 谁读 |
 |---|---|---|---|---|
 | `VisibleContent` | `visibleContent` | agent：落库的回复是结构化输出的信封时，写解码后的可见正文 | 字符串，只在与 `content` 不同时写 | agent 交给模型的历史取它；检索、摘要等按语义读历史的一方，读不到退回 `content` |
-| `SpokenContent` | `spokenContent` | 存档：提问里发言人自己写的话（入站消息的 `content`） | 字符串，可以是空串；只在与归档文本不同时写 | 会话服务给出提问条目的正文 |
+| `SpokenContent` | `spokenContent` | 存档：提问里发言人自己写的话（入站消息的 `content`；合并转发的展开不在里面，只有它的占位） | 字符串，可以是空串；只在与归档文本不同时写 | 会话服务给出提问条目的正文 |
 | `Attachments` | `attachments` | 存档：提问带的附件 | `ArchivedAttachment[]`，按入站顺序；没有附件时不写 | 会话服务把文件还原成卡片、图片等按地址显示 |
+| `Forwards` | `forwards` | 存档：提问随附的转发（入站消息 `forwards` 的 id 与事实，不存展开），有才写 | `ArchivedForward[]` | 会话服务把转发画成单独的块，提问的文字里去掉它们的占位 |
 | `SenderLabel` | `senderLabel` | 存档：归档文本发送者前缀里的标签（`getSenderLabel` 的写法），只在加了前缀时写 | 字符串 | 把归档文本重排给模型或界面看的一方按它用 `stripSenderPrefix` 去掉这一层：向量记忆的召回片段、OneBot 的撤回摘录与引用反查；没有这个键的不去 |
-| `Mentions` | `mentions` | 存档：发言人自己写的话 @ 了哪些账号（`extractMentions` 从入站消息的 `content` 抽，引用与附件描述里的不算），有才写 | 字符串数组 | 向量记忆给被 @ 的人加权；关系图的提取据此认被 @ 的人（没发过言、图里也没有的人，被 @ 了也能记进关系） |
+| `Mentions` | `mentions` | 存档：发言人自己写的话 @ 了哪些账号（`extractMentions` 从入站消息的 `content` 抽，引用、附件描述与转发里的不算），有才写 | 字符串数组 | 向量记忆给被 @ 的人加权；关系图的提取据此认被 @ 的人（没发过言、图里也没有的人，被 @ 了也能记进关系） |
 | `Platform`、`UserId`、`Nickname` | `platform`、`userId`、`nickname` | 存档写入站消息的说话人；agent 给她自己的回复写这一轮的平台与她在那里的账号、昵称 | 字符串 | 会话服务标说话人与是不是 owner；记忆后端按平台筛最近消息；向量记忆、用户档案与关系等 |
 | `GroupId`、`GroupName`、`SessionType` | `groupId`、`groupName`、`sessionType` | 存档写入站消息的群号、群名与会话类型；agent 给她自己的回复写这一轮的 | 字符串，即入站消息的同名字段 | 向量记忆与最近消息写出说话的位置，只用于显示；判是不是多方读会话记录的 `originChat.multiParty`（子会话取根会话的） |
 | `MessageId` | `messageId` | 存档：平台侧的消息 id（入站消息的 `messageId`） | 字符串 | 存档按它反查被引用的原文（`findByMessageId`）；关系插件把引用与回复对回消息 |

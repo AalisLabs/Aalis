@@ -5,9 +5,9 @@
 // 有两种格式：新格式是最后一条带时间线（segments）的回复，覆盖这一轮之前按旧格式落库的工具调用组；旧格式是分条的 assistant
 // （带 toolCalls）与 tool 结果。同一轮里相邻的 assistant 与 tool 消息成一组，两种格式都归并成按时间顺序的思考、正文与工具调用
 // 条目；每次模型调用说的话各成一条（重试的各版不连在一起）。提问、通知与发出的附件各自单独成条（她发的附件是只有附件的她的
-// 消息，插件发的是带附件的通知）；提问的正文与附件取存档另记的发言人写的话与附件清单，宿主通知另带它的 id 与给界面的事实，
-// 通知与事件标记的文字先取存档另记的文字对象（没记的旧记录取正文）。进了一轮的输入（提问与通知）带回合 id、进入方式与是否被
-// 点名；agent 写的回合记录在它之后还原成回合条目（结局与来源），只带记录的事件标记不另成条。
+// 消息，插件发的是带附件的通知）；提问的正文、附件与随附的转发取存档另记的发言人写的话（去掉转发的占位）、附件清单与转发，
+// 宿主通知另带它的 id 与给界面的事实，通知与事件标记的文字先取存档另记的文字对象（没记的旧记录取正文）。进了一轮的输入（提问
+// 与通知）带回合 id、进入方式与是否被点名；agent 写的回合记录在它之后还原成回合条目（结局与来源），只带记录的事件标记不另成条。
 // 存档元数据只按 schema-message 登记的键读（WellKnownMetadataKeys），会话服务自己写进工具结果元数据的几个除外：工具卡的审批结算、「已发出」、回合停止时还没结束、命令的退出码与转到后台的
 // 任务 id 取自工具结果的元数据（会话服务在结果落库前写上），没有结果的调用（重启或中断）同样算没结束。
 // 房间里她只把最后的回复发进房间（api-agent 的约定）：工具调用之前说的话、重试丢掉的几版标「未发出」，平台没收下的回复
@@ -27,8 +27,10 @@ import type { Logger } from '@aalis/core';
 import { isTextRef, type TextRef } from '@aalis/schema-i18n';
 import {
   type ArchivedAttachment,
+  type ArchivedForward,
   CONTROL_KINDS,
   type ContentSegment,
+  type ForwardFacts,
   groupToolCalls,
   type Message,
   type MessageAttachment,
@@ -36,6 +38,7 @@ import {
   parseAttachmentRefs,
   WellKnownKinds,
   WellKnownMetadataKeys,
+  withForwards,
 } from '@aalis/schema-message';
 import { failure } from './connection.js';
 import type { DisplayOf } from './display.js';
@@ -173,6 +176,47 @@ function askedAttachments(value: unknown, signFile: SignFile): Attachment[] {
   );
 }
 
+/** 存档里提问随附的转发：按类型取，不是数组的不认，id 不是字符串的项不认，事实不合形状的当没有（见 {@link forwardFacts}） */
+function archivedForwards(value: unknown): ArchivedForward[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry => {
+    if (!isRecord(entry) || typeof entry.id !== 'string') return [];
+    const facts = forwardFacts(entry.facts);
+    return [facts ? { id: entry.id, facts } : { id: entry.id }];
+  });
+}
+
+/**
+ * 一段转发给界面的事实，按类型取：count 是有限数、participants 是字符串数组、text 是字符串，有一样不合就当没有事实；unlisted
+ * 不是有限数、cutOff 不是 true 的当没有这一项（存储把 undefined 存成 null）
+ */
+function forwardFacts(value: unknown): ForwardFacts | undefined {
+  if (!isRecord(value)) return undefined;
+  const count = finite(value.count);
+  const { participants, text: chat } = value;
+  if (count === undefined || typeof chat !== 'string') return undefined;
+  if (!Array.isArray(participants) || !participants.every(name => typeof name === 'string')) return undefined;
+  const unlisted = finite(value.unlisted);
+  return {
+    count,
+    participants,
+    ...(unlisted === undefined ? {} : { unlisted }),
+    text: chat,
+    ...(value.cutOff === true ? { cutOff: true } : {}),
+  };
+}
+
+/**
+ * 发言人的话给人看的写法：随消息转发来的聊天记录另成一栏，文字里去掉它们的占位，连同占位留下的首尾空白；没有转发的原样
+ */
+export function spokenText(spoken: string, forwards: readonly { id: string }[] | undefined): string {
+  if (!forwards?.length) return spoken;
+  return withForwards(
+    spoken,
+    forwards.map(({ id }) => ({ id, content: '' })),
+  ).trim();
+}
+
 /** 存档里宿主通知给界面的事实：只认字符串与有限数的项，不是对象或一项都不认时没有 */
 function noticeFacts(value: unknown): Record<string, string | number> | undefined {
   if (!isRecord(value)) return undefined;
@@ -272,8 +316,8 @@ function recordedTurn(message: Message): Item<'turn'> | undefined {
 /**
  * 单独成条的存档消息：提问、通知（含压缩分隔线、指令的回复与平台事件合成的入站）、发出的附件（她发的是只有附件的她的消息，
  * 插件发的是带附件的通知，topic 同事件标记按来源取）。都带归进的回合 id（{@link turnOf}），与实时推送一样并进回合；进了一轮的
- * 提问与通知另带进入方式与是否被点名。她的回复与工具调用要成组归并，带回合记录的（只带记录的事件标记）、其余系统消息与组外的
- * 工具结果不显示，都回 undefined
+ * 提问与通知另带进入方式与是否被点名；随提问转发来的聊天记录另成 forwards（只带给界面的事实），文字里去掉它们的占位。她的回复
+ * 与工具调用要成组归并，带回合记录的（只带记录的事件标记）、其余系统消息与组外的工具结果不显示，都回 undefined
  */
 export function archivedItem(
   message: Message,
@@ -288,14 +332,16 @@ export function archivedItem(
   // 记了给人看的那句的入站是平台事件合成或转成的（如好友申请、戳一戳），不是谁的发言：画成通知，种类取存档记的子类或来源
   if (message.role === 'user' && !isTextRef(recorded)) {
     const spoken = meta?.[WellKnownMetadataKeys.SpokenContent];
+    const forwards = archivedForwards(meta?.[WellKnownMetadataKeys.Forwards]);
     return {
       kind: 'user-message',
       itemId,
       turnId,
       ...entryOf(message, multiParty),
       at,
-      text: typeof spoken === 'string' ? spoken : (message.content ?? ''),
+      text: spokenText(typeof spoken === 'string' ? spoken : (message.content ?? ''), forwards),
       attachments: askedAttachments(meta?.[WellKnownMetadataKeys.Attachments], signFile),
+      ...(forwards.length > 0 ? { forwards: forwards.map(({ facts }) => (facts ? { facts } : {})) } : {}),
       speaker: speakerOf(message, isOwner),
     };
   }

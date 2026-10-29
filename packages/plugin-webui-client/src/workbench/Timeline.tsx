@@ -33,7 +33,8 @@ import './Timeline.css';
 // 正文不收。终端照同一条规则，见 test/architecture/tool-call-fold-parity.test.ts。
 // 没有回复、最后一段只有输入的一轮在输入下面只写一行「没有回复」，中间只隔着不在回合里的提问的几轮合成一行「N 轮没有回复」写在
 // 最后一轮，被并掉的几轮照常显示输入，房间不刷屏靠合并。
-// 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示；指令的回复是一张卡，只认段落与列表，其余通知是一行
+// 后台任务的结束通知按它带的事实画成一行状态，写给模型的那句话不显示；指令的回复是一张卡，只认段落与列表，其余通知是一行。
+// 提问随附的转发按事实画成默认收起的块，没有事实的写一行
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
 
@@ -141,7 +142,7 @@ function outcomeLine(block: Block, silent: number | undefined): string | undefin
 const drawn = (block: Block, silent: number | undefined) =>
   block.items.length > 0 || block.source !== undefined || outcomeLine(block, silent) !== undefined;
 
-/** 工具卡与思考的折叠：默认收起，「全部展开」「全部折叠」改默认并清掉逐张的设置 */
+/** 工具卡、思考与提问随附的转发的折叠：默认收起，「全部展开」「全部折叠」改默认并清掉逐张的设置 */
 export function useFold() {
   const [all, setAll] = useState(false);
   const [single, setSingle] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -334,7 +335,7 @@ function Entry({ item, last, ...props }: EntryProps) {
   const { sessionId, room, streaming, fold } = props;
   switch (item.kind) {
     case 'user-message':
-      return <UserMessage item={item} room={room} sessionId={sessionId} />;
+      return <UserMessage item={item} room={room} sessionId={sessionId} fold={fold} />;
     case 'agent-message':
       return <AgentMessage item={item} room={room} sessionId={sessionId} streaming={streaming.has(item.itemId)} />;
     case 'reasoning':
@@ -391,7 +392,14 @@ function entryLine({ entry, addressed }: Item<'user-message' | 'notice'>): strin
   return tr(addressed ? 'entryOpenedAddressed' : 'entryOpenedInterjection');
 }
 
-function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; room: boolean; sessionId: string }) {
+interface UserMessageProps {
+  item: Item<'user-message'>;
+  room: boolean;
+  sessionId: string;
+  fold: Fold;
+}
+
+function UserMessage({ item, room, sessionId, fold }: UserMessageProps) {
   const entry = entryLine(item);
   return (
     <div className="message" data-from="user" data-room={room || undefined} title={clockTime(item.at)}>
@@ -403,6 +411,10 @@ function UserMessage({ item, room, sessionId }: { item: Item<'user-message'>; ro
       )}
       {item.speaker.source && <p className="message-meta">{tr('messageFrom', { source: item.speaker.source })}</p>}
       {item.text && <p className="message-text">{item.text}</p>}
+      {item.forwards?.map(({ facts }, i) => {
+        const key = `${item.itemId}/forward/${i}`;
+        return <Forwarded key={key} facts={facts} open={fold.isOpen(key)} onToggle={() => fold.toggle(key)} />;
+      })}
       <Attachments attachments={item.attachments} sessionId={sessionId} />
       {entry && <p className="message-meta">{entry}</p>}
     </div>
@@ -469,6 +481,32 @@ function Reasoning({ item, streaming, open, onToggle }: ReasoningProps) {
         <div className="reasoning-text">
           <Markdown text={item.text} streaming={streaming} />
         </div>
+      )}
+    </div>
+  );
+}
+
+type ForwardFacts = NonNullable<NonNullable<Item<'user-message'>['forwards']>[number]['facts']>;
+
+/** 提问随附的一段转发：按钮写条数与参与者，点开是转发的文字；没有事实的写一行、不能展开 */
+function Forwarded({ facts, open, onToggle }: { facts?: ForwardFacts; open: boolean; onToggle(): void }) {
+  if (!facts) return <p className="forwarded">{tr('forwardedNoContent')}</p>;
+  const more = facts.unlisted ?? 0;
+  return (
+    <div className="forwarded">
+      <Disclosure expanded={open} onToggle={onToggle}>
+        {tr('forwardedChat', {
+          count: facts.count,
+          names: facts.participants,
+          more,
+          total: facts.participants.length + more,
+        })}
+      </Disclosure>
+      {open && (
+        <p className="forwarded-text">
+          {facts.text}
+          {facts.cutOff && `\n${tr('forwardedCutOff')}`}
+        </p>
       )}
     </div>
   );
