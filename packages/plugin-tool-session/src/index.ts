@@ -6,29 +6,30 @@ import { type BoundOf, config, definePlugin, logger, optional, provide } from '@
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import { CONTROL_KINDS, type Message } from '@aalis/schema-message';
+import { t } from './texts.js';
 
 // ===== 插件元数据与能力声明 =====
 
 const configSchema = defineConfig({
-  enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true, onInvalid: 'error' },
+  enabled: { type: 'boolean', label: t('enabledLabel'), default: true, onInvalid: 'error' },
   maxLimit: {
     type: 'number',
-    label: '单次最多读取条数',
+    label: t('maxLimitLabel'),
     default: 100,
-    description: 'session_get_history 一次能返回的硬上限；LLM 传入 limit 超过此值会被 cap。建议 50~200。',
+    description: t('maxLimitDescription'),
   },
   defaultLimit: {
     type: 'number',
-    label: '默认读取条数（LLM 不传 limit 时）',
+    label: t('defaultLimitLabel'),
     default: 20,
-    description: '不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。',
+    description: t('defaultLimitDescription'),
   },
-  includeArchivedDefault: { type: 'boolean', label: '默认包含已归档消息', default: false },
+  includeArchivedDefault: { type: 'boolean', label: t('includeArchivedDefaultLabel'), default: false },
   perMessageMaxChars: {
     type: 'number',
-    label: '每条消息截断字数',
+    label: t('perMessageMaxCharsLabel'),
     default: 0,
-    description: '返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
+    description: t('perMessageMaxCharsDescription'),
   },
 });
 
@@ -250,7 +251,8 @@ function registerSessionHistoryTools(
 ): void {
   tools.use.registerGroup({
     name: 'session-history',
-    label: '会话历史读取',
+    label: t('sessionHistory'),
+    summary: t('groupSummary'),
     description: '按 Aalis sessionId 读取近期会话历史，用于核实跨会话上下文',
   });
 
@@ -330,7 +332,7 @@ function registerSessionHistoryTools(
 
 export default definePlugin({
   name: '@aalis/plugin-tool-session',
-  displayName: '会话工具',
+  displayName: t('displayName'),
   subsystem: 'session',
   configSchema,
   provides: [sessionHistory],
@@ -350,7 +352,7 @@ export default definePlugin({
     if (!cfg.enabled) return;
 
     const historyService = createSessionHistoryService(caps, cfg);
-    caps.provide.use(sessionHistory, historyService, { label: '会话历史读取' });
+    caps.provide.use(sessionHistory, historyService, { label: t('sessionHistory') });
     registerSessionHistoryTools(caps, historyService, cfg);
   },
 });

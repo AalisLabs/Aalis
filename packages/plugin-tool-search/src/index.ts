@@ -6,51 +6,47 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   enabled: {
     type: 'boolean',
-    label: '启用工具搜索层',
+    label: t('enabledLabel'),
     default: true,
-    description: '关闭后所有工具将直接发送给 LLM，不经过搜索层',
+    description: t('enabledDescription'),
   },
   showToolNames: {
     type: 'boolean',
-    label: '展示可用能力目录',
+    label: t('showToolNamesLabel'),
     default: true,
-    description:
-      '开启后，search_tools 的描述中会概括本轮可用分组、能力说明与工具名示例，' +
-      '模型需要调用 search_tools 查询具体用法后才能使用对应工具。' +
-      '关闭后模型只看到 search_tools，需要先搜索才能发现工具。',
+    description: t('showToolNamesDescription'),
   },
   maxDirectTools: {
     type: 'number',
-    label: '直传阈值',
+    label: t('maxDirectToolsLabel'),
     default: 5,
-    description: '当注册的工具总数不超过此值时，跳过搜索层，直接将全部工具发送给 LLM',
+    description: t('maxDirectToolsDescription'),
   },
   maxSearchResults: {
     type: 'number',
-    label: '搜索结果上限',
+    label: t('maxSearchResultsLabel'),
     default: 5,
     min: 0,
     integer: true,
-    description: '单次搜索返回的最大工具数量，0 表示不限制',
+    description: t('maxSearchResultsDescription'),
   },
   alwaysDirectTools: {
     type: 'multiselect',
-    label: '直出工具名单',
+    label: t('alwaysDirectToolsLabel'),
     default: [],
     allowCustom: true,
-    description: '即使启用工具搜索层，也始终直接暴露这些工具的完整定义。填写工具名，如 web_search。',
+    description: t('alwaysDirectToolsDescription'),
   },
   maxDiscoveredKeep: {
     type: 'number',
-    label: '已发现工具队列上限',
+    label: t('maxDiscoveredKeepLabel'),
     default: 20,
-    description:
-      '从消息历史推断出的“已发现工具”最多保留 N 个（按最近使用时间倒序保留，0 = 不限）。' +
-      '避免长会话里 discovered 集合无限膨胀，使搜索层失去瘦身价值。',
+    description: t('maxDiscoveredKeepDescription'),
   },
 });
 
@@ -335,7 +331,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-tool-search',
-  displayName: '搜索工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,

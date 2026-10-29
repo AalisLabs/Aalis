@@ -1,6 +1,7 @@
 import { type BoundTools, tools, withToolGroups } from '@aalis/api-tools';
 import { config, definePlugin, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { t } from './texts.js';
 import { registerBaseConvertTools } from './tools/base-convert.js';
 import { registerCalculusTools } from './tools/calculus.js';
 import { registerConversionTools } from './tools/conversion.js';
@@ -17,73 +18,73 @@ import { registerSymbolicTools } from './tools/symbolic.js';
 
 const configSchema = defineConfig({
   evaluate: {
-    label: '表达式计算',
+    label: t('evaluateLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用表达式计算工具', default: true },
+      enabled: { type: 'boolean', label: t('evaluateEnabledLabel'), default: true },
     },
   },
   statistics: {
-    label: '统计分析',
+    label: t('statisticsLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用统计分析工具', default: true },
+      enabled: { type: 'boolean', label: t('statisticsEnabledLabel'), default: true },
     },
   },
   matrix: {
-    label: '矩阵运算',
+    label: t('matrixLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用矩阵运算工具', default: true },
+      enabled: { type: 'boolean', label: t('matrixEnabledLabel'), default: true },
     },
   },
   numberTheory: {
-    label: '数论与组合',
+    label: t('numberTheoryLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用数论工具', default: true },
+      enabled: { type: 'boolean', label: t('numberTheoryEnabledLabel'), default: true },
     },
   },
   geometry: {
-    label: '几何计算',
+    label: t('geometryLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用几何计算工具', default: true },
+      enabled: { type: 'boolean', label: t('geometryEnabledLabel'), default: true },
     },
   },
   conversion: {
-    label: '单位换算',
+    label: t('conversionLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用单位换算工具', default: true },
+      enabled: { type: 'boolean', label: t('conversionEnabledLabel'), default: true },
     },
   },
   financial: {
-    label: '金融数学',
+    label: t('financialLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用金融数学工具', default: true },
+      enabled: { type: 'boolean', label: t('financialEnabledLabel'), default: true },
     },
   },
   calculus: {
-    label: '微积分',
+    label: t('calculusLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用微积分工具', default: true },
+      enabled: { type: 'boolean', label: t('calculusEnabledLabel'), default: true },
     },
   },
   equation: {
-    label: '方程求解',
+    label: t('equationLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用方程求解工具', default: true },
+      enabled: { type: 'boolean', label: t('equationEnabledLabel'), default: true },
     },
   },
   baseConvert: {
-    label: '进制转换',
+    label: t('baseConvertLabel'),
     fields: {
-      enabled: { type: 'boolean', label: '启用进制转换工具', default: true },
+      enabled: { type: 'boolean', label: t('baseConvertEnabledLabel'), default: true },
     },
   },
   symbolic: {
-    label: '符号代数 (mathjs)',
+    label: t('symbolicLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用符号计算工具',
+        label: t('symbolicEnabledLabel'),
         default: true,
-        description: '符号求导、化简、有理化、LaTeX 输出等，基于 mathjs',
+        description: t('symbolicEnabledDescription'),
       },
     },
   },
@@ -97,7 +98,7 @@ const uses = { tools: optional(tools), config, logger };
 
 export default definePlugin({
   name: '@aalis/plugin-tool-math',
-  displayName: '数学工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -106,7 +107,8 @@ export default definePlugin({
 
     tools.use.registerGroup({
       name: 'math',
-      label: '数学工具',
+      label: t('displayName'),
+      summary: t('groupSummary'),
       description: '表达式计算、统计分析、矩阵运算、数论、几何、单位换算、金融数学、微积分、方程求解、进制转换',
     });
 

@@ -11,6 +11,7 @@ import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { toolContext } from '../fixtures/tool-call.js';
@@ -229,7 +230,7 @@ describe('ensureBrowser 对断连的浏览器', () => {
 describe('浏览器页', () => {
   it('过登记门槛；开页与关页都推 invalidate，表格跟着变', async () => {
     expect(pages.logs).toEqual([]);
-    expect(pages.view('browser')).toMatchObject({ title: '浏览器', placement: 'plugin', icon: 'globe' });
+    expect(toSource(pages.view('browser'))).toMatchObject({ title: '浏览器', placement: 'plugin', icon: 'globe' });
     const opened = pages.invalidations.length;
     const pageId = await navigate();
     expect(pages.invalidations.slice(opened)).toContainEqual({
@@ -240,7 +241,7 @@ describe('浏览器页', () => {
     expect(rows.find(row => row.id === pageId)).toMatchObject({ title: '截图页', url: `http://127.0.0.1:${port}/` });
 
     const closing = pages.invalidations.length;
-    expect(await pages.act('browser', 'closePage', { rowKey: pageId })).toEqual({
+    expect(toSource(await pages.act('browser', 'closePage', { rowKey: pageId }))).toEqual({
       status: 200,
       body: { message: `已关闭 ${pageId}` },
     });
@@ -261,7 +262,7 @@ describe('浏览器页', () => {
   }, 60_000);
 
   it('关不存在的页面回错误，不当成功', async () => {
-    expect(await pages.act('browser', 'closePage', { rowKey: 'page_none' })).toEqual({
+    expect(toSource(await pages.act('browser', 'closePage', { rowKey: 'page_none' }))).toEqual({
       status: 500,
       body: { error: '页面 page_none 不存在' },
     });
@@ -270,7 +271,10 @@ describe('浏览器页', () => {
   it('关闭所有页面：表格清空并推 invalidate', async () => {
     await navigate();
     const before = pages.invalidations.length;
-    expect(await pages.act('browser', 'closeAllPages')).toEqual({ status: 200, body: { message: '已关闭全部页面' } });
+    expect(toSource(await pages.act('browser', 'closeAllPages'))).toEqual({
+      status: 200,
+      body: { message: '已关闭全部页面' },
+    });
     expect(pages.invalidations.length).toBeGreaterThan(before);
     expect(await pages.data('browser', 'pages')).toEqual([]);
   }, 60_000);

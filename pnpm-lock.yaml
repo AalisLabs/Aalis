@@ -3113,6 +3113,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -3147,6 +3150,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       '@aalis/util-network-guard':
         specifier: workspace:>=0.6.3 <1.0.0
         version: link:../util-network-guard
@@ -3181,6 +3187,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -3200,6 +3209,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
       mathjs:
         specifier: ^14.9.1
         version: 14.9.1

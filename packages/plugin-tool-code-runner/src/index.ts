@@ -5,77 +5,79 @@ import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { type RunnerConfig, runCode } from './runner.js';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   python: {
     label: 'Python',
     fields: {
-      enabled: { type: 'boolean', label: '启用 run_python', default: true, onInvalid: 'error' },
+      enabled: { type: 'boolean', label: t('enableTool', { tool: 'run_python' }), default: true, onInvalid: 'error' },
       interpreter: {
         type: 'string',
-        label: '解释器路径',
+        label: t('interpreterLabel'),
         default: 'python3',
         required: true,
         onInvalid: 'error',
-        description: 'Python 解释器路径或命令名，如 python3、/usr/bin/python3',
+        description: t('pythonInterpreterDescription'),
       },
     },
   },
   javascript: {
     label: 'JavaScript (Node.js)',
     fields: {
-      enabled: { type: 'boolean', label: '启用 run_javascript', default: true, onInvalid: 'error' },
+      enabled: {
+        type: 'boolean',
+        label: t('enableTool', { tool: 'run_javascript' }),
+        default: true,
+        onInvalid: 'error',
+      },
       interpreter: {
         type: 'string',
-        label: '解释器路径',
+        label: t('interpreterLabel'),
         default: 'node',
         required: true,
         onInvalid: 'error',
-        description: 'Node.js 解释器路径或命令名',
+        description: t('javascriptInterpreterDescription'),
       },
     },
   },
   maxOutputSize: {
     type: 'number',
-    label: '最大输出字节',
+    label: t('maxOutputSizeLabel'),
     default: 131072,
-    description: 'stdout/stderr 各自的最大输出字节数',
+    description: t('maxOutputSizeDescription'),
   },
   workingDirectory: {
     type: 'string',
-    label: '逻辑工作目录',
+    label: t('workingDirectoryLabel'),
     default: 'workspace:/',
     onInvalid: 'error',
-    description: '脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。',
+    description: t('workingDirectoryDescription'),
   },
   sandbox: {
-    label: '代码沙箱',
+    label: t('sandboxLabel'),
     fields: {
       mode: {
         type: 'select',
-        label: '隔离模式',
+        label: t('modeLabel'),
         default: 'auto',
         onInvalid: 'error',
         options: [
-          { label: '自动（有沙箱则强制隔离，无则拒绝运行）', value: 'auto' },
-          { label: '无隔离（裸进程，危险，仅信任环境）', value: 'none' },
+          { label: t('modeAuto'), value: 'auto' },
+          { label: t('modeNone'), value: 'none' },
         ],
-        description:
-          'auto：经 code-sandbox 服务（Linux bubblewrap / macOS sandbox-exec）把代码限制在「工作区 + 本次临时目录」、默认断网、' +
-          '只放行白名单环境变量；无可用沙箱后端时拒绝执行（fail-closed）。none：退回无隔离裸进程，每次告警。' +
-          '说明：v1 读放开（解释器需系统库），防的是写出工作区/联网外泄/篡改系统，不防读取本机其它文件。',
+        description: t('modeDescription'),
       },
       network: {
         type: 'select',
-        label: '子进程网络',
+        label: t('networkLabel'),
         default: 'deny',
         onInvalid: 'error',
         options: [
-          { label: '断网（推荐）', value: 'deny' },
-          { label: '放开（粗粒度，无法按域名过滤）', value: 'allow' },
+          { label: t('networkDeny'), value: 'deny' },
+          { label: t('networkAllow'), value: 'allow' },
         ],
-        description:
-          '仅 auto 模式生效。deny：脚本内联网（含 fetch）会失败。allow：放开子进程网络（无法按域名白名单过滤）。',
+        description: t('networkDescription'),
       },
     },
   },
@@ -147,7 +149,7 @@ async function createRunnerConfig(
 
 export default definePlugin({
   name: '@aalis/plugin-tool-code-runner',
-  displayName: '代码执行器',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -169,7 +171,8 @@ export default definePlugin({
     // 注册工具分组
     tools.use.registerGroup({
       name: 'code-runner',
-      label: '代码执行',
+      label: t('groupLabel'),
+      summary: t('groupSummary'),
       description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
     });
 
