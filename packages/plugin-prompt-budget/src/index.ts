@@ -14,6 +14,7 @@ import type { TokenUsageEvent } from '@aalis/api-agent';
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { createBoundedMap } from '@aalis/util-bounded-map';
+import { t } from './texts.js';
 
 /** 事件契约形状来自 @aalis/api-agent 的 TokenUsageEvent，本插件只追加入库时刻 */
 interface TokenUsage extends TokenUsageEvent {
@@ -27,7 +28,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-prompt-budget',
-  displayName: 'Prompt 预算自检',
+  displayName: t('displayName'),
   subsystem: 'agent',
   uses,
   apply(caps) {

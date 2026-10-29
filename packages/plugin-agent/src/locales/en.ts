@@ -2,6 +2,22 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'Default agent',
+  systemPromptLabel: 'Behavior guidelines prompt',
+  systemPromptDescription:
+    "Defines the agent's behavior guidelines. When a persona plugin is present, the persona provides the identity description and this is only appended as behavioral instructions.",
+  memoryTokenBudgetLabel: 'Tokens reserved for long-term memory',
+  memoryTokenBudgetDescription:
+    'Token allowance for injected system messages (skills, summaries, memory, etc.). It only takes effect when hard trimming has dropped all history and the prompt is still over budget: if together they exceed the allowance they are scaled down proportionally, and removed if still over',
+  promptBuildTimeoutMsLabel: 'Prompt contribution build timeout (ms)',
+  promptBuildTimeoutMsDescription:
+    'How long to wait for a single agent:prompt contribution build. A hung build (such as a stuck network lookup) is left out of this turn after the timeout while the rest proceed, so it does not hold up every LLM call. 0 means no limit.',
+  toolResultMaxRatioLabel: 'Maximum tool result ratio',
+  toolResultMaxRatioDescription:
+    'The largest share of the context window a single tool result may take (0~1); anything beyond is truncated. For example, 0.15 means 15%',
+  trimThresholdRatioLabel: 'Trim threshold ratio',
+  trimThresholdRatioDescription:
+    'Trim budget = context length × this ratio − max output tokens − 512 safety margin (at least 1024). Hard trimming trims the message list about to be sent to fit it (only in memory, the DB is untouched): history beyond what is available (the budget minus the head and a quarter of the budget) is dropped in segments, and the other steps only run when the estimate exceeds the budget. The default 1.0 uses the whole window left after reserving output; lower it to trim earlier. Compaction triggers are set in session settings: the auto-compaction threshold (summary plugin) and the history limit (this plugin).',
   systemNotice: '[System] {why}',
   turnError: '[Error] {error}',
   llmNoneErrored:
@@ -42,4 +58,16 @@ export default defineLocale<Source>()({
   stopped: 'Stopped this turn',
   stopIdle: 'No turn is running',
   stopDenied: 'Only those taking part in this turn and the owner can stop it',
+  modelDescription: 'List or search available chat models. Paged, -p turns the page; e.g. /model grok',
+  personaDescription: 'List or search available personas. Paged, -p turns the page',
+  pageOptionDescription: 'Page number (default 1)',
+  modelsLabel: 'available models',
+  personasLabel: 'available personas',
+  pagedNoMatch: 'No {label} match "{keyword}"',
+  pagedNone: '(No {label})',
+  pagedHeader: 'Showing {label} ({count, number} in total · page {page, number}/{pages, number}):',
+  pagedHeaderMatching:
+    'Showing {label} containing "{keyword}" ({count, number} in total · page {page, number}/{pages, number}):',
+  pagedHint: '—— Next page: {command} -p {next}  Search: {command} <keyword>',
+  pagedHintMatching: '—— Next page: {command} {keyword} -p {next}',
 });

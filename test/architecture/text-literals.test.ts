@@ -33,7 +33,6 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 /** 包级名单：包目录名 → 理由 */
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-adapter-onebot', '尚未迁移'],
-  ['plugin-agent', '尚未迁移'],
   ['plugin-asr-openai', '尚未迁移'],
   ['plugin-asr-whisper-cpp', '尚未迁移'],
   ['plugin-authority', '尚未迁移'],
@@ -69,7 +68,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-paper', '尚未迁移'],
   ['plugin-persona', '尚未迁移'],
   ['plugin-process-local', '尚未迁移'],
-  ['plugin-prompt-budget', '尚未迁移'],
   ['plugin-publish-review', '尚未迁移'],
   ['plugin-reach', '尚未迁移'],
   ['plugin-remote-agent-cursor', '尚未迁移'],
@@ -85,7 +83,6 @@ const PACKAGE_ALLOWLIST = new Map([
   ['plugin-tool-search', '尚未迁移'],
   ['plugin-tool-session', '尚未迁移'],
   ['plugin-tool-system', '尚未迁移'],
-  ['plugin-tools', '尚未迁移'],
   ['plugin-trigger-laya', '尚未迁移'],
   ['plugin-trigger-policy', '尚未迁移'],
   ['plugin-usage-stats', '尚未迁移'],
@@ -134,6 +131,11 @@ const POSITION_ALLOWLIST: readonly (Position & { reason: string })[] = [
     file: 'packages/plugin-session-manager/src/index.ts',
     literal: `\`会话消息历史清空失败: \${msg}\``,
     reason: '删除会话时的清理结果只进日志（属显示但不翻）',
+  },
+  {
+    file: 'packages/plugin-tools/src/tools.ts',
+    literal: "'回合已中止，未执行'",
+    reason: '执行守卫的拒绝语在工具路径只给模型（交工具结果前取原文），与「调用已中止，未执行」同类，不进字典',
   },
   {
     file: 'packages/plugin-webui-client/src/frame/FramePage.tsx',

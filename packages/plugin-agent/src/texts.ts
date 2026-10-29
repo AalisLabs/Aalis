@@ -1,9 +1,23 @@
-// 本插件自己的原文字典：发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，用量拆分表的分项名，按会话字段的称呼与说明，
-// /stop 的说明与回复
+// 本插件自己的原文字典：显示名与配置项，发到会话里的「[系统]」「[错误]」与 LLM 解析失败的说明，用量拆分表的分项名，按会话
+// 字段的称呼与说明，/stop 的说明与回复，/model 与 /persona 的说明与分页回复
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: '默认 Agent',
+  systemPromptLabel: '行为准则提示词',
+  systemPromptDescription: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
+  memoryTokenBudgetLabel: '长期记忆预留 Token',
+  memoryTokenBudgetDescription:
+    '注入的 system 消息（技能、摘要、记忆等）的 token 额度，只在硬裁剪丢完历史仍超预算时起作用：它们合计超过额度就按比例缩减，仍超时删除',
+  promptBuildTimeoutMsLabel: '提示词贡献构建超时 (ms)',
+  promptBuildTimeoutMsDescription:
+    '单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。',
+  toolResultMaxRatioLabel: '工具结果最大比例',
+  toolResultMaxRatioDescription: '单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15%',
+  trimThresholdRatioLabel: '裁剪触发比例',
+  trimThresholdRatioDescription:
+    '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。硬裁剪按它裁要发出的消息列表（只裁内存里的，不影响 DB）：历史超过可用量（预算减去头部与四分之一预算）就成段丢，其余几步在估算超过预算时才做。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
   systemNotice: '[系统] {why}',
   turnError: '[错误] {error}',
   llmNoneErrored:
@@ -41,6 +55,17 @@ const SOURCE = {
   stopped: '已停下这一轮',
   stopIdle: '没有在跑的一轮',
   stopDenied: '只有参与这一轮的人和 owner 能停',
+  modelDescription: '列出/搜索可用对话模型。分页显示，-p 翻页；如 /model grok',
+  personaDescription: '列出/搜索可用人设（分页，-p 翻页）',
+  pageOptionDescription: '页码（默认 1）',
+  modelsLabel: '可用模型',
+  personasLabel: '可用人设',
+  pagedNoMatch: '无匹配 "{keyword}" 的{label}',
+  pagedNone: '(无可用{label})',
+  pagedHeader: '{label}（共 {count, number} · 第 {page, number}/{pages, number} 页）:',
+  pagedHeaderMatching: '{label}（含"{keyword}" 共 {count, number} · 第 {page, number}/{pages, number} 页）:',
+  pagedHint: '—— 翻页: {command} -p {next}　搜索: {command} <关键词>',
+  pagedHintMatching: '—— 翻页: {command} {keyword} -p {next}',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -11,26 +11,25 @@ import { ToolRegistry } from './tools.js';
 
 const configSchema = defineConfig({
   background: {
-    label: '后台任务',
+    label: t('backgroundLabel'),
     fields: {
       maxWaitSeconds: {
         type: 'number',
-        label: '前台最多等待（秒）',
+        label: t('maxWaitSecondsLabel'),
         default: DEFAULT_LIMITS.maxWaitSeconds,
         min: 1,
         // 计时器能表示的最长时限（2147483647 毫秒）：超过时 Node 按 1 毫秒算，等于立即转后台
         max: 2_147_483,
         integer: true,
-        description: '可转后台的工具调用在前台最多等多少秒，模型给的 waitSeconds 超过它按它算；到时还没结束就转到后台',
+        description: t('maxWaitSecondsDescription'),
       },
       maxPerSession: {
         type: 'number',
-        label: '每个会话同时在跑的上限',
+        label: t('maxPerSessionLabel'),
         default: DEFAULT_LIMITS.maxPerSession,
         min: 1,
         integer: true,
-        description:
-          '同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数），满了时新的调用在执行之前就被拒绝；不在对话回合里的调用不会转后台，不占名额',
+        description: t('maxPerSessionDescription'),
       },
     },
   },
@@ -48,7 +47,7 @@ const configSchema = defineConfig({
 
 export default definePlugin({
   name: '@aalis/plugin-tools',
-  displayName: '工具注册表',
+  displayName: t('displayName'),
   subsystem: 'agent',
   configSchema,
   provides: [tools, backgroundTasks],
