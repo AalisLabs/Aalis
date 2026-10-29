@@ -19,7 +19,8 @@ export const isSessionEntry = (entry: unknown): entry is Field & { session: NonN
 
 /**
  * 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项；
- * description 是写在选项下面的一行说明；capabilities 是模型的能力（如 chat、vision），只有模型的可选项有
+ * description 是写在选项下面的一行说明；capabilities 是模型的能力（如 chat、vision），只有模型的可选项有；members 是选上
+ * 这一项会带上的成员的名字（如工具分组里的工具），有成员才有
  */
 export interface Option {
   key: string;
@@ -28,6 +29,13 @@ export interface Option {
   isDefault?: boolean;
   description?: string;
   capabilities?: string[];
+  members?: string[];
+}
+
+/** 可选项接口另给的、不属于任何可选项的成员与这一行的名字（如不属于任何分组的工具） */
+export interface Others {
+  label: string;
+  members: string[];
 }
 
 export const isModelField = (field: Field) => String(field.type) === 'llm-ref';
@@ -94,6 +102,19 @@ export function staticOptions(field: Field): Option[] {
   return (field.options ?? []).map(option => ({ key: String(option.value), label: option.label, value: option.value }));
 }
 
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
+
+/** 成员的名字：字符串的项，重名的只留一个（界面按名字列出） */
+const memberNames = (value: unknown): string[] => [...new Set(strings(value))];
+
+/** 可选项接口另给的 others：名字不是字符串或一个成员都没有时没有 */
+export function parseOthers(body: unknown): Others | undefined {
+  const others = isRecord(body) && isRecord(body.others) ? body.others : undefined;
+  const members = memberNames(others?.members);
+  return typeof others?.label === 'string' && members.length > 0 ? { label: others.label, members } : undefined;
+}
+
 /** 可选项接口另给的 labels：认得、但这次不在可选项里的取值的名字（如别的模型才有的思考档位）；不是可选项 */
 export function parseNames(body: unknown): Option[] {
   const labels = isRecord(body) && isRecord(body.labels) ? body.labels : {};
@@ -104,7 +125,7 @@ export function parseNames(body: unknown): Option[] {
 
 /**
  * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带提供它的插件实例 id，即 contextId，与它的能力），分组等给 details
- * （标了 default 的是没设时生效的那一项），其余给 models 的名字列表
+ * （标了 default 的是没设时生效的那一项，带成员的另有 members），其余给 models 的名字列表
  */
 export function parseOptions(models: boolean, body: unknown): Option[] {
   if (!isRecord(body)) throw new Error(tr('optionsMalformed'));
@@ -112,9 +133,7 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
   if (models) {
     const entries = (list('providers') ?? []).flatMap(entry => {
       const model = modelOf({ provider: entry.contextId, model: entry.model });
-      const capabilities = Array.isArray(entry.capabilities)
-        ? entry.capabilities.filter(item => typeof item === 'string')
-        : [];
+      const capabilities = strings(entry.capabilities);
       return model
         ? [{ ...model, label: typeof entry.provider === 'string' ? entry.provider : model.provider, capabilities }]
         : [];
@@ -129,21 +148,22 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
   }
   const details = list('details');
   if (details) {
-    return details.flatMap(entry =>
-      typeof entry.value === 'string'
-        ? [
-            {
-              key: entry.value,
-              label: typeof entry.label === 'string' ? entry.label : entry.value,
-              value: entry.value,
-              ...(entry.default === true ? { isDefault: true } : {}),
-              ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
-            },
-          ]
-        : [],
-    );
+    return details.flatMap(entry => {
+      if (typeof entry.value !== 'string') return [];
+      const members = memberNames(entry.members);
+      return [
+        {
+          key: entry.value,
+          label: typeof entry.label === 'string' ? entry.label : entry.value,
+          value: entry.value,
+          ...(entry.default === true ? { isDefault: true } : {}),
+          ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
+          ...(members.length > 0 ? { members } : {}),
+        },
+      ];
+    });
   }
-  const names = Array.isArray(body.models) ? body.models.filter(name => typeof name === 'string') : [];
+  const names = strings(body.models);
   return names.map(name => ({ key: name, label: name, value: name }));
 }
 

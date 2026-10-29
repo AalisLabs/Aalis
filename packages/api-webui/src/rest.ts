@@ -207,12 +207,19 @@ export interface PluginThemesResponse {
 
 // ----- 可选项与模型 -----
 
-/** 一个可选项：default 标没设时生效的那一项；description 是写在选项下面的一行说明（如工具分组的概述） */
+/**
+ * 一个可选项：default 标没设时生效的那一项；description 是写在选项下面的一行说明（如工具分组的概述）。
+ *
+ * members 与回应的 others 是通用字段：任何「选几组、每组带一批东西」的多选（工具分组，以后的技能、模型分组等）都按它们交，
+ * 界面不认来源、不认插件
+ */
 export interface OptionDetail {
   value: string;
   label: string | TextRef;
   default?: true;
   description?: string | TextRef;
+  /** 选上这一项会带上哪些成员的名字：界面在这一项下面写「包含 N 项」、点开列出；没有成员时不交 */
+  members?: string[];
 }
 
 /**
@@ -225,7 +232,7 @@ export interface OptionsContribution {
 }
 
 /** 可选项来源给的一项：value 是存进配置的值 */
-export type OptionItem = Pick<OptionDetail, 'value' | 'label' | 'description'>;
+export type OptionItem = Pick<OptionDetail, 'value' | 'label' | 'description' | 'members'>;
 
 declare module '@aalis/api-contributions' {
   interface ContributionPointMap {
@@ -235,12 +242,15 @@ declare module '@aalis/api-contributions' {
 
 /**
  * 可选项来源的回应：models 是取值，details 是带名字的可选项（有它时按它画），labels 是不在可选项里的取值的名字
- * （深度思考的档位：换了模型以后存着的档位不在可选项里，界面按它写名字）
+ * （深度思考的档位：换了模型以后存着的档位不在可选项里，界面按它写名字）。others 是不属于任何可选项、不随选择变的成员与
+ * 这一行的名字，界面写在可选项末尾、点开列出；这些成员怎么用由字段的说明写。只有宿主回答的来源（如 toolGroups）交得了
+ * others，插件经 webui:options 交的来源只交可选项
  */
 export interface OptionsResponse {
   models: string[];
   details?: OptionDetail[];
   labels?: Record<string, string | TextRef>;
+  others?: { label: string | TextRef; members: string[] };
 }
 
 /** 一个模型：contextId 是提供它的插件实例，llm-ref 的取值 `{ provider, model }` 认的是它 */
@@ -482,9 +492,9 @@ export interface WebuiRestRoutes {
 
   /**
    * 按来源取可选项：先找贡献点 webui:options 里同名的来源（dependency 原样交给它），回 `{ models, details }`；没有时
-   * llm 回模型；toolGroups 与 llm-thinking 由宿主回答：toolGroups 是已登记的分组与工具上出现过的分组的并集，
-   * llm-thinking 收 dependency（条目 id `<提供者实例 id>/<模型 id>`，没带时回空的可选项）；其余服务合起各提供者的
-   * listModels()，回 `{ models }`
+   * llm 回模型；toolGroups 与 llm-thinking 由宿主回答：toolGroups 是已登记的分组与工具上出现过的分组的并集，有工具的
+   * 分组带组内工具的名字，不属于任何分组的工具另交 others；llm-thinking 收 dependency（条目 id
+   * `<提供者实例 id>/<模型 id>`，没带时回空的可选项）；其余服务合起各提供者的 listModels()，回 `{ models }`
    */
   'GET /api/models/:service': { query: { dependency?: string }; response: LLMModelsResponse | OptionsResponse };
   /** :contextId 是提供者的插件实例，与模型的 contextId 相同 */

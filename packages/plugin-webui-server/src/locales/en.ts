@@ -79,6 +79,7 @@ export default defineLocale<Source>()({
   refreshNoModels: 'Provider {provider} has no registered models right now and cannot be refreshed',
   dependencyInvalid: 'dependency must be an entry id <provider instance id>/<model id>',
   allGroups: '* (all groups)',
+  ungroupedTools: 'Tools outside any group',
   pluginMissing: 'Plugin {instance} does not exist',
   refused:
     'Plugin {instance} is not accepting {action, select, config {config updates} enable {enabling} disable {disabling} other {reloads}} right now (shutting down or being unloaded); the config was not changed',
